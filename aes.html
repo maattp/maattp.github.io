@@ -1,0 +1,254 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AES Encryption & Decryption</title>
+    <style>
+        body {
+            font-family: sans-serif;
+            margin: 20px;
+        }
+
+        textarea, input[type="password"], input[type="text"], input[type="file"] {
+            width: 100%;
+            padding: 10px;
+            margin-bottom: 10px;
+            box-sizing: border-box;
+            border: 1px solid #ccc;
+            border-radius: 4px;
+        }
+
+        button {
+            background-color: #4CAF50;
+            color: white;
+            padding: 12px 20px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+        }
+
+        button:hover {
+            background-color: #45a049;
+        }
+
+        #decryptedOutput {
+            margin-top: 20px;
+            word-wrap: break-word;
+            border: 1px solid #ddd;
+            padding: 10px;
+            min-height: 50px;
+        }
+
+        .error {
+            color: red;
+            margin-top: 5px;
+        }
+
+        .hidden {
+            display: none;
+        }
+    </style>
+</head>
+<body>
+
+    <h1>AES Encryption</h1>
+
+    <label for="plaintext">Text to Encrypt:</label>
+    <textarea id="plaintext" rows="4" placeholder="Enter text here..."></textarea>
+
+    <label for="password">Password:</label>
+    <input type="password" id="password" placeholder="Enter password">
+    <div id="passwordError" class="error"></div>
+
+    <button onclick="encryptAndDownload()">Encrypt & Download</button>
+
+
+    <h1>AES Decryption</h1>
+
+    <label for="encryptedFile">Upload Encrypted File:</label>
+    <input type="file" id="encryptedFile">
+
+    <label for="passwordDecrypt">Password:</label>
+    <input type="password" id="passwordDecrypt" placeholder="Enter password">
+    <div id="passwordDecryptError" class="error"></div>
+
+    <button onclick="decryptFile()">Decrypt</button>
+
+    <h2>Decrypted Text:</h2>
+    <div id="decryptedOutput"></div>
+
+    <script>
+        // --- Encryption ---
+        async function encryptAndDownload() {
+            const plaintext = document.getElementById('plaintext').value;
+            const password = document.getElementById('password').value;
+            const passwordError = document.getElementById('passwordError');
+
+            passwordError.textContent = '';
+
+            if (!plaintext) {
+                alert("Please enter text to encrypt.");
+                return;
+            }
+
+            if (!password) {
+                passwordError.textContent = "Please enter a password.";
+                return;
+            }
+
+            try {
+                const encryptedData = await aesGcmEncrypt(plaintext, password);
+                const blob = new Blob([encryptedData], { type: 'text/plain' }); // Or application/octet-stream
+                const url = URL.createObjectURL(blob);
+
+                // Simulate a click on a hidden link to trigger download directly
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = 'encrypted.txt';
+                document.body.appendChild(a); // Append to body (required for Firefox)
+                a.click();
+                document.body.removeChild(a); // Clean up
+                URL.revokeObjectURL(url);    // Important for memory management
+
+            } catch (error) {
+                alert("Encryption Error: " + error.message); // Changed to alert
+                console.error("Encryption Error:", error);
+            }
+        }
+
+        async function aesGcmEncrypt(plaintext, password) {
+            const encoder = new TextEncoder();
+            const plaintextBytes = encoder.encode(plaintext);
+            const salt = window.crypto.getRandomValues(new Uint8Array(16));
+            const passwordBytes = encoder.encode(password);
+            const keyMaterial = await window.crypto.subtle.importKey(
+                "raw",
+                passwordBytes,
+                {name: "PBKDF2"},
+                false,
+                ["deriveKey"]
+            );
+            const key = await window.crypto.subtle.deriveKey(
+                {
+                    name: "PBKDF2",
+                    salt: salt,
+                    iterations: 5000000,
+                    hash: "SHA-256"
+                },
+                keyMaterial,
+                {name: "AES-GCM", length: 256},
+                true,
+                ["encrypt", "decrypt"]
+            );
+            const iv = window.crypto.getRandomValues(new Uint8Array(12));
+            const ciphertext = await window.crypto.subtle.encrypt({name: "AES-GCM", iv: iv}, key, plaintextBytes);
+            const combined = new Uint8Array(salt.byteLength + iv.byteLength + ciphertext.byteLength);
+            combined.set(salt, 0);
+            combined.set(iv, salt.byteLength);
+            combined.set(new Uint8Array(ciphertext), salt.byteLength + iv.byteLength);
+            return btoa(String.fromCharCode(...combined));
+        }
+
+
+        // --- Decryption ---
+
+        async function decryptFile() {
+            const fileInput = document.getElementById('encryptedFile');
+            const password = document.getElementById('passwordDecrypt').value;
+            const passwordDecryptError = document.getElementById('passwordDecryptError');
+            const decryptedOutputDiv = document.getElementById('decryptedOutput');
+
+            decryptedOutputDiv.textContent = '';
+            passwordDecryptError.textContent = '';
+
+            if (!fileInput.files[0]) {
+                decryptedOutputDiv.textContent = "Please select a file to decrypt.";
+                return;
+            }
+
+            if (!password) {
+                passwordDecryptError.textContent = "Please enter the password.";
+                return;
+            }
+
+            const file = fileInput.files[0];
+            const reader = new FileReader();
+
+            reader.onload = async function(event) {
+                try {
+                    const encryptedData = event.target.result;
+                    const decryptedText = await aesGcmDecrypt(encryptedData, password);
+                    decryptedOutputDiv.textContent = decryptedText;
+                } catch (error) {
+                    decryptedOutputDiv.textContent = "Decryption Error: " + error.message;
+                    console.error("Decryption Error:", error);
+                }
+            };
+
+            reader.onerror = function() {
+                decryptedOutputDiv.textContent = "Error reading file.";
+            };
+
+            reader.readAsText(file);
+        }
+
+      async function aesGcmDecrypt(encryptedData, password) {
+           // 1. Base64 Decode
+           const combined = new Uint8Array(Array.from(atob(encryptedData)).map(char => char.charCodeAt(0)));
+
+           // 2. Extract Salt, IV, and Ciphertext
+           const salt = combined.slice(0, 16);
+           const iv = combined.slice(16, 16 + 12);
+           const ciphertext = combined.slice(16 + 12);
+
+           // 3. Derive Key (same as encryption!)
+           const encoder = new TextEncoder();
+           const passwordBytes = encoder.encode(password);
+           const keyMaterial = await window.crypto.subtle.importKey(
+               "raw",
+               passwordBytes,
+               {name: "PBKDF2"},
+               false,
+               ["deriveKey"]
+           );
+
+           const key = await window.crypto.subtle.deriveKey(
+               {
+                   name: "PBKDF2",
+                   salt: salt,
+                   iterations: 5000000, // Must match encryption
+                   hash: "SHA-256",
+               },
+               keyMaterial,
+               {name: "AES-GCM", length: 256},
+               true,
+               ["encrypt", "decrypt"] // Must match encryption
+           );
+
+           // 4. Decrypt
+           try {
+               const decryptedBytes = await window.crypto.subtle.decrypt(
+                   {
+                       name: "AES-GCM",
+                       iv: iv,
+                   },
+                   key,
+                   ciphertext
+               );
+
+               // 5. Decode to String
+               const decoder = new TextDecoder();
+               const decryptedText = decoder.decode(decryptedBytes);
+               return decryptedText;
+
+           } catch (error) {
+               // VERY IMPORTANT: This will throw an error if the ciphertext
+               // was tampered with, or if the wrong password/IV/salt is used.
+               throw new Error("Decryption failed: Authentication or data integrity check failed.");
+           }
+       }
+
+    </script>
+</body>
+</html>
