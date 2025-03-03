@@ -44,6 +44,20 @@
             color: red;
             margin-top: 5px;
         }
+
+        #loadingIndicator {
+          display: none;
+          margin-top: 10px;
+          font-style: italic;
+          color: #888;
+        }
+
+        #loadingIndicatorDecrypt {
+          display: none;
+          margin-top: 10px;
+          font-style: italic;
+          color: #888;
+        }
     </style>
 </head>
 <body>
@@ -58,8 +72,10 @@
     <div id="passwordError" class="error"></div>
 
     <button onclick="encryptText()">Encrypt</button>
+    <div id="loadingIndicator">Encrypting... (this may take a moment)</div>
 
     <h2>Encrypted Text:</h2>
+    <button onclick="copyEncryptedText()">Copy</button>
     <div id="encryptedOutput"></div>
 
     <h1>AES Decryption</h1>
@@ -72,6 +88,7 @@
     <div id="passwordDecryptError" class="error"></div>
 
     <button onclick="decryptText()">Decrypt</button>
+    <div id="loadingIndicatorDecrypt">Decrypting... (this may take a moment)</div>
 
     <h2>Decrypted Text:</h2>
     <div id="decryptedOutput"></div>
@@ -83,17 +100,21 @@
             const password = document.getElementById('password').value;
             const passwordError = document.getElementById('passwordError');
             const encryptedOutputDiv = document.getElementById('encryptedOutput');
+            const loadingIndicator = document.getElementById('loadingIndicator');
 
             encryptedOutputDiv.textContent = '';
             passwordError.textContent = '';
+            loadingIndicator.style.display = 'block';
 
             if (!plaintext) {
                 encryptedOutputDiv.textContent = "Please enter text to encrypt.";
+                loadingIndicator.style.display = 'none';
                 return;
             }
 
             if (!password) {
                 passwordError.textContent = "Please enter a password.";
+                loadingIndicator.style.display = 'none';
                 return;
             }
 
@@ -103,113 +124,140 @@
             } catch (error) {
                 encryptedOutputDiv.textContent = "Encryption Error: " + error.message;
                 console.error("Encryption Error:", error);
+            } finally {
+              loadingIndicator.style.display = 'none';
             }
         }
 
         async function aesGcmEncrypt(plaintext, password) {
-            const encoder = new TextEncoder();
-            const plaintextBytes = encoder.encode(plaintext);
-            const salt = window.crypto.getRandomValues(new Uint8Array(16));
-            const passwordBytes = encoder.encode(password);
-            const keyMaterial = await window.crypto.subtle.importKey("raw", passwordBytes, {name: "PBKDF2"}, false, ["deriveKey"]);
-            const key = await window.crypto.subtle.deriveKey({name: "PBKDF2", salt: salt, iterations: 10000000, hash: "SHA-256"}, keyMaterial, {name: "AES-GCM", length: 256}, false, ["encrypt", "decrypt"]); //extractable to false
-            const iv = window.crypto.getRandomValues(new Uint8Array(12));
-            const ciphertext = await window.crypto.subtle.encrypt({name: "AES-GCM", iv: iv}, key, plaintextBytes);
-            const combined = new Uint8Array(salt.byteLength + iv.byteLength + ciphertext.byteLength);
-            combined.set(salt, 0);
-            combined.set(iv, salt.byteLength);
-            combined.set(new Uint8Array(ciphertext), salt.byteLength + iv.byteLength);
-            return btoa(String.fromCharCode(...combined));
+          const encoder = new TextEncoder();
+          const plaintextBytes = encoder.encode(plaintext);
+          const salt = window.crypto.getRandomValues(new Uint8Array(16));
+          const passwordBytes = encoder.encode(password);
+          const keyMaterial = await window.crypto.subtle.importKey("raw", passwordBytes, {name: "PBKDF2"}, false, ["deriveKey"]);
+          const key = await window.crypto.subtle.deriveKey({name: "PBKDF2", salt: salt, iterations: 10000000, hash: "SHA-256"}, keyMaterial, {name: "AES-GCM", length: 256}, false, ["encrypt", "decrypt"]);
+          const iv = window.crypto.getRandomValues(new Uint8Array(12));
+          const ciphertext = await window.crypto.subtle.encrypt({name: "AES-GCM", iv: iv}, key, plaintextBytes);
+          const combined = new Uint8Array(salt.byteLength + iv.byteLength + ciphertext.byteLength);
+          combined.set(salt, 0);
+          combined.set(iv, salt.byteLength);
+          combined.set(new Uint8Array(ciphertext), salt.byteLength + iv.byteLength);
+          return btoa(String.fromCharCode(...combined));
         }
 
 
-        // --- Decryption ---
+      // --- Copy Encrypted Text ---
+        function copyEncryptedText() {
+            const encryptedOutputDiv = document.getElementById('encryptedOutput');
+            const textToCopy = encryptedOutputDiv.textContent;
 
+            if (!textToCopy) {
+                alert("Nothing to copy. Please encrypt some text first.");
+                return;
+            }
+
+            navigator.clipboard.writeText(textToCopy)
+                .then(() => {
+                    alert("Encrypted text copied to clipboard!");
+                })
+                .catch(err => {
+                    console.error('Failed to copy text: ', err);
+                    alert("Failed to copy text. See console for details.");
+                });
+        }
+
+        // --- Decryption ---
         async function decryptText() {
             const encryptedData = document.getElementById('encryptedText').value;
             const password = document.getElementById('passwordDecrypt').value;
             const passwordDecryptError = document.getElementById('passwordDecryptError');
             const decryptedOutputDiv = document.getElementById('decryptedOutput');
+            const loadingIndicatorDecrypt = document.getElementById('loadingIndicatorDecrypt');
 
             decryptedOutputDiv.textContent = '';
             passwordDecryptError.textContent = '';
+            loadingIndicatorDecrypt.style.display = 'block';
 
             if (!encryptedData) {
                 decryptedOutputDiv.textContent = "Please paste the encrypted text.";
+                loadingIndicatorDecrypt.style.display = 'none';
                 return;
             }
 
             if (!password) {
                 passwordDecryptError.textContent = "Please enter the password.";
+                loadingIndicatorDecrypt.style.display = 'none';
                 return;
             }
+
             try {
-                // Trim whitespace before Base64 decoding
                 const trimmedEncryptedData = encryptedData.trim();
                 const decryptedText = await aesGcmDecrypt(trimmedEncryptedData, password);
                 decryptedOutputDiv.textContent = decryptedText;
             } catch (error) {
                 decryptedOutputDiv.textContent = "Decryption Error: " + error.message;
                 console.error("Decryption Error:", error);
+            } finally {
+              loadingIndicatorDecrypt.style.display = 'none';
             }
         }
 
-         async function aesGcmDecrypt(encryptedData, password) {
-            try{
-                // 1. Base64 Decode
-                const combined = new Uint8Array(Array.from(atob(encryptedData)).map(char => char.charCodeAt(0)));
+      async function aesGcmDecrypt(encryptedData, password) {
+        try{
+              // 1. Base64 Decode
+              const combined = new Uint8Array(Array.from(atob(encryptedData)).map(char => char.charCodeAt(0)));
 
 
-                // 2. Extract Salt, IV, and Ciphertext
-                const salt = combined.slice(0, 16);
-                const iv = combined.slice(16, 16 + 12);
-                const ciphertext = combined.slice(16 + 12);
+              // 2. Extract Salt, IV, and Ciphertext
+              const salt = combined.slice(0, 16);
+              const iv = combined.slice(16, 16 + 12);
+              const ciphertext = combined.slice(16 + 12);
 
-                // 3. Derive Key (same as encryption!)
-                const encoder = new TextEncoder();
-                const passwordBytes = encoder.encode(password);
-                const keyMaterial = await window.crypto.subtle.importKey(
-                    "raw",
-                    passwordBytes,
-                    {name: "PBKDF2"},
-                    false,
-                    ["deriveKey"]
-                );
+              // 3. Derive Key (same as encryption!)
+              const encoder = new TextEncoder();
+              const passwordBytes = encoder.encode(password);
+              const keyMaterial = await window.crypto.subtle.importKey(
+                  "raw",
+                  passwordBytes,
+                  {name: "PBKDF2"},
+                  false,
+                  ["deriveKey"]
+              );
 
-                const key = await window.crypto.subtle.deriveKey(
-                    {
-                        name: "PBKDF2",
-                        salt: salt,
-                        iterations: 10000000, // Must match encryption
-                        hash: "SHA-256",
-                    },
-                    keyMaterial,
-                    {name: "AES-GCM", length: 256},
-                    false,
-                    ["encrypt", "decrypt"] // Must match encryption
-                );
+              const key = await window.crypto.subtle.deriveKey(
+                  {
+                      name: "PBKDF2",
+                      salt: salt,
+                      iterations: 10000000, // Must match encryption
+                      hash: "SHA-256",
+                  },
+                  keyMaterial,
+                  {name: "AES-GCM", length: 256},
+                  false,
+                  ["encrypt", "decrypt"] // Must match encryption
+              );
 
-                // 4. Decrypt
-            
-                const decryptedBytes = await window.crypto.subtle.decrypt(
-                    {
-                        name: "AES-GCM",
-                        iv: iv,
-                    },
-                    key,
-                    ciphertext
-                );
+              // 4. Decrypt
 
-                // 5. Decode to String
-                const decoder = new TextDecoder();
-                const decryptedText = decoder.decode(decryptedBytes);
-                return decryptedText;
-            } catch (error) {
-               // VERY IMPORTANT: This will throw an error if the ciphertext
-               // was tampered with, or if the wrong password/IV/salt is used.
-                throw new Error("Decryption failed: Authentication or data integrity check failed.  Also make sure your input is valid Base64 with no extra spaces.");
-           }
-        }
+              const decryptedBytes = await window.crypto.subtle.decrypt(
+                  {
+                      name: "AES-GCM",
+                      iv: iv,
+                  },
+                  key,
+                  ciphertext
+              );
+
+              // 5. Decode to String
+              const decoder = new TextDecoder();
+              const decryptedText = decoder.decode(decryptedBytes);
+              return decryptedText;
+          }catch (error) {
+              // VERY IMPORTANT: This will throw an error if the ciphertext
+              // was tampered with, or if the wrong password/IV/salt is used.
+              throw new Error("Decryption failed: Authentication or data integrity check failed.  Also make sure your input is valid Base64 with no extra spaces.");
+          }
+      }
     </script>
 </body>
 </html>
