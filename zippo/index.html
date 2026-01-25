@@ -50,22 +50,11 @@
             background: linear-gradient(90deg, #c0c0c0 0%, #d8d8d8 20%, #e8e8e8 40%, #f0f0f0 50%, #e8e8e8 60%, #d0d0d0 80%, #b0b0b0 100%);
             border-radius: 9px 9px 0 0;
             border: 1px solid #999;
-            border-bottom: none;
+            border-bottom: 1px solid #888;
+            box-shadow: 0 2px 2px rgba(0,0,0,0.2);
             transform-origin: 0 100%;
             transition: transform 0.3s ease-out;
             z-index: 10;
-        }
-
-        .lid::before {
-            content: '';
-            position: absolute;
-            top: 18px;
-            left: 50%;
-            transform: translateX(-50%);
-            width: 36px;
-            height: 6px;
-            background: linear-gradient(90deg, #999 0%, #bbb 50%, #999 100%);
-            border-radius: 3px;
         }
 
         .lid.open {
@@ -79,12 +68,6 @@
             display: flex;
             justify-content: center;
             z-index: 5;
-            opacity: 0;
-            transition: opacity 0.15s ease-out;
-        }
-
-        .chimney.visible {
-            opacity: 1;
         }
 
         .chimney-inner {
@@ -116,7 +99,7 @@
             background: linear-gradient(90deg, #b8b8b8 0%, #d8d8d8 20%, #e8e8e8 40%, #f0f0f0 50%, #e8e8e8 60%, #d0d0d0 80%, #a8a8a8 100%);
             border-radius: 0 0 12px 12px;
             border: 1px solid #999;
-            border-top: none;
+            border-top: 1px solid #777;
         }
 
         .flame-container {
@@ -226,15 +209,15 @@
 
             flameTime += 0.1;
 
-            const baseX = 60 - tiltX * 3;
+            const baseX = 60;
             const baseY = 180;
             const flameHeight = 112;
             const flameWidth = 21;
             const baseWidth = 18;
 
-            // Slight wobble
-            const wobble = Math.sin(flameTime * 2) * 3 - tiltX * 4.5;
-            const wobble2 = Math.sin(flameTime * 3 + 1) * 2.25;
+            // Wobble - top moves more with tilt
+            const wobble = Math.sin(flameTime * 2) * 3 - tiltX * 12;
+            const wobble2 = Math.sin(flameTime * 3 + 1) * 2 - tiltX * 4;
 
             // Outer flame (orange/yellow) - flat bottom
             ctx.beginPath();
@@ -296,11 +279,9 @@
         }
 
         // Toggle lighter
-        const chimney = document.getElementById('chimney');
         document.getElementById('zippo').addEventListener('click', () => {
             isOpen = !isOpen;
             lid.classList.toggle('open', isOpen);
-            chimney.classList.toggle('visible', isOpen);
         });
 
         // Device motion
