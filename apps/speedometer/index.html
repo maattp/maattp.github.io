@@ -6,6 +6,8 @@
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
     <title>Speedometer</title>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" crossorigin="">
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script>
     <style>
         * {
             margin: 0;
@@ -17,13 +19,50 @@
             font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
             background: #111;
             min-height: 100vh;
+            color: #fff;
+            overflow: hidden;
+            padding-top: env(safe-area-inset-top);
+        }
+
+        .pages-container {
+            display: flex;
+            width: 200vw;
+            height: calc(100vh - env(safe-area-inset-top));
+            transition: transform 0.3s ease-out;
+        }
+
+        .page {
+            width: 100vw;
+            height: 100%;
+            flex-shrink: 0;
             display: flex;
             flex-direction: column;
             align-items: center;
             justify-content: center;
-            color: #fff;
-            overflow: hidden;
-            padding-top: env(safe-area-inset-top);
+            position: relative;
+        }
+
+        .page-dots {
+            position: fixed;
+            bottom: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            display: flex;
+            gap: 8px;
+            z-index: 200;
+        }
+
+        .dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: rgba(255, 255, 255, 0.3);
+            transition: background 0.3s;
+            cursor: pointer;
+        }
+
+        .dot.active {
+            background: #fff;
         }
 
         .speedometer {
@@ -210,33 +249,161 @@
             border-color: #888;
             color: #888;
         }
+
+        .elevation-display {
+            margin-top: 20px;
+            text-align: center;
+        }
+
+        .elevation-value {
+            font-size: 24px;
+            font-weight: 300;
+            color: #888;
+        }
+
+        .elevation-value.active {
+            color: #fff;
+        }
+
+        .elevation-label {
+            font-size: 12px;
+            color: #555;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            margin-top: 4px;
+        }
+
+        /* Map Page */
+        .map-page {
+            background: #111;
+            padding: 0;
+        }
+
+        .map-header {
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            padding: 15px 20px;
+            background: rgba(17, 17, 17, 0.9);
+            z-index: 100;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .map-title {
+            font-size: 18px;
+            font-weight: 500;
+        }
+
+        .map-stats {
+            display: flex;
+            gap: 20px;
+            font-size: 12px;
+            color: #888;
+        }
+
+        .map-stat-value {
+            color: #fff;
+            font-weight: 500;
+        }
+
+        #map {
+            width: 100%;
+            height: 100%;
+            background: #1a1a1a;
+        }
+
+        .map-empty {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            height: 100%;
+            color: #555;
+            text-align: center;
+            padding: 40px;
+        }
+
+        .map-empty svg {
+            width: 80px;
+            height: 80px;
+            margin-bottom: 20px;
+            opacity: 0.3;
+        }
+
+        .map-empty p {
+            margin-bottom: 8px;
+        }
+
+        .leaflet-control-attribution {
+            display: none;
+        }
     </style>
 </head>
 <body>
-    <div class="speedometer">
-        <canvas class="gauge" id="gauge" width="320" height="320"></canvas>
-        <div class="speed-display">
-            <div class="speed-value" id="speed-value">0</div>
-            <div class="unit-toggle">
-                <span class="unit-label active" id="label-km">km/h</span>
-                <div class="toggle-switch" id="unit-toggle" onclick="toggleUnit()"></div>
-                <span class="unit-label" id="label-mi">mph</span>
+    <div class="pages-container" id="pages-container">
+        <!-- Page 1: Speedometer -->
+        <div class="page speedometer-page">
+            <div class="speedometer">
+                <canvas class="gauge" id="gauge" width="320" height="320"></canvas>
+                <div class="speed-display">
+                    <div class="speed-value" id="speed-value">0</div>
+                    <div class="unit-toggle">
+                        <span class="unit-label active" id="label-km">km/h</span>
+                        <div class="toggle-switch" id="unit-toggle" onclick="toggleUnit()"></div>
+                        <span class="unit-label" id="label-mi">mph</span>
+                    </div>
+                </div>
+            </div>
+
+            <div class="elevation-display">
+                <div class="elevation-value" id="elevation-value">--</div>
+                <div class="elevation-label">Elevation</div>
+            </div>
+
+            <div class="odometer-container">
+                <div class="odometer-label">Trip</div>
+                <div class="odometer" id="odometer"></div>
+                <div class="odometer-unit" id="odometer-unit">km</div>
+            </div>
+
+            <button class="start-btn" id="start-btn" onclick="toggleTracking()">Start</button>
+            <button class="reset-btn" id="reset-btn" onclick="resetOdometer()">Reset Trip</button>
+
+            <div class="error" id="error" style="display: none;"></div>
+        </div>
+
+        <!-- Page 2: Map -->
+        <div class="page map-page" id="map-page">
+            <div class="map-header">
+                <div class="map-title">Route</div>
+                <div class="map-stats">
+                    <div><span class="map-stat-value" id="map-distance">0.0</span> <span id="map-distance-unit">km</span></div>
+                    <div><span class="map-stat-value" id="map-elevation-gain">0</span> <span id="map-elevation-unit">m</span> gain</div>
+                </div>
+            </div>
+            <div id="map"></div>
+            <div class="map-empty" id="map-empty">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1">
+                    <polygon points="1 6 1 22 8 18 16 22 23 18 23 2 16 6 8 2 1 6"/>
+                    <line x1="8" y1="2" x2="8" y2="18"/>
+                    <line x1="16" y1="6" x2="16" y2="22"/>
+                </svg>
+                <p>No route recorded</p>
+                <p style="font-size: 14px;">Start tracking to see your path</p>
             </div>
         </div>
     </div>
 
-    <div class="odometer-container">
-        <div class="odometer-label">Trip</div>
-        <div class="odometer" id="odometer"></div>
-        <div class="odometer-unit" id="odometer-unit">km</div>
+    <div class="page-dots">
+        <div class="dot active" data-page="0"></div>
+        <div class="dot" data-page="1"></div>
     </div>
 
-    <button class="start-btn" id="start-btn" onclick="toggleTracking()">Start</button>
-    <button class="reset-btn" id="reset-btn" onclick="resetOdometer()">Reset Trip</button>
-
-    <div class="error" id="error" style="display: none;"></div>
-
     <script>
+        // ========== Elements ==========
         const canvas = document.getElementById('gauge');
         const ctx = canvas.getContext('2d');
         const speedValueEl = document.getElementById('speed-value');
@@ -247,18 +414,123 @@
         const odometerUnitEl = document.getElementById('odometer-unit');
         const startBtn = document.getElementById('start-btn');
         const errorEl = document.getElementById('error');
+        const elevationValueEl = document.getElementById('elevation-value');
+        const pagesContainer = document.getElementById('pages-container');
+        const dots = document.querySelectorAll('.dot');
+        const mapEl = document.getElementById('map');
+        const mapEmpty = document.getElementById('map-empty');
+        const mapDistanceEl = document.getElementById('map-distance');
+        const mapDistanceUnitEl = document.getElementById('map-distance-unit');
+        const mapElevationGainEl = document.getElementById('map-elevation-gain');
+        const mapElevationUnitEl = document.getElementById('map-elevation-unit');
 
+        // ========== State ==========
         let unit = 'km/h';
         let speed = 0; // Current speed in m/s
         let distance = 0; // Total distance in meters
+        let elevation = null; // Current elevation in meters
+        let elevationGain = 0; // Total elevation gain in meters
+        let lastElevation = null;
         let tracking = false;
         let watchId = null;
         let lastPosition = null;
         let lastTime = null;
         let wakeLock = null;
+        let currentPage = 0;
+        let path = []; // Array of {lat, lng, altitude, speed, timestamp}
+        let map = null;
+        let pathLine = null;
+        let startMarker = null;
+        let endMarker = null;
 
-        const maxSpeed = unit === 'km/h' ? 200 : 120; // Max display speed
+        // ========== Page Swipe ==========
+        let touchStartX = 0;
+        let touchEndX = 0;
+        let isDragging = false;
+        let startTranslate = 0;
 
+        pagesContainer.addEventListener('touchstart', (e) => {
+            touchStartX = e.touches[0].clientX;
+            touchEndX = touchStartX;
+            isDragging = true;
+            startTranslate = currentPage * -100;
+            pagesContainer.style.transition = 'none';
+        });
+
+        pagesContainer.addEventListener('touchmove', (e) => {
+            if (!isDragging) return;
+            touchEndX = e.touches[0].clientX;
+            const diff = touchEndX - touchStartX;
+            const percent = (diff / window.innerWidth) * 100;
+            pagesContainer.style.transform = `translateX(${startTranslate + percent}vw)`;
+        });
+
+        pagesContainer.addEventListener('touchend', () => {
+            isDragging = false;
+            pagesContainer.style.transition = 'transform 0.3s ease-out';
+
+            const diff = touchEndX - touchStartX;
+            const threshold = window.innerWidth * 0.2;
+
+            if (diff < -threshold && currentPage < 1) {
+                currentPage++;
+            } else if (diff > threshold && currentPage > 0) {
+                currentPage--;
+            }
+
+            updatePage();
+            touchStartX = 0;
+            touchEndX = 0;
+        });
+
+        // Click on dots
+        dots.forEach(dot => {
+            dot.addEventListener('click', () => {
+                currentPage = parseInt(dot.dataset.page);
+                updatePage();
+            });
+        });
+
+        // Horizontal scroll wheel
+        let wheelAccumulator = 0;
+        let wheelTimeout = null;
+        pagesContainer.addEventListener('wheel', (e) => {
+            e.preventDefault();
+
+            wheelAccumulator += e.deltaX;
+
+            if (wheelTimeout) clearTimeout(wheelTimeout);
+            wheelTimeout = setTimeout(() => {
+                wheelAccumulator = 0;
+            }, 150);
+
+            if (wheelAccumulator > 30 && currentPage < 1) {
+                currentPage++;
+                updatePage();
+                wheelAccumulator = 0;
+            } else if (wheelAccumulator < -30 && currentPage > 0) {
+                currentPage--;
+                updatePage();
+                wheelAccumulator = 0;
+            }
+        }, { passive: false });
+
+        function updatePage() {
+            pagesContainer.style.transform = `translateX(${currentPage * -100}vw)`;
+            dots.forEach((dot, i) => {
+                dot.classList.toggle('active', i === currentPage);
+            });
+
+            // Initialize/update map when switching to map page
+            if (currentPage === 1) {
+                setTimeout(() => {
+                    initMap();
+                    updateMap();
+                }, 100);
+            }
+        }
+
+        // ========== Speedometer ==========
         function getMaxSpeed() {
             return unit === 'km/h' ? 200 : 120;
         }
@@ -353,6 +625,7 @@
             ctx.fill();
         }
 
+        // ========== Odometer ==========
         function initOdometer() {
             odometerEl.innerHTML = '';
             // 5 digits + 1 decimal
@@ -403,6 +676,20 @@
             });
         }
 
+        // ========== Elevation ==========
+        function updateElevation() {
+            if (elevation === null) {
+                elevationValueEl.textContent = '--';
+                elevationValueEl.classList.remove('active');
+            } else {
+                const elevDisplay = unit === 'km/h' ? elevation : elevation * 3.281;
+                const elevUnit = unit === 'km/h' ? 'm' : 'ft';
+                elevationValueEl.textContent = `${Math.round(elevDisplay)} ${elevUnit}`;
+                elevationValueEl.classList.add('active');
+            }
+        }
+
+        // ========== Display Update ==========
         function updateDisplay() {
             let displaySpeed;
             if (unit === 'km/h') {
@@ -422,6 +709,8 @@
             speedValueEl.textContent = Math.round(displaySpeed);
             drawGauge(displaySpeed);
             updateOdometer();
+            updateElevation();
+            updateMapStats();
         }
 
         function toggleUnit() {
@@ -429,26 +718,42 @@
             updateDisplay();
         }
 
+        // ========== GPS Position Handling ==========
         function handlePosition(position) {
             errorEl.style.display = 'none';
 
             const now = Date.now();
+            const coords = position.coords;
 
             // Use GPS speed if available
-            if (position.coords.speed !== null && position.coords.speed >= 0) {
-                speed = position.coords.speed;
+            if (coords.speed !== null && coords.speed >= 0) {
+                speed = coords.speed;
             }
 
-            // Calculate distance
+            // Update elevation
+            if (coords.altitude !== null) {
+                elevation = coords.altitude;
+
+                // Calculate elevation gain
+                if (lastElevation !== null) {
+                    const elevDiff = elevation - lastElevation;
+                    if (elevDiff > 0 && elevDiff < 50) { // Filter unreasonable jumps
+                        elevationGain += elevDiff;
+                    }
+                }
+                lastElevation = elevation;
+            }
+
+            // Calculate distance and track path
             if (lastPosition && lastTime) {
                 const timeDelta = (now - lastTime) / 1000; // seconds
                 if (timeDelta > 0 && timeDelta < 10) {
                     // Use Haversine formula for distance
                     const R = 6371000; // Earth's radius in meters
                     const lat1 = lastPosition.coords.latitude * Math.PI / 180;
-                    const lat2 = position.coords.latitude * Math.PI / 180;
-                    const dLat = (position.coords.latitude - lastPosition.coords.latitude) * Math.PI / 180;
-                    const dLon = (position.coords.longitude - lastPosition.coords.longitude) * Math.PI / 180;
+                    const lat2 = coords.latitude * Math.PI / 180;
+                    const dLat = (coords.latitude - lastPosition.coords.latitude) * Math.PI / 180;
+                    const dLon = (coords.longitude - lastPosition.coords.longitude) * Math.PI / 180;
 
                     const a = Math.sin(dLat/2) * Math.sin(dLat/2) +
                               Math.cos(lat1) * Math.cos(lat2) *
@@ -456,16 +761,39 @@
                     const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
                     const d = R * c;
 
-                    // Only add distance if it seems reasonable (filter GPS jitter)
+                    // Only add distance and path point if it seems reasonable (filter GPS jitter)
                     if (d < 100 && d > 0.5) {
                         distance += d;
+
+                        // Add to path
+                        path.push({
+                            lat: coords.latitude,
+                            lng: coords.longitude,
+                            altitude: coords.altitude,
+                            speed: coords.speed,
+                            timestamp: now
+                        });
                     }
                 }
+            } else {
+                // First point
+                path.push({
+                    lat: coords.latitude,
+                    lng: coords.longitude,
+                    altitude: coords.altitude,
+                    speed: coords.speed,
+                    timestamp: now
+                });
             }
 
             lastPosition = position;
             lastTime = now;
             updateDisplay();
+
+            // Update map if on map page
+            if (currentPage === 1 && map) {
+                updateMap();
+            }
         }
 
         function handleError(err) {
@@ -481,6 +809,7 @@
             errorEl.style.display = 'block';
         }
 
+        // ========== Wake Lock ==========
         async function requestWakeLock() {
             try {
                 if ('wakeLock' in navigator) {
@@ -498,6 +827,7 @@
             }
         }
 
+        // ========== Tracking Control ==========
         function toggleTracking() {
             if (tracking) {
                 stopTracking();
@@ -506,7 +836,7 @@
             }
         }
 
-            async function startTracking() {
+        async function startTracking() {
             if (!navigator.geolocation) {
                 errorEl.textContent = 'Geolocation is not supported by your browser';
                 errorEl.style.display = 'block';
@@ -546,13 +876,112 @@
 
         function resetOdometer() {
             distance = 0;
+            elevationGain = 0;
+            lastElevation = null;
+            path = [];
             updateOdometer();
+            updateMapStats();
+            if (map) {
+                updateMap();
+            }
         }
 
-        // Initialize
+        // ========== Map ==========
+        function initMap() {
+            if (map) {
+                map.invalidateSize();
+                return;
+            }
+
+            map = L.map('map', {
+                zoomControl: true,
+                attributionControl: false
+            }).setView([0, 0], 2);
+
+            L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+                maxZoom: 19
+            }).addTo(map);
+        }
+
+        function updateMap() {
+            if (!map) return;
+
+            // Show/hide empty state
+            if (path.length < 2) {
+                mapEl.style.display = 'none';
+                mapEmpty.style.display = 'flex';
+                return;
+            }
+
+            mapEl.style.display = 'block';
+            mapEmpty.style.display = 'none';
+
+            // Create path coordinates
+            const pathCoords = path.map(p => [p.lat, p.lng]);
+
+            // Update or create path line
+            if (pathLine) {
+                pathLine.setLatLngs(pathCoords);
+            } else {
+                pathLine = L.polyline(pathCoords, {
+                    color: '#2ecc71',
+                    weight: 4,
+                    opacity: 0.8
+                }).addTo(map);
+            }
+
+            // Start marker (green)
+            const startIcon = L.divIcon({
+                html: '<div style="width:12px;height:12px;background:#2ecc71;border:2px solid #fff;border-radius:50%;"></div>',
+                iconSize: [16, 16],
+                iconAnchor: [8, 8],
+                className: ''
+            });
+
+            if (startMarker) {
+                startMarker.setLatLng(pathCoords[0]);
+            } else {
+                startMarker = L.marker(pathCoords[0], { icon: startIcon }).addTo(map);
+            }
+
+            // End/current marker (red)
+            const endIcon = L.divIcon({
+                html: '<div style="width:12px;height:12px;background:#e74c3c;border:2px solid #fff;border-radius:50%;"></div>',
+                iconSize: [16, 16],
+                iconAnchor: [8, 8],
+                className: ''
+            });
+
+            const lastCoord = pathCoords[pathCoords.length - 1];
+            if (endMarker) {
+                endMarker.setLatLng(lastCoord);
+            } else {
+                endMarker = L.marker(lastCoord, { icon: endIcon }).addTo(map);
+            }
+
+            // Fit map to show entire path
+            const bounds = L.latLngBounds(pathCoords);
+            map.fitBounds(bounds, { padding: [50, 50] });
+        }
+
+        function updateMapStats() {
+            // Distance
+            const distDisplay = unit === 'km/h' ? distance / 1000 : distance / 1609.34;
+            mapDistanceEl.textContent = distDisplay.toFixed(1);
+            mapDistanceUnitEl.textContent = unit === 'km/h' ? 'km' : 'mi';
+
+            // Elevation gain
+            const elevDisplay = unit === 'km/h' ? elevationGain : elevationGain * 3.281;
+            mapElevationGainEl.textContent = Math.round(elevDisplay);
+            mapElevationUnitEl.textContent = unit === 'km/h' ? 'm' : 'ft';
+        }
+
+        // ========== Initialize ==========
         initOdometer();
         drawGauge(0);
         updateOdometer();
+        updateElevation();
+        updateMapStats();
     </script>
 </body>
 </html>
