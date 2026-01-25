@@ -1,0 +1,487 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>Clock</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: #000;
+            min-height: 100vh;
+            overflow: hidden;
+            color: #fff;
+            transition: background 0.3s;
+        }
+
+        body.light {
+            background: #fff;
+        }
+
+        .pages-container {
+            display: flex;
+            width: 200vw;
+            height: 100vh;
+            transition: transform 0.3s ease-out;
+        }
+
+        .page {
+            width: 100vw;
+            height: 100vh;
+            flex-shrink: 0;
+            position: relative;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .page-dots {
+            position: fixed;
+            bottom: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            display: flex;
+            gap: 8px;
+            z-index: 200;
+        }
+
+        .dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: rgba(255, 255, 255, 0.3);
+            transition: background 0.3s;
+            cursor: pointer;
+        }
+
+        .dot.active {
+            background: #fff;
+        }
+
+        body.light .dot {
+            background: rgba(0, 0, 0, 0.3);
+        }
+
+        body.light .dot.active {
+            background: #000;
+        }
+
+        /* Settings toggle */
+        .settings-toggle {
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            z-index: 200;
+            background: rgba(255, 255, 255, 0.1);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            border-radius: 8px;
+            padding: 8px 16px;
+            color: #fff;
+            font-size: 14px;
+            cursor: pointer;
+            transition: background 0.2s;
+        }
+
+        .settings-toggle:hover {
+            background: rgba(255, 255, 255, 0.2);
+        }
+
+        body.light .settings-toggle {
+            background: rgba(0, 0, 0, 0.1);
+            border: 1px solid rgba(0, 0, 0, 0.2);
+            color: #000;
+        }
+
+        body.light .settings-toggle:hover {
+            background: rgba(0, 0, 0, 0.2);
+        }
+
+        /* Shared page styles */
+        .analog-page,
+        .minimal-page {
+            background: #000;
+            cursor: pointer;
+            transition: background 0.3s, color 0.3s;
+        }
+
+        .analog-page.light,
+        .minimal-page.light {
+            background: #fff;
+        }
+
+        /* Page 1: Analog Clock */
+        .analog-clock {
+            position: relative;
+            width: min(80vw, 80vh, 400px);
+            height: min(80vw, 80vh, 400px);
+        }
+
+        #analog-canvas {
+            width: 100%;
+            height: 100%;
+        }
+
+        /* Page 2: Minimal Clock */
+
+        .minimal-time {
+            font-family: -apple-system, BlinkMacSystemFont, 'Helvetica Neue', sans-serif;
+            font-size: clamp(80px, 25vw, 200px);
+            font-weight: 100;
+            color: #fff;
+            transition: color 0.3s;
+        }
+
+        .minimal-page.light .minimal-time {
+            color: #000;
+        }
+
+        .theme-hint {
+            position: absolute;
+            bottom: 60px;
+            font-size: 12px;
+            color: rgba(255, 255, 255, 0.3);
+            transition: color 0.3s;
+        }
+
+        .light .theme-hint {
+            color: rgba(0, 0, 0, 0.3);
+        }
+
+    </style>
+</head>
+<body>
+    <button class="settings-toggle" id="format-toggle" style="display: none;">12h</button>
+
+    <div class="pages-container" id="pages-container">
+        <!-- Page 1: Analog Clock -->
+        <div class="page analog-page" id="page-analog">
+            <div class="analog-clock">
+                <canvas id="analog-canvas"></canvas>
+            </div>
+            <div class="theme-hint">Tap to toggle theme</div>
+        </div>
+
+        <!-- Page 2: Minimal Clock -->
+        <div class="page minimal-page" id="page-minimal">
+            <div class="minimal-time" id="minimal-time">00:00</div>
+            <div class="theme-hint">Tap to toggle theme</div>
+        </div>
+    </div>
+
+    <div class="page-dots">
+        <div class="dot active" data-page="0"></div>
+        <div class="dot" data-page="1"></div>
+    </div>
+
+    <script>
+        // State
+        let currentPage = 0;
+        let use24Hour = false;
+        let darkMode = true;
+        let wakeLock = null;
+
+        // Elements
+        const pagesContainer = document.getElementById('pages-container');
+        const dots = document.querySelectorAll('.dot');
+        const formatToggle = document.getElementById('format-toggle');
+
+        // Analog clock elements
+        const analogCanvas = document.getElementById('analog-canvas');
+        const ctx = analogCanvas.getContext('2d');
+
+        // Minimal clock elements
+        const minimalTime = document.getElementById('minimal-time');
+        const minimalPage = document.getElementById('page-minimal');
+        const analogPage = document.getElementById('page-analog');
+
+        // Swipe handling
+        let touchStartX = 0;
+        let touchEndX = 0;
+        let isDragging = false;
+        let startTranslate = 0;
+
+        pagesContainer.addEventListener('touchstart', (e) => {
+            touchStartX = e.touches[0].clientX;
+            isDragging = true;
+            startTranslate = currentPage * -100;
+            pagesContainer.style.transition = 'none';
+        });
+
+        pagesContainer.addEventListener('touchmove', (e) => {
+            if (!isDragging) return;
+            touchEndX = e.touches[0].clientX;
+            const diff = touchEndX - touchStartX;
+            const percent = (diff / window.innerWidth) * 100;
+            pagesContainer.style.transform = `translateX(${startTranslate + percent}vw)`;
+        });
+
+        pagesContainer.addEventListener('touchend', () => {
+            isDragging = false;
+            pagesContainer.style.transition = 'transform 0.3s ease-out';
+
+            const diff = touchEndX - touchStartX;
+            const threshold = window.innerWidth * 0.2;
+
+            if (diff < -threshold && currentPage < 1) {
+                currentPage++;
+            } else if (diff > threshold && currentPage > 0) {
+                currentPage--;
+            }
+
+            updatePage();
+            touchStartX = 0;
+            touchEndX = 0;
+        });
+
+        // Click on dots
+        dots.forEach(dot => {
+            dot.addEventListener('click', () => {
+                currentPage = parseInt(dot.dataset.page);
+                updatePage();
+            });
+        });
+
+        // Horizontal scroll wheel
+        let wheelAccumulator = 0;
+        let wheelTimeout = null;
+        pagesContainer.addEventListener('wheel', (e) => {
+            e.preventDefault();
+
+            wheelAccumulator += e.deltaX;
+
+            if (wheelTimeout) clearTimeout(wheelTimeout);
+            wheelTimeout = setTimeout(() => {
+                wheelAccumulator = 0;
+            }, 150);
+
+            if (wheelAccumulator > 30 && currentPage < 1) {
+                currentPage++;
+                updatePage();
+                wheelAccumulator = 0;
+            } else if (wheelAccumulator < -30 && currentPage > 0) {
+                currentPage--;
+                updatePage();
+                wheelAccumulator = 0;
+            }
+        }, { passive: false });
+
+        function updatePage() {
+            pagesContainer.style.transform = `translateX(${currentPage * -100}vw)`;
+            dots.forEach((dot, i) => {
+                dot.classList.toggle('active', i === currentPage);
+            });
+            formatToggle.style.display = currentPage === 0 ? 'none' : 'block';
+        }
+
+        // Format toggle
+        formatToggle.addEventListener('click', () => {
+            use24Hour = !use24Hour;
+            formatToggle.textContent = use24Hour ? '24h' : '12h';
+            updateClocks();
+        });
+
+        // Theme toggle for both pages
+        function toggleTheme() {
+            darkMode = !darkMode;
+            document.body.classList.toggle('light', !darkMode);
+            analogPage.classList.toggle('light', !darkMode);
+            minimalPage.classList.toggle('light', !darkMode);
+        }
+
+        analogPage.addEventListener('click', toggleTheme);
+        minimalPage.addEventListener('click', toggleTheme);
+
+        // Wake Lock
+        async function requestWakeLock() {
+            if ('wakeLock' in navigator) {
+                try {
+                    wakeLock = await navigator.wakeLock.request('screen');
+                } catch (err) {
+                    // Wake lock not available
+                }
+            }
+        }
+
+        document.addEventListener('visibilitychange', () => {
+            if (document.visibilityState === 'visible') {
+                requestWakeLock();
+            }
+        });
+
+        // Analog Clock Drawing
+        function setupAnalogCanvas() {
+            const rect = analogCanvas.getBoundingClientRect();
+            const dpr = window.devicePixelRatio || 1;
+            analogCanvas.width = rect.width * dpr;
+            analogCanvas.height = rect.height * dpr;
+            ctx.scale(dpr, dpr);
+        }
+
+        function drawAnalogClock() {
+            const rect = analogCanvas.getBoundingClientRect();
+            const width = rect.width;
+            const height = rect.height;
+            const centerX = width / 2;
+            const centerY = height / 2;
+            const radius = Math.min(width, height) / 2 - 10;
+
+            // Colors based on theme
+            const mainColor = darkMode ? 'rgba(255, 255, 255, 0.8)' : 'rgba(0, 0, 0, 0.8)';
+            const subtleColor = darkMode ? 'rgba(255, 255, 255, 0.3)' : 'rgba(0, 0, 0, 0.3)';
+            const handColor = darkMode ? '#fff' : '#000';
+            const faceColor = darkMode ? 'rgba(255, 255, 255, 0.05)' : 'rgba(0, 0, 0, 0.05)';
+
+            ctx.clearRect(0, 0, width, height);
+
+            // Clock face
+            ctx.beginPath();
+            ctx.arc(centerX, centerY, radius, 0, 2 * Math.PI);
+            ctx.fillStyle = faceColor;
+            ctx.fill();
+            ctx.strokeStyle = subtleColor;
+            ctx.lineWidth = 2;
+            ctx.stroke();
+
+            // Hour markers
+            for (let i = 0; i < 12; i++) {
+                const angle = (i * 30 - 90) * Math.PI / 180;
+                const innerRadius = radius - 20;
+                const outerRadius = radius - 8;
+
+                ctx.beginPath();
+                ctx.moveTo(
+                    centerX + Math.cos(angle) * innerRadius,
+                    centerY + Math.sin(angle) * innerRadius
+                );
+                ctx.lineTo(
+                    centerX + Math.cos(angle) * outerRadius,
+                    centerY + Math.sin(angle) * outerRadius
+                );
+                ctx.strokeStyle = mainColor;
+                ctx.lineWidth = 3;
+                ctx.stroke();
+            }
+
+            // Minute markers
+            for (let i = 0; i < 60; i++) {
+                if (i % 5 === 0) continue;
+                const angle = (i * 6 - 90) * Math.PI / 180;
+                const innerRadius = radius - 12;
+                const outerRadius = radius - 8;
+
+                ctx.beginPath();
+                ctx.moveTo(
+                    centerX + Math.cos(angle) * innerRadius,
+                    centerY + Math.sin(angle) * innerRadius
+                );
+                ctx.lineTo(
+                    centerX + Math.cos(angle) * outerRadius,
+                    centerY + Math.sin(angle) * outerRadius
+                );
+                ctx.strokeStyle = subtleColor;
+                ctx.lineWidth = 1;
+                ctx.stroke();
+            }
+
+            // Get current time
+            const now = new Date();
+            const hours = now.getHours();
+            const minutes = now.getMinutes();
+            const seconds = now.getSeconds();
+            const millis = now.getMilliseconds();
+
+            // Smooth second hand with milliseconds
+            const smoothSeconds = seconds + millis / 1000;
+
+            // Hour hand
+            const hourAngle = ((hours % 12) * 30 + minutes * 0.5 - 90) * Math.PI / 180;
+            ctx.beginPath();
+            ctx.moveTo(centerX, centerY);
+            ctx.lineTo(
+                centerX + Math.cos(hourAngle) * (radius * 0.5),
+                centerY + Math.sin(hourAngle) * (radius * 0.5)
+            );
+            ctx.strokeStyle = handColor;
+            ctx.lineWidth = 6;
+            ctx.lineCap = 'round';
+            ctx.stroke();
+
+            // Minute hand
+            const minuteAngle = (minutes * 6 + seconds * 0.1 - 90) * Math.PI / 180;
+            ctx.beginPath();
+            ctx.moveTo(centerX, centerY);
+            ctx.lineTo(
+                centerX + Math.cos(minuteAngle) * (radius * 0.7),
+                centerY + Math.sin(minuteAngle) * (radius * 0.7)
+            );
+            ctx.strokeStyle = handColor;
+            ctx.lineWidth = 4;
+            ctx.lineCap = 'round';
+            ctx.stroke();
+
+            // Second hand
+            const secondAngle = (smoothSeconds * 6 - 90) * Math.PI / 180;
+            ctx.beginPath();
+            ctx.moveTo(centerX, centerY);
+            ctx.lineTo(
+                centerX + Math.cos(secondAngle) * (radius * 0.8),
+                centerY + Math.sin(secondAngle) * (radius * 0.8)
+            );
+            ctx.strokeStyle = '#ff6b6b';
+            ctx.lineWidth = 2;
+            ctx.lineCap = 'round';
+            ctx.stroke();
+
+            // Center dot
+            ctx.beginPath();
+            ctx.arc(centerX, centerY, 6, 0, 2 * Math.PI);
+            ctx.fillStyle = '#ff6b6b';
+            ctx.fill();
+        }
+
+        // Minimal Clock
+        function updateMinimalClock() {
+            const now = new Date();
+            let hours = now.getHours();
+            const minutes = now.getMinutes().toString().padStart(2, '0');
+
+            if (use24Hour) {
+                minimalTime.textContent = `${hours.toString().padStart(2, '0')}:${minutes}`;
+            } else {
+                const ampm = hours >= 12 ? 'PM' : 'AM';
+                hours = hours % 12 || 12;
+                minimalTime.textContent = `${hours}:${minutes} ${ampm}`;
+            }
+        }
+
+        // Update all clocks
+        function updateClocks() {
+            drawAnalogClock();
+            updateMinimalClock();
+        }
+
+        // Animation loop
+        function animate() {
+            updateClocks();
+            requestAnimationFrame(animate);
+        }
+
+        // Handle resize
+        window.addEventListener('resize', () => {
+            setupAnalogCanvas();
+        });
+
+        // Initialize
+        setupAnalogCanvas();
+        requestWakeLock();
+        animate();
+    </script>
+</body>
+</html>
