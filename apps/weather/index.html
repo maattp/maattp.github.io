@@ -5,6 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no, viewport-fit=cover">
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="theme-color" content="#1e3c72">
     <title>Weather</title>
     <style>
         * {
@@ -13,25 +14,46 @@
             box-sizing: border-box;
         }
 
-        html {
+        :root {
+            --bg-gradient: linear-gradient(135deg, #1e3c72, #2a5298);
+        }
+
+        html, body {
+            min-height: 100%;
             min-height: 100vh;
-            background: linear-gradient(135deg, #1e3c72, #2a5298);
+            min-height: -webkit-fill-available;
+        }
+
+        html {
+            background: var(--bg-gradient);
         }
 
         body {
             font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-            min-height: 100vh;
             color: #fff;
-            padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
-            padding-top: calc(env(safe-area-inset-top) + 20px);
-            padding-bottom: calc(env(safe-area-inset-bottom) + 20px);
+            background: transparent;
             overflow-y: auto;
+        }
+
+        /* Fixed background layer that extends behind iOS status bar */
+        #bg-layer {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: var(--bg-gradient);
+            z-index: -1;
         }
 
         .container {
             max-width: 500px;
             margin: 0 auto;
             padding: 20px;
+            padding-top: calc(env(safe-area-inset-top) + 20px);
+            padding-bottom: calc(env(safe-area-inset-bottom) + 20px);
+            padding-left: calc(env(safe-area-inset-left) + 20px);
+            padding-right: calc(env(safe-area-inset-right) + 20px);
         }
 
         .header {
@@ -325,32 +347,16 @@
         }
 
         /* Background gradients for different weather conditions */
-        html.clear-day {
-            background: linear-gradient(135deg, #2193b0, #6dd5ed);
-        }
-
-        html.clear-night {
-            background: linear-gradient(135deg, #0f2027, #203a43, #2c5364);
-        }
-
-        html.cloudy {
-            background: linear-gradient(135deg, #616161, #9bc5c3);
-        }
-
-        html.rainy {
-            background: linear-gradient(135deg, #373b44, #4286f4);
-        }
-
-        html.snowy {
-            background: linear-gradient(135deg, #e6dada, #274046);
-        }
-
-        html.stormy {
-            background: linear-gradient(135deg, #232526, #414345);
-        }
+        html.clear-day { --bg-gradient: linear-gradient(135deg, #2193b0, #6dd5ed); }
+        html.clear-night { --bg-gradient: linear-gradient(135deg, #0f2027, #203a43, #2c5364); }
+        html.cloudy { --bg-gradient: linear-gradient(135deg, #616161, #9bc5c3); }
+        html.rainy { --bg-gradient: linear-gradient(135deg, #373b44, #4286f4); }
+        html.snowy { --bg-gradient: linear-gradient(135deg, #e6dada, #274046); }
+        html.stormy { --bg-gradient: linear-gradient(135deg, #232526, #414345); }
     </style>
 </head>
 <body>
+    <div id="bg-layer"></div>
     <button class="refresh-button" id="refresh-btn" title="Refresh">&#x21bb;</button>
 
     <div class="container" id="app">
