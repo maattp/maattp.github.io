@@ -1,0 +1,120 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <title>Apps</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        html {
+            height: 100%;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: #000;
+            min-height: 100%;
+            color: #fff;
+            padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
+            padding-top: calc(env(safe-area-inset-top) + 40px);
+            padding-bottom: calc(env(safe-area-inset-bottom) + 20px);
+        }
+
+        h1 {
+            text-align: center;
+            font-size: 28px;
+            font-weight: 600;
+            margin-bottom: 30px;
+            color: #fff;
+        }
+
+        .apps-grid {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 25px;
+            padding: 0 20px;
+            max-width: 400px;
+            margin: 0 auto;
+        }
+
+        .app-link {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            text-decoration: none;
+            gap: 8px;
+        }
+
+        .app-icon {
+            width: 70px;
+            height: 70px;
+            border-radius: 16px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 32px;
+            transition: transform 0.15s ease;
+        }
+
+        .app-link:active .app-icon {
+            transform: scale(0.92);
+        }
+
+        .app-name {
+            font-size: 12px;
+            color: #fff;
+            text-align: center;
+        }
+
+        /* App icon colors */
+        .app-aes { background: linear-gradient(135deg, #5856d6, #af52de); }
+        .app-clock { background: linear-gradient(135deg, #1c1c1e, #3a3a3c); border: 1px solid #555; }
+        .app-ruler { background: linear-gradient(135deg, #f5c518, #ff9500); }
+        .app-speedometer { background: linear-gradient(135deg, #30d158, #34c759); }
+        .app-totp { background: linear-gradient(135deg, #007aff, #5ac8fa); }
+        .app-zippo { background: linear-gradient(135deg, #5a0a0a, #8a1414); }
+    </style>
+</head>
+<body>
+    <h1>Apps</h1>
+
+    <div class="apps-grid">
+        <a href="/aes/" class="app-link">
+            <div class="app-icon app-aes">🔐</div>
+            <span class="app-name">AES</span>
+        </a>
+
+        <a href="/clock/" class="app-link">
+            <div class="app-icon app-clock">🕐</div>
+            <span class="app-name">Clock</span>
+        </a>
+
+        <a href="/ruler/" class="app-link">
+            <div class="app-icon app-ruler">📏</div>
+            <span class="app-name">Ruler</span>
+        </a>
+
+        <a href="/speedometer/" class="app-link">
+            <div class="app-icon app-speedometer">🚗</div>
+            <span class="app-name">Speedometer</span>
+        </a>
+
+        <a href="/totp/" class="app-link">
+            <div class="app-icon app-totp">🔑</div>
+            <span class="app-name">TOTP</span>
+        </a>
+
+        <a href="/zippo/" class="app-link">
+            <div class="app-icon app-zippo">🔥</div>
+            <span class="app-name">Zippo</span>
+        </a>
+    </div>
+</body>
+</html>
