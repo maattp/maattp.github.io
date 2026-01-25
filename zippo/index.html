@@ -27,6 +27,7 @@
         .zippo {
             position: relative;
             cursor: pointer;
+            transform: scale(1.5);
         }
 
         .zippo-top {
@@ -129,13 +130,6 @@
             height: 100%;
         }
 
-        .hint {
-            position: fixed;
-            bottom: 40px;
-            font-size: 14px;
-            color: rgba(255, 255, 255, 0.4);
-        }
-
         .permission-btn {
             position: fixed;
             top: 20px;
@@ -180,7 +174,6 @@
         <div class="body"></div>
     </div>
 
-    <div class="hint">Tap to open, tilt to move flame</div>
 
     <script>
         const lid = document.getElementById('lid');
@@ -192,6 +185,26 @@
         let tiltX = 0;
         let tiltY = 0;
         let hasMotionPermission = false;
+        let wakeLock = null;
+
+        // Wake Lock
+        async function requestWakeLock() {
+            if ('wakeLock' in navigator) {
+                try {
+                    wakeLock = await navigator.wakeLock.request('screen');
+                } catch (err) {
+                    // Wake lock not available
+                }
+            }
+        }
+
+        document.addEventListener('visibilitychange', () => {
+            if (document.visibilityState === 'visible') {
+                requestWakeLock();
+            }
+        });
+
+        requestWakeLock();
 
         // Set up canvas
         const dpr = window.devicePixelRatio || 1;
@@ -209,14 +222,14 @@
 
             flameTime += 0.1;
 
-            const baseX = 40 + tiltX * 2;
+            const baseX = 40 - tiltX * 2;
             const baseY = 120;
             const flameHeight = 75;
             const flameWidth = 14;
             const baseWidth = 12;
 
             // Slight wobble
-            const wobble = Math.sin(flameTime * 2) * 2 + tiltX * 3;
+            const wobble = Math.sin(flameTime * 2) * 2 - tiltX * 3;
             const wobble2 = Math.sin(flameTime * 3 + 1) * 1.5;
 
             // Outer flame (orange/yellow) - flat bottom
