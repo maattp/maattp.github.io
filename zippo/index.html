@@ -1,0 +1,374 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>Zippo</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: linear-gradient(145deg, #1a1a1a 0%, #0d0d0d 100%);
+            min-height: 100vh;
+            overflow: hidden;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            user-select: none;
+            -webkit-user-select: none;
+        }
+
+        .zippo {
+            position: relative;
+            cursor: pointer;
+        }
+
+        .zippo-top {
+            position: relative;
+            display: flex;
+            align-items: flex-end;
+        }
+
+        .lid {
+            position: absolute;
+            left: 0;
+            bottom: 0;
+            width: 100px;
+            height: 58px;
+            background: linear-gradient(90deg, #c0c0c0 0%, #d8d8d8 20%, #e8e8e8 40%, #f0f0f0 50%, #e8e8e8 60%, #d0d0d0 80%, #b0b0b0 100%);
+            border-radius: 6px 6px 0 0;
+            border: 1px solid #999;
+            border-bottom: none;
+            transform-origin: 8px 100%;
+            transition: transform 0.3s ease-out;
+            z-index: 10;
+        }
+
+        .lid::before {
+            content: '';
+            position: absolute;
+            top: 12px;
+            left: 50%;
+            transform: translateX(-50%);
+            width: 24px;
+            height: 4px;
+            background: linear-gradient(90deg, #999 0%, #bbb 50%, #999 100%);
+            border-radius: 2px;
+        }
+
+        .lid.open {
+            transform: rotate(-110deg);
+        }
+
+        .chimney {
+            position: relative;
+            width: 100px;
+            height: 45px;
+            display: flex;
+            justify-content: center;
+            z-index: 5;
+            opacity: 0;
+            transition: opacity 0.15s ease-out;
+        }
+
+        .chimney.visible {
+            opacity: 1;
+        }
+
+        .chimney-inner {
+            width: 70px;
+            height: 45px;
+            background: linear-gradient(90deg, #a0a0a0 0%, #c8c8c8 30%, #d8d8d8 50%, #c8c8c8 70%, #a0a0a0 100%);
+            border-radius: 4px 4px 0 0;
+            position: relative;
+            display: flex;
+            flex-wrap: wrap;
+            justify-content: center;
+            align-content: center;
+            gap: 4px;
+            padding: 8px;
+        }
+
+        .chimney-hole {
+            width: 6px;
+            height: 6px;
+            background: #333;
+            border-radius: 50%;
+            box-shadow: inset 1px 1px 2px rgba(0,0,0,0.5);
+        }
+
+        .body {
+            position: relative;
+            width: 100px;
+            height: 88px;
+            background: linear-gradient(90deg, #b8b8b8 0%, #d8d8d8 20%, #e8e8e8 40%, #f0f0f0 50%, #e8e8e8 60%, #d0d0d0 80%, #a8a8a8 100%);
+            border-radius: 0 0 8px 8px;
+            border: 1px solid #999;
+            border-top: none;
+        }
+
+        .body::after {
+            content: 'ZIPPO';
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            font-size: 14px;
+            font-weight: bold;
+            letter-spacing: 3px;
+            color: #777;
+            text-shadow: 1px 1px 0 #fff;
+        }
+
+        .flame-container {
+            position: absolute;
+            bottom: 100%;
+            left: 50%;
+            transform: translateX(-50%);
+            width: 80px;
+            height: 120px;
+            pointer-events: none;
+        }
+
+        #flame-canvas {
+            width: 100%;
+            height: 100%;
+        }
+
+        .hint {
+            position: fixed;
+            bottom: 40px;
+            font-size: 14px;
+            color: rgba(255, 255, 255, 0.4);
+        }
+
+        .permission-btn {
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            background: rgba(255, 255, 255, 0.1);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            border-radius: 8px;
+            padding: 8px 16px;
+            color: #fff;
+            font-size: 14px;
+            cursor: pointer;
+            display: none;
+        }
+
+        .permission-btn:hover {
+            background: rgba(255, 255, 255, 0.2);
+        }
+    </style>
+</head>
+<body>
+    <button class="permission-btn" id="permission-btn">Enable Motion</button>
+
+    <div class="zippo" id="zippo">
+        <div class="zippo-top">
+            <div class="lid" id="lid"></div>
+            <div class="chimney" id="chimney">
+                <div class="chimney-inner">
+                    <div class="flame-container">
+                        <canvas id="flame-canvas"></canvas>
+                    </div>
+                    <div class="chimney-hole"></div>
+                    <div class="chimney-hole"></div>
+                    <div class="chimney-hole"></div>
+                    <div class="chimney-hole"></div>
+                    <div class="chimney-hole"></div>
+                    <div class="chimney-hole"></div>
+                    <div class="chimney-hole"></div>
+                    <div class="chimney-hole"></div>
+                </div>
+            </div>
+        </div>
+        <div class="body"></div>
+    </div>
+
+    <div class="hint">Tap to open, tilt to move flame</div>
+
+    <script>
+        const lid = document.getElementById('lid');
+        const canvas = document.getElementById('flame-canvas');
+        const ctx = canvas.getContext('2d');
+        const permissionBtn = document.getElementById('permission-btn');
+
+        let isOpen = false;
+        let tiltX = 0;
+        let tiltY = 0;
+        let hasMotionPermission = false;
+
+        // Set up canvas
+        const dpr = window.devicePixelRatio || 1;
+        canvas.width = 80 * dpr;
+        canvas.height = 120 * dpr;
+        ctx.scale(dpr, dpr);
+
+        // Flame particles
+        const particles = [];
+        const particleCount = 50;
+
+        class Particle {
+            constructor() {
+                this.reset();
+            }
+
+            reset() {
+                this.x = 40 + (Math.random() - 0.5) * 8;
+                this.y = 110;
+                this.vx = (Math.random() - 0.5) * 0.5;
+                this.vy = -Math.random() * 3 - 2;
+                this.life = 1;
+                this.maxLife = 0.8 + Math.random() * 0.4;
+                this.size = 8 + Math.random() * 12;
+            }
+
+            update() {
+                // Apply tilt
+                this.vx += tiltX * 0.15;
+                this.vy += tiltY * 0.02;
+
+                // Dampen horizontal velocity
+                this.vx *= 0.98;
+
+                this.x += this.vx;
+                this.y += this.vy;
+                this.life -= 0.02 / this.maxLife;
+
+                if (this.life <= 0) {
+                    this.reset();
+                }
+            }
+
+            draw() {
+                const alpha = this.life * 0.8;
+                const size = this.size * this.life;
+
+                // Inner bright core
+                const gradient = ctx.createRadialGradient(
+                    this.x, this.y, 0,
+                    this.x, this.y, size
+                );
+
+                if (this.life > 0.7) {
+                    gradient.addColorStop(0, `rgba(255, 255, 255, ${alpha})`);
+                    gradient.addColorStop(0.2, `rgba(255, 255, 200, ${alpha})`);
+                    gradient.addColorStop(0.4, `rgba(255, 200, 50, ${alpha})`);
+                    gradient.addColorStop(0.7, `rgba(255, 100, 0, ${alpha * 0.8})`);
+                    gradient.addColorStop(1, `rgba(255, 50, 0, 0)`);
+                } else if (this.life > 0.4) {
+                    gradient.addColorStop(0, `rgba(255, 200, 50, ${alpha})`);
+                    gradient.addColorStop(0.3, `rgba(255, 100, 0, ${alpha})`);
+                    gradient.addColorStop(0.7, `rgba(200, 50, 0, ${alpha * 0.6})`);
+                    gradient.addColorStop(1, `rgba(100, 20, 0, 0)`);
+                } else {
+                    gradient.addColorStop(0, `rgba(200, 80, 0, ${alpha})`);
+                    gradient.addColorStop(0.5, `rgba(100, 30, 0, ${alpha * 0.5})`);
+                    gradient.addColorStop(1, `rgba(50, 10, 0, 0)`);
+                }
+
+                ctx.beginPath();
+                ctx.arc(this.x, this.y, size, 0, Math.PI * 2);
+                ctx.fillStyle = gradient;
+                ctx.fill();
+            }
+        }
+
+        // Initialize particles
+        for (let i = 0; i < particleCount; i++) {
+            const p = new Particle();
+            p.life = Math.random();
+            p.y = 110 - Math.random() * 80;
+            particles.push(p);
+        }
+
+        function drawFlame() {
+            ctx.clearRect(0, 0, 80, 120);
+
+            if (!isOpen) return;
+
+            // Sort by life so newer particles are drawn on top
+            particles.sort((a, b) => b.life - a.life);
+
+            // Draw glow
+            const glowGradient = ctx.createRadialGradient(40 + tiltX * 3, 80, 0, 40 + tiltX * 3, 80, 50);
+            glowGradient.addColorStop(0, 'rgba(255, 150, 50, 0.3)');
+            glowGradient.addColorStop(0.5, 'rgba(255, 100, 0, 0.1)');
+            glowGradient.addColorStop(1, 'rgba(255, 50, 0, 0)');
+            ctx.fillStyle = glowGradient;
+            ctx.fillRect(0, 0, 80, 120);
+
+            // Update and draw particles
+            ctx.globalCompositeOperation = 'lighter';
+            for (const p of particles) {
+                p.update();
+                p.draw();
+            }
+            ctx.globalCompositeOperation = 'source-over';
+        }
+
+        function animate() {
+            drawFlame();
+            requestAnimationFrame(animate);
+        }
+
+        // Toggle lighter
+        const chimney = document.getElementById('chimney');
+        document.getElementById('zippo').addEventListener('click', () => {
+            isOpen = !isOpen;
+            lid.classList.toggle('open', isOpen);
+            chimney.classList.toggle('visible', isOpen);
+        });
+
+        // Device motion
+        function handleMotion(event) {
+            const accel = event.accelerationIncludingGravity;
+            if (accel) {
+                // Smooth the values
+                tiltX = tiltX * 0.7 + (accel.x || 0) * 0.3;
+                tiltY = tiltY * 0.7 + ((accel.y || 0) - 9.8) * 0.3;
+
+                // Clamp values
+                tiltX = Math.max(-10, Math.min(10, tiltX));
+                tiltY = Math.max(-10, Math.min(10, tiltY));
+            }
+        }
+
+        // Check if we need permission (iOS 13+)
+        if (typeof DeviceMotionEvent !== 'undefined' && typeof DeviceMotionEvent.requestPermission === 'function') {
+            permissionBtn.style.display = 'block';
+            permissionBtn.addEventListener('click', async () => {
+                try {
+                    const permission = await DeviceMotionEvent.requestPermission();
+                    if (permission === 'granted') {
+                        window.addEventListener('devicemotion', handleMotion);
+                        permissionBtn.style.display = 'none';
+                        hasMotionPermission = true;
+                    }
+                } catch (err) {
+                    console.error(err);
+                }
+            });
+        } else if ('DeviceMotionEvent' in window) {
+            window.addEventListener('devicemotion', handleMotion);
+            hasMotionPermission = true;
+        }
+
+        // Mouse/touch fallback for desktop
+        document.addEventListener('mousemove', (e) => {
+            if (hasMotionPermission) return;
+            const centerX = window.innerWidth / 2;
+            tiltX = ((e.clientX - centerX) / centerX) * 5;
+        });
+
+        animate();
+    </script>
+</body>
+</html>
