@@ -588,12 +588,12 @@
                             const high = formatTemp(daily.temperature_2m_max[i], false);
                             const low = formatTemp(daily.temperature_2m_min[i], false);
                             const precip = daily.precipitation_sum[i];
-                            const precipDisplay = precip > 0 ? `${precip.toFixed(1)} mm` : '—';
+                            const precipDisplay = precip > 0 ? `${precip.toFixed(1)} mm` : '';
                             return `
                                 <div class="forecast-day">
                                     <div class="forecast-day-name">${getDayName(date)}</div>
                                     <div class="forecast-icon">${dayInfo.icon}</div>
-                                    <div class="forecast-rain">💧 ${precipDisplay}</div>
+                                    <div class="forecast-rain">${precipDisplay}</div>
                                     <div class="forecast-temps">
                                         <span class="forecast-high">${high.c} / ${high.f}</span>
                                         <span class="forecast-low">${low.c} / ${low.f}</span>
