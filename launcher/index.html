@@ -2,9 +2,7 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no, viewport-fit=cover">
-    <meta name="apple-mobile-web-app-capable" content="yes">
-    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
     <title>Apps</title>
     <style>
         * {
@@ -86,43 +84,35 @@
     <h1>Apps</h1>
 
     <div class="apps-grid">
-        <div class="app-link" data-href="/aes/">
+        <a href="/aes/" class="app-link">
             <div class="app-icon app-aes">🔐</div>
             <span class="app-name">AES</span>
-        </div>
+        </a>
 
-        <div class="app-link" data-href="/clock/">
+        <a href="/clock/" class="app-link">
             <div class="app-icon app-clock">🕐</div>
             <span class="app-name">Clock</span>
-        </div>
+        </a>
 
-        <div class="app-link" data-href="/ruler/">
+        <a href="/ruler/" class="app-link">
             <div class="app-icon app-ruler">📏</div>
             <span class="app-name">Ruler</span>
-        </div>
+        </a>
 
-        <div class="app-link" data-href="/speedometer/">
+        <a href="/speedometer/" class="app-link">
             <div class="app-icon app-speedometer">🚗</div>
             <span class="app-name">Speedometer</span>
-        </div>
+        </a>
 
-        <div class="app-link" data-href="/totp/">
+        <a href="/totp/" class="app-link">
             <div class="app-icon app-totp">🔑</div>
             <span class="app-name">TOTP</span>
-        </div>
+        </a>
 
-        <div class="app-link" data-href="/zippo/">
+        <a href="/zippo/" class="app-link">
             <div class="app-icon app-zippo">🔥</div>
             <span class="app-name">Zippo</span>
-        </div>
+        </a>
     </div>
-
-    <script>
-        document.querySelectorAll('.app-link').forEach(link => {
-            link.addEventListener('click', () => {
-                window.location.href = link.dataset.href;
-            });
-        });
-    </script>
 </body>
 </html>
