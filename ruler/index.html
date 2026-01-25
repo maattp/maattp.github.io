@@ -35,7 +35,7 @@
 
         .page-dots {
             position: fixed;
-            bottom: 30px;
+            bottom: 10px;
             left: 50%;
             transform: translateX(-50%);
             display: flex;
@@ -349,6 +349,30 @@
                 updatePage();
             });
         });
+
+        // Horizontal scroll wheel
+        let wheelAccumulator = 0;
+        let wheelTimeout = null;
+        pagesContainer.addEventListener('wheel', (e) => {
+            e.preventDefault();
+
+            wheelAccumulator += e.deltaX;
+
+            if (wheelTimeout) clearTimeout(wheelTimeout);
+            wheelTimeout = setTimeout(() => {
+                wheelAccumulator = 0;
+            }, 150);
+
+            if (wheelAccumulator > 30 && currentPage < 1) {
+                currentPage = 1;
+                updatePage();
+                wheelAccumulator = 0;
+            } else if (wheelAccumulator < -30 && currentPage > 0) {
+                currentPage = 0;
+                updatePage();
+                wheelAccumulator = 0;
+            }
+        }, { passive: false });
 
         function updatePage() {
             pagesContainer.style.transform = `translateX(${currentPage * -100}vw)`;
