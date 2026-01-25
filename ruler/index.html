@@ -1,0 +1,406 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>Ruler</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: #f5f5f5;
+            min-height: 100vh;
+            overflow: hidden;
+            color: #333;
+        }
+
+        .ruler-horizontal {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            height: 80px;
+            background: #fef3c7;
+            border-bottom: 2px solid #92400e;
+        }
+
+        .ruler-vertical {
+            position: fixed;
+            top: 0;
+            left: 0;
+            bottom: 0;
+            width: 80px;
+            background: #fef3c7;
+            border-right: 2px solid #92400e;
+        }
+
+        .corner {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 80px;
+            height: 80px;
+            background: #fcd34d;
+            z-index: 10;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+            border-right: 2px solid #92400e;
+            border-bottom: 2px solid #92400e;
+        }
+
+        .corner:hover {
+            background: #fbbf24;
+        }
+
+        .unit-display {
+            font-size: 14px;
+            font-weight: bold;
+            color: #78350f;
+        }
+
+        canvas {
+            position: fixed;
+        }
+
+        #horizontal-canvas {
+            top: 0;
+            left: 80px;
+            height: 80px;
+        }
+
+        #vertical-canvas {
+            top: 80px;
+            left: 0;
+            width: 80px;
+        }
+
+        .info-panel {
+            position: fixed;
+            bottom: 20px;
+            right: 20px;
+            background: #fff;
+            padding: 20px;
+            border-radius: 12px;
+            box-shadow: 0 4px 20px rgba(0,0,0,0.1);
+            max-width: 300px;
+            z-index: 100;
+        }
+
+        .info-panel h3 {
+            color: #78350f;
+            margin-bottom: 12px;
+            font-size: 14px;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+
+        .info-row {
+            display: flex;
+            justify-content: space-between;
+            margin-bottom: 8px;
+            font-size: 13px;
+        }
+
+        .info-label {
+            color: #666;
+        }
+
+        .info-value {
+            color: #333;
+            font-family: monospace;
+        }
+
+        .ppi-override {
+            margin-top: 15px;
+            padding-top: 15px;
+            border-top: 1px solid #eee;
+        }
+
+        .ppi-override label {
+            display: block;
+            color: #666;
+            font-size: 12px;
+            margin-bottom: 6px;
+        }
+
+        .ppi-override input {
+            width: 100%;
+            padding: 8px 12px;
+            background: #f9fafb;
+            border: 1px solid #d1d5db;
+            border-radius: 6px;
+            color: #333;
+            font-size: 14px;
+            font-family: monospace;
+        }
+
+        .ppi-override input:focus {
+            outline: none;
+            border-color: #92400e;
+        }
+
+        .warning {
+            background: #fef3c7;
+            border: 1px solid #d97706;
+            padding: 10px;
+            border-radius: 6px;
+            margin-bottom: 12px;
+            font-size: 12px;
+            color: #92400e;
+        }
+
+        .toggle-btn {
+            display: inline-block;
+            padding: 8px 16px;
+            background: #92400e;
+            color: #fff;
+            border: none;
+            border-radius: 6px;
+            font-size: 12px;
+            cursor: pointer;
+            margin-top: 10px;
+        }
+
+        .toggle-btn:hover {
+            background: #78350f;
+        }
+    </style>
+</head>
+<body>
+    <div class="corner" onclick="toggleUnit()" title="Click to toggle units">
+        <span class="unit-display" id="unit-display">cm</span>
+    </div>
+
+    <div class="ruler-horizontal"></div>
+    <div class="ruler-vertical"></div>
+
+    <canvas id="horizontal-canvas"></canvas>
+    <canvas id="vertical-canvas"></canvas>
+
+    <div class="info-panel">
+        <div class="warning" id="warning" style="display: none;"></div>
+        <h3>Device Info</h3>
+        <div class="info-row">
+            <span class="info-label">Resolution</span>
+            <span class="info-value" id="resolution">--</span>
+        </div>
+        <div class="info-row">
+            <span class="info-label">Pixel Ratio</span>
+            <span class="info-value" id="pixel-ratio">--</span>
+        </div>
+        <div class="info-row">
+            <span class="info-label">PPI</span>
+            <span class="info-value" id="ppi-display">--</span>
+        </div>
+        <div class="ppi-override">
+            <label for="ppi-input">Manual PPI Override</label>
+            <input type="number" id="ppi-input" placeholder="Enter PPI">
+        </div>
+        <button class="toggle-btn" onclick="toggleUnit()">Toggle cm/in</button>
+    </div>
+
+    <script>
+        // iPhone PPI lookup table (physical resolution -> PPI)
+        const PPI_TABLE = {
+            '750×1334': 326,    // iPhone 6, 6s, 7, 8, SE 2nd/3rd gen
+            '1080×1920': 401,   // iPhone 6+, 6s+, 7+, 8+
+            '828×1792': 326,    // iPhone XR, 11
+            '1125×2436': 458,   // iPhone X, XS, 11 Pro
+            '1242×2688': 458,   // iPhone XS Max, 11 Pro Max
+            '1080×2340': 476,   // iPhone 12 mini, 13 mini
+            '1170×2532': 460,   // iPhone 12, 12 Pro, 13, 13 Pro, 14, 16e
+            '1284×2778': 458,   // iPhone 12 Pro Max, 13 Pro Max, 14 Plus
+            '1179×2556': 460,   // iPhone 14 Pro, 15, 15 Pro, 16
+            '1290×2796': 460,   // iPhone 14 Pro Max, 15 Plus, 15 Pro Max, 16 Plus
+            '1206×2622': 460,   // iPhone 16 Pro, 17, 17 Pro
+            '1320×2868': 460,   // iPhone 16 Pro Max, 17 Pro Max
+            '1260×2736': 460,   // iPhone Air
+        };
+
+        let unit = 'cm';
+        let ppi = null;
+        let manualPPI = null;
+
+        const horizontalCanvas = document.getElementById('horizontal-canvas');
+        const verticalCanvas = document.getElementById('vertical-canvas');
+        const hCtx = horizontalCanvas.getContext('2d');
+        const vCtx = verticalCanvas.getContext('2d');
+
+        function detectPPI() {
+            const width = Math.round(screen.width * devicePixelRatio);
+            const height = Math.round(screen.height * devicePixelRatio);
+            const key = `${Math.min(width, height)}×${Math.max(width, height)}`;
+            return PPI_TABLE[key] || null;
+        }
+
+        function updateDeviceInfo() {
+            const width = Math.round(screen.width * devicePixelRatio);
+            const height = Math.round(screen.height * devicePixelRatio);
+
+            document.getElementById('resolution').textContent = `${width} × ${height}`;
+            document.getElementById('pixel-ratio').textContent = devicePixelRatio.toFixed(1);
+
+            const detectedPPI = detectPPI();
+            const activePPI = manualPPI || detectedPPI;
+
+            if (activePPI) {
+                document.getElementById('ppi-display').textContent = activePPI + (manualPPI ? ' (manual)' : ' (detected)');
+                document.getElementById('warning').style.display = 'none';
+                ppi = activePPI;
+            } else {
+                document.getElementById('ppi-display').textContent = 'Unknown';
+                document.getElementById('warning').textContent = 'Device not recognized. Enter PPI manually for accurate measurements.';
+                document.getElementById('warning').style.display = 'block';
+                ppi = null;
+            }
+        }
+
+        function getCSSPixelsPerUnit() {
+            if (!ppi) return null;
+            const cssPixelsPerInch = ppi / devicePixelRatio;
+            return unit === 'cm' ? cssPixelsPerInch / 2.54 : cssPixelsPerInch;
+        }
+
+        function drawRulers() {
+            const pixelsPerUnit = getCSSPixelsPerUnit();
+
+            // Horizontal ruler
+            horizontalCanvas.width = window.innerWidth - 80;
+            horizontalCanvas.height = 80;
+
+            // Vertical ruler
+            verticalCanvas.width = 80;
+            verticalCanvas.height = window.innerHeight - 80;
+
+            if (!pixelsPerUnit) {
+                // Draw placeholder
+                hCtx.fillStyle = '#92400e';
+                hCtx.font = '12px sans-serif';
+                hCtx.fillText('Set PPI to enable ruler', 20, 45);
+
+                vCtx.fillStyle = '#92400e';
+                vCtx.font = '12px sans-serif';
+                vCtx.save();
+                vCtx.translate(45, 20);
+                vCtx.rotate(Math.PI / 2);
+                vCtx.fillText('Set PPI to enable ruler', 0, 0);
+                vCtx.restore();
+                return;
+            }
+
+            const minorDivisions = unit === 'cm' ? 10 : 8;
+            const minorInterval = pixelsPerUnit / minorDivisions;
+
+            // Draw horizontal ruler
+            hCtx.strokeStyle = '#92400e';
+            hCtx.fillStyle = '#78350f';
+            hCtx.font = '11px monospace';
+            hCtx.textAlign = 'center';
+
+            let pos = 0;
+            let majorCount = 0;
+            while (pos < horizontalCanvas.width) {
+                for (let i = 0; i < minorDivisions && pos < horizontalCanvas.width; i++) {
+                    hCtx.beginPath();
+                    hCtx.moveTo(pos, 80);
+
+                    if (i === 0) {
+                        // Major tick
+                        hCtx.lineWidth = 2;
+                        hCtx.lineTo(pos, 40);
+                        if (majorCount > 0) {
+                            hCtx.fillText(majorCount.toString(), pos, 32);
+                        }
+                    } else if (i === minorDivisions / 2) {
+                        // Half tick
+                        hCtx.lineWidth = 1;
+                        hCtx.lineTo(pos, 55);
+                    } else {
+                        // Minor tick
+                        hCtx.lineWidth = 1;
+                        hCtx.lineTo(pos, 65);
+                    }
+                    hCtx.stroke();
+                    pos += minorInterval;
+                }
+                majorCount++;
+            }
+
+            // Draw vertical ruler
+            vCtx.strokeStyle = '#92400e';
+            vCtx.fillStyle = '#78350f';
+            vCtx.font = '11px monospace';
+            vCtx.textAlign = 'center';
+
+            pos = 0;
+            majorCount = 0;
+            while (pos < verticalCanvas.height) {
+                for (let i = 0; i < minorDivisions && pos < verticalCanvas.height; i++) {
+                    vCtx.beginPath();
+                    vCtx.moveTo(80, pos);
+
+                    if (i === 0) {
+                        // Major tick
+                        vCtx.lineWidth = 2;
+                        vCtx.lineTo(40, pos);
+                        if (majorCount > 0) {
+                            vCtx.save();
+                            vCtx.translate(32, pos);
+                            vCtx.rotate(-Math.PI / 2);
+                            vCtx.fillText(majorCount.toString(), 0, 0);
+                            vCtx.restore();
+                        }
+                    } else if (i === minorDivisions / 2) {
+                        // Half tick
+                        vCtx.lineWidth = 1;
+                        vCtx.lineTo(55, pos);
+                    } else {
+                        // Minor tick
+                        vCtx.lineWidth = 1;
+                        vCtx.lineTo(65, pos);
+                    }
+                    vCtx.stroke();
+                    pos += minorInterval;
+                }
+                majorCount++;
+            }
+        }
+
+        function toggleUnit() {
+            unit = unit === 'in' ? 'cm' : 'in';
+            document.getElementById('unit-display').textContent = unit;
+            drawRulers();
+        }
+
+        // Event listeners
+        document.getElementById('ppi-input').addEventListener('input', (e) => {
+            const val = parseInt(e.target.value);
+            manualPPI = val > 0 ? val : null;
+            updateDeviceInfo();
+            drawRulers();
+        });
+
+        window.addEventListener('resize', () => {
+            drawRulers();
+        });
+
+        window.addEventListener('orientationchange', () => {
+            setTimeout(() => {
+                updateDeviceInfo();
+                drawRulers();
+            }, 100);
+        });
+
+        // Initialize
+        updateDeviceInfo();
+        drawRulers();
+    </script>
+</body>
+</html>
