@@ -294,20 +294,21 @@
         .map-page {
             background: #111;
             padding: 0;
-            display: flex;
-            flex-direction: column;
-            justify-content: flex-start;
+            display: block;
+            position: relative;
         }
 
         .map-header {
-            position: relative;
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
             padding: 20px;
             background: #111;
-            z-index: 1000;
+            z-index: 100;
             display: flex;
             justify-content: space-between;
             align-items: center;
-            flex-shrink: 0;
         }
 
         .map-speed {
@@ -341,20 +342,31 @@
         }
 
         #map {
+            position: absolute;
+            top: 88px;
+            left: 0;
+            right: 0;
+            bottom: 0;
             width: 100%;
-            flex: 1;
+            height: auto;
             background: #1a1a1a;
+            z-index: 1;
         }
 
         .map-empty {
+            position: absolute;
+            top: 88px;
+            left: 0;
+            right: 0;
+            bottom: 0;
             display: flex;
             flex-direction: column;
             align-items: center;
             justify-content: center;
-            flex: 1;
             color: #555;
             text-align: center;
             padding: 40px;
+            z-index: 1;
         }
 
         .map-empty svg {
@@ -868,7 +880,8 @@
         // ========== Map ==========
         function initMap() {
             if (map) {
-                map.invalidateSize();
+                // Force Leaflet to recalculate size when page becomes visible
+                setTimeout(() => map.invalidateSize(), 50);
                 return;
             }
 
@@ -880,6 +893,9 @@
             L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
                 maxZoom: 19
             }).addTo(map);
+
+            // Ensure proper size after initial render
+            setTimeout(() => map.invalidateSize(), 100);
         }
 
         function updateMap() {
@@ -887,13 +903,16 @@
 
             // Show/hide empty state
             if (path.length < 2) {
-                mapEl.style.display = 'none';
+                mapEl.style.visibility = 'hidden';
                 mapEmpty.style.display = 'flex';
                 return;
             }
 
-            mapEl.style.display = 'block';
+            mapEl.style.visibility = 'visible';
             mapEmpty.style.display = 'none';
+
+            // Tell Leaflet to recalculate size
+            map.invalidateSize();
 
             // Create path coordinates
             const pathCoords = path.map(p => [p.lat, p.lng]);
