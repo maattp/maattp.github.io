@@ -2,7 +2,9 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
     <title>Zippo</title>
     <style>
         * {
@@ -11,10 +13,14 @@
             box-sizing: border-box;
         }
 
+        html {
+            height: 100%;
+        }
+
         body {
             font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-            background: linear-gradient(145deg, #1a1a1a 0%, #0d0d0d 100%);
-            min-height: 100vh;
+            background: #000;
+            height: 100%;
             overflow: hidden;
             display: flex;
             flex-direction: column;
@@ -27,7 +33,6 @@
         .zippo {
             position: relative;
             cursor: pointer;
-            transform: scale(1.5);
         }
 
         .zippo-top {
@@ -40,10 +45,10 @@
             position: absolute;
             left: 0;
             bottom: 0;
-            width: 100px;
-            height: 58px;
+            width: 150px;
+            height: 87px;
             background: linear-gradient(90deg, #c0c0c0 0%, #d8d8d8 20%, #e8e8e8 40%, #f0f0f0 50%, #e8e8e8 60%, #d0d0d0 80%, #b0b0b0 100%);
-            border-radius: 6px 6px 0 0;
+            border-radius: 9px 9px 0 0;
             border: 1px solid #999;
             border-bottom: none;
             transform-origin: 0 100%;
@@ -54,23 +59,23 @@
         .lid::before {
             content: '';
             position: absolute;
-            top: 12px;
+            top: 18px;
             left: 50%;
             transform: translateX(-50%);
-            width: 24px;
-            height: 4px;
+            width: 36px;
+            height: 6px;
             background: linear-gradient(90deg, #999 0%, #bbb 50%, #999 100%);
-            border-radius: 2px;
+            border-radius: 3px;
         }
 
         .lid.open {
-            transform: rotate(-110deg);
+            transform: rotate(-90deg);
         }
 
         .chimney {
             position: relative;
-            width: 100px;
-            height: 45px;
+            width: 150px;
+            height: 68px;
             display: flex;
             justify-content: center;
             z-index: 5;
@@ -83,45 +88,44 @@
         }
 
         .chimney-inner {
-            width: 50px;
-            height: 45px;
+            width: 75px;
+            height: 68px;
             background: linear-gradient(90deg, #a0a0a0 0%, #c8c8c8 30%, #d8d8d8 50%, #c8c8c8 70%, #a0a0a0 100%);
-            border-radius: 4px 4px 0 0;
+            border-radius: 6px 6px 0 0;
             position: relative;
             display: flex;
             flex-wrap: wrap;
             justify-content: center;
             align-content: center;
-            gap: 4px;
-            padding: 8px;
+            gap: 6px;
+            padding: 12px;
         }
 
         .chimney-hole {
-            width: 6px;
-            height: 6px;
+            width: 9px;
+            height: 9px;
             background: #333;
             border-radius: 50%;
-            box-shadow: inset 1px 1px 2px rgba(0,0,0,0.5);
+            box-shadow: inset 1px 1px 3px rgba(0,0,0,0.5);
         }
 
         .body {
             position: relative;
-            width: 100px;
-            height: 88px;
+            width: 150px;
+            height: 132px;
             background: linear-gradient(90deg, #b8b8b8 0%, #d8d8d8 20%, #e8e8e8 40%, #f0f0f0 50%, #e8e8e8 60%, #d0d0d0 80%, #a8a8a8 100%);
-            border-radius: 0 0 8px 8px;
+            border-radius: 0 0 12px 12px;
             border: 1px solid #999;
             border-top: none;
         }
-
 
         .flame-container {
             position: absolute;
             bottom: 100%;
             left: 50%;
             transform: translateX(-50%);
-            width: 80px;
-            height: 120px;
+            width: 120px;
+            height: 180px;
             pointer-events: none;
         }
 
@@ -208,29 +212,29 @@
 
         // Set up canvas
         const dpr = window.devicePixelRatio || 1;
-        canvas.width = 80 * dpr;
-        canvas.height = 120 * dpr;
+        canvas.width = 120 * dpr;
+        canvas.height = 180 * dpr;
         ctx.scale(dpr, dpr);
 
         // Flame animation
         let flameTime = 0;
 
         function drawFlame() {
-            ctx.clearRect(0, 0, 80, 120);
+            ctx.clearRect(0, 0, 120, 180);
 
             if (!isOpen) return;
 
             flameTime += 0.1;
 
-            const baseX = 40 - tiltX * 2;
-            const baseY = 120;
-            const flameHeight = 75;
-            const flameWidth = 14;
-            const baseWidth = 12;
+            const baseX = 60 - tiltX * 3;
+            const baseY = 180;
+            const flameHeight = 112;
+            const flameWidth = 21;
+            const baseWidth = 18;
 
             // Slight wobble
-            const wobble = Math.sin(flameTime * 2) * 2 - tiltX * 3;
-            const wobble2 = Math.sin(flameTime * 3 + 1) * 1.5;
+            const wobble = Math.sin(flameTime * 2) * 3 - tiltX * 4.5;
+            const wobble2 = Math.sin(flameTime * 3 + 1) * 2.25;
 
             // Outer flame (orange/yellow) - flat bottom
             ctx.beginPath();
