@@ -20,6 +20,7 @@
             overflow: hidden;
             color: #fff;
             transition: background 0.3s;
+            padding-top: env(safe-area-inset-top);
         }
 
         body.light {
@@ -29,13 +30,13 @@
         .pages-container {
             display: flex;
             width: 200vw;
-            height: 100vh;
+            height: calc(100vh - env(safe-area-inset-top));
             transition: transform 0.3s ease-out;
         }
 
         .page {
             width: 100vw;
-            height: 100vh;
+            height: calc(100vh - env(safe-area-inset-top));
             flex-shrink: 0;
             position: relative;
             display: flex;
