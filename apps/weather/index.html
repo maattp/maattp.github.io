@@ -13,10 +13,14 @@
             box-sizing: border-box;
         }
 
+        html {
+            min-height: 100vh;
+            background: linear-gradient(135deg, #1e3c72, #2a5298);
+        }
+
         body {
             font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
             min-height: 100vh;
-            background: linear-gradient(135deg, #1e3c72, #2a5298);
             color: #fff;
             padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
             padding-top: calc(env(safe-area-inset-top) + 20px);
@@ -321,27 +325,27 @@
         }
 
         /* Background gradients for different weather conditions */
-        body.clear-day {
+        html.clear-day {
             background: linear-gradient(135deg, #2193b0, #6dd5ed);
         }
 
-        body.clear-night {
+        html.clear-night {
             background: linear-gradient(135deg, #0f2027, #203a43, #2c5364);
         }
 
-        body.cloudy {
+        html.cloudy {
             background: linear-gradient(135deg, #616161, #9bc5c3);
         }
 
-        body.rainy {
+        html.rainy {
             background: linear-gradient(135deg, #373b44, #4286f4);
         }
 
-        body.snowy {
+        html.snowy {
             background: linear-gradient(135deg, #e6dada, #274046);
         }
 
-        body.stormy {
+        html.stormy {
             background: linear-gradient(135deg, #232526, #414345);
         }
     </style>
@@ -477,12 +481,12 @@
             const weatherInfo = getWeatherInfo(current.weather_code);
 
             // Set background based on weather and time
-            document.body.className = '';
+            document.documentElement.className = '';
             const night = isNight(daily.sunrise[0], daily.sunset[0]);
             if (weatherInfo.bg === 'clear') {
-                document.body.classList.add(night ? 'clear-night' : 'clear-day');
+                document.documentElement.classList.add(night ? 'clear-night' : 'clear-day');
             } else {
-                document.body.classList.add(weatherInfo.bg);
+                document.documentElement.classList.add(weatherInfo.bg);
             }
 
             // Format current datetime
