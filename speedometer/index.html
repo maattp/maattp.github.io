@@ -252,6 +252,7 @@
         let watchId = null;
         let lastPosition = null;
         let lastTime = null;
+        let wakeLock = null;
 
         const maxSpeed = unit === 'km/h' ? 200 : 120; // Max display speed
 
@@ -477,6 +478,23 @@
             errorEl.style.display = 'block';
         }
 
+        async function requestWakeLock() {
+            try {
+                if ('wakeLock' in navigator) {
+                    wakeLock = await navigator.wakeLock.request('screen');
+                }
+            } catch (err) {
+                console.log('Wake lock failed:', err);
+            }
+        }
+
+        function releaseWakeLock() {
+            if (wakeLock) {
+                wakeLock.release();
+                wakeLock = null;
+            }
+        }
+
         function toggleTracking() {
             if (tracking) {
                 stopTracking();
@@ -485,7 +503,7 @@
             }
         }
 
-        function startTracking() {
+            async function startTracking() {
             if (!navigator.geolocation) {
                 errorEl.textContent = 'Geolocation is not supported by your browser';
                 errorEl.style.display = 'block';
@@ -495,6 +513,8 @@
             tracking = true;
             startBtn.textContent = 'Stop';
             startBtn.classList.add('active');
+
+            await requestWakeLock();
 
             watchId = navigator.geolocation.watchPosition(handlePosition, handleError, {
                 enableHighAccuracy: true,
@@ -507,6 +527,8 @@
             tracking = false;
             startBtn.textContent = 'Start';
             startBtn.classList.remove('active');
+
+            releaseWakeLock();
 
             if (watchId !== null) {
                 navigator.geolocation.clearWatch(watchId);
