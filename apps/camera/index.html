@@ -1,0 +1,654 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <title>Camera</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: #000;
+            min-height: 100vh;
+            overflow: hidden;
+            color: #fff;
+            padding-top: env(safe-area-inset-top);
+            padding-bottom: env(safe-area-inset-bottom);
+        }
+
+        .app-container {
+            height: calc(100vh - env(safe-area-inset-top) - env(safe-area-inset-bottom));
+            display: flex;
+            flex-direction: column;
+        }
+
+        /* Camera View */
+        .camera-view {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            position: relative;
+        }
+
+        .camera-view.hidden {
+            display: none;
+        }
+
+        .video-container {
+            flex: 1;
+            position: relative;
+            background: #111;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            overflow: hidden;
+        }
+
+        #video {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+        }
+
+        #canvas {
+            display: none;
+        }
+
+        .camera-controls {
+            display: flex;
+            align-items: center;
+            justify-content: space-around;
+            padding: 20px;
+            background: rgba(0, 0, 0, 0.9);
+        }
+
+        .control-btn {
+            background: none;
+            border: none;
+            color: #fff;
+            cursor: pointer;
+            padding: 10px;
+            border-radius: 50%;
+            transition: background 0.2s;
+        }
+
+        .control-btn:hover {
+            background: rgba(255, 255, 255, 0.1);
+        }
+
+        .gallery-btn {
+            width: 50px;
+            height: 50px;
+            border-radius: 8px;
+            overflow: hidden;
+            background: #333;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .gallery-btn img {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+        }
+
+        .capture-btn {
+            width: 70px;
+            height: 70px;
+            border-radius: 50%;
+            background: #fff;
+            border: 4px solid rgba(255, 255, 255, 0.3);
+            cursor: pointer;
+            transition: transform 0.15s;
+        }
+
+        .capture-btn:active {
+            transform: scale(0.9);
+        }
+
+        .switch-btn {
+            width: 50px;
+            height: 50px;
+            font-size: 24px;
+        }
+
+        .flash-indicator {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: #fff;
+            opacity: 0;
+            pointer-events: none;
+            z-index: 100;
+        }
+
+        .flash-indicator.flash {
+            animation: flash 0.15s ease-out;
+        }
+
+        @keyframes flash {
+            0% { opacity: 0.8; }
+            100% { opacity: 0; }
+        }
+
+        .error-message {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            text-align: center;
+            padding: 20px;
+            color: #999;
+        }
+
+        .error-message svg {
+            width: 64px;
+            height: 64px;
+            margin-bottom: 16px;
+            opacity: 0.5;
+        }
+
+        /* Gallery View */
+        .gallery-view {
+            flex: 1;
+            display: none;
+            flex-direction: column;
+            background: #000;
+        }
+
+        .gallery-view.active {
+            display: flex;
+        }
+
+        .gallery-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 15px 20px;
+            background: rgba(0, 0, 0, 0.9);
+            border-bottom: 1px solid #333;
+        }
+
+        .back-btn {
+            background: none;
+            border: none;
+            color: #007aff;
+            font-size: 16px;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            gap: 5px;
+        }
+
+        .gallery-title {
+            font-size: 17px;
+            font-weight: 600;
+        }
+
+        .photo-count {
+            color: #666;
+            font-size: 14px;
+        }
+
+        .gallery-grid {
+            flex: 1;
+            overflow-y: auto;
+            padding: 2px;
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 2px;
+        }
+
+        .gallery-item {
+            aspect-ratio: 1;
+            overflow: hidden;
+            cursor: pointer;
+            position: relative;
+        }
+
+        .gallery-item img {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+            transition: transform 0.2s;
+        }
+
+        .gallery-item:active img {
+            transform: scale(0.95);
+        }
+
+        .empty-gallery {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            color: #666;
+            padding: 40px;
+            text-align: center;
+        }
+
+        .empty-gallery svg {
+            width: 80px;
+            height: 80px;
+            margin-bottom: 20px;
+            opacity: 0.3;
+        }
+
+        /* Photo Viewer */
+        .photo-viewer {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: #000;
+            z-index: 1000;
+            display: none;
+            flex-direction: column;
+        }
+
+        .photo-viewer.active {
+            display: flex;
+        }
+
+        .viewer-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 15px 20px;
+            padding-top: calc(env(safe-area-inset-top) + 15px);
+            background: rgba(0, 0, 0, 0.8);
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            z-index: 10;
+        }
+
+        .close-btn {
+            background: none;
+            border: none;
+            color: #fff;
+            font-size: 16px;
+            cursor: pointer;
+        }
+
+        .viewer-date {
+            font-size: 14px;
+            color: #999;
+        }
+
+        .delete-btn {
+            background: none;
+            border: none;
+            color: #ff3b30;
+            font-size: 16px;
+            cursor: pointer;
+        }
+
+        .viewer-image-container {
+            flex: 1;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            overflow: hidden;
+        }
+
+        .viewer-image-container img {
+            max-width: 100%;
+            max-height: 100%;
+            object-fit: contain;
+        }
+    </style>
+</head>
+<body>
+    <div class="app-container">
+        <!-- Camera View -->
+        <div class="camera-view" id="camera-view">
+            <div class="video-container">
+                <video id="video" autoplay playsinline></video>
+                <canvas id="canvas"></canvas>
+                <div class="error-message" id="error-message" style="display: none;">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                        <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/>
+                        <circle cx="12" cy="13" r="4"/>
+                        <line x1="4" y1="4" x2="20" y2="20"/>
+                    </svg>
+                    <p id="error-text">Camera access denied</p>
+                </div>
+            </div>
+            <div class="camera-controls">
+                <button class="control-btn gallery-btn" id="gallery-btn" title="Gallery">
+                    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <rect x="3" y="3" width="18" height="18" rx="2"/>
+                        <circle cx="8.5" cy="8.5" r="1.5"/>
+                        <path d="M21 15l-5-5L5 21"/>
+                    </svg>
+                </button>
+                <button class="capture-btn" id="capture-btn" title="Take Photo"></button>
+                <button class="control-btn switch-btn" id="switch-btn" title="Switch Camera">
+                    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/>
+                        <circle cx="12" cy="13" r="4"/>
+                    </svg>
+                </button>
+            </div>
+            <div class="flash-indicator" id="flash"></div>
+        </div>
+
+        <!-- Gallery View -->
+        <div class="gallery-view" id="gallery-view">
+            <div class="gallery-header">
+                <button class="back-btn" id="back-btn">
+                    <svg width="12" height="20" viewBox="0 0 12 20" fill="currentColor">
+                        <path d="M10 20l-10-10 10-10 2 2-8 8 8 8z"/>
+                    </svg>
+                    Camera
+                </button>
+                <span class="gallery-title">Photos</span>
+                <span class="photo-count" id="photo-count"></span>
+            </div>
+            <div class="gallery-grid" id="gallery-grid"></div>
+            <div class="empty-gallery" id="empty-gallery" style="display: none;">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1">
+                    <rect x="3" y="3" width="18" height="18" rx="2"/>
+                    <circle cx="8.5" cy="8.5" r="1.5"/>
+                    <path d="M21 15l-5-5L5 21"/>
+                </svg>
+                <p>No photos yet</p>
+                <p style="margin-top: 8px; font-size: 14px;">Photos you take will appear here</p>
+            </div>
+        </div>
+
+        <!-- Photo Viewer -->
+        <div class="photo-viewer" id="photo-viewer">
+            <div class="viewer-header">
+                <button class="close-btn" id="close-viewer">Done</button>
+                <span class="viewer-date" id="viewer-date"></span>
+                <button class="delete-btn" id="delete-photo">Delete</button>
+            </div>
+            <div class="viewer-image-container">
+                <img id="viewer-image" src="" alt="Photo">
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // State
+        let photos = [];
+        let currentStream = null;
+        let facingMode = 'environment';
+        let currentViewingIndex = -1;
+
+        // Elements
+        const video = document.getElementById('video');
+        const canvas = document.getElementById('canvas');
+        const captureBtn = document.getElementById('capture-btn');
+        const switchBtn = document.getElementById('switch-btn');
+        const galleryBtn = document.getElementById('gallery-btn');
+        const flash = document.getElementById('flash');
+        const errorMessage = document.getElementById('error-message');
+        const errorText = document.getElementById('error-text');
+
+        const cameraView = document.getElementById('camera-view');
+        const galleryView = document.getElementById('gallery-view');
+        const galleryGrid = document.getElementById('gallery-grid');
+        const emptyGallery = document.getElementById('empty-gallery');
+        const photoCount = document.getElementById('photo-count');
+        const backBtn = document.getElementById('back-btn');
+
+        const photoViewer = document.getElementById('photo-viewer');
+        const viewerImage = document.getElementById('viewer-image');
+        const viewerDate = document.getElementById('viewer-date');
+        const closeViewer = document.getElementById('close-viewer');
+        const deletePhoto = document.getElementById('delete-photo');
+
+        // Load photos from localStorage
+        function loadPhotos() {
+            try {
+                const stored = localStorage.getItem('camera-photos');
+                if (stored) {
+                    photos = JSON.parse(stored);
+                }
+            } catch (e) {
+                console.error('Failed to load photos:', e);
+                photos = [];
+            }
+            updateGalleryBtn();
+        }
+
+        // Save photos to localStorage
+        function savePhotos() {
+            try {
+                localStorage.setItem('camera-photos', JSON.stringify(photos));
+            } catch (e) {
+                console.error('Failed to save photos:', e);
+                if (e.name === 'QuotaExceededError') {
+                    alert('Storage is full. Please delete some photos.');
+                }
+            }
+        }
+
+        // Initialize camera
+        async function initCamera() {
+            try {
+                if (currentStream) {
+                    currentStream.getTracks().forEach(track => track.stop());
+                }
+
+                const constraints = {
+                    video: {
+                        facingMode: facingMode,
+                        width: { ideal: 1920 },
+                        height: { ideal: 1080 }
+                    },
+                    audio: false
+                };
+
+                currentStream = await navigator.mediaDevices.getUserMedia(constraints);
+                video.srcObject = currentStream;
+                video.style.display = 'block';
+                errorMessage.style.display = 'none';
+                captureBtn.disabled = false;
+            } catch (err) {
+                console.error('Camera error:', err);
+                video.style.display = 'none';
+                errorMessage.style.display = 'block';
+                captureBtn.disabled = true;
+
+                if (err.name === 'NotAllowedError') {
+                    errorText.textContent = 'Camera access denied. Please enable camera permissions.';
+                } else if (err.name === 'NotFoundError') {
+                    errorText.textContent = 'No camera found on this device.';
+                } else {
+                    errorText.textContent = 'Could not access camera.';
+                }
+            }
+        }
+
+        // Capture photo
+        function capturePhoto() {
+            if (!currentStream) return;
+
+            const track = currentStream.getVideoTracks()[0];
+            const settings = track.getSettings();
+
+            canvas.width = settings.width || video.videoWidth;
+            canvas.height = settings.height || video.videoHeight;
+
+            const ctx = canvas.getContext('2d');
+            ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+
+            // Flash effect
+            flash.classList.add('flash');
+            setTimeout(() => flash.classList.remove('flash'), 150);
+
+            // Get image data
+            const imageData = canvas.toDataURL('image/jpeg', 0.8);
+
+            // Save photo
+            const photo = {
+                id: Date.now(),
+                data: imageData,
+                timestamp: new Date().toISOString()
+            };
+
+            photos.unshift(photo);
+            savePhotos();
+            updateGalleryBtn();
+        }
+
+        // Switch camera
+        async function switchCamera() {
+            facingMode = facingMode === 'environment' ? 'user' : 'environment';
+            await initCamera();
+        }
+
+        // Update gallery button thumbnail
+        function updateGalleryBtn() {
+            if (photos.length > 0) {
+                galleryBtn.innerHTML = `<img src="${photos[0].data}" alt="Last photo">`;
+            } else {
+                galleryBtn.innerHTML = `
+                    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <rect x="3" y="3" width="18" height="18" rx="2"/>
+                        <circle cx="8.5" cy="8.5" r="1.5"/>
+                        <path d="M21 15l-5-5L5 21"/>
+                    </svg>
+                `;
+            }
+        }
+
+        // Show gallery
+        function showGallery() {
+            cameraView.classList.add('hidden');
+            galleryView.classList.add('active');
+            renderGallery();
+        }
+
+        // Hide gallery
+        function hideGallery() {
+            galleryView.classList.remove('active');
+            cameraView.classList.remove('hidden');
+        }
+
+        // Render gallery
+        function renderGallery() {
+            photoCount.textContent = photos.length > 0 ? `${photos.length}` : '';
+
+            if (photos.length === 0) {
+                galleryGrid.style.display = 'none';
+                emptyGallery.style.display = 'flex';
+                return;
+            }
+
+            galleryGrid.style.display = 'grid';
+            emptyGallery.style.display = 'none';
+
+            galleryGrid.innerHTML = photos.map((photo, index) => `
+                <div class="gallery-item" data-index="${index}">
+                    <img src="${photo.data}" alt="Photo ${index + 1}">
+                </div>
+            `).join('');
+
+            // Add click handlers
+            galleryGrid.querySelectorAll('.gallery-item').forEach(item => {
+                item.addEventListener('click', () => {
+                    const index = parseInt(item.dataset.index);
+                    openPhotoViewer(index);
+                });
+            });
+        }
+
+        // Open photo viewer
+        function openPhotoViewer(index) {
+            currentViewingIndex = index;
+            const photo = photos[index];
+            viewerImage.src = photo.data;
+
+            const date = new Date(photo.timestamp);
+            viewerDate.textContent = date.toLocaleDateString(undefined, {
+                month: 'short',
+                day: 'numeric',
+                year: 'numeric',
+                hour: 'numeric',
+                minute: '2-digit'
+            });
+
+            photoViewer.classList.add('active');
+        }
+
+        // Close photo viewer
+        function closePhotoViewer() {
+            photoViewer.classList.remove('active');
+            currentViewingIndex = -1;
+        }
+
+        // Delete current photo
+        function deleteCurrentPhoto() {
+            if (currentViewingIndex < 0) return;
+
+            if (confirm('Delete this photo?')) {
+                photos.splice(currentViewingIndex, 1);
+                savePhotos();
+                closePhotoViewer();
+                renderGallery();
+                updateGalleryBtn();
+            }
+        }
+
+        // Event listeners
+        captureBtn.addEventListener('click', capturePhoto);
+        switchBtn.addEventListener('click', switchCamera);
+        galleryBtn.addEventListener('click', showGallery);
+        backBtn.addEventListener('click', hideGallery);
+        closeViewer.addEventListener('click', closePhotoViewer);
+        deletePhoto.addEventListener('click', deleteCurrentPhoto);
+
+        // Swipe to go back in viewer
+        let touchStartX = 0;
+        photoViewer.addEventListener('touchstart', (e) => {
+            touchStartX = e.touches[0].clientX;
+        });
+
+        photoViewer.addEventListener('touchend', (e) => {
+            const touchEndX = e.changedTouches[0].clientX;
+            const diff = touchEndX - touchStartX;
+
+            if (diff > 100) {
+                // Swipe right - previous photo
+                if (currentViewingIndex > 0) {
+                    openPhotoViewer(currentViewingIndex - 1);
+                }
+            } else if (diff < -100) {
+                // Swipe left - next photo
+                if (currentViewingIndex < photos.length - 1) {
+                    openPhotoViewer(currentViewingIndex + 1);
+                }
+            }
+        });
+
+        // Initialize
+        loadPhotos();
+        initCamera();
+
+        // Handle visibility change
+        document.addEventListener('visibilitychange', () => {
+            if (document.visibilityState === 'visible' && !galleryView.classList.contains('active')) {
+                initCamera();
+            }
+        });
+    </script>
+</body>
+</html>
