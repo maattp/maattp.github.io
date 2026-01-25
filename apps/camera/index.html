@@ -5,7 +5,9 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no, viewport-fit=cover">
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-    <title>Camera</title>
+    <title>Photo Map</title>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" crossorigin="">
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script>
     <style>
         * {
             margin: 0;
@@ -35,32 +37,30 @@
             display: flex;
             flex-direction: column;
             justify-content: center;
+            align-items: center;
             position: relative;
+            background: #111;
         }
 
         .camera-view.hidden {
             display: none;
         }
 
-        .video-container {
-            width: 100%;
-            aspect-ratio: 4 / 3;
-            position: relative;
-            background: #111;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            overflow: hidden;
+        .camera-prompt {
+            text-align: center;
+            padding: 40px;
+            color: #999;
         }
 
-        #video {
-            width: 100%;
-            height: 100%;
-            object-fit: cover;
+        .camera-prompt svg {
+            width: 80px;
+            height: 80px;
+            margin-bottom: 20px;
+            opacity: 0.5;
         }
 
-        #canvas {
-            display: none;
+        .camera-prompt p {
+            margin-bottom: 10px;
         }
 
         .camera-controls {
@@ -69,9 +69,9 @@
             justify-content: space-around;
             padding: 20px;
             background: rgba(0, 0, 0, 0.9);
+            width: 100%;
         }
 
-        /* Extra bottom padding in browser mode to clear address bar */
         @media not all and (display-mode: standalone) {
             .camera-controls {
                 padding-bottom: 80px;
@@ -117,69 +117,67 @@
             border: 4px solid rgba(255, 255, 255, 0.3);
             cursor: pointer;
             transition: transform 0.15s;
+            position: relative;
+            overflow: hidden;
         }
 
         .capture-btn:active {
             transform: scale(0.9);
         }
 
-        .switch-btn {
-            width: 50px;
-            height: 50px;
-            font-size: 24px;
-        }
-
-        .flash-indicator {
-            position: fixed;
+        .capture-btn input {
+            position: absolute;
             top: 0;
             left: 0;
-            right: 0;
-            bottom: 0;
-            background: #fff;
+            width: 100%;
+            height: 100%;
             opacity: 0;
-            pointer-events: none;
-            z-index: 100;
+            cursor: pointer;
         }
 
-        .flash-indicator.flash {
-            animation: flash 0.15s ease-out;
+        .map-btn {
+            width: 50px;
+            height: 50px;
         }
 
-        @keyframes flash {
-            0% { opacity: 0.8; }
-            100% { opacity: 0; }
-        }
-
-        .error-message {
+        .location-status {
             position: absolute;
-            top: 50%;
+            top: 20px;
             left: 50%;
-            transform: translate(-50%, -50%);
-            text-align: center;
-            padding: 20px;
-            color: #999;
+            transform: translateX(-50%);
+            background: rgba(0, 0, 0, 0.7);
+            padding: 8px 16px;
+            border-radius: 20px;
+            font-size: 12px;
+            display: flex;
+            align-items: center;
+            gap: 6px;
         }
 
-        .error-message svg {
-            width: 64px;
-            height: 64px;
-            margin-bottom: 16px;
-            opacity: 0.5;
+        .location-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: #ff3b30;
         }
 
-        /* Gallery View */
-        .gallery-view {
+        .location-dot.active {
+            background: #30d158;
+        }
+
+        /* Browse View (Gallery + Map) */
+        .browse-view {
             flex: 1;
             display: none;
             flex-direction: column;
             background: #000;
         }
 
-        .gallery-view.active {
+        .browse-view.active {
             display: flex;
         }
 
-        .gallery-header {
+        .browse-header {
             display: flex;
             align-items: center;
             justify-content: space-between;
@@ -199,16 +197,66 @@
             gap: 5px;
         }
 
-        .gallery-title {
-            font-size: 17px;
-            font-weight: 600;
+        .date-nav {
+            display: flex;
+            align-items: center;
+            gap: 10px;
         }
 
-        .photo-count {
+        .date-nav button {
+            background: none;
+            border: none;
+            color: #007aff;
+            font-size: 20px;
+            cursor: pointer;
+            padding: 5px;
+        }
+
+        .date-nav button:disabled {
+            color: #333;
+        }
+
+        .date-display {
+            font-size: 15px;
+            font-weight: 500;
+            min-width: 100px;
+            text-align: center;
+        }
+
+        .tab-bar {
+            display: flex;
+            border-bottom: 1px solid #333;
+        }
+
+        .tab-btn {
+            flex: 1;
+            background: none;
+            border: none;
             color: #666;
+            padding: 12px;
             font-size: 14px;
+            cursor: pointer;
+            border-bottom: 2px solid transparent;
+            transition: all 0.2s;
         }
 
+        .tab-btn.active {
+            color: #007aff;
+            border-bottom-color: #007aff;
+        }
+
+        .tab-content {
+            flex: 1;
+            display: none;
+            overflow: hidden;
+        }
+
+        .tab-content.active {
+            display: flex;
+            flex-direction: column;
+        }
+
+        /* Gallery Grid */
         .gallery-grid {
             flex: 1;
             overflow-y: auto;
@@ -236,7 +284,17 @@
             transform: scale(0.95);
         }
 
-        .empty-gallery {
+        .gallery-item .location-badge {
+            position: absolute;
+            bottom: 4px;
+            right: 4px;
+            background: rgba(0, 0, 0, 0.6);
+            border-radius: 10px;
+            padding: 2px 6px;
+            font-size: 10px;
+        }
+
+        .empty-state {
             flex: 1;
             display: flex;
             flex-direction: column;
@@ -247,11 +305,42 @@
             text-align: center;
         }
 
-        .empty-gallery svg {
+        .empty-state svg {
             width: 80px;
             height: 80px;
             margin-bottom: 20px;
             opacity: 0.3;
+        }
+
+        /* Map */
+        #map {
+            flex: 1;
+            background: #1a1a1a;
+        }
+
+        .leaflet-popup-content {
+            margin: 0;
+        }
+
+        .leaflet-popup-content-wrapper {
+            padding: 0;
+            border-radius: 8px;
+            overflow: hidden;
+        }
+
+        .map-popup-img {
+            width: 150px;
+            height: 150px;
+            object-fit: cover;
+            display: block;
+            cursor: pointer;
+        }
+
+        .map-popup-time {
+            padding: 8px;
+            font-size: 12px;
+            text-align: center;
+            background: #fff;
         }
 
         /* Photo Viewer */
@@ -293,9 +382,19 @@
             cursor: pointer;
         }
 
+        .viewer-info {
+            text-align: center;
+        }
+
         .viewer-date {
             font-size: 14px;
             color: #999;
+        }
+
+        .viewer-location {
+            font-size: 11px;
+            color: #666;
+            margin-top: 2px;
         }
 
         .delete-btn {
@@ -319,23 +418,56 @@
             max-height: 100%;
             object-fit: contain;
         }
+
+        /* Loading overlay */
+        .loading-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0, 0, 0, 0.8);
+            display: none;
+            align-items: center;
+            justify-content: center;
+            z-index: 2000;
+            flex-direction: column;
+            gap: 15px;
+        }
+
+        .loading-overlay.active {
+            display: flex;
+        }
+
+        .spinner {
+            width: 40px;
+            height: 40px;
+            border: 3px solid #333;
+            border-top-color: #fff;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
     </style>
 </head>
 <body>
     <div class="app-container">
         <!-- Camera View -->
         <div class="camera-view" id="camera-view">
-            <div class="video-container">
-                <video id="video" autoplay playsinline></video>
-                <canvas id="canvas"></canvas>
-                <div class="error-message" id="error-message" style="display: none;">
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
-                        <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/>
-                        <circle cx="12" cy="13" r="4"/>
-                        <line x1="4" y1="4" x2="20" y2="20"/>
-                    </svg>
-                    <p id="error-text">Camera access denied</p>
-                </div>
+            <div class="location-status" id="location-status">
+                <span class="location-dot" id="location-dot"></span>
+                <span id="location-text">Location off</span>
+            </div>
+            <div class="camera-prompt">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                    <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/>
+                    <circle cx="12" cy="13" r="4"/>
+                </svg>
+                <p>Tap the button below to take a photo</p>
+                <p style="font-size: 14px; color: #666;">Photos are saved with location data</p>
             </div>
             <div class="camera-controls">
                 <button class="control-btn gallery-btn" id="gallery-btn" title="Gallery">
@@ -345,38 +477,61 @@
                         <path d="M21 15l-5-5L5 21"/>
                     </svg>
                 </button>
-                <button class="capture-btn" id="capture-btn" title="Take Photo"></button>
-                <button class="control-btn switch-btn" id="switch-btn" title="Switch Camera">
+                <div class="capture-btn" id="capture-btn" title="Take Photo">
+                    <input type="file" accept="image/*" capture="environment" id="camera-input">
+                </div>
+                <button class="control-btn map-btn" id="map-btn" title="Map">
                     <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                        <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/>
-                        <circle cx="12" cy="13" r="4"/>
+                        <polygon points="1 6 1 22 8 18 16 22 23 18 23 2 16 6 8 2 1 6"/>
+                        <line x1="8" y1="2" x2="8" y2="18"/>
+                        <line x1="16" y1="6" x2="16" y2="22"/>
                     </svg>
                 </button>
             </div>
-            <div class="flash-indicator" id="flash"></div>
         </div>
 
-        <!-- Gallery View -->
-        <div class="gallery-view" id="gallery-view">
-            <div class="gallery-header">
+        <!-- Browse View (Gallery + Map) -->
+        <div class="browse-view" id="browse-view">
+            <div class="browse-header">
                 <button class="back-btn" id="back-btn">
                     <svg width="12" height="20" viewBox="0 0 12 20" fill="currentColor">
                         <path d="M10 20l-10-10 10-10 2 2-8 8 8 8z"/>
                     </svg>
                     Camera
                 </button>
-                <span class="gallery-title">Photos</span>
-                <span class="photo-count" id="photo-count"></span>
+                <div class="date-nav">
+                    <button id="prev-day">&lt;</button>
+                    <span class="date-display" id="date-display">Today</span>
+                    <button id="next-day">&gt;</button>
+                </div>
             </div>
-            <div class="gallery-grid" id="gallery-grid"></div>
-            <div class="empty-gallery" id="empty-gallery" style="display: none;">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1">
-                    <rect x="3" y="3" width="18" height="18" rx="2"/>
-                    <circle cx="8.5" cy="8.5" r="1.5"/>
-                    <path d="M21 15l-5-5L5 21"/>
-                </svg>
-                <p>No photos yet</p>
-                <p style="margin-top: 8px; font-size: 14px;">Photos you take will appear here</p>
+            <div class="tab-bar">
+                <button class="tab-btn active" data-tab="gallery">Gallery</button>
+                <button class="tab-btn" data-tab="map">Map</button>
+            </div>
+            <div class="tab-content active" id="gallery-tab">
+                <div class="gallery-grid" id="gallery-grid"></div>
+                <div class="empty-state" id="empty-gallery" style="display: none;">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1">
+                        <rect x="3" y="3" width="18" height="18" rx="2"/>
+                        <circle cx="8.5" cy="8.5" r="1.5"/>
+                        <path d="M21 15l-5-5L5 21"/>
+                    </svg>
+                    <p>No photos this day</p>
+                    <p style="margin-top: 8px; font-size: 14px;">Take some photos to see them here</p>
+                </div>
+            </div>
+            <div class="tab-content" id="map-tab">
+                <div id="map"></div>
+                <div class="empty-state" id="empty-map" style="display: none;">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1">
+                        <polygon points="1 6 1 22 8 18 16 22 23 18 23 2 16 6 8 2 1 6"/>
+                        <line x1="8" y1="2" x2="8" y2="18"/>
+                        <line x1="16" y1="6" x2="16" y2="22"/>
+                    </svg>
+                    <p>No locations this day</p>
+                    <p style="margin-top: 8px; font-size: 14px;">Photos with GPS will appear on the map</p>
+                </div>
             </div>
         </div>
 
@@ -384,7 +539,10 @@
         <div class="photo-viewer" id="photo-viewer">
             <div class="viewer-header">
                 <button class="close-btn" id="close-viewer">Done</button>
-                <span class="viewer-date" id="viewer-date"></span>
+                <div class="viewer-info">
+                    <div class="viewer-date" id="viewer-date"></div>
+                    <div class="viewer-location" id="viewer-location"></div>
+                </div>
                 <button class="delete-btn" id="delete-photo">Delete</button>
             </div>
             <div class="viewer-image-container">
@@ -393,141 +551,211 @@
         </div>
     </div>
 
+    <!-- Loading Overlay -->
+    <div class="loading-overlay" id="loading">
+        <div class="spinner"></div>
+        <span>Saving photo...</span>
+    </div>
+
     <script>
-        // State
-        let photos = [];
-        let currentStream = null;
-        let facingMode = 'environment';
+        // ========== IndexedDB Setup ==========
+        const DB_NAME = 'PhotoMapDB';
+        const DB_VERSION = 1;
+        const STORE_NAME = 'photos';
+        let db = null;
+
+        function openDB() {
+            return new Promise((resolve, reject) => {
+                const request = indexedDB.open(DB_NAME, DB_VERSION);
+
+                request.onerror = () => reject(request.error);
+                request.onsuccess = () => {
+                    db = request.result;
+                    resolve(db);
+                };
+
+                request.onupgradeneeded = (event) => {
+                    const database = event.target.result;
+                    if (!database.objectStoreNames.contains(STORE_NAME)) {
+                        const store = database.createObjectStore(STORE_NAME, { keyPath: 'id' });
+                        store.createIndex('timestamp', 'timestamp', { unique: false });
+                        store.createIndex('date', 'date', { unique: false });
+                    }
+                };
+            });
+        }
+
+        async function savePhoto(photo) {
+            return new Promise((resolve, reject) => {
+                const tx = db.transaction(STORE_NAME, 'readwrite');
+                const store = tx.objectStore(STORE_NAME);
+                const request = store.add(photo);
+                request.onsuccess = () => resolve(photo);
+                request.onerror = () => reject(request.error);
+            });
+        }
+
+        async function deletePhotoById(id) {
+            return new Promise((resolve, reject) => {
+                const tx = db.transaction(STORE_NAME, 'readwrite');
+                const store = tx.objectStore(STORE_NAME);
+                const request = store.delete(id);
+                request.onsuccess = () => resolve();
+                request.onerror = () => reject(request.error);
+            });
+        }
+
+        async function getPhotosByDate(dateStr) {
+            return new Promise((resolve, reject) => {
+                const tx = db.transaction(STORE_NAME, 'readonly');
+                const store = tx.objectStore(STORE_NAME);
+                const index = store.index('date');
+                const request = index.getAll(dateStr);
+                request.onsuccess = () => {
+                    const photos = request.result.sort((a, b) =>
+                        new Date(b.timestamp) - new Date(a.timestamp)
+                    );
+                    resolve(photos);
+                };
+                request.onerror = () => reject(request.error);
+            });
+        }
+
+        async function getAllPhotos() {
+            return new Promise((resolve, reject) => {
+                const tx = db.transaction(STORE_NAME, 'readonly');
+                const store = tx.objectStore(STORE_NAME);
+                const request = store.getAll();
+                request.onsuccess = () => {
+                    const photos = request.result.sort((a, b) =>
+                        new Date(b.timestamp) - new Date(a.timestamp)
+                    );
+                    resolve(photos);
+                };
+                request.onerror = () => reject(request.error);
+            });
+        }
+
+        async function getUniqueDates() {
+            const photos = await getAllPhotos();
+            const dates = [...new Set(photos.map(p => p.date))];
+            return dates.sort((a, b) => new Date(b) - new Date(a));
+        }
+
+        async function getMostRecentPhoto() {
+            const photos = await getAllPhotos();
+            return photos[0] || null;
+        }
+
+        // ========== Geolocation ==========
+        let currentLocation = null;
+        let watchId = null;
+
+        function startLocationWatch() {
+            if (!navigator.geolocation) {
+                updateLocationStatus(false, 'Not supported');
+                return;
+            }
+
+            watchId = navigator.geolocation.watchPosition(
+                (position) => {
+                    currentLocation = {
+                        lat: position.coords.latitude,
+                        lng: position.coords.longitude,
+                        accuracy: position.coords.accuracy
+                    };
+                    updateLocationStatus(true, 'Location on');
+                },
+                (error) => {
+                    currentLocation = null;
+                    if (error.code === error.PERMISSION_DENIED) {
+                        updateLocationStatus(false, 'Location denied');
+                    } else {
+                        updateLocationStatus(false, 'Location unavailable');
+                    }
+                },
+                { enableHighAccuracy: true, maximumAge: 30000 }
+            );
+        }
+
+        function updateLocationStatus(active, text) {
+            document.getElementById('location-dot').classList.toggle('active', active);
+            document.getElementById('location-text').textContent = text;
+        }
+
+        // ========== State ==========
+        let currentDate = new Date().toISOString().split('T')[0];
+        let currentPhotos = [];
         let currentViewingIndex = -1;
+        let map = null;
+        let markers = [];
 
-        // Elements
-        const video = document.getElementById('video');
-        const canvas = document.getElementById('canvas');
-        const captureBtn = document.getElementById('capture-btn');
-        const switchBtn = document.getElementById('switch-btn');
-        const galleryBtn = document.getElementById('gallery-btn');
-        const flash = document.getElementById('flash');
-        const errorMessage = document.getElementById('error-message');
-        const errorText = document.getElementById('error-text');
-
+        // ========== Elements ==========
         const cameraView = document.getElementById('camera-view');
-        const galleryView = document.getElementById('gallery-view');
+        const browseView = document.getElementById('browse-view');
+        const cameraInput = document.getElementById('camera-input');
+        const galleryBtn = document.getElementById('gallery-btn');
+        const mapBtn = document.getElementById('map-btn');
+        const backBtn = document.getElementById('back-btn');
         const galleryGrid = document.getElementById('gallery-grid');
         const emptyGallery = document.getElementById('empty-gallery');
-        const photoCount = document.getElementById('photo-count');
-        const backBtn = document.getElementById('back-btn');
-
+        const emptyMap = document.getElementById('empty-map');
+        const dateDisplay = document.getElementById('date-display');
+        const prevDayBtn = document.getElementById('prev-day');
+        const nextDayBtn = document.getElementById('next-day');
         const photoViewer = document.getElementById('photo-viewer');
         const viewerImage = document.getElementById('viewer-image');
         const viewerDate = document.getElementById('viewer-date');
+        const viewerLocation = document.getElementById('viewer-location');
         const closeViewer = document.getElementById('close-viewer');
-        const deletePhoto = document.getElementById('delete-photo');
+        const deletePhotoBtn = document.getElementById('delete-photo');
+        const loading = document.getElementById('loading');
+        const galleryTab = document.getElementById('gallery-tab');
+        const mapTab = document.getElementById('map-tab');
+        const tabButtons = document.querySelectorAll('.tab-btn');
 
-        // Load photos from localStorage
-        function loadPhotos() {
+        // ========== Photo Capture ==========
+        cameraInput.addEventListener('change', async (e) => {
+            const file = e.target.files[0];
+            if (!file) return;
+
+            loading.classList.add('active');
+
             try {
-                const stored = localStorage.getItem('camera-photos');
-                if (stored) {
-                    photos = JSON.parse(stored);
-                }
-            } catch (e) {
-                console.error('Failed to load photos:', e);
-                photos = [];
-            }
-            updateGalleryBtn();
-        }
+                const reader = new FileReader();
+                reader.onload = async (event) => {
+                    const dataUrl = event.target.result;
+                    const now = new Date();
 
-        // Save photos to localStorage
-        function savePhotos() {
-            try {
-                localStorage.setItem('camera-photos', JSON.stringify(photos));
-            } catch (e) {
-                console.error('Failed to save photos:', e);
-                if (e.name === 'QuotaExceededError') {
-                    alert('Storage is full. Please delete some photos.');
-                }
-            }
-        }
+                    const photo = {
+                        id: Date.now(),
+                        data: dataUrl,
+                        timestamp: now.toISOString(),
+                        date: now.toISOString().split('T')[0],
+                        lat: currentLocation?.lat || null,
+                        lng: currentLocation?.lng || null
+                    };
 
-        // Initialize camera
-        async function initCamera() {
-            try {
-                if (currentStream) {
-                    currentStream.getTracks().forEach(track => track.stop());
-                }
-
-                const constraints = {
-                    video: {
-                        facingMode: facingMode,
-                        width: { ideal: 1920 },
-                        height: { ideal: 1080 }
-                    },
-                    audio: false
+                    await savePhoto(photo);
+                    await updateGalleryBtn();
+                    loading.classList.remove('active');
                 };
-
-                currentStream = await navigator.mediaDevices.getUserMedia(constraints);
-                video.srcObject = currentStream;
-                video.style.display = 'block';
-                errorMessage.style.display = 'none';
-                captureBtn.disabled = false;
+                reader.readAsDataURL(file);
             } catch (err) {
-                console.error('Camera error:', err);
-                video.style.display = 'none';
-                errorMessage.style.display = 'block';
-                captureBtn.disabled = true;
-
-                if (err.name === 'NotAllowedError') {
-                    errorText.textContent = 'Camera access denied. Please enable camera permissions.';
-                } else if (err.name === 'NotFoundError') {
-                    errorText.textContent = 'No camera found on this device.';
-                } else {
-                    errorText.textContent = 'Could not access camera.';
-                }
+                console.error('Failed to save photo:', err);
+                loading.classList.remove('active');
+                alert('Failed to save photo');
             }
-        }
 
-        // Capture photo
-        function capturePhoto() {
-            if (!currentStream) return;
+            // Reset input so same file can be selected again
+            e.target.value = '';
+        });
 
-            const track = currentStream.getVideoTracks()[0];
-            const settings = track.getSettings();
-
-            canvas.width = settings.width || video.videoWidth;
-            canvas.height = settings.height || video.videoHeight;
-
-            const ctx = canvas.getContext('2d');
-            ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-
-            // Flash effect
-            flash.classList.add('flash');
-            setTimeout(() => flash.classList.remove('flash'), 150);
-
-            // Get image data
-            const imageData = canvas.toDataURL('image/jpeg', 0.8);
-
-            // Save photo
-            const photo = {
-                id: Date.now(),
-                data: imageData,
-                timestamp: new Date().toISOString()
-            };
-
-            photos.unshift(photo);
-            savePhotos();
-            updateGalleryBtn();
-        }
-
-        // Switch camera
-        async function switchCamera() {
-            facingMode = facingMode === 'environment' ? 'user' : 'environment';
-            await initCamera();
-        }
-
-        // Update gallery button thumbnail
-        function updateGalleryBtn() {
-            if (photos.length > 0) {
-                galleryBtn.innerHTML = `<img src="${photos[0].data}" alt="Last photo">`;
+        // ========== Gallery Button Thumbnail ==========
+        async function updateGalleryBtn() {
+            const photo = await getMostRecentPhoto();
+            if (photo) {
+                galleryBtn.innerHTML = `<img src="${photo.data}" alt="Last photo">`;
             } else {
                 galleryBtn.innerHTML = `
                     <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -539,24 +767,101 @@
             }
         }
 
-        // Show gallery
-        function showGallery() {
+        // ========== Navigation ==========
+        function showBrowseView(tab = 'gallery') {
             cameraView.classList.add('hidden');
-            galleryView.classList.add('active');
-            renderGallery();
+            browseView.classList.add('active');
+
+            // Set active tab
+            tabButtons.forEach(btn => btn.classList.toggle('active', btn.dataset.tab === tab));
+            galleryTab.classList.toggle('active', tab === 'gallery');
+            mapTab.classList.toggle('active', tab === 'map');
+
+            loadCurrentDate();
+
+            if (tab === 'map') {
+                setTimeout(initMap, 100);
+            }
         }
 
-        // Hide gallery
-        function hideGallery() {
-            galleryView.classList.remove('active');
+        function hideBrowseView() {
+            browseView.classList.remove('active');
             cameraView.classList.remove('hidden');
         }
 
-        // Render gallery
-        function renderGallery() {
-            photoCount.textContent = photos.length > 0 ? `${photos.length}` : '';
+        galleryBtn.addEventListener('click', () => showBrowseView('gallery'));
+        mapBtn.addEventListener('click', () => showBrowseView('map'));
+        backBtn.addEventListener('click', hideBrowseView);
 
-            if (photos.length === 0) {
+        // ========== Tab Switching ==========
+        tabButtons.forEach(btn => {
+            btn.addEventListener('click', () => {
+                const tab = btn.dataset.tab;
+                tabButtons.forEach(b => b.classList.toggle('active', b === btn));
+                galleryTab.classList.toggle('active', tab === 'gallery');
+                mapTab.classList.toggle('active', tab === 'map');
+
+                if (tab === 'map') {
+                    setTimeout(() => {
+                        initMap();
+                        updateMap();
+                    }, 100);
+                }
+            });
+        });
+
+        // ========== Date Navigation ==========
+        function formatDateDisplay(dateStr) {
+            const date = new Date(dateStr + 'T12:00:00');
+            const today = new Date();
+            const yesterday = new Date(today);
+            yesterday.setDate(yesterday.getDate() - 1);
+
+            if (dateStr === today.toISOString().split('T')[0]) {
+                return 'Today';
+            } else if (dateStr === yesterday.toISOString().split('T')[0]) {
+                return 'Yesterday';
+            } else {
+                return date.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+            }
+        }
+
+        async function loadCurrentDate() {
+            dateDisplay.textContent = formatDateDisplay(currentDate);
+            currentPhotos = await getPhotosByDate(currentDate);
+
+            const dates = await getUniqueDates();
+            const currentIndex = dates.indexOf(currentDate);
+            prevDayBtn.disabled = currentIndex >= dates.length - 1;
+            nextDayBtn.disabled = currentIndex <= 0 || currentDate >= new Date().toISOString().split('T')[0];
+
+            renderGallery();
+            if (mapTab.classList.contains('active')) {
+                updateMap();
+            }
+        }
+
+        prevDayBtn.addEventListener('click', async () => {
+            const dates = await getUniqueDates();
+            const currentIndex = dates.indexOf(currentDate);
+            if (currentIndex < dates.length - 1) {
+                currentDate = dates[currentIndex + 1];
+                loadCurrentDate();
+            }
+        });
+
+        nextDayBtn.addEventListener('click', async () => {
+            const dates = await getUniqueDates();
+            const currentIndex = dates.indexOf(currentDate);
+            if (currentIndex > 0) {
+                currentDate = dates[currentIndex - 1];
+                loadCurrentDate();
+            }
+        });
+
+        // ========== Gallery Rendering ==========
+        function renderGallery() {
+            if (currentPhotos.length === 0) {
                 galleryGrid.style.display = 'none';
                 emptyGallery.style.display = 'flex';
                 return;
@@ -565,25 +870,97 @@
             galleryGrid.style.display = 'grid';
             emptyGallery.style.display = 'none';
 
-            galleryGrid.innerHTML = photos.map((photo, index) => `
+            galleryGrid.innerHTML = currentPhotos.map((photo, index) => `
                 <div class="gallery-item" data-index="${index}">
                     <img src="${photo.data}" alt="Photo ${index + 1}">
+                    ${photo.lat ? '<span class="location-badge">📍</span>' : ''}
                 </div>
             `).join('');
 
-            // Add click handlers
             galleryGrid.querySelectorAll('.gallery-item').forEach(item => {
                 item.addEventListener('click', () => {
-                    const index = parseInt(item.dataset.index);
-                    openPhotoViewer(index);
+                    openPhotoViewer(parseInt(item.dataset.index));
                 });
             });
         }
 
-        // Open photo viewer
+        // ========== Map ==========
+        function initMap() {
+            if (map) {
+                map.invalidateSize();
+                return;
+            }
+
+            map = L.map('map', {
+                zoomControl: true,
+                attributionControl: false
+            }).setView([0, 0], 2);
+
+            L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+                maxZoom: 19
+            }).addTo(map);
+        }
+
+        function updateMap() {
+            if (!map) return;
+
+            // Clear existing markers
+            markers.forEach(m => map.removeLayer(m));
+            markers = [];
+
+            const photosWithLocation = currentPhotos.filter(p => p.lat && p.lng);
+
+            if (photosWithLocation.length === 0) {
+                document.getElementById('map').style.display = 'none';
+                emptyMap.style.display = 'flex';
+                return;
+            }
+
+            document.getElementById('map').style.display = 'block';
+            emptyMap.style.display = 'none';
+
+            const bounds = L.latLngBounds();
+
+            photosWithLocation.forEach((photo, idx) => {
+                const marker = L.marker([photo.lat, photo.lng]).addTo(map);
+
+                const time = new Date(photo.timestamp).toLocaleTimeString(undefined, {
+                    hour: 'numeric',
+                    minute: '2-digit'
+                });
+
+                const popupContent = `
+                    <img src="${photo.data}" class="map-popup-img" data-index="${currentPhotos.indexOf(photo)}">
+                    <div class="map-popup-time">${time}</div>
+                `;
+
+                marker.bindPopup(popupContent, { minWidth: 150, maxWidth: 150 });
+
+                marker.on('popupopen', () => {
+                    const img = document.querySelector('.map-popup-img');
+                    if (img) {
+                        img.addEventListener('click', () => {
+                            openPhotoViewer(parseInt(img.dataset.index));
+                        });
+                    }
+                });
+
+                markers.push(marker);
+                bounds.extend([photo.lat, photo.lng]);
+            });
+
+            // Fit map to show all markers
+            if (photosWithLocation.length === 1) {
+                map.setView([photosWithLocation[0].lat, photosWithLocation[0].lng], 15);
+            } else {
+                map.fitBounds(bounds, { padding: [30, 30] });
+            }
+        }
+
+        // ========== Photo Viewer ==========
         function openPhotoViewer(index) {
             currentViewingIndex = index;
-            const photo = photos[index];
+            const photo = currentPhotos[index];
             viewerImage.src = photo.data;
 
             const date = new Date(photo.timestamp);
@@ -595,37 +972,35 @@
                 minute: '2-digit'
             });
 
+            if (photo.lat && photo.lng) {
+                viewerLocation.textContent = `📍 ${photo.lat.toFixed(4)}, ${photo.lng.toFixed(4)}`;
+            } else {
+                viewerLocation.textContent = '';
+            }
+
             photoViewer.classList.add('active');
         }
 
-        // Close photo viewer
         function closePhotoViewer() {
             photoViewer.classList.remove('active');
             currentViewingIndex = -1;
         }
 
-        // Delete current photo
-        function deleteCurrentPhoto() {
+        closeViewer.addEventListener('click', closePhotoViewer);
+
+        deletePhotoBtn.addEventListener('click', async () => {
             if (currentViewingIndex < 0) return;
 
             if (confirm('Delete this photo?')) {
-                photos.splice(currentViewingIndex, 1);
-                savePhotos();
+                const photo = currentPhotos[currentViewingIndex];
+                await deletePhotoById(photo.id);
                 closePhotoViewer();
-                renderGallery();
-                updateGalleryBtn();
+                await loadCurrentDate();
+                await updateGalleryBtn();
             }
-        }
+        });
 
-        // Event listeners
-        captureBtn.addEventListener('click', capturePhoto);
-        switchBtn.addEventListener('click', switchCamera);
-        galleryBtn.addEventListener('click', showGallery);
-        backBtn.addEventListener('click', hideGallery);
-        closeViewer.addEventListener('click', closePhotoViewer);
-        deletePhoto.addEventListener('click', deleteCurrentPhoto);
-
-        // Swipe to go back in viewer
+        // Swipe navigation in viewer
         let touchStartX = 0;
         photoViewer.addEventListener('touchstart', (e) => {
             touchStartX = e.touches[0].clientX;
@@ -635,29 +1010,47 @@
             const touchEndX = e.changedTouches[0].clientX;
             const diff = touchEndX - touchStartX;
 
-            if (diff > 100) {
-                // Swipe right - previous photo
-                if (currentViewingIndex > 0) {
-                    openPhotoViewer(currentViewingIndex - 1);
-                }
-            } else if (diff < -100) {
-                // Swipe left - next photo
-                if (currentViewingIndex < photos.length - 1) {
-                    openPhotoViewer(currentViewingIndex + 1);
-                }
+            if (diff > 100 && currentViewingIndex > 0) {
+                openPhotoViewer(currentViewingIndex - 1);
+            } else if (diff < -100 && currentViewingIndex < currentPhotos.length - 1) {
+                openPhotoViewer(currentViewingIndex + 1);
             }
         });
 
-        // Initialize
-        loadPhotos();
-        initCamera();
-
-        // Handle visibility change
-        document.addEventListener('visibilitychange', () => {
-            if (document.visibilityState === 'visible' && !galleryView.classList.contains('active')) {
-                initCamera();
+        // ========== Migrate from localStorage ==========
+        async function migrateFromLocalStorage() {
+            try {
+                const stored = localStorage.getItem('camera-photos');
+                if (stored) {
+                    const oldPhotos = JSON.parse(stored);
+                    for (const photo of oldPhotos) {
+                        const date = new Date(photo.timestamp);
+                        await savePhoto({
+                            id: photo.id,
+                            data: photo.data,
+                            timestamp: photo.timestamp,
+                            date: date.toISOString().split('T')[0],
+                            lat: null,
+                            lng: null
+                        });
+                    }
+                    localStorage.removeItem('camera-photos');
+                    console.log(`Migrated ${oldPhotos.length} photos from localStorage`);
+                }
+            } catch (e) {
+                console.error('Migration failed:', e);
             }
-        });
+        }
+
+        // ========== Initialize ==========
+        async function init() {
+            await openDB();
+            await migrateFromLocalStorage();
+            await updateGalleryBtn();
+            startLocationWatch();
+        }
+
+        init();
     </script>
 </body>
 </html>
