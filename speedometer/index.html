@@ -1,0 +1,533 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>Speedometer</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: #111;
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            color: #fff;
+            overflow: hidden;
+        }
+
+        .speedometer {
+            position: relative;
+            width: 320px;
+            height: 320px;
+        }
+
+        .gauge {
+            width: 100%;
+            height: 100%;
+        }
+
+        .speed-display {
+            position: absolute;
+            top: 65%;
+            left: 50%;
+            transform: translateX(-50%);
+            text-align: center;
+        }
+
+        .speed-value {
+            font-size: 48px;
+            font-weight: 300;
+            font-family: 'Helvetica Neue', sans-serif;
+        }
+
+        .unit-toggle {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            margin-top: 8px;
+        }
+
+        .unit-label {
+            font-size: 14px;
+            color: #555;
+            transition: color 0.2s;
+        }
+
+        .unit-label.active {
+            color: #fff;
+        }
+
+        .toggle-switch {
+            width: 44px;
+            height: 24px;
+            background: #333;
+            border-radius: 12px;
+            cursor: pointer;
+            position: relative;
+            transition: background 0.2s;
+        }
+
+        .toggle-switch::after {
+            content: '';
+            position: absolute;
+            top: 3px;
+            left: 3px;
+            width: 18px;
+            height: 18px;
+            background: #2ecc71;
+            border-radius: 50%;
+            transition: transform 0.2s;
+        }
+
+        .toggle-switch.imperial::after {
+            transform: translateX(20px);
+        }
+
+        .odometer-container {
+            margin-top: 40px;
+            background: #222;
+            border-radius: 8px;
+            padding: 15px 20px;
+            display: flex;
+            align-items: center;
+            gap: 15px;
+        }
+
+        .odometer-label {
+            font-size: 12px;
+            color: #666;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+
+        .odometer {
+            display: flex;
+            gap: 2px;
+        }
+
+        .odometer-digit {
+            width: 24px;
+            height: 36px;
+            background: #000;
+            border-radius: 4px;
+            overflow: hidden;
+            position: relative;
+        }
+
+        .odometer-digit-inner {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            transition: transform 0.3s ease-out;
+        }
+
+        .odometer-digit-num {
+            width: 100%;
+            height: 36px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-family: 'Courier New', monospace;
+            font-size: 20px;
+            font-weight: bold;
+            color: #fff;
+        }
+
+        .odometer-decimal {
+            width: 8px;
+            font-size: 24px;
+            color: #fff;
+            display: flex;
+            align-items: flex-end;
+            padding-bottom: 4px;
+        }
+
+        .odometer-unit {
+            font-size: 14px;
+            color: #888;
+        }
+
+        .start-btn {
+            margin-top: 30px;
+            padding: 12px 32px;
+            background: #2ecc71;
+            color: #fff;
+            border: none;
+            border-radius: 8px;
+            font-size: 16px;
+            cursor: pointer;
+            transition: background 0.2s;
+        }
+
+        .start-btn:hover {
+            background: #27ae60;
+        }
+
+        .start-btn.active {
+            background: #e74c3c;
+        }
+
+        .start-btn.active:hover {
+            background: #c0392b;
+        }
+
+        .error {
+            margin-top: 20px;
+            padding: 15px 20px;
+            background: rgba(231, 76, 60, 0.2);
+            border: 1px solid #e74c3c;
+            border-radius: 8px;
+            color: #e74c3c;
+            font-size: 14px;
+            max-width: 300px;
+            text-align: center;
+        }
+
+        .reset-btn {
+            margin-top: 15px;
+            padding: 8px 20px;
+            background: transparent;
+            color: #666;
+            border: 1px solid #444;
+            border-radius: 6px;
+            font-size: 12px;
+            cursor: pointer;
+        }
+
+        .reset-btn:hover {
+            border-color: #888;
+            color: #888;
+        }
+    </style>
+</head>
+<body>
+    <div class="speedometer">
+        <canvas class="gauge" id="gauge" width="320" height="320"></canvas>
+        <div class="speed-display">
+            <div class="speed-value" id="speed-value">0</div>
+            <div class="unit-toggle">
+                <span class="unit-label active" id="label-km">km/h</span>
+                <div class="toggle-switch" id="unit-toggle" onclick="toggleUnit()"></div>
+                <span class="unit-label" id="label-mi">mph</span>
+            </div>
+        </div>
+    </div>
+
+    <div class="odometer-container">
+        <div class="odometer-label">Trip</div>
+        <div class="odometer" id="odometer"></div>
+        <div class="odometer-unit" id="odometer-unit">km</div>
+    </div>
+
+    <button class="start-btn" id="start-btn" onclick="toggleTracking()">Start</button>
+    <button class="reset-btn" id="reset-btn" onclick="resetOdometer()">Reset Trip</button>
+
+    <div class="error" id="error" style="display: none;"></div>
+
+    <script>
+        const canvas = document.getElementById('gauge');
+        const ctx = canvas.getContext('2d');
+        const speedValueEl = document.getElementById('speed-value');
+        const unitToggleEl = document.getElementById('unit-toggle');
+        const labelKm = document.getElementById('label-km');
+        const labelMi = document.getElementById('label-mi');
+        const odometerEl = document.getElementById('odometer');
+        const odometerUnitEl = document.getElementById('odometer-unit');
+        const startBtn = document.getElementById('start-btn');
+        const errorEl = document.getElementById('error');
+
+        let unit = 'km/h';
+        let speed = 0; // Current speed in m/s
+        let distance = 0; // Total distance in meters
+        let tracking = false;
+        let watchId = null;
+        let lastPosition = null;
+        let lastTime = null;
+
+        const maxSpeed = unit === 'km/h' ? 200 : 120; // Max display speed
+
+        function getMaxSpeed() {
+            return unit === 'km/h' ? 200 : 120;
+        }
+
+        function drawGauge(currentSpeed) {
+            const cx = canvas.width / 2;
+            const cy = canvas.height / 2;
+            const radius = 140;
+            const max = getMaxSpeed();
+
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+            // Draw outer ring
+            ctx.beginPath();
+            ctx.arc(cx, cy, radius + 10, 0, Math.PI * 2);
+            ctx.strokeStyle = '#333';
+            ctx.lineWidth = 2;
+            ctx.stroke();
+
+            // Draw tick marks and numbers
+            const startAngle = Math.PI * 0.75;
+            const endAngle = Math.PI * 2.25;
+            const angleRange = endAngle - startAngle;
+
+            for (let i = 0; i <= max; i += 10) {
+                const angle = startAngle + (i / max) * angleRange;
+                const isMajor = i % 20 === 0;
+                const innerR = isMajor ? radius - 20 : radius - 12;
+                const outerR = radius - 4;
+
+                const x1 = cx + Math.cos(angle) * innerR;
+                const y1 = cy + Math.sin(angle) * innerR;
+                const x2 = cx + Math.cos(angle) * outerR;
+                const y2 = cy + Math.sin(angle) * outerR;
+
+                ctx.beginPath();
+                ctx.moveTo(x1, y1);
+                ctx.lineTo(x2, y2);
+                ctx.strokeStyle = i <= currentSpeed ? '#2ecc71' : '#555';
+                ctx.lineWidth = isMajor ? 3 : 1;
+                ctx.stroke();
+
+                if (isMajor) {
+                    const textR = radius - 35;
+                    const textX = cx + Math.cos(angle) * textR;
+                    const textY = cy + Math.sin(angle) * textR;
+                    ctx.font = '12px sans-serif';
+                    ctx.fillStyle = '#888';
+                    ctx.textAlign = 'center';
+                    ctx.textBaseline = 'middle';
+                    ctx.fillText(i.toString(), textX, textY);
+                }
+            }
+
+            // Draw needle
+            const speedClamped = Math.min(currentSpeed, max);
+            const needleAngle = startAngle + (speedClamped / max) * angleRange;
+            const needleLength = radius - 45;
+
+            ctx.save();
+            ctx.translate(cx, cy);
+            ctx.rotate(needleAngle);
+
+            // Needle shadow
+            ctx.beginPath();
+            ctx.moveTo(0, 0);
+            ctx.lineTo(needleLength, 0);
+            ctx.strokeStyle = 'rgba(231, 76, 60, 0.3)';
+            ctx.lineWidth = 6;
+            ctx.stroke();
+
+            // Needle
+            ctx.beginPath();
+            ctx.moveTo(-10, 0);
+            ctx.lineTo(needleLength, 0);
+            ctx.strokeStyle = '#e74c3c';
+            ctx.lineWidth = 3;
+            ctx.lineCap = 'round';
+            ctx.stroke();
+
+            ctx.restore();
+
+            // Center cap
+            ctx.beginPath();
+            ctx.arc(cx, cy, 12, 0, Math.PI * 2);
+            ctx.fillStyle = '#e74c3c';
+            ctx.fill();
+
+            ctx.beginPath();
+            ctx.arc(cx, cy, 6, 0, Math.PI * 2);
+            ctx.fillStyle = '#111';
+            ctx.fill();
+        }
+
+        function initOdometer() {
+            odometerEl.innerHTML = '';
+            // 5 digits + 1 decimal
+            for (let i = 0; i < 5; i++) {
+                const digit = document.createElement('div');
+                digit.className = 'odometer-digit';
+                const inner = document.createElement('div');
+                inner.className = 'odometer-digit-inner';
+                for (let n = 0; n <= 9; n++) {
+                    const num = document.createElement('div');
+                    num.className = 'odometer-digit-num';
+                    num.textContent = n;
+                    inner.appendChild(num);
+                }
+                digit.appendChild(inner);
+                odometerEl.appendChild(digit);
+            }
+
+            // Decimal point
+            const decimal = document.createElement('div');
+            decimal.className = 'odometer-decimal';
+            decimal.textContent = '.';
+            odometerEl.appendChild(decimal);
+
+            // Decimal digit
+            const decDigit = document.createElement('div');
+            decDigit.className = 'odometer-digit';
+            const decInner = document.createElement('div');
+            decInner.className = 'odometer-digit-inner';
+            for (let n = 0; n <= 9; n++) {
+                const num = document.createElement('div');
+                num.className = 'odometer-digit-num';
+                num.textContent = n;
+                decInner.appendChild(num);
+            }
+            decDigit.appendChild(decInner);
+            odometerEl.appendChild(decDigit);
+        }
+
+        function updateOdometer() {
+            const distanceDisplay = unit === 'km/h' ? distance / 1000 : distance / 1609.34;
+            const digits = odometerEl.querySelectorAll('.odometer-digit-inner');
+            const numStr = Math.floor(distanceDisplay * 10).toString().padStart(6, '0');
+
+            digits.forEach((inner, i) => {
+                const val = parseInt(numStr[i]);
+                inner.style.transform = `translateY(${-val * 36}px)`;
+            });
+        }
+
+        function updateDisplay() {
+            let displaySpeed;
+            if (unit === 'km/h') {
+                displaySpeed = speed * 3.6; // m/s to km/h
+                odometerUnitEl.textContent = 'km';
+                labelKm.classList.add('active');
+                labelMi.classList.remove('active');
+                unitToggleEl.classList.remove('imperial');
+            } else {
+                displaySpeed = speed * 2.237; // m/s to mph
+                odometerUnitEl.textContent = 'mi';
+                labelKm.classList.remove('active');
+                labelMi.classList.add('active');
+                unitToggleEl.classList.add('imperial');
+            }
+
+            speedValueEl.textContent = Math.round(displaySpeed);
+            drawGauge(displaySpeed);
+            updateOdometer();
+        }
+
+        function toggleUnit() {
+            unit = unit === 'km/h' ? 'mph' : 'km/h';
+            updateDisplay();
+        }
+
+        function handlePosition(position) {
+            errorEl.style.display = 'none';
+
+            const now = Date.now();
+
+            // Use GPS speed if available
+            if (position.coords.speed !== null && position.coords.speed >= 0) {
+                speed = position.coords.speed;
+            }
+
+            // Calculate distance
+            if (lastPosition && lastTime) {
+                const timeDelta = (now - lastTime) / 1000; // seconds
+                if (timeDelta > 0 && timeDelta < 10) {
+                    // Use Haversine formula for distance
+                    const R = 6371000; // Earth's radius in meters
+                    const lat1 = lastPosition.coords.latitude * Math.PI / 180;
+                    const lat2 = position.coords.latitude * Math.PI / 180;
+                    const dLat = (position.coords.latitude - lastPosition.coords.latitude) * Math.PI / 180;
+                    const dLon = (position.coords.longitude - lastPosition.coords.longitude) * Math.PI / 180;
+
+                    const a = Math.sin(dLat/2) * Math.sin(dLat/2) +
+                              Math.cos(lat1) * Math.cos(lat2) *
+                              Math.sin(dLon/2) * Math.sin(dLon/2);
+                    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+                    const d = R * c;
+
+                    // Only add distance if it seems reasonable (filter GPS jitter)
+                    if (d < 100 && d > 0.5) {
+                        distance += d;
+                    }
+                }
+            }
+
+            lastPosition = position;
+            lastTime = now;
+            updateDisplay();
+        }
+
+        function handleError(err) {
+            let msg = 'Unable to get location';
+            if (err.code === 1) {
+                msg = 'Location access denied. Please enable location services.';
+            } else if (err.code === 2) {
+                msg = 'Location unavailable. Make sure GPS is enabled.';
+            } else if (err.code === 3) {
+                msg = 'Location request timed out.';
+            }
+            errorEl.textContent = msg;
+            errorEl.style.display = 'block';
+        }
+
+        function toggleTracking() {
+            if (tracking) {
+                stopTracking();
+            } else {
+                startTracking();
+            }
+        }
+
+        function startTracking() {
+            if (!navigator.geolocation) {
+                errorEl.textContent = 'Geolocation is not supported by your browser';
+                errorEl.style.display = 'block';
+                return;
+            }
+
+            tracking = true;
+            startBtn.textContent = 'Stop';
+            startBtn.classList.add('active');
+
+            watchId = navigator.geolocation.watchPosition(handlePosition, handleError, {
+                enableHighAccuracy: true,
+                maximumAge: 0,
+                timeout: 10000
+            });
+        }
+
+        function stopTracking() {
+            tracking = false;
+            startBtn.textContent = 'Start';
+            startBtn.classList.remove('active');
+
+            if (watchId !== null) {
+                navigator.geolocation.clearWatch(watchId);
+                watchId = null;
+            }
+
+            speed = 0;
+            lastPosition = null;
+            lastTime = null;
+            updateDisplay();
+        }
+
+        function resetOdometer() {
+            distance = 0;
+            updateOdometer();
+        }
+
+        // Initialize
+        initOdometer();
+        drawGauge(0);
+        updateOdometer();
+    </script>
+</body>
+</html>
