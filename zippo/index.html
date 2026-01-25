@@ -45,7 +45,7 @@
             border-radius: 6px 6px 0 0;
             border: 1px solid #999;
             border-bottom: none;
-            transform-origin: 8px 100%;
+            transform-origin: 0 100%;
             transition: transform 0.3s ease-out;
             z-index: 10;
         }
@@ -82,7 +82,7 @@
         }
 
         .chimney-inner {
-            width: 70px;
+            width: 50px;
             height: 45px;
             background: linear-gradient(90deg, #a0a0a0 0%, #c8c8c8 30%, #d8d8d8 50%, #c8c8c8 70%, #a0a0a0 100%);
             border-radius: 4px 4px 0 0;
@@ -113,18 +113,6 @@
             border-top: none;
         }
 
-        .body::after {
-            content: 'ZIPPO';
-            position: absolute;
-            top: 50%;
-            left: 50%;
-            transform: translate(-50%, -50%);
-            font-size: 14px;
-            font-weight: bold;
-            letter-spacing: 3px;
-            color: #777;
-            text-shadow: 1px 1px 0 #fff;
-        }
 
         .flame-container {
             position: absolute;
@@ -211,107 +199,78 @@
         canvas.height = 120 * dpr;
         ctx.scale(dpr, dpr);
 
-        // Flame particles
-        const particles = [];
-        const particleCount = 50;
-
-        class Particle {
-            constructor() {
-                this.reset();
-            }
-
-            reset() {
-                this.x = 40 + (Math.random() - 0.5) * 8;
-                this.y = 110;
-                this.vx = (Math.random() - 0.5) * 0.5;
-                this.vy = -Math.random() * 3 - 2;
-                this.life = 1;
-                this.maxLife = 0.8 + Math.random() * 0.4;
-                this.size = 8 + Math.random() * 12;
-            }
-
-            update() {
-                // Apply tilt
-                this.vx += tiltX * 0.15;
-                this.vy += tiltY * 0.02;
-
-                // Dampen horizontal velocity
-                this.vx *= 0.98;
-
-                this.x += this.vx;
-                this.y += this.vy;
-                this.life -= 0.02 / this.maxLife;
-
-                if (this.life <= 0) {
-                    this.reset();
-                }
-            }
-
-            draw() {
-                const alpha = this.life * 0.8;
-                const size = this.size * this.life;
-
-                // Inner bright core
-                const gradient = ctx.createRadialGradient(
-                    this.x, this.y, 0,
-                    this.x, this.y, size
-                );
-
-                if (this.life > 0.7) {
-                    gradient.addColorStop(0, `rgba(255, 255, 255, ${alpha})`);
-                    gradient.addColorStop(0.2, `rgba(255, 255, 200, ${alpha})`);
-                    gradient.addColorStop(0.4, `rgba(255, 200, 50, ${alpha})`);
-                    gradient.addColorStop(0.7, `rgba(255, 100, 0, ${alpha * 0.8})`);
-                    gradient.addColorStop(1, `rgba(255, 50, 0, 0)`);
-                } else if (this.life > 0.4) {
-                    gradient.addColorStop(0, `rgba(255, 200, 50, ${alpha})`);
-                    gradient.addColorStop(0.3, `rgba(255, 100, 0, ${alpha})`);
-                    gradient.addColorStop(0.7, `rgba(200, 50, 0, ${alpha * 0.6})`);
-                    gradient.addColorStop(1, `rgba(100, 20, 0, 0)`);
-                } else {
-                    gradient.addColorStop(0, `rgba(200, 80, 0, ${alpha})`);
-                    gradient.addColorStop(0.5, `rgba(100, 30, 0, ${alpha * 0.5})`);
-                    gradient.addColorStop(1, `rgba(50, 10, 0, 0)`);
-                }
-
-                ctx.beginPath();
-                ctx.arc(this.x, this.y, size, 0, Math.PI * 2);
-                ctx.fillStyle = gradient;
-                ctx.fill();
-            }
-        }
-
-        // Initialize particles
-        for (let i = 0; i < particleCount; i++) {
-            const p = new Particle();
-            p.life = Math.random();
-            p.y = 110 - Math.random() * 80;
-            particles.push(p);
-        }
+        // Flame animation
+        let flameTime = 0;
 
         function drawFlame() {
             ctx.clearRect(0, 0, 80, 120);
 
             if (!isOpen) return;
 
-            // Sort by life so newer particles are drawn on top
-            particles.sort((a, b) => b.life - a.life);
+            flameTime += 0.1;
 
-            // Draw glow
-            const glowGradient = ctx.createRadialGradient(40 + tiltX * 3, 80, 0, 40 + tiltX * 3, 80, 50);
-            glowGradient.addColorStop(0, 'rgba(255, 150, 50, 0.3)');
-            glowGradient.addColorStop(0.5, 'rgba(255, 100, 0, 0.1)');
-            glowGradient.addColorStop(1, 'rgba(255, 50, 0, 0)');
-            ctx.fillStyle = glowGradient;
-            ctx.fillRect(0, 0, 80, 120);
+            const baseX = 40 + tiltX * 2;
+            const baseY = 120;
+            const flameHeight = 75;
+            const flameWidth = 14;
+            const baseWidth = 12;
 
-            // Update and draw particles
-            ctx.globalCompositeOperation = 'lighter';
-            for (const p of particles) {
-                p.update();
-                p.draw();
-            }
-            ctx.globalCompositeOperation = 'source-over';
+            // Slight wobble
+            const wobble = Math.sin(flameTime * 2) * 2 + tiltX * 3;
+            const wobble2 = Math.sin(flameTime * 3 + 1) * 1.5;
+
+            // Outer flame (orange/yellow) - flat bottom
+            ctx.beginPath();
+            ctx.moveTo(baseX - baseWidth, baseY);
+            ctx.lineTo(baseX + baseWidth, baseY);
+            ctx.bezierCurveTo(
+                baseX + flameWidth + wobble2, baseY - flameHeight * 0.3,
+                baseX + flameWidth * 0.8 + wobble, baseY - flameHeight * 0.7,
+                baseX + wobble * 0.5, baseY - flameHeight
+            );
+            ctx.bezierCurveTo(
+                baseX - flameWidth * 0.8 + wobble, baseY - flameHeight * 0.7,
+                baseX - flameWidth + wobble2, baseY - flameHeight * 0.3,
+                baseX - baseWidth, baseY
+            );
+
+            const outerGradient = ctx.createLinearGradient(baseX, baseY, baseX + wobble * 0.5, baseY - flameHeight);
+            outerGradient.addColorStop(0, 'rgba(80, 120, 200, 0.9)');
+            outerGradient.addColorStop(0.12, 'rgba(255, 100, 0, 1)');
+            outerGradient.addColorStop(0.4, 'rgba(255, 160, 20, 1)');
+            outerGradient.addColorStop(0.7, 'rgba(255, 200, 50, 0.9)');
+            outerGradient.addColorStop(1, 'rgba(255, 220, 100, 0)');
+
+            ctx.fillStyle = outerGradient;
+            ctx.fill();
+
+            // Inner flame (yellow/white core) - flat bottom
+            const innerWidth = flameWidth * 0.5;
+            const innerHeight = flameHeight * 0.55;
+            const innerBaseWidth = baseWidth * 0.6;
+
+            ctx.beginPath();
+            ctx.moveTo(baseX - innerBaseWidth, baseY);
+            ctx.lineTo(baseX + innerBaseWidth, baseY);
+            ctx.bezierCurveTo(
+                baseX + innerWidth + wobble2 * 0.5, baseY - innerHeight * 0.3,
+                baseX + innerWidth * 0.6 + wobble * 0.5, baseY - innerHeight * 0.7,
+                baseX + wobble * 0.3, baseY - innerHeight
+            );
+            ctx.bezierCurveTo(
+                baseX - innerWidth * 0.6 + wobble * 0.5, baseY - innerHeight * 0.7,
+                baseX - innerWidth + wobble2 * 0.5, baseY - innerHeight * 0.3,
+                baseX - innerBaseWidth, baseY
+            );
+
+            const innerGradient = ctx.createLinearGradient(baseX, baseY, baseX + wobble * 0.3, baseY - innerHeight);
+            innerGradient.addColorStop(0, 'rgba(100, 150, 255, 0.8)');
+            innerGradient.addColorStop(0.15, 'rgba(255, 255, 200, 1)');
+            innerGradient.addColorStop(0.5, 'rgba(255, 255, 220, 0.9)');
+            innerGradient.addColorStop(1, 'rgba(255, 255, 255, 0)');
+
+            ctx.fillStyle = innerGradient;
+            ctx.fill();
         }
 
         function animate() {
