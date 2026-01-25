@@ -27,7 +27,7 @@
         .pages-container {
             display: flex;
             width: 200vw;
-            height: calc(100vh - env(safe-area-inset-top));
+            height: calc(100vh - env(safe-area-inset-top) - 60px - env(safe-area-inset-bottom));
             transition: transform 0.3s ease-out;
         }
 
@@ -42,27 +42,44 @@
             position: relative;
         }
 
-        .page-dots {
+        .tab-bar {
             position: fixed;
-            bottom: 20px;
-            left: 50%;
-            transform: translateX(-50%);
+            bottom: 0;
+            left: 0;
+            right: 0;
+            height: 60px;
+            padding-bottom: env(safe-area-inset-bottom);
+            background: #1a1a1a;
+            border-top: 1px solid #333;
             display: flex;
-            gap: 8px;
             z-index: 200;
         }
 
-        .dot {
-            width: 8px;
-            height: 8px;
-            border-radius: 50%;
-            background: rgba(255, 255, 255, 0.3);
-            transition: background 0.3s;
+        .tab {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            gap: 4px;
+            color: #666;
             cursor: pointer;
+            transition: color 0.2s;
         }
 
-        .dot.active {
-            background: #fff;
+        .tab.active {
+            color: #2ecc71;
+        }
+
+        .tab svg {
+            width: 24px;
+            height: 24px;
+        }
+
+        .tab span {
+            font-size: 10px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
         }
 
         .speedometer {
@@ -292,14 +309,27 @@
             align-items: center;
         }
 
-        .map-title {
-            font-size: 18px;
-            font-weight: 500;
+        .map-speed {
+            display: flex;
+            align-items: baseline;
+            gap: 4px;
+        }
+
+        .map-speed-value {
+            font-size: 32px;
+            font-weight: 300;
+        }
+
+        .map-speed-unit {
+            font-size: 14px;
+            color: #888;
         }
 
         .map-stats {
             display: flex;
-            gap: 20px;
+            flex-direction: column;
+            align-items: flex-end;
+            gap: 2px;
             font-size: 12px;
             color: #888;
         }
@@ -378,7 +408,10 @@
         <!-- Page 2: Map -->
         <div class="page map-page" id="map-page">
             <div class="map-header">
-                <div class="map-title">Route</div>
+                <div class="map-speed">
+                    <span class="map-speed-value" id="map-speed-value">0</span>
+                    <span class="map-speed-unit" id="map-speed-unit">km/h</span>
+                </div>
                 <div class="map-stats">
                     <div><span class="map-stat-value" id="map-distance">0.0</span> <span id="map-distance-unit">km</span></div>
                     <div><span class="map-stat-value" id="map-elevation-gain">0</span> <span id="map-elevation-unit">m</span> gain</div>
@@ -397,9 +430,22 @@
         </div>
     </div>
 
-    <div class="page-dots">
-        <div class="dot active" data-page="0"></div>
-        <div class="dot" data-page="1"></div>
+    <div class="tab-bar">
+        <div class="tab active" data-page="0" onclick="switchPage(0)">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <circle cx="12" cy="12" r="10"/>
+                <path d="M12 6v6l4 2"/>
+            </svg>
+            <span>Speed</span>
+        </div>
+        <div class="tab" data-page="1" onclick="switchPage(1)">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <polygon points="1 6 1 22 8 18 16 22 23 18 23 2 16 6 8 2 1 6"/>
+                <line x1="8" y1="2" x2="8" y2="18"/>
+                <line x1="16" y1="6" x2="16" y2="22"/>
+            </svg>
+            <span>Map</span>
+        </div>
     </div>
 
     <script>
@@ -416,8 +462,10 @@
         const errorEl = document.getElementById('error');
         const elevationValueEl = document.getElementById('elevation-value');
         const pagesContainer = document.getElementById('pages-container');
-        const dots = document.querySelectorAll('.dot');
+        const tabs = document.querySelectorAll('.tab');
         const mapEl = document.getElementById('map');
+        const mapSpeedValueEl = document.getElementById('map-speed-value');
+        const mapSpeedUnitEl = document.getElementById('map-speed-unit');
         const mapEmpty = document.getElementById('map-empty');
         const mapDistanceEl = document.getElementById('map-distance');
         const mapDistanceUnitEl = document.getElementById('map-distance-unit');
@@ -443,82 +491,12 @@
         let startMarker = null;
         let endMarker = null;
 
-        // ========== Page Swipe ==========
-        let touchStartX = 0;
-        let touchEndX = 0;
-        let isDragging = false;
-        let startTranslate = 0;
-
-        pagesContainer.addEventListener('touchstart', (e) => {
-            touchStartX = e.touches[0].clientX;
-            touchEndX = touchStartX;
-            isDragging = true;
-            startTranslate = currentPage * -100;
-            pagesContainer.style.transition = 'none';
-        });
-
-        pagesContainer.addEventListener('touchmove', (e) => {
-            if (!isDragging) return;
-            touchEndX = e.touches[0].clientX;
-            const diff = touchEndX - touchStartX;
-            const percent = (diff / window.innerWidth) * 100;
-            pagesContainer.style.transform = `translateX(${startTranslate + percent}vw)`;
-        });
-
-        pagesContainer.addEventListener('touchend', () => {
-            isDragging = false;
-            pagesContainer.style.transition = 'transform 0.3s ease-out';
-
-            const diff = touchEndX - touchStartX;
-            const threshold = window.innerWidth * 0.2;
-
-            if (diff < -threshold && currentPage < 1) {
-                currentPage++;
-            } else if (diff > threshold && currentPage > 0) {
-                currentPage--;
-            }
-
-            updatePage();
-            touchStartX = 0;
-            touchEndX = 0;
-        });
-
-        // Click on dots
-        dots.forEach(dot => {
-            dot.addEventListener('click', () => {
-                currentPage = parseInt(dot.dataset.page);
-                updatePage();
-            });
-        });
-
-        // Horizontal scroll wheel
-        let wheelAccumulator = 0;
-        let wheelTimeout = null;
-        pagesContainer.addEventListener('wheel', (e) => {
-            e.preventDefault();
-
-            wheelAccumulator += e.deltaX;
-
-            if (wheelTimeout) clearTimeout(wheelTimeout);
-            wheelTimeout = setTimeout(() => {
-                wheelAccumulator = 0;
-            }, 150);
-
-            if (wheelAccumulator > 30 && currentPage < 1) {
-                currentPage++;
-                updatePage();
-                wheelAccumulator = 0;
-            } else if (wheelAccumulator < -30 && currentPage > 0) {
-                currentPage--;
-                updatePage();
-                wheelAccumulator = 0;
-            }
-        }, { passive: false });
-
-        function updatePage() {
+        // ========== Tab Navigation ==========
+        function switchPage(page) {
+            currentPage = page;
             pagesContainer.style.transform = `translateX(${currentPage * -100}vw)`;
-            dots.forEach((dot, i) => {
-                dot.classList.toggle('active', i === currentPage);
+            tabs.forEach((tab, i) => {
+                tab.classList.toggle('active', i === currentPage);
             });
 
             // Initialize/update map when switching to map page
@@ -965,6 +943,11 @@
         }
 
         function updateMapStats() {
+            // Speed
+            const speedDisplay = unit === 'km/h' ? speed * 3.6 : speed * 2.237;
+            mapSpeedValueEl.textContent = Math.round(speedDisplay);
+            mapSpeedUnitEl.textContent = unit;
+
             // Distance
             const distDisplay = unit === 'km/h' ? distance / 1000 : distance / 1609.34;
             mapDistanceEl.textContent = distDisplay.toFixed(1);
