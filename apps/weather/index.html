@@ -208,6 +208,13 @@
             opacity: 0.6;
         }
 
+        .forecast-rain {
+            font-size: 13px;
+            color: #87CEEB;
+            width: 55px;
+            text-align: right;
+        }
+
         .loading {
             display: flex;
             flex-direction: column;
@@ -460,7 +467,7 @@
 
         // Fetch weather data
         async function fetchWeather(lat, lon) {
-            const url = `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&current=temperature_2m,relative_humidity_2m,apparent_temperature,weather_code,wind_speed_10m,wind_direction_10m,pressure_msl,uv_index&hourly=temperature_2m,weather_code&daily=weather_code,temperature_2m_max,temperature_2m_min,sunrise,sunset,precipitation_probability_max&timezone=auto`;
+            const url = `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&current=temperature_2m,relative_humidity_2m,apparent_temperature,weather_code,wind_speed_10m,wind_direction_10m,pressure_msl,uv_index&hourly=temperature_2m,weather_code&daily=weather_code,temperature_2m_max,temperature_2m_min,sunrise,sunset,precipitation_probability_max,precipitation_sum&timezone=auto`;
 
             const response = await fetch(url);
             if (!response.ok) throw new Error('Weather data unavailable');
@@ -580,10 +587,13 @@
                             const dayInfo = getWeatherInfo(daily.weather_code[i]);
                             const high = formatTemp(daily.temperature_2m_max[i], false);
                             const low = formatTemp(daily.temperature_2m_min[i], false);
+                            const precip = daily.precipitation_sum[i];
+                            const precipDisplay = precip > 0 ? `${precip.toFixed(1)} mm` : '—';
                             return `
                                 <div class="forecast-day">
                                     <div class="forecast-day-name">${getDayName(date)}</div>
                                     <div class="forecast-icon">${dayInfo.icon}</div>
+                                    <div class="forecast-rain">💧 ${precipDisplay}</div>
                                     <div class="forecast-temps">
                                         <span class="forecast-high">${high.c} / ${high.f}</span>
                                         <span class="forecast-low">${low.c} / ${low.f}</span>
