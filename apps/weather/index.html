@@ -35,17 +35,6 @@
             overflow-y: auto;
         }
 
-        /* Fixed background layer that extends behind iOS status bar */
-        #bg-layer {
-            position: fixed;
-            top: 0;
-            left: 0;
-            right: 0;
-            bottom: 0;
-            background: var(--bg-gradient);
-            z-index: -1;
-        }
-
         .container {
             max-width: 500px;
             margin: 0 auto;
@@ -356,7 +345,6 @@
     </style>
 </head>
 <body>
-    <div id="bg-layer"></div>
     <button class="refresh-button" id="refresh-btn" title="Refresh">&#x21bb;</button>
 
     <div class="container" id="app">
