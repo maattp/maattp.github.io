@@ -47,11 +47,11 @@
             bottom: 0;
             width: 150px;
             height: 87px;
-            background: linear-gradient(90deg, #c0c0c0 0%, #d8d8d8 20%, #e8e8e8 40%, #f0f0f0 50%, #e8e8e8 60%, #d0d0d0 80%, #b0b0b0 100%);
+            background: linear-gradient(90deg, #a01010 0%, #b81818 30%, #c41c1c 50%, #b81818 70%, #a01010 100%);
             border-radius: 9px 9px 0 0;
-            border: 1px solid #999;
-            border-bottom: 1px solid #888;
-            box-shadow: 0 2px 2px rgba(0,0,0,0.2);
+            border: 1px solid #801010;
+            border-bottom: 1px solid #701010;
+            box-shadow: 0 1px 1px rgba(0,0,0,0.2);
             transform-origin: 0 100%;
             transition: transform 0.3s ease-out;
             z-index: 10;
@@ -59,6 +59,18 @@
 
         .lid.open {
             transform: rotate(-90deg);
+        }
+
+        .hinge {
+            position: absolute;
+            left: -6px;
+            top: -5px;
+            width: 8px;
+            height: 10px;
+            background: linear-gradient(180deg, #aaa 0%, #888 50%, #666 100%);
+            border-radius: 4px;
+            border: 1px solid #555;
+            z-index: 15;
         }
 
         .chimney {
@@ -96,10 +108,10 @@
             position: relative;
             width: 150px;
             height: 132px;
-            background: linear-gradient(90deg, #b8b8b8 0%, #d8d8d8 20%, #e8e8e8 40%, #f0f0f0 50%, #e8e8e8 60%, #d0d0d0 80%, #a8a8a8 100%);
+            background: linear-gradient(90deg, #a01010 0%, #b81818 30%, #c41c1c 50%, #b81818 70%, #a01010 100%);
             border-radius: 0 0 12px 12px;
-            border: 1px solid #999;
-            border-top: 1px solid #777;
+            border: 1px solid #801010;
+            border-top: 1px solid #701010;
         }
 
         .flame-container {
@@ -107,8 +119,8 @@
             bottom: 100%;
             left: 50%;
             transform: translateX(-50%);
-            width: 120px;
-            height: 180px;
+            width: 200px;
+            height: 200px;
             pointer-events: none;
         }
 
@@ -158,7 +170,7 @@
                 </div>
             </div>
         </div>
-        <div class="body"></div>
+        <div class="body"><div class="hinge"></div></div>
     </div>
 
 
@@ -195,22 +207,22 @@
 
         // Set up canvas
         const dpr = window.devicePixelRatio || 1;
-        canvas.width = 120 * dpr;
-        canvas.height = 180 * dpr;
+        canvas.width = 200 * dpr;
+        canvas.height = 200 * dpr;
         ctx.scale(dpr, dpr);
 
         // Flame animation
         let flameTime = 0;
 
         function drawFlame() {
-            ctx.clearRect(0, 0, 120, 180);
+            ctx.clearRect(0, 0, 200, 200);
 
             if (!isOpen) return;
 
             flameTime += 0.1;
 
-            const baseX = 60;
-            const baseY = 180;
+            const baseX = 100;
+            const baseY = 200;
             const flameHeight = 112;
             const flameWidth = 21;
             const baseWidth = 18;
