@@ -1,0 +1,876 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <title>Radio</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        html, body {
+            height: 100%;
+            overflow: hidden;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: linear-gradient(135deg, #1a1a2e 0%, #16213e 50%, #0f3460 100%);
+            color: #fff;
+            min-height: 100vh;
+            padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
+        }
+
+        .container {
+            display: flex;
+            flex-direction: column;
+            height: 100%;
+            max-width: 500px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+
+        /* Header with station selector */
+        .header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 20px;
+        }
+
+        .header h1 {
+            font-size: 24px;
+            font-weight: 600;
+        }
+
+        .search-btn {
+            background: rgba(255, 255, 255, 0.1);
+            border: none;
+            color: #fff;
+            padding: 10px 15px;
+            border-radius: 20px;
+            font-size: 14px;
+            cursor: pointer;
+            transition: background 0.2s;
+        }
+
+        .search-btn:active {
+            background: rgba(255, 255, 255, 0.2);
+        }
+
+        /* Visualizer */
+        .visualizer-container {
+            flex: 1;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            min-height: 150px;
+            max-height: 250px;
+            margin-bottom: 20px;
+        }
+
+        #visualizer {
+            width: 100%;
+            height: 100%;
+            border-radius: 16px;
+            background: rgba(0, 0, 0, 0.3);
+        }
+
+        /* Now Playing */
+        .now-playing {
+            text-align: center;
+            margin-bottom: 30px;
+            min-height: 100px;
+        }
+
+        .station-name {
+            font-size: 14px;
+            color: rgba(255, 255, 255, 0.6);
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            margin-bottom: 10px;
+        }
+
+        .track-title {
+            font-size: 22px;
+            font-weight: 600;
+            margin-bottom: 5px;
+            line-height: 1.3;
+        }
+
+        .track-artist {
+            font-size: 18px;
+            color: rgba(255, 255, 255, 0.8);
+            margin-bottom: 5px;
+        }
+
+        .track-album {
+            font-size: 14px;
+            color: rgba(255, 255, 255, 0.5);
+        }
+
+        /* Controls */
+        .controls {
+            display: flex;
+            flex-direction: column;
+            gap: 20px;
+            padding-bottom: 20px;
+        }
+
+        .main-controls {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            gap: 30px;
+        }
+
+        .play-btn {
+            width: 80px;
+            height: 80px;
+            border-radius: 50%;
+            background: linear-gradient(135deg, #e94560, #ff6b6b);
+            border: none;
+            color: #fff;
+            font-size: 32px;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: transform 0.15s, box-shadow 0.15s;
+            box-shadow: 0 4px 20px rgba(233, 69, 96, 0.4);
+        }
+
+        .play-btn:active {
+            transform: scale(0.92);
+        }
+
+        .play-btn.loading {
+            opacity: 0.7;
+            pointer-events: none;
+        }
+
+        .quality-btn {
+            background: rgba(255, 255, 255, 0.1);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            color: #fff;
+            padding: 10px 16px;
+            border-radius: 20px;
+            font-size: 14px;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .quality-btn:active {
+            background: rgba(255, 255, 255, 0.2);
+        }
+
+        .quality-btn.active {
+            background: rgba(233, 69, 96, 0.3);
+            border-color: #e94560;
+        }
+
+        /* Volume */
+        .volume-control {
+            display: flex;
+            align-items: center;
+            gap: 15px;
+            padding: 0 10px;
+        }
+
+        .volume-icon {
+            font-size: 20px;
+            width: 30px;
+            text-align: center;
+        }
+
+        .volume-slider {
+            flex: 1;
+            -webkit-appearance: none;
+            appearance: none;
+            height: 6px;
+            border-radius: 3px;
+            background: rgba(255, 255, 255, 0.2);
+            outline: none;
+        }
+
+        .volume-slider::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            appearance: none;
+            width: 20px;
+            height: 20px;
+            border-radius: 50%;
+            background: #fff;
+            cursor: pointer;
+            box-shadow: 0 2px 6px rgba(0, 0, 0, 0.3);
+        }
+
+        .volume-slider::-moz-range-thumb {
+            width: 20px;
+            height: 20px;
+            border-radius: 50%;
+            background: #fff;
+            cursor: pointer;
+            border: none;
+        }
+
+        /* Visualizer toggle */
+        .visualizer-toggle {
+            display: flex;
+            justify-content: center;
+            margin-top: 10px;
+        }
+
+        .toggle-btn {
+            background: none;
+            border: none;
+            color: rgba(255, 255, 255, 0.5);
+            font-size: 12px;
+            cursor: pointer;
+            padding: 5px 10px;
+        }
+
+        .toggle-btn.active {
+            color: #e94560;
+        }
+
+        /* Search Modal */
+        .modal {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0, 0, 0, 0.9);
+            z-index: 100;
+            padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
+        }
+
+        .modal.open {
+            display: flex;
+            flex-direction: column;
+        }
+
+        .modal-header {
+            display: flex;
+            align-items: center;
+            gap: 15px;
+            padding: 20px;
+        }
+
+        .close-btn {
+            background: none;
+            border: none;
+            color: #fff;
+            font-size: 28px;
+            cursor: pointer;
+            padding: 5px;
+        }
+
+        .search-input {
+            flex: 1;
+            background: rgba(255, 255, 255, 0.1);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            border-radius: 25px;
+            padding: 12px 20px;
+            color: #fff;
+            font-size: 16px;
+            outline: none;
+        }
+
+        .search-input::placeholder {
+            color: rgba(255, 255, 255, 0.5);
+        }
+
+        .search-results {
+            flex: 1;
+            overflow-y: auto;
+            padding: 0 20px 20px;
+        }
+
+        .station-item {
+            display: flex;
+            align-items: center;
+            gap: 15px;
+            padding: 15px;
+            background: rgba(255, 255, 255, 0.05);
+            border-radius: 12px;
+            margin-bottom: 10px;
+            cursor: pointer;
+            transition: background 0.2s;
+        }
+
+        .station-item:active {
+            background: rgba(255, 255, 255, 0.1);
+        }
+
+        .station-icon {
+            width: 50px;
+            height: 50px;
+            border-radius: 10px;
+            background: linear-gradient(135deg, #e94560, #ff6b6b);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 24px;
+            flex-shrink: 0;
+            overflow: hidden;
+        }
+
+        .station-icon img {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+        }
+
+        .station-info {
+            flex: 1;
+            overflow: hidden;
+        }
+
+        .station-info h3 {
+            font-size: 16px;
+            font-weight: 500;
+            margin-bottom: 3px;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        .station-info p {
+            font-size: 13px;
+            color: rgba(255, 255, 255, 0.5);
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        .kexp-section {
+            padding: 0 20px 20px;
+        }
+
+        .section-title {
+            font-size: 12px;
+            color: rgba(255, 255, 255, 0.5);
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            margin-bottom: 15px;
+        }
+
+        /* Loading spinner */
+        .spinner {
+            width: 24px;
+            height: 24px;
+            border: 3px solid rgba(255, 255, 255, 0.3);
+            border-top-color: #fff;
+            border-radius: 50%;
+            animation: spin 0.8s linear infinite;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+
+        .loading-text {
+            text-align: center;
+            padding: 40px;
+            color: rgba(255, 255, 255, 0.5);
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>Radio</h1>
+            <button class="search-btn" onclick="openSearch()">Search Stations</button>
+        </div>
+
+        <div class="visualizer-container">
+            <canvas id="visualizer"></canvas>
+        </div>
+
+        <div class="now-playing">
+            <div class="station-name" id="stationName">KEXP 90.3 FM</div>
+            <div class="track-title" id="trackTitle">--</div>
+            <div class="track-artist" id="trackArtist">--</div>
+            <div class="track-album" id="trackAlbum"></div>
+        </div>
+
+        <div class="controls">
+            <div class="main-controls">
+                <button class="quality-btn" id="quality64" onclick="setQuality('64')">64K</button>
+                <button class="play-btn" id="playBtn" onclick="togglePlay()">
+                    <span id="playIcon">&#9654;</span>
+                </button>
+                <button class="quality-btn active" id="quality160" onclick="setQuality('160')">160K</button>
+            </div>
+
+            <div class="volume-control">
+                <span class="volume-icon" id="volumeIcon">&#128266;</span>
+                <input type="range" class="volume-slider" id="volumeSlider" min="0" max="100" value="80">
+            </div>
+
+            <div class="visualizer-toggle">
+                <button class="toggle-btn active" id="visualizerToggle" onclick="toggleVisualizer()">Visualizer ON</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Search Modal -->
+    <div class="modal" id="searchModal">
+        <div class="modal-header">
+            <button class="close-btn" onclick="closeSearch()">&times;</button>
+            <input type="text" class="search-input" id="searchInput" placeholder="Search radio stations..." oninput="debounceSearch()">
+        </div>
+
+        <div class="kexp-section">
+            <div class="section-title">Featured</div>
+            <div class="station-item" onclick="selectKEXP()">
+                <div class="station-icon">K</div>
+                <div class="station-info">
+                    <h3>KEXP 90.3 FM</h3>
+                    <p>Seattle, WA - Where the music matters</p>
+                </div>
+            </div>
+        </div>
+
+        <div class="search-results" id="searchResults">
+            <div class="loading-text">Search for stations from Radio Browser</div>
+        </div>
+    </div>
+
+    <script>
+        // State
+        let audio = null;
+        let audioContext = null;
+        let analyser = null;
+        let source = null;
+        let isPlaying = false;
+        let currentQuality = '160';
+        let visualizerEnabled = true;
+        let animationId = null;
+        let searchTimeout = null;
+        let currentStation = {
+            name: 'KEXP 90.3 FM',
+            url: 'https://kexp.streamguys1.com/kexp160.aac',
+            isKEXP: true
+        };
+
+        // KEXP streams
+        const kexpStreams = {
+            '64': 'https://kexp.streamguys1.com/kexp64.aac',
+            '160': 'https://kexp.streamguys1.com/kexp160.aac'
+        };
+
+        // DOM elements
+        const playBtn = document.getElementById('playBtn');
+        const playIcon = document.getElementById('playIcon');
+        const volumeSlider = document.getElementById('volumeSlider');
+        const volumeIcon = document.getElementById('volumeIcon');
+        const canvas = document.getElementById('visualizer');
+        const ctx = canvas.getContext('2d');
+        const trackTitle = document.getElementById('trackTitle');
+        const trackArtist = document.getElementById('trackArtist');
+        const trackAlbum = document.getElementById('trackAlbum');
+        const stationName = document.getElementById('stationName');
+        const searchModal = document.getElementById('searchModal');
+        const searchInput = document.getElementById('searchInput');
+        const searchResults = document.getElementById('searchResults');
+
+        // Initialize
+        function init() {
+            setupCanvas();
+            updateVolumeIcon();
+            if (currentStation.isKEXP) {
+                fetchKEXPNowPlaying();
+                setInterval(fetchKEXPNowPlaying, 30000);
+            }
+
+            volumeSlider.addEventListener('input', updateVolume);
+            window.addEventListener('resize', setupCanvas);
+        }
+
+        function setupCanvas() {
+            const container = canvas.parentElement;
+            const rect = container.getBoundingClientRect();
+            const dpr = window.devicePixelRatio || 1;
+            canvas.width = rect.width * dpr;
+            canvas.height = rect.height * dpr;
+            canvas.style.width = rect.width + 'px';
+            canvas.style.height = rect.height + 'px';
+            ctx.scale(dpr, dpr);
+        }
+
+        // Audio setup
+        function setupAudio() {
+            if (audio) {
+                audio.pause();
+                audio.src = '';
+            }
+
+            audio = new Audio();
+            audio.crossOrigin = 'anonymous';
+            audio.volume = volumeSlider.value / 100;
+
+            audio.addEventListener('playing', () => {
+                isPlaying = true;
+                playIcon.innerHTML = '&#10074;&#10074;';
+                playBtn.classList.remove('loading');
+                if (visualizerEnabled) {
+                    setupVisualizer();
+                }
+            });
+
+            audio.addEventListener('pause', () => {
+                isPlaying = false;
+                playIcon.innerHTML = '&#9654;';
+            });
+
+            audio.addEventListener('error', (e) => {
+                console.error('Audio error:', e);
+                playBtn.classList.remove('loading');
+                playIcon.innerHTML = '&#9654;';
+                isPlaying = false;
+                trackTitle.textContent = 'Error loading stream';
+            });
+
+            audio.addEventListener('waiting', () => {
+                playBtn.classList.add('loading');
+            });
+
+            audio.addEventListener('canplay', () => {
+                playBtn.classList.remove('loading');
+            });
+        }
+
+        function setupVisualizer() {
+            if (!audioContext) {
+                audioContext = new (window.AudioContext || window.webkitAudioContext)();
+            }
+
+            if (audioContext.state === 'suspended') {
+                audioContext.resume();
+            }
+
+            if (!source && audio) {
+                try {
+                    source = audioContext.createMediaElementSource(audio);
+                    analyser = audioContext.createAnalyser();
+                    analyser.fftSize = 256;
+                    source.connect(analyser);
+                    analyser.connect(audioContext.destination);
+                } catch (e) {
+                    console.log('Visualizer setup error (CORS):', e);
+                }
+            }
+
+            if (!animationId) {
+                drawVisualizer();
+            }
+        }
+
+        function drawVisualizer() {
+            if (!visualizerEnabled) {
+                cancelAnimationFrame(animationId);
+                animationId = null;
+                drawIdleVisualizer();
+                return;
+            }
+
+            animationId = requestAnimationFrame(drawVisualizer);
+
+            const width = canvas.width / (window.devicePixelRatio || 1);
+            const height = canvas.height / (window.devicePixelRatio || 1);
+
+            ctx.fillStyle = 'rgba(0, 0, 0, 0.3)';
+            ctx.fillRect(0, 0, width, height);
+
+            if (analyser && isPlaying) {
+                const bufferLength = analyser.frequencyBinCount;
+                const dataArray = new Uint8Array(bufferLength);
+                analyser.getByteFrequencyData(dataArray);
+
+                const barWidth = (width / bufferLength) * 2.5;
+                let x = 0;
+
+                for (let i = 0; i < bufferLength; i++) {
+                    const barHeight = (dataArray[i] / 255) * height * 0.8;
+
+                    const gradient = ctx.createLinearGradient(0, height - barHeight, 0, height);
+                    gradient.addColorStop(0, '#e94560');
+                    gradient.addColorStop(1, '#ff6b6b');
+
+                    ctx.fillStyle = gradient;
+                    ctx.fillRect(x, height - barHeight, barWidth - 2, barHeight);
+
+                    x += barWidth;
+                }
+            } else {
+                drawIdleVisualizer();
+            }
+        }
+
+        function drawIdleVisualizer() {
+            const width = canvas.width / (window.devicePixelRatio || 1);
+            const height = canvas.height / (window.devicePixelRatio || 1);
+
+            ctx.fillStyle = 'rgba(0, 0, 0, 0.3)';
+            ctx.fillRect(0, 0, width, height);
+
+            // Draw simple idle animation
+            const time = Date.now() / 1000;
+            const bars = 32;
+            const barWidth = width / bars;
+
+            for (let i = 0; i < bars; i++) {
+                const barHeight = (Math.sin(time * 2 + i * 0.3) + 1) * 20 + 5;
+                const gradient = ctx.createLinearGradient(0, height - barHeight, 0, height);
+                gradient.addColorStop(0, 'rgba(233, 69, 96, 0.3)');
+                gradient.addColorStop(1, 'rgba(255, 107, 107, 0.3)');
+                ctx.fillStyle = gradient;
+                ctx.fillRect(i * barWidth, height - barHeight, barWidth - 2, barHeight);
+            }
+
+            if (!isPlaying || !visualizerEnabled) {
+                requestAnimationFrame(drawIdleVisualizer);
+            }
+        }
+
+        // Playback controls
+        function togglePlay() {
+            if (isPlaying) {
+                audio.pause();
+            } else {
+                if (!audio || !audio.src) {
+                    setupAudio();
+                    audio.src = currentStation.url;
+                }
+                playBtn.classList.add('loading');
+                playIcon.innerHTML = '<div class="spinner"></div>';
+                audio.play().catch(e => {
+                    console.error('Play error:', e);
+                    playBtn.classList.remove('loading');
+                    playIcon.innerHTML = '&#9654;';
+                });
+            }
+        }
+
+        function setQuality(quality) {
+            if (currentQuality === quality || !currentStation.isKEXP) return;
+
+            currentQuality = quality;
+            document.getElementById('quality64').classList.toggle('active', quality === '64');
+            document.getElementById('quality160').classList.toggle('active', quality === '160');
+
+            currentStation.url = kexpStreams[quality];
+
+            if (isPlaying) {
+                const wasPlaying = isPlaying;
+                audio.pause();
+                source = null;
+                setupAudio();
+                audio.src = currentStation.url;
+                if (wasPlaying) {
+                    playBtn.classList.add('loading');
+                    playIcon.innerHTML = '<div class="spinner"></div>';
+                    audio.play();
+                }
+            }
+        }
+
+        function updateVolume() {
+            if (audio) {
+                audio.volume = volumeSlider.value / 100;
+            }
+            updateVolumeIcon();
+        }
+
+        function updateVolumeIcon() {
+            const vol = volumeSlider.value;
+            if (vol == 0) {
+                volumeIcon.innerHTML = '&#128263;';
+            } else if (vol < 50) {
+                volumeIcon.innerHTML = '&#128265;';
+            } else {
+                volumeIcon.innerHTML = '&#128266;';
+            }
+        }
+
+        function toggleVisualizer() {
+            visualizerEnabled = !visualizerEnabled;
+            const btn = document.getElementById('visualizerToggle');
+            btn.textContent = visualizerEnabled ? 'Visualizer ON' : 'Visualizer OFF';
+            btn.classList.toggle('active', visualizerEnabled);
+
+            if (visualizerEnabled && isPlaying) {
+                setupVisualizer();
+            } else if (!visualizerEnabled) {
+                cancelAnimationFrame(animationId);
+                animationId = null;
+                drawIdleVisualizer();
+            }
+        }
+
+        // KEXP Now Playing
+        async function fetchKEXPNowPlaying() {
+            if (!currentStation.isKEXP) return;
+
+            try {
+                const response = await fetch('https://api.kexp.org/v2/plays/?limit=1&format=json');
+                const data = await response.json();
+
+                if (data.results && data.results.length > 0) {
+                    const play = data.results[0];
+                    if (play.playtype?.name === 'Air break') {
+                        trackTitle.textContent = 'Air Break';
+                        trackArtist.textContent = '';
+                        trackAlbum.textContent = '';
+                    } else {
+                        trackTitle.textContent = play.song || play.track?.name || 'Unknown Track';
+                        trackArtist.textContent = play.artist || play.track?.artist?.name || '';
+                        trackAlbum.textContent = play.album || play.release?.name || '';
+                    }
+                }
+            } catch (e) {
+                console.error('Failed to fetch KEXP now playing:', e);
+            }
+        }
+
+        // Search Modal
+        function openSearch() {
+            searchModal.classList.add('open');
+            searchInput.focus();
+        }
+
+        function closeSearch() {
+            searchModal.classList.remove('open');
+            searchInput.value = '';
+            searchResults.innerHTML = '<div class="loading-text">Search for stations from Radio Browser</div>';
+        }
+
+        function debounceSearch() {
+            clearTimeout(searchTimeout);
+            const query = searchInput.value.trim();
+            if (query.length < 2) {
+                searchResults.innerHTML = '<div class="loading-text">Search for stations from Radio Browser</div>';
+                return;
+            }
+            searchResults.innerHTML = '<div class="loading-text"><div class="spinner" style="margin: 0 auto;"></div></div>';
+            searchTimeout = setTimeout(() => searchStations(query), 500);
+        }
+
+        async function searchStations(query) {
+            try {
+                const response = await fetch(`https://de1.api.radio-browser.info/json/stations/byname/${encodeURIComponent(query)}?limit=20&hidebroken=true&order=clickcount&reverse=true`);
+                const stations = await response.json();
+
+                if (stations.length === 0) {
+                    searchResults.innerHTML = '<div class="loading-text">No stations found</div>';
+                    return;
+                }
+
+                searchResults.innerHTML = stations.map(station => `
+                    <div class="station-item" onclick='selectStation(${JSON.stringify({
+                        name: station.name,
+                        url: station.url_resolved || station.url,
+                        favicon: station.favicon,
+                        country: station.country,
+                        tags: station.tags
+                    }).replace(/'/g, "&#39;")})'>
+                        <div class="station-icon">
+                            ${station.favicon ? `<img src="${station.favicon}" onerror="this.parentElement.innerHTML='&#128251;'">` : '&#128251;'}
+                        </div>
+                        <div class="station-info">
+                            <h3>${escapeHtml(station.name)}</h3>
+                            <p>${escapeHtml(station.country || '')}${station.tags ? ' - ' + escapeHtml(station.tags.split(',').slice(0, 3).join(', ')) : ''}</p>
+                        </div>
+                    </div>
+                `).join('');
+            } catch (e) {
+                console.error('Search error:', e);
+                searchResults.innerHTML = '<div class="loading-text">Error searching stations</div>';
+            }
+        }
+
+        function selectStation(station) {
+            currentStation = {
+                name: station.name,
+                url: station.url,
+                isKEXP: false
+            };
+
+            stationName.textContent = station.name;
+            trackTitle.textContent = 'Loading...';
+            trackArtist.textContent = '';
+            trackAlbum.textContent = '';
+
+            // Hide quality buttons for non-KEXP
+            document.getElementById('quality64').style.visibility = 'hidden';
+            document.getElementById('quality160').style.visibility = 'hidden';
+
+            closeSearch();
+
+            // Restart playback
+            if (audio) {
+                audio.pause();
+            }
+            source = null;
+            setupAudio();
+            audio.src = station.url;
+            playBtn.classList.add('loading');
+            playIcon.innerHTML = '<div class="spinner"></div>';
+            audio.play().then(() => {
+                trackTitle.textContent = 'Now Playing';
+            }).catch(e => {
+                console.error('Play error:', e);
+                trackTitle.textContent = 'Error loading stream';
+            });
+        }
+
+        function selectKEXP() {
+            currentStation = {
+                name: 'KEXP 90.3 FM',
+                url: kexpStreams[currentQuality],
+                isKEXP: true
+            };
+
+            stationName.textContent = 'KEXP 90.3 FM';
+
+            // Show quality buttons
+            document.getElementById('quality64').style.visibility = 'visible';
+            document.getElementById('quality160').style.visibility = 'visible';
+
+            closeSearch();
+            fetchKEXPNowPlaying();
+
+            // Restart playback
+            if (audio) {
+                audio.pause();
+            }
+            source = null;
+            setupAudio();
+            audio.src = currentStation.url;
+            playBtn.classList.add('loading');
+            playIcon.innerHTML = '<div class="spinner"></div>';
+            audio.play().catch(e => {
+                console.error('Play error:', e);
+            });
+        }
+
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+
+        // Start
+        init();
+        drawIdleVisualizer();
+    </script>
+</body>
+</html>
