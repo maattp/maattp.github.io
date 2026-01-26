@@ -1,0 +1,779 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="theme-color" content="#1a1a2e">
+    <title>Podcast CORS Tester</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        html, body {
+            min-height: 100%;
+            min-height: 100vh;
+            min-height: -webkit-fill-available;
+        }
+
+        html {
+            background: linear-gradient(135deg, #1a1a2e, #16213e, #0f3460);
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            color: #fff;
+            background: transparent;
+            overflow-y: auto;
+        }
+
+        .container {
+            max-width: 600px;
+            margin: 0 auto;
+            padding: 20px;
+            padding-top: calc(env(safe-area-inset-top) + 20px);
+            padding-bottom: calc(env(safe-area-inset-bottom) + 20px);
+            padding-left: calc(env(safe-area-inset-left) + 20px);
+            padding-right: calc(env(safe-area-inset-right) + 20px);
+        }
+
+        .header {
+            text-align: center;
+            margin-bottom: 25px;
+        }
+
+        .header h1 {
+            font-size: 24px;
+            font-weight: 600;
+            margin-bottom: 5px;
+        }
+
+        .header .subtitle {
+            font-size: 14px;
+            opacity: 0.7;
+        }
+
+        .search-box {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 20px;
+        }
+
+        .search-input {
+            flex: 1;
+            padding: 14px 18px;
+            border: none;
+            border-radius: 12px;
+            background: rgba(255, 255, 255, 0.1);
+            color: #fff;
+            font-size: 16px;
+            outline: none;
+        }
+
+        .search-input::placeholder {
+            color: rgba(255, 255, 255, 0.5);
+        }
+
+        .search-input:focus {
+            background: rgba(255, 255, 255, 0.15);
+        }
+
+        .search-button {
+            padding: 14px 24px;
+            border: none;
+            border-radius: 12px;
+            background: #5856d6;
+            color: #fff;
+            font-size: 16px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: background 0.2s;
+        }
+
+        .search-button:hover {
+            background: #6d6be0;
+        }
+
+        .search-button:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        .card {
+            background: rgba(255, 255, 255, 0.1);
+            backdrop-filter: blur(10px);
+            border-radius: 16px;
+            padding: 20px;
+            margin-bottom: 15px;
+        }
+
+        .card-title {
+            font-size: 13px;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            opacity: 0.7;
+            margin-bottom: 15px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .podcasts-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+            gap: 15px;
+        }
+
+        .podcast-item {
+            cursor: pointer;
+            text-align: center;
+            padding: 10px;
+            border-radius: 12px;
+            transition: background 0.2s;
+        }
+
+        .podcast-item:hover {
+            background: rgba(255, 255, 255, 0.1);
+        }
+
+        .podcast-item.selected {
+            background: rgba(88, 86, 214, 0.3);
+        }
+
+        .podcast-artwork {
+            width: 100%;
+            aspect-ratio: 1;
+            border-radius: 12px;
+            object-fit: cover;
+            margin-bottom: 8px;
+            background: rgba(255, 255, 255, 0.1);
+        }
+
+        .podcast-title {
+            font-size: 12px;
+            font-weight: 500;
+            line-height: 1.3;
+            display: -webkit-box;
+            -webkit-line-clamp: 2;
+            -webkit-box-orient: vertical;
+            overflow: hidden;
+        }
+
+        .podcast-publisher {
+            font-size: 11px;
+            opacity: 0.6;
+            margin-top: 4px;
+            display: -webkit-box;
+            -webkit-line-clamp: 1;
+            -webkit-box-orient: vertical;
+            overflow: hidden;
+        }
+
+        .episode-list {
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+        }
+
+        .episode-item {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            padding: 12px;
+            background: rgba(255, 255, 255, 0.05);
+            border-radius: 10px;
+        }
+
+        .episode-status {
+            font-size: 20px;
+            width: 30px;
+            text-align: center;
+            flex-shrink: 0;
+        }
+
+        .episode-info {
+            flex: 1;
+            min-width: 0;
+        }
+
+        .episode-title {
+            font-size: 14px;
+            font-weight: 500;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        .episode-host {
+            font-size: 11px;
+            opacity: 0.6;
+            margin-top: 2px;
+            font-family: 'SF Mono', 'Menlo', monospace;
+        }
+
+        .status-accessible {
+            color: #30d158;
+        }
+
+        .status-blocked {
+            color: #ff453a;
+        }
+
+        .status-testing {
+            animation: pulse 1s ease-in-out infinite;
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.4; }
+        }
+
+        .summary-card {
+            text-align: center;
+            padding: 20px;
+        }
+
+        .summary-stat {
+            font-size: 48px;
+            font-weight: 300;
+            margin-bottom: 5px;
+        }
+
+        .summary-label {
+            font-size: 14px;
+            opacity: 0.7;
+        }
+
+        .host-stats {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+            margin-top: 20px;
+        }
+
+        .host-stat-item {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 10px 14px;
+            background: rgba(255, 255, 255, 0.05);
+            border-radius: 8px;
+        }
+
+        .host-name {
+            font-family: 'SF Mono', 'Menlo', monospace;
+            font-size: 13px;
+        }
+
+        .host-result {
+            font-size: 13px;
+            font-weight: 500;
+        }
+
+        .loading {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            min-height: 100px;
+            text-align: center;
+        }
+
+        .loading-spinner {
+            width: 30px;
+            height: 30px;
+            border: 3px solid rgba(255, 255, 255, 0.2);
+            border-top-color: #5ac8fa;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+            margin-bottom: 12px;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+
+        .empty-state {
+            text-align: center;
+            padding: 40px 20px;
+            opacity: 0.6;
+        }
+
+        .empty-state-icon {
+            font-size: 48px;
+            margin-bottom: 15px;
+        }
+
+        .error-message {
+            background: rgba(255, 69, 58, 0.2);
+            color: #ff453a;
+            padding: 12px 16px;
+            border-radius: 10px;
+            font-size: 14px;
+            margin-bottom: 15px;
+        }
+
+        .back-button {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            padding: 8px 16px;
+            background: rgba(255, 255, 255, 0.1);
+            border: none;
+            border-radius: 8px;
+            color: #fff;
+            font-size: 14px;
+            cursor: pointer;
+            margin-bottom: 15px;
+            transition: background 0.2s;
+        }
+
+        .back-button:hover {
+            background: rgba(255, 255, 255, 0.2);
+        }
+
+        .progress-bar {
+            height: 4px;
+            background: rgba(255, 255, 255, 0.1);
+            border-radius: 2px;
+            overflow: hidden;
+            margin-bottom: 15px;
+        }
+
+        .progress-fill {
+            height: 100%;
+            background: linear-gradient(90deg, #5ac8fa, #30d158);
+            transition: width 0.3s ease;
+        }
+
+        .info-note {
+            font-size: 12px;
+            opacity: 0.6;
+            text-align: center;
+            margin-top: 15px;
+            line-height: 1.5;
+        }
+    </style>
+</head>
+<body>
+    <div class="container" id="app">
+        <div class="header">
+            <h1>Podcast CORS Tester</h1>
+            <div class="subtitle">Test which podcast hosts allow browser audio access</div>
+        </div>
+
+        <div class="search-box">
+            <input type="text" class="search-input" id="search-input" placeholder="Search podcasts..." />
+            <button class="search-button" id="search-button">Search</button>
+        </div>
+
+        <div id="content">
+            <div class="empty-state">
+                <div class="empty-state-icon">🎙️</div>
+                <p>Search for a podcast to test CORS accessibility</p>
+            </div>
+        </div>
+
+        <div id="host-stats-container"></div>
+    </div>
+
+    <script>
+        // State
+        let selectedPodcast = null;
+        let hostStats = {}; // Track CORS results by host domain
+
+        // DOM elements
+        const searchInput = document.getElementById('search-input');
+        const searchButton = document.getElementById('search-button');
+        const contentEl = document.getElementById('content');
+        const hostStatsContainer = document.getElementById('host-stats-container');
+
+        // Event listeners
+        searchButton.addEventListener('click', searchPodcasts);
+        searchInput.addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') searchPodcasts();
+        });
+
+        // Search podcasts using iTunes API
+        async function searchPodcasts() {
+            const query = searchInput.value.trim();
+            if (!query) return;
+
+            searchButton.disabled = true;
+            contentEl.innerHTML = `
+                <div class="loading">
+                    <div class="loading-spinner"></div>
+                    <p>Searching podcasts...</p>
+                </div>
+            `;
+
+            try {
+                const response = await fetch(
+                    `https://itunes.apple.com/search?term=${encodeURIComponent(query)}&media=podcast&limit=20`
+                );
+                const data = await response.json();
+
+                if (data.results.length === 0) {
+                    contentEl.innerHTML = `
+                        <div class="empty-state">
+                            <div class="empty-state-icon">🔍</div>
+                            <p>No podcasts found for "${query}"</p>
+                        </div>
+                    `;
+                    return;
+                }
+
+                renderPodcastResults(data.results);
+            } catch (error) {
+                contentEl.innerHTML = `
+                    <div class="error-message">
+                        Failed to search podcasts: ${error.message}
+                    </div>
+                `;
+            } finally {
+                searchButton.disabled = false;
+            }
+        }
+
+        // Render podcast search results
+        function renderPodcastResults(podcasts) {
+            contentEl.innerHTML = `
+                <div class="card">
+                    <div class="card-title">
+                        <span>🎧</span>
+                        Search Results (${podcasts.length})
+                    </div>
+                    <div class="podcasts-grid">
+                        ${podcasts.map((p, i) => `
+                            <div class="podcast-item" data-index="${i}">
+                                <img class="podcast-artwork"
+                                     src="${p.artworkUrl100?.replace('100x100', '200x200') || ''}"
+                                     alt="${escapeHtml(p.collectionName)}"
+                                     onerror="this.src='data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><rect fill=%22%23333%22 width=%22100%22 height=%22100%22/><text x=%2250%22 y=%2255%22 text-anchor=%22middle%22 fill=%22%23666%22 font-size=%2240%22>🎙️</text></svg>'" />
+                                <div class="podcast-title">${escapeHtml(p.collectionName)}</div>
+                                <div class="podcast-publisher">${escapeHtml(p.artistName)}</div>
+                            </div>
+                        `).join('')}
+                    </div>
+                </div>
+            `;
+
+            // Add click handlers
+            contentEl.querySelectorAll('.podcast-item').forEach((el, i) => {
+                el.addEventListener('click', () => selectPodcast(podcasts[i]));
+            });
+        }
+
+        // Select a podcast and fetch its feed
+        async function selectPodcast(podcast) {
+            selectedPodcast = podcast;
+
+            contentEl.innerHTML = `
+                <button class="back-button" id="back-btn">← Back to results</button>
+                <div class="card">
+                    <div style="display: flex; gap: 15px; align-items: center; margin-bottom: 15px;">
+                        <img class="podcast-artwork"
+                             src="${podcast.artworkUrl100?.replace('100x100', '200x200') || ''}"
+                             alt="${escapeHtml(podcast.collectionName)}"
+                             style="width: 80px; height: 80px; flex-shrink: 0;" />
+                        <div>
+                            <div style="font-size: 18px; font-weight: 600;">${escapeHtml(podcast.collectionName)}</div>
+                            <div style="font-size: 13px; opacity: 0.7; margin-top: 4px;">${escapeHtml(podcast.artistName)}</div>
+                        </div>
+                    </div>
+                    <div class="loading">
+                        <div class="loading-spinner"></div>
+                        <p>Fetching RSS feed...</p>
+                    </div>
+                </div>
+            `;
+
+            document.getElementById('back-btn').addEventListener('click', () => searchPodcasts());
+
+            try {
+                const episodes = await fetchRSSFeed(podcast.feedUrl);
+                if (episodes.length === 0) {
+                    throw new Error('No episodes found in feed');
+                }
+                await testEpisodes(podcast, episodes);
+            } catch (error) {
+                contentEl.innerHTML = `
+                    <button class="back-button" id="back-btn">← Back to results</button>
+                    <div class="error-message">
+                        Failed to fetch podcast feed: ${error.message}
+                    </div>
+                    <p class="info-note">
+                        The RSS feed itself may be blocked by CORS. This is common for some podcast hosts.
+                    </p>
+                `;
+                document.getElementById('back-btn').addEventListener('click', () => searchPodcasts());
+            }
+        }
+
+        // Fetch and parse RSS feed
+        async function fetchRSSFeed(feedUrl) {
+            // Use allorigins proxy to bypass CORS for RSS feeds
+            const proxyUrl = `https://api.allorigins.win/raw?url=${encodeURIComponent(feedUrl)}`;
+
+            const response = await fetch(proxyUrl);
+            if (!response.ok) {
+                throw new Error(`HTTP ${response.status}`);
+            }
+
+            const text = await response.text();
+            const parser = new DOMParser();
+            const xml = parser.parseFromString(text, 'text/xml');
+
+            // Check for parse errors
+            const parseError = xml.querySelector('parsererror');
+            if (parseError) {
+                throw new Error('Invalid RSS feed');
+            }
+
+            // Extract episodes (limit to 5)
+            const items = xml.querySelectorAll('item');
+            const episodes = [];
+
+            for (let i = 0; i < Math.min(items.length, 5); i++) {
+                const item = items[i];
+                const enclosure = item.querySelector('enclosure');
+                const title = item.querySelector('title')?.textContent || 'Untitled Episode';
+
+                if (enclosure) {
+                    const url = enclosure.getAttribute('url');
+                    if (url && (url.includes('.mp3') || url.includes('.m4a') || enclosure.getAttribute('type')?.includes('audio'))) {
+                        episodes.push({
+                            title,
+                            url,
+                            host: extractHost(url)
+                        });
+                    }
+                }
+            }
+
+            return episodes;
+        }
+
+        // Extract host domain from URL
+        function extractHost(url) {
+            try {
+                const hostname = new URL(url).hostname;
+                // Get the main domain (e.g., anchor.fm from cdn.anchor.fm)
+                const parts = hostname.split('.');
+                if (parts.length > 2) {
+                    return parts.slice(-2).join('.');
+                }
+                return hostname;
+            } catch {
+                return 'unknown';
+            }
+        }
+
+        // Test CORS access for episodes
+        async function testEpisodes(podcast, episodes) {
+            const results = episodes.map(ep => ({
+                ...ep,
+                status: 'testing',
+                accessible: null,
+                error: null
+            }));
+
+            renderEpisodeResults(podcast, results, 0);
+
+            for (let i = 0; i < results.length; i++) {
+                results[i].status = 'testing';
+                renderEpisodeResults(podcast, results, i);
+
+                const testResult = await testCorsAccess(results[i].url);
+                results[i].accessible = testResult.accessible;
+                results[i].error = testResult.error;
+                results[i].status = testResult.accessible ? 'accessible' : 'blocked';
+
+                // Update host stats
+                const host = results[i].host;
+                if (!hostStats[host]) {
+                    hostStats[host] = { accessible: 0, blocked: 0 };
+                }
+                if (testResult.accessible) {
+                    hostStats[host].accessible++;
+                } else {
+                    hostStats[host].blocked++;
+                }
+
+                renderEpisodeResults(podcast, results, i + 1);
+                renderHostStats();
+            }
+        }
+
+        // Test CORS access for a single MP3 URL
+        async function testCorsAccess(mp3Url) {
+            try {
+                // First, try a HEAD request to check basic CORS
+                const response = await fetch(mp3Url, {
+                    method: 'GET',
+                    headers: {
+                        'Range': 'bytes=0-1024' // Only fetch first 1KB to save bandwidth
+                    }
+                });
+
+                if (!response.ok) {
+                    return { accessible: false, error: `HTTP ${response.status}` };
+                }
+
+                const arrayBuffer = await response.arrayBuffer();
+
+                // Try to decode the audio to confirm it's valid
+                const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+
+                // For partial content, we just verify we got audio data
+                // Full decode might fail with partial data, so we check headers instead
+                const contentType = response.headers.get('content-type');
+                if (contentType && contentType.includes('audio')) {
+                    await audioContext.close();
+                    return { accessible: true };
+                }
+
+                // Try to decode if we got enough data
+                try {
+                    await audioContext.decodeAudioData(arrayBuffer.slice(0));
+                    await audioContext.close();
+                    return { accessible: true };
+                } catch (decodeError) {
+                    // Partial data might not decode, but if we got here with CORS, it's accessible
+                    await audioContext.close();
+                    return { accessible: true };
+                }
+            } catch (e) {
+                // CORS errors typically throw TypeError: Failed to fetch
+                return {
+                    accessible: false,
+                    error: e.message.includes('Failed to fetch') ? 'CORS blocked' : e.message
+                };
+            }
+        }
+
+        // Render episode test results
+        function renderEpisodeResults(podcast, results, testedCount) {
+            const accessibleCount = results.filter(r => r.accessible === true).length;
+            const blockedCount = results.filter(r => r.accessible === false).length;
+            const progress = (testedCount / results.length) * 100;
+
+            contentEl.innerHTML = `
+                <button class="back-button" id="back-btn">← Back to results</button>
+
+                <div class="card">
+                    <div style="display: flex; gap: 15px; align-items: center; margin-bottom: 15px;">
+                        <img class="podcast-artwork"
+                             src="${podcast.artworkUrl100?.replace('100x100', '200x200') || ''}"
+                             alt="${escapeHtml(podcast.collectionName)}"
+                             style="width: 80px; height: 80px; flex-shrink: 0;" />
+                        <div>
+                            <div style="font-size: 18px; font-weight: 600;">${escapeHtml(podcast.collectionName)}</div>
+                            <div style="font-size: 13px; opacity: 0.7; margin-top: 4px;">${escapeHtml(podcast.artistName)}</div>
+                        </div>
+                    </div>
+
+                    ${testedCount < results.length ? `
+                        <div class="progress-bar">
+                            <div class="progress-fill" style="width: ${progress}%"></div>
+                        </div>
+                        <p style="text-align: center; font-size: 13px; opacity: 0.7;">
+                            Testing episode ${testedCount + 1} of ${results.length}...
+                        </p>
+                    ` : `
+                        <div class="summary-card">
+                            <div class="summary-stat ${accessibleCount > 0 ? 'status-accessible' : 'status-blocked'}">
+                                ${accessibleCount}/${results.length}
+                            </div>
+                            <div class="summary-label">
+                                ${accessibleCount === results.length ? 'All episodes accessible!' :
+                                  accessibleCount === 0 ? 'All episodes blocked by CORS' :
+                                  'Episodes accessible via CORS'}
+                            </div>
+                        </div>
+                    `}
+                </div>
+
+                <div class="card">
+                    <div class="card-title">
+                        <span>📋</span>
+                        Episodes
+                    </div>
+                    <div class="episode-list">
+                        ${results.map(ep => `
+                            <div class="episode-item">
+                                <div class="episode-status ${ep.status === 'testing' ? 'status-testing' :
+                                    ep.accessible ? 'status-accessible' : 'status-blocked'}">
+                                    ${ep.status === 'testing' ? '⏳' : ep.accessible ? '✓' : '✗'}
+                                </div>
+                                <div class="episode-info">
+                                    <div class="episode-title">${escapeHtml(ep.title)}</div>
+                                    <div class="episode-host">${ep.host}</div>
+                                </div>
+                            </div>
+                        `).join('')}
+                    </div>
+                </div>
+
+                <p class="info-note">
+                    Testing uses Range requests (first 1KB) to minimize bandwidth.
+                    A checkmark means the audio can be fetched and processed in-browser.
+                </p>
+            `;
+
+            document.getElementById('back-btn').addEventListener('click', () => searchPodcasts());
+        }
+
+        // Render aggregated host statistics
+        function renderHostStats() {
+            const hosts = Object.entries(hostStats).sort((a, b) => {
+                const aTotal = a[1].accessible + a[1].blocked;
+                const bTotal = b[1].accessible + b[1].blocked;
+                return bTotal - aTotal;
+            });
+
+            if (hosts.length === 0) {
+                hostStatsContainer.innerHTML = '';
+                return;
+            }
+
+            hostStatsContainer.innerHTML = `
+                <div class="card">
+                    <div class="card-title">
+                        <span>📊</span>
+                        Host Statistics
+                    </div>
+                    <div class="host-stats">
+                        ${hosts.map(([host, stats]) => {
+                            const total = stats.accessible + stats.blocked;
+                            const allAccessible = stats.blocked === 0;
+                            const allBlocked = stats.accessible === 0;
+                            return `
+                                <div class="host-stat-item">
+                                    <span class="host-name">${host}</span>
+                                    <span class="host-result ${allAccessible ? 'status-accessible' : allBlocked ? 'status-blocked' : ''}">
+                                        ${stats.accessible}/${total} ${allAccessible ? '✓' : allBlocked ? '✗' : ''}
+                                    </span>
+                                </div>
+                            `;
+                        }).join('')}
+                    </div>
+                </div>
+            `;
+        }
+
+        // Escape HTML to prevent XSS
+        function escapeHtml(text) {
+            if (!text) return '';
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+    </script>
+</body>
+</html>
