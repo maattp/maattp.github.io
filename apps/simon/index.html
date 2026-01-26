@@ -565,16 +565,20 @@
         });
 
         startBtn.addEventListener('click', startGame);
+        startBtn.addEventListener('touchend', (e) => {
+            e.preventDefault();
+            startGame();
+        });
 
         strictBtn.addEventListener('click', () => {
             strictMode = !strictMode;
             strictBtn.classList.toggle('active', strictMode);
         });
-
-        // Prevent zoom on double tap
-        document.addEventListener('touchend', (e) => {
+        strictBtn.addEventListener('touchend', (e) => {
             e.preventDefault();
-        }, { passive: false });
+            strictMode = !strictMode;
+            strictBtn.classList.toggle('active', strictMode);
+        });
     </script>
 </body>
 </html>
