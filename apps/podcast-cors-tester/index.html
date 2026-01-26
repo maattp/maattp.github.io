@@ -515,48 +515,76 @@
             }
         }
 
+        // CORS proxies to try (in order)
+        const CORS_PROXIES = [
+            (url) => `https://corsproxy.io/?${encodeURIComponent(url)}`,
+            (url) => `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`,
+            (url) => `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(url)}`
+        ];
+
         // Fetch and parse RSS feed
         async function fetchRSSFeed(feedUrl) {
-            // Use allorigins proxy to bypass CORS for RSS feeds
-            const proxyUrl = `https://api.allorigins.win/raw?url=${encodeURIComponent(feedUrl)}`;
+            let lastError = null;
 
-            const response = await fetch(proxyUrl);
-            if (!response.ok) {
-                throw new Error(`HTTP ${response.status}`);
-            }
+            // Try each proxy in sequence
+            for (let i = 0; i < CORS_PROXIES.length; i++) {
+                const proxyUrl = CORS_PROXIES[i](feedUrl);
+                try {
+                    const response = await fetch(proxyUrl, {
+                        signal: AbortSignal.timeout(10000) // 10 second timeout
+                    });
 
-            const text = await response.text();
-            const parser = new DOMParser();
-            const xml = parser.parseFromString(text, 'text/xml');
-
-            // Check for parse errors
-            const parseError = xml.querySelector('parsererror');
-            if (parseError) {
-                throw new Error('Invalid RSS feed');
-            }
-
-            // Extract episodes (limit to 5)
-            const items = xml.querySelectorAll('item');
-            const episodes = [];
-
-            for (let i = 0; i < Math.min(items.length, 5); i++) {
-                const item = items[i];
-                const enclosure = item.querySelector('enclosure');
-                const title = item.querySelector('title')?.textContent || 'Untitled Episode';
-
-                if (enclosure) {
-                    const url = enclosure.getAttribute('url');
-                    if (url && (url.includes('.mp3') || url.includes('.m4a') || enclosure.getAttribute('type')?.includes('audio'))) {
-                        episodes.push({
-                            title,
-                            url,
-                            host: extractHost(url)
-                        });
+                    if (!response.ok) {
+                        throw new Error(`HTTP ${response.status}`);
                     }
+
+                    const text = await response.text();
+
+                    // Check if we got HTML error page instead of XML
+                    if (text.trim().startsWith('<!') || text.trim().startsWith('<html')) {
+                        throw new Error('Proxy returned HTML instead of RSS');
+                    }
+
+                    const parser = new DOMParser();
+                    const xml = parser.parseFromString(text, 'text/xml');
+
+                    // Check for parse errors
+                    const parseError = xml.querySelector('parsererror');
+                    if (parseError) {
+                        throw new Error('Invalid RSS feed');
+                    }
+
+                    // Extract episodes (limit to 5)
+                    const items = xml.querySelectorAll('item');
+                    const episodes = [];
+
+                    for (let j = 0; j < Math.min(items.length, 5); j++) {
+                        const item = items[j];
+                        const enclosure = item.querySelector('enclosure');
+                        const title = item.querySelector('title')?.textContent || 'Untitled Episode';
+
+                        if (enclosure) {
+                            const url = enclosure.getAttribute('url');
+                            if (url && (url.includes('.mp3') || url.includes('.m4a') || enclosure.getAttribute('type')?.includes('audio'))) {
+                                episodes.push({
+                                    title,
+                                    url,
+                                    host: extractHost(url)
+                                });
+                            }
+                        }
+                    }
+
+                    return episodes;
+                } catch (error) {
+                    lastError = error;
+                    console.log(`Proxy ${i + 1} failed:`, error.message);
+                    // Continue to next proxy
                 }
             }
 
-            return episodes;
+            // All proxies failed
+            throw new Error(lastError?.message || 'All CORS proxies failed');
         }
 
         // Extract host domain from URL
