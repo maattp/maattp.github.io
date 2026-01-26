@@ -63,29 +63,15 @@
             background: rgba(255, 255, 255, 0.2);
         }
 
-        /* Visualizer */
-        .visualizer-container {
-            flex: 1;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            min-height: 150px;
-            max-height: 250px;
-            margin-bottom: 20px;
-        }
-
-        #visualizer {
-            width: 100%;
-            height: 100%;
-            border-radius: 16px;
-            background: rgba(0, 0, 0, 0.3);
-        }
-
         /* Now Playing */
         .now-playing {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
             text-align: center;
             margin-bottom: 30px;
-            min-height: 100px;
         }
 
         .station-name {
@@ -216,26 +202,6 @@
             background: #fff;
             cursor: pointer;
             border: none;
-        }
-
-        /* Visualizer toggle */
-        .visualizer-toggle {
-            display: flex;
-            justify-content: center;
-            margin-top: 10px;
-        }
-
-        .toggle-btn {
-            background: none;
-            border: none;
-            color: rgba(255, 255, 255, 0.5);
-            font-size: 12px;
-            cursor: pointer;
-            padding: 5px 10px;
-        }
-
-        .toggle-btn.active {
-            color: #e94560;
         }
 
         /* Search Modal */
@@ -390,10 +356,6 @@
             <button class="search-btn" onclick="openSearch()">Search Stations</button>
         </div>
 
-        <div class="visualizer-container">
-            <canvas id="visualizer"></canvas>
-        </div>
-
         <div class="now-playing">
             <div class="station-name" id="stationName">KEXP 90.3 FM</div>
             <div class="track-title" id="trackTitle">--</div>
@@ -415,9 +377,6 @@
                 <input type="range" class="volume-slider" id="volumeSlider" min="0" max="100" value="80">
             </div>
 
-            <div class="visualizer-toggle">
-                <button class="toggle-btn active" id="visualizerToggle" onclick="toggleVisualizer()">Visualizer ON</button>
-            </div>
         </div>
     </div>
 
@@ -447,13 +406,8 @@
     <script>
         // State
         let audio = null;
-        let audioContext = null;
-        let analyser = null;
-        let source = null;
         let isPlaying = false;
         let currentQuality = '160';
-        let visualizerEnabled = true;
-        let animationId = null;
         let searchTimeout = null;
         let currentStation = {
             name: 'KEXP 90.3 FM',
@@ -472,8 +426,6 @@
         const playIcon = document.getElementById('playIcon');
         const volumeSlider = document.getElementById('volumeSlider');
         const volumeIcon = document.getElementById('volumeIcon');
-        const canvas = document.getElementById('visualizer');
-        const ctx = canvas.getContext('2d');
         const trackTitle = document.getElementById('trackTitle');
         const trackArtist = document.getElementById('trackArtist');
         const trackAlbum = document.getElementById('trackAlbum');
@@ -484,7 +436,6 @@
 
         // Initialize
         function init() {
-            setupCanvas();
             updateVolumeIcon();
             if (currentStation.isKEXP) {
                 fetchKEXPNowPlaying();
@@ -492,18 +443,6 @@
             }
 
             volumeSlider.addEventListener('input', updateVolume);
-            window.addEventListener('resize', setupCanvas);
-        }
-
-        function setupCanvas() {
-            const container = canvas.parentElement;
-            const rect = container.getBoundingClientRect();
-            const dpr = window.devicePixelRatio || 1;
-            canvas.width = rect.width * dpr;
-            canvas.height = rect.height * dpr;
-            canvas.style.width = rect.width + 'px';
-            canvas.style.height = rect.height + 'px';
-            ctx.scale(dpr, dpr);
         }
 
         // Audio setup
@@ -521,9 +460,6 @@
                 isPlaying = true;
                 playIcon.innerHTML = '&#10074;&#10074;';
                 playBtn.classList.remove('loading');
-                if (visualizerEnabled) {
-                    setupVisualizer();
-                }
             });
 
             audio.addEventListener('pause', () => {
@@ -546,99 +482,6 @@
             audio.addEventListener('canplay', () => {
                 playBtn.classList.remove('loading');
             });
-        }
-
-        function setupVisualizer() {
-            if (!audioContext) {
-                audioContext = new (window.AudioContext || window.webkitAudioContext)();
-            }
-
-            if (audioContext.state === 'suspended') {
-                audioContext.resume();
-            }
-
-            if (!source && audio) {
-                try {
-                    source = audioContext.createMediaElementSource(audio);
-                    analyser = audioContext.createAnalyser();
-                    analyser.fftSize = 256;
-                    source.connect(analyser);
-                    analyser.connect(audioContext.destination);
-                } catch (e) {
-                    console.log('Visualizer setup error (CORS):', e);
-                }
-            }
-
-            if (!animationId) {
-                drawVisualizer();
-            }
-        }
-
-        function drawVisualizer() {
-            if (!visualizerEnabled) {
-                cancelAnimationFrame(animationId);
-                animationId = null;
-                drawIdleVisualizer();
-                return;
-            }
-
-            animationId = requestAnimationFrame(drawVisualizer);
-
-            const width = canvas.width / (window.devicePixelRatio || 1);
-            const height = canvas.height / (window.devicePixelRatio || 1);
-
-            ctx.fillStyle = 'rgba(0, 0, 0, 0.3)';
-            ctx.fillRect(0, 0, width, height);
-
-            if (analyser && isPlaying) {
-                const bufferLength = analyser.frequencyBinCount;
-                const dataArray = new Uint8Array(bufferLength);
-                analyser.getByteFrequencyData(dataArray);
-
-                const barWidth = (width / bufferLength) * 2.5;
-                let x = 0;
-
-                for (let i = 0; i < bufferLength; i++) {
-                    const barHeight = (dataArray[i] / 255) * height * 0.8;
-
-                    const gradient = ctx.createLinearGradient(0, height - barHeight, 0, height);
-                    gradient.addColorStop(0, '#e94560');
-                    gradient.addColorStop(1, '#ff6b6b');
-
-                    ctx.fillStyle = gradient;
-                    ctx.fillRect(x, height - barHeight, barWidth - 2, barHeight);
-
-                    x += barWidth;
-                }
-            } else {
-                drawIdleVisualizer();
-            }
-        }
-
-        function drawIdleVisualizer() {
-            const width = canvas.width / (window.devicePixelRatio || 1);
-            const height = canvas.height / (window.devicePixelRatio || 1);
-
-            ctx.fillStyle = 'rgba(0, 0, 0, 0.3)';
-            ctx.fillRect(0, 0, width, height);
-
-            // Draw simple idle animation
-            const time = Date.now() / 1000;
-            const bars = 32;
-            const barWidth = width / bars;
-
-            for (let i = 0; i < bars; i++) {
-                const barHeight = (Math.sin(time * 2 + i * 0.3) + 1) * 20 + 5;
-                const gradient = ctx.createLinearGradient(0, height - barHeight, 0, height);
-                gradient.addColorStop(0, 'rgba(233, 69, 96, 0.3)');
-                gradient.addColorStop(1, 'rgba(255, 107, 107, 0.3)');
-                ctx.fillStyle = gradient;
-                ctx.fillRect(i * barWidth, height - barHeight, barWidth - 2, barHeight);
-            }
-
-            if (!isPlaying || !visualizerEnabled) {
-                requestAnimationFrame(drawIdleVisualizer);
-            }
         }
 
         // Playback controls
@@ -672,7 +515,6 @@
             if (isPlaying) {
                 const wasPlaying = isPlaying;
                 audio.pause();
-                source = null;
                 setupAudio();
                 audio.src = currentStation.url;
                 if (wasPlaying) {
@@ -698,21 +540,6 @@
                 volumeIcon.innerHTML = '&#128265;';
             } else {
                 volumeIcon.innerHTML = '&#128266;';
-            }
-        }
-
-        function toggleVisualizer() {
-            visualizerEnabled = !visualizerEnabled;
-            const btn = document.getElementById('visualizerToggle');
-            btn.textContent = visualizerEnabled ? 'Visualizer ON' : 'Visualizer OFF';
-            btn.classList.toggle('active', visualizerEnabled);
-
-            if (visualizerEnabled && isPlaying) {
-                setupVisualizer();
-            } else if (!visualizerEnabled) {
-                cancelAnimationFrame(animationId);
-                animationId = null;
-                drawIdleVisualizer();
             }
         }
 
@@ -819,7 +646,6 @@
             if (audio) {
                 audio.pause();
             }
-            source = null;
             setupAudio();
             audio.src = station.url;
             playBtn.classList.add('loading');
@@ -852,7 +678,6 @@
             if (audio) {
                 audio.pause();
             }
-            source = null;
             setupAudio();
             audio.src = currentStation.url;
             playBtn.classList.add('loading');
@@ -870,7 +695,6 @@
 
         // Start
         init();
-        drawIdleVisualizer();
     </script>
 </body>
 </html>
