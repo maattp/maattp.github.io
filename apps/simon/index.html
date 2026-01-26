@@ -14,19 +14,20 @@
             box-sizing: border-box;
         }
 
-        html {
-            background: linear-gradient(135deg, #1a1a2e 0%, #16213e 50%, #0f0f23 100%);
+        html, body {
+            height: 100%;
         }
 
         body {
             font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: linear-gradient(135deg, #1a1a2e 0%, #16213e 50%, #0f0f23 100%);
             min-height: 100vh;
-            min-height: -webkit-fill-available;
             display: flex;
             flex-direction: column;
             align-items: center;
             justify-content: center;
-            padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
+            padding-top: env(safe-area-inset-top);
+            padding-bottom: env(safe-area-inset-bottom);
             color: #fff;
             overflow: hidden;
             -webkit-user-select: none;
@@ -565,16 +566,20 @@
         });
 
         startBtn.addEventListener('click', startGame);
+        startBtn.addEventListener('touchend', (e) => {
+            e.preventDefault();
+            startGame();
+        });
 
         strictBtn.addEventListener('click', () => {
             strictMode = !strictMode;
             strictBtn.classList.toggle('active', strictMode);
         });
-
-        // Prevent zoom on double tap
-        document.addEventListener('touchend', (e) => {
+        strictBtn.addEventListener('touchend', (e) => {
             e.preventDefault();
-        }, { passive: false });
+            strictMode = !strictMode;
+            strictBtn.classList.toggle('active', strictMode);
+        });
     </script>
 </body>
 </html>
