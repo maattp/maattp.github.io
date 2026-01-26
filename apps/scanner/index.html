@@ -219,7 +219,7 @@
             opacity: 0;
         }
 
-        .channel-item.active .channel-live {
+        .channel-item.playing .channel-live {
             opacity: 1;
             animation: pulse 2s infinite;
         }
@@ -410,6 +410,13 @@
                 playBtn.classList.remove('loading');
                 statusDot.classList.add('live');
                 statusText.textContent = 'Live';
+                // Restore channel description and show playing indicator
+                if (currentChannel) {
+                    currentDescEl.textContent = currentChannel.desc;
+                    document.querySelectorAll('.channel-item').forEach(el => {
+                        el.classList.toggle('playing', el.classList.contains('active'));
+                    });
+                }
             });
 
             audio.addEventListener('pause', () => {
@@ -417,6 +424,10 @@
                 playIcon.innerHTML = '&#9654;';
                 statusDot.classList.remove('live');
                 statusText.textContent = 'Paused';
+                // Remove playing indicator from all channels
+                document.querySelectorAll('.channel-item').forEach(el => {
+                    el.classList.remove('playing');
+                });
             });
 
             audio.addEventListener('error', (e) => {
@@ -425,8 +436,12 @@
                 playIcon.innerHTML = '&#9654;';
                 isPlaying = false;
                 statusDot.classList.remove('live');
-                statusText.textContent = 'Error';
+                statusText.textContent = 'Unavailable';
                 currentDescEl.textContent = 'Stream unavailable - try another channel';
+                // Remove playing indicator from all channels
+                document.querySelectorAll('.channel-item').forEach(el => {
+                    el.classList.remove('playing');
+                });
             });
 
             audio.addEventListener('waiting', () => {
