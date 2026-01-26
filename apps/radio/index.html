@@ -23,7 +23,6 @@
             background: linear-gradient(135deg, #1a1a2e 0%, #16213e 50%, #0f3460 100%);
             color: #fff;
             min-height: 100vh;
-            padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
         }
 
         .container {
@@ -32,7 +31,7 @@
             height: 100%;
             max-width: 500px;
             margin: 0 auto;
-            padding: 20px;
+            padding: calc(20px + env(safe-area-inset-top)) calc(20px + env(safe-area-inset-right)) calc(20px + env(safe-area-inset-bottom)) calc(20px + env(safe-area-inset-left));
         }
 
         /* Header with station selector */
