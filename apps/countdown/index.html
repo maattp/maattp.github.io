@@ -487,7 +487,8 @@
             // Add custom dates
             const customDates = getCustomDates();
             customDates.forEach(custom => {
-                let date = new Date(custom.date);
+                // Parse as local time by appending T00:00:00 (otherwise "YYYY-MM-DD" is parsed as UTC)
+                let date = new Date(custom.date + 'T00:00:00');
 
                 if (custom.recurring) {
                     const now = new Date();
