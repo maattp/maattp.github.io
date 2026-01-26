@@ -160,50 +160,6 @@
             border-color: #e94560;
         }
 
-        /* Volume */
-        .volume-control {
-            display: flex;
-            align-items: center;
-            gap: 15px;
-            padding: 0 10px;
-        }
-
-        .volume-icon {
-            font-size: 20px;
-            width: 30px;
-            text-align: center;
-        }
-
-        .volume-slider {
-            flex: 1;
-            -webkit-appearance: none;
-            appearance: none;
-            height: 6px;
-            border-radius: 3px;
-            background: rgba(255, 255, 255, 0.2);
-            outline: none;
-        }
-
-        .volume-slider::-webkit-slider-thumb {
-            -webkit-appearance: none;
-            appearance: none;
-            width: 20px;
-            height: 20px;
-            border-radius: 50%;
-            background: #fff;
-            cursor: pointer;
-            box-shadow: 0 2px 6px rgba(0, 0, 0, 0.3);
-        }
-
-        .volume-slider::-moz-range-thumb {
-            width: 20px;
-            height: 20px;
-            border-radius: 50%;
-            background: #fff;
-            cursor: pointer;
-            border: none;
-        }
-
         /* Search Modal */
         .modal {
             display: none;
@@ -372,11 +328,6 @@
                 <button class="quality-btn active" id="quality160" onclick="setQuality('160')">160K</button>
             </div>
 
-            <div class="volume-control">
-                <span class="volume-icon" id="volumeIcon">&#128266;</span>
-                <input type="range" class="volume-slider" id="volumeSlider" min="0" max="100" value="80">
-            </div>
-
         </div>
     </div>
 
@@ -424,8 +375,6 @@
         // DOM elements
         const playBtn = document.getElementById('playBtn');
         const playIcon = document.getElementById('playIcon');
-        const volumeSlider = document.getElementById('volumeSlider');
-        const volumeIcon = document.getElementById('volumeIcon');
         const trackTitle = document.getElementById('trackTitle');
         const trackArtist = document.getElementById('trackArtist');
         const trackAlbum = document.getElementById('trackAlbum');
@@ -436,13 +385,10 @@
 
         // Initialize
         function init() {
-            updateVolumeIcon();
             if (currentStation.isKEXP) {
                 fetchKEXPNowPlaying();
                 setInterval(fetchKEXPNowPlaying, 30000);
             }
-
-            volumeSlider.addEventListener('input', updateVolume);
         }
 
         // Audio setup
@@ -454,7 +400,6 @@
 
             audio = new Audio();
             audio.crossOrigin = 'anonymous';
-            audio.volume = volumeSlider.value / 100;
 
             audio.addEventListener('playing', () => {
                 isPlaying = true;
@@ -522,24 +467,6 @@
                     playIcon.innerHTML = '<div class="spinner"></div>';
                     audio.play();
                 }
-            }
-        }
-
-        function updateVolume() {
-            if (audio) {
-                audio.volume = volumeSlider.value / 100;
-            }
-            updateVolumeIcon();
-        }
-
-        function updateVolumeIcon() {
-            const vol = volumeSlider.value;
-            if (vol == 0) {
-                volumeIcon.innerHTML = '&#128263;';
-            } else if (vol < 50) {
-                volumeIcon.innerHTML = '&#128265;';
-            } else {
-                volumeIcon.innerHTML = '&#128266;';
             }
         }
 
