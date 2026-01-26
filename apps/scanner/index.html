@@ -1,0 +1,562 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <title>Seattle Scanner</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        html, body {
+            height: 100%;
+            overflow: hidden;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: linear-gradient(135deg, #0a1628 0%, #1a2a4a 50%, #0d1f3c 100%);
+            color: #fff;
+            min-height: 100vh;
+            padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
+        }
+
+        .container {
+            display: flex;
+            flex-direction: column;
+            height: 100%;
+            max-width: 500px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+
+        .header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 15px;
+        }
+
+        .header h1 {
+            font-size: 22px;
+            font-weight: 600;
+            color: #4a9eff;
+        }
+
+        .status-indicator {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 12px;
+            color: rgba(255, 255, 255, 0.6);
+        }
+
+        .status-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: #444;
+        }
+
+        .status-dot.live {
+            background: #00ff00;
+            box-shadow: 0 0 8px #00ff00;
+            animation: pulse 2s infinite;
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+
+        .now-playing {
+            background: rgba(74, 158, 255, 0.1);
+            border: 1px solid rgba(74, 158, 255, 0.3);
+            border-radius: 16px;
+            padding: 20px;
+            margin-bottom: 15px;
+            text-align: center;
+        }
+
+        .channel-name {
+            font-size: 18px;
+            font-weight: 600;
+            margin-bottom: 5px;
+            color: #4a9eff;
+        }
+
+        .channel-desc {
+            font-size: 13px;
+            color: rgba(255, 255, 255, 0.6);
+            margin-bottom: 15px;
+        }
+
+        .controls {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            gap: 20px;
+        }
+
+        .play-btn {
+            width: 70px;
+            height: 70px;
+            border-radius: 50%;
+            background: linear-gradient(135deg, #4a9eff, #2563eb);
+            border: none;
+            color: #fff;
+            font-size: 28px;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: transform 0.15s, box-shadow 0.15s;
+            box-shadow: 0 4px 20px rgba(74, 158, 255, 0.4);
+        }
+
+        .play-btn:active {
+            transform: scale(0.92);
+        }
+
+        .play-btn.loading {
+            opacity: 0.7;
+            pointer-events: none;
+        }
+
+        .volume-control {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            margin-top: 15px;
+            padding: 0 10px;
+        }
+
+        .volume-icon {
+            font-size: 18px;
+            width: 25px;
+            text-align: center;
+        }
+
+        .volume-slider {
+            flex: 1;
+            -webkit-appearance: none;
+            appearance: none;
+            height: 6px;
+            border-radius: 3px;
+            background: rgba(255, 255, 255, 0.2);
+            outline: none;
+        }
+
+        .volume-slider::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            appearance: none;
+            width: 18px;
+            height: 18px;
+            border-radius: 50%;
+            background: #4a9eff;
+            cursor: pointer;
+            box-shadow: 0 2px 6px rgba(0, 0, 0, 0.3);
+        }
+
+        .volume-slider::-moz-range-thumb {
+            width: 18px;
+            height: 18px;
+            border-radius: 50%;
+            background: #4a9eff;
+            cursor: pointer;
+            border: none;
+        }
+
+        .section-title {
+            font-size: 12px;
+            color: rgba(255, 255, 255, 0.5);
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            margin-bottom: 12px;
+            margin-top: 5px;
+        }
+
+        .channels-list {
+            flex: 1;
+            overflow-y: auto;
+            padding-bottom: 20px;
+        }
+
+        .channel-item {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            padding: 14px;
+            background: rgba(255, 255, 255, 0.05);
+            border-radius: 12px;
+            margin-bottom: 10px;
+            cursor: pointer;
+            transition: all 0.2s;
+            border: 1px solid transparent;
+        }
+
+        .channel-item:active {
+            background: rgba(255, 255, 255, 0.1);
+        }
+
+        .channel-item.active {
+            background: rgba(74, 158, 255, 0.15);
+            border-color: rgba(74, 158, 255, 0.4);
+        }
+
+        .channel-icon {
+            width: 44px;
+            height: 44px;
+            border-radius: 10px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 20px;
+            flex-shrink: 0;
+        }
+
+        .channel-icon.police {
+            background: linear-gradient(135deg, #1e3a5f, #2563eb);
+        }
+
+        .channel-icon.fire {
+            background: linear-gradient(135deg, #7f1d1d, #dc2626);
+        }
+
+        .channel-icon.multi {
+            background: linear-gradient(135deg, #4c1d95, #7c3aed);
+        }
+
+        .channel-info {
+            flex: 1;
+            overflow: hidden;
+        }
+
+        .channel-info h3 {
+            font-size: 15px;
+            font-weight: 500;
+            margin-bottom: 3px;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        .channel-info p {
+            font-size: 12px;
+            color: rgba(255, 255, 255, 0.5);
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        .channel-live {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: #00ff00;
+            flex-shrink: 0;
+            opacity: 0;
+        }
+
+        .channel-item.active .channel-live {
+            opacity: 1;
+            animation: pulse 2s infinite;
+        }
+
+        .spinner {
+            width: 24px;
+            height: 24px;
+            border: 3px solid rgba(255, 255, 255, 0.3);
+            border-top-color: #fff;
+            border-radius: 50%;
+            animation: spin 0.8s linear infinite;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+
+        .disclaimer {
+            font-size: 10px;
+            color: rgba(255, 255, 255, 0.3);
+            text-align: center;
+            padding: 10px;
+            line-height: 1.4;
+        }
+
+        .disclaimer a {
+            color: rgba(74, 158, 255, 0.6);
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>Seattle Scanner</h1>
+            <div class="status-indicator">
+                <div class="status-dot" id="statusDot"></div>
+                <span id="statusText">Offline</span>
+            </div>
+        </div>
+
+        <div class="now-playing">
+            <div class="channel-name" id="currentChannel">Select a Channel</div>
+            <div class="channel-desc" id="currentDesc">Choose a scanner feed below</div>
+            <div class="controls">
+                <button class="play-btn" id="playBtn" onclick="togglePlay()">
+                    <span id="playIcon">&#9654;</span>
+                </button>
+            </div>
+            <div class="volume-control">
+                <span class="volume-icon" id="volumeIcon">&#128266;</span>
+                <input type="range" class="volume-slider" id="volumeSlider" min="0" max="100" value="80">
+            </div>
+        </div>
+
+        <div class="section-title">Seattle Channels</div>
+
+        <div class="channels-list" id="channelsList">
+            <!-- Channels populated by JS -->
+        </div>
+
+        <div class="disclaimer">
+            Streams provided by <a href="https://www.broadcastify.com" target="_blank">Broadcastify</a>.
+            Feed availability depends on volunteer operators.
+        </div>
+    </div>
+
+    <script>
+        // Seattle scanner channels from Broadcastify
+        const channels = [
+            {
+                id: '40168',
+                name: 'Downtown Law Enforcement',
+                desc: 'SPD Western & Eastern Precincts, WSP Downtown',
+                type: 'police'
+            },
+            {
+                id: '40212',
+                name: 'Police & Fire (PSERN)',
+                desc: 'Seattle Police and Fire combined feed',
+                type: 'multi'
+            },
+            {
+                id: '31314',
+                name: 'Police Dispatch - North',
+                desc: 'North Precinct dispatch and response',
+                type: 'police'
+            },
+            {
+                id: '40244',
+                name: 'Police Dispatch - South',
+                desc: 'South Precinct dispatch and response',
+                type: 'police'
+            },
+            {
+                id: '41619',
+                name: 'Police Dispatch - West',
+                desc: 'West Precinct dispatch and response',
+                type: 'police'
+            },
+            {
+                id: '40439',
+                name: 'Fire & East Precinct',
+                desc: 'Seattle Fire and East Precinct Police',
+                type: 'multi'
+            },
+            {
+                id: '20365',
+                name: 'Seattle Fire',
+                desc: 'Seattle Fire Department dispatch',
+                type: 'fire'
+            },
+            {
+                id: '29351',
+                name: 'Seattle Police',
+                desc: 'General Seattle Police feed',
+                type: 'police'
+            }
+        ];
+
+        // State
+        let audio = null;
+        let isPlaying = false;
+        let currentChannel = null;
+
+        // DOM elements
+        const playBtn = document.getElementById('playBtn');
+        const playIcon = document.getElementById('playIcon');
+        const volumeSlider = document.getElementById('volumeSlider');
+        const volumeIcon = document.getElementById('volumeIcon');
+        const statusDot = document.getElementById('statusDot');
+        const statusText = document.getElementById('statusText');
+        const currentChannelEl = document.getElementById('currentChannel');
+        const currentDescEl = document.getElementById('currentDesc');
+        const channelsList = document.getElementById('channelsList');
+
+        // Initialize
+        function init() {
+            renderChannels();
+            volumeSlider.addEventListener('input', updateVolume);
+        }
+
+        function renderChannels() {
+            channelsList.innerHTML = channels.map((channel, index) => `
+                <div class="channel-item" data-index="${index}" onclick="selectChannel(${index})">
+                    <div class="channel-icon ${channel.type}">
+                        ${channel.type === 'police' ? '👮' : channel.type === 'fire' ? '🚒' : '📡'}
+                    </div>
+                    <div class="channel-info">
+                        <h3>${channel.name}</h3>
+                        <p>${channel.desc}</p>
+                    </div>
+                    <div class="channel-live"></div>
+                </div>
+            `).join('');
+        }
+
+        function selectChannel(index) {
+            const channel = channels[index];
+            currentChannel = channel;
+
+            // Update UI
+            currentChannelEl.textContent = channel.name;
+            currentDescEl.textContent = channel.desc;
+
+            // Update active state
+            document.querySelectorAll('.channel-item').forEach((el, i) => {
+                el.classList.toggle('active', i === index);
+            });
+
+            // Stop current playback and start new
+            if (audio) {
+                audio.pause();
+                audio.src = '';
+            }
+            isPlaying = false;
+            playIcon.innerHTML = '&#9654;';
+            statusDot.classList.remove('live');
+            statusText.textContent = 'Ready';
+
+            // Auto-play the selected channel
+            startPlayback();
+        }
+
+        function setupAudio() {
+            if (audio) {
+                audio.pause();
+                audio.src = '';
+            }
+
+            audio = new Audio();
+            audio.volume = volumeSlider.value / 100;
+
+            audio.addEventListener('playing', () => {
+                isPlaying = true;
+                playIcon.innerHTML = '&#10074;&#10074;';
+                playBtn.classList.remove('loading');
+                statusDot.classList.add('live');
+                statusText.textContent = 'Live';
+            });
+
+            audio.addEventListener('pause', () => {
+                isPlaying = false;
+                playIcon.innerHTML = '&#9654;';
+                statusDot.classList.remove('live');
+                statusText.textContent = 'Paused';
+            });
+
+            audio.addEventListener('error', (e) => {
+                console.error('Audio error:', e);
+                playBtn.classList.remove('loading');
+                playIcon.innerHTML = '&#9654;';
+                isPlaying = false;
+                statusDot.classList.remove('live');
+                statusText.textContent = 'Error';
+                currentDescEl.textContent = 'Stream unavailable - try another channel';
+            });
+
+            audio.addEventListener('waiting', () => {
+                playBtn.classList.add('loading');
+                statusText.textContent = 'Buffering...';
+            });
+
+            audio.addEventListener('canplay', () => {
+                playBtn.classList.remove('loading');
+            });
+        }
+
+        function startPlayback() {
+            if (!currentChannel) return;
+
+            setupAudio();
+
+            // Broadcastify CDN stream URL format
+            const streamUrl = `https://broadcastify.cdnstream1.com/${currentChannel.id}`;
+            audio.src = streamUrl;
+
+            playBtn.classList.add('loading');
+            playIcon.innerHTML = '<div class="spinner"></div>';
+            statusText.textContent = 'Connecting...';
+
+            audio.play().catch(e => {
+                console.error('Play error:', e);
+                playBtn.classList.remove('loading');
+                playIcon.innerHTML = '&#9654;';
+                statusText.textContent = 'Error';
+                currentDescEl.textContent = 'Tap play to try again';
+            });
+        }
+
+        function togglePlay() {
+            if (!currentChannel) {
+                // Select first channel if none selected
+                selectChannel(0);
+                return;
+            }
+
+            if (isPlaying) {
+                audio.pause();
+            } else {
+                if (!audio || !audio.src) {
+                    startPlayback();
+                } else {
+                    playBtn.classList.add('loading');
+                    playIcon.innerHTML = '<div class="spinner"></div>';
+                    audio.play().catch(e => {
+                        console.error('Play error:', e);
+                        playBtn.classList.remove('loading');
+                        playIcon.innerHTML = '&#9654;';
+                    });
+                }
+            }
+        }
+
+        function updateVolume() {
+            if (audio) {
+                audio.volume = volumeSlider.value / 100;
+            }
+            updateVolumeIcon();
+        }
+
+        function updateVolumeIcon() {
+            const vol = volumeSlider.value;
+            if (vol == 0) {
+                volumeIcon.innerHTML = '&#128263;';
+            } else if (vol < 50) {
+                volumeIcon.innerHTML = '&#128265;';
+            } else {
+                volumeIcon.innerHTML = '&#128266;';
+            }
+        }
+
+        // Start
+        init();
+    </script>
+</body>
+</html>
