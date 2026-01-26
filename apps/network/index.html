@@ -1,0 +1,789 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="theme-color" content="#1a1a2e">
+    <title>Network Info</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        html, body {
+            min-height: 100%;
+            min-height: 100vh;
+            min-height: -webkit-fill-available;
+        }
+
+        html {
+            background: linear-gradient(135deg, #1a1a2e, #16213e, #0f3460);
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            color: #fff;
+            background: transparent;
+            overflow-y: auto;
+        }
+
+        .container {
+            max-width: 500px;
+            margin: 0 auto;
+            padding: 20px;
+            padding-top: calc(env(safe-area-inset-top) + 20px);
+            padding-bottom: calc(env(safe-area-inset-bottom) + 20px);
+            padding-left: calc(env(safe-area-inset-left) + 20px);
+            padding-right: calc(env(safe-area-inset-right) + 20px);
+        }
+
+        .header {
+            text-align: center;
+            margin-bottom: 25px;
+        }
+
+        .header h1 {
+            font-size: 28px;
+            font-weight: 600;
+            margin-bottom: 5px;
+        }
+
+        .header .subtitle {
+            font-size: 14px;
+            opacity: 0.7;
+        }
+
+        .status-badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            padding: 6px 14px;
+            border-radius: 20px;
+            font-size: 13px;
+            font-weight: 500;
+            margin-top: 10px;
+        }
+
+        .status-online {
+            background: rgba(48, 209, 88, 0.2);
+            color: #30d158;
+        }
+
+        .status-offline {
+            background: rgba(255, 69, 58, 0.2);
+            color: #ff453a;
+        }
+
+        .status-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: currentColor;
+            animation: pulse 2s ease-in-out infinite;
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+
+        .card {
+            background: rgba(255, 255, 255, 0.1);
+            backdrop-filter: blur(10px);
+            border-radius: 16px;
+            padding: 20px;
+            margin-bottom: 15px;
+        }
+
+        .card-title {
+            font-size: 13px;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            opacity: 0.7;
+            margin-bottom: 15px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .card-title-icon {
+            font-size: 16px;
+        }
+
+        .ip-display {
+            text-align: center;
+            padding: 15px 0;
+        }
+
+        .ip-address {
+            font-size: 32px;
+            font-weight: 300;
+            font-family: 'SF Mono', 'Menlo', monospace;
+            letter-spacing: 1px;
+            word-break: break-all;
+        }
+
+        .ip-label {
+            font-size: 12px;
+            opacity: 0.6;
+            margin-top: 5px;
+        }
+
+        .info-grid {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 12px;
+        }
+
+        .info-item {
+            background: rgba(255, 255, 255, 0.05);
+            border-radius: 12px;
+            padding: 12px;
+        }
+
+        .info-item.full-width {
+            grid-column: 1 / -1;
+        }
+
+        .info-label {
+            font-size: 11px;
+            opacity: 0.6;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            margin-bottom: 4px;
+        }
+
+        .info-value {
+            font-size: 15px;
+            font-weight: 500;
+            word-break: break-word;
+        }
+
+        .info-value.mono {
+            font-family: 'SF Mono', 'Menlo', monospace;
+            font-size: 13px;
+        }
+
+        .latency-tests {
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+        }
+
+        .latency-item {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            background: rgba(255, 255, 255, 0.05);
+            border-radius: 10px;
+            padding: 12px 15px;
+        }
+
+        .latency-name {
+            font-size: 14px;
+        }
+
+        .latency-value {
+            font-family: 'SF Mono', 'Menlo', monospace;
+            font-size: 14px;
+            font-weight: 500;
+        }
+
+        .latency-good { color: #30d158; }
+        .latency-medium { color: #ffd60a; }
+        .latency-poor { color: #ff9500; }
+        .latency-bad { color: #ff453a; }
+
+        .speed-bar {
+            height: 6px;
+            background: rgba(255, 255, 255, 0.1);
+            border-radius: 3px;
+            overflow: hidden;
+            margin-top: 8px;
+        }
+
+        .speed-fill {
+            height: 100%;
+            background: linear-gradient(90deg, #5ac8fa, #30d158);
+            border-radius: 3px;
+            transition: width 0.5s ease;
+        }
+
+        .loading {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            min-height: 200px;
+            text-align: center;
+        }
+
+        .loading-spinner {
+            width: 40px;
+            height: 40px;
+            border: 3px solid rgba(255, 255, 255, 0.2);
+            border-top-color: #5ac8fa;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+            margin-bottom: 15px;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+
+        .refresh-button {
+            position: fixed;
+            top: calc(env(safe-area-inset-top) + 15px);
+            right: 15px;
+            background: rgba(255, 255, 255, 0.15);
+            border: none;
+            color: #fff;
+            width: 40px;
+            height: 40px;
+            border-radius: 50%;
+            font-size: 20px;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: transform 0.3s, background 0.2s;
+            z-index: 100;
+        }
+
+        .refresh-button:hover {
+            background: rgba(255, 255, 255, 0.25);
+        }
+
+        .refresh-button.spinning {
+            animation: spin 1s linear infinite;
+        }
+
+        .error-card {
+            text-align: center;
+            padding: 30px 20px;
+        }
+
+        .error-icon {
+            font-size: 48px;
+            margin-bottom: 15px;
+        }
+
+        .error-message {
+            font-size: 15px;
+            opacity: 0.8;
+        }
+
+        .map-container {
+            height: 150px;
+            border-radius: 12px;
+            overflow: hidden;
+            margin-top: 12px;
+            background: rgba(0, 0, 0, 0.2);
+        }
+
+        .map-container iframe {
+            width: 100%;
+            height: 100%;
+            border: none;
+            filter: grayscale(30%) brightness(0.85);
+        }
+
+        .connection-type {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            padding: 15px;
+            background: rgba(255, 255, 255, 0.05);
+            border-radius: 12px;
+            margin-bottom: 12px;
+        }
+
+        .connection-icon {
+            font-size: 28px;
+        }
+
+        .connection-details {
+            flex: 1;
+        }
+
+        .connection-name {
+            font-size: 16px;
+            font-weight: 600;
+        }
+
+        .connection-effective {
+            font-size: 12px;
+            opacity: 0.7;
+            margin-top: 2px;
+        }
+
+        .na {
+            opacity: 0.4;
+            font-style: italic;
+        }
+    </style>
+</head>
+<body>
+    <button class="refresh-button" id="refresh-btn" title="Refresh">&#x21bb;</button>
+
+    <div class="container" id="app">
+        <div class="loading">
+            <div class="loading-spinner"></div>
+            <p>Gathering network info...</p>
+        </div>
+    </div>
+
+    <script>
+        // State
+        let networkData = {
+            ip: null,
+            geo: null,
+            connection: null,
+            latency: {},
+            browser: null
+        };
+
+        // Get connection type icon
+        function getConnectionIcon(type) {
+            const icons = {
+                'wifi': '📶',
+                'cellular': '📱',
+                'ethernet': '🔌',
+                'bluetooth': '🔵',
+                'wimax': '📡',
+                'other': '🌐',
+                'none': '❌',
+                'unknown': '❓'
+            };
+            return icons[type] || icons.unknown;
+        }
+
+        // Get effective type label
+        function getEffectiveLabel(type) {
+            const labels = {
+                'slow-2g': 'Very Slow (2G)',
+                '2g': 'Slow (2G)',
+                '3g': 'Moderate (3G)',
+                '4g': 'Fast (4G/LTE+)'
+            };
+            return labels[type] || type || 'Unknown';
+        }
+
+        // Get latency class
+        function getLatencyClass(ms) {
+            if (ms < 100) return 'latency-good';
+            if (ms < 200) return 'latency-medium';
+            if (ms < 500) return 'latency-poor';
+            return 'latency-bad';
+        }
+
+        // Fetch IP geolocation data
+        async function fetchIPData() {
+            try {
+                const response = await fetch('http://ip-api.com/json/?fields=status,message,country,countryCode,region,regionName,city,zip,lat,lon,timezone,isp,org,as,query');
+                const data = await response.json();
+                if (data.status === 'success') {
+                    return data;
+                }
+                throw new Error(data.message || 'Failed to fetch IP data');
+            } catch (error) {
+                console.error('IP-API error:', error);
+                // Fallback to ipify for just the IP
+                try {
+                    const ipResponse = await fetch('https://api.ipify.org?format=json');
+                    const ipData = await ipResponse.json();
+                    return { query: ipData.ip, fallback: true };
+                } catch {
+                    return null;
+                }
+            }
+        }
+
+        // Get browser connection info
+        function getConnectionInfo() {
+            const conn = navigator.connection || navigator.mozConnection || navigator.webkitConnection;
+            if (!conn) return null;
+
+            return {
+                type: conn.type || 'unknown',
+                effectiveType: conn.effectiveType,
+                downlink: conn.downlink,
+                rtt: conn.rtt,
+                saveData: conn.saveData
+            };
+        }
+
+        // Measure latency to an endpoint
+        async function measureLatency(name, url) {
+            try {
+                const start = performance.now();
+                await fetch(url, {
+                    method: 'HEAD',
+                    mode: 'no-cors',
+                    cache: 'no-store'
+                });
+                const end = performance.now();
+                return { name, ms: Math.round(end - start), error: false };
+            } catch {
+                return { name, ms: null, error: true };
+            }
+        }
+
+        // Run latency tests
+        async function runLatencyTests() {
+            const tests = [
+                { name: 'Google', url: 'https://www.google.com/favicon.ico' },
+                { name: 'Cloudflare', url: 'https://www.cloudflare.com/favicon.ico' },
+                { name: 'Amazon AWS', url: 'https://aws.amazon.com/favicon.ico' },
+                { name: 'Microsoft', url: 'https://www.microsoft.com/favicon.ico' }
+            ];
+
+            const results = await Promise.all(
+                tests.map(t => measureLatency(t.name, t.url))
+            );
+
+            return results;
+        }
+
+        // Get browser info
+        function getBrowserInfo() {
+            const ua = navigator.userAgent;
+            let browser = 'Unknown';
+            let os = navigator.platform;
+
+            if (ua.includes('Firefox/')) browser = 'Firefox';
+            else if (ua.includes('Edg/')) browser = 'Edge';
+            else if (ua.includes('Chrome/')) browser = 'Chrome';
+            else if (ua.includes('Safari/')) browser = 'Safari';
+
+            return {
+                browser,
+                platform: os,
+                language: navigator.language,
+                languages: navigator.languages?.join(', ') || navigator.language,
+                cookiesEnabled: navigator.cookieEnabled,
+                doNotTrack: navigator.doNotTrack === '1',
+                online: navigator.onLine,
+                deviceMemory: navigator.deviceMemory,
+                hardwareConcurrency: navigator.hardwareConcurrency,
+                screenWidth: screen.width,
+                screenHeight: screen.height,
+                colorDepth: screen.colorDepth,
+                pixelRatio: window.devicePixelRatio
+            };
+        }
+
+        // Render the UI
+        function render() {
+            const { geo, connection, latency, browser } = networkData;
+
+            const online = navigator.onLine;
+            const statusClass = online ? 'status-online' : 'status-offline';
+            const statusText = online ? 'Online' : 'Offline';
+
+            let html = `
+                <div class="header">
+                    <h1>Network Info</h1>
+                    <div class="subtitle">Your connection at a glance</div>
+                    <div class="status-badge ${statusClass}">
+                        <span class="status-dot"></span>
+                        ${statusText}
+                    </div>
+                </div>
+            `;
+
+            // IP Address Card
+            html += `
+                <div class="card">
+                    <div class="card-title">
+                        <span class="card-title-icon">🌐</span>
+                        Public IP Address
+                    </div>
+                    <div class="ip-display">
+                        <div class="ip-address">${geo?.query || '<span class="na">Unavailable</span>'}</div>
+                        <div class="ip-label">IPv4 Address</div>
+                    </div>
+                </div>
+            `;
+
+            // Location Card (only if we have geo data)
+            if (geo && !geo.fallback) {
+                html += `
+                    <div class="card">
+                        <div class="card-title">
+                            <span class="card-title-icon">📍</span>
+                            Location
+                        </div>
+                        <div class="info-grid">
+                            <div class="info-item">
+                                <div class="info-label">City</div>
+                                <div class="info-value">${geo.city || 'N/A'}</div>
+                            </div>
+                            <div class="info-item">
+                                <div class="info-label">Region</div>
+                                <div class="info-value">${geo.regionName || 'N/A'}</div>
+                            </div>
+                            <div class="info-item">
+                                <div class="info-label">Country</div>
+                                <div class="info-value">${geo.country || 'N/A'} ${geo.countryCode ? getFlagEmoji(geo.countryCode) : ''}</div>
+                            </div>
+                            <div class="info-item">
+                                <div class="info-label">ZIP Code</div>
+                                <div class="info-value">${geo.zip || 'N/A'}</div>
+                            </div>
+                            <div class="info-item">
+                                <div class="info-label">Timezone</div>
+                                <div class="info-value">${geo.timezone || 'N/A'}</div>
+                            </div>
+                            <div class="info-item">
+                                <div class="info-label">Coordinates</div>
+                                <div class="info-value mono">${geo.lat?.toFixed(4)}, ${geo.lon?.toFixed(4)}</div>
+                            </div>
+                        </div>
+                        ${geo.lat && geo.lon ? `
+                            <div class="map-container">
+                                <iframe
+                                    src="https://www.openstreetmap.org/export/embed.html?bbox=${geo.lon - 0.05},${geo.lat - 0.03},${geo.lon + 0.05},${geo.lat + 0.03}&layer=mapnik&marker=${geo.lat},${geo.lon}"
+                                    loading="lazy">
+                                </iframe>
+                            </div>
+                        ` : ''}
+                    </div>
+                `;
+            }
+
+            // ISP Card
+            if (geo && !geo.fallback) {
+                html += `
+                    <div class="card">
+                        <div class="card-title">
+                            <span class="card-title-icon">🏢</span>
+                            Service Provider
+                        </div>
+                        <div class="info-grid">
+                            <div class="info-item full-width">
+                                <div class="info-label">ISP</div>
+                                <div class="info-value">${geo.isp || 'N/A'}</div>
+                            </div>
+                            <div class="info-item full-width">
+                                <div class="info-label">Organization</div>
+                                <div class="info-value">${geo.org || 'N/A'}</div>
+                            </div>
+                            <div class="info-item full-width">
+                                <div class="info-label">AS Number</div>
+                                <div class="info-value mono">${geo.as || 'N/A'}</div>
+                            </div>
+                        </div>
+                    </div>
+                `;
+            }
+
+            // Connection Card
+            html += `
+                <div class="card">
+                    <div class="card-title">
+                        <span class="card-title-icon">📡</span>
+                        Connection
+                    </div>
+            `;
+
+            if (connection) {
+                const speedPercent = Math.min((connection.downlink || 0) / 100 * 100, 100);
+                html += `
+                    <div class="connection-type">
+                        <div class="connection-icon">${getConnectionIcon(connection.type)}</div>
+                        <div class="connection-details">
+                            <div class="connection-name">${connection.type.charAt(0).toUpperCase() + connection.type.slice(1)}</div>
+                            <div class="connection-effective">${getEffectiveLabel(connection.effectiveType)}</div>
+                        </div>
+                    </div>
+                    <div class="info-grid">
+                        <div class="info-item">
+                            <div class="info-label">Downlink</div>
+                            <div class="info-value">${connection.downlink ? connection.downlink + ' Mbps' : '<span class="na">N/A</span>'}</div>
+                            ${connection.downlink ? `
+                                <div class="speed-bar">
+                                    <div class="speed-fill" style="width: ${speedPercent}%"></div>
+                                </div>
+                            ` : ''}
+                        </div>
+                        <div class="info-item">
+                            <div class="info-label">RTT</div>
+                            <div class="info-value">${connection.rtt ? connection.rtt + ' ms' : '<span class="na">N/A</span>'}</div>
+                        </div>
+                        <div class="info-item">
+                            <div class="info-label">Save Data</div>
+                            <div class="info-value">${connection.saveData ? 'Enabled' : 'Disabled'}</div>
+                        </div>
+                    </div>
+                `;
+            } else {
+                html += `
+                    <div class="info-item full-width" style="text-align: center; padding: 20px;">
+                        <div class="info-value na">Network Information API not supported in this browser</div>
+                    </div>
+                `;
+            }
+
+            html += `</div>`;
+
+            // Latency Card
+            if (latency && latency.length > 0) {
+                html += `
+                    <div class="card">
+                        <div class="card-title">
+                            <span class="card-title-icon">⚡</span>
+                            Latency Tests
+                        </div>
+                        <div class="latency-tests">
+                            ${latency.map(l => `
+                                <div class="latency-item">
+                                    <span class="latency-name">${l.name}</span>
+                                    <span class="latency-value ${l.error ? 'na' : getLatencyClass(l.ms)}">
+                                        ${l.error ? 'Failed' : l.ms + ' ms'}
+                                    </span>
+                                </div>
+                            `).join('')}
+                        </div>
+                    </div>
+                `;
+            }
+
+            // Browser Card
+            if (browser) {
+                html += `
+                    <div class="card">
+                        <div class="card-title">
+                            <span class="card-title-icon">🖥️</span>
+                            Browser & Device
+                        </div>
+                        <div class="info-grid">
+                            <div class="info-item">
+                                <div class="info-label">Browser</div>
+                                <div class="info-value">${browser.browser}</div>
+                            </div>
+                            <div class="info-item">
+                                <div class="info-label">Platform</div>
+                                <div class="info-value">${browser.platform}</div>
+                            </div>
+                            <div class="info-item">
+                                <div class="info-label">Language</div>
+                                <div class="info-value">${browser.language}</div>
+                            </div>
+                            <div class="info-item">
+                                <div class="info-label">Screen</div>
+                                <div class="info-value">${browser.screenWidth}x${browser.screenHeight}</div>
+                            </div>
+                            <div class="info-item">
+                                <div class="info-label">Pixel Ratio</div>
+                                <div class="info-value">${browser.pixelRatio}x</div>
+                            </div>
+                            <div class="info-item">
+                                <div class="info-label">Color Depth</div>
+                                <div class="info-value">${browser.colorDepth}-bit</div>
+                            </div>
+                            ${browser.hardwareConcurrency ? `
+                                <div class="info-item">
+                                    <div class="info-label">CPU Cores</div>
+                                    <div class="info-value">${browser.hardwareConcurrency}</div>
+                                </div>
+                            ` : ''}
+                            ${browser.deviceMemory ? `
+                                <div class="info-item">
+                                    <div class="info-label">Device Memory</div>
+                                    <div class="info-value">${browser.deviceMemory} GB</div>
+                                </div>
+                            ` : ''}
+                            <div class="info-item">
+                                <div class="info-label">Cookies</div>
+                                <div class="info-value">${browser.cookiesEnabled ? 'Enabled' : 'Disabled'}</div>
+                            </div>
+                            <div class="info-item">
+                                <div class="info-label">Do Not Track</div>
+                                <div class="info-value">${browser.doNotTrack ? 'Enabled' : 'Disabled'}</div>
+                            </div>
+                        </div>
+                    </div>
+                `;
+            }
+
+            document.getElementById('app').innerHTML = html;
+        }
+
+        // Get flag emoji from country code
+        function getFlagEmoji(countryCode) {
+            const codePoints = countryCode
+                .toUpperCase()
+                .split('')
+                .map(char => 127397 + char.charCodeAt());
+            return String.fromCodePoint(...codePoints);
+        }
+
+        // Initialize
+        async function init() {
+            const refreshBtn = document.getElementById('refresh-btn');
+            refreshBtn.classList.add('spinning');
+
+            document.getElementById('app').innerHTML = `
+                <div class="loading">
+                    <div class="loading-spinner"></div>
+                    <p>Gathering network info...</p>
+                </div>
+            `;
+
+            try {
+                // Gather all data in parallel
+                const [geo, latency] = await Promise.all([
+                    fetchIPData(),
+                    runLatencyTests()
+                ]);
+
+                networkData.geo = geo;
+                networkData.connection = getConnectionInfo();
+                networkData.latency = latency;
+                networkData.browser = getBrowserInfo();
+
+                render();
+            } catch (error) {
+                console.error('Init error:', error);
+                document.getElementById('app').innerHTML = `
+                    <div class="header">
+                        <h1>Network Info</h1>
+                    </div>
+                    <div class="card error-card">
+                        <div class="error-icon">⚠️</div>
+                        <div class="error-message">Unable to gather network information. Please check your connection and try again.</div>
+                    </div>
+                `;
+            } finally {
+                refreshBtn.classList.remove('spinning');
+            }
+        }
+
+        // Event listeners
+        document.getElementById('refresh-btn').addEventListener('click', init);
+
+        // Listen for online/offline changes
+        window.addEventListener('online', render);
+        window.addEventListener('offline', render);
+
+        // Listen for connection changes
+        const conn = navigator.connection || navigator.mozConnection || navigator.webkitConnection;
+        if (conn) {
+            conn.addEventListener('change', () => {
+                networkData.connection = getConnectionInfo();
+                render();
+            });
+        }
+
+        // Start
+        init();
+    </script>
+</body>
+</html>
