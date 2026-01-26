@@ -1,0 +1,580 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="theme-color" content="#1a1a2e">
+    <title>Simon</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        html {
+            background: linear-gradient(135deg, #1a1a2e 0%, #16213e 50%, #0f0f23 100%);
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            min-height: 100vh;
+            min-height: -webkit-fill-available;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
+            color: #fff;
+            overflow: hidden;
+            -webkit-user-select: none;
+            user-select: none;
+        }
+
+        .game-container {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 20px;
+            padding: 20px;
+        }
+
+        .header {
+            text-align: center;
+            margin-bottom: 10px;
+        }
+
+        .title {
+            font-size: 2.5rem;
+            font-weight: 700;
+            letter-spacing: 8px;
+            text-transform: uppercase;
+            background: linear-gradient(135deg, #00d4ff, #7b2ff7);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+
+        .score-display {
+            display: flex;
+            gap: 30px;
+            margin-top: 10px;
+        }
+
+        .score-item {
+            text-align: center;
+        }
+
+        .score-label {
+            font-size: 0.75rem;
+            color: #888;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+
+        .score-value {
+            font-size: 1.5rem;
+            font-weight: 600;
+            color: #fff;
+        }
+
+        .simon-board {
+            position: relative;
+            width: min(85vw, 340px);
+            height: min(85vw, 340px);
+        }
+
+        .pad {
+            position: absolute;
+            width: 48%;
+            height: 48%;
+            cursor: pointer;
+            transition: filter 0.1s ease, transform 0.1s ease;
+            border: none;
+            outline: none;
+        }
+
+        .pad:active:not(.disabled) {
+            transform: scale(0.97);
+        }
+
+        .pad.disabled {
+            cursor: not-allowed;
+        }
+
+        .pad.lit {
+            filter: brightness(1.8) saturate(1.2);
+            z-index: 10;
+        }
+
+        /* Green - Top Left */
+        .pad-green {
+            top: 0;
+            left: 0;
+            background: linear-gradient(135deg, #2ecc40 0%, #1a8a2a 100%);
+            border-radius: 100% 10px 10px 10px;
+            box-shadow:
+                inset 3px 3px 10px rgba(255, 255, 255, 0.2),
+                inset -3px -3px 10px rgba(0, 0, 0, 0.3),
+                0 4px 15px rgba(46, 204, 64, 0.3);
+        }
+
+        .pad-green.lit {
+            background: linear-gradient(135deg, #5eff7a 0%, #2ecc40 100%);
+            box-shadow:
+                inset 3px 3px 10px rgba(255, 255, 255, 0.3),
+                inset -3px -3px 10px rgba(0, 0, 0, 0.2),
+                0 0 40px rgba(46, 204, 64, 0.8),
+                0 0 80px rgba(46, 204, 64, 0.4);
+        }
+
+        /* Red - Top Right */
+        .pad-red {
+            top: 0;
+            right: 0;
+            background: linear-gradient(225deg, #ff4136 0%, #b32d26 100%);
+            border-radius: 10px 100% 10px 10px;
+            box-shadow:
+                inset 3px 3px 10px rgba(255, 255, 255, 0.2),
+                inset -3px -3px 10px rgba(0, 0, 0, 0.3),
+                0 4px 15px rgba(255, 65, 54, 0.3);
+        }
+
+        .pad-red.lit {
+            background: linear-gradient(225deg, #ff7a72 0%, #ff4136 100%);
+            box-shadow:
+                inset 3px 3px 10px rgba(255, 255, 255, 0.3),
+                inset -3px -3px 10px rgba(0, 0, 0, 0.2),
+                0 0 40px rgba(255, 65, 54, 0.8),
+                0 0 80px rgba(255, 65, 54, 0.4);
+        }
+
+        /* Yellow - Bottom Left */
+        .pad-yellow {
+            bottom: 0;
+            left: 0;
+            background: linear-gradient(45deg, #ffdc00 0%, #c7a900 100%);
+            border-radius: 10px 10px 10px 100%;
+            box-shadow:
+                inset 3px 3px 10px rgba(255, 255, 255, 0.2),
+                inset -3px -3px 10px rgba(0, 0, 0, 0.3),
+                0 4px 15px rgba(255, 220, 0, 0.3);
+        }
+
+        .pad-yellow.lit {
+            background: linear-gradient(45deg, #fff056 0%, #ffdc00 100%);
+            box-shadow:
+                inset 3px 3px 10px rgba(255, 255, 255, 0.3),
+                inset -3px -3px 10px rgba(0, 0, 0, 0.2),
+                0 0 40px rgba(255, 220, 0, 0.8),
+                0 0 80px rgba(255, 220, 0, 0.4);
+        }
+
+        /* Blue - Bottom Right */
+        .pad-blue {
+            bottom: 0;
+            right: 0;
+            background: linear-gradient(315deg, #0074d9 0%, #004a8c 100%);
+            border-radius: 10px 10px 100% 10px;
+            box-shadow:
+                inset 3px 3px 10px rgba(255, 255, 255, 0.2),
+                inset -3px -3px 10px rgba(0, 0, 0, 0.3),
+                0 4px 15px rgba(0, 116, 217, 0.3);
+        }
+
+        .pad-blue.lit {
+            background: linear-gradient(315deg, #4da6ff 0%, #0074d9 100%);
+            box-shadow:
+                inset 3px 3px 10px rgba(255, 255, 255, 0.3),
+                inset -3px -3px 10px rgba(0, 0, 0, 0.2),
+                0 0 40px rgba(0, 116, 217, 0.8),
+                0 0 80px rgba(0, 116, 217, 0.4);
+        }
+
+        /* Center circle */
+        .center-circle {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            width: 35%;
+            height: 35%;
+            background: linear-gradient(145deg, #2a2a4a, #1a1a2e);
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            box-shadow:
+                0 4px 20px rgba(0, 0, 0, 0.5),
+                inset 0 2px 10px rgba(255, 255, 255, 0.1);
+            z-index: 20;
+        }
+
+        .center-text {
+            font-size: 1rem;
+            font-weight: 600;
+            color: #888;
+            text-align: center;
+            line-height: 1.2;
+        }
+
+        .controls {
+            display: flex;
+            gap: 15px;
+            margin-top: 10px;
+        }
+
+        .btn {
+            padding: 14px 28px;
+            font-size: 1rem;
+            font-weight: 600;
+            border: none;
+            border-radius: 12px;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+
+        .btn-start {
+            background: linear-gradient(135deg, #00d4ff, #0099cc);
+            color: #000;
+            box-shadow: 0 4px 15px rgba(0, 212, 255, 0.3);
+        }
+
+        .btn-start:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 6px 20px rgba(0, 212, 255, 0.4);
+        }
+
+        .btn-start:active {
+            transform: translateY(0);
+        }
+
+        .btn-strict {
+            background: rgba(255, 255, 255, 0.1);
+            color: #fff;
+            border: 2px solid rgba(255, 255, 255, 0.2);
+        }
+
+        .btn-strict.active {
+            background: linear-gradient(135deg, #ff4136, #cc3029);
+            border-color: #ff4136;
+            box-shadow: 0 4px 15px rgba(255, 65, 54, 0.3);
+        }
+
+        .btn-strict:hover {
+            background: rgba(255, 255, 255, 0.15);
+        }
+
+        .btn-strict.active:hover {
+            background: linear-gradient(135deg, #ff5a50, #ff4136);
+        }
+
+        .message {
+            height: 24px;
+            font-size: 1rem;
+            color: #888;
+            text-align: center;
+            margin-top: 5px;
+        }
+
+        .message.error {
+            color: #ff4136;
+        }
+
+        .message.success {
+            color: #2ecc40;
+        }
+
+        @media (max-height: 650px) {
+            .title {
+                font-size: 2rem;
+            }
+
+            .game-container {
+                gap: 10px;
+            }
+
+            .simon-board {
+                width: min(75vw, 280px);
+                height: min(75vw, 280px);
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="game-container">
+        <div class="header">
+            <h1 class="title">Simon</h1>
+            <div class="score-display">
+                <div class="score-item">
+                    <div class="score-label">Round</div>
+                    <div class="score-value" id="round">0</div>
+                </div>
+                <div class="score-item">
+                    <div class="score-label">Best</div>
+                    <div class="score-value" id="best">0</div>
+                </div>
+            </div>
+        </div>
+
+        <div class="simon-board">
+            <button class="pad pad-green" data-color="green" aria-label="Green"></button>
+            <button class="pad pad-red" data-color="red" aria-label="Red"></button>
+            <button class="pad pad-yellow" data-color="yellow" aria-label="Yellow"></button>
+            <button class="pad pad-blue" data-color="blue" aria-label="Blue"></button>
+            <div class="center-circle">
+                <span class="center-text" id="center-text">Press<br>Start</span>
+            </div>
+        </div>
+
+        <div class="controls">
+            <button class="btn btn-start" id="start-btn">Start</button>
+            <button class="btn btn-strict" id="strict-btn">Strict</button>
+        </div>
+
+        <div class="message" id="message"></div>
+    </div>
+
+    <script>
+        // Audio context and frequencies (classic Simon tones)
+        const AudioContext = window.AudioContext || window.webkitAudioContext;
+        let audioCtx = null;
+
+        const frequencies = {
+            green: 329.63,  // E4
+            red: 261.63,    // C4
+            yellow: 220.00, // A3
+            blue: 164.81    // E3
+        };
+
+        function initAudio() {
+            if (!audioCtx) {
+                audioCtx = new AudioContext();
+            }
+            if (audioCtx.state === 'suspended') {
+                audioCtx.resume();
+            }
+        }
+
+        function playTone(color, duration = 400) {
+            if (!audioCtx) initAudio();
+
+            const oscillator = audioCtx.createOscillator();
+            const gainNode = audioCtx.createGain();
+
+            oscillator.connect(gainNode);
+            gainNode.connect(audioCtx.destination);
+
+            oscillator.type = 'sine';
+            oscillator.frequency.value = frequencies[color];
+
+            gainNode.gain.setValueAtTime(0.5, audioCtx.currentTime);
+            gainNode.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + duration / 1000);
+
+            oscillator.start(audioCtx.currentTime);
+            oscillator.stop(audioCtx.currentTime + duration / 1000);
+        }
+
+        function playErrorSound() {
+            if (!audioCtx) initAudio();
+
+            const oscillator = audioCtx.createOscillator();
+            const gainNode = audioCtx.createGain();
+
+            oscillator.connect(gainNode);
+            gainNode.connect(audioCtx.destination);
+
+            oscillator.type = 'sawtooth';
+            oscillator.frequency.value = 80;
+
+            gainNode.gain.setValueAtTime(0.4, audioCtx.currentTime);
+            gainNode.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.8);
+
+            oscillator.start(audioCtx.currentTime);
+            oscillator.stop(audioCtx.currentTime + 0.8);
+        }
+
+        // Game state
+        let sequence = [];
+        let playerSequence = [];
+        let round = 0;
+        let bestScore = parseInt(localStorage.getItem('simon-best') || '0');
+        let isPlaying = false;
+        let isPlayerTurn = false;
+        let strictMode = false;
+
+        // DOM elements
+        const pads = document.querySelectorAll('.pad');
+        const roundDisplay = document.getElementById('round');
+        const bestDisplay = document.getElementById('best');
+        const startBtn = document.getElementById('start-btn');
+        const strictBtn = document.getElementById('strict-btn');
+        const message = document.getElementById('message');
+        const centerText = document.getElementById('center-text');
+
+        // Initialize best score display
+        bestDisplay.textContent = bestScore;
+
+        function setMessage(text, type = '') {
+            message.textContent = text;
+            message.className = 'message ' + type;
+        }
+
+        function updateCenterText(text) {
+            centerText.innerHTML = text;
+        }
+
+        function lightPad(color, duration = 400) {
+            const pad = document.querySelector(`.pad-${color}`);
+            pad.classList.add('lit');
+            playTone(color, duration);
+
+            setTimeout(() => {
+                pad.classList.remove('lit');
+            }, duration - 50);
+        }
+
+        function disablePads() {
+            pads.forEach(pad => pad.classList.add('disabled'));
+            isPlayerTurn = false;
+        }
+
+        function enablePads() {
+            pads.forEach(pad => pad.classList.remove('disabled'));
+            isPlayerTurn = true;
+        }
+
+        async function playSequence() {
+            disablePads();
+            updateCenterText(round.toString());
+            setMessage('Watch carefully...');
+
+            await sleep(600);
+
+            for (let i = 0; i < sequence.length; i++) {
+                lightPad(sequence[i], 400);
+                await sleep(500);
+            }
+
+            await sleep(200);
+            enablePads();
+            setMessage('Your turn!');
+            playerSequence = [];
+        }
+
+        function addToSequence() {
+            const colors = ['green', 'red', 'yellow', 'blue'];
+            const randomColor = colors[Math.floor(Math.random() * 4)];
+            sequence.push(randomColor);
+        }
+
+        async function startGame() {
+            initAudio();
+            sequence = [];
+            playerSequence = [];
+            round = 0;
+            isPlaying = true;
+            startBtn.textContent = 'Restart';
+
+            nextRound();
+        }
+
+        async function nextRound() {
+            round++;
+            roundDisplay.textContent = round;
+            addToSequence();
+            await sleep(400);
+            playSequence();
+        }
+
+        async function handlePadClick(color) {
+            if (!isPlayerTurn || !isPlaying) return;
+
+            lightPad(color, 300);
+            playerSequence.push(color);
+
+            const currentIndex = playerSequence.length - 1;
+
+            if (playerSequence[currentIndex] !== sequence[currentIndex]) {
+                // Wrong!
+                await handleWrongInput();
+                return;
+            }
+
+            if (playerSequence.length === sequence.length) {
+                // Completed round!
+                disablePads();
+                setMessage('Correct!', 'success');
+
+                if (round > bestScore) {
+                    bestScore = round;
+                    localStorage.setItem('simon-best', bestScore.toString());
+                    bestDisplay.textContent = bestScore;
+                }
+
+                await sleep(1000);
+                nextRound();
+            }
+        }
+
+        async function handleWrongInput() {
+            disablePads();
+            playErrorSound();
+            setMessage('Wrong!', 'error');
+            updateCenterText('✗');
+
+            // Flash all pads
+            pads.forEach(pad => pad.classList.add('lit'));
+            await sleep(300);
+            pads.forEach(pad => pad.classList.remove('lit'));
+
+            if (strictMode) {
+                await sleep(800);
+                setMessage('Game Over! Strict mode.', 'error');
+                updateCenterText('Game<br>Over');
+                isPlaying = false;
+                startBtn.textContent = 'Start';
+            } else {
+                await sleep(800);
+                setMessage('Try again...');
+                playerSequence = [];
+                playSequence();
+            }
+        }
+
+        function sleep(ms) {
+            return new Promise(resolve => setTimeout(resolve, ms));
+        }
+
+        // Event listeners
+        pads.forEach(pad => {
+            pad.addEventListener('click', () => {
+                handlePadClick(pad.dataset.color);
+            });
+
+            pad.addEventListener('touchstart', (e) => {
+                e.preventDefault();
+                if (isPlayerTurn && isPlaying) {
+                    handlePadClick(pad.dataset.color);
+                }
+            }, { passive: false });
+        });
+
+        startBtn.addEventListener('click', startGame);
+
+        strictBtn.addEventListener('click', () => {
+            strictMode = !strictMode;
+            strictBtn.classList.toggle('active', strictMode);
+        });
+
+        // Prevent zoom on double tap
+        document.addEventListener('touchend', (e) => {
+            e.preventDefault();
+        }, { passive: false });
+    </script>
+</body>
+</html>
