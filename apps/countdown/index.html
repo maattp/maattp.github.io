@@ -1,0 +1,684 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <title>Countdown</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: linear-gradient(135deg, #1a1a2e 0%, #16213e 50%, #0f3460 100%);
+            min-height: 100vh;
+            color: #fff;
+            padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
+            padding-top: calc(env(safe-area-inset-top) + 20px);
+        }
+
+        .container {
+            max-width: 500px;
+            margin: 0 auto;
+            padding: 0 20px 100px 20px;
+        }
+
+        h1 {
+            text-align: center;
+            font-size: 28px;
+            font-weight: 600;
+            margin-bottom: 24px;
+            color: #e94560;
+        }
+
+        .countdown-list {
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+        }
+
+        .countdown-item {
+            background: rgba(255, 255, 255, 0.1);
+            border-radius: 16px;
+            padding: 16px 20px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            transition: transform 0.2s, background 0.2s;
+        }
+
+        .countdown-item:hover {
+            background: rgba(255, 255, 255, 0.15);
+        }
+
+        .countdown-item.today {
+            background: linear-gradient(135deg, #e94560 0%, #ff6b6b 100%);
+            border: none;
+        }
+
+        .countdown-item.past {
+            opacity: 0.5;
+        }
+
+        .countdown-info {
+            flex: 1;
+        }
+
+        .countdown-name {
+            font-size: 18px;
+            font-weight: 600;
+            margin-bottom: 4px;
+        }
+
+        .countdown-date {
+            font-size: 13px;
+            color: rgba(255, 255, 255, 0.7);
+        }
+
+        .countdown-item.today .countdown-date {
+            color: rgba(255, 255, 255, 0.9);
+        }
+
+        .countdown-days {
+            text-align: right;
+            min-width: 80px;
+        }
+
+        .days-number {
+            font-size: 32px;
+            font-weight: 700;
+            color: #e94560;
+            line-height: 1;
+        }
+
+        .countdown-item.today .days-number {
+            color: #fff;
+        }
+
+        .days-label {
+            font-size: 12px;
+            color: rgba(255, 255, 255, 0.7);
+            text-transform: uppercase;
+        }
+
+        .countdown-item.today .days-label {
+            color: rgba(255, 255, 255, 0.9);
+        }
+
+        .custom-badge {
+            background: rgba(233, 69, 96, 0.3);
+            color: #ff6b6b;
+            font-size: 10px;
+            padding: 2px 8px;
+            border-radius: 10px;
+            margin-left: 8px;
+            text-transform: uppercase;
+            font-weight: 600;
+        }
+
+        .delete-btn {
+            background: rgba(255, 255, 255, 0.1);
+            border: none;
+            color: rgba(255, 255, 255, 0.7);
+            width: 32px;
+            height: 32px;
+            border-radius: 50%;
+            cursor: pointer;
+            font-size: 18px;
+            margin-left: 12px;
+            transition: background 0.2s, color 0.2s;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .delete-btn:hover {
+            background: rgba(233, 69, 96, 0.5);
+            color: #fff;
+        }
+
+        .section-header {
+            font-size: 14px;
+            color: rgba(255, 255, 255, 0.5);
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            margin: 24px 0 12px 0;
+            padding-left: 4px;
+        }
+
+        .section-header:first-child {
+            margin-top: 0;
+        }
+
+        /* Add button */
+        .add-btn {
+            position: fixed;
+            bottom: calc(env(safe-area-inset-bottom) + 20px);
+            right: 20px;
+            width: 56px;
+            height: 56px;
+            border-radius: 50%;
+            background: linear-gradient(135deg, #e94560 0%, #ff6b6b 100%);
+            border: none;
+            color: #fff;
+            font-size: 32px;
+            cursor: pointer;
+            box-shadow: 0 4px 20px rgba(233, 69, 96, 0.4);
+            transition: transform 0.2s, box-shadow 0.2s;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .add-btn:hover {
+            transform: scale(1.1);
+            box-shadow: 0 6px 25px rgba(233, 69, 96, 0.5);
+        }
+
+        .add-btn:active {
+            transform: scale(0.95);
+        }
+
+        /* Modal */
+        .modal-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0, 0, 0, 0.7);
+            display: none;
+            align-items: center;
+            justify-content: center;
+            z-index: 1000;
+            padding: 20px;
+        }
+
+        .modal-overlay.active {
+            display: flex;
+        }
+
+        .modal {
+            background: #1a1a2e;
+            border-radius: 20px;
+            padding: 24px;
+            width: 100%;
+            max-width: 400px;
+            border: 1px solid rgba(255, 255, 255, 0.1);
+        }
+
+        .modal h2 {
+            font-size: 22px;
+            margin-bottom: 20px;
+            color: #e94560;
+        }
+
+        .form-group {
+            margin-bottom: 16px;
+        }
+
+        .form-group label {
+            display: block;
+            font-size: 14px;
+            color: rgba(255, 255, 255, 0.7);
+            margin-bottom: 8px;
+        }
+
+        .form-group input {
+            width: 100%;
+            padding: 12px 16px;
+            border-radius: 12px;
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            background: rgba(255, 255, 255, 0.1);
+            color: #fff;
+            font-size: 16px;
+            outline: none;
+            transition: border-color 0.2s;
+        }
+
+        .form-group input:focus {
+            border-color: #e94560;
+        }
+
+        .form-group input::placeholder {
+            color: rgba(255, 255, 255, 0.4);
+        }
+
+        .form-group input[type="date"]::-webkit-calendar-picker-indicator {
+            filter: invert(1);
+            cursor: pointer;
+        }
+
+        .modal-actions {
+            display: flex;
+            gap: 12px;
+            margin-top: 24px;
+        }
+
+        .modal-actions button {
+            flex: 1;
+            padding: 14px;
+            border-radius: 12px;
+            border: none;
+            font-size: 16px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: opacity 0.2s;
+        }
+
+        .modal-actions button:hover {
+            opacity: 0.9;
+        }
+
+        .btn-cancel {
+            background: rgba(255, 255, 255, 0.1);
+            color: #fff;
+        }
+
+        .btn-save {
+            background: linear-gradient(135deg, #e94560 0%, #ff6b6b 100%);
+            color: #fff;
+        }
+
+        .empty-state {
+            text-align: center;
+            padding: 40px 20px;
+            color: rgba(255, 255, 255, 0.5);
+        }
+
+        .empty-state p {
+            margin-top: 8px;
+            font-size: 14px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Countdown</h1>
+        <div class="countdown-list" id="countdown-list"></div>
+    </div>
+
+    <button class="add-btn" id="add-btn">+</button>
+
+    <div class="modal-overlay" id="modal-overlay">
+        <div class="modal">
+            <h2>Add Custom Date</h2>
+            <div class="form-group">
+                <label for="event-name">Event Name</label>
+                <input type="text" id="event-name" placeholder="Birthday, Anniversary, etc.">
+            </div>
+            <div class="form-group">
+                <label for="event-date">Date</label>
+                <input type="date" id="event-date">
+            </div>
+            <div class="form-group">
+                <label for="event-recurring">
+                    <input type="checkbox" id="event-recurring" style="width: auto; margin-right: 8px;">
+                    Repeat every year
+                </label>
+            </div>
+            <div class="modal-actions">
+                <button class="btn-cancel" id="btn-cancel">Cancel</button>
+                <button class="btn-save" id="btn-save">Save</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Built-in holidays
+        const builtInHolidays = [
+            { name: "New Year's Day", month: 1, day: 1 },
+            { name: "Valentine's Day", month: 2, day: 14 },
+            { name: "St. Patrick's Day", month: 3, day: 17 },
+            { name: "Easter", getDate: getEasterDate },
+            { name: "Mother's Day", getDate: (year) => getNthWeekdayOfMonth(year, 5, 0, 2) }, // 2nd Sunday of May
+            { name: "Memorial Day", getDate: (year) => getLastWeekdayOfMonth(year, 5, 1) }, // Last Monday of May
+            { name: "Canada Day", month: 7, day: 1 },
+            { name: "Independence Day", month: 7, day: 4 },
+            { name: "Labor Day", getDate: (year) => getNthWeekdayOfMonth(year, 9, 1, 1) }, // 1st Monday of September
+            { name: "Halloween", month: 10, day: 31 },
+            { name: "Thanksgiving (US)", getDate: (year) => getNthWeekdayOfMonth(year, 11, 4, 4) }, // 4th Thursday of November
+            { name: "Thanksgiving (CA)", getDate: (year) => getNthWeekdayOfMonth(year, 10, 1, 2) }, // 2nd Monday of October
+            { name: "Christmas Eve", month: 12, day: 24 },
+            { name: "Christmas Day", month: 12, day: 25 },
+            { name: "New Year's Eve", month: 12, day: 31 }
+        ];
+
+        // Calculate Easter date using Anonymous Gregorian algorithm
+        function getEasterDate(year) {
+            const a = year % 19;
+            const b = Math.floor(year / 100);
+            const c = year % 100;
+            const d = Math.floor(b / 4);
+            const e = b % 4;
+            const f = Math.floor((b + 8) / 25);
+            const g = Math.floor((b - f + 1) / 3);
+            const h = (19 * a + b - d - g + 15) % 30;
+            const i = Math.floor(c / 4);
+            const k = c % 4;
+            const l = (32 + 2 * e + 2 * i - h - k) % 7;
+            const m = Math.floor((a + 11 * h + 22 * l) / 451);
+            const month = Math.floor((h + l - 7 * m + 114) / 31);
+            const day = ((h + l - 7 * m + 114) % 31) + 1;
+            return new Date(year, month - 1, day);
+        }
+
+        // Get nth weekday of month (e.g., 2nd Sunday)
+        function getNthWeekdayOfMonth(year, month, weekday, n) {
+            const firstDay = new Date(year, month - 1, 1);
+            let dayOffset = weekday - firstDay.getDay();
+            if (dayOffset < 0) dayOffset += 7;
+            const day = 1 + dayOffset + (n - 1) * 7;
+            return new Date(year, month - 1, day);
+        }
+
+        // Get last weekday of month (e.g., last Monday)
+        function getLastWeekdayOfMonth(year, month, weekday) {
+            const lastDay = new Date(year, month, 0);
+            let dayOffset = lastDay.getDay() - weekday;
+            if (dayOffset < 0) dayOffset += 7;
+            return new Date(year, month - 1, lastDay.getDate() - dayOffset);
+        }
+
+        // Local storage key
+        const STORAGE_KEY = 'countdown-custom-dates';
+
+        // Get custom dates from localStorage
+        function getCustomDates() {
+            try {
+                const data = localStorage.getItem(STORAGE_KEY);
+                return data ? JSON.parse(data) : [];
+            } catch (e) {
+                return [];
+            }
+        }
+
+        // Save custom dates to localStorage
+        function saveCustomDates(dates) {
+            localStorage.setItem(STORAGE_KEY, JSON.stringify(dates));
+        }
+
+        // Add custom date
+        function addCustomDate(name, date, recurring) {
+            const dates = getCustomDates();
+            dates.push({
+                id: Date.now(),
+                name,
+                date,
+                recurring
+            });
+            saveCustomDates(dates);
+            renderCountdowns();
+        }
+
+        // Delete custom date
+        function deleteCustomDate(id) {
+            const dates = getCustomDates().filter(d => d.id !== id);
+            saveCustomDates(dates);
+            renderCountdowns();
+        }
+
+        // Calculate days until date
+        function daysUntil(targetDate) {
+            const today = new Date();
+            today.setHours(0, 0, 0, 0);
+            const target = new Date(targetDate);
+            target.setHours(0, 0, 0, 0);
+            const diff = target - today;
+            return Math.ceil(diff / (1000 * 60 * 60 * 24));
+        }
+
+        // Format date for display
+        function formatDate(date) {
+            const options = { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' };
+            return date.toLocaleDateString('en-US', options);
+        }
+
+        // Get next occurrence of a holiday
+        function getNextOccurrence(holiday) {
+            const now = new Date();
+            const currentYear = now.getFullYear();
+
+            let date;
+            if (holiday.getDate) {
+                date = holiday.getDate(currentYear);
+            } else {
+                date = new Date(currentYear, holiday.month - 1, holiday.day);
+            }
+
+            // If the date has passed this year, get next year's date
+            const today = new Date();
+            today.setHours(0, 0, 0, 0);
+            date.setHours(0, 0, 0, 0);
+
+            if (date < today) {
+                if (holiday.getDate) {
+                    date = holiday.getDate(currentYear + 1);
+                } else {
+                    date = new Date(currentYear + 1, holiday.month - 1, holiday.day);
+                }
+            }
+
+            return date;
+        }
+
+        // Render all countdowns
+        function renderCountdowns() {
+            const listEl = document.getElementById('countdown-list');
+            const allEvents = [];
+
+            // Add built-in holidays
+            builtInHolidays.forEach(holiday => {
+                const date = getNextOccurrence(holiday);
+                allEvents.push({
+                    name: holiday.name,
+                    date,
+                    isBuiltIn: true
+                });
+            });
+
+            // Add custom dates
+            const customDates = getCustomDates();
+            customDates.forEach(custom => {
+                let date = new Date(custom.date);
+
+                if (custom.recurring) {
+                    const now = new Date();
+                    const currentYear = now.getFullYear();
+                    date = new Date(currentYear, date.getMonth(), date.getDate());
+
+                    const today = new Date();
+                    today.setHours(0, 0, 0, 0);
+                    date.setHours(0, 0, 0, 0);
+
+                    if (date < today) {
+                        date = new Date(currentYear + 1, date.getMonth(), date.getDate());
+                    }
+                }
+
+                allEvents.push({
+                    id: custom.id,
+                    name: custom.name,
+                    date,
+                    isBuiltIn: false,
+                    recurring: custom.recurring
+                });
+            });
+
+            // Sort by days until
+            allEvents.sort((a, b) => a.date - b.date);
+
+            // Group events
+            const todayEvents = [];
+            const upcomingEvents = [];
+            const pastEvents = [];
+
+            allEvents.forEach(event => {
+                const days = daysUntil(event.date);
+                event.days = days;
+
+                if (days === 0) {
+                    todayEvents.push(event);
+                } else if (days > 0) {
+                    upcomingEvents.push(event);
+                } else {
+                    pastEvents.push(event);
+                }
+            });
+
+            // Build HTML
+            let html = '';
+
+            if (todayEvents.length > 0) {
+                html += '<div class="section-header">Today</div>';
+                todayEvents.forEach(event => {
+                    html += renderEvent(event, 'today');
+                });
+            }
+
+            if (upcomingEvents.length > 0) {
+                html += '<div class="section-header">Upcoming</div>';
+                upcomingEvents.forEach(event => {
+                    html += renderEvent(event, 'upcoming');
+                });
+            }
+
+            if (pastEvents.length > 0 && pastEvents.some(e => !e.isBuiltIn)) {
+                html += '<div class="section-header">Past</div>';
+                pastEvents.filter(e => !e.isBuiltIn).forEach(event => {
+                    html += renderEvent(event, 'past');
+                });
+            }
+
+            if (allEvents.length === 0) {
+                html = '<div class="empty-state"><p>No events yet. Tap + to add one.</p></div>';
+            }
+
+            listEl.innerHTML = html;
+
+            // Add delete button listeners
+            document.querySelectorAll('.delete-btn').forEach(btn => {
+                btn.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    const id = parseInt(btn.dataset.id);
+                    if (confirm('Delete this event?')) {
+                        deleteCustomDate(id);
+                    }
+                });
+            });
+        }
+
+        function renderEvent(event, type) {
+            const daysText = event.days === 0 ? 'Today!' :
+                           event.days === 1 ? '1' :
+                           event.days === -1 ? '-1' :
+                           event.days.toString();
+            const labelText = event.days === 0 ? '' :
+                            Math.abs(event.days) === 1 ? 'day' : 'days';
+
+            const typeClass = type === 'today' ? 'today' : type === 'past' ? 'past' : '';
+            const customBadge = !event.isBuiltIn ? '<span class="custom-badge">Custom</span>' : '';
+            const deleteBtn = !event.isBuiltIn ? `<button class="delete-btn" data-id="${event.id}">&times;</button>` : '';
+
+            return `
+                <div class="countdown-item ${typeClass}">
+                    <div class="countdown-info">
+                        <div class="countdown-name">${event.name}${customBadge}</div>
+                        <div class="countdown-date">${formatDate(event.date)}</div>
+                    </div>
+                    <div class="countdown-days">
+                        <div class="days-number">${daysText}</div>
+                        <div class="days-label">${labelText}</div>
+                    </div>
+                    ${deleteBtn}
+                </div>
+            `;
+        }
+
+        // Modal handling
+        const modalOverlay = document.getElementById('modal-overlay');
+        const addBtn = document.getElementById('add-btn');
+        const cancelBtn = document.getElementById('btn-cancel');
+        const saveBtn = document.getElementById('btn-save');
+        const eventNameInput = document.getElementById('event-name');
+        const eventDateInput = document.getElementById('event-date');
+        const eventRecurringInput = document.getElementById('event-recurring');
+
+        addBtn.addEventListener('click', () => {
+            modalOverlay.classList.add('active');
+            eventNameInput.value = '';
+            eventDateInput.value = '';
+            eventRecurringInput.checked = true;
+            eventNameInput.focus();
+        });
+
+        cancelBtn.addEventListener('click', () => {
+            modalOverlay.classList.remove('active');
+        });
+
+        modalOverlay.addEventListener('click', (e) => {
+            if (e.target === modalOverlay) {
+                modalOverlay.classList.remove('active');
+            }
+        });
+
+        saveBtn.addEventListener('click', () => {
+            const name = eventNameInput.value.trim();
+            const date = eventDateInput.value;
+            const recurring = eventRecurringInput.checked;
+
+            if (!name) {
+                alert('Please enter an event name');
+                return;
+            }
+
+            if (!date) {
+                alert('Please select a date');
+                return;
+            }
+
+            addCustomDate(name, date, recurring);
+            modalOverlay.classList.remove('active');
+        });
+
+        // Handle Enter key in form
+        eventNameInput.addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') {
+                eventDateInput.focus();
+            }
+        });
+
+        eventDateInput.addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') {
+                saveBtn.click();
+            }
+        });
+
+        // Initial render
+        renderCountdowns();
+
+        // Update at midnight
+        function scheduleNextUpdate() {
+            const now = new Date();
+            const tomorrow = new Date(now);
+            tomorrow.setDate(tomorrow.getDate() + 1);
+            tomorrow.setHours(0, 0, 0, 0);
+            const msUntilMidnight = tomorrow - now;
+
+            setTimeout(() => {
+                renderCountdowns();
+                scheduleNextUpdate();
+            }, msUntilMidnight);
+        }
+
+        scheduleNextUpdate();
+    </script>
+</body>
+</html>
