@@ -339,6 +339,7 @@
         let audio = null;
         let isPlaying = false;
         let currentChannel = null;
+        let audioSessionId = 0;
 
         // DOM elements
         const playBtn = document.getElementById('playBtn');
@@ -403,8 +404,11 @@
             }
 
             audio = new Audio();
+            audioSessionId++;
+            const thisSession = audioSessionId;
 
             audio.addEventListener('playing', () => {
+                if (thisSession !== audioSessionId) return; // Ignore stale events
                 isPlaying = true;
                 playIcon.innerHTML = '&#10074;&#10074;';
                 playBtn.classList.remove('loading');
@@ -420,8 +424,10 @@
             });
 
             audio.addEventListener('pause', () => {
+                if (thisSession !== audioSessionId) return; // Ignore stale events
                 isPlaying = false;
                 playIcon.innerHTML = '&#9654;';
+                playBtn.classList.remove('loading');
                 statusDot.classList.remove('live');
                 statusText.textContent = 'Paused';
                 // Remove playing indicator from all channels
@@ -431,6 +437,7 @@
             });
 
             audio.addEventListener('error', (e) => {
+                if (thisSession !== audioSessionId) return; // Ignore stale events
                 console.error('Audio error:', e);
                 playBtn.classList.remove('loading');
                 playIcon.innerHTML = '&#9654;';
@@ -445,11 +452,13 @@
             });
 
             audio.addEventListener('waiting', () => {
+                if (thisSession !== audioSessionId) return; // Ignore stale events
                 playBtn.classList.add('loading');
                 statusText.textContent = 'Buffering...';
             });
 
             audio.addEventListener('canplay', () => {
+                if (thisSession !== audioSessionId) return; // Ignore stale events
                 playBtn.classList.remove('loading');
             });
         }
@@ -491,10 +500,13 @@
                 } else {
                     playBtn.classList.add('loading');
                     playIcon.innerHTML = '<div class="spinner"></div>';
+                    statusText.textContent = 'Connecting...';
                     audio.play().catch(e => {
                         console.error('Play error:', e);
                         playBtn.classList.remove('loading');
                         playIcon.innerHTML = '&#9654;';
+                        statusText.textContent = 'Error';
+                        currentDescEl.textContent = 'Tap play to try again';
                     });
                 }
             }
