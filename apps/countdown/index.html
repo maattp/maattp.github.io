@@ -357,6 +357,8 @@
             { name: "New Year's Day", month: 1, day: 1 },
             { name: "Valentine's Day", month: 2, day: 14 },
             { name: "St. Patrick's Day", month: 3, day: 17 },
+            { name: "Lunar New Year", getDate: getLunarNewYearDate },
+            { name: "🎁", getDate: (year) => { const d = getLunarNewYearDate(year); d.setDate(d.getDate() + 4); return d; } },
             { name: "Easter", getDate: getEasterDate },
             { name: "Mother's Day", getDate: (year) => getNthWeekdayOfMonth(year, 5, 0, 2) }, // 2nd Sunday of May
             { name: "Memorial Day", getDate: (year) => getLastWeekdayOfMonth(year, 5, 1) }, // Last Monday of May
@@ -371,6 +373,26 @@
             { name: "Christmas Day", month: 12, day: 25 },
             { name: "New Year's Eve", month: 12, day: 31 }
         ];
+
+        // Lunar New Year dates lookup table (2024-2050)
+        const lunarNewYearDates = {
+            2024: [2, 10], 2025: [1, 29], 2026: [2, 17], 2027: [2, 6],
+            2028: [1, 26], 2029: [2, 13], 2030: [2, 3],  2031: [1, 23],
+            2032: [2, 11], 2033: [1, 31], 2034: [2, 19], 2035: [2, 8],
+            2036: [1, 28], 2037: [2, 15], 2038: [2, 4],  2039: [1, 24],
+            2040: [2, 12], 2041: [2, 1],  2042: [1, 22], 2043: [2, 10],
+            2044: [1, 30], 2045: [2, 17], 2046: [2, 6],  2047: [1, 26],
+            2048: [2, 14], 2049: [2, 2],  2050: [1, 23]
+        };
+
+        function getLunarNewYearDate(year) {
+            const entry = lunarNewYearDates[year];
+            if (entry) {
+                return new Date(year, entry[0] - 1, entry[1]);
+            }
+            // Fallback: approximate as Jan 29 if year not in table
+            return new Date(year, 0, 29);
+        }
 
         // Calculate Easter date using Anonymous Gregorian algorithm
         function getEasterDate(year) {
