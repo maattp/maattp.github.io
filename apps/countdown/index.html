@@ -358,6 +358,7 @@
             { name: "Valentine's Day", month: 2, day: 14 },
             { name: "St. Patrick's Day", month: 3, day: 17 },
             { name: "Lunar New Year", getDate: getLunarNewYearDate },
+            { name: "🎁", getDate: (year) => { const d = getLunarNewYearDate(year); d.setDate(d.getDate() + 4); return d; } },
             { name: "Easter", getDate: getEasterDate },
             { name: "Mother's Day", getDate: (year) => getNthWeekdayOfMonth(year, 5, 0, 2) }, // 2nd Sunday of May
             { name: "Memorial Day", getDate: (year) => getLastWeekdayOfMonth(year, 5, 1) }, // Last Monday of May
