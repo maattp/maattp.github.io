@@ -1,0 +1,965 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="theme-color" content="#1a1a1a">
+    <title>Reddit</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        html, body {
+            min-height: 100%;
+            min-height: 100vh;
+            min-height: -webkit-fill-available;
+        }
+
+        html {
+            background: #1a1a1a;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            color: #e0e0e0;
+            background: transparent;
+            line-height: 1.5;
+        }
+
+        .container {
+            max-width: 700px;
+            margin: 0 auto;
+            padding: 20px;
+            padding-top: calc(env(safe-area-inset-top) + 20px);
+            padding-bottom: calc(env(safe-area-inset-bottom) + 20px);
+            padding-left: calc(env(safe-area-inset-left) + 20px);
+            padding-right: calc(env(safe-area-inset-right) + 20px);
+        }
+
+        .header {
+            display: flex;
+            align-items: center;
+            margin-bottom: 20px;
+            gap: 12px;
+        }
+
+        .header h1 {
+            font-size: 24px;
+            font-weight: 600;
+            flex: 1;
+            min-width: 0;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+
+        .header-btn {
+            background: #2a2a2a;
+            border: 1px solid #3a3a3a;
+            color: #e0e0e0;
+            width: 40px;
+            height: 40px;
+            border-radius: 50%;
+            font-size: 20px;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            flex-shrink: 0;
+            transition: background 0.2s;
+        }
+
+        .header-btn:hover {
+            background: #333;
+        }
+
+        .header-btn.spinning {
+            animation: spin 1s linear infinite;
+        }
+
+        /* Home view */
+        .add-row {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 20px;
+        }
+
+        .add-row input {
+            flex: 1;
+            background: #2a2a2a;
+            border: 1px solid #3a3a3a;
+            color: #e0e0e0;
+            padding: 10px 14px;
+            border-radius: 8px;
+            font-size: 16px;
+            outline: none;
+        }
+
+        .add-row input::placeholder {
+            color: #666;
+        }
+
+        .add-row input:focus {
+            border-color: #ff4500;
+        }
+
+        .add-row button {
+            background: #ff4500;
+            border: none;
+            color: #fff;
+            padding: 10px 20px;
+            border-radius: 8px;
+            font-size: 16px;
+            font-weight: 600;
+            cursor: pointer;
+            flex-shrink: 0;
+        }
+
+        .sub-list {
+            list-style: none;
+        }
+
+        .sub-item {
+            display: flex;
+            align-items: center;
+            padding: 14px 0;
+            border-bottom: 1px solid #2a2a2a;
+            position: relative;
+            overflow: hidden;
+            touch-action: pan-y;
+        }
+
+        .sub-item-content {
+            display: flex;
+            align-items: center;
+            flex: 1;
+            min-width: 0;
+            transition: transform 0.2s;
+            cursor: pointer;
+        }
+
+        .sub-name {
+            font-size: 17px;
+            font-weight: 500;
+            color: #fff;
+            flex: 1;
+        }
+
+        .sub-name:hover {
+            color: #ff4500;
+        }
+
+        .sub-arrow {
+            color: #555;
+            font-size: 18px;
+            margin-left: 10px;
+        }
+
+        .sub-delete {
+            background: none;
+            border: none;
+            color: #666;
+            font-size: 20px;
+            cursor: pointer;
+            padding: 5px 10px;
+            flex-shrink: 0;
+        }
+
+        .sub-delete:hover {
+            color: #ff4500;
+        }
+
+        .sub-delete-bg {
+            position: absolute;
+            right: 0;
+            top: 0;
+            bottom: 0;
+            background: #d32f2f;
+            color: #fff;
+            display: flex;
+            align-items: center;
+            padding: 0 20px;
+            font-size: 14px;
+            font-weight: 600;
+            transform: translateX(100%);
+            transition: transform 0.2s;
+        }
+
+        /* Post list */
+        .post-item {
+            padding: 14px 0;
+            border-bottom: 1px solid #2a2a2a;
+        }
+
+        .post-score {
+            font-size: 13px;
+            color: #ff4500;
+            font-weight: 600;
+            margin-bottom: 4px;
+        }
+
+        .post-title {
+            font-size: 16px;
+            font-weight: 500;
+            color: #fff;
+            line-height: 1.4;
+            margin-bottom: 6px;
+            cursor: pointer;
+        }
+
+        .post-title:hover {
+            color: #6cb4ff;
+        }
+
+        .post-meta {
+            font-size: 12px;
+            color: #666;
+            display: flex;
+            flex-wrap: wrap;
+            gap: 6px;
+            align-items: center;
+        }
+
+        .post-meta span {
+            white-space: nowrap;
+        }
+
+        .post-domain {
+            color: #888;
+        }
+
+        .post-comments {
+            color: #6cb4ff;
+            cursor: pointer;
+            background: none;
+            border: none;
+            font: inherit;
+            font-size: 12px;
+            padding: 0;
+        }
+
+        .post-comments:hover {
+            text-decoration: underline;
+        }
+
+        .load-more {
+            display: block;
+            width: 100%;
+            background: #2a2a2a;
+            border: 1px solid #3a3a3a;
+            color: #e0e0e0;
+            padding: 14px;
+            border-radius: 8px;
+            font-size: 16px;
+            cursor: pointer;
+            margin-top: 16px;
+            text-align: center;
+        }
+
+        .load-more:hover {
+            background: #333;
+        }
+
+        /* Comments */
+        .comment-post-title {
+            font-size: 18px;
+            font-weight: 600;
+            color: #fff;
+            margin-bottom: 8px;
+            line-height: 1.4;
+        }
+
+        .comment-post-link {
+            display: inline-block;
+            font-size: 13px;
+            color: #6cb4ff;
+            text-decoration: none;
+            margin-bottom: 12px;
+            word-break: break-all;
+        }
+
+        .comment-post-link:hover {
+            text-decoration: underline;
+        }
+
+        .comment-selftext {
+            font-size: 15px;
+            color: #ccc;
+            line-height: 1.6;
+            margin-bottom: 16px;
+            padding: 12px;
+            background: #222;
+            border-radius: 8px;
+        }
+
+        .comment-selftext a {
+            color: #6cb4ff;
+        }
+
+        .comment-selftext pre {
+            background: #1a1a1a;
+            padding: 10px;
+            border-radius: 4px;
+            overflow-x: auto;
+            margin: 8px 0;
+        }
+
+        .comment-selftext code {
+            font-family: 'SF Mono', Monaco, 'Cascadia Code', monospace;
+            font-size: 13px;
+        }
+
+        .comment-selftext blockquote {
+            border-left: 3px solid #555;
+            padding-left: 12px;
+            color: #999;
+            margin: 8px 0;
+        }
+
+        .comments-divider {
+            border: none;
+            border-top: 1px solid #3a3a3a;
+            margin: 16px 0;
+        }
+
+        .comment {
+            padding: 10px 0 10px 14px;
+            margin-left: 0;
+        }
+
+        .comment-depth-0 { border-left: 3px solid #ff4500; }
+        .comment-depth-1 { border-left: 3px solid #6cb4ff; margin-left: 12px; }
+        .comment-depth-2 { border-left: 3px solid #4caf50; margin-left: 24px; }
+        .comment-depth-3 { border-left: 3px solid #ff9800; margin-left: 36px; }
+        .comment-depth-4 { border-left: 3px solid #9c27b0; margin-left: 48px; }
+
+        .comment-author {
+            font-size: 12px;
+            font-weight: 600;
+            color: #ff4500;
+            margin-bottom: 4px;
+        }
+
+        .comment-author .comment-time {
+            font-weight: 400;
+            color: #555;
+            margin-left: 8px;
+        }
+
+        .comment-body {
+            font-size: 14px;
+            color: #ccc;
+            line-height: 1.6;
+            overflow-wrap: break-word;
+        }
+
+        .comment-body a {
+            color: #6cb4ff;
+            word-break: break-all;
+        }
+
+        .comment-body pre {
+            background: #1a1a1a;
+            padding: 10px;
+            border-radius: 4px;
+            overflow-x: auto;
+            margin: 8px 0;
+        }
+
+        .comment-body code {
+            font-family: 'SF Mono', Monaco, 'Cascadia Code', monospace;
+            font-size: 13px;
+        }
+
+        .comment-body blockquote {
+            border-left: 3px solid #555;
+            padding-left: 12px;
+            color: #999;
+            margin: 8px 0;
+        }
+
+        .comment-body table {
+            border-collapse: collapse;
+            margin: 8px 0;
+            font-size: 13px;
+            width: 100%;
+            overflow-x: auto;
+            display: block;
+        }
+
+        .comment-body th, .comment-body td {
+            border: 1px solid #3a3a3a;
+            padding: 6px 10px;
+            text-align: left;
+        }
+
+        .comment-body th {
+            background: #2a2a2a;
+        }
+
+        .comment-body p {
+            margin: 6px 0;
+        }
+
+        .comment-body ul, .comment-body ol {
+            margin: 6px 0;
+            padding-left: 20px;
+        }
+
+        .comment-body img {
+            max-width: 100%;
+            height: auto;
+        }
+
+        /* Loading / Error */
+        .loading {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            min-height: 40vh;
+            text-align: center;
+        }
+
+        .loading-spinner {
+            width: 40px;
+            height: 40px;
+            border: 3px solid #333;
+            border-top-color: #ff4500;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+            margin-bottom: 15px;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+
+        .error {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            min-height: 40vh;
+            text-align: center;
+            padding: 20px;
+        }
+
+        .error-message {
+            font-size: 16px;
+            color: #888;
+            margin-bottom: 20px;
+        }
+
+        .retry-button {
+            background: #2a2a2a;
+            border: 1px solid #3a3a3a;
+            color: #e0e0e0;
+            padding: 12px 30px;
+            border-radius: 25px;
+            font-size: 16px;
+            cursor: pointer;
+        }
+
+        .retry-button:hover {
+            background: #333;
+        }
+    </style>
+</head>
+<body>
+    <div class="container" id="app"></div>
+
+    <script>
+        const PROXY = 'https://little-sunset-822a.maattp.workers.dev/';
+        const LS_KEY = 'reddit-subs';
+        const DEFAULT_SUBS = ['technology', 'seattle', 'canada'];
+
+        let state = {
+            view: 'home',
+            sub: null,
+            postId: null,
+            posts: [],
+            after: null,
+            scrollPositions: {}
+        };
+
+        function getSubs() {
+            const stored = localStorage.getItem(LS_KEY);
+            if (stored) return JSON.parse(stored);
+            localStorage.setItem(LS_KEY, JSON.stringify(DEFAULT_SUBS));
+            return [...DEFAULT_SUBS];
+        }
+
+        function saveSubs(subs) {
+            localStorage.setItem(LS_KEY, JSON.stringify(subs));
+        }
+
+        async function redditFetch(path) {
+            const url = `${PROXY}?url=${encodeURIComponent('https://www.reddit.com' + path)}`;
+            const res = await fetch(url);
+            if (!res.ok) throw new Error(res.status);
+            return res.json();
+        }
+
+        function timeAgo(utc) {
+            const seconds = Math.floor(Date.now() / 1000 - utc);
+            if (seconds < 60) return 'just now';
+            if (seconds < 3600) return Math.floor(seconds / 60) + 'm ago';
+            if (seconds < 86400) return Math.floor(seconds / 3600) + 'h ago';
+            if (seconds < 604800) return Math.floor(seconds / 86400) + 'd ago';
+            if (seconds < 2592000) return Math.floor(seconds / 604800) + 'w ago';
+            return Math.floor(seconds / 2592000) + 'mo ago';
+        }
+
+        function formatScore(n) {
+            if (n >= 100000) return (n / 1000).toFixed(0) + 'k';
+            if (n >= 10000) return (n / 1000).toFixed(1) + 'k';
+            return String(n);
+        }
+
+        function getDomain(url) {
+            try {
+                return new URL(url).hostname.replace('www.', '');
+            } catch {
+                return '';
+            }
+        }
+
+        function escapeHtml(s) {
+            const d = document.createElement('div');
+            d.textContent = s;
+            return d.innerHTML;
+        }
+
+        function renderCommentHtml(html) {
+            if (!html) return '';
+            const div = document.createElement('div');
+            div.innerHTML = html;
+            div.querySelectorAll('a').forEach(a => {
+                a.setAttribute('target', '_blank');
+                a.setAttribute('rel', 'noopener');
+            });
+            return div.innerHTML;
+        }
+
+        // --- Views ---
+
+        function renderHome() {
+            const subs = getSubs();
+            const app = document.getElementById('app');
+            app.innerHTML = `
+                <div class="header">
+                    <h1>Reddit</h1>
+                </div>
+                <div class="add-row">
+                    <input type="text" id="sub-input" placeholder="Add subreddit..." autocapitalize="none" autocorrect="off">
+                    <button id="add-btn">Add</button>
+                </div>
+                ${subs.length === 0 ? `
+                    <p style="color:#666; text-align:center; padding:40px 0;">No subreddits yet. Add one above.</p>
+                ` : `
+                <ul class="sub-list" id="sub-list">
+                    ${subs.map(s => `
+                        <li class="sub-item" data-sub="${escapeHtml(s)}">
+                            <div class="sub-delete-bg">Delete</div>
+                            <div class="sub-item-content">
+                                <span class="sub-name">r/${escapeHtml(s)}</span>
+                                <span class="sub-arrow">&rsaquo;</span>
+                            </div>
+                            <button class="sub-delete" title="Delete">&times;</button>
+                        </li>
+                    `).join('')}
+                </ul>
+                `}
+            `;
+
+            const input = document.getElementById('sub-input');
+            const addBtn = document.getElementById('add-btn');
+
+            function addSub() {
+                const val = input.value.trim().replace(/^r\//, '').replace(/\//g, '').toLowerCase();
+                if (!val) return;
+                const subs = getSubs();
+                if (subs.includes(val)) {
+                    input.value = '';
+                    return;
+                }
+                subs.push(val);
+                saveSubs(subs);
+                renderHome();
+            }
+
+            addBtn.addEventListener('click', addSub);
+            input.addEventListener('keydown', e => {
+                if (e.key === 'Enter') addSub();
+            });
+
+            // Delete buttons
+            document.querySelectorAll('.sub-delete').forEach(btn => {
+                btn.addEventListener('click', e => {
+                    e.stopPropagation();
+                    const sub = btn.closest('.sub-item').dataset.sub;
+                    const subs = getSubs().filter(s => s !== sub);
+                    saveSubs(subs);
+                    renderHome();
+                });
+            });
+
+            // Tap to navigate
+            document.querySelectorAll('.sub-item-content').forEach(el => {
+                el.addEventListener('click', () => {
+                    const sub = el.closest('.sub-item').dataset.sub;
+                    navigateToPosts(sub);
+                });
+            });
+
+            // Swipe to delete (mobile)
+            document.querySelectorAll('.sub-item').forEach(item => {
+                let startX = 0;
+                let currentX = 0;
+                let swiping = false;
+
+                item.addEventListener('touchstart', e => {
+                    startX = e.touches[0].clientX;
+                    currentX = startX;
+                    swiping = true;
+                }, { passive: true });
+
+                item.addEventListener('touchmove', e => {
+                    if (!swiping) return;
+                    currentX = e.touches[0].clientX;
+                    const diff = startX - currentX;
+                    if (diff > 0) {
+                        const translate = Math.min(diff, 80);
+                        item.querySelector('.sub-item-content').style.transform = `translateX(-${translate}px)`;
+                        item.querySelector('.sub-delete-bg').style.transform = `translateX(${Math.max(0, 80 - diff)}px)`;
+                    }
+                }, { passive: true });
+
+                item.addEventListener('touchend', () => {
+                    if (!swiping) return;
+                    swiping = false;
+                    const diff = startX - currentX;
+                    const content = item.querySelector('.sub-item-content');
+                    const bg = item.querySelector('.sub-delete-bg');
+
+                    if (diff > 60) {
+                        content.style.transform = 'translateX(-80px)';
+                        bg.style.transform = 'translateX(0)';
+                        bg.addEventListener('click', () => {
+                            const sub = item.dataset.sub;
+                            const subs = getSubs().filter(s => s !== sub);
+                            saveSubs(subs);
+                            renderHome();
+                        }, { once: true });
+                    } else {
+                        content.style.transform = '';
+                        bg.style.transform = '';
+                    }
+                });
+            });
+
+            state.view = 'home';
+            history.replaceState({ view: 'home' }, '', '/apps/reddit/');
+        }
+
+        async function navigateToPosts(sub) {
+            state.sub = sub;
+            state.posts = [];
+            state.after = null;
+            history.pushState({ view: 'posts', sub }, '', `/apps/reddit/#r/${sub}`);
+            await renderPosts(true);
+        }
+
+        async function renderPosts(initial) {
+            const app = document.getElementById('app');
+
+            if (initial) {
+                app.innerHTML = `
+                    <div class="header">
+                        <button class="header-btn" id="back-btn">&larr;</button>
+                        <h1>r/${escapeHtml(state.sub)}</h1>
+                        <button class="header-btn" id="refresh-btn">&#x21bb;</button>
+                    </div>
+                    <div id="posts-content">
+                        <div class="loading">
+                            <div class="loading-spinner"></div>
+                            <p>Loading posts...</p>
+                        </div>
+                    </div>
+                `;
+                document.getElementById('back-btn').addEventListener('click', () => {
+                    history.back();
+                });
+                document.getElementById('refresh-btn').addEventListener('click', async () => {
+                    state.posts = [];
+                    state.after = null;
+                    const btn = document.getElementById('refresh-btn');
+                    btn.classList.add('spinning');
+                    try {
+                        await loadPosts();
+                        renderPostList();
+                    } catch {
+                        document.getElementById('posts-content').innerHTML = `
+                            <div class="error">
+                                <div class="error-message">Failed to load posts</div>
+                                <button class="retry-button" id="retry-btn">Try Again</button>
+                            </div>
+                        `;
+                        document.getElementById('retry-btn').addEventListener('click', () => renderPosts(false));
+                    } finally {
+                        btn.classList.remove('spinning');
+                    }
+                });
+            }
+
+            try {
+                await loadPosts();
+                renderPostList();
+            } catch (err) {
+                document.getElementById('posts-content').innerHTML = `
+                    <div class="error">
+                        <div class="error-message">Failed to load posts</div>
+                        <button class="retry-button" id="retry-btn">Try Again</button>
+                    </div>
+                `;
+                document.getElementById('retry-btn').addEventListener('click', () => renderPosts(false));
+            }
+
+            state.view = 'posts';
+        }
+
+        async function loadPosts() {
+            let path = `/r/${state.sub}/hot.json?limit=25&raw_json=1`;
+            if (state.after) path += `&after=${state.after}`;
+            const data = await redditFetch(path);
+            const newPosts = data.data.children.map(c => c.data);
+            state.posts = state.posts.concat(newPosts);
+            state.after = data.data.after;
+        }
+
+        function postItemHtml(p) {
+            const isSelf = p.is_self;
+            const domain = isSelf ? `self.${p.subreddit}` : getDomain(p.url);
+            return `
+                <div class="post-item" data-id="${p.id}">
+                    <div class="post-score">${formatScore(p.score)} pts</div>
+                    <div class="post-title" data-url="${escapeHtml(p.url)}" data-self="${isSelf}" data-id="${p.id}" data-sub="${p.subreddit}">${escapeHtml(p.title)}</div>
+                    <div class="post-meta">
+                        <span class="post-domain">${escapeHtml(domain)}</span>
+                        <span>&middot;</span>
+                        <span>${escapeHtml(p.author)}</span>
+                        <span>&middot;</span>
+                        <span>${timeAgo(p.created_utc)}</span>
+                        <span>&middot;</span>
+                        <button class="post-comments" data-id="${p.id}" data-sub="${p.subreddit}">${p.num_comments} comments</button>
+                    </div>
+                </div>
+            `;
+        }
+
+        function bindPostEvents(container) {
+            container.querySelectorAll('.post-title').forEach(el => {
+                el.addEventListener('click', () => {
+                    if (el.dataset.self === 'true') {
+                        navigateToComments(el.dataset.sub, el.dataset.id);
+                    } else {
+                        window.open(el.dataset.url, '_blank', 'noopener');
+                    }
+                });
+            });
+            container.querySelectorAll('.post-comments').forEach(el => {
+                el.addEventListener('click', () => {
+                    navigateToComments(el.dataset.sub, el.dataset.id);
+                });
+            });
+        }
+
+        function renderPostList(startIndex) {
+            const content = document.getElementById('posts-content');
+            const from = startIndex || 0;
+
+            if (from === 0) {
+                content.innerHTML = '';
+            } else {
+                const oldBtn = document.getElementById('load-more-btn');
+                if (oldBtn) oldBtn.remove();
+            }
+
+            const fragment = document.createElement('div');
+            fragment.innerHTML = state.posts.slice(from).map(postItemHtml).join('');
+            bindPostEvents(fragment);
+
+            while (fragment.firstChild) {
+                content.appendChild(fragment.firstChild);
+            }
+
+            if (state.after) {
+                const btn = document.createElement('button');
+                btn.className = 'load-more';
+                btn.id = 'load-more-btn';
+                btn.textContent = 'Load More';
+                btn.addEventListener('click', async function() {
+                    this.textContent = 'Loading...';
+                    this.disabled = true;
+                    const prevCount = state.posts.length;
+                    try {
+                        await loadPosts();
+                        renderPostList(prevCount);
+                    } catch {
+                        this.textContent = 'Error. Tap to retry.';
+                        this.disabled = false;
+                    }
+                });
+                content.appendChild(btn);
+            }
+        }
+
+        async function navigateToComments(sub, postId) {
+            state.scrollPositions.posts = window.scrollY;
+            state.postId = postId;
+            history.pushState({ view: 'comments', sub, postId }, '', `/apps/reddit/#r/${sub}/comments/${postId}`);
+            await renderComments(sub, postId);
+        }
+
+        async function renderComments(sub, postId) {
+            const app = document.getElementById('app');
+            app.innerHTML = `
+                <div class="header">
+                    <button class="header-btn" id="back-btn">&larr;</button>
+                    <h1>Comments</h1>
+                </div>
+                <div id="comments-content">
+                    <div class="loading">
+                        <div class="loading-spinner"></div>
+                        <p>Loading comments...</p>
+                    </div>
+                </div>
+            `;
+            document.getElementById('back-btn').addEventListener('click', () => {
+                history.back();
+            });
+
+            state.view = 'comments';
+
+            try {
+                const data = await redditFetch(`/r/${sub}/comments/${postId}.json?raw_json=1&limit=200`);
+                const post = data[0].data.children[0].data;
+                const comments = data[1].data.children;
+
+                let html = `<div class="comment-post-title">${escapeHtml(post.title)}</div>`;
+
+                if (!post.is_self && post.url) {
+                    html += `<a class="comment-post-link" href="${escapeHtml(post.url)}" target="_blank" rel="noopener">${escapeHtml(post.url)}</a>`;
+                }
+
+                if (post.is_self && post.selftext_html) {
+                    html += `<div class="comment-selftext">${renderCommentHtml(post.selftext_html)}</div>`;
+                }
+
+                html += '<hr class="comments-divider">';
+                html += renderCommentsTree(comments, 0);
+
+                document.getElementById('comments-content').innerHTML = html;
+                window.scrollTo(0, 0);
+            } catch (err) {
+                document.getElementById('comments-content').innerHTML = `
+                    <div class="error">
+                        <div class="error-message">Failed to load comments</div>
+                        <button class="retry-button" id="retry-btn">Try Again</button>
+                    </div>
+                `;
+                document.getElementById('retry-btn').addEventListener('click', () => renderComments(sub, postId));
+            }
+        }
+
+        function renderCommentsTree(children, depth) {
+            if (!children) return '';
+            const clampedDepth = Math.min(depth, 4);
+            return children.map(c => {
+                if (c.kind !== 't1') return '';
+                const d = c.data;
+                let html = `
+                    <div class="comment comment-depth-${clampedDepth}">
+                        <div class="comment-author">
+                            ${escapeHtml(d.author)}
+                            <span class="comment-time">${timeAgo(d.created_utc)}</span>
+                        </div>
+                        <div class="comment-body">${renderCommentHtml(d.body_html)}</div>
+                `;
+                if (d.replies && d.replies.data && d.replies.data.children) {
+                    html += renderCommentsTree(d.replies.data.children, depth + 1);
+                }
+                html += '</div>';
+                return html;
+            }).join('');
+        }
+
+        function goBackToPosts() {
+            const app = document.getElementById('app');
+            app.innerHTML = `
+                <div class="header">
+                    <button class="header-btn" id="back-btn">&larr;</button>
+                    <h1>r/${escapeHtml(state.sub)}</h1>
+                    <button class="header-btn" id="refresh-btn">&#x21bb;</button>
+                </div>
+                <div id="posts-content"></div>
+            `;
+            document.getElementById('back-btn').addEventListener('click', () => {
+                history.back();
+            });
+            document.getElementById('refresh-btn').addEventListener('click', async () => {
+                state.posts = [];
+                state.after = null;
+                const btn = document.getElementById('refresh-btn');
+                btn.classList.add('spinning');
+                try {
+                    await loadPosts();
+                    renderPostList();
+                } catch {
+                    document.getElementById('posts-content').innerHTML = `
+                        <div class="error">
+                            <div class="error-message">Failed to load posts</div>
+                            <button class="retry-button" id="retry-btn">Try Again</button>
+                        </div>
+                    `;
+                    document.getElementById('retry-btn').addEventListener('click', () => renderPosts(false));
+                } finally {
+                    btn.classList.remove('spinning');
+                }
+            });
+            renderPostList();
+            state.view = 'posts';
+            setTimeout(() => {
+                window.scrollTo(0, state.scrollPositions.posts || 0);
+            }, 0);
+        }
+
+        // Handle browser back/forward
+        window.addEventListener('popstate', e => {
+            const s = e.state;
+            if (!s || s.view === 'home') {
+                renderHome();
+            } else if (s.view === 'posts') {
+                state.sub = s.sub;
+                if (state.posts.length > 0) {
+                    goBackToPosts();
+                } else {
+                    state.after = null;
+                    renderPosts(true);
+                }
+            } else if (s.view === 'comments') {
+                renderComments(s.sub, s.postId);
+            }
+        });
+
+        // Init
+        renderHome();
+    </script>
+</body>
+</html>
