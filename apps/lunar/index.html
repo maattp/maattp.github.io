@@ -1,0 +1,812 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <title>农历 · Lunar Calendar</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+        html { height: 100%; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'PingFang SC', 'Microsoft YaHei', sans-serif;
+            background: #1a0a0a;
+            color: #f5e6d3;
+            min-height: 100%;
+            overflow-x: hidden;
+            padding: env(safe-area-inset-top) env(safe-area-inset-right) 0 env(safe-area-inset-left);
+        }
+
+        /* --- Top calendar "page" stack --- */
+        .calendar-stack {
+            position: relative;
+            width: 92%;
+            max-width: 380px;
+            margin: 20px auto 0;
+            perspective: 800px;
+        }
+        /* Stacked pages behind */
+        .stack-shadow {
+            position: absolute;
+            top: 0; left: 0; right: 0;
+            height: 100%;
+            border-radius: 6px;
+            pointer-events: none;
+        }
+        .stack-shadow:nth-child(1) { background: #d4a373; transform: translate(6px, 6px); z-index: 1; }
+        .stack-shadow:nth-child(2) { background: #c9967a; transform: translate(10px, 10px); z-index: 0; }
+
+        .calendar-page {
+            position: relative;
+            z-index: 5;
+            background: linear-gradient(175deg, #fdf6ec 0%, #f5e6d3 100%);
+            border-radius: 6px;
+            padding: 14px 18px 18px;
+            color: #2a1a0a;
+            box-shadow: 0 4px 20px rgba(0,0,0,0.5);
+            border: 1px solid #d4a373;
+            min-height: 380px;
+            display: flex;
+            flex-direction: column;
+            transition: transform 0.3s ease;
+        }
+
+        /* Top binding holes */
+        .binding {
+            display: flex;
+            justify-content: center;
+            gap: 40px;
+            margin-bottom: 10px;
+        }
+        .binding-hole {
+            width: 14px; height: 14px;
+            border-radius: 50%;
+            background: #1a0a0a;
+            border: 2px solid #b8956a;
+            box-shadow: inset 0 2px 4px rgba(0,0,0,0.5);
+        }
+
+        /* Header row: gregorian date + day of week */
+        .page-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 2px;
+        }
+        .gregorian-date {
+            font-size: 13px;
+            color: #8a6a4a;
+            font-weight: 500;
+        }
+        .day-of-week {
+            font-size: 14px;
+            font-weight: 700;
+            padding: 2px 10px;
+            border-radius: 4px;
+        }
+        .day-of-week.weekend { background: #c41e3a; color: #fff; }
+        .day-of-week.weekday { background: #2a5a2a; color: #fff; }
+
+        /* Big day number */
+        .big-day {
+            text-align: center;
+            font-size: 120px;
+            font-weight: 800;
+            line-height: 1;
+            margin: 4px 0 2px;
+            color: #2a1a0a;
+        }
+        .big-day.is-holiday { color: #c41e3a; }
+
+        /* Lunar date line */
+        .lunar-date-line {
+            text-align: center;
+            font-size: 20px;
+            font-weight: 600;
+            color: #6a3a1a;
+            margin-bottom: 6px;
+        }
+
+        /* Ganzhi row */
+        .ganzhi-row {
+            display: flex;
+            justify-content: center;
+            gap: 16px;
+            font-size: 13px;
+            color: #8a6a4a;
+            margin-bottom: 8px;
+        }
+
+        /* Festival / solar term banner */
+        .festival-banner {
+            text-align: center;
+            font-size: 16px;
+            font-weight: 700;
+            color: #c41e3a;
+            padding: 5px 0;
+            margin-bottom: 6px;
+            border-top: 1px solid #d4a373;
+            border-bottom: 1px solid #d4a373;
+            display: none;
+        }
+        .festival-banner.visible { display: block; }
+
+        /* Yi / Ji section */
+        .yiji-section {
+            display: flex;
+            gap: 12px;
+            margin-top: auto;
+            font-size: 12px;
+            line-height: 1.6;
+        }
+        .yi-col, .ji-col {
+            flex: 1;
+            padding: 6px 8px;
+            border-radius: 4px;
+        }
+        .yi-col { background: rgba(42, 90, 42, 0.08); border: 1px solid rgba(42, 90, 42, 0.15); }
+        .ji-col { background: rgba(196, 30, 58, 0.06); border: 1px solid rgba(196, 30, 58, 0.12); }
+        .yi-label { color: #2a5a2a; font-weight: 700; font-size: 14px; margin-bottom: 3px; }
+        .ji-label { color: #c41e3a; font-weight: 700; font-size: 14px; margin-bottom: 3px; }
+        .yi-items, .ji-items { color: #5a4a3a; }
+
+        /* Zodiac + element badge */
+        .zodiac-badge {
+            text-align: center;
+            font-size: 12px;
+            color: #8a6a4a;
+            margin-bottom: 6px;
+        }
+
+        /* --- Upcoming days scroll --- */
+        .upcoming-section {
+            margin-top: 20px;
+            padding: 0 0 calc(env(safe-area-inset-bottom) + 20px);
+        }
+        .upcoming-header {
+            font-size: 14px;
+            font-weight: 600;
+            color: #8a6a4a;
+            padding: 0 16px 10px;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+        .upcoming-list {
+            display: flex;
+            flex-direction: column;
+            gap: 1px;
+        }
+
+        .upcoming-card {
+            display: flex;
+            align-items: center;
+            padding: 14px 16px;
+            background: rgba(255,255,255,0.04);
+            border-bottom: 1px solid rgba(255,255,255,0.06);
+            gap: 14px;
+            cursor: pointer;
+            transition: background 0.15s;
+        }
+        .upcoming-card:active { background: rgba(255,255,255,0.08); }
+
+        .upcoming-day-box {
+            width: 50px; height: 50px;
+            border-radius: 10px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            flex-shrink: 0;
+            font-weight: 700;
+        }
+        .upcoming-day-box.weekend { background: rgba(196,30,58,0.15); color: #ff6b6b; }
+        .upcoming-day-box.weekday { background: rgba(212,163,115,0.15); color: #d4a373; }
+        .upcoming-day-num { font-size: 22px; line-height: 1; }
+        .upcoming-day-dow { font-size: 9px; text-transform: uppercase; opacity: 0.7; margin-top: 2px; }
+
+        .upcoming-info { flex: 1; min-width: 0; }
+        .upcoming-lunar { font-size: 15px; font-weight: 600; color: #f5e6d3; }
+        .upcoming-ganzhi { font-size: 11px; color: #8a6a4a; margin-top: 2px; }
+        .upcoming-festival {
+            display: inline-block;
+            font-size: 11px;
+            font-weight: 600;
+            color: #c41e3a;
+            background: rgba(196,30,58,0.12);
+            padding: 1px 8px;
+            border-radius: 3px;
+            margin-top: 3px;
+        }
+
+        .upcoming-yi-ji {
+            text-align: right;
+            flex-shrink: 0;
+            font-size: 11px;
+            line-height: 1.5;
+        }
+        .mini-yi { color: #5a8a5a; }
+        .mini-ji { color: #c47a7a; }
+
+        /* Expanded card detail */
+        .upcoming-card.expanded {
+            flex-direction: column;
+            align-items: stretch;
+            background: rgba(255,255,255,0.07);
+        }
+        .upcoming-card.expanded .card-top {
+            display: flex;
+            align-items: center;
+            gap: 14px;
+        }
+        .expanded-detail {
+            display: none;
+            margin-top: 10px;
+            padding-top: 10px;
+            border-top: 1px solid rgba(255,255,255,0.08);
+        }
+        .upcoming-card.expanded .expanded-detail { display: flex; gap: 10px; }
+        .expanded-yi, .expanded-ji {
+            flex: 1;
+            font-size: 12px;
+            line-height: 1.6;
+            padding: 6px 8px;
+            border-radius: 4px;
+        }
+        .expanded-yi { background: rgba(42,90,42,0.1); }
+        .expanded-ji { background: rgba(196,30,58,0.08); }
+        .expanded-yi .yi-label { color: #5a8a5a; font-weight: 700; }
+        .expanded-ji .ji-label { color: #c47a7a; font-weight: 700; }
+        .expanded-yi-items { color: #aaa; }
+        .expanded-ji-items { color: #aaa; }
+
+        /* Scroll to today button */
+        .scroll-top-btn {
+            position: fixed;
+            bottom: calc(env(safe-area-inset-bottom) + 20px);
+            right: 20px;
+            width: 44px; height: 44px;
+            border-radius: 50%;
+            background: #c41e3a;
+            color: #fff;
+            border: none;
+            font-size: 20px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            box-shadow: 0 4px 12px rgba(196,30,58,0.4);
+            cursor: pointer;
+            z-index: 100;
+            opacity: 0;
+            transition: opacity 0.2s;
+            pointer-events: none;
+        }
+        .scroll-top-btn.visible { opacity: 1; pointer-events: auto; }
+    </style>
+</head>
+<body>
+
+<div class="calendar-stack">
+    <div class="stack-shadow"></div>
+    <div class="stack-shadow"></div>
+    <div class="calendar-page" id="mainPage">
+        <div class="binding">
+            <div class="binding-hole"></div>
+            <div class="binding-hole"></div>
+            <div class="binding-hole"></div>
+        </div>
+        <div class="page-header">
+            <span class="gregorian-date" id="gregDate"></span>
+            <span class="day-of-week" id="dayOfWeek"></span>
+        </div>
+        <div class="big-day" id="bigDay"></div>
+        <div class="lunar-date-line" id="lunarDateLine"></div>
+        <div class="zodiac-badge" id="zodiacBadge"></div>
+        <div class="ganzhi-row" id="ganzhiRow"></div>
+        <div class="festival-banner" id="festivalBanner"></div>
+        <div class="yiji-section">
+            <div class="yi-col">
+                <div class="yi-label">宜</div>
+                <div class="yi-items" id="yiItems"></div>
+            </div>
+            <div class="ji-col">
+                <div class="ji-label">忌</div>
+                <div class="ji-items" id="jiItems"></div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="upcoming-section">
+    <div class="upcoming-header">Upcoming Days</div>
+    <div class="upcoming-list" id="upcomingList"></div>
+</div>
+
+<button class="scroll-top-btn" id="scrollTopBtn" onclick="window.scrollTo({top:0,behavior:'smooth'})">↑</button>
+
+<script>
+// =====================================================================
+// Lunar Calendar Engine
+// =====================================================================
+
+// Lunar calendar data 1900-2100
+// Each year is encoded as a hex number:
+// Bits 0-11: month lengths (0=29 days, 1=30 days) for months 1-12
+// Bits 12-15: leap month (0 = no leap month)
+// Bit 16: leap month length (0=29, 1=30)
+const LUNAR_INFO = [
+    0x04bd8, 0x04ae0, 0x0a570, 0x054d5, 0x0d260, 0x0d950, 0x16554, 0x056a0, 0x09ad0, 0x055d2,
+    0x04ae0, 0x0a5b6, 0x0a4d0, 0x0d250, 0x1d255, 0x0b540, 0x0d6a0, 0x0ada2, 0x095b0, 0x14977,
+    0x04970, 0x0a4b0, 0x0b4b5, 0x06a50, 0x06d40, 0x1ab54, 0x02b60, 0x09570, 0x052f2, 0x04970,
+    0x06566, 0x0d4a0, 0x0ea50, 0x16a95, 0x05ad0, 0x02b60, 0x186e3, 0x092e0, 0x1c8d7, 0x0c950,
+    0x0d4a0, 0x1d8a6, 0x0b550, 0x056a0, 0x1a5b4, 0x025d0, 0x092d0, 0x0d2b2, 0x0a950, 0x0b557,
+    0x06ca0, 0x0b550, 0x15355, 0x04da0, 0x0a5b0, 0x14573, 0x052b0, 0x0a9a8, 0x0e950, 0x06aa0,
+    0x0aea6, 0x0ab50, 0x04b60, 0x0aae4, 0x0a570, 0x05260, 0x0f263, 0x0d950, 0x05b57, 0x056a0,
+    0x096d0, 0x04dd5, 0x04ad0, 0x0a4d0, 0x0d4d4, 0x0d250, 0x0d558, 0x0b540, 0x0b6a0, 0x195a6,
+    0x095b0, 0x049b0, 0x0a974, 0x0a4b0, 0x0b27a, 0x06a50, 0x06d40, 0x0af46, 0x0ab60, 0x09570,
+    0x04af5, 0x04970, 0x064b0, 0x074a3, 0x0ea50, 0x06b58, 0x05ac0, 0x0ab60, 0x096d5, 0x092e0,
+    0x0c960, 0x0d954, 0x0d4a0, 0x0da50, 0x07552, 0x056a0, 0x0abb7, 0x025d0, 0x092d0, 0x0cab5,
+    0x0a950, 0x0b4a0, 0x0baa4, 0x0ad50, 0x055d9, 0x04ba0, 0x0a5b0, 0x15176, 0x052b0, 0x0a930,
+    0x07954, 0x06aa0, 0x0ad50, 0x05b52, 0x04b60, 0x0a6e6, 0x0a4e0, 0x0d260, 0x0ea65, 0x0d530,
+    0x05aa0, 0x076a3, 0x096d0, 0x04afb, 0x04ad0, 0x0a4d0, 0x1d0b6, 0x0d250, 0x0d520, 0x0dd45,
+    0x0b5a0, 0x056d0, 0x055b2, 0x049b0, 0x0a577, 0x0a4b0, 0x0aa50, 0x1b255, 0x06d20, 0x0ada0,
+    0x14b63, 0x09370, 0x049f8, 0x04970, 0x064b0, 0x168a6, 0x0ea50, 0x06aa0, 0x1a6c4, 0x0aae0,
+    0x092e0, 0x0d2e3, 0x0c960, 0x0d557, 0x0d4a0, 0x0da50, 0x05d55, 0x056a0, 0x0a6d0, 0x055d4,
+    0x052d0, 0x0a9b8, 0x0a950, 0x0b4a0, 0x0b6a6, 0x0ad50, 0x055a0, 0x0aba4, 0x0a5b0, 0x052b0,
+    0x0b273, 0x06930, 0x07337, 0x06aa0, 0x0ad50, 0x14b55, 0x04b60, 0x0a570, 0x054e4, 0x0d160,
+    0x0e968, 0x0d520, 0x0daa0, 0x16aa6, 0x056d0, 0x04ae0, 0x0a9d4, 0x0a4d0, 0x0d150, 0x0f252,
+    0x0d520
+];
+
+// ---- Heavenly Stems and Earthly Branches ----
+const HEAVENLY_STEMS = ['甲','乙','丙','丁','戊','己','庚','辛','壬','癸'];
+const EARTHLY_BRANCHES = ['子','丑','寅','卯','辰','巳','午','未','申','酉','戌','亥'];
+const ZODIAC_ANIMALS = ['鼠','牛','虎','兔','龙','蛇','马','羊','猴','鸡','狗','猪'];
+const ZODIAC_EN = ['Rat','Ox','Tiger','Rabbit','Dragon','Snake','Horse','Goat','Monkey','Rooster','Dog','Pig'];
+const ELEMENTS = ['Wood','Wood','Fire','Fire','Earth','Earth','Metal','Metal','Water','Water'];
+const ELEMENTS_CN = ['木','木','火','火','土','土','金','金','水','水'];
+const LUNAR_MONTH_NAMES = ['正月','二月','三月','四月','五月','六月','七月','八月','九月','十月','冬月','腊月'];
+const LUNAR_DAY_NAMES = [
+    '初一','初二','初三','初四','初五','初六','初七','初八','初九','初十',
+    '十一','十二','十三','十四','十五','十六','十七','十八','十九','二十',
+    '廿一','廿二','廿三','廿四','廿五','廿六','廿七','廿八','廿九','三十'
+];
+const WEEK_DAYS_CN = ['星期日','星期一','星期二','星期三','星期四','星期五','星期六'];
+const WEEK_DAYS_SHORT = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+
+// ---- Core lunar calendar functions ----
+function lunarYearDays(y) {
+    let i, sum = 348;
+    for (i = 0x8000; i > 0x8; i >>= 1) sum += (LUNAR_INFO[y - 1900] & i) ? 1 : 0;
+    return sum + leapDays(y);
+}
+
+function leapMonth(y) {
+    return LUNAR_INFO[y - 1900] & 0xf;
+}
+
+function leapDays(y) {
+    if (leapMonth(y)) return (LUNAR_INFO[y - 1900] & 0x10000) ? 30 : 29;
+    return 0;
+}
+
+function monthDays(y, m) {
+    return (LUNAR_INFO[y - 1900] & (0x10000 >> m)) ? 30 : 29;
+}
+
+function solarToLunar(year, month, day) {
+    // Base date: 1900-01-31 = Lunar 1900/1/1
+    const baseDate = new Date(1900, 0, 31);
+    const objDate = new Date(year, month - 1, day);
+    let offset = Math.floor((objDate - baseDate) / 86400000);
+
+    let lunarYear, lunarMonth, lunarDay, isLeap = false;
+    let temp = 0;
+
+    // Find lunar year
+    for (lunarYear = 1900; lunarYear < 2101 && offset > 0; lunarYear++) {
+        temp = lunarYearDays(lunarYear);
+        offset -= temp;
+    }
+    if (offset < 0) {
+        offset += temp;
+        lunarYear--;
+    }
+
+    // Find lunar month
+    let leap = leapMonth(lunarYear);
+    for (lunarMonth = 1; lunarMonth < 13 && offset > 0; lunarMonth++) {
+        if (leap > 0 && lunarMonth === (leap + 1) && !isLeap) {
+            --lunarMonth;
+            isLeap = true;
+            temp = leapDays(lunarYear);
+        } else {
+            temp = monthDays(lunarYear, lunarMonth);
+        }
+        if (isLeap && lunarMonth === (leap + 1)) isLeap = false;
+        offset -= temp;
+    }
+    if (offset === 0 && leap > 0 && lunarMonth === leap + 1) {
+        if (isLeap) {
+            isLeap = false;
+        } else {
+            isLeap = true;
+            --lunarMonth;
+        }
+    }
+    if (offset < 0) {
+        offset += temp;
+        --lunarMonth;
+    }
+    lunarDay = offset + 1;
+
+    return { year: lunarYear, month: lunarMonth, day: lunarDay, isLeap };
+}
+
+function ganzhiYear(lunarYear) {
+    const stem = HEAVENLY_STEMS[(lunarYear - 4) % 10];
+    const branch = EARTHLY_BRANCHES[(lunarYear - 4) % 12];
+    return stem + branch;
+}
+
+function zodiacAnimal(lunarYear) {
+    return ZODIAC_ANIMALS[(lunarYear - 4) % 12];
+}
+
+function zodiacAnimalEn(lunarYear) {
+    return ZODIAC_EN[(lunarYear - 4) % 12];
+}
+
+function elementOfYear(lunarYear) {
+    return ELEMENTS[(lunarYear - 4) % 10];
+}
+
+function elementOfYearCn(lunarYear) {
+    return ELEMENTS_CN[(lunarYear - 4) % 10];
+}
+
+// Ganzhi for month (approximation based on year stem and month)
+function ganzhiMonth(lunarYear, lunarMonth) {
+    const yearStemIdx = (lunarYear - 4) % 10;
+    // Month stem formula: (yearStem * 2 + month) % 10
+    const monthStemIdx = (yearStemIdx * 2 + lunarMonth) % 10;
+    // Month branch: month + 1 (寅 is branch index 2 for month 1)
+    const monthBranchIdx = (lunarMonth + 1) % 12;
+    return HEAVENLY_STEMS[monthStemIdx] + EARTHLY_BRANCHES[monthBranchIdx];
+}
+
+// Ganzhi for day (based on offset from known reference)
+function ganzhiDay(year, month, day) {
+    // Reference: Jan 1, 1900 = 甲戌 (index 10 in 60-cycle, but we use simpler approach)
+    // Using Julian Day Number method
+    const d = new Date(year, month - 1, day);
+    const baseDate = new Date(1900, 0, 1); // 1900-01-01 = 甲戌
+    const diff = Math.floor((d - baseDate) / 86400000);
+    const stemIdx = (diff + 0) % 10; // 甲=0 for Jan 1 1900? Let's calibrate
+    // Jan 1, 1900 is 甲戌, stem=甲(0), branch=戌(10)
+    const branchIdx = (diff + 10) % 12;
+    return HEAVENLY_STEMS[(stemIdx + 10) % 10] + EARTHLY_BRANCHES[(branchIdx) % 12];
+}
+
+// ---- 24 Solar Terms ----
+// Approximate dates for solar terms (month, day) — average values
+// These shift by ±1 day year to year; we use a lookup approach
+const SOLAR_TERMS = [
+    { name: '小寒', nameEn: 'Minor Cold', month: 1, day: 6 },
+    { name: '大寒', nameEn: 'Major Cold', month: 1, day: 20 },
+    { name: '立春', nameEn: 'Start of Spring', month: 2, day: 4 },
+    { name: '雨水', nameEn: 'Rain Water', month: 2, day: 19 },
+    { name: '惊蛰', nameEn: 'Awakening of Insects', month: 3, day: 6 },
+    { name: '春分', nameEn: 'Spring Equinox', month: 3, day: 21 },
+    { name: '清明', nameEn: 'Clear and Bright', month: 4, day: 5 },
+    { name: '谷雨', nameEn: 'Grain Rain', month: 4, day: 20 },
+    { name: '立夏', nameEn: 'Start of Summer', month: 5, day: 6 },
+    { name: '小满', nameEn: 'Grain Buds', month: 5, day: 21 },
+    { name: '芒种', nameEn: 'Grain in Ear', month: 6, day: 6 },
+    { name: '夏至', nameEn: 'Summer Solstice', month: 6, day: 21 },
+    { name: '小暑', nameEn: 'Minor Heat', month: 7, day: 7 },
+    { name: '大暑', nameEn: 'Major Heat', month: 7, day: 23 },
+    { name: '立秋', nameEn: 'Start of Autumn', month: 8, day: 7 },
+    { name: '处暑', nameEn: 'End of Heat', month: 8, day: 23 },
+    { name: '白露', nameEn: 'White Dew', month: 9, day: 8 },
+    { name: '秋分', nameEn: 'Autumn Equinox', month: 9, day: 23 },
+    { name: '寒露', nameEn: 'Cold Dew', month: 10, day: 8 },
+    { name: '霜降', nameEn: "Frost's Descent", month: 10, day: 23 },
+    { name: '立冬', nameEn: 'Start of Winter', month: 11, day: 7 },
+    { name: '小雪', nameEn: 'Minor Snow', month: 11, day: 22 },
+    { name: '大雪', nameEn: 'Major Snow', month: 12, day: 7 },
+    { name: '冬至', nameEn: 'Winter Solstice', month: 12, day: 22 }
+];
+
+function getSolarTerm(month, day) {
+    for (const term of SOLAR_TERMS) {
+        if (term.month === month && Math.abs(term.day - day) <= 1 && term.day === day) {
+            return term;
+        }
+    }
+    return null;
+}
+
+// ---- Chinese Festivals ----
+// Lunar calendar festivals: { month, day, name, nameEn }
+const LUNAR_FESTIVALS = [
+    { month: 1, day: 1, name: '春节', nameEn: 'Spring Festival' },
+    { month: 1, day: 15, name: '元宵节', nameEn: 'Lantern Festival' },
+    { month: 2, day: 2, name: '龙抬头', nameEn: 'Dragon Head Raising' },
+    { month: 3, day: 3, name: '上巳节', nameEn: 'Shangsi Festival' },
+    { month: 5, day: 5, name: '端午节', nameEn: 'Dragon Boat Festival' },
+    { month: 7, day: 7, name: '七夕节', nameEn: 'Qixi Festival' },
+    { month: 7, day: 15, name: '中元节', nameEn: 'Ghost Festival' },
+    { month: 8, day: 15, name: '中秋节', nameEn: 'Mid-Autumn Festival' },
+    { month: 9, day: 9, name: '重阳节', nameEn: 'Double Ninth Festival' },
+    { month: 10, day: 1, name: '寒衣节', nameEn: 'Winter Clothing Festival' },
+    { month: 10, day: 15, name: '下元节', nameEn: 'Lower Yuan Festival' },
+    { month: 12, day: 8, name: '腊八节', nameEn: 'Laba Festival' },
+    { month: 12, day: 23, name: '小年', nameEn: 'Little New Year' },
+];
+
+// Gregorian calendar festivals
+const SOLAR_FESTIVALS = [
+    { month: 1, day: 1, name: '元旦', nameEn: "New Year's Day" },
+    { month: 3, day: 8, name: '妇女节', nameEn: "Women's Day" },
+    { month: 5, day: 1, name: '劳动节', nameEn: 'Labour Day' },
+    { month: 5, day: 4, name: '青年节', nameEn: 'Youth Day' },
+    { month: 6, day: 1, name: '儿童节', nameEn: "Children's Day" },
+    { month: 10, day: 1, name: '国庆节', nameEn: 'National Day' },
+];
+
+function getLunarFestival(lunarMonth, lunarDay) {
+    return LUNAR_FESTIVALS.find(f => f.month === lunarMonth && f.day === lunarDay) || null;
+}
+
+function getSolarFestival(month, day) {
+    return SOLAR_FESTIVALS.find(f => f.month === month && f.day === day) || null;
+}
+
+// Check for New Year's Eve (除夕) - last day of lunar month 12
+function isNewYearsEve(lunarYear, lunarMonth, lunarDay) {
+    if (lunarMonth !== 12) return false;
+    const daysInMonth = monthDays(lunarYear, 12);
+    return lunarDay === daysInMonth;
+}
+
+// ---- Yi/Ji (Auspicious/Inauspicious) Activities ----
+const YI_ACTIVITIES = [
+    '祭祀','祈福','求嗣','开光','出行','嫁娶','纳采','订盟',
+    '入宅','移徙','安床','安门','修造','动土','竖柱','上梁',
+    '开市','交易','立券','纳财','栽种','纳畜','牧养','沐浴',
+    '解除','冠笄','入学','赴任','求医','捕捉','取渔','结网'
+];
+const JI_ACTIVITIES = [
+    '嫁娶','出行','动土','安葬','破土','修造','开市','入宅',
+    '移徙','祭祀','祈福','栽种','安床','作灶','纳畜','伐木',
+    '交易','纳财','赴任','开仓','掘井','立碑','入殓','移柩'
+];
+
+// Deterministic pseudo-random yi/ji based on date
+function getYiJi(year, month, day) {
+    const seed = year * 10000 + month * 100 + day;
+    function hash(n) {
+        n = ((n >> 16) ^ n) * 0x45d9f3b;
+        n = ((n >> 16) ^ n) * 0x45d9f3b;
+        n = (n >> 16) ^ n;
+        return Math.abs(n);
+    }
+    const h = hash(seed);
+
+    // Pick 4-6 yi activities
+    const yiCount = 4 + (h % 3);
+    const yi = [];
+    for (let i = 0; i < yiCount; i++) {
+        const idx = hash(seed + i * 7 + 1) % YI_ACTIVITIES.length;
+        const item = YI_ACTIVITIES[idx];
+        if (!yi.includes(item)) yi.push(item);
+    }
+
+    // Pick 3-5 ji activities (no overlap with yi)
+    const jiCount = 3 + (h % 3);
+    const ji = [];
+    for (let i = 0; i < jiCount; i++) {
+        const idx = hash(seed + i * 13 + 100) % JI_ACTIVITIES.length;
+        const item = JI_ACTIVITIES[idx];
+        if (!ji.includes(item) && !yi.includes(item)) ji.push(item);
+    }
+
+    return { yi, ji };
+}
+
+// ---- Twelve Day Officers ----
+const DAY_OFFICERS = ['建','除','满','平','定','执','破','危','成','收','开','闭'];
+const DAY_OFFICERS_EN = ['Establish','Remove','Full','Balance','Stable','Grasp','Break','Danger','Success','Harvest','Open','Close'];
+
+function getDayOfficer(lunarMonth, lunarDay) {
+    // Simplified: cycles through 12 officers based on lunar month and day
+    const idx = (lunarMonth + lunarDay - 2) % 12;
+    return { cn: DAY_OFFICERS[idx], en: DAY_OFFICERS_EN[idx] };
+}
+
+// =====================================================================
+// Rendering
+// =====================================================================
+
+function formatGregorianDate(date) {
+    const months = ['January','February','March','April','May','June','July','August','September','October','November','December'];
+    return `${months[date.getMonth()]} ${date.getFullYear()}`;
+}
+
+function getLunarMonthName(month, isLeap) {
+    return (isLeap ? '闰' : '') + LUNAR_MONTH_NAMES[month - 1];
+}
+
+function getFullDayInfo(date) {
+    const y = date.getFullYear();
+    const m = date.getMonth() + 1;
+    const d = date.getDate();
+    const dow = date.getDay();
+
+    const lunar = solarToLunar(y, m, d);
+    const gzYear = ganzhiYear(lunar.year);
+    const gzMonth = ganzhiMonth(lunar.year, lunar.month);
+    const gzDay = ganzhiDay(y, m, d);
+    const zodiac = zodiacAnimal(lunar.year);
+    const zodiacEn = zodiacAnimalEn(lunar.year);
+    const element = elementOfYear(lunar.year);
+    const elementCn = elementOfYearCn(lunar.year);
+    const solarTerm = getSolarTerm(m, d);
+    const lunarFest = getLunarFestival(lunar.month, lunar.day);
+    const solarFest = getSolarFestival(m, d);
+    const nye = isNewYearsEve(lunar.year, lunar.month, lunar.day);
+    const yiji = getYiJi(y, m, d);
+    const officer = getDayOfficer(lunar.month, lunar.day);
+
+    let festivals = [];
+    if (nye) festivals.push({ name: '除夕', nameEn: "New Year's Eve" });
+    if (lunarFest) festivals.push(lunarFest);
+    if (solarFest) festivals.push(solarFest);
+    if (solarTerm) festivals.push({ name: solarTerm.name, nameEn: solarTerm.nameEn });
+
+    const isWeekend = dow === 0 || dow === 6;
+    const isHoliday = festivals.length > 0 || isWeekend;
+
+    return {
+        date, y, m, d, dow, lunar, gzYear, gzMonth, gzDay,
+        zodiac, zodiacEn, element, elementCn,
+        solarTerm, festivals, yiji, officer,
+        isWeekend, isHoliday,
+        lunarMonthName: getLunarMonthName(lunar.month, lunar.isLeap),
+        lunarDayName: LUNAR_DAY_NAMES[lunar.day - 1]
+    };
+}
+
+function renderMainPage(info) {
+    document.getElementById('gregDate').textContent = formatGregorianDate(info.date);
+
+    const dowEl = document.getElementById('dayOfWeek');
+    dowEl.textContent = WEEK_DAYS_CN[info.dow];
+    dowEl.className = 'day-of-week ' + (info.isWeekend ? 'weekend' : 'weekday');
+
+    const bigDay = document.getElementById('bigDay');
+    bigDay.textContent = info.d;
+    bigDay.className = 'big-day' + (info.isHoliday ? ' is-holiday' : '');
+
+    document.getElementById('lunarDateLine').textContent =
+        info.lunarMonthName + info.lunarDayName;
+
+    document.getElementById('zodiacBadge').textContent =
+        `${info.gzYear}年 · ${info.element} ${info.zodiacEn} · ${info.zodiac}年 · ${info.officer.cn}日`;
+
+    document.getElementById('ganzhiRow').innerHTML =
+        `<span>年 ${info.gzYear}</span><span>月 ${info.gzMonth}</span><span>日 ${info.gzDay}</span>`;
+
+    const festBanner = document.getElementById('festivalBanner');
+    if (info.festivals.length > 0) {
+        festBanner.innerHTML = info.festivals.map(f => `${f.name} · ${f.nameEn}`).join('<br>');
+        festBanner.classList.add('visible');
+    } else {
+        festBanner.classList.remove('visible');
+    }
+
+    document.getElementById('yiItems').textContent = info.yiji.yi.join(' · ');
+    document.getElementById('jiItems').textContent = info.yiji.ji.join(' · ');
+}
+
+function renderUpcomingList() {
+    const container = document.getElementById('upcomingList');
+    container.innerHTML = '';
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+
+    for (let i = 1; i <= 60; i++) {
+        const d = new Date(today);
+        d.setDate(d.getDate() + i);
+        const info = getFullDayInfo(d);
+
+        const card = document.createElement('div');
+        card.className = 'upcoming-card';
+
+        // Top row
+        const topRow = document.createElement('div');
+        topRow.className = 'card-top';
+        topRow.style.cssText = 'display:flex;align-items:center;gap:14px;width:100%';
+
+        const dayBox = document.createElement('div');
+        dayBox.className = 'upcoming-day-box ' + (info.isWeekend ? 'weekend' : 'weekday');
+        dayBox.innerHTML = `<div class="upcoming-day-num">${info.d}</div><div class="upcoming-day-dow">${WEEK_DAYS_SHORT[info.dow]}</div>`;
+
+        const infoDiv = document.createElement('div');
+        infoDiv.className = 'upcoming-info';
+        infoDiv.innerHTML = `<div class="upcoming-lunar">${info.lunarMonthName}${info.lunarDayName}</div>
+            <div class="upcoming-ganzhi">${info.gzYear} · ${info.gzDay} · ${info.officer.cn}日</div>`;
+
+        if (info.festivals.length > 0) {
+            info.festivals.forEach(f => {
+                const badge = document.createElement('span');
+                badge.className = 'upcoming-festival';
+                badge.textContent = `${f.name} ${f.nameEn}`;
+                infoDiv.appendChild(badge);
+            });
+        }
+
+        const yijiMini = document.createElement('div');
+        yijiMini.className = 'upcoming-yi-ji';
+        yijiMini.innerHTML = `<div class="mini-yi">宜 ${info.yiji.yi.slice(0, 2).join(' ')}</div>
+            <div class="mini-ji">忌 ${info.yiji.ji.slice(0, 2).join(' ')}</div>`;
+
+        topRow.appendChild(dayBox);
+        topRow.appendChild(infoDiv);
+        topRow.appendChild(yijiMini);
+        card.appendChild(topRow);
+
+        // Expanded detail (hidden by default)
+        const detail = document.createElement('div');
+        detail.className = 'expanded-detail';
+        detail.innerHTML = `
+            <div class="expanded-yi">
+                <div class="yi-label">宜</div>
+                <div class="expanded-yi-items">${info.yiji.yi.join(' · ')}</div>
+            </div>
+            <div class="expanded-ji">
+                <div class="ji-label">忌</div>
+                <div class="expanded-ji-items">${info.yiji.ji.join(' · ')}</div>
+            </div>`;
+        card.appendChild(detail);
+
+        card.addEventListener('click', () => {
+            const wasExpanded = card.classList.contains('expanded');
+            document.querySelectorAll('.upcoming-card.expanded').forEach(c => c.classList.remove('expanded'));
+            if (!wasExpanded) card.classList.add('expanded');
+        });
+
+        container.appendChild(card);
+    }
+}
+
+// Scroll-to-top button visibility
+window.addEventListener('scroll', () => {
+    const btn = document.getElementById('scrollTopBtn');
+    btn.classList.toggle('visible', window.scrollY > 400);
+});
+
+// ---- Init ----
+function init() {
+    const today = new Date();
+    const info = getFullDayInfo(today);
+    renderMainPage(info);
+    renderUpcomingList();
+}
+
+init();
+
+// Refresh at midnight
+(function scheduleMidnightRefresh() {
+    const now = new Date();
+    const tomorrow = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1);
+    const msUntilMidnight = tomorrow - now;
+    setTimeout(() => {
+        init();
+        scheduleMidnightRefresh();
+    }, msUntilMidnight + 1000);
+})();
+</script>
+</body>
+</html>
