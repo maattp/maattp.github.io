@@ -1,0 +1,951 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="theme-color" content="#1a1a2e">
+    <title>Podcasts</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        html, body {
+            min-height: 100%;
+            min-height: 100vh;
+            min-height: -webkit-fill-available;
+        }
+
+        html {
+            background: linear-gradient(135deg, #1a1a2e, #16213e, #0f3460);
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            color: #fff;
+            background: transparent;
+            overflow-y: auto;
+        }
+
+        .container {
+            max-width: 600px;
+            margin: 0 auto;
+            padding: 20px;
+            padding-top: calc(env(safe-area-inset-top) + 20px);
+            padding-bottom: calc(env(safe-area-inset-bottom) + 20px);
+            padding-left: calc(env(safe-area-inset-left) + 20px);
+            padding-right: calc(env(safe-area-inset-right) + 20px);
+        }
+
+        .header {
+            text-align: center;
+            margin-bottom: 25px;
+        }
+
+        .header h1 {
+            font-size: 24px;
+            font-weight: 600;
+        }
+
+        .search-box {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 20px;
+        }
+
+        .search-input {
+            flex: 1;
+            padding: 14px 18px;
+            border: none;
+            border-radius: 12px;
+            background: rgba(255, 255, 255, 0.1);
+            color: #fff;
+            font-size: 16px;
+            outline: none;
+        }
+
+        .search-input::placeholder {
+            color: rgba(255, 255, 255, 0.5);
+        }
+
+        .search-input:focus {
+            background: rgba(255, 255, 255, 0.15);
+        }
+
+        .search-button {
+            padding: 14px 24px;
+            border: none;
+            border-radius: 12px;
+            background: #5856d6;
+            color: #fff;
+            font-size: 16px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: background 0.2s;
+        }
+
+        .search-button:hover {
+            background: #6d6be0;
+        }
+
+        .search-button:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        .card {
+            background: rgba(255, 255, 255, 0.1);
+            backdrop-filter: blur(10px);
+            border-radius: 16px;
+            padding: 20px;
+            margin-bottom: 15px;
+        }
+
+        .card-title {
+            font-size: 13px;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            opacity: 0.7;
+            margin-bottom: 15px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .podcasts-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+            gap: 15px;
+        }
+
+        .podcast-item {
+            cursor: pointer;
+            text-align: center;
+            padding: 10px;
+            border-radius: 12px;
+            transition: background 0.2s;
+        }
+
+        .podcast-item:hover {
+            background: rgba(255, 255, 255, 0.1);
+        }
+
+        .podcast-artwork {
+            width: 100%;
+            aspect-ratio: 1;
+            border-radius: 12px;
+            object-fit: cover;
+            margin-bottom: 8px;
+            background: rgba(255, 255, 255, 0.1);
+        }
+
+        .podcast-title {
+            font-size: 12px;
+            font-weight: 500;
+            line-height: 1.3;
+            display: -webkit-box;
+            -webkit-line-clamp: 2;
+            -webkit-box-orient: vertical;
+            overflow: hidden;
+        }
+
+        .podcast-publisher {
+            font-size: 11px;
+            opacity: 0.6;
+            margin-top: 4px;
+            display: -webkit-box;
+            -webkit-line-clamp: 1;
+            -webkit-box-orient: vertical;
+            overflow: hidden;
+        }
+
+        .episode-list {
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+        }
+
+        .episode-item {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            padding: 12px;
+            background: rgba(255, 255, 255, 0.05);
+            border-radius: 10px;
+            cursor: pointer;
+            transition: background 0.2s;
+        }
+
+        .episode-item:hover {
+            background: rgba(255, 255, 255, 0.12);
+        }
+
+        .episode-item.now-playing {
+            background: rgba(88, 86, 214, 0.3);
+        }
+
+        .episode-play-icon {
+            font-size: 18px;
+            width: 30px;
+            text-align: center;
+            flex-shrink: 0;
+            color: #5856d6;
+        }
+
+        .episode-info {
+            flex: 1;
+            min-width: 0;
+        }
+
+        .episode-title {
+            font-size: 14px;
+            font-weight: 500;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        .episode-date {
+            font-size: 11px;
+            opacity: 0.6;
+            margin-top: 2px;
+        }
+
+        .episode-duration {
+            font-size: 11px;
+            opacity: 0.5;
+            flex-shrink: 0;
+        }
+
+        /* Now Playing Screen */
+        .now-playing-screen {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            padding-top: 10px;
+        }
+
+        .now-playing-artwork {
+            width: 280px;
+            height: 280px;
+            border-radius: 16px;
+            object-fit: cover;
+            background: rgba(255, 255, 255, 0.1);
+            box-shadow: 0 8px 40px rgba(0, 0, 0, 0.4);
+            margin-bottom: 30px;
+        }
+
+        .now-playing-title {
+            font-size: 20px;
+            font-weight: 600;
+            text-align: center;
+            margin-bottom: 6px;
+            max-width: 100%;
+            display: -webkit-box;
+            -webkit-line-clamp: 2;
+            -webkit-box-orient: vertical;
+            overflow: hidden;
+        }
+
+        .now-playing-podcast {
+            font-size: 15px;
+            opacity: 0.7;
+            text-align: center;
+            margin-bottom: 30px;
+        }
+
+        .seek-container {
+            width: 100%;
+            margin-bottom: 20px;
+        }
+
+        .seek-bar {
+            width: 100%;
+            height: 6px;
+            -webkit-appearance: none;
+            appearance: none;
+            background: rgba(255, 255, 255, 0.2);
+            border-radius: 3px;
+            outline: none;
+            cursor: pointer;
+        }
+
+        .seek-bar::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            width: 16px;
+            height: 16px;
+            border-radius: 50%;
+            background: #fff;
+            cursor: pointer;
+            box-shadow: 0 1px 4px rgba(0, 0, 0, 0.3);
+        }
+
+        .seek-bar::-moz-range-thumb {
+            width: 16px;
+            height: 16px;
+            border-radius: 50%;
+            background: #fff;
+            cursor: pointer;
+            border: none;
+            box-shadow: 0 1px 4px rgba(0, 0, 0, 0.3);
+        }
+
+        .seek-bar::-webkit-slider-runnable-track {
+            height: 6px;
+            border-radius: 3px;
+        }
+
+        .seek-bar::-moz-range-track {
+            height: 6px;
+            border-radius: 3px;
+            background: rgba(255, 255, 255, 0.2);
+        }
+
+        .time-display {
+            display: flex;
+            justify-content: space-between;
+            font-size: 12px;
+            opacity: 0.6;
+            margin-top: 6px;
+            font-variant-numeric: tabular-nums;
+        }
+
+        .controls {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 30px;
+            margin-bottom: 20px;
+        }
+
+        .control-button {
+            background: none;
+            border: none;
+            color: #fff;
+            cursor: pointer;
+            padding: 8px;
+            border-radius: 50%;
+            transition: opacity 0.2s;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .control-button:hover {
+            opacity: 0.8;
+        }
+
+        .control-button:active {
+            opacity: 0.6;
+        }
+
+        .control-button svg {
+            fill: #fff;
+        }
+
+        .play-pause-button {
+            width: 64px;
+            height: 64px;
+            background: #fff;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .play-pause-button svg {
+            fill: #1a1a2e;
+        }
+
+        .skip-button {
+            position: relative;
+        }
+
+        .skip-label {
+            font-size: 10px;
+            font-weight: 700;
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            pointer-events: none;
+        }
+
+        .loading {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            min-height: 100px;
+            text-align: center;
+        }
+
+        .loading-spinner {
+            width: 30px;
+            height: 30px;
+            border: 3px solid rgba(255, 255, 255, 0.2);
+            border-top-color: #5ac8fa;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+            margin-bottom: 12px;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+
+        .empty-state {
+            text-align: center;
+            padding: 40px 20px;
+            opacity: 0.6;
+        }
+
+        .empty-state-icon {
+            font-size: 48px;
+            margin-bottom: 15px;
+        }
+
+        .error-message {
+            background: rgba(255, 69, 58, 0.2);
+            color: #ff453a;
+            padding: 12px 16px;
+            border-radius: 10px;
+            font-size: 14px;
+            margin-bottom: 15px;
+        }
+
+        .back-button {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            padding: 8px 16px;
+            background: rgba(255, 255, 255, 0.1);
+            border: none;
+            border-radius: 8px;
+            color: #fff;
+            font-size: 14px;
+            cursor: pointer;
+            margin-bottom: 15px;
+            transition: background 0.2s;
+        }
+
+        .back-button:hover {
+            background: rgba(255, 255, 255, 0.2);
+        }
+
+        .speed-button {
+            background: rgba(255, 255, 255, 0.15);
+            border: none;
+            color: #fff;
+            font-size: 13px;
+            font-weight: 600;
+            padding: 6px 12px;
+            border-radius: 8px;
+            cursor: pointer;
+            transition: background 0.2s;
+        }
+
+        .speed-button:hover {
+            background: rgba(255, 255, 255, 0.25);
+        }
+    </style>
+</head>
+<body>
+    <div class="container" id="app">
+        <div class="header">
+            <h1>Podcasts</h1>
+        </div>
+
+        <div class="search-box">
+            <input type="text" class="search-input" id="search-input" placeholder="Search podcasts..." />
+            <button class="search-button" id="search-button">Search</button>
+        </div>
+
+        <div id="content">
+            <div class="empty-state">
+                <div class="empty-state-icon">🎙️</div>
+                <p>Search for a podcast to start listening</p>
+            </div>
+        </div>
+    </div>
+
+    <audio id="audio-player" preload="auto"></audio>
+
+    <script>
+        // State
+        let selectedPodcast = null;
+        let currentEpisode = null;
+        let episodes = [];
+        let lastSearchResults = [];
+        let playbackSpeed = 1;
+        const SPEEDS = [0.5, 0.75, 1, 1.25, 1.5, 1.75, 2];
+
+        // DOM elements
+        const searchInput = document.getElementById('search-input');
+        const searchButton = document.getElementById('search-button');
+        const contentEl = document.getElementById('content');
+        const audioPlayer = document.getElementById('audio-player');
+
+        // Event listeners
+        searchButton.addEventListener('click', searchPodcasts);
+        searchInput.addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') searchPodcasts();
+        });
+
+        // Search podcasts using iTunes API
+        async function searchPodcasts() {
+            const query = searchInput.value.trim();
+            if (!query) return;
+
+            searchButton.disabled = true;
+            contentEl.innerHTML = `
+                <div class="loading">
+                    <div class="loading-spinner"></div>
+                    <p>Searching podcasts...</p>
+                </div>
+            `;
+
+            try {
+                const response = await fetch(
+                    `https://itunes.apple.com/search?term=${encodeURIComponent(query)}&media=podcast&limit=20`
+                );
+                const data = await response.json();
+
+                if (data.results.length === 0) {
+                    contentEl.innerHTML = `
+                        <div class="empty-state">
+                            <div class="empty-state-icon">🔍</div>
+                            <p>No podcasts found for "${escapeHtml(query)}"</p>
+                        </div>
+                    `;
+                    return;
+                }
+
+                lastSearchResults = data.results;
+                renderPodcastResults(data.results);
+            } catch (error) {
+                contentEl.innerHTML = `
+                    <div class="error-message">
+                        Failed to search podcasts: ${escapeHtml(error.message)}
+                    </div>
+                `;
+            } finally {
+                searchButton.disabled = false;
+            }
+        }
+
+        // Render podcast search results
+        function renderPodcastResults(podcasts) {
+            contentEl.innerHTML = `
+                <div class="card">
+                    <div class="card-title">
+                        <span>🎧</span>
+                        Search Results (${podcasts.length})
+                    </div>
+                    <div class="podcasts-grid">
+                        ${podcasts.map((p, i) => `
+                            <div class="podcast-item" data-index="${i}">
+                                <img class="podcast-artwork"
+                                     src="${p.artworkUrl100?.replace('100x100', '200x200') || ''}"
+                                     alt="${escapeHtml(p.collectionName)}"
+                                     onerror="this.src='data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><rect fill=%22%23333%22 width=%22100%22 height=%22100%22/><text x=%2250%22 y=%2255%22 text-anchor=%22middle%22 fill=%22%23666%22 font-size=%2240%22>🎙️</text></svg>'" />
+                                <div class="podcast-title">${escapeHtml(p.collectionName)}</div>
+                                <div class="podcast-publisher">${escapeHtml(p.artistName)}</div>
+                            </div>
+                        `).join('')}
+                    </div>
+                </div>
+            `;
+
+            contentEl.querySelectorAll('.podcast-item').forEach((el, i) => {
+                el.addEventListener('click', () => selectPodcast(podcasts[i]));
+            });
+        }
+
+        // Select a podcast and fetch its feed
+        async function selectPodcast(podcast) {
+            selectedPodcast = podcast;
+
+            contentEl.innerHTML = `
+                <button class="back-button" id="back-btn">\u2190 Back to results</button>
+                <div class="card">
+                    <div style="display: flex; gap: 15px; align-items: center; margin-bottom: 15px;">
+                        <img class="podcast-artwork"
+                             src="${podcast.artworkUrl100?.replace('100x100', '200x200') || ''}"
+                             alt="${escapeHtml(podcast.collectionName)}"
+                             style="width: 80px; height: 80px; flex-shrink: 0;" />
+                        <div>
+                            <div style="font-size: 18px; font-weight: 600;">${escapeHtml(podcast.collectionName)}</div>
+                            <div style="font-size: 13px; opacity: 0.7; margin-top: 4px;">${escapeHtml(podcast.artistName)}</div>
+                        </div>
+                    </div>
+                    <div class="loading">
+                        <div class="loading-spinner"></div>
+                        <p>Loading episodes...</p>
+                    </div>
+                </div>
+            `;
+
+            document.getElementById('back-btn').addEventListener('click', () => {
+                renderPodcastResults(lastSearchResults);
+            });
+
+            try {
+                episodes = await fetchRSSFeed(podcast.feedUrl);
+                if (episodes.length === 0) {
+                    throw new Error('No episodes found in feed');
+                }
+                renderEpisodeList(podcast, episodes);
+            } catch (error) {
+                contentEl.innerHTML = `
+                    <button class="back-button" id="back-btn">\u2190 Back to results</button>
+                    <div class="error-message">
+                        Failed to load podcast feed: ${escapeHtml(error.message)}
+                    </div>
+                `;
+                document.getElementById('back-btn').addEventListener('click', () => {
+                    renderPodcastResults(lastSearchResults);
+                });
+            }
+        }
+
+        // CORS proxies to try as fallback
+        const CORS_PROXIES = [
+            (url) => `https://corsproxy.io/?${encodeURIComponent(url)}`,
+            (url) => `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`,
+            (url) => `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(url)}`
+        ];
+
+        // Fetch and parse RSS feed (direct first, then proxy fallback)
+        async function fetchRSSFeed(feedUrl) {
+            let lastError = null;
+
+            // Try direct fetch first
+            try {
+                const text = await fetchFeedText(feedUrl);
+                return parseFeed(text);
+            } catch (error) {
+                lastError = error;
+                console.log('Direct fetch failed:', error.message);
+            }
+
+            // Try each proxy as fallback
+            for (let i = 0; i < CORS_PROXIES.length; i++) {
+                const proxyUrl = CORS_PROXIES[i](feedUrl);
+                try {
+                    const text = await fetchFeedText(proxyUrl);
+                    return parseFeed(text);
+                } catch (error) {
+                    lastError = error;
+                    console.log(`Proxy ${i + 1} failed:`, error.message);
+                }
+            }
+
+            throw new Error(lastError?.message || 'Failed to fetch podcast feed');
+        }
+
+        async function fetchFeedText(url) {
+            const response = await fetch(url, {
+                signal: AbortSignal.timeout(10000)
+            });
+            if (!response.ok) {
+                throw new Error(`HTTP ${response.status}`);
+            }
+            const text = await response.text();
+            if (text.trim().startsWith('<!') || text.trim().startsWith('<html')) {
+                throw new Error('Got HTML instead of RSS');
+            }
+            return text;
+        }
+
+        function parseFeed(text) {
+            const parser = new DOMParser();
+            const xml = parser.parseFromString(text, 'text/xml');
+
+            const parseError = xml.querySelector('parsererror');
+            if (parseError) {
+                throw new Error('Invalid RSS feed');
+            }
+
+            const items = xml.querySelectorAll('item');
+            const result = [];
+
+            for (let j = 0; j < items.length; j++) {
+                const item = items[j];
+                const enclosure = item.querySelector('enclosure');
+                const title = item.querySelector('title')?.textContent || 'Untitled Episode';
+                const pubDate = item.querySelector('pubDate')?.textContent || '';
+                const duration = item.getElementsByTagNameNS('http://www.itunes.com/dtds/podcast-1.0.dtd', 'duration')[0]?.textContent || '';
+
+                if (enclosure) {
+                    const url = enclosure.getAttribute('url');
+                    if (url && (url.includes('.mp3') || url.includes('.m4a') || enclosure.getAttribute('type')?.includes('audio'))) {
+                        result.push({
+                            title,
+                            url,
+                            pubDate: pubDate ? formatDate(pubDate) : '',
+                            duration: duration ? formatDuration(duration) : ''
+                        });
+                    }
+                }
+            }
+
+            return result;
+        }
+
+        function formatDate(dateStr) {
+            try {
+                const d = new Date(dateStr);
+                return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
+            } catch {
+                return dateStr;
+            }
+        }
+
+        function formatDuration(dur) {
+            // Could be seconds ("1234") or HH:MM:SS / MM:SS
+            if (dur.includes(':')) return dur;
+            const secs = parseInt(dur, 10);
+            if (isNaN(secs)) return dur;
+            const h = Math.floor(secs / 3600);
+            const m = Math.floor((secs % 3600) / 60);
+            const s = secs % 60;
+            if (h > 0) return `${h}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
+            return `${m}:${String(s).padStart(2, '0')}`;
+        }
+
+        // Render episode list
+        function renderEpisodeList(podcast, eps) {
+            contentEl.innerHTML = `
+                <button class="back-button" id="back-btn">\u2190 Back to results</button>
+                <div class="card">
+                    <div style="display: flex; gap: 15px; align-items: center;">
+                        <img class="podcast-artwork"
+                             src="${podcast.artworkUrl600 || podcast.artworkUrl100?.replace('100x100', '600x600') || ''}"
+                             alt="${escapeHtml(podcast.collectionName)}"
+                             style="width: 80px; height: 80px; flex-shrink: 0;" />
+                        <div>
+                            <div style="font-size: 18px; font-weight: 600;">${escapeHtml(podcast.collectionName)}</div>
+                            <div style="font-size: 13px; opacity: 0.7; margin-top: 4px;">${escapeHtml(podcast.artistName)}</div>
+                            <div style="font-size: 12px; opacity: 0.5; margin-top: 4px;">${eps.length} episode${eps.length !== 1 ? 's' : ''}</div>
+                        </div>
+                    </div>
+                </div>
+                <div class="card">
+                    <div class="card-title">
+                        <span>📋</span>
+                        Episodes
+                    </div>
+                    <div class="episode-list">
+                        ${eps.map((ep, i) => `
+                            <div class="episode-item${currentEpisode && currentEpisode.url === ep.url ? ' now-playing' : ''}" data-index="${i}">
+                                <div class="episode-play-icon">
+                                    ${currentEpisode && currentEpisode.url === ep.url ? '🔊' : '▶'}
+                                </div>
+                                <div class="episode-info">
+                                    <div class="episode-title">${escapeHtml(ep.title)}</div>
+                                    <div class="episode-date">${escapeHtml(ep.pubDate)}</div>
+                                </div>
+                                ${ep.duration ? `<div class="episode-duration">${escapeHtml(ep.duration)}</div>` : ''}
+                            </div>
+                        `).join('')}
+                    </div>
+                </div>
+            `;
+
+            document.getElementById('back-btn').addEventListener('click', () => {
+                renderPodcastResults(lastSearchResults);
+            });
+
+            contentEl.querySelectorAll('.episode-item').forEach((el) => {
+                const idx = parseInt(el.dataset.index, 10);
+                el.addEventListener('click', () => playEpisode(eps[idx]));
+            });
+        }
+
+        // Play an episode - show Now Playing screen
+        function playEpisode(episode) {
+            currentEpisode = episode;
+
+            // Set audio source and play
+            if (audioPlayer.src !== episode.url) {
+                audioPlayer.src = episode.url;
+            }
+            audioPlayer.playbackRate = playbackSpeed;
+            audioPlayer.play();
+
+            renderNowPlaying();
+        }
+
+        function renderNowPlaying() {
+            const episode = currentEpisode;
+            const podcast = selectedPodcast;
+            const artworkUrl = podcast.artworkUrl600 || podcast.artworkUrl100?.replace('100x100', '600x600') || '';
+
+            contentEl.innerHTML = `
+                <button class="back-button" id="back-to-episodes">\u2190 Episodes</button>
+                <div class="now-playing-screen">
+                    <img class="now-playing-artwork"
+                         src="${artworkUrl}"
+                         alt="${escapeHtml(podcast.collectionName)}"
+                         onerror="this.src='data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><rect fill=%22%23333%22 width=%22100%22 height=%22100%22/><text x=%2250%22 y=%2255%22 text-anchor=%22middle%22 fill=%22%23666%22 font-size=%2240%22>🎙️</text></svg>'" />
+
+                    <div class="now-playing-title">${escapeHtml(episode.title)}</div>
+                    <div class="now-playing-podcast">${escapeHtml(podcast.collectionName)}</div>
+
+                    <div class="seek-container">
+                        <input type="range" class="seek-bar" id="seek-bar" min="0" max="100" value="0" step="0.1" />
+                        <div class="time-display">
+                            <span id="current-time">0:00</span>
+                            <span id="total-time">--:--</span>
+                        </div>
+                    </div>
+
+                    <div class="controls">
+                        <button class="control-button skip-button" id="skip-back" title="Back 15s">
+                            <svg width="32" height="32" viewBox="0 0 24 24">
+                                <path d="M12 5V1L7 6l5 5V7c3.31 0 6 2.69 6 6s-2.69 6-6 6-6-2.69-6-6H4c0 4.42 3.58 8 8 8s8-3.58 8-8-3.58-8-8-8z"/>
+                            </svg>
+                            <span class="skip-label">15</span>
+                        </button>
+
+                        <button class="control-button play-pause-button" id="play-pause-btn">
+                            ${audioPlayer.paused ? playSVG() : pauseSVG()}
+                        </button>
+
+                        <button class="control-button skip-button" id="skip-forward" title="Forward 30s">
+                            <svg width="32" height="32" viewBox="0 0 24 24">
+                                <path d="M12 5V1l5 5-5 5V7c-3.31 0-6 2.69-6 6s2.69 6 6 6 6-2.69 6-6h2c0 4.42-3.58 8-8 8s-8-3.58-8-8 3.58-8 8-8z"/>
+                            </svg>
+                            <span class="skip-label">30</span>
+                        </button>
+                    </div>
+
+                    <button class="speed-button" id="speed-btn">${playbackSpeed}x</button>
+                </div>
+            `;
+
+            // Wire up controls
+            document.getElementById('back-to-episodes').addEventListener('click', () => {
+                renderEpisodeList(selectedPodcast, episodes);
+            });
+
+            const seekBar = document.getElementById('seek-bar');
+            const currentTimeEl = document.getElementById('current-time');
+            const totalTimeEl = document.getElementById('total-time');
+            const playPauseBtn = document.getElementById('play-pause-btn');
+
+            let seeking = false;
+
+            seekBar.addEventListener('input', () => {
+                seeking = true;
+                if (audioPlayer.duration) {
+                    const time = (seekBar.value / 100) * audioPlayer.duration;
+                    currentTimeEl.textContent = formatTime(time);
+                }
+            });
+
+            seekBar.addEventListener('change', () => {
+                if (audioPlayer.duration) {
+                    audioPlayer.currentTime = (seekBar.value / 100) * audioPlayer.duration;
+                }
+                seeking = false;
+            });
+
+            playPauseBtn.addEventListener('click', () => {
+                if (audioPlayer.paused) {
+                    audioPlayer.play();
+                } else {
+                    audioPlayer.pause();
+                }
+            });
+
+            document.getElementById('skip-back').addEventListener('click', () => {
+                audioPlayer.currentTime = Math.max(0, audioPlayer.currentTime - 15);
+            });
+
+            document.getElementById('skip-forward').addEventListener('click', () => {
+                audioPlayer.currentTime = Math.min(audioPlayer.duration || 0, audioPlayer.currentTime + 30);
+            });
+
+            document.getElementById('speed-btn').addEventListener('click', () => {
+                const idx = SPEEDS.indexOf(playbackSpeed);
+                playbackSpeed = SPEEDS[(idx + 1) % SPEEDS.length];
+                audioPlayer.playbackRate = playbackSpeed;
+                document.getElementById('speed-btn').textContent = playbackSpeed + 'x';
+            });
+
+            // Update UI on audio events
+            function updateProgress() {
+                if (!seeking && audioPlayer.duration) {
+                    seekBar.value = (audioPlayer.currentTime / audioPlayer.duration) * 100;
+                    currentTimeEl.textContent = formatTime(audioPlayer.currentTime);
+                }
+            }
+
+            function updateDuration() {
+                if (audioPlayer.duration && isFinite(audioPlayer.duration)) {
+                    totalTimeEl.textContent = formatTime(audioPlayer.duration);
+                }
+            }
+
+            function updatePlayPause() {
+                playPauseBtn.innerHTML = audioPlayer.paused ? playSVG() : pauseSVG();
+            }
+
+            audioPlayer.addEventListener('timeupdate', updateProgress);
+            audioPlayer.addEventListener('loadedmetadata', updateDuration);
+            audioPlayer.addEventListener('durationchange', updateDuration);
+            audioPlayer.addEventListener('play', updatePlayPause);
+            audioPlayer.addEventListener('pause', updatePlayPause);
+
+            // Set initial values if already loaded
+            updateDuration();
+            updateProgress();
+
+            // Clean up listeners when navigating away
+            const observer = new MutationObserver(() => {
+                if (!document.getElementById('seek-bar')) {
+                    audioPlayer.removeEventListener('timeupdate', updateProgress);
+                    audioPlayer.removeEventListener('loadedmetadata', updateDuration);
+                    audioPlayer.removeEventListener('durationchange', updateDuration);
+                    audioPlayer.removeEventListener('play', updatePlayPause);
+                    audioPlayer.removeEventListener('pause', updatePlayPause);
+                    observer.disconnect();
+                }
+            });
+            observer.observe(contentEl, { childList: true });
+        }
+
+        function formatTime(secs) {
+            if (!isFinite(secs)) return '--:--';
+            const h = Math.floor(secs / 3600);
+            const m = Math.floor((secs % 3600) / 60);
+            const s = Math.floor(secs % 60);
+            if (h > 0) return `${h}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
+            return `${m}:${String(s).padStart(2, '0')}`;
+        }
+
+        function playSVG() {
+            return '<svg width="32" height="32" viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>';
+        }
+
+        function pauseSVG() {
+            return '<svg width="32" height="32" viewBox="0 0 24 24"><path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/></svg>';
+        }
+
+        // Escape HTML to prevent XSS
+        function escapeHtml(text) {
+            if (!text) return '';
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+    </script>
+</body>
+</html>
