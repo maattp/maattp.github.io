@@ -58,6 +58,10 @@
             background: rgba(255, 255, 255, 0.15);
         }
 
+        .swipe-container .countdown-item {
+            border-radius: 16px;
+        }
+
         .countdown-item.today {
             background: linear-gradient(135deg, #e94560 0%, #ff6b6b 100%);
             border: none;
@@ -123,25 +127,39 @@
             font-weight: 600;
         }
 
-        .delete-btn {
-            background: rgba(255, 255, 255, 0.1);
-            border: none;
-            color: rgba(255, 255, 255, 0.7);
-            width: 32px;
-            height: 32px;
-            border-radius: 50%;
-            cursor: pointer;
-            font-size: 18px;
-            margin-left: 12px;
-            transition: background 0.2s, color 0.2s;
+        /* Swipe to delete */
+        .swipe-container {
+            position: relative;
+            overflow: hidden;
+            border-radius: 16px;
+        }
+
+        .swipe-content {
+            position: relative;
+            z-index: 1;
+            transition: transform 0.3s ease;
+            touch-action: pan-y;
+        }
+
+        .swipe-content.swiping {
+            transition: none;
+        }
+
+        .delete-action {
+            position: absolute;
+            top: 0;
+            right: 0;
+            bottom: 0;
+            width: 80px;
+            background: #e94560;
             display: flex;
             align-items: center;
             justify-content: center;
-        }
-
-        .delete-btn:hover {
-            background: rgba(233, 69, 96, 0.5);
             color: #fff;
+            font-weight: 600;
+            font-size: 14px;
+            z-index: 0;
+            border-radius: 0 16px 16px 0;
         }
 
         .section-header {
@@ -340,6 +358,7 @@
             { name: "Easter", getDate: getEasterDate },
             { name: "Mother's Day", getDate: (year) => getNthWeekdayOfMonth(year, 5, 0, 2) }, // 2nd Sunday of May
             { name: "Memorial Day", getDate: (year) => getLastWeekdayOfMonth(year, 5, 1) }, // Last Monday of May
+            { name: "Father's Day", getDate: (year) => getNthWeekdayOfMonth(year, 6, 0, 3) }, // 3rd Sunday of June
             { name: "Canada Day", month: 7, day: 1 },
             { name: "Independence Day", month: 7, day: 4 },
             { name: "Labor Day", getDate: (year) => getNthWeekdayOfMonth(year, 9, 1, 1) }, // 1st Monday of September
@@ -564,16 +583,73 @@
 
             listEl.innerHTML = html;
 
-            // Add delete button listeners
-            document.querySelectorAll('.delete-btn').forEach(btn => {
-                btn.addEventListener('click', (e) => {
-                    e.stopPropagation();
-                    const id = parseInt(btn.dataset.id);
-                    if (confirm('Delete this event?')) {
-                        deleteCustomDate(id);
+            // Setup swipe-to-delete handlers
+            setupSwipeHandlers();
+        }
+
+        // Swipe to delete functionality
+        function setupSwipeHandlers() {
+            const swipeContainers = document.querySelectorAll('.swipe-container');
+            const deleteThreshold = 80;
+
+            swipeContainers.forEach(container => {
+                const content = container.querySelector('.swipe-content');
+                const deleteAction = container.querySelector('.delete-action');
+                let startX = 0;
+                let currentX = 0;
+                let isDragging = false;
+
+                content.addEventListener('touchstart', (e) => {
+                    startX = e.touches[0].clientX;
+                    currentX = 0;
+                    isDragging = true;
+                    content.classList.add('swiping');
+                }, { passive: true });
+
+                content.addEventListener('touchmove', (e) => {
+                    if (!isDragging) return;
+                    const diffX = e.touches[0].clientX - startX;
+                    // Only allow swiping left (negative)
+                    currentX = Math.min(0, Math.max(-deleteThreshold, diffX));
+                    content.style.transform = `translateX(${currentX}px)`;
+                }, { passive: true });
+
+                content.addEventListener('touchend', () => {
+                    isDragging = false;
+                    content.classList.remove('swiping');
+
+                    if (currentX <= -deleteThreshold) {
+                        // Show delete state
+                        content.style.transform = `translateX(-${deleteThreshold}px)`;
+                    } else {
+                        // Snap back
+                        content.style.transform = 'translateX(0)';
+                    }
+                });
+
+                // Handle delete action tap
+                deleteAction.addEventListener('click', () => {
+                    const id = parseInt(container.dataset.id);
+                    deleteCustomDate(id);
+                });
+
+                // Close swipe on tap elsewhere
+                content.addEventListener('click', () => {
+                    if (currentX < 0) {
+                        content.style.transform = 'translateX(0)';
+                        currentX = 0;
                     }
                 });
             });
+
+            // Close any open swipes when tapping outside
+            document.addEventListener('touchstart', (e) => {
+                if (!e.target.closest('.swipe-container')) {
+                    document.querySelectorAll('.swipe-content').forEach(content => {
+                        content.style.transform = 'translateX(0)';
+                    });
+                }
+            }, { passive: true });
         }
 
         function renderEvent(event, type) {
@@ -586,9 +662,8 @@
 
             const typeClass = type === 'today' ? 'today' : type === 'past' ? 'past' : '';
             const customBadge = !event.isBuiltIn ? '<span class="custom-badge">Custom</span>' : '';
-            const deleteBtn = !event.isBuiltIn ? `<button class="delete-btn" data-id="${event.id}">&times;</button>` : '';
 
-            return `
+            const itemContent = `
                 <div class="countdown-item ${typeClass}">
                     <div class="countdown-info">
                         <div class="countdown-name">${event.name}${customBadge}</div>
@@ -598,9 +673,20 @@
                         <div class="days-number">${daysText}</div>
                         <div class="days-label">${labelText}</div>
                     </div>
-                    ${deleteBtn}
                 </div>
             `;
+
+            // Wrap custom events in swipe container for delete
+            if (!event.isBuiltIn) {
+                return `
+                    <div class="swipe-container" data-id="${event.id}">
+                        <div class="delete-action">Delete</div>
+                        <div class="swipe-content">${itemContent}</div>
+                    </div>
+                `;
+            }
+
+            return itemContent;
         }
 
         // Modal handling
