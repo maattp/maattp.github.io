@@ -7,95 +7,355 @@
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
     <title>AES Encryption & Decryption</title>
     <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
         body {
-            font-family: sans-serif;
-            margin: 20px;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: linear-gradient(135deg, #3a1c71, #5856d6, #af52de);
+            min-height: 100vh;
+            display: flex;
+            justify-content: center;
+            padding: 40px 16px;
+            padding-top: max(40px, env(safe-area-inset-top));
+            padding-bottom: max(40px, env(safe-area-inset-bottom));
+        }
+
+        .container {
+            width: 100%;
+            max-width: 480px;
+        }
+
+        .page-title {
+            color: #fff;
+            font-size: 28px;
+            font-weight: 700;
+            text-align: center;
+            margin-bottom: 24px;
+            text-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+        }
+
+        .tabs {
+            display: flex;
+            gap: 4px;
+            margin-bottom: 16px;
+            background: rgba(255, 255, 255, 0.15);
+            border-radius: 12px;
+            padding: 4px;
+            backdrop-filter: blur(10px);
+            -webkit-backdrop-filter: blur(10px);
+        }
+
+        .tab {
+            flex: 1;
+            padding: 10px 16px;
+            border: none;
+            border-radius: 10px;
+            font-size: 15px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.25s ease;
+            color: rgba(255, 255, 255, 0.7);
+            background: transparent;
+        }
+
+        .tab.active {
+            background: rgba(255, 255, 255, 0.95);
+            color: #5856d6;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+        }
+
+        .tab:not(.active):hover {
+            color: #fff;
+            background: rgba(255, 255, 255, 0.1);
+        }
+
+        .card {
+            background: #fff;
+            border-radius: 20px;
+            padding: 28px 24px;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.25);
+        }
+
+        .section {
+            display: none;
+        }
+
+        .section.active {
+            display: block;
+        }
+
+        .section-title {
+            font-size: 13px;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.8px;
+            color: #8e8e93;
+            margin-bottom: 8px;
+        }
+
+        label {
+            display: block;
+            font-size: 14px;
+            font-weight: 500;
+            color: #3a3a3c;
+            margin-bottom: 6px;
         }
 
         textarea, input[type="password"], input[type="text"] {
             width: 100%;
-            padding: 10px;
-            margin-bottom: 10px;
-            box-sizing: border-box;
-            border: 1px solid #ccc;
-            border-radius: 4px;
+            padding: 12px 14px;
+            margin-bottom: 16px;
+            border: 2px solid #e5e5ea;
+            border-radius: 10px;
+            font-size: 15px;
+            font-family: inherit;
+            transition: border-color 0.2s ease;
+            background: #f9f9fb;
+            color: #1c1c1e;
+            resize: vertical;
         }
 
-        button {
-            background-color: #4CAF50;
-            color: white;
-            padding: 12px 20px;
+        textarea:focus, input[type="password"]:focus, input[type="text"]:focus {
+            outline: none;
+            border-color: #5856d6;
+            background: #fff;
+        }
+
+        textarea {
+            min-height: 100px;
+            font-family: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, monospace;
+            font-size: 14px;
+            line-height: 1.5;
+        }
+
+        .password-row {
+            position: relative;
+        }
+
+        .btn {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            gap: 8px;
+            padding: 12px 24px;
             border: none;
-            border-radius: 4px;
+            border-radius: 10px;
+            font-size: 16px;
+            font-weight: 600;
             cursor: pointer;
+            transition: all 0.2s ease;
+            font-family: inherit;
         }
 
-        button:hover {
-            background-color: #45a049;
+        .btn-primary {
+            width: 100%;
+            background: linear-gradient(135deg, #5856d6, #af52de);
+            color: #fff;
+            box-shadow: 0 4px 12px rgba(88, 86, 214, 0.3);
         }
 
-        #encryptedOutput, #decryptedOutput {
+        .btn-primary:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 6px 20px rgba(88, 86, 214, 0.4);
+        }
+
+        .btn-primary:active {
+            transform: scale(0.97);
+            box-shadow: 0 2px 8px rgba(88, 86, 214, 0.3);
+        }
+
+        .btn-primary:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+            transform: none;
+        }
+
+        .output-section {
             margin-top: 20px;
+        }
+
+        .output-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: 8px;
+        }
+
+        .btn-copy {
+            padding: 6px 14px;
+            background: #f2f2f7;
+            color: #5856d6;
+            border: 1.5px solid #e5e5ea;
+            border-radius: 8px;
+            font-size: 13px;
+            font-weight: 600;
+        }
+
+        .btn-copy:hover {
+            background: #e5e5ea;
+        }
+
+        .btn-copy:active {
+            transform: scale(0.95);
+        }
+
+        .btn-copy.copied {
+            background: #34c759;
+            color: #fff;
+            border-color: #34c759;
+        }
+
+        .output-box {
+            padding: 14px 16px;
+            background: #f9f9fb;
+            border: 2px solid #e5e5ea;
+            border-radius: 10px;
+            min-height: 60px;
             word-wrap: break-word;
-            border: 1px solid #ddd;
-            padding: 10px;
-            min-height: 50px;
+            word-break: break-all;
+            font-family: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, monospace;
+            font-size: 13px;
+            line-height: 1.6;
+            color: #1c1c1e;
+        }
+
+        .output-box:empty::before {
+            content: 'Output will appear here...';
+            color: #c7c7cc;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            font-style: italic;
         }
 
         .error {
-            color: red;
-            margin-top: 5px;
+            color: #ff3b30;
+            font-size: 13px;
+            margin-top: -10px;
+            margin-bottom: 12px;
+            font-weight: 500;
         }
 
-        #loadingIndicator {
-          display: none;
-          margin-top: 10px;
-          font-style: italic;
-          color: #888;
+        .loading {
+            display: none;
+            text-align: center;
+            margin-top: 12px;
+            font-size: 14px;
+            color: #8e8e93;
+            font-style: italic;
         }
 
-        #loadingIndicatorDecrypt {
-          display: none;
-          margin-top: 10px;
-          font-style: italic;
-          color: #888;
+        .loading.visible {
+            display: block;
+        }
+
+        .spinner {
+            display: inline-block;
+            width: 16px;
+            height: 16px;
+            border: 2px solid #e5e5ea;
+            border-top-color: #5856d6;
+            border-radius: 50%;
+            animation: spin 0.8s linear infinite;
+            vertical-align: middle;
+            margin-right: 6px;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+
+        .divider {
+            height: 1px;
+            background: #e5e5ea;
+            margin: 24px 0;
+        }
+
+        @media (max-width: 400px) {
+            body {
+                padding: 24px 12px;
+            }
+
+            .card {
+                padding: 22px 18px;
+            }
+
+            .page-title {
+                font-size: 24px;
+            }
         }
     </style>
 </head>
 <body>
 
-    <h1>AES Encryption</h1>
+    <div class="container">
+        <div class="page-title">AES Encryption</div>
 
-    <label for="plaintext">Text to Encrypt:</label>
-    <textarea id="plaintext" rows="4" placeholder="Enter text here..."></textarea>
+        <div class="tabs">
+            <button class="tab active" onclick="switchTab('encrypt')">Encrypt</button>
+            <button class="tab" onclick="switchTab('decrypt')">Decrypt</button>
+        </div>
 
-    <label for="password">Password:</label>
-    <input type="password" id="password" placeholder="Enter password">
-    <div id="passwordError" class="error"></div>
+        <div class="card">
+            <!-- Encrypt Section -->
+            <div id="encryptSection" class="section active">
+                <label for="plaintext">Text to Encrypt</label>
+                <textarea id="plaintext" rows="4" placeholder="Enter text here..."></textarea>
 
-    <button onclick="encryptText()">Encrypt</button>
-    <div id="loadingIndicator">Encrypting... (this may take a moment)</div>
+                <label for="password">Password</label>
+                <div class="password-row">
+                    <input type="password" id="password" placeholder="Enter password">
+                </div>
+                <div id="passwordError" class="error"></div>
 
-    <h2>Encrypted Text:</h2>
-    <button onclick="copyEncryptedText()">Copy</button>
-    <div id="encryptedOutput"></div>
+                <button class="btn btn-primary" onclick="encryptText()">Encrypt</button>
+                <div id="loadingIndicator" class="loading"><span class="spinner"></span>Encrypting... (this may take a moment)</div>
 
-    <h1>AES Decryption</h1>
+                <div class="output-section">
+                    <div class="output-header">
+                        <span class="section-title">Encrypted Text</span>
+                        <button class="btn btn-copy" onclick="copyEncryptedText()">Copy</button>
+                    </div>
+                    <div id="encryptedOutput" class="output-box"></div>
+                </div>
+            </div>
 
-    <label for="encryptedText">Paste Encrypted Text (Base64):</label>
-    <textarea id="encryptedText" rows="4" placeholder="Paste encrypted text here..."></textarea>
+            <!-- Decrypt Section -->
+            <div id="decryptSection" class="section">
+                <label for="encryptedText">Encrypted Text (Base64)</label>
+                <textarea id="encryptedText" rows="4" placeholder="Paste encrypted text here..."></textarea>
 
-    <label for="passwordDecrypt">Password:</label>
-    <input type="password" id="passwordDecrypt" placeholder="Enter password">
-    <div id="passwordDecryptError" class="error"></div>
+                <label for="passwordDecrypt">Password</label>
+                <div class="password-row">
+                    <input type="password" id="passwordDecrypt" placeholder="Enter password">
+                </div>
+                <div id="passwordDecryptError" class="error"></div>
 
-    <button onclick="decryptText()">Decrypt</button>
-    <div id="loadingIndicatorDecrypt">Decrypting... (this may take a moment)</div>
+                <button class="btn btn-primary" onclick="decryptText()">Decrypt</button>
+                <div id="loadingIndicatorDecrypt" class="loading"><span class="spinner"></span>Decrypting... (this may take a moment)</div>
 
-    <h2>Decrypted Text:</h2>
-    <div id="decryptedOutput"></div>
+                <div class="output-section">
+                    <div class="output-header">
+                        <span class="section-title">Decrypted Text</span>
+                    </div>
+                    <div id="decryptedOutput" class="output-box"></div>
+                </div>
+            </div>
+        </div>
+    </div>
 
     <script>
+        // --- Tab Switching ---
+        function switchTab(tab) {
+            const tabs = document.querySelectorAll('.tab');
+            tabs[0].classList.toggle('active', tab === 'encrypt');
+            tabs[1].classList.toggle('active', tab === 'decrypt');
+            document.getElementById('encryptSection').classList.toggle('active', tab === 'encrypt');
+            document.getElementById('decryptSection').classList.toggle('active', tab === 'decrypt');
+        }
+
         // --- Encryption ---
         async function encryptText() {
             const plaintext = document.getElementById('plaintext').value;
@@ -158,9 +418,15 @@
                 return;
             }
 
+            const copyBtn = document.querySelector('.btn-copy');
             navigator.clipboard.writeText(textToCopy)
                 .then(() => {
-                    alert("Encrypted text copied to clipboard!");
+                    copyBtn.textContent = 'Copied!';
+                    copyBtn.classList.add('copied');
+                    setTimeout(() => {
+                        copyBtn.textContent = 'Copy';
+                        copyBtn.classList.remove('copied');
+                    }, 2000);
                 })
                 .catch(err => {
                     console.error('Failed to copy text: ', err);
