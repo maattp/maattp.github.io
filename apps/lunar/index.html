@@ -261,6 +261,18 @@
         .expanded-ji-items { color: #aaa; }
 
         /* Scroll to today button */
+        .month-header {
+            position: sticky;
+            top: 0;
+            z-index: 10;
+            background: #1a0a0a;
+            padding: 10px 16px;
+            font-size: 15px;
+            font-weight: 700;
+            color: #d4a373;
+            border-bottom: 1px solid rgba(212,163,115,0.2);
+        }
+
         .scroll-top-btn {
             position: fixed;
             bottom: calc(env(safe-area-inset-bottom) + 20px);
@@ -715,11 +727,22 @@ function renderUpcomingList() {
     container.innerHTML = '';
     const today = new Date();
     today.setHours(0, 0, 0, 0);
+    const MONTH_NAMES = ['January','February','March','April','May','June','July','August','September','October','November','December'];
+    let lastMonth = -1;
 
-    for (let i = 1; i <= 60; i++) {
+    for (let i = 1; i <= 365; i++) {
         const d = new Date(today);
         d.setDate(d.getDate() + i);
         const info = getFullDayInfo(d);
+
+        // Insert month header when month changes
+        if (d.getMonth() !== lastMonth) {
+            lastMonth = d.getMonth();
+            const header = document.createElement('div');
+            header.className = 'month-header';
+            header.textContent = `${MONTH_NAMES[d.getMonth()]} ${d.getFullYear()}`;
+            container.appendChild(header);
+        }
 
         const card = document.createElement('div');
         card.className = 'upcoming-card';
