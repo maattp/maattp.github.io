@@ -598,6 +598,7 @@
         let use24Hour = false;
         let darkMode = true;
         let wakeLock = null;
+        let noSleepVideo = null;
 
         // Elements
         const pagesContainer = document.getElementById('pages-container');
@@ -729,15 +730,45 @@
         minimalPage.addEventListener('click', toggleTheme);
         flipPage.addEventListener('click', toggleTheme);
 
-        // Wake Lock
+        // Wake Lock - prevent display sleep
         async function requestWakeLock() {
+            // Try Wake Lock API first (Safari 16.4+, Chrome, Edge)
             if ('wakeLock' in navigator) {
                 try {
                     wakeLock = await navigator.wakeLock.request('screen');
-                } catch (err) {
-                    // Wake lock not available
-                }
+                    wakeLock.addEventListener('release', () => { wakeLock = null; });
+                    return;
+                } catch (e) {}
             }
+            // Fallback: silent video keeps display awake on older iOS Safari
+            playNoSleepVideo();
+        }
+
+        function playNoSleepVideo() {
+            if (!noSleepVideo) {
+                noSleepVideo = document.createElement('video');
+                noSleepVideo.setAttribute('playsinline', '');
+                noSleepVideo.setAttribute('webkit-playsinline', '');
+                noSleepVideo.muted = true;
+                noSleepVideo.loop = true;
+                noSleepVideo.style.cssText = 'position:fixed;top:0;left:0;width:1px;height:1px;opacity:0.01;pointer-events:none;z-index:-1';
+                const canvas = document.createElement('canvas');
+                canvas.width = 2;
+                canvas.height = 2;
+                canvas.getContext('2d').fillRect(0, 0, 2, 2);
+                if (canvas.captureStream) {
+                    noSleepVideo.srcObject = canvas.captureStream(1);
+                }
+                document.body.appendChild(noSleepVideo);
+            }
+            noSleepVideo.play().catch(() => {
+                // Autoplay blocked - wait for user gesture
+                const resume = () => {
+                    noSleepVideo.play().catch(() => {});
+                };
+                document.addEventListener('touchstart', resume, { once: true });
+                document.addEventListener('click', resume, { once: true });
+            });
         }
 
         document.addEventListener('visibilitychange', () => {
