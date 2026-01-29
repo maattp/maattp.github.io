@@ -104,6 +104,7 @@
             color: #fff;
             font-size: 14px;
             font-weight: 500;
+            cursor: pointer;
         }
 
         .stopwatch-content {
@@ -272,6 +273,7 @@
 
         .modal-input[type="datetime-local"] {
             color-scheme: dark;
+            max-width: 100%;
         }
 
         .modal-input + .modal-input {
@@ -383,16 +385,22 @@
             }));
         }
 
-        // Format time as HH:MM:SS
+        // Format time as Dd HH:MM:SS
         function formatTime(ms) {
             const totalSeconds = Math.floor(ms / 1000);
-            const hours = Math.floor(totalSeconds / 3600);
+            const days = Math.floor(totalSeconds / 86400);
+            const hours = Math.floor((totalSeconds % 86400) / 3600);
             const minutes = Math.floor((totalSeconds % 3600) / 60);
             const seconds = totalSeconds % 60;
 
-            return String(hours).padStart(2, '0') + ':' +
-                   String(minutes).padStart(2, '0') + ':' +
-                   String(seconds).padStart(2, '0');
+            const timePart = String(hours).padStart(2, '0') + ':' +
+                             String(minutes).padStart(2, '0') + ':' +
+                             String(seconds).padStart(2, '0');
+
+            if (days > 0) {
+                return days + 'd ' + timePart;
+            }
+            return timePart;
         }
 
         // Get current elapsed time for a stopwatch
@@ -477,7 +485,8 @@
             let startX = 0;
             let currentX = 0;
             let isDragging = false;
-            const threshold = 80;
+            let isOpen = false;
+            const deleteWidth = 80;
 
             content.addEventListener('touchstart', (e) => {
                 startX = e.touches[0].clientX;
@@ -491,9 +500,12 @@
                 currentX = e.touches[0].clientX;
                 let diff = currentX - startX;
 
-                // Only allow swiping left
+                // Adjust for current open state
+                if (isOpen) diff -= deleteWidth;
+
+                // Only allow swiping left, clamp to delete button width
                 if (diff > 0) diff = 0;
-                if (diff < -threshold - 20) diff = -threshold - 20;
+                if (diff < -deleteWidth) diff = -deleteWidth;
 
                 content.style.transform = `translateX(${diff}px)`;
             });
@@ -502,17 +514,27 @@
                 isDragging = false;
                 content.classList.remove('swiping');
 
-                const diff = currentX - startX;
+                let diff = currentX - startX;
+                if (isOpen) diff -= deleteWidth;
 
-                if (diff < -threshold) {
-                    // Delete
-                    content.style.transform = `translateX(-100%)`;
-                    setTimeout(() => {
-                        deleteStopwatch(id);
-                    }, 200);
+                if (diff < -deleteWidth / 2) {
+                    // Open to show delete button
+                    content.style.transform = `translateX(-${deleteWidth}px)`;
+                    isOpen = true;
                 } else {
+                    // Close
                     content.style.transform = 'translateX(0)';
+                    isOpen = false;
                 }
+            });
+
+            // Handle delete button click
+            const deleteBg = content.parentElement.querySelector('.stopwatch-delete-bg');
+            deleteBg.addEventListener('click', () => {
+                content.style.transform = `translateX(-100%)`;
+                setTimeout(() => {
+                    deleteStopwatch(id);
+                }, 200);
             });
         }
 
