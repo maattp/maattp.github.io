@@ -454,7 +454,7 @@
             item.appendChild(content);
 
             // Swipe to delete
-            setupSwipeToDelete(item, content, sw.id);
+            setupSwipeToDelete(content, sw.id);
 
             return item;
         }
@@ -467,7 +467,7 @@
         }
 
         // Setup swipe to delete
-        function setupSwipeToDelete(item, content, id) {
+        function setupSwipeToDelete(content, id) {
             let startX = 0;
             let currentX = 0;
             let isDragging = false;
@@ -611,10 +611,16 @@
             requestAnimationFrame(tick);
         }
 
-        // Handle Enter key in modal
+        // Handle keyboard in modal
         document.getElementById('stopwatch-name-input').addEventListener('keydown', (e) => {
             if (e.key === 'Enter') {
                 createStopwatch();
+            }
+        });
+
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'Escape') {
+                hideAddModal();
             }
         });
 
