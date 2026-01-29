@@ -31,59 +31,6 @@
             text-decoration: none;
         }
 
-        .hamburger {
-            position: fixed;
-            top: 20px;
-            left: 20px;
-            width: 30px;
-            height: 24px;
-            cursor: pointer;
-            z-index: 1001;
-            display: flex;
-            flex-direction: column;
-            justify-content: space-between;
-        }
-
-        .hamburger span {
-            display: block;
-            height: 3px;
-            background: #0f0;
-            border-radius: 2px;
-            transition: all 0.3s ease;
-        }
-
-
-        .nav-menu {
-            position: fixed;
-            top: 0;
-            left: -251px;
-            width: 250px;
-            height: 100%;
-            background: rgba(0, 0, 0, 0.95);
-            border-right: 1px solid #0f0;
-            transition: left 0.3s ease;
-            z-index: 1000;
-            padding-top: 70px;
-        }
-
-        .nav-menu.open {
-            left: 0;
-        }
-
-        .nav-menu a {
-            display: block;
-            padding: 15px 25px;
-            color: #0f0;
-            text-decoration: none;
-            font-size: 18px;
-            border-bottom: 1px solid rgba(0, 255, 0, 0.2);
-            transition: background 0.2s ease;
-        }
-
-        .nav-menu a:hover {
-            background: rgba(0, 255, 0, 0.1);
-        }
-
         h1 {
             margin: 0;
             margin-bottom: 5px;
@@ -96,32 +43,6 @@
     </style>
 </head>
 <body>
-    <div class="hamburger" onclick="toggleMenu()">
-        <span></span>
-        <span></span>
-        <span></span>
-    </div>
-
-    <nav class="nav-menu">
-        <a href="/apps/aes/">AES Encryption</a>
-        <a href="/apps/clock/">Clock</a>
-        <a href="/apps/countdown/">Countdown</a>
-        <a href="/apps/lunar/">Lunar Calendar</a>
-        <a href="/apps/network/">Network Info</a>
-        <a href="/apps/news/">News</a>
-        <a href="/apps/podcasts/">Podcasts</a>
-        <a href="/apps/reddit/">Reddit</a>
-        <a href="/apps/radio/">Radio</a>
-        <a href="/apps/ruler/">Ruler</a>
-        <a href="/apps/scanner/">Scanner</a>
-        <a href="/apps/simon/">Simon</a>
-        <a href="/apps/speedometer/">Speedometer</a>
-        <a href="/apps/stopwatch/">Stopwatch</a>
-        <a href="/apps/totp/">TOTP Generator</a>
-        <a href="/apps/weather/">Weather</a>
-        <a href="/apps/zippo/">Zippo</a>
-    </nav>
-
     <canvas id="matrix-bg"></canvas>
 
     <div id="resume-content">
@@ -134,11 +55,6 @@
     </div>
 
     <script>
-        function toggleMenu() {
-            document.querySelector('.hamburger').classList.toggle('open');
-            document.querySelector('.nav-menu').classList.toggle('open');
-        }
-
         // Matrix Animation Script
         const canvas = document.getElementById('matrix-bg');
         const ctx = canvas.getContext('2d');
