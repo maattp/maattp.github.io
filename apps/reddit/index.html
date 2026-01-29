@@ -705,33 +705,41 @@
                         await loadPosts();
                         renderPostList();
                     } catch {
-                        document.getElementById('posts-content').innerHTML = `
-                            <div class="error">
-                                <div class="error-message">Failed to load posts</div>
-                                <button class="retry-button" id="retry-btn">Try Again</button>
-                            </div>
-                        `;
-                        document.getElementById('retry-btn').addEventListener('click', () => renderPosts(false));
+                        showPostsError();
                     } finally {
                         btn.classList.remove('spinning');
                     }
                 });
+            } else {
+                // Reset state and show loading indicator for retry
+                state.posts = [];
+                state.after = null;
+                document.getElementById('posts-content').innerHTML = `
+                    <div class="loading">
+                        <div class="loading-spinner"></div>
+                        <p>Loading posts...</p>
+                    </div>
+                `;
             }
 
             try {
                 await loadPosts();
                 renderPostList();
             } catch (err) {
-                document.getElementById('posts-content').innerHTML = `
-                    <div class="error">
-                        <div class="error-message">Failed to load posts</div>
-                        <button class="retry-button" id="retry-btn">Try Again</button>
-                    </div>
-                `;
-                document.getElementById('retry-btn').addEventListener('click', () => renderPosts(false));
+                showPostsError();
             }
 
             state.view = 'posts';
+        }
+
+        function showPostsError() {
+            document.getElementById('posts-content').innerHTML = `
+                <div class="error">
+                    <div class="error-message">Failed to load posts</div>
+                    <button class="retry-button" id="retry-btn">Try Again</button>
+                </div>
+            `;
+            document.getElementById('retry-btn').addEventListener('click', () => renderPosts(false));
         }
 
         async function loadPosts() {
@@ -922,13 +930,7 @@
                     await loadPosts();
                     renderPostList();
                 } catch {
-                    document.getElementById('posts-content').innerHTML = `
-                        <div class="error">
-                            <div class="error-message">Failed to load posts</div>
-                            <button class="retry-button" id="retry-btn">Try Again</button>
-                        </div>
-                    `;
-                    document.getElementById('retry-btn').addEventListener('click', () => renderPosts(false));
+                    showPostsError();
                 } finally {
                     btn.classList.remove('spinning');
                 }
