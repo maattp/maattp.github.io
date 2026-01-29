@@ -286,6 +286,10 @@
             color: rgba(255, 255, 255, 0.4);
         }
 
+        .modal-input[type="datetime-local"] {
+            color-scheme: dark;
+        }
+
         .modal-input + .modal-input {
             margin-top: 12px;
         }
@@ -355,8 +359,8 @@
                     <input type="text" class="modal-input" id="stopwatch-name-input" placeholder="Stopwatch name (optional)" maxlength="50">
                 </div>
                 <div class="input-group">
-                    <label class="input-label">Started how long ago? (optional)</label>
-                    <input type="text" class="modal-input" id="stopwatch-offset-input" placeholder="e.g. 5m, 1h30m, 2h">
+                    <label class="input-label">Started at (optional)</label>
+                    <input type="datetime-local" class="modal-input" id="stopwatch-start-input">
                 </div>
             </div>
             <div class="modal-actions">
@@ -392,28 +396,6 @@
                 stopwatches: stopwatches,
                 counter: stopwatchCounter
             }));
-        }
-
-        // Parse time offset string (e.g. "5m", "1h30m", "2h", "90") into milliseconds
-        function parseTimeOffset(str) {
-            if (!str || !str.trim()) return 0;
-            str = str.trim().toLowerCase();
-
-            // If just a number, treat as minutes
-            if (/^\d+$/.test(str)) {
-                return parseInt(str, 10) * 60 * 1000;
-            }
-
-            let totalMs = 0;
-            const hourMatch = str.match(/(\d+)\s*h/);
-            const minMatch = str.match(/(\d+)\s*m/);
-            const secMatch = str.match(/(\d+)\s*s/);
-
-            if (hourMatch) totalMs += parseInt(hourMatch[1], 10) * 60 * 60 * 1000;
-            if (minMatch) totalMs += parseInt(minMatch[1], 10) * 60 * 1000;
-            if (secMatch) totalMs += parseInt(secMatch[1], 10) * 1000;
-
-            return totalMs;
         }
 
         // Format time as HH:MM:SS
@@ -557,10 +539,10 @@
         function showAddModal() {
             const overlay = document.getElementById('modal-overlay');
             const nameInput = document.getElementById('stopwatch-name-input');
-            const offsetInput = document.getElementById('stopwatch-offset-input');
+            const startInput = document.getElementById('stopwatch-start-input');
             overlay.classList.add('visible');
             nameInput.value = '';
-            offsetInput.value = '';
+            startInput.value = '';
             setTimeout(() => nameInput.focus(), 100);
         }
 
@@ -580,22 +562,34 @@
         // Create new stopwatch
         function createStopwatch() {
             const nameInput = document.getElementById('stopwatch-name-input');
-            const offsetInput = document.getElementById('stopwatch-offset-input');
+            const startInput = document.getElementById('stopwatch-start-input');
             let name = nameInput.value.trim();
-            const offset = parseTimeOffset(offsetInput.value);
 
             if (!name) {
                 stopwatchCounter++;
                 name = `Stopwatch ${stopwatchCounter}`;
             }
 
-            const hasOffset = offset > 0;
+            let elapsed = 0;
+            let running = false;
+            let startTime = null;
+
+            if (startInput.value) {
+                const startDate = new Date(startInput.value);
+                const now = Date.now();
+                if (startDate.getTime() < now) {
+                    elapsed = now - startDate.getTime();
+                    running = true;
+                    startTime = now;
+                }
+            }
+
             const sw = {
                 id: Date.now().toString(),
                 name: name,
-                elapsed: hasOffset ? offset : 0,
-                running: hasOffset,
-                startTime: hasOffset ? Date.now() : null
+                elapsed: elapsed,
+                running: running,
+                startTime: startTime
             };
 
             stopwatches.unshift(sw);
@@ -666,7 +660,7 @@
             }
         });
 
-        document.getElementById('stopwatch-offset-input').addEventListener('keydown', (e) => {
+        document.getElementById('stopwatch-start-input').addEventListener('keydown', (e) => {
             if (e.key === 'Enter') {
                 createStopwatch();
             }
