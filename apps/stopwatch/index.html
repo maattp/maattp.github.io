@@ -104,6 +104,7 @@
             color: #fff;
             font-size: 14px;
             font-weight: 500;
+            cursor: pointer;
         }
 
         .stopwatch-content {
@@ -144,10 +145,6 @@
             letter-spacing: -1px;
         }
 
-        .stopwatch-time.running {
-            color: #30d158;
-        }
-
         .stopwatch-controls {
             display: flex;
             gap: 12px;
@@ -178,18 +175,6 @@
             border-color: rgba(255, 255, 255, 0.3);
             color: #fff;
             background: rgba(255, 255, 255, 0.1);
-        }
-
-        .start-btn {
-            border-color: rgba(48, 209, 88, 0.3);
-            color: #30d158;
-            background: rgba(48, 209, 88, 0.15);
-        }
-
-        .stop-btn {
-            border-color: rgba(255, 59, 48, 0.3);
-            color: #ff3b30;
-            background: rgba(255, 59, 48, 0.15);
         }
 
         .delete-btn {
@@ -288,6 +273,7 @@
 
         .modal-input[type="datetime-local"] {
             color-scheme: dark;
+            max-width: 100%;
         }
 
         .modal-input + .modal-input {
@@ -375,6 +361,7 @@
         let stopwatches = [];
         let stopwatchCounter = 0;
         let ticking = false;
+        const timeElements = new Map();
 
         // Load from localStorage
         function loadStopwatches() {
@@ -399,24 +386,27 @@
             }));
         }
 
-        // Format time as HH:MM:SS
+        // Format time as Dd HH:MM:SS
         function formatTime(ms) {
             const totalSeconds = Math.floor(ms / 1000);
-            const hours = Math.floor(totalSeconds / 3600);
+            const days = Math.floor(totalSeconds / 86400);
+            const hours = Math.floor((totalSeconds % 86400) / 3600);
             const minutes = Math.floor((totalSeconds % 3600) / 60);
             const seconds = totalSeconds % 60;
 
-            return String(hours).padStart(2, '0') + ':' +
-                   String(minutes).padStart(2, '0') + ':' +
-                   String(seconds).padStart(2, '0');
+            const timePart = String(hours).padStart(2, '0') + ':' +
+                             String(minutes).padStart(2, '0') + ':' +
+                             String(seconds).padStart(2, '0');
+
+            if (days > 0) {
+                return days + 'd ' + timePart;
+            }
+            return timePart;
         }
 
         // Get current elapsed time for a stopwatch
         function getElapsedTime(sw) {
-            if (sw.running) {
-                return sw.elapsed + (Date.now() - sw.startTime);
-            }
-            return sw.elapsed;
+            return Date.now() - sw.startTime;
         }
 
         // Render stopwatch list
@@ -444,6 +434,9 @@
                 }
             });
 
+            // Clear element cache
+            timeElements.clear();
+
             stopwatches.forEach(sw => {
                 const item = createStopwatchElement(sw);
                 list.appendChild(item);
@@ -464,17 +457,40 @@
 
             const elapsed = getElapsedTime(sw);
 
-            content.innerHTML = `
-                <div class="stopwatch-info">
-                    <div class="stopwatch-name">${escapeHtml(sw.name)}</div>
-                    <div class="stopwatch-time ${sw.running ? 'running' : ''}" data-id="${sw.id}">${formatTime(elapsed)}</div>
-                </div>
-                <div class="stopwatch-controls">
-                    <button class="control-btn reset-btn" onclick="resetStopwatch('${sw.id}')">Reset</button>
-                    <button class="control-btn ${sw.running ? 'stop-btn' : 'start-btn'}" onclick="toggleStopwatch('${sw.id}')">${sw.running ? 'Stop' : 'Start'}</button>
-                    <button class="delete-btn" onclick="deleteStopwatch('${sw.id}')" title="Delete">&times;</button>
-                </div>
-            `;
+            const info = document.createElement('div');
+            info.className = 'stopwatch-info';
+
+            const nameEl = document.createElement('div');
+            nameEl.className = 'stopwatch-name';
+            nameEl.textContent = sw.name;
+
+            const timeEl = document.createElement('div');
+            timeEl.className = 'stopwatch-time';
+            timeEl.textContent = formatTime(elapsed);
+            timeElements.set(sw.id, timeEl);
+
+            info.appendChild(nameEl);
+            info.appendChild(timeEl);
+
+            const controls = document.createElement('div');
+            controls.className = 'stopwatch-controls';
+
+            const resetBtn = document.createElement('button');
+            resetBtn.className = 'control-btn reset-btn';
+            resetBtn.textContent = 'Reset';
+            resetBtn.onclick = () => resetStopwatch(sw.id);
+
+            const deleteBtn = document.createElement('button');
+            deleteBtn.className = 'delete-btn';
+            deleteBtn.innerHTML = '&times;';
+            deleteBtn.title = 'Delete';
+            deleteBtn.onclick = () => deleteStopwatch(sw.id);
+
+            controls.appendChild(resetBtn);
+            controls.appendChild(deleteBtn);
+
+            content.appendChild(info);
+            content.appendChild(controls);
 
             item.appendChild(deleteBg);
             item.appendChild(content);
@@ -485,19 +501,13 @@
             return item;
         }
 
-        // Escape HTML
-        function escapeHtml(text) {
-            const div = document.createElement('div');
-            div.textContent = text;
-            return div.innerHTML;
-        }
-
         // Setup swipe to delete
         function setupSwipeToDelete(content, id) {
             let startX = 0;
             let currentX = 0;
             let isDragging = false;
-            const threshold = 80;
+            let isOpen = false;
+            const deleteWidth = 80;
 
             content.addEventListener('touchstart', (e) => {
                 startX = e.touches[0].clientX;
@@ -511,9 +521,12 @@
                 currentX = e.touches[0].clientX;
                 let diff = currentX - startX;
 
-                // Only allow swiping left
+                // Adjust for current open state
+                if (isOpen) diff -= deleteWidth;
+
+                // Only allow swiping left, clamp to delete button width
                 if (diff > 0) diff = 0;
-                if (diff < -threshold - 20) diff = -threshold - 20;
+                if (diff < -deleteWidth) diff = -deleteWidth;
 
                 content.style.transform = `translateX(${diff}px)`;
             });
@@ -522,17 +535,27 @@
                 isDragging = false;
                 content.classList.remove('swiping');
 
-                const diff = currentX - startX;
+                let diff = currentX - startX;
+                if (isOpen) diff -= deleteWidth;
 
-                if (diff < -threshold) {
-                    // Delete
-                    content.style.transform = `translateX(-100%)`;
-                    setTimeout(() => {
-                        deleteStopwatch(id);
-                    }, 200);
+                if (diff < -deleteWidth / 2) {
+                    // Open to show delete button
+                    content.style.transform = `translateX(-${deleteWidth}px)`;
+                    isOpen = true;
                 } else {
+                    // Close
                     content.style.transform = 'translateX(0)';
+                    isOpen = false;
                 }
+            });
+
+            // Handle delete button click
+            const deleteBg = content.parentElement.querySelector('.stopwatch-delete-bg');
+            deleteBg.addEventListener('click', () => {
+                content.style.transform = `translateX(-100%)`;
+                setTimeout(() => {
+                    deleteStopwatch(id);
+                }, 200);
             });
         }
 
@@ -544,6 +567,8 @@
             overlay.classList.add('visible');
             nameInput.value = '';
             startInput.value = '';
+            // Prevent future dates
+            startInput.max = new Date().toISOString().slice(0, 16);
             setTimeout(() => nameInput.focus(), 100);
         }
 
@@ -571,25 +596,18 @@
                 name = `Stopwatch ${stopwatchCounter}`;
             }
 
-            let elapsed = 0;
-            let running = false;
-            let startTime = null;
+            let startTime = Date.now();
 
             if (startInput.value) {
                 const startDate = new Date(startInput.value);
-                const now = Date.now();
-                if (startDate.getTime() < now) {
-                    elapsed = now - startDate.getTime();
-                    running = true;
-                    startTime = now;
+                if (startDate.getTime() < startTime) {
+                    startTime = startDate.getTime();
                 }
             }
 
             const sw = {
-                id: Date.now().toString(),
+                id: crypto.randomUUID(),
                 name: name,
-                elapsed: elapsed,
-                running: running,
                 startTime: startTime
             };
 
@@ -600,35 +618,12 @@
             startTickIfNeeded();
         }
 
-        // Toggle stopwatch (start/stop)
-        function toggleStopwatch(id) {
-            const sw = stopwatches.find(s => s.id === id);
-            if (!sw) return;
-
-            if (sw.running) {
-                // Stop
-                sw.elapsed += Date.now() - sw.startTime;
-                sw.running = false;
-                sw.startTime = null;
-            } else {
-                // Start
-                sw.running = true;
-                sw.startTime = Date.now();
-            }
-
-            saveStopwatches();
-            renderStopwatches();
-            startTickIfNeeded();
-        }
-
         // Reset stopwatch
         function resetStopwatch(id) {
             const sw = stopwatches.find(s => s.id === id);
             if (!sw) return;
 
-            sw.elapsed = 0;
-            sw.startTime = sw.running ? Date.now() : null;
-
+            sw.startTime = Date.now();
             saveStopwatches();
             updateDisplay();
         }
@@ -640,37 +635,32 @@
             renderStopwatches();
         }
 
-        // Update display for running stopwatches
+        // Update display for all stopwatches
         function updateDisplay() {
             stopwatches.forEach(sw => {
-                const el = document.querySelector(`.stopwatch-time[data-id="${sw.id}"]`);
+                const el = timeElements.get(sw.id);
                 if (el) {
                     el.textContent = formatTime(getElapsedTime(sw));
                 }
             });
         }
 
-        // Check if any stopwatch is running
-        function hasRunningStopwatch() {
-            return stopwatches.some(sw => sw.running);
-        }
-
         // Start tick loop if needed
         function startTickIfNeeded() {
-            if (!ticking && hasRunningStopwatch()) {
+            if (!ticking && stopwatches.length > 0) {
                 ticking = true;
                 tick();
             }
         }
 
-        // Animation loop for updating running stopwatches
+        // Update loop - runs once per second
         function tick() {
-            if (!hasRunningStopwatch()) {
+            if (stopwatches.length === 0) {
                 ticking = false;
                 return;
             }
             updateDisplay();
-            requestAnimationFrame(tick);
+            setTimeout(tick, 1000);
         }
 
         // Handle keyboard in modal
