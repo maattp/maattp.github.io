@@ -144,10 +144,6 @@
             letter-spacing: -1px;
         }
 
-        .stopwatch-time.running {
-            color: #30d158;
-        }
-
         .stopwatch-controls {
             display: flex;
             gap: 12px;
@@ -178,18 +174,6 @@
             border-color: rgba(255, 255, 255, 0.3);
             color: #fff;
             background: rgba(255, 255, 255, 0.1);
-        }
-
-        .start-btn {
-            border-color: rgba(48, 209, 88, 0.3);
-            color: #30d158;
-            background: rgba(48, 209, 88, 0.15);
-        }
-
-        .stop-btn {
-            border-color: rgba(255, 59, 48, 0.3);
-            color: #ff3b30;
-            background: rgba(255, 59, 48, 0.15);
         }
 
         .delete-btn {
@@ -413,10 +397,7 @@
 
         // Get current elapsed time for a stopwatch
         function getElapsedTime(sw) {
-            if (sw.running) {
-                return sw.elapsed + (Date.now() - sw.startTime);
-            }
-            return sw.elapsed;
+            return Date.now() - sw.startTime;
         }
 
         // Render stopwatch list
@@ -467,11 +448,10 @@
             content.innerHTML = `
                 <div class="stopwatch-info">
                     <div class="stopwatch-name">${escapeHtml(sw.name)}</div>
-                    <div class="stopwatch-time ${sw.running ? 'running' : ''}" data-id="${sw.id}">${formatTime(elapsed)}</div>
+                    <div class="stopwatch-time" data-id="${sw.id}">${formatTime(elapsed)}</div>
                 </div>
                 <div class="stopwatch-controls">
                     <button class="control-btn reset-btn" onclick="resetStopwatch('${sw.id}')">Reset</button>
-                    <button class="control-btn ${sw.running ? 'stop-btn' : 'start-btn'}" onclick="toggleStopwatch('${sw.id}')">${sw.running ? 'Stop' : 'Start'}</button>
                     <button class="delete-btn" onclick="deleteStopwatch('${sw.id}')" title="Delete">&times;</button>
                 </div>
             `;
@@ -571,25 +551,18 @@
                 name = `Stopwatch ${stopwatchCounter}`;
             }
 
-            let elapsed = 0;
-            let running = false;
-            let startTime = null;
+            let startTime = Date.now();
 
             if (startInput.value) {
                 const startDate = new Date(startInput.value);
-                const now = Date.now();
-                if (startDate.getTime() < now) {
-                    elapsed = now - startDate.getTime();
-                    running = true;
-                    startTime = now;
+                if (startDate.getTime() < startTime) {
+                    startTime = startDate.getTime();
                 }
             }
 
             const sw = {
                 id: Date.now().toString(),
                 name: name,
-                elapsed: elapsed,
-                running: running,
                 startTime: startTime
             };
 
@@ -600,35 +573,12 @@
             startTickIfNeeded();
         }
 
-        // Toggle stopwatch (start/stop)
-        function toggleStopwatch(id) {
-            const sw = stopwatches.find(s => s.id === id);
-            if (!sw) return;
-
-            if (sw.running) {
-                // Stop
-                sw.elapsed += Date.now() - sw.startTime;
-                sw.running = false;
-                sw.startTime = null;
-            } else {
-                // Start
-                sw.running = true;
-                sw.startTime = Date.now();
-            }
-
-            saveStopwatches();
-            renderStopwatches();
-            startTickIfNeeded();
-        }
-
         // Reset stopwatch
         function resetStopwatch(id) {
             const sw = stopwatches.find(s => s.id === id);
             if (!sw) return;
 
-            sw.elapsed = 0;
-            sw.startTime = sw.running ? Date.now() : null;
-
+            sw.startTime = Date.now();
             saveStopwatches();
             updateDisplay();
         }
@@ -650,22 +600,17 @@
             });
         }
 
-        // Check if any stopwatch is running
-        function hasRunningStopwatch() {
-            return stopwatches.some(sw => sw.running);
-        }
-
         // Start tick loop if needed
         function startTickIfNeeded() {
-            if (!ticking && hasRunningStopwatch()) {
+            if (!ticking && stopwatches.length > 0) {
                 ticking = true;
                 tick();
             }
         }
 
-        // Animation loop for updating running stopwatches
+        // Animation loop for updating stopwatches
         function tick() {
-            if (!hasRunningStopwatch()) {
+            if (stopwatches.length === 0) {
                 ticking = false;
                 return;
             }
