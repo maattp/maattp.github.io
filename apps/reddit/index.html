@@ -499,11 +499,22 @@
             localStorage.setItem(LS_KEY, JSON.stringify(subs));
         }
 
-        async function redditFetch(path) {
+        async function redditFetch(path, retries = 3) {
             const url = `${PROXY}?url=${encodeURIComponent('https://www.reddit.com' + path)}`;
-            const res = await fetch(url);
-            if (!res.ok) throw new Error(res.status);
-            return res.json();
+            let lastError;
+            for (let attempt = 0; attempt < retries; attempt++) {
+                try {
+                    if (attempt > 0) {
+                        await new Promise(r => setTimeout(r, 1000 * Math.pow(2, attempt - 1)));
+                    }
+                    const res = await fetch(url);
+                    if (!res.ok) throw new Error(res.status);
+                    return res.json();
+                } catch (err) {
+                    lastError = err;
+                }
+            }
+            throw lastError;
         }
 
         function timeAgo(utc) {
@@ -705,33 +716,41 @@
                         await loadPosts();
                         renderPostList();
                     } catch {
-                        document.getElementById('posts-content').innerHTML = `
-                            <div class="error">
-                                <div class="error-message">Failed to load posts</div>
-                                <button class="retry-button" id="retry-btn">Try Again</button>
-                            </div>
-                        `;
-                        document.getElementById('retry-btn').addEventListener('click', () => renderPosts(false));
+                        showPostsError();
                     } finally {
                         btn.classList.remove('spinning');
                     }
                 });
+            } else {
+                // Reset state and show loading indicator for retry
+                state.posts = [];
+                state.after = null;
+                document.getElementById('posts-content').innerHTML = `
+                    <div class="loading">
+                        <div class="loading-spinner"></div>
+                        <p>Loading posts...</p>
+                    </div>
+                `;
             }
 
             try {
                 await loadPosts();
                 renderPostList();
             } catch (err) {
-                document.getElementById('posts-content').innerHTML = `
-                    <div class="error">
-                        <div class="error-message">Failed to load posts</div>
-                        <button class="retry-button" id="retry-btn">Try Again</button>
-                    </div>
-                `;
-                document.getElementById('retry-btn').addEventListener('click', () => renderPosts(false));
+                showPostsError();
             }
 
             state.view = 'posts';
+        }
+
+        function showPostsError() {
+            document.getElementById('posts-content').innerHTML = `
+                <div class="error">
+                    <div class="error-message">Failed to load posts</div>
+                    <button class="retry-button" id="retry-btn">Try Again</button>
+                </div>
+            `;
+            document.getElementById('retry-btn').addEventListener('click', () => renderPosts(false));
         }
 
         async function loadPosts() {
@@ -922,13 +941,7 @@
                     await loadPosts();
                     renderPostList();
                 } catch {
-                    document.getElementById('posts-content').innerHTML = `
-                        <div class="error">
-                            <div class="error-message">Failed to load posts</div>
-                            <button class="retry-button" id="retry-btn">Try Again</button>
-                        </div>
-                    `;
-                    document.getElementById('retry-btn').addEventListener('click', () => renderPosts(false));
+                    showPostsError();
                 } finally {
                     btn.classList.remove('spinning');
                 }
