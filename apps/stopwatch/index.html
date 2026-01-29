@@ -17,11 +17,13 @@
         body {
             font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'Segoe UI', Roboto, sans-serif;
             background: #000;
-            min-height: 100vh;
+            height: 100vh;
             color: #fff;
             padding-top: env(safe-area-inset-top);
             padding-bottom: env(safe-area-inset-bottom);
-            overflow-x: hidden;
+            overflow: hidden;
+            display: flex;
+            flex-direction: column;
         }
 
         .header {
@@ -30,6 +32,7 @@
             justify-content: space-between;
             padding: 16px 20px;
             border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+            flex-shrink: 0;
         }
 
         .header h1 {
@@ -62,7 +65,8 @@
         .stopwatch-list {
             padding: 0;
             overflow-y: auto;
-            max-height: calc(100vh - 100px - env(safe-area-inset-top) - env(safe-area-inset-bottom));
+            flex: 1;
+            min-height: 0;
         }
 
         .empty-state {
@@ -273,7 +277,8 @@
 
         .modal-input[type="datetime-local"] {
             color-scheme: dark;
-            max-width: 100%;
+            width: 100%;
+            min-width: 0;
         }
 
         .modal-input + .modal-input {
