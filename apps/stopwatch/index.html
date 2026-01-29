@@ -19,7 +19,6 @@
             background: #000;
             height: 100vh;
             color: #fff;
-            padding-top: env(safe-area-inset-top);
             padding-bottom: env(safe-area-inset-bottom);
             overflow: hidden;
             display: flex;
@@ -31,6 +30,7 @@
             align-items: center;
             justify-content: space-between;
             padding: 16px 20px;
+            padding-top: calc(16px + env(safe-area-inset-top));
             border-bottom: 1px solid rgba(255, 255, 255, 0.1);
             flex-shrink: 0;
         }
