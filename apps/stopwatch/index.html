@@ -374,6 +374,7 @@
         // State
         let stopwatches = [];
         let stopwatchCounter = 0;
+        let ticking = false;
 
         // Load from localStorage
         function loadStopwatches() {
@@ -596,6 +597,7 @@
             saveStopwatches();
             renderStopwatches();
             hideAddModal();
+            startTickIfNeeded();
         }
 
         // Toggle stopwatch (start/stop)
@@ -616,6 +618,7 @@
 
             saveStopwatches();
             renderStopwatches();
+            startTickIfNeeded();
         }
 
         // Reset stopwatch
@@ -647,8 +650,25 @@
             });
         }
 
+        // Check if any stopwatch is running
+        function hasRunningStopwatch() {
+            return stopwatches.some(sw => sw.running);
+        }
+
+        // Start tick loop if needed
+        function startTickIfNeeded() {
+            if (!ticking && hasRunningStopwatch()) {
+                ticking = true;
+                tick();
+            }
+        }
+
         // Animation loop for updating running stopwatches
         function tick() {
+            if (!hasRunningStopwatch()) {
+                ticking = false;
+                return;
+            }
             updateDisplay();
             requestAnimationFrame(tick);
         }
@@ -675,7 +695,7 @@
         // Initialize
         loadStopwatches();
         renderStopwatches();
-        tick();
+        startTickIfNeeded();
     </script>
 </body>
 </html>
