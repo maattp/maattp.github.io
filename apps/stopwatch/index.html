@@ -609,14 +609,6 @@
         loadStopwatches();
         renderStopwatches();
         tick();
-
-        // Save on page unload
-        window.addEventListener('beforeunload', saveStopwatches);
-        document.addEventListener('visibilitychange', () => {
-            if (document.visibilityState === 'hidden') {
-                saveStopwatches();
-            }
-        });
     </script>
 </body>
 </html>
