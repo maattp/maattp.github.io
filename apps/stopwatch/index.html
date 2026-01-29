@@ -361,6 +361,7 @@
         let stopwatches = [];
         let stopwatchCounter = 0;
         let ticking = false;
+        const timeElements = new Map();
 
         // Load from localStorage
         function loadStopwatches() {
@@ -433,6 +434,9 @@
                 }
             });
 
+            // Clear element cache
+            timeElements.clear();
+
             stopwatches.forEach(sw => {
                 const item = createStopwatchElement(sw);
                 list.appendChild(item);
@@ -453,16 +457,40 @@
 
             const elapsed = getElapsedTime(sw);
 
-            content.innerHTML = `
-                <div class="stopwatch-info">
-                    <div class="stopwatch-name">${escapeHtml(sw.name)}</div>
-                    <div class="stopwatch-time" data-id="${sw.id}">${formatTime(elapsed)}</div>
-                </div>
-                <div class="stopwatch-controls">
-                    <button class="control-btn reset-btn" onclick="resetStopwatch('${sw.id}')">Reset</button>
-                    <button class="delete-btn" onclick="deleteStopwatch('${sw.id}')" title="Delete">&times;</button>
-                </div>
-            `;
+            const info = document.createElement('div');
+            info.className = 'stopwatch-info';
+
+            const nameEl = document.createElement('div');
+            nameEl.className = 'stopwatch-name';
+            nameEl.textContent = sw.name;
+
+            const timeEl = document.createElement('div');
+            timeEl.className = 'stopwatch-time';
+            timeEl.textContent = formatTime(elapsed);
+            timeElements.set(sw.id, timeEl);
+
+            info.appendChild(nameEl);
+            info.appendChild(timeEl);
+
+            const controls = document.createElement('div');
+            controls.className = 'stopwatch-controls';
+
+            const resetBtn = document.createElement('button');
+            resetBtn.className = 'control-btn reset-btn';
+            resetBtn.textContent = 'Reset';
+            resetBtn.onclick = () => resetStopwatch(sw.id);
+
+            const deleteBtn = document.createElement('button');
+            deleteBtn.className = 'delete-btn';
+            deleteBtn.innerHTML = '&times;';
+            deleteBtn.title = 'Delete';
+            deleteBtn.onclick = () => deleteStopwatch(sw.id);
+
+            controls.appendChild(resetBtn);
+            controls.appendChild(deleteBtn);
+
+            content.appendChild(info);
+            content.appendChild(controls);
 
             item.appendChild(deleteBg);
             item.appendChild(content);
@@ -471,13 +499,6 @@
             setupSwipeToDelete(content, sw.id);
 
             return item;
-        }
-
-        // Escape HTML
-        function escapeHtml(text) {
-            const div = document.createElement('div');
-            div.textContent = text;
-            return div.innerHTML;
         }
 
         // Setup swipe to delete
@@ -546,6 +567,8 @@
             overlay.classList.add('visible');
             nameInput.value = '';
             startInput.value = '';
+            // Prevent future dates
+            startInput.max = new Date().toISOString().slice(0, 16);
             setTimeout(() => nameInput.focus(), 100);
         }
 
@@ -583,7 +606,7 @@
             }
 
             const sw = {
-                id: Date.now().toString(),
+                id: crypto.randomUUID(),
                 name: name,
                 startTime: startTime
             };
@@ -612,10 +635,10 @@
             renderStopwatches();
         }
 
-        // Update display for running stopwatches
+        // Update display for all stopwatches
         function updateDisplay() {
             stopwatches.forEach(sw => {
-                const el = document.querySelector(`.stopwatch-time[data-id="${sw.id}"]`);
+                const el = timeElements.get(sw.id);
                 if (el) {
                     el.textContent = formatTime(getElapsedTime(sw));
                 }
@@ -630,14 +653,14 @@
             }
         }
 
-        // Animation loop for updating stopwatches
+        // Update loop - runs once per second
         function tick() {
             if (stopwatches.length === 0) {
                 ticking = false;
                 return;
             }
             updateDisplay();
-            requestAnimationFrame(tick);
+            setTimeout(tick, 1000);
         }
 
         // Handle keyboard in modal
