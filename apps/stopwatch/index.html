@@ -192,6 +192,33 @@
             background: rgba(255, 59, 48, 0.15);
         }
 
+        .delete-btn {
+            width: 36px;
+            height: 36px;
+            border-radius: 50%;
+            border: none;
+            background: rgba(255, 59, 48, 0.15);
+            color: #ff3b30;
+            font-size: 18px;
+            cursor: pointer;
+            display: none;
+            align-items: center;
+            justify-content: center;
+            margin-left: 8px;
+            transition: transform 0.15s, opacity 0.15s;
+        }
+
+        .delete-btn:active {
+            transform: scale(0.92);
+            opacity: 0.8;
+        }
+
+        @media (hover: hover) and (pointer: fine) {
+            .delete-btn {
+                display: flex;
+            }
+        }
+
         /* Modal */
         .modal-overlay {
             position: fixed;
@@ -288,11 +315,6 @@
             font-weight: 600;
         }
 
-        /* Swipe hint animation */
-        @keyframes swipeHint {
-            0%, 100% { transform: translateX(0); }
-            50% { transform: translateX(-20px); }
-        }
     </style>
 </head>
 <body>
@@ -327,7 +349,6 @@
         // State
         let stopwatches = [];
         let stopwatchCounter = 0;
-        let animationFrameId = null;
 
         // Load from localStorage
         function loadStopwatches() {
@@ -337,14 +358,6 @@
                     const data = JSON.parse(saved);
                     stopwatches = data.stopwatches || [];
                     stopwatchCounter = data.counter || 0;
-
-                    // Recalculate elapsed time for running stopwatches
-                    const now = Date.now();
-                    stopwatches.forEach(sw => {
-                        if (sw.running && sw.startTime) {
-                            // Keep running, startTime is already set
-                        }
-                    });
                 }
             } catch (e) {
                 stopwatches = [];
@@ -405,17 +418,16 @@
                 }
             });
 
-            stopwatches.forEach((sw, index) => {
-                const item = createStopwatchElement(sw, index);
+            stopwatches.forEach(sw => {
+                const item = createStopwatchElement(sw);
                 list.appendChild(item);
             });
         }
 
         // Create stopwatch DOM element
-        function createStopwatchElement(sw, index) {
+        function createStopwatchElement(sw) {
             const item = document.createElement('div');
             item.className = 'stopwatch-item';
-            item.dataset.index = index;
 
             const deleteBg = document.createElement('div');
             deleteBg.className = 'stopwatch-delete-bg';
@@ -434,6 +446,7 @@
                 <div class="stopwatch-controls">
                     <button class="control-btn reset-btn" onclick="resetStopwatch('${sw.id}')">Reset</button>
                     <button class="control-btn ${sw.running ? 'stop-btn' : 'start-btn'}" onclick="toggleStopwatch('${sw.id}')">${sw.running ? 'Stop' : 'Start'}</button>
+                    <button class="delete-btn" onclick="deleteStopwatch('${sw.id}')" title="Delete">&times;</button>
                 </div>
             `;
 
@@ -595,7 +608,7 @@
         // Animation loop for updating running stopwatches
         function tick() {
             updateDisplay();
-            animationFrameId = requestAnimationFrame(tick);
+            requestAnimationFrame(tick);
         }
 
         // Handle Enter key in modal
