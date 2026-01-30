@@ -626,6 +626,16 @@
             return d.innerHTML;
         }
 
+        // Proxy URL for video content (Reddit blocks direct video requests)
+        function proxyVideoUrl(url) {
+            if (!url) return url;
+            // Only proxy Reddit video URLs
+            if (url.includes('v.redd.it') || url.includes('preview.redd.it')) {
+                return `${PROXY}?url=${encodeURIComponent(url)}`;
+            }
+            return url;
+        }
+
         // Extract media info from a Reddit post
         function extractMedia(post) {
             const media = {
@@ -1065,10 +1075,11 @@
             const loadingAttr = index < 3 ? 'eager' : 'lazy';
 
             if (media.type === 'video') {
+                const videoUrl = proxyVideoUrl(media.url);
                 mediaHtml = `
                     <video class="feed-item-media"
                            data-index="${index}"
-                           src="${escapeHtml(media.url)}"
+                           src="${escapeHtml(videoUrl)}"
                            autoplay
                            loop
                            muted
