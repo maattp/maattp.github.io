@@ -497,9 +497,13 @@
             loading: false
         };
 
-        // Prefetch cache
+        // Prefetch cache with size limit
         const prefetchCache = new Map();
         const PREFETCH_AHEAD = 3;
+        const MAX_CACHE_SIZE = 20;
+
+        // Single observer instance to avoid memory leaks
+        let feedObserver = null;
 
         function getSubs() {
             const stored = localStorage.getItem(LS_KEY);
@@ -668,6 +672,13 @@
             return null;
         }
 
+        // Trim cache to max size, removing oldest entries
+        function trimPrefetchCache() {
+            if (prefetchCache.size <= MAX_CACHE_SIZE) return;
+            const keysToDelete = Array.from(prefetchCache.keys()).slice(0, prefetchCache.size - MAX_CACHE_SIZE);
+            keysToDelete.forEach(key => prefetchCache.delete(key));
+        }
+
         // Prefetch media for upcoming posts
         function prefetchMedia(startIndex) {
             for (let i = startIndex; i < Math.min(startIndex + PREFETCH_AHEAD, state.posts.length); i++) {
@@ -677,25 +688,28 @@
                 const cacheKey = post.id;
                 if (prefetchCache.has(cacheKey)) continue;
 
-                if (post.media.type === 'image' || post.media.type === 'gallery') {
-                    const urls = post.media.type === 'gallery'
-                        ? post.media.urls.map(u => u.url)
-                        : [post.media.url];
-
-                    const images = urls.map(url => {
+                if (post.media.type === 'image') {
+                    const img = new Image();
+                    img.src = post.media.url;
+                    prefetchCache.set(cacheKey, [img]);
+                } else if (post.media.type === 'gallery') {
+                    // Only prefetch first 2 images of gallery
+                    const urls = post.media.urls.slice(0, 2);
+                    const images = urls.map(u => {
                         const img = new Image();
-                        img.src = url;
+                        img.src = u.url;
                         return img;
                     });
                     prefetchCache.set(cacheKey, images);
                 } else if (post.media.type === 'video') {
-                    // Preload video metadata
+                    // Preload video metadata only
                     const video = document.createElement('video');
                     video.preload = 'metadata';
                     video.src = post.media.url;
                     prefetchCache.set(cacheKey, video);
                 }
             }
+            trimPrefetchCache();
         }
 
         // Render home view
@@ -723,6 +737,7 @@
             document.getElementById('home-view').classList.remove('hidden');
             document.getElementById('feed-view').classList.remove('active');
             state.view = 'home';
+            history.replaceState({ view: 'home' }, '', '/apps/feed/');
         }
 
         function bindHomeEvents() {
@@ -826,12 +841,14 @@
             state.posts = [];
             state.after = null;
             state.currentIndex = 0;
+            cleanupObserver();
             prefetchCache.clear();
 
             document.getElementById('home-view').classList.add('hidden');
             document.getElementById('feed-view').classList.add('active');
             document.getElementById('feed-title').textContent = `r/${sub}`;
             state.view = 'feed';
+            history.pushState({ view: 'feed', sub }, '', `/apps/feed/#r/${sub}`);
 
             const container = document.getElementById('feed-container');
             container.innerHTML = `
@@ -847,15 +864,21 @@
                 await loadPosts();
                 renderFeed();
             } catch (err) {
-                container.innerHTML = `
-                    <div class="feed-item">
-                        <div class="feed-error">
-                            <p>Failed to load posts</p>
-                            <button class="retry-btn" onclick="openFeed('${escapeHtml(sub)}')">Try Again</button>
-                        </div>
-                    </div>
-                `;
+                showFeedError('Failed to load posts', () => openFeed(sub));
             }
+        }
+
+        function showFeedError(message, retryFn) {
+            const container = document.getElementById('feed-container');
+            container.innerHTML = `
+                <div class="feed-item">
+                    <div class="feed-error">
+                        <p>${escapeHtml(message)}</p>
+                        <button class="retry-btn" id="error-retry-btn">Try Again</button>
+                    </div>
+                </div>
+            `;
+            document.getElementById('error-retry-btn').addEventListener('click', retryFn);
         }
 
         async function loadPosts() {
@@ -863,7 +886,7 @@
             state.loading = true;
 
             try {
-                let path = `/r/${state.sub}/hot.json?limit=50&raw_json=1`;
+                let path = `/r/${encodeURIComponent(state.sub)}/hot.json?limit=50&raw_json=1`;
                 if (state.after) path += `&after=${state.after}`;
 
                 const data = await redditFetch(path);
@@ -882,55 +905,49 @@
             }
         }
 
+        function cleanupObserver() {
+            if (feedObserver) {
+                feedObserver.disconnect();
+                feedObserver = null;
+            }
+        }
+
         function renderFeed() {
             const container = document.getElementById('feed-container');
+            cleanupObserver();
 
             if (state.posts.length === 0) {
                 container.innerHTML = `
                     <div class="feed-item">
                         <div class="feed-error">
                             <p>No media posts found</p>
-                            <button class="retry-btn" onclick="goHome()">Go Back</button>
+                            <button class="retry-btn" id="go-back-btn">Go Back</button>
                         </div>
                     </div>
                 `;
+                document.getElementById('go-back-btn').addEventListener('click', goHome);
                 return;
             }
 
             container.innerHTML = state.posts.map((post, index) => renderFeedItem(post, index)).join('');
 
-            // Add end of feed / load more
+            // Add end of feed / load more using insertAdjacentHTML
             if (state.after) {
-                container.innerHTML += `
+                container.insertAdjacentHTML('beforeend', `
                     <div class="feed-end" id="feed-end">
                         <p>Load more posts?</p>
                         <button class="load-more-btn" id="load-more-btn">Load More</button>
                     </div>
-                `;
-                document.getElementById('load-more-btn').addEventListener('click', async function() {
-                    this.disabled = true;
-                    this.textContent = 'Loading...';
-                    const prevCount = state.posts.length;
-                    try {
-                        await loadPosts();
-                        renderFeed();
-                        // Scroll back to where we were
-                        const items = container.querySelectorAll('.feed-item');
-                        if (items[prevCount - 1]) {
-                            items[prevCount - 1].scrollIntoView();
-                        }
-                    } catch (err) {
-                        this.textContent = 'Error. Tap to retry.';
-                        this.disabled = false;
-                    }
-                });
+                `);
+                document.getElementById('load-more-btn').addEventListener('click', handleLoadMore);
             } else {
-                container.innerHTML += `
-                    <div class="feed-end">
+                container.insertAdjacentHTML('beforeend', `
+                    <div class="feed-end" id="feed-end">
                         <p>That's all for now!</p>
-                        <button class="load-more-btn" onclick="goHome()">Back to Subreddits</button>
+                        <button class="load-more-btn" id="back-home-btn">Back to Subreddits</button>
                     </div>
-                `;
+                `);
+                document.getElementById('back-home-btn').addEventListener('click', goHome);
             }
 
             // Bind gallery events
@@ -943,10 +960,27 @@
             prefetchMedia(0);
         }
 
+        async function handleLoadMore() {
+            const btn = document.getElementById('load-more-btn');
+            btn.disabled = true;
+            btn.textContent = 'Loading...';
+            const prevCount = state.posts.length;
+            try {
+                await loadPosts();
+                appendNewItems(prevCount);
+            } catch (err) {
+                btn.textContent = 'Error. Tap to retry.';
+                btn.disabled = false;
+            }
+        }
+
         function renderFeedItem(post, index) {
             const media = post.media;
             let mediaHtml = '';
             let galleryNav = '';
+
+            // First 3 items load eagerly, rest lazy
+            const loadingAttr = index < 3 ? 'eager' : 'lazy';
 
             if (media.type === 'video') {
                 mediaHtml = `
@@ -955,7 +989,7 @@
                            loop
                            muted
                            playsinline
-                           preload="auto"
+                           preload="metadata"
                            poster="${post.thumbnail && post.thumbnail !== 'default' ? escapeHtml(post.thumbnail) : ''}">
                         <source src="${escapeHtml(media.url)}" type="video/mp4">
                     </video>
@@ -967,7 +1001,7 @@
                          data-gallery-index="0"
                          src="${escapeHtml(media.urls[0].url)}"
                          alt="${escapeHtml(post.title)}"
-                         loading="lazy">
+                         loading="${loadingAttr}">
                 `;
                 if (media.urls.length > 1) {
                     galleryNav = `
@@ -982,7 +1016,7 @@
                          data-index="${index}"
                          src="${escapeHtml(media.url)}"
                          alt="${escapeHtml(post.title)}"
-                         loading="lazy">
+                         loading="${loadingAttr}">
                 `;
             }
 
@@ -1038,7 +1072,7 @@
             const container = document.getElementById('feed-container');
             const items = container.querySelectorAll('.feed-item[data-index]');
 
-            const observer = new IntersectionObserver((entries) => {
+            feedObserver = new IntersectionObserver((entries) => {
                 entries.forEach(entry => {
                     const item = entry.target;
                     const index = parseInt(item.dataset.index);
@@ -1047,8 +1081,9 @@
                     if (entry.isIntersecting && entry.intersectionRatio > 0.5) {
                         state.currentIndex = index;
 
-                        // Play video if visible
+                        // Play video if visible, upgrade preload
                         if (video) {
+                            video.preload = 'auto';
                             video.play().catch(() => {});
                         }
 
@@ -1057,10 +1092,10 @@
 
                         // Auto-load more when near end
                         if (index >= state.posts.length - 3 && state.after && !state.loading) {
-                            loadPosts().then(() => {
-                                // Append new items without full re-render
-                                appendNewItems();
-                            });
+                            const prevCount = state.posts.length;
+                            loadPosts()
+                                .then(() => appendNewItems(prevCount))
+                                .catch(() => {}); // Silently fail auto-load, user can manual load
                         }
                     } else {
                         // Pause video when not visible
@@ -1073,55 +1108,58 @@
                 threshold: [0, 0.5, 1]
             });
 
-            items.forEach(item => observer.observe(item));
+            items.forEach(item => feedObserver.observe(item));
         }
 
-        function appendNewItems() {
+        function appendNewItems(startIndex) {
             const container = document.getElementById('feed-container');
-            const existingCount = container.querySelectorAll('.feed-item[data-index]').length;
             const endEl = document.getElementById('feed-end');
 
             // Add new items before the end element
-            const newPosts = state.posts.slice(existingCount);
-            const html = newPosts.map((post, i) => renderFeedItem(post, existingCount + i)).join('');
+            const newPosts = state.posts.slice(startIndex);
+            const html = newPosts.map((post, i) => renderFeedItem(post, startIndex + i)).join('');
 
             if (endEl) {
                 endEl.insertAdjacentHTML('beforebegin', html);
+
+                // Update end element if no more posts
+                if (!state.after) {
+                    endEl.innerHTML = `
+                        <p>That's all for now!</p>
+                        <button class="load-more-btn" id="back-home-btn">Back to Subreddits</button>
+                    `;
+                    document.getElementById('back-home-btn').addEventListener('click', goHome);
+                } else {
+                    // Reset load more button
+                    const btn = document.getElementById('load-more-btn');
+                    if (btn) {
+                        btn.disabled = false;
+                        btn.textContent = 'Load More';
+                    }
+                }
             }
 
-            // Re-bind gallery events and observer
+            // Re-bind gallery events for new items
             bindGalleryEvents();
 
-            // Observe new items
+            // Observe new items with the existing observer
             const newItems = container.querySelectorAll('.feed-item[data-index]');
-            const observer = new IntersectionObserver((entries) => {
-                entries.forEach(entry => {
-                    const item = entry.target;
-                    const index = parseInt(item.dataset.index);
-                    const video = item.querySelector('video');
-
-                    if (entry.isIntersecting && entry.intersectionRatio > 0.5) {
-                        state.currentIndex = index;
-                        if (video) video.play().catch(() => {});
-                        prefetchMedia(index + 1);
-                    } else {
-                        if (video) video.pause();
-                    }
-                });
-            }, { threshold: [0, 0.5, 1] });
-
             newItems.forEach((item, i) => {
-                if (i >= existingCount) observer.observe(item);
+                if (i >= startIndex && feedObserver) {
+                    feedObserver.observe(item);
+                }
             });
         }
 
         function goHome() {
-            // Stop all videos
+            // Stop all videos and release resources
             document.querySelectorAll('video').forEach(v => {
                 v.pause();
-                v.src = '';
+                v.removeAttribute('src');
+                v.load();
             });
 
+            cleanupObserver();
             prefetchCache.clear();
             renderHome();
         }
@@ -1135,6 +1173,7 @@
             state.posts = [];
             state.after = null;
             state.currentIndex = 0;
+            cleanupObserver();
             prefetchCache.clear();
 
             try {
@@ -1142,7 +1181,7 @@
                 renderFeed();
                 document.getElementById('feed-container').scrollTop = 0;
             } catch (err) {
-                // Error handling in loadPosts
+                showFeedError('Failed to refresh', () => openFeed(state.sub));
             } finally {
                 this.classList.remove('spinning');
             }
@@ -1153,8 +1192,8 @@
             const feedItem = e.target.closest('.feed-item');
             if (!feedItem) return;
 
-            // Don't toggle if clicking on gallery nav
-            if (e.target.closest('.gallery-nav')) return;
+            // Don't toggle if clicking on gallery nav or buttons
+            if (e.target.closest('.gallery-nav') || e.target.closest('button')) return;
 
             const video = feedItem.querySelector('video');
             if (video) {
@@ -1163,6 +1202,28 @@
                 } else {
                     video.pause();
                 }
+            }
+        });
+
+        // Handle browser back/forward
+        window.addEventListener('popstate', e => {
+            const s = e.state;
+            if (!s || s.view === 'home') {
+                // Stop videos before going home
+                document.querySelectorAll('video').forEach(v => {
+                    v.pause();
+                    v.removeAttribute('src');
+                    v.load();
+                });
+                cleanupObserver();
+                prefetchCache.clear();
+
+                document.getElementById('home-view').classList.remove('hidden');
+                document.getElementById('feed-view').classList.remove('active');
+                state.view = 'home';
+                bindHomeEvents();
+            } else if (s.view === 'feed' && s.sub) {
+                openFeed(s.sub);
             }
         });
 
