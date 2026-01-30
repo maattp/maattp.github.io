@@ -626,7 +626,12 @@
             after: null,
             currentIndex: 0,
             loading: false,
-            sort: localStorage.getItem(LS_SORT_KEY) || 'hot'
+            sort: localStorage.getItem(LS_SORT_KEY) || 'hot',
+            // Track pagination state per subreddit for mixed feed
+            mixedFeedState: {
+                subredditAfters: {},  // Maps subreddit name to its after token
+                currentSubreddit: null  // The subreddit we're currently paginating through
+            }
         };
 
         // Prefetch cache with size limit
@@ -1055,6 +1060,11 @@
             state.posts = [];
             state.after = null;
             state.currentIndex = 0;
+            // Reset mixed feed pagination state
+            state.mixedFeedState = {
+                subredditAfters: {},
+                currentSubreddit: null
+            };
             cleanupObserver();
             prefetchCache.clear();
 
@@ -1140,7 +1150,7 @@
             return { posts, after: data.data.after };
         }
 
-        // Load posts for mixed feed from a random subreddit
+        // Load posts for mixed feed from a random subreddit with proper pagination
         async function loadMixedPosts() {
             if (state.loading) return;
             state.loading = true;
@@ -1149,13 +1159,45 @@
                 const subs = getSubs();
                 if (subs.length === 0) return;
 
-                // Pick one random subreddit
-                const randomSub = subs[Math.floor(Math.random() * subs.length)];
+                let subredditToFetch;
+                let afterToken = null;
 
-                const { posts, after } = await fetchSubredditPosts(randomSub, 15);
+                // If we have a current subreddit with more content, continue with it
+                if (state.mixedFeedState.currentSubreddit &&
+                    state.mixedFeedState.subredditAfters[state.mixedFeedState.currentSubreddit] !== null) {
+                    subredditToFetch = state.mixedFeedState.currentSubreddit;
+                    afterToken = state.mixedFeedState.subredditAfters[state.mixedFeedState.currentSubreddit];
+                } else {
+                    // Pick a new subreddit (preferably one we haven't exhausted)
+                    const unexphaustedSubs = subs.filter(s =>
+                        state.mixedFeedState.subredditAfters[s] === undefined ||
+                        state.mixedFeedState.subredditAfters[s] !== null
+                    );
+
+                    if (unexphaustedSubs.length > 0) {
+                        subredditToFetch = unexphaustedSubs[Math.floor(Math.random() * unexphaustedSubs.length)];
+                        afterToken = state.mixedFeedState.subredditAfters[subredditToFetch] || null;
+                    } else {
+                        // All subreddits exhausted, no more content available
+                        state.after = null;
+                        return;
+                    }
+                }
+
+                state.mixedFeedState.currentSubreddit = subredditToFetch;
+                const { posts, after } = await fetchSubredditPosts(subredditToFetch, 15, afterToken);
                 state.posts = state.posts.concat(posts);
-                // Always allow loading more (from another random sub)
-                state.after = subs.length > 0 ? 'mixed' : null;
+
+                // Store the after token for this subreddit
+                state.mixedFeedState.subredditAfters[subredditToFetch] = after;
+
+                // Check if we still have content available from any subreddit
+                const hasMoreContent = subs.some(s =>
+                    state.mixedFeedState.subredditAfters[s] === undefined ||
+                    state.mixedFeedState.subredditAfters[s] !== null
+                );
+
+                state.after = hasMoreContent ? 'mixed' : null;
             } finally {
                 state.loading = false;
             }
@@ -1461,6 +1503,11 @@
             state.posts = [];
             state.after = null;
             state.currentIndex = 0;
+            // Reset mixed feed pagination state
+            state.mixedFeedState = {
+                subredditAfters: {},
+                currentSubreddit: null
+            };
             cleanupObserver();
             prefetchCache.clear();
 
