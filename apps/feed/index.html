@@ -244,6 +244,27 @@
             to { transform: rotate(360deg); }
         }
 
+        .sound-btn {
+            background: rgba(255,255,255,0.15);
+            border: none;
+            color: #fff;
+            width: 40px;
+            height: 40px;
+            border-radius: 50%;
+            font-size: 18px;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            backdrop-filter: blur(10px);
+            -webkit-backdrop-filter: blur(10px);
+            margin-right: 8px;
+        }
+
+        .sound-btn.muted {
+            color: rgba(255,255,255,0.5);
+        }
+
         /* Feed container with scroll-snap */
         .feed-container {
             flex: 1;
@@ -536,6 +557,7 @@
         <div class="feed-header">
             <button class="back-btn" id="back-btn">&larr;</button>
             <span class="feed-title" id="feed-title">r/pics</span>
+            <button class="sound-btn muted" id="sound-btn" title="Toggle sound">&#x1F507;</button>
             <button class="refresh-btn" id="refresh-btn">&#x21bb;</button>
         </div>
         <div class="feed-container" id="feed-container"></div>
@@ -544,6 +566,7 @@
     <script>
         const PROXY = 'https://little-sunset-822a.maattp.workers.dev/';
         const LS_KEY = 'feed-subs';
+        const LS_MUTED_KEY = 'feed-muted';
         const DEFAULT_SUBS = ['pics', 'videos', 'gifs', 'aww'];
 
         let state = {
@@ -552,7 +575,8 @@
             posts: [],
             after: null,
             currentIndex: 0,
-            loading: false
+            loading: false,
+            muted: localStorage.getItem(LS_MUTED_KEY) !== 'false'  // Default to muted
         };
 
         // Prefetch cache with size limit
@@ -1081,6 +1105,7 @@
             const loadingAttr = index < 3 ? 'eager' : 'lazy';
 
             if (media.type === 'video') {
+                // Always start muted for autoplay compatibility, then unmute after play starts
                 mediaHtml = `
                     <video class="feed-item-media"
                            data-index="${index}"
@@ -1202,12 +1227,17 @@
                             // Always try to play - let browser handle buffering
                             const playPromise = video.play();
                             if (playPromise !== undefined) {
-                                playPromise.catch(err => {
+                                playPromise.then(() => {
+                                    // Playback started - apply user's sound preference
+                                    video.muted = state.muted;
+                                }).catch(err => {
                                     // If autoplay was blocked, try again when video is ready
                                     console.log('Video play failed:', err.name, err.message);
                                     if (video.readyState < 2) {
                                         video.addEventListener('canplay', () => {
-                                            video.play().catch(() => {});
+                                            video.play().then(() => {
+                                                video.muted = state.muted;
+                                            }).catch(() => {});
                                         }, { once: true });
                                     }
                                 });
@@ -1297,6 +1327,32 @@
 
         // Event listeners
         document.getElementById('back-btn').addEventListener('click', goHome);
+
+        // Sound toggle
+        const soundBtn = document.getElementById('sound-btn');
+        function updateSoundButton() {
+            if (state.muted) {
+                soundBtn.innerHTML = '&#x1F507;';  // Muted speaker
+                soundBtn.classList.add('muted');
+                soundBtn.title = 'Unmute';
+            } else {
+                soundBtn.innerHTML = '&#x1F50A;';  // Speaker with sound
+                soundBtn.classList.remove('muted');
+                soundBtn.title = 'Mute';
+            }
+        }
+        updateSoundButton();
+
+        soundBtn.addEventListener('click', () => {
+            state.muted = !state.muted;
+            localStorage.setItem(LS_MUTED_KEY, state.muted ? 'true' : 'false');
+            updateSoundButton();
+
+            // Update all videos
+            document.querySelectorAll('video').forEach(video => {
+                video.muted = state.muted;
+            });
+        });
 
         document.getElementById('refresh-btn').addEventListener('click', async function() {
             if (state.loading) return;
