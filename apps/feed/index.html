@@ -460,6 +460,31 @@
             text-align: center;
             padding: 40px 20px;
         }
+
+        /* Media error state */
+        .media-error {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            gap: 12px;
+            color: #666;
+        }
+
+        .media-error-icon {
+            font-size: 48px;
+            opacity: 0.5;
+        }
+
+        .skip-btn {
+            background: rgba(255,255,255,0.1);
+            border: 1px solid #444;
+            color: #fff;
+            padding: 10px 20px;
+            border-radius: 20px;
+            font-size: 14px;
+            cursor: pointer;
+        }
     </style>
 </head>
 <body>
@@ -506,14 +531,25 @@
         let feedObserver = null;
 
         function getSubs() {
-            const stored = localStorage.getItem(LS_KEY);
-            if (stored) return JSON.parse(stored);
+            try {
+                const stored = localStorage.getItem(LS_KEY);
+                if (stored) {
+                    const parsed = JSON.parse(stored);
+                    if (Array.isArray(parsed)) return parsed;
+                }
+            } catch (e) {
+                // Corrupted localStorage, reset to defaults
+            }
             localStorage.setItem(LS_KEY, JSON.stringify(DEFAULT_SUBS));
             return [...DEFAULT_SUBS];
         }
 
         function saveSubs(subs) {
-            localStorage.setItem(LS_KEY, JSON.stringify(subs));
+            try {
+                localStorage.setItem(LS_KEY, JSON.stringify(subs));
+            } catch (e) {
+                // localStorage full or unavailable
+            }
         }
 
         async function redditFetch(path, retries = 3) {
@@ -536,6 +572,7 @@
 
         function timeAgo(utc) {
             const seconds = Math.floor(Date.now() / 1000 - utc);
+            if (seconds < 0) return 'just now'; // Handle future timestamps (clock skew)
             if (seconds < 60) return 'just now';
             if (seconds < 3600) return Math.floor(seconds / 60) + 'm';
             if (seconds < 86400) return Math.floor(seconds / 3600) + 'h';
@@ -710,6 +747,42 @@
                 }
             }
             trimPrefetchCache();
+        }
+
+        // Skip to next feed item
+        function skipToNext(currentIndex) {
+            const container = document.getElementById('feed-container');
+            const nextItem = container.querySelector(`.feed-item[data-index="${currentIndex + 1}"]`);
+            if (nextItem) {
+                nextItem.scrollIntoView({ behavior: 'smooth' });
+            }
+        }
+
+        // Handle media error - show error state with skip button
+        function handleMediaError(feedItem, index) {
+            const mediaEl = feedItem.querySelector('.feed-item-media');
+            if (mediaEl) {
+                mediaEl.style.display = 'none';
+            }
+
+            // Check if error state already exists
+            if (feedItem.querySelector('.media-error')) return;
+
+            const errorDiv = document.createElement('div');
+            errorDiv.className = 'media-error';
+            errorDiv.innerHTML = `
+                <div class="media-error-icon">⚠️</div>
+                <p>Failed to load media</p>
+                <button class="skip-btn" data-action="skip" data-index="${index}">Skip to Next</button>
+            `;
+            feedItem.insertBefore(errorDiv, feedItem.querySelector('.feed-item-overlay'));
+
+            // Auto-skip after 2 seconds
+            setTimeout(() => {
+                if (state.currentIndex === index) {
+                    skipToNext(index);
+                }
+            }, 2000);
         }
 
         // Render home view
@@ -950,11 +1023,11 @@
                 document.getElementById('back-home-btn').addEventListener('click', goHome);
             }
 
-            // Bind gallery events
-            bindGalleryEvents();
-
             // Set up scroll observer for prefetching and video control
             setupScrollObserver();
+
+            // Bind media error handlers
+            bindMediaErrorHandlers();
 
             // Start prefetching
             prefetchMedia(0);
@@ -1037,34 +1110,26 @@
             `;
         }
 
-        function bindGalleryEvents() {
-            document.querySelectorAll('.gallery-nav').forEach(btn => {
-                btn.addEventListener('click', (e) => {
-                    e.stopPropagation();
-                    const index = parseInt(btn.dataset.index);
-                    const post = state.posts[index];
-                    const feedItem = btn.closest('.feed-item');
-                    const img = feedItem.querySelector('.gallery-image');
-                    const indicator = feedItem.querySelector('.gallery-indicator');
-                    const prevBtn = feedItem.querySelector('.gallery-nav.prev');
-                    const nextBtn = feedItem.querySelector('.gallery-nav.next');
+        // Bind error handlers to all media elements
+        function bindMediaErrorHandlers() {
+            const container = document.getElementById('feed-container');
 
-                    let galleryIndex = parseInt(img.dataset.galleryIndex);
-                    const totalImages = post.media.urls.length;
+            // Images
+            container.querySelectorAll('img.feed-item-media').forEach(img => {
+                img.onerror = function() {
+                    const feedItem = this.closest('.feed-item');
+                    const index = parseInt(feedItem.dataset.index);
+                    handleMediaError(feedItem, index);
+                };
+            });
 
-                    if (btn.classList.contains('prev')) {
-                        galleryIndex = Math.max(0, galleryIndex - 1);
-                    } else {
-                        galleryIndex = Math.min(totalImages - 1, galleryIndex + 1);
-                    }
-
-                    img.src = post.media.urls[galleryIndex].url;
-                    img.dataset.galleryIndex = galleryIndex;
-                    indicator.textContent = `${galleryIndex + 1} / ${totalImages}`;
-
-                    prevBtn.style.display = galleryIndex === 0 ? 'none' : 'flex';
-                    nextBtn.style.display = galleryIndex === totalImages - 1 ? 'none' : 'flex';
-                });
+            // Videos
+            container.querySelectorAll('video.feed-item-media').forEach(video => {
+                video.onerror = function() {
+                    const feedItem = this.closest('.feed-item');
+                    const index = parseInt(feedItem.dataset.index);
+                    handleMediaError(feedItem, index);
+                };
             });
         }
 
@@ -1139,8 +1204,8 @@
                 }
             }
 
-            // Re-bind gallery events for new items
-            bindGalleryEvents();
+            // Bind error handlers for new items
+            bindMediaErrorHandlers();
 
             // Observe new items with the existing observer
             const newItems = container.querySelectorAll('.feed-item[data-index]');
@@ -1187,13 +1252,54 @@
             }
         });
 
-        // Handle tap to play/pause video
+        // Event delegation for feed container (handles gallery nav, skip buttons, video tap)
         document.getElementById('feed-container').addEventListener('click', (e) => {
-            const feedItem = e.target.closest('.feed-item');
+            const target = e.target;
+
+            // Handle skip button
+            if (target.dataset.action === 'skip') {
+                const index = parseInt(target.dataset.index);
+                skipToNext(index);
+                return;
+            }
+
+            // Handle gallery navigation
+            if (target.classList.contains('gallery-nav')) {
+                e.stopPropagation();
+                const index = parseInt(target.dataset.index);
+                const post = state.posts[index];
+                if (!post) return;
+
+                const feedItem = target.closest('.feed-item');
+                const img = feedItem.querySelector('.gallery-image');
+                const indicator = feedItem.querySelector('.gallery-indicator');
+                const prevBtn = feedItem.querySelector('.gallery-nav.prev');
+                const nextBtn = feedItem.querySelector('.gallery-nav.next');
+
+                let galleryIndex = parseInt(img.dataset.galleryIndex);
+                const totalImages = post.media.urls.length;
+
+                if (target.classList.contains('prev')) {
+                    galleryIndex = Math.max(0, galleryIndex - 1);
+                } else {
+                    galleryIndex = Math.min(totalImages - 1, galleryIndex + 1);
+                }
+
+                img.src = post.media.urls[galleryIndex].url;
+                img.dataset.galleryIndex = galleryIndex;
+                indicator.textContent = `${galleryIndex + 1} / ${totalImages}`;
+
+                prevBtn.style.display = galleryIndex === 0 ? 'none' : 'flex';
+                nextBtn.style.display = galleryIndex === totalImages - 1 ? 'none' : 'flex';
+                return;
+            }
+
+            // Handle video tap to play/pause
+            const feedItem = target.closest('.feed-item');
             if (!feedItem) return;
 
-            // Don't toggle if clicking on gallery nav or buttons
-            if (e.target.closest('.gallery-nav') || e.target.closest('button')) return;
+            // Don't toggle if clicking on buttons
+            if (target.closest('button')) return;
 
             const video = feedItem.querySelector('video');
             if (video) {
@@ -1218,10 +1324,8 @@
                 cleanupObserver();
                 prefetchCache.clear();
 
-                document.getElementById('home-view').classList.remove('hidden');
-                document.getElementById('feed-view').classList.remove('active');
-                state.view = 'home';
-                bindHomeEvents();
+                // Re-render home to ensure fresh subreddit list
+                renderHome();
             } else if (s.view === 'feed' && s.sub) {
                 openFeed(s.sub);
             }
