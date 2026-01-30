@@ -325,6 +325,36 @@
             font-weight: 600;
         }
 
+        /* Secret mode styles */
+        .header.secret-mode {
+            border-bottom-color: rgba(155, 89, 182, 0.3);
+        }
+
+        .header.secret-mode h1 {
+            color: #9b59b6;
+        }
+
+        .ghost-icon {
+            display: inline-block;
+            animation: float 2s ease-in-out infinite;
+        }
+
+        @keyframes float {
+            0%, 100% { transform: translateY(0); }
+            50% { transform: translateY(-4px); }
+        }
+
+        .secret-mode-indicator {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            font-size: 120px;
+            opacity: 0.03;
+            pointer-events: none;
+            z-index: 0;
+        }
+
     </style>
 </head>
 <body>
@@ -365,8 +395,16 @@
         // State
         let stopwatches = [];
         let stopwatchCounter = 0;
+        let secretStopwatches = [];
+        let secretStopwatchCounter = 0;
+        let secretMode = false; // Never persisted - always starts false
         let ticking = false;
         const timeElements = new Map();
+
+        // Triple-tap detection for secret mode toggle
+        let tapCount = 0;
+        let lastTapTime = 0;
+        const tripleTapThreshold = 500; // ms between taps
 
         // Load from localStorage
         function loadStopwatches() {
@@ -381,6 +419,18 @@
                 stopwatches = [];
                 stopwatchCounter = 0;
             }
+            // Load secret stopwatches separately
+            try {
+                const savedSecret = localStorage.getItem('secretStopwatches');
+                if (savedSecret) {
+                    const data = JSON.parse(savedSecret);
+                    secretStopwatches = data.stopwatches || [];
+                    secretStopwatchCounter = data.counter || 0;
+                }
+            } catch (e) {
+                secretStopwatches = [];
+                secretStopwatchCounter = 0;
+            }
         }
 
         // Save to localStorage
@@ -389,6 +439,61 @@
                 stopwatches: stopwatches,
                 counter: stopwatchCounter
             }));
+        }
+
+        // Save secret stopwatches to localStorage
+        function saveSecretStopwatches() {
+            localStorage.setItem('secretStopwatches', JSON.stringify({
+                stopwatches: secretStopwatches,
+                counter: secretStopwatchCounter
+            }));
+        }
+
+        // Get current stopwatch list based on mode
+        function getCurrentStopwatches() {
+            return secretMode ? secretStopwatches : stopwatches;
+        }
+
+        // Toggle secret mode
+        function toggleSecretMode() {
+            secretMode = !secretMode;
+            updateSecretModeUI();
+            renderStopwatches();
+            startTickIfNeeded();
+        }
+
+        // Update UI for secret mode
+        function updateSecretModeUI() {
+            const header = document.querySelector('.header');
+            const title = document.querySelector('.header h1');
+            const addBtn = document.querySelector('.add-btn');
+
+            if (secretMode) {
+                header.classList.add('secret-mode');
+                title.innerHTML = '<span class="ghost-icon">&#128123;</span> Secret';
+                addBtn.style.background = '#9b59b6';
+                document.body.style.background = '#0a0a12';
+            } else {
+                header.classList.remove('secret-mode');
+                title.textContent = 'Stopwatch';
+                addBtn.style.background = '#ff9500';
+                document.body.style.background = '#000';
+            }
+        }
+
+        // Handle triple tap on header
+        function handleHeaderTap() {
+            const now = Date.now();
+            if (now - lastTapTime < tripleTapThreshold) {
+                tapCount++;
+                if (tapCount >= 3) {
+                    tapCount = 0;
+                    toggleSecretMode();
+                }
+            } else {
+                tapCount = 1;
+            }
+            lastTapTime = now;
         }
 
         // Format time as Dd HH:MM:SS
@@ -418,9 +523,20 @@
         function renderStopwatches() {
             const list = document.getElementById('stopwatch-list');
             const emptyState = document.getElementById('empty-state');
+            const currentList = getCurrentStopwatches();
 
-            if (stopwatches.length === 0) {
+            if (currentList.length === 0) {
                 emptyState.style.display = 'flex';
+                // Update empty state text for secret mode
+                const emptyText = emptyState.querySelector('.empty-state-text');
+                const emptyIcon = emptyState.querySelector('.empty-state-icon');
+                if (secretMode) {
+                    emptyIcon.innerHTML = '&#128123;';
+                    emptyText.textContent = 'No hidden stopwatches yet';
+                } else {
+                    emptyIcon.innerHTML = '&#9201;';
+                    emptyText.textContent = 'Tap + to create a new stopwatch';
+                }
                 // Remove all items except empty state
                 Array.from(list.children).forEach(child => {
                     if (child !== emptyState) {
@@ -442,7 +558,7 @@
             // Clear element cache
             timeElements.clear();
 
-            stopwatches.forEach(sw => {
+            currentList.forEach(sw => {
                 const item = createStopwatchElement(sw);
                 list.appendChild(item);
             });
@@ -597,8 +713,13 @@
             let name = nameInput.value.trim();
 
             if (!name) {
-                stopwatchCounter++;
-                name = `Stopwatch ${stopwatchCounter}`;
+                if (secretMode) {
+                    secretStopwatchCounter++;
+                    name = `Secret ${secretStopwatchCounter}`;
+                } else {
+                    stopwatchCounter++;
+                    name = `Stopwatch ${stopwatchCounter}`;
+                }
             }
 
             let startTime = Date.now();
@@ -616,8 +737,13 @@
                 startTime: startTime
             };
 
-            stopwatches.unshift(sw);
-            saveStopwatches();
+            if (secretMode) {
+                secretStopwatches.unshift(sw);
+                saveSecretStopwatches();
+            } else {
+                stopwatches.unshift(sw);
+                saveStopwatches();
+            }
             renderStopwatches();
             hideAddModal();
             startTickIfNeeded();
@@ -625,24 +751,35 @@
 
         // Reset stopwatch
         function resetStopwatch(id) {
-            const sw = stopwatches.find(s => s.id === id);
+            const currentList = getCurrentStopwatches();
+            const sw = currentList.find(s => s.id === id);
             if (!sw) return;
 
             sw.startTime = Date.now();
-            saveStopwatches();
+            if (secretMode) {
+                saveSecretStopwatches();
+            } else {
+                saveStopwatches();
+            }
             updateDisplay();
         }
 
         // Delete stopwatch
         function deleteStopwatch(id) {
-            stopwatches = stopwatches.filter(s => s.id !== id);
-            saveStopwatches();
+            if (secretMode) {
+                secretStopwatches = secretStopwatches.filter(s => s.id !== id);
+                saveSecretStopwatches();
+            } else {
+                stopwatches = stopwatches.filter(s => s.id !== id);
+                saveStopwatches();
+            }
             renderStopwatches();
         }
 
         // Update display for all stopwatches
         function updateDisplay() {
-            stopwatches.forEach(sw => {
+            const currentList = getCurrentStopwatches();
+            currentList.forEach(sw => {
                 const el = timeElements.get(sw.id);
                 if (el) {
                     el.textContent = formatTime(getElapsedTime(sw));
@@ -652,7 +789,8 @@
 
         // Start tick loop if needed
         function startTickIfNeeded() {
-            if (!ticking && stopwatches.length > 0) {
+            const currentList = getCurrentStopwatches();
+            if (!ticking && currentList.length > 0) {
                 ticking = true;
                 tick();
             }
@@ -660,7 +798,8 @@
 
         // Update loop - runs once per second
         function tick() {
-            if (stopwatches.length === 0) {
+            const currentList = getCurrentStopwatches();
+            if (currentList.length === 0) {
                 ticking = false;
                 return;
             }
@@ -691,6 +830,17 @@
         loadStopwatches();
         renderStopwatches();
         startTickIfNeeded();
+
+        // Setup triple-tap listener on header for secret mode
+        const headerTitle = document.querySelector('.header h1');
+        headerTitle.addEventListener('click', handleHeaderTap);
+        headerTitle.addEventListener('touchend', (e) => {
+            e.preventDefault();
+            handleHeaderTap();
+        });
+        headerTitle.style.cursor = 'default';
+        headerTitle.style.userSelect = 'none';
+        headerTitle.style.webkitUserSelect = 'none';
     </script>
 </body>
 </html>
