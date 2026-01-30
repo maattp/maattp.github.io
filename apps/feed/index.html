@@ -54,6 +54,27 @@
             flex: 1;
         }
 
+        .sort-select {
+            background: #2a2a2a;
+            border: 1px solid #3a3a3a;
+            color: #e0e0e0;
+            padding: 8px 12px;
+            border-radius: 8px;
+            font-size: 14px;
+            outline: none;
+            cursor: pointer;
+            -webkit-appearance: none;
+            appearance: none;
+            background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='%23888' d='M6 8L2 4h8z'/%3E%3C/svg%3E");
+            background-repeat: no-repeat;
+            background-position: right 10px center;
+            padding-right: 30px;
+        }
+
+        .sort-select:focus {
+            border-color: #ff4500;
+        }
+
         .add-row {
             display: flex;
             gap: 10px;
@@ -242,27 +263,6 @@
 
         @keyframes spin {
             to { transform: rotate(360deg); }
-        }
-
-        .sound-btn {
-            background: rgba(255,255,255,0.15);
-            border: none;
-            color: #fff;
-            width: 40px;
-            height: 40px;
-            border-radius: 50%;
-            font-size: 18px;
-            cursor: pointer;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            backdrop-filter: blur(10px);
-            -webkit-backdrop-filter: blur(10px);
-            margin-right: 8px;
-        }
-
-        .sound-btn.muted {
-            color: rgba(255,255,255,0.5);
         }
 
         /* Feed container with scroll-snap */
@@ -545,6 +545,12 @@
     <div class="home-view" id="home-view">
         <div class="header">
             <h1>Feed</h1>
+            <select class="sort-select" id="sort-select">
+                <option value="hot">Hot</option>
+                <option value="new">New</option>
+                <option value="top">Top</option>
+                <option value="rising">Rising</option>
+            </select>
         </div>
         <div class="add-row">
             <input type="text" id="sub-input" placeholder="Add subreddit..." autocapitalize="none" autocorrect="off">
@@ -557,7 +563,6 @@
         <div class="feed-header">
             <button class="back-btn" id="back-btn">&larr;</button>
             <span class="feed-title" id="feed-title">r/pics</span>
-            <button class="sound-btn muted" id="sound-btn" title="Toggle sound">&#x1F507;</button>
             <button class="refresh-btn" id="refresh-btn">&#x21bb;</button>
         </div>
         <div class="feed-container" id="feed-container"></div>
@@ -566,8 +571,9 @@
     <script>
         const PROXY = 'https://little-sunset-822a.maattp.workers.dev/';
         const LS_KEY = 'feed-subs';
-        const LS_MUTED_KEY = 'feed-muted';
+        const LS_SORT_KEY = 'feed-sort';
         const DEFAULT_SUBS = ['pics', 'videos', 'gifs', 'aww'];
+        const SORT_OPTIONS = ['hot', 'new', 'top', 'rising'];
 
         let state = {
             view: 'home',
@@ -576,7 +582,7 @@
             after: null,
             currentIndex: 0,
             loading: false,
-            muted: localStorage.getItem(LS_MUTED_KEY) !== 'false'  // Default to muted
+            sort: localStorage.getItem(LS_SORT_KEY) || 'hot'
         };
 
         // Prefetch cache with size limit
@@ -860,6 +866,10 @@
             const subs = getSubs();
             const list = document.getElementById('sub-list');
 
+            // Set sort select to current value
+            const sortSelect = document.getElementById('sort-select');
+            sortSelect.value = state.sort;
+
             if (subs.length === 0) {
                 list.innerHTML = '<li class="empty-state">No subreddits yet. Add one above.</li>';
             } else {
@@ -1032,7 +1042,7 @@
             state.loading = true;
 
             try {
-                let path = `/r/${encodeURIComponent(state.sub)}/hot.json?limit=50&raw_json=1`;
+                let path = `/r/${encodeURIComponent(state.sub)}/${state.sort}.json?limit=50&raw_json=1`;
                 if (state.after) path += `&after=${state.after}`;
 
                 const data = await redditFetch(path);
@@ -1222,22 +1232,15 @@
                     if (entry.isIntersecting && entry.intersectionRatio > 0.5) {
                         state.currentIndex = index;
 
-                        // Play video if visible
+                        // Play video if visible (always muted for iOS autoplay compatibility)
                         if (video) {
-                            // Always try to play - let browser handle buffering
                             const playPromise = video.play();
                             if (playPromise !== undefined) {
-                                playPromise.then(() => {
-                                    // Playback started - apply user's sound preference
-                                    video.muted = state.muted;
-                                }).catch(err => {
-                                    // If autoplay was blocked, try again when video is ready
+                                playPromise.catch(err => {
                                     console.log('Video play failed:', err.name, err.message);
                                     if (video.readyState < 2) {
                                         video.addEventListener('canplay', () => {
-                                            video.play().then(() => {
-                                                video.muted = state.muted;
-                                            }).catch(() => {});
+                                            video.play().catch(() => {});
                                         }, { once: true });
                                     }
                                 });
@@ -1328,30 +1331,10 @@
         // Event listeners
         document.getElementById('back-btn').addEventListener('click', goHome);
 
-        // Sound toggle
-        const soundBtn = document.getElementById('sound-btn');
-        function updateSoundButton() {
-            if (state.muted) {
-                soundBtn.innerHTML = '&#x1F507;';  // Muted speaker
-                soundBtn.classList.add('muted');
-                soundBtn.title = 'Unmute';
-            } else {
-                soundBtn.innerHTML = '&#x1F50A;';  // Speaker with sound
-                soundBtn.classList.remove('muted');
-                soundBtn.title = 'Mute';
-            }
-        }
-        updateSoundButton();
-
-        soundBtn.addEventListener('click', () => {
-            state.muted = !state.muted;
-            localStorage.setItem(LS_MUTED_KEY, state.muted ? 'true' : 'false');
-            updateSoundButton();
-
-            // Update all videos
-            document.querySelectorAll('video').forEach(video => {
-                video.muted = state.muted;
-            });
+        // Sort select listener
+        document.getElementById('sort-select').addEventListener('change', function() {
+            state.sort = this.value;
+            localStorage.setItem(LS_SORT_KEY, state.sort);
         });
 
         document.getElementById('refresh-btn').addEventListener('click', async function() {
