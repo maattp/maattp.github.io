@@ -480,6 +480,49 @@
             padding: 40px 20px;
         }
 
+        /* Mixed feed item */
+        .mixed-feed-item {
+            display: flex;
+            align-items: center;
+            padding: 16px;
+            margin-bottom: 16px;
+            background: linear-gradient(135deg, #ff4500 0%, #ff6b35 100%);
+            border-radius: 12px;
+            cursor: pointer;
+            transition: transform 0.15s, opacity 0.15s;
+        }
+
+        .mixed-feed-item:active {
+            transform: scale(0.98);
+            opacity: 0.9;
+        }
+
+        .mixed-feed-icon {
+            font-size: 24px;
+            margin-right: 12px;
+        }
+
+        .mixed-feed-text {
+            flex: 1;
+        }
+
+        .mixed-feed-title {
+            font-size: 17px;
+            font-weight: 600;
+            color: #fff;
+        }
+
+        .mixed-feed-subtitle {
+            font-size: 13px;
+            color: rgba(255,255,255,0.8);
+            margin-top: 2px;
+        }
+
+        .mixed-feed-arrow {
+            color: rgba(255,255,255,0.8);
+            font-size: 18px;
+        }
+
         /* Video play button overlay */
         .video-play-overlay {
             position: absolute;
@@ -578,6 +621,7 @@
         let state = {
             view: 'home',
             sub: null,
+            isMixed: false,
             posts: [],
             after: null,
             currentIndex: 0,
@@ -870,10 +914,22 @@
             const sortSelect = document.getElementById('sort-select');
             sortSelect.value = state.sort;
 
+            // Build mixed feed item if we have subreddits
+            const mixedHtml = subs.length > 0 ? `
+                <div class="mixed-feed-item" id="mixed-feed-btn">
+                    <span class="mixed-feed-icon">🔀</span>
+                    <div class="mixed-feed-text">
+                        <div class="mixed-feed-title">Mixed Feed</div>
+                        <div class="mixed-feed-subtitle">Posts from all your subreddits</div>
+                    </div>
+                    <span class="mixed-feed-arrow">&rsaquo;</span>
+                </div>
+            ` : '';
+
             if (subs.length === 0) {
                 list.innerHTML = '<li class="empty-state">No subreddits yet. Add one above.</li>';
             } else {
-                list.innerHTML = subs.map(s => `
+                list.innerHTML = mixedHtml + subs.map(s => `
                     <li class="sub-item" data-sub="${escapeHtml(s)}">
                         <div class="sub-delete-bg">Delete</div>
                         <div class="sub-item-content">
@@ -921,6 +977,12 @@
             newInput.addEventListener('keydown', e => {
                 if (e.key === 'Enter') addSub();
             });
+
+            // Mixed feed button
+            const mixedBtn = document.getElementById('mixed-feed-btn');
+            if (mixedBtn) {
+                mixedBtn.addEventListener('click', openMixedFeed);
+            }
 
             // Delete buttons
             document.querySelectorAll('.sub-delete').forEach(btn => {
@@ -988,9 +1050,8 @@
             });
         }
 
-        // Open feed for subreddit
-        async function openFeed(sub) {
-            state.sub = sub;
+        // Common setup for feed view
+        function setupFeedView(title, historyPath, historyState) {
             state.posts = [];
             state.after = null;
             state.currentIndex = 0;
@@ -999,9 +1060,9 @@
 
             document.getElementById('home-view').classList.add('hidden');
             document.getElementById('feed-view').classList.add('active');
-            document.getElementById('feed-title').textContent = `r/${sub}`;
+            document.getElementById('feed-title').textContent = title;
             state.view = 'feed';
-            history.pushState({ view: 'feed', sub }, '', `/apps/feed/#r/${sub}`);
+            history.pushState(historyState, '', historyPath);
 
             const container = document.getElementById('feed-container');
             container.innerHTML = `
@@ -1012,6 +1073,13 @@
                     </div>
                 </div>
             `;
+        }
+
+        // Open feed for subreddit
+        async function openFeed(sub) {
+            state.sub = sub;
+            state.isMixed = false;
+            setupFeedView(`r/${sub}`, `/apps/feed/#r/${sub}`, { view: 'feed', sub });
 
             try {
                 await loadPosts();
@@ -1021,6 +1089,23 @@
                     ? 'Rate limited by Reddit. Wait a minute and try again.'
                     : 'Failed to load posts';
                 showFeedError(msg, () => openFeed(sub));
+            }
+        }
+
+        // Open mixed feed from all subreddits
+        async function openMixedFeed() {
+            state.sub = null;
+            state.isMixed = true;
+            setupFeedView('Mixed Feed', '/apps/feed/#mixed', { view: 'feed', mixed: true });
+
+            try {
+                await loadMixedPosts();
+                renderFeed();
+            } catch (err) {
+                const msg = err.status === 429
+                    ? 'Rate limited by Reddit. Wait a minute and try again.'
+                    : 'Failed to load posts';
+                showFeedError(msg, () => openMixedFeed());
             }
         }
 
@@ -1037,25 +1122,54 @@
             document.getElementById('error-retry-btn').addEventListener('click', retryFn);
         }
 
+        // Fetch posts from a single subreddit
+        async function fetchSubredditPosts(subreddit, limit = 50, after = null) {
+            let path = `/r/${encodeURIComponent(subreddit)}/${state.sort}.json?limit=${limit}&raw_json=1`;
+            if (after) path += `&after=${after}`;
+
+            const data = await redditFetch(path);
+            const posts = data.data.children
+                .map(c => c.data)
+                .map(post => {
+                    post.media = extractMedia(post);
+                    post.subreddit_display = post.subreddit; // Keep track of source
+                    return post;
+                })
+                .filter(post => post.media !== null);
+
+            return { posts, after: data.data.after };
+        }
+
+        // Load posts for mixed feed from a random subreddit
+        async function loadMixedPosts() {
+            if (state.loading) return;
+            state.loading = true;
+
+            try {
+                const subs = getSubs();
+                if (subs.length === 0) return;
+
+                // Pick one random subreddit
+                const randomSub = subs[Math.floor(Math.random() * subs.length)];
+
+                const { posts, after } = await fetchSubredditPosts(randomSub, 15);
+                state.posts = state.posts.concat(posts);
+                // Always allow loading more (from another random sub)
+                state.after = subs.length > 0 ? 'mixed' : null;
+            } finally {
+                state.loading = false;
+            }
+        }
+
+        // Load posts for a single subreddit
         async function loadPosts() {
             if (state.loading) return;
             state.loading = true;
 
             try {
-                let path = `/r/${encodeURIComponent(state.sub)}/${state.sort}.json?limit=50&raw_json=1`;
-                if (state.after) path += `&after=${state.after}`;
-
-                const data = await redditFetch(path);
-                const newPosts = data.data.children
-                    .map(c => c.data)
-                    .map(post => {
-                        post.media = extractMedia(post);
-                        return post;
-                    })
-                    .filter(post => post.media !== null);
-
-                state.posts = state.posts.concat(newPosts);
-                state.after = data.data.after;
+                const { posts, after } = await fetchSubredditPosts(state.sub, 50, state.after);
+                state.posts = state.posts.concat(posts);
+                state.after = after;
             } finally {
                 state.loading = false;
             }
@@ -1156,6 +1270,8 @@
                 `;
             }
 
+            const subredditMeta = state.isMixed ? `<span>r/${escapeHtml(post.subreddit)}</span>` : '';
+
             return `
                 <div class="feed-item" data-index="${index}" data-post-id="${post.id}">
                     ${mediaHtml}
@@ -1163,6 +1279,7 @@
                     <div class="feed-item-overlay">
                         <div class="feed-item-title">${escapeHtml(post.title)}</div>
                         <div class="feed-item-meta">
+                            ${subredditMeta}
                             <span class="feed-item-score">${formatScore(post.score)} pts</span>
                             <span>u/${escapeHtml(post.author)}</span>
                             <span>${timeAgo(post.created_utc)}</span>
@@ -1253,7 +1370,8 @@
                         // Auto-load more when near end
                         if (index >= state.posts.length - 5 && state.after && !state.loading) {
                             const prevCount = state.posts.length;
-                            loadPosts()
+                            const loadFn = state.isMixed ? loadMixedPosts : loadPosts;
+                            loadFn()
                                 .then(() => {
                                     if (state.posts.length > prevCount) {
                                         appendNewItems(prevCount);
@@ -1347,14 +1465,16 @@
             prefetchCache.clear();
 
             try {
-                await loadPosts();
+                const loadFn = state.isMixed ? loadMixedPosts : loadPosts;
+                await loadFn();
                 renderFeed();
                 document.getElementById('feed-container').scrollTop = 0;
             } catch (err) {
                 const msg = err.status === 429
                     ? 'Rate limited by Reddit. Wait a minute and try again.'
                     : 'Failed to refresh';
-                showFeedError(msg, () => openFeed(state.sub));
+                const retryFn = state.isMixed ? openMixedFeed : () => openFeed(state.sub);
+                showFeedError(msg, retryFn);
             } finally {
                 this.classList.remove('spinning');
             }
@@ -1444,8 +1564,12 @@
 
                 // Re-render home to ensure fresh subreddit list
                 renderHome();
-            } else if (s.view === 'feed' && s.sub) {
-                openFeed(s.sub);
+            } else if (s.view === 'feed') {
+                if (s.mixed) {
+                    openMixedFeed();
+                } else if (s.sub) {
+                    openFeed(s.sub);
+                }
             }
         });
 
