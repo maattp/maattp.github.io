@@ -330,8 +330,7 @@
         /* Gallery navigation */
         .gallery-nav {
             position: absolute;
-            top: 50%;
-            transform: translateY(-50%);
+            bottom: calc(env(safe-area-inset-bottom) + 140px);
             background: rgba(255,255,255,0.2);
             border: none;
             color: #fff;
@@ -358,10 +357,9 @@
 
         .gallery-indicator {
             position: absolute;
-            top: 50%;
+            bottom: calc(env(safe-area-inset-bottom) + 150px);
             left: 50%;
-            transform: translate(-50%, -50%);
-            margin-top: -60px;
+            transform: translateX(-50%);
             background: rgba(0,0,0,0.6);
             padding: 6px 12px;
             border-radius: 12px;
@@ -614,12 +612,12 @@
             }
 
             // Gallery posts
-            if (post.is_gallery && post.gallery_data && post.media_metadata) {
+            if (post.is_gallery && post.gallery_data?.items && post.media_metadata) {
                 const items = post.gallery_data.items;
                 const urls = [];
                 for (const item of items) {
                     const meta = post.media_metadata[item.media_id];
-                    if (meta && meta.s) {
+                    if (meta && meta.s && meta.status !== 'failed') {
                         // Get the highest quality image
                         let imgUrl = meta.s.u || meta.s.gif;
                         if (imgUrl) {
