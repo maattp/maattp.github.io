@@ -1140,17 +1140,7 @@
             return { posts, after: data.data.after };
         }
 
-        // Shuffle array using Fisher-Yates algorithm
-        function shuffleArray(array) {
-            const shuffled = [...array];
-            for (let i = shuffled.length - 1; i > 0; i--) {
-                const j = Math.floor(Math.random() * (i + 1));
-                [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
-            }
-            return shuffled;
-        }
-
-        // Load posts for mixed feed from random subreddits
+        // Load posts for mixed feed from a random subreddit
         async function loadMixedPosts() {
             if (state.loading) return;
             state.loading = true;
@@ -1159,31 +1149,13 @@
                 const subs = getSubs();
                 if (subs.length === 0) return;
 
-                const POSTS_PER_SUB = 15;
-                const MAX_SUBS = 4; // Fetch from up to 4 random subreddits
+                // Pick one random subreddit
+                const randomSub = subs[Math.floor(Math.random() * subs.length)];
 
-                // Pick random subreddits
-                const shuffledSubs = shuffleArray(subs);
-                const selectedSubs = shuffledSubs.slice(0, Math.min(MAX_SUBS, subs.length));
-
-                // Fetch from all selected subreddits in parallel
-                const fetchPromises = selectedSubs.map(sub =>
-                    fetchSubredditPosts(sub, POSTS_PER_SUB)
-                        .catch(err => {
-                            console.log(`Failed to fetch from r/${sub}:`, err.message);
-                            return { posts: [], after: null };
-                        })
-                );
-
-                const results = await Promise.all(fetchPromises);
-
-                // Combine all posts and shuffle
-                const allPosts = results.flatMap(r => r.posts);
-                const shuffledPosts = shuffleArray(allPosts);
-
-                state.posts = state.posts.concat(shuffledPosts);
-                // Mixed mode doesn't support pagination in the traditional sense
-                state.after = results.some(r => r.after) ? 'mixed' : null;
+                const { posts, after } = await fetchSubredditPosts(randomSub, 15);
+                state.posts = state.posts.concat(posts);
+                // Always allow loading more (from another random sub)
+                state.after = subs.length > 0 ? 'mixed' : null;
             } finally {
                 state.loading = false;
             }
