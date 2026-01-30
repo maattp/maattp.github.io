@@ -1150,7 +1150,67 @@
             return { posts, after: data.data.after };
         }
 
+        // Shuffle an array using Fisher-Yates
+        function shuffleArray(arr) {
+            for (let i = arr.length - 1; i > 0; i--) {
+                const j = Math.floor(Math.random() * (i + 1));
+                [arr[i], arr[j]] = [arr[j], arr[i]];
+            }
+            return arr;
+        }
+
+        // Shuffle new posts into remaining buffer (posts after currentIndex)
+        function shuffleIntoRemaining(newPosts) {
+            const startIndex = state.currentIndex + 1;
+            const remaining = state.posts.slice(startIndex);
+            const combined = remaining.concat(newPosts);
+            shuffleArray(combined);
+            state.posts = state.posts.slice(0, startIndex).concat(combined);
+        }
+
+        // Re-render posts after a given index
+        function reRenderAfterIndex(startIndex) {
+            const container = document.getElementById('feed-container');
+
+            // Remove all feed items at or after startIndex
+            container.querySelectorAll('.feed-item[data-index]').forEach(item => {
+                if (parseInt(item.dataset.index) >= startIndex) {
+                    item.remove();
+                }
+            });
+
+            // Remove end indicator if present
+            const endEl = document.getElementById('feed-end');
+            if (endEl) endEl.remove();
+
+            // Re-add the shuffled posts
+            const newHtml = state.posts.slice(startIndex).map((post, i) =>
+                renderFeedItem(post, startIndex + i)
+            ).join('');
+            container.insertAdjacentHTML('beforeend', newHtml);
+
+            // Add end indicator if no more posts
+            if (!state.after) {
+                container.insertAdjacentHTML('beforeend', `
+                    <div class="feed-end" id="feed-end">
+                        <p>That's all for now!</p>
+                    </div>
+                `);
+            }
+
+            // Re-bind error handlers
+            bindMediaErrorHandlers();
+
+            // Observe new items
+            container.querySelectorAll('.feed-item[data-index]').forEach(item => {
+                if (parseInt(item.dataset.index) >= startIndex && feedObserver) {
+                    feedObserver.observe(item);
+                }
+            });
+        }
+
         // Load posts for mixed feed from a random subreddit with proper pagination
+        // Initial load fetches 30, subsequent loads fetch 15 and shuffle into remaining
         async function loadMixedPosts() {
             if (state.loading) return;
             state.loading = true;
@@ -1159,37 +1219,35 @@
                 const subs = getSubs();
                 if (subs.length === 0) return;
 
-                let subredditToFetch;
-                let afterToken = null;
+                const isInitialLoad = state.posts.length === 0;
+                const limit = isInitialLoad ? 30 : 15;
 
-                // If we have a current subreddit with more content, continue with it
-                if (state.mixedFeedState.currentSubreddit &&
-                    state.mixedFeedState.subredditAfters[state.mixedFeedState.currentSubreddit] !== null) {
-                    subredditToFetch = state.mixedFeedState.currentSubreddit;
-                    afterToken = state.mixedFeedState.subredditAfters[state.mixedFeedState.currentSubreddit];
-                } else {
-                    // Pick a new subreddit (preferably one we haven't exhausted)
-                    const unexphaustedSubs = subs.filter(s =>
-                        state.mixedFeedState.subredditAfters[s] === undefined ||
-                        state.mixedFeedState.subredditAfters[s] !== null
-                    );
+                // Pick a random subreddit (preferably one we haven't exhausted)
+                const unexphaustedSubs = subs.filter(s =>
+                    state.mixedFeedState.subredditAfters[s] === undefined ||
+                    state.mixedFeedState.subredditAfters[s] !== null
+                );
 
-                    if (unexphaustedSubs.length > 0) {
-                        subredditToFetch = unexphaustedSubs[Math.floor(Math.random() * unexphaustedSubs.length)];
-                        afterToken = state.mixedFeedState.subredditAfters[subredditToFetch] || null;
-                    } else {
-                        // All subreddits exhausted, no more content available
-                        state.after = null;
-                        return;
-                    }
+                if (unexphaustedSubs.length === 0) {
+                    // All subreddits exhausted, no more content available
+                    state.after = null;
+                    return;
                 }
 
-                state.mixedFeedState.currentSubreddit = subredditToFetch;
-                const { posts, after } = await fetchSubredditPosts(subredditToFetch, 15, afterToken);
-                state.posts = state.posts.concat(posts);
+                const subredditToFetch = unexphaustedSubs[Math.floor(Math.random() * unexphaustedSubs.length)];
+                const afterToken = state.mixedFeedState.subredditAfters[subredditToFetch] || null;
+
+                const { posts, after } = await fetchSubredditPosts(subredditToFetch, limit, afterToken);
 
                 // Store the after token for this subreddit
                 state.mixedFeedState.subredditAfters[subredditToFetch] = after;
+
+                if (isInitialLoad) {
+                    state.posts = posts;
+                } else {
+                    // Shuffle new posts into remaining buffer
+                    shuffleIntoRemaining(posts);
+                }
 
                 // Check if we still have content available from any subreddit
                 const hasMoreContent = subs.some(s =>
@@ -1409,17 +1467,32 @@
                         // Prefetch upcoming posts
                         prefetchMedia(index + 1);
 
-                        // Auto-load more when near end
-                        if (index >= state.posts.length - 5 && state.after && !state.loading) {
-                            const prevCount = state.posts.length;
-                            const loadFn = state.isMixed ? loadMixedPosts : loadPosts;
-                            loadFn()
-                                .then(() => {
-                                    if (state.posts.length > prevCount) {
-                                        appendNewItems(prevCount);
-                                    }
-                                })
-                                .catch(() => {});
+                        // Auto-load more
+                        const remaining = state.posts.length - index;
+                        if (state.isMixed) {
+                            // Mixed feed: trigger at 15 remaining, shuffle new posts in
+                            if (remaining <= 15 && state.after && !state.loading) {
+                                const prevCount = state.posts.length;
+                                loadMixedPosts()
+                                    .then(() => {
+                                        if (state.posts.length > prevCount) {
+                                            reRenderAfterIndex(state.currentIndex + 1);
+                                        }
+                                    })
+                                    .catch(() => {});
+                            }
+                        } else {
+                            // Single subreddit: load when 5 posts from end
+                            if (remaining <= 5 && state.after && !state.loading) {
+                                const prevCount = state.posts.length;
+                                loadPosts()
+                                    .then(() => {
+                                        if (state.posts.length > prevCount) {
+                                            appendNewItems(prevCount);
+                                        }
+                                    })
+                                    .catch(() => {});
+                            }
                         }
                     } else {
                         // Pause video when not visible
