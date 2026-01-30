@@ -1,0 +1,1173 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="theme-color" content="#000">
+    <title>Feed</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        html, body {
+            height: 100%;
+            height: -webkit-fill-available;
+            overflow: hidden;
+            background: #000;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            color: #fff;
+        }
+
+        /* Home view */
+        .home-view {
+            min-height: 100%;
+            min-height: 100vh;
+            min-height: -webkit-fill-available;
+            background: #1a1a1a;
+            padding: 20px;
+            padding-top: calc(env(safe-area-inset-top) + 20px);
+            padding-bottom: calc(env(safe-area-inset-bottom) + 20px);
+            padding-left: calc(env(safe-area-inset-left) + 20px);
+            padding-right: calc(env(safe-area-inset-right) + 20px);
+            overflow-y: auto;
+            -webkit-overflow-scrolling: touch;
+        }
+
+        .header {
+            display: flex;
+            align-items: center;
+            margin-bottom: 20px;
+            gap: 12px;
+        }
+
+        .header h1 {
+            font-size: 24px;
+            font-weight: 600;
+            flex: 1;
+        }
+
+        .add-row {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 20px;
+        }
+
+        .add-row input {
+            flex: 1;
+            background: #2a2a2a;
+            border: 1px solid #3a3a3a;
+            color: #e0e0e0;
+            padding: 10px 14px;
+            border-radius: 8px;
+            font-size: 16px;
+            outline: none;
+        }
+
+        .add-row input::placeholder {
+            color: #666;
+        }
+
+        .add-row input:focus {
+            border-color: #ff4500;
+        }
+
+        .add-row button {
+            background: #ff4500;
+            border: none;
+            color: #fff;
+            padding: 10px 20px;
+            border-radius: 8px;
+            font-size: 16px;
+            font-weight: 600;
+            cursor: pointer;
+            flex-shrink: 0;
+        }
+
+        .sub-list {
+            list-style: none;
+        }
+
+        .sub-item {
+            display: flex;
+            align-items: center;
+            padding: 14px 0;
+            border-bottom: 1px solid #2a2a2a;
+            position: relative;
+            overflow: hidden;
+            touch-action: pan-y;
+        }
+
+        .sub-item-content {
+            display: flex;
+            align-items: center;
+            flex: 1;
+            min-width: 0;
+            transition: transform 0.2s;
+            cursor: pointer;
+        }
+
+        .sub-name {
+            font-size: 17px;
+            font-weight: 500;
+            color: #fff;
+            flex: 1;
+        }
+
+        .sub-name:hover {
+            color: #ff4500;
+        }
+
+        .sub-arrow {
+            color: #555;
+            font-size: 18px;
+            margin-left: 10px;
+        }
+
+        .sub-delete {
+            background: none;
+            border: none;
+            color: #666;
+            font-size: 20px;
+            cursor: pointer;
+            padding: 5px 10px;
+            flex-shrink: 0;
+        }
+
+        .sub-delete:hover {
+            color: #ff4500;
+        }
+
+        .sub-delete-bg {
+            position: absolute;
+            right: 0;
+            top: 0;
+            bottom: 0;
+            background: #d32f2f;
+            color: #fff;
+            display: flex;
+            align-items: center;
+            padding: 0 20px;
+            font-size: 14px;
+            font-weight: 600;
+            transform: translateX(100%);
+            transition: transform 0.2s;
+        }
+
+        /* Feed view */
+        .feed-view {
+            height: 100%;
+            height: 100vh;
+            height: -webkit-fill-available;
+            display: none;
+            flex-direction: column;
+            background: #000;
+        }
+
+        .feed-view.active {
+            display: flex;
+        }
+
+        .feed-header {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            z-index: 100;
+            display: flex;
+            align-items: center;
+            padding: 12px 16px;
+            padding-top: calc(env(safe-area-inset-top) + 12px);
+            padding-left: calc(env(safe-area-inset-left) + 16px);
+            padding-right: calc(env(safe-area-inset-right) + 16px);
+            background: linear-gradient(to bottom, rgba(0,0,0,0.8) 0%, rgba(0,0,0,0) 100%);
+            pointer-events: none;
+        }
+
+        .feed-header > * {
+            pointer-events: auto;
+        }
+
+        .back-btn {
+            background: rgba(255,255,255,0.15);
+            border: none;
+            color: #fff;
+            width: 40px;
+            height: 40px;
+            border-radius: 50%;
+            font-size: 20px;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            backdrop-filter: blur(10px);
+            -webkit-backdrop-filter: blur(10px);
+        }
+
+        .feed-title {
+            flex: 1;
+            font-size: 17px;
+            font-weight: 600;
+            text-align: center;
+            margin: 0 12px;
+            text-shadow: 0 1px 3px rgba(0,0,0,0.5);
+        }
+
+        .refresh-btn {
+            background: rgba(255,255,255,0.15);
+            border: none;
+            color: #fff;
+            width: 40px;
+            height: 40px;
+            border-radius: 50%;
+            font-size: 18px;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            backdrop-filter: blur(10px);
+            -webkit-backdrop-filter: blur(10px);
+        }
+
+        .refresh-btn.spinning {
+            animation: spin 1s linear infinite;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+
+        /* Feed container with scroll-snap */
+        .feed-container {
+            flex: 1;
+            overflow-y: scroll;
+            scroll-snap-type: y mandatory;
+            -webkit-overflow-scrolling: touch;
+            scrollbar-width: none;
+            -ms-overflow-style: none;
+        }
+
+        .feed-container::-webkit-scrollbar {
+            display: none;
+        }
+
+        /* Individual feed item */
+        .feed-item {
+            height: 100vh;
+            height: 100dvh;
+            width: 100%;
+            scroll-snap-align: start;
+            scroll-snap-stop: always;
+            position: relative;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background: #000;
+            overflow: hidden;
+        }
+
+        .feed-item-media {
+            max-width: 100%;
+            max-height: 100%;
+            width: auto;
+            height: auto;
+            object-fit: contain;
+        }
+
+        .feed-item video {
+            max-width: 100%;
+            max-height: 100%;
+            width: 100%;
+            height: 100%;
+            object-fit: contain;
+        }
+
+        .feed-item-overlay {
+            position: absolute;
+            bottom: 0;
+            left: 0;
+            right: 0;
+            padding: 60px 16px 20px 16px;
+            padding-bottom: calc(env(safe-area-inset-bottom) + 20px);
+            padding-left: calc(env(safe-area-inset-left) + 16px);
+            padding-right: calc(env(safe-area-inset-right) + 16px);
+            background: linear-gradient(to top, rgba(0,0,0,0.8) 0%, rgba(0,0,0,0) 100%);
+            pointer-events: none;
+        }
+
+        .feed-item-title {
+            font-size: 15px;
+            font-weight: 500;
+            line-height: 1.4;
+            margin-bottom: 8px;
+            text-shadow: 0 1px 3px rgba(0,0,0,0.5);
+            display: -webkit-box;
+            -webkit-line-clamp: 3;
+            -webkit-box-orient: vertical;
+            overflow: hidden;
+        }
+
+        .feed-item-meta {
+            font-size: 13px;
+            color: rgba(255,255,255,0.7);
+            display: flex;
+            gap: 12px;
+            flex-wrap: wrap;
+        }
+
+        .feed-item-score {
+            color: #ff4500;
+            font-weight: 600;
+        }
+
+        /* Gallery navigation */
+        .gallery-nav {
+            position: absolute;
+            top: 50%;
+            transform: translateY(-50%);
+            background: rgba(255,255,255,0.2);
+            border: none;
+            color: #fff;
+            width: 44px;
+            height: 44px;
+            border-radius: 50%;
+            font-size: 20px;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            backdrop-filter: blur(10px);
+            -webkit-backdrop-filter: blur(10px);
+            z-index: 10;
+        }
+
+        .gallery-nav.prev {
+            left: calc(env(safe-area-inset-left) + 12px);
+        }
+
+        .gallery-nav.next {
+            right: calc(env(safe-area-inset-right) + 12px);
+        }
+
+        .gallery-indicator {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            margin-top: -60px;
+            background: rgba(0,0,0,0.6);
+            padding: 6px 12px;
+            border-radius: 12px;
+            font-size: 13px;
+            font-weight: 500;
+            z-index: 5;
+        }
+
+        /* Loading state */
+        .feed-loading {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 12px;
+        }
+
+        .loading-spinner {
+            width: 40px;
+            height: 40px;
+            border: 3px solid #333;
+            border-top-color: #ff4500;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+        }
+
+        /* Error state */
+        .feed-error {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            text-align: center;
+            padding: 20px;
+        }
+
+        .feed-error p {
+            color: #888;
+            margin-bottom: 16px;
+        }
+
+        .retry-btn {
+            background: #2a2a2a;
+            border: 1px solid #3a3a3a;
+            color: #fff;
+            padding: 12px 24px;
+            border-radius: 20px;
+            font-size: 15px;
+            cursor: pointer;
+        }
+
+        /* End of feed */
+        .feed-end {
+            height: 100vh;
+            height: 100dvh;
+            scroll-snap-align: start;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            gap: 16px;
+            padding: 20px;
+        }
+
+        .feed-end p {
+            color: #888;
+            font-size: 16px;
+        }
+
+        .load-more-btn {
+            background: #ff4500;
+            border: none;
+            color: #fff;
+            padding: 14px 32px;
+            border-radius: 25px;
+            font-size: 16px;
+            font-weight: 600;
+            cursor: pointer;
+        }
+
+        .load-more-btn:disabled {
+            opacity: 0.6;
+        }
+
+        /* Hidden state */
+        .hidden {
+            display: none !important;
+        }
+
+        /* Empty state */
+        .empty-state {
+            color: #666;
+            text-align: center;
+            padding: 40px 20px;
+        }
+    </style>
+</head>
+<body>
+    <div class="home-view" id="home-view">
+        <div class="header">
+            <h1>Feed</h1>
+        </div>
+        <div class="add-row">
+            <input type="text" id="sub-input" placeholder="Add subreddit..." autocapitalize="none" autocorrect="off">
+            <button id="add-btn">Add</button>
+        </div>
+        <ul class="sub-list" id="sub-list"></ul>
+    </div>
+
+    <div class="feed-view" id="feed-view">
+        <div class="feed-header">
+            <button class="back-btn" id="back-btn">&larr;</button>
+            <span class="feed-title" id="feed-title">r/pics</span>
+            <button class="refresh-btn" id="refresh-btn">&#x21bb;</button>
+        </div>
+        <div class="feed-container" id="feed-container"></div>
+    </div>
+
+    <script>
+        const PROXY = 'https://little-sunset-822a.maattp.workers.dev/';
+        const LS_KEY = 'feed-subs';
+        const DEFAULT_SUBS = ['pics', 'videos', 'gifs', 'aww'];
+
+        let state = {
+            view: 'home',
+            sub: null,
+            posts: [],
+            after: null,
+            currentIndex: 0,
+            loading: false
+        };
+
+        // Prefetch cache
+        const prefetchCache = new Map();
+        const PREFETCH_AHEAD = 3;
+
+        function getSubs() {
+            const stored = localStorage.getItem(LS_KEY);
+            if (stored) return JSON.parse(stored);
+            localStorage.setItem(LS_KEY, JSON.stringify(DEFAULT_SUBS));
+            return [...DEFAULT_SUBS];
+        }
+
+        function saveSubs(subs) {
+            localStorage.setItem(LS_KEY, JSON.stringify(subs));
+        }
+
+        async function redditFetch(path, retries = 3) {
+            const url = `${PROXY}?url=${encodeURIComponent('https://www.reddit.com' + path)}`;
+            let lastError;
+            for (let attempt = 0; attempt < retries; attempt++) {
+                try {
+                    if (attempt > 0) {
+                        await new Promise(r => setTimeout(r, 1000 * Math.pow(2, attempt - 1)));
+                    }
+                    const res = await fetch(url);
+                    if (!res.ok) throw new Error(res.status);
+                    return res.json();
+                } catch (err) {
+                    lastError = err;
+                }
+            }
+            throw lastError;
+        }
+
+        function timeAgo(utc) {
+            const seconds = Math.floor(Date.now() / 1000 - utc);
+            if (seconds < 60) return 'just now';
+            if (seconds < 3600) return Math.floor(seconds / 60) + 'm';
+            if (seconds < 86400) return Math.floor(seconds / 3600) + 'h';
+            if (seconds < 604800) return Math.floor(seconds / 86400) + 'd';
+            return Math.floor(seconds / 604800) + 'w';
+        }
+
+        function formatScore(n) {
+            if (n >= 100000) return (n / 1000).toFixed(0) + 'k';
+            if (n >= 10000) return (n / 1000).toFixed(1) + 'k';
+            if (n >= 1000) return (n / 1000).toFixed(1) + 'k';
+            return String(n);
+        }
+
+        function escapeHtml(s) {
+            const d = document.createElement('div');
+            d.textContent = s;
+            return d.innerHTML;
+        }
+
+        // Extract media info from a Reddit post
+        function extractMedia(post) {
+            const media = {
+                type: null,
+                url: null,
+                urls: null,  // For galleries
+                thumbnail: null,
+                width: 0,
+                height: 0
+            };
+
+            // Reddit hosted video
+            if (post.is_video && post.media?.reddit_video) {
+                media.type = 'video';
+                media.url = post.media.reddit_video.fallback_url;
+                media.width = post.media.reddit_video.width;
+                media.height = post.media.reddit_video.height;
+                return media;
+            }
+
+            // Gallery posts
+            if (post.is_gallery && post.gallery_data && post.media_metadata) {
+                const items = post.gallery_data.items;
+                const urls = [];
+                for (const item of items) {
+                    const meta = post.media_metadata[item.media_id];
+                    if (meta && meta.s) {
+                        // Get the highest quality image
+                        let imgUrl = meta.s.u || meta.s.gif;
+                        if (imgUrl) {
+                            // Decode HTML entities in URL
+                            imgUrl = imgUrl.replace(/&amp;/g, '&');
+                            urls.push({
+                                url: imgUrl,
+                                width: meta.s.x,
+                                height: meta.s.y
+                            });
+                        }
+                    }
+                }
+                if (urls.length > 0) {
+                    media.type = 'gallery';
+                    media.urls = urls;
+                    media.url = urls[0].url;
+                    media.width = urls[0].width;
+                    media.height = urls[0].height;
+                    return media;
+                }
+            }
+
+            // GIF from preview (reddit serves as mp4)
+            if (post.preview?.reddit_video_preview) {
+                media.type = 'video';
+                media.url = post.preview.reddit_video_preview.fallback_url;
+                media.width = post.preview.reddit_video_preview.width;
+                media.height = post.preview.reddit_video_preview.height;
+                return media;
+            }
+
+            // Check for mp4 variant in preview images
+            if (post.preview?.images?.[0]?.variants?.mp4) {
+                const mp4 = post.preview.images[0].variants.mp4.source;
+                media.type = 'video';
+                media.url = mp4.url.replace(/&amp;/g, '&');
+                media.width = mp4.width;
+                media.height = mp4.height;
+                return media;
+            }
+
+            // Check for gif variant in preview images
+            if (post.preview?.images?.[0]?.variants?.gif) {
+                const gif = post.preview.images[0].variants.gif.source;
+                media.type = 'image';
+                media.url = gif.url.replace(/&amp;/g, '&');
+                media.width = gif.width;
+                media.height = gif.height;
+                return media;
+            }
+
+            // Regular image post
+            if (post.post_hint === 'image' ||
+                /\.(jpg|jpeg|png|gif|webp)(\?.*)?$/i.test(post.url)) {
+                media.type = 'image';
+                media.url = post.url.replace(/&amp;/g, '&');
+                if (post.preview?.images?.[0]?.source) {
+                    media.width = post.preview.images[0].source.width;
+                    media.height = post.preview.images[0].source.height;
+                }
+                return media;
+            }
+
+            // Hosted video on external sites (use preview image)
+            if (post.post_hint === 'hosted:video' || post.post_hint === 'rich:video') {
+                if (post.preview?.images?.[0]?.source) {
+                    const src = post.preview.images[0].source;
+                    media.type = 'image';
+                    media.url = src.url.replace(/&amp;/g, '&');
+                    media.width = src.width;
+                    media.height = src.height;
+                    return media;
+                }
+            }
+
+            // Fallback to preview image if available
+            if (post.preview?.images?.[0]?.source) {
+                const src = post.preview.images[0].source;
+                media.type = 'image';
+                media.url = src.url.replace(/&amp;/g, '&');
+                media.width = src.width;
+                media.height = src.height;
+                return media;
+            }
+
+            return null;
+        }
+
+        // Prefetch media for upcoming posts
+        function prefetchMedia(startIndex) {
+            for (let i = startIndex; i < Math.min(startIndex + PREFETCH_AHEAD, state.posts.length); i++) {
+                const post = state.posts[i];
+                if (!post.media) continue;
+
+                const cacheKey = post.id;
+                if (prefetchCache.has(cacheKey)) continue;
+
+                if (post.media.type === 'image' || post.media.type === 'gallery') {
+                    const urls = post.media.type === 'gallery'
+                        ? post.media.urls.map(u => u.url)
+                        : [post.media.url];
+
+                    const images = urls.map(url => {
+                        const img = new Image();
+                        img.src = url;
+                        return img;
+                    });
+                    prefetchCache.set(cacheKey, images);
+                } else if (post.media.type === 'video') {
+                    // Preload video metadata
+                    const video = document.createElement('video');
+                    video.preload = 'metadata';
+                    video.src = post.media.url;
+                    prefetchCache.set(cacheKey, video);
+                }
+            }
+        }
+
+        // Render home view
+        function renderHome() {
+            const subs = getSubs();
+            const list = document.getElementById('sub-list');
+
+            if (subs.length === 0) {
+                list.innerHTML = '<li class="empty-state">No subreddits yet. Add one above.</li>';
+            } else {
+                list.innerHTML = subs.map(s => `
+                    <li class="sub-item" data-sub="${escapeHtml(s)}">
+                        <div class="sub-delete-bg">Delete</div>
+                        <div class="sub-item-content">
+                            <span class="sub-name">r/${escapeHtml(s)}</span>
+                            <span class="sub-arrow">&rsaquo;</span>
+                        </div>
+                        <button class="sub-delete" title="Delete">&times;</button>
+                    </li>
+                `).join('');
+            }
+
+            bindHomeEvents();
+
+            document.getElementById('home-view').classList.remove('hidden');
+            document.getElementById('feed-view').classList.remove('active');
+            state.view = 'home';
+        }
+
+        function bindHomeEvents() {
+            const input = document.getElementById('sub-input');
+            const addBtn = document.getElementById('add-btn');
+
+            // Remove old listeners by cloning
+            const newInput = input.cloneNode(true);
+            const newAddBtn = addBtn.cloneNode(true);
+            input.parentNode.replaceChild(newInput, input);
+            addBtn.parentNode.replaceChild(newAddBtn, addBtn);
+
+            function addSub() {
+                const val = newInput.value.trim().replace(/^r\//, '').replace(/\//g, '').toLowerCase();
+                if (!val) return;
+                const subs = getSubs();
+                if (subs.includes(val)) {
+                    newInput.value = '';
+                    return;
+                }
+                subs.push(val);
+                saveSubs(subs);
+                newInput.value = '';
+                renderHome();
+            }
+
+            newAddBtn.addEventListener('click', addSub);
+            newInput.addEventListener('keydown', e => {
+                if (e.key === 'Enter') addSub();
+            });
+
+            // Delete buttons
+            document.querySelectorAll('.sub-delete').forEach(btn => {
+                btn.addEventListener('click', e => {
+                    e.stopPropagation();
+                    const sub = btn.closest('.sub-item').dataset.sub;
+                    const subs = getSubs().filter(s => s !== sub);
+                    saveSubs(subs);
+                    renderHome();
+                });
+            });
+
+            // Tap to navigate
+            document.querySelectorAll('.sub-item-content').forEach(el => {
+                el.addEventListener('click', () => {
+                    const sub = el.closest('.sub-item').dataset.sub;
+                    openFeed(sub);
+                });
+            });
+
+            // Swipe to delete
+            document.querySelectorAll('.sub-item').forEach(item => {
+                let startX = 0;
+                let currentX = 0;
+                let swiping = false;
+
+                item.addEventListener('touchstart', e => {
+                    startX = e.touches[0].clientX;
+                    currentX = startX;
+                    swiping = true;
+                }, { passive: true });
+
+                item.addEventListener('touchmove', e => {
+                    if (!swiping) return;
+                    currentX = e.touches[0].clientX;
+                    const diff = startX - currentX;
+                    if (diff > 0) {
+                        const translate = Math.min(diff, 80);
+                        item.querySelector('.sub-item-content').style.transform = `translateX(-${translate}px)`;
+                        item.querySelector('.sub-delete-bg').style.transform = `translateX(${Math.max(0, 80 - diff)}px)`;
+                    }
+                }, { passive: true });
+
+                item.addEventListener('touchend', () => {
+                    if (!swiping) return;
+                    swiping = false;
+                    const diff = startX - currentX;
+                    const content = item.querySelector('.sub-item-content');
+                    const bg = item.querySelector('.sub-delete-bg');
+
+                    if (diff > 60) {
+                        content.style.transform = 'translateX(-80px)';
+                        bg.style.transform = 'translateX(0)';
+                        bg.addEventListener('click', () => {
+                            const sub = item.dataset.sub;
+                            const subs = getSubs().filter(s => s !== sub);
+                            saveSubs(subs);
+                            renderHome();
+                        }, { once: true });
+                    } else {
+                        content.style.transform = '';
+                        bg.style.transform = '';
+                    }
+                });
+            });
+        }
+
+        // Open feed for subreddit
+        async function openFeed(sub) {
+            state.sub = sub;
+            state.posts = [];
+            state.after = null;
+            state.currentIndex = 0;
+            prefetchCache.clear();
+
+            document.getElementById('home-view').classList.add('hidden');
+            document.getElementById('feed-view').classList.add('active');
+            document.getElementById('feed-title').textContent = `r/${sub}`;
+            state.view = 'feed';
+
+            const container = document.getElementById('feed-container');
+            container.innerHTML = `
+                <div class="feed-item">
+                    <div class="feed-loading">
+                        <div class="loading-spinner"></div>
+                        <p>Loading...</p>
+                    </div>
+                </div>
+            `;
+
+            try {
+                await loadPosts();
+                renderFeed();
+            } catch (err) {
+                container.innerHTML = `
+                    <div class="feed-item">
+                        <div class="feed-error">
+                            <p>Failed to load posts</p>
+                            <button class="retry-btn" onclick="openFeed('${escapeHtml(sub)}')">Try Again</button>
+                        </div>
+                    </div>
+                `;
+            }
+        }
+
+        async function loadPosts() {
+            if (state.loading) return;
+            state.loading = true;
+
+            try {
+                let path = `/r/${state.sub}/hot.json?limit=50&raw_json=1`;
+                if (state.after) path += `&after=${state.after}`;
+
+                const data = await redditFetch(path);
+                const newPosts = data.data.children
+                    .map(c => c.data)
+                    .map(post => {
+                        post.media = extractMedia(post);
+                        return post;
+                    })
+                    .filter(post => post.media !== null);
+
+                state.posts = state.posts.concat(newPosts);
+                state.after = data.data.after;
+            } finally {
+                state.loading = false;
+            }
+        }
+
+        function renderFeed() {
+            const container = document.getElementById('feed-container');
+
+            if (state.posts.length === 0) {
+                container.innerHTML = `
+                    <div class="feed-item">
+                        <div class="feed-error">
+                            <p>No media posts found</p>
+                            <button class="retry-btn" onclick="goHome()">Go Back</button>
+                        </div>
+                    </div>
+                `;
+                return;
+            }
+
+            container.innerHTML = state.posts.map((post, index) => renderFeedItem(post, index)).join('');
+
+            // Add end of feed / load more
+            if (state.after) {
+                container.innerHTML += `
+                    <div class="feed-end" id="feed-end">
+                        <p>Load more posts?</p>
+                        <button class="load-more-btn" id="load-more-btn">Load More</button>
+                    </div>
+                `;
+                document.getElementById('load-more-btn').addEventListener('click', async function() {
+                    this.disabled = true;
+                    this.textContent = 'Loading...';
+                    const prevCount = state.posts.length;
+                    try {
+                        await loadPosts();
+                        renderFeed();
+                        // Scroll back to where we were
+                        const items = container.querySelectorAll('.feed-item');
+                        if (items[prevCount - 1]) {
+                            items[prevCount - 1].scrollIntoView();
+                        }
+                    } catch (err) {
+                        this.textContent = 'Error. Tap to retry.';
+                        this.disabled = false;
+                    }
+                });
+            } else {
+                container.innerHTML += `
+                    <div class="feed-end">
+                        <p>That's all for now!</p>
+                        <button class="load-more-btn" onclick="goHome()">Back to Subreddits</button>
+                    </div>
+                `;
+            }
+
+            // Bind gallery events
+            bindGalleryEvents();
+
+            // Set up scroll observer for prefetching and video control
+            setupScrollObserver();
+
+            // Start prefetching
+            prefetchMedia(0);
+        }
+
+        function renderFeedItem(post, index) {
+            const media = post.media;
+            let mediaHtml = '';
+            let galleryNav = '';
+
+            if (media.type === 'video') {
+                mediaHtml = `
+                    <video class="feed-item-media"
+                           data-index="${index}"
+                           loop
+                           muted
+                           playsinline
+                           preload="auto"
+                           poster="${post.thumbnail && post.thumbnail !== 'default' ? escapeHtml(post.thumbnail) : ''}">
+                        <source src="${escapeHtml(media.url)}" type="video/mp4">
+                    </video>
+                `;
+            } else if (media.type === 'gallery') {
+                mediaHtml = `
+                    <img class="feed-item-media gallery-image"
+                         data-index="${index}"
+                         data-gallery-index="0"
+                         src="${escapeHtml(media.urls[0].url)}"
+                         alt="${escapeHtml(post.title)}"
+                         loading="lazy">
+                `;
+                if (media.urls.length > 1) {
+                    galleryNav = `
+                        <button class="gallery-nav prev" data-index="${index}" style="display:none">&lsaquo;</button>
+                        <button class="gallery-nav next" data-index="${index}">&rsaquo;</button>
+                        <div class="gallery-indicator" data-index="${index}">1 / ${media.urls.length}</div>
+                    `;
+                }
+            } else {
+                mediaHtml = `
+                    <img class="feed-item-media"
+                         data-index="${index}"
+                         src="${escapeHtml(media.url)}"
+                         alt="${escapeHtml(post.title)}"
+                         loading="lazy">
+                `;
+            }
+
+            return `
+                <div class="feed-item" data-index="${index}" data-post-id="${post.id}">
+                    ${mediaHtml}
+                    ${galleryNav}
+                    <div class="feed-item-overlay">
+                        <div class="feed-item-title">${escapeHtml(post.title)}</div>
+                        <div class="feed-item-meta">
+                            <span class="feed-item-score">${formatScore(post.score)} pts</span>
+                            <span>u/${escapeHtml(post.author)}</span>
+                            <span>${timeAgo(post.created_utc)}</span>
+                            <span>${post.num_comments} comments</span>
+                        </div>
+                    </div>
+                </div>
+            `;
+        }
+
+        function bindGalleryEvents() {
+            document.querySelectorAll('.gallery-nav').forEach(btn => {
+                btn.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    const index = parseInt(btn.dataset.index);
+                    const post = state.posts[index];
+                    const feedItem = btn.closest('.feed-item');
+                    const img = feedItem.querySelector('.gallery-image');
+                    const indicator = feedItem.querySelector('.gallery-indicator');
+                    const prevBtn = feedItem.querySelector('.gallery-nav.prev');
+                    const nextBtn = feedItem.querySelector('.gallery-nav.next');
+
+                    let galleryIndex = parseInt(img.dataset.galleryIndex);
+                    const totalImages = post.media.urls.length;
+
+                    if (btn.classList.contains('prev')) {
+                        galleryIndex = Math.max(0, galleryIndex - 1);
+                    } else {
+                        galleryIndex = Math.min(totalImages - 1, galleryIndex + 1);
+                    }
+
+                    img.src = post.media.urls[galleryIndex].url;
+                    img.dataset.galleryIndex = galleryIndex;
+                    indicator.textContent = `${galleryIndex + 1} / ${totalImages}`;
+
+                    prevBtn.style.display = galleryIndex === 0 ? 'none' : 'flex';
+                    nextBtn.style.display = galleryIndex === totalImages - 1 ? 'none' : 'flex';
+                });
+            });
+        }
+
+        function setupScrollObserver() {
+            const container = document.getElementById('feed-container');
+            const items = container.querySelectorAll('.feed-item[data-index]');
+
+            const observer = new IntersectionObserver((entries) => {
+                entries.forEach(entry => {
+                    const item = entry.target;
+                    const index = parseInt(item.dataset.index);
+                    const video = item.querySelector('video');
+
+                    if (entry.isIntersecting && entry.intersectionRatio > 0.5) {
+                        state.currentIndex = index;
+
+                        // Play video if visible
+                        if (video) {
+                            video.play().catch(() => {});
+                        }
+
+                        // Prefetch upcoming posts
+                        prefetchMedia(index + 1);
+
+                        // Auto-load more when near end
+                        if (index >= state.posts.length - 3 && state.after && !state.loading) {
+                            loadPosts().then(() => {
+                                // Append new items without full re-render
+                                appendNewItems();
+                            });
+                        }
+                    } else {
+                        // Pause video when not visible
+                        if (video) {
+                            video.pause();
+                        }
+                    }
+                });
+            }, {
+                threshold: [0, 0.5, 1]
+            });
+
+            items.forEach(item => observer.observe(item));
+        }
+
+        function appendNewItems() {
+            const container = document.getElementById('feed-container');
+            const existingCount = container.querySelectorAll('.feed-item[data-index]').length;
+            const endEl = document.getElementById('feed-end');
+
+            // Add new items before the end element
+            const newPosts = state.posts.slice(existingCount);
+            const html = newPosts.map((post, i) => renderFeedItem(post, existingCount + i)).join('');
+
+            if (endEl) {
+                endEl.insertAdjacentHTML('beforebegin', html);
+            }
+
+            // Re-bind gallery events and observer
+            bindGalleryEvents();
+
+            // Observe new items
+            const newItems = container.querySelectorAll('.feed-item[data-index]');
+            const observer = new IntersectionObserver((entries) => {
+                entries.forEach(entry => {
+                    const item = entry.target;
+                    const index = parseInt(item.dataset.index);
+                    const video = item.querySelector('video');
+
+                    if (entry.isIntersecting && entry.intersectionRatio > 0.5) {
+                        state.currentIndex = index;
+                        if (video) video.play().catch(() => {});
+                        prefetchMedia(index + 1);
+                    } else {
+                        if (video) video.pause();
+                    }
+                });
+            }, { threshold: [0, 0.5, 1] });
+
+            newItems.forEach((item, i) => {
+                if (i >= existingCount) observer.observe(item);
+            });
+        }
+
+        function goHome() {
+            // Stop all videos
+            document.querySelectorAll('video').forEach(v => {
+                v.pause();
+                v.src = '';
+            });
+
+            prefetchCache.clear();
+            renderHome();
+        }
+
+        // Event listeners
+        document.getElementById('back-btn').addEventListener('click', goHome);
+
+        document.getElementById('refresh-btn').addEventListener('click', async function() {
+            if (state.loading) return;
+            this.classList.add('spinning');
+            state.posts = [];
+            state.after = null;
+            state.currentIndex = 0;
+            prefetchCache.clear();
+
+            try {
+                await loadPosts();
+                renderFeed();
+                document.getElementById('feed-container').scrollTop = 0;
+            } catch (err) {
+                // Error handling in loadPosts
+            } finally {
+                this.classList.remove('spinning');
+            }
+        });
+
+        // Handle tap to play/pause video
+        document.getElementById('feed-container').addEventListener('click', (e) => {
+            const feedItem = e.target.closest('.feed-item');
+            if (!feedItem) return;
+
+            // Don't toggle if clicking on gallery nav
+            if (e.target.closest('.gallery-nav')) return;
+
+            const video = feedItem.querySelector('video');
+            if (video) {
+                if (video.paused) {
+                    video.play().catch(() => {});
+                } else {
+                    video.pause();
+                }
+            }
+        });
+
+        // Initialize
+        renderHome();
+    </script>
+</body>
+</html>
