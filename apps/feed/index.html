@@ -459,6 +459,41 @@
             padding: 40px 20px;
         }
 
+        /* Video play button overlay */
+        .video-play-overlay {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            width: 80px;
+            height: 80px;
+            background: rgba(0, 0, 0, 0.6);
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+            opacity: 0;
+            transition: opacity 0.2s;
+            pointer-events: none;
+            z-index: 5;
+        }
+
+        .video-play-overlay.visible {
+            opacity: 1;
+            pointer-events: auto;
+        }
+
+        .video-play-overlay::after {
+            content: '';
+            width: 0;
+            height: 0;
+            border-style: solid;
+            border-width: 15px 0 15px 25px;
+            border-color: transparent transparent transparent #fff;
+            margin-left: 5px;
+        }
+
         /* Media error state */
         .media-error {
             display: flex;
@@ -1034,12 +1069,15 @@
                     <video class="feed-item-media"
                            data-index="${index}"
                            src="${escapeHtml(media.url)}"
+                           autoplay
                            loop
                            muted
                            playsinline
                            preload="auto"
+                           webkit-playsinline
                            poster="${post.thumbnail && post.thumbnail !== 'default' ? escapeHtml(post.thumbnail) : ''}">
                     </video>
+                    <div class="video-play-overlay" data-index="${index}"></div>
                 `;
             } else if (media.type === 'gallery') {
                 mediaHtml = `
@@ -1104,6 +1142,29 @@
                     const index = parseInt(feedItem.dataset.index);
                     handleMediaError(feedItem, index);
                 };
+
+                // Show/hide play button based on video state
+                const feedItem = video.closest('.feed-item');
+                const playOverlay = feedItem.querySelector('.video-play-overlay');
+                if (playOverlay) {
+                    // Show play button when video is paused and visible
+                    video.addEventListener('pause', () => {
+                        if (state.currentIndex === parseInt(feedItem.dataset.index)) {
+                            playOverlay.classList.add('visible');
+                        }
+                    });
+
+                    video.addEventListener('play', () => {
+                        playOverlay.classList.remove('visible');
+                    });
+
+                    // Initially check if video is paused after a short delay
+                    setTimeout(() => {
+                        if (video.paused && state.currentIndex === parseInt(feedItem.dataset.index)) {
+                            playOverlay.classList.add('visible');
+                        }
+                    }, 500);
+                }
             });
         }
 
@@ -1122,15 +1183,18 @@
 
                         // Play video if visible
                         if (video) {
-                            // Ensure video is ready then play
-                            if (video.readyState >= 2) {
-                                video.play().catch(() => {});
-                            } else {
-                                video.addEventListener('canplay', function onCanPlay() {
-                                    video.removeEventListener('canplay', onCanPlay);
-                                    video.play().catch(() => {});
-                                }, { once: true });
-                                video.load();
+                            // Always try to play - let browser handle buffering
+                            const playPromise = video.play();
+                            if (playPromise !== undefined) {
+                                playPromise.catch(err => {
+                                    // If autoplay was blocked, try again when video is ready
+                                    console.log('Video play failed:', err.name, err.message);
+                                    if (video.readyState < 2) {
+                                        video.addEventListener('canplay', () => {
+                                            video.play().catch(() => {});
+                                        }, { once: true });
+                                    }
+                                });
                             }
                         }
 
@@ -1152,6 +1216,11 @@
                         // Pause video when not visible
                         if (video) {
                             video.pause();
+                            // Hide play overlay when scrolling away
+                            const playOverlay = item.querySelector('.video-play-overlay');
+                            if (playOverlay) {
+                                playOverlay.classList.remove('visible');
+                            }
                         }
                     }
                 });
@@ -1272,6 +1341,16 @@
 
                 prevBtn.style.display = galleryIndex === 0 ? 'none' : 'flex';
                 nextBtn.style.display = galleryIndex === totalImages - 1 ? 'none' : 'flex';
+                return;
+            }
+
+            // Handle play overlay click
+            if (target.classList.contains('video-play-overlay')) {
+                const feedItem = target.closest('.feed-item');
+                const video = feedItem.querySelector('video');
+                if (video) {
+                    video.play().catch(() => {});
+                }
                 return;
             }
 
