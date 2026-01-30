@@ -508,10 +508,16 @@
                         await new Promise(r => setTimeout(r, 1000 * Math.pow(2, attempt - 1)));
                     }
                     const res = await fetch(url);
+                    if (res.status === 429) {
+                        const err = new Error('Rate limited');
+                        err.status = 429;
+                        throw err;
+                    }
                     if (!res.ok) throw new Error(res.status);
                     return res.json();
                 } catch (err) {
                     lastError = err;
+                    if (err.status === 429) break;
                 }
             }
             throw lastError;
@@ -715,8 +721,8 @@
                     try {
                         await loadPosts();
                         renderPostList();
-                    } catch {
-                        showPostsError();
+                    } catch (err) {
+                        showPostsError(err);
                     } finally {
                         btn.classList.remove('spinning');
                     }
@@ -737,16 +743,19 @@
                 await loadPosts();
                 renderPostList();
             } catch (err) {
-                showPostsError();
+                showPostsError(err);
             }
 
             state.view = 'posts';
         }
 
-        function showPostsError() {
+        function showPostsError(err) {
+            const msg = err?.status === 429
+                ? 'Rate limited by Reddit. Wait a minute and try again.'
+                : 'Failed to load posts';
             document.getElementById('posts-content').innerHTML = `
                 <div class="error">
-                    <div class="error-message">Failed to load posts</div>
+                    <div class="error-message">${msg}</div>
                     <button class="retry-button" id="retry-btn">Try Again</button>
                 </div>
             `;
@@ -830,8 +839,8 @@
                     try {
                         await loadPosts();
                         renderPostList(prevCount);
-                    } catch {
-                        this.textContent = 'Error. Tap to retry.';
+                    } catch (err) {
+                        this.textContent = err?.status === 429 ? 'Rate limited. Wait and retry.' : 'Error. Tap to retry.';
                         this.disabled = false;
                     }
                 });
@@ -887,9 +896,12 @@
                 document.getElementById('comments-content').innerHTML = html;
                 window.scrollTo(0, 0);
             } catch (err) {
+                const msg = err?.status === 429
+                    ? 'Rate limited by Reddit. Wait a minute and try again.'
+                    : 'Failed to load comments';
                 document.getElementById('comments-content').innerHTML = `
                     <div class="error">
-                        <div class="error-message">Failed to load comments</div>
+                        <div class="error-message">${msg}</div>
                         <button class="retry-button" id="retry-btn">Try Again</button>
                     </div>
                 `;
@@ -940,8 +952,8 @@
                 try {
                     await loadPosts();
                     renderPostList();
-                } catch {
-                    showPostsError();
+                } catch (err) {
+                    showPostsError(err);
                 } finally {
                     btn.classList.remove('spinning');
                 }

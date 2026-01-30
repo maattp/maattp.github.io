@@ -594,10 +594,16 @@
                         await new Promise(r => setTimeout(r, 1000 * Math.pow(2, attempt - 1)));
                     }
                     const res = await fetch(url);
+                    if (res.status === 429) {
+                        const err = new Error('Rate limited');
+                        err.status = 429;
+                        throw err;
+                    }
                     if (!res.ok) throw new Error(res.status);
                     return res.json();
                 } catch (err) {
                     lastError = err;
+                    if (err.status === 429) break; // Don't retry rate limits
                 }
             }
             throw lastError;
@@ -637,13 +643,27 @@
                 height: 0
             };
 
-            // Reddit hosted video
-            if (post.is_video && post.media?.reddit_video) {
+            // Reddit hosted video (check both media and secure_media)
+            const redditVideo = post.media?.reddit_video || post.secure_media?.reddit_video;
+            if (post.is_video && redditVideo) {
                 media.type = 'video';
-                media.url = post.media.reddit_video.fallback_url;
-                media.width = post.media.reddit_video.width;
-                media.height = post.media.reddit_video.height;
+                media.url = redditVideo.fallback_url;
+                media.width = redditVideo.width;
+                media.height = redditVideo.height;
                 return media;
+            }
+
+            // Cross-post with video
+            if (post.crosspost_parent_list?.length > 0) {
+                const parent = post.crosspost_parent_list[0];
+                const parentVideo = parent.media?.reddit_video || parent.secure_media?.reddit_video;
+                if (parent.is_video && parentVideo) {
+                    media.type = 'video';
+                    media.url = parentVideo.fallback_url;
+                    media.width = parentVideo.width;
+                    media.height = parentVideo.height;
+                    return media;
+                }
             }
 
             // Gallery posts
@@ -717,16 +737,9 @@
                 return media;
             }
 
-            // Hosted video on external sites (use preview image)
-            if (post.post_hint === 'hosted:video' || post.post_hint === 'rich:video') {
-                if (post.preview?.images?.[0]?.source) {
-                    const src = post.preview.images[0].source;
-                    media.type = 'image';
-                    media.url = src.url.replace(/&amp;/g, '&');
-                    media.width = src.width;
-                    media.height = src.height;
-                    return media;
-                }
+            // External video hosts (YouTube, etc.) - skip, can't autoplay
+            if (post.post_hint === 'rich:video') {
+                return null;
             }
 
             // Fallback to preview image if available
@@ -970,7 +983,10 @@
                 await loadPosts();
                 renderFeed();
             } catch (err) {
-                showFeedError('Failed to load posts', () => openFeed(sub));
+                const msg = err.status === 429
+                    ? 'Rate limited by Reddit. Wait a minute and try again.'
+                    : 'Failed to load posts';
+                showFeedError(msg, () => openFeed(sub));
             }
         }
 
@@ -1296,7 +1312,10 @@
                 renderFeed();
                 document.getElementById('feed-container').scrollTop = 0;
             } catch (err) {
-                showFeedError('Failed to refresh', () => openFeed(state.sub));
+                const msg = err.status === 429
+                    ? 'Rate limited by Reddit. Wait a minute and try again.'
+                    : 'Failed to refresh';
+                showFeedError(msg, () => openFeed(state.sub));
             } finally {
                 this.classList.remove('spinning');
             }
