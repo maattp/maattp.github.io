@@ -1002,23 +1002,13 @@
 
             container.innerHTML = state.posts.map((post, index) => renderFeedItem(post, index)).join('');
 
-            // Add end of feed / load more using insertAdjacentHTML
-            if (state.after) {
-                container.insertAdjacentHTML('beforeend', `
-                    <div class="feed-end" id="feed-end">
-                        <p>Load more posts?</p>
-                        <button class="load-more-btn" id="load-more-btn">Load More</button>
-                    </div>
-                `);
-                document.getElementById('load-more-btn').addEventListener('click', handleLoadMore);
-            } else {
+            // Add end of feed indicator
+            if (!state.after) {
                 container.insertAdjacentHTML('beforeend', `
                     <div class="feed-end" id="feed-end">
                         <p>That's all for now!</p>
-                        <button class="load-more-btn" id="back-home-btn">Back to Subreddits</button>
                     </div>
                 `);
-                document.getElementById('back-home-btn').addEventListener('click', goHome);
             }
 
             // Set up scroll observer for prefetching and video control
@@ -1029,20 +1019,6 @@
 
             // Start prefetching
             prefetchMedia(0);
-        }
-
-        async function handleLoadMore() {
-            const btn = document.getElementById('load-more-btn');
-            btn.disabled = true;
-            btn.textContent = 'Loading...';
-            const prevCount = state.posts.length;
-            try {
-                await loadPosts();
-                appendNewItems(prevCount);
-            } catch (err) {
-                btn.textContent = 'Error. Tap to retry.';
-                btn.disabled = false;
-            }
         }
 
         function renderFeedItem(post, index) {
@@ -1057,12 +1033,12 @@
                 mediaHtml = `
                     <video class="feed-item-media"
                            data-index="${index}"
+                           src="${escapeHtml(media.url)}"
                            loop
                            muted
                            playsinline
-                           preload="metadata"
+                           preload="auto"
                            poster="${post.thumbnail && post.thumbnail !== 'default' ? escapeHtml(post.thumbnail) : ''}">
-                        <source src="${escapeHtml(media.url)}" type="video/mp4">
                     </video>
                 `;
             } else if (media.type === 'gallery') {
@@ -1144,21 +1120,33 @@
                     if (entry.isIntersecting && entry.intersectionRatio > 0.5) {
                         state.currentIndex = index;
 
-                        // Play video if visible, upgrade preload
+                        // Play video if visible
                         if (video) {
-                            video.preload = 'auto';
-                            video.play().catch(() => {});
+                            // Ensure video is ready then play
+                            if (video.readyState >= 2) {
+                                video.play().catch(() => {});
+                            } else {
+                                video.addEventListener('canplay', function onCanPlay() {
+                                    video.removeEventListener('canplay', onCanPlay);
+                                    video.play().catch(() => {});
+                                }, { once: true });
+                                video.load();
+                            }
                         }
 
                         // Prefetch upcoming posts
                         prefetchMedia(index + 1);
 
                         // Auto-load more when near end
-                        if (index >= state.posts.length - 3 && state.after && !state.loading) {
+                        if (index >= state.posts.length - 5 && state.after && !state.loading) {
                             const prevCount = state.posts.length;
                             loadPosts()
-                                .then(() => appendNewItems(prevCount))
-                                .catch(() => {}); // Silently fail auto-load, user can manual load
+                                .then(() => {
+                                    if (state.posts.length > prevCount) {
+                                        appendNewItems(prevCount);
+                                    }
+                                })
+                                .catch(() => {});
                         }
                     } else {
                         // Pause video when not visible
@@ -1178,28 +1166,23 @@
             const container = document.getElementById('feed-container');
             const endEl = document.getElementById('feed-end');
 
-            // Add new items before the end element
+            // Add new items before the end element (or at end of container)
             const newPosts = state.posts.slice(startIndex);
             const html = newPosts.map((post, i) => renderFeedItem(post, startIndex + i)).join('');
 
             if (endEl) {
                 endEl.insertAdjacentHTML('beforebegin', html);
+            } else {
+                container.insertAdjacentHTML('beforeend', html);
+            }
 
-                // Update end element if no more posts
-                if (!state.after) {
-                    endEl.innerHTML = `
+            // Add end indicator if no more posts
+            if (!state.after && !endEl) {
+                container.insertAdjacentHTML('beforeend', `
+                    <div class="feed-end" id="feed-end">
                         <p>That's all for now!</p>
-                        <button class="load-more-btn" id="back-home-btn">Back to Subreddits</button>
-                    `;
-                    document.getElementById('back-home-btn').addEventListener('click', goHome);
-                } else {
-                    // Reset load more button
-                    const btn = document.getElementById('load-more-btn');
-                    if (btn) {
-                        btn.disabled = false;
-                        btn.textContent = 'Load More';
-                    }
-                }
+                    </div>
+                `);
             }
 
             // Bind error handlers for new items
