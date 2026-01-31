@@ -1576,12 +1576,14 @@
                 const feedItem = target.closest('.feed-item');
                 const video = feedItem.querySelector('video');
                 if (video) {
+                    // Unmute on user interaction (iOS requires user gesture for audio)
+                    video.muted = false;
                     video.play().catch(() => {});
                 }
                 return;
             }
 
-            // Handle video tap to play/pause
+            // Handle video tap to play/pause and unmute
             const feedItem = target.closest('.feed-item');
             if (!feedItem) return;
 
@@ -1591,6 +1593,8 @@
             const video = feedItem.querySelector('video');
             if (video) {
                 if (video.paused) {
+                    // Unmute on user interaction (iOS requires user gesture for audio)
+                    video.muted = false;
                     video.play().catch(() => {});
                 } else {
                     video.pause();
