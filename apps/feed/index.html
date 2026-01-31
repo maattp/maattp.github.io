@@ -810,7 +810,11 @@
 
             while (currentId && count < limit) {
                 const fav = getFavoriteById(currentId);
-                if (!fav) break; // Corrupted list, stop here
+                if (!fav) {
+                    // Corrupted list - treat as end to prevent infinite loop
+                    currentId = null;
+                    break;
+                }
                 favorites.push(fav);
                 currentId = fav.next;
                 count++;
@@ -818,7 +822,7 @@
 
             return {
                 favorites,
-                nextCursor: currentId, // null if no more
+                nextCursor: currentId,
                 hasMore: currentId !== null
             };
         }
@@ -842,27 +846,31 @@
         // Add favorite - O(1)
         function addFavorite(post) {
             const meta = getFavMeta();
-            const fav = {
-                ...extractFavoriteData(post),
-                prev: null,
-                next: meta.head
-            };
 
-            // Update old head's prev pointer
+            // Update old head's prev pointer (if it exists and is valid)
+            let validNext = null;
             if (meta.head) {
                 const oldHead = getFavoriteById(meta.head);
                 if (oldHead) {
-                    oldHead.prev = fav.id;
+                    oldHead.prev = post.id;
                     saveFavoriteNode(oldHead);
+                    validNext = meta.head;
                 }
+                // If oldHead is null (corrupted), we start fresh with this as only node
             }
+
+            const fav = {
+                ...extractFavoriteData(post),
+                prev: null,
+                next: validNext
+            };
 
             // Save new favorite
             saveFavoriteNode(fav);
 
             // Update metadata
             meta.head = fav.id;
-            if (!meta.tail) meta.tail = fav.id;
+            if (!meta.tail || !validNext) meta.tail = fav.id;
             meta.count++;
             saveFavMeta(meta);
         }
@@ -1385,11 +1393,14 @@
             if (!state.favCursor || state.loading) return;
             state.loading = true;
 
-            const { favorites, nextCursor, hasMore } = loadFavorites(state.favCursor, FAV_PAGE_SIZE);
-            state.posts = state.posts.concat(favorites);
-            state.favCursor = nextCursor;
-            state.after = hasMore ? 'more' : null;
-            state.loading = false;
+            try {
+                const { favorites, nextCursor, hasMore } = loadFavorites(state.favCursor, FAV_PAGE_SIZE);
+                state.posts = state.posts.concat(favorites);
+                state.favCursor = nextCursor;
+                state.after = hasMore ? 'more' : null;
+            } finally {
+                state.loading = false;
+            }
         }
 
         function showFeedError(message, retryFn) {
