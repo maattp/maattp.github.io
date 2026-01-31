@@ -84,6 +84,14 @@
             border-color: #ff4500;
         }
 
+        .time-select {
+            display: none;
+        }
+
+        .time-select.visible {
+            display: block;
+        }
+
         .add-row {
             display: flex;
             gap: 10px;
@@ -678,6 +686,13 @@
                 <option value="top">Top</option>
                 <option value="rising">Rising</option>
             </select>
+            <select class="sort-select time-select" id="time-select">
+                <option value="day">Today</option>
+                <option value="week">This Week</option>
+                <option value="month">This Month</option>
+                <option value="year">This Year</option>
+                <option value="all">All Time</option>
+            </select>
         </div>
         <div class="add-row">
             <input type="text" id="sub-input" placeholder="Add subreddit..." autocapitalize="none" autocorrect="off">
@@ -699,11 +714,19 @@
         const PROXY = 'https://little-sunset-822a.maattp.workers.dev/';
         const LS_KEY = 'feed-subs';
         const LS_SORT_KEY = 'feed-sort';
+        const LS_TIME_KEY = 'feed-time';
         const FAV_META_KEY = 'fav-meta';
         const FAV_PREFIX = 'fav:';
         const FAV_PAGE_SIZE = 50;
         const DEFAULT_SUBS = ['pics', 'videos', 'gifs', 'aww'];
         const SORT_OPTIONS = ['hot', 'new', 'top', 'rising'];
+        const TIME_OPTIONS = [
+            { value: 'day', label: 'Today' },
+            { value: 'week', label: 'This Week' },
+            { value: 'month', label: 'This Month' },
+            { value: 'year', label: 'This Year' },
+            { value: 'all', label: 'All Time' }
+        ];
 
         let state = {
             view: 'home',
@@ -716,6 +739,7 @@
             currentIndex: 0,
             loading: false,
             sort: localStorage.getItem(LS_SORT_KEY) || 'hot',
+            timePeriod: localStorage.getItem(LS_TIME_KEY) || 'day',
             mixedQueue: [] // Shuffled queue of subreddits for mixed feed
         };
 
@@ -1202,6 +1226,11 @@
             const sortSelect = document.getElementById('sort-select');
             sortSelect.value = state.sort;
 
+            // Set time select to current value and show/hide based on sort
+            const timeSelect = document.getElementById('time-select');
+            timeSelect.value = state.timePeriod;
+            timeSelect.classList.toggle('visible', state.sort === 'top');
+
             // Build mixed feed item if we have subreddits
             const mixedHtml = subs.length > 0 ? `
                 <div class="mixed-feed-item" id="mixed-feed-btn">
@@ -1475,6 +1504,7 @@
         // Fetch posts from a single subreddit
         async function fetchSubredditPosts(subreddit, limit = 50, after = null) {
             let path = `/r/${encodeURIComponent(subreddit)}/${state.sort}.json?limit=${limit}&raw_json=1`;
+            if (state.sort === 'top') path += `&t=${state.timePeriod}`;
             if (after) path += `&after=${after}`;
 
             const data = await redditFetch(path);
@@ -1892,6 +1922,15 @@
         document.getElementById('sort-select').addEventListener('change', function() {
             state.sort = this.value;
             localStorage.setItem(LS_SORT_KEY, state.sort);
+            // Show/hide time select based on sort type
+            const timeSelect = document.getElementById('time-select');
+            timeSelect.classList.toggle('visible', state.sort === 'top');
+        });
+
+        // Time period select listener
+        document.getElementById('time-select').addEventListener('change', function() {
+            state.timePeriod = this.value;
+            localStorage.setItem(LS_TIME_KEY, state.timePeriod);
         });
 
         document.getElementById('refresh-btn').addEventListener('click', async function() {
