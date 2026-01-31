@@ -674,12 +674,30 @@
             transform: none;
             opacity: 1;
         }
+
+        .hls-toggle {
+            background: #2a2a2a;
+            border: 1px solid #3a3a3a;
+            color: #888;
+            padding: 6px 12px;
+            border-radius: 8px;
+            font-size: 12px;
+            font-weight: 600;
+            cursor: pointer;
+        }
+
+        .hls-toggle.active {
+            background: #ff4500;
+            border-color: #ff4500;
+            color: #fff;
+        }
     </style>
 </head>
 <body>
     <div class="home-view" id="home-view">
         <div class="header">
             <h1>Feed <span class="version">v6</span></h1>
+            <button class="hls-toggle" id="hls-toggle">HLS</button>
             <select class="sort-select" id="sort-select">
                 <option value="hot">Hot</option>
                 <option value="new">New</option>
@@ -755,6 +773,9 @@
 
         // Track if user has enabled audio (persists during session)
         let audioEnabled = false;
+
+        // Track if HLS mode is enabled (for testing)
+        let useHls = false;
 
         // Fisher-Yates shuffle - ensures even distribution
         function shuffleArray(array) {
@@ -1066,7 +1087,7 @@
             const redditVideo = post.media?.reddit_video || post.secure_media?.reddit_video;
             if (post.is_video && redditVideo) {
                 media.type = 'video';
-                media.url = redditVideo.fallback_url;
+                media.url = useHls && redditVideo.hls_url ? redditVideo.hls_url : redditVideo.fallback_url;
                 media.width = redditVideo.width;
                 media.height = redditVideo.height;
                 return media;
@@ -1078,7 +1099,7 @@
                 const parentVideo = parent.media?.reddit_video || parent.secure_media?.reddit_video;
                 if (parent.is_video && parentVideo) {
                     media.type = 'video';
-                    media.url = parentVideo.fallback_url;
+                    media.url = useHls && parentVideo.hls_url ? parentVideo.hls_url : parentVideo.fallback_url;
                     media.width = parentVideo.width;
                     media.height = parentVideo.height;
                     return media;
@@ -2105,6 +2126,12 @@
                     openFeed(s.sub);
                 }
             }
+        });
+
+        // HLS toggle button
+        document.getElementById('hls-toggle').addEventListener('click', function() {
+            useHls = !useHls;
+            this.classList.toggle('active', useHls);
         });
 
         // Initialize
