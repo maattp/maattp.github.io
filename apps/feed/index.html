@@ -629,10 +629,10 @@
             sort: localStorage.getItem(LS_SORT_KEY) || 'hot'
         };
 
-        // Prefetch cache with size limit
-        const prefetchCache = new Map();
-        const PREFETCH_AHEAD = 3;
-        const MAX_CACHE_SIZE = 20;
+        // Windowed rendering settings
+        const WINDOW_BEFORE = 2;  // Items to keep before current
+        const WINDOW_AFTER = 3;   // Items to keep after current
+        let currentWindow = { start: 0, end: 0 };
 
         // Single observer instance to avoid memory leaks
         let feedObserver = null;
@@ -829,44 +829,17 @@
             return null;
         }
 
-        // Trim cache to max size, removing oldest entries
-        function trimPrefetchCache() {
-            if (prefetchCache.size <= MAX_CACHE_SIZE) return;
-            const keysToDelete = Array.from(prefetchCache.keys()).slice(0, prefetchCache.size - MAX_CACHE_SIZE);
-            keysToDelete.forEach(key => prefetchCache.delete(key));
+        // Calculate the window range around current index
+        function getWindowRange(currentIndex) {
+            const start = Math.max(0, currentIndex - WINDOW_BEFORE);
+            const end = Math.min(state.posts.length - 1, currentIndex + WINDOW_AFTER);
+            return { start, end };
         }
 
-        // Prefetch media for upcoming posts
-        function prefetchMedia(startIndex) {
-            for (let i = startIndex; i < Math.min(startIndex + PREFETCH_AHEAD, state.posts.length); i++) {
-                const post = state.posts[i];
-                if (!post.media) continue;
-
-                const cacheKey = post.id;
-                if (prefetchCache.has(cacheKey)) continue;
-
-                if (post.media.type === 'image') {
-                    const img = new Image();
-                    img.src = post.media.url;
-                    prefetchCache.set(cacheKey, [img]);
-                } else if (post.media.type === 'gallery') {
-                    // Only prefetch first 2 images of gallery
-                    const urls = post.media.urls.slice(0, 2);
-                    const images = urls.map(u => {
-                        const img = new Image();
-                        img.src = u.url;
-                        return img;
-                    });
-                    prefetchCache.set(cacheKey, images);
-                } else if (post.media.type === 'video') {
-                    // Preload video metadata only
-                    const video = document.createElement('video');
-                    video.preload = 'metadata';
-                    video.src = post.media.url;
-                    prefetchCache.set(cacheKey, video);
-                }
-            }
-            trimPrefetchCache();
+        // Check if window needs to shift
+        function shouldShiftWindow(currentIndex) {
+            // Shift if current is within 1 of window edge
+            return currentIndex <= currentWindow.start + 1 || currentIndex >= currentWindow.end - 1;
         }
 
         // Skip to next feed item
@@ -1056,7 +1029,6 @@
             state.after = null;
             state.currentIndex = 0;
             cleanupObserver();
-            prefetchCache.clear();
 
             document.getElementById('home-view').classList.add('hidden');
             document.getElementById('feed-view').classList.add('active');
@@ -1199,25 +1171,59 @@
                 return;
             }
 
-            container.innerHTML = state.posts.map((post, index) => renderFeedItem(post, index)).join('');
+            // Initialize window and render
+            currentWindow = getWindowRange(state.currentIndex);
+            renderWindow();
 
-            // Add end of feed indicator
-            if (!state.after) {
-                container.insertAdjacentHTML('beforeend', `
+            // Set up scroll observer for window shifts and video control
+            setupScrollObserver();
+        }
+
+        // Render only the windowed items with spacers
+        function renderWindow() {
+            const container = document.getElementById('feed-container');
+            const { start, end } = currentWindow;
+
+            // Clean up videos outside new window before re-rendering
+            container.querySelectorAll('video').forEach(v => {
+                const itemIndex = parseInt(v.closest('.feed-item')?.dataset.index);
+                if (isNaN(itemIndex) || itemIndex < start || itemIndex > end) {
+                    v.pause();
+                    v.removeAttribute('src');
+                    v.load();
+                }
+            });
+
+            // Build HTML with spacers
+            const topSpacerHeight = start * 100;
+            const bottomSpacerHeight = Math.max(0, state.posts.length - 1 - end) * 100;
+
+            let html = `<div class="feed-spacer" style="height: ${topSpacerHeight}dvh; flex-shrink: 0;"></div>`;
+
+            for (let i = start; i <= end; i++) {
+                html += renderFeedItem(state.posts[i], i);
+            }
+
+            // Add end of feed indicator if no more posts and we're at the end
+            if (!state.after && end === state.posts.length - 1) {
+                html += `
                     <div class="feed-end" id="feed-end">
                         <p>That's all for now!</p>
                     </div>
-                `);
+                `;
+            } else {
+                html += `<div class="feed-spacer" style="height: ${bottomSpacerHeight}dvh; flex-shrink: 0;"></div>`;
             }
 
-            // Set up scroll observer for prefetching and video control
-            setupScrollObserver();
+            container.innerHTML = html;
 
             // Bind media error handlers
             bindMediaErrorHandlers();
 
-            // Start prefetching
-            prefetchMedia(0);
+            // Eagerly load all videos in window
+            container.querySelectorAll('video').forEach(v => {
+                v.load();
+            });
         }
 
         function renderFeedItem(post, index) {
@@ -1225,8 +1231,8 @@
             let mediaHtml = '';
             let galleryNav = '';
 
-            // First 3 items load eagerly, rest lazy
-            const loadingAttr = index < 3 ? 'eager' : 'lazy';
+            // All items in window load eagerly since we control what's in DOM
+            const loadingAttr = 'eager';
 
             if (media.type === 'video') {
                 // Always start muted for autoplay compatibility, then unmute after play starts
@@ -1364,20 +1370,15 @@
                             }
                         }
 
-                        // Prefetch upcoming posts
-                        prefetchMedia(index + 1);
+                        // Check if we need to shift the window
+                        if (shouldShiftWindow(index)) {
+                            shiftWindow(index);
+                        }
 
-                        // Auto-load more when near end
+                        // Auto-load more when near end of available posts
                         if (index >= state.posts.length - 5 && state.after && !state.loading) {
-                            const prevCount = state.posts.length;
                             const loadFn = state.isMixed ? loadMixedPosts : loadPosts;
-                            loadFn()
-                                .then(() => {
-                                    if (state.posts.length > prevCount) {
-                                        appendNewItems(prevCount);
-                                    }
-                                })
-                                .catch(() => {});
+                            loadFn().catch(() => {});
                         }
                     } else {
                         // Pause video when not visible
@@ -1398,40 +1399,38 @@
             items.forEach(item => feedObserver.observe(item));
         }
 
-        function appendNewItems(startIndex) {
+        // Shift the window and re-render
+        function shiftWindow(currentIndex) {
+            const newWindow = getWindowRange(currentIndex);
+
+            // Don't shift if window hasn't actually changed
+            if (newWindow.start === currentWindow.start && newWindow.end === currentWindow.end) {
+                return;
+            }
+
+            // Store scroll position relative to current item
             const container = document.getElementById('feed-container');
-            const endEl = document.getElementById('feed-end');
+            const currentItem = container.querySelector(`.feed-item[data-index="${currentIndex}"]`);
+            const currentItemTop = currentItem ? currentItem.getBoundingClientRect().top : 0;
 
-            // Add new items before the end element (or at end of container)
-            const newPosts = state.posts.slice(startIndex);
-            const html = newPosts.map((post, i) => renderFeedItem(post, startIndex + i)).join('');
+            // Update window and re-render
+            currentWindow = newWindow;
+            renderWindow();
 
-            if (endEl) {
-                endEl.insertAdjacentHTML('beforebegin', html);
-            } else {
-                container.insertAdjacentHTML('beforeend', html);
+            // Restore scroll position
+            const newCurrentItem = container.querySelector(`.feed-item[data-index="${currentIndex}"]`);
+            if (newCurrentItem) {
+                const newItemTop = newCurrentItem.getBoundingClientRect().top;
+                container.scrollTop += (newItemTop - currentItemTop);
             }
 
-            // Add end indicator if no more posts
-            if (!state.after && !endEl) {
-                container.insertAdjacentHTML('beforeend', `
-                    <div class="feed-end" id="feed-end">
-                        <p>That's all for now!</p>
-                    </div>
-                `);
-            }
-
-            // Bind error handlers for new items
-            bindMediaErrorHandlers();
-
-            // Observe new items with the existing observer
-            const newItems = container.querySelectorAll('.feed-item[data-index]');
-            newItems.forEach((item, i) => {
-                if (i >= startIndex && feedObserver) {
-                    feedObserver.observe(item);
-                }
-            });
+            // Re-setup observer for new items
+            cleanupObserver();
+            setupScrollObserver();
         }
+
+        // No longer needed - windowed rendering handles this automatically
+        // New posts are picked up when shiftWindow recalculates the range
 
         function goHome() {
             // Stop all videos and release resources
@@ -1442,7 +1441,6 @@
             });
 
             cleanupObserver();
-            prefetchCache.clear();
             renderHome();
         }
 
@@ -1462,7 +1460,6 @@
             state.after = null;
             state.currentIndex = 0;
             cleanupObserver();
-            prefetchCache.clear();
 
             try {
                 const loadFn = state.isMixed ? loadMixedPosts : loadPosts;
@@ -1560,7 +1557,6 @@
                     v.load();
                 });
                 cleanupObserver();
-                prefetchCache.clear();
 
                 // Re-render home to ensure fresh subreddit list
                 renderHome();
