@@ -699,7 +699,9 @@
         const PROXY = 'https://little-sunset-822a.maattp.workers.dev/';
         const LS_KEY = 'feed-subs';
         const LS_SORT_KEY = 'feed-sort';
-        const LS_FAVORITES_KEY = 'feed-favorites';
+        const FAV_META_KEY = 'fav-meta';
+        const FAV_PREFIX = 'fav:';
+        const FAV_PAGE_SIZE = 50;
         const DEFAULT_SUBS = ['pics', 'videos', 'gifs', 'aww'];
         const SORT_OPTIONS = ['hot', 'new', 'top', 'rising'];
 
@@ -710,6 +712,7 @@
             isFavorites: false,
             posts: [],
             after: null,
+            favCursor: null, // For paginated favorites loading
             currentIndex: 0,
             loading: false,
             sort: localStorage.getItem(LS_SORT_KEY) || 'hot'
@@ -750,26 +753,74 @@
             }
         }
 
-        // Favorites management - store minimal data needed to render
-        function getFavorites() {
+        // Favorites management - doubly linked list in localStorage
+        // Each favorite stored as separate key: fav:{id} -> {data, prev, next}
+        // Metadata stored as: fav-meta -> {head, tail, count}
+
+        function getFavMeta() {
             try {
-                const stored = localStorage.getItem(LS_FAVORITES_KEY);
-                if (stored) {
-                    const parsed = JSON.parse(stored);
-                    if (Array.isArray(parsed)) return parsed;
-                }
+                const stored = localStorage.getItem(FAV_META_KEY);
+                if (stored) return JSON.parse(stored);
             } catch (e) {}
-            return [];
+            return { head: null, tail: null, count: 0 };
         }
 
-        function saveFavorites(favorites) {
+        function saveFavMeta(meta) {
             try {
-                localStorage.setItem(LS_FAVORITES_KEY, JSON.stringify(favorites));
+                localStorage.setItem(FAV_META_KEY, JSON.stringify(meta));
             } catch (e) {}
         }
 
+        function getFavoriteById(id) {
+            try {
+                const stored = localStorage.getItem(FAV_PREFIX + id);
+                if (stored) return JSON.parse(stored);
+            } catch (e) {}
+            return null;
+        }
+
+        function saveFavoriteNode(fav) {
+            try {
+                localStorage.setItem(FAV_PREFIX + fav.id, JSON.stringify(fav));
+            } catch (e) {}
+        }
+
+        function deleteFavoriteNode(id) {
+            try {
+                localStorage.removeItem(FAV_PREFIX + id);
+            } catch (e) {}
+        }
+
+        // O(1) check - just see if key exists
         function isFavorited(postId) {
-            return getFavorites().some(f => f.id === postId);
+            return localStorage.getItem(FAV_PREFIX + postId) !== null;
+        }
+
+        // Get favorites count from metadata - O(1)
+        function getFavoritesCount() {
+            return getFavMeta().count;
+        }
+
+        // Load favorites with pagination - O(n) but only for requested page
+        function loadFavorites(startFromId = null, limit = FAV_PAGE_SIZE) {
+            const meta = getFavMeta();
+            const favorites = [];
+            let currentId = startFromId || meta.head;
+            let count = 0;
+
+            while (currentId && count < limit) {
+                const fav = getFavoriteById(currentId);
+                if (!fav) break; // Corrupted list, stop here
+                favorites.push(fav);
+                currentId = fav.next;
+                count++;
+            }
+
+            return {
+                favorites,
+                nextCursor: currentId, // null if no more
+                hasMore: currentId !== null
+            };
         }
 
         // Extract minimal data from post for persistence
@@ -783,24 +834,85 @@
                 created_utc: post.created_utc,
                 num_comments: post.num_comments,
                 thumbnail: post.thumbnail,
-                media: post.media, // Already extracted, contains only what we need
+                media: post.media,
                 hearted_at: Date.now()
             };
         }
 
-        function toggleFavorite(post) {
-            const favorites = getFavorites();
-            const existingIndex = favorites.findIndex(f => f.id === post.id);
+        // Add favorite - O(1)
+        function addFavorite(post) {
+            const meta = getFavMeta();
+            const fav = {
+                ...extractFavoriteData(post),
+                prev: null,
+                next: meta.head
+            };
 
-            if (existingIndex >= 0) {
-                // Remove from favorites
-                favorites.splice(existingIndex, 1);
-                saveFavorites(favorites);
+            // Update old head's prev pointer
+            if (meta.head) {
+                const oldHead = getFavoriteById(meta.head);
+                if (oldHead) {
+                    oldHead.prev = fav.id;
+                    saveFavoriteNode(oldHead);
+                }
+            }
+
+            // Save new favorite
+            saveFavoriteNode(fav);
+
+            // Update metadata
+            meta.head = fav.id;
+            if (!meta.tail) meta.tail = fav.id;
+            meta.count++;
+            saveFavMeta(meta);
+        }
+
+        // Remove favorite - O(1)
+        function removeFavorite(id) {
+            const fav = getFavoriteById(id);
+            if (!fav) return;
+
+            const meta = getFavMeta();
+
+            // Update prev node's next pointer
+            if (fav.prev) {
+                const prevNode = getFavoriteById(fav.prev);
+                if (prevNode) {
+                    prevNode.next = fav.next;
+                    saveFavoriteNode(prevNode);
+                }
+            } else {
+                // Was head
+                meta.head = fav.next;
+            }
+
+            // Update next node's prev pointer
+            if (fav.next) {
+                const nextNode = getFavoriteById(fav.next);
+                if (nextNode) {
+                    nextNode.prev = fav.prev;
+                    saveFavoriteNode(nextNode);
+                }
+            } else {
+                // Was tail
+                meta.tail = fav.prev;
+            }
+
+            // Delete the node
+            deleteFavoriteNode(id);
+
+            // Update metadata
+            meta.count--;
+            saveFavMeta(meta);
+        }
+
+        // Toggle favorite - returns true if now favorited
+        function toggleFavorite(post) {
+            if (isFavorited(post.id)) {
+                removeFavorite(post.id);
                 return false;
             } else {
-                // Add to favorites
-                favorites.unshift(extractFavoriteData(post));
-                saveFavorites(favorites);
+                addFavorite(post);
                 return true;
             }
         }
@@ -1040,13 +1152,13 @@
             ` : '';
 
             // Build favorites item
-            const favorites = getFavorites();
-            const favoritesHtml = favorites.length > 0 ? `
+            const favCount = getFavoritesCount();
+            const favoritesHtml = favCount > 0 ? `
                 <div class="favorites-feed-item" id="favorites-feed-btn">
                     <span class="mixed-feed-icon">❤️</span>
                     <div class="mixed-feed-text">
                         <div class="mixed-feed-title">Favorites</div>
-                        <div class="mixed-feed-subtitle">${favorites.length} saved post${favorites.length !== 1 ? 's' : ''}</div>
+                        <div class="mixed-feed-subtitle">${favCount} saved post${favCount !== 1 ? 's' : ''}</div>
                     </div>
                     <span class="mixed-feed-arrow">&rsaquo;</span>
                 </div>
@@ -1252,18 +1364,32 @@
 
         // Open favorites feed
         function openFavoritesFeed() {
-            const favorites = getFavorites();
-            if (favorites.length === 0) return;
+            if (getFavoritesCount() === 0) return;
 
             state.sub = null;
             state.isMixed = false;
             state.isFavorites = true;
+            state.favCursor = null;
             setupFeedView('Favorites', '/apps/feed/#favorites', { view: 'feed', favorites: true });
 
-            // Load favorites directly from storage (no network fetch needed)
+            // Load first page of favorites
+            const { favorites, nextCursor, hasMore } = loadFavorites(null, FAV_PAGE_SIZE);
             state.posts = favorites;
-            state.after = null; // No pagination for favorites
+            state.favCursor = nextCursor;
+            state.after = hasMore ? 'more' : null; // Use 'after' to signal more available
             renderFeed();
+        }
+
+        // Load more favorites (called when scrolling near end)
+        function loadMoreFavorites() {
+            if (!state.favCursor || state.loading) return;
+            state.loading = true;
+
+            const { favorites, nextCursor, hasMore } = loadFavorites(state.favCursor, FAV_PAGE_SIZE);
+            state.posts = state.posts.concat(favorites);
+            state.favCursor = nextCursor;
+            state.after = hasMore ? 'more' : null;
+            state.loading = false;
         }
 
         function showFeedError(message, retryFn) {
@@ -1611,11 +1737,15 @@
 
                         // Auto-load more when near end of available posts
                         if (index >= state.posts.length - 5 && state.after && !state.loading) {
-                            const loadFn = state.isMixed ? loadMixedPosts : loadPosts;
-                            loadFn().then(() => {
-                                // Append new items to DOM
+                            if (state.isFavorites) {
+                                loadMoreFavorites();
                                 appendNewItems();
-                            }).catch(() => {});
+                            } else {
+                                const loadFn = state.isMixed ? loadMixedPosts : loadPosts;
+                                loadFn().then(() => {
+                                    appendNewItems();
+                                }).catch(() => {});
+                            }
                         }
                     } else {
                         // Pause video when not visible
@@ -1712,11 +1842,14 @@
             try {
                 if (state.isFavorites) {
                     // Reload from storage
-                    state.posts = getFavorites();
-                    if (state.posts.length === 0) {
+                    if (getFavoritesCount() === 0) {
                         goHome();
                         return;
                     }
+                    const { favorites, nextCursor, hasMore } = loadFavorites(null, FAV_PAGE_SIZE);
+                    state.posts = favorites;
+                    state.favCursor = nextCursor;
+                    state.after = hasMore ? 'more' : null;
                 } else {
                     const loadFn = state.isMixed ? loadMixedPosts : loadPosts;
                     await loadFn();
@@ -1760,11 +1893,11 @@
                 heartBtn.innerHTML = isNowHearted ? heartFilled : heartEmpty;
                 heartBtn.classList.toggle('hearted', isNowHearted);
 
-                // If un-hearting in favorites view, remove the item
+                // If un-hearting in favorites view, remove the item from current posts
                 if (state.isFavorites && !isNowHearted) {
-                    // Reload favorites from storage and re-render
-                    state.posts = getFavorites();
-                    if (state.posts.length === 0) {
+                    // Remove from current posts array
+                    state.posts = state.posts.filter(p => p.id !== post.id);
+                    if (state.posts.length === 0 && getFavoritesCount() === 0) {
                         goHome();
                     } else {
                         renderFeed();
