@@ -599,12 +599,79 @@
             font-size: 14px;
             cursor: pointer;
         }
+
+        /* Heart button */
+        .heart-btn {
+            position: absolute;
+            right: calc(env(safe-area-inset-right) + 16px);
+            bottom: calc(env(safe-area-inset-bottom) + 100px);
+            background: rgba(0, 0, 0, 0.4);
+            border: none;
+            width: 48px;
+            height: 48px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+            backdrop-filter: blur(10px);
+            -webkit-backdrop-filter: blur(10px);
+            z-index: 10;
+            transition: transform 0.15s;
+        }
+
+        .heart-btn:active {
+            transform: scale(0.9);
+        }
+
+        .heart-btn svg {
+            width: 26px;
+            height: 26px;
+            transition: transform 0.2s;
+        }
+
+        .heart-btn.hearted svg {
+            animation: heartPop 0.3s ease-out;
+        }
+
+        @keyframes heartPop {
+            0% { transform: scale(1); }
+            50% { transform: scale(1.3); }
+            100% { transform: scale(1); }
+        }
+
+        /* Favorites item on home */
+        .favorites-feed-item {
+            display: flex;
+            align-items: center;
+            padding: 16px;
+            margin-bottom: 16px;
+            background: linear-gradient(135deg, #e91e63 0%, #f06292 100%);
+            border-radius: 12px;
+            cursor: pointer;
+            transition: transform 0.15s, opacity 0.15s;
+        }
+
+        .favorites-feed-item:active {
+            transform: scale(0.98);
+            opacity: 0.9;
+        }
+
+        .favorites-feed-item.empty {
+            background: linear-gradient(135deg, #424242 0%, #616161 100%);
+            cursor: default;
+        }
+
+        .favorites-feed-item.empty:active {
+            transform: none;
+            opacity: 1;
+        }
     </style>
 </head>
 <body>
     <div class="home-view" id="home-view">
         <div class="header">
-            <h1>Feed <span class="version">v2</span></h1>
+            <h1>Feed <span class="version">v3</span></h1>
             <select class="sort-select" id="sort-select">
                 <option value="hot">Hot</option>
                 <option value="new">New</option>
@@ -632,6 +699,9 @@
         const PROXY = 'https://little-sunset-822a.maattp.workers.dev/';
         const LS_KEY = 'feed-subs';
         const LS_SORT_KEY = 'feed-sort';
+        const FAV_META_KEY = 'fav-meta';
+        const FAV_PREFIX = 'fav:';
+        const FAV_PAGE_SIZE = 50;
         const DEFAULT_SUBS = ['pics', 'videos', 'gifs', 'aww'];
         const SORT_OPTIONS = ['hot', 'new', 'top', 'rising'];
 
@@ -639,8 +709,10 @@
             view: 'home',
             sub: null,
             isMixed: false,
+            isFavorites: false,
             posts: [],
             after: null,
+            favCursor: null, // For paginated favorites loading
             currentIndex: 0,
             loading: false,
             sort: localStorage.getItem(LS_SORT_KEY) || 'hot'
@@ -678,6 +750,209 @@
                 localStorage.setItem(LS_KEY, JSON.stringify(subs));
             } catch (e) {
                 // localStorage full or unavailable
+            }
+        }
+
+        // Favorites management - doubly linked list in localStorage
+        // Each favorite stored as separate key: fav:{id} -> {data, prev, next}
+        // Metadata stored as: fav-meta -> {head, tail, count}
+
+        function getFavMeta() {
+            try {
+                const stored = localStorage.getItem(FAV_META_KEY);
+                if (stored) return JSON.parse(stored);
+            } catch (e) {}
+            return { head: null, tail: null, count: 0 };
+        }
+
+        function saveFavMeta(meta) {
+            localStorage.setItem(FAV_META_KEY, JSON.stringify(meta));
+        }
+
+        function getFavoriteById(id) {
+            try {
+                const stored = localStorage.getItem(FAV_PREFIX + id);
+                if (stored) return JSON.parse(stored);
+            } catch (e) {}
+            return null;
+        }
+
+        function saveFavoriteNode(fav) {
+            localStorage.setItem(FAV_PREFIX + fav.id, JSON.stringify(fav));
+        }
+
+        function deleteFavoriteNode(id) {
+            localStorage.removeItem(FAV_PREFIX + id);
+        }
+
+        // O(1) check - just see if key exists
+        function isFavorited(postId) {
+            return localStorage.getItem(FAV_PREFIX + postId) !== null;
+        }
+
+        // Get favorites count from metadata - O(1)
+        function getFavoritesCount() {
+            return getFavMeta().count;
+        }
+
+        // Load favorites with pagination - O(n) but only for requested page
+        function loadFavorites(startFromId = null, limit = FAV_PAGE_SIZE) {
+            const meta = getFavMeta();
+            const favorites = [];
+            let currentId = startFromId || meta.head;
+            let count = 0;
+
+            while (currentId && count < limit) {
+                const fav = getFavoriteById(currentId);
+                if (!fav) {
+                    // Corrupted list - treat as end to prevent infinite loop
+                    currentId = null;
+                    break;
+                }
+                favorites.push(fav);
+                currentId = fav.next;
+                count++;
+            }
+
+            return {
+                favorites,
+                nextCursor: currentId,
+                hasMore: currentId !== null
+            };
+        }
+
+        // Extract minimal data from post for persistence
+        function extractFavoriteData(post) {
+            return {
+                id: post.id,
+                title: post.title,
+                subreddit: post.subreddit,
+                author: post.author,
+                score: post.score,
+                created_utc: post.created_utc,
+                num_comments: post.num_comments,
+                thumbnail: post.thumbnail,
+                media: post.media,
+                hearted_at: Date.now()
+            };
+        }
+
+        // Add favorite - O(1), returns false if storage full
+        function addFavorite(post) {
+            const meta = getFavMeta();
+
+            // Update old head's prev pointer (if it exists and is valid)
+            let validNext = null;
+            if (meta.head) {
+                const oldHead = getFavoriteById(meta.head);
+                if (oldHead) {
+                    oldHead.prev = post.id;
+                    try {
+                        saveFavoriteNode(oldHead);
+                    } catch (e) {
+                        if (e.name === 'QuotaExceededError') return false;
+                        throw e;
+                    }
+                    validNext = meta.head;
+                }
+            }
+
+            const fav = {
+                ...extractFavoriteData(post),
+                prev: null,
+                next: validNext
+            };
+
+            // Save new favorite
+            try {
+                saveFavoriteNode(fav);
+            } catch (e) {
+                if (e.name === 'QuotaExceededError') {
+                    // Rollback: restore old head's prev pointer
+                    if (validNext) {
+                        const oldHead = getFavoriteById(validNext);
+                        if (oldHead) {
+                            oldHead.prev = null;
+                            try { saveFavoriteNode(oldHead); } catch (_) {}
+                        }
+                    }
+                    return false;
+                }
+                throw e;
+            }
+
+            // Update metadata
+            meta.head = fav.id;
+            if (!meta.tail || !validNext) meta.tail = fav.id;
+            meta.count++;
+            try {
+                saveFavMeta(meta);
+            } catch (e) {
+                // Rollback: delete the node we just added
+                deleteFavoriteNode(fav.id);
+                if (validNext) {
+                    const oldHead = getFavoriteById(validNext);
+                    if (oldHead) {
+                        oldHead.prev = null;
+                        try { saveFavoriteNode(oldHead); } catch (_) {}
+                    }
+                }
+                if (e.name === 'QuotaExceededError') return false;
+                throw e;
+            }
+            return true;
+        }
+
+        // Remove favorite - O(1)
+        function removeFavorite(id) {
+            const fav = getFavoriteById(id);
+            if (!fav) return;
+
+            const meta = getFavMeta();
+
+            // Update prev node's next pointer
+            if (fav.prev) {
+                const prevNode = getFavoriteById(fav.prev);
+                if (prevNode) {
+                    prevNode.next = fav.next;
+                    saveFavoriteNode(prevNode);
+                }
+            } else {
+                // Was head
+                meta.head = fav.next;
+            }
+
+            // Update next node's prev pointer
+            if (fav.next) {
+                const nextNode = getFavoriteById(fav.next);
+                if (nextNode) {
+                    nextNode.prev = fav.prev;
+                    saveFavoriteNode(nextNode);
+                }
+            } else {
+                // Was tail
+                meta.tail = fav.prev;
+            }
+
+            // Delete the node
+            deleteFavoriteNode(id);
+
+            // Update metadata
+            meta.count--;
+            saveFavMeta(meta);
+        }
+
+        // Toggle favorite - returns {hearted: bool, error: string|null}
+        function toggleFavorite(post) {
+            if (isFavorited(post.id)) {
+                removeFavorite(post.id);
+                return { hearted: false, error: null };
+            } else {
+                const success = addFavorite(post);
+                if (!success) {
+                    return { hearted: false, error: 'Storage full. Remove some favorites first.' };
+                }
+                return { hearted: true, error: null };
             }
         }
 
@@ -915,10 +1190,31 @@
                 </div>
             ` : '';
 
+            // Build favorites item
+            const favCount = getFavoritesCount();
+            const favoritesHtml = favCount > 0 ? `
+                <div class="favorites-feed-item" id="favorites-feed-btn">
+                    <span class="mixed-feed-icon">❤️</span>
+                    <div class="mixed-feed-text">
+                        <div class="mixed-feed-title">Favorites</div>
+                        <div class="mixed-feed-subtitle">${favCount} saved post${favCount !== 1 ? 's' : ''}</div>
+                    </div>
+                    <span class="mixed-feed-arrow">&rsaquo;</span>
+                </div>
+            ` : `
+                <div class="favorites-feed-item empty">
+                    <span class="mixed-feed-icon">🤍</span>
+                    <div class="mixed-feed-text">
+                        <div class="mixed-feed-title">Favorites</div>
+                        <div class="mixed-feed-subtitle">Heart posts to save them here</div>
+                    </div>
+                </div>
+            `;
+
             if (subs.length === 0) {
-                list.innerHTML = '<li class="empty-state">No subreddits yet. Add one above.</li>';
+                list.innerHTML = favoritesHtml + '<li class="empty-state">No subreddits yet. Add one above.</li>';
             } else {
-                list.innerHTML = mixedHtml + subs.map(s => `
+                list.innerHTML = mixedHtml + favoritesHtml + subs.map(s => `
                     <li class="sub-item" data-sub="${escapeHtml(s)}">
                         <div class="sub-delete-bg">Delete</div>
                         <div class="sub-item-content">
@@ -971,6 +1267,12 @@
             const mixedBtn = document.getElementById('mixed-feed-btn');
             if (mixedBtn) {
                 mixedBtn.addEventListener('click', openMixedFeed);
+            }
+
+            // Favorites feed button
+            const favoritesBtn = document.getElementById('favorites-feed-btn');
+            if (favoritesBtn) {
+                favoritesBtn.addEventListener('click', openFavoritesFeed);
             }
 
             // Delete buttons
@@ -1067,6 +1369,7 @@
         async function openFeed(sub) {
             state.sub = sub;
             state.isMixed = false;
+            state.isFavorites = false;
             setupFeedView(`r/${sub}`, `/apps/feed/#r/${sub}`, { view: 'feed', sub });
 
             try {
@@ -1084,6 +1387,7 @@
         async function openMixedFeed() {
             state.sub = null;
             state.isMixed = true;
+            state.isFavorites = false;
             setupFeedView('Mixed Feed', '/apps/feed/#mixed', { view: 'feed', mixed: true });
 
             try {
@@ -1094,6 +1398,39 @@
                     ? 'Rate limited by Reddit. Wait a minute and try again.'
                     : 'Failed to load posts';
                 showFeedError(msg, () => openMixedFeed());
+            }
+        }
+
+        // Open favorites feed
+        function openFavoritesFeed() {
+            if (getFavoritesCount() === 0) return;
+
+            state.sub = null;
+            state.isMixed = false;
+            state.isFavorites = true;
+            state.favCursor = null;
+            setupFeedView('Favorites', '/apps/feed/#favorites', { view: 'feed', favorites: true });
+
+            // Load first page of favorites
+            const { favorites, nextCursor, hasMore } = loadFavorites(null, FAV_PAGE_SIZE);
+            state.posts = favorites;
+            state.favCursor = nextCursor;
+            state.after = hasMore ? 'more' : null; // Use 'after' to signal more available
+            renderFeed();
+        }
+
+        // Load more favorites (called when scrolling near end)
+        function loadMoreFavorites() {
+            if (!state.favCursor || state.loading) return;
+            state.loading = true;
+
+            try {
+                const { favorites, nextCursor, hasMore } = loadFavorites(state.favCursor, FAV_PAGE_SIZE);
+                state.posts = state.posts.concat(favorites);
+                state.favCursor = nextCursor;
+                state.after = hasMore ? 'more' : null;
+            } finally {
+                state.loading = false;
             }
         }
 
@@ -1327,7 +1664,12 @@
                 `;
             }
 
-            const subredditMeta = state.isMixed ? `<span>r/${escapeHtml(post.subreddit)}</span>` : '';
+            const subredditMeta = (state.isMixed || state.isFavorites) ? `<span>r/${escapeHtml(post.subreddit)}</span>` : '';
+            const isHearted = isFavorited(post.id);
+
+            // Heart SVG icons
+            const heartEmpty = `<svg viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2"><path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"></path></svg>`;
+            const heartFilled = `<svg viewBox="0 0 24 24" fill="#ff4081" stroke="#ff4081" stroke-width="2"><path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"></path></svg>`;
 
             // Media container starts with a loading spinner - actual media loaded on demand
             return `
@@ -1336,6 +1678,9 @@
                         <div class="loading-spinner"></div>
                     </div>
                     ${galleryNav}
+                    <button class="heart-btn${isHearted ? ' hearted' : ''}" data-index="${index}" data-post-id="${post.id}">
+                        ${isHearted ? heartFilled : heartEmpty}
+                    </button>
                     <div class="feed-item-overlay">
                         <div class="feed-item-title">${escapeHtml(post.title)}</div>
                         <div class="feed-item-meta">
@@ -1434,11 +1779,15 @@
 
                         // Auto-load more when near end of available posts
                         if (index >= state.posts.length - 5 && state.after && !state.loading) {
-                            const loadFn = state.isMixed ? loadMixedPosts : loadPosts;
-                            loadFn().then(() => {
-                                // Append new items to DOM
+                            if (state.isFavorites) {
+                                loadMoreFavorites();
                                 appendNewItems();
-                            }).catch(() => {});
+                            } else {
+                                const loadFn = state.isMixed ? loadMixedPosts : loadPosts;
+                                loadFn().then(() => {
+                                    appendNewItems();
+                                }).catch(() => {});
+                            }
                         }
                     } else {
                         // Pause video when not visible
@@ -1533,8 +1882,20 @@
             loadedMediaItems.clear();
 
             try {
-                const loadFn = state.isMixed ? loadMixedPosts : loadPosts;
-                await loadFn();
+                if (state.isFavorites) {
+                    // Reload from storage
+                    if (getFavoritesCount() === 0) {
+                        goHome();
+                        return;
+                    }
+                    const { favorites, nextCursor, hasMore } = loadFavorites(null, FAV_PAGE_SIZE);
+                    state.posts = favorites;
+                    state.favCursor = nextCursor;
+                    state.after = hasMore ? 'more' : null;
+                } else {
+                    const loadFn = state.isMixed ? loadMixedPosts : loadPosts;
+                    await loadFn();
+                }
                 renderFeed();
                 document.getElementById('feed-container').scrollTop = 0;
             } catch (err) {
@@ -1548,7 +1909,7 @@
             }
         });
 
-        // Event delegation for feed container (handles gallery nav, skip buttons, video tap)
+        // Event delegation for feed container (handles gallery nav, skip buttons, video tap, heart)
         document.getElementById('feed-container').addEventListener('click', (e) => {
             const target = e.target;
 
@@ -1556,6 +1917,40 @@
             if (target.dataset.action === 'skip') {
                 const index = parseInt(target.dataset.index);
                 skipToNext(index);
+                return;
+            }
+
+            // Handle heart button
+            const heartBtn = target.closest('.heart-btn');
+            if (heartBtn) {
+                e.stopPropagation();
+                const index = parseInt(heartBtn.dataset.index);
+                const post = state.posts[index];
+                if (!post) return;
+
+                const { hearted: isNowHearted, error } = toggleFavorite(post);
+
+                if (error) {
+                    alert(error);
+                    return;
+                }
+
+                const heartEmpty = `<svg viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2"><path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"></path></svg>`;
+                const heartFilled = `<svg viewBox="0 0 24 24" fill="#ff4081" stroke="#ff4081" stroke-width="2"><path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"></path></svg>`;
+
+                heartBtn.innerHTML = isNowHearted ? heartFilled : heartEmpty;
+                heartBtn.classList.toggle('hearted', isNowHearted);
+
+                // If un-hearting in favorites view, remove the item from current posts
+                if (state.isFavorites && !isNowHearted) {
+                    // Remove from current posts array
+                    state.posts = state.posts.filter(p => p.id !== post.id);
+                    if (state.posts.length === 0 && getFavoritesCount() === 0) {
+                        goHome();
+                    } else {
+                        renderFeed();
+                    }
+                }
                 return;
             }
 
@@ -1641,7 +2036,9 @@
                 // Re-render home to ensure fresh subreddit list
                 renderHome();
             } else if (s.view === 'feed') {
-                if (s.mixed) {
+                if (s.favorites) {
+                    openFavoritesFeed();
+                } else if (s.mixed) {
                     openMixedFeed();
                 } else if (s.sub) {
                     openFeed(s.sub);
