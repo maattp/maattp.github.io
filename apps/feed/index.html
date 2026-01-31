@@ -1044,6 +1044,42 @@
             }
         }
 
+        // Export all persisted data as JSON file
+        function exportAllData() {
+            const data = {
+                version: 1,
+                exportedAt: new Date().toISOString(),
+                settings: {
+                    subreddits: getSubs(),
+                    sort: localStorage.getItem(LS_SORT_KEY) || 'hot',
+                    timePeriod: localStorage.getItem(LS_TIME_KEY) || 'day'
+                },
+                favorites: []
+            };
+
+            // Load all favorites from linked list
+            const meta = getFavMeta();
+            let currentId = meta.head;
+            while (currentId) {
+                const fav = getFavoriteById(currentId);
+                if (!fav) break;
+                // Remove linked list pointers from export
+                const { prev, next, ...favData } = fav;
+                data.favorites.push(favData);
+                currentId = fav.next;
+            }
+
+            const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `feed-export-${new Date().toISOString().split('T')[0]}.json`;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+        }
+
         async function redditFetch(path, retries = 3) {
             const url = `${PROXY}?url=${encodeURIComponent('https://www.reddit.com' + path)}`;
             let lastError;
@@ -2186,40 +2222,7 @@
         });
 
         // Export all data button
-        document.getElementById('export-btn').addEventListener('click', function() {
-            const data = {
-                version: 1,
-                exportedAt: new Date().toISOString(),
-                settings: {
-                    subreddits: getSubs(),
-                    sort: localStorage.getItem(LS_SORT_KEY) || 'hot',
-                    timePeriod: localStorage.getItem(LS_TIME_KEY) || 'day'
-                },
-                favorites: []
-            };
-
-            // Load all favorites from linked list
-            const meta = getFavMeta();
-            let currentId = meta.head;
-            while (currentId) {
-                const fav = getFavoriteById(currentId);
-                if (!fav) break;
-                // Remove linked list pointers from export
-                const { prev, next, ...favData } = fav;
-                data.favorites.push(favData);
-                currentId = fav.next;
-            }
-
-            const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
-            const url = URL.createObjectURL(blob);
-            const a = document.createElement('a');
-            a.href = url;
-            a.download = `feed-export-${new Date().toISOString().split('T')[0]}.json`;
-            document.body.appendChild(a);
-            a.click();
-            document.body.removeChild(a);
-            URL.revokeObjectURL(url);
-        });
+        document.getElementById('export-btn').addEventListener('click', exportAllData);
 
         // Initialize
         renderHome();
