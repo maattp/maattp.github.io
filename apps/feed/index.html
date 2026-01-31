@@ -715,7 +715,8 @@
             favCursor: null, // For paginated favorites loading
             currentIndex: 0,
             loading: false,
-            sort: localStorage.getItem(LS_SORT_KEY) || 'hot'
+            sort: localStorage.getItem(LS_SORT_KEY) || 'hot',
+            mixedQueue: [] // Shuffled queue of subreddits for mixed feed
         };
 
         // Windowed rendering settings - controls media loading, not DOM presence
@@ -730,6 +731,29 @@
 
         // Track if user has enabled audio (persists during session)
         let audioEnabled = false;
+
+        // Fisher-Yates shuffle - ensures even distribution
+        function shuffleArray(array) {
+            const shuffled = [...array];
+            for (let i = shuffled.length - 1; i > 0; i--) {
+                const j = Math.floor(Math.random() * (i + 1));
+                [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
+            }
+            return shuffled;
+        }
+
+        // Get next subreddit from shuffled queue, reshuffling when empty
+        function getNextMixedSubreddit() {
+            const subs = getSubs();
+            if (subs.length === 0) return null;
+
+            // Refill and shuffle queue if empty
+            if (state.mixedQueue.length === 0) {
+                state.mixedQueue = shuffleArray(subs);
+            }
+
+            return state.mixedQueue.shift();
+        }
 
         function getSubs() {
             try {
@@ -1388,6 +1412,7 @@
             state.sub = null;
             state.isMixed = true;
             state.isFavorites = false;
+            state.mixedQueue = []; // Reset queue for fresh shuffle
             setupFeedView('Mixed Feed', '/apps/feed/#mixed', { view: 'feed', mixed: true });
 
             try {
@@ -1465,22 +1490,19 @@
             return { posts, after: data.data.after };
         }
 
-        // Load posts for mixed feed from a random subreddit
+        // Load posts for mixed feed from shuffled subreddit queue
         async function loadMixedPosts() {
             if (state.loading) return;
             state.loading = true;
 
             try {
-                const subs = getSubs();
-                if (subs.length === 0) return;
+                const nextSub = getNextMixedSubreddit();
+                if (!nextSub) return;
 
-                // Pick one random subreddit
-                const randomSub = subs[Math.floor(Math.random() * subs.length)];
-
-                const { posts, after } = await fetchSubredditPosts(randomSub, 15);
+                const { posts, after } = await fetchSubredditPosts(nextSub, 15);
                 state.posts = state.posts.concat(posts);
-                // Always allow loading more (from another random sub)
-                state.after = subs.length > 0 ? 'mixed' : null;
+                // Always allow loading more (from another sub in queue)
+                state.after = getSubs().length > 0 ? 'mixed' : null;
             } finally {
                 state.loading = false;
             }
