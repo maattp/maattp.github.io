@@ -28,9 +28,11 @@
 
         /* Home view */
         .home-view {
-            height: 100%;
-            height: 100vh;
-            height: -webkit-fill-available;
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
             background: #1a1a1a;
             padding: 20px;
             padding-top: calc(env(safe-area-inset-top) + 20px);
@@ -602,7 +604,7 @@
 <body>
     <div class="home-view" id="home-view">
         <div class="header">
-            <h1>Feed <span class="version">v1</span></h1>
+            <h1>Feed <span class="version">v2</span></h1>
             <select class="sort-select" id="sort-select">
                 <option value="hot">Hot</option>
                 <option value="new">New</option>
