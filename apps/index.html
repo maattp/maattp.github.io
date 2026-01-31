@@ -440,7 +440,7 @@
             <span class="app-name">Reddit</span>
         </a>
 
-        <a href="feed/" class="app-link">
+        <a href="feed/" class="app-link" id="feed-app" style="display: none;">
             <div class="app-icon app-feed">📱</div>
             <span class="app-name">Feed</span>
         </a>
@@ -600,6 +600,21 @@
 
         updateFlipClock();
         setInterval(updateFlipClock, 1000);
+
+        // Clock interaction
+        const clockHeader = document.querySelector('.flip-clock-header');
+        let tapCount = 0;
+        let tapTimer = null;
+        clockHeader.addEventListener('click', () => {
+            tapCount++;
+            if (tapTimer) clearTimeout(tapTimer);
+            if (tapCount === 3) {
+                document.getElementById('feed-app').style.display = 'flex';
+                tapCount = 0;
+            } else {
+                tapTimer = setTimeout(() => { tapCount = 0; }, 400);
+            }
+        });
     </script>
 </body>
 </html>
