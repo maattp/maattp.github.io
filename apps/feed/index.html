@@ -696,7 +696,7 @@
             background: rgba(255,255,255,0.35);
         }
 
-        .hls-toggle {
+        .export-btn {
             background: #2a2a2a;
             border: 1px solid #3a3a3a;
             color: #888;
@@ -707,18 +707,16 @@
             cursor: pointer;
         }
 
-        .hls-toggle.active {
-            background: #ff4500;
-            border-color: #ff4500;
-            color: #fff;
+        .export-btn:active {
+            background: #3a3a3a;
         }
     </style>
 </head>
 <body>
     <div class="home-view" id="home-view">
         <div class="header">
-            <h1>Feed <span class="version">v7</span></h1>
-            <button class="hls-toggle" id="hls-toggle">HLS</button>
+            <h1>Feed <span class="version">v8</span></h1>
+            <button class="export-btn" id="export-btn">Export</button>
             <select class="sort-select" id="sort-select">
                 <option value="hot">Hot</option>
                 <option value="new">New</option>
@@ -795,8 +793,8 @@
         // Track if user has enabled audio (persists during session)
         let audioEnabled = false;
 
-        // Track if HLS mode is enabled (for testing)
-        let useHls = false;
+        // HLS mode always enabled
+        let useHls = true;
 
         // Fisher-Yates shuffle - ensures even distribution
         function shuffleArray(array) {
@@ -1044,6 +1042,42 @@
                 }
                 return { hearted: true, error: null };
             }
+        }
+
+        // Export all persisted data as JSON file
+        function exportAllData() {
+            const data = {
+                version: 1,
+                exportedAt: new Date().toISOString(),
+                settings: {
+                    subreddits: getSubs(),
+                    sort: localStorage.getItem(LS_SORT_KEY) || 'hot',
+                    timePeriod: localStorage.getItem(LS_TIME_KEY) || 'day'
+                },
+                favorites: []
+            };
+
+            // Load all favorites from linked list
+            const meta = getFavMeta();
+            let currentId = meta.head;
+            while (currentId) {
+                const fav = getFavoriteById(currentId);
+                if (!fav) break;
+                // Remove linked list pointers from export
+                const { prev, next, ...favData } = fav;
+                data.favorites.push(favData);
+                currentId = fav.next;
+            }
+
+            const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `feed-export-${new Date().toISOString().split('T')[0]}.json`;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
         }
 
         async function redditFetch(path, retries = 3) {
@@ -2187,11 +2221,8 @@
             }
         });
 
-        // HLS toggle button
-        document.getElementById('hls-toggle').addEventListener('click', function() {
-            useHls = !useHls;
-            this.classList.toggle('active', useHls);
-        });
+        // Export all data button
+        document.getElementById('export-btn').addEventListener('click', exportAllData);
 
         // Initialize
         renderHome();
