@@ -647,6 +647,9 @@
         // Track which items have media loaded
         let loadedMediaItems = new Set();
 
+        // Track if user has enabled audio (persists during session)
+        let audioEnabled = false;
+
         function getSubs() {
             try {
                 const stored = localStorage.getItem(LS_KEY);
@@ -1397,14 +1400,21 @@
                         // Update media loading window
                         updateMediaWindow(index);
 
-                        // Play video if visible (always muted for iOS autoplay compatibility)
+                        // Play video if visible
                         const video = item.querySelector('video');
                         if (video) {
+                            // If user has enabled audio, try to unmute
+                            if (audioEnabled) {
+                                video.muted = false;
+                            }
                             const playPromise = video.play();
                             if (playPromise !== undefined) {
                                 playPromise.catch(err => {
-                                    console.log('Video play failed:', err.name, err.message);
-                                    if (video.readyState < 2) {
+                                    // If unmuted play fails, try muted (iOS restriction)
+                                    if (!video.muted) {
+                                        video.muted = true;
+                                        video.play().catch(() => {});
+                                    } else if (video.readyState < 2) {
                                         video.addEventListener('canplay', () => {
                                             video.play().catch(() => {});
                                         }, { once: true });
@@ -1576,14 +1586,15 @@
                 const feedItem = target.closest('.feed-item');
                 const video = feedItem.querySelector('video');
                 if (video) {
-                    // Unmute on user interaction (iOS requires user gesture for audio)
+                    // Enable audio globally on first user interaction
+                    audioEnabled = true;
                     video.muted = false;
                     video.play().catch(() => {});
                 }
                 return;
             }
 
-            // Handle video tap to play/pause and unmute
+            // Handle video tap to play/pause and toggle audio
             const feedItem = target.closest('.feed-item');
             if (!feedItem) return;
 
@@ -1593,11 +1604,14 @@
             const video = feedItem.querySelector('video');
             if (video) {
                 if (video.paused) {
-                    // Unmute on user interaction (iOS requires user gesture for audio)
+                    // Enable audio globally on first user interaction
+                    audioEnabled = true;
                     video.muted = false;
                     video.play().catch(() => {});
                 } else {
-                    video.pause();
+                    // Tap while playing toggles mute
+                    video.muted = !video.muted;
+                    audioEnabled = !video.muted;
                 }
             }
         });
