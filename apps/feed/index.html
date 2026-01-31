@@ -675,6 +675,27 @@
             opacity: 1;
         }
 
+        .favorites-shuffle-btn {
+            background: rgba(255,255,255,0.2);
+            border: none;
+            color: #fff;
+            width: 40px;
+            height: 40px;
+            border-radius: 50%;
+            font-size: 18px;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            margin-left: 8px;
+            flex-shrink: 0;
+            transition: background 0.15s;
+        }
+
+        .favorites-shuffle-btn:active {
+            background: rgba(255,255,255,0.35);
+        }
+
         .hls-toggle {
             background: #2a2a2a;
             border: 1px solid #3a3a3a;
@@ -696,7 +717,7 @@
 <body>
     <div class="home-view" id="home-view">
         <div class="header">
-            <h1>Feed <span class="version">v6</span></h1>
+            <h1>Feed <span class="version">v7</span></h1>
             <button class="hls-toggle" id="hls-toggle">HLS</button>
             <select class="sort-select" id="sort-select">
                 <option value="hot">Hot</option>
@@ -1273,6 +1294,7 @@
                         <div class="mixed-feed-title">Favorites</div>
                         <div class="mixed-feed-subtitle">${favCount} saved post${favCount !== 1 ? 's' : ''}</div>
                     </div>
+                    <button class="favorites-shuffle-btn" id="favorites-shuffle-btn" title="Shuffle">🔀</button>
                     <span class="mixed-feed-arrow">&rsaquo;</span>
                 </div>
             ` : `
@@ -1346,7 +1368,20 @@
             // Favorites feed button
             const favoritesBtn = document.getElementById('favorites-feed-btn');
             if (favoritesBtn) {
-                favoritesBtn.addEventListener('click', openFavoritesFeed);
+                favoritesBtn.addEventListener('click', (e) => {
+                    // Don't trigger if clicking shuffle button
+                    if (e.target.closest('.favorites-shuffle-btn')) return;
+                    openFavoritesFeed(false);
+                });
+            }
+
+            // Favorites shuffle button
+            const favoritesShuffleBtn = document.getElementById('favorites-shuffle-btn');
+            if (favoritesShuffleBtn) {
+                favoritesShuffleBtn.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    openFavoritesFeed(true);
+                });
             }
 
             // Delete buttons
@@ -1477,20 +1512,44 @@
         }
 
         // Open favorites feed
-        function openFavoritesFeed() {
+        function openFavoritesFeed(shuffled = false) {
             if (getFavoritesCount() === 0) return;
 
             state.sub = null;
             state.isMixed = false;
             state.isFavorites = true;
             state.favCursor = null;
-            setupFeedView('Favorites', '/apps/feed/#favorites', { view: 'feed', favorites: true });
 
-            // Load first page of favorites
-            const { favorites, nextCursor, hasMore } = loadFavorites(null, FAV_PAGE_SIZE);
-            state.posts = favorites;
-            state.favCursor = nextCursor;
-            state.after = hasMore ? 'more' : null; // Use 'after' to signal more available
+            if (shuffled) {
+                // For shuffled mode, load ALL favorites at once and shuffle them
+                const title = 'Favorites (Shuffled)';
+                setupFeedView(title, '/apps/feed/#favorites-shuffle', { view: 'feed', favorites: true, shuffled: true });
+
+                // Load all favorites by iterating through the linked list
+                const allFavorites = [];
+                let cursor = null;
+                let hasMore = true;
+                while (hasMore) {
+                    const result = loadFavorites(cursor, FAV_PAGE_SIZE);
+                    allFavorites.push(...result.favorites);
+                    cursor = result.nextCursor;
+                    hasMore = result.hasMore;
+                }
+
+                // Shuffle using Fisher-Yates
+                state.posts = shuffleArray(allFavorites);
+                state.favCursor = null;
+                state.after = null; // No pagination in shuffle mode
+            } else {
+                setupFeedView('Favorites', '/apps/feed/#favorites', { view: 'feed', favorites: true });
+
+                // Load first page of favorites
+                const { favorites, nextCursor, hasMore } = loadFavorites(null, FAV_PAGE_SIZE);
+                state.posts = favorites;
+                state.favCursor = nextCursor;
+                state.after = hasMore ? 'more' : null; // Use 'after' to signal more available
+            }
+
             renderFeed();
         }
 
@@ -2119,7 +2178,7 @@
                 renderHome();
             } else if (s.view === 'feed') {
                 if (s.favorites) {
-                    openFavoritesFeed();
+                    openFavoritesFeed(s.shuffled || false);
                 } else if (s.mixed) {
                     openMixedFeed();
                 } else if (s.sub) {
