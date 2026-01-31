@@ -66,3 +66,13 @@ python3 -m http.server 8000
 ```
 
 Then open http://localhost:8000
+
+## Feed App
+
+### Version Management
+
+**IMPORTANT:** Increment the version number in `/apps/feed/index.html` once per PR.
+
+The version is displayed in the Home Screen header as `v1`, `v2`, etc.
+
+Location: `<h1>Feed <span class="version">vX</span></h1>`
