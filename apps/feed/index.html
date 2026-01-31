@@ -766,9 +766,7 @@
         }
 
         function saveFavMeta(meta) {
-            try {
-                localStorage.setItem(FAV_META_KEY, JSON.stringify(meta));
-            } catch (e) {}
+            localStorage.setItem(FAV_META_KEY, JSON.stringify(meta));
         }
 
         function getFavoriteById(id) {
@@ -780,15 +778,11 @@
         }
 
         function saveFavoriteNode(fav) {
-            try {
-                localStorage.setItem(FAV_PREFIX + fav.id, JSON.stringify(fav));
-            } catch (e) {}
+            localStorage.setItem(FAV_PREFIX + fav.id, JSON.stringify(fav));
         }
 
         function deleteFavoriteNode(id) {
-            try {
-                localStorage.removeItem(FAV_PREFIX + id);
-            } catch (e) {}
+            localStorage.removeItem(FAV_PREFIX + id);
         }
 
         // O(1) check - just see if key exists
@@ -843,7 +837,7 @@
             };
         }
 
-        // Add favorite - O(1)
+        // Add favorite - O(1), returns false if storage full
         function addFavorite(post) {
             const meta = getFavMeta();
 
@@ -853,10 +847,14 @@
                 const oldHead = getFavoriteById(meta.head);
                 if (oldHead) {
                     oldHead.prev = post.id;
-                    saveFavoriteNode(oldHead);
+                    try {
+                        saveFavoriteNode(oldHead);
+                    } catch (e) {
+                        if (e.name === 'QuotaExceededError') return false;
+                        throw e;
+                    }
                     validNext = meta.head;
                 }
-                // If oldHead is null (corrupted), we start fresh with this as only node
             }
 
             const fav = {
@@ -866,13 +864,43 @@
             };
 
             // Save new favorite
-            saveFavoriteNode(fav);
+            try {
+                saveFavoriteNode(fav);
+            } catch (e) {
+                if (e.name === 'QuotaExceededError') {
+                    // Rollback: restore old head's prev pointer
+                    if (validNext) {
+                        const oldHead = getFavoriteById(validNext);
+                        if (oldHead) {
+                            oldHead.prev = null;
+                            try { saveFavoriteNode(oldHead); } catch (_) {}
+                        }
+                    }
+                    return false;
+                }
+                throw e;
+            }
 
             // Update metadata
             meta.head = fav.id;
             if (!meta.tail || !validNext) meta.tail = fav.id;
             meta.count++;
-            saveFavMeta(meta);
+            try {
+                saveFavMeta(meta);
+            } catch (e) {
+                // Rollback: delete the node we just added
+                deleteFavoriteNode(fav.id);
+                if (validNext) {
+                    const oldHead = getFavoriteById(validNext);
+                    if (oldHead) {
+                        oldHead.prev = null;
+                        try { saveFavoriteNode(oldHead); } catch (_) {}
+                    }
+                }
+                if (e.name === 'QuotaExceededError') return false;
+                throw e;
+            }
+            return true;
         }
 
         // Remove favorite - O(1)
@@ -914,14 +942,17 @@
             saveFavMeta(meta);
         }
 
-        // Toggle favorite - returns true if now favorited
+        // Toggle favorite - returns {hearted: bool, error: string|null}
         function toggleFavorite(post) {
             if (isFavorited(post.id)) {
                 removeFavorite(post.id);
-                return false;
+                return { hearted: false, error: null };
             } else {
-                addFavorite(post);
-                return true;
+                const success = addFavorite(post);
+                if (!success) {
+                    return { hearted: false, error: 'Storage full. Remove some favorites first.' };
+                }
+                return { hearted: true, error: null };
             }
         }
 
@@ -1897,7 +1928,13 @@
                 const post = state.posts[index];
                 if (!post) return;
 
-                const isNowHearted = toggleFavorite(post);
+                const { hearted: isNowHearted, error } = toggleFavorite(post);
+
+                if (error) {
+                    alert(error);
+                    return;
+                }
+
                 const heartEmpty = `<svg viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2"><path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"></path></svg>`;
                 const heartFilled = `<svg viewBox="0 0 24 24" fill="#ff4081" stroke="#ff4081" stroke-width="2"><path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"></path></svg>`;
 
