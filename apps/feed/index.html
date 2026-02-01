@@ -1281,6 +1281,40 @@
 
             imageAutoAdvanceTimer = setTimeout(() => {
                 if (state.autoplay && state.currentIndex === index) {
+                    const post = state.posts[index];
+                    const container = document.getElementById('feed-container');
+                    const feedItem = container.querySelector(`.feed-item[data-index="${index}"]`);
+
+                    // Check if this is a gallery with more images to show
+                    if (post && post.media && post.media.type === 'gallery' && feedItem) {
+                        const img = feedItem.querySelector('.gallery-image');
+                        if (img) {
+                            const currentGalleryIndex = parseInt(img.dataset.galleryIndex) || 0;
+                            const totalImages = post.media.urls.length;
+
+                            if (currentGalleryIndex < totalImages - 1) {
+                                // Advance to next gallery image
+                                const nextIndex = currentGalleryIndex + 1;
+                                img.src = post.media.urls[nextIndex].url;
+                                img.dataset.galleryIndex = nextIndex;
+
+                                // Update indicator and nav buttons
+                                const indicator = feedItem.querySelector('.gallery-indicator');
+                                const prevBtn = feedItem.querySelector('.gallery-nav.prev');
+                                const nextBtn = feedItem.querySelector('.gallery-nav.next');
+
+                                if (indicator) indicator.textContent = `${nextIndex + 1} / ${totalImages}`;
+                                if (prevBtn) prevBtn.style.display = 'flex';
+                                if (nextBtn) nextBtn.style.display = nextIndex === totalImages - 1 ? 'none' : 'flex';
+
+                                // Restart timer for next image
+                                startImageTimer(index);
+                                return;
+                            }
+                        }
+                    }
+
+                    // Not a gallery or on last image - advance to next post
                     skipToNext(index);
                 }
             }, 5000);
