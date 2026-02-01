@@ -711,7 +711,7 @@
 <body>
     <div class="home-view" id="home-view">
         <div class="header">
-            <h1>Feed <span class="version">v9</span></h1>
+            <h1>Feed <span class="version">v10</span></h1>
             <button class="export-btn" id="export-btn">Export</button>
             <select class="sort-select" id="sort-select">
                 <option value="hot">Hot</option>
@@ -779,6 +779,74 @@
 
         // Timer for image auto-advance
         let imageAutoAdvanceTimer = null;
+
+        // Wake Lock to prevent screen sleep on iOS
+        let wakeLock = null;
+        let noSleepVideo = null;
+
+        // Request wake lock using Screen Wake Lock API or NoSleep fallback
+        async function requestWakeLock() {
+            // Try Screen Wake Lock API first (Safari 16.4+, Chrome, etc.)
+            if ('wakeLock' in navigator) {
+                try {
+                    wakeLock = await navigator.wakeLock.request('screen');
+                    wakeLock.addEventListener('release', () => {
+                        wakeLock = null;
+                    });
+                    return true;
+                } catch (err) {
+                    // Wake lock request failed (e.g., low battery, background tab)
+                    console.log('Wake Lock API failed, trying fallback');
+                }
+            }
+
+            // Fallback for older iOS: play a tiny silent video in a loop
+            // This tricks iOS into thinking media is playing and prevents sleep
+            if (!noSleepVideo) {
+                noSleepVideo = document.createElement('video');
+                noSleepVideo.setAttribute('playsinline', '');
+                noSleepVideo.setAttribute('webkit-playsinline', '');
+                noSleepVideo.setAttribute('muted', '');
+                noSleepVideo.muted = true;
+                noSleepVideo.loop = true;
+                noSleepVideo.style.position = 'fixed';
+                noSleepVideo.style.top = '-1px';
+                noSleepVideo.style.left = '-1px';
+                noSleepVideo.style.width = '1px';
+                noSleepVideo.style.height = '1px';
+                noSleepVideo.style.opacity = '0.01';
+                noSleepVideo.style.pointerEvents = 'none';
+                // Tiny 1-second silent video as base64 (WebM format)
+                noSleepVideo.src = 'data:video/webm;base64,GkXfowEAAAAAAAAfQoaBAUL3gQFC8oEEQvOBCEKChHdlYm1Ch4EEQoWBAhhTgGcBAAAAAAAH4xFNm3RALE27i1OrhBVJqWZTrIHfTbuMU6uEFlSua1OsggEuTbuMU6uEHFO7a1OsggHL7AEAAAAAAACkAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAVSalmAQAAAAAAAEUq17GDD0JATYCNTGF2ZjU4Ljc2LjEwMFdBjUxhdmY1OC43Ni4xMDBzpJBlrrXf3DCDVB8KcgbMpcr+RImIQJBgAAAAAAAWVK5rAQAAAAAAD++uAQAAAAAAADLXgQFzxYEBnIEAIrWcg3VuZIaFVl9WUDmDgQEj44teleA7tnhHp1z+Y5F1TcUAAAAAAABhTbWIAAAAAG222rVITQ1HT1JOSElCVIlNT1bBkppw+d4SXJbl33zP1mWAAAAAAAAAWKVuOAEAAAAAAABN54EAo0FCrwEAAAAAAAA0rgEAAAAAAAAo';
+                document.body.appendChild(noSleepVideo);
+            }
+
+            try {
+                await noSleepVideo.play();
+                return true;
+            } catch (err) {
+                console.log('NoSleep video fallback failed');
+                return false;
+            }
+        }
+
+        // Release wake lock
+        function releaseWakeLock() {
+            if (wakeLock) {
+                wakeLock.release();
+                wakeLock = null;
+            }
+            if (noSleepVideo) {
+                noSleepVideo.pause();
+            }
+        }
+
+        // Re-acquire wake lock when page becomes visible again
+        document.addEventListener('visibilitychange', async () => {
+            if (document.visibilityState === 'visible' && state.view === 'feed') {
+                await requestWakeLock();
+            }
+        });
 
         // Windowed rendering settings - controls media loading, not DOM presence
         const WINDOW_BEFORE = 3;  // Items to preload before current
@@ -1592,6 +1660,9 @@
             state.currentIndex = 0;
             cleanupObserver();
 
+            // Request wake lock to prevent iOS from sleeping
+            requestWakeLock();
+
             document.getElementById('home-view').classList.add('hidden');
             document.getElementById('feed-view').classList.add('active');
             document.getElementById('feed-title').textContent = title;
@@ -2144,6 +2215,9 @@
                 v.load();
             });
 
+            // Release wake lock when leaving feed
+            releaseWakeLock();
+
             // Reset autoplay state
             state.autoplay = false;
             clearImageTimer();
@@ -2301,6 +2375,9 @@
                 });
                 cleanupObserver();
                 loadedMediaItems.clear();
+
+                // Release wake lock when leaving feed
+                releaseWakeLock();
 
                 // Re-render home to ensure fresh subreddit list
                 renderHome();
