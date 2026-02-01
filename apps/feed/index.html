@@ -258,7 +258,7 @@
             text-shadow: 0 1px 3px rgba(0,0,0,0.5);
         }
 
-        .refresh-btn {
+        .autoplay-btn {
             background: rgba(255,255,255,0.15);
             border: none;
             color: #fff;
@@ -274,12 +274,8 @@
             -webkit-backdrop-filter: blur(10px);
         }
 
-        .refresh-btn.spinning {
-            animation: spin 1s linear infinite;
-        }
-
-        @keyframes spin {
-            to { transform: rotate(360deg); }
+        .autoplay-btn.playing {
+            background: rgba(255,69,0,0.6);
         }
 
         /* Feed container with scroll-snap */
@@ -715,7 +711,7 @@
 <body>
     <div class="home-view" id="home-view">
         <div class="header">
-            <h1>Feed <span class="version">v8</span></h1>
+            <h1>Feed <span class="version">v9</span></h1>
             <button class="export-btn" id="export-btn">Export</button>
             <select class="sort-select" id="sort-select">
                 <option value="hot">Hot</option>
@@ -742,7 +738,7 @@
         <div class="feed-header">
             <button class="back-btn" id="back-btn">&larr;</button>
             <span class="feed-title" id="feed-title">r/pics</span>
-            <button class="refresh-btn" id="refresh-btn">&#x21bb;</button>
+            <button class="autoplay-btn" id="autoplay-btn">&#9654;</button>
         </div>
         <div class="feed-container" id="feed-container"></div>
     </div>
@@ -777,8 +773,12 @@
             loading: false,
             sort: localStorage.getItem(LS_SORT_KEY) || 'hot',
             timePeriod: localStorage.getItem(LS_TIME_KEY) || 'day',
-            mixedQueue: [] // Shuffled queue of subreddits for mixed feed
+            mixedQueue: [], // Shuffled queue of subreddits for mixed feed
+            autoplay: false // Auto-advance mode
         };
+
+        // Timer for image auto-advance
+        let imageAutoAdvanceTimer = null;
 
         // Windowed rendering settings - controls media loading, not DOM presence
         const WINDOW_BEFORE = 3;  // Items to preload before current
@@ -1263,6 +1263,107 @@
             const nextItem = container.querySelector(`.feed-item[data-index="${currentIndex + 1}"]`);
             if (nextItem) {
                 nextItem.scrollIntoView({ behavior: 'smooth' });
+            }
+        }
+
+        // Clear image auto-advance timer
+        function clearImageTimer() {
+            if (imageAutoAdvanceTimer) {
+                clearTimeout(imageAutoAdvanceTimer);
+                imageAutoAdvanceTimer = null;
+            }
+        }
+
+        // Start image auto-advance timer (5 seconds)
+        function startImageTimer(index) {
+            clearImageTimer();
+            if (!state.autoplay) return;
+
+            imageAutoAdvanceTimer = setTimeout(() => {
+                if (state.autoplay && state.currentIndex === index) {
+                    const post = state.posts[index];
+                    const container = document.getElementById('feed-container');
+                    const feedItem = container.querySelector(`.feed-item[data-index="${index}"]`);
+
+                    // Check if this is a gallery with more images to show
+                    if (post && post.media && post.media.type === 'gallery' && feedItem) {
+                        const img = feedItem.querySelector('.gallery-image');
+                        if (img) {
+                            const currentGalleryIndex = parseInt(img.dataset.galleryIndex) || 0;
+                            const totalImages = post.media.urls.length;
+
+                            if (currentGalleryIndex < totalImages - 1) {
+                                // Advance to next gallery image
+                                const nextIndex = currentGalleryIndex + 1;
+                                img.src = post.media.urls[nextIndex].url;
+                                img.dataset.galleryIndex = nextIndex;
+
+                                // Update indicator and nav buttons
+                                const indicator = feedItem.querySelector('.gallery-indicator');
+                                const prevBtn = feedItem.querySelector('.gallery-nav.prev');
+                                const nextBtn = feedItem.querySelector('.gallery-nav.next');
+
+                                if (indicator) indicator.textContent = `${nextIndex + 1} / ${totalImages}`;
+                                if (prevBtn) prevBtn.style.display = 'flex';
+                                if (nextBtn) nextBtn.style.display = nextIndex === totalImages - 1 ? 'none' : 'flex';
+
+                                // Restart timer for next image
+                                startImageTimer(index);
+                                return;
+                            }
+                        }
+                    }
+
+                    // Not a gallery or on last image - advance to next post
+                    skipToNext(index);
+                }
+            }, 5000);
+        }
+
+        // Toggle autoplay mode
+        function toggleAutoplay() {
+            state.autoplay = !state.autoplay;
+            const btn = document.getElementById('autoplay-btn');
+
+            if (state.autoplay) {
+                btn.innerHTML = '&#10074;&#10074;'; // Pause icon
+                btn.classList.add('playing');
+                // Start autoplay for current item
+                startAutoplayForCurrentItem();
+            } else {
+                btn.innerHTML = '&#9654;'; // Play icon
+                btn.classList.remove('playing');
+                clearImageTimer();
+                // Re-enable looping for current video
+                const container = document.getElementById('feed-container');
+                const currentItem = container.querySelector(`.feed-item[data-index="${state.currentIndex}"]`);
+                if (currentItem) {
+                    const video = currentItem.querySelector('video');
+                    if (video) {
+                        video.loop = true;
+                    }
+                }
+            }
+        }
+
+        // Start autoplay behavior for current item
+        function startAutoplayForCurrentItem() {
+            if (!state.autoplay) return;
+
+            const container = document.getElementById('feed-container');
+            const currentItem = container.querySelector(`.feed-item[data-index="${state.currentIndex}"]`);
+            if (!currentItem) return;
+
+            const post = state.posts[state.currentIndex];
+            if (!post) return;
+
+            const video = currentItem.querySelector('video');
+            if (video) {
+                // Video: disable loop, advance when ended
+                video.loop = false;
+            } else if (post.media && (post.media.type === 'image' || post.media.type === 'gallery')) {
+                // Image/gallery: start 5 second timer
+                startImageTimer(state.currentIndex);
             }
         }
 
@@ -1882,6 +1983,13 @@
                     handleMediaError(feedItem, index);
                 };
 
+                // Auto-advance when video ends (in autoplay mode)
+                video.addEventListener('ended', () => {
+                    if (state.autoplay && state.currentIndex === index) {
+                        skipToNext(index);
+                    }
+                });
+
                 // Show/hide play button based on video state
                 const playOverlay = feedItem.querySelector('.video-play-overlay');
                 if (playOverlay) {
@@ -1917,12 +2025,18 @@
                     if (entry.isIntersecting && entry.intersectionRatio > 0.5) {
                         state.currentIndex = index;
 
+                        // Clear any pending image timer from previous item
+                        clearImageTimer();
+
                         // Update media loading window
                         updateMediaWindow(index);
 
                         // Play video if visible
                         const video = item.querySelector('video');
                         if (video) {
+                            // Set loop based on autoplay state
+                            video.loop = !state.autoplay;
+
                             // If user has enabled audio, try to unmute
                             if (audioEnabled) {
                                 video.muted = false;
@@ -1940,6 +2054,12 @@
                                         }, { once: true });
                                     }
                                 });
+                            }
+                        } else if (state.autoplay) {
+                            // For images/galleries in autoplay mode, start timer
+                            const post = state.posts[index];
+                            if (post && post.media && (post.media.type === 'image' || post.media.type === 'gallery')) {
+                                startImageTimer(index);
                             }
                         }
 
@@ -2024,6 +2144,15 @@
                 v.load();
             });
 
+            // Reset autoplay state
+            state.autoplay = false;
+            clearImageTimer();
+            const autoplayBtn = document.getElementById('autoplay-btn');
+            if (autoplayBtn) {
+                autoplayBtn.innerHTML = '&#9654;';
+                autoplayBtn.classList.remove('playing');
+            }
+
             cleanupObserver();
             loadedMediaItems.clear();
             renderHome();
@@ -2047,42 +2176,7 @@
             localStorage.setItem(LS_TIME_KEY, state.timePeriod);
         });
 
-        document.getElementById('refresh-btn').addEventListener('click', async function() {
-            if (state.loading) return;
-            this.classList.add('spinning');
-            state.posts = [];
-            state.after = null;
-            state.currentIndex = 0;
-            cleanupObserver();
-            loadedMediaItems.clear();
-
-            try {
-                if (state.isFavorites) {
-                    // Reload from storage
-                    if (getFavoritesCount() === 0) {
-                        goHome();
-                        return;
-                    }
-                    const { favorites, nextCursor, hasMore } = loadFavorites(null, FAV_PAGE_SIZE);
-                    state.posts = favorites;
-                    state.favCursor = nextCursor;
-                    state.after = hasMore ? 'more' : null;
-                } else {
-                    const loadFn = state.isMixed ? loadMixedPosts : loadPosts;
-                    await loadFn();
-                }
-                renderFeed();
-                document.getElementById('feed-container').scrollTop = 0;
-            } catch (err) {
-                const msg = err.status === 429
-                    ? 'Rate limited by Reddit. Wait a minute and try again.'
-                    : 'Failed to refresh';
-                const retryFn = state.isMixed ? openMixedFeed : () => openFeed(state.sub);
-                showFeedError(msg, retryFn);
-            } finally {
-                this.classList.remove('spinning');
-            }
-        });
+        document.getElementById('autoplay-btn').addEventListener('click', toggleAutoplay);
 
         // Event delegation for feed container (handles gallery nav, skip buttons, video tap, heart)
         document.getElementById('feed-container').addEventListener('click', (e) => {
