@@ -587,6 +587,8 @@
             justify-content: center;
             gap: 12px;
             color: #666;
+            width: 100%;
+            height: 100%;
         }
 
         .media-error-icon {
@@ -1440,9 +1442,9 @@
 
         // Handle media error - show error state with skip button
         function handleMediaError(feedItem, index) {
-            const mediaEl = feedItem.querySelector('.feed-item-media');
-            if (mediaEl) {
-                mediaEl.style.display = 'none';
+            const mediaContainer = feedItem.querySelector('.media-container');
+            if (mediaContainer) {
+                mediaContainer.style.display = 'none';
             }
 
             // Check if error state already exists
