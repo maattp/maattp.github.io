@@ -885,12 +885,19 @@
     }
 
     function logout() {
+        // Remove only split-related keys (don't nuke other apps' data)
+        localStorage.removeItem(SK.AUTH);
+        localStorage.removeItem(SK.QUEUE);
+        const oldSplits = state.splits;
+        localStorage.removeItem(SK.SPLITS);
+        for (const s of oldSplits) {
+            localStorage.removeItem(SK.EXPENSES(s.id));
+        }
         state.auth = null;
         state.splits = [];
         state.expenses = {};
         state.syncQueue = [];
         state.currentSplitId = null;
-        localStorage.clear();
         showView('login');
     }
 
@@ -1336,20 +1343,23 @@
     }
 
     // ===== Swipe to Delete =====
+    let swipeAbort = null;
+
     function setupSwipeToDelete(container) {
+        if (swipeAbort) swipeAbort.abort();
+        swipeAbort = new AbortController();
+        const sig = { signal: swipeAbort.signal };
+
         let startX, currentItem, swiped;
 
         container.addEventListener('touchstart', e => {
             const item = e.target.closest('.expense-item');
             if (!item || e.target.closest('.expense-delete-zone')) return;
-
-            // Close any previously swiped
             document.querySelectorAll('.expense-item.swiped').forEach(el => el.classList.remove('swiped'));
-
             startX = e.touches[0].clientX;
             currentItem = item;
             swiped = false;
-        }, { passive: true });
+        }, { ...sig, passive: true });
 
         container.addEventListener('touchmove', e => {
             if (!currentItem) return;
@@ -1361,11 +1371,11 @@
                 currentItem.classList.remove('swiped');
                 swiped = false;
             }
-        }, { passive: true });
+        }, { ...sig, passive: true });
 
         container.addEventListener('touchend', () => {
             currentItem = null;
-        }, { passive: true });
+        }, { ...sig, passive: true });
 
         container.addEventListener('click', e => {
             const deleteZone = e.target.closest('.expense-delete-zone');
@@ -1375,7 +1385,7 @@
             if (confirm('Delete this expense?')) {
                 deleteExpense(state.currentSplitId, clientId);
             }
-        });
+        }, sig);
     }
 
     // ===== Modals =====

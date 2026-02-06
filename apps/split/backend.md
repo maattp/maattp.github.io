@@ -183,10 +183,11 @@ JOIN users u1 ON s.user1_id = u1.id
 JOIN users u2 ON s.user2_id = u2.id
 WHERE s.user1_id = ?1 OR s.user2_id = ?1;
 
--- Then for each split, calculate balance:
+-- For each split, calculate balance (must filter soft deletes):
 SELECT paid_by_user_id, amount_cents, payer_percent
 FROM expenses
-WHERE split_id = ?1 AND deleted_at IS NULL;
+WHERE split_id = ?1
+  AND deleted_at IS NULL;
 ```
 
 ### POST /api/splits
