@@ -54,8 +54,13 @@ Set up Google Sign-In so users can authenticate:
 
 ## Worker Project Structure
 
+The backend lives in its own repo (separate from the frontend GitHub Pages site). The repo has this structure:
+
 ```
-split-worker/
+split-worker/               ← standalone repo
+├── .github/
+│   └── workflows/
+│       └── deploy.yml       ← auto-deploy on merge to main
 ├── wrangler.toml
 ├── migrations/
 │   └── 0001_init.sql
@@ -67,7 +72,8 @@ Initialize the project:
 
 ```bash
 mkdir split-worker && cd split-worker
-mkdir -p src migrations
+git init
+mkdir -p src migrations .github/workflows
 ```
 
 ## D1 Schema
@@ -687,7 +693,9 @@ if (expenseMatch && request.method === 'DELETE') {
 
 ## Deployment
 
-Run these commands from the `split-worker/` directory:
+### First-Time Setup
+
+Run these commands from the `split-worker/` repo root:
 
 ```bash
 # 1. Create the D1 database
@@ -703,12 +711,74 @@ openssl rand -base64 48
 wrangler secret put JWT_SECRET
 # Paste the generated secret when prompted
 
-# 4. Deploy the Worker
+# 4. Deploy the Worker (first time only — CI handles subsequent deploys)
 wrangler deploy
 # Output: https://split-api.<your-subdomain>.workers.dev
 ```
 
 After `wrangler deploy`, you'll see the Worker URL. It will be `https://split-api.<your-subdomain>.workers.dev`. This is your `API_URL`.
+
+### CI/CD — Auto-Deploy on Merge
+
+The backend repo includes a GitHub Actions workflow (`.github/workflows/deploy.yml`) that auto-deploys the Worker whenever code is pushed to `main`. Merging a PR triggers a deploy automatically.
+
+Create `.github/workflows/deploy.yml` in the backend repo:
+
+```yaml
+name: Deploy Split Worker
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    name: Deploy to Cloudflare Workers
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Deploy Worker
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+```
+
+**GitHub Secrets to configure** (in the backend repo → Settings → Secrets and variables → Actions):
+
+| Secret | How to get it |
+|--------|---------------|
+| `CLOUDFLARE_API_TOKEN` | Cloudflare dashboard → My Profile → API Tokens → Create Token → Use the **"Edit Cloudflare Workers"** template → (optionally scope to your account/zone) → Create Token. Copy the token value. |
+
+The `wrangler-action` also needs your Cloudflare Account ID. **Recommended**: Add `account_id` to `wrangler.toml` so the workflow doesn't need it as a separate secret:
+
+```toml
+name = "split-api"
+main = "src/index.js"
+compatibility_date = "2024-01-01"
+account_id = "YOUR_ACCOUNT_ID_HERE"
+
+[vars]
+GOOGLE_CLIENT_ID = "YOUR_GOOGLE_CLIENT_ID_HERE.apps.googleusercontent.com"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "split-db"
+database_id = "<filled-in-after-d1-create>"
+```
+
+To find your Account ID: Cloudflare dashboard → pick any domain (or Workers & Pages) → the Account ID is shown in the right sidebar. This is not a secret — it's safe to commit.
+
+**What the workflow does:**
+1. Triggers on any push to `main`
+2. Checks out the repo
+3. Runs `wrangler deploy` using `cloudflare/wrangler-action@v3`
+
+**D1 migrations** are NOT auto-run by this workflow. If you add a new migration file, run it manually before/after deploy:
+```bash
+wrangler d1 execute split-db --remote --file=migrations/0002_whatever.sql
+```
 
 ## Connecting the Frontend
 
