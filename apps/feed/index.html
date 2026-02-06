@@ -713,7 +713,7 @@
 <body>
     <div class="home-view" id="home-view">
         <div class="header">
-            <h1>Feed <span class="version">v11</span></h1>
+            <h1>Feed <span class="version">v12</span></h1>
             <button class="export-btn" id="export-btn">Export</button>
             <select class="sort-select" id="sort-select">
                 <option value="hot">Hot</option>
@@ -775,7 +775,8 @@
             loading: false,
             sort: localStorage.getItem(LS_SORT_KEY) || 'hot',
             timePeriod: localStorage.getItem(LS_TIME_KEY) || 'day',
-            mixedQueue: [], // Shuffled queue of subreddits for mixed feed
+            mixedPools: {}, // Per-subreddit post pools: { [sub]: { posts, after, exhausted, fetched } }
+            mixedSeen: new Set(), // Post IDs already added to feed (dedup)
             autoplay: false // Auto-advance mode
         };
 
@@ -879,17 +880,136 @@
             return shuffled;
         }
 
-        // Get next subreddit from shuffled queue, reshuffling when empty
-        function getNextMixedSubreddit() {
+        // Initialize empty pools for all subreddits
+        function initMixedPools() {
             const subs = getSubs();
-            if (subs.length === 0) return null;
+            state.mixedPools = {};
+            state.mixedSeen = new Set();
+            for (const sub of subs) {
+                state.mixedPools[sub] = { posts: [], after: null, exhausted: false, fetched: false };
+            }
+        }
 
-            // Refill and shuffle queue if empty
-            if (state.mixedQueue.length === 0) {
-                state.mixedQueue = shuffleArray(subs);
+        // Fetch initial pools - up to 5 subreddits in parallel
+        async function fetchInitialMixedPools() {
+            const subs = Object.keys(state.mixedPools);
+            const toFetch = subs.length <= 5 ? [...subs] : shuffleArray(subs).slice(0, 5);
+
+            const results = await Promise.allSettled(
+                toFetch.map(sub => fetchSubredditPosts(sub, 25))
+            );
+
+            let anySucceeded = false;
+            let rateLimited = false;
+            for (let i = 0; i < toFetch.length; i++) {
+                const sub = toFetch[i];
+                const pool = state.mixedPools[sub];
+                if (results[i].status === 'fulfilled') {
+                    const { posts, after } = results[i].value;
+                    pool.posts = posts;
+                    pool.after = after;
+                    pool.exhausted = !after;
+                    pool.fetched = true;
+                    if (posts.length > 0) anySucceeded = true;
+                } else {
+                    pool.fetched = true;
+                    pool.exhausted = true;
+                    if (results[i].reason?.status === 429) rateLimited = true;
+                }
             }
 
-            return state.mixedQueue.shift();
+            if (!anySucceeded) {
+                if (rateLimited) {
+                    const err = new Error('Rate limited');
+                    err.status = 429;
+                    throw err;
+                }
+                throw new Error('Failed to load posts from any subreddit');
+            }
+        }
+
+        // Interleave posts from pools into state.posts using weighted random selection
+        function interleaveFromPools(count = 30) {
+            let added = 0;
+            let emptyRounds = 0;
+
+            while (added < count && emptyRounds < 3) {
+                // Get pools that have posts
+                const available = Object.entries(state.mixedPools)
+                    .filter(([_, pool]) => pool.posts.length > 0);
+
+                if (available.length === 0) break;
+
+                // Weighted random: probability proportional to pool size
+                const totalPosts = available.reduce((sum, [_, p]) => sum + p.posts.length, 0);
+                let rand = Math.random() * totalPosts;
+                let selectedSub = available[0][0];
+                for (const [sub, pool] of available) {
+                    rand -= pool.posts.length;
+                    if (rand <= 0) { selectedSub = sub; break; }
+                }
+
+                const post = state.mixedPools[selectedSub].posts.shift();
+                if (!state.mixedSeen.has(post.id)) {
+                    state.mixedSeen.add(post.id);
+                    state.posts.push(post);
+                    added++;
+                    emptyRounds = 0;
+                } else {
+                    emptyRounds++;
+                }
+            }
+
+            return added;
+        }
+
+        // Check if the mixed feed can still produce more content
+        function mixedHasMore() {
+            for (const pool of Object.values(state.mixedPools)) {
+                if (pool.posts.length > 0) return true;
+                if (!pool.fetched) return true;
+                if (!pool.exhausted) return true;
+            }
+            return false;
+        }
+
+        // Refill a single pool: prioritize unfetched subs, then most-depleted with cursor
+        async function refillMixedPool() {
+            // Priority 1: unfetched subreddits
+            const unfetched = Object.entries(state.mixedPools)
+                .filter(([_, pool]) => !pool.fetched);
+            if (unfetched.length > 0) {
+                const [sub, pool] = unfetched[Math.floor(Math.random() * unfetched.length)];
+                try {
+                    const { posts, after } = await fetchSubredditPosts(sub, 25);
+                    pool.posts = posts;
+                    pool.after = after;
+                    pool.exhausted = !after;
+                    pool.fetched = true;
+                } catch (err) {
+                    pool.fetched = true;
+                    pool.exhausted = true;
+                    if (err.status === 429) throw err;
+                }
+                return;
+            }
+
+            // Priority 2: most-depleted pool that has a cursor
+            const refillable = Object.entries(state.mixedPools)
+                .filter(([_, pool]) => pool.fetched && !pool.exhausted && pool.after)
+                .sort((a, b) => a[1].posts.length - b[1].posts.length);
+            if (refillable.length > 0) {
+                const [sub, pool] = refillable[0];
+                try {
+                    const { posts, after } = await fetchSubredditPosts(sub, 25, pool.after);
+                    pool.posts = pool.posts.concat(posts);
+                    pool.after = after;
+                    pool.exhausted = !after;
+                } catch (err) {
+                    pool.exhausted = true;
+                    if (err.status === 429) throw err;
+                }
+            }
         }
 
         function getSubs() {
@@ -1709,11 +1829,13 @@
             state.sub = null;
             state.isMixed = true;
             state.isFavorites = false;
-            state.mixedQueue = []; // Reset queue for fresh shuffle
             setupFeedView('Mixed Feed', '/apps/feed/#mixed', { view: 'feed', mixed: true });
 
             try {
-                await loadMixedPosts();
+                initMixedPools();
+                await fetchInitialMixedPools();
+                interleaveFromPools(30);
+                state.after = mixedHasMore() ? 'mixed' : null;
                 renderFeed();
             } catch (err) {
                 const msg = err.status === 429
@@ -1816,39 +1938,26 @@
             return { posts, after: data.data.after || null };
         }
 
-        // Load posts for mixed feed from shuffled subreddit queue
+        // Load more posts for mixed feed from pools, refilling as needed
         async function loadMixedPosts() {
             if (state.loading) return;
             state.loading = true;
 
             try {
-                const subs = getSubs();
-                let attempts = 0;
-                const maxAttempts = Math.min(subs.length, 3);
+                // Check if pools need refilling before interleaving
+                const totalInPools = Object.values(state.mixedPools)
+                    .reduce((sum, pool) => sum + pool.posts.length, 0);
 
-                while (attempts < maxAttempts) {
-                    const nextSub = getNextMixedSubreddit();
-                    if (!nextSub) break;
-
+                if (totalInPools < 15) {
                     try {
-                        const { posts } = await fetchSubredditPosts(nextSub, 15);
-                        state.posts = state.posts.concat(posts);
-                        state.after = subs.length > 0 ? 'mixed' : null;
-                        return; // Success - stop trying
-                    } catch (err) {
-                        attempts++;
-                        // If rate limited, don't try more subs
-                        if (err.status === 429) throw err;
-                        // Otherwise try next subreddit in queue
+                        await refillMixedPool();
+                    } catch (e) {
+                        // Best-effort: still interleave whatever's in the pools
                     }
                 }
 
-                // All attempts failed
-                if (state.posts.length === 0) {
-                    throw new Error('Failed to load posts from any subreddit');
-                }
-                // We have some posts from before, just signal no more
-                state.after = subs.length > 0 ? 'mixed' : null;
+                interleaveFromPools(30);
+                state.after = mixedHasMore() ? 'mixed' : null;
             } finally {
                 state.loading = false;
             }
@@ -2256,6 +2365,10 @@
                 autoplayBtn.innerHTML = '&#9654;';
                 autoplayBtn.classList.remove('playing');
             }
+
+            // Clear mixed feed pools
+            state.mixedPools = {};
+            state.mixedSeen = new Set();
 
             cleanupObserver();
             loadedMediaItems.clear();
