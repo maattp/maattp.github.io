@@ -711,7 +711,7 @@
 <body>
     <div class="home-view" id="home-view">
         <div class="header">
-            <h1>Feed <span class="version">v10</span></h1>
+            <h1>Feed <span class="version">v11</span></h1>
             <button class="export-btn" id="export-btn">Export</button>
             <select class="sort-select" id="sort-select">
                 <option value="hot">Hot</option>
@@ -861,8 +861,11 @@
         // Track if user has enabled audio (persists during session)
         let audioEnabled = false;
 
-        // HLS mode always enabled
-        let useHls = true;
+        // HLS mode - only enable on browsers with native HLS support (Safari/iOS)
+        const useHls = (function() {
+            const video = document.createElement('video');
+            return video.canPlayType('application/vnd.apple.mpegurl') !== '';
+        })();
 
         // Fisher-Yates shuffle - ensures even distribution
         function shuffleArray(array) {
@@ -1163,7 +1166,7 @@
                         throw err;
                     }
                     if (!res.ok) throw new Error(res.status);
-                    return res.json();
+                    return await res.json();
                 } catch (err) {
                     lastError = err;
                     if (err.status === 429) break; // Don't retry rate limits
@@ -1658,6 +1661,7 @@
             state.posts = [];
             state.after = null;
             state.currentIndex = 0;
+            state.loading = false;
             cleanupObserver();
 
             // Request wake lock to prevent iOS from sleeping
@@ -1794,16 +1798,20 @@
             if (after) path += `&after=${after}`;
 
             const data = await redditFetch(path);
+            if (!data || !data.data || !Array.isArray(data.data.children)) {
+                return { posts: [], after: null };
+            }
             const posts = data.data.children
                 .map(c => c.data)
+                .filter(post => post) // Skip malformed entries
                 .map(post => {
                     post.media = extractMedia(post);
-                    post.subreddit_display = post.subreddit; // Keep track of source
+                    post.subreddit_display = post.subreddit;
                     return post;
                 })
                 .filter(post => post.media !== null);
 
-            return { posts, after: data.data.after };
+            return { posts, after: data.data.after || null };
         }
 
         // Load posts for mixed feed from shuffled subreddit queue
@@ -1812,13 +1820,33 @@
             state.loading = true;
 
             try {
-                const nextSub = getNextMixedSubreddit();
-                if (!nextSub) return;
+                const subs = getSubs();
+                let attempts = 0;
+                const maxAttempts = Math.min(subs.length, 3);
 
-                const { posts, after } = await fetchSubredditPosts(nextSub, 15);
-                state.posts = state.posts.concat(posts);
-                // Always allow loading more (from another sub in queue)
-                state.after = getSubs().length > 0 ? 'mixed' : null;
+                while (attempts < maxAttempts) {
+                    const nextSub = getNextMixedSubreddit();
+                    if (!nextSub) break;
+
+                    try {
+                        const { posts } = await fetchSubredditPosts(nextSub, 15);
+                        state.posts = state.posts.concat(posts);
+                        state.after = subs.length > 0 ? 'mixed' : null;
+                        return; // Success - stop trying
+                    } catch (err) {
+                        attempts++;
+                        // If rate limited, don't try more subs
+                        if (err.status === 429) throw err;
+                        // Otherwise try next subreddit in queue
+                    }
+                }
+
+                // All attempts failed
+                if (state.posts.length === 0) {
+                    throw new Error('Failed to load posts from any subreddit');
+                }
+                // We have some posts from before, just signal no more
+                state.after = subs.length > 0 ? 'mixed' : null;
             } finally {
                 state.loading = false;
             }
