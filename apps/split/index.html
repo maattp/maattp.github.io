@@ -122,6 +122,48 @@
         #google-signin-btn {
             min-height: 44px;
         }
+        .btn-mock-signin {
+            padding: 12px 32px;
+            background: #fff;
+            color: #333;
+            border: none;
+            border-radius: 24px;
+            font-size: 15px;
+            font-weight: 600;
+            font-family: inherit;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        .btn-mock-signin:active { opacity: 0.8; }
+        .btn-mock-signin::before {
+            content: 'G';
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            width: 22px;
+            height: 22px;
+            border-radius: 50%;
+            background: #4285f4;
+            color: #fff;
+            font-size: 13px;
+            font-weight: 700;
+        }
+        .mock-badge {
+            position: fixed;
+            top: calc(env(safe-area-inset-top) + 4px);
+            left: 50%;
+            transform: translateX(-50%);
+            background: #f0a500;
+            color: #000;
+            font-size: 10px;
+            font-weight: 700;
+            padding: 2px 8px;
+            border-radius: 8px;
+            z-index: 200;
+            letter-spacing: 0.5px;
+        }
 
         /* ===== Scrollable Content ===== */
         .content {
@@ -643,6 +685,7 @@
     <script>
     // ===== Configuration =====
     const CONFIG = {
+        MOCK_MODE: true, // Set to false when backend is ready
         GOOGLE_CLIENT_ID: 'REPLACE_WITH_YOUR_GOOGLE_CLIENT_ID',
         API_URL: 'REPLACE_WITH_YOUR_WORKER_URL',
         SYNC_INTERVAL: 30000,
@@ -735,8 +778,78 @@
         }
     }
 
+    // ===== Mock Backend =====
+    let mockNextId = 100;
+
+    async function mockApi(method, path, body) {
+        await new Promise(r => setTimeout(r, 150));
+
+        if (path === '/api/auth/google') {
+            return {
+                token: 'mock-jwt-token',
+                user: { id: 1, email: 'you@gmail.com', name: 'You', picture: null }
+            };
+        }
+        if (path === '/api/splits' && method === 'GET') {
+            return { splits: state.splits };
+        }
+        if (path === '/api/splits' && method === 'POST') {
+            const id = mockNextId++;
+            const name = body.partner_email.split('@')[0];
+            const partner = { id: id + 1000, email: body.partner_email, name: name.charAt(0).toUpperCase() + name.slice(1), picture: null };
+            return { split: { id, partner } };
+        }
+        if (path.match(/\/api\/splits\/\d+$/) && method === 'GET') {
+            const splitId = parseInt(path.split('/').pop());
+            return {
+                split: state.splits.find(s => s.id === splitId),
+                expenses: (state.expenses[splitId] || []).map(e => ({ ...e, synced: true })),
+                balance_cents: calculateLocalBalance(splitId),
+            };
+        }
+        if (path.match(/\/api\/splits\/\d+\/sync/) && method === 'POST') {
+            const results = (body.operations || []).map(op => ({
+                client_id: op.action === 'add' ? op.expense.client_id : op.client_id,
+                status: op.action === 'add' ? 'created' : 'deleted',
+            }));
+            const splitId = parseInt(path.split('/')[3]);
+            return { results, balance_cents: calculateLocalBalance(splitId) };
+        }
+        return {};
+    }
+
+    function seedMockData() {
+        const myId = 1;
+        const partnerId = 2;
+        const splitId = 1;
+        state.splits = [
+            {
+                id: splitId,
+                partner: { id: partnerId, email: 'sarah@gmail.com', name: 'Sarah', picture: null },
+                balance_cents: 0,
+            },
+        ];
+        const now = new Date();
+        const day = (d) => { const dt = new Date(now); dt.setDate(dt.getDate() - d); return dt.toISOString(); };
+        state.expenses[splitId] = [
+            { client_id: uuid(), description: 'Groceries', amount_cents: 8743, paid_by_user_id: myId, payer_percent: 50, created_at: day(0), synced: true },
+            { client_id: uuid(), description: 'Thai takeout', amount_cents: 4200, paid_by_user_id: partnerId, payer_percent: 50, created_at: day(1), synced: true },
+            { client_id: uuid(), description: 'Electric bill', amount_cents: 11500, paid_by_user_id: myId, payer_percent: 50, created_at: day(3), synced: true },
+            { client_id: uuid(), description: 'Coffee beans', amount_cents: 1895, paid_by_user_id: partnerId, payer_percent: 50, created_at: day(5), synced: true },
+            { client_id: uuid(), description: 'New lamp', amount_cents: 4999, paid_by_user_id: myId, payer_percent: 0, created_at: day(8), synced: true },
+            { client_id: uuid(), description: 'Dinner w/ friends', amount_cents: 12400, paid_by_user_id: partnerId, payer_percent: 30, created_at: day(12), synced: true },
+            { client_id: uuid(), description: 'Streaming subscription', amount_cents: 1599, paid_by_user_id: myId, payer_percent: 50, created_at: day(35), synced: true },
+            { client_id: uuid(), description: 'Groceries', amount_cents: 6320, paid_by_user_id: partnerId, payer_percent: 50, created_at: day(37), synced: true },
+        ];
+        // Calculate balance from seed data
+        state.splits[0].balance_cents = calculateLocalBalance(splitId);
+        save();
+    }
+
     // ===== API =====
     async function api(method, path, body) {
+        if (CONFIG.MOCK_MODE) return mockApi(method, path, body);
+
         const headers = { 'Content-Type': 'application/json' };
         if (state.auth?.token) headers['Authorization'] = `Bearer ${state.auth.token}`;
         const opts = { method, headers };
@@ -762,12 +875,12 @@
         try {
             const data = await api('POST', '/api/auth/google', { id_token: idToken });
             state.auth = { token: data.token, user: data.user };
+            if (CONFIG.MOCK_MODE && state.splits.length === 0) seedMockData();
             save();
             showView('splits');
             refreshSplits();
         } catch (e) {
             console.error('Auth failed:', e);
-            // If backend is down, still save the Google user info for offline display
         }
     }
 
@@ -1399,6 +1512,13 @@
     window.onload = function() {
         load();
 
+        if (CONFIG.MOCK_MODE) {
+            const badge = document.createElement('div');
+            badge.className = 'mock-badge';
+            badge.textContent = 'DEMO MODE';
+            document.body.appendChild(badge);
+        }
+
         if (state.auth?.token) {
             showView('splits');
             updateSyncStatus();
@@ -1408,19 +1528,25 @@
             showView('login');
         }
 
-        // Init Google Sign-In
-        if (typeof google !== 'undefined' && google.accounts) {
-            initGoogleSignIn();
+        if (CONFIG.MOCK_MODE) {
+            const btn = document.getElementById('google-signin-btn');
+            btn.innerHTML = '<button class="btn-mock-signin">Sign in with Google</button>';
+            btn.querySelector('button').addEventListener('click', () => {
+                onGoogleSignIn({ credential: 'mock-token' });
+            });
         } else {
-            // GIS script may still be loading
-            const checkGsi = setInterval(() => {
-                if (typeof google !== 'undefined' && google.accounts) {
-                    clearInterval(checkGsi);
-                    initGoogleSignIn();
-                }
-            }, 200);
-            // Stop checking after 10s
-            setTimeout(() => clearInterval(checkGsi), 10000);
+            // Init Google Sign-In
+            if (typeof google !== 'undefined' && google.accounts) {
+                initGoogleSignIn();
+            } else {
+                const checkGsi = setInterval(() => {
+                    if (typeof google !== 'undefined' && google.accounts) {
+                        clearInterval(checkGsi);
+                        initGoogleSignIn();
+                    }
+                }, 200);
+                setTimeout(() => clearInterval(checkGsi), 10000);
+            }
         }
 
         // Periodic sync
