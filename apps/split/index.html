@@ -1,0 +1,1559 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="theme-color" content="#0a0a0a">
+    <title>Split</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        html, body {
+            height: 100%;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: #0a0a0a;
+            color: #f0f0f0;
+            -webkit-tap-highlight-color: transparent;
+            -webkit-overflow-scrolling: touch;
+            overflow: hidden;
+        }
+
+        /* ===== Views ===== */
+        .view {
+            display: none;
+            flex-direction: column;
+            height: 100%;
+            padding-top: env(safe-area-inset-top);
+            padding-bottom: env(safe-area-inset-bottom);
+            padding-left: env(safe-area-inset-left);
+            padding-right: env(safe-area-inset-right);
+        }
+        .view.active { display: flex; }
+
+        /* ===== Header ===== */
+        .header {
+            display: flex;
+            align-items: center;
+            padding: 12px 16px;
+            min-height: 52px;
+            flex-shrink: 0;
+        }
+        .header h1 {
+            font-size: 20px;
+            font-weight: 700;
+            flex: 1;
+        }
+        .header-actions {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+        .btn-back {
+            background: none;
+            border: none;
+            color: #4ecca3;
+            font-size: 16px;
+            padding: 4px 8px 4px 0;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            gap: 4px;
+        }
+
+        /* ===== Sync Status ===== */
+        .sync-status {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            font-size: 11px;
+            color: #888;
+            padding: 4px 8px;
+            border-radius: 12px;
+            background: rgba(255,255,255,0.05);
+        }
+        .sync-dot {
+            width: 6px;
+            height: 6px;
+            border-radius: 50%;
+            background: #4ecca3;
+        }
+        .sync-dot.pending {
+            background: #f0a500;
+            animation: pulse 1.5s infinite;
+        }
+        .sync-dot.offline { background: #666; }
+        .sync-dot.error { background: #e17055; }
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.4; }
+        }
+
+        /* ===== Login View ===== */
+        #view-login {
+            justify-content: center;
+            align-items: center;
+            gap: 20px;
+            padding: 40px;
+        }
+        .login-title {
+            font-size: 48px;
+            font-weight: 200;
+            letter-spacing: -1px;
+            color: #4ecca3;
+        }
+        .login-subtitle {
+            font-size: 15px;
+            color: #888;
+            text-align: center;
+            margin-bottom: 20px;
+        }
+        #google-signin-btn {
+            min-height: 44px;
+        }
+        .btn-mock-signin {
+            padding: 12px 32px;
+            background: #fff;
+            color: #333;
+            border: none;
+            border-radius: 24px;
+            font-size: 15px;
+            font-weight: 600;
+            font-family: inherit;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        .btn-mock-signin:active { opacity: 0.8; }
+        .btn-mock-signin::before {
+            content: 'G';
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            width: 22px;
+            height: 22px;
+            border-radius: 50%;
+            background: #4285f4;
+            color: #fff;
+            font-size: 13px;
+            font-weight: 700;
+        }
+        .mock-badge {
+            position: fixed;
+            top: calc(env(safe-area-inset-top) + 4px);
+            left: 50%;
+            transform: translateX(-50%);
+            background: #f0a500;
+            color: #000;
+            font-size: 10px;
+            font-weight: 700;
+            padding: 2px 8px;
+            border-radius: 8px;
+            z-index: 200;
+            letter-spacing: 0.5px;
+        }
+
+        /* ===== Scrollable Content ===== */
+        .content {
+            flex: 1;
+            overflow-y: auto;
+            -webkit-overflow-scrolling: touch;
+            padding: 0 16px 100px;
+        }
+
+        /* ===== Splits List ===== */
+        .split-card {
+            display: flex;
+            align-items: center;
+            padding: 14px;
+            background: #1a1a1a;
+            border-radius: 12px;
+            margin-bottom: 10px;
+            cursor: pointer;
+            transition: background 0.15s;
+            gap: 12px;
+        }
+        .split-card:active { background: #222; }
+        .avatar {
+            width: 40px;
+            height: 40px;
+            border-radius: 50%;
+            background: #2a2a2a;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 16px;
+            font-weight: 600;
+            color: #4ecca3;
+            flex-shrink: 0;
+            overflow: hidden;
+        }
+        .avatar img {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+        }
+        .split-info {
+            flex: 1;
+            min-width: 0;
+        }
+        .split-partner {
+            font-size: 15px;
+            font-weight: 600;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+        .split-email {
+            font-size: 12px;
+            color: #888;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+        .split-balance {
+            font-size: 15px;
+            font-weight: 600;
+            text-align: right;
+            white-space: nowrap;
+        }
+        .positive { color: #4ecca3; }
+        .negative { color: #e17055; }
+        .settled { color: #888; }
+
+        /* ===== Balance Card ===== */
+        .balance-card {
+            background: #1a1a1a;
+            border-radius: 16px;
+            padding: 20px;
+            margin: 0 16px 16px;
+            text-align: center;
+            flex-shrink: 0;
+        }
+        .balance-label {
+            font-size: 13px;
+            color: #888;
+            margin-bottom: 4px;
+        }
+        .balance-amount {
+            font-size: 32px;
+            font-weight: 700;
+            margin-bottom: 12px;
+        }
+        .btn-settle {
+            background: rgba(78, 204, 163, 0.15);
+            color: #4ecca3;
+            border: 1px solid rgba(78, 204, 163, 0.3);
+            padding: 8px 20px;
+            border-radius: 20px;
+            font-size: 14px;
+            font-weight: 600;
+            cursor: pointer;
+        }
+        .btn-settle:active { background: rgba(78, 204, 163, 0.25); }
+
+        /* ===== Expense List ===== */
+        .expense-date-group {
+            font-size: 12px;
+            font-weight: 600;
+            color: #666;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            padding: 16px 0 8px;
+        }
+        .expense-item {
+            display: flex;
+            align-items: center;
+            padding: 12px 14px;
+            background: #1a1a1a;
+            border-radius: 12px;
+            margin-bottom: 8px;
+            gap: 12px;
+            position: relative;
+            overflow: hidden;
+        }
+        .expense-item.unsynced {
+            border-left: 3px solid #f0a500;
+        }
+        .expense-icon {
+            width: 36px;
+            height: 36px;
+            border-radius: 10px;
+            background: #2a2a2a;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 14px;
+            flex-shrink: 0;
+        }
+        .expense-details {
+            flex: 1;
+            min-width: 0;
+        }
+        .expense-desc {
+            font-size: 14px;
+            font-weight: 500;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+        .expense-meta {
+            font-size: 12px;
+            color: #888;
+        }
+        .expense-amount-col {
+            text-align: right;
+            flex-shrink: 0;
+        }
+        .expense-total {
+            font-size: 14px;
+            font-weight: 600;
+        }
+        .expense-net {
+            font-size: 11px;
+        }
+        .expense-delete-zone {
+            position: absolute;
+            right: 0;
+            top: 0;
+            bottom: 0;
+            width: 80px;
+            background: #e17055;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: #fff;
+            font-size: 13px;
+            font-weight: 600;
+            transform: translateX(100%);
+            transition: transform 0.2s;
+        }
+        .expense-item.swiped .expense-delete-zone {
+            transform: translateX(0);
+        }
+
+        /* ===== Empty State ===== */
+        .empty-state {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            padding: 60px 20px;
+            text-align: center;
+        }
+        .empty-icon {
+            font-size: 48px;
+            margin-bottom: 16px;
+            opacity: 0.5;
+        }
+        .empty-text {
+            font-size: 15px;
+            color: #888;
+            line-height: 1.5;
+        }
+
+        /* ===== FAB ===== */
+        .fab {
+            position: fixed;
+            bottom: calc(env(safe-area-inset-bottom) + 24px);
+            right: calc(env(safe-area-inset-right) + 24px);
+            width: 56px;
+            height: 56px;
+            border-radius: 28px;
+            background: #4ecca3;
+            color: #0a0a0a;
+            border: none;
+            font-size: 28px;
+            font-weight: 300;
+            cursor: pointer;
+            box-shadow: 0 4px 20px rgba(78, 204, 163, 0.4);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            z-index: 10;
+            transition: transform 0.15s;
+        }
+        .fab:active { transform: scale(0.92); }
+
+        /* ===== Modal ===== */
+        .modal {
+            display: none;
+            position: fixed;
+            inset: 0;
+            z-index: 100;
+            padding-top: env(safe-area-inset-top);
+            padding-bottom: env(safe-area-inset-bottom);
+        }
+        .modal.active { display: flex; flex-direction: column; }
+        .modal-overlay {
+            position: absolute;
+            inset: 0;
+            background: rgba(0,0,0,0.7);
+        }
+        .modal-content {
+            position: relative;
+            background: #1a1a1a;
+            margin: auto 0 0;
+            border-radius: 20px 20px 0 0;
+            padding: 24px 20px calc(env(safe-area-inset-bottom) + 24px);
+            max-height: 90%;
+            overflow-y: auto;
+            animation: slideUp 0.25s ease-out;
+        }
+        @keyframes slideUp {
+            from { transform: translateY(100%); }
+            to { transform: translateY(0); }
+        }
+        .modal-handle {
+            width: 36px;
+            height: 4px;
+            background: #444;
+            border-radius: 2px;
+            margin: 0 auto 20px;
+        }
+        .modal-title {
+            font-size: 20px;
+            font-weight: 700;
+            margin-bottom: 20px;
+        }
+
+        /* ===== Form ===== */
+        .form-group {
+            margin-bottom: 20px;
+        }
+        .form-label {
+            font-size: 12px;
+            font-weight: 600;
+            color: #888;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            margin-bottom: 8px;
+            display: block;
+        }
+        .form-input {
+            width: 100%;
+            padding: 12px 14px;
+            background: #0a0a0a;
+            border: 1px solid #2a2a2a;
+            border-radius: 10px;
+            color: #f0f0f0;
+            font-size: 16px;
+            font-family: inherit;
+            outline: none;
+            transition: border-color 0.2s;
+        }
+        .form-input:focus { border-color: #4ecca3; }
+        .form-input::placeholder { color: #555; }
+        .amount-input-wrapper {
+            position: relative;
+        }
+        .amount-input-wrapper .currency-symbol {
+            position: absolute;
+            left: 14px;
+            top: 50%;
+            transform: translateY(-50%);
+            font-size: 16px;
+            color: #888;
+            pointer-events: none;
+        }
+        .amount-input-wrapper .form-input {
+            padding-left: 28px;
+        }
+
+        /* ===== Toggle Buttons ===== */
+        .toggle-group {
+            display: flex;
+            background: #0a0a0a;
+            border-radius: 10px;
+            padding: 3px;
+            gap: 3px;
+        }
+        .toggle-btn {
+            flex: 1;
+            padding: 10px;
+            background: none;
+            border: none;
+            border-radius: 8px;
+            color: #888;
+            font-size: 14px;
+            font-weight: 500;
+            cursor: pointer;
+            font-family: inherit;
+            transition: all 0.2s;
+        }
+        .toggle-btn.active {
+            background: #4ecca3;
+            color: #0a0a0a;
+            font-weight: 600;
+        }
+
+        /* ===== Split Options ===== */
+        .split-options {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 8px;
+        }
+        .split-option {
+            padding: 10px;
+            background: #0a0a0a;
+            border: 1px solid #2a2a2a;
+            border-radius: 10px;
+            color: #888;
+            font-size: 13px;
+            font-weight: 500;
+            cursor: pointer;
+            text-align: center;
+            font-family: inherit;
+            transition: all 0.2s;
+        }
+        .split-option.active {
+            border-color: #4ecca3;
+            color: #4ecca3;
+            background: rgba(78, 204, 163, 0.08);
+        }
+        .custom-percent-row {
+            display: none;
+            align-items: center;
+            gap: 12px;
+            margin-top: 12px;
+        }
+        .custom-percent-row.visible { display: flex; }
+        .percent-input {
+            width: 70px;
+            text-align: center;
+        }
+        .percent-label {
+            font-size: 13px;
+            color: #888;
+            flex: 1;
+        }
+
+        /* ===== Submit Button ===== */
+        .btn-submit {
+            width: 100%;
+            padding: 14px;
+            background: #4ecca3;
+            color: #0a0a0a;
+            border: none;
+            border-radius: 12px;
+            font-size: 16px;
+            font-weight: 700;
+            cursor: pointer;
+            font-family: inherit;
+            margin-top: 8px;
+            transition: opacity 0.15s;
+        }
+        .btn-submit:active { opacity: 0.8; }
+        .btn-submit:disabled { opacity: 0.4; cursor: default; }
+
+        /* ===== Logout ===== */
+        .btn-logout {
+            background: none;
+            border: none;
+            color: #e17055;
+            font-size: 13px;
+            cursor: pointer;
+            padding: 4px 8px;
+            font-family: inherit;
+        }
+
+    </style>
+</head>
+<body>
+    <!-- ===== Login View ===== -->
+    <div class="view active" id="view-login">
+        <div class="login-title">Split</div>
+        <div class="login-subtitle">Track shared expenses<br>with one other person</div>
+        <div id="google-signin-btn"></div>
+    </div>
+
+    <!-- ===== Splits List View ===== -->
+    <div class="view" id="view-splits">
+        <div class="header">
+            <h1>Split</h1>
+            <div class="header-actions">
+                <div class="sync-status" id="sync-status">
+                    <div class="sync-dot" id="sync-dot"></div>
+                    <span id="sync-text">Synced</span>
+                </div>
+                <button class="btn-logout" id="btn-logout">Sign out</button>
+            </div>
+        </div>
+        <div class="content" id="splits-list"></div>
+        <button class="fab" id="btn-new-split">+</button>
+    </div>
+
+    <!-- ===== Split Detail View ===== -->
+    <div class="view" id="view-detail">
+        <div class="header">
+            <button class="btn-back" id="btn-back-to-splits">&#8592; Back</button>
+            <h1 id="detail-partner-name"></h1>
+            <div class="header-actions">
+                <div class="sync-status" id="sync-status-detail">
+                    <div class="sync-dot" id="sync-dot-detail"></div>
+                    <span id="sync-text-detail">Synced</span>
+                </div>
+            </div>
+        </div>
+        <div class="balance-card" id="balance-card"></div>
+        <div class="content" id="expenses-list"></div>
+        <button class="fab" id="btn-add-expense">+</button>
+    </div>
+
+    <!-- ===== New Split Modal ===== -->
+    <div class="modal" id="modal-new-split">
+        <div class="modal-overlay" data-close="modal-new-split"></div>
+        <div class="modal-content">
+            <div class="modal-handle"></div>
+            <div class="modal-title">New Split</div>
+            <div class="form-group">
+                <label class="form-label">Partner's email</label>
+                <input type="email" class="form-input" id="input-partner-email" placeholder="name@example.com" autocapitalize="none" autocomplete="email" inputmode="email">
+            </div>
+            <button class="btn-submit" id="btn-create-split">Create Split</button>
+        </div>
+    </div>
+
+    <!-- ===== Add Expense Modal ===== -->
+    <div class="modal" id="modal-add-expense">
+        <div class="modal-overlay" data-close="modal-add-expense"></div>
+        <div class="modal-content">
+            <div class="modal-handle"></div>
+            <div class="modal-title">Add Expense</div>
+            <div class="form-group">
+                <label class="form-label">Description</label>
+                <input type="text" class="form-input" id="input-desc" placeholder="Groceries, dinner, etc." autocapitalize="sentences">
+            </div>
+            <div class="form-group">
+                <label class="form-label">Amount</label>
+                <div class="amount-input-wrapper">
+                    <span class="currency-symbol">$</span>
+                    <input type="text" inputmode="decimal" class="form-input" id="input-amount" placeholder="0.00">
+                </div>
+            </div>
+            <div class="form-group">
+                <label class="form-label">Who paid?</label>
+                <div class="toggle-group" id="toggle-payer">
+                    <button class="toggle-btn active" data-value="me">I paid</button>
+                    <button class="toggle-btn" data-value="them" id="btn-payer-them">They paid</button>
+                </div>
+            </div>
+            <div class="form-group">
+                <label class="form-label">Split</label>
+                <div class="split-options" id="split-options">
+                    <button class="split-option active" data-split="50">Equal</button>
+                    <button class="split-option" data-split="0">They owe all</button>
+                    <button class="split-option" data-split="100">I owe all</button>
+                    <button class="split-option" data-split="custom">Custom %</button>
+                </div>
+                <div class="custom-percent-row" id="custom-percent-row">
+                    <span class="percent-label">Payer's share:</span>
+                    <input type="number" inputmode="numeric" class="form-input percent-input" id="input-payer-percent" min="0" max="100" value="50">
+                    <span class="percent-label">%</span>
+                </div>
+            </div>
+            <button class="btn-submit" id="btn-submit-expense">Add Expense</button>
+        </div>
+    </div>
+
+    <script src="https://accounts.google.com/gsi/client" async></script>
+    <script>
+    // ===== Configuration =====
+    const CONFIG = {
+        MOCK_MODE: true, // Set to false when backend is ready
+        GOOGLE_CLIENT_ID: 'REPLACE_WITH_YOUR_GOOGLE_CLIENT_ID',
+        API_URL: 'REPLACE_WITH_YOUR_WORKER_URL',
+        SYNC_INTERVAL: 30000,
+    };
+
+    // ===== Storage Keys =====
+    const SK = {
+        AUTH: 'split_auth',
+        SPLITS: 'split_splits',
+        EXPENSES: id => `split_expenses_${id}`,
+        QUEUE: 'split_sync_queue',
+    };
+
+    // ===== State =====
+    let state = {
+        auth: null,
+        splits: [],
+        currentSplitId: null,
+        expenses: {},
+        syncQueue: [],
+        syncing: false,
+    };
+
+    // ===== Utilities =====
+    function uuid() {
+        return crypto.randomUUID();
+    }
+
+    function cents(dollars) {
+        return Math.round(parseFloat(dollars) * 100);
+    }
+
+    function formatMoney(c) {
+        const abs = Math.abs(c);
+        const sign = c < 0 ? '-' : '';
+        return sign + '$' + (abs / 100).toFixed(2);
+    }
+
+    function formatDate(iso) {
+        const d = new Date(iso);
+        const now = new Date();
+        const diff = now - d;
+        if (diff < 86400000 && d.getDate() === now.getDate()) return 'Today';
+        if (diff < 172800000) {
+            const yesterday = new Date(now);
+            yesterday.setDate(yesterday.getDate() - 1);
+            if (d.getDate() === yesterday.getDate()) return 'Yesterday';
+        }
+        return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: d.getFullYear() !== now.getFullYear() ? 'numeric' : undefined });
+    }
+
+    function formatMonthGroup(iso) {
+        const d = new Date(iso);
+        return d.toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
+    }
+
+    function getInitial(name, email) {
+        if (name) return name.charAt(0).toUpperCase();
+        if (email) return email.charAt(0).toUpperCase();
+        return '?';
+    }
+
+    // ===== Persistence =====
+    function save() {
+        try {
+            localStorage.setItem(SK.AUTH, JSON.stringify(state.auth));
+            localStorage.setItem(SK.SPLITS, JSON.stringify(state.splits));
+            localStorage.setItem(SK.QUEUE, JSON.stringify(state.syncQueue));
+            for (const [id, exps] of Object.entries(state.expenses)) {
+                localStorage.setItem(SK.EXPENSES(id), JSON.stringify(exps));
+            }
+        } catch (e) { /* storage full, best effort */ }
+    }
+
+    function load() {
+        try {
+            state.auth = JSON.parse(localStorage.getItem(SK.AUTH)) || null;
+            state.splits = JSON.parse(localStorage.getItem(SK.SPLITS)) || [];
+            state.syncQueue = JSON.parse(localStorage.getItem(SK.QUEUE)) || [];
+            state.expenses = {};
+            for (const s of state.splits) {
+                const stored = localStorage.getItem(SK.EXPENSES(s.id));
+                if (stored) state.expenses[s.id] = JSON.parse(stored);
+            }
+        } catch (e) {
+            state.auth = null;
+            state.splits = [];
+            state.syncQueue = [];
+            state.expenses = {};
+        }
+    }
+
+    // ===== Mock Backend =====
+    let mockNextId = 100;
+
+    async function mockApi(method, path, body) {
+        await new Promise(r => setTimeout(r, 150));
+
+        if (path === '/api/auth/google') {
+            return {
+                token: 'mock-jwt-token',
+                user: { id: 1, email: 'you@gmail.com', name: 'You', picture: null }
+            };
+        }
+        if (path === '/api/splits' && method === 'GET') {
+            return { splits: state.splits };
+        }
+        if (path === '/api/splits' && method === 'POST') {
+            const id = mockNextId++;
+            const name = body.partner_email.split('@')[0];
+            const partner = { id: id + 1000, email: body.partner_email, name: name.charAt(0).toUpperCase() + name.slice(1), picture: null };
+            return { split: { id, partner } };
+        }
+        if (path.match(/\/api\/splits\/\d+$/) && method === 'GET') {
+            const splitId = parseInt(path.split('/').pop());
+            return {
+                split: state.splits.find(s => s.id === splitId),
+                expenses: (state.expenses[splitId] || []).map(e => ({ ...e, synced: true })),
+                balance_cents: calculateLocalBalance(splitId),
+            };
+        }
+        if (path.match(/\/api\/splits\/\d+\/sync/) && method === 'POST') {
+            const results = (body.operations || []).map(op => ({
+                client_id: op.action === 'add' ? op.expense.client_id : op.client_id,
+                status: op.action === 'add' ? 'created' : 'deleted',
+            }));
+            const splitId = parseInt(path.split('/')[3]);
+            return { results, balance_cents: calculateLocalBalance(splitId) };
+        }
+        return {};
+    }
+
+    function seedMockData() {
+        const myId = 1;
+        const partnerId = 2;
+        const splitId = 1;
+        state.splits = [
+            {
+                id: splitId,
+                partner: { id: partnerId, email: 'sarah@gmail.com', name: 'Sarah', picture: null },
+                balance_cents: 0,
+            },
+        ];
+        const now = new Date();
+        const day = (d) => { const dt = new Date(now); dt.setDate(dt.getDate() - d); return dt.toISOString(); };
+        state.expenses[splitId] = [
+            { client_id: uuid(), description: 'Groceries', amount_cents: 8743, paid_by_user_id: myId, payer_percent: 50, created_at: day(0), synced: true },
+            { client_id: uuid(), description: 'Thai takeout', amount_cents: 4200, paid_by_user_id: partnerId, payer_percent: 50, created_at: day(1), synced: true },
+            { client_id: uuid(), description: 'Electric bill', amount_cents: 11500, paid_by_user_id: myId, payer_percent: 50, created_at: day(3), synced: true },
+            { client_id: uuid(), description: 'Coffee beans', amount_cents: 1895, paid_by_user_id: partnerId, payer_percent: 50, created_at: day(5), synced: true },
+            { client_id: uuid(), description: 'New lamp', amount_cents: 4999, paid_by_user_id: myId, payer_percent: 0, created_at: day(8), synced: true },
+            { client_id: uuid(), description: 'Dinner w/ friends', amount_cents: 12400, paid_by_user_id: partnerId, payer_percent: 30, created_at: day(12), synced: true },
+            { client_id: uuid(), description: 'Streaming subscription', amount_cents: 1599, paid_by_user_id: myId, payer_percent: 50, created_at: day(35), synced: true },
+            { client_id: uuid(), description: 'Groceries', amount_cents: 6320, paid_by_user_id: partnerId, payer_percent: 50, created_at: day(37), synced: true },
+        ];
+        // Calculate balance from seed data
+        state.splits[0].balance_cents = calculateLocalBalance(splitId);
+        save();
+    }
+
+    // ===== API =====
+    async function api(method, path, body) {
+        if (CONFIG.MOCK_MODE) return mockApi(method, path, body);
+
+        const headers = { 'Content-Type': 'application/json' };
+        if (state.auth?.token) headers['Authorization'] = `Bearer ${state.auth.token}`;
+        const opts = { method, headers };
+        if (body) opts.body = JSON.stringify(body);
+        const res = await fetch(CONFIG.API_URL + path, opts);
+        if (res.status === 401) {
+            state.auth = null;
+            save();
+            showView('login');
+            throw new Error('Unauthorized');
+        }
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || 'Request failed');
+        return data;
+    }
+
+    // ===== Auth =====
+    function onGoogleSignIn(response) {
+        authenticateWithBackend(response.credential);
+    }
+
+    async function authenticateWithBackend(idToken) {
+        try {
+            const data = await api('POST', '/api/auth/google', { id_token: idToken });
+            state.auth = { token: data.token, user: data.user };
+            if (CONFIG.MOCK_MODE && state.splits.length === 0) seedMockData();
+            save();
+            showView('splits');
+            refreshSplits();
+        } catch (e) {
+            console.error('Auth failed:', e);
+        }
+    }
+
+    function logout() {
+        // Remove only split-related keys (don't nuke other apps' data)
+        localStorage.removeItem(SK.AUTH);
+        localStorage.removeItem(SK.QUEUE);
+        const oldSplits = state.splits;
+        localStorage.removeItem(SK.SPLITS);
+        for (const s of oldSplits) {
+            localStorage.removeItem(SK.EXPENSES(s.id));
+        }
+        state.auth = null;
+        state.splits = [];
+        state.expenses = {};
+        state.syncQueue = [];
+        state.currentSplitId = null;
+        showView('login');
+    }
+
+    // ===== Sync Engine =====
+    function addToQueue(item) {
+        state.syncQueue.push(item);
+        save();
+        updateSyncStatus();
+    }
+
+    async function syncQueue() {
+        if (state.syncing || state.syncQueue.length === 0 || !state.auth) return;
+        state.syncing = true;
+        updateSyncStatus();
+
+        // Group operations by split_id
+        const bySplit = {};
+        for (const op of state.syncQueue) {
+            if (!bySplit[op.split_id]) bySplit[op.split_id] = [];
+            bySplit[op.split_id].push(op);
+        }
+
+        const synced = [];
+        for (const [splitId, ops] of Object.entries(bySplit)) {
+            try {
+                const operations = ops.map(op => {
+                    if (op.action === 'add') {
+                        return {
+                            action: 'add',
+                            expense: {
+                                client_id: op.client_id,
+                                description: op.data.description,
+                                amount_cents: op.data.amount_cents,
+                                paid_by_user_id: op.data.paid_by_user_id,
+                                payer_percent: op.data.payer_percent,
+                                created_at: op.data.created_at,
+                            }
+                        };
+                    } else {
+                        return { action: 'delete', client_id: op.client_id };
+                    }
+                });
+                const res = await api('POST', `/api/splits/${splitId}/sync`, { operations });
+                // Mark all as synced
+                for (const op of ops) synced.push(op.client_id);
+                // Update local expenses with synced status
+                if (state.expenses[splitId]) {
+                    for (const exp of state.expenses[splitId]) {
+                        if (synced.includes(exp.client_id)) {
+                            exp.synced = true;
+                        }
+                    }
+                }
+            } catch (e) {
+                console.error(`Sync failed for split ${splitId}:`, e);
+            }
+        }
+
+        // Remove synced items from queue
+        state.syncQueue = state.syncQueue.filter(op => !synced.includes(op.client_id));
+        state.syncing = false;
+        save();
+        updateSyncStatus();
+        renderCurrentView();
+    }
+
+    async function refreshSplits() {
+        if (!state.auth) return;
+        try {
+            const data = await api('GET', '/api/splits');
+            state.splits = data.splits;
+            save();
+            renderSplitsList();
+        } catch (e) {
+            console.error('Failed to refresh splits:', e);
+        }
+    }
+
+    async function refreshSplitDetail(splitId) {
+        if (!state.auth) return;
+        try {
+            const data = await api('GET', `/api/splits/${splitId}`);
+            // Merge: keep unsynced local expenses, update the rest from server
+            const unsyncedLocal = (state.expenses[splitId] || []).filter(e => !e.synced);
+            const unsyncedClientIds = new Set(unsyncedLocal.map(e => e.client_id));
+            const serverExpenses = data.expenses.map(e => ({ ...e, synced: true }));
+            // Filter out server expenses that overlap with unsynced local
+            const merged = [
+                ...serverExpenses.filter(e => !unsyncedClientIds.has(e.client_id)),
+                ...unsyncedLocal,
+            ];
+            merged.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+            state.expenses[splitId] = merged;
+            // Update the split balance from the server
+            const split = state.splits.find(s => s.id === splitId);
+            if (split) split.balance_cents = data.balance_cents;
+            save();
+            if (state.currentSplitId === splitId) renderSplitDetail();
+        } catch (e) {
+            console.error('Failed to refresh split detail:', e);
+        }
+    }
+
+    function updateSyncStatus() {
+        const pending = state.syncQueue.length;
+        const online = navigator.onLine;
+        const dots = document.querySelectorAll('#sync-dot, #sync-dot-detail');
+        const texts = document.querySelectorAll('#sync-text, #sync-text-detail');
+
+        dots.forEach(dot => {
+            dot.className = 'sync-dot';
+            if (!online) dot.classList.add('offline');
+            else if (state.syncing) dot.classList.add('pending');
+            else if (pending > 0) dot.classList.add('pending');
+        });
+
+        texts.forEach(text => {
+            if (!online) text.textContent = 'Offline';
+            else if (state.syncing) text.textContent = 'Syncing...';
+            else if (pending > 0) text.textContent = `${pending} pending`;
+            else text.textContent = 'Synced';
+        });
+    }
+
+    // ===== Data Operations =====
+    async function createSplit(partnerEmail) {
+        try {
+            const data = await api('POST', '/api/splits', { partner_email: partnerEmail });
+            const newSplit = {
+                id: data.split.id,
+                partner: data.split.partner,
+                balance_cents: 0,
+            };
+            // Avoid duplicates
+            if (!state.splits.find(s => s.id === newSplit.id)) {
+                state.splits.push(newSplit);
+            }
+            state.expenses[newSplit.id] = [];
+            save();
+            renderSplitsList();
+            closeModal('modal-new-split');
+            return newSplit;
+        } catch (e) {
+            alert(e.message || 'Failed to create split');
+            return null;
+        }
+    }
+
+    function addExpense(splitId, { description, amountCents, paidByMe, payerPercent }) {
+        const split = state.splits.find(s => s.id === splitId);
+        if (!split) return;
+
+        const myId = state.auth.user.id;
+        const partnerId = split.partner.id;
+        const paidByUserId = paidByMe ? myId : partnerId;
+        const clientId = uuid();
+        const now = new Date().toISOString();
+
+        const expense = {
+            client_id: clientId,
+            description,
+            amount_cents: amountCents,
+            paid_by_user_id: paidByUserId,
+            payer_percent: payerPercent,
+            created_at: now,
+            created_by_user_id: myId,
+            synced: false,
+        };
+
+        if (!state.expenses[splitId]) state.expenses[splitId] = [];
+        state.expenses[splitId].unshift(expense);
+
+        // Update local balance
+        const netToOther = Math.round(amountCents * (100 - payerPercent) / 100);
+        if (paidByUserId === myId) {
+            split.balance_cents = (split.balance_cents || 0) + netToOther;
+        } else {
+            split.balance_cents = (split.balance_cents || 0) - netToOther;
+        }
+
+        // Queue for sync
+        addToQueue({
+            action: 'add',
+            client_id: clientId,
+            split_id: splitId,
+            data: expense,
+        });
+
+        save();
+        renderSplitDetail();
+        renderSplitsList();
+        syncQueue();
+    }
+
+    function deleteExpense(splitId, clientId) {
+        const split = state.splits.find(s => s.id === splitId);
+        if (!split) return;
+
+        const expenses = state.expenses[splitId] || [];
+        const idx = expenses.findIndex(e => e.client_id === clientId);
+        if (idx === -1) return;
+
+        const expense = expenses[idx];
+
+        // Reverse the balance impact
+        const netToOther = Math.round(expense.amount_cents * (100 - expense.payer_percent) / 100);
+        const myId = state.auth.user.id;
+        if (expense.paid_by_user_id === myId) {
+            split.balance_cents -= netToOther;
+        } else {
+            split.balance_cents += netToOther;
+        }
+
+        // Remove locally
+        expenses.splice(idx, 1);
+
+        // If it was unsynced, just remove from queue too
+        const queueIdx = state.syncQueue.findIndex(op => op.client_id === clientId && op.action === 'add');
+        if (queueIdx !== -1) {
+            state.syncQueue.splice(queueIdx, 1);
+        } else {
+            // Already synced: queue a delete operation
+            addToQueue({
+                action: 'delete',
+                client_id: clientId,
+                split_id: splitId,
+            });
+        }
+
+        save();
+        renderSplitDetail();
+        renderSplitsList();
+        syncQueue();
+    }
+
+    function calculateLocalBalance(splitId) {
+        const expenses = state.expenses[splitId] || [];
+        const myId = state.auth?.user?.id;
+        if (!myId) return 0;
+        let balance = 0;
+        for (const e of expenses) {
+            const netToOther = Math.round(e.amount_cents * (100 - e.payer_percent) / 100);
+            if (e.paid_by_user_id === myId) {
+                balance += netToOther;
+            } else {
+                balance -= netToOther;
+            }
+        }
+        return balance;
+    }
+
+    // ===== Views =====
+    function showView(name) {
+        document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
+        document.getElementById(`view-${name}`).classList.add('active');
+
+        if (name === 'splits') {
+            renderSplitsList();
+        } else if (name === 'detail') {
+            renderSplitDetail();
+        }
+    }
+
+    function renderCurrentView() {
+        const active = document.querySelector('.view.active');
+        if (active?.id === 'view-splits') renderSplitsList();
+        else if (active?.id === 'view-detail') renderSplitDetail();
+    }
+
+    function renderSplitsList() {
+        const container = document.getElementById('splits-list');
+        if (state.splits.length === 0) {
+            container.innerHTML = `
+                <div class="empty-state">
+                    <div class="empty-icon">&#x1F91D;</div>
+                    <div class="empty-text">No splits yet.<br>Tap + to start splitting with someone.</div>
+                </div>`;
+            return;
+        }
+
+        container.innerHTML = state.splits.map(s => {
+            const bal = s.balance_cents || 0;
+            let balText, balClass;
+            if (bal > 0) {
+                balText = formatMoney(bal);
+                balClass = 'positive';
+            } else if (bal < 0) {
+                balText = formatMoney(bal);
+                balClass = 'negative';
+            } else {
+                balText = 'Settled';
+                balClass = 'settled';
+            }
+            const initial = getInitial(s.partner.name, s.partner.email);
+            const avatarContent = s.partner.picture
+                ? `<img src="${s.partner.picture}" alt="">`
+                : initial;
+            const displayName = s.partner.name || s.partner.email;
+
+            return `
+                <div class="split-card" data-split-id="${s.id}">
+                    <div class="avatar">${avatarContent}</div>
+                    <div class="split-info">
+                        <div class="split-partner">${esc(displayName)}</div>
+                        ${s.partner.name ? `<div class="split-email">${esc(s.partner.email)}</div>` : ''}
+                    </div>
+                    <div class="split-balance ${balClass}">${balText}</div>
+                </div>`;
+        }).join('');
+
+        container.querySelectorAll('.split-card').forEach(card => {
+            card.addEventListener('click', () => {
+                state.currentSplitId = parseInt(card.dataset.splitId);
+                showView('detail');
+                refreshSplitDetail(state.currentSplitId);
+            });
+        });
+    }
+
+    function renderSplitDetail() {
+        const split = state.splits.find(s => s.id === state.currentSplitId);
+        if (!split) return;
+
+        const partnerName = split.partner.name || split.partner.email;
+        document.getElementById('detail-partner-name').textContent = partnerName;
+
+        // Update the "They paid" button label
+        const payerThemBtn = document.getElementById('btn-payer-them');
+        if (payerThemBtn) {
+            const shortName = (split.partner.name || split.partner.email.split('@')[0]);
+            payerThemBtn.textContent = shortName + ' paid';
+        }
+
+        // Balance card
+        const bal = split.balance_cents || 0;
+        const balCard = document.getElementById('balance-card');
+        let balLabel, balClass;
+        if (bal > 0) {
+            balLabel = `${esc(partnerName)} owes you`;
+            balClass = 'positive';
+        } else if (bal < 0) {
+            balLabel = `You owe ${esc(partnerName)}`;
+            balClass = 'negative';
+        } else {
+            balLabel = 'All settled up';
+            balClass = 'settled';
+        }
+
+        balCard.innerHTML = `
+            <div class="balance-label">${balLabel}</div>
+            <div class="balance-amount ${balClass}">${formatMoney(Math.abs(bal))}</div>
+            ${bal !== 0 ? `<button class="btn-settle" id="btn-settle">Settle Up</button>` : ''}`;
+
+        if (bal !== 0) {
+            document.getElementById('btn-settle').addEventListener('click', () => settleUp(split));
+        }
+
+        // Expenses list
+        const expenses = state.expenses[state.currentSplitId] || [];
+        const container = document.getElementById('expenses-list');
+
+        if (expenses.length === 0) {
+            container.innerHTML = `
+                <div class="empty-state">
+                    <div class="empty-icon">&#x1F4B8;</div>
+                    <div class="empty-text">No expenses yet.<br>Tap + to add one.</div>
+                </div>`;
+            return;
+        }
+
+        // Group by month
+        const groups = {};
+        for (const e of expenses) {
+            const key = formatMonthGroup(e.created_at);
+            if (!groups[key]) groups[key] = [];
+            groups[key].push(e);
+        }
+
+        const myId = state.auth.user.id;
+        let html = '';
+        for (const [month, exps] of Object.entries(groups)) {
+            html += `<div class="expense-date-group">${month}</div>`;
+            for (const e of exps) {
+                const paidByMe = e.paid_by_user_id === myId;
+                const payer = paidByMe ? 'You' : (split.partner.name || split.partner.email.split('@')[0]);
+                const netToOther = Math.round(e.amount_cents * (100 - e.payer_percent) / 100);
+                let netText, netClass;
+                if (paidByMe) {
+                    netText = netToOther > 0 ? `+${formatMoney(netToOther)}` : formatMoney(0);
+                    netClass = netToOther > 0 ? 'positive' : 'settled';
+                } else {
+                    netText = netToOther > 0 ? `-${formatMoney(netToOther)}` : formatMoney(0);
+                    netClass = netToOther > 0 ? 'negative' : 'settled';
+                }
+                const splitLabel = e.payer_percent === 50 ? '50/50' : `${e.payer_percent}/${100 - e.payer_percent}`;
+                const syncClass = e.synced === false ? ' unsynced' : '';
+
+                html += `
+                    <div class="expense-item${syncClass}" data-client-id="${e.client_id}">
+                        <div class="expense-icon">${paidByMe ? '&#x1F4B5;' : '&#x1F4B3;'}</div>
+                        <div class="expense-details">
+                            <div class="expense-desc">${esc(e.description)}</div>
+                            <div class="expense-meta">${payer} paid &middot; ${splitLabel} &middot; ${formatDate(e.created_at)}</div>
+                        </div>
+                        <div class="expense-amount-col">
+                            <div class="expense-total">${formatMoney(e.amount_cents)}</div>
+                            <div class="expense-net ${netClass}">${netText}</div>
+                        </div>
+                        <div class="expense-delete-zone">Delete</div>
+                    </div>`;
+            }
+        }
+        container.innerHTML = html;
+
+        // Swipe to delete
+        setupSwipeToDelete(container);
+    }
+
+    function settleUp(split) {
+        const bal = split.balance_cents || 0;
+        if (bal === 0) return;
+        const absBal = Math.abs(bal);
+        const paidByMe = bal < 0; // if I owe, I pay to settle
+
+        openAddExpenseModal();
+        document.getElementById('input-desc').value = 'Settlement';
+        document.getElementById('input-amount').value = (absBal / 100).toFixed(2);
+
+        // Set payer
+        const payerBtns = document.querySelectorAll('#toggle-payer .toggle-btn');
+        payerBtns.forEach(b => b.classList.remove('active'));
+        if (paidByMe) {
+            payerBtns[0].classList.add('active');
+        } else {
+            payerBtns[1].classList.add('active');
+        }
+
+        // Set split to "they owe all" (payer_percent = 0)
+        const splitBtns = document.querySelectorAll('#split-options .split-option');
+        splitBtns.forEach(b => b.classList.remove('active'));
+        splitBtns[1].classList.add('active'); // "They owe all" = payer_percent 0
+        document.getElementById('custom-percent-row').classList.remove('visible');
+    }
+
+    // ===== Swipe to Delete =====
+    let swipeAbort = null;
+
+    function setupSwipeToDelete(container) {
+        if (swipeAbort) swipeAbort.abort();
+        swipeAbort = new AbortController();
+        const sig = { signal: swipeAbort.signal };
+
+        let startX, currentItem, swiped;
+
+        container.addEventListener('touchstart', e => {
+            const item = e.target.closest('.expense-item');
+            if (!item || e.target.closest('.expense-delete-zone')) return;
+            document.querySelectorAll('.expense-item.swiped').forEach(el => el.classList.remove('swiped'));
+            startX = e.touches[0].clientX;
+            currentItem = item;
+            swiped = false;
+        }, { ...sig, passive: true });
+
+        container.addEventListener('touchmove', e => {
+            if (!currentItem) return;
+            const dx = e.touches[0].clientX - startX;
+            if (dx < -50 && !swiped) {
+                currentItem.classList.add('swiped');
+                swiped = true;
+            } else if (dx > 20 && swiped) {
+                currentItem.classList.remove('swiped');
+                swiped = false;
+            }
+        }, { ...sig, passive: true });
+
+        container.addEventListener('touchend', () => {
+            currentItem = null;
+        }, { ...sig, passive: true });
+
+        container.addEventListener('click', e => {
+            const deleteZone = e.target.closest('.expense-delete-zone');
+            if (!deleteZone) return;
+            const item = deleteZone.closest('.expense-item');
+            const clientId = item.dataset.clientId;
+            if (confirm('Delete this expense?')) {
+                deleteExpense(state.currentSplitId, clientId);
+            }
+        }, sig);
+    }
+
+    // ===== Modals =====
+    function openModal(id) {
+        document.getElementById(id).classList.add('active');
+    }
+
+    function closeModal(id) {
+        document.getElementById(id).classList.remove('active');
+    }
+
+    function openAddExpenseModal() {
+        document.getElementById('input-desc').value = '';
+        document.getElementById('input-amount').value = '';
+        // Reset payer toggle
+        document.querySelectorAll('#toggle-payer .toggle-btn').forEach((b, i) => {
+            b.classList.toggle('active', i === 0);
+        });
+        // Reset split options
+        document.querySelectorAll('#split-options .split-option').forEach((b, i) => {
+            b.classList.toggle('active', i === 0);
+        });
+        document.getElementById('custom-percent-row').classList.remove('visible');
+        document.getElementById('input-payer-percent').value = '50';
+        openModal('modal-add-expense');
+    }
+
+    // ===== HTML Escaping =====
+    function esc(str) {
+        const div = document.createElement('div');
+        div.textContent = str || '';
+        return div.innerHTML;
+    }
+
+    // ===== Event Listeners =====
+    document.getElementById('btn-logout').addEventListener('click', logout);
+    document.getElementById('btn-new-split').addEventListener('click', () => {
+        document.getElementById('input-partner-email').value = '';
+        openModal('modal-new-split');
+    });
+    document.getElementById('btn-add-expense').addEventListener('click', openAddExpenseModal);
+
+    document.getElementById('btn-back-to-splits').addEventListener('click', () => {
+        state.currentSplitId = null;
+        showView('splits');
+    });
+
+    // Close modals on overlay click
+    document.querySelectorAll('[data-close]').forEach(el => {
+        el.addEventListener('click', () => closeModal(el.dataset.close));
+    });
+
+    // Toggle buttons
+    document.getElementById('toggle-payer').addEventListener('click', e => {
+        const btn = e.target.closest('.toggle-btn');
+        if (!btn) return;
+        document.querySelectorAll('#toggle-payer .toggle-btn').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+    });
+
+    document.getElementById('split-options').addEventListener('click', e => {
+        const btn = e.target.closest('.split-option');
+        if (!btn) return;
+        document.querySelectorAll('#split-options .split-option').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        const customRow = document.getElementById('custom-percent-row');
+        if (btn.dataset.split === 'custom') {
+            customRow.classList.add('visible');
+        } else {
+            customRow.classList.remove('visible');
+        }
+    });
+
+    // Create split
+    document.getElementById('btn-create-split').addEventListener('click', () => {
+        const email = document.getElementById('input-partner-email').value.trim().toLowerCase();
+        if (!email || !email.includes('@')) {
+            alert('Please enter a valid email address');
+            return;
+        }
+        createSplit(email);
+    });
+
+    // Submit expense
+    document.getElementById('btn-submit-expense').addEventListener('click', () => {
+        const desc = document.getElementById('input-desc').value.trim();
+        const amountStr = document.getElementById('input-amount').value.trim();
+        const amount = parseFloat(amountStr);
+
+        if (!desc) { alert('Please enter a description'); return; }
+        if (!amountStr || isNaN(amount) || amount <= 0) { alert('Please enter a valid amount'); return; }
+
+        const paidByMe = document.querySelector('#toggle-payer .toggle-btn.active').dataset.value === 'me';
+
+        let payerPercent;
+        const activeSplit = document.querySelector('#split-options .split-option.active');
+        if (activeSplit.dataset.split === 'custom') {
+            payerPercent = parseInt(document.getElementById('input-payer-percent').value);
+            if (isNaN(payerPercent) || payerPercent < 0 || payerPercent > 100) {
+                alert('Percentage must be 0-100');
+                return;
+            }
+        } else {
+            payerPercent = parseInt(activeSplit.dataset.split);
+        }
+
+        addExpense(state.currentSplitId, {
+            description: desc,
+            amountCents: cents(amount),
+            paidByMe,
+            payerPercent,
+        });
+
+        closeModal('modal-add-expense');
+    });
+
+    // Enter key support for forms
+    document.getElementById('input-partner-email').addEventListener('keydown', e => {
+        if (e.key === 'Enter') document.getElementById('btn-create-split').click();
+    });
+    document.getElementById('input-amount').addEventListener('keydown', e => {
+        if (e.key === 'Enter') document.getElementById('btn-submit-expense').click();
+    });
+
+    // Online/offline handlers
+    window.addEventListener('online', () => {
+        updateSyncStatus();
+        syncQueue();
+        if (state.auth) refreshSplits();
+    });
+    window.addEventListener('offline', () => updateSyncStatus());
+
+    // ===== Google Sign-In Init =====
+    window.onload = function() {
+        load();
+
+        if (CONFIG.MOCK_MODE) {
+            const badge = document.createElement('div');
+            badge.className = 'mock-badge';
+            badge.textContent = 'DEMO MODE';
+            document.body.appendChild(badge);
+        }
+
+        if (state.auth?.token) {
+            showView('splits');
+            updateSyncStatus();
+            syncQueue();
+            refreshSplits();
+        } else {
+            showView('login');
+        }
+
+        if (CONFIG.MOCK_MODE) {
+            const btn = document.getElementById('google-signin-btn');
+            btn.innerHTML = '<button class="btn-mock-signin">Sign in with Google</button>';
+            btn.querySelector('button').addEventListener('click', () => {
+                onGoogleSignIn({ credential: 'mock-token' });
+            });
+        } else {
+            // Init Google Sign-In
+            if (typeof google !== 'undefined' && google.accounts) {
+                initGoogleSignIn();
+            } else {
+                const checkGsi = setInterval(() => {
+                    if (typeof google !== 'undefined' && google.accounts) {
+                        clearInterval(checkGsi);
+                        initGoogleSignIn();
+                    }
+                }, 200);
+                setTimeout(() => clearInterval(checkGsi), 10000);
+            }
+        }
+
+        // Periodic sync
+        setInterval(() => {
+            if (state.auth) {
+                syncQueue();
+            }
+        }, CONFIG.SYNC_INTERVAL);
+    };
+
+    function initGoogleSignIn() {
+        if (CONFIG.GOOGLE_CLIENT_ID === 'REPLACE_WITH_YOUR_GOOGLE_CLIENT_ID') return;
+        google.accounts.id.initialize({
+            client_id: CONFIG.GOOGLE_CLIENT_ID,
+            callback: onGoogleSignIn,
+        });
+        google.accounts.id.renderButton(
+            document.getElementById('google-signin-btn'),
+            { theme: 'filled_black', size: 'large', shape: 'pill', width: 250 }
+        );
+    }
+    </script>
+</body>
+</html>
