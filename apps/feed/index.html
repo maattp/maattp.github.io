@@ -898,6 +898,7 @@
             );
 
             let anySucceeded = false;
+            let rateLimited = false;
             for (let i = 0; i < toFetch.length; i++) {
                 const sub = toFetch[i];
                 const pool = state.mixedPools[sub];
@@ -911,12 +912,16 @@
                 } else {
                     pool.fetched = true;
                     pool.exhausted = true;
-                    // Propagate rate limit errors
-                    if (results[i].reason?.status === 429) throw results[i].reason;
+                    if (results[i].reason?.status === 429) rateLimited = true;
                 }
             }
 
             if (!anySucceeded) {
+                if (rateLimited) {
+                    const err = new Error('Rate limited');
+                    err.status = 429;
+                    throw err;
+                }
                 throw new Error('Failed to load posts from any subreddit');
             }
         }
@@ -1942,7 +1947,11 @@
                     .reduce((sum, pool) => sum + pool.posts.length, 0);
 
                 if (totalInPools < 15) {
-                    await refillMixedPool();
+                    try {
+                        await refillMixedPool();
+                    } catch (e) {
+                        // Best-effort: still interleave whatever's in the pools
+                    }
                 }
 
                 interleaveFromPools(30);
