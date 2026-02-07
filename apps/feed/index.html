@@ -1938,15 +1938,22 @@
             state.loading = true;
 
             try {
-                // Check if pools need refilling before interleaving
-                const totalInPools = Object.values(state.mixedPools)
-                    .reduce((sum, pool) => sum + pool.posts.length, 0);
+                // Always prioritize bringing in unfetched subreddits
+                const hasUnfetched = Object.values(state.mixedPools)
+                    .some(pool => !pool.fetched);
 
-                if (totalInPools < 15) {
+                if (hasUnfetched) {
                     try {
-                        await refillMixedPool();
-                    } catch (e) {
-                        // Best-effort: still interleave whatever's in the pools
+                        await refillMixedPool(); // Priority 1 in refillMixedPool handles unfetched
+                    } catch (e) {}
+                } else {
+                    // Only refill already-fetched pools when running low
+                    const totalInPools = Object.values(state.mixedPools)
+                        .reduce((sum, pool) => sum + pool.posts.length, 0);
+                    if (totalInPools < 15) {
+                        try {
+                            await refillMixedPool();
+                        } catch (e) {}
                     }
                 }
 
