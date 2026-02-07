@@ -713,7 +713,7 @@
 <body>
     <div class="home-view" id="home-view">
         <div class="header">
-            <h1>Feed <span class="version">v15</span></h1>
+            <h1>Feed <span class="version">v16</span></h1>
             <button class="export-btn" id="export-btn">Export</button>
             <select class="sort-select" id="sort-select">
                 <option value="hot">Hot</option>
@@ -2186,10 +2186,13 @@
                 img.onerror = function() {
                     handleMediaError(feedItem, index);
                 };
-                // Filter out tiny placeholder images (e.g. Imgur "image removed")
+                // Hide posts with tiny placeholder images (e.g. Imgur "image removed")
                 img.onload = function() {
                     if (img.naturalWidth < 200 && img.naturalHeight < 200) {
-                        handleMediaError(feedItem, index);
+                        feedItem.style.display = 'none';
+                        if (state.currentIndex === index) {
+                            skipToNext(index);
+                        }
                     }
                 };
             }
