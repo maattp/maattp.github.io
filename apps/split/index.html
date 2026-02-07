@@ -803,12 +803,27 @@
         }
     }
 
-    function loadArchive(splitId) {
+    async function loadArchive(splitId) {
         if (state.archiveLoaded[splitId]) return;
+
+        // Try localStorage first (fast path)
         try {
             const stored = localStorage.getItem(SK.ARCHIVE(splitId));
-            state.archivedExpenses[splitId] = stored ? JSON.parse(stored) : [];
+            if (stored) {
+                state.archivedExpenses[splitId] = JSON.parse(stored);
+                state.archiveLoaded[splitId] = true;
+                return;
+            }
+        } catch (e) { /* fall through to server */ }
+
+        // No local cache -- fetch from server
+        try {
+            const data = await api('GET', `/api/splits/${splitId}/archive`);
+            state.archivedExpenses[splitId] = data.expenses || [];
+            // Cache locally for next time
+            try { localStorage.setItem(SK.ARCHIVE(splitId), JSON.stringify(state.archivedExpenses[splitId])); } catch (e) {}
         } catch (e) {
+            console.error('Failed to load archive:', e);
             state.archivedExpenses[splitId] = [];
         }
         state.archiveLoaded[splitId] = true;
@@ -941,16 +956,23 @@
             const partner = { id: id + 1000, email: body.partner_email, name: name.charAt(0).toUpperCase() + name.slice(1), picture: null };
             return { split: { id, partner } };
         }
+        if (path.match(/\/api\/splits\/\d+\/archive$/) && method === 'GET') {
+            const splitId = parseInt(path.split('/')[3]);
+            const archived = state.archivedExpenses[splitId] || [];
+            return {
+                expenses: archived.map(e => ({ ...e, synced: true })),
+            };
+        }
         if (path.match(/\/api\/splits\/\d+$/) && method === 'GET') {
             const splitId = parseInt(path.split('/').pop());
             const active = state.expenses[splitId] || [];
-            const archived = state.archivedExpenses[splitId] || [];
-            const allExpenses = [...active, ...archived];
             const split = state.splits.find(s => s.id === splitId);
             return {
                 split,
-                expenses: allExpenses.map(e => ({ ...e, synced: true })),
+                expenses: active.map(e => ({ ...e, synced: true })),
                 balance_cents: split?.balance_cents || 0,
+                archived_balance_cents: split?.archived_balance_cents || 0,
+                archived_expense_count: split?.archived_expense_count || 0,
             };
         }
         if (path.match(/\/api\/splits\/\d+\/sync/) && method === 'POST') {
@@ -1136,12 +1158,8 @@
         if (!state.auth) return;
         try {
             const data = await api('GET', `/api/splits/${splitId}`);
-            // Merge: keep unsynced local expenses, update the rest from server
-            const localActive = state.expenses[splitId] || [];
-            const localArchived = state.archiveLoaded[splitId] ? (state.archivedExpenses[splitId] || []) : [];
-            const allLocal = [...localActive, ...localArchived];
-
-            const unsyncedLocal = allLocal.filter(e => !e.synced);
+            // Server returns only current-era expenses + archive metadata
+            const unsyncedLocal = (state.expenses[splitId] || []).filter(e => !e.synced);
             const unsyncedClientIds = new Set(unsyncedLocal.map(e => e.client_id));
             const serverExpenses = data.expenses.map(e => ({ ...e, synced: true }));
 
@@ -1151,38 +1169,20 @@
             ];
             merged.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
 
-            // Split into active and archived
-            const settlementIdx = findSettlementBoundary(merged);
+            state.expenses[splitId] = merged;
+
+            // Update split metadata from server
             const split = state.splits.find(s => s.id === splitId);
+            if (split) {
+                split.balance_cents = data.balance_cents;
+                split.archived_balance_cents = data.archived_balance_cents || 0;
+                split.archived_expense_count = data.archived_expense_count || 0;
+            }
 
-            if (settlementIdx !== -1) {
-                state.expenses[splitId] = merged.slice(0, settlementIdx);
-                const newArchive = merged.slice(settlementIdx);
-
-                if (state.archiveLoaded[splitId]) {
-                    state.archivedExpenses[splitId] = newArchive;
-                }
-                try { localStorage.setItem(SK.ARCHIVE(splitId), JSON.stringify(newArchive)); } catch (err) {}
-
-                if (split) {
-                    const myId = state.auth.user.id;
-                    let archBal = 0;
-                    for (const e of newArchive) {
-                        const netToOther = Math.round(e.amount_cents * (100 - e.payer_percent) / 100);
-                        if (e.paid_by_user_id === myId) archBal += netToOther;
-                        else archBal -= netToOther;
-                    }
-                    split.archived_balance_cents = archBal;
-                    split.archived_expense_count = newArchive.length;
-                    split.balance_cents = data.balance_cents;
-                }
-            } else {
-                state.expenses[splitId] = merged;
-                if (split) {
-                    split.archived_balance_cents = 0;
-                    split.archived_expense_count = 0;
-                    split.balance_cents = data.balance_cents;
-                }
+            // Invalidate cached archive so next expand fetches fresh data
+            if (state.archiveLoaded[splitId]) {
+                delete state.archivedExpenses[splitId];
+                state.archiveLoaded[splitId] = false;
                 try { localStorage.removeItem(SK.ARCHIVE(splitId)); } catch (err) {}
             }
 
@@ -1222,6 +1222,8 @@
                 id: data.split.id,
                 partner: data.split.partner,
                 balance_cents: 0,
+                archived_balance_cents: 0,
+                archived_expense_count: 0,
             };
             // Avoid duplicates
             if (!state.splits.find(s => s.id === newSplit.id)) {
@@ -1577,10 +1579,10 @@
 
         // Attach settled divider toggle with lazy archive loading
         if (hasArchive) {
-            document.getElementById('settled-divider').addEventListener('click', () => {
+            document.getElementById('settled-divider').addEventListener('click', async () => {
                 state.showSettledExpenses = !state.showSettledExpenses;
                 if (state.showSettledExpenses && !state.archiveLoaded[state.currentSplitId]) {
-                    loadArchive(state.currentSplitId);
+                    await loadArchive(state.currentSplitId);
                 }
                 renderSplitDetail();
             });
