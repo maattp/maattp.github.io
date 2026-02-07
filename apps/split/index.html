@@ -705,6 +705,7 @@
         AUTH: 'split_auth',
         SPLITS: 'split_splits',
         EXPENSES: id => `split_expenses_${id}`,
+        ARCHIVE: id => `split_archive_${id}`,
         QUEUE: 'split_sync_queue',
     };
 
@@ -714,6 +715,8 @@
         splits: [],
         currentSplitId: null,
         expenses: {},
+        archivedExpenses: {},
+        archiveLoaded: {},
         syncQueue: [],
         syncing: false,
         showSettledExpenses: false,
@@ -766,14 +769,94 @@
         return -1;
     }
 
+    // ===== Archive =====
+    function archiveSettledExpenses(splitId) {
+        const expenses = state.expenses[splitId] || [];
+        const settlementIdx = findSettlementBoundary(expenses);
+        if (settlementIdx === -1) return;
+
+        const currentEra = expenses.slice(0, settlementIdx);
+        const newlyArchived = expenses.slice(settlementIdx);
+
+        // Calculate balance contribution of archived expenses
+        const myId = state.auth?.user?.id;
+        let archivedBalanceDelta = 0;
+        if (myId) {
+            for (const e of newlyArchived) {
+                const netToOther = Math.round(e.amount_cents * (100 - e.payer_percent) / 100);
+                if (e.paid_by_user_id === myId) archivedBalanceDelta += netToOther;
+                else archivedBalanceDelta -= netToOther;
+            }
+        }
+
+        state.expenses[splitId] = currentEra;
+
+        // Prepend to existing archive (newly archived are more recent)
+        const existingArchive = state.archivedExpenses[splitId] || [];
+        state.archivedExpenses[splitId] = [...newlyArchived, ...existingArchive];
+        state.archiveLoaded[splitId] = true;
+
+        const split = state.splits.find(s => s.id === splitId);
+        if (split) {
+            split.archived_balance_cents = (split.archived_balance_cents || 0) + archivedBalanceDelta;
+            split.archived_expense_count = state.archivedExpenses[splitId].length;
+        }
+    }
+
+    function loadArchive(splitId) {
+        if (state.archiveLoaded[splitId]) return;
+        try {
+            const stored = localStorage.getItem(SK.ARCHIVE(splitId));
+            state.archivedExpenses[splitId] = stored ? JSON.parse(stored) : [];
+        } catch (e) {
+            state.archivedExpenses[splitId] = [];
+        }
+        state.archiveLoaded[splitId] = true;
+    }
+
+    function getArchiveCount(splitId) {
+        if (state.archiveLoaded[splitId]) {
+            return (state.archivedExpenses[splitId] || []).length;
+        }
+        const split = state.splits.find(s => s.id === splitId);
+        return split?.archived_expense_count || 0;
+    }
+
+    function recomputeArchive(splitId) {
+        const active = state.expenses[splitId] || [];
+        const archived = state.archivedExpenses[splitId] || [];
+        const all = [...active, ...archived];
+        all.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+
+        state.expenses[splitId] = all;
+        state.archivedExpenses[splitId] = [];
+        state.archiveLoaded[splitId] = true;
+
+        const split = state.splits.find(s => s.id === splitId);
+        if (split) {
+            split.archived_balance_cents = 0;
+            split.archived_expense_count = 0;
+        }
+
+        try { localStorage.removeItem(SK.ARCHIVE(splitId)); } catch (e) {}
+
+        // Re-archive if there's another settlement deeper in the history
+        archiveSettledExpenses(splitId);
+    }
+
     // ===== Persistence =====
     function save() {
         try {
             localStorage.setItem(SK.AUTH, JSON.stringify(state.auth));
             localStorage.setItem(SK.SPLITS, JSON.stringify(state.splits));
             localStorage.setItem(SK.QUEUE, JSON.stringify(state.syncQueue));
-            for (const [id, exps] of Object.entries(state.expenses)) {
-                localStorage.setItem(SK.EXPENSES(id), JSON.stringify(exps));
+            for (const id of Object.keys(state.expenses)) {
+                localStorage.setItem(SK.EXPENSES(id), JSON.stringify(state.expenses[id]));
+            }
+            for (const id of Object.keys(state.archivedExpenses)) {
+                if (state.archiveLoaded[id]) {
+                    localStorage.setItem(SK.ARCHIVE(id), JSON.stringify(state.archivedExpenses[id]));
+                }
             }
         } catch (e) { /* storage full, best effort */ }
     }
@@ -784,16 +867,57 @@
             state.splits = JSON.parse(localStorage.getItem(SK.SPLITS)) || [];
             state.syncQueue = JSON.parse(localStorage.getItem(SK.QUEUE)) || [];
             state.expenses = {};
+            state.archivedExpenses = {};
+            state.archiveLoaded = {};
             for (const s of state.splits) {
                 const stored = localStorage.getItem(SK.EXPENSES(s.id));
                 if (stored) state.expenses[s.id] = JSON.parse(stored);
+                // Migrate: if main expenses still contain a settlement, archive them
+                migrateToArchive(s.id);
             }
         } catch (e) {
             state.auth = null;
             state.splits = [];
             state.syncQueue = [];
             state.expenses = {};
+            state.archivedExpenses = {};
+            state.archiveLoaded = {};
         }
+    }
+
+    function migrateToArchive(splitId) {
+        const expenses = state.expenses[splitId] || [];
+        const settlementIdx = findSettlementBoundary(expenses);
+        if (settlementIdx === -1) return;
+        // Already has an archive -- skip migration
+        if (localStorage.getItem(SK.ARCHIVE(splitId))) return;
+
+        const currentEra = expenses.slice(0, settlementIdx);
+        const toArchive = expenses.slice(settlementIdx);
+
+        const myId = state.auth?.user?.id;
+        let archivedBalance = 0;
+        if (myId) {
+            for (const e of toArchive) {
+                const netToOther = Math.round(e.amount_cents * (100 - e.payer_percent) / 100);
+                if (e.paid_by_user_id === myId) archivedBalance += netToOther;
+                else archivedBalance -= netToOther;
+            }
+        }
+
+        state.expenses[splitId] = currentEra;
+        const split = state.splits.find(s => s.id === splitId);
+        if (split) {
+            split.archived_balance_cents = archivedBalance;
+            split.archived_expense_count = toArchive.length;
+        }
+
+        // Write archive directly to localStorage without loading into state
+        try {
+            localStorage.setItem(SK.EXPENSES(splitId), JSON.stringify(currentEra));
+            localStorage.setItem(SK.ARCHIVE(splitId), JSON.stringify(toArchive));
+            localStorage.setItem(SK.SPLITS, JSON.stringify(state.splits));
+        } catch (e) { /* best effort */ }
     }
 
     // ===== Mock Backend =====
@@ -819,10 +943,14 @@
         }
         if (path.match(/\/api\/splits\/\d+$/) && method === 'GET') {
             const splitId = parseInt(path.split('/').pop());
+            const active = state.expenses[splitId] || [];
+            const archived = state.archivedExpenses[splitId] || [];
+            const allExpenses = [...active, ...archived];
+            const split = state.splits.find(s => s.id === splitId);
             return {
-                split: state.splits.find(s => s.id === splitId),
-                expenses: (state.expenses[splitId] || []).map(e => ({ ...e, synced: true })),
-                balance_cents: calculateLocalBalance(splitId),
+                split,
+                expenses: allExpenses.map(e => ({ ...e, synced: true })),
+                balance_cents: split?.balance_cents || 0,
             };
         }
         if (path.match(/\/api\/splits\/\d+\/sync/) && method === 'POST') {
@@ -845,6 +973,8 @@
                 id: splitId,
                 partner: { id: partnerId, email: 'sarah@gmail.com', name: 'Sarah', picture: null },
                 balance_cents: 0,
+                archived_balance_cents: 0,
+                archived_expense_count: 0,
             },
         ];
         const now = new Date();
@@ -863,8 +993,9 @@
             { client_id: uuid(), description: 'Streaming subscription', amount_cents: 1599, paid_by_user_id: myId, payer_percent: 50, created_at: day(35), synced: true },
             { client_id: uuid(), description: 'Groceries', amount_cents: 6320, paid_by_user_id: partnerId, payer_percent: 50, created_at: day(37), synced: true },
         ];
-        // Calculate balance from seed data
+        // Calculate full balance, then archive settled expenses to separate storage
         state.splits[0].balance_cents = calculateLocalBalance(splitId);
+        archiveSettledExpenses(splitId);
         save();
     }
 
@@ -914,10 +1045,13 @@
         localStorage.removeItem(SK.SPLITS);
         for (const s of oldSplits) {
             localStorage.removeItem(SK.EXPENSES(s.id));
+            localStorage.removeItem(SK.ARCHIVE(s.id));
         }
         state.auth = null;
         state.splits = [];
         state.expenses = {};
+        state.archivedExpenses = {};
+        state.archiveLoaded = {};
         state.syncQueue = [];
         state.currentSplitId = null;
         showView('login');
@@ -1003,19 +1137,55 @@
         try {
             const data = await api('GET', `/api/splits/${splitId}`);
             // Merge: keep unsynced local expenses, update the rest from server
-            const unsyncedLocal = (state.expenses[splitId] || []).filter(e => !e.synced);
+            const localActive = state.expenses[splitId] || [];
+            const localArchived = state.archiveLoaded[splitId] ? (state.archivedExpenses[splitId] || []) : [];
+            const allLocal = [...localActive, ...localArchived];
+
+            const unsyncedLocal = allLocal.filter(e => !e.synced);
             const unsyncedClientIds = new Set(unsyncedLocal.map(e => e.client_id));
             const serverExpenses = data.expenses.map(e => ({ ...e, synced: true }));
-            // Filter out server expenses that overlap with unsynced local
+
             const merged = [
                 ...serverExpenses.filter(e => !unsyncedClientIds.has(e.client_id)),
                 ...unsyncedLocal,
             ];
             merged.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
-            state.expenses[splitId] = merged;
-            // Update the split balance from the server
+
+            // Split into active and archived
+            const settlementIdx = findSettlementBoundary(merged);
             const split = state.splits.find(s => s.id === splitId);
-            if (split) split.balance_cents = data.balance_cents;
+
+            if (settlementIdx !== -1) {
+                state.expenses[splitId] = merged.slice(0, settlementIdx);
+                const newArchive = merged.slice(settlementIdx);
+
+                if (state.archiveLoaded[splitId]) {
+                    state.archivedExpenses[splitId] = newArchive;
+                }
+                try { localStorage.setItem(SK.ARCHIVE(splitId), JSON.stringify(newArchive)); } catch (err) {}
+
+                if (split) {
+                    const myId = state.auth.user.id;
+                    let archBal = 0;
+                    for (const e of newArchive) {
+                        const netToOther = Math.round(e.amount_cents * (100 - e.payer_percent) / 100);
+                        if (e.paid_by_user_id === myId) archBal += netToOther;
+                        else archBal -= netToOther;
+                    }
+                    split.archived_balance_cents = archBal;
+                    split.archived_expense_count = newArchive.length;
+                    split.balance_cents = data.balance_cents;
+                }
+            } else {
+                state.expenses[splitId] = merged;
+                if (split) {
+                    split.archived_balance_cents = 0;
+                    split.archived_expense_count = 0;
+                    split.balance_cents = data.balance_cents;
+                }
+                try { localStorage.removeItem(SK.ARCHIVE(splitId)); } catch (err) {}
+            }
+
             save();
             if (state.currentSplitId === splitId) renderSplitDetail();
         } catch (e) {
@@ -1108,6 +1278,11 @@
             data: expense,
         });
 
+        // Archive settled expenses when a settlement is added
+        if (description === 'Settlement') {
+            archiveSettledExpenses(splitId);
+        }
+
         save();
         renderSplitDetail();
         renderSplitsList();
@@ -1118,11 +1293,21 @@
         const split = state.splits.find(s => s.id === splitId);
         if (!split) return;
 
-        const expenses = state.expenses[splitId] || [];
-        const idx = expenses.findIndex(e => e.client_id === clientId);
+        // Search active expenses first, then archive
+        let expenses = state.expenses[splitId] || [];
+        let idx = expenses.findIndex(e => e.client_id === clientId);
+        let isArchived = false;
+
+        if (idx === -1 && state.archiveLoaded[splitId]) {
+            expenses = state.archivedExpenses[splitId] || [];
+            idx = expenses.findIndex(e => e.client_id === clientId);
+            isArchived = true;
+        }
+
         if (idx === -1) return;
 
         const expense = expenses[idx];
+        const isSettlement = expense.description === 'Settlement';
 
         // Reverse the balance impact
         const netToOther = Math.round(expense.amount_cents * (100 - expense.payer_percent) / 100);
@@ -1131,6 +1316,15 @@
             split.balance_cents -= netToOther;
         } else {
             split.balance_cents += netToOther;
+        }
+
+        // Also update archived_balance_cents if deleting from archive
+        if (isArchived) {
+            if (expense.paid_by_user_id === myId) {
+                split.archived_balance_cents = (split.archived_balance_cents || 0) - netToOther;
+            } else {
+                split.archived_balance_cents = (split.archived_balance_cents || 0) + netToOther;
+            }
         }
 
         // Remove locally
@@ -1149,6 +1343,13 @@
             });
         }
 
+        // If we deleted a settlement, recompute the archive boundary
+        if (isSettlement && isArchived) {
+            recomputeArchive(splitId);
+        } else if (isArchived) {
+            split.archived_expense_count = (state.archivedExpenses[splitId] || []).length;
+        }
+
         save();
         renderSplitDetail();
         renderSplitsList();
@@ -1157,9 +1358,10 @@
 
     function calculateLocalBalance(splitId) {
         const expenses = state.expenses[splitId] || [];
+        const split = state.splits.find(s => s.id === splitId);
         const myId = state.auth?.user?.id;
         if (!myId) return 0;
-        let balance = 0;
+        let balance = split?.archived_balance_cents || 0;
         for (const e of expenses) {
             const netToOther = Math.round(e.amount_cents * (100 - e.payer_percent) / 100);
             if (e.paid_by_user_id === myId) {
@@ -1327,8 +1529,10 @@
         // Expenses list
         const expenses = state.expenses[state.currentSplitId] || [];
         const container = document.getElementById('expenses-list');
+        const archiveCount = getArchiveCount(state.currentSplitId);
+        const hasArchive = archiveCount > 0;
 
-        if (expenses.length === 0) {
+        if (expenses.length === 0 && !hasArchive) {
             container.innerHTML = `
                 <div class="empty-state">
                     <div class="empty-icon">&#x1F4B8;</div>
@@ -1337,50 +1541,47 @@
             return;
         }
 
-        // Split expenses into current era and settled history
-        const settlementIdx = findSettlementBoundary(expenses);
-        const hasSettledHistory = settlementIdx !== -1;
-        const currentEra = hasSettledHistory ? expenses.slice(0, settlementIdx) : expenses;
-        const settledExpenses = hasSettledHistory ? expenses.slice(settlementIdx) : [];
-
         const myId = state.auth.user.id;
         let html = '';
 
-        // Render current era
-        html += renderExpenseGroup(currentEra, split, myId);
+        // Render current era (always in memory)
+        html += renderExpenseGroup(expenses, split, myId);
 
-        if (currentEra.length === 0 && hasSettledHistory) {
+        if (expenses.length === 0 && hasArchive) {
             html += `
                 <div class="empty-state" style="padding: 30px 20px;">
                     <div class="empty-text">No expenses since last settlement.</div>
                 </div>`;
         }
 
-        // Settled expenses divider
-        if (hasSettledHistory) {
-            const count = settledExpenses.length;
+        // Settled expenses divider (archive exists)
+        if (hasArchive) {
             const chevronClass = state.showSettledExpenses ? ' expanded' : '';
             html += `
                 <div class="settled-divider" id="settled-divider">
                     <div class="settled-divider-line"></div>
                     <span class="settled-divider-chevron${chevronClass}">&#9654;</span>
-                    <span class="settled-divider-text">${count} older settled expense${count !== 1 ? 's' : ''}</span>
+                    <span class="settled-divider-text">${archiveCount} older settled expense${archiveCount !== 1 ? 's' : ''}</span>
                     <div class="settled-divider-line"></div>
                 </div>`;
 
-            if (state.showSettledExpenses) {
+            if (state.showSettledExpenses && state.archiveLoaded[state.currentSplitId]) {
+                const archived = state.archivedExpenses[state.currentSplitId] || [];
                 html += '<div class="settled-era">';
-                html += renderExpenseGroup(settledExpenses, split, myId);
+                html += renderExpenseGroup(archived, split, myId);
                 html += '</div>';
             }
         }
 
         container.innerHTML = html;
 
-        // Attach settled divider toggle
-        if (hasSettledHistory) {
+        // Attach settled divider toggle with lazy archive loading
+        if (hasArchive) {
             document.getElementById('settled-divider').addEventListener('click', () => {
                 state.showSettledExpenses = !state.showSettledExpenses;
+                if (state.showSettledExpenses && !state.archiveLoaded[state.currentSplitId]) {
+                    loadArchive(state.currentSplitId);
+                }
                 renderSplitDetail();
             });
         }
@@ -1502,6 +1703,11 @@
     document.getElementById('btn-add-expense').addEventListener('click', openAddExpenseModal);
 
     document.getElementById('btn-back-to-splits').addEventListener('click', () => {
+        // Free archive from memory
+        if (state.currentSplitId && state.archiveLoaded[state.currentSplitId]) {
+            delete state.archivedExpenses[state.currentSplitId];
+            state.archiveLoaded[state.currentSplitId] = false;
+        }
         state.currentSplitId = null;
         state.showSettledExpenses = false;
         showView('splits');
