@@ -928,7 +928,7 @@
             }
         }
 
-        // Interleave posts from pools into state.posts using weighted random selection
+        // Interleave posts from pools into state.posts using uniform random selection
         function interleaveFromPools(count = 30) {
             let added = 0;
             let emptyRounds = 0;
@@ -940,14 +940,8 @@
 
                 if (available.length === 0) break;
 
-                // Weighted random: probability proportional to pool size
-                const totalPosts = available.reduce((sum, [_, p]) => sum + p.posts.length, 0);
-                let rand = Math.random() * totalPosts;
-                let selectedSub = available[0][0];
-                for (const [sub, pool] of available) {
-                    rand -= pool.posts.length;
-                    if (rand <= 0) { selectedSub = sub; break; }
-                }
+                // Uniform random: equal probability per subreddit regardless of pool size
+                const [selectedSub] = available[Math.floor(Math.random() * available.length)];
 
                 const post = state.mixedPools[selectedSub].posts.shift();
                 if (!state.mixedSeen.has(post.id)) {
@@ -1944,15 +1938,22 @@
             state.loading = true;
 
             try {
-                // Check if pools need refilling before interleaving
-                const totalInPools = Object.values(state.mixedPools)
-                    .reduce((sum, pool) => sum + pool.posts.length, 0);
+                // Always prioritize bringing in unfetched subreddits
+                const hasUnfetched = Object.values(state.mixedPools)
+                    .some(pool => !pool.fetched);
 
-                if (totalInPools < 15) {
+                if (hasUnfetched) {
                     try {
-                        await refillMixedPool();
-                    } catch (e) {
-                        // Best-effort: still interleave whatever's in the pools
+                        await refillMixedPool(); // Priority 1 in refillMixedPool handles unfetched
+                    } catch (e) {}
+                } else {
+                    // Only refill already-fetched pools when running low
+                    const totalInPools = Object.values(state.mixedPools)
+                        .reduce((sum, pool) => sum + pool.posts.length, 0);
+                    if (totalInPools < 15) {
+                        try {
+                            await refillMixedPool();
+                        } catch (e) {}
                     }
                 }
 
