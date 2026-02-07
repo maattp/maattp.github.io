@@ -500,7 +500,7 @@ Sync a batch of operations (adds and deletes). This is the primary sync endpoint
 1. Parse split ID from URL. Fetch the split. Return 404 if not found.
 2. Verify user is a member of this split. Return 403 if not.
 3. Parse `operations` array from body. Return 400 if missing or not an array.
-4. Use `env.DB.batch()` to process all operations atomically. Build an array of D1 prepared statements, then execute them in one batch call. This ensures either all operations succeed or none do.
+4. Process operations sequentially using `env.DB.prepare()`. Note: D1's `batch()` sends multiple statements in one round-trip for performance, but it is **not transactional** — individual statements can fail independently. This is fine here because each operation is idempotent (inserts use `ON CONFLICT DO NOTHING`, deletes use `WHERE deleted_at IS NULL`), so partial failures are safe to retry.
 5. Process each operation:
    - **add**: Validate the expense fields first:
      - `expense.client_id` must be a non-empty string
@@ -740,7 +740,7 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Deploy Worker
-        uses: cloudflare/wrangler-action@v3
+        uses: cloudflare/wrangler-action@v4
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
 ```
@@ -773,7 +773,7 @@ To find your Account ID: Cloudflare dashboard → pick any domain (or Workers & 
 **What the workflow does:**
 1. Triggers on any push to `main`
 2. Checks out the repo
-3. Runs `wrangler deploy` using `cloudflare/wrangler-action@v3`
+3. Runs `wrangler deploy` using `cloudflare/wrangler-action@v4`
 
 **D1 migrations** are NOT auto-run by this workflow. If you add a new migration file, run it manually before/after deploy:
 ```bash
