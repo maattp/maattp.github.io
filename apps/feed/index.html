@@ -1938,36 +1938,16 @@
             state.loading = true;
 
             try {
-                // Refill depleted pools (pools with fewer posts than average)
-                const pools = Object.values(state.mixedPools);
-                const depleted = Object.entries(state.mixedPools)
-                    .filter(([_, pool]) => !pool.exhausted && (pool.posts.length < 5 || !pool.fetched));
+                // Check if pools need refilling before interleaving
+                const totalInPools = Object.values(state.mixedPools)
+                    .reduce((sum, pool) => sum + pool.posts.length, 0);
 
-                if (depleted.length > 0) {
-                    // Refill up to 3 pools in parallel
-                    const toRefill = depleted.slice(0, 3);
-                    await Promise.allSettled(toRefill.map(([sub, pool]) => {
-                        if (!pool.fetched) {
-                            return fetchSubredditPosts(sub, 25).then(({ posts, after }) => {
-                                pool.posts = posts;
-                                pool.after = after;
-                                pool.exhausted = !after;
-                                pool.fetched = true;
-                            }).catch(err => {
-                                pool.fetched = true;
-                                pool.exhausted = true;
-                            });
-                        } else if (pool.after) {
-                            return fetchSubredditPosts(sub, 25, pool.after).then(({ posts, after }) => {
-                                pool.posts = pool.posts.concat(posts);
-                                pool.after = after;
-                                pool.exhausted = !after;
-                            }).catch(err => {
-                                pool.exhausted = true;
-                            });
-                        }
-                        return Promise.resolve();
-                    }));
+                if (totalInPools < 15) {
+                    try {
+                        await refillMixedPool();
+                    } catch (e) {
+                        // Best-effort: still interleave whatever's in the pools
+                    }
                 }
 
                 interleaveFromPools(30);
