@@ -1374,14 +1374,12 @@
                         }
                     }
                 }
-                // Filter out tiny images (e.g. Imgur "image not available" placeholders)
-                const validUrls = urls.filter(u => u.width >= 200 && u.height >= 200);
-                if (validUrls.length > 0) {
+                if (urls.length > 0) {
                     media.type = 'gallery';
-                    media.urls = validUrls;
-                    media.url = validUrls[0].url;
-                    media.width = validUrls[0].width;
-                    media.height = validUrls[0].height;
+                    media.urls = urls;
+                    media.url = urls[0].url;
+                    media.width = urls[0].width;
+                    media.height = urls[0].height;
                     return media;
                 }
             }
@@ -1935,14 +1933,7 @@
                     post.subreddit_display = post.subreddit;
                     return post;
                 })
-                .filter(post => post.media !== null)
-                // Filter out tiny images (e.g. Imgur "image not available" placeholders)
-                .filter(post => {
-                    if (post.media.type === 'image' && post.media.width && post.media.height) {
-                        return post.media.width >= 200 && post.media.height >= 200;
-                    }
-                    return true;
-                });
+                .filter(post => post.media !== null);
 
             return { posts, after: data.data.after || null };
         }
@@ -2193,6 +2184,12 @@
             if (img) {
                 img.onerror = function() {
                     handleMediaError(feedItem, index);
+                };
+                // Filter out tiny placeholder images (e.g. Imgur "image removed")
+                img.onload = function() {
+                    if (img.naturalWidth < 200 && img.naturalHeight < 200) {
+                        handleMediaError(feedItem, index);
+                    }
                 };
             }
 
