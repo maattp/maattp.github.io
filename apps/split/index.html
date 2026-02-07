@@ -333,6 +333,39 @@
             transform: translateX(0);
         }
 
+        /* ===== Settled Divider ===== */
+        .settled-divider {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            padding: 20px 0 12px;
+            cursor: pointer;
+            -webkit-tap-highlight-color: transparent;
+        }
+        .settled-divider:active { opacity: 0.7; }
+        .settled-divider-line {
+            flex: 1;
+            height: 1px;
+            background: #333;
+        }
+        .settled-divider-text {
+            font-size: 12px;
+            font-weight: 600;
+            color: #666;
+            white-space: nowrap;
+            letter-spacing: 0.3px;
+        }
+        .settled-divider-chevron {
+            font-size: 10px;
+            color: #666;
+            transition: transform 0.2s ease;
+        }
+        .settled-divider-chevron.expanded {
+            transform: rotate(90deg);
+        }
+        .settled-era .expense-item { opacity: 0.6; }
+        .settled-era .expense-date-group { opacity: 0.6; }
+
         /* ===== Empty State ===== */
         .empty-state {
             display: flex;
@@ -683,6 +716,7 @@
         expenses: {},
         syncQueue: [],
         syncing: false,
+        showSettledExpenses: false,
     };
 
     // ===== Utilities =====
@@ -722,6 +756,14 @@
         if (name) return name.charAt(0).toUpperCase();
         if (email) return email.charAt(0).toUpperCase();
         return '?';
+    }
+
+    // Returns index of the most recent settlement in a newest-first expense array, or -1.
+    function findSettlementBoundary(expenses) {
+        for (let i = 0; i < expenses.length; i++) {
+            if (expenses[i].description === 'Settlement') return i;
+        }
+        return -1;
     }
 
     // ===== Persistence =====
@@ -808,10 +850,14 @@
         const now = new Date();
         const day = (d) => { const dt = new Date(now); dt.setDate(dt.getDate() - d); return dt.toISOString(); };
         state.expenses[splitId] = [
+            // Current era (after settlement)
             { client_id: uuid(), description: 'Groceries', amount_cents: 8743, paid_by_user_id: myId, payer_percent: 50, created_at: day(0), synced: true },
             { client_id: uuid(), description: 'Thai takeout', amount_cents: 4200, paid_by_user_id: partnerId, payer_percent: 50, created_at: day(1), synced: true },
             { client_id: uuid(), description: 'Electric bill', amount_cents: 11500, paid_by_user_id: myId, payer_percent: 50, created_at: day(3), synced: true },
             { client_id: uuid(), description: 'Coffee beans', amount_cents: 1895, paid_by_user_id: partnerId, payer_percent: 50, created_at: day(5), synced: true },
+            // Settlement boundary
+            { client_id: uuid(), description: 'Settlement', amount_cents: 6041, paid_by_user_id: myId, payer_percent: 0, created_at: day(7), synced: true },
+            // Settled era
             { client_id: uuid(), description: 'New lamp', amount_cents: 4999, paid_by_user_id: myId, payer_percent: 0, created_at: day(8), synced: true },
             { client_id: uuid(), description: 'Dinner w/ friends', amount_cents: 12400, paid_by_user_id: partnerId, payer_percent: 30, created_at: day(12), synced: true },
             { client_id: uuid(), description: 'Streaming subscription', amount_cents: 1599, paid_by_user_id: myId, payer_percent: 50, created_at: day(35), synced: true },
@@ -1187,10 +1233,57 @@
         container.querySelectorAll('.split-card').forEach(card => {
             card.addEventListener('click', () => {
                 state.currentSplitId = parseInt(card.dataset.splitId);
+                state.showSettledExpenses = false;
                 showView('detail');
                 refreshSplitDetail(state.currentSplitId);
             });
         });
+    }
+
+    function renderExpenseGroup(expenses, split, myId) {
+        if (expenses.length === 0) return '';
+        const groups = {};
+        for (const e of expenses) {
+            const key = formatMonthGroup(e.created_at);
+            if (!groups[key]) groups[key] = [];
+            groups[key].push(e);
+        }
+        let html = '';
+        for (const [month, exps] of Object.entries(groups)) {
+            html += `<div class="expense-date-group">${month}</div>`;
+            for (const e of exps) {
+                const paidByMe = e.paid_by_user_id === myId;
+                const payer = paidByMe ? 'You' : (split.partner.name || split.partner.email.split('@')[0]);
+                const isSettlement = e.description === 'Settlement';
+                const netToOther = Math.round(e.amount_cents * (100 - e.payer_percent) / 100);
+                let netText, netClass;
+                if (paidByMe) {
+                    netText = netToOther > 0 ? `+${formatMoney(netToOther)}` : formatMoney(0);
+                    netClass = netToOther > 0 ? 'positive' : 'settled';
+                } else {
+                    netText = netToOther > 0 ? `-${formatMoney(netToOther)}` : formatMoney(0);
+                    netClass = netToOther > 0 ? 'negative' : 'settled';
+                }
+                const splitLabel = e.payer_percent === 50 ? '50/50' : `${e.payer_percent}/${100 - e.payer_percent}`;
+                const syncClass = e.synced === false ? ' unsynced' : '';
+                const icon = isSettlement ? '&#x1F91D;' : (paidByMe ? '&#x1F4B5;' : '&#x1F4B3;');
+
+                html += `
+                    <div class="expense-item${syncClass}" data-client-id="${e.client_id}">
+                        <div class="expense-icon">${icon}</div>
+                        <div class="expense-details">
+                            <div class="expense-desc">${esc(e.description)}</div>
+                            <div class="expense-meta">${payer} paid &middot; ${splitLabel} &middot; ${formatDate(e.created_at)}</div>
+                        </div>
+                        <div class="expense-amount-col">
+                            <div class="expense-total">${formatMoney(e.amount_cents)}</div>
+                            <div class="expense-net ${netClass}">${netText}</div>
+                        </div>
+                        <div class="expense-delete-zone">Delete</div>
+                    </div>`;
+            }
+        }
+        return html;
     }
 
     function renderSplitDetail() {
@@ -1244,49 +1337,53 @@
             return;
         }
 
-        // Group by month
-        const groups = {};
-        for (const e of expenses) {
-            const key = formatMonthGroup(e.created_at);
-            if (!groups[key]) groups[key] = [];
-            groups[key].push(e);
-        }
+        // Split expenses into current era and settled history
+        const settlementIdx = findSettlementBoundary(expenses);
+        const hasSettledHistory = settlementIdx !== -1;
+        const currentEra = hasSettledHistory ? expenses.slice(0, settlementIdx) : expenses;
+        const settledExpenses = hasSettledHistory ? expenses.slice(settlementIdx) : [];
 
         const myId = state.auth.user.id;
         let html = '';
-        for (const [month, exps] of Object.entries(groups)) {
-            html += `<div class="expense-date-group">${month}</div>`;
-            for (const e of exps) {
-                const paidByMe = e.paid_by_user_id === myId;
-                const payer = paidByMe ? 'You' : (split.partner.name || split.partner.email.split('@')[0]);
-                const netToOther = Math.round(e.amount_cents * (100 - e.payer_percent) / 100);
-                let netText, netClass;
-                if (paidByMe) {
-                    netText = netToOther > 0 ? `+${formatMoney(netToOther)}` : formatMoney(0);
-                    netClass = netToOther > 0 ? 'positive' : 'settled';
-                } else {
-                    netText = netToOther > 0 ? `-${formatMoney(netToOther)}` : formatMoney(0);
-                    netClass = netToOther > 0 ? 'negative' : 'settled';
-                }
-                const splitLabel = e.payer_percent === 50 ? '50/50' : `${e.payer_percent}/${100 - e.payer_percent}`;
-                const syncClass = e.synced === false ? ' unsynced' : '';
 
-                html += `
-                    <div class="expense-item${syncClass}" data-client-id="${e.client_id}">
-                        <div class="expense-icon">${paidByMe ? '&#x1F4B5;' : '&#x1F4B3;'}</div>
-                        <div class="expense-details">
-                            <div class="expense-desc">${esc(e.description)}</div>
-                            <div class="expense-meta">${payer} paid &middot; ${splitLabel} &middot; ${formatDate(e.created_at)}</div>
-                        </div>
-                        <div class="expense-amount-col">
-                            <div class="expense-total">${formatMoney(e.amount_cents)}</div>
-                            <div class="expense-net ${netClass}">${netText}</div>
-                        </div>
-                        <div class="expense-delete-zone">Delete</div>
-                    </div>`;
+        // Render current era
+        html += renderExpenseGroup(currentEra, split, myId);
+
+        if (currentEra.length === 0 && hasSettledHistory) {
+            html += `
+                <div class="empty-state" style="padding: 30px 20px;">
+                    <div class="empty-text">No expenses since last settlement.</div>
+                </div>`;
+        }
+
+        // Settled expenses divider
+        if (hasSettledHistory) {
+            const count = settledExpenses.length;
+            const chevronClass = state.showSettledExpenses ? ' expanded' : '';
+            html += `
+                <div class="settled-divider" id="settled-divider">
+                    <div class="settled-divider-line"></div>
+                    <span class="settled-divider-chevron${chevronClass}">&#9654;</span>
+                    <span class="settled-divider-text">${count} older settled expense${count !== 1 ? 's' : ''}</span>
+                    <div class="settled-divider-line"></div>
+                </div>`;
+
+            if (state.showSettledExpenses) {
+                html += '<div class="settled-era">';
+                html += renderExpenseGroup(settledExpenses, split, myId);
+                html += '</div>';
             }
         }
+
         container.innerHTML = html;
+
+        // Attach settled divider toggle
+        if (hasSettledHistory) {
+            document.getElementById('settled-divider').addEventListener('click', () => {
+                state.showSettledExpenses = !state.showSettledExpenses;
+                renderSplitDetail();
+            });
+        }
 
         // Swipe to delete
         setupSwipeToDelete(container);
@@ -1406,6 +1503,7 @@
 
     document.getElementById('btn-back-to-splits').addEventListener('click', () => {
         state.currentSplitId = null;
+        state.showSettledExpenses = false;
         showView('splits');
     });
 
