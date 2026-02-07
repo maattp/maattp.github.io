@@ -713,7 +713,7 @@
 <body>
     <div class="home-view" id="home-view">
         <div class="header">
-            <h1>Feed <span class="version">v13</span></h1>
+            <h1>Feed <span class="version">v14</span></h1>
             <button class="export-btn" id="export-btn">Export</button>
             <select class="sort-select" id="sort-select">
                 <option value="hot">Hot</option>
@@ -928,7 +928,7 @@
             }
         }
 
-        // Interleave posts from pools into state.posts using weighted random selection
+        // Interleave posts from pools into state.posts using uniform random selection
         function interleaveFromPools(count = 30) {
             let added = 0;
             let emptyRounds = 0;
@@ -940,14 +940,8 @@
 
                 if (available.length === 0) break;
 
-                // Weighted random: probability proportional to pool size
-                const totalPosts = available.reduce((sum, [_, p]) => sum + p.posts.length, 0);
-                let rand = Math.random() * totalPosts;
-                let selectedSub = available[0][0];
-                for (const [sub, pool] of available) {
-                    rand -= pool.posts.length;
-                    if (rand <= 0) { selectedSub = sub; break; }
-                }
+                // Uniform random: equal probability per subreddit regardless of pool size
+                const [selectedSub] = available[Math.floor(Math.random() * available.length)];
 
                 const post = state.mixedPools[selectedSub].posts.shift();
                 if (!state.mixedSeen.has(post.id)) {
@@ -1944,16 +1938,36 @@
             state.loading = true;
 
             try {
-                // Check if pools need refilling before interleaving
-                const totalInPools = Object.values(state.mixedPools)
-                    .reduce((sum, pool) => sum + pool.posts.length, 0);
+                // Refill depleted pools (pools with fewer posts than average)
+                const pools = Object.values(state.mixedPools);
+                const depleted = Object.entries(state.mixedPools)
+                    .filter(([_, pool]) => !pool.exhausted && (pool.posts.length < 5 || !pool.fetched));
 
-                if (totalInPools < 15) {
-                    try {
-                        await refillMixedPool();
-                    } catch (e) {
-                        // Best-effort: still interleave whatever's in the pools
-                    }
+                if (depleted.length > 0) {
+                    // Refill up to 3 pools in parallel
+                    const toRefill = depleted.slice(0, 3);
+                    await Promise.allSettled(toRefill.map(([sub, pool]) => {
+                        if (!pool.fetched) {
+                            return fetchSubredditPosts(sub, 25).then(({ posts, after }) => {
+                                pool.posts = posts;
+                                pool.after = after;
+                                pool.exhausted = !after;
+                                pool.fetched = true;
+                            }).catch(err => {
+                                pool.fetched = true;
+                                pool.exhausted = true;
+                            });
+                        } else if (pool.after) {
+                            return fetchSubredditPosts(sub, 25, pool.after).then(({ posts, after }) => {
+                                pool.posts = pool.posts.concat(posts);
+                                pool.after = after;
+                                pool.exhausted = !after;
+                            }).catch(err => {
+                                pool.exhausted = true;
+                            });
+                        }
+                        return Promise.resolve();
+                    }));
                 }
 
                 interleaveFromPools(30);
