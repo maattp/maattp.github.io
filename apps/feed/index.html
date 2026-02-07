@@ -713,7 +713,7 @@
 <body>
     <div class="home-view" id="home-view">
         <div class="header">
-            <h1>Feed <span class="version">v13</span></h1>
+            <h1>Feed <span class="version">v14</span></h1>
             <button class="export-btn" id="export-btn">Export</button>
             <select class="sort-select" id="sort-select">
                 <option value="hot">Hot</option>
@@ -1374,12 +1374,14 @@
                         }
                     }
                 }
-                if (urls.length > 0) {
+                // Filter out tiny images (e.g. Imgur "image not available" placeholders)
+                const validUrls = urls.filter(u => u.width >= 200 && u.height >= 200);
+                if (validUrls.length > 0) {
                     media.type = 'gallery';
-                    media.urls = urls;
-                    media.url = urls[0].url;
-                    media.width = urls[0].width;
-                    media.height = urls[0].height;
+                    media.urls = validUrls;
+                    media.url = validUrls[0].url;
+                    media.width = validUrls[0].width;
+                    media.height = validUrls[0].height;
                     return media;
                 }
             }
@@ -1933,7 +1935,14 @@
                     post.subreddit_display = post.subreddit;
                     return post;
                 })
-                .filter(post => post.media !== null);
+                .filter(post => post.media !== null)
+                // Filter out tiny images (e.g. Imgur "image not available" placeholders)
+                .filter(post => {
+                    if (post.media.type === 'image' && post.media.width && post.media.height) {
+                        return post.media.width >= 200 && post.media.height >= 200;
+                    }
+                    return true;
+                });
 
             return { posts, after: data.data.after || null };
         }
