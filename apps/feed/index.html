@@ -2191,7 +2191,19 @@
                     if (img.naturalWidth < 200 && img.naturalHeight < 200) {
                         feedItem.style.display = 'none';
                         if (state.currentIndex === index) {
-                            skipToNext(index);
+                            // Find next visible feed item
+                            const container = document.getElementById('feed-container');
+                            let nextIdx = index + 1;
+                            let nextItem = container.querySelector(`.feed-item[data-index="${nextIdx}"]`);
+                            while (nextItem && nextItem.style.display === 'none') {
+                                nextIdx++;
+                                nextItem = container.querySelector(`.feed-item[data-index="${nextIdx}"]`);
+                            }
+                            if (nextItem) {
+                                state.currentIndex = nextIdx;
+                                updateMediaWindow(nextIdx);
+                                nextItem.scrollIntoView({ behavior: 'smooth' });
+                            }
                         }
                     }
                 };
