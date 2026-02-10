@@ -713,7 +713,7 @@
 <body>
     <div class="home-view" id="home-view">
         <div class="header">
-            <h1>Feed <span class="version">v15</span></h1>
+            <h1>Feed <span class="version">v16</span></h1>
             <button class="export-btn" id="export-btn">Export</button>
             <select class="sort-select" id="sort-select">
                 <option value="hot">Hot</option>
@@ -2186,10 +2186,25 @@
                 img.onerror = function() {
                     handleMediaError(feedItem, index);
                 };
-                // Filter out tiny placeholder images (e.g. Imgur "image removed")
+                // Hide posts with tiny placeholder images (e.g. Imgur "image removed")
                 img.onload = function() {
                     if (img.naturalWidth < 200 && img.naturalHeight < 200) {
-                        handleMediaError(feedItem, index);
+                        feedItem.style.display = 'none';
+                        if (state.currentIndex === index) {
+                            // Find next visible feed item
+                            const container = document.getElementById('feed-container');
+                            let nextIdx = index + 1;
+                            let nextItem = container.querySelector(`.feed-item[data-index="${nextIdx}"]`);
+                            while (nextItem && nextItem.style.display === 'none') {
+                                nextIdx++;
+                                nextItem = container.querySelector(`.feed-item[data-index="${nextIdx}"]`);
+                            }
+                            if (nextItem) {
+                                state.currentIndex = nextIdx;
+                                updateMediaWindow(nextIdx);
+                                nextItem.scrollIntoView({ behavior: 'smooth' });
+                            }
+                        }
                     }
                 };
             }
