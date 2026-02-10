@@ -713,7 +713,7 @@
 <body>
     <div class="home-view" id="home-view">
         <div class="header">
-            <h1>Feed <span class="version">v16</span></h1>
+            <h1>Feed <span class="version">v17</span></h1>
             <button class="export-btn" id="export-btn">Export</button>
             <select class="sort-select" id="sort-select">
                 <option value="hot">Hot</option>
@@ -1447,7 +1447,13 @@
         // Skip to next feed item
         function skipToNext(currentIndex) {
             const container = document.getElementById('feed-container');
-            const nextItem = container.querySelector(`.feed-item[data-index="${currentIndex + 1}"]`);
+            let nextIdx = currentIndex + 1;
+            let nextItem = container.querySelector(`.feed-item[data-index="${nextIdx}"]`);
+            // Skip over hidden items (e.g. small images that were filtered out)
+            while (nextItem && nextItem.style.display === 'none') {
+                nextIdx++;
+                nextItem = container.querySelector(`.feed-item[data-index="${nextIdx}"]`);
+            }
             if (nextItem) {
                 nextItem.scrollIntoView({ behavior: 'smooth' });
             }
