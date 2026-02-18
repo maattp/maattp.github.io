@@ -17,7 +17,8 @@
         body {
             font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'Segoe UI', Roboto, sans-serif;
             background: #000;
-            height: 100vh;
+            position: fixed;
+            inset: 0;
             color: #fff;
             padding-bottom: env(safe-area-inset-bottom);
             overflow: hidden;
@@ -697,6 +698,8 @@
         function hideAddModal() {
             const overlay = document.getElementById('modal-overlay');
             overlay.classList.remove('visible');
+            // Reset scroll position in case iOS keyboard scrolled the page
+            window.scrollTo(0, 0);
         }
 
         // Handle overlay click
