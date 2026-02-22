@@ -4,7 +4,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>terminal</title>
+<title>Matt Polkiewicz</title>
 <style>
   * { margin: 0; padding: 0; box-sizing: border-box; }
 
@@ -43,6 +43,14 @@ animation: blink 1s step-end infinite;
 0%, 100% { opacity: 1; }
 50% { opacity: 0; }
 }
+
+a {
+color: #b0b0b0;
+text-decoration: none;
+}
+a:hover {
+text-decoration: underline;
+}
 </style>
 
 </head>
@@ -61,8 +69,8 @@ animation: blink 1s step-end infinite;
     '> matt polkiewicz',
     '  software engineer',
     '',
-    '  m.polkiewicz@gmail.com',
-    '  linkedin.com/in/polkiewicz',
+    { text: '  m.polkiewicz@gmail.com', href: 'mailto:m.polkiewicz@gmail.com', linkStart: 2 },
+    { text: '  linkedin.com/in/polkiewicz', href: 'https://www.linkedin.com/in/polkiewicz', linkStart: 2 },
   ];
 
   const CHAR_SPEED = 30;
@@ -74,14 +82,26 @@ animation: blink 1s step-end infinite;
     return c;
   }
 
-  function typeLine(el, text, cursor) {
+  function typeLine(el, line, cursor) {
     return new Promise(resolve => {
+      const text = typeof line === 'string' ? line : line.text;
+      const href = typeof line === 'object' ? line.href : null;
+      const linkStart = typeof line === 'object' ? (line.linkStart || 0) : 0;
+
       el.appendChild(cursor);
       let i = 0;
+      let anchor = null;
+
       function next() {
         if (i >= text.length) {
           setTimeout(resolve, LINE_PAUSE);
           return;
+        }
+        if (href && i === linkStart && !anchor) {
+          anchor = document.createElement('a');
+          anchor.href = href;
+          cursor.before(anchor);
+          anchor.appendChild(cursor);
         }
         cursor.before(document.createTextNode(text[i]));
         i++;
@@ -97,11 +117,13 @@ animation: blink 1s step-end infinite;
 
     for (let i = 0; i < lines.length; i++) {
       const el = document.getElementById('line-' + i);
-      if (lines[i] === '') {
+      const line = lines[i];
+      const text = typeof line === 'string' ? line : line.text;
+      if (text === '') {
         el.appendChild(cursor);
         await new Promise(r => setTimeout(r, LINE_PAUSE));
       } else {
-        await typeLine(el, lines[i], cursor);
+        await typeLine(el, line, cursor);
       }
     }
   }
