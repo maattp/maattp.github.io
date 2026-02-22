@@ -1,115 +1,113 @@
 <!DOCTYPE html>
+
 <html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Matt Polkiewicz</title>
-    <style>
-        body {
-            margin: 0;
-            overflow: hidden;
-            font-family: 'Arial', sans-serif;
-        }
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>terminal</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
 
-        canvas {
-            display: block;
-        }
+body {
+background: #0d0d0d;
+color: #b0b0b0;
+font-family: 'Courier New', Courier, monospace;
+min-height: 100vh;
+display: flex;
+align-items: center;
+justify-content: center;
+padding: 40px;
+}
 
-        #resume-content {
-            position: absolute;
-            top: 50%;
-            left: 50%;
-            transform: translate(-50%, -50%);
-            color: #fff;
-            text-align: center;
-        }
+.terminal {
+font-size: clamp(14px, 2vw, 18px);
+line-height: 1.8;
+width: 32ch;
+}
 
-        #resume-content a {
-            display: block;
-            margin-bottom: 10px;
-            color: #fff;
-            text-decoration: none;
-        }
+.line {
+white-space: pre;
+height: 1.8em;
+}
 
-        h1 {
-            margin: 0;
-            margin-bottom: 5px;
-        }
+.cursor {
+display: inline-block;
+width: 0.55em;
+height: 1.15em;
+background: #b0b0b0;
+vertical-align: text-bottom;
+animation: blink 1s step-end infinite;
+}
 
-        h2 {
-            margin: 0;
-            white-space: nowrap;
-        }
-    </style>
+@keyframes blink {
+0%, 100% { opacity: 1; }
+50% { opacity: 0; }
+}
+</style>
+
 </head>
 <body>
-    <canvas id="matrix-bg"></canvas>
 
-    <div id="resume-content">
-        <h1>Matt Polkiewicz</h1>
-        <h2>Software Engineer</h2>
-        <p>
-            <a href="mailto:m.polkiewicz@gmail.com">m.polkiewicz@gmail.com</a>
-            <a href="https://www.linkedin.com/in/polkiewicz">linkedin.com/in/polkiewicz</a>
-        </p>
-    </div>
+<div class="terminal" id="terminal">
+  <div class="line" id="line-0"></div>
+  <div class="line" id="line-1"></div>
+  <div class="line" id="line-2"></div>
+  <div class="line" id="line-3"></div>
+  <div class="line" id="line-4"></div>
+</div>
 
-    <script>
-        // Matrix Animation Script
-        const canvas = document.getElementById('matrix-bg');
-        const ctx = canvas.getContext('2d');
+<script>
+  const lines = [
+    '> matt polkiewicz',
+    '  software engineer',
+    '',
+    '  m.polkiewicz@gmail.com',
+    '  linkedin.com/in/polkiewicz',
+  ];
 
-        // Set canvas size to cover the whole window
-        canvas.width = window.innerWidth;
-        canvas.height = window.innerHeight;
+  const CHAR_SPEED = 30;
+  const LINE_PAUSE = 300;
 
-        // Generate random characters for the matrix rain
-        const matrixCode = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
-        const matrixCodeArr = matrixCode.split('');
+  function createCursor() {
+    const c = document.createElement('span');
+    c.className = 'cursor';
+    return c;
+  }
 
-        const columns = Math.floor(canvas.width / 20);
-        const drops = [];
-
-        // Initialize drops
-        for (let i = 0; i < columns; i++) {
-            drops[i] = Math.floor(Math.random() * canvas.height);
+  function typeLine(el, text, cursor) {
+    return new Promise(resolve => {
+      el.appendChild(cursor);
+      let i = 0;
+      function next() {
+        if (i >= text.length) {
+          setTimeout(resolve, LINE_PAUSE);
+          return;
         }
+        cursor.before(document.createTextNode(text[i]));
+        i++;
+        setTimeout(next, CHAR_SPEED + Math.random() * 15);
+      }
+      next();
+    });
+  }
 
-        function drawMatrix() {
-            // Draw black background to create the "trailing effect"
-            ctx.fillStyle = 'rgba(0, 0, 0, 0.1)';
-            ctx.fillRect(0, 0, canvas.width, canvas.height);
+  async function run() {
+    await new Promise(r => setTimeout(r, 600));
+    const cursor = createCursor();
 
-            // Draw matrix characters
-            ctx.fillStyle = '#0f0';
-            ctx.font = '15px Arial';
+    for (let i = 0; i < lines.length; i++) {
+      const el = document.getElementById('line-' + i);
+      if (lines[i] === '') {
+        el.appendChild(cursor);
+        await new Promise(r => setTimeout(r, LINE_PAUSE));
+      } else {
+        await typeLine(el, lines[i], cursor);
+      }
+    }
+  }
 
-            for (let i = 0; i < drops.length; i++) {
-                const text = matrixCodeArr[Math.floor(Math.random() * matrixCodeArr.length)];
-                ctx.fillText(text, i * 20, drops[i] * 20);
+  run();
+</script>
 
-                // Reset drops when they reach the bottom
-                if (drops[i] * 20 > canvas.height && Math.random() > 0.975) {
-                    drops[i] = 0;
-                }
-
-                drops[i]++;
-            }
-        }
-
-        function animateMatrix() {
-            drawMatrix();
-            requestAnimationFrame(animateMatrix);
-        }
-
-        // Start the matrix animation
-        animateMatrix();
-
-        // Update canvas size when the window is resized
-        window.addEventListener('resize', () => {
-            canvas.width = window.innerWidth;
-            canvas.height = window.innerHeight;
-        });
-    </script>
 </body>
 </html>
