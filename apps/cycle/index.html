@@ -25,7 +25,7 @@
             display: flex;
             justify-content: space-between;
             align-items: center;
-            padding: calc(env(safe-area-inset-top) + 12px) 20px 8px;
+            padding: 12px 20px 8px;
         }
         .back-link { color: #7eb8da; text-decoration: none; font-size: 14px; }
         h1 { font-size: 20px; font-weight: 600; letter-spacing: 1px; }
@@ -342,20 +342,8 @@ function drawSkyArc(sunArc, moonArc, sunEvts, moonEvts) {
     const sunNow = getSunPos(now);
     const moonNow = getMoonPos(now);
 
-    function drawGlow(x, y, color, radius) {
-        const grad = ctx.createRadialGradient(x, y, 0, x, y, radius * 3);
-        grad.addColorStop(0, color);
-        grad.addColorStop(1, 'transparent');
-        ctx.fillStyle = grad;
-        ctx.fillRect(x - radius * 3, y - radius * 3, radius * 6, radius * 6);
-        ctx.beginPath();
-        ctx.arc(x, y, radius, 0, Math.PI * 2);
-        ctx.fillStyle = color;
-        ctx.fill();
-    }
-
-    drawGlow(nowX, ty(sunNow.altitude), 'rgba(255,200,50,0.9)', 5);
-    drawGlow(nowX, ty(moonNow.altitude), 'rgba(200,220,240,0.8)', 4);
+    drawGlow(ctx, nowX, ty(sunNow.altitude), 'rgba(255,200,50,0.9)', 5);
+    drawGlow(ctx, nowX, ty(moonNow.altitude), 'rgba(200,220,240,0.8)', 4);
 
     // Labels
     ctx.fillStyle = 'rgba(255,255,255,0.35)';
@@ -598,7 +586,7 @@ function drawCompass(sunEvts, moonEvts) {
     if (sunNow.altitude > -5) {
         const a = (sunNow.azimuth - 90) * DEG;
         const sx = cx + r * 0.4 * Math.cos(a), sy = cy + r * 0.4 * Math.sin(a);
-        drawGlowCompass(ctx, sx, sy, 'rgba(255,200,50,0.8)', 4);
+        drawGlow(ctx, sx, sy, 'rgba(255,200,50,0.8)', 4);
         ctx.font = '12px sans-serif';
         ctx.fillStyle = 'rgba(255,200,50,0.9)';
         ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
@@ -607,7 +595,7 @@ function drawCompass(sunEvts, moonEvts) {
     if (moonNow.altitude > -5) {
         const a = (moonNow.azimuth - 90) * DEG;
         const mx = cx + r * 0.4 * Math.cos(a), my = cy + r * 0.4 * Math.sin(a);
-        drawGlowCompass(ctx, mx, my, 'rgba(200,220,240,0.6)', 3);
+        drawGlow(ctx, mx, my, 'rgba(200,220,240,0.6)', 3);
         ctx.font = '11px sans-serif';
         ctx.fillStyle = 'rgba(200,220,240,0.9)';
         ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
@@ -615,12 +603,16 @@ function drawCompass(sunEvts, moonEvts) {
     }
 }
 
-function drawGlowCompass(ctx, x, y, color, r) {
+function drawGlow(ctx, x, y, color, r) {
     const grad = ctx.createRadialGradient(x, y, 0, x, y, r * 3);
     grad.addColorStop(0, color);
     grad.addColorStop(1, 'transparent');
     ctx.fillStyle = grad;
     ctx.fillRect(x - r * 3, y - r * 3, r * 6, r * 6);
+    ctx.beginPath();
+    ctx.arc(x, y, r, 0, Math.PI * 2);
+    ctx.fillStyle = color;
+    ctx.fill();
 }
 
 // ==================== UI UPDATES ====================
@@ -752,8 +744,8 @@ function getLocation() {
 }
 
 // ==================== INIT ====================
+updateUI(); // Show Seattle defaults immediately while geolocation resolves
 getLocation();
-updateUI();
 // Update every 30 seconds
 setInterval(updateUI, 30000);
 // Redraw on resize
