@@ -1,0 +1,763 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="theme-color" content="#0a0e27">
+    <title>Cycle</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        html, body { height: 100%; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: linear-gradient(180deg, #0a0e27 0%, #141833 50%, #0d1b2a 100%);
+            color: #e0e0e0;
+            min-height: 100%;
+            padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
+            -webkit-tap-highlight-color: transparent;
+            overflow-x: hidden;
+            overflow-y: auto;
+            -webkit-overflow-scrolling: touch;
+        }
+        .header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: calc(env(safe-area-inset-top) + 12px) 20px 8px;
+        }
+        .back-link { color: #7eb8da; text-decoration: none; font-size: 14px; }
+        h1 { font-size: 20px; font-weight: 600; letter-spacing: 1px; }
+        .location { font-size: 12px; color: #6a7a8a; }
+        .arc-container { padding: 8px 12px; }
+        #skyCanvas {
+            width: 100%;
+            border-radius: 16px;
+            background: rgba(255,255,255,0.02);
+            display: block;
+        }
+        .cards { padding: 12px; display: flex; flex-direction: column; gap: 12px; }
+        .card {
+            background: rgba(255,255,255,0.05);
+            border-radius: 16px;
+            padding: 16px;
+            backdrop-filter: blur(10px);
+            -webkit-backdrop-filter: blur(10px);
+            border: 1px solid rgba(255,255,255,0.07);
+        }
+        .card-header { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; font-size: 16px; font-weight: 600; }
+        .card-row { display: flex; justify-content: space-between; padding: 5px 0; font-size: 14px; }
+        .card-label { color: #6a7a8a; }
+        .card-value { font-weight: 500; }
+        .moon-phase-row { display: flex; align-items: center; gap: 16px; margin: 8px 0 12px; }
+        #moonCanvas { width: 64px; height: 64px; flex-shrink: 0; }
+        .phase-info { display: flex; flex-direction: column; gap: 2px; }
+        .phase-name { font-size: 15px; font-weight: 600; color: #c8d8e8; }
+        .phase-illum { font-size: 12px; color: #6a7a8a; }
+        .compass-wrap { display: flex; justify-content: center; margin: 4px 0; }
+        #compassCanvas { width: 200px; height: 200px; }
+        .summary { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; padding: 0 12px 30px; }
+        .summary-item {
+            background: rgba(255,255,255,0.05);
+            border-radius: 12px;
+            padding: 12px;
+            text-align: center;
+            border: 1px solid rgba(255,255,255,0.07);
+        }
+        .summary-value { font-size: 20px; font-weight: 700; margin-bottom: 2px; }
+        .summary-label { font-size: 11px; color: #6a7a8a; text-transform: uppercase; letter-spacing: 0.5px; }
+        .sun-c { color: #ffb347; }
+        .moon-c { color: #a8c4e0; }
+        .gold { color: #ffb347; }
+        .silver { color: #a8c4e0; }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <a href="/apps/" class="back-link">&larr; Apps</a>
+        <h1>Cycle</h1>
+        <div class="location" id="location">Loading...</div>
+    </div>
+    <div class="arc-container"><canvas id="skyCanvas"></canvas></div>
+    <div class="cards">
+        <div class="card">
+            <div class="card-header sun-c">&#9728;&#65039; Sun</div>
+            <div id="sunInfo"></div>
+        </div>
+        <div class="card">
+            <div class="card-header moon-c">&#127769; Moon</div>
+            <div class="moon-phase-row">
+                <canvas id="moonCanvas" width="128" height="128"></canvas>
+                <div class="phase-info">
+                    <div class="phase-name" id="phaseName">--</div>
+                    <div class="phase-illum" id="phaseIllum">--</div>
+                </div>
+            </div>
+            <div id="moonInfo"></div>
+        </div>
+        <div class="card">
+            <div class="card-header">&#129517; Rise &amp; Set Directions</div>
+            <div class="compass-wrap"><canvas id="compassCanvas" width="400" height="400"></canvas></div>
+        </div>
+    </div>
+    <div class="summary" id="summary"></div>
+
+<script>
+// ==================== CONFIG ====================
+const DEG = Math.PI / 180, RAD = 180 / Math.PI;
+const J2000 = 2451545, DAY_MS = 864e5;
+let lat = 47.6062, lon = -122.3321, locName = 'Seattle, WA';
+
+// ==================== ASTRONOMY ====================
+function toJD(d) { return d.valueOf() / DAY_MS - 0.5 + 2440588; }
+function toD(d) { return toJD(d) - J2000; }
+const OBL = 23.4397 * DEG;
+
+function sunCoords(d) {
+    const M = (357.5291 + 0.98560028 * d) * DEG;
+    const C = (1.9148 * Math.sin(M) + 0.02 * Math.sin(2*M) + 0.0003 * Math.sin(3*M)) * DEG;
+    const L = M + C + 102.9372 * DEG + Math.PI;
+    return { dec: Math.asin(Math.sin(OBL) * Math.sin(L)), ra: Math.atan2(Math.sin(L) * Math.cos(OBL), Math.cos(L)) };
+}
+
+function moonCoords(d) {
+    const L = (218.316 + 13.176396 * d) * DEG;
+    const M = (134.963 + 13.064993 * d) * DEG;
+    const F = (93.272 + 13.229350 * d) * DEG;
+    const lo = L + 6.289 * DEG * Math.sin(M);
+    const la = 5.128 * DEG * Math.sin(F);
+    return {
+        ra: Math.atan2(Math.sin(lo) * Math.cos(OBL) - Math.tan(la) * Math.sin(OBL), Math.cos(lo)),
+        dec: Math.asin(Math.sin(la) * Math.cos(OBL) + Math.cos(la) * Math.sin(OBL) * Math.sin(lo))
+    };
+}
+
+function siderealTime(d, lonRad) { return (280.1470 + 360.9856235 * d) * DEG + lonRad; }
+
+function altAz(H, phi, dec) {
+    const alt = Math.asin(Math.sin(phi) * Math.sin(dec) + Math.cos(phi) * Math.cos(dec) * Math.cos(H));
+    const az = Math.atan2(-Math.sin(H) * Math.cos(dec), Math.sin(dec) * Math.cos(phi) - Math.cos(dec) * Math.sin(phi) * Math.cos(H));
+    return { altitude: alt * RAD, azimuth: ((az * RAD) + 360) % 360 };
+}
+
+function getSunPos(date) {
+    const d = toD(date), c = sunCoords(d), H = siderealTime(d, lon * DEG) - c.ra;
+    return altAz(H, lat * DEG, c.dec);
+}
+
+function getMoonPos(date) {
+    const d = toD(date), c = moonCoords(d), H = siderealTime(d, lon * DEG) - c.ra;
+    return altAz(H, lat * DEG, c.dec);
+}
+
+function getMoonPhase(date) {
+    const d = toD(date), s = sunCoords(d), m = moonCoords(d);
+    const phi = Math.acos(Math.sin(s.dec) * Math.sin(m.dec) + Math.cos(s.dec) * Math.cos(m.dec) * Math.cos(s.ra - m.ra));
+    const illum = (1 - Math.cos(phi)) / 2;
+    const SYNODIC = 29.53059;
+    const phase = (((toJD(date) - 2451550.1) % SYNODIC) + SYNODIC) % SYNODIC / SYNODIC;
+    const names = ['New Moon','Waxing Crescent','First Quarter','Waxing Gibbous','Full Moon','Waning Gibbous','Last Quarter','Waning Crescent'];
+    const idx = Math.floor(((phase + 0.0625) % 1) * 8);
+    return { phase, illumination: illum, name: names[idx] };
+}
+
+// ==================== ARC DATA ====================
+function generateArc(date, posFn) {
+    const pts = [], base = new Date(date); base.setHours(0, 0, 0, 0);
+    for (let m = 0; m <= 1440; m += 6) {
+        const t = new Date(base.getTime() + m * 60000);
+        const p = posFn(t);
+        pts.push({ time: t, min: m, alt: p.altitude, az: p.azimuth });
+    }
+    return pts;
+}
+
+function findEvents(arc) {
+    const evts = [];
+    for (let i = 1; i < arc.length; i++) {
+        const a = arc[i - 1], b = arc[i];
+        if ((a.alt <= 0 && b.alt > 0) || (a.alt > 0 && b.alt <= 0)) {
+            const f = Math.abs(a.alt) / (Math.abs(a.alt) + Math.abs(b.alt));
+            const t = new Date(a.time.getTime() + f * (b.time.getTime() - a.time.getTime()));
+            const az = a.az + f * ((((b.az - a.az) % 360) + 540) % 360 - 180);
+            evts.push({ type: a.alt <= 0 ? 'rise' : 'set', time: t, azimuth: ((az % 360) + 360) % 360 });
+        }
+    }
+    return evts;
+}
+
+function maxAlt(arc) {
+    let best = arc[0];
+    for (const p of arc) if (p.alt > best.alt) best = p;
+    return best;
+}
+
+// ==================== HELPERS ====================
+function fmtTime(d) {
+    if (!d) return '--:--';
+    let h = d.getHours(), m = d.getMinutes();
+    const ap = h >= 12 ? 'PM' : 'AM';
+    h = h % 12 || 12;
+    return h + ':' + String(m).padStart(2, '0') + ' ' + ap;
+}
+
+function fmtDir(az) {
+    if (az == null) return '--';
+    const dirs = ['N','NNE','NE','ENE','E','ESE','SE','SSE','S','SSW','SW','WSW','W','WNW','NW','NNW'];
+    return dirs[Math.round(az / 22.5) % 16];
+}
+
+function fmtDeg(v) { return v == null ? '--' : Math.round(v) + '\u00B0'; }
+
+function fmtDuration(ms) {
+    const totalMin = Math.floor(Math.abs(ms) / 60000);
+    const h = Math.floor(totalMin / 60), m = totalMin % 60;
+    return h + 'h ' + m + 'm';
+}
+
+function row(label, value) {
+    return '<div class="card-row"><span class="card-label">' + label + '</span><span class="card-value">' + value + '</span></div>';
+}
+
+// ==================== CANVAS: SKY ARC ====================
+function drawSkyArc(sunArc, moonArc, sunEvts, moonEvts) {
+    const canvas = document.getElementById('skyCanvas');
+    const dpr = window.devicePixelRatio || 1;
+    const w = canvas.clientWidth, h = Math.round(w * 0.55);
+    canvas.style.height = h + 'px';
+    canvas.width = w * dpr; canvas.height = h * dpr;
+    const ctx = canvas.getContext('2d');
+    ctx.scale(dpr, dpr);
+
+    const pad = { top: 20, right: 16, bottom: 28, left: 34 };
+    const gw = w - pad.left - pad.right, gh = h - pad.top - pad.bottom;
+    const minAlt = -10, maxAltVal = 90;
+    const altRange = maxAltVal - minAlt;
+
+    function tx(min) { return pad.left + (min / 1440) * gw; }
+    function ty(alt) { return pad.top + (1 - (alt - minAlt) / altRange) * gh; }
+
+    // Sky background gradient
+    const now = new Date();
+    const nowMin = now.getHours() * 60 + now.getMinutes();
+
+    // Determine sunrise/sunset minutes for background coloring
+    let srMin = 360, ssMin = 1080; // defaults
+    for (const e of sunEvts) {
+        const em = e.time.getHours() * 60 + e.time.getMinutes();
+        if (e.type === 'rise') srMin = em;
+        if (e.type === 'set') ssMin = em;
+    }
+
+    // Draw sky background bands
+    for (let m = 0; m < 1440; m += 4) {
+        const x1 = tx(m), x2 = tx(m + 4);
+        let alpha = 0.02;
+        // Dawn/dusk coloring
+        if (m > srMin - 60 && m < srMin + 30) {
+            const p = 1 - Math.abs(m - srMin) / 60;
+            ctx.fillStyle = 'rgba(255,140,50,' + (p * 0.08).toFixed(3) + ')';
+            ctx.fillRect(x1, pad.top, x2 - x1, gh);
+        } else if (m > ssMin - 30 && m < ssMin + 60) {
+            const p = 1 - Math.abs(m - ssMin) / 60;
+            ctx.fillStyle = 'rgba(255,100,50,' + (p * 0.08).toFixed(3) + ')';
+            ctx.fillRect(x1, pad.top, x2 - x1, gh);
+        }
+        // Daytime brightness
+        if (m > srMin && m < ssMin) {
+            ctx.fillStyle = 'rgba(80,140,220,0.03)';
+            ctx.fillRect(x1, pad.top, x2 - x1, ty(0) - pad.top);
+        }
+    }
+
+    // Grid lines
+    ctx.strokeStyle = 'rgba(255,255,255,0.06)';
+    ctx.lineWidth = 1;
+    for (let a = 0; a <= 90; a += 30) {
+        const y = ty(a);
+        ctx.beginPath(); ctx.moveTo(pad.left, y); ctx.lineTo(w - pad.right, y); ctx.stroke();
+    }
+    for (let hr = 0; hr <= 24; hr += 3) {
+        const x = tx(hr * 60);
+        ctx.beginPath(); ctx.moveTo(x, pad.top); ctx.lineTo(x, h - pad.bottom); ctx.stroke();
+    }
+
+    // Horizon line
+    const horizY = ty(0);
+    ctx.strokeStyle = 'rgba(255,255,255,0.25)';
+    ctx.lineWidth = 1.5;
+    ctx.beginPath(); ctx.moveTo(pad.left, horizY); ctx.lineTo(w - pad.right, horizY); ctx.stroke();
+    ctx.fillStyle = 'rgba(255,255,255,0.3)';
+    ctx.font = '9px -apple-system, sans-serif';
+    ctx.fillText('Horizon', pad.left + 2, horizY - 3);
+
+    // Draw arc curve with fill
+    function drawArcCurve(arc, color, fillColor) {
+        ctx.beginPath();
+        let started = false;
+        for (const p of arc) {
+            const x = tx(p.min), y = ty(Math.max(p.alt, minAlt));
+            if (!started) { ctx.moveTo(x, y); started = true; }
+            else ctx.lineTo(x, y);
+        }
+        ctx.strokeStyle = color;
+        ctx.lineWidth = 2.5;
+        ctx.stroke();
+
+        // Fill above horizon
+        ctx.beginPath();
+        let inFill = false;
+        for (const p of arc) {
+            const x = tx(p.min), y = ty(Math.max(p.alt, 0));
+            if (p.alt > 0) {
+                if (!inFill) { ctx.moveTo(x, horizY); ctx.lineTo(x, y); inFill = true; }
+                else ctx.lineTo(x, y);
+            } else if (inFill) {
+                ctx.lineTo(tx(p.min), horizY);
+                inFill = false;
+            }
+        }
+        if (inFill) {
+            const last = arc[arc.length - 1];
+            ctx.lineTo(tx(last.min), horizY);
+        }
+        ctx.closePath();
+        ctx.fillStyle = fillColor;
+        ctx.fill();
+    }
+
+    drawArcCurve(sunArc, 'rgba(255,179,71,0.9)', 'rgba(255,179,71,0.08)');
+    drawArcCurve(moonArc, 'rgba(168,196,224,0.7)', 'rgba(168,196,224,0.05)');
+
+    // Current time line
+    ctx.strokeStyle = 'rgba(255,255,255,0.3)';
+    ctx.lineWidth = 1;
+    ctx.setLineDash([4, 4]);
+    const nowX = tx(nowMin);
+    ctx.beginPath(); ctx.moveTo(nowX, pad.top); ctx.lineTo(nowX, h - pad.bottom); ctx.stroke();
+    ctx.setLineDash([]);
+
+    // Current sun position
+    const sunNow = getSunPos(now);
+    const moonNow = getMoonPos(now);
+
+    function drawGlow(x, y, color, radius) {
+        const grad = ctx.createRadialGradient(x, y, 0, x, y, radius * 3);
+        grad.addColorStop(0, color);
+        grad.addColorStop(1, 'transparent');
+        ctx.fillStyle = grad;
+        ctx.fillRect(x - radius * 3, y - radius * 3, radius * 6, radius * 6);
+        ctx.beginPath();
+        ctx.arc(x, y, radius, 0, Math.PI * 2);
+        ctx.fillStyle = color;
+        ctx.fill();
+    }
+
+    drawGlow(nowX, ty(sunNow.altitude), 'rgba(255,200,50,0.9)', 5);
+    drawGlow(nowX, ty(moonNow.altitude), 'rgba(200,220,240,0.8)', 4);
+
+    // Labels
+    ctx.fillStyle = 'rgba(255,255,255,0.35)';
+    ctx.font = '10px -apple-system, sans-serif';
+    ctx.textAlign = 'center';
+    for (let hr = 0; hr <= 24; hr += 3) {
+        let label;
+        if (hr === 0 || hr === 24) label = '12a';
+        else if (hr === 12) label = '12p';
+        else if (hr < 12) label = hr + 'a';
+        else label = (hr - 12) + 'p';
+        ctx.fillText(label, tx(hr * 60), h - pad.bottom + 14);
+    }
+
+    ctx.textAlign = 'right';
+    for (let a = 0; a <= 90; a += 30) {
+        if (a === 0) continue;
+        ctx.fillText(a + '\u00B0', pad.left - 4, ty(a) + 3);
+    }
+
+    // Legend
+    ctx.textAlign = 'left';
+    ctx.fillStyle = 'rgba(255,179,71,0.8)';
+    ctx.fillText('\u2600 Sun', w - pad.right - 70, pad.top + 12);
+    ctx.fillStyle = 'rgba(168,196,224,0.8)';
+    ctx.fillText('\u263E Moon', w - pad.right - 70, pad.top + 24);
+}
+
+// ==================== CANVAS: MOON PHASE ====================
+function drawMoonPhase(phase) {
+    const canvas = document.getElementById('moonCanvas');
+    const dpr = window.devicePixelRatio || 1;
+    const size = 64;
+    canvas.width = size * dpr; canvas.height = size * dpr;
+    canvas.style.width = size + 'px'; canvas.style.height = size + 'px';
+    const ctx = canvas.getContext('2d');
+    ctx.scale(dpr, dpr);
+
+    const cx = size / 2, cy = size / 2, r = size / 2 - 4;
+
+    // Draw dark moon base
+    ctx.beginPath();
+    ctx.arc(cx, cy, r, 0, Math.PI * 2);
+    ctx.fillStyle = '#1a1e30';
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(168,196,224,0.3)';
+    ctx.lineWidth = 1;
+    ctx.stroke();
+
+    // Draw illuminated portion
+    ctx.beginPath();
+    const p = phase;
+    // Sweep from top to bottom
+    for (let i = -r; i <= r; i++) {
+        const y = cy + i;
+        const xBase = Math.sqrt(r * r - i * i);
+
+        let xLeft, xRight;
+        if (p < 0.25) {
+            // Waxing crescent - right side lit
+            const f = Math.cos(p / 0.25 * Math.PI / 2);
+            xLeft = cx + xBase * f;
+            xRight = cx + xBase;
+        } else if (p < 0.5) {
+            // Waxing gibbous - right side lit, expanding
+            const f = Math.cos((p - 0.25) / 0.25 * Math.PI / 2);
+            xLeft = cx - xBase * f;
+            xRight = cx + xBase;
+        } else if (p < 0.75) {
+            // Waning gibbous - left side lit
+            const f = Math.cos((p - 0.5) / 0.25 * Math.PI / 2);
+            xLeft = cx - xBase;
+            xRight = cx + xBase * f;
+        } else {
+            // Waning crescent - left side lit, shrinking
+            const f = Math.cos((p - 0.75) / 0.25 * Math.PI / 2);
+            xLeft = cx - xBase;
+            xRight = cx - xBase * f;
+        }
+
+        if (i === -r) ctx.moveTo(xLeft, y);
+        else ctx.lineTo(xLeft, y);
+    }
+    for (let i = r; i >= -r; i--) {
+        const y = cy + i;
+        const xBase = Math.sqrt(r * r - i * i);
+
+        let xRight;
+        if (p < 0.25) {
+            xRight = cx + xBase;
+        } else if (p < 0.5) {
+            xRight = cx + xBase;
+        } else if (p < 0.75) {
+            const f = Math.cos((p - 0.5) / 0.25 * Math.PI / 2);
+            xRight = cx + xBase * f;
+        } else {
+            const f = Math.cos((p - 0.75) / 0.25 * Math.PI / 2);
+            xRight = cx - xBase * f;
+        }
+        ctx.lineTo(xRight, y);
+    }
+    ctx.closePath();
+
+    const grad = ctx.createRadialGradient(cx - r * 0.3, cy - r * 0.3, 0, cx, cy, r);
+    grad.addColorStop(0, '#f0f0e8');
+    grad.addColorStop(0.7, '#d0d0c8');
+    grad.addColorStop(1, '#b0b0a8');
+    ctx.fillStyle = grad;
+    ctx.fill();
+
+    // Subtle glow
+    const glow = ctx.createRadialGradient(cx, cy, r, cx, cy, r + 8);
+    glow.addColorStop(0, 'rgba(200,220,240,0.15)');
+    glow.addColorStop(1, 'transparent');
+    ctx.fillStyle = glow;
+    ctx.fillRect(0, 0, size, size);
+}
+
+// ==================== CANVAS: COMPASS ====================
+function drawCompass(sunEvts, moonEvts) {
+    const canvas = document.getElementById('compassCanvas');
+    const dpr = window.devicePixelRatio || 1;
+    const size = 200;
+    canvas.width = size * dpr; canvas.height = size * dpr;
+    canvas.style.width = size + 'px'; canvas.style.height = size + 'px';
+    const ctx = canvas.getContext('2d');
+    ctx.scale(dpr, dpr);
+
+    const cx = size / 2, cy = size / 2, r = size / 2 - 24;
+
+    // Outer circle
+    ctx.beginPath();
+    ctx.arc(cx, cy, r, 0, Math.PI * 2);
+    ctx.strokeStyle = 'rgba(255,255,255,0.15)';
+    ctx.lineWidth = 1.5;
+    ctx.stroke();
+
+    // Inner circle
+    ctx.beginPath();
+    ctx.arc(cx, cy, r * 0.5, 0, Math.PI * 2);
+    ctx.strokeStyle = 'rgba(255,255,255,0.06)';
+    ctx.lineWidth = 1;
+    ctx.stroke();
+
+    // Cardinal directions
+    const dirs = [
+        { label: 'N', angle: -90 }, { label: 'E', angle: 0 },
+        { label: 'S', angle: 90 }, { label: 'W', angle: 180 }
+    ];
+    ctx.font = '11px -apple-system, sans-serif';
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    for (const d of dirs) {
+        const a = d.angle * DEG;
+        const lx = cx + (r + 13) * Math.cos(a), ly = cy + (r + 13) * Math.sin(a);
+        ctx.fillStyle = d.label === 'N' ? 'rgba(255,100,100,0.7)' : 'rgba(255,255,255,0.35)';
+        ctx.fillText(d.label, lx, ly);
+        // Tick
+        ctx.beginPath();
+        ctx.moveTo(cx + r * Math.cos(a), cy + r * Math.sin(a));
+        ctx.lineTo(cx + (r - 6) * Math.cos(a), cy + (r - 6) * Math.sin(a));
+        ctx.strokeStyle = 'rgba(255,255,255,0.2)';
+        ctx.lineWidth = 1.5;
+        ctx.stroke();
+    }
+
+    // Intercardinal ticks
+    for (let a = 45; a < 360; a += 90) {
+        const ar = (a - 90) * DEG;
+        ctx.beginPath();
+        ctx.moveTo(cx + r * Math.cos(ar), cy + r * Math.sin(ar));
+        ctx.lineTo(cx + (r - 4) * Math.cos(ar), cy + (r - 4) * Math.sin(ar));
+        ctx.strokeStyle = 'rgba(255,255,255,0.1)';
+        ctx.lineWidth = 1;
+        ctx.stroke();
+    }
+
+    // Draw rise/set markers and arc
+    function drawBodyArc(events, color, emoji) {
+        const rise = events.find(e => e.type === 'rise');
+        const set = events.find(e => e.type === 'set');
+        if (!rise && !set) return;
+
+        // Draw arc between rise and set
+        if (rise && set) {
+            const rA = (rise.azimuth - 90) * DEG;
+            const sA = (set.azimuth - 90) * DEG;
+            ctx.beginPath();
+            // Determine arc direction: sun goes clockwise through south (in northern hemisphere)
+            let startAngle = rA, endAngle = sA;
+            if (endAngle < startAngle) endAngle += Math.PI * 2;
+            ctx.arc(cx, cy, r * 0.75, startAngle, endAngle, false);
+            ctx.strokeStyle = color;
+            ctx.lineWidth = 2.5;
+            ctx.setLineDash([4, 3]);
+            ctx.stroke();
+            ctx.setLineDash([]);
+        }
+
+        // Rise marker
+        if (rise) {
+            const a = (rise.azimuth - 90) * DEG;
+            const mx = cx + r * 0.75 * Math.cos(a), my = cy + r * 0.75 * Math.sin(a);
+            ctx.beginPath(); ctx.arc(mx, my, 8, 0, Math.PI * 2);
+            ctx.fillStyle = color.replace('0.8', '0.15').replace('0.7', '0.15');
+            ctx.fill();
+            ctx.font = '10px -apple-system, sans-serif';
+            ctx.fillStyle = color;
+            ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+            ctx.fillText('\u2197', mx, my);
+            // Azimuth label
+            const lx = cx + (r * 0.75 + 14) * Math.cos(a), ly = cy + (r * 0.75 + 14) * Math.sin(a);
+            ctx.font = '8px -apple-system, sans-serif';
+            ctx.fillText(Math.round(rise.azimuth) + '\u00B0', lx, ly);
+        }
+
+        // Set marker
+        if (set) {
+            const a = (set.azimuth - 90) * DEG;
+            const mx = cx + r * 0.75 * Math.cos(a), my = cy + r * 0.75 * Math.sin(a);
+            ctx.beginPath(); ctx.arc(mx, my, 8, 0, Math.PI * 2);
+            ctx.fillStyle = color.replace('0.8', '0.15').replace('0.7', '0.15');
+            ctx.fill();
+            ctx.font = '10px -apple-system, sans-serif';
+            ctx.fillStyle = color;
+            ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+            ctx.fillText('\u2198', mx, my);
+            const lx = cx + (r * 0.75 + 14) * Math.cos(a), ly = cy + (r * 0.75 + 14) * Math.sin(a);
+            ctx.font = '8px -apple-system, sans-serif';
+            ctx.fillText(Math.round(set.azimuth) + '\u00B0', lx, ly);
+        }
+    }
+
+    drawBodyArc(sunEvts, 'rgba(255,179,71,0.8)', '\u2600');
+    drawBodyArc(moonEvts, 'rgba(168,196,224,0.7)', '\u263E');
+
+    // Current sun/moon azimuth
+    const now = new Date();
+    const sunNow = getSunPos(now), moonNow = getMoonPos(now);
+
+    if (sunNow.altitude > -5) {
+        const a = (sunNow.azimuth - 90) * DEG;
+        const sx = cx + r * 0.4 * Math.cos(a), sy = cy + r * 0.4 * Math.sin(a);
+        drawGlowCompass(ctx, sx, sy, 'rgba(255,200,50,0.8)', 4);
+        ctx.font = '12px sans-serif';
+        ctx.fillStyle = 'rgba(255,200,50,0.9)';
+        ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+        ctx.fillText('\u2600', sx, sy);
+    }
+    if (moonNow.altitude > -5) {
+        const a = (moonNow.azimuth - 90) * DEG;
+        const mx = cx + r * 0.4 * Math.cos(a), my = cy + r * 0.4 * Math.sin(a);
+        drawGlowCompass(ctx, mx, my, 'rgba(200,220,240,0.6)', 3);
+        ctx.font = '11px sans-serif';
+        ctx.fillStyle = 'rgba(200,220,240,0.9)';
+        ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+        ctx.fillText('\u263E', mx, my);
+    }
+}
+
+function drawGlowCompass(ctx, x, y, color, r) {
+    const grad = ctx.createRadialGradient(x, y, 0, x, y, r * 3);
+    grad.addColorStop(0, color);
+    grad.addColorStop(1, 'transparent');
+    ctx.fillStyle = grad;
+    ctx.fillRect(x - r * 3, y - r * 3, r * 6, r * 6);
+}
+
+// ==================== UI UPDATES ====================
+function updateUI() {
+    const now = new Date();
+    const sunArc = generateArc(now, getSunPos);
+    const moonArc = generateArc(now, getMoonPos);
+    const sunEvts = findEvents(sunArc);
+    const moonEvts = findEvents(moonArc);
+    const sunNow = getSunPos(now);
+    const moonNow = getMoonPos(now);
+    const moonPhase = getMoonPhase(now);
+
+    // Sky arc canvas
+    drawSkyArc(sunArc, moonArc, sunEvts, moonEvts);
+
+    // Sun info
+    const sunRise = sunEvts.find(e => e.type === 'rise');
+    const sunSet = sunEvts.find(e => e.type === 'set');
+    const sunMax = maxAlt(sunArc);
+    let sunHtml = '';
+    sunHtml += row('Sunrise', sunRise ? fmtTime(sunRise.time) + ' &middot; ' + fmtDir(sunRise.azimuth) + ' (' + fmtDeg(sunRise.azimuth) + ')' : 'No rise today');
+    sunHtml += row('Sunset', sunSet ? fmtTime(sunSet.time) + ' &middot; ' + fmtDir(sunSet.azimuth) + ' (' + fmtDeg(sunSet.azimuth) + ')' : 'No set today');
+    sunHtml += row('Current Altitude', fmtDeg(sunNow.altitude));
+    sunHtml += row('Current Azimuth', fmtDir(sunNow.azimuth) + ' (' + fmtDeg(sunNow.azimuth) + ')');
+    sunHtml += row('Max Altitude', fmtDeg(sunMax.alt) + ' at ' + fmtTime(sunMax.time));
+    document.getElementById('sunInfo').innerHTML = sunHtml;
+
+    // Moon info
+    const moonRise = moonEvts.find(e => e.type === 'rise');
+    const moonSet = moonEvts.find(e => e.type === 'set');
+    const moonMax = maxAlt(moonArc);
+    let moonHtml = '';
+    moonHtml += row('Moonrise', moonRise ? fmtTime(moonRise.time) + ' &middot; ' + fmtDir(moonRise.azimuth) + ' (' + fmtDeg(moonRise.azimuth) + ')' : 'No rise today');
+    moonHtml += row('Moonset', moonSet ? fmtTime(moonSet.time) + ' &middot; ' + fmtDir(moonSet.azimuth) + ' (' + fmtDeg(moonSet.azimuth) + ')' : 'No set today');
+    moonHtml += row('Current Altitude', fmtDeg(moonNow.altitude));
+    moonHtml += row('Current Azimuth', fmtDir(moonNow.azimuth) + ' (' + fmtDeg(moonNow.azimuth) + ')');
+    moonHtml += row('Max Altitude', fmtDeg(moonMax.alt) + ' at ' + fmtTime(moonMax.time));
+    document.getElementById('moonInfo').innerHTML = moonHtml;
+
+    // Moon phase
+    drawMoonPhase(moonPhase.phase);
+    document.getElementById('phaseName').textContent = moonPhase.name;
+    document.getElementById('phaseIllum').textContent = Math.round(moonPhase.illumination * 100) + '% illuminated';
+
+    // Compass
+    drawCompass(sunEvts, moonEvts);
+
+    // Summary
+    let dayLen = '--', nextEvtLabel = '', nextEvtValue = '';
+    if (sunRise && sunSet) {
+        dayLen = fmtDuration(sunSet.time - sunRise.time);
+    }
+    const nowMs = now.getTime();
+    if (sunRise && nowMs < sunRise.time.getTime()) {
+        nextEvtLabel = 'Until Sunrise';
+        nextEvtValue = fmtDuration(sunRise.time.getTime() - nowMs);
+    } else if (sunSet && nowMs < sunSet.time.getTime()) {
+        nextEvtLabel = 'Until Sunset';
+        nextEvtValue = fmtDuration(sunSet.time.getTime() - nowMs);
+    } else {
+        // After sunset - calculate tomorrow's sunrise
+        const tomorrow = new Date(now);
+        tomorrow.setDate(tomorrow.getDate() + 1);
+        const tArc = generateArc(tomorrow, getSunPos);
+        const tEvts = findEvents(tArc);
+        const tRise = tEvts.find(e => e.type === 'rise');
+        if (tRise) {
+            nextEvtLabel = 'Until Sunrise';
+            nextEvtValue = fmtDuration(tRise.time.getTime() - nowMs);
+        } else {
+            nextEvtLabel = 'Next Event';
+            nextEvtValue = '--';
+        }
+    }
+
+    // Golden hour (sun altitude ~6 degrees before sunset)
+    let goldenHour = '--';
+    if (sunSet) {
+        for (let i = sunArc.length - 1; i >= 0; i--) {
+            if (sunArc[i].alt >= 6 && sunArc[i].alt <= 10 && sunArc[i].min < sunSet.time.getHours() * 60 + sunSet.time.getMinutes()) {
+                goldenHour = fmtTime(sunArc[i].time);
+                break;
+            }
+        }
+    }
+
+    document.getElementById('summary').innerHTML =
+        '<div class="summary-item"><div class="summary-value gold">' + dayLen + '</div><div class="summary-label">Day Length</div></div>' +
+        '<div class="summary-item"><div class="summary-value">' + nextEvtValue + '</div><div class="summary-label">' + nextEvtLabel + '</div></div>' +
+        '<div class="summary-item"><div class="summary-value gold">' + goldenHour + '</div><div class="summary-label">Golden Hour</div></div>' +
+        '<div class="summary-item"><div class="summary-value silver">' + moonPhase.name.split(' ').map(w => w[0]).join('') + '</div><div class="summary-label">' + moonPhase.name + '</div></div>';
+
+    // Location display
+    document.getElementById('location').textContent = '\uD83D\uDCCD ' + locName;
+}
+
+// ==================== GEOLOCATION ====================
+function getLocation() {
+    if ('geolocation' in navigator) {
+        navigator.geolocation.getCurrentPosition(
+            function(pos) {
+                lat = pos.coords.latitude;
+                lon = pos.coords.longitude;
+                // Reverse geocode with simple display
+                locName = lat.toFixed(2) + '\u00B0, ' + lon.toFixed(2) + '\u00B0';
+                updateUI();
+                // Try to get city name
+                fetch('https://nominatim.openstreetmap.org/reverse?lat=' + lat + '&lon=' + lon + '&format=json&zoom=10')
+                    .then(function(r) { return r.json(); })
+                    .then(function(data) {
+                        if (data.address) {
+                            locName = data.address.city || data.address.town || data.address.village || data.address.county || locName;
+                            if (data.address.state) locName += ', ' + data.address.state;
+                        }
+                        updateUI();
+                    })
+                    .catch(function() {});
+            },
+            function() {
+                // Geolocation denied or unavailable - use Seattle default
+                updateUI();
+            },
+            { timeout: 5000, maximumAge: 300000 }
+        );
+    } else {
+        updateUI();
+    }
+}
+
+// ==================== INIT ====================
+getLocation();
+updateUI();
+// Update every 30 seconds
+setInterval(updateUI, 30000);
+// Redraw on resize
+window.addEventListener('resize', updateUI);
+</script>
+</body>
+</html>
