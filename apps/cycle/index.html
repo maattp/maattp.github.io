@@ -410,7 +410,7 @@ function drawMoonPhase(phase) {
         } else if (p < 0.5) {
             // Waxing gibbous - right side lit, expanding
             const f = Math.cos((p - 0.25) / 0.25 * Math.PI / 2);
-            xLeft = cx - xBase * f;
+            xLeft = cx - xBase * (1 - f);
             xRight = cx + xBase;
         } else if (p < 0.75) {
             // Waning gibbous - left side lit
@@ -421,7 +421,7 @@ function drawMoonPhase(phase) {
             // Waning crescent - left side lit, shrinking
             const f = Math.cos((p - 0.75) / 0.25 * Math.PI / 2);
             xLeft = cx - xBase;
-            xRight = cx - xBase * f;
+            xRight = cx - xBase * (1 - f);
         }
 
         if (i === -r) ctx.moveTo(xLeft, y);
@@ -441,7 +441,7 @@ function drawMoonPhase(phase) {
             xRight = cx + xBase * f;
         } else {
             const f = Math.cos((p - 0.75) / 0.25 * Math.PI / 2);
-            xRight = cx - xBase * f;
+            xRight = cx - xBase * (1 - f);
         }
         ctx.lineTo(xRight, y);
     }
