@@ -45,4 +45,4 @@ npm run typecheck # type check
 
 ## Deployment
 
-Auto-deploys on push to `main` when files in `worker/` change. See `../.github/workflows/deploy-worker.yml`. Requires `CLOUDFLARE_API_TOKEN` repo secret.
+Auto-deploys on push to `master` when files in `worker/` change. See `../.github/workflows/deploy-worker.yml`. Requires `CLOUDFLARE_API_TOKEN` repo secret.

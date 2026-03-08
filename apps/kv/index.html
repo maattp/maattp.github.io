@@ -1,0 +1,333 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <title>Key-Value</title>
+    <script src="https://accounts.google.com/gsi/client" async></script>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+            -webkit-tap-highlight-color: transparent;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'Segoe UI', Roboto, sans-serif;
+            background: #000;
+            position: fixed;
+            inset: 0;
+            color: #fff;
+            padding-bottom: env(safe-area-inset-bottom);
+            overflow: hidden;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 16px 20px;
+            padding-top: calc(16px + env(safe-area-inset-top));
+            border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+            flex-shrink: 0;
+        }
+
+        .header h1 {
+            font-size: 34px;
+            font-weight: 700;
+            letter-spacing: -0.5px;
+        }
+
+        .sign-in-container {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            gap: 20px;
+        }
+
+        .sign-in-container p {
+            color: rgba(255, 255, 255, 0.5);
+            font-size: 17px;
+        }
+
+        .sign-in-btn {
+            padding: 12px 24px;
+            background: #4285f4;
+            color: #fff;
+            border: none;
+            border-radius: 12px;
+            font-size: 17px;
+            font-weight: 600;
+            cursor: pointer;
+        }
+
+        .content {
+            flex: 1;
+            overflow-y: auto;
+            -webkit-overflow-scrolling: touch;
+            padding: 16px 20px;
+        }
+
+        .input-row {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 16px;
+        }
+
+        .input-row input {
+            flex: 1;
+            padding: 12px 16px;
+            background: #1c1c1e;
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            border-radius: 12px;
+            color: #fff;
+            font-size: 17px;
+            outline: none;
+        }
+
+        .input-row input:focus {
+            border-color: #ff9500;
+        }
+
+        .action-btns {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 24px;
+        }
+
+        .action-btns button {
+            flex: 1;
+            padding: 12px;
+            border: none;
+            border-radius: 12px;
+            font-size: 15px;
+            font-weight: 600;
+            cursor: pointer;
+            color: #fff;
+        }
+
+        .btn-get { background: #30d158; }
+        .btn-put { background: #ff9500; }
+        .btn-delete { background: #ff453a; }
+
+        .result {
+            background: #1c1c1e;
+            border-radius: 12px;
+            padding: 16px;
+            margin-bottom: 12px;
+            display: none;
+        }
+
+        .result.visible { display: block; }
+
+        .result-label {
+            font-size: 13px;
+            color: rgba(255, 255, 255, 0.5);
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            margin-bottom: 8px;
+        }
+
+        .result-value {
+            font-size: 17px;
+            word-break: break-all;
+            white-space: pre-wrap;
+        }
+
+        .result-value.error { color: #ff453a; }
+        .result-value.success { color: #30d158; }
+
+        .keys-section {
+            margin-top: 24px;
+        }
+
+        .keys-label {
+            font-size: 13px;
+            color: rgba(255, 255, 255, 0.5);
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            margin-bottom: 8px;
+        }
+
+        .keys-list {
+            background: #1c1c1e;
+            border-radius: 12px;
+            overflow: hidden;
+        }
+
+        .key-item {
+            padding: 14px 16px;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+            font-size: 17px;
+            cursor: pointer;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .key-item:last-child { border-bottom: none; }
+
+        .key-item:active { background: rgba(255, 255, 255, 0.05); }
+
+        .key-item .chevron {
+            color: rgba(255, 255, 255, 0.3);
+            font-size: 14px;
+        }
+
+        .keys-empty {
+            padding: 14px 16px;
+            color: rgba(255, 255, 255, 0.3);
+            font-size: 15px;
+        }
+
+        .hidden { display: none !important; }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>Key-Value</h1>
+    </div>
+
+    <div id="sign-in-view" class="sign-in-container">
+        <p>Sign in with Google to continue</p>
+        <div id="g_id_onload"
+             data-client_id="611505411727-94u34em16j7sd0rdigejmvfdgnjj67ma.apps.googleusercontent.com"
+             data-callback="onSignIn"
+             data-auto_prompt="false">
+        </div>
+        <div class="g_id_signin"
+             data-type="standard"
+             data-size="large"
+             data-theme="filled_black"
+             data-text="sign_in_with"
+             data-shape="rectangular">
+        </div>
+    </div>
+
+    <div id="app-view" class="hidden">
+        <div class="content">
+            <div class="input-row">
+                <input type="text" id="key-input" placeholder="Key">
+            </div>
+            <div class="input-row">
+                <input type="text" id="value-input" placeholder="Value">
+            </div>
+            <div class="action-btns">
+                <button class="btn-get" onclick="doGet()">Get</button>
+                <button class="btn-put" onclick="doPut()">Put</button>
+                <button class="btn-delete" onclick="doDelete()">Delete</button>
+            </div>
+            <div id="result" class="result">
+                <div class="result-label">Result</div>
+                <div id="result-value" class="result-value"></div>
+            </div>
+            <div class="keys-section">
+                <div class="keys-label">All Keys</div>
+                <div id="keys-list" class="keys-list">
+                    <div class="keys-empty">Loading...</div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const API = 'https://cloudflare-backend.maattp.workers.dev';
+        let idToken = null;
+
+        function onSignIn(response) {
+            idToken = response.credential;
+            document.getElementById('sign-in-view').classList.add('hidden');
+            document.getElementById('app-view').classList.remove('hidden');
+            loadKeys();
+        }
+
+        async function apiCall(method, path, body) {
+            const res = await fetch(`${API}${path}`, {
+                method,
+                headers: { 'Authorization': `Bearer ${idToken}` },
+                body: body !== undefined ? body : undefined
+            });
+            return res.json();
+        }
+
+        async function loadKeys() {
+            try {
+                const data = await apiCall('GET', '/kv');
+                const list = document.getElementById('keys-list');
+                if (!data.keys || data.keys.length === 0) {
+                    list.innerHTML = '<div class="keys-empty">No keys stored</div>';
+                    return;
+                }
+                list.innerHTML = data.keys.map(k =>
+                    `<div class="key-item" onclick="selectKey('${k.replace(/'/g, "\\'")}')">
+                        <span>${k}</span>
+                        <span class="chevron">›</span>
+                    </div>`
+                ).join('');
+            } catch (e) {
+                document.getElementById('keys-list').innerHTML =
+                    '<div class="keys-empty">Failed to load keys</div>';
+            }
+        }
+
+        function selectKey(key) {
+            document.getElementById('key-input').value = key;
+            doGet();
+        }
+
+        function showResult(data, isError) {
+            const el = document.getElementById('result');
+            const val = document.getElementById('result-value');
+            el.classList.add('visible');
+            val.className = 'result-value' + (isError ? ' error' : ' success');
+            val.textContent = typeof data === 'string' ? data : JSON.stringify(data, null, 2);
+        }
+
+        async function doGet() {
+            const key = document.getElementById('key-input').value.trim();
+            if (!key) return;
+            try {
+                const data = await apiCall('GET', `/kv/${encodeURIComponent(key)}`);
+                if (data.error) showResult(data.error, true);
+                else showResult(data.value, false);
+            } catch (e) {
+                showResult(e.message, true);
+            }
+        }
+
+        async function doPut() {
+            const key = document.getElementById('key-input').value.trim();
+            const value = document.getElementById('value-input').value;
+            if (!key) return;
+            try {
+                const data = await apiCall('PUT', `/kv/${encodeURIComponent(key)}`, value);
+                if (data.error) showResult(data.error, true);
+                else showResult('Stored successfully', false);
+                loadKeys();
+            } catch (e) {
+                showResult(e.message, true);
+            }
+        }
+
+        async function doDelete() {
+            const key = document.getElementById('key-input').value.trim();
+            if (!key) return;
+            try {
+                const data = await apiCall('DELETE', `/kv/${encodeURIComponent(key)}`);
+                if (data.error) showResult(data.error, true);
+                else showResult('Deleted successfully', false);
+                loadKeys();
+            } catch (e) {
+                showResult(e.message, true);
+            }
+        }
+    </script>
+</body>
+</html>

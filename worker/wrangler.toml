@@ -7,5 +7,5 @@ binding = "KV"
 id = "695a2234a1704cf693385666f5ce902d"
 
 [vars]
-GOOGLE_CLIENT_ID = "your-google-client-id.apps.googleusercontent.com"
-ALLOWED_EMAIL = "you@gmail.com"
+GOOGLE_CLIENT_ID = "611505411727-94u34em16j7sd0rdigejmvfdgnjj67ma.apps.googleusercontent.com"
+ALLOWED_EMAIL = "m.polkiewicz@gmail.com"

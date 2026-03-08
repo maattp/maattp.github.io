@@ -1,4 +1,5 @@
 import { Hono } from "hono";
+import { cors } from "hono/cors";
 
 type Bindings = {
   KV: KVNamespace;
@@ -70,6 +71,12 @@ async function verifyGoogleToken(
 
 const app = new Hono<{ Bindings: Bindings }>();
 
+app.use("*", cors({
+  origin: ["https://polkiewicz.com", "https://maattp.github.io", "http://localhost:8000"],
+  allowHeaders: ["Authorization"],
+  allowMethods: ["GET", "PUT", "DELETE"],
+}));
+
 app.get("/", (c) => {
   return c.json({ status: "ok" });
 });
@@ -86,6 +93,11 @@ app.use("/kv/*", async (c, next) => {
     return c.json({ error: "unauthorized" }, 401);
   }
   await next();
+});
+
+app.get("/kv", async (c) => {
+  const list = await c.env.KV.list();
+  return c.json({ keys: list.keys.map((k) => k.name) });
 });
 
 app.get("/kv/:key", async (c) => {

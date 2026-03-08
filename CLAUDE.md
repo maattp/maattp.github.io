@@ -8,6 +8,7 @@ Static personal site with a collection of self-contained web utilities.
 /index.html              - Main site (resume/portfolio)
 /apps/index.html         - Launcher (iOS home screen app)
 /apps/[name]/index.html  - Individual utilities
+/worker/                 - Cloudflare Worker backend (see worker/CLAUDE.md)
 ```
 
 Each utility is a single self-contained `index.html` file (HTML + CSS + JS inline).
