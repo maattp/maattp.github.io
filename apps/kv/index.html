@@ -265,12 +265,20 @@
                     list.innerHTML = '<div class="keys-empty">No keys stored</div>';
                     return;
                 }
-                list.innerHTML = data.keys.map(k =>
-                    `<div class="key-item" onclick="selectKey('${k.replace(/'/g, "\\'")}')">
-                        <span>${k}</span>
-                        <span class="chevron">›</span>
-                    </div>`
-                ).join('');
+                list.innerHTML = '';
+                data.keys.forEach(k => {
+                    const item = document.createElement('div');
+                    item.className = 'key-item';
+                    const name = document.createElement('span');
+                    name.textContent = k;
+                    const chevron = document.createElement('span');
+                    chevron.className = 'chevron';
+                    chevron.textContent = '›';
+                    item.appendChild(name);
+                    item.appendChild(chevron);
+                    item.addEventListener('click', () => selectKey(k));
+                    list.appendChild(item);
+                });
             } catch (e) {
                 document.getElementById('keys-list').innerHTML =
                     '<div class="keys-empty">Failed to load keys</div>';

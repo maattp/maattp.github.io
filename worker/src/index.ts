@@ -64,6 +64,7 @@ async function verifyGoogleToken(
   if (payload.iss !== "accounts.google.com" && payload.iss !== "https://accounts.google.com") return null;
   if (payload.aud !== clientId) return null;
   if (typeof payload.exp === "number" && payload.exp < now) return null;
+  if (!payload.email_verified) return null;
   if (payload.email !== allowedEmail) return null;
 
   return { email: payload.email as string };
