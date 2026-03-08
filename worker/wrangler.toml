@@ -1,0 +1,11 @@
+name = "cloudflare-backend"
+main = "src/index.ts"
+compatibility_date = "2025-03-01"
+
+[[kv_namespaces]]
+binding = "KV"
+id = "695a2234a1704cf693385666f5ce902d"
+
+[vars]
+GOOGLE_CLIENT_ID = "your-google-client-id.apps.googleusercontent.com"
+ALLOWED_EMAIL = "you@gmail.com"
