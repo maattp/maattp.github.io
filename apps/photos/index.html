@@ -434,7 +434,7 @@
             item.className = 'grid-item';
             const img = document.createElement('img');
             img.loading = 'lazy';
-            loadAuthImage(img, `${API}/photos/${photo.id}/thumb`);
+            loadThumb(img, photo.id);
             img.addEventListener('click', () => openViewer(photo.id));
             item.appendChild(img);
             return item;
@@ -474,6 +474,8 @@
 
         // --- Auth image loading ---
 
+        const thumbCache = {}; // id -> blob URL
+
         async function loadAuthImage(imgEl, url) {
             try {
                 const res = await apiFetch('GET', url.replace(API, ''));
@@ -482,6 +484,23 @@
                 imgEl.src = URL.createObjectURL(blob);
             } catch (e) {
                 console.error('Failed to load image', e);
+            }
+        }
+
+        async function loadThumb(imgEl, id) {
+            if (thumbCache[id]) {
+                imgEl.src = thumbCache[id];
+                return;
+            }
+            try {
+                const res = await apiFetch('GET', `/photos/${id}/thumb`);
+                if (!res) return;
+                const blob = await res.blob();
+                const url = URL.createObjectURL(blob);
+                thumbCache[id] = url;
+                imgEl.src = url;
+            } catch (e) {
+                console.error('Failed to load thumb', e);
             }
         }
 
@@ -496,12 +515,22 @@
             document.getElementById('viewer').classList.remove('hidden');
         }
 
-        function showViewerPhoto() {
+        async function showViewerPhoto() {
             const img = document.getElementById('viewer-img');
             img.style.transform = '';
             img.style.opacity = '1';
-            img.src = '';
-            loadAuthImage(img, `${API}/photos/${viewingId}/original`);
+            // Show thumbnail instantly, then swap in full-res
+            const id = viewingId;
+            img.src = thumbCache[id] || '';
+            try {
+                const res = await apiFetch('GET', `/photos/${id}/original`);
+                if (!res || viewingId !== id) return;
+                const blob = await res.blob();
+                if (viewingId !== id) return;
+                img.src = URL.createObjectURL(blob);
+            } catch (e) {
+                console.error('Failed to load original', e);
+            }
         }
 
         function navigateViewer(delta) {
