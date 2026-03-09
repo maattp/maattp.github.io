@@ -187,12 +187,18 @@
             font-size: 15px;
         }
 
+        .user-email {
+            font-size: 13px;
+            color: rgba(255, 255, 255, 0.4);
+        }
+
         .hidden { display: none !important; }
     </style>
 </head>
 <body>
     <div class="header">
         <h1>Key-Value</h1>
+        <span id="user-email" class="user-email"></span>
     </div>
 
     <div id="sign-in-view" class="sign-in-container">
@@ -239,23 +245,67 @@
 
     <script>
         const API = 'https://cloudflare-backend.maattp.workers.dev';
-        let idToken = null;
+        const TOKEN_KEY = 'kv_session_id';
+        const EMAIL_KEY = 'kv_email';
+        let sessionToken = null;
 
-        function onSignIn(response) {
-            idToken = response.credential;
+        function showApp() {
             document.getElementById('sign-in-view').classList.add('hidden');
             document.getElementById('app-view').classList.remove('hidden');
+            document.getElementById('user-email').textContent = localStorage.getItem(EMAIL_KEY) || '';
             loadKeys();
+        }
+
+        function showSignIn() {
+            sessionToken = null;
+            localStorage.removeItem(TOKEN_KEY);
+            localStorage.removeItem(EMAIL_KEY);
+            document.getElementById('app-view').classList.add('hidden');
+            document.getElementById('sign-in-view').classList.remove('hidden');
+        }
+
+        async function onSignIn(response) {
+            try {
+                const res = await fetch(`${API}/auth`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ token: response.credential })
+                });
+                const data = await res.json();
+                if (!data.sessionId) {
+                    showResult(data.error || 'Auth failed', true);
+                    return;
+                }
+                sessionToken = data.sessionId;
+                localStorage.setItem(TOKEN_KEY, sessionToken);
+                localStorage.setItem(EMAIL_KEY, data.email);
+                showApp();
+            } catch (e) {
+                showResult(e.message, true);
+            }
         }
 
         async function apiCall(method, path, body) {
             const res = await fetch(`${API}${path}`, {
                 method,
-                headers: { 'Authorization': `Bearer ${idToken}` },
+                headers: { 'Authorization': `Bearer ${sessionToken}` },
                 body: body !== undefined ? body : undefined
             });
+            if (res.status === 401) {
+                showSignIn();
+                return { error: 'Session expired, please sign in again' };
+            }
             return res.json();
         }
+
+        // Check for existing session on load
+        (function init() {
+            const stored = localStorage.getItem(TOKEN_KEY);
+            if (stored) {
+                sessionToken = stored;
+                showApp();
+            }
+        })();
 
         async function loadKeys() {
             try {

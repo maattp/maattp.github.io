@@ -1,6 +1,9 @@
 import { Hono } from "hono";
 import { cors } from "hono/cors";
 
+const SESSION_TTL = 365 * 24 * 60 * 60; // 1 year in seconds
+const SESSION_PREFIX = "__session:";
+
 type Bindings = {
   KV: KVNamespace;
   GOOGLE_CLIENT_ID: string;
@@ -70,26 +73,56 @@ async function verifyGoogleToken(
   return { email: payload.email as string };
 }
 
+async function createSession(kv: KVNamespace, email: string): Promise<string> {
+  const sessionId = crypto.randomUUID();
+  await kv.put(`${SESSION_PREFIX}${sessionId}`, email, { expirationTtl: SESSION_TTL });
+  return sessionId;
+}
+
+async function verifySession(
+  kv: KVNamespace,
+  sessionId: string,
+  allowedEmail: string
+): Promise<{ email: string } | null> {
+  const email = await kv.get(`${SESSION_PREFIX}${sessionId}`);
+  if (!email || email !== allowedEmail) return null;
+  return { email };
+}
+
 const app = new Hono<{ Bindings: Bindings }>();
 
 app.use("*", cors({
   origin: ["https://polkiewicz.com", "https://maattp.github.io", "http://localhost:8000"],
-  allowHeaders: ["Authorization"],
-  allowMethods: ["GET", "PUT", "DELETE"],
+  allowHeaders: ["Authorization", "Content-Type"],
+  allowMethods: ["GET", "POST", "PUT", "DELETE"],
 }));
 
 app.get("/", (c) => {
   return c.json({ status: "ok" });
 });
 
-// Require Google auth on all /kv routes
+// Exchange Google ID token for a session
+app.post("/auth", async (c) => {
+  const { token } = await c.req.json<{ token: string }>();
+  if (!token) {
+    return c.json({ error: "missing token" }, 400);
+  }
+  const user = await verifyGoogleToken(token, c.env.GOOGLE_CLIENT_ID, c.env.ALLOWED_EMAIL);
+  if (!user) {
+    return c.json({ error: "unauthorized" }, 401);
+  }
+  const sessionId = await createSession(c.env.KV, user.email);
+  return c.json({ sessionId, email: user.email });
+});
+
+// Require valid session on all /kv routes
 app.use("/kv/*", async (c, next) => {
   const auth = c.req.header("Authorization");
   if (!auth?.startsWith("Bearer ")) {
     return c.json({ error: "unauthorized" }, 401);
   }
-  const token = auth.slice(7);
-  const user = await verifyGoogleToken(token, c.env.GOOGLE_CLIENT_ID, c.env.ALLOWED_EMAIL);
+  const sessionId = auth.slice(7);
+  const user = await verifySession(c.env.KV, sessionId, c.env.ALLOWED_EMAIL);
   if (!user) {
     return c.json({ error: "unauthorized" }, 401);
   }
