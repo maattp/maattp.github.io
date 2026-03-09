@@ -43,6 +43,43 @@ npm run deploy    # deploy to Cloudflare
 npm run typecheck # type check
 ```
 
+## D1 Database Migrations
+
+The worker uses Cloudflare D1 (SQLite) for structured data. The database is bound as `DB` and named `photos-db`.
+
+### Adding or Updating a Table
+
+1. Create a new migration file in `worker/migrations/` with the next sequential number:
+   ```
+   worker/migrations/NNNN_description.sql
+   ```
+   Example: `0003_add_tags_table.sql`
+
+2. Write standard SQL in the migration file (D1 uses SQLite syntax):
+   ```sql
+   CREATE TABLE IF NOT EXISTS tags (
+     id INTEGER PRIMARY KEY AUTOINCREMENT,
+     name TEXT NOT NULL
+   );
+   ```
+   For schema changes to existing tables, use `ALTER TABLE`.
+
+3. Test locally before pushing:
+   ```bash
+   cd worker
+   npx wrangler d1 migrations apply photos-db --local
+   ```
+
+4. Commit and push. The GitHub Actions workflow automatically runs `wrangler d1 migrations apply photos-db --remote` before deploying, so migrations are applied in CI on merge to `master`.
+
+### Migration Conventions
+
+- Migrations are applied in order by filename prefix (`0001_`, `0002_`, etc.)
+- Wrangler tracks which migrations have already been applied — it won't re-run them
+- Use `IF NOT EXISTS` / `IF EXISTS` for safety
+- Keep each migration focused on a single change
+- The current schema is documented in `worker/schema.sql` — update it when adding migrations
+
 ## Deployment
 
-Auto-deploys on push to `master` when files in `worker/` change. See `../.github/workflows/deploy-worker.yml`. Requires `CLOUDFLARE_API_TOKEN` repo secret.
+Auto-deploys on push to `master` when files in `worker/` change. See `../.github/workflows/deploy-worker.yml`. The workflow runs D1 migrations before deploying the worker. Requires `CLOUDFLARE_API_TOKEN` repo secret.
