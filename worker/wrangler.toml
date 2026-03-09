@@ -17,4 +17,4 @@ database_id = "94b16b1f-ff69-4f23-b1d2-0df20febe2b3"
 
 [vars]
 GOOGLE_CLIENT_ID = "611505411727-94u34em16j7sd0rdigejmvfdgnjj67ma.apps.googleusercontent.com"
-ALLOWED_EMAIL = "m.polkiewicz@gmail.com"
+ALLOWED_EMAILS = "m.polkiewicz@gmail.com,ting520143@gmail.com"

@@ -9,7 +9,11 @@ type Bindings = {
   PHOTOS: R2Bucket;
   DB: D1Database;
   GOOGLE_CLIENT_ID: string;
-  ALLOWED_EMAIL: string;
+  ALLOWED_EMAILS: string;
+};
+
+type Variables = {
+  email: string;
 };
 
 type GoogleJWKS = {
@@ -34,10 +38,14 @@ function decodeJwtPayload(token: string): Record<string, unknown> {
   return JSON.parse(new TextDecoder().decode(decodeBase64Url(parts[1])));
 }
 
+function parseAllowedEmails(allowedEmails: string): Set<string> {
+  return new Set(allowedEmails.split(",").map((e) => e.trim().toLowerCase()));
+}
+
 async function verifyGoogleToken(
   token: string,
   clientId: string,
-  allowedEmail: string
+  allowedEmails: Set<string>
 ): Promise<{ email: string } | null> {
   const parts = token.split(".");
   if (parts.length !== 3) return null;
@@ -70,7 +78,7 @@ async function verifyGoogleToken(
   if (payload.aud !== clientId) return null;
   if (typeof payload.exp === "number" && payload.exp < now) return null;
   if (!payload.email_verified) return null;
-  if (payload.email !== allowedEmail) return null;
+  if (!allowedEmails.has((payload.email as string).toLowerCase())) return null;
 
   return { email: payload.email as string };
 }
@@ -84,14 +92,14 @@ async function createSession(kv: KVNamespace, email: string): Promise<string> {
 async function verifySession(
   kv: KVNamespace,
   sessionId: string,
-  allowedEmail: string
+  allowedEmails: Set<string>
 ): Promise<{ email: string } | null> {
   const email = await kv.get(`${SESSION_PREFIX}${sessionId}`);
-  if (!email || email !== allowedEmail) return null;
+  if (!email || !allowedEmails.has(email.toLowerCase())) return null;
   return { email };
 }
 
-const app = new Hono<{ Bindings: Bindings }>();
+const app = new Hono<{ Bindings: Bindings; Variables: Variables }>();
 
 app.use("*", cors({
   origin: ["https://polkiewicz.com", "https://maattp.github.io", "http://localhost:8000"],
@@ -109,7 +117,8 @@ app.post("/auth", async (c) => {
   if (!token) {
     return c.json({ error: "missing token" }, 400);
   }
-  const user = await verifyGoogleToken(token, c.env.GOOGLE_CLIENT_ID, c.env.ALLOWED_EMAIL);
+  const allowed = parseAllowedEmails(c.env.ALLOWED_EMAILS);
+  const user = await verifyGoogleToken(token, c.env.GOOGLE_CLIENT_ID, allowed);
   if (!user) {
     return c.json({ error: "unauthorized" }, 401);
   }
@@ -124,10 +133,12 @@ app.use("/kv/*", async (c, next) => {
     return c.json({ error: "unauthorized" }, 401);
   }
   const sessionId = auth.slice(7);
-  const user = await verifySession(c.env.KV, sessionId, c.env.ALLOWED_EMAIL);
+  const allowed = parseAllowedEmails(c.env.ALLOWED_EMAILS);
+  const user = await verifySession(c.env.KV, sessionId, allowed);
   if (!user) {
     return c.json({ error: "unauthorized" }, 401);
   }
+  c.set("email", user.email);
   await next();
 });
 
@@ -167,22 +178,25 @@ app.use("/photos/*", async (c, next) => {
     return c.json({ error: "unauthorized" }, 401);
   }
   const sessionId = auth.slice(7);
-  const user = await verifySession(c.env.KV, sessionId, c.env.ALLOWED_EMAIL);
+  const allowed = parseAllowedEmails(c.env.ALLOWED_EMAILS);
+  const user = await verifySession(c.env.KV, sessionId, allowed);
   if (!user) {
     return c.json({ error: "unauthorized" }, 401);
   }
+  c.set("email", user.email);
   await next();
 });
 
-// List photos (newest first)
+// List photos (newest first, scoped to owner)
 app.get("/photos/list", async (c) => {
+  const email = c.get("email");
   const cursor = c.req.query("cursor") || "0";
   const limit = 50;
   const offset = parseInt(cursor, 10);
   const rows = await c.env.DB.prepare(
-    "SELECT id, filename, content_type, size, width, height, created_at FROM photos ORDER BY created_at DESC LIMIT ? OFFSET ?"
+    "SELECT id, filename, content_type, size, width, height, created_at FROM photos WHERE owner = ? ORDER BY created_at DESC LIMIT ? OFFSET ?"
   )
-    .bind(limit, offset)
+    .bind(email, limit, offset)
     .all();
   return c.json({
     photos: rows.results,
@@ -213,18 +227,22 @@ app.post("/photos/upload", async (c) => {
     }),
   ]);
 
+  const email = c.get("email");
   await c.env.DB.prepare(
-    "INSERT INTO photos (id, filename, content_type, size, width, height) VALUES (?, ?, ?, ?, ?, ?)"
+    "INSERT INTO photos (id, owner, filename, content_type, size, width, height) VALUES (?, ?, ?, ?, ?, ?, ?)"
   )
-    .bind(id, original.name, original.type, original.size, width ? parseInt(width, 10) : null, height ? parseInt(height, 10) : null)
+    .bind(id, email, original.name, original.type, original.size, width ? parseInt(width, 10) : null, height ? parseInt(height, 10) : null)
     .run();
 
   return c.json({ id });
 });
 
-// Get original photo
+// Get original photo (verify ownership)
 app.get("/photos/:id/original", async (c) => {
   const id = c.req.param("id");
+  const email = c.get("email");
+  const row = await c.env.DB.prepare("SELECT 1 FROM photos WHERE id = ? AND owner = ?").bind(id, email).first();
+  if (!row) return c.json({ error: "not found" }, 404);
   const obj = await c.env.PHOTOS.get(`original/${id}`);
   if (!obj) return c.json({ error: "not found" }, 404);
   const headers = new Headers();
@@ -233,9 +251,12 @@ app.get("/photos/:id/original", async (c) => {
   return new Response(obj.body, { headers });
 });
 
-// Get thumbnail
+// Get thumbnail (verify ownership)
 app.get("/photos/:id/thumb", async (c) => {
   const id = c.req.param("id");
+  const email = c.get("email");
+  const row = await c.env.DB.prepare("SELECT 1 FROM photos WHERE id = ? AND owner = ?").bind(id, email).first();
+  if (!row) return c.json({ error: "not found" }, 404);
   const obj = await c.env.PHOTOS.get(`thumb/${id}`);
   if (!obj) return c.json({ error: "not found" }, 404);
   const headers = new Headers();
@@ -244,14 +265,17 @@ app.get("/photos/:id/thumb", async (c) => {
   return new Response(obj.body, { headers });
 });
 
-// Delete photo
+// Delete photo (verify ownership)
 app.delete("/photos/:id", async (c) => {
   const id = c.req.param("id");
+  const email = c.get("email");
+  const row = await c.env.DB.prepare("SELECT 1 FROM photos WHERE id = ? AND owner = ?").bind(id, email).first();
+  if (!row) return c.json({ error: "not found" }, 404);
   await Promise.all([
     c.env.PHOTOS.delete(`original/${id}`),
     c.env.PHOTOS.delete(`thumb/${id}`),
   ]);
-  await c.env.DB.prepare("DELETE FROM photos WHERE id = ?").bind(id).run();
+  await c.env.DB.prepare("DELETE FROM photos WHERE id = ? AND owner = ?").bind(id, email).run();
   return c.json({ deleted: true });
 });
 
