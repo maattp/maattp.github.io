@@ -6,6 +6,8 @@ const SESSION_PREFIX = "__session:";
 
 type Bindings = {
   KV: KVNamespace;
+  PHOTOS: R2Bucket;
+  DB: D1Database;
   GOOGLE_CLIENT_ID: string;
   ALLOWED_EMAIL: string;
 };
@@ -154,6 +156,103 @@ app.delete("/kv/:key", async (c) => {
   const key = c.req.param("key");
   await c.env.KV.delete(key);
   return c.json({ key, deleted: true });
+});
+
+// --- Photos ---
+
+// Require valid session on all /photos routes
+app.use("/photos/*", async (c, next) => {
+  const auth = c.req.header("Authorization");
+  if (!auth?.startsWith("Bearer ")) {
+    return c.json({ error: "unauthorized" }, 401);
+  }
+  const sessionId = auth.slice(7);
+  const user = await verifySession(c.env.KV, sessionId, c.env.ALLOWED_EMAIL);
+  if (!user) {
+    return c.json({ error: "unauthorized" }, 401);
+  }
+  await next();
+});
+
+// List photos (newest first)
+app.get("/photos/list", async (c) => {
+  const cursor = c.req.query("cursor") || "0";
+  const limit = 50;
+  const offset = parseInt(cursor, 10);
+  const rows = await c.env.DB.prepare(
+    "SELECT id, filename, content_type, size, width, height, created_at FROM photos ORDER BY created_at DESC LIMIT ? OFFSET ?"
+  )
+    .bind(limit, offset)
+    .all();
+  return c.json({
+    photos: rows.results,
+    nextCursor: rows.results.length === limit ? String(offset + limit) : null,
+  });
+});
+
+// Upload photo (multipart: original + thumbnail)
+app.post("/photos/upload", async (c) => {
+  const form = await c.req.formData();
+  const original = form.get("original") as File | null;
+  const thumbnail = form.get("thumbnail") as File | null;
+  const width = form.get("width") as string | null;
+  const height = form.get("height") as string | null;
+
+  if (!original || !thumbnail) {
+    return c.json({ error: "missing original or thumbnail" }, 400);
+  }
+
+  const id = crypto.randomUUID();
+
+  await Promise.all([
+    c.env.PHOTOS.put(`original/${id}`, original.stream(), {
+      httpMetadata: { contentType: original.type },
+    }),
+    c.env.PHOTOS.put(`thumb/${id}`, thumbnail.stream(), {
+      httpMetadata: { contentType: thumbnail.type },
+    }),
+  ]);
+
+  await c.env.DB.prepare(
+    "INSERT INTO photos (id, filename, content_type, size, width, height) VALUES (?, ?, ?, ?, ?, ?)"
+  )
+    .bind(id, original.name, original.type, original.size, width ? parseInt(width, 10) : null, height ? parseInt(height, 10) : null)
+    .run();
+
+  return c.json({ id });
+});
+
+// Get original photo
+app.get("/photos/:id/original", async (c) => {
+  const id = c.req.param("id");
+  const obj = await c.env.PHOTOS.get(`original/${id}`);
+  if (!obj) return c.json({ error: "not found" }, 404);
+  const headers = new Headers();
+  headers.set("Content-Type", obj.httpMetadata?.contentType || "image/jpeg");
+  headers.set("Cache-Control", "private, max-age=31536000, immutable");
+  return new Response(obj.body, { headers });
+});
+
+// Get thumbnail
+app.get("/photos/:id/thumb", async (c) => {
+  const id = c.req.param("id");
+  const obj = await c.env.PHOTOS.get(`thumb/${id}`);
+  if (!obj) return c.json({ error: "not found" }, 404);
+  const headers = new Headers();
+  headers.set("Content-Type", obj.httpMetadata?.contentType || "image/jpeg");
+  headers.set("Cache-Control", "private, max-age=31536000, immutable");
+  return new Response(obj.body, { headers });
+});
+
+// Delete photo
+app.delete("/photos/:id", async (c) => {
+  const id = c.req.param("id");
+  await Promise.all([
+    c.env.PHOTOS.delete(`original/${id}`),
+    c.env.PHOTOS.delete(`thumb/${id}`),
+  ]);
+  await c.env.DB.prepare("DELETE FROM photos WHERE id = ?").bind(id).run();
+  return c.json({ deleted: true });
 });
 
 export default app;

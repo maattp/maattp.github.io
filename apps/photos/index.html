@@ -1,0 +1,469 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <title>Photos</title>
+    <script src="https://accounts.google.com/gsi/client" async></script>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+            -webkit-tap-highlight-color: transparent;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'Segoe UI', Roboto, sans-serif;
+            background: #000;
+            position: fixed;
+            inset: 0;
+            color: #fff;
+            overflow: hidden;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 16px 20px;
+            padding-top: calc(16px + env(safe-area-inset-top));
+            border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+            flex-shrink: 0;
+        }
+
+        .header h1 {
+            font-size: 34px;
+            font-weight: 700;
+            letter-spacing: -0.5px;
+        }
+
+        .header-right {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+
+        .user-email {
+            font-size: 13px;
+            color: rgba(255, 255, 255, 0.4);
+        }
+
+        .upload-btn {
+            width: 44px;
+            height: 44px;
+            border-radius: 50%;
+            background: #007aff;
+            border: none;
+            color: #fff;
+            font-size: 24px;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .sign-in-container {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            gap: 20px;
+        }
+
+        .sign-in-container p {
+            color: rgba(255, 255, 255, 0.5);
+            font-size: 17px;
+        }
+
+        .grid {
+            flex: 1;
+            overflow-y: auto;
+            -webkit-overflow-scrolling: touch;
+            padding: 2px;
+            padding-bottom: env(safe-area-inset-bottom);
+        }
+
+        .grid-inner {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 2px;
+        }
+
+        .grid-item {
+            aspect-ratio: 1;
+            overflow: hidden;
+            cursor: pointer;
+            position: relative;
+            background: #1c1c1e;
+        }
+
+        .grid-item img {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+        }
+
+        .empty-state {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            color: rgba(255, 255, 255, 0.3);
+            font-size: 17px;
+            gap: 8px;
+        }
+
+        .empty-state .icon {
+            font-size: 48px;
+            margin-bottom: 8px;
+        }
+
+        /* Fullscreen viewer */
+        .viewer {
+            position: fixed;
+            inset: 0;
+            background: #000;
+            z-index: 100;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .viewer.hidden { display: none; }
+
+        .viewer-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 16px 20px;
+            padding-top: calc(16px + env(safe-area-inset-top));
+            flex-shrink: 0;
+        }
+
+        .viewer-btn {
+            background: none;
+            border: none;
+            color: #007aff;
+            font-size: 17px;
+            cursor: pointer;
+            padding: 8px;
+        }
+
+        .viewer-delete {
+            color: #ff453a;
+        }
+
+        .viewer-img-container {
+            flex: 1;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            overflow: hidden;
+            padding-bottom: env(safe-area-inset-bottom);
+        }
+
+        .viewer-img-container img {
+            max-width: 100%;
+            max-height: 100%;
+            object-fit: contain;
+        }
+
+        /* Upload progress */
+        .upload-overlay {
+            position: fixed;
+            inset: 0;
+            background: rgba(0, 0, 0, 0.8);
+            z-index: 200;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            flex-direction: column;
+            gap: 16px;
+        }
+
+        .upload-overlay.hidden { display: none; }
+
+        .upload-text {
+            font-size: 17px;
+            color: rgba(255, 255, 255, 0.7);
+        }
+
+        .spinner {
+            width: 36px;
+            height: 36px;
+            border: 3px solid rgba(255, 255, 255, 0.2);
+            border-top-color: #fff;
+            border-radius: 50%;
+            animation: spin 0.8s linear infinite;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+
+        .hidden { display: none !important; }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>Photos</h1>
+        <div class="header-right">
+            <span id="user-email" class="user-email"></span>
+            <button id="upload-btn" class="upload-btn hidden" onclick="document.getElementById('file-input').click()">+</button>
+        </div>
+    </div>
+
+    <input type="file" id="file-input" accept="image/*" multiple style="display:none" onchange="handleUpload(this.files)">
+
+    <div id="sign-in-view" class="sign-in-container">
+        <p>Sign in with Google to continue</p>
+        <div id="g_id_onload"
+             data-client_id="611505411727-94u34em16j7sd0rdigejmvfdgnjj67ma.apps.googleusercontent.com"
+             data-callback="onSignIn"
+             data-auto_prompt="false">
+        </div>
+        <div class="g_id_signin"
+             data-type="standard"
+             data-size="large"
+             data-theme="filled_black"
+             data-text="sign_in_with"
+             data-shape="rectangular">
+        </div>
+    </div>
+
+    <div id="app-view" class="hidden">
+        <div id="empty-state" class="empty-state hidden">
+            <div class="icon">📷</div>
+            <div>No photos yet</div>
+            <div style="font-size: 14px">Tap + to upload</div>
+        </div>
+        <div id="grid" class="grid hidden">
+            <div id="grid-inner" class="grid-inner"></div>
+        </div>
+    </div>
+
+    <div id="viewer" class="viewer hidden">
+        <div class="viewer-header">
+            <button class="viewer-btn" onclick="closeViewer()">Back</button>
+            <button class="viewer-btn viewer-delete" onclick="deletePhoto()">Delete</button>
+        </div>
+        <div class="viewer-img-container">
+            <img id="viewer-img" src="">
+        </div>
+    </div>
+
+    <div id="upload-overlay" class="upload-overlay hidden">
+        <div class="spinner"></div>
+        <div id="upload-text" class="upload-text">Uploading...</div>
+    </div>
+
+    <script>
+        const API = 'https://cloudflare-backend.maattp.workers.dev';
+        const TOKEN_KEY = 'photos_session_id';
+        const EMAIL_KEY = 'photos_email';
+        const THUMB_SIZE = 400;
+        let sessionToken = null;
+        let photos = [];
+        let viewingId = null;
+
+        // --- Auth ---
+
+        function showApp() {
+            document.getElementById('sign-in-view').classList.add('hidden');
+            document.getElementById('app-view').classList.remove('hidden');
+            document.getElementById('upload-btn').classList.remove('hidden');
+            document.getElementById('user-email').textContent = localStorage.getItem(EMAIL_KEY) || '';
+            loadPhotos();
+        }
+
+        function showSignIn() {
+            sessionToken = null;
+            localStorage.removeItem(TOKEN_KEY);
+            localStorage.removeItem(EMAIL_KEY);
+            document.getElementById('app-view').classList.add('hidden');
+            document.getElementById('upload-btn').classList.add('hidden');
+            document.getElementById('sign-in-view').classList.remove('hidden');
+        }
+
+        async function onSignIn(response) {
+            try {
+                const res = await fetch(`${API}/auth`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ token: response.credential })
+                });
+                const data = await res.json();
+                if (!data.sessionId) return;
+                sessionToken = data.sessionId;
+                localStorage.setItem(TOKEN_KEY, sessionToken);
+                localStorage.setItem(EMAIL_KEY, data.email);
+                showApp();
+            } catch (e) {
+                console.error('Auth failed', e);
+            }
+        }
+
+        (function init() {
+            const stored = localStorage.getItem(TOKEN_KEY);
+            if (stored) {
+                sessionToken = stored;
+                showApp();
+            }
+        })();
+
+        // --- API ---
+
+        async function apiFetch(method, path, opts = {}) {
+            const res = await fetch(`${API}${path}`, {
+                method,
+                headers: { 'Authorization': `Bearer ${sessionToken}`, ...opts.headers },
+                body: opts.body
+            });
+            if (res.status === 401) {
+                showSignIn();
+                return null;
+            }
+            return res;
+        }
+
+        // --- Thumbnail generation ---
+
+        function createThumbnail(file) {
+            return new Promise((resolve, reject) => {
+                const img = new Image();
+                img.onload = () => {
+                    const canvas = document.createElement('canvas');
+                    let w = img.width, h = img.height;
+                    if (w > h) {
+                        if (w > THUMB_SIZE) { h = h * THUMB_SIZE / w; w = THUMB_SIZE; }
+                    } else {
+                        if (h > THUMB_SIZE) { w = w * THUMB_SIZE / h; h = THUMB_SIZE; }
+                    }
+                    canvas.width = w;
+                    canvas.height = h;
+                    const ctx = canvas.getContext('2d');
+                    ctx.drawImage(img, 0, 0, w, h);
+                    canvas.toBlob(blob => {
+                        resolve({ blob, origWidth: img.width, origHeight: img.height });
+                    }, 'image/jpeg', 0.7);
+                };
+                img.onerror = reject;
+                img.src = URL.createObjectURL(file);
+            });
+        }
+
+        // --- Upload ---
+
+        async function handleUpload(fileList) {
+            const files = Array.from(fileList);
+            if (files.length === 0) return;
+
+            const overlay = document.getElementById('upload-overlay');
+            const uploadText = document.getElementById('upload-text');
+            overlay.classList.remove('hidden');
+
+            for (let i = 0; i < files.length; i++) {
+                uploadText.textContent = files.length > 1
+                    ? `Uploading ${i + 1} of ${files.length}...`
+                    : 'Uploading...';
+
+                try {
+                    const { blob: thumbBlob, origWidth, origHeight } = await createThumbnail(files[i]);
+                    const form = new FormData();
+                    form.append('original', files[i]);
+                    form.append('thumbnail', thumbBlob, 'thumb.jpg');
+                    form.append('width', String(origWidth));
+                    form.append('height', String(origHeight));
+
+                    await apiFetch('POST', '/photos/upload', { body: form });
+                } catch (e) {
+                    console.error('Upload failed', e);
+                }
+            }
+
+            overlay.classList.add('hidden');
+            document.getElementById('file-input').value = '';
+            loadPhotos();
+        }
+
+        // --- Photo grid ---
+
+        async function loadPhotos() {
+            const res = await apiFetch('GET', '/photos/list');
+            if (!res) return;
+            const data = await res.json();
+            photos = data.photos || [];
+            renderGrid();
+        }
+
+        function renderGrid() {
+            const grid = document.getElementById('grid');
+            const inner = document.getElementById('grid-inner');
+            const empty = document.getElementById('empty-state');
+
+            if (photos.length === 0) {
+                grid.classList.add('hidden');
+                empty.classList.remove('hidden');
+                return;
+            }
+
+            empty.classList.add('hidden');
+            grid.classList.remove('hidden');
+            inner.innerHTML = '';
+
+            photos.forEach(photo => {
+                const item = document.createElement('div');
+                item.className = 'grid-item';
+                const img = document.createElement('img');
+                img.loading = 'lazy';
+                loadAuthImage(img, `${API}/photos/${photo.id}/thumb`);
+                img.addEventListener('click', () => openViewer(photo.id));
+                item.appendChild(img);
+                inner.appendChild(item);
+            });
+        }
+
+        // --- Auth image loading ---
+
+        async function loadAuthImage(imgEl, url) {
+            try {
+                const res = await apiFetch('GET', url.replace(API, ''));
+                if (!res) return;
+                const blob = await res.blob();
+                imgEl.src = URL.createObjectURL(blob);
+            } catch (e) {
+                console.error('Failed to load image', e);
+            }
+        }
+
+        // --- Viewer ---
+
+        function openViewer(id) {
+            viewingId = id;
+            const img = document.getElementById('viewer-img');
+            img.src = '';
+            loadAuthImage(img, `${API}/photos/${id}/original`);
+            document.getElementById('viewer').classList.remove('hidden');
+        }
+
+        function closeViewer() {
+            viewingId = null;
+            document.getElementById('viewer').classList.add('hidden');
+            document.getElementById('viewer-img').src = '';
+        }
+
+        async function deletePhoto() {
+            if (!viewingId || !confirm('Delete this photo?')) return;
+            await apiFetch('DELETE', `/photos/${viewingId}`);
+            closeViewer();
+            loadPhotos();
+        }
+    </script>
+</body>
+</html>
