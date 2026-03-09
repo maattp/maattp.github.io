@@ -2,7 +2,7 @@
 
 ## Site Structure
 
-Static personal site with a collection of self-contained web utilities.
+Static personal site with a collection of self-contained web utilities. Served at polkiewicz.com.
 
 ```
 /index.html              - Main site (resume/portfolio)
