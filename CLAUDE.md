@@ -77,3 +77,9 @@ Then open http://localhost:8000
 The version is displayed in the Home Screen header as `v1`, `v2`, etc.
 
 Location: `<h1>Feed <span class="version">vX</span></h1>`
+
+## Photos App
+
+### Known Limitations
+
+**Memory usage on large libraries:** The photo grid accumulates blob URLs and DOM nodes as you scroll (infinite scroll, no virtualization). Fine for hundreds of photos; may need virtualized scrolling if the library grows to thousands.
