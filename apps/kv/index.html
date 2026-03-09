@@ -335,17 +335,32 @@
             }
         }
 
-        function selectKey(key) {
+        async function selectKey(key) {
             document.getElementById('key-input').value = key;
-            doGet();
+            try {
+                const data = await apiCall('GET', `/kv/${encodeURIComponent(key)}`);
+                if (data.error) {
+                    document.getElementById('value-input').value = '';
+                    showResult(data.error, true);
+                } else {
+                    document.getElementById('value-input').value = data.value;
+                    hideResult();
+                }
+            } catch (e) {
+                showResult(e.message, true);
+            }
         }
 
-        function showResult(data, isError) {
+        function showResult(msg, isError) {
             const el = document.getElementById('result');
             const val = document.getElementById('result-value');
             el.classList.add('visible');
             val.className = 'result-value' + (isError ? ' error' : ' success');
-            val.textContent = typeof data === 'string' ? data : JSON.stringify(data, null, 2);
+            val.textContent = msg;
+        }
+
+        function hideResult() {
+            document.getElementById('result').classList.remove('visible');
         }
 
         async function doGet() {
@@ -353,8 +368,13 @@
             if (!key) return;
             try {
                 const data = await apiCall('GET', `/kv/${encodeURIComponent(key)}`);
-                if (data.error) showResult(data.error, true);
-                else showResult(data.value, false);
+                if (data.error) {
+                    document.getElementById('value-input').value = '';
+                    showResult(data.error, true);
+                } else {
+                    document.getElementById('value-input').value = data.value;
+                    showResult('Loaded', false);
+                }
             } catch (e) {
                 showResult(e.message, true);
             }
@@ -367,7 +387,7 @@
             try {
                 const data = await apiCall('PUT', `/kv/${encodeURIComponent(key)}`, value);
                 if (data.error) showResult(data.error, true);
-                else showResult('Stored successfully', false);
+                else showResult('Stored', false);
                 loadKeys();
             } catch (e) {
                 showResult(e.message, true);
@@ -380,7 +400,11 @@
             try {
                 const data = await apiCall('DELETE', `/kv/${encodeURIComponent(key)}`);
                 if (data.error) showResult(data.error, true);
-                else showResult('Deleted successfully', false);
+                else {
+                    showResult('Deleted', false);
+                    document.getElementById('key-input').value = '';
+                    document.getElementById('value-input').value = '';
+                }
                 loadKeys();
             } catch (e) {
                 showResult(e.message, true);
