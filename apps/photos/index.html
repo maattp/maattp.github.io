@@ -207,6 +207,13 @@
             to { transform: rotate(360deg); }
         }
 
+        .app-view {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+        }
+
         .hidden { display: none !important; }
     </style>
 </head>
@@ -237,7 +244,7 @@
         </div>
     </div>
 
-    <div id="app-view" class="hidden">
+    <div id="app-view" class="app-view hidden">
         <div id="empty-state" class="empty-state hidden">
             <div class="icon">📷</div>
             <div>No photos yet</div>
@@ -271,6 +278,8 @@
         let sessionToken = null;
         let photos = [];
         let viewingId = null;
+        let nextCursor = null;
+        let loadingMore = false;
 
         // --- Auth ---
 
@@ -395,11 +404,37 @@
         // --- Photo grid ---
 
         async function loadPhotos() {
+            nextCursor = null;
             const res = await apiFetch('GET', '/photos/list');
             if (!res) return;
             const data = await res.json();
             photos = data.photos || [];
+            nextCursor = data.nextCursor;
             renderGrid();
+        }
+
+        async function loadMore() {
+            if (!nextCursor || loadingMore) return;
+            loadingMore = true;
+            const res = await apiFetch('GET', `/photos/list?cursor=${nextCursor}`);
+            if (!res) { loadingMore = false; return; }
+            const data = await res.json();
+            const newPhotos = data.photos || [];
+            photos = photos.concat(newPhotos);
+            nextCursor = data.nextCursor;
+            appendToGrid(newPhotos);
+            loadingMore = false;
+        }
+
+        function createGridItem(photo) {
+            const item = document.createElement('div');
+            item.className = 'grid-item';
+            const img = document.createElement('img');
+            img.loading = 'lazy';
+            loadAuthImage(img, `${API}/photos/${photo.id}/thumb`);
+            img.addEventListener('click', () => openViewer(photo.id));
+            item.appendChild(img);
+            return item;
         }
 
         function renderGrid() {
@@ -416,18 +451,23 @@
             empty.classList.add('hidden');
             grid.classList.remove('hidden');
             inner.innerHTML = '';
-
-            photos.forEach(photo => {
-                const item = document.createElement('div');
-                item.className = 'grid-item';
-                const img = document.createElement('img');
-                img.loading = 'lazy';
-                loadAuthImage(img, `${API}/photos/${photo.id}/thumb`);
-                img.addEventListener('click', () => openViewer(photo.id));
-                item.appendChild(img);
-                inner.appendChild(item);
-            });
+            photos.forEach(photo => inner.appendChild(createGridItem(photo)));
         }
+
+        function appendToGrid(newPhotos) {
+            const inner = document.getElementById('grid-inner');
+            newPhotos.forEach(photo => inner.appendChild(createGridItem(photo)));
+        }
+
+        // Infinite scroll
+        document.addEventListener('DOMContentLoaded', () => {
+            const grid = document.getElementById('grid');
+            grid.addEventListener('scroll', () => {
+                if (grid.scrollTop + grid.clientHeight >= grid.scrollHeight - 200) {
+                    loadMore();
+                }
+            });
+        });
 
         // --- Auth image loading ---
 
