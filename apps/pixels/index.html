@@ -109,6 +109,10 @@
             border-color: #fff;
             box-shadow: 0 0 0 2px rgba(255,255,255,0.3);
         }
+
+        .color-swatch.eraser {
+            background: repeating-conic-gradient(#999 0% 25%, #555 0% 50%) 0 0 / 8px 8px;
+        }
     </style>
 </head>
 <body>
@@ -175,8 +179,21 @@
             paletteEl.appendChild(swatch);
         });
 
+        // Add eraser (blank) swatch
+        const eraserSwatch = document.createElement('div');
+        eraserSwatch.className = 'color-swatch eraser';
+        eraserSwatch.addEventListener('click', () => {
+            selectedColor = EMPTY;
+            updatePaletteSelection();
+        });
+        paletteEl.appendChild(eraserSwatch);
+
         function updatePaletteSelection() {
             document.querySelectorAll('.color-swatch').forEach((s, i) => {
+                if (s === eraserSwatch) {
+                    s.classList.toggle('selected', selectedColor === EMPTY);
+                    return;
+                }
                 const isSelected = COLORS[i] === selectedColor;
                 s.classList.toggle('selected', isSelected);
                 if (COLORS[i] === '#000000') {
