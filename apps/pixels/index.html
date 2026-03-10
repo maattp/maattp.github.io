@@ -71,6 +71,10 @@
 
         .pixel {
             border: 0.5px solid rgba(255,255,255,0.05);
+            background: repeating-conic-gradient(#2a2a2a 0% 25%, #1a1a1a 0% 50%) 0 0 / 8px 8px;
+        }
+
+        .pixel.painted {
             background: #111;
         }
 
@@ -124,7 +128,7 @@
         const API_BASE = 'https://worker.polkiewicz.com';
         const GRID_SIZE = 25;
         const COLORS = [
-            '#111111', '#ff4444', '#ff9900', '#ffdd00',
+            '#000000', '#ff4444', '#ff9900', '#ffdd00',
             '#44cc44', '#2299ff', '#9944ff', '#ff44aa',
             '#ffffff', '#888888', '#664422', '#00cccc'
         ];
@@ -158,7 +162,7 @@
             swatch.className = 'color-swatch';
             if (color === selectedColor) swatch.classList.add('selected');
             swatch.style.background = color;
-            if (color === '#111111') {
+            if (color === '#000000') {
                 swatch.style.border = '2px solid #444';
                 if (swatch.classList.contains('selected')) {
                     swatch.style.borderColor = '#fff';
@@ -175,10 +179,20 @@
             document.querySelectorAll('.color-swatch').forEach((s, i) => {
                 const isSelected = COLORS[i] === selectedColor;
                 s.classList.toggle('selected', isSelected);
-                if (COLORS[i] === '#111111') {
+                if (COLORS[i] === '#000000') {
                     s.style.borderColor = isSelected ? '#fff' : '#444';
                 }
             });
+        }
+
+        function setCellColor(cell, color) {
+            if (color === EMPTY) {
+                cell.classList.remove('painted');
+                cell.style.background = '';
+            } else {
+                cell.classList.add('painted');
+                cell.style.background = color;
+            }
         }
 
         function paintCell(x, y) {
@@ -192,7 +206,7 @@
             }
 
             grid[y][x] = color;
-            cells[y][x].style.background = color;
+            setCellColor(cells[y][x], color);
         }
 
         function commitStroke() {
@@ -214,7 +228,7 @@
             for (let y = 0; y < GRID_SIZE; y++) {
                 for (let x = 0; x < GRID_SIZE; x++) {
                     grid[y][x] = serverGrid[y][x];
-                    cells[y][x].style.background = serverGrid[y][x];
+                    setCellColor(cells[y][x], serverGrid[y][x]);
                 }
             }
         }
