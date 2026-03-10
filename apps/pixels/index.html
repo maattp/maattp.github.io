@@ -46,33 +46,6 @@
             font-weight: 600;
         }
 
-        .header-actions {
-            display: flex;
-            gap: 8px;
-        }
-
-        .header-btn {
-            background: rgba(255,255,255,0.1);
-            border: none;
-            color: #eee;
-            width: 36px;
-            height: 36px;
-            border-radius: 8px;
-            font-size: 18px;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            cursor: pointer;
-        }
-
-        .header-btn:active {
-            background: rgba(255,255,255,0.2);
-        }
-
-        .header-btn:disabled {
-            opacity: 0.3;
-        }
-
         .canvas-wrapper {
             flex: 1;
             display: flex;
@@ -92,11 +65,17 @@
             aspect-ratio: 1;
             width: 100%;
             max-height: 100%;
+            -webkit-user-select: none;
+            user-select: none;
         }
 
         .pixel {
             border: 0.5px solid rgba(255,255,255,0.05);
-            background: #111;
+            background: repeating-conic-gradient(#2a2a2a 0% 25%, #1a1a1a 0% 50%) 0 0 / 8px 8px;
+        }
+
+        .pixel.painted {
+            background: none;
         }
 
         .toolbar {
@@ -131,57 +110,14 @@
             box-shadow: 0 0 0 2px rgba(255,255,255,0.3);
         }
 
-        .eraser-swatch {
-            width: 36px;
-            height: 36px;
-            border-radius: 8px;
-            border: 2px solid transparent;
-            cursor: pointer;
-            background: #111;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            font-size: 18px;
-            transition: transform 0.1s;
-            position: relative;
-            overflow: hidden;
-        }
-
-        .eraser-swatch::before {
-            content: '';
-            position: absolute;
-            inset: 2px;
+        .color-swatch.eraser {
             background: repeating-conic-gradient(#999 0% 25%, #555 0% 50%) 0 0 / 8px 8px;
-            border-radius: 4px;
-        }
-
-        .eraser-swatch::after {
-            content: '✕';
-            position: relative;
-            z-index: 1;
-            font-size: 16px;
-            color: #fff;
-            text-shadow: 0 1px 2px rgba(0,0,0,0.8);
-        }
-
-        .eraser-swatch:active {
-            transform: scale(0.9);
-        }
-
-        .eraser-swatch.selected {
-            border-color: #fff;
-            box-shadow: 0 0 0 2px rgba(255,255,255,0.3);
         }
     </style>
 </head>
 <body>
     <div class="header">
         <h1>Pixels</h1>
-        <div class="header-actions">
-            <button class="header-btn" id="undo-btn" disabled title="Undo">↩</button>
-            <button class="header-btn" id="redo-btn" disabled title="Redo">↪</button>
-            <button class="header-btn" id="clear-btn" title="Clear">🗑</button>
-        </div>
     </div>
 
     <div class="canvas-wrapper">
@@ -193,9 +129,10 @@
     </div>
 
     <script>
+        const API_BASE = 'https://worker.polkiewicz.com';
         const GRID_SIZE = 25;
         const COLORS = [
-            '#111111', '#ff4444', '#ff9900', '#ffdd00',
+            '#000000', '#ff4444', '#ff9900', '#ffdd00',
             '#44cc44', '#2299ff', '#9944ff', '#ff44aa',
             '#ffffff', '#888888', '#664422', '#00cccc'
         ];
@@ -203,17 +140,11 @@
 
         let grid = Array.from({ length: GRID_SIZE }, () => Array(GRID_SIZE).fill(EMPTY));
         let selectedColor = COLORS[0];
-        let isEraser = false;
-        let undoStack = [];
-        let redoStack = [];
         let painting = false;
-        let strokeChanges = null; // tracks pixels changed during a single stroke
+        let strokeChanges = null;
 
         const gridEl = document.getElementById('grid');
         const paletteEl = document.getElementById('palette');
-        const undoBtn = document.getElementById('undo-btn');
-        const redoBtn = document.getElementById('redo-btn');
-        const clearBtn = document.getElementById('clear-btn');
 
         // Build grid
         const cells = [];
@@ -233,9 +164,9 @@
         COLORS.forEach(color => {
             const swatch = document.createElement('div');
             swatch.className = 'color-swatch';
-            if (color === selectedColor && !isEraser) swatch.classList.add('selected');
+            if (color === selectedColor) swatch.classList.add('selected');
             swatch.style.background = color;
-            if (color === '#111111') {
+            if (color === '#000000') {
                 swatch.style.border = '2px solid #444';
                 if (swatch.classList.contains('selected')) {
                     swatch.style.borderColor = '#fff';
@@ -243,110 +174,89 @@
             }
             swatch.addEventListener('click', () => {
                 selectedColor = color;
-                isEraser = false;
                 updatePaletteSelection();
             });
             paletteEl.appendChild(swatch);
         });
 
-        // Add eraser
-        const eraserEl = document.createElement('div');
-        eraserEl.className = 'eraser-swatch';
-        eraserEl.addEventListener('click', () => {
-            isEraser = true;
+        // Add eraser (blank) swatch
+        const eraserSwatch = document.createElement('div');
+        eraserSwatch.className = 'color-swatch eraser';
+        eraserSwatch.addEventListener('click', () => {
+            selectedColor = EMPTY;
             updatePaletteSelection();
         });
-        paletteEl.appendChild(eraserEl);
+        paletteEl.appendChild(eraserSwatch);
 
         function updatePaletteSelection() {
             document.querySelectorAll('.color-swatch').forEach((s, i) => {
-                const isSelected = !isEraser && COLORS[i] === selectedColor;
+                if (s === eraserSwatch) {
+                    s.classList.toggle('selected', selectedColor === EMPTY);
+                    return;
+                }
+                const isSelected = COLORS[i] === selectedColor;
                 s.classList.toggle('selected', isSelected);
-                if (COLORS[i] === '#111111') {
+                if (COLORS[i] === '#000000') {
                     s.style.borderColor = isSelected ? '#fff' : '#444';
                 }
             });
-            eraserEl.classList.toggle('selected', isEraser);
+        }
+
+        function setCellColor(cell, color) {
+            if (color === EMPTY) {
+                cell.classList.remove('painted');
+                cell.style.background = '';
+            } else {
+                cell.classList.add('painted');
+                cell.style.background = color;
+            }
         }
 
         function paintCell(x, y) {
-            const color = isEraser ? EMPTY : selectedColor;
+            const color = selectedColor;
             if (grid[y][x] === color) return;
 
             if (!strokeChanges) strokeChanges = {};
             const key = `${x},${y}`;
-            // Only record the original color on first touch of this pixel in the stroke
             if (!(key in strokeChanges)) {
-                strokeChanges[key] = { x, y, from: grid[y][x] };
+                strokeChanges[key] = { x, y };
             }
 
             grid[y][x] = color;
-            cells[y][x].style.background = color;
+            setCellColor(cells[y][x], color);
         }
 
         function commitStroke() {
             if (!strokeChanges) return;
-            const changes = Object.values(strokeChanges);
-            if (changes.length === 0) { strokeChanges = null; return; }
-
-            // Record the 'to' color for each change
-            changes.forEach(c => c.to = grid[c.y][c.x]);
-
-            undoStack.push(changes);
-            redoStack = [];
-            updateUndoRedoButtons();
+            const changes = Object.values(strokeChanges).map(c => ({
+                x: c.x, y: c.y, color: grid[c.y][c.x]
+            }));
             strokeChanges = null;
-        }
-
-        function undo() {
-            if (undoStack.length === 0) return;
-            const changes = undoStack.pop();
-            changes.forEach(c => {
-                grid[c.y][c.x] = c.from;
-                cells[c.y][c.x].style.background = c.from;
-            });
-            redoStack.push(changes);
-            updateUndoRedoButtons();
-        }
-
-        function redo() {
-            if (redoStack.length === 0) return;
-            const changes = redoStack.pop();
-            changes.forEach(c => {
-                grid[c.y][c.x] = c.to;
-                cells[c.y][c.x].style.background = c.to;
-            });
-            undoStack.push(changes);
-            updateUndoRedoButtons();
-        }
-
-        function clearGrid() {
-            // Build changes for undo
-            const changes = [];
-            for (let y = 0; y < GRID_SIZE; y++) {
-                for (let x = 0; x < GRID_SIZE; x++) {
-                    if (grid[y][x] !== EMPTY) {
-                        changes.push({ x, y, from: grid[y][x], to: EMPTY });
-                    }
-                }
-            }
             if (changes.length === 0) return;
 
-            undoStack.push(changes);
-            redoStack = [];
-
-            for (let y = 0; y < GRID_SIZE; y++) {
-                for (let x = 0; x < GRID_SIZE; x++) {
-                    grid[y][x] = EMPTY;
-                    cells[y][x].style.background = EMPTY;
-                }
-            }
-            updateUndoRedoButtons();
+            fetch(`${API_BASE}/pixels`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ changes })
+            }).catch(() => {});
         }
 
-        function updateUndoRedoButtons() {
-            undoBtn.disabled = undoStack.length === 0;
-            redoBtn.disabled = redoStack.length === 0;
+        function renderGrid(serverGrid) {
+            for (let y = 0; y < GRID_SIZE; y++) {
+                for (let x = 0; x < GRID_SIZE; x++) {
+                    grid[y][x] = serverGrid[y][x];
+                    setCellColor(cells[y][x], serverGrid[y][x]);
+                }
+            }
+        }
+
+        function loadGrid() {
+            fetch(`${API_BASE}/pixels`)
+                .then(r => r.json())
+                .then(data => {
+                    if (data.grid) renderGrid(data.grid);
+                })
+                .catch(() => {});
         }
 
         function getCellFromPoint(clientX, clientY) {
@@ -357,7 +267,7 @@
             return null;
         }
 
-        // Pointer events for cross-platform support
+        // Pointer events
         gridEl.addEventListener('pointerdown', e => {
             e.preventDefault();
             painting = true;
@@ -385,9 +295,13 @@
             commitStroke();
         });
 
-        undoBtn.addEventListener('click', undo);
-        redoBtn.addEventListener('click', redo);
-        clearBtn.addEventListener('click', clearGrid);
+        // Prevent pinch-to-zoom (iOS ignores user-scalable=no)
+        document.addEventListener('gesturestart', e => e.preventDefault());
+        document.addEventListener('gesturechange', e => e.preventDefault());
+        document.addEventListener('gestureend', e => e.preventDefault());
+
+        // Load shared canvas on start
+        loadGrid();
     </script>
 </body>
 </html>
