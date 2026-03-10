@@ -185,6 +185,42 @@ app.delete("/kv/:key", async (c) => {
   return c.json({ key, deleted: true });
 });
 
+// --- Pixels (shared canvas) ---
+
+const PIXELS_KEY = "pixels";
+const PIXELS_GRID_SIZE = 25;
+
+app.get("/pixels", async (c) => {
+  const data = await c.env.KV.get(PIXELS_KEY);
+  if (!data) {
+    return c.json({ grid: null });
+  }
+  return c.json({ grid: JSON.parse(data) });
+});
+
+app.post("/pixels", async (c) => {
+  const { changes } = await c.req.json<{ changes: { x: number; y: number; color: string }[] }>();
+  if (!Array.isArray(changes) || changes.length === 0) {
+    return c.json({ error: "missing changes" }, 400);
+  }
+
+  // Load existing grid or create empty one
+  const data = await c.env.KV.get(PIXELS_KEY);
+  const grid: string[][] = data
+    ? JSON.parse(data)
+    : Array.from({ length: PIXELS_GRID_SIZE }, () => Array(PIXELS_GRID_SIZE).fill("#111"));
+
+  // Apply changes
+  for (const { x, y, color } of changes) {
+    if (x >= 0 && x < PIXELS_GRID_SIZE && y >= 0 && y < PIXELS_GRID_SIZE) {
+      grid[y][x] = color;
+    }
+  }
+
+  await c.env.KV.put(PIXELS_KEY, JSON.stringify(grid));
+  return c.json({ success: true });
+});
+
 // --- Photos ---
 
 // Require valid session on all /photos routes
