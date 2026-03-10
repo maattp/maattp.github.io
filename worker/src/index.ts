@@ -126,6 +126,22 @@ app.post("/auth", async (c) => {
   return c.json({ sessionId, email: user.email });
 });
 
+// Public feedback endpoint (no auth required)
+app.post("/feedback", async (c) => {
+  const body = await c.req.text();
+  if (!body || body.length === 0) {
+    return c.json({ error: "empty feedback" }, 400);
+  }
+  if (body.length > 5000) {
+    return c.json({ error: "feedback too long" }, 400);
+  }
+  const epoch = Date.now();
+  const rand = Math.random().toString(36).slice(2, 8);
+  const key = `feedback:${epoch}:${rand}`;
+  await c.env.KV.put(key, body);
+  return c.json({ success: true });
+});
+
 // Require valid session on all /kv routes
 app.use("/kv/*", async (c, next) => {
   const auth = c.req.header("Authorization");
