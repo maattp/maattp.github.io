@@ -264,6 +264,11 @@
             commitStroke();
         });
 
+        // Prevent pinch-to-zoom (iOS ignores user-scalable=no)
+        document.addEventListener('gesturestart', e => e.preventDefault());
+        document.addEventListener('gesturechange', e => e.preventDefault());
+        document.addEventListener('gestureend', e => e.preventDefault());
+
         // Load shared canvas on start
         loadGrid();
     </script>
