@@ -1,0 +1,171 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="theme-color" content="#1a1a2e">
+    <title>Feedback</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        html, body {
+            height: 100%;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: #1a1a2e;
+            color: #e0e0e0;
+            display: flex;
+            flex-direction: column;
+            padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
+            padding-top: calc(env(safe-area-inset-top) + 20px);
+            padding-bottom: calc(env(safe-area-inset-bottom) + 20px);
+            -webkit-overflow-scrolling: touch;
+            -webkit-tap-highlight-color: transparent;
+        }
+
+        .container {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            max-width: 500px;
+            width: 100%;
+            margin: 0 auto;
+            padding: 20px;
+        }
+
+        .header {
+            display: flex;
+            align-items: center;
+            margin-bottom: 24px;
+        }
+
+        .back-btn {
+            color: #5ac8fa;
+            text-decoration: none;
+            font-size: 16px;
+            margin-right: 16px;
+        }
+
+        h1 {
+            font-size: 24px;
+            font-weight: 700;
+        }
+
+        textarea {
+            flex: 1;
+            width: 100%;
+            background: #16213e;
+            border: 1px solid #333;
+            border-radius: 12px;
+            color: #e0e0e0;
+            font-family: inherit;
+            font-size: 16px;
+            padding: 16px;
+            resize: none;
+            outline: none;
+            min-height: 150px;
+        }
+
+        textarea:focus {
+            border-color: #5ac8fa;
+        }
+
+        textarea::placeholder {
+            color: #666;
+        }
+
+        .submit-btn {
+            width: 100%;
+            padding: 16px;
+            margin-top: 16px;
+            background: #5ac8fa;
+            color: #000;
+            border: none;
+            border-radius: 12px;
+            font-size: 17px;
+            font-weight: 600;
+            cursor: pointer;
+            font-family: inherit;
+            transition: opacity 0.15s;
+        }
+
+        .submit-btn:active {
+            opacity: 0.7;
+        }
+
+        .submit-btn:disabled {
+            opacity: 0.4;
+            cursor: default;
+        }
+
+        .status {
+            text-align: center;
+            margin-top: 16px;
+            font-size: 15px;
+            min-height: 22px;
+        }
+
+        .status.success {
+            color: #30d158;
+        }
+
+        .status.error {
+            color: #ff453a;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <a href="../" class="back-btn">← Apps</a>
+            <h1>Feedback</h1>
+        </div>
+        <textarea id="message" placeholder="Write your feedback here..."></textarea>
+        <button class="submit-btn" id="submitBtn" onclick="submit()">Send Feedback</button>
+        <div class="status" id="status"></div>
+    </div>
+
+    <script>
+        const API = 'https://cloudflare-backend.maattp.workers.dev';
+        const messageEl = document.getElementById('message');
+        const submitBtn = document.getElementById('submitBtn');
+        const statusEl = document.getElementById('status');
+
+        async function submit() {
+            const text = messageEl.value.trim();
+            if (!text) return;
+
+            submitBtn.disabled = true;
+            statusEl.textContent = '';
+            statusEl.className = 'status';
+
+            try {
+                const res = await fetch(`${API}/feedback`, {
+                    method: 'POST',
+                    body: text
+                });
+                if (!res.ok) {
+                    const data = await res.json();
+                    throw new Error(data.error || 'Failed to send');
+                }
+                statusEl.textContent = 'Feedback sent. Thank you!';
+                statusEl.className = 'status success';
+                messageEl.value = '';
+            } catch (e) {
+                statusEl.textContent = e.message;
+                statusEl.className = 'status error';
+            } finally {
+                submitBtn.disabled = false;
+            }
+        }
+    </script>
+</body>
+</html>
