@@ -211,8 +211,9 @@ app.post("/pixels", async (c) => {
     : Array.from({ length: PIXELS_GRID_SIZE }, () => Array(PIXELS_GRID_SIZE).fill("#111"));
 
   // Apply changes
+  const colorPattern = /^#[0-9a-f]{3,6}$/i;
   for (const { x, y, color } of changes) {
-    if (x >= 0 && x < PIXELS_GRID_SIZE && y >= 0 && y < PIXELS_GRID_SIZE) {
+    if (x >= 0 && x < PIXELS_GRID_SIZE && y >= 0 && y < PIXELS_GRID_SIZE && colorPattern.test(color)) {
       grid[y][x] = color;
     }
   }
