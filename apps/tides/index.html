@@ -597,6 +597,33 @@
             return [];
         }
 
+        function synthesizePredictions(hilos) {
+            if (hilos.length < 2) return [];
+            const preds = [];
+            for (let i = 0; i < hilos.length - 1; i++) {
+                const t1 = parseTime(hilos[i].t).getTime();
+                const t2 = parseTime(hilos[i + 1].t).getTime();
+                const v1 = parseFloat(hilos[i].v);
+                const v2 = parseFloat(hilos[i + 1].v);
+                const steps = Math.max(Math.round((t2 - t1) / 360000), 1);
+                for (let s = 0; s < steps; s++) {
+                    const frac = s / steps;
+                    const t = t1 + frac * (t2 - t1);
+                    const v = v1 + (v2 - v1) * (1 - Math.cos(Math.PI * frac)) / 2;
+                    const d = new Date(t);
+                    const ds = d.getFullYear() + '-' +
+                        (d.getMonth() + 1).toString().padStart(2, '0') + '-' +
+                        d.getDate().toString().padStart(2, '0');
+                    const ts = d.getHours().toString().padStart(2, '0') + ':' +
+                        d.getMinutes().toString().padStart(2, '0');
+                    preds.push({ t: ds + ' ' + ts, v: v.toFixed(3) });
+                }
+            }
+            const last = hilos[hilos.length - 1];
+            preds.push({ t: last.t, v: last.v });
+            return preds;
+        }
+
         async function fetchHiLo(stationId, beginDate, endDate) {
             const url = `${NOAA_API}?product=predictions&application=polkiewicz_tides&begin_date=${beginDate}&end_date=${endDate}&datum=MLLW&station=${stationId}&time_zone=lst_ldt&units=english&interval=hilo&format=json`;
             const resp = await fetch(url);
@@ -967,13 +994,15 @@
                 fetchHiLo(stationId, formatDate(today), formatDate(end))
             ]);
 
+            const usePreds = preds.length > 0 ? preds : synthesizePredictions(hilos);
+
             predictions = {};
             hiloPredictions = {};
             for (let d = 0; d <= 2; d++) {
                 const targetDate = new Date();
                 targetDate.setDate(targetDate.getDate() + d);
                 const ds = dateStr(targetDate);
-                predictions[d] = preds.filter(p => p.t.startsWith(ds));
+                predictions[d] = usePreds.filter(p => p.t.startsWith(ds));
                 hiloPredictions[d] = hilos.filter(p => p.t.startsWith(ds));
             }
         }
