@@ -575,7 +575,7 @@
             const resp = await fetch(proxied(`${NOAA_STATIONS_API}?type=tidepredictions`));
             if (!resp.ok) throw new Error('Failed to load stations');
             const data = await resp.json();
-            return data.stations || [];
+            return data.stations || data.stationList || [];
         }
 
         function findNearestStations(lat, lon, stations, count) {
@@ -590,11 +590,16 @@
         }
 
         async function fetchPredictions(stationId, beginDate, endDate) {
-            const url = `${NOAA_API}?product=predictions&application=polkiewicz_tides&begin_date=${beginDate}&end_date=${endDate}&datum=MLLW&station=${stationId}&time_zone=lst_ldt&units=english&interval=6&format=json`;
-            const resp = await fetch(proxied(url));
-            if (!resp.ok) throw new Error('Failed to load predictions');
-            const data = await resp.json();
-            return data.predictions || [];
+            // Try 6-minute interval first (harmonic stations), fall back to hourly
+            for (const interval of ['6', 'h']) {
+                const url = `${NOAA_API}?product=predictions&application=polkiewicz_tides&begin_date=${beginDate}&end_date=${endDate}&datum=MLLW&station=${stationId}&time_zone=lst_ldt&units=english&interval=${interval}&format=json`;
+                const resp = await fetch(proxied(url));
+                if (!resp.ok) continue;
+                const data = await resp.json();
+                if (data.predictions && data.predictions.length > 0) return data.predictions;
+                if (data.error) continue;
+            }
+            return [];
         }
 
         async function fetchHiLo(stationId, beginDate, endDate) {
