@@ -497,13 +497,8 @@
 
     <script>
     (function() {
-        const PROXY = 'https://little-sunset-822a.maattp.workers.dev/';
         const NOAA_API = 'https://api.tidesandcurrents.noaa.gov/api/prod/datagetter';
         const NOAA_STATIONS_API = 'https://api.tidesandcurrents.noaa.gov/mdapi/prod/webapi/stations.json';
-
-        function proxied(url) {
-            return `${PROXY}?url=${encodeURIComponent(url)}`;
-        }
 
         let allStations = [];
         let nearbyStations = [];
@@ -572,7 +567,7 @@
         }
 
         async function fetchStations() {
-            const resp = await fetch(proxied(`${NOAA_STATIONS_API}?type=tidepredictions`));
+            const resp = await fetch(`${NOAA_STATIONS_API}?type=tidepredictions`);
             if (!resp.ok) throw new Error('Failed to load stations');
             const data = await resp.json();
             return data.stations || data.stationList || [];
@@ -593,7 +588,7 @@
             // Try 6-minute interval first (harmonic stations), fall back to hourly
             for (const interval of ['6', 'h']) {
                 const url = `${NOAA_API}?product=predictions&application=polkiewicz_tides&begin_date=${beginDate}&end_date=${endDate}&datum=MLLW&station=${stationId}&time_zone=lst_ldt&units=english&interval=${interval}&format=json`;
-                const resp = await fetch(proxied(url));
+                const resp = await fetch(url);
                 if (!resp.ok) continue;
                 const data = await resp.json();
                 if (data.predictions && data.predictions.length > 0) return data.predictions;
@@ -604,7 +599,7 @@
 
         async function fetchHiLo(stationId, beginDate, endDate) {
             const url = `${NOAA_API}?product=predictions&application=polkiewicz_tides&begin_date=${beginDate}&end_date=${endDate}&datum=MLLW&station=${stationId}&time_zone=lst_ldt&units=english&interval=hilo&format=json`;
-            const resp = await fetch(proxied(url));
+            const resp = await fetch(url);
             if (!resp.ok) throw new Error('Failed to load hi/lo data');
             const data = await resp.json();
             return data.predictions || [];
@@ -1028,7 +1023,7 @@
                 if (err.code === 1) {
                     showError('Location access denied. Please enable location services and reload.');
                 } else {
-                    showError('Failed to load tide data. Please try again.');
+                    showError(`Failed to load tide data: ${err.message}`);
                 }
             }
         }
