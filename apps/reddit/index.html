@@ -469,6 +469,40 @@
         .retry-button:hover {
             background: #333;
         }
+
+        .sort-select {
+            background: #2a2a2a;
+            color: #e0e0e0;
+            border: 1px solid #3a3a3a;
+            padding: 8px 30px 8px 12px;
+            border-radius: 8px;
+            font-size: 14px;
+            cursor: pointer;
+            -webkit-appearance: none;
+            appearance: none;
+            background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='%23888' d='M6 8L1 3h10z'/%3E%3C/svg%3E");
+            background-repeat: no-repeat;
+            background-position: right 10px center;
+            outline: none;
+        }
+
+        .sort-select:focus {
+            border-color: #ff4500;
+        }
+
+        .time-select {
+            display: none;
+        }
+
+        .time-select.visible {
+            display: block;
+        }
+
+        .filter-row {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 20px;
+        }
     </style>
 </head>
 <body>
@@ -477,6 +511,8 @@
     <script>
         const PROXY = 'https://little-sunset-822a.maattp.workers.dev/';
         const LS_KEY = 'reddit-subs';
+        const LS_SORT_KEY = 'reddit-sort';
+        const LS_TIME_KEY = 'reddit-time';
         const DEFAULT_SUBS = ['technology', 'seattle', 'canada'];
 
         let state = {
@@ -485,7 +521,9 @@
             postId: null,
             posts: [],
             after: null,
-            scrollPositions: {}
+            scrollPositions: {},
+            sort: localStorage.getItem(LS_SORT_KEY) || 'hot',
+            timePeriod: localStorage.getItem(LS_TIME_KEY) || 'day'
         };
 
         function getSubs() {
@@ -577,6 +615,21 @@
                     <input type="text" id="sub-input" placeholder="Add subreddit..." autocapitalize="none" autocorrect="off">
                     <button id="add-btn">Add</button>
                 </div>
+                <div class="filter-row">
+                    <select class="sort-select" id="sort-select">
+                        <option value="hot">Hot</option>
+                        <option value="new">New</option>
+                        <option value="top">Top</option>
+                        <option value="rising">Rising</option>
+                    </select>
+                    <select class="sort-select time-select" id="time-select">
+                        <option value="day">Today</option>
+                        <option value="week">This Week</option>
+                        <option value="month">This Month</option>
+                        <option value="year">This Year</option>
+                        <option value="all">All Time</option>
+                    </select>
+                </div>
                 ${subs.length === 0 ? `
                     <p style="color:#666; text-align:center; padding:40px 0;">No subreddits yet. Add one above.</p>
                 ` : `
@@ -633,6 +686,24 @@
                     const sub = el.closest('.sub-item').dataset.sub;
                     navigateToPosts(sub);
                 });
+            });
+
+            // Sort/time dropdowns
+            const sortSelect = document.getElementById('sort-select');
+            sortSelect.value = state.sort;
+            const timeSelect = document.getElementById('time-select');
+            timeSelect.value = state.timePeriod;
+            timeSelect.classList.toggle('visible', state.sort === 'top');
+
+            sortSelect.addEventListener('change', function() {
+                state.sort = this.value;
+                localStorage.setItem(LS_SORT_KEY, state.sort);
+                timeSelect.classList.toggle('visible', state.sort === 'top');
+            });
+
+            timeSelect.addEventListener('change', function() {
+                state.timePeriod = this.value;
+                localStorage.setItem(LS_TIME_KEY, state.timePeriod);
             });
 
             // Swipe to delete (mobile)
@@ -763,7 +834,8 @@
         }
 
         async function loadPosts() {
-            let path = `/r/${state.sub}/hot.json?limit=25&raw_json=1`;
+            let path = `/r/${state.sub}/${state.sort}.json?limit=25&raw_json=1`;
+            if (state.sort === 'top') path += `&t=${state.timePeriod}`;
             if (state.after) path += `&after=${state.after}`;
             const data = await redditFetch(path);
             const newPosts = data.data.children.map(c => c.data);
