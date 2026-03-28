@@ -328,21 +328,77 @@
         }
 
         .comment {
-            padding: 10px 0 10px 10px;
+            display: flex;
             margin-left: 0;
         }
 
-        .comment-depth-0 { border-left: none; padding-left: 0; }
-        .comment-depth-1 { border-left: 3px solid #6cb4ff; margin-left: 6px; }
-        .comment-depth-2 { border-left: 3px solid #4caf50; margin-left: 6px; }
-        .comment-depth-3 { border-left: 3px solid #ff9800; margin-left: 6px; }
-        .comment-depth-4 { border-left: 3px solid #9c27b0; margin-left: 6px; }
+        .comment-collapse-line {
+            flex-shrink: 0;
+            width: 12px;
+            cursor: pointer;
+            position: relative;
+            display: flex;
+            justify-content: center;
+        }
+
+        .comment-collapse-line::after {
+            content: '';
+            width: 3px;
+            height: 100%;
+            border-radius: 2px;
+            transition: width 0.15s, opacity 0.15s;
+        }
+
+        .comment-collapse-line:hover::after {
+            width: 5px;
+            opacity: 0.8;
+        }
+
+        .comment-depth-0 > .comment-collapse-line { display: none; }
+        .comment-depth-0 > .comment-inner { padding-left: 0; }
+
+        .comment-depth-1 > .comment-collapse-line::after { background: #6cb4ff; }
+        .comment-depth-2 > .comment-collapse-line::after { background: #4caf50; }
+        .comment-depth-3 > .comment-collapse-line::after { background: #ff9800; }
+        .comment-depth-4 > .comment-collapse-line::after { background: #9c27b0; }
+
+        .comment-depth-0 { margin-left: 0; }
+        .comment-depth-1,
+        .comment-depth-2,
+        .comment-depth-3,
+        .comment-depth-4 { margin-left: 6px; }
+
+        .comment-inner {
+            flex: 1;
+            min-width: 0;
+            padding: 10px 0 10px 6px;
+        }
+
+        .comment.collapsed > .comment-inner > .comment-body,
+        .comment.collapsed > .comment-inner > .comment {
+            display: none;
+        }
+
+        .comment.collapsed > .comment-inner > .comment-author .collapsed-indicator {
+            display: inline;
+        }
+
+        .collapsed-indicator {
+            display: none;
+            color: #555;
+            font-weight: 400;
+            font-style: italic;
+            margin-left: 8px;
+        }
 
         .comment-author {
             font-size: 12px;
             font-weight: 600;
             color: #ff4500;
             margin-bottom: 4px;
+            cursor: pointer;
+            -webkit-user-select: none;
+            user-select: none;
         }
 
         .comment-author .comment-time {
@@ -893,7 +949,23 @@
                 html += '<hr class="comments-divider">';
                 html += renderCommentsTree(comments, 0);
 
-                document.getElementById('comments-content').innerHTML = html;
+                const commentsEl = document.getElementById('comments-content');
+                commentsEl.innerHTML = html;
+
+                commentsEl.addEventListener('click', e => {
+                    const line = e.target.closest('[data-collapse]');
+                    if (line) {
+                        const comment = line.closest('.comment');
+                        if (comment) comment.classList.toggle('collapsed');
+                        return;
+                    }
+                    const author = e.target.closest('.comment-author');
+                    if (author) {
+                        const comment = author.closest('.comment');
+                        if (comment) comment.classList.toggle('collapsed');
+                    }
+                });
+
                 window.scrollTo(0, 0);
             } catch (err) {
                 const msg = err?.status === 429
@@ -915,18 +987,30 @@
             return children.map(c => {
                 if (c.kind !== 't1') return '';
                 const d = c.data;
+                let childCount = 0;
+                function countReplies(node) {
+                    if (!node.data?.replies?.data?.children) return;
+                    for (const child of node.data.replies.data.children) {
+                        if (child.kind === 't1') { childCount++; countReplies(child); }
+                    }
+                }
+                countReplies(c);
+                const childLabel = childCount > 0 ? ` + ${childCount} ${childCount === 1 ? 'reply' : 'replies'}` : '';
                 let html = `
                     <div class="comment comment-depth-${clampedDepth}">
-                        <div class="comment-author">
-                            ${escapeHtml(d.author)}
-                            <span class="comment-time">${timeAgo(d.created_utc)}</span>
-                        </div>
-                        <div class="comment-body">${renderCommentHtml(d.body_html)}</div>
+                        <div class="comment-collapse-line" data-collapse></div>
+                        <div class="comment-inner">
+                            <div class="comment-author">
+                                ${escapeHtml(d.author)}
+                                <span class="comment-time">${timeAgo(d.created_utc)}</span>
+                                <span class="collapsed-indicator">collapsed${childLabel}</span>
+                            </div>
+                            <div class="comment-body">${renderCommentHtml(d.body_html)}</div>
                 `;
                 if (d.replies && d.replies.data && d.replies.data.children) {
                     html += renderCommentsTree(d.replies.data.children, depth + 1);
                 }
-                html += '</div>';
+                html += '</div></div>';
                 return html;
             }).join('');
         }
