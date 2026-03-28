@@ -456,6 +456,20 @@
             cursor: pointer;
         }
 
+        /* Load more retry banner */
+        .load-more-error {
+            padding: 20px;
+            text-align: center;
+            color: #888;
+            font-size: 14px;
+        }
+
+        .load-more-error .retry-btn {
+            margin-top: 10px;
+            font-size: 14px;
+            padding: 8px 20px;
+        }
+
         /* End of feed */
         .feed-end {
             height: 100vh;
@@ -713,7 +727,7 @@
 <body>
     <div class="home-view" id="home-view">
         <div class="header">
-            <h1>Feed <span class="version">v17</span></h1>
+            <h1>Feed <span class="version">v18</span></h1>
             <button class="export-btn" id="export-btn">Export</button>
             <select class="sort-select" id="sort-select">
                 <option value="hot">Hot</option>
@@ -913,7 +927,7 @@
                     if (posts.length > 0) anySucceeded = true;
                 } else {
                     pool.fetched = true;
-                    pool.exhausted = true;
+                    // Don't mark as exhausted - allow retry on next refill
                     if (results[i].reason?.status === 429) rateLimited = true;
                 }
             }
@@ -982,7 +996,7 @@
                     pool.fetched = true;
                 } catch (err) {
                     pool.fetched = true;
-                    pool.exhausted = true;
+                    // Don't mark as exhausted - allow retry on next refill
                     if (err.status === 429) throw err;
                 }
                 return;
@@ -1000,7 +1014,24 @@
                     pool.after = after;
                     pool.exhausted = !after;
                 } catch (err) {
-                    pool.exhausted = true;
+                    // Don't mark as exhausted - allow retry on next refill
+                    if (err.status === 429) throw err;
+                }
+                return;
+            }
+
+            // Priority 3: retry previously failed pools (fetched, not exhausted, no cursor, no posts)
+            const retryable = Object.entries(state.mixedPools)
+                .filter(([_, pool]) => pool.fetched && !pool.exhausted && !pool.after && pool.posts.length === 0);
+            if (retryable.length > 0) {
+                const [sub, pool] = retryable[Math.floor(Math.random() * retryable.length)];
+                try {
+                    const { posts, after } = await fetchSubredditPosts(sub, 25);
+                    pool.posts = posts;
+                    pool.after = after;
+                    pool.exhausted = !after;
+                } catch (err) {
+                    // Still don't mark as exhausted - can retry again later
                     if (err.status === 429) throw err;
                 }
             }
@@ -1271,11 +1302,14 @@
             const url = `${PROXY}?url=${encodeURIComponent('https://www.reddit.com' + path)}`;
             let lastError;
             for (let attempt = 0; attempt < retries; attempt++) {
+                const controller = new AbortController();
+                const timeoutId = setTimeout(() => controller.abort(), 15000);
                 try {
                     if (attempt > 0) {
                         await new Promise(r => setTimeout(r, 1000 * Math.pow(2, attempt - 1)));
                     }
-                    const res = await fetch(url);
+                    const res = await fetch(url, { signal: controller.signal });
+                    clearTimeout(timeoutId);
                     if (res.status === 429) {
                         const err = new Error('Rate limited');
                         err.status = 429;
@@ -1284,7 +1318,12 @@
                     if (!res.ok) throw new Error(res.status);
                     return await res.json();
                 } catch (err) {
-                    lastError = err;
+                    clearTimeout(timeoutId);
+                    if (err.name === 'AbortError') {
+                        lastError = new Error('Request timed out');
+                    } else {
+                        lastError = err;
+                    }
                     if (err.status === 429) break; // Don't retry rate limits
                 }
             }
@@ -1909,6 +1948,28 @@
             }
         }
 
+        function showLoadMoreError() {
+            const container = document.getElementById('feed-container');
+            // Don't add duplicate error banners
+            if (container.querySelector('.load-more-error')) return;
+            const errorDiv = document.createElement('div');
+            errorDiv.className = 'load-more-error';
+            errorDiv.innerHTML = `
+                <p>Failed to load more posts</p>
+                <button class="retry-btn">Retry</button>
+            `;
+            errorDiv.querySelector('.retry-btn').addEventListener('click', () => {
+                errorDiv.remove();
+                const loadFn = state.isMixed ? loadMixedPosts : loadPosts;
+                loadFn().then(() => {
+                    appendNewItems();
+                }).catch(() => {
+                    showLoadMoreError();
+                });
+            });
+            container.appendChild(errorDiv);
+        }
+
         function showFeedError(message, retryFn) {
             const container = document.getElementById('feed-container');
             container.innerHTML = `
@@ -2305,7 +2366,9 @@
                                 const loadFn = state.isMixed ? loadMixedPosts : loadPosts;
                                 loadFn().then(() => {
                                     appendNewItems();
-                                }).catch(() => {});
+                                }).catch(() => {
+                                    showLoadMoreError();
+                                });
                             }
                         }
                     } else {
