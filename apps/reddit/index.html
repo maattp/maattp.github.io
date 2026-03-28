@@ -354,8 +354,8 @@
             opacity: 0.8;
         }
 
-        .comment-depth-0 > .comment-collapse-line { display: none; }
-        .comment-depth-0 > .comment-inner { padding-left: 0; }
+        .comment-depth-0 > .comment-collapse-line::after { background: #444; }
+        .comment-depth-0 > .comment-inner { padding-left: 6px; }
 
         .comment-depth-1 > .comment-collapse-line::after { background: #6cb4ff; }
         .comment-depth-2 > .comment-collapse-line::after { background: #4caf50; }
@@ -949,23 +949,7 @@
                 html += '<hr class="comments-divider">';
                 html += renderCommentsTree(comments, 0);
 
-                const commentsEl = document.getElementById('comments-content');
-                commentsEl.innerHTML = html;
-
-                commentsEl.addEventListener('click', e => {
-                    const line = e.target.closest('[data-collapse]');
-                    if (line) {
-                        const comment = line.closest('.comment');
-                        if (comment) comment.classList.toggle('collapsed');
-                        return;
-                    }
-                    const author = e.target.closest('.comment-author');
-                    if (author) {
-                        const comment = author.closest('.comment');
-                        if (comment) comment.classList.toggle('collapsed');
-                    }
-                });
-
+                document.getElementById('comments-content').innerHTML = html;
                 window.scrollTo(0, 0);
             } catch (err) {
                 const msg = err?.status === 429
@@ -981,20 +965,23 @@
             }
         }
 
+        function countReplies(node) {
+            let count = 0;
+            const children = node.data?.replies?.data?.children;
+            if (!children) return 0;
+            for (const child of children) {
+                if (child.kind === 't1') { count += 1 + countReplies(child); }
+            }
+            return count;
+        }
+
         function renderCommentsTree(children, depth) {
             if (!children) return '';
             const clampedDepth = Math.min(depth, 4);
             return children.map(c => {
                 if (c.kind !== 't1') return '';
                 const d = c.data;
-                let childCount = 0;
-                function countReplies(node) {
-                    if (!node.data?.replies?.data?.children) return;
-                    for (const child of node.data.replies.data.children) {
-                        if (child.kind === 't1') { childCount++; countReplies(child); }
-                    }
-                }
-                countReplies(c);
+                const childCount = countReplies(c);
                 const childLabel = childCount > 0 ? ` + ${childCount} ${childCount === 1 ? 'reply' : 'replies'}` : '';
                 let html = `
                     <div class="comment comment-depth-${clampedDepth}">
@@ -1064,6 +1051,21 @@
                 }
             } else if (s.view === 'comments') {
                 renderComments(s.sub, s.postId);
+            }
+        });
+
+        // Delegated collapse handler on #app (registered once)
+        document.getElementById('app').addEventListener('click', e => {
+            const line = e.target.closest('[data-collapse]');
+            if (line) {
+                const comment = line.closest('.comment');
+                if (comment) comment.classList.toggle('collapsed');
+                return;
+            }
+            const author = e.target.closest('.comment-author');
+            if (author) {
+                const comment = author.closest('.comment');
+                if (comment) comment.classList.toggle('collapsed');
             }
         });
 
