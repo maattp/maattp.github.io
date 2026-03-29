@@ -407,6 +407,12 @@
             margin-left: 8px;
         }
 
+        .comment-author .comment-score {
+            font-weight: 400;
+            color: #ff4500;
+            margin-left: 8px;
+        }
+
         .comment-body {
             font-size: 14px;
             color: #ccc;
@@ -1061,6 +1067,7 @@
                         <div class="comment-inner">
                             <div class="comment-author">
                                 ${escapeHtml(d.author)}
+                                <span class="comment-score">${formatScore(d.score)} pts</span>
                                 <span class="comment-time">${timeAgo(d.created_utc)}</span>
                                 <span class="collapsed-indicator">collapsed${childLabel}</span>
                             </div>
