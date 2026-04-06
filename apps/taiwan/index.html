@@ -42,7 +42,7 @@
         .container {
             max-width: 640px;
             margin: 0 auto;
-            padding: 20px 16px 100px;
+            padding: 20px 16px 140px;
         }
 
         /* Header */
@@ -459,10 +459,120 @@
             z-index: 9999;
             transition: width 0.15s;
         }
+
+        /* Section nav */
+        .section-nav {
+            position: fixed;
+            bottom: env(safe-area-inset-bottom, 0px);
+            left: 0; right: 0;
+            background: linear-gradient(to top, var(--bg) 70%, transparent);
+            padding: 16px 0 12px;
+            z-index: 999;
+            display: flex;
+            justify-content: center;
+            gap: 2px;
+            pointer-events: none;
+        }
+
+        .section-nav-inner {
+            display: flex;
+            gap: 2px;
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: 20px;
+            padding: 4px;
+            pointer-events: auto;
+            overflow-x: auto;
+            max-width: calc(100vw - 32px);
+            -webkit-overflow-scrolling: touch;
+        }
+
+        .section-nav-inner::-webkit-scrollbar { display: none; }
+
+        .nav-dot {
+            width: 28px; height: 28px;
+            border-radius: 50%;
+            display: flex; align-items: center; justify-content: center;
+            font-size: 13px;
+            cursor: pointer;
+            transition: all 0.2s;
+            flex-shrink: 0;
+            opacity: 0.5;
+        }
+
+        .nav-dot.active { opacity: 1; background: var(--surface2); }
+        .nav-dot:active { transform: scale(0.9); }
+
+        /* Answer counter */
+        .answer-counter {
+            position: fixed;
+            top: env(safe-area-inset-top, 0px);
+            right: 12px;
+            margin-top: 8px;
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: 16px;
+            padding: 4px 10px;
+            font-size: 11px;
+            color: var(--text-dim);
+            z-index: 999;
+            transition: opacity 0.3s;
+        }
+
+        .answer-counter .count-num { color: var(--jade); font-weight: 600; }
+
+        /* Auto-save toast */
+        .save-toast {
+            position: fixed;
+            top: env(safe-area-inset-top, 0px);
+            left: 50%;
+            transform: translateX(-50%);
+            margin-top: 8px;
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: 16px;
+            padding: 4px 12px;
+            font-size: 11px;
+            color: var(--jade);
+            z-index: 999;
+            opacity: 0;
+            transition: opacity 0.3s;
+            pointer-events: none;
+        }
+
+        .save-toast.show { opacity: 1; }
+
+        /* Image fade-in */
+        .place-card, .scenic-card, .food-card-hero {
+            opacity: 0;
+            animation: fadeReveal 0.5s ease forwards;
+        }
+
+        @keyframes fadeReveal {
+            from { opacity: 0; transform: translateY(8px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        /* Confetti canvas */
+        #confetti {
+            position: fixed;
+            top: 0; left: 0;
+            width: 100%; height: 100%;
+            pointer-events: none;
+            z-index: 10000;
+        }
     </style>
 </head>
 <body>
     <div class="progress-bar" id="progressBar" style="width: 0%"></div>
+    <div class="answer-counter" id="answerCounter"><span class="count-num" id="countNum">0</span> answered</div>
+    <div class="save-toast" id="saveToast">saved</div>
+    <canvas id="confetti"></canvas>
+
+    <div class="section-nav">
+        <div class="section-nav-inner" id="sectionNav"></div>
+    </div>
+
     <div class="container">
         <div class="header">
             <span class="header-icon">🏮</span>
@@ -857,7 +967,7 @@
                     </div>
                 </div>
                 <div class="scroll-dots" id="foodDots"></div>
-                <div class="scroll-hint">swipe to browse &mdash; 15 spots</div>
+                <div class="scroll-hint" id="foodScrollHint">swipe to browse &mdash; 15 spots</div>
             </div>
 
             <div class="question">
@@ -1636,10 +1746,14 @@
         }
 
         // ===== Auto-save =====
-        let saveTimeout;
+        let saveTimeout2;
         function autoSave() {
-            clearTimeout(saveTimeout);
-            saveTimeout = setTimeout(() => localStorage.setItem(STORAGE_KEY, JSON.stringify(collectAnswers())), 300);
+            clearTimeout(saveTimeout2);
+            saveTimeout2 = setTimeout(() => {
+                localStorage.setItem(STORAGE_KEY, JSON.stringify(collectAnswers()));
+                showSaveToast();
+                updateAnswerCount();
+            }, 300);
         }
 
         // ===== Restore =====
@@ -1700,6 +1814,149 @@
             }
         }
         restore();
+        updateAnswerCount();
+
+        // ===== Section nav =====
+        const sectionEmojis = [
+            ['📅','When'],['✨','Vibe'],['🗾','Where'],['🍜','Food'],['🏔️','Views'],
+            ['🦌','Animals'],['🥾','Do'],['🏨','Stay'],['💳','Points'],['🎯','Rank'],
+            ['💑','Couple'],['⚠️','Prep'],['💭','Final']
+        ];
+        const sections = document.querySelectorAll('.section');
+        const navInner = document.getElementById('sectionNav');
+        sectionEmojis.forEach(([emoji, label], i) => {
+            const dot = document.createElement('div');
+            dot.className = 'nav-dot';
+            dot.textContent = emoji;
+            dot.title = label;
+            dot.addEventListener('click', () => {
+                if (sections[i]) sections[i].scrollIntoView({ behavior: 'smooth', block: 'start' });
+            });
+            navInner.appendChild(dot);
+        });
+
+        // Highlight active section
+        const navDots = navInner.querySelectorAll('.nav-dot');
+        const sectionObserver = new IntersectionObserver(entries => {
+            entries.forEach(entry => {
+                if (entry.isIntersecting) {
+                    const idx = [...sections].indexOf(entry.target);
+                    navDots.forEach((d, i) => d.classList.toggle('active', i === idx));
+                }
+            });
+        }, { threshold: 0.3 });
+        sections.forEach(s => sectionObserver.observe(s));
+
+        // ===== Image fade-in on scroll =====
+        const fadeObserver = new IntersectionObserver(entries => {
+            entries.forEach(e => {
+                if (e.isIntersecting) {
+                    e.target.style.animationDelay = '0s';
+                    e.target.style.animationPlayState = 'running';
+                    fadeObserver.unobserve(e.target);
+                }
+            });
+        }, { threshold: 0.1 });
+        document.querySelectorAll('.place-card, .scenic-card, .food-card-hero').forEach(el => {
+            el.style.animationPlayState = 'paused';
+            fadeObserver.observe(el);
+        });
+
+        // ===== Answer counter =====
+        function updateAnswerCount() {
+            let count = 0;
+            // Chips with selections
+            document.querySelectorAll('.chips[data-key]').forEach(g => { if (g.querySelector('.chip.selected')) count++; });
+            // Radio cards with selections
+            document.querySelectorAll('.radio-cards[data-key]').forEach(g => { if (g.querySelector('.radio-card.selected')) count++; });
+            // Place cards
+            document.querySelectorAll('.place-grid[data-key]').forEach(g => { if (g.querySelector('.place-card.selected')) count++; });
+            // Scenic cards
+            document.querySelectorAll('.scenic-list[data-key]').forEach(g => { if (g.querySelector('.scenic-card.selected')) count++; });
+            // Food cards
+            document.querySelectorAll('.food-scroll[data-key]').forEach(g => { if (g.querySelector('.food-card.selected')) count++; });
+            // Weather table
+            if (document.querySelector('.weather-table tbody tr.selected-row')) count++;
+            // Sliders (count if moved from default)
+            document.querySelectorAll('input[type="range"][data-key]').forEach(s => {
+                const def = s.dataset.key === 'duration_days' ? '10' : '3';
+                if (s.value !== def) count++;
+            });
+            // Textareas
+            document.querySelectorAll('textarea[data-key]').forEach(t => { if (t.value.trim()) count++; });
+            // Name
+            if (document.getElementById('travelerName').value.trim()) count++;
+
+            document.getElementById('countNum').textContent = count;
+
+            // Update food scroll hint
+            const foodSelected = document.querySelectorAll('.food-scroll .food-card.selected').length;
+            const hint = document.getElementById('foodScrollHint');
+            if (foodSelected > 0) {
+                hint.textContent = foodSelected + ' of 15 selected \u2014 swipe for more';
+                hint.style.color = 'var(--lantern)';
+            } else {
+                hint.textContent = 'swipe to browse \u2014 15 spots';
+                hint.style.color = '';
+            }
+        }
+
+        // ===== Save toast =====
+        let toastTimeout;
+        function showSaveToast() {
+            const toast = document.getElementById('saveToast');
+            toast.classList.add('show');
+            clearTimeout(toastTimeout);
+            toastTimeout = setTimeout(() => toast.classList.remove('show'), 1200);
+        }
+
+        // ===== Confetti =====
+        function launchConfetti() {
+            const canvas = document.getElementById('confetti');
+            const ctx = canvas.getContext('2d');
+            canvas.width = window.innerWidth;
+            canvas.height = window.innerHeight;
+            const colors = ['#e44d6e','#f0a050','#2dd4a8','#5a8dee','#f5c518','#ff6b9d'];
+            const pieces = [];
+            for (let i = 0; i < 120; i++) {
+                pieces.push({
+                    x: Math.random() * canvas.width,
+                    y: -20 - Math.random() * 200,
+                    w: 4 + Math.random() * 6,
+                    h: 8 + Math.random() * 8,
+                    color: colors[Math.floor(Math.random() * colors.length)],
+                    vx: (Math.random() - 0.5) * 4,
+                    vy: 2 + Math.random() * 4,
+                    rot: Math.random() * Math.PI * 2,
+                    rv: (Math.random() - 0.5) * 0.15,
+                    opacity: 1
+                });
+            }
+            let frame = 0;
+            function draw() {
+                ctx.clearRect(0, 0, canvas.width, canvas.height);
+                let alive = false;
+                pieces.forEach(p => {
+                    if (p.opacity <= 0) return;
+                    alive = true;
+                    p.x += p.vx;
+                    p.y += p.vy;
+                    p.vy += 0.08;
+                    p.rot += p.rv;
+                    if (frame > 60) p.opacity -= 0.015;
+                    ctx.save();
+                    ctx.globalAlpha = Math.max(0, p.opacity);
+                    ctx.translate(p.x, p.y);
+                    ctx.rotate(p.rot);
+                    ctx.fillStyle = p.color;
+                    ctx.fillRect(-p.w/2, -p.h/2, p.w, p.h);
+                    ctx.restore();
+                });
+                frame++;
+                if (alive) requestAnimationFrame(draw);
+            }
+            draw();
+        }
 
         // ===== Progress bar =====
         function updateProgress() {
@@ -1721,6 +1978,7 @@
             const ind = document.getElementById('savedIndicator');
             ind.classList.add('show'); setTimeout(() => ind.classList.remove('show'), 2000);
             output.scrollIntoView({ behavior: 'smooth', block: 'start' });
+            launchConfetti();
         });
 
         // ===== Copy =====
