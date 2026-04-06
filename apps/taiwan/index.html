@@ -279,9 +279,30 @@
         .scroll-hint {
             font-size: 11px;
             color: var(--text-dim);
-            text-align: right;
-            margin-top: 4px;
+            text-align: center;
+            margin-top: 8px;
             opacity: 0.7;
+        }
+
+        .scroll-dots {
+            display: flex;
+            justify-content: center;
+            gap: 4px;
+            margin-top: 8px;
+        }
+
+        .scroll-dot {
+            width: 6px;
+            height: 6px;
+            border-radius: 50%;
+            background: var(--border);
+            transition: background 0.2s;
+        }
+
+        .scroll-dot.active {
+            background: var(--lantern);
+            width: 16px;
+            border-radius: 3px;
         }
 
         /* ===== SCENIC CARDS ===== */
@@ -378,9 +399,21 @@
         .saved-indicator { text-align: center; margin-top: 12px; font-size: 12px; color: var(--text-dim); opacity: 0; transition: opacity 0.3s; }
         .saved-indicator.show { opacity: 1; }
         .wave-divider { text-align: center; color: var(--border); font-size: 24px; letter-spacing: 8px; margin: 40px 0 0; opacity: 0.5; }
+
+        /* Progress bar */
+        .progress-bar {
+            position: fixed;
+            top: 0;
+            left: 0;
+            height: 3px;
+            background: linear-gradient(90deg, var(--accent), var(--lantern));
+            z-index: 9999;
+            transition: width 0.15s;
+        }
     </style>
 </head>
 <body>
+    <div class="progress-bar" id="progressBar" style="width: 0%"></div>
     <div class="container">
         <div class="header">
             <span class="header-icon">🏮</span>
@@ -397,6 +430,17 @@
             <div class="section-header">
                 <div class="section-icon">📅</div>
                 <div><h2>When & How Long</h2><span class="section-sub">Timing changes everything in Taiwan</span></div>
+            </div>
+
+            <div class="question">
+                <label class="question-label">Where are you flying from?</label>
+                <textarea data-key="departure_city" style="min-height: 40px;" placeholder="e.g. San Francisco, New York, Los Angeles..."></textarea>
+            </div>
+
+            <div class="question">
+                <label class="question-label">Do you have specific dates in mind?</label>
+                <div class="question-hint">Exact dates help with flight pricing, festival alignment, and availability. Leave blank if flexible.</div>
+                <textarea data-key="specific_dates" style="min-height: 40px;" placeholder="e.g. Oct 15 - Oct 28, or just 'sometime in October'"></textarea>
             </div>
 
             <div class="question">
@@ -731,7 +775,8 @@
                         </div>
                     </div>
                 </div>
-                <div class="scroll-hint">swipe for more &rarr;</div>
+                <div class="scroll-dots" id="foodDots"></div>
+                <div class="scroll-hint">swipe to browse &mdash; 15 spots</div>
             </div>
 
             <div class="question">
@@ -961,16 +1006,6 @@
                     <div class="radio-card" data-val="easy"><div class="rc-label">Easy trails</div><div class="rc-sub">1-2 hrs</div></div>
                     <div class="radio-card" data-val="moderate"><div class="rc-label">Moderate hikes</div><div class="rc-sub">Half day</div></div>
                     <div class="radio-card" data-val="serious"><div class="rc-label">Serious treks</div><div class="rc-sub">Multi-day / peaks</div></div>
-                </div>
-            </div>
-
-            <div class="question">
-                <label class="question-label">Hot springs &mdash; how interested?</label>
-                <div class="question-hint">Beitou is 30 min from Taipei by MRT. Jiaoxi has silky "beauty springs." Guanziling has one of only 3 mud springs on Earth.</div>
-                <div class="radio-cards three-col" data-key="hot_springs" data-mode="single">
-                    <div class="radio-card" data-val="skip"><div class="rc-label">Skip</div></div>
-                    <div class="radio-card" data-val="try_once"><div class="rc-label">Try once</div></div>
-                    <div class="radio-card" data-val="multiple"><div class="rc-label">Hit several</div></div>
                 </div>
             </div>
 
@@ -1331,6 +1366,24 @@
             });
         });
 
+        // ===== Food scroll dots =====
+        const foodScroll = document.querySelector('.food-scroll');
+        const foodCards = foodScroll.querySelectorAll('.food-card');
+        const dotsContainer = document.getElementById('foodDots');
+        foodCards.forEach((_, i) => {
+            const dot = document.createElement('div');
+            dot.className = 'scroll-dot' + (i === 0 ? ' active' : '');
+            dotsContainer.appendChild(dot);
+        });
+        foodScroll.addEventListener('scroll', () => {
+            const scrollLeft = foodScroll.scrollLeft;
+            const cardWidth = 260 + 12;
+            const activeIdx = Math.round(scrollLeft / cardWidth);
+            dotsContainer.querySelectorAll('.scroll-dot').forEach((d, i) => {
+                d.classList.toggle('active', i === activeIdx);
+            });
+        }, { passive: true });
+
         // ===== Sliders =====
         const durationHints = { 5:'5 days \u2014 highlights only', 6:'6 days', 7:'7 days \u2014 one week', 8:'8 days', 9:'9 days', 10:'10 days \u2014 solid trip', 11:'11 days', 12:'12 days', 13:'13 days', 14:'14 days \u2014 full island loop', 15:'15 days', 16:'16 days', 17:'17 days', 18:'18 days', 19:'19 days', 20:'20 days', 21:'21 days \u2014 deep dive' };
         const paceLabels = ['Slow & immersive', 'Mostly relaxed', 'Balanced', 'Active pace', 'See it all'];
@@ -1510,12 +1563,79 @@
         }
         restore();
 
+        // ===== Progress bar =====
+        function updateProgress() {
+            const scrollTop = window.scrollY;
+            const docHeight = document.documentElement.scrollHeight - window.innerHeight;
+            const pct = docHeight > 0 ? Math.min((scrollTop / docHeight) * 100, 100) : 0;
+            document.getElementById('progressBar').style.width = pct + '%';
+        }
+        window.addEventListener('scroll', updateProgress, { passive: true });
+        updateProgress();
+
+        // ===== Generate summary =====
+        function generateSummary(data) {
+            const lines = [];
+            const name = data.name || 'Traveler';
+            lines.push('=== ' + name + "'s Taiwan Trip Profile ===\n");
+
+            if (data.departure_city) lines.push('Flying from: ' + data.departure_city);
+            if (data.specific_dates) lines.push('Dates: ' + data.specific_dates);
+            if (data.travel_month?.length) lines.push('Months: ' + data.travel_month.join(', '));
+            if (data.duration_days) lines.push('Duration: ' + data.duration_days + ' days');
+            lines.push('');
+
+            if (data.regions?.length) lines.push('Regions: ' + data.regions.join(', '));
+            if (data.scenic_spots?.length) lines.push('Must-see spots: ' + data.scenic_spots.join(', '));
+            if (data.must_do) lines.push('Must-do: ' + data.must_do);
+            lines.push('');
+
+            if (data.food_importance) lines.push('Food priority: ' + data.food_importance);
+            if (data.food_spots?.length) lines.push('Food spots: ' + data.food_spots.join(', '));
+            if (data.must_try_dishes?.length) lines.push('Must-try dishes: ' + data.must_try_dishes.join(', '));
+            if (data.food_adventurousness) lines.push('Weird food: ' + data.food_adventurousness);
+            if (data.breakfast_culture) lines.push('Breakfast: ' + data.breakfast_culture);
+            if (data.tea_interest) lines.push('Tea: ' + data.tea_interest);
+            if (data.dietary?.length) lines.push('Dietary: ' + data.dietary.join(', '));
+            if (data.food_notes) lines.push('Food notes: ' + data.food_notes);
+            lines.push('');
+
+            if (data.hiking_level) lines.push('Hiking: ' + data.hiking_level);
+            if (data.hot_spring_style) lines.push('Hot springs: ' + data.hot_spring_style);
+            if (data.animal_experiences?.length) lines.push('Animals: ' + data.animal_experiences.join(', '));
+            if (data.activities?.length) lines.push('Activities: ' + data.activities.join(', '));
+            lines.push('');
+
+            if (data.morning_person) lines.push('Morning person: ' + data.morning_person);
+            if (data.split_up) lines.push('Split up: ' + data.split_up);
+            if (data.splurge_meal) lines.push('Splurge meal: ' + data.splurge_meal);
+            if (data.walking_stamina) lines.push('Walking stamina: ' + data.walking_stamina);
+            lines.push('');
+
+            if (data.budget) lines.push('Budget: ' + data.budget);
+            if (data.accommodation?.length) lines.push('Accommodation: ' + data.accommodation.join(', '));
+            if (data.flight_class) lines.push('Flight class: ' + data.flight_class);
+            if (data.points_programs?.length) lines.push('Points programs: ' + data.points_programs.join(', '));
+            if (data.points_balances) lines.push('Balances: ' + data.points_balances);
+            if (data.hotel_loyalty) lines.push('Hotel loyalty: ' + data.hotel_loyalty);
+            if (data.card_perks) lines.push('Card perks: ' + data.card_perks);
+            lines.push('');
+
+            if (data.priorities?.length) lines.push('Priorities (ranked): ' + data.priorities.join(' > '));
+            if (data.dream_moment) lines.push('Dream moment: ' + data.dream_moment);
+            if (data.avoid) lines.push('Avoid: ' + data.avoid);
+            if (data.notes) lines.push('Notes: ' + data.notes);
+
+            return lines.filter(l => l !== undefined).join('\n');
+        }
+
         // ===== Submit =====
         document.getElementById('submitBtn').addEventListener('click', () => {
             const data = collectAnswers();
             localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
             const output = document.getElementById('output');
-            document.getElementById('outputJson').textContent = JSON.stringify(data, null, 2);
+            const summary = generateSummary(data);
+            document.getElementById('outputJson').textContent = summary + '\n\n--- RAW JSON ---\n' + JSON.stringify(data, null, 2);
             output.classList.add('visible');
             const ind = document.getElementById('savedIndicator');
             ind.classList.add('show'); setTimeout(() => ind.classList.remove('show'), 2000);
