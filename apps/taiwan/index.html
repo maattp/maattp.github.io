@@ -400,6 +400,55 @@
         .saved-indicator.show { opacity: 1; }
         .wave-divider { text-align: center; color: var(--border); font-size: 24px; letter-spacing: 8px; margin: 40px 0 0; opacity: 0.5; }
 
+        /* Weather table */
+        .weather-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-bottom: 12px;
+            font-size: 11px;
+        }
+
+        .weather-table th {
+            text-align: left;
+            padding: 6px 4px;
+            color: var(--text-dim);
+            font-weight: 500;
+            border-bottom: 1px solid var(--border);
+            font-size: 10px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        .weather-table td {
+            padding: 8px 4px;
+            border-bottom: 1px solid rgba(42, 42, 61, 0.5);
+            vertical-align: top;
+        }
+
+        .weather-table tr { cursor: pointer; transition: background 0.15s; }
+        .weather-table tbody tr:hover { background: var(--surface2); }
+        .weather-table tbody tr.selected-row { background: var(--accent-glow); }
+
+        .weather-month { font-weight: 600; color: var(--text); white-space: nowrap; }
+        .weather-temp { color: var(--lantern); white-space: nowrap; }
+        .weather-rain { white-space: nowrap; }
+        .weather-rain.low { color: var(--jade); }
+        .weather-rain.med { color: var(--lantern); }
+        .weather-rain.high { color: var(--accent); }
+        .weather-vibe { color: var(--text-dim); line-height: 1.4; }
+        .weather-badge {
+            display: inline-block;
+            font-size: 9px;
+            padding: 1px 5px;
+            border-radius: 4px;
+            margin-left: 4px;
+            font-weight: 500;
+            vertical-align: middle;
+        }
+        .badge-best { background: rgba(45, 212, 168, 0.2); color: var(--jade); }
+        .badge-ok { background: rgba(240, 160, 80, 0.2); color: var(--lantern); }
+        .badge-rough { background: rgba(228, 77, 110, 0.2); color: var(--accent); }
+
         /* Progress bar */
         .progress-bar {
             position: fixed;
@@ -439,16 +488,33 @@
 
             <div class="question">
                 <label class="question-label">When are you thinking of going?</label>
-                <div class="question-hint">Oct-Nov is ideal (dry, pleasant). May-Jun is plum rain season. Jul-Sep brings typhoons but also summer festivals. Feb has cherry blossoms and lantern festivals.</div>
-                <div class="chips" data-key="travel_month">
-                    <div class="chip" data-val="jan">Jan</div><div class="chip" data-val="feb">Feb</div>
-                    <div class="chip" data-val="mar">Mar</div><div class="chip" data-val="apr">Apr</div>
-                    <div class="chip" data-val="may">May</div><div class="chip" data-val="jun">Jun</div>
-                    <div class="chip" data-val="jul">Jul</div><div class="chip" data-val="aug">Aug</div>
-                    <div class="chip" data-val="sep">Sep</div><div class="chip" data-val="oct">Oct</div>
-                    <div class="chip" data-val="nov">Nov</div><div class="chip" data-val="dec">Dec</div>
-                    <div class="chip" data-val="flexible">Flexible</div>
-                </div>
+                <div class="question-hint">Tap months to select. Temperatures are for Taipei &mdash; south is 3-5&deg;C warmer, mountains are 10&deg;C+ cooler.</div>
+
+                <table class="weather-table" id="weatherTable">
+                    <thead>
+                        <tr>
+                            <th>Month</th>
+                            <th>Temp</th>
+                            <th>Rain</th>
+                            <th>What to expect</th>
+                        </tr>
+                    </thead>
+                    <tbody data-key="travel_month">
+                        <tr data-val="jan"><td class="weather-month">Jan</td><td class="weather-temp">14-19&deg;C</td><td class="weather-rain low">64mm</td><td class="weather-vibe">Cool &amp; dry. Fewest crowds. Lunar New Year prep. Some things may close for holidays. <span class="weather-badge badge-ok">Good</span></td></tr>
+                        <tr data-val="feb"><td class="weather-month">Feb</td><td class="weather-temp">14-19&deg;C</td><td class="weather-rain med">97mm</td><td class="weather-vibe">Cherry blossoms start. Pingxi Lantern Festival (mass sky lantern release). Lunar New Year &mdash; festive but very crowded, book early. <span class="weather-badge badge-ok">Good</span></td></tr>
+                        <tr data-val="mar"><td class="weather-month">Mar</td><td class="weather-temp">16-22&deg;C</td><td class="weather-rain med">104mm</td><td class="weather-vibe">Spring warming up. Cherry blossoms peak in mountains. Comfortable hiking weather. Shoulder season &mdash; fewer tourists, good prices. <span class="weather-badge badge-best">Great</span></td></tr>
+                        <tr data-val="apr"><td class="weather-month">Apr</td><td class="weather-temp">19-26&deg;C</td><td class="weather-rain med">117mm</td><td class="weather-vibe">Warm and pleasant. Hakka tung blossom festival (white "snow" flowers). Firefly season begins in mountains. One of the driest months. <span class="weather-badge badge-best">Great</span></td></tr>
+                        <tr data-val="may"><td class="weather-month">May</td><td class="weather-temp">23-28&deg;C</td><td class="weather-rain high">178mm</td><td class="weather-vibe">Plum rain season begins &mdash; weeks of steady drizzle, especially in the north. Penghu Fireworks Festival starts. Mango season begins. <span class="weather-badge badge-rough">Rainy</span></td></tr>
+                        <tr data-val="jun"><td class="weather-month">Jun</td><td class="weather-temp">25-32&deg;C</td><td class="weather-rain high">185mm</td><td class="weather-vibe">Hot, humid, plum rain continues. Dragon Boat Festival. Good for south &amp; beaches. Tough for all-day sightseeing in Taipei. <span class="weather-badge badge-rough">Hot + wet</span></td></tr>
+                        <tr data-val="jul"><td class="weather-month">Jul</td><td class="weather-temp">27-33&deg;C</td><td class="weather-rain med">114mm</td><td class="weather-vibe">Peak summer heat. Typhoon season starts. Taitung Hot Air Balloon Festival. Penghu fireworks continue. Good for beaches &amp; mountains as heat escape. <span class="weather-badge badge-rough">Hot</span></td></tr>
+                        <tr data-val="aug"><td class="weather-month">Aug</td><td class="weather-temp">26-33&deg;C</td><td class="weather-rain high">170mm</td><td class="weather-vibe">Hottest month. Peak typhoon risk &mdash; can strand you on east coast. Indigenous harvest festivals (Amis Ilisin). Brutal humidity. <span class="weather-badge badge-rough">Risky</span></td></tr>
+                        <tr data-val="sep"><td class="weather-month">Sep</td><td class="weather-temp">24-31&deg;C</td><td class="weather-rain high">198mm</td><td class="weather-vibe">Still hot. Typhoon risk continues. Mid-Autumn (Moon) Festival. Crowds thin out. Rain is heaviest this month. <span class="weather-badge badge-rough">Rainy</span></td></tr>
+                        <tr data-val="oct"><td class="weather-month">Oct</td><td class="weather-temp">22-27&deg;C</td><td class="weather-rain med">117mm</td><td class="weather-vibe">Weather transforms. Comfortable temps, dropping humidity, clear skies return. The sweet spot begins. Ideal for everything. <span class="weather-badge badge-best">Best</span></td></tr>
+                        <tr data-val="nov"><td class="weather-month">Nov</td><td class="weather-temp">19-24&deg;C</td><td class="weather-rain low">91mm</td><td class="weather-vibe">Excellent all around. Dry, mild, uncrowded. Great hiking weather. Christmasland in New Taipei starts. <span class="weather-badge badge-best">Best</span></td></tr>
+                        <tr data-val="dec"><td class="weather-month">Dec</td><td class="weather-temp">16-21&deg;C</td><td class="weather-rain low">66mm</td><td class="weather-vibe">Cool and dry. North can be overcast. South stays sunny (18-22&deg;C). Hot springs season. Quiet, uncrowded. <span class="weather-badge badge-ok">Good</span></td></tr>
+                        <tr data-val="flexible"><td class="weather-month" colspan="4" style="text-align:center; color: var(--text-dim);">Flexible &mdash; open to any time of year</td></tr>
+                    </tbody>
+                </table>
             </div>
 
             <div class="question">
@@ -1418,6 +1484,14 @@
             });
         });
 
+        // ===== Weather table row selection =====
+        document.querySelectorAll('.weather-table tbody tr[data-val]').forEach(row => {
+            row.addEventListener('click', () => {
+                row.classList.toggle('selected-row');
+                autoSave();
+            });
+        });
+
         // ===== Food scroll dots =====
         const foodScroll = document.querySelector('.food-scroll');
         const foodCards = foodScroll.querySelectorAll('.food-card');
@@ -1544,6 +1618,10 @@
                 data[g.dataset.key] = [...g.querySelectorAll('.food-card.selected')].map(c => c.dataset.val);
             });
 
+            // Weather table rows
+            const monthRows = document.querySelectorAll('.weather-table tbody tr.selected-row[data-val]');
+            if (monthRows.length) data.travel_month = [...monthRows].map(r => r.dataset.val);
+
             // Sliders
             document.querySelectorAll('input[type="range"][data-key]').forEach(s => { data[s.dataset.key] = parseInt(s.value); });
 
@@ -1597,6 +1675,13 @@
             document.querySelectorAll('.food-scroll[data-key]').forEach(g => {
                 (data[g.dataset.key]||[]).forEach(v => { g.querySelectorAll('.food-card').forEach(c => { if (c.dataset.val === v) c.classList.add('selected'); }); });
             });
+
+            // Weather table rows
+            if (data.travel_month) {
+                document.querySelectorAll('.weather-table tbody tr[data-val]').forEach(r => {
+                    if (data.travel_month.includes(r.dataset.val)) r.classList.add('selected-row');
+                });
+            }
 
             // Sliders
             document.querySelectorAll('input[type="range"][data-key]').forEach(s => {
@@ -1661,7 +1746,7 @@
             if (!confirm('Clear all your answers?')) return;
             localStorage.removeItem(STORAGE_KEY);
             document.getElementById('travelerName').value = '';
-            document.querySelectorAll('.selected').forEach(c => c.classList.remove('selected'));
+            document.querySelectorAll('.selected, .selected-row').forEach(c => { c.classList.remove('selected'); c.classList.remove('selected-row'); });
             document.querySelectorAll('input[type="range"]').forEach(s => { s.value = s.dataset.key === 'duration_days' ? 10 : 3; s.dispatchEvent(new Event('input')); });
             document.querySelectorAll('textarea').forEach(t => t.value = '');
             document.getElementById('output').classList.remove('visible');
