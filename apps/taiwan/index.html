@@ -153,6 +153,8 @@
             justify-content: flex-end;
             padding: 12px;
             border: 2px solid transparent;
+            background-size: cover;
+            background-position: center;
         }
 
         .place-card:active { transform: scale(0.97); }
@@ -477,58 +479,47 @@
                 <label class="question-label">Which regions interest you?</label>
                 <div class="question-hint">Each region has a different character. You can't do it all unless you have 2+ weeks.</div>
                 <div class="place-grid" data-key="regions">
-                    <div class="place-card" data-val="taipei" style="background: linear-gradient(135deg, #1a1a3e, #2d1f4e, #0f2847);">
-                        <span class="card-emoji">🌃</span>
+                    <div class="place-card" data-val="taipei" style="background: linear-gradient(to top, rgba(0,0,0,0.7), rgba(0,0,0,0.1)), url(img/taipei.jpg) center/cover;">
                         <div class="card-name">Taipei</div>
                         <div class="card-sub">Culture, food, nightlife</div>
                     </div>
-                    <div class="place-card" data-val="northeast" style="background: linear-gradient(135deg, #8b2500, #c0392b, #4a1a0a);">
-                        <span class="card-emoji">🏮</span>
+                    <div class="place-card" data-val="northeast" style="background: linear-gradient(to top, rgba(0,0,0,0.7), rgba(0,0,0,0.1)), url(img/jiufen.jpg) center/cover;">
                         <div class="card-name">Northeast Coast</div>
                         <div class="card-sub">Jiufen, Shifen, Keelung</div>
                     </div>
-                    <div class="place-card" data-val="taichung" style="background: linear-gradient(135deg, #1a3c34, #2c6b5a, #0d2e26);">
-                        <span class="card-emoji">🎨</span>
+                    <div class="place-card" data-val="taichung" style="background: linear-gradient(to top, rgba(0,0,0,0.7), rgba(0,0,0,0.1)), url(img/taichung.jpg) center/cover;">
                         <div class="card-name">Taichung</div>
                         <div class="card-sub">Creative city, bubble tea origin</div>
                     </div>
-                    <div class="place-card" data-val="sun_moon_lake" style="background: linear-gradient(135deg, #1a3a5c, #2a5a7a, #0d2a42);">
-                        <span class="card-emoji">🚴</span>
+                    <div class="place-card" data-val="sun_moon_lake" style="background: linear-gradient(to top, rgba(0,0,0,0.7), rgba(0,0,0,0.1)), url(img/sun-moon-lake.jpg) center/cover;">
                         <div class="card-name">Sun Moon Lake</div>
                         <div class="card-sub">Cycling, tea, misty mountains</div>
                     </div>
-                    <div class="place-card" data-val="alishan" style="background: linear-gradient(135deg, #2d4a1a, #4a6b2a, #1a2d0d);">
-                        <span class="card-emoji">🌄</span>
+                    <div class="place-card" data-val="alishan" style="background: linear-gradient(to top, rgba(0,0,0,0.7), rgba(0,0,0,0.1)), url(img/alishan.jpg) center/cover;">
                         <div class="card-name">Alishan</div>
                         <div class="card-sub">Sunrise over sea of clouds</div>
                     </div>
-                    <div class="place-card" data-val="tainan" style="background: linear-gradient(135deg, #6b3a1a, #8b5a2a, #4a2a0d);">
-                        <span class="card-emoji">🛕</span>
+                    <div class="place-card" data-val="tainan" style="background: linear-gradient(to top, rgba(0,0,0,0.7), rgba(0,0,0,0.1)), url(img/tainan.jpg) center/cover;">
                         <div class="card-name">Tainan</div>
                         <div class="card-sub">Oldest city, food capital of Taiwan</div>
                     </div>
-                    <div class="place-card" data-val="kaohsiung" style="background: linear-gradient(135deg, #1a2a4a, #2a4a7a, #0d1a3a);">
-                        <span class="card-emoji">⛩️</span>
+                    <div class="place-card" data-val="kaohsiung" style="background: linear-gradient(to top, rgba(0,0,0,0.7), rgba(0,0,0,0.1)), url(img/kaohsiung.jpg) center/cover;">
                         <div class="card-name">Kaohsiung</div>
                         <div class="card-sub">Port city, art, Fo Guang Shan</div>
                     </div>
-                    <div class="place-card" data-val="kenting" style="background: linear-gradient(135deg, #0a4a5a, #1a7a8a, #063a4a);">
-                        <span class="card-emoji">🏖️</span>
+                    <div class="place-card" data-val="kenting" style="background: linear-gradient(to top, rgba(0,0,0,0.7), rgba(0,0,0,0.1)), url(img/kenting.jpg) center/cover;">
                         <div class="card-name">Kenting</div>
                         <div class="card-sub">Tropical beaches, snorkeling</div>
                     </div>
-                    <div class="place-card wide" data-val="hualien_taroko" style="background: linear-gradient(135deg, #1a3a3a, #0a5a6a, #2a4a4a, #0d3a4a);">
-                        <span class="card-emoji">🏔️</span>
+                    <div class="place-card wide" data-val="hualien_taroko" style="background: linear-gradient(to top, rgba(0,0,0,0.6), rgba(0,0,0,0.1)), url(img/taroko.jpg) center/cover;">
                         <div class="card-name">Hualien & Taroko Gorge</div>
                         <div class="card-sub">Marble canyon walls rising 1,000m &mdash; Taiwan's most dramatic landscape</div>
                     </div>
-                    <div class="place-card" data-val="taitung" style="background: linear-gradient(135deg, #2a4a2a, #3a6a3a, #1a3a1a);">
-                        <span class="card-emoji">🏄</span>
-                        <div class="card-name">Taitung</div>
+                    <div class="place-card" data-val="taitung" style="background: linear-gradient(to top, rgba(0,0,0,0.7), rgba(0,0,0,0.1)), url(img/qingshui.jpg) center/cover;">
+                        <div class="card-name">Taitung & East Coast</div>
                         <div class="card-sub">East rift valley, surf, hot springs</div>
                     </div>
-                    <div class="place-card" data-val="offshore" style="background: linear-gradient(135deg, #0a3a5a, #1a5a7a, #063050);">
-                        <span class="card-emoji">🐢</span>
+                    <div class="place-card" data-val="offshore" style="background: linear-gradient(to top, rgba(0,0,0,0.7), rgba(0,0,0,0.1)), url(img/xiao-liuqiu.jpg) center/cover;">
                         <div class="card-name">Offshore Islands</div>
                         <div class="card-sub">Xiao Liuqiu, Penghu, Green Island</div>
                     </div>
@@ -829,74 +820,62 @@
                 <div class="question-hint">Tap the places you'd want to see. These are the "I can't believe Taiwan looks like this" moments.</div>
 
                 <div data-key="scenic_spots" class="scenic-list">
-                    <div class="scenic-card" data-val="taroko" style="background: linear-gradient(135deg, #0a4a5a, #1a6a7a, #0d3a4a);">
-                        <span class="scenic-emoji">🏔️</span>
+                    <div class="scenic-card" data-val="taroko" style="background: linear-gradient(to top, rgba(0,0,0,0.65), rgba(0,0,0,0.15)), url(img/taroko.jpg) center/cover;">
                         <div class="scenic-name">Taroko Gorge</div>
                         <div class="scenic-desc">Marble-walled canyons plunge hundreds of meters while turquoise rivers vanish into the mountain's throat</div>
                     </div>
 
-                    <div class="scenic-card" data-val="qingshui" style="background: linear-gradient(135deg, #0a3050, #1a5070, #0a2a40);">
-                        <span class="scenic-emoji">🌊</span>
+                    <div class="scenic-card" data-val="qingshui" style="background: linear-gradient(to top, rgba(0,0,0,0.65), rgba(0,0,0,0.15)), url(img/qingshui.jpg) center/cover;">
                         <div class="scenic-name">Qingshui Cliffs</div>
                         <div class="scenic-desc">1,000m sheer drops into three shades of blue Pacific &mdash; East Asia's most dramatic coast</div>
                     </div>
 
-                    <div class="scenic-card" data-val="alishan_sunrise" style="background: linear-gradient(135deg, #4a3a1a, #6a5a2a, #3a2a0a);">
-                        <span class="scenic-emoji">🌅</span>
+                    <div class="scenic-card" data-val="alishan_sunrise" style="background: linear-gradient(to top, rgba(0,0,0,0.65), rgba(0,0,0,0.15)), url(img/alishan.jpg) center/cover;">
                         <div class="scenic-name">Alishan Sunrise</div>
                         <div class="scenic-desc">Board a century-old railway into the clouds. Golden light breaks over a sea of fog above 2,000m peaks</div>
                     </div>
 
-                    <div class="scenic-card" data-val="sun_moon" style="background: linear-gradient(135deg, #1a3a5c, #2a5a7a, #0d2a42);">
-                        <span class="scenic-emoji">🪷</span>
+                    <div class="scenic-card" data-val="sun_moon" style="background: linear-gradient(to top, rgba(0,0,0,0.65), rgba(0,0,0,0.15)), url(img/sun-moon-lake.jpg) center/cover;">
                         <div class="scenic-name">Sun Moon Lake at Dawn</div>
                         <div class="scenic-desc">Mirror-still water in a volcanic basin where morning mist erases the treeline</div>
                     </div>
 
-                    <div class="scenic-card" data-val="jiufen_dusk" style="background: linear-gradient(135deg, #6a1a0a, #8a2a10, #4a1008);">
-                        <span class="scenic-emoji">🏮</span>
+                    <div class="scenic-card" data-val="jiufen_dusk" style="background: linear-gradient(to top, rgba(0,0,0,0.65), rgba(0,0,0,0.15)), url(img/jiufen.jpg) center/cover;">
                         <div class="scenic-name">Jiufen at Dusk</div>
                         <div class="scenic-desc">Red lanterns cascade down stone stairways into the mist, tea and taro drifting from doorways above the Pacific</div>
                     </div>
 
-                    <div class="scenic-card" data-val="yehliu" style="background: linear-gradient(135deg, #3a3a2a, #5a5a3a, #2a2a1a);">
-                        <span class="scenic-emoji">🪨</span>
+                    <div class="scenic-card" data-val="yehliu" style="background: linear-gradient(to top, rgba(0,0,0,0.65), rgba(0,0,0,0.15)), url(img/yehliu.jpg) center/cover;">
                         <div class="scenic-name">Yehliu Geopark</div>
                         <div class="scenic-desc">Wind and wave sculpted a peninsula of sandstone into surreal mushroom rocks and the famous Queen's Head</div>
                     </div>
 
-                    <div class="scenic-card" data-val="gaomei" style="background: linear-gradient(135deg, #3a2a1a, #5a4a3a, #2a1a0a);">
-                        <span class="scenic-emoji">🌇</span>
+                    <div class="scenic-card" data-val="gaomei" style="background: linear-gradient(to top, rgba(0,0,0,0.65), rgba(0,0,0,0.15)), url(img/gaomei.jpg) center/cover;">
                         <div class="scenic-name">Gaomei Wetlands</div>
                         <div class="scenic-desc">Infinite sunset reflections on tidal flats &mdash; walk the boardwalk as the sky turns liquid gold</div>
                     </div>
 
-                    <div class="scenic-card" data-val="xiao_liuqiu" style="background: linear-gradient(135deg, #0a4a4a, #1a6a6a, #063a3a);">
-                        <span class="scenic-emoji">🐢</span>
+                    <div class="scenic-card" data-val="xiao_liuqiu" style="background: linear-gradient(to top, rgba(0,0,0,0.65), rgba(0,0,0,0.15)), url(img/xiao-liuqiu.jpg) center/cover;">
                         <div class="scenic-name">Xiao Liuqiu</div>
                         <div class="scenic-desc">Crystal water, coral island, and sea turtles swimming right beside you &mdash; Taiwan's tropical secret</div>
                     </div>
 
-                    <div class="scenic-card" data-val="elephant_mt" style="background: linear-gradient(135deg, #1a1a3a, #2a2a5a, #0d0d2a);">
-                        <span class="scenic-emoji">🌆</span>
+                    <div class="scenic-card" data-val="elephant_mt" style="background: linear-gradient(to top, rgba(0,0,0,0.65), rgba(0,0,0,0.15)), url(img/elephant-mt.jpg) center/cover;">
                         <div class="scenic-name">Elephant Mountain</div>
                         <div class="scenic-desc">20-minute climb through jungle to Taipei 101 glowing against the city skyline. Best at sunset.</div>
                     </div>
 
-                    <div class="scenic-card" data-val="east_coast" style="background: linear-gradient(135deg, #1a3a2a, #2a5a4a, #0d2a1a);">
-                        <span class="scenic-emoji">🛤️</span>
+                    <div class="scenic-card" data-val="east_coast" style="background: linear-gradient(to top, rgba(0,0,0,0.65), rgba(0,0,0,0.15)), url(img/qingshui.jpg) center 40%/cover;">
                         <div class="scenic-name">East Coast Highway 11</div>
                         <div class="scenic-desc">Cliffs, surf breaks, rice paddies meeting the ocean &mdash; Taiwan's most beautiful drive</div>
                     </div>
 
-                    <div class="scenic-card" data-val="beitou" style="background: linear-gradient(135deg, #3a3a4a, #4a4a5a, #2a2a3a);">
-                        <span class="scenic-emoji">♨️</span>
+                    <div class="scenic-card" data-val="beitou" style="background: linear-gradient(to top, rgba(0,0,0,0.65), rgba(0,0,0,0.15)), url(img/beitou.jpg) center/cover;">
                         <div class="scenic-name">Beitou Hot Springs</div>
                         <div class="scenic-desc">Sulfur-scented valley 30 min from downtown Taipei. Japanese-era bathhouses line a steaming creek</div>
                     </div>
 
-                    <div class="scenic-card" data-val="yangmingshan" style="background: linear-gradient(135deg, #2a4a2a, #3a6a3a, #1a3a1a);">
-                        <span class="scenic-emoji">🌋</span>
+                    <div class="scenic-card" data-val="yangmingshan" style="background: linear-gradient(to top, rgba(0,0,0,0.65), rgba(0,0,0,0.15)), url(img/beitou.jpg) center 30%/cover;">
                         <div class="scenic-name">Yangmingshan</div>
                         <div class="scenic-desc">Steaming volcanic vents, calla lily fields in spring, and misty trails above Taipei</div>
                     </div>
