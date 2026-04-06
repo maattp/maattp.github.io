@@ -157,6 +157,13 @@
             background-position: center;
         }
 
+        /* Region cards: full-width with room for descriptions */
+        .regions-grid .place-card {
+            aspect-ratio: auto;
+            min-height: 200px;
+            padding: 16px;
+        }
+
         .place-card:active { transform: scale(0.97); }
         .place-card.selected { border-color: var(--jade); box-shadow: 0 0 20px rgba(45, 212, 168, 0.2); }
 
@@ -183,9 +190,23 @@
             margin-top: 2px;
         }
 
+        .place-card .card-detail {
+            font-size: 11.5px;
+            color: rgba(255,255,255,0.8);
+            text-shadow: 0 1px 4px rgba(0,0,0,0.5);
+            line-height: 1.5;
+            margin-top: 6px;
+        }
+
         .place-card.wide {
             grid-column: span 2;
-            aspect-ratio: 2.2/1;
+            aspect-ratio: auto;
+            min-height: 160px;
+        }
+
+        /* All region cards are now wide/full-width */
+        .place-grid.regions-grid {
+            grid-template-columns: 1fr;
         }
 
         /* ===== FOOD SPOT CARDS ===== */
@@ -697,50 +718,61 @@
             <div class="question">
                 <label class="question-label">Which regions interest you?</label>
                 <div class="question-hint">Each region has a different character. You can't do it all unless you have 2+ weeks.</div>
-                <div class="place-grid" data-key="regions">
-                    <div class="place-card" data-val="taipei" style="background: linear-gradient(to top, rgba(0,0,0,0.7), rgba(0,0,0,0.1)), url(img/taipei.jpg) center/cover;">
+                <div class="place-grid regions-grid" data-key="regions">
+                    <div class="place-card wide" data-val="taipei" style="background: linear-gradient(to top, rgba(0,0,0,0.75), rgba(0,0,0,0.15)), url(img/taipei.jpg) center/cover;">
                         <div class="card-name">Taipei</div>
                         <div class="card-sub">Culture, food, nightlife</div>
+                        <div class="card-detail">Taiwan's capital and the place most people spend the most time. Dense with night markets, temples, and world-class food at every price point. Incredible public transit (MRT goes everywhere). This is where you'll find Din Tai Fung, Yongkang Street, the National Palace Museum, and Taipei 101. Walkable neighborhoods each have their own personality &mdash; Daan for food, Zhongshan for art and cafes, Ximending for street culture, Dadaocheng for old-school Taipei. Most travelers spend 3-4 days here and wish they had more.</div>
                     </div>
-                    <div class="place-card" data-val="northeast" style="background: linear-gradient(to top, rgba(0,0,0,0.7), rgba(0,0,0,0.1)), url(img/jiufen.jpg) center/cover;">
+                    <div class="place-card wide" data-val="northeast" style="background: linear-gradient(to top, rgba(0,0,0,0.75), rgba(0,0,0,0.15)), url(img/jiufen.jpg) center/cover;">
                         <div class="card-name">Northeast Coast</div>
                         <div class="card-sub">Jiufen, Shifen, Keelung</div>
+                        <div class="card-detail">The most popular day trip region from Taipei. Jiufen is the lantern-lit hillside town rumored to have inspired Spirited Away. Shifen is where you release sky lanterns over old train tracks. Keelung has one of Taiwan's best night markets built around a temple, with seafood straight off the fishing boats. The coastline between these towns is dramatic &mdash; cliffs, fishing villages, and rock formations. Easy to do as a day trip by train + bus from Taipei.</div>
                     </div>
-                    <div class="place-card" data-val="taichung" style="background: linear-gradient(to top, rgba(0,0,0,0.7), rgba(0,0,0,0.1)), url(img/taichung.jpg) center/cover;">
+                    <div class="place-card wide" data-val="taichung" style="background: linear-gradient(to top, rgba(0,0,0,0.75), rgba(0,0,0,0.15)), url(img/taichung.jpg) center/cover;">
                         <div class="card-name">Taichung</div>
                         <div class="card-sub">Creative city, bubble tea origin</div>
+                        <div class="card-detail">Taiwan's second-largest city with a younger, more creative energy than Taipei. This is where bubble tea was invented (you can visit the original Chun Shui Tang shop). The art scene is strong &mdash; Rainbow Village (a retired soldier hand-painted an entire village), the National Taichung Theater, and the Calligraphy Greenway. It's also the gateway to Sun Moon Lake and Alishan. Great food, less crowded than Taipei, and a useful base for central Taiwan. 50 min from Taipei by HSR.</div>
                     </div>
-                    <div class="place-card" data-val="sun_moon_lake" style="background: linear-gradient(to top, rgba(0,0,0,0.7), rgba(0,0,0,0.1)), url(img/sun-moon-lake.jpg) center/cover;">
+                    <div class="place-card wide" data-val="sun_moon_lake" style="background: linear-gradient(to top, rgba(0,0,0,0.75), rgba(0,0,0,0.15)), url(img/sun-moon-lake.jpg) center/cover;">
                         <div class="card-name">Sun Moon Lake</div>
                         <div class="card-sub">Cycling, tea, misty mountains</div>
+                        <div class="card-detail">Taiwan's largest natural lake, cradled by misty mountains at 750m elevation. The 30km cycling loop around it is ranked among the world's most beautiful bike rides &mdash; flat, scenic, and well-paved. The surrounding hills produce some of Taiwan's finest tea (Assam and Ruby 18). Stay overnight to catch the lake at dawn when mist hovers on the water. Home to the indigenous Thao people. About 90 min by bus from Taichung. Best combined with a Taichung stop.</div>
                     </div>
-                    <div class="place-card" data-val="alishan" style="background: linear-gradient(to top, rgba(0,0,0,0.7), rgba(0,0,0,0.1)), url(img/alishan.jpg) center/cover;">
+                    <div class="place-card wide" data-val="alishan" style="background: linear-gradient(to top, rgba(0,0,0,0.75), rgba(0,0,0,0.15)), url(img/alishan.jpg) center/cover;">
                         <div class="card-name">Alishan</div>
                         <div class="card-sub">Sunrise over sea of clouds</div>
+                        <div class="card-detail">A mountain forest recreation area at 2,200m famous for one thing above all: watching sunrise over a sea of clouds from a peak you reach by century-old narrow-gauge railway. You take a pre-dawn train through ancient red cypress forest, arrive at the viewpoint in darkness, and watch the sky turn gold as clouds fill the valley below. Beyond the sunrise, there are hiking trails through 2,000-year-old trees and cool mountain air. Requires an overnight stay (limited lodging &mdash; book early). Getting there: HSR to Chiayi, then a 2.5hr mountain bus.</div>
                     </div>
-                    <div class="place-card" data-val="tainan" style="background: linear-gradient(to top, rgba(0,0,0,0.7), rgba(0,0,0,0.1)), url(img/tainan.jpg) center/cover;">
+                    <div class="place-card wide" data-val="tainan" style="background: linear-gradient(to top, rgba(0,0,0,0.75), rgba(0,0,0,0.15)), url(img/tainan.jpg) center/cover;">
                         <div class="card-name">Tainan</div>
                         <div class="card-sub">Oldest city, food capital of Taiwan</div>
+                        <div class="card-detail">Taiwan's original capital (1624&ndash;1887) and widely considered its food capital. If you care about food, you have to come here. Tainan has its own distinct cuisine &mdash; dishes are sweeter and more complex than the rest of the island. Milkfish congee at dawn, shrimp rolls at lunch, coffin bread in the afternoon, and beef soup at midnight. The streets are layered with 400 years of Dutch, Japanese, and Chinese history &mdash; temples, old forts, and narrow lanes. Smaller and more walkable than Taipei. 90 min by HSR from Taipei.</div>
                     </div>
-                    <div class="place-card" data-val="kaohsiung" style="background: linear-gradient(to top, rgba(0,0,0,0.7), rgba(0,0,0,0.1)), url(img/kaohsiung.jpg) center/cover;">
+                    <div class="place-card wide" data-val="kaohsiung" style="background: linear-gradient(to top, rgba(0,0,0,0.75), rgba(0,0,0,0.15)), url(img/kaohsiung.jpg) center/cover;">
                         <div class="card-name">Kaohsiung</div>
                         <div class="card-sub">Port city, art, Fo Guang Shan</div>
+                        <div class="card-detail">Taiwan's second-largest city, completely different from Taipei. A warm, sprawling port city that's reinvented itself through massive public art installations and urban renewal. The Pier-2 Art District is a converted warehouse complex filled with galleries. Fo Guang Shan, just outside the city, is one of the largest Buddhist monasteries in the world &mdash; a 36m-tall golden Buddha overlooking a complex the size of a university campus. Also the jumping-off point for Kenting and Xiao Liuqiu. Good MRT system. Warmer and sunnier than Taipei year-round.</div>
                     </div>
-                    <div class="place-card" data-val="kenting" style="background: linear-gradient(to top, rgba(0,0,0,0.7), rgba(0,0,0,0.1)), url(img/kenting.jpg) center/cover;">
+                    <div class="place-card wide" data-val="kenting" style="background: linear-gradient(to top, rgba(0,0,0,0.75), rgba(0,0,0,0.15)), url(img/kenting.jpg) center/cover;">
                         <div class="card-name">Kenting</div>
                         <div class="card-sub">Tropical beaches, snorkeling</div>
+                        <div class="card-detail">Taiwan's southern tip &mdash; the only truly tropical part of the island. White sand beaches, coral reefs, and warm water year-round. Kenting National Park has both coastline and jungle. The vibe is laid-back and beachy, with a night market right on the main strip. Snorkeling and diving are excellent. It's a different Taiwan &mdash; less cultural depth but genuine tropical relaxation. Best reached from Kaohsiung (2hrs by bus or rental car). A scooter makes exploring the coast much easier here.</div>
                     </div>
-                    <div class="place-card wide" data-val="hualien_taroko" style="background: linear-gradient(to top, rgba(0,0,0,0.6), rgba(0,0,0,0.1)), url(img/taroko.jpg) center/cover;">
-                        <div class="card-name">Hualien & Taroko Gorge</div>
-                        <div class="card-sub">Marble canyon walls rising 1,000m &mdash; partially closed since 2024 earthquake, check current trail status before planning</div>
+                    <div class="place-card wide" data-val="hualien_taroko" style="background: linear-gradient(to top, rgba(0,0,0,0.7), rgba(0,0,0,0.15)), url(img/taroko.jpg) center/cover;">
+                        <div class="card-name">Hualien &amp; Taroko Gorge</div>
+                        <div class="card-sub">Marble canyon, cliffs, indigenous culture</div>
+                        <div class="card-detail">Taroko Gorge is Taiwan's most dramatic natural wonder &mdash; a river-carved canyon cutting through solid marble, with 1,000m walls and trails chiseled into the cliff face. The gorge was partially damaged in the 2024 earthquake and some trails remain closed, but what's open is still extraordinary. Hualien city itself is a relaxed coastal town with a strong indigenous Amis culture, a great night market, and easy access to the spectacular Qingshui Cliffs. Getting there: scenic train along the coast (2.5hrs from Taipei) or a quick domestic flight. Plan at least 2 days.</div>
                     </div>
-                    <div class="place-card" data-val="taitung" style="background: linear-gradient(to top, rgba(0,0,0,0.7), rgba(0,0,0,0.1)), url(img/qingshui.jpg) center/cover;">
-                        <div class="card-name">Taitung & East Coast</div>
+                    <div class="place-card wide" data-val="taitung" style="background: linear-gradient(to top, rgba(0,0,0,0.75), rgba(0,0,0,0.15)), url(img/qingshui.jpg) center/cover;">
+                        <div class="card-name">Taitung &amp; East Coast</div>
                         <div class="card-sub">East rift valley, surf, hot springs</div>
+                        <div class="card-detail">The least-developed and most scenic stretch of Taiwan. The East Rift Valley is a wide, flat plain flanked by two mountain ranges &mdash; emerald rice paddies, hot air balloons (Jul&ndash;Aug festival), and almost no tourists. The coastline has dramatic rock formations and some of Taiwan's best surf breaks. Natural hot springs dot the valley (Zhiben is the most famous). This is also the departure point for Green Island and Orchid Island. Fewer English speakers and less infrastructure &mdash; you'll need flexibility and ideally a rental car or scooter.</div>
                     </div>
-                    <div class="place-card" data-val="offshore" style="background: linear-gradient(to top, rgba(0,0,0,0.7), rgba(0,0,0,0.1)), url(img/xiao-liuqiu.jpg) center/cover;">
+                    <div class="place-card wide" data-val="offshore" style="background: linear-gradient(to top, rgba(0,0,0,0.75), rgba(0,0,0,0.15)), url(img/xiao-liuqiu.jpg) center/cover;">
                         <div class="card-name">Offshore Islands</div>
                         <div class="card-sub">Xiao Liuqiu, Penghu, Green Island</div>
+                        <div class="card-detail">Three very different island experiences. Xiao Liuqiu (30 min ferry from Kaohsiung area) is a tiny coral island where you snorkel with sea turtles right off the beach &mdash; Taiwan's best-kept secret. Penghu is an archipelago of 90 islands in the Taiwan Strait with traditional stone villages, pristine beaches, and world-class windsurfing (best Apr&ndash;Oct). Green Island is a volcanic island off Taitung with saltwater hot springs that flow into the ocean &mdash; one of only three in the world. All require ferry or domestic flight, and accommodation books out fast in summer.</div>
                     </div>
                 </div>
             </div>
