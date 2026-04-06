@@ -1037,6 +1037,93 @@
             </div>
         </div>
 
+        <!-- ===== POINTS & MILES ===== -->
+        <div class="section">
+            <div class="section-header">
+                <div class="section-icon">💳</div>
+                <div><h2>Points & Miles</h2><span class="section-sub">Let's optimize what you have</span></div>
+            </div>
+
+            <div class="question">
+                <label class="question-label">Which points/miles programs do you have balances in?</label>
+                <div class="question-hint">Select all that apply. We'll figure out the best redemptions for flights and hotels.</div>
+                <div class="chips" data-key="points_programs">
+                    <div class="chip">Chase Ultimate Rewards</div>
+                    <div class="chip">Amex Membership Rewards</div>
+                    <div class="chip">Capital One Miles</div>
+                    <div class="chip">Citi ThankYou Points</div>
+                    <div class="chip">Bilt Rewards</div>
+                    <div class="chip">Marriott Bonvoy</div>
+                    <div class="chip">Hilton Honors</div>
+                    <div class="chip">IHG One Rewards</div>
+                    <div class="chip">World of Hyatt</div>
+                    <div class="chip">United MileagePlus</div>
+                    <div class="chip">Delta SkyMiles</div>
+                    <div class="chip">American Airlines AAdvantage</div>
+                    <div class="chip">Alaska Mileage Plan</div>
+                    <div class="chip">Air Canada Aeroplan</div>
+                    <div class="chip">EVA Air / Star Alliance</div>
+                    <div class="chip">China Airlines Dynasty Flyer</div>
+                    <div class="chip">None / paying cash</div>
+                </div>
+            </div>
+
+            <div class="question">
+                <label class="question-label">Approximate points balances (rough is fine)</label>
+                <div class="question-hint">This helps us figure out what's realistic &mdash; e.g. 80k Chase UR can cover two round-trip economy flights to Taiwan via Aeroplan, or a week of Hyatt hotels.</div>
+                <textarea data-key="points_balances" placeholder="e.g. ~120k Chase UR, ~80k Amex MR, ~50k Hyatt, ~40k Marriott..."></textarea>
+            </div>
+
+            <div class="question">
+                <label class="question-label">What do you want to use points for?</label>
+                <div class="chips" data-key="points_use">
+                    <div class="chip">Flights to Taiwan</div>
+                    <div class="chip">Flight upgrades (business class)</div>
+                    <div class="chip">Hotels in Taipei</div>
+                    <div class="chip">Hotels outside Taipei</div>
+                    <div class="chip">Save points, pay cash for everything</div>
+                </div>
+            </div>
+
+            <div class="question">
+                <label class="question-label">Flight class preference</label>
+                <div class="question-hint">Economy to Taipei is 13-16hrs from the US. EVA Air business class (the Hello Kitty jet!) is bookable via Aeroplan at ~88k miles. China Airlines via Dynasty Flyer is another option.</div>
+                <div class="radio-cards" data-key="flight_class" data-mode="single">
+                    <div class="radio-card" data-val="economy"><div class="rc-label">Economy is fine</div><div class="rc-sub">~35k points RT via Aeroplan</div></div>
+                    <div class="radio-card" data-val="premium_economy"><div class="rc-label">Premium economy</div><div class="rc-sub">Worth the upgrade if available</div></div>
+                    <div class="radio-card" data-val="business"><div class="rc-label">Business class</div><div class="rc-sub">~88k points RT via Aeroplan</div></div>
+                    <div class="radio-card" data-val="cash"><div class="rc-label">Paying cash for flights</div></div>
+                </div>
+            </div>
+
+            <div class="question">
+                <label class="question-label">Hotel loyalty preference in Taiwan</label>
+                <div class="question-hint">Hyatt: Grand Hyatt Taipei (near 101, ~20k pts/night). IHG: Kimpton Da An (trendy, ~34k pts), Regent Taipei (~38k pts). Marriott: W Taipei, Le M&eacute;ridien (~62k pts). Hilton: limited in Taiwan.</div>
+                <div class="radio-cards" data-key="hotel_loyalty" data-mode="single">
+                    <div class="radio-card" data-val="hyatt"><div class="rc-label">Hyatt</div><div class="rc-sub">Grand Hyatt Taipei</div></div>
+                    <div class="radio-card" data-val="ihg"><div class="rc-label">IHG</div><div class="rc-sub">Kimpton, Regent, Indigo</div></div>
+                    <div class="radio-card" data-val="marriott"><div class="rc-label">Marriott</div><div class="rc-sub">W, Le M&eacute;ridien, Courtyard</div></div>
+                    <div class="radio-card" data-val="no_preference"><div class="rc-label">No loyalty</div><div class="rc-sub">Best value wins</div></div>
+                </div>
+            </div>
+
+            <div class="question">
+                <label class="question-label">What redemption value are you targeting?</label>
+                <div class="question-hint">General rule: 1.5 cents/point is decent, 2+ cents/point is great. Business class flights and premium hotels usually give the best value per point.</div>
+                <div class="radio-cards" data-key="redemption_target" data-mode="single">
+                    <div class="radio-card" data-val="maximize"><div class="rc-label">Maximize value</div><div class="rc-sub">I'll adjust plans to get 2+ cpp</div></div>
+                    <div class="radio-card" data-val="good_enough"><div class="rc-label">Good enough</div><div class="rc-sub">1.5 cpp+ and I'm happy</div></div>
+                    <div class="radio-card" data-val="convenience"><div class="rc-label">Convenience first</div><div class="rc-sub">Just use them, don't care about cpp</div></div>
+                </div>
+            </div>
+
+            <div class="question">
+                <label class="question-label">Any credit cards with travel perks to leverage?</label>
+                <div class="question-hint">e.g. Amex Platinum lounge access, Chase Sapphire Reserve travel credit, Global Entry/TSA Pre, hotel elite status, travel insurance, etc.</div>
+                <textarea data-key="card_perks" placeholder="e.g. Amex Platinum (lounge access), CSR (Priority Pass), Marriott Titanium status..."></textarea>
+            </div>
+        </div>
+
         <!-- ===== PRIORITIES ===== -->
         <div class="section">
             <div class="section-header">
