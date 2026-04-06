@@ -46,404 +46,338 @@
         }
 
         /* Header */
-        .header {
-            text-align: center;
-            padding: 40px 0 32px;
-            position: relative;
-        }
-
-        .header-icon {
-            font-size: 48px;
-            margin-bottom: 12px;
-            display: block;
-        }
-
-        .header h1 {
-            font-size: 28px;
-            font-weight: 700;
-            letter-spacing: -0.5px;
-            margin-bottom: 4px;
-        }
-
+        .header { text-align: center; padding: 40px 0 32px; }
+        .header-icon { font-size: 48px; margin-bottom: 12px; display: block; }
+        .header h1 { font-size: 28px; font-weight: 700; letter-spacing: -0.5px; margin-bottom: 4px; }
         .header h1 .tw {
             background: linear-gradient(135deg, var(--accent), var(--lantern));
-            -webkit-background-clip: text;
-            -webkit-text-fill-color: transparent;
+            -webkit-background-clip: text; -webkit-text-fill-color: transparent;
         }
-
-        .header p {
-            color: var(--text-dim);
-            font-size: 14px;
-        }
+        .header p { color: var(--text-dim); font-size: 14px; }
 
         .name-input-wrapper {
-            margin-top: 20px;
-            display: flex;
-            align-items: center;
-            gap: 10px;
-            justify-content: center;
+            margin-top: 20px; display: flex; align-items: center;
+            gap: 10px; justify-content: center;
         }
-
-        .name-input-wrapper label {
-            font-size: 14px;
-            color: var(--text-dim);
-            white-space: nowrap;
-        }
-
+        .name-input-wrapper label { font-size: 14px; color: var(--text-dim); white-space: nowrap; }
         .name-input {
-            background: var(--surface);
-            border: 1px solid var(--border);
-            border-radius: 8px;
-            padding: 8px 14px;
-            color: var(--text);
-            font-size: 16px;
-            width: 180px;
-            outline: none;
-            transition: border-color 0.2s;
+            background: var(--surface); border: 1px solid var(--border); border-radius: 8px;
+            padding: 8px 14px; color: var(--text); font-size: 16px; width: 180px;
+            outline: none; transition: border-color 0.2s;
         }
-
-        .name-input:focus {
-            border-color: var(--accent);
-        }
+        .name-input:focus { border-color: var(--accent); }
 
         /* Sections */
-        .section {
-            margin-top: 36px;
-        }
-
+        .section { margin-top: 36px; }
         .section-header {
-            display: flex;
-            align-items: center;
-            gap: 10px;
-            margin-bottom: 16px;
-            padding-bottom: 10px;
-            border-bottom: 1px solid var(--border);
+            display: flex; align-items: center; gap: 10px;
+            margin-bottom: 16px; padding-bottom: 10px; border-bottom: 1px solid var(--border);
         }
-
         .section-icon {
-            font-size: 20px;
-            width: 36px;
-            height: 36px;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            background: var(--surface2);
-            border-radius: 10px;
-            flex-shrink: 0;
+            font-size: 20px; width: 36px; height: 36px;
+            display: flex; align-items: center; justify-content: center;
+            background: var(--surface2); border-radius: 10px; flex-shrink: 0;
         }
-
-        .section-header h2 {
-            font-size: 18px;
-            font-weight: 600;
-            letter-spacing: -0.3px;
-        }
-
-        .section-header .section-sub {
-            font-size: 12px;
-            color: var(--text-dim);
-            display: block;
-            font-weight: 400;
-        }
+        .section-header h2 { font-size: 18px; font-weight: 600; letter-spacing: -0.3px; }
+        .section-header .section-sub { font-size: 12px; color: var(--text-dim); display: block; font-weight: 400; }
 
         /* Questions */
-        .question {
-            margin-bottom: 24px;
-        }
+        .question { margin-bottom: 24px; }
+        .question-label { font-size: 15px; font-weight: 500; margin-bottom: 6px; display: block; }
+        .question-hint { font-size: 12px; color: var(--text-dim); margin-bottom: 10px; line-height: 1.5; }
 
-        .question-label {
-            font-size: 15px;
-            font-weight: 500;
-            margin-bottom: 6px;
-            display: block;
-        }
-
-        .question-hint {
-            font-size: 12px;
-            color: var(--text-dim);
-            margin-bottom: 10px;
-            line-height: 1.5;
-        }
-
-        /* Chips (multi-select) */
-        .chips {
-            display: flex;
-            flex-wrap: wrap;
-            gap: 8px;
-        }
-
+        /* Chips */
+        .chips { display: flex; flex-wrap: wrap; gap: 8px; }
         .chip {
-            padding: 8px 14px;
-            border-radius: 20px;
-            background: var(--surface);
-            border: 1px solid var(--border);
-            font-size: 13px;
-            color: var(--text-dim);
-            cursor: pointer;
-            transition: all 0.2s;
-            user-select: none;
-            -webkit-user-select: none;
+            padding: 8px 14px; border-radius: 20px; background: var(--surface);
+            border: 1px solid var(--border); font-size: 13px; color: var(--text-dim);
+            cursor: pointer; transition: all 0.2s; user-select: none; -webkit-user-select: none;
         }
-
         .chip:active { transform: scale(0.96); }
-
-        .chip.selected {
-            background: var(--accent-glow);
-            border-color: var(--accent);
-            color: var(--text);
-        }
-
-        .chip.jade.selected {
-            background: var(--jade-glow);
-            border-color: var(--jade);
-        }
-
-        .chip.lantern.selected {
-            background: var(--lantern-glow);
-            border-color: var(--lantern);
-        }
+        .chip.selected { background: var(--accent-glow); border-color: var(--accent); color: var(--text); }
+        .chip.jade.selected { background: var(--jade-glow); border-color: var(--jade); }
+        .chip.lantern.selected { background: var(--lantern-glow); border-color: var(--lantern); }
 
         /* Radio cards */
-        .radio-cards {
-            display: grid;
-            grid-template-columns: 1fr 1fr;
-            gap: 8px;
-        }
-
-        .radio-cards.three-col {
-            grid-template-columns: 1fr 1fr 1fr;
-        }
-
+        .radio-cards { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+        .radio-cards.three-col { grid-template-columns: 1fr 1fr 1fr; }
         .radio-card {
-            padding: 12px;
-            border-radius: var(--radius);
-            background: var(--surface);
-            border: 1px solid var(--border);
-            text-align: center;
-            cursor: pointer;
-            transition: all 0.2s;
-            user-select: none;
-            -webkit-user-select: none;
+            padding: 12px; border-radius: var(--radius); background: var(--surface);
+            border: 1px solid var(--border); text-align: center; cursor: pointer;
+            transition: all 0.2s; user-select: none; -webkit-user-select: none;
         }
-
         .radio-card:active { transform: scale(0.97); }
-
         .radio-card .rc-icon { font-size: 22px; margin-bottom: 4px; }
         .radio-card .rc-label { font-size: 13px; font-weight: 500; }
         .radio-card .rc-sub { font-size: 11px; color: var(--text-dim); margin-top: 2px; }
-
-        .radio-card.selected {
-            background: var(--accent-glow);
-            border-color: var(--accent);
-        }
+        .radio-card.selected { background: var(--accent-glow); border-color: var(--accent); }
 
         /* Slider */
-        .slider-wrapper {
-            padding: 4px 0;
-        }
-
-        .slider-labels {
-            display: flex;
-            justify-content: space-between;
-            font-size: 11px;
-            color: var(--text-dim);
-            margin-bottom: 8px;
-        }
-
-        input[type="range"] {
-            -webkit-appearance: none;
-            width: 100%;
-            height: 6px;
-            border-radius: 3px;
-            background: var(--surface2);
-            outline: none;
-        }
-
+        .slider-wrapper { padding: 4px 0; }
+        .slider-labels { display: flex; justify-content: space-between; font-size: 11px; color: var(--text-dim); margin-bottom: 8px; }
+        input[type="range"] { -webkit-appearance: none; width: 100%; height: 6px; border-radius: 3px; background: var(--surface2); outline: none; }
         input[type="range"]::-webkit-slider-thumb {
-            -webkit-appearance: none;
-            width: 22px;
-            height: 22px;
-            border-radius: 50%;
-            background: var(--accent);
-            cursor: pointer;
-            box-shadow: 0 2px 8px rgba(228, 77, 110, 0.4);
+            -webkit-appearance: none; width: 22px; height: 22px; border-radius: 50%;
+            background: var(--accent); cursor: pointer; box-shadow: 0 2px 8px rgba(228, 77, 110, 0.4);
         }
-
-        .slider-value {
-            text-align: center;
-            margin-top: 8px;
-            font-size: 13px;
-            color: var(--text-dim);
-        }
+        .slider-value { text-align: center; margin-top: 8px; font-size: 13px; color: var(--text-dim); }
 
         /* Textarea */
         textarea {
-            width: 100%;
-            background: var(--surface);
-            border: 1px solid var(--border);
-            border-radius: var(--radius);
-            padding: 12px 14px;
-            color: var(--text);
-            font-size: 14px;
-            font-family: inherit;
-            resize: vertical;
-            min-height: 72px;
-            outline: none;
-            transition: border-color 0.2s;
+            width: 100%; background: var(--surface); border: 1px solid var(--border);
+            border-radius: var(--radius); padding: 12px 14px; color: var(--text);
+            font-size: 14px; font-family: inherit; resize: vertical; min-height: 72px;
+            outline: none; transition: border-color 0.2s;
         }
-
         textarea:focus { border-color: var(--accent); }
         textarea::placeholder { color: var(--text-dim); opacity: 0.6; }
 
-        /* Priority ranking */
-        .priority-list {
-            list-style: none;
+        /* ===== VISUAL CARDS ===== */
+        .place-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 10px;
         }
 
-        .priority-item {
-            display: flex;
-            align-items: center;
-            gap: 12px;
-            padding: 10px 14px;
-            margin-bottom: 6px;
-            background: var(--surface);
-            border: 1px solid var(--border);
-            border-radius: 10px;
-            cursor: grab;
-            touch-action: none;
+        .place-card {
+            position: relative;
+            border-radius: 14px;
+            overflow: hidden;
+            cursor: pointer;
+            transition: all 0.2s;
             user-select: none;
             -webkit-user-select: none;
-            transition: background 0.15s, border-color 0.15s;
+            aspect-ratio: 4/3;
+            display: flex;
+            flex-direction: column;
+            justify-content: flex-end;
+            padding: 12px;
+            border: 2px solid transparent;
         }
 
-        .priority-item:active, .priority-item.dragging {
-            background: var(--surface2);
-            border-color: var(--accent);
-            cursor: grabbing;
+        .place-card:active { transform: scale(0.97); }
+        .place-card.selected { border-color: var(--jade); box-shadow: 0 0 20px rgba(45, 212, 168, 0.2); }
+
+        .place-card .card-emoji {
+            font-size: 28px;
+            position: absolute;
+            top: 10px;
+            right: 10px;
+            filter: drop-shadow(0 2px 4px rgba(0,0,0,0.3));
         }
 
-        .priority-rank {
-            width: 24px;
-            height: 24px;
-            border-radius: 6px;
-            background: var(--surface2);
+        .place-card .card-name {
+            font-size: 14px;
+            font-weight: 600;
+            color: #fff;
+            text-shadow: 0 1px 4px rgba(0,0,0,0.5);
+            line-height: 1.3;
+        }
+
+        .place-card .card-sub {
+            font-size: 11px;
+            color: rgba(255,255,255,0.75);
+            text-shadow: 0 1px 3px rgba(0,0,0,0.5);
+            margin-top: 2px;
+        }
+
+        .place-card.wide {
+            grid-column: span 2;
+            aspect-ratio: 2/1;
+        }
+
+        /* ===== FOOD SPOT CARDS ===== */
+        .food-scroll {
+            display: flex;
+            gap: 12px;
+            overflow-x: auto;
+            scroll-snap-type: x mandatory;
+            -webkit-overflow-scrolling: touch;
+            padding-bottom: 8px;
+            margin: 0 -16px;
+            padding-left: 16px;
+            padding-right: 16px;
+        }
+
+        .food-scroll::-webkit-scrollbar { display: none; }
+
+        .food-card {
+            flex: 0 0 260px;
+            scroll-snap-align: start;
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: 14px;
+            overflow: hidden;
+            transition: border-color 0.2s;
+            cursor: pointer;
+            user-select: none;
+            -webkit-user-select: none;
+        }
+
+        .food-card:active { transform: scale(0.98); }
+        .food-card.selected { border-color: var(--lantern); }
+
+        .food-card-hero {
+            height: 100px;
             display: flex;
             align-items: center;
             justify-content: center;
-            font-size: 12px;
+            font-size: 48px;
+            position: relative;
+        }
+
+        .food-card-body {
+            padding: 12px 14px 14px;
+        }
+
+        .food-card-name {
+            font-size: 14px;
             font-weight: 600;
+            margin-bottom: 1px;
+        }
+
+        .food-card-name-zh {
+            font-size: 12px;
             color: var(--text-dim);
-            flex-shrink: 0;
+            margin-bottom: 4px;
         }
 
-        .priority-item:first-child .priority-rank {
-            background: var(--accent-glow);
-            color: var(--accent);
+        .food-card-desc {
+            font-size: 12px;
+            color: var(--text-dim);
+            line-height: 1.4;
+            margin-bottom: 8px;
+            display: -webkit-box;
+            -webkit-line-clamp: 3;
+            -webkit-box-orient: vertical;
+            overflow: hidden;
         }
 
+        .food-card-meta {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
+
+        .food-card-tag {
+            font-size: 10px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            padding: 3px 8px;
+            border-radius: 6px;
+            background: var(--surface2);
+            color: var(--text-dim);
+        }
+
+        .food-card-link {
+            font-size: 11px;
+            color: var(--lantern);
+            text-decoration: none;
+            font-weight: 500;
+        }
+
+        .scroll-hint {
+            font-size: 11px;
+            color: var(--text-dim);
+            text-align: right;
+            margin-top: 4px;
+            opacity: 0.7;
+        }
+
+        /* ===== SCENIC CARDS ===== */
+        .scenic-card {
+            position: relative;
+            border-radius: 14px;
+            overflow: hidden;
+            cursor: pointer;
+            user-select: none;
+            -webkit-user-select: none;
+            padding: 16px;
+            margin-bottom: 10px;
+            min-height: 110px;
+            display: flex;
+            flex-direction: column;
+            justify-content: flex-end;
+            border: 2px solid transparent;
+            transition: all 0.2s;
+        }
+
+        .scenic-card:active { transform: scale(0.98); }
+        .scenic-card.selected { border-color: var(--jade); box-shadow: 0 0 20px rgba(45, 212, 168, 0.15); }
+
+        .scenic-card .scenic-emoji {
+            font-size: 32px;
+            position: absolute;
+            top: 12px;
+            right: 14px;
+            filter: drop-shadow(0 2px 4px rgba(0,0,0,0.3));
+        }
+
+        .scenic-card .scenic-name {
+            font-size: 16px;
+            font-weight: 700;
+            color: #fff;
+            text-shadow: 0 1px 6px rgba(0,0,0,0.5);
+            margin-bottom: 4px;
+        }
+
+        .scenic-card .scenic-desc {
+            font-size: 12px;
+            color: rgba(255,255,255,0.8);
+            text-shadow: 0 1px 4px rgba(0,0,0,0.5);
+            line-height: 1.5;
+            max-width: 85%;
+        }
+
+        /* Priority ranking */
+        .priority-list { list-style: none; }
+        .priority-item {
+            display: flex; align-items: center; gap: 12px;
+            padding: 10px 14px; margin-bottom: 6px; background: var(--surface);
+            border: 1px solid var(--border); border-radius: 10px;
+            cursor: grab; touch-action: none; user-select: none; -webkit-user-select: none;
+            transition: background 0.15s, border-color 0.15s;
+        }
+        .priority-item:active, .priority-item.dragging { background: var(--surface2); border-color: var(--accent); cursor: grabbing; }
+        .priority-rank {
+            width: 24px; height: 24px; border-radius: 6px; background: var(--surface2);
+            display: flex; align-items: center; justify-content: center;
+            font-size: 12px; font-weight: 600; color: var(--text-dim); flex-shrink: 0;
+        }
+        .priority-item:first-child .priority-rank { background: var(--accent-glow); color: var(--accent); }
         .priority-text { font-size: 14px; flex: 1; }
         .priority-handle { color: var(--text-dim); font-size: 16px; flex-shrink: 0; }
 
-        /* Submit */
+        /* Submit / Output */
         .submit-btn {
-            display: block;
-            width: 100%;
-            padding: 16px;
-            margin-top: 40px;
-            border: none;
-            border-radius: var(--radius);
-            background: linear-gradient(135deg, var(--accent), #c0395a);
-            color: white;
-            font-size: 16px;
-            font-weight: 600;
-            cursor: pointer;
-            transition: transform 0.15s, opacity 0.15s;
-            letter-spacing: 0.3px;
+            display: block; width: 100%; padding: 16px; margin-top: 40px; border: none;
+            border-radius: var(--radius); background: linear-gradient(135deg, var(--accent), #c0395a);
+            color: white; font-size: 16px; font-weight: 600; cursor: pointer;
+            transition: transform 0.15s, opacity 0.15s; letter-spacing: 0.3px;
         }
-
         .submit-btn:active { transform: scale(0.98); opacity: 0.9; }
-
         .clear-btn {
-            display: block;
-            width: 100%;
-            padding: 12px;
-            margin-top: 10px;
-            border: 1px solid var(--border);
-            border-radius: var(--radius);
-            background: transparent;
-            color: var(--text-dim);
-            font-size: 14px;
-            cursor: pointer;
-            transition: border-color 0.2s;
+            display: block; width: 100%; padding: 12px; margin-top: 10px;
+            border: 1px solid var(--border); border-radius: var(--radius);
+            background: transparent; color: var(--text-dim); font-size: 14px; cursor: pointer;
         }
-
-        .clear-btn:active { border-color: var(--accent); }
-
-        /* Output */
-        .output {
-            display: none;
-            margin-top: 32px;
-        }
-
+        .output { display: none; margin-top: 32px; }
         .output.visible { display: block; }
-
-        .output h3 {
-            font-size: 16px;
-            margin-bottom: 12px;
-        }
-
+        .output h3 { font-size: 16px; margin-bottom: 12px; }
         .output-block {
-            background: var(--surface);
-            border: 1px solid var(--border);
-            border-radius: var(--radius);
-            padding: 14px;
-            font-family: 'SF Mono', 'Fira Code', monospace;
-            font-size: 12px;
-            line-height: 1.5;
-            color: var(--jade);
-            white-space: pre-wrap;
-            word-break: break-all;
-            max-height: 400px;
-            overflow-y: auto;
-            -webkit-overflow-scrolling: touch;
+            background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius);
+            padding: 14px; font-family: 'SF Mono', 'Fira Code', monospace; font-size: 12px;
+            line-height: 1.5; color: var(--jade); white-space: pre-wrap; word-break: break-all;
+            max-height: 400px; overflow-y: auto; -webkit-overflow-scrolling: touch;
         }
-
         .copy-btn {
-            display: block;
-            width: 100%;
-            padding: 12px;
-            margin-top: 10px;
-            border: 1px solid var(--jade);
-            border-radius: var(--radius);
-            background: var(--jade-glow);
-            color: var(--jade);
-            font-size: 14px;
-            font-weight: 500;
-            cursor: pointer;
-            transition: opacity 0.15s;
+            display: block; width: 100%; padding: 12px; margin-top: 10px;
+            border: 1px solid var(--jade); border-radius: var(--radius);
+            background: var(--jade-glow); color: var(--jade); font-size: 14px; font-weight: 500; cursor: pointer;
         }
-
-        .copy-btn:active { opacity: 0.8; }
-
-        .saved-indicator {
-            text-align: center;
-            margin-top: 12px;
-            font-size: 12px;
-            color: var(--text-dim);
-            opacity: 0;
-            transition: opacity 0.3s;
-        }
-
+        .saved-indicator { text-align: center; margin-top: 12px; font-size: 12px; color: var(--text-dim); opacity: 0; transition: opacity 0.3s; }
         .saved-indicator.show { opacity: 1; }
-
-        /* Decorative divider */
-        .wave-divider {
-            text-align: center;
-            color: var(--border);
-            font-size: 24px;
-            letter-spacing: 8px;
-            margin: 40px 0 0;
-            opacity: 0.5;
-        }
+        .wave-divider { text-align: center; color: var(--border); font-size: 24px; letter-spacing: 8px; margin: 40px 0 0; opacity: 0.5; }
     </style>
 </head>
 <body>
@@ -467,48 +401,25 @@
 
             <div class="question">
                 <label class="question-label">When are you thinking of going?</label>
-                <div class="question-hint">Oct-Nov is ideal (dry, pleasant). May-Jun is plum rain season. Jul-Sep brings typhoons but also summer festivals.</div>
+                <div class="question-hint">Oct-Nov is ideal (dry, pleasant). May-Jun is plum rain season. Jul-Sep brings typhoons but also summer festivals. Feb has cherry blossoms and lantern festivals.</div>
                 <div class="chips" data-key="travel_month">
-                    <div class="chip" data-val="jan">Jan</div>
-                    <div class="chip" data-val="feb">Feb</div>
-                    <div class="chip" data-val="mar">Mar</div>
-                    <div class="chip" data-val="apr">Apr</div>
-                    <div class="chip" data-val="may">May</div>
-                    <div class="chip" data-val="jun">Jun</div>
-                    <div class="chip" data-val="jul">Jul</div>
-                    <div class="chip" data-val="aug">Aug</div>
-                    <div class="chip" data-val="sep">Sep</div>
-                    <div class="chip" data-val="oct">Oct</div>
-                    <div class="chip" data-val="nov">Nov</div>
-                    <div class="chip" data-val="dec">Dec</div>
+                    <div class="chip" data-val="jan">Jan</div><div class="chip" data-val="feb">Feb</div>
+                    <div class="chip" data-val="mar">Mar</div><div class="chip" data-val="apr">Apr</div>
+                    <div class="chip" data-val="may">May</div><div class="chip" data-val="jun">Jun</div>
+                    <div class="chip" data-val="jul">Jul</div><div class="chip" data-val="aug">Aug</div>
+                    <div class="chip" data-val="sep">Sep</div><div class="chip" data-val="oct">Oct</div>
+                    <div class="chip" data-val="nov">Nov</div><div class="chip" data-val="dec">Dec</div>
                     <div class="chip" data-val="flexible">Flexible</div>
                 </div>
             </div>
 
             <div class="question">
-                <label class="question-label">How long can you go?</label>
+                <label class="question-label">How many days?</label>
                 <div class="question-hint">1 week = Taipei + one region. 2 weeks = full island loop. 3 weeks = go deep with islands and mountains.</div>
-                <div class="radio-cards" data-key="duration" data-mode="single">
-                    <div class="radio-card" data-val="5-7">
-                        <div class="rc-icon">⚡</div>
-                        <div class="rc-label">5-7 days</div>
-                        <div class="rc-sub">Highlights</div>
-                    </div>
-                    <div class="radio-card" data-val="8-10">
-                        <div class="rc-icon">🎯</div>
-                        <div class="rc-label">8-10 days</div>
-                        <div class="rc-sub">Solid trip</div>
-                    </div>
-                    <div class="radio-card" data-val="11-14">
-                        <div class="rc-icon">🗺️</div>
-                        <div class="rc-label">11-14 days</div>
-                        <div class="rc-sub">Full loop</div>
-                    </div>
-                    <div class="radio-card" data-val="15+">
-                        <div class="rc-icon">🌊</div>
-                        <div class="rc-label">15+ days</div>
-                        <div class="rc-sub">Deep dive</div>
-                    </div>
+                <div class="slider-wrapper">
+                    <div class="slider-labels"><span>5 days</span><span>21 days</span></div>
+                    <input type="range" min="5" max="21" value="10" data-key="duration_days">
+                    <div class="slider-value" id="durationLabel">10 days</div>
                 </div>
             </div>
         </div>
@@ -555,33 +466,77 @@
             </div>
         </div>
 
-        <!-- ===== REGIONS ===== -->
+        <!-- ===== REGIONS (VISUAL CARDS) ===== -->
         <div class="section">
             <div class="section-header">
                 <div class="section-icon">🗾</div>
-                <div><h2>Regions & Places</h2><span class="section-sub">Taiwan is small but incredibly varied</span></div>
+                <div><h2>Regions & Places</h2><span class="section-sub">Tap the places that call to you</span></div>
             </div>
 
             <div class="question">
-                <label class="question-label">Which regions interest you most?</label>
-                <div class="question-hint">Each region has a different character. You can't do it all in one trip unless you have 2+ weeks.</div>
-                <div class="chips jade" data-key="regions">
-                    <div class="chip jade" data-val="taipei">Taipei &mdash; culture, food, nightlife</div>
-                    <div class="chip jade" data-val="northeast">Northeast Coast &mdash; Jiufen, Shifen, Keelung</div>
-                    <div class="chip jade" data-val="taichung">Taichung &mdash; creative city, day trips</div>
-                    <div class="chip jade" data-val="sun_moon_lake">Sun Moon Lake &mdash; cycling, tea, scenery</div>
-                    <div class="chip jade" data-val="alishan">Alishan &mdash; sunrise, ancient forest, railway</div>
-                    <div class="chip jade" data-val="tainan">Tainan &mdash; oldest city, food capital</div>
-                    <div class="chip jade" data-val="kaohsiung">Kaohsiung &mdash; port city, art, Fo Guang Shan</div>
-                    <div class="chip jade" data-val="kenting">Kenting &mdash; tropical beaches, snorkeling</div>
-                    <div class="chip jade" data-val="hualien_taroko">Hualien &amp; Taroko Gorge &mdash; marble canyon</div>
-                    <div class="chip jade" data-val="taitung">Taitung &mdash; east rift valley, surf, hot springs</div>
-                    <div class="chip jade" data-val="offshore">Offshore Islands &mdash; Xiao Liuqiu, Penghu, Green Island</div>
+                <label class="question-label">Which regions interest you?</label>
+                <div class="question-hint">Each region has a different character. You can't do it all unless you have 2+ weeks.</div>
+                <div class="place-grid" data-key="regions">
+                    <div class="place-card" data-val="taipei" style="background: linear-gradient(135deg, #1a1a3e, #2d1f4e, #0f2847);">
+                        <span class="card-emoji">🌃</span>
+                        <div class="card-name">Taipei</div>
+                        <div class="card-sub">Culture, food, nightlife</div>
+                    </div>
+                    <div class="place-card" data-val="northeast" style="background: linear-gradient(135deg, #8b2500, #c0392b, #4a1a0a);">
+                        <span class="card-emoji">🏮</span>
+                        <div class="card-name">Northeast Coast</div>
+                        <div class="card-sub">Jiufen, Shifen, Keelung</div>
+                    </div>
+                    <div class="place-card" data-val="taichung" style="background: linear-gradient(135deg, #1a3c34, #2c6b5a, #0d2e26);">
+                        <span class="card-emoji">🎨</span>
+                        <div class="card-name">Taichung</div>
+                        <div class="card-sub">Creative city, bubble tea origin</div>
+                    </div>
+                    <div class="place-card" data-val="sun_moon_lake" style="background: linear-gradient(135deg, #1a3a5c, #2a5a7a, #0d2a42);">
+                        <span class="card-emoji">🚴</span>
+                        <div class="card-name">Sun Moon Lake</div>
+                        <div class="card-sub">Cycling, tea, misty mountains</div>
+                    </div>
+                    <div class="place-card" data-val="alishan" style="background: linear-gradient(135deg, #2d4a1a, #4a6b2a, #1a2d0d);">
+                        <span class="card-emoji">🌄</span>
+                        <div class="card-name">Alishan</div>
+                        <div class="card-sub">Sunrise over sea of clouds</div>
+                    </div>
+                    <div class="place-card" data-val="tainan" style="background: linear-gradient(135deg, #6b3a1a, #8b5a2a, #4a2a0d);">
+                        <span class="card-emoji">🛕</span>
+                        <div class="card-name">Tainan</div>
+                        <div class="card-sub">Oldest city, food capital of Taiwan</div>
+                    </div>
+                    <div class="place-card" data-val="kaohsiung" style="background: linear-gradient(135deg, #1a2a4a, #2a4a7a, #0d1a3a);">
+                        <span class="card-emoji">⛩️</span>
+                        <div class="card-name">Kaohsiung</div>
+                        <div class="card-sub">Port city, art, Fo Guang Shan</div>
+                    </div>
+                    <div class="place-card" data-val="kenting" style="background: linear-gradient(135deg, #0a4a5a, #1a7a8a, #063a4a);">
+                        <span class="card-emoji">🏖️</span>
+                        <div class="card-name">Kenting</div>
+                        <div class="card-sub">Tropical beaches, snorkeling</div>
+                    </div>
+                    <div class="place-card wide" data-val="hualien_taroko" style="background: linear-gradient(135deg, #1a3a3a, #0a5a6a, #2a4a4a, #0d3a4a);">
+                        <span class="card-emoji">🏔️</span>
+                        <div class="card-name">Hualien & Taroko Gorge</div>
+                        <div class="card-sub">Marble canyon walls rising 1,000m &mdash; Taiwan's most dramatic landscape</div>
+                    </div>
+                    <div class="place-card" data-val="taitung" style="background: linear-gradient(135deg, #2a4a2a, #3a6a3a, #1a3a1a);">
+                        <span class="card-emoji">🏄</span>
+                        <div class="card-name">Taitung</div>
+                        <div class="card-sub">East rift valley, surf, hot springs</div>
+                    </div>
+                    <div class="place-card" data-val="offshore" style="background: linear-gradient(135deg, #0a3a5a, #1a5a7a, #063050);">
+                        <span class="card-emoji">🐢</span>
+                        <div class="card-name">Offshore Islands</div>
+                        <div class="card-sub">Xiao Liuqiu, Penghu, Green Island</div>
+                    </div>
                 </div>
             </div>
 
             <div class="question">
-                <label class="question-label">Any must-do spots? Things you've seen online or heard about?</label>
+                <label class="question-label">Any must-do spots you've heard about?</label>
                 <textarea data-key="must_do" placeholder="e.g. Taroko Gorge, Jiufen at night, that one night market everyone talks about..."></textarea>
             </div>
         </div>
@@ -596,183 +551,269 @@
             <div class="question">
                 <label class="question-label">How important is food to this trip?</label>
                 <div class="radio-cards" data-key="food_importance" data-mode="single">
-                    <div class="radio-card" data-val="eat_to_live">
-                        <div class="rc-label">Fuel up & go</div>
-                        <div class="rc-sub">Food isn't the focus</div>
-                    </div>
-                    <div class="radio-card" data-val="enjoy">
-                        <div class="rc-label">Enjoy good food</div>
-                        <div class="rc-sub">Try the hits</div>
-                    </div>
-                    <div class="radio-card" data-val="food_driven">
-                        <div class="rc-label">Plan around food</div>
-                        <div class="rc-sub">EAT. EVERYTHING.</div>
-                    </div>
+                    <div class="radio-card" data-val="eat_to_live"><div class="rc-label">Fuel up & go</div><div class="rc-sub">Food isn't the focus</div></div>
+                    <div class="radio-card" data-val="enjoy"><div class="rc-label">Enjoy good food</div><div class="rc-sub">Try the hits</div></div>
+                    <div class="radio-card" data-val="food_driven"><div class="rc-label">Plan around food</div><div class="rc-sub">EAT. EVERYTHING.</div></div>
                 </div>
             </div>
 
             <div class="question">
-                <label class="question-label">Which food experiences appeal to you?</label>
-                <div class="chips lantern" data-key="food_experiences">
-                    <div class="chip lantern">Night market hopping</div>
-                    <div class="chip lantern">Street food deep dives</div>
-                    <div class="chip lantern">Sit-down local restaurants</div>
-                    <div class="chip lantern">Cooking class</div>
-                    <div class="chip lantern">Tea ceremony / tasting</div>
-                    <div class="chip lantern">Breakfast shop culture</div>
-                    <div class="chip lantern">Bubble tea origin tour</div>
-                    <div class="chip lantern">Regional specialties trail</div>
-                    <div class="chip lantern">Fine dining / Michelin</div>
+                <label class="question-label">Food spots that interest you</label>
+                <div class="question-hint">Swipe to browse. Tap to select. Tap the map link to see it on Google Maps.</div>
+                <div class="food-scroll" data-key="food_spots">
+                    <div class="food-card" data-val="din_tai_fung">
+                        <div class="food-card-hero" style="background: linear-gradient(135deg, #2a1a0a, #4a3020);">🥟</div>
+                        <div class="food-card-body">
+                            <div class="food-card-name">Din Tai Fung</div>
+                            <div class="food-card-name-zh">鼎泰豐 &mdash; Xinyi, Taipei</div>
+                            <div class="food-card-desc">The gold standard of xiao long bao. The original location of a global dumpling empire. Worth the queue.</div>
+                            <div class="food-card-meta">
+                                <span class="food-card-tag">Restaurant</span>
+                                <a href="https://maps.google.com/?q=Din+Tai+Fung+Original+Xinyi+Taipei+Taiwan" target="_blank" rel="noopener" class="food-card-link" onclick="event.stopPropagation()">View on map &rarr;</a>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="food-card" data-val="yongkang_beef">
+                        <div class="food-card-hero" style="background: linear-gradient(135deg, #3a1a0a, #5a2a10);">🍜</div>
+                        <div class="food-card-body">
+                            <div class="food-card-name">Yongkang Beef Noodle</div>
+                            <div class="food-card-name-zh">永康牛肉麵 &mdash; Da'an, Taipei</div>
+                            <div class="food-card-desc">Taipei's most legendary beef noodle soup. Fork-tender braised beef in a deeply spiced broth. The benchmark.</div>
+                            <div class="food-card-meta">
+                                <span class="food-card-tag">Restaurant</span>
+                                <a href="https://maps.google.com/?q=Yongkang+Beef+Noodle+Taipei+Taiwan" target="_blank" rel="noopener" class="food-card-link" onclick="event.stopPropagation()">View on map &rarr;</a>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="food-card" data-val="fuhang">
+                        <div class="food-card-hero" style="background: linear-gradient(135deg, #3a2a1a, #5a4020);">🥞</div>
+                        <div class="food-card-body">
+                            <div class="food-card-name">Fuhang Soy Milk</div>
+                            <div class="food-card-name-zh">阜杭豆漿 &mdash; Zhongzheng, Taipei</div>
+                            <div class="food-card-desc">Taipei's most famous breakfast. Flaky shaobing, crispy youtiao, warm soy milk. Lines form before 5:30 AM.</div>
+                            <div class="food-card-meta">
+                                <span class="food-card-tag">Breakfast</span>
+                                <a href="https://maps.google.com/?q=Fuhang+Soy+Milk+Taipei+Taiwan" target="_blank" rel="noopener" class="food-card-link" onclick="event.stopPropagation()">View on map &rarr;</a>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="food-card" data-val="jin_feng">
+                        <div class="food-card-hero" style="background: linear-gradient(135deg, #2a1a08, #4a3018);">🍚</div>
+                        <div class="food-card-body">
+                            <div class="food-card-name">Jin Feng Lu Rou Fan</div>
+                            <div class="food-card-name-zh">金峰魯肉飯 &mdash; Zhongzheng, Taipei</div>
+                            <div class="food-card-desc">The definitive braised pork rice. Glossy soy-and-five-spice sauce over steaming rice. About $1.50 USD.</div>
+                            <div class="food-card-meta">
+                                <span class="food-card-tag">Street food</span>
+                                <a href="https://maps.google.com/?q=Jin+Feng+Lu+Rou+Fan+Taipei+Taiwan" target="_blank" rel="noopener" class="food-card-link" onclick="event.stopPropagation()">View on map &rarr;</a>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="food-card" data-val="raohe_bun">
+                        <div class="food-card-hero" style="background: linear-gradient(135deg, #4a1a0a, #6a2a10);">🫓</div>
+                        <div class="food-card-body">
+                            <div class="food-card-name">Fuzhou Pepper Pork Bun</div>
+                            <div class="food-card-name-zh">福州世祖胡椒餅 &mdash; Raohe, Taipei</div>
+                            <div class="food-card-desc">Charcoal-baked in a clay oven. Crispy shell, juicy pepper pork and scallion filling. Always a queue.</div>
+                            <div class="food-card-meta">
+                                <span class="food-card-tag">Night market</span>
+                                <a href="https://maps.google.com/?q=Fuzhou+Pepper+Pork+Bun+Raohe+Night+Market+Taipei" target="_blank" rel="noopener" class="food-card-link" onclick="event.stopPropagation()">View on map &rarr;</a>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="food-card" data-val="a_mei_tea">
+                        <div class="food-card-hero" style="background: linear-gradient(135deg, #3a1a1a, #5a2020);">🍵</div>
+                        <div class="food-card-body">
+                            <div class="food-card-name">A-Mei Tea House</div>
+                            <div class="food-card-name-zh">阿妹茶樓 &mdash; Jiufen</div>
+                            <div class="food-card-desc">Oolong tea in a wooden teahouse draped in red lanterns overlooking the ocean. Said to have inspired Spirited Away.</div>
+                            <div class="food-card-meta">
+                                <span class="food-card-tag">Tea</span>
+                                <a href="https://maps.google.com/?q=A-Mei+Tea+House+Jiufen+Taiwan" target="_blank" rel="noopener" class="food-card-link" onclick="event.stopPropagation()">View on map &rarr;</a>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="food-card" data-val="chun_shui_tang">
+                        <div class="food-card-hero" style="background: linear-gradient(135deg, #1a2a1a, #2a4a2a);">🧋</div>
+                        <div class="food-card-body">
+                            <div class="food-card-name">Chun Shui Tang</div>
+                            <div class="food-card-name-zh">春水堂 &mdash; Taichung</div>
+                            <div class="food-card-desc">Claims to have invented bubble tea in 1983. Still serving the original pearl milk tea recipe in the original shop.</div>
+                            <div class="food-card-meta">
+                                <span class="food-card-tag">Tea</span>
+                                <a href="https://maps.google.com/?q=Chun+Shui+Tang+Original+Taichung+Taiwan" target="_blank" rel="noopener" class="food-card-link" onclick="event.stopPropagation()">View on map &rarr;</a>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="food-card" data-val="du_xiao_yue">
+                        <div class="food-card-hero" style="background: linear-gradient(135deg, #4a2a0a, #6a4020);">🍝</div>
+                        <div class="food-card-body">
+                            <div class="food-card-name">Du Xiao Yue</div>
+                            <div class="food-card-name-zh">度小月 &mdash; Tainan</div>
+                            <div class="food-card-desc">Dan zai noodles from the same recipe since 1895. Rich shrimp-pork broth ladled at a tiny counter. A Tainan institution.</div>
+                            <div class="food-card-meta">
+                                <span class="food-card-tag">Restaurant</span>
+                                <a href="https://maps.google.com/?q=Du+Xiao+Yue+Original+Tainan+Taiwan" target="_blank" rel="noopener" class="food-card-link" onclick="event.stopPropagation()">View on map &rarr;</a>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="food-card" data-val="ningxia">
+                        <div class="food-card-hero" style="background: linear-gradient(135deg, #2a1a2a, #4a2a3a);">🥘</div>
+                        <div class="food-card-body">
+                            <div class="food-card-name">Ningxia Night Market</div>
+                            <div class="food-card-name-zh">寧夏夜市 &mdash; Datong, Taipei</div>
+                            <div class="food-card-desc">Compact, food-focused, beloved by locals. Best lu rou fan in the city. Taro balls, oyster omelets, no tourist crush.</div>
+                            <div class="food-card-meta">
+                                <span class="food-card-tag">Night market</span>
+                                <a href="https://maps.google.com/?q=Ningxia+Night+Market+Taipei+Taiwan" target="_blank" rel="noopener" class="food-card-link" onclick="event.stopPropagation()">View on map &rarr;</a>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="food-card" data-val="miaokou">
+                        <div class="food-card-hero" style="background: linear-gradient(135deg, #0a2a3a, #1a3a5a);">🦀</div>
+                        <div class="food-card-body">
+                            <div class="food-card-name">Miaokou Night Market</div>
+                            <div class="food-card-name-zh">廟口夜市 &mdash; Keelung</div>
+                            <div class="food-card-desc">Taiwan's best seafood night market. Stalls numbered for decades. Crab soup, tempura, peanut ice cream rolls steps from the harbor.</div>
+                            <div class="food-card-meta">
+                                <span class="food-card-tag">Night market</span>
+                                <a href="https://maps.google.com/?q=Miaokou+Night+Market+Keelung+Taiwan" target="_blank" rel="noopener" class="food-card-link" onclick="event.stopPropagation()">View on map &rarr;</a>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="food-card" data-val="dongdamen">
+                        <div class="food-card-hero" style="background: linear-gradient(135deg, #1a3a2a, #2a5a3a);">🌽</div>
+                        <div class="food-card-body">
+                            <div class="food-card-name">Dongdamen Night Market</div>
+                            <div class="food-card-name-zh">東大門夜市 &mdash; Hualien</div>
+                            <div class="food-card-desc">Indigenous Amis-influenced flavors meet Taiwanese street food. Flame-grilled corn, fresh seafood, east coast vibes.</div>
+                            <div class="food-card-meta">
+                                <span class="food-card-tag">Night market</span>
+                                <a href="https://maps.google.com/?q=Dongdamen+Night+Market+Hualien+Taiwan" target="_blank" rel="noopener" class="food-card-link" onclick="event.stopPropagation()">View on map &rarr;</a>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="food-card" data-val="hayashi">
+                        <div class="food-card-hero" style="background: linear-gradient(135deg, #3a3020, #5a4a30);">🏛️</div>
+                        <div class="food-card-body">
+                            <div class="food-card-name">Hayashi Department Store</div>
+                            <div class="food-card-name-zh">林百貨 &mdash; Tainan</div>
+                            <div class="food-card-desc">Beautifully restored 1932 Art Deco building with rooftop cafe. Local crafts, Tainan treats, and WWII bullet scars on the walls.</div>
+                            <div class="food-card-meta">
+                                <span class="food-card-tag">Cafe / Shop</span>
+                                <a href="https://maps.google.com/?q=Hayashi+Department+Store+Tainan+Taiwan" target="_blank" rel="noopener" class="food-card-link" onclick="event.stopPropagation()">View on map &rarr;</a>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="food-card" data-val="ice_monster">
+                        <div class="food-card-hero" style="background: linear-gradient(135deg, #4a2a1a, #6a4a2a);">🍧</div>
+                        <div class="food-card-body">
+                            <div class="food-card-name">Ice Monster</div>
+                            <div class="food-card-name-zh">ICE MONSTER &mdash; Da'an, Taipei</div>
+                            <div class="food-card-desc">Pioneered Taiwan's shaved ice revolution. Towering bowls of mango shaved ice made from frozen fruit blocks.</div>
+                            <div class="food-card-meta">
+                                <span class="food-card-tag">Dessert</span>
+                                <a href="https://maps.google.com/?q=Ice+Monster+Taipei+Taiwan" target="_blank" rel="noopener" class="food-card-link" onclick="event.stopPropagation()">View on map &rarr;</a>
+                            </div>
+                        </div>
+                    </div>
                 </div>
+                <div class="scroll-hint">swipe for more &rarr;</div>
             </div>
 
             <div class="question">
-                <label class="question-label">Night market style — which sounds more like you?</label>
-                <div class="question-hint">Raohe is compact and foodie-focused (famous pepper pork buns). Shilin is massive and buzzy. Nanjichang is where locals go — Michelin-rated stalls, zero tourists.</div>
+                <label class="question-label">Night market style &mdash; which sounds more like you?</label>
+                <div class="question-hint">Raohe is compact and foodie-focused. Shilin is massive and buzzy. Nanjichang is where locals go &mdash; Michelin-rated stalls, zero tourists.</div>
                 <div class="radio-cards" data-key="night_market_style" data-mode="single">
-                    <div class="radio-card" data-val="iconic">
-                        <div class="rc-label">The big famous ones</div>
-                        <div class="rc-sub">Shilin, Raohe</div>
-                    </div>
-                    <div class="radio-card" data-val="local">
-                        <div class="rc-label">Where locals actually go</div>
-                        <div class="rc-sub">Nanjichang, Ningxia</div>
-                    </div>
-                    <div class="radio-card" data-val="regional">
-                        <div class="rc-label">Different cities' markets</div>
-                        <div class="rc-sub">Keelung, Hualien, Tainan</div>
-                    </div>
-                    <div class="radio-card" data-val="all">
-                        <div class="rc-label">All of the above</div>
-                        <div class="rc-sub">I want the full tour</div>
-                    </div>
+                    <div class="radio-card" data-val="iconic"><div class="rc-label">Big famous ones</div><div class="rc-sub">Shilin, Raohe</div></div>
+                    <div class="radio-card" data-val="local"><div class="rc-label">Where locals go</div><div class="rc-sub">Nanjichang, Ningxia</div></div>
+                    <div class="radio-card" data-val="regional"><div class="rc-label">Different cities</div><div class="rc-sub">Keelung, Hualien, Tainan</div></div>
+                    <div class="radio-card" data-val="all"><div class="rc-label">All of the above</div><div class="rc-sub">Full market tour</div></div>
                 </div>
             </div>
 
             <div class="question">
                 <label class="question-label">Which iconic dishes are you excited to try?</label>
-                <div class="question-hint">These are THE dishes. Some people plan entire days around one of these.</div>
                 <div class="chips lantern" data-key="must_try_dishes">
                     <div class="chip lantern">Beef noodle soup</div>
-                    <div class="chip lantern">Xiao long bao (soup dumplings)</div>
+                    <div class="chip lantern">Xiao long bao</div>
                     <div class="chip lantern">Lu rou fan (braised pork rice)</div>
                     <div class="chip lantern">Gua bao (pork belly bun)</div>
                     <div class="chip lantern">Oyster omelette</div>
                     <div class="chip lantern">Pepper pork bun</div>
                     <div class="chip lantern">Dan bing (egg crepe)</div>
-                    <div class="chip lantern">Bubble tea at the original shop</div>
+                    <div class="chip lantern">Bubble tea at the OG shop</div>
                     <div class="chip lantern">Taro balls in Jiufen</div>
                     <div class="chip lantern">Pineapple cake</div>
                     <div class="chip lantern">Tainan coffin bread</div>
-                    <div class="chip lantern">Tainan milkfish</div>
-                    <div class="chip lantern">Whatever the locals are queueing for</div>
+                    <div class="chip lantern">Mango shaved ice</div>
+                    <div class="chip lantern">Scallion pancake</div>
+                    <div class="chip lantern">Whatever locals queue for</div>
                 </div>
             </div>
 
             <div class="question">
                 <label class="question-label">How do you feel about the weird stuff?</label>
-                <div class="question-hint">Taiwan has incredible "weird" food. Stinky tofu smells like a dumpster but many say it's the best thing they ate. Iron eggs from Tamsui are braised dozens of times until dark and chewy. Pig blood cake is savory rice on a stick.</div>
+                <div class="question-hint">Stinky tofu smells like a dumpster but many say it's the best thing they ate. Iron eggs are braised dozens of times until dark and chewy. Pig blood cake is savory rice on a stick.</div>
                 <div class="radio-cards" data-key="food_adventurousness" data-mode="single">
-                    <div class="radio-card" data-val="bring_it">
-                        <div class="rc-icon">🤤</div>
-                        <div class="rc-label">Feed me everything</div>
-                        <div class="rc-sub">Stinky tofu, pig blood cake, all of it</div>
-                    </div>
-                    <div class="radio-card" data-val="try_some">
-                        <div class="rc-icon">🤔</div>
-                        <div class="rc-label">I'll try most things</div>
-                        <div class="rc-sub">Tell me what it is first</div>
-                    </div>
-                    <div class="radio-card" data-val="play_safe">
-                        <div class="rc-icon">😊</div>
-                        <div class="rc-label">Keep it approachable</div>
-                        <div class="rc-sub">Stick to what I'd recognize</div>
-                    </div>
+                    <div class="radio-card" data-val="bring_it"><div class="rc-icon">🤤</div><div class="rc-label">Feed me everything</div><div class="rc-sub">Stinky tofu, pig blood cake, all of it</div></div>
+                    <div class="radio-card" data-val="try_some"><div class="rc-icon">🤔</div><div class="rc-label">I'll try most things</div><div class="rc-sub">Tell me what it is first</div></div>
+                    <div class="radio-card" data-val="play_safe"><div class="rc-icon">😊</div><div class="rc-label">Keep it approachable</div><div class="rc-sub">Nothing too weird</div></div>
                 </div>
             </div>
 
             <div class="question">
                 <label class="question-label">Taiwanese breakfast is a whole culture. Are you in?</label>
-                <div class="question-hint">Locals hit dedicated breakfast shops (zao can dian) for egg crepes, soy milk, sticky rice rolls, and flatbread with fried dough. It's one of the best parts of each day.</div>
+                <div class="question-hint">Dedicated breakfast shops open before 6am for egg crepes, soy milk, sticky rice rolls, and flatbread. One of the best parts of each day.</div>
                 <div class="radio-cards three-col" data-key="breakfast_culture" data-mode="single">
-                    <div class="radio-card" data-val="all_in">
-                        <div class="rc-label">Every morning</div>
-                    </div>
-                    <div class="radio-card" data-val="sometimes">
-                        <div class="rc-label">A few times</div>
-                    </div>
-                    <div class="radio-card" data-val="hotel">
-                        <div class="rc-label">Hotel breakfast</div>
-                    </div>
+                    <div class="radio-card" data-val="all_in"><div class="rc-label">Every morning</div></div>
+                    <div class="radio-card" data-val="sometimes"><div class="rc-label">A few times</div></div>
+                    <div class="radio-card" data-val="hotel"><div class="rc-label">Hotel breakfast</div></div>
                 </div>
             </div>
 
             <div class="question">
-                <label class="question-label">Tea — how deep do you want to go?</label>
-                <div class="question-hint">Taiwan produces some of the world's finest oolong. You can sip it casually or do full gongfu cha ceremonies in mountain teahouses overlooking plantations.</div>
+                <label class="question-label">Tea &mdash; how deep do you want to go?</label>
+                <div class="question-hint">Taiwan produces some of the world's finest oolong. Maokong has teahouses overlooking plantations, reachable by gondola from Taipei Zoo.</div>
                 <div class="radio-cards" data-key="tea_interest" data-mode="single">
-                    <div class="radio-card" data-val="not_interested">
-                        <div class="rc-label">Not really my thing</div>
-                    </div>
-                    <div class="radio-card" data-val="casual">
-                        <div class="rc-label">A nice teahouse visit</div>
-                        <div class="rc-sub">Jiufen or Maokong</div>
-                    </div>
-                    <div class="radio-card" data-val="deep">
-                        <div class="rc-label">Tea pilgrimage</div>
-                        <div class="rc-sub">Plantations, tastings, ceremonies</div>
-                    </div>
+                    <div class="radio-card" data-val="not_interested"><div class="rc-label">Not my thing</div></div>
+                    <div class="radio-card" data-val="casual"><div class="rc-label">A nice teahouse</div><div class="rc-sub">Jiufen or Maokong</div></div>
+                    <div class="radio-card" data-val="deep"><div class="rc-label">Tea pilgrimage</div><div class="rc-sub">Plantations, tastings, ceremonies</div></div>
                 </div>
             </div>
 
             <div class="question">
                 <label class="question-label">Would you do a cooking class?</label>
-                <div class="question-hint">Half-day classes start at traditional morning markets then cook xiao long bao, beef noodle soup, or pineapple cake. ~$35 USD. Some in Hualien focus on indigenous cuisine.</div>
+                <div class="question-hint">Half-day classes start at morning markets then cook xiao long bao or beef noodle soup. ~$35 USD. Some in Hualien focus on indigenous cuisine.</div>
                 <div class="radio-cards three-col" data-key="cooking_class" data-mode="single">
-                    <div class="radio-card" data-val="yes">
-                        <div class="rc-label">Definitely</div>
-                    </div>
-                    <div class="radio-card" data-val="maybe">
-                        <div class="rc-label">If it fits</div>
-                    </div>
-                    <div class="radio-card" data-val="no">
-                        <div class="rc-label">Skip</div>
-                    </div>
+                    <div class="radio-card" data-val="yes"><div class="rc-label">Definitely</div></div>
+                    <div class="radio-card" data-val="maybe"><div class="rc-label">If it fits</div></div>
+                    <div class="radio-card" data-val="no"><div class="rc-label">Skip</div></div>
                 </div>
             </div>
 
             <div class="question">
                 <label class="question-label">How late will you eat?</label>
-                <div class="question-hint">Night markets peak 8-10pm. Some of the best food appears after midnight. Breakfast shops open by 6am. Taiwan rewards the schedule-flexible eater.</div>
+                <div class="question-hint">Night markets peak 8-10pm. Some of the best food appears after midnight. Taiwan rewards the schedule-flexible eater.</div>
                 <div class="radio-cards three-col" data-key="late_eating" data-mode="single">
-                    <div class="radio-card" data-val="early">
-                        <div class="rc-label">Done by 9pm</div>
-                    </div>
-                    <div class="radio-card" data-val="nightowl">
-                        <div class="rc-label">10pm-midnight</div>
-                    </div>
-                    <div class="radio-card" data-val="whenever">
-                        <div class="rc-label">I eat when the food's good</div>
-                    </div>
+                    <div class="radio-card" data-val="early"><div class="rc-label">Done by 9pm</div></div>
+                    <div class="radio-card" data-val="nightowl"><div class="rc-label">10pm-midnight</div></div>
+                    <div class="radio-card" data-val="whenever"><div class="rc-label">When it's good</div></div>
                 </div>
             </div>
 
             <div class="question">
                 <label class="question-label">Any dietary restrictions?</label>
                 <div class="chips" data-key="dietary">
-                    <div class="chip">Vegetarian</div>
-                    <div class="chip">Vegan</div>
-                    <div class="chip">No pork</div>
-                    <div class="chip">No shellfish</div>
-                    <div class="chip">Gluten-free</div>
-                    <div class="chip">Allergies (note below)</div>
+                    <div class="chip">Vegetarian</div><div class="chip">Vegan</div><div class="chip">No pork</div>
+                    <div class="chip">No shellfish</div><div class="chip">Gluten-free</div><div class="chip">Allergies (note below)</div>
                     <div class="chip">None</div>
                 </div>
             </div>
 
             <div class="question">
                 <label class="question-label">Food dealbreakers or strong preferences?</label>
-                <textarea data-key="food_notes" placeholder="e.g. I hate cilantro, can't handle very spicy, my wife is pescatarian, we love seafood..."></textarea>
+                <textarea data-key="food_notes" placeholder="e.g. I hate cilantro, can't handle very spicy, we love seafood, she's pescatarian..."></textarea>
             </div>
         </div>
 
@@ -784,61 +825,96 @@
             </div>
 
             <div class="question">
-                <label class="question-label">What kind of beauty stops you in your tracks?</label>
-                <div class="chips jade" data-key="scenery_vibes" data-max="5">
-                    <div class="chip jade">Dramatic cliffs & gorges</div>
-                    <div class="chip jade">Misty mountain forests</div>
-                    <div class="chip jade">Turquoise coastal water</div>
-                    <div class="chip jade">Golden hour rice terraces</div>
-                    <div class="chip jade">Lantern-lit old streets</div>
-                    <div class="chip jade">Moody temple atmospheres</div>
-                    <div class="chip jade">Steaming hot spring valleys</div>
-                    <div class="chip jade">Lush tropical jungle</div>
-                    <div class="chip jade">City skyline views at night</div>
-                </div>
-            </div>
+                <label class="question-label">Which of these stops you in your tracks?</label>
+                <div class="question-hint">Tap the places you'd want to see. These are the "I can't believe Taiwan looks like this" moments.</div>
 
-            <div class="question">
-                <label class="question-label">Which of these jaw-dropping spots call to you?</label>
-                <div class="question-hint">These are the places that make people's "I can't believe Taiwan looks like this" posts.</div>
-                <div class="chips jade" data-key="scenic_spots">
-                    <div class="chip jade" data-val="taroko">Taroko Gorge &mdash; marble canyon walls rising 1,000m</div>
-                    <div class="chip jade" data-val="qingshui">Qingshui Cliffs &mdash; sheer drops into three shades of blue Pacific</div>
-                    <div class="chip jade" data-val="alishan_sunrise">Alishan sunrise &mdash; golden light over a sea of clouds</div>
-                    <div class="chip jade" data-val="sun_moon">Sun Moon Lake at dawn &mdash; mirror-still water, misty mountains</div>
-                    <div class="chip jade" data-val="jiufen_dusk">Jiufen at dusk &mdash; red lanterns glowing over the coast</div>
-                    <div class="chip jade" data-val="yehliu">Yehliu Geopark &mdash; alien rock formations on the coast</div>
-                    <div class="chip jade" data-val="gaomei">Gaomei Wetlands &mdash; infinite sunset reflections on tidal flats</div>
-                    <div class="chip jade" data-val="xiao_liuqiu">Xiao Liuqiu &mdash; crystal water, sea turtles, coral island</div>
-                    <div class="chip jade" data-val="elephant_mt">Elephant Mountain &mdash; Taipei 101 glowing through jungle</div>
-                    <div class="chip jade" data-val="east_coast">East coast Highway 11 &mdash; cliffs, surf, rice fields meeting ocean</div>
-                    <div class="chip jade" data-val="yangmingshan">Yangmingshan &mdash; steaming volcanic vents, calla lily fields</div>
-                    <div class="chip jade" data-val="shifen_falls">Shifen Waterfall &mdash; Taiwan's mini Niagara in the jungle</div>
+                <div data-key="scenic_spots" class="scenic-list">
+                    <div class="scenic-card" data-val="taroko" style="background: linear-gradient(135deg, #0a4a5a, #1a6a7a, #0d3a4a);">
+                        <span class="scenic-emoji">🏔️</span>
+                        <div class="scenic-name">Taroko Gorge</div>
+                        <div class="scenic-desc">Marble-walled canyons plunge hundreds of meters while turquoise rivers vanish into the mountain's throat</div>
+                    </div>
+
+                    <div class="scenic-card" data-val="qingshui" style="background: linear-gradient(135deg, #0a3050, #1a5070, #0a2a40);">
+                        <span class="scenic-emoji">🌊</span>
+                        <div class="scenic-name">Qingshui Cliffs</div>
+                        <div class="scenic-desc">1,000m sheer drops into three shades of blue Pacific &mdash; East Asia's most dramatic coast</div>
+                    </div>
+
+                    <div class="scenic-card" data-val="alishan_sunrise" style="background: linear-gradient(135deg, #4a3a1a, #6a5a2a, #3a2a0a);">
+                        <span class="scenic-emoji">🌅</span>
+                        <div class="scenic-name">Alishan Sunrise</div>
+                        <div class="scenic-desc">Board a century-old railway into the clouds. Golden light breaks over a sea of fog above 2,000m peaks</div>
+                    </div>
+
+                    <div class="scenic-card" data-val="sun_moon" style="background: linear-gradient(135deg, #1a3a5c, #2a5a7a, #0d2a42);">
+                        <span class="scenic-emoji">🪷</span>
+                        <div class="scenic-name">Sun Moon Lake at Dawn</div>
+                        <div class="scenic-desc">Mirror-still water in a volcanic basin where morning mist erases the treeline</div>
+                    </div>
+
+                    <div class="scenic-card" data-val="jiufen_dusk" style="background: linear-gradient(135deg, #6a1a0a, #8a2a10, #4a1008);">
+                        <span class="scenic-emoji">🏮</span>
+                        <div class="scenic-name">Jiufen at Dusk</div>
+                        <div class="scenic-desc">Red lanterns cascade down stone stairways into the mist, tea and taro drifting from doorways above the Pacific</div>
+                    </div>
+
+                    <div class="scenic-card" data-val="yehliu" style="background: linear-gradient(135deg, #3a3a2a, #5a5a3a, #2a2a1a);">
+                        <span class="scenic-emoji">🪨</span>
+                        <div class="scenic-name">Yehliu Geopark</div>
+                        <div class="scenic-desc">Wind and wave sculpted a peninsula of sandstone into surreal mushroom rocks and the famous Queen's Head</div>
+                    </div>
+
+                    <div class="scenic-card" data-val="gaomei" style="background: linear-gradient(135deg, #3a2a1a, #5a4a3a, #2a1a0a);">
+                        <span class="scenic-emoji">🌇</span>
+                        <div class="scenic-name">Gaomei Wetlands</div>
+                        <div class="scenic-desc">Infinite sunset reflections on tidal flats &mdash; walk the boardwalk as the sky turns liquid gold</div>
+                    </div>
+
+                    <div class="scenic-card" data-val="xiao_liuqiu" style="background: linear-gradient(135deg, #0a4a4a, #1a6a6a, #063a3a);">
+                        <span class="scenic-emoji">🐢</span>
+                        <div class="scenic-name">Xiao Liuqiu</div>
+                        <div class="scenic-desc">Crystal water, coral island, and sea turtles swimming right beside you &mdash; Taiwan's tropical secret</div>
+                    </div>
+
+                    <div class="scenic-card" data-val="elephant_mt" style="background: linear-gradient(135deg, #1a1a3a, #2a2a5a, #0d0d2a);">
+                        <span class="scenic-emoji">🌆</span>
+                        <div class="scenic-name">Elephant Mountain</div>
+                        <div class="scenic-desc">20-minute climb through jungle to Taipei 101 glowing against the city skyline. Best at sunset.</div>
+                    </div>
+
+                    <div class="scenic-card" data-val="east_coast" style="background: linear-gradient(135deg, #1a3a2a, #2a5a4a, #0d2a1a);">
+                        <span class="scenic-emoji">🛤️</span>
+                        <div class="scenic-name">East Coast Highway 11</div>
+                        <div class="scenic-desc">Cliffs, surf breaks, rice paddies meeting the ocean &mdash; Taiwan's most beautiful drive</div>
+                    </div>
+
+                    <div class="scenic-card" data-val="beitou" style="background: linear-gradient(135deg, #3a3a4a, #4a4a5a, #2a2a3a);">
+                        <span class="scenic-emoji">♨️</span>
+                        <div class="scenic-name">Beitou Hot Springs</div>
+                        <div class="scenic-desc">Sulfur-scented valley 30 min from downtown Taipei. Japanese-era bathhouses line a steaming creek</div>
+                    </div>
+
+                    <div class="scenic-card" data-val="yangmingshan" style="background: linear-gradient(135deg, #2a4a2a, #3a6a3a, #1a3a1a);">
+                        <span class="scenic-emoji">🌋</span>
+                        <div class="scenic-name">Yangmingshan</div>
+                        <div class="scenic-desc">Steaming volcanic vents, calla lily fields in spring, and misty trails above Taipei</div>
+                    </div>
                 </div>
             </div>
 
             <div class="question">
                 <label class="question-label">Golden hour chaser or go-with-the-flow?</label>
-                <div class="question-hint">Some of Taiwan's best moments are timed — Alishan sunrise at 5am, Gaomei Wetlands at sunset, Jiufen lanterns at dusk. Are you willing to plan around the light?</div>
+                <div class="question-hint">Alishan sunrise requires a 5am train. Gaomei Wetlands are magical only at sunset. Jiufen lanterns glow at dusk. Are you willing to plan around the light?</div>
                 <div class="radio-cards three-col" data-key="golden_hour" data-mode="single">
-                    <div class="radio-card" data-val="chase">
-                        <div class="rc-label">Set the alarm</div>
-                        <div class="rc-sub">I'll wake up for it</div>
-                    </div>
-                    <div class="radio-card" data-val="sometimes">
-                        <div class="rc-label">Once or twice</div>
-                        <div class="rc-sub">Not every day</div>
-                    </div>
-                    <div class="radio-card" data-val="flow">
-                        <div class="rc-label">Whatever happens</div>
-                        <div class="rc-sub">I don't set alarms on vacation</div>
-                    </div>
+                    <div class="radio-card" data-val="chase"><div class="rc-label">Set the alarm</div><div class="rc-sub">I'll wake up for it</div></div>
+                    <div class="radio-card" data-val="sometimes"><div class="rc-label">Once or twice</div><div class="rc-sub">Not every day</div></div>
+                    <div class="radio-card" data-val="flow"><div class="rc-label">Whatever happens</div><div class="rc-sub">No alarms on vacation</div></div>
                 </div>
             </div>
 
             <div class="question">
                 <label class="question-label">Would you take a detour for a view?</label>
-                <div class="question-hint">Qingshui Cliffs add time to Taroko. Xiao Liuqiu is a ferry ride from the mainland. Some of the best spots aren't "on the way."</div>
                 <div class="slider-wrapper">
                     <div class="slider-labels"><span>Only if convenient</span><span>Reroute the whole trip</span></div>
                     <input type="range" min="1" max="5" value="3" data-key="detour_willingness">
@@ -856,57 +932,32 @@
 
             <div class="question">
                 <label class="question-label">Hiking comfort level</label>
-                <div class="question-hint">Taiwan has everything from 20-min city viewpoints (Elephant Mountain) to multi-day high-altitude treks (Yushan, 3,952m). Mountain permits are needed for big peaks.</div>
+                <div class="question-hint">Elephant Mountain is a 20-min city hike. Taroko has river-level gorge trails. Yushan (3,952m) is a 2-day permitted trek.</div>
                 <div class="radio-cards" data-key="hiking_level" data-mode="single">
-                    <div class="radio-card" data-val="none">
-                        <div class="rc-label">Not for me</div>
-                    </div>
-                    <div class="radio-card" data-val="easy">
-                        <div class="rc-label">Easy trails</div>
-                        <div class="rc-sub">1-2 hrs</div>
-                    </div>
-                    <div class="radio-card" data-val="moderate">
-                        <div class="rc-label">Moderate hikes</div>
-                        <div class="rc-sub">Half day</div>
-                    </div>
-                    <div class="radio-card" data-val="serious">
-                        <div class="rc-label">Serious treks</div>
-                        <div class="rc-sub">Multi-day / peaks</div>
-                    </div>
+                    <div class="radio-card" data-val="none"><div class="rc-label">Not for me</div></div>
+                    <div class="radio-card" data-val="easy"><div class="rc-label">Easy trails</div><div class="rc-sub">1-2 hrs</div></div>
+                    <div class="radio-card" data-val="moderate"><div class="rc-label">Moderate hikes</div><div class="rc-sub">Half day</div></div>
+                    <div class="radio-card" data-val="serious"><div class="rc-label">Serious treks</div><div class="rc-sub">Multi-day / peaks</div></div>
                 </div>
             </div>
 
             <div class="question">
-                <label class="question-label">Hot springs — how interested?</label>
-                <div class="question-hint">Beitou is 30 min from central Taipei. Jiaoxi has silky "beauty springs." Guanziling has one of only 3 mud springs in the world.</div>
+                <label class="question-label">Hot springs &mdash; how interested?</label>
+                <div class="question-hint">Beitou is 30 min from Taipei by MRT. Jiaoxi has silky "beauty springs." Guanziling has one of only 3 mud springs on Earth.</div>
                 <div class="radio-cards three-col" data-key="hot_springs" data-mode="single">
-                    <div class="radio-card" data-val="skip">
-                        <div class="rc-label">Skip</div>
-                    </div>
-                    <div class="radio-card" data-val="try_once">
-                        <div class="rc-label">Try once</div>
-                    </div>
-                    <div class="radio-card" data-val="multiple">
-                        <div class="rc-label">Hit several</div>
-                    </div>
+                    <div class="radio-card" data-val="skip"><div class="rc-label">Skip</div></div>
+                    <div class="radio-card" data-val="try_once"><div class="rc-label">Try once</div></div>
+                    <div class="radio-card" data-val="multiple"><div class="rc-label">Hit several</div></div>
                 </div>
             </div>
 
             <div class="question">
                 <label class="question-label">Other activities you'd be into</label>
                 <div class="chips" data-key="activities">
-                    <div class="chip">Cycling</div>
-                    <div class="chip">Snorkeling / diving</div>
-                    <div class="chip">Surfing</div>
-                    <div class="chip">Photography walks</div>
-                    <div class="chip">Temple visits</div>
-                    <div class="chip">Museum / gallery</div>
-                    <div class="chip">Shopping & markets</div>
-                    <div class="chip">Nightlife & bars</div>
-                    <div class="chip">Indigenous culture</div>
-                    <div class="chip">Scooter road trip</div>
-                    <div class="chip">Train journeys</div>
-                    <div class="chip">Festival / event</div>
+                    <div class="chip">Cycling</div><div class="chip">Snorkeling / diving</div><div class="chip">Surfing</div>
+                    <div class="chip">Photography walks</div><div class="chip">Temple visits</div><div class="chip">Museum / gallery</div>
+                    <div class="chip">Shopping & markets</div><div class="chip">Nightlife & bars</div><div class="chip">Indigenous culture</div>
+                    <div class="chip">Scooter road trip</div><div class="chip">Train journeys</div><div class="chip">Festival / event</div>
                 </div>
             </div>
         </div>
@@ -921,52 +972,28 @@
             <div class="question">
                 <label class="question-label">Where do you want to sleep?</label>
                 <div class="chips" data-key="accommodation">
-                    <div class="chip">Nice hotels</div>
-                    <div class="chip">Boutique / design hotels</div>
-                    <div class="chip">Budget-friendly</div>
-                    <div class="chip">Hot spring resort</div>
-                    <div class="chip">Mix it up</div>
+                    <div class="chip">Nice hotels</div><div class="chip">Boutique / design hotels</div>
+                    <div class="chip">Budget-friendly</div><div class="chip">Hot spring resort</div><div class="chip">Mix it up</div>
                 </div>
             </div>
 
             <div class="question">
                 <label class="question-label">Budget comfort level (per person, per day, excluding flights)</label>
                 <div class="radio-cards" data-key="budget" data-mode="single">
-                    <div class="radio-card" data-val="budget">
-                        <div class="rc-label">Budget</div>
-                        <div class="rc-sub">~$50-80/day</div>
-                    </div>
-                    <div class="radio-card" data-val="mid">
-                        <div class="rc-label">Mid-range</div>
-                        <div class="rc-sub">~$100-180/day</div>
-                    </div>
-                    <div class="radio-card" data-val="comfort">
-                        <div class="rc-label">Comfortable</div>
-                        <div class="rc-sub">~$200-350/day</div>
-                    </div>
-                    <div class="radio-card" data-val="luxury">
-                        <div class="rc-label">Luxury</div>
-                        <div class="rc-sub">$350+/day</div>
-                    </div>
+                    <div class="radio-card" data-val="budget"><div class="rc-label">Budget</div><div class="rc-sub">~$50-80/day</div></div>
+                    <div class="radio-card" data-val="mid"><div class="rc-label">Mid-range</div><div class="rc-sub">~$100-180/day</div></div>
+                    <div class="radio-card" data-val="comfort"><div class="rc-label">Comfortable</div><div class="rc-sub">~$200-350/day</div></div>
+                    <div class="radio-card" data-val="luxury"><div class="rc-label">Luxury</div><div class="rc-sub">$350+/day</div></div>
                 </div>
             </div>
 
             <div class="question">
                 <label class="question-label">How do you feel about transit logistics?</label>
-                <div class="question-hint">Taiwan's HSR + MRT is excellent, but east coast and mountains need buses or chartered vans.</div>
+                <div class="question-hint">HSR is fast (Taipei to Kaohsiung in 2hrs). East coast and mountains need buses or chartered vans. New Sanying MRT line opens in 2026.</div>
                 <div class="radio-cards" data-key="transit_comfort" data-mode="single">
-                    <div class="radio-card" data-val="public_only">
-                        <div class="rc-label">Public transit</div>
-                        <div class="rc-sub">Trains, buses, MRT</div>
-                    </div>
-                    <div class="radio-card" data-val="mixed">
-                        <div class="rc-label">Mix it up</div>
-                        <div class="rc-sub">Transit + some taxis</div>
-                    </div>
-                    <div class="radio-card" data-val="easy">
-                        <div class="rc-label">Make it easy</div>
-                        <div class="rc-sub">Taxis, chartered vans</div>
-                    </div>
+                    <div class="radio-card" data-val="public_only"><div class="rc-label">Public transit</div><div class="rc-sub">Trains, buses, MRT</div></div>
+                    <div class="radio-card" data-val="mixed"><div class="rc-label">Mix it up</div><div class="rc-sub">Transit + some taxis</div></div>
+                    <div class="radio-card" data-val="easy"><div class="rc-label">Make it easy</div><div class="rc-sub">Taxis, chartered vans</div></div>
                 </div>
             </div>
 
@@ -974,15 +1001,9 @@
                 <label class="question-label">Would you rent a scooter?</label>
                 <div class="question-hint">Almost essential for Kenting, Xiao Liuqiu, and rural east coast. Requires International Driving Permit.</div>
                 <div class="radio-cards three-col" data-key="scooter" data-mode="single">
-                    <div class="radio-card" data-val="yes">
-                        <div class="rc-label">Definitely</div>
-                    </div>
-                    <div class="radio-card" data-val="maybe">
-                        <div class="rc-label">If needed</div>
-                    </div>
-                    <div class="radio-card" data-val="no">
-                        <div class="rc-label">No way</div>
-                    </div>
+                    <div class="radio-card" data-val="yes"><div class="rc-label">Definitely</div></div>
+                    <div class="radio-card" data-val="maybe"><div class="rc-label">If needed</div></div>
+                    <div class="radio-card" data-val="no"><div class="rc-label">No way</div></div>
                 </div>
             </div>
         </div>
@@ -991,11 +1012,10 @@
         <div class="section">
             <div class="section-header">
                 <div class="section-icon">🎯</div>
-                <div><h2>Priorities</h2><span class="section-sub">Drag to rank — most important on top</span></div>
+                <div><h2>Priorities</h2><span class="section-sub">Drag to rank &mdash; most important on top</span></div>
             </div>
-
             <div class="question">
-                <label class="question-label">Rank what matters most to you on this trip</label>
+                <label class="question-label">Rank what matters most to you</label>
                 <ul class="priority-list" data-key="priorities" id="priorityList">
                     <li class="priority-item" data-val="food"><span class="priority-rank">1</span><span class="priority-text">Amazing food experiences</span><span class="priority-handle">⠿</span></li>
                     <li class="priority-item" data-val="nature"><span class="priority-rank">2</span><span class="priority-text">Nature & scenery</span><span class="priority-handle">⠿</span></li>
@@ -1007,23 +1027,20 @@
             </div>
         </div>
 
-        <!-- ===== DEAL BREAKERS & WISHES ===== -->
+        <!-- ===== FINAL THOUGHTS ===== -->
         <div class="section">
             <div class="section-header">
                 <div class="section-icon">💭</div>
                 <div><h2>Final Thoughts</h2></div>
             </div>
-
             <div class="question">
                 <label class="question-label">Anything you definitely want to avoid?</label>
                 <textarea data-key="avoid" placeholder="e.g. super touristy crowds, long bus rides, being too scheduled..."></textarea>
             </div>
-
             <div class="question">
-                <label class="question-label">Your dream moment on this trip — what does it look like?</label>
+                <label class="question-label">Your dream moment on this trip &mdash; what does it look like?</label>
                 <textarea data-key="dream_moment" placeholder="e.g. sitting in a hot spring in the mountains at dusk, eating street food at 11pm surrounded by locals..."></textarea>
             </div>
-
             <div class="question">
                 <label class="question-label">Anything else the trip planner should know?</label>
                 <textarea data-key="notes" placeholder="Concerns, accessibility needs, travel quirks, past Asia travel experience..."></textarea>
@@ -1045,7 +1062,6 @@
     </div>
 
     <script>
-        // ===== State =====
         const STORAGE_KEY = 'taiwan-trip-survey';
 
         // ===== Chip selection =====
@@ -1053,54 +1069,70 @@
             const max = parseInt(group.dataset.max) || Infinity;
             group.querySelectorAll('.chip').forEach(chip => {
                 chip.addEventListener('click', () => {
-                    if (chip.classList.contains('selected')) {
-                        chip.classList.remove('selected');
-                    } else {
-                        const selected = group.querySelectorAll('.chip.selected').length;
-                        if (selected < max) chip.classList.add('selected');
-                    }
+                    if (chip.classList.contains('selected')) { chip.classList.remove('selected'); }
+                    else if (group.querySelectorAll('.chip.selected').length < max) { chip.classList.add('selected'); }
                     autoSave();
                 });
             });
         });
 
-        // ===== Radio cards (single select) =====
+        // ===== Radio cards =====
         document.querySelectorAll('.radio-cards[data-mode="single"]').forEach(group => {
             group.querySelectorAll('.radio-card').forEach(card => {
                 card.addEventListener('click', () => {
-                    const wasSelected = card.classList.contains('selected');
+                    const was = card.classList.contains('selected');
                     group.querySelectorAll('.radio-card').forEach(c => c.classList.remove('selected'));
-                    if (!wasSelected) card.classList.add('selected');
+                    if (!was) card.classList.add('selected');
                     autoSave();
                 });
+            });
+        });
+
+        // ===== Place cards (multi-select) =====
+        document.querySelectorAll('.place-grid').forEach(grid => {
+            grid.querySelectorAll('.place-card').forEach(card => {
+                card.addEventListener('click', () => { card.classList.toggle('selected'); autoSave(); });
+            });
+        });
+
+        // ===== Scenic cards (multi-select) =====
+        document.querySelectorAll('.scenic-list').forEach(list => {
+            list.querySelectorAll('.scenic-card').forEach(card => {
+                card.addEventListener('click', () => { card.classList.toggle('selected'); autoSave(); });
+            });
+        });
+
+        // ===== Food cards (multi-select) =====
+        document.querySelectorAll('.food-scroll').forEach(scroll => {
+            scroll.querySelectorAll('.food-card').forEach(card => {
+                card.addEventListener('click', () => { card.classList.toggle('selected'); autoSave(); });
             });
         });
 
         // ===== Sliders =====
+        const durationHints = { 5:'5 days \u2014 highlights only', 6:'6 days', 7:'7 days \u2014 one week', 8:'8 days', 9:'9 days', 10:'10 days \u2014 solid trip', 11:'11 days', 12:'12 days', 13:'13 days', 14:'14 days \u2014 full island loop', 15:'15 days', 16:'16 days', 17:'17 days', 18:'18 days', 19:'19 days', 20:'20 days', 21:'21 days \u2014 deep dive' };
         const paceLabels = ['Slow & immersive', 'Mostly relaxed', 'Balanced', 'Active pace', 'See it all'];
         const adventureLabels = ['Stick to the hits', 'Mostly classic', 'Mix of both', 'Lean local', 'Deep local immersion'];
-        const detourLabels = ['Only if it\'s on the way', 'Short detour is fine', 'Worth a reasonable detour', 'I\'ll go out of my way', 'Reroute the whole trip'];
+        const detourLabels = ['Only if on the way', 'Short detour fine', 'Worth a reasonable detour', 'Go out of my way', 'Reroute the whole trip'];
 
-        document.querySelector('[data-key="pace"]').addEventListener('input', e => {
-            document.getElementById('paceLabel').textContent = paceLabels[e.target.value - 1];
-            autoSave();
-        });
+        function bindSlider(key, labels, labelId) {
+            const el = document.querySelector('[data-key="'+key+'"]');
+            if (!el) return;
+            el.addEventListener('input', e => {
+                const lbl = document.getElementById(labelId);
+                if (typeof labels === 'object' && !Array.isArray(labels)) lbl.textContent = labels[e.target.value] || e.target.value;
+                else lbl.textContent = labels[e.target.value - (key === 'duration_days' ? 0 : 1)] || '';
+                autoSave();
+            });
+        }
+        bindSlider('duration_days', durationHints, 'durationLabel');
+        bindSlider('pace', paceLabels, 'paceLabel');
+        bindSlider('adventure', adventureLabels, 'adventureLabel');
+        bindSlider('detour_willingness', detourLabels, 'detourLabel');
 
-        document.querySelector('[data-key="adventure"]').addEventListener('input', e => {
-            document.getElementById('adventureLabel').textContent = adventureLabels[e.target.value - 1];
-            autoSave();
-        });
-
-        document.querySelector('[data-key="detour_willingness"]').addEventListener('input', e => {
-            document.getElementById('detourLabel').textContent = detourLabels[e.target.value - 1];
-            autoSave();
-        });
-
-        // ===== Priority drag-to-reorder =====
+        // ===== Priority drag =====
         const priorityList = document.getElementById('priorityList');
-        let dragItem = null;
-        let dragStartY = 0;
-        let dragOffsetY = 0;
+        let dragItem = null, dragStartY = 0, dragOffsetY = 0;
 
         function updateRanks() {
             priorityList.querySelectorAll('.priority-item').forEach((item, i) => {
@@ -1108,126 +1140,89 @@
             });
         }
 
-        priorityList.addEventListener('touchstart', e => {
-            const item = e.target.closest('.priority-item');
-            if (!item) return;
-            dragItem = item;
-            dragStartY = e.touches[0].clientY;
-            dragOffsetY = 0;
-            item.classList.add('dragging');
-        }, { passive: true });
+        function handleDrag(getY, isTouch) {
+            return {
+                start(e) {
+                    const item = e.target.closest('.priority-item');
+                    if (!item) return;
+                    dragItem = item; dragStartY = getY(e); dragOffsetY = 0;
+                    item.classList.add('dragging');
+                },
+                move(e) {
+                    if (!dragItem) return;
+                    if (isTouch) e.preventDefault();
+                    dragOffsetY = getY(e) - dragStartY;
+                    const items = [...priorityList.querySelectorAll('.priority-item')];
+                    const idx = items.indexOf(dragItem);
+                    const itemH = dragItem.offsetHeight + 6;
+                    if (dragOffsetY > itemH/2 && idx < items.length-1) {
+                        priorityList.insertBefore(items[idx+1], dragItem);
+                        dragStartY += itemH; dragOffsetY -= itemH; updateRanks();
+                    } else if (dragOffsetY < -itemH/2 && idx > 0) {
+                        priorityList.insertBefore(dragItem, items[idx-1]);
+                        dragStartY -= itemH; dragOffsetY += itemH; updateRanks();
+                    }
+                },
+                end() { if (dragItem) { dragItem.classList.remove('dragging'); dragItem = null; autoSave(); } }
+            };
+        }
 
-        priorityList.addEventListener('touchmove', e => {
-            if (!dragItem) return;
-            e.preventDefault();
-            const y = e.touches[0].clientY;
-            dragOffsetY = y - dragStartY;
+        const touch = handleDrag(e => e.touches[0].clientY, true);
+        priorityList.addEventListener('touchstart', touch.start, { passive: true });
+        priorityList.addEventListener('touchmove', touch.move, { passive: false });
+        priorityList.addEventListener('touchend', touch.end);
 
-            const items = [...priorityList.querySelectorAll('.priority-item')];
-            const idx = items.indexOf(dragItem);
-            const itemH = dragItem.offsetHeight + 6;
-
-            if (dragOffsetY > itemH / 2 && idx < items.length - 1) {
-                priorityList.insertBefore(items[idx + 1], dragItem);
-                dragStartY += itemH;
-                dragOffsetY -= itemH;
-                updateRanks();
-            } else if (dragOffsetY < -itemH / 2 && idx > 0) {
-                priorityList.insertBefore(dragItem, items[idx - 1]);
-                dragStartY -= itemH;
-                dragOffsetY += itemH;
-                updateRanks();
-            }
-        }, { passive: false });
-
-        priorityList.addEventListener('touchend', () => {
-            if (dragItem) {
-                dragItem.classList.remove('dragging');
-                dragItem = null;
-                autoSave();
-            }
-        });
-
-        // Mouse drag support
         priorityList.addEventListener('mousedown', e => {
-            const item = e.target.closest('.priority-item');
-            if (!item) return;
-            dragItem = item;
-            dragStartY = e.clientY;
-            item.classList.add('dragging');
-
-            const onMove = e2 => {
-                if (!dragItem) return;
-                dragOffsetY = e2.clientY - dragStartY;
-                const items = [...priorityList.querySelectorAll('.priority-item')];
-                const idx = items.indexOf(dragItem);
-                const itemH = dragItem.offsetHeight + 6;
-
-                if (dragOffsetY > itemH / 2 && idx < items.length - 1) {
-                    priorityList.insertBefore(items[idx + 1], dragItem);
-                    dragStartY += itemH;
-                    updateRanks();
-                } else if (dragOffsetY < -itemH / 2 && idx > 0) {
-                    priorityList.insertBefore(dragItem, items[idx - 1]);
-                    dragStartY -= itemH;
-                    updateRanks();
-                }
-            };
-
-            const onUp = () => {
-                if (dragItem) dragItem.classList.remove('dragging');
-                dragItem = null;
-                autoSave();
-                document.removeEventListener('mousemove', onMove);
-                document.removeEventListener('mouseup', onUp);
-            };
-
+            const mouse = handleDrag(e => e.clientY, false);
+            mouse.start(e);
+            const onMove = e2 => mouse.move(e2);
+            const onUp = () => { mouse.end(); document.removeEventListener('mousemove', onMove); document.removeEventListener('mouseup', onUp); };
             document.addEventListener('mousemove', onMove);
             document.addEventListener('mouseup', onUp);
         });
 
-        // ===== Textarea auto-save =====
-        document.querySelectorAll('textarea').forEach(ta => {
-            ta.addEventListener('input', () => autoSave());
-        });
-
+        // ===== Textarea & name auto-save =====
+        document.querySelectorAll('textarea').forEach(ta => ta.addEventListener('input', () => autoSave()));
         document.getElementById('travelerName').addEventListener('input', () => autoSave());
 
-        // ===== Collect answers =====
+        // ===== Collect =====
         function collectAnswers() {
-            const data = {
-                name: document.getElementById('travelerName').value.trim(),
-                timestamp: new Date().toISOString()
-            };
+            const data = { name: document.getElementById('travelerName').value.trim(), timestamp: new Date().toISOString() };
 
             // Chips
-            document.querySelectorAll('.chips[data-key]').forEach(group => {
-                const key = group.dataset.key;
-                const selected = [...group.querySelectorAll('.chip.selected')].map(c => c.dataset.val || c.textContent.trim());
-                data[key] = selected;
+            document.querySelectorAll('.chips[data-key]').forEach(g => {
+                data[g.dataset.key] = [...g.querySelectorAll('.chip.selected')].map(c => c.dataset.val || c.textContent.trim());
             });
 
             // Radio cards
-            document.querySelectorAll('.radio-cards[data-key]').forEach(group => {
-                const key = group.dataset.key;
-                const sel = group.querySelector('.radio-card.selected');
-                data[key] = sel ? sel.dataset.val : null;
+            document.querySelectorAll('.radio-cards[data-key]').forEach(g => {
+                const sel = g.querySelector('.radio-card.selected');
+                data[g.dataset.key] = sel ? sel.dataset.val : null;
+            });
+
+            // Place cards
+            document.querySelectorAll('.place-grid[data-key]').forEach(g => {
+                data[g.dataset.key] = [...g.querySelectorAll('.place-card.selected')].map(c => c.dataset.val);
+            });
+
+            // Scenic cards
+            document.querySelectorAll('.scenic-list[data-key]').forEach(g => {
+                data[g.dataset.key] = [...g.querySelectorAll('.scenic-card.selected')].map(c => c.dataset.val);
+            });
+
+            // Food cards
+            document.querySelectorAll('.food-scroll[data-key]').forEach(g => {
+                data[g.dataset.key] = [...g.querySelectorAll('.food-card.selected')].map(c => c.dataset.val);
             });
 
             // Sliders
-            document.querySelectorAll('input[type="range"][data-key]').forEach(slider => {
-                data[slider.dataset.key] = parseInt(slider.value);
-            });
+            document.querySelectorAll('input[type="range"][data-key]').forEach(s => { data[s.dataset.key] = parseInt(s.value); });
 
             // Textareas
-            document.querySelectorAll('textarea[data-key]').forEach(ta => {
-                const val = ta.value.trim();
-                if (val) data[ta.dataset.key] = val;
-            });
+            document.querySelectorAll('textarea[data-key]').forEach(ta => { const v = ta.value.trim(); if (v) data[ta.dataset.key] = v; });
 
             // Priorities
-            const priorities = [...priorityList.querySelectorAll('.priority-item')].map(item => item.dataset.val);
-            data.priorities = priorities;
+            data.priorities = [...priorityList.querySelectorAll('.priority-item')].map(i => i.dataset.val);
 
             return data;
         }
@@ -1236,92 +1231,78 @@
         let saveTimeout;
         function autoSave() {
             clearTimeout(saveTimeout);
-            saveTimeout = setTimeout(() => {
-                const data = collectAnswers();
-                localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
-            }, 300);
+            saveTimeout = setTimeout(() => localStorage.setItem(STORAGE_KEY, JSON.stringify(collectAnswers())), 300);
         }
 
-        // ===== Restore from localStorage =====
+        // ===== Restore =====
         function restore() {
             const raw = localStorage.getItem(STORAGE_KEY);
             if (!raw) return;
-            let data;
-            try { data = JSON.parse(raw); } catch { return; }
+            let data; try { data = JSON.parse(raw); } catch { return; }
 
-            // Name
             if (data.name) document.getElementById('travelerName').value = data.name;
 
             // Chips
-            document.querySelectorAll('.chips[data-key]').forEach(group => {
-                const key = group.dataset.key;
-                const vals = data[key] || [];
-                group.querySelectorAll('.chip').forEach(chip => {
-                    const chipVal = chip.dataset.val || chip.textContent.trim();
-                    if (vals.includes(chipVal)) chip.classList.add('selected');
+            document.querySelectorAll('.chips[data-key]').forEach(g => {
+                (data[g.dataset.key]||[]).forEach(v => {
+                    g.querySelectorAll('.chip').forEach(c => { if ((c.dataset.val||c.textContent.trim()) === v) c.classList.add('selected'); });
                 });
             });
 
             // Radio cards
-            document.querySelectorAll('.radio-cards[data-key]').forEach(group => {
-                const key = group.dataset.key;
-                if (data[key]) {
-                    group.querySelectorAll('.radio-card').forEach(card => {
-                        if (card.dataset.val === data[key]) card.classList.add('selected');
-                    });
-                }
+            document.querySelectorAll('.radio-cards[data-key]').forEach(g => {
+                if (data[g.dataset.key]) g.querySelectorAll('.radio-card').forEach(c => { if (c.dataset.val === data[g.dataset.key]) c.classList.add('selected'); });
+            });
+
+            // Place cards
+            document.querySelectorAll('.place-grid[data-key]').forEach(g => {
+                (data[g.dataset.key]||[]).forEach(v => { g.querySelectorAll('.place-card').forEach(c => { if (c.dataset.val === v) c.classList.add('selected'); }); });
+            });
+
+            // Scenic cards
+            document.querySelectorAll('.scenic-list[data-key]').forEach(g => {
+                (data[g.dataset.key]||[]).forEach(v => { g.querySelectorAll('.scenic-card').forEach(c => { if (c.dataset.val === v) c.classList.add('selected'); }); });
+            });
+
+            // Food cards
+            document.querySelectorAll('.food-scroll[data-key]').forEach(g => {
+                (data[g.dataset.key]||[]).forEach(v => { g.querySelectorAll('.food-card').forEach(c => { if (c.dataset.val === v) c.classList.add('selected'); }); });
             });
 
             // Sliders
-            document.querySelectorAll('input[type="range"][data-key]').forEach(slider => {
-                if (data[slider.dataset.key] !== undefined) {
-                    slider.value = data[slider.dataset.key];
-                    slider.dispatchEvent(new Event('input'));
-                }
+            document.querySelectorAll('input[type="range"][data-key]').forEach(s => {
+                if (data[s.dataset.key] !== undefined) { s.value = data[s.dataset.key]; s.dispatchEvent(new Event('input')); }
             });
 
             // Textareas
-            document.querySelectorAll('textarea[data-key]').forEach(ta => {
-                if (data[ta.dataset.key]) ta.value = data[ta.dataset.key];
-            });
+            document.querySelectorAll('textarea[data-key]').forEach(ta => { if (data[ta.dataset.key]) ta.value = data[ta.dataset.key]; });
 
             // Priorities
             if (data.priorities) {
                 const items = [...priorityList.querySelectorAll('.priority-item')];
-                const ordered = data.priorities.map(val => items.find(i => i.dataset.val === val)).filter(Boolean);
-                ordered.forEach(item => priorityList.appendChild(item));
+                data.priorities.map(v => items.find(i => i.dataset.val === v)).filter(Boolean).forEach(i => priorityList.appendChild(i));
                 updateRanks();
             }
         }
-
         restore();
 
         // ===== Submit =====
         document.getElementById('submitBtn').addEventListener('click', () => {
             const data = collectAnswers();
-            const json = JSON.stringify(data, null, 2);
-
             localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
-
             const output = document.getElementById('output');
-            const outputJson = document.getElementById('outputJson');
-            outputJson.textContent = json;
+            document.getElementById('outputJson').textContent = JSON.stringify(data, null, 2);
             output.classList.add('visible');
-
-            const indicator = document.getElementById('savedIndicator');
-            indicator.classList.add('show');
-            setTimeout(() => indicator.classList.remove('show'), 2000);
-
+            const ind = document.getElementById('savedIndicator');
+            ind.classList.add('show'); setTimeout(() => ind.classList.remove('show'), 2000);
             output.scrollIntoView({ behavior: 'smooth', block: 'start' });
         });
 
         // ===== Copy =====
         document.getElementById('copyBtn').addEventListener('click', () => {
-            const text = document.getElementById('outputJson').textContent;
-            navigator.clipboard.writeText(text).then(() => {
+            navigator.clipboard.writeText(document.getElementById('outputJson').textContent).then(() => {
                 const btn = document.getElementById('copyBtn');
-                btn.textContent = 'Copied!';
-                setTimeout(() => btn.textContent = 'Copy to Clipboard', 1500);
+                btn.textContent = 'Copied!'; setTimeout(() => btn.textContent = 'Copy to Clipboard', 1500);
             });
         });
 
@@ -1330,14 +1311,9 @@
             const text = document.getElementById('outputJson').textContent;
             const name = document.getElementById('travelerName').value.trim() || 'Someone';
             if (navigator.share) {
-                navigator.share({
-                    title: name + '\'s Taiwan Trip Profile',
-                    text: text
-                }).catch(() => {});
+                navigator.share({ title: name + "'s Taiwan Trip Profile", text }).catch(() => {});
             } else {
-                // Fallback: open SMS with pre-filled body
-                const encoded = encodeURIComponent(text);
-                window.open('sms:&body=' + encoded);
+                window.open('sms:&body=' + encodeURIComponent(text));
             }
         });
 
@@ -1345,21 +1321,13 @@
         document.getElementById('clearBtn').addEventListener('click', () => {
             if (!confirm('Clear all your answers?')) return;
             localStorage.removeItem(STORAGE_KEY);
-
             document.getElementById('travelerName').value = '';
-            document.querySelectorAll('.chip.selected').forEach(c => c.classList.remove('selected'));
-            document.querySelectorAll('.radio-card.selected').forEach(c => c.classList.remove('selected'));
-            document.querySelectorAll('input[type="range"]').forEach(s => { s.value = 3; s.dispatchEvent(new Event('input')); });
+            document.querySelectorAll('.selected').forEach(c => c.classList.remove('selected'));
+            document.querySelectorAll('input[type="range"]').forEach(s => { s.value = s.dataset.key === 'duration_days' ? 10 : 3; s.dispatchEvent(new Event('input')); });
             document.querySelectorAll('textarea').forEach(t => t.value = '');
             document.getElementById('output').classList.remove('visible');
-
-            // Reset priority order
             const items = [...priorityList.querySelectorAll('.priority-item')];
-            const defaultOrder = ['food', 'nature', 'culture', 'relaxation', 'adventure', 'unique'];
-            defaultOrder.forEach(val => {
-                const item = items.find(i => i.dataset.val === val);
-                if (item) priorityList.appendChild(item);
-            });
+            ['food','nature','culture','relaxation','adventure','unique'].forEach(v => { const i = items.find(x => x.dataset.val === v); if (i) priorityList.appendChild(i); });
             updateRanks();
         });
     </script>
