@@ -147,7 +147,7 @@
             transition: all 0.2s;
             user-select: none;
             -webkit-user-select: none;
-            aspect-ratio: 4/3;
+            aspect-ratio: 3/4;
             display: flex;
             flex-direction: column;
             justify-content: flex-end;
@@ -185,7 +185,7 @@
 
         .place-card.wide {
             grid-column: span 2;
-            aspect-ratio: 2/1;
+            aspect-ratio: 2.2/1;
         }
 
         /* ===== FOOD SPOT CARDS ===== */
@@ -220,12 +220,14 @@
         .food-card.selected { border-color: var(--lantern); }
 
         .food-card-hero {
-            height: 100px;
+            height: 120px;
             display: flex;
             align-items: center;
             justify-content: center;
             font-size: 48px;
             position: relative;
+            background-size: cover;
+            background-position: center;
         }
 
         .food-card-body {
@@ -296,7 +298,7 @@
             -webkit-user-select: none;
             padding: 16px;
             margin-bottom: 10px;
-            min-height: 110px;
+            min-height: 180px;
             display: flex;
             flex-direction: column;
             justify-content: flex-end;
@@ -553,158 +555,182 @@
                 <div class="question-hint">Swipe to browse. Tap to select. Tap the map link to see it on Google Maps.</div>
                 <div class="food-scroll" data-key="food_spots">
                     <div class="food-card" data-val="din_tai_fung">
-                        <div class="food-card-hero" style="background: linear-gradient(135deg, #2a1a0a, #4a3020);">🥟</div>
+                        <div class="food-card-hero" style="background: linear-gradient(to top, rgba(0,0,0,0.3), transparent), url(img/din-tai-fung.jpg) center/cover;"></div>
                         <div class="food-card-body">
                             <div class="food-card-name">Din Tai Fung</div>
-                            <div class="food-card-name-zh">鼎泰豐 &mdash; Xinyi, Taipei</div>
-                            <div class="food-card-desc">The gold standard of xiao long bao. The original location of a global dumpling empire. Worth the queue.</div>
+                            <div class="food-card-name-zh">鼎泰豐 &mdash; Da'an, Taipei</div>
+                            <div class="food-card-desc">Order: Pork XLB (NT$105/5), truffle XLB (NT$450/5), chicken soup. Cash only. Go before 11:30am or after 2pm to skip the worst lines. Dongmen MRT Exit 5.</div>
                             <div class="food-card-meta">
-                                <span class="food-card-tag">Restaurant</span>
-                                <a href="https://maps.google.com/?q=Din+Tai+Fung+Original+Xinyi+Taipei+Taiwan" target="_blank" rel="noopener" class="food-card-link" onclick="event.stopPropagation()">View on map &rarr;</a>
+                                <span class="food-card-tag">Michelin</span>
+                                <a href="https://maps.google.com/?q=Din+Tai+Fung+194+Xinyi+Road+Taipei+Taiwan" target="_blank" rel="noopener" class="food-card-link" onclick="event.stopPropagation()">Map &rarr;</a>
                             </div>
                         </div>
                     </div>
                     <div class="food-card" data-val="yongkang_beef">
-                        <div class="food-card-hero" style="background: linear-gradient(135deg, #3a1a0a, #5a2a10);">🍜</div>
+                        <div class="food-card-hero" style="background: linear-gradient(to top, rgba(0,0,0,0.3), transparent), url(img/beef-noodle.jpg) center/cover;"></div>
                         <div class="food-card-body">
                             <div class="food-card-name">Yongkang Beef Noodle</div>
                             <div class="food-card-name-zh">永康牛肉麵 &mdash; Da'an, Taipei</div>
-                            <div class="food-card-desc">Taipei's most legendary beef noodle soup. Fork-tender braised beef in a deeply spiced broth. The benchmark.</div>
+                            <div class="food-card-desc">Order: Braised beef in spicy broth (NT$230). Add steamed spare ribs and large intestines. Bib Gourmand. 11am-8:30pm. Cash only. Dongmen MRT, 10 min walk.</div>
                             <div class="food-card-meta">
-                                <span class="food-card-tag">Restaurant</span>
-                                <a href="https://maps.google.com/?q=Yongkang+Beef+Noodle+Taipei+Taiwan" target="_blank" rel="noopener" class="food-card-link" onclick="event.stopPropagation()">View on map &rarr;</a>
+                                <span class="food-card-tag">Bib Gourmand</span>
+                                <a href="https://maps.google.com/?q=Yongkang+Beef+Noodle+Taipei+Taiwan" target="_blank" rel="noopener" class="food-card-link" onclick="event.stopPropagation()">Map &rarr;</a>
                             </div>
                         </div>
                     </div>
                     <div class="food-card" data-val="fuhang">
-                        <div class="food-card-hero" style="background: linear-gradient(135deg, #3a2a1a, #5a4020);">🥞</div>
+                        <div class="food-card-hero" style="background: linear-gradient(to top, rgba(0,0,0,0.3), transparent), url(img/breakfast.jpg) center/cover;"></div>
                         <div class="food-card-body">
                             <div class="food-card-name">Fuhang Soy Milk</div>
                             <div class="food-card-name-zh">阜杭豆漿 &mdash; Zhongzheng, Taipei</div>
-                            <div class="food-card-desc">Taipei's most famous breakfast. Flaky shaobing, crispy youtiao, warm soy milk. Lines form before 5:30 AM.</div>
+                            <div class="food-card-desc">Order: Thick shaobing, salty soy milk with vinegar, dan bing. Opens 5:30am, closed Mon. Weekday before 7am = 20 min wait. Weekend = 1hr+. Know your order before you reach the counter. Cash only.</div>
                             <div class="food-card-meta">
                                 <span class="food-card-tag">Breakfast</span>
-                                <a href="https://maps.google.com/?q=Fuhang+Soy+Milk+Taipei+Taiwan" target="_blank" rel="noopener" class="food-card-link" onclick="event.stopPropagation()">View on map &rarr;</a>
+                                <a href="https://maps.google.com/?q=Fuhang+Soy+Milk+Taipei+Taiwan" target="_blank" rel="noopener" class="food-card-link" onclick="event.stopPropagation()">Map &rarr;</a>
                             </div>
                         </div>
                     </div>
                     <div class="food-card" data-val="jin_feng">
-                        <div class="food-card-hero" style="background: linear-gradient(135deg, #2a1a08, #4a3018);">🍚</div>
+                        <div class="food-card-hero" style="background: linear-gradient(to top, rgba(0,0,0,0.3), transparent), url(img/lu-rou-fan.jpg) center/cover;"></div>
                         <div class="food-card-body">
                             <div class="food-card-name">Jin Feng Lu Rou Fan</div>
                             <div class="food-card-name-zh">金峰魯肉飯 &mdash; Zhongzheng, Taipei</div>
-                            <div class="food-card-desc">The definitive braised pork rice. Glossy soy-and-five-spice sauce over steaming rice. About $1.50 USD.</div>
+                            <div class="food-card-desc">Order: Large braised pork rice (NT$50), stewed egg (NT$15), pork rib soup. Open 8am-1am. Total meal ~NT$100 ($3). CKS Memorial MRT Exit 2, 50m walk. Cash only.</div>
                             <div class="food-card-meta">
                                 <span class="food-card-tag">Street food</span>
-                                <a href="https://maps.google.com/?q=Jin+Feng+Lu+Rou+Fan+Taipei+Taiwan" target="_blank" rel="noopener" class="food-card-link" onclick="event.stopPropagation()">View on map &rarr;</a>
+                                <a href="https://maps.google.com/?q=Jin+Feng+Lu+Rou+Fan+Taipei+Taiwan" target="_blank" rel="noopener" class="food-card-link" onclick="event.stopPropagation()">Map &rarr;</a>
                             </div>
                         </div>
                     </div>
                     <div class="food-card" data-val="raohe_bun">
-                        <div class="food-card-hero" style="background: linear-gradient(135deg, #4a1a0a, #6a2a10);">🫓</div>
+                        <div class="food-card-hero" style="background: linear-gradient(to top, rgba(0,0,0,0.3), transparent), url(img/raohe.jpg) center/cover;"></div>
                         <div class="food-card-body">
                             <div class="food-card-name">Fuzhou Pepper Pork Bun</div>
                             <div class="food-card-name-zh">福州世祖胡椒餅 &mdash; Raohe, Taipei</div>
-                            <div class="food-card-desc">Charcoal-baked in a clay oven. Crispy shell, juicy pepper pork and scallion filling. Always a queue.</div>
+                            <div class="food-card-desc">Charcoal-baked in a clay oven. Crispy shell, juicy pepper pork and scallion filling. ~NT$60 each. Right at Raohe market entrance. Always a 20-30 min queue. Worth it.</div>
                             <div class="food-card-meta">
                                 <span class="food-card-tag">Night market</span>
-                                <a href="https://maps.google.com/?q=Fuzhou+Pepper+Pork+Bun+Raohe+Night+Market+Taipei" target="_blank" rel="noopener" class="food-card-link" onclick="event.stopPropagation()">View on map &rarr;</a>
+                                <a href="https://maps.google.com/?q=Fuzhou+Pepper+Pork+Bun+Raohe+Night+Market+Taipei" target="_blank" rel="noopener" class="food-card-link" onclick="event.stopPropagation()">Map &rarr;</a>
                             </div>
                         </div>
                     </div>
                     <div class="food-card" data-val="a_mei_tea">
-                        <div class="food-card-hero" style="background: linear-gradient(135deg, #3a1a1a, #5a2020);">🍵</div>
+                        <div class="food-card-hero" style="background: linear-gradient(to top, rgba(0,0,0,0.3), transparent), url(img/a-mei-tea.jpg) center/cover;"></div>
                         <div class="food-card-body">
                             <div class="food-card-name">A-Mei Tea House</div>
                             <div class="food-card-name-zh">阿妹茶樓 &mdash; Jiufen</div>
-                            <div class="food-card-desc">Oolong tea in a wooden teahouse draped in red lanterns overlooking the ocean. Said to have inspired Spirited Away.</div>
+                            <div class="food-card-desc">Tea + sweets set NT$300. Oolong in a 100-year-old building with ocean views and red lanterns. Go at dusk for magic lighting. Weekends get packed. The teahouses across the street are less crowded with similar views.</div>
                             <div class="food-card-meta">
                                 <span class="food-card-tag">Tea</span>
-                                <a href="https://maps.google.com/?q=A-Mei+Tea+House+Jiufen+Taiwan" target="_blank" rel="noopener" class="food-card-link" onclick="event.stopPropagation()">View on map &rarr;</a>
+                                <a href="https://maps.google.com/?q=A-Mei+Tea+House+Jiufen+Taiwan" target="_blank" rel="noopener" class="food-card-link" onclick="event.stopPropagation()">Map &rarr;</a>
                             </div>
                         </div>
                     </div>
                     <div class="food-card" data-val="chun_shui_tang">
-                        <div class="food-card-hero" style="background: linear-gradient(135deg, #1a2a1a, #2a4a2a);">🧋</div>
+                        <div class="food-card-hero" style="background: linear-gradient(to top, rgba(0,0,0,0.3), transparent), url(img/bubble-tea.jpg) center/cover;"></div>
                         <div class="food-card-body">
                             <div class="food-card-name">Chun Shui Tang</div>
                             <div class="food-card-name-zh">春水堂 &mdash; Taichung</div>
-                            <div class="food-card-desc">Claims to have invented bubble tea in 1983. Still serving the original pearl milk tea recipe in the original shop.</div>
+                            <div class="food-card-desc">Order: Original Pearl Milk Tea (NT$70-140). Invented here in 1983. Go mid-afternoon to skip crowds. 20 min walk from Taichung TRA station. Basement area is cozier. No photos at the counter.</div>
                             <div class="food-card-meta">
-                                <span class="food-card-tag">Tea</span>
-                                <a href="https://maps.google.com/?q=Chun+Shui+Tang+Original+Taichung+Taiwan" target="_blank" rel="noopener" class="food-card-link" onclick="event.stopPropagation()">View on map &rarr;</a>
+                                <span class="food-card-tag">Tea / Origin</span>
+                                <a href="https://maps.google.com/?q=Chun+Shui+Tang+30+Siwei+Street+Taichung+Taiwan" target="_blank" rel="noopener" class="food-card-link" onclick="event.stopPropagation()">Map &rarr;</a>
                             </div>
                         </div>
                     </div>
                     <div class="food-card" data-val="du_xiao_yue">
-                        <div class="food-card-hero" style="background: linear-gradient(135deg, #4a2a0a, #6a4020);">🍝</div>
+                        <div class="food-card-hero" style="background: linear-gradient(to top, rgba(0,0,0,0.3), transparent), url(img/night-market.jpg) center/cover;"></div>
                         <div class="food-card-body">
                             <div class="food-card-name">Du Xiao Yue</div>
                             <div class="food-card-name-zh">度小月 &mdash; Tainan</div>
-                            <div class="food-card-desc">Dan zai noodles from the same recipe since 1895. Rich shrimp-pork broth ladled at a tiny counter. A Tainan institution.</div>
+                            <div class="food-card-desc">Order: Dan zai noodles &mdash; same recipe since 1895. Small bowl, shrimp-pork broth, minced meat. Tainan's most famous single dish. Sit at the counter to watch them cook.</div>
                             <div class="food-card-meta">
-                                <span class="food-card-tag">Restaurant</span>
-                                <a href="https://maps.google.com/?q=Du+Xiao+Yue+Original+Tainan+Taiwan" target="_blank" rel="noopener" class="food-card-link" onclick="event.stopPropagation()">View on map &rarr;</a>
+                                <span class="food-card-tag">Since 1895</span>
+                                <a href="https://maps.google.com/?q=Du+Xiao+Yue+Original+Tainan+Taiwan" target="_blank" rel="noopener" class="food-card-link" onclick="event.stopPropagation()">Map &rarr;</a>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="food-card" data-val="addiction">
+                        <div class="food-card-hero" style="background: linear-gradient(to top, rgba(0,0,0,0.3), transparent), url(img/stinky-tofu.jpg) center/cover;"></div>
+                        <div class="food-card-body">
+                            <div class="food-card-name">Addiction Aquatic Development</div>
+                            <div class="food-card-name-zh">上引水產 &mdash; Zhongshan, Taipei</div>
+                            <div class="food-card-desc">Luxury seafood market + sushi bar + grill. Sashimi platters, standing sushi counter with Japanese chef, live seafood tanks. 7am-10pm. Cash only (!). Eat at Rongxing Park nearby.</div>
+                            <div class="food-card-meta">
+                                <span class="food-card-tag">Seafood market</span>
+                                <a href="https://maps.google.com/?q=Addiction+Aquatic+Development+Taipei+Taiwan" target="_blank" rel="noopener" class="food-card-link" onclick="event.stopPropagation()">Map &rarr;</a>
                             </div>
                         </div>
                     </div>
                     <div class="food-card" data-val="ningxia">
-                        <div class="food-card-hero" style="background: linear-gradient(135deg, #2a1a2a, #4a2a3a);">🥘</div>
+                        <div class="food-card-hero" style="background: linear-gradient(to top, rgba(0,0,0,0.3), transparent), url(img/ningxia.jpg) center/cover;"></div>
                         <div class="food-card-body">
                             <div class="food-card-name">Ningxia Night Market</div>
                             <div class="food-card-name-zh">寧夏夜市 &mdash; Datong, Taipei</div>
-                            <div class="food-card-desc">Compact, food-focused, beloved by locals. Best lu rou fan in the city. Taro balls, oyster omelets, no tourist crush.</div>
+                            <div class="food-card-desc">Compact, food-focused, beloved by locals. Best lu rou fan in the city. Taro balls, oyster omelets, no tourist crush. Open every night. Near Dihua Street &mdash; combine the two.</div>
                             <div class="food-card-meta">
                                 <span class="food-card-tag">Night market</span>
-                                <a href="https://maps.google.com/?q=Ningxia+Night+Market+Taipei+Taiwan" target="_blank" rel="noopener" class="food-card-link" onclick="event.stopPropagation()">View on map &rarr;</a>
+                                <a href="https://maps.google.com/?q=Ningxia+Night+Market+Taipei+Taiwan" target="_blank" rel="noopener" class="food-card-link" onclick="event.stopPropagation()">Map &rarr;</a>
                             </div>
                         </div>
                     </div>
                     <div class="food-card" data-val="miaokou">
-                        <div class="food-card-hero" style="background: linear-gradient(135deg, #0a2a3a, #1a3a5a);">🦀</div>
+                        <div class="food-card-hero" style="background: linear-gradient(to top, rgba(0,0,0,0.3), transparent), url(img/miaokou.jpg) center/cover;"></div>
                         <div class="food-card-body">
                             <div class="food-card-name">Miaokou Night Market</div>
                             <div class="food-card-name-zh">廟口夜市 &mdash; Keelung</div>
-                            <div class="food-card-desc">Taiwan's best seafood night market. Stalls numbered for decades. Crab soup, tempura, peanut ice cream rolls steps from the harbor.</div>
+                            <div class="food-card-desc">Taiwan's best seafood night market. Stalls numbered for decades. Crab thick soup, ding bian cuo, tempura, peanut ice cream rolls. Steps from the harbor &mdash; it doesn't get fresher.</div>
                             <div class="food-card-meta">
                                 <span class="food-card-tag">Night market</span>
-                                <a href="https://maps.google.com/?q=Miaokou+Night+Market+Keelung+Taiwan" target="_blank" rel="noopener" class="food-card-link" onclick="event.stopPropagation()">View on map &rarr;</a>
+                                <a href="https://maps.google.com/?q=Miaokou+Night+Market+Keelung+Taiwan" target="_blank" rel="noopener" class="food-card-link" onclick="event.stopPropagation()">Map &rarr;</a>
                             </div>
                         </div>
                     </div>
-                    <div class="food-card" data-val="dongdamen">
-                        <div class="food-card-hero" style="background: linear-gradient(135deg, #1a3a2a, #2a5a3a);">🌽</div>
+                    <div class="food-card" data-val="shilin">
+                        <div class="food-card-hero" style="background: linear-gradient(to top, rgba(0,0,0,0.3), transparent), url(img/shilin.jpg) center/cover;"></div>
                         <div class="food-card-body">
-                            <div class="food-card-name">Dongdamen Night Market</div>
-                            <div class="food-card-name-zh">東大門夜市 &mdash; Hualien</div>
-                            <div class="food-card-desc">Indigenous Amis-influenced flavors meet Taiwanese street food. Flame-grilled corn, fresh seafood, east coast vibes.</div>
+                            <div class="food-card-name">Shilin Night Market</div>
+                            <div class="food-card-name-zh">士林夜市 &mdash; Shilin, Taipei</div>
+                            <div class="food-card-desc">Taiwan's biggest and most famous night market. Underground food court for giant fried chicken, stinky tofu, oyster omelets. Touristy but still fun. Jiantan MRT.</div>
                             <div class="food-card-meta">
                                 <span class="food-card-tag">Night market</span>
-                                <a href="https://maps.google.com/?q=Dongdamen+Night+Market+Hualien+Taiwan" target="_blank" rel="noopener" class="food-card-link" onclick="event.stopPropagation()">View on map &rarr;</a>
+                                <a href="https://maps.google.com/?q=Shilin+Night+Market+Taipei+Taiwan" target="_blank" rel="noopener" class="food-card-link" onclick="event.stopPropagation()">Map &rarr;</a>
                             </div>
                         </div>
                     </div>
-                    <div class="food-card" data-val="hayashi">
-                        <div class="food-card-hero" style="background: linear-gradient(135deg, #3a3020, #5a4a30);">🏛️</div>
+                    <div class="food-card" data-val="a_hsing">
+                        <div class="food-card-hero" style="background: linear-gradient(to top, rgba(0,0,0,0.3), transparent), url(img/tainan.jpg) center/cover;"></div>
                         <div class="food-card-body">
-                            <div class="food-card-name">Hayashi Department Store</div>
-                            <div class="food-card-name-zh">林百貨 &mdash; Tainan</div>
-                            <div class="food-card-desc">Beautifully restored 1932 Art Deco building with rooftop cafe. Local crafts, Tainan treats, and WWII bullet scars on the walls.</div>
+                            <div class="food-card-name">A Hsing Milkfish Congee</div>
+                            <div class="food-card-name-zh">阿星鹹粥 &mdash; Tainan</div>
+                            <div class="food-card-desc">Bib Gourmand since 1965. Queue starts at 5am. Ask for belly cut &mdash; fattiest, silkiest part of the milkfish. Congee with fried garlic on top. Air-conditioned inside. THE Tainan milkfish experience.</div>
                             <div class="food-card-meta">
-                                <span class="food-card-tag">Cafe / Shop</span>
-                                <a href="https://maps.google.com/?q=Hayashi+Department+Store+Tainan+Taiwan" target="_blank" rel="noopener" class="food-card-link" onclick="event.stopPropagation()">View on map &rarr;</a>
+                                <span class="food-card-tag">Bib Gourmand</span>
+                                <a href="https://maps.google.com/?q=A+Hsing+Congee+Tainan+Taiwan" target="_blank" rel="noopener" class="food-card-link" onclick="event.stopPropagation()">Map &rarr;</a>
                             </div>
                         </div>
                     </div>
                     <div class="food-card" data-val="ice_monster">
-                        <div class="food-card-hero" style="background: linear-gradient(135deg, #4a2a1a, #6a4a2a);">🍧</div>
+                        <div class="food-card-hero" style="background: linear-gradient(to top, rgba(0,0,0,0.3), transparent), url(img/mango-ice.jpg) center/cover;"></div>
                         <div class="food-card-body">
                             <div class="food-card-name">Ice Monster</div>
                             <div class="food-card-name-zh">ICE MONSTER &mdash; Da'an, Taipei</div>
-                            <div class="food-card-desc">Pioneered Taiwan's shaved ice revolution. Towering bowls of mango shaved ice made from frozen fruit blocks.</div>
+                            <div class="food-card-desc">Pioneered Taiwan's shaved ice revolution. Towering bowls of mango shaved ice made from frozen fruit blocks, not plain ice. Best in summer (mango season May-Oct).</div>
                             <div class="food-card-meta">
                                 <span class="food-card-tag">Dessert</span>
-                                <a href="https://maps.google.com/?q=Ice+Monster+Taipei+Taiwan" target="_blank" rel="noopener" class="food-card-link" onclick="event.stopPropagation()">View on map &rarr;</a>
+                                <a href="https://maps.google.com/?q=Ice+Monster+Taipei+Taiwan" target="_blank" rel="noopener" class="food-card-link" onclick="event.stopPropagation()">Map &rarr;</a>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="food-card" data-val="hayashi">
+                        <div class="food-card-hero" style="background: linear-gradient(to top, rgba(0,0,0,0.3), transparent), url(img/tainan.jpg) center 30%/cover;"></div>
+                        <div class="food-card-body">
+                            <div class="food-card-name">Hayashi Department Store</div>
+                            <div class="food-card-name-zh">林百貨 &mdash; Tainan</div>
+                            <div class="food-card-desc">Restored 1932 Art Deco building with rooftop cafe. Local crafts, Tainan treats, and WWII bullet scars on the walls. A beautiful spot for a break and souvenirs.</div>
+                            <div class="food-card-meta">
+                                <span class="food-card-tag">Cafe / Shop</span>
+                                <a href="https://maps.google.com/?q=Hayashi+Department+Store+Tainan+Taiwan" target="_blank" rel="noopener" class="food-card-link" onclick="event.stopPropagation()">Map &rarr;</a>
                             </div>
                         </div>
                     </div>
