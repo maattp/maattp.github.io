@@ -1573,69 +1573,12 @@
         window.addEventListener('scroll', updateProgress, { passive: true });
         updateProgress();
 
-        // ===== Generate summary =====
-        function generateSummary(data) {
-            const lines = [];
-            const name = data.name || 'Traveler';
-            lines.push('=== ' + name + "'s Taiwan Trip Profile ===\n");
-
-            if (data.departure_city) lines.push('Flying from: ' + data.departure_city);
-            if (data.specific_dates) lines.push('Dates: ' + data.specific_dates);
-            if (data.travel_month?.length) lines.push('Months: ' + data.travel_month.join(', '));
-            if (data.duration_days) lines.push('Duration: ' + data.duration_days + ' days');
-            lines.push('');
-
-            if (data.regions?.length) lines.push('Regions: ' + data.regions.join(', '));
-            if (data.scenic_spots?.length) lines.push('Must-see spots: ' + data.scenic_spots.join(', '));
-            if (data.must_do) lines.push('Must-do: ' + data.must_do);
-            lines.push('');
-
-            if (data.food_importance) lines.push('Food priority: ' + data.food_importance);
-            if (data.food_spots?.length) lines.push('Food spots: ' + data.food_spots.join(', '));
-            if (data.must_try_dishes?.length) lines.push('Must-try dishes: ' + data.must_try_dishes.join(', '));
-            if (data.food_adventurousness) lines.push('Weird food: ' + data.food_adventurousness);
-            if (data.breakfast_culture) lines.push('Breakfast: ' + data.breakfast_culture);
-            if (data.tea_interest) lines.push('Tea: ' + data.tea_interest);
-            if (data.dietary?.length) lines.push('Dietary: ' + data.dietary.join(', '));
-            if (data.food_notes) lines.push('Food notes: ' + data.food_notes);
-            lines.push('');
-
-            if (data.hiking_level) lines.push('Hiking: ' + data.hiking_level);
-            if (data.hot_spring_style) lines.push('Hot springs: ' + data.hot_spring_style);
-            if (data.animal_experiences?.length) lines.push('Animals: ' + data.animal_experiences.join(', '));
-            if (data.activities?.length) lines.push('Activities: ' + data.activities.join(', '));
-            lines.push('');
-
-            if (data.morning_person) lines.push('Morning person: ' + data.morning_person);
-            if (data.split_up) lines.push('Split up: ' + data.split_up);
-            if (data.splurge_meal) lines.push('Splurge meal: ' + data.splurge_meal);
-            if (data.walking_stamina) lines.push('Walking stamina: ' + data.walking_stamina);
-            lines.push('');
-
-            if (data.budget) lines.push('Budget: ' + data.budget);
-            if (data.accommodation?.length) lines.push('Accommodation: ' + data.accommodation.join(', '));
-            if (data.flight_class) lines.push('Flight class: ' + data.flight_class);
-            if (data.points_programs?.length) lines.push('Points programs: ' + data.points_programs.join(', '));
-            if (data.points_balances) lines.push('Balances: ' + data.points_balances);
-            if (data.hotel_loyalty) lines.push('Hotel loyalty: ' + data.hotel_loyalty);
-            if (data.card_perks) lines.push('Card perks: ' + data.card_perks);
-            lines.push('');
-
-            if (data.priorities?.length) lines.push('Priorities (ranked): ' + data.priorities.join(' > '));
-            if (data.dream_moment) lines.push('Dream moment: ' + data.dream_moment);
-            if (data.avoid) lines.push('Avoid: ' + data.avoid);
-            if (data.notes) lines.push('Notes: ' + data.notes);
-
-            return lines.filter(l => l !== undefined).join('\n');
-        }
-
         // ===== Submit =====
         document.getElementById('submitBtn').addEventListener('click', () => {
             const data = collectAnswers();
             localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
             const output = document.getElementById('output');
-            const summary = generateSummary(data);
-            document.getElementById('outputJson').textContent = summary + '\n\n--- RAW JSON ---\n' + JSON.stringify(data, null, 2);
+            document.getElementById('outputJson').textContent = JSON.stringify(data, null, 2);
             output.classList.add('visible');
             const ind = document.getElementById('savedIndicator');
             ind.classList.add('show'); setTimeout(() => ind.classList.remove('show'), 2000);
