@@ -397,6 +397,61 @@
             color: #fff;
         }
 
+        /* Ghost overlay - shows edge of last photo for alignment */
+        .ghost-overlay {
+            position: absolute;
+            top: 0;
+            left: 0;
+            height: 100%;
+            pointer-events: none;
+            z-index: 3;
+            opacity: 0.35;
+            display: none;
+        }
+        .ghost-overlay.visible { display: block; }
+        .ghost-edge {
+            position: absolute;
+            right: 0;
+            top: 0;
+            bottom: 0;
+            width: 3px;
+            background: #00d4aa;
+            box-shadow: 0 0 8px rgba(0,212,170,0.6);
+        }
+
+        /* Panorama preview strip */
+        .pano-strip-container {
+            position: relative;
+            margin: 8px 16px 0;
+            height: 56px;
+            background: rgba(0,0,0,0.6);
+            border-radius: 10px;
+            overflow: hidden;
+            backdrop-filter: blur(10px);
+            -webkit-backdrop-filter: blur(10px);
+        }
+        .pano-strip {
+            display: flex;
+            height: 100%;
+            padding: 4px;
+            gap: 2px;
+        }
+        .pano-strip-frame {
+            height: 100%;
+            border-radius: 4px;
+            object-fit: cover;
+            flex-shrink: 0;
+        }
+        .pano-strip-empty {
+            flex: 1;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: rgba(255,255,255,0.3);
+            font-size: 12px;
+            font-weight: 500;
+        }
+
         /* Center guide overlay */
         .guide-overlay {
             position: absolute;
@@ -406,67 +461,94 @@
             display: flex;
             flex-direction: column;
             align-items: center;
-            gap: 16px;
+            gap: 12px;
             pointer-events: none;
             z-index: 5;
         }
-        .guide-ring {
-            width: 120px;
-            height: 120px;
-            border-radius: 50%;
-            border: 3px solid rgba(255,255,255,0.3);
+
+        /* Direction arrow - big and animated */
+        .guide-direction {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+        .guide-arrow {
+            width: 60px;
+            height: 60px;
             display: flex;
             align-items: center;
             justify-content: center;
-            position: relative;
-            transition: border-color 0.3s, box-shadow 0.3s;
+            font-size: 40px;
+            color: #fff;
+            filter: drop-shadow(0 2px 8px rgba(0,0,0,0.5));
+            transition: transform 0.2s, color 0.3s;
         }
-        .guide-ring.aligned {
-            border-color: #00d4aa;
-            box-shadow: 0 0 30px rgba(0,212,170,0.3), inset 0 0 20px rgba(0,212,170,0.1);
+        .guide-arrow.bounce-right {
+            animation: bounceRight 1s ease-in-out infinite;
         }
-        .guide-ring.aligned .guide-arrow-icon {
-            color: #00d4aa;
+        .guide-arrow.bounce-left {
+            animation: bounceLeft 1s ease-in-out infinite;
         }
-        .guide-crosshair {
-            width: 2px;
-            height: 24px;
-            background: rgba(255,255,255,0.5);
-            position: absolute;
+        @keyframes bounceRight {
+            0%, 100% { transform: translateX(0); }
+            50% { transform: translateX(12px); }
         }
-        .guide-crosshair.h {
-            width: 24px;
-            height: 2px;
+        @keyframes bounceLeft {
+            0%, 100% { transform: translateX(0); }
+            50% { transform: translateX(-12px); }
         }
-        .guide-arrow-icon {
-            font-size: 36px;
-            color: rgba(255,255,255,0.7);
-            transition: color 0.3s, transform 0.3s;
-            line-height: 1;
-        }
-        .guide-arrow-icon.flip {
-            transform: scaleX(-1);
-        }
+
         .guide-text {
             font-size: 16px;
             font-weight: 600;
             color: #fff;
             text-align: center;
-            background: rgba(0,0,0,0.6);
-            padding: 8px 20px;
-            border-radius: 20px;
+            background: rgba(0,0,0,0.65);
+            padding: 10px 24px;
+            border-radius: 24px;
             backdrop-filter: blur(10px);
             -webkit-backdrop-filter: blur(10px);
             white-space: nowrap;
             transition: background 0.3s;
+            box-shadow: 0 2px 12px rgba(0,0,0,0.3);
         }
         .guide-text.success {
-            background: rgba(0,212,170,0.4);
+            background: rgba(0,212,170,0.5);
+        }
+        .guide-text.first-capture {
+            font-size: 18px;
+            padding: 14px 28px;
+            animation: firstPulse 2s ease-in-out infinite;
+        }
+        @keyframes firstPulse {
+            0%, 100% { box-shadow: 0 2px 12px rgba(0,0,0,0.3); }
+            50% { box-shadow: 0 2px 24px rgba(0,212,170,0.4); }
         }
         .guide-subtext {
             font-size: 12px;
-            color: rgba(255,255,255,0.5);
+            color: rgba(255,255,255,0.6);
             text-align: center;
+            background: rgba(0,0,0,0.4);
+            padding: 4px 12px;
+            border-radius: 10px;
+        }
+
+        /* Alignment indicator - shown when near target */
+        .align-indicator {
+            position: absolute;
+            inset: 0;
+            border: 3px solid transparent;
+            border-radius: 0;
+            pointer-events: none;
+            z-index: 4;
+            transition: border-color 0.3s;
+        }
+        .align-indicator.near {
+            border-color: rgba(0,212,170,0.3);
+        }
+        .align-indicator.aligned {
+            border-color: #00d4aa;
+            box-shadow: inset 0 0 30px rgba(0,212,170,0.15);
         }
 
         /* Horizon level line */
@@ -482,24 +564,25 @@
         .horizon-line::before {
             content: '';
             position: absolute;
-            left: 20%;
-            right: 20%;
+            left: 15%;
+            right: 15%;
             height: 1px;
-            background: rgba(255,255,255,0.15);
+            background: rgba(255,255,255,0.2);
         }
         .horizon-line .horizon-bubble {
             position: absolute;
             left: 50%;
-            top: -4px;
-            width: 8px;
-            height: 8px;
+            top: -5px;
+            width: 10px;
+            height: 10px;
             border-radius: 50%;
-            border: 1.5px solid rgba(255,255,255,0.4);
+            border: 2px solid rgba(255,255,255,0.4);
             transform: translateX(-50%);
             transition: transform 0.15s, border-color 0.3s;
         }
         .horizon-line .horizon-bubble.level {
             border-color: #00d4aa;
+            background: rgba(0,212,170,0.2);
         }
 
         /* Capture button ready state */
@@ -512,7 +595,7 @@
         }
         @keyframes captureReady {
             0%, 100% { box-shadow: 0 0 0 0 rgba(0,212,170,0.4); }
-            50% { box-shadow: 0 0 0 12px rgba(0,212,170,0); }
+            50% { box-shadow: 0 0 0 14px rgba(0,212,170,0); }
         }
 
         /* Auto-capture countdown ring */
@@ -534,6 +617,25 @@
             from { transform: rotate(0deg); }
             to { transform: rotate(360deg); }
         }
+
+        /* Orientation unavailable notice */
+        .no-orientation-notice {
+            position: absolute;
+            top: calc(env(safe-area-inset-top) + 68px);
+            left: 16px;
+            right: 16px;
+            background: rgba(255,107,107,0.2);
+            border: 1px solid rgba(255,107,107,0.4);
+            border-radius: 10px;
+            padding: 8px 12px;
+            font-size: 12px;
+            color: rgba(255,255,255,0.8);
+            text-align: center;
+            pointer-events: none;
+            z-index: 6;
+            display: none;
+        }
+        .no-orientation-notice.visible { display: block; }
 
         /* Flash overlay for capture feedback */
         .flash-overlay {
@@ -577,7 +679,22 @@
     <!-- Capture Screen -->
     <div id="screen-capture" class="screen">
         <video id="camera" autoplay playsinline muted></video>
+
+        <!-- Ghost overlay: shows edge of last photo for visual alignment -->
+        <canvas class="ghost-overlay" id="ghost-overlay">
+            <div class="ghost-edge"></div>
+        </canvas>
+
+        <!-- Alignment border indicator -->
+        <div class="align-indicator" id="align-indicator"></div>
+
+        <!-- No-orientation fallback notice -->
+        <div class="no-orientation-notice" id="no-orientation-notice">
+            Gyroscope unavailable — align the camera with the ghost overlay on the left
+        </div>
+
         <div class="capture-overlay">
+            <!-- Compass strip -->
             <div class="compass-strip" id="compass-strip">
                 <div class="compass-track">
                     <div class="compass-fill" id="compass-fill"></div>
@@ -588,24 +705,33 @@
                     <span>N</span><span>E</span><span>S</span><span>W</span><span>N</span>
                 </div>
             </div>
+
+            <!-- Panorama preview strip -->
+            <div class="pano-strip-container" id="pano-strip-container">
+                <div class="pano-strip" id="pano-strip">
+                    <div class="pano-strip-empty">Your panorama will build here</div>
+                </div>
+            </div>
+
             <div class="capture-info">
                 <span class="capture-count" id="capture-count">0 photos</span>
                 <span class="capture-heading" id="capture-heading">--°</span>
             </div>
+
+            <!-- Center area with guides -->
             <div class="capture-spacer">
                 <div class="horizon-line">
                     <div class="horizon-bubble" id="horizon-bubble"></div>
                 </div>
                 <div class="guide-overlay" id="guide-overlay">
-                    <div class="guide-ring" id="guide-ring">
-                        <div class="guide-crosshair"></div>
-                        <div class="guide-crosshair h"></div>
-                        <span class="guide-arrow-icon" id="guide-arrow">→</span>
+                    <div class="guide-direction" id="guide-direction" style="display:none">
+                        <div class="guide-arrow" id="guide-arrow">›</div>
                     </div>
-                    <div class="guide-text" id="guide-text">Tap to take first photo</div>
+                    <div class="guide-text first-capture" id="guide-text">Tap to take first photo</div>
                     <div class="guide-subtext" id="guide-subtext">Then slowly rotate right</div>
                 </div>
             </div>
+
             <div class="capture-thumbs" id="capture-thumbs"></div>
             <div class="capture-controls">
                 <button class="done-btn hidden" id="btn-done">Stitch</button>
@@ -787,16 +913,14 @@
     }
 
     // ==========================================
-    // Capture Guide
+    // Capture Guide & Visual Overlays
     // ==========================================
     function angleDiff(a, b) {
-        // Shortest signed angle from a to b (-180..180)
         let d = ((b - a + 540) % 360) - 180;
         return d;
     }
 
     function getNextTarget() {
-        // Find the nearest uncaptured target angle
         if (!state.hasOrientation || state.heading === null) return null;
         let bestIdx = -1, bestDist = Infinity;
         for (let i = 0; i < CONFIG.targetCaptures; i++) {
@@ -812,38 +936,125 @@
         return { index: bestIdx, angle: bestIdx * CONFIG.angleStep, dist: bestDist };
     }
 
+    // Ghost overlay: show the right edge of the last captured photo
+    // so the user can visually align the camera with it
+    function updateGhostOverlay() {
+        const ghost = document.getElementById('ghost-overlay');
+        const n = state.captures.length;
+
+        if (n === 0) {
+            ghost.classList.remove('visible');
+            return;
+        }
+
+        const lastCapture = state.captures[n - 1];
+        const srcCanvas = lastCapture.canvas;
+
+        // Show rightmost 30% of last capture as ghost on the left side
+        const overlapFraction = 0.30;
+        const cropX = Math.floor(srcCanvas.width * (1 - overlapFraction));
+        const cropW = srcCanvas.width - cropX;
+        const cropH = srcCanvas.height;
+
+        // Size ghost to fill left portion of screen
+        const screenH = window.innerHeight;
+        const displayScale = screenH / cropH;
+        const displayW = Math.round(cropW * displayScale);
+
+        ghost.width = cropW;
+        ghost.height = cropH;
+        ghost.style.width = displayW + 'px';
+        ghost.style.height = screenH + 'px';
+
+        const ctx = ghost.getContext('2d');
+        ctx.clearRect(0, 0, cropW, cropH);
+        ctx.drawImage(srcCanvas, cropX, 0, cropW, cropH, 0, 0, cropW, cropH);
+
+        // Draw green edge line on the right
+        ctx.strokeStyle = '#00d4aa';
+        ctx.lineWidth = 3;
+        ctx.beginPath();
+        ctx.moveTo(cropW - 1, 0);
+        ctx.lineTo(cropW - 1, cropH);
+        ctx.stroke();
+
+        ghost.classList.add('visible');
+    }
+
+    // Panorama preview strip: shows captured images building up
+    function updatePanoStrip() {
+        const strip = document.getElementById('pano-strip');
+        strip.innerHTML = '';
+
+        if (state.captures.length === 0) {
+            strip.innerHTML = '<div class="pano-strip-empty">Your panorama will build here</div>';
+            return;
+        }
+
+        const stripH = 48; // inner height
+        for (const cap of state.captures) {
+            const thumb = document.createElement('canvas');
+            thumb.className = 'pano-strip-frame';
+            const aspect = cap.canvas.width / cap.canvas.height;
+            const thumbW = Math.round(stripH * aspect);
+            thumb.width = Math.round(cap.canvas.width * (stripH / cap.canvas.height));
+            thumb.height = stripH;
+            thumb.style.width = thumbW + 'px';
+            thumb.getContext('2d').drawImage(cap.canvas, 0, 0, thumb.width, thumb.height);
+            strip.appendChild(thumb);
+        }
+    }
+
     function updateGuide() {
         const guideText = document.getElementById('guide-text');
         const guideSubtext = document.getElementById('guide-subtext');
         const guideArrow = document.getElementById('guide-arrow');
-        const guideRing = document.getElementById('guide-ring');
+        const guideDir = document.getElementById('guide-direction');
         const captureBtn = document.getElementById('btn-capture');
+        const alignIndicator = document.getElementById('align-indicator');
         const n = state.captures.length;
 
         if (n === 0) {
+            // First capture - prominent prompt
+            guideDir.style.display = 'none';
             guideText.textContent = 'Tap to take first photo';
-            guideText.classList.remove('success');
+            guideText.className = 'guide-text first-capture';
             guideSubtext.textContent = 'Then slowly rotate right';
-            guideArrow.textContent = '●';
-            guideArrow.classList.remove('flip');
-            guideRing.classList.remove('aligned');
             captureBtn.classList.remove('ready');
+            alignIndicator.className = 'align-indicator';
+            return;
+        }
+
+        guideText.classList.remove('first-capture');
+
+        // If no orientation, guide purely via ghost overlay
+        if (!state.hasOrientation) {
+            guideDir.style.display = 'flex';
+            guideArrow.textContent = '›';
+            guideArrow.className = 'guide-arrow bounce-right';
+            guideText.className = 'guide-text';
+            guideText.textContent = `Photo ${n + 1} — rotate right, match the overlay`;
+            guideSubtext.textContent = 'Align the green edge with the scene';
+            captureBtn.classList.remove('ready');
+            alignIndicator.className = 'align-indicator';
             return;
         }
 
         const allCaptured = state.capturedAngles.size >= CONFIG.targetCaptures;
         if (allCaptured) {
+            guideDir.style.display = 'none';
             guideText.textContent = 'Full coverage!';
-            guideText.classList.add('success');
+            guideText.className = 'guide-text success';
             guideSubtext.textContent = 'Tap Stitch when ready';
-            guideArrow.textContent = '✓';
-            guideRing.classList.add('aligned');
             captureBtn.classList.remove('ready');
+            alignIndicator.className = 'align-indicator aligned';
             return;
         }
 
         const next = getNextTarget();
         if (!next) {
+            guideDir.style.display = 'none';
+            guideText.className = 'guide-text';
             guideText.textContent = 'Tap to capture';
             guideSubtext.textContent = '';
             return;
@@ -852,31 +1063,55 @@
         const diff = angleDiff(state.heading, next.angle);
         const absDiff = Math.abs(diff);
 
+        guideDir.style.display = 'flex';
+
         if (absDiff <= CONFIG.alignTolerance) {
-            // Aligned with target
-            guideRing.classList.add('aligned');
+            // ALIGNED - green everything, ready to capture
             captureBtn.classList.add('ready');
             guideArrow.textContent = '●';
-            guideArrow.classList.remove('flip');
+            guideArrow.className = 'guide-arrow';
+            guideArrow.style.color = '#00d4aa';
+            guideArrow.style.fontSize = '48px';
             guideText.textContent = 'Hold steady...';
-            guideText.classList.add('success');
+            guideText.className = 'guide-text success';
             guideSubtext.textContent = 'Auto-capturing';
-        } else {
-            // Not aligned - show direction
-            guideRing.classList.remove('aligned');
+            alignIndicator.className = 'align-indicator aligned';
+        } else if (absDiff <= 20) {
+            // CLOSE - show near indicator
             captureBtn.classList.remove('ready');
-            guideText.classList.remove('success');
+            guideArrow.style.color = '';
+            guideArrow.style.fontSize = '';
+            alignIndicator.className = 'align-indicator near';
 
             if (diff > 0) {
-                guideArrow.textContent = '→';
-                guideArrow.classList.remove('flip');
+                guideArrow.textContent = '›';
+                guideArrow.className = 'guide-arrow bounce-right';
+                guideText.textContent = `Almost there — ${Math.round(absDiff)}° right`;
+            } else {
+                guideArrow.textContent = '‹';
+                guideArrow.className = 'guide-arrow bounce-left';
+                guideText.textContent = `Almost there — ${Math.round(absDiff)}° left`;
+            }
+            guideText.className = 'guide-text';
+            guideSubtext.textContent = 'Match the overlay on the left';
+        } else {
+            // FAR - show direction with big arrow
+            captureBtn.classList.remove('ready');
+            guideArrow.style.color = '';
+            guideArrow.style.fontSize = '';
+            alignIndicator.className = 'align-indicator';
+
+            if (diff > 0) {
+                guideArrow.textContent = '›';
+                guideArrow.className = 'guide-arrow bounce-right';
                 guideText.textContent = `Rotate right ${Math.round(absDiff)}°`;
             } else {
-                guideArrow.textContent = '→';
-                guideArrow.classList.add('flip');
+                guideArrow.textContent = '‹';
+                guideArrow.className = 'guide-arrow bounce-left';
                 guideText.textContent = `Rotate left ${Math.round(absDiff)}°`;
             }
-            guideSubtext.textContent = `Target: ${next.angle}°`;
+            guideText.className = 'guide-text';
+            guideSubtext.textContent = `Next capture at ${next.angle}°`;
         }
     }
 
@@ -889,46 +1124,54 @@
     }
 
     function checkAutoCapture() {
-        if (!state.hasOrientation || state.heading === null) return;
+        if (state.captures.length === 0) return; // First must be manual
         if (state.autoCaptureLocked) return;
 
-        const next = getNextTarget();
-        if (!next) return;
+        // With orientation: use compass alignment
+        if (state.hasOrientation && state.heading !== null) {
+            const next = getNextTarget();
+            if (!next) return;
+            const absDiff = Math.abs(angleDiff(state.heading, next.angle));
 
-        const absDiff = Math.abs(angleDiff(state.heading, next.angle));
+            if (absDiff <= CONFIG.autoCaptureTolerance) {
+                if (!state.autoCaptureTimer) {
+                    const ring = document.getElementById('auto-ring');
+                    ring.classList.remove('active');
+                    void ring.offsetWidth;
+                    ring.classList.add('active');
 
-        if (absDiff <= CONFIG.autoCaptureTolerance) {
-            // Start auto-capture timer if not already running
-            if (!state.autoCaptureTimer) {
-                const ring = document.getElementById('auto-ring');
-                ring.classList.remove('active');
-                void ring.offsetWidth;
-                ring.classList.add('active');
-
-                state.autoCaptureTimer = setTimeout(() => {
-                    state.autoCaptureTimer = null;
-                    // Re-check alignment before firing
-                    const currentNext = getNextTarget();
-                    if (currentNext) {
-                        const currentDiff = Math.abs(angleDiff(state.heading, currentNext.angle));
-                        if (currentDiff <= CONFIG.autoCaptureTolerance) {
-                            captureFrame();
-                            // Prevent re-trigger for a bit
-                            state.autoCaptureLocked = true;
-                            setTimeout(() => { state.autoCaptureLocked = false; }, 1000);
+                    state.autoCaptureTimer = setTimeout(() => {
+                        state.autoCaptureTimer = null;
+                        const currentNext = getNextTarget();
+                        if (currentNext) {
+                            const currentDiff = Math.abs(angleDiff(state.heading, currentNext.angle));
+                            if (currentDiff <= CONFIG.autoCaptureTolerance) {
+                                captureFrame();
+                                state.autoCaptureLocked = true;
+                                setTimeout(() => { state.autoCaptureLocked = false; }, 1000);
+                            }
                         }
-                    }
+                        document.getElementById('auto-ring').classList.remove('active');
+                    }, CONFIG.autoCaptureDelay);
+                }
+            } else {
+                if (state.autoCaptureTimer) {
+                    clearTimeout(state.autoCaptureTimer);
+                    state.autoCaptureTimer = null;
                     document.getElementById('auto-ring').classList.remove('active');
-                }, CONFIG.autoCaptureDelay);
-            }
-        } else {
-            // Moved away - cancel auto-capture
-            if (state.autoCaptureTimer) {
-                clearTimeout(state.autoCaptureTimer);
-                state.autoCaptureTimer = null;
-                document.getElementById('auto-ring').classList.remove('active');
+                }
             }
         }
+    }
+
+    // Show notice after 2s if no orientation events received
+    let orientationCheckTimer = null;
+    function startOrientationCheck() {
+        orientationCheckTimer = setTimeout(() => {
+            if (!state.hasOrientation) {
+                document.getElementById('no-orientation-notice').classList.add('visible');
+            }
+        }, 2000);
     }
 
     // ==========================================
@@ -1010,7 +1253,9 @@
             document.getElementById('compass-fill').style.width = pct + '%';
         }
 
-        // Refresh the guide text immediately
+        // Update visual overlays
+        updateGhostOverlay();
+        updatePanoStrip();
         updateGuide();
 
         // Add thumbnail
@@ -1574,6 +1819,7 @@
         state.capturedAngles = new Set();
         state.autoCaptureTimer = null;
         state.autoCaptureLocked = false;
+        state.hasOrientation = false;
         document.getElementById('capture-thumbs').innerHTML = '';
         document.getElementById('btn-done').classList.add('hidden');
         document.getElementById('btn-capture').classList.remove('ready');
@@ -1581,12 +1827,17 @@
         initCompassDots();
         document.getElementById('compass-fill').style.width = '0%';
         document.getElementById('capture-count').textContent = '0 photos';
+        // Reset visual overlays
+        document.getElementById('ghost-overlay').classList.remove('visible');
+        document.getElementById('align-indicator').className = 'align-indicator';
+        document.getElementById('no-orientation-notice').classList.remove('visible');
+        document.getElementById('pano-strip').innerHTML =
+            '<div class="pano-strip-empty">Your panorama will build here</div>';
         // Reset guide
         document.getElementById('guide-text').textContent = 'Tap to take first photo';
-        document.getElementById('guide-text').classList.remove('success');
+        document.getElementById('guide-text').className = 'guide-text first-capture';
         document.getElementById('guide-subtext').textContent = 'Then slowly rotate right';
-        document.getElementById('guide-arrow').textContent = '●';
-        document.getElementById('guide-ring').classList.remove('aligned');
+        document.getElementById('guide-direction').style.display = 'none';
     }
 
     document.addEventListener('opencv-ready', () => {
@@ -1626,6 +1877,7 @@
         reset();
         await startCamera();
         await startOrientation();
+        startOrientationCheck();
         showScreen('capture');
     });
 
@@ -1641,6 +1893,7 @@
         reset();
         await startCamera();
         await startOrientation();
+        startOrientationCheck();
         showScreen('capture');
     });
 
