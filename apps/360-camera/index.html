@@ -1,0 +1,1333 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="theme-color" content="#0a0a1a">
+    <title>360 Camera</title>
+    <script>
+    var Module = {
+        onRuntimeInitialized: function() {
+            document.dispatchEvent(new Event('opencv-ready'));
+        }
+    };
+    </script>
+    <script defer src="https://docs.opencv.org/4.9.0/opencv.js"></script>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        html, body { height: 100%; overflow: hidden; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: #0a0a1a;
+            color: #fff;
+            -webkit-tap-highlight-color: transparent;
+        }
+
+        .screen {
+            position: fixed; inset: 0;
+            display: none;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+        }
+        .screen.active { display: flex; }
+
+        /* Loading */
+        #screen-loading {
+            background: #0a0a1a;
+            gap: 24px;
+        }
+        .loading-icon {
+            font-size: 64px;
+            animation: pulse 2s ease-in-out infinite;
+        }
+        @keyframes pulse { 0%,100% { transform: scale(1); } 50% { transform: scale(1.1); } }
+        .loading-title {
+            font-size: 28px;
+            font-weight: 700;
+            letter-spacing: -0.5px;
+        }
+        .loading-bar {
+            width: 200px; height: 4px;
+            background: rgba(255,255,255,0.1);
+            border-radius: 2px;
+            overflow: hidden;
+        }
+        .loading-fill {
+            height: 100%;
+            width: 30%;
+            background: linear-gradient(90deg, #00d4aa, #00b4d8);
+            border-radius: 2px;
+            animation: loadSlide 1.5s ease-in-out infinite;
+        }
+        @keyframes loadSlide {
+            0% { transform: translateX(-100%); }
+            100% { transform: translateX(400%); }
+        }
+        .loading-status {
+            font-size: 14px;
+            color: rgba(255,255,255,0.5);
+        }
+        .loading-error {
+            color: #ff6b6b;
+            font-size: 14px;
+            max-width: 300px;
+            text-align: center;
+            display: none;
+        }
+
+        /* Ready */
+        #screen-ready {
+            background: #0a0a1a;
+            gap: 16px;
+            padding: 40px;
+        }
+        .ready-icon { font-size: 80px; margin-bottom: 8px; }
+        .ready-title {
+            font-size: 32px;
+            font-weight: 700;
+            letter-spacing: -0.5px;
+        }
+        .ready-desc {
+            font-size: 15px;
+            color: rgba(255,255,255,0.6);
+            text-align: center;
+            line-height: 1.5;
+            max-width: 280px;
+        }
+        .btn-primary {
+            margin-top: 24px;
+            padding: 16px 48px;
+            font-size: 17px;
+            font-weight: 600;
+            border: none;
+            border-radius: 14px;
+            background: linear-gradient(135deg, #00d4aa, #00b4d8);
+            color: #000;
+            cursor: pointer;
+            transition: transform 0.15s;
+        }
+        .btn-primary:active { transform: scale(0.95); }
+
+        /* Capture */
+        #screen-capture { background: #000; }
+        #camera {
+            position: absolute; inset: 0;
+            width: 100%; height: 100%;
+            object-fit: cover;
+        }
+        .capture-overlay {
+            position: absolute; inset: 0;
+            display: flex;
+            flex-direction: column;
+            pointer-events: none;
+            z-index: 10;
+        }
+
+        .compass-strip {
+            position: relative;
+            margin-top: calc(env(safe-area-inset-top) + 12px);
+            margin-left: 16px;
+            margin-right: 16px;
+            height: 48px;
+            background: rgba(0,0,0,0.6);
+            border-radius: 12px;
+            overflow: hidden;
+            backdrop-filter: blur(10px);
+            -webkit-backdrop-filter: blur(10px);
+            pointer-events: auto;
+        }
+        .compass-track {
+            position: absolute;
+            top: 8px;
+            left: 12px;
+            right: 12px;
+            height: 8px;
+            background: rgba(255,255,255,0.1);
+            border-radius: 4px;
+        }
+        .compass-fill {
+            position: absolute;
+            height: 100%;
+            background: linear-gradient(90deg, #00d4aa, #00b4d8);
+            border-radius: 4px;
+            transition: width 0.3s;
+        }
+        .compass-marker {
+            position: absolute;
+            top: 3px;
+            width: 6px;
+            height: 14px;
+            background: #00d4aa;
+            border-radius: 3px;
+            transform: translateX(-50%);
+            transition: left 0.1s;
+            box-shadow: 0 0 6px rgba(0,212,170,0.5);
+        }
+        .compass-heading-indicator {
+            position: absolute;
+            top: 3px;
+            width: 2px;
+            height: 14px;
+            background: #fff;
+            transform: translateX(-50%);
+            transition: left 0.15s;
+            opacity: 0.8;
+        }
+        .compass-labels {
+            position: absolute;
+            bottom: 6px;
+            left: 12px;
+            right: 12px;
+            display: flex;
+            justify-content: space-between;
+            font-size: 10px;
+            color: rgba(255,255,255,0.5);
+            font-weight: 500;
+        }
+        .capture-dots {
+            position: absolute;
+            top: 6px;
+            left: 12px;
+            right: 12px;
+            height: 12px;
+        }
+        .capture-dot {
+            position: absolute;
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            top: 2px;
+            transform: translateX(-50%);
+        }
+        .capture-dot.target {
+            background: rgba(255,255,255,0.15);
+            border: 1px solid rgba(255,255,255,0.2);
+        }
+        .capture-dot.captured {
+            background: #00d4aa;
+            border: none;
+            box-shadow: 0 0 4px rgba(0,212,170,0.5);
+        }
+
+        .capture-info {
+            display: flex;
+            justify-content: space-between;
+            padding: 12px 20px;
+        }
+        .capture-count, .capture-heading {
+            font-size: 14px;
+            font-weight: 600;
+            color: rgba(255,255,255,0.8);
+            background: rgba(0,0,0,0.5);
+            padding: 6px 12px;
+            border-radius: 8px;
+            backdrop-filter: blur(10px);
+            -webkit-backdrop-filter: blur(10px);
+        }
+
+        .capture-spacer { flex: 1; }
+
+        .capture-thumbs {
+            display: flex;
+            gap: 6px;
+            padding: 0 16px 12px;
+            overflow-x: auto;
+            -webkit-overflow-scrolling: touch;
+            pointer-events: auto;
+        }
+        .capture-thumb {
+            width: 48px; height: 36px;
+            border-radius: 6px;
+            object-fit: cover;
+            border: 2px solid rgba(0,212,170,0.6);
+            flex-shrink: 0;
+        }
+
+        .capture-controls {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 32px;
+            padding-bottom: calc(env(safe-area-inset-bottom) + 24px);
+            pointer-events: auto;
+        }
+        .capture-btn {
+            width: 72px; height: 72px;
+            border-radius: 50%;
+            border: 4px solid #fff;
+            background: transparent;
+            cursor: pointer;
+            position: relative;
+            transition: transform 0.1s;
+        }
+        .capture-btn::after {
+            content: '';
+            position: absolute;
+            inset: 4px;
+            border-radius: 50%;
+            background: #fff;
+            transition: transform 0.15s;
+        }
+        .capture-btn:active::after { transform: scale(0.85); }
+        .capture-btn.flash::after {
+            animation: captureFlash 0.2s ease-out;
+        }
+        @keyframes captureFlash {
+            0% { background: #00d4aa; transform: scale(0.85); }
+            100% { background: #fff; transform: scale(1); }
+        }
+
+        .done-btn {
+            padding: 12px 28px;
+            font-size: 15px;
+            font-weight: 600;
+            border: none;
+            border-radius: 12px;
+            background: linear-gradient(135deg, #00d4aa, #00b4d8);
+            color: #000;
+            cursor: pointer;
+            transition: transform 0.15s;
+        }
+        .done-btn:active { transform: scale(0.95); }
+        .done-btn.hidden { display: none; }
+
+        /* Processing */
+        #screen-processing {
+            background: #0a0a1a;
+            gap: 24px;
+            padding: 40px;
+        }
+        .processing-title {
+            font-size: 22px;
+            font-weight: 600;
+        }
+        .progress-bar {
+            width: 260px;
+            height: 6px;
+            background: rgba(255,255,255,0.1);
+            border-radius: 3px;
+            overflow: hidden;
+        }
+        .progress-fill {
+            height: 100%;
+            width: 0%;
+            background: linear-gradient(90deg, #00d4aa, #00b4d8);
+            border-radius: 3px;
+            transition: width 0.3s;
+        }
+        .processing-status {
+            font-size: 14px;
+            color: rgba(255,255,255,0.5);
+        }
+
+        /* Preview */
+        #screen-preview {
+            background: #000;
+            justify-content: flex-start;
+        }
+        .preview-header {
+            width: 100%;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: calc(env(safe-area-inset-top) + 8px) 16px 8px;
+            background: rgba(0,0,0,0.6);
+            backdrop-filter: blur(10px);
+            -webkit-backdrop-filter: blur(10px);
+            z-index: 10;
+        }
+        .preview-title {
+            font-size: 17px;
+            font-weight: 600;
+        }
+        .preview-hint {
+            font-size: 12px;
+            color: rgba(255,255,255,0.5);
+        }
+
+        .pano-container {
+            flex: 1;
+            width: 100%;
+            overflow: hidden;
+            display: flex;
+            align-items: center;
+            position: relative;
+            touch-action: none;
+        }
+        #pano-canvas {
+            height: 100%;
+            max-height: 60vh;
+            position: absolute;
+            left: 0;
+            transition: none;
+            cursor: grab;
+        }
+        #pano-canvas.dragging { cursor: grabbing; }
+
+        .preview-controls {
+            width: 100%;
+            display: flex;
+            gap: 12px;
+            padding: 16px;
+            padding-bottom: calc(env(safe-area-inset-bottom) + 16px);
+            background: rgba(0,0,0,0.6);
+            backdrop-filter: blur(10px);
+            -webkit-backdrop-filter: blur(10px);
+        }
+        .preview-btn {
+            flex: 1;
+            padding: 14px;
+            font-size: 15px;
+            font-weight: 600;
+            border: none;
+            border-radius: 12px;
+            cursor: pointer;
+            transition: transform 0.15s;
+        }
+        .preview-btn:active { transform: scale(0.95); }
+        .preview-btn.primary {
+            background: linear-gradient(135deg, #00d4aa, #00b4d8);
+            color: #000;
+        }
+        .preview-btn.secondary {
+            background: rgba(255,255,255,0.15);
+            color: #fff;
+        }
+
+        /* Flash overlay for capture feedback */
+        .flash-overlay {
+            position: fixed; inset: 0;
+            background: #fff;
+            opacity: 0;
+            pointer-events: none;
+            z-index: 100;
+        }
+        .flash-overlay.flash {
+            animation: screenFlash 0.15s ease-out;
+        }
+        @keyframes screenFlash {
+            0% { opacity: 0.4; }
+            100% { opacity: 0; }
+        }
+    </style>
+</head>
+<body>
+    <div class="flash-overlay" id="flash-overlay"></div>
+
+    <!-- Loading Screen -->
+    <div id="screen-loading" class="screen active">
+        <div class="loading-icon">📷</div>
+        <div class="loading-title">360° Camera</div>
+        <div class="loading-bar"><div class="loading-fill"></div></div>
+        <div class="loading-status" id="loading-status">Loading OpenCV.js...</div>
+        <div class="loading-error" id="loading-error"></div>
+    </div>
+
+    <!-- Ready Screen -->
+    <div id="screen-ready" class="screen">
+        <div class="ready-icon">🌐</div>
+        <div class="ready-title">360° Camera</div>
+        <p class="ready-desc">
+            Capture a full panorama by slowly rotating your device. Images are stitched together on-device using computer vision.
+        </p>
+        <button class="btn-primary" id="btn-start">Start Capture</button>
+    </div>
+
+    <!-- Capture Screen -->
+    <div id="screen-capture" class="screen">
+        <video id="camera" autoplay playsinline muted></video>
+        <div class="capture-overlay">
+            <div class="compass-strip" id="compass-strip">
+                <div class="compass-track">
+                    <div class="compass-fill" id="compass-fill"></div>
+                </div>
+                <div class="capture-dots" id="capture-dots"></div>
+                <div class="compass-heading-indicator" id="heading-indicator"></div>
+                <div class="compass-labels">
+                    <span>N</span><span>E</span><span>S</span><span>W</span><span>N</span>
+                </div>
+            </div>
+            <div class="capture-info">
+                <span class="capture-count" id="capture-count">0 photos</span>
+                <span class="capture-heading" id="capture-heading">--°</span>
+            </div>
+            <div class="capture-spacer"></div>
+            <div class="capture-thumbs" id="capture-thumbs"></div>
+            <div class="capture-controls">
+                <button class="done-btn hidden" id="btn-done">Stitch</button>
+                <button class="capture-btn" id="btn-capture"></button>
+                <div style="width:76px"></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Processing Screen -->
+    <div id="screen-processing" class="screen">
+        <div class="processing-title">Stitching Panorama</div>
+        <div class="progress-bar"><div class="progress-fill" id="progress-fill"></div></div>
+        <div class="processing-status" id="processing-status">Preparing...</div>
+    </div>
+
+    <!-- Preview Screen -->
+    <div id="screen-preview" class="screen">
+        <div class="preview-header">
+            <div>
+                <div class="preview-title">Your Panorama</div>
+                <div class="preview-hint">Drag to pan</div>
+            </div>
+        </div>
+        <div class="pano-container" id="pano-container">
+            <canvas id="pano-canvas"></canvas>
+        </div>
+        <div class="preview-controls">
+            <button class="preview-btn secondary" id="btn-retake">Retake</button>
+            <button class="preview-btn secondary" id="btn-share">Share</button>
+            <button class="preview-btn primary" id="btn-save">Save</button>
+        </div>
+    </div>
+
+    <script>
+    // ==========================================
+    // Configuration
+    // ==========================================
+    const CONFIG = {
+        captureWidth: 1280,
+        captureHeight: 720,
+        maxFeatures: 3000,
+        matchRatio: 0.75,
+        ransacThreshold: 5.0,
+        minMatches: 10,
+        minCaptures: 3,
+        targetCaptures: 12,
+        angleStep: 30,
+    };
+
+    // ==========================================
+    // State
+    // ==========================================
+    const state = {
+        cvReady: false,
+        screen: 'loading',
+        captures: [],       // { canvas, heading, timestamp }
+        stream: null,
+        heading: null,
+        hasOrientation: false,
+        panoramaCanvas: null,
+        viewerX: 0,
+    };
+
+    // ==========================================
+    // UI Helpers
+    // ==========================================
+    function showScreen(name) {
+        document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
+        document.getElementById('screen-' + name).classList.add('active');
+        state.screen = name;
+    }
+
+    function updateProgress(pct, status) {
+        document.getElementById('progress-fill').style.width = pct + '%';
+        document.getElementById('processing-status').textContent = status;
+    }
+
+    function flashScreen() {
+        const el = document.getElementById('flash-overlay');
+        el.classList.remove('flash');
+        void el.offsetWidth;
+        el.classList.add('flash');
+    }
+
+    // ==========================================
+    // Camera
+    // ==========================================
+    async function startCamera() {
+        try {
+            const stream = await navigator.mediaDevices.getUserMedia({
+                video: {
+                    facingMode: { ideal: 'environment' },
+                    width: { ideal: 1920 },
+                    height: { ideal: 1080 },
+                },
+                audio: false,
+            });
+            state.stream = stream;
+            const video = document.getElementById('camera');
+            video.srcObject = stream;
+            await video.play();
+
+            // Try to lock exposure/white balance for consistency
+            const track = stream.getVideoTracks()[0];
+            const caps = track.getCapabilities ? track.getCapabilities() : {};
+            const constraints = [];
+            if (caps.exposureMode && caps.exposureMode.includes('manual')) {
+                constraints.push({ exposureMode: 'manual' });
+            }
+            if (caps.whiteBalanceMode && caps.whiteBalanceMode.includes('manual')) {
+                constraints.push({ whiteBalanceMode: 'manual' });
+            }
+            if (constraints.length) {
+                try { await track.applyConstraints({ advanced: constraints }); } catch(e) {}
+            }
+        } catch (err) {
+            alert('Camera access required. Please allow camera permissions and reload.');
+        }
+    }
+
+    function stopCamera() {
+        if (state.stream) {
+            state.stream.getTracks().forEach(t => t.stop());
+            state.stream = null;
+        }
+    }
+
+    // ==========================================
+    // Device Orientation
+    // ==========================================
+    async function startOrientation() {
+        if (typeof DeviceOrientationEvent !== 'undefined' &&
+            typeof DeviceOrientationEvent.requestPermission === 'function') {
+            try {
+                const perm = await DeviceOrientationEvent.requestPermission();
+                if (perm !== 'granted') return;
+            } catch(e) { return; }
+        }
+        window.addEventListener('deviceorientation', handleOrientation, true);
+    }
+
+    function handleOrientation(e) {
+        let heading = null;
+        if (e.webkitCompassHeading !== undefined && e.webkitCompassHeading !== null) {
+            heading = e.webkitCompassHeading;
+        } else if (e.alpha !== null) {
+            heading = (360 - e.alpha) % 360;
+        }
+        if (heading !== null) {
+            state.heading = heading;
+            state.hasOrientation = true;
+            updateCompass();
+        }
+    }
+
+    function updateCompass() {
+        const h = state.heading;
+        if (h === null) return;
+
+        document.getElementById('capture-heading').textContent = Math.round(h) + '°';
+
+        // Move heading indicator
+        const strip = document.getElementById('capture-dots');
+        const indicator = document.getElementById('heading-indicator');
+        const pct = (h / 360) * 100;
+        indicator.style.left = pct + '%';
+    }
+
+    // ==========================================
+    // Capture
+    // ==========================================
+    function initCompassDots() {
+        const container = document.getElementById('capture-dots');
+        container.innerHTML = '';
+        for (let i = 0; i < CONFIG.targetCaptures; i++) {
+            const dot = document.createElement('div');
+            dot.className = 'capture-dot target';
+            dot.dataset.index = i;
+            const angle = i * CONFIG.angleStep;
+            dot.style.left = ((angle / 360) * 100) + '%';
+            container.appendChild(dot);
+        }
+    }
+
+    function captureFrame() {
+        const video = document.getElementById('camera');
+        if (video.readyState < 2) return;
+
+        const canvas = document.createElement('canvas');
+        canvas.width = CONFIG.captureWidth;
+        canvas.height = CONFIG.captureHeight;
+        const ctx = canvas.getContext('2d');
+
+        // Draw video frame, centered and covering
+        const vw = video.videoWidth, vh = video.videoHeight;
+        const scale = Math.max(CONFIG.captureWidth / vw, CONFIG.captureHeight / vh);
+        const sw = vw * scale, sh = vh * scale;
+        const sx = (CONFIG.captureWidth - sw) / 2;
+        const sy = (CONFIG.captureHeight - sh) / 2;
+        ctx.drawImage(video, sx, sy, sw, sh);
+
+        const capture = {
+            canvas,
+            heading: state.heading,
+            timestamp: Date.now(),
+        };
+        state.captures.push(capture);
+
+        // UI feedback
+        flashScreen();
+        if (navigator.vibrate) navigator.vibrate(30);
+
+        const btn = document.getElementById('btn-capture');
+        btn.classList.remove('flash');
+        void btn.offsetWidth;
+        btn.classList.add('flash');
+
+        updateCaptureUI();
+    }
+
+    function updateCaptureUI() {
+        const n = state.captures.length;
+        document.getElementById('capture-count').textContent = n + ' photo' + (n !== 1 ? 's' : '');
+
+        // Show/hide done button
+        const doneBtn = document.getElementById('btn-done');
+        if (n >= CONFIG.minCaptures) {
+            doneBtn.classList.remove('hidden');
+        }
+
+        // Update compass dots
+        if (state.hasOrientation) {
+            const dots = document.querySelectorAll('.capture-dot');
+            state.captures.forEach(cap => {
+                if (cap.heading === null) return;
+                // Find closest target dot and mark it captured
+                const idx = Math.round(cap.heading / CONFIG.angleStep) % CONFIG.targetCaptures;
+                if (dots[idx]) dots[idx].className = 'capture-dot captured';
+            });
+
+            // Update fill bar (coverage)
+            const captured = document.querySelectorAll('.capture-dot.captured').length;
+            const pct = Math.min(100, (captured / CONFIG.targetCaptures) * 100);
+            document.getElementById('compass-fill').style.width = pct + '%';
+        } else {
+            // No orientation: just show progress by count
+            const pct = Math.min(100, (n / CONFIG.targetCaptures) * 100);
+            document.getElementById('compass-fill').style.width = pct + '%';
+        }
+
+        // Add thumbnail
+        const thumbs = document.getElementById('capture-thumbs');
+        const img = document.createElement('canvas');
+        img.className = 'capture-thumb';
+        img.width = 96; img.height = 72;
+        img.getContext('2d').drawImage(state.captures[n - 1].canvas, 0, 0, 96, 72);
+        thumbs.appendChild(img);
+        thumbs.scrollLeft = thumbs.scrollWidth;
+    }
+
+    // ==========================================
+    // Stitching Pipeline
+    // ==========================================
+    async function stitchPanorama() {
+        showScreen('processing');
+        updateProgress(0, 'Preparing images...');
+
+        // Allow UI to update
+        await sleep(100);
+
+        try {
+            const result = await doStitch();
+            state.panoramaCanvas = result;
+            showPreview();
+        } catch (err) {
+            console.error('Stitching failed:', err);
+            alert('Stitching failed: ' + err.message + '\nTry capturing more overlapping photos.');
+            showScreen('capture');
+        }
+    }
+
+    function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
+
+    async function doStitch() {
+        let captures = [...state.captures];
+
+        // Sort by heading if available, otherwise keep capture order
+        if (state.hasOrientation && captures.every(c => c.heading !== null)) {
+            captures.sort((a, b) => a.heading - b.heading);
+        }
+
+        const n = captures.length;
+        if (n < 2) throw new Error('Need at least 2 images');
+
+        // Convert to cv.Mat
+        updateProgress(5, 'Loading images...');
+        await sleep(50);
+        const mats = [];
+        const grays = [];
+        for (let i = 0; i < n; i++) {
+            const mat = cv.imread(captures[i].canvas);
+            mats.push(mat);
+            const gray = new cv.Mat();
+            cv.cvtColor(mat, gray, cv.COLOR_RGBA2GRAY);
+            grays.push(gray);
+        }
+
+        // Detect features
+        updateProgress(10, 'Detecting features...');
+        await sleep(50);
+
+        let detector, normType;
+        try {
+            detector = new cv.AKAZE();
+            normType = cv.NORM_HAMMING;
+        } catch(e) {
+            try {
+                detector = new cv.ORB(CONFIG.maxFeatures);
+                normType = cv.NORM_HAMMING;
+            } catch(e2) {
+                detector = new cv.ORB();
+                normType = cv.NORM_HAMMING;
+            }
+        }
+
+        const keypointsArr = [];
+        const descriptorsArr = [];
+        const emptyMask = new cv.Mat();
+
+        for (let i = 0; i < n; i++) {
+            const kp = new cv.KeyPointVector();
+            const desc = new cv.Mat();
+            detector.detectAndCompute(grays[i], emptyMask, kp, desc);
+            keypointsArr.push(kp);
+            descriptorsArr.push(desc);
+            updateProgress(10 + (i / n) * 15, `Features: image ${i + 1}/${n}`);
+            await sleep(10);
+        }
+        emptyMask.delete();
+
+        // Match consecutive pairs
+        updateProgress(25, 'Matching features...');
+        await sleep(50);
+
+        const bf = new cv.BFMatcher(normType, false);
+        const pairHomographies = []; // pairH[i] maps image i → image i+1
+
+        for (let i = 0; i < n - 1; i++) {
+            updateProgress(25 + (i / (n - 1)) * 20, `Matching: pair ${i + 1}/${n - 1}`);
+            await sleep(10);
+
+            if (descriptorsArr[i].rows === 0 || descriptorsArr[i + 1].rows === 0) {
+                throw new Error(`No features found in image ${descriptorsArr[i].rows === 0 ? i + 1 : i + 2}`);
+            }
+
+            const matches = new cv.DMatchVectorVector();
+            bf.knnMatch(descriptorsArr[i], descriptorsArr[i + 1], matches, 2);
+
+            // Lowe's ratio test
+            const good = [];
+            for (let j = 0; j < matches.size(); j++) {
+                const mv = matches.get(j);
+                if (mv.size() >= 2) {
+                    const m = mv.get(0);
+                    const nn = mv.get(1);
+                    if (m.distance < CONFIG.matchRatio * nn.distance) {
+                        good.push(m);
+                    }
+                }
+            }
+            matches.delete();
+
+            if (good.length < CONFIG.minMatches) {
+                throw new Error(
+                    `Not enough matches between images ${i + 1} and ${i + 2} (${good.length} found, ${CONFIG.minMatches} needed). Try more overlap.`
+                );
+            }
+
+            // Build point arrays
+            const srcPts = [];
+            const dstPts = [];
+            for (const m of good) {
+                const kp1 = keypointsArr[i].get(m.queryIdx);
+                const kp2 = keypointsArr[i + 1].get(m.trainIdx);
+                srcPts.push(kp1.pt.x, kp1.pt.y);
+                dstPts.push(kp2.pt.x, kp2.pt.y);
+            }
+
+            const srcMat = cv.matFromArray(good.length, 1, cv.CV_32FC2, srcPts);
+            const dstMat = cv.matFromArray(good.length, 1, cv.CV_32FC2, dstPts);
+            const mask = new cv.Mat();
+
+            const H = cv.findHomography(srcMat, dstMat, cv.RANSAC, CONFIG.ransacThreshold, mask);
+
+            if (H.empty()) {
+                srcMat.delete(); dstMat.delete(); mask.delete();
+                throw new Error(`Could not compute transform for images ${i + 1}-${i + 2}`);
+            }
+
+            pairHomographies.push(H);
+            srcMat.delete();
+            dstMat.delete();
+            mask.delete();
+        }
+
+        // Chain homographies relative to reference (middle image)
+        updateProgress(50, 'Computing transforms...');
+        await sleep(50);
+
+        const refIdx = Math.floor(n / 2);
+        const finalH = new Array(n);
+        finalH[refIdx] = cv.Mat.eye(3, 3, cv.CV_64F);
+
+        // Left of reference: H[i] = H[i+1] * pairH[i]
+        // pairH[i] maps i → i+1, so chaining gets i → ref
+        for (let i = refIdx - 1; i >= 0; i--) {
+            finalH[i] = new cv.Mat();
+            const zeroPad = cv.Mat.zeros(3, 3, cv.CV_64F);
+            cv.gemm(finalH[i + 1], pairHomographies[i], 1, zeroPad, 0, finalH[i]);
+            zeroPad.delete();
+        }
+
+        // Right of reference: H[i] = H[i-1] * inv(pairH[i-1])
+        for (let i = refIdx + 1; i < n; i++) {
+            const inv = new cv.Mat();
+            cv.invert(pairHomographies[i - 1], inv);
+            finalH[i] = new cv.Mat();
+            const zeroPad = cv.Mat.zeros(3, 3, cv.CV_64F);
+            cv.gemm(finalH[i - 1], inv, 1, zeroPad, 0, finalH[i]);
+            zeroPad.delete();
+            inv.delete();
+        }
+
+        // Compute output bounds
+        updateProgress(55, 'Computing bounds...');
+        let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+
+        for (let i = 0; i < n; i++) {
+            const w = mats[i].cols, h = mats[i].rows;
+            const corners = [[0, 0], [w, 0], [w, h], [0, h]];
+            const H = finalH[i];
+
+            for (const [px, py] of corners) {
+                const d = H.doubleAt(2, 0) * px + H.doubleAt(2, 1) * py + H.doubleAt(2, 2);
+                if (Math.abs(d) < 1e-10) continue;
+                const tx = (H.doubleAt(0, 0) * px + H.doubleAt(0, 1) * py + H.doubleAt(0, 2)) / d;
+                const ty = (H.doubleAt(1, 0) * px + H.doubleAt(1, 1) * py + H.doubleAt(1, 2)) / d;
+                minX = Math.min(minX, tx);
+                minY = Math.min(minY, ty);
+                maxX = Math.max(maxX, tx);
+                maxY = Math.max(maxY, ty);
+            }
+        }
+
+        // Clamp output size to prevent memory issues
+        let outW = Math.ceil(maxX - minX);
+        let outH = Math.ceil(maxY - minY);
+        const maxDim = 16000;
+        if (outW > maxDim || outH > maxDim) {
+            const s = maxDim / Math.max(outW, outH);
+            outW = Math.ceil(outW * s);
+            outH = Math.ceil(outH * s);
+            // Would need to scale homographies too - for now just clamp
+        }
+
+        // Translation to shift everything into positive coordinates
+        const T = cv.matFromArray(3, 3, cv.CV_64F, [
+            1, 0, -minX,
+            0, 1, -minY,
+            0, 0, 1
+        ]);
+
+        // Warp each image and create weight maps
+        updateProgress(60, 'Warping images...');
+        await sleep(50);
+
+        const size = new cv.Size(outW, outH);
+        const warpedImages = [];
+        const warpedMasks = [];
+        const weightMaps = [];
+
+        for (let i = 0; i < n; i++) {
+            updateProgress(60 + (i / n) * 20, `Warping image ${i + 1}/${n}`);
+            await sleep(10);
+
+            // Compute T * H[i]
+            const TH = new cv.Mat();
+            const zeroPad = cv.Mat.zeros(3, 3, cv.CV_64F);
+            cv.gemm(T, finalH[i], 1, zeroPad, 0, TH);
+            zeroPad.delete();
+
+            // Warp the image
+            const warped = new cv.Mat();
+            cv.warpPerspective(mats[i], warped, TH, size, cv.INTER_LINEAR, cv.BORDER_CONSTANT, new cv.Scalar(0, 0, 0, 0));
+            warpedImages.push(warped);
+
+            // Create and warp mask
+            const whiteMask = new cv.Mat(mats[i].rows, mats[i].cols, cv.CV_8UC1, new cv.Scalar(255));
+            const warpedMask = new cv.Mat();
+            cv.warpPerspective(whiteMask, warpedMask, TH, size, cv.INTER_NEAREST, cv.BORDER_CONSTANT, new cv.Scalar(0));
+            warpedMasks.push(warpedMask);
+            whiteMask.delete();
+
+            // Compute distance transform for weight map
+            const dist = new cv.Mat();
+            cv.distanceTransform(warpedMask, dist, cv.DIST_L2, 5);
+            weightMaps.push(dist);
+
+            TH.delete();
+        }
+
+        // Feather blend with distance weights
+        updateProgress(85, 'Blending...');
+        await sleep(50);
+
+        // Accumulate: weighted sum of images / sum of weights
+        const accum = cv.Mat.zeros(outH, outW, cv.CV_32FC4);
+        const weightAccum = cv.Mat.zeros(outH, outW, cv.CV_32FC1);
+
+        for (let i = 0; i < n; i++) {
+            updateProgress(85 + (i / n) * 10, `Blending image ${i + 1}/${n}`);
+            await sleep(10);
+
+            // Convert image to float
+            const imgFloat = new cv.Mat();
+            warpedImages[i].convertTo(imgFloat, cv.CV_32FC4, 1.0 / 255.0);
+
+            // Multiply each pixel by its weight and accumulate
+            const rows = outH, cols = outW;
+            const imgData = imgFloat.data32F;
+            const weightData = weightMaps[i].data32F;
+            const accumData = accum.data32F;
+            const wAccumData = weightAccum.data32F;
+
+            for (let r = 0; r < rows; r++) {
+                for (let c = 0; c < cols; c++) {
+                    const w = weightData[r * cols + c];
+                    if (w <= 0) continue;
+                    const pxIdx4 = (r * cols + c) * 4;
+                    const pxIdx1 = r * cols + c;
+                    accumData[pxIdx4]     += imgData[pxIdx4]     * w;
+                    accumData[pxIdx4 + 1] += imgData[pxIdx4 + 1] * w;
+                    accumData[pxIdx4 + 2] += imgData[pxIdx4 + 2] * w;
+                    accumData[pxIdx4 + 3] += imgData[pxIdx4 + 3] * w;
+                    wAccumData[pxIdx1] += w;
+                }
+            }
+            imgFloat.delete();
+        }
+
+        // Normalize by weight sum
+        updateProgress(95, 'Finalizing...');
+        await sleep(50);
+
+        const result = new cv.Mat(outH, outW, cv.CV_8UC4);
+        const accumData = accum.data32F;
+        const wAccumData = weightAccum.data32F;
+        const resultData = result.data;
+
+        for (let r = 0; r < outH; r++) {
+            for (let c = 0; c < outW; c++) {
+                const idx4 = (r * outW + c) * 4;
+                const idx1 = r * outW + c;
+                const w = wAccumData[idx1];
+                if (w > 0) {
+                    resultData[idx4]     = Math.min(255, Math.max(0, Math.round((accumData[idx4]     / w) * 255)));
+                    resultData[idx4 + 1] = Math.min(255, Math.max(0, Math.round((accumData[idx4 + 1] / w) * 255)));
+                    resultData[idx4 + 2] = Math.min(255, Math.max(0, Math.round((accumData[idx4 + 2] / w) * 255)));
+                    resultData[idx4 + 3] = 255;
+                } else {
+                    resultData[idx4] = resultData[idx4 + 1] = resultData[idx4 + 2] = 0;
+                    resultData[idx4 + 3] = 0;
+                }
+            }
+        }
+
+        // Write to output canvas
+        const outCanvas = document.createElement('canvas');
+        outCanvas.width = outW;
+        outCanvas.height = outH;
+        cv.imshow(outCanvas, result);
+
+        // Crop to content (remove black borders)
+        const cropped = cropToContent(outCanvas);
+
+        // Cleanup
+        updateProgress(100, 'Done!');
+        mats.forEach(m => m.delete());
+        grays.forEach(m => m.delete());
+        keypointsArr.forEach(k => k.delete());
+        descriptorsArr.forEach(d => d.delete());
+        pairHomographies.forEach(h => h.delete());
+        finalH.forEach(h => h.delete());
+        warpedImages.forEach(m => m.delete());
+        warpedMasks.forEach(m => m.delete());
+        weightMaps.forEach(m => m.delete());
+        accum.delete();
+        weightAccum.delete();
+        result.delete();
+        T.delete();
+        detector.delete();
+        bf.delete();
+
+        return cropped;
+    }
+
+    function cropToContent(canvas) {
+        const ctx = canvas.getContext('2d');
+        const imgData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+        const data = imgData.data;
+        const w = canvas.width, h = canvas.height;
+
+        let top = h, bottom = 0, left = w, right = 0;
+
+        // Find bounding box of non-transparent pixels
+        for (let y = 0; y < h; y++) {
+            for (let x = 0; x < w; x++) {
+                const a = data[(y * w + x) * 4 + 3];
+                if (a > 10) {
+                    top = Math.min(top, y);
+                    bottom = Math.max(bottom, y);
+                    left = Math.min(left, x);
+                    right = Math.max(right, x);
+                }
+            }
+        }
+
+        // Find the largest rectangle with full content
+        // Simple approach: find rows/cols that are mostly non-transparent
+        const margin = 5;
+        const cropTop = Math.min(top + margin, h);
+        const cropBottom = Math.max(bottom - margin, 0);
+        const cropLeft = Math.min(left + margin, w);
+        const cropRight = Math.max(right - margin, 0);
+
+        if (cropRight <= cropLeft || cropBottom <= cropTop) return canvas;
+
+        const cropW = cropRight - cropLeft;
+        const cropH = cropBottom - cropTop;
+        const cropped = document.createElement('canvas');
+        cropped.width = cropW;
+        cropped.height = cropH;
+        cropped.getContext('2d').drawImage(canvas, cropLeft, cropTop, cropW, cropH, 0, 0, cropW, cropH);
+        return cropped;
+    }
+
+    // ==========================================
+    // Panorama Viewer (touch-to-pan)
+    // ==========================================
+    function showPreview() {
+        showScreen('preview');
+        const container = document.getElementById('pano-container');
+        const panoCanvas = document.getElementById('pano-canvas');
+        const src = state.panoramaCanvas;
+
+        // Scale panorama to fill container height
+        const containerH = container.clientHeight;
+        const scale = containerH / src.height;
+        const displayW = Math.round(src.width * scale);
+        const displayH = containerH;
+
+        panoCanvas.width = src.width;
+        panoCanvas.height = src.height;
+        panoCanvas.getContext('2d').drawImage(src, 0, 0);
+        panoCanvas.style.width = displayW + 'px';
+        panoCanvas.style.height = displayH + 'px';
+
+        // Center initially
+        state.viewerX = -(displayW - container.clientWidth) / 2;
+        panoCanvas.style.transform = `translateX(${state.viewerX}px)`;
+
+        setupPanControls(container, panoCanvas, displayW);
+    }
+
+    function setupPanControls(container, canvas, totalWidth) {
+        let isDragging = false;
+        let startX = 0;
+        let startOffset = 0;
+        let velocity = 0;
+        let lastX = 0;
+        let lastTime = 0;
+        let animFrame = null;
+
+        const containerW = container.clientWidth;
+        const minX = -(totalWidth - containerW);
+        const maxX = 0;
+
+        function clamp(val) {
+            return Math.max(minX, Math.min(maxX, val));
+        }
+
+        function applyX(x) {
+            state.viewerX = clamp(x);
+            canvas.style.transform = `translateX(${state.viewerX}px)`;
+        }
+
+        // Touch events
+        container.addEventListener('touchstart', (e) => {
+            isDragging = true;
+            canvas.classList.add('dragging');
+            startX = e.touches[0].clientX;
+            startOffset = state.viewerX;
+            velocity = 0;
+            lastX = startX;
+            lastTime = Date.now();
+            if (animFrame) cancelAnimationFrame(animFrame);
+        }, { passive: true });
+
+        container.addEventListener('touchmove', (e) => {
+            if (!isDragging) return;
+            const x = e.touches[0].clientX;
+            const now = Date.now();
+            const dt = now - lastTime;
+            if (dt > 0) velocity = (x - lastX) / dt;
+            lastX = x;
+            lastTime = now;
+            applyX(startOffset + (x - startX));
+        }, { passive: true });
+
+        container.addEventListener('touchend', () => {
+            isDragging = false;
+            canvas.classList.remove('dragging');
+            // Momentum
+            const decel = 0.95;
+            function momentum() {
+                if (Math.abs(velocity) < 0.01) return;
+                velocity *= decel;
+                applyX(state.viewerX + velocity * 16);
+                animFrame = requestAnimationFrame(momentum);
+            }
+            momentum();
+        });
+
+        // Mouse events (for desktop testing)
+        container.addEventListener('mousedown', (e) => {
+            isDragging = true;
+            canvas.classList.add('dragging');
+            startX = e.clientX;
+            startOffset = state.viewerX;
+            velocity = 0;
+            lastX = startX;
+            lastTime = Date.now();
+            if (animFrame) cancelAnimationFrame(animFrame);
+        });
+
+        window.addEventListener('mousemove', (e) => {
+            if (!isDragging) return;
+            const now = Date.now();
+            const dt = now - lastTime;
+            if (dt > 0) velocity = (e.clientX - lastX) / dt;
+            lastX = e.clientX;
+            lastTime = now;
+            applyX(startOffset + (e.clientX - startX));
+        });
+
+        window.addEventListener('mouseup', () => {
+            if (!isDragging) return;
+            isDragging = false;
+            canvas.classList.remove('dragging');
+            const decel = 0.95;
+            function momentum() {
+                if (Math.abs(velocity) < 0.01) return;
+                velocity *= decel;
+                applyX(state.viewerX + velocity * 16);
+                animFrame = requestAnimationFrame(momentum);
+            }
+            momentum();
+        });
+    }
+
+    // ==========================================
+    // Save & Share
+    // ==========================================
+    function savePanorama() {
+        if (!state.panoramaCanvas) return;
+        state.panoramaCanvas.toBlob(blob => {
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `panorama_${Date.now()}.jpg`;
+            a.click();
+            setTimeout(() => URL.revokeObjectURL(url), 1000);
+        }, 'image/jpeg', 0.95);
+    }
+
+    async function sharePanorama() {
+        if (!state.panoramaCanvas) return;
+        try {
+            const blob = await new Promise(r => state.panoramaCanvas.toBlob(r, 'image/jpeg', 0.95));
+            const file = new File([blob], 'panorama.jpg', { type: 'image/jpeg' });
+            if (navigator.canShare && navigator.canShare({ files: [file] })) {
+                await navigator.share({ files: [file], title: '360° Panorama' });
+            } else {
+                // Fallback to save
+                savePanorama();
+            }
+        } catch (e) {
+            if (e.name !== 'AbortError') savePanorama();
+        }
+    }
+
+    // ==========================================
+    // Initialization
+    // ==========================================
+    function reset() {
+        state.captures = [];
+        state.panoramaCanvas = null;
+        state.viewerX = 0;
+        document.getElementById('capture-thumbs').innerHTML = '';
+        document.getElementById('btn-done').classList.add('hidden');
+        initCompassDots();
+        document.getElementById('compass-fill').style.width = '0%';
+        document.getElementById('capture-count').textContent = '0 photos';
+    }
+
+    document.addEventListener('opencv-ready', () => {
+        state.cvReady = true;
+        document.getElementById('loading-status').textContent = 'Ready!';
+
+        // Check required functions
+        const required = ['Mat', 'cvtColor', 'findHomography', 'warpPerspective', 'distanceTransform'];
+        const missing = required.filter(fn => typeof cv[fn] === 'undefined');
+        if (missing.length > 0) {
+            document.getElementById('loading-error').style.display = 'block';
+            document.getElementById('loading-error').textContent =
+                'OpenCV build missing: ' + missing.join(', ') + '. Some features may not work.';
+        }
+
+        setTimeout(() => showScreen('ready'), 300);
+    });
+
+    // Handle OpenCV load failure
+    setTimeout(() => {
+        if (!state.cvReady) {
+            document.getElementById('loading-status').textContent = 'Loading is taking a while...';
+        }
+    }, 10000);
+
+    setTimeout(() => {
+        if (!state.cvReady) {
+            document.getElementById('loading-status').textContent = '';
+            document.getElementById('loading-error').style.display = 'block';
+            document.getElementById('loading-error').textContent =
+                'Failed to load OpenCV.js. Check your connection and reload.';
+        }
+    }, 30000);
+
+    // Event listeners
+    document.getElementById('btn-start').addEventListener('click', async () => {
+        reset();
+        await startCamera();
+        await startOrientation();
+        showScreen('capture');
+    });
+
+    document.getElementById('btn-capture').addEventListener('click', captureFrame);
+
+    document.getElementById('btn-done').addEventListener('click', () => {
+        stopCamera();
+        window.removeEventListener('deviceorientation', handleOrientation, true);
+        stitchPanorama();
+    });
+
+    document.getElementById('btn-retake').addEventListener('click', async () => {
+        reset();
+        await startCamera();
+        await startOrientation();
+        showScreen('capture');
+    });
+
+    document.getElementById('btn-save').addEventListener('click', savePanorama);
+    document.getElementById('btn-share').addEventListener('click', sharePanorama);
+    </script>
+</body>
+</html>
