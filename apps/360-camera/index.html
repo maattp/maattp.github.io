@@ -397,6 +397,144 @@
             color: #fff;
         }
 
+        /* Center guide overlay */
+        .guide-overlay {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 16px;
+            pointer-events: none;
+            z-index: 5;
+        }
+        .guide-ring {
+            width: 120px;
+            height: 120px;
+            border-radius: 50%;
+            border: 3px solid rgba(255,255,255,0.3);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            position: relative;
+            transition: border-color 0.3s, box-shadow 0.3s;
+        }
+        .guide-ring.aligned {
+            border-color: #00d4aa;
+            box-shadow: 0 0 30px rgba(0,212,170,0.3), inset 0 0 20px rgba(0,212,170,0.1);
+        }
+        .guide-ring.aligned .guide-arrow-icon {
+            color: #00d4aa;
+        }
+        .guide-crosshair {
+            width: 2px;
+            height: 24px;
+            background: rgba(255,255,255,0.5);
+            position: absolute;
+        }
+        .guide-crosshair.h {
+            width: 24px;
+            height: 2px;
+        }
+        .guide-arrow-icon {
+            font-size: 36px;
+            color: rgba(255,255,255,0.7);
+            transition: color 0.3s, transform 0.3s;
+            line-height: 1;
+        }
+        .guide-arrow-icon.flip {
+            transform: scaleX(-1);
+        }
+        .guide-text {
+            font-size: 16px;
+            font-weight: 600;
+            color: #fff;
+            text-align: center;
+            background: rgba(0,0,0,0.6);
+            padding: 8px 20px;
+            border-radius: 20px;
+            backdrop-filter: blur(10px);
+            -webkit-backdrop-filter: blur(10px);
+            white-space: nowrap;
+            transition: background 0.3s;
+        }
+        .guide-text.success {
+            background: rgba(0,212,170,0.4);
+        }
+        .guide-subtext {
+            font-size: 12px;
+            color: rgba(255,255,255,0.5);
+            text-align: center;
+        }
+
+        /* Horizon level line */
+        .horizon-line {
+            position: absolute;
+            left: 0;
+            right: 0;
+            top: 50%;
+            height: 1px;
+            pointer-events: none;
+            z-index: 4;
+        }
+        .horizon-line::before {
+            content: '';
+            position: absolute;
+            left: 20%;
+            right: 20%;
+            height: 1px;
+            background: rgba(255,255,255,0.15);
+        }
+        .horizon-line .horizon-bubble {
+            position: absolute;
+            left: 50%;
+            top: -4px;
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            border: 1.5px solid rgba(255,255,255,0.4);
+            transform: translateX(-50%);
+            transition: transform 0.15s, border-color 0.3s;
+        }
+        .horizon-line .horizon-bubble.level {
+            border-color: #00d4aa;
+        }
+
+        /* Capture button ready state */
+        .capture-btn.ready {
+            border-color: #00d4aa;
+            animation: captureReady 1s ease-in-out infinite;
+        }
+        .capture-btn.ready::after {
+            background: #00d4aa;
+        }
+        @keyframes captureReady {
+            0%, 100% { box-shadow: 0 0 0 0 rgba(0,212,170,0.4); }
+            50% { box-shadow: 0 0 0 12px rgba(0,212,170,0); }
+        }
+
+        /* Auto-capture countdown ring */
+        .auto-ring {
+            position: absolute;
+            inset: -8px;
+            border-radius: 50%;
+            border: 3px solid transparent;
+            border-top-color: #00d4aa;
+            pointer-events: none;
+            opacity: 0;
+            transition: opacity 0.2s;
+        }
+        .auto-ring.active {
+            opacity: 1;
+            animation: autoSpin 0.8s linear;
+        }
+        @keyframes autoSpin {
+            from { transform: rotate(0deg); }
+            to { transform: rotate(360deg); }
+        }
+
         /* Flash overlay for capture feedback */
         .flash-overlay {
             position: fixed; inset: 0;
@@ -454,11 +592,24 @@
                 <span class="capture-count" id="capture-count">0 photos</span>
                 <span class="capture-heading" id="capture-heading">--°</span>
             </div>
-            <div class="capture-spacer"></div>
+            <div class="capture-spacer">
+                <div class="horizon-line">
+                    <div class="horizon-bubble" id="horizon-bubble"></div>
+                </div>
+                <div class="guide-overlay" id="guide-overlay">
+                    <div class="guide-ring" id="guide-ring">
+                        <div class="guide-crosshair"></div>
+                        <div class="guide-crosshair h"></div>
+                        <span class="guide-arrow-icon" id="guide-arrow">→</span>
+                    </div>
+                    <div class="guide-text" id="guide-text">Tap to take first photo</div>
+                    <div class="guide-subtext" id="guide-subtext">Then slowly rotate right</div>
+                </div>
+            </div>
             <div class="capture-thumbs" id="capture-thumbs"></div>
             <div class="capture-controls">
                 <button class="done-btn hidden" id="btn-done">Stitch</button>
-                <button class="capture-btn" id="btn-capture"></button>
+                <button class="capture-btn" id="btn-capture"><div class="auto-ring" id="auto-ring"></div></button>
                 <div style="width:76px"></div>
             </div>
         </div>
@@ -503,6 +654,9 @@
         minCaptures: 3,
         targetCaptures: 12,
         angleStep: 30,
+        alignTolerance: 8,      // degrees: "aligned" with target
+        autoCaptureTolerance: 5, // degrees: trigger auto-capture
+        autoCaptureDelay: 600,   // ms: hold steady before auto-capture
     };
 
     // ==========================================
@@ -517,6 +671,10 @@
         hasOrientation: false,
         panoramaCanvas: null,
         viewerX: 0,
+        capturedAngles: new Set(),  // indices of captured target slots
+        autoCaptureTimer: null,
+        autoCaptureLocked: false,   // prevent rapid re-triggers
+        pitch: null,                // device tilt
     };
 
     // ==========================================
@@ -607,7 +765,11 @@
         if (heading !== null) {
             state.heading = heading;
             state.hasOrientation = true;
+            state.pitch = e.beta !== null ? e.beta - 90 : null; // 0 = level
             updateCompass();
+            updateGuide();
+            updateHorizon();
+            checkAutoCapture();
         }
     }
 
@@ -622,6 +784,151 @@
         const indicator = document.getElementById('heading-indicator');
         const pct = (h / 360) * 100;
         indicator.style.left = pct + '%';
+    }
+
+    // ==========================================
+    // Capture Guide
+    // ==========================================
+    function angleDiff(a, b) {
+        // Shortest signed angle from a to b (-180..180)
+        let d = ((b - a + 540) % 360) - 180;
+        return d;
+    }
+
+    function getNextTarget() {
+        // Find the nearest uncaptured target angle
+        if (!state.hasOrientation || state.heading === null) return null;
+        let bestIdx = -1, bestDist = Infinity;
+        for (let i = 0; i < CONFIG.targetCaptures; i++) {
+            if (state.capturedAngles.has(i)) continue;
+            const targetAngle = i * CONFIG.angleStep;
+            const dist = Math.abs(angleDiff(state.heading, targetAngle));
+            if (dist < bestDist) {
+                bestDist = dist;
+                bestIdx = i;
+            }
+        }
+        if (bestIdx === -1) return null;
+        return { index: bestIdx, angle: bestIdx * CONFIG.angleStep, dist: bestDist };
+    }
+
+    function updateGuide() {
+        const guideText = document.getElementById('guide-text');
+        const guideSubtext = document.getElementById('guide-subtext');
+        const guideArrow = document.getElementById('guide-arrow');
+        const guideRing = document.getElementById('guide-ring');
+        const captureBtn = document.getElementById('btn-capture');
+        const n = state.captures.length;
+
+        if (n === 0) {
+            guideText.textContent = 'Tap to take first photo';
+            guideText.classList.remove('success');
+            guideSubtext.textContent = 'Then slowly rotate right';
+            guideArrow.textContent = '●';
+            guideArrow.classList.remove('flip');
+            guideRing.classList.remove('aligned');
+            captureBtn.classList.remove('ready');
+            return;
+        }
+
+        const allCaptured = state.capturedAngles.size >= CONFIG.targetCaptures;
+        if (allCaptured) {
+            guideText.textContent = 'Full coverage!';
+            guideText.classList.add('success');
+            guideSubtext.textContent = 'Tap Stitch when ready';
+            guideArrow.textContent = '✓';
+            guideRing.classList.add('aligned');
+            captureBtn.classList.remove('ready');
+            return;
+        }
+
+        const next = getNextTarget();
+        if (!next) {
+            guideText.textContent = 'Tap to capture';
+            guideSubtext.textContent = '';
+            return;
+        }
+
+        const diff = angleDiff(state.heading, next.angle);
+        const absDiff = Math.abs(diff);
+
+        if (absDiff <= CONFIG.alignTolerance) {
+            // Aligned with target
+            guideRing.classList.add('aligned');
+            captureBtn.classList.add('ready');
+            guideArrow.textContent = '●';
+            guideArrow.classList.remove('flip');
+            guideText.textContent = 'Hold steady...';
+            guideText.classList.add('success');
+            guideSubtext.textContent = 'Auto-capturing';
+        } else {
+            // Not aligned - show direction
+            guideRing.classList.remove('aligned');
+            captureBtn.classList.remove('ready');
+            guideText.classList.remove('success');
+
+            if (diff > 0) {
+                guideArrow.textContent = '→';
+                guideArrow.classList.remove('flip');
+                guideText.textContent = `Rotate right ${Math.round(absDiff)}°`;
+            } else {
+                guideArrow.textContent = '→';
+                guideArrow.classList.add('flip');
+                guideText.textContent = `Rotate left ${Math.round(absDiff)}°`;
+            }
+            guideSubtext.textContent = `Target: ${next.angle}°`;
+        }
+    }
+
+    function updateHorizon() {
+        const bubble = document.getElementById('horizon-bubble');
+        if (state.pitch === null) return;
+        const offset = Math.max(-30, Math.min(30, state.pitch));
+        bubble.style.transform = `translateX(-50%) translateY(${offset * 2}px)`;
+        bubble.classList.toggle('level', Math.abs(state.pitch) < 3);
+    }
+
+    function checkAutoCapture() {
+        if (!state.hasOrientation || state.heading === null) return;
+        if (state.autoCaptureLocked) return;
+
+        const next = getNextTarget();
+        if (!next) return;
+
+        const absDiff = Math.abs(angleDiff(state.heading, next.angle));
+
+        if (absDiff <= CONFIG.autoCaptureTolerance) {
+            // Start auto-capture timer if not already running
+            if (!state.autoCaptureTimer) {
+                const ring = document.getElementById('auto-ring');
+                ring.classList.remove('active');
+                void ring.offsetWidth;
+                ring.classList.add('active');
+
+                state.autoCaptureTimer = setTimeout(() => {
+                    state.autoCaptureTimer = null;
+                    // Re-check alignment before firing
+                    const currentNext = getNextTarget();
+                    if (currentNext) {
+                        const currentDiff = Math.abs(angleDiff(state.heading, currentNext.angle));
+                        if (currentDiff <= CONFIG.autoCaptureTolerance) {
+                            captureFrame();
+                            // Prevent re-trigger for a bit
+                            state.autoCaptureLocked = true;
+                            setTimeout(() => { state.autoCaptureLocked = false; }, 1000);
+                        }
+                    }
+                    document.getElementById('auto-ring').classList.remove('active');
+                }, CONFIG.autoCaptureDelay);
+            }
+        } else {
+            // Moved away - cancel auto-capture
+            if (state.autoCaptureTimer) {
+                clearTimeout(state.autoCaptureTimer);
+                state.autoCaptureTimer = null;
+                document.getElementById('auto-ring').classList.remove('active');
+            }
+        }
     }
 
     // ==========================================
@@ -686,25 +993,25 @@
             doneBtn.classList.remove('hidden');
         }
 
-        // Update compass dots
+        // Update compass dots and track captured angles
         if (state.hasOrientation) {
             const dots = document.querySelectorAll('.capture-dot');
             state.captures.forEach(cap => {
                 if (cap.heading === null) return;
-                // Find closest target dot and mark it captured
                 const idx = Math.round(cap.heading / CONFIG.angleStep) % CONFIG.targetCaptures;
                 if (dots[idx]) dots[idx].className = 'capture-dot captured';
+                state.capturedAngles.add(idx);
             });
 
-            // Update fill bar (coverage)
-            const captured = document.querySelectorAll('.capture-dot.captured').length;
-            const pct = Math.min(100, (captured / CONFIG.targetCaptures) * 100);
+            const pct = Math.min(100, (state.capturedAngles.size / CONFIG.targetCaptures) * 100);
             document.getElementById('compass-fill').style.width = pct + '%';
         } else {
-            // No orientation: just show progress by count
             const pct = Math.min(100, (n / CONFIG.targetCaptures) * 100);
             document.getElementById('compass-fill').style.width = pct + '%';
         }
+
+        // Refresh the guide text immediately
+        updateGuide();
 
         // Add thumbnail
         const thumbs = document.getElementById('capture-thumbs');
@@ -1264,11 +1571,22 @@
         state.captures = [];
         state.panoramaCanvas = null;
         state.viewerX = 0;
+        state.capturedAngles = new Set();
+        state.autoCaptureTimer = null;
+        state.autoCaptureLocked = false;
         document.getElementById('capture-thumbs').innerHTML = '';
         document.getElementById('btn-done').classList.add('hidden');
+        document.getElementById('btn-capture').classList.remove('ready');
+        document.getElementById('auto-ring').classList.remove('active');
         initCompassDots();
         document.getElementById('compass-fill').style.width = '0%';
         document.getElementById('capture-count').textContent = '0 photos';
+        // Reset guide
+        document.getElementById('guide-text').textContent = 'Tap to take first photo';
+        document.getElementById('guide-text').classList.remove('success');
+        document.getElementById('guide-subtext').textContent = 'Then slowly rotate right';
+        document.getElementById('guide-arrow').textContent = '●';
+        document.getElementById('guide-ring').classList.remove('aligned');
     }
 
     document.addEventListener('opencv-ready', () => {
