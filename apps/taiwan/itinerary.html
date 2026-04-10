@@ -1,0 +1,820 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="theme-color" content="#0a0a0f">
+<title>Taiwan 2026 — Matt & Tingting</title>
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --bg:#0a0a0f;--surface:#12121e;--card:#171725;--card-hover:#1c1c2e;
+  --accent:#f0b429;--accent2:#4fc3f7;--accent3:#ab47bc;
+  --text:#eeeef2;--text2:#b0b0c0;--dim:#6b6b80;
+  --food:#ff6b4a;--sight:#4fc3f7;--transit:#ab47bc;--rest:#4caf8b;--book:#f0b429;
+  --border:rgba(255,255,255,.06);--glow:rgba(240,180,41,.08);
+  --r:16px;
+  --safe-t:env(safe-area-inset-top,0px);--safe-b:env(safe-area-inset-bottom,0px);
+  --safe-l:env(safe-area-inset-left,0px);--safe-r:env(safe-area-inset-right,0px);
+}
+html{background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSystemFont,"SF Pro Display","Segoe UI",Roboto,Helvetica,sans-serif;-webkit-text-size-adjust:100%;scroll-behavior:smooth;-webkit-font-smoothing:antialiased}
+body{padding-top:calc(60px + var(--safe-t));padding-bottom:calc(72px + var(--safe-b));min-height:100dvh;overflow-x:hidden}
+a{color:var(--accent2);text-decoration:none}
+a:active{opacity:.7}
+
+/* ===== HEADER ===== */
+.hdr{position:fixed;top:0;left:0;right:0;z-index:200;background:rgba(10,10,15,.85);-webkit-backdrop-filter:saturate(180%) blur(20px);backdrop-filter:saturate(180%) blur(20px);padding:var(--safe-t) 0 0;border-bottom:1px solid var(--border)}
+.hdr-in{display:flex;align-items:center;justify-content:space-between;padding:14px 20px 12px}
+.hdr-title{font-size:19px;font-weight:800;letter-spacing:-.3px;background:linear-gradient(135deg,var(--accent) 0%,#fdd835 50%,var(--accent2) 100%);-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text}
+.hdr-sub{font-size:11px;color:var(--dim);font-weight:500;letter-spacing:.2px;margin-top:1px}
+.hdr-flag{font-size:28px;line-height:1}
+
+/* ===== TAB BAR ===== */
+.tbar{position:fixed;bottom:0;left:0;right:0;z-index:200;background:rgba(10,10,15,.9);-webkit-backdrop-filter:saturate(180%) blur(20px);backdrop-filter:saturate(180%) blur(20px);border-top:1px solid var(--border);padding:0 var(--safe-l) var(--safe-b) var(--safe-r)}
+.tbar-in{display:flex;justify-content:space-around;padding:6px 0 2px}
+.tb{display:flex;flex-direction:column;align-items:center;gap:2px;background:none;border:none;color:var(--dim);font-size:10px;font-weight:600;cursor:pointer;padding:6px 16px;-webkit-tap-highlight-color:transparent;transition:color .2s;letter-spacing:.2px;position:relative}
+.tb.on{color:var(--accent)}
+.tb svg{width:24px;height:24px;transition:transform .2s}
+.tb.on svg{transform:scale(1.1)}
+.tb-badge{position:absolute;top:0;right:8px;background:var(--food);color:#fff;font-size:8px;min-width:16px;height:16px;border-radius:8px;display:flex;align-items:center;justify-content:center;font-weight:700;padding:0 4px}
+
+/* ===== VIEWS ===== */
+.vw{display:none;padding:0 16px 24px}
+.vw.on{display:block}
+
+/* ===== HERO BANNER ===== */
+.hero{position:relative;margin:-0 -16px 20px;height:240px;overflow:hidden}
+.hero img{width:100%;height:100%;object-fit:cover;display:block}
+.hero-overlay{position:absolute;inset:0;background:linear-gradient(to top,var(--bg) 0%,rgba(10,10,15,.3) 50%,rgba(10,10,15,.1) 100%)}
+.hero-text{position:absolute;bottom:20px;left:20px;right:20px}
+.hero-text h2{font-size:28px;font-weight:800;letter-spacing:-.5px;line-height:1.15}
+.hero-text p{font-size:14px;color:var(--text2);margin-top:6px;line-height:1.4}
+.hero-countdown{font-size:48px;font-weight:900;background:linear-gradient(135deg,var(--accent),var(--accent2));-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text;line-height:1}
+.hero-countdown-label{font-size:13px;color:var(--dim);text-transform:uppercase;letter-spacing:1px;margin-top:4px}
+
+/* ===== STAT PILLS ===== */
+.stats{display:flex;gap:8px;overflow-x:auto;padding:0 0 12px;-webkit-overflow-scrolling:touch;scrollbar-width:none;margin-bottom:8px}
+.stats::-webkit-scrollbar{display:none}
+.stat{flex-shrink:0;background:var(--card);border:1px solid var(--border);border-radius:12px;padding:12px 16px;min-width:90px;text-align:center}
+.stat-num{font-size:22px;font-weight:800;background:linear-gradient(135deg,var(--accent),var(--accent2));-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text}
+.stat-label{font-size:10px;color:var(--dim);text-transform:uppercase;letter-spacing:.5px;margin-top:2px}
+
+/* ===== ROUTE VISUALIZATION ===== */
+.route-strip{background:var(--card);border:1px solid var(--border);border-radius:var(--r);padding:16px 18px;margin-bottom:20px;overflow-x:auto;-webkit-overflow-scrolling:touch}
+.route-cities{display:flex;align-items:center;gap:0;min-width:max-content}
+.route-city{text-align:center;flex-shrink:0}
+.route-dot{width:10px;height:10px;border-radius:50%;background:var(--accent);margin:0 auto 4px}
+.route-dot.active{box-shadow:0 0 0 3px rgba(240,180,41,.3)}
+.route-name{font-size:11px;font-weight:600;white-space:nowrap}
+.route-nights{font-size:9px;color:var(--dim);margin-top:1px}
+.route-line{width:32px;height:2px;background:linear-gradient(90deg,var(--accent),var(--accent2));flex-shrink:0;margin:0 0 16px}
+
+/* ===== DAY CARDS ===== */
+.day{background:var(--card);border-radius:var(--r);margin-bottom:16px;overflow:hidden;border:1px solid var(--border);transition:border-color .3s}
+.day.today{border-color:var(--accent);box-shadow:0 0 0 1px rgba(240,180,41,.2),0 8px 32px rgba(240,180,41,.08)}
+.day-hero{position:relative;height:160px;overflow:hidden;cursor:pointer;-webkit-tap-highlight-color:transparent}
+.day-hero img{width:100%;height:100%;object-fit:cover;transition:transform .4s}
+.day.open .day-hero img{transform:scale(1.05)}
+.day-hero-grad{position:absolute;inset:0;background:linear-gradient(to top,rgba(23,23,37,.95) 0%,rgba(23,23,37,.3) 60%,transparent 100%)}
+.day-hero-top{position:absolute;top:12px;left:14px;display:flex;gap:6px}
+.day-hero-text{position:absolute;bottom:12px;left:14px;right:50px}
+.day-num-pill{font-size:10px;font-weight:700;background:rgba(240,180,41,.9);color:#0a0a0f;padding:3px 10px;border-radius:20px;letter-spacing:.5px}
+.day-today-pill{font-size:10px;font-weight:700;background:rgba(79,195,247,.9);color:#0a0a0f;padding:3px 10px;border-radius:20px;letter-spacing:.3px}
+.day-h-title{font-size:17px;font-weight:700;line-height:1.2}
+.day-h-sub{font-size:12px;color:var(--text2);margin-top:3px}
+.day-h-tags{display:flex;gap:4px;margin-top:6px}
+.day-chev{position:absolute;bottom:14px;right:14px;width:28px;height:28px;background:rgba(255,255,255,.1);border-radius:50%;display:flex;align-items:center;justify-content:center;transition:transform .3s}
+.day.open .day-chev{transform:rotate(180deg)}
+.day-chev svg{width:14px;height:14px;fill:var(--text)}
+
+/* Day Body */
+.day-body{display:none;padding:4px 16px 20px}
+.day.open .day-body{display:block}
+
+/* Tags */
+.tg{font-size:9px;padding:2px 7px;border-radius:10px;font-weight:700;text-transform:uppercase;letter-spacing:.4px}
+.tg-food{background:rgba(255,107,74,.15);color:var(--food)}
+.tg-sight{background:rgba(79,195,247,.15);color:var(--sight)}
+.tg-transit{background:rgba(171,71,188,.15);color:var(--transit)}
+.tg-rest{background:rgba(76,175,139,.15);color:var(--rest)}
+.tg-book{background:rgba(240,180,41,.15);color:var(--book)}
+
+/* ===== ACTIVITIES ===== */
+.act{position:relative;padding:14px 0 14px 20px;margin:0}
+.act+.act{border-top:1px solid var(--border)}
+.act::before{content:'';position:absolute;left:0;top:0;bottom:0;width:3px;border-radius:2px}
+.act.food::before{background:var(--food)}.act.sight::before{background:var(--sight)}
+.act.transit::before{background:var(--transit)}.act.rest::before{background:var(--rest)}
+.act.book::before{background:var(--book)}
+.act-time{font-size:11px;font-weight:700;color:var(--accent);letter-spacing:.3px;font-variant-numeric:tabular-nums}
+.act-name{font-size:15px;font-weight:700;margin-top:3px;line-height:1.3}
+.act-chinese{font-size:13px;color:var(--dim);margin-top:1px}
+.act-detail{font-size:13px;color:var(--text2);margin-top:6px;line-height:1.55}
+.act-detail strong{color:var(--text);font-weight:600}
+.act-detail em{color:var(--accent2);font-style:normal;font-weight:600}
+.act-expand{display:none}
+.act.expanded .act-expand{display:block}
+.act-toggle{font-size:12px;color:var(--accent2);font-weight:600;cursor:pointer;margin-top:6px;display:inline-block;-webkit-tap-highlight-color:transparent}
+.act-toggle:active{opacity:.6}
+
+/* Photo strip within activity */
+.act-photo{width:100%;height:120px;border-radius:10px;overflow:hidden;margin-top:10px}
+.act-photo img{width:100%;height:100%;object-fit:cover;display:block}
+
+/* Map embed */
+.act-map{margin-top:10px;border-radius:10px;overflow:hidden;border:1px solid var(--border)}
+.act-map img{width:100%;height:140px;object-fit:cover;display:block}
+.act-map-link{display:flex;align-items:center;justify-content:center;gap:6px;padding:10px;background:var(--surface);font-size:12px;font-weight:600;color:var(--accent2)}
+.act-map-link svg{width:14px;height:14px;fill:currentColor}
+
+/* Meta row */
+.act-meta{display:flex;gap:10px;flex-wrap:wrap;margin-top:8px}
+.meta{font-size:11px;color:var(--dim);display:flex;align-items:center;gap:3px}
+.meta svg{width:11px;height:11px;fill:currentColor;flex-shrink:0}
+
+/* ===== TRANSIT CARD ===== */
+.tr-card{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:14px;margin:12px 0}
+.tr-label{font-size:9px;text-transform:uppercase;letter-spacing:.8px;color:var(--transit);font-weight:700;margin-bottom:6px;display:flex;align-items:center;gap:6px}
+.tr-label svg{width:12px;height:12px;fill:currentColor}
+.tr-steps{font-size:13px;line-height:1.6;color:var(--text2)}
+.tr-steps strong{color:var(--text)}
+.tr-stats{display:flex;gap:16px;margin-top:8px;flex-wrap:wrap}
+.tr-stat{font-size:11px;color:var(--dim);display:flex;align-items:center;gap:4px}
+.tr-stat svg{width:12px;height:12px;fill:currentColor}
+
+/* ===== DREAM MOMENT ===== */
+.dream{position:relative;border-radius:12px;padding:16px;margin:12px 0;overflow:hidden;background:linear-gradient(135deg,rgba(240,180,41,.08),rgba(79,195,247,.08));border:1px solid rgba(240,180,41,.2)}
+.dream::before{content:'';position:absolute;top:-20px;right:-20px;width:80px;height:80px;background:radial-gradient(circle,rgba(240,180,41,.15),transparent);border-radius:50%}
+.dream-label{font-size:9px;text-transform:uppercase;letter-spacing:1px;color:var(--accent);font-weight:700;margin-bottom:4px}
+.dream-text{font-size:14px;font-style:italic;line-height:1.5;color:var(--text);position:relative}
+
+/* ===== LUGGAGE ===== */
+.luggage{background:rgba(171,71,188,.06);border:1px solid rgba(171,71,188,.2);border-radius:12px;padding:12px 14px;margin:8px 0;font-size:12px;color:var(--text2);line-height:1.5;display:flex;gap:8px;align-items:flex-start}
+.luggage svg{width:16px;height:16px;fill:var(--transit);flex-shrink:0;margin-top:1px}
+.luggage strong{color:var(--text)}
+
+/* ===== WARNING ===== */
+.warn{background:rgba(255,107,74,.06);border:1px solid rgba(255,107,74,.2);border-radius:12px;padding:12px 14px;margin:8px 0;font-size:12px;color:var(--food);line-height:1.5}
+
+/* ===== ACTION ITEMS ===== */
+.ag{margin-bottom:28px}
+.ag-title{font-size:13px;font-weight:700;text-transform:uppercase;letter-spacing:.6px;padding:10px 0 8px;border-bottom:1px solid var(--border);display:flex;justify-content:space-between;align-items:center}
+.ag-count{font-size:11px;color:var(--dim);font-weight:400}
+.ai{display:flex;gap:12px;padding:12px 0;border-bottom:1px solid var(--border);align-items:flex-start;-webkit-tap-highlight-color:transparent}
+.ai:last-child{border:none}
+.ai-chk{width:24px;height:24px;border:2px solid var(--border);border-radius:7px;flex-shrink:0;cursor:pointer;display:flex;align-items:center;justify-content:center;transition:all .2s;margin-top:1px}
+.ai-chk.done{background:var(--rest);border-color:var(--rest)}
+.ai-chk.done::after{content:'\\2713';color:#fff;font-size:14px;font-weight:700}
+.ai.done .ai-text{opacity:.4}
+.ai.done .ai-name{text-decoration:line-through}
+.ai-text{flex:1;min-width:0}
+.ai-name{font-size:14px;font-weight:600;line-height:1.3}
+.ai-desc{font-size:12px;color:var(--dim);margin-top:4px;line-height:1.5}
+.ai-foot{display:flex;gap:8px;align-items:center;margin-top:5px;flex-wrap:wrap}
+.ai-pri{font-size:10px;font-weight:700;text-transform:uppercase;padding:2px 8px;border-radius:6px;letter-spacing:.3px}
+.ai-pri.must{background:rgba(255,107,74,.15);color:var(--food)}
+.ai-pri.should{background:rgba(240,180,41,.15);color:var(--accent)}
+.ai-pri.nice{background:rgba(76,175,139,.15);color:var(--rest)}
+.ai-dead{font-size:11px;color:var(--dim)}
+
+/* ===== INFO ===== */
+.info-s{background:var(--card);border-radius:var(--r);padding:18px;margin-bottom:16px;border:1px solid var(--border)}
+.info-s h3{font-size:13px;font-weight:700;color:var(--accent);margin-bottom:14px;text-transform:uppercase;letter-spacing:.6px}
+.info-row{display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid var(--border);font-size:13px;gap:12px}
+.info-row:last-child{border:none}
+.info-row .l{color:var(--dim);flex-shrink:0}
+.info-row .v{font-weight:600;text-align:right;word-break:break-word}
+.phrase{padding:10px 0;border-bottom:1px solid var(--border)}
+.phrase:last-child{border:none}
+.phrase-zh{font-size:18px;font-weight:600}
+.phrase-py{font-size:12px;color:var(--accent2);margin-top:2px}
+.phrase-en{font-size:12px;color:var(--dim);margin-top:1px}
+.reminder-item{padding:8px 0;border-bottom:1px solid var(--border);font-size:13px;line-height:1.5;color:var(--text2);display:flex;gap:8px;align-items:flex-start}
+.reminder-item:last-child{border:none}
+.reminder-item::before{content:'!';flex-shrink:0;width:18px;height:18px;background:rgba(240,180,41,.15);color:var(--accent);font-size:10px;font-weight:800;border-radius:50%;display:flex;align-items:center;justify-content:center;margin-top:2px}
+.ref-input{background:var(--surface);border:1px solid var(--border);border-radius:10px;color:var(--text);padding:10px 14px;font-size:13px;width:100%;margin-top:6px;font-family:inherit;transition:border-color .2s}
+.ref-input:focus{outline:none;border-color:var(--accent2)}
+.ref-label{font-size:11px;color:var(--dim);margin-top:14px;font-weight:600}
+.pts-row{display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid var(--border);font-size:13px}
+.pts-row:last-child{border:none}
+.pts-val{font-weight:700;color:var(--accent2);font-variant-numeric:tabular-nums}
+.budget-row{display:flex;justify-content:space-between;padding:8px 0;border-bottom:1px solid var(--border);font-size:13px}
+.budget-row:last-child{border:none}
+.budget-total{font-weight:700;font-size:14px;color:var(--accent);border-top:2px solid var(--border);margin-top:4px;padding-top:12px}
+
+/* ===== PROGRESS BAR ===== */
+.progress{height:3px;background:var(--border);border-radius:2px;margin:8px 0 16px;overflow:hidden}
+.progress-fill{height:100%;background:linear-gradient(90deg,var(--accent),var(--accent2));border-radius:2px;transition:width .5s}
+
+/* ===== RESPONSIVE ===== */
+@media(min-width:600px){.vw{max-width:560px;margin:0 auto}}
+@media(prefers-color-scheme:light){:root{--bg:#f5f5f8;--surface:#eeeef2;--card:#fff;--card-hover:#f8f8fc;--text:#1a1a2e;--text2:#555;--dim:#888;--border:rgba(0,0,0,.08)}}
+</style>
+</head>
+<body>
+
+<!-- HEADER -->
+<div class="hdr"><div class="hdr-in">
+<div><div class="hdr-title">Taiwan 2026</div><div class="hdr-sub">Apr 18 – 27 &bull; Matt & Tingting</div></div>
+<div class="hdr-flag">&#127481;&#127484;</div>
+</div></div>
+
+<!-- VIEWS -->
+<div id="v-today" class="vw on"></div>
+<div id="v-trip" class="vw"></div>
+<div id="v-act" class="vw"></div>
+<div id="v-info" class="vw"></div>
+
+<!-- TAB BAR -->
+<div class="tbar"><div class="tbar-in">
+<button class="tb on" data-v="today" onclick="go('today')">
+<svg viewBox="0 0 24 24"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z"/></svg>
+Today</button>
+<button class="tb" data-v="trip" onclick="go('trip')">
+<svg viewBox="0 0 24 24"><path d="M19 3h-1V1h-2v2H8V1H6v2H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm0 16H5V8h14v11z"/></svg>
+Full Trip</button>
+<button class="tb" data-v="act" onclick="go('act')">
+<svg viewBox="0 0 24 24"><path d="M3 13h2v-2H3v2zm0 4h2v-2H3v2zm0-8h2V7H3v2zm4 4h14v-2H7v2zm0 4h14v-2H7v2zM7 7v2h14V7H7z"/></svg>
+<span class="tb-badge" id="act-badge"></span>
+Actions</button>
+<button class="tb" data-v="info" onclick="go('info')">
+<svg viewBox="0 0 24 24"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-6h2v6zm0-8h-2V7h2v2z"/></svg>
+Info</button>
+</div></div>
+
+<script>
+// ===== SVG ICONS =====
+const ICONS = {
+  pin:'<svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zm0 9.5c-1.38 0-2.5-1.12-2.5-2.5S10.62 6.5 12 6.5s2.5 1.12 2.5 2.5S13.38 11.5 12 11.5z"/></svg>',
+  clock:'<svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2C6.5 2 2 6.5 2 12s4.5 10 10 10 10-4.5 10-10S17.5 2 12 2zm4.2 14.2L11 13V7h1.5v5.2l4.5 2.7-.8 1.3z"/></svg>',
+  money:'<svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><path d="M11.8 10.9c-2.27-.59-3-1.2-3-2.15 0-1.09 1.01-1.85 2.7-1.85 1.78 0 2.44.85 2.5 2.1h2.21c-.07-1.72-1.12-3.3-3.21-3.81V3h-3v2.16c-1.94.42-3.5 1.68-3.5 3.61 0 2.31 1.91 3.46 4.7 4.13 2.5.6 3 1.48 3 2.41 0 .69-.49 1.79-2.7 1.79-2.06 0-2.87-.92-2.98-2.1h-2.2c.12 2.19 1.76 3.42 3.68 3.83V21h3v-2.15c1.95-.37 3.5-1.5 3.5-3.55 0-2.84-2.43-3.81-4.7-4.4z"/></svg>',
+  walk:'<svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><path d="M13.5 5.5c1.1 0 2-.9 2-2s-.9-2-2-2-2 .9-2 2 .9 2 2 2zM9.8 8.9L7 23h2.1l1.8-8 2.1 2v6h2v-7.5l-2.1-2 .6-3C14.8 12 16.8 13 19 13v-2c-1.9 0-3.5-1-4.3-2.4l-1-1.6c-.4-.6-1-1-1.7-1-.3 0-.5.1-.8.1L6 8.3V13h2V9.6l1.8-.7"/></svg>',
+  train:'<svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2c-4 0-8 .5-8 4v9.5C4 17.43 5.57 19 7.5 19L6 20.5v.5h2.23l2-2h3.54l2 2H18v-.5L16.5 19c1.93 0 3.5-1.57 3.5-3.5V6c0-3.5-4-4-8-4zM7.5 17c-.83 0-1.5-.67-1.5-1.5S6.67 14 7.5 14s1.5.67 1.5 1.5S8.33 17 7.5 17zm3.5-7H6V6h5v4zm2 0V6h5v4h-5zm3.5 7c-.83 0-1.5-.67-1.5-1.5s.67-1.5 1.5-1.5 1.5.67 1.5 1.5-.67 1.5-1.5 1.5z"/></svg>',
+  luggage:'<svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M17 6h-2V3c0-.55-.45-1-1-1h-4c-.55 0-1 .45-1 1v3H7c-1.1 0-2 .9-2 2v11c0 1.1.9 2 2 2 0 .55.45 1 1 1s1-.45 1-1h6c0 .55.45 1 1 1s1-.45 1-1c1.1 0 2-.9 2-2V8c0-1.1-.9-2-2-2zM10 3h4v3h-4V3z"/></svg>',
+  nav:'<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M21 3L3 10.53v.98l6.84 2.65L12.48 21h.98L21 3z"/></svg>'
+};
+
+// ===== PHOTOS (Unsplash, cached on first load) =====
+const PHOTOS = {
+  taipei101:'https://images.unsplash.com/photo-1508009603885-50cf7c579365?w=800&q=80',
+  yongkang:'https://images.unsplash.com/photo-1529566193637-29e9e237e888?w=800&q=80',
+  pottery:'https://images.unsplash.com/photo-1565193566173-7a0ee3dbe261?w=800&q=80',
+  jiufen:'https://images.unsplash.com/photo-1558454930-81b0ae8e05ee?w=800&q=80',
+  wulai:'https://images.unsplash.com/photo-1540979388789-6cee28a1cdc9?w=800&q=80',
+  tainan:'https://images.unsplash.com/photo-1572036300015-4bcd5e4a5e93?w=800&q=80',
+  alishan:'https://images.unsplash.com/photo-1586185018495-b98be2a12818?w=800&q=80',
+  sunrise:'https://images.unsplash.com/photo-1501785888041-af3ef285b470?w=800&q=80',
+  departure:'https://images.unsplash.com/photo-1436491865332-7a61a109db05?w=800&q=80',
+  nightmarket:'https://images.unsplash.com/photo-1518709779341-56a4f6547102?w=800&q=80',
+  temple:'https://images.unsplash.com/photo-1590938468123-a78005f9e5e9?w=800&q=80',
+  hotspring:'https://images.unsplash.com/photo-1545569341-9eb8b30979d9?w=800&q=80',
+  hero:'https://images.unsplash.com/photo-1470004914212-05527e49370b?w=1200&q=80',
+  food:'https://images.unsplash.com/photo-1563245372-f21724e3856d?w=800&q=80',
+  tea:'https://images.unsplash.com/photo-1556679343-c7306c1976bc?w=800&q=80'
+};
+
+// ===== MAP HELPERS =====
+function mapUrl(from,to){return 'https://www.google.com/maps/dir/'+encodeURIComponent(from)+'/'+encodeURIComponent(to)}
+function mapStaticUrl(lat,lng,zoom){return 'https://maps.googleapis.com/maps/api/staticmap?center='+lat+','+lng+'&zoom='+zoom+'&size=600x200&scale=2&maptype=roadmap&style=feature:all|element:geometry|color:0x242f3e&style=feature:all|element:labels.text.fill|color:0x746855&style=feature:all|element:labels.text.stroke|color:0x242f3e&style=feature:road|element:geometry|color:0x38414e&style=feature:water|element:geometry|color:0x17263c'}
+function mapLink(from,to,label){
+  const url=mapUrl(from,to);
+  return '<div class="act-map"><a href="'+url+'" target="_blank" rel="noopener" class="act-map-link">'+ICONS.nav+' Open directions in Google Maps: '+label+'</a></div>';
+}
+function simpleMapLink(url,label){
+  return '<a href="'+url+'" target="_blank" rel="noopener" style="display:inline-flex;align-items:center;gap:4px;color:var(--accent2);font-size:12px;font-weight:600;margin-top:4px">'+ICONS.nav+' '+label+'</a>';
+}
+
+// ===== TRIP DATA =====
+const DAYS = [
+{day:1,date:'2026-04-19',dow:'Sunday',title:'Arrive in Taipei',sub:'EVA Air Business Class \u2192 Grand Hyatt',city:'Taipei',photo:PHOTOS.taipei101,tags:['transit','rest'],
+ luggage:null,
+ acts:[
+  {t:'05:00',type:'transit',name:'Land at Taoyuan Airport',zh:'桃園國際機場',detail:'EVA Air Royal Laurel Business Class. Immigration + luggage ~45 min.',photo:null},
+  {t:'06:00',type:'transit',name:'Airport MRT \u2192 Taipei Main Station',zh:'機場捷運',
+   detail:'Taoyuan Airport T1 \u2192 Taipei Main Station.<br><strong>37 min express, TWD 160/person (~$5).</strong><br>Buy <em>EasyCard</em> at airport 7-11 (TWD 500 w/ $13 stored value). Tap on/off.',
+   mapFrom:'Taoyuan International Airport',mapTo:'Taipei Main Station'},
+  {t:'07:30',type:'rest',name:'Grand Hyatt Taipei',zh:'台北君悅酒店',
+   detail:'Address: <strong>2 Songshou Road, Xinyi District</strong> (松壽路2號)<br>Chinese for taxi: <strong>台北君悅酒店</strong><br>MRT Red Line \u2192 Taipei 101/World Trade Center Station, Exit 3. Walk 5 min east on Songshou Road.<br>Early check-in may not be ready until 3pm \u2014 leave bags with concierge.<br><em>~15,000 Hyatt points/night \u00d7 5 nights = 75k points</em>',
+   mapPlace:'https://www.google.com/maps/place/Grand+Hyatt+Taipei'},
+  {t:'10:00',type:'sight',name:'Walk Xinyi District',zh:'信義區',
+   detail:'Taipei 101 exterior (skip the observatory \u2014 Elephant Mountain is free and better). Browse <strong>Eslite Spectrum Songyan</strong> (huge bookstore + design shops, opens 11am).'},
+  {t:'12:30',type:'rest',name:'Nap / Rest',zh:'',detail:'Jet lag recovery. If room isn\'t ready, lunch at <strong>Addiction Aquatic Development</strong> (上引水產) \u2014 standing sushi bar + seafood market. Near Xingtian Temple MRT, Exit 1. TWD 500-1000/person.'},
+  {t:'17:30',type:'sight',name:'Xinyi at Dusk',zh:'',detail:'Watch Taipei 101 light up. First Taiwan bubble tea \u2014 try <strong>Tiger Sugar</strong> in Xinyi.'},
+  {t:'19:00',type:'food',name:'Light Dinner & Early Sleep',zh:'',detail:'Casual ramen or noodle shop in Xinyi. Don\'t overdo it \u2014 rest up for tomorrow.',photo:null}
+]},
+
+{day:2,date:'2026-04-20',dow:'Monday',title:'Food, Streets & Sunset',sub:'Yongkang, Simple Kaffa, Dihua St, Elephant Mountain, Raohe',city:'Taipei',photo:PHOTOS.yongkang,tags:['food','sight'],
+ luggage:null,
+ acts:[
+  {t:'09:00',type:'transit',name:'MRT to Dongmen Station',zh:'東門站',detail:'Red Line from Taipei 101 \u2192 Dongmen (Exit 5). 2 stops.'},
+  {t:'10:00',type:'food',name:'Yongkang Beef Noodle',zh:'永康牛肉麵',
+   detail:'No. 17, Lane 31, Sec 2, Jinshan S Road. 2 min walk from Dongmen Exit 5.<br>Arrive before 11am \u2014 ~20 min wait weekdays.<br>Order: <strong>half-tendon half-meat noodle (半筋半肉麵)</strong> \u2014 the classic. Also: pickled cabbage, <strong>scallion pancake (蔥油餅)</strong>.<br><strong>Cash only. TWD 250-350/person.</strong>',
+   mapPlace:'https://www.google.com/maps/place/Yongkang+Beef+Noodles',
+   photo:PHOTOS.food},
+  {t:'12:00',type:'food',name:'Simple Kaffa Flagship',zh:'興波咖啡',
+   detail:'No. 27, Sec 2, Zhongxiao E Road. 15 min walk from Yongkang.<br>Founded by <strong>2016 World Barista Champion Berg Wu</strong>.<br>Order a single-origin pour-over \u2014 ask the barista\'s pick.<br><em>Hours: 10:00-17:00. TWD 200-400/drink.</em>',
+   mapPlace:'https://www.google.com/maps/place/Simple+Kaffa'},
+  {t:'13:30',type:'sight',name:'Huashan 1914 Creative Park',zh:'華山1914文化創意產業園區',detail:'Right next to Simple Kaffa. Former sake brewery turned art campus. Free to enter. Current exhibitions rotate.'},
+  {t:'14:30',type:'sight',name:'Dihua Street',zh:'迪化街',
+   detail:'MRT to Beimen Station, Exit 3. Walk 5 min north.<br>Century-old trading street \u2014 dried goods, herbs, <strong>tea shops</strong>, indie boutiques.<br><strong>Tea shopping for Tingting:</strong> <em>Lin Hua Tai Tea (林華泰茶行)</em> \u2014 4th gen family shop, Alishan oolong at wholesale prices.',
+   mapPlace:'https://www.google.com/maps/place/Dihua+Street'},
+  {t:'15:30',type:'sight',name:'Taipei City Mall \u2014 Retro Games',zh:'台北地下街',
+   detail:'MRT to Taipei Main. Enter underground mall, head to <strong>Y section (Y13-Y28)</strong>. Retro gaming district: <strong>Game Boy, Famicom, collectibles</strong>.<br><em>Matt\'s vintage video game hunt!</em> Budget 1-2 hrs. Most items Japan/Asia region.',
+   mapPlace:'https://www.google.com/maps/place/Taipei+City+Mall'},
+  {t:'17:00',type:'sight',name:'Elephant Mountain Sunset',zh:'象山',
+   detail:'MRT Red Line to Xiangshan Station, Exit 2. Walk 10 min to trailhead \u2192 20 min climb.<br><strong>Sunset ~6:10pm in late April.</strong> Arrive by 5:30 for a good spot.<br>THE Taipei 101 photo spot at golden hour.<br><em>Tingting \u2014 this is your shot.</em>',
+   mapPlace:'https://www.google.com/maps/place/Elephant+Mountain+Hiking+Trail'},
+  {t:'18:30',type:'food',name:'Raohe Night Market',zh:'饒河夜市',
+   detail:'MRT Green Line, Songshan Exit 5 \u2014 gate is RIGHT there.<br><strong>First stop: Fuzhou Pepper Bun (福州世祖胡椒餅)</strong> at the entrance arch. Queue 20-30 min.<br>Also try: medicinal ribs (藥燉排骨), stinky tofu (臭豆腐), mochi, fruit drinks.<br><strong>Couple food crawl challenge \u2014 try 8+ stalls!</strong><br><em>Budget TWD 500-800/person.</em>',
+   mapPlace:'https://www.google.com/maps/place/Raohe+Street+Night+Market',
+   photo:PHOTOS.nightmarket,
+   dream:'Night market food crawl challenge \u2014 Tingting\'s couple experience pick!'}
+]},
+
+{day:3,date:'2026-04-21',dow:'Tuesday',title:'Crafts, Creatures & Local Eats',sub:'Yingge pottery, Sanxia temple, Capybara Knight, Ningxia',city:'New Taipei',photo:PHOTOS.pottery,tags:['sight','food'],
+ luggage:null,
+ acts:[
+  {t:'09:00',type:'transit',name:'Train to Yingge',zh:'鶯歌',
+   detail:'TRA from Taipei Main \u2192 Yingge Station. Westbound platform.<br><strong>30 min, TWD 31 (EasyCard).</strong>',
+   mapFrom:'Taipei Main Station',mapTo:'Yingge Station'},
+  {t:'10:00',type:'sight',name:'Pottery Workshop',zh:'陶瓷工坊',
+   detail:'Wheel-throwing class at Yingge Ceramics Street, ~2.5 hours.<br><strong>Book via KKday or Klook. TWD 500-800/person.</strong><br>Shape, glaze, and fire your own piece. Ships to hotel in 2-3 weeks or to US.',
+   book:true},
+  {t:'12:30',type:'sight',name:'Sanxia Zushi Temple',zh:'三峽祖師廟',
+   detail:'Short bus or TWD 200 taxi from Yingge (~20 min).<br><strong>40+ years of continuous stone carving</strong> by master artisans. Every surface is carved. One of Taiwan\'s most ornate temples.',
+   mapPlace:'https://www.google.com/maps/place/Sanxia+Zushi+Temple',
+   photo:PHOTOS.temple},
+  {t:'13:00',type:'food',name:'Sanxia Old Street Lunch',zh:'三峽老街',detail:'Golden horn pastries (金角三峽) and local noodles. TWD 150-250/person.'},
+  {t:'14:30',type:'sight',name:'Capybara Knight',zh:'水豚騎士',
+   detail:'No. 18, Alley 2, Lane 61, Yuanlin St, Tucheng. 10 min walk from Tucheng Station.<br><strong>Must book 1 week ahead!</strong><br>TWD 250/person \u2014 includes drink + capybara cake + <strong>20 min with Ba La</strong> the capybara (plus rabbits & ducks).<br><em>Hours: 10:00-18:00.</em>',
+   mapPlace:'https://www.google.com/maps/place/Capybara+Knight',
+   book:true},
+  {t:'19:00',type:'food',name:'Ningxia Night Market',zh:'寧夏夜市',
+   detail:'MRT Red Line to Shuanglian, Exit 1. Walk 5 min south.<br>Smaller, food-focused, very local.<br><strong>Must-try: Liu Yu Zi taro balls (劉芋仔)</strong> \u2014 queue ~20 min, legendary. Also: braised pork rice, grilled squid, fried milk.<br><em>TWD 400-600/person.</em>',
+   mapPlace:'https://www.google.com/maps/place/Ningxia+Night+Market'}
+]},
+
+{day:4,date:'2026-04-22',dow:'Wednesday',title:'Fuhang & Northeast Coast',sub:'Legendary breakfast, Jiufen at golden hour, Keelung',city:'Taipei + Northeast',photo:PHOTOS.jiufen,tags:['food','sight'],
+ luggage:null,
+ acts:[
+  {t:'06:15',type:'food',name:'Fuhang Soy Milk',zh:'阜杭豆漿',
+   detail:'MRT Blue Line \u2192 Shandao Temple Station, Exit 5. Walk 2 min.<br>2F of Huashan Market building (stairs at corner).<br><strong>Weekday before 7am = ~20 min wait.</strong> Closed Mondays.<br>Order at counter (moves fast \u2014 know your order):<br>\u2022 <strong>Thick soy milk</strong> (濃豆漿) \u2014 sweet or savory<br>\u2022 <strong>Shaobing with youtiao</strong> (燒餅夾油條)<br>\u2022 <strong>Dan bing</strong> (蛋餅) \u2014 Tingting\'s must-try!<br><em>Cash only. TWD 100-150/person for a feast.</em>',
+   mapPlace:'https://www.google.com/maps/place/Fu+Hang+Dou+Jiang'},
+  {t:'07:30',type:'rest',name:'Return & Recharge',zh:'',detail:'Full bellies. Rest, shower. Pack daypack: umbrella, light jacket (Jiufen can be drizzly), camera, portable charger.'},
+  {t:'12:30',type:'transit',name:'Bus 1062 to Jiufen',zh:'',
+   detail:'MRT to Zhongxiao Fuxing, Exit 2. Bus 1062 stop on Zhongxiao E Road. Every 15-20 min.<br><strong>~90 min ride, TWD 98 (EasyCard).</strong><br><em>Sit on the RIGHT for ocean views.</em>',
+   mapFrom:'Zhongxiao Fuxing MRT',mapTo:'Jiufen Old Street'},
+  {t:'14:00',type:'sight',name:'Jiufen Old Street',zh:'九份老街',
+   detail:'<strong>Wednesday = way fewer crowds!</strong><br>Browse narrow lanes and stairs. <strong>Ah Gan Yi Taro Balls (阿柑姨芋圓)</strong> \u2014 mountain/ocean terrace views. Fish balls, peanut ice cream rolls.<br>Walk down to <em>Shuchi Road (豎崎路)</em> \u2014 the photogenic lantern-lined staircase.',
+   mapPlace:'https://www.google.com/maps/place/Jiufen+Old+Street'},
+  {t:'16:30',type:'food',name:'A-Mei Tea House',zh:'阿妹茶樓',
+   detail:'The iconic Spirited Away-esque building.<br>Arrive before dusk for window/terrace seat. Order tea set (<strong>TWD 300-500/person</strong>, includes snacks + multiple steepings).<br><strong>Watch lanterns light up at dusk ~5:45-6:15pm.</strong><br>Sit 1-1.5 hours. No rush.<br><em>Tingting\'s deep tea + golden hour photography moment.</em>',
+   mapPlace:'https://www.google.com/maps/place/A-Mei+Tea+House',
+   photo:PHOTOS.tea,
+   dream:'Both selected A-Mei Tea House \u2014 Jiufen at dusk with tea and lanterns.'},
+  {t:'18:30',type:'transit',name:'Taxi to Keelung',zh:'',detail:'~30 min, TWD 300-400. Or Bus 788.'},
+  {t:'19:00',type:'food',name:'Miaokou Night Market',zh:'廟口夜市',
+   detail:'Right next to Keelung Station. Pure food focus \u2014 <strong>Tingting\'s pick!</strong><br><strong>Must-try: Ding Bian Cuo (鼎邊趖, stall #27)</strong> \u2014 rice noodle soup unique to Keelung.<br>Also: tempura (#46), crab soup, nutritious sandwich (#59).<br><em>TWD 400-600/person.</em>',
+   mapPlace:'https://www.google.com/maps/place/Miaokou+Night+Market'},
+  {t:'20:30',type:'transit',name:'Train to Taipei',zh:'',detail:'TRA from Keelung \u2192 Taipei Main. <strong>~40 min, TWD 41.</strong> Trains until ~11pm.'}
+]},
+
+{day:5,date:'2026-04-23',dow:'Thursday',title:'Wulai & Head South',sub:'Hot springs, waterfall, HSR to Tainan, Garden Night Market',city:'Wulai \u2192 Tainan',photo:PHOTOS.wulai,tags:['sight','food','transit'],
+ luggage:'Check out Grand Hyatt. Leave MAIN luggage with concierge (returning Sunday). Travel south with 3-night daypack only.',
+ acts:[
+  {t:'08:00',type:'rest',name:'Check Out Grand Hyatt',zh:'',detail:'Fuel up with hotel breakfast. Leave main luggage with concierge \u2014 tell them "returning Sunday the 26th."'},
+  {t:'09:00',type:'transit',name:'MRT + Bus to Wulai',zh:'烏來',
+   detail:'Green Line to Xindian Station (end of line). Exit, walk behind 7-11 to <strong>Bus 849</strong> stop.<br><strong>Every 15-20 min, 45 min ride, TWD 15.</strong><br>Scenic Xindian River valley route.',
+   mapFrom:'Xindian MRT Station',mapTo:'Wulai'},
+  {t:'10:00',type:'sight',name:'Wulai Village',zh:'烏來老街',
+   detail:'Closest Atayal indigenous village to Taipei.<br>Walk old street: <strong>wild boar sausage (山豬肉香腸), mochi (麻糬), millet wine.</strong><br>Cross bridge for free public hot spring foot soaking by the river.'},
+  {t:'11:00',type:'sight',name:'Wulai Waterfall + Mini-train',zh:'烏來瀑布',
+   detail:'15 min walk from old street, or ride the <strong>scenic mini-train (台車, TWD 50)</strong>.<br><strong>80m waterfall!</strong> Both selected this hidden gem.',
+   mapPlace:'https://www.google.com/maps/place/Wulai+Waterfall',
+   photo:PHOTOS.hotspring},
+  {t:'11:30',type:'food',name:'Atayal Indigenous Lunch',zh:'原住民料理',detail:'On Wulai Old Street. Try: <strong>bamboo rice (竹筒飯), wild boar (山豬肉), river shrimp.</strong> TWD 200-400/person.'},
+  {t:'13:00',type:'rest',name:'Private Hot Spring Soak',zh:'溫泉',
+   detail:'<strong>Volando Urai</strong> (TWD 1,800-3,000/hr) or <strong>Wulai Spring Resort</strong> (TWD 800-1,200/hr).<br>Private room with valley views. Clear sodium bicarbonate water \u2014 silky smooth.<br><em>1-1.5 hour soak for two.</em>',
+   book:true,
+   dream:'Matt\'s dream: "Having a romantic evening at the room with the hot tub spa thing" \u2014 a private open-air hot spring room overlooking the Nanshi River valley.'},
+  {t:'15:00',type:'transit',name:'Return to Taipei',zh:'',detail:'Bus 849 back to Xindian MRT (~45 min) \u2192 MRT to Taipei Main (~25 min). Grab south-trip bags from Grand Hyatt concierge.'},
+  {t:'17:00',type:'transit',name:'HSR Taipei \u2192 Tainan',zh:'高鐵',
+   detail:'<strong>1 hr 45 min. TWD 1,350/person</strong> (early bird 35% off = TWD 878!).<br>Book via T Express app. Reserved seats in Car 6-12.',
+   mapFrom:'Taipei Main Station',mapTo:'HSR Tainan Station'},
+  {t:'18:45',type:'transit',name:'HSR Tainan \u2192 Downtown',zh:'',detail:'HSR Tainan is in Guiren \u2014 NOT downtown. Walk to connected Shalun TRA \u2192 Tainan TRA Station. <strong>25 min, TWD 25.</strong> Check into hotel.'},
+  {t:'20:00',type:'food',name:'Garden Night Market',zh:'花園夜市',
+   detail:'<strong>Open Thu/Sat/Sun only \u2014 that\'s why we arrive Thursday!</strong><br>Taxi from downtown ~10 min, TWD 100-150. One of Taiwan\'s LARGEST \u2014 300+ stalls in an open field.<br>Try: <strong>night market steak (鐵板牛排)</strong> \u2014 a Tainan thing! Coffin bread, fried chicken, local fruits.<br><em>TWD 500-800/person.</em>',
+   mapPlace:'https://www.google.com/maps/place/Garden+Night+Market',
+   photo:PHOTOS.nightmarket}
+]},
+
+{day:6,date:'2026-04-24',dow:'Friday',title:'Tainan \u2014 Food Capital',sub:'A-Hsing at dawn, temples, Du Xiao Yue, Anping, food crawl',city:'Tainan',photo:PHOTOS.tainan,tags:['food','sight'],
+ luggage:null,
+ acts:[
+  {t:'05:30',type:'food',name:'A-Hsing Congee',zh:'阿星鹹粥',
+   detail:'No. 37, Guohua Street Sec 3. <strong>Opens ~5:30am, queue starts 5am.</strong><br>Order: <strong>milkfish congee (虱目魚鹹粥)</strong> + fried fish belly.<br><em>Cash only. TWD 100-150/person.</em><br>"Whatever locals queue for" \u2014 this IS it.',
+   mapPlace:'https://www.google.com/maps/place/A-Hsing+Congee'},
+  {t:'06:30',type:'food',name:'Guohua Street Food Stalls',zh:'國華街',detail:'Walk 5 min \u2014 Tainan\'s breakfast paradise.<br>Try: <strong>beef soup (牛肉湯)</strong> \u2014 raw beef cooked in hot broth, a Tainan specialty.'},
+  {t:'08:30',type:'rest',name:'Return to Hotel & Rest',zh:'',detail:'Post-dawn food coma. Recharge for temples.'},
+  {t:'10:00',type:'sight',name:'Temple Circuit',zh:'廟宇',
+   detail:'<strong>Confucius Temple (台南孔廟)</strong> \u2014 Taiwan\'s oldest (1665). Peaceful grounds, big banyan trees.<br><strong>Grand Mazu Temple (大天后宮)</strong> \u2014 10 min walk south. Stunning painted door gods.<br><strong>Chikan Tower (赤崁樓)</strong> \u2014 5 min walk. Dutch-era fort. Entry TWD 50.',
+   mapPlace:'https://www.google.com/maps/place/Tainan+Confucius+Temple',
+   photo:PHOTOS.temple},
+  {t:'12:00',type:'food',name:'Du Xiao Yue',zh:'度小月',
+   detail:'No. 16, Sec 2, Zhongzheng Road. 10 min walk from Chikan Tower.<br><strong>The OG Tainan dan zai noodles since 1895.</strong> Both selected this!<br>Order: dan zai noodles (small \u2014 get 2-3), shrimp rolls (蝦捲).<br><em>TWD 200-300/person.</em>',
+   mapPlace:'https://www.google.com/maps/place/Du+Xiao+Yue'},
+  {t:'13:30',type:'sight',name:'Anping District',zh:'安平',
+   detail:'Taxi ~15 min from downtown, TWD 150.<br><strong>Anping Old Fort (安平古堡)</strong> \u2014 oldest European fort in Taiwan (1624). Entry TWD 50.<br><strong>Anping Tree House (安平樹屋)</strong> \u2014 banyan trees consuming a warehouse. Incredible photos. Entry TWD 50.',
+   mapPlace:'https://www.google.com/maps/place/Anping+Old+Fort'},
+  {t:'15:00',type:'food',name:'Coffin Bread',zh:'棺材板',
+   detail:'Tainan-only specialty! Thick toast hollowed out, filled with seafood chowder.<br><strong>Matt: filling is creamy \u2014 try a bite but get shrimp rolls instead.</strong> Tingting: enjoy the full thing.'},
+  {t:'16:00',type:'sight',name:'Hayashi Department Store',zh:'林百貨',detail:'No. 63, Zhongyi Rd Sec 2. Restored 1930s Japanese-era dept store. Souvenirs, rooftop shrine, AC break.'},
+  {t:'18:00',type:'sight',name:'Shennong Street at Dusk',zh:'神農街',
+   detail:'Atmospheric old street with lanterns, cafes, art galleries. <em>Beautiful at dusk for photos \u2014 Tingting\'s photography walk.</em>',
+   mapPlace:'https://www.google.com/maps/place/Shennong+Street'},
+  {t:'19:00',type:'food',name:'Evening Food Crawl',zh:'',detail:'Walk and graze: <strong>scallion pancake (蔥油餅)</strong> from a street vendor \u2014 Matt\'s must-try!<br>Tainan sweet treats: almond tofu (杏仁豆腐), red bean soup. Follow the longest queues.<br><em>TWD 400-600/person.</em>'}
+]},
+
+{day:7,date:'2026-04-25',dow:'Saturday',title:'Tainan \u2192 Alishan',sub:'Turkey rice, mountain bus, firefly watching',city:'Chiayi \u2192 Alishan',photo:PHOTOS.alishan,tags:['transit','sight'],
+ luggage:'Check out Tainan hotel. All bags travel with you. Pack warm layers \u2014 8-10\u00b0C at night!',
+ acts:[
+  {t:'08:00',type:'food',name:'Last Tainan Breakfast',zh:'',detail:'Hotel breakfast or local dan bing shop.'},
+  {t:'10:30',type:'transit',name:'Check Out & Head to HSR',zh:'',detail:'TRA shuttle Tainan \u2192 Shalun/HSR (25 min, TWD 25) or taxi (~25 min, TWD 350).'},
+  {t:'11:30',type:'transit',name:'HSR Tainan \u2192 Chiayi',zh:'高鐵嘉義',detail:'<strong>15-20 min, TWD 290</strong> (early bird TWD 189).'},
+  {t:'12:00',type:'food',name:'Chiayi Turkey Rice',zh:'嘉義雞肉飯',
+   detail:'THE local specialty. Shredded turkey on rice with gravy. Find it at shops near the HSR bus stop.<br><strong>TWD 60-100/person. Yes, that cheap.</strong>'},
+  {t:'14:10',type:'transit',name:'Tourist Bus to Alishan',zh:'阿里山',
+   detail:'Taiwan Tourist Shuttle Bus 7329 from Chiayi HSR.<br><strong>2.5 hours, TWD 278, EasyCard OK.</strong><br>Winding mountain road with 100+ hairpin turns.<br><em>Take motion sickness meds 30 min before. Sit near front.</em><br>Enjoy: tea plantations, bamboo forests, misty valleys.',
+   mapFrom:'Chiayi HSR Station',mapTo:'Alishan Forest Recreation Area'},
+  {t:'16:40',type:'rest',name:'Arrive & Check In',zh:'',
+   detail:'Entry fee TWD 200/person. Walk or shuttle to lodge.<br><strong>It\'s COOL: 15-18\u00b0C afternoon, 8-10\u00b0C at night.</strong> Wear layers!<br><em>Alishan House (~TWD 4,000-6,000/night) or similar mountain lodge.</em>',book:true},
+  {t:'17:30',type:'book',name:'Buy Sunrise Train Tickets!',zh:'祝山線車票',
+   detail:'Walk to <strong>Alishan Station</strong>. Ticket window: 1:30-4:30pm.<br><strong>Zhushan Line: TWD 150/person each way.</strong><br>Get there early \u2014 Saturday tickets can sell out!<br>Departure time (~4:50am) posted at station.',book:true},
+  {t:'18:00',type:'food',name:'Mountain Dinner',zh:'',detail:'Alishan mountain vegetables, wild boar stew, bamboo rice. Hearty mountain food at the lodge.'},
+  {t:'19:30',type:'sight',name:'Firefly Watching!',zh:'螢火蟲',
+   detail:'<strong>April = peak firefly season in Alishan!</strong><br>Check with lodge for guided tours. Best spots: trails near visitor center, tea plantation areas.<br>Rules: NO flashlights, NO flash photography, stay on paths.<br><strong>Thousands of tiny green lights floating through the misty forest.</strong><br>Dress warm! 1-1.5 hours, darkness from ~7:30-9pm.',
+   dream:'Both selected firefly season \u2014 nature + adventure + unique converge in one magical evening.'}
+]},
+
+{day:8,date:'2026-04-26',dow:'Sunday',title:'Alishan Sunrise & Return',sub:'Sunrise train, sacred trees, oolong tea, Beitou, Din Tai Fung',city:'Alishan \u2192 Taipei',photo:PHOTOS.sunrise,tags:['sight','food','transit'],
+ luggage:'Pack everything from Alishan. Pick up stored luggage from Grand Hyatt concierge upon return to Taipei.',
+ acts:[
+  {t:'04:20',type:'rest',name:'Wake Up',zh:'',detail:'Layer up: long pants, fleece/jacket, hat. <strong>8-10\u00b0C.</strong> You can do this.'},
+  {t:'04:50',type:'sight',name:'Alishan Sunrise Train',zh:'祝山線',
+   detail:'<strong>Zhushan Line departs 4:50am.</strong> 25 min ride through dark cypress forest to Zhushan viewing platform.',
+   dream:'Matt\'s dream: "Experiencing something truly beautiful with Tingting" \u2014 watch the sun rise over the Yushan range and the sea of clouds. Hold hands. This is peak Taiwan.'},
+  {t:'05:25',type:'sight',name:'Sunrise Over the Sea of Clouds',zh:'日出雲海',
+   detail:'<strong>Sunrise ~5:25-5:30am.</strong> Clouds fill the valley like an ocean. Peaks emerge like islands. Take photos, breathe it in, be present.'},
+  {t:'06:40',type:'transit',name:'Return Train',zh:'',detail:'<strong>Last return at 6:40am \u2014 DON\'T MISS IT!</strong>'},
+  {t:'08:00',type:'sight',name:'Sacred Tree Trail',zh:'神木群棧道',
+   detail:'Walk among <strong>2,000+ year old red cypress trees.</strong> Wooden boardwalk loop, ~1-1.5 hours.<br>Must-see: Xianglin Sacred Tree (香林神木).<br><em>Misty morning forest atmosphere.</em>'},
+  {t:'09:30',type:'sight',name:'Sisters Ponds',zh:'姊妹潭',detail:'Two peaceful alpine pools connected by boardwalk. 10 min walk from Sacred Tree area.'},
+  {t:'10:00',type:'food',name:'Alishan High-Mountain Oolong',zh:'阿里山高山茶',
+   detail:'Tea tasting at a local shop near visitor center.<br><strong>Alishan oolong is among Taiwan\'s finest.</strong><br><em>Tingting\'s deep tea moment \u2014 tasting at the source, at elevation, after sunrise.</em><br>Buy some to take home (TWD 600-1,200/150g).',
+   photo:PHOTOS.tea},
+  {t:'11:10',type:'transit',name:'Bus Down to Chiayi',zh:'',detail:'Same winding road, downhill. 2.5 hours, TWD 278. Motion sickness meds if needed.'},
+  {t:'14:00',type:'transit',name:'HSR Chiayi \u2192 Taipei',zh:'',
+   detail:'1.5 hours, TWD 1,080 (early bird TWD 702).<br><em>Optional detour: HSR to Taichung (+20 min) for <strong>Chun Shui Tang (春水堂)</strong> \u2014 the birthplace of bubble tea. Adds ~2 hours total.</em>'},
+  {t:'16:00',type:'rest',name:'Arrive Taipei & Luggage',zh:'',detail:'Pick up stored luggage from Grand Hyatt concierge. Check back in for final night.'},
+  {t:'17:00',type:'rest',name:'Beitou Hot Spring',zh:'北投溫泉',
+   detail:'MRT Red Line \u2192 Xinbeitou Station (~35 min).<br><strong>Private hot spring room:</strong> Asia Pacific Hotel (TWD 1,500-2,500/hr) or Spring City Resort (TWD 1,200-2,000/hr).<br>1-1.5 hour soak. <strong>Thermal Valley (地熱谷)</strong> \u2014 free, steaming turquoise sulfur pool, open until 6pm.',
+   mapPlace:'https://www.google.com/maps/place/Beitou+Hot+Spring'},
+  {t:'19:30',type:'food',name:'Din Tai Fung Farewell',zh:'鼎泰豐',
+   detail:'Taipei 101 branch (B1). After 8pm = shorter wait.<br>Order: <strong>xiao long bao (小籠包)</strong>, truffle XLB, shrimp wontons, fried rice, taro XLB dessert.<br><em>TWD 800-1,200/person.</em><br><strong>Both selected xiao long bao as must-try!</strong>',
+   mapPlace:'https://www.google.com/maps/place/Din+Tai+Fung+Taipei+101',
+   photo:PHOTOS.food},
+  {t:'21:00',type:'sight',name:'Last Stroll & Pineapple Cakes',zh:'',
+   detail:'Buy pineapple cakes: <strong>SunnyHills (微熱山丘)</strong> or <strong>Chia Te (佳德鳳梨酥, No. 88 Sec 5 Nanjing E Road)</strong>. Tingting\'s must-try souvenir.'}
+]},
+
+{day:9,date:'2026-04-27',dow:'Monday',title:'Farewell, Taiwan',sub:'Last bites, shopping, EVA Business Class home',city:'Taipei \u2192 Seattle',photo:PHOTOS.departure,tags:['food','transit'],
+ luggage:'All bags. Check out Grand Hyatt by 10am.',
+ acts:[
+  {t:'09:00',type:'rest',name:'Sleep In!',zh:'',detail:'No alarms. After yesterday\'s 4:20am sunrise, you earned it.'},
+  {t:'10:00',type:'transit',name:'Check Out Grand Hyatt',zh:'',detail:'Final checkout. Last look at Taipei 101 from the lobby.'},
+  {t:'10:30',type:'food',name:'Ice Monster / Last Shopping',zh:'冰館',
+   detail:'<strong>Ice Monster</strong> \u2014 No. 297, Sec 4, Zhongxiao E Road, near Dunhua MRT.<br>April is early for mango (peak Jun-Sep) \u2014 ask what\'s in season. Strawberry ice is excellent in spring.<br>Or: last Taipei City Mall browse for Matt\'s vintage games.',
+   mapPlace:'https://www.google.com/maps/place/Ice+Monster+Taipei'},
+  {t:'13:00',type:'transit',name:'Airport MRT to Taoyuan',zh:'',detail:'Taipei Main \u2192 Taoyuan Airport T2 (EVA Air).<br><strong>37 min express, TWD 160.</strong>'},
+  {t:'14:00',type:'rest',name:'Airport & Lounge',zh:'',
+   detail:'Check in luggage. <strong>Priority Pass Lounge</strong> via Tingting\'s Amex Platinum \u2014 Plaza Premium Lounge (food, showers, nap rooms) or EVA Air Infinity Lounge.<br>Buy last pineapple cakes at airport SunnyHills.<br>Duty free: Kavalan whisky, tea, beauty products.'},
+  {t:'23:50',type:'transit',name:'EVA Air Business Class \u2192 Seattle',zh:'',
+   detail:'TPE \u2192 SEA, ~11.5 hours (tailwind). Arrive Seattle same day (Mon Apr 27) ~7pm local time.<br><strong>Royal Laurel Class:</strong> lie-flat bed, gourmet food, champagne.<br><em>You arrive home the same calendar day you left \u2014 time travel!</em>'}
+]}
+];
+
+// ===== ACTION ITEMS =====
+const ACTS_DATA = [
+{group:'Book NOW!',color:'var(--food)',items:[
+{n:'Transfer points to Aeroplan',d:'Matt: 57k Chase \u2192 Aeroplan. Tingting: 100k Chase + 19k Amex \u2192 Aeroplan. Total: 176k. Chase = instant. Amex = 1-3 biz days. DO IT TODAY.',dl:'Apr 9',pr:'must',id:'a1'},
+{n:'Book EVA Air flights on Aeroplan',d:'aeroplan.com. SEA\u2192TPE Apr 17/18 + TPE\u2192SEA Apr 27. Business class, 88k/person. If sold out: call 1-800-361-5373.',dl:'Apr 9',pr:'must',id:'a2'},
+{n:'Book Grand Hyatt Taipei (5 nights)',d:'Apr 19-23 + Apr 26. ~15k Hyatt pts/night. hyatt.com. Request king bed, high floor.',dl:'Apr 9',pr:'must',id:'a3'},
+{n:'Book Tainan hotel (2 nights)',d:'Apr 23-25. Silks Place or U.I.J Hotel. West Central District. ~$100-170/night.',dl:'Apr 9',pr:'must',id:'a4'},
+{n:'Book Alishan lodge (1 night)',d:'Apr 25 (Saturday + firefly season = sells out!). Alishan House or similar.',dl:'Apr 9',pr:'must',id:'a5'},
+{n:'Book Capybara Knight cafe',d:'Tuesday Apr 21, afternoon. Must book 1 week ahead.',dl:'Apr 10',pr:'should',id:'a6'},
+{n:'Book Yingge pottery workshop',d:'Tuesday Apr 21, 10am. KKday or Klook. TWD 500-800/person.',dl:'Apr 10',pr:'should',id:'a7'},
+]},
+{group:'This Week (Apr 10-16)',color:'var(--accent)',items:[
+{n:'Book HSR early bird tickets (35% off!)',d:'All legs via T Express app: Apr 23 Taipei\u2192Tainan, Apr 25 Tainan\u2192Chiayi, Apr 26 Chiayi\u2192Taipei. Need passport numbers.',dl:'Apr 10-13',pr:'should',id:'a8'},
+{n:'Alishan sunrise train \u2014 online booking',d:'Opens 14 days ahead (Apr 12). afrts.forest.gov.tw. Opens 6am TW time = 2pm PT on Apr 11.',dl:'Apr 12',pr:'should',id:'a9'},
+{n:'Download apps + offline maps',d:'Google Maps (Taiwan offline), Google Translate (Trad Chinese), T Express, Uber, LINE, LINE Taxi.',dl:'Apr 14',pr:'must',id:'a10'},
+{n:'Order eSIM',d:'Via Airalo or Ubigi. Or buy SIM at Taoyuan Airport on arrival.',dl:'Apr 14',pr:'should',id:'a11'},
+{n:'Notify credit cards of travel',d:'Chase, Amex, Citi \u2014 set Taiwan notification Apr 18-27.',dl:'Apr 14',pr:'should',id:'a12'},
+{n:'Cash strategy',d:'Don\'t exchange at home. Withdraw TWD 10-15k at airport ATM. Bring no-fee debit card.',dl:'Apr 16',pr:'should',id:'a13'},
+]},
+{group:'Packing (Apr 16-17)',color:'var(--rest)',items:[
+{n:'Pack essentials',d:'Rain jacket, Alishan warm layers (fleece, 8\u00b0C!), walking shoes, hot spring sandals, portable battery, motion sickness meds, sunscreen, hat.',dl:'Apr 16',pr:'must',id:'a14'},
+{n:'Save Chinese addresses offline',d:'Grand Hyatt: \u53f0\u5317\u541b\u60a5\u9152\u5e97 \u677e\u58fd\u8def2\u865f. Save all hotel addresses in Chinese for taxi drivers.',dl:'Apr 16',pr:'should',id:'a15'},
+]},
+{group:'During Trip',color:'var(--accent2)',items:[
+{n:'Day 1: Buy EasyCard + SIM at airport',d:'Airport arrivals. Withdraw cash from ATM. TWD 10-15k.',dl:'Apr 19',pr:'must',id:'a17'},
+{n:'Day 5: Tell Grand Hyatt about luggage',d:'"Returning Sunday the 26th, can you hold our bags?" They will.',dl:'Apr 23',pr:'must',id:'a18'},
+{n:'Day 7: Buy sunrise train tickets at station',d:'Alishan Station window 1:30-4:30pm. Arrive early \u2014 Saturday sells out!',dl:'Apr 25',pr:'must',id:'a19'},
+{n:'Day 7: Motion sickness meds before bus',d:'30 min before the 2:10pm Alishan bus. 100+ hairpin turns.',dl:'Apr 25',pr:'should',id:'a20'},
+{n:'Day 8: Don\'t miss 6:40am return train!',d:'Last train from Zhushan sunrise platform. Miss it = 40 min walk in dark.',dl:'Apr 26',pr:'must',id:'a21'},
+{n:'Day 8: Pick up luggage from Grand Hyatt',d:'After returning from Alishan, before Beitou or dinner.',dl:'Apr 26',pr:'must',id:'a22'},
+{n:'Day 9: Buy pineapple cakes!',d:'SunnyHills or Chia Te in Taipei, or at airport. Tingting\'s must-try souvenir.',dl:'Apr 27',pr:'nice',id:'a23'},
+]}
+];
+
+// ===== RENDER ENGINE =====
+
+function go(v){
+  document.querySelectorAll('.vw').forEach(el=>el.classList.remove('on'));
+  document.querySelectorAll('.tb').forEach(el=>el.classList.remove('on'));
+  document.getElementById('v-'+v).classList.add('on');
+  document.querySelector('.tb[data-v="'+v+'"]').classList.add('on');
+  window.scrollTo({top:0,behavior:'instant'});
+}
+
+function toggleD(el){el.closest('.day').classList.toggle('open')}
+
+function fmtDate(s){const d=new Date(s+'T12:00:00+08:00');return d.toLocaleDateString('en-US',{month:'short',day:'numeric'})}
+function isToday(s){const n=new Date();const t=new Date(n.toLocaleString('en-US',{timeZone:'Asia/Taipei'}));const ts=t.getFullYear()+'-'+String(t.getMonth()+1).padStart(2,'0')+'-'+String(t.getDate()).padStart(2,'0');return ts===s}
+function todayIdx(){for(let i=0;i<DAYS.length;i++)if(isToday(DAYS[i].date))return i;const n=new Date(),t=new Date(n.toLocaleString('en-US',{timeZone:'Asia/Taipei'})),ts=t.getFullYear()+'-'+String(t.getMonth()+1).padStart(2,'0')+'-'+String(t.getDate()).padStart(2,'0');if(ts<DAYS[0].date)return -1;return DAYS.length}
+function daysUntil(){const n=new Date(),t=new Date(n.toLocaleString('en-US',{timeZone:'Asia/Taipei'})),s=new Date(DAYS[0].date+'T00:00:00+08:00');return Math.ceil((s-t)/864e5)}
+
+// Render activity
+function rAct(a){
+  let h='<div class="act '+a.type+'">';
+  h+='<div class="act-time">'+a.t+'</div>';
+  h+='<div class="act-name">'+a.name+'</div>';
+  if(a.zh)h+='<div class="act-chinese">'+a.zh+'</div>';
+  if(a.detail)h+='<div class="act-detail">'+a.detail+'</div>';
+  if(a.dream)h+='<div class="dream"><div class="dream-label">\u2728 Dream Moment</div><div class="dream-text">'+a.dream+'</div></div>';
+  if(a.book)h+='<div style="margin-top:6px"><span class="tg tg-book">Advance Booking Required</span></div>';
+  if(a.photo)h+='<div class="act-photo"><img src="'+a.photo+'" alt="" loading="lazy"></div>';
+  // Map links
+  if(a.mapPlace)h+='<div style="margin-top:8px">'+simpleMapLink(a.mapPlace,'View on Google Maps')+'</div>';
+  if(a.mapFrom&&a.mapTo)h+=mapLink(a.mapFrom,a.mapTo,a.mapFrom+' \u2192 '+a.mapTo);
+  h+='</div>';
+  return h;
+}
+
+// Render day card
+function rDay(d,open){
+  const today=isToday(d.date);
+  let h='<div class="day'+(open?' open':'')+(today?' today':'')+'" id="day-'+d.day+'">';
+  // Hero image
+  h+='<div class="day-hero" onclick="toggleD(this)">';
+  h+='<img src="'+d.photo+'" alt="'+d.title+'" loading="lazy">';
+  h+='<div class="day-hero-grad"></div>';
+  h+='<div class="day-hero-top"><span class="day-num-pill">Day '+d.day+'</span>';
+  if(today)h+='<span class="day-today-pill">Today</span>';
+  h+='</div>';
+  h+='<div class="day-hero-text">';
+  h+='<div class="day-h-title">'+d.title+'</div>';
+  h+='<div class="day-h-sub">'+d.dow+', '+fmtDate(d.date)+' &bull; '+d.city+'</div>';
+  h+='<div class="day-h-tags">'+d.tags.map(t=>'<span class="tg tg-'+t+'">'+t+'</span>').join('')+'</div>';
+  h+='</div>';
+  h+='<div class="day-chev"><svg viewBox="0 0 24 24"><path d="M7 10l5 5 5-5z"/></svg></div>';
+  h+='</div>';
+  // Body
+  h+='<div class="day-body">';
+  if(d.luggage)h+='<div class="luggage">'+ICONS.luggage+'<div><strong>Luggage Plan:</strong> '+d.luggage+'</div></div>';
+  d.acts.forEach(a=>{h+=rAct(a)});
+  h+='</div></div>';
+  return h;
+}
+
+// ===== TODAY VIEW =====
+function renderToday(){
+  const el=document.getElementById('v-today');
+  const idx=todayIdx();
+  const du=daysUntil();
+  let h='';
+
+  // Hero
+  h+='<div class="hero"><img src="'+PHOTOS.hero+'" alt="Taiwan"><div class="hero-overlay"></div><div class="hero-text">';
+  if(du>0){
+    h+='<div class="hero-countdown">'+du+'</div>';
+    h+='<div class="hero-countdown-label">days until Taiwan</div>';
+  }else if(idx>=0&&idx<DAYS.length){
+    h+='<h2>Day '+(idx+1)+' \u2014 '+DAYS[idx].title+'</h2>';
+    h+='<p>'+DAYS[idx].sub+'</p>';
+  }else{
+    h+='<h2>Trip Complete!</h2>';
+    h+='<p>What an adventure \u2764\ufe0f</p>';
+  }
+  h+='</div></div>';
+
+  // Stats
+  h+='<div class="stats">';
+  h+='<div class="stat"><div class="stat-num">9</div><div class="stat-label">Days</div></div>';
+  h+='<div class="stat"><div class="stat-num">3</div><div class="stat-label">Regions</div></div>';
+  h+='<div class="stat"><div class="stat-num">4</div><div class="stat-label">Night Mkts</div></div>';
+  h+='<div class="stat"><div class="stat-num">251k</div><div class="stat-label">Points</div></div>';
+  h+='<div class="stat"><div class="stat-num">BIZ</div><div class="stat-label">Class</div></div>';
+  h+='</div>';
+
+  // Route strip
+  h+='<div class="route-strip"><div class="route-cities">';
+  const cities=[{n:'Seattle',nights:''},{n:'Taipei',nights:'4 nights'},{n:'Tainan',nights:'2 nights'},{n:'Alishan',nights:'1 night'},{n:'Taipei',nights:'1 night'},{n:'Seattle',nights:''}];
+  cities.forEach((c,i)=>{
+    if(i>0)h+='<div class="route-line"></div>';
+    h+='<div class="route-city"><div class="route-dot"></div><div class="route-name">'+c.n+'</div>';
+    if(c.nights)h+='<div class="route-nights">'+c.nights+'</div>';
+    h+='</div>';
+  });
+  h+='</div></div>';
+
+  // Show relevant day
+  if(idx>=0&&idx<DAYS.length){
+    h+=rDay(DAYS[idx],true);
+  }else if(du>0){
+    // Before trip: show first day preview
+    h+=rDay(DAYS[0],false);
+  }
+
+  // Action items preview
+  const checks=lc();
+  let rem=0;
+  ACTS_DATA.forEach(g=>g.items.forEach(i=>{if(!checks[i.id])rem++}));
+  if(rem>0){
+    h+='<div style="margin-top:4px;background:var(--card);border:1px solid var(--border);border-radius:var(--r);padding:16px 18px">';
+    h+='<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">';
+    h+='<div style="font-size:15px;font-weight:700">Action Items</div>';
+    h+='<div style="font-size:12px;color:var(--dim)">'+rem+' remaining</div></div>';
+    const urgent=[];
+    ACTS_DATA.forEach(g=>g.items.forEach(i=>{if(!checks[i.id])urgent.push(i)}));
+    urgent.slice(0,4).forEach(item=>{h+=rAI(item,checks)});
+    h+='<div style="text-align:center;padding:10px 0 0"><a href="#" onclick="go(\'act\');return false" style="font-weight:600;font-size:13px">View all '+rem+' items \u2192</a></div>';
+    h+='</div>';
+  }
+
+  el.innerHTML=h;
+}
+
+// ===== TRIP VIEW =====
+function renderTrip(){
+  const el=document.getElementById('v-trip');
+  let h='';
+  h+='<div style="text-align:center;padding:8px 0 16px"><div style="font-size:22px;font-weight:800;letter-spacing:-.3px">The Full Itinerary</div><div style="font-size:13px;color:var(--dim);margin-top:4px">Seattle \u2192 Taipei \u2192 Tainan \u2192 Alishan \u2192 Taipei \u2192 Seattle</div></div>';
+
+  // Route
+  h+='<div class="route-strip"><div class="route-cities">';
+  [{n:'SEA',nights:''},{n:'Taipei',nights:'4n'},{n:'Tainan',nights:'2n'},{n:'Alishan',nights:'1n'},{n:'Taipei',nights:'1n'},{n:'SEA',nights:''}].forEach((c,i)=>{
+    if(i>0)h+='<div class="route-line"></div>';
+    h+='<div class="route-city"><div class="route-dot"></div><div class="route-name">'+c.n+'</div>';
+    if(c.nights)h+='<div class="route-nights">'+c.nights+'</div>';
+    h+='</div>';
+  });
+  h+='</div></div>';
+
+  DAYS.forEach(d=>{h+=rDay(d,false)});
+  el.innerHTML=h;
+
+  // Scroll to today if applicable
+  const idx=todayIdx();
+  if(idx>=0&&idx<DAYS.length){
+    setTimeout(()=>{const e=document.getElementById('day-'+(idx+1));if(e)e.scrollIntoView({behavior:'smooth',block:'center'})},400);
+  }
+}
+
+// ===== ACTIONS =====
+function lc(){try{return JSON.parse(localStorage.getItem('tw_chk')||'{}')}catch(e){return{}}}
+function sc(c){localStorage.setItem('tw_chk',JSON.stringify(c))}
+function tc(id){const c=lc();c[id]=!c[id];sc(c);renderAct();renderToday();badge()}
+
+function rAI(item,checks){
+  const done=checks[item.id];
+  let h='<div class="ai'+(done?' done':'')+'">';
+  h+='<div class="ai-chk'+(done?' done':'')+'" onclick="tc(\''+item.id+'\')"></div>';
+  h+='<div class="ai-text">';
+  h+='<div class="ai-name">'+item.n+'</div>';
+  h+='<div class="ai-desc">'+item.d+'</div>';
+  h+='<div class="ai-foot"><span class="ai-pri '+item.pr+'">'+item.pr+'</span><span class="ai-dead">'+item.dl+'</span></div>';
+  h+='</div></div>';
+  return h;
+}
+
+function renderAct(){
+  const el=document.getElementById('v-act');
+  const checks=lc();
+  let total=0,done=0;
+  ACTS_DATA.forEach(g=>g.items.forEach(i=>{total++;if(checks[i.id])done++}));
+
+  let h='<div style="text-align:center;padding:8px 0 4px"><div style="font-size:22px;font-weight:800">Action Items</div><div style="font-size:13px;color:var(--dim);margin-top:4px">'+done+' of '+total+' completed</div></div>';
+  h+='<div class="progress"><div class="progress-fill" style="width:'+Math.round(done/total*100)+'%"></div></div>';
+
+  ACTS_DATA.forEach(g=>{
+    const gd=g.items.filter(i=>checks[i.id]).length;
+    h+='<div class="ag"><div class="ag-title" style="color:'+g.color+'">'+g.group+' <span class="ag-count">'+gd+'/'+g.items.length+'</span></div>';
+    g.items.forEach(item=>{h+=rAI(item,checks)});
+    h+='</div>';
+  });
+  el.innerHTML=h;
+}
+
+function badge(){
+  const checks=lc();let r=0;
+  ACTS_DATA.forEach(g=>g.items.forEach(i=>{if(!checks[i.id])r++}));
+  const b=document.getElementById('act-badge');
+  if(r>0){b.textContent=r;b.style.display='flex'}else{b.style.display='none'}
+}
+
+// ===== INFO =====
+function renderInfo(){
+  const el=document.getElementById('v-info');
+  let h='';
+
+  // Emergency
+  h+='<div class="info-s"><h3>Emergency Numbers</h3>';
+  [{l:'Police',v:'110'},{l:'Ambulance / Fire',v:'119'},{l:'Tourist Helpline',v:'0800-011-765'},{l:'US Embassy (AIT)',v:'+886-2-2162-2000'}].forEach(r=>{
+    h+='<div class="info-row"><span class="l">'+r.l+'</span><span class="v"><a href="tel:'+r.v+'" style="color:var(--accent2)">'+r.v+'</a></span></div>';
+  });
+  h+='</div>';
+
+  // Reminders
+  h+='<div class="info-s"><h3>Important Reminders</h3>';
+  ['No eating/drinking on MRT \u2014 fine NT$1,500-7,500!',
+   'Taiwan uses Type A/B plugs \u2014 same as US, no adapter needed',
+   'Tap EasyCard on AND off (buses + MRT)',
+   'Night markets are cash-only. Carry TWD 1,000-1,500/person/day',
+   'Taiwan time = UTC+8, no daylight saving',
+   '1 USD \u2248 31 TWD (April 2026)',
+   'Tingting handles all Chinese ordering \u2014 Matt has a phrase cheat sheet below',
+   '7-11 and FamilyMart are EVERYWHERE \u2014 ATMs, snacks, hot food, bills'
+  ].forEach(r=>{h+='<div class="reminder-item">'+r+'</div>'});
+  h+='</div>';
+
+  // Phrases
+  h+='<div class="info-s"><h3>Key Mandarin Phrases</h3>';
+  [{z:'\u8b1d\u8b1d',p:'xi\u00e8 xie',e:'Thank you'},
+   {z:'\u591a\u5c11\u9322\uff1f',p:'du\u014d sh\u01ceo qi\u00e1n?',e:'How much?'},
+   {z:'\u4e0d\u8981\u9999\u83dc',p:'b\u00f9 y\u00e0o xi\u0101ng c\u00e0i',e:'No cilantro'},
+   {z:'\u4e0d\u8981\u5976\u6cb9',p:'b\u00f9 y\u00e0o n\u01cei y\u00f3u',e:'No cream (for Matt)'},
+   {z:'\u8cb7\u55ae',p:'m\u01cei d\u0101n',e:'The bill please'},
+   {z:'\u4e0d\u597d\u610f\u601d',p:'b\u00f9 h\u01ceo y\u00ec si',e:'Excuse me'},
+   {z:'\u597d\u5403\uff01',p:'h\u01ceo ch\u012b!',e:'Delicious!'},
+   {z:'\u5ec1\u6240\u5728\u54ea\u88e1\uff1f',p:'c\u00e8 su\u01d2 z\u00e0i n\u01ce l\u01d0?',e:'Where is the toilet?'},
+   {z:'\u6211\u8981\u9019\u500b',p:'w\u01d2 y\u00e0o zh\u00e8 ge',e:'I want this one'}
+  ].forEach(p=>{h+='<div class="phrase"><div class="phrase-zh">'+p.z+'</div><div class="phrase-py">'+p.p+'</div><div class="phrase-en">'+p.e+'</div></div>'});
+  h+='</div>';
+
+  // Hotels
+  h+='<div class="info-s"><h3>Hotel Addresses (show taxi driver)</h3>';
+  [{l:'Grand Hyatt Taipei',v:'\u53f0\u5317\u541b\u60a5\u9152\u5e97 \u2014 \u53f0\u5317\u5e02\u4fe1\u7fa9\u5340\u677e\u58fd\u8def2\u865f'},
+   {l:'Tainan (update after booking)',v:'\u2014'},
+   {l:'Alishan (update after booking)',v:'\u2014'}
+  ].forEach(r=>{h+='<div style="padding:10px 0;border-bottom:1px solid var(--border)"><div style="font-size:11px;color:var(--dim)">'+r.l+'</div><div style="font-size:16px;font-weight:600;margin-top:4px">'+r.v+'</div></div>'});
+  h+='</div>';
+
+  // Points
+  h+='<div class="info-s"><h3>Points & Booking</h3>';
+  [{l:'2\u00d7 EVA Business RT',v:'176,000 Aeroplan'},{l:'Grand Hyatt (5 nights)',v:'~75,000 Hyatt'},{l:'Total points used',v:'~251,000'}].forEach(r=>{
+    h+='<div class="pts-row"><span>'+r.l+'</span><span class="pts-val">'+r.v+'</span></div>';
+  });
+  h+='<div class="ref-label">Flight Confirmation #</div><input class="ref-input" id="ref-flight" placeholder="Enter after booking..." oninput="sRef(\'flight\',this.value)">';
+  h+='<div class="ref-label">Grand Hyatt Confirmation #</div><input class="ref-input" id="ref-hyatt" placeholder="Enter after booking..." oninput="sRef(\'hyatt\',this.value)">';
+  h+='<div class="ref-label">Tainan Hotel Confirmation #</div><input class="ref-input" id="ref-tainan" placeholder="Enter after booking..." oninput="sRef(\'tainan\',this.value)">';
+  h+='<div class="ref-label">Alishan Lodge Confirmation #</div><input class="ref-input" id="ref-ali" placeholder="Enter after booking..." oninput="sRef(\'ali\',this.value)">';
+  h+='</div>';
+
+  // Budget
+  h+='<div class="info-s"><h3>Cash Budget (2 people total)</h3>';
+  [{l:'Tainan hotel (2 nights)',v:'$250-340'},{l:'Alishan lodge (1 night)',v:'$130-200'},{l:'HSR tickets (all legs)',v:'$200-260'},{l:'Food (9 days)',v:'$470-700'},{l:'Activities & fees',v:'$100-165'},{l:'Local transport',v:'$100-165'},{l:'Shopping',v:'$100-330'},{l:'SIM / WiFi',v:'$30-50'}].forEach(r=>{
+    h+='<div class="budget-row"><span>'+r.l+'</span><span>'+r.v+'</span></div>';
+  });
+  h+='<div class="budget-row budget-total"><span>Total (2 people)</span><span>$1,380 - 2,210</span></div>';
+  h+='<div class="budget-row budget-total"><span>Per person</span><span>$690 - 1,105</span></div>';
+  h+='</div>';
+
+  el.innerHTML=h;
+  // Load saved refs
+  ['flight','hyatt','tainan','ali'].forEach(k=>{const v=localStorage.getItem('tw_ref_'+k);if(v){const e=document.getElementById('ref-'+k);if(e)e.value=v}});
+}
+
+function sRef(k,v){localStorage.setItem('tw_ref_'+k,v)}
+
+// ===== INIT =====
+renderToday();
+renderTrip();
+renderAct();
+renderInfo();
+badge();
+</script>
+</body>
+</html>
