@@ -114,7 +114,10 @@ export class Renderer {
                 this._drawTileSides(ctx, i, j, e, hw, hh, hs);
 
                 // Top diamond: sand color (warmer where sand is thick, cooler where raw stream)
-                const isStreamBed = Math.abs(i - terrain.streamCenter[j]) < STREAM_WIDTH * 0.9 && e < 0.1;
+                const u = (j - i) * 0.5;
+                const sCoord = (i + j) * 0.5;
+                const meander = Math.sin(sCoord * 0.2) * 1.6;
+                const isStreamBed = Math.abs(u - meander) < STREAM_WIDTH * 0.9 && e < 0.1;
                 this._drawTileTop(ctx, sx, sy, hw, hh, e, sand, isStreamBed, terrain.flowMag[k]);
 
                 // Materials
@@ -337,15 +340,19 @@ export class Renderer {
     }
 
     _drawOceanFoam(ctx) {
-        const { terrain, cam } = this;
+        // Ocean sits at the high-(i+j) corner in diagonal-stream coords.
+        const { cam } = this;
         const t = performance.now() * 0.0012;
-        for (let j = OCEAN_ROW; j < GRID_H; j++) {
-            const oT = (j - OCEAN_ROW) / (GRID_H - 1 - OCEAN_ROW);
+        const threshold = (GRID_W + GRID_H) - 6; // (i+j) >= this means "ocean"
+        const hw = TILE_W * 0.5 * cam.scale;
+        const hh = TILE_H * 0.5 * cam.scale;
+        for (let j = 0; j < GRID_H; j++) {
             for (let i = 0; i < GRID_W; i++) {
-                const p = project(i + 0.5, j + 0.5, Math.sin(i * 0.5 + t + j * 0.2) * 0.05 - 0.15, cam);
-                const hw = TILE_W * 0.5 * cam.scale;
-                const hh = TILE_H * 0.5 * cam.scale;
-                ctx.fillStyle = `rgba(110,170,200,${0.55 + oT * 0.2})`;
+                if (i + j < threshold) continue;
+                const oT = Math.min(1, ((i + j) - threshold) / 6);
+                const p = project(i + 0.5, j + 0.5,
+                    Math.sin(i * 0.5 + t + j * 0.2) * 0.05 - 0.15, cam);
+                ctx.fillStyle = `rgba(110,170,200,${0.5 + oT * 0.25})`;
                 ctx.beginPath();
                 ctx.moveTo(p.sx, p.sy - hh);
                 ctx.lineTo(p.sx + hw, p.sy);
@@ -353,9 +360,9 @@ export class Renderer {
                 ctx.lineTo(p.sx - hw, p.sy);
                 ctx.closePath();
                 ctx.fill();
-                // Foam strips at the shore
-                if (j === OCEAN_ROW) {
-                    const foam = 0.35 + 0.25 * Math.sin(i + t * 2.5);
+                // Foam at the first shore line
+                if (Math.abs((i + j) - threshold) < 1) {
+                    const foam = 0.35 + 0.25 * Math.sin((i + j) + t * 2.5);
                     ctx.fillStyle = `rgba(255,255,255,${foam})`;
                     ctx.beginPath();
                     ctx.ellipse(p.sx, p.sy - hh * 0.3, hw * 0.7, hh * 0.4, 0, 0, Math.PI * 2);

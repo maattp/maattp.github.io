@@ -1,6 +1,6 @@
 import {
     GRID_W, GRID_H, H, H2,
-    REST_DENSITY, STIFFNESS, VISCOSITY, GRAVITY,
+    REST_DENSITY, STIFFNESS, VISCOSITY, GRAVITY, DOWNSTREAM_BIAS,
     TERRAIN_WALL_K, TERRAIN_DAMP,
     MAX_PARTICLES, MAX_SPEED, PARTICLE_MASS,
     SPAWN_PER_SEC, SPAWN_JITTER,
@@ -172,40 +172,43 @@ export class SPH {
             const g = terrain.gradientAt(ppx, ppy);
             ax -= g.dx * GRAVITY;
             ay -= g.dy * GRAVITY;
-            // Slight downstream bias so stagnation doesn't kill the flow entirely
-            ay += 0.6;
+            // Downstream bias along the diagonal (+x, +y)
+            ax += DOWNSTREAM_BIAS * 0.707;
+            ay += DOWNSTREAM_BIAS * 0.707;
 
-            // Wall from nearby terrain elevation that exceeds particle "level"
-            // Estimate effective water surface height via density.
+            // Soft wall from nearby raised cells — pushes water away from dams.
+            // We also do a hard position clamp after integration.
+            const myFloor = terrain.elevationAt(ppx, ppy);
             const waterSurface = pileHeightFromDensity(density[p]);
+            const topOfWater = myFloor + waterSurface;
             const cellI = ppx | 0, cellJ = ppy | 0;
-            // Push away from neighbor cells whose elevation is too tall
             for (let dj = -1; dj <= 1; dj++) {
                 for (let di = -1; di <= 1; di++) {
+                    if (di === 0 && dj === 0) continue;
                     const ci = cellI + di, cj = cellJ + dj;
                     if (!terrain.inBounds(ci, cj)) continue;
                     const e = terrain.elevation(ci, cj);
-                    // "Floor" of this cell relative to local water surface
-                    const myFloor = terrain.elevationAt(ppx, ppy);
-                    const overhead = e - (myFloor + waterSurface);
-                    if (overhead > 0) {
-                        // Closest point on cell bounds
-                        const cx = Math.max(ci, Math.min(ci + 1, ppx));
-                        const cy = Math.max(cj, Math.min(cj + 1, ppy));
-                        const rx = ppx - cx;
-                        const ry = ppy - cy;
-                        const d = Math.sqrt(rx * rx + ry * ry);
-                        if (d < 0.4 && d > 1e-4) {
-                            const push = TERRAIN_WALL_K * overhead * (0.4 - d);
-                            ax += (rx / d) * push;
-                            ay += (ry / d) * push;
-                            // Damp velocity into the wall
-                            const vn = pVx * (-rx / d) + pVy * (-ry / d);
-                            if (vn > 0) {
-                                ax -= (-rx / d) * vn * TERRAIN_DAMP;
-                                ay -= (-ry / d) * vn * TERRAIN_DAMP;
-                            }
-                        }
+                    const overhead = e - topOfWater;
+                    if (overhead <= 0) continue;
+                    // Closest point on that cell's AABB
+                    const cx = Math.max(ci, Math.min(ci + 1, ppx));
+                    const cy = Math.max(cj, Math.min(cj + 1, ppy));
+                    const rx = ppx - cx;
+                    const ry = ppy - cy;
+                    const d2 = rx * rx + ry * ry;
+                    const reach = 0.55;
+                    if (d2 >= reach * reach) continue;
+                    const d = Math.sqrt(d2) || 1e-4;
+                    const nxw = rx / d, nyw = ry / d;
+                    const pen = reach - d;
+                    const push = TERRAIN_WALL_K * Math.min(overhead, 1.5) * pen;
+                    ax += nxw * push;
+                    ay += nyw * push;
+                    // Damp velocity component heading into the wall
+                    const vn = pVx * -nxw + pVy * -nyw;
+                    if (vn > 0) {
+                        ax -= -nxw * vn * TERRAIN_DAMP;
+                        ay -= -nyw * vn * TERRAIN_DAMP;
                     }
                 }
             }
@@ -238,13 +241,52 @@ export class SPH {
         const { px, py, vx, vy, alive, terrain } = this;
         for (let p = 0; p < this.capacity; p++) {
             if (!alive[p]) continue;
-            // Lateral walls of the grid
+            // Grid edges
             if (px[p] < 0.05) { px[p] = 0.05; if (vx[p] < 0) vx[p] = -vx[p] * 0.3; }
             if (px[p] > GRID_W - 0.05) { px[p] = GRID_W - 0.05; if (vx[p] > 0) vx[p] = -vx[p] * 0.3; }
-            // Top wall (upstream end): soft wall
             if (py[p] < 0.05) { py[p] = 0.05; if (vy[p] < 0) vy[p] = -vy[p] * 0.3; }
-            // Bottom: remove if past the ocean
-            if (py[p] > GRID_H - 0.1) {
+
+            // Hard terrain wall: if this particle is inside a cell whose top
+            // is above our local water surface, shove it sideways toward the
+            // lowest neighbor. Prevents fast particles from tunneling dams.
+            const ci = px[p] | 0, cj = py[p] | 0;
+            const myTop = terrain.elevation(ci, cj);
+            const myFloor = terrain.elevationAt(px[p], py[p]);
+            const waterSurface = pileHeightFromDensity(this.density[p]);
+            if (myTop > myFloor + waterSurface + 0.25) {
+                // We're standing on a raised cell (a dam). Push to the lowest
+                // neighbor to simulate overtopping / spill.
+                let bestI = ci, bestJ = cj, bestE = myTop;
+                for (let dj = -1; dj <= 1; dj++) {
+                    for (let di = -1; di <= 1; di++) {
+                        if (di === 0 && dj === 0) continue;
+                        const ni = ci + di, nj = cj + dj;
+                        if (!terrain.inBounds(ni, nj)) continue;
+                        const ne = terrain.elevation(ni, nj);
+                        if (ne < bestE) { bestE = ne; bestI = ni; bestJ = nj; }
+                    }
+                }
+                if (bestI !== ci || bestJ !== cj) {
+                    const tx = bestI + 0.5, ty = bestJ + 0.5;
+                    const dx = tx - px[p], dy = ty - py[p];
+                    const dL = Math.sqrt(dx * dx + dy * dy) || 1;
+                    // Nudge across the edge of this cell
+                    px[p] += (dx / dL) * 0.15;
+                    py[p] += (dy / dL) * 0.15;
+                    vx[p] *= 0.5;
+                    vy[p] *= 0.5;
+                }
+            }
+
+            // Drain at the ocean shore so new water keeps entering the system.
+            // With the diagonal stream, downstream is measured as (x+y).
+            const ds = px[p] + py[p];
+            const oceanS = (GRID_W + GRID_H) - 6;
+            if (ds > oceanS) {
+                vx[p] *= 0.85;
+                vy[p] *= 0.85;
+            }
+            if (ds > (GRID_W + GRID_H) - 2.4) {
                 this._kill(p);
             }
         }
@@ -257,13 +299,19 @@ export class SPH {
         const toSpawn = Math.floor(this.spawnAccumulator);
         if (toSpawn <= 0) return;
         this.spawnAccumulator -= toSpawn;
-        const cx = this.terrain.streamCenter[1];
+        // Spring is at the back corner (world 0,0). Spawn along the stream
+        // centerline (s ~ 1..2, u ~ 0) which in world (x,y) = (s-u, s+u).
         for (let i = 0; i < toSpawn; i++) {
             if (this.count >= this.capacity - 2) break;
-            const x = cx + (Math.random() - 0.5) * 1.4;
-            const y = 0.5 + Math.random() * 1.1;
-            const vx = (Math.random() - 0.5) * SPAWN_JITTER;
-            const vy = 1.0 + Math.random() * 0.8;
+            const s = 0.9 + Math.random() * 1.6;
+            const u = (Math.random() - 0.5) * 0.9;
+            const x = s - u;
+            const y = s + u;
+            // Downstream direction is (+x, +y) in world so initial velocity
+            // nudges along that diagonal.
+            const nudge = 0.35 + Math.random() * 0.3;
+            const vx = nudge + (Math.random() - 0.5) * SPAWN_JITTER;
+            const vy = nudge + (Math.random() - 0.5) * SPAWN_JITTER;
             this._spawn(x, y, vx, vy);
         }
     }

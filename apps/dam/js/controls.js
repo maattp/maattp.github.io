@@ -1,4 +1,4 @@
-import { ROCK_CD, STICK_CD, GRID_W, GRID_H, SAND_PLACE_AMOUNT, DIG_AMOUNT } from './config.js';
+import { ROCK_CD, STICK_CD, GRID_W, GRID_H, SAND_PLACE_AMOUNT, SAND_PLACE_RADIUS, DIG_AMOUNT } from './config.js';
 
 // Manages the active tool, cooldown UI, and pointer (touch/mouse) events
 // on the canvas. Placement is throttled so a drag emits a steady stream
@@ -85,17 +85,16 @@ export class Controls {
         const tool = this.activeTool;
 
         if (tool === 'sand') {
-            // Drag throttle: only place every ~50ms during drag
             const now = performance.now();
-            if (!isTap && now - this.lastDragPlaceTime < 40) return;
+            if (!isTap && now - this.lastDragPlaceTime < 28) return;
             this.lastDragPlaceTime = now;
-            this.terrain.addSand(world.x, world.y, 1.1, SAND_PLACE_AMOUNT * (isTap ? 1.0 : 0.55));
+            this.terrain.addSand(world.x, world.y, SAND_PLACE_RADIUS, SAND_PLACE_AMOUNT * (isTap ? 1.0 : 0.55));
             this.audio?.playPlace('sand');
         } else if (tool === 'dig') {
             const now = performance.now();
-            if (!isTap && now - this.lastDragPlaceTime < 40) return;
+            if (!isTap && now - this.lastDragPlaceTime < 28) return;
             this.lastDragPlaceTime = now;
-            this.terrain.dig(world.x, world.y, 1.1, DIG_AMOUNT * (isTap ? 1.0 : 0.55));
+            this.terrain.dig(world.x, world.y, SAND_PLACE_RADIUS, DIG_AMOUNT * (isTap ? 1.0 : 0.55));
             this.audio?.playPlace('dig');
         } else if (tool === 'rock') {
             if (this.cooldowns.rock > 0) return;
