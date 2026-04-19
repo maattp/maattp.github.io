@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="theme-color" content="#d9b88c">
+    <title>Dam</title>
+    <link rel="stylesheet" href="css/main.css">
+</head>
+<body>
+    <canvas id="scene"></canvas>
+
+    <div class="hud" id="hud">
+        <div class="hud-stat" id="heldStat">
+            <span class="hud-label">Held</span>
+            <span class="hud-value" id="heldValue">0s</span>
+        </div>
+        <button class="hud-btn" id="resetBtn" aria-label="Reset">↺</button>
+        <button class="hud-btn" id="muteBtn" aria-label="Mute">🔊</button>
+    </div>
+
+    <div class="toolbar" id="toolbar">
+        <button class="tool active" data-tool="sand">
+            <span class="tool-icon sand-icon"></span>
+            <span class="tool-label">Sand</span>
+        </button>
+        <button class="tool" data-tool="rock">
+            <span class="tool-icon rock-icon"></span>
+            <span class="tool-label">Rock</span>
+            <span class="cooldown-ring"></span>
+        </button>
+        <button class="tool" data-tool="stick">
+            <span class="tool-icon stick-icon"></span>
+            <span class="tool-label">Stick</span>
+            <span class="cooldown-ring"></span>
+        </button>
+        <button class="tool" data-tool="dig">
+            <span class="tool-icon dig-icon"></span>
+            <span class="tool-label">Dig</span>
+        </button>
+    </div>
+
+    <script type="module" src="js/main.js"></script>
+</body>
+</html>
