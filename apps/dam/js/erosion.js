@@ -1,4 +1,4 @@
-import { GRID_W, GRID_H, SAND_RESIST, STICK_RESIST, ROCK_RESIST } from './config.js';
+import { GRID_W, GRID_H, SAND_RESIST } from './config.js';
 
 // Couples the SPH simulation to the terrain. Each frame, it walks the
 // particle array, figures out which cell each particle is in, and adds
@@ -91,14 +91,14 @@ export class Erosion {
             d.elevZ += d.vz * dt;
             if (d.elevZ < 0) d.elevZ = 0;
 
-            // Slope-driven horizontal acceleration + sample velocity from water
+            // Slope-driven horizontal acceleration + downstream drift (diagonal)
             const g = terrain.gradientAt(d.x, d.y);
             const mass = d.kind === 'rock' ? 3.5 : 1.4;
-            d.vx += (-g.dx * 6 / mass) * dt;
-            d.vy += (-g.dy * 6 / mass + 1.6 / mass) * dt;
-            // Water drag
+            const downstreamNudge = 0.9 / mass;
+            d.vx += (-g.dx * 6 / mass + downstreamNudge) * dt;
+            d.vy += (-g.dy * 6 / mass + downstreamNudge) * dt;
             d.vx *= 1 - dt * 2.4;
-            d.vy = d.vy * (1 - dt * 2.4) + 1.2 * dt;
+            d.vy *= 1 - dt * 2.4;
             d.x += d.vx * dt;
             d.y += d.vy * dt;
 
@@ -129,8 +129,9 @@ export class Erosion {
                 }
             }
 
-            // Kill if past ocean or off-grid
-            if (d.y > GRID_H - 0.3 || d.x < 0 || d.x > GRID_W) continue;
+            // Kill if past ocean (diagonal) or off-grid
+            if ((d.x + d.y) > (GRID_W + GRID_H) - 1.5) continue;
+            if (d.x < 0 || d.x > GRID_W || d.y < 0 || d.y > GRID_H) continue;
             // Kill if it comes to rest after long time
             if (d.life > 3.5 && Math.abs(d.vx) < 0.1 && Math.abs(d.vy) < 0.3) {
                 // Deposit as sand at this spot (it got buried)
