@@ -185,6 +185,37 @@ app.delete("/kv/:key", async (c) => {
   return c.json({ key, deleted: true });
 });
 
+// --- Reddit proxy ---
+// Browsers can't call reddit.com directly (no CORS). This proxies GET requests
+// to reddit.com with a descriptive User-Agent, which reddit requires.
+
+const REDDIT_UA = "web:polkiewicz.com:v1.0 (by /u/mp_readonly)";
+
+app.get("/reddit-proxy", async (c) => {
+  const target = c.req.query("url");
+  if (!target) return c.json({ error: "missing url" }, 400);
+  let parsed: URL;
+  try {
+    parsed = new URL(target);
+  } catch {
+    return c.json({ error: "invalid url" }, 400);
+  }
+  if (parsed.protocol !== "https:" || !/(^|\.)reddit\.com$/.test(parsed.hostname)) {
+    return c.json({ error: "only reddit.com is allowed" }, 400);
+  }
+  const upstream = await fetch(parsed.toString(), {
+    headers: { "User-Agent": REDDIT_UA, "Accept": "application/json" },
+  });
+  const body = await upstream.arrayBuffer();
+  return new Response(body, {
+    status: upstream.status,
+    headers: {
+      "Content-Type": upstream.headers.get("Content-Type") ?? "application/json",
+      "Cache-Control": "no-store",
+    },
+  });
+});
+
 // --- Pixels (shared canvas) ---
 
 const PIXELS_KEY = "pixels";

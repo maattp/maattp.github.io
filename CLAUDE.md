@@ -1,8 +1,12 @@
 # CLAUDE.md
 
+## Domain
+
+**The site is served at `polkiewicz.com`.** The repository is named `maattp.github.io` for GitHub Pages routing, but that hostname is **not** the live site — do not assume `maattp.github.io` is the user-facing origin. When configuring CORS, `fetch` URLs, or anything origin-sensitive, the canonical origin is `https://polkiewicz.com`.
+
 ## Site Structure
 
-Static personal site with a collection of self-contained web utilities. Served at polkiewicz.com.
+Static personal site with a collection of self-contained web utilities.
 
 ```
 /index.html              - Main site (resume/portfolio)
