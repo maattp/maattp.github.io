@@ -46,39 +46,63 @@ export class Terrain {
     }
 
     _buildBaseTerrain() {
+        // Stream runs DIAGONALLY across the square grid, from the back-top
+        // corner (world 0,0) to the front-bottom (world W,H). In the rotated
+        // isometric projection this reads as a purely vertical stream on
+        // screen. We use rotated coordinates (s, u) where s is the distance
+        // downstream and u is the lateral offset across the stream.
         const { w, h, base, streamCenter } = this;
+        const diag = Math.sqrt(w * w + h * h);
         for (let j = 0; j < h; j++) {
-            // Ocean ramp: last few rows taper to elevation 0 (water level)
-            const oceanT = Math.max(0, (j - OCEAN_ROW) / (h - 1 - OCEAN_ROW));
-            // Beach slope rises upstream (decreasing j). Top row is highest.
-            const beach = BEACH_SLOPE * (h - 1 - j);
-            // Meandering stream center
-            const cx = w * 0.5 + Math.sin(j * STREAM_FREQ) * STREAM_MEANDER
-                       + Math.sin(j * 0.07 + 1.3) * 0.7;
-            streamCenter[j] = cx;
-            // Extra depth for the spring pool at the top rows
-            const springT = j < SPRING_POOL_ROWS ? (1 - j / SPRING_POOL_ROWS) : 0;
             for (let i = 0; i < w; i++) {
-                const dx = i - cx;
-                // Smooth Lorentzian valley — deep at centerline, falls off with distance
-                const valley = STREAM_DEPTH / (1 + Math.pow(dx / (STREAM_WIDTH * 0.6), 2));
-                // Aggressive lateral rise outside the valley so water stays contained
-                const bank = Math.min(BANK_MAX, Math.max(0, (Math.abs(dx) - STREAM_WIDTH) * BANK_SLOPE));
-                // Noise for natural look (deterministic)
-                const n = pseudoNoise(i, j) * 0.10;
-                // Taper into ocean — widen the channel and drop the banks
+                // Downstream / lateral coordinates (rotated 45°)
+                const s = (i + j) * 0.5;                // 0..(w+h)/2, increases toward ocean
+                const u = (j - i) * 0.5;                // negative = left bank, positive = right bank
+                const sT = s / ((w + h) * 0.5);         // 0..1
+                // Gentle meander
+                const meander = Math.sin(s * STREAM_FREQ) * STREAM_MEANDER
+                              + Math.sin(s * 0.09 + 1.3) * 0.7;
+                const du = u - meander;
+
+                // Beach elevation: highest at the spring, tapers to the ocean
+                const beach = BEACH_SLOPE * (1 - sT) * diag;
+
+                // Lorentzian valley + aggressive banks
+                const valley = STREAM_DEPTH / (1 + Math.pow(du / (STREAM_WIDTH * 0.6), 2));
+                const bank = Math.min(BANK_MAX, Math.max(0, (Math.abs(du) - STREAM_WIDTH) * BANK_SLOPE));
+
+                // Ocean ramp
+                const oceanT = Math.max(0, (sT - (OCEAN_ROW / h)) / (1 - OCEAN_ROW / h));
+
                 const bankSoften = 1 - oceanT * 0.9;
+
+                // Noise for natural texture
+                const n = pseudoNoise(i, j) * 0.10;
                 let e = beach - valley * bankSoften + bank * bankSoften + n;
-                // Spring pool: carve an extra bowl at the top
-                if (springT > 0 && Math.abs(dx) < STREAM_WIDTH * 1.5) {
+
+                // Spring pool: extra depth near the spring corner
+                const springT = Math.max(0, 1 - s / SPRING_POOL_ROWS);
+                if (springT > 0 && Math.abs(du) < STREAM_WIDTH * 1.5) {
                     const bowl = SPRING_POOL_EXTRA * springT
-                        * Math.max(0, 1 - Math.abs(dx) / (STREAM_WIDTH * 1.5));
+                        * Math.max(0, 1 - Math.abs(du) / (STREAM_WIDTH * 1.5));
                     e -= bowl;
                 }
+
+                // Taper into the ocean
                 e *= (1 - oceanT * 0.9);
                 e -= oceanT * 0.6;
                 base[j * w + i] = e;
             }
+        }
+        // streamCenter[j] is used at spawn + spring queries. Since flow is
+        // diagonal, "row j" crosses the stream at x = j (centerline before
+        // meander). We store the x-coordinate where the centerline crosses
+        // each row — for spawn purposes we just use the spring corner.
+        for (let j = 0; j < h; j++) {
+            // centerline: the diagonal i = j (in world coords). With meander,
+            // the i value at the stream center in this row is j + meander*√2.
+            // We only really need this for spawn, where j is small.
+            streamCenter[j] = j;
         }
     }
 
@@ -89,11 +113,14 @@ export class Terrain {
             s = (s * 1103515245 + 12345) & 0x7fffffff;
             return s / 0x7fffffff;
         };
-        for (let j = 2; j < this.h - 4; j++) {
-            const cx = this.streamCenter[j];
+        for (let j = 0; j < this.h; j++) {
             for (let i = 0; i < this.w; i++) {
-                const dx = Math.abs(i - cx);
-                if (dx > STREAM_WIDTH + 0.5 && dx < STREAM_WIDTH + 3 && rand() < 0.08) {
+                const u = (j - i) * 0.5;
+                const sCoord = (i + j) * 0.5;
+                if (sCoord < 3 || sCoord > (this.w + this.h) * 0.5 - 4) continue;
+                const meander = Math.sin(sCoord * STREAM_FREQ) * STREAM_MEANDER;
+                const du = u - meander;
+                if (Math.abs(du) > STREAM_WIDTH + 0.5 && Math.abs(du) < STREAM_WIDTH + 3 && rand() < 0.08) {
                     this.addRock(i, j, rand);
                 }
             }
