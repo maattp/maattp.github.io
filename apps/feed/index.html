@@ -45,44 +45,49 @@
         .header {
             display: flex;
             align-items: center;
-            gap: 12px;
-            flex-wrap: wrap;
+            gap: 6px;
             position: sticky;
             top: 0;
             z-index: 10;
             background: #1a1a1a;
-            padding-top: calc(env(safe-area-inset-top) + 20px);
-            padding-bottom: 20px;
+            padding-top: calc(env(safe-area-inset-top) + 16px);
+            padding-bottom: 16px;
         }
 
         .header h1 {
-            font-size: 24px;
+            font-size: 20px;
             font-weight: 600;
             flex: 1;
+            min-width: 0;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            white-space: nowrap;
+            overflow: hidden;
         }
 
         .version {
-            font-size: 12px;
+            font-size: 11px;
             color: #666;
             font-weight: 400;
-            margin-left: 8px;
+            margin-left: 4px;
         }
 
         .sort-select {
             background: #2a2a2a;
             border: 1px solid #3a3a3a;
             color: #e0e0e0;
-            padding: 8px 12px;
-            border-radius: 8px;
-            font-size: 14px;
+            padding: 5px 18px 5px 8px;
+            border-radius: 6px;
+            font-size: 12px;
             outline: none;
             cursor: pointer;
+            flex-shrink: 0;
             -webkit-appearance: none;
             appearance: none;
-            background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='%23888' d='M6 8L2 4h8z'/%3E%3C/svg%3E");
+            background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='10' viewBox='0 0 12 12'%3E%3Cpath fill='%23888' d='M6 8L2 4h8z'/%3E%3C/svg%3E");
             background-repeat: no-repeat;
-            background-position: right 10px center;
-            padding-right: 30px;
+            background-position: right 5px center;
         }
 
         .sort-select:focus {
@@ -714,30 +719,46 @@
         }
 
         .export-btn {
-            background: #2a2a2a;
-            border: 1px solid #3a3a3a;
-            color: #888;
-            padding: 6px 12px;
-            border-radius: 8px;
-            font-size: 12px;
-            font-weight: 600;
+            background: none;
+            border: none;
+            color: #666;
+            padding: 4px;
+            border-radius: 6px;
             cursor: pointer;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            flex-shrink: 0;
+        }
+
+        .export-btn svg {
+            display: block;
+            width: 16px;
+            height: 16px;
         }
 
         .export-btn:active {
-            background: #3a3a3a;
+            color: #ff4500;
         }
     </style>
 </head>
 <body>
     <div class="home-view" id="home-view">
         <div class="header">
-            <h1>Feed <span class="version">v20</span></h1>
+            <h1>
+                Feed <span class="version">v21</span>
+                <button class="export-btn" id="export-btn" title="Export data" aria-label="Export data">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+                        <polyline points="7 10 12 15 17 10"/>
+                        <line x1="12" y1="15" x2="12" y2="3"/>
+                    </svg>
+                </button>
+            </h1>
             <select class="sort-select list-sort-select" id="list-sort-select" title="Sort subreddit list">
                 <option value="recent">Recent</option>
                 <option value="alpha">A-Z</option>
             </select>
-            <button class="export-btn" id="export-btn">Export</button>
             <select class="sort-select" id="sort-select">
                 <option value="hot">Hot</option>
                 <option value="new">New</option>
@@ -746,10 +767,10 @@
             </select>
             <select class="sort-select time-select" id="time-select">
                 <option value="day">Today</option>
-                <option value="week">This Week</option>
-                <option value="month">This Month</option>
-                <option value="year">This Year</option>
-                <option value="all">All Time</option>
+                <option value="week">Week</option>
+                <option value="month">Month</option>
+                <option value="year">Year</option>
+                <option value="all">All</option>
             </select>
         </div>
         <div class="add-row">
