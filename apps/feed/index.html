@@ -34,8 +34,7 @@
             right: 0;
             bottom: 0;
             background: #1a1a1a;
-            padding: 20px;
-            padding-top: calc(env(safe-area-inset-top) + 20px);
+            padding: 0 20px;
             padding-bottom: calc(env(safe-area-inset-bottom) + 20px);
             padding-left: calc(env(safe-area-inset-left) + 20px);
             padding-right: calc(env(safe-area-inset-right) + 20px);
@@ -46,8 +45,14 @@
         .header {
             display: flex;
             align-items: center;
-            margin-bottom: 20px;
             gap: 12px;
+            flex-wrap: wrap;
+            position: sticky;
+            top: 0;
+            z-index: 10;
+            background: #1a1a1a;
+            padding-top: calc(env(safe-area-inset-top) + 20px);
+            padding-bottom: 20px;
         }
 
         .header h1 {
@@ -727,7 +732,11 @@
 <body>
     <div class="home-view" id="home-view">
         <div class="header">
-            <h1>Feed <span class="version">v19</span></h1>
+            <h1>Feed <span class="version">v20</span></h1>
+            <select class="sort-select list-sort-select" id="list-sort-select" title="Sort subreddit list">
+                <option value="recent">Recent</option>
+                <option value="alpha">A-Z</option>
+            </select>
             <button class="export-btn" id="export-btn">Export</button>
             <select class="sort-select" id="sort-select">
                 <option value="hot">Hot</option>
@@ -764,6 +773,7 @@
         const LS_KEY = 'feed-subs';
         const LS_SORT_KEY = 'feed-sort';
         const LS_TIME_KEY = 'feed-time';
+        const LS_LIST_SORT_KEY = 'feed-list-sort';
         const FAV_META_KEY = 'fav-meta';
         const FAV_PREFIX = 'fav:';
         const FAV_PAGE_SIZE = 50;
@@ -789,6 +799,7 @@
             loading: false,
             sort: localStorage.getItem(LS_SORT_KEY) || 'hot',
             timePeriod: localStorage.getItem(LS_TIME_KEY) || 'day',
+            listSort: localStorage.getItem(LS_LIST_SORT_KEY) || 'recent',
             mixedPools: {}, // Per-subreddit post pools: { [sub]: { posts, after, exhausted, fetched } }
             mixedSeen: new Set(), // Post IDs already added to feed (dedup)
             autoplay: false // Auto-advance mode
@@ -1270,7 +1281,8 @@
                 settings: {
                     subreddits: getSubs(),
                     sort: localStorage.getItem(LS_SORT_KEY) || 'hot',
-                    timePeriod: localStorage.getItem(LS_TIME_KEY) || 'day'
+                    timePeriod: localStorage.getItem(LS_TIME_KEY) || 'day',
+                    listSort: localStorage.getItem(LS_LIST_SORT_KEY) || 'recent'
                 },
                 favorites: []
             };
@@ -1636,11 +1648,18 @@
         // Render home view
         function renderHome() {
             const subs = getSubs();
+            const displaySubs = state.listSort === 'alpha'
+                ? [...subs].sort((a, b) => a.localeCompare(b))
+                : subs;
             const list = document.getElementById('sub-list');
 
             // Set sort select to current value
             const sortSelect = document.getElementById('sort-select');
             sortSelect.value = state.sort;
+
+            // Set list sort select to current value
+            const listSortSelect = document.getElementById('list-sort-select');
+            listSortSelect.value = state.listSort;
 
             // Set time select to current value and show/hide based on sort
             const timeSelect = document.getElementById('time-select');
@@ -1684,7 +1703,7 @@
             if (subs.length === 0) {
                 list.innerHTML = favoritesHtml + '<li class="empty-state">No subreddits yet. Add one above.</li>';
             } else {
-                list.innerHTML = mixedHtml + favoritesHtml + subs.map(s => `
+                list.innerHTML = mixedHtml + favoritesHtml + displaySubs.map(s => `
                     <li class="sub-item" data-sub="${escapeHtml(s)}">
                         <div class="sub-delete-bg">Delete</div>
                         <div class="sub-item-content">
@@ -2477,6 +2496,13 @@
         document.getElementById('time-select').addEventListener('change', function() {
             state.timePeriod = this.value;
             localStorage.setItem(LS_TIME_KEY, state.timePeriod);
+        });
+
+        // List sort select listener (alphabetical vs chronological)
+        document.getElementById('list-sort-select').addEventListener('change', function() {
+            state.listSort = this.value;
+            localStorage.setItem(LS_LIST_SORT_KEY, state.listSort);
+            if (state.view === 'home') renderHome();
         });
 
         document.getElementById('autoplay-btn').addEventListener('click', toggleAutoplay);
