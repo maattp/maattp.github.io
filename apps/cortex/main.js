@@ -33,7 +33,9 @@ function detectTier() {
     const dpr = window.devicePixelRatio || 1;
     const memHint = navigator.deviceMemory || 4;
 
-    // Try to read renderer string for finer tiering
+    // Try to read renderer string for finer tiering, then explicitly
+    // drop the probe context so its GPU resources free immediately
+    // rather than waiting for GC.
     let rendererStr = '';
     try {
         const tmp = document.createElement('canvas').getContext('webgl2');
@@ -42,6 +44,8 @@ function detectTier() {
             if (ext) {
                 rendererStr = tmp.getParameter(ext.UNMASKED_RENDERER_WEBGL) || '';
             }
+            const lose = tmp.getExtension('WEBGL_lose_context');
+            if (lose) lose.loseContext();
         }
     } catch (e) { /* ignore */ }
     const lowGpu = /SwiftShader|Mali|Adreno 3|Adreno 4|PowerVR/i.test(rendererStr);
@@ -111,7 +115,9 @@ function resize() {
     const h = window.innerHeight;
     const dpr = renderer.renderer.getPixelRatio();
     renderer.setSize(w, h, dpr);
-    post.setSize(w * dpr, h * dpr);
+    // Round so the composer's render targets get integer dimensions even
+    // when pixelRatio isn't an integer (e.g. tier-medium uses 1.75).
+    post.setSize(Math.round(w * dpr), Math.round(h * dpr));
 }
 window.addEventListener('resize', resize);
 resize();
@@ -120,8 +126,6 @@ resize();
 
 const ray = new THREE.Raycaster();
 const ndc = new THREE.Vector2();
-const tmpVec = new THREE.Vector3();
-const tmpRel = new THREE.Vector3();
 
 camCtl.onClickWorld = (clientX, clientY) => {
     const rect = canvas.getBoundingClientRect();
@@ -135,7 +139,6 @@ camCtl.onClickWorld = (clientX, clientY) => {
     const positions = network.positions;
     let bestIdx = -1;
     let bestD2 = Infinity;
-    let bestT = 0;
     for (let i = 0; i < network.n; i++) {
         const px = positions[i * 3 + 0];
         const py = positions[i * 3 + 1];
@@ -153,7 +156,6 @@ camCtl.onClickWorld = (clientX, clientY) => {
         if (d2 < bestD2) {
             bestD2 = d2;
             bestIdx = i;
-            bestT = t;
         }
     }
 

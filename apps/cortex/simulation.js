@@ -118,6 +118,11 @@ export class Network {
         this.synDelay = null;   // Float32Array(M)
         this.synapseCount = 0;
 
+        // Per-step spike list — pre-allocated to worst case (all neurons
+        // fire) so the hot loop never touches the JS allocator.
+        this.spikeBuffer = new Int32Array(this.n);
+        this.spikeCount = 0;
+
         // Delivery ring buffer: ringSize × n floats of pending current
         this.ringSize = Math.ceil(MAX_DELAY_MS / SIM_DT_MS) + 1;
         this.ring = new Array(this.ringSize);
@@ -340,8 +345,9 @@ export class Network {
 
         // 2. Decay V toward rest, decrement refractory, decay brightness.
         // 3. Add background noise to non-refractory neurons.
-        // 4. Threshold detection — mark spikes.
-        const spikes = []; // indices that fired this step
+        // 4. Threshold detection — append spike indices to pre-allocated buffer.
+        const spikeBuf = this.spikeBuffer;
+        let spikeCount = 0;
         const noiseScale = NOISE_AMPLITUDE;
         const rand = this.rand;
         for (let i = 0; i < N; i++) {
@@ -370,7 +376,7 @@ export class Network {
                 this.V[i] = V_RESET;
                 this.refractory[i] = REFRACTORY_MS;
                 this.brightness[i] = BRIGHTNESS_PEAK;
-                spikes.push(i);
+                spikeBuf[spikeCount++] = i;
 
                 // Coincidence flash if both E and I arrived recently
                 if (this.recentE[i] > 0.4 && this.recentI[i] > 0.4) {
@@ -378,13 +384,14 @@ export class Network {
                 }
             }
         }
+        this.spikeCount = spikeCount;
 
         // 5. For each spike, queue deliveries and emit pulses for rendering.
         const ringSize = this.ringSize;
         const ringIdx = this.ringIdx;
         const tStart = this.simTimeMs;
-        for (let k = 0; k < spikes.length; k++) {
-            const src = spikes[k];
+        for (let k = 0; k < spikeCount; k++) {
+            const src = spikeBuf[k];
             const start = this.synOutStart[src];
             const end = this.synOutStart[src + 1];
             const srcType = this.types[src];
@@ -419,7 +426,7 @@ export class Network {
         this.ringIdx = (this.ringIdx + 1) % this.ringSize;
         this._prunePulses();
 
-        return spikes.length;
+        return spikeCount;
     }
 
     _spawnPulse(sx, sy, sz, dx, dy, dz, tStart, tEnd, color) {
@@ -462,21 +469,4 @@ export class Network {
         this.activePulseCount = count;
     }
 
-    // Build a contiguous Float32Array of just the active pulses for
-    // upload to the GPU. Returns {data, count}.
-    snapshotActivePulses() {
-        const stride = this.pulseStride;
-        const out = new Float32Array(this.activePulseCount * stride);
-        const alive = this.pulseAlive;
-        const src = this.pulseData;
-        let w = 0;
-        for (let i = 0, n = alive.length; i < n; i++) {
-            if (alive[i]) {
-                const o = i * stride;
-                for (let k = 0; k < stride; k++) out[w + k] = src[o + k];
-                w += stride;
-            }
-        }
-        return { data: out, count: this.activePulseCount };
-    }
 }

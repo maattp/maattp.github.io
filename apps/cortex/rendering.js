@@ -232,7 +232,8 @@ export class CortexRenderer {
             alpha: false,
             powerPreference: 'high-performance',
         });
-        this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+        // Pixel ratio is owned by the caller (main.js sets it from the
+        // hardware tier).
         this.renderer.setClearColor(this.opts.backgroundColor, 1);
         // We want HDR-ish accumulation for bloom; postprocessing.js sets up
         // the float render targets. Keep tone mapping off here so values
@@ -506,7 +507,7 @@ export class CortexRenderer {
     }
 
     // Per-frame hook: push simulation state into GPU buffers.
-    syncFromSimulation(activePulses) {
+    syncFromSimulation() {
         // Neuron brightness and flash already share the same Float32Array
         // as the simulation; just flag for upload.
         this.brightnessAttr.needsUpdate = true;
