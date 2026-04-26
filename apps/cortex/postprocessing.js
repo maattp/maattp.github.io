@@ -145,23 +145,29 @@ export class CortexPostprocessor {
             bloomThreshold: 0.42,
             enableDoF: true,
             enableBloom: true,
+            useHalfFloat: true,
         }, opts);
 
         const size = renderer.getDrawingBufferSize(new THREE.Vector2());
+        // iOS Safari has had recurring issues with HalfFloat color
+        // attachments — fall back to UnsignedByte when the caller asks
+        // (typically on mobile). Costs HDR bloom headroom but produces
+        // a renderable framebuffer.
+        const rtType = this.opts.useHalfFloat ? THREE.HalfFloatType : THREE.UnsignedByteType;
 
         // Our own scene RT — owns the depth texture. Composer never touches this.
         const dt = new THREE.DepthTexture(size.x, size.y);
         dt.type = THREE.UnsignedShortType;
         this.sceneRT = new THREE.WebGLRenderTarget(size.x, size.y, {
-            type: THREE.HalfFloatType,
+            type: rtType,
             depthBuffer: true,
             depthTexture: dt,
         });
         this.depthTexture = dt;
 
-        // Composer RTs — HDR but no depth attachment, so no feedback risk.
+        // Composer RTs — same precision as scene, no depth attachment.
         const composerRT = new THREE.WebGLRenderTarget(size.x, size.y, {
-            type: THREE.HalfFloatType,
+            type: rtType,
             depthBuffer: false,
         });
         this.composer = new EffectComposer(renderer, composerRT);

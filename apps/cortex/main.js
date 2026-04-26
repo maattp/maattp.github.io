@@ -59,6 +59,10 @@ function detectTier() {
             bloomStrength: 0.85,
             pixelRatio: Math.min(dpr, 1.5),
             synapseSubsample: 0.14,
+            // iOS Safari has been historically flaky with HalfFloat color
+            // attachments — falling back to UnsignedByte costs a bit of HDR
+            // headroom for bloom but is much more reliably renderable.
+            useHalfFloat: false,
         };
     }
     if (cores < 8) {
@@ -70,6 +74,7 @@ function detectTier() {
             bloomStrength: 1.0,
             pixelRatio: Math.min(dpr, 1.75),
             synapseSubsample: 0.20,
+            useHalfFloat: true,
         };
     }
     return {
@@ -80,7 +85,17 @@ function detectTier() {
         bloomStrength: 1.05,
         pixelRatio: Math.min(dpr, 2),
         synapseSubsample: 0.22,
+        useHalfFloat: true,
     };
+}
+
+function showFatal(msg) {
+    const el = document.getElementById('err');
+    if (el) {
+        el.style.display = 'block';
+        el.textContent = 'cortex error: ' + msg;
+    }
+    console.error('[cortex]', msg);
 }
 
 // ---------- Init ----------
@@ -88,31 +103,45 @@ function detectTier() {
 const canvas = document.getElementById('cortex');
 const tier = detectTier();
 
-const network = new Network(tier.neuronCount);
-const renderer = new CortexRenderer(canvas, network, {
-    synapseSubsample: tier.synapseSubsample,
-});
-renderer.renderer.setPixelRatio(tier.pixelRatio);
+let network, renderer, post, camCtl;
+try {
+    network = new Network(tier.neuronCount);
+    renderer = new CortexRenderer(canvas, network, {
+        synapseSubsample: tier.synapseSubsample,
+    });
+    renderer.renderer.setPixelRatio(tier.pixelRatio);
 
-const post = new CortexPostprocessor(renderer.renderer, renderer.scene, renderer.camera, {
-    bloomStrength: tier.bloomStrength,
-    bloomRadius: 0.85,
-    bloomThreshold: 0.42,
-    enableDoF: tier.enableDoF,
-    enableBloom: tier.enableBloom,
-});
+    post = new CortexPostprocessor(renderer.renderer, renderer.scene, renderer.camera, {
+        bloomStrength: tier.bloomStrength,
+        bloomRadius: 0.85,
+        bloomThreshold: 0.42,
+        enableDoF: tier.enableDoF,
+        enableBloom: tier.enableBloom,
+        useHalfFloat: tier.useHalfFloat,
+    });
 
-const camCtl = new CortexCamera(renderer.camera, canvas, {
-    initialDistance: 230,
-    initialTheta: 0.4,
-    initialPhi: 0.18,
-});
+    camCtl = new CortexCamera(renderer.camera, canvas, {
+        initialDistance: 230,
+        initialTheta: 0.4,
+        initialPhi: 0.18,
+    });
+} catch (e) {
+    showFatal((e && e.message ? e.message : String(e)) + ' [tier=' + tier.tier + ']');
+    throw e;
+}
 
 // ---------- Resize ----------
 
 function resize() {
     const w = window.innerWidth;
     const h = window.innerHeight;
+    if (w === 0 || h === 0) {
+        // iOS standalone PWA can briefly report a 0×0 viewport during
+        // launch; retry on the next animation frame instead of building
+        // zero-sized render targets.
+        requestAnimationFrame(resize);
+        return;
+    }
     const dpr = renderer.renderer.getPixelRatio();
     renderer.setSize(w, h, dpr);
     // Round so the composer's render targets get integer dimensions even
@@ -180,7 +209,9 @@ let fpsSamples = [];
 let fpsCheckedAt = 0;
 let degradeTriggered = false;
 
+let loopFatal = false;
 function tick(nowMs) {
+    if (loopFatal) return;
     requestAnimationFrame(tick);
 
     const dtMs = Math.min(100, nowMs - lastFrameMs); // clamp big gaps (tab switch)
@@ -199,12 +230,16 @@ function tick(nowMs) {
         simAccumulatorMs = 0;
     }
 
-    // Camera + state sync + render
-    camCtl.update(nowMs);
-    renderer.syncFromSimulation();
-    // Keep DoF focus on the network's near edge so the front feels sharp
-    if (post.dofPass) post.setFocusDistance(camCtl.getDistanceToTarget() * 0.75);
-    post.render(nowMs);
+    try {
+        camCtl.update(nowMs);
+        renderer.syncFromSimulation();
+        if (post.dofPass) post.setFocusDistance(camCtl.getDistanceToTarget() * 0.75);
+        post.render(nowMs);
+    } catch (e) {
+        loopFatal = true;
+        showFatal('frame: ' + (e && e.message ? e.message : String(e)));
+        throw e;
+    }
 
     // FPS-based live degradation
     if (firstFrameDone && !degradeTriggered) {

@@ -546,11 +546,14 @@ export class CortexRenderer {
         }
 
         this.pulseGeom.instanceCount = w;
-        // Upload only the prefix that changed
-        this.pulseSrc.addUpdateRange(0, w * 3);   this.pulseSrc.needsUpdate = true;
-        this.pulseDst.addUpdateRange(0, w * 3);   this.pulseDst.needsUpdate = true;
-        this.pulseTime.addUpdateRange(0, w * 2);  this.pulseTime.needsUpdate = true;
-        this.pulseColor.addUpdateRange(0, w * 3); this.pulseColor.needsUpdate = true;
+        // Upload only the prefix that changed. Skip when w=0 — some
+        // drivers throw on bufferSubData with count=0.
+        if (w > 0) {
+            this.pulseSrc.addUpdateRange(0, w * 3);   this.pulseSrc.needsUpdate = true;
+            this.pulseDst.addUpdateRange(0, w * 3);   this.pulseDst.needsUpdate = true;
+            this.pulseTime.addUpdateRange(0, w * 2);  this.pulseTime.needsUpdate = true;
+            this.pulseColor.addUpdateRange(0, w * 3); this.pulseColor.needsUpdate = true;
+        }
 
         // Update pulse uniforms
         this.pulseMaterial.uniforms.uNow.value = this.network.simTimeMs;

@@ -26,7 +26,21 @@
             height: 100vh;
             cursor: crosshair;
         }
+        #err {
+            position: fixed;
+            top: 0; left: 0; right: 0;
+            padding: env(safe-area-inset-top, 12px) 16px 16px;
+            font: 13px/1.4 -apple-system, BlinkMacSystemFont, "Helvetica Neue", monospace;
+            color: #ff8aa8;
+            background: rgba(8, 4, 12, 0.92);
+            border-bottom: 1px solid #5a1240;
+            z-index: 10;
+            white-space: pre-wrap;
+            display: none;
+        }
     </style>
+    <!-- importmap polyfill for iOS Safari < 16.4 -->
+    <script async src="https://ga.jspm.io/npm:es-module-shims@1.10.0/dist/es-module-shims.js"></script>
     <script type="importmap">
     {
         "imports": {
@@ -38,6 +52,18 @@
 </head>
 <body>
     <canvas id="cortex"></canvas>
+    <div id="err"></div>
     <script type="module" src="./main.js"></script>
+    <script>
+        // Surface load-time errors that happen before main.js sets up its
+        // own handlers (e.g. importmap not supported, module 404, parse fail).
+        window.addEventListener('error', function (ev) {
+            var el = document.getElementById('err');
+            if (!el) return;
+            el.style.display = 'block';
+            el.textContent = 'cortex error: ' + (ev.message || ev.error || 'unknown')
+                + '\nat ' + (ev.filename || '?') + ':' + (ev.lineno || '?');
+        }, true);
+    </script>
 </body>
 </html>
