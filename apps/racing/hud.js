@@ -12,7 +12,6 @@ export class Hud {
         this.elHud = document.getElementById('hud');
         this.elSpeedWrap = document.getElementById('speed-wrap');
         this.elSpeedFill = document.getElementById('speed-fill');
-        this.elBoost = document.getElementById('boost-flash');
         this.elStart = document.getElementById('screen-start');
         this.elOver = document.getElementById('screen-over');
         this.elOverScore = document.getElementById('over-score');
@@ -77,12 +76,5 @@ export class Hud {
 
     setSpeed(frac) {
         this.elSpeedFill.style.width = Math.max(0, Math.min(1, frac)) * 100 + '%';
-    }
-
-    flashBoost() {
-        this.elBoost.classList.remove('go');
-        // force reflow so the animation restarts even on rapid re-trigger
-        void this.elBoost.offsetWidth;
-        this.elBoost.classList.add('go');
     }
 }

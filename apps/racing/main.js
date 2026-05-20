@@ -184,7 +184,6 @@ const api = {
     onBoost() {
         game.speed = Math.max(game.speed, BOOST_SPEED);
         game.shakeT = 0.32; game.shakeAmp = 0.4;
-        hud.flashBoost();
     },
 };
 
