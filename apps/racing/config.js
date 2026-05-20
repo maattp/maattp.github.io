@@ -22,14 +22,14 @@ export const CAM_RISE = 2.6;             // toward tube center from the craft (+
 export const CAM_LOOK_AHEAD = 22;        // look target distance ahead (-Z)
 export const CAM_LOOK_RISE = 1.1;        // look slightly up from the craft
 export const FOV_BASE = 78;
-export const FOV_BOOST = 100;            // FOV punch at peak boost
+export const FOV_BOOST = 88;             // FOV punch at peak boost
 
 // Speeds are in world units / second.
 export const SPEED_START = 78;
 export const SPEED_MAX = 188;            // base cruising speed cap (grows with distance)
 export const SPEED_RAMP_DIST = 9000;     // distance over which base speed climbs to max
-export const BOOST_SPEED = 320;          // peak speed right after hitting a ramp
-export const BOOST_DECAY = 0.62;         // higher = boost fades faster
+export const BOOST_SPEED = 205;          // peak speed right after hitting a ramp
+export const BOOST_DECAY = 1.7;          // speed ease rate; higher = boost fades faster
 export const HIT_SLOWDOWN = 0.55;        // speed multiplier applied on a crash
 
 // Collision tolerances (radians). HIT_MARGIN widens an obstacle's hit arc by
