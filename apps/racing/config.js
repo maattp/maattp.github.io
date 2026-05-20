@@ -32,8 +32,9 @@ export const BOOST_SPEED = 320;          // peak speed right after hitting a ram
 export const BOOST_DECAY = 0.62;         // higher = boost fades faster
 export const HIT_SLOWDOWN = 0.55;        // speed multiplier applied on a crash
 
-// Collision: half-angular-width that counts as "in your lane" at z=0.
-export const HIT_ANGLE = 0.30;
+// Collision tolerances (radians). HIT_MARGIN widens an obstacle's hit arc by
+// roughly the craft's half-width; COLLECT/RAMP are how close you must line up.
+export const HIT_MARGIN = 0.05;
 export const COLLECT_ANGLE = 0.40;
 export const RAMP_ANGLE = 0.34;
 

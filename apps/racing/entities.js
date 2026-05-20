@@ -1,17 +1,18 @@
-// Everything streaming down the tube toward the player: gate-walls (the
-// obstacles), collectible orbs, and boost ramps. All three are object pools —
-// fixed sets of meshes that wrap from behind the camera back out into the fog
-// with fresh parameters, so steady-state play allocates nothing.
+// Everything streaming down the tube toward the player: obstacles, collectible
+// orbs, and boost ramps. All three are object pools — fixed sets of meshes that
+// wrap from behind the camera back into the fog with fresh parameters, so
+// steady-state play allocates nothing.
 //
-// Obstacles are partial-ring barriers (a torus with an arc cut out): you must
-// rotate the craft into the gap before the ring reaches z=0. The gap shrinks
-// as distance climbs. Orbs and ramps are single points on the wall you line up
-// with. Collision is resolved the frame an item crosses the player plane.
+// Obstacles are small arc barriers stuck to the wall (a short torus arc): you
+// rotate the craft AWAY from them to dodge. Early on they are tiny and sparse;
+// as distance climbs they grow wider and spawn more often. Orbs and ramps are
+// single points on the wall you line up with. Collision is resolved the frame
+// an item crosses the player plane.
 
 import * as THREE from 'three';
 import {
     ENTITY_RADIUS, SPAWN_Z, RECYCLE_Z, PLAYER_Z,
-    HIT_ANGLE, COLLECT_ANGLE, RAMP_ANGLE,
+    HIT_MARGIN, COLLECT_ANGLE, RAMP_ANGLE,
     COL_OBSTACLE, COL_COLLECT, COL_RAMP,
 } from './config.js';
 
@@ -24,13 +25,9 @@ function angDist(a, b) {
     return Math.abs(d);
 }
 
-// --- gate gap presets: [arc covered, gapHalfWidth] for easy/med/hard ---
-const GAP_PRESETS = [
-    { gapHalf: 1.15 },
-    { gapHalf: 0.92 },
-    { gapHalf: 0.70 },
-    { gapHalf: 0.55 },
-];
+// Obstacle arc widths (full angular span, radians), smallest first. Early game
+// only uses the small ones; bigger arcs unlock with difficulty.
+const OBSTACLE_ARCS = [0.5, 0.72, 0.98, 1.28];
 
 export class EntityField {
     constructor() {
@@ -38,7 +35,7 @@ export class EntityField {
         this.distance = 0;
         this.diff = 0;
 
-        this._buildGates();
+        this._buildObstacles();
         this._buildOrbs();
         this._buildRamps();
         this.reset();
@@ -46,20 +43,19 @@ export class EntityField {
 
     // ---------------- construction ----------------
 
-    _buildGates() {
-        this.gateSpacing = 38;
-        this.gateCount = 13;
-        this.gateSpan = this.gateSpacing * this.gateCount;
+    _buildObstacles() {
+        this.obSpacing = 40;
+        this.obCount = 14;
+        this.obSpan = this.obSpacing * this.obCount;
 
-        // Pre-build one torus geometry per gap preset (swapping geometry on a
-        // mesh is free; rebuilding it per wrap is not).
-        this.gateGeos = GAP_PRESETS.map(({ gapHalf }) => {
-            const arc = TWO_PI - 2 * gapHalf;
-            const seg = Math.max(24, Math.round(96 * (arc / TWO_PI)));
-            return new THREE.TorusGeometry(ENTITY_RADIUS, 0.5, 10, seg, arc);
+        // Pre-build one torus arc per width (swapping geometry on a mesh is
+        // free; rebuilding it per wrap is not).
+        this.obGeos = OBSTACLE_ARCS.map((arc) => {
+            const seg = Math.max(10, Math.round(40 * (arc / TWO_PI) * (TWO_PI / 0.5)));
+            return new THREE.TorusGeometry(ENTITY_RADIUS, 0.42, 10, seg, arc);
         });
 
-        this.gateMat = new THREE.MeshStandardMaterial({
+        this.obMat = new THREE.MeshStandardMaterial({
             color: COL_OBSTACLE,
             emissive: new THREE.Color(COL_OBSTACLE),
             emissiveIntensity: 2.6,
@@ -67,12 +63,12 @@ export class EntityField {
             roughness: 0.4,
         });
 
-        this.gates = [];
-        for (let i = 0; i < this.gateCount; i++) {
-            const mesh = new THREE.Mesh(this.gateGeos[0], this.gateMat);
+        this.obstacles = [];
+        for (let i = 0; i < this.obCount; i++) {
+            const mesh = new THREE.Mesh(this.obGeos[0], this.obMat);
             mesh.frustumCulled = false;
             this.group.add(mesh);
-            this.gates.push({ mesh, z: 0, prevZ: 0, gapCenter: 0, gapHalf: 1.15, consumed: false });
+            this.obstacles.push({ mesh, z: 0, prevZ: 0, center: 0, half: 0.25, active: false, consumed: false });
         }
     }
 
@@ -129,9 +125,10 @@ export class EntityField {
     reset() {
         this.distance = 0;
         this.diff = 0;
-        // Give the player runway at the start: nearest gate well down the tube.
-        for (let i = 0; i < this.gateCount; i++) {
-            this._placeGate(this.gates[i], -120 - i * this.gateSpacing);
+        // Give the player runway: nearest obstacle well down the tube, and force
+        // the first couple of slots clear so the run never opens on a wall.
+        for (let i = 0; i < this.obCount; i++) {
+            this._placeObstacle(this.obstacles[i], -150 - i * this.obSpacing, i < 2);
         }
         for (let i = 0; i < this.orbCount; i++) {
             this._placeOrb(this.orbs[i], -70 - i * this.orbSpacing);
@@ -141,27 +138,33 @@ export class EntityField {
         }
     }
 
-    _gapPresetForDiff() {
-        // bias toward harder presets as difficulty climbs
-        const maxIdx = Math.min(GAP_PRESETS.length - 1, Math.floor(this.diff * 4));
-        const idx = Math.floor(Math.random() * (maxIdx + 1));
-        return GAP_PRESETS[idx];
+    _spawnChance() {
+        // sparse at the start, busy later
+        return Math.min(0.9, 0.3 + 0.55 * this.diff);
     }
 
-    _placeGate(g, z) {
-        g.z = z;
-        g.prevZ = z;
-        g.consumed = false;
-        const preset = this._gapPresetForDiff();
-        const presetIdx = GAP_PRESETS.indexOf(preset);
-        g.gapHalf = preset.gapHalf;
-        g.gapCenter = Math.random() * TWO_PI;
-        const geo = this.gateGeos[presetIdx];
-        g.mesh.geometry = geo;
-        // torus covers [rot, rot+arc]; centre the *gap* on gapCenter
-        const arc = TWO_PI - 2 * g.gapHalf;
-        g.mesh.rotation.z = g.gapCenter - arc / 2 - Math.PI;
-        g.mesh.position.z = z;
+    _arcIndexForDiff() {
+        // only small arcs early; wider ones unlock as difficulty climbs
+        const maxIdx = Math.min(OBSTACLE_ARCS.length - 1, Math.floor(this.diff * 4));
+        return Math.floor(Math.random() * (maxIdx + 1));
+    }
+
+    _placeObstacle(o, z, forceEmpty = false) {
+        o.z = z;
+        o.prevZ = z;
+        o.consumed = false;
+        o.active = !forceEmpty && Math.random() < this._spawnChance();
+        o.mesh.visible = o.active;
+        if (o.active) {
+            const idx = this._arcIndexForDiff();
+            const arc = OBSTACLE_ARCS[idx];
+            o.half = arc / 2;
+            o.center = Math.random() * TWO_PI;
+            o.mesh.geometry = this.obGeos[idx];
+            // torus arc spans local [0, arc]; centre it on o.center
+            o.mesh.rotation.z = o.center - arc / 2;
+        }
+        o.mesh.position.z = z;
     }
 
     _placeOrb(o, z) {
@@ -170,13 +173,9 @@ export class EntityField {
         o.consumed = false;
         o.angle = Math.random() * TWO_PI;
         o.mesh.visible = true;
-        this._orbXY(o);
-        o.mesh.position.z = z;
-    }
-
-    _orbXY(o) {
         o.mesh.position.x = ENTITY_RADIUS * Math.cos(o.angle);
         o.mesh.position.y = ENTITY_RADIUS * Math.sin(o.angle);
+        o.mesh.position.z = z;
     }
 
     _placeRamp(r, z) {
@@ -195,21 +194,20 @@ export class EntityField {
 
     update(dt, speed, playerAngle, api, time, collide) {
         this.distance += speed * dt;
-        // difficulty saturates around ~9k distance
-        this.diff = Math.min(1, this.distance / 9000);
+        // difficulty saturates around ~12k distance (gentle early ramp)
+        this.diff = Math.min(1, this.distance / 12000);
         const move = speed * dt;
 
-        // gates
-        for (const g of this.gates) {
-            g.prevZ = g.z;
-            g.z += move;
-            g.mesh.position.z = g.z;
-            if (collide && !g.consumed && g.prevZ <= PLAYER_Z && g.z > PLAYER_Z) {
-                g.consumed = true;
-                const inGap = angDist(playerAngle, g.gapCenter) < (g.gapHalf - 0.05);
-                if (!inGap) api.onHit();
+        // obstacles
+        for (const o of this.obstacles) {
+            o.prevZ = o.z;
+            o.z += move;
+            o.mesh.position.z = o.z;
+            if (collide && o.active && !o.consumed && o.prevZ <= PLAYER_Z && o.z > PLAYER_Z) {
+                o.consumed = true;
+                if (angDist(playerAngle, o.center) < o.half + HIT_MARGIN) api.onHit();
             }
-            if (g.z > RECYCLE_Z) this._placeGate(g, g.z - this.gateSpan);
+            if (o.z > RECYCLE_Z) this._placeObstacle(o, o.z - this.obSpan);
         }
 
         // orbs (spin for sparkle)
