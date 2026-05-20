@@ -14,7 +14,7 @@
 
 import * as THREE from 'three';
 import {
-    SPEED_START, SPEED_MAX, SPEED_RAMP_DIST, BOOST_SPEED, HIT_SLOWDOWN,
+    SPEED_START, SPEED_MAX, SPEED_RAMP_DIST, BOOST_SPEED, BOOST_DECAY, HIT_SLOWDOWN,
     FOV_BASE, FOV_BOOST, MAX_ANG_VEL, STEER_SMOOTH,
     START_SHIELDS, INVULN_TIME, CRAFT_RADIUS, CAM_RISE, CAM_BACK,
 } from './config.js';
@@ -183,7 +183,7 @@ const api = {
     },
     onBoost() {
         game.speed = Math.max(game.speed, BOOST_SPEED);
-        game.shakeT = 0.5; game.shakeAmp = 0.7;
+        game.shakeT = 0.32; game.shakeAmp = 0.4;
         hud.flashBoost();
     },
 };
@@ -265,7 +265,7 @@ function step(dt) {
     else if (game.state === STATE.DEAD) cruise = 0;
     else cruise = cruiseSpeed();
     // ease speed toward cruise (this is how boost bleeds off and crashes recover)
-    game.speed += (cruise - game.speed) * Math.min(1, dt * 1.1);
+    game.speed += (cruise - game.speed) * Math.min(1, dt * BOOST_DECAY);
 
     if (playing) {
         game.distance += game.speed * dt;
