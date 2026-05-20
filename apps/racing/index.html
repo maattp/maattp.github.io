@@ -116,30 +116,6 @@
             transition: width 0.12s linear;
         }
 
-        /* boost flash text */
-        #boost-flash {
-            position: absolute;
-            top: 40%;
-            left: 0; right: 0;
-            text-align: center;
-            font-size: 40px;
-            font-weight: 900;
-            letter-spacing: 6px;
-            color: #39ff9e;
-            text-shadow: 0 0 14px rgba(57, 255, 158, 0.95), 0 0 40px rgba(57, 255, 158, 0.6);
-            opacity: 0;
-            transform: scale(0.7);
-        }
-        #boost-flash.go {
-            animation: boostPop 0.9s ease-out forwards;
-        }
-        @keyframes boostPop {
-            0%   { opacity: 0; transform: scale(0.6); }
-            18%  { opacity: 1; transform: scale(1.12); }
-            55%  { opacity: 1; transform: scale(1.0); }
-            100% { opacity: 0; transform: scale(1.25); }
-        }
-
         /* full-screen panels (start / game over) */
         .panel {
             position: absolute;
@@ -264,7 +240,6 @@
         </div>
 
         <div id="speed-wrap"><div id="speed-fill"></div></div>
-        <div id="boost-flash">BOOST</div>
 
         <!-- start panel -->
         <div id="screen-start" class="panel">
