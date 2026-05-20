@@ -29,6 +29,13 @@ function angDist(a, b) {
 // only uses the small ones; bigger arcs unlock with difficulty.
 const OBSTACLE_ARCS = [0.5, 0.72, 0.98, 1.28];
 
+// Keep the lane right behind a boost ramp clear of obstacles so you don't get
+// slammed into a barrier the instant you boost. An obstacle within this z-window
+// behind a ramp and within this angle of the ramp's lane gets shoved aside.
+const RAMP_CLEAR_Z = 135;       // units behind the ramp to protect
+const RAMP_CLEAR_AHEAD = 25;    // small buffer in front of the ramp too
+const RAMP_CLEAR_ANGLE = 0.75;  // how close (rad) counts as "in the boost lane"
+
 export class EntityField {
     constructor() {
         this.group = new THREE.Group();
@@ -125,6 +132,10 @@ export class EntityField {
     reset() {
         this.distance = 0;
         this.diff = 0;
+        // Ramps first, so obstacle placement can steer clear of their lanes.
+        for (let i = 0; i < this.rampCount; i++) {
+            this._placeRamp(this.ramps[i], SPAWN_Z - i * this.rampSpacing);
+        }
         // Give the player runway: nearest obstacle well down the tube, and force
         // the first couple of slots clear so the run never opens on a wall.
         for (let i = 0; i < this.obCount; i++) {
@@ -132,9 +143,6 @@ export class EntityField {
         }
         for (let i = 0; i < this.orbCount; i++) {
             this._placeOrb(this.orbs[i], -70 - i * this.orbSpacing);
-        }
-        for (let i = 0; i < this.rampCount; i++) {
-            this._placeRamp(this.ramps[i], SPAWN_Z - i * this.rampSpacing);
         }
     }
 
@@ -149,6 +157,24 @@ export class EntityField {
         return Math.floor(Math.random() * (maxIdx + 1));
     }
 
+    _setObstacleAngle(o, center) {
+        o.center = center;
+        o.mesh.rotation.z = center - o.half; // arc spans [center-half, center+half]
+    }
+
+    // If (z, center) sits in a boost ramp's protected lane, return that ramp's
+    // angle so the caller can shove the obstacle to the opposite side.
+    _rampLaneAngle(z, center) {
+        for (const r of this.ramps) {
+            const dz = r.z - z; // >0 when the obstacle is behind (arrives after) the ramp
+            if (dz > -RAMP_CLEAR_AHEAD && dz < RAMP_CLEAR_Z &&
+                angDist(center, r.angle) < RAMP_CLEAR_ANGLE) {
+                return r.angle;
+            }
+        }
+        return null;
+    }
+
     _placeObstacle(o, z, forceEmpty = false) {
         o.z = z;
         o.prevZ = z;
@@ -159,10 +185,11 @@ export class EntityField {
             const idx = this._arcIndexForDiff();
             const arc = OBSTACLE_ARCS[idx];
             o.half = arc / 2;
-            o.center = Math.random() * TWO_PI;
             o.mesh.geometry = this.obGeos[idx];
-            // torus arc spans local [0, arc]; centre it on o.center
-            o.mesh.rotation.z = o.center - arc / 2;
+            let center = Math.random() * TWO_PI;
+            const lane = this._rampLaneAngle(z, center);
+            if (lane !== null) center = lane + Math.PI + (Math.random() - 0.5) * 1.4;
+            this._setObstacleAngle(o, center);
         }
         o.mesh.position.z = z;
     }
@@ -188,6 +215,16 @@ export class EntityField {
         // so its midpoint sits at 0.31. Rotate to centre the pad on r.angle.
         r.mesh.position.set(0, 0, z);
         r.mesh.rotation.z = r.angle - 0.31;
+
+        // Shove any obstacles already sitting in this ramp's lane out of the way.
+        for (const o of this.obstacles) {
+            if (!o.active) continue;
+            const dz = z - o.z;
+            if (dz > -RAMP_CLEAR_AHEAD && dz < RAMP_CLEAR_Z &&
+                angDist(o.center, r.angle) < RAMP_CLEAR_ANGLE) {
+                this._setObstacleAngle(o, r.angle + Math.PI + (Math.random() - 0.5) * 1.4);
+            }
+        }
     }
 
     // ---------------- per-frame ----------------
