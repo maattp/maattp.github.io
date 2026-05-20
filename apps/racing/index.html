@@ -1,0 +1,308 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="theme-color" content="#05030f">
+    <link rel="apple-touch-icon" href="../icon.png">
+    <title>Racing</title>
+    <style>
+        html, body {
+            margin: 0;
+            padding: 0;
+            width: 100%;
+            height: 100%;
+            overflow: hidden;
+            background: #05030f;
+            color: #eaf6ff;
+            font-family: 'Helvetica Neue', -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+            -webkit-tap-highlight-color: transparent;
+            -webkit-user-select: none;
+            user-select: none;
+            touch-action: none;
+            overscroll-behavior: none;
+        }
+        canvas {
+            display: block;
+            position: fixed;
+            inset: 0;
+            width: 100vw;
+            height: 100vh;
+        }
+
+        /* ---- HUD overlay ---- */
+        #ui {
+            position: fixed;
+            inset: 0;
+            z-index: 5;
+            pointer-events: none;
+            padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
+        }
+
+        .neon {
+            text-shadow: 0 0 6px rgba(57, 208, 255, 0.9), 0 0 18px rgba(57, 208, 255, 0.55);
+        }
+
+        /* top bar */
+        #hud {
+            position: absolute;
+            top: calc(env(safe-area-inset-top) + 14px);
+            left: 0; right: 0;
+            display: flex;
+            align-items: flex-start;
+            justify-content: space-between;
+            padding: 0 18px;
+            opacity: 0;
+            transition: opacity 0.4s ease;
+        }
+        #hud.live { opacity: 1; }
+
+        #score-wrap { text-align: left; }
+        #score {
+            font-size: 34px;
+            font-weight: 800;
+            letter-spacing: 1px;
+            line-height: 1;
+            font-variant-numeric: tabular-nums;
+        }
+        #score-label, #best-line {
+            font-size: 11px;
+            letter-spacing: 3px;
+            text-transform: uppercase;
+            opacity: 0.65;
+            margin-top: 4px;
+        }
+        #shields {
+            display: flex;
+            gap: 7px;
+            margin-top: 2px;
+        }
+        .pip {
+            width: 16px; height: 16px;
+            border-radius: 50%;
+            border: 2px solid rgba(57, 208, 255, 0.55);
+            background: radial-gradient(circle at 35% 30%, #7af0ff, #1488d4);
+            box-shadow: 0 0 8px rgba(57, 208, 255, 0.8);
+            transition: opacity 0.25s ease, transform 0.25s ease;
+        }
+        .pip.spent {
+            opacity: 0.18;
+            background: none;
+            box-shadow: none;
+            transform: scale(0.8);
+        }
+
+        /* speed bar */
+        #speed-wrap {
+            position: absolute;
+            left: 18px; right: 18px;
+            bottom: calc(env(safe-area-inset-bottom) + 16px);
+            height: 5px;
+            border-radius: 3px;
+            background: rgba(255,255,255,0.08);
+            overflow: hidden;
+            opacity: 0;
+            transition: opacity 0.4s ease;
+        }
+        #speed-wrap.live { opacity: 1; }
+        #speed-fill {
+            height: 100%;
+            width: 0%;
+            border-radius: 3px;
+            background: linear-gradient(90deg, #12c2e9, #c471ed);
+            box-shadow: 0 0 10px rgba(196, 113, 237, 0.8);
+            transition: width 0.12s linear;
+        }
+
+        /* boost flash text */
+        #boost-flash {
+            position: absolute;
+            top: 40%;
+            left: 0; right: 0;
+            text-align: center;
+            font-size: 40px;
+            font-weight: 900;
+            letter-spacing: 6px;
+            color: #39ff9e;
+            text-shadow: 0 0 14px rgba(57, 255, 158, 0.95), 0 0 40px rgba(57, 255, 158, 0.6);
+            opacity: 0;
+            transform: scale(0.7);
+        }
+        #boost-flash.go {
+            animation: boostPop 0.9s ease-out forwards;
+        }
+        @keyframes boostPop {
+            0%   { opacity: 0; transform: scale(0.6); }
+            18%  { opacity: 1; transform: scale(1.12); }
+            55%  { opacity: 1; transform: scale(1.0); }
+            100% { opacity: 0; transform: scale(1.25); }
+        }
+
+        /* full-screen panels (start / game over) */
+        .panel {
+            position: absolute;
+            inset: 0;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            text-align: center;
+            gap: 10px;
+            padding: 24px;
+            pointer-events: auto;
+            background: radial-gradient(ellipse at center, rgba(8,4,22,0.35) 0%, rgba(5,3,15,0.82) 75%);
+        }
+        .panel.hidden { display: none; }
+
+        .title {
+            font-size: 64px;
+            font-weight: 900;
+            letter-spacing: 10px;
+            margin: 0 0 0 10px;
+            background: linear-gradient(180deg, #b6f3ff 0%, #6db3ff 45%, #c471ed 100%);
+            -webkit-background-clip: text;
+            background-clip: text;
+            color: transparent;
+            filter: drop-shadow(0 0 18px rgba(86, 180, 255, 0.55));
+        }
+        .subtitle {
+            font-size: 13px;
+            letter-spacing: 4px;
+            text-transform: uppercase;
+            opacity: 0.8;
+        }
+        .cta {
+            margin-top: 26px;
+            font-size: 17px;
+            font-weight: 700;
+            letter-spacing: 3px;
+            text-transform: uppercase;
+            color: #eaf6ff;
+            border: 1.5px solid rgba(57, 208, 255, 0.7);
+            border-radius: 999px;
+            padding: 14px 34px;
+            box-shadow: 0 0 18px rgba(57, 208, 255, 0.45), inset 0 0 12px rgba(57, 208, 255, 0.18);
+            animation: pulse 1.8s ease-in-out infinite;
+        }
+        @keyframes pulse {
+            0%, 100% { box-shadow: 0 0 14px rgba(57, 208, 255, 0.35), inset 0 0 10px rgba(57, 208, 255, 0.15); }
+            50%      { box-shadow: 0 0 26px rgba(57, 208, 255, 0.7), inset 0 0 16px rgba(57, 208, 255, 0.28); }
+        }
+        .hint {
+            font-size: 12px;
+            line-height: 1.6;
+            letter-spacing: 1px;
+            opacity: 0.6;
+            max-width: 320px;
+            margin-top: 22px;
+        }
+        .big-score {
+            font-size: 56px;
+            font-weight: 900;
+            font-variant-numeric: tabular-nums;
+            line-height: 1;
+        }
+        .over-title {
+            font-size: 30px;
+            font-weight: 800;
+            letter-spacing: 8px;
+            color: #ff5a78;
+            text-shadow: 0 0 16px rgba(255, 45, 85, 0.7);
+        }
+        .stat-row {
+            display: flex;
+            gap: 40px;
+            margin-top: 6px;
+        }
+        .stat .k {
+            font-size: 11px; letter-spacing: 3px; text-transform: uppercase; opacity: 0.6;
+        }
+        .stat .v {
+            font-size: 28px; font-weight: 800; font-variant-numeric: tabular-nums;
+        }
+
+        #err {
+            position: fixed;
+            top: 0; left: 0; right: 0;
+            padding: env(safe-area-inset-top, 12px) 16px 16px;
+            font: 13px/1.4 -apple-system, BlinkMacSystemFont, monospace;
+            color: #ff8aa8;
+            background: rgba(8, 4, 12, 0.92);
+            border-bottom: 1px solid #5a1240;
+            z-index: 20;
+            white-space: pre-wrap;
+            display: none;
+        }
+    </style>
+    <!-- importmap polyfill for iOS Safari < 16.4 -->
+    <script async src="https://ga.jspm.io/npm:es-module-shims@1.10.0/dist/es-module-shims.js"></script>
+    <script type="importmap">
+    {
+        "imports": {
+            "three": "https://unpkg.com/three@0.161.0/build/three.module.js",
+            "three/addons/": "https://unpkg.com/three@0.161.0/examples/jsm/"
+        }
+    }
+    </script>
+</head>
+<body>
+    <canvas id="game"></canvas>
+
+    <div id="ui">
+        <!-- in-game HUD -->
+        <div id="hud">
+            <div id="score-wrap">
+                <div id="score" class="neon">0</div>
+                <div id="score-label">score</div>
+            </div>
+            <div style="text-align:right;">
+                <div id="shields"></div>
+                <div id="best-line">best 0</div>
+            </div>
+        </div>
+
+        <div id="speed-wrap"><div id="speed-fill"></div></div>
+        <div id="boost-flash">BOOST</div>
+
+        <!-- start panel -->
+        <div id="screen-start" class="panel">
+            <h1 class="title">RACING</h1>
+            <div class="subtitle neon">tunnel runner</div>
+            <div class="cta" id="start-btn">Tap to start</div>
+            <div class="hint" id="start-hint">
+                Tilt your phone left and right to spin around the tunnel.<br>
+                Dodge the red barriers, grab gold orbs, and slam the green
+                ramps for a speed boost.
+            </div>
+        </div>
+
+        <!-- game over panel -->
+        <div id="screen-over" class="panel hidden">
+            <div class="over-title">GAME OVER</div>
+            <div class="big-score neon" id="over-score">0</div>
+            <div class="stat-row">
+                <div class="stat"><div class="k">best</div><div class="v" id="over-best">0</div></div>
+                <div class="stat"><div class="k">orbs</div><div class="v" id="over-orbs">0</div></div>
+            </div>
+            <div class="cta" id="restart-btn">Tap to retry</div>
+        </div>
+    </div>
+
+    <div id="err"></div>
+
+    <script type="module" src="./main.js"></script>
+    <script>
+        // Surface load-time errors that happen before main.js installs its
+        // own handlers (importmap unsupported, module 404, parse failure).
+        window.addEventListener('error', function (ev) {
+            var el = document.getElementById('err');
+            if (!el) return;
+            el.style.display = 'block';
+            el.textContent = 'racing error: ' + (ev.message || ev.error || 'unknown')
+                + '\nat ' + (ev.filename || '?') + ':' + (ev.lineno || '?');
+        }, true);
+    </script>
+</body>
+</html>
