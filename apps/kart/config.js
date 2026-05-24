@@ -18,9 +18,9 @@ export const TUNING = {
     topSpeed: 42,            // normal forward top speed (units/s)
     accel: 2.4,              // ramp-up rate toward target while accelerating
     engineBrake: 1.7,        // ramp-down rate when above target (how boost bleeds off)
-    brakeStrength: 3.6,      // ramp rate toward 0 / reverse while braking
+    brakeStrength: 5.0,      // ramp rate toward 0 / reverse while braking (firm)
     coastDrag: 0.7,          // ramp toward 0 when neither accelerating nor braking
-    reverseSpeed: 9,         // top reverse speed when holding brake from a stop
+    reverseSpeed: 12,        // top reverse speed when holding brake from a stop
 
     // ---------------------------------------------------------------- steering
     // Turn authority scales with speed so the kart is sluggish when slow and
@@ -33,18 +33,22 @@ export const TUNING = {
     // ---------------------------------------------------------------- grip / slide
     // Lateral (sideways) velocity is bled off each step: `vLat += (0-vLat)*grip*dt`.
     // High grip = planted; low grip = the kart slides, which is what makes a drift
-    // carve a wide arc.
+    // carve a wide arc. The effective grip eases toward its target (gripEase) so
+    // engaging/releasing a drift doesn't snap the kart sideways.
     normalGrip: 9.0,
-    driftGrip: 2.4,
+    driftGrip: 4.2,          // higher than before = a gentler, more controllable slide
+    gripEase: 7.0,           // how fast grip transitions (lower = smoother onset)
 
     // ---------------------------------------------------------------- drift
     driftMinSpeed: 11,        // must be going at least this fast to start a drift
     driftSteerThreshold: 0.16,// must be turning at least this hard to start a drift
     // While drifting, yaw rate = baseTurnRate * (a multiplier between min and max,
     // chosen by how hard the player steers INTO the drift). Countersteering widens
-    // the arc (min); steering hard inward tightens it (max).
-    driftYawMin: 0.55,
-    driftYawMax: 1.20,
+    // the arc (min); steering hard inward tightens it (max). Kept at/below 1 so a
+    // drift never snaps the kart around faster than a normal hard turn — it's a
+    // controlled slide, not a spin.
+    driftYawMin: 0.7,
+    driftYawMax: 0.98,
     // Seconds of continuous drift needed to reach each charge stage.
     // [stage1 (blue), stage2 (orange), stage3 (purple)]
     driftStageTimes: [0.55, 1.30, 2.20],
@@ -61,8 +65,9 @@ export const TUNING = {
     offTrackGrip: 5.5,       // grass is a little loose underfoot
 
     // ---------------------------------------------------------------- walls
-    wallBounce: 0.15,        // 0 = slide along wall, higher = bounce off it
-    wallScrub: 0.92,         // speed retained on wall contact (lower = more punishing)
+    kartRadius: 1.1,         // collision radius so the body edge stops AT the wall, not in it
+    wallBounce: 0.0,         // 0 = pure slide along wall (smooth), higher = bounce off it
+    wallScrub: 0.96,         // speed retained on wall contact (lower = more punishing)
 
     // ---------------------------------------------------------------- camera
     camDistance: 8.6,        // how far behind the kart the camera sits
@@ -76,12 +81,12 @@ export const TUNING = {
     camBoostPullback: 1.6,   // extra distance the camera drops back at full boost
 
     // ---------------------------------------------------------------- visual feel
-    kartBodyRoll: 0.42,      // radians the body leans into a drift at full slide
+    kartBodyRoll: 0.28,      // radians the body leans into a drift at full slide
     kartBoostSquash: 0.12,   // body stretch on boost (0 = none)
-    kartDriftHop: 0.35,      // little hop height when a drift kicks off
+    kartDriftHop: 0.12,      // small hop when a drift kicks off (subtle)
     wheelSteerMaxDeg: 26,    // visual front-wheel turn at full steer
-    camShakeBoost: 0.22,     // camera shake amplitude at full boost
-    camShakeStageUp: 0.5,    // shake kick when a drift charge stage levels up
+    camShakeBoost: 0.14,     // camera shake amplitude at full boost
+    camShakeStageUp: 0.26,   // shake kick when a drift charge stage levels up
 
     // ---------------------------------------------------------------- race
     totalLaps: 3,
