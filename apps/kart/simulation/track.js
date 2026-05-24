@@ -69,7 +69,7 @@ export function createTrack() {
     // Nearest point on the polyline to (x,z). Returns squared distance, the
     // segment index, and the param t along that segment.
     function nearest(x, z) {
-        let best = Infinity, bestSeg = 0, bestT = 0;
+        let best = Infinity, bestSeg = 0, bestT = 0, bestCx = x, bestCz = z;
         for (let i = 0; i < count; i++) {
             const a = samples[i];
             const b = samples[(i + 1) % count];
@@ -81,13 +81,25 @@ export function createTrack() {
             const cx = a.x + abx * t, cz = a.z + abz * t;
             const dx = x - cx, dz = z - cz;
             const d2 = dx * dx + dz * dz;
-            if (d2 < best) { best = d2; bestSeg = i; bestT = t; }
+            if (d2 < best) { best = d2; bestSeg = i; bestT = t; bestCx = cx; bestCz = cz; }
         }
-        return { dist2: best, seg: bestSeg, t: bestT };
+        return { dist2: best, seg: bestSeg, t: bestT, cx: bestCx, cz: bestCz };
     }
 
     function isOnTrack(x, z) {
         return nearest(x, z).dist2 <= hw * hw;
+    }
+
+    // Wall constraint: if (x,z) is farther than `radius` from the centerline,
+    // return the clamped position on the wall plus the outward unit normal so the
+    // caller can cancel the outward velocity and slide along the barrier.
+    function confine(x, z, radius) {
+        const nr = nearest(x, z);
+        const d = Math.sqrt(nr.dist2);
+        if (d <= radius) return { hit: false, x, z, nx: 0, nz: 0 };
+        const ox = (x - nr.cx) / (d || 1e-6);
+        const oz = (z - nr.cz) / (d || 1e-6);
+        return { hit: true, x: nr.cx + ox * radius, z: nr.cz + oz * radius, nx: ox, nz: oz };
     }
 
     // Normalized lap progress 0..1 along the loop at the nearest centerline point.
@@ -106,12 +118,14 @@ export function createTrack() {
 
     return {
         halfWidth: hw,
+        wallHalfWidth: TRACK.wallHalfWidth,
         samples,
         leftEdge,
         rightEdge,
         tangents,
         totalLen,
         isOnTrack,
+        confine,
         progressAt,
         startPose,
     };

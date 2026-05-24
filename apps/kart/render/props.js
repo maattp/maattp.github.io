@@ -23,12 +23,13 @@ function trees(track) {
     const leafMatA = toonMat(COLORS.treeLeaf);
     const leafMatB = toonMat(COLORS.treeLeaf2);
 
+    const clear = track.wallHalfWidth + 3;              // keep trees off the road + barriers
     let placed = 0, attempts = 0;
-    while (placed < VISUALS.trees && attempts < VISUALS.trees * 12) {
+    while (placed < VISUALS.trees && attempts < VISUALS.trees * 14) {
         attempts++;
-        const x = (Math.random() - 0.5) * 230;
-        const z = (Math.random() - 0.5) * 230;
-        if (track.isOnTrack(x, z)) continue;            // keep off the road
+        const x = (Math.random() - 0.5) * 320;
+        const z = (Math.random() - 0.5) * 320;
+        if (!track.confine(x, z, clear).hit) continue;  // inside clear radius -> skip
         const scale = 0.8 + Math.random() * 1.1;
         const t = new THREE.Group();
         // trees don't cast shadows (they'd be the bulk of shadow casters); the

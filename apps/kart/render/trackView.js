@@ -46,7 +46,46 @@ export function buildTrackView(track) {
     // ---- cones along the edges ----
     group.add(cones(track));
 
+    // ---- barrier walls just outside the runoff (these constrain the kart) ----
+    group.add(walls(track));
+
     return group;
+}
+
+// Vertical barrier ribbons standing at the wall radius on both sides of the
+// track. The simulation enforces the same radius, so these read as the thing
+// keeping you on course. Striped red/white like crash barriers.
+function walls(track) {
+    const g = new THREE.Group();
+    const n = track.samples.length;
+    const wallR = track.wallHalfWidth;
+    const height = 1.6;
+    for (const sign of [-1, 1]) {
+        const pos = [], idx = [], col = [];
+        const red = new THREE.Color(COLORS.kerbRed);
+        const white = new THREE.Color(COLORS.kerbWhite);
+        for (let i = 0; i < n; i++) {
+            const s = track.samples[i], t = track.tangents[i];
+            const nx = t.z * sign, nz = -t.x * sign;      // outward normal for this side
+            const bx = s.x + nx * wallR, bz = s.z + nz * wallR;
+            pos.push(bx, 0, bz, bx, height, bz);
+            const c = (i % 2) ? red : white;
+            col.push(c.r, c.g, c.b, c.r, c.g, c.b);
+        }
+        for (let i = 0; i < n; i++) {
+            const ni = (i + 1) % n;
+            idx.push(i * 2, i * 2 + 1, ni * 2, i * 2 + 1, ni * 2 + 1, ni * 2);
+        }
+        const geo = new THREE.BufferGeometry();
+        geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+        geo.setAttribute('color', new THREE.Float32BufferAttribute(col, 3));
+        geo.setIndex(idx);
+        geo.computeVertexNormals();
+        const m = new THREE.Mesh(geo, toonMat(0xffffff, { vertexColors: true, side: THREE.DoubleSide }));
+        m.castShadow = true;
+        g.add(m);
+    }
+    return g;
 }
 
 // Striped kerb strip running from the edge outward, vertex-coloured red/white.

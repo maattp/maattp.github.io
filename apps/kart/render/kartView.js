@@ -23,53 +23,58 @@ export class KartView {
         const accentMat = toonMat(COLORS.kartBody2);
         const darkMat = toonMat(COLORS.kartAccent);
 
+        // low floor pan ties the body to the wheels (no floating gap)
+        const floor = mesh(roundedBox(1.55, 0.3, 2.7, 0.12), darkMat);
+        floor.position.y = 0.4;
+        this.chassis.add(floor);
+
         // main tub
-        const tub = mesh(roundedBox(1.7, 0.55, 2.6, 0.18), bodyMat);
-        tub.position.y = 0.5;
+        const tub = mesh(roundedBox(1.4, 0.5, 1.9, 0.16), bodyMat);
+        tub.position.y = 0.78;
         this.chassis.add(tub);
 
         // sloped nose
-        const nose = mesh(roundedBox(1.3, 0.4, 1.0, 0.14), bodyMat);
-        nose.position.set(0, 0.4, 1.45);
+        const nose = mesh(roundedBox(1.2, 0.38, 1.05, 0.14), bodyMat);
+        nose.position.set(0, 0.6, 1.55);
         this.chassis.add(nose);
 
         // side pods
         for (const sx of [-1, 1]) {
-            const pod = mesh(roundedBox(0.4, 0.4, 1.6, 0.12), accentMat);
-            pod.position.set(sx * 0.95, 0.42, 0.1);
+            const pod = mesh(roundedBox(0.42, 0.45, 1.7, 0.12), accentMat);
+            pod.position.set(sx * 0.98, 0.5, 0.1);
             this.chassis.add(pod);
         }
 
         // seat + driver
         const seat = mesh(roundedBox(1.0, 0.5, 0.9, 0.12), darkMat);
-        seat.position.set(0, 0.78, -0.5);
+        seat.position.set(0, 0.95, -0.5);
         this.chassis.add(seat);
 
-        const torso = mesh(roundedBox(0.7, 0.7, 0.6, 0.16), toonMat(COLORS.helmet));
-        torso.position.set(0, 1.15, -0.45);
+        const torso = mesh(roundedBox(0.72, 0.72, 0.62, 0.16), toonMat(COLORS.helmet));
+        torso.position.set(0, 1.32, -0.45);
         this.chassis.add(torso);
 
         const head = mesh(new THREE.SphereGeometry(0.32, 16, 12), toonMat(COLORS.driver));
-        head.position.set(0, 1.62, -0.35);
+        head.position.set(0, 1.78, -0.35);
         this.chassis.add(head);
 
         const helmet = mesh(new THREE.SphereGeometry(0.36, 16, 12, 0, Math.PI * 2, 0, Math.PI * 0.62), toonMat(COLORS.helmet));
-        helmet.position.set(0, 1.66, -0.35);
+        helmet.position.set(0, 1.82, -0.35);
         this.chassis.add(helmet);
 
         // steering wheel
         const wheelHub = mesh(new THREE.TorusGeometry(0.22, 0.05, 8, 16), darkMat);
-        wheelHub.position.set(0, 1.05, 0.25);
+        wheelHub.position.set(0, 1.2, 0.35);
         wheelHub.rotation.x = Math.PI * 0.34;
         this.chassis.add(wheelHub);
 
         // rear spoiler
-        const wing = mesh(roundedBox(1.6, 0.12, 0.45, 0.05), accentMat);
-        wing.position.set(0, 1.05, -1.35);
+        const wing = mesh(roundedBox(1.65, 0.14, 0.5, 0.05), accentMat);
+        wing.position.set(0, 1.25, -1.5);
         this.chassis.add(wing);
-        for (const sx of [-0.6, 0.6]) {
-            const strut = mesh(new THREE.BoxGeometry(0.1, 0.5, 0.1), darkMat);
-            strut.position.set(sx, 0.82, -1.32);
+        for (const sx of [-0.62, 0.62]) {
+            const strut = mesh(new THREE.BoxGeometry(0.1, 0.55, 0.1), darkMat);
+            strut.position.set(sx, 0.98, -1.47);
             this.chassis.add(strut);
         }
 
@@ -78,12 +83,12 @@ export class KartView {
         for (const sx of [-0.4, 0.4]) {
             const pipe = mesh(new THREE.CylinderGeometry(0.09, 0.11, 0.5, 10), darkMat);
             pipe.rotation.x = Math.PI / 2;
-            pipe.position.set(sx, 0.7, -1.55);
+            pipe.position.set(sx, 0.72, -1.62);
             this.chassis.add(pipe);
 
             const flame = mesh(new THREE.ConeGeometry(0.16, 0.7, 10), new THREE.MeshBasicMaterial({ color: 0xfff1a8 }));
             flame.rotation.x = -Math.PI / 2;
-            flame.position.set(sx, 0.7, -1.95);
+            flame.position.set(sx, 0.72, -2.02);
             flame.visible = false;
             this.chassis.add(flame);
             this.flames.push(flame);
@@ -91,19 +96,20 @@ export class KartView {
 
         // antenna with ball
         const ant = mesh(new THREE.CylinderGeometry(0.02, 0.02, 0.7, 6), darkMat);
-        ant.position.set(0.5, 1.2, -0.9);
+        ant.position.set(0.52, 1.4, -0.9);
         this.chassis.add(ant);
         const ball = mesh(new THREE.SphereGeometry(0.09, 10, 8), toonMat(COLORS.kartBody2));
-        ball.position.set(0.5, 1.55, -0.9);
+        ball.position.set(0.52, 1.78, -0.9);
         this.chassis.add(ball);
 
-        // wheels (front pair steer; all spin)
-        this.frontL = makeWheel(); this.frontR = makeWheel();
-        this.rearL = makeWheel(0.52); this.rearR = makeWheel(0.52);
-        this.frontL.pivot.position.set(-0.92, 0.46, 1.05);
-        this.frontR.pivot.position.set(0.92, 0.46, 1.05);
-        this.rearL.pivot.position.set(-0.98, 0.52, -1.05);
-        this.rearR.pivot.position.set(0.98, 0.52, -1.05);
+        // wheels (front pair steer; all spin). Pivot y == radius so they sit
+        // exactly on the ground.
+        this.frontL = makeWheel(0.55); this.frontR = makeWheel(0.55);
+        this.rearL = makeWheel(0.62); this.rearR = makeWheel(0.62);
+        this.frontL.pivot.position.set(-0.98, 0.55, 1.15);
+        this.frontR.pivot.position.set(0.98, 0.55, 1.15);
+        this.rearL.pivot.position.set(-1.02, 0.62, -1.15);
+        this.rearR.pivot.position.set(1.02, 0.62, -1.15);
         for (const w of [this.frontL, this.frontR, this.rearL, this.rearR]) this.bob.add(w.pivot);
 
         // shadow casters

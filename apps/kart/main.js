@@ -26,7 +26,7 @@ import { TUNING as T } from './config.js';
 
 const STEP = 1 / 60;
 const MAX_BOOST_BONUS = Math.max(...T.boostStageBonus);
-const SLIP_REF = 12;            // lateral speed that reads as "full slide" (visual only)
+const SLIP_REF = 15;            // lateral speed that reads as "full slide" (visual only)
 const SPEED_DISPLAY_SCALE = 3;  // raw units/s -> punchier HUD number (display only)
 
 function showFatal(msg) {
@@ -267,6 +267,7 @@ function frame(now) {
         kartView.update(r, dt);
         effects.update(dt, r);
         chase.update(r, r.boost, dt);
+        stage.setSunFocus(r.x, r.z);
 
         // camera shake: continuous on boost + a kick on each charge stage-up
         if (game.curr.driftStage > game.lastStage) game.shake = T.camShakeStageUp;
