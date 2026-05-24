@@ -4,6 +4,7 @@
 
 import * as THREE from 'three';
 import { COLORS, VISUALS } from '../config.js';
+import { heightAt } from '../simulation/terrain.js';
 import { toonMat } from './materials.js';
 
 export function buildProps(track) {
@@ -41,7 +42,7 @@ function trees(track) {
         l1.position.y = 2.4; t.add(l1);
         const l2 = new THREE.Mesh(leafGeoB, leafMatB);
         l2.position.y = 3.6; t.add(l2);
-        t.position.set(x, 0, z);
+        t.position.set(x, heightAt(x, z), z);
         t.scale.setScalar(scale);
         t.rotation.y = Math.random() * Math.PI;
         g.add(t);
@@ -58,7 +59,8 @@ function hills() {
         const r = 200 + Math.random() * 80;
         const rad = 26 + Math.random() * 30;
         const hill = new THREE.Mesh(new THREE.SphereGeometry(rad, 16, 10), mat);
-        hill.position.set(Math.cos(a) * r, -rad * 0.45, Math.sin(a) * r);
+        const hx = Math.cos(a) * r, hz = Math.sin(a) * r;
+        hill.position.set(hx, heightAt(hx, hz) - rad * 0.45, hz);
         hill.scale.y = 0.5;
         g.add(hill);
     }

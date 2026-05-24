@@ -20,15 +20,15 @@ export class ChaseCamera {
         const fx = Math.sin(r.heading), fz = Math.cos(r.heading);
         const dist = T.camDistance + T.camBoostPullback * boost;
 
-        // desired camera position: behind + above the kart
+        // desired camera position: behind + above the kart (track its height)
         const dx = r.x - fx * dist;
         const dz = r.z - fz * dist;
-        const dy = T.camHeight;
+        const dy = r.y + T.camHeight;
 
         // desired look target: ahead of and slightly above the kart
         const lx = r.x + fx * T.camLookAhead;
         const lz = r.z + fz * T.camLookAhead;
-        const ly = T.camLookHeight;
+        const ly = r.y + T.camLookHeight;
 
         if (!this._init) {
             this._pos.set(dx, dy, dz);
