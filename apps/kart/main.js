@@ -217,12 +217,14 @@ function interpolated(alpha) {
     const boost = clamp((c.forwardSpeed - T.topSpeed) / (MAX_BOOST_BONUS || 1), 0, 1);
     return {
         x: p.x + (c.x - p.x) * alpha,
+        y: p.y + (c.y - p.y) * alpha,
         z: p.z + (c.z - p.z) * alpha,
         heading: angleLerp(p.heading, c.heading, alpha),
         slip: clamp(vLat / SLIP_REF, -1, 1),
         steer: c.steer,
         speed: c.forwardSpeed,
         drifting: c.drifting,
+        airborne: c.airborne,
         boost,
         driftStage: c.driftStage,
         boostStage: c.boostStage,
@@ -267,7 +269,7 @@ function frame(now) {
         kartView.update(r, dt);
         effects.update(dt, r);
         chase.update(r, r.boost, dt);
-        stage.setSunFocus(r.x, r.z);
+        stage.setSunFocus(r.x, r.y, r.z);
 
         // camera shake: continuous on boost + a kick on each charge stage-up
         if (game.curr.driftStage > game.lastStage) game.shake = T.camShakeStageUp;

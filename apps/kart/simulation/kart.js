@@ -11,6 +11,9 @@
 //   heading       yaw, radians (forward = (sin h, cos h))
 //   vx, vz        world-space velocity
 //   forwardSpeed  signed speed along heading (cached for HUD/render/feel)
+//   y             height above the world plane (follows the terrain)
+//   vy            vertical velocity (for ramps / jumps / falling)
+//   airborne      bool (off the ground after launching off a crest)
 //   steer         smoothed steer actually applied (-1..1)
 //   drifting      bool
 //   driftDir      -1 / +1 committed drift direction
@@ -21,6 +24,7 @@
 //   onTrack       bool (last surface test)
 
 import { TUNING as T } from '../config.js';
+import { heightAt, gradientAt } from './terrain.js';
 
 export function createKartState(pose) {
     return {
@@ -30,6 +34,9 @@ export function createKartState(pose) {
         vx: 0,
         vz: 0,
         forwardSpeed: 0,
+        y: heightAt(pose.x, pose.z),
+        vy: 0,
+        airborne: false,
         grip: T.normalGrip,   // eased toward target grip for smooth drift onset
         steer: 0,
         drifting: false,
@@ -68,13 +75,15 @@ export function stepKart(prev, input, dt, track) {
     // ---- surface + boost bookkeeping ----
     const onTrack = track.isOnTrack(s.x, s.z);
     s.onTrack = onTrack;
+    const grounded = !s.airborne;
+    const slopeGrad = gradientAt(s.x, s.z);        // slope at the pre-move position (drives slope-speed)
     if (s.boostTimer > 0) s.boostTimer = Math.max(0, s.boostTimer - dt);
     const boosting = s.boostTimer > 0;
 
-    // ---- drift state machine ----
+    // ---- drift state machine (can only start a drift while on the ground) ----
     const wantDrift = input.drift && input.accelerate;
     if (!s.drifting) {
-        if (wantDrift && vForward > T.driftMinSpeed && Math.abs(s.steer) > T.driftSteerThreshold) {
+        if (grounded && wantDrift && vForward > T.driftMinSpeed && Math.abs(s.steer) > T.driftSteerThreshold) {
             s.drifting = true;
             s.driftDir = s.steer >= 0 ? 1 : -1;
             s.driftCharge = 0;
@@ -105,7 +114,11 @@ export function stepKart(prev, input, dt, track) {
         : 0;
     let target = T.topSpeed + boostBonus;
     let accelRate;
-    if (onTrack) {
+    if (!grounded) {
+        // airborne: no tire force, just a wisp of air drag
+        target = vForward;
+        accelRate = 0;
+    } else if (onTrack) {
         if (input.accelerate) {
             accelRate = vForward < target ? T.accel : T.engineBrake;
         } else if (input.brake) {
@@ -122,13 +135,21 @@ export function stepKart(prev, input, dt, track) {
     }
     vForward += (target - vForward) * Math.min(1, accelRate * dt);
 
-    // ---- lateral grip (low while drifting / on grass = slide) ----
+    // ---- slope affects speed: gravity bleeds speed uphill, adds it downhill ----
+    if (grounded) {
+        const alongSlope = slopeGrad.gx * fx + slopeGrad.gz * fz; // >0 climbing, <0 descending
+        vForward -= T.slopeAccel * alongSlope * dt;
+    }
+
+    // ---- lateral grip (low while drifting / on grass = slide; none in the air) ----
     // Ease the effective grip toward its target so starting/ending a drift slides
     // in gradually instead of snapping the kart sideways.
-    let gripTarget = s.drifting ? T.driftGrip : T.normalGrip;
-    if (!onTrack) gripTarget = Math.min(gripTarget, T.offTrackGrip);
-    s.grip += (gripTarget - s.grip) * Math.min(1, T.gripEase * dt);
-    vLateral += (0 - vLateral) * Math.min(1, s.grip * dt);
+    if (grounded) {
+        let gripTarget = s.drifting ? T.driftGrip : T.normalGrip;
+        if (!onTrack) gripTarget = Math.min(gripTarget, T.offTrackGrip);
+        s.grip += (gripTarget - s.grip) * Math.min(1, T.gripEase * dt);
+        vLateral += (0 - vLateral) * Math.min(1, s.grip * dt);
+    }
 
     // ---- recompose world velocity (still using current heading) ----
     s.vx = vForward * fx + vLateral * rx;
@@ -139,6 +160,7 @@ export function stepKart(prev, input, dt, track) {
     const speedFrac = clamp(Math.abs(vForward) / T.topSpeed, 0, 1);
     let authority = clamp(speedFrac * T.steerSpeedGain, 0, 1);
     authority *= 1 - T.turnTopSpeedFalloff * speedFrac; // shave twitch at the very top
+    if (!grounded) authority *= T.airSteer;             // little control in the air
     let yawRate;
     if (s.drifting) {
         // additive control: gentle base pull in the drift direction + your steer.
@@ -175,6 +197,42 @@ export function stepKart(prev, input, dt, track) {
         // refresh cached forward speed after the correction
         s.forwardSpeed = s.vx * fx + s.vz * fz;
     }
+
+    // ---- vertical dynamics over the terrain (2.5D) ----
+    // Grounded: stick to the surface, but if the ground drops away faster than we
+    // can fall, launch (crest of a hill at speed). Airborne: ballistic fall under
+    // gravity until we meet the ground again.
+    const groundY = heightAt(s.x, s.z);
+    const vertGrad = gradientAt(s.x, s.z);         // slope at the finalised position (drives launch/stick)
+    if (s.airborne) {
+        s.vy -= T.gravity * dt;
+        s.y += s.vy * dt;
+        if (s.y <= groundY) {
+            // landing
+            if (s.vy < -T.hardLandSpeed) {
+                const hit = Math.min(1, (-s.vy - T.hardLandSpeed) / T.hardLandSpeed);
+                const scrub = 1 - (1 - T.landScrub) * hit;
+                s.vx *= scrub; s.vz *= scrub; // hard landings scrub speed
+            }
+            s.y = groundY;
+            s.airborne = false;
+            s.vy = 0;
+        }
+    } else {
+        const vGround = vertGrad.gx * s.vx + vertGrad.gz * s.vz; // ground's vertical rate along path
+        s.vy -= T.gravity * dt;
+        const yBallistic = s.y + s.vy * dt;
+        if (yBallistic > groundY + 0.05) {
+            // crest: ground fell away faster than we drop -> we're airborne
+            s.airborne = true;
+            s.y = yBallistic;
+        } else {
+            // stay glued to the surface, matching its rise/fall
+            s.y = groundY;
+            s.vy = vGround;
+        }
+    }
+    s.forwardSpeed = s.vx * fx + s.vz * fz;
 
     return s;
 }

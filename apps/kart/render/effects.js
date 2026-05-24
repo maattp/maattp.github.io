@@ -9,6 +9,7 @@
 
 import * as THREE from 'three';
 import { COLORS, VISUALS } from '../config.js';
+import { heightAt } from '../simulation/terrain.js';
 
 export class Effects {
     constructor(scene) {
@@ -48,7 +49,7 @@ export class Effects {
             if (fx.driftStage > 0) tint.lerp(new THREE.Color(COLORS.driftStage[fx.driftStage - 1]), 0.55);
             for (const side of [-1, 1]) {
                 const p = rear(side);
-                if (Math.random() < 0.9) this.smoke.spawn(p.x, 0.25, p.z, tint, 0.6 + Math.random() * 0.5, 1.1 + fx.driftStage * 0.3);
+                if (Math.random() < 0.9) this.smoke.spawn(p.x, fx.y + 0.25, p.z, tint, 0.6 + Math.random() * 0.5, 1.1 + fx.driftStage * 0.3);
             }
             // lay skid marks every fixed distance travelled
             this._skidDist += (fx.speed || 0) * dt;
@@ -66,7 +67,7 @@ export class Effects {
             const c = new THREE.Color(COLORS.driftStage[fx.driftStage - 1]);
             for (const side of [-1, 1]) {
                 const p = rear(side);
-                for (let i = 0; i < 10; i++) this.sparks.spawn(p.x, 0.4, p.z, c, 0.35, 0.5, 7);
+                for (let i = 0; i < 10; i++) this.sparks.spawn(p.x, fx.y + 0.4, p.z, c, 0.35, 0.5, 7);
             }
         }
         this._prevStage = fx.driftStage;
@@ -75,7 +76,7 @@ export class Effects {
         if (fx.boost > 0.1 && Math.random() < fx.boost) {
             const c = new THREE.Color(COLORS.driftStage[Math.max(0, fx.boostStage - 1)]);
             const ex = { x: fx.x + fwdX * -1.7, z: fx.z + fwdZ * -1.7 };
-            this.sparks.spawn(ex.x, 0.6, ex.z, c, 0.3, 0.45, 5);
+            this.sparks.spawn(ex.x, fx.y + 0.6, ex.z, c, 0.3, 0.45, 5);
         }
 
         this.smoke.update(dt);
@@ -184,7 +185,6 @@ function makeSkid() {
         color: 0x1a1a1f, transparent: true, opacity: 0.34, depthWrite: false,
     });
     const inst = new THREE.InstancedMesh(geo, mat, max);
-    inst.position.y = 0.03;
     inst.frustumCulled = false;
     const dummy = new THREE.Object3D();
     // hide all initially
@@ -196,7 +196,7 @@ function makeSkid() {
     return {
         mesh: inst,
         drop(x, z, heading) {
-            dummy.position.set(x, 0, z);
+            dummy.position.set(x, heightAt(x, z) + 0.06, z);
             dummy.rotation.set(0, heading, 0);
             dummy.scale.setScalar(1);
             dummy.updateMatrix();

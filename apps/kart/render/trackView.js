@@ -1,11 +1,14 @@
-// Builds the visible track from the sim's sampled centerline: asphalt ribbon,
-// striped red/white kerbs, a dashed centre line, a checkered start stripe with
-// a START / FINISH banner arch, and traffic cones along the edges. Geometry
-// only — built once, no per-frame work.
+// Builds the visible track from the sim's sampled centerline, draped over the
+// terrain heightfield so the asphalt, kerbs, walls, banner and cones follow the
+// hills. Geometry only — built once, no per-frame work.
 
 import * as THREE from 'three';
 import { COLORS, VISUALS } from '../config.js';
+import { heightAt } from '../simulation/terrain.js';
 import { toonMat } from './materials.js';
+
+// small vertical offsets so layers stack cleanly on the terrain
+const Y_ROAD = 0.06, Y_KERB = 0.10, Y_EDGE = 0.14, Y_DASH = 0.16, Y_START = 0.18;
 
 export function buildTrackView(track) {
     const group = new THREE.Group();
@@ -16,7 +19,8 @@ export function buildTrackView(track) {
     const indices = [];
     for (let i = 0; i < n; i++) {
         const l = track.leftEdge[i], r = track.rightEdge[i];
-        positions.push(l.x, 0, l.z, r.x, 0, r.z);
+        positions.push(l.x, heightAt(l.x, l.z) + Y_ROAD, l.z,
+                       r.x, heightAt(r.x, r.z) + Y_ROAD, r.z);
     }
     for (let i = 0; i < n; i++) {
         const ni = (i + 1) % n;
@@ -31,8 +35,8 @@ export function buildTrackView(track) {
     group.add(road);
 
     // ---- kerbs (striped red/white strips just outside each edge) ----
-    group.add(kerb(track.leftEdge, track.samples, 0.9));
-    group.add(kerb(track.rightEdge, track.samples, 0.9));
+    group.add(kerb(track.leftEdge, track.samples));
+    group.add(kerb(track.rightEdge, track.samples));
 
     // ---- white edge lines + dashed centre line ----
     group.add(edgeLine(track.leftEdge, track.samples));
@@ -52,9 +56,6 @@ export function buildTrackView(track) {
     return group;
 }
 
-// Vertical barrier ribbons standing at the wall radius on both sides of the
-// track. The simulation enforces the same radius, so these read as the thing
-// keeping you on course. Striped red/white like crash barriers.
 function walls(track) {
     const g = new THREE.Group();
     const n = track.samples.length;
@@ -68,7 +69,8 @@ function walls(track) {
             const s = track.samples[i], t = track.tangents[i];
             const nx = t.z * sign, nz = -t.x * sign;      // outward normal for this side
             const bx = s.x + nx * wallR, bz = s.z + nz * wallR;
-            pos.push(bx, 0, bz, bx, height, bz);
+            const by = heightAt(bx, bz);
+            pos.push(bx, by, bz, bx, by + height, bz);
             const c = (i % 2) ? red : white;
             col.push(c.r, c.g, c.b, c.r, c.g, c.b);
         }
@@ -88,9 +90,9 @@ function walls(track) {
     return g;
 }
 
-// Striped kerb strip running from the edge outward, vertex-coloured red/white.
-function kerb(edge, center, width) {
+function kerb(edge, center) {
     const n = edge.length;
+    const width = 0.9;
     const pos = [], idx = [], col = [];
     const red = new THREE.Color(COLORS.kerbRed);
     const white = new THREE.Color(COLORS.kerbWhite);
@@ -98,7 +100,8 @@ function kerb(edge, center, width) {
         const ex = edge[i].x, ez = edge[i].z;
         let ox = ex - center[i].x, oz = ez - center[i].z; // outward
         const ol = Math.hypot(ox, oz) || 1e-6; ox /= ol; oz /= ol;
-        pos.push(ex, 0, ez, ex + ox * width, 0, ez + oz * width);
+        const ax = ex, az = ez, bx = ex + ox * width, bz = ez + oz * width;
+        pos.push(ax, heightAt(ax, az) + Y_KERB, az, bx, heightAt(bx, bz) + Y_KERB, bz);
         const c = (i % 2) ? red : white;
         col.push(c.r, c.g, c.b, c.r, c.g, c.b);
     }
@@ -112,7 +115,6 @@ function kerb(edge, center, width) {
     g.setIndex(idx);
     g.computeVertexNormals();
     const m = new THREE.Mesh(g, toonMat(0xffffff, { vertexColors: true }));
-    m.position.y = 0.015;
     m.receiveShadow = true;
     return m;
 }
@@ -126,7 +128,8 @@ function edgeLine(edge, center) {
         let dx = center[i].x - ex, dz = center[i].z - ez;
         const dl = Math.hypot(dx, dz) || 1e-6; dx /= dl; dz /= dl;
         const px = ex + dx * inset, pz = ez + dz * inset;
-        pos.push(px, 0, pz, px + dx * width, 0, pz + dz * width);
+        const qx = px + dx * width, qz = pz + dz * width;
+        pos.push(px, heightAt(px, pz) + Y_EDGE, pz, qx, heightAt(qx, qz) + Y_EDGE, qz);
     }
     for (let i = 0; i < n; i++) {
         const ni = (i + 1) % n;
@@ -136,21 +139,19 @@ function edgeLine(edge, center) {
     g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
     g.setIndex(idx);
     g.computeVertexNormals();
-    const m = new THREE.Mesh(g, new THREE.MeshBasicMaterial({ color: COLORS.trackEdge }));
-    m.position.y = 0.025;
-    return m;
+    return new THREE.Mesh(g, new THREE.MeshBasicMaterial({ color: COLORS.trackEdge }));
 }
 
 function centerDashes(track) {
     const g = new THREE.Group();
     const n = track.samples.length;
     const mat = new THREE.MeshBasicMaterial({ color: COLORS.centerLine });
-    const dashGeo = new THREE.PlaneGeometry(0.35, 2.2);
+    const dashGeo = new THREE.PlaneGeometry(0.4, 2.6);
     dashGeo.rotateX(-Math.PI / 2);
     for (let i = 4; i < n; i += 4) {
         const s = track.samples[i], t = track.tangents[i];
         const d = new THREE.Mesh(dashGeo, mat);
-        d.position.set(s.x, 0.03, s.z);
+        d.position.set(s.x, heightAt(s.x, s.z) + Y_DASH, s.z);
         d.rotation.y = Math.atan2(t.x, t.z);
         g.add(d);
     }
@@ -159,10 +160,10 @@ function centerDashes(track) {
 
 function startStripe(track) {
     const s = track.samples[0], t = track.tangents[0];
-    const geo = new THREE.PlaneGeometry(track.halfWidth * 2, 2.4);
+    const geo = new THREE.PlaneGeometry(track.halfWidth * 2, 2.6);
     geo.rotateX(-Math.PI / 2);
     const stripe = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({ map: checkerTexture() }));
-    stripe.position.set(s.x, 0.035, s.z);
+    stripe.position.set(s.x, heightAt(s.x, s.z) + Y_START, s.z);
     stripe.rotation.y = Math.atan2(t.x, t.z);
     return stripe;
 }
@@ -173,12 +174,13 @@ function startBanner(track) {
     const yaw = Math.atan2(t.x, t.z);
     const span = track.halfWidth * 2 + 1.6;
     const postMat = toonMat(COLORS.bannerPost);
+    const rx = Math.cos(yaw), rz = -Math.sin(yaw);
+    const postH = 5.2;
 
     for (const side of [-1, 1]) {
-        const post = new THREE.Mesh(new THREE.CylinderGeometry(0.25, 0.25, 5.2, 12), postMat);
-        // offset sideways along the track's lateral (right) vector
-        const rx = Math.cos(yaw), rz = -Math.sin(yaw);
-        post.position.set(s.x + rx * side * span / 2, 2.6, s.z + rz * side * span / 2);
+        const bx = s.x + rx * side * span / 2, bz = s.z + rz * side * span / 2;
+        const post = new THREE.Mesh(new THREE.CylinderGeometry(0.25, 0.25, postH, 12), postMat);
+        post.position.set(bx, heightAt(bx, bz) + postH / 2, bz);
         post.castShadow = true;
         g.add(post);
     }
@@ -187,7 +189,7 @@ function startBanner(track) {
         new THREE.BoxGeometry(span, 1.3, 0.2),
         new THREE.MeshBasicMaterial({ map: bannerTexture() })
     );
-    banner.position.set(s.x, 5.0, s.z);
+    banner.position.set(s.x, heightAt(s.x, s.z) + postH - 0.2, s.z);
     banner.rotation.y = yaw;
     g.add(banner);
     return g;
@@ -200,11 +202,12 @@ function cones(track) {
     const coneGeo = new THREE.ConeGeometry(0.28, 0.8, 12);
     const mat = toonMat(COLORS.cone);
     for (let i = 0; i < n; i += step) {
-        for (const [edge, sign] of [[track.leftEdge, 1], [track.rightEdge, 1]]) {
+        for (const edge of [track.leftEdge, track.rightEdge]) {
             let ox = edge[i].x - track.samples[i].x, oz = edge[i].z - track.samples[i].z;
             const ol = Math.hypot(ox, oz) || 1e-6; ox /= ol; oz /= ol;
+            const cx = edge[i].x + ox * 1.4, cz = edge[i].z + oz * 1.4;
             const c = new THREE.Mesh(coneGeo, mat);
-            c.position.set(edge[i].x + ox * 1.4 * sign, 0.4, edge[i].z + oz * 1.4 * sign);
+            c.position.set(cx, heightAt(cx, cz) + 0.4, cz);
             c.castShadow = true;
             g.add(c);
         }
@@ -236,7 +239,6 @@ function bannerTexture() {
     c.width = w; c.height = h;
     const ctx = c.getContext('2d');
     ctx.fillStyle = '#2a2f3a'; ctx.fillRect(0, 0, w, h);
-    // checker trim top/bottom
     const cs = 16;
     for (let x = 0; x < w / cs; x++) {
         ctx.fillStyle = x % 2 ? '#fff' : '#111';

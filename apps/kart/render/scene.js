@@ -3,7 +3,8 @@
 // win), and a striped mown-lawn ground. Pure presentation — never mutates sim.
 
 import * as THREE from 'three';
-import { COLORS } from '../config.js';
+import { COLORS, TERRAIN } from '../config.js';
+import { heightAt } from '../simulation/terrain.js';
 import { toonMat } from './materials.js';
 
 export class Stage {
@@ -87,18 +88,28 @@ export class Stage {
         this._sunOffset = sun.position.clone();
     }
 
-    // Keep the shadow frustum centred on the kart.
-    setSunFocus(x, z) {
-        this.sun.target.position.set(x, 0, z);
-        this.sun.position.set(x + this._sunOffset.x, this._sunOffset.y, z + this._sunOffset.z);
+    // Keep the shadow frustum centred on the kart (including its height on hills).
+    setSunFocus(x, y, z) {
+        this.sun.target.position.set(x, y, z);
+        this.sun.position.set(x + this._sunOffset.x, y + this._sunOffset.y, z + this._sunOffset.z);
     }
 
     _addGround() {
-        const geo = new THREE.PlaneGeometry(1400, 1400);
+        // Displaced terrain mesh: a grid whose vertices are lifted by heightAt so
+        // the ground matches the simulation's heightfield exactly.
+        const size = TERRAIN.extent * 2;
+        const seg = Math.max(8, Math.round(size / TERRAIN.meshStep));
+        const geo = new THREE.PlaneGeometry(size, size, seg, seg);
         geo.rotateX(-Math.PI / 2);
+        const pos = geo.attributes.position;
+        for (let i = 0; i < pos.count; i++) {
+            const x = pos.getX(i), z = pos.getZ(i);
+            pos.setY(i, heightAt(x, z) - 0.05);
+        }
+        pos.needsUpdate = true;
+        geo.computeVertexNormals();
         const mat = toonMat(0xffffff, { map: stripedLawn() });
         this.ground = new THREE.Mesh(geo, mat);
-        this.ground.position.y = -0.02;
         this.ground.receiveShadow = true;
         this.scene.add(this.ground);
     }

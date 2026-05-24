@@ -7,17 +7,24 @@
 import * as THREE from 'three';
 import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
 import { COLORS, TUNING as T } from '../config.js';
+import { gradientAt } from '../simulation/terrain.js';
 import { toonMat } from './materials.js';
 
 export class KartView {
     constructor() {
         this.group = new THREE.Group();
 
-        this.bob = new THREE.Group();          // hop + squash
-        this.group.add(this.bob);
+        this.tilt = new THREE.Group();         // pitch/roll to the terrain slope
+        this.group.add(this.tilt);
 
-        this.chassis = new THREE.Group();      // roll/lean
+        this.bob = new THREE.Group();          // hop + squash
+        this.tilt.add(this.bob);
+
+        this.chassis = new THREE.Group();      // roll/lean (drift)
         this.bob.add(this.chassis);
+
+        this._pitch = 0;
+        this._roll = 0;
 
         const bodyMat = toonMat(COLORS.kartBody);
         const accentMat = toonMat(COLORS.kartBody2);
@@ -133,8 +140,20 @@ export class KartView {
 
     // r: interpolated render state. dt: real seconds since last frame.
     update(r, dt) {
-        this.group.position.set(r.x, 0, r.z);
+        this.group.position.set(r.x, r.y, r.z);
         this.group.rotation.y = r.heading;
+
+        // pitch/roll the kart to match the terrain slope (level out in the air)
+        const g = gradientAt(r.x, r.z);
+        const fx = Math.sin(r.heading), fz = Math.cos(r.heading);
+        const rxv = Math.cos(r.heading), rzv = -Math.sin(r.heading);
+        const pitchTarget = r.airborne ? 0 : -Math.atan(g.gx * fx + g.gz * fz);
+        const rollTarget = r.airborne ? 0 : Math.atan(g.gx * rxv + g.gz * rzv);
+        const k = Math.min(1, dt * 8);
+        this._pitch += (pitchTarget - this._pitch) * k;
+        this._roll += (rollTarget - this._roll) * k;
+        this.tilt.rotation.x = this._pitch;
+        this.tilt.rotation.z = this._roll;
 
         // drift hop on the rising edge of a drift
         if (r.drifting && !this._wasDrifting) this._hopT = 0.32;

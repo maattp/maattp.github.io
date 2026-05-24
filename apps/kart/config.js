@@ -69,6 +69,13 @@ export const TUNING = {
     wallBounce: 0.0,         // 0 = pure slide along wall (smooth), higher = bounce off it
     wallScrub: 0.96,         // speed retained on wall contact (lower = more punishing)
 
+    // ---------------------------------------------------------------- terrain / vertical (2.5D)
+    gravity: 30,             // downward acceleration (units/s^2)
+    slopeAccel: 24,          // how strongly up/down slopes bleed/add forward speed
+    airSteer: 0.35,          // fraction of normal steering authority while airborne
+    hardLandSpeed: 14,       // downward speed above which a landing scrubs speed
+    landScrub: 0.8,          // forward speed retained on the hardest landing
+
     // ---------------------------------------------------------------- camera
     camDistance: 8.6,        // how far behind the kart the camera sits
     camHeight: 4.0,          // camera height above the ground
@@ -100,18 +107,36 @@ export const TUNING = {
 export const TRACK = {
     halfWidth: 12,           // drivable road half-width (24u wide -> ~4 karts abreast)
     wallHalfWidth: 14.5,     // hard wall: ~2.5u of grass runoff outside the road, then a barrier
-    // [x, z] control points, traversed in order. Closed loop. This curve was
-    // validated offline to be free of self-overlap (min self-distance ~91u) while
-    // featuring one tight corner (turn radius ~21u, comfortably clear of the wall
-    // radius), several medium corners, and long sweepers — so drift pays off
-    // differently around the lap. ~657u long. Start/finish on the straightest part.
+    // [x, z] control points, traversed in order. Closed loop. Validated offline to
+    // be free of self-overlap (min self-distance ~137u) with the tightest corner
+    // (turn radius ~32u) well clear of the wall radius. ~985u long — a big, flowing
+    // circuit. It drapes over the terrain heightfield (see TERRAIN), so corners and
+    // straights gain real elevation. Start/finish on the straightest part.
     controlPoints: [
-        [-46.7, 58.6], [-78.8, 38], [-108.3, 0], [-105.2, -50.7],
-        [-63.5, -79.6], [-15.7, -69], [10, -43.7], [27.2, -34.1],
-        [63.2, -30.4], [108.3, 0], [120.9, 58.2], [83, 104.1],
-        [24.4, 107], [-18.7, 81.8],
+        [-70.1, 87.9], [-118.2, 57], [-162.4, 0], [-157.8, -76.1],
+        [-95.3, -119.4], [-23.5, -103.5], [15, -65.6], [40.8, -51.2],
+        [94.8, -45.6], [162.4, 0], [181.4, 87.3], [124.5, 156.1],
+        [36.6, 160.5], [-28, 122.7],
     ],
     samplesPerSegment: 26,   // spline resolution for the on-track test + mesh
+};
+
+// Terrain heightfield (y = height(x,z)). Low-frequency waves give rolling hills;
+// Gaussian bumps add local hills / ramps. Validated so slopes along the track stay
+// drivable (max along-track ~13deg) while giving ~19u of elevation across the lap.
+// Single-valued by design (no bridges/overlaps — that's Level 3, out of scope).
+export const TERRAIN = {
+    waves: [
+        { a: 7,   fx: 0.013, fz: 0.015, px: 0.5, pz: 1.2 },
+        { a: 4,   fx: 0.024, fz: 0.020, px: 2.1, pz: 0.3 },
+        { a: 2,   fx: 0.041, fz: 0.038, px: 0.0, pz: 2.0 },
+    ],
+    bumps: [
+        { x: 90,   z: -70,  a: 8, s: 24 },   // hill beside a corner
+        { x: -150, z: 120,  a: 6, s: 30 },   // scenery rise off-track
+    ],
+    extent: 520,             // half-size of the rendered terrain mesh (covers the map)
+    meshStep: 8,             // terrain mesh vertex spacing (smaller = finer = heavier)
 };
 
 export const COLORS = {
