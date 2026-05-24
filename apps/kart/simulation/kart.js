@@ -30,6 +30,7 @@ export function createKartState(pose) {
         vx: 0,
         vz: 0,
         forwardSpeed: 0,
+        grip: T.normalGrip,   // eased toward target grip for smooth drift onset
         steer: 0,
         drifting: false,
         driftDir: 0,
@@ -122,9 +123,12 @@ export function stepKart(prev, input, dt, track) {
     vForward += (target - vForward) * Math.min(1, accelRate * dt);
 
     // ---- lateral grip (low while drifting / on grass = slide) ----
-    let grip = s.drifting ? T.driftGrip : T.normalGrip;
-    if (!onTrack) grip = Math.min(grip, T.offTrackGrip);
-    vLateral += (0 - vLateral) * Math.min(1, grip * dt);
+    // Ease the effective grip toward its target so starting/ending a drift slides
+    // in gradually instead of snapping the kart sideways.
+    let gripTarget = s.drifting ? T.driftGrip : T.normalGrip;
+    if (!onTrack) gripTarget = Math.min(gripTarget, T.offTrackGrip);
+    s.grip += (gripTarget - s.grip) * Math.min(1, T.gripEase * dt);
+    vLateral += (0 - vLateral) * Math.min(1, s.grip * dt);
 
     // ---- recompose world velocity (still using current heading) ----
     s.vx = vForward * fx + vLateral * rx;
@@ -152,8 +156,11 @@ export function stepKart(prev, input, dt, track) {
     s.x += s.vx * dt;
     s.z += s.vz * dt;
 
-    // ---- wall constraint: keep the kart inside the barrier and slide along it ----
-    const conf = track.confine(s.x, s.z, track.wallHalfWidth);
+    // ---- wall constraint: keep the kart's BODY (not just its centre) inside the
+    // barrier and slide along it. Constraining the centre to wall - kartRadius
+    // stops the body edge from clipping through, and projecting out only the
+    // into-wall velocity component gives a smooth slide instead of a bounce. ----
+    const conf = track.confine(s.x, s.z, track.wallHalfWidth - T.kartRadius);
     if (conf.hit) {
         s.x = conf.x;
         s.z = conf.z;
