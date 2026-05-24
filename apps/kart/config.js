@@ -36,19 +36,19 @@ export const TUNING = {
     // carve a wide arc. The effective grip eases toward its target (gripEase) so
     // engaging/releasing a drift doesn't snap the kart sideways.
     normalGrip: 9.0,
-    driftGrip: 4.2,          // higher than before = a gentler, more controllable slide
+    driftGrip: 5.2,          // higher = a gentle, controllable slide (less throw-off)
     gripEase: 7.0,           // how fast grip transitions (lower = smoother onset)
 
     // ---------------------------------------------------------------- drift
     driftMinSpeed: 11,        // must be going at least this fast to start a drift
     driftSteerThreshold: 0.16,// must be turning at least this hard to start a drift
-    // While drifting, yaw rate = baseTurnRate * (a multiplier between min and max,
-    // chosen by how hard the player steers INTO the drift). Countersteering widens
-    // the arc (min); steering hard inward tightens it (max). Kept at/below 1 so a
-    // drift never snaps the kart around faster than a normal hard turn — it's a
-    // controlled slide, not a spin.
-    driftYawMin: 0.7,
-    driftYawMax: 0.98,
+    // Drift yaw is ADDITIVE so you stay in control: a gentle base pull in the
+    // drift direction, plus your raw steering on top. Steering into the drift
+    // tightens it; countersteering subtracts and can hold a line or straighten you
+    // right out of the drift. The total is kept at/below a normal hard turn, so a
+    // drift never snaps the kart around — it's a controllable slide, not a spin.
+    driftBaseYaw: 0.30,        // base turn in the drift direction (gentle)
+    driftSteerAuthority: 0.60, // how much raw steer (-1..1) adds/subtracts on top
     // Seconds of continuous drift needed to reach each charge stage.
     // [stage1 (blue), stage2 (orange), stage3 (purple)]
     driftStageTimes: [0.55, 1.30, 2.20],

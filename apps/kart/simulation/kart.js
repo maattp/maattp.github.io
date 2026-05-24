@@ -141,10 +141,11 @@ export function stepKart(prev, input, dt, track) {
     authority *= 1 - T.turnTopSpeedFalloff * speedFrac; // shave twitch at the very top
     let yawRate;
     if (s.drifting) {
-        // committed arc: steering INTO the drift tightens it, countersteer widens it
-        const inward = clamp(s.steer * s.driftDir, -1, 1); // 1 = hard into drift
-        const mult = T.driftYawMin + (T.driftYawMax - T.driftYawMin) * (inward + 1) * 0.5;
-        yawRate = s.driftDir * T.maxTurnRate * authority * mult;
+        // additive control: gentle base pull in the drift direction + your steer.
+        // countersteering subtracts, so you can tighten, hold a line, or straighten
+        // out — clamped to a normal hard turn so it never spins you.
+        const mult = clamp(s.driftDir * T.driftBaseYaw + s.steer * T.driftSteerAuthority, -1, 1);
+        yawRate = mult * T.maxTurnRate * authority;
     } else {
         yawRate = s.steer * T.maxTurnRate * authority;
     }
