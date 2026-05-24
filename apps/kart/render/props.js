@@ -1,6 +1,5 @@
-// Static set dressing: chunky cartoon trees, distant rolling hills, and floating
-// clouds. Scattered once at build time and never touched again. Trees avoid the
-// drivable surface; hills sit far out in the fog for depth.
+// Static set dressing: chunky cartoon trees and floating clouds. Scattered once
+// at build time and never touched again. Trees avoid the drivable surface.
 
 import * as THREE from 'three';
 import { COLORS, VISUALS } from '../config.js';
@@ -10,7 +9,6 @@ import { toonMat } from './materials.js';
 export function buildProps(track) {
     const group = new THREE.Group();
     group.add(trees(track));
-    group.add(hills());
     group.add(clouds());
     return group;
 }
@@ -47,22 +45,6 @@ function trees(track) {
         t.rotation.y = Math.random() * Math.PI;
         g.add(t);
         placed++;
-    }
-    return g;
-}
-
-function hills() {
-    const g = new THREE.Group();
-    const mat = toonMat(COLORS.hill);
-    for (let i = 0; i < VISUALS.hills; i++) {
-        const a = (i / VISUALS.hills) * Math.PI * 2 + Math.random() * 0.3;
-        const r = 200 + Math.random() * 80;
-        const rad = 26 + Math.random() * 30;
-        const hill = new THREE.Mesh(new THREE.SphereGeometry(rad, 16, 10), mat);
-        const hx = Math.cos(a) * r, hz = Math.sin(a) * r;
-        hill.position.set(hx, heightAt(hx, hz) - rad * 0.45, hz);
-        hill.scale.y = 0.5;
-        g.add(hill);
     }
     return g;
 }

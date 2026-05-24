@@ -166,7 +166,6 @@ export const COLORS = {
     treeLeaf: 0x47b04a,
     treeLeaf2: 0x5fc95f,
     cloud: 0xffffff,
-    hill: 0x7fd06a,
     driftStage: [0x39d0ff, 0xff9f1c, 0xb06bff], // blue, orange, purple sparks/glow
 };
 
@@ -174,7 +173,6 @@ export const COLORS = {
 export const VISUALS = {
     trees: 64,
     clouds: 16,
-    hills: 11,
     conesPerSide: 32,        // pylons spaced along each track edge
     smokeMax: 90,            // drift smoke particle pool
     skidMax: 160,            // skid-mark quad pool
