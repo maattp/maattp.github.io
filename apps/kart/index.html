@@ -1,0 +1,271 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="theme-color" content="#1a1a2e">
+    <link rel="apple-touch-icon" href="../icon.png">
+    <title>Kart</title>
+    <style>
+        html, body {
+            margin: 0; padding: 0; width: 100%; height: 100%;
+            overflow: hidden; background: #1a1a2e; color: #f4f8ff;
+            font-family: 'Helvetica Neue', -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+            -webkit-tap-highlight-color: transparent;
+            -webkit-user-select: none; user-select: none;
+            touch-action: none; overscroll-behavior: none;
+        }
+        canvas {
+            display: block; position: fixed; inset: 0;
+            width: 100vw; height: 100vh;
+        }
+
+        #ui {
+            position: fixed; inset: 0; z-index: 5; pointer-events: none;
+            padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
+        }
+
+        /* ---- top HUD bar ---- */
+        #hud {
+            position: absolute;
+            top: calc(env(safe-area-inset-top) + 10px);
+            left: calc(env(safe-area-inset-left) + 14px);
+            right: calc(env(safe-area-inset-right) + 14px);
+            display: flex; justify-content: space-between; align-items: flex-start;
+            opacity: 0; transition: opacity 0.3s ease;
+        }
+        #hud.live { opacity: 1; }
+        .hud-box {
+            background: rgba(10, 12, 24, 0.5);
+            border-radius: 10px; padding: 6px 12px; min-width: 70px;
+            text-align: center; backdrop-filter: blur(4px);
+        }
+        .hud-label {
+            font-size: 10px; letter-spacing: 2px; text-transform: uppercase;
+            opacity: 0.6; margin-bottom: 2px;
+        }
+        .hud-big {
+            font-size: 24px; font-weight: 800; line-height: 1;
+            font-variant-numeric: tabular-nums;
+        }
+
+        /* ---- drift charge meter ---- */
+        #drift-wrap {
+            position: absolute;
+            top: calc(env(safe-area-inset-top) + 64px);
+            left: 50%; transform: translateX(-50%);
+            width: 180px; height: 8px; border-radius: 5px;
+            background: rgba(10, 12, 24, 0.5); overflow: hidden;
+            opacity: 0; transition: opacity 0.3s ease, box-shadow 0.15s ease;
+        }
+        #hud.live ~ #drift-wrap, #drift-wrap.live { opacity: 1; }
+        #drift-fill {
+            height: 100%; width: 0%; border-radius: 5px; background: #7fa8c9;
+            transition: width 0.08s linear, background 0.15s ease;
+        }
+
+        /* ---- countdown ---- */
+        #countdown {
+            position: absolute; inset: 0;
+            display: flex; align-items: center; justify-content: center;
+            font-size: 120px; font-weight: 900; color: #fff;
+            text-shadow: 0 0 30px rgba(0,0,0,0.6);
+            animation: pop 0.4s ease;
+        }
+        #countdown.hidden { display: none; }
+        @keyframes pop {
+            0% { transform: scale(0.4); opacity: 0; }
+            40% { transform: scale(1.15); opacity: 1; }
+            100% { transform: scale(1); opacity: 1; }
+        }
+
+        /* ---- touch controls ---- */
+        #touch { position: absolute; inset: 0; pointer-events: none; }
+        #steer-zone {
+            position: absolute; left: 0; bottom: 0;
+            width: 42%; height: 60%;
+            pointer-events: auto;
+            display: flex; align-items: flex-end; justify-content: center;
+            padding-bottom: calc(env(safe-area-inset-bottom) + 18px);
+        }
+        .steer-hint {
+            font-size: 13px; letter-spacing: 3px; opacity: 0.35;
+            text-transform: uppercase;
+        }
+        #btn-cluster {
+            position: absolute;
+            right: calc(env(safe-area-inset-right) + 22px);
+            bottom: calc(env(safe-area-inset-bottom) + 22px);
+            display: flex; align-items: flex-end; gap: 14px;
+        }
+        .ctl-btn {
+            pointer-events: auto;
+            display: flex; align-items: center; justify-content: center;
+            border-radius: 50%;
+            font-size: 13px; font-weight: 800; letter-spacing: 1px;
+            text-transform: uppercase;
+            background: rgba(20, 24, 44, 0.55);
+            border: 2px solid rgba(255,255,255,0.25);
+            backdrop-filter: blur(4px);
+            transition: transform 0.06s ease, background 0.06s ease;
+            width: 78px; height: 78px;
+        }
+        .ctl-btn.accel {
+            width: 104px; height: 104px;
+            background: rgba(46, 204, 64, 0.35);
+            border-color: rgba(46, 204, 64, 0.7);
+        }
+        .ctl-btn.small { width: 66px; height: 66px; font-size: 11px; }
+        #btn-drift {
+            background: rgba(57, 208, 255, 0.32);
+            border-color: rgba(57, 208, 255, 0.7);
+        }
+        .ctl-btn.pressed { transform: scale(0.9); background: rgba(255,255,255,0.45); }
+
+        /* ---- panels ---- */
+        .panel {
+            position: absolute; inset: 0; pointer-events: auto;
+            display: flex; flex-direction: column; align-items: center; justify-content: center;
+            text-align: center; gap: 6px; padding: 24px;
+            background: radial-gradient(ellipse at center, rgba(26,26,46,0.5) 0%, rgba(15,15,30,0.9) 80%);
+        }
+        .panel.hidden { display: none; }
+        .title {
+            font-size: 76px; font-weight: 900; letter-spacing: 12px; margin: 0 0 0 12px;
+            background: linear-gradient(180deg, #fff 0%, #6db3ff 60%, #c471ed 100%);
+            -webkit-background-clip: text; background-clip: text; color: transparent;
+            filter: drop-shadow(0 0 16px rgba(86,180,255,0.5));
+        }
+        .subtitle {
+            font-size: 12px; letter-spacing: 4px; text-transform: uppercase; opacity: 0.7;
+        }
+        .cta {
+            margin-top: 24px; font-size: 16px; font-weight: 700; letter-spacing: 3px;
+            text-transform: uppercase; color: #f4f8ff;
+            border: 1.5px solid rgba(57,208,255,0.7); border-radius: 999px;
+            padding: 13px 32px; box-shadow: 0 0 16px rgba(57,208,255,0.4);
+            animation: pulse 1.8s ease-in-out infinite;
+        }
+        @keyframes pulse {
+            0%,100% { box-shadow: 0 0 12px rgba(57,208,255,0.35); }
+            50% { box-shadow: 0 0 24px rgba(57,208,255,0.7); }
+        }
+        .hint {
+            font-size: 12px; line-height: 1.7; letter-spacing: 1px; opacity: 0.6;
+            max-width: 340px; margin-top: 22px;
+        }
+        .results-title {
+            font-size: 34px; font-weight: 900; letter-spacing: 8px; color: #39d0ff;
+            text-shadow: 0 0 16px rgba(57,208,255,0.6); margin-bottom: 10px;
+        }
+        #results-body {
+            display: flex; flex-direction: column; gap: 6px;
+            font-variant-numeric: tabular-nums; min-width: 220px;
+        }
+        .result-row {
+            display: flex; justify-content: space-between; gap: 30px;
+            font-size: 17px; padding: 4px 0; opacity: 0.85;
+        }
+        .result-row.best { color: #2ecc40; opacity: 1; }
+        .result-row.total {
+            border-top: 1px solid rgba(255,255,255,0.2); margin-top: 6px;
+            padding-top: 10px; font-weight: 800; font-size: 20px; opacity: 1;
+        }
+
+        /* ---- rotate-to-landscape overlay ---- */
+        #rotate {
+            position: fixed; inset: 0; z-index: 30; display: none;
+            align-items: center; justify-content: center; text-align: center;
+            background: #1a1a2e; font-size: 18px; letter-spacing: 2px; padding: 30px;
+        }
+        @media (orientation: portrait) {
+            #rotate { display: flex; }
+        }
+
+        /* hide touch controls where there's a real pointer (desktop dev) */
+        @media (hover: hover) and (pointer: fine) {
+            #touch { display: none; }
+        }
+
+        #err {
+            position: fixed; top: 0; left: 0; right: 0; z-index: 40;
+            padding: env(safe-area-inset-top, 12px) 16px 16px;
+            font: 13px/1.4 -apple-system, monospace; color: #ff8aa8;
+            background: rgba(8,4,12,0.92); border-bottom: 1px solid #5a1240;
+            white-space: pre-wrap; display: none;
+        }
+    </style>
+    <!-- importmap polyfill for iOS Safari < 16.4 -->
+    <script async src="https://ga.jspm.io/npm:es-module-shims@1.10.0/dist/es-module-shims.js"></script>
+    <script type="importmap">
+    {
+        "imports": {
+            "three": "https://unpkg.com/three@0.161.0/build/three.module.js",
+            "three/addons/": "https://unpkg.com/three@0.161.0/examples/jsm/"
+        }
+    }
+    </script>
+</head>
+<body>
+    <canvas id="game"></canvas>
+
+    <div id="ui">
+        <!-- top HUD -->
+        <div id="hud">
+            <div class="hud-box"><div class="hud-label">Speed</div><div id="speed-val" class="hud-big">0</div></div>
+            <div class="hud-box"><div class="hud-label">Lap</div><div id="lap-val" class="hud-big">1/3</div></div>
+            <div class="hud-box"><div class="hud-label">Time</div><div id="laptime-val" class="hud-big">0:00.000</div></div>
+        </div>
+
+        <div id="drift-wrap"><div id="drift-fill"></div></div>
+
+        <div id="countdown" class="hidden">3</div>
+
+        <!-- touch controls -->
+        <div id="touch">
+            <div id="steer-zone"><span class="steer-hint">&#9664; steer &#9654;</span></div>
+            <div id="btn-cluster">
+                <div id="btn-brake" class="ctl-btn small">Brake</div>
+                <div id="btn-drift" class="ctl-btn">Drift</div>
+                <div id="btn-accel" class="ctl-btn accel">Gas</div>
+            </div>
+        </div>
+
+        <!-- start screen -->
+        <div id="screen-start" class="panel">
+            <h1 class="title">KART</h1>
+            <div class="subtitle">milestone 1 &middot; driving feel</div>
+            <div class="cta" id="btn-start">Tap to start</div>
+            <div class="hint" id="start-hint">
+                Hold <b>Gas</b>, steer with your left thumb, and hold <b>Drift</b>
+                while turning to charge a boost &mdash; release for a speed burst.<br>
+                Desktop: arrows / WASD to drive, <b>Space</b> to drift.
+            </div>
+        </div>
+
+        <!-- results -->
+        <div id="screen-results" class="panel hidden">
+            <div class="results-title">FINISH</div>
+            <div id="results-body"></div>
+            <div class="cta" id="btn-restart">Race again</div>
+        </div>
+    </div>
+
+    <div id="rotate">Rotate your device to landscape to race &#128260;</div>
+    <div id="err"></div>
+
+    <script type="module" src="./main.js"></script>
+    <script>
+        // Surface load-time errors before main.js installs its own handler.
+        window.addEventListener('error', function (ev) {
+            var el = document.getElementById('err');
+            if (!el) return;
+            el.style.display = 'block';
+            el.textContent = 'kart error: ' + (ev.message || ev.error || 'unknown')
+                + '\nat ' + (ev.filename || '?') + ':' + (ev.lineno || '?');
+        }, true);
+    </script>
+</body>
+</html>
