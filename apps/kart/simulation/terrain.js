@@ -35,11 +35,3 @@ export function gradientAt(x, z) {
     }
     return { gx, gz };
 }
-
-// Unit surface normal (y-up). Useful for orienting meshes to the slope.
-export function normalAt(x, z) {
-    const { gx, gz } = gradientAt(x, z);
-    const nx = -gx, ny = 1, nz = -gz;
-    const l = Math.hypot(nx, ny, nz) || 1;
-    return { x: nx / l, y: ny / l, z: nz / l };
-}

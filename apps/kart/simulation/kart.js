@@ -76,7 +76,7 @@ export function stepKart(prev, input, dt, track) {
     const onTrack = track.isOnTrack(s.x, s.z);
     s.onTrack = onTrack;
     const grounded = !s.airborne;
-    const grad = gradientAt(s.x, s.z);             // terrain slope at current position
+    const slopeGrad = gradientAt(s.x, s.z);        // slope at the pre-move position (drives slope-speed)
     if (s.boostTimer > 0) s.boostTimer = Math.max(0, s.boostTimer - dt);
     const boosting = s.boostTimer > 0;
 
@@ -137,7 +137,7 @@ export function stepKart(prev, input, dt, track) {
 
     // ---- slope affects speed: gravity bleeds speed uphill, adds it downhill ----
     if (grounded) {
-        const alongSlope = grad.gx * fx + grad.gz * fz; // >0 climbing, <0 descending
+        const alongSlope = slopeGrad.gx * fx + slopeGrad.gz * fz; // >0 climbing, <0 descending
         vForward -= T.slopeAccel * alongSlope * dt;
     }
 
@@ -203,7 +203,7 @@ export function stepKart(prev, input, dt, track) {
     // can fall, launch (crest of a hill at speed). Airborne: ballistic fall under
     // gravity until we meet the ground again.
     const groundY = heightAt(s.x, s.z);
-    const grad2 = gradientAt(s.x, s.z);
+    const vertGrad = gradientAt(s.x, s.z);         // slope at the finalised position (drives launch/stick)
     if (s.airborne) {
         s.vy -= T.gravity * dt;
         s.y += s.vy * dt;
@@ -219,7 +219,7 @@ export function stepKart(prev, input, dt, track) {
             s.vy = 0;
         }
     } else {
-        const vGround = grad2.gx * s.vx + grad2.gz * s.vz; // ground's vertical rate along path
+        const vGround = vertGrad.gx * s.vx + vertGrad.gz * s.vz; // ground's vertical rate along path
         s.vy -= T.gravity * dt;
         const yBallistic = s.y + s.vy * dt;
         if (yBallistic > groundY + 0.05) {
