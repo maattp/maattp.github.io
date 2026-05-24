@@ -191,6 +191,9 @@ function finishRace() {
 const NEUTRAL = { steer: 0, accelerate: false, brake: false, drift: false };
 
 function simStep() {
+    // Held at the start line until GO: don't advance physics during READY/COUNTDOWN
+    // so the kart can't roll down the slope before the race begins.
+    if (game.state !== STATE.RACING && game.state !== STATE.FINISHED) return;
     const cmd = game.state === STATE.RACING ? input.sample() : NEUTRAL;
     game.prev = game.curr;
     game.curr = stepKart(game.curr, cmd, STEP, track);

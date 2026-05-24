@@ -104,7 +104,10 @@ export class Stage {
         const pos = geo.attributes.position;
         for (let i = 0; i < pos.count; i++) {
             const x = pos.getX(i), z = pos.getZ(i);
-            pos.setY(i, heightAt(x, z) - 0.05);
+            // sit the background terrain slightly below the true surface so the
+            // draped road/verge always cover it and the coarse mesh can't poke
+            // through near the walls
+            pos.setY(i, heightAt(x, z) - 0.18);
         }
         pos.needsUpdate = true;
         geo.computeVertexNormals();
