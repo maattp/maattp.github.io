@@ -5,13 +5,13 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no, viewport-fit=cover">
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-    <meta name="theme-color" content="#1a1a2e">
+    <meta name="theme-color" content="#3f9bff">
     <link rel="apple-touch-icon" href="../icon.png">
     <title>Kart</title>
     <style>
         html, body {
             margin: 0; padding: 0; width: 100%; height: 100%;
-            overflow: hidden; background: #1a1a2e; color: #f4f8ff;
+            overflow: hidden; background: #bfe6ff; color: #f4f8ff;
             font-family: 'Helvetica Neue', -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
             -webkit-tap-highlight-color: transparent;
             -webkit-user-select: none; user-select: none;
@@ -112,17 +112,14 @@
             transition: transform 0.06s ease, background 0.06s ease;
             width: 78px; height: 78px;
         }
-        .ctl-btn.accel {
-            width: 104px; height: 104px;
-            background: rgba(46, 204, 64, 0.35);
-            border-color: rgba(46, 204, 64, 0.7);
-        }
-        .ctl-btn.small { width: 66px; height: 66px; font-size: 11px; }
+        .ctl-btn.big { width: 120px; height: 120px; font-size: 16px; }
+        .ctl-btn.small { width: 70px; height: 70px; font-size: 11px; }
         #btn-drift {
-            background: rgba(57, 208, 255, 0.32);
-            border-color: rgba(57, 208, 255, 0.7);
+            background: rgba(57, 208, 255, 0.4);
+            border-color: rgba(57, 208, 255, 0.85);
+            box-shadow: 0 0 16px rgba(57,208,255,0.4);
         }
-        .ctl-btn.pressed { transform: scale(0.9); background: rgba(255,255,255,0.45); }
+        .ctl-btn.pressed { transform: scale(0.9); background: rgba(255,255,255,0.5); }
 
         /* ---- panels ---- */
         .panel {
@@ -178,7 +175,8 @@
         #rotate {
             position: fixed; inset: 0; z-index: 30; display: none;
             align-items: center; justify-content: center; text-align: center;
-            background: #1a1a2e; font-size: 18px; letter-spacing: 2px; padding: 30px;
+            background: linear-gradient(180deg, #3f9bff, #cdecff); color: #14324f;
+            font-size: 18px; font-weight: 700; letter-spacing: 2px; padding: 30px;
         }
         @media (orientation: portrait) {
             #rotate { display: flex; }
@@ -228,8 +226,7 @@
             <div id="steer-zone"><span class="steer-hint">&#9664; steer &#9654;</span></div>
             <div id="btn-cluster">
                 <div id="btn-brake" class="ctl-btn small">Brake</div>
-                <div id="btn-drift" class="ctl-btn">Drift</div>
-                <div id="btn-accel" class="ctl-btn accel">Gas</div>
+                <div id="btn-drift" class="ctl-btn big">Drift</div>
             </div>
         </div>
 
@@ -239,9 +236,11 @@
             <div class="subtitle">milestone 1 &middot; driving feel</div>
             <div class="cta" id="btn-start">Tap to start</div>
             <div class="hint" id="start-hint">
-                Hold <b>Gas</b>, steer with your left thumb, and hold <b>Drift</b>
-                while turning to charge a boost &mdash; release for a speed burst.<br>
-                Desktop: arrows / WASD to drive, <b>Space</b> to drift.
+                You auto-drive &mdash; steer with your <b>left thumb</b> and hold
+                <b>Drift</b> through a corner to charge a boost, then release for a
+                speed burst. Tap <b>Brake</b> to slow.<br>
+                Desktop: &larr;&rarr; / A&nbsp;D to steer, <b>Space</b> to drift,
+                <b>S</b> to brake.
             </div>
         </div>
 

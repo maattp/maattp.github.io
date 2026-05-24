@@ -11,6 +11,11 @@ const STEER_TRAVEL = 70; // px of horizontal drag from touch-down for full lock
 
 export class Input {
     constructor(els) {
+        // Auto-accelerate: the kart always drives forward unless braking. This is
+        // the standard mobile-kart control because it frees the right thumb to
+        // drift — you can't hold a gas button AND a drift button with one thumb.
+        this.autoAccel = true;
+
         // touch state
         this._touchSteer = 0;
         this._steerId = null;
@@ -82,16 +87,18 @@ export class Input {
     // Device-agnostic snapshot handed to the simulation.
     sample() {
         let steer = this._touchSteer;
-        let accelerate = this._accel;
-        let brake = this._brake;
-        let drift = this._drift;
+        let brake = this._brake || this._keyBrake;
+        let drift = this._drift || this._keyDrift;
 
-        // keyboard overlays (so desktop testing works even with touch els present)
+        // keyboard steer overlays (so desktop testing works with touch els present)
         if (this._keyLeft) steer = -1;
         if (this._keyRight) steer = 1;
-        if (this._keyAccel) accelerate = true;
-        if (this._keyBrake) brake = true;
-        if (this._keyDrift) drift = true;
+
+        // auto-accelerate unless braking; a held gas button/key can still force it
+        let accelerate;
+        if (this.autoAccel) accelerate = !brake;
+        else accelerate = this._accel || this._keyAccel;
+        if (this._accel || this._keyAccel) accelerate = true;
 
         if (Math.abs(steer) < 0.04) steer = 0; // tiny deadzone
         return { steer, accelerate, brake, drift };
