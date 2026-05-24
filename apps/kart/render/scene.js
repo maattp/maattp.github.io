@@ -1,11 +1,10 @@
-// Renderer + scene + sky + lights + ground. Bright cartoon look: a gradient sky
-// dome, a warm sun that casts soft shadows (the single biggest "this looks real"
-// win), and a striped mown-lawn ground. Pure presentation — never mutates sim.
+// Renderer + scene + sky + lights. Bright cartoon look: a gradient sky dome and
+// a warm sun that casts soft shadows. The drivable track (draped on the terrain
+// heightfield) provides the ground; there's no surrounding background terrain.
+// Pure presentation — never mutates sim.
 
 import * as THREE from 'three';
-import { COLORS, TERRAIN } from '../config.js';
-import { heightAt } from '../simulation/terrain.js';
-import { toonMat } from './materials.js';
+import { COLORS } from '../config.js';
 
 export class Stage {
     constructor(canvas, tier) {
@@ -27,7 +26,6 @@ export class Stage {
 
         this._addSky();
         this._addLights(tier);
-        this._addGround();
     }
 
     _addSky() {
@@ -94,29 +92,6 @@ export class Stage {
         this.sun.position.set(x + this._sunOffset.x, y + this._sunOffset.y, z + this._sunOffset.z);
     }
 
-    _addGround() {
-        // Displaced terrain mesh: a grid whose vertices are lifted by heightAt so
-        // the ground matches the simulation's heightfield exactly.
-        const size = TERRAIN.extent * 2;
-        const seg = Math.max(8, Math.round(size / TERRAIN.meshStep));
-        const geo = new THREE.PlaneGeometry(size, size, seg, seg);
-        geo.rotateX(-Math.PI / 2);
-        const pos = geo.attributes.position;
-        for (let i = 0; i < pos.count; i++) {
-            const x = pos.getX(i), z = pos.getZ(i);
-            // sit the background terrain slightly below the true surface so the
-            // draped road/verge always cover it and the coarse mesh can't poke
-            // through near the walls
-            pos.setY(i, heightAt(x, z) - 0.18);
-        }
-        pos.needsUpdate = true;
-        geo.computeVertexNormals();
-        const mat = toonMat(0xffffff, { map: stripedLawn() });
-        this.ground = new THREE.Mesh(geo, mat);
-        this.ground.receiveShadow = true;
-        this.scene.add(this.ground);
-    }
-
     setSize(w, h) {
         this.renderer.setSize(w, h, false);
         this.camera.aspect = w / h;
@@ -129,24 +104,4 @@ export class Stage {
             this.camera.updateProjectionMatrix();
         }
     }
-}
-
-// Canvas texture of alternating green stripes -> mown-lawn / golf-course look.
-function stripedLawn() {
-    const size = 256;
-    const c = document.createElement('canvas');
-    c.width = c.height = size;
-    const ctx = c.getContext('2d');
-    const a = '#' + COLORS.grass.toString(16).padStart(6, '0');
-    const b = '#' + COLORS.grassDark.toString(16).padStart(6, '0');
-    for (let i = 0; i < 8; i++) {
-        ctx.fillStyle = i % 2 ? a : b;
-        ctx.fillRect(0, (i / 8) * size, size, size / 8);
-    }
-    const tex = new THREE.CanvasTexture(c);
-    tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
-    tex.repeat.set(60, 60);
-    tex.colorSpace = THREE.SRGBColorSpace;
-    tex.anisotropy = 4;
-    return tex;
 }

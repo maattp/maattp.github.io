@@ -133,10 +133,8 @@ export const TERRAIN = {
     ],
     bumps: [
         { x: 90,   z: -70,  a: 8, s: 24 },   // hill beside a corner
-        { x: -150, z: 120,  a: 6, s: 30 },   // scenery rise off-track
+        { x: -150, z: 120,  a: 6, s: 30 },   // off-track rise
     ],
-    extent: 520,             // half-size of the rendered terrain mesh (covers the map)
-    meshStep: 8,             // terrain mesh vertex spacing (smaller = finer = heavier)
 };
 
 export const COLORS = {
@@ -144,8 +142,7 @@ export const COLORS = {
     skyBottom: 0xcdecff,     // horizon
     fog: 0xd2ecff,
     sun: 0xfff4dc,
-    grass: 0x67c24f,         // bright cartoon lawn
-    grassDark: 0x57b341,     // mown stripe
+    grass: 0x67c24f,         // bright cartoon lawn (track verge)
     track: 0x565b6b,         // asphalt
     trackEdge: 0xf4f4f8,
     kerbRed: 0xe8473f,
@@ -162,19 +159,13 @@ export const COLORS = {
     wheel: 0x1b1b22,
     hubcap: 0xe6e6ec,
     cone: 0xff7a1e,
-    treeTrunk: 0x8a5a2b,
-    treeLeaf: 0x47b04a,
-    treeLeaf2: 0x5fc95f,
     cloud: 0xffffff,
-    hill: 0x7fd06a,
     driftStage: [0x39d0ff, 0xff9f1c, 0xb06bff], // blue, orange, purple sparks/glow
 };
 
-// Counts / sizes for set dressing and effects. Bumped down on mobile by the tier.
+// Counts / sizes for set dressing and effects.
 export const VISUALS = {
-    trees: 64,
     clouds: 16,
-    hills: 11,
     conesPerSide: 32,        // pylons spaced along each track edge
     smokeMax: 90,            // drift smoke particle pool
     skidMax: 160,            // skid-mark quad pool

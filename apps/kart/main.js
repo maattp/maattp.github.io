@@ -60,7 +60,7 @@ try {
     track = createTrack();
     stage = new Stage(canvas, tier);
     stage.scene.add(buildTrackView(track));
-    stage.scene.add(buildProps(track));
+    stage.scene.add(buildProps());
     kartView = new KartView();
     stage.scene.add(kartView.group);
     effects = new Effects(stage.scene);
