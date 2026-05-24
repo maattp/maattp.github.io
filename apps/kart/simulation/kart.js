@@ -152,6 +152,22 @@ export function stepKart(prev, input, dt, track) {
     s.x += s.vx * dt;
     s.z += s.vz * dt;
 
+    // ---- wall constraint: keep the kart inside the barrier and slide along it ----
+    const conf = track.confine(s.x, s.z, track.wallHalfWidth);
+    if (conf.hit) {
+        s.x = conf.x;
+        s.z = conf.z;
+        const vOut = s.vx * conf.nx + s.vz * conf.nz; // velocity into the wall
+        if (vOut > 0) {
+            s.vx -= conf.nx * vOut * (1 + T.wallBounce);
+            s.vz -= conf.nz * vOut * (1 + T.wallBounce);
+            s.vx *= T.wallScrub;  // scrub a little speed on contact
+            s.vz *= T.wallScrub;
+        }
+        // refresh cached forward speed after the correction
+        s.forwardSpeed = s.vx * fx + s.vz * fz;
+    }
+
     return s;
 }
 

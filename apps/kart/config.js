@@ -15,7 +15,7 @@ export const TUNING = {
     // Exponential eases: `vForward += (target - vForward) * rate * dt`. A higher
     // rate snaps harder. This doubles as the acceleration curve (fast off the
     // line, tapering as you approach top speed) and the boost bleed-off.
-    topSpeed: 34,            // normal forward top speed (units/s)
+    topSpeed: 42,            // normal forward top speed (units/s)
     accel: 2.4,              // ramp-up rate toward target while accelerating
     engineBrake: 1.7,        // ramp-down rate when above target (how boost bleeds off)
     brakeStrength: 3.6,      // ramp rate toward 0 / reverse while braking
@@ -52,19 +52,23 @@ export const TUNING = {
     // ---------------------------------------------------------------- boost
     // Indexed by the highest stage reached when drift is released (0 = released
     // before stage 1 -> nothing). Boost adds a decaying bonus on top of topSpeed.
-    boostStageBonus: [0, 8, 13, 19],     // extra units/s above top speed
+    boostStageBonus: [0, 10, 16, 24],    // extra units/s above top speed
     boostStageDuration: [0, 0.75, 1.15, 1.6], // seconds the bonus takes to decay to 0
 
     // ---------------------------------------------------------------- off-track
-    offTrackMaxSpeed: 14,    // hard speed ceiling on the grass
+    offTrackMaxSpeed: 16,    // hard speed ceiling on the grass runoff
     offTrackDrag: 4.5,       // strong decel toward the ceiling when off-track
     offTrackGrip: 5.5,       // grass is a little loose underfoot
 
+    // ---------------------------------------------------------------- walls
+    wallBounce: 0.15,        // 0 = slide along wall, higher = bounce off it
+    wallScrub: 0.92,         // speed retained on wall contact (lower = more punishing)
+
     // ---------------------------------------------------------------- camera
-    camDistance: 7.4,        // how far behind the kart the camera sits
-    camHeight: 3.3,          // camera height above the ground
-    camLookAhead: 7.0,       // look target distance ahead of the kart
-    camLookHeight: 0.9,      // look slightly down toward the kart
+    camDistance: 8.6,        // how far behind the kart the camera sits
+    camHeight: 4.0,          // camera height above the ground
+    camLookAhead: 9.0,       // look target distance ahead of the kart
+    camLookHeight: 1.0,      // look slightly down toward the kart
     camFollowLag: 6.5,       // position follow rate (higher = tighter, less lag)
     camFovBase: 72,
     camFovBoost: 82,         // FOV widens on boost to sell speed
@@ -89,17 +93,18 @@ export const TUNING = {
 // sweepers so drift pays off. Kept here (not in render) because the simulation
 // needs the same geometry for the on-track test and lap progress.
 export const TRACK = {
-    halfWidth: 6.5,
+    halfWidth: 12,           // drivable road half-width (24u wide -> ~4 karts abreast)
+    wallHalfWidth: 14.5,     // hard wall: ~2.5u of grass runoff outside the road, then a barrier
     // [x, z] control points, traversed in order. Closed loop. This curve was
-    // validated offline to be free of self-overlap (min self-distance ~52u) while
-    // featuring one tight corner (turn radius ~12u), several medium corners, and
-    // long sweepers — so drift pays off differently around the lap. Start/finish
-    // sits on the straightest section.
+    // validated offline to be free of self-overlap (min self-distance ~91u) while
+    // featuring one tight corner (turn radius ~21u, comfortably clear of the wall
+    // radius), several medium corners, and long sweepers — so drift pays off
+    // differently around the lap. ~657u long. Start/finish on the straightest part.
     controlPoints: [
-        [-29.1, 36.5], [-47.5, 22.9], [-63.1, 0], [-60, -28.9],
-        [-35.7, -44.8], [-8.8, -38.4], [5.5, -24.3], [15.4, -19.4],
-        [36.6, -17.6], [63.1, 0], [71, 34.2], [49.4, 61.9],
-        [14.8, 65], [-11.6, 50.9],
+        [-46.7, 58.6], [-78.8, 38], [-108.3, 0], [-105.2, -50.7],
+        [-63.5, -79.6], [-15.7, -69], [10, -43.7], [27.2, -34.1],
+        [63.2, -30.4], [108.3, 0], [120.9, 58.2], [83, 104.1],
+        [24.4, 107], [-18.7, 81.8],
     ],
     samplesPerSegment: 26,   // spline resolution for the on-track test + mesh
 };
@@ -137,11 +142,11 @@ export const COLORS = {
 
 // Counts / sizes for set dressing and effects. Bumped down on mobile by the tier.
 export const VISUALS = {
-    trees: 46,
-    clouds: 14,
-    hills: 9,
-    conesPerSide: 26,        // pylons spaced along each track edge
+    trees: 64,
+    clouds: 16,
+    hills: 11,
+    conesPerSide: 32,        // pylons spaced along each track edge
     smokeMax: 90,            // drift smoke particle pool
-    skidMax: 140,            // skid-mark quad pool
+    skidMax: 160,            // skid-mark quad pool
     sparkMax: 60,            // boost / stage-up spark pool
 };

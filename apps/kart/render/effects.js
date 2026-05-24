@@ -38,8 +38,8 @@ export class Effects {
         const rgtX = Math.cos(fx.heading), rgtZ = -Math.sin(fx.heading);
         // rear-wheel world positions
         const rear = (side) => ({
-            x: fx.x + rgtX * side * 0.98 + fwdX * -1.05,
-            z: fx.z + rgtZ * side * 0.98 + fwdZ * -1.05,
+            x: fx.x + rgtX * side * 1.02 + fwdX * -1.15,
+            z: fx.z + rgtZ * side * 1.02 + fwdZ * -1.15,
         });
 
         // ---- drift smoke + skid ----
