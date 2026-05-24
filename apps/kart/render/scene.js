@@ -1,9 +1,10 @@
-// Renderer + scene + lights + ground plane. Pure presentation: it reads the
-// simulation's state but never changes it. Keeping all Three.js behind render/*
-// means the simulation stays portable.
+// Renderer + scene + sky + lights + ground. Bright cartoon look: a gradient sky
+// dome, a warm sun that casts soft shadows (the single biggest "this looks real"
+// win), and a striped mown-lawn ground. Pure presentation — never mutates sim.
 
 import * as THREE from 'three';
 import { COLORS } from '../config.js';
+import { toonMat } from './materials.js';
 
 export class Stage {
     constructor(canvas, tier) {
@@ -14,27 +15,81 @@ export class Stage {
         });
         this.renderer.setPixelRatio(tier.pixelRatio);
         this.renderer.outputColorSpace = THREE.SRGBColorSpace;
-        this.renderer.shadowMap.enabled = false;
+        this.renderer.shadowMap.enabled = true;
+        this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 
         this.scene = new THREE.Scene();
-        this.scene.background = new THREE.Color(COLORS.sky);
-        this.scene.fog = new THREE.Fog(COLORS.fog, 90, 320);
+        this.scene.fog = new THREE.Fog(COLORS.fog, 130, 380);
 
-        this.camera = new THREE.PerspectiveCamera(72, 1, 0.1, 600);
+        this.camera = new THREE.PerspectiveCamera(72, 1, 0.1, 1000);
         this.camera.position.set(0, 6, -10);
 
-        // lighting — flat and bright; art doesn't matter this milestone
-        this.scene.add(new THREE.HemisphereLight(0xffffff, 0x4a6a3a, 1.0));
-        const sun = new THREE.DirectionalLight(0xffffff, 1.1);
-        sun.position.set(40, 80, 30);
-        this.scene.add(sun);
+        this._addSky();
+        this._addLights(tier);
+        this._addGround();
+    }
 
-        // ground (grass) — large plane under everything
-        const groundGeo = new THREE.PlaneGeometry(1200, 1200);
-        groundGeo.rotateX(-Math.PI / 2);
-        const groundMat = new THREE.MeshLambertMaterial({ color: COLORS.grass });
-        this.ground = new THREE.Mesh(groundGeo, groundMat);
+    _addSky() {
+        const geo = new THREE.SphereGeometry(480, 32, 16);
+        const mat = new THREE.ShaderMaterial({
+            side: THREE.BackSide,
+            depthWrite: false,
+            fog: false,
+            uniforms: {
+                top: { value: new THREE.Color(COLORS.skyTop) },
+                bottom: { value: new THREE.Color(COLORS.skyBottom) },
+            },
+            vertexShader: /* glsl */`
+                varying vec3 vDir;
+                void main() {
+                    vDir = normalize(position);
+                    gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+                }
+            `,
+            fragmentShader: /* glsl */`
+                varying vec3 vDir;
+                uniform vec3 top;
+                uniform vec3 bottom;
+                void main() {
+                    float t = clamp(vDir.y * 0.5 + 0.5, 0.0, 1.0);
+                    t = pow(t, 0.75);
+                    gl_FragColor = vec4(mix(bottom, top, t), 1.0);
+                }
+            `,
+        });
+        const sky = new THREE.Mesh(geo, mat);
+        sky.frustumCulled = false;
+        this.scene.add(sky);
+    }
+
+    _addLights(tier) {
+        this.scene.add(new THREE.HemisphereLight(COLORS.skyTop, COLORS.grass, 0.95));
+
+        const sun = new THREE.DirectionalLight(COLORS.sun, 1.35);
+        sun.position.set(60, 110, 40);
+        sun.castShadow = true;
+        const sz = tier.shadowMap;
+        sun.shadow.mapSize.set(sz, sz);
+        const d = 85;
+        sun.shadow.camera.left = -d;
+        sun.shadow.camera.right = d;
+        sun.shadow.camera.top = d;
+        sun.shadow.camera.bottom = -d;
+        sun.shadow.camera.near = 1;
+        sun.shadow.camera.far = 320;
+        sun.shadow.bias = -0.0006;
+        sun.shadow.normalBias = 0.5;
+        this.scene.add(sun);
+        this.scene.add(sun.target);
+    }
+
+    _addGround() {
+        const geo = new THREE.PlaneGeometry(1400, 1400);
+        geo.rotateX(-Math.PI / 2);
+        const mat = toonMat(0xffffff, { map: stripedLawn() });
+        this.ground = new THREE.Mesh(geo, mat);
         this.ground.position.y = -0.02;
+        this.ground.receiveShadow = true;
         this.scene.add(this.ground);
     }
 
@@ -50,8 +105,24 @@ export class Stage {
             this.camera.updateProjectionMatrix();
         }
     }
+}
 
-    render() {
-        this.renderer.render(this.scene, this.camera);
+// Canvas texture of alternating green stripes -> mown-lawn / golf-course look.
+function stripedLawn() {
+    const size = 256;
+    const c = document.createElement('canvas');
+    c.width = c.height = size;
+    const ctx = c.getContext('2d');
+    const a = '#' + COLORS.grass.toString(16).padStart(6, '0');
+    const b = '#' + COLORS.grassDark.toString(16).padStart(6, '0');
+    for (let i = 0; i < 8; i++) {
+        ctx.fillStyle = i % 2 ? a : b;
+        ctx.fillRect(0, (i / 8) * size, size, size / 8);
     }
+    const tex = new THREE.CanvasTexture(c);
+    tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+    tex.repeat.set(60, 60);
+    tex.colorSpace = THREE.SRGBColorSpace;
+    tex.anisotropy = 4;
+    return tex;
 }

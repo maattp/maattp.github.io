@@ -38,8 +38,8 @@ export const TUNING = {
     driftGrip: 2.4,
 
     // ---------------------------------------------------------------- drift
-    driftMinSpeed: 13,        // must be going at least this fast to start a drift
-    driftSteerThreshold: 0.18,// must be turning at least this hard to start a drift
+    driftMinSpeed: 11,        // must be going at least this fast to start a drift
+    driftSteerThreshold: 0.16,// must be turning at least this hard to start a drift
     // While drifting, yaw rate = baseTurnRate * (a multiplier between min and max,
     // chosen by how hard the player steers INTO the drift). Countersteering widens
     // the arc (min); steering hard inward tightens it (max).
@@ -72,8 +72,12 @@ export const TUNING = {
     camBoostPullback: 1.6,   // extra distance the camera drops back at full boost
 
     // ---------------------------------------------------------------- visual feel
-    kartBodyRoll: 0.45,      // radians the body leans into a drift at full slide
+    kartBodyRoll: 0.42,      // radians the body leans into a drift at full slide
     kartBoostSquash: 0.12,   // body stretch on boost (0 = none)
+    kartDriftHop: 0.35,      // little hop height when a drift kicks off
+    wheelSteerMaxDeg: 26,    // visual front-wheel turn at full steer
+    camShakeBoost: 0.22,     // camera shake amplitude at full boost
+    camShakeStageUp: 0.5,    // shake kick when a drift charge stage levels up
 
     // ---------------------------------------------------------------- race
     totalLaps: 3,
@@ -86,33 +90,58 @@ export const TUNING = {
 // needs the same geometry for the on-track test and lap progress.
 export const TRACK = {
     halfWidth: 6.5,
-    // [x, z] control points, traversed in order. Closed loop.
+    // [x, z] control points, traversed in order. Closed loop. This curve was
+    // validated offline to be free of self-overlap (min self-distance ~52u) while
+    // featuring one tight corner (turn radius ~12u), several medium corners, and
+    // long sweepers — so drift pays off differently around the lap. Start/finish
+    // sits on the straightest section.
     controlPoints: [
-        [0, -52],
-        [42, -46],
-        [58, -8],
-        [30, 12],     // chicane-ish kink
-        [48, 42],
-        [8, 58],
-        [-34, 48],
-        [-54, 10],
-        [-36, -22],   // hairpin-ish
-        [-12, -42],
+        [-29.1, 36.5], [-47.5, 22.9], [-63.1, 0], [-60, -28.9],
+        [-35.7, -44.8], [-8.8, -38.4], [5.5, -24.3], [15.4, -19.4],
+        [36.6, -17.6], [63.1, 0], [71, 34.2], [49.4, 61.9],
+        [14.8, 65], [-11.6, 50.9],
     ],
     samplesPerSegment: 26,   // spline resolution for the on-track test + mesh
 };
 
 export const COLORS = {
-    sky: 0x9fd3ff,
-    fog: 0xbfe0ff,
-    grass: 0x3f7a4a,
-    grassDark: 0x356b40,
-    track: 0x3a3d46,
+    skyTop: 0x3f9bff,        // zenith
+    skyBottom: 0xcdecff,     // horizon
+    fog: 0xd2ecff,
+    sun: 0xfff4dc,
+    grass: 0x67c24f,         // bright cartoon lawn
+    grassDark: 0x57b341,     // mown stripe
+    track: 0x565b6b,         // asphalt
     trackEdge: 0xf4f4f8,
-    centerLine: 0xf4d03f,
+    kerbRed: 0xe8473f,
+    kerbWhite: 0xf6f6f6,
+    centerLine: 0xf4d23f,
     startLine: 0xffffff,
+    bannerPost: 0xf24e4e,
+    bannerCloth: 0x2a2f3a,
     kartBody: 0xff5a4d,
-    kartAccent: 0x1a1a22,
-    wheel: 0x14141a,
+    kartBody2: 0xffd23f,     // accent stripe / spoiler
+    kartAccent: 0x23252e,
+    driver: 0xffd9b3,        // skin
+    helmet: 0x2f7bdc,
+    wheel: 0x1b1b22,
+    hubcap: 0xe6e6ec,
+    cone: 0xff7a1e,
+    treeTrunk: 0x8a5a2b,
+    treeLeaf: 0x47b04a,
+    treeLeaf2: 0x5fc95f,
+    cloud: 0xffffff,
+    hill: 0x7fd06a,
     driftStage: [0x39d0ff, 0xff9f1c, 0xb06bff], // blue, orange, purple sparks/glow
+};
+
+// Counts / sizes for set dressing and effects. Bumped down on mobile by the tier.
+export const VISUALS = {
+    trees: 46,
+    clouds: 14,
+    hills: 9,
+    conesPerSide: 26,        // pylons spaced along each track edge
+    smokeMax: 90,            // drift smoke particle pool
+    skidMax: 140,            // skid-mark quad pool
+    sparkMax: 60,            // boost / stage-up spark pool
 };

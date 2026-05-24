@@ -14,8 +14,11 @@
 import { stepKart, createKartState } from './simulation/kart.js';
 import { createTrack } from './simulation/track.js';
 import { Stage } from './render/scene.js';
+import { Post } from './render/postprocessing.js';
 import { buildTrackView } from './render/trackView.js';
+import { buildProps } from './render/props.js';
 import { KartView } from './render/kartView.js';
+import { Effects } from './render/effects.js';
 import { ChaseCamera } from './render/chaseCamera.js';
 import { Input } from './input/input.js';
 import { Hud } from './hud.js';
@@ -38,25 +41,38 @@ function detectTier() {
     const dpr = window.devicePixelRatio || 1;
     const cores = navigator.hardwareConcurrency || 4;
     if (isMobile || cores < 4) {
-        return { pixelRatio: Math.min(dpr, 1.5), antialias: false };
+        return {
+            pixelRatio: Math.min(dpr, 1.5), antialias: false,
+            shadowMap: 1024, bloomStrength: 0.32, useHalfFloat: false,
+        };
     }
-    return { pixelRatio: Math.min(dpr, 2), antialias: true };
+    return {
+        pixelRatio: Math.min(dpr, 2), antialias: true,
+        shadowMap: 2048, bloomStrength: 0.38, useHalfFloat: true,
+    };
 }
 
 // ---------------------------------------------------------------- boot
 const canvas = document.getElementById('game');
-let stage, kartView, chase, hud, input, track;
+const tier = detectTier();
+let stage, post, kartView, effects, chase, hud, input, track;
 try {
     track = createTrack();
-    stage = new Stage(canvas, detectTier());
+    stage = new Stage(canvas, tier);
     stage.scene.add(buildTrackView(track));
+    stage.scene.add(buildProps(track));
     kartView = new KartView();
     stage.scene.add(kartView.group);
+    effects = new Effects(stage.scene);
     chase = new ChaseCamera(stage.camera);
+    post = new Post(stage.renderer, stage.scene, stage.camera, {
+        width: 1, height: 1,
+        bloomStrength: tier.bloomStrength,
+        useHalfFloat: tier.useHalfFloat,
+    });
     hud = new Hud();
     input = new Input({
         steerZone: document.getElementById('steer-zone'),
-        accel: document.getElementById('btn-accel'),
         brake: document.getElementById('btn-brake'),
         drift: document.getElementById('btn-drift'),
     });
@@ -70,6 +86,8 @@ function resize() {
     const w = window.innerWidth, h = window.innerHeight;
     if (w === 0 || h === 0) { requestAnimationFrame(resize); return; }
     stage.setSize(w, h);
+    const dpr = stage.renderer.getPixelRatio();
+    post.setSize(Math.round(w * dpr), Math.round(h * dpr));
 }
 window.addEventListener('resize', resize);
 resize();
@@ -87,6 +105,8 @@ const game = {
     lapTimes: [],
     prevProgress: 0,
     passedHalf: false,
+    shake: 0,          // decaying camera-shake kick (stage-ups)
+    lastStage: 0,      // for detecting drift-charge stage-ups
 };
 
 function freshSim() {
@@ -103,7 +123,10 @@ function resetRace() {
     game.lapTimes = [];
     game.prevProgress = track.progressAt(game.curr.x, game.curr.z);
     game.passedHalf = false;
+    game.shake = 0;
+    game.lastStage = 0;
     chase.reset();
+    effects.reset();
     hud.setLap(1, T.totalLaps);
     hud.setLapTime(0);
     hud.setSpeed(0);
@@ -197,6 +220,9 @@ function interpolated(alpha) {
         z: p.z + (c.z - p.z) * alpha,
         heading: angleLerp(p.heading, c.heading, alpha),
         slip: clamp(vLat / SLIP_REF, -1, 1),
+        steer: c.steer,
+        speed: c.forwardSpeed,
+        drifting: c.drifting,
         boost,
         driftStage: c.driftStage,
         boostStage: c.boostStage,
@@ -238,8 +264,21 @@ function frame(now) {
 
         // render with interpolation
         const r = interpolated(acc / STEP);
-        kartView.update(r);
+        kartView.update(r, dt);
+        effects.update(dt, r);
         chase.update(r, r.boost, dt);
+
+        // camera shake: continuous on boost + a kick on each charge stage-up
+        if (game.curr.driftStage > game.lastStage) game.shake = T.camShakeStageUp;
+        game.lastStage = game.curr.driftStage;
+        game.shake = Math.max(0, game.shake - dt * 2.2);
+        const shakeAmp = game.shake + r.boost * T.camShakeBoost;
+        if (shakeAmp > 0.001) {
+            stage.camera.position.x += (Math.random() - 0.5) * shakeAmp;
+            stage.camera.position.y += (Math.random() - 0.5) * shakeAmp;
+        }
+
+        post.setGrade(r.boost);
 
         // HUD (live values from latest sim state)
         if (game.state === STATE.RACING) {
@@ -250,7 +289,7 @@ function frame(now) {
             hud.setLapTime(game.raceTime - game.lapStart);
         }
 
-        stage.render();
+        post.render();
     } catch (e) {
         loopFatal = true;
         showFatal('frame: ' + ((e && e.message) ? e.message : String(e)));
