@@ -449,7 +449,11 @@
             curbGeo.setAttribute('color', new THREE.Float32BufferAttribute(curbColor, 3));
             curbGeo.setIndex(curbIdx);
             curbGeo.computeVertexNormals();
-            scene.add(new THREE.Mesh(curbGeo, new THREE.MeshLambertMaterial({ vertexColors: true })));
+            // polygonOffset keeps the curbs from z-fighting the road they sit on
+            const curbMesh = new THREE.Mesh(curbGeo, new THREE.MeshLambertMaterial({
+                vertexColors: true, polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -1 }));
+            curbMesh.renderOrder = 2;
+            scene.add(curbMesh);
 
             // guardrails along both edges
             buildGuardrails();
@@ -467,44 +471,50 @@
         }
 
         function buildGuardrails() {
-            const wallH = 3.4;
+            // Solid barriers with real thickness: an inner face, an outer face
+            // and a top. Every surface lies in a distinct plane, so there are no
+            // near-coplanar polygons to z-fight (the old thin "cap" did).
+            const wallH = 3.2, thick = 1.1;
             // red / white striped barrier texture
             const cv = document.createElement('canvas'); cv.width = 64; cv.height = 16;
             const g = cv.getContext('2d');
             for (let i = 0; i < 8; i++) { g.fillStyle = i % 2 ? '#eef0f5' : '#d8324a'; g.fillRect(i * 8, 0, 8, 16); }
             const tex = new THREE.CanvasTexture(cv);
             tex.wrapS = tex.wrapT = THREE.RepeatWrapping; tex.anisotropy = 4;
-            const mat = new THREE.MeshLambertMaterial({ map: tex, side: THREE.DoubleSide });
-            const capMat = new THREE.MeshLambertMaterial({ color: 0x2a3142, side: THREE.DoubleSide });
+            const faceMat = new THREE.MeshLambertMaterial({ map: tex, side: THREE.DoubleSide });
+            const topMat = new THREE.MeshLambertMaterial({ color: 0x2a3142, side: THREE.DoubleSide });
 
             for (const side of [1, -1]) {
-                const pos = [], uv = [], idx = [];
-                const capPos = [], capIdx = [];
+                const inner = HALF_W, outer = HALF_W + thick;
+                const pos = [], uv = [], faceIdx = [], topIdx = [];
                 for (let i = 0; i <= N_SAMPLES; i++) {
                     const k = i % N_SAMPLES;
                     const c = centerline[k], n = normals[k];
-                    const ex = c.x + n.x * HALF_W * side, ez = c.z + n.z * HALF_W * side;
-                    pos.push(ex, 0.05, ez, ex, wallH, ez);
-                    const u = i * 0.18;
-                    uv.push(u, 0, u, 1);
-                    // a small flat cap on top, leaning slightly outward
-                    capPos.push(ex, wallH, ez, ex + n.x * 0.6 * side, wallH + 0.05, ez + n.z * 0.6 * side);
+                    const ix = c.x + n.x * inner * side, iz = c.z + n.z * inner * side;
+                    const ox = c.x + n.x * outer * side, oz = c.z + n.z * outer * side;
+                    // per sample: innerBottom, innerTop, outerBottom, outerTop
+                    pos.push(ix, 0.02, iz, ix, wallH, iz, ox, 0.02, oz, ox, wallH, oz);
+                    const u = i * 0.14;
+                    uv.push(u, 0, u, 1, u, 0, u, 1);
                 }
                 for (let i = 0; i < N_SAMPLES; i++) {
-                    const a = i * 2, b = a + 1, cc = a + 2, d = a + 3;
-                    idx.push(a, cc, b, b, cc, d);
-                    capIdx.push(a, cc, b, b, cc, d);
+                    const o = i * 4, o2 = (i + 1) * 4;
+                    const iB = o, iT = o + 1, oB = o + 2, oT = o + 3;
+                    const iB2 = o2, iT2 = o2 + 1, oB2 = o2 + 2, oT2 = o2 + 3;
+                    faceIdx.push(iB, iB2, iT, iT, iB2, iT2);   // inner face (faces track)
+                    faceIdx.push(oB, oT, oB2, oT, oT2, oB2);   // outer face
+                    topIdx.push(iT, iT2, oT, oT, iT2, oT2);    // top
                 }
-                const geo = new THREE.BufferGeometry();
-                geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
-                geo.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
-                geo.setIndex(idx); geo.computeVertexNormals();
-                scene.add(new THREE.Mesh(geo, mat));
+                const wallGeo = new THREE.BufferGeometry();
+                wallGeo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+                wallGeo.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
+                wallGeo.setIndex(faceIdx); wallGeo.computeVertexNormals();
+                scene.add(new THREE.Mesh(wallGeo, faceMat));
 
-                const cgeo = new THREE.BufferGeometry();
-                cgeo.setAttribute('position', new THREE.Float32BufferAttribute(capPos, 3));
-                cgeo.setIndex(capIdx); cgeo.computeVertexNormals();
-                scene.add(new THREE.Mesh(cgeo, capMat));
+                const topGeo = new THREE.BufferGeometry();
+                topGeo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+                topGeo.setIndex(topIdx); topGeo.computeVertexNormals();
+                scene.add(new THREE.Mesh(topGeo, topMat));
             }
         }
 
@@ -539,10 +549,12 @@
             }
             const tex = new THREE.CanvasTexture(cv);
             const lineGeo = new THREE.PlaneGeometry(TRACK_WIDTH, 6);
-            const line = new THREE.Mesh(lineGeo, new THREE.MeshBasicMaterial({ map: tex }));
+            const line = new THREE.Mesh(lineGeo, new THREE.MeshBasicMaterial({
+                map: tex, polygonOffset: true, polygonOffsetFactor: -3, polygonOffsetUnits: -3, depthWrite: false }));
             line.rotation.x = -Math.PI / 2;
             line.rotation.z = Math.atan2(t.x, t.z);
-            line.position.set(c.x, 0.08, c.z);
+            line.position.set(c.x, 0.07, c.z);
+            line.renderOrder = 3;
             scene.add(line);
 
             // banner arch
@@ -588,10 +600,12 @@
             }
             const tex = new THREE.CanvasTexture(cv);
             const pad = new THREE.Mesh(new THREE.PlaneGeometry(TRACK_WIDTH * 0.55, 14),
-                new THREE.MeshBasicMaterial({ map: tex }));
+                new THREE.MeshBasicMaterial({
+                    map: tex, polygonOffset: true, polygonOffsetFactor: -3, polygonOffsetUnits: -3, depthWrite: false }));
             pad.rotation.x = -Math.PI / 2;
             pad.rotation.z = Math.atan2(t.x, t.z);
-            pad.position.set(c.x, 0.09, c.z);
+            pad.position.set(c.x, 0.07, c.z);
+            pad.renderOrder = 3;
             scene.add(pad);
         }
 
@@ -771,9 +785,11 @@
             sgr.addColorStop(0, 'rgba(0,0,0,0.45)'); sgr.addColorStop(1, 'rgba(0,0,0,0)');
             sg.fillStyle = sgr; sg.fillRect(0, 0, 64, 64);
             const shadow = new THREE.Mesh(new THREE.PlaneGeometry(7.5, 8.5),
-                new THREE.MeshBasicMaterial({ map: new THREE.CanvasTexture(shCv), transparent: true, depthWrite: false }));
+                new THREE.MeshBasicMaterial({ map: new THREE.CanvasTexture(shCv), transparent: true,
+                    depthWrite: false, polygonOffset: true, polygonOffsetFactor: -4, polygonOffsetUnits: -4 }));
             shadow.rotation.x = -Math.PI / 2;
-            shadow.position.y = 0.05;
+            shadow.position.y = 0.12;
+            shadow.renderOrder = 4;
             g.add(shadow);
 
             scene.add(g);
