@@ -393,7 +393,7 @@
         let particles;
         let sun, hemi;
         let currentTrackIdx = 0, selectedCharIdx = 0;
-        let sensitivity = 28;          // tilt divisor (lower = more sensitive)
+        let sensitivity = 28;          // tilt divisor (lower = more sensitive); slider is inverted so right = more sensitive
 
         // minimap
         let miniPath = [], miniB = null;
@@ -401,7 +401,6 @@
 
         // game state
         let state = 'menu'; // menu, countdown, racing, finished, paused
-        let prevState = 'racing';
         let controlMode = 'tilt';
         let steerInput = 0, tiltSteer = 0, touchSteer = 0, keySteer = 0;
         let holding = false, playerWantDrift = false, useItemPressed = false;
@@ -1600,7 +1599,8 @@
                     seg.classList.add('active'); controlMode = seg.dataset.mode; savePrefs();
                 });
             });
-            dom.sensSlider.addEventListener('input', () => { sensitivity = parseInt(dom.sensSlider.value, 10); savePrefs(); });
+            // slider reads as "sensitivity": dragging right increases responsiveness (lowers the divisor)
+            dom.sensSlider.addEventListener('input', () => { sensitivity = 58 - parseInt(dom.sensSlider.value, 10); savePrefs(); });
 
             dom.muteBtn.addEventListener('click', () => { muted = !muted; dom.muteBtn.textContent = muted ? '🔇' : '🔊'; });
 
@@ -1647,7 +1647,7 @@
                 card.addEventListener('click', () => { if (i !== currentTrackIdx) { loadTrack(i); resetRace(); } savePrefs(); refreshCards(); });
                 dom.trackPick.appendChild(card);
             });
-            dom.sensSlider.value = sensitivity;
+            dom.sensSlider.value = 58 - sensitivity;
             dom.ctrlPick.querySelectorAll('.seg').forEach((s) => s.classList.toggle('active', s.dataset.mode === controlMode));
         }
         function refreshCards() {
@@ -1714,7 +1714,7 @@
 
         function pauseGame() {
             if (state !== 'racing') return;
-            prevState = state; state = 'paused';
+            state = 'paused';
             dom.pauseScreen.classList.add('on');
             if (audioCtx) { engineGain.gain.setTargetAtTime(0, audioCtx.currentTime, 0.05); }
         }
