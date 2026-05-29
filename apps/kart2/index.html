@@ -666,7 +666,7 @@
             for (let x = 0; x < 8; x++) for (let y = 0; y < 2; y++) { g.fillStyle = (x + y) % 2 ? '#fff' : '#111'; g.fillRect(x * 8, y * 8, 8, 8); }
             const tex = new THREE.CanvasTexture(cv);
             const line = new THREE.Mesh(new THREE.PlaneGeometry(TRACK_WIDTH, 6), new THREE.MeshBasicMaterial({
-                map: tex, polygonOffset: true, polygonOffsetFactor: -4, polygonOffsetUnits: -4 }));
+                map: tex, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2 }));
             line.rotation.x = -Math.PI / 2; line.rotation.z = Math.atan2(t.x, t.z);
             line.position.set(c.x, c.y + 0.1, c.z); line.renderOrder = 3; worldGroup.add(line);
 
@@ -704,7 +704,7 @@
             [Math.floor(N_SAMPLES * 0.2), Math.floor(N_SAMPLES * 0.47), Math.floor(N_SAMPLES * 0.74)].forEach((k) => {
                 const c = centerline[k], t = tangents[k];
                 const pad = new THREE.Mesh(new THREE.PlaneGeometry(TRACK_WIDTH * 0.55, 14), new THREE.MeshBasicMaterial({
-                    map: tex, polygonOffset: true, polygonOffsetFactor: -4, polygonOffsetUnits: -4 }));
+                    map: tex, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2 }));
                 pad.rotation.x = -Math.PI / 2; pad.rotation.z = Math.atan2(t.x, t.z);
                 pad.position.set(c.x, c.y + 0.1, c.z); pad.renderOrder = 3; worldGroup.add(pad);
                 boostPads.push(k);
@@ -950,8 +950,8 @@
             sgr.addColorStop(0, 'rgba(0,0,0,0.45)'); sgr.addColorStop(1, 'rgba(0,0,0,0)');
             sg.fillStyle = sgr; sg.fillRect(0, 0, 64, 64);
             const shadow = new THREE.Mesh(new THREE.PlaneGeometry(7.5, 8.5), new THREE.MeshBasicMaterial({
-                map: new THREE.CanvasTexture(shCv), transparent: true, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -4, polygonOffsetUnits: -4 }));
-            shadow.rotation.x = -Math.PI / 2; shadow.position.y = 0.12; shadow.renderOrder = 4; g.add(shadow);
+                map: new THREE.CanvasTexture(shCv), transparent: true, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -3, polygonOffsetUnits: -3 }));
+            shadow.rotation.x = -Math.PI / 2; shadow.position.y = 0.16; shadow.renderOrder = 5; g.add(shadow);
 
             scene.add(g);
             return { group: g, wheels, frontPivots, shield };
@@ -1577,25 +1577,98 @@
             aTone(freq, 'sine', 0.3, 0.16, masterGain);
             aTone(freq * 2, 'sine', 0.18, 0.05, masterGain);
         }
-        // ---- chiptune-ish loop: lead + bass + drums over a I-V-vi-IV progression ----
-        const MUS_LEAD = [
-            523, 0, 659, 0, 784, 659, 523, 0,  587, 0, 494, 0, 392, 494, 587, 0,
-            523, 0, 440, 0, 330, 440, 523, 0,  349, 0, 523, 0, 440, 349, 523, 0
+        // ===================================================================
+        //  MUSIC — "Turbo Sunshine Grand Prix": bright F-major racing anthem.
+        //  224 16th-note steps @ 140 BPM (~107ms/step) => ~24s loop, four
+        //  distinct sections — intro(2 bars)/A hook(4)/B contrast(4)/bridge(4) —
+        //  so it doesn't feel repetitive. Diatonic/pentatonic so nothing clashes.
+        // ===================================================================
+        const NOTE = {
+            0: 0,
+            C3: 130.81, D3: 146.83, E3: 164.81, F3: 174.61, G3: 196.00, A3: 220.00, Bb3: 233.08, B3: 246.94,
+            C4: 261.63, D4: 293.66, E4: 329.63, F4: 349.23, G4: 392.00, A4: 440.00, Bb4: 466.16, B4: 493.88,
+            C5: 523.25, D5: 587.33, E5: 659.25, F5: 698.46, G5: 783.99, A5: 880.00, Bb5: 932.33, B5: 987.77,
+            C6: 1046.50, D6: 1174.66, E6: 1318.51, F6: 1396.91, G6: 1567.98, A6: 1760.00
+        };
+        function NF(n) { return NOTE[n] || 0; }
+        const MUSIC_LEN = 224;
+        const LEAD = [
+            // INTRO (0-31): hook teaser, sparse
+            0,0,0,0, 'C5',0,'C5',0, 0,0,0,0, 'F5',0,'E5',0,
+            'D5',0,0,0, 'C5',0,'D5',0, 'E5',0,'E5',0, 'G5',0,0,0,
+            // A (32-79): main hook  F | Dm | Bb | C
+            'F5',0,'A5',0, 'G5',0,'F5',0, 'A5',0,'F5','A5','C6',0,0,0,
+            'A5',0,'F5',0, 'D5',0,'F5',0, 'A5',0,'G5',0, 'F5',0,0,0,
+            'D5',0,'F5',0, 'Bb5',0,'A5',0, 'G5',0,'F5',0, 'D5',0,0,0,
+            'C5',0,'E5',0, 'G5',0,'C6',0, 'B5',0,'G5',0, 'E5',0,'C5',0,
+            // B (80-127): bouncier answer  Bb | C | Dm | C/F
+            'F5','F5',0,'A5', 'G5',0,'A5',0, 'Bb5',0,0,'A5', 'G5',0,'F5',0,
+            'G5','G5',0,'B5', 'C6',0,'B5',0, 'C6',0,0,'D6', 'C6',0,'A5',0,
+            'F5',0,'A5',0, 'D6',0,'C6',0, 'A5',0,'F5',0, 'A5',0,'D6',0,
+            'C6',0,'A5',0, 'G5',0,'E5',0, 'F5',0,'G5',0, 'A5',0,0,0,
+            // BRIDGE (128-191): lift  G | Em | C | D
+            'G5',0,'B5',0, 'D6',0,'B5',0, 'G5','A5','B5',0,'D6',0,0,0,
+            'B5',0,'G5',0, 'E5',0,'G5',0, 'B5',0,'A5',0, 'G5',0,0,0,
+            'C6',0,'E6',0, 'G6',0,'E6',0, 'C6',0,'D6',0, 'E6',0,0,0,
+            'D6',0,'B5',0, 'A5',0,'G5',0, 'F5',0,'E5',0, 'D5',0,'C5',0
         ];
-        const MUS_BASS = [65.41, 98.0, 110.0, 87.31]; // C2 G2 A2 F2
+        const BASS = [
+            'F3',0,'F3',0, 'F3',0,'F3','F3', 'F3',0,'F3',0, 'C3',0,'C3','C3',
+            'F3',0,'F3',0, 'F3',0,'F3','F3', 'G3',0,'G3',0, 'C3',0,'C3','C3',
+            'F3',0,'F3','C3', 'F3',0,'F3',0, 'D3',0,'D3','A3', 'D3',0,'D3',0,
+            'D3',0,'D3','A3', 'D3',0,'F3',0, 'Bb3',0,'Bb3','F3','Bb3',0,'D3',0,
+            'Bb3',0,'Bb3','F3','Bb3',0,'A3',0, 'C3',0,'C3','G3', 'C3',0,'E3',0,
+            'C3',0,'C3','G3', 'G3',0,'G3',0, 'C3',0,'E3',0, 'F3',0,'G3',0,
+            'Bb3',0,'Bb3',0, 'Bb3','Bb3',0,'F3', 'C3',0,'C3',0, 'C3','C3',0,'G3',
+            'C3',0,'C3',0, 'G3',0,'G3',0, 'D3',0,'D3',0, 'D3','D3',0,'A3',
+            'D3',0,'A3',0, 'D3',0,'F3',0, 'C3',0,'C3','G3','C3',0,'C3',0,
+            'C3',0,'E3',0, 'F3',0,'G3',0, 'A3',0,'G3',0, 'C3',0,'C3','C3',
+            'G3',0,'G3','D3', 'G3',0,'G3',0, 'E3',0,'E3','B3', 'E3',0,'E3',0,
+            'E3',0,'E3','B3', 'E3',0,'G3',0, 'C3',0,'C3','G3', 'C3',0,'E3',0,
+            'C3',0,'C3','G3', 'C3',0,'D3',0, 'D3',0,'D3','A3', 'D3',0,'D3',0,
+            'D3',0,'A3',0, 'D3',0,'C3',0, 'Bb3',0,'A3',0, 'G3',0,'F3',0
+        ];
+        const ARP = [
+            0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0,
+            0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0,
+            0,0,'A5',0, 0,0,'C6',0, 0,0,'F5',0, 0,0,'A5',0,
+            0,0,'F5',0, 0,0,'A5',0, 0,0,'D5',0, 0,0,'F5',0,
+            0,0,'D5',0, 0,0,'F5',0, 0,0,'Bb5',0, 0,0,'D5',0,
+            0,0,'E5',0, 0,0,'G5',0, 0,0,'C6',0, 0,0,'E5',0,
+            0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0,
+            0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0,
+            0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0,
+            0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0,
+            0,0,'B5',0, 0,0,'D6',0, 0,0,'G5',0, 0,0,'B5',0,
+            0,0,'G5',0, 0,0,'B5',0, 0,0,'E5',0, 0,0,'G5',0,
+            0,0,'E6',0, 0,0,'G6',0, 0,0,'C6',0, 0,0,'E6',0,
+            0,0,'A5',0, 0,0,'D6',0, 0,0,'F5',0, 0,0,'A5',0
+        ];
+        function musicSection(s) { return s < 32 ? 0 : s < 96 ? 1 : s < 160 ? 2 : 3; }
         function musicTick() {
             if (!audioCtx) return;
             if (!muted && (state === 'racing' || state === 'countdown')) {
-                const s = musicStep % 32;
-                if (MUS_LEAD[s]) aTone(MUS_LEAD[s], 'square', 0.2, 0.085, musicGain);
-                if (s % 8 === 0 || s % 8 === 4) aTone(MUS_BASS[Math.floor(s / 8) % 4], 'triangle', 0.3, 0.22, musicGain);
-                if (s % 4 === 0) aKick(musicGain);
-                if (s % 8 === 4) aNoise(0.12, 0.16, false, musicGain);  // snare
-                if (s % 2 === 1) aNoise(0.025, 0.045, true, musicGain); // hat
+                const s = musicStep % MUSIC_LEN, b = s % 16, sec = musicSection(s);
+                // lead (saw in the bridge for brightness, square hook elsewhere), with octave doubling on downbeats
+                const ln = LEAD[s];
+                if (ln) { aTone(NF(ln), sec === 3 ? 'sawtooth' : 'square', 0.16, 0.085, musicGain);
+                          if (b === 0 && sec >= 1) aTone(NF(ln) / 2, 'triangle', 0.16, 0.05, musicGain); }
+                // walking bass
+                const bn = BASS[s]; if (bn) aTone(NF(bn), 'triangle', 0.13, 0.22, musicGain);
+                // sparkle
+                const an = ARP[s]; if (an) aTone(NF(an), 'square', 0.07, 0.045, musicGain);
+                // drums
+                if (b === 0 || b === 8) aKick(musicGain);
+                if (sec >= 1 && b === 14) aKick(musicGain);
+                if (sec === 3 && b === 6) aKick(musicGain);
+                if ((b === 4 || b === 12) && !(sec === 0 && s < 16)) aNoise(0.12, 0.18, false, musicGain);
+                if (b >= 12 && (s === 94 || s === 95 || s === 158 || s === 159 || s === 222 || s === 223)) aNoise(0.06, 0.16, false, musicGain);
+                if (b % 2 === 0) aNoise(0.03, 0.05, true, musicGain);
+                if (b % 4 === 2 && sec >= 1) aNoise(0.05, 0.06, true, musicGain);
             }
             musicStep++;
         }
-        function startMusic() { if (musicTimer) clearInterval(musicTimer); musicStep = 0; musicTimer = setInterval(musicTick, 125); }
+        function startMusic() { if (musicTimer) clearInterval(musicTimer); musicStep = 0; musicTimer = setInterval(musicTick, 107); }
         function stopMusic() { if (musicTimer) { clearInterval(musicTimer); musicTimer = null; } }
 
         // ===================================================================
