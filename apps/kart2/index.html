@@ -413,8 +413,8 @@
         let fpsAccum = 0, fpsFrames = 0, dprAdjusted = false;
 
         // audio
-        let audioCtx = null, engineOsc = null, engineGain = null, muted = false;
-        let musicTimer = null, musicStep = 0, musicGain = null;
+        let audioCtx = null, masterGain = null, engineGain = null, engineFilter = null, engineOscs = [], muted = false;
+        let musicTimer = null, musicStep = 0, musicGain = null, noiseBuf = null;
 
         // ===================================================================
         //  STORAGE (best times per track)
@@ -500,12 +500,18 @@
             const pts = def.ctrl.map((p) => new THREE.Vector3(p[0], 0, p[1]));
             const curve = new THREE.CatmullRomCurve3(pts, true, 'catmullrom', 0.5);
             centerline = []; tangents = []; normals = [];
+            for (let i = 0; i < N_SAMPLES; i++) centerline.push(curve.getPointAt(i / N_SAMPLES));
+            // Derive tangents/normals from finite differences of the (smooth)
+            // sample positions rather than curve.getTangentAt(). getTangentAt
+            // glitches near the closed-curve seam (a single ~73° flip around
+            // sample 889) which swapped the ribbon's left/right edges and
+            // twisted the road + guardrails into a bowtie at the finish line.
             for (let i = 0; i < N_SAMPLES; i++) {
-                const u = i / N_SAMPLES;
-                const p = curve.getPointAt(u);
-                const t = curve.getTangentAt(u); t.y = 0; t.normalize();
-                const n = new THREE.Vector3(-t.z, 0, t.x);
-                centerline.push(p); tangents.push(t); normals.push(n);
+                const a = centerline[(i - 1 + N_SAMPLES) % N_SAMPLES];
+                const b = centerline[(i + 1) % N_SAMPLES];
+                const t = new THREE.Vector3(b.x - a.x, 0, b.z - a.z).normalize();
+                tangents.push(t);
+                normals.push(new THREE.Vector3(-t.z, 0, t.x));
             }
         }
 
@@ -599,7 +605,10 @@
             roadGeo.setAttribute('position', new THREE.Float32BufferAttribute(roadPos, 3));
             roadGeo.setAttribute('uv', new THREE.Float32BufferAttribute(roadUV, 2));
             roadGeo.setIndex(roadIdx); roadGeo.computeVertexNormals();
-            const roadMesh = new THREE.Mesh(roadGeo, new THREE.MeshLambertMaterial({ map: makeRoadTexture(th) }));
+            // DoubleSide: the ribbon's triangle winding faces downward, so with
+            // default back-face culling the road's top was culled — you saw
+            // straight through it to the ground. DoubleSide renders + lights both faces.
+            const roadMesh = new THREE.Mesh(roadGeo, new THREE.MeshLambertMaterial({ map: makeRoadTexture(th), side: THREE.DoubleSide }));
             roadMesh.renderOrder = 1; worldGroup.add(roadMesh);
 
             const curbGeo = new THREE.BufferGeometry();
@@ -970,7 +979,7 @@
                     statSpeed: ch.speed, statAccel: ch.accel, statHandling: ch.handling,
                     pos: new THREE.Vector3(), theta: 0, speed: 0, groundY: 0,
                     seg: 0, lastSeg: 0, u: 0, laps: 0, progress: 0, rank: i + 1,
-                    drifting: false, driftDir: 0, driftCharge: 0,
+                    drifting: false, driftDir: 0, driftCharge: 0, driftRamp: 0,
                     boostTimer: 0, hopT: 0, visualRoll: 0,
                     spinTimer: 0, shieldTimer: 0, invuln: 0,
                     item: null, itemRolling: 0, itemUseTimer: 0,
@@ -995,7 +1004,7 @@
                 k.groundY = c.y;
                 k.theta = Math.atan2(t.x, t.z);
                 k.speed = 0; k.seg = seg; k.lastSeg = k.seg; k.u = k.seg / N_SAMPLES; k.laps = 0; k.progress = k.seg / N_SAMPLES;
-                k.drifting = false; k.driftCharge = 0; k.boostTimer = 0; k.hopT = 0; k.visualRoll = 0;
+                k.drifting = false; k.driftCharge = 0; k.driftRamp = 0; k.boostTimer = 0; k.hopT = 0; k.visualRoll = 0;
                 k.spinTimer = 0; k.shieldTimer = 0; k.invuln = 0; k.item = null; k.itemRolling = 0; k.itemUseTimer = 0; k.stuckTimer = 0;
                 k.lane = grid[i].side * (HALF_W * 0.45);
                 k.finished = false; k.finishTime = 0; k.bestLap = Infinity; k.lastLapStart = 0;
@@ -1070,7 +1079,7 @@
             if (controlled) {
                 if (k.isPlayer) {
                     steer = steerInput;
-                    if (playerWantDrift && !k.drifting) startDrift(k);
+                    if (playerWantDrift && !k.drifting) startDrift(k, steer);
                     else if (!playerWantDrift && k.drifting) releaseDrift(k);
                 } else {
                     steer = aiSteer(k, dt);
@@ -1095,7 +1104,14 @@
             // steering (full control retained even when bonked)
             const speedFactor = clamp(k.speed / 26, 0, 1);
             let turn = steer * 2.5 * k.statHandling * speedFactor;
-            if (k.drifting) turn = (steer * 1.0 + k.driftDir * 1.5) * speedFactor * 1.25 * k.statHandling;
+            if (k.drifting) {
+                // ease the drift in, stay committed to driftDir, and let the player
+                // tighten (steer into) or loosen (steer out) it smoothly — no yank.
+                k.driftRamp = Math.min(1, (k.driftRamp || 0) + dt * 6);
+                const into = clamp(k.driftDir * steer, -1, 1);
+                const rate = 1.9 + into * 0.9;
+                turn = k.driftDir * rate * speedFactor * k.statHandling * k.driftRamp;
+            }
             k.theta += turn * dt;
 
             if (k.drifting && k.speed > 25) k.driftCharge += dt;
@@ -1163,12 +1179,14 @@
             if (stage > 0 && k.isPlayer) { sfxBoost(); vibrate(stage * 25); }
             k.drifting = false; k.driftCharge = 0; k.driftDir = 0;
         }
-        function startDrift(k) {
-            if (k.drifting || k.speed < 22) return;
+        function startDrift(k, steerVal) {
+            if (k.drifting || k.speed < 24) return;
+            // only drift when actually turning — prevents the old random veer when level
+            if (Math.abs(steerVal) < 0.28) return;
             k.drifting = true;
-            k.driftDir = (k.isPlayer ? (steerInput >= 0 ? 1 : -1) : 1);
-            if (Math.abs(k.isPlayer ? steerInput : 0) < 0.15) k.driftDir = (Math.random() < 0.5 ? 1 : -1);
-            k.hopT = 0.28;
+            k.driftDir = steerVal >= 0 ? 1 : -1;
+            k.driftRamp = 0;
+            k.hopT = 0.26;
         }
         function spawnRearSpark(k, color, spread) {
             const back = -2.6, side = 1.7;
@@ -1338,8 +1356,9 @@
             const gap = player.progress - k.progress;
             k._rubber = clamp(1 + gap * 0.10, 0.82, 1.18) * k.aiSkill;
             const aheadSeg = (k.seg + 30) % N_SAMPLES;
-            const turnTight = Math.abs(wrapAngle(Math.atan2(centerline[aheadSeg].x - k.pos.x, centerline[aheadSeg].z - k.pos.z) - k.theta));
-            if (!k.drifting && turnTight > 0.5 && k.speed > 40 && Math.random() < 0.02) startDrift(k);
+            const aheadAng = wrapAngle(Math.atan2(centerline[aheadSeg].x - k.pos.x, centerline[aheadSeg].z - k.pos.z) - k.theta);
+            const turnTight = Math.abs(aheadAng);
+            if (!k.drifting && turnTight > 0.5 && k.speed > 40 && Math.random() < 0.02) startDrift(k, aheadAng >= 0 ? 1 : -1);
             if (k.drifting && (turnTight < 0.2 || k.driftCharge > rand(1.0, 2.1))) releaseDrift(k);
             // avoid bananas
             for (const h of hazards) {
@@ -1380,7 +1399,7 @@
             const targetRoll = (k.drifting ? -k.driftDir * 0.16 : -(k.isPlayer ? steerInput : 0) * 0.06);
             k.visualRoll = lerp(k.visualRoll, targetRoll, instant ? 1 : 0.15);
             g.rotation.z = k.visualRoll;
-            g.rotation.y = k.theta + (k.drifting ? -k.driftDir * 0.32 : 0);
+            g.rotation.y = k.theta + (k.drifting ? -k.driftDir * 0.32 * (k.driftRamp || 1) : 0);
             const spin = k.speed * dt * 0.9;
             for (const w of k.mesh.wheels) w.rotation.x += spin;
             const fs = (k.isPlayer ? steerInput : 0) * 0.4 + (k.drifting ? k.driftDir * 0.3 : 0);
@@ -1493,59 +1512,90 @@
         function initAudio() {
             try {
                 audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-                engineGain = audioCtx.createGain(); engineGain.gain.value = 0; engineGain.connect(audioCtx.destination);
-                engineOsc = audioCtx.createOscillator(); engineOsc.type = 'sawtooth'; engineOsc.frequency.value = 70;
-                const lp = audioCtx.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = 900;
-                engineOsc.connect(lp); lp.connect(engineGain); engineOsc.start();
-                musicGain = audioCtx.createGain(); musicGain.gain.value = 0.06; musicGain.connect(audioCtx.destination);
+                const ctx = audioCtx;
+                masterGain = ctx.createGain(); masterGain.gain.value = 0.85; masterGain.connect(ctx.destination);
+                // engine: stacked detuned saws + a sub-osc through a resonant lowpass
+                engineGain = ctx.createGain(); engineGain.gain.value = 0;
+                engineFilter = ctx.createBiquadFilter(); engineFilter.type = 'lowpass'; engineFilter.frequency.value = 600; engineFilter.Q.value = 7;
+                engineFilter.connect(engineGain); engineGain.connect(masterGain);
+                engineOscs = [];
+                [[1, 'sawtooth', 0.32], [1.008, 'sawtooth', 0.28], [2.01, 'sawtooth', 0.12], [0.5, 'sine', 0.45]].forEach(([mult, type, g]) => {
+                    const o = ctx.createOscillator(); o.type = type; o.frequency.value = 55 * mult;
+                    const gn = ctx.createGain(); gn.gain.value = g; o.connect(gn); gn.connect(engineFilter); o.start();
+                    engineOscs.push({ o, mult });
+                });
+                musicGain = ctx.createGain(); musicGain.gain.value = 0.5; musicGain.connect(masterGain);
+                noiseBuf = ctx.createBuffer(1, Math.floor(ctx.sampleRate * 0.6), ctx.sampleRate);
+                const nd = noiseBuf.getChannelData(0); for (let i = 0; i < nd.length; i++) nd[i] = Math.random() * 2 - 1;
             } catch (e) { audioCtx = null; }
         }
         function updateEngineSound() {
             if (!audioCtx || muted) return;
-            const t = clamp(player.speed / MAX_SPEED, 0, 1.4);
-            engineOsc.frequency.setTargetAtTime(60 + t * 180, audioCtx.currentTime, 0.05);
-            engineGain.gain.setTargetAtTime(state === 'racing' ? 0.05 + t * 0.05 : 0, audioCtx.currentTime, 0.1);
+            const now = audioCtx.currentTime;
+            const t = clamp(player.speed / MAX_SPEED, 0, 1.5);
+            const base = 50 + t * 155 + (player.boostTimer > 0 ? 28 : 0);
+            engineOscs.forEach(e => e.o.frequency.setTargetAtTime(base * e.mult, now, 0.05));
+            engineFilter.frequency.setTargetAtTime(420 + t * 3200, now, 0.08);
+            engineGain.gain.setTargetAtTime(state === 'racing' ? 0.05 + t * 0.07 : 0, now, 0.12);
+        }
+        // ---- audio primitives ----
+        function aTone(freq, type, dur, gain, dest) {
+            if (!audioCtx) return;
+            const now = audioCtx.currentTime, o = audioCtx.createOscillator(), g = audioCtx.createGain();
+            o.type = type; o.frequency.value = freq;
+            g.gain.setValueAtTime(0.0001, now);
+            g.gain.exponentialRampToValueAtTime(gain, now + 0.012);
+            g.gain.exponentialRampToValueAtTime(0.0001, now + dur);
+            o.connect(g); g.connect(dest || masterGain); o.start(now); o.stop(now + dur + 0.03);
+        }
+        function aNoise(dur, gain, hp, dest) {
+            if (!audioCtx || !noiseBuf) return;
+            const now = audioCtx.currentTime, s = audioCtx.createBufferSource(); s.buffer = noiseBuf;
+            const f = audioCtx.createBiquadFilter(); f.type = hp ? 'highpass' : 'lowpass'; f.frequency.value = hp ? 5500 : 1800;
+            const g = audioCtx.createGain(); g.gain.setValueAtTime(gain, now); g.gain.exponentialRampToValueAtTime(0.0001, now + dur);
+            s.connect(f); f.connect(g); g.connect(dest || masterGain); s.start(now); s.stop(now + dur + 0.03);
+        }
+        function aKick(dest) {
+            if (!audioCtx) return;
+            const now = audioCtx.currentTime, o = audioCtx.createOscillator(), g = audioCtx.createGain();
+            o.frequency.setValueAtTime(135, now); o.frequency.exponentialRampToValueAtTime(46, now + 0.12);
+            g.gain.setValueAtTime(0.5, now); g.gain.exponentialRampToValueAtTime(0.001, now + 0.17);
+            o.connect(g); g.connect(dest || masterGain); o.start(now); o.stop(now + 0.19);
         }
         function sfxBoost() {
             if (!audioCtx || muted) return;
+            const now = audioCtx.currentTime;
+            aTone(220, 'square', 0.32, 0.12, masterGain);
             const o = audioCtx.createOscillator(), g = audioCtx.createGain();
-            o.type = 'square'; o.frequency.setValueAtTime(220, audioCtx.currentTime);
-            o.frequency.exponentialRampToValueAtTime(880, audioCtx.currentTime + 0.25);
-            g.gain.setValueAtTime(0.12, audioCtx.currentTime); g.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.3);
-            o.connect(g); g.connect(audioCtx.destination); o.start(); o.stop(audioCtx.currentTime + 0.32);
+            o.type = 'sawtooth'; o.frequency.setValueAtTime(180, now); o.frequency.exponentialRampToValueAtTime(900, now + 0.28);
+            g.gain.setValueAtTime(0.12, now); g.gain.exponentialRampToValueAtTime(0.001, now + 0.32);
+            o.connect(g); g.connect(masterGain); o.start(now); o.stop(now + 0.34);
+            aNoise(0.3, 0.12, true);
         }
         function sfxBeep(freq) {
             if (!audioCtx || muted) return;
-            const o = audioCtx.createOscillator(), g = audioCtx.createGain();
-            o.type = 'sine'; o.frequency.value = freq;
-            g.gain.setValueAtTime(0.16, audioCtx.currentTime); g.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.3);
-            o.connect(g); g.connect(audioCtx.destination); o.start(); o.stop(audioCtx.currentTime + 0.32);
+            aTone(freq, 'sine', 0.3, 0.16, masterGain);
+            aTone(freq * 2, 'sine', 0.18, 0.05, masterGain);
         }
-        // light, upbeat background loop
-        const MUSIC_NOTES = [0, 4, 7, 12, 7, 4, 0, -5, 2, 5, 9, 14, 9, 5, 2, -3];
+        // ---- chiptune-ish loop: lead + bass + drums over a I-V-vi-IV progression ----
+        const MUS_LEAD = [
+            523, 0, 659, 0, 784, 659, 523, 0,  587, 0, 494, 0, 392, 494, 587, 0,
+            523, 0, 440, 0, 330, 440, 523, 0,  349, 0, 523, 0, 440, 349, 523, 0
+        ];
+        const MUS_BASS = [65.41, 98.0, 110.0, 87.31]; // C2 G2 A2 F2
         function musicTick() {
             if (!audioCtx) return;
             if (!muted && (state === 'racing' || state === 'countdown')) {
-                const base = 196; // G3
-                const semi = MUSIC_NOTES[musicStep % MUSIC_NOTES.length];
-                const f = base * Math.pow(2, semi / 12);
-                const o = audioCtx.createOscillator(), g = audioCtx.createGain();
-                o.type = 'triangle'; o.frequency.value = f;
-                g.gain.setValueAtTime(0.0001, audioCtx.currentTime);
-                g.gain.linearRampToValueAtTime(0.05, audioCtx.currentTime + 0.02);
-                g.gain.exponentialRampToValueAtTime(0.0001, audioCtx.currentTime + 0.22);
-                o.connect(g); g.connect(musicGain); o.start(); o.stop(audioCtx.currentTime + 0.24);
-                // bass on the beat
-                if (musicStep % 4 === 0) {
-                    const bo = audioCtx.createOscillator(), bg = audioCtx.createGain();
-                    bo.type = 'sine'; bo.frequency.value = f / 2;
-                    bg.gain.setValueAtTime(0.08, audioCtx.currentTime); bg.gain.exponentialRampToValueAtTime(0.0001, audioCtx.currentTime + 0.3);
-                    bo.connect(bg); bg.connect(musicGain); bo.start(); bo.stop(audioCtx.currentTime + 0.32);
-                }
+                const s = musicStep % 32;
+                if (MUS_LEAD[s]) aTone(MUS_LEAD[s], 'square', 0.2, 0.085, musicGain);
+                if (s % 8 === 0 || s % 8 === 4) aTone(MUS_BASS[Math.floor(s / 8) % 4], 'triangle', 0.3, 0.22, musicGain);
+                if (s % 4 === 0) aKick(musicGain);
+                if (s % 8 === 4) aNoise(0.12, 0.16, false, musicGain);  // snare
+                if (s % 2 === 1) aNoise(0.025, 0.045, true, musicGain); // hat
             }
             musicStep++;
         }
-        function startMusic() { if (musicTimer) clearInterval(musicTimer); musicStep = 0; musicTimer = setInterval(musicTick, 200); }
+        function startMusic() { if (musicTimer) clearInterval(musicTimer); musicStep = 0; musicTimer = setInterval(musicTick, 125); }
         function stopMusic() { if (musicTimer) { clearInterval(musicTimer); musicTimer = null; } }
 
         // ===================================================================
