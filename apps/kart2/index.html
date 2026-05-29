@@ -284,12 +284,12 @@
         };
 
         // ---------- config ----------
-        const TRACK_WIDTH = 26;
+        const TRACK_WIDTH = 48;
         const HALF_W = TRACK_WIDTH / 2;
+        const WALL_LIMIT = HALF_W - 2.2;   // how far from centerline a kart can go before the rail
         const N_SAMPLES = 900;
         const TOTAL_LAPS = 3;
         const MAX_SPEED = 98;
-        const GRASS_CAP = 40;
         const ACCEL = 70;
         const BOOST_CAP = 168;
         const KART_RADIUS = 3.0;
@@ -451,6 +451,9 @@
             curbGeo.computeVertexNormals();
             scene.add(new THREE.Mesh(curbGeo, new THREE.MeshLambertMaterial({ vertexColors: true })));
 
+            // guardrails along both edges
+            buildGuardrails();
+
             // start/finish banner + line
             buildStartLine();
 
@@ -461,6 +464,48 @@
                 addBoostPad(k);
                 boostPads.push(k);
             });
+        }
+
+        function buildGuardrails() {
+            const wallH = 3.4;
+            // red / white striped barrier texture
+            const cv = document.createElement('canvas'); cv.width = 64; cv.height = 16;
+            const g = cv.getContext('2d');
+            for (let i = 0; i < 8; i++) { g.fillStyle = i % 2 ? '#eef0f5' : '#d8324a'; g.fillRect(i * 8, 0, 8, 16); }
+            const tex = new THREE.CanvasTexture(cv);
+            tex.wrapS = tex.wrapT = THREE.RepeatWrapping; tex.anisotropy = 4;
+            const mat = new THREE.MeshLambertMaterial({ map: tex, side: THREE.DoubleSide });
+            const capMat = new THREE.MeshLambertMaterial({ color: 0x2a3142, side: THREE.DoubleSide });
+
+            for (const side of [1, -1]) {
+                const pos = [], uv = [], idx = [];
+                const capPos = [], capIdx = [];
+                for (let i = 0; i <= N_SAMPLES; i++) {
+                    const k = i % N_SAMPLES;
+                    const c = centerline[k], n = normals[k];
+                    const ex = c.x + n.x * HALF_W * side, ez = c.z + n.z * HALF_W * side;
+                    pos.push(ex, 0.05, ez, ex, wallH, ez);
+                    const u = i * 0.18;
+                    uv.push(u, 0, u, 1);
+                    // a small flat cap on top, leaning slightly outward
+                    capPos.push(ex, wallH, ez, ex + n.x * 0.6 * side, wallH + 0.05, ez + n.z * 0.6 * side);
+                }
+                for (let i = 0; i < N_SAMPLES; i++) {
+                    const a = i * 2, b = a + 1, cc = a + 2, d = a + 3;
+                    idx.push(a, cc, b, b, cc, d);
+                    capIdx.push(a, cc, b, b, cc, d);
+                }
+                const geo = new THREE.BufferGeometry();
+                geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+                geo.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
+                geo.setIndex(idx); geo.computeVertexNormals();
+                scene.add(new THREE.Mesh(geo, mat));
+
+                const cgeo = new THREE.BufferGeometry();
+                cgeo.setAttribute('position', new THREE.Float32BufferAttribute(capPos, 3));
+                cgeo.setIndex(capIdx); cgeo.computeVertexNormals();
+                scene.add(new THREE.Mesh(cgeo, capMat));
+            }
         }
 
         function makeRoadTexture() {
@@ -656,64 +701,83 @@
             const g = new THREE.Group();
             const bodyMat = new THREE.MeshLambertMaterial({ color: colors.body });
             const accMat = new THREE.MeshLambertMaterial({ color: colors.accent });
-            const darkMat = new THREE.MeshLambertMaterial({ color: 0x1a1f2a });
+            const darkMat = new THREE.MeshLambertMaterial({ color: 0x14171f });
+            const rimMat = new THREE.MeshLambertMaterial({ color: 0xb9bec8 });
 
-            const body = new THREE.Mesh(new THREE.BoxGeometry(3.4, 1.4, 5.2), bodyMat);
-            body.position.y = 1.4; g.add(body);
-            // nose taper
-            const nose = new THREE.Mesh(new THREE.BoxGeometry(2.6, 1.1, 1.8), bodyMat);
-            nose.position.set(0, 1.3, 3.0); g.add(nose);
+            // low, wide chassis
+            const chassis = new THREE.Mesh(new THREE.BoxGeometry(3.8, 0.85, 5.6), bodyMat);
+            chassis.position.y = 1.05; g.add(chassis);
+            // sleek tapered nose
+            const nose = new THREE.Mesh(new THREE.BoxGeometry(3.0, 0.65, 2.4), bodyMat);
+            nose.position.set(0, 0.98, 3.0); g.add(nose);
+            // center accent stripe running down the nose
+            const stripe = new THREE.Mesh(new THREE.BoxGeometry(0.9, 0.68, 2.4), accMat);
+            stripe.position.set(0, 0.99, 3.0); g.add(stripe);
+            // cockpit hump behind the driver
+            const hump = new THREE.Mesh(new THREE.BoxGeometry(2.3, 0.85, 2.0), bodyMat);
+            hump.position.set(0, 1.7, -1.5); g.add(hump);
             // side pods
             for (const s of [1, -1]) {
-                const pod = new THREE.Mesh(new THREE.BoxGeometry(0.9, 0.9, 3.2), accMat);
-                pod.position.set(1.9 * s, 1.1, 0.2); g.add(pod);
+                const pod = new THREE.Mesh(new THREE.BoxGeometry(0.8, 0.65, 3.0), accMat);
+                pod.position.set(2.0 * s, 1.0, 0.1); g.add(pod);
             }
-            // seat / cockpit
-            const seat = new THREE.Mesh(new THREE.BoxGeometry(2.2, 1.0, 2.0), darkMat);
-            seat.position.set(0, 2.1, -0.4); g.add(seat);
-            // spoiler
-            const wing = new THREE.Mesh(new THREE.BoxGeometry(4.0, 0.3, 1.2), accMat);
-            wing.position.set(0, 2.7, -2.6); g.add(wing);
-            const wingPost = new THREE.Mesh(new THREE.BoxGeometry(0.3, 1.0, 0.3), darkMat);
-            wingPost.position.set(0, 2.2, -2.6); g.add(wingPost);
+            // rear wing
+            const wing = new THREE.Mesh(new THREE.BoxGeometry(4.2, 0.26, 1.1), accMat);
+            wing.position.set(0, 2.25, -3.0); g.add(wing);
+            for (const s of [1, -1]) {
+                const post = new THREE.Mesh(new THREE.BoxGeometry(0.24, 0.95, 0.3), darkMat);
+                post.position.set(0.95 * s, 1.8, -3.0); g.add(post);
+            }
 
-            // driver
+            // driver — smaller, more in-proportion than before
             const driver = new THREE.Group();
-            const torso = new THREE.Mesh(new THREE.BoxGeometry(1.6, 1.4, 1.2), accMat);
-            torso.position.y = 2.9; driver.add(torso);
-            const head = new THREE.Mesh(new THREE.SphereGeometry(0.85, 12, 12), new THREE.MeshLambertMaterial({ color: 0xffd9a8 }));
-            head.position.y = 4.0; driver.add(head);
-            const helmet = new THREE.Mesh(new THREE.SphereGeometry(0.95, 12, 12, 0, Math.PI * 2, 0, Math.PI / 1.7), bodyMat);
-            helmet.position.y = 4.15; driver.add(helmet);
-            driver.position.z = -0.4;
-            g.add(driver);
+            const torso = new THREE.Mesh(new THREE.BoxGeometry(1.4, 1.1, 1.0), accMat);
+            torso.position.y = 2.15; driver.add(torso);
+            const head = new THREE.Mesh(new THREE.SphereGeometry(0.6, 16, 16),
+                new THREE.MeshLambertMaterial({ color: 0xffd9a8 }));
+            head.position.y = 2.95; driver.add(head);
+            const helmet = new THREE.Mesh(new THREE.SphereGeometry(0.68, 16, 16, 0, Math.PI * 2, 0, Math.PI / 1.85), bodyMat);
+            helmet.position.y = 3.02; driver.add(helmet);
+            const visor = new THREE.Mesh(new THREE.BoxGeometry(0.85, 0.2, 0.25), darkMat);
+            visor.position.set(0, 2.96, 0.55); driver.add(visor);
+            driver.position.z = -0.7; g.add(driver);
 
-            // wheels
-            const wheelGeo = new THREE.CylinderGeometry(1.15, 1.15, 1.0, 14);
-            const wheelMat = new THREE.MeshLambertMaterial({ color: 0x111317 });
-            const wheels = [];
-            const wpos = [[1.9, 0.9, 1.9], [-1.9, 0.9, 1.9], [1.9, 0.9, -1.9], [-1.9, 0.9, -1.9]];
+            // wheels: each on a pivot group. Tire geometry is laid down once so
+            // rolling is a clean spin about the axle (no Euler-order wobble).
+            const tireGeo = new THREE.CylinderGeometry(1.05, 1.05, 0.95, 20);
+            tireGeo.rotateZ(Math.PI / 2);   // axle along local X
+            const hubGeo = new THREE.CylinderGeometry(0.42, 0.42, 1.02, 12);
+            hubGeo.rotateZ(Math.PI / 2);
+            const tireMat = new THREE.MeshLambertMaterial({ color: 0x14171f });
+            const wheels = [];        // spinning meshes
+            const frontPivots = [];   // pivots that steer
+            const wpos = [[1.95, 0.95, 1.95, true], [-1.95, 0.95, 1.95, true],
+                          [2.0, 0.95, -2.05, false], [-2.0, 0.95, -2.05, false]];
             for (const p of wpos) {
-                const w = new THREE.Mesh(wheelGeo, wheelMat);
-                w.rotation.z = Math.PI / 2;
-                w.position.set(p[0], p[1], p[2]);
-                g.add(w); wheels.push(w);
+                const pivot = new THREE.Group();
+                pivot.position.set(p[0], p[1], p[2]);
+                const tire = new THREE.Mesh(tireGeo, tireMat);
+                tire.add(new THREE.Mesh(hubGeo, rimMat));
+                pivot.add(tire);
+                g.add(pivot);
+                wheels.push(tire);
+                if (p[3]) frontPivots.push(pivot);
             }
 
             // blob shadow
             const shCv = document.createElement('canvas'); shCv.width = 64; shCv.height = 64;
             const sg = shCv.getContext('2d');
             const sgr = sg.createRadialGradient(32, 32, 0, 32, 32, 32);
-            sgr.addColorStop(0, 'rgba(0,0,0,0.5)'); sgr.addColorStop(1, 'rgba(0,0,0,0)');
+            sgr.addColorStop(0, 'rgba(0,0,0,0.45)'); sgr.addColorStop(1, 'rgba(0,0,0,0)');
             sg.fillStyle = sgr; sg.fillRect(0, 0, 64, 64);
-            const shadow = new THREE.Mesh(new THREE.PlaneGeometry(7, 8),
+            const shadow = new THREE.Mesh(new THREE.PlaneGeometry(7.5, 8.5),
                 new THREE.MeshBasicMaterial({ map: new THREE.CanvasTexture(shCv), transparent: true, depthWrite: false }));
             shadow.rotation.x = -Math.PI / 2;
             shadow.position.y = 0.05;
             g.add(shadow);
 
             scene.add(g);
-            return { group: g, wheels, frontWheels: [wheels[0], wheels[1]] };
+            return { group: g, wheels, frontPivots };
         }
 
         function buildKarts() {
@@ -789,9 +853,26 @@
             }
             k.u = best / N_SAMPLES;
             k.progress = k.laps + k.u;
-            // lateral distance for off-track
-            const c = centerline[best];
-            k.lateral = Math.hypot(k.pos.x - c.x, k.pos.z - c.z);
+            // signed lateral offset from centerline (along the track normal)
+            const c = centerline[best], n = normals[best];
+            k.lateralSigned = (k.pos.x - c.x) * n.x + (k.pos.z - c.z) * n.z;
+            k.lateral = Math.abs(k.lateralSigned);
+        }
+
+        // Keep a kart inside the guardrails: clamp its lateral offset and shave
+        // a little speed so hitting the wall feels like a soft scrape, not a stop.
+        function clampToTrack(k) {
+            const c = centerline[k.seg], n = normals[k.seg];
+            let off = (k.pos.x - c.x) * n.x + (k.pos.z - c.z) * n.z;
+            if (off > WALL_LIMIT) {
+                const d = off - WALL_LIMIT;
+                k.pos.x -= n.x * d; k.pos.z -= n.z * d;
+                k.speed *= 0.97;
+            } else if (off < -WALL_LIMIT) {
+                const d = -WALL_LIMIT - off;
+                k.pos.x += n.x * d; k.pos.z += n.z * d;
+                k.speed *= 0.97;
+            }
         }
 
         function onLapCrossed(k) {
@@ -826,16 +907,15 @@
                 steer = aiSteer(k, dt);
             }
 
-            const onGrass = k.lateral > HALF_W + 1.2;
-            let cap = onGrass ? GRASS_CAP : MAX_SPEED;
+            let cap = MAX_SPEED;
             // rubber-banding: trailing AI go a touch faster, leaders a touch slower
-            if (!k.isPlayer && k._rubber && !onGrass) cap *= k._rubber;
+            if (!k.isPlayer && k._rubber) cap *= k._rubber;
             if (k.boostTimer > 0) cap = BOOST_CAP;
 
             // accelerate / decelerate toward cap
             if (!k.finished) {
                 if (k.speed < cap) k.speed += ACCEL * dt;
-                else k.speed -= (onGrass ? 120 : 60) * dt;
+                else k.speed -= 60 * dt;
             }
             if (k.boostTimer > 0) {
                 k.boostTimer -= dt;
@@ -852,9 +932,6 @@
             // drift charge builds while sliding at speed
             if (k.drifting && k.speed > 25) k.driftCharge += dt;
 
-            // grass wobble
-            if (onGrass && k.speed > 5) k.theta += Math.sin(raceClock * 30 + k.aiPhase) * 0.012;
-
             // move
             const fx = Math.sin(k.theta), fz = Math.cos(k.theta);
             k.pos.x += fx * k.speed * dt;
@@ -864,6 +941,7 @@
             if (k.hopT > 0) k.hopT -= dt;
 
             updateProgress(k);
+            clampToTrack(k);
 
             // boost pad
             for (const pk of boostPads) {
@@ -977,21 +1055,20 @@
         function syncKartMesh(k, instant, dt) {
             dt = dt || 0.016;
             const g = k.mesh.group;
-            const hop = k.hopT > 0 ? Math.sin((1 - k.hopT / 0.28) * Math.PI) * 1.4 : 0;
+            const hop = k.hopT > 0 ? Math.sin((1 - k.hopT / 0.28) * Math.PI) * 0.9 : 0;
             g.position.set(k.pos.x, hop, k.pos.z);
-            g.rotation.y = k.theta;
-            // visual roll into drift / turn
-            const targetRoll = (k.drifting ? -k.driftDir * 0.18 : -(k.isPlayer ? steerInput : 0) * 0.07);
+            // body lean into a drift / turn
+            const targetRoll = (k.drifting ? -k.driftDir * 0.16 : -(k.isPlayer ? steerInput : 0) * 0.06);
             k.visualRoll = lerp(k.visualRoll, targetRoll, instant ? 1 : 0.15);
             g.rotation.z = k.visualRoll;
-            // drift yaw kick (slide look)
-            g.rotation.y = k.theta + (k.drifting ? -k.driftDir * 0.35 : 0);
-            // wheel spin
+            // heading + a slight yaw kick while drifting (slide look)
+            g.rotation.y = k.theta + (k.drifting ? -k.driftDir * 0.32 : 0);
+            // wheels roll cleanly about their axle
             const spin = k.speed * dt * 0.9;
             for (const w of k.mesh.wheels) w.rotation.x += spin;
-            // front wheel steer
+            // front wheels steer via their pivot
             const fs = (k.isPlayer ? steerInput : 0) * 0.4 + (k.drifting ? k.driftDir * 0.3 : 0);
-            for (const fw of k.mesh.frontWheels) fw.rotation.y = fs;
+            for (const p of k.mesh.frontPivots) p.rotation.y = fs;
         }
 
         // ===================================================================
@@ -1118,7 +1195,8 @@
             // gamma: left-right tilt in portrait (-90..90)
             if (neutralGamma == null) neutralGamma = e.gamma;
             const rel = e.gamma - neutralGamma;
-            tiltSteer = clamp(rel / 28, -1, 1);
+            // negated: tilting the phone left should steer left
+            tiltSteer = clamp(-rel / 28, -1, 1);
         }
 
         function setupInput() {
@@ -1295,10 +1373,14 @@
                 updateHUD();
                 updateEngineSound();
             } else {
-                // gentle idle camera orbit on menu
-                const t = clock.elapsedTime * 0.15;
-                camera.position.set(Math.sin(t) * 60, 30, Math.cos(t) * 60 - 120);
-                camera.lookAt(0, 0, -120);
+                // slow cinematic orbit around the starting grid (karts are
+                // already placed on the grid at boot, so this frames them nicely)
+                const focus = player.pos;
+                const t = clock.elapsedTime * 0.18;
+                const r = 34;
+                camera.position.set(focus.x + Math.cos(t) * r, 13 + Math.sin(t * 0.6) * 3, focus.z + Math.sin(t) * r);
+                camera.lookAt(focus.x, 3, focus.z);
+                if (camera.fov !== 60) { camera.fov = 60; camera.updateProjectionMatrix(); }
             }
 
             updateParticles(dt);
@@ -1317,6 +1399,7 @@
         function boot() {
             initThree();
             setupInput();
+            resetRace();   // place karts on the grid so the menu orbit has something to frame
             dom.loadMsg.style.display = 'none';
             dom.startBtn.addEventListener('click', startGame);
             dom.againBtn.addEventListener('click', startGame);
