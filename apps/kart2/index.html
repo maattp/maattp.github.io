@@ -495,7 +495,9 @@
         }
 
         function buildCenterline(def) {
-            const pts = def.ctrl.map((p) => new THREE.Vector3(p[0], p[2] || 0, p[1]));
+            // Tracks are kept flat (y=0): elevated road over a single flat ground
+            // plane left visible gaps/void beside raised sections.
+            const pts = def.ctrl.map((p) => new THREE.Vector3(p[0], 0, p[1]));
             const curve = new THREE.CatmullRomCurve3(pts, true, 'catmullrom', 0.5);
             centerline = []; tangents = []; normals = [];
             for (let i = 0; i < N_SAMPLES; i++) {
@@ -509,7 +511,7 @@
 
         function applyTheme(th) {
             // sky dome
-            const geo = new THREE.SphereGeometry(1200, 32, 20);
+            const geo = new THREE.SphereGeometry(2400, 32, 20);
             const mat = new THREE.ShaderMaterial({
                 side: THREE.BackSide,
                 uniforms: { top: { value: new THREE.Color(th.skyTop) }, mid: { value: new THREE.Color(th.skyMid) }, bot: { value: new THREE.Color(th.skyBot) } },
@@ -533,7 +535,7 @@
                 // star field
                 const sg = new THREE.BufferGeometry(); const sv = [];
                 for (let i = 0; i < 400; i++) {
-                    const v = new THREE.Vector3().setFromSphericalCoords(1100, rand(0.2, 1.2), rand(0, Math.PI * 2));
+                    const v = new THREE.Vector3().setFromSphericalCoords(2300, rand(0.2, 1.2), rand(0, Math.PI * 2));
                     sv.push(v.x, Math.abs(v.y), v.z);
                 }
                 sg.setAttribute('position', new THREE.Float32BufferAttribute(sv, 3));
@@ -551,7 +553,8 @@
             worldGroup.add(sun);
 
             // ground
-            const ground = new THREE.Mesh(new THREE.PlaneGeometry(4000, 4000), new THREE.MeshLambertMaterial({ color: th.ground }));
+            const ground = new THREE.Mesh(new THREE.PlaneGeometry(4600, 4600), new THREE.MeshLambertMaterial({
+                color: th.ground, polygonOffset: true, polygonOffsetFactor: 1, polygonOffsetUnits: 1 }));
             ground.rotation.x = -Math.PI / 2;
             ground.position.y = -0.05;
             worldGroup.add(ground);
@@ -654,9 +657,9 @@
             for (let x = 0; x < 8; x++) for (let y = 0; y < 2; y++) { g.fillStyle = (x + y) % 2 ? '#fff' : '#111'; g.fillRect(x * 8, y * 8, 8, 8); }
             const tex = new THREE.CanvasTexture(cv);
             const line = new THREE.Mesh(new THREE.PlaneGeometry(TRACK_WIDTH, 6), new THREE.MeshBasicMaterial({
-                map: tex, polygonOffset: true, polygonOffsetFactor: -3, polygonOffsetUnits: -3, depthWrite: false }));
+                map: tex, polygonOffset: true, polygonOffsetFactor: -4, polygonOffsetUnits: -4 }));
             line.rotation.x = -Math.PI / 2; line.rotation.z = Math.atan2(t.x, t.z);
-            line.position.set(c.x, c.y + 0.07, c.z); line.renderOrder = 3; worldGroup.add(line);
+            line.position.set(c.x, c.y + 0.1, c.z); line.renderOrder = 3; worldGroup.add(line);
 
             const postH = 22;
             const postMat = new THREE.MeshLambertMaterial({ color: 0xff3b5c });
@@ -674,8 +677,10 @@
             bg.fillText('START', 256, 52);
             const bannerFace = new THREE.Mesh(new THREE.PlaneGeometry(TRACK_WIDTH + 6, 4.4),
                 new THREE.MeshBasicMaterial({ map: new THREE.CanvasTexture(bcv) }));
-            bannerFace.position.set(c.x, c.y + postH, c.z);
-            bannerFace.lookAt(c.x - t.x * 10, c.y + postH, c.z - t.z * 10);
+            // sit the banner clearly in front of the bar (bar is 2 deep) so it
+            // doesn't z-fight / hide inside the bar box
+            bannerFace.position.set(c.x - t.x * 1.4, c.y + postH, c.z - t.z * 1.4);
+            bannerFace.lookAt(c.x - t.x * 11.4, c.y + postH, c.z - t.z * 11.4);
             worldGroup.add(bannerFace);
         }
 
@@ -690,9 +695,9 @@
             [Math.floor(N_SAMPLES * 0.2), Math.floor(N_SAMPLES * 0.47), Math.floor(N_SAMPLES * 0.74)].forEach((k) => {
                 const c = centerline[k], t = tangents[k];
                 const pad = new THREE.Mesh(new THREE.PlaneGeometry(TRACK_WIDTH * 0.55, 14), new THREE.MeshBasicMaterial({
-                    map: tex, polygonOffset: true, polygonOffsetFactor: -3, polygonOffsetUnits: -3, depthWrite: false }));
+                    map: tex, polygonOffset: true, polygonOffsetFactor: -4, polygonOffsetUnits: -4 }));
                 pad.rotation.x = -Math.PI / 2; pad.rotation.z = Math.atan2(t.x, t.z);
-                pad.position.set(c.x, c.y + 0.07, c.z); pad.renderOrder = 3; worldGroup.add(pad);
+                pad.position.set(c.x, c.y + 0.1, c.z); pad.renderOrder = 3; worldGroup.add(pad);
                 boostPads.push(k);
             });
         }
@@ -967,7 +972,7 @@
                     seg: 0, lastSeg: 0, u: 0, laps: 0, progress: 0, rank: i + 1,
                     drifting: false, driftDir: 0, driftCharge: 0,
                     boostTimer: 0, hopT: 0, visualRoll: 0,
-                    spinTimer: 0, spinDir: 1, shieldTimer: 0, invuln: 0,
+                    spinTimer: 0, shieldTimer: 0, invuln: 0,
                     item: null, itemRolling: 0, itemUseTimer: 0,
                     stuckTimer: 0,
                     lane: 0, aiSkill: 1, _rubber: 1, aiPhase: Math.random() * Math.PI * 2,
@@ -1057,11 +1062,11 @@
             if (k.invuln > 0) k.invuln -= dt;
             if (k.itemRolling > 0) { k.itemRolling -= dt; if (k.itemRolling <= 0) finishRoll(k); }
 
-            const spinning = k.spinTimer > 0;
-            if (spinning) k.spinTimer -= dt;
+            const bonked = k.spinTimer > 0;
+            if (bonked) k.spinTimer -= dt;
 
             let steer = 0;
-            const controlled = !spinning && !k.finished;
+            const controlled = !k.finished;   // keep full control even when bonked
             if (controlled) {
                 if (k.isPlayer) {
                     steer = steerInput;
@@ -1078,7 +1083,7 @@
             if (!k.isPlayer && k._rubber) cap *= k._rubber;
             if (k.boostTimer > 0) cap = BOOST_CAP;
             if (k.shieldTimer > 0) cap *= 1.04;
-            if (spinning) cap = MAX_SPEED * 0.25;
+            if (bonked) cap = Math.min(cap, MAX_SPEED * 0.5);   // brief slow on a hit, no loss of control
 
             if (!k.finished) {
                 if (k.speed < cap) k.speed += ACCEL * k.statAccel * dt;
@@ -1087,15 +1092,11 @@
             if (k.boostTimer > 0) { k.boostTimer -= dt; k.speed = Math.max(k.speed, MAX_SPEED + 30); }
             k.speed = clamp(k.speed, 0, BOOST_CAP);
 
-            // steering
-            if (spinning) {
-                k.theta += k.spinDir * 13 * dt;
-            } else {
-                const speedFactor = clamp(k.speed / 26, 0, 1);
-                let turn = steer * 2.5 * k.statHandling * speedFactor;
-                if (k.drifting) turn = (steer * 1.0 + k.driftDir * 1.5) * speedFactor * 1.25 * k.statHandling;
-                k.theta += turn * dt;
-            }
+            // steering (full control retained even when bonked)
+            const speedFactor = clamp(k.speed / 26, 0, 1);
+            let turn = steer * 2.5 * k.statHandling * speedFactor;
+            if (k.drifting) turn = (steer * 1.0 + k.driftDir * 1.5) * speedFactor * 1.25 * k.statHandling;
+            k.theta += turn * dt;
 
             if (k.drifting && k.speed > 25) k.driftCharge += dt;
 
@@ -1109,7 +1110,7 @@
 
             // stuck / backward recovery
             const fwdDot = Math.sin(k.theta) * tangents[k.seg].x + Math.cos(k.theta) * tangents[k.seg].z;
-            if (!k.finished && !spinning && (fwdDot < -0.2 || k.speed < 6)) k.stuckTimer += dt; else k.stuckTimer = 0;
+            if (!k.finished && !bonked && (fwdDot < -0.2 || k.speed < 6)) k.stuckTimer += dt; else k.stuckTimer = 0;
             if (k.stuckTimer > 2.2) { recoverKart(k); k.stuckTimer = 0; }
 
             // boost pads
@@ -1137,7 +1138,7 @@
                 if (stage > 0) spawnRearSpark(k, stage === 1 ? 0x4ad6ff : (stage === 2 ? 0xff9a3c : 0xff3bd0), 5);
             }
             if (k.boostTimer > 0) spawnRearSpark(k, 0xff7a3c, 7);
-            if (spinning) emitSpark(new THREE.Vector3(k.pos.x, k.groundY + 1.5, k.pos.z), 0xcccccc, 4, 3, { normal: true, life: 0.4 });
+            if (bonked) emitSpark(new THREE.Vector3(k.pos.x, k.groundY + 1.5, k.pos.z), 0xffe27a, 4, 3, { normal: true, life: 0.4 });
 
             syncKartMesh(k, false, dt);
         }
@@ -1265,16 +1266,18 @@
             }
             return best;
         }
+        // Getting hit is a quick "bonk": you lose speed and bounce, but you keep
+        // steering — no frustrating loss-of-control spin.
         function spinKart(k, fromBolt) {
             if (k.invuln > 0 || k.spinTimer > 0 || k.finished) return;
             if (k.shieldTimer > 0) { k.shieldTimer = 0; k.mesh.shield.visible = false; if (k.isPlayer) { sfxBeep(360); vibrate(30); } return; }
-            k.spinTimer = fromBolt ? 0.9 : 1.2;
-            k.spinDir = Math.random() < 0.5 ? 1 : -1;
-            k.speed *= fromBolt ? 0.5 : 0.35;
-            k.invuln = k.spinTimer + 0.6;
-            k.drifting = false; k.driftCharge = 0; k.boostTimer = 0;
-            if (k.isPlayer) { sfxBeep(220); vibrate([0, 60, 40, 60]); flash('SPIN OUT!', '#ff7a7a'); }
-            for (let i = 0; i < 8; i++) emitSpark(new THREE.Vector3(k.pos.x, k.groundY + 1.5, k.pos.z), 0xffffff, 6, 5, { normal: true });
+            k.spinTimer = fromBolt ? 0.4 : 0.5;          // brief slow window
+            k.speed *= fromBolt ? 0.6 : 0.5;
+            k.invuln = k.spinTimer + 0.5;
+            k.hopT = 0.3;                                 // little bounce for feedback
+            k.drifting = false; k.driftCharge = 0;
+            if (k.isPlayer) { sfxBeep(240); vibrate(45); flash('BONK!', '#ffd54a'); }
+            for (let i = 0; i < 8; i++) emitSpark(new THREE.Vector3(k.pos.x, k.groundY + 1.5, k.pos.z), 0xffe27a, 6, 5, { normal: true });
         }
 
         function clearProjectiles() { for (const p of projectiles) { scene.remove(p.mesh); disposeObject(p.mesh); } projectiles = []; }
