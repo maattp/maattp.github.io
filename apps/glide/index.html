@@ -210,6 +210,11 @@
             canvas.style.height = H + 'px';
             ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
             buildStars();
+            buildClouds();
+            buildBirds();
+            buildAmbient();
+            buildVignette();
+            buildNoise();
         }
         window.addEventListener('resize', resize);
 
@@ -375,6 +380,108 @@
         }
 
         // ---------------------------------------------------------------
+        //  Atmosphere — clouds, birds, ambient motes, aurora, vignette, grain
+        // ---------------------------------------------------------------
+        let clouds = [];
+        function buildClouds() {
+            clouds = [];
+            // two depth layers: far (small, faint, slow) and near (big, bold)
+            const span = W + 460;
+            const make = (count, layer, yLo, yHi, scaleLo, scaleHi, speed) => {
+                for (let i = 0; i < count; i++) {
+                    const sc = scaleLo + Math.random() * (scaleHi - scaleLo);
+                    const puffs = [];
+                    const np = 4 + Math.floor(Math.random() * 3);
+                    for (let j = 0; j < np; j++) {
+                        puffs.push({
+                            dx: (Math.random() - 0.5) * 120 * sc,
+                            dy: (Math.random() - 0.4) * 26 * sc,
+                            r: (26 + Math.random() * 26) * sc,
+                        });
+                    }
+                    clouds.push({
+                        layer: layer,
+                        x0: Math.random() * span,
+                        y: (yLo + Math.random() * (yHi - yLo)) * H,
+                        sc: sc,
+                        speed: speed,
+                        puffs: puffs,
+                    });
+                }
+            };
+            make(3, 0, 0.10, 0.42, 0.5, 0.85, 0.045);   // far
+            make(3, 1, 0.16, 0.52, 0.9, 1.35, 0.11);     // near
+            clouds.sort((a, b) => a.layer - b.layer);
+        }
+
+        let birds = [];
+        function buildBirds() {
+            birds = [];
+            const flocks = 2 + Math.floor(Math.random() * 2);
+            for (let f = 0; f < flocks; f++) {
+                const n = 4 + Math.floor(Math.random() * 5);
+                const members = [];
+                for (let i = 0; i < n; i++) {
+                    members.push({
+                        ox: (Math.random() - 0.5) * 80 - i * 9,
+                        oy: (Math.random() - 0.5) * 36 + Math.abs(i - n / 2) * 5,
+                        ph: Math.random() * Math.PI * 2,
+                        sz: 4 + Math.random() * 3,
+                    });
+                }
+                birds.push({
+                    x0: Math.random() * (W + 300),
+                    y: (0.18 + Math.random() * 0.3) * H,
+                    speed: 0.16 + Math.random() * 0.1,
+                    flap: 4 + Math.random() * 3,
+                    members: members,
+                });
+            }
+        }
+
+        let ambient = [];
+        function buildAmbient() {
+            ambient = [];
+            const n = Math.round((W * H) / 26000);
+            for (let i = 0; i < n; i++) {
+                ambient.push({
+                    x: Math.random() * W,
+                    y: Math.random() * H,
+                    r: Math.random() * 1.8 + 0.6,
+                    drift: 0.2 + Math.random() * 0.5,
+                    sway: Math.random() * Math.PI * 2,
+                    swaySp: 0.4 + Math.random() * 0.9,
+                    tw: Math.random() * Math.PI * 2,
+                });
+            }
+        }
+
+        let vignetteGrad = null;
+        function buildVignette() {
+            const g = ctx.createRadialGradient(W / 2, H * 0.46, H * 0.34, W / 2, H * 0.5, H * 0.82);
+            g.addColorStop(0, 'rgba(0,0,0,0)');
+            g.addColorStop(0.7, 'rgba(0,0,0,0)');
+            g.addColorStop(1, 'rgba(6,6,16,0.42)');
+            vignetteGrad = g;
+        }
+
+        let noisePattern = null;
+        function buildNoise() {
+            const size = 96;
+            const nc = document.createElement('canvas');
+            nc.width = size; nc.height = size;
+            const nctx = nc.getContext('2d');
+            const img = nctx.createImageData(size, size);
+            for (let i = 0; i < img.data.length; i += 4) {
+                const v = (Math.random() * 255) | 0;
+                img.data[i] = v; img.data[i + 1] = v; img.data[i + 2] = v;
+                img.data[i + 3] = 255;
+            }
+            nctx.putImageData(img, 0, 0);
+            noisePattern = ctx.createPattern(nc, 'repeat');
+        }
+
+        // ---------------------------------------------------------------
         //  Drawing
         // ---------------------------------------------------------------
         function drawSky(sky) {
@@ -507,6 +614,165 @@
             ctx.restore();
         }
 
+        // Aurora — shimmering ribbons of light high in the night sky
+        function drawAurora(sky) {
+            if (sky.dark < 0.55) return;
+            const a = (sky.dark - 0.55) / 0.45;     // fades in through twilight->night
+            const now = performance.now() / 1000;
+            ctx.save();
+            ctx.globalCompositeOperation = 'lighter';
+            const bands = [
+                { col: [90, 245, 185], yb: 0.30, amp: 30, fr: 0.011, sp: 0.18, w: 78, al: 0.30 },
+                { col: [130, 150, 255], yb: 0.38, amp: 38, fr: 0.008, sp: -0.13, w: 96, al: 0.24 },
+                { col: [205, 120, 235], yb: 0.25, amp: 24, fr: 0.014, sp: 0.22, w: 60, al: 0.22 },
+            ];
+            for (const band of bands) {
+                ctx.beginPath();
+                for (let x = 0; x <= W; x += 12) {
+                    const y = band.yb * H
+                        + Math.sin(x * band.fr + now * band.sp) * band.amp
+                        + Math.sin(x * band.fr * 2.7 + now * band.sp * 1.6) * band.amp * 0.4;
+                    if (x === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+                }
+                // vertical curtain via a tall gradient stroke
+                const c = band.col;
+                const grad = ctx.createLinearGradient(0, band.yb * H - band.w, 0, band.yb * H + band.w);
+                grad.addColorStop(0, 'rgba(' + c[0] + ',' + c[1] + ',' + c[2] + ',0)');
+                grad.addColorStop(0.5, 'rgba(' + c[0] + ',' + c[1] + ',' + c[2] + ',' + (band.al * a) + ')');
+                grad.addColorStop(1, 'rgba(' + c[0] + ',' + c[1] + ',' + c[2] + ',0)');
+                ctx.strokeStyle = grad;
+                ctx.lineWidth = band.w;
+                ctx.stroke();
+            }
+            ctx.restore();
+        }
+
+        // God rays — soft volumetric shafts from the sun at the golden hours
+        function drawGodRays(sky) {
+            const c = celestialPos(sky);
+            if (!c.isDay || sky.warm < 0.35) return;
+            const a = (sky.warm - 0.35) / 0.65;
+            const hc = sky.stops[3];
+            ctx.save();
+            ctx.globalCompositeOperation = 'lighter';
+            ctx.translate(c.x, c.y);
+            const rays = 9;
+            for (let i = 0; i < rays; i++) {
+                const ang = (i / rays) * Math.PI * 2 + performance.now() / 9000;
+                const len = H * (0.5 + 0.25 * Math.sin(i * 1.7));
+                const wide = 0.06 + 0.03 * Math.sin(i * 2.3);
+                ctx.save();
+                ctx.rotate(ang);
+                const grad = ctx.createLinearGradient(0, 0, len, 0);
+                grad.addColorStop(0, 'rgba(' + hc[0] + ',' + hc[1] + ',' + hc[2] + ',' + (0.10 * a) + ')');
+                grad.addColorStop(1, 'rgba(' + hc[0] + ',' + hc[1] + ',' + hc[2] + ',0)');
+                ctx.fillStyle = grad;
+                ctx.beginPath();
+                ctx.moveTo(0, 0);
+                ctx.lineTo(len, -len * wide);
+                ctx.lineTo(len, len * wide);
+                ctx.closePath();
+                ctx.fill();
+                ctx.restore();
+            }
+            ctx.restore();
+        }
+
+        // Volumetric parallax clouds, lit on top and shaded beneath, tinted by the sky
+        function drawClouds(sky) {
+            const span = W + 460;
+            // lit (top) and shaded (base) cloud colours derived from the current sky
+            let lit = lerpColor([255, 255, 255], sky.stops[3], sky.warm * 0.55);
+            lit = lerpColor(lit, [56, 62, 96], sky.dark * 0.78);
+            let shade = lerpColor([168, 170, 192], sky.stops[1], 0.45);
+            shade = lerpColor(shade, [24, 28, 52], sky.dark * 0.82);
+            const baseAlpha = lerp(0.92, 0.55, sky.dark);
+            for (const cl of clouds) {
+                let sx = ((cl.x0 - distance * cl.speed) % span + span) % span - 230;
+                const layerA = baseAlpha * (cl.layer === 0 ? 0.55 : 1);
+                for (const pf of cl.puffs) {
+                    const b = clamp(0.5 + pf.dy / (30 * cl.sc), 0, 1); // upper puffs lit, lower shaded
+                    const col = lerpColor(lit, shade, b);
+                    const px = sx + pf.dx, py = cl.y + pf.dy;
+                    const g = ctx.createRadialGradient(px, py - pf.r * 0.2, pf.r * 0.15, px, py, pf.r);
+                    g.addColorStop(0, 'rgba(' + col[0] + ',' + col[1] + ',' + col[2] + ',' + layerA + ')');
+                    g.addColorStop(0.7, 'rgba(' + col[0] + ',' + col[1] + ',' + col[2] + ',' + (layerA * 0.5) + ')');
+                    g.addColorStop(1, 'rgba(' + col[0] + ',' + col[1] + ',' + col[2] + ',0)');
+                    ctx.fillStyle = g;
+                    ctx.beginPath();
+                    ctx.arc(px, py, pf.r, 0, Math.PI * 2);
+                    ctx.fill();
+                }
+            }
+        }
+
+        // Distant drifting flocks of birds
+        function drawBirds(sky) {
+            const col = lerpColor([60, 64, 86], [10, 12, 28], sky.dark);
+            const now = performance.now() / 1000;
+            const span = W + 300;
+            ctx.save();
+            ctx.strokeStyle = rgb(col);
+            ctx.globalAlpha = lerp(0.5, 0.28, sky.dark);
+            ctx.lineWidth = 1.6;
+            ctx.lineCap = 'round';
+            for (const fl of birds) {
+                const fx = ((fl.x0 - distance * fl.speed) % span + span) % span - 150;
+                for (const m of fl.members) {
+                    const x = fx + m.ox;
+                    const y = fl.y + m.oy + Math.sin(now * 0.5 + m.ph) * 6;
+                    const w = m.sz, up = Math.sin(now * fl.flap + m.ph) * 0.5 + 0.5; // 0..1 wing beat
+                    const lift = up * w * 0.7;
+                    ctx.beginPath();
+                    ctx.moveTo(x - w, y + lift);
+                    ctx.quadraticCurveTo(x - w * 0.4, y - lift * 0.6, x, y);
+                    ctx.quadraticCurveTo(x + w * 0.4, y - lift * 0.6, x + w, y + lift);
+                    ctx.stroke();
+                }
+            }
+            ctx.restore();
+        }
+
+        // Floating ambient motes — dust in daylight, glowing embers/fireflies at night
+        function drawAmbient(sky) {
+            const now = performance.now() / 1000;
+            const warmC = lerpColor([255, 224, 150], [255, 150, 90], sky.warm);
+            const dayC = [255, 255, 255];
+            const col = lerpColor(dayC, warmC, clamp(sky.warm + sky.dark * 0.6, 0, 1));
+            const glow = sky.dark > 0.5;               // fireflies twinkle at night
+            ctx.save();
+            ctx.globalCompositeOperation = 'lighter';
+            for (const m of ambient) {
+                m.x -= m.drift * (0.6 + speed * 0.04);
+                m.x += Math.sin(now * m.swaySp + m.sway) * 0.3;
+                if (m.x < -6) { m.x = W + 6; m.y = Math.random() * H; }
+                let a = 0.25;
+                if (glow) a = 0.15 + 0.45 * (0.5 + 0.5 * Math.sin(now * 2.2 + m.tw));
+                ctx.globalAlpha = a * (glow ? 1 : 0.5);
+                ctx.fillStyle = 'rgb(' + col[0] + ',' + col[1] + ',' + col[2] + ')';
+                ctx.beginPath();
+                ctx.arc(m.x, m.y, m.r, 0, Math.PI * 2);
+                ctx.fill();
+            }
+            ctx.restore();
+        }
+
+        function drawVignette() {
+            if (vignetteGrad) {
+                ctx.fillStyle = vignetteGrad;
+                ctx.fillRect(0, 0, W, H);
+            }
+        }
+
+        function drawGrain() {
+            if (!noisePattern) return;
+            ctx.save();
+            ctx.globalAlpha = 0.028;
+            ctx.fillStyle = noisePattern;
+            ctx.fillRect(0, 0, W, H);
+            ctx.restore();
+        }
+
         // Distant parallax mountain ridges with atmospheric haze for depth
         function drawHills(sky) {
             const haze = sky.bot; // horizon colour the far ridges dissolve into
@@ -599,29 +865,57 @@
             edge(botAt);
         }
 
-        function drawRings() {
+        function drawRings(sky) {
+            const now = performance.now();
             for (const r of rings) {
                 const sx = r.wx - distance;
                 if (sx < -RING_RADIUS * 2 || sx > W + RING_RADIUS * 2) continue;
                 if (r.collected) continue;
-                const pulse = 1 + 0.06 * Math.sin(performance.now() / 200 + r.wx);
+                // gentle rotation about the vertical axis -> perspective ellipse
+                const spin = Math.sin(now / 900 + r.wx * 0.7);
+                const sxScale = 0.42 + 0.58 * Math.abs(spin); // 0.42 (edge-on) .. 1 (face-on)
+                const bob = Math.sin(now / 600 + r.wx) * 4;
                 ctx.save();
-                ctx.translate(sx, r.y);
-                ctx.scale(1, pulse);
-                // outer glow
-                const glow = ctx.createRadialGradient(0, 0, RING_RADIUS * 0.5, 0, 0, RING_RADIUS * 1.3);
-                glow.addColorStop(0, 'rgba(255,220,120,0)');
-                glow.addColorStop(0.75, 'rgba(255,210,100,0.35)');
-                glow.addColorStop(1, 'rgba(255,210,100,0)');
+                ctx.translate(sx, r.y + bob);
+
+                // outer glow (additive)
+                ctx.save();
+                ctx.globalCompositeOperation = 'lighter';
+                const glow = ctx.createRadialGradient(0, 0, RING_RADIUS * 0.45, 0, 0, RING_RADIUS * 1.5);
+                glow.addColorStop(0, 'rgba(255,224,130,0)');
+                glow.addColorStop(0.72, 'rgba(255,206,96,0.4)');
+                glow.addColorStop(1, 'rgba(255,200,90,0)');
                 ctx.fillStyle = glow;
-                ctx.beginPath(); ctx.arc(0, 0, RING_RADIUS * 1.3, 0, Math.PI * 2); ctx.fill();
-                // ring
-                ctx.lineWidth = 8;
-                ctx.strokeStyle = '#ffd86b';
+                ctx.beginPath(); ctx.arc(0, 0, RING_RADIUS * 1.5, 0, Math.PI * 2); ctx.fill();
+                ctx.restore();
+
+                ctx.scale(sxScale, 1);
+                // metallic torus band: gradient across the ring thickness
+                const band = ctx.createLinearGradient(0, -RING_RADIUS, 0, RING_RADIUS);
+                band.addColorStop(0, '#fff0b8');
+                band.addColorStop(0.5, '#ffc24a');
+                band.addColorStop(1, '#e8932a');
+                ctx.lineWidth = 9;
+                ctx.strokeStyle = band;
                 ctx.beginPath(); ctx.arc(0, 0, RING_RADIUS, 0, Math.PI * 2); ctx.stroke();
-                ctx.lineWidth = 3;
-                ctx.strokeStyle = 'rgba(255,255,255,0.8)';
-                ctx.beginPath(); ctx.arc(0, 0, RING_RADIUS - 5, 0, Math.PI * 2); ctx.stroke();
+                // bright inner highlight
+                ctx.lineWidth = 2.5;
+                ctx.strokeStyle = 'rgba(255,255,255,0.85)';
+                ctx.beginPath(); ctx.arc(0, 0, RING_RADIUS - 4.5, 0, Math.PI * 2); ctx.stroke();
+                ctx.restore();
+
+                // sparkle that races around the rim
+                const sa = now / 360 + r.wx;
+                const sxp = Math.cos(sa) * RING_RADIUS * sxScale;
+                const syp = Math.sin(sa) * RING_RADIUS;
+                ctx.save();
+                ctx.globalCompositeOperation = 'lighter';
+                ctx.translate(sx, r.y + bob);
+                const spark = ctx.createRadialGradient(sxp, syp, 0, sxp, syp, 9);
+                spark.addColorStop(0, 'rgba(255,255,255,0.95)');
+                spark.addColorStop(1, 'rgba(255,255,255,0)');
+                ctx.fillStyle = spark;
+                ctx.beginPath(); ctx.arc(sxp, syp, 9, 0, Math.PI * 2); ctx.fill();
                 ctx.restore();
             }
         }
@@ -889,11 +1183,16 @@
                 ctx.translate((Math.random() - 0.5) * shakeT * 18, (Math.random() - 0.5) * shakeT * 18);
             }
 
-            drawSky(sky);
-            drawCelestial(sky);
-            drawHills(sky);
-            drawCave(sky);
-            drawRings();
+            drawSky(sky);          // gradient + horizon bloom + stars + shooting star
+            drawAurora(sky);       // night ribbons of light
+            drawGodRays(sky);      // golden-hour shafts
+            drawCelestial(sky);    // sun / moon
+            drawClouds(sky);       // lit volumetric clouds
+            drawBirds(sky);        // distant flocks
+            drawHills(sky);        // hazy parallax ridges
+            drawCave(sky);         // the canyon
+            drawRings(sky);
+            drawAmbient(sky);      // foreground motes / fireflies
 
             if (state !== 'dead') {
                 drawTrail();
@@ -902,6 +1201,10 @@
             drawParticles();
 
             ctx.restore();
+
+            // screen-space finishing passes (do not shake)
+            drawVignette();
+            drawGrain();
 
             // ring pickup flash
             if (lastFlash > 0) {
