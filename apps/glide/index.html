@@ -1,0 +1,838 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="theme-color" content="#1a1a2e">
+    <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+    <link rel="apple-touch-icon" href="../icon.png">
+    <title>Glide</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        html, body {
+            height: 100%;
+            overflow: hidden;
+            background: #0a0a1a;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            -webkit-tap-highlight-color: transparent;
+            -webkit-user-select: none;
+            user-select: none;
+            touch-action: none;
+        }
+        #game {
+            display: block;
+            position: fixed;
+            inset: 0;
+            width: 100%;
+            height: 100%;
+        }
+
+        /* ---- HUD ---- */
+        #hud {
+            position: fixed;
+            top: calc(env(safe-area-inset-top) + 14px);
+            left: 0; right: 0;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            pointer-events: none;
+            z-index: 5;
+            text-shadow: 0 2px 8px rgba(0,0,0,0.55);
+        }
+        #score {
+            font-size: 54px;
+            font-weight: 800;
+            color: #fff;
+            line-height: 1;
+            font-variant-numeric: tabular-nums;
+        }
+        #ringHud {
+            margin-top: 6px;
+            font-size: 15px;
+            font-weight: 600;
+            color: #ffe08a;
+            letter-spacing: 0.5px;
+        }
+        #hud.hidden { display: none; }
+
+        /* ---- Overlays ---- */
+        .screen {
+            position: fixed;
+            inset: 0;
+            z-index: 10;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            text-align: center;
+            padding: env(safe-area-inset-top) 28px env(safe-area-inset-bottom);
+            background: radial-gradient(ellipse at 50% 35%, rgba(30,40,90,0.35), rgba(8,8,22,0.78));
+            backdrop-filter: blur(2px);
+            -webkit-backdrop-filter: blur(2px);
+        }
+        .screen.hidden { display: none; }
+        .title {
+            font-size: 64px;
+            font-weight: 800;
+            letter-spacing: 2px;
+            color: #fff;
+            margin-bottom: 6px;
+            text-shadow: 0 4px 24px rgba(120,180,255,0.45);
+        }
+        .glider-emoji { font-size: 52px; margin-bottom: 10px; filter: drop-shadow(0 6px 12px rgba(0,0,0,0.4)); }
+        .subtitle {
+            font-size: 16px;
+            color: #b8c4e0;
+            line-height: 1.5;
+            max-width: 320px;
+            margin-bottom: 28px;
+        }
+        .subtitle b { color: #fff; }
+        .btn {
+            pointer-events: auto;
+            font-size: 20px;
+            font-weight: 700;
+            color: #0a1024;
+            background: linear-gradient(135deg, #ffd86b, #ff9e4a);
+            border: none;
+            border-radius: 999px;
+            padding: 16px 48px;
+            cursor: pointer;
+            box-shadow: 0 8px 24px rgba(255,160,80,0.4);
+            transition: transform 0.12s ease;
+        }
+        .btn:active { transform: scale(0.94); }
+        .stat-row {
+            display: flex;
+            gap: 36px;
+            margin: 18px 0 30px;
+        }
+        .stat { display: flex; flex-direction: column; gap: 4px; }
+        .stat .label { font-size: 13px; color: #8e9bc0; text-transform: uppercase; letter-spacing: 1px; }
+        .stat .value { font-size: 40px; font-weight: 800; color: #fff; font-variant-numeric: tabular-nums; }
+        .stat .value.gold { color: #ffd86b; }
+        #newBest {
+            font-size: 15px;
+            font-weight: 700;
+            color: #ffd86b;
+            margin-bottom: 14px;
+            letter-spacing: 1px;
+        }
+        #newBest.hidden { display: none; }
+        .gameover-title { font-size: 40px; font-weight: 800; color: #fff; margin-bottom: 4px; }
+        #tiltNote {
+            margin-top: 22px;
+            font-size: 13px;
+            color: #7c88ac;
+            max-width: 300px;
+            line-height: 1.5;
+        }
+        .back {
+            position: fixed;
+            top: calc(env(safe-area-inset-top) + 10px);
+            left: calc(env(safe-area-inset-left) + 14px);
+            z-index: 11;
+            pointer-events: auto;
+            text-decoration: none;
+            font-size: 26px;
+            color: rgba(255,255,255,0.85);
+            text-shadow: 0 2px 6px rgba(0,0,0,0.5);
+        }
+    </style>
+</head>
+<body>
+    <canvas id="game"></canvas>
+
+    <a href="../" class="back" id="backBtn">‹</a>
+
+    <div id="hud" class="hidden">
+        <div id="score">0</div>
+        <div id="ringHud">◎ 0</div>
+    </div>
+
+    <!-- Start -->
+    <div class="screen" id="startScreen">
+        <div class="glider-emoji">🛩️</div>
+        <div class="title">GLIDE</div>
+        <div class="subtitle">
+            Soar through the canyon. <b>Tilt your phone back to climb,
+            forward to dive.</b> Thread the narrowing cave and fly through
+            golden rings for bonus points.
+        </div>
+        <button class="btn" id="startBtn">Take Off</button>
+        <div id="tiltNote"></div>
+    </div>
+
+    <!-- Game over -->
+    <div class="screen hidden" id="overScreen">
+        <div class="gameover-title">Crashed</div>
+        <div id="newBest" class="hidden">★ NEW BEST ★</div>
+        <div class="stat-row">
+            <div class="stat"><span class="label">Score</span><span class="value" id="finalScore">0</span></div>
+            <div class="stat"><span class="label">Best</span><span class="value gold" id="bestScore">0</span></div>
+        </div>
+        <button class="btn" id="retryBtn">Fly Again</button>
+    </div>
+
+    <script>
+    (function () {
+        'use strict';
+
+        // ---------------------------------------------------------------
+        //  Setup
+        // ---------------------------------------------------------------
+        const canvas = document.getElementById('game');
+        const ctx = canvas.getContext('2d');
+        const dom = {
+            hud: document.getElementById('hud'),
+            score: document.getElementById('score'),
+            ringHud: document.getElementById('ringHud'),
+            startScreen: document.getElementById('startScreen'),
+            overScreen: document.getElementById('overScreen'),
+            startBtn: document.getElementById('startBtn'),
+            retryBtn: document.getElementById('retryBtn'),
+            finalScore: document.getElementById('finalScore'),
+            bestScore: document.getElementById('bestScore'),
+            newBest: document.getElementById('newBest'),
+            tiltNote: document.getElementById('tiltNote'),
+        };
+
+        let W = 0, H = 0, DPR = 1;
+        function resize() {
+            DPR = Math.min(window.devicePixelRatio || 1, 2);
+            W = window.innerWidth;
+            H = window.innerHeight;
+            canvas.width = Math.round(W * DPR);
+            canvas.height = Math.round(H * DPR);
+            canvas.style.width = W + 'px';
+            canvas.style.height = H + 'px';
+            ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+            buildStars();
+        }
+        window.addEventListener('resize', resize);
+
+        // ---------------------------------------------------------------
+        //  Constants / tuning
+        // ---------------------------------------------------------------
+        const BEST_KEY = 'glide.best';
+        const RING_SPACING = 900;     // world px between rings
+        const RING_RADIUS = 46;
+        const RING_BONUS = 25;
+        const TILT_RANGE = 26;        // degrees of tilt for full deflection
+        const CYCLE_DIST = 16000;     // world px for one full day/night cycle
+
+        // ---------------------------------------------------------------
+        //  Game state
+        // ---------------------------------------------------------------
+        let state = 'menu';           // 'menu' | 'playing' | 'dead'
+        let distance = 0;             // world px travelled
+        let speed = 0;                // horizontal px/frame
+        let gliderY = 0;             // screen-space y of glider
+        let gliderVY = 0;             // vertical velocity
+        let gliderX = 0;             // fixed screen x of glider
+        let tilt = 0;                 // -1..1 (computed from device)
+        let best = parseInt(localStorage.getItem(BEST_KEY) || '0', 10) || 0;
+        let ringsHit = 0;
+        let ringPoints = 0;
+        let rings = [];               // {wx, y, collected, pulse}
+        let nextRingWX = 0;
+        let trail = [];               // glider trail points
+        let particles = [];           // crash debris
+        let shakeT = 0;
+        let lastFlash = 0;            // ring flash timer
+
+        // input sources
+        let neutralBeta = null;
+        let tiltActive = false;
+        let keyTilt = 0;
+        let pointerTilt = 0;          // last-resort drag fallback
+
+        // ---------------------------------------------------------------
+        //  Math helpers
+        // ---------------------------------------------------------------
+        const clamp = (v, a, b) => v < a ? a : (v > b ? b : v);
+        const lerp = (a, b, t) => a + (b - a) * t;
+        function lerpColor(c1, c2, t) {
+            return [
+                Math.round(lerp(c1[0], c2[0], t)),
+                Math.round(lerp(c1[1], c2[1], t)),
+                Math.round(lerp(c1[2], c2[2], t)),
+            ];
+        }
+        const rgb = (c) => 'rgb(' + c[0] + ',' + c[1] + ',' + c[2] + ')';
+
+        // ---------------------------------------------------------------
+        //  Cave terrain — pure functions of world-x
+        // ---------------------------------------------------------------
+        // Vertical center of the channel at a given world-x.
+        function channelCenter(wx) {
+            const c = 0.5
+                + 0.16 * Math.sin(wx * 0.00130)
+                + 0.09 * Math.sin(wx * 0.00310 + 1.3)
+                + 0.045 * Math.sin(wx * 0.00720 + 2.7);
+            return clamp(c, 0.30, 0.70) * H;
+        }
+        // Half-height of the open channel. Shrinks with distance to ramp difficulty.
+        function channelHalf(dist) {
+            const startH = H * 0.34;
+            const minH = H * 0.135;
+            const shrink = clamp(dist / 26000, 0, 1);
+            // small "breathing" so it tightens and loosens on the way down
+            const breathe = 1 + 0.10 * Math.sin(dist * 0.00055);
+            return Math.max(minH, lerp(startH, minH, shrink)) * breathe;
+        }
+        function topAt(wx, dist) { return channelCenter(wx) - channelHalf(dist); }
+        function botAt(wx, dist) { return channelCenter(wx) + channelHalf(dist); }
+
+        // ---------------------------------------------------------------
+        //  Day / night cycle
+        // ---------------------------------------------------------------
+        // Keyframes around the cycle: dawn -> day -> dusk -> night -> (dawn)
+        const SKY = [
+            { at: 0.00, top: [58, 78, 140], bot: [255, 170, 120], dark: 0.45 }, // dawn
+            { at: 0.25, top: [74, 144, 217], bot: [180, 216, 246], dark: 0.00 }, // day
+            { at: 0.50, top: [54, 42, 96], bot: [255, 120, 95], dark: 0.55 },    // dusk
+            { at: 0.75, top: [8, 10, 38], bot: [26, 26, 58], dark: 1.00 },       // night
+            { at: 1.00, top: [58, 78, 140], bot: [255, 170, 120], dark: 0.45 },  // back to dawn
+        ];
+        function cycleAt(dist) {
+            const p = ((dist / CYCLE_DIST) % 1 + 1) % 1; // start near dawn->day
+            // bias so a fresh game opens in daytime
+            return (p + 0.15) % 1;
+        }
+        function skyState(dist) {
+            const p = cycleAt(dist);
+            let i = 0;
+            while (i < SKY.length - 1 && p > SKY[i + 1].at) i++;
+            const a = SKY[i], b = SKY[i + 1];
+            const t = (p - a.at) / (b.at - a.at);
+            return {
+                p: p,
+                top: lerpColor(a.top, b.top, t),
+                bot: lerpColor(a.bot, b.bot, t),
+                dark: lerp(a.dark, b.dark, t),
+            };
+        }
+
+        // ---------------------------------------------------------------
+        //  Stars
+        // ---------------------------------------------------------------
+        let stars = [];
+        function buildStars() {
+            stars = [];
+            const n = Math.round((W * H) / 9000);
+            for (let i = 0; i < n; i++) {
+                stars.push({
+                    x: Math.random() * W,
+                    y: Math.random() * H * 0.85,
+                    r: Math.random() * 1.4 + 0.3,
+                    tw: Math.random() * Math.PI * 2,
+                    sp: 0.5 + Math.random() * 1.5,
+                });
+            }
+        }
+
+        // ---------------------------------------------------------------
+        //  Drawing
+        // ---------------------------------------------------------------
+        function drawSky(sky) {
+            const g = ctx.createLinearGradient(0, 0, 0, H);
+            g.addColorStop(0, rgb(sky.top));
+            g.addColorStop(1, rgb(sky.bot));
+            ctx.fillStyle = g;
+            ctx.fillRect(0, 0, W, H);
+
+            // stars fade in with darkness
+            if (sky.dark > 0.05) {
+                ctx.save();
+                const now = performance.now() / 1000;
+                for (const s of stars) {
+                    const tw = 0.55 + 0.45 * Math.sin(now * s.sp + s.tw);
+                    ctx.globalAlpha = sky.dark * tw;
+                    ctx.fillStyle = '#fff';
+                    ctx.beginPath();
+                    ctx.arc(s.x, s.y, s.r, 0, Math.PI * 2);
+                    ctx.fill();
+                }
+                ctx.restore();
+            }
+        }
+
+        function drawCelestial(sky) {
+            // Sun travels the sky during the "day" half of the cycle (p 0..0.5),
+            // moon during the night half (p 0.5..1).
+            const p = sky.p;
+            const isDay = p < 0.5;
+            const local = isDay ? (p / 0.5) : ((p - 0.5) / 0.5); // 0..1 across its arc
+            const x = local * W;
+            const y = H * 0.62 - Math.sin(local * Math.PI) * H * 0.50;
+
+            ctx.save();
+            if (isDay) {
+                const r = 38;
+                const glow = ctx.createRadialGradient(x, y, 0, x, y, r * 4);
+                glow.addColorStop(0, 'rgba(255,240,190,0.55)');
+                glow.addColorStop(1, 'rgba(255,240,190,0)');
+                ctx.fillStyle = glow;
+                ctx.beginPath(); ctx.arc(x, y, r * 4, 0, Math.PI * 2); ctx.fill();
+                ctx.fillStyle = '#fff4d6';
+                ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.fill();
+            } else {
+                const r = 30;
+                const glow = ctx.createRadialGradient(x, y, 0, x, y, r * 3.5);
+                glow.addColorStop(0, 'rgba(220,228,255,0.4)');
+                glow.addColorStop(1, 'rgba(220,228,255,0)');
+                ctx.fillStyle = glow;
+                ctx.beginPath(); ctx.arc(x, y, r * 3.5, 0, Math.PI * 2); ctx.fill();
+                ctx.fillStyle = '#eef0ff';
+                ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.fill();
+                // crater shadow for a crescent
+                ctx.fillStyle = rgb(sky.top);
+                ctx.globalAlpha = 0.9;
+                ctx.beginPath(); ctx.arc(x + r * 0.4, y - r * 0.3, r * 0.95, 0, Math.PI * 2); ctx.fill();
+            }
+            ctx.restore();
+        }
+
+        // Distant parallax hills
+        function drawHills(sky) {
+            const layers = [
+                { speed: 0.18, base: 0.74, amp: 0.06, freq: 0.0016, shade: 0.55 },
+                { speed: 0.34, base: 0.82, amp: 0.08, freq: 0.0026, shade: 0.35 },
+            ];
+            for (const L of layers) {
+                const off = distance * L.speed;
+                // hill colour: blend sky bottom toward dark
+                const col = lerpColor(sky.bot, [20, 20, 38], 1 - L.shade + sky.dark * 0.4);
+                ctx.fillStyle = rgb(col);
+                ctx.beginPath();
+                ctx.moveTo(0, H);
+                for (let x = 0; x <= W; x += 12) {
+                    const wx = (x + off) * 1;
+                    const y = H * L.base
+                        - Math.sin(wx * L.freq) * H * L.amp
+                        - Math.sin(wx * L.freq * 2.3 + 1.1) * H * L.amp * 0.4;
+                    ctx.lineTo(x, y);
+                }
+                ctx.lineTo(W, H);
+                ctx.closePath();
+                ctx.fill();
+            }
+        }
+
+        function drawCave(sky) {
+            const step = 10;
+            // terrain colours shift darker at night
+            const lightCol = lerpColor([120, 96, 74], [40, 44, 70], sky.dark);
+            const darkCol = lerpColor([58, 44, 34], [14, 16, 32], sky.dark);
+            const rimCol = lerpColor([170, 140, 110], [70, 78, 120], sky.dark);
+
+            // ----- top terrain -----
+            const gTop = ctx.createLinearGradient(0, 0, 0, H * 0.5);
+            gTop.addColorStop(0, rgb(darkCol));
+            gTop.addColorStop(1, rgb(lightCol));
+            ctx.fillStyle = gTop;
+            ctx.beginPath();
+            ctx.moveTo(0, 0);
+            for (let x = 0; x <= W; x += step) {
+                ctx.lineTo(x, topAt(distance + x, distance));
+            }
+            ctx.lineTo(W, 0);
+            ctx.closePath();
+            ctx.fill();
+            // rim
+            ctx.strokeStyle = rgb(rimCol);
+            ctx.lineWidth = 3;
+            ctx.beginPath();
+            for (let x = 0; x <= W; x += step) {
+                const y = topAt(distance + x, distance);
+                if (x === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+            }
+            ctx.stroke();
+
+            // ----- bottom terrain -----
+            const gBot = ctx.createLinearGradient(0, H * 0.5, 0, H);
+            gBot.addColorStop(0, rgb(lightCol));
+            gBot.addColorStop(1, rgb(darkCol));
+            ctx.fillStyle = gBot;
+            ctx.beginPath();
+            ctx.moveTo(0, H);
+            for (let x = 0; x <= W; x += step) {
+                ctx.lineTo(x, botAt(distance + x, distance));
+            }
+            ctx.lineTo(W, H);
+            ctx.closePath();
+            ctx.fill();
+            // rim
+            ctx.strokeStyle = rgb(rimCol);
+            ctx.lineWidth = 3;
+            ctx.beginPath();
+            for (let x = 0; x <= W; x += step) {
+                const y = botAt(distance + x, distance);
+                if (x === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+            }
+            ctx.stroke();
+        }
+
+        function drawRings() {
+            for (const r of rings) {
+                const sx = r.wx - distance;
+                if (sx < -RING_RADIUS * 2 || sx > W + RING_RADIUS * 2) continue;
+                if (r.collected) continue;
+                const pulse = 1 + 0.06 * Math.sin(performance.now() / 200 + r.wx);
+                ctx.save();
+                ctx.translate(sx, r.y);
+                ctx.scale(1, pulse);
+                // outer glow
+                const glow = ctx.createRadialGradient(0, 0, RING_RADIUS * 0.5, 0, 0, RING_RADIUS * 1.3);
+                glow.addColorStop(0, 'rgba(255,220,120,0)');
+                glow.addColorStop(0.75, 'rgba(255,210,100,0.35)');
+                glow.addColorStop(1, 'rgba(255,210,100,0)');
+                ctx.fillStyle = glow;
+                ctx.beginPath(); ctx.arc(0, 0, RING_RADIUS * 1.3, 0, Math.PI * 2); ctx.fill();
+                // ring
+                ctx.lineWidth = 8;
+                ctx.strokeStyle = '#ffd86b';
+                ctx.beginPath(); ctx.arc(0, 0, RING_RADIUS, 0, Math.PI * 2); ctx.stroke();
+                ctx.lineWidth = 3;
+                ctx.strokeStyle = 'rgba(255,255,255,0.8)';
+                ctx.beginPath(); ctx.arc(0, 0, RING_RADIUS - 5, 0, Math.PI * 2); ctx.stroke();
+                ctx.restore();
+            }
+        }
+
+        function drawTrail() {
+            for (let i = 0; i < trail.length; i++) {
+                const t = trail[i];
+                const a = (i / trail.length) * 0.5;
+                ctx.fillStyle = 'rgba(255,255,255,' + a + ')';
+                ctx.beginPath();
+                ctx.arc(t.x, t.y, (i / trail.length) * 4 + 0.5, 0, Math.PI * 2);
+                ctx.fill();
+            }
+        }
+
+        function drawGlider() {
+            const angle = clamp(gliderVY * 0.045, -0.7, 0.7);
+            ctx.save();
+            ctx.translate(gliderX, gliderY);
+            ctx.rotate(angle);
+            // body — sleek glider pointing right
+            ctx.fillStyle = '#f4f6ff';
+            ctx.strokeStyle = '#2b3358';
+            ctx.lineWidth = 2;
+            ctx.beginPath();
+            ctx.moveTo(20, 0);
+            ctx.lineTo(-14, -8);
+            ctx.lineTo(-8, 0);
+            ctx.lineTo(-14, 8);
+            ctx.closePath();
+            ctx.fill();
+            ctx.stroke();
+            // wing accent
+            ctx.fillStyle = '#ff9e4a';
+            ctx.beginPath();
+            ctx.moveTo(20, 0);
+            ctx.lineTo(-14, -8);
+            ctx.lineTo(-2, -1);
+            ctx.closePath();
+            ctx.fill();
+            // tail fin
+            ctx.fillStyle = '#cdd6f5';
+            ctx.beginPath();
+            ctx.moveTo(-8, 0);
+            ctx.lineTo(-16, -7);
+            ctx.lineTo(-10, 0);
+            ctx.closePath();
+            ctx.fill();
+            ctx.restore();
+        }
+
+        function drawParticles() {
+            for (const p of particles) {
+                ctx.globalAlpha = clamp(p.life, 0, 1);
+                ctx.fillStyle = p.color;
+                ctx.beginPath();
+                ctx.arc(p.x, p.y, p.r, 0, Math.PI * 2);
+                ctx.fill();
+            }
+            ctx.globalAlpha = 1;
+        }
+
+        // ---------------------------------------------------------------
+        //  Update
+        // ---------------------------------------------------------------
+        function spawnRingsAhead() {
+            const horizon = distance + W + RING_RADIUS * 2;
+            while (nextRingWX < horizon) {
+                const y = channelCenter(nextRingWX);
+                rings.push({ wx: nextRingWX, y: y, collected: false });
+                nextRingWX += RING_SPACING;
+            }
+            // drop rings well behind us
+            rings = rings.filter(r => r.wx - distance > -RING_RADIUS * 3);
+        }
+
+        function currentTilt() {
+            if (tiltActive) return tilt;
+            if (keyTilt !== 0) return keyTilt;
+            return pointerTilt;
+        }
+
+        function updatePlaying(dt) {
+            // accelerate slowly over time
+            speed = lerp(speed, 4.6 + Math.min(distance / 9000, 3.4), 0.02);
+            distance += speed;
+
+            // vertical physics: tilt sets target climb rate, gentle gravity sink
+            const t = currentTilt();
+            const targetVY = -t * 7.2 + 1.1; // +climb when tilt>0, slight sink at neutral
+            gliderVY = lerp(gliderVY, targetVY, 0.12);
+            gliderY += gliderVY;
+
+            // trail
+            trail.push({ x: gliderX - 12, y: gliderY + 4 });
+            if (trail.length > 16) trail.shift();
+
+            spawnRingsAhead();
+
+            // ring collection
+            const gwx = distance + gliderX;
+            for (const r of rings) {
+                if (r.collected) continue;
+                const dx = r.wx - gwx;
+                const dy = r.y - gliderY;
+                if (Math.abs(dx) < RING_RADIUS && Math.abs(dy) < RING_RADIUS &&
+                    (dx * dx + dy * dy) < RING_RADIUS * RING_RADIUS) {
+                    r.collected = true;
+                    ringsHit++;
+                    ringPoints += RING_BONUS;
+                    lastFlash = 1;
+                    if (navigator.vibrate) navigator.vibrate(15);
+                }
+            }
+            if (lastFlash > 0) lastFlash -= 0.06;
+
+            // collision with cave
+            const top = topAt(gwx, distance);
+            const bot = botAt(gwx, distance);
+            const r = 9;
+            if (gliderY - r < top || gliderY + r > bot) {
+                die();
+                return;
+            }
+
+            // HUD
+            const sc = Math.floor(distance / 30) + ringPoints;
+            dom.score.textContent = sc;
+            dom.ringHud.textContent = '◎ ' + ringsHit;
+        }
+
+        function updateParticles() {
+            for (const p of particles) {
+                p.x += p.vx;
+                p.y += p.vy;
+                p.vy += 0.35;
+                p.life -= 0.018;
+            }
+            particles = particles.filter(p => p.life > 0);
+            if (shakeT > 0) shakeT -= 0.05;
+        }
+
+        // ---------------------------------------------------------------
+        //  Main loop
+        // ---------------------------------------------------------------
+        function frame() {
+            requestAnimationFrame(frame);
+
+            if (state === 'playing') updatePlaying();
+            if (state === 'dead') {
+                distance += speed * 0.4; // keep scrolling a touch on the death screen
+                updateParticles();
+            }
+
+            const sky = skyState(distance);
+
+            ctx.save();
+            if (shakeT > 0) {
+                ctx.translate((Math.random() - 0.5) * shakeT * 18, (Math.random() - 0.5) * shakeT * 18);
+            }
+
+            drawSky(sky);
+            drawCelestial(sky);
+            drawHills(sky);
+            drawCave(sky);
+            drawRings();
+
+            if (state !== 'dead') {
+                drawTrail();
+                drawGlider();
+            }
+            drawParticles();
+
+            ctx.restore();
+
+            // ring pickup flash
+            if (lastFlash > 0) {
+                ctx.fillStyle = 'rgba(255,225,140,' + (lastFlash * 0.25) + ')';
+                ctx.fillRect(0, 0, W, H);
+            }
+        }
+
+        // ---------------------------------------------------------------
+        //  State transitions
+        // ---------------------------------------------------------------
+        function resetGame() {
+            distance = 0;
+            speed = 4.6;
+            gliderX = Math.round(W * 0.30);
+            gliderY = channelCenter(gliderX);
+            gliderVY = 0;
+            ringsHit = 0;
+            ringPoints = 0;
+            rings = [];
+            nextRingWX = RING_SPACING;
+            trail = [];
+            particles = [];
+            shakeT = 0;
+            lastFlash = 0;
+            neutralBeta = null; // recalibrate tilt to current hold
+            dom.score.textContent = '0';
+            dom.ringHud.textContent = '◎ 0';
+        }
+
+        function startPlaying() {
+            resetGame();
+            state = 'playing';
+            dom.startScreen.classList.add('hidden');
+            dom.overScreen.classList.add('hidden');
+            dom.hud.classList.remove('hidden');
+        }
+
+        function die() {
+            state = 'dead';
+            shakeT = 1;
+            if (navigator.vibrate) navigator.vibrate([40, 30, 60]);
+            // debris
+            for (let i = 0; i < 22; i++) {
+                particles.push({
+                    x: gliderX, y: gliderY,
+                    vx: (Math.random() - 0.5) * 9,
+                    vy: (Math.random() - 0.5) * 9 - 2,
+                    r: Math.random() * 3 + 1.5,
+                    life: 1,
+                    color: Math.random() < 0.5 ? '#f4f6ff' : '#ff9e4a',
+                });
+            }
+            const sc = Math.floor(distance / 30) + ringPoints;
+            const isBest = sc > best;
+            if (isBest) {
+                best = sc;
+                localStorage.setItem(BEST_KEY, String(best));
+            }
+            dom.finalScore.textContent = sc;
+            dom.bestScore.textContent = best;
+            dom.newBest.classList.toggle('hidden', !isBest);
+            dom.hud.classList.add('hidden');
+            setTimeout(() => { dom.overScreen.classList.remove('hidden'); }, 700);
+        }
+
+        // ---------------------------------------------------------------
+        //  Input
+        // ---------------------------------------------------------------
+        function onOrientation(e) {
+            if (e.beta == null) return;
+            tiltActive = true;
+            if (neutralBeta == null) neutralBeta = e.beta;
+            // tilt phone back toward you (beta increases) -> climb (positive)
+            const rel = e.beta - neutralBeta;
+            tilt = clamp(rel / TILT_RANGE, -1, 1);
+        }
+
+        let tiltListenerAdded = false;
+        function addTiltListener() {
+            if (!tiltListenerAdded) {
+                window.addEventListener('deviceorientation', onOrientation);
+                tiltListenerAdded = true;
+            }
+        }
+        async function requestTilt() {
+            if (typeof DeviceOrientationEvent !== 'undefined' &&
+                typeof DeviceOrientationEvent.requestPermission === 'function') {
+                try {
+                    const res = await DeviceOrientationEvent.requestPermission();
+                    if (res === 'granted') { addTiltListener(); return true; }
+                    return false;
+                } catch (err) { return false; }
+            } else {
+                addTiltListener();
+                return true;
+            }
+        }
+
+        // keyboard fallback (desktop testing)
+        window.addEventListener('keydown', (e) => {
+            if (e.key === 'ArrowUp' || e.key === 'w') keyTilt = 1;
+            if (e.key === 'ArrowDown' || e.key === 's') keyTilt = -1;
+            if (e.code === 'Space' && state !== 'playing') {
+                e.preventDefault();
+                if (state === 'menu') dom.startBtn.click();
+                else dom.retryBtn.click();
+            }
+        });
+        window.addEventListener('keyup', (e) => {
+            if (e.key === 'ArrowUp' || e.key === 'w' || e.key === 'ArrowDown' || e.key === 's') keyTilt = 0;
+        });
+
+        // pointer fallback (drag up/down) — only used if no tilt & no keys
+        let dragging = false, dragStartY = 0;
+        function pointerDown(y) { dragging = true; dragStartY = y; }
+        function pointerMove(y) {
+            if (!dragging) return;
+            pointerTilt = clamp((dragStartY - y) / 90, -1, 1);
+        }
+        function pointerUp() { dragging = false; pointerTilt = 0; }
+        canvas.addEventListener('touchstart', (e) => { pointerDown(e.touches[0].clientY); }, { passive: true });
+        canvas.addEventListener('touchmove', (e) => { pointerMove(e.touches[0].clientY); }, { passive: true });
+        canvas.addEventListener('touchend', pointerUp, { passive: true });
+        canvas.addEventListener('mousedown', (e) => pointerDown(e.clientY));
+        window.addEventListener('mousemove', (e) => pointerMove(e.clientY));
+        window.addEventListener('mouseup', pointerUp);
+
+        async function begin() {
+            await requestTilt();
+            startPlaying();
+        }
+        dom.startBtn.addEventListener('click', begin);
+        dom.retryBtn.addEventListener('click', begin);
+
+        // auto game-over if app is backgrounded mid-flight
+        document.addEventListener('visibilitychange', () => {
+            if (document.hidden && state === 'playing') die();
+        });
+
+        // ---------------------------------------------------------------
+        //  Boot
+        // ---------------------------------------------------------------
+        function detectTiltSupport() {
+            const hasOrientation = ('DeviceOrientationEvent' in window);
+            if (!hasOrientation) {
+                dom.tiltNote.textContent = 'No motion sensor detected — use ↑ / ↓ keys or drag up/down to fly.';
+            } else if (typeof DeviceOrientationEvent.requestPermission === 'function') {
+                dom.tiltNote.textContent = 'Tap “Take Off” to allow motion access. Hold the phone comfortably — that becomes level.';
+            } else {
+                dom.tiltNote.textContent = 'Hold the phone comfortably when you take off — that becomes your level position.';
+            }
+        }
+
+        resize();
+        detectTiltSupport();
+        gliderX = Math.round(W * 0.30);
+        gliderY = H * 0.5;
+        requestAnimationFrame(frame);
+    })();
+    </script>
+</body>
+</html>
