@@ -220,8 +220,14 @@
         const RING_SPACING = 900;     // world px between rings
         const RING_RADIUS = 46;
         const RING_BONUS = 25;
-        const TILT_RANGE = 26;        // degrees of tilt for full deflection
+        const TILT_RANGE = 24;        // degrees of tilt for full deflection
         const CYCLE_DIST = 16000;     // world px for one full day/night cycle
+        // vertical flight model (gravity-based so the glider naturally sinks)
+        const GRAVITY = 0.22;         // constant downward accel
+        const LIFT = 0.70;            // upward accel at full back-tilt
+        const AIR_DRAG = 0.93;        // velocity damping -> glider inertia
+        const MAX_CLIMB = 8;          // max upward speed (px/frame)
+        const MAX_DIVE = 9;           // max downward speed (px/frame)
 
         // ---------------------------------------------------------------
         //  Game state
@@ -586,10 +592,13 @@
             speed = lerp(speed, 4.6 + Math.min(distance / 9000, 3.4), 0.02);
             distance += speed;
 
-            // vertical physics: tilt sets target climb rate, gentle gravity sink
+            // vertical physics: gravity always pulls down; tilting back adds lift.
+            // Neutral = gentle glide-down, tilt back = climb, tilt forward = fast dive.
+            // This gives symmetric up/down authority and makes descending feel natural.
             const t = currentTilt();
-            const targetVY = -t * 7.2 + 1.1; // +climb when tilt>0, slight sink at neutral
-            gliderVY = lerp(gliderVY, targetVY, 0.12);
+            gliderVY += GRAVITY - t * LIFT;
+            gliderVY *= AIR_DRAG;
+            gliderVY = clamp(gliderVY, -MAX_CLIMB, MAX_DIVE);
             gliderY += gliderVY;
 
             // trail
