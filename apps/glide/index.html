@@ -221,7 +221,7 @@
         const RING_RADIUS = 46;
         const RING_BONUS = 25;
         const TILT_RANGE = 24;        // degrees of tilt for full deflection
-        const CYCLE_DIST = 16000;     // world px for one full day/night cycle
+        const CYCLE_DIST = 22000;     // world px for one full day/night cycle (slow, majestic)
         // vertical flight model (gravity-based so the glider naturally sinks)
         const GRAVITY = 0.22;         // constant downward accel
         const LIFT = 0.70;            // upward accel at full back-tilt
@@ -295,18 +295,32 @@
         // ---------------------------------------------------------------
         //  Day / night cycle
         // ---------------------------------------------------------------
-        // Keyframes around the cycle: dawn -> day -> dusk -> night -> (dawn)
+        // Each keyframe is a full vertical gradient (zenith -> upper -> lower ->
+        // horizon) plus how dark the sky is (stars) and how warm the light is
+        // (dawn/dusk bloom). Interpolating these slowly fades dusk into night
+        // into dawn into day.
         const SKY = [
-            { at: 0.00, top: [58, 78, 140], bot: [255, 170, 120], dark: 0.45 }, // dawn
-            { at: 0.25, top: [74, 144, 217], bot: [180, 216, 246], dark: 0.00 }, // day
-            { at: 0.50, top: [54, 42, 96], bot: [255, 120, 95], dark: 0.55 },    // dusk
-            { at: 0.75, top: [8, 10, 38], bot: [26, 26, 58], dark: 1.00 },       // night
-            { at: 1.00, top: [58, 78, 140], bot: [255, 170, 120], dark: 0.45 },  // back to dawn
+            // dawn — indigo night yielding to a rose-gold horizon
+            { at: 0.00, stops: [[34, 38, 82], [86, 70, 130], [214, 124, 140], [255, 180, 142]], dark: 0.58, warm: 0.60 },
+            // sunrise — cool blue overhead, molten gold at the horizon
+            { at: 0.13, stops: [[56, 92, 158], [120, 140, 196], [255, 182, 120], [255, 230, 158]], dark: 0.14, warm: 0.90 },
+            // day — clean deep azure
+            { at: 0.28, stops: [[46, 120, 206], [92, 162, 226], [156, 204, 242], [208, 236, 251]], dark: 0.00, warm: 0.08 },
+            // golden hour — warm amber wash climbing the sky
+            { at: 0.44, stops: [[64, 106, 182], [150, 156, 206], [255, 198, 134], [255, 230, 176]], dark: 0.10, warm: 0.82 },
+            // dusk — violet zenith, fiery coral horizon
+            { at: 0.57, stops: [[46, 36, 94], [128, 60, 122], [240, 108, 96], [255, 150, 92]], dark: 0.44, warm: 1.00 },
+            // twilight — deep navy with a dim ember band
+            { at: 0.72, stops: [[20, 22, 60], [54, 44, 96], [118, 66, 108], [186, 98, 100]], dark: 0.84, warm: 0.55 },
+            // night — near-black, a faint cool glow at the horizon
+            { at: 0.86, stops: [[5, 7, 28], [11, 15, 44], [20, 26, 62], [40, 48, 92]], dark: 1.00, warm: 0.06 },
+            // back to dawn (seam)
+            { at: 1.00, stops: [[34, 38, 82], [86, 70, 130], [214, 124, 140], [255, 180, 142]], dark: 0.58, warm: 0.60 },
         ];
+        const STOP_POS = [0, 0.42, 0.72, 1];
         function cycleAt(dist) {
-            const p = ((dist / CYCLE_DIST) % 1 + 1) % 1; // start near dawn->day
-            // bias so a fresh game opens in daytime
-            return (p + 0.15) % 1;
+            const p = ((dist / CYCLE_DIST) % 1 + 1) % 1;
+            return (p + 0.20) % 1; // open on a bright morning
         }
         function skyState(dist) {
             const p = cycleAt(dist);
@@ -314,11 +328,27 @@
             while (i < SKY.length - 1 && p > SKY[i + 1].at) i++;
             const a = SKY[i], b = SKY[i + 1];
             const t = (p - a.at) / (b.at - a.at);
+            const stops = a.stops.map((c, k) => lerpColor(c, b.stops[k], t));
             return {
                 p: p,
-                top: lerpColor(a.top, b.top, t),
-                bot: lerpColor(a.bot, b.bot, t),
+                stops: stops,
+                top: stops[0],
+                bot: stops[3],
                 dark: lerp(a.dark, b.dark, t),
+                warm: lerp(a.warm, b.warm, t),
+            };
+        }
+        // Where the sun (day half) or moon (night half) sits, and its arc progress.
+        function celestialPos(sky) {
+            // sun owns most of the cycle so dusk shows a low setting sun;
+            // the moon takes the deep-night stretch.
+            const isDay = sky.p < 0.6;
+            const local = isDay ? (sky.p / 0.6) : ((sky.p - 0.6) / 0.4);
+            return {
+                isDay: isDay,
+                local: local,
+                x: local * W,
+                y: H * 0.66 - Math.sin(local * Math.PI) * H * 0.52,
             };
         }
 
@@ -326,16 +356,20 @@
         //  Stars
         // ---------------------------------------------------------------
         let stars = [];
+        let shootingStar = null;
         function buildStars() {
             stars = [];
-            const n = Math.round((W * H) / 9000);
+            const n = Math.round((W * H) / 6500);
             for (let i = 0; i < n; i++) {
+                const big = Math.random() < 0.10;
+                const tint = Math.random();
                 stars.push({
                     x: Math.random() * W,
-                    y: Math.random() * H * 0.85,
-                    r: Math.random() * 1.4 + 0.3,
+                    y: Math.random() * H * 0.82,
+                    r: big ? Math.random() * 1.5 + 1.2 : Math.random() * 1.0 + 0.25,
                     tw: Math.random() * Math.PI * 2,
-                    sp: 0.5 + Math.random() * 1.5,
+                    sp: 0.4 + Math.random() * 1.7,
+                    hue: tint < 0.28 ? [196, 212, 255] : (tint < 0.5 ? [255, 240, 214] : [255, 255, 255]),
                 });
             }
         }
@@ -344,82 +378,161 @@
         //  Drawing
         // ---------------------------------------------------------------
         function drawSky(sky) {
+            // multi-stop vertical gradient — the spectacular backdrop
             const g = ctx.createLinearGradient(0, 0, 0, H);
-            g.addColorStop(0, rgb(sky.top));
-            g.addColorStop(1, rgb(sky.bot));
+            for (let k = 0; k < sky.stops.length; k++) {
+                g.addColorStop(STOP_POS[k], rgb(sky.stops[k]));
+            }
             ctx.fillStyle = g;
             ctx.fillRect(0, 0, W, H);
 
-            // stars fade in with darkness
-            if (sky.dark > 0.05) {
+            // atmospheric horizon bloom — a warm wash centred on the sun that
+            // swells at dawn/dusk and melts away by midday/midnight
+            if (sky.warm > 0.02) {
+                const cx = celestialPos(sky).x;
+                const hy = H * 0.78;
+                const hc = sky.stops[3];
+                const a0 = 0.46 * sky.warm;
+                const bloom = ctx.createRadialGradient(cx, hy, 0, cx, hy, H * 0.95);
+                bloom.addColorStop(0, 'rgba(' + hc[0] + ',' + hc[1] + ',' + hc[2] + ',' + a0 + ')');
+                bloom.addColorStop(0.45, 'rgba(' + hc[0] + ',' + hc[1] + ',' + hc[2] + ',' + (a0 * 0.32) + ')');
+                bloom.addColorStop(1, 'rgba(' + hc[0] + ',' + hc[1] + ',' + hc[2] + ',0)');
                 ctx.save();
+                ctx.globalCompositeOperation = 'lighter';
+                ctx.fillStyle = bloom;
+                ctx.fillRect(0, 0, W, H);
+                ctx.restore();
+            }
+
+            // stars fade in with darkness
+            if (sky.dark > 0.04) {
                 const now = performance.now() / 1000;
                 for (const s of stars) {
-                    const tw = 0.55 + 0.45 * Math.sin(now * s.sp + s.tw);
-                    ctx.globalAlpha = sky.dark * tw;
-                    ctx.fillStyle = '#fff';
+                    const tw = 0.5 + 0.5 * Math.sin(now * s.sp + s.tw);
+                    ctx.globalAlpha = sky.dark * (0.3 + 0.7 * tw);
+                    ctx.fillStyle = 'rgb(' + s.hue[0] + ',' + s.hue[1] + ',' + s.hue[2] + ')';
                     ctx.beginPath();
                     ctx.arc(s.x, s.y, s.r, 0, Math.PI * 2);
                     ctx.fill();
                 }
+                ctx.globalAlpha = 1;
+                drawShootingStar(sky, now);
+            }
+        }
+
+        function drawShootingStar(sky, now) {
+            if (sky.dark < 0.6) { shootingStar = null; return; }
+            if (!shootingStar && Math.random() < 0.005) {
+                shootingStar = {
+                    x: Math.random() * W * 0.6 + W * 0.1,
+                    y: Math.random() * H * 0.28 + 16,
+                    vx: 7 + Math.random() * 4,
+                    vy: 2.5 + Math.random() * 2,
+                    life: 1,
+                };
+            }
+            if (shootingStar) {
+                const s = shootingStar;
+                s.x += s.vx; s.y += s.vy; s.life -= 0.022;
+                if (s.life <= 0 || s.x > W + 60) { shootingStar = null; return; }
+                const a = clamp(s.life, 0, 1) * sky.dark;
+                const tx = s.x - s.vx * 7, ty = s.y - s.vy * 7;
+                const grad = ctx.createLinearGradient(s.x, s.y, tx, ty);
+                grad.addColorStop(0, 'rgba(255,255,255,' + a + ')');
+                grad.addColorStop(1, 'rgba(180,200,255,0)');
+                ctx.save();
+                ctx.globalCompositeOperation = 'lighter';
+                ctx.strokeStyle = grad;
+                ctx.lineWidth = 2;
+                ctx.lineCap = 'round';
+                ctx.beginPath();
+                ctx.moveTo(s.x, s.y);
+                ctx.lineTo(tx, ty);
+                ctx.stroke();
                 ctx.restore();
             }
         }
 
         function drawCelestial(sky) {
-            // Sun travels the sky during the "day" half of the cycle (p 0..0.5),
-            // moon during the night half (p 0.5..1).
-            const p = sky.p;
-            const isDay = p < 0.5;
-            const local = isDay ? (p / 0.5) : ((p - 0.5) / 0.5); // 0..1 across its arc
-            const x = local * W;
-            const y = H * 0.62 - Math.sin(local * Math.PI) * H * 0.50;
-
+            const c = celestialPos(sky);
+            const x = c.x, y = c.y;
             ctx.save();
-            if (isDay) {
-                const r = 38;
-                const glow = ctx.createRadialGradient(x, y, 0, x, y, r * 4);
-                glow.addColorStop(0, 'rgba(255,240,190,0.55)');
-                glow.addColorStop(1, 'rgba(255,240,190,0)');
+            if (c.isDay) {
+                // sun — swells and reddens toward the golden hours
+                const warm = sky.warm;
+                const r = 30 + warm * 14;
+                const gr = r * (4 + warm * 3.5);
+                const glow = ctx.createRadialGradient(x, y, 0, x, y, gr);
+                glow.addColorStop(0, 'rgba(255,242,202,' + (0.42 + warm * 0.3) + ')');
+                glow.addColorStop(0.4, 'rgba(255,206,150,' + (0.18 + warm * 0.26) + ')');
+                glow.addColorStop(1, 'rgba(255,196,140,0)');
+                ctx.globalCompositeOperation = 'lighter';
                 ctx.fillStyle = glow;
-                ctx.beginPath(); ctx.arc(x, y, r * 4, 0, Math.PI * 2); ctx.fill();
-                ctx.fillStyle = '#fff4d6';
+                ctx.beginPath(); ctx.arc(x, y, gr, 0, Math.PI * 2); ctx.fill();
+                ctx.globalCompositeOperation = 'source-over';
+                const core = ctx.createRadialGradient(x - r * 0.3, y - r * 0.3, r * 0.1, x, y, r);
+                core.addColorStop(0, '#fffdf4');
+                core.addColorStop(0.55, '#fff0c8');
+                core.addColorStop(1, rgb(lerpColor([255, 228, 168], [255, 168, 110], warm)));
+                ctx.fillStyle = core;
                 ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.fill();
             } else {
-                const r = 30;
-                const glow = ctx.createRadialGradient(x, y, 0, x, y, r * 3.5);
-                glow.addColorStop(0, 'rgba(220,228,255,0.4)');
-                glow.addColorStop(1, 'rgba(220,228,255,0)');
+                const r = 26;
+                const gr = r * 4.5;
+                const glow = ctx.createRadialGradient(x, y, 0, x, y, gr);
+                glow.addColorStop(0, 'rgba(214,224,255,0.42)');
+                glow.addColorStop(0.5, 'rgba(182,198,255,0.13)');
+                glow.addColorStop(1, 'rgba(182,198,255,0)');
+                ctx.globalCompositeOperation = 'lighter';
                 ctx.fillStyle = glow;
-                ctx.beginPath(); ctx.arc(x, y, r * 3.5, 0, Math.PI * 2); ctx.fill();
-                ctx.fillStyle = '#eef0ff';
+                ctx.beginPath(); ctx.arc(x, y, gr, 0, Math.PI * 2); ctx.fill();
+                ctx.globalCompositeOperation = 'source-over';
+                // moon disc
+                const md = ctx.createRadialGradient(x - r * 0.3, y - r * 0.3, r * 0.2, x, y, r);
+                md.addColorStop(0, '#fdfdff');
+                md.addColorStop(1, '#c6cfec');
+                ctx.fillStyle = md;
                 ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.fill();
-                // crater shadow for a crescent
-                ctx.fillStyle = rgb(sky.top);
-                ctx.globalAlpha = 0.9;
-                ctx.beginPath(); ctx.arc(x + r * 0.4, y - r * 0.3, r * 0.95, 0, Math.PI * 2); ctx.fill();
+                // craters
+                ctx.fillStyle = 'rgba(150,160,196,0.4)';
+                ctx.beginPath(); ctx.arc(x - r * 0.28, y - r * 0.1, r * 0.18, 0, Math.PI * 2); ctx.fill();
+                ctx.beginPath(); ctx.arc(x + r * 0.22, y + r * 0.26, r * 0.12, 0, Math.PI * 2); ctx.fill();
+                ctx.beginPath(); ctx.arc(x + r * 0.05, y - r * 0.32, r * 0.08, 0, Math.PI * 2); ctx.fill();
+                // crescent shadow
+                ctx.globalAlpha = 0.5;
+                ctx.fillStyle = rgb(sky.stops[0]);
+                ctx.beginPath(); ctx.arc(x + r * 0.55, y - r * 0.32, r * 0.95, 0, Math.PI * 2); ctx.fill();
+                ctx.globalAlpha = 1;
             }
             ctx.restore();
         }
 
-        // Distant parallax hills
+        // Distant parallax mountain ridges with atmospheric haze for depth
         function drawHills(sky) {
+            const haze = sky.bot; // horizon colour the far ridges dissolve into
+            const earth = lerpColor([48, 50, 80], [20, 22, 42], sky.dark);
+            // farthest -> nearest; far ridges fade most into the haze
             const layers = [
-                { speed: 0.18, base: 0.74, amp: 0.06, freq: 0.0016, shade: 0.55 },
-                { speed: 0.34, base: 0.82, amp: 0.08, freq: 0.0026, shade: 0.35 },
+                { speed: 0.08, base: 0.68, amp: 0.05, freq: 0.0011, haze: 0.78, ph: 0.0 },
+                { speed: 0.17, base: 0.76, amp: 0.07, freq: 0.0018, haze: 0.52, ph: 2.1 },
+                { speed: 0.32, base: 0.85, amp: 0.10, freq: 0.0027, haze: 0.26, ph: 4.3 },
             ];
             for (const L of layers) {
                 const off = distance * L.speed;
-                // hill colour: blend sky bottom toward dark
-                const col = lerpColor(sky.bot, [20, 20, 38], 1 - L.shade + sky.dark * 0.4);
-                ctx.fillStyle = rgb(col);
+                const base = lerpColor(earth, haze, L.haze * (1 - sky.dark * 0.45));
+                const topY = H * (L.base - L.amp - 0.05);
+                const grd = ctx.createLinearGradient(0, topY, 0, H);
+                grd.addColorStop(0, rgb(lerpColor(base, haze, 0.3)));
+                grd.addColorStop(1, rgb(lerpColor(base, [10, 11, 26], 0.35 + sky.dark * 0.3)));
+                ctx.fillStyle = grd;
                 ctx.beginPath();
                 ctx.moveTo(0, H);
-                for (let x = 0; x <= W; x += 12) {
-                    const wx = (x + off) * 1;
+                for (let x = 0; x <= W; x += 10) {
+                    const wx = x + off;
                     const y = H * L.base
-                        - Math.sin(wx * L.freq) * H * L.amp
-                        - Math.sin(wx * L.freq * 2.3 + 1.1) * H * L.amp * 0.4;
+                        - Math.sin(wx * L.freq + L.ph) * H * L.amp
+                        - Math.sin(wx * L.freq * 2.3 + 1.1) * H * L.amp * 0.4
+                        - Math.sin(wx * L.freq * 5.1 + 0.5) * H * L.amp * 0.15;
                     ctx.lineTo(x, y);
                 }
                 ctx.lineTo(W, H);
@@ -431,55 +544,59 @@
         function drawCave(sky) {
             const step = 10;
             // terrain colours shift darker at night
-            const lightCol = lerpColor([120, 96, 74], [40, 44, 70], sky.dark);
-            const darkCol = lerpColor([58, 44, 34], [14, 16, 32], sky.dark);
-            const rimCol = lerpColor([170, 140, 110], [70, 78, 120], sky.dark);
+            const lightCol = lerpColor([118, 94, 72], [38, 42, 68], sky.dark);
+            const darkCol = lerpColor([56, 42, 32], [12, 14, 30], sky.dark);
+            // the rim catches sky light — warm at dawn/dusk, cool at night
+            let rimCol = lerpColor([176, 146, 114], [66, 74, 116], sky.dark);
+            rimCol = lerpColor(rimCol, sky.stops[3], sky.warm * 0.55);
+            const glowCol = lerpColor(sky.stops[3], [255, 240, 220], 0.2);
+
+            const edge = (yAt) => {
+                // wide soft glow first, then a crisp lit rim
+                ctx.lineJoin = 'round';
+                ctx.strokeStyle = 'rgba(' + glowCol[0] + ',' + glowCol[1] + ',' + glowCol[2] + ',' + (0.12 + sky.warm * 0.22) + ')';
+                ctx.lineWidth = 9;
+                ctx.beginPath();
+                for (let x = 0; x <= W; x += step) {
+                    const y = yAt(distance + x, distance);
+                    if (x === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+                }
+                ctx.stroke();
+                ctx.strokeStyle = rgb(rimCol);
+                ctx.lineWidth = 2.5;
+                ctx.beginPath();
+                for (let x = 0; x <= W; x += step) {
+                    const y = yAt(distance + x, distance);
+                    if (x === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+                }
+                ctx.stroke();
+            };
 
             // ----- top terrain -----
-            const gTop = ctx.createLinearGradient(0, 0, 0, H * 0.5);
+            const gTop = ctx.createLinearGradient(0, 0, 0, H * 0.55);
             gTop.addColorStop(0, rgb(darkCol));
             gTop.addColorStop(1, rgb(lightCol));
             ctx.fillStyle = gTop;
             ctx.beginPath();
             ctx.moveTo(0, 0);
-            for (let x = 0; x <= W; x += step) {
-                ctx.lineTo(x, topAt(distance + x, distance));
-            }
+            for (let x = 0; x <= W; x += step) ctx.lineTo(x, topAt(distance + x, distance));
             ctx.lineTo(W, 0);
             ctx.closePath();
             ctx.fill();
-            // rim
-            ctx.strokeStyle = rgb(rimCol);
-            ctx.lineWidth = 3;
-            ctx.beginPath();
-            for (let x = 0; x <= W; x += step) {
-                const y = topAt(distance + x, distance);
-                if (x === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
-            }
-            ctx.stroke();
+            edge(topAt);
 
             // ----- bottom terrain -----
-            const gBot = ctx.createLinearGradient(0, H * 0.5, 0, H);
+            const gBot = ctx.createLinearGradient(0, H * 0.45, 0, H);
             gBot.addColorStop(0, rgb(lightCol));
             gBot.addColorStop(1, rgb(darkCol));
             ctx.fillStyle = gBot;
             ctx.beginPath();
             ctx.moveTo(0, H);
-            for (let x = 0; x <= W; x += step) {
-                ctx.lineTo(x, botAt(distance + x, distance));
-            }
+            for (let x = 0; x <= W; x += step) ctx.lineTo(x, botAt(distance + x, distance));
             ctx.lineTo(W, H);
             ctx.closePath();
             ctx.fill();
-            // rim
-            ctx.strokeStyle = rgb(rimCol);
-            ctx.lineWidth = 3;
-            ctx.beginPath();
-            for (let x = 0; x <= W; x += step) {
-                const y = botAt(distance + x, distance);
-                if (x === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
-            }
-            ctx.stroke();
+            edge(botAt);
         }
 
         function drawRings() {
@@ -510,49 +627,151 @@
         }
 
         function drawTrail() {
-            for (let i = 0; i < trail.length; i++) {
-                const t = trail[i];
-                const a = (i / trail.length) * 0.5;
-                ctx.fillStyle = 'rgba(255,255,255,' + a + ')';
+            if (trail.length < 2) return;
+            ctx.save();
+            ctx.globalCompositeOperation = 'lighter';
+            ctx.lineCap = 'round';
+            ctx.lineJoin = 'round';
+            for (let i = 1; i < trail.length; i++) {
+                const f = i / trail.length;            // 0 (oldest) -> 1 (newest, at tail)
+                const g = Math.round(214 + 40 * f);
+                const b = Math.round(170 + 70 * f);
+                ctx.strokeStyle = 'rgba(255,' + g + ',' + b + ',' + (f * f * 0.55) + ')';
+                ctx.lineWidth = f * 7 + 0.6;
                 ctx.beginPath();
-                ctx.arc(t.x, t.y, (i / trail.length) * 4 + 0.5, 0, Math.PI * 2);
-                ctx.fill();
+                ctx.moveTo(trail[i - 1].x, trail[i - 1].y);
+                ctx.lineTo(trail[i].x, trail[i].y);
+                ctx.stroke();
             }
+            ctx.restore();
         }
 
-        function drawGlider() {
-            const angle = clamp(gliderVY * 0.045, -0.7, 0.7);
+        function drawGlider(sky) {
+            const angle = clamp(gliderVY * 0.05, -0.62, 0.62);
+            // warm light tint for the lit upper surfaces (picks up dawn/dusk colour)
+            const lit = sky ? lerpColor([255, 255, 255], sky.stops[3], sky.warm * 0.4) : [255, 255, 255];
+            const litStr = rgb(lit);
+
             ctx.save();
             ctx.translate(gliderX, gliderY);
             ctx.rotate(angle);
-            // body — sleek glider pointing right
-            ctx.fillStyle = '#f4f6ff';
-            ctx.strokeStyle = '#2b3358';
-            ctx.lineWidth = 2;
+
+            // --- soft aura (heroic glow, strongest at dusk/dawn) ---
+            if (sky) {
+                const aura = ctx.createRadialGradient(0, 0, 4, 0, 0, 44);
+                aura.addColorStop(0, 'rgba(' + lit[0] + ',' + lit[1] + ',' + lit[2] + ',' + (0.10 + sky.warm * 0.16) + ')');
+                aura.addColorStop(1, 'rgba(' + lit[0] + ',' + lit[1] + ',' + lit[2] + ',0)');
+                ctx.save();
+                ctx.globalCompositeOperation = 'lighter';
+                ctx.fillStyle = aura;
+                ctx.beginPath(); ctx.arc(0, 0, 44, 0, Math.PI * 2); ctx.fill();
+                ctx.restore();
+            }
+
+            // === FAR WING (behind fuselage, in shade) sweeping down-back ===
+            ctx.fillStyle = '#8b96b8';
             ctx.beginPath();
-            ctx.moveTo(20, 0);
-            ctx.lineTo(-14, -8);
-            ctx.lineTo(-8, 0);
-            ctx.lineTo(-14, 8);
+            ctx.moveTo(7, 1);
+            ctx.lineTo(-24, 22);
+            ctx.lineTo(-30, 21);
+            ctx.lineTo(-3, 3);
+            ctx.closePath();
+            ctx.fill();
+
+            // === FUSELAGE: sleek pod-and-boom ===
+            const body = ctx.createLinearGradient(0, -9, 0, 9);
+            body.addColorStop(0, litStr);
+            body.addColorStop(0.45, '#eaf0fb');
+            body.addColorStop(1, '#9fb0d0');
+            ctx.fillStyle = body;
+            ctx.strokeStyle = 'rgba(40,48,78,0.55)';
+            ctx.lineWidth = 1;
+            ctx.beginPath();
+            ctx.moveTo(31, 0);                       // nose
+            ctx.quadraticCurveTo(25, -7, 13, -7.5);  // canopy hump (top)
+            ctx.quadraticCurveTo(-6, -5, -22, -2);   // taper into tail boom (top)
+            ctx.quadraticCurveTo(-27, -1.2, -30, 0); // tail tip
+            ctx.quadraticCurveTo(-27, 1.4, -22, 2.4);// boom (belly)
+            ctx.quadraticCurveTo(-4, 6, 12, 7);      // belly forward
+            ctx.quadraticCurveTo(25, 6.5, 31, 0);    // belly to nose
             ctx.closePath();
             ctx.fill();
             ctx.stroke();
-            // wing accent
+
+            // orange speed stripe along the flank
             ctx.fillStyle = '#ff9e4a';
             ctx.beginPath();
-            ctx.moveTo(20, 0);
-            ctx.lineTo(-14, -8);
-            ctx.lineTo(-2, -1);
+            ctx.moveTo(20, 1.6);
+            ctx.quadraticCurveTo(2, 3.4, -20, 1.6);
+            ctx.quadraticCurveTo(2, 4.6, 20, 3.2);
             ctx.closePath();
             ctx.fill();
-            // tail fin
+
+            // === T-TAIL: swept vertical fin + horizontal stabiliser ===
             ctx.fillStyle = '#cdd6f5';
             ctx.beginPath();
-            ctx.moveTo(-8, 0);
-            ctx.lineTo(-16, -7);
-            ctx.lineTo(-10, 0);
+            ctx.moveTo(-19, -1.5);
+            ctx.lineTo(-30, -13);
+            ctx.lineTo(-26.5, -13);
+            ctx.lineTo(-15, -0.5);
             ctx.closePath();
             ctx.fill();
+            ctx.fillStyle = litStr;
+            ctx.beginPath();          // tailplane on top of the fin
+            ctx.moveTo(-30.5, -12.5);
+            ctx.lineTo(-37, -14.5);
+            ctx.lineTo(-25, -13.5);
+            ctx.lineTo(-27, -11.5);
+            ctx.closePath();
+            ctx.fill();
+
+            // === NEAR WING (lit) — long, slender, swept up-back ===
+            const wing = ctx.createLinearGradient(0, 0, -28, -30);
+            wing.addColorStop(0, litStr);
+            wing.addColorStop(1, '#c4d0ee');
+            ctx.fillStyle = wing;
+            ctx.strokeStyle = 'rgba(40,48,78,0.35)';
+            ctx.lineWidth = 1;
+            ctx.beginPath();
+            ctx.moveTo(9, -1);        // root leading edge
+            ctx.lineTo(-25, -31);     // tip leading edge
+            ctx.lineTo(-31, -29.5);   // wingtip
+            ctx.lineTo(-2, 2);        // root trailing edge
+            ctx.closePath();
+            ctx.fill();
+            ctx.stroke();
+            // crisp lit leading edge
+            ctx.strokeStyle = 'rgba(255,255,255,0.85)';
+            ctx.lineWidth = 1.4;
+            ctx.beginPath();
+            ctx.moveTo(9, -1);
+            ctx.lineTo(-25, -31);
+            ctx.stroke();
+
+            // === CANOPY: tinted glass bubble with a highlight ===
+            ctx.save();
+            ctx.translate(13, -3.4);
+            ctx.rotate(-0.12);
+            const glass = ctx.createLinearGradient(0, -5, 0, 4);
+            glass.addColorStop(0, '#bfe0ff');
+            glass.addColorStop(0.5, '#5d8fc8');
+            glass.addColorStop(1, '#274a78');
+            ctx.fillStyle = glass;
+            ctx.beginPath();
+            ctx.ellipse(0, 0, 9.5, 5, 0, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.fillStyle = 'rgba(255,255,255,0.8)';
+            ctx.beginPath();
+            ctx.ellipse(-2.5, -1.8, 3.4, 1.3, -0.3, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.restore();
+
+            // nose glint
+            ctx.fillStyle = 'rgba(255,255,255,0.7)';
+            ctx.beginPath();
+            ctx.ellipse(27, -1.5, 2.4, 1.2, 0, 0, Math.PI * 2);
+            ctx.fill();
+
             ctx.restore();
         }
 
@@ -601,9 +820,10 @@
             gliderVY = clamp(gliderVY, -MAX_CLIMB, MAX_DIVE);
             gliderY += gliderVY;
 
-            // trail
-            trail.push({ x: gliderX - 12, y: gliderY + 4 });
-            if (trail.length > 16) trail.shift();
+            // trail (vapor from the tail) — older puffs drift back with the world
+            for (let k = 0; k < trail.length; k++) trail[k].x -= speed;
+            trail.push({ x: gliderX - 20, y: gliderY + 2 });
+            if (trail.length > 26) trail.shift();
 
             spawnRingsAhead();
 
@@ -677,7 +897,7 @@
 
             if (state !== 'dead') {
                 drawTrail();
-                drawGlider();
+                drawGlider(sky);
             }
             drawParticles();
 
