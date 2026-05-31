@@ -129,6 +129,13 @@
             max-width: 300px;
             line-height: 1.5;
         }
+        #buildTag {
+            margin-top: 16px;
+            font-size: 11px;
+            letter-spacing: 0.5px;
+            color: #4a5675;
+            font-variant-numeric: tabular-nums;
+        }
         .back {
             position: fixed;
             top: calc(env(safe-area-inset-top) + 10px);
@@ -163,6 +170,7 @@
         </div>
         <button class="btn" id="startBtn">Take Off</button>
         <div id="tiltNote"></div>
+        <div id="buildTag">build 5 · tilt-left-up</div>
     </div>
 
     <!-- Game over -->
@@ -1302,9 +1310,10 @@
             if (e.gamma == null) return;
             tiltActive = true;
             if (neutralGamma == null) neutralGamma = e.gamma;
-            // tilt the phone left -> climb; tilt right -> dive
+            // On iOS portrait, tilting the phone's left side down makes gamma
+            // go negative; we want that to climb, so negate. (tilt left = up)
             const rel = e.gamma - neutralGamma;
-            tilt = clamp(rel / TILT_RANGE, -1, 1);
+            tilt = clamp(-rel / TILT_RANGE, -1, 1);
         }
 
         let tiltListenerAdded = false;
