@@ -1302,9 +1302,9 @@
             if (e.gamma == null) return;
             tiltActive = true;
             if (neutralGamma == null) neutralGamma = e.gamma;
-            // tilt the phone left (gamma decreases) -> climb; tilt right -> dive
+            // tilt the phone left -> climb; tilt right -> dive
             const rel = e.gamma - neutralGamma;
-            tilt = clamp(-rel / TILT_RANGE, -1, 1);
+            tilt = clamp(rel / TILT_RANGE, -1, 1);
         }
 
         let tiltListenerAdded = false;
