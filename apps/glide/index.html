@@ -225,7 +225,7 @@
         const RING_SPACING = 900;     // world px between rings
         const RING_RADIUS = 46;
         const RING_BONUS = 25;
-        const TILT_RANGE = 24;        // degrees of tilt for full deflection
+        const TILT_RANGE = 38;        // degrees of tilt for full deflection
         const CYCLE_DIST = 22000;     // world px for one full day/night cycle (slow, majestic)
         // vertical flight model (gravity-based so the glider naturally sinks)
         const GRAVITY = 0.22;         // constant downward accel
@@ -605,11 +605,15 @@
                 ctx.beginPath(); ctx.arc(x - r * 0.28, y - r * 0.1, r * 0.18, 0, Math.PI * 2); ctx.fill();
                 ctx.beginPath(); ctx.arc(x + r * 0.22, y + r * 0.26, r * 0.12, 0, Math.PI * 2); ctx.fill();
                 ctx.beginPath(); ctx.arc(x + r * 0.05, y - r * 0.32, r * 0.08, 0, Math.PI * 2); ctx.fill();
-                // crescent shadow
-                ctx.globalAlpha = 0.5;
-                ctx.fillStyle = rgb(sky.stops[0]);
-                ctx.beginPath(); ctx.arc(x + r * 0.55, y - r * 0.32, r * 0.95, 0, Math.PI * 2); ctx.fill();
-                ctx.globalAlpha = 1;
+                // soft terminator shading, clipped to the disc so it never bleeds into the sky
+                ctx.save();
+                ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.clip();
+                const term = ctx.createRadialGradient(x - r * 0.5, y - r * 0.5, r * 0.3, x + r * 0.45, y + r * 0.45, r * 1.5);
+                term.addColorStop(0, 'rgba(120,132,170,0)');
+                term.addColorStop(1, 'rgba(120,132,170,0.45)');
+                ctx.fillStyle = term;
+                ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.fill();
+                ctx.restore();
             }
             ctx.restore();
         }
