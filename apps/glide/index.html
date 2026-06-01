@@ -165,12 +165,13 @@
         <div class="title">GLIDE</div>
         <div class="subtitle">
             Soar through the canyon. <b>Tilt your phone left to climb,
-            right to dive.</b> Thread the narrowing cave and fly through
-            golden rings for bonus points.
+            right to dive.</b> Thread the narrowing cave, fly through
+            golden rings for bonus points, and watch for updrafts that
+            shove you skyward.
         </div>
         <button class="btn" id="startBtn">Take Off</button>
         <div id="tiltNote"></div>
-        <div id="buildTag">build 5 · tilt-left-up</div>
+        <div id="buildTag">build 6 · updrafts</div>
     </div>
 
     <!-- Game over -->
@@ -241,6 +242,12 @@
         const AIR_DRAG = 0.93;        // velocity damping -> glider inertia
         const MAX_CLIMB = 8;          // max upward speed (px/frame)
         const MAX_DIVE = 9;           // max downward speed (px/frame)
+        // updrafts — occasional columns of rising air that shove the glider up
+        const UPDRAFT_FORCE = 0.42;   // upward accel inside a column (vs GRAVITY 0.22)
+        const UPDRAFT_MIN_GAP = 1700; // min world px between updrafts
+        const UPDRAFT_MAX_GAP = 4200; // max world px between updrafts
+        const UPDRAFT_MIN_W = 80;     // narrowest column
+        const UPDRAFT_MAX_W = 175;    // widest column
 
         // ---------------------------------------------------------------
         //  Game state
@@ -257,6 +264,9 @@
         let ringPoints = 0;
         let rings = [];               // {wx, y, collected, pulse}
         let nextRingWX = 0;
+        let updrafts = [];            // {wx, w, phase} columns of rising air
+        let nextUpdraftWX = 0;
+        let inUpdraft = 0;            // 0..1 strength of updraft currently lifting glider
         let trail = [];               // glider trail points
         let particles = [];           // crash debris
         let shakeT = 0;
@@ -1101,6 +1111,44 @@
             ctx.restore();
         }
 
+        // Updrafts — columns of rising air, telegraphed with cool wispy streaks
+        function drawUpdrafts(sky) {
+            if (!updrafts.length) return;
+            const now = performance.now() / 1000;
+            for (const u of updrafts) {
+                const sx = u.wx - distance;            // left edge in screen space
+                if (sx > W || sx + u.w < 0) continue;
+                const top = topAt(u.wx + u.w * 0.5, distance);
+                const bot = botAt(u.wx + u.w * 0.5, distance);
+                ctx.save();
+                // soft vertical glow band so the player can see it coming
+                const band = ctx.createLinearGradient(sx, 0, sx + u.w, 0);
+                band.addColorStop(0, 'rgba(150,210,255,0)');
+                band.addColorStop(0.5, 'rgba(180,225,255,0.18)');
+                band.addColorStop(1, 'rgba(150,210,255,0)');
+                ctx.fillStyle = band;
+                ctx.fillRect(sx, top, u.w, bot - top);
+                // rising wispy streaks
+                ctx.globalCompositeOperation = 'lighter';
+                ctx.strokeStyle = 'rgba(200,235,255,0.34)';
+                ctx.lineWidth = 1.6;
+                const streaks = 6;
+                for (let i = 0; i < streaks; i++) {
+                    const fx = sx + u.w * ((i + 0.5) / streaks);
+                    const rise = ((now * 70 + i * 53 + u.phase * 40) % (bot - top));
+                    const y = bot - rise;
+                    const wob = Math.sin(now * 2 + i + u.phase) * 7;
+                    ctx.beginPath();
+                    ctx.moveTo(fx, y);
+                    ctx.quadraticCurveTo(fx + wob, y - 24, fx, y - 48);
+                    ctx.globalAlpha = clamp(rise / (bot - top), 0, 1) * (1 - rise / (bot - top)) * 4;
+                    ctx.stroke();
+                }
+                ctx.globalAlpha = 1;
+                ctx.restore();
+            }
+        }
+
         function drawParticles() {
             for (const p of particles) {
                 ctx.globalAlpha = clamp(p.life, 0, 1);
@@ -1126,6 +1174,17 @@
             rings = rings.filter(r => r.wx - distance > -RING_RADIUS * 3);
         }
 
+        function spawnUpdraftsAhead() {
+            const horizon = distance + W + 200;
+            while (nextUpdraftWX < horizon) {
+                const w = UPDRAFT_MIN_W + Math.random() * (UPDRAFT_MAX_W - UPDRAFT_MIN_W);
+                updrafts.push({ wx: nextUpdraftWX, w: w, phase: Math.random() * Math.PI * 2 });
+                nextUpdraftWX += UPDRAFT_MIN_GAP + Math.random() * (UPDRAFT_MAX_GAP - UPDRAFT_MIN_GAP);
+            }
+            // drop columns once fully behind us
+            updrafts = updrafts.filter(u => u.wx + u.w - distance > -50);
+        }
+
         function currentTilt() {
             if (tiltActive) return tilt;
             if (keyTilt !== 0) return keyTilt;
@@ -1142,6 +1201,18 @@
             // This gives symmetric up/down authority and makes descending feel natural.
             const t = currentTilt();
             gliderVY += GRAVITY - t * LIFT;
+            // updrafts: a column of rising air shoves the glider upward
+            const gwxNow = distance + gliderX;
+            inUpdraft = 0;
+            for (const u of updrafts) {
+                if (gwxNow >= u.wx && gwxNow <= u.wx + u.w) {
+                    // smooth edges so entering/leaving isn't a hard jolt
+                    const edge = Math.min(gwxNow - u.wx, u.wx + u.w - gwxNow);
+                    const ramp = clamp(edge / 40, 0, 1);
+                    gliderVY -= UPDRAFT_FORCE * ramp;
+                    inUpdraft = Math.max(inUpdraft, ramp);
+                }
+            }
             gliderVY *= AIR_DRAG;
             gliderVY = clamp(gliderVY, -MAX_CLIMB, MAX_DIVE);
             gliderY += gliderVY;
@@ -1152,6 +1223,7 @@
             if (trail.length > 26) trail.shift();
 
             spawnRingsAhead();
+            spawnUpdraftsAhead();
 
             // ring collection
             const gwx = distance + gliderX;
@@ -1223,6 +1295,7 @@
             drawBirds(sky);        // distant flocks
             drawHills(sky);        // hazy parallax ridges
             drawCave(sky);         // the canyon
+            drawUpdrafts(sky);     // columns of rising air
             drawRings(sky);
             drawAmbient(sky);      // foreground motes / fireflies
 
@@ -1258,6 +1331,9 @@
             ringPoints = 0;
             rings = [];
             nextRingWX = RING_SPACING;
+            updrafts = [];
+            nextUpdraftWX = UPDRAFT_MIN_GAP + Math.random() * (UPDRAFT_MAX_GAP - UPDRAFT_MIN_GAP);
+            inUpdraft = 0;
             trail = [];
             particles = [];
             shakeT = 0;
