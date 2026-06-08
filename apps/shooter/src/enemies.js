@@ -61,14 +61,12 @@ export class EnemyManager {
     e.reward = def.reward; e.score = def.score;
     e.cd = 0; e.flinch = 0; e.vy = 0; e.attack = false; e._flashT = 0;
     e.state = 'spawning'; e.spawnT = 0; e.deathT = 0;
-    // ground spawn point far from player
+    // ground spawn point in a band AROUND the player (close enough to find,
+    // far enough not to pop in on top of them)
     const px = this.game.player.pos.x, pz = this.game.player.pos.z;
-    let best = null, bd = -1;
-    for (let k = 0; k < 6; k++) {
-      const sp = w.spawnPoints[(Math.random() * w.spawnPoints.length) | 0];
-      const d = (sp.x - px) ** 2 + (sp.z - pz) ** 2;
-      if (d > bd) { bd = d; best = sp; }
-    }
+    const band = w.spawnPoints.filter(sp => { const d = Math.hypot(sp.x - px, sp.z - pz); return d > 13 && d < 44; });
+    const pool = band.length ? band : w.spawnPoints;
+    const best = pool[(Math.random() * pool.length) | 0];
     e.feetY = best.y; e.root.position.set(best.x, best.y, best.z);
     e.root.rotation.set(0, 0, 0); e.root.scale.setScalar(0.01);
     e.rig.setOpacity(1); e.rig.setEmissive(2.5);

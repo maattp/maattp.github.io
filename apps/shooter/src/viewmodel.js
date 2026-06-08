@@ -8,10 +8,11 @@ export class ViewModel {
     this.game = game;
     this.group = new THREE.Group();
     game.engine.camera.add(this.group);
-    this.rest = new THREE.Vector3(0.14, -0.16, -0.46);
-    this.ads = new THREE.Vector3(0, -0.075, -0.34);
+    this.rest = new THREE.Vector3(0.16, -0.2, -0.5);
+    this.ads = new THREE.Vector3(0, -0.082, -0.34);
     this.group.position.copy(this.rest);
-    this.group.scale.setScalar(1.12);
+    this.group.scale.setScalar(1.0);
+    this.group.rotation.y = -0.06; // slight inward cant, classic FPS look
     this.muzzle = new THREE.Object3D(); this.group.add(this.muzzle);
     this.eject = new THREE.Object3D(); this.group.add(this.eject);
     this._meshes = [];
@@ -44,10 +45,10 @@ export class ViewModel {
     const fore = this._add(new THREE.CapsuleGeometry(0.03, Math.max(0.05, L - 0.06), 4, 6), this.matSleeve, (gx + ax) / 2, (gy + ay) / 2, (gz + az) / 2);
     fore.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), dir);
     const hand = new THREE.Group(); hand.position.set(gx, gy, gz); this.group.add(hand); this._meshes.push(hand);
-    hand.rotation.set(0.2, 0, side * 0.2);
-    this._add(new THREE.BoxGeometry(0.065, 0.05, 0.085), this.matSkin, 0, 0, 0, hand);        // palm
-    this._add(new THREE.BoxGeometry(0.07, 0.028, 0.055), this.matSkin, 0, -0.035, -0.035, hand); // curled fingers over front
-    this._add(new THREE.BoxGeometry(0.022, 0.05, 0.04), this.matSkin, -side * 0.04, 0.005, 0.01, hand); // thumb
+    hand.rotation.set(0.25, 0, side * 0.18);
+    this._add(new THREE.BoxGeometry(0.055, 0.045, 0.075), this.matSkin, 0, 0, 0, hand);        // palm
+    this._add(new THREE.BoxGeometry(0.06, 0.025, 0.05), this.matSkin, 0, -0.032, -0.032, hand); // curled fingers over front
+    this._add(new THREE.BoxGeometry(0.02, 0.044, 0.034), this.matSkin, -side * 0.035, 0.004, 0.008, hand); // thumb
     return { fore, hand };
   }
 
@@ -57,13 +58,14 @@ export class ViewModel {
     const glow = this._glow(w.color);
 
     if (w.frame === 'pistol') {
-      this._add(new THREE.BoxGeometry(0.07, 0.12, 0.34), this.matMetal, 0, 0, -0.04);
-      this.slide = this._add(new THREE.BoxGeometry(0.08, 0.06, 0.36), this.matDark, 0, 0.08, -0.05);
-      this._add(new THREE.BoxGeometry(0.07, 0.17, 0.09), this.matMetal, 0, -0.13, 0.05);
-      this.mag = this._add(new THREE.BoxGeometry(0.055, 0.12, 0.07), glow, 0, -0.16, 0.05);
-      this._add(new THREE.BoxGeometry(0.02, 0.02, 0.34), glow, 0.0, 0.12, -0.05);
-      this.muzzle.position.set(0, 0.02, -0.24); this.eject.position.set(0.06, 0.09, -0.06);
-      this._armsFor(0.0, -0.05, 0.06, -0.02, -0.03, -0.14);
+      this._add(new THREE.BoxGeometry(0.058, 0.055, 0.42), this.matDark, 0, -0.005, -0.07);  // frame/barrel
+      this.slide = this._add(new THREE.BoxGeometry(0.07, 0.06, 0.4), this.matMetal, 0, 0.05, -0.06); // slide
+      const grip = this._add(new THREE.BoxGeometry(0.066, 0.18, 0.095), this.matMetal, 0, -0.12, 0.06); grip.rotation.x = 0.26;
+      this.mag = this._add(new THREE.BoxGeometry(0.05, 0.12, 0.075), glow, 0, -0.17, 0.085);
+      this._add(new THREE.TorusGeometry(0.038, 0.011, 6, 12), this.matDark, 0, -0.055, 0.005).rotation.y = Math.PI / 2; // trigger guard
+      this._add(new THREE.BoxGeometry(0.022, 0.014, 0.34), glow, 0, 0.085, -0.07);  // slide glow strip
+      this.muzzle.position.set(0, 0.02, -0.28); this.eject.position.set(0.05, 0.07, -0.05);
+      this._armsFor(0.0, -0.05, 0.07, -0.01, -0.02, -0.18);
     } else if (w.frame === 'smg') {
       this._add(new THREE.BoxGeometry(0.08, 0.1, 0.46), this.matMetal, 0, 0.01, -0.1);
       this.slide = this._add(new THREE.BoxGeometry(0.06, 0.05, 0.34), this.matDark, 0, 0.08, -0.08);

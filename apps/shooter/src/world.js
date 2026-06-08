@@ -3,126 +3,155 @@ import { COLORS } from './config.js';
 import { clamp } from './utils.js';
 
 const FORT_COLORS = [COLORS.cyan, COLORS.magenta, COLORS.amber, COLORS.lime];
+const UP = new THREE.Vector3(0, 1, 0);
+const ZAX = new THREE.Vector3(0, 0, 1);
 
-// Cyberpunk "Block Fort" arena — four tiered forts with ramps, a high bridge
-// ring connecting them, and a central platform. Provides a raycast floor
-// sampler + wall-collision test so movement supports ramps and levels.
+// Cyberpunk "Block Fort" (Mario Kart 64) arena. Four tiered forts with aligned
+// ramps, a TOP bridge ring connecting all four fort roofs, and a central
+// platform. Surfaces are textured/lit so floors and ramps are clearly visible.
 export class World {
   constructor(scene, quality = 'high') {
     this.scene = scene;
     this.group = new THREE.Group();
     scene.add(this.group);
     this.HALF = 50;
-    this.walkables = [];     // meshes for downward floor raycast
-    this.colliders = [];     // {minX,maxX,minZ,maxZ,top} horizontal blockers
-    this.spawnPoints = [];   // {x,y,z} — GROUND level only (enemies climb from here)
-    this.navNodes = [];      // {x,y,z,edges:[{to,cost}]} nav graph for enemy pathing
+    this.walkables = [];
+    this.colliders = [];
+    this.spawnPoints = [];
+    this.navNodes = [];
     this._ray = new THREE.Raycaster();
     this._ro = new THREE.Vector3();
     this._rd = new THREE.Vector3(0, -1, 0);
-    this._mats(quality);
-    this._build(quality);
+    this._mats();
+    this._build();
   }
 
-  _mats(quality) {
-    this.matFloor = new THREE.MeshStandardMaterial({ color: 0x0c0b18, roughness: 0.9, metalness: 0.3 });
-    this.matStruct = new THREE.MeshStandardMaterial({ color: 0x16151f, roughness: 0.72, metalness: 0.45 });
-    this.matRamp = new THREE.MeshStandardMaterial({ color: 0x1b1a26, roughness: 0.8, metalness: 0.35 });
+  _gridTex(base, line, cells, glow = 0) {
+    const c = document.createElement('canvas'); c.width = c.height = 128;
+    const x = c.getContext('2d');
+    x.fillStyle = base; x.fillRect(0, 0, 128, 128);
+    const step = 128 / cells;
+    x.strokeStyle = line; x.lineWidth = 2;
+    for (let i = 0; i <= cells; i++) {
+      x.beginPath(); x.moveTo(i * step, 0); x.lineTo(i * step, 128); x.stroke();
+      x.beginPath(); x.moveTo(0, i * step); x.lineTo(128, i * step); x.stroke();
+    }
+    if (glow) { x.fillStyle = glow; x.fillRect(0, 0, 128, 2); x.fillRect(0, 0, 2, 128); }
+    const t = new THREE.CanvasTexture(c);
+    t.wrapS = t.wrapT = THREE.RepeatWrapping;
+    return t;
+  }
+
+  _mats() {
+    const floorTex = this._gridTex('#161d33', '#2a4d6e', 8);
+    floorTex.repeat.set(40, 40);
+    this.matFloor = new THREE.MeshStandardMaterial({ map: floorTex, color: 0x9fb3d0, roughness: 0.85, metalness: 0.25 });
+    const panel = this._gridTex('#39435c', '#566480', 4);
+    panel.repeat.set(3, 3);
+    this.matStruct = new THREE.MeshStandardMaterial({ map: panel, color: 0xaab6cc, roughness: 0.7, metalness: 0.4 });
+    const rampTex = this._gridTex('#4a566f', '#6f7ea0', 3);
+    rampTex.repeat.set(2, 3);
+    this.matRamp = new THREE.MeshStandardMaterial({ map: rampTex, color: 0xb9c4dc, roughness: 0.75, metalness: 0.3 });
   }
   _neon(color) { return new THREE.MeshBasicMaterial({ color, toneMapped: false }); }
 
-  _addWalkable(mesh) { mesh.receiveShadow = true; this.walkables.push(mesh); this.group.add(mesh); }
-
-  // Solid block: bottom at baseY, given footprint + height. Registers walkable top + side collider.
   _block(cx, cz, baseY, w, d, h, color, addCollider = true) {
     const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), this.matStruct);
     m.position.set(cx, baseY + h / 2, cz);
     m.castShadow = true; m.receiveShadow = true;
     this.group.add(m); this.walkables.push(m);
-    // glowing edge outline
     const edges = new THREE.LineSegments(new THREE.EdgesGeometry(m.geometry),
-      new THREE.LineBasicMaterial({ color, transparent: true, opacity: 0.9 }));
+      new THREE.LineBasicMaterial({ color, transparent: true, opacity: 0.95 }));
     edges.position.copy(m.position); this.group.add(edges);
-    // top trim strip
-    const trim = new THREE.Mesh(new THREE.BoxGeometry(w + 0.25, 0.18, d + 0.25), this._neon(color));
-    trim.position.set(cx, baseY + h, cz); this.group.add(trim);
+    // bright top trim so the deck edge reads clearly
+    const trim = new THREE.Mesh(new THREE.BoxGeometry(w + 0.2, 0.16, d + 0.2), this._neon(color));
+    trim.position.set(cx, baseY + h + 0.04, cz); this.group.add(trim);
     if (addCollider) this.colliders.push({ minX: cx - w / 2, maxX: cx + w / 2, minZ: cz - d / 2, maxZ: cz + d / 2, top: baseY + h });
     return m;
   }
 
-  // Ramp from a high edge point down to a low point (walkable slope, no side collider).
+  // Ramp whose TOP surface passes exactly through (hx,hy,hz)→(lx,ly,lz).
   _ramp(hx, hy, hz, lx, ly, lz, width, color) {
-    const dir = new THREE.Vector3(hx - lx, hy - ly, hz - lz);
-    const len = dir.length(); dir.normalize();
-    const geo = new THREE.BoxGeometry(width, 0.5, len);
-    const m = new THREE.Mesh(geo, this.matRamp);
-    m.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), dir);
-    m.position.set((hx + lx) / 2, (hy + ly) / 2 + 0.22, (hz + lz) / 2);
+    const fwd = new THREE.Vector3(hx - lx, hy - ly, hz - lz);
+    const len = fwd.length(); fwd.normalize();
+    const side = new THREE.Vector3().crossVectors(UP, fwd).normalize();
+    const up = new THREE.Vector3().crossVectors(fwd, side).normalize();
+    const thick = 0.4;
+    const m = new THREE.Mesh(new THREE.BoxGeometry(width, thick, len), this.matRamp);
+    m.quaternion.setFromRotationMatrix(new THREE.Matrix4().makeBasis(side, up, fwd));
+    m.position.set((hx + lx) / 2, (hy + ly) / 2, (hz + lz) / 2).addScaledVector(up, -thick / 2);
     m.castShadow = true; m.receiveShadow = true;
     this.group.add(m); this.walkables.push(m);
     // glowing side rails
     for (const s of [-1, 1]) {
-      const rail = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.12, len), this._neon(color));
+      const rail = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.14, len), this._neon(color));
       rail.quaternion.copy(m.quaternion);
-      const off = new THREE.Vector3(s * width / 2, 0.3, 0).applyQuaternion(m.quaternion);
-      rail.position.copy(m.position).add(off);
+      rail.position.copy(m.position).addScaledVector(side, s * width / 2).addScaledVector(up, 0.2);
       this.group.add(rail);
+    }
+    // glowing rungs across the ramp so it reads as a climbable surface
+    const rungs = Math.max(2, Math.round(len / 1.4));
+    for (let i = 1; i < rungs; i++) {
+      const t = i / rungs;
+      const rung = new THREE.Mesh(new THREE.BoxGeometry(width * 0.82, 0.05, 0.16), this._neon(color));
+      rung.quaternion.copy(m.quaternion);
+      rung.position.set(lx + (hx - lx) * t, ly + (hy - ly) * t, lz + (hz - lz) * t).addScaledVector(up, 0.03);
+      this.group.add(rung);
     }
     return m;
   }
 
-  // Horizontal plank bridge between two points at height y (walkable, fall off sides).
+  // Horizontal plank bridge between two points at height y.
   _bridge(x1, z1, x2, z2, y, width, color) {
-    const dir = new THREE.Vector3(x2 - x1, 0, z2 - z1);
-    const len = dir.length(); dir.normalize();
-    const m = new THREE.Mesh(new THREE.BoxGeometry(width, 0.4, len), this.matStruct);
-    m.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), dir);
-    m.position.set((x1 + x2) / 2, y - 0.2, (z1 + z2) / 2);
+    const fwd = new THREE.Vector3(x2 - x1, 0, z2 - z1);
+    const len = fwd.length(); fwd.normalize();
+    const m = new THREE.Mesh(new THREE.BoxGeometry(width, 0.35, len), this.matStruct);
+    m.quaternion.setFromUnitVectors(ZAX, fwd);
+    m.position.set((x1 + x2) / 2, y - 0.175, (z1 + z2) / 2);
     m.castShadow = true; m.receiveShadow = true;
     this.group.add(m); this.walkables.push(m);
+    const side = new THREE.Vector3().crossVectors(UP, fwd).normalize();
     for (const s of [-1, 1]) {
-      const rail = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.5, len), this._neon(color));
+      const rail = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.55, len), this._neon(color));
       rail.quaternion.copy(m.quaternion);
-      const off = new THREE.Vector3(s * width / 2, 0.25, 0).applyQuaternion(m.quaternion);
-      rail.position.copy(m.position).add(off);
+      rail.position.copy(m.position).addScaledVector(side, s * width / 2).addScaledVector(UP, 0.2);
       this.group.add(rail);
     }
+    // edge outline along the deck
+    const edge = new THREE.Mesh(new THREE.BoxGeometry(width + 0.1, 0.06, len), this._neon(color));
+    edge.quaternion.copy(m.quaternion); edge.position.set((x1 + x2) / 2, y + 0.03, (z1 + z2) / 2);
+    this.group.add(edge);
   }
 
   _fort(cx, cz, color) {
-    const sx = Math.sign(cx), sz = Math.sign(cz);
-    // tier 1 (top y3) and tier 2 (top y6)
-    this._block(cx, cz, 0, 15, 15, 3, color);
-    this._block(cx, cz, 3, 8, 8, 3, color);
-    // ground -> tier1 ramp on the inner X face (toward arena center)
-    this._ramp(cx - sx * 7.5, 3, cz, cx - sx * 13.5, 0, cz, 4, color);
-    // tier1 -> tier2 ramp (switchback toward tower)
-    this._ramp(cx - sx * 4, 6, cz, cx - sx * 10, 3, cz, 3, color);
-    // a glowing beacon on top
-    const beacon = new THREE.Mesh(new THREE.CylinderGeometry(0.18, 0.18, 2.4, 8), this._neon(color));
-    beacon.position.set(cx, 7.2, cz); this.group.add(beacon);
-    const lamp = new THREE.PointLight(color, 0.5, 30); lamp.position.set(cx, 8, cz); this.group.add(lamp);
+    const sx = Math.sign(cx);
+    this._block(cx, cz, 0, 15, 15, 3, color);     // tier 1 (roof y3)
+    this._block(cx, cz, 3, 8, 8, 3, color);       // tier 2 (roof y6 = top)
+    // ground -> tier1, top surface flush with the tier-1 deck edge
+    this._ramp(cx - sx * 7.0, 3, cz, cx - sx * 14.5, 0, cz, 5, color);
+    // tier1 -> tier2 (top), switchback
+    this._ramp(cx - sx * 3.6, 6, cz, cx - sx * 9.2, 3, cz, 4, color);
+    // glowing beacon
+    const beacon = new THREE.Mesh(new THREE.CylinderGeometry(0.16, 0.16, 2.2, 8), this._neon(color));
+    beacon.position.set(cx, 7.1, cz); this.group.add(beacon);
+    const lamp = new THREE.PointLight(color, 0.6, 34); lamp.position.set(cx, 8, cz); this.group.add(lamp);
   }
 
-  _build(quality) {
+  _build() {
     const H = this.HALF;
-    // ground
-    const floor = new THREE.Mesh(new THREE.PlaneGeometry(H * 2 + 10, H * 2 + 10), this.matFloor);
+    const floor = new THREE.Mesh(new THREE.PlaneGeometry(H * 2 + 12, H * 2 + 12), this.matFloor);
     floor.rotation.x = -Math.PI / 2; floor.receiveShadow = true;
     this.group.add(floor); this.walkables.push(floor);
-    // neon grids
-    const g1 = new THREE.GridHelper(H * 2, 50, 0x1c6f9e, 0x10283c);
-    g1.position.y = 0.02; g1.material.transparent = true; g1.material.opacity = 0.45; this.group.add(g1);
-    const g2 = new THREE.GridHelper(H * 2, 12, COLORS.magenta, 0x241433);
-    g2.position.y = 0.03; g2.material.transparent = true; g2.material.opacity = 0.18; this.group.add(g2);
+    const g1 = new THREE.GridHelper(H * 2, 50, 0x2f8fc4, 0x1b3a52);
+    g1.position.y = 0.03; g1.material.transparent = true; g1.material.opacity = 0.6; this.group.add(g1);
 
-    // perimeter walls (always-blocking: very tall top)
-    const wallMat = new THREE.MeshStandardMaterial({ color: 0x0d0c1c, roughness: 0.6, metalness: 0.6 });
+    // perimeter walls
+    const wallMat = new THREE.MeshStandardMaterial({ color: 0x232a40, roughness: 0.6, metalness: 0.5 });
     const wh = 9;
     for (const [x, z, w, d] of [[0, -H, H * 2, 1], [0, H, H * 2, 1], [-H, 0, 1, H * 2], [H, 0, 1, H * 2]]) {
       const wall = new THREE.Mesh(new THREE.BoxGeometry(w, wh, d), wallMat);
       wall.position.set(x, wh / 2, z); wall.castShadow = true; wall.receiveShadow = true;
-      this.group.add(wall); this.walkables.push(wall); // also a bullet-stop surface
+      this.group.add(wall); this.walkables.push(wall);
       const trim = new THREE.Mesh(new THREE.BoxGeometry(w, 0.3, d), this._neon(COLORS.cyan));
       trim.position.set(x, wh - 0.3, z); this.group.add(trim);
       const trim2 = new THREE.Mesh(new THREE.BoxGeometry(w, 0.3, d), this._neon(COLORS.magenta));
@@ -130,40 +159,40 @@ export class World {
       this.colliders.push({ minX: x - w / 2, maxX: x + w / 2, minZ: z - d / 2, maxZ: z + d / 2, top: 99 });
     }
 
-    // four forts
     const fp = [[-26, -26], [26, -26], [-26, 26], [26, 26]];
     fp.forEach((p, i) => this._fort(p[0], p[1], FORT_COLORS[i]));
 
-    // high bridge ring at y3 connecting tier-1 tops of adjacent forts
-    this._bridge(-18.5, -26, 18.5, -26, 3, 4, COLORS.cyan);
-    this._bridge(-18.5, 26, 18.5, 26, 3, 4, COLORS.amber);
-    this._bridge(-26, -18.5, -26, 18.5, 3, 4, COLORS.magenta);
-    this._bridge(26, -18.5, 26, 18.5, 3, 4, COLORS.lime);
+    // TOP bridge ring (y6) connecting all four fort roofs — Block Fort style
+    this._bridge(-22, -26, 22, -26, 6, 4.5, COLORS.cyan);    // north edge (fort0-fort1)
+    this._bridge(-22, 26, 22, 26, 6, 4.5, COLORS.amber);     // south edge (fort2-fort3)
+    this._bridge(-26, -22, -26, 22, 6, 4.5, COLORS.magenta); // west edge (fort0-fort2)
+    this._bridge(26, -22, 26, 22, 6, 4.5, COLORS.lime);      // east edge (fort1-fort3)
 
-    // central platform (top y1.4) with ramps on all four sides
+    // central platform (top y1.4) with aligned ramps on all four sides
     this._block(0, 0, 0, 13, 13, 1.4, COLORS.cyan);
-    this._ramp(0, 1.4, 6.5, 0, 0, 12, 4, COLORS.cyan);
-    this._ramp(0, 1.4, -6.5, 0, 0, -12, 4, COLORS.cyan);
-    this._ramp(6.5, 1.4, 0, 12, 0, 0, 4, COLORS.cyan);
-    this._ramp(-6.5, 1.4, 0, -12, 0, 0, 4, COLORS.cyan);
-    // central obelisk (cover) on the platform
-    this._block(0, 0, 1.4, 2.4, 2.4, 5, COLORS.magenta);
+    this._ramp(0, 1.4, 6.0, 0, 0, 12, 4.5, COLORS.cyan);
+    this._ramp(0, 1.4, -6.0, 0, 0, -12, 4.5, COLORS.cyan);
+    this._ramp(6.0, 1.4, 0, 12, 0, 0, 4.5, COLORS.cyan);
+    this._ramp(-6.0, 1.4, 0, -12, 0, 0, 4.5, COLORS.cyan);
+    this._block(0, 0, 1.4, 2.4, 2.4, 4.5, COLORS.magenta); // central obelisk cover
 
-    // scattered cover crates at ground level
-    const crates = [[-12, 8], [12, -8], [-8, -14], [10, 14], [16, 0], [-16, 2], [18, 16], [-18, -16]];
+    // cover crates (kept off the central lanes)
+    const crates = [[-13, 9], [13, -9], [-9, -15], [11, 15], [17, 0], [-17, 2], [19, 17], [-19, -17]];
     for (let i = 0; i < crates.length; i++) {
       const [x, z] = crates[i]; const h = 1.6 + (i % 3) * 0.5;
       this._block(x, z, 0, 2.6, 2.6, h, FORT_COLORS[i % 4]);
     }
 
-    // ground-ring spawn points
-    for (let i = 0; i < 14; i++) {
-      const a = (i / 14) * Math.PI * 2, r = 42;
-      this.spawnPoints.push({ x: Math.cos(a) * r, y: 0, z: Math.sin(a) * r });
+    // spawn points: inner + outer ground rings in open lanes
+    for (const r of [20, 34]) for (let i = 0; i < 12; i++) {
+      const a = (i / 12) * Math.PI * 2 + (r === 20 ? 0.26 : 0);
+      const x = Math.cos(a) * r, z = Math.sin(a) * r;
+      // keep clear of fort footprints
+      if (this._segClear(x, z, x, z)) this.spawnPoints.push({ x, y: 0, z });
     }
 
     // distant neon skyline
-    const skMat = new THREE.MeshStandardMaterial({ color: 0x070617, roughness: 1 });
+    const skMat = new THREE.MeshStandardMaterial({ color: 0x0b0a1c, roughness: 1 });
     for (let i = 0; i < 44; i++) {
       const a = (i / 44) * Math.PI * 2, r = 92 + (i % 5) * 15, h = 30 + (i * 7 % 80), w = 7 + (i * 3 % 11);
       const b = new THREE.Mesh(new THREE.BoxGeometry(w, h, w), skMat);
@@ -175,7 +204,6 @@ export class World {
     this._buildNav();
   }
 
-  // ---- Navigation graph (enemies spawn on ground and route up ramps/bridges) ----
   _buildNav() {
     const N = this.navNodes;
     const node = (x, y, z) => { N.push({ x, y, z, edges: [] }); return N.length - 1; };
@@ -184,53 +212,46 @@ export class World {
       const A = N[a], B = N[b], c = Math.hypot(A.x - B.x, A.y - B.y, A.z - B.z);
       A.edges.push({ to: b, cost: c }); B.edges.push({ to: a, cost: c });
     };
-    // ground lane nodes (open cross-lanes + fort ramp bottoms)
     const gpts = [[0, -40], [0, -22], [0, -10], [0, 10], [0, 22], [0, 40],
                   [-40, 0], [-22, 0], [-10, 0], [10, 0], [22, 0], [40, 0]];
     const fp = [[-26, -26], [26, -26], [-26, 26], [26, 26]];
-    const FB = fp.map(([cx, cz]) => { const sx = Math.sign(cx); return node(cx - sx * 13.5, 0, cz); });
+    const FB = fp.map(([cx, cz]) => { const sx = Math.sign(cx); return node(cx - sx * 14.5, 0, cz); });
     const ground = [...FB];
     for (const [x, z] of gpts) ground.push(node(x, 0, z));
-    // central ramp-bottom nodes + central top
     const CB = [[0, 12], [0, -12], [12, 0], [-12, 0]].map(([x, z]) => node(x, 0, z));
     ground.push(...CB);
     const CT = node(0, 1.4, 0);
     for (const cb of CB) edge(cb, CT);
-    // auto-connect ground nodes whose straight line stays clear of solid footprints
     for (let i = 0; i < ground.length; i++)
       for (let j = i + 1; j < ground.length; j++) {
         const a = N[ground[i]], b = N[ground[j]];
-        const d = Math.hypot(a.x - b.x, a.z - b.z);
-        if (d > 30) continue;
+        if (Math.hypot(a.x - b.x, a.z - b.z) > 30) continue;
         if (this._segClear(a.x, a.z, b.x, b.z)) edge(ground[i], ground[j]);
       }
-    // per-fort climb chain: FB -> R1(tier1) -> R2b -> TOP(tier2), plus tier1 center for bridges
-    const TC = [];
+    // per-fort: FB -> R1(tier1) -> R2b -> TOP(roof y6)
+    const TOP = [];
     fp.forEach(([cx, cz], i) => {
-      const sx = Math.sign(cx), sz = Math.sign(cz);
-      const r1 = node(cx - sx * 5, 3, cz);
-      const tc = node(cx, 3, cz); TC.push(tc);
-      const r2b = node(cx - sx * 8, 3, cz);
-      const top = node(cx, 6, cz);
-      edge(FB[i], r1); edge(r1, tc); edge(r1, r2b); edge(tc, r2b); edge(r2b, top);
+      const sx = Math.sign(cx);
+      const r1 = node(cx - sx * 6, 3, cz);
+      const r2b = node(cx - sx * 8.5, 3, cz);
+      const top = node(cx, 6, cz); TOP.push(top);
+      edge(FB[i], r1); edge(r1, r2b); edge(r2b, top);
     });
-    // bridges connect adjacent fort tier-1 centers
-    edge(TC[0], TC[1]); edge(TC[2], TC[3]); edge(TC[0], TC[2]); edge(TC[1], TC[3]);
+    // TOP bridge ring connects all fort roofs
+    edge(TOP[0], TOP[1]); edge(TOP[2], TOP[3]); edge(TOP[0], TOP[2]); edge(TOP[1], TOP[3]);
   }
 
-  // True if the ground segment doesn't pass through a tall solid footprint.
   _segClear(x1, z1, x2, z2) {
-    for (let t = 0.12; t < 0.9; t += 0.12) {
+    for (let t = 0.08; t <= 0.92; t += 0.08) {
       const x = x1 + (x2 - x1) * t, z = z1 + (z2 - z1) * t;
       for (const c of this.colliders) {
-        if (c.top < 1.0 || c.top > 50) continue; // ignore low trims and perimeter
+        if (c.top < 1.0 || c.top > 50) continue;
         if (x > c.minX - 0.6 && x < c.maxX + 0.6 && z > c.minZ - 0.6 && z < c.maxZ + 0.6) return false;
       }
     }
     return true;
   }
 
-  // Nearest nav node to a point, weighting vertical distance so the right level wins.
   nearestNode(x, y, z) {
     let best = 0, bd = Infinity;
     for (let i = 0; i < this.navNodes.length; i++) {
@@ -241,23 +262,20 @@ export class World {
     return best;
   }
 
-  // Highest walkable surface strictly below originY (ignores overhead bridges).
   sampleFloor(x, z, originY) {
     this._ro.set(x, originY, z);
     this._ray.set(this._ro, this._rd);
-    // far = originY + 2: from height originY the ray reaches ~2 units below y=0,
-    // so it always finds the ground floor while ignoring anything far underneath.
+    // reach ~2 units below y=0 from any starting height
     this._ray.far = originY + 2;
     const hits = this._ray.intersectObjects(this.walkables, false);
     return hits.length ? hits[0].point.y : null;
   }
 
-  // Horizontal blocking: a collider only blocks while your feet are below its top.
   blocked(x, z, feetY, r, step) {
     const H = this.HALF;
     if (x < -H + r || x > H - r || z < -H + r || z > H - r) return true;
     for (const c of this.colliders) {
-      if (feetY >= c.top - step) continue;          // standing on/above it → not a wall
+      if (feetY >= c.top - step) continue;
       const cx = clamp(x, c.minX, c.maxX), cz = clamp(z, c.minZ, c.maxZ);
       const dx = x - cx, dz = z - cz;
       if (dx * dx + dz * dz < r * r) return true;
