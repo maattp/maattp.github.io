@@ -6,7 +6,7 @@ import { clamp, lerp, damp, rand } from './utils.js';
 export class WeaponSystem {
   constructor(game) {
     this.game = game;
-    this.weapons = WEAPONS;
+    this.weapons = WEAPONS.map(w => ({ ...w })); // per-instance copies; keep config WEAPONS pristine
     this.idx = 0;
     this.vm = new ViewModel(game);
     this.adsAmt = 0;

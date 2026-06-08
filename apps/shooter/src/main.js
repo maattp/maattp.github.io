@@ -122,7 +122,7 @@ function loop() { raf = requestAnimationFrame(loop); if (game) { let dt = clock.
 function ensureGame() {
   if (game) return;
   game = new Game($('qualitySel').value);
-  window.__game = game; // debug handle
+  if (location.hostname === 'localhost' || location.hostname === '127.0.0.1') window.__game = game; // debug handle (local only)
   game.player.sensitivity = pendingSens;
   if (!raf) loop();
 }

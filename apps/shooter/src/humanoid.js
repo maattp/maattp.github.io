@@ -114,7 +114,6 @@ export function buildHumanoid(def) {
 }
 
 // Procedural gait + pose. p: { moving, speed, gaitAmp, lean, phase, flinch, attack, aimPitch, ranged }
-const tmpHeadFix = 0;
 export function animateHumanoid(rig, p, dt) {
   const j = rig.j;
   const amp = p.gaitAmp * (p.moving ? 1 : 0.06);

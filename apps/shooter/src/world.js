@@ -245,6 +245,8 @@ export class World {
   sampleFloor(x, z, originY) {
     this._ro.set(x, originY, z);
     this._ray.set(this._ro, this._rd);
+    // far = originY + 2: from height originY the ray reaches ~2 units below y=0,
+    // so it always finds the ground floor while ignoring anything far underneath.
     this._ray.far = originY + 2;
     const hits = this._ray.intersectObjects(this.walkables, false);
     return hits.length ? hits[0].point.y : null;
