@@ -6,7 +6,6 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="theme-color" content="#05010f">
-<meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <title>NEON SIEGE</title>
 <script type="importmap">
 { "imports": { "three": "https://unpkg.com/three@0.160.0/build/three.module.js" } }
@@ -397,7 +396,7 @@ const Audio = (()=>{
   }
   let lastVox=0;
   return {
-    init, resume, get ready(){ return ready; }, get time(){ return ready?ctx.currentTime:0; },
+    init, resume, tone, noise, get ready(){ return ready; }, get time(){ return ready?ctx.currentTime:0; },
     // layered weapon report
     shoot(w){
       if(w.id==='pulse'){
@@ -1401,7 +1400,17 @@ addEventListener('resize', ()=>{
 });
 sizeDmgCanvas();
 camera.position.set(0,9,0);
-$('loadMsg').textContent='ready · click INITIALIZE';
+// Desktop-only: the game relies on the Pointer Lock API + keyboard/mouse,
+// which iOS Safari does not support. Show a clear notice on touch devices.
+const desktopOK = ('pointerLockElement' in document) && window.matchMedia('(pointer: fine)').matches;
+if(desktopOK){
+  $('loadMsg').textContent='ready · click INITIALIZE';
+} else {
+  $('startBtn').style.display='none';
+  $('loadMsg').innerHTML='⌨️ + 🖱️&nbsp; DESKTOP ONLY<br>Neon Siege needs a keyboard &amp; mouse (pointer lock).<br>Open it on a Mac or PC.';
+  $('loadMsg').style.color='#ff7a3c';
+  $('loadMsg').style.lineHeight='1.9';
+}
 loop();
 </script>
 </body>
