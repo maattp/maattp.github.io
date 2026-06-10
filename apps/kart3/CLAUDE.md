@@ -60,6 +60,39 @@ worker, WebRTC with relay fallback, host-authoritative state sync, voice
 stretch goal) lives in **`VISION.md`** — read it before starting any netcode
 work, and don't regress these four seams.
 
+### M1 netcode (SHIPPED): rooms + WS relay racing
+
+- `net.mode ∈ solo|host|client`. The worker's `Kart3Room` DO (see
+  `worker/CLAUDE.md`) is lobby + opaque relay. Humans fill kart slots in
+  roster order, AI fill the rest (`buildKartsRoster`).
+- **Host** = full authoritative sim; remote humans drive via
+  `remoteController` (latest relayed input; `f` is a cumulative fire counter
+  so taps survive packet loss). Snapshots every `SNAP_EVERY` ticks from
+  `hostSendSnap` (karts compact-array + box flags + goo/rocket positions).
+- **Client** sims ONLY its own kart (prediction) in `netClientFrame`;
+  everything else interpolates `INTERP_MS` in the past between buffered
+  snapshots (`clientApplySnaps`). Own kart adopts authoritative event/item
+  fields (bonk/goo/shield/item/rank/finished) and gets gentle position
+  correction (>5u ease, >30u snap). Items/boxes/lap-finishes are
+  host-decided on clients; goo/rockets render as pooled "ghost" meshes.
+- Disconnected humans convert to AI on the host; host-left ends the race;
+  results' RACE AGAIN becomes BACK TO LOBBY (DO phase → lobby).
+- No pausing online (pause button hidden, visibilitychange guard).
+- **Testing**: `wrangler dev` + `python3 -m http.server 8765` serving the
+  debug copy from /tmp (must be http://localhost, NOT file:// — the WS
+  route checks Origin) + TWO headless Chrome instances (ports 9223/9224 —
+  separate instances, one per player, avoids occluded-tab rAF throttling;
+  launch Chrome with `--disable-background-timer-throttling`). Autopilot
+  both players and drive the lobby via DOM clicks. The client autopilot
+  works because input packets carry `player.ctrl` (controller output), not
+  raw touch state.
+- Known M1 limitation for M2: client steering reaches the host ~50-150ms
+  late, so the host's copy of a client kart corners on stale inputs and
+  scrubs speed the local player never sees. Candidates: client-authoritative
+  own-kart pose in input packets (fine at this trust level), or host-side
+  input delay buffering. Also: no client rocket-start (host can't see
+  pre-GO inputs), no late-join.
+
 ## Track / world model
 
 - `CTRL` points `[x, z, y]` are scaled by `SC = 1.35`; elevation 0→31.
