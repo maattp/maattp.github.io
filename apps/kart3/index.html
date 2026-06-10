@@ -412,15 +412,16 @@
         const TUNNEL_OUT = [-180 * SC, 165 * SC];
         const JUMP_AT = [-268 * SC, -60 * SC];   // ramp crest location
 
+        // size scales the driver figure; flair is each character's signature look
         const CHARS = [
-            { id: 'dash',  name: 'Dash',  body: 0xff3b5c, accent: 0xffd54a, skin: 0xffd9a8, speed: 1.00, accel: 1.00, handling: 1.00 },
-            { id: 'koa',   name: 'Koa',   body: 0x21d0c3, accent: 0xfff3d0, skin: 0xc98a5a, speed: 1.06, accel: 0.92, handling: 0.96 },
-            { id: 'fern',  name: 'Fern',  body: 0x58e36a, accent: 0x0b3a1c, skin: 0xffd9a8, speed: 0.95, accel: 1.04, handling: 1.10 },
-            { id: 'vega',  name: 'Vega',  body: 0xb06bff, accent: 0xffe27a, skin: 0x8a5a3a, speed: 0.98, accel: 1.10, handling: 1.02 },
-            { id: 'bruno', name: 'Bruno', body: 0xff8a2a, accent: 0x3a2a14, skin: 0xe8b88a, speed: 1.09, accel: 0.86, handling: 0.90 },
-            { id: 'pip',   name: 'Pip',   body: 0xffd54a, accent: 0xff3b5c, skin: 0xffe0c0, speed: 0.92, accel: 1.12, handling: 1.08 },
-            { id: 'indi',  name: 'Indi',  body: 0x3a8bff, accent: 0xffffff, skin: 0x6a4a2a, speed: 1.03, accel: 0.97, handling: 1.00 },
-            { id: 'rosa',  name: 'Rosa',  body: 0xff6bd0, accent: 0x2a1240, skin: 0xffd9a8, speed: 1.00, accel: 1.03, handling: 1.04 },
+            { id: 'dash',  name: 'Dash',  body: 0xff3b5c, accent: 0xffd54a, skin: 0xffd9a8, hair: 0x4a2a10, speed: 1.00, accel: 1.00, handling: 1.00, size: 1.00, flair: 'fin' },
+            { id: 'koa',   name: 'Koa',   body: 0x21d0c3, accent: 0xfff3d0, skin: 0xc98a5a, hair: 0x1a1008, speed: 1.06, accel: 0.92, handling: 0.96, size: 1.06, flair: 'shades' },
+            { id: 'fern',  name: 'Fern',  body: 0x58e36a, accent: 0x14542a, skin: 0xffd9a8, hair: 0x7a4a1a, speed: 0.95, accel: 1.04, handling: 1.10, size: 0.94, flair: 'sprout' },
+            { id: 'vega',  name: 'Vega',  body: 0xb06bff, accent: 0xffe27a, skin: 0x8a5a3a, hair: 0x14060a, speed: 0.98, accel: 1.10, handling: 1.02, size: 1.00, flair: 'star' },
+            { id: 'bruno', name: 'Bruno', body: 0xff8a2a, accent: 0x4a3014, skin: 0xe8b88a, hair: 0x3a200a, speed: 1.09, accel: 0.86, handling: 0.90, size: 1.20, flair: 'stache' },
+            { id: 'pip',   name: 'Pip',   body: 0xffd54a, accent: 0xff3b5c, skin: 0xffe0c0, hair: 0xd87a2a, speed: 0.92, accel: 1.12, handling: 1.08, size: 0.80, flair: 'bighelmet' },
+            { id: 'indi',  name: 'Indi',  body: 0x3a8bff, accent: 0xf2f6ff, skin: 0x6a4a2a, hair: 0x10141f, speed: 1.03, accel: 0.97, handling: 1.00, size: 1.02, flair: 'mohawk' },
+            { id: 'rosa',  name: 'Rosa',  body: 0xff6bd0, accent: 0x3a1450, skin: 0xffd9a8, hair: 0xe8c23a, speed: 1.00, accel: 1.03, handling: 1.04, size: 0.94, flair: 'ponytail' },
         ];
 
         const ITEM_DEF = {
@@ -1302,52 +1303,135 @@
         // ===================================================================
         //  KART MESHES — body baked into one vertex-colored geometry per kart
         // ===================================================================
-        let WHEEL_GEO = null, WHEEL_MAT = null, BODY_MAT = null;
+        let WHEEL_MAT = null, BODY_MAT = null;
+        const WHEEL_GEO_CACHE = {};
         function initKartGeos() {
-            const tire = new THREE.CylinderGeometry(1.0, 1.0, 0.95, 16);
-            tire.rotateZ(Math.PI / 2);
-            const hub = new THREE.CylinderGeometry(0.42, 0.42, 1.0, 10);
-            hub.rotateZ(Math.PI / 2);
-            WHEEL_GEO = bakeMerge([
-                { geo: tire, color: 0x14171f, matrix: new THREE.Matrix4() },
-                { geo: hub, color: 0xb9bec8, matrix: new THREE.Matrix4() },
-            ]);
             WHEEL_MAT = new THREE.MeshLambertMaterial({ vertexColors: true });
             BODY_MAT = new THREE.MeshLambertMaterial({ vertexColors: true });
         }
+        // chunky tire + accent rim + hub cap, cached per accent color
+        function wheelGeo(accent) {
+            if (WHEEL_GEO_CACHE[accent]) return WHEEL_GEO_CACHE[accent];
+            const tire = new THREE.CylinderGeometry(1.04, 1.04, 1.0, 16);
+            tire.rotateZ(Math.PI / 2);
+            const rim = new THREE.CylinderGeometry(0.52, 0.52, 1.04, 12);
+            rim.rotateZ(Math.PI / 2);
+            const cap = new THREE.CylinderGeometry(0.18, 0.18, 1.1, 8);
+            cap.rotateZ(Math.PI / 2);
+            const geo = bakeMerge([
+                { geo: tire, color: 0x14171f, matrix: new THREE.Matrix4() },
+                { geo: rim, color: accent, matrix: new THREE.Matrix4() },
+                { geo: cap, color: 0xd8dde6, matrix: new THREE.Matrix4() },
+            ]);
+            WHEEL_GEO_CACHE[accent] = geo;
+            return geo;
+        }
+        function shade(hex, f) {
+            const c = new THREE.Color(hex).multiplyScalar(f);
+            return c.getHex();
+        }
         function createKartMesh(ch) {
             const g = new THREE.Group();
-            const body = ch.body, acc = ch.accent, dark = 0x1a1d26, gray = 0xb9bec8, skin = ch.skin;
+            const B = ch.body, A = ch.accent, D = 0x1a1d26, M = 0xb9bec8, SK = ch.skin, H = ch.hair;
+            const S = shade(B, 0.55);
             const P = [];
             const box = (w, h, d) => new THREE.BoxGeometry(w, h, d);
-            P.push({ geo: box(3.6, 0.78, 5.2), color: body, matrix: mat4(0, 1.02, 0, 0) });
-            P.push({ geo: box(2.6, 0.55, 1.7), color: body, matrix: mat4(0, 0.96, 2.95, 0) });
-            const noseTip = new THREE.ConeGeometry(1.05, 1.5, 10);
-            P.push({ geo: noseTip, color: body, matrix: mat4(0, 0.96, 4.2, 0, 1, 1, 1, Math.PI / 2, 0) });
-            P.push({ geo: box(0.85, 0.62, 3.6), color: acc, matrix: mat4(0, 1.08, 1.8, 0) });
-            P.push({ geo: box(2.3, 0.5, 2.6), color: dark, matrix: mat4(0, 1.34, -0.6, 0) });
-            for (const s of [1, -1]) P.push({ geo: box(0.9, 0.62, 2.9), color: acc, matrix: mat4(1.95 * s, 0.98, 0.2, 0) });
-            P.push({ geo: box(3.4, 0.5, 0.6), color: dark, matrix: mat4(0, 0.95, -2.7, 0) });
-            P.push({ geo: box(1.7, 0.8, 1.2), color: dark, matrix: mat4(0, 1.55, -2.1, 0) });
-            const exh = new THREE.CylinderGeometry(0.18, 0.22, 0.9, 8);
-            for (const s of [1, -1]) P.push({ geo: exh, color: gray, matrix: mat4(0.55 * s, 1.78, -2.85, 0, 1, 1, 1, Math.PI / 2.3, 0) });
-            P.push({ geo: box(4.0, 0.22, 1.05), color: acc, matrix: mat4(0, 2.22, -2.95, 0) });
-            for (const s of [1, -1]) P.push({ geo: box(0.24, 0.9, 0.3), color: dark, matrix: mat4(0.95 * s, 1.75, -2.95, 0) });
-            // driver
-            P.push({ geo: box(1.3, 1.05, 0.95), color: acc, matrix: mat4(0, 2.0, -0.62, 0) });
-            P.push({ geo: new THREE.SphereGeometry(0.55, 12, 10), color: skin, matrix: mat4(0, 2.82, -0.62, 0) });
-            P.push({ geo: new THREE.SphereGeometry(0.64, 12, 10, 0, Math.PI * 2, 0, Math.PI / 1.8), color: body, matrix: mat4(0, 2.88, -0.62, 0) });
-            P.push({ geo: box(0.8, 0.24, 0.3), color: dark, matrix: mat4(0, 2.84, -0.12, 0) });
-            const wheelG = new THREE.TorusGeometry(0.36, 0.09, 6, 12);
-            P.push({ geo: wheelG, color: dark, matrix: mat4(0, 1.7, 0.55, 0, 1, 1, 1, -0.6, 0) });
+            const sph = (r, cut) => cut ? new THREE.SphereGeometry(r, 12, 10, 0, Math.PI * 2, 0, cut) : new THREE.SphereGeometry(r, 12, 10);
+
+            // ---- chassis ----
+            P.push({ geo: box(3.5, 0.3, 5.6), color: S, matrix: mat4(0, 0.62, 0, 0) });                       // floor pan
+            P.push({ geo: box(2.5, 0.72, 4.6), color: B, matrix: mat4(0, 1.1, 0.1, 0) });                     // main tub
+            for (const s of [1, -1]) {
+                P.push({ geo: box(0.55, 0.45, 3.4), color: S, matrix: mat4(1.55 * s, 0.78, 0.1, 0) });        // sills
+                P.push({ geo: box(0.95, 0.66, 2.5), color: B, matrix: mat4(1.7 * s, 1.12, -0.2, 0) });        // side pods
+                P.push({ geo: box(0.55, 0.4, 0.2), color: D, matrix: mat4(1.7 * s, 1.14, 1.06, 0) });         // pod intakes
+            }
+            // ---- nose ----
+            P.push({ geo: box(1.7, 0.52, 1.4), color: B, matrix: mat4(0, 1.0, 2.85, 0) });
+            const noseTip = new THREE.ConeGeometry(0.82, 1.6, 12);
+            P.push({ geo: noseTip, color: B, matrix: mat4(0, 0.98, 4.1, 0, 1, 1, 1, Math.PI / 2, 0) });
+            P.push({ geo: new THREE.CylinderGeometry(0.42, 0.42, 0.12, 14), color: A, matrix: mat4(0, 1.3, 2.85, 0) });  // roundel
+            P.push({ geo: box(3.6, 0.16, 0.85), color: A, matrix: mat4(0, 0.52, 3.95, 0) });                  // front wing
+            for (const s of [1, -1]) P.push({ geo: box(0.16, 0.42, 0.92), color: D, matrix: mat4(1.78 * s, 0.62, 3.95, 0) });
+            // ---- cockpit ----
+            P.push({ geo: box(2.0, 0.26, 0.5), color: D, matrix: mat4(0, 1.52, 0.85, 0) });                   // dash cowl
+            for (const s of [1, -1]) P.push({ geo: box(0.28, 0.26, 2.4), color: D, matrix: mat4(0.95 * s, 1.52, -0.3, 0) });
+            P.push({ geo: box(1.5, 1.05, 0.3), color: S, matrix: mat4(0, 1.95, -1.7, 0, 1, 1, 1, -0.12, 0) }); // seat back
+            P.push({ geo: box(0.85, 0.5, 0.34), color: D, matrix: mat4(0, 2.62, -1.78, 0, 1, 1, 1, -0.12, 0) }); // headrest
+            P.push({ geo: new THREE.TorusGeometry(0.36, 0.09, 6, 14), color: D, matrix: mat4(0, 1.78, 0.5, 0, 1, 1, 1, -0.6, 0) });  // steering wheel
+            P.push({ geo: new THREE.CylinderGeometry(0.07, 0.07, 0.6, 6), color: M, matrix: mat4(0, 1.62, 0.62, 0, 1, 1, 1, 1.0, 0) });
+            // ---- rear ----
+            P.push({ geo: box(1.5, 0.72, 1.0), color: D, matrix: mat4(0, 1.45, -2.3, 0) });                   // engine
+            const engTop = new THREE.CylinderGeometry(0.28, 0.28, 0.9, 10);
+            engTop.rotateZ(Math.PI / 2);
+            P.push({ geo: engTop, color: M, matrix: mat4(0, 1.9, -2.3, 0) });
+            const exh = new THREE.CylinderGeometry(0.15, 0.2, 0.95, 8);
+            for (const s of [1, -1]) {
+                P.push({ geo: exh, color: M, matrix: mat4(0.52 * s, 1.62, -2.95, 0, 1, 1, 1, Math.PI / 2.2, 0) });
+                P.push({ geo: new THREE.CylinderGeometry(0.21, 0.21, 0.14, 8), color: D, matrix: mat4(0.52 * s, 1.83, -3.36, 0, 1, 1, 1, Math.PI / 2.2, 0) });
+            }
+            P.push({ geo: box(3.6, 0.16, 1.0), color: A, matrix: mat4(0, 2.38, -2.85, 0) });                  // rear wing
+            for (const s of [1, -1]) {
+                P.push({ geo: box(0.14, 0.56, 1.06), color: B, matrix: mat4(1.78 * s, 2.32, -2.85, 0) });     // endplates
+                P.push({ geo: box(0.18, 0.85, 0.22), color: D, matrix: mat4(0.8 * s, 1.95, -2.78, 0, 1, 1, 1, -0.28, 0) });
+            }
+            for (const fx of [-0.6, 0, 0.6]) P.push({ geo: box(0.1, 0.38, 0.65), color: D, matrix: mat4(fx, 0.6, -2.85, 0) });  // diffuser
+            P.push({ geo: box(3.3, 0.42, 0.4), color: S, matrix: mat4(0, 0.92, -2.85, 0) });                  // rear bumper
+
+            // ---- driver (scaled per character, pivot at the seat) ----
+            const sz = ch.size;
+            const dp = (x, y, z) => ({ x: x * sz, y: 1.55 + (y - 1.55) * sz, z: -0.7 + (z + 0.7) * sz });
+            const part = (geo, color, x, y, z, ry, sx, sy, szz, rx, rz) => {
+                const p = dp(x, y, z);
+                P.push({ geo, color, matrix: mat4(p.x, p.y, p.z, ry || 0, (sx == null ? 1 : sx) * sz, (sy == null ? (sx == null ? 1 : sx) : sy) * sz, (szz == null ? (sx == null ? 1 : sx) : szz) * sz, rx, rz) });
+            };
+            part(box(1.15, 1.05, 0.8), A, 0, 2.12, -0.7);                              // torso
+            part(box(0.5, 1.07, 0.84), B, 0, 2.12, -0.7);                              // suit stripe
+            for (const s of [1, -1]) {
+                part(sph(0.27), A, 0.62 * s, 2.55, -0.7);                              // shoulders
+                part(box(0.22, 0.85, 0.24), A, 0.46 * s, 2.12, -0.12, 0, 1, 1, 1, -0.85, -0.3 * s);  // arms
+                part(sph(0.15), D, 0.3 * s, 1.85, 0.32);                               // gloves
+            }
+            part(sph(0.5), SK, 0, 2.98, -0.68);                                        // head
+            for (const s of [1, -1]) {
+                part(sph(0.1), 0xffffff, 0.18 * s, 3.02, -0.27);                       // eyes
+                part(sph(0.05), 0x1a1410, 0.18 * s, 3.02, -0.2);                       // pupils
+            }
+            const bigHelm = ch.flair === 'bighelmet';
+            part(sph(bigHelm ? 0.72 : 0.58, Math.PI / 1.65), B, 0, bigHelm ? 3.1 : 3.06, -0.68);   // helmet shell
+            part(box(0.16, 0.3, 1.14), A, 0, bigHelm ? 3.42 : 3.3, -0.68);             // helmet stripe
+            part(box(1.0, 0.13, 0.34), D, 0, 3.22, -0.26);                             // visor brim
+
+            // ---- signature flair ----
+            if (ch.flair === 'fin') {
+                part(box(0.1, 0.42, 0.85), A, 0, 3.5, -0.75);
+            } else if (ch.flair === 'shades') {
+                part(box(0.95, 0.16, 0.2), 0x14181f, 0, 3.02, -0.22);
+            } else if (ch.flair === 'sprout') {
+                part(new THREE.CylinderGeometry(0.035, 0.035, 0.5, 5), 0x2f9a44, 0, 3.6, -0.68);
+                part(box(0.3, 0.05, 0.16), 0x3db854, 0.12, 3.85, -0.68, 0, 1, 1, 1, 0, 0.5);
+            } else if (ch.flair === 'star') {
+                part(new THREE.CylinderGeometry(0.03, 0.03, 0.4, 5), M, 0, 3.55, -0.68);
+                part(new THREE.OctahedronGeometry(0.16, 0), 0xffe27a, 0, 3.8, -0.68);
+            } else if (ch.flair === 'stache') {
+                part(box(0.62, 0.14, 0.14), H, 0, 2.78, -0.22);
+            } else if (ch.flair === 'mohawk') {
+                for (let m = 0; m < 3; m++) part(box(0.09, 0.34, 0.3), H, 0, 3.45, -0.95 + m * 0.3);
+            } else if (ch.flair === 'ponytail') {
+                part(sph(0.16), H, 0, 3.2, -1.18);
+                part(sph(0.13), H, 0, 2.95, -1.4);
+                part(sph(0.1), H, 0, 2.68, -1.55);
+            }
+
             const bodyMesh = new THREE.Mesh(bakeMerge(P), BODY_MAT);
             g.add(bodyMesh);
 
             const wheels = [], frontPivots = [];
-            const wpos = [[1.88, 0.98, 1.85, true], [-1.88, 0.98, 1.85, true], [1.95, 0.98, -1.95, false], [-1.95, 0.98, -1.95, false]];
+            const WG = wheelGeo(A);
+            const wpos = [[1.88, 1.0, 1.85, true], [-1.88, 1.0, 1.85, true], [1.95, 1.0, -1.95, false], [-1.95, 1.0, -1.95, false]];
             for (const p of wpos) {
                 const pivot = new THREE.Group(); pivot.position.set(p[0], p[1], p[2]);
-                const tire = new THREE.Mesh(WHEEL_GEO, WHEEL_MAT);
+                const tire = new THREE.Mesh(WG, WHEEL_MAT);
                 pivot.add(tire); g.add(pivot); wheels.push(tire);
                 if (p[3]) frontPivots.push(pivot);
             }
