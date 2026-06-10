@@ -75,14 +75,37 @@ periodic `netSnapshot`s; remote karts get a packet-fed controller.
   or the jump feels flat.
 - **Terrain**: 128² heightfield; each vertex blends from road-edge height
   (embankment) to noise hills by distance from the centerline — this is what
-  makes elevation possible with no voids (kart2 had to stay flat). Over the
-  tunnel range the blend target is `centerline.y + 15` (the headland).
+  makes elevation possible with no voids (kart2 had to stay flat).
   `terrainY(x, z)` is the same function used for scenery placement.
+  **Through the tunnel range the heightfield stays at road level** — the
+  headland is a separate rock-shell mesh (bigger arch over the tube + end
+  facades connecting shell rim to tube mouth). When the heightfield itself
+  ramped up to "cover" the tunnel, the ramp was a solid wall right inside
+  the portal mouth (the original "tunnel entrance looks solid" bug).
+- **Road decals** (start line, boost pads) are ribbon strips via
+  `buildDecalStrip()` that follow `roadY()` bank+slope per sample. Flat
+  rotated planes sink/float — the start line vanished into the banked
+  chicane (bankSlope at seg 0 is ≈ −0.13).
 - Road/curb ribbons are `side: THREE.DoubleSide` (winding faces down).
 - Guardrails only where `roadY − terrainY(±(HALF_W+26)) > 4.5` (cliff drops).
 - Scenery (palms/rocks/stands/rails-posts/flags…) is baked via `bakeMerge()`
   into ONE vertex-colored mesh (single draw call). Kart bodies likewise: ~45
   primitives baked per kart; wheels are separate meshes (front pivots steer).
+
+## Handling / tuning model (post bug-fix pass)
+
+- Karts have **no lateral slip**: cornering is purely yaw rate vs speed.
+  Yaw authority = `TURN_BASE·(1 − TURN_FADE·v/MAX_SPEED)`, so hairpins
+  demand braking or drifting (drift turns ~1.2–1.6× tighter).
+- `cornerCap[]` is the closed-form solve of `v·κ = margin·yaw(v)` — it MUST
+  be derived from the steering model above. (It was once a made-up grip
+  formula; the AI braked to ~50 where anyone corners at 90 and "always lost".)
+- Acceleration tapers toward the cap (`ACCEL`, `ACCEL_TAPER`): ~4.5s of
+  wind-up to top speed, MK64-style. Boosts: floor `BOOST_FLOOR`, cap
+  `BOOST_CAP` ≈ 1.5× MAX — not warp speed.
+- AI seek boost pads, drift deliberately into braking corners, and have a
+  tight skill band (0.955–1.04) — tune pace via autopilot lap times
+  (leader ~22–24s/lap; autopilot avg-skill player should finish mid-pack).
 
 ## Gameplay conventions (several are explicit user preferences)
 
