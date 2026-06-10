@@ -276,8 +276,8 @@
                 <div class="trackname">🏝️ Coral Cliffs Circuit · 3 Laps · 8 Racers</div>
                 <div class="bestline" id="bestLine">No record yet</div>
                 <button class="btn" id="startBtn">START RACE</button>
-                <div class="hint"><b>Left thumb</b> slides to steer · <b>DRIFT</b> hold while turning for turbo ·
-                    grab <b>?</b> boxes and fire items!</div>
+                <div class="hint"><b>Left thumb</b> slides to steer · hold <b>DRIFT</b> in turns for turbo ·
+                    grab <b>?</b> boxes · hold DRIFT on <b>GO!</b> for a rocket start</div>
                 <div class="loader" id="loadMsg">loading…</div>
             </div>
             <div class="menu-right">
@@ -1497,15 +1497,20 @@
                     _rubber: 1,
                     ai: i === 0 ? null : {
                         skill: skills[i - 1],
+                        aggr: rand(0.3, 1.0),
                         drift: rand(0.5, 1.0),
                         driftHold: rand(1.1, 2.1),
                         phase: rand(0, Math.PI * 2),
                         laneBias: rand(-4, 4),
                         errT: rand(2, 6), errOff: 0,
+                        rival: false,
                     },
                 });
             }
             player = karts[0];
+            // the two sharpest AI are "rivals": they shadow the player all race
+            karts.filter((k) => k.ai).sort((a, b) => b.ai.skill - a.ai.skill)
+                 .slice(0, 2).forEach((k) => { k.ai.rival = true; k.ai.aggr = Math.max(k.ai.aggr, 0.75); });
         }
 
         function resetRace() {
@@ -2076,6 +2081,16 @@
                     if (Math.abs(ld) < 4.6) { lane = k.lateralSigned - Math.sign(ld || (ai.laneBias || 1)) * 6; break; }
                 }
             }
+            // defensive blocking: mirror a close chaser's line (MK-style weave)
+            if (ai.aggr > 0.5) {
+                let chaser = null, cd = Infinity;
+                for (const o of karts) {
+                    if (o === k || o.finished) continue;
+                    const behind = (k.progress - o.progress) * trackLen;
+                    if (behind > 1 && behind < 11 && behind < cd) { cd = behind; chaser = o; }
+                }
+                if (chaser) lane = lerp(lane, clamp(chaser.lateralSigned, -(HALF_W - 4), HALF_W - 4), 0.5);
+            }
             // avoid goo / dodge what's droppable
             for (const h of hazards) {
                 const dx = h.x - k.pos.x, dz = h.z - k.pos.z;
@@ -2103,7 +2118,9 @@
                 if (cc < minCap) minCap = cc;
             }
             const grip = k.drifting ? 1.22 : 1.0;
-            const brake = k.speed > minCap * grip * (0.92 + ai.skill * 0.1) && k.boostTimer <= 0;
+            // during a "mistake" episode they also brake late and run wide
+            const lateBrake = ai.errOff !== 0 ? 1.1 : 1.0;
+            const brake = k.speed > minCap * grip * lateBrake * (0.92 + ai.skill * 0.1) && k.boostTimer <= 0;
 
             // deliberate drifting through sustained corners
             let wantDrift = k.drifting;
@@ -2112,9 +2129,14 @@
             }
             if (k.drifting && (k.driftCharge > ai.driftHold || (minCap > 96 && k.driftCharge > 0.55))) wantDrift = false;
 
-            // bounded two-way rubber band, off for the opening seconds
+            // bounded two-way rubber band, off for the opening seconds.
+            // Rivals shadow the player tighter; the final lap loosens the band
+            // so the finish is earned, and side-by-side karts surge to fight.
             const gap = player.progress - k.progress;
-            let rub = clamp(1 + gap * 0.55, 0.90, 1.10);
+            const lastLap = player.laps >= TOTAL_LAPS - 1;
+            const lo = lastLap ? 0.93 : 0.90, hi = lastLap ? 1.07 : 1.10;
+            let rub = clamp(1 + gap * (ai.rival ? 0.85 : 0.55), lo, hi);
+            if (Math.abs(gap) < 0.02) rub += 0.035 * ai.aggr;   // wheel-to-wheel: fight back
             if (raceClock < 6) rub = Math.min(rub, 1.0);
             k._rubber = rub * ai.skill;
 
@@ -2703,7 +2725,15 @@
                     lamps.forEach((l) => l.className = 'lamp green');
                     sfxBeep(880);
                     state = 'racing'; raceClock = 0;
-                    for (const k of karts) k.lastLapStart = 0;
+                    for (const k of karts) {
+                        k.lastLapStart = 0;
+                        if (k.ai && rng() < 0.45) k.boostTimer = rand(0.4, 0.8);   // some AI nail the start
+                    }
+                    if (driftHeld) {   // hold DRIFT on GO → rocket start
+                        player.boostTimer = 0.9;
+                        flash('ROCKET START!', '#ffd54a');
+                        sfxBoost(); vibrate(40);
+                    }
                     setTimeout(() => dom.countdown.classList.remove('on'), 700);
                 }
             };
