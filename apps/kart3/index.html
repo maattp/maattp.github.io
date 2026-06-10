@@ -130,6 +130,10 @@
             font-size: 30px; font-weight: 900; color: #ff5a5a; letter-spacing: 2px;
             text-shadow: 0 3px 14px rgba(0,0,0,0.7); animation: itempulse 0.5s ease-in-out infinite; }
         #wrongWay.on { display: block; }
+        #rocketWarn { position: fixed; right: calc(env(safe-area-inset-right) + 14px); top: 46%; z-index: 12;
+            display: none; font-size: 30px; filter: drop-shadow(0 0 10px #ff3b3b);
+            animation: itempulse 0.35s ease-in-out infinite; }
+        #rocketWarn.on { display: block; }
 
         /* ===== Overlay screens ===== */
         .screen { position: fixed; inset: 0; z-index: 20; display: flex; flex-direction: column; align-items: center;
@@ -256,6 +260,7 @@
     <div id="flash"></div>
     <div id="toast"></div>
     <div id="wrongWay">⚠ WRONG WAY ⚠</div>
+    <div id="rocketWarn">🚀⚠️</div>
     <div id="countdown">
         <div id="lightTree"><div class="lamp"></div><div class="lamp"></div><div class="lamp"></div></div>
         <div id="cdNum">3</div>
@@ -360,7 +365,7 @@
             game: $('game'), hud: $('hud'), lapNum: $('lapNum'), lapTotal: $('lapTotal'),
             posBig: $('posBig'), lapTime: $('lapTime'),
             boostWrap: $('boostWrap'), boostFill: $('boostFill'), boostHint: $('boostHint'),
-            flash: $('flash'), toast: $('toast'), wrongWay: $('wrongWay'), speedlines: $('speedlines'),
+            flash: $('flash'), toast: $('toast'), wrongWay: $('wrongWay'), rocketWarn: $('rocketWarn'), speedlines: $('speedlines'),
             startScreen: $('startScreen'), startBtn: $('startBtn'), charPick: $('charPick'),
             bestLine: $('bestLine'), loadMsg: $('loadMsg'),
             resultScreen: $('resultScreen'), finishPos: $('finishPos'), resultTitle: $('resultTitle'),
@@ -1506,6 +1511,8 @@
         function resetRace() {
             seedRng(raceSeed);   // a future host shares raceSeed → identical item rolls everywhere
             raceClock = 0; simAcc = 0; simTickNo = 0;
+            zapTimer = 0; rocketWarnT = 0;
+            dom.rocketWarn.classList.remove('on');
             clearProjectiles(); clearHazards();
             // grid: AI rows up front, player starts 8th (rearmost) — earn the win
             for (let i = 0; i < karts.length; i++) {
@@ -1619,6 +1626,7 @@
             if (k.drafting) cap *= 1.07;
             if (k.boostTimer > 0) cap = BOOST_CAP;
             if (k.gooT > 0) cap *= 0.45;
+            if (k.shrinkT > 0) cap *= 0.8;   // shrunk by the shockwave → slower top end too
             if (bonked) cap = Math.min(cap, MAX_SPEED * 0.5);
 
             if (!k.finished) {
@@ -1795,21 +1803,31 @@
             k._rollPick = rollItemFor(k);
             if (k.isPlayer) { sfxPickup(); vibrate(20); updateItemButton(); }
         }
-        // rank-weighted: leaders get defense, trailers get firepower — fair catch-up
+        // rank-weighted like MK: leaders get defense, trailers get firepower.
+        // zapTimer is a global cooldown so the shockwave stays a rare event.
+        let zapTimer = 0;
         function rollItemFor(k) {
             const r = k.rank;
             let pool;
-            if (r <= 2) pool = ['goo', 'goo', 'shield', 'turbo', 'rocket', 'shield'];
-            else if (r <= 4) pool = ['turbo', 'rocket', 'goo', 'shield', 'turbo3', 'rocket'];
-            else if (r <= 6) pool = ['rocket', 'turbo3', 'turbo', 'zap', 'shield', 'rocket'];
-            else pool = ['turbo3', 'zap', 'rocket', 'turbo3', 'zap', 'turbo'];
-            return pick(pool);
+            if (r === 1) pool = ['goo', 'goo', 'shield', 'shield', 'turbo', 'goo'];
+            else if (r <= 3) pool = ['turbo', 'rocket', 'goo', 'shield', 'turbo', 'rocket'];
+            else if (r <= 5) pool = ['rocket', 'turbo3', 'turbo', 'rocket', 'shield', 'turbo3'];
+            else pool = ['turbo3', 'zap', 'rocket', 'turbo3', 'zap', 'rocket'];
+            // far behind the leader → sweeten the pot
+            const leader = karts.reduce((a, b) => (b.progress > a.progress ? b : a), karts[0]);
+            if (leader.progress - k.progress > 0.5 && r >= 6) pool = pool.concat(['zap', 'turbo3', 'turbo3']);
+            let it = pick(pool);
+            if (it === 'zap' && zapTimer > 0) it = r >= 6 ? 'turbo3' : 'rocket';
+            if (it === 'zap') zapTimer = 30;   // claimed: nobody else rolls one for a while
+            return it;
         }
         function finishRoll(k) {
             k.item = k._rollPick || 'turbo'; k._rollPick = null; k.itemRolling = 0;
             k.itemCharges = k.item === 'turbo3' ? 3 : 1;
-            if (k.isPlayer) { updateItemButton(); sfxItemWin(); }
-            else k.itemUseTimer = rand(0.5, 2.0);
+            if (k.isPlayer) {
+                updateItemButton(); sfxItemWin();
+                showToast(ITEM_DEF[k.item].icon + ' ' + ITEM_DEF[k.item].name + '!', '#ffd54a');
+            } else k.itemUseTimer = rand(0.5, 2.0);
         }
         function useItem(k) {
             if (!k.item || k.itemRolling > 0 || k.finished) return;
@@ -1824,7 +1842,7 @@
             k.item = null;
             if (k.isPlayer) updateItemButton();
             if (it === 'turbo') { k.boostTimer = Math.max(k.boostTimer, 1.6); if (k.isPlayer) { sfxBoost(); vibrate(40); for (let i = 0; i < 6; i++) emitBoostSpark(k); } }
-            else if (it === 'shield') { k.shieldTimer = 6.0; if (k.isPlayer) { sfxShield(); vibrate(30); } }
+            else if (it === 'shield') { k.shieldTimer = 5.0; if (k.isPlayer) { sfxShield(); vibrate(30); } }
             else if (it === 'goo') dropGoo(k);
             else if (it === 'rocket') fireRocket(k);
             else if (it === 'zap') fireZap(k);
@@ -1838,8 +1856,9 @@
             for (let j = 6; j < 70; j += 6) minCap = Math.min(minCap, cornerCap[(k.seg + j) % N]);
             const onStraight = minCap > 92;
             if ((it === 'turbo' || it === 'turbo3') && !onStraight) { k.itemUseTimer = rand(0.4, 1.0); return; }
-            if (it === 'rocket' && gapAhead > 0.07) { k.itemUseTimer = rand(0.6, 1.6); return; }
-            if (it === 'goo' && !someoneBehind && onStraight && rng() < 0.6) { k.itemUseTimer = rand(0.5, 1.2); return; }
+            if (it === 'rocket' && (gapAhead > 0.07 || (ahead && ahead.shieldTimer > 0))) { k.itemUseTimer = rand(0.6, 1.6); return; }
+            // goo is most valuable dropped on a corner line or right in front of a chaser
+            if (it === 'goo' && !someoneBehind && onStraight && rng() < 0.75) { k.itemUseTimer = rand(0.5, 1.2); return; }
             if (it === 'zap') {
                 const nAhead = karts.filter((o) => o !== k && !o.finished && o.progress > k.progress && o.progress - k.progress < 0.22).length;
                 if (nAhead < 2 && k.rank < 6) { k.itemUseTimer = rand(0.8, 2.0); return; }
@@ -1909,6 +1928,14 @@
             if (k.isPlayer) { sfxBonk(); vibrate(45); flash('BONK!', '#ffd54a'); }
             for (let i = 0; i < 8; i++) emitSpark(new THREE.Vector3(k.pos.x, k.y + 1.5, k.pos.z), 0xffe27a, 6, 5, { normal: true });
         }
+        let rocketWarnT = 0;
+        function rocketWarn() {
+            if (rocketWarnT > 0) return;
+            rocketWarnT = 0.55;
+            dom.rocketWarn.classList.add('on');
+            if (audioCtx && !muted) aTone(1500, 'square', 0.07, 0.09, masterGain);
+            vibrate(15);
+        }
         function gooHit(k) {
             if (k.invuln > 0 || k.gooT > 0 || k.finished) return;
             if (k.shieldTimer > 0) { k.shieldTimer = 0; k.mesh.shield.visible = false; return; }
@@ -1952,11 +1979,21 @@
                 const py = roadY(bs, lat) + 1.6;
                 p.mesh.position.set(p.x, py, p.z); p.mesh.rotation.y = p.theta;
                 emitSpark(new THREE.Vector3(p.x - tx * 1.5, py, p.z - tz * 1.5), 0xffa030, 2, 1, { life: 0.25 });
+                // spy-beep warning when a rocket is hunting the player
+                if (p.target === player && !player.finished) {
+                    const ddx = player.pos.x - p.x, ddz = player.pos.z - p.z;
+                    if (ddx * ddx + ddz * ddz < 5200) rocketWarn();
+                }
                 let hit = false;
                 for (const o of karts) {
                     if (o === p.owner || o.finished) continue;
                     const dx = o.pos.x - p.x, dz = o.pos.z - p.z;
-                    if (dx * dx + dz * dz < 25) { bonkKart(o); hit = true; break; }
+                    if (dx * dx + dz * dz < 25) {
+                        bonkKart(o);
+                        for (let j = 0; j < 14; j++) emitSpark(new THREE.Vector3(p.x, py + 1, p.z), j % 2 ? 0xff7a30 : 0xffd54a, 12, 9, { life: 0.55, size: vrand(2.5, 4.5) });
+                        if (o.isPlayer || p.owner.isPlayer) sfxBonk();
+                        hit = true; break;
+                    }
                 }
                 if (hit || p.life <= 0) { scene.remove(p.mesh); disposeObject(p.mesh); projectiles.splice(i, 1); }
             }
@@ -2755,6 +2792,8 @@
         let simAcc = 0, simTickNo = 0;
         function simTick(d) {
             if (state === 'racing') raceClock += d;
+            if (zapTimer > 0) zapTimer -= d;
+            if (rocketWarnT > 0) { rocketWarnT -= d; if (rocketWarnT <= 0) dom.rocketWarn.classList.remove('on'); }
             for (const k of karts) updateKart(k, d);
             resolveCollisions();
             updateProjectiles(d);
