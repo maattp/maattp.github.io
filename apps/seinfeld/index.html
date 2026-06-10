@@ -1,0 +1,1440 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="theme-color" content="#10131a">
+    <title>Seinfeld — Apartment 5A</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+        html, body {
+            height: 100%;
+            overflow: hidden;
+            background: #10131a;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            touch-action: none;
+            position: fixed;
+            width: 100%;
+            -webkit-user-select: none;
+            user-select: none;
+        }
+        #scene { position: fixed; inset: 0; }
+        canvas { display: block; }
+
+        /* ---------- Start overlay ---------- */
+        #start {
+            position: fixed; inset: 0; z-index: 50;
+            background: radial-gradient(ellipse at 50% 35%, #232a3d 0%, #0c0f16 70%);
+            display: flex; flex-direction: column; align-items: center; justify-content: center;
+            gap: 14px; text-align: center; padding: 20px;
+            padding-top: env(safe-area-inset-top); padding-bottom: env(safe-area-inset-bottom);
+        }
+        .logo {
+            position: relative;
+            font-style: italic; font-weight: 900;
+            font-size: clamp(44px, 11vw, 84px);
+            letter-spacing: 1px;
+            color: #f7c948;
+            text-shadow: 0 2px 0 #7a1f1f, 0 4px 14px rgba(0,0,0,0.6);
+            transform: rotate(-4deg);
+            padding: 6px 34px;
+        }
+        .logo::before {
+            content: ''; position: absolute; inset: -6px -10px;
+            border: 6px solid #c0392b; border-radius: 50%;
+            transform: rotate(3deg);
+        }
+        .sub { color: #cdd6e4; font-size: 15px; max-width: 480px; line-height: 1.5; }
+        .sub b { color: #fff; }
+        .controls-hint {
+            color: #8d99ad; font-size: 12.5px; max-width: 460px; line-height: 1.6;
+            background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.08);
+            border-radius: 10px; padding: 10px 16px;
+        }
+        #enterBtn {
+            margin-top: 6px;
+            font-size: 17px; font-weight: 700; letter-spacing: 0.5px;
+            color: #1a1206; background: linear-gradient(180deg, #f7c948, #e0a52e);
+            border: none; border-radius: 12px; padding: 14px 38px;
+            box-shadow: 0 6px 18px rgba(247,201,72,0.25);
+            cursor: pointer;
+        }
+        #enterBtn:active { transform: scale(0.96); }
+        a.backlink { color: #72839e; font-size: 13px; text-decoration: none; margin-top: 8px; }
+
+        /* ---------- Rotate overlay ---------- */
+        #rotate {
+            position: fixed; inset: 0; z-index: 60; display: none;
+            background: #0c0f16; color: #e8edf5;
+            flex-direction: column; align-items: center; justify-content: center; gap: 16px;
+            text-align: center; padding: 30px;
+        }
+        #rotate .phone { font-size: 54px; animation: spinphone 1.6s ease-in-out infinite; }
+        @keyframes spinphone {
+            0%, 20% { transform: rotate(0deg); }
+            55%, 100% { transform: rotate(90deg); }
+        }
+        body.portrait #rotate { display: flex; }
+
+        /* ---------- HUD ---------- */
+        #hud { position: fixed; inset: 0; pointer-events: none; z-index: 20; display: none; }
+        body.playing #hud { display: block; }
+        .badge {
+            position: absolute;
+            top: calc(env(safe-area-inset-top) + 10px);
+            left: calc(env(safe-area-inset-left) + 14px);
+            background: rgba(10,12,18,0.55); color: #f7c948;
+            font-weight: 800; font-style: italic; font-size: 14px;
+            border: 1px solid rgba(247,201,72,0.35);
+            padding: 5px 11px; border-radius: 999px;
+            backdrop-filter: blur(6px);
+        }
+        #muteBtn {
+            position: absolute;
+            top: calc(env(safe-area-inset-top) + 8px);
+            right: calc(env(safe-area-inset-right) + 12px);
+            pointer-events: auto;
+            background: rgba(10,12,18,0.55); color: #e8edf5;
+            border: 1px solid rgba(255,255,255,0.15);
+            font-size: 16px; padding: 6px 10px; border-radius: 999px;
+            backdrop-filter: blur(6px); cursor: pointer;
+        }
+        #reticle {
+            position: absolute; left: 50%; top: 50%;
+            width: 6px; height: 6px; margin: -3px 0 0 -3px;
+            border-radius: 50%; background: rgba(255,255,255,0.55);
+            box-shadow: 0 0 4px rgba(0,0,0,0.5);
+            transition: transform 0.12s ease, background 0.12s ease;
+        }
+        #reticle.hot { transform: scale(1.9); background: #f7c948; }
+        #hint {
+            position: absolute; left: 50%; transform: translateX(-50%);
+            bottom: calc(env(safe-area-inset-bottom) + 14px);
+            color: rgba(232,237,245,0.85); font-size: 13px;
+            background: rgba(10,12,18,0.5); padding: 7px 14px; border-radius: 999px;
+            backdrop-filter: blur(6px); white-space: nowrap;
+            transition: opacity 1s ease;
+        }
+        #hint.faded { opacity: 0; }
+
+        /* ---------- Joystick ---------- */
+        #joyBase {
+            position: absolute; width: 110px; height: 110px; border-radius: 50%;
+            border: 2px solid rgba(255,255,255,0.25);
+            background: rgba(255,255,255,0.06);
+            display: none; transform: translate(-50%, -50%);
+        }
+        #joyKnob {
+            position: absolute; width: 52px; height: 52px; border-radius: 50%;
+            background: rgba(255,255,255,0.35);
+            border: 1px solid rgba(255,255,255,0.4);
+            display: none; transform: translate(-50%, -50%);
+        }
+
+        /* ---------- Info card ---------- */
+        #card {
+            position: absolute; left: 50%; transform: translateX(-50%) translateY(20px);
+            bottom: calc(env(safe-area-inset-bottom) + 52px);
+            max-width: min(480px, 86vw);
+            background: rgba(14,17,25,0.86); color: #e8edf5;
+            border: 1px solid rgba(247,201,72,0.3);
+            border-radius: 14px; padding: 13px 18px;
+            backdrop-filter: blur(10px);
+            opacity: 0; pointer-events: none;
+            transition: opacity 0.25s ease, transform 0.25s ease;
+        }
+        #card.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+        #card h3 { font-size: 15px; color: #f7c948; margin-bottom: 4px; font-style: italic; }
+        #card p { font-size: 13px; line-height: 1.45; color: #cdd6e4; }
+    </style>
+</head>
+<body>
+    <div id="scene"></div>
+
+    <div id="hud">
+        <div class="badge">Apt 5A</div>
+        <button id="muteBtn">🔊</button>
+        <div id="reticle"></div>
+        <div id="hint">Left side: walk &nbsp;·&nbsp; Right side: look &nbsp;·&nbsp; Tap things to inspect</div>
+        <div id="joyBase"></div>
+        <div id="joyKnob"></div>
+        <div id="card"><h3 id="cardTitle"></h3><p id="cardBody"></p></div>
+    </div>
+
+    <div id="rotate">
+        <div class="phone">📱</div>
+        <div style="font-size:18px; font-weight:700;">Rotate your phone</div>
+        <div style="font-size:13px; color:#8d99ad;">The tour plays in landscape</div>
+    </div>
+
+    <div id="start">
+        <div class="logo">Seinfeld</div>
+        <div class="sub">A 3D tour of <b>Jerry's apartment</b><br>129 West 81st Street, Apt 5A, New York</div>
+        <div class="controls-hint">
+            <b>Phone:</b> hold the left half of the screen to walk, drag the right half to look around, tap objects to inspect them.<br>
+            <b>Desktop:</b> click to capture the mouse, WASD to walk, click to inspect.
+        </div>
+        <button id="enterBtn">Enter Apartment</button>
+        <a class="backlink" href="../">‹ Back to apps</a>
+    </div>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script>
+    'use strict';
+
+    // =====================================================================
+    //  Helpers
+    // =====================================================================
+    function makeTex(w, h, draw, repX, repY) {
+        const c = document.createElement('canvas');
+        c.width = w; c.height = h;
+        draw(c.getContext('2d'), w, h);
+        const t = new THREE.CanvasTexture(c);
+        t.encoding = THREE.sRGBEncoding;
+        if (repX || repY) {
+            t.wrapS = t.wrapT = THREE.RepeatWrapping;
+            t.repeat.set(repX || 1, repY || 1);
+        }
+        t.anisotropy = 4;
+        return t;
+    }
+    function rnd(a, b) { return a + Math.random() * (b - a); }
+    function pick(arr) { return arr[Math.floor(Math.random() * arr.length)]; }
+
+    // =====================================================================
+    //  Procedural textures
+    // =====================================================================
+    const floorTex = makeTex(512, 512, (g) => {
+        g.fillStyle = '#9a7044'; g.fillRect(0, 0, 512, 512);
+        const rows = 8;
+        for (let r = 0; r < rows; r++) {
+            const y = r * 64;
+            const off = (r % 2) * 170;
+            g.fillStyle = `rgb(${150 + rnd(-22, 18) | 0},${104 + rnd(-18, 14) | 0},${62 + rnd(-14, 12) | 0})`;
+            g.fillRect(0, y, 512, 64);
+            // grain
+            g.strokeStyle = 'rgba(80,52,28,0.25)';
+            for (let i = 0; i < 9; i++) {
+                g.beginPath();
+                const gy = y + rnd(4, 60);
+                g.moveTo(0, gy);
+                g.bezierCurveTo(150, gy + rnd(-4, 4), 360, gy + rnd(-4, 4), 512, gy + rnd(-3, 3));
+                g.lineWidth = rnd(0.5, 1.4);
+                g.stroke();
+            }
+            // plank seams
+            g.fillStyle = 'rgba(50,30,14,0.55)';
+            g.fillRect(0, y, 512, 2);
+            for (let s = off; s < 512; s += 256) g.fillRect(s, y, 2, 64);
+        }
+    }, 5, 3.6);
+
+    const rugTex = makeTex(512, 384, (g) => {
+        g.fillStyle = '#7a2630'; g.fillRect(0, 0, 512, 384);
+        g.strokeStyle = '#1f3050'; g.lineWidth = 16; g.strokeRect(14, 14, 484, 356);
+        g.strokeStyle = '#caa15a'; g.lineWidth = 4; g.strokeRect(30, 30, 452, 324);
+        g.fillStyle = '#1f3050';
+        for (let x = 60; x < 480; x += 56) {
+            for (let y = 64; y < 340; y += 56) {
+                g.save(); g.translate(x, y); g.rotate(Math.PI / 4);
+                g.fillRect(-9, -9, 18, 18); g.restore();
+            }
+        }
+        g.fillStyle = '#caa15a';
+        for (let x = 88; x < 460; x += 56) {
+            for (let y = 92; y < 320; y += 56) g.fillRect(x - 3, y - 3, 6, 6);
+        }
+    });
+
+    const brickTex = makeTex(256, 256, (g) => {
+        g.fillStyle = '#6e3a2c'; g.fillRect(0, 0, 256, 256);
+        for (let r = 0; r < 8; r++) {
+            const y = r * 32, off = (r % 2) * 32;
+            for (let x = -32; x < 256; x += 64) {
+                g.fillStyle = `rgb(${125 + rnd(-18, 18) | 0},${62 + rnd(-10, 12) | 0},${48 + rnd(-8, 10) | 0})`;
+                g.fillRect(x + off + 2, y + 2, 60, 28);
+            }
+        }
+    }, 6, 6);
+
+    const hallpaperTex = makeTex(256, 256, (g) => {
+        g.fillStyle = '#c9bb9c'; g.fillRect(0, 0, 256, 256);
+        g.fillStyle = '#b5a482';
+        for (let x = 0; x < 256; x += 32) g.fillRect(x, 0, 14, 256);
+        g.fillStyle = 'rgba(140,120,86,0.5)';
+        for (let x = 16; x < 256; x += 32)
+            for (let y = 12; y < 256; y += 40) { g.beginPath(); g.arc(x + 7, y, 4, 0, 7); g.fill(); }
+    }, 4, 2);
+
+    const stripeTex = makeTex(128, 128, (g) => {
+        g.fillStyle = '#3c5a80'; g.fillRect(0, 0, 128, 128);
+        g.fillStyle = '#d8d2bd';
+        for (let x = 0; x < 128; x += 32) g.fillRect(x, 0, 10, 128);
+        g.fillStyle = '#7a2630';
+        for (let x = 14; x < 128; x += 32) g.fillRect(x, 0, 3, 128);
+    }, 2, 2);
+
+    const cityTex = makeTex(512, 512, (g) => {
+        // sky
+        const sky = g.createLinearGradient(0, 0, 0, 300);
+        sky.addColorStop(0, '#bcd5e8'); sky.addColorStop(1, '#e8ddc8');
+        g.fillStyle = sky; g.fillRect(0, 0, 512, 300);
+        // building across the street
+        g.fillStyle = '#8a5a42'; g.fillRect(0, 120, 512, 392);
+        g.fillStyle = '#6e4634';
+        for (let y = 124; y < 512; y += 16) g.fillRect(0, y, 512, 2);
+        for (let fx = 20; fx < 512; fx += 90) {
+            for (let fy = 150; fy < 480; fy += 110) {
+                g.fillStyle = '#2c2f3a'; g.fillRect(fx, fy, 52, 76);
+                g.fillStyle = 'rgba(190,205,220,0.5)'; g.fillRect(fx + 4, fy + 4, 20, 30);
+                g.fillStyle = '#caa15a'; g.fillRect(fx - 4, fy + 76, 60, 6);
+            }
+        }
+    });
+
+    const screenTex = makeTex(128, 96, (g) => {
+        g.fillStyle = '#1a2436'; g.fillRect(0, 0, 128, 96);
+        g.fillStyle = '#67d27a'; g.font = '7px monospace';
+        const lines = ['> the move', '> shrinkage.dat', '> yada yada', '> notes_tues', '> set_list.txt', '> _'];
+        lines.forEach((l, i) => g.fillText(l, 6, 14 + i * 13));
+    });
+
+    const tvTex = makeTex(128, 96, (g) => {
+        const grad = g.createLinearGradient(0, 0, 128, 96);
+        grad.addColorStop(0, '#10202e'); grad.addColorStop(1, '#1c3142');
+        g.fillStyle = grad; g.fillRect(0, 0, 128, 96);
+        g.fillStyle = 'rgba(255,255,255,0.08)';
+        g.beginPath(); g.ellipse(40, 30, 30, 18, -0.4, 0, 7); g.fill();
+    });
+
+    function plaqueTex(label) {
+        return makeTex(96, 64, (g) => {
+            g.fillStyle = '#caa15a'; g.fillRect(0, 0, 96, 64);
+            g.strokeStyle = '#8a6a2a'; g.lineWidth = 4; g.strokeRect(4, 4, 88, 56);
+            g.fillStyle = '#3a2a10'; g.font = 'bold 34px Georgia';
+            g.textAlign = 'center'; g.textBaseline = 'middle';
+            g.fillText(label, 48, 35);
+        });
+    }
+
+    function posterTex(kind) {
+        return makeTex(192, 256, (g) => {
+            if (kind === 'skyline') {
+                const sky = g.createLinearGradient(0, 0, 0, 256);
+                sky.addColorStop(0, '#1a2a4a'); sky.addColorStop(1, '#4a3a5a');
+                g.fillStyle = sky; g.fillRect(0, 0, 192, 256);
+                g.fillStyle = '#0c1322';
+                const bds = [[8, 120, 26], [40, 80, 30], [76, 140, 22], [104, 60, 34], [144, 110, 30], [60, 100, 14]];
+                bds.forEach(([x, top, w]) => g.fillRect(x, 256 - top - 40, w, top + 40));
+                g.fillStyle = '#f2d98a';
+                for (let i = 0; i < 90; i++) g.fillRect(rnd(8, 180) | 0, rnd(110, 246) | 0, 2, 3);
+                g.fillStyle = '#fff'; g.font = 'bold 18px Georgia'; g.textAlign = 'center';
+                g.fillText('NEW YORK', 96, 26);
+            } else if (kind === 'cycle') {
+                g.fillStyle = '#e8c545'; g.fillRect(0, 0, 192, 256);
+                g.strokeStyle = '#1a1a2e'; g.lineWidth = 6;
+                g.beginPath(); g.arc(60, 170, 38, 0, 7); g.stroke();
+                g.beginPath(); g.arc(140, 170, 38, 0, 7); g.stroke();
+                g.beginPath(); g.moveTo(60, 170); g.lineTo(95, 108); g.lineTo(140, 170);
+                g.lineTo(102, 170); g.lineTo(82, 120); g.stroke();
+                g.fillStyle = '#c0392b'; g.font = 'bold 26px Georgia'; g.textAlign = 'center';
+                g.fillText('VÉLO', 96, 48);
+            } else {
+                g.fillStyle = '#ece6d8'; g.fillRect(0, 0, 192, 256);
+                g.fillStyle = '#c0392b'; g.fillRect(22, 30, 70, 100);
+                g.fillStyle = '#1f3050'; g.fillRect(70, 90, 100, 70);
+                g.fillStyle = '#e8c545'; g.fillRect(40, 150, 60, 80);
+                g.strokeStyle = '#1a1a2e'; g.lineWidth = 4; g.strokeRect(22, 30, 148, 200);
+            }
+        });
+    }
+
+    function cerealTex(bg, accent, label) {
+        return makeTex(64, 128, (g) => {
+            g.fillStyle = bg; g.fillRect(0, 0, 64, 128);
+            g.fillStyle = accent; g.fillRect(0, 0, 64, 26);
+            g.fillStyle = '#fff';
+            g.beginPath(); g.ellipse(32, 76, 24, 30, 0, 0, 7); g.fill();
+            g.fillStyle = accent;
+            g.beginPath(); g.arc(32, 80, 13, 0, 7); g.fill();
+            g.fillStyle = '#fff'; g.font = 'bold 11px sans-serif'; g.textAlign = 'center';
+            g.fillText(label, 32, 17);
+        });
+    }
+
+    // =====================================================================
+    //  Scene setup
+    // =====================================================================
+    const renderer = new THREE.WebGLRenderer({ antialias: true });
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    renderer.outputEncoding = THREE.sRGBEncoding;
+    renderer.shadowMap.enabled = true;
+    renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    document.getElementById('scene').appendChild(renderer.domElement);
+
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color(0xbcd5e8);
+
+    const camera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.05, 60);
+    camera.rotation.order = 'YXZ';
+
+    // ---- Lighting (warm sitcom stage light) ----
+    scene.add(new THREE.HemisphereLight(0xc8d8e8, 0x8a6a4a, 0.5));
+    scene.add(new THREE.AmbientLight(0xfff0dd, 0.22));
+
+    const sun = new THREE.DirectionalLight(0xfff1d6, 0.85);
+    sun.position.set(-7, 5.5, 1.5);
+    sun.castShadow = true;
+    sun.shadow.mapSize.set(1024, 1024);
+    sun.shadow.camera.left = -7; sun.shadow.camera.right = 7;
+    sun.shadow.camera.top = 6; sun.shadow.camera.bottom = -7;
+    sun.shadow.camera.near = 1; sun.shadow.camera.far = 20;
+    sun.shadow.bias = -0.002;
+    scene.add(sun);
+
+    const ceilLight = new THREE.PointLight(0xffe2b8, 0.5, 11, 2);
+    ceilLight.position.set(0.4, 2.75, 0.5); scene.add(ceilLight);
+    const kitchLight = new THREE.PointLight(0xffe2b8, 0.4, 8, 2);
+    kitchLight.position.set(1.4, 2.65, -2.6); scene.add(kitchLight);
+    const hallLight = new THREE.PointLight(0xffd9a0, 0.35, 6, 2);
+    hallLight.position.set(3.6, 2.4, -4.6); scene.add(hallLight);
+    const corrLight = new THREE.PointLight(0xffd9a0, 0.3, 5, 2);
+    corrLight.position.set(-2.75, 2.3, -4.4); scene.add(corrLight);
+
+    // ---- Materials ----
+    const M = {
+        wall: new THREE.MeshLambertMaterial({ color: 0xaebcc8 }),
+        wallHall: new THREE.MeshLambertMaterial({ map: hallpaperTex }),
+        ceil: new THREE.MeshLambertMaterial({ color: 0xe8e4da }),
+        floor: new THREE.MeshLambertMaterial({ map: floorTex }),
+        trim: new THREE.MeshLambertMaterial({ color: 0xd8d4c8 }),
+        doorJerry: new THREE.MeshLambertMaterial({ color: 0x7e8d84 }),
+        doorWood: new THREE.MeshLambertMaterial({ color: 0x6b4a2e }),
+        doorWhite: new THREE.MeshLambertMaterial({ color: 0xdcd8cc }),
+        counter: new THREE.MeshLambertMaterial({ color: 0x3e4a48 }),
+        cabinet: new THREE.MeshLambertMaterial({ color: 0xb98e5a }),
+        cabinetDark: new THREE.MeshLambertMaterial({ color: 0x9a7344 }),
+        wood: new THREE.MeshLambertMaterial({ color: 0x7a5230 }),
+        woodDark: new THREE.MeshLambertMaterial({ color: 0x4e3520 }),
+        white: new THREE.MeshLambertMaterial({ color: 0xf2f0ea }),
+        steel: new THREE.MeshPhongMaterial({ color: 0xb8bcc2, shininess: 60 }),
+        black: new THREE.MeshLambertMaterial({ color: 0x22242a }),
+        couch: new THREE.MeshLambertMaterial({ color: 0x46597a }),
+        couchDark: new THREE.MeshLambertMaterial({ color: 0x3a4a66 }),
+        stripe: new THREE.MeshLambertMaterial({ map: stripeTex }),
+        maroon: new THREE.MeshLambertMaterial({ color: 0x7a2630 }),
+        mustard: new THREE.MeshLambertMaterial({ color: 0xcaa15a }),
+        brick: new THREE.MeshLambertMaterial({ map: brickTex }),
+        glass: new THREE.MeshBasicMaterial({ color: 0xcfe4f0, transparent: true, opacity: 0.12 }),
+        teal: new THREE.MeshPhongMaterial({ color: 0x1f8a74, shininess: 80 }),
+        skin: new THREE.MeshLambertMaterial({ color: 0xd8a878 }),
+        blue: new THREE.MeshLambertMaterial({ color: 0x2553a8 }),
+        red: new THREE.MeshLambertMaterial({ color: 0xc0392b }),
+        green: new THREE.MeshLambertMaterial({ color: 0x3a6a3a })
+    };
+
+    // ---- Geometry helpers ----
+    const world = new THREE.Group();
+    scene.add(world);
+    const solids = [];       // collision AABBs {x1,x2,z1,z2}
+    const interactables = []; // meshes with userData.info
+
+    function box(w, h, d, mat, x, y, z, ry, parent) {
+        const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), mat);
+        m.position.set(x, y, z);
+        if (ry) m.rotation.y = ry;
+        (parent || world).add(m);
+        return m;
+    }
+    function cyl(rt, rb, h, mat, x, y, z, seg, parent) {
+        const m = new THREE.Mesh(new THREE.CylinderGeometry(rt, rb, h, seg || 14), mat);
+        m.position.set(x, y, z);
+        (parent || world).add(m);
+        return m;
+    }
+    function solid(x1, x2, z1, z2) { solids.push({ x1, x2, z1, z2 }); }
+    function tag(obj, title, body) {
+        obj.traverse ? obj.traverse(o => { o.userData.info = { title, body }; }) : (obj.userData.info = { title, body });
+        interactables.push(obj);
+    }
+    // tube between two 2D points in the XY plane (for the bike)
+    function tube2D(parent, x1, y1, x2, y2, r, mat) {
+        const dx = x2 - x1, dy = y2 - y1;
+        const len = Math.sqrt(dx * dx + dy * dy);
+        const m = new THREE.Mesh(new THREE.CylinderGeometry(r, r, len, 8), mat);
+        m.position.set((x1 + x2) / 2, (y1 + y2) / 2, 0);
+        m.rotation.z = Math.atan2(dy, dx) - Math.PI / 2;
+        parent.add(m);
+        return m;
+    }
+
+    // =====================================================================
+    //  Room shell  (x: -5..5, z: -3.6..3.6, ceiling 3)
+    // =====================================================================
+    const floor = new THREE.Mesh(new THREE.PlaneGeometry(10, 7.2), M.floor);
+    floor.rotation.x = -Math.PI / 2;
+    floor.receiveShadow = true;
+    world.add(floor);
+
+    const ceiling = new THREE.Mesh(new THREE.PlaneGeometry(10, 7.2), M.ceil);
+    ceiling.rotation.x = Math.PI / 2;
+    ceiling.position.y = 3;
+    world.add(ceiling);
+
+    const WT = 0.15; // wall thickness
+    function wallX(x1, x2, y1, y2, zc) { // segment of back/front wall
+        return box(x2 - x1, y2 - y1, WT, M.wall, (x1 + x2) / 2, (y1 + y2) / 2, zc);
+    }
+    function wallZ(z1, z2, y1, y2, xc) { // segment of side wall
+        return box(WT, y2 - y1, z2 - z1, M.wall, xc, (y1 + y2) / 2, (z1 + z2) / 2);
+    }
+    function baseboardX(x1, x2, z, off) { box(x2 - x1, 0.12, 0.03, M.trim, (x1 + x2) / 2, 0.06, z + off); }
+    function baseboardZ(z1, z2, x, off) { box(0.03, 0.12, z2 - z1, M.trim, x + off, 0.06, (z1 + z2) / 2); }
+
+    // Back wall (z = -3.6): hallway opening [-3.3,-2.2], sink window [1.0,1.9] y[1.3,2.2], door [3.15,4.1] h 2.12
+    const ZB = -3.6 - WT / 2;
+    wallX(-5, -3.3, 0, 3, ZB);
+    wallX(-3.3, -2.2, 2.2, 3, ZB);            // hallway header
+    wallX(-2.2, 1.0, 0, 3, ZB);
+    wallX(1.0, 1.9, 0, 1.3, ZB);              // under sink window
+    wallX(1.0, 1.9, 2.2, 3, ZB);              // above sink window
+    wallX(1.9, 3.15, 0, 3, ZB);
+    wallX(3.15, 4.1, 2.12, 3, ZB);            // door header
+    wallX(4.1, 5, 0, 3, ZB);
+    baseboardX(-5, -3.3, -3.6, 0.015); baseboardX(-2.2, 3.15, -3.6, 0.015); baseboardX(4.1, 5, -3.6, 0.015);
+
+    // Front wall (z = +3.6) with closet door inset
+    const ZF = 3.6 + WT / 2;
+    wallX(-5, 5, 0, 3, ZF);
+    baseboardX(-5, 1.55, 3.6, -0.015); baseboardX(2.55, 5, 3.6, -0.015);
+
+    // Left wall (x = -5): windows z[-2.4,-1.2] and z[0,1.2], y[0.9,2.5]
+    const XL = -5 - WT / 2;
+    wallZ(-3.6, -2.4, 0, 3, XL);
+    wallZ(-2.4, -1.2, 0, 0.9, XL); wallZ(-2.4, -1.2, 2.5, 3, XL);
+    wallZ(-1.2, 0, 0, 3, XL);
+    wallZ(0, 1.2, 0, 0.9, XL); wallZ(0, 1.2, 2.5, 3, XL);
+    wallZ(1.2, 3.6, 0, 3, XL);
+    baseboardZ(-3.6, 3.6, -5, 0.09);
+
+    // Right wall (x = +5)
+    wallZ(-3.6, 3.6, 0, 3, 5 + WT / 2);
+    baseboardZ(-3.6, 3.6, 5, -0.09);
+
+    // =====================================================================
+    //  Windows (left wall) + exterior
+    // =====================================================================
+    function windowUnit(zc) {
+        const g = new THREE.Group(); world.add(g);
+        const w = 1.2, sill = 0.9, top = 2.5;
+        // frame
+        box(0.08, top - sill, 0.08, M.trim, -5, (sill + top) / 2, zc - w / 2 + 0.0, 0, g);
+        box(0.08, top - sill, 0.08, M.trim, -5, (sill + top) / 2, zc + w / 2, 0, g);
+        box(0.08, 0.1, w + 0.1, M.trim, -5, top, zc, 0, g);
+        box(0.12, 0.1, w + 0.16, M.trim, -4.95, sill, zc, 0, g);   // sill ledge
+        box(0.06, 0.05, w, M.trim, -5, (sill + top) / 2, zc, 0, g); // sash divider
+        box(0.05, top - sill, 0.04, M.trim, -5, (sill + top) / 2 + 0.4, zc, 0, g); // upper mullion
+        box(0.05, top - sill, 0.04, M.trim, -5, (sill + top) / 2 - 0.4, zc, 0, g);
+        // glass
+        const gl = box(0.02, top - sill - 0.08, w - 0.08, M.glass, -5.02, (sill + top) / 2, zc, 0, g);
+        return gl;
+    }
+    const win1 = windowUnit(-1.8);
+    const win2 = windowUnit(0.6);
+    tag(win2, 'The Window', 'West 81st Street. Fire escape, pigeons, and a clear view of whoever is coming to bother Jerry next.');
+    tag(win1, 'The Window', 'Good light for a comedian who is home a suspicious amount of the time.');
+
+    // building across the street + sky
+    const across = new THREE.Mesh(new THREE.PlaneGeometry(16, 12), new THREE.MeshBasicMaterial({ map: cityTex }));
+    across.rotation.y = Math.PI / 2;
+    across.position.set(-8.5, 3.4, -0.6);
+    scene.add(across);
+
+    // fire escape outside front-left window
+    (function fireEscape() {
+        const g = new THREE.Group(); scene.add(g);
+        const fy = 0.82, zc = 0.6;
+        for (let i = 0; i < 8; i++) box(1.1, 0.02, 0.1, M.black, -5.75, fy, zc - 0.6 + i * 0.16, 0, g);
+        box(1.2, 0.03, 0.05, M.black, -5.75, fy, zc - 0.66, 0, g);
+        box(1.2, 0.03, 0.05, M.black, -5.75, fy, zc + 0.62, 0, g);
+        for (const dz of [-0.66, 0.62]) {
+            for (const dx of [-1.25, -0.3]) {
+                cyl(0.02, 0.02, 0.9, M.black, -5.05 + dx, fy + 0.45, zc + dz, 8, g);
+            }
+            box(1.05, 0.04, 0.04, M.black, -5.82, fy + 0.9, zc + dz, 0, g);
+        }
+        box(0.04, 0.04, 1.28, M.black, -6.33, fy + 0.9, zc, 0, g);
+        // ladder hint
+        for (let i = 0; i < 5; i++) box(0.4, 0.03, 0.03, M.black, -6.2, fy - 0.25 - i * 0.3, zc - 0.5, 0, g);
+    })();
+
+    // =====================================================================
+    //  Front door (5A) + building hallway with Kramer's 5B
+    // =====================================================================
+    const doorPivot = new THREE.Group();
+    doorPivot.position.set(4.1, 0, -3.6);
+    world.add(doorPivot);
+    const doorGroup = new THREE.Group();
+    doorPivot.add(doorGroup);
+    (function buildDoor() {
+        const slab = box(0.95, 2.12, 0.06, M.doorJerry, -0.475, 1.06, 0, 0, doorGroup);
+        slab.castShadow = true;
+        // panels
+        box(0.7, 0.78, 0.02, M.doorJerry, -0.475, 1.55, 0.04, 0, doorGroup).material = new THREE.MeshLambertMaterial({ color: 0x71807a });
+        box(0.7, 0.78, 0.02, doorGroup.children[1].material, -0.475, 0.56, 0.04, 0, doorGroup);
+        // knob + deadbolt + chain (inside face)
+        cyl(0.035, 0.035, 0.05, M.steel, -0.82, 1.02, 0.06, 10, doorGroup).rotation.x = Math.PI / 2;
+        box(0.05, 0.08, 0.03, M.steel, -0.82, 1.22, 0.05, 0, doorGroup);
+        box(0.18, 0.02, 0.02, M.steel, -0.68, 1.38, 0.05, 0, doorGroup);
+        // peephole
+        cyl(0.018, 0.018, 0.08, M.steel, -0.475, 1.6, 0, 10, doorGroup).rotation.x = Math.PI / 2;
+        // 5A plaque on hallway side
+        const pl = new THREE.Mesh(new THREE.PlaneGeometry(0.14, 0.1), new THREE.MeshLambertMaterial({ map: plaqueTex('5A') }));
+        pl.position.set(-0.475, 1.78, -0.034); pl.rotation.y = Math.PI;
+        doorGroup.add(pl);
+    })();
+    // door frame
+    box(0.08, 2.16, 0.22, M.trim, 3.13, 1.08, -3.6);
+    box(0.08, 2.16, 0.22, M.trim, 4.12, 1.08, -3.6);
+    box(1.1, 0.1, 0.22, M.trim, 3.62, 2.16, -3.6);
+    let doorOpen = false, doorAngle = 0;
+    tag(doorGroup, 'The Door — Apt 5A', 'Survived roughly 180 unannounced Kramer entrances. Tap to open or close it.');
+
+    // doormat
+    box(0.8, 0.015, 0.5, M.maroon, 3.62, 0.01, -3.2);
+
+    // intercom buzzer beside the door
+    (function buzzer() {
+        const g = new THREE.Group(); g.position.set(4.55, 1.45, -3.56); world.add(g);
+        box(0.16, 0.24, 0.04, M.trim, 0, 0, 0, 0, g);
+        box(0.1, 0.08, 0.01, M.black, 0, 0.05, 0.022, 0, g);
+        cyl(0.018, 0.018, 0.015, M.black, -0.03, -0.06, 0.022, 8, g).rotation.x = Math.PI / 2;
+        cyl(0.018, 0.018, 0.015, M.maroon, 0.03, -0.06, 0.022, 8, g).rotation.x = Math.PI / 2;
+        tag(g, 'The Intercom', '"Who is it?" … "It\'s Newman." The most reliable two lines of dialogue in the building.');
+    })();
+    // light switch by door
+    box(0.08, 0.12, 0.02, M.trim, 2.95, 1.3, -3.56);
+
+    // ---- building hallway behind the door ----
+    (function buildingHall() {
+        const g = new THREE.Group(); world.add(g);
+        const hfloor = box(2.8, 0.02, 2.0, M.woodDark, 3.6, -0.01, -4.6, 0, g);
+        hfloor.material = new THREE.MeshLambertMaterial({ color: 0x5a4632 });
+        box(2.8, 0.02, 2.0, M.ceil, 3.6, 3.0, -4.6, 0, g);
+        // walls: left (x=2.2), far (z=-5.6), right (x=5)
+        box(WT, 3, 2.0, M.wallHall, 2.2 - WT / 2, 1.5, -4.6, 0, g);
+        box(WT, 3, 2.0, M.wallHall, 5 + WT / 2, 1.5, -4.6, 0, g);
+        // far wall with Kramer's door gap [3.1, 4.0]
+        box(0.9, 3, WT, M.wallHall, 2.65, 1.5, -5.6 - WT / 2, 0, g);
+        box(1.0, 3, WT, M.wallHall, 4.5, 1.5, -5.6 - WT / 2, 0, g);
+        box(0.9, 0.88, WT, M.wallHall, 3.55, 2.56, -5.6 - WT / 2, 0, g);
+        // Kramer's door 5B
+        const kd = new THREE.Group(); kd.position.set(3.55, 0, -5.58); g.add(kd);
+        box(0.9, 2.12, 0.06, M.doorWood, 0, 1.06, 0, 0, kd);
+        box(0.64, 0.8, 0.02, new THREE.MeshLambertMaterial({ color: 0x7a5638 }), 0, 1.52, 0.04, 0, kd);
+        box(0.64, 0.8, 0.02, kd.children[1].material, 0, 0.55, 0.04, 0, kd);
+        cyl(0.035, 0.035, 0.05, M.steel, 0.33, 1.02, 0.05, 10, kd).rotation.x = Math.PI / 2;
+        const pl = new THREE.Mesh(new THREE.PlaneGeometry(0.14, 0.1), new THREE.MeshLambertMaterial({ map: plaqueTex('5B') }));
+        pl.position.set(0, 1.78, 0.035); kd.add(pl);
+        box(0.06, 2.16, 0.18, M.trim, -0.51, 1.08, -0.02, 0, kd);
+        box(0.06, 2.16, 0.18, M.trim, 0.51, 1.08, -0.02, 0, kd);
+        box(1.06, 0.08, 0.18, M.trim, 0, 2.16, -0.02, 0, kd);
+        tag(kd, "Kramer's — Apt 5B", "Across the hall. You don't visit Kramer; Kramer visits you. Usually mid-sentence, always without knocking.");
+        // Kramer's doormat + sconce
+        box(0.7, 0.015, 0.45, new THREE.MeshLambertMaterial({ color: 0x3a5a3a }), 3.55, 0.01, -5.25, 0, g);
+        const sc = cyl(0.05, 0.08, 0.14, M.trim, 2.3, 2.2, -4.6, 10, g);
+        sc.material = new THREE.MeshBasicMaterial({ color: 0xffe2b0 });
+        // hallway runner
+        box(1.1, 0.012, 1.9, new THREE.MeshLambertMaterial({ color: 0x5a2a2a }), 3.6, 0.012, -4.6, 0, g);
+    })();
+
+    // =====================================================================
+    //  Kitchen (back wall, x 0.2..3.1)
+    // =====================================================================
+    (function kitchen() {
+        // base cabinets along back wall
+        const baseRun = box(2.25, 0.86, 0.6, M.cabinet, 1.325, 0.43, -3.3);
+        baseRun.castShadow = true;
+        box(2.33, 0.05, 0.66, M.counter, 1.325, 0.885, -3.29);   // countertop
+        solid(0.2, 2.45, -3.6, -2.98);
+        // cabinet door seams + knobs
+        for (let i = 0; i < 4; i++) {
+            box(0.5, 0.62, 0.015, M.cabinetDark, 0.5 + i * 0.55, 0.46, -2.995);
+            cyl(0.015, 0.015, 0.02, M.steel, 0.68 + i * 0.55, 0.5, -2.985, 8).rotation.x = Math.PI / 2;
+        }
+        // sink
+        box(0.5, 0.02, 0.36, M.steel, 1.45, 0.912, -3.3);
+        box(0.42, 0.015, 0.28, M.black, 1.45, 0.918, -3.3);
+        const fc = new THREE.Group(); fc.position.set(1.45, 0.91, -3.5); world.add(fc);
+        cyl(0.02, 0.02, 0.22, M.steel, 0, 0.11, 0, 8, fc);
+        const spout = cyl(0.016, 0.016, 0.24, M.steel, 0, 0.22, 0.1, 8, fc);
+        spout.rotation.x = Math.PI / 2;
+        cyl(0.014, 0.014, 0.06, M.steel, 0, 0.19, 0.21, 8, fc);
+        // window above sink (light shaft + brick)
+        box(0.06, 0.92, 0.06, M.trim, 1.0, 1.75, -3.6);
+        box(0.06, 0.92, 0.06, M.trim, 1.9, 1.75, -3.6);
+        box(0.96, 0.06, 0.06, M.trim, 1.45, 2.2, -3.6);
+        box(0.96, 0.06, 0.06, M.trim, 1.45, 1.3, -3.6);
+        box(0.9, 0.86, 0.02, M.glass, 1.45, 1.75, -3.62);
+        const shaft = new THREE.Mesh(new THREE.PlaneGeometry(4, 5), M.brick);
+        shaft.position.set(1.45, 2.2, -4.7); world.add(shaft);
+        // upper cabinets (split around window)
+        const up1 = box(0.8, 0.8, 0.35, M.cabinet, 0.6, 1.95, -3.42);
+        const up2 = box(0.55, 0.8, 0.35, M.cabinet, 2.175, 1.95, -3.42);
+        [up1, up2].forEach(u => u.castShadow = true);
+        box(0.36, 0.66, 0.015, M.cabinetDark, 0.41, 1.95, -3.235);
+        box(0.36, 0.66, 0.015, M.cabinetDark, 0.79, 1.95, -3.235);
+        box(0.49, 0.66, 0.015, M.cabinetDark, 2.175, 1.95, -3.235);
+        // THE cereal boxes on top of the cabinets
+        const cerealG = new THREE.Group(); world.add(cerealG);
+        const flavors = [
+            ['#c0392b', '#f2c238', 'KRUNCH'], ['#2553a8', '#e8e8e8', 'FLAKES'],
+            ['#e67e22', '#7a2630', 'OATS'], ['#27ae60', '#f2c238', 'PUFFS'],
+            ['#8e44ad', '#e8e8e8', 'BRAN-O'], ['#f1c40f', '#c0392b', 'POPS'],
+            ['#16a085', '#f2c238', 'CHEX-Y'], ['#d35400', '#2553a8', 'BITES']
+        ];
+        let cx = 0.3;
+        for (let i = 0; i < 14; i++) {
+            if (cx > 0.9 && cx < 1.98) cx = 1.98;   // skip the window gap
+            if (cx > 2.38) break;
+            const f = flavors[i % flavors.length];
+            const t = cerealTex(f[0], f[1], f[2]);
+            const side = new THREE.MeshLambertMaterial({ color: f[0] });
+            const front = new THREE.MeshLambertMaterial({ map: t });
+            const bx = new THREE.Mesh(new THREE.BoxGeometry(0.145, 0.3, 0.055),
+                [side, side, side, side, front, side]);
+            bx.position.set(cx, 2.5, -3.42 + rnd(-0.02, 0.02));
+            bx.rotation.y = rnd(-0.08, 0.08);
+            cerealG.add(bx);
+            cx += rnd(0.155, 0.175);
+        }
+        tag(cerealG, 'The Cereal Wall', 'A grown man\'s full lineup of cereal boxes, displayed like trophies. Dinner is whichever one is closest.');
+
+        // fridge (right of cabinets, next to the door)
+        const fridge = new THREE.Group(); fridge.position.set(2.72, 0, -3.22); world.add(fridge);
+        const fbody = box(0.72, 1.78, 0.68, M.white, 0, 0.89, 0, 0, fridge);
+        fbody.castShadow = true;
+        box(0.72, 0.015, 0.7, M.black, 0, 1.24, 0.005, 0, fridge);  // door split
+        box(0.03, 0.5, 0.04, M.steel, -0.3, 0.9, 0.36, 0, fridge);   // handle lower
+        box(0.03, 0.3, 0.04, M.steel, -0.3, 1.48, 0.36, 0, fridge);  // handle upper
+        // magnets & photos
+        const magCols = [0xc0392b, 0x2553a8, 0xf1c40f, 0x27ae60, 0xe67e22];
+        for (let i = 0; i < 8; i++) {
+            cyl(0.02, 0.02, 0.012, new THREE.MeshLambertMaterial({ color: pick(magCols) }),
+                rnd(-0.25, 0.25), rnd(0.7, 1.6), 0.345, 8, fridge).rotation.x = Math.PI / 2;
+        }
+        box(0.12, 0.16, 0.005, M.white, 0.12, 1.0, 0.345, 0.1, fridge);
+        box(0.1, 0.13, 0.004, new THREE.MeshLambertMaterial({ color: 0x88a8c8 }), 0.12, 1.0, 0.35, 0.1, fridge);
+        solid(2.36, 3.08, -3.6, -2.85);
+        tag(fridge, 'The Refrigerator', 'Kramer\'s primary food source. Jerry buys the groceries; Kramer eats them. The system works.');
+
+        // microwave + toaster + coffee maker on the counter
+        const mw = box(0.42, 0.26, 0.32, M.black, 2.15, 1.04, -3.32);
+        box(0.26, 0.18, 0.01, new THREE.MeshLambertMaterial({ color: 0x44505c }), 2.08, 1.04, -3.155);
+        const toaster = box(0.24, 0.16, 0.16, M.steel, 0.45, 0.99, -3.3);
+        const cm = new THREE.Group(); cm.position.set(0.85, 0.91, -3.32); world.add(cm);
+        box(0.18, 0.3, 0.18, M.black, 0, 0.15, 0, 0, cm);
+        cyl(0.07, 0.06, 0.12, M.glass, 0, 0.08, 0.06, 10, cm);
+        // paper towels + fruit bowl
+        cyl(0.05, 0.05, 0.24, M.white, 1.9, 1.03, -3.32, 10);
+        cyl(0.13, 0.08, 0.08, M.wood, 1.05, 0.95, -3.25, 12);
+        for (let i = 0; i < 3; i++) {
+            const fruit = new THREE.Mesh(new THREE.SphereGeometry(0.045, 10, 8),
+                new THREE.MeshLambertMaterial({ color: [0xe67e22, 0xc0392b, 0xf1c40f][i] }));
+            fruit.position.set(1.0 + i * 0.055, 1.0, -3.25 + (i % 2) * 0.05);
+            world.add(fruit);
+        }
+
+        // peninsula counter (the famous one)
+        const pen = box(0.62, 0.86, 2.0, M.cabinet, -0.12, 0.43, -2.6);
+        pen.castShadow = true;
+        box(0.78, 0.05, 2.1, M.counter, -0.16, 0.885, -2.6);
+        box(0.015, 0.6, 0.85, M.cabinetDark, 0.2, 0.45, -3.0);
+        box(0.015, 0.6, 0.85, M.cabinetDark, 0.2, 0.45, -2.1);
+        solid(-0.55, 0.19, -3.6, -1.6);
+        tag(pen, 'The Counter', 'The real stage of the show. Coffee, cereal, and a thousand conversations about absolutely nothing.');
+
+        // stools on the living-room side
+        for (const sz of [-3.05, -2.55, -2.05]) {
+            const st = new THREE.Group(); st.position.set(-0.85, 0, sz); world.add(st);
+            cyl(0.19, 0.19, 0.06, M.black, 0, 0.66, 0, 14, st);
+            cyl(0.025, 0.025, 0.63, M.steel, 0, 0.33, 0, 8, st);
+            cyl(0.16, 0.16, 0.02, M.steel, 0, 0.02, 0, 14, st);
+            cyl(0.14, 0.14, 0.02, M.steel, 0, 0.25, 0, 14, st);
+            st.children[0].castShadow = true;
+            tag(st, 'Counter Stool', 'Elaine\'s preferred perch for delivering judgments about everyone\'s personal life.');
+        }
+
+        // cordless phone + answering machine on peninsula end
+        const ph = new THREE.Group(); ph.position.set(-0.16, 0.91, -1.75); world.add(ph);
+        box(0.09, 0.03, 0.2, M.black, 0, 0.015, 0, 0, ph);
+        const hs = box(0.05, 0.045, 0.17, M.black, 0, 0.05, 0, 0, ph);
+        hs.rotation.z = 0.04;
+        cyl(0.005, 0.005, 0.1, M.black, 0.0, 0.13, -0.07, 6, ph);
+        tag(ph, 'The Phone', '"Hello?" Half the plots of the \'90s started with one call on this thing.');
+    })();
+
+    // =====================================================================
+    //  Bedroom hallway (back-left, raised step) + bike above it
+    // =====================================================================
+    (function bedroomHall() {
+        const g = new THREE.Group(); world.add(g);
+        // raised floor + step
+        box(1.1, 0.17, 1.7, M.wood, -2.75, 0.085, -4.45, 0, g);
+        box(1.1, 0.17, 0.35, M.wood, -2.75, 0.085, -3.47, 0, g);
+        // corridor walls
+        box(WT, 3, 1.8, M.wall, -3.3 - WT / 2, 1.5, -4.5, 0, g);
+        box(WT, 3, 1.8, M.wall, -2.2 + WT / 2, 1.5, -4.5, 0, g);
+        box(1.4, 3, WT, M.wall, -2.75, 1.5, -5.4 - WT / 2, 0, g);
+        box(1.4, 0.02, 1.8, M.ceil, -2.75, 2.99, -4.5, 0, g);
+        // bathroom door at the end
+        const bd = new THREE.Group(); bd.position.set(-2.75, 0.17, -5.38); g.add(bd);
+        box(0.78, 2.0, 0.05, M.doorWhite, 0, 1.0, 0, 0, bd);
+        box(0.5, 0.7, 0.02, new THREE.MeshLambertMaterial({ color: 0xcdc9bd }), 0, 1.42, 0.03, 0, bd);
+        box(0.5, 0.7, 0.02, bd.children[1].material, 0, 0.52, 0.03, 0, bd);
+        cyl(0.03, 0.03, 0.04, M.steel, 0.3, 0.95, 0.04, 10, bd).rotation.x = Math.PI / 2;
+        tag(bd, 'The Bathroom', 'Jerry once threw out a perfectly good belt because it grazed the floor of a public restroom. Imagine the standards in here.');
+        // bedroom door on the side wall
+        const brd = new THREE.Group(); brd.position.set(-3.28, 0.17, -4.5); brd.rotation.y = Math.PI / 2; g.add(brd);
+        box(0.78, 2.0, 0.05, M.doorWhite, 0, 1.0, 0, 0, brd);
+        cyl(0.03, 0.03, 0.04, M.steel, 0.3, 0.95, 0.04, 10, brd).rotation.x = Math.PI / 2;
+        tag(brd, 'The Bedroom', 'Where Jerry keeps the other half of his identical outfits: 40 white sneakers and a wall of blue jeans.');
+        // trim around opening
+        box(0.08, 2.95, 0.2, M.trim, -3.32, 1.475, -3.6, 0, g);
+        box(0.08, 2.95, 0.2, M.trim, -2.18, 1.475, -3.6, 0, g);
+    })();
+
+    // ---- THE bike, hanging above the hallway opening ----
+    (function bike() {
+        const g = new THREE.Group();
+        g.position.set(-2.4, 2.35, -3.42);
+        g.rotation.z = -0.04;
+        world.add(g);
+        const wheelGeo = new THREE.TorusGeometry(0.3, 0.022, 8, 28);
+        for (const wx of [-0.56, 0.56]) {
+            const wh = new THREE.Mesh(wheelGeo, M.black);
+            wh.position.x = wx; g.add(wh);
+            for (let s = 0; s < 4; s++) {
+                const sp = cyl(0.004, 0.004, 0.58, M.steel, wx, 0, 0, 6, g);
+                sp.rotation.z = s * Math.PI / 4;
+            }
+            cyl(0.025, 0.025, 0.04, M.steel, wx, 0, 0, 8, g).rotation.x = Math.PI / 2;
+        }
+        // frame (teal Klein)
+        tube2D(g, -0.05, 0.02, -0.2, 0.42, 0.022, M.teal);    // seat tube
+        tube2D(g, -0.2, 0.42, 0.42, 0.4, 0.02, M.teal);       // top tube
+        tube2D(g, -0.05, 0.02, 0.44, 0.38, 0.022, M.teal);    // down tube
+        tube2D(g, -0.05, 0.02, -0.56, 0, 0.015, M.teal);      // chainstay
+        tube2D(g, -0.2, 0.42, -0.56, 0, 0.015, M.teal);       // seatstay
+        tube2D(g, 0.44, 0.44, 0.56, 0, 0.018, M.teal);        // fork
+        // saddle, bars, crank
+        box(0.2, 0.04, 0.07, M.black, -0.22, 0.49, 0, 0, g);
+        cyl(0.015, 0.015, 0.3, M.steel, 0.45, 0.46, 0, 8, g).rotation.x = Math.PI / 2;
+        box(0.04, 0.04, 0.1, M.black, 0.45, 0.46, 0.16, 0, g);
+        box(0.04, 0.04, 0.1, M.black, 0.45, 0.46, -0.16, 0, g);
+        cyl(0.05, 0.05, 0.03, M.steel, -0.05, 0.02, 0, 12, g).rotation.x = Math.PI / 2;
+        // wall hooks
+        box(0.04, 0.1, 0.1, M.black, -0.56, 0.32, -0.1, 0, g);
+        box(0.04, 0.1, 0.1, M.black, 0.56, 0.32, -0.1, 0, g);
+        tag(g, 'The Bike', 'The green Klein. Hung on this wall for nine seasons and ridden approximately never. The most reliable cast member.');
+    })();
+
+    // poster left of the hallway opening
+    (function posterLeft() {
+        const fr = new THREE.Group(); fr.position.set(-4.2, 1.75, -3.55); world.add(fr);
+        box(0.78, 1.02, 0.03, M.woodDark, 0, 0, 0, 0, fr);
+        const art = new THREE.Mesh(new THREE.PlaneGeometry(0.7, 0.94), new THREE.MeshLambertMaterial({ map: posterTex('cycle') }));
+        art.position.z = 0.02; fr.add(art);
+        tag(fr, 'Bike Poster', 'For a guy who never rides, Jerry is surprisingly committed to the cycling aesthetic.');
+    })();
+
+    // =====================================================================
+    //  Living room
+    // =====================================================================
+    // rug
+    const rug = new THREE.Mesh(new THREE.PlaneGeometry(3.6, 2.7), new THREE.MeshLambertMaterial({ map: rugTex }));
+    rug.rotation.x = -Math.PI / 2;
+    rug.position.set(-1.3, 0.012, 0.45);
+    rug.receiveShadow = true;
+    world.add(rug);
+
+    // ---- couch ----
+    (function couch() {
+        const g = new THREE.Group(); g.position.set(-1.4, 0, -0.45); world.add(g);
+        const base = box(2.2, 0.32, 0.95, M.couchDark, 0, 0.26, 0, 0, g);
+        base.castShadow = true;
+        box(2.2, 0.62, 0.24, M.couchDark, 0, 0.66, -0.36, 0, g).castShadow = true; // back
+        box(0.24, 0.58, 0.95, M.couchDark, -1.1, 0.5, 0, 0, g).castShadow = true;  // arms
+        box(0.24, 0.58, 0.95, M.couchDark, 1.1, 0.5, 0, 0, g).castShadow = true;
+        // cushions
+        box(1.0, 0.16, 0.62, M.couch, -0.5, 0.5, 0.07, 0, g);
+        box(1.0, 0.16, 0.62, M.couch, 0.5, 0.5, 0.07, 0, g);
+        const bc1 = box(1.0, 0.5, 0.16, M.couch, -0.5, 0.84, -0.26, 0, g); bc1.rotation.x = -0.12;
+        const bc2 = box(1.0, 0.5, 0.16, M.couch, 0.5, 0.84, -0.26, 0, g); bc2.rotation.x = -0.12;
+        // throw pillows
+        const p1 = box(0.34, 0.34, 0.12, M.maroon, -0.82, 0.74, -0.16, 0, g);
+        p1.rotation.set(-0.18, 0, 0.5);
+        const p2 = box(0.34, 0.34, 0.12, M.mustard, 0.84, 0.74, -0.16, 0, g);
+        p2.rotation.set(-0.18, 0, -0.4);
+        // legs
+        for (const lx of [-1.0, 1.0]) for (const lz of [-0.4, 0.4])
+            cyl(0.03, 0.025, 0.1, M.woodDark, lx, 0.05, lz, 8, g);
+        solid(-2.55, -0.25, -1.0, 0.1);
+        tag(g, 'The Couch', 'George has declared bankruptcy from life on this couch many, many times. It absorbs despair beautifully.');
+    })();
+
+    // ---- coffee table ----
+    (function coffeeTable() {
+        const g = new THREE.Group(); g.position.set(-1.4, 0, 0.8); world.add(g);
+        const top = box(1.25, 0.05, 0.6, M.wood, 0, 0.42, 0, 0, g);
+        top.castShadow = true;
+        box(1.15, 0.04, 0.5, M.wood, 0, 0.18, 0, 0, g); // lower shelf
+        for (const lx of [-0.56, 0.56]) for (const lz of [-0.24, 0.24])
+            box(0.05, 0.42, 0.05, M.woodDark, lx, 0.21, lz, 0, g);
+        // cereal bowl + spoon + remote + magazines
+        cyl(0.09, 0.055, 0.06, M.white, -0.3, 0.475, 0.05, 14, g);
+        box(0.03, 0.01, 0.14, M.steel, -0.16, 0.455, 0.1, 0.4, g);
+        box(0.06, 0.02, 0.16, M.black, 0.25, 0.455, 0.12, -0.3, g);
+        box(0.24, 0.012, 0.32, M.red, 0.32, 0.45, -0.12, 0.15, g);
+        box(0.24, 0.012, 0.32, M.blue, 0.3, 0.462, -0.1, 0.05, g);
+        solid(-2.1, -0.7, 0.45, 1.15);
+        tag(g, 'Coffee Table', 'Cereal at 11 PM, TV Guide, and a remote that belongs to Jerry but is operated exclusively by George.');
+    })();
+
+    // ---- striped armchair ----
+    (function armchair() {
+        const g = new THREE.Group(); g.position.set(0.78, 0, -0.1); g.rotation.y = -0.55; world.add(g);
+        const base = box(0.85, 0.34, 0.8, M.stripe, 0, 0.27, 0, 0, g);
+        base.castShadow = true;
+        box(0.85, 0.65, 0.22, M.stripe, 0, 0.65, -0.29, 0, g).castShadow = true;
+        box(0.2, 0.52, 0.8, M.stripe, -0.42, 0.5, 0, 0, g);
+        box(0.2, 0.52, 0.8, M.stripe, 0.42, 0.5, 0, 0, g);
+        box(0.62, 0.14, 0.56, M.stripe, 0, 0.5, 0.06, 0, g);
+        for (const lx of [-0.36, 0.36]) for (const lz of [-0.32, 0.32])
+            cyl(0.03, 0.025, 0.1, M.woodDark, lx, 0.05, lz, 8, g);
+        solid(0.25, 1.35, -0.65, 0.45);
+        tag(g, 'The Armchair', 'Best seat in the house for watching nothing in particular and having opinions about everything.');
+    })();
+
+    // ---- floor lamp behind the couch ----
+    (function lamp() {
+        const g = new THREE.Group(); g.position.set(-2.85, 0, -1.0); world.add(g);
+        cyl(0.16, 0.18, 0.03, M.woodDark, 0, 0.015, 0, 14, g);
+        cyl(0.018, 0.018, 1.45, M.steel, 0, 0.75, 0, 8, g);
+        const shade = cyl(0.14, 0.2, 0.26, new THREE.MeshLambertMaterial({
+            color: 0xf2e2c0, emissive: 0x6a5230
+        }), 0, 1.55, 0, 14, g);
+        const lp = new THREE.PointLight(0xffe2b0, 0.4, 5, 2);
+        lp.position.set(0, 1.5, 0); g.add(lp);
+    })();
+
+    // ---- computer desk (left wall, between windows) ----
+    (function desk() {
+        const g = new THREE.Group(); g.position.set(-4.55, 0, -0.6); g.rotation.y = Math.PI / 2; world.add(g);
+        const top = box(1.2, 0.04, 0.6, M.wood, 0, 0.74, 0, 0, g);
+        top.castShadow = true;
+        box(0.05, 0.74, 0.55, M.wood, -0.55, 0.37, 0, 0, g);
+        box(0.05, 0.74, 0.55, M.wood, 0.55, 0.37, 0, 0, g);
+        box(0.4, 0.3, 0.5, M.wood, 0.35, 0.55, 0, 0, g); // drawer unit
+        // beige Mac
+        const mac = new THREE.Group(); mac.position.set(-0.15, 0.76, -0.1); g.add(mac);
+        const beige = new THREE.MeshLambertMaterial({ color: 0xd8cfb8 });
+        box(0.4, 0.34, 0.36, beige, 0, 0.21, 0, 0, mac);
+        const scr = new THREE.Mesh(new THREE.PlaneGeometry(0.3, 0.23), new THREE.MeshBasicMaterial({ map: screenTex }));
+        scr.position.set(0, 0.22, 0.181); mac.add(scr);
+        box(0.34, 0.03, 0.14, beige, 0, 0.015, 0.24, 0, mac); // keyboard
+        box(0.05, 0.02, 0.08, beige, 0.26, 0.01, 0.24, 0, mac); // mouse
+        // papers
+        box(0.2, 0.008, 0.28, M.white, 0.35, 0.745, 0.1, 0.2, g);
+        tag(mac, 'The Mac', 'Sat on this desk for nine seasons. Jerry was seen actually using it roughly twice. Great screensaver, though.');
+        // desk chair
+        const ch = new THREE.Group(); ch.position.set(-4.0, 0, -0.55); ch.rotation.y = rnd(2.4, 2.9); world.add(ch);
+        box(0.42, 0.06, 0.42, M.black, 0, 0.45, 0, 0, ch);
+        box(0.42, 0.5, 0.06, M.black, 0, 0.78, -0.2, 0, ch);
+        cyl(0.03, 0.03, 0.4, M.steel, 0, 0.24, 0, 8, ch);
+        for (let i = 0; i < 5; i++) {
+            const leg = box(0.26, 0.03, 0.04, M.black, 0.11, 0.03, 0, 0, ch);
+            leg.rotation.y = i * Math.PI * 2 / 5;
+            leg.position.set(Math.cos(i * Math.PI * 2 / 5) * 0.13, 0.03, Math.sin(i * Math.PI * 2 / 5) * 0.13);
+        }
+        solid(-4.95, -4.2, -1.25, 0.05);
+    })();
+
+    // ---- dining table (front right) ----
+    (function dining() {
+        const g = new THREE.Group(); g.position.set(3.5, 0, 1.7); world.add(g);
+        const top = cyl(0.55, 0.55, 0.045, M.wood, 0, 0.74, 0, 20, g);
+        top.castShadow = true;
+        cyl(0.05, 0.07, 0.72, M.woodDark, 0, 0.37, 0, 10, g);
+        cyl(0.3, 0.3, 0.03, M.woodDark, 0, 0.025, 0, 14, g);
+        // chairs
+        for (const a of [0.5, Math.PI - 0.4, Math.PI + 1.4]) {
+            const ch = new THREE.Group();
+            ch.position.set(Math.cos(a) * 0.85, 0, Math.sin(a) * 0.85);
+            ch.rotation.y = -a - Math.PI / 2;   // back to the outside, facing the table
+            g.add(ch);
+            box(0.4, 0.04, 0.4, M.wood, 0, 0.45, 0, 0, ch);
+            box(0.4, 0.45, 0.04, M.wood, 0, 0.72, -0.18, 0, ch);
+            for (const lx of [-0.17, 0.17]) for (const lz of [-0.17, 0.17])
+                box(0.04, 0.45, 0.04, M.woodDark, lx, 0.225, lz, 0, ch);
+            ch.children[0].castShadow = true;
+        }
+        // takeout on the table
+        box(0.14, 0.1, 0.1, M.white, 0.15, 0.81, 0.1, 0.4, g);
+        cyl(0.06, 0.045, 0.07, M.white, -0.15, 0.78, -0.05, 12, g);
+        solid(2.7, 4.3, 0.9, 2.5);
+        tag(g, 'The Table', 'For takeout: Chinese food, the occasional big salad, and soup — when the soup place still allows it.');
+    })();
+
+    // ---- TV console against the fourth wall ----
+    (function tv() {
+        const g = new THREE.Group(); g.position.set(-1.3, 0, 3.25); g.rotation.y = Math.PI; world.add(g);
+        const cab = box(1.5, 0.5, 0.5, M.wood, 0, 0.25, 0, 0, g);
+        cab.castShadow = true;
+        box(0.6, 0.34, 0.015, M.woodDark, -0.35, 0.25, 0.255, 0, g);
+        box(0.6, 0.34, 0.015, M.woodDark, 0.35, 0.25, 0.255, 0, g);
+        // CRT TV
+        const crt = box(0.78, 0.6, 0.55, new THREE.MeshLambertMaterial({ color: 0x3a3d44 }), 0, 0.82, 0, 0, g);
+        crt.castShadow = true;
+        const scr = new THREE.Mesh(new THREE.PlaneGeometry(0.62, 0.46), new THREE.MeshBasicMaterial({ map: tvTex }));
+        scr.position.set(0, 0.84, 0.28); g.add(scr);
+        // VCR
+        box(0.5, 0.09, 0.4, M.black, 0, 0.555, 0, 0, g);
+        solid(-2.1, -0.5, 2.95, 3.6);
+        tag(g, 'The TV', 'There\'s always a game on. Or Melrose Place — which absolutely nobody in this apartment watches. Nope.');
+    })();
+
+    // ---- closet door on front wall ----
+    (function closet() {
+        const cd = new THREE.Group(); cd.position.set(2.05, 0, 3.55); cd.rotation.y = Math.PI; world.add(cd);
+        box(0.85, 2.05, 0.05, M.doorWhite, 0, 1.025, 0, 0, cd);
+        box(0.55, 0.75, 0.02, new THREE.MeshLambertMaterial({ color: 0xcdc9bd }), 0, 1.45, 0.03, 0, cd);
+        box(0.55, 0.75, 0.02, cd.children[1].material, 0, 0.55, 0.03, 0, cd);
+        cyl(0.03, 0.03, 0.04, M.steel, 0.34, 1.0, 0.04, 10, cd).rotation.x = Math.PI / 2;
+        tag(cd, 'The Closet', 'Storage for things Jerry doesn\'t want: gifts he\'s re-gifting, and occasionally other people\'s problems.');
+    })();
+
+    // ---- bookshelf + stereo on the right wall ----
+    let stereoGroup;
+    (function shelves() {
+        const g = new THREE.Group(); g.position.set(4.78, 0, 0.6); g.rotation.y = -Math.PI / 2; world.add(g);
+        const W = 2.0, H = 2.1, D = 0.32;
+        const inner = new THREE.MeshLambertMaterial({ color: 0x5e3f24 });
+        const back = box(W, H, 0.03, inner, 0, H / 2, -D / 2 + 0.015, 0, g);
+        const sideL = box(0.04, H, D, M.wood, -W / 2 + 0.02, H / 2, 0, 0, g);
+        const sideR = box(0.04, H, D, M.wood, W / 2 - 0.02, H / 2, 0, 0, g);
+        box(W, 0.05, D, M.wood, 0, H - 0.025, 0, 0, g);          // top
+        box(W - 0.08, 0.1, D, M.wood, 0, 0.05, 0, 0, g);          // plinth
+        [sideL, sideR].forEach(s => s.castShadow = true);
+        const shelfYs = [0.5, 1.0, 1.5];
+        shelfYs.forEach(y => box(W - 0.08, 0.04, D - 0.04, M.wood, 0, y, 0.0, 0, g));
+        // books
+        const bookCols = [0x7a2630, 0x1f3050, 0x3a6a3a, 0xcaa15a, 0x4a3a5a, 0x8a5a42, 0x2c2f3a];
+        function bookRow(y, x0, x1) {
+            let bx = x0;
+            while (bx < x1) {
+                const bw = rnd(0.028, 0.055), bh = rnd(0.2, 0.3);
+                box(bw, bh, rnd(0.16, 0.22), new THREE.MeshLambertMaterial({ color: pick(bookCols) }),
+                    bx + bw / 2, y + bh / 2, 0.05, 0, g);
+                bx += bw + rnd(0.002, 0.012);
+                if (Math.random() < 0.06) bx += rnd(0.05, 0.12);
+            }
+        }
+        bookRow(0.12, -0.9, 0.85);
+        bookRow(0.52, -0.9, 0.85);
+        bookRow(1.02, -0.9, 0.08);
+        bookRow(1.52, 0.0, 0.78);
+        // stereo on middle shelf
+        stereoGroup = new THREE.Group(); stereoGroup.position.set(0.45, 1.02, 0.02); g.add(stereoGroup);
+        box(0.5, 0.12, 0.24, M.black, 0, 0.06, 0, 0, stereoGroup);
+        box(0.5, 0.1, 0.24, new THREE.MeshLambertMaterial({ color: 0x2e323a }), 0, 0.17, 0, 0, stereoGroup);
+        cyl(0.025, 0.025, 0.015, M.steel, 0.16, 0.17, 0.125, 10, stereoGroup).rotation.x = Math.PI / 2;
+        cyl(0.018, 0.018, 0.015, M.steel, 0.08, 0.17, 0.125, 10, stereoGroup).rotation.x = Math.PI / 2;
+        tag(stereoGroup, 'The Stereo', 'Tap it for a little slap bass. You know the one.');
+        // speakers flanking the stereo on its shelf
+        box(0.16, 0.28, 0.18, M.black, 0.84, 1.16, 0.0, 0, g);
+        box(0.16, 0.28, 0.18, M.black, 0.14, 1.16, 0.0, 0, g);
+        // Superman figurine on the top shelf
+        const sup = new THREE.Group(); sup.position.set(-0.55, 1.54, 0.04); g.add(sup);
+        box(0.05, 0.09, 0.035, M.blue, 0, 0.105, 0, 0, sup);                   // torso
+        box(0.05, 0.015, 0.035, M.red, 0, 0.0575, 0, 0, sup);                  // trunks
+        box(0.02, 0.05, 0.03, M.blue, -0.015, 0.025, 0, 0, sup);               // legs
+        box(0.02, 0.05, 0.03, M.blue, 0.015, 0.025, 0, 0, sup);
+        box(0.018, 0.02, 0.032, M.red, -0.015, 0.005, 0.002, 0, sup);          // boots
+        box(0.018, 0.02, 0.032, M.red, 0.015, 0.005, 0.002, 0, sup);
+        box(0.018, 0.07, 0.03, M.blue, -0.04, 0.11, 0, 0, sup);                // arms
+        box(0.018, 0.07, 0.03, M.blue, 0.04, 0.11, 0, 0, sup);
+        const head = new THREE.Mesh(new THREE.SphereGeometry(0.022, 10, 8), M.skin);
+        head.position.set(0, 0.172, 0); sup.add(head);
+        const cape = box(0.06, 0.13, 0.008, M.red, 0, 0.095, -0.024, 0, sup);
+        cape.rotation.x = 0.12;
+        box(0.016, 0.012, 0.002, M.red, 0, 0.115, 0.019, 0, sup);              // the S
+        tag(sup, 'Superman', 'Jerry\'s hero. Look closely — there\'s a Superman hiding somewhere in nearly every episode of the show.');
+        solid(4.45, 5.0, -0.45, 1.65);
+        tag(back, 'The Bookshelf', 'Mostly unread. The books are load-bearing for the stereo and the Superman.');
+    })();
+
+    // ---- console table by the door (right wall) + art ----
+    (function consoleTable() {
+        const g = new THREE.Group(); g.position.set(4.78, 0, -2.4); g.rotation.y = -Math.PI / 2; world.add(g);
+        box(0.9, 0.04, 0.32, M.wood, 0, 0.8, 0, 0, g);
+        for (const lx of [-0.4, 0.4]) for (const lz of [-0.12, 0.12])
+            box(0.04, 0.8, 0.04, M.woodDark, lx, 0.4, lz, 0, g);
+        // keys bowl + mail
+        cyl(0.08, 0.05, 0.05, new THREE.MeshLambertMaterial({ color: 0x4a6a8a }), -0.2, 0.845, 0, 12, g);
+        box(0.18, 0.025, 0.12, M.white, 0.2, 0.83, 0.02, 0.2, g);
+        solid(4.45, 5.0, -2.88, -1.92);
+        tag(g, 'The Key Table', 'Keys go in the bowl. Unless Kramer has them. Then they go to a body shop in Queens, somehow.');
+        // framed art above
+        const fr = new THREE.Group(); fr.position.set(4.97, 1.85, -2.4); fr.rotation.y = -Math.PI / 2; world.add(fr);
+        box(0.66, 0.86, 0.03, M.woodDark, 0, 0, 0, 0, fr);
+        const art = new THREE.Mesh(new THREE.PlaneGeometry(0.58, 0.78), new THREE.MeshLambertMaterial({ map: posterTex('abstract') }));
+        art.position.z = 0.02; fr.add(art);
+        tag(fr, 'Abstract Art', 'Nobody knows what it is. Elaine says it\'s "evocative." George says it\'s upside down.');
+    })();
+
+    // skyline print on the front wall
+    (function skylineArt() {
+        const fr = new THREE.Group(); fr.position.set(0.6, 1.8, 3.55); fr.rotation.y = Math.PI; world.add(fr);
+        box(0.82, 1.06, 0.03, M.black, 0, 0, 0, 0, fr);
+        const art = new THREE.Mesh(new THREE.PlaneGeometry(0.74, 0.98), new THREE.MeshLambertMaterial({ map: posterTex('skyline') }));
+        art.position.z = 0.02; fr.add(art);
+        tag(fr, 'New York', 'The city. The whole show is about it: the subway, the soup, the parking garages, the marble rye.');
+    })();
+
+    // ---- ceiling fixtures ----
+    function ceilingFixture(x, z) {
+        const g = new THREE.Group(); g.position.set(x, 2.97, z); world.add(g);
+        cyl(0.16, 0.2, 0.07, new THREE.MeshBasicMaterial({ color: 0xfff2d8 }), 0, -0.03, 0, 16, g);
+        cyl(0.21, 0.21, 0.02, M.trim, 0, 0.01, 0, 16, g);
+    }
+    ceilingFixture(0.4, 0.5);
+    ceilingFixture(1.4, -2.6);
+
+    // =====================================================================
+    //  Movement, collision, controls
+    // =====================================================================
+    const player = { x: 0.4, z: 2.6, yaw: Math.PI, pitch: 0 };
+    // yaw PI => facing -z? In three: yaw 0 looks down -z. We want to start looking toward the kitchen (-z): yaw = 0.
+    player.yaw = 0;
+    const EYE = 1.6;
+    let eyeY = EYE, bobPhase = 0;
+
+    const rects = {
+        main: { x1: -4.8, x2: 4.8, z1: -3.42, z2: 3.42 },
+        doorway: { x1: 3.22, x2: 4.03, z1: -3.9, z2: -3.3 },
+        hall: { x1: 2.4, x2: 4.8, z1: -5.4, z2: -3.75 },
+        corrGate: { x1: -3.22, x2: -2.28, z1: -3.9, z2: -3.3 },
+        corr: { x1: -3.22, x2: -2.28, z1: -5.15, z2: -3.75 }
+    };
+    function inRect(r, x, z) { return x >= r.x1 && x <= r.x2 && z >= r.z1 && z <= r.z2; }
+    const R = 0.22;
+    function walkable(x, z) {
+        const inMain = inRect(rects.main, x, z);
+        const inDoor = doorAngle > 1.0 && (inRect(rects.doorway, x, z) || inRect(rects.hall, x, z));
+        const inCorr = inRect(rects.corrGate, x, z) || inRect(rects.corr, x, z);
+        if (!inMain && !inDoor && !inCorr) return false;
+        for (const s of solids) {
+            if (x > s.x1 - R && x < s.x2 + R && z > s.z1 - R && z < s.z2 + R) return false;
+        }
+        return true;
+    }
+
+    const keys = {};
+    window.addEventListener('keydown', e => { keys[e.code] = true; });
+    window.addEventListener('keyup', e => { keys[e.code] = false; });
+
+    // ---- pointer lock (desktop) ----
+    const canvas = renderer.domElement;
+    let pointerLocked = false;
+    document.addEventListener('pointerlockchange', () => {
+        pointerLocked = document.pointerLockElement === canvas;
+    });
+    canvas.addEventListener('click', () => {
+        if (!playing) return;
+        if (!isTouch && !pointerLocked) { canvas.requestPointerLock(); return; }
+        if (pointerLocked) interactAt(0, 0);
+    });
+    document.addEventListener('mousemove', e => {
+        if (!pointerLocked) return;
+        player.yaw -= e.movementX * 0.0024;
+        player.pitch -= e.movementY * 0.0024;
+        player.pitch = Math.max(-1.35, Math.min(1.35, player.pitch));
+    });
+
+    // ---- touch controls ----
+    const isTouch = 'ontouchstart' in window;
+    const joyBase = document.getElementById('joyBase');
+    const joyKnob = document.getElementById('joyKnob');
+    let joyId = null, joyOrigin = null, joyVec = { x: 0, y: 0 };
+    let lookId = null, lookLast = null, lookStart = null, lookMoved = 0, lookT0 = 0;
+
+    function onTouchStart(e) {
+        if (!playing) return;
+        for (const t of e.changedTouches) {
+            if (t.clientX < window.innerWidth * 0.42 && joyId === null) {
+                joyId = t.identifier;
+                joyOrigin = { x: t.clientX, y: t.clientY };
+                joyVec = { x: 0, y: 0 };
+                joyBase.style.display = joyKnob.style.display = 'block';
+                joyBase.style.left = joyKnob.style.left = t.clientX + 'px';
+                joyBase.style.top = joyKnob.style.top = t.clientY + 'px';
+            } else if (lookId === null) {
+                lookId = t.identifier;
+                lookLast = { x: t.clientX, y: t.clientY };
+                lookStart = { x: t.clientX, y: t.clientY };
+                lookMoved = 0; lookT0 = performance.now();
+            }
+        }
+        e.preventDefault();
+    }
+    function onTouchMove(e) {
+        for (const t of e.changedTouches) {
+            if (t.identifier === joyId) {
+                let dx = t.clientX - joyOrigin.x, dy = t.clientY - joyOrigin.y;
+                const d = Math.hypot(dx, dy), max = 48;
+                if (d > max) { dx *= max / d; dy *= max / d; }
+                joyVec = { x: dx / max, y: dy / max };
+                joyKnob.style.left = (joyOrigin.x + dx) + 'px';
+                joyKnob.style.top = (joyOrigin.y + dy) + 'px';
+            } else if (t.identifier === lookId) {
+                const dx = t.clientX - lookLast.x, dy = t.clientY - lookLast.y;
+                lookMoved += Math.abs(dx) + Math.abs(dy);
+                player.yaw -= dx * 0.005;
+                player.pitch -= dy * 0.005;
+                player.pitch = Math.max(-1.35, Math.min(1.35, player.pitch));
+                lookLast = { x: t.clientX, y: t.clientY };
+            }
+        }
+        e.preventDefault();
+    }
+    function onTouchEnd(e) {
+        for (const t of e.changedTouches) {
+            if (t.identifier === joyId) {
+                joyId = null; joyVec = { x: 0, y: 0 };
+                joyBase.style.display = joyKnob.style.display = 'none';
+            } else if (t.identifier === lookId) {
+                if (lookMoved < 14 && performance.now() - lookT0 < 350) {
+                    const nx = (t.clientX / window.innerWidth) * 2 - 1;
+                    const ny = -(t.clientY / window.innerHeight) * 2 + 1;
+                    interactAt(nx, ny);
+                }
+                lookId = null;
+            }
+        }
+        e.preventDefault();
+    }
+    canvas.addEventListener('touchstart', onTouchStart, { passive: false });
+    canvas.addEventListener('touchmove', onTouchMove, { passive: false });
+    canvas.addEventListener('touchend', onTouchEnd, { passive: false });
+    canvas.addEventListener('touchcancel', onTouchEnd, { passive: false });
+
+    // =====================================================================
+    //  Interaction
+    // =====================================================================
+    const raycaster = new THREE.Raycaster();
+    raycaster.far = 6;
+    const card = document.getElementById('card');
+    const cardTitle = document.getElementById('cardTitle');
+    const cardBody = document.getElementById('cardBody');
+    let cardTimer = null;
+
+    function showCard(title, body) {
+        cardTitle.textContent = title;
+        cardBody.textContent = body;
+        card.classList.add('show');
+        clearTimeout(cardTimer);
+        cardTimer = setTimeout(() => card.classList.remove('show'), 6500);
+    }
+
+    function interactAt(nx, ny) {
+        raycaster.setFromCamera({ x: nx, y: ny }, camera);
+        // ray against the whole room so walls occlude items behind them
+        const hits = raycaster.intersectObjects(world.children, true);
+        if (!hits.length) { card.classList.remove('show'); return; }
+        let o = hits[0].object, info = null;
+        while (o) { if (o.userData.info) { info = o.userData.info; break; } o = o.parent; }
+        if (!info) { card.classList.remove('show'); return; }
+        if (info.title.indexOf('Apt 5A') !== -1) {
+            doorOpen = !doorOpen;
+            playKnock();
+        }
+        if (info.title === 'The Stereo') playBassRiff();
+        showCard(info.title, info.body);
+    }
+
+    // hover reticle (desktop)
+    const reticle = document.getElementById('reticle');
+    let hoverTick = 0;
+
+    // =====================================================================
+    //  Audio — synthesized slap-bass sting & knock
+    // =====================================================================
+    let audioCtx = null, muted = false;
+    try { muted = localStorage.getItem('seinfeldMuted') === '1'; } catch (e) {}
+    const muteBtn = document.getElementById('muteBtn');
+    muteBtn.textContent = muted ? '🔇' : '🔊';
+    muteBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        muted = !muted;
+        try { localStorage.setItem('seinfeldMuted', muted ? '1' : '0'); } catch (err) {}
+        muteBtn.textContent = muted ? '🔇' : '🔊';
+    });
+
+    function ensureAudio() {
+        if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        if (audioCtx.state === 'suspended') audioCtx.resume();
+    }
+    function bassNote(t, freq, dur, slideTo) {
+        const o = audioCtx.createOscillator();
+        const f = audioCtx.createBiquadFilter();
+        const gn = audioCtx.createGain();
+        o.type = 'sawtooth';
+        o.frequency.setValueAtTime(freq, t);
+        if (slideTo) o.frequency.exponentialRampToValueAtTime(slideTo, t + dur * 0.9);
+        f.type = 'lowpass';
+        f.frequency.setValueAtTime(900, t);
+        f.frequency.exponentialRampToValueAtTime(250, t + dur);
+        f.Q.value = 6;
+        gn.gain.setValueAtTime(0, t);
+        gn.gain.linearRampToValueAtTime(0.22, t + 0.012);
+        gn.gain.exponentialRampToValueAtTime(0.001, t + dur);
+        o.connect(f); f.connect(gn); gn.connect(audioCtx.destination);
+        o.start(t); o.stop(t + dur + 0.05);
+        // slap "pop" transient
+        const p = audioCtx.createOscillator();
+        const pg = audioCtx.createGain();
+        p.type = 'square';
+        p.frequency.setValueAtTime(freq * 4, t);
+        pg.gain.setValueAtTime(0.05, t);
+        pg.gain.exponentialRampToValueAtTime(0.001, t + 0.04);
+        p.connect(pg); pg.connect(audioCtx.destination);
+        p.start(t); p.stop(t + 0.06);
+    }
+    function playBassRiff() {
+        if (muted) return;
+        ensureAudio();
+        const t0 = audioCtx.currentTime + 0.04;
+        // an original funky lick — evocative, not the actual theme
+        const seq = [
+            [0, 87.31, 0.16],            // F2
+            [0.18, 87.31, 0.1, 116.54],  // F2 slide up
+            [0.32, 116.54, 0.16],        // A#2
+            [0.52, 104.0, 0.12],         // ~G#2
+            [0.66, 87.31, 0.2],          // F2
+            [0.92, 65.41, 0.3, 58.27]    // C2 fall-off
+        ];
+        seq.forEach(([dt, f, d, s]) => bassNote(t0 + dt, f, d, s));
+    }
+    function playKnock() {
+        if (muted) return;
+        ensureAudio();
+        const t0 = audioCtx.currentTime;
+        for (let i = 0; i < 2; i++) {
+            const o = audioCtx.createOscillator();
+            const g = audioCtx.createGain();
+            o.type = 'triangle';
+            o.frequency.setValueAtTime(95, t0 + i * 0.14);
+            o.frequency.exponentialRampToValueAtTime(55, t0 + i * 0.14 + 0.08);
+            g.gain.setValueAtTime(0.3, t0 + i * 0.14);
+            g.gain.exponentialRampToValueAtTime(0.001, t0 + i * 0.14 + 0.1);
+            o.connect(g); g.connect(audioCtx.destination);
+            o.start(t0 + i * 0.14); o.stop(t0 + i * 0.14 + 0.12);
+        }
+    }
+
+    // =====================================================================
+    //  Orientation + lifecycle
+    // =====================================================================
+    let playing = false;
+    function checkOrientation() {
+        const portrait = window.innerHeight > window.innerWidth;
+        document.body.classList.toggle('portrait', playing && portrait);
+    }
+    window.addEventListener('resize', () => {
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        camera.aspect = window.innerWidth / window.innerHeight;
+        camera.updateProjectionMatrix();
+        checkOrientation();
+    });
+    window.addEventListener('orientationchange', () => setTimeout(checkOrientation, 250));
+
+    document.getElementById('enterBtn').addEventListener('click', () => {
+        document.getElementById('start').style.display = 'none';
+        document.body.classList.add('playing');
+        playing = true;
+        ensureAudio();
+        playBassRiff();
+        checkOrientation();
+        setTimeout(() => document.getElementById('hint').classList.add('faded'), 7000);
+        if (!isTouch) document.getElementById('hint').textContent = 'Click to look around · WASD to walk · Click things to inspect';
+    });
+
+    // =====================================================================
+    //  Main loop
+    // =====================================================================
+    const clock = new THREE.Clock();
+    function animate() {
+        requestAnimationFrame(animate);
+        const dt = Math.min(clock.getDelta(), 0.05);
+
+        // door animation
+        const targetAngle = doorOpen ? 1.85 : 0;
+        doorAngle += (targetAngle - doorAngle) * Math.min(1, dt * 5);
+        doorPivot.rotation.y = doorAngle;
+
+        if (playing) {
+            // movement input
+            let mx = 0, mz = 0;
+            if (keys['KeyW'] || keys['ArrowUp']) mz -= 1;
+            if (keys['KeyS'] || keys['ArrowDown']) mz += 1;
+            if (keys['KeyA'] || keys['ArrowLeft']) mx -= 1;
+            if (keys['KeyD'] || keys['ArrowRight']) mx += 1;
+            mx += joyVec.x; mz += joyVec.y;
+            let fwd = -mz, str = mx;
+            const len = Math.hypot(fwd, str);
+            const moving = len > 0.01;
+            if (moving) {
+                if (len > 1) { fwd /= len; str /= len; }
+                const speed = 2.3 * (keys['ShiftLeft'] ? 1.6 : 1);
+                const s = Math.sin(player.yaw), c = Math.cos(player.yaw);
+                const dx = (-s * fwd + c * str) * speed * dt;
+                const dz = (-c * fwd - s * str) * speed * dt;
+                if (walkable(player.x + dx, player.z)) player.x += dx;
+                if (walkable(player.x, player.z + dz)) player.z += dz;
+                bobPhase += speed * Math.min(1, len) * dt * 2.0;
+            }
+            // raised hallway step
+            const inCorr = inRect(rects.corr, player.x, player.z) || inRect(rects.corrGate, player.x, player.z);
+            const targetY = EYE + (inCorr && player.z < -3.55 ? 0.17 : 0);
+            eyeY += (targetY - eyeY) * Math.min(1, dt * 8);
+            camera.position.set(player.x, eyeY + (moving ? Math.sin(bobPhase) * 0.022 : 0), player.z);
+            camera.rotation.set(player.pitch, player.yaw, 0);
+
+            // hover highlight (desktop, throttled)
+            if (pointerLocked && (hoverTick++ % 6 === 0)) {
+                raycaster.setFromCamera({ x: 0, y: 0 }, camera);
+                const hits = raycaster.intersectObjects(world.children, true);
+                let hot = false;
+                if (hits.length) {
+                    let o = hits[0].object;
+                    while (o) { if (o.userData.info) { hot = true; break; } o = o.parent; }
+                }
+                reticle.classList.toggle('hot', hot);
+            }
+        } else {
+            // idle establishing shot: slow pan around the room
+            const t = clock.elapsedTime * 0.1;
+            camera.position.set(0.4 + Math.sin(t) * 0.4, 1.7, 2.4);
+            camera.rotation.set(-0.04, Math.sin(t * 0.7) * 0.35, 0);
+        }
+
+        renderer.render(scene, camera);
+    }
+    animate();
+    </script>
+</body>
+</html>
