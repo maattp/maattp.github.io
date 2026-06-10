@@ -4,7 +4,9 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no, viewport-fit=cover">
     <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="apple-mobile-web-app-title" content="Kart 3">
     <meta name="theme-color" content="#071a2e">
     <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
     <title>Kart 3 — Coral Cliffs GP</title>
@@ -14,6 +16,7 @@
             height: 100%; width: 100%; overflow: hidden; background: #071a2e;
             font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
             color: #fff; -webkit-user-select: none; user-select: none; touch-action: none;
+            position: fixed; inset: 0;   /* keep iOS standalone PWA truly fullscreen, no rubber-banding */
         }
         #game { position: fixed; inset: 0; }
         canvas { display: block; touch-action: none; }
@@ -448,9 +451,15 @@
             try {
                 const c = parseInt(localStorage.getItem('kart3_char'), 10);
                 if (!isNaN(c) && CHARS[c]) selectedCharIdx = c;
+                muted = localStorage.getItem('kart3_muted') === '1';
             } catch (e) {}
         }
-        function savePrefs() { try { localStorage.setItem('kart3_char', selectedCharIdx); } catch (e) {} }
+        function savePrefs() {
+            try {
+                localStorage.setItem('kart3_char', selectedCharIdx);
+                localStorage.setItem('kart3_muted', muted ? '1' : '0');
+            } catch (e) {}
+        }
 
         // ===================================================================
         //  SCENE INIT
@@ -469,6 +478,8 @@
 
             buildParticles();
             window.addEventListener('resize', onResize);
+            // iOS reports stale dimensions at the instant of rotation
+            window.addEventListener('orientationchange', () => { setTimeout(onResize, 80); setTimeout(onResize, 350); });
         }
 
         function disposeObject(root) {
@@ -550,10 +561,11 @@
 
             // carve the jump ramp into the elevation profile: a wedge that rises
             // 2.6 over ~14 samples then drops away — vertical physics launches karts.
+            // the road is descending here, so the wedge must out-climb the descent
             const RAMP_LEN = 14;
             for (let k = 0; k <= RAMP_LEN; k++) {
                 const i = ((jumpSeg - RAMP_LEN + k) % N + N) % N;
-                centerline[i].y += 2.6 * (k / RAMP_LEN);
+                centerline[i].y += 4.6 * (k / RAMP_LEN);
             }
 
             // signed curvature (heading derivative). θ increases → path bends
@@ -1558,7 +1570,7 @@
                     k.grounded = true;
                     if (k.vy < -12) {
                         for (let i = 0; i < 5; i++) emitSpark(new THREE.Vector3(k.pos.x, g + 0.5, k.pos.z), 0xd8cfa8, 7, 3, { normal: true, life: 0.4 });
-                        if (k.isPlayer) vibrate(25);
+                        if (k.isPlayer) { vibrate(25); sfxLand(); }
                     }
                     k.y = g; k.vy = 0; k.lastVR = 0;
                 }
@@ -1678,7 +1690,7 @@
             if (k.item || k.itemRolling > 0) return;
             k.itemRolling = k.isPlayer ? 1.0 : 0.01;
             k._rollPick = rollItemFor(k);
-            if (k.isPlayer) { sfxBeep(520); vibrate(20); updateItemButton(); }
+            if (k.isPlayer) { sfxPickup(); vibrate(20); updateItemButton(); }
         }
         // rank-weighted: leaders get defense, trailers get firepower — fair catch-up
         function rollItemFor(k) {
@@ -1693,7 +1705,7 @@
         function finishRoll(k) {
             k.item = k._rollPick || 'turbo'; k._rollPick = null; k.itemRolling = 0;
             k.itemCharges = k.item === 'turbo3' ? 3 : 1;
-            if (k.isPlayer) { updateItemButton(); sfxBeep(880); }
+            if (k.isPlayer) { updateItemButton(); sfxItemWin(); }
             else k.itemUseTimer = rand(0.5, 2.0);
         }
         function useItem(k) {
@@ -1709,7 +1721,7 @@
             k.item = null;
             if (k.isPlayer) updateItemButton();
             if (it === 'turbo') { k.boostTimer = Math.max(k.boostTimer, 1.6); if (k.isPlayer) { sfxBoost(); vibrate(40); for (let i = 0; i < 6; i++) emitBoostSpark(k); } }
-            else if (it === 'shield') { k.shieldTimer = 6.0; if (k.isPlayer) { sfxBeep(420); vibrate(30); } }
+            else if (it === 'shield') { k.shieldTimer = 6.0; if (k.isPlayer) { sfxShield(); vibrate(30); } }
             else if (it === 'goo') dropGoo(k);
             else if (it === 'rocket') fireRocket(k);
             else if (it === 'zap') fireZap(k);
@@ -1756,7 +1768,7 @@
             mesh.position.set(k.pos.x + fx * 4, k.y + 1.6, k.pos.z + fz * 4);
             scene.add(mesh);
             projectiles.push({ mesh, x: mesh.position.x, z: mesh.position.z, theta: k.theta, owner: k, target, life: 5, seg: k.seg });
-            if (k.isPlayer) sfxBeep(640);
+            if (k.isPlayer) sfxRocket();
         }
         function fireZap(k) {
             let any = false;
@@ -1764,7 +1776,7 @@
                 if (o === k || o.finished) continue;
                 if (o.progress > k.progress) { bonkKart(o, { shrink: true }); any = true; }
             }
-            if (k.isPlayer && any) { sfxBeep(180); flash('⚡ SHOCKWAVE! ⚡', '#ffe27a'); }
+            if (k.isPlayer && any) { sfxZap(); flash('⚡ SHOCKWAVE! ⚡', '#ffe27a'); }
         }
         function nextAhead(k) {
             let best = null, bestGap = Infinity;
@@ -1791,14 +1803,14 @@
             k.hopT = 0.3;
             if (opts.shrink) k.shrinkT = 1.8;
             k.drifting = false; k.driftCharge = 0;
-            if (k.isPlayer) { sfxBeep(240); vibrate(45); flash('BONK!', '#ffd54a'); }
+            if (k.isPlayer) { sfxBonk(); vibrate(45); flash('BONK!', '#ffd54a'); }
             for (let i = 0; i < 8; i++) emitSpark(new THREE.Vector3(k.pos.x, k.y + 1.5, k.pos.z), 0xffe27a, 6, 5, { normal: true });
         }
         function gooHit(k) {
             if (k.invuln > 0 || k.gooT > 0 || k.finished) return;
             if (k.shieldTimer > 0) { k.shieldTimer = 0; k.mesh.shield.visible = false; return; }
             k.gooT = 1.3; k.invuln = 0.6;
-            if (k.isPlayer) { sfxBeep(200); vibrate(40); flash('GOO!', '#b06bff'); }
+            if (k.isPlayer) { sfxGoo(); vibrate(40); flash('GOO!', '#b06bff'); }
         }
 
         function clearProjectiles() { for (const p of projectiles) { scene.remove(p.mesh); disposeObject(p.mesh); } projectiles = []; }
@@ -2079,9 +2091,12 @@
             }
         }
         const ROLL_ICONS = ['🔥', '🚀', '🫧', '🛡️', '⚡'];
+        let lastRollIcon = -1;
         function animateItemRoll() {
             if (player.itemRolling > 0) {
-                dom.itemBtn.innerHTML = ROLL_ICONS[Math.floor(clock.elapsedTime * 12) % ROLL_ICONS.length];
+                const i = Math.floor(clock.elapsedTime * 12) % ROLL_ICONS.length;
+                if (i !== lastRollIcon) { lastRollIcon = i; sfxTick(); }
+                dom.itemBtn.innerHTML = ROLL_ICONS[i];
             }
         }
         function drawMinimap() {
@@ -2120,11 +2135,19 @@
         // ===================================================================
         //  AUDIO
         // ===================================================================
+        let skidGain = null, windGain = null;
         function initAudio() {
             try {
                 audioCtx = new (window.AudioContext || window.webkitAudioContext)();
                 const ctx = audioCtx;
-                masterGain = ctx.createGain(); masterGain.gain.value = 0.85; masterGain.connect(ctx.destination);
+                // master → gentle compressor → out: glues the mix, stops clipping
+                const comp = ctx.createDynamicsCompressor();
+                comp.threshold.value = -16; comp.knee.value = 22; comp.ratio.value = 5;
+                comp.attack.value = 0.004; comp.release.value = 0.18;
+                comp.connect(ctx.destination);
+                masterGain = ctx.createGain(); masterGain.gain.value = 0.9; masterGain.connect(comp);
+
+                // engine: stacked detuned saws + sub through a resonant lowpass
                 engineGain = ctx.createGain(); engineGain.gain.value = 0;
                 engineFilter = ctx.createBiquadFilter(); engineFilter.type = 'lowpass'; engineFilter.frequency.value = 600; engineFilter.Q.value = 7;
                 engineFilter.connect(engineGain); engineGain.connect(masterGain);
@@ -2134,20 +2157,45 @@
                     const gg = ctx.createGain(); gg.gain.value = gn; o.connect(gg); gg.connect(engineFilter); o.start();
                     engineOscs.push({ o, mult });
                 });
+
                 musicGain = ctx.createGain(); musicGain.gain.value = 0.5; musicGain.connect(masterGain);
                 noiseBuf = ctx.createBuffer(1, Math.floor(ctx.sampleRate * 0.6), ctx.sampleRate);
                 const nd = noiseBuf.getChannelData(0);
                 for (let i = 0; i < nd.length; i++) nd[i] = Math.random() * 2 - 1;
+
+                // looping tire-skid noise (audible while drifting)
+                const skidSrc = ctx.createBufferSource(); skidSrc.buffer = noiseBuf; skidSrc.loop = true;
+                const skidBp = ctx.createBiquadFilter(); skidBp.type = 'bandpass'; skidBp.frequency.value = 2400; skidBp.Q.value = 1.2;
+                skidGain = ctx.createGain(); skidGain.gain.value = 0;
+                skidSrc.connect(skidBp); skidBp.connect(skidGain); skidGain.connect(masterGain); skidSrc.start();
+
+                // looping wind rush (scales with speed)
+                const windSrc = ctx.createBufferSource(); windSrc.buffer = noiseBuf; windSrc.loop = true;
+                const windLp = ctx.createBiquadFilter(); windLp.type = 'lowpass'; windLp.frequency.value = 900;
+                windGain = ctx.createGain(); windGain.gain.value = 0;
+                windSrc.connect(windLp); windLp.connect(windGain); windGain.connect(masterGain); windSrc.start();
             } catch (e) { audioCtx = null; }
         }
         function updateEngineSound() {
-            if (!audioCtx || muted) return;
+            if (!audioCtx || muted) {
+                if (audioCtx && muted) {
+                    const now = audioCtx.currentTime;
+                    engineGain.gain.setTargetAtTime(0, now, 0.05);
+                    skidGain.gain.setTargetAtTime(0, now, 0.05);
+                    windGain.gain.setTargetAtTime(0, now, 0.05);
+                }
+                return;
+            }
             const now = audioCtx.currentTime;
             const t = clamp(player.speed / MAX_SPEED, 0, 1.5);
-            const base = 50 + t * 155 + (player.boostTimer > 0 ? 28 : 0);
+            const airFlare = player.grounded ? 0 : 22;   // revs flare when wheels leave the ground
+            const base = 50 + t * 155 + (player.boostTimer > 0 ? 28 : 0) + airFlare;
             engineOscs.forEach((e) => e.o.frequency.setTargetAtTime(base * e.mult, now, 0.05));
             engineFilter.frequency.setTargetAtTime(420 + t * 3200, now, 0.08);
             engineGain.gain.setTargetAtTime(state === 'racing' ? 0.05 + t * 0.07 : 0, now, 0.12);
+            const skidding = state === 'racing' && player.drifting && player.grounded && player.speed > 30;
+            skidGain.gain.setTargetAtTime(skidding ? 0.05 + driftStage(player.driftCharge) * 0.012 : 0, now, 0.06);
+            windGain.gain.setTargetAtTime(state === 'racing' ? t * t * 0.05 : 0, now, 0.15);
         }
         function aTone(freq, type, dur, gain, dest) {
             if (!audioCtx || !freq) return;
@@ -2186,6 +2234,68 @@
             if (!audioCtx || muted) return;
             aTone(freq, 'sine', 0.3, 0.16, masterGain);
             aTone(freq * 2, 'sine', 0.18, 0.05, masterGain);
+        }
+        function sfxTick() {            // item roulette tick
+            if (!audioCtx || muted) return;
+            aTone(1320, 'square', 0.04, 0.045, masterGain);
+        }
+        function sfxPickup() {          // grabbed an item box
+            if (!audioCtx || muted) return;
+            aTone(660, 'square', 0.07, 0.08, masterGain);
+            setTimeout(() => aTone(880, 'square', 0.07, 0.08, masterGain), 60);
+            setTimeout(() => aTone(1100, 'square', 0.1, 0.08, masterGain), 120);
+        }
+        function sfxItemWin() {         // roulette settled
+            if (!audioCtx || muted) return;
+            aTone(880, 'triangle', 0.16, 0.14, masterGain);
+            aTone(1320, 'triangle', 0.22, 0.09, masterGain);
+        }
+        function sfxRocket() {          // launch whoosh
+            if (!audioCtx || muted) return;
+            const now = audioCtx.currentTime;
+            const o = audioCtx.createOscillator(), g = audioCtx.createGain();
+            o.type = 'sawtooth'; o.frequency.setValueAtTime(700, now); o.frequency.exponentialRampToValueAtTime(120, now + 0.45);
+            g.gain.setValueAtTime(0.14, now); g.gain.exponentialRampToValueAtTime(0.001, now + 0.5);
+            o.connect(g); g.connect(masterGain); o.start(now); o.stop(now + 0.52);
+            aNoise(0.45, 0.16, true);
+        }
+        function sfxZap() {             // shockwave crackle
+            if (!audioCtx || muted) return;
+            for (let i = 0; i < 6; i++) {
+                setTimeout(() => { aTone(i % 2 ? 1800 : 900, 'square', 0.05, 0.1, masterGain); aNoise(0.05, 0.08, true); }, i * 55);
+            }
+            aTone(70, 'sawtooth', 0.4, 0.18, masterGain);
+        }
+        function sfxShield() {          // bubble shimmer up
+            if (!audioCtx || muted) return;
+            const now = audioCtx.currentTime;
+            const o = audioCtx.createOscillator(), g = audioCtx.createGain();
+            o.type = 'sine'; o.frequency.setValueAtTime(420, now); o.frequency.exponentialRampToValueAtTime(1260, now + 0.3);
+            g.gain.setValueAtTime(0.12, now); g.gain.exponentialRampToValueAtTime(0.001, now + 0.38);
+            o.connect(g); g.connect(masterGain); o.start(now); o.stop(now + 0.4);
+            aTone(630, 'sine', 0.3, 0.06, masterGain);
+        }
+        function sfxGoo() {             // slimy wobble
+            if (!audioCtx || muted) return;
+            const now = audioCtx.currentTime;
+            const o = audioCtx.createOscillator(), g = audioCtx.createGain();
+            o.type = 'sine'; o.frequency.setValueAtTime(220, now);
+            o.frequency.linearRampToValueAtTime(90, now + 0.12);
+            o.frequency.linearRampToValueAtTime(180, now + 0.24);
+            o.frequency.linearRampToValueAtTime(70, now + 0.4);
+            g.gain.setValueAtTime(0.16, now); g.gain.exponentialRampToValueAtTime(0.001, now + 0.45);
+            o.connect(g); g.connect(masterGain); o.start(now); o.stop(now + 0.47);
+        }
+        function sfxBonk() {            // got hit: thud + clatter
+            if (!audioCtx || muted) return;
+            aKick(masterGain);
+            aNoise(0.22, 0.16, false);
+            aTone(180, 'square', 0.18, 0.1, masterGain);
+        }
+        function sfxLand() {            // landed a jump
+            if (!audioCtx || muted) return;
+            aKick(masterGain);
+            aNoise(0.1, 0.08, false);
         }
 
         // ===================================================================
@@ -2245,6 +2355,12 @@
             0,0,'Cs5',0, 0,0,'Fs4',0, 0,0,'A4',0, 0,0,'Cs5',0,
             0,0,'B4',0, 0,0,'Gs4',0, 0,0,'E5',0, 0,0,'B4',0,
         ];
+        // warm triad stabs, one bar each: A D A E | F#m D A E | D E F#m E
+        const STABS = [
+            ['A3','Cs4','E4'], ['D4','Fs4','A4'], ['A3','Cs4','E4'], ['E4','Gs4','B4'],
+            ['Fs4','A4','Cs5'], ['D4','Fs4','A4'], ['A3','Cs4','E4'], ['E4','Gs4','B4'],
+            ['D4','Fs4','A4'], ['E4','Gs4','B4'], ['Fs4','A4','Cs5'], ['E4','Gs4','B4'],
+        ];
         function musicSection(s) { return s < 64 ? 0 : s < 128 ? 1 : 2; }
         function musicTick() {
             if (!audioCtx) return;
@@ -2257,6 +2373,11 @@
                 }
                 const bn = BASS[s]; if (bn) aTone(NF(bn), 'triangle', 0.13, 0.22, musicGain);
                 const an = ARP[s]; if (an) aTone(NF(an), 'square', 0.07, 0.04, musicGain);
+                // calypso comp: stab on the downbeat and the "and" push
+                if (b === 0 || b === 10) {
+                    const tri = STABS[Math.floor(s / 16)];
+                    for (const nn of tri) aTone(NF(nn), 'triangle', b === 0 ? 0.22 : 0.12, 0.045, musicGain);
+                }
                 if (b === 0 || b === 8) aKick(musicGain);
                 if (sec >= 1 && b === 11) aKick(musicGain);
                 if (b === 4 || b === 12) aNoise(0.12, 0.17, false, musicGain);
@@ -2345,7 +2466,8 @@
             dom.itemBtn.addEventListener('click', () => { if (state === 'racing') useItem(player); });
 
             dom.pauseBtn.addEventListener('click', () => { if (state === 'racing') pauseGame(); });
-            dom.muteBtn.addEventListener('click', () => { muted = !muted; dom.muteBtn.textContent = muted ? '🔇' : '🔊'; });
+            dom.muteBtn.addEventListener('click', () => { muted = !muted; dom.muteBtn.textContent = muted ? '🔇' : '🔊'; savePrefs(); });
+            dom.muteBtn.textContent = muted ? '🔇' : '🔊';
             dom.resumeBtn.addEventListener('click', resumeGame);
             dom.restartBtn.addEventListener('click', () => { dom.pauseScreen.classList.remove('on'); resetRace(); runCountdown(); });
             dom.quitBtn.addEventListener('click', quitToMenu);
