@@ -134,8 +134,12 @@ racing is rock solid.
 
 ## Milestones
 
-1. **M1 — Rooms + relay racing**: Room DO, lobby UI, 2 humans over the WS
-   relay end-to-end (no WebRTC yet). Proves protocol, prediction, interp.
+1. **M1 — Rooms + relay racing** ✅ *(shipped)*: Room DO, lobby UI, 2 humans
+   over the WS relay end-to-end (no WebRTC yet). Proved protocol, prediction,
+   interp (own-kart divergence ~2u on localhost). Learning for M2: relay
+   latency makes the host sim clients' karts on stale steering — consider
+   client-authoritative own-kart pose (fine at this trust level) or input
+   delay buffering alongside WebRTC.
 2. **M2 — WebRTC + full grid**: DataChannels with relay fallback, 4 humans +
    AI fill, disconnect→AI conversion, rejoin.
 3. **M3 — Matchmaking**: quick-race queue, names/avatars, polish lobby.

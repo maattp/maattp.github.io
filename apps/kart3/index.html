@@ -207,6 +207,45 @@
         .hint b { color: #ffd54a; }
         .loader { font-size: 13px; opacity: 0.7; margin-top: 14px; letter-spacing: 2px; }
 
+        /* ===== Online play ===== */
+        .online-row { margin-top: 12px; display: flex; gap: 6px; align-items: center; flex-wrap: wrap;
+            justify-content: center; pointer-events: auto; }
+        .online-row input { background: rgba(6,14,30,0.7); border: 1.5px solid rgba(255,255,255,0.22);
+            border-radius: 10px; color: #fff; font-size: 14px; font-weight: 700; padding: 9px 10px;
+            outline: none; -webkit-user-select: text; user-select: text; }
+        .online-row input:focus { border-color: #6fe0ff; }
+        #nameInput { width: 110px; }
+        #codeInput { width: 76px; text-transform: uppercase; letter-spacing: 2px; text-align: center; }
+        .mini-btn { pointer-events: auto; font-size: 12px; font-weight: 900; letter-spacing: 1px; color: #071a2e;
+            background: linear-gradient(180deg, #7fe3ff, #2f9fe8); border: none; border-radius: 999px;
+            padding: 10px 16px; box-shadow: 0 4px 0 #1a5fa0, 0 8px 16px rgba(0,0,0,0.35); }
+        .mini-btn:active { transform: translateY(3px); box-shadow: 0 1px 0 #1a5fa0; }
+        .mini-btn:disabled { opacity: 0.45; }
+        #netStatus { margin-top: 8px; font-size: 12px; font-weight: 700; color: #ffd54a; min-height: 16px; }
+
+        /* Lobby */
+        #roomCode { font-size: 52px; font-weight: 900; font-style: italic; letter-spacing: 8px; line-height: 1;
+            margin: 4px 0 2px;
+            background: linear-gradient(180deg, #fff, #6fe0ff); -webkit-background-clip: text;
+            background-clip: text; -webkit-text-fill-color: transparent;
+            filter: drop-shadow(0 4px 0 rgba(0,0,0,0.3)); }
+        .lobby-hint { font-size: 11px; opacity: 0.65; margin-bottom: 6px; }
+        #lobbyMsg { font-size: 12px; font-weight: 700; color: #ff9a9a; min-height: 16px; margin-top: 6px; }
+        #lobbyList { display: flex; flex-direction: column; gap: 6px; min-width: 250px; margin-bottom: 8px; }
+        .lob-row { display: flex; align-items: center; gap: 9px; padding: 7px 12px; border-radius: 11px;
+            background: rgba(255,255,255,0.06); border: 1.5px solid rgba(255,255,255,0.12);
+            font-size: 14px; font-weight: 800; }
+        .lob-row.me { border-color: rgba(255,213,74,0.5); background: rgba(255,213,74,0.08); }
+        .lob-row .sw { width: 16px; height: 16px; border-radius: 50%; box-shadow: inset 0 -3px 5px rgba(0,0,0,0.4); }
+        .lob-row .nm { flex: 1; text-align: left; }
+        .lob-row .tag-host { font-size: 9px; font-weight: 900; letter-spacing: 1px; color: #ffd54a;
+            border: 1px solid rgba(255,213,74,0.5); border-radius: 6px; padding: 2px 6px; }
+        .lob-row .rdy { font-size: 12px; font-weight: 900; color: #57e36a; opacity: 0.25; }
+        .lob-row .rdy.on { opacity: 1; }
+        .lob-empty { opacity: 0.45; font-size: 12px; font-style: italic; padding: 7px 12px; }
+        #readyBtn.on { background: linear-gradient(180deg, #8fffb0, #2fc860); box-shadow: 0 8px 0 #157a38, 0 14px 28px rgba(0,0,0,0.4); }
+        .btn:disabled { opacity: 0.45; }
+
         /* Results */
         #resultTitle { font-size: 26px; font-weight: 900; letter-spacing: 1px; }
         #finishPos { font-size: 60px; font-weight: 900; line-height: 1; margin: 4px 0; font-style: italic;
@@ -303,6 +342,14 @@
                 <div class="trackname">🏝️ Coral Cliffs Circuit · 3 Laps · 8 Racers</div>
                 <div class="bestline" id="bestLine">No record yet</div>
                 <button class="btn" id="startBtn">START RACE</button>
+                <div class="section-label" style="margin-top:14px">Race online</div>
+                <div class="online-row">
+                    <input id="nameInput" maxlength="12" placeholder="Your name" autocomplete="off">
+                    <button class="mini-btn" id="createRoomBtn">CREATE</button>
+                    <input id="codeInput" maxlength="5" placeholder="CODE" autocomplete="off" autocapitalize="characters">
+                    <button class="mini-btn" id="joinRoomBtn">JOIN</button>
+                </div>
+                <div id="netStatus"></div>
                 <div class="hint"><b>Left thumb</b> slides to steer · hold <b>DRIFT</b> in turns for turbo ·
                     grab <b>?</b> boxes · hold DRIFT on <b>GO!</b> for a rocket start</div>
                 <div class="loader" id="loadMsg">loading…</div>
@@ -310,6 +357,27 @@
             <div class="menu-right">
                 <div class="section-label">Choose your driver</div>
                 <div class="cards" id="charPick"></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Online lobby -->
+    <div class="screen hidden" id="lobbyScreen">
+        <div class="menu-row">
+            <div class="menu-left">
+                <div class="section-label">Room code</div>
+                <div id="roomCode">·····</div>
+                <div class="lobby-hint">Friends: open Kart 3 → enter this code → JOIN</div>
+                <button class="btn" id="readyBtn">READY!</button>
+                <button class="btn secondary" id="lobbyStartBtn">START RACE</button>
+                <div class="btn-row"><button class="btn secondary" id="leaveBtn">Leave room</button></div>
+                <div id="lobbyMsg"></div>
+            </div>
+            <div class="menu-right">
+                <div class="section-label">Racers</div>
+                <div id="lobbyList"></div>
+                <div class="section-label">Your driver</div>
+                <div class="cards" id="lobbyChars"></div>
             </div>
         </div>
     </div>
@@ -399,6 +467,11 @@
             resTotal: $('resTotal'), resBest: $('resBest'), newRecord: $('newRecord'), standings: $('standings'),
             againBtn: $('againBtn'), menuBtn: $('menuBtn'),
             countdown: $('countdown'), cdNum: $('cdNum'), lightTree: $('lightTree'),
+            nameInput: $('nameInput'), codeInput: $('codeInput'), createRoomBtn: $('createRoomBtn'),
+            joinRoomBtn: $('joinRoomBtn'), netStatus: $('netStatus'),
+            lobbyScreen: $('lobbyScreen'), roomCode: $('roomCode'), lobbyList: $('lobbyList'),
+            lobbyChars: $('lobbyChars'), readyBtn: $('readyBtn'), lobbyStartBtn: $('lobbyStartBtn'),
+            leaveBtn: $('leaveBtn'), lobbyMsg: $('lobbyMsg'),
             muteBtn: $('muteBtn'), itemBtn: $('itemBtn'), driftBtn: $('driftBtn'), pauseBtn: $('pauseBtn'),
             pauseScreen: $('pauseScreen'), resumeBtn: $('resumeBtn'), restartBtn: $('restartBtn'), quitBtn: $('quitBtn'),
             minimap: $('minimap'), stick: $('stick'), stickDot: $('stickDot'),
@@ -424,6 +497,8 @@
         const KART_RADIUS = 2.9;
         const NUM_KARTS = 8;
         const GRAV = 46;                     // arcade gravity for crest jumps
+        const PAD_FRAC = 0.30;               // boost pad width as fraction of HALF_W
+        const PAD_HALF = HALF_W * PAD_FRAC;
 
         // Coral Cliffs Circuit — single hand-tuned loop with elevation:
         // beach straight → coast sweep climbing → banked cliff bend → tunnel
@@ -519,6 +594,469 @@
                 localStorage.setItem('kart3_char', selectedCharIdx);
                 localStorage.setItem('kart3_muted', muted ? '1' : '0');
             } catch (e) {}
+        }
+
+        // ===================================================================
+        //  ONLINE PLAY — M1: WebSocket relay via the Cloudflare worker.
+        //  Host-authoritative (see VISION.md): the room creator simulates the
+        //  whole race including AI; clients send inputs, predict their own
+        //  kart, and interpolate everyone else from ~12Hz snapshots.
+        // ===================================================================
+        const NET_HTTP = (location.hostname === 'localhost' || location.hostname === '127.0.0.1')
+            ? 'http://localhost:8787'
+            : 'https://cloudflare-backend.maattp.workers.dev';
+        const NET_WS = NET_HTTP.replace(/^http/, 'ws');
+        const SNAP_EVERY = 5;          // host snapshot every 5 sim ticks (12Hz)
+        const INPUT_MS = 33;           // client input send interval (~30Hz)
+        const INTERP_MS = 130;         // remote karts render this far in the past
+
+        const net = {
+            mode: 'solo',              // 'solo' | 'host' | 'client'
+            ws: null, connected: false,
+            myId: -1, isHost: false, code: '',
+            players: [], phase: 'lobby',
+            myCharIdx: 0, myReady: false,
+            fireCount: 0,
+            remoteCtrl: {},            // host: playerId → latest input packet
+            snaps: [],                 // client: [{rt, d}] buffered snapshots
+            lastInputSent: 0,
+            pingTimer: 0,
+            racing: false,
+            _lastRoll: 0, _lastItem: null,
+        };
+        function netActive() { return net.mode !== 'solo'; }
+        function myName() {
+            const v = (dom.nameInput.value || '').trim().slice(0, 12);
+            return v || 'Racer';
+        }
+        function netStatusMsg(s, isErr) {
+            dom.netStatus.textContent = s;
+            dom.netStatus.style.color = isErr ? '#ff9a9a' : '#ffd54a';
+        }
+
+        async function createRoom() {
+            try {
+                netStatusMsg('Creating room…');
+                const res = await fetch(NET_HTTP + '/kart3/rooms', { method: 'POST' });
+                const j = await res.json();
+                if (!j.code) throw new Error('no code');
+                joinRoom(j.code);
+            } catch (e) {
+                netStatusMsg('Could not create room — check connection', true);
+            }
+        }
+        function joinRoom(code) {
+            code = String(code || '').toUpperCase().trim();
+            if (!/^[A-Z2-9]{5}$/.test(code)) { netStatusMsg('Room codes are 5 letters/digits', true); return; }
+            netStatusMsg('Joining ' + code + '…');
+            try { localStorage.setItem('kart3_name', myName()); } catch (e) {}
+            const ws = new WebSocket(NET_WS + '/kart3/rooms/' + code + '/ws');
+            net.ws = ws;
+            ws.onopen = () => {
+                net.connected = true;
+                net.myCharIdx = selectedCharIdx;
+                ws.send(JSON.stringify({ t: 'hello', name: myName(), charIdx: net.myCharIdx }));
+                net.pingTimer = setInterval(() => { try { ws.send('ping'); } catch (e) {} }, 20000);
+            };
+            ws.onmessage = (ev) => {
+                if (ev.data === 'pong') return;
+                let msg;
+                try { msg = JSON.parse(ev.data); } catch (e) { return; }
+                netHandle(msg);
+            };
+            ws.onclose = () => netClosed();
+            ws.onerror = () => {};
+        }
+        function netReset() {
+            if (net.pingTimer) { clearInterval(net.pingTimer); net.pingTimer = 0; }
+            if (net.ws) { try { net.ws.onclose = null; net.ws.close(); } catch (e) {} }
+            net.ws = null; net.connected = false; net.mode = 'solo';
+            net.myId = -1; net.isHost = false; net.code = ''; net.players = [];
+            net.myReady = false; net.racing = false;
+            net.remoteCtrl = {}; net.snaps = []; net.fireCount = 0;
+            clearGhosts();
+            dom.pauseBtn.style.display = '';
+        }
+        function netClosed() {
+            const wasRacing = net.racing && state !== 'menu';
+            netReset();
+            if (wasRacing) {
+                flash('CONNECTION LOST', '#ff9a9a');
+                setTimeout(quitToMenu, 1300);
+            } else {
+                dom.lobbyScreen.classList.add('hidden');
+                dom.startScreen.classList.remove('hidden');
+                netStatusMsg('Disconnected from room', true);
+            }
+        }
+        function netHandle(msg) {
+            switch (msg.t) {
+                case 'welcome':
+                    net.myId = msg.id; net.isHost = msg.host; net.code = msg.code;
+                    net.mode = msg.host ? 'host' : 'client';
+                    netStatusMsg('');
+                    showLobby();
+                    break;
+                case 'roster': {
+                    net.players = msg.players; net.phase = msg.phase;
+                    const me = net.players.find((p) => p.id === net.myId);
+                    if (me) {
+                        net.isHost = me.host;
+                        net.mode = me.host ? 'host' : 'client';
+                        net.myReady = me.ready;
+                        net.myCharIdx = me.charIdx;
+                    }
+                    if (net.racing && msg.phase === 'lobby') endOnlineRaceToLobby();
+                    else if (state === 'menu') renderLobby();
+                    break;
+                }
+                case 'you-are-host':
+                    net.isHost = true; net.mode = 'host';
+                    if (state === 'menu') renderLobby();
+                    break;
+                case 'start':
+                    startOnlineRace(msg.seed, msg.players);
+                    break;
+                case 'input':
+                    net.remoteCtrl[msg.from] = msg;
+                    break;
+                case 'snap':
+                    net.snaps.push({ rt: performance.now(), d: msg });
+                    if (net.snaps.length > 6) net.snaps.shift();
+                    break;
+                case 'peer-left':
+                    showToast((msg.name || 'A racer') + ' left', '#ff9a9a');
+                    if (net.mode === 'host' && net.racing) hostConvertToAI(msg.id);
+                    break;
+                case 'host-left':
+                    if (net.racing) {
+                        flash('HOST LEFT', '#ff9a9a');
+                        net.racing = false;
+                        setTimeout(() => { netReset(); quitToMenu(); }, 1400);
+                    }
+                    break;
+                case 'error':
+                    if (state === 'menu') {
+                        if (dom.lobbyScreen.classList.contains('hidden')) netStatusMsg(msg.msg, true);
+                        else dom.lobbyMsg.textContent = msg.msg;
+                    }
+                    break;
+            }
+        }
+
+        // ---------- lobby UI ----------
+        function showLobby() {
+            dom.startScreen.classList.add('hidden');
+            dom.resultScreen.classList.add('hidden');
+            dom.lobbyScreen.classList.remove('hidden');
+            dom.roomCode.textContent = net.code;
+            dom.lobbyMsg.textContent = '';
+            renderLobby();
+        }
+        function renderLobby() {
+            dom.lobbyList.innerHTML = '';
+            net.players.forEach((p) => {
+                const row = document.createElement('div');
+                row.className = 'lob-row' + (p.id === net.myId ? ' me' : '');
+                row.innerHTML = '<span class="sw" style="background:' + hx(CHARS[p.charIdx].body) + '"></span>' +
+                    '<span class="nm">' + p.name + (p.id === net.myId ? ' (you)' : '') + '</span>' +
+                    (p.host ? '<span class="tag-host">HOST</span>' : '') +
+                    '<span class="rdy' + ((p.ready || p.host) ? ' on' : '') + '">✓ READY</span>';
+                dom.lobbyList.appendChild(row);
+            });
+            for (let i = net.players.length; i < 4; i++) {
+                const row = document.createElement('div');
+                row.className = 'lob-empty';
+                row.textContent = 'waiting for racer…';
+                dom.lobbyList.appendChild(row);
+            }
+            dom.lobbyChars.innerHTML = '';
+            CHARS.forEach((ch, i) => {
+                const card = document.createElement('div');
+                card.className = 'card' + (i === net.myCharIdx ? ' active' : '');
+                card.innerHTML = '<div class="swatch" style="background:' + hx(ch.body) + '"></div>' +
+                    '<div class="cname">' + ch.name + '</div>';
+                card.addEventListener('click', () => {
+                    net.myCharIdx = i;
+                    selectedCharIdx = i; savePrefs();
+                    if (net.ws && net.connected) net.ws.send(JSON.stringify({ t: 'char', charIdx: i }));
+                });
+                dom.lobbyChars.appendChild(card);
+            });
+            dom.readyBtn.style.display = net.isHost ? 'none' : '';
+            dom.readyBtn.textContent = net.myReady ? '✓ READY' : 'READY!';
+            dom.readyBtn.classList.toggle('on', net.myReady);
+            dom.lobbyStartBtn.style.display = net.isHost ? '' : 'none';
+            const allReady = net.players.length >= 2 && net.players.every((p) => p.ready || p.host);
+            dom.lobbyStartBtn.disabled = !allReady;
+            dom.lobbyStartBtn.textContent = net.players.length < 2 ? 'WAITING FOR RACERS…'
+                : (allReady ? 'START RACE' : 'WAITING FOR READY…');
+        }
+
+        // ---------- race wiring ----------
+        function startOnlineRace(seed, players) {
+            raceSeed = (seed >>> 0) || 1;
+            net.players = players;
+            net.racing = true;
+            net.fireCount = 0;
+            net.remoteCtrl = {};
+            net.snaps = [];
+            net._lastRoll = 0; net._lastItem = null;
+            const roster = players.map((p) => ({
+                kind: p.id === net.myId ? 'local' : 'remote',
+                charIdx: p.charIdx, name: p.name, pid: p.id,
+            }));
+            const used = new Set(roster.map((r) => r.charIdx));
+            for (let c = 0; roster.length < NUM_KARTS && c < CHARS.length * 2; c++) {
+                const ci = c % CHARS.length;
+                if (used.has(ci) && c < CHARS.length) continue;
+                used.add(ci);
+                roster.push({ kind: 'ai', charIdx: ci, name: CHARS[ci].name, pid: -1 });
+            }
+            buildKartsRoster(roster);
+            if (!audioCtx) initAudio();
+            if (audioCtx && audioCtx.state === 'suspended') audioCtx.resume();
+            dom.startScreen.classList.add('hidden');
+            dom.lobbyScreen.classList.add('hidden');
+            dom.resultScreen.classList.add('hidden');
+            dom.hud.classList.add('on'); dom.muteBtn.classList.add('on');
+            dom.pauseBtn.style.display = 'none';   // nobody pauses a shared race
+            resetRace();
+            startMusic();
+            runCountdown();
+        }
+        function endOnlineRaceToLobby() {
+            net.racing = false;
+            net.snaps = []; net.remoteCtrl = {};
+            clearGhosts();
+            stopMusic();
+            state = 'menu';
+            dom.hud.classList.remove('on'); dom.muteBtn.classList.remove('on');
+            dom.speedlines.classList.remove('on'); dom.wrongWay.classList.remove('on');
+            dom.countdown.classList.remove('on');
+            dom.pauseBtn.style.display = '';
+            resetRace();
+            showLobby();
+        }
+        function hostConvertToAI(pid) {
+            const k = karts.find((kk) => kk.pid === pid);
+            if (!k || k.finished) return;
+            k.kind = 'ai';
+            k.controller = aiController;
+            if (!k.ai) {
+                k.ai = { skill: 0.985, aggr: 0.5, drift: 0.85, driftHold: 1.6,
+                    phase: rand(0, Math.PI * 2), laneBias: rand(-3, 3), errT: 3, errOff: 0, rival: false };
+            }
+            delete net.remoteCtrl[pid];
+        }
+
+        // host: remote humans' karts read the latest relayed input packet
+        function remoteController(k) {
+            const rc = net.remoteCtrl[k.pid];
+            if (!rc) { k.ctrl.steer = 0; k.ctrl.drift = false; k.ctrl.brake = false; return; }
+            k.ctrl.steer = clamp(+rc.s || 0, -1, 1);
+            k.ctrl.drift = !!rc.d;
+            k.ctrl.brake = false;
+            if ((rc.f | 0) > k._firedCount) { k._firedCount = rc.f | 0; k.ctrl.fire = true; }
+        }
+
+        // host → everyone: compact per-tick state
+        function hostSendSnap() {
+            if (!net.ws || !net.connected) return;
+            const r2 = (v) => Math.round(v * 100) / 100;
+            const msg = {
+                t: 'snap', tick: simTickNo, clock: r2(raceClock),
+                karts: karts.map((k) => [
+                    r2(k.pos.x), r2(k.pos.z), r2(k.y), r2(k.theta), Math.round(k.speed),
+                    k.rank, k.laps, r2(k.progress),
+                    k.item || 0, k.itemCharges, r2(k.itemRolling),
+                    r2(k.spinTimer), r2(k.gooT), r2(k.shieldTimer), r2(k.shrinkT), r2(k.boostTimer),
+                    k.drifting ? k.driftDir : 0, k.grounded ? 1 : 0,
+                    k.finished ? 1 : 0, r2(k.finishTime), k.bestLap === Infinity ? -1 : r2(k.bestLap),
+                ]),
+                boxes: itemBoxes.map((b) => (b.active ? 1 : 0)),
+                haz: hazards.map((h) => [r2(h.x), r2(h.mesh.position.y), r2(h.z)]),
+                proj: projectiles.map((p) => [r2(p.x), r2(p.mesh.position.y), r2(p.z), r2(p.theta)]),
+            };
+            try { net.ws.send(JSON.stringify(msg)); } catch (e) {}
+        }
+        function snapKart(arr) {
+            return { x: arr[0], z: arr[1], y: arr[2], theta: arr[3], speed: arr[4],
+                rank: arr[5], laps: arr[6], progress: arr[7],
+                item: arr[8] || null, itemCharges: arr[9], itemRolling: arr[10],
+                spinTimer: arr[11], gooT: arr[12], shieldTimer: arr[13], shrinkT: arr[14], boostTimer: arr[15],
+                driftDir: arr[16], grounded: !!arr[17],
+                finished: !!arr[18], finishTime: arr[19], bestLap: arr[20] < 0 ? Infinity : arr[20] };
+        }
+        function nearestSegNear(k) {
+            const base = k.seg || 0;
+            let best = base, bd = Infinity;
+            for (let d = -30; d <= 30; d += 2) {
+                const i = ((base + d) % N + N) % N;
+                const c = centerline[i];
+                const dd = (k.pos.x - c.x) * (k.pos.x - c.x) + (k.pos.z - c.z) * (k.pos.z - c.z);
+                if (dd < bd) { bd = dd; best = i; }
+            }
+            if (bd > 2500) return nearestSeg(k.pos.x, k.pos.z);
+            return best;
+        }
+
+        // client: apply buffered snapshots — own kart adopts authoritative
+        // event/item fields + gentle position correction; remote karts
+        // interpolate between the two snapshots bracketing the render time
+        function clientApplySnaps(dt) {
+            if (!net.snaps.length) return;
+            const B0 = net.snaps[net.snaps.length - 1];
+            const latest = B0.d;
+            const rt = performance.now() - INTERP_MS;
+            let A = net.snaps[0], B = B0;
+            for (let i = net.snaps.length - 1; i > 0; i--) {
+                if (net.snaps[i - 1].rt <= rt) { A = net.snaps[i - 1]; B = net.snaps[i]; break; }
+            }
+            const span = Math.max(B.rt - A.rt, 1);
+            const f = clamp((rt - A.rt) / span, 0, 1.25);
+
+            for (let i = 0; i < karts.length && i < latest.karts.length; i++) {
+                const k = karts[i];
+                const sb = snapKart(B.d.karts[i]);
+                if (k.isPlayer) {
+                    // pickup/roll/item feedback comes from the host
+                    if (sb.itemRolling > 0 && net._lastRoll <= 0) { sfxPickup(); vibrate(20); }
+                    if (sb.item && sb.item !== net._lastItem) {
+                        sfxItemWin();
+                        showToast(ITEM_DEF[sb.item].icon + ' ' + ITEM_DEF[sb.item].name + '!', '#ffd54a');
+                    }
+                    net._lastRoll = sb.itemRolling; net._lastItem = sb.item;
+                    k.item = sb.item; k.itemCharges = sb.itemCharges; k.itemRolling = sb.itemRolling;
+                    if (sb.spinTimer > k.spinTimer) { k.spinTimer = sb.spinTimer; sfxBonk(); vibrate(45); flash('BONK!', '#ffd54a'); }
+                    if (sb.gooT > k.gooT) { k.gooT = sb.gooT; sfxGoo(); flash('GOO!', '#b06bff'); }
+                    if (sb.shrinkT > k.shrinkT) k.shrinkT = sb.shrinkT;
+                    k.shieldTimer = sb.shieldTimer;
+                    k.boostTimer = Math.max(k.boostTimer, sb.boostTimer);
+                    k.rank = sb.rank;
+                    const itemKey = (sb.item || '') + ':' + sb.itemCharges + ':' + (sb.itemRolling > 0 ? 1 : 0);
+                    if (net._itemKey !== itemKey) { net._itemKey = itemKey; updateItemButton(); }
+                    if (sb.finished && !k.finished) {
+                        k.finished = true; k.finishTime = sb.finishTime; k.bestLap = sb.bestLap;
+                        finishRace();
+                    }
+                    const dx = sb.x - k.pos.x, dz = sb.z - k.pos.z;
+                    const d2 = dx * dx + dz * dz;
+                    if (d2 > 900) {           // way off: snap to authority
+                        k.pos.x = sb.x; k.pos.z = sb.z; k.theta = sb.theta;
+                        k.speed = sb.speed; k.y = sb.y; k.vy = 0; k.grounded = sb.grounded;
+                        updateProgress(k);
+                    } else if (d2 > 25) {     // drifting apart: ease back
+                        k.pos.x += dx * 0.08; k.pos.z += dz * 0.08;
+                    }
+                } else {
+                    const sa = snapKart(A.d.karts[i]);
+                    k.pos.x = lerp(sa.x, sb.x, f);
+                    k.pos.z = lerp(sa.z, sb.z, f);
+                    k.y = lerp(sa.y, sb.y, f);
+                    k.theta = sa.theta + wrapAngle(sb.theta - sa.theta) * f;
+                    k.speed = sb.speed;
+                    k.rank = sb.rank; k.laps = sb.laps; k.progress = sb.progress;
+                    k.item = sb.item; k.itemCharges = sb.itemCharges;
+                    k.spinTimer = sb.spinTimer; k.gooT = sb.gooT; k.shieldTimer = sb.shieldTimer;
+                    k.shrinkT = sb.shrinkT; k.boostTimer = sb.boostTimer;
+                    k.drifting = sb.driftDir !== 0; k.driftDir = sb.driftDir || 0; k.driftRamp = 1;
+                    k.grounded = sb.grounded;
+                    k.finished = sb.finished; k.finishTime = sb.finishTime;
+                    k.seg = nearestSegNear(k);
+                    const c = centerline[k.seg], n = normals[k.seg];
+                    k.lateralSigned = (k.pos.x - c.x) * n.x + (k.pos.z - c.z) * n.z;
+                    k.lateral = Math.abs(k.lateralSigned);
+                    k.groundY = roadY(k.seg, clamp(k.lateralSigned, -HALF_W, HALF_W));
+                    syncKartMesh(k, false, dt);
+                    if (k.drifting && k.grounded && k.speed > 25) spawnRearSpark(k, 0x4ad6ff, 5);
+                    if (k.boostTimer > 0) spawnRearSpark(k, 0xff7a3c, 7);
+                }
+            }
+            raceClock = latest.clock;
+            latest.boxes.forEach((on, i) => {
+                const b = itemBoxes[i];
+                if (b) { b.active = !!on; b.group.visible = !!on; }
+            });
+            syncGhosts(latest);
+        }
+
+        // visual stand-ins for host-owned goo puddles + rockets
+        let ghostGoo = [], ghostRockets = [];
+        function makeGhostGoo() {
+            const mesh = new THREE.Mesh(new THREE.CylinderGeometry(2.4, 2.6, 0.25, 12),
+                new THREE.MeshLambertMaterial({ color: 0x7a3bd0, transparent: true, opacity: 0.9 }));
+            scene.add(mesh);
+            return mesh;
+        }
+        function makeGhostRocket() {
+            const mesh = new THREE.Group();
+            const body = new THREE.Mesh(new THREE.ConeGeometry(0.85, 3, 10), new THREE.MeshLambertMaterial({ color: 0xff3b5c }));
+            body.rotation.x = Math.PI / 2; mesh.add(body);
+            const fin = new THREE.Mesh(new THREE.SphereGeometry(0.65, 8, 8), new THREE.MeshBasicMaterial({ color: 0xffd54a }));
+            fin.position.z = -1.4; mesh.add(fin);
+            scene.add(mesh);
+            return mesh;
+        }
+        function syncGhosts(latest) {
+            while (ghostGoo.length < latest.haz.length) ghostGoo.push(makeGhostGoo());
+            ghostGoo.forEach((m, i) => {
+                const h = latest.haz[i];
+                m.visible = !!h;
+                if (h) m.position.set(h[0], h[1], h[2]);
+            });
+            while (ghostRockets.length < latest.proj.length) ghostRockets.push(makeGhostRocket());
+            ghostRockets.forEach((m, i) => {
+                const p = latest.proj[i];
+                m.visible = !!p;
+                if (p) {
+                    m.position.set(p[0], p[1], p[2]);
+                    m.rotation.y = p[3];
+                    emitSpark(new THREE.Vector3(p[0], p[1], p[2]), 0xffa030, 2, 1, { life: 0.25 });
+                }
+            });
+        }
+        function clearGhosts() {
+            for (const m of ghostGoo.concat(ghostRockets)) { scene.remove(m); disposeObject(m); }
+            ghostGoo = []; ghostRockets = [];
+        }
+
+        // client per-frame: fixed-step own-kart prediction + snapshot apply + input send
+        function netClientFrame(dt) {
+            simAcc += dt;
+            let steps = 0;
+            while (simAcc >= SIM_DT && steps < 5) {
+                updateKart(player, SIM_DT);
+                // soft push-apart vs interpolated karts (feel only; host decides truth)
+                for (const o of karts) {
+                    if (o === player || Math.abs(o.y - player.y) > 3) continue;
+                    const dx = player.pos.x - o.pos.x, dz = player.pos.z - o.pos.z;
+                    const d = Math.hypot(dx, dz);
+                    if (d > 0.0001 && d < KART_RADIUS * 2) {
+                        const push = KART_RADIUS * 2 - d;
+                        player.pos.x += (dx / d) * push;
+                        player.pos.z += (dz / d) * push;
+                        player.speed *= 0.985;
+                    }
+                }
+                simAcc -= SIM_DT; steps++; simTickNo++;
+            }
+            if (steps === 5) simAcc = 0;
+            clientApplySnaps(dt);
+            const now = performance.now();
+            if (net.ws && net.connected && now - net.lastInputSent > INPUT_MS) {
+                net.lastInputSent = now;
+                try {
+                    // send what the local controller produced — the same seam a
+                    // remote peer fills, so even an autopiloted player nets correctly
+                    net.ws.send(JSON.stringify({
+                        t: 'input',
+                        s: Math.round(player.ctrl.steer * 100) / 100,
+                        d: player.ctrl.drift,
+                        f: net.fireCount,
+                    }));
+                } catch (e) {}
+            }
         }
 
         // ===================================================================
@@ -923,15 +1461,16 @@
         // Road decals (start line, boost pads) must be ribbons that follow the
         // road's bank + slope — flat rotated planes sink/float at the edges
         // (the start line vanished completely into the banked chicane).
-        function buildDecalStrip(segCenter, halfLenSegs, widthFrac, tex, lift) {
+        function buildDecalStrip(segCenter, halfLenSegs, widthFrac, tex, lift, latCenter) {
             const pos = [], uv = [], idx = [];
             const W = HALF_W * widthFrac;
+            const LC = latCenter || 0;
             let r = 0;
             for (let d = -halfLenSegs; d <= halfLenSegs; d++) {
                 const i = ((segCenter + d) % N + N) % N;
                 const c = centerline[i], n = normals[i];
-                pos.push(c.x + n.x * W, roadY(i, W) + lift, c.z + n.z * W);
-                pos.push(c.x - n.x * W, roadY(i, -W) + lift, c.z - n.z * W);
+                pos.push(c.x + n.x * (LC + W), roadY(i, LC + W) + lift, c.z + n.z * (LC + W));
+                pos.push(c.x + n.x * (LC - W), roadY(i, LC - W) + lift, c.z + n.z * (LC - W));
                 const v = (d + halfLenSegs) / (2 * halfLenSegs);
                 uv.push(0, v, 1, v);
                 if (d < halfLenSegs) { const o = r * 2; idx.push(o, o + 1, o + 2, o + 1, o + 3, o + 2); }
@@ -1312,12 +1851,25 @@
                 g.closePath(); g.fill();
             }
             const tex = new THREE.CanvasTexture(cv);
+            // Pads are narrow (~30% of the road) and lane-offset, so hitting one
+            // takes aim. Two deliberate chain pairs are gapped ~46 samples
+            // (~118 units): the first boost expires JUST before the second pad,
+            // so a clean line through both extends the boost — skill chaining.
+            // (Previously pads were near full-width and one sat 20 samples
+            // before the jump pad, where the second could never re-trigger.)
             boostPads = [];
-            const segs = [Math.floor(N * 0.155), Math.floor(N * 0.46), Math.floor(N * 0.70),
-                          ((jumpSeg - 34) % N + N) % N];
-            for (const k of segs) {
-                buildDecalStrip(k, 3, 0.55, tex, 0.12);
-                boostPads.push(k);
+            const a = Math.floor(N * 0.10);
+            const c2 = Math.floor(N * 0.45);
+            const d2 = ((jumpSeg - 80) % N + N) % N;
+            const e2 = ((jumpSeg - 34) % N + N) % N;
+            const defs = [
+                { seg: a, lat: -6 }, { seg: a + 46, lat: 6 },       // beach chain pair
+                { seg: c2, lat: 5 },                                 // tunnel approach
+                { seg: d2, lat: -5 }, { seg: e2, lat: 0 },           // descent chain into the jump
+            ];
+            for (const p of defs) {
+                buildDecalStrip(p.seg, 3, PAD_FRAC, tex, 0.12, p.lat);
+                boostPads.push(p);
             }
         }
 
@@ -1597,17 +2149,32 @@
             karts = [];
         }
         function buildKarts() {
-            disposeKarts();
+            // solo roster: local player first, AI for everyone else
             const order = charOrder();
+            buildKartsRoster(order.map((ci, i) => ({
+                kind: i === 0 ? 'local' : 'ai',
+                charIdx: ci, name: CHARS[ci].name, pid: i === 0 ? 0 : -1,
+            })));
+        }
+        // roster: [{kind: 'local'|'remote'|'ai', charIdx, name, pid}] × NUM_KARTS
+        function buildKartsRoster(roster) {
+            disposeKarts();
             // AI skill spread, shuffled so the fast rival differs run to run
             const skills = [1.04, 1.02, 1.005, 0.995, 0.985, 0.97, 0.955];
             for (let i = skills.length - 1; i > 0; i--) { const j = Math.floor(rng() * (i + 1)); [skills[i], skills[j]] = [skills[j], skills[i]]; }
+            let si = 0;
             for (let i = 0; i < NUM_KARTS; i++) {
-                const ch = CHARS[order[i]];
+                const slot = roster[i];
+                const ch = CHARS[slot.charIdx];
                 const mesh = createKartMesh(ch);
+                const isLocal = slot.kind === 'local';
+                const isAi = slot.kind === 'ai';
                 karts.push({
-                    mesh, isPlayer: i === 0, char: ch,
-                    controller: i === 0 ? localController : aiController,
+                    mesh, isPlayer: isLocal, char: ch,
+                    kind: slot.kind, pid: slot.pid == null ? -1 : slot.pid,
+                    dispName: slot.name || ch.name,
+                    controller: isLocal ? localController : (isAi ? aiController : remoteController),
+                    _firedCount: 0,
                     ctrl: { steer: 0, brake: false, drift: false, fire: false },
                     statSpeed: ch.speed, statAccel: ch.accel, statHandling: ch.handling,
                     pos: new THREE.Vector3(), y: 0, vy: 0, grounded: true, lastVR: 0,
@@ -1622,8 +2189,8 @@
                     stuckTimer: 0, wrongT: 0,
                     finished: false, finishTime: 0, bestLap: Infinity, lastLapStart: 0,
                     _rubber: 1,
-                    ai: i === 0 ? null : {
-                        skill: skills[i - 1],
+                    ai: !isAi ? null : {
+                        skill: skills[si++ % skills.length],
                         aggr: rand(0.3, 1.0),
                         drift: rand(0.7, 1.05),
                         driftHold: rand(1.3, 2.3),
@@ -1634,7 +2201,7 @@
                     },
                 });
             }
-            player = karts[0];
+            player = karts.find((k) => k.isPlayer) || karts[0];
             // the two sharpest AI are "rivals": they shadow the player all race
             karts.filter((k) => k.ai).sort((a, b) => b.ai.skill - a.ai.skill)
                  .slice(0, 2).forEach((k) => { k.ai.rival = true; k.ai.aggr = Math.max(k.ai.aggr, 0.75); });
@@ -1719,8 +2286,12 @@
             if (k.lastLapStart > 0 && lapTime > 0.5 && lapTime < k.bestLap) k.bestLap = lapTime;
             k.lastLapStart = raceClock;
             if (k.laps >= TOTAL_LAPS && !k.finished) {
-                k.finished = true; k.finishTime = raceClock;
-                if (k.isPlayer) finishRace();
+                if (net.mode === 'client') {
+                    // the host confirms finishes; coast until the snapshot says so
+                } else {
+                    k.finished = true; k.finishTime = raceClock;
+                    if (k.isPlayer) finishRace();
+                }
             }
             if (k.isPlayer && !k.finished) {
                 flash(k.laps === TOTAL_LAPS - 1 ? 'FINAL LAP!' : 'LAP ' + (k.laps + 1), '#6fe0ff');
@@ -1754,8 +2325,12 @@
                     k.ctrl.fire = false;
                     // MK-style roulette: the first tap STOPS the slot machine
                     // and locks the item in; a second tap actually uses it.
-                    if (k.itemRolling > 0) finishRoll(k);
-                    else useItem(k);
+                    // (Online clients don't act locally — their taps travel to
+                    // the host as a fire counter and the result snapshots back.)
+                    if (net.mode !== 'client') {
+                        if (k.itemRolling > 0) finishRoll(k);
+                        else useItem(k);
+                    }
                 }
             } else if (k.drifting) releaseDrift(k);
 
@@ -1838,22 +2413,24 @@
                 dom.wrongWay.classList.toggle('on', k.wrongT > 0.7);
             }
 
-            // boost pads
+            // boost pads — narrow and lane-offset: you have to actually hit them
             if (k.grounded) {
-                for (const pk of boostPads) {
-                    let dseg = Math.abs(k.seg - pk); dseg = Math.min(dseg, N - dseg);
-                    if (dseg < 4 && k.lateral < HALF_W && k.boostTimer < 0.3) {
+                for (const pad of boostPads) {
+                    let dseg = Math.abs(k.seg - pad.seg); dseg = Math.min(dseg, N - dseg);
+                    if (dseg < 4 && Math.abs(k.lateralSigned - pad.lat) < PAD_HALF + 1.2 && k.boostTimer < 0.3) {
                         k.boostTimer = 1.1;
                         if (k.isPlayer) { sfxBoost(); vibrate(30); for (let i = 0; i < 6; i++) emitBoostSpark(k); }
                     }
                 }
             }
 
-            // item boxes
-            for (const b of itemBoxes) {
-                if (!b.active) continue;
-                const dx = k.pos.x - b.x, dz = k.pos.z - b.z;
-                if (dx * dx + dz * dz < 28) pickupBox(k, b);
+            // item boxes (host-authoritative online: clients see results via snapshots)
+            if (net.mode !== 'client') {
+                for (const b of itemBoxes) {
+                    if (!b.active) continue;
+                    const dx = k.pos.x - b.x, dz = k.pos.z - b.z;
+                    if (dx * dx + dz * dz < 28) pickupBox(k, b);
+                }
             }
 
             // slipstream draft (needs a sustained, tight tow — no boost chaining)
@@ -2254,10 +2831,10 @@
                 }
                 if (bestBox && bestD < 14) lane = lerp(lane, bestBox.lat, 0.8);
             }
-            // swing through upcoming boost pads (they sit on the track center)
-            for (const pk of boostPads) {
-                let dseg = pk - k.seg; if (dseg < 0) dseg += N;
-                if (dseg > 6 && dseg < look + 30) { lane = lerp(lane, 0, 0.7); break; }
+            // swing through upcoming boost pads (now narrow + lane-offset)
+            for (const pad of boostPads) {
+                let dseg = pad.seg - k.seg; if (dseg < 0) dseg += N;
+                if (dseg > 6 && dseg < look + 30) { lane = lerp(lane, pad.lat, 0.75); break; }
             }
             lane = clamp(lane, -(HALF_W - 3), HALF_W - 3);
 
@@ -2793,8 +3370,13 @@
                 if (e.key === 'ArrowLeft' || e.key === 'a') keySteer = -1;
                 if (e.key === 'ArrowRight' || e.key === 'd') keySteer = 1;
                 if (e.code === 'Space') { driftHeld = true; dom.driftBtn.classList.add('held'); e.preventDefault(); }
-                if (e.key === 'Shift' || e.key === 'e' || e.key === 'Enter') { if (state === 'racing') pendingFire = true; }
-                if (e.key === 'p' || e.key === 'Escape') { if (state === 'racing') pauseGame(); else if (state === 'paused') resumeGame(); }
+                if (e.key === 'Shift' || e.key === 'e' || e.key === 'Enter') {
+                    if (state === 'racing' && document.activeElement.tagName !== 'INPUT') { pendingFire = true; net.fireCount++; }
+                }
+                if (e.key === 'p' || e.key === 'Escape') {
+                    if (netActive()) return;   // no pausing a shared race
+                    if (state === 'racing') pauseGame(); else if (state === 'paused') resumeGame();
+                }
             });
             window.addEventListener('keyup', (e) => {
                 if (e.key === 'ArrowLeft' || e.key === 'a' || e.key === 'ArrowRight' || e.key === 'd') keySteer = 0;
@@ -2814,17 +3396,22 @@
             // a single tap must be exactly ONE fire event, or it would stop
             // the roulette and instantly use the item it just locked in.
             let lastItemTouch = 0;
+            const fireTap = () => {
+                if (state !== 'racing') return;
+                pendingFire = true;
+                net.fireCount++;   // online: cumulative counter rides the input packets
+            };
             dom.itemBtn.addEventListener('touchstart', (e) => {
                 e.preventDefault();
                 lastItemTouch = performance.now();
-                if (state === 'racing') pendingFire = true;
+                fireTap();
             }, { passive: false });
             dom.itemBtn.addEventListener('click', () => {
                 if (performance.now() - lastItemTouch < 800) return;
-                if (state === 'racing') pendingFire = true;
+                fireTap();
             });
 
-            dom.pauseBtn.addEventListener('click', () => { if (state === 'racing') pauseGame(); });
+            dom.pauseBtn.addEventListener('click', () => { if (state === 'racing' && !netActive()) pauseGame(); });
             dom.muteBtn.addEventListener('click', () => { muted = !muted; dom.muteBtn.textContent = muted ? '🔇' : '🔊'; savePrefs(); });
             dom.muteBtn.textContent = muted ? '🔇' : '🔊';
             dom.resumeBtn.addEventListener('click', resumeGame);
@@ -2835,7 +3422,33 @@
             });
             dom.quitBtn.addEventListener('click', quitToMenu);
 
-            document.addEventListener('visibilitychange', () => { if (document.hidden && state === 'racing') pauseGame(); });
+            document.addEventListener('visibilitychange', () => {
+                if (document.hidden && state === 'racing' && !netActive()) pauseGame();
+            });
+
+            // ---- online controls ----
+            dom.createRoomBtn.addEventListener('click', createRoom);
+            dom.joinRoomBtn.addEventListener('click', () => joinRoom(dom.codeInput.value));
+            dom.codeInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') joinRoom(dom.codeInput.value); });
+            dom.readyBtn.addEventListener('click', () => {
+                if (net.ws && net.connected) {
+                    net.myReady = !net.myReady;
+                    net.ws.send(JSON.stringify({ t: 'ready', ready: net.myReady }));
+                    renderLobby();
+                }
+            });
+            dom.lobbyStartBtn.addEventListener('click', () => {
+                if (net.isHost && net.ws && net.connected) {
+                    net.ws.send(JSON.stringify({ t: 'start', seed: (Math.random() * 0x7fffffff) | 0, laps: TOTAL_LAPS }));
+                }
+            });
+            dom.leaveBtn.addEventListener('click', () => {
+                netReset();
+                dom.lobbyScreen.classList.add('hidden');
+                dom.startScreen.classList.remove('hidden');
+                buildKarts(); resetRace();
+                netStatusMsg('');
+            });
         }
         function computeSteer() {
             steerInput = clamp(touchSteer + keySteer, -1, 1);
@@ -2901,9 +3514,9 @@
                         k.lastLapStart = 0;
                         if (k.ai && rng() < 0.6) k.boostTimer = rand(0.4, 0.8);   // most AI nail the start
                     }
-                    if (driftHeld) {   // hold DRIFT on GO → rocket start
-                        player.boostTimer = 0.9;
-                        flash('ROCKET START!', '#ffd54a');
+                    if (driftHeld && net.mode !== 'client') {   // hold DRIFT on GO → rocket start
+                        player.boostTimer = 0.9;                // (client boosts would be phantom —
+                        flash('ROCKET START!', '#ffd54a');      //  host can't see pre-GO inputs yet, M2)
                         sfxBoost(); vibrate(40);
                     }
                     setTimeout(() => dom.countdown.classList.remove('on'), 700);
@@ -2927,13 +3540,17 @@
             simAcc = 0;   // don't fast-forward the sim over the pause
         }
         function quitToMenu() {
+            const wasOnline = netActive();
+            netReset();
             dom.pauseScreen.classList.remove('on');
             dom.resultScreen.classList.add('hidden');
+            dom.lobbyScreen.classList.add('hidden');
             dom.hud.classList.remove('on'); dom.muteBtn.classList.remove('on'); dom.speedlines.classList.remove('on');
             dom.wrongWay.classList.remove('on');
             stopMusic();
             state = 'menu';
             buildSelectionUI();
+            if (wasOnline) buildKarts();   // back to a solo roster
             resetRace();
             dom.startScreen.classList.remove('hidden');
         }
@@ -2970,10 +3587,11 @@
                 row.className = 'st-row' + (k.isPlayer ? ' me' : '');
                 row.innerHTML = '<span class="rk">' + (i + 1) + '</span>' +
                     '<span class="sw" style="background:' + hx(k.char.body) + '"></span>' +
-                    '<span class="nm">' + k.char.name + (k.isPlayer ? ' (you)' : '') + '</span>' +
+                    '<span class="nm">' + (k.dispName || k.char.name) + (k.isPlayer ? ' (you)' : '') + '</span>' +
                     '<span class="tm">' + fmtTime(projectedFinish(k)) + '</span>';
                 dom.standings.appendChild(row);
             });
+            dom.againBtn.textContent = netActive() ? 'BACK TO LOBBY' : 'RACE AGAIN';
 
             if (rank === 1) {
                 vibrate([0, 80, 60, 80, 60, 120]);
@@ -3006,6 +3624,7 @@
             updateItemBoxesSim(d);
             updateRankings();
             simTickNo++;
+            if (net.mode === 'host' && net.racing && simTickNo % SNAP_EVERY === 0) hostSendSnap();
         }
 
         // -------------------------------------------------------------------
@@ -3059,10 +3678,15 @@
             if (state === 'racing' || state === 'finished' || state === 'countdown') {
                 computeSteer();
                 if (state !== 'countdown') {
-                    simAcc += dt;
-                    let steps = 0;
-                    while (simAcc >= SIM_DT && steps < 5) { simTick(SIM_DT); simAcc -= SIM_DT; steps++; }
-                    if (steps === 5) simAcc = 0;   // hitch guard: drop time rather than spiral
+                    if (net.mode === 'client' && net.racing) {
+                        // online client: own-kart prediction + snapshot interpolation
+                        netClientFrame(dt);
+                    } else {
+                        simAcc += dt;
+                        let steps = 0;
+                        while (simAcc >= SIM_DT && steps < 5) { simTick(SIM_DT); simAcc -= SIM_DT; steps++; }
+                        if (steps === 5) simAcc = 0;   // hitch guard: drop time rather than spiral
+                    }
                 }
                 updateItemBoxesVisual(dt);
                 updateCamera(false);
@@ -3118,8 +3742,14 @@
             buildSelectionUI();
             resetRace();
             dom.loadMsg.style.display = 'none';
+            try { dom.nameInput.value = localStorage.getItem('kart3_name') || ''; } catch (e) {}
             dom.startBtn.addEventListener('click', startGame);
-            dom.againBtn.addEventListener('click', startGame);
+            dom.againBtn.addEventListener('click', () => {
+                if (netActive()) {
+                    if (net.isHost && net.ws && net.connected) net.ws.send(JSON.stringify({ t: 'end' }));
+                    else endOnlineRaceToLobby();   // lobby now; roster sync follows when host ends
+                } else startGame();
+            });
             dom.menuBtn.addEventListener('click', quitToMenu);
             animate();
         }

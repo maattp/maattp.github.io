@@ -1,5 +1,8 @@
 import { Hono } from "hono";
 import { cors } from "hono/cors";
+import { Kart3Room } from "./kart3room";
+
+export { Kart3Room };
 
 const SESSION_TTL = 365 * 24 * 60 * 60; // 1 year in seconds
 const SESSION_PREFIX = "__session:";
@@ -8,6 +11,7 @@ type Bindings = {
   KV: KVNamespace;
   PHOTOS: R2Bucket;
   DB: D1Database;
+  KART3_ROOM: DurableObjectNamespace;
   GOOGLE_CLIENT_ID: string;
   ALLOWED_EMAILS: string;
 };
@@ -101,11 +105,75 @@ async function verifySession(
 
 const app = new Hono<{ Bindings: Bindings; Variables: Variables }>();
 
+// --- Kart 3 multiplayer rooms: WebSocket upgrade ---
+// Registered BEFORE the cors middleware: cors() mutates response headers,
+// and a 101 WebSocket response's headers are immutable.
+// No Google auth on /kart3/* by design — the unguessable room code is the
+// credential (friends aren't in ALLOWED_EMAILS). Origin-gated instead.
+const KART3_ORIGINS = ["https://polkiewicz.com", "https://maattp.github.io"];
+function kart3OriginOk(origin: string | undefined): boolean {
+  if (!origin) return false;
+  return KART3_ORIGINS.includes(origin) || origin.startsWith("http://localhost:");
+}
+const ROOM_CODE_RE = /^[A-Z2-9]{5}$/;
+
+app.get("/kart3/rooms/:code/ws", async (c) => {
+  if (c.req.header("Upgrade") !== "websocket") {
+    return c.json({ error: "expected websocket" }, 426);
+  }
+  if (!kart3OriginOk(c.req.header("Origin"))) {
+    return c.json({ error: "forbidden" }, 403);
+  }
+  const code = c.req.param("code").toUpperCase();
+  if (!ROOM_CODE_RE.test(code)) {
+    return c.json({ error: "bad room code" }, 400);
+  }
+  const stub = c.env.KART3_ROOM.get(c.env.KART3_ROOM.idFromName(code));
+  return stub.fetch("https://do/ws", c.req.raw);
+});
+
 app.use("*", cors({
-  origin: ["https://polkiewicz.com", "https://maattp.github.io", "http://localhost:8000"],
+  // function form so any localhost port works for local development
+  origin: (origin) => {
+    if (!origin) return origin;
+    if (
+      origin === "https://polkiewicz.com" ||
+      origin === "https://maattp.github.io" ||
+      origin.startsWith("http://localhost:")
+    ) {
+      return origin;
+    }
+    return "";
+  },
   allowHeaders: ["Authorization", "Content-Type"],
   allowMethods: ["GET", "POST", "PUT", "DELETE"],
 }));
+
+// --- Kart 3 multiplayer rooms: create + status (CORS applies) ---
+const ROOM_ALPHABET = "ABCDEFGHJKMNPQRSTUVWXYZ23456789"; // no 0/O/1/I/L
+
+app.post("/kart3/rooms", async (c) => {
+  if (!kart3OriginOk(c.req.header("Origin"))) {
+    return c.json({ error: "forbidden" }, 403);
+  }
+  const bytes = new Uint8Array(5);
+  crypto.getRandomValues(bytes);
+  let code = "";
+  for (const b of bytes) code += ROOM_ALPHABET[b % ROOM_ALPHABET.length];
+  const stub = c.env.KART3_ROOM.get(c.env.KART3_ROOM.idFromName(code));
+  await stub.fetch("https://do/init", { method: "POST", body: code });
+  return c.json({ code });
+});
+
+app.get("/kart3/rooms/:code", async (c) => {
+  const code = c.req.param("code").toUpperCase();
+  if (!ROOM_CODE_RE.test(code)) {
+    return c.json({ error: "bad room code" }, 400);
+  }
+  const stub = c.env.KART3_ROOM.get(c.env.KART3_ROOM.idFromName(code));
+  const res = await stub.fetch("https://do/status");
+  return c.json(await res.json());
+});
 
 app.get("/", (c) => {
   return c.json({ status: "ok" });
