@@ -120,6 +120,19 @@ work, and don't regress these four seams.
 
 ## Track / world model
 
+- **Multi-track**: `TRACKS[]` holds per-track ctrl loops, tunnel/jump
+  landmarks, and a `theme` (EVERY world color lives in the theme — sky,
+  fog, terrain palette, road/lane, tunnel, foliage kind 'palms'|'spires',
+  embers). `loadTrack(idx)` disposes the `world` Group and rebuilds;
+  karts/particles/ghosts live in the scene and survive. World build is
+  seeded `WORLD_SEED + idx*7919` so every client builds identical tracks.
+  Online: host picks in the lobby (`track` DO message); everyone's menu
+  backdrop follows live; `start`/`rejoin-state` carry the index. Best
+  times are per-track (`kart3_best_<id>`, legacy key = coral).
+- Tracks: **Coral Cliffs** (sunny island, beach/palms) and **Volcano Bay**
+  (dusk caldera, spires + embers, longer + more technical: S-twist,
+  tight descent hairpin).
+
 - `CTRL` points `[x, z, y]` are scaled by `SC = 1.35`; elevation 0→31.
   Tunnel portals + jump location are found by `nearestSeg()` from landmark
   coords at build.
@@ -183,6 +196,10 @@ work, and don't regress these four seams.
 
 - **No spinouts, ever.** Hits = `bonkKart` (speed cut + hop, steering kept).
   Goo slows + wobbles but never removes control.
+- Live standings strip (`#raceStandings`, left edge): all 8 positions at
+  ~4Hz; local player gold, remote humans blue-highlighted, 🏁 when
+  finished. Friend-finish toasts fire host-side (onLapCrossed) and
+  client-side (snapshot finished transition). Results show +gap times.
 - Player starts 8th; rank-weighted items (leader pool is defense-only,
   global 30s `zapTimer` cooldown keeps ⚡ rare).
 - **Item roulette is tap-to-stop** (player roll 2.2s, AI 1.0s): the first

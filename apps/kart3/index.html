@@ -254,6 +254,22 @@
         .lob-row .rdy { font-size: 12px; font-weight: 900; color: #57e36a; opacity: 0.25; }
         .lob-row .rdy.on { opacity: 1; }
         .lob-empty { opacity: 0.45; font-size: 12px; font-style: italic; padding: 7px 12px; }
+        .track-card .tprev { height: 30px; border-radius: 8px; margin-bottom: 5px; border: 1px solid rgba(255,255,255,0.15); }
+        .cards.dim .card { pointer-events: none; }
+        #roomCode { pointer-events: auto; cursor: pointer; }
+
+        /* Live race standings (left edge): see your friends' positions */
+        #raceStandings { position: absolute; left: calc(env(safe-area-inset-left) + 12px);
+            top: calc(env(safe-area-inset-top) + 60px); display: flex; flex-direction: column; gap: 2px;
+            pointer-events: none; }
+        .rs-row { display: flex; align-items: center; gap: 5px; font-size: 10px; font-weight: 800;
+            padding: 2px 8px 2px 5px; border-radius: 8px; background: rgba(6,14,30,0.42);
+            border: 1px solid rgba(255,255,255,0.08); }
+        .rs-row .rp { width: 10px; text-align: right; font-style: italic; opacity: 0.85; }
+        .rs-row .rsw { width: 8px; height: 8px; border-radius: 50%; flex: none; }
+        .rs-row .rn { letter-spacing: 0.3px; max-width: 76px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .rs-row.human { border-color: rgba(143,214,255,0.45); background: rgba(20,46,84,0.6); }
+        .rs-row.me { border-color: rgba(255,213,74,0.6); background: rgba(255,213,74,0.18); }
         #readyBtn.on { background: linear-gradient(180deg, #8fffb0, #2fc860); box-shadow: 0 8px 0 #157a38, 0 14px 28px rgba(0,0,0,0.4); }
         .btn:disabled { opacity: 0.45; }
 
@@ -324,6 +340,7 @@
         <button id="pauseBtn">⏸</button>
         <div id="netInd">RELAY</div>
         <div id="posBig" class="pos-8">8<small>th</small></div>
+        <div id="raceStandings"></div>
         <div id="miniWrap"><canvas id="minimap" width="208" height="208"></canvas></div>
         <div id="boostWrap">
             <div id="boostHint">DRIFT!</div>
@@ -369,6 +386,8 @@
             <div class="menu-right">
                 <div class="section-label">Choose your driver</div>
                 <div class="cards" id="charPick"></div>
+                <div class="section-label">Track</div>
+                <div class="cards" id="trackPick"></div>
             </div>
         </div>
     </div>
@@ -379,7 +398,9 @@
             <div class="menu-left">
                 <div class="section-label">Room code</div>
                 <div id="roomCode">·····</div>
-                <div class="lobby-hint">Friends: open Kart 3 → enter this code → JOIN</div>
+                <div class="lobby-hint">Friends: open Kart 3 → enter this code → JOIN · tap code to copy</div>
+                <div class="section-label">Track</div>
+                <div class="cards" id="lobbyTracks"></div>
                 <button class="btn" id="readyBtn">READY!</button>
                 <button class="btn secondary" id="lobbyStartBtn">START RACE</button>
                 <div class="btn-row"><button class="btn secondary" id="leaveBtn">Leave room</button></div>
@@ -484,6 +505,7 @@
             lobbyScreen: $('lobbyScreen'), roomCode: $('roomCode'), lobbyList: $('lobbyList'),
             lobbyChars: $('lobbyChars'), readyBtn: $('readyBtn'), lobbyStartBtn: $('lobbyStartBtn'),
             leaveBtn: $('leaveBtn'), lobbyMsg: $('lobbyMsg'), netInd: $('netInd'),
+            trackPick: $('trackPick'), lobbyTracks: $('lobbyTracks'), raceStandings: $('raceStandings'),
             muteBtn: $('muteBtn'), itemBtn: $('itemBtn'), driftBtn: $('driftBtn'), pauseBtn: $('pauseBtn'),
             pauseScreen: $('pauseScreen'), resumeBtn: $('resumeBtn'), restartBtn: $('restartBtn'), quitBtn: $('quitBtn'),
             minimap: $('minimap'), stick: $('stick'), stickDot: $('stickDot'),
@@ -516,30 +538,75 @@
         const PAD_FRAC = 0.30;               // boost pad width as fraction of HALF_W
         const PAD_HALF = HALF_W * PAD_FRAC;
 
-        // Coral Cliffs Circuit — single hand-tuned loop with elevation:
-        // beach straight → coast sweep climbing → banked cliff bend → tunnel
-        // through the headland → crest-jump descent → hairpin → chicane → finish.
-        // [x, z, y] · SC scales the footprint (lap length) without touching elevation
+        // ---------- tracks ----------
+        // Each track: hand-tuned ctrl loop [x, z, y] (SC scales footprint),
+        // tunnel/jump landmarks, and a theme (every world color lives here).
         const SC = 1.35;
-        const CTRL = [
-            [0, -250, 0],        // start/finish — beach straight
-            [130, -248, 0],
-            [230, -190, 1],      // sweep right, leaving the beach
-            [272, -70, 8],       // coast climb
-            [258, 60, 18],       // banked cliff bend
-            [180, 150, 26],
-            [60, 195, 30],       // tunnel entrance
-            [-70, 205, 31],      // inside the headland
-            [-180, 165, 24],     // tunnel exit
-            [-250, 60, 14],      // high descent sweep
-            [-268, -60, 6],      // jump crest on this descent
-            [-210, -160, 1],     // hairpin back toward the shore
-            [-110, -215, 0],     // chicane out
-            [-40, -190, 0],      // chicane in
-        ].map((p) => [p[0] * SC, p[1] * SC, p[2]]);
-        const TUNNEL_IN = [60 * SC, 195 * SC];   // xz of portal ctrl points (resolved to samples at build)
-        const TUNNEL_OUT = [-180 * SC, 165 * SC];
-        const JUMP_AT = [-268 * SC, -60 * SC];   // ramp crest location
+        const scaled = (pts) => pts.map((p) => [p[0] * SC, p[1] * SC, p[2]]);
+        const TRACKS = [
+            {
+                id: 'coral', name: 'Coral Cliffs',
+                // beach straight → coast climb → banked cliff bend → tunnel
+                // through the headland → crest-jump descent → hairpin → chicane
+                ctrl: scaled([
+                    [0, -250, 0], [130, -248, 0], [230, -190, 1], [272, -70, 8],
+                    [258, 60, 18], [180, 150, 26], [60, 195, 30], [-70, 205, 31],
+                    [-180, 165, 24], [-250, 60, 14], [-268, -60, 6], [-210, -160, 1],
+                    [-110, -215, 0], [-40, -190, 0],
+                ]),
+                tunnelIn: [60 * SC, 195 * SC], tunnelOut: [-180 * SC, 165 * SC],
+                jumpAt: [-268 * SC, -60 * SC],
+                preview: 'linear-gradient(180deg,#7fc0ff,#55a843)',
+                theme: {
+                    skyTop: 0x1d6fe0, skyMid: 0x7fc0ff, skyBot: 0xeaf6ff,
+                    fog: 0xbfe2ff, cloud: 0xffffff, sun: 0xfff4c2, sunPos: [-500, 560, -420],
+                    hemiSky: 0xcfe8ff, hemiGround: 0x4a7a3a, hemiInt: 0.95,
+                    dirColor: 0xfff2d0, dirInt: 1.12, dirPos: [-200, 320, -160],
+                    waterTex: '#2a8fd6', deep: 0x0a3f72,
+                    grass1: 0x55a843, grass2: 0x70c050, sand: 0xe7cf96, rock: 0x8a6a4f,
+                    road: '#3c4250', lane: '#ffd54a', edge: '#e8ecf2',
+                    tube: 0x4a3a2c, shellRock: 0x8a6a4f, shellGrass: 0x55a843, portal: 0x5a4636,
+                    foliage: 'palms', trunk: 0x9a6a3a, leaf1: 0x2f9a44, leaf2: 0x3db854,
+                    shrubs: [0x2f7a3a, 0x3a8a44, 0x276a34],
+                    rocks: [0x8a6a4f, 0x7a5f48, 0x9a8a72],
+                    beach: true, embers: 0,
+                },
+            },
+            {
+                id: 'volcano', name: 'Volcano Bay',
+                // ash shore → inland S-twist climbing → high tunnel through the
+                // caldera → tight descent hairpin → jump over the lava shelf →
+                // chicane home. More technical than Coral Cliffs.
+                ctrl: scaled([
+                    [0, -240, 0], [150, -230, 2], [245, -150, 6], [240, -20, 14],
+                    [150, 30, 18], [205, 135, 26], [80, 205, 32], [-60, 215, 34],
+                    [-185, 170, 26], [-145, 75, 18], [-235, 5, 12], [-250, -120, 5],
+                    [-130, -195, 1], [-55, -150, 2], [-15, -220, 0],
+                ]),
+                tunnelIn: [80 * SC, 205 * SC], tunnelOut: [-185 * SC, 170 * SC],
+                jumpAt: [-250 * SC, -120 * SC],
+                preview: 'linear-gradient(180deg,#7a2a4a,#3a3632)',
+                theme: {
+                    skyTop: 0x241038, skyMid: 0x7a2a4a, skyBot: 0xff9a4a,
+                    fog: 0x5a3046, cloud: 0xd8a0b0, sun: 0xff8a4a, sunPos: [-520, 380, 340],
+                    hemiSky: 0xc88a96, hemiGround: 0x3a2a2a, hemiInt: 0.85,
+                    dirColor: 0xffb070, dirInt: 1.0, dirPos: [-220, 260, 200],
+                    waterTex: '#1a5a6a', deep: 0x06222e,
+                    grass1: 0x4f5a44, grass2: 0x68724e, sand: 0x4a423c, rock: 0x6a4a44,
+                    road: '#2f333d', lane: '#ff9a4a', edge: '#d8dde6',
+                    tube: 0x3a2c28, shellRock: 0x5a4038, shellGrass: 0x4f5a44, portal: 0x46322c,
+                    foliage: 'spires', trunk: 0x4a3a36, leaf1: 0x5a4a44, leaf2: 0x6a564e,
+                    shrubs: [0x4a5440, 0x3f4938, 0x55604a],
+                    rocks: [0x5a4038, 0x4a3530, 0x6a564e],
+                    beach: false, embers: 0xff5a2a,
+                },
+            },
+        ];
+        // per-load track state (set by loadTrack)
+        let currentTrackIdx = 0;
+        let CTRL = TRACKS[0].ctrl, TUNNEL_IN = TRACKS[0].tunnelIn,
+            TUNNEL_OUT = TRACKS[0].tunnelOut, JUMP_AT = TRACKS[0].jumpAt,
+            THEME = TRACKS[0].theme;
 
         // size scales the driver figure; flair is each character's signature look
         const CHARS = [
@@ -572,6 +639,7 @@
         let karts = [], player;
         let particles;
         let waterMat = null, crowdPts = null;
+        let world = null;                    // all static track geometry (rebuilt per track)
         let selectedCharIdx = 0;
 
         // minimap
@@ -593,15 +661,22 @@
         let musicTimer = null, musicStep = 0, musicGain = null, noiseBuf = null;
 
         // ---------- storage ----------
+        function bestKey() { return 'kart3_best_' + TRACKS[currentTrackIdx].id; }
         function loadBest() {
-            try { const v = JSON.parse(localStorage.getItem('kart3_best')); return v && typeof v === 'object' ? v : null; }
-            catch (e) { return null; }
+            try {
+                // legacy fallback: pre-multi-track records belong to Coral Cliffs
+                const raw = localStorage.getItem(bestKey()) || (currentTrackIdx === 0 ? localStorage.getItem('kart3_best') : null);
+                const v = JSON.parse(raw);
+                return v && typeof v === 'object' ? v : null;
+            } catch (e) { return null; }
         }
-        function saveBest(data) { try { localStorage.setItem('kart3_best', JSON.stringify(data)); } catch (e) {} }
+        function saveBest(data) { try { localStorage.setItem(bestKey(), JSON.stringify(data)); } catch (e) {} }
         function loadPrefs() {
             try {
                 const c = parseInt(localStorage.getItem('kart3_char'), 10);
                 if (!isNaN(c) && CHARS[c]) selectedCharIdx = c;
+                const tr = parseInt(localStorage.getItem('kart3_track'), 10);
+                if (!isNaN(tr) && TRACKS[tr]) currentTrackIdx = tr;
                 muted = localStorage.getItem('kart3_muted') === '1';
             } catch (e) {}
         }
@@ -638,7 +713,7 @@
             lastSnapTick: 0,           // dedupe (snaps arrive on both transports)
             lastInputSent: 0,
             pingTimer: 0, pingMs: 0,
-            racing: false, rejoinTries: 0,
+            racing: false, rejoinTries: 0, track: 0,
             rtc: {},                   // pid → {pc, ch, open} WebRTC fast path
             _lastRoll: 0, _lastItem: null, _itemKey: '',
         };
@@ -829,6 +904,14 @@
                     }
                     const hostP = net.players.find((p) => p.host);
                     if (hostP) net.hostId = hostP.id;
+                    if (typeof msg.track === 'number' && TRACKS[msg.track]) {
+                        net.track = msg.track;
+                        // live backdrop: everyone's menu world follows the host's pick
+                        if (!net.racing && state === 'menu' && msg.track !== currentTrackIdx) {
+                            loadTrack(msg.track);
+                            resetRace();
+                        }
+                    }
                     // host pre-warms a P2P channel to every client from the lobby
                     if (net.isHost && !net.racing) {
                         for (const p of net.players) if (p.id !== net.myId) rtcInitiate(p.id);
@@ -842,7 +925,7 @@
                     if (state === 'menu') renderLobby();
                     break;
                 case 'start':
-                    startOnlineRace(msg.seed, msg.players);
+                    startOnlineRace(msg.seed, msg.players, false, msg.track);
                     break;
                 case 'input':
                     net.remoteCtrl[msg.from] = msg;
@@ -864,7 +947,7 @@
                     if (net.mode === 'host' && net.racing) {
                         hostConvertToRemote(msg.id);
                         wsSend({ t: 'event', to: msg.id, e: 'rejoin-state',
-                            seed: raceSeed, players: net.racePlayers, snap: netSnapshot() });
+                            seed: raceSeed, players: net.racePlayers, track: currentTrackIdx, snap: netSnapshot() });
                         showToast('They’re back!', '#9affc0');
                     }
                     break;
@@ -931,6 +1014,18 @@
                 });
                 dom.lobbyChars.appendChild(card);
             });
+            dom.lobbyTracks.innerHTML = '';
+            dom.lobbyTracks.classList.toggle('dim', !net.isHost);
+            TRACKS.forEach((tr, i) => {
+                const card = document.createElement('div');
+                card.className = 'card track-card' + (i === net.track ? ' active' : '');
+                card.innerHTML = '<div class="tprev" style="background:' + tr.preview + '"></div>' +
+                    '<div class="cname">' + tr.name + '</div>';
+                card.addEventListener('click', () => {
+                    if (net.isHost && net.ws && net.connected) net.ws.send(JSON.stringify({ t: 'track', track: i }));
+                });
+                dom.lobbyTracks.appendChild(card);
+            });
             dom.readyBtn.style.display = net.isHost ? 'none' : '';
             dom.readyBtn.textContent = net.myReady ? '✓ READY' : 'READY!';
             dom.readyBtn.classList.toggle('on', net.myReady);
@@ -942,7 +1037,8 @@
         }
 
         // ---------- race wiring ----------
-        function startOnlineRace(seed, players, skipCountdown) {
+        function startOnlineRace(seed, players, skipCountdown, track) {
+            if (typeof track === 'number' && TRACKS[track] && track !== currentTrackIdx) loadTrack(track);
             raceSeed = (seed >>> 0) || 1;
             net.players = players;
             net.racePlayers = players;
@@ -981,7 +1077,7 @@
         // client got its seat back mid-race: rebuild if cold, then adopt the
         // host's authoritative state wholesale
         function applyRejoinState(msg) {
-            if (!net.racing) startOnlineRace(msg.seed, msg.players, true);
+            if (!net.racing) startOnlineRace(msg.seed, msg.players, true, msg.track);
             netRestore(msg.snap);
             state = 'racing';
             dom.countdown.classList.remove('on');
@@ -1189,6 +1285,9 @@
                     k.shrinkT = sb.shrinkT; k.boostTimer = sb.boostTimer;
                     k.drifting = sb.driftDir !== 0; k.driftDir = sb.driftDir || 0; k.driftRamp = 1;
                     k.grounded = sb.grounded;
+                    if (sb.finished && !k.finished && k.kind === 'remote') {
+                        showToast((k.dispName || 'Racer') + ' finished!', '#9affc0');
+                    }
                     k.finished = sb.finished; k.finishTime = sb.finishTime;
                     k.seg = nearestSegNear(k);
                     const c = centerline[k.seg], n = normals[k.seg];
@@ -1523,8 +1622,8 @@
             geo.rotateX(-Math.PI / 2);
             const pa = geo.attributes.position;
             const cols = [];
-            const grass1 = new THREE.Color(0x55a843), grass2 = new THREE.Color(0x70c050);
-            const sand = new THREE.Color(0xe7cf96), rock = new THREE.Color(0x8a6a4f);
+            const grass1 = new THREE.Color(THEME.grass1), grass2 = new THREE.Color(THEME.grass2);
+            const sand = new THREE.Color(THEME.sand), rock = new THREE.Color(THEME.rock);
             const tmp = new THREE.Color();
             for (let i = 0; i < pa.count; i++) {
                 const x = pa.getX(i), z = pa.getZ(i);
@@ -1539,12 +1638,12 @@
             geo.setAttribute('color', new THREE.Float32BufferAttribute(cols, 3));
             geo.computeVertexNormals();
             const mesh = new THREE.Mesh(geo, new THREE.MeshLambertMaterial({ vertexColors: true }));
-            scene.add(mesh);
+            world.add(mesh);
         }
         function buildWater() {
             const cv = document.createElement('canvas'); cv.width = 128; cv.height = 128;
             const g = cv.getContext('2d');
-            g.fillStyle = '#2a8fd6'; g.fillRect(0, 0, 128, 128);
+            g.fillStyle = THEME.waterTex; g.fillRect(0, 0, 128, 128);
             g.strokeStyle = 'rgba(255,255,255,0.25)'; g.lineWidth = 3;
             for (let i = 0; i < 6; i++) {
                 g.beginPath();
@@ -1560,11 +1659,11 @@
             waterMat = new THREE.MeshBasicMaterial({ map: tex, transparent: true, opacity: 0.88 });
             const water = new THREE.Mesh(new THREE.CircleGeometry(1700, 48), waterMat);
             water.rotation.x = -Math.PI / 2; water.position.y = -1.6;
-            scene.add(water);
+            world.add(water);
             const deep = new THREE.Mesh(new THREE.CircleGeometry(1700, 48),
-                new THREE.MeshBasicMaterial({ color: 0x0a3f72 }));
+                new THREE.MeshBasicMaterial({ color: THEME.deep }));
             deep.rotation.x = -Math.PI / 2; deep.position.y = -2.4;
-            scene.add(deep);
+            world.add(deep);
         }
 
         function buildSky() {
@@ -1572,9 +1671,9 @@
             const mat = new THREE.ShaderMaterial({
                 side: THREE.BackSide, fog: false, depthWrite: false,
                 uniforms: {
-                    top: { value: new THREE.Color(0x1d6fe0) },
-                    mid: { value: new THREE.Color(0x7fc0ff) },
-                    bot: { value: new THREE.Color(0xeaf6ff) },
+                    top: { value: new THREE.Color(THEME.skyTop) },
+                    mid: { value: new THREE.Color(THEME.skyMid) },
+                    bot: { value: new THREE.Color(THEME.skyBot) },
                 },
                 vertexShader: 'varying vec3 vP; void main(){ vP = position; gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.0); }',
                 fragmentShader: 'varying vec3 vP; uniform vec3 top; uniform vec3 mid; uniform vec3 bot;\n' +
@@ -1585,12 +1684,12 @@
             });
             const sky = new THREE.Mesh(geo, mat);
             sky.renderOrder = -10;
-            scene.add(sky);
+            world.add(sky);
 
             const sunMesh = new THREE.Mesh(new THREE.CircleGeometry(70, 32),
-                new THREE.MeshBasicMaterial({ color: 0xfff4c2, fog: false }));
-            sunMesh.position.set(-500, 560, -420); sunMesh.lookAt(0, 0, 0);
-            scene.add(sunMesh);
+                new THREE.MeshBasicMaterial({ color: THEME.sun, fog: false }));
+            sunMesh.position.set(THEME.sunPos[0], THEME.sunPos[1], THEME.sunPos[2]); sunMesh.lookAt(0, 0, 0);
+            world.add(sunMesh);
 
             // clouds: squashed spheres merged into one unlit mesh
             const parts = [];
@@ -1600,19 +1699,19 @@
                 const cx = Math.cos(a) * d, cz = Math.sin(a) * d;
                 for (let j = 0; j < 3; j++) {
                     const r = rand(26, 52);
-                    parts.push({ geo: cg, color: 0xffffff, matrix: mat4(cx + rand(-40, 40), y + rand(-8, 8), cz + rand(-40, 40), 0, r, r * 0.42, r) });
+                    parts.push({ geo: cg, color: THEME.cloud, matrix: mat4(cx + rand(-40, 40), y + rand(-8, 8), cz + rand(-40, 40), 0, r, r * 0.42, r) });
                 }
             }
             const cloudMesh = new THREE.Mesh(bakeMerge(parts), new THREE.MeshBasicMaterial({ vertexColors: true, fog: false }));
-            scene.add(cloudMesh);
+            world.add(cloudMesh);
 
-            scene.fog = new THREE.Fog(0xbfe2ff, 300, 980);
-            scene.background = new THREE.Color(0xbfe2ff);
+            scene.fog = new THREE.Fog(THEME.fog, 300, 980);
+            scene.background = new THREE.Color(THEME.fog);
 
-            scene.add(new THREE.HemisphereLight(0xcfe8ff, 0x4a7a3a, 0.95));
-            const sun = new THREE.DirectionalLight(0xfff2d0, 1.12);
-            sun.position.set(-200, 320, -160);
-            scene.add(sun);
+            world.add(new THREE.HemisphereLight(THEME.hemiSky, THEME.hemiGround, THEME.hemiInt));
+            const sun = new THREE.DirectionalLight(THEME.dirColor, THEME.dirInt);
+            sun.position.set(THEME.dirPos[0], THEME.dirPos[1], THEME.dirPos[2]);
+            world.add(sun);
         }
 
         // ===================================================================
@@ -1621,7 +1720,7 @@
         function makeRoadTexture() {
             const cv = document.createElement('canvas'); cv.width = 128; cv.height = 256;
             const g = cv.getContext('2d');
-            g.fillStyle = '#3c4250'; g.fillRect(0, 0, 128, 256);
+            g.fillStyle = THEME.road; g.fillRect(0, 0, 128, 256);
             for (let i = 0; i < 700; i++) {
                 g.fillStyle = 'rgba(0,0,0,' + (Math.random() * 0.09) + ')';
                 g.fillRect(Math.random() * 128, Math.random() * 256, 2, 2);
@@ -1630,8 +1729,8 @@
                 g.fillStyle = 'rgba(255,255,255,' + (Math.random() * 0.04) + ')';
                 g.fillRect(Math.random() * 128, Math.random() * 256, 2, 2);
             }
-            g.fillStyle = '#e8ecf2'; g.fillRect(3, 0, 4, 256); g.fillRect(121, 0, 4, 256);
-            g.fillStyle = '#ffd54a';
+            g.fillStyle = THEME.edge; g.fillRect(3, 0, 4, 256); g.fillRect(121, 0, 4, 256);
+            g.fillStyle = THEME.lane;
             for (let y = 0; y < 256; y += 64) g.fillRect(61, y, 5, 36);
             const tex = new THREE.CanvasTexture(cv);
             tex.wrapS = tex.wrapT = THREE.RepeatWrapping; tex.anisotropy = 4;
@@ -1657,7 +1756,7 @@
             // DoubleSide: ribbon winding faces down (Kart 2 lesson)
             const mesh = new THREE.Mesh(geo, new THREE.MeshLambertMaterial({ map: makeRoadTexture(), side: THREE.DoubleSide }));
             mesh.renderOrder = 1;
-            scene.add(mesh);
+            world.add(mesh);
             buildCurbs();
         }
         function buildCurbs() {
@@ -1687,7 +1786,7 @@
                 vertexColors: true, side: THREE.DoubleSide,
                 polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -1 }));
             mesh.renderOrder = 2;
-            scene.add(mesh);
+            world.add(mesh);
         }
 
         // Road decals (start line, boost pads) must be ribbons that follow the
@@ -1716,7 +1815,7 @@
                 map: tex, side: THREE.DoubleSide,
                 polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2 }));
             mesh.renderOrder = 3;
-            scene.add(mesh);
+            world.add(mesh);
             return mesh;
         }
 
@@ -1779,7 +1878,7 @@
             geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
             geo.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
             geo.setIndex(idx); geo.computeVertexNormals();
-            scene.add(new THREE.Mesh(geo, mat));
+            world.add(new THREE.Mesh(geo, mat));
         }
 
         function buildTunnel() {
@@ -1807,7 +1906,7 @@
             const geo = new THREE.BufferGeometry();
             geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
             geo.setIndex(idx); geo.computeVertexNormals();
-            scene.add(new THREE.Mesh(geo, new THREE.MeshLambertMaterial({ color: 0x4a3a2c, side: THREE.DoubleSide })));
+            world.add(new THREE.Mesh(geo, new THREE.MeshLambertMaterial({ color: THEME.tube, side: THREE.DoubleSide })));
 
             // headland: a rock shell over the tube (grassy on top) with end
             // facades connecting the shell rim to the tube mouth — so the
@@ -1825,7 +1924,7 @@
                 return out;
             };
             const spos = [], scol = [], sidx = [];
-            const rockC = new THREE.Color(0x8a6a4f), grassC = new THREE.Color(0x55a843), tmpC = new THREE.Color();
+            const rockC = new THREE.Color(THEME.shellRock), grassC = new THREE.Color(THEME.shellGrass), tmpC = new THREE.Color();
             const ssecs = [];
             for (let i = tunnelA; i <= tunnelB; i += 4) ssecs.push(i);
             if (ssecs[ssecs.length - 1] !== tunnelB) ssecs.push(tunnelB);
@@ -1865,7 +1964,7 @@
             sgeo.setAttribute('position', new THREE.Float32BufferAttribute(spos, 3));
             sgeo.setAttribute('color', new THREE.Float32BufferAttribute(scol, 3));
             sgeo.setIndex(sidx); sgeo.computeVertexNormals();
-            scene.add(new THREE.Mesh(sgeo, new THREE.MeshLambertMaterial({ vertexColors: true, side: THREE.DoubleSide })));
+            world.add(new THREE.Mesh(sgeo, new THREE.MeshLambertMaterial({ vertexColors: true, side: THREE.DoubleSide })));
 
             // glowing lamps along the ceiling + real lights (brighter near the
             // mouths so the interior visibly reads from outside)
@@ -1875,23 +1974,23 @@
                 const c = centerline[i];
                 lampParts.push({ geo: lampGeo, color: 0xffd88a, matrix: mat4(c.x, c.y + H - 0.6, c.z, 0) });
             }
-            scene.add(new THREE.Mesh(bakeMerge(lampParts), new THREE.MeshBasicMaterial({ vertexColors: true })));
+            world.add(new THREE.Mesh(bakeMerge(lampParts), new THREE.MeshBasicMaterial({ vertexColors: true })));
             for (const f of [0.06, 0.28, 0.5, 0.72, 0.94]) {
                 const i = Math.floor(lerp(tunnelA, tunnelB, f));
                 const c = centerline[i];
                 const pl = new THREE.PointLight(0xffc070, 1.1, 120);
                 pl.position.set(c.x, c.y + H - 3, c.z);
-                scene.add(pl);
+                world.add(pl);
             }
 
             // portal rim trim
-            const rockMat = new THREE.MeshLambertMaterial({ color: 0x5a4636 });
+            const rockMat = new THREE.MeshLambertMaterial({ color: THEME.portal });
             for (const i of [tunnelA, tunnelB]) {
                 const c = centerline[i], t = tangents[i];
                 const ring = new THREE.Mesh(new THREE.TorusGeometry(R + 1.2, 2.2, 8, 18, Math.PI), rockMat);
                 ring.position.set(c.x, c.y + 1.2, c.z);
                 ring.lookAt(c.x + t.x, c.y + 1.2, c.z + t.z);
-                scene.add(ring);
+                world.add(ring);
             }
         }
 
@@ -1923,7 +2022,7 @@
                 new THREE.MeshBasicMaterial({ map: new THREE.CanvasTexture(bcv) }));
             banner.position.set(c.x - t.x * 1.35, c.y + postH, c.z - t.z * 1.35);
             banner.lookAt(c.x - t.x * 12, c.y + postH, c.z - t.z * 12);
-            scene.add(banner);
+            world.add(banner);
 
             // grandstands on the inland side of the start straight
             const standSeg = [Math.floor(N * 0.965), 26];
@@ -1960,7 +2059,7 @@
             cgeo.setAttribute('position', new THREE.Float32BufferAttribute(cpos, 3));
             cgeo.setAttribute('color', new THREE.Float32BufferAttribute(ccol, 3));
             crowdPts = new THREE.Points(cgeo, new THREE.PointsMaterial({ vertexColors: true, size: 1.5, sizeAttenuation: true }));
-            scene.add(crowdPts);
+            world.add(crowdPts);
 
             // flag poles along the start straight
             const flagGeo = new THREE.PlaneGeometry(2.6, 1.6);
@@ -1989,20 +2088,33 @@
             const umbTop = new THREE.ConeGeometry(3.2, 1.4, 10);
             const buoyGeo = new THREE.SphereGeometry(1.6, 10, 8);
 
+            const spireGeo = new THREE.ConeGeometry(1.6, 4, 5);
+            const emberGeo = new THREE.SphereGeometry(0.9, 6, 5);
             function palmAt(x, z, sc) {
                 const y = terrainY(x, z);
                 if (y < 0) return;
+                if (THEME.foliage === 'spires') {
+                    // jagged volcanic spire, sometimes with an ember glow at its base
+                    const h = rand(7, 18) * sc;
+                    parts.push({ geo: spireGeo, color: pick(THEME.rocks),
+                        matrix: mat4(x, y + h * 0.45, z, rand(0, Math.PI * 2), rand(1.5, 2.8), h / 4, rand(1.5, 2.8), 0, rand(-0.08, 0.08)) });
+                    if (THEME.embers && rng() < 0.4) {
+                        basicParts.push({ geo: emberGeo, color: THEME.embers,
+                            matrix: mat4(x + rand(-2.5, 2.5), y + rand(0.4, 1.0), z + rand(-2.5, 2.5), 0, rand(0.6, 1.4)) });
+                    }
+                    return;
+                }
                 const lean = rand(-0.16, 0.16), ry = rand(0, Math.PI * 2);
                 // 3 stacked trunk segments with growing lean
                 for (let s = 0; s < 3; s++) {
-                    parts.push({ geo: trunkGeo, color: 0x9a6a3a,
+                    parts.push({ geo: trunkGeo, color: THEME.trunk,
                         matrix: mat4(x + Math.sin(ry) * lean * s * 4 * sc, y + (2.2 + s * 4.4) * sc, z + Math.cos(ry) * lean * s * 4 * sc, ry, sc * (1 - s * 0.13), sc, sc * (1 - s * 0.13), 0, lean * (s + 1) * 0.5) });
                 }
                 const tx = x + Math.sin(ry) * lean * 9 * sc, tz = z + Math.cos(ry) * lean * 9 * sc;
                 const ty = y + 13.4 * sc;
                 for (let l = 0; l < 6; l++) {
                     const a = (l / 6) * Math.PI * 2 + ry;
-                    parts.push({ geo: leafGeo, color: l % 2 ? 0x2f9a44 : 0x3db854,
+                    parts.push({ geo: leafGeo, color: l % 2 ? THEME.leaf1 : THEME.leaf2,
                         matrix: mat4(tx + Math.sin(a) * 2.8 * sc, ty, tz + Math.cos(a) * 2.8 * sc, a, sc, sc, sc, 0.42, 0) });
                 }
             }
@@ -2019,21 +2131,21 @@
                     if (ty < -0.5) continue;
                     if (c.y < 5 && ty < 4) {
                         if (rng() < 0.75) palmAt(x, z, rand(0.75, 1.25));
-                        else parts.push({ geo: rockGeo, color: 0x9a8a72, matrix: mat4(x, ty + 0.5, z, rand(0, 3), rand(1.2, 2.6)) });
+                        else parts.push({ geo: rockGeo, color: THEME.rocks[2], matrix: mat4(x, ty + 0.5, z, rand(0, 3), rand(1.2, 2.6)) });
                     } else {
                         if (rng() < 0.55) {
                             const s = rand(1.6, 3.4);
-                            parts.push({ geo: shrubGeo, color: pick([0x2f7a3a, 0x3a8a44, 0x276a34]),
+                            parts.push({ geo: shrubGeo, color: pick(THEME.shrubs),
                                 matrix: mat4(x, ty + s * 0.45, z, 0, s, s * 0.75, s) });
                         } else {
-                            parts.push({ geo: rockGeo, color: pick([0x8a6a4f, 0x7a5f48, 0x9a8a72]),
+                            parts.push({ geo: rockGeo, color: pick(THEME.rocks),
                                 matrix: mat4(x, ty + 0.6, z, rand(0, 3), rand(1.4, 3.2)) });
                         }
                     }
                 }
             }
             // beach umbrellas near the start straight, sea side
-            for (let i = 0; i < 6; i++) {
+            for (let i = 0; i < (THEME.beach ? 6 : 0); i++) {
                 const sg = (Math.floor(N * 0.94) + i * 14) % N;
                 const c = centerline[sg], n = normals[sg];
                 const x = c.x - n.x * (HALF_W + rand(14, 30)), z = c.z - n.z * (HALF_W + rand(14, 30));
@@ -2049,10 +2161,10 @@
             }
 
             const mesh = new THREE.Mesh(bakeMerge(parts), new THREE.MeshLambertMaterial({ vertexColors: true }));
-            scene.add(mesh);
+            world.add(mesh);
             if (basicParts.length) {
                 const bm = new THREE.Mesh(bakeMerge(basicParts), new THREE.MeshBasicMaterial({ vertexColors: true, side: THREE.DoubleSide }));
-                scene.add(bm);
+                world.add(bm);
             }
 
             // hot-air balloons (animated)
@@ -2065,7 +2177,7 @@
                 basket.position.y = -13; grp.add(basket);
                 const a = rand(0, Math.PI * 2), d = rand(220, 420);
                 grp.position.set(Math.cos(a) * d, rand(60, 110), Math.sin(a) * d);
-                scene.add(grp);
+                world.add(grp);
                 spinners.push({ obj: grp, speed: 0, bob: grp.position.y, bobAmp: rand(3, 7), drift: rand(0.5, 1.5) });
             }
         }
@@ -2129,7 +2241,7 @@
                     const bx = c.x + n.x * lane, bz = c.z + n.z * lane;
                     const by = roadY(seg, lane) + 2.9;
                     box.position.set(bx, by, bz);
-                    scene.add(box);
+                    world.add(box);
                     itemBoxes.push({ group: box, seg, lat: lane, x: bx, z: bz, active: true, respawn: 0, baseY: by });
                 }
             }
@@ -2154,7 +2266,22 @@
             return { x: W / 2 + (x - cx) * s, y: W / 2 + (z - cz) * s };
         }
 
-        function buildWorld() {
+        // Dispose the current world and build the requested track. Everything
+        // static lives under `world` (one Group) so a track switch is one
+        // remove + rebuild; karts/particles/ghosts live directly in the scene.
+        function loadTrack(idx) {
+            currentTrackIdx = idx;
+            const def = TRACKS[idx];
+            CTRL = def.ctrl;
+            TUNNEL_IN = def.tunnelIn; TUNNEL_OUT = def.tunnelOut; JUMP_AT = def.jumpAt;
+            THEME = def.theme;
+            try { localStorage.setItem('kart3_track', idx); } catch (e) {}
+            if (world) { scene.remove(world); disposeObject(world); }
+            world = new THREE.Group();
+            scene.add(world);
+            spinners = []; boostPads = []; itemBoxes = [];
+            clearProjectiles(); clearHazards(); clearGhosts();
+            seedRng(WORLD_SEED + idx * 7919);   // every client builds this track identically
             buildCenterline();
             buildSky();
             buildTerrain();
@@ -2473,6 +2600,7 @@
             }
             for (const b of itemBoxes) { b.active = true; b.respawn = 0; b.group.visible = true; }
             prevPlayerRank = NUM_KARTS;
+            rebuildStandingsHud();
             updateItemButton();
             updateCamera(true);
         }
@@ -2525,6 +2653,7 @@
                 } else {
                     k.finished = true; k.finishTime = raceClock;
                     if (k.isPlayer) finishRace();
+                    else if (k.kind === 'remote') showToast((k.dispName || 'Racer') + ' finished!', '#9affc0');
                 }
             }
             if (k.isPlayer && !k.finished) {
@@ -3255,6 +3384,29 @@
             for (let i = 0; i < sorted.length; i++) sorted[i].rank = i + 1;
         }
 
+        // live standings strip: position, swatch, name — friends highlighted
+        let standingsEls = [], standThrottle = 0;
+        function rebuildStandingsHud() {
+            dom.raceStandings.innerHTML = '';
+            standingsEls = karts.map(() => {
+                const d = document.createElement('div');
+                d.className = 'rs-row';
+                dom.raceStandings.appendChild(d);
+                return d;
+            });
+        }
+        function updateRaceStandings() {
+            if (standingsEls.length !== karts.length) rebuildStandingsHud();
+            const sorted = karts.slice().sort((a, b) => a.rank - b.rank);
+            for (let i = 0; i < sorted.length; i++) {
+                const k = sorted[i], el = standingsEls[i];
+                el.className = 'rs-row' + (k.isPlayer ? ' me' : (k.kind === 'remote' ? ' human' : ''));
+                el.innerHTML = '<span class="rp">' + k.rank + '</span>' +
+                    '<span class="rsw" style="background:' + hx(k.char.body) + '"></span>' +
+                    '<span class="rn">' + (k.dispName || k.char.name) + (k.finished ? ' \ud83c\udfc1' : '') + '</span>';
+            }
+        }
+
         const SUFFIX = ['', 'st', 'nd', 'rd', 'th', 'th', 'th', 'th', 'th'];
         function updateHUD() {
             dom.lapNum.textContent = clamp(player.laps + 1, 1, TOTAL_LAPS);
@@ -3283,6 +3435,9 @@
 
             miniThrottle += 1;
             if (miniThrottle >= 2) { miniThrottle = 0; drawMinimap(); }
+
+            standThrottle += 1;
+            if (standThrottle >= 15) { standThrottle = 0; updateRaceStandings(); }
 
             if (netActive() && net.racing) {
                 let label, p2p = false;
@@ -3729,6 +3884,13 @@
 
             // ---- online controls ----
             dom.createRoomBtn.addEventListener('click', createRoom);
+            dom.roomCode.addEventListener('click', () => {
+                if (!net.code) return;
+                try { navigator.clipboard.writeText(net.code); } catch (e) {}
+                dom.lobbyMsg.style.color = '#9affc0';
+                dom.lobbyMsg.textContent = 'Code ' + net.code + ' copied!';
+                setTimeout(() => { dom.lobbyMsg.textContent = ''; dom.lobbyMsg.style.color = ''; }, 1800);
+            });
             dom.joinRoomBtn.addEventListener('click', () => joinRoom(dom.codeInput.value));
             dom.codeInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') joinRoom(dom.codeInput.value); });
             dom.readyBtn.addEventListener('click', () => {
@@ -3773,6 +3935,18 @@
                     buildKarts(); resetRace();
                 });
                 dom.charPick.appendChild(card);
+            });
+            dom.trackPick.innerHTML = '';
+            TRACKS.forEach((tr, i) => {
+                const card = document.createElement('div');
+                card.className = 'card track-card' + (i === currentTrackIdx ? ' active' : '');
+                card.innerHTML = '<div class="tprev" style="background:' + tr.preview + '"></div>' +
+                    '<div class="cname">' + tr.name + '</div>';
+                card.addEventListener('click', () => {
+                    if (i !== currentTrackIdx) { loadTrack(i); resetRace(); }
+                    buildSelectionUI();
+                });
+                dom.trackPick.appendChild(card);
             });
             const best = loadBest();
             dom.bestLine.textContent = best ? ('Best ' + fmtTime(best.total) + ' · Lap ' + fmtTime(best.lap)) : 'No record yet';
@@ -3882,6 +4056,7 @@
 
             // standings table (projected times for karts still on track)
             const sorted = karts.slice().sort((a, b) => projectedFinish(a) - projectedFinish(b));
+            const t0 = projectedFinish(sorted[0]);
             dom.standings.innerHTML = '';
             sorted.forEach((k, i) => {
                 const row = document.createElement('div');
@@ -3889,7 +4064,7 @@
                 row.innerHTML = '<span class="rk">' + (i + 1) + '</span>' +
                     '<span class="sw" style="background:' + hx(k.char.body) + '"></span>' +
                     '<span class="nm">' + (k.dispName || k.char.name) + (k.isPlayer ? ' (you)' : '') + '</span>' +
-                    '<span class="tm">' + fmtTime(projectedFinish(k)) + '</span>';
+                    '<span class="tm">' + (i === 0 ? fmtTime(t0) : '+' + (projectedFinish(k) - t0).toFixed(1)) + '</span>';
                 dom.standings.appendChild(row);
             });
             dom.againBtn.textContent = netActive() ? 'BACK TO LOBBY' : 'RACE AGAIN';
@@ -4037,10 +4212,9 @@
         // ===================================================================
         function boot() {
             loadPrefs();
-            seedRng(WORLD_SEED);   // deterministic island: every client builds the same world
             initThree();
             initKartGeos();
-            buildWorld();
+            loadTrack(currentTrackIdx);
             buildKarts();
             setupInput();
             buildSelectionUI();
