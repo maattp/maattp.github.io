@@ -1,0 +1,16 @@
+{
+  "name": "Kart 3 — Coral Cliffs GP",
+  "short_name": "Kart 3",
+  "description": "Landscape kart racing — 8 karts, items, drifting, and online play with friends.",
+  "start_url": "/apps/kart3/",
+  "scope": "/apps/kart3/",
+  "display": "fullscreen",
+  "orientation": "landscape",
+  "background_color": "#071a2e",
+  "theme_color": "#071a2e",
+  "icons": [
+    { "src": "icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}
