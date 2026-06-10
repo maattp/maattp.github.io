@@ -498,7 +498,11 @@
         const ACCEL_TAPER = 0.55;            // fraction of accel lost as speed→cap
         const BRAKE = 105;
         const BOOST_CAP = 138;
-        const BOOST_FLOOR = 120;             // boosting at least hits this
+        // Boosts are one-shot KICKS (speed += kick, at least `floor`) plus a
+        // temporary cap window (boostTimer opens cap to BOOST_CAP). There is
+        // deliberately NO per-tick speed floor — the old floor re-warped every
+        // boost to 120 each tick, which made chained boost pads a no-op and
+        // every boost source feel identically violent.
         const TURN_BASE = 2.4;               // yaw rate (rad/s) at standstill…
         const TURN_FADE = 0.28;              // …fading by this fraction at MAX_SPEED
         const KART_RADIUS = 2.9;
@@ -1067,7 +1071,6 @@
             }
             if (k.drifting && k.grounded && k.speed > 25) spawnRearSpark(k, 0x4ad6ff, 5);
             if (k.boostTimer > 0) spawnRearSpark(k, 0xff7a3c, 7);
-            syncKartMesh(k, false, dt);
         }
 
         // host → everyone: compact per-tick state, dual-sent over the WS relay
@@ -1245,6 +1248,8 @@
             simAcc += dt;
             let steps = 0;
             while (simAcc >= SIM_DT && steps < 5) {
+                player._px = player.pos.x; player._pz = player.pos.z;
+                player._py = player.y; player._pth = player.theta;
                 updateKart(player, SIM_DT);
                 // soft push-apart vs interpolated karts (feel only; host decides truth)
                 for (const o of karts) {
@@ -2400,11 +2405,12 @@
                     ctrl: { steer: 0, brake: false, drift: false, fire: false },
                     statSpeed: ch.speed, statAccel: ch.accel, statHandling: ch.handling,
                     pos: new THREE.Vector3(), y: 0, vy: 0, grounded: true, lastVR: 0,
+                    _px: 0, _pz: 0, _py: 0, _pth: null,
                     theta: 0, speed: 0, brake: false, groundY: 0,
                     seg: 0, u: 0, laps: 0, progress: 0, rank: i + 1,
                     lateralSigned: 0, lateral: 0,
                     drifting: false, driftDir: 0, driftCharge: 0, driftRamp: 0,
-                    boostTimer: 0, hopT: 0, visualRoll: 0, visualPitch: 0, visualScale: 1,
+                    boostTimer: 0, padCool: 0, hopT: 0, visualRoll: 0, visualPitch: 0, visualScale: 1,
                     spinTimer: 0, shrinkT: 0, gooT: 0, shieldTimer: 0, invuln: 0,
                     item: null, itemCharges: 0, itemRolling: 0, itemUseTimer: 0, _rollPick: null,
                     draftT: 0, drafting: false,
@@ -2448,7 +2454,7 @@
                 k.theta = Math.atan2(t.x, t.z);
                 k.speed = 0; k.brake = false; k.seg = seg; k.u = seg / N; k.laps = 0; k.progress = seg / N;
                 k.lateralSigned = lane; k.lateral = Math.abs(lane);
-                k.drifting = false; k.driftCharge = 0; k.driftRamp = 0; k.boostTimer = 0; k.hopT = 0;
+                k.drifting = false; k.driftCharge = 0; k.driftRamp = 0; k.boostTimer = 0; k.padCool = 0; k.hopT = 0;
                 k.visualRoll = 0; k.visualPitch = 0; k.visualScale = 1;
                 k.spinTimer = 0; k.shrinkT = 0; k.gooT = 0; k.shieldTimer = 0; k.invuln = 0;
                 k.item = null; k.itemCharges = 0; k.itemRolling = 0; k.itemUseTimer = 0; k._rollPick = null;
@@ -2457,6 +2463,7 @@
                 k.finished = false; k.finishTime = 0; k.bestLap = Infinity; k.lastLapStart = 0;
                 k._rubber = 1;
                 k.mesh.shield.visible = false;
+                k._px = k.pos.x; k._pz = k.pos.z; k._py = k.y; k._pth = k.theta;
                 syncKartMesh(k, true, 0.016);
             }
             for (const b of itemBoxes) { b.active = true; b.respawn = 0; b.group.visible = true; }
@@ -2572,7 +2579,7 @@
                     if (k.grounded) k.speed += ACCEL * k.statAccel * (1 - ACCEL_TAPER * clamp(k.speed / cap, 0, 1)) * dt;
                 } else k.speed -= 60 * dt;
             }
-            if (k.boostTimer > 0) { k.boostTimer -= dt; k.speed = Math.max(k.speed, BOOST_FLOOR); }
+            if (k.boostTimer > 0) k.boostTimer -= dt;
             k.speed = clamp(k.speed, 0, BOOST_CAP);
 
             // steering — full control kept even when bonked (no spinouts, ever).
@@ -2636,12 +2643,21 @@
                 dom.wrongWay.classList.toggle('on', k.wrongT > 0.7);
             }
 
-            // boost pads — narrow and lane-offset: you have to actually hit them
+            // boost pads — narrow, lane-offset, and ADDITIVE. The math:
+            //   single pad:  speed → max(speed+16, 104), cap opens to 138 for
+            //                0.9s → accel taper peaks you around ~124, decays.
+            //   chained pad: arriving at ~124 still boosting, the second +16
+            //                kick reaches the true 138 cap AND extends the
+            //                window — a chain is visibly faster, not a no-op.
+            // (The old version FLOORED speed at 120 (a violent +28 warp) and a
+            // second pad only re-armed the same floor — zero visible effect.)
+            if (k.padCool > 0) k.padCool -= dt;
             if (k.grounded) {
                 for (const pad of boostPads) {
                     let dseg = Math.abs(k.seg - pad.seg); dseg = Math.min(dseg, N - dseg);
-                    if (dseg < 4 && Math.abs(k.lateralSigned - pad.lat) < PAD_HALF + 1.2 && k.boostTimer < 0.3) {
-                        k.boostTimer = 1.1;
+                    if (dseg < 4 && Math.abs(k.lateralSigned - pad.lat) < PAD_HALF + 1.2 && k.padCool <= 0) {
+                        k.padCool = 0.8;   // edge-trigger: one kick per crossing, chains 0.9s+ apart still land
+                        grantBoost(k, 0.9, 16, 104);
                         if (k.isPlayer) { sfxBoost(); vibrate(30); for (let i = 0; i < 6; i++) emitBoostSpark(k); }
                     }
                 }
@@ -2671,7 +2687,7 @@
                 k.draftT += dt;
                 if (k.draftT > 2.2) {
                     k.draftT = 0;
-                    k.boostTimer = Math.max(k.boostTimer, 0.7);
+                    grantBoost(k, 0.7, 12, 104);
                     if (k.isPlayer) { flash('SLIPSTREAM!', '#9affc0'); sfxBoost(); vibrate(25); }
                 }
             } else k.draftT = Math.max(0, k.draftT - dt * 2);
@@ -2689,8 +2705,8 @@
             if (k.boostTimer > 0) spawnRearSpark(k, 0xff7a3c, 7);
             if (bonked) emitSpark(new THREE.Vector3(k.pos.x, k.y + 1.5, k.pos.z), 0xffe27a, 4, 3, { normal: true, life: 0.4 });
             if (k.gooT > 0) emitSpark(new THREE.Vector3(k.pos.x, k.y + 0.6, k.pos.z), 0xb06bff, 3, 2, { normal: true, life: 0.3 });
-
-            syncKartMesh(k, false, dt);
+            // mesh sync happens in the render pass (renderKarts) with
+            // fixed-timestep interpolation — see the ProMotion note there
         }
 
         function recoverKart(k) {
@@ -2704,12 +2720,16 @@
         }
 
         function driftStage(c) { if (c >= 2.0) return 3; if (c >= 1.2) return 2; if (c >= 0.55) return 1; return 0; }
+        function grantBoost(k, dur, kick, floor) {
+            k.boostTimer = Math.max(k.boostTimer, dur);
+            k.speed = clamp(Math.max(k.speed + kick, floor || 0), 0, BOOST_CAP);
+        }
         function releaseDrift(k) {
             if (!k.drifting) return;
             const stage = driftStage(k.driftCharge);
-            if (stage === 1) k.boostTimer = Math.max(k.boostTimer, 0.7);
-            else if (stage === 2) k.boostTimer = Math.max(k.boostTimer, 1.1);
-            else if (stage === 3) k.boostTimer = Math.max(k.boostTimer, 1.7);
+            if (stage === 1) grantBoost(k, 0.7, 14, 108);
+            else if (stage === 2) grantBoost(k, 1.1, 20, 116);
+            else if (stage === 3) grantBoost(k, 1.7, 26, 124);
             if (stage > 0 && k.isPlayer) { sfxBoost(); vibrate(stage * 25); }
             k.drifting = false; k.driftCharge = 0; k.driftDir = 0;
         }
@@ -2777,14 +2797,14 @@
             const it = k.item;
             if (it === 'turbo3') {
                 k.itemCharges--;
-                k.boostTimer = Math.max(k.boostTimer, 1.15);
+                grantBoost(k, 1.15, 22, 118);
                 if (k.itemCharges <= 0) k.item = null; else if (!k.isPlayer) k.itemUseTimer = rand(0.5, 1.4);
                 if (k.isPlayer) { sfxBoost(); vibrate(35); for (let i = 0; i < 5; i++) emitBoostSpark(k); updateItemButton(); }
                 return;
             }
             k.item = null;
             if (k.isPlayer) updateItemButton();
-            if (it === 'turbo') { k.boostTimer = Math.max(k.boostTimer, 1.6); if (k.isPlayer) { sfxBoost(); vibrate(40); for (let i = 0; i < 6; i++) emitBoostSpark(k); } }
+            if (it === 'turbo') { grantBoost(k, 1.6, 26, 122); if (k.isPlayer) { sfxBoost(); vibrate(40); for (let i = 0; i < 6; i++) emitBoostSpark(k); } }
             else if (it === 'shield') { k.shieldTimer = 5.0; if (k.isPlayer) { sfxShield(); vibrate(30); } }
             else if (it === 'goo') dropGoo(k);
             else if (it === 'rocket') fireRocket(k);
@@ -3135,11 +3155,11 @@
 
             // pitch: follow road slope when grounded, nose-follows-arc in the air
             const tgtPitch = k.grounded ? -slopeAng[k.seg] : clamp(-k.vy * 0.014, -0.3, 0.4);
-            k.visualPitch = instant ? tgtPitch : lerp(k.visualPitch, tgtPitch, 0.18);
+            k.visualPitch = instant ? tgtPitch : lerp(k.visualPitch, tgtPitch, frameLerp(0.18, dt));
             // roll: banking + drift/steer lean
             const bankRoll = -Math.atan(bankSlope[k.seg]);
             const leanRoll = k.drifting ? -k.driftDir * 0.16 : -(k.isPlayer ? steerInput : 0) * 0.06;
-            k.visualRoll = instant ? bankRoll : lerp(k.visualRoll, bankRoll + leanRoll, 0.15);
+            k.visualRoll = instant ? bankRoll : lerp(k.visualRoll, bankRoll + leanRoll, frameLerp(0.15, dt));
             g.rotation.y = k.theta + (k.drifting ? -k.driftDir * 0.32 * k.driftRamp : 0);
             g.rotation.x = k.visualPitch;
             g.rotation.z = k.visualRoll;
@@ -3163,25 +3183,57 @@
         }
 
         // ===================================================================
+        //  RENDER PASS — fixed-timestep interpolation.
+        //  The sim steps at 60Hz but iPhones render at up to 120Hz
+        //  (ProMotion switches adaptively — the "sometimes" in "sometimes the
+        //  kart vibrates"). Without interpolation, >60Hz frames alternate
+        //  0-and-1 sim steps: the kart advances in bursts while the camera
+        //  lerps every frame, so the kart oscillates in screen space. Here we
+        //  blend each kart between its previous and current sim tick by the
+        //  accumulator fraction, and drive the camera off the SAME
+        //  interpolated pose.
+        // ===================================================================
+        function renderKarts(dt) {
+            const alpha = clamp(simAcc / SIM_DT, 0, 1);
+            for (const k of karts) {
+                // client remotes are snapshot-interpolated in clientApplySnaps
+                if (net.mode === 'client' && net.racing && !k.isPlayer) continue;
+                const cx = k.pos.x, cy = k.y, cz = k.pos.z, cth = k.theta;
+                if (k._pth != null) {
+                    k.pos.x = k._px + (cx - k._px) * alpha;
+                    k.pos.z = k._pz + (cz - k._pz) * alpha;
+                    k.y = k._py + (cy - k._py) * alpha;
+                    k.theta = k._pth + wrapAngle(cth - k._pth) * alpha;
+                }
+                syncKartMesh(k, false, dt);
+                if (k.isPlayer) updateCamera(false, dt);   // camera sees the interpolated pose
+                k.pos.x = cx; k.pos.z = cz; k.y = cy; k.theta = cth;
+            }
+        }
+
+        // ===================================================================
         //  CAMERA
         // ===================================================================
         const camPos = new THREE.Vector3(), camLook = new THREE.Vector3();
         let camYS = 0;
-        function updateCamera(instant) {
+        // smoothing factors are normalized to dt so 120Hz ProMotion frames
+        // don't double the chase speed (factors were tuned at 60fps)
+        function frameLerp(base, dt) { return 1 - Math.pow(1 - base, clamp((dt || 1 / 60) * 60, 0.25, 3)); }
+        function updateCamera(instant, dt) {
             const k = player;
             const fx = Math.sin(k.theta), fz = Math.cos(k.theta);
             const speedT = clamp(k.speed / MAX_SPEED, 0, 1.3);
             const dist = 12.6 + speedT * 2.6;       // close MK64-style chase framing
             const ty = k.y + 6.2;
-            camYS = instant ? ty : lerp(camYS, ty, 0.2);
+            camYS = instant ? ty : lerp(camYS, ty, frameLerp(0.2, dt));
             camPos.set(k.pos.x - fx * dist, camYS, k.pos.z - fz * dist);
-            if (instant) camera.position.copy(camPos); else camera.position.lerp(camPos, 0.2);
+            if (instant) camera.position.copy(camPos); else camera.position.lerp(camPos, frameLerp(0.2, dt));
             // look mostly at the kart, biased down the road — keeps the kart
             // big and low-center even over crests and mid-jump
             camLook.set(k.pos.x + fx * 8.5, k.y + 1.9, k.pos.z + fz * 8.5);
             camera.lookAt(camLook);
             const targetFov = 68 + speedT * 9 + (k.boostTimer > 0 ? 8 : 0);
-            camera.fov = instant ? targetFov : lerp(camera.fov, targetFov, 0.1);
+            camera.fov = instant ? targetFov : lerp(camera.fov, targetFov, frameLerp(0.1, dt));
             camera.updateProjectionMatrix();
         }
 
@@ -3756,10 +3808,10 @@
                     state = 'racing'; raceClock = 0;
                     for (const k of karts) {
                         k.lastLapStart = 0;
-                        if (k.ai && rng() < 0.6) k.boostTimer = rand(0.4, 0.8);   // most AI nail the start
+                        if (k.ai && rng() < 0.6) grantBoost(k, rand(0.4, 0.8), 10, 0);   // most AI nail the start
                     }
-                    if (driftHeld) {   // hold DRIFT on GO → rocket start (clients too,
-                        player.boostTimer = 0.9;   // now that their pose is authoritative)
+                    if (driftHeld) {   // hold DRIFT on GO → rocket start
+                        grantBoost(player, 0.9, 14, 0);
                         flash('ROCKET START!', '#ffd54a');
                         sfxBoost(); vibrate(40);
                     }
@@ -3861,7 +3913,10 @@
             if (state === 'racing') raceClock += d;
             if (zapTimer > 0) zapTimer -= d;
             if (rocketWarnT > 0) { rocketWarnT -= d; if (rocketWarnT <= 0) dom.rocketWarn.classList.remove('on'); }
-            for (const k of karts) updateKart(k, d);
+            for (const k of karts) {
+                k._px = k.pos.x; k._pz = k.pos.z; k._py = k.y; k._pth = k.theta;
+                updateKart(k, d);
+            }
             resolveCollisions();
             updateProjectiles(d);
             updateHazards(d);
@@ -3933,7 +3988,7 @@
                     }
                 }
                 updateItemBoxesVisual(dt);
-                updateCamera(false);
+                renderKarts(dt);   // interpolated mesh sync + camera
                 updateHUD();
                 animateItemRoll(dt);
                 updateEngineSound();
