@@ -71,7 +71,12 @@ export class Kart3Room {
   }
 
   private async broadcastRoster(): Promise<void> {
-    this.broadcast({ t: "roster", players: this.roster(), phase: await this.phase() });
+    this.broadcast({
+      t: "roster",
+      players: this.roster(),
+      phase: await this.phase(),
+      track: (await this.state.storage.get<number>("track")) || 0,
+    });
   }
 
   async fetch(request: Request): Promise<Response> {
@@ -180,6 +185,14 @@ export class Kart3Room {
         await this.broadcastRoster();
         return;
       }
+      case "track": {
+        // host picks the track in the lobby; everyone's backdrop follows
+        if (!me.host) return;
+        if ((await this.phase()) !== "lobby") return;
+        await this.state.storage.put("track", Number.isInteger(msg.track) && msg.track >= 0 ? msg.track : 0);
+        await this.broadcastRoster();
+        return;
+      }
       case "start": {
         if (!me.host) return;
         if ((await this.phase()) !== "lobby") return;
@@ -196,7 +209,10 @@ export class Kart3Room {
         // remember who holds each seat so they can rejoin mid-race by name
         await this.state.storage.put("seats", players.map((p) => ({ id: p.id, name: p.name })));
         await this.state.storage.setAlarm(Date.now() + ROOM_TTL_MS);
-        this.broadcast({ t: "start", seed: msg.seed >>> 0, laps: msg.laps, players });
+        this.broadcast({
+          t: "start", seed: msg.seed >>> 0, laps: msg.laps, players,
+          track: (await this.state.storage.get<number>("track")) || 0,
+        });
         return;
       }
       case "end": {
