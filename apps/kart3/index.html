@@ -53,6 +53,12 @@
         #lapPill { top: calc(env(safe-area-inset-top) + 10px); left: calc(env(safe-area-inset-left) + 14px); }
         #timePill { top: calc(env(safe-area-inset-top) + 10px); right: calc(env(safe-area-inset-right) + 14px); text-align: right; }
         #lapTime { font-variant-numeric: tabular-nums; }
+        #netInd { position: absolute; top: calc(env(safe-area-inset-top) + 62px); right: calc(env(safe-area-inset-right) + 14px);
+            display: none; font-size: 10px; font-weight: 900; letter-spacing: 1px; padding: 3px 9px; border-radius: 999px;
+            background: rgba(6,14,30,0.55); border: 1px solid rgba(255,255,255,0.14); color: #8fd6ff;
+            font-variant-numeric: tabular-nums; }
+        #netInd.on { display: block; }
+        #netInd.p2p { color: #7dffb0; }
 
         /* Big position, MK64-style bottom-left */
         #posBig { position: absolute; left: calc(env(safe-area-inset-left) + 16px);
@@ -311,6 +317,7 @@
             <div class="value" id="lapTime">0:00.0</div>
         </div>
         <button id="pauseBtn">⏸</button>
+        <div id="netInd">RELAY</div>
         <div id="posBig" class="pos-8">8<small>th</small></div>
         <div id="miniWrap"><canvas id="minimap" width="208" height="208"></canvas></div>
         <div id="boostWrap">
@@ -471,7 +478,7 @@
             joinRoomBtn: $('joinRoomBtn'), netStatus: $('netStatus'),
             lobbyScreen: $('lobbyScreen'), roomCode: $('roomCode'), lobbyList: $('lobbyList'),
             lobbyChars: $('lobbyChars'), readyBtn: $('readyBtn'), lobbyStartBtn: $('lobbyStartBtn'),
-            leaveBtn: $('leaveBtn'), lobbyMsg: $('lobbyMsg'),
+            leaveBtn: $('leaveBtn'), lobbyMsg: $('lobbyMsg'), netInd: $('netInd'),
             muteBtn: $('muteBtn'), itemBtn: $('itemBtn'), driftBtn: $('driftBtn'), pauseBtn: $('pauseBtn'),
             pauseScreen: $('pauseScreen'), resumeBtn: $('resumeBtn'), restartBtn: $('restartBtn'), quitBtn: $('quitBtn'),
             minimap: $('minimap'), stick: $('stick'), stickDot: $('stickDot'),
@@ -613,18 +620,93 @@
         const net = {
             mode: 'solo',              // 'solo' | 'host' | 'client'
             ws: null, connected: false,
-            myId: -1, isHost: false, code: '',
-            players: [], phase: 'lobby',
+            myId: -1, isHost: false, code: '', hostId: 0,
+            players: [], racePlayers: [], phase: 'lobby',
             myCharIdx: 0, myReady: false,
             fireCount: 0,
             remoteCtrl: {},            // host: playerId → latest input packet
             snaps: [],                 // client: [{rt, d}] buffered snapshots
+            lastSnapTick: 0,           // dedupe (snaps arrive on both transports)
             lastInputSent: 0,
-            pingTimer: 0,
-            racing: false,
-            _lastRoll: 0, _lastItem: null,
+            pingTimer: 0, pingMs: 0,
+            racing: false, rejoinTries: 0,
+            rtc: {},                   // pid → {pc, ch, open} WebRTC fast path
+            _lastRoll: 0, _lastItem: null, _itemKey: '',
         };
         function netActive() { return net.mode !== 'solo'; }
+        function wsSend(obj) {
+            if (net.ws && net.connected) { try { net.ws.send(JSON.stringify(obj)); } catch (e) {} }
+        }
+
+        // ---------------------------------------------------------------
+        // WebRTC fast path (M2). Star topology: host ↔ each client, one
+        // unordered/unreliable DataChannel for inputs + snapshots. The DO
+        // relays the SDP/ICE signaling; if a pair can't go P2P the WS relay
+        // keeps carrying their traffic (snaps are dual-sent + tick-deduped).
+        // ---------------------------------------------------------------
+        const RTC_CFG = { iceServers: [{ urls: ['stun:stun.l.google.com:19302', 'stun:stun.cloudflare.com:3478'] }] };
+        function rtcAvailable() { return !window.__noRtc && typeof RTCPeerConnection !== 'undefined'; }
+        function rtcDrop(pid) {
+            const r = net.rtc[pid];
+            if (!r) return;
+            try { if (r.ch) r.ch.close(); } catch (e) {}
+            try { if (r.pc) r.pc.close(); } catch (e) {}
+            delete net.rtc[pid];
+        }
+        function rtcTeardown() { for (const pid of Object.keys(net.rtc)) rtcDrop(pid); }
+        function rtcWireChannel(pid, ch) {
+            ch.onopen = () => { if (net.rtc[pid]) net.rtc[pid].open = true; };
+            ch.onclose = () => { if (net.rtc[pid]) net.rtc[pid].open = false; };
+            ch.onmessage = (ev) => {
+                let m;
+                try { m = JSON.parse(ev.data); } catch (e) { return; }
+                if (m.t === 'input') m.from = pid;   // trust the channel, not the payload
+                netHandle(m);
+            };
+        }
+        function rtcInitiate(pid) {      // host side: offer a channel to one client
+            if (!rtcAvailable() || net.rtc[pid]) return;
+            const pc = new RTCPeerConnection(RTC_CFG);
+            const entry = net.rtc[pid] = { pc, ch: null, open: false };
+            const ch = pc.createDataChannel('fast', { ordered: false, maxRetransmits: 0 });
+            entry.ch = ch;
+            rtcWireChannel(pid, ch);
+            pc.onicecandidate = (e) => { if (e.candidate) wsSend({ t: 'rtc', to: pid, ice: e.candidate }); };
+            pc.createOffer()
+                .then((o) => pc.setLocalDescription(o))
+                .then(() => wsSend({ t: 'rtc', to: pid, sdp: pc.localDescription }))
+                .catch(() => {});
+        }
+        function rtcHandleSignal(msg) {
+            if (!rtcAvailable()) return;
+            const pid = msg.from;
+            let entry = net.rtc[pid];
+            if (msg.sdp && msg.sdp.type === 'offer') {       // client side: answer
+                rtcDrop(pid);                                // clear any stale pc
+                const pc = new RTCPeerConnection(RTC_CFG);
+                entry = net.rtc[pid] = { pc, ch: null, open: false };
+                pc.ondatachannel = (e) => { entry.ch = e.channel; rtcWireChannel(pid, e.channel); };
+                pc.onicecandidate = (e) => { if (e.candidate) wsSend({ t: 'rtc', to: pid, ice: e.candidate }); };
+                pc.setRemoteDescription(msg.sdp)
+                    .then(() => pc.createAnswer())
+                    .then((a) => pc.setLocalDescription(a))
+                    .then(() => wsSend({ t: 'rtc', to: pid, sdp: pc.localDescription }))
+                    .catch(() => {});
+            } else if (msg.sdp && msg.sdp.type === 'answer') {
+                if (entry) entry.pc.setRemoteDescription(msg.sdp).catch(() => {});
+            } else if (msg.ice) {
+                if (entry) entry.pc.addIceCandidate(msg.ice).catch(() => {});
+            }
+        }
+        function rtcToHostOpen() {
+            const r = net.rtc[net.hostId];
+            return !!(r && r.open);
+        }
+        function sendToHostFast(obj) {
+            const r = net.rtc[net.hostId];
+            if (r && r.open) { try { r.ch.send(JSON.stringify(obj)); return; } catch (e) {} }
+            wsSend(obj);
+        }
         function myName() {
             const v = (dom.nameInput.value || '').trim().slice(0, 12);
             return v || 'Racer';
@@ -656,7 +738,8 @@
                 net.connected = true;
                 net.myCharIdx = selectedCharIdx;
                 ws.send(JSON.stringify({ t: 'hello', name: myName(), charIdx: net.myCharIdx }));
-                net.pingTimer = setInterval(() => { try { ws.send('ping'); } catch (e) {} }, 20000);
+                // doubles as keepalive and RTT probe
+                net.pingTimer = setInterval(() => wsSend({ t: 'pp', ts: performance.now() }), 2500);
             };
             ws.onmessage = (ev) => {
                 if (ev.data === 'pong') return;
@@ -670,14 +753,36 @@
         function netReset() {
             if (net.pingTimer) { clearInterval(net.pingTimer); net.pingTimer = 0; }
             if (net.ws) { try { net.ws.onclose = null; net.ws.close(); } catch (e) {} }
+            rtcTeardown();
             net.ws = null; net.connected = false; net.mode = 'solo';
-            net.myId = -1; net.isHost = false; net.code = ''; net.players = [];
-            net.myReady = false; net.racing = false;
+            net.myId = -1; net.isHost = false; net.code = ''; net.hostId = 0;
+            net.players = []; net.racePlayers = [];
+            net.myReady = false; net.racing = false; net.rejoinTries = 0;
             net.remoteCtrl = {}; net.snaps = []; net.fireCount = 0;
+            net.lastSnapTick = 0; net.pingMs = 0; net._itemKey = '';
             clearGhosts();
             dom.pauseBtn.style.display = '';
+            dom.netInd.classList.remove('on');
         }
         function netClosed() {
+            // client dropped mid-race: hold the race state and try to rejoin —
+            // own kart keeps driving locally, remote karts freeze on the last snap
+            if (net.racing && state !== 'menu' && net.mode === 'client') {
+                net.connected = false;
+                net.ws = null;
+                if (net.pingTimer) { clearInterval(net.pingTimer); net.pingTimer = 0; }
+                rtcTeardown();
+                if (net.rejoinTries < 4) {
+                    net.rejoinTries++;
+                    flash('RECONNECTING…', '#ffd54a');
+                    setTimeout(() => { if (net.racing && !net.connected) joinRoom(net.code); }, 1000);
+                } else {
+                    flash('CONNECTION LOST', '#ff9a9a');
+                    net.racing = false;
+                    setTimeout(quitToMenu, 1300);
+                }
+                return;
+            }
             const wasRacing = net.racing && state !== 'menu';
             netReset();
             if (wasRacing) {
@@ -693,9 +798,16 @@
             switch (msg.t) {
                 case 'welcome':
                     net.myId = msg.id; net.isHost = msg.host; net.code = msg.code;
-                    net.mode = msg.host ? 'host' : 'client';
-                    netStatusMsg('');
-                    showLobby();
+                    if (msg.rejoin) {
+                        // seat reclaimed mid-race; host will send rejoin-state
+                        net.mode = 'client';
+                        net.rejoinTries = 0;
+                        flash('RECONNECTED!', '#9affc0');
+                    } else {
+                        net.mode = msg.host ? 'host' : 'client';
+                        netStatusMsg('');
+                        showLobby();
+                    }
                     break;
                 case 'roster': {
                     net.players = msg.players; net.phase = msg.phase;
@@ -705,6 +817,12 @@
                         net.mode = me.host ? 'host' : 'client';
                         net.myReady = me.ready;
                         net.myCharIdx = me.charIdx;
+                    }
+                    const hostP = net.players.find((p) => p.host);
+                    if (hostP) net.hostId = hostP.id;
+                    // host pre-warms a P2P channel to every client from the lobby
+                    if (net.isHost && !net.racing) {
+                        for (const p of net.players) if (p.id !== net.myId) rtcInitiate(p.id);
                     }
                     if (net.racing && msg.phase === 'lobby') endOnlineRaceToLobby();
                     else if (state === 'menu') renderLobby();
@@ -721,11 +839,32 @@
                     net.remoteCtrl[msg.from] = msg;
                     break;
                 case 'snap':
+                    if (msg.tick <= net.lastSnapTick) return;   // dual-transport dedupe
+                    net.lastSnapTick = msg.tick;
                     net.snaps.push({ rt: performance.now(), d: msg });
                     if (net.snaps.length > 6) net.snaps.shift();
                     break;
+                case 'rtc':
+                    rtcHandleSignal(msg);
+                    break;
+                case 'pp':
+                    net.pingMs = Math.max(1, Math.round(performance.now() - msg.ts));
+                    break;
+                case 'rejoined':
+                    // host: hand the seat back from AI to its returning human
+                    if (net.mode === 'host' && net.racing) {
+                        hostConvertToRemote(msg.id);
+                        wsSend({ t: 'event', to: msg.id, e: 'rejoin-state',
+                            seed: raceSeed, players: net.racePlayers, snap: netSnapshot() });
+                        showToast('They’re back!', '#9affc0');
+                    }
+                    break;
+                case 'event':
+                    if (msg.e === 'rejoin-state') applyRejoinState(msg);
+                    break;
                 case 'peer-left':
                     showToast((msg.name || 'A racer') + ' left', '#ff9a9a');
+                    rtcDrop(msg.id);
                     if (net.mode === 'host' && net.racing) hostConvertToAI(msg.id);
                     break;
                 case 'host-left':
@@ -794,14 +933,17 @@
         }
 
         // ---------- race wiring ----------
-        function startOnlineRace(seed, players) {
+        function startOnlineRace(seed, players, skipCountdown) {
             raceSeed = (seed >>> 0) || 1;
             net.players = players;
+            net.racePlayers = players;
             net.racing = true;
+            net.rejoinTries = 0;
             net.fireCount = 0;
             net.remoteCtrl = {};
             net.snaps = [];
-            net._lastRoll = 0; net._lastItem = null;
+            net.lastSnapTick = 0;
+            net._lastRoll = 0; net._lastItem = null; net._itemKey = '';
             const roster = players.map((p) => ({
                 kind: p.id === net.myId ? 'local' : 'remote',
                 charIdx: p.charIdx, name: p.name, pid: p.id,
@@ -821,14 +963,29 @@
             dom.resultScreen.classList.add('hidden');
             dom.hud.classList.add('on'); dom.muteBtn.classList.add('on');
             dom.pauseBtn.style.display = 'none';   // nobody pauses a shared race
+            dom.netInd.classList.add('on');
             resetRace();
             startMusic();
-            runCountdown();
+            if (skipCountdown) state = 'racing';
+            else runCountdown();
+        }
+        // client got its seat back mid-race: rebuild if cold, then adopt the
+        // host's authoritative state wholesale
+        function applyRejoinState(msg) {
+            if (!net.racing) startOnlineRace(msg.seed, msg.players, true);
+            netRestore(msg.snap);
+            state = 'racing';
+            dom.countdown.classList.remove('on');
+            net.snaps = []; net.lastSnapTick = 0;
+            net.fireCount = 0;   // host reset our fire counter on reconversion
+            net._itemKey = '';
+            updateItemButton();
         }
         function endOnlineRaceToLobby() {
             net.racing = false;
-            net.snaps = []; net.remoteCtrl = {};
+            net.snaps = []; net.remoteCtrl = {}; net.lastSnapTick = 0;
             clearGhosts();
+            dom.netInd.classList.remove('on');
             stopMusic();
             state = 'menu';
             dom.hud.classList.remove('on'); dom.muteBtn.classList.remove('on');
@@ -848,21 +1005,83 @@
                     phase: rand(0, Math.PI * 2), laneBias: rand(-3, 3), errT: 3, errOff: 0, rival: false };
             }
             delete net.remoteCtrl[pid];
+            rtcDrop(pid);
+        }
+        function hostConvertToRemote(pid) {
+            const k = karts.find((kk) => kk.pid === pid);
+            if (!k) return;
+            k.kind = 'remote';
+            k.controller = remoteController;
+            k.ai = null;
+            k._firedCount = 0;
+            delete net.remoteCtrl[pid];
+            rtcDrop(pid);
+            rtcInitiate(pid);
         }
 
-        // host: remote humans' karts read the latest relayed input packet
+        // host: remote humans' karts are CLIENT-AUTHORITATIVE for pose (M2) —
+        // each player's kart is exactly where they see it, so relay latency
+        // never makes the host sim them on stale steering. The host keeps
+        // authority over items, laps, ranks, bonks and collisions-with-AI.
         function remoteController(k) {
+            // unused while kind === 'remote' (updateRemoteKart drives the kart);
+            // kept as the controller slot so conversions are a kind/controller swap
+            k.ctrl.steer = 0; k.ctrl.drift = false; k.ctrl.brake = false;
+        }
+        function updateRemoteKart(k, dt) {
+            // effect timers still tick host-side (they gate item logic + snapshots)
+            if (k.shieldTimer > 0) k.shieldTimer -= dt;
+            if (k.invuln > 0) k.invuln -= dt;
+            if (k.gooT > 0) k.gooT -= dt;
+            if (k.shrinkT > 0) k.shrinkT -= dt;
+            if (k.spinTimer > 0) k.spinTimer -= dt;
+            if (k.boostTimer > 0) k.boostTimer -= dt;
+            if (k.itemRolling > 0) { k.itemRolling -= dt; if (k.itemRolling <= 0) finishRoll(k); }
             const rc = net.remoteCtrl[k.pid];
-            if (!rc) { k.ctrl.steer = 0; k.ctrl.drift = false; k.ctrl.brake = false; return; }
-            k.ctrl.steer = clamp(+rc.s || 0, -1, 1);
-            k.ctrl.drift = !!rc.d;
-            k.ctrl.brake = false;
-            if ((rc.f | 0) > k._firedCount) { k._firedCount = rc.f | 0; k.ctrl.fire = true; }
+            if (rc) {
+                if ((rc.f | 0) > k._firedCount) {
+                    k._firedCount = rc.f | 0;
+                    if (k.itemRolling > 0) finishRoll(k);
+                    else useItem(k);
+                }
+                if (rc.p) {
+                    const t = clamp(dt * 25, 0, 1);   // smooth toward 30Hz pose updates
+                    k.pos.x = lerp(k.pos.x, rc.p[0], t);
+                    k.pos.z = lerp(k.pos.z, rc.p[1], t);
+                    k.y = lerp(k.y, rc.p[2], t);
+                    k.theta += wrapAngle(rc.p[3] - k.theta) * t;
+                    k.speed = rc.p[4] || 0;
+                    k.grounded = !!rc.p[5];
+                    k.driftDir = rc.p[6] || 0;
+                    k.drifting = k.driftDir !== 0;
+                    k.driftRamp = 1;
+                    k.boostTimer = Math.max(k.boostTimer, rc.p[7] || 0);
+                }
+            }
+            updateProgress(k);   // authoritative laps/rank from the real pose
+            clampToTrack(k);
+            for (const b of itemBoxes) {
+                if (!b.active) continue;
+                const dx = k.pos.x - b.x, dz = k.pos.z - b.z;
+                if (dx * dx + dz * dz < 28) pickupBox(k, b);
+            }
+            if (k.drifting && k.grounded && k.speed > 25) spawnRearSpark(k, 0x4ad6ff, 5);
+            if (k.boostTimer > 0) spawnRearSpark(k, 0xff7a3c, 7);
+            syncKartMesh(k, false, dt);
         }
 
-        // host → everyone: compact per-tick state
+        // host → everyone: compact per-tick state, dual-sent over the WS relay
+        // AND every open P2P channel (clients dedupe by tick, fastest wins)
         function hostSendSnap() {
             if (!net.ws || !net.connected) return;
+            const payload = buildSnapPayload();
+            try { net.ws.send(payload); } catch (e) {}
+            for (const pid of Object.keys(net.rtc)) {
+                const r = net.rtc[pid];
+                if (r.open) { try { r.ch.send(payload); } catch (e) {} }
+            }
+        }
+        function buildSnapPayload() {
             const r2 = (v) => Math.round(v * 100) / 100;
             const msg = {
                 t: 'snap', tick: simTickNo, clock: r2(raceClock),
@@ -878,7 +1097,7 @@
                 haz: hazards.map((h) => [r2(h.x), r2(h.mesh.position.y), r2(h.z)]),
                 proj: projectiles.map((p) => [r2(p.x), r2(p.mesh.position.y), r2(p.z), r2(p.theta)]),
             };
-            try { net.ws.send(JSON.stringify(msg)); } catch (e) {}
+            return JSON.stringify(msg);
         }
         function snapKart(arr) {
             return { x: arr[0], z: arr[1], y: arr[2], theta: arr[3], speed: arr[4],
@@ -940,14 +1159,14 @@
                         k.finished = true; k.finishTime = sb.finishTime; k.bestLap = sb.bestLap;
                         finishRace();
                     }
+                    // our pose is authoritative now (M2): the host copy is just
+                    // our own latency-delayed echo, so never tug toward it —
+                    // only emergency-snap if we've somehow truly diverged
                     const dx = sb.x - k.pos.x, dz = sb.z - k.pos.z;
-                    const d2 = dx * dx + dz * dz;
-                    if (d2 > 900) {           // way off: snap to authority
+                    if (dx * dx + dz * dz > 2000) {
                         k.pos.x = sb.x; k.pos.z = sb.z; k.theta = sb.theta;
                         k.speed = sb.speed; k.y = sb.y; k.vy = 0; k.grounded = sb.grounded;
                         updateProgress(k);
-                    } else if (d2 > 25) {     // drifting apart: ease back
-                        k.pos.x += dx * 0.08; k.pos.z += dz * 0.08;
                     }
                 } else {
                     const sa = snapKart(A.d.karts[i]);
@@ -1044,18 +1263,21 @@
             if (steps === 5) simAcc = 0;
             clientApplySnaps(dt);
             const now = performance.now();
-            if (net.ws && net.connected && now - net.lastInputSent > INPUT_MS) {
+            if (net.connected && now - net.lastInputSent > INPUT_MS) {
                 net.lastInputSent = now;
-                try {
-                    // send what the local controller produced — the same seam a
-                    // remote peer fills, so even an autopiloted player nets correctly
-                    net.ws.send(JSON.stringify({
-                        t: 'input',
-                        s: Math.round(player.ctrl.steer * 100) / 100,
-                        d: player.ctrl.drift,
-                        f: net.fireCount,
-                    }));
-                } catch (e) {}
+                const r2 = (v) => Math.round(v * 100) / 100;
+                // inputs + client-authoritative pose: the host places our kart
+                // exactly where we see it (no stale-steering penalty), keeping
+                // authority only over items/laps/ranks/bonks
+                sendToHostFast({
+                    t: 'input',
+                    s: r2(player.ctrl.steer),
+                    d: player.ctrl.drift,
+                    f: net.fireCount,
+                    p: [r2(player.pos.x), r2(player.pos.z), r2(player.y), r2(player.theta),
+                        Math.round(player.speed), player.grounded ? 1 : 0,
+                        player.drifting ? player.driftDir : 0, r2(player.boostTimer)],
+                });
             }
         }
 
@@ -2303,6 +2525,7 @@
         //  PHYSICS
         // ===================================================================
         function updateKart(k, dt) {
+            if (net.mode === 'host' && k.kind === 'remote') { updateRemoteKart(k, dt); return; }
             if (k.finished) k.speed = lerp(k.speed, 0, 1 - Math.exp(-2 * dt));
 
             if (k.shieldTimer > 0) k.shieldTimer -= dt;
@@ -2885,9 +3108,15 @@
                     const d = Math.hypot(dx, dz);
                     const min = KART_RADIUS * 2;
                     if (d > 0.0001 && d < min) {
-                        const push = (min - d) / 2, nx = dx / d, nz = dz / d;
-                        a.pos.x -= nx * push; a.pos.z -= nz * push;
-                        b.pos.x += nx * push; b.pos.z += nz * push;
+                        // pose-authoritative remote karts are immovable on the
+                        // host — their owners move them; push the simmed kart
+                        const aFixed = net.mode === 'host' && a.kind === 'remote';
+                        const bFixed = net.mode === 'host' && b.kind === 'remote';
+                        const total = min - d, nx = dx / d, nz = dz / d;
+                        const pushA = aFixed ? 0 : (bFixed ? total : total / 2);
+                        const pushB = bFixed ? 0 : (aFixed ? total : total / 2);
+                        a.pos.x -= nx * pushA; a.pos.z -= nz * pushA;
+                        b.pos.x += nx * pushB; b.pos.z += nz * pushB;
                         if (a.shieldTimer > 0 && b.shieldTimer <= 0) bonkKart(b);
                         else if (b.shieldTimer > 0 && a.shieldTimer <= 0) bonkKart(a);
                         else {
@@ -2997,6 +3226,21 @@
 
             miniThrottle += 1;
             if (miniThrottle >= 2) { miniThrottle = 0; drawMinimap(); }
+
+            if (netActive() && net.racing) {
+                let label, p2p = false;
+                if (net.mode === 'host') {
+                    const peers = Object.keys(net.rtc);
+                    const open = peers.filter((pid) => net.rtc[pid].open).length;
+                    p2p = peers.length > 0 && open === peers.length;
+                    label = 'HOST · ' + (peers.length ? open + '/' + peers.length + ' P2P' : 'RELAY');
+                } else {
+                    p2p = rtcToHostOpen();
+                    label = (p2p ? 'P2P' : 'RELAY') + ' · ' + (net.connected ? (net.pingMs || '–') + 'ms' : '⚠ OFFLINE');
+                }
+                dom.netInd.textContent = label;
+                dom.netInd.classList.toggle('p2p', p2p);
+            }
         }
         function updateItemButton() {
             dom.itemBtn.classList.remove('rolling');
@@ -3514,9 +3758,9 @@
                         k.lastLapStart = 0;
                         if (k.ai && rng() < 0.6) k.boostTimer = rand(0.4, 0.8);   // most AI nail the start
                     }
-                    if (driftHeld && net.mode !== 'client') {   // hold DRIFT on GO → rocket start
-                        player.boostTimer = 0.9;                // (client boosts would be phantom —
-                        flash('ROCKET START!', '#ffd54a');      //  host can't see pre-GO inputs yet, M2)
+                    if (driftHeld) {   // hold DRIFT on GO → rocket start (clients too,
+                        player.boostTimer = 0.9;   // now that their pose is authoritative)
+                        flash('ROCKET START!', '#ffd54a');
                         sfxBoost(); vibrate(40);
                     }
                     setTimeout(() => dom.countdown.classList.remove('on'), 700);

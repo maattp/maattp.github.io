@@ -118,12 +118,30 @@ export class Kart3Room {
     // first message must be hello
     if (!me) {
       if (msg.t !== "hello") { ws.close(1008, "hello first"); return; }
+      const players = this.roster();
+      const name = sanitizeName(msg.name);
       if ((await this.phase()) === "racing") {
-        ws.send(JSON.stringify({ t: "error", msg: "race in progress" }));
-        ws.close(1008, "race in progress");
+        // mid-race REJOIN: a disconnected player can reclaim their seat by
+        // name (host has been driving their kart as AI meanwhile)
+        const seats = (await this.state.storage.get<{ id: number; name: string }[]>("seats")) || [];
+        const connected = new Set(players.map((p) => p.id));
+        const seat = seats.find(
+          (s) => !connected.has(s.id) && s.name.toLowerCase() === name.toLowerCase()
+        );
+        if (!seat) {
+          ws.send(JSON.stringify({ t: "error", msg: "race in progress" }));
+          ws.close(1008, "race in progress");
+          return;
+        }
+        const a: Attachment = { id: seat.id, name: seat.name, charIdx: 0, ready: true, host: false };
+        ws.serializeAttachment(a);
+        const code0 = (await this.state.storage.get<string>("code")) || "";
+        ws.send(JSON.stringify({ t: "welcome", id: a.id, host: false, code: code0, rejoin: true }));
+        // host fetches them back up to speed with a state event
+        this.sendTo((p) => p.host, { t: "rejoined", id: a.id });
+        await this.broadcastRoster();
         return;
       }
-      const players = this.roster();
       if (players.length >= MAX_PLAYERS) {
         ws.send(JSON.stringify({ t: "error", msg: "room full" }));
         ws.close(1008, "room full");
@@ -134,7 +152,7 @@ export class Kart3Room {
       while (used.has(id)) id++;
       const a: Attachment = {
         id,
-        name: sanitizeName(msg.name),
+        name,
         charIdx: Number.isInteger(msg.charIdx) ? Math.max(0, Math.min(7, msg.charIdx)) : 0,
         ready: false,
         host: players.length === 0,
@@ -175,6 +193,8 @@ export class Kart3Room {
           return;
         }
         await this.state.storage.put("phase", "racing");
+        // remember who holds each seat so they can rejoin mid-race by name
+        await this.state.storage.put("seats", players.map((p) => ({ id: p.id, name: p.name })));
         await this.state.storage.setAlarm(Date.now() + ROOM_TTL_MS);
         this.broadcast({ t: "start", seed: msg.seed >>> 0, laps: msg.laps, players });
         return;
@@ -199,9 +219,22 @@ export class Kart3Room {
       }
       case "snap":
       case "event": {
-        // host → everyone else (payload opaque)
+        // host → everyone else, or a single peer when msg.to is set
         if (!me.host) return;
-        this.broadcast(msg, me.id);
+        if (typeof msg.to === "number") this.sendTo((a) => a.id === msg.to, msg);
+        else this.broadcast(msg, me.id);
+        return;
+      }
+      case "rtc": {
+        // WebRTC signaling (offer/answer/ICE) relayed peer→peer
+        if (typeof msg.to !== "number") return;
+        msg.from = me.id;
+        this.sendTo((a) => a.id === msg.to, msg);
+        return;
+      }
+      case "pp": {
+        // latency probe: echo straight back to the sender
+        ws.send(JSON.stringify({ t: "pp", ts: msg.ts }));
         return;
       }
     }

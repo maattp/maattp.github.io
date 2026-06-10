@@ -140,8 +140,11 @@ racing is rock solid.
    latency makes the host sim clients' karts on stale steering — consider
    client-authoritative own-kart pose (fine at this trust level) or input
    delay buffering alongside WebRTC.
-2. **M2 — WebRTC + full grid**: DataChannels with relay fallback, 4 humans +
-   AI fill, disconnect→AI conversion, rejoin.
+2. **M2 — WebRTC + full grid** ✅ *(shipped)*: DataChannels with relay
+   fallback (dual-send + tick dedupe, lobby-pre-warmed), client-authoritative
+   own-kart pose (host keeps items/laps/ranks; fixed M1's stale-steering),
+   disconnect→AI conversion, auto-rejoin by seat name with full-state
+   restore, client rocket starts, P2P/RELAY + RTT indicator.
 3. **M3 — Matchmaking**: quick-race queue, names/avatars, polish lobby.
 4. **M4 — Resilience polish**: host clock sync hardening, jitter buffers,
    reconnect UX, version gating.
