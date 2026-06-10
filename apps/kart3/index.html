@@ -2751,7 +2751,10 @@
             if (state !== 'paused') return;
             dom.pauseScreen.classList.remove('on');
             state = 'racing';
+            // iOS suspends the AudioContext when the PWA is backgrounded
+            if (audioCtx && audioCtx.state === 'suspended') audioCtx.resume();
             clock.getDelta();
+            simAcc = 0;   // don't fast-forward the sim over the pause
         }
         function quitToMenu() {
             dom.pauseScreen.classList.remove('on');
