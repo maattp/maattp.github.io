@@ -383,14 +383,20 @@
         const WALL_LIMIT = HALF_W - 2.4;
         const N = 820;                       // centerline samples
         const TOTAL_LAPS = 3;
-        const MAX_SPEED = 100;
-        const ACCEL = 74;
+        // MK64-style pacing: moderate top speed, a ~3s wind-up to reach it,
+        // boosts ~1.3x (not warp speed), and steering that widens with speed
+        // so hairpins demand braking or drifting.
+        const MAX_SPEED = 92;
+        const ACCEL = 48;                    // initial accel; tapers near the cap (see updateKart)
+        const ACCEL_TAPER = 0.55;            // fraction of accel lost as speed→cap
         const BRAKE = 105;
-        const BOOST_CAP = 172;
+        const BOOST_CAP = 138;
+        const BOOST_FLOOR = 120;             // boosting at least hits this
+        const TURN_BASE = 2.4;               // yaw rate (rad/s) at standstill…
+        const TURN_FADE = 0.28;              // …fading by this fraction at MAX_SPEED
         const KART_RADIUS = 2.9;
         const NUM_KARTS = 8;
         const GRAV = 46;                     // arcade gravity for crest jumps
-        const LATG = 78;                     // cornering grip for AI speed targets
 
         // Coral Cliffs Circuit — single hand-tuned loop with elevation:
         // beach straight → coast sweep climbing → banked cliff bend → tunnel
@@ -618,11 +624,19 @@
                 slopeAng.push(Math.atan2(yb - ya, 4 * ds));
             }
 
-            // AI corner speed targets from smoothed curvature (banking adds grip)
+            // AI corner speed targets derived from the ACTUAL steering model:
+            // karts have no lateral slip, so the only corner limit is turning
+            // circle vs curve radius. Achievable yaw at speed v is
+            // TURN_BASE·(1 − TURN_FADE·v/MAX); solving v·κ = margin·yaw(v)
+            // gives the closed form below. (The old grip-formula guess made
+            // the AI brake to ~50 where anyone can corner at 90 — they never
+            // stood a chance.)
             cornerCap = [];
+            const CC_M = 0.93 * TURN_BASE;
             for (let i = 0; i < N; i++) {
                 const k = Math.max(Math.abs(curvSm[i]), 1e-4);
-                cornerCap.push(clamp(Math.sqrt(LATG * (1 + 2.2 * Math.abs(bankSlope[i])) / k), 40, 1000));
+                const bankBonus = 1 + 0.5 * Math.abs(bankSlope[i]);
+                cornerCap.push(clamp(CC_M * bankBonus / (k + CC_M * TURN_FADE / MAX_SPEED), 38, 1000));
             }
 
             buildRaceLine();
@@ -695,9 +709,13 @@
             const lat = (x - c.x) * n.x + (z - c.z) * n.z;
             const d = Math.hypot(x - c.x, z - c.z);
             const hill = hillH(x, z);
-            if (inTunnel(s) && s > tunnelA + 6 && s < tunnelB - 6) {
-                const cover = c.y + 15 + hillH(x * 0.7, z * 0.7) * 0.25;
-                return lerp(cover, Math.max(hill, c.y * 0.5), smoothstep(HALF_W + 14, HALF_W + 70, d));
+            // Inside the tunnel footprint the heightfield stays at road level —
+            // the headland is a separate rock-shell mesh over the tube. (When
+            // the heightfield itself ramped up to "cover" the tunnel, the ramp
+            // formed a solid wall right inside the portal mouth.)
+            if (inTunnel(s)) {
+                const edge2 = roadY(s, clamp(lat, -HALF_W, HALF_W)) - 0.6;
+                return lerp(edge2, Math.max(hill, c.y * 0.4), smoothstep(HALF_W + 18, HALF_W + 60, d));
             }
             const edge = roadY(s, clamp(lat, -HALF_W, HALF_W)) - 0.5;
             return lerp(edge, hill, smoothstep(HALF_W + 1, HALF_W + 42, d));
@@ -875,6 +893,35 @@
             scene.add(mesh);
         }
 
+        // Road decals (start line, boost pads) must be ribbons that follow the
+        // road's bank + slope — flat rotated planes sink/float at the edges
+        // (the start line vanished completely into the banked chicane).
+        function buildDecalStrip(segCenter, halfLenSegs, widthFrac, tex, lift) {
+            const pos = [], uv = [], idx = [];
+            const W = HALF_W * widthFrac;
+            let r = 0;
+            for (let d = -halfLenSegs; d <= halfLenSegs; d++) {
+                const i = ((segCenter + d) % N + N) % N;
+                const c = centerline[i], n = normals[i];
+                pos.push(c.x + n.x * W, roadY(i, W) + lift, c.z + n.z * W);
+                pos.push(c.x - n.x * W, roadY(i, -W) + lift, c.z - n.z * W);
+                const v = (d + halfLenSegs) / (2 * halfLenSegs);
+                uv.push(0, v, 1, v);
+                if (d < halfLenSegs) { const o = r * 2; idx.push(o, o + 1, o + 2, o + 1, o + 3, o + 2); }
+                r++;
+            }
+            const geo = new THREE.BufferGeometry();
+            geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+            geo.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
+            geo.setIndex(idx);
+            const mesh = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({
+                map: tex, side: THREE.DoubleSide,
+                polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2 }));
+            mesh.renderOrder = 3;
+            scene.add(mesh);
+            return mesh;
+        }
+
         // guardrails only where the ground drops away beside the road
         function railNeeded(i, side) {
             if (inTunnel(i)) return false;
@@ -962,31 +1009,90 @@
             const geo = new THREE.BufferGeometry();
             geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
             geo.setIndex(idx); geo.computeVertexNormals();
-            scene.add(new THREE.Mesh(geo, new THREE.MeshLambertMaterial({ color: 0x564536, side: THREE.DoubleSide })));
+            scene.add(new THREE.Mesh(geo, new THREE.MeshLambertMaterial({ color: 0x4a3a2c, side: THREE.DoubleSide })));
 
-            // glowing lamps along the ceiling + a few real lights
+            // headland: a rock shell over the tube (grassy on top) with end
+            // facades connecting the shell rim to the tube mouth — so the
+            // entrance reads as a dark hole in a hill, not a solid wall.
+            const SR = HALF_W + 16, SH = 19;
+            const arch = (i, rad, hgt, lift) => {
+                const out = [];
+                const c = centerline[i], n = normals[i];
+                for (let a = 0; a < ARCH; a++) {
+                    const th = (a / (ARCH - 1)) * Math.PI;
+                    const l = Math.cos(th) * rad;
+                    const y = roadY(i, clamp(l, -HALF_W, HALF_W)) + lift + Math.sin(th) * hgt;
+                    out.push([c.x + n.x * l, y, c.z + n.z * l, Math.sin(th)]);
+                }
+                return out;
+            };
+            const spos = [], scol = [], sidx = [];
+            const rockC = new THREE.Color(0x8a6a4f), grassC = new THREE.Color(0x55a843), tmpC = new THREE.Color();
+            const ssecs = [];
+            for (let i = tunnelA; i <= tunnelB; i += 4) ssecs.push(i);
+            if (ssecs[ssecs.length - 1] !== tunnelB) ssecs.push(tunnelB);
+            for (const i of ssecs) {
+                for (const [x, y, z, t] of arch(i, SR, SH, -0.5)) {
+                    spos.push(x, y, z);
+                    tmpC.copy(rockC).lerp(grassC, smoothstep(0.55, 0.9, t) * 0.85);
+                    tmpC.multiplyScalar(0.92 + 0.16 * Math.abs(Math.sin(x * 0.13 + z * 0.17)));
+                    scol.push(tmpC.r, tmpC.g, tmpC.b);
+                }
+            }
+            for (let s = 0; s < ssecs.length - 1; s++) {
+                for (let a = 0; a < ARCH - 1; a++) {
+                    const o = s * ARCH + a, p = (s + 1) * ARCH + a;
+                    sidx.push(o, p, o + 1, o + 1, p, p + 1);
+                }
+            }
+            // end facades: annulus quads between tube-mouth arch and shell rim
+            for (const i of [tunnelA, tunnelB]) {
+                const inner = arch(i, R + 0.5, H + 0.5, 0);
+                const outer = arch(i, SR, SH, -0.5);
+                const base = spos.length / 3;
+                for (let a = 0; a < ARCH; a++) {
+                    spos.push(inner[a][0], inner[a][1], inner[a][2]);
+                    tmpC.copy(rockC).multiplyScalar(0.8);
+                    scol.push(tmpC.r, tmpC.g, tmpC.b);
+                    spos.push(outer[a][0], outer[a][1], outer[a][2]);
+                    tmpC.copy(rockC).multiplyScalar(0.95);
+                    scol.push(tmpC.r, tmpC.g, tmpC.b);
+                }
+                for (let a = 0; a < ARCH - 1; a++) {
+                    const o = base + a * 2;
+                    sidx.push(o, o + 2, o + 1, o + 1, o + 2, o + 3);
+                }
+            }
+            const sgeo = new THREE.BufferGeometry();
+            sgeo.setAttribute('position', new THREE.Float32BufferAttribute(spos, 3));
+            sgeo.setAttribute('color', new THREE.Float32BufferAttribute(scol, 3));
+            sgeo.setIndex(sidx); sgeo.computeVertexNormals();
+            scene.add(new THREE.Mesh(sgeo, new THREE.MeshLambertMaterial({ vertexColors: true, side: THREE.DoubleSide })));
+
+            // glowing lamps along the ceiling + real lights (brighter near the
+            // mouths so the interior visibly reads from outside)
             const lampParts = [];
             const lampGeo = new THREE.BoxGeometry(1.6, 0.5, 0.9);
-            for (let i = tunnelA + 6; i < tunnelB - 4; i += 9) {
+            for (let i = tunnelA + 5; i < tunnelB - 3; i += 9) {
                 const c = centerline[i];
                 lampParts.push({ geo: lampGeo, color: 0xffd88a, matrix: mat4(c.x, c.y + H - 0.6, c.z, 0) });
             }
             scene.add(new THREE.Mesh(bakeMerge(lampParts), new THREE.MeshBasicMaterial({ vertexColors: true })));
-            for (let f = 0.2; f <= 0.8; f += 0.3) {
+            for (const f of [0.06, 0.28, 0.5, 0.72, 0.94]) {
                 const i = Math.floor(lerp(tunnelA, tunnelB, f));
                 const c = centerline[i];
-                const pl = new THREE.PointLight(0xffc070, 0.9, 130);
+                const pl = new THREE.PointLight(0xffc070, 1.1, 120);
                 pl.position.set(c.x, c.y + H - 3, c.z);
                 scene.add(pl);
             }
 
-            // portal facades
-            const rockMat = new THREE.MeshLambertMaterial({ color: 0x6b5743 });
+            // portal rim trim
+            const rockMat = new THREE.MeshLambertMaterial({ color: 0x5a4636 });
             for (const i of [tunnelA, tunnelB]) {
                 const c = centerline[i], t = tangents[i];
-                const ring = new THREE.Mesh(new THREE.TorusGeometry(R + 1.5, 3.4, 8, 18, Math.PI), rockMat);
-                ring.position.set(c.x, c.y + 1.5, c.z);
-                ring.lookAt(c.x + t.x, c.y + 1.5, c.z + t.z);
+                const ring = new THREE.Mesh(new THREE.TorusGeometry(R + 1.2, 2.2, 8, 18, Math.PI), rockMat);
+                ring.position.set(c.x, c.y + 1.2, c.z);
+                ring.lookAt(c.x + t.x, c.y + 1.2, c.z + t.z);
                 scene.add(ring);
             }
         }
@@ -1000,11 +1106,7 @@
             const cv = document.createElement('canvas'); cv.width = 64; cv.height = 16;
             const g = cv.getContext('2d');
             for (let x = 0; x < 8; x++) for (let y = 0; y < 2; y++) { g.fillStyle = (x + y) % 2 ? '#fff' : '#111'; g.fillRect(x * 8, y * 8, 8, 8); }
-            const line = new THREE.Mesh(new THREE.PlaneGeometry(TRACK_WIDTH, 6), new THREE.MeshBasicMaterial({
-                map: new THREE.CanvasTexture(cv), polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2 }));
-            line.rotation.x = -Math.PI / 2; line.rotation.z = Math.atan2(t.x, t.z);
-            line.position.set(c.x, c.y + 0.14, c.z); line.renderOrder = 3;
-            scene.add(line);
+            buildDecalStrip(0, 2, 1.0, new THREE.CanvasTexture(cv), 0.12);
 
             // gate
             const postH = 20;
@@ -1175,21 +1277,19 @@
             const g = cv.getContext('2d');
             g.fillStyle = '#0a2a44'; g.fillRect(0, 0, 64, 64);
             g.fillStyle = '#34d6ff';
+            // chevrons point along the direction of travel (texture v axis)
             for (let i = 0; i < 3; i++) {
-                g.beginPath(); const y = 10 + i * 18;
-                g.moveTo(12, y); g.lineTo(52, y + 9); g.lineTo(12, y + 18); g.closePath(); g.fill();
+                g.beginPath(); const y = 8 + i * 18;
+                g.moveTo(12, y + 16); g.lineTo(32, y); g.lineTo(52, y + 16);
+                g.lineTo(52, y + 10); g.lineTo(32, y - 6); g.lineTo(12, y + 10);
+                g.closePath(); g.fill();
             }
             const tex = new THREE.CanvasTexture(cv);
             boostPads = [];
             const segs = [Math.floor(N * 0.155), Math.floor(N * 0.46), Math.floor(N * 0.70),
                           ((jumpSeg - 34) % N + N) % N];
             for (const k of segs) {
-                const c = centerline[k], t = tangents[k];
-                const pad = new THREE.Mesh(new THREE.PlaneGeometry(TRACK_WIDTH * 0.55, 13), new THREE.MeshBasicMaterial({
-                    map: tex, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2 }));
-                pad.rotation.x = -Math.PI / 2; pad.rotation.z = Math.atan2(t.x, t.z);
-                pad.position.set(c.x, c.y + 0.16, c.z); pad.renderOrder = 3;
-                scene.add(pad);
+                buildDecalStrip(k, 3, 0.55, tex, 0.12);
                 boostPads.push(k);
             }
         }
@@ -1473,7 +1573,7 @@
             disposeKarts();
             const order = charOrder();
             // AI skill spread, shuffled so the fast rival differs run to run
-            const skills = [1.015, 1.0, 0.99, 0.978, 0.965, 0.952, 0.94];
+            const skills = [1.04, 1.02, 1.005, 0.995, 0.985, 0.97, 0.955];
             for (let i = skills.length - 1; i > 0; i--) { const j = Math.floor(rng() * (i + 1)); [skills[i], skills[j]] = [skills[j], skills[i]]; }
             for (let i = 0; i < NUM_KARTS; i++) {
                 const ch = CHARS[order[i]];
@@ -1498,8 +1598,8 @@
                     ai: i === 0 ? null : {
                         skill: skills[i - 1],
                         aggr: rand(0.3, 1.0),
-                        drift: rand(0.5, 1.0),
-                        driftHold: rand(1.1, 2.1),
+                        drift: rand(0.7, 1.05),
+                        driftHold: rand(1.3, 2.3),
                         phase: rand(0, Math.PI * 2),
                         laneBias: rand(-4, 4),
                         errT: rand(2, 6), errOff: 0,
@@ -1636,19 +1736,23 @@
 
             if (!k.finished) {
                 if (k.brake && k.grounded && k.boostTimer <= 0) k.speed -= BRAKE * dt;
-                else if (k.speed < cap) { if (k.grounded) k.speed += ACCEL * k.statAccel * dt; }
-                else k.speed -= 60 * dt;
+                else if (k.speed < cap) {
+                    // MK-style wind-up: strong off the line, tapering toward top speed
+                    if (k.grounded) k.speed += ACCEL * k.statAccel * (1 - ACCEL_TAPER * clamp(k.speed / cap, 0, 1)) * dt;
+                } else k.speed -= 60 * dt;
             }
-            if (k.boostTimer > 0) { k.boostTimer -= dt; k.speed = Math.max(k.speed, MAX_SPEED + 30); }
+            if (k.boostTimer > 0) { k.boostTimer -= dt; k.speed = Math.max(k.speed, BOOST_FLOOR); }
             k.speed = clamp(k.speed, 0, BOOST_CAP);
 
-            // steering — full control kept even when bonked (no spinouts, ever)
+            // steering — full control kept even when bonked (no spinouts, ever).
+            // Yaw authority fades with speed: hairpins demand braking or a drift.
             const speedFactor = clamp(k.speed / 26, 0, 1);
-            let turn = steer * 2.5 * k.statHandling * speedFactor;
+            const yawAuth = TURN_BASE * (1 - TURN_FADE * clamp(k.speed / MAX_SPEED, 0, 1.3));
+            let turn = steer * yawAuth * k.statHandling * speedFactor;
             if (k.drifting) {
                 k.driftRamp = Math.min(1, k.driftRamp + dt * 6);
                 const into = clamp(k.driftDir * steer, -1, 1);
-                const rate = 1.9 + into * 0.9;
+                const rate = yawAuth * (1.18 + into * 0.42);   // drifting turns ~1.2-1.6x tighter
                 turn = k.driftDir * rate * speedFactor * k.statHandling * k.driftRamp;
             }
             if (!k.grounded) turn *= 0.3;
@@ -1859,7 +1963,7 @@
             const someoneBehind = karts.some((o) => o !== k && !o.finished && o.progress < k.progress && k.progress - o.progress < 0.035);
             let minCap = Infinity;
             for (let j = 6; j < 70; j += 6) minCap = Math.min(minCap, cornerCap[(k.seg + j) % N]);
-            const onStraight = minCap > 92;
+            const onStraight = minCap > MAX_SPEED;
             if ((it === 'turbo' || it === 'turbo3') && !onStraight) { k.itemUseTimer = rand(0.4, 1.0); return; }
             if (it === 'rocket' && (gapAhead > 0.07 || (ahead && ahead.shieldTimer > 0))) { k.itemUseTimer = rand(0.6, 1.6); return; }
             // goo is most valuable dropped on a corner line or right in front of a chaser
@@ -2104,6 +2208,11 @@
                     }
                 }
             }
+            // swing through upcoming boost pads (they sit on the track center)
+            for (const pk of boostPads) {
+                let dseg = pk - k.seg; if (dseg < 0) dseg += N;
+                if (dseg > 6 && dseg < look + 30) { lane = lerp(lane, 0, 0.7); break; }
+            }
             lane = clamp(lane, -(HALF_W - 3), HALF_W - 3);
 
             const tp = pointAt(ti, lane);
@@ -2117,17 +2226,18 @@
                 const cc = cornerCap[(k.seg + j) % N];
                 if (cc < minCap) minCap = cc;
             }
-            const grip = k.drifting ? 1.22 : 1.0;
+            const grip = k.drifting ? 1.3 : 1.0;   // drifting corners ~1.2-1.6x tighter
             // during a "mistake" episode they also brake late and run wide
             const lateBrake = ai.errOff !== 0 ? 1.1 : 1.0;
             const brake = k.speed > minCap * grip * lateBrake * (0.92 + ai.skill * 0.1) && k.boostTimer <= 0;
 
-            // deliberate drifting through sustained corners
+            // deliberate drifting through sustained corners (commit early,
+            // while carrying speed into the corner — that's where turbos come from)
             let wantDrift = k.drifting;
-            if (!k.drifting && minCap < k.speed * 0.95 && minCap < 92 && k.speed > 48 && Math.abs(steer) > 0.4) {
-                if (rng() < ai.drift * dt * 5) wantDrift = true;
+            if (!k.drifting && minCap < k.speed * 0.97 && minCap < MAX_SPEED && k.speed > 45 && Math.abs(steer) > 0.35) {
+                if (rng() < ai.drift * dt * 9) wantDrift = true;
             }
-            if (k.drifting && (k.driftCharge > ai.driftHold || (minCap > 96 && k.driftCharge > 0.55))) wantDrift = false;
+            if (k.drifting && (k.driftCharge > ai.driftHold || (minCap > MAX_SPEED * 1.05 && k.driftCharge > 0.55))) wantDrift = false;
 
             // bounded two-way rubber band, off for the opening seconds.
             // Rivals shadow the player tighter; the final lap loosens the band
@@ -2729,7 +2839,7 @@
                     state = 'racing'; raceClock = 0;
                     for (const k of karts) {
                         k.lastLapStart = 0;
-                        if (k.ai && rng() < 0.45) k.boostTimer = rand(0.4, 0.8);   // some AI nail the start
+                        if (k.ai && rng() < 0.6) k.boostTimer = rand(0.4, 0.8);   // most AI nail the start
                     }
                     if (driftHeld) {   // hold DRIFT on GO → rocket start
                         player.boostTimer = 0.9;
