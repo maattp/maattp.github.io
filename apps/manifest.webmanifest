@@ -1,0 +1,14 @@
+{
+  "name": "Polkiewicz Apps",
+  "short_name": "Apps",
+  "description": "Launcher for the polkiewicz.com web apps.",
+  "start_url": "/apps/",
+  "scope": "/apps/",
+  "display": "standalone",
+  "background_color": "#f4a4b4",
+  "theme_color": "#f4a4b4",
+  "icons": [
+    { "src": "icon.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "icon.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}
