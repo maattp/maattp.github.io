@@ -55,9 +55,10 @@ audio/music → input → menu → flow → fixed-step sim + render loop → boo
 4. **`netSnapshot()` / `netRestore()`**: full race-state serialization
    (verified exact round-trip in the harness).
 
-To add WiFi multiplayer one day: transport (WebRTC data channel or WS via the
-Cloudflare worker), host broadcasts `{raceSeed, roster}` + input packets or
-periodic `netSnapshot`s; remote karts get a packet-fed controller.
+The full multiplayer plan (private rooms + matchmaking on the Cloudflare
+worker, WebRTC with relay fallback, host-authoritative state sync, voice
+stretch goal) lives in **`VISION.md`** — read it before starting any netcode
+work, and don't regress these four seams.
 
 ## Track / world model
 
@@ -113,6 +114,13 @@ periodic `netSnapshot`s; remote karts get a packet-fed controller.
   Goo slows + wobbles but never removes control.
 - Player starts 8th; rank-weighted items (leader pool is defense-only,
   global 30s `zapTimer` cooldown keeps ⚡ rare).
+- **Item roulette is tap-to-stop** (player roll 2.2s, AI 1.0s): the first
+  `ctrl.fire` while `itemRolling > 0` calls `finishRoll` (locks the item),
+  the next one uses it. The item button dedupes `touchstart` + iOS's
+  synthetic `click` (one tap must be exactly one fire event, else it stops
+  AND instantly uses).
+- AI swerve to grab an item box when empty-handed (`b.lat` per box) and
+  aim for boost pads.
 - Rubber band is bounded (±10%, ±7% on the final lap), two 'rival' AI shadow
   the player, AI block chasers and make late-brake mistakes. AI obey the same
   physics caps as the player (`_rubber` is the only asymmetry).

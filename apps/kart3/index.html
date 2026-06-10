@@ -46,8 +46,9 @@
         .pill { position: absolute; background: rgba(6,14,30,0.55); backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
             border: 1px solid rgba(255,255,255,0.14); border-radius: 14px; padding: 6px 12px;
             box-shadow: 0 6px 20px rgba(0,0,0,0.35); }
-        .pill .label { font-size: 9px; letter-spacing: 1.5px; text-transform: uppercase; opacity: 0.7; font-weight: 700; }
-        .pill .value { font-size: 21px; font-weight: 800; line-height: 1; margin-top: 2px; }
+        .pill .label { font-size: 9px; letter-spacing: 2px; text-transform: uppercase; opacity: 0.7; font-weight: 800; }
+        .pill .value { font-size: 21px; font-weight: 900; font-style: italic; line-height: 1; margin-top: 2px;
+            text-shadow: 0 2px 4px rgba(0,0,0,0.6); }
         .pill .value small { font-size: 12px; opacity: 0.7; font-weight: 700; }
         #lapPill { top: calc(env(safe-area-inset-top) + 10px); left: calc(env(safe-area-inset-left) + 14px); }
         #timePill { top: calc(env(safe-area-inset-top) + 10px); right: calc(env(safe-area-inset-right) + 14px); text-align: right; }
@@ -70,23 +71,43 @@
             box-shadow: 0 6px 18px rgba(0,0,0,0.35); }
         #minimap { width: 100%; height: 100%; }
 
-        /* Right-thumb buttons */
+        /* Right-thumb buttons — bevelled, glassy, arcade-style */
         #driftBtn, #itemBtn { position: absolute; pointer-events: auto; border-radius: 50%;
             display: flex; align-items: center; justify-content: center;
-            background: rgba(6,14,30,0.5); border: 2px solid rgba(255,255,255,0.2);
-            box-shadow: 0 6px 18px rgba(0,0,0,0.4); transition: transform 0.08s, border-color 0.2s; }
+            background: radial-gradient(circle at 50% 30%, rgba(46,82,138,0.78), rgba(7,15,32,0.88) 72%);
+            border: 3px solid rgba(255,255,255,0.26);
+            box-shadow: inset 0 2px 6px rgba(255,255,255,0.18), inset 0 -8px 14px rgba(0,0,0,0.45),
+                        0 6px 18px rgba(0,0,0,0.45);
+            transition: transform 0.08s, border-color 0.2s; }
         #driftBtn { right: calc(env(safe-area-inset-right) + 18px); bottom: calc(env(safe-area-inset-bottom) + 16px);
-            width: 92px; height: 92px; font-size: 15px; font-weight: 900; letter-spacing: 1px; color: #8fd6ff; }
-        #driftBtn.held { background: rgba(60,160,255,0.35); border-color: #8fd6ff; transform: scale(0.94); }
+            width: 92px; height: 92px; font-size: 16px; font-weight: 900; font-style: italic;
+            letter-spacing: 2px; color: #aee0ff; text-shadow: 0 2px 4px rgba(0,0,0,0.7);
+            border-color: rgba(143,214,255,0.4); }
+        #driftBtn.held { background: radial-gradient(circle at 50% 30%, rgba(80,180,255,0.65), rgba(10,40,80,0.9) 75%);
+            border-color: #bfe6ff; transform: scale(0.94);
+            box-shadow: inset 0 2px 6px rgba(255,255,255,0.25), 0 0 26px rgba(120,200,255,0.55), 0 6px 18px rgba(0,0,0,0.45); }
         #itemBtn { right: calc(env(safe-area-inset-right) + 124px); bottom: calc(env(safe-area-inset-bottom) + 38px);
-            width: 70px; height: 70px; font-size: 34px; }
-        #itemBtn.armed { border-color: #ffd54a; box-shadow: 0 0 18px rgba(255,213,74,0.6), 0 6px 18px rgba(0,0,0,0.4);
+            width: 72px; height: 72px; font-size: 34px; }
+        #itemBtn.armed { border-color: #ffd54a;
+            background: radial-gradient(circle at 50% 30%, rgba(140,100,30,0.7), rgba(40,24,6,0.9) 75%);
+            box-shadow: inset 0 2px 6px rgba(255,235,160,0.3), 0 0 22px rgba(255,213,74,0.65), 0 6px 18px rgba(0,0,0,0.45);
             animation: itempulse 0.9s ease-in-out infinite; }
+        #itemBtn.rolling { border-color: #b08aff;
+            animation: rollglow 0.32s linear infinite; }
+        @keyframes rollglow {
+            0%, 100% { box-shadow: inset 0 2px 6px rgba(255,255,255,0.18), 0 0 12px rgba(176,138,255,0.45), 0 6px 18px rgba(0,0,0,0.45); }
+            50% { box-shadow: inset 0 2px 6px rgba(255,255,255,0.18), 0 0 26px rgba(176,138,255,0.85), 0 6px 18px rgba(0,0,0,0.45); }
+        }
         #itemBtn:active { transform: scale(0.9); }
         @keyframes itempulse { 0%,100% { transform: scale(1);} 50% { transform: scale(1.06);} }
-        #itemBtn .empty { font-size: 10px; opacity: 0.4; letter-spacing: 1px; font-weight: 700; }
-        #itemBtn .cnt { position: absolute; right: 2px; bottom: 2px; font-size: 14px; font-weight: 900; color: #ffd54a;
+        #itemBtn .empty { font-size: 10px; opacity: 0.45; letter-spacing: 2px; font-weight: 900; font-style: italic; }
+        #itemBtn .cnt { position: absolute; right: 1px; bottom: 3px; font-size: 14px; font-weight: 900; color: #ffd54a;
             text-shadow: 0 1px 3px #000; }
+        #itemBtn .rollicon { animation: slotbounce 0.16s linear infinite; display: inline-block; }
+        @keyframes slotbounce { 0% { transform: translateY(-3px); } 50% { transform: translateY(3px); } 100% { transform: translateY(-3px); } }
+        #itemBtn .taphint { position: absolute; bottom: -18px; left: 50%; transform: translateX(-50%);
+            font-size: 11px; font-weight: 900; font-style: italic; letter-spacing: 2px; color: #d8c2ff;
+            text-shadow: 0 0 10px rgba(176,138,255,0.9), 0 2px 4px #000; animation: itempulse 0.4s ease-in-out infinite; }
 
         /* Left-thumb steering joystick indicator */
         #stick { position: absolute; pointer-events: none; width: 120px; height: 46px; border-radius: 999px;
@@ -105,24 +126,30 @@
         #boostBar { width: 100%; height: 10px; border-radius: 8px; overflow: hidden;
             background: rgba(6,14,30,0.6); border: 1px solid rgba(255,255,255,0.18); }
         #boostFill { height: 100%; width: 0%; border-radius: 8px; background: #4ad6ff; transition: width 0.05s linear, background 0.2s; }
-        #boostHint { font-size: 10px; font-weight: 700; letter-spacing: 1px; opacity: 0.85; text-shadow: 0 1px 4px #000; }
+        #boostHint { font-size: 11px; font-weight: 900; font-style: italic; letter-spacing: 2px;
+            opacity: 0.9; text-shadow: 0 2px 4px #000, 0 0 12px rgba(120,200,255,0.5); }
 
         #pauseBtn { position: absolute; left: 50%; transform: translateX(-50%);
             top: calc(env(safe-area-inset-top) + 10px); width: 36px; height: 36px; border-radius: 50%;
             pointer-events: auto; background: rgba(6,14,30,0.55); border: 1px solid rgba(255,255,255,0.14);
             color: #fff; font-size: 13px; display: flex; align-items: center; justify-content: center; }
 
-        /* Flash / toast / wrong-way */
+        /* Flash / toast / wrong-way — racing-poster typography */
         #flash { position: fixed; top: 30%; left: 0; right: 0; text-align: center; z-index: 12;
-            font-size: 42px; font-weight: 900; letter-spacing: 1px;
-            text-shadow: 0 4px 18px rgba(0,0,0,0.6), 0 0 30px currentColor; opacity: 0; pointer-events: none; transform: scale(0.7); }
-        @keyframes flashpop { 0% {opacity:0; transform:scale(0.6);} 18% {opacity:1; transform:scale(1.08);}
-            70% {opacity:1; transform:scale(1);} 100% {opacity:0; transform:scale(1.15);} }
+            font-size: 44px; font-weight: 900; font-style: italic; letter-spacing: 1px;
+            -webkit-text-stroke: 1.5px rgba(0,0,0,0.35); paint-order: stroke fill;
+            text-shadow: 0 4px 0 rgba(0,0,0,0.3), 0 6px 22px rgba(0,0,0,0.6), 0 0 34px currentColor;
+            opacity: 0; pointer-events: none; transform: scale(0.7); }
+        @keyframes flashpop { 0% {opacity:0; transform:scale(0.6) rotate(-2deg);} 18% {opacity:1; transform:scale(1.08) rotate(-2deg);}
+            70% {opacity:1; transform:scale(1) rotate(-2deg);} 100% {opacity:0; transform:scale(1.15) rotate(-2deg);} }
         #flash.show { animation: flashpop 1.3s ease forwards; }
         #toast { position: fixed; left: 50%; top: calc(env(safe-area-inset-top) + 54px); transform: translateX(-50%);
-            z-index: 12; font-size: 15px; font-weight: 800; letter-spacing: 0.5px; padding: 6px 15px; border-radius: 999px;
-            background: rgba(6,14,30,0.7); border: 1px solid rgba(255,255,255,0.18); opacity: 0; pointer-events: none;
-            text-shadow: 0 1px 4px #000; }
+            z-index: 12; font-size: 16px; font-weight: 900; font-style: italic; letter-spacing: 1.5px;
+            text-transform: uppercase; padding: 8px 20px; border-radius: 999px;
+            background: linear-gradient(180deg, rgba(28,52,96,0.92), rgba(7,15,32,0.92));
+            border: 1.5px solid rgba(255,213,74,0.5); opacity: 0; pointer-events: none;
+            box-shadow: 0 5px 18px rgba(0,0,0,0.5), 0 0 24px rgba(255,213,74,0.16), inset 0 1px 0 rgba(255,255,255,0.18);
+            text-shadow: 0 2px 4px rgba(0,0,0,0.8), 0 0 14px currentColor; }
         @keyframes toastpop { 0% {opacity:0; transform:translateX(-50%) translateY(-8px);}
             12% {opacity:1; transform:translateX(-50%) translateY(0);} 80% {opacity:1;} 100% {opacity:0;} }
         #toast.show { animation: toastpop 1.6s ease forwards; }
@@ -1319,7 +1346,7 @@
                     const by = roadY(seg, lane) + 2.9;
                     box.position.set(bx, by, bz);
                     scene.add(box);
-                    itemBoxes.push({ group: box, seg, x: bx, z: bz, active: true, respawn: 0, baseY: by });
+                    itemBoxes.push({ group: box, seg, lat: lane, x: bx, z: bz, active: true, respawn: 0, baseY: by });
                 }
             }
         }
@@ -1723,7 +1750,13 @@
                 k.brake = k.ctrl.brake;
                 if (k.ctrl.drift && !k.drifting && k.grounded) startDrift(k, steer);
                 else if (!k.ctrl.drift && k.drifting) releaseDrift(k);
-                if (k.ctrl.fire) { k.ctrl.fire = false; useItem(k); }
+                if (k.ctrl.fire) {
+                    k.ctrl.fire = false;
+                    // MK-style roulette: the first tap STOPS the slot machine
+                    // and locks the item in; a second tap actually uses it.
+                    if (k.itemRolling > 0) finishRoll(k);
+                    else useItem(k);
+                }
             } else if (k.drifting) releaseDrift(k);
 
             let cap = MAX_SPEED * k.statSpeed;
@@ -1908,7 +1941,8 @@
             b.active = false; b.respawn = 4.0; b.group.visible = false;
             emitSpark(new THREE.Vector3(b.x, b.baseY, b.z), 0xb06bff, 6, 5, { life: 0.4 });
             if (k.item || k.itemRolling > 0) return;
-            k.itemRolling = k.isPlayer ? 1.0 : 0.01;
+            // long player roulette — tapping the slot stops it early (MK-style)
+            k.itemRolling = k.isPlayer ? 2.2 : 1.0;
             k._rollPick = rollItemFor(k);
             if (k.isPlayer) { sfxPickup(); vibrate(20); updateItemButton(); }
         }
@@ -2208,6 +2242,18 @@
                     }
                 }
             }
+            // grab an item box when empty-handed — swerve to the nearest lane
+            if (!k.item && k.itemRolling <= 0) {
+                let bestBox = null, bestD = Infinity;
+                for (const b of itemBoxes) {
+                    if (!b.active) continue;
+                    let dseg = b.seg - k.seg; if (dseg < 0) dseg += N;
+                    if (dseg < 6 || dseg > look + 26) continue;
+                    const ld = Math.abs(b.lat - k.lateralSigned);
+                    if (ld < bestD) { bestD = ld; bestBox = b; }
+                }
+                if (bestBox && bestD < 14) lane = lerp(lane, bestBox.lat, 0.8);
+            }
             // swing through upcoming boost pads (they sit on the track center)
             for (const pk of boostPads) {
                 let dseg = pk - k.seg; if (dseg < 0) dseg += N;
@@ -2376,6 +2422,7 @@
             if (miniThrottle >= 2) { miniThrottle = 0; drawMinimap(); }
         }
         function updateItemButton() {
+            dom.itemBtn.classList.remove('rolling');
             const it = player.item;
             if (it && ITEM_DEF[it]) {
                 dom.itemBtn.innerHTML = ITEM_DEF[it].icon +
@@ -2389,12 +2436,15 @@
             }
         }
         const ROLL_ICONS = ['🔥', '🚀', '🫧', '🛡️', '⚡'];
-        let lastRollIcon = -1;
-        function animateItemRoll() {
+        let lastRollIcon = -1, rollPhase = 0;
+        function animateItemRoll(dt) {
             if (player.itemRolling > 0) {
-                const i = Math.floor(clock.elapsedTime * 12) % ROLL_ICONS.length;
+                dom.itemBtn.classList.add('rolling');
+                // slot machine decelerates as it settles
+                rollPhase += dt * (5 + 9 * clamp(player.itemRolling / 2.2, 0, 1));
+                const i = Math.floor(rollPhase) % ROLL_ICONS.length;
                 if (i !== lastRollIcon) { lastRollIcon = i; sfxTick(); }
-                dom.itemBtn.innerHTML = ROLL_ICONS[i];
+                dom.itemBtn.innerHTML = '<span class="rollicon">' + ROLL_ICONS[i] + '</span><span class="taphint">TAP!</span>';
             }
         }
         function drawMinimap() {
@@ -2759,10 +2809,20 @@
             dom.driftBtn.addEventListener('mousedown', driftOn);
             dom.driftBtn.addEventListener('mouseup', driftOff);
 
-            // item fires through the controller seam (consumed next sim tick)
-            const fireItem = (e) => { e.preventDefault(); if (state === 'racing') pendingFire = true; };
-            dom.itemBtn.addEventListener('touchstart', fireItem, { passive: false });
-            dom.itemBtn.addEventListener('click', () => { if (state === 'racing') pendingFire = true; });
+            // item fires through the controller seam (consumed next sim tick).
+            // Dedupe touchstart + the synthetic click iOS sends afterwards —
+            // a single tap must be exactly ONE fire event, or it would stop
+            // the roulette and instantly use the item it just locked in.
+            let lastItemTouch = 0;
+            dom.itemBtn.addEventListener('touchstart', (e) => {
+                e.preventDefault();
+                lastItemTouch = performance.now();
+                if (state === 'racing') pendingFire = true;
+            }, { passive: false });
+            dom.itemBtn.addEventListener('click', () => {
+                if (performance.now() - lastItemTouch < 800) return;
+                if (state === 'racing') pendingFire = true;
+            });
 
             dom.pauseBtn.addEventListener('click', () => { if (state === 'racing') pauseGame(); });
             dom.muteBtn.addEventListener('click', () => { muted = !muted; dom.muteBtn.textContent = muted ? '🔇' : '🔊'; savePrefs(); });
@@ -3007,7 +3067,7 @@
                 updateItemBoxesVisual(dt);
                 updateCamera(false);
                 updateHUD();
-                animateItemRoll();
+                animateItemRoll(dt);
                 updateEngineSound();
             } else {
                 // menu: cinematic orbit of the start grid
