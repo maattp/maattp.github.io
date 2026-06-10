@@ -55,9 +55,10 @@ audio/music → input → menu → flow → fixed-step sim + render loop → boo
 4. **`netSnapshot()` / `netRestore()`**: full race-state serialization
    (verified exact round-trip in the harness).
 
-To add WiFi multiplayer one day: transport (WebRTC data channel or WS via the
-Cloudflare worker), host broadcasts `{raceSeed, roster}` + input packets or
-periodic `netSnapshot`s; remote karts get a packet-fed controller.
+The full multiplayer plan (private rooms + matchmaking on the Cloudflare
+worker, WebRTC with relay fallback, host-authoritative state sync, voice
+stretch goal) lives in **`VISION.md`** — read it before starting any netcode
+work, and don't regress these four seams.
 
 ## Track / world model
 
