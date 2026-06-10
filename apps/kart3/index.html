@@ -234,6 +234,20 @@
         .mini-btn:disabled { opacity: 0.45; }
         #netStatus { margin-top: 8px; font-size: 12px; font-weight: 700; color: #ffd54a; min-height: 16px; }
 
+        /* Settings pane */
+        #settingsPane { display: none; margin-top: 10px; padding: 12px 16px; border-radius: 14px;
+            background: rgba(6,14,30,0.55); border: 1.5px solid rgba(255,255,255,0.15);
+            pointer-events: auto; width: 100%; max-width: 320px; }
+        #settingsPane.open { display: block; }
+        .set-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin: 7px 0; }
+        .set-label { font-size: 12px; font-weight: 700; opacity: 0.85; white-space: nowrap; }
+        .seg2 { display: flex; border: 1.5px solid rgba(255,255,255,0.22); border-radius: 999px; overflow: hidden; }
+        .seg-opt { font-size: 11px; font-weight: 800; letter-spacing: 0.5px; padding: 7px 12px;
+            background: transparent; border: none; color: #fff; opacity: 0.5; }
+        .seg-opt.active { opacity: 1; background: rgba(120,200,255,0.3); }
+        #sensSlider { width: 130px; accent-color: #6fe0ff; }
+        .set-hint { font-size: 10px; opacity: 0.55; margin-top: 4px; }
+
         /* Lobby */
         #roomCode { font-size: 52px; font-weight: 900; font-style: italic; letter-spacing: 8px; line-height: 1;
             margin: 4px 0 2px;
@@ -379,6 +393,21 @@
                     <button class="mini-btn" id="joinRoomBtn">JOIN</button>
                 </div>
                 <div id="netStatus"></div>
+                <button class="mini-btn" id="settingsBtn" style="margin-top:10px">⚙ SETTINGS</button>
+                <div id="settingsPane">
+                    <div class="set-row">
+                        <span class="set-label">Steering direction</span>
+                        <div class="seg2" id="steerDirSeg">
+                            <button class="seg-opt" data-v="0">Standard</button>
+                            <button class="seg-opt" data-v="1">Reversed</button>
+                        </div>
+                    </div>
+                    <div class="set-row">
+                        <span class="set-label">Steering sensitivity</span>
+                        <input type="range" id="sensSlider" min="0" max="100" value="62">
+                    </div>
+                    <div class="set-hint">Reversed flips the slide direction of the steering thumb.</div>
+                </div>
                 <div class="hint"><b>Left thumb</b> slides to steer · hold <b>DRIFT</b> in turns for turbo ·
                     grab <b>?</b> boxes · hold DRIFT on <b>GO!</b> for a rocket start</div>
                 <div class="loader" id="loadMsg">loading…</div>
@@ -506,6 +535,8 @@
             lobbyChars: $('lobbyChars'), readyBtn: $('readyBtn'), lobbyStartBtn: $('lobbyStartBtn'),
             leaveBtn: $('leaveBtn'), lobbyMsg: $('lobbyMsg'), netInd: $('netInd'),
             trackPick: $('trackPick'), lobbyTracks: $('lobbyTracks'), raceStandings: $('raceStandings'),
+            settingsBtn: $('settingsBtn'), settingsPane: $('settingsPane'),
+            steerDirSeg: $('steerDirSeg'), sensSlider: $('sensSlider'),
             muteBtn: $('muteBtn'), itemBtn: $('itemBtn'), driftBtn: $('driftBtn'), pauseBtn: $('pauseBtn'),
             pauseScreen: $('pauseScreen'), resumeBtn: $('resumeBtn'), restartBtn: $('restartBtn'), quitBtn: $('quitBtn'),
             minimap: $('minimap'), stick: $('stick'), stickDot: $('stickDot'),
@@ -649,6 +680,8 @@
         let state = 'menu'; // menu, countdown, racing, finished, paused
         let steerInput = 0, keySteer = 0, touchSteer = 0;
         let driftHeld = false, pendingFire = false;
+        let steerReversed = false;           // touch-steer direction preference
+        let steerRangePx = 64;               // thumb travel (px) for full lock
         let raceClock = 0, prevPlayerRank = 1;
         let raceSeed = 1;
 
@@ -678,6 +711,9 @@
                 const tr = parseInt(localStorage.getItem('kart3_track'), 10);
                 if (!isNaN(tr) && TRACKS[tr]) currentTrackIdx = tr;
                 muted = localStorage.getItem('kart3_muted') === '1';
+                steerReversed = localStorage.getItem('kart3_steerrev') === '1';
+                const sv = parseInt(localStorage.getItem('kart3_sens'), 10);
+                if (!isNaN(sv)) steerRangePx = sensToRange(sv);
             } catch (e) {}
         }
         function savePrefs() {
@@ -3774,7 +3810,6 @@
         //  INPUT — left-thumb slide steering + DRIFT / ITEM buttons
         // ===================================================================
         let steerTouchId = null, steerX0 = 0;
-        const STEER_RANGE = 64; // px of thumb travel for full lock
         function setupInput() {
             const surface = renderer.domElement;
             function steerZone(x) { return x < window.innerWidth * 0.5; }
@@ -3799,7 +3834,7 @@
                 e.preventDefault();
                 for (const t of e.changedTouches) {
                     if (t.identifier === steerTouchId) {
-                        touchSteer = clamp((t.clientX - steerX0) / STEER_RANGE, -1, 1);
+                        touchSteer = clamp((t.clientX - steerX0) / steerRangePx, -1, 1);
                         dom.stickDot.style.transform = 'translate(calc(-50% + ' + (touchSteer * 40) + 'px), -50%)';
                     }
                 }
@@ -3819,7 +3854,7 @@
             // mouse fallback (desktop testing)
             let mouseDown = false;
             surface.addEventListener('mousedown', (e) => { mouseDown = true; steerX0 = e.clientX; });
-            window.addEventListener('mousemove', (e) => { if (mouseDown) touchSteer = clamp((e.clientX - steerX0) / STEER_RANGE, -1, 1); });
+            window.addEventListener('mousemove', (e) => { if (mouseDown) touchSteer = clamp((e.clientX - steerX0) / steerRangePx, -1, 1); });
             window.addEventListener('mouseup', () => { mouseDown = false; touchSteer = 0; });
 
             window.addEventListener('keydown', (e) => {
@@ -3882,6 +3917,30 @@
                 if (document.hidden && state === 'racing' && !netActive()) pauseGame();
             });
 
+            // ---- settings pane ----
+            dom.settingsBtn.addEventListener('click', () => dom.settingsPane.classList.toggle('open'));
+            const reflectSteerDir = () => {
+                dom.steerDirSeg.querySelectorAll('.seg-opt').forEach((b) =>
+                    b.classList.toggle('active', b.dataset.v === (steerReversed ? '1' : '0')));
+            };
+            dom.steerDirSeg.querySelectorAll('.seg-opt').forEach((b) => {
+                b.addEventListener('click', () => {
+                    steerReversed = b.dataset.v === '1';
+                    try { localStorage.setItem('kart3_steerrev', steerReversed ? '1' : '0'); } catch (e) {}
+                    reflectSteerDir();
+                });
+            });
+            reflectSteerDir();
+            try {
+                const sv = parseInt(localStorage.getItem('kart3_sens'), 10);
+                if (!isNaN(sv)) dom.sensSlider.value = sv;
+            } catch (e) {}
+            dom.sensSlider.addEventListener('input', () => {
+                const v = parseInt(dom.sensSlider.value, 10) || 62;
+                steerRangePx = sensToRange(v);
+                try { localStorage.setItem('kart3_sens', v); } catch (e) {}
+            });
+
             // ---- online controls ----
             dom.createRoomBtn.addEventListener('click', createRoom);
             dom.roomCode.addEventListener('click', () => {
@@ -3914,8 +3973,9 @@
             });
         }
         function computeSteer() {
-            steerInput = clamp(touchSteer + keySteer, -1, 1);
+            steerInput = clamp(touchSteer * (steerReversed ? -1 : 1) + keySteer, -1, 1);
         }
+        function sensToRange(v) { return Math.round(lerp(110, 36, clamp(v, 0, 100) / 100)); }
 
         // ===================================================================
         //  MENU UI
