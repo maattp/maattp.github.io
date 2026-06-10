@@ -160,8 +160,21 @@ work, and don't regress these four seams.
   be derived from the steering model above. (It was once a made-up grip
   formula; the AI braked to ~50 where anyone corners at 90 and "always lost".)
 - Acceleration tapers toward the cap (`ACCEL`, `ACCEL_TAPER`): ~4.5s of
-  wind-up to top speed, MK64-style. Boosts: floor `BOOST_FLOOR`, cap
-  `BOOST_CAP` ≈ 1.5× MAX — not warp speed.
+  wind-up to top speed, MK64-style.
+- **Boosts are one-shot kicks via `grantBoost(k, dur, kick, floor)`** —
+  speed += kick (at least floor) once, plus a temporary cap window to
+  `BOOST_CAP`. There is deliberately NO per-tick speed floor: the old
+  `speed = max(speed, 120)` every tick warped every boost to 120 and made
+  chained boost pads a no-op. Pads: +16/0.9s with `padCool` edge-trigger;
+  single pad peaks ~124, a chained pair (gap ~118u) lands a second kick to
+  the true 138 cap (verified: kicks at both pads, chain peak exactly 138).
+- **Fixed-timestep render interpolation (`renderKarts`)**: meshes + camera
+  render at the pose blended between the previous and current sim tick by
+  `simAcc/SIM_DT`. Without it, 120Hz ProMotion frames alternate 0-and-1 sim
+  steps and the kart visibly vibrates against the per-frame-lerping camera
+  (ProMotion switches rates adaptively → "sometimes it vibrates"). Camera
+  and kart visual lerps are dt-normalized via `frameLerp` for the same
+  reason. Mesh sync lives in the render pass, NOT in updateKart.
 - AI seek boost pads, drift deliberately into braking corners, and have a
   tight skill band (0.955–1.04) — tune pace via autopilot lap times
   (leader ~22–24s/lap; autopilot avg-skill player should finish mid-pack).
