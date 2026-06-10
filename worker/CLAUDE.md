@@ -34,8 +34,11 @@ email-locked. The unguessable 5-char code is the credential.
   and a 101 WebSocket response's headers are immutable. Keep it there.
 
 The DO is a lobby (roster/chars/ready/host) + opaque message relay:
-client `input` → host; host `snap`/`event` → everyone else. Protocol lives
-in `apps/kart3/index.html` (`netHandle`) and `apps/kart3/VISION.md`.
+client `input` → host; host `snap`/`event` → everyone else (or one peer via
+`msg.to`); `rtc` relays WebRTC signaling peer→peer; `pp` echoes for RTT.
+At race start it stores `seats` (id+name) so a player who drops mid-race
+can rejoin by name and reclaim their kart. Protocol lives in
+`apps/kart3/index.html` (`netHandle`) and `apps/kart3/VISION.md`.
 Rooms self-destruct via alarm after 45 min or when the last socket leaves.
 
 ## Auth

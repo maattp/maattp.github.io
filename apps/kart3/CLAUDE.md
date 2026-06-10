@@ -86,12 +86,37 @@ work, and don't regress these four seams.
   both players and drive the lobby via DOM clicks. The client autopilot
   works because input packets carry `player.ctrl` (controller output), not
   raw touch state.
-- Known M1 limitation for M2: client steering reaches the host ~50-150ms
-  late, so the host's copy of a client kart corners on stale inputs and
-  scrubs speed the local player never sees. Candidates: client-authoritative
-  own-kart pose in input packets (fine at this trust level), or host-side
-  input delay buffering. Also: no client rocket-start (host can't see
-  pre-GO inputs), no late-join.
+### M2 netcode (SHIPPED): WebRTC fast path + pose authority + rejoin
+
+- **WebRTC DataChannels** (`rtcInitiate`/`rtcHandleSignal`): host offers one
+  unordered/unreliable 'fast' channel per client from the LOBBY (pre-warmed
+  before GO); SDP/ICE relayed through the DO (`rtc` messages). Snapshots are
+  dual-sent (WS broadcast + every open channel) and clients dedupe by tick —
+  fastest transport wins; pairs that can't go P2P just stay on the relay.
+  Inputs go rtc-else-ws (`sendToHostFast`). `window.__noRtc` forces relay
+  (used in tests).
+- **Client-authoritative pose** (fixes M1's stale-steering): input packets
+  carry the own-kart pose; on the host, remote karts skip physics entirely
+  (`updateRemoteKart`) — pose is lerp-applied, effect timers tick, item
+  pickups/laps/ranks stay host-derived, `clampToTrack` sanity-bounds it.
+  They're immovable in `resolveCollisions` (owner moves them). The client no
+  longer eases toward the host echo (it's just its own delayed pose) — only
+  a >45u emergency snap remains. Client rocket-start is back.
+- **Mid-race rejoin**: DO stores `seats` (id+name) at race start; a hello
+  during `racing` whose name matches a vacant seat is re-admitted with
+  `welcome.rejoin`. Host converts that kart AI→remote and sends a targeted
+  `rejoin-state` event (seed + racePlayers + full `netSnapshot`). Clients
+  auto-retry 4× on mid-race socket loss (own kart keeps driving, remotes
+  freeze on the last snap); cold rejoin (page reload) rebuilds the race and
+  `netRestore`s.
+- **Connection indicator** (`#netInd`): client shows `P2P/RELAY · Nms`
+  (WS RTT via `pp` echo, doubles as keepalive); host shows open-channel
+  count. Green when fully P2P.
+- **CI caveat**: under SwiftShader CPU contention the host page's sim runs
+  slower than wall time (hitch guard drops time) while pose-authoritative
+  clients keep real-time speed — host AI and raceClock fall behind. That's
+  load distortion, not a netcode bug; quiet machines and real phones at
+  60fps don't exhibit it. Run perf-sensitive assertions on a quiet machine.
 
 ## Track / world model
 
