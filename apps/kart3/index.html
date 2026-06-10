@@ -321,8 +321,28 @@
         // ---------- helpers ----------
         const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
         const lerp = (a, b, t) => a + (b - a) * t;
-        const rand = (a, b) => a + Math.random() * (b - a);
-        const pick = (arr) => arr[Math.floor(Math.random() * arr.length)];
+
+        // -------------------------------------------------------------------
+        // MULTIPLAYER-READINESS SEAM #1: deterministic randomness.
+        // All gameplay + world-build randomness flows through this seeded PRNG
+        // (mulberry32). A future WiFi host shares {worldSeed, raceSeed, roster}
+        // and every client deterministically builds the same world / rolls the
+        // same items. Purely cosmetic randomness (particles) uses vrand/vpick
+        // so it can never desync a synced simulation.
+        // -------------------------------------------------------------------
+        let _rng = 1;
+        function seedRng(s) { _rng = (s >>> 0) || 1; }
+        function rng() {
+            _rng |= 0; _rng = (_rng + 0x6D2B79F5) | 0;
+            let t = Math.imul(_rng ^ (_rng >>> 15), 1 | _rng);
+            t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+            return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+        }
+        const rand = (a, b) => a + rng() * (b - a);
+        const pick = (arr) => arr[Math.floor(rng() * arr.length)];
+        const vrand = (a, b) => a + Math.random() * (b - a);     // visual-only
+        const vpick = (arr) => arr[Math.floor(Math.random() * arr.length)];
+        const WORLD_SEED = 0xC04A1;   // "coral" — fixed so every client builds the identical island
         const smoothstep = (a, b, x) => { const t = clamp((x - a) / (b - a), 0, 1); return t * t * (3 - 2 * t); };
         function wrapAngle(a) { while (a > Math.PI) a -= Math.PI * 2; while (a < -Math.PI) a += Math.PI * 2; return a; }
         function fmtTime(s) {
@@ -430,8 +450,9 @@
         // game state
         let state = 'menu'; // menu, countdown, racing, finished, paused
         let steerInput = 0, keySteer = 0, touchSteer = 0;
-        let driftHeld = false;
+        let driftHeld = false, pendingFire = false;
         let raceClock = 0, prevPlayerRank = 1;
+        let raceSeed = 1;
 
         // perf adaptive
         let curDPR = Math.min(window.devicePixelRatio || 1, 2);
@@ -1012,7 +1033,7 @@
                         matrix: mat4(bx + nn.x * tier * 3.6, cc.y + 1 + tier * 1.7, bz + nn.z * tier * 3.6, ry) });
                     // crowd dots above each tier
                     for (let kx = -15; kx <= 15; kx += 2) {
-                        if (Math.random() < 0.25) continue;
+                        if (rng() < 0.25) continue;
                         crowd.push(bx + nn.x * tier * 3.6 + tt.x * kx + rand(-0.5, 0.5),
                                    cc.y + 2.6 + tier * 1.7,
                                    bz + nn.z * tier * 3.6 + tt.z * kx + rand(-0.5, 0.5),
@@ -1083,7 +1104,7 @@
             // distribute: palms near the low beach zones, rocks/shrubs on hills
             for (let i = 0; i < N; i += 9) {
                 for (const side of [1, -1]) {
-                    if (Math.random() < 0.42) continue;
+                    if (rng() < 0.42) continue;
                     const c = centerline[i], n = normals[i];
                     if (inTunnel(i)) continue;
                     const off = HALF_W + rand(10, 56);
@@ -1091,10 +1112,10 @@
                     const ty = terrainY(x, z);
                     if (ty < -0.5) continue;
                     if (c.y < 5 && ty < 4) {
-                        if (Math.random() < 0.75) palmAt(x, z, rand(0.75, 1.25));
+                        if (rng() < 0.75) palmAt(x, z, rand(0.75, 1.25));
                         else parts.push({ geo: rockGeo, color: 0x9a8a72, matrix: mat4(x, ty + 0.5, z, rand(0, 3), rand(1.2, 2.6)) });
                     } else {
-                        if (Math.random() < 0.55) {
+                        if (rng() < 0.55) {
                             const s = rand(1.6, 3.4);
                             parts.push({ geo: shrubGeo, color: pick([0x2f7a3a, 0x3a8a44, 0x276a34]),
                                 matrix: mat4(x, ty + s * 0.45, z, 0, s, s * 0.75, s) });
@@ -1251,14 +1272,14 @@
             opts = opts || {};
             const it = particles.items[particles.i];
             particles.i = (particles.i + 1) % particles.items.length;
-            it.life = it.max = opts.life || rand(0.25, 0.5);
-            it.vx = rand(-spread, spread); it.vy = up + rand(0, 6); it.vz = rand(-spread, spread);
+            it.life = it.max = opts.life || vrand(0.25, 0.5);
+            it.vx = vrand(-spread, spread); it.vy = up + vrand(0, 6); it.vz = vrand(-spread, spread);
             it.grav = opts.grav != null ? opts.grav : 14;
             it.sp.position.copy(pos);
             it.sp.material.color.setHex(color);
             it.sp.material.blending = opts.normal ? THREE.NormalBlending : THREE.AdditiveBlending;
             it.sp.material.opacity = 1; it.sp.visible = true;
-            const s = opts.size || rand(1.5, 3.2); it.sp.scale.set(s, s, s);
+            const s = opts.size || vrand(1.5, 3.2); it.sp.scale.set(s, s, s);
         }
         function updateParticles(dt) {
             for (const it of particles.items) {
@@ -1273,8 +1294,8 @@
         function confettiBurst(pos) {
             const cols = [0xff3b5c, 0x3ad6ff, 0xffd54a, 0x57e36a, 0xb06bff, 0xffffff];
             for (let i = 0; i < 70; i++) {
-                emitSpark(new THREE.Vector3(pos.x + rand(-3, 3), pos.y + rand(2, 6), pos.z + rand(-3, 3)),
-                    pick(cols), 18, 22, { life: rand(1.0, 1.8), grav: 26, size: rand(1.2, 2.6), normal: true });
+                emitSpark(new THREE.Vector3(pos.x + vrand(-3, 3), pos.y + vrand(2, 6), pos.z + vrand(-3, 3)),
+                    vpick(cols), 18, 22, { life: vrand(1.0, 1.8), grav: 26, size: vrand(1.2, 2.6), normal: true });
             }
         }
 
@@ -1364,12 +1385,14 @@
             const order = charOrder();
             // AI skill spread, shuffled so the fast rival differs run to run
             const skills = [1.015, 1.0, 0.99, 0.978, 0.965, 0.952, 0.94];
-            for (let i = skills.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [skills[i], skills[j]] = [skills[j], skills[i]]; }
+            for (let i = skills.length - 1; i > 0; i--) { const j = Math.floor(rng() * (i + 1)); [skills[i], skills[j]] = [skills[j], skills[i]]; }
             for (let i = 0; i < NUM_KARTS; i++) {
                 const ch = CHARS[order[i]];
                 const mesh = createKartMesh(ch);
                 karts.push({
                     mesh, isPlayer: i === 0, char: ch,
+                    controller: i === 0 ? localController : aiController,
+                    ctrl: { steer: 0, brake: false, drift: false, fire: false },
                     statSpeed: ch.speed, statAccel: ch.accel, statHandling: ch.handling,
                     pos: new THREE.Vector3(), y: 0, vy: 0, grounded: true, lastVR: 0,
                     theta: 0, speed: 0, brake: false, groundY: 0,
@@ -1397,7 +1420,8 @@
         }
 
         function resetRace() {
-            raceClock = 0;
+            seedRng(raceSeed);   // a future host shares raceSeed → identical item rolls everywhere
+            raceClock = 0; simAcc = 0; simTickNo = 0;
             clearProjectiles(); clearHazards();
             // grid: AI rows up front, player starts 8th (rearmost) — earn the win
             for (let i = 0; i < karts.length; i++) {
@@ -1417,6 +1441,7 @@
                 k.spinTimer = 0; k.shrinkT = 0; k.gooT = 0; k.shieldTimer = 0; k.invuln = 0;
                 k.item = null; k.itemCharges = 0; k.itemRolling = 0; k.itemUseTimer = 0; k._rollPick = null;
                 k.draftT = 0; k.drafting = false; k.stuckTimer = 0; k.wrongT = 0;
+                k.ctrl.steer = 0; k.ctrl.brake = false; k.ctrl.drift = false; k.ctrl.fire = false;
                 k.finished = false; k.finishTime = 0; k.bestLap = Infinity; k.lastLapStart = 0;
                 k._rubber = 1;
                 k.mesh.shield.visible = false;
@@ -1497,18 +1522,12 @@
 
             let steer = 0;
             if (!k.finished) {
-                if (k.isPlayer) {
-                    steer = steerInput;
-                    k.brake = false;
-                    if (driftHeld && !k.drifting && k.grounded) startDrift(k, steer);
-                    else if (!driftHeld && k.drifting) releaseDrift(k);
-                } else {
-                    const d = aiDrive(k, dt);
-                    steer = d.steer;
-                    k.brake = d.brake;
-                    if (d.wantDrift && !k.drifting && k.grounded) startDrift(k, steer);
-                    else if (!d.wantDrift && k.drifting) releaseDrift(k);
-                }
+                k.controller(k, dt);   // local / AI / (one day) remote — physics only reads k.ctrl
+                steer = k.ctrl.steer;
+                k.brake = k.ctrl.brake;
+                if (k.ctrl.drift && !k.drifting && k.grounded) startDrift(k, steer);
+                else if (!k.ctrl.drift && k.drifting) releaseDrift(k);
+                if (k.ctrl.fire) { k.ctrl.fire = false; useItem(k); }
             } else if (k.drifting) releaseDrift(k);
 
             let cap = MAX_SPEED * k.statSpeed;
@@ -1623,7 +1642,7 @@
                 }
             } else k.draftT = Math.max(0, k.draftT - dt * 2);
 
-            if (!k.isPlayer && k.item && k.itemUseTimer > 0) {
+            if (k.ai && k.item && k.itemUseTimer > 0) {
                 k.itemUseTimer -= dt;
                 if (k.itemUseTimer <= 0) aiUseItem(k);
             }
@@ -1736,12 +1755,12 @@
             const onStraight = minCap > 92;
             if ((it === 'turbo' || it === 'turbo3') && !onStraight) { k.itemUseTimer = rand(0.4, 1.0); return; }
             if (it === 'rocket' && gapAhead > 0.07) { k.itemUseTimer = rand(0.6, 1.6); return; }
-            if (it === 'goo' && !someoneBehind && onStraight && Math.random() < 0.6) { k.itemUseTimer = rand(0.5, 1.2); return; }
+            if (it === 'goo' && !someoneBehind && onStraight && rng() < 0.6) { k.itemUseTimer = rand(0.5, 1.2); return; }
             if (it === 'zap') {
                 const nAhead = karts.filter((o) => o !== k && !o.finished && o.progress > k.progress && o.progress - k.progress < 0.22).length;
                 if (nAhead < 2 && k.rank < 6) { k.itemUseTimer = rand(0.8, 2.0); return; }
             }
-            useItem(k);
+            k.ctrl.fire = true;   // fires through the same input path a remote player would
         }
         function dropGoo(k) {
             const fx = Math.sin(k.theta), fz = Math.cos(k.theta);
@@ -1873,17 +1892,41 @@
                 }
             }
         }
-        function updateItemBoxes(dt) {
+        function updateItemBoxesSim(d) {
             for (const b of itemBoxes) {
-                if (b.active) {
-                    b.group.rotation.y += dt * 1.6;
-                    b.group.rotation.x += dt * 0.7;
-                    b.group.position.y = b.baseY + Math.sin(clock.elapsedTime * 2 + b.seg) * 0.5;
-                } else {
-                    b.respawn -= dt;
+                if (!b.active) {
+                    b.respawn -= d;
                     if (b.respawn <= 0) { b.active = true; b.group.visible = true; }
                 }
             }
+        }
+        function updateItemBoxesVisual(dt) {
+            for (const b of itemBoxes) {
+                if (!b.active) continue;
+                b.group.rotation.y += dt * 1.6;
+                b.group.rotation.x += dt * 0.7;
+                b.group.position.y = b.baseY + Math.sin(clock.elapsedTime * 2 + b.seg) * 0.5;
+            }
+        }
+
+        // -------------------------------------------------------------------
+        // MULTIPLAYER-READINESS SEAM #2: controllers.
+        // The physics step only ever reads k.ctrl {steer, brake, drift, fire}.
+        // A WiFi opponent one day is just a controller that fills k.ctrl from
+        // received input packets (and localController's input gets sent out).
+        // -------------------------------------------------------------------
+        function localController(k) {
+            k.ctrl.steer = steerInput;
+            k.ctrl.brake = false;
+            k.ctrl.drift = driftHeld;
+            if (pendingFire) { k.ctrl.fire = true; pendingFire = false; }
+        }
+        function aiController(k, dt) {
+            const d = aiDrive(k, dt);
+            k.ctrl.steer = d.steer;
+            k.ctrl.brake = d.brake;
+            k.ctrl.drift = d.wantDrift;
+            // k.ctrl.fire is set by the aiUseItem timer
         }
 
         // ===================================================================
@@ -1895,7 +1938,7 @@
             ai.errT -= dt;
             if (ai.errT <= 0) {
                 if (ai.errOff !== 0) { ai.errOff = 0; ai.errT = rand(3, 8); }
-                else if (Math.random() < (1.06 - ai.skill)) { ai.errOff = (Math.random() < 0.5 ? -1 : 1) * rand(3, 6.5); ai.errT = rand(1.0, 2.0); }
+                else if (rng() < (1.06 - ai.skill)) { ai.errOff = (rng() < 0.5 ? -1 : 1) * rand(3, 6.5); ai.errT = rand(1.0, 2.0); }
                 else ai.errT = rand(2, 5);
             }
 
@@ -1944,7 +1987,7 @@
             // deliberate drifting through sustained corners
             let wantDrift = k.drifting;
             if (!k.drifting && minCap < k.speed * 0.95 && minCap < 92 && k.speed > 48 && Math.abs(steer) > 0.4) {
-                if (Math.random() < ai.drift * dt * 5) wantDrift = true;
+                if (rng() < ai.drift * dt * 5) wantDrift = true;
             }
             if (k.drifting && (k.driftCharge > ai.driftHold || (minCap > 96 && k.driftCharge > 0.55))) wantDrift = false;
 
@@ -2445,7 +2488,7 @@
                 if (e.key === 'ArrowLeft' || e.key === 'a') keySteer = -1;
                 if (e.key === 'ArrowRight' || e.key === 'd') keySteer = 1;
                 if (e.code === 'Space') { driftHeld = true; dom.driftBtn.classList.add('held'); e.preventDefault(); }
-                if (e.key === 'Shift' || e.key === 'e' || e.key === 'Enter') { if (state === 'racing') useItem(player); }
+                if (e.key === 'Shift' || e.key === 'e' || e.key === 'Enter') { if (state === 'racing') pendingFire = true; }
                 if (e.key === 'p' || e.key === 'Escape') { if (state === 'racing') pauseGame(); else if (state === 'paused') resumeGame(); }
             });
             window.addEventListener('keyup', (e) => {
@@ -2461,15 +2504,20 @@
             dom.driftBtn.addEventListener('mousedown', driftOn);
             dom.driftBtn.addEventListener('mouseup', driftOff);
 
-            const fireItem = (e) => { e.preventDefault(); if (state === 'racing') useItem(player); };
+            // item fires through the controller seam (consumed next sim tick)
+            const fireItem = (e) => { e.preventDefault(); if (state === 'racing') pendingFire = true; };
             dom.itemBtn.addEventListener('touchstart', fireItem, { passive: false });
-            dom.itemBtn.addEventListener('click', () => { if (state === 'racing') useItem(player); });
+            dom.itemBtn.addEventListener('click', () => { if (state === 'racing') pendingFire = true; });
 
             dom.pauseBtn.addEventListener('click', () => { if (state === 'racing') pauseGame(); });
             dom.muteBtn.addEventListener('click', () => { muted = !muted; dom.muteBtn.textContent = muted ? '🔇' : '🔊'; savePrefs(); });
             dom.muteBtn.textContent = muted ? '🔇' : '🔊';
             dom.resumeBtn.addEventListener('click', resumeGame);
-            dom.restartBtn.addEventListener('click', () => { dom.pauseScreen.classList.remove('on'); resetRace(); runCountdown(); });
+            dom.restartBtn.addEventListener('click', () => {
+                dom.pauseScreen.classList.remove('on');
+                raceSeed = (Math.random() * 0x7fffffff) | 0;
+                resetRace(); runCountdown();
+            });
             dom.quitBtn.addEventListener('click', quitToMenu);
 
             document.addEventListener('visibilitychange', () => { if (document.hidden && state === 'racing') pauseGame(); });
@@ -2507,6 +2555,7 @@
         function startGame() {
             if (!audioCtx) initAudio();
             if (audioCtx && audioCtx.state === 'suspended') audioCtx.resume();
+            raceSeed = (Math.random() * 0x7fffffff) | 0;   // a future host would broadcast this
             dom.startScreen.classList.add('hidden');
             dom.resultScreen.classList.add('hidden');
             dom.hud.classList.add('on'); dom.muteBtn.classList.add('on');
@@ -2612,6 +2661,61 @@
             }, 1800);
         }
 
+        // -------------------------------------------------------------------
+        // MULTIPLAYER-READINESS SEAM #3: fixed-step simulation, decoupled from
+        // rendering. Lockstep/rollback netcode needs discrete numbered ticks;
+        // everything inside simTick() is gameplay-authoritative, everything in
+        // animate() below it is presentation (camera, HUD, particles, audio).
+        // -------------------------------------------------------------------
+        const SIM_DT = 1 / 60;
+        let simAcc = 0, simTickNo = 0;
+        function simTick(d) {
+            if (state === 'racing') raceClock += d;
+            for (const k of karts) updateKart(k, d);
+            resolveCollisions();
+            updateProjectiles(d);
+            updateHazards(d);
+            updateItemBoxesSim(d);
+            updateRankings();
+            simTickNo++;
+        }
+
+        // -------------------------------------------------------------------
+        // MULTIPLAYER-READINESS SEAM #4: race-state serialization. A host can
+        // snapshot authoritative state for clients (state-sync) or rollback.
+        // World/scenery are seed-derived and never need serializing.
+        // -------------------------------------------------------------------
+        const NET_KART_FIELDS = ['y', 'vy', 'grounded', 'theta', 'speed', 'seg', 'u', 'laps', 'progress', 'rank',
+            'lateralSigned', 'drifting', 'driftDir', 'driftCharge', 'driftRamp', 'boostTimer', 'spinTimer', 'shrinkT',
+            'gooT', 'shieldTimer', 'invuln', 'item', 'itemCharges', 'itemRolling', 'itemUseTimer', 'draftT',
+            'finished', 'finishTime', 'bestLap', 'lastLapStart'];
+        function netSnapshot() {
+            return {
+                tick: simTickNo, clock: raceClock, seed: _rng,
+                boxes: itemBoxes.map((b) => [b.active ? 1 : 0, +b.respawn.toFixed(2)]),
+                karts: karts.map((k) => {
+                    const o = { x: k.pos.x, z: k.pos.z };
+                    for (const f of NET_KART_FIELDS) o[f] = k[f];
+                    return o;
+                }),
+            };
+        }
+        function netRestore(snap) {
+            simTickNo = snap.tick; raceClock = snap.clock; _rng = snap.seed;
+            snap.boxes.forEach((s, i) => {
+                const b = itemBoxes[i];
+                b.active = !!s[0]; b.respawn = s[1]; b.group.visible = b.active;
+            });
+            snap.karts.forEach((s, i) => {
+                const k = karts[i];
+                k.pos.x = s.x; k.pos.z = s.z;
+                for (const f of NET_KART_FIELDS) k[f] = s[f];
+                k.groundY = roadY(k.seg, clamp(k.lateralSigned, -HALF_W, HALF_W));
+                syncKartMesh(k, true, SIM_DT);
+            });
+            updateRankings();
+        }
+
         // ===================================================================
         //  MAIN LOOP
         // ===================================================================
@@ -2625,16 +2729,14 @@
             if (waterMat) waterMat.map.offset.x += dt * 0.013;
 
             if (state === 'racing' || state === 'finished' || state === 'countdown') {
-                if (state === 'racing') raceClock += dt;
                 computeSteer();
                 if (state !== 'countdown') {
-                    for (const k of karts) updateKart(k, dt);
-                    resolveCollisions();
-                    updateProjectiles(dt);
-                    updateHazards(dt);
-                    updateRankings();
+                    simAcc += dt;
+                    let steps = 0;
+                    while (simAcc >= SIM_DT && steps < 5) { simTick(SIM_DT); simAcc -= SIM_DT; steps++; }
+                    if (steps === 5) simAcc = 0;   // hitch guard: drop time rather than spiral
                 }
-                updateItemBoxes(dt);
+                updateItemBoxesVisual(dt);
                 updateCamera(false);
                 updateHUD();
                 animateItemRoll();
@@ -2646,7 +2748,7 @@
                 camera.position.set(focus.x + Math.cos(t) * r, player.y + 14 + Math.sin(t * 0.6) * 3, focus.z + Math.sin(t) * r);
                 camera.lookAt(focus.x, player.y + 3, focus.z);
                 if (camera.fov !== 62) { camera.fov = 62; camera.updateProjectionMatrix(); }
-                updateItemBoxes(dt);
+                updateItemBoxesVisual(dt);
             }
 
             for (const s of spinners) {
@@ -2679,6 +2781,7 @@
         // ===================================================================
         function boot() {
             loadPrefs();
+            seedRng(WORLD_SEED);   // deterministic island: every client builds the same world
             initThree();
             initKartGeos();
             buildWorld();
