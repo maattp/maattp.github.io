@@ -113,6 +113,13 @@ periodic `netSnapshot`s; remote karts get a packet-fed controller.
   Goo slows + wobbles but never removes control.
 - Player starts 8th; rank-weighted items (leader pool is defense-only,
   global 30s `zapTimer` cooldown keeps ⚡ rare).
+- **Item roulette is tap-to-stop** (player roll 2.2s, AI 1.0s): the first
+  `ctrl.fire` while `itemRolling > 0` calls `finishRoll` (locks the item),
+  the next one uses it. The item button dedupes `touchstart` + iOS's
+  synthetic `click` (one tap must be exactly one fire event, else it stops
+  AND instantly uses).
+- AI swerve to grab an item box when empty-handed (`b.lat` per box) and
+  aim for boost pads.
 - Rubber band is bounded (±10%, ±7% on the final lap), two 'rival' AI shadow
   the player, AI block chasers and make late-brake mistakes. AI obey the same
   physics caps as the player (`_rubber` is the only asymmetry).
