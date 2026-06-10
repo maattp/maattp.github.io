@@ -2209,14 +2209,16 @@
             const k = player;
             const fx = Math.sin(k.theta), fz = Math.cos(k.theta);
             const speedT = clamp(k.speed / MAX_SPEED, 0, 1.3);
-            const dist = 16.5 + speedT * 2.5;
-            const ty = k.y + 7.6;
-            camYS = instant ? ty : lerp(camYS, ty, 0.17);
+            const dist = 12.6 + speedT * 2.6;       // close MK64-style chase framing
+            const ty = k.y + 6.2;
+            camYS = instant ? ty : lerp(camYS, ty, 0.2);
             camPos.set(k.pos.x - fx * dist, camYS, k.pos.z - fz * dist);
-            if (instant) camera.position.copy(camPos); else camera.position.lerp(camPos, 0.14);
-            camLook.set(k.pos.x + fx * 13, k.y + 2.8, k.pos.z + fz * 13);
+            if (instant) camera.position.copy(camPos); else camera.position.lerp(camPos, 0.2);
+            // look mostly at the kart, biased down the road — keeps the kart
+            // big and low-center even over crests and mid-jump
+            camLook.set(k.pos.x + fx * 8.5, k.y + 1.9, k.pos.z + fz * 8.5);
             camera.lookAt(camLook);
-            const targetFov = 70 + speedT * 9 + (k.boostTimer > 0 ? 8 : 0);
+            const targetFov = 68 + speedT * 9 + (k.boostTimer > 0 ? 8 : 0);
             camera.fov = instant ? targetFov : lerp(camera.fov, targetFov, 0.1);
             camera.updateProjectionMatrix();
         }
