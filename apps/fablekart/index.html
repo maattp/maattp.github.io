@@ -2519,6 +2519,29 @@
             }
         }
 
+        // shared soft blob-shadow texture (karts, item boxes) — a strong dark
+        // core reads as MK64-style contact grounding, not ambient haze
+        let _blobTex = null;
+        function blobShadowTex() {
+            if (_blobTex) return _blobTex;
+            const cv = document.createElement('canvas'); cv.width = 64; cv.height = 64;
+            const g = cv.getContext('2d');
+            const gr = g.createRadialGradient(32, 32, 0, 32, 32, 32);
+            gr.addColorStop(0, 'rgba(0,0,0,0.6)');
+            gr.addColorStop(0.55, 'rgba(0,0,0,0.42)');
+            gr.addColorStop(1, 'rgba(0,0,0,0)');
+            g.fillStyle = gr; g.fillRect(0, 0, 64, 64);
+            _blobTex = new THREE.CanvasTexture(cv);
+            return _blobTex;
+        }
+        function blobShadowMesh(w, h) {
+            const m = new THREE.Mesh(new THREE.PlaneGeometry(w, h), new THREE.MeshBasicMaterial({
+                map: blobShadowTex(), transparent: true, depthWrite: false,
+                polygonOffset: true, polygonOffsetFactor: -3, polygonOffsetUnits: -3 }));
+            m.rotation.x = -Math.PI / 2; m.renderOrder = 5;
+            return m;
+        }
+
         function buildItemBoxes() {
             itemBoxes = [];
             const qcv = document.createElement('canvas'); qcv.width = 64; qcv.height = 64;
@@ -2544,7 +2567,11 @@
                     const by = roadY(seg, lane) + 2.9;
                     box.position.set(bx, by, bz);
                     world.add(box);
-                    itemBoxes.push({ group: box, seg, lat: lane, x: bx, z: bz, active: true, respawn: 0, baseY: by });
+                    // grounding blob on the road below the floating box
+                    const shadow = blobShadowMesh(4.8, 4.8);
+                    shadow.position.set(bx, roadY(seg, lane) + 0.16, bz);
+                    world.add(shadow);
+                    itemBoxes.push({ group: box, shadow, seg, lat: lane, x: bx, z: bz, active: true, respawn: 0, baseY: by });
                 }
             }
         }
@@ -2788,15 +2815,8 @@
                 new THREE.MeshBasicMaterial({ color: 0x6ff0ff, transparent: true, opacity: 0.28, depthWrite: false }));
             shield.position.y = 2.0; shield.visible = false; g.add(shield);
 
-            const shCv = document.createElement('canvas'); shCv.width = 64; shCv.height = 64;
-            const sg = shCv.getContext('2d');
-            const sgr = sg.createRadialGradient(32, 32, 0, 32, 32, 32);
-            sgr.addColorStop(0, 'rgba(0,0,0,0.45)'); sgr.addColorStop(1, 'rgba(0,0,0,0)');
-            sg.fillStyle = sgr; sg.fillRect(0, 0, 64, 64);
-            const shadow = new THREE.Mesh(new THREE.PlaneGeometry(7.2, 8.2), new THREE.MeshBasicMaterial({
-                map: new THREE.CanvasTexture(shCv), transparent: true, depthWrite: false,
-                polygonOffset: true, polygonOffsetFactor: -3, polygonOffsetUnits: -3 }));
-            shadow.rotation.x = -Math.PI / 2; shadow.position.y = 0.18; shadow.renderOrder = 5; g.add(shadow);
+            const shadow = blobShadowMesh(7.6, 8.6);
+            shadow.position.y = 0.18; g.add(shadow);
 
             scene.add(g);
             g.rotation.order = 'YXZ';
@@ -3484,10 +3504,14 @@
         }
         function updateItemBoxesVisual(dt) {
             for (const b of itemBoxes) {
+                if (b.shadow) b.shadow.visible = b.active;
                 if (!b.active) continue;
+                const bob = Math.sin(clock.elapsedTime * 2 + b.seg) * 0.5;
                 b.group.rotation.y += dt * 1.6;
                 b.group.rotation.x += dt * 0.7;
-                b.group.position.y = b.baseY + Math.sin(clock.elapsedTime * 2 + b.seg) * 0.5;
+                b.group.position.y = b.baseY + bob;
+                // shadow breathes opposite the bob — sells the float height
+                if (b.shadow) b.shadow.scale.setScalar(1 - bob * 0.12);
             }
         }
 
@@ -3690,8 +3714,15 @@
                 sh.visible = true; sh.rotation.y += dt * 2;
                 sh.material.opacity = 0.18 + 0.12 * Math.sin(raceClock * 8);
             } else sh.visible = false;
-            k.mesh.shadow.visible = k.grounded || (k.y - k.groundY) < 6;
-            k.mesh.shadow.position.y = -(k.y - k.groundY) + 0.18 - hop;
+            const airH = (k.y - k.groundY) + hop;
+            k.mesh.shadow.visible = k.grounded || airH < 9;
+            k.mesh.shadow.position.y = -airH + 0.18;
+            // airborne: the blob shrinks + fades with height and stays flat on
+            // the road instead of pitching with the kart's jump arc
+            k.mesh.shadow.rotation.x = -Math.PI / 2 - (k.grounded ? 0 : k.visualPitch);
+            const shScale = k.grounded ? 1 : clamp(1 - airH * 0.055, 0.5, 1);
+            k.mesh.shadow.scale.setScalar(shScale);
+            k.mesh.shadow.material.opacity = k.grounded ? 1 : clamp(1 - airH * 0.07, 0.3, 1);
         }
 
         // ===================================================================
