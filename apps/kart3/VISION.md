@@ -121,8 +121,10 @@ Add:
   standings. Host migration is a v2 nicety (snapshot + DO re-elects).
 - **Backgrounded phone** (call/notification): treat as disconnect+rejoin;
   never pause the shared race.
-- **Versioning**: room advertises a protocol/app version; mismatched clients
-  get a "refresh to update" message instead of a desync.
+- **Versioning** ✅ *(shipped)*: every `hello` carries `NET_VER` (= `APP_VER`,
+  bumped per PR, + a hash of track/physics data); the room rejects joiners
+  whose tag differs from the host's with a "close and reopen the app"
+  message instead of desyncing.
 
 ### Voice (stretch)
 

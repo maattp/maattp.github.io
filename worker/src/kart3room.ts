@@ -18,6 +18,7 @@ type Attachment = {
   charIdx: number;
   ready: boolean;
   host: boolean;
+  ver: string;
 };
 
 type Phase = "lobby" | "racing";
@@ -25,6 +26,11 @@ type Phase = "lobby" | "racing";
 const MAX_PLAYERS = 4;
 const ROOM_TTL_MS = 45 * 60 * 1000; // hard kill switch for abandoned rooms
 const NAME_MAX = 12;
+
+function sanitizeVer(raw: unknown): string {
+  // old clients send no version — 'legacy' never matches a tagged build
+  return String(raw ?? "legacy").slice(0, 24);
+}
 
 function sanitizeName(raw: unknown): string {
   const s = String(raw ?? "").replace(/[<>&"'`]/g, "").trim();
@@ -138,7 +144,16 @@ export class Kart3Room {
           ws.close(1008, "race in progress");
           return;
         }
-        const a: Attachment = { id: seat.id, name: seat.name, charIdx: 0, ready: true, host: false };
+        const hostP0 = players.find((p) => p.host);
+        if (hostP0 && sanitizeVer(msg.ver) !== hostP0.ver) {
+          ws.send(JSON.stringify({
+            t: "error",
+            msg: "Game versions differ — close the app fully and reopen it, then rejoin",
+          }));
+          ws.close(1008, "version mismatch");
+          return;
+        }
+        const a: Attachment = { id: seat.id, name: seat.name, charIdx: 0, ready: true, host: false, ver: sanitizeVer(msg.ver) };
         ws.serializeAttachment(a);
         const code0 = (await this.state.storage.get<string>("code")) || "";
         ws.send(JSON.stringify({ t: "welcome", id: a.id, host: false, code: code0, rejoin: true }));
@@ -152,6 +167,17 @@ export class Kart3Room {
         ws.close(1008, "room full");
         return;
       }
+      // version gate: different builds desync (track geometry, snapshot
+      // format) — only pair clients matching the host's version
+      const hostP = players.find((p) => p.host);
+      if (hostP && sanitizeVer(msg.ver) !== hostP.ver) {
+        ws.send(JSON.stringify({
+          t: "error",
+          msg: "Game versions differ — close the app fully and reopen it on the older phone, then rejoin",
+        }));
+        ws.close(1008, "version mismatch");
+        return;
+      }
       const used = new Set(players.map((p) => p.id));
       let id = 0;
       while (used.has(id)) id++;
@@ -161,6 +187,7 @@ export class Kart3Room {
         charIdx: Number.isInteger(msg.charIdx) ? Math.max(0, Math.min(7, msg.charIdx)) : 0,
         ready: false,
         host: players.length === 0,
+        ver: sanitizeVer(msg.ver),
       };
       ws.serializeAttachment(a);
       const code = (await this.state.storage.get<string>("code")) || "";
