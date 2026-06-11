@@ -37,6 +37,17 @@
         @keyframes rot { 0%,20% { transform: rotate(0deg);} 60%,100% { transform: rotate(90deg);} }
         #rotate .msg { font-size: 18px; font-weight: 800; letter-spacing: 1px; }
         #rotate .sub { font-size: 13px; opacity: 0.65; }
+        /* add-to-home-screen card: only revealed by JS on iOS Safari (not
+           when already running standalone from the Home Screen) */
+        #a2hs { display: none; margin-top: 26px; max-width: 270px; font-size: 13px;
+            line-height: 1.7; padding: 13px 16px; border-radius: 14px;
+            background: rgba(120,200,255,0.1); border: 1.5px solid rgba(120,200,255,0.35); }
+        #a2hs.on { display: block; }
+        #a2hs .a2hs-title { font-size: 11px; font-weight: 900; letter-spacing: 2px;
+            color: #8fd6ff; margin-bottom: 4px; }
+        #a2hs b { color: #ffd54a; }
+        #a2hs .share-ico { width: 17px; height: 17px; vertical-align: -3px;
+            color: #6fb9ff; display: inline-block; }
         @media (orientation: portrait) and (pointer: coarse) { #rotate { display: flex; } }
 
         /* ===== Speed lines ===== */
@@ -378,6 +389,11 @@
         <div class="ph">📱</div>
         <div class="msg">ROTATE YOUR PHONE</div>
         <div class="sub">Fable Kart races in landscape</div>
+        <div id="a2hs">
+            <div class="a2hs-title">PLAY IT FULL SCREEN</div>
+            Tap <svg viewBox="0 0 24 24" class="share-ico" aria-hidden="true"><path fill="currentColor" d="M12 2.6 8.2 6.4l1 1L11.3 5.3V15h1.4V5.3l2.1 2.1 1-1zM5 9h3v1.4H6.4v10.2h11.2V10.4H15V9h3a1 1 0 0 1 1 1v11a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V10a1 1 0 0 1 1-1z"/></svg>
+            then <b>Add to Home Screen</b> — no Safari bars, true full screen
+        </div>
     </div>
 
     <!-- HUD -->
@@ -825,7 +841,7 @@
         // ⚠ APP_VER: increment ONCE PER PR (CLAUDE.md rule). Shown on the
         // title screen and folded into NET_VER, so any two different builds
         // refuse to share a room.
-        const APP_VER = 8;
+        const APP_VER = 9;
         function hash32(str) {
             let h = 2166136261 >>> 0;
             for (let i = 0; i < str.length; i++) { h ^= str.charCodeAt(i); h = Math.imul(h, 16777619); }
@@ -5036,6 +5052,11 @@
             resetRace();
             dom.loadMsg.style.display = 'none';
             document.getElementById('appVer').textContent = 'v' + APP_VER;
+            // Add-to-Home-Screen hint: Safari on iOS exposes
+            // navigator.standalone — false in a browser tab, true when
+            // launched from the Home Screen, undefined elsewhere. Only the
+            // `=== false` case (iOS browser, not installed) shows the card.
+            if (navigator.standalone === false) document.getElementById('a2hs').classList.add('on');
             try { dom.nameInput.value = localStorage.getItem('kart3_name') || ''; } catch (e) {}
             dom.startBtn.addEventListener('click', startGame);
             dom.againBtn.addEventListener('click', () => {
