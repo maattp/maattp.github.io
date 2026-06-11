@@ -740,6 +740,7 @@
         let gapMidX = 0, gapMidZ = 0;
         let lavaMats = [], craterLight = null;
         let cloudSpin = null;   // baked cloud mesh, drifts slowly in animate()
+        let foamMat = null, lavaGlow = null;   // water glints / lava-lake rim, pulsed in animate()
         let boostPads = [], itemBoxes = [], projectiles = [], hazards = [], spinners = [];
         let karts = [], player;
         let particles;
@@ -1789,6 +1790,7 @@
             const cols = [];
             const grass1 = new THREE.Color(THEME.grass1), grass2 = new THREE.Color(THEME.grass2);
             const sand = new THREE.Color(THEME.sand), rock = new THREE.Color(THEME.rock);
+            const white = new THREE.Color(0xffffff);
             const tmp = new THREE.Color();
             for (let i = 0; i < pa.count; i++) {
                 const x = pa.getX(i), z = pa.getZ(i);
@@ -1798,6 +1800,12 @@
                 tmp.copy(grass1).lerp(grass2, nse * 0.5 + 0.5);
                 if (y < 1.3) tmp.lerp(sand, smoothstep(1.3, 0.4, y));
                 if (y > 17) tmp.lerp(rock, smoothstep(17, 26, y));
+                // surf line: brighten the band right at the waterline (-1.6)
+                // so the real coast contour reads as foam/wet shimmer
+                if (y > -3.4 && y < 0.4) {
+                    const d = Math.abs(y + 1.5);
+                    tmp.lerp(white, 0.6 * Math.exp(-d * d * 1.4));
+                }
                 cols.push(tmp.r, tmp.g, tmp.b);
             }
             geo.setAttribute('color', new THREE.Float32BufferAttribute(cols, 3));
@@ -1829,6 +1837,23 @@
                 new THREE.MeshBasicMaterial({ color: THEME.deep }));
             deep.rotation.x = -Math.PI / 2; deep.position.y = -2.4;
             world.add(deep);
+
+            // sun glints on the open water: scattered points that flicker in
+            // animate(). Placed only over true ocean (terrain well underwater).
+            foamMat = null;
+            const sp = [];
+            for (let i = 0; i < 900 && sp.length < 750; i++) {
+                const a = rand(0, Math.PI * 2), d = rand(220, 1100);
+                const x = Math.cos(a) * d, z = Math.sin(a) * d;
+                if (terrainY(x, z) < -3.5) sp.push(x, -1.35, z);
+            }
+            if (sp.length) {
+                const sgeo = new THREE.BufferGeometry();
+                sgeo.setAttribute('position', new THREE.Float32BufferAttribute(sp, 3));
+                foamMat = new THREE.PointsMaterial({ color: 0xffffff, size: 2.6,
+                    transparent: true, opacity: 0.5, depthWrite: false });
+                world.add(new THREE.Points(sgeo, foamMat));
+            }
         }
 
         function makeLavaTexture() {
@@ -1856,7 +1881,7 @@
         // the volcano's identity: a glowing lava lake in the caldera, a lava
         // channel under the road gap, smoke over the crater, and a warm light
         function buildLava() {
-            lavaMats = []; craterLight = null;
+            lavaMats = []; craterLight = null; lavaGlow = null;
             const cr = THEME.crater;
             if (cr) {
                 const tex = makeLavaTexture(); tex.repeat.set(6, 6);
@@ -1869,6 +1894,14 @@
                 craterLight = new THREE.PointLight(0xff7a30, 1.25, cr.r * 3.4);
                 craterLight.position.set(cr.x, cr.floor + 30, cr.z);
                 world.add(craterLight);
+                // hot rim glow where the lake meets the crater wall, pulsing
+                // with the crater light
+                lavaGlow = new THREE.Mesh(new THREE.RingGeometry(cr.r - 48, cr.r - 28, 48),
+                    new THREE.MeshBasicMaterial({ color: 0xffb04a, transparent: true,
+                        opacity: 0.32, depthWrite: false }));
+                lavaGlow.rotation.x = -Math.PI / 2;
+                lavaGlow.position.set(cr.x, cr.floor + 0.9, cr.z);
+                world.add(lavaGlow);
                 for (let i = 0; i < 4; i++) {
                     const puff = new THREE.Mesh(new THREE.SphereGeometry(rand(16, 26), 8, 6),
                         new THREE.MeshLambertMaterial({ color: 0x2a2026, transparent: true, opacity: 0.5 }));
@@ -4772,6 +4805,8 @@
             if (cloudSpin) cloudSpin.rotation.y += dt * 0.0022;   // lazy cloud drift
             for (const lm of lavaMats) if (lm.map) lm.map.offset.y += dt * 0.03;
             if (craterLight) craterLight.intensity = 1.15 + Math.sin(clock.elapsedTime * 2.1) * 0.3;
+            if (lavaGlow) lavaGlow.material.opacity = 0.28 + Math.sin(clock.elapsedTime * 2.1) * 0.1;
+            if (foamMat) foamMat.opacity = 0.35 + Math.abs(Math.sin(clock.elapsedTime * 2.6)) * 0.35;   // water glints
             // ember column rising from the lava gap (telegraphs it over the crest)
             if (gapA >= 0 && Math.random() < 0.5) {
                 const cdx = camera.position.x - gapMidX, cdz = camera.position.z - gapMidZ;
