@@ -2735,7 +2735,7 @@
                     seg: 0, u: 0, laps: 0, progress: 0, rank: i + 1,
                     lateralSigned: 0, lateral: 0,
                     drifting: false, driftDir: 0, driftCharge: 0, driftRamp: 0,
-                    boostTimer: 0, padCool: 0, hopT: 0, visualRoll: 0, visualPitch: 0, visualScale: 1,
+                    boostTimer: 0, boostCap: 0, padCool: 0, hopT: 0, visualRoll: 0, visualPitch: 0, visualScale: 1,
                     spinTimer: 0, shrinkT: 0, gooT: 0, shieldTimer: 0, invuln: 0,
                     item: null, itemCharges: 0, itemRolling: 0, itemUseTimer: 0, _rollPick: null,
                     draftT: 0, drafting: false,
@@ -2780,7 +2780,7 @@
                 k.theta = Math.atan2(t.x, t.z);
                 k.speed = 0; k.brake = false; k.seg = seg; k.u = seg / N; k.laps = 0; k.progress = seg / N;
                 k.lateralSigned = lane; k.lateral = Math.abs(lane);
-                k.drifting = false; k.driftCharge = 0; k.driftRamp = 0; k.boostTimer = 0; k.padCool = 0; k.hopT = 0;
+                k.drifting = false; k.driftCharge = 0; k.driftRamp = 0; k.boostTimer = 0; k.boostCap = 0; k.padCool = 0; k.hopT = 0;
                 k.visualRoll = 0; k.visualPitch = 0; k.visualScale = 1;
                 k.spinTimer = 0; k.shrinkT = 0; k.gooT = 0; k.shieldTimer = 0; k.invuln = 0;
                 k.item = null; k.itemCharges = 0; k.itemRolling = 0; k.itemUseTimer = 0; k._rollPick = null;
@@ -2895,7 +2895,7 @@
             let cap = MAX_SPEED * k.statSpeed;
             if (!k.isPlayer) cap *= k._rubber;
             if (k.drafting) cap *= 1.07;
-            if (k.boostTimer > 0) cap = BOOST_CAP;
+            if (k.boostTimer > 0) cap = k.boostCap || BOOST_CAP;
             if (k.gooT > 0) cap *= 0.45;
             if (k.shrinkT > 0) cap *= 0.8;   // shrunk by the shockwave → slower top end too
             if (bonked) cap = Math.min(cap, MAX_SPEED * 0.5);
@@ -2916,10 +2916,16 @@
             const yawAuth = TURN_BASE * (1 - TURN_FADE * clamp(k.speed / MAX_SPEED, 0, 1.3));
             let turn = steer * yawAuth * k.statHandling * speedFactor;
             if (k.drifting) {
-                k.driftRamp = Math.min(1, k.driftRamp + dt * 6);
-                const into = clamp(k.driftDir * steer, -1, 1);
-                const rate = yawAuth * (1.18 + into * 0.42);   // drifting turns ~1.2-1.6x tighter
-                turn = k.driftDir * rate * speedFactor * k.statHandling * k.driftRamp;
+                // MKDS-style slide: BLEND from current steering response into
+                // the committed drift over ~0.3s (no engage yank, no dropout),
+                // then steer modulates the arc — into the drift = slightly
+                // tighter than full normal steering, away = a wide drift
+                k.driftRamp = Math.min(1, k.driftRamp + dt * 3.2);
+                const into01 = clamp(k.driftDir * steer, -1, 1) * 0.5 + 0.5;
+                // full counter-steer ≈ nearly straight (0.18x) — long drifts and
+                // MKDS-style snaking become controllable; full into ≈ 1.10x
+                const driftTurn = k.driftDir * yawAuth * (0.18 + 0.92 * into01) * k.statHandling * speedFactor;
+                turn = lerp(turn, driftTurn, k.driftRamp);
             }
             if (!k.grounded) turn *= 0.3;
             if (k.gooT > 0) turn += Math.sin(raceClock * 14) * 0.5;   // slick wobble, still steerable
@@ -3094,16 +3100,20 @@
         }
 
         function driftStage(c) { if (c >= 2.0) return 3; if (c >= 1.2) return 2; if (c >= 0.55) return 1; return 0; }
-        function grantBoost(k, dur, kick, floor) {
+        function grantBoost(k, dur, kick, floor, cap) {
+            const c = cap || BOOST_CAP;
+            k.boostCap = k.boostTimer > 0 ? Math.max(k.boostCap || c, c) : c;
             k.boostTimer = Math.max(k.boostTimer, dur);
-            k.speed = clamp(Math.max(k.speed + kick, floor || 0), 0, BOOST_CAP);
+            k.speed = clamp(Math.max(k.speed + kick, floor || 0), 0, c);
         }
         function releaseDrift(k) {
             if (!k.drifting) return;
             const stage = driftStage(k.driftCharge);
-            if (stage === 1) grantBoost(k, 0.7, 14, 108);
-            else if (stage === 2) grantBoost(k, 1.1, 20, 116);
-            else if (stage === 3) grantBoost(k, 1.7, 26, 124);
+            // MKDS-magnitude mini-turbos: a short, modest surge — the reward
+            // is rhythm, not warp speed (items stay much stronger)
+            if (stage === 1) grantBoost(k, 0.5, 8, 0, 116);
+            else if (stage === 2) grantBoost(k, 0.8, 12, 0, 122);
+            else if (stage === 3) grantBoost(k, 1.1, 16, 0, 126);
             if (stage > 0 && k.isPlayer) { sfxBoost(); vibrate(stage * 25); }
             k.drifting = false; k.driftCharge = 0; k.driftDir = 0;
         }
@@ -3113,7 +3123,7 @@
             k.drifting = true;
             k.driftDir = steerVal >= 0 ? 1 : -1;
             k.driftRamp = 0;
-            k.hopT = 0.26;
+            k.hopT = 0.2;
         }
         function spawnRearSpark(k, color, spread) {
             const back = -2.6, side = 1.7;
@@ -3466,7 +3476,7 @@
                 const cc = cornerCap[(k.seg + j) % N];
                 if (cc < minCap) minCap = cc;
             }
-            const grip = k.drifting ? 1.3 : 1.0;   // drifting corners ~1.2-1.6x tighter
+            const grip = k.drifting ? 1.08 : 1.0;   // drift is barely tighter now (MKDS model)
             // during a "mistake" episode they also brake late and run wide
             const lateBrake = ai.errOff !== 0 ? 1.1 : 1.0;
             const brake = k.speed > minCap * grip * lateBrake * (0.92 + ai.skill * 0.1) && k.boostTimer <= 0;
@@ -3474,8 +3484,8 @@
             // deliberate drifting through sustained corners (commit early,
             // while carrying speed into the corner — that's where turbos come from)
             let wantDrift = k.drifting;
-            if (!k.drifting && minCap < k.speed * 0.97 && minCap < MAX_SPEED && k.speed > 45 && Math.abs(steer) > 0.35) {
-                if (rng() < ai.drift * dt * 9) wantDrift = true;
+            if (!k.drifting && minCap < k.speed * 1.06 && minCap < MAX_SPEED * 0.97 && k.speed > 40 && Math.abs(steer) > 0.3) {
+                if (rng() < ai.drift * dt * 10) wantDrift = true;
             }
             if (k.drifting && (k.driftCharge > ai.driftHold || (minCap > MAX_SPEED * 1.05 && k.driftCharge > 0.55))) wantDrift = false;
 
@@ -3524,17 +3534,17 @@
 
         function syncKartMesh(k, instant, dt) {
             const g = k.mesh.group;
-            const hop = k.hopT > 0 ? Math.sin((1 - k.hopT / 0.28) * Math.PI) * 0.9 : 0;
+            const hop = k.hopT > 0 ? Math.sin((1 - k.hopT / 0.28) * Math.PI) * 0.55 : 0;
             g.position.set(k.pos.x, k.y + hop, k.pos.z);
 
             // pitch: follow road slope when grounded, nose-follows-arc in the air
             const tgtPitch = k.grounded ? -slopeAng[k.seg] : clamp(-k.vy * 0.014, -0.3, 0.4);
             k.visualPitch = instant ? tgtPitch : lerp(k.visualPitch, tgtPitch, frameLerp(0.18, dt));
-            // roll: banking + drift/steer lean
+            // roll: banking + drift/steer lean — INTO the corner, like a kart
             const bankRoll = -Math.atan(bankSlope[k.seg]);
-            const leanRoll = k.drifting ? -k.driftDir * 0.16 : -(k.isPlayer ? steerInput : 0) * 0.06;
+            const leanRoll = k.drifting ? k.driftDir * 0.13 * k.driftRamp : (k.isPlayer ? steerInput : 0) * 0.05;
             k.visualRoll = instant ? bankRoll : lerp(k.visualRoll, bankRoll + leanRoll, frameLerp(0.15, dt));
-            g.rotation.y = k.theta + (k.drifting ? -k.driftDir * 0.32 * k.driftRamp : 0);
+            g.rotation.y = k.theta + (k.drifting ? k.driftDir * 0.3 * k.driftRamp : 0);   // nose points into the slide
             g.rotation.x = k.visualPitch;
             g.rotation.z = k.visualRoll;
 
