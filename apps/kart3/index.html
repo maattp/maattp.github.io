@@ -3524,7 +3524,20 @@
                         if (a.shieldTimer > 0 && b.shieldTimer <= 0) bonkKart(b);
                         else if (b.shieldTimer > 0 && a.shieldTimer <= 0) bonkKart(a);
                         else {
-                            a.speed *= 0.975; b.speed *= 0.975;
+                            // momentum flows the right way: only the kart driving
+                            // INTO the contact slows — being rear-ended must not
+                            // brake you (it used to grind BOTH karts 0.975/tick)
+                            const fa = Math.sin(a.theta) * nx + Math.cos(a.theta) * nz;     // a's forward · (a→b)
+                            const fb = -(Math.sin(b.theta) * nx + Math.cos(b.theta) * nz);  // b's forward · (b→a)
+                            if (fa > 0.45 && fa > fb + 0.2) {
+                                a.speed *= 0.97;   // a rammed b: a slows, b gets a small shunt
+                                b.speed = Math.min(b.speed + 0.6, MAX_SPEED * b.statSpeed + 8);
+                            } else if (fb > 0.45 && fb > fa + 0.2) {
+                                b.speed *= 0.97;
+                                a.speed = Math.min(a.speed + 0.6, MAX_SPEED * a.statSpeed + 8);
+                            } else {
+                                a.speed *= 0.99; b.speed *= 0.99;   // side-by-side rubbing
+                            }
                             if ((a.isPlayer || b.isPlayer) && Math.abs(a.speed - b.speed) > 8) vibrate(12);
                         }
                     }
