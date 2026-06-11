@@ -189,6 +189,12 @@ work, and don't regress these four seams.
   rotated planes sink/float — the start line vanished into the banked
   chicane (bankSlope at seg 0 is ≈ −0.13).
 - Road/curb ribbons are `side: THREE.DoubleSide` (winding faces down).
+- **Tunnel jumbotron** (`buildTV`, tunnel tracks only): MK64-style screen on
+  posts above the entrance arch. A broadcast cam mounted at the panel tracks
+  the LOCAL player's kart (auto-zoom ≈16u frame) and renders the scene to a
+  320×180 UnsignedByte RT every other frame in `animate()` — the screen mesh
+  hides during its own pass (feedback loop otherwise). Cosmetic only, never
+  touches the sim. Kart meshes are `k.mesh.group` (k.mesh is a wrapper).
 - Guardrails only where `roadY − terrainY(±(HALF_W+26)) > 4.5` (cliff drops).
 - Scenery (palms/rocks/stands/rails-posts/flags…) is baked via `bakeMerge()`
   into ONE vertex-colored mesh (single draw call). Kart bodies likewise: ~45
