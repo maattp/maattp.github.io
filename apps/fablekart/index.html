@@ -438,7 +438,7 @@
             <div class="menu-left">
                 <div class="logo">FABLE<span class="three">KART</span></div>
                 <div class="tag">Grand Prix</div>
-                <div class="trackname">🏝️ Coral Cliffs Circuit · 3 Laps · 8 Racers</div>
+                <div class="trackname" id="trackLine">🏝️ Coral Cliffs Circuit · 3 Laps · 8 Racers</div>
                 <div class="bestline" id="bestLine">No record yet</div>
                 <button class="btn" id="startBtn">START RACE</button>
                 <div class="section-label" style="margin-top:14px">Race online</div>
@@ -642,7 +642,7 @@
         const scaled = (pts) => pts.map((p) => [p[0] * SC, p[1] * SC, p[2]]);
         const TRACKS = [
             {
-                id: 'coral', name: 'Coral Cliffs',
+                id: 'coral', name: 'Coral Cliffs', tagline: '🏝️ Coral Cliffs Circuit',
                 // beach straight → coast climb → banked cliff bend → tunnel
                 // through the headland → crest-jump descent → hairpin → chicane
                 ctrl: scaled([
@@ -670,7 +670,7 @@
                 },
             },
             {
-                id: 'volcano', name: 'Volcano Bay',
+                id: 'volcano', name: 'Volcano Bay', tagline: '🌋 Volcano Bay',
                 // ash shore → east coast climb → a long banked ride around the
                 // CALDERA RIM (lava lake glowing inside) → west descent → ramp
                 // jump over a LAVA GAP in the road (too slow = splash + respawn)
@@ -703,6 +703,40 @@
                     lava: 0xff6a22, lavaDeep: 0xb02a08,
                     crater: { x: -14 * SC, z: 168 * SC, r: 92 * SC, h: 24, floor: 16 },
                     eruptions: true,
+                },
+            },
+            {
+                id: 'forest', name: 'Whisperwood', tagline: '🌲 Whisperwood',
+                // twilight forest — the most VERTICAL track: meadow start →
+                // rolling whoops → switchback climb to a 45-high ridge → through
+                // a giant mossy HOLLOW LOG at the summit → crest-jump dive off
+                // the ridge → swooping descent to a creek chicane home.
+                // Fireflies, glowing mushrooms and wisps do the magic.
+                ctrl: scaled([
+                    [0, -252, 0], [120, -245, 2], [205, -205, 6], [262, -120, 2],
+                    [270, -20, 12], [235, 80, 20], [150, 150, 28], [60, 175, 35],
+                    [-40, 195, 42], [-150, 185, 45], [-230, 120, 40], [-262, 20, 30],
+                    [-240, -80, 16], [-160, -170, 6], [-95, -220, 2], [-30, -185, 3],
+                ]),
+                tunnelIn: [-40 * SC, 195 * SC], tunnelOut: [-150 * SC, 185 * SC],
+                jumpAt: [-240 * SC, -80 * SC],
+                preview: 'linear-gradient(180deg,#4e8a9a,#2f7a3a)',
+                theme: {
+                    skyTop: 0x22356e, skyMid: 0x4e8a96, skyBot: 0xf2e0a8,
+                    fog: 0x9ab8a4, fogNear: 230, fogFar: 840,   // mistier than the others
+                    cloud: 0xe8f0d8, sun: 0xfff0b0, sunPos: [420, 480, -480], stars: true,
+                    hemiSky: 0xbcd8c8, hemiGround: 0x2a4a2e, hemiInt: 0.9,
+                    dirColor: 0xffe8b0, dirInt: 1.05, dirPos: [180, 300, -200],
+                    waterTex: '#2a7a8a', deep: 0x0a3a44,
+                    grass1: 0x2f7a3a, grass2: 0x4a9a4a, sand: 0x6a8a4a, rock: 0x6a7a6e,
+                    road: '#4a4438', lane: '#ffe08a', edge: '#d8cfa8',
+                    tube: 0x4a3320, shellRock: 0x6a4a2e, shellGrass: 0x3a8a44, portal: 0x5a4028,
+                    foliage: 'forest', trunk: 0x5a3e26, leaf1: 0x2f8a3e, leaf2: 0x57b85a,
+                    shrubs: [0x2a6a34, 0x3a7a40, 0x4a8a3a],
+                    rocks: [0x6a7a6e, 0x5a6a5e, 0x7a8a78],
+                    beach: false, embers: 0,
+                    glowFlora: [0x7af0ff, 0xff8ad8, 0xaaff7a],   // mushroom caps
+                    wisps: true, fireflies: true,
                 },
             },
         ];
@@ -762,6 +796,7 @@
         let particles;
         let waterMat = null, crowdPts = null;
         let birds = [];   // circling gulls (theme.birds), animated in animate()
+        let fireflyPts = null;   // drifting firefly cloud (theme.fireflies)
         let world = null;                    // all static track geometry (rebuilt per track)
         let selectedCharIdx = 0;
 
@@ -841,7 +876,7 @@
         // ⚠ APP_VER: increment ONCE PER PR (CLAUDE.md rule). Shown on the
         // title screen and folded into NET_VER, so any two different builds
         // refuse to share a room.
-        const APP_VER = 9;
+        const APP_VER = 10;
         function hash32(str) {
             let h = 2166136261 >>> 0;
             for (let i = 0; i < str.length; i++) { h ^= str.charCodeAt(i); h = Math.imul(h, 16777619); }
@@ -2033,7 +2068,7 @@
                     transparent: true, opacity: 0.85, depthWrite: false })));
             }
 
-            scene.fog = new THREE.Fog(THEME.fog, 300, 980);
+            scene.fog = new THREE.Fog(THEME.fog, THEME.fogNear || 300, THEME.fogFar || 980);
             scene.background = new THREE.Color(THEME.fog);
 
             world.add(new THREE.HemisphereLight(THEME.hemiSky, THEME.hemiGround, THEME.hemiInt));
@@ -2580,6 +2615,32 @@
             function palmAt(x, z, sc) {
                 const y = terrainY(x, z);
                 if (y < 0) return;
+                if (THEME.foliage === 'forest') {
+                    // big broadleaf: tall trunk + 3 stacked canopy blobs.
+                    // Occasional glowing mushroom ring at the base (basicParts
+                    // = unlit, so the caps read as self-lit in the twilight).
+                    const h = rand(11, 18) * sc;
+                    parts.push({ geo: trunkGeo, color: THEME.trunk,
+                        matrix: mat4(x, y + h * 0.5, z, rand(0, Math.PI * 2), 1.7 * sc, h / 5, 1.7 * sc) });
+                    for (let l = 0; l < 3; l++) {
+                        const r = (5.4 - l * 1.4) * sc * rand(0.9, 1.1);
+                        parts.push({ geo: shrubGeo, color: l % 2 ? THEME.leaf1 : THEME.leaf2,
+                            matrix: mat4(x + rand(-1, 1), y + h + (l * 2.7 - 1.2) * sc, z + rand(-1, 1), 0, r, r * 0.8, r) });
+                    }
+                    if (THEME.glowFlora && rng() < 0.5) {
+                        for (let m = 0; m < 3; m++) {
+                            const ma = rand(0, Math.PI * 2), md = rand(2.5, 5);
+                            const mx = x + Math.sin(ma) * md, mz = z + Math.cos(ma) * md;
+                            const my = terrainY(mx, mz);
+                            if (my < 0) continue;
+                            parts.push({ geo: umbPole, color: 0xe8e0c8,
+                                matrix: mat4(mx, my + 0.45, mz, 0, 1.2, 0.22, 1.2) });
+                            basicParts.push({ geo: umbTop, color: pick(THEME.glowFlora),
+                                matrix: mat4(mx, my + 1.0, mz, 0, rand(0.32, 0.5), rand(0.35, 0.5), rand(0.32, 0.5)) });
+                        }
+                    }
+                    return;
+                }
                 if (THEME.foliage === 'spires') {
                     // jagged volcanic spire, sometimes with an ember glow at its base
                     const h = rand(7, 18) * sc;
@@ -2607,9 +2668,11 @@
             }
 
             // distribute: palms near the low beach zones, rocks/shrubs on hills
-            for (let i = 0; i < N; i += 9) {
+            // (forest: denser spacing, trees at every altitude)
+            const forest = THEME.foliage === 'forest';
+            for (let i = 0; i < N; i += (forest ? 6 : 9)) {
                 for (const side of [1, -1]) {
-                    if (rng() < 0.42) continue;
+                    if (rng() < (forest ? 0.3 : 0.42)) continue;
                     const c = centerline[i], n = normals[i];
                     if (inTunnel(i)) continue;
                     const off = HALF_W + rand(10, 56);
@@ -2617,7 +2680,14 @@
                     if (THEME.crater && Math.hypot(x - THEME.crater.x, z - THEME.crater.z) < THEME.crater.r - 36) continue;
                     const ty = terrainY(x, z);
                     if (ty < -0.5) continue;
-                    if (c.y < 5 && ty < 4) {
+                    if (forest) {
+                        if (rng() < 0.8) palmAt(x, z, rand(0.8, 1.45));
+                        else {
+                            const s = rand(1.6, 3.0);
+                            parts.push({ geo: shrubGeo, color: pick(THEME.shrubs),
+                                matrix: mat4(x, ty + s * 0.45, z, 0, s, s * 0.75, s) });
+                        }
+                    } else if (c.y < 5 && ty < 4) {
                         if (rng() < 0.75) palmAt(x, z, rand(0.75, 1.25));
                         else parts.push({ geo: rockGeo, color: THEME.rocks[2], matrix: mat4(x, ty + 0.5, z, rand(0, 3), rand(1.2, 2.6)) });
                     } else {
@@ -2653,6 +2723,65 @@
             if (basicParts.length) {
                 const bm = new THREE.Mesh(bakeMerge(basicParts), new THREE.MeshBasicMaterial({ vertexColors: true, side: THREE.DoubleSide }));
                 world.add(bm);
+            }
+
+            // forest: blanket the WHOLE landmass in trees, not just the
+            // roadside band — otherwise the big ridge reads as a bald dome.
+            // Rejection-sampled over the island, skipping the road corridor.
+            if (forest) {
+                let placed = 0;
+                for (let tries = 0; tries < 4200 && placed < 900; tries++) {
+                    const a = rand(0, Math.PI * 2), d = Math.sqrt(rng()) * 620;
+                    const x = Math.cos(a) * d, z = Math.sin(a) * d;
+                    const ty = terrainY(x, z);
+                    if (ty < 1) continue;
+                    // stay out of the road corridor (and the tunnel shell)
+                    const s = nearestSeg(x, z);
+                    const c = centerline[s];
+                    const rd = Math.hypot(x - c.x, z - c.z);
+                    if (rd < HALF_W + 9) continue;
+                    if (inTunnel(s) && rd < HALF_W + 42) continue;
+                    palmAt(x, z, rand(0.7, 1.5));
+                    placed++;
+                }
+            }
+
+            // magical wisps: glowing orbs that bob and drift beside the road
+            // (they ride the existing spinners bob/drift animation)
+            if (THEME.wisps) {
+                const wispGeo = new THREE.SphereGeometry(0.8, 8, 6);
+                for (let w = 0; w < 18; w++) {
+                    const sg = Math.floor((w / 18) * N);
+                    if (inTunnel(sg)) continue;
+                    const c = centerline[sg], n = normals[sg];
+                    const side = w % 2 ? 1 : -1;
+                    const off = HALF_W + rand(5, 14);
+                    const orb = new THREE.Mesh(wispGeo, new THREE.MeshBasicMaterial({
+                        color: pick([0x9af0ff, 0xffd0f0, 0xc8ffb0]), transparent: true, opacity: 0.85 }));
+                    const oy = roadY(sg, 0) + rand(4, 8);
+                    orb.position.set(c.x + n.x * off * side, oy, c.z + n.z * off * side);
+                    world.add(orb);
+                    spinners.push({ obj: orb, speed: 0, bob: oy, bobAmp: rand(1.5, 3), drift: rand(0.5, 1.1) });
+                }
+            }
+
+            // fireflies: a drifting, blinking point cloud hugging the roadside
+            fireflyPts = null;
+            if (THEME.fireflies) {
+                const fp = [];
+                for (let f = 0; f < 170; f++) {
+                    const sg = Math.floor(rng() * N);
+                    const c = centerline[sg], n = normals[sg];
+                    const off = rand(-HALF_W - 26, HALF_W + 26);
+                    fp.push(c.x + n.x * off, roadY(sg, 0) + rand(1.5, 9), c.z + n.z * off);
+                }
+                const fgeo = new THREE.BufferGeometry();
+                fgeo.setAttribute('position', new THREE.Float32BufferAttribute(fp, 3));
+                fireflyPts = new THREE.Points(fgeo, new THREE.PointsMaterial({
+                    color: 0xd8ff7a, size: 1.7, transparent: true, opacity: 0.9, depthWrite: false }));
+                fireflyPts.userData.base = Float32Array.from(fp);
+                fireflyPts.userData.phase = Float32Array.from({ length: fp.length / 3 }, () => rand(0, Math.PI * 2));
+                world.add(fireflyPts);
             }
 
             // hot-air balloons (animated)
@@ -4637,6 +4766,8 @@
                 });
                 dom.trackPick.appendChild(card);
             });
+            document.getElementById('trackLine').textContent =
+                TRACKS[currentTrackIdx].tagline + ' · 3 Laps · 8 Racers';
             const best = loadBest();
             dom.bestLine.textContent = best ? ('Best ' + fmtTime(best.total) + ' · Lap ' + fmtTime(best.lap)) : 'No record yet';
         }
@@ -4939,6 +5070,20 @@
                     pa2.array[i * 3 + 1] = base[i * 3 + 1] + Math.max(0, Math.sin(tt2 + ph[i])) * 0.55;
                 }
                 pa2.needsUpdate = true;
+            }
+            if (fireflyPts) {
+                // each firefly wanders on its own slow lissajous + blinks
+                const fa = fireflyPts.geometry.attributes.position;
+                const fb = fireflyPts.userData.base, fph = fireflyPts.userData.phase;
+                const ft = clock.elapsedTime;
+                for (let i = 0; i < fph.length; i++) {
+                    const p2 = fph[i];
+                    fa.array[i * 3] = fb[i * 3] + Math.sin(ft * 0.5 + p2) * 2.4;
+                    fa.array[i * 3 + 1] = fb[i * 3 + 1] + Math.sin(ft * 0.8 + p2 * 2) * 1.2;
+                    fa.array[i * 3 + 2] = fb[i * 3 + 2] + Math.cos(ft * 0.4 + p2) * 2.4;
+                }
+                fa.needsUpdate = true;
+                fireflyPts.material.opacity = 0.55 + Math.sin(ft * 2.3) * 0.35;
             }
             for (const b of birds) {
                 const t2 = clock.elapsedTime * b.speed + b.phase;
