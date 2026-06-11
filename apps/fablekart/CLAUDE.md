@@ -254,12 +254,15 @@ work, and don't regress these four seams.
   the player, AI block chasers and make late-brake mistakes. AI obey the same
   physics caps as the player (`_rubber` is the only asymmetry).
 - **Settings pane** (start screen ⚙): steering direction Standard/Reversed
-  (flips TOUCH steering only — arrow keys stay absolute) and steering
-  sensitivity (thumb travel 36-110px). Persisted as kart3_steerrev /
-  kart3_sens. **The DEFAULT ("Standard") is deliberately the inverted
-  slide mapping** (`touchSteer * -1`, user preference via PR #170 after a
+  (flips touch AND keyboard steering) and steering sensitivity (thumb
+  travel 36-110px). Persisted as kart3_steerrev / kart3_sens. **The
+  DEFAULT ("Standard") is deliberately the inverted mapping**
+  (`(touchSteer + keySteer) * -1`, user preference via PR #170 after a
   family playtest); "Reversed" restores the geometric mapping (thumb-right
-  → kart screen-right, NDC-verified). Do NOT "fix" the default back.
+  / right-arrow → kart screen-right, NDC-verified). Keys were originally
+  hardwired geometric ("absolute"), but on a laptop that felt like being
+  stuck in Reversed, so they follow the setting too (user request,
+  2026-06-10). Do NOT "fix" the default back.
 - Drift only engages while actually steering (|steer| > 0.28); hold DRIFT on
   GO! for a rocket start.
 - **Drift model (MKDS-style, tuned after playtest)**: engaging BLENDS from

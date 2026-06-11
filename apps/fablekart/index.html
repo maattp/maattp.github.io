@@ -456,7 +456,7 @@
                             <button class="seg-opt" data-v="hard">Hard</button>
                         </div>
                     </div>
-                    <div class="set-hint">Reversed flips the slide direction of the steering thumb.</div>
+                    <div class="set-hint">Reversed flips the steering direction — thumb slide and arrow keys.</div>
                 </div>
                 <div class="hint"><b>Left thumb</b> slides to steer · hold <b>DRIFT</b> in turns for turbo ·
                     grab <b>?</b> boxes · hold DRIFT on <b>GO!</b> for a rocket start</div>
@@ -821,7 +821,7 @@
         // ⚠ APP_VER: increment ONCE PER PR (CLAUDE.md rule). Shown on the
         // title screen and folded into NET_VER, so any two different builds
         // refuse to share a room.
-        const APP_VER = 4;
+        const APP_VER = 5;
         function hash32(str) {
             let h = 2166136261 >>> 0;
             for (let i = 0; i < str.length; i++) { h ^= str.charCodeAt(i); h = Math.imul(h, 16777619); }
@@ -4289,8 +4289,11 @@
         }
         function computeSteer() {
             // Standard (default) is the former "reversed" slide direction; the
-            // Reversed option restores the old base mapping.
-            steerInput = clamp(touchSteer * (steerReversed ? 1 : -1) + keySteer, -1, 1);
+            // Reversed option restores the old base mapping. The setting covers
+            // keyboard too: keys used to be hardwired geometric (left arrow →
+            // screen-left), which on a laptop felt like being stuck in
+            // Reversed if your muscle memory is the Standard scheme.
+            steerInput = clamp((touchSteer + keySteer) * (steerReversed ? 1 : -1), -1, 1);
         }
         function sensToRange(v) { return Math.round(lerp(110, 36, clamp(v, 0, 100) / 100)); }
 
