@@ -428,6 +428,14 @@
                         <span class="set-label">Steering sensitivity</span>
                         <input type="range" id="sensSlider" min="0" max="100" value="62">
                     </div>
+                    <div class="set-row">
+                        <span class="set-label">AI difficulty</span>
+                        <div class="seg2" id="diffSeg">
+                            <button class="seg-opt" data-v="easy">Easy</button>
+                            <button class="seg-opt" data-v="medium">Med</button>
+                            <button class="seg-opt" data-v="hard">Hard</button>
+                        </div>
+                    </div>
                     <div class="set-hint">Reversed flips the slide direction of the steering thumb.</div>
                 </div>
                 <div class="hint"><b>Left thumb</b> slides to steer · hold <b>DRIFT</b> in turns for turbo ·
@@ -557,7 +565,7 @@
             leaveBtn: $('leaveBtn'), lobbyMsg: $('lobbyMsg'), netInd: $('netInd'),
             trackPick: $('trackPick'), lobbyTracks: $('lobbyTracks'), raceStandings: $('raceStandings'),
             settingsBtn: $('settingsBtn'), settingsPane: $('settingsPane'),
-            steerDirSeg: $('steerDirSeg'), sensSlider: $('sensSlider'),
+            steerDirSeg: $('steerDirSeg'), sensSlider: $('sensSlider'), diffSeg: $('diffSeg'),
             muteBtn: $('muteBtn'), itemBtn: $('itemBtn'), driftBtn: $('driftBtn'), pauseBtn: $('pauseBtn'),
             pauseScreen: $('pauseScreen'), resumeBtn: $('resumeBtn'), restartBtn: $('restartBtn'), quitBtn: $('quitBtn'),
             minimap: $('minimap'), stick: $('stick'), stickDot: $('stickDot'),
@@ -667,6 +675,18 @@
             TUNNEL_OUT = TRACKS[0].tunnelOut, JUMP_AT = TRACKS[0].jumpAt,
             THEME = TRACKS[0].theme;
 
+        // AI difficulty: skill band, rubber-band bounds (normal / final lap),
+        // mistake frequency, drift commitment, rocket-start rate
+        const DIFFS = {
+            easy:   { skills: [0.99, 0.975, 0.96, 0.95, 0.94, 0.925, 0.91],
+                      rubLo: 0.88, rubHi: 1.06, rubLoF: 0.90, rubHiF: 1.04, err: 1.6, drift: -0.15, start: 0.35 },
+            medium: { skills: [1.04, 1.02, 1.005, 0.995, 0.985, 0.97, 0.955],
+                      rubLo: 0.90, rubHi: 1.10, rubLoF: 0.93, rubHiF: 1.07, err: 1.0, drift: 0, start: 0.6 },
+            hard:   { skills: [1.075, 1.055, 1.04, 1.028, 1.018, 1.005, 0.99],
+                      rubLo: 0.93, rubHi: 1.12, rubLoF: 0.95, rubHiF: 1.09, err: 0.45, drift: 0.12, start: 0.8 },
+        };
+        let aiDifficulty = 'medium';
+
         // size scales the driver figure; flair is each character's signature look
         const CHARS = [
             { id: 'dash',  name: 'Dash',  body: 0xff3b5c, accent: 0xffd54a, skin: 0xffd9a8, hair: 0x4a2a10, speed: 1.00, accel: 1.00, handling: 1.00, size: 1.00, flair: 'fin' },
@@ -743,6 +763,8 @@
                 if (!isNaN(tr) && TRACKS[tr]) currentTrackIdx = tr;
                 muted = localStorage.getItem('kart3_muted') === '1';
                 steerReversed = localStorage.getItem('kart3_steerrev') === '1';
+                const df = localStorage.getItem('kart3_diff');
+                if (DIFFS[df]) aiDifficulty = df;
                 const sv = parseInt(localStorage.getItem('kart3_sens'), 10);
                 if (!isNaN(sv)) steerRangePx = sensToRange(sv);
             } catch (e) {}
@@ -2710,8 +2732,10 @@
         // roster: [{kind: 'local'|'remote'|'ai', charIdx, name, pid}] × NUM_KARTS
         function buildKartsRoster(roster) {
             disposeKarts();
-            // AI skill spread, shuffled so the fast rival differs run to run
-            const skills = [1.04, 1.02, 1.005, 0.995, 0.985, 0.97, 0.955];
+            // AI skill spread from the difficulty setting, shuffled so the
+            // fast rival differs run to run
+            const D = DIFFS[aiDifficulty] || DIFFS.medium;
+            const skills = D.skills.slice();
             for (let i = skills.length - 1; i > 0; i--) { const j = Math.floor(rng() * (i + 1)); [skills[i], skills[j]] = [skills[j], skills[i]]; }
             let si = 0;
             for (let i = 0; i < NUM_KARTS; i++) {
@@ -2744,7 +2768,7 @@
                     ai: !isAi ? null : {
                         skill: skills[si++ % skills.length],
                         aggr: rand(0.3, 1.0),
-                        drift: rand(0.7, 1.05),
+                        drift: clamp(rand(0.7, 1.05) + D.drift, 0.3, 1.2),
                         driftHold: rand(1.3, 2.3),
                         phase: rand(0, Math.PI * 2),
                         laneBias: rand(-4, 4),
@@ -3405,7 +3429,7 @@
             ai.errT -= dt;
             if (ai.errT <= 0) {
                 if (ai.errOff !== 0) { ai.errOff = 0; ai.errT = rand(3, 8); }
-                else if (rng() < (1.06 - ai.skill)) { ai.errOff = (rng() < 0.5 ? -1 : 1) * rand(3, 6.5); ai.errT = rand(1.0, 2.0); }
+                else if (rng() < (1.06 - ai.skill) * (DIFFS[aiDifficulty] || DIFFS.medium).err) { ai.errOff = (rng() < 0.5 ? -1 : 1) * rand(3, 6.5); ai.errT = rand(1.0, 2.0); }
                 else ai.errT = rand(2, 5);
             }
 
@@ -3493,7 +3517,8 @@
             // so the finish is earned, and side-by-side karts surge to fight.
             const gap = player.progress - k.progress;
             const lastLap = player.laps >= TOTAL_LAPS - 1;
-            const lo = lastLap ? 0.93 : 0.90, hi = lastLap ? 1.07 : 1.10;
+            const D2 = DIFFS[aiDifficulty] || DIFFS.medium;
+            const lo = lastLap ? D2.rubLoF : D2.rubLo, hi = lastLap ? D2.rubHiF : D2.rubHi;
             let rub = clamp(1 + gap * (ai.rival ? 0.85 : 0.55), lo, hi);
             if (Math.abs(gap) < 0.02) rub += 0.035 * ai.aggr;   // wheel-to-wheel: fight back
             if (raceClock < 6) rub = Math.min(rub, 1.0);
@@ -4166,6 +4191,19 @@
                 steerRangePx = sensToRange(v);
                 try { localStorage.setItem('kart3_sens', v); } catch (e) {}
             });
+            const reflectDiff = () => {
+                dom.diffSeg.querySelectorAll('.seg-opt').forEach((b) =>
+                    b.classList.toggle('active', b.dataset.v === aiDifficulty));
+            };
+            dom.diffSeg.querySelectorAll('.seg-opt').forEach((b) => {
+                b.addEventListener('click', () => {
+                    aiDifficulty = b.dataset.v;
+                    try { localStorage.setItem('kart3_diff', aiDifficulty); } catch (e) {}
+                    reflectDiff();
+                    if (state === 'menu' && !netActive()) { buildKarts(); resetRace(); }
+                });
+            });
+            reflectDiff();
 
             // ---- online controls ----
             dom.createRoomBtn.addEventListener('click', createRoom);
@@ -4275,7 +4313,7 @@
                     state = 'racing'; raceClock = 0;
                     for (const k of karts) {
                         k.lastLapStart = 0;
-                        if (k.ai && rng() < 0.6) grantBoost(k, rand(0.4, 0.8), 10, 0);   // most AI nail the start
+                        if (k.ai && rng() < (DIFFS[aiDifficulty] || DIFFS.medium).start) grantBoost(k, rand(0.4, 0.8), 10, 0);
                     }
                     if (driftHeld) {   // hold DRIFT on GO → rocket start
                         grantBoost(player, 0.9, 14, 0);
