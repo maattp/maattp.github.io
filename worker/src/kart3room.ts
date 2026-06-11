@@ -1,6 +1,7 @@
-// Kart 3 multiplayer room — one Durable Object instance per room code.
+// Fable Kart multiplayer room — one Durable Object instance per room code.
+// (File/DO/routes keep the pre-rename "kart3" name: shipped clients use them.)
 //
-// Responsibilities (M1, see apps/kart3/VISION.md):
+// Responsibilities (M1, see apps/fablekart/VISION.md):
 //   - WebSocket hub for up to 4 players (hibernation API: the DO sleeps
 //     between messages, attachments survive)
 //   - lobby state: roster, character picks, ready flags, host designation

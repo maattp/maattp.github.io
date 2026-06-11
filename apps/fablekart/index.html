@@ -6,7 +6,7 @@
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-    <meta name="apple-mobile-web-app-title" content="Kart 3">
+    <meta name="apple-mobile-web-app-title" content="Fable Kart">
     <meta name="theme-color" content="#04101e">
     <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
     <!-- Home-screen install: apple-touch-icon for iOS, manifest for Android
@@ -14,7 +14,7 @@
     <link rel="apple-touch-icon" href="icon-180.png">
     <link rel="icon" type="image/png" sizes="192x192" href="icon-192.png">
     <link rel="manifest" href="manifest.webmanifest">
-    <title>Kart 3 — Coral Cliffs GP</title>
+    <title>Fable Kart</title>
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
         html, body {
@@ -191,11 +191,11 @@
         .menu-left { display: flex; flex-direction: column; align-items: center; flex: 0 0 auto; }
         .menu-right { display: flex; flex-direction: column; align-items: center; flex: 1 1 auto; min-width: 0; }
 
-        .logo { font-size: 56px; line-height: 0.9; font-weight: 900; letter-spacing: -2px; white-space: nowrap;
+        .logo { font-size: 48px; line-height: 0.9; font-weight: 900; letter-spacing: -2px; white-space: nowrap;
             background: linear-gradient(180deg, #fff 0%, #6fe0ff 50%, #1d8fff 100%);
             -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent;
             filter: drop-shadow(0 5px 0 rgba(0,0,0,0.3)) drop-shadow(0 10px 24px rgba(40,160,255,0.35)); transform: rotate(-3deg); }
-        .logo .three { display: inline-block; transform: rotate(7deg) translateY(-3px);
+        .logo .three { display: inline-block; margin-left: 7px; transform: rotate(4deg) translateY(-2px);
             background: linear-gradient(180deg, #ffe27a 0%, #ff8a3c 100%);
             -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent; }
         .tag { margin-top: 6px; font-size: 12px; letter-spacing: 4px; text-transform: uppercase; opacity: 0.75; font-weight: 700; }
@@ -273,7 +273,7 @@
             .screen { justify-content: flex-start; padding-top: calc(env(safe-area-inset-top) + 8px);
                 padding-bottom: calc(env(safe-area-inset-bottom) + 8px); }
             .menu-row { gap: 22px; }
-            .logo { font-size: 40px; }
+            .logo { font-size: 36px; }
             .tag { margin-top: 3px; }
             .trackname { margin-top: 5px; }
             .bestline { margin-top: 2px; }
@@ -377,7 +377,7 @@
     <div id="rotate">
         <div class="ph">📱</div>
         <div class="msg">ROTATE YOUR PHONE</div>
-        <div class="sub">Kart 3 races in landscape</div>
+        <div class="sub">Fable Kart races in landscape</div>
     </div>
 
     <!-- HUD -->
@@ -420,8 +420,8 @@
         <div id="appVer"></div>
         <div class="menu-row">
             <div class="menu-left">
-                <div class="logo">KART<span class="three">3</span></div>
-                <div class="tag">Coral Cliffs GP</div>
+                <div class="logo">FABLE<span class="three">KART</span></div>
+                <div class="tag">Grand Prix</div>
                 <div class="trackname">🏝️ Coral Cliffs Circuit · 3 Laps · 8 Racers</div>
                 <div class="bestline" id="bestLine">No record yet</div>
                 <button class="btn" id="startBtn">START RACE</button>
@@ -477,7 +477,7 @@
             <div class="menu-left">
                 <div class="section-label">Room code</div>
                 <div id="roomCode">·····</div>
-                <div class="lobby-hint">Friends: open Kart 3 → enter this code → JOIN · tap code to copy</div>
+                <div class="lobby-hint">Friends: open Fable Kart → enter this code → JOIN · tap code to copy</div>
                 <div class="section-label">Track</div>
                 <div class="cards" id="lobbyTracks"></div>
                 <button class="btn" id="readyBtn">READY!</button>
@@ -821,7 +821,7 @@
         // ⚠ APP_VER: increment ONCE PER PR (CLAUDE.md rule). Shown on the
         // title screen and folded into NET_VER, so any two different builds
         // refuse to share a room.
-        const APP_VER = 3;
+        const APP_VER = 4;
         function hash32(str) {
             let h = 2166136261 >>> 0;
             for (let i = 0; i < str.length; i++) { h ^= str.charCodeAt(i); h = Math.imul(h, 16777619); }
@@ -2255,7 +2255,7 @@
             const bg = bcv.getContext('2d');
             bg.fillStyle = '#14305a'; bg.fillRect(0, 0, 512, 84);
             bg.fillStyle = '#ffd54a'; bg.font = 'bold 58px sans-serif'; bg.textAlign = 'center'; bg.textBaseline = 'middle';
-            bg.fillText('🏁 KART 3 🏁', 256, 46);
+            bg.fillText('🏁 FABLE KART 🏁', 256, 46);
             const banner = new THREE.Mesh(new THREE.PlaneGeometry(TRACK_WIDTH + 8, 4),
                 new THREE.MeshBasicMaterial({ map: new THREE.CanvasTexture(bcv) }));
             banner.position.set(c.x - t.x * 1.35, c.y + postH, c.z - t.z * 1.35);

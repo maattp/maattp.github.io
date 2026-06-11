@@ -1,6 +1,6 @@
-# Kart 3 — Multiplayer Vision
+# Fable Kart — Multiplayer Vision
 
-The end goal: **really solid 2–4 player multiplayer.** I can open Kart 3 on my
+The end goal: **really solid 2–4 player multiplayer.** I can open Fable Kart on my
 phone, create a private room, send three friends a code (or have matchmaking
 pair us), and race a full Grand Prix together over the internet — or sitting
 in the same room. Stretch: voice chat while racing.

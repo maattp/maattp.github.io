@@ -1,9 +1,9 @@
 {
-  "name": "Kart 3 — Coral Cliffs GP",
-  "short_name": "Kart 3",
+  "name": "Fable Kart",
+  "short_name": "Fable Kart",
   "description": "Landscape kart racing — 8 karts, items, drifting, and online play with friends.",
-  "start_url": "/apps/kart3/",
-  "scope": "/apps/kart3/",
+  "start_url": "/apps/fablekart/",
+  "scope": "/apps/fablekart/",
   "display": "fullscreen",
   "orientation": "landscape",
   "background_color": "#04101e",
