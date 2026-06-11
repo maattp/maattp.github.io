@@ -105,7 +105,7 @@ async function verifySession(
 
 const app = new Hono<{ Bindings: Bindings; Variables: Variables }>();
 
-// --- Kart 3 multiplayer rooms: WebSocket upgrade ---
+// --- Fable Kart multiplayer rooms: WebSocket upgrade ---
 // Registered BEFORE the cors middleware: cors() mutates response headers,
 // and a 101 WebSocket response's headers are immutable.
 // No Google auth on /kart3/* by design — the unguessable room code is the
@@ -149,7 +149,7 @@ app.use("*", cors({
   allowMethods: ["GET", "POST", "PUT", "DELETE"],
 }));
 
-// --- Kart 3 multiplayer rooms: create + status (CORS applies) ---
+// --- Fable Kart multiplayer rooms: create + status (CORS applies) ---
 const ROOM_ALPHABET = "ABCDEFGHJKMNPQRSTUVWXYZ23456789"; // no 0/O/1/I/L
 
 app.post("/kart3/rooms", async (c) => {

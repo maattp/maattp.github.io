@@ -1,6 +1,6 @@
 # Worker
 
-Cloudflare Worker providing a KV storage API and the Kart 3 multiplayer room
+Cloudflare Worker providing a KV storage API and the Fable Kart multiplayer room
 backend. Built with Hono and deployed via Wrangler.
 
 ## Stack
@@ -21,7 +21,10 @@ All `/kv/*` routes require `Authorization: Bearer <google-id-token>`.
 - `PUT /kv/:key` — write a value (body = raw text)
 - `DELETE /kv/:key` — delete a value
 
-### Kart 3 rooms (`/kart3/*` — NO Google auth by design)
+### Fable Kart rooms (`/kart3/*` — NO Google auth by design)
+
+The routes keep the pre-rename "kart3" name on purpose — shipped clients
+point at them.
 
 Friends join with a room code, so these routes are origin-gated
 (polkiewicz.com / maattp.github.io / any localhost port) instead of
@@ -38,7 +41,7 @@ client `input` → host; host `snap`/`event` → everyone else (or one peer via
 `msg.to`); `rtc` relays WebRTC signaling peer→peer; `pp` echoes for RTT.
 At race start it stores `seats` (id+name) so a player who drops mid-race
 can rejoin by name and reclaim their kart. Protocol lives in
-`apps/kart3/index.html` (`netHandle`) and `apps/kart3/VISION.md`.
+`apps/fablekart/index.html` (`netHandle`) and `apps/fablekart/VISION.md`.
 Rooms self-destruct via alarm after 45 min or when the last socket leaves.
 
 ## Auth

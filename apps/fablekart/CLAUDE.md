@@ -1,6 +1,11 @@
-# Kart 3 — CLAUDE.md
+# Fable Kart — CLAUDE.md
 
-Project notes for **Kart 3** (`apps/kart3/index.html`). Read before changing it.
+Project notes for **Fable Kart** (`apps/fablekart/index.html`), formerly
+"Kart 3" (renamed 2026-06, named after Claude Fable). The rename is
+user-facing only: the worker API routes (`/kart3/rooms`), the `Kart3Room`
+DO, and all `kart3_*` localStorage keys deliberately keep their old names —
+they're invisible to players and renaming them would risk the multiplayer
+backend and wipe saved best times/settings. Read before changing it.
 Repo-root `CLAUDE.md` covers site-wide rules; `apps/kart2/CLAUDE.md` documents
 the headless render harness in depth and several lessons this app inherits.
 
@@ -16,7 +21,7 @@ half auto-covers track geometry + core physics, but nothing else).
 
 A single self-contained `index.html` — a **landscape** (horizontal) 3D kart
 racer for iPhone PWA. Three.js **r128** from cdnjs, all assets generated at
-runtime. One map ("Coral Cliffs Circuit"), 3 laps, player + **7 AI**.
+runtime. Two tracks (Coral Cliffs, Volcano Bay), 3 laps, player + **7 AI**.
 Left-thumb slide steering, DRIFT/ITEM buttons, auto-accelerate.
 
 ## ⚠ Verify by rendering, not by reading
