@@ -640,7 +640,7 @@
                 preview: 'linear-gradient(180deg,#7fc0ff,#55a843)',
                 theme: {
                     skyTop: 0x1d6fe0, skyMid: 0x7fc0ff, skyBot: 0xeaf6ff,
-                    fog: 0xbfe2ff, cloud: 0xffffff, sun: 0xfff4c2, sunPos: [-500, 560, -420],
+                    fog: 0xbfe2ff, cloud: 0xffffff, sun: 0xfff4c2, sunPos: [-500, 560, -420], birds: true,
                     hemiSky: 0xcfe8ff, hemiGround: 0x4a7a3a, hemiInt: 0.95,
                     dirColor: 0xfff2d0, dirInt: 1.12, dirPos: [-200, 320, -160],
                     waterTex: '#2a8fd6', deep: 0x0a3f72,
@@ -673,7 +673,7 @@
                 preview: 'linear-gradient(180deg,#7a2a4a,#3a3632)',
                 theme: {
                     skyTop: 0x241038, skyMid: 0x7a2a4a, skyBot: 0xff9a4a,
-                    fog: 0x5a3046, cloud: 0xd8a0b0, sun: 0xff8a4a, sunPos: [-520, 380, 340],
+                    fog: 0x5a3046, cloud: 0xd8a0b0, sun: 0xff8a4a, sunPos: [-520, 380, 340], stars: true,
                     hemiSky: 0xc88a96, hemiGround: 0x3a2a2a, hemiInt: 0.85,
                     dirColor: 0xffb070, dirInt: 1.0, dirPos: [-220, 260, 200],
                     waterTex: '#1a5a6a', deep: 0x06222e,
@@ -739,10 +739,13 @@
         let gapA = -1, gapB = -1, lavaGapY = 0;   // road gap (lava below) — see Volcano Bay
         let gapMidX = 0, gapMidZ = 0;
         let lavaMats = [], craterLight = null;
+        let cloudSpin = null;   // baked cloud mesh, drifts slowly in animate()
+        let foamMat = null, lavaGlow = null;   // water glints / lava-lake rim, pulsed in animate()
         let boostPads = [], itemBoxes = [], projectiles = [], hazards = [], spinners = [];
         let karts = [], player;
         let particles;
         let waterMat = null, crowdPts = null;
+        let birds = [];   // circling gulls (theme.birds), animated in animate()
         let world = null;                    // all static track geometry (rebuilt per track)
         let selectedCharIdx = 0;
 
@@ -822,7 +825,7 @@
         // ⚠ APP_VER: increment ONCE PER PR (CLAUDE.md rule). Shown on the
         // title screen and folded into NET_VER, so any two different builds
         // refuse to share a room.
-        const APP_VER = 6;
+        const APP_VER = 7;
         function hash32(str) {
             let h = 2166136261 >>> 0;
             for (let i = 0; i < str.length; i++) { h ^= str.charCodeAt(i); h = Math.imul(h, 16777619); }
@@ -1788,6 +1791,7 @@
             const cols = [];
             const grass1 = new THREE.Color(THEME.grass1), grass2 = new THREE.Color(THEME.grass2);
             const sand = new THREE.Color(THEME.sand), rock = new THREE.Color(THEME.rock);
+            const white = new THREE.Color(0xffffff);
             const tmp = new THREE.Color();
             for (let i = 0; i < pa.count; i++) {
                 const x = pa.getX(i), z = pa.getZ(i);
@@ -1797,6 +1801,12 @@
                 tmp.copy(grass1).lerp(grass2, nse * 0.5 + 0.5);
                 if (y < 1.3) tmp.lerp(sand, smoothstep(1.3, 0.4, y));
                 if (y > 17) tmp.lerp(rock, smoothstep(17, 26, y));
+                // surf line: brighten the band right at the waterline (-1.6)
+                // so the real coast contour reads as foam/wet shimmer
+                if (y > -3.4 && y < 0.4) {
+                    const d = Math.abs(y + 1.5);
+                    tmp.lerp(white, 0.6 * Math.exp(-d * d * 1.4));
+                }
                 cols.push(tmp.r, tmp.g, tmp.b);
             }
             geo.setAttribute('color', new THREE.Float32BufferAttribute(cols, 3));
@@ -1828,6 +1838,23 @@
                 new THREE.MeshBasicMaterial({ color: THEME.deep }));
             deep.rotation.x = -Math.PI / 2; deep.position.y = -2.4;
             world.add(deep);
+
+            // sun glints on the open water: scattered points that flicker in
+            // animate(). Placed only over true ocean (terrain well underwater).
+            foamMat = null;
+            const sp = [];
+            for (let i = 0; i < 900 && sp.length < 750; i++) {
+                const a = rand(0, Math.PI * 2), d = rand(220, 1100);
+                const x = Math.cos(a) * d, z = Math.sin(a) * d;
+                if (terrainY(x, z) < -3.5) sp.push(x, -1.35, z);
+            }
+            if (sp.length) {
+                const sgeo = new THREE.BufferGeometry();
+                sgeo.setAttribute('position', new THREE.Float32BufferAttribute(sp, 3));
+                foamMat = new THREE.PointsMaterial({ color: 0xffffff, size: 2.6,
+                    transparent: true, opacity: 0.5, depthWrite: false });
+                world.add(new THREE.Points(sgeo, foamMat));
+            }
         }
 
         function makeLavaTexture() {
@@ -1855,7 +1882,7 @@
         // the volcano's identity: a glowing lava lake in the caldera, a lava
         // channel under the road gap, smoke over the crater, and a warm light
         function buildLava() {
-            lavaMats = []; craterLight = null;
+            lavaMats = []; craterLight = null; lavaGlow = null;
             const cr = THEME.crater;
             if (cr) {
                 const tex = makeLavaTexture(); tex.repeat.set(6, 6);
@@ -1868,6 +1895,14 @@
                 craterLight = new THREE.PointLight(0xff7a30, 1.25, cr.r * 3.4);
                 craterLight.position.set(cr.x, cr.floor + 30, cr.z);
                 world.add(craterLight);
+                // hot rim glow where the lake meets the crater wall, pulsing
+                // with the crater light
+                lavaGlow = new THREE.Mesh(new THREE.RingGeometry(cr.r - 48, cr.r - 28, 48),
+                    new THREE.MeshBasicMaterial({ color: 0xffb04a, transparent: true,
+                        opacity: 0.32, depthWrite: false }));
+                lavaGlow.rotation.x = -Math.PI / 2;
+                lavaGlow.position.set(cr.x, cr.floor + 0.9, cr.z);
+                world.add(lavaGlow);
                 for (let i = 0; i < 4; i++) {
                     const puff = new THREE.Mesh(new THREE.SphereGeometry(rand(16, 26), 8, 6),
                         new THREE.MeshLambertMaterial({ color: 0x2a2026, transparent: true, opacity: 0.5 }));
@@ -1921,24 +1956,66 @@
             sky.renderOrder = -10;
             world.add(sky);
 
-            const sunMesh = new THREE.Mesh(new THREE.CircleGeometry(70, 32),
-                new THREE.MeshBasicMaterial({ color: THEME.sun, fog: false }));
-            sunMesh.position.set(THEME.sunPos[0], THEME.sunPos[1], THEME.sunPos[2]); sunMesh.lookAt(0, 0, 0);
-            world.add(sunMesh);
+            // sun: bright core + soft halo rings so it glows instead of
+            // reading as a flat painted circle
+            const sunGrp = new THREE.Group();
+            sunGrp.position.set(THEME.sunPos[0], THEME.sunPos[1], THEME.sunPos[2]);
+            const sunC = new THREE.Color(THEME.sun);
+            for (const [r, op] of [[70, 1], [115, 0.22], [175, 0.08]]) {
+                const ring = new THREE.Mesh(new THREE.CircleGeometry(r, 32),
+                    new THREE.MeshBasicMaterial({ color: sunC, fog: false, transparent: op < 1,
+                        opacity: op, depthWrite: false }));
+                ring.position.z = (70 - r) * 0.01;   // halo slightly behind the core
+                sunGrp.add(ring);
+            }
+            sunGrp.lookAt(0, 0, 0);
+            world.add(sunGrp);
 
-            // clouds: squashed spheres merged into one unlit mesh
+            // clouds: puffy cumulus — one big puff + a skirt of smaller ones
+            // whose bottoms align (flat base, billowy top), plus a far ring of
+            // bigger fog-tinted clouds for horizon depth
             const parts = [];
             const cg = new THREE.SphereGeometry(1, 10, 8);
-            for (let i = 0; i < 11; i++) {
-                const a = (i / 11) * Math.PI * 2 + 0.4, d = rand(520, 980), y = rand(140, 230);
-                const cx = Math.cos(a) * d, cz = Math.sin(a) * d;
-                for (let j = 0; j < 3; j++) {
-                    const r = rand(26, 52);
-                    parts.push({ geo: cg, color: THEME.cloud, matrix: mat4(cx + rand(-40, 40), y + rand(-8, 8), cz + rand(-40, 40), 0, r, r * 0.42, r) });
+            const fogC = new THREE.Color(THEME.fog), cloudC = new THREE.Color(THEME.cloud), tmpCC = new THREE.Color();
+            const cluster = (cx, y, cz, scale, col) => {
+                const rBig = rand(30, 46) * scale;
+                parts.push({ geo: cg, color: col, matrix: mat4(cx, y, cz, 0, rBig, rBig * 0.45, rBig) });
+                const np = 3 + Math.floor(rand(0, 3));
+                for (let j = 0; j < np; j++) {
+                    const r = rBig * rand(0.4, 0.72);
+                    const aa = rand(0, Math.PI * 2), dd = rBig * rand(0.55, 1.05);
+                    parts.push({ geo: cg, color: col, matrix: mat4(
+                        cx + Math.cos(aa) * dd, y + (rBig - r) * 0.18, cz + Math.sin(aa) * dd * 0.7,
+                        0, r, r * 0.5, r) });
                 }
+            };
+            for (let i = 0; i < 11; i++) {
+                const a = (i / 11) * Math.PI * 2 + 0.4, d = rand(520, 980);
+                cluster(Math.cos(a) * d, rand(140, 230), Math.sin(a) * d, 1, THEME.cloud);
+            }
+            tmpCC.copy(cloudC).lerp(fogC, 0.45);   // distant ring fades toward the haze
+            for (let i = 0; i < 7; i++) {
+                const a = (i / 7) * Math.PI * 2 + 1.1, d = rand(1250, 1750);
+                cluster(Math.cos(a) * d, rand(170, 300), Math.sin(a) * d, 1.7, tmpCC.getHex());
             }
             const cloudMesh = new THREE.Mesh(bakeMerge(parts), new THREE.MeshBasicMaterial({ vertexColors: true, fog: false }));
             world.add(cloudMesh);
+            cloudSpin = cloudMesh;   // slow drift in animate()
+
+            // dusk themes get a starfield high in the dome
+            if (THEME.stars) {
+                const sp = [];
+                for (let i = 0; i < 220; i++) {
+                    const az = rand(0, Math.PI * 2), el = rand(0.22, 1.4);
+                    const R2 = 2400;
+                    sp.push(Math.cos(az) * Math.cos(el) * R2, Math.sin(el) * R2, Math.sin(az) * Math.cos(el) * R2);
+                }
+                const sgeo = new THREE.BufferGeometry();
+                sgeo.setAttribute('position', new THREE.Float32BufferAttribute(sp, 3));
+                world.add(new THREE.Points(sgeo, new THREE.PointsMaterial({
+                    color: 0xfff4d8, size: 2.2, sizeAttenuation: false, fog: false,
+                    transparent: true, opacity: 0.85, depthWrite: false })));
+            }
 
             scene.fog = new THREE.Fog(THEME.fog, 300, 980);
             scene.background = new THREE.Color(THEME.fog);
@@ -1994,6 +2071,53 @@
             mesh.renderOrder = 1;
             world.add(mesh);
             buildCurbs();
+            buildSkidMarks();
+        }
+
+        // rubber laid down through the corners: faint tire-pair streaks along
+        // the racing line wherever sustained curvature is in the top quartile.
+        // Build-time + seeded rng → identical on every client.
+        function buildSkidMarks() {
+            const mags = [];
+            for (let i = 0; i < N; i++) mags.push(Math.abs(curvSm[i]));
+            const sorted = mags.slice().sort((a, b) => a - b);
+            const T = sorted[Math.floor(N * 0.78)];
+
+            const cv = document.createElement('canvas'); cv.width = 64; cv.height = 256;
+            const g = cv.getContext('2d');
+            for (let p = 0; p < 5; p++) {
+                const x0 = 6 + rand(0, 40);
+                const a = 0.1 + rand(0, 0.14);
+                g.strokeStyle = 'rgba(10,10,14,' + a.toFixed(2) + ')';
+                g.lineWidth = 3.5;
+                for (const off of [0, 9]) {   // tire pair
+                    g.beginPath();
+                    for (let y = 0; y <= 256; y += 16) {
+                        const x = x0 + off + Math.sin(y * 0.05 + p * 2) * 3;
+                        if (y === 0) g.moveTo(x, y); else g.lineTo(x, y);
+                    }
+                    g.stroke();
+                }
+            }
+            const tex = new THREE.CanvasTexture(cv);
+            tex.wrapT = THREE.RepeatWrapping;
+
+            let i = 4;
+            while (i < N - 4) {
+                if (mags[i] > T) {
+                    let j = i;
+                    while (j < N - 1 && mags[j] > T * 0.7) j++;
+                    const len = j - i;
+                    if (len >= 12 && !(gapA >= 0 && j >= gapA - 8 && i <= gapB + 8)) {
+                        const mid = (i + j) >> 1;
+                        const lat = clamp(raceLine[mid] || 0, -(HALF_W - 6), HALF_W - 6);
+                        const m = buildDecalStrip(mid, Math.min(Math.floor(len / 2) + 4, 34), 0.22, tex, 0.1, lat);
+                        m.material.transparent = true;
+                        m.material.map.repeat.set(1, Math.max(1, Math.floor(len / 18)));
+                    }
+                    i = j + 8;
+                } else i++;
+            }
         }
         function buildCurbs() {
             const pos = [], col = [], idx = [];
@@ -2214,6 +2338,36 @@
                 lampParts.push({ geo: lampGeo, color: 0xffd88a, matrix: mat4(c.x, c.y + H - 0.6, c.z, 0) });
             }
             world.add(new THREE.Mesh(bakeMerge(lampParts), new THREE.MeshBasicMaterial({ vertexColors: true })));
+
+            // warm glow around each lamp + a pool of light on the road below —
+            // fake volumetrics that make the interior read as lit
+            const gcv = document.createElement('canvas'); gcv.width = 64; gcv.height = 64;
+            const gg = gcv.getContext('2d');
+            const ggr = gg.createRadialGradient(32, 32, 0, 32, 32, 32);
+            ggr.addColorStop(0, 'rgba(255,216,138,0.9)');
+            ggr.addColorStop(0.45, 'rgba(255,196,110,0.35)');
+            ggr.addColorStop(1, 'rgba(255,196,110,0)');
+            gg.fillStyle = ggr; gg.fillRect(0, 0, 64, 64);
+            const glowTex = new THREE.CanvasTexture(gcv);
+            const glowMat = new THREE.SpriteMaterial({ map: glowTex, transparent: true,
+                opacity: 0.55, depthWrite: false });
+            const poolGeo = new THREE.CircleGeometry(7, 18);
+            const poolMat = new THREE.MeshBasicMaterial({ map: glowTex, transparent: true,
+                opacity: 0.32, depthWrite: false, polygonOffset: true,
+                polygonOffsetFactor: -2, polygonOffsetUnits: -2 });
+            for (let i = tunnelA + 5; i < tunnelB - 3; i += 9) {
+                const c = centerline[i];
+                const halo = new THREE.Sprite(glowMat);
+                halo.scale.set(8, 6, 1);
+                halo.position.set(c.x, c.y + H - 1.5, c.z);
+                world.add(halo);
+                const pool = new THREE.Mesh(poolGeo, poolMat);
+                pool.rotation.x = -Math.PI / 2;
+                pool.position.set(c.x, roadY(i, 0) + 0.14, c.z);
+                pool.renderOrder = 4;
+                world.add(pool);
+            }
+
             for (const f of [0.06, 0.28, 0.5, 0.72, 0.94]) {
                 const i = Math.floor(lerp(tunnelA, tunnelB, f));
                 const c = centerline[i];
@@ -2308,6 +2462,29 @@
             banner.lookAt(c.x - t.x * 12, c.y + postH, c.z - t.z * 12);
             world.add(banner);
 
+            // gulls circling offshore (coral theme) — silhouette birds with
+            // flapping wing planes, flown in animate()
+            birds = [];
+            if (THEME.birds) {
+                for (let b = 0; b < 6; b++) {
+                    const grp = new THREE.Group();
+                    const bmat = new THREE.MeshBasicMaterial({ color: 0x3a4250 });
+                    const body = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.22, 1.3), bmat);
+                    grp.add(body);
+                    const wl = new THREE.Mesh(new THREE.BoxGeometry(2.4, 0.07, 0.75), bmat);
+                    wl.geometry.translate(1.2, 0, 0); wl.position.set(0.2, 0.06, 0);
+                    const wr = new THREE.Mesh(new THREE.BoxGeometry(2.4, 0.07, 0.75), bmat);
+                    wr.geometry.translate(-1.2, 0, 0); wr.position.set(-0.2, 0.06, 0);
+                    grp.add(wl); grp.add(wr);
+                    const aa = rand(0, Math.PI * 2), dd = rand(330, 560);
+                    birds.push({ grp, wl, wr,
+                        cx: Math.cos(aa) * dd, cz: Math.sin(aa) * dd,
+                        cy: rand(26, 46), r: rand(28, 70),
+                        speed: (rng() < 0.5 ? 1 : -1) * rand(0.12, 0.22), phase: rand(0, Math.PI * 2) });
+                    world.add(grp);
+                }
+            }
+
             // grandstands on the inland side of the start straight
             const standSeg = [Math.floor(N * 0.965), 26];
             const crowd = [];
@@ -2343,6 +2520,9 @@
             cgeo.setAttribute('position', new THREE.Float32BufferAttribute(cpos, 3));
             cgeo.setAttribute('color', new THREE.Float32BufferAttribute(ccol, 3));
             crowdPts = new THREE.Points(cgeo, new THREE.PointsMaterial({ vertexColors: true, size: 1.5, sizeAttenuation: true }));
+            // remember rest pose + a per-fan phase so the crowd can jump
+            crowdPts.userData.base = Float32Array.from(cpos);
+            crowdPts.userData.phase = Float32Array.from({ length: cpos.length / 3 }, () => rand(0, Math.PI * 2));
             world.add(crowdPts);
 
             // flag poles along the start straight
@@ -2519,6 +2699,29 @@
             }
         }
 
+        // shared soft blob-shadow texture (karts, item boxes) — a strong dark
+        // core reads as MK64-style contact grounding, not ambient haze
+        let _blobTex = null;
+        function blobShadowTex() {
+            if (_blobTex) return _blobTex;
+            const cv = document.createElement('canvas'); cv.width = 64; cv.height = 64;
+            const g = cv.getContext('2d');
+            const gr = g.createRadialGradient(32, 32, 0, 32, 32, 32);
+            gr.addColorStop(0, 'rgba(0,0,0,0.6)');
+            gr.addColorStop(0.55, 'rgba(0,0,0,0.42)');
+            gr.addColorStop(1, 'rgba(0,0,0,0)');
+            g.fillStyle = gr; g.fillRect(0, 0, 64, 64);
+            _blobTex = new THREE.CanvasTexture(cv);
+            return _blobTex;
+        }
+        function blobShadowMesh(w, h) {
+            const m = new THREE.Mesh(new THREE.PlaneGeometry(w, h), new THREE.MeshBasicMaterial({
+                map: blobShadowTex(), transparent: true, depthWrite: false,
+                polygonOffset: true, polygonOffsetFactor: -3, polygonOffsetUnits: -3 }));
+            m.rotation.x = -Math.PI / 2; m.renderOrder = 5;
+            return m;
+        }
+
         function buildItemBoxes() {
             itemBoxes = [];
             const qcv = document.createElement('canvas'); qcv.width = 64; qcv.height = 64;
@@ -2544,7 +2747,11 @@
                     const by = roadY(seg, lane) + 2.9;
                     box.position.set(bx, by, bz);
                     world.add(box);
-                    itemBoxes.push({ group: box, seg, lat: lane, x: bx, z: bz, active: true, respawn: 0, baseY: by });
+                    // grounding blob on the road below the floating box
+                    const shadow = blobShadowMesh(4.8, 4.8);
+                    shadow.position.set(bx, roadY(seg, lane) + 0.16, bz);
+                    world.add(shadow);
+                    itemBoxes.push({ group: box, shadow, seg, lat: lane, x: bx, z: bz, active: true, respawn: 0, baseY: by });
                 }
             }
         }
@@ -2788,19 +2995,31 @@
                 new THREE.MeshBasicMaterial({ color: 0x6ff0ff, transparent: true, opacity: 0.28, depthWrite: false }));
             shield.position.y = 2.0; shield.visible = false; g.add(shield);
 
-            const shCv = document.createElement('canvas'); shCv.width = 64; shCv.height = 64;
-            const sg = shCv.getContext('2d');
-            const sgr = sg.createRadialGradient(32, 32, 0, 32, 32, 32);
-            sgr.addColorStop(0, 'rgba(0,0,0,0.45)'); sgr.addColorStop(1, 'rgba(0,0,0,0)');
-            sg.fillStyle = sgr; sg.fillRect(0, 0, 64, 64);
-            const shadow = new THREE.Mesh(new THREE.PlaneGeometry(7.2, 8.2), new THREE.MeshBasicMaterial({
-                map: new THREE.CanvasTexture(shCv), transparent: true, depthWrite: false,
-                polygonOffset: true, polygonOffsetFactor: -3, polygonOffsetUnits: -3 }));
-            shadow.rotation.x = -Math.PI / 2; shadow.position.y = 0.18; shadow.renderOrder = 5; g.add(shadow);
+            const shadow = blobShadowMesh(7.6, 8.6);
+            shadow.position.y = 0.18; g.add(shadow);
+
+            // twin boost flames out of the exhaust tips (shown while
+            // boostTimer > 0, flicker-scaled per frame in syncKartMesh)
+            const flames = [];
+            for (const s of [1, -1]) {
+                const fl = new THREE.Group();
+                const outer = new THREE.Mesh(new THREE.ConeGeometry(0.32, 2.3, 8),
+                    new THREE.MeshBasicMaterial({ color: 0xff7a18, transparent: true, opacity: 0.92, depthWrite: false }));
+                outer.rotation.x = -Math.PI / 2 + 0.14;   // tip backward, slight up
+                outer.position.z = -1.15;
+                const inner = new THREE.Mesh(new THREE.ConeGeometry(0.17, 1.45, 8),
+                    new THREE.MeshBasicMaterial({ color: 0xffe9a8, transparent: true, opacity: 0.95, depthWrite: false }));
+                inner.rotation.x = -Math.PI / 2 + 0.14;
+                inner.position.z = -0.75;
+                fl.add(outer); fl.add(inner);
+                fl.position.set(0.52 * s, 1.78, -3.3);
+                fl.visible = false;
+                g.add(fl); flames.push(fl);
+            }
 
             scene.add(g);
             g.rotation.order = 'YXZ';
-            return { group: g, wheels, frontPivots, shield, shadow };
+            return { group: g, wheels, frontPivots, shield, shadow, flames };
         }
 
         function charOrder() {
@@ -3484,10 +3703,14 @@
         }
         function updateItemBoxesVisual(dt) {
             for (const b of itemBoxes) {
+                if (b.shadow) b.shadow.visible = b.active;
                 if (!b.active) continue;
+                const bob = Math.sin(clock.elapsedTime * 2 + b.seg) * 0.5;
                 b.group.rotation.y += dt * 1.6;
                 b.group.rotation.x += dt * 0.7;
-                b.group.position.y = b.baseY + Math.sin(clock.elapsedTime * 2 + b.seg) * 0.5;
+                b.group.position.y = b.baseY + bob;
+                // shadow breathes opposite the bob — sells the float height
+                if (b.shadow) b.shadow.scale.setScalar(1 - bob * 0.12);
             }
         }
 
@@ -3685,13 +3908,29 @@
             const fs = (k.isPlayer ? steerInput : 0) * 0.4 + (k.drifting ? k.driftDir * 0.3 : 0);
             for (const p of k.mesh.frontPivots) p.rotation.y = fs;
 
+            const boosting = k.boostTimer > 0;
+            for (const fl of k.mesh.flames) {
+                fl.visible = boosting;
+                if (boosting) {
+                    fl.scale.set(0.85 + vrand(0, 0.3), 0.85 + vrand(0, 0.3), 0.7 + vrand(0, 0.6));
+                    fl.rotation.z = vrand(-0.2, 0.2);
+                }
+            }
+
             const sh = k.mesh.shield;
             if (k.shieldTimer > 0) {
                 sh.visible = true; sh.rotation.y += dt * 2;
                 sh.material.opacity = 0.18 + 0.12 * Math.sin(raceClock * 8);
             } else sh.visible = false;
-            k.mesh.shadow.visible = k.grounded || (k.y - k.groundY) < 6;
-            k.mesh.shadow.position.y = -(k.y - k.groundY) + 0.18 - hop;
+            const airH = (k.y - k.groundY) + hop;
+            k.mesh.shadow.visible = k.grounded || airH < 9;
+            k.mesh.shadow.position.y = -airH + 0.18;
+            // airborne: the blob shrinks + fades with height and stays flat on
+            // the road instead of pitching with the kart's jump arc
+            k.mesh.shadow.rotation.x = -Math.PI / 2 - (k.grounded ? 0 : k.visualPitch);
+            const shScale = k.grounded ? 1 : clamp(1 - airH * 0.055, 0.5, 1);
+            k.mesh.shadow.scale.setScalar(shScale);
+            k.mesh.shadow.material.opacity = k.grounded ? 1 : clamp(1 - airH * 0.07, 0.3, 1);
         }
 
         // ===================================================================
@@ -4667,8 +4906,29 @@
             if (state === 'paused') { renderer.render(scene, camera); return; }
 
             if (waterMat) waterMat.map.offset.x += dt * 0.013;
+            if (cloudSpin) cloudSpin.rotation.y += dt * 0.0022;   // lazy cloud drift
+            if (crowdPts) {
+                // the crowd jumps — each fan on their own phase
+                const pa2 = crowdPts.geometry.attributes.position;
+                const base = crowdPts.userData.base, ph = crowdPts.userData.phase;
+                const tt2 = clock.elapsedTime * 5.2;
+                for (let i = 0; i < ph.length; i++) {
+                    pa2.array[i * 3 + 1] = base[i * 3 + 1] + Math.max(0, Math.sin(tt2 + ph[i])) * 0.55;
+                }
+                pa2.needsUpdate = true;
+            }
+            for (const b of birds) {
+                const t2 = clock.elapsedTime * b.speed + b.phase;
+                b.grp.position.set(b.cx + Math.cos(t2) * b.r, b.cy + Math.sin(t2 * 0.7) * 3, b.cz + Math.sin(t2) * b.r);
+                const sgn = Math.sign(b.speed);
+                b.grp.rotation.y = Math.atan2(-Math.sin(t2) * sgn, Math.cos(t2) * sgn);
+                const flap = Math.sin(clock.elapsedTime * 9 + b.phase) * 0.55;
+                b.wl.rotation.z = flap; b.wr.rotation.z = -flap;
+            }
             for (const lm of lavaMats) if (lm.map) lm.map.offset.y += dt * 0.03;
             if (craterLight) craterLight.intensity = 1.15 + Math.sin(clock.elapsedTime * 2.1) * 0.3;
+            if (lavaGlow) lavaGlow.material.opacity = 0.28 + Math.sin(clock.elapsedTime * 2.1) * 0.1;
+            if (foamMat) foamMat.opacity = 0.35 + Math.abs(Math.sin(clock.elapsedTime * 2.6)) * 0.35;   // water glints
             // ember column rising from the lava gap (telegraphs it over the crest)
             if (gapA >= 0 && Math.random() < 0.5) {
                 const cdx = camera.position.x - gapMidX, cdz = camera.position.z - gapMidZ;
