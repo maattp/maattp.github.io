@@ -56,28 +56,30 @@
             text-shadow: 0 2px 4px rgba(0,0,0,0.6); }
         .pill .value small { font-size: 12px; opacity: 0.7; font-weight: 700; }
         #lapPill { top: calc(env(safe-area-inset-top) + 10px); left: calc(env(safe-area-inset-left) + 14px); }
-        #timePill { top: calc(env(safe-area-inset-top) + 10px); right: calc(env(safe-area-inset-right) + 14px); text-align: right; }
+        #timePill { top: calc(env(safe-area-inset-top) + 66px); right: calc(env(safe-area-inset-right) + 14px); text-align: right;
+            padding: 4px 10px; }
+        #timePill .value { font-size: 17px; }
         #lapTime { font-variant-numeric: tabular-nums; }
-        #netInd { position: absolute; top: calc(env(safe-area-inset-top) + 62px); right: calc(env(safe-area-inset-right) + 14px);
+        #netInd { position: absolute; top: calc(env(safe-area-inset-top) + 116px); right: calc(env(safe-area-inset-right) + 14px);
             display: none; font-size: 10px; font-weight: 900; letter-spacing: 1px; padding: 3px 9px; border-radius: 999px;
             background: rgba(6,14,30,0.55); border: 1px solid rgba(255,255,255,0.14); color: #8fd6ff;
             font-variant-numeric: tabular-nums; }
         #netInd.on { display: block; }
         #netInd.p2p { color: #7dffb0; }
 
-        /* Big position, MK64-style bottom-left */
-        #posBig { position: absolute; left: calc(env(safe-area-inset-left) + 16px);
-            bottom: calc(env(safe-area-inset-bottom) + 8px); line-height: 0.9; font-weight: 900;
-            font-size: 74px; font-style: italic; letter-spacing: -3px;
+        /* Big position: top-right, clear of both thumbs */
+        #posBig { position: absolute; right: calc(env(safe-area-inset-right) + 14px);
+            top: calc(env(safe-area-inset-top) + 2px); line-height: 0.95; font-weight: 900;
+            font-size: 58px; font-style: italic; letter-spacing: -2px; text-align: right;
             text-shadow: 0 4px 0 rgba(0,0,0,0.45), 0 8px 24px rgba(0,0,0,0.5); }
-        #posBig small { font-size: 30px; letter-spacing: 0; vertical-align: top; }
+        #posBig small { font-size: 24px; letter-spacing: 0; vertical-align: top; }
         .pos-1 { color: #ffd54a; } .pos-2 { color: #e8eeff; } .pos-3 { color: #ffab6b; }
         .pos-4, .pos-5 { color: #9fd0ff; } .pos-6, .pos-7, .pos-8 { color: #ff8a8a; }
 
-        /* Minimap bottom-center-left */
-        #miniWrap { position: absolute; left: 50%; transform: translateX(-130%);
+        /* Minimap: true bottom-center — dead space between the two thumbs */
+        #miniWrap { position: absolute; left: 50%; transform: translateX(-50%);
             bottom: calc(env(safe-area-inset-bottom) + 10px);
-            width: 104px; height: 104px; border-radius: 14px; overflow: hidden;
+            width: 98px; height: 98px; border-radius: 14px; overflow: hidden;
             background: rgba(6,14,30,0.45); border: 1px solid rgba(255,255,255,0.14);
             box-shadow: 0 6px 18px rgba(0,0,0,0.35); }
         #minimap { width: 100%; height: 100%; }
@@ -129,9 +131,9 @@
         #steerHint { position: absolute; left: calc(env(safe-area-inset-left) + 20px); bottom: calc(env(safe-area-inset-bottom) + 110px);
             font-size: 11px; font-weight: 700; letter-spacing: 1px; opacity: 0.45; }
 
-        /* Drift charge bar */
-        #boostWrap { position: absolute; left: 50%; transform: translateX(30%);
-            bottom: calc(env(safe-area-inset-bottom) + 16px); width: 26%; max-width: 230px;
+        /* Drift charge bar: centered above the minimap */
+        #boostWrap { position: absolute; left: 50%; transform: translateX(-50%);
+            bottom: calc(env(safe-area-inset-bottom) + 116px); width: 24%; max-width: 210px;
             display: flex; flex-direction: column; align-items: center; gap: 5px; opacity: 0; transition: opacity 0.2s; }
         #boostWrap.on { opacity: 1; }
         #boostBar { width: 100%; height: 10px; border-radius: 8px; overflow: hidden;
