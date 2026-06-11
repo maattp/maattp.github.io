@@ -244,6 +244,17 @@ work, and don't regress these four seams.
   → kart screen-right, NDC-verified). Do NOT "fix" the default back.
 - Drift only engages while actually steering (|steer| > 0.28); hold DRIFT on
   GO! for a rocket start.
+- **Drift model (MKDS-style, tuned after playtest)**: engaging BLENDS from
+  the current steering response into the slide over ~0.3s (`lerp(steerTurn,
+  driftTurn, driftRamp)`, ramp dt*3.2) — never a yank, never a dropout.
+  While sliding, steer modulates the arc: full counter-steer ≈ 0.18× yaw
+  (nearly straight — long drifts and snaking are controllable), full into ≈
+  1.10×. Visuals: nose points INTO the slide (+driftDir yaw offset) and the
+  kart leans INTO the corner (+driftDir roll) — both signs were backwards
+  once; verify with behind-the-kart screenshots if touched. Mini-turbos are
+  modest (kicks 8/12/16, caps 116/122/126 via grantBoost's per-boost cap) —
+  measured drift-boost peak ≈ 104 vs items/pads ≈ 131. AI corner planning
+  uses drift grip 1.08 (matches the model; 1.3 made them overshoot).
 - Lap counting: forward seam crossing (prev seg > 0.7N → new seg < 0.25N);
   grid starts just *past* the line.
 
