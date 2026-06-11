@@ -142,8 +142,19 @@ work, and don't regress these four seams.
   Online: host picks in the lobby (`track` DO message); everyone's menu
   backdrop follows live; `start`/`rejoin-state` carry the index. Best
   times are per-track (`kart3_best_<id>`, legacy key = coral).
-- Tracks: **Coral Cliffs** (sunny island, beach/palms, tunnel) and
-  **Volcano Bay** (dusk caldera — structurally distinct, NO tunnel):
+- Tracks: **Coral Cliffs** (sunny island, beach/palms, tunnel),
+  **Volcano Bay** (dusk caldera — structurally distinct, NO tunnel), and
+  **Whisperwood** (twilight forest — the VERTICAL one: rolling whoops →
+  switchback climb to a 45-high ridge (others top out at 31/33) → tunnel
+  themed as a giant mossy hollow log at the summit → crest-jump dive off
+  the ridge → creek chicane. Theme extras: `fogNear`/`fogFar` overrides
+  (mistier), `foliage: 'forest'` (tall stacked-canopy trees, island-wide
+  seeded scatter of ~900 so the ridge doesn't read bald, glowing
+  mushroom rings via `glowFlora`), `wisps` (bobbing glow orbs riding the
+  spinners system), `fireflies` (170-point drifting/blinking cloud,
+  animated in `animate()` via `fireflyPts`), `stars`. Debug-camera
+  caveat: distant aerials sit beyond fogFar and the treed ridge looks
+  bald — judge from gameplay-range cameras.):
   - **Caldera rim ride**: ~220° banked arc on the crater crest with a
     glowing lava lake inside (`THEME.crater` shapes the heightfield in
     `hillH`; lake disc + pulsing PointLight + smoke in `buildLava`).
