@@ -2338,6 +2338,36 @@
                 lampParts.push({ geo: lampGeo, color: 0xffd88a, matrix: mat4(c.x, c.y + H - 0.6, c.z, 0) });
             }
             world.add(new THREE.Mesh(bakeMerge(lampParts), new THREE.MeshBasicMaterial({ vertexColors: true })));
+
+            // warm glow around each lamp + a pool of light on the road below —
+            // fake volumetrics that make the interior read as lit
+            const gcv = document.createElement('canvas'); gcv.width = 64; gcv.height = 64;
+            const gg = gcv.getContext('2d');
+            const ggr = gg.createRadialGradient(32, 32, 0, 32, 32, 32);
+            ggr.addColorStop(0, 'rgba(255,216,138,0.9)');
+            ggr.addColorStop(0.45, 'rgba(255,196,110,0.35)');
+            ggr.addColorStop(1, 'rgba(255,196,110,0)');
+            gg.fillStyle = ggr; gg.fillRect(0, 0, 64, 64);
+            const glowTex = new THREE.CanvasTexture(gcv);
+            const glowMat = new THREE.SpriteMaterial({ map: glowTex, transparent: true,
+                opacity: 0.55, depthWrite: false });
+            const poolGeo = new THREE.CircleGeometry(7, 18);
+            const poolMat = new THREE.MeshBasicMaterial({ map: glowTex, transparent: true,
+                opacity: 0.32, depthWrite: false, polygonOffset: true,
+                polygonOffsetFactor: -2, polygonOffsetUnits: -2 });
+            for (let i = tunnelA + 5; i < tunnelB - 3; i += 9) {
+                const c = centerline[i];
+                const halo = new THREE.Sprite(glowMat);
+                halo.scale.set(8, 6, 1);
+                halo.position.set(c.x, c.y + H - 1.5, c.z);
+                world.add(halo);
+                const pool = new THREE.Mesh(poolGeo, poolMat);
+                pool.rotation.x = -Math.PI / 2;
+                pool.position.set(c.x, roadY(i, 0) + 0.14, c.z);
+                pool.renderOrder = 4;
+                world.add(pool);
+            }
+
             for (const f of [0.06, 0.28, 0.5, 0.72, 0.94]) {
                 const i = Math.floor(lerp(tunnelA, tunnelB, f));
                 const c = centerline[i];
