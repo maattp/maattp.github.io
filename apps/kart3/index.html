@@ -219,6 +219,9 @@
         .hint { margin-top: 14px; font-size: 12px; line-height: 1.55; opacity: 0.8; max-width: 320px; }
         .hint b { color: #ffd54a; }
         .loader { font-size: 13px; opacity: 0.7; margin-top: 14px; letter-spacing: 2px; }
+        #appVer { position: absolute; right: calc(env(safe-area-inset-right) + 12px);
+            bottom: calc(env(safe-area-inset-bottom) + 8px); font-size: 11px; font-weight: 700;
+            letter-spacing: 1px; opacity: 0.4; font-variant-numeric: tabular-nums; }
 
         /* ===== Online play ===== */
         .online-row { margin-top: 12px; display: flex; gap: 6px; align-items: center; flex-wrap: wrap;
@@ -400,6 +403,7 @@
 
     <!-- Start screen -->
     <div class="screen" id="startScreen">
+        <div id="appVer"></div>
         <div class="menu-row">
             <div class="menu-left">
                 <div class="logo">KART<span class="three">3</span></div>
@@ -790,6 +794,26 @@
         const INPUT_MS = 33;           // client input send interval (~30Hz)
         const INTERP_MS = 130;         // remote karts render this far in the past
 
+        // ---------------------------------------------------------------
+        // Version gate. Two phones on different builds desync horribly
+        // (different track geometry, positional snapshot format), so rooms
+        // only pair clients whose tag matches the host's. NET_PROTO is
+        // bumped by hand for snapshot/protocol changes; the hash part
+        // auto-changes whenever track data or core physics constants do.
+        // ---------------------------------------------------------------
+        // ⚠ APP_VER: increment ONCE PER PR (CLAUDE.md rule). Shown on the
+        // title screen and folded into NET_VER, so any two different builds
+        // refuse to share a room.
+        const APP_VER = 1;
+        function hash32(str) {
+            let h = 2166136261 >>> 0;
+            for (let i = 0; i < str.length; i++) { h ^= str.charCodeAt(i); h = Math.imul(h, 16777619); }
+            return (h >>> 0).toString(36);
+        }
+        const NET_VER = 'v' + APP_VER + '.' + hash32(JSON.stringify(
+            [N, MAX_SPEED, ACCEL, BOOST_CAP, TURN_BASE, TURN_FADE, GRAV,
+             TRACKS.map((t) => [t.ctrl, t.gapLen, t.tunnelIn, t.tunnelOut, t.jumpAt])]));
+
         const net = {
             mode: 'solo',              // 'solo' | 'host' | 'client'
             ws: null, connected: false,
@@ -910,7 +934,7 @@
             ws.onopen = () => {
                 net.connected = true;
                 net.myCharIdx = selectedCharIdx;
-                ws.send(JSON.stringify({ t: 'hello', name: myName(), charIdx: net.myCharIdx }));
+                ws.send(JSON.stringify({ t: 'hello', name: myName(), charIdx: net.myCharIdx, ver: NET_VER }));
                 // doubles as keepalive and RTT probe
                 net.pingTimer = setInterval(() => wsSend({ t: 'pp', ts: performance.now() }), 2500);
             };
@@ -957,6 +981,7 @@
                 return;
             }
             const wasRacing = net.racing && state !== 'menu';
+            const recentError = net.lastErrorAt && performance.now() - net.lastErrorAt < 2000;
             netReset();
             if (wasRacing) {
                 flash('CONNECTION LOST', '#ff9a9a');
@@ -964,7 +989,8 @@
             } else {
                 dom.lobbyScreen.classList.add('hidden');
                 dom.startScreen.classList.remove('hidden');
-                netStatusMsg('Disconnected from room', true);
+                // keep a just-shown server error (e.g. version mismatch) visible
+                if (!recentError) netStatusMsg('Disconnected from room', true);
             }
         }
         function netHandle(msg) {
@@ -1056,6 +1082,7 @@
                     }
                     break;
                 case 'error':
+                    net.lastErrorAt = performance.now();
                     if (state === 'menu') {
                         if (dom.lobbyScreen.classList.contains('hidden')) netStatusMsg(msg.msg, true);
                         else dom.lobbyMsg.textContent = msg.msg;
@@ -4646,6 +4673,7 @@
             buildSelectionUI();
             resetRace();
             dom.loadMsg.style.display = 'none';
+            document.getElementById('appVer').textContent = 'v' + APP_VER;
             try { dom.nameInput.value = localStorage.getItem('kart3_name') || ''; } catch (e) {}
             dom.startBtn.addEventListener('click', startGame);
             dom.againBtn.addEventListener('click', () => {

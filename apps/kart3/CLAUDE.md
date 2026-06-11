@@ -4,6 +4,14 @@ Project notes for **Kart 3** (`apps/kart3/index.html`). Read before changing it.
 Repo-root `CLAUDE.md` covers site-wide rules; `apps/kart2/CLAUDE.md` documents
 the headless render harness in depth and several lessons this app inherits.
 
+## ⚠ Version bump — EVERY PR
+
+**Increment `APP_VER` in `index.html` once per PR.** It is displayed on the
+title screen (bottom-right) and is the manual half of `NET_VER`, the online
+version gate: two phones only share a room when their tags match, so a
+forgotten bump lets a stale build pair with a new one and desync (the hash
+half auto-covers track geometry + core physics, but nothing else).
+
 ## What this is
 
 A single self-contained `index.html` — a **landscape** (horizontal) 3D kart
