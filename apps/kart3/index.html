@@ -625,17 +625,21 @@
             },
             {
                 id: 'volcano', name: 'Volcano Bay',
-                // ash shore → inland S-twist climbing → high tunnel through the
-                // caldera → tight descent hairpin → jump over the lava shelf →
-                // chicane home. More technical than Coral Cliffs.
+                // ash shore → east coast climb → a long banked ride around the
+                // CALDERA RIM (lava lake glowing inside) → west descent → ramp
+                // jump over a LAVA GAP in the road (too slow = splash + respawn)
+                // → chicane home. Eruptions rain lava bombs on the mid-section.
                 ctrl: scaled([
-                    [0, -240, 0], [150, -230, 2], [245, -150, 6], [240, -20, 14],
-                    [150, 30, 18], [205, 135, 26], [80, 205, 32], [-60, 215, 34],
-                    [-185, 170, 26], [-145, 75, 18], [-235, 5, 12], [-250, -120, 5],
-                    [-130, -195, 1], [-55, -150, 2], [-15, -220, 0],
+                    [0, -240, 0], [165, -215, 2], [255, -115, 7], [248, 20, 14],
+                    [165, 90, 21],
+                    [72, 136, 27], [66, 214, 31], [2, 259, 33], [-73, 238, 33],
+                    [-106, 168, 31], [-89, 115, 27],
+                    [-185, 60, 18], [-206, -34, 11], [-228, -128, 9],
+                    [-120, -200, 1], [-48, -155, 2], [-12, -222, 0],
                 ]),
-                tunnelIn: [80 * SC, 205 * SC], tunnelOut: [-185 * SC, 170 * SC],
-                jumpAt: [-250 * SC, -120 * SC],
+                tunnelIn: null, tunnelOut: null,
+                jumpAt: [-228 * SC, -128 * SC],
+                gapLen: 11,                       // road MISSING for 11 samples after the ramp
                 preview: 'linear-gradient(180deg,#7a2a4a,#3a3632)',
                 theme: {
                     skyTop: 0x241038, skyMid: 0x7a2a4a, skyBot: 0xff9a4a,
@@ -650,6 +654,9 @@
                     shrubs: [0x4a5440, 0x3f4938, 0x55604a],
                     rocks: [0x5a4038, 0x4a3530, 0x6a564e],
                     beach: false, embers: 0xff5a2a,
+                    lava: 0xff6a22, lavaDeep: 0xb02a08,
+                    crater: { x: -14 * SC, z: 168 * SC, r: 92 * SC, h: 24, floor: 16 },
+                    eruptions: true,
                 },
             },
         ];
@@ -685,7 +692,10 @@
         let centerline = [], tangents = [], normals = [];
         let bankSlope = [], slopeAng = [], curvSm = [], cornerCap = [], raceLine = [];
         let ds = 1, trackLen = 1;
-        let tunnelA = 0, tunnelB = 0, jumpSeg = 0;
+        let tunnelA = -1, tunnelB = -1, jumpSeg = 0;
+        let gapA = -1, gapB = -1, lavaGapY = 0;   // road gap (lava below) — see Volcano Bay
+        let gapMidX = 0, gapMidZ = 0;
+        let lavaMats = [], craterLight = null;
         let boostPads = [], itemBoxes = [], projectiles = [], hazards = [], spinners = [];
         let karts = [], player;
         let particles;
@@ -1427,6 +1437,7 @@
             }
             if (steps === 5) simAcc = 0;
             clientApplySnaps(dt);
+            updateBombs(dt);
             const now = performance.now();
             if (net.connected && now - net.lastInputSent > INPUT_MS) {
                 net.lastInputSent = now;
@@ -1539,10 +1550,15 @@
             }
             ds = trackLen / N;
 
-            // resolve landmark samples
-            tunnelA = nearestSeg(TUNNEL_IN[0], TUNNEL_IN[1]);
-            tunnelB = nearestSeg(TUNNEL_OUT[0], TUNNEL_OUT[1]);
+            // resolve landmark samples (tunnel + gap are per-track optional)
+            tunnelA = TUNNEL_IN ? nearestSeg(TUNNEL_IN[0], TUNNEL_IN[1]) : -1;
+            tunnelB = TUNNEL_OUT ? nearestSeg(TUNNEL_OUT[0], TUNNEL_OUT[1]) : -1;
             jumpSeg = nearestSeg(JUMP_AT[0], JUMP_AT[1]);
+            const gl = TRACKS[currentTrackIdx].gapLen || 0;
+            if (gl > 0) {
+                gapA = (jumpSeg + 2) % N;
+                gapB = (gapA + gl) % N;
+            } else { gapA = -1; gapB = -1; }
 
             // carve the jump ramp into the elevation profile: a wedge that rises
             // 2.6 over ~14 samples then drops away — vertical physics launches karts.
@@ -1551,6 +1567,14 @@
             for (let k = 0; k <= RAMP_LEN; k++) {
                 const i = ((jumpSeg - RAMP_LEN + k) % N + N) % N;
                 centerline[i].y += 4.6 * (k / RAMP_LEN);
+            }
+
+            // the channel is a lava RIVER just below road level — visually
+            // unmissable, and landing short means touching it almost instantly
+            lavaGapY = gapA >= 0 ? centerline[gapA].y - 2.5 : 0;
+            if (gapA >= 0) {
+                const gm = centerline[(gapA + ((gapB - gapA + N) % N >> 1)) % N];
+                gapMidX = gm.x; gapMidZ = gm.z;
             }
 
             // signed curvature (heading derivative). θ increases → path bends
@@ -1640,7 +1664,8 @@
             }
             raceLine = smoothArr(raceLine, 4).map((v) => clamp(v, -LIM, LIM));
         }
-        function inTunnel(i) { return i >= tunnelA && i <= tunnelB; }
+        function inTunnel(i) { return tunnelA >= 0 && i >= tunnelA && i <= tunnelB; }
+        function inGap(i) { return gapA >= 0 && i >= gapA && i <= gapB; }
 
         // ===================================================================
         //  TERRAIN — heightfield flattened to the road (embankments, no voids),
@@ -1653,6 +1678,14 @@
             const r = Math.hypot(x, z);
             h += smoothstep(360, 200, r) * 5;
             h -= smoothstep(560, 760, r) * 30;
+            const cr = THEME.crater;
+            if (cr) {
+                // volcano: a ridge ring at the caldera rim, bowling down to a
+                // lava-lake floor inside (the rim road flattens onto the crest)
+                const d = Math.hypot(x - cr.x, z - cr.z);
+                h += Math.exp(-((d - cr.r) * (d - cr.r)) / (2 * 30 * 30)) * cr.h;
+                if (d < cr.r - 10) h = lerp(cr.floor, h, smoothstep(cr.r - 52, cr.r - 10, d));
+            }
             return h;
         }
         function terrainY(x, z) {
@@ -1670,7 +1703,14 @@
                 return lerp(edge2, Math.max(hill, c.y * 0.4), smoothstep(HALF_W + 18, HALF_W + 60, d));
             }
             const edge = roadY(s, clamp(lat, -HALF_W, HALF_W)) - 0.5;
-            return lerp(edge, hill, smoothstep(HALF_W + 1, HALF_W + 42, d));
+            let out = lerp(edge, hill, smoothstep(HALF_W + 1, HALF_W + 42, d));
+            if (gapA >= 0) {
+                // carve a radial depression around the gap so the lava river is
+                // exposed (nearest-seg logic alone gets bridged by the coarse grid)
+                const dg = Math.hypot(x - gapMidX, z - gapMidZ);
+                out = Math.min(out, lerp(lavaGapY - 1.4, out, smoothstep(30, 66, dg)));
+            }
+            return out;
         }
         function buildTerrain() {
             const SIZE = 1800, GN = 128;
@@ -1720,6 +1760,77 @@
                 new THREE.MeshBasicMaterial({ color: THEME.deep }));
             deep.rotation.x = -Math.PI / 2; deep.position.y = -2.4;
             world.add(deep);
+        }
+
+        function makeLavaTexture() {
+            const cv = document.createElement('canvas'); cv.width = 128; cv.height = 128;
+            const g = cv.getContext('2d');
+            g.fillStyle = hx(THEME.lavaDeep || 0xb02a08); g.fillRect(0, 0, 128, 128);
+            g.strokeStyle = hx(THEME.lava || 0xff6a22); g.lineWidth = 5; g.lineCap = 'round';
+            for (let i = 0; i < 7; i++) {
+                g.beginPath();
+                let x = Math.random() * 128, y = Math.random() * 128;
+                g.moveTo(x, y);
+                for (let t = 0; t < 5; t++) { x += (Math.random() - 0.5) * 64; y += (Math.random() - 0.5) * 64; g.lineTo(x, y); }
+                g.stroke();
+            }
+            g.fillStyle = 'rgba(255,210,90,0.5)';
+            for (let i = 0; i < 26; i++) {
+                g.beginPath();
+                g.arc(Math.random() * 128, Math.random() * 128, Math.random() * 5 + 1.5, 0, Math.PI * 2);
+                g.fill();
+            }
+            const tex = new THREE.CanvasTexture(cv);
+            tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+            return tex;
+        }
+        // the volcano's identity: a glowing lava lake in the caldera, a lava
+        // channel under the road gap, smoke over the crater, and a warm light
+        function buildLava() {
+            lavaMats = []; craterLight = null;
+            const cr = THEME.crater;
+            if (cr) {
+                const tex = makeLavaTexture(); tex.repeat.set(6, 6);
+                const mat = new THREE.MeshBasicMaterial({ map: tex });
+                const lake = new THREE.Mesh(new THREE.CircleGeometry(cr.r - 40, 40), mat);
+                lake.rotation.x = -Math.PI / 2;
+                lake.position.set(cr.x, cr.floor + 0.7, cr.z);
+                world.add(lake);
+                lavaMats.push(mat);
+                craterLight = new THREE.PointLight(0xff7a30, 1.25, cr.r * 3.4);
+                craterLight.position.set(cr.x, cr.floor + 30, cr.z);
+                world.add(craterLight);
+                for (let i = 0; i < 4; i++) {
+                    const puff = new THREE.Mesh(new THREE.SphereGeometry(rand(16, 26), 8, 6),
+                        new THREE.MeshLambertMaterial({ color: 0x2a2026, transparent: true, opacity: 0.5 }));
+                    puff.position.set(cr.x + rand(-28, 28), cr.floor + 52 + i * 15, cr.z + rand(-28, 28));
+                    world.add(puff);
+                    spinners.push({ obj: puff, speed: 0, bob: puff.position.y, bobAmp: rand(4, 8), drift: rand(0.4, 0.9) });
+                }
+            }
+            if (gapA >= 0) {
+                const tex2 = makeLavaTexture(); tex2.repeat.set(3, 1);
+                // DoubleSide: ribbon winding faces down (the eternal kart2 lesson)
+                const mat2 = new THREE.MeshBasicMaterial({ map: tex2, side: THREE.DoubleSide });
+                const pos = [], uv = [], idx = [];
+                let r = 0;
+                for (let i = gapA - 4; i <= gapB + 4; i++) {
+                    const k = ((i) % N + N) % N;
+                    const c = centerline[k], n = normals[k];
+                    const W = HALF_W + 7;
+                    pos.push(c.x + n.x * W, lavaGapY + 0.2, c.z + n.z * W);
+                    pos.push(c.x - n.x * W, lavaGapY + 0.2, c.z - n.z * W);
+                    uv.push(0, r * 0.18, 1, r * 0.18);
+                    if (i < gapB + 4) { const o = r * 2; idx.push(o, o + 1, o + 2, o + 1, o + 3, o + 2); }
+                    r++;
+                }
+                const geo = new THREE.BufferGeometry();
+                geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+                geo.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
+                geo.setIndex(idx);
+                world.add(new THREE.Mesh(geo, mat2));
+                lavaMats.push(mat2);
+            }
         }
 
         function buildSky() {
@@ -1802,6 +1913,7 @@
                 uv.push(0, i * 0.45, 1, i * 0.45);
             }
             for (let i = 0; i < N; i++) {
+                if (gapA >= 0 && i >= gapA && i < gapB) continue;   // the lava gap: no road
                 const a = i * 2, b = a + 1, c = a + 2, d = a + 3;
                 idx.push(a, b, c, b, d, c);
             }
@@ -1830,6 +1942,7 @@
                 col.push(...cc, ...cc, ...cc, ...cc);
             }
             for (let i = 0; i < N; i++) {
+                if (gapA >= 0 && i >= gapA && i < gapB) continue;
                 const o = i * 4;
                 idx.push(o, o + 1, o + 4, o + 1, o + 5, o + 4);
                 idx.push(o + 2, o + 6, o + 3, o + 3, o + 6, o + 7);
@@ -1878,6 +1991,7 @@
         // guardrails only where the ground drops away beside the road
         function railNeeded(i, side) {
             if (inTunnel(i)) return false;
+            if (gapA >= 0 && i >= gapA - 5 && i <= gapB + 5) return false;
             const c = centerline[i], n = normals[i];
             const px = c.x + n.x * (HALF_W + 26) * side, pz = c.z + n.z * (HALF_W + 26) * side;
             const drop = roadY(i, HALF_W * side) - terrainY(px, pz);
@@ -1938,6 +2052,7 @@
         }
 
         function buildTunnel() {
+            if (tunnelA < 0) return;   // this track has no tunnel
             const ARCH = 9, R = HALF_W + 5, H = 14;
             const pos = [], idx = [];
             const sections = [];
@@ -2183,6 +2298,7 @@
                     if (inTunnel(i)) continue;
                     const off = HALF_W + rand(10, 56);
                     const x = c.x + n.x * off * side, z = c.z + n.z * off * side;
+                    if (THEME.crater && Math.hypot(x - THEME.crater.x, z - THEME.crater.z) < THEME.crater.r - 36) continue;
                     const ty = terrainY(x, z);
                     if (ty < -0.5) continue;
                     if (c.y < 5 && ty < 4) {
@@ -2271,6 +2387,23 @@
                 buildDecalStrip(p.seg, 3, PAD_FRAC, tex, 0.12, p.lat);
                 boostPads.push(p);
             }
+            if (gapA >= 0) {
+                // the crest hides the lava gap from the approach — telegraph it
+                const hz = document.createElement('canvas'); hz.width = 64; hz.height = 32;
+                const hg = hz.getContext('2d');
+                hg.fillStyle = '#e8b80a'; hg.fillRect(0, 0, 64, 32);
+                hg.fillStyle = '#1a1410';
+                for (let i = -2; i < 6; i++) {
+                    hg.beginPath();
+                    hg.moveTo(i * 16, 32); hg.lineTo(i * 16 + 16, 0);
+                    hg.lineTo(i * 16 + 24, 0); hg.lineTo(i * 16 + 8, 32);
+                    hg.closePath(); hg.fill();
+                }
+                const htex = new THREE.CanvasTexture(hz);
+                htex.wrapS = htex.wrapT = THREE.RepeatWrapping;
+                buildDecalStrip(((jumpSeg - 22) % N + N) % N, 2, 0.95, htex, 0.13);
+                buildDecalStrip(((jumpSeg - 4) % N + N) % N, 1, 0.95, htex, 0.13);
+            }
         }
 
         function buildItemBoxes() {
@@ -2338,10 +2471,12 @@
             spinners = []; boostPads = []; itemBoxes = [];
             clearProjectiles(); clearHazards(); clearGhosts();
             seedRng(WORLD_SEED + idx * 7919);   // every client builds this track identically
+            clearBombs();
             buildCenterline();
             buildSky();
             buildTerrain();
             buildWater();
+            buildLava();
             buildRoad();
             buildTunnel();
             buildScenery();
@@ -2625,6 +2760,7 @@
 
         function resetRace() {
             seedRng(raceSeed);   // a future host shares raceSeed → identical item rolls everywhere
+            buildBombSchedule();  // first rng draws: identical eruption times on every machine
             raceClock = 0; simAcc = 0; simTickNo = 0;
             zapTimer = 0; rocketWarnT = 0;
             dom.rocketWarn.classList.remove('on');
@@ -2798,7 +2934,8 @@
             clampToTrack(k);
 
             // ---- vertical: crest/ramp launches with arcade gravity ----
-            const g = k.groundY;
+            // in the lava gap there is NO road — only the channel far below
+            const g = inGap(k.seg) ? lavaGapY : k.groundY;
             if (k.grounded) {
                 const prevY = k.y;
                 const vr = (g - prevY) / Math.max(dt, 1e-4);
@@ -2823,6 +2960,7 @@
                     k.y = g; k.vy = 0; k.lastVR = 0;
                 }
             }
+            if (inGap(k.seg) && k.y <= lavaGapY + 0.6 && !k.finished) lavaSplash(k);
 
             // stuck / wrong-way
             const fwdDot = fx * tangents[k.seg].x + fz * tangents[k.seg].z;
@@ -2831,6 +2969,12 @@
             if (k.isPlayer) {
                 if (fwdDot < -0.45 && state === 'racing') k.wrongT += dt; else k.wrongT = 0;
                 dom.wrongWay.classList.toggle('on', k.wrongT > 0.7);
+            }
+
+            // crossing the gap cleanly clears any splash streak
+            if (k.splashStreak && gapA >= 0) {
+                const past = (k.seg - gapB + N) % N;
+                if (past > 4 && past < 60) k.splashStreak = 0;
             }
 
             // boost pads — narrow, lane-offset, and ADDITIVE. The math:
@@ -2899,6 +3043,44 @@
             // fixed-timestep interpolation — see the ProMotion note there
         }
 
+        // came up short over the lava gap: fiery dunk, respawn before the ramp.
+        // Three consecutive dunks (goo on the approach, rocket spam, whatever)
+        // and you're set down PAST the gap instead — the time penalty is paid,
+        // and nobody gets trapped in a splash loop.
+        function lavaSplash(k) {
+            k.splashStreak = (k.splashStreak || 0) + 1;
+            if (k.splashStreak >= 3) {
+                k.splashStreak = 0;
+                const fwd = (gapB + 6) % N;
+                const cf = centerline[fwd], tf = tangents[fwd];
+                k.pos.x = cf.x; k.pos.z = cf.z;
+                k.y = roadY(fwd, 0); k.vy = 0; k.grounded = true; k.lastVR = 0;
+                k.theta = Math.atan2(tf.x, tf.z);
+                k.speed = 30; k.boostTimer = 0; k.gooT = 0; k.spinTimer = 0;
+                k.invuln = 1.2;
+                if (k.isPlayer) { flash('CARRIED ACROSS', '#ffd54a'); vibrate(40); }
+                updateProgress(k);
+                return;
+            }
+            for (let i = 0; i < 14; i++) {
+                emitSpark(new THREE.Vector3(k.pos.x + vrand(-2, 2), lavaGapY + 1, k.pos.z + vrand(-2, 2)),
+                    i % 2 ? 0xff6a22 : 0xffd54a, 9, 13, { life: 0.6, normal: i % 3 === 0 });
+            }
+            if (k.isPlayer) { flash('LAVA!', '#ff6a22'); sfxBonk(); vibrate(70); }
+            // staggered respawn lanes — simultaneous splashers must not stack
+            // into a pile-up that grinds everyone to a halt
+            const slot = karts.indexOf(k);
+            const back = ((gapA - 34 - (slot % 3) * 5) % N + N) % N;
+            const lane = ((slot % 3) - 1) * 9;
+            const c = centerline[back], n = normals[back], t = tangents[back];
+            k.pos.x = c.x + n.x * lane; k.pos.z = c.z + n.z * lane;
+            k.y = roadY(back, lane); k.vy = 0; k.grounded = true; k.lastVR = 0;
+            k.theta = Math.atan2(t.x, t.z);
+            k.speed = 34; k.boostTimer = 0; k.padCool = 0;
+            k.drifting = false; k.driftCharge = 0;
+            k.invuln = 1;
+            updateProgress(k);
+        }
         function recoverKart(k) {
             const c = centerline[k.seg], t = tangents[k.seg];
             k.pos.x = c.x; k.pos.z = c.z;
@@ -4163,6 +4345,92 @@
             }, 1800);
         }
 
+        // ---- eruption lava bombs (Volcano Bay) ----
+        // The schedule is precomputed at resetRace from the seeded rng, so every
+        // machine sees identical volleys at identical times with NO extra
+        // netcode. Visuals run everywhere; bonks are applied by whoever owns a
+        // kart's sim (host/solo: everyone, like rockets; online client: own kart).
+        let bombSchedule = [], bombIdx = 0, bombsLive = [];
+        const BOMB_WARN = 1.4, BOMB_FALL = 0.6;
+        function buildBombSchedule() {
+            bombSchedule = []; bombIdx = 0;
+            clearBombs();
+            if (!THEME.eruptions) return;
+            let t = 14;
+            while (t < 300) {
+                const volley = 4 + Math.floor(rng() * 3);
+                for (let b = 0; b < volley; b++) {
+                    bombSchedule.push({
+                        t: t + rng() * 1.6,
+                        seg: Math.floor(N * (0.22 + rng() * 0.5)),
+                        lat: (rng() * 2 - 1) * (HALF_W - 5),
+                    });
+                }
+                t += 14 + rng() * 9;
+            }
+        }
+        function clearBombs() {
+            for (const b of bombsLive) {
+                scene.remove(b.warn); scene.remove(b.rock);
+                disposeObject(b.warn); disposeObject(b.rock);
+            }
+            bombsLive = [];
+        }
+        function spawnBomb(def) {
+            const c = centerline[def.seg], n = normals[def.seg];
+            const x = c.x + n.x * def.lat, z = c.z + n.z * def.lat;
+            const y = roadY(def.seg, clamp(def.lat, -HALF_W, HALF_W));
+            const warn = new THREE.Mesh(new THREE.RingGeometry(2.2, 3.6, 18),
+                new THREE.MeshBasicMaterial({ color: 0xff6a22, transparent: true, opacity: 0.8, side: THREE.DoubleSide,
+                    polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2 }));
+            warn.rotation.x = -Math.PI / 2;
+            warn.position.set(x, y + 0.22, z);
+            warn.renderOrder = 4;
+            scene.add(warn);
+            const rock = new THREE.Mesh(new THREE.DodecahedronGeometry(1.5, 0),
+                new THREE.MeshBasicMaterial({ color: 0xff5a2a }));
+            rock.visible = false;
+            scene.add(rock);
+            bombsLive.push({ x, z, y, warn, rock, age: 0 });
+        }
+        function updateBombs(d) {
+            if (!THEME.eruptions) return;
+            if (state !== 'racing' && state !== 'finished') return;
+            while (bombIdx < bombSchedule.length && bombSchedule[bombIdx].t <= raceClock) spawnBomb(bombSchedule[bombIdx++]);
+            for (let i = bombsLive.length - 1; i >= 0; i--) {
+                const b = bombsLive[i];
+                b.age += d;
+                if (b.age < BOMB_WARN) {
+                    b.warn.material.opacity = 0.45 + 0.4 * Math.abs(Math.sin(b.age * 9));
+                    b.warn.scale.setScalar(1 + (1 - b.age / BOMB_WARN) * 0.7);
+                } else if (b.age < BOMB_WARN + BOMB_FALL) {
+                    b.rock.visible = true;
+                    const f = (b.age - BOMB_WARN) / BOMB_FALL;
+                    b.rock.position.set(b.x, b.y + (1 - f) * 95 + 1.2, b.z);
+                    b.rock.rotation.x += d * 9; b.rock.rotation.y += d * 7;
+                    emitSpark(b.rock.position, 0xff8a3a, 2, 1, { life: 0.25 });
+                } else {
+                    for (let j = 0; j < 10; j++) {
+                        emitSpark(new THREE.Vector3(b.x, b.y + 1, b.z),
+                            j % 2 ? 0xff6a22 : 0x4a3a30, 11, 9, { life: 0.5, normal: j % 2 === 0 });
+                    }
+                    for (const k of karts) {
+                        if (k.finished) continue;
+                        if (net.mode === 'client' && !k.isPlayer) continue;   // theirs is host-confirmed
+                        const dx = k.pos.x - b.x, dz = k.pos.z - b.z;
+                        if (dx * dx + dz * dz < 42 && Math.abs(k.y - b.y) < 4) bonkKart(k);
+                    }
+                    if (audioCtx && !muted) {
+                        const pdx = player.pos.x - b.x, pdz = player.pos.z - b.z;
+                        if (pdx * pdx + pdz * pdz < 6000) aKick(masterGain);
+                    }
+                    scene.remove(b.warn); scene.remove(b.rock);
+                    disposeObject(b.warn); disposeObject(b.rock);
+                    bombsLive.splice(i, 1);
+                }
+            }
+        }
+
         // -------------------------------------------------------------------
         // MULTIPLAYER-READINESS SEAM #3: fixed-step simulation, decoupled from
         // rendering. Lockstep/rollback netcode needs discrete numbered ticks;
@@ -4182,6 +4450,7 @@
             resolveCollisions();
             updateProjectiles(d);
             updateHazards(d);
+            updateBombs(d);
             updateItemBoxesSim(d);
             updateRankings();
             simTickNo++;
@@ -4235,6 +4504,19 @@
             if (state === 'paused') { renderer.render(scene, camera); return; }
 
             if (waterMat) waterMat.map.offset.x += dt * 0.013;
+            for (const lm of lavaMats) if (lm.map) lm.map.offset.y += dt * 0.03;
+            if (craterLight) craterLight.intensity = 1.15 + Math.sin(clock.elapsedTime * 2.1) * 0.3;
+            // ember column rising from the lava gap (telegraphs it over the crest)
+            if (gapA >= 0 && Math.random() < 0.5) {
+                const cdx = camera.position.x - gapMidX, cdz = camera.position.z - gapMidZ;
+                if (cdx * cdx + cdz * cdz < 360000) {
+                    const i = gapA + Math.floor(Math.random() * (gapB - gapA));
+                    const c = centerline[i], n = normals[i];
+                    const l = (Math.random() * 2 - 1) * HALF_W;
+                    emitSpark(new THREE.Vector3(c.x + n.x * l, lavaGapY + 1, c.z + n.z * l),
+                        Math.random() < 0.5 ? 0xff6a22 : 0xffb04a, 1.5, 14, { life: 1.1, grav: 2, size: vrand(1.2, 2.4) });
+                }
+            }
 
             if (state === 'racing' || state === 'finished' || state === 'countdown') {
                 computeSteer();

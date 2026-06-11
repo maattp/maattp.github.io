@@ -129,9 +129,26 @@ work, and don't regress these four seams.
   Online: host picks in the lobby (`track` DO message); everyone's menu
   backdrop follows live; `start`/`rejoin-state` carry the index. Best
   times are per-track (`kart3_best_<id>`, legacy key = coral).
-- Tracks: **Coral Cliffs** (sunny island, beach/palms) and **Volcano Bay**
-  (dusk caldera, spires + embers, longer + more technical: S-twist,
-  tight descent hairpin).
+- Tracks: **Coral Cliffs** (sunny island, beach/palms, tunnel) and
+  **Volcano Bay** (dusk caldera — structurally distinct, NO tunnel):
+  - **Caldera rim ride**: ~220° banked arc on the crater crest with a
+    glowing lava lake inside (`THEME.crater` shapes the heightfield in
+    `hillH`; lake disc + pulsing PointLight + smoke in `buildLava`).
+  - **Lava gap**: `gapLen` samples of road MISSING right after the ramp
+    (`gapA..gapB`; indices skipped in road/curbs, terrain carved by a
+    radial depression — nearest-seg alone gets bridged by the coarse
+    grid; lava river ribbon needs DoubleSide, the eternal winding
+    lesson). Physics: in-gap ground = `lavaGapY`; landing short →
+    `lavaSplash` (respawn before the ramp on STAGGERED lanes — a single
+    respawn point caused pile-up splash-loops). Third consecutive splash
+    carries you PAST the gap. The approach must stay STRAIGHT for ~60
+    samples so AI arrive at full speed (clear threshold ≈ 45).
+  - **Eruptions** (`THEME.eruptions`): lava-bomb volleys on the
+    0.22-0.72N zone — schedule precomputed at resetRace from the seeded
+    rng (first draws after `seedRng(raceSeed)`!) so all online clients
+    see identical volleys with zero netcode; warn ring 1.4s → falling
+    rock 0.6s → impact bonk r≈6.5. `updateBombs` runs in simTick AND
+    netClientFrame.
 
 - `CTRL` points `[x, z, y]` are scaled by `SC = 1.35`; elevation 0→31.
   Tunnel portals + jump location are found by `nearestSeg()` from landmark
@@ -213,11 +230,12 @@ work, and don't regress these four seams.
   the player, AI block chasers and make late-brake mistakes. AI obey the same
   physics caps as the player (`_rubber` is the only asymmetry).
 - **Settings pane** (start screen ⚙): steering direction Standard/Reversed
-  (flips TOUCH steering only — arrow keys stay absolute; base mapping was
-  empirically verified correct via NDC-projection probe: thumb-right moves
-  the kart screen-right initially before the chase camera re-centers it)
-  and steering sensitivity (thumb travel 36-110px). Persisted as
-  kart3_steerrev / kart3_sens.
+  (flips TOUCH steering only — arrow keys stay absolute) and steering
+  sensitivity (thumb travel 36-110px). Persisted as kart3_steerrev /
+  kart3_sens. **The DEFAULT ("Standard") is deliberately the inverted
+  slide mapping** (`touchSteer * -1`, user preference via PR #170 after a
+  family playtest); "Reversed" restores the geometric mapping (thumb-right
+  → kart screen-right, NDC-verified). Do NOT "fix" the default back.
 - Drift only engages while actually steering (|steer| > 0.28); hold DRIFT on
   GO! for a rocket start.
 - Lap counting: forward seam crossing (prev seg > 0.7N → new seg < 0.25N);
