@@ -2070,6 +2070,53 @@
             mesh.renderOrder = 1;
             world.add(mesh);
             buildCurbs();
+            buildSkidMarks();
+        }
+
+        // rubber laid down through the corners: faint tire-pair streaks along
+        // the racing line wherever sustained curvature is in the top quartile.
+        // Build-time + seeded rng → identical on every client.
+        function buildSkidMarks() {
+            const mags = [];
+            for (let i = 0; i < N; i++) mags.push(Math.abs(curvSm[i]));
+            const sorted = mags.slice().sort((a, b) => a - b);
+            const T = sorted[Math.floor(N * 0.78)];
+
+            const cv = document.createElement('canvas'); cv.width = 64; cv.height = 256;
+            const g = cv.getContext('2d');
+            for (let p = 0; p < 5; p++) {
+                const x0 = 6 + rand(0, 40);
+                const a = 0.1 + rand(0, 0.14);
+                g.strokeStyle = 'rgba(10,10,14,' + a.toFixed(2) + ')';
+                g.lineWidth = 3.5;
+                for (const off of [0, 9]) {   // tire pair
+                    g.beginPath();
+                    for (let y = 0; y <= 256; y += 16) {
+                        const x = x0 + off + Math.sin(y * 0.05 + p * 2) * 3;
+                        if (y === 0) g.moveTo(x, y); else g.lineTo(x, y);
+                    }
+                    g.stroke();
+                }
+            }
+            const tex = new THREE.CanvasTexture(cv);
+            tex.wrapT = THREE.RepeatWrapping;
+
+            let i = 4;
+            while (i < N - 4) {
+                if (mags[i] > T) {
+                    let j = i;
+                    while (j < N - 1 && mags[j] > T * 0.7) j++;
+                    const len = j - i;
+                    if (len >= 12 && !(gapA >= 0 && j >= gapA - 8 && i <= gapB + 8)) {
+                        const mid = (i + j) >> 1;
+                        const lat = clamp(raceLine[mid] || 0, -(HALF_W - 6), HALF_W - 6);
+                        const m = buildDecalStrip(mid, Math.min(Math.floor(len / 2) + 4, 34), 0.22, tex, 0.1, lat);
+                        m.material.transparent = true;
+                        m.material.map.repeat.set(1, Math.max(1, Math.floor(len / 18)));
+                    }
+                    i = j + 8;
+                } else i++;
+            }
         }
         function buildCurbs() {
             const pos = [], col = [], idx = [];
