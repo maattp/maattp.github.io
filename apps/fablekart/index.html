@@ -2818,9 +2818,28 @@
             const shadow = blobShadowMesh(7.6, 8.6);
             shadow.position.y = 0.18; g.add(shadow);
 
+            // twin boost flames out of the exhaust tips (shown while
+            // boostTimer > 0, flicker-scaled per frame in syncKartMesh)
+            const flames = [];
+            for (const s of [1, -1]) {
+                const fl = new THREE.Group();
+                const outer = new THREE.Mesh(new THREE.ConeGeometry(0.32, 2.3, 8),
+                    new THREE.MeshBasicMaterial({ color: 0xff7a18, transparent: true, opacity: 0.92, depthWrite: false }));
+                outer.rotation.x = -Math.PI / 2 + 0.14;   // tip backward, slight up
+                outer.position.z = -1.15;
+                const inner = new THREE.Mesh(new THREE.ConeGeometry(0.17, 1.45, 8),
+                    new THREE.MeshBasicMaterial({ color: 0xffe9a8, transparent: true, opacity: 0.95, depthWrite: false }));
+                inner.rotation.x = -Math.PI / 2 + 0.14;
+                inner.position.z = -0.75;
+                fl.add(outer); fl.add(inner);
+                fl.position.set(0.52 * s, 1.78, -3.3);
+                fl.visible = false;
+                g.add(fl); flames.push(fl);
+            }
+
             scene.add(g);
             g.rotation.order = 'YXZ';
-            return { group: g, wheels, frontPivots, shield, shadow };
+            return { group: g, wheels, frontPivots, shield, shadow, flames };
         }
 
         function charOrder() {
@@ -3708,6 +3727,15 @@
             for (const w of k.mesh.wheels) w.rotation.x += spin;
             const fs = (k.isPlayer ? steerInput : 0) * 0.4 + (k.drifting ? k.driftDir * 0.3 : 0);
             for (const p of k.mesh.frontPivots) p.rotation.y = fs;
+
+            const boosting = k.boostTimer > 0;
+            for (const fl of k.mesh.flames) {
+                fl.visible = boosting;
+                if (boosting) {
+                    fl.scale.set(0.85 + vrand(0, 0.3), 0.85 + vrand(0, 0.3), 0.7 + vrand(0, 0.6));
+                    fl.rotation.z = vrand(-0.2, 0.2);
+                }
+            }
 
             const sh = k.mesh.shield;
             if (k.shieldTimer > 0) {
