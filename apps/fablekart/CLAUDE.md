@@ -189,6 +189,16 @@ work, and don't regress these four seams.
   rotated planes sink/float — the start line vanished into the banked
   chicane (bankSlope at seg 0 is ≈ −0.13).
 - Road/curb ribbons are `side: THREE.DoubleSide` (winding faces down).
+- **Graphics-pass conventions** (2026-06 overhaul): contact shadows share
+  `blobShadowTex()`/`blobShadowMesh()`; boost flames live in `k.mesh.flames`
+  (flicker uses `vrand` — cosmetic, never the seeded rng); clouds/sun/stars
+  in `buildSky` (theme flags `stars`, `birds`); waterline surf is painted
+  into TERRAIN vertex colors (a polar foam ribbon fails on a
+  non-star-shaped island — don't retry it); corner skids are seeded decals
+  over top-quartile `curvSm` runs at `raceLine` lateral; per-frame world
+  animation (crowd jump, gulls, glints, lava rim, cloud drift) hangs off
+  globals reset in their builders (`crowdPts`, `birds`, `foamMat`,
+  `lavaGlow`, `cloudSpin`).
 - **Tunnel jumbotron** (`buildTV`, tunnel tracks only): MK64-style screen on
   posts above the entrance arch. A broadcast cam mounted at the panel tracks
   the LOCAL player's kart (auto-zoom ≈16u frame) and renders the scene to a
