@@ -212,6 +212,12 @@ work, and don't regress these four seams.
 - Rubber band is bounded (±10%, ±7% on the final lap), two 'rival' AI shadow
   the player, AI block chasers and make late-brake mistakes. AI obey the same
   physics caps as the player (`_rubber` is the only asymmetry).
+- **Settings pane** (start screen ⚙): steering direction Standard/Reversed
+  (flips TOUCH steering only — arrow keys stay absolute; base mapping was
+  empirically verified correct via NDC-projection probe: thumb-right moves
+  the kart screen-right initially before the chase camera re-centers it)
+  and steering sensitivity (thumb travel 36-110px). Persisted as
+  kart3_steerrev / kart3_sens.
 - Drift only engages while actually steering (|steer| > 0.28); hold DRIFT on
   GO! for a rocket start.
 - Lap counting: forward seam crossing (prev seg > 0.7N → new seg < 0.25N);
