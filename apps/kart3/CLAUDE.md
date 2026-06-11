@@ -213,6 +213,12 @@ work, and don't regress these four seams.
 
 - **No spinouts, ever.** Hits = `bonkKart` (speed cut + hop, steering kept).
   Goo slows + wobbles but never removes control.
+- HUD layout (landscape, thumbs at bottom corners): big position +
+  time + net indicator stacked TOP-RIGHT; lap + live standings TOP-LEFT;
+  minimap true bottom-center with the drift-charge bar above it;
+  DRIFT/ITEM bottom-right. The bottom-LEFT quadrant stays EMPTY — it's
+  the steering thumb zone (the old big position number lived there and
+  sat directly under the player's finger).
 - Live standings strip (`#raceStandings`, left edge): all 8 positions at
   ~4Hz; local player gold, remote humans blue-highlighted, 🏁 when
   finished. Friend-finish toasts fire host-side (onLapCrossed) and
