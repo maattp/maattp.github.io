@@ -825,7 +825,7 @@
         // ⚠ APP_VER: increment ONCE PER PR (CLAUDE.md rule). Shown on the
         // title screen and folded into NET_VER, so any two different builds
         // refuse to share a room.
-        const APP_VER = 7;
+        const APP_VER = 8;
         function hash32(str) {
             let h = 2166136261 >>> 0;
             for (let i = 0; i < str.length; i++) { h ^= str.charCodeAt(i); h = Math.imul(h, 16777619); }
@@ -2030,22 +2030,28 @@
         //  ROAD / CURBS / RAILS / TUNNEL
         // ===================================================================
         function makeRoadTexture() {
-            const cv = document.createElement('canvas'); cv.width = 128; cv.height = 256;
+            // 256-wide texture + max anisotropy: at the chase cam's grazing
+            // angle, mipmaps smear thin lines into the asphalt within a few
+            // meters unless the line is wide in texels AND the sampler gets
+            // full anisotropic filtering (aniso 4 was the "center line
+            // disappears a few feet ahead" bug)
+            const cv = document.createElement('canvas'); cv.width = 256; cv.height = 512;
             const g = cv.getContext('2d');
-            g.fillStyle = THEME.road; g.fillRect(0, 0, 128, 256);
-            for (let i = 0; i < 700; i++) {
+            g.fillStyle = THEME.road; g.fillRect(0, 0, 256, 512);
+            for (let i = 0; i < 1400; i++) {
                 g.fillStyle = 'rgba(0,0,0,' + (Math.random() * 0.09) + ')';
-                g.fillRect(Math.random() * 128, Math.random() * 256, 2, 2);
+                g.fillRect(Math.random() * 256, Math.random() * 512, 3, 3);
             }
-            for (let i = 0; i < 300; i++) {
+            for (let i = 0; i < 600; i++) {
                 g.fillStyle = 'rgba(255,255,255,' + (Math.random() * 0.04) + ')';
-                g.fillRect(Math.random() * 128, Math.random() * 256, 2, 2);
+                g.fillRect(Math.random() * 256, Math.random() * 512, 3, 3);
             }
-            g.fillStyle = THEME.edge; g.fillRect(3, 0, 4, 256); g.fillRect(121, 0, 4, 256);
+            g.fillStyle = THEME.edge; g.fillRect(5, 0, 9, 512); g.fillRect(242, 0, 9, 512);
             g.fillStyle = THEME.lane;
-            for (let y = 0; y < 256; y += 64) g.fillRect(61, y, 5, 36);
+            for (let y = 0; y < 512; y += 128) g.fillRect(122, y, 13, 84);
             const tex = new THREE.CanvasTexture(cv);
-            tex.wrapS = tex.wrapT = THREE.RepeatWrapping; tex.anisotropy = 4;
+            tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+            tex.anisotropy = renderer.capabilities.getMaxAnisotropy();
             return tex;
         }
         function buildRoad() {
@@ -2194,7 +2200,8 @@
             const g = cv.getContext('2d');
             for (let i = 0; i < 8; i++) { g.fillStyle = i % 2 ? '#eef0f5' : '#d8324a'; g.fillRect(i * 8, 0, 8, 16); }
             const tex = new THREE.CanvasTexture(cv);
-            tex.wrapS = tex.wrapT = THREE.RepeatWrapping; tex.anisotropy = 4;
+            tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+            tex.anisotropy = renderer.capabilities.getMaxAnisotropy();
             const mat = new THREE.MeshLambertMaterial({ map: tex, side: THREE.DoubleSide });
             const postGeo = new THREE.BoxGeometry(0.5, 2.1, 0.5);
 
