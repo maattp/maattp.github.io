@@ -673,7 +673,7 @@
                 preview: 'linear-gradient(180deg,#7a2a4a,#3a3632)',
                 theme: {
                     skyTop: 0x241038, skyMid: 0x7a2a4a, skyBot: 0xff9a4a,
-                    fog: 0x5a3046, cloud: 0xd8a0b0, sun: 0xff8a4a, sunPos: [-520, 380, 340],
+                    fog: 0x5a3046, cloud: 0xd8a0b0, sun: 0xff8a4a, sunPos: [-520, 380, 340], stars: true,
                     hemiSky: 0xc88a96, hemiGround: 0x3a2a2a, hemiInt: 0.85,
                     dirColor: 0xffb070, dirInt: 1.0, dirPos: [-220, 260, 200],
                     waterTex: '#1a5a6a', deep: 0x06222e,
@@ -739,6 +739,7 @@
         let gapA = -1, gapB = -1, lavaGapY = 0;   // road gap (lava below) — see Volcano Bay
         let gapMidX = 0, gapMidZ = 0;
         let lavaMats = [], craterLight = null;
+        let cloudSpin = null;   // baked cloud mesh, drifts slowly in animate()
         let boostPads = [], itemBoxes = [], projectiles = [], hazards = [], spinners = [];
         let karts = [], player;
         let particles;
@@ -1921,24 +1922,66 @@
             sky.renderOrder = -10;
             world.add(sky);
 
-            const sunMesh = new THREE.Mesh(new THREE.CircleGeometry(70, 32),
-                new THREE.MeshBasicMaterial({ color: THEME.sun, fog: false }));
-            sunMesh.position.set(THEME.sunPos[0], THEME.sunPos[1], THEME.sunPos[2]); sunMesh.lookAt(0, 0, 0);
-            world.add(sunMesh);
+            // sun: bright core + soft halo rings so it glows instead of
+            // reading as a flat painted circle
+            const sunGrp = new THREE.Group();
+            sunGrp.position.set(THEME.sunPos[0], THEME.sunPos[1], THEME.sunPos[2]);
+            const sunC = new THREE.Color(THEME.sun);
+            for (const [r, op] of [[70, 1], [115, 0.22], [175, 0.08]]) {
+                const ring = new THREE.Mesh(new THREE.CircleGeometry(r, 32),
+                    new THREE.MeshBasicMaterial({ color: sunC, fog: false, transparent: op < 1,
+                        opacity: op, depthWrite: false }));
+                ring.position.z = (70 - r) * 0.01;   // halo slightly behind the core
+                sunGrp.add(ring);
+            }
+            sunGrp.lookAt(0, 0, 0);
+            world.add(sunGrp);
 
-            // clouds: squashed spheres merged into one unlit mesh
+            // clouds: puffy cumulus — one big puff + a skirt of smaller ones
+            // whose bottoms align (flat base, billowy top), plus a far ring of
+            // bigger fog-tinted clouds for horizon depth
             const parts = [];
             const cg = new THREE.SphereGeometry(1, 10, 8);
-            for (let i = 0; i < 11; i++) {
-                const a = (i / 11) * Math.PI * 2 + 0.4, d = rand(520, 980), y = rand(140, 230);
-                const cx = Math.cos(a) * d, cz = Math.sin(a) * d;
-                for (let j = 0; j < 3; j++) {
-                    const r = rand(26, 52);
-                    parts.push({ geo: cg, color: THEME.cloud, matrix: mat4(cx + rand(-40, 40), y + rand(-8, 8), cz + rand(-40, 40), 0, r, r * 0.42, r) });
+            const fogC = new THREE.Color(THEME.fog), cloudC = new THREE.Color(THEME.cloud), tmpCC = new THREE.Color();
+            const cluster = (cx, y, cz, scale, col) => {
+                const rBig = rand(30, 46) * scale;
+                parts.push({ geo: cg, color: col, matrix: mat4(cx, y, cz, 0, rBig, rBig * 0.45, rBig) });
+                const np = 3 + Math.floor(rand(0, 3));
+                for (let j = 0; j < np; j++) {
+                    const r = rBig * rand(0.4, 0.72);
+                    const aa = rand(0, Math.PI * 2), dd = rBig * rand(0.55, 1.05);
+                    parts.push({ geo: cg, color: col, matrix: mat4(
+                        cx + Math.cos(aa) * dd, y + (rBig - r) * 0.18, cz + Math.sin(aa) * dd * 0.7,
+                        0, r, r * 0.5, r) });
                 }
+            };
+            for (let i = 0; i < 11; i++) {
+                const a = (i / 11) * Math.PI * 2 + 0.4, d = rand(520, 980);
+                cluster(Math.cos(a) * d, rand(140, 230), Math.sin(a) * d, 1, THEME.cloud);
+            }
+            tmpCC.copy(cloudC).lerp(fogC, 0.45);   // distant ring fades toward the haze
+            for (let i = 0; i < 7; i++) {
+                const a = (i / 7) * Math.PI * 2 + 1.1, d = rand(1250, 1750);
+                cluster(Math.cos(a) * d, rand(170, 300), Math.sin(a) * d, 1.7, tmpCC.getHex());
             }
             const cloudMesh = new THREE.Mesh(bakeMerge(parts), new THREE.MeshBasicMaterial({ vertexColors: true, fog: false }));
             world.add(cloudMesh);
+            cloudSpin = cloudMesh;   // slow drift in animate()
+
+            // dusk themes get a starfield high in the dome
+            if (THEME.stars) {
+                const sp = [];
+                for (let i = 0; i < 220; i++) {
+                    const az = rand(0, Math.PI * 2), el = rand(0.22, 1.4);
+                    const R2 = 2400;
+                    sp.push(Math.cos(az) * Math.cos(el) * R2, Math.sin(el) * R2, Math.sin(az) * Math.cos(el) * R2);
+                }
+                const sgeo = new THREE.BufferGeometry();
+                sgeo.setAttribute('position', new THREE.Float32BufferAttribute(sp, 3));
+                world.add(new THREE.Points(sgeo, new THREE.PointsMaterial({
+                    color: 0xfff4d8, size: 2.2, sizeAttenuation: false, fog: false,
+                    transparent: true, opacity: 0.85, depthWrite: false })));
+            }
 
             scene.fog = new THREE.Fog(THEME.fog, 300, 980);
             scene.background = new THREE.Color(THEME.fog);
@@ -4726,6 +4769,7 @@
             if (state === 'paused') { renderer.render(scene, camera); return; }
 
             if (waterMat) waterMat.map.offset.x += dt * 0.013;
+            if (cloudSpin) cloudSpin.rotation.y += dt * 0.0022;   // lazy cloud drift
             for (const lm of lavaMats) if (lm.map) lm.map.offset.y += dt * 0.03;
             if (craterLight) craterLight.intensity = 1.15 + Math.sin(clock.elapsedTime * 2.1) * 0.3;
             // ember column rising from the lava gap (telegraphs it over the crest)
