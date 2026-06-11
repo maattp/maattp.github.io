@@ -232,7 +232,12 @@ work, and don't regress these four seams.
   AND instantly uses).
 - AI swerve to grab an item box when empty-handed (`b.lat` per box) and
   aim for boost pads.
-- Rubber band is bounded (±10%, ±7% on the final lap), two 'rival' AI shadow
+- **AI difficulty** (settings pane, persisted `kart3_diff`, default
+  medium): `DIFFS` sets the skill band, rubber bounds, mistake rate,
+  drift commitment and rocket-start rate. A/B-verified: the same
+  autopilot player finishes 2nd on easy vs 7th on hard. Online races use
+  the HOST's setting (AI are host-simmed).
+- Rubber band is bounded (per difficulty; tighter on the final lap), two 'rival' AI shadow
   the player, AI block chasers and make late-brake mistakes. AI obey the same
   physics caps as the player (`_rubber` is the only asymmetry).
 - **Settings pane** (start screen ⚙): steering direction Standard/Reversed
