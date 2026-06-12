@@ -3731,12 +3731,24 @@
             zapTimer = 0; rocketWarnT = 0;
             dom.rocketWarn.classList.remove('on');
             clearProjectiles(); clearHazards();
-            // grid: AI rows up front, player starts 8th (rearmost) — earn the win
+            // grid: AI rows up front, humans rearmost — earn the win. Rows
+            // MUST derive from the shared roster (kart index), not isPlayer:
+            // "local player goes rearmost" online meant every machine put its
+            // own kart at row 7, so all humans overlapped at GO. Humans now
+            // pair up side-by-side on the back rows (a 1v1 starts dead even);
+            // AI fill the front rows. Solo grid is unchanged.
+            const humansN = karts.filter((q) => q.kind !== 'ai').length || 1;
             for (let i = 0; i < karts.length; i++) {
                 const k = karts[i];
-                const row = k.isPlayer ? 7 : i - 1;
+                let row, lane;
+                if (k.kind !== 'ai') {
+                    row = 7 - (i >> 1);
+                    lane = (i % 2 === 0 ? -1 : 1) * HALF_W * 0.35;
+                } else {
+                    row = i - humansN;
+                    lane = (row % 2 === 0 ? 1 : -1) * HALF_W * 0.35;
+                }
                 const seg = (36 - row * 4 + N) % N;
-                const lane = (row % 2 === 0 ? 1 : -1) * HALF_W * 0.35;
                 const c = centerline[seg], n = normals[seg], t = tangents[seg];
                 k.pos.set(c.x + n.x * lane, 0, c.z + n.z * lane);
                 k.y = roadY(seg, lane); k.vy = 0; k.grounded = true; k.lastVR = 0;
