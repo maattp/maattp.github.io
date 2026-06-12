@@ -882,7 +882,7 @@
         // ⚠ APP_VER: increment ONCE PER PR (CLAUDE.md rule). Shown on the
         // title screen and folded into NET_VER, so any two different builds
         // refuse to share a room.
-        const APP_VER = 11;
+        const APP_VER = 12;
         function hash32(str) {
             let h = 2166136261 >>> 0;
             for (let i = 0; i < str.length; i++) { h ^= str.charCodeAt(i); h = Math.imul(h, 16777619); }
@@ -4614,20 +4614,26 @@
         }
 
         // ===================================================================
-        //  MUSIC — "Coral Cliffs Calypso": sunny A-major island-racing loop.
-        //  192 16th-steps @ 152 BPM (~99ms/step), three 4-bar sections:
-        //  A hook / B answer / C lift. Pentatonic-leaning so nothing clashes.
+        //  MUSIC — one composition per track, played by a generic step
+        //  sequencer (SONGS):
+        //   · Coral Cliffs  — "Coral Calypso", sunny A major, 152 BPM 4/4
+        //   · Volcano Bay   — "Caldera Run", E minor w/ phrygian F + a B-major
+        //     tension bar, 160 BPM 4/4, driving power-chord stabs
+        //   · Whisper Wood  — "The Elder Waltz", D major in 3/4 (12-step
+        //     bars), music-box lead over an oom-pah-pah
+        //  Each is 12 bars in three 4-bar sections: A hook / B answer / C lift.
         // ===================================================================
-        const NOTE = {
-            0: 0,
-            E2: 82.41, Fs2: 92.50, A2: 110.00, B2: 123.47, Cs3: 138.59, D3: 146.83, E3: 164.81,
-            Fs3: 185.00, Gs3: 207.65, A3: 220.00, B3: 246.94, Cs4: 277.18, D4: 293.66, E4: 329.63,
-            Fs4: 369.99, Gs4: 415.30, A4: 440.00, B4: 493.88, Cs5: 554.37, D5: 587.33, E5: 659.25,
-            Fs5: 739.99, Gs5: 830.61, A5: 880.00, B5: 987.77, Cs6: 1108.73, D6: 1174.66, E6: 1318.51,
-        };
+        const NOTE = { 0: 0 };
+        (() => {   // full equal-temperament table, octaves 1–6 (A4 = 440)
+            const names = ['C', 'Cs', 'D', 'Ds', 'E', 'F', 'Fs', 'G', 'Gs', 'A', 'As', 'B'];
+            for (let oct = 1; oct <= 6; oct++) {
+                for (let i = 0; i < 12; i++) {
+                    NOTE[names[i] + oct] = +(440 * Math.pow(2, ((oct + 1) * 12 + i - 69) / 12)).toFixed(2);
+                }
+            }
+        })();
         function NF(n) { return NOTE[n] || 0; }
-        const MUSIC_LEN = 192;
-        // A: A | D | A | E    B: Fsm | D | A | E    C: D | E | Fsm | E
+        // ---- Coral Calypso: A | D | A | E   F#m | D | A | E   D | E | F#m | E
         const LEAD = [
             'A4',0,'Cs5',0, 'E5',0,'Cs5',0, 'A4',0,'E5',0, 'Cs5',0,'A4',0,
             'D5',0,'Fs5',0, 'A5',0,'Fs5',0, 'D5','E5','Fs5',0, 'A5',0,0,0,
@@ -4676,32 +4682,180 @@
             ['Fs4','A4','Cs5'], ['D4','Fs4','A4'], ['A3','Cs4','E4'], ['E4','Gs4','B4'],
             ['D4','Fs4','A4'], ['E4','Gs4','B4'], ['Fs4','A4','Cs5'], ['E4','Gs4','B4'],
         ];
-        function musicSection(s) { return s < 64 ? 0 : s < 128 ? 1 : 2; }
+        // ---- Caldera Run (Volcano Bay): Em | F | Em | D   C | D | Em | B
+        //      Am | C | D | Em — phrygian F glow, B-major bite, driving 8ths.
+        const LEAD_V = [
+            'E4',0,'E4','G4', 0,'G4',0,'E4', 'B4',0,'G4',0, 'E4',0,0,0,
+            'F4',0,'F4','A4', 0,'A4',0,'F4', 'C5',0,'A4',0, 'F4',0,0,0,
+            'E4',0,'E4','G4', 0,'B4',0,'D5', 'B4',0,'G4',0, 'E4',0,0,0,
+            'D4',0,'Fs4',0, 'A4',0,'D5',0, 'C5',0,'A4',0, 'Fs4','G4','A4',0,
+            'G4',0,0,'E4', 0,'C5',0,0, 'B4',0,'G4',0, 'E4',0,0,0,
+            'A4',0,0,'Fs4', 0,'D5',0,0, 'C5',0,'A4',0, 'Fs4',0,0,0,
+            'B4',0,0,'G4', 0,'E5',0,0, 'D5',0,'B4',0, 'G4',0,0,0,
+            'B4',0,'Ds5',0, 'Fs5',0,'B5',0, 'A5',0,'Fs5',0, 'Ds5',0,'B4',0,
+            'E5',0,'C5',0, 'A4',0,'C5',0, 'E5',0,'A5',0, 'E5',0,'C5',0,
+            'G5',0,'E5',0, 'C5',0,'E5',0, 'G5',0,'C6',0, 'G5',0,'E5',0,
+            'Fs5',0,'D5',0, 'A4',0,'D5',0, 'Fs5',0,'A5',0, 'D6',0,'A5',0,
+            'B5',0,'G5',0, 'E5',0,'D5',0, 'B4',0,'G4','Fs4', 'E4',0,0,0,
+        ];
+        const BASS_V = [
+            'E2',0,'E2',0, 'E3',0,'E2',0, 'E2',0,'E2',0, 'B2',0,'E2',0,
+            'F2',0,'F2',0, 'F3',0,'F2',0, 'F2',0,'F2',0, 'C3',0,'F2',0,
+            'E2',0,'E2',0, 'E3',0,'E2',0, 'E2',0,'E2',0, 'B2',0,'E2',0,
+            'D2',0,'D2',0, 'D3',0,'D2',0, 'D2',0,'D2',0, 'A2',0,'D2',0,
+            'C2',0,'C2',0, 'C3',0,'C2',0, 'C2',0,'C2',0, 'G2',0,'C2',0,
+            'D2',0,'D2',0, 'D3',0,'D2',0, 'D2',0,'D2',0, 'A2',0,'D2',0,
+            'E2',0,'E2',0, 'E3',0,'E2',0, 'E2',0,'E2',0, 'B2',0,'E2',0,
+            'B2',0,'B2',0, 'B3',0,'B2',0, 'B2',0,'B2',0, 'Fs3',0,'B2',0,
+            'A2',0,'A2',0, 'A3',0,'A2',0, 'A2',0,'A2',0, 'E3',0,'A2',0,
+            'C2',0,'C2',0, 'C3',0,'C2',0, 'C2',0,'C2',0, 'G2',0,'C2',0,
+            'D2',0,'D2',0, 'D3',0,'D2',0, 'D2',0,'D2',0, 'A2',0,'D2',0,
+            'E2',0,'E2',0, 'E3',0,'E2',0, 'E2',0,'E2',0, 'B2',0,'E2',0,
+        ];
+        const ARP_V = [
+            0,0,'B3',0, 0,0,'E4',0, 0,0,'B3',0, 0,0,'E4',0,
+            0,0,'C4',0, 0,0,'F4',0, 0,0,'C4',0, 0,0,'F4',0,
+            0,0,'B3',0, 0,0,'E4',0, 0,0,'B3',0, 0,0,'E4',0,
+            0,0,'A3',0, 0,0,'D4',0, 0,0,'A3',0, 0,0,'D4',0,
+            0,0,'G3',0, 0,0,'C4',0, 0,0,'G3',0, 0,0,'C4',0,
+            0,0,'A3',0, 0,0,'D4',0, 0,0,'A3',0, 0,0,'D4',0,
+            0,0,'B3',0, 0,0,'E4',0, 0,0,'B3',0, 0,0,'E4',0,
+            0,0,'Fs4',0, 0,0,'B4',0, 0,0,'Fs4',0, 0,0,'B4',0,
+            0,0,'E4',0, 0,0,'A4',0, 0,0,'E4',0, 0,0,'A4',0,
+            0,0,'G3',0, 0,0,'C4',0, 0,0,'G3',0, 0,0,'C4',0,
+            0,0,'A3',0, 0,0,'D4',0, 0,0,'A3',0, 0,0,'D4',0,
+            0,0,'B3',0, 0,0,'E4',0, 0,0,'B3',0, 0,0,'E4',0,
+        ];
+        const STABS_V = [
+            ['E3','B3','E4'], ['F3','C4','F4'], ['E3','B3','E4'], ['D3','A3','D4'],
+            ['C3','G3','C4'], ['D3','A3','D4'], ['E3','B3','E4'], ['B2','Fs3','B3'],
+            ['A2','E3','A3'], ['C3','G3','C4'], ['D3','A3','D4'], ['E3','B3','E4'],
+        ];
+
+        // ---- The Elder Waltz (Whisper Wood), 3/4 (12-step bars):
+        //      D | G | D | A   Bm | G | D | A   G | A | Bm | D
+        const LEAD_F = [
+            'Fs5',0,0,0, 'A5',0,'G5',0, 'Fs5',0,'E5',0,
+            'G5',0,0,0, 'B5',0,'A5',0, 'G5',0,'D5',0,
+            'Fs5',0,0,'A5', 0,0,'D6',0, 'A5',0,'Fs5',0,
+            'E5',0,0,0, 'Cs5',0,'E5',0, 'A4',0,0,0,
+            'D5',0,0,0, 'Fs5',0,'B5',0, 'Fs5',0,'D5',0,
+            'B4',0,0,'D5', 0,0,'G5',0, 'E5',0,'D5',0,
+            'A4',0,0,0, 'D5',0,'Fs5',0, 'A5',0,0,0,
+            'B5',0,'A5',0, 'E5',0,'Cs5',0, 'A4',0,0,0,
+            'G5',0,0,0, 'A5',0,'B5',0, 'D6',0,0,0,
+            'Cs6',0,0,0, 'B5',0,'A5',0, 'E5',0,'Fs5',0,
+            'Fs5',0,'G5',0, 'Fs5',0,'D5',0, 'B4',0,'D5',0,
+            'Fs5',0,0,'E5', 0,0,'D5',0, 'Cs5',0,'E5',0,
+        ];
+        const BASS_F = [
+            'D3',0,0,0, 0,0,0,0, 0,0,0,0,
+            'G2',0,0,0, 0,0,0,0, 'D3',0,0,0,
+            'D3',0,0,0, 0,0,0,0, 0,0,0,0,
+            'A2',0,0,0, 0,0,0,0, 'E3',0,0,0,
+            'B2',0,0,0, 0,0,0,0, 0,0,0,0,
+            'G2',0,0,0, 0,0,0,0, 'D3',0,0,0,
+            'D3',0,0,0, 0,0,0,0, 0,0,0,0,
+            'A2',0,0,0, 0,0,0,0, 'E3',0,0,0,
+            'G2',0,0,0, 0,0,0,0, 'D3',0,0,0,
+            'A2',0,0,0, 0,0,0,0, 'E3',0,0,0,
+            'B2',0,0,0, 0,0,0,0, 'Fs3',0,0,0,
+            'D3',0,0,0, 0,0,0,0, 'A2',0,0,0,
+        ];
+        const ARP_F = [
+            0,0,0,0, 0,0,'E6',0, 0,0,0,0,
+            0,0,0,0, 0,0,0,0, 0,0,'B5',0,
+            0,0,0,0, 0,0,'D6',0, 0,0,0,0,
+            0,0,0,0, 0,0,0,0, 0,0,'Cs6',0,
+            0,0,0,0, 0,0,'Fs6',0, 0,0,0,0,
+            0,0,0,0, 0,0,0,0, 0,0,'B5',0,
+            0,0,0,0, 0,0,'D6',0, 0,0,0,0,
+            0,0,0,0, 0,0,0,0, 0,0,'E6',0,
+            0,0,'G5',0, 0,0,'B5',0, 0,0,'D6',0,
+            0,0,'A5',0, 0,0,'Cs6',0, 0,0,'E6',0,
+            0,0,'Fs5',0, 0,0,'B5',0, 0,0,'D6',0,
+            0,0,'A5',0, 0,0,'D6',0, 0,0,'Fs6',0,
+        ];
+        const STABS_F = [
+            ['D4','Fs4','A4'], ['D4','G4','B4'], ['D4','Fs4','A4'], ['Cs4','E4','A4'],
+            ['D4','Fs4','B4'], ['D4','G4','B4'], ['D4','Fs4','A4'], ['Cs4','E4','A4'],
+            ['D4','G4','B4'], ['Cs4','E4','A4'], ['D4','Fs4','B4'], ['D4','Fs4','A4'],
+        ];
+
+        const SONGS = {
+            coral: {
+                stepMs: 99, barLen: 16, lead: LEAD, bass: BASS, arp: ARP, stabs: STABS,
+                leadWave: ['square', 'square', 'sawtooth'], leadDur: 0.15, leadVol: 0.08,
+                subMul: 0.5, subDur: 0.16, subVol: 0.05,
+                bassWave: 'triangle', bassDur: 0.13, bassVol: 0.22,
+                arpWave: 'square', arpDur: 0.07, arpVol: 0.04,
+                stabSteps: [0, 10], stabWave: 'triangle', stabDur: [0.22, 0.12], stabVol: 0.045,
+                drums: (b, sec) => {
+                    if (b === 0 || b === 8) aKick(musicGain);
+                    if (sec >= 1 && b === 11) aKick(musicGain);
+                    if (b === 4 || b === 12) aNoise(0.12, 0.17, false, musicGain);
+                    if (b % 2 === 0) aNoise(0.03, 0.05, true, musicGain);
+                    if (b % 4 === 2 && sec >= 1) aNoise(0.05, 0.06, true, musicGain);
+                },
+            },
+            volcano: {
+                stepMs: 94, barLen: 16, lead: LEAD_V, bass: BASS_V, arp: ARP_V, stabs: STABS_V,
+                leadWave: ['sawtooth', 'square', 'sawtooth'], leadDur: 0.14, leadVol: 0.07,
+                subMul: 0.5, subDur: 0.15, subVol: 0.05,
+                bassWave: 'sawtooth', bassDur: 0.1, bassVol: 0.14,
+                arpWave: 'square', arpDur: 0.06, arpVol: 0.03,
+                stabSteps: [0, 8], stabWave: 'triangle', stabDur: [0.2, 0.14], stabVol: 0.05,
+                drums: (b, sec) => {
+                    if (b % 4 === 0) aKick(musicGain);                       // four on the floor
+                    if (sec === 2 && b === 14) aKick(musicGain);             // C-section push
+                    if (b === 4 || b === 12) aNoise(0.12, 0.16, false, musicGain);
+                    if (b % 2 === 0) aNoise(0.03, 0.05, true, musicGain);
+                    if (sec >= 1 && b % 2 === 1) aNoise(0.022, 0.032, true, musicGain);
+                },
+            },
+            forest: {
+                stepMs: 132, barLen: 12, lead: LEAD_F, bass: BASS_F, arp: ARP_F, stabs: STABS_F,
+                leadWave: ['sine', 'triangle', 'triangle'], leadDur: 0.3, leadVol: 0.105,
+                subMul: 2, subDur: 0.28, subVol: 0.03,                       // octave shimmer, not a sub
+                bassWave: 'triangle', bassDur: 0.34, bassVol: 0.26,
+                arpWave: 'sine', arpDur: 0.26, arpVol: 0.065,
+                stabSteps: [4, 8], stabWave: 'triangle', stabDur: [0.18, 0.18], stabVol: 0.046,
+                drums: (b, sec) => {
+                    if (b === 0) aTone(72, 'sine', 0.16, 0.11, musicGain);   // soft floor thump
+                    if (b === 4 || b === 8) aNoise(0.02, 0.028, true, musicGain);   // brush pah-pah
+                    if (sec === 2 && b === 0) aTone(2349, 'sine', 0.5, 0.016, musicGain);   // triangle ting
+                },
+            },
+        };
+        function currentSong() { return SONGS[TRACKS[currentTrackIdx].id] || SONGS.coral; }
         function musicTick() {
             if (!audioCtx) return;
             if (!muted && (state === 'racing' || state === 'countdown')) {
-                const s = musicStep % MUSIC_LEN, b = s % 16, sec = musicSection(s);
-                const ln = LEAD[s];
+                const sg = currentSong();
+                const len = sg.barLen * 12;                       // 12 bars, three 4-bar sections
+                const s = musicStep % len, b = s % sg.barLen;
+                const sec = Math.min(2, Math.floor(s / (len / 3)));
+                const ln = sg.lead[s];
                 if (ln) {
-                    aTone(NF(ln), sec === 2 ? 'sawtooth' : 'square', 0.15, 0.08, musicGain);
-                    if (b === 0) aTone(NF(ln) / 2, 'triangle', 0.16, 0.05, musicGain);
+                    aTone(NF(ln), sg.leadWave[sec], sg.leadDur, sg.leadVol, musicGain);
+                    if (b === 0) aTone(NF(ln) * sg.subMul, 'triangle', sg.subDur, sg.subVol, musicGain);
                 }
-                const bn = BASS[s]; if (bn) aTone(NF(bn), 'triangle', 0.13, 0.22, musicGain);
-                const an = ARP[s]; if (an) aTone(NF(an), 'square', 0.07, 0.04, musicGain);
-                // calypso comp: stab on the downbeat and the "and" push
-                if (b === 0 || b === 10) {
-                    const tri = STABS[Math.floor(s / 16)];
-                    for (const nn of tri) aTone(NF(nn), 'triangle', b === 0 ? 0.22 : 0.12, 0.045, musicGain);
+                const bn = sg.bass[s]; if (bn) aTone(NF(bn), sg.bassWave, sg.bassDur, sg.bassVol, musicGain);
+                const an = sg.arp[s]; if (an) aTone(NF(an), sg.arpWave, sg.arpDur, sg.arpVol, musicGain);
+                const si = sg.stabSteps.indexOf(b);
+                if (si >= 0) {
+                    const tri = sg.stabs[Math.floor(s / sg.barLen)];
+                    for (const nn of tri) aTone(NF(nn), sg.stabWave, sg.stabDur[si], sg.stabVol, musicGain);
                 }
-                if (b === 0 || b === 8) aKick(musicGain);
-                if (sec >= 1 && b === 11) aKick(musicGain);
-                if (b === 4 || b === 12) aNoise(0.12, 0.17, false, musicGain);
-                if (b % 2 === 0) aNoise(0.03, 0.05, true, musicGain);
-                if (b % 4 === 2 && sec >= 1) aNoise(0.05, 0.06, true, musicGain);
+                sg.drums(b, sec);
             }
             musicStep++;
         }
-        function startMusic() { if (musicTimer) clearInterval(musicTimer); musicStep = 0; musicTimer = setInterval(musicTick, 99); }
+        function startMusic() {
+            if (musicTimer) clearInterval(musicTimer);
+            musicStep = 0;
+            musicTimer = setInterval(musicTick, currentSong().stepMs);
+        }
         function stopMusic() { if (musicTimer) { clearInterval(musicTimer); musicTimer = null; } }
 
         // ===================================================================
