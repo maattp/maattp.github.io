@@ -800,8 +800,8 @@
                       rubLo: 0.88, rubHi: 1.06, rubLoF: 0.90, rubHiF: 1.04, err: 1.6, drift: -0.15, start: 0.35 },
             medium: { skills: [1.04, 1.02, 1.005, 0.995, 0.985, 0.97, 0.955],
                       rubLo: 0.90, rubHi: 1.10, rubLoF: 0.93, rubHiF: 1.07, err: 1.0, drift: 0, start: 0.6 },
-            hard:   { skills: [1.075, 1.055, 1.04, 1.028, 1.018, 1.005, 0.99],
-                      rubLo: 0.93, rubHi: 1.12, rubLoF: 0.95, rubHiF: 1.09, err: 0.45, drift: 0.12, start: 0.8 },
+            hard:   { skills: [1.11, 1.09, 1.072, 1.056, 1.042, 1.028, 1.012],
+                      rubLo: 0.96, rubHi: 1.16, rubLoF: 0.97, rubHiF: 1.12, err: 0.2, drift: 0.25, start: 0.95 },
         };
         let aiDifficulty = 'medium';
 
@@ -933,7 +933,7 @@
         // ⚠ APP_VER: increment ONCE PER PR (CLAUDE.md rule). Shown on the
         // title screen and folded into NET_VER, so any two different builds
         // refuse to share a room.
-        const APP_VER = 16;
+        const APP_VER = 17;
         function hash32(str) {
             let h = 2166136261 >>> 0;
             for (let i = 0; i < str.length; i++) { h ^= str.charCodeAt(i); h = Math.imul(h, 16777619); }
