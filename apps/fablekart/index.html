@@ -882,7 +882,7 @@
         // ⚠ APP_VER: increment ONCE PER PR (CLAUDE.md rule). Shown on the
         // title screen and folded into NET_VER, so any two different builds
         // refuse to share a room.
-        const APP_VER = 12;
+        const APP_VER = 13;
         function hash32(str) {
             let h = 2166136261 >>> 0;
             for (let i = 0; i < str.length; i++) { h ^= str.charCodeAt(i); h = Math.imul(h, 16777619); }
@@ -1146,6 +1146,7 @@
                     break;
                 case 'event':
                     if (msg.e === 'rejoin-state') applyRejoinState(msg);
+                    else if (msg.e === 'goo-hit') gooScoreFx(msg.v);
                     break;
                 case 'peer-left':
                     showToast((msg.name || 'A racer') + ' left', '#ff9a9a');
@@ -3933,11 +3934,26 @@
             if (audioCtx && !muted) aTone(1500, 'square', 0.07, 0.09, masterGain);
             vibrate(15);
         }
-        function gooHit(k) {
+        function gooHit(k, h) {
             if (k.invuln > 0 || k.gooT > 0 || k.finished) return;
             if (k.shieldTimer > 0) { k.shieldTimer = 0; k.mesh.shield.visible = false; return; }
             k.gooT = 1.3; k.invuln = 0.6;
             if (k.isPlayer) { sfxGoo(); vibrate(40); flash('GOO!', '#b06bff'); }
+            // tell whoever DROPPED the goo that it scored (humans only —
+            // local: toast+chirp; remote: targeted event through the relay)
+            const ow = h && h.owner;
+            if (ow && ow !== k) {
+                const victim = k.dispName || k.char.name;
+                if (ow.isPlayer) gooScoreFx(victim);
+                else if (net.mode === 'host' && ow.kind === 'remote' && ow.pid >= 0) {
+                    wsSend({ t: 'event', to: ow.pid, e: 'goo-hit', v: victim });
+                }
+            }
+        }
+        function gooScoreFx(victim) {
+            showToast('🫧 ' + victim + ' slipped on your goo!', '#d8a0ff');
+            sfxGooScore();
+            vibrate(18);
         }
 
         function clearProjectiles() { for (const p of projectiles) { scene.remove(p.mesh); disposeObject(p.mesh); } projectiles = []; }
@@ -4006,7 +4022,7 @@
                     if (o.finished) continue;
                     if (h.arm > 0 && o === h.owner) continue;
                     const dx = o.pos.x - h.x, dz = o.pos.z - h.z;
-                    if (dx * dx + dz * dz < 14 && o.grounded) { gooHit(o); }
+                    if (dx * dx + dz * dz < 14 && o.grounded) { gooHit(o, h); }
                 }
             }
         }
@@ -4589,6 +4605,11 @@
             g.gain.setValueAtTime(0.12, now); g.gain.exponentialRampToValueAtTime(0.001, now + 0.38);
             o.connect(g); g.connect(masterGain); o.start(now); o.stop(now + 0.4);
             aTone(630, 'sine', 0.3, 0.06, masterGain);
+        }
+        function sfxGooScore() {        // your goo got someone: cheeky rising chirp
+            if (!audioCtx || muted) return;
+            aTone(620, 'sine', 0.1, 0.09, masterGain);
+            setTimeout(() => { if (audioCtx && !muted) aTone(930, 'sine', 0.16, 0.08, masterGain); }, 90);
         }
         function sfxGoo() {             // slimy wobble
             if (!audioCtx || muted) return;
