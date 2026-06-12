@@ -27,6 +27,12 @@
             position: fixed; inset: 0;   /* keep iOS standalone PWA truly fullscreen, no rubber-banding */
         }
         #game { position: fixed; inset: 0; }
+        /* Large-screen UI scale: every top-level UI layer zooms by --uiz,
+           computed from the viewport in JS (exactly 1 on phone-sized
+           viewports — small screens render byte-identical; up to 2 on a
+           desktop monitor). The game canvas never zooms. */
+        #hud, #rotate, .screen, #countdown, #pauseScreen, #muteBtn,
+        #toast, #flash, #wrongWay, #rocketWarn { zoom: var(--uiz, 1); }
         canvas { display: block; touch-action: none; }
 
         /* ===== Rotate-to-landscape overlay (game is landscape-only) ===== */
@@ -933,7 +939,7 @@
         // ⚠ APP_VER: increment ONCE PER PR (CLAUDE.md rule). Shown on the
         // title screen and folded into NET_VER, so any two different builds
         // refuse to share a room.
-        const APP_VER = 17;
+        const APP_VER = 18;
         function hash32(str) {
             let h = 2166136261 >>> 0;
             for (let i = 0; i < str.length; i++) { h ^= str.charCodeAt(i); h = Math.imul(h, 16777619); }
@@ -1656,6 +1662,7 @@
             window.addEventListener('resize', onResize);
             // iOS reports stale dimensions at the instant of rotation
             window.addEventListener('orientationchange', () => { setTimeout(onResize, 80); setTimeout(onResize, 350); });
+            updateUIScale();
         }
 
         function disposeObject(root) {
@@ -5323,8 +5330,11 @@
             const surface = renderer.domElement;
             function steerZone(x) { return x < window.innerWidth * 0.5; }
             function placeStick(x, y) {
-                dom.stick.style.left = (x - 60) + 'px';
-                dom.stick.style.top = (y - 23) + 'px';
+                // clientX/Y are viewport px; the stick lives inside the
+                // zoomed #hud, so convert into its scaled coordinate space
+                const z = uiZoom || 1;
+                dom.stick.style.left = (x / z - 60) + 'px';
+                dom.stick.style.top = (y / z - 23) + 'px';
             }
             surface.addEventListener('touchstart', (e) => {
                 e.preventDefault();
@@ -5987,10 +5997,21 @@
                 }
             }
         }
+        let uiZoom = 1;
+        function updateUIScale() {
+            // HUD/menus were designed for ~390px-tall landscape phones.
+            // Scale UP on big windows (27" monitor etc.), never down — the
+            // factor is exactly 1 at phone sizes so small screens render
+            // identically. min() of both axes keeps short-wide windows sane.
+            uiZoom = Math.max(1, Math.min(2,
+                Math.min(window.innerHeight / 470, window.innerWidth / 1000)));
+            document.documentElement.style.setProperty('--uiz', uiZoom.toFixed(3));
+        }
         function onResize() {
             camera.aspect = window.innerWidth / window.innerHeight;
             camera.updateProjectionMatrix();
             renderer.setSize(window.innerWidth, window.innerHeight);
+            updateUIScale();
         }
 
         // ===================================================================
