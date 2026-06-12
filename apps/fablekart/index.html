@@ -800,8 +800,8 @@
                       rubLo: 0.88, rubHi: 1.06, rubLoF: 0.90, rubHiF: 1.04, err: 1.6, drift: -0.15, start: 0.35 },
             medium: { skills: [1.04, 1.02, 1.005, 0.995, 0.985, 0.97, 0.955],
                       rubLo: 0.90, rubHi: 1.10, rubLoF: 0.93, rubHiF: 1.07, err: 1.0, drift: 0, start: 0.6 },
-            hard:   { skills: [1.075, 1.055, 1.04, 1.028, 1.018, 1.005, 0.99],
-                      rubLo: 0.93, rubHi: 1.12, rubLoF: 0.95, rubHiF: 1.09, err: 0.45, drift: 0.12, start: 0.8 },
+            hard:   { skills: [1.11, 1.09, 1.072, 1.056, 1.042, 1.028, 1.012],
+                      rubLo: 0.96, rubHi: 1.16, rubLoF: 0.97, rubHiF: 1.12, err: 0.2, drift: 0.25, start: 0.95 },
         };
         let aiDifficulty = 'medium';
 
@@ -933,7 +933,7 @@
         // ⚠ APP_VER: increment ONCE PER PR (CLAUDE.md rule). Shown on the
         // title screen and folded into NET_VER, so any two different builds
         // refuse to share a room.
-        const APP_VER = 16;
+        const APP_VER = 17;
         function hash32(str) {
             let h = 2166136261 >>> 0;
             for (let i = 0; i < str.length; i++) { h ^= str.charCodeAt(i); h = Math.imul(h, 16777619); }
@@ -3731,12 +3731,24 @@
             zapTimer = 0; rocketWarnT = 0;
             dom.rocketWarn.classList.remove('on');
             clearProjectiles(); clearHazards();
-            // grid: AI rows up front, player starts 8th (rearmost) — earn the win
+            // grid: AI rows up front, humans rearmost — earn the win. Rows
+            // MUST derive from the shared roster (kart index), not isPlayer:
+            // "local player goes rearmost" online meant every machine put its
+            // own kart at row 7, so all humans overlapped at GO. Humans now
+            // pair up side-by-side on the back rows (a 1v1 starts dead even);
+            // AI fill the front rows. Solo grid is unchanged.
+            const humansN = karts.filter((q) => q.kind !== 'ai').length || 1;
             for (let i = 0; i < karts.length; i++) {
                 const k = karts[i];
-                const row = k.isPlayer ? 7 : i - 1;
+                let row, lane;
+                if (k.kind !== 'ai') {
+                    row = 7 - (i >> 1);
+                    lane = (i % 2 === 0 ? -1 : 1) * HALF_W * 0.35;
+                } else {
+                    row = i - humansN;
+                    lane = (row % 2 === 0 ? 1 : -1) * HALF_W * 0.35;
+                }
                 const seg = (36 - row * 4 + N) % N;
-                const lane = (row % 2 === 0 ? 1 : -1) * HALF_W * 0.35;
                 const c = centerline[seg], n = normals[seg], t = tangents[seg];
                 k.pos.set(c.x + n.x * lane, 0, c.z + n.z * lane);
                 k.y = roadY(seg, lane); k.vy = 0; k.grounded = true; k.lastVR = 0;
