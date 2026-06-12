@@ -706,19 +706,20 @@
                 },
             },
             {
-                id: 'forest', name: 'Whisperwood', tagline: '🌲 Whisperwood',
+                id: 'forest', name: 'Whisper Wood', tagline: '🌲 Whisper Wood',
                 // twilight forest — the most VERTICAL track: meadow start →
-                // rolling whoops → switchback climb to a 45-high ridge → through
-                // a giant mossy HOLLOW LOG at the summit → crest-jump dive off
-                // the ridge → swooping descent to a creek chicane home.
-                // Fireflies, glowing mushrooms and wisps do the magic.
+                // rolling whoops → switchback climb → a HORSESHOE around the
+                // colossal ELDER TREE at the 45-high summit → crest-jump dive
+                // past a WATERFALL → splash through the creek FORD chicane.
+                // No tunnel on purpose: that's Coral's landmark.
                 ctrl: scaled([
                     [0, -252, 0], [120, -245, 2], [205, -205, 6], [262, -120, 2],
-                    [270, -20, 12], [235, 80, 20], [150, 150, 28], [60, 175, 35],
-                    [-40, 195, 42], [-150, 185, 45], [-230, 120, 40], [-262, 20, 30],
-                    [-240, -80, 16], [-160, -170, 6], [-95, -220, 2], [-30, -185, 3],
+                    [270, -20, 12], [235, 80, 20], [150, 150, 28], [55, 185, 35],
+                    [-25, 245, 40], [-115, 263, 44], [-190, 232, 45], [-212, 155, 42],
+                    [-262, 20, 30], [-240, -80, 16], [-160, -170, 6], [-95, -220, 2],
+                    [-30, -185, 3],
                 ]),
-                tunnelIn: [-40 * SC, 195 * SC], tunnelOut: [-150 * SC, 185 * SC],
+                tunnelIn: null, tunnelOut: null,
                 jumpAt: [-240 * SC, -80 * SC],
                 preview: 'linear-gradient(180deg,#4e8a9a,#2f7a3a)',
                 theme: {
@@ -730,13 +731,16 @@
                     waterTex: '#2a7a8a', deep: 0x0a3a44,
                     grass1: 0x2f7a3a, grass2: 0x4a9a4a, sand: 0x6a8a4a, rock: 0x6a7a6e,
                     road: '#4a4438', lane: '#ffe08a', edge: '#d8cfa8',
-                    tube: 0x4a3320, shellRock: 0x6a4a2e, shellGrass: 0x3a8a44, portal: 0x5a4028,
                     foliage: 'forest', trunk: 0x5a3e26, leaf1: 0x2f8a3e, leaf2: 0x57b85a,
                     shrubs: [0x2a6a34, 0x3a7a40, 0x4a8a3a],
                     rocks: [0x6a7a6e, 0x5a6a5e, 0x7a8a78],
                     beach: false, embers: 0,
                     glowFlora: [0x7af0ff, 0xff8ad8, 0xaaff7a],   // mushroom caps
                     wisps: true, fireflies: true,
+                    // signature landmarks (each themed system no-ops elsewhere)
+                    elderTree: { x: -115 * SC, z: 200 * SC },
+                    waterfall: { x: -255 * SC, z: -30 * SC },
+                    ford: { x: -60 * SC, z: -205 * SC },
                 },
             },
         ];
@@ -797,6 +801,8 @@
         let waterMat = null, crowdPts = null;
         let birds = [];   // circling gulls (theme.birds), animated in animate()
         let fireflyPts = null;   // drifting firefly cloud (theme.fireflies)
+        let waterfallMats = [];  // falling-water UV scroll (theme.waterfall)
+        let fordA = -1, fordB = -1;   // creek ford seg range — karts splash through (theme.ford)
         let world = null;                    // all static track geometry (rebuilt per track)
         let selectedCharIdx = 0;
 
@@ -876,7 +882,7 @@
         // ⚠ APP_VER: increment ONCE PER PR (CLAUDE.md rule). Shown on the
         // title screen and folded into NET_VER, so any two different builds
         // refuse to share a room.
-        const APP_VER = 10;
+        const APP_VER = 11;
         function hash32(str) {
             let h = 2166136261 >>> 0;
             for (let i = 0; i < str.length; i++) { h ^= str.charCodeAt(i); h = Math.imul(h, 16777619); }
@@ -1987,6 +1993,157 @@
             }
         }
 
+        // Per-track signature landmarks (Whisper Wood). Each block no-ops when
+        // its theme field is absent, like crater/eruptions do for Volcano.
+        function buildLandmarks() {
+            waterfallMats = []; fordA = -1; fordB = -1;
+
+            // ---- THE ELDER TREE: a colossal glowing tree inside the summit
+            // horseshoe — trunk, root flare, glowing hollows, overhanging
+            // canopy, hanging lantern orbs, and a warm light at its base.
+            const et = THEME.elderTree;
+            if (et) {
+                const baseY = terrainY(et.x, et.z);
+                const parts = [], glowParts = [];
+                // trunk: three stacked tapered drums with slight organic offsets
+                for (let s = 0; s < 3; s++) {
+                    parts.push({ geo: new THREE.CylinderGeometry(13 - s * 2.6, 16 - s * 2.6, 26, 12),
+                        color: s % 2 ? 0x6a4830 : 0x5a3e26,
+                        matrix: mat4(et.x + s * 1.5, baseY + 13 + s * 24, et.z - s * 1.2, s * 0.7) });
+                }
+                // root flare
+                for (let r = 0; r < 7; r++) {
+                    const a = (r / 7) * Math.PI * 2;
+                    parts.push({ geo: new THREE.ConeGeometry(4.5, 16, 6), color: 0x4a3220,
+                        matrix: mat4(et.x + Math.sin(a) * 14, baseY + 3, et.z + Math.cos(a) * 14,
+                            a, 1.4, 1, 1.4, 0.6, 0) });
+                }
+                // glowing hollows up the trunk
+                for (let h = 0; h < 4; h++) {
+                    const a = h * 1.7 + 0.4;
+                    parts.push({ geo: new THREE.SphereGeometry(1, 8, 6), color: 0x2a1c10,
+                        matrix: mat4(et.x + Math.sin(a) * 13.4, baseY + 14 + h * 16, et.z + Math.cos(a) * 13.4,
+                            0, 2.6, 3.4, 1.4) });
+                    glowParts.push({ geo: new THREE.SphereGeometry(1, 8, 6), color: pick(THEME.glowFlora || [0x9af0ff]),
+                        matrix: mat4(et.x + Math.sin(a) * 14.1, baseY + 14 + h * 16, et.z + Math.cos(a) * 14.1,
+                            0, 1.7, 2.4, 0.9) });
+                }
+                // huge overhanging canopy
+                for (let c = 0; c < 9; c++) {
+                    const a = (c / 9) * Math.PI * 2 + 0.5, d = c === 0 ? 0 : rand(16, 42);
+                    const r = c === 0 ? 46 : rand(26, 40);
+                    parts.push({ geo: new THREE.SphereGeometry(1, 10, 8),
+                        color: c % 2 ? THEME.leaf1 : THEME.leaf2,
+                        matrix: mat4(et.x + Math.sin(a) * d, baseY + 74 + (c === 0 ? 14 : rand(0, 16)),
+                            et.z + Math.cos(a) * d, 0, r, r * 0.7, r) });
+                }
+                world.add(new THREE.Mesh(bakeMerge(parts), new THREE.MeshLambertMaterial({ vertexColors: true })));
+                world.add(new THREE.Mesh(bakeMerge(glowParts), new THREE.MeshBasicMaterial({ vertexColors: true })));
+                // hanging lanterns swing on the spinners bob
+                for (let l = 0; l < 12; l++) {
+                    const a = rand(0, Math.PI * 2), d = rand(22, 46);
+                    const orb = new THREE.Mesh(new THREE.SphereGeometry(1.1, 8, 6),
+                        new THREE.MeshBasicMaterial({ color: pick([0xffd88a, 0x9af0ff, 0xffb0e8]), transparent: true, opacity: 0.92 }));
+                    const oy = baseY + rand(20, 56);
+                    orb.position.set(et.x + Math.sin(a) * d, oy, et.z + Math.cos(a) * d);
+                    world.add(orb);
+                    spinners.push({ obj: orb, speed: 0, bob: oy, bobAmp: rand(0.8, 2), drift: rand(0.4, 0.9) });
+                }
+                const tl = new THREE.PointLight(0xffc98a, 1.1, 200);
+                tl.position.set(et.x, baseY + 22, et.z);
+                world.add(tl);
+            }
+
+            // ---- WATERFALL: pours off the ridge cliff beside the descent into
+            // a pool — animated falling-streak curtain + foam + drifting mist.
+            const wf = THEME.waterfall;
+            if (wf) {
+                // hunt the biggest real drop near the landmark — a fixed
+                // offset buries the pool in the embankment
+                const s0 = nearestSeg(wf.x, wf.z);
+                let bestP = null;
+                for (let ds = -28; ds <= 28; ds += 4) {
+                    const si = ((s0 + ds) % N + N) % N;
+                    const cc = centerline[si], nn = normals[si];
+                    for (const sd of [1, -1]) {
+                        for (let off = HALF_W + 24; off <= HALF_W + 110; off += 7) {
+                            const x = cc.x + nn.x * off * sd, z = cc.z + nn.z * off * sd;
+                            const ty = terrainY(x, z);
+                            const drop = cc.y - ty;
+                            if (!bestP || drop > bestP.drop) bestP = { s: si, x, z, ty, drop };
+                        }
+                    }
+                }
+                const s = bestP.s;
+                const c = centerline[s];
+                const bx = bestP.x, bz = bestP.z;
+                const topY = c.y + 9, botY = Math.max(bestP.ty, -1.4) + 0.4;
+                const wcv = document.createElement('canvas'); wcv.width = 64; wcv.height = 128;
+                const wg = wcv.getContext('2d');
+                wg.fillStyle = 'rgba(190,230,255,0.55)'; wg.fillRect(0, 0, 64, 128);
+                for (let i = 0; i < 14; i++) {
+                    wg.fillStyle = 'rgba(255,255,255,' + rand(0.25, 0.6).toFixed(2) + ')';
+                    const x = Math.random() * 62;
+                    wg.fillRect(x, 0, rand(1.5, 3.5), 128);
+                }
+                const wtex = new THREE.CanvasTexture(wcv);
+                wtex.wrapT = THREE.RepeatWrapping; wtex.repeat.set(1, 2);
+                const wmat = new THREE.MeshBasicMaterial({ map: wtex, transparent: true,
+                    depthWrite: false, side: THREE.DoubleSide });
+                const curtain = new THREE.Mesh(new THREE.PlaneGeometry(24, topY - botY), wmat);
+                curtain.position.set(bx, (topY + botY) / 2, bz);
+                curtain.lookAt(c.x, (topY + botY) / 2, c.z);
+                world.add(curtain);
+                waterfallMats.push(wmat);
+                // crest lip + plunge pool + foam ring
+                const lip = new THREE.Mesh(new THREE.BoxGeometry(26, 2.2, 6),
+                    new THREE.MeshLambertMaterial({ color: THEME.rock }));
+                lip.position.set(bx, topY - 0.8, bz); lip.lookAt(c.x, topY - 0.8, c.z);
+                world.add(lip);
+                const pool = new THREE.Mesh(new THREE.CircleGeometry(17, 22),
+                    new THREE.MeshBasicMaterial({ color: 0x7ac8e8, transparent: true, opacity: 0.75, depthWrite: false }));
+                pool.rotation.x = -Math.PI / 2; pool.position.set(bx, botY + 0.15, bz);
+                world.add(pool);
+                const foam = new THREE.Mesh(new THREE.RingGeometry(4, 9, 22),
+                    new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.5, depthWrite: false }));
+                foam.rotation.x = -Math.PI / 2; foam.position.set(bx, botY + 0.3, bz);
+                world.add(foam);
+                for (let m = 0; m < 3; m++) {
+                    const puff = new THREE.Mesh(new THREE.SphereGeometry(rand(4, 7), 8, 6),
+                        new THREE.MeshLambertMaterial({ color: 0xeaf6ff, transparent: true, opacity: 0.4 }));
+                    const py = botY + rand(3, 9);
+                    puff.position.set(bx + rand(-8, 8), py, bz + rand(-8, 8));
+                    world.add(puff);
+                    spinners.push({ obj: puff, speed: 0, bob: py, bobAmp: rand(1.5, 3), drift: rand(0.4, 0.8) });
+                }
+            }
+
+            // ---- CREEK FORD: a shallow water film across the road; karts
+            // kick up spray driving through (updateKart emits the splashes).
+            const fd = THEME.ford;
+            if (fd) {
+                const f = nearestSeg(fd.x, fd.z);
+                fordA = Math.max(f - 6, 0); fordB = Math.min(f + 6, N - 1);   // no seam wrap
+                const fcv = document.createElement('canvas'); fcv.width = 64; fcv.height = 64;
+                const fg = fcv.getContext('2d');
+                fg.fillStyle = 'rgba(110,190,230,0.5)'; fg.fillRect(0, 0, 64, 64);
+                fg.strokeStyle = 'rgba(255,255,255,0.5)'; fg.lineWidth = 2;
+                for (let i = 0; i < 4; i++) {
+                    fg.beginPath();
+                    for (let x = 0; x <= 64; x += 8) {
+                        const y = 8 + i * 16 + Math.sin(x * 0.3 + i) * 3;
+                        if (x === 0) fg.moveTo(x, y); else fg.lineTo(x, y);
+                    }
+                    fg.stroke();
+                }
+                const ftex = new THREE.CanvasTexture(fcv);
+                ftex.wrapS = ftex.wrapT = THREE.RepeatWrapping;
+                const m = buildDecalStrip(f, 7, 1.04, ftex, 0.14, 0);
+                m.material.transparent = true;
+                waterfallMats.push(m.material);   // ripples drift with the same scroll
+            }
+        }
+
         function buildSky() {
             const geo = new THREE.SphereGeometry(2600, 32, 20);
             const mat = new THREE.ShaderMaterial({
@@ -2953,6 +3110,7 @@
             buildTunnel();
             buildTV();
             buildScenery();
+            buildLandmarks();
             buildBoostPads();
             buildItemBoxes();
             buildMinimapPath();
@@ -3425,6 +3583,13 @@
 
             updateProgress(k);
             clampToTrack(k);
+
+            // creek ford: blast a spray wake while crossing the water film
+            if (fordA >= 0 && k.seg >= fordA && k.seg <= fordB && k.grounded
+                && k.speed > 22 && simTickNo % 3 === 0) {
+                emitSpark(new THREE.Vector3(k.pos.x + vrand(-1.6, 1.6), k.y + 0.4, k.pos.z + vrand(-1.6, 1.6)),
+                    0xbfe8ff, 7, 6, { life: 0.45, grav: 20, size: vrand(0.9, 1.5) });
+            }
 
             // ---- vertical: crest/ramp launches with arcade gravity ----
             // in the lava gap there is NO road — only the channel far below
@@ -5096,6 +5261,7 @@
             for (const lm of lavaMats) if (lm.map) lm.map.offset.y += dt * 0.03;
             if (craterLight) craterLight.intensity = 1.15 + Math.sin(clock.elapsedTime * 2.1) * 0.3;
             if (lavaGlow) lavaGlow.material.opacity = 0.28 + Math.sin(clock.elapsedTime * 2.1) * 0.1;
+            for (const wm of waterfallMats) wm.map.offset.y -= dt * 0.6;   // falling water / drifting ripples
             if (foamMat) foamMat.opacity = 0.35 + Math.abs(Math.sin(clock.elapsedTime * 2.6)) * 0.35;   // water glints
             // ember column rising from the lava gap (telegraphs it over the crest)
             if (gapA >= 0 && Math.random() < 0.5) {

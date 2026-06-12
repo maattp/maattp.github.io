@@ -144,17 +144,27 @@ work, and don't regress these four seams.
   times are per-track (`kart3_best_<id>`, legacy key = coral).
 - Tracks: **Coral Cliffs** (sunny island, beach/palms, tunnel),
   **Volcano Bay** (dusk caldera — structurally distinct, NO tunnel), and
-  **Whisperwood** (twilight forest — the VERTICAL one: rolling whoops →
-  switchback climb to a 45-high ridge (others top out at 31/33) → tunnel
-  themed as a giant mossy hollow log at the summit → crest-jump dive off
-  the ridge → creek chicane. Theme extras: `fogNear`/`fogFar` overrides
-  (mistier), `foliage: 'forest'` (tall stacked-canopy trees, island-wide
-  seeded scatter of ~900 so the ridge doesn't read bald, glowing
-  mushroom rings via `glowFlora`), `wisps` (bobbing glow orbs riding the
-  spinners system), `fireflies` (170-point drifting/blinking cloud,
-  animated in `animate()` via `fireflyPts`), `stars`. Debug-camera
-  caveat: distant aerials sit beyond fogFar and the treed ridge looks
-  bald — judge from gameplay-range cameras.):
+  **Whisper Wood** (two words — one word clipped the track card; twilight
+  forest, the VERTICAL one: rolling whoops → switchback climb → summit
+  HORSESHOE around the Elder Tree at 45 high (others top out at 31/33) →
+  crest-jump dive past the waterfall → creek-ford chicane. **NO tunnel /
+  jumbotron by design** — those are Coral's landmarks (user feedback:
+  tracks must not share signatures). Its own landmarks live in
+  `buildLandmarks()`, each gated on a theme field like Volcano's crater:
+  `elderTree` (colossal trunk + glowing hollows + overhanging canopy +
+  lantern-orb spinners + warm PointLight; sits in the terrain hollow
+  inside the horseshoe, so it rises from below the road), `waterfall`
+  (placement SCANS ±28 segs × both sides for the max terrain drop — a
+  fixed offset buried the pool in the embankment; animated curtain via
+  `waterfallMats` scroll), `ford` (water-film decal across segs
+  `fordA..fordB`; updateKart emits spray while crossing — cosmetic only,
+  no speed effect). Theme extras: `fogNear`/`fogFar` overrides (mistier),
+  `foliage: 'forest'` (tall stacked-canopy trees, island-wide seeded
+  scatter of ~900 so the ridge doesn't read bald, glowing mushroom rings
+  via `glowFlora`), `wisps`, `fireflies` (170-point drifting/blinking
+  cloud via `fireflyPts`), `stars`. Debug-camera caveat: distant aerials
+  sit beyond fogFar and the treed ridge looks bald — judge from
+  gameplay-range cameras.):
   - **Caldera rim ride**: ~220° banked arc on the crater crest with a
     glowing lava lake inside (`THEME.crater` shapes the heightfield in
     `hillH`; lake disc + pulsing PointLight + smoke in `buildLava`).
