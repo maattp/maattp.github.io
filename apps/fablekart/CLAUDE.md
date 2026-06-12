@@ -184,6 +184,28 @@ work, and don't regress these four seams.
     rock 0.6s → impact bonk r≈6.5. `updateBombs` runs in simTick AND
     netClientFrame.
 
+- **Glacier Pass** (`id: 'glacier'` — night-snow summit, THE HARD ONE).
+  Signature systems, all theme-gated in `buildGlacierZones()` and
+  measured/resolved from landmarks at load:
+  - **Ice physics** (`iceSegs`): steering authority ×0.55 inside zones
+    (frozen lake full-width, final chicane, the split's shortcut lane).
+    Flag set per-tick in `clampToTrack(k, dt)` — dt is ONLY passed from
+    the kart's own sim, so pose-authoritative remote karts are exempt
+    (their owner applies zone physics; never "fix" that by passing dt
+    from updateRemoteKart).
+  - **THE SPLIT** (`splitZone`): a crevasse-median wall divides a long
+    bend into two lanes on the SAME ribbon (a true forked centerline
+    would break progress/clamp/AI/minimap). Which lane is the shortcut
+    is MEASURED at build (inside of the arc, ~20u shorter) and that lane
+    is auto-iced + narrowed. Median = wall-style shove in clampToTrack.
+    AI lane choice: seeded per-racer "daring" override in aiController
+    (without it the racing line sends every AI inside).
+  - **Crosswind ridge** (`windZone`): constant lateral push toward
+    whichever side the ground drops (resolved at build).
+  - Aurora curtains (`auroraMats`, UV-scroll + opacity pulse), falling
+    snow (`snowPts`, camera-following recycled point cloud), ski-lift
+    gondola (`gondolaAnim`, sagging cable + ping-pong cabins), `pines`
+    foliage (snow-capped conifers).
 - `CTRL` points `[x, z, y]` are scaled by `SC = 1.35`; elevation 0→31.
   Tunnel portals + jump location are found by `nearestSeg()` from landmark
   coords at build.

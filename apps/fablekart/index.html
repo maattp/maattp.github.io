@@ -743,6 +743,49 @@
                     ford: { x: -60 * SC, z: -205 * SC },
                 },
             },
+            {
+                id: 'glacier', name: 'Glacier Pass', tagline: '❄️ Glacier Pass',
+                // night-blue snow summit — THE HARD ONE: esses through the
+                // pines → frozen-lake crossing (ice physics, full width) →
+                // tight switchback climb → exposed CROSSWIND ridge → THE SPLIT
+                // (a crevasse median divides a long bend: inside lane is a
+                // genuinely shorter but icy ledge; outside is groomed and
+                // safe) → crest-jump descent → icy final chicane. Aurora,
+                // falling snow and a ski-lift gondola overhead.
+                ctrl: scaled([
+                    [0, -250, 0], [125, -242, 1], [225, -188, 3], [258, -95, 1],
+                    [265, 5, 0], [235, 95, 4], [150, 148, 12],
+                    [120, 210, 19], [40, 182, 23], [16, 242, 28],
+                    [-85, 252, 33], [-180, 228, 34],
+                    [-242, 148, 29], [-264, 40, 22], [-242, -70, 15],
+                    [-160, -172, 5], [-75, -228, 2], [-18, -182, 1],
+                ]),
+                tunnelIn: null, tunnelOut: null,
+                jumpAt: [-200 * SC, -125 * SC],
+                preview: 'linear-gradient(180deg,#1d3a5e,#dce6f0)',
+                theme: {
+                    skyTop: 0x0a1028, skyMid: 0x1d3a5e, skyBot: 0x9ab8d8,
+                    fog: 0x4a5e78, fogNear: 260, fogFar: 900,
+                    cloud: 0x8aa0bc, sun: 0xd8e8ff, sunPos: [480, 520, 380], stars: true,
+                    hemiSky: 0x9ab8d8, hemiGround: 0x4a5668, hemiInt: 0.85,
+                    dirColor: 0xcfe0ff, dirInt: 0.95, dirPos: [200, 300, 180],
+                    waterTex: '#9fc8e0', deep: 0x4a7a9a,
+                    grass1: 0xe6ecf6, grass2: 0xd2dcec, sand: 0xc2d0e2, rock: 0x7a8aa0,
+                    road: '#454e5e', lane: '#7ad6ff', edge: '#e8ecf2',
+                    foliage: 'pines', trunk: 0x3a3026, leaf1: 0x1d4a34, leaf2: 0x2a5e42,
+                    shrubs: [0xdce6f0, 0xcfdaea, 0xe8eef8],
+                    rocks: [0x7a8aa0, 0x8c9cb4, 0x6a788e],
+                    beach: false, embers: 0,
+                    aurora: true, snowfall: true, village: true, xmasLights: true,
+                    iceZones: [
+                        { a: [258 * SC, -95 * SC], b: [235 * SC, 95 * SC] },     // frozen lake, full width
+                        { a: [-75 * SC, -228 * SC], b: [-30 * SC, -190 * SC] },  // final chicane patch
+                    ],
+                    wind: { a: [-85 * SC, 252 * SC], b: [-180 * SC, 228 * SC], push: 8 },
+                    split: { a: [-242 * SC, 148 * SC], b: [-242 * SC, -70 * SC], w: 3 },  // inside lane auto-iced
+                    gondola: { a: [60 * SC, -200 * SC], b: [262 * SC, -40 * SC] },
+                },
+            },
         ];
         // per-load track state (set by loadTrack)
         let currentTrackIdx = 0;
@@ -803,6 +846,14 @@
         let fireflyPts = null;   // drifting firefly cloud (theme.fireflies)
         let waterfallMats = [];  // falling-water UV scroll (theme.waterfall)
         let fordA = -1, fordB = -1;   // creek ford seg range — karts splash through (theme.ford)
+        // Glacier Pass zone state (resolved from theme landmarks in buildLandmarks)
+        let iceSegs = [];        // [{a, b, side}] side 0 = full width, ±1 = that lateral side only
+        let windZone = null;     // {a, b, push} signed push along +normal (u/s)
+        let splitZone = null;    // {a, b, w, inside, gain} — crevasse median, inside = shorter side sign
+        let auroraMats = [];     // animated sky curtains (theme.aurora)
+        let snowPts = null;      // camera-following snowfall (theme.snowfall)
+        let gondolaAnim = null;  // ski-lift cabins (theme.gondola)
+        let chimneySmoke = [];   // village chimney puffs (theme.village)
         let world = null;                    // all static track geometry (rebuilt per track)
         let selectedCharIdx = 0;
 
@@ -882,7 +933,7 @@
         // ⚠ APP_VER: increment ONCE PER PR (CLAUDE.md rule). Shown on the
         // title screen and folded into NET_VER, so any two different builds
         // refuse to share a room.
-        const APP_VER = 14;
+        const APP_VER = 15;
         function hash32(str) {
             let h = 2166136261 >>> 0;
             for (let i = 0; i < str.length; i++) { h ^= str.charCodeAt(i); h = Math.imul(h, 16777619); }
@@ -1998,6 +2049,8 @@
         // its theme field is absent, like crater/eruptions do for Volcano.
         function buildLandmarks() {
             waterfallMats = []; fordA = -1; fordB = -1;
+            iceSegs = []; windZone = null; splitZone = null; gondolaAnim = null;
+            buildGlacierZones();
 
             // ---- THE ELDER TREE: a colossal glowing tree inside the summit
             // horseshoe — trunk, root flare, glowing hollows, overhanging
@@ -2145,6 +2198,183 @@
             }
         }
 
+        // Glacier Pass zone resolution + visuals: ice patches, crosswind
+        // ridge, the crevasse SPLIT (which lane is the shortcut is MEASURED —
+        // the inside of the arc is genuinely shorter), and the gondola.
+        function buildGlacierZones() {
+            const laneLat = () => (splitZone.w + WALL_LIMIT) / 2;
+            chimneySmoke = [];
+            // ---- alpine Christmas village: cabins with snowy roofs, glowing
+            // windows, eave light strings and smoking chimneys
+            if (THEME.village) {
+                const parts = [], glowParts = [];
+                const bodyGeo = new THREE.BoxGeometry(1, 1, 1);
+                const roofGeo = new THREE.ConeGeometry(0.82, 1, 4);
+                const bulbGeo = new THREE.SphereGeometry(0.17, 6, 5);
+                const bulbCols = [0xff4a4a, 0x4aff6a, 0xffd54a, 0x4a9aff, 0xff8ad8];
+                const bodyCols = [0x7a5238, 0x8a3a34, 0x5a6478, 0x6a503e];
+                const smokeGeo = new THREE.SphereGeometry(0.8, 7, 6);
+                for (const f of [0.018, 0.05, 0.082, 0.114, 0.9, 0.935, 0.972]) {
+                    const sg = Math.floor(N * f);
+                    const c = centerline[sg], n = normals[sg];
+                    const side = (sg % 2) ? 1 : -1;
+                    const off = HALF_W + rand(26, 46);
+                    const x = c.x + n.x * off * side, z = c.z + n.z * off * side;
+                    const y = terrainY(x, z);
+                    if (y < 0.5) continue;
+                    const ry = Math.atan2(c.x - x, c.z - z);   // door faces the road
+                    const W2 = rand(7, 9), D2 = rand(7, 9), H2 = rand(4.2, 5.4);
+                    parts.push({ geo: bodyGeo, color: pick(bodyCols), matrix: mat4(x, y + H2 / 2, z, ry, W2, H2, D2) });
+                    parts.push({ geo: roofGeo, color: 0xeef4fc,
+                        matrix: mat4(x, y + H2 + 1.6, z, ry + Math.PI / 4, W2 * 0.95, 3.2, D2 * 0.95) });
+                    // glowing windows + door on the road-facing wall
+                    const fx2 = Math.sin(ry), fz2 = Math.cos(ry);      // toward road
+                    const px2 = Math.cos(ry), pz2 = -Math.sin(ry);     // along the wall
+                    for (const wx of [-W2 * 0.24, W2 * 0.24]) {
+                        glowParts.push({ geo: bodyGeo, color: 0xffd88a,
+                            matrix: mat4(x + px2 * wx + fx2 * (D2 / 2 + 0.12), y + H2 * 0.5,
+                                z + pz2 * wx + fz2 * (D2 / 2 + 0.12), ry, 1.5, 1.7, 0.12) });
+                    }
+                    parts.push({ geo: bodyGeo, color: 0x3a2c20,
+                        matrix: mat4(x + fx2 * (D2 / 2 + 0.1), y + 1.4, z + fz2 * (D2 / 2 + 0.1), ry, 1.7, 2.8, 0.14) });
+                    // light string along the front eave
+                    for (let L = 0; L < 8; L++) {
+                        const wx = -W2 * 0.46 + (L / 7) * W2 * 0.92;
+                        glowParts.push({ geo: bulbGeo, color: bulbCols[L % 5],
+                            matrix: mat4(x + px2 * wx + fx2 * (D2 / 2 + 0.35), y + H2 + 0.25,
+                                z + pz2 * wx + fz2 * (D2 / 2 + 0.35), 0, 1) });
+                    }
+                    // chimney + drifting smoke puffs
+                    const chx = x - px2 * W2 * 0.22, chz = z - pz2 * W2 * 0.22;
+                    parts.push({ geo: bodyGeo, color: 0x5a5a64,
+                        matrix: mat4(chx, y + H2 + 2.4, chz, ry, 1.3, 2.6, 1.3) });
+                    for (let s = 0; s < 3; s++) {
+                        const puff = new THREE.Mesh(smokeGeo, new THREE.MeshLambertMaterial({
+                            color: 0xd8dde6, transparent: true, opacity: 0.5, depthWrite: false }));
+                        world.add(puff);
+                        chimneySmoke.push({ mesh: puff, x: chx, z: chz, y0: y + H2 + 3.8, t: s / 3, ph: rand(0, 6) });
+                    }
+                }
+                world.add(new THREE.Mesh(bakeMerge(parts), new THREE.MeshLambertMaterial({ vertexColors: true })));
+                world.add(new THREE.Mesh(bakeMerge(glowParts), new THREE.MeshBasicMaterial({ vertexColors: true })));
+            }
+            // ---- ice patches (full-width zones from the theme)
+            const iceDecals = [];
+            if (THEME.iceZones) {
+                for (const z of THEME.iceZones) {
+                    const a = nearestSeg(z.a[0], z.a[1]), b = nearestSeg(z.b[0], z.b[1]);
+                    iceSegs.push({ a: Math.min(a, b), b: Math.max(a, b), side: 0 });
+                    iceDecals.push({ a: Math.min(a, b), b: Math.max(a, b), lat: 0, frac: 0.94 });
+                }
+            }
+            // ---- crosswind ridge: push toward whichever side the ground drops
+            if (THEME.wind) {
+                const a = nearestSeg(THEME.wind.a[0], THEME.wind.a[1]);
+                const b = nearestSeg(THEME.wind.b[0], THEME.wind.b[1]);
+                const mid = (Math.min(a, b) + Math.max(a, b)) >> 1;
+                const c = centerline[mid], n = normals[mid];
+                const sign = terrainY(c.x + n.x * 60, c.z + n.z * 60) <
+                             terrainY(c.x - n.x * 60, c.z - n.z * 60) ? 1 : -1;
+                windZone = { a: Math.min(a, b), b: Math.max(a, b), push: THEME.wind.push * sign };
+            }
+            // ---- THE SPLIT: crevasse median; measure both lanes, ice the shorter
+            if (THEME.split) {
+                const a0 = nearestSeg(THEME.split.a[0], THEME.split.a[1]);
+                const b0 = nearestSeg(THEME.split.b[0], THEME.split.b[1]);
+                const a = Math.min(a0, b0), b = Math.max(a0, b0);
+                splitZone = { a, b, w: THEME.split.w, inside: 1, gain: 0 };
+                const lat = laneLat();
+                let lenP = 0, lenN = 0;
+                for (let i = a; i < b; i++) {
+                    const c1 = centerline[i], n1 = normals[i], c2 = centerline[i + 1], n2 = normals[i + 1];
+                    lenP += Math.hypot((c2.x + n2.x * lat) - (c1.x + n1.x * lat), (c2.z + n2.z * lat) - (c1.z + n1.z * lat));
+                    lenN += Math.hypot((c2.x - n2.x * lat) - (c1.x - n1.x * lat), (c2.z - n2.z * lat) - (c1.z - n1.z * lat));
+                }
+                splitZone.inside = lenP < lenN ? 1 : -1;
+                splitZone.gain = Math.abs(lenP - lenN);
+                iceSegs.push({ a: a + 2, b: b - 2, side: splitZone.inside });
+                iceDecals.push({ a: a + 2, b: b - 2, lat: splitZone.inside * lat, frac: (WALL_LIMIT - splitZone.w) / HALF_W * 0.92 });
+                // crevasse median: glowing-cored ice ridge down the centerline,
+                // tapered at both mouths so it reads as rising from the road
+                const parts = [], glow = [];
+                const blockGeo = new THREE.BoxGeometry(1, 1, 1);
+                for (let i = a; i <= b; i += 3) {
+                    const c = centerline[i], t = tangents[i];
+                    const edge = Math.min(i - a, b - i);
+                    const hScale = edge < 8 ? 0.35 + 0.65 * (edge / 8) : 1;
+                    const ry = Math.atan2(t.x, t.z);
+                    parts.push({ geo: blockGeo, color: 0xbfe0f4,
+                        matrix: mat4(c.x, roadY(i, 0) + 1.1 * hScale, c.z, ry,
+                            3.4, 2.3 * hScale, 8.4, 0, rand(-0.06, 0.06)) });
+                    glow.push({ geo: blockGeo, color: 0x7ad6ff,
+                        matrix: mat4(c.x, roadY(i, 0) + 2.15 * hScale, c.z, ry, 1.4, 0.35, 8.0) });
+                }
+                world.add(new THREE.Mesh(bakeMerge(parts), new THREE.MeshLambertMaterial({ vertexColors: true })));
+                world.add(new THREE.Mesh(bakeMerge(glow), new THREE.MeshBasicMaterial({ vertexColors: true })));
+            }
+            // ---- shared icy-sheen decal over every ice zone
+            if (iceDecals.length) {
+                const icv = document.createElement('canvas'); icv.width = 64; icv.height = 64;
+                const ig = icv.getContext('2d');
+                ig.fillStyle = 'rgba(170,216,255,0.34)'; ig.fillRect(0, 0, 64, 64);
+                ig.strokeStyle = 'rgba(255,255,255,0.5)'; ig.lineWidth = 1.5;
+                for (let i = 0; i < 5; i++) {   // hairline cracks
+                    ig.beginPath();
+                    let x = Math.random() * 64, y = 0;
+                    ig.moveTo(x, y);
+                    while (y < 64) { x += (Math.random() - 0.5) * 18; y += 8 + Math.random() * 10; ig.lineTo(x, y); }
+                    ig.stroke();
+                }
+                const itex = new THREE.CanvasTexture(icv);
+                itex.wrapS = itex.wrapT = THREE.RepeatWrapping;
+                for (const d of iceDecals) {
+                    const mid = (d.a + d.b) >> 1;
+                    const m = buildDecalStrip(mid, Math.ceil((d.b - d.a) / 2), d.frac, itex, 0.12, d.lat);
+                    m.material.transparent = true;
+                    m.material.map.repeat.set(1, Math.max(1, Math.floor((d.b - d.a) / 10)));
+                }
+            }
+            // ---- ski-lift gondola: two pylons, a sagging cable, gliding cabins
+            if (THEME.gondola) {
+                const gA = THEME.gondola.a, gB = THEME.gondola.b;
+                const ya = terrainY(gA[0], gA[1]) + 26, yb = terrainY(gB[0], gB[1]) + 26;
+                const pylGeo = new THREE.BoxGeometry(1.6, 1, 1.6);
+                const pylMat = new THREE.MeshLambertMaterial({ color: 0x4a5668 });
+                for (const [px, pz, py] of [[gA[0], gA[1], ya], [gB[0], gB[1], yb]]) {
+                    const ph = py - terrainY(px, pz);
+                    const pyl = new THREE.Mesh(pylGeo, pylMat);
+                    pyl.scale.y = ph; pyl.position.set(px, py - ph / 2, pz);
+                    world.add(pyl);
+                    const arm = new THREE.Mesh(new THREE.BoxGeometry(6, 0.8, 1.2), pylMat);
+                    arm.position.set(px, py, pz); arm.lookAt(gB[0], yb, gB[1]);
+                    world.add(arm);
+                }
+                const span = Math.hypot(gB[0] - gA[0], gB[1] - gA[1]);
+                const cable = new THREE.Mesh(new THREE.CylinderGeometry(0.12, 0.12, span, 4),
+                    new THREE.MeshBasicMaterial({ color: 0x2a323e }));
+                cable.position.set((gA[0] + gB[0]) / 2, (ya + yb) / 2 - 4, (gA[1] + gB[1]) / 2);
+                cable.rotation.z = Math.PI / 2;
+                cable.lookAt(gB[0], yb, gB[1]); cable.rotateX(Math.PI / 2);
+                world.add(cable);
+                gondolaAnim = { ax: gA[0], ay: ya, az: gA[1], bx: gB[0], by: yb, bz: gB[1], cabins: [] };
+                const cabCols = [0xff5a6a, 0x3ad6ff, 0xffd54a];
+                for (let i = 0; i < 3; i++) {
+                    const cab = new THREE.Group();
+                    const body = new THREE.Mesh(new THREE.BoxGeometry(2.4, 2.2, 3.2),
+                        new THREE.MeshLambertMaterial({ color: cabCols[i] }));
+                    body.position.y = -2.2; cab.add(body);
+                    const win = new THREE.Mesh(new THREE.BoxGeometry(2.5, 0.9, 3.3),
+                        new THREE.MeshBasicMaterial({ color: 0xbfe8ff }));
+                    win.position.y = -1.9; cab.add(win);
+                    const hang = new THREE.Mesh(new THREE.BoxGeometry(0.22, 1.4, 0.22),
+                        new THREE.MeshLambertMaterial({ color: 0x2a323e }));
+                    hang.position.y = -0.7; cab.add(hang);
+                    world.add(cab);
+                    gondolaAnim.cabins.push({ mesh: cab, t: 0.18 + i * 0.32, dir: i % 2 ? 1 : -1 });
+                }
+            }
+        }
+
         function buildSky() {
             const geo = new THREE.SphereGeometry(2600, 32, 20);
             const mat = new THREE.ShaderMaterial({
@@ -2210,6 +2440,49 @@
             const cloudMesh = new THREE.Mesh(bakeMerge(parts), new THREE.MeshBasicMaterial({ vertexColors: true, fog: false }));
             world.add(cloudMesh);
             cloudSpin = cloudMesh;   // slow drift in animate()
+
+            // aurora borealis: tall additive curtains that shimmer and drift
+            auroraMats = [];
+            if (THEME.aurora) {
+                const acv = document.createElement('canvas'); acv.width = 128; acv.height = 64;
+                const ag = acv.getContext('2d');
+                const cols = ['rgba(90,255,170,', 'rgba(120,230,255,', 'rgba(190,140,255,'];
+                for (let i = 0; i < 22; i++) {
+                    const x = Math.random() * 128, w2 = 3 + Math.random() * 9;
+                    const grd = ag.createLinearGradient(0, 0, 0, 64);
+                    const cc = cols[i % 3];
+                    grd.addColorStop(0, cc + '0)');
+                    grd.addColorStop(0.35, cc + (0.18 + Math.random() * 0.22) + ')');
+                    grd.addColorStop(1, cc + '0)');
+                    ag.fillStyle = grd; ag.fillRect(x, 0, w2, 64);
+                }
+                const atex = new THREE.CanvasTexture(acv);
+                atex.wrapS = THREE.RepeatWrapping;
+                for (let i = 0; i < 3; i++) {
+                    const am = new THREE.MeshBasicMaterial({ map: atex, transparent: true,
+                        opacity: 0.55, depthWrite: false, fog: false, side: THREE.DoubleSide });
+                    const a = 1.2 + i * 1.5, d = 1500 + i * 160;
+                    const cur = new THREE.Mesh(new THREE.PlaneGeometry(1300, 300), am);
+                    cur.position.set(Math.cos(a) * d, 420 + i * 70, Math.sin(a) * d);
+                    cur.lookAt(0, 260, 0);
+                    cur.renderOrder = -8;
+                    world.add(cur);
+                    auroraMats.push(am);
+                }
+            }
+
+            // snowfall: a point cloud that follows the camera, recycled as it falls
+            snowPts = null;
+            if (THEME.snowfall) {
+                const sp2 = [];
+                for (let i = 0; i < 420; i++) sp2.push(rand(-130, 130), rand(-90, 130), rand(-130, 130));
+                const sg2 = new THREE.BufferGeometry();
+                sg2.setAttribute('position', new THREE.Float32BufferAttribute(sp2, 3));
+                snowPts = new THREE.Points(sg2, new THREE.PointsMaterial({
+                    color: 0xffffff, size: 1.5, transparent: true, opacity: 0.85, depthWrite: false }));
+                snowPts.userData.phase = Float32Array.from({ length: 420 }, () => rand(0, Math.PI * 2));
+                world.add(snowPts);
+            }
 
             // dusk themes get a starfield high in the dome
             if (THEME.stars) {
@@ -2778,6 +3051,33 @@
             function palmAt(x, z, sc) {
                 const y = terrainY(x, z);
                 if (y < 0) return;
+                if (THEME.foliage === 'pines') {
+                    // snow-dusted conifer: short trunk, 3 stacked cones, white cap
+                    const h = rand(7, 13) * sc;
+                    parts.push({ geo: trunkGeo, color: THEME.trunk,
+                        matrix: mat4(x, y + h * 0.18, z, 0, 1.1 * sc, h * 0.07, 1.1 * sc) });
+                    for (let l = 0; l < 3; l++) {
+                        const r = (3.6 - l * 0.9) * sc, cy = y + h * (0.3 + l * 0.26);
+                        parts.push({ geo: spireGeo, color: l % 2 ? THEME.leaf1 : THEME.leaf2,
+                            matrix: mat4(x, cy, z, rand(0, Math.PI * 2), r / 1.6, h * 0.09, r / 1.6) });
+                    }
+                    parts.push({ geo: spireGeo, color: 0xeef4fc,   // snow cap
+                        matrix: mat4(x, y + h * 0.96, z, 0, 0.9 * sc, h * 0.045, 0.9 * sc) });
+                    // some pines are strung with Christmas lights: a spiral of
+                    // tiny glowing baubles following the cone taper
+                    if (THEME.xmasLights && rng() < 0.45) {
+                        const bulbGeo = new THREE.SphereGeometry(0.17, 6, 5);
+                        const cols = [0xff4a4a, 0x4aff6a, 0xffd54a, 0x4a9aff, 0xff8ad8];
+                        for (let L = 0; L < 10; L++) {
+                            const f = 0.28 + (L / 10) * 0.62;
+                            const rr = (3.6 - f * 3.0) * sc * 0.62 + 0.3;
+                            const th = L * 2.0 + x;   // x in the phase varies trees
+                            basicParts.push({ geo: bulbGeo, color: cols[L % 5],
+                                matrix: mat4(x + Math.sin(th) * rr, y + h * f, z + Math.cos(th) * rr, 0, 1) });
+                        }
+                    }
+                    return;
+                }
                 if (THEME.foliage === 'forest') {
                     // big broadleaf: tall trunk + 3 stacked canopy blobs.
                     // Occasional glowing mushroom ring at the base (basicParts
@@ -3471,9 +3771,31 @@
             k.lateral = Math.abs(k.lateralSigned);
             k.groundY = roadY(best, clamp(k.lateralSigned, -HALF_W, HALF_W));
         }
-        function clampToTrack(k) {
+        function clampToTrack(k, dt) {
             const c = centerline[k.seg], n = normals[k.seg];
             let off = (k.pos.x - c.x) * n.x + (k.pos.z - c.z) * n.z;
+            // Glacier Pass zones (dt only passed from the kart's OWN sim —
+            // remote karts are pose-authoritative, their owner applies these)
+            if (dt != null) {
+                k.onIce = false;
+                for (const z of iceSegs) {
+                    if (k.seg >= z.a && k.seg <= z.b && (!z.side || off * z.side > 0)) { k.onIce = true; break; }
+                }
+                if (windZone && k.seg >= windZone.a && k.seg <= windZone.b && k.grounded) {
+                    k.pos.x += n.x * windZone.push * dt;
+                    k.pos.z += n.z * windZone.push * dt;
+                    off += windZone.push * dt;
+                }
+                if (splitZone && k.seg >= splitZone.a && k.seg <= splitZone.b
+                    && off > -splitZone.w && off < splitZone.w) {
+                    // the crevasse median is a wall: shove out to the nearer lane
+                    const target = off >= 0 ? splitZone.w : -splitZone.w;
+                    k.pos.x += n.x * (target - off);
+                    k.pos.z += n.z * (target - off);
+                    k.speed *= 0.985;
+                    off = target;
+                }
+            }
             if (off > WALL_LIMIT) {
                 const d = off - WALL_LIMIT;
                 k.pos.x -= n.x * d; k.pos.z -= n.z * d;
@@ -3577,6 +3899,7 @@
                 turn = lerp(turn, driftTurn, k.driftRamp);
             }
             if (!k.grounded) turn *= 0.3;
+            if (k.onIce) turn *= 0.55;   // glacier ice: less than half the steering bite
             if (k.gooT > 0) turn += Math.sin(raceClock * 14) * 0.5;   // slick wobble, still steerable
             k.theta += turn * dt;
 
@@ -3588,7 +3911,13 @@
             if (k.hopT > 0) k.hopT -= dt;
 
             updateProgress(k);
-            clampToTrack(k);
+            clampToTrack(k, dt);
+
+            // glacier ice: skating spray while sliding across a patch
+            if (k.onIce && k.grounded && k.speed > 20 && simTickNo % 4 === 0) {
+                emitSpark(new THREE.Vector3(k.pos.x + vrand(-1.4, 1.4), k.y + 0.3, k.pos.z + vrand(-1.4, 1.4)),
+                    0xdcecff, 5, 3, { life: 0.35, grav: 10, size: vrand(0.7, 1.2) });
+            }
 
             // creek ford: blast a spray wake while crossing the water film
             if (fordA >= 0 && k.seg >= fordA && k.seg <= fordB && k.grounded
@@ -4088,6 +4417,15 @@
             const look = Math.floor(10 + k.speed * 0.22);
             const ti = (k.seg + look) % N;
             let lane = raceLine[ti] + ai.laneBias * 0.45 + Math.sin(raceClock * 0.5 + ai.phase) * 1.2 + ai.errOff;
+
+            // Glacier split: each AI has a lane personality — daring ones
+            // (positive laneBias parity) take the icy shortcut, the rest go
+            // around. Without this the racing line sends ALL of them inside.
+            if (splitZone && ti >= splitZone.a - 25 && ti <= splitZone.b) {
+                const daring = ai.laneBias >= 0;   // seeded per-racer → roughly half each way
+                const laneC = splitZone.inside * (splitZone.w + WALL_LIMIT) / 2;
+                lane = daring ? laneC : -laneC;
+            }
 
             // avoid karts directly ahead — commit to a side
             for (const o of karts) {
@@ -4808,6 +5146,56 @@
             ['D4','G4','B4'], ['Cs4','E4','A4'], ['D4','Fs4','B4'], ['D4','Fs4','A4'],
         ];
 
+        // ---- Permafrost (Glacier Pass): Bm | G | D | A   Em | G | Bm | F#
+        //      G | A | Bm | Bm — crystalline 8ths, harmonic-minor F# bite.
+        const LEAD_G = [
+            'B4',0,'D5',0, 'Fs5',0,'D5',0, 'B4',0,'Fs5',0, 'D5',0,'B4',0,
+            'B4',0,'D5',0, 'G5',0,'D5',0, 'B4',0,'G5',0, 'D5',0,'B4',0,
+            'A4',0,'D5',0, 'Fs5',0,'A5',0, 'Fs5',0,'D5',0, 'A4',0,'D5',0,
+            'Cs5',0,'E5',0, 'A5',0,'E5',0, 'Cs5',0,'E5',0, 'Fs5',0,'A5',0,
+            'G5',0,'E5',0, 'B4',0,'E5',0, 'G5',0,'B5',0, 'G5',0,'E5',0,
+            'D5',0,'B4',0, 'G4',0,'B4',0, 'D5',0,'G5',0, 'D5',0,'B4',0,
+            'Fs5',0,'D5',0, 'B4',0,'D5',0, 'Fs5',0,'B5',0, 'Fs5',0,'D5',0,
+            'Fs5',0,'Cs5',0, 'As4',0,'Cs5',0, 'Fs5',0,'As5',0, 'Fs5',0,'Cs5',0,
+            'G5',0,0,'B5', 0,'D6',0,0, 'B5',0,'G5',0, 'D5',0,0,0,
+            'A5',0,0,'Cs6', 0,'E6',0,0, 'Cs6',0,'A5',0, 'E5',0,0,0,
+            'Fs5',0,'B5',0, 'D6',0,'B5',0, 'Fs5',0,'D5',0, 'B4',0,'D5',0,
+            'B5',0,'A5',0, 'Fs5',0,'E5',0, 'D5',0,'Cs5',0, 'B4',0,0,0,
+        ];
+        const BASS_G = [
+            'B2',0,'B2',0, 'B3',0,'B2',0, 'B2',0,'B2',0, 'Fs3',0,'B2',0,
+            'G2',0,'G2',0, 'G3',0,'G2',0, 'G2',0,'G2',0, 'D3',0,'G2',0,
+            'D2',0,'D2',0, 'D3',0,'D2',0, 'D2',0,'D2',0, 'A2',0,'D2',0,
+            'A2',0,'A2',0, 'A3',0,'A2',0, 'A2',0,'A2',0, 'E3',0,'A2',0,
+            'E2',0,'E2',0, 'E3',0,'E2',0, 'E2',0,'E2',0, 'B2',0,'E2',0,
+            'G2',0,'G2',0, 'G3',0,'G2',0, 'G2',0,'G2',0, 'D3',0,'G2',0,
+            'B2',0,'B2',0, 'B3',0,'B2',0, 'B2',0,'B2',0, 'Fs3',0,'B2',0,
+            'Fs2',0,'Fs2',0, 'Fs3',0,'Fs2',0, 'Fs2',0,'Fs2',0, 'Cs3',0,'Fs2',0,
+            'G2',0,'G2',0, 'G3',0,'G2',0, 'G2',0,'G2',0, 'D3',0,'G2',0,
+            'A2',0,'A2',0, 'A3',0,'A2',0, 'A2',0,'A2',0, 'E3',0,'A2',0,
+            'B2',0,'B2',0, 'B3',0,'B2',0, 'B2',0,'B2',0, 'Fs3',0,'B2',0,
+            'B2',0,'B2',0, 'A2',0,'B2',0, 'B2',0,'Fs2',0, 'B2',0,'B2',0,
+        ];
+        const ARP_G = [
+            0,0,'Fs4',0, 0,0,'B4',0, 0,0,'Fs4',0, 0,0,'B4',0,
+            0,0,'G4',0, 0,0,'D5',0, 0,0,'G4',0, 0,0,'D5',0,
+            0,0,'A4',0, 0,0,'D5',0, 0,0,'A4',0, 0,0,'D5',0,
+            0,0,'A4',0, 0,0,'E5',0, 0,0,'A4',0, 0,0,'E5',0,
+            0,0,'G4',0, 0,0,'B4',0, 0,0,'G4',0, 0,0,'B4',0,
+            0,0,'G4',0, 0,0,'D5',0, 0,0,'G4',0, 0,0,'D5',0,
+            0,0,'Fs4',0, 0,0,'B4',0, 0,0,'Fs4',0, 0,0,'B4',0,
+            0,0,'Cs5',0, 0,0,'Fs4',0, 0,0,'Cs5',0, 0,0,'Fs4',0,
+            0,0,'B4',0, 0,0,'G4',0, 0,0,'B4',0, 0,0,'G4',0,
+            0,0,'Cs5',0, 0,0,'A4',0, 0,0,'Cs5',0, 0,0,'A4',0,
+            0,0,'D5',0, 0,0,'B4',0, 0,0,'D5',0, 0,0,'B4',0,
+            0,0,'Fs4',0, 0,0,'D5',0, 0,0,'Fs4',0, 0,0,'B4',0,
+        ];
+        const STABS_G = [
+            ['B3','D4','Fs4'], ['G3','B3','D4'], ['D4','Fs4','A4'], ['A3','Cs4','E4'],
+            ['E4','G4','B4'], ['G3','B3','D4'], ['B3','D4','Fs4'], ['Fs3','As3','Cs4'],
+            ['G3','B3','D4'], ['A3','Cs4','E4'], ['B3','D4','Fs4'], ['B3','D4','Fs4'],
+        ];
+
         const SONGS = {
             coral: {
                 stepMs: 99, barLen: 16, lead: LEAD, bass: BASS, arp: ARP, stabs: STABS,
@@ -4850,6 +5238,22 @@
                     if (b === 0) aTone(72, 'sine', 0.16, 0.11, musicGain);   // soft floor thump
                     if (b === 4 || b === 8) aNoise(0.02, 0.028, true, musicGain);   // brush pah-pah
                     if (sec === 2 && b === 0) aTone(2349, 'sine', 0.5, 0.016, musicGain);   // triangle ting
+                },
+            },
+            glacier: {
+                stepMs: 96, barLen: 16, lead: LEAD_G, bass: BASS_G, arp: ARP_G, stabs: STABS_G,
+                leadWave: ['square', 'triangle', 'square'], leadDur: 0.13, leadVol: 0.07,
+                subMul: 2, subDur: 0.14, subVol: 0.025,                      // glassy octave glint
+                bassWave: 'triangle', bassDur: 0.12, bassVol: 0.2,
+                arpWave: 'sine', arpDur: 0.09, arpVol: 0.05,                 // icicle bells
+                stabSteps: [0, 8], stabWave: 'triangle', stabDur: [0.2, 0.12], stabVol: 0.04,
+                drums: (b, sec) => {
+                    if (b === 0 || b === 8) aKick(musicGain);
+                    if (sec >= 1 && b === 6) aKick(musicGain);
+                    if (b === 4 || b === 12) aNoise(0.1, 0.14, false, musicGain);
+                    if (b % 2 === 0) aNoise(0.025, 0.045, true, musicGain);  // sleigh-ish tick
+                    if (b === 4 || b === 12) aNoise(0.05, 0.05, true, musicGain);
+                    if (sec === 2 && b % 2 === 1) aNoise(0.02, 0.03, true, musicGain);
                 },
             },
         };
@@ -5442,6 +5846,39 @@
             if (craterLight) craterLight.intensity = 1.15 + Math.sin(clock.elapsedTime * 2.1) * 0.3;
             if (lavaGlow) lavaGlow.material.opacity = 0.28 + Math.sin(clock.elapsedTime * 2.1) * 0.1;
             for (const wm of waterfallMats) wm.map.offset.y -= dt * 0.6;   // falling water / drifting ripples
+            for (let i = 0; i < auroraMats.length; i++) {   // shimmering curtains
+                auroraMats[i].map.offset.x += dt * (0.008 + i * 0.005);
+                auroraMats[i].opacity = 0.45 + Math.sin(clock.elapsedTime * 0.5 + i * 2.1) * 0.18;
+            }
+            if (snowPts) {
+                snowPts.position.copy(camera.position);   // the flurry travels with the camera
+                const pa3 = snowPts.geometry.attributes.position;
+                const ph3 = snowPts.userData.phase;
+                for (let i = 0; i < ph3.length; i++) {
+                    let y = pa3.array[i * 3 + 1] - (11 + (ph3[i] % 1) * 8) * dt;
+                    if (y < -90) y += 220;
+                    pa3.array[i * 3 + 1] = y;
+                    pa3.array[i * 3] += Math.sin(clock.elapsedTime * 0.8 + ph3[i]) * dt * 3;
+                }
+                pa3.needsUpdate = true;
+            }
+            for (const cs of chimneySmoke) {
+                cs.t += dt * 0.22; if (cs.t > 1) cs.t -= 1;
+                cs.mesh.position.set(cs.x + Math.sin(cs.t * 4 + cs.ph) * 0.9, cs.y0 + cs.t * 8.5, cs.z);
+                cs.mesh.scale.setScalar(0.5 + cs.t * 1.4);
+                cs.mesh.material.opacity = 0.5 * (1 - cs.t);
+            }
+            if (gondolaAnim) {
+                for (const cb of gondolaAnim.cabins) {
+                    cb.t += cb.dir * dt * 0.018;
+                    if (cb.t > 0.97 || cb.t < 0.03) cb.dir *= -1;
+                    const t = cb.t;
+                    cb.mesh.position.set(
+                        lerp(gondolaAnim.ax, gondolaAnim.bx, t),
+                        lerp(gondolaAnim.ay, gondolaAnim.by, t) - 4 - Math.sin(Math.PI * t) * 5,
+                        lerp(gondolaAnim.az, gondolaAnim.bz, t));
+                }
+            }
             if (foamMat) foamMat.opacity = 0.35 + Math.abs(Math.sin(clock.elapsedTime * 2.6)) * 0.35;   // water glints
             // ember column rising from the lava gap (telegraphs it over the crest)
             if (gapA >= 0 && Math.random() < 0.5) {
