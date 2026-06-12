@@ -758,7 +758,7 @@
                     [120, 210, 19], [40, 182, 23], [16, 242, 28],
                     [-85, 252, 33], [-180, 228, 34],
                     [-242, 148, 29], [-264, 40, 22], [-242, -70, 15],
-                    [-160, -172, 5], [-75, -228, 2], [-18, -182, 1],
+                    [-160, -172, 5], [-85, -222, 2],
                 ]),
                 tunnelIn: null, tunnelOut: null,
                 jumpAt: [-200 * SC, -125 * SC],
@@ -779,11 +779,11 @@
                     aurora: true, snowfall: true, village: true, xmasLights: true,
                     iceZones: [
                         { a: [258 * SC, -95 * SC], b: [235 * SC, 95 * SC] },     // frozen lake, full width
-                        { a: [-75 * SC, -228 * SC], b: [-30 * SC, -190 * SC] },  // final chicane patch
+                        { a: [-135 * SC, -198 * SC], b: [-62 * SC, -232 * SC] },  // final sweep patch
                     ],
                     wind: { a: [-85 * SC, 252 * SC], b: [-180 * SC, 228 * SC], push: 8 },
                     split: { a: [-242 * SC, 148 * SC], b: [-242 * SC, -70 * SC], w: 3 },  // inside lane auto-iced
-                    gondola: { a: [60 * SC, -200 * SC], b: [262 * SC, -40 * SC] },
+                    gondola: { a: [60 * SC, -200 * SC], b: [318 * SC, -40 * SC] },   // b stands out on the frozen lake, clear of the road
                 },
             },
         ];
@@ -933,7 +933,7 @@
         // ⚠ APP_VER: increment ONCE PER PR (CLAUDE.md rule). Shown on the
         // title screen and folded into NET_VER, so any two different builds
         // refuse to share a room.
-        const APP_VER = 15;
+        const APP_VER = 16;
         function hash32(str) {
             let h = 2166136261 >>> 0;
             for (let i = 0; i < str.length; i++) { h ^= str.charCodeAt(i); h = Math.imul(h, 16777619); }
@@ -2222,6 +2222,13 @@
                     const x = c.x + n.x * off * side, z = c.z + n.z * off * side;
                     const y = terrainY(x, z);
                     if (y < 0.5) continue;
+                    // the tail doubles back near the start straight: a cabin
+                    // offset from ITS segment can sit on a DIFFERENT road
+                    // ("a house in the middle of the track") — check clearance
+                    // against the nearest road anywhere
+                    const rs = nearestSeg(x, z);
+                    const rc = centerline[rs];
+                    if (Math.hypot(x - rc.x, z - rc.z) < HALF_W + 13) continue;
                     const ry = Math.atan2(c.x - x, c.z - z);   // door faces the road
                     const W2 = rand(7, 9), D2 = rand(7, 9), H2 = rand(4.2, 5.4);
                     parts.push({ geo: bodyGeo, color: pick(bodyCols), matrix: mat4(x, y + H2 / 2, z, ry, W2, H2, D2) });
@@ -3291,6 +3298,14 @@
                 { seg: c2, lat: 5 },                                 // tunnel approach
                 { seg: d2, lat: -5 }, { seg: e2, lat: 0 },           // descent chain into the jump
             ];
+            if (splitZone) {
+                // the icy shortcut's REWARD: a chain pair only reachable from
+                // the inside lane (the geometric gain alone read as pointless)
+                const lat = splitZone.inside * (splitZone.w + WALL_LIMIT) / 2;
+                const span = splitZone.b - splitZone.a;
+                defs.push({ seg: splitZone.a + Math.floor(span * 0.3), lat });
+                defs.push({ seg: splitZone.a + Math.floor(span * 0.74), lat });
+            }
             for (const p of defs) {
                 buildDecalStrip(p.seg, 3, PAD_FRAC, tex, 0.12, p.lat);
                 boostPads.push(p);
@@ -3899,7 +3914,7 @@
                 turn = lerp(turn, driftTurn, k.driftRamp);
             }
             if (!k.grounded) turn *= 0.3;
-            if (k.onIce) turn *= 0.55;   // glacier ice: less than half the steering bite
+            if (k.onIce) turn *= 0.42;   // glacier ice: barely a third of the steering bite
             if (k.gooT > 0) turn += Math.sin(raceClock * 14) * 0.5;   // slick wobble, still steerable
             k.theta += turn * dt;
 
