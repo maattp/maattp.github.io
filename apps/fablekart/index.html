@@ -882,7 +882,7 @@
         // ⚠ APP_VER: increment ONCE PER PR (CLAUDE.md rule). Shown on the
         // title screen and folded into NET_VER, so any two different builds
         // refuse to share a room.
-        const APP_VER = 13;
+        const APP_VER = 14;
         function hash32(str) {
             let h = 2166136261 >>> 0;
             for (let i = 0; i < str.length; i++) { h ^= str.charCodeAt(i); h = Math.imul(h, 16777619); }
@@ -2621,7 +2621,10 @@
             tvRT.texture.minFilter = THREE.LinearFilter;
 
             const g = new THREE.Group();
-            g.position.set(c.x, baseY + SHELL_H + 4 + H9 / 2, c.z);
+            // mounted proud of the arch FACE (the rounded shell crest used to
+            // hide the panel's lower third from the low chase cam): pushed
+            // toward the approach and dropped to just above the portal mouth
+            g.position.set(c.x + dir.x * 12, baseY + 22, c.z + dir.z * 12);
             g.rotation.y = Math.atan2(dir.x, dir.z);
             g.rotateX(-0.08);   // slight down-tilt toward the approach
 
@@ -2638,9 +2641,11 @@
             g.add(tvLive);
             const postMat = new THREE.MeshLambertMaterial({ color: 0x2a3242 });
             for (const sx of [-(W / 2 - 2.5), W / 2 - 2.5]) {
-                const post = new THREE.Mesh(new THREE.BoxGeometry(1.5, 9, 1.5), postMat);
-                post.position.set(sx, -(H9 / 2 + 3.5), 0);   // sinks into the headland rock
-                g.add(post);
+                // struts angle back-and-down from the frame into the shell crest
+                const strut = new THREE.Mesh(new THREE.BoxGeometry(1.3, 1.3, 14), postMat);
+                strut.position.set(sx, -2.2, -6.5);
+                strut.rotation.x = 0.3;
+                g.add(strut);
             }
             world.add(g);
 
