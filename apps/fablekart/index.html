@@ -221,6 +221,19 @@
 
         .section-label { font-size: 10px; letter-spacing: 2px; text-transform: uppercase; opacity: 0.6; font-weight: 700; margin: 4px 0 8px; }
         .cards { display: grid; grid-template-columns: repeat(4, minmax(76px, 96px)); gap: 8px; justify-content: center; pointer-events: auto; }
+        /* iPhone-Home-Screen-style paged track selector: 4 maps per page,
+           horizontal scroll-snap, swipe between pages, dots below */
+        .trackpager { display: flex; overflow-x: auto; scroll-snap-type: x mandatory;
+            -webkit-overflow-scrolling: touch; width: min(360px, 100%); margin: 0 auto;
+            scrollbar-width: none; pointer-events: auto; }
+        .trackpager::-webkit-scrollbar { display: none; }
+        .tpage { flex: 0 0 100%; scroll-snap-align: center; display: grid;
+            grid-template-columns: repeat(4, 1fr); gap: 8px; padding: 0 2px; }
+        .tdots { display: flex; gap: 7px; justify-content: center; margin-top: 7px; pointer-events: auto; }
+        .tdots:empty, .tdots.solo { display: none; }
+        .tdot { width: 7px; height: 7px; border-radius: 50%; background: rgba(255,255,255,0.28);
+            transition: background 0.15s, transform 0.15s; }
+        .tdot.on { background: #ffd54a; transform: scale(1.25); }
         .card { padding: 8px 4px; border-radius: 12px; border: 2px solid rgba(255,255,255,0.12);
             background: rgba(255,255,255,0.05); opacity: 0.55; transition: all 0.15s; }
         .card.active { opacity: 1; border-color: #fff; background: rgba(255,255,255,0.12); }
@@ -495,7 +508,8 @@
                 <div class="section-label">Choose your driver</div>
                 <div class="cards" id="charPick"></div>
                 <div class="section-label">Track</div>
-                <div class="cards" id="trackPick"></div>
+                <div class="trackpager" id="trackPick"></div>
+                <div class="tdots" id="trackDots"></div>
             </div>
         </div>
     </div>
@@ -508,7 +522,8 @@
                 <div id="roomCode">·····</div>
                 <div class="lobby-hint">Friends: open Fable Kart → enter this code → JOIN · tap code to copy</div>
                 <div class="section-label">Track</div>
-                <div class="cards" id="lobbyTracks"></div>
+                <div class="trackpager" id="lobbyTracks"></div>
+                <div class="tdots" id="lobbyDots"></div>
                 <button class="btn" id="readyBtn">READY!</button>
                 <button class="btn secondary" id="lobbyStartBtn">START RACE</button>
                 <div class="btn-row"><button class="btn secondary" id="leaveBtn">Leave room</button></div>
@@ -612,7 +627,7 @@
             lobbyScreen: $('lobbyScreen'), roomCode: $('roomCode'), lobbyList: $('lobbyList'),
             lobbyChars: $('lobbyChars'), readyBtn: $('readyBtn'), lobbyStartBtn: $('lobbyStartBtn'),
             leaveBtn: $('leaveBtn'), lobbyMsg: $('lobbyMsg'), netInd: $('netInd'),
-            trackPick: $('trackPick'), lobbyTracks: $('lobbyTracks'), raceStandings: $('raceStandings'),
+            trackPick: $('trackPick'), lobbyTracks: $('lobbyTracks'), trackDots: $('trackDots'), lobbyDots: $('lobbyDots'), raceStandings: $('raceStandings'),
             settingsBtn: $('settingsBtn'), settingsPane: $('settingsPane'),
             settingsBackdrop: $('settingsBackdrop'), settingsClose: $('settingsClose'),
             steerDirSeg: $('steerDirSeg'), sensSlider: $('sensSlider'), diffSeg: $('diffSeg'), mouseSteerSeg: $('mouseSteerSeg'),
@@ -803,6 +818,44 @@
                     gondola: { a: [60 * SC, -200 * SC], b: [318 * SC, -40 * SC] },   // b stands out on the frozen lake, clear of the road
                 },
             },
+            {
+                id: 'city', name: 'Neon City', tagline: '🌆 Neon City',
+                // midnight downtown — skyline of tall lit-window towers, neon
+                // signs, and a cable-stayed BRIDGE arcing over a river (carved
+                // into the terrain so the water runs under it). Headlights on.
+                // Mostly flat city blocks with the bridge as the one big climb.
+                ctrl: scaled([
+                    [0, -250, 0], [150, -246, 0], [248, -198, 1], [270, -92, 1],
+                    [258, 30, 4], [250, 110, 9], [214, 168, 9], [150, 196, 4],
+                    [40, 210, 0], [-80, 205, 0], [-185, 170, 1], [-250, 82, 1],
+                    [-236, -12, 0], [-150, -46, 0], [-216, -126, 0], [-250, -206, 0],
+                    [-150, -210, 0], [-58, -214, 0],
+                ]),
+                tunnelIn: null, tunnelOut: null,
+                jumpAt: [150 * SC, 196 * SC],
+                preview: 'linear-gradient(180deg,#0a0e22,#ff4dd8)',
+                theme: {
+                    skyTop: 0x05070f, skyMid: 0x141a38, skyBot: 0x3a2a5a,
+                    fog: 0x141a30, fogNear: 240, fogFar: 880,
+                    cloud: 0x2a2f4a, sun: 0xff6ad0, sunPos: [-460, 360, 420], stars: true,
+                    dust: 0x3a3f4e, headlights: true,
+                    hemiSky: 0x3a3f6a, hemiGround: 0x14161f, hemiInt: 0.8,
+                    dirColor: 0x9fb0ff, dirInt: 0.7, dirPos: [-200, 300, 200],
+                    waterTex: '#0e2236', deep: 0x060c18,
+                    grass1: 0x23252e, grass2: 0x2c2f3a, sand: 0x333640, rock: 0x3a3d49,
+                    road: '#23252e', lane: '#ffe08a', edge: '#3a3d49',
+                    foliage: 'city', trunk: 0x2a2d36, leaf1: 0x2f3340, leaf2: 0x363a48,
+                    shrubs: [0x2a2d36, 0x303440, 0x262932],
+                    rocks: [0x333640, 0x3a3d49, 0x2c2f38],
+                    beach: false, embers: 0,
+                    city: true,
+                    // river = an inlet from the sea reaching in to the bridge,
+                    // crossing UNDER the road (carved below the waterline so the
+                    // harbor plane fills it); the bridge deck spans the mouth
+                    river: { a: [150 * SC, 196 * SC], b: [320 * SC, 470 * SC], width: 60 * SC },
+                    bridge: { at: [196 * SC, 184 * SC] },
+                },
+            },
         ];
         // per-load track state (set by loadTrack)
         let currentTrackIdx = 0;
@@ -958,7 +1011,7 @@
         // ⚠ APP_VER: increment ONCE PER PR (CLAUDE.md rule). Shown on the
         // title screen and folded into NET_VER, so any two different builds
         // refuse to share a room.
-        const APP_VER = 25;
+        const APP_VER = 26;
         function hash32(str) {
             let h = 2166136261 >>> 0;
             for (let i = 0; i < str.length; i++) { h ^= str.charCodeAt(i); h = Math.imul(h, 16777619); }
@@ -1285,17 +1338,9 @@
                 });
                 dom.lobbyChars.appendChild(card);
             });
-            dom.lobbyTracks.innerHTML = '';
             dom.lobbyTracks.classList.toggle('dim', !net.isHost);
-            TRACKS.forEach((tr, i) => {
-                const card = document.createElement('div');
-                card.className = 'card track-card' + (i === net.track ? ' active' : '');
-                card.innerHTML = '<div class="tprev" style="background:' + tr.preview + '"></div>' +
-                    '<div class="cname">' + tr.name + '</div>';
-                card.addEventListener('click', () => {
-                    if (net.isHost && net.ws && net.connected) net.ws.send(JSON.stringify({ t: 'track', track: i }));
-                });
-                dom.lobbyTracks.appendChild(card);
+            renderTrackPager(dom.lobbyTracks, dom.lobbyDots, net.track, (i) => {
+                if (net.isHost && net.ws && net.connected) net.ws.send(JSON.stringify({ t: 'track', track: i }));
             });
             dom.readyBtn.style.display = net.isHost ? 'none' : '';
             dom.readyBtn.textContent = net.myReady ? '✓ READY' : 'READY!';
@@ -1903,6 +1948,17 @@
                 h += Math.exp(-((d - cr.r) * (d - cr.r)) / (2 * 30 * 30)) * cr.h;
                 if (d < cr.r - 10) h = lerp(cr.floor, h, smoothstep(cr.r - 52, cr.r - 10, d));
             }
+            const rv = THEME.river;
+            if (rv) {
+                // carve a river channel below the waterline so the harbor plane
+                // shows through; the bridge deck (road) spans it on its hump
+                const ax = rv.a[0], az = rv.a[1], bx = rv.b[0], bz = rv.b[1];
+                const dx = bx - ax, dz = bz - az, L2 = dx * dx + dz * dz;
+                const t = clamp(((x - ax) * dx + (z - az) * dz) / (L2 || 1), 0, 1);
+                const px = ax + dx * t, pz = az + dz * t;
+                const dist = Math.hypot(x - px, z - pz);
+                if (dist < rv.width) h = lerp(-7, h, smoothstep(rv.width * 0.55, rv.width, dist));
+            }
             return h;
         }
         function terrainY(x, z) {
@@ -2088,6 +2144,7 @@
             waterfallMats = []; fordA = -1; fordB = -1;
             iceSegs = []; windZone = null; splitZone = null; gondolaAnim = null;
             buildGlacierZones();
+            if (THEME.city) buildCity();
 
             // ---- THE ELDER TREE: a colossal glowing tree inside the summit
             // horseshoe — trunk, root flare, glowing hollows, overhanging
@@ -2238,6 +2295,134 @@
         // Glacier Pass zone resolution + visuals: ice patches, crosswind
         // ridge, the crevasse SPLIT (which lane is the shortcut is MEASURED —
         // the inside of the arc is genuinely shorter), and the gondola.
+        // Neon City: skyline of lit-window towers, neon signs, a river plane,
+        // and a cable-stayed bridge over it. All build-time, seeded.
+        function buildCity() {
+            // ---- shared lit-window facade texture (unlit so windows glow at night)
+            const wcv = document.createElement('canvas'); wcv.width = 64; wcv.height = 64;
+            const wg = wcv.getContext('2d');
+            wg.fillStyle = '#0a0c16'; wg.fillRect(0, 0, 64, 64);
+            const lit = ['#ffd88a', '#ffe9b0', '#9fd0ff', '#bfe8ff', '#ff8ad8'];
+            for (let gy = 4; gy < 64; gy += 10) for (let gx = 5; gx < 64; gx += 9) {
+                if (rng() < 0.42) { wg.fillStyle = '#10131f'; }   // dark window
+                else { wg.fillStyle = lit[Math.floor(rng() * lit.length)]; }
+                wg.fillRect(gx, gy, 5, 6);
+            }
+            const winTex = new THREE.CanvasTexture(wcv);
+            winTex.wrapS = winTex.wrapT = THREE.RepeatWrapping;
+            const winMat = new THREE.MeshBasicMaterial({ map: winTex });
+            const roofMat = new THREE.MeshLambertMaterial({ color: 0x14161f });
+            const boxGeo = new THREE.BoxGeometry(1, 1, 1);
+
+            const addTower = (x, z, w, d, h) => {
+                const y = Math.max(terrainY(x, z), 0);
+                const tex = winTex.clone(); tex.needsUpdate = true;
+                tex.repeat.set(Math.max(2, Math.round(w / 7)), Math.max(3, Math.round(h / 11)));
+                const mat = new THREE.MeshBasicMaterial({ map: tex });
+                const b = new THREE.Mesh(boxGeo, mat);
+                b.scale.set(w, h, d); b.position.set(x, y + h / 2, z);
+                world.add(b);
+                const roof = new THREE.Mesh(boxGeo, roofMat);
+                roof.scale.set(w * 1.04, 1.2, d * 1.04); roof.position.set(x, y + h + 0.4, z);
+                world.add(roof);
+                // occasional rooftop neon beacon
+                if (rng() < 0.5) {
+                    const be = new THREE.Mesh(new THREE.SphereGeometry(0.9, 8, 6),
+                        new THREE.MeshBasicMaterial({ color: pick([0xff3bd0, 0x3bf0ff, 0xffe27a]) }));
+                    be.position.set(x, y + h + 1.6, z); world.add(be);
+                }
+            };
+            // ring the circuit with towers, set well back from the road, denser
+            // than scatter; skip the river span so nothing floats on the water
+            const rv = THEME.river;
+            const onRiver = (x, z) => {
+                if (!rv) return false;
+                const dx = rv.b[0]-rv.a[0], dz = rv.b[1]-rv.a[1], L2 = dx*dx+dz*dz;
+                const t = clamp(((x-rv.a[0])*dx+(z-rv.a[1])*dz)/(L2||1), 0, 1);
+                return Math.hypot(x-(rv.a[0]+dx*t), z-(rv.a[1]+dz*t)) < rv.width + 16;
+            };
+            for (let i = 0; i < N; i += 7) {
+                for (const side of [1, -1]) {
+                    if (rng() < 0.25) continue;
+                    const c = centerline[i], n = normals[i];
+                    const off = HALF_W + rand(20, 70);
+                    const x = c.x + n.x * off * side, z = c.z + n.z * off * side;
+                    if (onRiver(x, z) || terrainY(x, z) < 0) continue;
+                    addTower(x, z, rand(12, 22), rand(12, 22), rand(26, 92));
+                    // a few neon signs facing the road on near towers
+                    if (rng() < 0.22) {
+                        const sgn = new THREE.Mesh(new THREE.PlaneGeometry(rand(5, 9), rand(2, 4)),
+                            new THREE.MeshBasicMaterial({ color: pick([0xff3bd0, 0x3bf0ff, 0xffe27a, 0x7aff8a]),
+                                transparent: true, opacity: 0.85, side: THREE.DoubleSide }));
+                        sgn.position.set(c.x + n.x * (HALF_W + 16) * side, terrainY(x, z) + rand(8, 24), c.z + n.z * (HALF_W + 16) * side);
+                        sgn.lookAt(c.x, sgn.position.y, c.z); world.add(sgn);
+                    }
+                }
+            }
+
+            // ---- river plane + the bridge over it ----
+            if (rv) {
+                const mx = (rv.a[0] + rv.b[0]) / 2, mz = (rv.a[1] + rv.b[1]) / 2;
+                const ang = Math.atan2(rv.b[0] - rv.a[0], rv.b[1] - rv.a[1]);
+                const len = Math.hypot(rv.b[0] - rv.a[0], rv.b[1] - rv.a[1]) + 260;
+                const river = new THREE.Mesh(new THREE.PlaneGeometry(rv.width * 2, len),
+                    new THREE.MeshBasicMaterial({ color: 0x0c1c30 }));
+                river.rotation.x = -Math.PI / 2; river.rotation.z = -ang;
+                river.position.set(mx, -1.4, mz);
+                world.add(river);
+                // neon reflections shimmering on the water (rideable in animate via foamMat? keep static glints)
+                for (let i = 0; i < 26; i++) {
+                    const gl = new THREE.Mesh(new THREE.PlaneGeometry(rand(1.5, 4), rand(8, 22)),
+                        new THREE.MeshBasicMaterial({ color: pick([0xff3bd0, 0x3bf0ff, 0xffe27a]),
+                            transparent: true, opacity: 0.18, blending: THREE.AdditiveBlending, depthWrite: false }));
+                    gl.rotation.x = -Math.PI / 2; gl.rotation.z = -ang;
+                    gl.position.set(mx + rand(-rv.width, rv.width), -1.3, mz + rand(-len/2.3, len/2.3));
+                    world.add(gl);
+                }
+                // bridge superstructure at the road crossing: two towers + stays
+                const bs = nearestSeg(THEME.bridge.at[0], THEME.bridge.at[1]);
+                const bc = centerline[bs], bn = normals[bs];
+                const deckY = roadY(bs, 0);
+                const towerMat = new THREE.MeshLambertMaterial({ color: 0x2a2e3c });
+                for (const sgn of [1, -1]) {
+                    const tx = bc.x + bn.x * (HALF_W + 2.5) * sgn, tz = bc.z + bn.z * (HALF_W + 2.5) * sgn;
+                    const th = 34;
+                    const tw = new THREE.Mesh(boxGeo, towerMat);
+                    tw.scale.set(2.4, th, 2.4); tw.position.set(tx, deckY + th / 2 - 4, tz);
+                    world.add(tw);
+                    const cap = new THREE.Mesh(new THREE.SphereGeometry(1.1, 8, 6),
+                        new THREE.MeshBasicMaterial({ color: 0x3bf0ff }));
+                    cap.position.set(tx, deckY + th - 4, tz); world.add(cap);
+                    // stay cables fanning to the deck along the road
+                    for (let d = -8; d <= 8; d += 4) {
+                        const di = ((bs + d) % N + N) % N;
+                        const dc = centerline[di];
+                        const ex = dc.x, ez = dc.z, ey = roadY(di, 0) + 0.5;
+                        const topx = tx, topy = deckY + th - 5, topz = tz;
+                        const cl = new THREE.Mesh(new THREE.CylinderGeometry(0.12, 0.12, 1, 4),
+                            new THREE.MeshBasicMaterial({ color: 0x6a7a9a }));
+                        cl.position.set((topx + ex) / 2, (topy + ey) / 2, (topz + ez) / 2);
+                        const dxx = ex - topx, dyy = ey - topy, dzz = ez - topz;
+                        cl.scale.y = Math.hypot(dxx, dyy, dzz);
+                        cl.lookAt(ex, ey, ez); cl.rotateX(Math.PI / 2);
+                        world.add(cl);
+                    }
+                }
+                // deck side railings across the span
+                for (let d = -10; d <= 10; d++) {
+                    const di = ((bs + d) % N + N) % N;
+                    const dc = centerline[di], dn = normals[di];
+                    for (const sgn of [1, -1]) {
+                        const rg = new THREE.Mesh(boxGeo, towerMat);
+                        rg.scale.set(0.5, 1.4, 4);
+                        rg.position.set(dc.x + dn.x * (HALF_W + 0.5) * sgn, roadY(di, 0) + 0.7, dc.z + dn.z * (HALF_W + 0.5) * sgn);
+                        rg.rotation.y = Math.atan2(tangents[di].x, tangents[di].z);
+                        world.add(rg);
+                    }
+                }
+            }
+        }
+
         function buildGlacierZones() {
             const laneLat = () => (splitZone.w + WALL_LIMIT) / 2;
             chimneySmoke = [];
@@ -3095,6 +3280,7 @@
             function palmAt(x, z, sc) {
                 const y = terrainY(x, z);
                 if (y < 0) return;
+                if (THEME.foliage === 'city') return;   // skyline comes from buildCity(), not roadside scatter
                 if (THEME.foliage === 'pines') {
                     // snow-dusted conifer: short trunk, 3 stacked cones, white cap
                     const h = rand(7, 13) * sc;
@@ -5430,6 +5616,23 @@
             ['G3','B3','D4'], ['A3','Cs4','E4'], ['B3','D4','Fs4'], ['B3','D4','Fs4'],
         ];
 
+        // ---- Neon City: "Midnight Drive" — F# minor synthwave, pulsing 8ths
+        //      (built from the chord progression to keep it compact)
+        const CITY_SONG = (() => {
+            const prog = ['Fsm', 'D', 'A', 'E', 'Fsm', 'D', 'A', 'E', 'D', 'E', 'Fsm', 'Fsm'];
+            const chord = { Fsm: ['Fs', 'A', 'Cs'], D: ['D', 'Fs', 'A'], A: ['A', 'Cs', 'E'], E: ['E', 'Gs', 'B'] };
+            const lead = [], bass = [], arp = [], stabs = [];
+            prog.forEach((ch, bar) => {
+                const tri = chord[ch], r = tri[0], sec = bar < 4 ? 0 : bar < 8 ? 1 : 2;
+                bass.push(r + '2', 0, r + '2', 0, r + '3', 0, r + '2', 0, r + '2', 0, r + '2', r + '2', r + '3', 0, r + '2', 0);
+                for (let i = 0; i < 16; i++) arp.push(i % 2 === 0 ? tri[(i / 2) % 3] + (i < 8 ? '4' : '5') : 0);
+                lead.push(tri[0] + '5', 0, tri[2] + '5', 0, tri[1] + '5', 0, tri[0] + '5', 0,
+                    tri[2] + '5', 0, (sec ? tri[1] : tri[0]) + '5', 0, tri[0] + (sec === 2 ? '6' : '5'), 0, 0, 0);
+                stabs.push([tri[0] + '3', tri[1] + '3', tri[2] + '4']);
+            });
+            return { lead, bass, arp, stabs };
+        })();
+
         const SONGS = {
             coral: {
                 stepMs: 99, barLen: 16, lead: LEAD, bass: BASS, arp: ARP, stabs: STABS,
@@ -5488,6 +5691,20 @@
                     if (b % 2 === 0) aNoise(0.025, 0.045, true, musicGain);  // sleigh-ish tick
                     if (b === 4 || b === 12) aNoise(0.05, 0.05, true, musicGain);
                     if (sec === 2 && b % 2 === 1) aNoise(0.02, 0.03, true, musicGain);
+                },
+            },
+            city: {
+                stepMs: 107, barLen: 16, lead: CITY_SONG.lead, bass: CITY_SONG.bass, arp: CITY_SONG.arp, stabs: CITY_SONG.stabs,
+                leadWave: ['sawtooth', 'sawtooth', 'sawtooth'], leadDur: 0.16, leadVol: 0.06,
+                subMul: 0.5, subDur: 0.18, subVol: 0.05,                     // octave-down synth pad under the lead
+                bassWave: 'sawtooth', bassDur: 0.11, bassVol: 0.17,          // driving synthwave bass
+                arpWave: 'sine', arpDur: 0.07, arpVol: 0.035,               // glassy 16th arp
+                stabSteps: [0, 8], stabWave: 'sawtooth', stabDur: [0.16, 0.12], stabVol: 0.03,
+                drums: (b, sec) => {
+                    if (b % 4 === 0) aKick(musicGain);                      // four-on-the-floor
+                    if (b === 4 || b === 12) aNoise(0.11, 0.15, false, musicGain);  // snare backbeat
+                    if (b % 2 === 1) aNoise(0.02, 0.03, true, musicGain);   // offbeat hi-hat
+                    if (sec === 2 && b % 4 === 2) aNoise(0.018, 0.025, true, musicGain);
                 },
             },
         };
@@ -5748,6 +5965,41 @@
         // ===================================================================
         //  MENU UI
         // ===================================================================
+        // Build a paged track selector (4 maps/page, scroll-snap + dots).
+        // Shared by the title screen and the online lobby.
+        function renderTrackPager(scroller, dots, activeIdx, onPick) {
+            scroller.innerHTML = ''; dots.innerHTML = '';
+            const pageCount = Math.ceil(TRACKS.length / 4);
+            for (let pg = 0; pg < pageCount; pg++) {
+                const page = document.createElement('div');
+                page.className = 'tpage';
+                for (let i = pg * 4; i < Math.min(pg * 4 + 4, TRACKS.length); i++) {
+                    const tr = TRACKS[i];
+                    const card = document.createElement('div');
+                    card.className = 'card track-card' + (i === activeIdx ? ' active' : '');
+                    card.innerHTML = '<div class="tprev" style="background:' + tr.preview + '"></div>' +
+                        '<div class="cname">' + tr.name + '</div>';
+                    card.addEventListener('click', () => onPick(i));
+                    page.appendChild(card);
+                }
+                scroller.appendChild(page);
+            }
+            dots.classList.toggle('solo', pageCount <= 1);
+            for (let pg = 0; pg < pageCount; pg++) {
+                const dot = document.createElement('div');
+                dot.className = 'tdot';
+                dot.addEventListener('click', () => scroller.scrollTo({ left: pg * scroller.clientWidth, behavior: 'smooth' }));
+                dots.appendChild(dot);
+            }
+            const syncDots = () => {
+                const pg = scroller.clientWidth ? Math.round(scroller.scrollLeft / scroller.clientWidth) : 0;
+                dots.querySelectorAll('.tdot').forEach((d, i) => d.classList.toggle('on', i === pg));
+            };
+            if (!scroller._pagerWired) { scroller.addEventListener('scroll', syncDots, { passive: true }); scroller._pagerWired = true; }
+            // jump to the active track's page (no animation) so re-renders keep place
+            scroller.scrollLeft = Math.floor(activeIdx / 4) * scroller.clientWidth;
+            syncDots();
+        }
         function buildSelectionUI() {
             dom.charPick.innerHTML = '';
             CHARS.forEach((ch, i) => {
@@ -5764,17 +6016,9 @@
                 });
                 dom.charPick.appendChild(card);
             });
-            dom.trackPick.innerHTML = '';
-            TRACKS.forEach((tr, i) => {
-                const card = document.createElement('div');
-                card.className = 'card track-card' + (i === currentTrackIdx ? ' active' : '');
-                card.innerHTML = '<div class="tprev" style="background:' + tr.preview + '"></div>' +
-                    '<div class="cname">' + tr.name + '</div>';
-                card.addEventListener('click', () => {
-                    if (i !== currentTrackIdx) { loadTrack(i); resetRace(); }
-                    buildSelectionUI();
-                });
-                dom.trackPick.appendChild(card);
+            renderTrackPager(dom.trackPick, dom.trackDots, currentTrackIdx, (i) => {
+                if (i !== currentTrackIdx) { loadTrack(i); resetRace(); }
+                buildSelectionUI();
             });
             document.getElementById('trackLine').textContent =
                 TRACKS[currentTrackIdx].tagline + ' · 3 Laps · 8 Racers';

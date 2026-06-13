@@ -21,8 +21,8 @@ half auto-covers track geometry + core physics, but nothing else).
 
 A single self-contained `index.html` — a **landscape** (horizontal) 3D kart
 racer for iPhone PWA. Three.js **r128** from cdnjs, all assets generated at
-runtime. **Four tracks** (Coral Cliffs, Volcano Bay, Whisper Wood,
-Glacier Pass), 3 laps, player + **7 AI**. Left-thumb slide steering,
+runtime. **Five tracks** (Coral Cliffs, Volcano Bay, Whisper Wood,
+Glacier Pass, Neon City), 3 laps, player + **7 AI**. Left-thumb slide steering,
 DRIFT/ITEM buttons, auto-accelerate. Each track has its own composition
 (per-track `SONGS` sequencer), signature landmarks, and theme.
 
