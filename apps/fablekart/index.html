@@ -856,6 +856,45 @@
                     bridge: { at: [196 * SC, 184 * SC] },
                 },
             },
+            {
+                id: 'desert', name: 'Dust Devil Gulch', tagline: '🌵 Dust Devil Gulch',
+                // golden-hour canyon — start straight -> mesa climb -> tight
+                // switchback hairpin -> a narrow SLOT CANYON S -> drop with a
+                // crest jump -> sweeping return. Signature: weave around SAND
+                // DRAG patches + dodge roaming DUST DEVILS. Endless sand to the
+                // dusty horizon (no sea).
+                ctrl: scaled([
+                    [0, -250, 0], [150, -248, 0], [252, -202, 2], [284, -104, 6],
+                    [266, -8, 12], [212, 74, 16], [120, 124, 16], [70, 200, 14],
+                    [-44, 232, 13], [-150, 214, 12],
+                    [-200, 150, 9], [-168, 74, 7], [-238, 16, 8],
+                    [-266, -82, 4], [-222, -162, 1], [-120, -216, 0], [-40, -206, 0],
+                ]),
+                tunnelIn: null, tunnelOut: null,
+                jumpAt: [-266 * SC, -82 * SC],
+                preview: 'linear-gradient(180deg,#e8985a,#c2683a)',
+                theme: {
+                    skyTop: 0x35508a, skyMid: 0xe89a58, skyBot: 0xffe0a6,
+                    fog: 0xe6bd86, fogNear: 300, fogFar: 1000,
+                    cloud: 0xf2cfa0, sun: 0xfff0c8, sunPos: [-460, 150, -520], stars: false,
+                    hemiSky: 0xf2c890, hemiGround: 0x9a6a44, hemiInt: 1.0,
+                    dirColor: 0xffe2b0, dirInt: 1.15, dirPos: [-300, 220, -260],
+                    waterTex: '#2a8fd6', deep: 0x0a3f72,
+                    grass1: 0xd9b271, grass2: 0xc9a35e, sand: 0xe8cf96, rock: 0xb05a36,
+                    road: '#6a5a48', lane: '#ffe08a', edge: '#caa460',
+                    foliage: 'desert', trunk: 0x3a7a3a, leaf1: 0x3f8a44, leaf2: 0x57b85a,
+                    shrubs: [0x9a8a4a, 0xb2a05a, 0x8a7a40],
+                    rocks: [0xb05a36, 0x9a4e30, 0xc26a40],
+                    beach: false, embers: 0, noSea: true, dustTint: 0xe0c088,
+                    canyon: { a: [284 * SC, -104 * SC], b: [212 * SC, 74 * SC] },
+                    itemRows: [0.06, 0.30, 0.58, 0.82],
+                    pads: [
+                        { f: 0.075, lat: -6 }, { f: 0.12, lat: 6 },   // launch chain off the start straight
+                        { f: 0.40, lat: 0 },                          // exit onto the mesa
+                        { f: 0.78, lat: -5 }, { f: 0.81, lat: 5 },    // chain feeding the crest jump
+                    ],
+                },
+            },
         ];
         // per-load track state (set by loadTrack)
         let currentTrackIdx = 0;
@@ -919,6 +958,8 @@
         let fordA = -1, fordB = -1;   // creek ford seg range — karts splash through (theme.ford)
         // Glacier Pass zone state (resolved from theme landmarks in buildLandmarks)
         let iceSegs = [];        // [{a, b, side}] side 0 = full width, ±1 = that lateral side only
+        let sandSegs = [];       // desert drag patches [{a,b,lat,hw}] — weave around them
+        let dustDevils = [];     // roaming sand columns [{seg,base,range,sp,phase,mesh}] (theme-driven, time-deterministic)
         let windZone = null;     // {a, b, push} signed push along +normal (u/s)
         let splitZone = null;    // {a, b, w, inside, gain} — crevasse median, inside = shorter side sign
         let auroraMats = [];     // animated sky curtains (theme.aurora)
@@ -1011,7 +1052,7 @@
         // ⚠ APP_VER: increment ONCE PER PR (CLAUDE.md rule). Shown on the
         // title screen and folded into NET_VER, so any two different builds
         // refuse to share a room.
-        const APP_VER = 28;
+        const APP_VER = 29;
         function hash32(str) {
             let h = 2166136261 >>> 0;
             for (let i = 0; i < str.length; i++) { h ^= str.charCodeAt(i); h = Math.imul(h, 16777619); }
@@ -1939,7 +1980,10 @@
                   + Math.sin((x + z) * 0.006 + 0.9) * 4.5;
             const r = Math.hypot(x, z);
             h += smoothstep(360, 200, r) * 5;
-            h -= smoothstep(560, 760, r) * 30;
+            // islands drop to a surrounding sea; a desert stays high to the
+            // dusty horizon (gentle outward rise instead of a coastline)
+            if (THEME.noSea) h += smoothstep(420, 760, r) * 16;
+            else h -= smoothstep(560, 760, r) * 30;
             const cr = THEME.crater;
             if (cr) {
                 // volcano: a ridge ring at the caldera rim, bowling down to a
@@ -2142,9 +2186,10 @@
         // its theme field is absent, like crater/eruptions do for Volcano.
         function buildLandmarks() {
             waterfallMats = []; fordA = -1; fordB = -1;
-            iceSegs = []; windZone = null; splitZone = null; gondolaAnim = null;
+            iceSegs = []; windZone = null; splitZone = null; gondolaAnim = null; sandSegs = []; dustDevils = [];
             buildGlacierZones();
             if (THEME.city) buildCity();
+            if (THEME.foliage === 'desert') buildDesert();
 
             // ---- THE ELDER TREE: a colossal glowing tree inside the summit
             // horseshoe — trunk, root flare, glowing hollows, overhanging
@@ -2427,6 +2472,82 @@
                         world.add(rg);
                     }
                 }
+            }
+        }
+
+        // Dust Devil Gulch: layered red-rock mesas in the distance + a
+        // tapered slot-canyon of walls hugging the road through theme.canyon.
+        function buildDesert() {
+            const box = new THREE.BoxGeometry(1, 1, 1);
+            const cols = THEME.rocks;
+            // ---- mesas: flat-topped buttes, set well back, baked as one mesh
+            const mparts = [];
+            for (let m = 0, tries = 0; m < 9 && tries < 60; tries++) {
+                const c = centerline[Math.floor(rng() * N)], n = normals[Math.floor(rng() * N)];
+                const side = rng() < 0.5 ? 1 : -1, off = HALF_W + rand(120, 320);
+                const x = c.x + n.x * off * side, z = c.z + n.z * off * side;
+                const ty = terrainY(x, z); if (ty < 0) continue;
+                const nc = centerline[nearestSeg(x, z)];
+                if (Math.hypot(x - nc.x, z - nc.z) < HALF_W + 70) continue;   // never near the road
+                m++;
+                const w = rand(34, 78), d = rand(34, 78), h = rand(24, 68), layers = 3 + Math.floor(rng() * 3);
+                for (let L = 0; L < layers; L++) {
+                    const f = L / layers, lw = w * (1 - f * 0.2), ld = d * (1 - f * 0.2), lh = h / layers;
+                    mparts.push({ geo: box, color: cols[L % cols.length], matrix: mat4(x, ty + lh * (L + 0.5), z, rand(0, 0.4), lw, lh, ld) });
+                }
+            }
+            if (mparts.length) world.add(new THREE.Mesh(bakeMerge(mparts), new THREE.MeshLambertMaterial({ vertexColors: true })));
+            // ---- slot-canyon walls flush along the road (tapered at the mouths
+            //      so you drive INTO a canyon, not a sudden box)
+            const cyn = THEME.canyon;
+            if (cyn) {
+                const wparts = [];
+                const a = nearestSeg(cyn.a[0], cyn.a[1]), b = nearestSeg(cyn.b[0], cyn.b[1]);
+                const lo = Math.min(a, b), hi = Math.max(a, b);
+                for (let i = lo; i <= hi; i += 2) {
+                    const c = centerline[i], n = normals[i], t = tangents[i];
+                    const ry = Math.atan2(t.x, t.z);
+                    const edge = Math.min(i - lo, hi - i), taper = edge < 7 ? 0.28 + 0.72 * (edge / 7) : 1;
+                    for (const sgn of [1, -1]) {
+                        const wh = rand(17, 30) * taper, ww = rand(5, 7);
+                        const ox = c.x + n.x * (HALF_W + 4) * sgn, oz = c.z + n.z * (HALF_W + 4) * sgn;
+                        wparts.push({ geo: box, color: pick(cols), matrix: mat4(ox, roadY(i, 0) + wh / 2 - 1, oz, ry, ww, wh, rand(6, 11), 0, rand(-0.05, 0.05)) });
+                    }
+                }
+                if (wparts.length) world.add(new THREE.Mesh(bakeMerge(wparts), new THREE.MeshLambertMaterial({ vertexColors: true })));
+            }
+            // ---- SAND DRAG patches: sandy decals set OFF the racing line so a
+            //      clean line threads past them (weave, don't bog down)
+            const sandCv = document.createElement('canvas'); sandCv.width = sandCv.height = 64;
+            const sg = sandCv.getContext('2d');
+            sg.fillStyle = 'rgba(232,202,140,0.95)'; sg.fillRect(0, 0, 64, 64);   // pale sand, pops on the dark road
+            for (let i = 0; i < 150; i++) { sg.fillStyle = 'rgba(190,150,90,' + (0.3 + Math.random() * 0.35).toFixed(2) + ')'; sg.fillRect(Math.random() * 64, Math.random() * 64, 3, 3); }
+            sg.strokeStyle = 'rgba(255,236,190,0.5)'; sg.lineWidth = 1.5;   // wind ripples → reads as a sand drift
+            for (let r = 6; r < 64; r += 11) { sg.beginPath(); for (let x = 0; x <= 64; x += 6) { const y = r + Math.sin(x * 0.25) * 2.5; x === 0 ? sg.moveTo(x, y) : sg.lineTo(x, y); } sg.stroke(); }
+            const sandTex = new THREE.CanvasTexture(sandCv); sandTex.wrapS = sandTex.wrapT = THREE.RepeatWrapping;
+            for (const ptc of [{ f: 0.20, lat: 10 }, { f: 0.52, lat: -12 }, { f: 0.66, lat: 11 }, { f: 0.88, lat: -10 }]) {
+                const seg = Math.floor(N * ptc.f), half = 10;
+                sandSegs.push({ a: Math.max(0, seg - half), b: Math.min(N - 1, seg + half), lat: ptc.lat, hw: 9 });
+                const m = buildDecalStrip(seg, half, 0.3, sandTex, 0.08, ptc.lat);
+                m.material.transparent = true; m.material.opacity = 0.95;
+                m.material.map.repeat.set(1, Math.max(1, Math.floor(half / 4)));
+            }
+            // ---- DUST DEVILS: roaming sand columns (stacked translucent cones)
+            //      on straighter sections; positions animate in the render loop
+            for (const df of [0.17, 0.45, 0.90]) {
+                const seg = Math.floor(N * df), grp = new THREE.Group();
+                for (let L = 0; L < 5; L++) {
+                    const r = 3.2 - L * 0.45;
+                    const cone = new THREE.Mesh(new THREE.ConeGeometry(r, 7, 9, 1, true),
+                        new THREE.MeshBasicMaterial({ color: THEME.dustTint || 0xd9b271, transparent: true, opacity: 0.5 - L * 0.06, depthWrite: false, side: THREE.DoubleSide }));
+                    cone.position.y = 3.5 + L * 4.2; cone.rotation.x = Math.PI;
+                    grp.add(cone);
+                }
+                const ring = new THREE.Mesh(new THREE.RingGeometry(2.5, 5.5, 16),
+                    new THREE.MeshBasicMaterial({ color: THEME.dustTint || 0xd9b271, transparent: true, opacity: 0.45, depthWrite: false, side: THREE.DoubleSide }));
+                ring.rotation.x = -Math.PI / 2; ring.position.y = 0.2; grp.add(ring);
+                world.add(grp);
+                dustDevils.push({ seg, base: 0, range: 13, sp: rand(0.5, 0.85), phase: rand(0, 6.28), mesh: grp, spin: 0 });
             }
         }
 
@@ -3288,6 +3409,18 @@
                 const y = terrainY(x, z);
                 if (y < 0) return;
                 if (THEME.foliage === 'city') return;   // skyline comes from buildCity(), not roadside scatter
+                if (THEME.foliage === 'desert') {
+                    // saguaro cactus: tall green trunk + 0-2 upturned arms
+                    const h = rand(4.5, 9) * sc, col = rng() < 0.5 ? THEME.leaf1 : THEME.leaf2;
+                    parts.push({ geo: trunkGeo, color: col, matrix: mat4(x, y + h * 0.42, z, rand(0, Math.PI * 2), 0.6 * sc, h / 5, 0.6 * sc) });
+                    const arms = Math.floor(rng() * 3);
+                    for (let a = 0; a < arms; a++) {
+                        const sx = a === 0 ? 1 : -1, ay = y + h * rand(0.4, 0.62);
+                        parts.push({ geo: trunkGeo, color: col, matrix: mat4(x + 1.0 * sc * sx, ay, z, 0, 0.4 * sc, h * 0.085, 0.4 * sc, 0, 1.1 * sx) });
+                        parts.push({ geo: trunkGeo, color: col, matrix: mat4(x + 1.7 * sc * sx, ay + h * 0.2, z, 0, 0.4 * sc, h * 0.075, 0.4 * sc) });
+                    }
+                    return;
+                }
                 if (THEME.foliage === 'pines') {
                     // snow-dusted conifer: short trunk, 3 stacked cones, white cap
                     const h = rand(7, 13) * sc;
@@ -3370,17 +3503,29 @@
             // distribute: palms near the low beach zones, rocks/shrubs on hills
             // (forest: denser spacing, trees at every altitude)
             const forest = THEME.foliage === 'forest';
-            for (let i = 0; i < N; i += (forest ? 6 : 9)) {
+            const desert = THEME.foliage === 'desert';
+            for (let i = 0; i < N; i += (forest ? 6 : desert ? 7 : 9)) {
                 for (const side of [1, -1]) {
-                    if (rng() < (forest ? 0.3 : 0.42)) continue;
+                    if (rng() < (forest ? 0.3 : desert ? 0.32 : 0.42)) continue;
                     const c = centerline[i], n = normals[i];
                     if (inTunnel(i)) continue;
-                    const off = HALF_W + rand(10, 56);
+                    const off = HALF_W + rand(desert ? 14 : 10, desert ? 90 : 56);
                     const x = c.x + n.x * off * side, z = c.z + n.z * off * side;
                     if (THEME.crater && Math.hypot(x - THEME.crater.x, z - THEME.crater.z) < THEME.crater.r - 36) continue;
+                    // never place scenery on the road anywhere — the circuit can
+                    // loop back near itself, so check the NEAREST segment, not i
+                    const nsc = centerline[nearestSeg(x, z)];
+                    if (Math.hypot(x - nsc.x, z - nsc.z) < HALF_W + 8) continue;
                     const ty = terrainY(x, z);
                     if (ty < -0.5) continue;
-                    if (forest) {
+                    if (desert) {
+                        const roll = rng();
+                        if (roll < 0.5) palmAt(x, z, rand(0.8, 1.5));
+                        else if (roll < 0.82) parts.push({ geo: rockGeo, color: pick(THEME.rocks),
+                            matrix: mat4(x, ty + 0.6, z, rand(0, 3), rand(1.6, 4.2), rand(1.4, 3.0), rand(1.6, 4.2)) });
+                        else { const s2 = rand(1.2, 2.2); parts.push({ geo: shrubGeo, color: pick(THEME.shrubs),  // dry tumble-bush
+                            matrix: mat4(x, ty + s2 * 0.4, z, 0, s2, s2 * 0.6, s2) }); }
+                    } else if (forest) {
                         if (rng() < 0.8) palmAt(x, z, rand(0.8, 1.45));
                         else {
                             const s = rand(1.6, 3.0);
@@ -3519,15 +3664,21 @@
             // (Previously pads were near full-width and one sat 20 samples
             // before the jump pad, where the second could never re-trigger.)
             boostPads = [];
+            let defs;
+            if (THEME.pads) {
+                // per-track hand-placed pads (kept clear of that track's hazards)
+                defs = THEME.pads.map((pd) => ({ seg: ((Math.floor(N * pd.f) % N) + N) % N, lat: pd.lat }));
+            } else {
             const a = Math.floor(N * 0.10);
             const c2 = Math.floor(N * 0.45);
             const d2 = ((jumpSeg - 80) % N + N) % N;
             const e2 = ((jumpSeg - 34) % N + N) % N;
-            const defs = [
+            defs = [
                 { seg: a, lat: -6 }, { seg: a + 46, lat: 6 },       // beach chain pair
                 { seg: c2, lat: 5 },                                 // tunnel approach
                 { seg: d2, lat: -5 }, { seg: e2, lat: 0 },           // descent chain into the jump
             ];
+            }
             if (splitZone) {
                 // the icy shortcut's REWARD: a chain pair only reachable from
                 // the inside lane (the geometric gain alone read as pointless)
@@ -3589,7 +3740,7 @@
             qg.fillStyle = '#ffd54a'; qg.font = 'bold 52px sans-serif'; qg.textAlign = 'center'; qg.textBaseline = 'middle';
             qg.fillText('?', 32, 36);
             const qtex = new THREE.CanvasTexture(qcv);
-            const rows = [0.075, 0.30, 0.625, 0.86];
+            const rows = THEME.itemRows || [0.075, 0.30, 0.625, 0.86];
             const lanes = [-0.58, -0.2, 0.2, 0.58];
             for (const f of rows) {
                 const seg = Math.floor(N * f);
@@ -3655,7 +3806,7 @@
             buildCenterline();
             buildSky();
             buildTerrain();
-            buildWater();
+            if (!THEME.noSea) buildWater();
             buildLava();
             buildRoad();
             buildTunnel();
@@ -4091,6 +4242,10 @@
                 for (const z of iceSegs) {
                     if (k.seg >= z.a && k.seg <= z.b && (!z.side || off * z.side > 0)) { k.onIce = true; break; }
                 }
+                k.onSand = false;
+                for (const z of sandSegs) {
+                    if (k.seg >= z.a && k.seg <= z.b && Math.abs(off - z.lat) < z.hw) { k.onSand = true; break; }
+                }
                 if (windZone && k.seg >= windZone.a && k.seg <= windZone.b && k.grounded) {
                     k.pos.x += n.x * windZone.push * dt;
                     k.pos.z += n.z * windZone.push * dt;
@@ -4231,6 +4386,34 @@
                 const bx = k.pos.x - Math.sin(k.theta) * 3.4, bz = k.pos.z - Math.cos(k.theta) * 3.4;
                 emitSpark(new THREE.Vector3(bx + vrand(-1.3, 1.3), (k.groundY || k.y) + 0.3, bz + vrand(-1.3, 1.3)),
                     THEME.dust, 1.6, 1.4, { normal: true, life: vrand(0.4, 0.7), grav: -3, size: vrand(1.8, 3.2) });
+            }
+
+            // desert SAND DRAG: loose sand bogs you down — strong deceleration
+            // while you're in a patch (weave around them), with a sandy spray
+            if (k.onSand && k.grounded) {
+                k.speed -= 34 * dt;
+                if (k.speed < 0) k.speed = 0;
+                if (k.speed > 14 && simTickNo % 3 === 0)
+                    emitSpark(new THREE.Vector3(k.pos.x + vrand(-1.4, 1.4), (k.groundY || k.y) + 0.3, k.pos.z + vrand(-1.4, 1.4)),
+                        THEME.dustTint || 0xd9b271, 2, 2.5, { normal: true, life: vrand(0.4, 0.7), grav: 6, size: vrand(1.6, 3.0) });
+            }
+            // DUST DEVILS: roaming sand columns sweep across the road. Their
+            // lateral position is a deterministic function of raceClock (so all
+            // online clients agree); touching one shoves you the way it's
+            // sweeping + a quick speed loss + a sand burst.
+            if (k.grounded) for (const dv of dustDevils) {
+                let ds = k.seg - dv.seg; if (ds > N / 2) ds -= N; else if (ds < -N / 2) ds += N;
+                if (Math.abs(ds) > 6) continue;
+                const lat = dv.base + Math.sin(raceClock * dv.sp + dv.phase) * dv.range;
+                if (Math.abs(k.lateralSigned - lat) < 5 && k.invuln <= 0) {
+                    const dir = Math.cos(raceClock * dv.sp + dv.phase) >= 0 ? 1 : -1;   // way it's sweeping
+                    const c2 = centerline[k.seg], n2 = normals[k.seg];
+                    k.pos.x += n2.x * 13 * dir * dt; k.pos.z += n2.z * 13 * dir * dt;
+                    k.speed *= 0.992;
+                    if (k.isPlayer && simTickNo % 6 === 0) vibrate(12);
+                    if (simTickNo % 2 === 0)
+                        emitSpark(new THREE.Vector3(k.pos.x, k.y + vrand(0.5, 3), k.pos.z), THEME.dustTint || 0xd9b271, 4, 5, { normal: true, life: 0.5, grav: 4, size: vrand(2, 3.5) });
+                }
             }
 
             // glacier ice: skating spray while sliding across a patch
@@ -5662,6 +5845,42 @@
             return { lead, bass, arp, stabs };
         })();
 
+        // ---- Dust Devil Gulch: "Canyon Mirage" — A Phrygian-dominant (the
+        //      Spanish/Western desert scale: A Bb C# D E F G), a longing
+        //      twang melody over a loping gallop. Fully composed, no formula.
+        const DESERT_SONG = (() => {
+            const chord = { A: ['A', 'Cs', 'E'], Bb: ['As', 'D', 'F'], Dm: ['D', 'F', 'A'], F: ['F', 'A', 'C'], G: ['G', 'B', 'D'] };
+            const prog = ['A', 'Bb', 'A', 'Bb', 'Dm', 'A', 'Bb', 'A', 'F', 'G', 'A', 'A'];
+            const leadBars = [
+                ['A5', 0, 0, 'Cs5', 0, 'E5', 0, 0, 'F5', 0, 'E5', 0, 'Cs5', 0, 0, 0],
+                ['As5', 0, 0, 0, 'D6', 0, 'As5', 0, 'F5', 0, 'D5', 0, 'As4', 0, 0, 0],
+                ['Cs5', 0, 'E5', 0, 'A5', 0, 'E5', 0, 'F5', 0, 'E5', 0, 'Cs5', 0, 0, 0],
+                ['D5', 0, 'F5', 0, 'As5', 0, 'F5', 0, 'D5', 0, 'As4', 0, 0, 0, 0, 0],
+                ['D5', 0, 0, 'F5', 0, 'A5', 0, 'F5', 'E5', 0, 'D5', 0, 'A4', 0, 0, 0],
+                ['A5', 0, 'Gs5', 0, 'A5', 0, 'Cs6', 0, 'E6', 0, 'Cs6', 0, 'A5', 0, 0, 0],
+                ['F6', 0, 'E6', 0, 'D6', 0, 'As5', 0, 'F5', 0, 'D5', 0, 'As4', 0, 0, 0],
+                ['E5', 0, 'F5', 0, 'E5', 0, 'Cs5', 0, 'A4', 0, 0, 0, 0, 0, 0, 0],
+                ['F5', 0, 'A5', 0, 'C6', 0, 'A5', 0, 'F5', 0, 'C5', 0, 'A4', 0, 0, 0],
+                ['G5', 0, 'B5', 0, 'D6', 0, 'B5', 0, 'G5', 0, 'D5', 0, 'B4', 0, 0, 0],
+                ['Cs6', 0, 'A5', 0, 'E5', 0, 'A5', 0, 'Cs6', 0, 'E6', 0, 'A5', 0, 0, 0],
+                ['A5', 0, 'Gs5', 0, 'F5', 0, 'E5', 0, 'Cs5', 0, 'As4', 0, 'A4', 0, 0, 0],
+            ];
+            const lead = [], bass = [], arp = [], stabs = [];
+            prog.forEach((ch, bar) => {
+                const tri = chord[ch], r = tri[0], climax = bar >= 8;
+                lead.push(...leadBars[bar]);
+                // loping western gallop on the root (dum .. da-dum)
+                bass.push(r + '2', 0, 0, 0, 0, 0, r + '2', 0, r + '3', 0, 0, r + '2', 0, 0, r + '2', 0);
+                // sparse shimmer that opens up in the climax
+                for (let i = 0; i < 16; i++) {
+                    const oct = i < 8 ? '4' : '5';
+                    arp.push(climax ? (i % 2 === 0 ? tri[(i / 2) % 3] + oct : 0) : (i % 4 === 2 ? tri[(i / 4) % 3] + oct : 0));
+                }
+                stabs.push([tri[0] + '3', tri[1] + '3', tri[2] + '4']);
+            });
+            return { lead, bass, arp, stabs };
+        })();
+
         const SONGS = {
             coral: {
                 stepMs: 99, barLen: 16, lead: LEAD, bass: BASS, arp: ARP, stabs: STABS,
@@ -5734,6 +5953,20 @@
                     if (b === 4 || b === 12) aNoise(0.11, 0.15, false, musicGain);  // snare backbeat
                     if (b % 2 === 1) aNoise(0.02, 0.03, true, musicGain);   // offbeat hi-hat
                     if (sec === 2 && b % 4 === 2) aNoise(0.018, 0.025, true, musicGain);
+                },
+            },
+            desert: {
+                stepMs: 124, barLen: 16, lead: DESERT_SONG.lead, bass: DESERT_SONG.bass, arp: DESERT_SONG.arp, stabs: DESERT_SONG.stabs,
+                leadWave: ['square', 'square', 'triangle'], leadDur: 0.2, leadVol: 0.07,   // reedy western twang
+                subMul: 0.5, subDur: 0.22, subVol: 0.045,                                  // low pad under the melody
+                bassWave: 'triangle', bassDur: 0.18, bassVol: 0.2,
+                arpWave: 'sine', arpDur: 0.1, arpVol: 0.035,
+                stabSteps: [0, 8], stabWave: 'triangle', stabDur: [0.22, 0.14], stabVol: 0.03,
+                drums: (b, sec) => {
+                    if (b === 0 || b === 8) aKick(musicGain);             // steady heartbeat
+                    if (b === 4 || b === 12) aNoise(0.12, 0.16, false, musicGain);  // hand-clap backbeat
+                    if (b % 4 === 2) aNoise(0.03, 0.05, true, musicGain);  // shaker
+                    if (sec === 2 && b % 2 === 1) aNoise(0.02, 0.03, true, musicGain);  // climax double-time shaker
                 },
             },
         };
@@ -6396,6 +6629,12 @@
                     pa3.array[i * 3] += Math.sin(clock.elapsedTime * 0.8 + ph3[i]) * dt * 3;
                 }
                 pa3.needsUpdate = true;
+            }
+            for (const dv of dustDevils) {
+                const c = centerline[dv.seg], n = normals[dv.seg];
+                const lat = dv.base + Math.sin(raceClock * dv.sp + dv.phase) * dv.range;
+                dv.mesh.position.set(c.x + n.x * lat, roadY(dv.seg, lat), c.z + n.z * lat);
+                dv.spin += dt * 6; dv.mesh.rotation.y = dv.spin;
             }
             for (const cs of chimneySmoke) {
                 cs.t += dt * 0.22; if (cs.t > 1) cs.t -= 1;
