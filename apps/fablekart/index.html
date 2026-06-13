@@ -1088,7 +1088,7 @@
         // ⚠ APP_VER: increment ONCE PER PR (CLAUDE.md rule). Shown on the
         // title screen and folded into NET_VER, so any two different builds
         // refuse to share a room.
-        const APP_VER = 30;
+        const APP_VER = 31;
         function hash32(str) {
             let h = 2166136261 >>> 0;
             for (let i = 0; i < str.length; i++) { h ^= str.charCodeAt(i); h = Math.imul(h, 16777619); }
@@ -2617,18 +2617,45 @@
         // viaduct system; this is the motorsport dressing.
         function buildSpeedway() {
             const box = new THREE.BoxGeometry(1, 1, 1);
-            // ---- PILLARS: drop a column from the deck underside to the ground
+            // ---- PIERS: a real overpass spans the road it crosses — NEVER a
+            // column in the middle of it. The deck's middle is over the lower
+            // road (the valley), so center pillars there punched straight
+            // through the bottom lane and their caps poked up through the
+            // banked top deck. Instead: find the crossing and stand two tall
+            // piers BESIDE the lower road, rising to the deck underside. The
+            // ramp ends ride on terrain embankment and need no support.
             const pillarMat = new THREE.MeshLambertMaterial({ color: 0xb04a52 });
-            const segs = Array.from(viaductSegs).sort((a, b) => a - b);
-            for (let k = 0; k < segs.length; k += 4) {
-                const i = segs[k], c = centerline[i];
-                const top = roadY(i, 0) - 1.0, ground = terrainY(c.x, c.z);
-                const h = Math.max(2, top - ground);
+            const addPier = (px, pz, topY) => {
+                const ground = terrainY(px, pz);
+                const h = Math.max(2, topY - ground);
+                if (h < 4) return;                          // deck ~at ground here — a stub, skip
                 const pl = new THREE.Mesh(box, pillarMat);
-                pl.scale.set(3.4, h, 3.4); pl.position.set(c.x, ground + h / 2, c.z);
-                world.add(pl);
+                pl.scale.set(3.4, h, 3.4); pl.position.set(px, ground + h / 2, pz); world.add(pl);
                 const cap = new THREE.Mesh(box, pillarMat);
-                cap.scale.set(5, 1.2, 5); cap.position.set(c.x, top - 0.2, c.z); world.add(cap);
+                cap.scale.set(6, 1.4, 6); cap.position.set(px, topY - 0.7, pz); world.add(cap);
+            };
+            // locate the crossing: the lower-road seg most directly under the deck
+            let crossLow = -1, bestDy = 0;
+            for (let i = 0; i < N; i++) {
+                if (viaductSegs.has(i)) continue;
+                const ci = centerline[i];
+                for (const v of viaductSegs) {
+                    const cv = centerline[v];
+                    if (Math.abs(ci.x - cv.x) < 10 && Math.abs(ci.z - cv.z) < 10) {
+                        const dy = cv.y - ci.y; if (dy > bestDy) { bestDy = dy; crossLow = i; }
+                    }
+                }
+            }
+            if (crossLow >= 0) {
+                const lc = centerline[crossLow], ln = normals[crossLow];
+                for (const side of [-1, 1]) {               // straddle the lower road
+                    const px = lc.x + ln.x * (HALF_W + 6) * side, pz = lc.z + ln.z * (HALF_W + 6) * side;
+                    // deck height ABOVE the pier — nearest VIADUCT seg, never the
+                    // lower road (nearestSeg would grab the road and zero the height)
+                    let dd = Infinity, ds = -1;
+                    for (const v of viaductSegs) { const cv = centerline[v]; const d = (px - cv.x) ** 2 + (pz - cv.z) ** 2; if (d < dd) { dd = d; ds = v; } }
+                    addPier(px, pz, centerline[ds].y - 1.0);
+                }
             }
             // ---- TIRE WALLS on the OUTSIDE of the tighter corners (baked)
             const tparts = [];
