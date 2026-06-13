@@ -1011,7 +1011,7 @@
         // ⚠ APP_VER: increment ONCE PER PR (CLAUDE.md rule). Shown on the
         // title screen and folded into NET_VER, so any two different builds
         // refuse to share a room.
-        const APP_VER = 27;
+        const APP_VER = 28;
         function hash32(str) {
             let h = 2166136261 >>> 0;
             for (let i = 0; i < str.length; i++) { h ^= str.charCodeAt(i); h = Math.imul(h, 16777619); }
@@ -2348,6 +2348,10 @@
                     const off = HALF_W + rand(20, 70);
                     const x = c.x + n.x * off * side, z = c.z + n.z * off * side;
                     if (onRiver(x, z) || terrainY(x, z) < 0) continue;
+                    // keep buildings off the roadway everywhere (not just this
+                    // segment) — the circuit loops back on itself near the end
+                    const ns = nearestSeg(x, z), nc = centerline[ns];
+                    if (Math.hypot(x - nc.x, z - nc.z) < HALF_W + 18) continue;
                     addTower(x, z, rand(12, 22), rand(12, 22), rand(26, 92));
                     // a few neon signs facing the road on near towers
                     if (rng() < 0.22) {
@@ -2393,11 +2397,14 @@
                     const cap = new THREE.Mesh(new THREE.SphereGeometry(1.1, 8, 6),
                         new THREE.MeshBasicMaterial({ color: 0x3bf0ff }));
                     cap.position.set(tx, deckY + th - 4, tz); world.add(cap);
-                    // stay cables fanning to the deck along the road
+                    // stay cables fan from the tower top down to anchors along
+                    // the DECK EDGE on this tower's own side — never into the
+                    // middle of the road (real cable-stayed geometry)
                     for (let d = -8; d <= 8; d += 4) {
                         const di = ((bs + d) % N + N) % N;
-                        const dc = centerline[di];
-                        const ex = dc.x, ez = dc.z, ey = roadY(di, 0) + 0.5;
+                        const dc = centerline[di], dn = normals[di];
+                        const lat = (HALF_W - 0.5) * sgn;
+                        const ex = dc.x + dn.x * lat, ez = dc.z + dn.z * lat, ey = roadY(di, lat) + 0.9;
                         const topx = tx, topy = deckY + th - 5, topz = tz;
                         const cl = new THREE.Mesh(new THREE.CylinderGeometry(0.12, 0.12, 1, 4),
                             new THREE.MeshBasicMaterial({ color: 0x6a7a9a }));
