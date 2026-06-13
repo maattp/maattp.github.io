@@ -322,6 +322,13 @@ work, and don't regress these four seams.
   ~4Hz; local player gold, remote humans blue-highlighted, 🏁 when
   finished. Friend-finish toasts fire host-side (onLapCrossed) and
   client-side (snapshot finished transition). Results show +gap times.
+- **Spike Shell** (`spike`, 🐚): MK blue-shell — a back-of-pack-only,
+  cooldown-gated (`spikeTimer`) leader-seeker. `fireSpike` launches a
+  projectile with `leaderOnly:true` that rail-follows the centerline
+  (aims at `seg+12` when far, homes when within ~50u) and only detonates
+  on the rank-1 kart (shrink-bonk). Falls back to a rocket if the user is
+  already leading. Host-authoritative like all items; rides the proj
+  snapshot (clients render it via the generic ghost-rocket mesh).
 - Player starts 8th; rank-weighted items (leader pool is defense-only,
   global 30s `zapTimer` cooldown keeps ⚡ rare).
 - **Item roulette is tap-to-stop** (player roll 2.2s, AI 1.0s): the first

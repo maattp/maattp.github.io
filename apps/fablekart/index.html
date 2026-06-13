@@ -841,6 +841,7 @@
             goo:    { icon: '🫧', name: 'Goo Slick' },
             shield: { icon: '🛡️', name: 'Bubble Shield' },
             zap:    { icon: '⚡', name: 'Shockwave' },
+            spike:  { icon: '🐚', name: 'Spike Shell' },
         };
 
         // ---------- three.js / track state ----------
@@ -952,7 +953,7 @@
         // ⚠ APP_VER: increment ONCE PER PR (CLAUDE.md rule). Shown on the
         // title screen and folded into NET_VER, so any two different builds
         // refuse to share a room.
-        const APP_VER = 23;
+        const APP_VER = 24;
         function hash32(str) {
             let h = 2166136261 >>> 0;
             for (let i = 0; i < str.length; i++) { h ^= str.charCodeAt(i); h = Math.imul(h, 16777619); }
@@ -3812,7 +3813,7 @@
             seedRng(raceSeed);   // a future host shares raceSeed → identical item rolls everywhere
             buildBombSchedule();  // first rng draws: identical eruption times on every machine
             raceClock = 0; simAcc = 0; simTickNo = 0;
-            zapTimer = 0; rocketWarnT = 0;
+            zapTimer = 0; spikeTimer = 0; rocketWarnT = 0;
             dom.rocketWarn.classList.remove('on');
             clearProjectiles(); clearHazards();
             // grid: AI rows up front, humans rearmost — earn the win. Rows
@@ -4257,19 +4258,24 @@
             if (k.isPlayer) { sfxPickup(); vibrate(20); updateItemButton(); }
         }
         // rank-weighted like MK: leaders get defense, trailers get firepower.
-        // zapTimer is a global cooldown so the shockwave stays a rare event.
-        let zapTimer = 0;
+        // zapTimer/spikeTimer are global cooldowns so the shockwave and the
+        // leader-seeking Spike Shell each stay rare, special-moment events.
+        let zapTimer = 0, spikeTimer = 0;
         function rollItemFor(k) {
             const r = k.rank;
             let pool;
             if (r === 1) pool = ['goo', 'goo', 'shield', 'shield', 'turbo', 'goo'];
             else if (r <= 3) pool = ['turbo', 'rocket', 'goo', 'shield', 'turbo', 'rocket'];
             else if (r <= 5) pool = ['rocket', 'turbo3', 'turbo', 'rocket', 'shield', 'turbo3'];
-            else pool = ['turbo3', 'zap', 'rocket', 'turbo3', 'zap', 'rocket'];
-            // far behind the leader → sweeten the pot
+            else pool = ['turbo3', 'zap', 'rocket', 'spike', 'turbo3', 'zap', 'rocket'];
+            // far behind the leader → sweeten the pot (comeback feel, MK-style)
             const leader = karts.reduce((a, b) => (b.progress > a.progress ? b : a), karts[0]);
-            if (leader.progress - k.progress > 0.5 && r >= 6) pool = pool.concat(['zap', 'turbo3', 'turbo3']);
+            const farBack = leader.progress - k.progress > 0.45;
+            if (farBack && r >= 5) pool = pool.concat(['spike', 'zap', 'turbo3', 'turbo3']);
             let it = pick(pool);
+            // Spike Shell only when there's a leader AHEAD to hunt; gated rare
+            if (it === 'spike' && (spikeTimer > 0 || r === 1)) it = farBack ? 'turbo3' : 'rocket';
+            if (it === 'spike') spikeTimer = 26;
             if (it === 'zap' && zapTimer > 0) it = r >= 6 ? 'turbo3' : 'rocket';
             if (it === 'zap') zapTimer = 30;   // claimed: nobody else rolls one for a while
             return it;
@@ -4299,6 +4305,7 @@
             else if (it === 'goo') dropGoo(k);
             else if (it === 'rocket') fireRocket(k);
             else if (it === 'zap') fireZap(k);
+            else if (it === 'spike') fireSpike(k);
         }
         function aiUseItem(k) {
             const it = k.item;
@@ -4316,6 +4323,8 @@
                 const nAhead = karts.filter((o) => o !== k && !o.finished && o.progress > k.progress && o.progress - k.progress < 0.22).length;
                 if (nAhead < 2 && k.rank < 6) { k.itemUseTimer = rand(0.8, 2.0); return; }
             }
+            // Spike Shell: fire as soon as you've got it (unless you're leading)
+            if (it === 'spike' && k.rank === 1) { k.itemUseTimer = rand(0.6, 1.4); return; }
             k.ctrl.fire = true;   // fires through the same input path a remote player would
         }
         function dropGoo(k) {
@@ -4352,6 +4361,30 @@
                 if (o.progress > k.progress) { bonkKart(o, { shrink: true }); any = true; }
             }
             if (k.isPlayer && any) { sfxZap(); flash('⚡ SHOCKWAVE! ⚡', '#ffe27a'); }
+        }
+        function fireSpike(k) {
+            // the Spike Shell: a leader-seeking missile that flies over the
+            // pack and only detonates on whoever is in 1st (MK blue shell).
+            let leader = null;
+            for (const o of karts) if (!o.finished && o !== k && (!leader || o.progress > leader.progress)) leader = o;
+            if (!leader || leader.progress <= k.progress) { fireRocket(k); return; }   // no one ahead → just a rocket
+            const fx = Math.sin(k.theta), fz = Math.cos(k.theta);
+            const mesh = new THREE.Group();
+            const core = new THREE.Mesh(new THREE.IcosahedronGeometry(1.15, 0),
+                new THREE.MeshLambertMaterial({ color: 0x2f6fff, emissive: 0x1840c0 }));
+            mesh.add(core);
+            for (const ax of [[1,0,0],[-1,0,0],[0,1,0],[0,0,1],[0,0,-1]]) {
+                const sp = new THREE.Mesh(new THREE.ConeGeometry(0.34, 1.1, 6),
+                    new THREE.MeshLambertMaterial({ color: 0xdfe8ff }));
+                sp.position.set(ax[0]*1.1, ax[1]*1.1, ax[2]*1.1);
+                sp.lookAt(ax[0]*3, ax[1]*3, ax[2]*3); sp.rotateX(Math.PI/2);
+                mesh.add(sp);
+            }
+            mesh.position.set(k.pos.x + fx * 4, k.y + 2.0, k.pos.z + fz * 4);
+            scene.add(mesh);
+            projectiles.push({ mesh, x: mesh.position.x, z: mesh.position.z, theta: k.theta,
+                owner: k, target: leader, life: 14, seg: k.seg, leaderOnly: true, spin: 0 });
+            if (k.isPlayer) { sfxRocket(); flash('🐚 SPIKE SHELL!', '#8fd0ff'); }
         }
         function nextAhead(k) {
             let best = null, bestGap = Infinity;
@@ -4422,8 +4455,15 @@
                 const p = projectiles[i];
                 p.life -= dt;
                 if (p.target && !p.target.finished) {
-                    const desired = Math.atan2(p.target.pos.x - p.x, p.target.pos.z - p.z);
-                    p.theta += wrapAngle(desired - p.theta) * clamp(dt * 3.2, 0, 1);
+                    const ddx = p.target.pos.x - p.x, ddz = p.target.pos.z - p.z;
+                    let desired;
+                    if (!p.leaderOnly || ddx * ddx + ddz * ddz < 2500) {
+                        desired = Math.atan2(ddx, ddz);            // home directly when close (or a normal rocket)
+                    } else {
+                        const ah = centerline[(p.seg + 12) % N];   // far: rail-follow forward down the track
+                        desired = Math.atan2(ah.x - p.x, ah.z - p.z);
+                    }
+                    p.theta += wrapAngle(desired - p.theta) * clamp(dt * (p.leaderOnly ? 4.5 : 3.2), 0, 1);
                 }
                 const tx = Math.sin(p.theta), tz = Math.cos(p.theta);
                 const sp = MAX_SPEED * 1.55;
@@ -4452,14 +4492,18 @@
                     const ddx = player.pos.x - p.x, ddz = player.pos.z - p.z;
                     if (ddx * ddx + ddz * ddz < 5200) rocketWarn();
                 }
+                if (p.leaderOnly) { p.spin += dt * 9; p.mesh.rotation.set(p.spin, p.theta, p.spin * 0.7); }
                 let hit = false;
                 for (const o of karts) {
                     if (o === p.owner || o.finished) continue;
+                    if (p.leaderOnly && o !== p.target) continue;   // Spike Shell ignores the pack
                     const dx = o.pos.x - p.x, dz = o.pos.z - p.z;
-                    if (dx * dx + dz * dz < 25) {
-                        bonkKart(o);
-                        for (let j = 0; j < 14; j++) emitSpark(new THREE.Vector3(p.x, py + 1, p.z), j % 2 ? 0xff7a30 : 0xffd54a, 12, 9, { life: 0.55, size: vrand(2.5, 4.5) });
+                    if (dx * dx + dz * dz < (p.leaderOnly ? 36 : 25)) {
+                        bonkKart(o, p.leaderOnly ? { shrink: true } : undefined);
+                        const cols = p.leaderOnly ? [0x2f6fff, 0xdfe8ff] : [0xff7a30, 0xffd54a];
+                        for (let j = 0; j < (p.leaderOnly ? 20 : 14); j++) emitSpark(new THREE.Vector3(p.x, py + 1, p.z), cols[j % 2], 13, 10, { life: 0.6, size: vrand(2.5, 4.8) });
                         if (o.isPlayer || p.owner.isPlayer) sfxBonk();
+                        if (p.leaderOnly && (o.isPlayer || p.owner.isPlayer)) flash(o.isPlayer ? '🐚 SPIKED!' : '🐚 LEADER HIT!', '#8fd0ff');
                         hit = true; break;
                     }
                 }
@@ -5959,6 +6003,7 @@
         function simTick(d) {
             if (state === 'racing') raceClock += d;
             if (zapTimer > 0) zapTimer -= d;
+            if (spikeTimer > 0) spikeTimer -= d;
             if (rocketWarnT > 0) { rocketWarnT -= d; if (rocketWarnT <= 0) dom.rocketWarn.classList.remove('on'); }
             for (const k of karts) {
                 k._px = k.pos.x; k._pz = k.pos.z; k._py = k.y; k._pth = k.theta;
