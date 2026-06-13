@@ -993,6 +993,7 @@
         let fordA = -1, fordB = -1;   // creek ford seg range — karts splash through (theme.ford)
         // Glacier Pass zone state (resolved from theme landmarks in buildLandmarks)
         let viaductSegs = new Set();   // upper-strand segs of an overpass — terrain embankment skips them (3D crossovers)
+        let crossCenter = null;        // {x,z,y} of the lower road under a flyover — terrainY carves a flat basin here so the underpass is a clean pass, not a ravine
         let iceSegs = [];        // [{a, b, side}] side 0 = full width, ±1 = that lateral side only
         let sandSegs = [];       // desert drag patches [{a,b,lat,hw}] — weave around them
         let dustDevils = [];     // roaming sand columns [{seg,base,range,sp,phase,mesh}] (theme-driven, time-deterministic)
@@ -1919,6 +1920,23 @@
                     if (Math.abs(ci.x - cj.x) < 16 && Math.abs(ci.z - cj.z) < 16 && ci.y - cj.y > 9) { viaductSegs.add(i); break; }
                 }
             }
+            // the crossover basin: find the LOWER-road seg most directly under the
+            // deck. terrainY flattens the embankment around it so the underpass is
+            // a clean flat pass (otherwise the hill the high strand rides forms a
+            // ravine wall right beside the low road).
+            crossCenter = null;
+            if (viaductSegs.size) {
+                let cl = -1, bd = 0;
+                for (let i = 0; i < N; i++) {
+                    if (viaductSegs.has(i)) continue;
+                    const ci = centerline[i];
+                    for (const v of viaductSegs) {
+                        const cv = centerline[v];
+                        if (Math.abs(ci.x - cv.x) < 10 && Math.abs(ci.z - cv.z) < 10) { const dy = cv.y - ci.y; if (dy > bd) { bd = dy; cl = i; } }
+                    }
+                }
+                if (cl >= 0) crossCenter = { x: centerline[cl].x, z: centerline[cl].z, y: centerline[cl].y };
+            }
 
             // the channel is a lava RIVER just below road level — visually
             // unmissable, and landing short means touching it almost instantly
@@ -2080,6 +2098,13 @@
             }
             const edge = roadY(s, clamp(lat, -HALF_W, HALF_W)) - 0.5;
             let out = lerp(edge, hill, smoothstep(HALF_W + 1, HALF_W + 42, d));
+            if (crossCenter) {
+                // flatten a basin around the crossover so the underpass is a clean
+                // flat pass — pull the embankment DOWN toward low-road level (only
+                // where it's higher), blending back to normal terrain at the rim.
+                const dc = Math.hypot(x - crossCenter.x, z - crossCenter.z);
+                out = Math.min(out, lerp(crossCenter.y - 0.5, out, smoothstep(40, 96, dc)));
+            }
             if (gapA >= 0) {
                 // carve a radial depression around the gap so the lava river is
                 // exposed (nearest-seg logic alone gets bridged by the coarse grid)
@@ -2628,34 +2653,29 @@
             const addPier = (px, pz, topY) => {
                 const ground = terrainY(px, pz);
                 const h = Math.max(2, topY - ground);
-                if (h < 4) return;                          // deck ~at ground here — a stub, skip
+                if (h < 5) return;                          // deck ~at ground here (ramp shoulder) — a stub, skip
                 const pl = new THREE.Mesh(box, pillarMat);
                 pl.scale.set(3.4, h, 3.4); pl.position.set(px, ground + h / 2, pz); world.add(pl);
                 const cap = new THREE.Mesh(box, pillarMat);
                 cap.scale.set(6, 1.4, 6); cap.position.set(px, topY - 0.7, pz); world.add(cap);
             };
-            // locate the crossing: the lower-road seg most directly under the deck
-            let crossLow = -1, bestDy = 0;
-            for (let i = 0; i < N; i++) {
-                if (viaductSegs.has(i)) continue;
-                const ci = centerline[i];
-                for (const v of viaductSegs) {
-                    const cv = centerline[v];
-                    if (Math.abs(ci.x - cv.x) < 10 && Math.abs(ci.z - cv.z) < 10) {
-                        const dy = cv.y - ci.y; if (dy > bestDy) { bestDy = dy; crossLow = i; }
-                    }
+            // ---- COLONNADE: a row of piers marching along the elevated deck over
+            // the flat crossover basin. At the deck centerline normally, but where
+            // the deck is directly over the lower road (the crossing) the pier
+            // steps aside into the basin so it never stands in either lane; if it
+            // can't clear, the deck just spans there.
+            const lowClear = (px, pz, m) => { const le = nearestSegExcl(px, pz), lc = centerline[le]; return Math.hypot(px - lc.x, pz - lc.z) > m; };
+            const segs = Array.from(viaductSegs).sort((a, b) => a - b);
+            for (let k = 0; k < segs.length; k += 3) {
+                const i = segs[k], c = centerline[i], n = normals[i];
+                let px = c.x, pz = c.z;
+                if (!lowClear(px, pz, HALF_W + 5)) {        // deck centerline is over the lower road — step aside
+                    const le = nearestSegExcl(c.x, c.z), lc = centerline[le];
+                    const sign = ((c.x - lc.x) * n.x + (c.z - lc.z) * n.z) >= 0 ? 1 : -1;
+                    px = c.x + n.x * (HALF_W + 7) * sign; pz = c.z + n.z * (HALF_W + 7) * sign;
+                    if (!lowClear(px, pz, HALF_W + 3)) continue;  // still over a road — let the deck clear-span
                 }
-            }
-            if (crossLow >= 0) {
-                const lc = centerline[crossLow], ln = normals[crossLow];
-                for (const side of [-1, 1]) {               // straddle the lower road
-                    const px = lc.x + ln.x * (HALF_W + 6) * side, pz = lc.z + ln.z * (HALF_W + 6) * side;
-                    // deck height ABOVE the pier — nearest VIADUCT seg, never the
-                    // lower road (nearestSeg would grab the road and zero the height)
-                    let dd = Infinity, ds = -1;
-                    for (const v of viaductSegs) { const cv = centerline[v]; const d = (px - cv.x) ** 2 + (pz - cv.z) ** 2; if (d < dd) { dd = d; ds = v; } }
-                    addPier(px, pz, centerline[ds].y - 1.0);
-                }
+                addPier(px, pz, roadY(i, 0) - 1.0);
             }
             // ---- TIRE WALLS on the OUTSIDE of the tighter corners (baked)
             const tparts = [];
