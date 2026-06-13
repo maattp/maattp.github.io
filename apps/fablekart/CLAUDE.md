@@ -21,8 +21,8 @@ half auto-covers track geometry + core physics, but nothing else).
 
 A single self-contained `index.html` — a **landscape** (horizontal) 3D kart
 racer for iPhone PWA. Three.js **r128** from cdnjs, all assets generated at
-runtime. **Six tracks** (Coral Cliffs, Volcano Bay, Whisper Wood,
-Glacier Pass, Neon City, Dust Devil Gulch), 3 laps, player + **7 AI**. Left-thumb slide steering,
+runtime. **Seven tracks** (Coral Cliffs, Volcano Bay, Whisper Wood,
+Glacier Pass, Neon City, Dust Devil Gulch, Crossover Speedway), 3 laps, player + **7 AI**. Left-thumb slide steering,
 DRIFT/ITEM buttons, auto-accelerate. Each track has its own composition
 (per-track `SONGS` sequencer), signature landmarks, and theme.
 
@@ -222,6 +222,33 @@ work, and don't regress these four seams.
     snow (`snowPts`, camera-following recycled point cloud), ski-lift
     gondola (`gondolaAnim`, sagging cable + ping-pong cabins), `pines`
     foliage (snow-capped conifers).
+- **Crossover Speedway** (`id: 'speedway'`, `theme.speedway`) — THE 3D ONE:
+  a figure-8 motorsport circuit where the ribbon flies OVER itself on a
+  viaduct and passes back UNDER. This is the proof-of-concept that the
+  engine can do crossovers/flyovers (single ribbon, no forked centerline).
+  How the overpass works without breaking the heightfield:
+  - **`viaductSegs` (auto-detected)**: after `buildCenterline`, scan every
+    seg pair; if two segs are close in XZ (<16u) but far apart in Y (>9u)
+    AND >24 segs apart along the ribbon, the HIGH one is a viaduct seg.
+    No hand-tagging — re-tune the ctrl loop and the overpass set updates.
+  - **`terrainY` exclusion**: under a flyover the single-valued heightfield
+    must follow the LOW road, not tent up to the deck. `nearestSegExcl()`
+    finds the nearest NON-viaduct seg; `terrainY` uses it whenever the
+    plain nearest seg is a viaduct. Deck floats on baked pillars
+    (`buildSpeedway`: red box columns from `roadY-1` down to terrain + cap).
+  - **Y-aware gameplay gates** (the netcode-relevant fixes): item pickups,
+    goo-hazard hits, and `resolveCollisions` all `continue` when `|Δy|`
+    between two bodies exceeds ~3-6u, so a kart on the deck can't collide
+    with / pick up / get goo'd by one on the road directly below. Verified:
+    two karts stacked 8u apart in XZ / 18u in Y do NOT interact.
+  - **Netcode survives**: pose already carries Y; progress is windowed +
+    incremental (`nearestSegNear`); host item/lap/rank authority unchanged.
+    No protocol change was needed for 3D tracks.
+  - Other landmarks in `buildSpeedway`: tire-wall barriers (baked cylinders
+    on the outside of high-curvature segs), billboards (set-back panels,
+    clearance-checked). `foliage:'speedway'` → sparse green shrubs only
+    (palms/scatter early-return). Music: `SPEEDWAY_SONG` "Pole Position"
+    (E major, four-on-floor, square/saw lead).
 - `CTRL` points `[x, z, y]` are scaled by `SC = 1.35`; elevation 0→31.
   Tunnel portals + jump location are found by `nearestSeg()` from landmark
   coords at build.
