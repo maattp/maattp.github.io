@@ -3430,8 +3430,17 @@
             for (let x = 0; x < 8; x++) for (let y = 0; y < 2; y++) { g.fillStyle = (x + y) % 2 ? '#fff' : '#111'; g.fillRect(x * 8, y * 8, 8, 8); }
             buildDecalStrip(0, 2, 1.0, new THREE.CanvasTexture(cv), 0.12);
 
-            // gate
-            const postH = 20;
+            // gate — normally 20 tall, but on a 3D track the start line can sit
+            // UNDER a flyover deck (the figure-8 crosses over its own start
+            // straight). A fixed-height arch then speared up through the deck
+            // and its banner read as a box lying on the upper pavement. Shrink
+            // the whole gantry to clear any deck overhead.
+            let deckY = Infinity;
+            for (const v of viaductSegs) {
+                const cv = centerline[v];
+                if (Math.abs(cv.x - c.x) < HALF_W && Math.abs(cv.z - c.z) < HALF_W && cv.y - c.y > 6) deckY = Math.min(deckY, cv.y);
+            }
+            const postH = deckY < Infinity ? Math.max(8, deckY - c.y - 4.5) : 20;
             for (const s of [1, -1]) {
                 parts.push({ geo: new THREE.CylinderGeometry(1, 1.2, postH, 10), color: 0xff3b5c,
                     matrix: mat4(c.x + n.x * (HALF_W + 2.5) * s, c.y + postH / 2, c.z + n.z * (HALF_W + 2.5) * s, 0) });
