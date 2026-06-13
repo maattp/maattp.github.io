@@ -42,6 +42,11 @@ during a session; recreate from this recipe):
    phase:0, laneBias:0, errT:6, errOff:0, rival:false}; p.controller = __dbg.aiController;`
 5. For full-race tests patch `TOTAL_LAPS = 1` in the debug copy.
 
+**SwiftShader caveat (toon):** MeshToonMaterial (per-fragment) costs ~25%
+headless fps vs the old Lambert (8.3 -> 6.2): full-race harness scripts
+with FIXED waits (drive2) now time out before the finish — poll
+`state === 'finished'` with patience instead. Real GPUs don't care.
+
 **SwiftShader caveat:** Lambert + bright lights renders washed-out pastels
 headless; the lighting values are kart2-proven on the real iPhone. Force
 MeshBasicMaterial to separate real geometry bugs from SwiftShader shading

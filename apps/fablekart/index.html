@@ -832,6 +832,22 @@
             zap:    { icon: '⚡', name: 'Shockwave' },
         };
 
+        // ---------- toon shading ----------
+        // Cel look: every lit material is MeshToonMaterial banded by a shared
+        // 3-step gradient — identical palette, lighting quantized into
+        // cartoon cels. Lam() is a drop-in for new MeshLambertMaterial().
+        const toonGrad = (() => {
+            const tex = new THREE.DataTexture(new Uint8Array([115, 190, 255]), 3, 1, THREE.LuminanceFormat);
+            tex.minFilter = THREE.NearestFilter; tex.magFilter = THREE.NearestFilter;
+            tex.needsUpdate = true;
+            return tex;
+        })();
+        function Lam(params) {
+            return new THREE.MeshToonMaterial(Object.assign({ gradientMap: toonGrad }, params || {}));
+        }
+        // ink outline for karts/boxes: same geometry, flipped faces, scaled up
+        const OUTLINE_MAT = new THREE.MeshBasicMaterial({ color: 0x10131c, side: THREE.BackSide });
+
         // ---------- three.js / track state ----------
         let renderer, scene, camera, clock;
         let centerline = [], tangents = [], normals = [];
@@ -939,7 +955,7 @@
         // ⚠ APP_VER: increment ONCE PER PR (CLAUDE.md rule). Shown on the
         // title screen and folded into NET_VER, so any two different builds
         // refuse to share a room.
-        const APP_VER = 18;
+        const APP_VER = 19;
         function hash32(str) {
             let h = 2166136261 >>> 0;
             for (let i = 0; i < str.length; i++) { h ^= str.charCodeAt(i); h = Math.imul(h, 16777619); }
@@ -1563,13 +1579,13 @@
         let ghostGoo = [], ghostRockets = [];
         function makeGhostGoo() {
             const mesh = new THREE.Mesh(new THREE.CylinderGeometry(2.4, 2.6, 0.25, 12),
-                new THREE.MeshLambertMaterial({ color: 0x7a3bd0, transparent: true, opacity: 0.9 }));
+                Lam({ color: 0x7a3bd0, transparent: true, opacity: 0.9 }));
             scene.add(mesh);
             return mesh;
         }
         function makeGhostRocket() {
             const mesh = new THREE.Group();
-            const body = new THREE.Mesh(new THREE.ConeGeometry(0.85, 3, 10), new THREE.MeshLambertMaterial({ color: 0xff3b5c }));
+            const body = new THREE.Mesh(new THREE.ConeGeometry(0.85, 3, 10), Lam({ color: 0xff3b5c }));
             body.rotation.x = Math.PI / 2; mesh.add(body);
             const fin = new THREE.Mesh(new THREE.SphereGeometry(0.65, 8, 8), new THREE.MeshBasicMaterial({ color: 0xffd54a }));
             fin.position.z = -1.4; mesh.add(fin);
@@ -1927,7 +1943,7 @@
             }
             geo.setAttribute('color', new THREE.Float32BufferAttribute(cols, 3));
             geo.computeVertexNormals();
-            const mesh = new THREE.Mesh(geo, new THREE.MeshLambertMaterial({ vertexColors: true }));
+            const mesh = new THREE.Mesh(geo, Lam({ vertexColors: true }));
             world.add(mesh);
         }
         function buildWater() {
@@ -2021,7 +2037,7 @@
                 world.add(lavaGlow);
                 for (let i = 0; i < 4; i++) {
                     const puff = new THREE.Mesh(new THREE.SphereGeometry(rand(16, 26), 8, 6),
-                        new THREE.MeshLambertMaterial({ color: 0x2a2026, transparent: true, opacity: 0.5 }));
+                        Lam({ color: 0x2a2026, transparent: true, opacity: 0.5 }));
                     puff.position.set(cr.x + rand(-28, 28), cr.floor + 52 + i * 15, cr.z + rand(-28, 28));
                     world.add(puff);
                     spinners.push({ obj: puff, speed: 0, bob: puff.position.y, bobAmp: rand(4, 8), drift: rand(0.4, 0.9) });
@@ -2098,7 +2114,7 @@
                         matrix: mat4(et.x + Math.sin(a) * d, baseY + 74 + (c === 0 ? 14 : rand(0, 16)),
                             et.z + Math.cos(a) * d, 0, r, r * 0.7, r) });
                 }
-                world.add(new THREE.Mesh(bakeMerge(parts), new THREE.MeshLambertMaterial({ vertexColors: true })));
+                world.add(new THREE.Mesh(bakeMerge(parts), Lam({ vertexColors: true })));
                 world.add(new THREE.Mesh(bakeMerge(glowParts), new THREE.MeshBasicMaterial({ vertexColors: true })));
                 // hanging lanterns swing on the spinners bob
                 for (let l = 0; l < 12; l++) {
@@ -2158,7 +2174,7 @@
                 waterfallMats.push(wmat);
                 // crest lip + plunge pool + foam ring
                 const lip = new THREE.Mesh(new THREE.BoxGeometry(26, 2.2, 6),
-                    new THREE.MeshLambertMaterial({ color: THEME.rock }));
+                    Lam({ color: THEME.rock }));
                 lip.position.set(bx, topY - 0.8, bz); lip.lookAt(c.x, topY - 0.8, c.z);
                 world.add(lip);
                 const pool = new THREE.Mesh(new THREE.CircleGeometry(17, 22),
@@ -2171,7 +2187,7 @@
                 world.add(foam);
                 for (let m = 0; m < 3; m++) {
                     const puff = new THREE.Mesh(new THREE.SphereGeometry(rand(4, 7), 8, 6),
-                        new THREE.MeshLambertMaterial({ color: 0xeaf6ff, transparent: true, opacity: 0.4 }));
+                        Lam({ color: 0xeaf6ff, transparent: true, opacity: 0.4 }));
                     const py = botY + rand(3, 9);
                     puff.position.set(bx + rand(-8, 8), py, bz + rand(-8, 8));
                     world.add(puff);
@@ -2263,13 +2279,13 @@
                     parts.push({ geo: bodyGeo, color: 0x5a5a64,
                         matrix: mat4(chx, y + H2 + 2.4, chz, ry, 1.3, 2.6, 1.3) });
                     for (let s = 0; s < 3; s++) {
-                        const puff = new THREE.Mesh(smokeGeo, new THREE.MeshLambertMaterial({
+                        const puff = new THREE.Mesh(smokeGeo, Lam({
                             color: 0xd8dde6, transparent: true, opacity: 0.5, depthWrite: false }));
                         world.add(puff);
                         chimneySmoke.push({ mesh: puff, x: chx, z: chz, y0: y + H2 + 3.8, t: s / 3, ph: rand(0, 6) });
                     }
                 }
-                world.add(new THREE.Mesh(bakeMerge(parts), new THREE.MeshLambertMaterial({ vertexColors: true })));
+                world.add(new THREE.Mesh(bakeMerge(parts), Lam({ vertexColors: true })));
                 world.add(new THREE.Mesh(bakeMerge(glowParts), new THREE.MeshBasicMaterial({ vertexColors: true })));
             }
             // ---- ice patches (full-width zones from the theme)
@@ -2323,7 +2339,7 @@
                     glow.push({ geo: blockGeo, color: 0x7ad6ff,
                         matrix: mat4(c.x, roadY(i, 0) + 2.15 * hScale, c.z, ry, 1.4, 0.35, 8.0) });
                 }
-                world.add(new THREE.Mesh(bakeMerge(parts), new THREE.MeshLambertMaterial({ vertexColors: true })));
+                world.add(new THREE.Mesh(bakeMerge(parts), Lam({ vertexColors: true })));
                 world.add(new THREE.Mesh(bakeMerge(glow), new THREE.MeshBasicMaterial({ vertexColors: true })));
             }
             // ---- shared icy-sheen decal over every ice zone
@@ -2353,7 +2369,7 @@
                 const gA = THEME.gondola.a, gB = THEME.gondola.b;
                 const ya = terrainY(gA[0], gA[1]) + 26, yb = terrainY(gB[0], gB[1]) + 26;
                 const pylGeo = new THREE.BoxGeometry(1.6, 1, 1.6);
-                const pylMat = new THREE.MeshLambertMaterial({ color: 0x4a5668 });
+                const pylMat = Lam({ color: 0x4a5668 });
                 for (const [px, pz, py] of [[gA[0], gA[1], ya], [gB[0], gB[1], yb]]) {
                     const ph = py - terrainY(px, pz);
                     const pyl = new THREE.Mesh(pylGeo, pylMat);
@@ -2375,13 +2391,13 @@
                 for (let i = 0; i < 3; i++) {
                     const cab = new THREE.Group();
                     const body = new THREE.Mesh(new THREE.BoxGeometry(2.4, 2.2, 3.2),
-                        new THREE.MeshLambertMaterial({ color: cabCols[i] }));
+                        Lam({ color: cabCols[i] }));
                     body.position.y = -2.2; cab.add(body);
                     const win = new THREE.Mesh(new THREE.BoxGeometry(2.5, 0.9, 3.3),
                         new THREE.MeshBasicMaterial({ color: 0xbfe8ff }));
                     win.position.y = -1.9; cab.add(win);
                     const hang = new THREE.Mesh(new THREE.BoxGeometry(0.22, 1.4, 0.22),
-                        new THREE.MeshLambertMaterial({ color: 0x2a323e }));
+                        Lam({ color: 0x2a323e }));
                     hang.position.y = -0.7; cab.add(hang);
                     world.add(cab);
                     gondolaAnim.cabins.push({ mesh: cab, t: 0.18 + i * 0.32, dir: i % 2 ? 1 : -1 });
@@ -2569,7 +2585,7 @@
             geo.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
             geo.setIndex(idx); geo.computeVertexNormals();
             // DoubleSide: ribbon winding faces down (Kart 2 lesson)
-            const mesh = new THREE.Mesh(geo, new THREE.MeshLambertMaterial({ map: makeRoadTexture(), side: THREE.DoubleSide }));
+            const mesh = new THREE.Mesh(geo, Lam({ map: makeRoadTexture(), side: THREE.DoubleSide }));
             mesh.renderOrder = 1;
             world.add(mesh);
             buildCurbs();
@@ -2645,7 +2661,7 @@
             geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
             geo.setAttribute('color', new THREE.Float32BufferAttribute(col, 3));
             geo.setIndex(idx); geo.computeVertexNormals();
-            const mesh = new THREE.Mesh(geo, new THREE.MeshLambertMaterial({
+            const mesh = new THREE.Mesh(geo, Lam({
                 vertexColors: true, side: THREE.DoubleSide,
                 polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -1 }));
             mesh.renderOrder = 2;
@@ -2698,7 +2714,7 @@
             const tex = new THREE.CanvasTexture(cv);
             tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
             tex.anisotropy = renderer.capabilities.getMaxAnisotropy();
-            const mat = new THREE.MeshLambertMaterial({ map: tex, side: THREE.DoubleSide });
+            const mat = Lam({ map: tex, side: THREE.DoubleSide });
             const postGeo = new THREE.BoxGeometry(0.5, 2.1, 0.5);
 
             for (const side of [1, -1]) {
@@ -2772,7 +2788,7 @@
             const geo = new THREE.BufferGeometry();
             geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
             geo.setIndex(idx); geo.computeVertexNormals();
-            world.add(new THREE.Mesh(geo, new THREE.MeshLambertMaterial({ color: THEME.tube, side: THREE.DoubleSide })));
+            world.add(new THREE.Mesh(geo, Lam({ color: THEME.tube, side: THREE.DoubleSide })));
 
             // headland: a rock shell over the tube (grassy on top) with end
             // facades connecting the shell rim to the tube mouth — so the
@@ -2830,7 +2846,7 @@
             sgeo.setAttribute('position', new THREE.Float32BufferAttribute(spos, 3));
             sgeo.setAttribute('color', new THREE.Float32BufferAttribute(scol, 3));
             sgeo.setIndex(sidx); sgeo.computeVertexNormals();
-            world.add(new THREE.Mesh(sgeo, new THREE.MeshLambertMaterial({ vertexColors: true, side: THREE.DoubleSide })));
+            world.add(new THREE.Mesh(sgeo, Lam({ vertexColors: true, side: THREE.DoubleSide })));
 
             // glowing lamps along the ceiling + real lights (brighter near the
             // mouths so the interior visibly reads from outside)
@@ -2880,7 +2896,7 @@
             }
 
             // portal rim trim
-            const rockMat = new THREE.MeshLambertMaterial({ color: THEME.portal });
+            const rockMat = Lam({ color: THEME.portal });
             for (const i of [tunnelA, tunnelB]) {
                 const c = centerline[i], t = tangents[i];
                 const ring = new THREE.Mesh(new THREE.TorusGeometry(R + 1.2, 2.2, 8, 18, Math.PI), rockMat);
@@ -2916,7 +2932,7 @@
             g.rotateX(-0.08);   // slight down-tilt toward the approach
 
             const frame = new THREE.Mesh(new THREE.BoxGeometry(W + 1.8, H9 + 1.8, 1.4),
-                new THREE.MeshLambertMaterial({ color: 0x141a26 }));
+                Lam({ color: 0x141a26 }));
             g.add(frame);
             tvScreen = new THREE.Mesh(new THREE.PlaneGeometry(W, H9),
                 new THREE.MeshBasicMaterial({ map: tvRT.texture }));
@@ -2926,7 +2942,7 @@
                 new THREE.MeshBasicMaterial({ color: 0xff2b2b }));
             tvLive.position.set(-(W + 1.8) / 2 + 1.3, (H9 + 1.8) / 2 - 1.1, 0.6);
             g.add(tvLive);
-            const postMat = new THREE.MeshLambertMaterial({ color: 0x2a3242 });
+            const postMat = Lam({ color: 0x2a3242 });
             for (const sx of [-(W / 2 - 2.5), W / 2 - 2.5]) {
                 // struts angle back-and-down from the frame into the shell crest
                 const strut = new THREE.Mesh(new THREE.BoxGeometry(1.3, 1.3, 14), postMat);
@@ -3195,7 +3211,7 @@
                 parts.push({ geo: buoyGeo, color: i % 2 ? 0xff5a3c : 0xffd54a, matrix: mat4(Math.cos(a) * d, -0.6, Math.sin(a) * d, 0) });
             }
 
-            const mesh = new THREE.Mesh(bakeMerge(parts), new THREE.MeshLambertMaterial({ vertexColors: true }));
+            const mesh = new THREE.Mesh(bakeMerge(parts), Lam({ vertexColors: true }));
             world.add(mesh);
             if (basicParts.length) {
                 const bm = new THREE.Mesh(bakeMerge(basicParts), new THREE.MeshBasicMaterial({ vertexColors: true, side: THREE.DoubleSide }));
@@ -3265,9 +3281,9 @@
             for (let i = 0; i < 3; i++) {
                 const grp = new THREE.Group();
                 const ball = new THREE.Mesh(new THREE.SphereGeometry(9, 14, 12),
-                    new THREE.MeshLambertMaterial({ color: pick([0xff5a6a, 0x3ad6ff, 0xffd54a]) }));
+                    Lam({ color: pick([0xff5a6a, 0x3ad6ff, 0xffd54a]) }));
                 ball.scale.y = 1.2; grp.add(ball);
-                const basket = new THREE.Mesh(new THREE.BoxGeometry(4, 3, 4), new THREE.MeshLambertMaterial({ color: 0x8a5a2a }));
+                const basket = new THREE.Mesh(new THREE.BoxGeometry(4, 3, 4), Lam({ color: 0x8a5a2a }));
                 basket.position.y = -13; grp.add(basket);
                 const a = rand(0, Math.PI * 2), d = rand(220, 420);
                 grp.position.set(Math.cos(a) * d, rand(60, 110), Math.sin(a) * d);
@@ -3374,9 +3390,12 @@
                     const lane = lf * HALF_W;
                     const c = centerline[seg], n = normals[seg];
                     const box = new THREE.Group();
-                    const cube = new THREE.Mesh(new THREE.BoxGeometry(3.6, 3.6, 3.6), new THREE.MeshLambertMaterial({
+                    const cube = new THREE.Mesh(new THREE.BoxGeometry(3.6, 3.6, 3.6), Lam({
                         color: 0x8a5aff, emissive: 0x5a2ad0, transparent: true, opacity: 0.62 }));
                     box.add(cube);
+                    const cubeLine = new THREE.Mesh(cube.geometry, OUTLINE_MAT);
+                    cubeLine.scale.setScalar(1.05);
+                    box.add(cubeLine);
                     const q = new THREE.Mesh(new THREE.PlaneGeometry(3.4, 3.4), new THREE.MeshBasicMaterial({ map: qtex, transparent: true }));
                     q.position.z = 1.85; box.add(q);
                     const q2 = q.clone(); q2.position.z = -1.85; q2.rotation.y = Math.PI; box.add(q2);
@@ -3499,8 +3518,8 @@
         let WHEEL_MAT = null, BODY_MAT = null;
         const WHEEL_GEO_CACHE = {};
         function initKartGeos() {
-            WHEEL_MAT = new THREE.MeshLambertMaterial({ vertexColors: true });
-            BODY_MAT = new THREE.MeshLambertMaterial({ vertexColors: true });
+            WHEEL_MAT = Lam({ vertexColors: true });
+            BODY_MAT = Lam({ vertexColors: true });
         }
         // chunky tire + accent rim + hub cap, cached per accent color
         function wheelGeo(accent) {
@@ -3618,6 +3637,10 @@
 
             const bodyMesh = new THREE.Mesh(bakeMerge(P), BODY_MAT);
             g.add(bodyMesh);
+            // ink outline: same geometry, back faces, slightly inflated
+            const outline = new THREE.Mesh(bodyMesh.geometry, OUTLINE_MAT);
+            outline.scale.setScalar(1.045);
+            g.add(outline);
 
             const wheels = [], frontPivots = [];
             const WG = wheelGeo(A);
@@ -3625,7 +3648,9 @@
             for (const p of wpos) {
                 const pivot = new THREE.Group(); pivot.position.set(p[0], p[1], p[2]);
                 const tire = new THREE.Mesh(WG, WHEEL_MAT);
-                pivot.add(tire); g.add(pivot); wheels.push(tire);
+                const tireLine = new THREE.Mesh(WG, OUTLINE_MAT);
+                tireLine.scale.setScalar(1.09);
+                pivot.add(tire); pivot.add(tireLine); g.add(pivot); wheels.push(tire);
                 if (p[3]) frontPivots.push(pivot);
             }
 
@@ -4236,7 +4261,7 @@
             const x = k.pos.x - fx * 5.5, z = k.pos.z - fz * 5.5;
             const seg = nearestSeg(x, z);
             const mesh = new THREE.Mesh(new THREE.CylinderGeometry(2.4, 2.6, 0.25, 12),
-                new THREE.MeshLambertMaterial({ color: 0x7a3bd0, transparent: true, opacity: 0.9 }));
+                Lam({ color: 0x7a3bd0, transparent: true, opacity: 0.9 }));
             const c = centerline[seg], n = normals[seg];
             const lat = clamp((x - c.x) * n.x + (z - c.z) * n.z, -WALL_LIMIT, WALL_LIMIT);
             mesh.position.set(c.x + n.x * lat, roadY(seg, lat) + 0.15, c.z + n.z * lat);
@@ -4249,7 +4274,7 @@
             const target = nextAhead(k);
             const fx = Math.sin(k.theta), fz = Math.cos(k.theta);
             const mesh = new THREE.Group();
-            const body = new THREE.Mesh(new THREE.ConeGeometry(0.85, 3, 10), new THREE.MeshLambertMaterial({ color: 0xff3b5c }));
+            const body = new THREE.Mesh(new THREE.ConeGeometry(0.85, 3, 10), Lam({ color: 0xff3b5c }));
             body.rotation.x = Math.PI / 2; mesh.add(body);
             const fin = new THREE.Mesh(new THREE.SphereGeometry(0.65, 8, 8), new THREE.MeshBasicMaterial({ color: 0xffd54a }));
             fin.position.z = -1.4; mesh.add(fin);
