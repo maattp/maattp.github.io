@@ -663,6 +663,7 @@
                 theme: {
                     skyTop: 0x1d6fe0, skyMid: 0x7fc0ff, skyBot: 0xeaf6ff,
                     fog: 0xbfe2ff, cloud: 0xffffff, sun: 0xfff4c2, sunPos: [-500, 560, -420], birds: true,
+                    dust: 0xe6d2a0,
                     hemiSky: 0xcfe8ff, hemiGround: 0x4a7a3a, hemiInt: 0.95,
                     dirColor: 0xfff2d0, dirInt: 1.12, dirPos: [-200, 320, -160],
                     waterTex: '#2a8fd6', deep: 0x0a3f72,
@@ -696,6 +697,7 @@
                 theme: {
                     skyTop: 0x241038, skyMid: 0x7a2a4a, skyBot: 0xff9a4a,
                     fog: 0x5a3046, cloud: 0xd8a0b0, sun: 0xff8a4a, sunPos: [-520, 380, 340], stars: true,
+                    dust: 0x6a5a52, headlights: true,
                     hemiSky: 0xc88a96, hemiGround: 0x3a2a2a, hemiInt: 0.85,
                     dirColor: 0xffb070, dirInt: 1.0, dirPos: [-220, 260, 200],
                     waterTex: '#1a5a6a', deep: 0x06222e,
@@ -732,6 +734,7 @@
                     skyTop: 0x22356e, skyMid: 0x4e8a96, skyBot: 0xf2e0a8,
                     fog: 0x9ab8a4, fogNear: 230, fogFar: 840,   // mistier than the others
                     cloud: 0xe8f0d8, sun: 0xfff0b0, sunPos: [420, 480, -480], stars: true,
+                    dust: 0x5a4a38, headlights: true,
                     hemiSky: 0xbcd8c8, hemiGround: 0x2a4a2e, hemiInt: 0.9,
                     dirColor: 0xffe8b0, dirInt: 1.05, dirPos: [180, 300, -200],
                     waterTex: '#2a7a8a', deep: 0x0a3a44,
@@ -773,6 +776,7 @@
                     skyTop: 0x0a1028, skyMid: 0x1d3a5e, skyBot: 0x9ab8d8,
                     fog: 0x4a5e78, fogNear: 260, fogFar: 900,
                     cloud: 0x8aa0bc, sun: 0xd8e8ff, sunPos: [480, 520, 380], stars: true,
+                    dust: 0xeef4fc, headlights: true,
                     hemiSky: 0x9ab8d8, hemiGround: 0x4a5668, hemiInt: 0.85,
                     dirColor: 0xcfe0ff, dirInt: 0.95, dirPos: [200, 300, 180],
                     waterTex: '#9fc8e0', deep: 0x4a7a9a,
@@ -939,7 +943,7 @@
         // ⚠ APP_VER: increment ONCE PER PR (CLAUDE.md rule). Shown on the
         // title screen and folded into NET_VER, so any two different builds
         // refuse to share a room.
-        const APP_VER = 21;
+        const APP_VER = 22;
         function hash32(str) {
             let h = 2166136261 >>> 0;
             for (let i = 0; i < str.length; i++) { h ^= str.charCodeAt(i); h = Math.imul(h, 16777619); }
@@ -3453,6 +3457,7 @@
             buildBoostPads();
             buildItemBoxes();
             buildMinimapPath();
+            applyKartEnv();   // refresh fake-metal reflection for this sky
         }
 
         // ===================================================================
@@ -3465,7 +3470,7 @@
             grd.addColorStop(0, 'rgba(255,255,255,1)'); grd.addColorStop(0.4, 'rgba(255,255,255,0.8)'); grd.addColorStop(1, 'rgba(255,255,255,0)');
             g.fillStyle = grd; g.fillRect(0, 0, 32, 32);
             const tex = new THREE.CanvasTexture(cv);
-            const POOL = 160;
+            const POOL = 224;   // headroom for per-kart dust trails + sparks
             particles = { items: [], i: 0 };
             for (let i = 0; i < POOL; i++) {
                 const mat = new THREE.SpriteMaterial({ map: tex, color: 0xffffff, transparent: true, opacity: 0, depthWrite: false, blending: THREE.AdditiveBlending });
@@ -3510,8 +3515,34 @@
         let WHEEL_MAT = null, BODY_MAT = null;
         const WHEEL_GEO_CACHE = {};
         function initKartGeos() {
-            WHEEL_MAT = new THREE.MeshLambertMaterial({ vertexColors: true });
-            BODY_MAT = new THREE.MeshLambertMaterial({ vertexColors: true });
+            // fake metal: a faint sky reflection ADDED onto the vertex-colored
+            // Lambert so chrome/engine bits catch a glint without making the
+            // matte paint glossy. envMap is (re)assigned per track in loadTrack.
+            WHEEL_MAT = new THREE.MeshLambertMaterial({ vertexColors: true,
+                combine: THREE.AddOperation, reflectivity: 0.32 });
+            BODY_MAT = new THREE.MeshLambertMaterial({ vertexColors: true,
+                combine: THREE.AddOperation, reflectivity: 0.12 });
+        }
+        // tiny cube map from a theme's sky gradient — just enough for glints
+        let _kartEnv = null;
+        function applyKartEnv() {
+            if (_kartEnv) _kartEnv.dispose();
+            const face = (paint) => {
+                const c = document.createElement('canvas'); c.width = c.height = 16;
+                paint(c.getContext('2d')); return c;
+            };
+            const top = hx(THEME.skyTop), mid = hx(THEME.skyMid), bot = hx(THEME.skyBot);
+            const solid = (col) => face((g) => { g.fillStyle = col; g.fillRect(0, 0, 16, 16); });
+            const grad = () => face((g) => {
+                const lg = g.createLinearGradient(0, 0, 0, 16);
+                lg.addColorStop(0, top); lg.addColorStop(0.5, mid); lg.addColorStop(1, bot);
+                g.fillStyle = lg; g.fillRect(0, 0, 16, 16);
+            });
+            // face order: +x -x +y -y +z -z
+            _kartEnv = new THREE.CubeTexture([grad(), grad(), solid(top), solid(bot), grad(), grad()]);
+            _kartEnv.needsUpdate = true;
+            if (BODY_MAT) { BODY_MAT.envMap = _kartEnv; BODY_MAT.needsUpdate = true; }
+            if (WHEEL_MAT) { WHEEL_MAT.envMap = _kartEnv; WHEEL_MAT.needsUpdate = true; }
         }
         // chunky tire + accent rim + hub cap, cached per accent color
         function wheelGeo(accent) {
@@ -3674,9 +3705,24 @@
                 g.add(fl); flames.push(fl);
             }
 
+            // headlight cones (shown only on dark tracks — toggled per frame
+            // in syncKartMesh by THEME.headlights). Two additive cones cast
+            // forward + slightly down from the nose.
+            const headlights = [];
+            const coneGeo = new THREE.ConeGeometry(2.4, 13, 12, 1, true);
+            for (const s of [1, -1]) {
+                const cone = new THREE.Mesh(coneGeo, new THREE.MeshBasicMaterial({
+                    color: 0xfff2c0, transparent: true, opacity: 0.16, depthWrite: false,
+                    blending: THREE.AdditiveBlending, side: THREE.DoubleSide }));
+                cone.rotation.x = Math.PI / 2 + 0.16;   // point down the +z nose, tilt down
+                cone.position.set(0.7 * s, 1.5, 4.0 + 6.0);   // apex at nose, fans ahead
+                cone.visible = false;
+                g.add(cone); headlights.push(cone);
+            }
+
             scene.add(g);
             g.rotation.order = 'YXZ';
-            return { group: g, wheels, frontPivots, shield, shadow, flames, driver: driverGrp };
+            return { group: g, wheels, frontPivots, shield, shadow, flames, driver: driverGrp, headlights };
         }
 
         function charOrder() {
@@ -3965,6 +4011,16 @@
 
             updateProgress(k);
             clampToTrack(k, dt);
+
+            // dust kicked up behind a kart at speed — tinted per track
+            // surface (sand/ash/dirt/snow). Soft, settling (NormalBlending),
+            // sparse per kart so the shared particle pool isn't starved.
+            if (THEME.dust && k.grounded && !k.onIce && k.speed > MAX_SPEED * 0.55
+                && (simTickNo + k.rank * 2) % 7 === 0) {
+                const bx = k.pos.x - Math.sin(k.theta) * 3.4, bz = k.pos.z - Math.cos(k.theta) * 3.4;
+                emitSpark(new THREE.Vector3(bx + vrand(-1.3, 1.3), (k.groundY || k.y) + 0.3, bz + vrand(-1.3, 1.3)),
+                    THEME.dust, 1.6, 1.4, { normal: true, life: vrand(0.4, 0.7), grav: -3, size: vrand(1.8, 3.2) });
+            }
 
             // glacier ice: skating spray while sliding across a patch
             if (k.onIce && k.grounded && k.speed > 20 && simTickNo % 4 === 0) {
@@ -4680,6 +4736,11 @@
                     fl.rotation.z = vrand(-0.2, 0.2);
                 }
             }
+            // headlight cones glow only on dark tracks; flicker subtly
+            if (k.mesh.headlights[0].visible !== !!THEME.headlights)
+                for (const c of k.mesh.headlights) c.visible = !!THEME.headlights;
+            if (THEME.headlights)
+                for (const c of k.mesh.headlights) c.material.opacity = 0.14 + vrand(0, 0.03);
 
             const sh = k.mesh.shield;
             if (k.shieldTimer > 0) {
@@ -4734,21 +4795,45 @@
         // smoothing factors are normalized to dt so 120Hz ProMotion frames
         // don't double the chase speed (factors were tuned at 60fps)
         function frameLerp(base, dt) { return 1 - Math.pow(1 - base, clamp((dt || 1 / 60) * 60, 0.25, 3)); }
+        // camera juice: transient shake / FOV punch / drift roll, set by
+        // rising-edge events below and decayed each frame
+        let camShake = 0, camFovKick = 0, camRoll = 0;
+        let _camPrevBoost = 0, _camPrevAir = false, _camPrevSpin = 0;
         function updateCamera(instant, dt) {
             const k = player;
             const fx = Math.sin(k.theta), fz = Math.cos(k.theta);
             const speedT = clamp(k.speed / MAX_SPEED, 0, 1.3);
+
+            // ---- event triggers (rising edges on the player) ----
+            if (!instant) {
+                if (k.boostTimer > 0 && _camPrevBoost <= 0) camFovKick = Math.max(camFovKick, 7);   // boost punch
+                if (k.grounded && _camPrevAir) camShake = Math.max(camShake, Math.min(0.9, Math.abs(k.lastVR) * 0.018));  // landing thump
+                if (k.spinTimer > _camPrevSpin + 0.01) camShake = Math.max(camShake, 0.8);   // bonk
+                _camPrevBoost = k.boostTimer; _camPrevAir = !k.grounded; _camPrevSpin = k.spinTimer;
+                const f = frameLerp(0.12, dt);
+                camFovKick += (0 - camFovKick) * f;
+                camShake += (0 - camShake) * frameLerp(0.16, dt);
+                const rollT = (k.drifting ? -k.driftDir * 0.05 : 0);   // bank into a drift
+                camRoll += (rollT - camRoll) * frameLerp(0.1, dt);
+            }
+
             const dist = 12.6 + speedT * 2.6;       // close MK64-style chase framing
             const ty = k.y + 6.2;
             camYS = instant ? ty : lerp(camYS, ty, frameLerp(0.2, dt));
             camPos.set(k.pos.x - fx * dist, camYS, k.pos.z - fz * dist);
             if (instant) camera.position.copy(camPos); else camera.position.lerp(camPos, frameLerp(0.2, dt));
+            if (camShake > 0.001) {
+                camera.position.x += vrand(-1, 1) * camShake;
+                camera.position.y += vrand(-1, 1) * camShake;
+                camera.position.z += vrand(-1, 1) * camShake;
+            }
             // look mostly at the kart, biased down the road — keeps the kart
             // big and low-center even over crests and mid-jump
             camLook.set(k.pos.x + fx * 8.5, k.y + 1.9, k.pos.z + fz * 8.5);
             camera.lookAt(camLook);
+            if (camRoll) camera.rotateZ(camRoll);
             const targetFov = 68 + speedT * 9 + (k.boostTimer > 0 ? 8 : 0);
-            camera.fov = instant ? targetFov : lerp(camera.fov, targetFov, frameLerp(0.1, dt));
+            camera.fov = (instant ? targetFov : lerp(camera.fov, targetFov, frameLerp(0.1, dt))) + camFovKick;
             camera.updateProjectionMatrix();
         }
 
