@@ -21,8 +21,10 @@ half auto-covers track geometry + core physics, but nothing else).
 
 A single self-contained `index.html` — a **landscape** (horizontal) 3D kart
 racer for iPhone PWA. Three.js **r128** from cdnjs, all assets generated at
-runtime. Two tracks (Coral Cliffs, Volcano Bay), 3 laps, player + **7 AI**.
-Left-thumb slide steering, DRIFT/ITEM buttons, auto-accelerate.
+runtime. **Four tracks** (Coral Cliffs, Volcano Bay, Whisper Wood,
+Glacier Pass), 3 laps, player + **7 AI**. Left-thumb slide steering,
+DRIFT/ITEM buttons, auto-accelerate. Each track has its own composition
+(per-track `SONGS` sequencer), signature landmarks, and theme.
 
 ## ⚠ Verify by rendering, not by reading
 
@@ -45,7 +47,12 @@ during a session; recreate from this recipe):
 **SwiftShader caveat:** Lambert + bright lights renders washed-out pastels
 headless; the lighting values are kart2-proven on the real iPhone. Force
 MeshBasicMaterial to separate real geometry bugs from SwiftShader shading
-artifacts. Audio is inaudible in CI — code-review it.
+artifacts. Audio is inaudible in CI — code-review it (per-track music in
+`SONGS`: a generic step sequencer reads one composition per track id, so
+each has its own tempo/meter/instrumentation — Coral Calypso, Caldera
+Run, the 3/4 Elder Waltz, Permafrost; render a song offline through an
+`OfflineAudioContext` driven by the live `SONGS` data to actually hear
+it). `NOTE` is a generated equal-temperament chromatic table.
 
 ## Architecture (one IIFE)
 
@@ -115,6 +122,15 @@ work, and don't regress these four seams.
   They're immovable in `resolveCollisions` (owner moves them). The client no
   longer eases toward the host echo (it's just its own delayed pose) — only
   a >45u emergency snap remains. Client rocket-start is back.
+  - **GOTCHA — never `Math.max` a round-tripped field on the client.** The
+    client sends its own `boostTimer` in the pose; the host echoes it
+    (`updateRemoteKart` maxes it in) and broadcasts it. A monotically
+    DECREASING field, echoed back a full round-trip stale, is always
+    *larger* than the current local value — so `max`ing the snapshot in
+    every frame ratcheted boost up forever (permanent-boost bug, fixed
+    PR #199). Client now adopts host-granted boosts on their RISING EDGE
+    only (`net._lastSnapBoost`) and lets local prediction own the decay.
+    Same trap applies to any future predicted-but-echoed timer.
 - **Mid-race rejoin**: DO stores `seats` (id+name) at race start; a hello
   during `racing` whose name matches a vacant seat is re-admitted with
   `welcome.rejoin`. Host converts that kart AI→remote and sends a targeted
@@ -277,6 +293,17 @@ work, and don't regress these four seams.
   (ProMotion switches rates adaptively → "sometimes it vibrates"). Camera
   and kart visual lerps are dt-normalized via `frameLerp` for the same
   reason. Mesh sync lives in the render pass, NOT in updateKart.
+- **Animated drivers** (`k.mesh.driver`, a seat-pivot group baked separately
+  from the chassis): lean into corners (harder drifting), tuck on boost,
+  glance back at a chaser within ~11u, victory bounce 3s post-finish.
+  All driven render-side in `syncKartMesh` — zero sim/netcode impact. (Any
+  future kart-body ink-outline must outline chassis + driver meshes
+  separately now that they're split.)
+- **Large-screen UI scale** (`--uiz`, set in `updateUIScale` on resize):
+  every top-level UI layer `zoom`s by a viewport-derived factor — exactly
+  1 at phone sizes (small screens untouched), up to 2 on desktop. The
+  canvas never zooms; the steering stick converts viewport px into the
+  zoomed HUD space.
 - AI seek boost pads, drift deliberately into braking corners, and have a
   tight skill band (0.955–1.04) — tune pace via autopilot lap times
   (leader ~22–24s/lap; autopilot avg-skill player should finish mid-pack).
@@ -306,9 +333,10 @@ work, and don't regress these four seams.
   aim for boost pads.
 - **AI difficulty** (settings pane, persisted `kart3_diff`, default
   medium): `DIFFS` sets the skill band, rubber bounds, mistake rate,
-  drift commitment and rocket-start rate. A/B-verified: the same
-  autopilot player finishes 2nd on easy vs 7th on hard. Online races use
-  the HOST's setting (AI are host-simmed).
+  drift commitment and rocket-start rate. A/B-verified: the same mid-skill
+  autopilot finishes ~2nd on easy and DEAD LAST (8th) on hard (hard was
+  buffed — top skill 1.11, leaders barely sandbag). Online races use the
+  HOST's setting (AI are host-simmed).
 - Rubber band is bounded (per difficulty; tighter on the final lap), two 'rival' AI shadow
   the player, AI block chasers and make late-brake mistakes. AI obey the same
   physics caps as the player (`_rubber` is the only asymmetry).
