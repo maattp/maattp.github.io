@@ -471,6 +471,13 @@
                         <input type="range" id="sensSlider" min="0" max="100" value="62">
                     </div>
                     <div class="set-row">
+                        <span class="set-label">Mouse steer (desktop)</span>
+                        <div class="seg2" id="mouseSteerSeg">
+                            <button class="seg-opt" data-v="0">Off</button>
+                            <button class="seg-opt" data-v="1">On</button>
+                        </div>
+                    </div>
+                    <div class="set-row">
                         <span class="set-label">AI difficulty</span>
                         <div class="seg2" id="diffSeg">
                             <button class="seg-opt" data-v="easy">Easy</button>
@@ -478,7 +485,7 @@
                             <button class="seg-opt" data-v="hard">Hard</button>
                         </div>
                     </div>
-                    <div class="set-hint">Reversed flips the steering direction — thumb slide and arrow keys.</div>
+                    <div class="set-hint">Reversed flips steering (thumb / keys / mouse). Mouse steer: move the cursor left/right to steer — smoother than the arrow keys.</div>
                 </div>
                 <div class="hint"><b>Left thumb</b> slides to steer · hold <b>DRIFT</b> in turns for turbo ·
                     grab <b>?</b> boxes · hold DRIFT on <b>GO!</b> for a rocket start</div>
@@ -608,7 +615,7 @@
             trackPick: $('trackPick'), lobbyTracks: $('lobbyTracks'), raceStandings: $('raceStandings'),
             settingsBtn: $('settingsBtn'), settingsPane: $('settingsPane'),
             settingsBackdrop: $('settingsBackdrop'), settingsClose: $('settingsClose'),
-            steerDirSeg: $('steerDirSeg'), sensSlider: $('sensSlider'), diffSeg: $('diffSeg'),
+            steerDirSeg: $('steerDirSeg'), sensSlider: $('sensSlider'), diffSeg: $('diffSeg'), mouseSteerSeg: $('mouseSteerSeg'),
             muteBtn: $('muteBtn'), itemBtn: $('itemBtn'), driftBtn: $('driftBtn'), pauseBtn: $('pauseBtn'),
             pauseScreen: $('pauseScreen'), resumeBtn: $('resumeBtn'), restartBtn: $('restartBtn'), quitBtn: $('quitBtn'),
             minimap: $('minimap'), stick: $('stick'), stickDot: $('stickDot'),
@@ -875,6 +882,7 @@
         let steerInput = 0, keySteer = 0, touchSteer = 0;
         let driftHeld = false, pendingFire = false;
         let steerReversed = false;           // touch-steer direction preference
+        let mouseSteerOn = false, mouseSteerVal = 0;   // desktop pointer steering (settings opt-in)
         let steerRangePx = 64;               // thumb travel (px) for full lock
         let raceClock = 0, prevPlayerRank = 1;
         let raceSeed = 1;
@@ -906,6 +914,7 @@
                 if (!isNaN(tr) && TRACKS[tr]) currentTrackIdx = tr;
                 muted = localStorage.getItem('kart3_muted') === '1';
                 steerReversed = localStorage.getItem('kart3_steerrev') === '1';
+                mouseSteerOn = localStorage.getItem('kart3_mousesteer') === '1';
                 const df = localStorage.getItem('kart3_diff');
                 if (DIFFS[df]) aiDifficulty = df;
                 const sv = parseInt(localStorage.getItem('kart3_sens'), 10);
@@ -943,7 +952,7 @@
         // ⚠ APP_VER: increment ONCE PER PR (CLAUDE.md rule). Shown on the
         // title screen and folded into NET_VER, so any two different builds
         // refuse to share a room.
-        const APP_VER = 22;
+        const APP_VER = 23;
         function hash32(str) {
             let h = 2166136261 >>> 0;
             for (let i = 0; i < str.length; i++) { h ^= str.charCodeAt(i); h = Math.imul(h, 16777619); }
@@ -5514,9 +5523,19 @@
 
             // mouse fallback (desktop testing)
             let mouseDown = false;
-            surface.addEventListener('mousedown', (e) => { mouseDown = true; steerX0 = e.clientX; });
-            window.addEventListener('mousemove', (e) => { if (mouseDown) touchSteer = clamp((e.clientX - steerX0) / steerRangePx, -1, 1); });
-            window.addEventListener('mouseup', () => { mouseDown = false; touchSteer = 0; });
+            surface.addEventListener('mousedown', (e) => { if (!mouseSteerOn) { mouseDown = true; steerX0 = e.clientX; } });
+            window.addEventListener('mousemove', (e) => {
+                if (mouseDown && !mouseSteerOn) touchSteer = clamp((e.clientX - steerX0) / steerRangePx, -1, 1);
+                // pointer-position steering: cursor X across the window maps to
+                // steer, with a small centre deadzone + gentle curve for fine
+                // control near centre. Smooth analog alternative to the keys.
+                if (mouseSteerOn) {
+                    const nx = (e.clientX / window.innerWidth) * 2 - 1, dz = 0.05;
+                    const m = Math.max(0, (Math.abs(nx) - dz) / (1 - dz));
+                    mouseSteerVal = Math.sign(nx) * Math.min(1, m * m * 1.15);
+                }
+            });
+            window.addEventListener('mouseup', () => { mouseDown = false; if (!mouseSteerOn) touchSteer = 0; });
 
             window.addEventListener('keydown', (e) => {
                 if (e.key === 'ArrowLeft' || e.key === 'a') keySteer = -1;
@@ -5621,6 +5640,19 @@
                 });
             });
             reflectDiff();
+            const reflectMouseSteer = () => {
+                dom.mouseSteerSeg.querySelectorAll('.seg-opt').forEach((b) =>
+                    b.classList.toggle('active', b.dataset.v === (mouseSteerOn ? '1' : '0')));
+            };
+            dom.mouseSteerSeg.querySelectorAll('.seg-opt').forEach((b) => {
+                b.addEventListener('click', () => {
+                    mouseSteerOn = b.dataset.v === '1';
+                    if (!mouseSteerOn) mouseSteerVal = 0;
+                    try { localStorage.setItem('kart3_mousesteer', mouseSteerOn ? '1' : '0'); } catch (e) {}
+                    reflectMouseSteer();
+                });
+            });
+            reflectMouseSteer();
 
             // ---- online controls ----
             dom.createRoomBtn.addEventListener('click', createRoom);
@@ -5659,7 +5691,8 @@
             // keyboard too: keys used to be hardwired geometric (left arrow →
             // screen-left), which on a laptop felt like being stuck in
             // Reversed if your muscle memory is the Standard scheme.
-            steerInput = clamp((touchSteer + keySteer) * (steerReversed ? 1 : -1), -1, 1);
+            const mouse = mouseSteerOn ? mouseSteerVal : 0;
+            steerInput = clamp((touchSteer + keySteer + mouse) * (steerReversed ? 1 : -1), -1, 1);
         }
         function sensToRange(v) { return Math.round(lerp(110, 36, clamp(v, 0, 100) / 100)); }
 
