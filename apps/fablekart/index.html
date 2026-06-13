@@ -895,6 +895,41 @@
                     ],
                 },
             },
+            {
+                id: 'speedway', name: 'Crossover Speedway', tagline: '🏁 Crossover Speedway',
+                // a FIGURE-8 motorsport circuit: the track climbs a lobe and
+                // flies OVER its own start on a viaduct, then loops back and
+                // passes UNDER it. Two strands meet at the origin — one ~0, one
+                // ~18 up. Grades kept gentle so nothing launches off the deck.
+                ctrl: scaled([
+                    [0, 0, 0], [78, 62, 1], [158, 30, 2], [196, -58, 5],
+                    [150, -150, 9], [70, -150, 12], [18, -100, 16],
+                    [0, 0, 18], [-24, 100, 17], [-104, 158, 12], [-196, 120, 8],
+                    [-214, 16, 5], [-176, -86, 3], [-104, -140, 1], [-46, -104, 1], [-16, -44, 0],
+                ]),
+                tunnelIn: null, tunnelOut: null, jumpAt: null,
+                preview: 'linear-gradient(180deg,#5aa0e0,#3a8a3a)',
+                theme: {
+                    skyTop: 0x1d6fe0, skyMid: 0x7fc0ff, skyBot: 0xdcefff,
+                    fog: 0xcfe6ff, fogNear: 340, fogFar: 1100,
+                    cloud: 0xffffff, sun: 0xfff6d8, sunPos: [-360, 520, -400], stars: false,
+                    hemiSky: 0xcfe8ff, hemiGround: 0x4a7a3a, hemiInt: 1.0,
+                    dirColor: 0xfff2d0, dirInt: 1.15, dirPos: [-220, 340, -180],
+                    waterTex: '#2a8fd6', deep: 0x0a3f72,
+                    grass1: 0x3f9a44, grass2: 0x57b058, sand: 0xcfcabc, rock: 0x8a8e98,
+                    road: '#34373f', lane: '#f4f4f4', edge: '#e8ecf2',
+                    foliage: 'speedway', trunk: 0x6a7078, leaf1: 0x3f9a44, leaf2: 0x57b058,
+                    shrubs: [0x3f9a44, 0x4aa850, 0x379040],
+                    rocks: [0x8a8e98, 0x9aa0aa, 0x7a808a],
+                    beach: false, embers: 0, noSea: true, speedway: true,
+                    itemRows: [0.05, 0.31, 0.56, 0.80],
+                    pads: [
+                        { f: 0.16, lat: -6 }, { f: 0.205, lat: 6 },   // chain out of the first lobe
+                        { f: 0.62, lat: 0 },                          // back-straight launch
+                        { f: 0.88, lat: 0 },                          // final-lobe exit
+                    ],
+                },
+            },
         ];
         // per-load track state (set by loadTrack)
         let currentTrackIdx = 0;
@@ -957,6 +992,7 @@
         let waterfallMats = [];  // falling-water UV scroll (theme.waterfall)
         let fordA = -1, fordB = -1;   // creek ford seg range — karts splash through (theme.ford)
         // Glacier Pass zone state (resolved from theme landmarks in buildLandmarks)
+        let viaductSegs = new Set();   // upper-strand segs of an overpass — terrain embankment skips them (3D crossovers)
         let iceSegs = [];        // [{a, b, side}] side 0 = full width, ±1 = that lateral side only
         let sandSegs = [];       // desert drag patches [{a,b,lat,hw}] — weave around them
         let dustDevils = [];     // roaming sand columns [{seg,base,range,sp,phase,mesh}] (theme-driven, time-deterministic)
@@ -1052,7 +1088,7 @@
         // ⚠ APP_VER: increment ONCE PER PR (CLAUDE.md rule). Shown on the
         // title screen and folded into NET_VER, so any two different builds
         // refuse to share a room.
-        const APP_VER = 29;
+        const APP_VER = 30;
         function hash32(str) {
             let h = 2166136261 >>> 0;
             for (let i = 0; i < str.length; i++) { h ^= str.charCodeAt(i); h = Math.imul(h, 16777619); }
@@ -1525,7 +1561,7 @@
             for (const b of itemBoxes) {
                 if (!b.active) continue;
                 const dx = k.pos.x - b.x, dz = k.pos.z - b.z;
-                if (dx * dx + dz * dz < 28) pickupBox(k, b);
+                if (dx * dx + dz * dz < 28 && Math.abs(k.y - (b.baseY - 2.9)) < 6) pickupBox(k, b);
             }
             if (k.drifting && k.grounded && k.speed > 25) spawnRearSpark(k, 0x4ad6ff, 5);
             if (k.boostTimer > 0) spawnRearSpark(k, 0xff7a3c, 7);
@@ -1856,7 +1892,7 @@
             // resolve landmark samples (tunnel + gap are per-track optional)
             tunnelA = TUNNEL_IN ? nearestSeg(TUNNEL_IN[0], TUNNEL_IN[1]) : -1;
             tunnelB = TUNNEL_OUT ? nearestSeg(TUNNEL_OUT[0], TUNNEL_OUT[1]) : -1;
-            jumpSeg = nearestSeg(JUMP_AT[0], JUMP_AT[1]);
+            jumpSeg = JUMP_AT ? nearestSeg(JUMP_AT[0], JUMP_AT[1]) : -1;
             const gl = TRACKS[currentTrackIdx].gapLen || 0;
             if (gl > 0) {
                 gapA = (jumpSeg + 2) % N;
@@ -1867,9 +1903,21 @@
             // 2.6 over ~14 samples then drops away — vertical physics launches karts.
             // the road is descending here, so the wedge must out-climb the descent
             const RAMP_LEN = 14;
-            for (let k = 0; k <= RAMP_LEN; k++) {
+            if (jumpSeg >= 0) for (let k = 0; k <= RAMP_LEN; k++) {
                 const i = ((jumpSeg - RAMP_LEN + k) % N + N) % N;
                 centerline[i].y += 4.6 * (k / RAMP_LEN);
+            }
+            // auto-detect overpass decks: a seg with another (far-in-index) seg
+            // close in x,z but well below it is the UPPER strand of a flyover
+            viaductSegs = new Set();
+            for (let i = 0; i < N; i++) {
+                const ci = centerline[i];
+                for (let j = 0; j < N; j++) {
+                    const idx = Math.abs(((j - i + N + N / 2) % N) - N / 2);
+                    if (idx < 24) continue;
+                    const cj = centerline[j];
+                    if (Math.abs(ci.x - cj.x) < 16 && Math.abs(ci.z - cj.z) < 16 && ci.y - cj.y > 9) { viaductSegs.add(i); break; }
+                }
             }
 
             // the channel is a lava RIVER just below road level — visually
@@ -2005,8 +2053,19 @@
             }
             return h;
         }
+        function nearestSegExcl(x, z) {   // nearest road seg that is NOT a flyover deck
+            let best = -1, bd = Infinity;
+            for (let i = 0; i < N; i += 2) {
+                if (viaductSegs.has(i)) continue;
+                const c = centerline[i]; const d = (x - c.x) * (x - c.x) + (z - c.z) * (z - c.z);
+                if (d < bd) { bd = d; best = i; }
+            }
+            return best < 0 ? 0 : best;
+        }
         function terrainY(x, z) {
-            const s = nearestSeg(x, z);
+            let s = nearestSeg(x, z);
+            // under a flyover the ground follows the LOWER road, not the deck
+            if (viaductSegs.size && viaductSegs.has(s)) s = nearestSegExcl(x, z);
             const c = centerline[s], n = normals[s];
             const lat = (x - c.x) * n.x + (z - c.z) * n.z;
             const d = Math.hypot(x - c.x, z - c.z);
@@ -2190,6 +2249,7 @@
             buildGlacierZones();
             if (THEME.city) buildCity();
             if (THEME.foliage === 'desert') buildDesert();
+            if (THEME.speedway) buildSpeedway();
 
             // ---- THE ELDER TREE: a colossal glowing tree inside the summit
             // horseshoe — trunk, root flare, glowing hollows, overhanging
@@ -2548,6 +2608,55 @@
                 ring.rotation.x = -Math.PI / 2; ring.position.y = 0.2; grp.add(ring);
                 world.add(grp);
                 dustDevils.push({ seg, base: 0, range: 13, sp: rand(0.5, 0.85), phase: rand(0, 6.28), mesh: grp, spin: 0 });
+            }
+        }
+
+        // Crossover Speedway furniture: support PILLARS under the flyover deck,
+        // tire-wall barriers on the fast corners, ad billboards, and a couple
+        // of extra grandstands. The deck/terrain are already handled by the
+        // viaduct system; this is the motorsport dressing.
+        function buildSpeedway() {
+            const box = new THREE.BoxGeometry(1, 1, 1);
+            // ---- PILLARS: drop a column from the deck underside to the ground
+            const pillarMat = new THREE.MeshLambertMaterial({ color: 0xb04a52 });
+            const segs = Array.from(viaductSegs).sort((a, b) => a - b);
+            for (let k = 0; k < segs.length; k += 4) {
+                const i = segs[k], c = centerline[i];
+                const top = roadY(i, 0) - 1.0, ground = terrainY(c.x, c.z);
+                const h = Math.max(2, top - ground);
+                const pl = new THREE.Mesh(box, pillarMat);
+                pl.scale.set(3.4, h, 3.4); pl.position.set(c.x, ground + h / 2, c.z);
+                world.add(pl);
+                const cap = new THREE.Mesh(box, pillarMat);
+                cap.scale.set(5, 1.2, 5); cap.position.set(c.x, top - 0.2, c.z); world.add(cap);
+            }
+            // ---- TIRE WALLS on the OUTSIDE of the tighter corners (baked)
+            const tparts = [];
+            const tireGeo = new THREE.CylinderGeometry(1, 1, 1.1, 8);
+            for (let i = 0; i < N; i += 3) {
+                if (viaductSegs.has(i)) continue;
+                if (Math.abs(curvSm[i]) < 0.018) continue;           // only on real bends
+                const outer = curvSm[i] > 0 ? 1 : -1;                // outside of the turn
+                const c = centerline[i], n = normals[i];
+                const ox = c.x + n.x * (HALF_W + 3.5) * outer, oz = c.z + n.z * (HALF_W + 3.5) * outer;
+                const gy = roadY(i, HALF_W * outer);
+                for (let r = 0; r < 2; r++) tparts.push({ geo: tireGeo, color: r % 2 ? 0x1a1a1f : 0x26262c, matrix: mat4(ox, gy + 0.6 + r * 1.0, oz, 0, 1.5, 1, 1.5) });
+            }
+            if (tparts.length) world.add(new THREE.Mesh(bakeMerge(tparts), new THREE.MeshLambertMaterial({ vertexColors: true })));
+            // ---- BILLBOARDS: ad panels on posts, set well back, road-facing
+            const adCols = [0xff3b5c, 0x3ad6ff, 0xffd54a, 0x57e36a, 0xb06bff, 0xff8a2a];
+            const postMat = new THREE.MeshLambertMaterial({ color: 0x3a3d46 });
+            for (let i = 0; i < N; i += 70) {
+                const side = (i / 70) % 2 ? 1 : -1, c = centerline[i], n = normals[i];
+                const off = HALF_W + 26;
+                const x = c.x + n.x * off * side, z = c.z + n.z * off * side;
+                if (terrainY(x, z) < 0) continue;
+                const nc = centerline[nearestSeg(x, z)];
+                if (Math.hypot(x - nc.x, z - nc.z) < HALF_W + 16) continue;
+                const gy = terrainY(x, z), ry = Math.atan2(c.x - x, c.z - z);
+                for (const px of [-5, 5]) { const post = new THREE.Mesh(box, postMat); post.scale.set(0.8, 11, 0.8); post.position.set(x + Math.cos(ry) * px, gy + 5.5, z - Math.sin(ry) * px); world.add(post); }
+                const panel = new THREE.Mesh(new THREE.PlaneGeometry(13, 5), new THREE.MeshBasicMaterial({ color: pick(adCols), side: THREE.DoubleSide }));
+                panel.position.set(x, gy + 11, z); panel.lookAt(c.x, gy + 11, c.z); world.add(panel);
             }
         }
 
@@ -3409,6 +3518,7 @@
                 const y = terrainY(x, z);
                 if (y < 0) return;
                 if (THEME.foliage === 'city') return;   // skyline comes from buildCity(), not roadside scatter
+                if (THEME.foliage === 'speedway') return;   // race furniture comes from buildSpeedway()
                 if (THEME.foliage === 'desert') {
                     // saguaro cactus: tall green trunk + 0-2 upturned arms
                     const h = rand(4.5, 9) * sc, col = rng() < 0.5 ? THEME.leaf1 : THEME.leaf2;
@@ -3504,6 +3614,7 @@
             // (forest: denser spacing, trees at every altitude)
             const forest = THEME.foliage === 'forest';
             const desert = THEME.foliage === 'desert';
+            const speedway = THEME.foliage === 'speedway';
             for (let i = 0; i < N; i += (forest ? 6 : desert ? 7 : 9)) {
                 for (const side of [1, -1]) {
                     if (rng() < (forest ? 0.3 : desert ? 0.32 : 0.42)) continue;
@@ -3518,7 +3629,9 @@
                     if (Math.hypot(x - nsc.x, z - nsc.z) < HALF_W + 8) continue;
                     const ty = terrainY(x, z);
                     if (ty < -0.5) continue;
-                    if (desert) {
+                    if (speedway) {
+                        if (rng() < 0.5) { const s2 = rand(1.0, 2.0); parts.push({ geo: shrubGeo, color: pick(THEME.shrubs), matrix: mat4(x, ty + s2 * 0.4, z, 0, s2, s2 * 0.55, s2) }); }
+                    } else if (desert) {
                         const roll = rng();
                         if (roll < 0.5) palmAt(x, z, rand(0.8, 1.5));
                         else if (roll < 0.82) parts.push({ geo: rockGeo, color: pick(THEME.rocks),
@@ -4498,7 +4611,7 @@
                 for (const b of itemBoxes) {
                     if (!b.active) continue;
                     const dx = k.pos.x - b.x, dz = k.pos.z - b.z;
-                    if (dx * dx + dz * dz < 28) pickupBox(k, b);
+                    if (dx * dx + dz * dz < 28 && Math.abs(k.y - (b.baseY - 2.9)) < 6) pickupBox(k, b);
                 }
             }
 
@@ -4718,7 +4831,7 @@
             const lat = clamp((x - c.x) * n.x + (z - c.z) * n.z, -WALL_LIMIT, WALL_LIMIT);
             mesh.position.set(c.x + n.x * lat, roadY(seg, lat) + 0.15, c.z + n.z * lat);
             scene.add(mesh);
-            hazards.push({ mesh, x: mesh.position.x, z: mesh.position.z, owner: k, arm: 0.5, life: 15 });
+            hazards.push({ mesh, x: mesh.position.x, y: mesh.position.y, z: mesh.position.z, owner: k, arm: 0.5, life: 15 });
             if (hazards.length > 14) removeHazard(hazards[0]);
             if (k.isPlayer) sfxBeep(300);
         }
@@ -4902,7 +5015,7 @@
                     if (o.finished) continue;
                     if (h.arm > 0 && o === h.owner) continue;
                     const dx = o.pos.x - h.x, dz = o.pos.z - h.z;
-                    if (dx * dx + dz * dz < 14 && o.grounded) { gooHit(o, h); }
+                    if (dx * dx + dz * dz < 14 && o.grounded && Math.abs(o.y - h.y) < 4) { gooHit(o, h); }
                 }
             }
         }
@@ -5881,6 +5994,37 @@
             return { lead, bass, arp, stabs };
         })();
 
+        // ---- Crossover Speedway: "Pole Position" — E major, fast & triumphant
+        //      race anthem; hand-composed, develops to a high climax run.
+        const SPEEDWAY_SONG = (() => {
+            const chord = { E: ['E', 'Gs', 'B'], A: ['A', 'Cs', 'E'], B: ['B', 'Ds', 'Fs'], Csm: ['Cs', 'E', 'Gs'] };
+            const prog = ['E', 'A', 'B', 'E', 'Csm', 'A', 'B', 'E', 'A', 'B', 'E', 'B'];
+            const leadBars = [
+                ['E5', 0, 'Gs5', 0, 'B5', 0, 'Gs5', 0, 'E5', 0, 'B5', 0, 'Gs5', 0, 0, 0],
+                ['A5', 0, 'Cs6', 0, 'E6', 0, 'Cs6', 0, 'A5', 0, 'E5', 0, 'Cs5', 0, 0, 0],
+                ['B5', 0, 'Ds6', 0, 'Fs6', 0, 'Ds6', 0, 'B5', 0, 'Fs5', 0, 'Ds5', 0, 0, 0],
+                ['E6', 0, 'B5', 0, 'Gs5', 0, 'E5', 0, 'Gs5', 0, 'B5', 0, 'E6', 0, 0, 0],
+                ['Cs6', 0, 'B5', 0, 'Gs5', 0, 'E5', 0, 'Gs5', 0, 'Cs6', 0, 'E6', 0, 0, 0],
+                ['Cs6', 0, 'A5', 0, 'E5', 0, 'A5', 0, 'Cs6', 0, 'E6', 0, 'Cs6', 0, 0, 0],
+                ['Ds6', 0, 'Fs6', 0, 'B5', 0, 'Fs6', 0, 'Ds6', 0, 'B5', 0, 'Fs5', 0, 0, 0],
+                ['E6', 0, 'Ds6', 'Cs6', 'B5', 0, 'Gs5', 0, 'E5', 0, 0, 0, 0, 0, 0, 0],
+                ['A5', 'B5', 'Cs6', 'E6', 'A6', 0, 'E6', 0, 'Cs6', 0, 'A5', 0, 'E6', 0, 0, 0],
+                ['B5', 'Cs6', 'Ds6', 'Fs6', 'B6', 0, 'Fs6', 0, 'Ds6', 0, 'B5', 0, 'Fs6', 0, 0, 0],
+                ['Gs6', 0, 'E6', 0, 'B5', 0, 'E6', 0, 'Gs6', 0, 'B6', 0, 'E6', 0, 0, 0],
+                ['Fs6', 0, 'Ds6', 0, 'B5', 0, 'Fs5', 0, 'Ds5', 0, 'B4', 0, 'Fs5', 0, 0, 0],
+            ];
+            const lead = [], bass = [], arp = [], stabs = [];
+            prog.forEach((ch, bar) => {
+                const tri = chord[ch], r = tri[0], climax = bar >= 8;
+                lead.push(...leadBars[bar]);
+                if (!climax) bass.push(r + '2', 0, r + '2', 0, r + '3', 0, r + '2', 0, r + '2', 0, r + '2', r + '2', r + '3', 0, r + '2', 0);
+                else bass.push(r + '2', 0, r + '2', r + '2', r + '2', 0, r + '2', 0, r + '3', 0, r + '2', r + '2', r + '3', r + '2', r + '3', 0);
+                for (let i = 0; i < 16; i++) { const oct = i < 8 ? '4' : '5'; arp.push(climax ? tri[i % 3] + oct : (i % 2 === 0 ? tri[(i / 2) % 3] + oct : 0)); }
+                stabs.push([tri[0] + '3', tri[1] + '3', tri[2] + '4']);
+            });
+            return { lead, bass, arp, stabs };
+        })();
+
         const SONGS = {
             coral: {
                 stepMs: 99, barLen: 16, lead: LEAD, bass: BASS, arp: ARP, stabs: STABS,
@@ -5967,6 +6111,20 @@
                     if (b === 4 || b === 12) aNoise(0.12, 0.16, false, musicGain);  // hand-clap backbeat
                     if (b % 4 === 2) aNoise(0.03, 0.05, true, musicGain);  // shaker
                     if (sec === 2 && b % 2 === 1) aNoise(0.02, 0.03, true, musicGain);  // climax double-time shaker
+                },
+            },
+            speedway: {
+                stepMs: 97, barLen: 16, lead: SPEEDWAY_SONG.lead, bass: SPEEDWAY_SONG.bass, arp: SPEEDWAY_SONG.arp, stabs: SPEEDWAY_SONG.stabs,
+                leadWave: ['square', 'square', 'sawtooth'], leadDur: 0.13, leadVol: 0.075,
+                subMul: 0.5, subDur: 0.15, subVol: 0.045,
+                bassWave: 'sawtooth', bassDur: 0.1, bassVol: 0.17,
+                arpWave: 'square', arpDur: 0.06, arpVol: 0.03,
+                stabSteps: [0, 8], stabWave: 'square', stabDur: [0.16, 0.1], stabVol: 0.034,
+                drums: (b, sec) => {
+                    if (b % 4 === 0) aKick(musicGain);                      // driving four-on-the-floor
+                    if (b === 4 || b === 12) aNoise(0.12, 0.16, false, musicGain);  // snare backbeat
+                    if (b % 2 === 1) aNoise(0.022, 0.034, true, musicGain);  // offbeat hat
+                    if (sec === 2 && b % 4 === 2) aNoise(0.05, 0.06, false, musicGain);  // climax tom
                 },
             },
         };
