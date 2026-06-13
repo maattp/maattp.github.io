@@ -3709,13 +3709,16 @@
             // in syncKartMesh by THEME.headlights). Two additive cones cast
             // forward + slightly down from the nose.
             const headlights = [];
+            // apex translated to the origin so the NARROW end sits at the lamp
+            // and the cone fans WIDE forward (a beam), not back at the kart
             const coneGeo = new THREE.ConeGeometry(2.4, 13, 12, 1, true);
+            coneGeo.translate(0, -6.5, 0);
             for (const s of [1, -1]) {
                 const cone = new THREE.Mesh(coneGeo, new THREE.MeshBasicMaterial({
                     color: 0xfff2c0, transparent: true, opacity: 0.16, depthWrite: false,
                     blending: THREE.AdditiveBlending, side: THREE.DoubleSide }));
-                cone.rotation.x = Math.PI / 2 + 0.16;   // point down the +z nose, tilt down
-                cone.position.set(0.7 * s, 1.5, 4.0 + 6.0);   // apex at nose, fans ahead
+                cone.rotation.x = -Math.PI / 2 + 0.12;   // open forward (+z), tilt down to the road
+                cone.position.set(0.7 * s, 1.5, 3.6);     // lamp at the nose
                 cone.visible = false;
                 g.add(cone); headlights.push(cone);
             }
