@@ -939,7 +939,7 @@
         // ⚠ APP_VER: increment ONCE PER PR (CLAUDE.md rule). Shown on the
         // title screen and folded into NET_VER, so any two different builds
         // refuse to share a room.
-        const APP_VER = 20;
+        const APP_VER = 21;
         function hash32(str) {
             let h = 2166136261 >>> 0;
             for (let i = 0; i < str.length; i++) { h ^= str.charCodeAt(i); h = Math.imul(h, 16777619); }
@@ -1091,7 +1091,7 @@
             net.players = []; net.racePlayers = [];
             net.myReady = false; net.racing = false; net.rejoinTries = 0;
             net.remoteCtrl = {}; net.snaps = []; net.fireCount = 0;
-            net.lastSnapTick = 0; net.pingMs = 0; net._itemKey = '';
+            net.lastSnapTick = 0; net.pingMs = 0; net._itemKey = ''; net._lastSnapBoost = 0;
             clearGhosts();
             dom.pauseBtn.style.display = '';
             dom.netInd.classList.remove('on');
@@ -1340,7 +1340,7 @@
         }
         function endOnlineRaceToLobby() {
             net.racing = false;
-            net.snaps = []; net.remoteCtrl = {}; net.lastSnapTick = 0;
+            net.snaps = []; net.remoteCtrl = {}; net.lastSnapTick = 0; net._lastSnapBoost = 0;
             clearGhosts();
             dom.netInd.classList.remove('on');
             stopMusic();
@@ -1507,7 +1507,18 @@
                     if (sb.gooT > k.gooT) { k.gooT = sb.gooT; sfxGoo(); flash('GOO!', '#b06bff'); }
                     if (sb.shrinkT > k.shrinkT) k.shrinkT = sb.shrinkT;
                     k.shieldTimer = sb.shieldTimer;
-                    k.boostTimer = Math.max(k.boostTimer, sb.boostTimer);
+                    // Adopt host-granted boosts (items, start-boost) on their
+                    // RISING EDGE only; pad/drift boosts are predicted locally
+                    // and decay locally. We must NOT Math.max the snapshot in
+                    // every frame: the host echoes our own reported boostTimer
+                    // (updateRemoteKart), and that echo is a full round-trip
+                    // stale — hence always larger than our decaying local
+                    // value — so maxing it ratcheted the timer back up forever
+                    // (boost for the entire race, client-side only).
+                    if (sb.boostTimer > (net._lastSnapBoost || 0) + 0.05 && sb.boostTimer > k.boostTimer) {
+                        k.boostTimer = sb.boostTimer;
+                    }
+                    net._lastSnapBoost = sb.boostTimer;
                     k.rank = sb.rank;
                     const itemKey = (sb.item || '') + ':' + sb.itemCharges + ':' + (sb.itemRolling > 0 ? 1 : 0);
                     if (net._itemKey !== itemKey) { net._itemKey = itemKey; updateItemButton(); }
