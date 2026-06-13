@@ -939,7 +939,7 @@
         // ⚠ APP_VER: increment ONCE PER PR (CLAUDE.md rule). Shown on the
         // title screen and folded into NET_VER, so any two different builds
         // refuse to share a room.
-        const APP_VER = 18;
+        const APP_VER = 20;
         function hash32(str) {
             let h = 2166136261 >>> 0;
             for (let i = 0; i < str.length; i++) { h ^= str.charCodeAt(i); h = Math.imul(h, 16777619); }
@@ -3572,11 +3572,15 @@
             P.push({ geo: box(3.3, 0.42, 0.4), color: S, matrix: mat4(0, 0.92, -2.85, 0) });                  // rear bumper
 
             // ---- driver (scaled per character, pivot at the seat) ----
+            // Baked into its OWN mesh inside a seat-pivot group so it can
+            // animate: lean into corners, tuck on boosts, glance back at
+            // chasers, celebrate the finish (driven in syncKartMesh).
+            const PD = [];
             const sz = ch.size;
-            const dp = (x, y, z) => ({ x: x * sz, y: 1.55 + (y - 1.55) * sz, z: -0.7 + (z + 0.7) * sz });
+            const dp = (x, y, z) => ({ x: x * sz, y: (y - 1.55) * sz, z: (z + 0.7) * sz });
             const part = (geo, color, x, y, z, ry, sx, sy, szz, rx, rz) => {
                 const p = dp(x, y, z);
-                P.push({ geo, color, matrix: mat4(p.x, p.y, p.z, ry || 0, (sx == null ? 1 : sx) * sz, (sy == null ? (sx == null ? 1 : sx) : sy) * sz, (szz == null ? (sx == null ? 1 : sx) : szz) * sz, rx, rz) });
+                PD.push({ geo, color, matrix: mat4(p.x, p.y, p.z, ry || 0, (sx == null ? 1 : sx) * sz, (sy == null ? (sx == null ? 1 : sx) : sy) * sz, (szz == null ? (sx == null ? 1 : sx) : szz) * sz, rx, rz) });
             };
             part(box(1.15, 1.05, 0.8), A, 0, 2.12, -0.7);                              // torso
             part(box(0.5, 1.07, 0.84), B, 0, 2.12, -0.7);                              // suit stripe
@@ -3618,6 +3622,10 @@
 
             const bodyMesh = new THREE.Mesh(bakeMerge(P), BODY_MAT);
             g.add(bodyMesh);
+            const driverGrp = new THREE.Group();
+            driverGrp.position.set(0, 1.55, -0.7);   // seat pivot
+            driverGrp.add(new THREE.Mesh(bakeMerge(PD), BODY_MAT));
+            g.add(driverGrp);
 
             const wheels = [], frontPivots = [];
             const WG = wheelGeo(A);
@@ -3657,7 +3665,7 @@
 
             scene.add(g);
             g.rotation.order = 'YXZ';
-            return { group: g, wheels, frontPivots, shield, shadow, flames };
+            return { group: g, wheels, frontPivots, shield, shadow, flames, driver: driverGrp };
         }
 
         function charOrder() {
@@ -4617,6 +4625,41 @@
             for (const w of k.mesh.wheels) w.rotation.x += spin;
             const fs = (k.isPlayer ? steerInput : 0) * 0.4 + (k.drifting ? k.driftDir * 0.3 : 0);
             for (const p of k.mesh.frontPivots) p.rotation.y = fs;
+
+            // ---- driver animation (render-side only, no sim impact) ----
+            const dr = k.mesh.driver;
+            if (k.finished && raceClock - k.finishTime < 3) {
+                // victory bounce: lean back and hop in the seat
+                const ft = raceClock - k.finishTime;
+                dr.rotation.set(-0.3, 0, 0);
+                dr.position.y = 1.55 + Math.abs(Math.sin(ft * 7)) * 0.34;
+            } else {
+                // lean INTO the corner (harder while drifting), tuck on boost
+                const leanT = k.drifting ? k.driftDir * 0.3
+                    : (k.isPlayer ? steerInput : k.ctrl.steer) * 0.18;
+                k._dLean = lerp(k._dLean || 0, leanT, frameLerp(0.14, dt));
+                k._dTuck = lerp(k._dTuck || 0, k.boostTimer > 0 ? 0.24 : 0, frameLerp(0.12, dt));
+                // glance over the shoulder when someone is right behind
+                k._dGlCool = (k._dGlCool || 0) - dt;
+                if (k._dGlCool <= 0) {
+                    k._dGlance = 0; k._dGlCool = 0.7;
+                    for (const o of karts) {
+                        if (o === k || o.finished) continue;
+                        const along = (k.progress - o.progress) * trackLen;
+                        if (along > 0.5 && along < 11) {
+                            k._dGlance = (o.lateralSigned > k.lateralSigned ? 1 : -1) * 0.55;
+                            k._dGlCool = 3.4; k._dGlT = 0.9;
+                            break;
+                        }
+                    }
+                }
+                if ((k._dGlT = Math.max(0, (k._dGlT || 0) - dt)) <= 0) k._dGlance = 0;
+                k._dGlY = lerp(k._dGlY || 0, k._dGlance || 0, frameLerp(0.12, dt));
+                dr.rotation.set(k._dTuck, k._dGlY, k._dLean);
+                // tiny speed bob keeps the figure alive on the straights
+                dr.position.y = 1.55 + Math.sin(raceClock * 9 + k.rank) *
+                    Math.min(k.speed / MAX_SPEED, 1) * 0.025;
+            }
 
             const boosting = k.boostTimer > 0;
             for (const fl of k.mesh.flames) {
