@@ -485,7 +485,7 @@
                             <button class="seg-opt" data-v="hard">Hard</button>
                         </div>
                     </div>
-                    <div class="set-hint">Reversed flips steering (thumb / keys / mouse). Mouse steer: move the cursor left/right to steer — smoother than the arrow keys.</div>
+                    <div class="set-hint">Reversed flips steering (thumb / keys / mouse). Mouse steer (on by default on desktop): just move the cursor left/right — no button to hold. Turn off for keys only.</div>
                 </div>
                 <div class="hint"><b>Left thumb</b> slides to steer · hold <b>DRIFT</b> in turns for turbo ·
                     grab <b>?</b> boxes · hold DRIFT on <b>GO!</b> for a rocket start</div>
@@ -915,7 +915,12 @@
                 if (!isNaN(tr) && TRACKS[tr]) currentTrackIdx = tr;
                 muted = localStorage.getItem('kart3_muted') === '1';
                 steerReversed = localStorage.getItem('kart3_steerrev') === '1';
-                mouseSteerOn = localStorage.getItem('kart3_mousesteer') === '1';
+                // default ON for desktop (a real mouse/trackpad), OFF for
+                // touch; an explicit saved choice always wins
+                const ms = localStorage.getItem('kart3_mousesteer');
+                mouseSteerOn = ms === null
+                    ? !(window.matchMedia && window.matchMedia('(pointer: coarse)').matches)
+                    : ms === '1';
                 const df = localStorage.getItem('kart3_diff');
                 if (DIFFS[df]) aiDifficulty = df;
                 const sv = parseInt(localStorage.getItem('kart3_sens'), 10);
@@ -953,7 +958,7 @@
         // ⚠ APP_VER: increment ONCE PER PR (CLAUDE.md rule). Shown on the
         // title screen and folded into NET_VER, so any two different builds
         // refuse to share a room.
-        const APP_VER = 24;
+        const APP_VER = 25;
         function hash32(str) {
             let h = 2166136261 >>> 0;
             for (let i = 0; i < str.length; i++) { h ^= str.charCodeAt(i); h = Math.imul(h, 16777619); }
