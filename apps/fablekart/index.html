@@ -403,14 +403,6 @@
 <body>
     <div id="game"></div>
     <div id="speedlines"></div>
-    <!-- iOS programmatic-haptics hack (iOS 17.4+): navigator.vibrate is a no-op
-         on iPhone, but toggling a NATIVE switch-styled checkbox fires the system
-         selection tap. Must stay RENDERED (not display:none) to work, so it's
-         parked off-screen and made inert. Undocumented — may break on future iOS. -->
-    <label id="hapticSwitch" aria-hidden="true"
-           style="position:absolute;left:-9999px;top:0;width:1px;height:1px;opacity:0;pointer-events:none;overflow:hidden">
-        <input type="checkbox" switch tabindex="-1">
-    </label>
 
     <div id="rotate">
         <div class="ph">📱</div>
@@ -615,28 +607,7 @@
             return m + ':' + (sec < 10 ? '0' : '') + sec.toFixed(1);
         }
         function hx(n) { return '#' + n.toString(16).padStart(6, '0'); }
-        // Haptics. Android honours navigator.vibrate(ms); iOS ignores it entirely,
-        // so there we toggle a native switch (see #hapticSwitch) which fires the
-        // system selection tap. iOS gives a single fixed tap — no duration — so a
-        // bigger ms maps to a quick burst of taps to read as "stronger".
-        const IS_IOS = /iP(hone|od|ad)/.test(navigator.userAgent) ||
-            (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
-        let _hapEl = null, _hapLast = 0;
-        function vibrate(ms) {
-            try {
-                if (IS_IOS) {
-                    if (_hapEl === null) _hapEl = document.getElementById('hapticSwitch') || false;
-                    if (!_hapEl) return;
-                    const now = (performance && performance.now) ? performance.now() : Date.now();
-                    if (now - _hapLast < 22) return;            // coalesce rapid calls
-                    _hapLast = now;
-                    const taps = ms >= 60 ? 3 : ms >= 35 ? 2 : 1; // light / medium / strong
-                    for (let i = 0; i < taps; i++) setTimeout(() => { try { _hapEl.click(); } catch (e) {} }, i * 17);
-                } else if (navigator.vibrate) {
-                    navigator.vibrate(ms);
-                }
-            } catch (e) {}
-        }
+        function vibrate(ms) { try { if (navigator.vibrate) navigator.vibrate(ms); } catch (e) {} }
 
         // ---------- DOM ----------
         const $ = (id) => document.getElementById(id);
@@ -1118,7 +1089,7 @@
         // ⚠ APP_VER: increment ONCE PER PR (CLAUDE.md rule). Shown on the
         // title screen and folded into NET_VER, so any two different builds
         // refuse to share a room.
-        const APP_VER = 33;
+        const APP_VER = 34;
         function hash32(str) {
             let h = 2166136261 >>> 0;
             for (let i = 0; i < str.length; i++) { h ^= str.charCodeAt(i); h = Math.imul(h, 16777619); }
@@ -6591,12 +6562,12 @@
                     dom.cdNum.textContent = n;
                     dom.cdNum.classList.remove('tick'); void dom.cdNum.offsetWidth; dom.cdNum.classList.add('tick');
                     lamps[3 - n].className = 'lamp red';
-                    sfxBeep(440); vibrate(18); n--; setTimeout(tick, 1000);
+                    sfxBeep(440); n--; setTimeout(tick, 1000);
                 } else {
                     dom.cdNum.textContent = 'GO!';
                     dom.cdNum.classList.remove('tick'); void dom.cdNum.offsetWidth; dom.cdNum.classList.add('tick');
                     lamps.forEach((l) => l.className = 'lamp green');
-                    sfxBeep(880); vibrate(60);
+                    sfxBeep(880);
                     state = 'racing'; raceClock = 0;
                     for (const k of karts) {
                         k.lastLapStart = 0;
