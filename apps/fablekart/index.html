@@ -1911,13 +1911,23 @@
             // auto-detect overpass decks: a seg with another (far-in-index) seg
             // close in x,z but well below it is the UPPER strand of a flyover
             viaductSegs = new Set();
+            // A seg is "elevated" (terrain follows the LOWER strand under it, not
+            // this one) if a far-in-index seg runs below it. On the speedway use a
+            // generous RADIUS, not just a seg directly overhead: the deck stays at
+            // height for a while past the crossover apex, running ALONGSIDE the low
+            // road as it curves out — that stretch must be excluded too or its
+            // embankment buries the low road's edge. Other tracks keep the strict
+            // box (so a tight switchback can't be mistaken for an overpass).
+            const overR2 = THEME.speedway ? 48 * 48 : 0;
             for (let i = 0; i < N; i++) {
                 const ci = centerline[i];
                 for (let j = 0; j < N; j++) {
                     const idx = Math.abs(((j - i + N + N / 2) % N) - N / 2);
                     if (idx < 24) continue;
                     const cj = centerline[j];
-                    if (Math.abs(ci.x - cj.x) < 16 && Math.abs(ci.z - cj.z) < 16 && ci.y - cj.y > 9) { viaductSegs.add(i); break; }
+                    const dx = ci.x - cj.x, dz = ci.z - cj.z;
+                    const near = overR2 ? (dx * dx + dz * dz < overR2) : (Math.abs(dx) < 16 && Math.abs(dz) < 16);
+                    if (near && ci.y - cj.y > 9) { viaductSegs.add(i); break; }
                 }
             }
             // the crossover basin: find the LOWER-road seg most directly under the
@@ -1925,7 +1935,7 @@
             // a clean flat pass (otherwise the hill the high strand rides forms a
             // ravine wall right beside the low road).
             crossCenter = null;
-            if (viaductSegs.size) {
+            if (THEME.speedway && viaductSegs.size) {
                 let cl = -1, bd = 0;
                 for (let i = 0; i < N; i++) {
                     if (viaductSegs.has(i)) continue;
@@ -2080,10 +2090,23 @@
             }
             return best < 0 ? 0 : best;
         }
+        function nearestSegBelow(x, z, maxY) {   // nearest seg below a height — the LOWER strand under a flyover
+            let best = -1, bd = Infinity;
+            for (let i = 0; i < N; i += 2) {
+                const c = centerline[i]; if (c.y >= maxY) continue;
+                const d = (x - c.x) * (x - c.x) + (z - c.z) * (z - c.z);
+                if (d < bd) { bd = d; best = i; }
+            }
+            return best < 0 ? nearestSegExcl(x, z) : best;
+        }
         function terrainY(x, z) {
             let s = nearestSeg(x, z);
-            // under a flyover the ground follows the LOWER road, not the deck
-            if (viaductSegs.size && viaductSegs.has(s)) s = nearestSegExcl(x, z);
+            // under a flyover the ground follows the LOWER road, not the deck. The
+            // deck can stay high PAST the crossing (no road under it there), so
+            // "nearest non-deck seg" isn't enough — it would grab that high tail.
+            // When we know the low-road level (crossover), take the nearest seg
+            // genuinely below it.
+            if (viaductSegs.size && viaductSegs.has(s)) s = crossCenter ? nearestSegBelow(x, z, crossCenter.y + 6) : nearestSegExcl(x, z);
             const c = centerline[s], n = normals[s];
             const lat = (x - c.x) * n.x + (z - c.z) * n.z;
             const d = Math.hypot(x - c.x, z - c.z);
@@ -2104,6 +2127,17 @@
                 // where it's higher), blending back to normal terrain at the rim.
                 const dc = Math.hypot(x - crossCenter.x, z - crossCenter.z);
                 out = Math.min(out, lerp(crossCenter.y - 0.5, out, smoothstep(40, 96, dc)));
+                // ...and a tighter corridor that FOLLOWS the lower road through the
+                // whole crossover region: where the high strand runs alongside, its
+                // embankment was lapping over the low road's edge. Clamp terrain
+                // beside the road down to that road's own surface.
+                if (dc < 120) {
+                    const le = nearestSegBelow(x, z, crossCenter.y + 6), lcc = centerline[le], lnn = normals[le];
+                    const llat = (x - lcc.x) * lnn.x + (z - lcc.z) * lnn.z;
+                    const ld = Math.hypot(x - lcc.x, z - lcc.z);
+                    const lowEdge = roadY(le, clamp(llat, -HALF_W, HALF_W)) - 0.4;
+                    out = Math.min(out, lerp(lowEdge, out, smoothstep(HALF_W + 2, HALF_W + 30, ld)));
+                }
             }
             if (gapA >= 0) {
                 // carve a radial depression around the gap so the lava river is
