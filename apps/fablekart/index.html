@@ -6564,12 +6564,12 @@
                     dom.cdNum.textContent = n;
                     dom.cdNum.classList.remove('tick'); void dom.cdNum.offsetWidth; dom.cdNum.classList.add('tick');
                     lamps[3 - n].className = 'lamp red';
-                    sfxBeep(440); n--; setTimeout(tick, 1000);
+                    sfxBeep(440); vibrate(18); n--; setTimeout(tick, 1000);   // countdown buzz (Android; no-op iOS)
                 } else {
                     dom.cdNum.textContent = 'GO!';
                     dom.cdNum.classList.remove('tick'); void dom.cdNum.offsetWidth; dom.cdNum.classList.add('tick');
                     lamps.forEach((l) => l.className = 'lamp green');
-                    sfxBeep(880);
+                    sfxBeep(880); vibrate(60);   // GO! buzz (Android; no-op iOS)
                     state = 'racing'; raceClock = 0;
                     for (const k of karts) {
                         k.lastLapStart = 0;
