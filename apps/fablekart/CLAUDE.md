@@ -337,6 +337,14 @@ work, and don't regress these four seams.
 
 ## Gameplay conventions (several are explicit user preferences)
 
+- **Haptics — iOS uses a switch hack, NOT `navigator.vibrate`.** `navigator.vibrate()`
+  is a no-op on iPhone. The `vibrate(ms)` helper detects iOS and instead `.click()`s
+  a hidden native switch-styled checkbox (`#hapticSwitch`, kept off-screen but
+  RENDERED — `display:none` kills it), which fires the system selection tap (iOS
+  17.4+). It's a single fixed tap with no duration, so `ms` maps to a burst count
+  (light/medium/strong) and calls are rate-limited (~22ms). Android still honours
+  `navigator.vibrate(ms)`. The `<input switch>` is undocumented behaviour — may
+  break on future iOS; don't "fix" the helper back to plain `navigator.vibrate`.
 - **No spinouts, ever.** Hits = `bonkKart` (speed cut + hop, steering kept).
   Goo slows + wobbles but never removes control.
 - HUD layout (landscape, thumbs at bottom corners): big position +
