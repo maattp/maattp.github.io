@@ -930,6 +930,43 @@
                     ],
                 },
             },
+            {
+                id: 'citadel', name: 'Sky Citadel', tagline: '✨ Fable Sky Citadel',
+                // a grand circuit on a floating castle plateau above a sea of
+                // clouds. Climbs to the keep at the top sweep, descends past the
+                // waterfalls, hops the drawbridge on the low straight, and runs
+                // back under the gatehouse. Gentle grades — the drawbridge is the
+                // only launch.
+                ctrl: scaled([
+                    [-40, -185, 1], [80, -188, 1], [175, -150, 2], [222, -50, 4],
+                    [226, 80, 8], [186, 202, 13], [96, 292, 16], [-40, 310, 17],
+                    [-166, 256, 14], [-226, 130, 9], [-228, -4, 6], [-180, -120, 3],
+                    [-96, -178, 1],
+                ]),
+                tunnelIn: null, tunnelOut: null, jumpAt: [120 * SC, -186 * SC],
+                preview: 'linear-gradient(180deg,#3a3a7e,#f0c89a)',
+                theme: {
+                    skyTop: 0x5a64bc, skyMid: 0x8f9ce8, skyBot: 0xf4d2a6,
+                    fog: 0xdcd2f2, fogNear: 360, fogFar: 1250,
+                    cloud: 0xfff2e6, sun: 0xfff0c4, sunPos: [340, 540, 360], stars: true,
+                    hemiSky: 0xc8d2ff, hemiGround: 0x7a6a86, hemiInt: 1.05,
+                    dirColor: 0xffe8c0, dirInt: 1.2, dirPos: [300, 380, 260],
+                    waterTex: '#e6ddff', deep: 0x9a8ad0,
+                    grass1: 0x4a9a54, grass2: 0x5cb265, sand: 0xd8cfc0, rock: 0x9a94a0,
+                    road: '#5a5460', lane: '#ffe9a8', edge: '#d8c878',
+                    foliage: 'citadel', trunk: 0x6a4a30, leaf1: 0x3f8a44, leaf2: 0x52a058,
+                    shrubs: [0x3f8a44, 0x4a9850, 0x379040],
+                    rocks: [0x9a94a0, 0xaaa4b0, 0x8a848e],
+                    beach: false, embers: 0, noSea: false, cloudSea: true,
+                    aurora: true, citadel: true,
+                    keep: { x: 10 * SC, z: 222 * SC },
+                    itemRows: [0.06, 0.30, 0.55, 0.80],
+                    pads: [
+                        { f: 0.12, lat: 0 }, { f: 0.40, lat: -6 },
+                        { f: 0.63, lat: 0 }, { f: 0.86, lat: 0 },
+                    ],
+                },
+            },
         ];
         // per-load track state (set by loadTrack)
         let currentTrackIdx = 0;
@@ -1089,7 +1126,7 @@
         // ⚠ APP_VER: increment ONCE PER PR (CLAUDE.md rule). Shown on the
         // title screen and folded into NET_VER, so any two different builds
         // refuse to share a room.
-        const APP_VER = 35;
+        const APP_VER = 36;
         function hash32(str) {
             let h = 2166136261 >>> 0;
             for (let i = 0; i < str.length; i++) { h ^= str.charCodeAt(i); h = Math.imul(h, 16777619); }
@@ -2051,6 +2088,18 @@
         //  raised into a headland over the tunnel, falling into the sea at the rim.
         // ===================================================================
         function hillH(x, z) {
+            if (THEME.citadel) {
+                // a FLOATING citadel: the ground falls away to the cloud void off
+                // the track ribbon. The keep sits on its own raised platform inside
+                // the top sweep (it overlaps the ribbon's inner verge, so it reads
+                // as connected). terrainY blends the road edge down into this.
+                let h = -62;                                  // the cloud void
+                const kp = THEME.keep;
+                if (kp) { const dk = Math.hypot(x - kp.x, z - kp.z); h = Math.max(h, lerp(7, -62, smoothstep(78, 150, dk))); }
+                // gentle texture on whatever is left above the void
+                if (h > -10) h += Math.sin(x * 0.02 + 1.1) * Math.cos(z * 0.018) * 1.4;
+                return h;
+            }
             let h = Math.sin(x * 0.012 + 1.7) * Math.cos(z * 0.010 + 0.4) * 5
                   + Math.sin(x * 0.027 - 0.8) * Math.sin(z * 0.022 + 2.1) * 2.6
                   + Math.sin((x + z) * 0.006 + 0.9) * 4.5;
@@ -2179,6 +2228,41 @@
             world.add(mesh);
         }
         function buildWater() {
+            if (THEME.cloudSea) {   // a floating citadel sits above a sea of clouds, not water
+                // soft cloud floor: two tinted discs so the void reads as deep haze
+                const floor = new THREE.Mesh(new THREE.CircleGeometry(1700, 48),
+                    new THREE.MeshBasicMaterial({ color: THEME.cloud }));
+                floor.rotation.x = -Math.PI / 2; floor.position.y = -34; floor.material.transparent = true; floor.material.opacity = 0.9;
+                world.add(floor);
+                const haze = new THREE.Mesh(new THREE.CircleGeometry(1700, 48),
+                    new THREE.MeshBasicMaterial({ color: THEME.deep }));
+                haze.rotation.x = -Math.PI / 2; haze.position.y = -44; world.add(haze);
+                // billowing cloudbank around and below the plateau rim (baked puffs)
+                const cg = new THREE.SphereGeometry(1, 9, 7), parts = [];
+                const cloudC = new THREE.Color(THEME.cloud), fogC = new THREE.Color(THEME.fog), tc = new THREE.Color();
+                for (let i = 0; i < 70; i++) {
+                    const a = rand(0, Math.PI * 2), d = rand(300, 1150);
+                    const x = Math.cos(a) * d, z = Math.sin(a) * d, y = rand(-30, -6);
+                    const r = rand(26, 60) * (d > 700 ? 1.5 : 1);
+                    tc.copy(cloudC).lerp(fogC, smoothstep(300, 1150, d) * 0.6);
+                    parts.push({ geo: cg, color: tc.getHex(), matrix: mat4(x, y, z, 0, r, r * 0.5, r) });
+                    const np = 2 + Math.floor(rand(0, 3));
+                    for (let j = 0; j < np; j++) {
+                        const rr = r * rand(0.45, 0.8), aa = rand(0, Math.PI * 2), dd = r * rand(0.6, 1.1);
+                        parts.push({ geo: cg, color: tc.getHex(), matrix: mat4(x + Math.cos(aa) * dd, y + rand(-3, 4), z + Math.sin(aa) * dd, 0, rr, rr * 0.5, rr) });
+                    }
+                }
+                world.add(new THREE.Mesh(bakeMerge(parts), new THREE.MeshBasicMaterial({ vertexColors: true, fog: true })));
+                // golden motes drifting over the clouds (reuse the foam-glint pulse)
+                foamMat = null;
+                const sp = [];
+                for (let i = 0; i < 600; i++) { const a = rand(0, Math.PI * 2), d = rand(240, 1000); sp.push(Math.cos(a) * d, rand(-4, 22), Math.sin(a) * d); }
+                const sgeo = new THREE.BufferGeometry();
+                sgeo.setAttribute('position', new THREE.Float32BufferAttribute(sp, 3));
+                foamMat = new THREE.PointsMaterial({ color: 0xfff0c0, size: 2.4, transparent: true, opacity: 0.5, depthWrite: false, fog: false });
+                world.add(new THREE.Points(sgeo, foamMat));
+                return;
+            }
             const cv = document.createElement('canvas'); cv.width = 128; cv.height = 128;
             const g = cv.getContext('2d');
             g.fillStyle = THEME.waterTex; g.fillRect(0, 0, 128, 128);
@@ -2309,6 +2393,7 @@
             if (THEME.city) buildCity();
             if (THEME.foliage === 'desert') buildDesert();
             if (THEME.speedway) buildSpeedway();
+            if (THEME.citadel) buildCitadel();
 
             // ---- THE ELDER TREE: a colossal glowing tree inside the summit
             // horseshoe — trunk, root flare, glowing hollows, overhanging
@@ -2741,6 +2826,141 @@
                 const panel = new THREE.Mesh(new THREE.PlaneGeometry(13, 5), new THREE.MeshBasicMaterial({ color: pick(adCols), side: THREE.DoubleSide }));
                 panel.position.set(x, gy + 11, z); panel.lookAt(c.x, gy + 11, c.z); world.add(panel);
             }
+        }
+
+        // ===================================================================
+        //  FABLE SKY CITADEL — a floating castle above a sea of clouds. The keep
+        //  + curtain wall sit inside the top sweep; a gatehouse straddles the
+        //  road; waterfalls spill off the rim; braziers and stained glass glow;
+        //  a dragon circles overhead (pushed into the `birds` flock animation).
+        // ===================================================================
+        function buildCitadel() {
+            const box = new THREE.BoxGeometry(1, 1, 1);
+            const cyl = new THREE.CylinderGeometry(1, 1, 1, 12);
+            const cone = new THREE.ConeGeometry(1, 1, 12);
+            const parts = [], glow = [];
+            const STONE = [0x9a94ac, 0xa8a2b8, 0x8e88a0], ROOF = [0xa066dc, 0xb87aec, 0x9a72e4];
+            const tower = (x, y, z, r, h, roofCol) => {
+                parts.push({ geo: cyl, color: pick(STONE), matrix: mat4(x, y + h / 2, z, 0, r * 2, h, r * 2) });
+                // crenellated cap ring
+                for (let k = 0; k < 8; k++) { const a = k / 8 * Math.PI * 2; parts.push({ geo: box, color: pick(STONE), matrix: mat4(x + Math.cos(a) * r, y + h + 0.6, z + Math.sin(a) * r, a, 1.1, 1.6, 1.1) }); }
+                const roofH = r * 1.9;                                          // tall, pointed fairy-tale roof
+                parts.push({ geo: cone, color: roofCol, matrix: mat4(x, y + h + roofH / 2, z, 0, r * 2.0, roofH, r * 2.0) });
+                parts.push({ geo: cone, color: roofCol, matrix: mat4(x, y + h + roofH + r * 0.85, z, 0, r * 0.45, r * 1.7, r * 0.45) });   // finial spire
+                const orbY = y + h + roofH + r * 1.7;
+                glow.push({ geo: new THREE.SphereGeometry(1, 10, 8), color: 0xfff0b0, matrix: mat4(x, orbY, z, 0, r * 0.34, r * 0.34, r * 0.34) });   // glowing finial jewel
+                glow.push({ geo: new THREE.SphereGeometry(1, 8, 6), color: 0xffe27a, matrix: mat4(x, orbY, z, 0, r * 0.6, r * 0.6, r * 0.6) });   // soft halo
+                // stained-glass windows up the shaft
+                for (let w = 0; w < 3; w++) glow.push({ geo: box, color: pick([0xff7ad0, 0x7ad0ff, 0xffe27a, 0x9affc0]), matrix: mat4(x + Math.sin(w * 2.1) * r, y + 6 + w * (h / 3.5), z + Math.cos(w * 2.1) * r, w * 2.1, 1.0, 2.2, 0.3) });
+            };
+            // ---- THE KEEP (inside the top sweep)
+            const kp = THEME.keep || { x: 0, z: 0 };
+            const ky = terrainY(kp.x, kp.z);
+            tower(kp.x, ky, kp.z, 11, 58, pick(ROOF));                     // central donjon
+            for (let i = 0; i < 4; i++) { const a = i / 4 * Math.PI * 2 + 0.78; tower(kp.x + Math.cos(a) * 26, ky, kp.z + Math.sin(a) * 26, 6.5, 36, pick(ROOF)); }
+            // curtain wall ring around the keep (crenellated), with a warm light
+            for (let k = 0; k < 40; k++) {
+                const a = k / 40 * Math.PI * 2, wx = kp.x + Math.cos(a) * 40, wz = kp.z + Math.sin(a) * 40, wy = terrainY(wx, wz);
+                parts.push({ geo: box, color: pick(STONE), matrix: mat4(wx, wy + 4, wz, a, 7, 8, 2.4) });
+                if (k % 2 === 0) parts.push({ geo: box, color: pick(STONE), matrix: mat4(wx, wy + 8.6, wz, a, 2.2, 2.4, 2.6) });   // merlons
+            }
+            const keepLight = new THREE.PointLight(0xffd27a, 1.2, 260); keepLight.position.set(kp.x, ky + 40, kp.z); world.add(keepLight);
+            spinners.push({ obj: keepLight, speed: 0, bob: keepLight.position.y, bobAmp: 0, drift: 0, pulse: 1 });
+
+            // ---- GATEHOUSE straddling the road (drive-through arch)
+            const gi = Math.floor(N * 0.86), gc = centerline[gi], gn = normals[gi], gry = Math.atan2(gn.x, gn.z);
+            const gby = roadY(gi, 0);
+            for (const sgn of [1, -1]) {
+                const px = gc.x + gn.x * (HALF_W + 5) * sgn, pz = gc.z + gn.z * (HALF_W + 5) * sgn;
+                parts.push({ geo: box, color: pick(STONE), matrix: mat4(px, gby + 13, pz, gry, 9, 30, 9) });
+                parts.push({ geo: cone, color: pick(ROOF), matrix: mat4(px, gby + 31, pz, 0, 11, 9, 11) });
+                glow.push({ geo: box, color: 0xffe27a, matrix: mat4(px - gn.x * 4.6 * sgn, gby + 16, pz - gn.z * 4.6 * sgn, gry, 0.3, 4, 2) });
+            }
+            // arch beam over the road (well above kart height) + banner
+            parts.push({ geo: box, color: pick(STONE), matrix: mat4(gc.x, gby + 26, gc.z, gry, HALF_W * 2 + 14, 5, 7) });
+            glow.push({ geo: box, color: 0xffcf6a, matrix: mat4(gc.x, gby + 22, gc.z, gry, HALF_W * 2 + 2, 5, 0.4) });
+
+            // ---- BRAZIERS along the road approaching the keep (warm flicker lights)
+            const braz = [];
+            for (const f of [0.20, 0.34, 0.50]) {
+                const bi = Math.floor(N * f), c = centerline[bi], n = normals[bi];
+                for (const sgn of [1, -1]) {
+                    const bx = c.x + n.x * (HALF_W + 4) * sgn, bz = c.z + n.z * (HALF_W + 4) * sgn, byy = roadY(bi, HALF_W * sgn);
+                    if (terrainY(bx, bz) < -0.5) continue;
+                    parts.push({ geo: cyl, color: 0x4a4450, matrix: mat4(bx, byy + 3, bz, 0, 1.4, 6, 1.4) });
+                    glow.push({ geo: new THREE.SphereGeometry(1, 7, 6), color: 0xff9a3a, matrix: mat4(bx, byy + 6.4, bz, 0, 1.8, 2.2, 1.8) });
+                    braz.push([bx, byy + 7, bz]);
+                }
+            }
+            // two actual lights (keep the count low for mobile), nearest the keep
+            for (const b of braz.slice(0, 2)) { const pl = new THREE.PointLight(0xff8a3a, 0.8, 90); pl.position.set(b[0], b[1], b[2]); world.add(pl); spinners.push({ obj: pl, speed: 0, bob: pl.position.y, bobAmp: 0, drift: 0, pulse: 2 }); }
+
+            // ---- WATERFALLS spilling off the ribbon's outer edge into the void
+            waterfallMats = waterfallMats || [];
+            const wcv = document.createElement('canvas'); wcv.width = 32; wcv.height = 64;
+            const wg = wcv.getContext('2d'); wg.fillStyle = '#e2ecff'; wg.fillRect(0, 0, 32, 64);
+            wg.strokeStyle = 'rgba(255,255,255,0.85)'; wg.lineWidth = 2;
+            for (let x = 3; x < 32; x += 5) { wg.beginPath(); wg.moveTo(x, 0); wg.lineTo(x + 1.5, 64); wg.stroke(); }
+            const wtex = new THREE.CanvasTexture(wcv); wtex.wrapS = wtex.wrapT = THREE.RepeatWrapping; wtex.repeat.set(2, 4);
+            const kpw = THEME.keep || { x: 0, z: 0 };
+            for (const f of [0.16, 0.34, 0.52, 0.70]) {
+                const wi = Math.floor(N * f), c = centerline[wi], n = normals[wi];
+                const sgn = ((c.x - kpw.x) * n.x + (c.z - kpw.z) * n.z) >= 0 ? 1 : -1;   // the OUTER edge (away from the keep)
+                const ex = c.x + n.x * (HALF_W + 5) * sgn, ez = c.z + n.z * (HALF_W + 5) * sgn;
+                const topY = roadY(wi, HALF_W * sgn) - 1;
+                const wmat = new THREE.MeshBasicMaterial({ map: wtex.clone(), transparent: true, opacity: 0.8, side: THREE.DoubleSide, depthWrite: false });
+                wmat.map.wrapS = wmat.map.wrapT = THREE.RepeatWrapping; wmat.map.repeat.set(2, 4); wmat.map.needsUpdate = true;
+                const fall = new THREE.Mesh(new THREE.PlaneGeometry(24, 64), wmat);
+                fall.position.set(ex, topY - 30, ez);
+                fall.lookAt(ex + n.x * sgn, topY - 30, ez + n.z * sgn);   // face outward over the void
+                world.add(fall); waterfallMats.push(wmat);
+                // misty pool of cloud where it lands
+                const mist = new THREE.Mesh(new THREE.SphereGeometry(10, 8, 6), new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.5, depthWrite: false }));
+                mist.position.set(ex + n.x * sgn * 4, -56, ez + n.z * sgn * 4); mist.scale.y = 0.4; world.add(mist);
+            }
+            // ---- FLOATING ISLANDS in the distance (decorative grass-topped rocks)
+            for (let i = 0; i < 7; i++) {
+                const a = rand(0, Math.PI * 2), d = rand(620, 1050), ix = Math.cos(a) * d, iz = Math.sin(a) * d, iy = rand(-18, 30);
+                const r = rand(20, 46);
+                parts.push({ geo: cone, color: pick(STONE), matrix: mat4(ix, iy - r * 0.6, iz, rand(0, 3), r * 1.6, r * 1.7, r * 1.6, Math.PI, 0) });
+                parts.push({ geo: cyl, color: THEME.grass1, matrix: mat4(ix, iy, iz, 0, r * 2, 2.2, r * 2) });
+                if (rng() < 0.6) tower(ix, iy + 1, iz, r * 0.18, r * 0.7, pick(ROOF));
+            }
+
+            // ---- PENNANT POLES near the gate
+            for (let i = 0; i < 6; i++) {
+                const si = (gi + (i - 3) * 6 + N) % N, c = centerline[si], n = normals[si], sgn = i % 2 ? 1 : -1;
+                const px = c.x + n.x * (HALF_W + 7) * sgn, pz = c.z + n.z * (HALF_W + 7) * sgn, py = roadY(si, HALF_W * sgn);
+                if (terrainY(px, pz) < -0.5) continue;
+                parts.push({ geo: cyl, color: 0x6a5a3a, matrix: mat4(px, py + 7, pz, 0, 0.5, 14, 0.5) });
+                glow.push({ geo: box, color: pick([0xff5a8a, 0x5ad0ff, 0xffd54a, 0x9affc0]), matrix: mat4(px + 1.6, py + 12, pz, 0, 3.2, 2.2, 0.3) });
+            }
+
+            if (parts.length) world.add(new THREE.Mesh(bakeMerge(parts), new THREE.MeshLambertMaterial({ vertexColors: true })));
+            if (glow.length) world.add(new THREE.Mesh(bakeMerge(glow), new THREE.MeshBasicMaterial({ vertexColors: true })));
+
+            // ---- THE DRAGON: a winged silhouette circling high over the keep,
+            //      flown by the existing bird-flock animation (grp + wl/wr flap).
+            //      Body is a SLIM box (a cylinder read as a dark ball head-on);
+            //      the big swept membrane wings carry the silhouette.
+            const dg = new THREE.Group();
+            const dmat = new THREE.MeshLambertMaterial({ color: 0x9a7ae0, emissive: 0x8a6ad6, emissiveIntensity: 0.95 });   // luminous, never a black blob
+            const memb = new THREE.MeshBasicMaterial({ color: 0x9a7ae0, side: THREE.DoubleSide });
+            const body = new THREE.Mesh(box, dmat); body.scale.set(1.1, 0.85, 8); dg.add(body);                // long slim torso
+            const neck = new THREE.Mesh(box, dmat); neck.scale.set(0.9, 0.9, 3.4); neck.position.set(0, 0.6, 5.6); dg.add(neck);
+            const head = new THREE.Mesh(new THREE.ConeGeometry(0.9, 2.6, 6), dmat); head.rotation.x = Math.PI / 2; head.position.set(0, 0.8, 7.7); dg.add(head);
+            const tail = new THREE.Mesh(new THREE.ConeGeometry(0.7, 9, 6), dmat); tail.rotation.x = -Math.PI / 2; tail.position.set(0, 0, -8); dg.add(tail);
+            const tailFin = new THREE.Mesh(new THREE.PlaneGeometry(3, 2.4), memb); tailFin.position.set(0, 0, -12); tailFin.rotation.x = Math.PI / 2; dg.add(tailFin);
+            const wing = () => {   // big membrane wing, swept back; pivot at the shoulder so the flap reads
+                const w = new THREE.Mesh(new THREE.PlaneGeometry(15, 7), memb);
+                w.geometry.translate(7.5, 0, -1.5);   // span outward, swept slightly back
+                return w;
+            };
+            const wl = wing(); dg.add(wl);
+            const wr = wing(); wr.rotation.y = Math.PI; dg.add(wr);
+            dg.scale.set(2.4, 2.4, 2.4);
+            world.add(dg);
+            birds.push({ grp: dg, wl, wr, cx: kp.x, cy: ky + 92, cz: kp.z, r: 165, speed: 0.14, phase: 0 });
         }
 
         function buildGlacierZones() {
@@ -3611,6 +3831,7 @@
                 if (y < 0) return;
                 if (THEME.foliage === 'city') return;   // skyline comes from buildCity(), not roadside scatter
                 if (THEME.foliage === 'speedway') return;   // race furniture comes from buildSpeedway()
+                if (THEME.foliage === 'citadel') return;   // castle furniture comes from buildCitadel()
                 if (THEME.foliage === 'desert') {
                     // saguaro cactus: tall green trunk + 0-2 upturned arms
                     const h = rand(4.5, 9) * sc, col = rng() < 0.5 ? THEME.leaf1 : THEME.leaf2;
@@ -3707,6 +3928,7 @@
             const forest = THEME.foliage === 'forest';
             const desert = THEME.foliage === 'desert';
             const speedway = THEME.foliage === 'speedway';
+            const citadel = THEME.foliage === 'citadel';
             for (let i = 0; i < N; i += (forest ? 6 : desert ? 7 : 9)) {
                 for (const side of [1, -1]) {
                     if (rng() < (forest ? 0.3 : desert ? 0.32 : 0.42)) continue;
@@ -3721,7 +3943,11 @@
                     if (Math.hypot(x - nsc.x, z - nsc.z) < HALF_W + 8) continue;
                     const ty = terrainY(x, z);
                     if (ty < -0.5) continue;
-                    if (speedway) {
+                    if (citadel) {
+                        // manicured garden: low hedges + occasional topiary cone, off the road
+                        if (rng() < 0.55) { const s2 = rand(1.4, 2.6); parts.push({ geo: shrubGeo, color: pick(THEME.shrubs), matrix: mat4(x, ty + s2 * 0.4, z, 0, s2 * 1.4, s2 * 0.6, s2) }); }
+                        else { const s2 = rand(1.8, 3.0); parts.push({ geo: new THREE.ConeGeometry(1, 1, 8), color: pick(THEME.shrubs), matrix: mat4(x, ty + s2 * 0.9, z, 0, s2 * 0.8, s2 * 2.0, s2 * 0.8) }); }
+                    } else if (speedway) {
                         if (rng() < 0.5) { const s2 = rand(1.0, 2.0); parts.push({ geo: shrubGeo, color: pick(THEME.shrubs), matrix: mat4(x, ty + s2 * 0.4, z, 0, s2, s2 * 0.55, s2) }); }
                     } else if (desert) {
                         const roll = rng();
@@ -3837,8 +4063,9 @@
             // hot-air balloons (animated)
             for (let i = 0; i < 3; i++) {
                 const grp = new THREE.Group();
+                const ballCol = pick([0xff5a6a, 0x3ad6ff, 0xffd54a, 0xff8ad8, 0x9a7aff]);
                 const ball = new THREE.Mesh(new THREE.SphereGeometry(9, 14, 12),
-                    new THREE.MeshLambertMaterial({ color: pick([0xff5a6a, 0x3ad6ff, 0xffd54a]) }));
+                    new THREE.MeshLambertMaterial({ color: ballCol, emissive: ballCol, emissiveIntensity: 0.55 }));
                 ball.scale.y = 1.2; grp.add(ball);
                 const basket = new THREE.Mesh(new THREE.BoxGeometry(4, 3, 4), new THREE.MeshLambertMaterial({ color: 0x8a5a2a }));
                 basket.position.y = -13; grp.add(basket);
@@ -6117,6 +6344,40 @@
             return { lead, bass, arp, stabs };
         })();
 
+        // ---- Fable Sky Citadel: "Aether Crown" — D major, a stately, soaring
+        //      fanfare; brass-like saw lead, harp arps, timpani-ish drums, lifts
+        //      to a triumphant climax. Hand-composed, no formula.
+        const CITADEL_SONG = (() => {
+            const chord = { D: ['D', 'Fs', 'A'], G: ['G', 'B', 'D'], A: ['A', 'Cs', 'E'], Bm: ['B', 'D', 'Fs'], Em: ['E', 'G', 'B'] };
+            const prog = ['D', 'G', 'A', 'D', 'Bm', 'G', 'A', 'D', 'G', 'A', 'Bm', 'A'];
+            const leadBars = [
+                ['D5', 0, 'Fs5', 0, 'A5', 0, 'D6', 0, 'A5', 0, 'Fs5', 0, 'D5', 0, 0, 0],
+                ['G5', 0, 'B5', 0, 'D6', 0, 'G6', 0, 'D6', 0, 'B5', 0, 'G5', 0, 0, 0],
+                ['A5', 0, 'Cs6', 0, 'E6', 0, 'Cs6', 0, 'A5', 0, 'E5', 0, 'Cs5', 0, 0, 0],
+                ['D6', 0, 'A5', 0, 'Fs5', 0, 'A5', 0, 'D6', 0, 'Fs6', 0, 'D6', 0, 0, 0],
+                ['B5', 0, 'D6', 0, 'Fs6', 0, 'D6', 0, 'B5', 0, 'Fs5', 0, 'D5', 0, 0, 0],
+                ['G5', 0, 'B5', 0, 'D6', 0, 'B5', 0, 'G5', 0, 'D5', 0, 'B4', 0, 0, 0],
+                ['A5', 0, 'Cs6', 0, 'E6', 0, 'A6', 0, 'E6', 0, 'Cs6', 0, 'A5', 0, 0, 0],
+                ['D6', 0, 'Cs6', 'B5', 'A5', 0, 'Fs5', 0, 'D5', 0, 0, 0, 0, 0, 0, 0],
+                ['G5', 'A5', 'B5', 'D6', 'G6', 0, 'D6', 0, 'B5', 0, 'G5', 0, 'D6', 0, 0, 0],
+                ['A5', 'B5', 'Cs6', 'E6', 'A6', 0, 'E6', 0, 'Cs6', 0, 'A5', 0, 'E6', 0, 0, 0],
+                ['B5', 0, 'Fs6', 0, 'D6', 0, 'Fs6', 0, 'B6', 0, 'Fs6', 0, 'D6', 0, 0, 0],
+                ['A5', 0, 'Cs6', 0, 'E6', 0, 'Cs6', 0, 'A5', 'B5', 'Cs6', 'D6', 'E6', 0, 0, 0],
+            ];
+            const lead = [], bass = [], arp = [], stabs = [];
+            prog.forEach((ch, bar) => {
+                const tri = chord[ch], r = tri[0], climax = bar >= 8;
+                lead.push(...leadBars[bar]);
+                // bass: stately root-fifth walk early; driving octaves in the climax
+                if (!climax) bass.push(r + '2', 0, 0, 0, r + '2', 0, 0, 0, r + '3', 0, 0, 0, r + '2', 0, 0, 0);
+                else bass.push(r + '2', 0, r + '2', 0, r + '3', 0, r + '2', 0, r + '2', 0, r + '2', r + '2', r + '3', 0, r + '2', 0);
+                // arp: harp-like triad, opening to full 16ths in the climax
+                for (let i = 0; i < 16; i++) { const oct = i < 8 ? '4' : '5'; arp.push(climax ? tri[i % 3] + oct : (i % 2 === 0 ? tri[(i / 2) % 3] + oct : 0)); }
+                stabs.push([tri[0] + '3', tri[1] + '3', tri[2] + '4']);
+            });
+            return { lead, bass, arp, stabs };
+        })();
+
         const SONGS = {
             coral: {
                 stepMs: 99, barLen: 16, lead: LEAD, bass: BASS, arp: ARP, stabs: STABS,
@@ -6217,6 +6478,20 @@
                     if (b === 4 || b === 12) aNoise(0.12, 0.16, false, musicGain);  // snare backbeat
                     if (b % 2 === 1) aNoise(0.022, 0.034, true, musicGain);  // offbeat hat
                     if (sec === 2 && b % 4 === 2) aNoise(0.05, 0.06, false, musicGain);  // climax tom
+                },
+            },
+            citadel: {
+                stepMs: 112, barLen: 16, lead: CITADEL_SONG.lead, bass: CITADEL_SONG.bass, arp: CITADEL_SONG.arp, stabs: CITADEL_SONG.stabs,
+                leadWave: ['sawtooth', 'square', 'sawtooth'], leadDur: 0.2, leadVol: 0.08,   // brass fanfare
+                subMul: 0.5, subDur: 0.24, subVol: 0.05,                                     // organ-pad octave under the lead
+                bassWave: 'triangle', bassDur: 0.16, bassVol: 0.22,
+                arpWave: 'sine', arpDur: 0.11, arpVol: 0.05,                                 // harp shimmer
+                stabSteps: [0, 8], stabWave: 'sawtooth', stabDur: [0.26, 0.16], stabVol: 0.05,
+                drums: (b, sec) => {
+                    if (b === 0 || b === 8) aKick(musicGain);                                // stately timpani downbeats
+                    if (b === 4 || b === 12) aNoise(0.13, 0.16, false, musicGain);           // snare roll backbeat
+                    if (b % 4 === 2) aNoise(0.025, 0.04, true, musicGain);                   // cymbal shimmer
+                    if (sec === 2 && b % 2 === 1) aNoise(0.02, 0.03, true, musicGain);       // climax double-time
                 },
             },
         };
