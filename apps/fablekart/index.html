@@ -1089,7 +1089,7 @@
         // ⚠ APP_VER: increment ONCE PER PR (CLAUDE.md rule). Shown on the
         // title screen and folded into NET_VER, so any two different builds
         // refuse to share a room.
-        const APP_VER = 34;
+        const APP_VER = 35;
         function hash32(str) {
             let h = 2166136261 >>> 0;
             for (let i = 0; i < str.length; i++) { h ^= str.charCodeAt(i); h = Math.imul(h, 16777619); }
@@ -2694,22 +2694,24 @@
                 cap.scale.set(6, 1.4, 6); cap.position.set(px, topY - 0.7, pz); world.add(cap);
             };
             // ---- COLONNADE: a row of piers marching along the elevated deck over
-            // the flat crossover basin. At the deck centerline normally, but where
-            // the deck is directly over the lower road (the crossing) the pier
-            // steps aside into the basin so it never stands in either lane; if it
-            // can't clear, the deck just spans there.
-            const lowClear = (px, pz, m) => { const le = nearestSegExcl(px, pz), lc = centerline[le]; return Math.hypot(px - lc.x, pz - lc.z) > m; };
+            // the flat crossover basin. A pier MUST stand UNDER the deck or its cap
+            // hangs in mid-air not touching the roadway. So try lateral positions
+            // from the centerline out to (but not past) the deck edge, and take the
+            // first that doesn't stand in the lower road; topY is the deck surface
+            // at that exact lateral (bank-aware) so the cap meets the underside.
+            // Where the lower road fills the whole deck width (the crossing) no
+            // offset clears it — the deck just spans, no pier.
+            const EDGE = HALF_W - 3;                          // furthest out a pier can go and still be under the deck
             const segs = Array.from(viaductSegs).sort((a, b) => a - b);
             for (let k = 0; k < segs.length; k += 3) {
                 const i = segs[k], c = centerline[i], n = normals[i];
-                let px = c.x, pz = c.z;
-                if (!lowClear(px, pz, HALF_W + 5)) {        // deck centerline is over the lower road — step aside
-                    const le = nearestSegExcl(c.x, c.z), lc = centerline[le];
-                    const sign = ((c.x - lc.x) * n.x + (c.z - lc.z) * n.z) >= 0 ? 1 : -1;
-                    px = c.x + n.x * (HALF_W + 7) * sign; pz = c.z + n.z * (HALF_W + 7) * sign;
-                    if (!lowClear(px, pz, HALF_W + 3)) continue;  // still over a road — let the deck clear-span
+                for (const lat of [0, EDGE, -EDGE, EDGE * 0.55, -EDGE * 0.55]) {
+                    const px = c.x + n.x * lat, pz = c.z + n.z * lat;
+                    const le = nearestSegExcl(px, pz), lc = centerline[le];
+                    if (Math.hypot(px - lc.x, pz - lc.z) <= HALF_W + 2) continue;  // would stand in the lower road
+                    addPier(px, pz, roadY(i, lat) - 0.6);
+                    break;
                 }
-                addPier(px, pz, roadY(i, 0) - 1.0);
             }
             // ---- TIRE WALLS on the OUTSIDE of the tighter corners (baked)
             const tparts = [];
