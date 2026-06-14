@@ -993,6 +993,7 @@
         let fordA = -1, fordB = -1;   // creek ford seg range — karts splash through (theme.ford)
         // Glacier Pass zone state (resolved from theme landmarks in buildLandmarks)
         let viaductSegs = new Set();   // upper-strand segs of an overpass — terrain embankment skips them (3D crossovers)
+        let crossCenter = null;        // {x,z,y} of the lower road under a flyover — terrainY carves a flat basin here so the underpass is a clean pass, not a ravine
         let iceSegs = [];        // [{a, b, side}] side 0 = full width, ±1 = that lateral side only
         let sandSegs = [];       // desert drag patches [{a,b,lat,hw}] — weave around them
         let dustDevils = [];     // roaming sand columns [{seg,base,range,sp,phase,mesh}] (theme-driven, time-deterministic)
@@ -1088,7 +1089,7 @@
         // ⚠ APP_VER: increment ONCE PER PR (CLAUDE.md rule). Shown on the
         // title screen and folded into NET_VER, so any two different builds
         // refuse to share a room.
-        const APP_VER = 30;
+        const APP_VER = 31;
         function hash32(str) {
             let h = 2166136261 >>> 0;
             for (let i = 0; i < str.length; i++) { h ^= str.charCodeAt(i); h = Math.imul(h, 16777619); }
@@ -1919,6 +1920,23 @@
                     if (Math.abs(ci.x - cj.x) < 16 && Math.abs(ci.z - cj.z) < 16 && ci.y - cj.y > 9) { viaductSegs.add(i); break; }
                 }
             }
+            // the crossover basin: find the LOWER-road seg most directly under the
+            // deck. terrainY flattens the embankment around it so the underpass is
+            // a clean flat pass (otherwise the hill the high strand rides forms a
+            // ravine wall right beside the low road).
+            crossCenter = null;
+            if (viaductSegs.size) {
+                let cl = -1, bd = 0;
+                for (let i = 0; i < N; i++) {
+                    if (viaductSegs.has(i)) continue;
+                    const ci = centerline[i];
+                    for (const v of viaductSegs) {
+                        const cv = centerline[v];
+                        if (Math.abs(ci.x - cv.x) < 10 && Math.abs(ci.z - cv.z) < 10) { const dy = cv.y - ci.y; if (dy > bd) { bd = dy; cl = i; } }
+                    }
+                }
+                if (cl >= 0) crossCenter = { x: centerline[cl].x, z: centerline[cl].z, y: centerline[cl].y };
+            }
 
             // the channel is a lava RIVER just below road level — visually
             // unmissable, and landing short means touching it almost instantly
@@ -2080,6 +2098,13 @@
             }
             const edge = roadY(s, clamp(lat, -HALF_W, HALF_W)) - 0.5;
             let out = lerp(edge, hill, smoothstep(HALF_W + 1, HALF_W + 42, d));
+            if (crossCenter) {
+                // flatten a basin around the crossover so the underpass is a clean
+                // flat pass — pull the embankment DOWN toward low-road level (only
+                // where it's higher), blending back to normal terrain at the rim.
+                const dc = Math.hypot(x - crossCenter.x, z - crossCenter.z);
+                out = Math.min(out, lerp(crossCenter.y - 0.5, out, smoothstep(40, 96, dc)));
+            }
             if (gapA >= 0) {
                 // carve a radial depression around the gap so the lava river is
                 // exposed (nearest-seg logic alone gets bridged by the coarse grid)
@@ -2617,18 +2642,40 @@
         // viaduct system; this is the motorsport dressing.
         function buildSpeedway() {
             const box = new THREE.BoxGeometry(1, 1, 1);
-            // ---- PILLARS: drop a column from the deck underside to the ground
+            // ---- PIERS: a real overpass spans the road it crosses — NEVER a
+            // column in the middle of it. The deck's middle is over the lower
+            // road (the valley), so center pillars there punched straight
+            // through the bottom lane and their caps poked up through the
+            // banked top deck. Instead: find the crossing and stand two tall
+            // piers BESIDE the lower road, rising to the deck underside. The
+            // ramp ends ride on terrain embankment and need no support.
             const pillarMat = new THREE.MeshLambertMaterial({ color: 0xb04a52 });
-            const segs = Array.from(viaductSegs).sort((a, b) => a - b);
-            for (let k = 0; k < segs.length; k += 4) {
-                const i = segs[k], c = centerline[i];
-                const top = roadY(i, 0) - 1.0, ground = terrainY(c.x, c.z);
-                const h = Math.max(2, top - ground);
+            const addPier = (px, pz, topY) => {
+                const ground = terrainY(px, pz);
+                const h = Math.max(2, topY - ground);
+                if (h < 5) return;                          // deck ~at ground here (ramp shoulder) — a stub, skip
                 const pl = new THREE.Mesh(box, pillarMat);
-                pl.scale.set(3.4, h, 3.4); pl.position.set(c.x, ground + h / 2, c.z);
-                world.add(pl);
+                pl.scale.set(3.4, h, 3.4); pl.position.set(px, ground + h / 2, pz); world.add(pl);
                 const cap = new THREE.Mesh(box, pillarMat);
-                cap.scale.set(5, 1.2, 5); cap.position.set(c.x, top - 0.2, c.z); world.add(cap);
+                cap.scale.set(6, 1.4, 6); cap.position.set(px, topY - 0.7, pz); world.add(cap);
+            };
+            // ---- COLONNADE: a row of piers marching along the elevated deck over
+            // the flat crossover basin. At the deck centerline normally, but where
+            // the deck is directly over the lower road (the crossing) the pier
+            // steps aside into the basin so it never stands in either lane; if it
+            // can't clear, the deck just spans there.
+            const lowClear = (px, pz, m) => { const le = nearestSegExcl(px, pz), lc = centerline[le]; return Math.hypot(px - lc.x, pz - lc.z) > m; };
+            const segs = Array.from(viaductSegs).sort((a, b) => a - b);
+            for (let k = 0; k < segs.length; k += 3) {
+                const i = segs[k], c = centerline[i], n = normals[i];
+                let px = c.x, pz = c.z;
+                if (!lowClear(px, pz, HALF_W + 5)) {        // deck centerline is over the lower road — step aside
+                    const le = nearestSegExcl(c.x, c.z), lc = centerline[le];
+                    const sign = ((c.x - lc.x) * n.x + (c.z - lc.z) * n.z) >= 0 ? 1 : -1;
+                    px = c.x + n.x * (HALF_W + 7) * sign; pz = c.z + n.z * (HALF_W + 7) * sign;
+                    if (!lowClear(px, pz, HALF_W + 3)) continue;  // still over a road — let the deck clear-span
+                }
+                addPier(px, pz, roadY(i, 0) - 1.0);
             }
             // ---- TIRE WALLS on the OUTSIDE of the tighter corners (baked)
             const tparts = [];
@@ -3403,8 +3450,17 @@
             for (let x = 0; x < 8; x++) for (let y = 0; y < 2; y++) { g.fillStyle = (x + y) % 2 ? '#fff' : '#111'; g.fillRect(x * 8, y * 8, 8, 8); }
             buildDecalStrip(0, 2, 1.0, new THREE.CanvasTexture(cv), 0.12);
 
-            // gate
-            const postH = 20;
+            // gate — normally 20 tall, but on a 3D track the start line can sit
+            // UNDER a flyover deck (the figure-8 crosses over its own start
+            // straight). A fixed-height arch then speared up through the deck
+            // and its banner read as a box lying on the upper pavement. Shrink
+            // the whole gantry to clear any deck overhead.
+            let deckY = Infinity;
+            for (const v of viaductSegs) {
+                const cv = centerline[v];
+                if (Math.abs(cv.x - c.x) < HALF_W && Math.abs(cv.z - c.z) < HALF_W && cv.y - c.y > 6) deckY = Math.min(deckY, cv.y);
+            }
+            const postH = deckY < Infinity ? Math.max(8, deckY - c.y - 4.5) : 20;
             for (const s of [1, -1]) {
                 parts.push({ geo: new THREE.CylinderGeometry(1, 1.2, postH, 10), color: 0xff3b5c,
                     matrix: mat4(c.x + n.x * (HALF_W + 2.5) * s, c.y + postH / 2, c.z + n.z * (HALF_W + 2.5) * s, 0) });
