@@ -64,16 +64,16 @@
   //  Mutable so the build can be re-tuned live via __cap.rebuild({...}).
   // ===================================================================
   const PROP = {
-    bodyCX: 0,   bodyCY: 224, bodyL: 322, bodyH: 112, bodyW: 152, bodyE: 2.1,
-    rumpDrop: 22,                          // back tapers/drops toward the rear
-    headCX: 322, headCY: 220, headL: 170, headH: 132, headW: 122, headE: 2.2,
-    snoutCX: 506, snoutCY: 190, snoutL: 96, snoutH: 94, snoutW: 104, snoutE: 3.0,
-    neckCX: 255, neckCY: 256, neckL: 135, neckH: 98, neckW: 116, neckE: 2.4,
-    earX: 322, earY: 348, earZ: 78, earR: 34,
-    eyeX: 484, eyeY: 308, eyeZ: 104, eyeR: 22,
-    noseX: 596, noseY: 208, noseR: 36,
-    legFrontX: 166, legHindX: -202, legZ: 104, legR: 65,
-    legTopFront: 126, legTopHind: 140, footH: 26, footR: 68,
+    bodyCX: 0,   bodyCY: 226, bodyL: 282, bodyH: 126, bodyW: 160, bodyE: 2.35,
+    rumpDrop: 20,                          // back tapers/drops toward the rear
+    headCX: 312, headCY: 232, headL: 138, headH: 146, headW: 142, headE: 2.7,
+    snoutCX: 478, snoutCY: 198, snoutL: 90, snoutH: 106, snoutW: 110, snoutE: 3.4,
+    neckCX: 258, neckCY: 252, neckL: 122, neckH: 104, neckW: 126, neckE: 2.4,
+    earX: 300, earY: 366, earZ: 86, earR: 30,
+    eyeX: 392, eyeY: 300, eyeZ: 104, eyeR: 18,
+    noseX: 520, noseY: 212, noseR: 36,
+    legFrontX: 150, legHindX: -178, legZ: 108, legR: 66,
+    legTopFront: 124, legTopHind: 138, footH: 26, footR: 70,
     shell: 3,                              // 0 = solid; >0 = hollow shell thickness (plates)
   };
 
@@ -98,10 +98,7 @@
       }
     }
     // snout (blocky, in front of head)
-    if (supEll(x, y, az, P.snoutCX, P.snoutCY, 0, P.snoutL, P.snoutH, P.snoutW, P.snoutE)) {
-      if (Math.hypot(x - P.noseX, y - P.noseY, az) <= P.noseR) return 'nose';
-      return 'snout';
-    }
+    if (supEll(x, y, az, P.snoutCX, P.snoutCY, 0, P.snoutL, P.snoutH, P.snoutW, P.snoutE)) return 'snout';
     // ears (on top-back of head)
     if (Math.hypot(x - P.earX, y - P.earY, az - P.earZ) <= P.earR) return 'ear';
     // head
@@ -400,11 +397,13 @@
       if (downs === 0) stud(bk, c, ix * STUD, (T + 1) * PLATE + STUD_H / 2, iz * STUD);
     }
 
-    // ---- distinct face pieces: round dark eyes + a nose pad (real 1x1 round tiles) ----
-    for (const sgn of [1, -1]) disc(bkDark, COL.eye, PROP.eyeX, PROP.eyeY, sgn * (PROP.eyeZ + 7), 14, 8, 'z');
-    // big dark nose pad at the front-TOP of the blunt muzzle (where a capybara's is)
-    disc(bkDark, COL.nose, PROP.noseX + 4, PROP.noseY + 40, 0, 24, 9, 'x');
-    for (const sgn of [1, -1]) disc(bkDark, COL.nose, PROP.noseX + 6, PROP.noseY + 52, sgn * 13, 7, 7, 'x');  // nostrils
+    // ---- distinct face pieces (real 1x1 round tiles), SNAPPED to the model surface ----
+    const P = PROP;
+    const eyeZ = (() => { for (let z = P.headW + 26; z >= 0; z -= 2) if (supEll(P.eyeX, P.eyeY, z, P.headCX, P.headCY, 0, P.headL, P.headH, P.headW, P.headE)) return z; return P.headW; })();
+    for (const sgn of [1, -1]) disc(bkDark, COL.eye, P.eyeX, P.eyeY, sgn * (eyeZ + 2), 16, 9, 'z');
+    const noseX = (() => { for (let x = P.snoutCX + P.snoutL + 26; x >= P.snoutCX; x -= 2) if (supEll(x, P.noseY, 0, P.snoutCX, P.snoutCY, 0, P.snoutL, P.snoutH, P.snoutW, P.snoutE)) return x; return P.snoutCX + P.snoutL; })();
+    disc(bkDark, COL.nose, noseX + 2, P.noseY + 14, 0, 24, 9, 'x');                                   // broad nose pad on the muzzle front
+    for (const sgn of [1, -1]) disc(bkDark, COL.nose, noseX + 3, P.noseY + 28, sgn * 13, 7, 8, 'x');  // nostrils
 
     world.add(bakeMesh(bkBody));
     world.add(bakeMesh(bkDark));
