@@ -50,11 +50,12 @@
 
   // LEGO-accurate-ish palette tuned to a reddish-brown capybara
   const COL = {
-    body:  0x8a5628, body2: 0x956031,     // warm reddish-brown (slight variation)
-    belly: 0xa37d46,                       // lighter underside
-    head:  0x8a5628, snout: 0x55371d,      // darker muzzle
-    nose:  0x241810, ear: 0x46301c, eye: 0x120d08,
-    leg:   0x664022, foot: 0x381f10,
+    // sampled from real capybara reference photos (rich reddish-brown)
+    body:  0x6f4026, body2: 0x794731,      // rich reddish-brown coat (slight variation)
+    belly: 0x8c6440,                       // yellowish-brown underside
+    head:  0x73442a, snout: 0x794b31,      // muzzle a touch warmer/lighter
+    nose:  0x201410, ear: 0x3c2516, eye: 0x0f0a06,
+    leg:   0x5f3a23, foot: 0x33200f,
     grass: 0x4f8f3c, grass2: 0x5b9c44, water: 0x2f86d6, water2: 0x3f97e0,
     sand:  0xcbb486, plant: 0x3a7a30, stem: 0x6a4a2a, rock: 0x9a948c,
   };
@@ -126,8 +127,8 @@
   const renderer = new THREE.WebGLRenderer({ antialias: true });
   renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
   renderer.outputEncoding = THREE.sRGBEncoding;
-  renderer.toneMapping = THREE.ACESFilmicToneMapping;
-  renderer.toneMappingExposure = 0.98;
+  renderer.toneMapping = THREE.NoToneMapping;
+  renderer.toneMappingExposure = 1.0;
   renderer.shadowMap.enabled = true;
   renderer.shadowMap.type = THREE.PCFSoftShadowMap;
   app.appendChild(renderer.domElement);
@@ -145,8 +146,8 @@
   const camera = new THREE.PerspectiveCamera(38, innerWidth / innerHeight, 10, 12000);
 
   // lighting — key / fill / rim + hemisphere ambient
-  const hemi = new THREE.HemisphereLight(0xdfeaf5, 0x6a5a48, 0.62); scene.add(hemi);
-  const key = new THREE.DirectionalLight(0xfff4e2, 1.7);
+  const hemi = new THREE.HemisphereLight(0xf1e9dc, 0x40301e, 0.24); scene.add(hemi);
+  const key = new THREE.DirectionalLight(0xfff2dc, 1.15);
   key.position.set(520, 760, 560); key.castShadow = true;
   key.shadow.mapSize.set(2048, 2048);
   key.shadow.camera.near = 100; key.shadow.camera.far = 3200;
@@ -154,8 +155,8 @@
   key.shadow.camera.top = 900; key.shadow.camera.bottom = -900;
   key.shadow.bias = -0.0008; key.shadow.normalBias = 2;
   scene.add(key);
-  const fill = new THREE.DirectionalLight(0xbcd2ec, 0.5); fill.position.set(-600, 420, -260); scene.add(fill);
-  const rim = new THREE.DirectionalLight(0xffffff, 0.5); rim.position.set(-200, 360, -680); scene.add(rim);
+  const fill = new THREE.DirectionalLight(0xd8d2c6, 0.16); fill.position.set(-600, 420, -260); scene.add(fill);
+  const rim = new THREE.DirectionalLight(0xffffff, 0.22); rim.position.set(-200, 360, -680); scene.add(rim);
 
   let world = new THREE.Group(); scene.add(world);
   let target = new THREE.Vector3(120, 200, 0);
