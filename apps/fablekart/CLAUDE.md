@@ -21,8 +21,8 @@ half auto-covers track geometry + core physics, but nothing else).
 
 A single self-contained `index.html` — a **landscape** (horizontal) 3D kart
 racer for iPhone PWA. Three.js **r128** from cdnjs, all assets generated at
-runtime. **Seven tracks** (Coral Cliffs, Volcano Bay, Whisper Wood,
-Glacier Pass, Neon City, Dust Devil Gulch, Crossover Speedway), 3 laps, player + **7 AI**. Left-thumb slide steering,
+runtime. **Eight tracks** (Coral Cliffs, Volcano Bay, Whisper Wood,
+Glacier Pass, Neon City, Dust Devil Gulch, Crossover Speedway, Sky Citadel), 3 laps, player + **7 AI**. Left-thumb slide steering,
 DRIFT/ITEM buttons, auto-accelerate. Each track has its own composition
 (per-track `SONGS` sequencer), signature landmarks, and theme.
 
@@ -249,6 +249,34 @@ work, and don't regress these four seams.
     clearance-checked). `foliage:'speedway'` → sparse green shrubs only
     (palms/scatter early-return). Music: `SPEEDWAY_SONG` "Pole Position"
     (E major, four-on-floor, square/saw lead).
+- **Sky Citadel** (`id: 'citadel'`, `theme.citadel`) — THE FINALE / "shining
+  jewel" (built for Apple-employee feedback that the game needed a grand 8th
+  track). A floating castle circuit ABOVE A SEA OF CLOUDS:
+  - **Floating ribbon-island terrain**: `hillH` returns the cloud void (-62)
+    off the track, so `terrainY`'s road-edge blend turns the circuit into a
+    narrow ribbon floating in cloud, with guardrails auto-added by the cliff
+    rule. The keep sits on its own raised platform (`THEME.keep`, a bump in
+    `hillH`) that overlaps the ribbon's inner verge so it reads as connected.
+  - **`buildWater` cloudSea branch** (`theme.cloudSea`): tinted cloud-floor
+    discs + a baked billowing cloudbank + golden drifting motes instead of
+    water.
+  - **`buildCitadel`**: the keep (central donjon + 4 corner towers, all with
+    pointed roofs + finial spires CROWNED WITH GLOWING ORBS — the "jewels";
+    a dark finial roof read as a black ball backlit, hence the glow), a
+    crenellated curtain wall, a gatehouse arch the road drives under (f0.86),
+    braziers w/ warm PointLights, pennant poles, decorative floating islands,
+    and waterfalls spilling off the ribbon's OUTER edge into the void
+    (`waterfallMats` scroll). A **dragon** circles the keep — pushed into the
+    `birds` flock array (grp + wl/wr flap); body is a SLIM box + big membrane
+    wings (a cylinder body read as a dark ball head-on) and near-self-lit
+    (high emissive) so it never renders dark.
+  - Theme: luminous twilight sky (lightened `skyTop` — a dark zenith read as
+    a dark ball when the cam tilts up), `aurora`, `stars`, drawbridge
+    crest-jump on the bottom straight (`jumpAt`). Music: `CITADEL_SONG`
+    "Aether Crown" (D major fanfare). **SwiftShader caveat bites hard here**:
+    the blown-out near-white sky makes any mid-tone sky object (dragon,
+    balloon) LOOK like a dark ball by contrast — proven false (darkest top
+    pixel is mid-tan sky); judge sky objects on device, not headless.
 - `CTRL` points `[x, z, y]` are scaled by `SC = 1.35`; elevation 0→31.
   Tunnel portals + jump location are found by `nearestSeg()` from landmark
   coords at build.
