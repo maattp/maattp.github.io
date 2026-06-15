@@ -1,0 +1,513 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="theme-color" content="#1a1a2e">
+<title>Capybara</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { width: 100%; height: 100%; overflow: hidden; background: #11131a;
+    -webkit-tap-highlight-color: transparent; -webkit-user-select: none; user-select: none;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; }
+  #app { position: fixed; inset: 0; }
+  canvas { display: block; touch-action: none; }
+  #hud { position: fixed; left: 0; right: 0; top: 0; padding: calc(env(safe-area-inset-top) + 14px) 18px 14px;
+    display: flex; align-items: center; justify-content: space-between; pointer-events: none; z-index: 5; }
+  #title { color: #fff; font-weight: 800; font-size: 19px; letter-spacing: 0.5px;
+    text-shadow: 0 2px 12px rgba(0,0,0,0.5); }
+  #title span { font-weight: 500; opacity: 0.7; font-size: 13px; }
+  #stats { color: #ffd9a8; font-size: 13px; font-weight: 700; text-align: right;
+    text-shadow: 0 2px 10px rgba(0,0,0,0.5); }
+  #hint { position: fixed; left: 0; right: 0; bottom: calc(env(safe-area-inset-bottom) + 12px);
+    text-align: center; color: rgba(255,255,255,0.55); font-size: 12px; z-index: 5; pointer-events: none; }
+  #spin { position: fixed; right: 16px; bottom: calc(env(safe-area-inset-bottom) + 38px); z-index: 6;
+    width: 46px; height: 46px; border-radius: 50%; border: none; background: rgba(255,255,255,0.14);
+    color: #fff; font-size: 20px; backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px); }
+  #spin.off { opacity: 0.45; }
+</style>
+</head>
+<body>
+<div id="app"></div>
+<div id="hud">
+  <div id="title">Capybara <span>· LEGO® build</span></div>
+  <div id="stats"><span id="pieceCount">…</span> pieces</div>
+</div>
+<button id="spin" title="Toggle spin">⟳</button>
+<div id="hint">drag to rotate · pinch / scroll to zoom</div>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script>
+(function () {
+  'use strict';
+  // ===================================================================
+  //  LEGO unit system (LDU).  stud pitch 20, plate 8 tall, brick 24 (3 plates)
+  // ===================================================================
+  const STUD = 20, PLATE = 8, BRICK = 24;
+  const SEAM = 0.4;                       // tiny gap between pieces so seams read
+  const STUD_R = 6.2, STUD_H = 4;         // stud cylinder
+
+  // LEGO-accurate-ish palette tuned to a reddish-brown capybara
+  const COL = {
+    body:  0x8a5628, body2: 0x956031,     // warm reddish-brown (slight variation)
+    belly: 0xa37d46,                       // lighter underside
+    head:  0x8a5628, snout: 0x55371d,      // darker muzzle
+    nose:  0x241810, ear: 0x46301c, eye: 0x120d08,
+    leg:   0x664022, foot: 0x381f10,
+    grass: 0x4f8f3c, grass2: 0x5b9c44, water: 0x2f86d6, water2: 0x3f97e0,
+    sand:  0xcbb486, plant: 0x3a7a30, stem: 0x6a4a2a, rock: 0x9a948c,
+  };
+
+  // ===================================================================
+  //  PROPORTIONS  (LDU, X=length/front+, Y=up, Z=width; model is Z-symmetric)
+  //  Mutable so the build can be re-tuned live via __cap.rebuild({...}).
+  // ===================================================================
+  const PROP = {
+    bodyCX: 0,   bodyCY: 224, bodyL: 322, bodyH: 112, bodyW: 152, bodyE: 2.1,
+    rumpDrop: 22,                          // back tapers/drops toward the rear
+    headCX: 322, headCY: 220, headL: 170, headH: 132, headW: 122, headE: 2.2,
+    snoutCX: 506, snoutCY: 190, snoutL: 96, snoutH: 94, snoutW: 104, snoutE: 3.0,
+    neckCX: 255, neckCY: 256, neckL: 135, neckH: 98, neckW: 116, neckE: 2.4,
+    earX: 322, earY: 348, earZ: 78, earR: 34,
+    eyeX: 484, eyeY: 308, eyeZ: 104, eyeR: 22,
+    noseX: 596, noseY: 208, noseR: 36,
+    legFrontX: 166, legHindX: -202, legZ: 104, legR: 65,
+    legTopFront: 126, legTopHind: 140, footH: 26, footR: 68,
+    shell: 3,                              // 0 = solid; >0 = hollow shell thickness (plates)
+  };
+
+  // ----- shape helpers -----
+  function supEll(x, y, z, cx, cy, cz, rx, ry, rz, e) {
+    const a = Math.abs((x - cx) / rx), b = Math.abs((y - cy) / ry), c = Math.abs((z - cz) / rz);
+    return Math.pow(a, e) + Math.pow(b, e) + Math.pow(c, e) <= 1;
+  }
+  const lerp = (a, b, t) => a + (b - a) * t;
+  const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+
+  // region tag for a solid point (az = |z|).  null = empty.
+  function regionAt(x, y, az) {
+    const P = PROP;
+    // legs / feet (lower body pillars)
+    for (const [lx, topY] of [[P.legFrontX, P.legTopFront], [P.legHindX, P.legTopHind]]) {
+      const d = Math.hypot(x - lx, az - P.legZ);
+      if (y >= 0 && y <= topY) {
+        let R = P.legR;
+        if (y < P.footH) R = lerp(P.footR, P.legR, y / P.footH);   // splayed foot
+        if (d <= R) return y < P.footH ? 'foot' : 'leg';
+      }
+    }
+    // snout (blocky, in front of head)
+    if (supEll(x, y, az, P.snoutCX, P.snoutCY, 0, P.snoutL, P.snoutH, P.snoutW, P.snoutE)) {
+      if (Math.hypot(x - P.noseX, y - P.noseY, az) <= P.noseR) return 'nose';
+      return 'snout';
+    }
+    // ears (on top-back of head)
+    if (Math.hypot(x - P.earX, y - P.earY, az - P.earZ) <= P.earR) return 'ear';
+    // head
+    if (supEll(x, y, az, P.headCX, P.headCY, 0, P.headL, P.headH, P.headW, P.headE)) {
+      if (Math.hypot(x - P.eyeX, y - P.eyeY, az - P.eyeZ) <= P.eyeR) return 'eye';
+      return 'head';
+    }
+    // neck — bridges the shoulder to the head so it isn't a floating ball
+    if (supEll(x, y, az, P.neckCX, P.neckCY, 0, P.neckL, P.neckH, P.neckW, P.neckE)) return 'head';
+    // body (barrel) — back drops slightly toward the rump
+    const cyBody = P.bodyCY - P.rumpDrop * clamp((P.bodyCX - x) / P.bodyL, 0, 1);
+    if (supEll(x, y, az, P.bodyCX, cyBody, 0, P.bodyL, P.bodyH, P.bodyW, P.bodyE)) {
+      return (y < cyBody - P.bodyH * 0.35) ? 'belly' : 'body';
+    }
+    return null;
+  }
+
+  // ===================================================================
+  //  three.js setup
+  // ===================================================================
+  const app = document.getElementById('app');
+  const renderer = new THREE.WebGLRenderer({ antialias: true });
+  renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+  renderer.outputEncoding = THREE.sRGBEncoding;
+  renderer.toneMapping = THREE.ACESFilmicToneMapping;
+  renderer.toneMappingExposure = 0.98;
+  renderer.shadowMap.enabled = true;
+  renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+  app.appendChild(renderer.domElement);
+
+  const scene = new THREE.Scene();
+  // soft studio gradient backdrop
+  (function () {
+    const c = document.createElement('canvas'); c.width = 16; c.height = 256;
+    const g = c.getContext('2d'); const grd = g.createLinearGradient(0, 0, 0, 256);
+    grd.addColorStop(0, '#cfe2f2'); grd.addColorStop(0.5, '#aac6dd'); grd.addColorStop(1, '#7f9bb3');
+    g.fillStyle = grd; g.fillRect(0, 0, 16, 256);
+    const t = new THREE.CanvasTexture(c); scene.background = t;
+  })();
+
+  const camera = new THREE.PerspectiveCamera(38, innerWidth / innerHeight, 10, 12000);
+
+  // lighting — key / fill / rim + hemisphere ambient
+  const hemi = new THREE.HemisphereLight(0xdfeaf5, 0x6a5a48, 0.62); scene.add(hemi);
+  const key = new THREE.DirectionalLight(0xfff4e2, 1.7);
+  key.position.set(520, 760, 560); key.castShadow = true;
+  key.shadow.mapSize.set(2048, 2048);
+  key.shadow.camera.near = 100; key.shadow.camera.far = 3200;
+  key.shadow.camera.left = -900; key.shadow.camera.right = 900;
+  key.shadow.camera.top = 900; key.shadow.camera.bottom = -900;
+  key.shadow.bias = -0.0008; key.shadow.normalBias = 2;
+  scene.add(key);
+  const fill = new THREE.DirectionalLight(0xbcd2ec, 0.5); fill.position.set(-600, 420, -260); scene.add(fill);
+  const rim = new THREE.DirectionalLight(0xffffff, 0.5); rim.position.set(-200, 360, -680); scene.add(rim);
+
+  let world = new THREE.Group(); scene.add(world);
+  let target = new THREE.Vector3(120, 200, 0);
+
+  // ===================================================================
+  //  baked geometry (one mesh per "color family" → few draw calls)
+  // ===================================================================
+  const tmpM = new THREE.Matrix4(), tmpC = new THREE.Color();
+  function Baker() {
+    return { pos: [], norm: [], col: [], idx: [], n: 0 };
+  }
+  const boxGeo = new THREE.BoxGeometry(1, 1, 1);
+  const studGeo = new THREE.CylinderGeometry(STUD_R, STUD_R, STUD_H, 12);
+  const discGeo = new THREE.CylinderGeometry(1, 1, 1, 16);   // unit round-tile (eyes/nose)
+  // unit slope wedge: high edge at -x (y=1), low edge at +x (y=0), extruded in z.
+  const wedgeGeo = (() => {
+    const A = [-0.5, 1, -0.5], B = [-0.5, 1, 0.5], C = [0.5, 0, -0.5], D = [0.5, 0, 0.5], E = [-0.5, 0, -0.5], F = [-0.5, 0, 0.5];
+    const tris = [[A, C, D], [A, D, B], [A, B, F], [A, F, E], [E, F, D], [E, D, C], [A, E, C], [B, D, F]];
+    const ctr = [0, 1 / 3, 0], pos = [], norm = [];
+    for (let [p, q, r] of tris) {
+      let ux = q[0] - p[0], uy = q[1] - p[1], uz = q[2] - p[2], vx = r[0] - p[0], vy = r[1] - p[1], vz = r[2] - p[2];
+      let nx = uy * vz - uz * vy, ny = uz * vx - ux * vz, nz = ux * vy - uy * vx;
+      const tc = [(p[0] + q[0] + r[0]) / 3, (p[1] + q[1] + r[1]) / 3, (p[2] + q[2] + r[2]) / 3];
+      if (nx * (tc[0] - ctr[0]) + ny * (tc[1] - ctr[1]) + nz * (tc[2] - ctr[2]) < 0) { [q, r] = [r, q]; nx = -nx; ny = -ny; nz = -nz; }
+      const l = Math.hypot(nx, ny, nz) || 1; nx /= l; ny /= l; nz /= l;
+      for (const v of [p, q, r]) { pos.push(v[0], v[1], v[2]); norm.push(nx, ny, nz); }
+    }
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+    g.setAttribute('normal', new THREE.Float32BufferAttribute(norm, 3));
+    return g;
+  })();
+  // place a wedge bridging a downward step. (cx,cz)=boundary centre, baseY=low top,
+  // hi=step height (LDU), rotY orients the downhill direction toward +x.
+  function wedge(bk, color, cx, baseY, cz, wPerp, hi, rotY) {
+    const m = new THREE.Matrix4();
+    m.makeRotationY(rotY);
+    m.multiply(new THREE.Matrix4().makeScale(STUD, hi, wPerp));
+    m.setPosition(cx, baseY, cz);
+    addGeo(bk, wedgeGeo, color, m);
+  }
+  function addGeo(bk, geo, color, m) {
+    const p = geo.attributes.position, nrm = geo.attributes.normal, base = bk.n;
+    tmpC.set(color);
+    const nm = new THREE.Matrix3().getNormalMatrix(m);
+    const v = new THREE.Vector3(), nv = new THREE.Vector3();
+    for (let i = 0; i < p.count; i++) {
+      v.fromBufferAttribute(p, i).applyMatrix4(m);
+      nv.fromBufferAttribute(nrm, i).applyMatrix3(nm).normalize();
+      bk.pos.push(v.x, v.y, v.z); bk.norm.push(nv.x, nv.y, nv.z); bk.col.push(tmpC.r, tmpC.g, tmpC.b);
+    }
+    const index = geo.index;
+    if (index) { for (let i = 0; i < index.count; i++) bk.idx.push(base + index.getX(i)); }
+    else { for (let i = 0; i < p.count; i++) bk.idx.push(base + i); }
+    bk.n += p.count;
+  }
+  function bakeMesh(bk, opts) {
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.Float32BufferAttribute(bk.pos, 3));
+    g.setAttribute('normal', new THREE.Float32BufferAttribute(bk.norm, 3));
+    g.setAttribute('color', new THREE.Float32BufferAttribute(bk.col, 3));
+    g.setIndex(bk.idx);
+    const mat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.62, metalness: 0.0,
+      flatShading: false });
+    if (opts && opts.transparent) { mat.transparent = true; mat.opacity = opts.opacity; }
+    const mesh = new THREE.Mesh(g, mat);
+    mesh.castShadow = true; mesh.receiveShadow = true;
+    return mesh;
+  }
+  function box(bk, color, cx, cy, cz, sx, sy, sz) {
+    tmpM.makeScale(sx, sy, sz); tmpM.setPosition(cx, cy, cz);
+    addGeo(bk, boxGeo, color, tmpM);
+  }
+  function stud(bk, color, cx, cy, cz) {
+    tmpM.makeScale(1, 1, 1); tmpM.setPosition(cx, cy, cz);
+    addGeo(bk, studGeo, color, tmpM);
+  }
+  function disc(bk, color, cx, cy, cz, r, thick, axis) {   // round tile facing x or z
+    const m = new THREE.Matrix4();
+    if (axis === 'z') m.makeRotationX(Math.PI / 2); else if (axis === 'x') m.makeRotationZ(Math.PI / 2);
+    m.multiply(new THREE.Matrix4().makeScale(r, thick, r));
+    m.setPosition(cx, cy, cz);
+    addGeo(bk, discGeo, color, m);
+  }
+
+  // ===================================================================
+  //  BUILD: voxelize → per-layer greedy tile → vertical brick merge → studs
+  // ===================================================================
+  // real LEGO plate/brick footprints (studs); both orientations, area-sorted
+  const FOOT = (() => {
+    const real = [[1,1],[1,2],[1,3],[1,4],[1,6],[1,8],[2,2],[2,3],[2,4],[2,6],[2,8],
+                  [4,4],[4,6],[4,8],[6,6],[6,8],[8,8]];
+    const set = new Set(), out = [];
+    for (const [a, b] of real) for (const [w, d] of [[a, b], [b, a]]) {
+      const k = w + 'x' + d; if (!set.has(k)) { set.add(k); out.push([w, d]); }
+    }
+    out.sort((p, q) => q[0] * q[1] - p[0] * p[1]);
+    return out;
+  })();
+
+  let pieceCount = 0;
+
+  function build() {
+    if (world) { scene.remove(world); world.traverse(o => { if (o.geometry) o.geometry.dispose(); if (o.material) o.material.dispose(); }); }
+    world = new THREE.Group(); scene.add(world);
+    pieceCount = 0;
+
+    // ---- voxelize the capybara onto the stud/plate grid ----
+    const IXMIN = -18, IXMAX = 34, IYMAX = 52, IZMAX = 10;
+    // occupancy + region, keyed "ix,iy,iz"
+    const occ = new Map(), reg = new Map();
+    const key = (ix, iy, iz) => ix + ',' + iy + ',' + iz;
+    for (let ix = IXMIN; ix <= IXMAX; ix++) {
+      const x = ix * STUD;
+      for (let iy = 0; iy <= IYMAX; iy++) {
+        const y = iy * PLATE + PLATE / 2;
+        for (let iz = -IZMAX; iz <= IZMAX; iz++) {
+          const z = iz * STUD;
+          const r = regionAt(x, y, Math.abs(z));
+          if (r) { occ.set(key(ix, iy, iz), true); reg.set(key(ix, iy, iz), r); }
+        }
+      }
+    }
+    // optional hollow shell (keep cells within `shell` of an empty neighbour)
+    if (PROP.shell > 0) {
+      const keep = new Map();
+      const sh = PROP.shell;
+      for (const k of occ.keys()) {
+        const [ix, iy, iz] = k.split(',').map(Number);
+        let surf = false;
+        for (let dx = -sh; dx <= sh && !surf; dx++)
+          for (let dy = -sh; dy <= sh && !surf; dy++)
+            for (let dz = -sh; dz <= sh && !surf; dz++)
+              if (!occ.has(key(ix + dx, iy + dy, iz + dz))) surf = true;
+        if (surf) keep.set(k, true);
+      }
+      occ.clear(); for (const k of keep.keys()) occ.set(k, true);
+    }
+
+    // colour for a cell, with surface detailing (eyes/nose only on the shell)
+    function cellColor(ix, iy, iz) {
+      const r = reg.get(key(ix, iy, iz)) || 'body';
+      const base = {
+        body: COL.body, belly: COL.belly, head: COL.head, snout: COL.snout,
+        nose: COL.nose, ear: COL.ear, eye: COL.eye, leg: COL.leg, foot: COL.foot,
+      }[r] || COL.body;
+      // subtle two-tone variation on the main coat (checker by cell)
+      if ((r === 'body' || r === 'head') && ((ix + iz) & 1)) return COL.body2;
+      return base;
+    }
+
+    // ---- per-layer greedy tiling into real footprints ----
+    // bricks grouped by colour family for few draw calls
+    const bkBody = Baker(), bkDark = Baker(), bkStud = Baker();
+    const bakerFor = (color) => (color === COL.eye || color === COL.nose || color === COL.ear
+      || color === COL.foot || color === COL.snout) ? bkDark : bkBody;
+
+    // gather pieces per layer, then vertical-merge identical footprints into bricks
+    const layerPieces = [];   // [{ix,iz,w,d,iy,color}]
+    for (let iy = 0; iy <= IYMAX; iy++) {
+      const cells = new Set(), covered = new Set();
+      for (let ix = IXMIN; ix <= IXMAX; ix++) for (let iz = -IZMAX; iz <= IZMAX; iz++)
+        if (occ.has(key(ix, iy, iz))) cells.add(ix + ',' + iz);
+      // scan in order; place the largest fitting footprint of a single colour
+      for (let ix = IXMIN; ix <= IXMAX; ix++) for (let iz = -IZMAX; iz <= IZMAX; iz++) {
+        const ck = ix + ',' + iz;
+        if (!cells.has(ck) || covered.has(ck)) continue;
+        const c0 = cellColor(ix, iy, iz);
+        let best = [1, 1];
+        for (const [w, d] of FOOT) {
+          let ok = true;
+          for (let dx = 0; dx < w && ok; dx++) for (let dz = 0; dz < d && ok; dz++) {
+            const kk = (ix + dx) + ',' + (iz + dz);
+            if (!cells.has(kk) || covered.has(kk) || cellColor(ix + dx, iy, iz + dz) !== c0) ok = false;
+          }
+          if (ok) { best = [w, d]; break; }
+        }
+        const [w, d] = best;
+        for (let dx = 0; dx < w; dx++) for (let dz = 0; dz < d; dz++) covered.add((ix + dx) + ',' + (iz + dz));
+        layerPieces.push({ ix, iz, w, d, iy, color: c0 });
+      }
+    }
+
+    // vertical merge: identical footprint+colour in consecutive layers → taller box
+    // (3 plates = 1 brick).  index by footprint key.
+    const byFoot = new Map();
+    for (const p of layerPieces) {
+      const fk = p.ix + ',' + p.iz + ',' + p.w + ',' + p.d + ',' + p.color;
+      if (!byFoot.has(fk)) byFoot.set(fk, []);
+      byFoot.get(fk).push(p);
+    }
+    for (const [fk, arr] of byFoot) {
+      arr.sort((a, b) => a.iy - b.iy);
+      let i = 0;
+      while (i < arr.length) {
+        let j = i; while (j + 1 < arr.length && arr[j + 1].iy === arr[j].iy + 1) j++;
+        let h = j - i + 1, layer = arr[i].iy;              // run of h plate-layers
+        const p = arr[i];
+        const bk = bakerFor(p.color);
+        const cx = (p.ix + (p.w - 1) / 2) * STUD;
+        const cz = (p.iz + (p.d - 1) / 2) * STUD;
+        // split run into bricks (3) then plates (1)
+        let yy = layer;
+        const emit = (plates) => {
+          const cy = yy * PLATE + plates * PLATE / 2;
+          box(bk, p.color, cx, cy, cz, p.w * STUD - SEAM, plates * PLATE - SEAM, p.d * STUD - SEAM);
+          pieceCount++; yy += plates;
+        };
+        while (h >= 3) { emit(3); h -= 3; }
+        while (h >= 1) { emit(1); h -= 1; }
+        i = j + 1;
+      }
+    }
+
+    // ---- smooth top contour: surface height map → slopes on every step,
+    //      studs only on flat plateaus (the pro Lego-sculpture look) ----
+    const topOf = new Map();                              // "ix,iz" -> highest occupied iy
+    for (const k of occ.keys()) {
+      const [ix, iy, iz] = k.split(',').map(Number);
+      const ck = ix + ',' + iz, cur = topOf.get(ck);
+      if (cur === undefined || iy > cur) topOf.set(ck, iy);
+    }
+    const DIRS = [[1, 0, 0], [-1, 0, Math.PI], [0, 1, -Math.PI / 2], [0, -1, Math.PI / 2]];
+    const SLOPE_MAX = 4;                                  // cap step a slope will bridge (plates)
+    for (const [ck, T] of topOf) {
+      const [ix, iz] = ck.split(',').map(Number);
+      const c = cellColor(ix, T, iz);
+      const bk = bakerFor(c);
+      let downs = 0;
+      for (const [dx, dz, rotY] of DIRS) {
+        const nk = (ix + dx) + ',' + (iz + dz);
+        const Tn = topOf.has(nk) ? topOf.get(nk) : -1;   // empty neighbour = cliff to base
+        const drop = T - Tn;
+        if (drop >= 1) {
+          downs++;
+          const h = Math.min(drop, SLOPE_MAX) * PLATE;
+          const baseY = (Tn < 0 ? T - SLOPE_MAX + 1 : Tn + 1) * PLATE;
+          const cx = (ix + dx / 2) * STUD, cz = (iz + dz / 2) * STUD;
+          wedge(bk, c, cx, baseY, cz, STUD, h, rotY);
+        }
+      }
+      if (downs === 0) stud(bk, c, ix * STUD, (T + 1) * PLATE + STUD_H / 2, iz * STUD);
+    }
+
+    // ---- distinct face pieces: round dark eyes + a nose pad (real 1x1 round tiles) ----
+    for (const sgn of [1, -1]) disc(bkDark, COL.eye, PROP.eyeX, PROP.eyeY, sgn * (PROP.eyeZ + 7), 14, 8, 'z');
+    // big dark nose pad at the front-TOP of the blunt muzzle (where a capybara's is)
+    disc(bkDark, COL.nose, PROP.noseX + 4, PROP.noseY + 40, 0, 24, 9, 'x');
+    for (const sgn of [1, -1]) disc(bkDark, COL.nose, PROP.noseX + 6, PROP.noseY + 52, sgn * 13, 7, 7, 'x');  // nostrils
+
+    world.add(bakeMesh(bkBody));
+    world.add(bakeMesh(bkDark));
+
+    // ---- scenic base: grass bank + water edge, built from plates ----
+    buildBase();
+
+    document.getElementById('pieceCount').textContent = pieceCount.toLocaleString();
+  }
+
+  function buildBase() {
+    const bk = Baker(), bkStud = Baker();
+    // footprint around the model
+    const X0 = -22, X1 = 36, Z0 = -16, Z1 = 16;          // studs
+    const waterX = 22;                                    // water in front of the snout (+X)
+    const top = 0;                                        // base top surface at y=0
+    const depth = BRICK;                                  // one brick thick
+    // tile the base into 8x8/6x8 plates by colour region (cheap: per-stud colour, greedy rows)
+    for (let ix = X0; ix <= X1; ix++) {
+      for (let iz = Z0; iz <= Z1; iz++) {
+        let col = COL.grass; let isWater = false;
+        const edge = ix > waterX;                          // water pool in front
+        if (edge) { col = ((ix + iz) & 1) ? COL.water : COL.water2; isWater = true; }
+        else if (ix > waterX - 3) col = COL.sand;          // sandy bank before the water
+        else col = ((ix + iz) & 1) ? COL.grass : COL.grass2;
+        const cy = isWater ? top - PLATE * 1.0 : top - PLATE / 2;
+        const h = isWater ? PLATE : PLATE;
+        box(bk, col, ix * STUD, cy - h / 2 + PLATE / 2, iz * STUD, STUD - SEAM, h - SEAM, STUD - SEAM);
+        // a filler brick beneath for thickness
+        box(bk, isWater ? COL.water2 : COL.sand, ix * STUD, top - PLATE - BRICK / 2, iz * STUD,
+            STUD - SEAM, BRICK - SEAM, STUD - SEAM);
+        pieceCount += 2;
+        // studs on the grass/sand (not on water — water tiles are smooth)
+        if (!isWater) { stud(bk, col, ix * STUD, top + STUD_H / 2 - PLATE + PLATE, iz * STUD); }
+      }
+    }
+    const baseMesh = bakeMesh(bk); baseMesh.receiveShadow = true; world.add(baseMesh);
+
+    // a couple of simple reed plants near the water
+    const bkP = Baker();
+    for (const [px, pz] of [[20, -11], [21, 12], [19, 9], [22, -8]]) {
+      box(bkP, COL.stem, px * STUD, 14, pz * STUD, 5, 28, 5); pieceCount++;
+      box(bkP, COL.plant, px * STUD, 34, pz * STUD, 6, 22, 6); pieceCount++;
+      stud(bkP, COL.plant, px * STUD, 46, pz * STUD);
+    }
+    world.add(bakeMesh(bkP));
+  }
+
+  // ===================================================================
+  //  camera controls: turntable orbit + zoom (+ autorotate)
+  // ===================================================================
+  let az = 0.9, el = 0.34, dist = 1500, autorot = true;
+  function applyCam() {
+    const ce = Math.cos(el), se = Math.sin(el), ca = Math.cos(az), sa = Math.sin(az);
+    camera.position.set(target.x + dist * ce * sa, target.y + dist * se, target.z + dist * ce * ca);
+    camera.lookAt(target);
+  }
+  let dragging = false, px = 0, py = 0, pinchD = 0;
+  const el2 = renderer.domElement;
+  el2.addEventListener('pointerdown', e => { dragging = true; px = e.clientX; py = e.clientY; autorot = false; document.getElementById('spin').classList.add('off'); });
+  el2.addEventListener('pointermove', e => {
+    if (!dragging) return;
+    az -= (e.clientX - px) * 0.008; el = clamp(el - (e.clientY - py) * 0.006, -0.2, 1.25);
+    px = e.clientX; py = e.clientY; applyCam();
+  });
+  addEventListener('pointerup', () => dragging = false);
+  el2.addEventListener('wheel', e => { dist = clamp(dist * (1 + Math.sign(e.deltaY) * 0.08), 600, 4000); applyCam(); e.preventDefault(); }, { passive: false });
+  el2.addEventListener('touchmove', e => {
+    if (e.touches.length === 2) {
+      const d = Math.hypot(e.touches[0].clientX - e.touches[1].clientX, e.touches[0].clientY - e.touches[1].clientY);
+      if (pinchD) { dist = clamp(dist * (pinchD / d), 600, 4000); applyCam(); }
+      pinchD = d; e.preventDefault();
+    }
+  }, { passive: false });
+  addEventListener('touchend', () => pinchD = 0);
+  document.getElementById('spin').addEventListener('click', () => {
+    autorot = !autorot; document.getElementById('spin').classList.toggle('off', !autorot);
+  });
+
+  function resize() { camera.aspect = innerWidth / innerHeight; camera.updateProjectionMatrix(); renderer.setSize(innerWidth, innerHeight); }
+  addEventListener('resize', resize); resize();
+
+  build();
+  applyCam();
+  let last = performance.now();
+  function loop(t) {
+    const dt = Math.min(0.05, (t - last) / 1000); last = t;
+    if (autorot) { az += dt * 0.35; applyCam(); }
+    renderer.render(scene, camera);
+    requestAnimationFrame(loop);
+  }
+  requestAnimationFrame(loop);
+
+  // ----- debug hook for headless iteration -----
+  window.__cap = {
+    THREE, scene, camera, renderer, PROP,
+    get count() { return pieceCount; },
+    rebuild(over) { if (over) Object.assign(PROP, over); build(); },
+    view(a, e, d) { if (a != null) az = a; if (e != null) el = e; if (d != null) dist = d; autorot = false; applyCam(); renderer.render(scene, camera); },
+    render() { renderer.render(scene, camera); },
+    target,
+  };
+})();
+</script>
+</body>
+</html>
