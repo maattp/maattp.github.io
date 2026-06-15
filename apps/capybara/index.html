@@ -64,16 +64,16 @@
   //  Mutable so the build can be re-tuned live via __cap.rebuild({...}).
   // ===================================================================
   const PROP = {
-    bodyCX: 0,   bodyCY: 226, bodyL: 282, bodyH: 126, bodyW: 160, bodyE: 2.35,
-    rumpDrop: 20,                          // back tapers/drops toward the rear
-    headCX: 312, headCY: 232, headL: 138, headH: 146, headW: 142, headE: 2.7,
-    snoutCX: 478, snoutCY: 198, snoutL: 90, snoutH: 106, snoutW: 110, snoutE: 3.4,
-    neckCX: 258, neckCY: 252, neckL: 122, neckH: 104, neckW: 126, neckE: 2.4,
-    earX: 300, earY: 366, earZ: 86, earR: 30,
-    eyeX: 392, eyeY: 300, eyeZ: 104, eyeR: 18,
-    noseX: 520, noseY: 212, noseR: 36,
-    legFrontX: 150, legHindX: -178, legZ: 108, legR: 66,
-    legTopFront: 124, legTopHind: 138, footH: 26, footR: 70,
+    bodyCX: 0,   bodyCY: 212, bodyL: 272, bodyH: 132, bodyW: 158, bodyE: 2.3,
+    rumpRise: 18,                          // back RISES toward the rear (rump is the high point)
+    headCX: 300, headCY: 206, headL: 130, headH: 128, headW: 128, headE: 2.35,
+    snoutCX: 424, snoutCY: 180, snoutL: 74, snoutH: 82, snoutW: 92, snoutE: 2.7,
+    neckCX: 248, neckCY: 232, neckL: 120, neckH: 112, neckW: 126, neckE: 2.4,
+    earX: 278, earY: 316, earZ: 80, earR: 26,
+    eyeX: 352, eyeY: 252, eyeZ: 104, eyeR: 16,
+    noseX: 480, noseY: 172, noseR: 34,
+    legFrontX: 152, legHindX: -168, legZ: 100, legR: 55,
+    legTopFront: 96, legTopHind: 104, footH: 24, footR: 60,
     shell: 3,                              // 0 = solid; >0 = hollow shell thickness (plates)
   };
 
@@ -108,10 +108,13 @@
     }
     // neck — bridges the shoulder to the head so it isn't a floating ball
     if (supEll(x, y, az, P.neckCX, P.neckCY, 0, P.neckL, P.neckH, P.neckW, P.neckE)) return 'head';
-    // body (barrel) — back drops slightly toward the rump
-    const cyBody = P.bodyCY - P.rumpDrop * clamp((P.bodyCX - x) / P.bodyL, 0, 1);
-    if (supEll(x, y, az, P.bodyCX, cyBody, 0, P.bodyL, P.bodyH, P.bodyW, P.bodyE)) {
-      return (y < cyBody - P.bodyH * 0.35) ? 'belly' : 'body';
+    // body (barrel) — topline RISES toward the rear (rump is the high point);
+    // belly stays level (raise the centre and grow the height by the same amount)
+    const f = clamp((P.bodyCX - x) / P.bodyL, 0, 1);
+    const cyBody = P.bodyCY + P.rumpRise * f;
+    const ryBody = P.bodyH + P.rumpRise * f;
+    if (supEll(x, y, az, P.bodyCX, cyBody, 0, P.bodyL, ryBody, P.bodyW, P.bodyE)) {
+      return (y < cyBody - ryBody * 0.4) ? 'belly' : 'body';
     }
     return null;
   }
