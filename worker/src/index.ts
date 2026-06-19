@@ -342,20 +342,27 @@ function buildPost(tag: string, block: string): Record<string, unknown> | null {
     return post;
   }
 
-  // Galleries and other posts: fall back to the listing thumbnail if it's a
-  // real preview image (not a "self"/"default"/"nsfw" placeholder).
-  if (thumbnail && /^https?:\/\//.test(thumbnail) && IMG_EXT.test(thumbnail.replace(/(\?.*)?$/, ".jpg"))) {
-    post.post_hint = "image";
-    post.url = thumbnail;
-    return post;
-  }
-  if (thumbnail && /redditmedia\.com|redditstatic\.com|redd\.it/.test(thumbnail)) {
-    post.post_hint = "image";
-    post.url = thumbnail;
-    return post;
+  // Reddit galleries: old.reddit only links to /gallery/<id>, and the full
+  // multi-image set lives on the comments page (an extra fetch per post). We
+  // skip that cost: the listing thumbnail is a preview of the gallery COVER
+  // image, so the full-size cover is at i.redd.it/<mediaId>.<ext> — derived
+  // with no extra request. Shows the cover (not swipeable) but at full res,
+  // which is >200px so the client won't hide it.
+  if (attr("is-gallery") === "true" || /\/gallery\//.test(url)) {
+    const cover = (thumbnail || "").match(/(?:preview|i)\.redd\.it\/([a-z0-9]+)\.(jpg|jpeg|png|gif|webp)/i);
+    if (cover) {
+      post.post_hint = "image";
+      post.url = `https://i.redd.it/${cover[1]}.${cover[2].toLowerCase()}`;
+      return post;
+    }
   }
 
-  return null; // self/text/external — no autoplayable media
+  // Everything else (self/text, external links) carries no full-size media we
+  // can show. We deliberately do NOT fall back to the ~140px listing
+  // thumbnail: the client hides any image whose natural size is <200px (and
+  // skip-scrolls if it's the current item), so a thumbnail-only post flashes
+  // in and collapses mid-scroll — jank.
+  return null;
 }
 
 function scrapeListing(html: string): { children: unknown[]; after: string | null } {
