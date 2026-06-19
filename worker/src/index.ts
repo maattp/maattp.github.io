@@ -342,20 +342,12 @@ function buildPost(tag: string, block: string): Record<string, unknown> | null {
     return post;
   }
 
-  // Galleries and other posts: fall back to the listing thumbnail if it's a
-  // real preview image (not a "self"/"default"/"nsfw" placeholder).
-  if (thumbnail && /^https?:\/\//.test(thumbnail) && IMG_EXT.test(thumbnail.replace(/(\?.*)?$/, ".jpg"))) {
-    post.post_hint = "image";
-    post.url = thumbnail;
-    return post;
-  }
-  if (thumbnail && /redditmedia\.com|redditstatic\.com|redd\.it/.test(thumbnail)) {
-    post.post_hint = "image";
-    post.url = thumbnail;
-    return post;
-  }
-
-  return null; // self/text/external — no autoplayable media
+  // Everything else (galleries, self/text, external links) carries no
+  // full-size media we can show. We deliberately do NOT fall back to the
+  // ~140px listing thumbnail: the client hides any image whose natural size
+  // is <200px (and skip-scrolls if it's the current item), so emitting a
+  // thumbnail-only post makes it flash in and collapse mid-scroll — jank.
+  return null;
 }
 
 function scrapeListing(html: string): { children: unknown[]; after: string | null } {
