@@ -254,10 +254,131 @@ app.delete("/kv/:key", async (c) => {
 });
 
 // --- Reddit proxy ---
-// Browsers can't call reddit.com directly (no CORS). This proxies GET requests
-// to reddit.com with a descriptive User-Agent, which reddit requires.
+// Browsers can't call reddit.com directly (no CORS), AND as of 2025 reddit
+// returns 403 ("network security" block page) for the anonymous *.json API
+// endpoints — only the OAuth API and the HTML site still serve listings.
+// So instead of proxying the (now-dead) JSON API, we scrape old.reddit.com's
+// HTML — which still works unauthenticated — and synthesize the same JSON
+// listing shape (`{data:{children:[{data}], after}}`) the Feed client expects.
+// This keeps the entire client unchanged.
 
 const REDDIT_UA = "web:polkiewicz.com:v1.0 (by /u/mp_readonly)";
+
+function decodeEntities(s: string): string {
+  return s
+    .replace(/&amp;/g, "&")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&quot;/g, '"')
+    .replace(/&#0?39;/g, "'")
+    .replace(/&apos;/g, "'")
+    .replace(/&#x?[0-9a-f]+;/gi, (m) => {
+      const hex = /^&#x/i.test(m);
+      const code = parseInt(m.slice(hex ? 3 : 2, -1), hex ? 16 : 10);
+      return Number.isFinite(code) ? String.fromCodePoint(code) : m;
+    });
+}
+
+const IMG_EXT = /\.(jpg|jpeg|png|gif|webp)(\?.*)?$/i;
+
+// Turn one old.reddit `div.thing` block into a reddit-API-shaped post object,
+// or null if it carries no displayable media (self/text/unsupported posts).
+function buildPost(tag: string, block: string): Record<string, unknown> | null {
+  const attr = (name: string): string | null => {
+    const m = tag.match(new RegExp(`\\bdata-${name}="([^"]*)"`));
+    return m ? decodeEntities(m[1]) : null;
+  };
+
+  const fullname = attr("fullname");
+  if (!fullname || !fullname.startsWith("t3_")) return null;
+  if (attr("promoted") === "true") return null;
+
+  const url = attr("url") || "";
+  const titleMatch = block.match(/<a[^>]*\bclass="title[^"]*"[^>]*>([\s\S]*?)<\/a>/);
+  const title = titleMatch ? decodeEntities(titleMatch[1].replace(/<[^>]*>/g, "")).trim() : "";
+
+  const thumbMatch = block.match(
+    /<a[^>]*\bclass="[^"]*\bthumbnail\b[^"]*"[^>]*>[\s\S]*?<img[^>]*\bsrc="([^"]*)"/
+  );
+  let thumbnail = thumbMatch ? decodeEntities(thumbMatch[1]) : null;
+  if (thumbnail && thumbnail.startsWith("//")) thumbnail = "https:" + thumbnail;
+
+  const post: Record<string, unknown> = {
+    id: fullname.slice(3),
+    name: fullname,
+    subreddit: attr("subreddit") || "",
+    title,
+    author: attr("author") || "[deleted]",
+    score: parseInt(attr("score") || "0", 10) || 0,
+    ups: parseInt(attr("score") || "0", 10) || 0,
+    num_comments: parseInt(attr("comments-count") || "0", 10) || 0,
+    created_utc: Math.floor((parseInt(attr("timestamp") || "0", 10) || 0) / 1000),
+    permalink: attr("permalink") || url,
+    domain: attr("domain") || "",
+    url,
+    thumbnail,
+    is_video: false,
+  };
+
+  // reddit-hosted video: old.reddit only links to v.redd.it/<id>, but the HLS
+  // manifest URL is deterministic from that id and serves publicly.
+  const vredd = url.match(/v\.redd\.it\/([a-z0-9]+)/i);
+  if (vredd) {
+    post.is_video = true;
+    post.media = {
+      reddit_video: {
+        hls_url: `https://v.redd.it/${vredd[1]}/HLSPlaylist.m3u8`,
+        fallback_url: `https://v.redd.it/${vredd[1]}/DASHPlaylist.mpd`,
+        width: 0,
+        height: 0,
+      },
+    };
+    return post;
+  }
+
+  // Direct image (i.redd.it, i.imgur.com, or any image-extension URL).
+  if (IMG_EXT.test(url) || /(^|\.)i\.redd\.it$/.test(post.domain as string)) {
+    post.post_hint = "image";
+    return post;
+  }
+
+  // Galleries and other posts: fall back to the listing thumbnail if it's a
+  // real preview image (not a "self"/"default"/"nsfw" placeholder).
+  if (thumbnail && /^https?:\/\//.test(thumbnail) && IMG_EXT.test(thumbnail.replace(/(\?.*)?$/, ".jpg"))) {
+    post.post_hint = "image";
+    post.url = thumbnail;
+    return post;
+  }
+  if (thumbnail && /redditmedia\.com|redditstatic\.com|redd\.it/.test(thumbnail)) {
+    post.post_hint = "image";
+    post.url = thumbnail;
+    return post;
+  }
+
+  return null; // self/text/external — no autoplayable media
+}
+
+function scrapeListing(html: string): { children: unknown[]; after: string | null } {
+  const children: unknown[] = [];
+  const thingRe = /<div[^>]*\bclass="[^"]*\bthing\b[^"]*"[^>]*>/g;
+  const starts: { index: number; tag: string }[] = [];
+  let m: RegExpExecArray | null;
+  while ((m = thingRe.exec(html))) starts.push({ index: m.index, tag: m[0] });
+
+  for (let i = 0; i < starts.length; i++) {
+    const block = html.slice(starts[i].index, starts[i + 1]?.index ?? html.length);
+    const post = buildPost(starts[i].tag, block);
+    if (post) children.push({ kind: "t3", data: post });
+  }
+
+  // Pagination token from the "next" button, else the last post's fullname.
+  const next = html.match(/class="next-button"[\s\S]*?after=(t3_[a-z0-9]+)/i);
+  let after: string | null = next ? next[1] : null;
+  if (!after && children.length) {
+    after = (children[children.length - 1] as { data: { name: string } }).data.name;
+  }
+  return { children, after };
+}
 
 app.get("/reddit-proxy", async (c) => {
   const target = c.req.query("url");
@@ -271,15 +392,37 @@ app.get("/reddit-proxy", async (c) => {
   if (parsed.protocol !== "https:" || !/(^|\.)reddit\.com$/.test(parsed.hostname)) {
     return c.json({ error: "only reddit.com is allowed" }, 400);
   }
-  const upstream = await fetch(parsed.toString(), {
-    headers: { "User-Agent": REDDIT_UA, "Accept": "application/json" },
-  });
-  const body = await upstream.arrayBuffer();
-  return new Response(body, {
-    status: upstream.status,
+
+  // Rewrite the client's `.../<sort>.json?...` request to the equivalent
+  // old.reddit HTML listing and scrape it.
+  const oldUrl = new URL(parsed.toString());
+  oldUrl.hostname = "old.reddit.com";
+  oldUrl.pathname = oldUrl.pathname.replace(/\.json$/, "/");
+
+  const upstream = await fetch(oldUrl.toString(), {
     headers: {
-      "Content-Type": upstream.headers.get("Content-Type") ?? "application/json",
-      "Cache-Control": "no-store",
+      "User-Agent": REDDIT_UA,
+      "Accept": "text/html",
+      // bypass the over-18 interstitial so NSFW subs return their listing
+      "Cookie": "over18=1",
+    },
+  });
+
+  if (!upstream.ok) {
+    return new Response(JSON.stringify({ error: "reddit upstream", status: upstream.status }), {
+      status: upstream.status,
+      headers: { "Content-Type": "application/json", "Cache-Control": "no-store" },
+    });
+  }
+
+  const html = await upstream.text();
+  const { children, after } = scrapeListing(html);
+
+  return new Response(JSON.stringify({ kind: "Listing", data: { after, children } }), {
+    headers: {
+      "Content-Type": "application/json",
+      // short cache softens reddit's aggressive per-IP HTML rate limiting
+      "Cache-Control": "public, max-age=45",
     },
   });
 });
