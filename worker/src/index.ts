@@ -264,6 +264,26 @@ app.delete("/kv/:key", async (c) => {
 
 const REDDIT_UA = "web:polkiewicz.com:v1.0 (by /u/mp_readonly)";
 
+// Fetch from old.reddit with a hard timeout so a slow/hung upstream doesn't
+// pin the Worker until Cloudflare's CPU deadline.
+async function redditFetch(url: string, timeoutMs = 9000): Promise<Response> {
+  const ac = new AbortController();
+  const timer = setTimeout(() => ac.abort(), timeoutMs);
+  try {
+    return await fetch(url, {
+      signal: ac.signal,
+      headers: {
+        "User-Agent": REDDIT_UA,
+        "Accept": "text/html",
+        // bypass the over-18 interstitial so NSFW subs/galleries return content
+        "Cookie": "over18=1",
+      },
+    });
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 function decodeEntities(s: string): string {
   return s
     .replace(/&amp;/g, "&")
@@ -303,14 +323,15 @@ function buildPost(tag: string, block: string): Record<string, unknown> | null {
   let thumbnail = thumbMatch ? decodeEntities(thumbMatch[1]) : null;
   if (thumbnail && thumbnail.startsWith("//")) thumbnail = "https:" + thumbnail;
 
+  const score = parseInt(attr("score") || "0", 10) || 0;
   const post: Record<string, unknown> = {
     id: fullname.slice(3),
     name: fullname,
     subreddit: attr("subreddit") || "",
     title,
     author: attr("author") || "[deleted]",
-    score: parseInt(attr("score") || "0", 10) || 0,
-    ups: parseInt(attr("score") || "0", 10) || 0,
+    score,
+    ups: score,
     num_comments: parseInt(attr("comments-count") || "0", 10) || 0,
     created_utc: Math.floor((parseInt(attr("timestamp") || "0", 10) || 0) / 1000),
     permalink: attr("permalink") || url,
@@ -342,15 +363,16 @@ function buildPost(tag: string, block: string): Record<string, unknown> | null {
     return post;
   }
 
-  // Reddit galleries: old.reddit only links to /gallery/<id>, and the full
-  // multi-image set lives on the comments page (an extra fetch per post). We
-  // skip that cost: the listing thumbnail is a preview of the gallery COVER
-  // image, so the full-size cover is at i.redd.it/<mediaId>.<ext> — derived
-  // with no extra request. Shows the cover (not swipeable) but at full res,
-  // which is >200px so the client won't hide it.
+  // Reddit galleries: old.reddit only links to /gallery/<id>. We flag the post
+  // so the route can enrich it with the full ordered image set (gallery_data +
+  // media_metadata) by fetching its page. As a fallback we also derive the
+  // full-res COVER image from the listing thumbnail (i.redd.it/<mediaId>.<ext>,
+  // no extra request): if enrichment fails or is skipped, the client's
+  // extractMedia falls through to render this single cover image instead.
   if (attr("is-gallery") === "true" || /\/gallery\//.test(url)) {
     const cover = (thumbnail || "").match(/(?:preview|i)\.redd\.it\/([a-z0-9]+)\.(jpg|jpeg|png|gif|webp)/i);
     if (cover) {
+      post.is_gallery = true;
       post.post_hint = "image";
       post.url = `https://i.redd.it/${cover[1]}.${cover[2].toLowerCase()}`;
       return post;
@@ -363,6 +385,67 @@ function buildPost(tag: string, block: string): Record<string, unknown> | null {
   // skip-scrolls if it's the current item), so a thumbnail-only post flashes
   // in and collapses mid-scroll — jank.
   return null;
+}
+
+// Extract a gallery's full ordered image set from its old.reddit page. Each
+// image is a `<div class="gallery-tile" data-media-id="<id>">` whose preview
+// <img> points at preview.redd.it/<id>.<ext>; the full-size original lives at
+// i.redd.it/<id>.<ext>. The matched media-id must equal the <img>'s id so we
+// only pick real gallery tiles (not sidebar/related-post thumbnails).
+function parseGallery(
+  page: string
+): { items: { media_id: string }[]; media_metadata: Record<string, unknown> } | null {
+  const start = page.indexOf('<div class="media-gallery">');
+  if (start < 0) return null;
+  const seg = page.slice(start, start + 60000);
+  const re =
+    /class="[^"]*gallery-tile[^"]*"[^>]*data-media-id="([a-z0-9]+)"[\s\S]*?<img[^>]*src="[^"]*?(?:preview|i)\.redd\.it\/([a-z0-9]+)\.(jpg|jpeg|png|gif|webp)/gi;
+  const items: { media_id: string }[] = [];
+  const media_metadata: Record<string, unknown> = {};
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(seg))) {
+    const [, tileId, imgId, ext] = m;
+    if (tileId !== imgId || media_metadata[tileId]) continue;
+    items.push({ media_id: tileId });
+    media_metadata[tileId] = {
+      status: "valid",
+      e: "Image",
+      s: { u: `https://i.redd.it/${tileId}.${ext.toLowerCase()}`, x: 0, y: 0 },
+    };
+  }
+  return items.length ? { items, media_metadata } : null;
+}
+
+// Fetch a gallery post's page and attach gallery_data + media_metadata in the
+// shape the client's extractMedia expects. On any failure the post keeps its
+// cover-image fallback, so it still renders.
+async function enrichGallery(post: Record<string, unknown>): Promise<void> {
+  const permalink = post.permalink as string | undefined;
+  if (!permalink) return;
+  try {
+    const res = await redditFetch("https://old.reddit.com" + permalink);
+    if (!res.ok) return;
+    const g = parseGallery(await res.text());
+    if (g) {
+      post.gallery_data = { items: g.items };
+      post.media_metadata = g.media_metadata;
+    }
+  } catch {
+    // timeout/abort/parse failure → leave the cover-image fallback in place
+  }
+}
+
+// Run async tasks with bounded concurrency to avoid bursting old.reddit (which
+// rate-limits hard per IP).
+async function pooled<T>(items: T[], limit: number, fn: (item: T) => Promise<void>): Promise<void> {
+  let i = 0;
+  const workers = Array.from({ length: Math.min(limit, items.length) }, async () => {
+    while (i < items.length) {
+      const idx = i++;
+      await fn(items[idx]);
+    }
+  });
+  await Promise.all(workers);
 }
 
 function scrapeListing(html: string): { children: unknown[]; after: string | null } {
@@ -406,14 +489,15 @@ app.get("/reddit-proxy", async (c) => {
   oldUrl.hostname = "old.reddit.com";
   oldUrl.pathname = oldUrl.pathname.replace(/\.json$/, "/");
 
-  const upstream = await fetch(oldUrl.toString(), {
-    headers: {
-      "User-Agent": REDDIT_UA,
-      "Accept": "text/html",
-      // bypass the over-18 interstitial so NSFW subs return their listing
-      "Cookie": "over18=1",
-    },
-  });
+  let upstream: Response;
+  try {
+    upstream = await redditFetch(oldUrl.toString());
+  } catch {
+    return new Response(JSON.stringify({ error: "reddit upstream timed out" }), {
+      status: 504,
+      headers: { "Content-Type": "application/json", "Cache-Control": "no-store" },
+    });
+  }
 
   if (!upstream.ok) {
     return new Response(JSON.stringify({ error: "reddit upstream", status: upstream.status }), {
@@ -425,11 +509,20 @@ app.get("/reddit-proxy", async (c) => {
   const html = await upstream.text();
   const { children, after } = scrapeListing(html);
 
+  // Enrich gallery posts with their full image set (one fetch each, capped and
+  // throttled so we don't burst old.reddit). Galleries that aren't enriched
+  // keep their cover-image fallback.
+  const galleries = (children as { data: Record<string, unknown> }[])
+    .map((c) => c.data)
+    .filter((d) => d.is_gallery);
+  await pooled(galleries.slice(0, 12), 4, enrichGallery);
+
   return new Response(JSON.stringify({ kind: "Listing", data: { after, children } }), {
     headers: {
       "Content-Type": "application/json",
-      // short cache softens reddit's aggressive per-IP HTML rate limiting
-      "Cache-Control": "public, max-age=45",
+      // s-maxage caches at Cloudflare's edge (softening reddit's per-IP rate
+      // limiting) without forcing a stale window on the client.
+      "Cache-Control": "s-maxage=45, max-age=0",
     },
   });
 });
