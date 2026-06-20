@@ -45,6 +45,7 @@
         .header {
             display: flex;
             align-items: center;
+            flex-wrap: wrap;
             gap: 6px;
             position: sticky;
             top: 0;
@@ -57,7 +58,11 @@
         .header h1 {
             font-size: 20px;
             font-weight: 600;
-            flex: 1;
+            /* Take the whole first row so the sort dropdowns wrap onto a
+               second row instead of overflowing off the right edge on narrow
+               screens (they previously got clipped — the sort control was
+               pushed off-screen). */
+            flex: 1 1 100%;
             min-width: 0;
             display: flex;
             align-items: center;
@@ -746,7 +751,7 @@
     <div class="home-view" id="home-view">
         <div class="header">
             <h1>
-                Feed <span class="version">v22</span>
+                Feed <span class="version">v23</span>
                 <button class="export-btn" id="export-btn" title="Export data" aria-label="Export data">
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                         <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
