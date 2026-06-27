@@ -880,6 +880,18 @@ function viewFor(state, seat, opts = {}) {
       records: state.players.flatMap((p) => p.winRecords),
       scores: state.players.map((p) => p.score),
       nextDealer: state.nextDealer,
+      // the hand is over — reveal each winner's full hand so everyone can see what won
+      hands: state.winnersThisHand.map((w) => {
+        const p = state.players[w];
+        const rec = p.winRecords[p.winRecords.length - 1];
+        return {
+          seat: w,
+          concealed: p.concealed.slice(),
+          melds: p.melds.map((m) => ({ ...m })),
+          winningTile: rec ? rec.winningTile : null,
+          winType: rec ? rec.winType : null,
+        };
+      }),
     };
   }
   return view;

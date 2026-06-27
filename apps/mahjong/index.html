@@ -76,12 +76,13 @@ input.txt::placeholder{color:rgba(255,255,255,.5);}
    in landscape. Top/bottom insets are handled by the topbar and handarea below. */
 #game{position:absolute;inset:0;display:none;flex-direction:column;
   padding-left:env(safe-area-inset-left);padding-right:env(safe-area-inset-right);}
-.topbar{display:flex;align-items:center;gap:10px;padding:6px 12px;padding-top:calc(env(safe-area-inset-top) + 4px);
+.topbar{display:flex;align-items:center;gap:6px;padding:6px 10px;padding-top:calc(env(safe-area-inset-top) + 4px);
   background:rgba(0,0,0,.25);font-size:13px;flex-shrink:0;}
-.topbar .title{font-weight:700;color:var(--gold);letter-spacing:1px;}
-.topbar .info{opacity:.85;font-variant-numeric:tabular-nums;}
+.topbar .title{font-weight:700;color:var(--gold);letter-spacing:1px;white-space:nowrap;}
+.topbar .info{opacity:.85;font-variant-numeric:tabular-nums;font-size:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0;}
 .topbar .spacer{flex:1;}
-.topbar button{background:rgba(255,255,255,.12);color:#fff;border-radius:8px;padding:6px 10px;font-size:13px;}
+.topbar button{background:rgba(255,255,255,.12);color:#fff;border-radius:8px;padding:5px 8px;font-size:12px;flex-shrink:0;}
+#sound-btn{padding:5px 6px;}
 .conpill{font-size:11px;padding:3px 8px;border-radius:10px;background:rgba(255,255,255,.12);}
 .conpill.ok{background:rgba(48,209,88,.25);} .conpill.bad{background:rgba(255,120,120,.3);}
 
@@ -138,6 +139,7 @@ input.txt::placeholder{color:rgba(255,255,255,.5);}
 .hand-row .tile.playable{cursor:pointer;}
 .hand-row .tile.playable:active{transform:translateY(-6px);}
 .hand-row .tile.win-hint{outline:2px solid var(--gold);outline-offset:1px;}
+.hand-row .tile.sel{transform:translateY(-12px);outline:2px solid var(--gold);box-shadow:0 8px 16px rgba(0,0,0,.5);z-index:2;}
 
 .melds{display:flex;gap:6px;flex-wrap:wrap;justify-content:center;}
 .meld{display:flex;gap:1px;}
@@ -173,6 +175,7 @@ input.txt::placeholder{color:rgba(255,255,255,.5);}
 .actions .b-peng{background:linear-gradient(135deg,#5ac8fa,#2b6fb5);border-color:#fff;}
 .actions .b-gang{background:linear-gradient(135deg,#bd6cff,#7a3fd6);border-color:#fff;}
 .actions .b-pass{background:rgba(255,255,255,.1);}
+.actions .b-discard{background:linear-gradient(135deg,#f4d58d,#e0a93f);color:#3a2600;border-color:#fff;}
 .actions .hint{font-size:13px;opacity:.8;font-weight:500;letter-spacing:0;}
 
 .dingque{display:flex;flex-direction:column;align-items:center;gap:12px;}
@@ -200,6 +203,13 @@ input.txt::placeholder{color:rgba(255,255,255,.5);}
 .scoreboard .pos{text-align:right;font-variant-numeric:tabular-nums;font-weight:700;}
 .scoreboard .gain-pos{color:#5ad17a;} .scoreboard .gain-neg{color:#ff7b7b;}
 .delta{font-variant-numeric:tabular-nums;font-size:12px;opacity:.8;}
+.winhands{margin-top:10px;display:flex;flex-direction:column;gap:8px;}
+.winhand .wh-name{font-size:12px;color:var(--gold);margin-bottom:3px;}
+.winhand .wh-tiles{display:flex;flex-wrap:wrap;gap:2px;align-items:center;}
+.winhand .wh-tiles .meld{margin-right:4px;}
+.winhand .tile{width:17px;height:24px;border-bottom-width:2px;}
+.winhand .tile .num{font-size:10px;} .winhand .tile .glyph{font-size:6px;}
+.winhand .tile.wt{margin-left:6px;outline:2px solid var(--gold);box-shadow:0 0 8px var(--gold);}
 
 .lobby{display:flex;flex-direction:column;gap:10px;}
 .lobby .code{font-size:34px;font-weight:800;letter-spacing:8px;color:var(--gold);text-align:center;
@@ -300,6 +310,7 @@ input.txt::placeholder{color:rgba(255,255,255,.5);}
     <span class="info" id="round-info"></span>
     <span class="spacer"></span>
     <span class="conpill" id="conpill" style="display:none;"></span>
+    <button id="sound-btn" aria-label="Toggle sound">🔊</button>
     <button id="rules-btn">Rules</button>
     <button id="menu-btn">Menu</button>
   </div>
@@ -1181,6 +1192,18 @@ function viewFor(state, seat, opts = {}) {
       records: state.players.flatMap((p) => p.winRecords),
       scores: state.players.map((p) => p.score),
       nextDealer: state.nextDealer,
+      // the hand is over — reveal each winner's full hand so everyone can see what won
+      hands: state.winnersThisHand.map((w) => {
+        const p = state.players[w];
+        const rec = p.winRecords[p.winRecords.length - 1];
+        return {
+          seat: w,
+          concealed: p.concealed.slice(),
+          melds: p.melds.map((m) => ({ ...m })),
+          winningTile: rec ? rec.winningTile : null,
+          winType: rec ? rec.winType : null,
+        };
+      }),
     };
   }
   return view;
@@ -1472,15 +1495,64 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 /* ---- module-level render state ---- */
 let curView = null;          // last view received
+let prevView = null;         // previous view (for sound deltas)
 let conn = null;             // active connection
 let pendingReveal = null;    // {seat,name} gate not yet acknowledged
 let online = false;
+let selectedTile = null;     // discard misclick guard: tile lifted/selected, awaiting confirm
+
+/* ---- WebAudio sound effects (no assets; mute toggle persisted) ---- */
+const Sound = {
+  ctx: null, enabled: true,
+  init() { try { if (!this.ctx) this.ctx = new (window.AudioContext || window.webkitAudioContext)(); if (this.ctx.state === 'suspended') this.ctx.resume(); } catch {} },
+  tone(freq, t0, dur, type, vol) {
+    const c = this.ctx; if (!c) return;
+    const o = c.createOscillator(), g = c.createGain();
+    o.type = type; o.frequency.value = freq;
+    const t = c.currentTime + t0;
+    g.gain.setValueAtTime(0.0001, t);
+    g.gain.exponentialRampToValueAtTime(vol, t + 0.008);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+    o.connect(g).connect(c.destination); o.start(t); o.stop(t + dur + 0.02);
+  },
+  play(name) {
+    if (!this.enabled) return; this.init(); if (!this.ctx) return;
+    if (name === 'discard') { this.tone(190, 0, 0.08, 'triangle', 0.16); this.tone(120, 0.015, 0.05, 'square', 0.07); }
+    else if (name === 'draw') { this.tone(440, 0, 0.05, 'sine', 0.10); }
+    else if (name === 'turn') { this.tone(880, 0, 0.11, 'sine', 0.13); this.tone(1175, 0.10, 0.13, 'sine', 0.10); }
+    else if (name === 'peng') { this.tone(523, 0, 0.09, 'triangle', 0.16); this.tone(659, 0.06, 0.11, 'triangle', 0.14); }
+    else if (name === 'gang') { this.tone(523, 0, 0.10, 'triangle', 0.17); this.tone(784, 0.07, 0.13, 'triangle', 0.15); }
+    else if (name === 'win') { [523, 659, 784, 1047].forEach((f, i) => this.tone(f, i * 0.085, 0.16, 'sine', 0.17)); }
+  },
+  setEnabled(on) { this.enabled = on; try { localStorage.setItem('mjSound', on ? '1' : '0'); } catch {} if (on) this.init(); },
+};
+try { Sound.enabled = localStorage.getItem('mjSound') !== '0'; } catch {}
+window.addEventListener('pointerdown', () => Sound.init(), { once: true });   // unlock audio on first tap
+
+/* derive sound cues from the change between two views (works for local AND online) */
+function soundForView(prev, cur) {
+  if (!prev || !cur || prev.handNo !== cur.handNo) return;
+  if (cur.winnersThisHand.length > prev.winnersThisHand.length) { Sound.play('win'); return; }
+  for (let s = 0; s < 4; s++) {
+    if (cur.players[s].melds.length > prev.players[s].melds.length) {
+      Sound.play(cur.players[s].melds[cur.players[s].melds.length - 1].type === PUNG ? 'peng' : 'gang'); return;
+    }
+  }
+  const discardCount = (v) => v.players.reduce((n, p) => n + p.discards.length, 0) + (v.pendingDiscard ? 1 : 0);
+  if (discardCount(cur) > discardCount(prev)) Sound.play('discard');
+  // gentle ping when it becomes my actionable turn (great for online / watching bots)
+  const myTurn = (v) => v.active === v.mySeat && v.phase === 'ACTIVE_TURN' && (v.me.legalActions || []).some((a) => a.type === 'Discard');
+  if (myTurn(cur) && !myTurn(prev)) Sound.play('turn');
+}
 
 /* =====================================================================
  * RENDER — pure function of a `view` (+ transient meta)
  * ===================================================================== */
 function onUpdate(view, meta = {}) {
+  if (!pendingReveal) soundForView(prevView, view);   // (skip while a hot-seat gate is up)
+  prevView = view;
   curView = view;
+  if (selectedTile != null && !(view.me && view.me.legalActions || []).some((a) => a.type === 'Discard' && a.tile === selectedTile)) selectedTile = null;
   if (meta.reveal) pendingReveal = meta.reveal;
   if (meta.toasts) for (const t of meta.toasts) toast(t.msg, t.ms || 950);
   if (meta.conn) updateConnPill(meta.conn);
@@ -1562,13 +1634,18 @@ function renderHandArea(view) {
     html += `<div class="ready-banner">🀄 Ready — win on ${me.ready.map((t) => tileRank(t) + SUIT_GLYPH[tileSuit(t)]).join(' ')}</div>`;
   } else html += `<div class="ready-banner"></div>`;
   html += `<div class="hand-row" style="${handRowVars(tiles.length + (drawn != null ? 1 : 0), drawn != null ? 12 : 0)}">`;
-  const tileCls = (t) => `${SUIT_CSS[tileSuit(t)]} ${canDiscard ? (discardable.has(t) ? 'playable' : 'dim') : ''} ${readySet.has(t) ? 'win-hint' : ''}`;
+  const tileCls = (t) => `${SUIT_CSS[tileSuit(t)]} ${canDiscard ? (discardable.has(t) ? 'playable' : 'dim') : ''} ${readySet.has(t) ? 'win-hint' : ''} ${selectedTile === t ? 'sel' : ''}`;
   for (const t of tiles) html += `<div class="tile ${tileCls(t)}" data-k="${t}"><span class="num">${tileRank(t)}</span><span class="glyph">${SUIT_GLYPH[tileSuit(t)]}</span></div>`;
   if (drawn != null) html += `<div class="tile ${tileCls(drawn)} drawn" data-k="${drawn}"><span class="num">${tileRank(drawn)}</span><span class="glyph">${SUIT_GLYPH[tileSuit(drawn)]}</span></div>`;
   html += '</div><div class="actions" id="actions"></div>';
   area.innerHTML = html;
 
-  if (canDiscard) area.querySelectorAll('.tile.playable').forEach((el) => el.addEventListener('click', () => submit({ type: 'Discard', tile: +el.dataset.k })));
+  // discard misclick guard: first tap lifts/selects a tile, second tap on it discards
+  if (canDiscard) area.querySelectorAll('.tile.playable').forEach((el) => el.addEventListener('click', () => {
+    const k = +el.dataset.k;
+    if (selectedTile === k) { selectedTile = null; submit({ type: 'Discard', tile: k }); }
+    else { selectedTile = k; render(); }
+  }));
   renderActions(view);
 }
 
@@ -1585,20 +1662,24 @@ function renderActions(view) {
   let html = '';
   const win = acts.find((a) => a.type === 'DeclareSelfDrawWin' || a.type === 'DeclareWinFromDiscard' || a.type === 'RobKong');
   if (win) html += `<button class="b-hu" data-i="${acts.indexOf(win)}">胡 HU</button>`;
+  const lbl = (a) => `${tileRank(a.tile)}${SUIT_GLYPH[tileSuit(a.tile)]}`;
   acts.forEach((a, i) => {
-    if (a.type === 'DeclareConcealedKong') html += `<button class="b-gang" data-i="${i}">暗杠 ${tileRank(a.tile)}${SUIT_GLYPH[tileSuit(a.tile)]}</button>`;
-    if (a.type === 'DeclareAddedKong') html += `<button class="b-gang" data-i="${i}">补杠 ${tileRank(a.tile)}${SUIT_GLYPH[tileSuit(a.tile)]}</button>`;
-    if (a.type === 'ClaimKongFromDiscard') html += `<button class="b-gang" data-i="${i}">杠 GANG</button>`;
-    if (a.type === 'ClaimPung') html += `<button class="b-peng" data-i="${i}">碰 PENG</button>`;
+    if (a.type === 'DeclareConcealedKong') html += `<button class="b-gang" data-i="${i}">暗杠 ${lbl(a)}</button>`;
+    if (a.type === 'DeclareAddedKong') html += `<button class="b-gang" data-i="${i}">补杠 ${lbl(a)}</button>`;
+    if (a.type === 'ClaimKongFromDiscard') html += `<button class="b-gang" data-i="${i}">杠 GANG ${lbl(a)}</button>`;
+    if (a.type === 'ClaimPung') html += `<button class="b-peng" data-i="${i}">碰 PENG ${lbl(a)}</button>`;
   });
   const pass = acts.find((a) => a.type === 'Pass');
   if (pass) html += `<button class="b-pass" data-i="${acts.indexOf(pass)}">Pass</button>`;
   if (acts.some((a) => a.type === 'Discard') && !win && !acts.some((a) => a.type === 'ClaimPung' || a.type === 'ClaimKongFromDiscard')) {
     const holdsMissing = missingCount({ concealed: me.concealed, missingSuit: me.missingSuit }) > 0;
-    html += `<span class="hint">Tap a tile to discard${holdsMissing ? ' (clear 缺 suit)' : ''}</span>`;
+    if (selectedTile != null) html += `<button class="b-discard" id="confirm-discard">弃 Discard ${tileRank(selectedTile)}${SUIT_GLYPH[tileSuit(selectedTile)]}</button>`;
+    else html += `<span class="hint">Tap a tile to discard${holdsMissing ? ' (clear 缺 suit)' : ''}</span>`;
   }
   ab.innerHTML = html;
   ab.querySelectorAll('button[data-i]').forEach((b) => b.addEventListener('click', () => submit(acts[+b.dataset.i])));
+  const cd = $('confirm-discard');
+  if (cd) cd.addEventListener('click', () => { const k = selectedTile; selectedTile = null; submit({ type: 'Discard', tile: k }); });
 }
 
 /* ---- ding que ---- */
@@ -1667,6 +1748,18 @@ function showResults(view) {
     rows += `<tr><td>${escapeHtml(p.name)} ${p.isBot ? '<small style="opacity:.5">bot</small>' : ''}</td>
       <td>${hand}</td><td class="pos ${p.score > 0 ? 'gain-pos' : p.score < 0 ? 'gain-neg' : ''}">${p.score >= 0 ? '+' : ''}${p.score}</td></tr>`;
   }
+  // reveal each winner's hand (concealed + melds + the winning tile, set apart and highlighted)
+  let handsHtml = '';
+  for (const h of (res.hands || [])) {
+    const name = (view.players[h.seat] || {}).name || ('Seat ' + h.seat);
+    const conc = [];
+    for (let t = 0; t < NUM_TYPES; t++) for (let i = 0; i < h.concealed[t]; i++) conc.push(t);
+    if (h.winType === 'SELF_DRAW' && h.winningTile != null) { const i = conc.lastIndexOf(h.winningTile); if (i >= 0) conc.splice(i, 1); }
+    const melds = h.melds.map(meldHTML).join('');
+    const tiles = conc.map((t) => tileHTML(t)).join('');
+    const wt = h.winningTile != null ? tileHTML(h.winningTile, 'wt') : '';
+    handsHtml += `<div class="winhand"><div class="wh-name">${escapeHtml(name)} 胡</div><div class="wh-tiles">${melds}${tiles}${wt}</div></div>`;
+  }
   const title = res.reason === 'exhaustion'
     ? (res.winners.length ? '血战结束 Hand Over' : '荒庄 Draw')
     : (view.mode === 'single' ? '胡牌 Winner!' : '血战结束 Hand Over');
@@ -1675,6 +1768,7 @@ function showResults(view) {
   overlay.style.display = 'flex';
   overlay.innerHTML = `<div class="modal"><h2>${title}</h2>
     <table class="scoreboard"><tr><th>Player</th><th>Hand</th><th class="pos">Score</th></tr>${rows}</table>
+    ${handsHtml ? `<div class="winhands">${handsHtml}</div>` : ''}
     ${canDeal ? `<button class="btn" id="again">${againLabel}</button>` : `<p style="text-align:center;opacity:.75;font-size:13px">Waiting for the host to deal the next hand…</p>`}
     <button class="btn alt" id="tomenu">${online ? 'Leave Game' : 'Main Menu'}</button></div>`;
   if ($('again')) $('again').addEventListener('click', () => { overlay.style.display = 'none'; overlay.innerHTML = ''; if (conn && conn.again) conn.again(); });
@@ -1849,6 +1943,10 @@ function wireSetup() {
   $('rules-link').addEventListener('click', showRules);
   $('rules-btn').addEventListener('click', showRules);
   $('menu-btn').addEventListener('click', showMenu);
+  const soundBtn = $('sound-btn');
+  const syncSoundIcon = () => { soundBtn.textContent = Sound.enabled ? '🔊' : '🔇'; soundBtn.style.opacity = Sound.enabled ? '1' : '0.6'; };
+  syncSoundIcon();
+  soundBtn.addEventListener('click', () => { Sound.setEnabled(!Sound.enabled); syncSoundIcon(); if (Sound.enabled) Sound.play('turn'); });
   buildNameInputs();
 }
 
