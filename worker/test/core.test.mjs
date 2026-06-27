@@ -203,6 +203,11 @@ function playOut(seed, checkCons) {
   ok(v.me.concealed && countTotal(v.me.concealed) > 0, 'view exposes my own concealed hand');
   ok(v.players[1].handCount > 0 && v.players[1].concealed === undefined, 'view hides opponents concealed tiles (only a count)');
   ok(Array.isArray(v.me.legalActions), 'view includes my legal actions');
+  // an opponent's concealed kong (暗杠) must not leak its tile during play, but the owner sees it
+  s.players[2].melds = [{ type: 'KONG_CONCEALED', tile: T(CHARACTER, 7), concealed: true }];
+  const vOpp = viewFor(s, 0).players[2].melds[0];
+  ok(vOpp.hidden === true && (vOpp.tile === -1 || vOpp.tile == null), 'opponent concealed-kong tile is redacted during play');
+  ok(viewFor(s, 2).players[2].melds[0].tile === T(CHARACTER, 7), 'owner still sees their own concealed-kong tile');
 }
 
 /* ===== conservation holds on a fresh deal ===== */

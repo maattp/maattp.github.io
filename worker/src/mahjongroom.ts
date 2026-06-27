@@ -187,6 +187,7 @@ export class MahjongRoom {
       const connected = new Set(players.map((p) => p.id));
       const token = typeof msg.token === "string" ? msg.token : "";
       const g = await this.loadGame();
+      if (!g) { ws.send(JSON.stringify({ t: "error", msg: "Game state unavailable — please try again" })); ws.close(1011, "no game"); return; }
       let seatId = -1;
       if (token) for (const id of humanSeats) {
         if (!connected.has(id) && seatTokens[id] && seatTokens[id] === token) { seatId = id; break; }

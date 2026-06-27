@@ -208,7 +208,7 @@ function isStandardShape(counts, groupsNeeded) {
   for (let p = 0; p < NUM_TYPES; p++) {
     if (counts[p] >= 2) {
       counts[p] -= 2;
-      const ok = canPartition(counts.slice(), groupsNeeded);
+      const ok = canPartition(counts, groupsNeeded);   // canPartition fully backtracks, so no copy needed
       counts[p] += 2;
       if (ok) return true;
     }
@@ -855,7 +855,12 @@ function viewFor(state, seat, opts = {}) {
       isBot: p.isBot,
       connected: p.connected,
       missingSuit: p.missingSuit,             // public after selection (default)
-      melds: p.melds.map((m) => ({ ...m, concealed: m.type === KONG_CONCEALED })),
+      // an opponent's concealed kong (暗杠) stays hidden until the hand ends — never
+      // leak its tile to other seats (this is a hidden-info game)
+      melds: p.melds.map((m) =>
+        (m.type === KONG_CONCEALED && p.seat !== seat && state.phase !== PHASE.HAND_ENDED)
+          ? { type: m.type, tile: -1, hidden: true }
+          : { ...m }),
       discards: p.discards.slice(),
       handCount: countTotal(p.concealed),
       hasWon: p.hasWon,
@@ -870,7 +875,7 @@ function viewFor(state, seat, opts = {}) {
     view.results = {
       reason: state.endReason,
       winners: state.winnersThisHand.slice(),
-      records: [].concat(...state.players.map((p) => p.winRecords)),
+      records: state.players.flatMap((p) => p.winRecords),
       scores: state.players.map((p) => p.score),
       nextDealer: state.nextDealer,
     };
@@ -1089,7 +1094,7 @@ function botChooseMeld(state, seat, pung, kong, difficulty) {
   // simulate removing `remove` copies into a meld; return resulting shanten + tenpai
   const evalClaim = (remove) => {
     const snap = p.concealed.slice(), msnap = p.melds.map((m) => ({ ...m }));
-    p.concealed[tile] -= remove; p.melds.push({ type: PUNG, tile });
+    p.concealed[tile] -= remove; p.melds.push({ type: remove === 2 ? PUNG : KONG_EXPOSED_FROM_DISCARD, tile });
     const after = shantenOf(p), ready = isReady(p, state.config);
     p.concealed = snap; p.melds = msnap;
     return { after, ready };
