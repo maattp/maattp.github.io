@@ -299,7 +299,8 @@ export class MahjongRoom {
     const seat = this.botPending(game);
     if (seat < 0 || this.state.getWebSockets().length === 0) { await this.state.storage.setAlarm(ttlAt); return; }
     const action = botChooseAction(game, seat);
-    if (action) applyAction(game, seat, action);
+    const res = action ? applyAction(game, seat, action) : { ok: false };
+    if (!res.ok) { await this.state.storage.setAlarm(ttlAt); return; }  // never spin the alarm on a stuck seat
     await this.saveGame(game);
     this.broadcastViews(game);
     await this.armAlarm(game);

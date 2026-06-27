@@ -1664,15 +1664,19 @@ class LocalConnection {
     this.lastHuman = cfg.seats.findIndex((s) => !s.isBot);
     this.pendingResolve = null;
     this.alive = true;
+    this.gen = 0;                 // drive-loop generation: a new hand supersedes the old loop
     this.newHand();
   }
   newHand() {
+    this.gen++;
+    const myGen = this.gen;
+    const r = this.pendingResolve; this.pendingResolve = null; if (r) r(null);  // unblock any prior loop
     const seed = (Date.now() ^ (Math.random() * 1e9)) | 0;
     this.state = createGame({ seed, config: this.cfg.config, names: this.cfg.names, seats: this.cfg.seats, dealer: this.cfg.dealer || 0, seatScores: this.scores });
-    this.drive();
+    this.drive(myGen);
   }
-  dispose() { this.alive = false; const r = this.pendingResolve; this.pendingResolve = null; if (r) r({ type: '__disposed' }); }
-  again() { if (this._dealing) return; this._dealing = true; this.scores = this.state.players.map((p) => p.score); this.cfg.dealer = this.state.nextDealer; this.newHand(); this._dealing = false; }
+  dispose() { this.alive = false; const r = this.pendingResolve; this.pendingResolve = null; if (r) r(null); }
+  again() { this.scores = this.state.players.map((p) => p.score); this.cfg.dealer = this.state.nextDealer; this.newHand(); }
 
   emit(meta) {
     const viewer = (this.viewerSeat != null) ? this.viewerSeat : (this.lastHuman >= 0 ? this.lastHuman : 0);
@@ -1689,8 +1693,9 @@ class LocalConnection {
     return out;
   }
 
-  async drive() {
-    while (this.alive) {
+  async drive(myGen) {
+    const live = () => this.alive && this.gen === myGen;   // false once a newer hand supersedes us
+    while (live()) {
       if (this.state.phase === 'HAND_ENDED') { this.viewerSeat = this.lastHuman >= 0 ? this.lastHuman : 0; this.emit({}); return; }
       const deciders = pendingDeciders(this.state);
       if (!deciders.length) return;
@@ -1699,7 +1704,7 @@ class LocalConnection {
         this.viewerSeat = this.lastHuman >= 0 ? this.lastHuman : botSeat;
         this.emit({});                                   // show the bot as "thinking"
         await this.botThink(this.state.players[botSeat]);
-        if (!this.alive) return;
+        if (!live()) return;
         const a = botChooseAction(this.state, botSeat);
         const res = applyAction(this.state, botSeat, a);
         this.emit({ toasts: this.eventToasts(res.events || []) });
@@ -1710,7 +1715,7 @@ class LocalConnection {
       const reveal = (this.numHumans > 1 && seat !== this.lastHuman) ? { seat, name: this.state.players[seat].name } : null;
       this.viewerSeat = seat; this.lastHuman = seat;
       const action = await new Promise((r) => { this.pendingResolve = r; this.emit({ reveal }); });
-      if (!this.alive) return;
+      if (!live() || !action) return;
       const res = applyAction(this.state, seat, action);
       if (!res.ok) { this.emit({ toasts: [{ msg: res.error.message, ms: 1600 }] }); continue; }
       this.emit({ toasts: this.eventToasts(res.events || []) });
