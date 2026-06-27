@@ -16,7 +16,7 @@
 const VERSION = 'v1';
 const CACHE = 'mahjong-' + VERSION;
 const SHELL = [
-  './',
+  './',                       // the start_url; GitHub Pages serves index.html (200) here
   './index.html',
   './manifest.webmanifest',
   './icon-180.png',
@@ -24,9 +24,18 @@ const SHELL = [
   './icon-512.png',
 ];
 
+// Cache a response, keeping the SW alive until the write finishes (iOS can otherwise
+// terminate it mid-write). Best-effort: never reject the request on a cache failure.
+function cachePut(event, req, resClone) {
+  event.waitUntil(caches.open(CACHE).then((c) => c.put(req, resClone)).catch(() => {}));
+}
+
 self.addEventListener('install', (event) => {
   event.waitUntil(
-    caches.open(CACHE).then((c) => c.addAll(SHELL)).then(() => self.skipWaiting())
+    caches.open(CACHE)
+      // resilient: a single bad entry shouldn't fail the whole install
+      .then((c) => Promise.all(SHELL.map((u) => c.add(u).catch(() => {}))))
+      .then(() => self.skipWaiting())
   );
 });
 
@@ -49,18 +58,21 @@ self.addEventListener('fetch', (event) => {
 
   const isHTML = req.mode === 'navigate' || (req.headers.get('accept') || '').includes('text/html');
   if (isHTML) {
+    // network-first: fresh when online, cached index.html when offline
     event.respondWith(
       fetch(req)
-        .then((res) => { const copy = res.clone(); caches.open(CACHE).then((c) => c.put(req, copy)); return res; })
+        .then((res) => { if (res.ok) cachePut(event, req, res.clone()); return res; })
         .catch(() => caches.match(req).then((r) => r || caches.match('./index.html')))
     );
     return;
   }
+  // static assets: cache-first, fill cache on first fetch
   event.respondWith(
-    caches.match(req).then((cached) =>
-      cached || fetch(req).then((res) => {
-        const copy = res.clone(); caches.open(CACHE).then((c) => c.put(req, copy)); return res;
-      }).catch(() => cached)
-    )
+    caches.match(req).then((cached) => {
+      if (cached) return cached;
+      return fetch(req)
+        .then((res) => { if (res.ok) cachePut(event, req, res.clone()); return res; })
+        .catch(() => new Response('Offline', { status: 503, statusText: 'Offline' }));
+    })
   );
 });
