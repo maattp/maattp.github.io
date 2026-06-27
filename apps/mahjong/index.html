@@ -1582,12 +1582,14 @@ function showResults(view) {
   const title = res.reason === 'exhaustion'
     ? (res.winners.length ? '血战结束 Hand Over' : '荒庄 Draw')
     : (view.mode === 'single' ? '胡牌 Winner!' : '血战结束 Hand Over');
+  const canDeal = !online || (conn && conn.host);
+  const againLabel = online ? 'Next Hand' : 'New Hand';
   overlay.style.display = 'flex';
   overlay.innerHTML = `<div class="modal"><h2>${title}</h2>
     <table class="scoreboard"><tr><th>Player</th><th>Hand</th><th class="pos">Score</th></tr>${rows}</table>
-    ${online ? `<button class="btn" id="again">Back to Lobby</button>` : `<button class="btn" id="again">New Hand</button>`}
-    <button class="btn alt" id="tomenu">Main Menu</button></div>`;
-  $('again').addEventListener('click', () => { overlay.style.display = 'none'; overlay.innerHTML = ''; if (conn && conn.again) conn.again(); });
+    ${canDeal ? `<button class="btn" id="again">${againLabel}</button>` : `<p style="text-align:center;opacity:.75;font-size:13px">Waiting for the host to deal the next hand…</p>`}
+    <button class="btn alt" id="tomenu">${online ? 'Leave Game' : 'Main Menu'}</button></div>`;
+  if ($('again')) $('again').addEventListener('click', () => { overlay.style.display = 'none'; overlay.innerHTML = ''; if (conn && conn.again) conn.again(); });
   $('tomenu').addEventListener('click', () => { overlay.style.display = 'none'; overlay.innerHTML = ''; leaveGame(); });
 }
 
@@ -1754,8 +1756,129 @@ function wireSetup() {
   buildNameInputs();
 }
 
-/* online entry point — implemented in the Online phase (net.js section below) */
-function startOnline(/* mode */) { $('online-msg').textContent = 'Online play is loading…'; if (window.__startOnline) window.__startOnline(); }
+/* =====================================================================
+ * ONLINE CONNECTION — same submit/view contract over a WebSocket to the
+ * server-authoritative MahjongRoom Durable Object.
+ * ===================================================================== */
+const NET_HTTP = (location.hostname === 'localhost' || location.hostname === '127.0.0.1')
+  ? `http://${location.hostname}:8787` : 'https://cloudflare-backend.maattp.workers.dev';
+const NET_WS = NET_HTTP.replace(/^http/, 'ws');
+const NET_VER = 'mj.v1';   // bump on any protocol change so mismatched builds can't pair
+
+class OnlineConnection {
+  constructor(opts) {
+    this.name = opts.name; this.difficulty = opts.difficulty;
+    this.code = opts.code || null; this.create = !!opts.create;
+    this.ws = null; this.seat = -1; this.host = false;
+    this.awaiting = false; this.alive = true; this.retries = 0; this.inGame = false; this.lobby = null;
+  }
+  async begin() {
+    if (this.create) {
+      onlineMsg('Creating game…');
+      try {
+        const r = await fetch(NET_HTTP + '/mahjong/rooms', { method: 'POST' });
+        const j = await r.json(); if (!j.code) throw new Error('no code');
+        this.code = j.code;
+      } catch (e) { onlineMsg('Could not reach the server. Try again.', true); return; }
+    }
+    this.connect();
+  }
+  connect() {
+    updateConnPill({ text: 'Connecting…', state: '' });
+    let ws; try { ws = new WebSocket(NET_WS + '/mahjong/rooms/' + this.code + '/ws'); } catch (e) { onlineMsg('Bad room code.', true); return; }
+    this.ws = ws;
+    ws.onopen = () => { this.retries = 0; updateConnPill({ text: 'Online', state: 'ok' }); this.rawsend({ t: 'hello', name: this.name, ver: NET_VER });
+      this.ping = setInterval(() => this.rawsend({ t: 'pp', ts: Date.now() }), 20000); };
+    ws.onmessage = (e) => { let m; try { m = JSON.parse(e.data); } catch { return; } this.handle(m); };
+    ws.onclose = () => { clearInterval(this.ping); this.onClose(); };
+    ws.onerror = () => {};
+  }
+  rawsend(o) { try { this.ws.send(JSON.stringify(o)); } catch {} }
+  handle(m) {
+    switch (m.t) {
+      case 'welcome': this.seat = m.id; this.host = m.host; this.code = m.code; if (m.rejoin) toast('Reconnected', 900); break;
+      case 'lobby': this.lobby = m; if (!this.inGame) showOnlineLobby(this, m); break;
+      case 'view':
+        if (!this.inGame) { this.inGame = true; overlay.style.display = 'none'; overlay.innerHTML = ''; showGameScreen(); }
+        if (m.view.phase !== 'HAND_ENDED' && overlay.style.display === 'flex' && overlay.querySelector('.scoreboard')) { overlay.style.display = 'none'; overlay.innerHTML = ''; }
+        this.awaiting = false;
+        onUpdate(m.view, { conn: { text: 'Online', state: 'ok' } });
+        break;
+      case 'reject': this.awaiting = false; toast(m.error && m.error.message ? m.error.message : 'Invalid move', 1500); render(); break;
+      case 'error': onlineMsg(m.msg || 'Server error', true); updateConnPill({ text: 'Error', state: 'bad' }); this.alive = false; break;
+      case 'you-are-host': this.host = true; if (this.lobby && !this.inGame) showOnlineLobby(this, this.lobby); break;
+    }
+  }
+  onClose() {
+    if (!this.alive) return;
+    updateConnPill({ text: 'Reconnecting…', state: 'bad' });
+    if (this.retries < 6) { this.retries++; setTimeout(() => { if (this.alive) this.connect(); }, 700 * this.retries); }
+    else { updateConnPill({ text: 'Disconnected', state: 'bad' }); toast('Connection lost', 1600); }
+  }
+  setReady(r) { this.rawsend({ t: 'ready', ready: r }); }
+  setConfig(c) { this.rawsend({ t: 'config', ...c }); }
+  startGame() { this.rawsend({ t: 'start' }); }
+  again() { if (this.host) this.rawsend({ t: 'rematch' }); }
+  submit(action) { if (this.awaiting) return; this.awaiting = true; this.rawsend({ t: 'action', action }); }
+  dispose() { this.alive = false; clearInterval(this.ping); try { this.ws.close(); } catch {} }
+}
+function onlineMsg(s, err) { const el = $('online-msg'); el.textContent = s; el.className = 'hostmsg' + (err ? ' err' : ''); }
+
+/* ---- online lobby (rendered into the overlay until the host deals) ---- */
+function showOnlineLobby(conn, lobby) {
+  const me = lobby.players.find((p) => p.id === conn.seat);
+  const seatRows = [];
+  for (let i = 0; i < lobby.maxPlayers; i++) {
+    const p = lobby.players.find((x) => x.id === i);
+    if (p) {
+      const badges = `${p.host ? '<span class="badge host">host</span>' : ''}${p.ready ? '<span class="badge ready">ready</span>' : '<span class="badge">…</span>'}`;
+      seatRows.push(`<div class="seat-card ${p.id === conn.seat ? 'me' : ''}"><span style="width:9px;height:9px;border-radius:50%;background:#30d158;display:inline-block"></span>
+        <span>${escapeHtml(p.name)}${p.id === conn.seat ? ' (you)' : ''}</span>${badges}</div>`);
+    } else {
+      seatRows.push(`<div class="seat-card" style="opacity:.6"><span style="width:9px;height:9px;border-radius:50%;background:#5ac8fa;display:inline-block"></span><span>Bot</span><span class="badge">fills at start</span></div>`);
+    }
+  }
+  const cfg = lobby.cfg || { mode: 'bloody', sevenPairs: true, difficulty: 'normal' };
+  const hostControls = conn.host ? `
+    <div class="card" style="margin-top:8px;background:rgba(0,0,0,.2)">
+      <h2>Table rules</h2>
+      <div class="seg" id="lb-mode"><button data-m="bloody" class="${cfg.mode === 'bloody' ? 'on' : ''}">Bloody</button><button data-m="single" class="${cfg.mode === 'single' ? 'on' : ''}">Single</button></div>
+      <div class="seg" id="lb-diff" style="margin-top:8px"><button data-d="easy" class="${cfg.difficulty === 'easy' ? 'on' : ''}">Easy</button><button data-d="normal" class="${cfg.difficulty === 'normal' ? 'on' : ''}">Normal</button><button data-d="hard" class="${cfg.difficulty === 'hard' ? 'on' : ''}">Hard</button></div>
+      <div class="toggle-row"><span>Seven Pairs</span><div class="switch ${cfg.sevenPairs ? 'on' : ''}" id="lb-sp"></div></div>
+    </div>` : `<p style="text-align:center;opacity:.7;font-size:13px">Bot difficulty &amp; rules: <b>${cfg.difficulty}</b>, ${cfg.mode}${cfg.sevenPairs ? ', 7-pairs' : ''}</p>`;
+
+  overlay.style.display = 'flex';
+  overlay.innerHTML = `<div class="modal lobby">
+    <h2>Online Game</h2>
+    <div class="code">${escapeHtml(lobby.code)}</div>
+    <p style="text-align:center">Share this code. ${lobby.players.length}/${lobby.maxPlayers} seats taken — empty seats become bots.</p>
+    <div class="seat-list">${seatRows.join('')}</div>
+    ${hostControls}
+    <button class="btn ${me && me.ready ? 'alt' : ''}" id="lb-ready">${me && me.ready ? 'Ready ✓ (tap to unready)' : "I'm ready"}</button>
+    ${conn.host ? `<button class="btn" id="lb-start">Deal &amp; Start</button>` : `<p style="text-align:center;opacity:.7;font-size:13px;margin-top:8px">Waiting for the host to start…</p>`}
+    <button class="btn alt" id="lb-leave">Leave</button>
+  </div>`;
+
+  $('lb-ready').onclick = () => conn.setReady(!(me && me.ready));
+  $('lb-leave').onclick = () => leaveGame();
+  if (conn.host) {
+    $('lb-start').onclick = () => conn.startGame();
+    $('lb-mode').onclick = (e) => { const b = e.target.closest('button'); if (b) conn.setConfig({ mode: b.dataset.m, sevenPairs: cfg.sevenPairs, difficulty: cfg.difficulty }); };
+    $('lb-diff').onclick = (e) => { const b = e.target.closest('button'); if (b) conn.setConfig({ mode: cfg.mode, sevenPairs: cfg.sevenPairs, difficulty: b.dataset.d }); };
+    $('lb-sp').onclick = () => conn.setConfig({ mode: cfg.mode, sevenPairs: !cfg.sevenPairs, difficulty: cfg.difficulty });
+  }
+}
+
+function startOnline(mode) {
+  const name = (onlineCfg.name || '').trim() || 'Player';
+  if (mode === 'join') {
+    const code = ($('join-code').value || '').trim().toUpperCase();
+    if (!/^[A-Z2-9]{5}$/.test(code)) { onlineMsg('Enter a valid 5-character room code.', true); return; }
+    online = true; conn = new OnlineConnection({ name, difficulty: onlineCfg.diff, code, create: false }); conn.begin();
+  } else {
+    online = true; conn = new OnlineConnection({ name, difficulty: onlineCfg.diff, create: true }); conn.begin();
+  }
+}
 
 wireSetup();
 window.__mahjongClient = { onUpdate, render, get conn() { return conn; }, set conn(c) { conn = c; }, set online(v) { online = v; }, viewFor, createGame, makeConfig };
