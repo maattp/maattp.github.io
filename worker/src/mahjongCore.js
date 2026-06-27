@@ -118,7 +118,7 @@ function createGame(opts = {}) {
     pendingDiscard: null, reactions: null, robReactions: null,
     turnFlags: { needsDraw: false, drewFromKong: false, lastDrawn: null, firstTurn: false, lastTileExhausted: false },
     firstDiscardDone: false,
-    winnersThisHand: [],
+    winnersThisHand: [], firstDealerSeat: null,
     log: [],
     ended: false, endReason: null,
     seatScores: opts.seatScores || [0, 0, 0, 0],   // carry running scores across hands
@@ -325,7 +325,9 @@ function getLegalActions(state, seat) {
     const justDrew = state.turnFlags.lastDrawn != null || state.turnFlags.firstTurn;
     // self-draw win
     if (!holdsMissing && justDrew && winsNow(p, state.config)) acts.push({ type: 'DeclareSelfDrawWin' });
-    if (!holdsMissing && !state.turnFlags.afterPung) {
+    // kongs only gate on the kong tile's suit (spec §6.7/§6.8), not on whether the
+    // player has cleared their own missing suit (that rule restricts discards only, §8.2)
+    if (!state.turnFlags.afterPung) {
       // concealed kong
       for (let t = 0; t < NUM_TYPES; t++) {
         if (p.concealed[t] === 4 && (state.config.allowKongInMissingSuit || tileSuit(t) !== p.missingSuit))
@@ -350,7 +352,8 @@ function getLegalActions(state, seat) {
     const holdsMissing = missingCount(p) > 0;
     if (!holdsMissing && tileSuit(tile) !== p.missingSuit && isWinningHand(p, state.config, tile))
       acts.push({ type: 'DeclareWinFromDiscard', tile });
-    const meldOk = !holdsMissing && (state.config.allowMeldsInMissingSuit || tileSuit(tile) !== p.missingSuit);
+    // peng/kong-from-discard gate on the claimed tile's suit only (spec §6.5/§6.6)
+    const meldOk = (state.config.allowMeldsInMissingSuit || tileSuit(tile) !== p.missingSuit);
     if (meldOk && p.concealed[tile] >= 3) acts.push({ type: 'ClaimKongFromDiscard', tile });
     if (meldOk && p.concealed[tile] >= 2) acts.push({ type: 'ClaimPung', tile });
     acts.push({ type: 'Pass' });
@@ -491,7 +494,7 @@ function doDiscard(state, seat, tile) {
 function reactionOptions(state, seat, tile) {
   const p = state.players[seat];
   const holdsMissing = missingCount(p) > 0;
-  const meldOk = !holdsMissing && (state.config.allowMeldsInMissingSuit || tileSuit(tile) !== p.missingSuit);
+  const meldOk = (state.config.allowMeldsInMissingSuit || tileSuit(tile) !== p.missingSuit);
   return {
     win: !holdsMissing && tileSuit(tile) !== p.missingSuit && isWinningHand(p, state.config, tile),
     kong: meldOk && p.concealed[tile] >= 3,
@@ -516,6 +519,8 @@ function resolveDiscardReactions(state) {
     const ordered = state.config.allowMultipleWinnersOnDiscard ? winners : [nearestInOrder(discarder, winners)];
     state.reactions = null;
     commitDiscardToPile(state);   // the won tile stays visible in the river, counted once
+    // §12.1: first winner becomes next dealer; if multiple win the same discard, the discarder does
+    if (state.winnersThisHand.length === 0) state.firstDealerSeat = (ordered.length >= 2 ? discarder : ordered[0]);
     for (const w of ordered) {
       // The winning tile is scored VIRTUALLY (not added to concealed) so one physical
       // tile can feed multiple winners without breaking conservation (spec §19, §10.1).
@@ -600,8 +605,14 @@ function resolveRobReactions(state) {
     const ordered = state.config.allowMultipleRobKongWinners ? robbers : [nearestInOrder(declarer, robbers)];
     state.robReactions = null;
     logEvent(state, { type: 'KongRobbed', declarer, tile });
+    // The kong tile is consumed by the rob (like a discard handed to the winner):
+    // remove it from the declarer's hand into their river so the declarer returns to
+    // 13 effective tiles and conservation holds. The pung is NOT upgraded (kong cancelled).
+    state.players[declarer].concealed[tile] -= 1;
+    state.players[declarer].discards.push(tile);
+    if (state.winnersThisHand.length === 0) state.firstDealerSeat = (ordered.length >= 2 ? declarer : ordered[0]);
     for (const w of ordered) {
-      // winning tile scored virtually (the declarer keeps the physical tile)
+      // winning tile scored virtually (it now lives in the declarer's river, counted once)
       resolveWin(state, w, { winType: 'ROB_KONG', winningTile: tile, source: declarer, lastTile: false, afterKong: false });
     }
     if (!checkHandEnd(state)) beginTurn(state, nextActiveSeat(state, declarer));
@@ -625,6 +636,7 @@ function doSelfDrawWin(state, seat) {
   const isHeavenly = state.turnFlags.firstTurn && seat === state.dealer && !state.firstDiscardDone;
   const ctx = { winType: 'SELF_DRAW', winningTile: state.turnFlags.lastDrawn, source: null,
     lastTile: state.turnFlags.lastTileExhausted, afterKong: pd.drewFromKong, isHeavenly };
+  if (state.winnersThisHand.length === 0) state.firstDealerSeat = seat;
   resolveWin(state, seat, ctx);
   if (!checkHandEnd(state)) beginTurn(state, nextActiveSeat(state, seat));
 }
@@ -779,8 +791,9 @@ function endHand(state, reason) {
       logEvent(state, { type: 'EndPenaltyApplied', seat: h.seat, kind: 'missingSuit' });
     }
   }
-  // next dealer: first winner, else dealer repeats (spec §12.1)
-  state.nextDealer = (state.winnersThisHand.length > 0) ? state.winnersThisHand[0] : state.dealer;
+  // next dealer (spec §12.1): the first winner (or discarder if the first win was a
+  // simultaneous multi-winner discard, tracked in firstDealerSeat); else dealer repeats
+  state.nextDealer = (state.firstDealerSeat != null) ? state.firstDealerSeat : state.dealer;
   state.seatScores = state.players.map((p) => p.score);
   logEvent(state, { type: 'HandEnded', reason, winners: state.winnersThisHand.slice() });
 }
@@ -961,7 +974,13 @@ function opponentDanger(state, seat) {
     if (s === seat) continue;
     const o = state.players[s];
     if (o.hasWon) continue;
-    const d = o.melds.length * 0.18 + (missingCount(o) === 0 ? 0.15 : 0) + Math.min(o.discards.length, 12) * 0.02;
+    // PUBLIC signals only — never inspect an opponent's concealed hand. We infer
+    // "has cleared their missing suit" from their discard river: they discarded
+    // missing-suit tiles earlier and their recent discards are no longer that suit.
+    const dumpedMissing = o.missingSuit != null && o.discards.some((t) => tileSuit(t) === o.missingSuit);
+    const recentOffMissing = o.discards.slice(-2).every((t) => o.missingSuit == null || tileSuit(t) !== o.missingSuit);
+    const voidedLikely = dumpedMissing && recentOffMissing && o.discards.length >= 3;
+    const d = o.melds.length * 0.2 + (voidedLikely ? 0.15 : 0) + Math.min(o.discards.length, 12) * 0.02;
     worst = Math.max(worst, Math.min(1, d));
   }
   return worst;

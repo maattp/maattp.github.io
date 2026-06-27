@@ -395,7 +395,7 @@ function createGame(opts = {}) {
     pendingDiscard: null, reactions: null, robReactions: null,
     turnFlags: { needsDraw: false, drewFromKong: false, lastDrawn: null, firstTurn: false, lastTileExhausted: false },
     firstDiscardDone: false,
-    winnersThisHand: [],
+    winnersThisHand: [], firstDealerSeat: null,
     log: [],
     ended: false, endReason: null,
     seatScores: opts.seatScores || [0, 0, 0, 0],   // carry running scores across hands
@@ -602,7 +602,9 @@ function getLegalActions(state, seat) {
     const justDrew = state.turnFlags.lastDrawn != null || state.turnFlags.firstTurn;
     // self-draw win
     if (!holdsMissing && justDrew && winsNow(p, state.config)) acts.push({ type: 'DeclareSelfDrawWin' });
-    if (!holdsMissing && !state.turnFlags.afterPung) {
+    // kongs only gate on the kong tile's suit (spec §6.7/§6.8), not on whether the
+    // player has cleared their own missing suit (that rule restricts discards only, §8.2)
+    if (!state.turnFlags.afterPung) {
       // concealed kong
       for (let t = 0; t < NUM_TYPES; t++) {
         if (p.concealed[t] === 4 && (state.config.allowKongInMissingSuit || tileSuit(t) !== p.missingSuit))
@@ -627,7 +629,8 @@ function getLegalActions(state, seat) {
     const holdsMissing = missingCount(p) > 0;
     if (!holdsMissing && tileSuit(tile) !== p.missingSuit && isWinningHand(p, state.config, tile))
       acts.push({ type: 'DeclareWinFromDiscard', tile });
-    const meldOk = !holdsMissing && (state.config.allowMeldsInMissingSuit || tileSuit(tile) !== p.missingSuit);
+    // peng/kong-from-discard gate on the claimed tile's suit only (spec §6.5/§6.6)
+    const meldOk = (state.config.allowMeldsInMissingSuit || tileSuit(tile) !== p.missingSuit);
     if (meldOk && p.concealed[tile] >= 3) acts.push({ type: 'ClaimKongFromDiscard', tile });
     if (meldOk && p.concealed[tile] >= 2) acts.push({ type: 'ClaimPung', tile });
     acts.push({ type: 'Pass' });
@@ -768,7 +771,7 @@ function doDiscard(state, seat, tile) {
 function reactionOptions(state, seat, tile) {
   const p = state.players[seat];
   const holdsMissing = missingCount(p) > 0;
-  const meldOk = !holdsMissing && (state.config.allowMeldsInMissingSuit || tileSuit(tile) !== p.missingSuit);
+  const meldOk = (state.config.allowMeldsInMissingSuit || tileSuit(tile) !== p.missingSuit);
   return {
     win: !holdsMissing && tileSuit(tile) !== p.missingSuit && isWinningHand(p, state.config, tile),
     kong: meldOk && p.concealed[tile] >= 3,
@@ -793,6 +796,8 @@ function resolveDiscardReactions(state) {
     const ordered = state.config.allowMultipleWinnersOnDiscard ? winners : [nearestInOrder(discarder, winners)];
     state.reactions = null;
     commitDiscardToPile(state);   // the won tile stays visible in the river, counted once
+    // §12.1: first winner becomes next dealer; if multiple win the same discard, the discarder does
+    if (state.winnersThisHand.length === 0) state.firstDealerSeat = (ordered.length >= 2 ? discarder : ordered[0]);
     for (const w of ordered) {
       // The winning tile is scored VIRTUALLY (not added to concealed) so one physical
       // tile can feed multiple winners without breaking conservation (spec §19, §10.1).
@@ -877,8 +882,14 @@ function resolveRobReactions(state) {
     const ordered = state.config.allowMultipleRobKongWinners ? robbers : [nearestInOrder(declarer, robbers)];
     state.robReactions = null;
     logEvent(state, { type: 'KongRobbed', declarer, tile });
+    // The kong tile is consumed by the rob (like a discard handed to the winner):
+    // remove it from the declarer's hand into their river so the declarer returns to
+    // 13 effective tiles and conservation holds. The pung is NOT upgraded (kong cancelled).
+    state.players[declarer].concealed[tile] -= 1;
+    state.players[declarer].discards.push(tile);
+    if (state.winnersThisHand.length === 0) state.firstDealerSeat = (ordered.length >= 2 ? declarer : ordered[0]);
     for (const w of ordered) {
-      // winning tile scored virtually (the declarer keeps the physical tile)
+      // winning tile scored virtually (it now lives in the declarer's river, counted once)
       resolveWin(state, w, { winType: 'ROB_KONG', winningTile: tile, source: declarer, lastTile: false, afterKong: false });
     }
     if (!checkHandEnd(state)) beginTurn(state, nextActiveSeat(state, declarer));
@@ -902,6 +913,7 @@ function doSelfDrawWin(state, seat) {
   const isHeavenly = state.turnFlags.firstTurn && seat === state.dealer && !state.firstDiscardDone;
   const ctx = { winType: 'SELF_DRAW', winningTile: state.turnFlags.lastDrawn, source: null,
     lastTile: state.turnFlags.lastTileExhausted, afterKong: pd.drewFromKong, isHeavenly };
+  if (state.winnersThisHand.length === 0) state.firstDealerSeat = seat;
   resolveWin(state, seat, ctx);
   if (!checkHandEnd(state)) beginTurn(state, nextActiveSeat(state, seat));
 }
@@ -1056,8 +1068,9 @@ function endHand(state, reason) {
       logEvent(state, { type: 'EndPenaltyApplied', seat: h.seat, kind: 'missingSuit' });
     }
   }
-  // next dealer: first winner, else dealer repeats (spec §12.1)
-  state.nextDealer = (state.winnersThisHand.length > 0) ? state.winnersThisHand[0] : state.dealer;
+  // next dealer (spec §12.1): the first winner (or discarder if the first win was a
+  // simultaneous multi-winner discard, tracked in firstDealerSeat); else dealer repeats
+  state.nextDealer = (state.firstDealerSeat != null) ? state.firstDealerSeat : state.dealer;
   state.seatScores = state.players.map((p) => p.score);
   logEvent(state, { type: 'HandEnded', reason, winners: state.winnersThisHand.slice() });
 }
@@ -1238,7 +1251,13 @@ function opponentDanger(state, seat) {
     if (s === seat) continue;
     const o = state.players[s];
     if (o.hasWon) continue;
-    const d = o.melds.length * 0.18 + (missingCount(o) === 0 ? 0.15 : 0) + Math.min(o.discards.length, 12) * 0.02;
+    // PUBLIC signals only — never inspect an opponent's concealed hand. We infer
+    // "has cleared their missing suit" from their discard river: they discarded
+    // missing-suit tiles earlier and their recent discards are no longer that suit.
+    const dumpedMissing = o.missingSuit != null && o.discards.some((t) => tileSuit(t) === o.missingSuit);
+    const recentOffMissing = o.discards.slice(-2).every((t) => o.missingSuit == null || tileSuit(t) !== o.missingSuit);
+    const voidedLikely = dumpedMissing && recentOffMissing && o.discards.length >= 3;
+    const d = o.melds.length * 0.2 + (voidedLikely ? 0.15 : 0) + Math.min(o.discards.length, 12) * 0.02;
     worst = Math.max(worst, Math.min(1, d));
   }
   return worst;
@@ -1411,7 +1430,7 @@ function onUpdate(view, meta = {}) {
 function render() {
   const view = curView; if (!view) return;
   $('round-info').textContent =
-    `Wall ${view.wallRemaining} · ${view.mode === 'bloody' ? '血战' : 'Single'} · Won ${view.winnersThisHand.length}/3`;
+    `Wall ${view.wallRemaining} · ${view.mode === 'bloody' ? '血战' : 'Single'} · Won ${view.winnersThisHand.length}${view.mode === 'bloody' ? '/3' : ''}`;
   const v = view.mySeat;
   for (let rel = 0; rel < 4; rel++) renderSeat(view, (v + rel) % 4, rel);
   renderCenter(view);
@@ -1431,10 +1450,7 @@ function renderSeat(view, seat, rel) {
       <span class="dot"></span>${dealer}<span>${escapeHtml(p.name)}</span>${tint}${won}
       <span class="sc">${p.score >= 0 ? '+' : ''}${p.score}</span>${thinking}</div>`;
   const melds = p.melds.length ? `<div class="melds">${p.melds.map(meldHTML).join('')}</div>` : '';
-  const river = `<div class="river">${p.discards.map((t, i) => {
-    const isLast = view.pendingDiscard && view.pendingDiscard.by === seat && false;
-    return tileHTML(t, '');
-  }).join('')}</div>`;
+  const river = `<div class="river">${p.discards.map((t) => tileHTML(t, '')).join('')}</div>`;
 
   if (rel === 0) { el.innerHTML = plate + melds + river; return; }
   let backs = '';
@@ -1456,6 +1472,15 @@ function renderHandArea(view) {
   const area = $('handarea');
   const me = view.me;
   const acts = me.legalActions || [];
+
+  // Hot-seat privacy: while a reveal gate is pending, NEVER paint the incoming
+  // player's real tiles into the DOM (the gate backdrop alone isn't fully opaque).
+  if (pendingReveal) {
+    let backs = '';
+    for (let i = 0; i < (me.concealed ? me.concealed.reduce((s, n) => s + n, 0) : 13); i++) backs += backHTML();
+    area.innerHTML = `<div class="ready-banner"></div><div class="hand-row">${backs}</div><div class="actions"></div>`;
+    return;
+  }
 
   // missing-suit chooser
   if (acts.some((a) => a.type === 'ChooseMissingSuit')) { area.innerHTML = dingQueHTML(view); wireDingque(); return; }
@@ -1543,12 +1568,13 @@ function submit(action) { if (conn) conn.submit(action); }
 /* ---- reveal gate (hot-seat privacy) ---- */
 function showRevealGate(reveal) {
   overlay.style.display = 'flex';
+  overlay.style.background = '#063d26';   // opaque — fully hide the board behind the gate
   overlay.innerHTML = `<div class="modal reveal-gate" id="rg"><div class="big">🀄️</div>
     <h2>${escapeHtml(reveal.name)}</h2>
     <p>Pass the device. Tap when ready — keep your tiles hidden from the others.</p>
     <button class="btn">I'm ready</button></div>`;
   $('rg').querySelector('.btn').addEventListener('click', () => {
-    pendingReveal = null; overlay.style.display = 'none'; overlay.innerHTML = ''; render();
+    pendingReveal = null; overlay.style.display = 'none'; overlay.innerHTML = ''; overlay.style.background = ''; render();
   });
 }
 
@@ -1622,7 +1648,8 @@ function showRules() {
 
 function leaveGame() {
   if (conn && conn.dispose) conn.dispose();
-  conn = null; curView = null; online = false;
+  conn = null; curView = null; online = false; pendingReveal = null;
+  overlay.style.display = 'none'; overlay.innerHTML = ''; overlay.style.background = '';
   $('conpill').style.display = 'none';
   $('game').style.display = 'none'; $('setup').style.display = 'flex';
 }
@@ -1644,8 +1671,8 @@ class LocalConnection {
     this.state = createGame({ seed, config: this.cfg.config, names: this.cfg.names, seats: this.cfg.seats, dealer: this.cfg.dealer || 0, seatScores: this.scores });
     this.drive();
   }
-  dispose() { this.alive = false; this.pendingResolve = null; }
-  again() { this.scores = this.state.players.map((p) => p.score); this.cfg.dealer = this.state.nextDealer; this.newHand(); }
+  dispose() { this.alive = false; const r = this.pendingResolve; this.pendingResolve = null; if (r) r({ type: '__disposed' }); }
+  again() { if (this._dealing) return; this._dealing = true; this.scores = this.state.players.map((p) => p.score); this.cfg.dealer = this.state.nextDealer; this.newHand(); this._dealing = false; }
 
   emit(meta) {
     const viewer = (this.viewerSeat != null) ? this.viewerSeat : (this.lastHuman >= 0 ? this.lastHuman : 0);
@@ -1801,10 +1828,10 @@ class OnlineConnection {
       case 'view':
         if (!this.inGame) { this.inGame = true; overlay.style.display = 'none'; overlay.innerHTML = ''; showGameScreen(); }
         if (m.view.phase !== 'HAND_ENDED' && overlay.style.display === 'flex' && overlay.querySelector('.scoreboard')) { overlay.style.display = 'none'; overlay.innerHTML = ''; }
-        this.awaiting = false;
+        this.awaiting = false; clearTimeout(this._awaitTimer);
         onUpdate(m.view, { conn: { text: 'Online', state: 'ok' } });
         break;
-      case 'reject': this.awaiting = false; toast(m.error && m.error.message ? m.error.message : 'Invalid move', 1500); render(); break;
+      case 'reject': this.awaiting = false; clearTimeout(this._awaitTimer); toast(m.error && m.error.message ? m.error.message : 'Invalid move', 1500); render(); break;
       case 'error': onlineMsg(m.msg || 'Server error', true); updateConnPill({ text: 'Error', state: 'bad' }); this.alive = false; break;
       case 'you-are-host': this.host = true; if (this.lobby && !this.inGame) showOnlineLobby(this, this.lobby); break;
     }
@@ -1819,7 +1846,13 @@ class OnlineConnection {
   setConfig(c) { this.rawsend({ t: 'config', ...c }); }
   startGame() { this.rawsend({ t: 'start' }); }
   again() { if (this.host) this.rawsend({ t: 'rematch' }); }
-  submit(action) { if (this.awaiting) return; this.awaiting = true; this.rawsend({ t: 'action', action }); }
+  submit(action) {
+    if (this.awaiting) return;
+    this.awaiting = true;
+    clearTimeout(this._awaitTimer);
+    this._awaitTimer = setTimeout(() => { this.awaiting = false; }, 4000);  // safety net if a view is dropped
+    this.rawsend({ t: 'action', action });
+  }
   dispose() { this.alive = false; clearInterval(this.ping); try { this.ws.close(); } catch {} }
 }
 function onlineMsg(s, err) { const el = $('online-msg'); el.textContent = s; el.className = 'hostmsg' + (err ? ' err' : ''); }

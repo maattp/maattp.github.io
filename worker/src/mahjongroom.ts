@@ -120,9 +120,11 @@ export class MahjongRoom {
     if (typeof message !== "string") return;
     let msg: any;
     try { msg = JSON.parse(message); } catch { return; }
+    if (!(await this.state.storage.get("created"))) { try { ws.close(1001, "room gone"); } catch { /* */ } return; }
     const me = ws.deserializeAttachment() as Attachment | null;
 
     if (!me) { await this.handleHello(ws, msg); return; }
+    await this.bumpTtl();   // any activity from a connected client keeps the room alive
 
     switch (msg.t) {
       case "ready": {
@@ -169,8 +171,10 @@ export class MahjongRoom {
     const name = sanitizeName(msg.name);
     const ver = sanitizeVer(msg.ver);
     const players = this.roster();
-    const hostP = players.find((p) => p.host);
-    if (hostP && ver !== hostP.ver) {
+    // Gate against the room's pinned version (set by the creator), not the live host's,
+    // so it still works when the host seat is currently disconnected.
+    const roomVer = await this.state.storage.get<string>("roomVer");
+    if (roomVer && ver !== roomVer) {
       ws.send(JSON.stringify({ t: "error", msg: "Game versions differ — fully close the app and reopen it, then rejoin" }));
       ws.close(1008, "version mismatch");
       return;
@@ -186,10 +190,12 @@ export class MahjongRoom {
         if (!connected.has(id) && g && g.players[id] && String(g.players[id].name).toLowerCase() === name.toLowerCase()) { seatId = id; break; }
       }
       if (seatId < 0) { ws.send(JSON.stringify({ t: "error", msg: "Game in progress — seat unavailable" })); ws.close(1008, "in progress"); return; }
-      const a: Attachment = { id: seatId, name: g.players[seatId].name, ready: true, host: g.players[seatId].seat === 0, ver };
+      const hostSeat = await this.state.storage.get<number>("hostSeat");
+      const a: Attachment = { id: seatId, name: g.players[seatId].name, ready: true, host: seatId === hostSeat, ver };
       ws.serializeAttachment(a);
       g.players[seatId].isBot = false; g.players[seatId].connected = true;
       await this.saveGame(g);
+      await this.bumpTtl();
       const code = (await this.state.storage.get<string>("code")) || "";
       ws.send(JSON.stringify({ t: "welcome", id: seatId, host: a.host, code, rejoin: true }));
       ws.send(JSON.stringify({ t: "view", view: viewFor(g, seatId) }));
@@ -201,7 +207,12 @@ export class MahjongRoom {
     if (players.length >= MAX_PLAYERS) { ws.send(JSON.stringify({ t: "error", msg: "room full" })); ws.close(1008, "room full"); return; }
     const used = new Set(players.map((p) => p.id));
     let id = 0; while (used.has(id)) id++;
-    const a: Attachment = { id, name, ready: false, host: players.length === 0, ver };
+    if (players.length === 0) {                 // first arrival pins the room version + host seat
+      await this.state.storage.put("roomVer", ver);
+      await this.state.storage.put("hostSeat", id);
+    }
+    const hostSeat = await this.state.storage.get<number>("hostSeat");
+    const a: Attachment = { id, name, ready: false, host: id === hostSeat, ver };
     ws.serializeAttachment(a);
     const code = (await this.state.storage.get<string>("code")) || "";
     ws.send(JSON.stringify({ t: "welcome", id, host: a.host, code }));
@@ -304,6 +315,10 @@ export class MahjongRoom {
     if (!me) return;
     const remaining = this.roster().filter((p) => p.id !== me.id);
 
+    // if the host left and others remain, promote a connected player so host-only
+    // actions (config/start/rematch) stay reachable — in both lobby and play.
+    if (me.host && remaining.length) await this.promoteHost(remaining[0].id);
+
     if ((await this.phase()) === "playing") {
       // seat is taken over by a bot so the hand keeps going; human may rejoin by name
       const game = await this.loadGame();
@@ -321,16 +336,17 @@ export class MahjongRoom {
       return;
     }
 
-    // lobby: drop the player; promote a new host; reap empty room
-    if (me.host && remaining.length) {
-      const heir = this.socketFor(remaining[0].id);
-      if (heir) {
-        const a = heir.deserializeAttachment() as Attachment;
-        a.host = true; a.ready = false; heir.serializeAttachment(a);
-        heir.send(JSON.stringify({ t: "you-are-host" }));
-      }
-    }
+    // lobby cleanup
     if (remaining.length === 0) { await this.state.storage.deleteAll(); return; }
     await this.broadcastLobby();
+  }
+
+  private async promoteHost(heirId: number): Promise<void> {
+    const heir = this.socketFor(heirId);
+    if (!heir) return;
+    const a = heir.deserializeAttachment() as Attachment;
+    a.host = true; heir.serializeAttachment(a);
+    await this.state.storage.put("hostSeat", a.id);
+    try { heir.send(JSON.stringify({ t: "you-are-host" })); } catch { /* */ }
   }
 }
