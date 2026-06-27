@@ -5,9 +5,13 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no, viewport-fit=cover">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-<meta name="theme-color" content="#0b3d2e">
+<meta name="apple-mobile-web-app-title" content="Mahjong">
+<meta name="theme-color" content="#063d26">
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
-<link rel="apple-touch-icon" href="../icon.png">
+<!-- Home-screen install: custom apple-touch-icon for iOS, manifest + 192/512 for Android -->
+<link rel="apple-touch-icon" href="icon-180.png">
+<link rel="icon" type="image/png" sizes="192x192" href="icon-192.png">
+<link rel="manifest" href="manifest.webmanifest">
 <title>Sichuan Mahjong</title>
 <style>
 :root{
@@ -16,10 +20,13 @@
   --man:#b23b3b; --sou:#1f8a4c; --pin:#2b6fb5; --ink:#222;
 }
 *{margin:0;padding:0;box-sizing:border-box;-webkit-tap-highlight-color:transparent;}
-html,body{height:100%;}
+/* solid felt under everything so the iOS safe-area / overscroll never shows white */
+html{height:100%;background:#063d26;}
+body{height:100%;}
 body{
   font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;
-  background:radial-gradient(circle at 50% 30%,#0e7a4c,#063d26 75%);
+  background-color:#063d26;
+  background-image:radial-gradient(circle at 50% 30%,#0e7a4c,#063d26 75%);
   color:#fff; overflow:hidden; -webkit-user-select:none; user-select:none;
   padding:env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
 }
@@ -28,7 +35,7 @@ button{font-family:inherit;cursor:pointer;border:none;}
 /* ============ SETUP ============ */
 #setup{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:flex-start;
   overflow-y:auto;-webkit-overflow-scrolling:touch;
-  padding:calc(env(safe-area-inset-top) + 22px) 20px calc(env(safe-area-inset-bottom) + 26px);}
+  padding:calc(env(safe-area-inset-top) + 22px) calc(env(safe-area-inset-right) + 20px) calc(env(safe-area-inset-bottom) + 26px) calc(env(safe-area-inset-left) + 20px);}
 .brand{text-align:center;margin-bottom:4px;}
 .brand .cn{font-size:clamp(32px,10vw,50px);font-weight:800;letter-spacing:6px;color:var(--gold);text-shadow:0 3px 10px rgba(0,0,0,.5);}
 .brand .en{font-size:12px;letter-spacing:3px;text-transform:uppercase;opacity:.85;margin-top:2px;}
@@ -64,7 +71,11 @@ input.txt::placeholder{color:rgba(255,255,255,.5);}
 .hostmsg.err{color:#ff9a9a;}
 
 /* ============ GAME ============ */
-#game{position:absolute;inset:0;display:none;flex-direction:column;}
+/* the game screen ignores body padding (it's absolutely positioned), so it carries
+   the horizontal safe-area insets itself — keeps the topbar/seats clear of the notch
+   in landscape. Top/bottom insets are handled by the topbar and handarea below. */
+#game{position:absolute;inset:0;display:none;flex-direction:column;
+  padding-left:env(safe-area-inset-left);padding-right:env(safe-area-inset-right);}
 .topbar{display:flex;align-items:center;gap:10px;padding:6px 12px;padding-top:calc(env(safe-area-inset-top) + 4px);
   background:rgba(0,0,0,.25);font-size:13px;flex-shrink:0;}
 .topbar .title{font-weight:700;color:var(--gold);letter-spacing:1px;}
@@ -78,7 +89,13 @@ input.txt::placeholder{color:rgba(255,255,255,.5);}
 .seat{display:flex;flex-direction:column;align-items:center;gap:3px;}
 .seat-top{order:0;}
 .midrow{order:1;flex:1;display:flex;align-items:stretch;gap:4px;min-height:0;}
-.seat-left,.seat-right{justify-content:center;flex-shrink:0;width:74px;}
+.seat-left,.seat-right{justify-content:center;flex-shrink:0;width:84px;}
+/* side nameplates are too wide for the narrow column — wrap them compactly so they
+   never clip at the screen edge or overlap the center (worse when showing "thinking…") */
+.seat-left .nameplate,.seat-right .nameplate{
+  white-space:normal;flex-wrap:wrap;justify-content:center;text-align:center;
+  max-width:84px;font-size:10px;padding:3px 7px;gap:2px 5px;line-height:1.3;}
+.seat-left .nameplate .thinking,.seat-right .nameplate .thinking{font-size:10px;}
 .center{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;position:relative;min-width:0;}
 .seat-bottom{order:2;}
 .nameplate{display:flex;align-items:center;gap:6px;font-size:12px;padding:3px 9px;border-radius:20px;
@@ -106,9 +123,16 @@ input.txt::placeholder{color:rgba(255,255,255,.5);}
 
 .handarea{flex-shrink:0;background:rgba(0,0,0,.32);border-top:1px solid rgba(255,255,255,.1);
   padding:6px 8px calc(env(safe-area-inset-bottom) + 8px);}
-.hand-row{display:flex;justify-content:center;align-items:flex-end;gap:3px;flex-wrap:wrap;min-height:54px;}
-.hand-row .tile{width:clamp(30px,8.4vw,46px);height:clamp(42px,11.6vw,64px);transition:transform .12s;}
-.hand-row .tile .num{font-size:clamp(17px,4.6vw,24px);} .hand-row .tile .glyph{font-size:clamp(9px,2.4vw,13px);}
+/* single fixed-height row: tile WIDTH is computed in JS to fit the current count, but
+   the row HEIGHT (--th) is constant, so drawing the 14th tile never shifts the layout.
+   overflow-x is a safety net for very small screens (justify safe-center keeps it usable) */
+.hand-row{display:flex;justify-content:safe center;align-items:center;gap:3px;flex-wrap:nowrap;
+  height:var(--rh,64px);overflow-x:auto;overflow-y:hidden;
+  -webkit-overflow-scrolling:touch;scrollbar-width:none;}
+.hand-row::-webkit-scrollbar{display:none;}
+.hand-row .tile{width:var(--tw,34px);height:calc(var(--tw,34px) * 1.4);transition:transform .12s;}
+.hand-row .tile .num{font-size:calc(var(--tw,34px) * 0.52);line-height:1;}
+.hand-row .tile .glyph{font-size:calc(var(--tw,34px) * 0.32);line-height:1;}
 .hand-row .tile.drawn{margin-left:12px;}
 .hand-row .tile.dim{opacity:.4;}
 .hand-row .tile.playable{cursor:pointer;}
@@ -1420,6 +1444,18 @@ function tileHTML(tile, cls = '') {
   return `<div class="tile ${SUIT_CSS[s]} ${cls}"><span class="num">${r}</span><span class="glyph">${SUIT_GLYPH[s]}</span></div>`;
 }
 const backHTML = (cls = '') => `<div class="tile back ${cls}"></div>`;
+/* hand-row CSS vars: fixed tile HEIGHT (--th, constant so the layout never shifts) and a
+   WIDTH (--tw) computed to fit `count` tiles on one row at the largest readable size. */
+function handRowVars(count, drawnMargin = 0) {
+  const vw = window.innerWidth || 390;
+  const maxTw = Math.round(Math.max(26, Math.min(42, vw * 0.085)));   // widest a tile may get
+  const area = $('handarea');
+  const avail = ((area && area.clientWidth) || vw) - 18;
+  const gaps = Math.max(0, count - 1) * 3 + drawnMargin;
+  const tw = Math.max(16, Math.min(maxTw, Math.floor((avail - gaps) / Math.max(1, count))));
+  const rh = Math.round(maxTw * 1.4) + 8;     // row height fixed to the largest tile → no layout jump
+  return `--tw:${tw}px;--rh:${rh}px`;
+}
 function meldHTML(m) {
   // an opponent's concealed kong is redacted (tile hidden) — show four backs
   if (m.hidden || m.tile == null || m.tile < 0) return `<div class="meld">${'<div class="tile back"></div>'.repeat(4)}</div>`;
@@ -1525,7 +1561,7 @@ function renderHandArea(view) {
   if (me.ready && me.ready.length && !me.hasWon) {
     html += `<div class="ready-banner">🀄 Ready — win on ${me.ready.map((t) => tileRank(t) + SUIT_GLYPH[tileSuit(t)]).join(' ')}</div>`;
   } else html += `<div class="ready-banner"></div>`;
-  html += '<div class="hand-row">';
+  html += `<div class="hand-row" style="${handRowVars(tiles.length + (drawn != null ? 1 : 0), drawn != null ? 12 : 0)}">`;
   const tileCls = (t) => `${SUIT_CSS[tileSuit(t)]} ${canDiscard ? (discardable.has(t) ? 'playable' : 'dim') : ''} ${readySet.has(t) ? 'win-hint' : ''}`;
   for (const t of tiles) html += `<div class="tile ${tileCls(t)}" data-k="${t}"><span class="num">${tileRank(t)}</span><span class="glyph">${SUIT_GLYPH[tileSuit(t)]}</span></div>`;
   if (drawn != null) html += `<div class="tile ${tileCls(drawn)} drawn" data-k="${drawn}"><span class="num">${tileRank(drawn)}</span><span class="glyph">${SUIT_GLYPH[tileSuit(drawn)]}</span></div>`;
@@ -1573,7 +1609,7 @@ function dingQueHTML(view) {
   const rec = botChooseMissingSuit({ concealed: me.concealed });
   const tiles = [];
   for (let t = 0; t < NUM_TYPES; t++) for (let i = 0; i < me.concealed[t]; i++) tiles.push(t);
-  let hand = '<div class="hand-row" style="margin-bottom:6px">' + tiles.map((t) => tileHTML(t)).join('') + '</div>';
+  let hand = `<div class="hand-row" style="margin-bottom:6px;${handRowVars(tiles.length)}">` + tiles.map((t) => tileHTML(t)).join('') + '</div>';
   let opts = '<div class="opts">';
   for (let s = 0; s < 3; s++) {
     opts += `<button class="${s === rec ? 'rec' : ''}" data-suit="${s}">
