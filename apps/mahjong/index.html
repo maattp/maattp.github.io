@@ -127,10 +127,11 @@ input.txt::placeholder{color:rgba(255,255,255,.5);}
 /* single fixed-height row: tile WIDTH is computed in JS to fit the current count, but
    the row HEIGHT (--th) is constant, so drawing the 14th tile never shifts the layout.
    overflow-x is a safety net for very small screens (justify safe-center keeps it usable) */
+/* overflow:visible so a selected/lifted tile isn't clipped at the top; margin-top gives
+   it room to rise without overlapping the ready banner. (JS sizes tiles to fit one row,
+   so the previous horizontal-scroll safety net isn't needed.) */
 .hand-row{display:flex;justify-content:safe center;align-items:center;gap:3px;flex-wrap:nowrap;
-  height:var(--rh,64px);overflow-x:auto;overflow-y:hidden;
-  -webkit-overflow-scrolling:touch;scrollbar-width:none;}
-.hand-row::-webkit-scrollbar{display:none;}
+  height:var(--rh,64px);margin-top:12px;overflow:visible;}
 .hand-row .tile{width:var(--tw,34px);height:calc(var(--tw,34px) * 1.4);transition:transform .12s;}
 .hand-row .tile .num{font-size:calc(var(--tw,34px) * 0.52);line-height:1;}
 .hand-row .tile .glyph{font-size:calc(var(--tw,34px) * 0.32);line-height:1;}
@@ -139,7 +140,7 @@ input.txt::placeholder{color:rgba(255,255,255,.5);}
 .hand-row .tile.playable{cursor:pointer;}
 .hand-row .tile.playable:active{transform:translateY(-6px);}
 .hand-row .tile.win-hint{outline:2px solid var(--gold);outline-offset:1px;}
-.hand-row .tile.sel{transform:translateY(-12px);outline:2px solid var(--gold);box-shadow:0 8px 16px rgba(0,0,0,.5);z-index:2;}
+.hand-row .tile.sel{transform:translateY(-10px);outline:2px solid var(--gold);box-shadow:0 8px 16px rgba(0,0,0,.5);z-index:2;}
 
 .melds{display:flex;gap:6px;flex-wrap:wrap;justify-content:center;}
 .meld{display:flex;gap:1px;}
