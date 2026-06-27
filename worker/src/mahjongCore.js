@@ -255,10 +255,13 @@ const winsNow = (player, config) => isWinningHand(player, config, null);
 function getWinningTiles(player, config, state = null) {
   const tiles = [];
   if (hasMissingSuitInCounts(player.concealed, player.missingSuit)) return tiles;
+  const pending = state && state.pendingDiscard ? state.pendingDiscard.tile : -1;
   for (let t = 0; t < NUM_TYPES; t++) {
     if (tileSuit(t) === player.missingSuit) continue;
     if (player.concealed[t] >= 4) continue;
-    if (state && remainingOf(state, t, player.seat) <= 0) continue;
+    // a tile with 0 unseen copies is unreachable — UNLESS it's the tile sitting on the
+    // table right now (the player can win on it this instant), so never filter that one out
+    if (state && t !== pending && remainingOf(state, t, player.seat) <= 0) continue;
     if (isWinningHand(player, config, t)) tiles.push(t);
   }
   return tiles;

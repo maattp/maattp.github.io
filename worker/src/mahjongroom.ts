@@ -91,6 +91,9 @@ export class MahjongRoom {
   async fetch(request: Request): Promise<Response> {
     const url = new URL(request.url);
     if (url.pathname === "/init" && request.method === "POST") {
+      // guard a (vanishingly unlikely) code collision: don't re-init a live room — that
+      // would merge phase:"lobby"/default cfg over an in-progress game and strand players.
+      if (await this.state.storage.get("created")) return new Response("conflict", { status: 409 });
       const code = await request.text();
       await this.state.storage.put({ created: true, code, phase: "lobby", cfg: { ...DEFAULT_CFG } });
       await this.bumpTtl();

@@ -192,13 +192,16 @@ app.get("/kart3/rooms/:code", async (c) => {
 // --- Sichuan Mahjong online rooms: create + status (CORS applies) ---
 app.post("/mahjong/rooms", async (c) => {
   if (!kart3OriginOk(c.req.header("Origin"))) return c.json({ error: "forbidden" }, 403);
-  const bytes = new Uint8Array(5);
-  crypto.getRandomValues(bytes);
-  let code = "";
-  for (const b of bytes) code += ROOM_ALPHABET[b % ROOM_ALPHABET.length];
-  const stub = c.env.MAHJONG_ROOM.get(c.env.MAHJONG_ROOM.idFromName(code));
-  await stub.fetch("https://do/init", { method: "POST", body: code });
-  return c.json({ code });
+  for (let attempt = 0; attempt < 5; attempt++) {
+    const bytes = new Uint8Array(5);
+    crypto.getRandomValues(bytes);
+    let code = "";
+    for (const b of bytes) code += ROOM_ALPHABET[b % ROOM_ALPHABET.length];
+    const stub = c.env.MAHJONG_ROOM.get(c.env.MAHJONG_ROOM.idFromName(code));
+    const res = await stub.fetch("https://do/init", { method: "POST", body: code });
+    if (res.status !== 409) return c.json({ code });   // 409 = code already in use; try another
+  }
+  return c.json({ error: "could not allocate a room, please try again" }, 503);
 });
 
 app.get("/mahjong/rooms/:code", async (c) => {

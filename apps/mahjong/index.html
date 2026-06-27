@@ -532,10 +532,13 @@ const winsNow = (player, config) => isWinningHand(player, config, null);
 function getWinningTiles(player, config, state = null) {
   const tiles = [];
   if (hasMissingSuitInCounts(player.concealed, player.missingSuit)) return tiles;
+  const pending = state && state.pendingDiscard ? state.pendingDiscard.tile : -1;
   for (let t = 0; t < NUM_TYPES; t++) {
     if (tileSuit(t) === player.missingSuit) continue;
     if (player.concealed[t] >= 4) continue;
-    if (state && remainingOf(state, t, player.seat) <= 0) continue;
+    // a tile with 0 unseen copies is unreachable — UNLESS it's the tile sitting on the
+    // table right now (the player can win on it this instant), so never filter that one out
+    if (state && t !== pending && remainingOf(state, t, player.seat) <= 0) continue;
     if (isWinningHand(player, config, t)) tiles.push(t);
   }
   return tiles;
@@ -1651,6 +1654,7 @@ function showRules() {
 }
 
 function leaveGame() {
+  try { if (conn && conn.code) localStorage.removeItem('mjrt:' + conn.code); } catch {}  // drop our reconnect token
   if (conn && conn.dispose) conn.dispose();
   conn = null; curView = null; online = false; pendingReveal = null;
   overlay.style.display = 'none'; overlay.innerHTML = ''; overlay.style.background = '';
@@ -1711,6 +1715,7 @@ class LocalConnection {
         if (!live()) return;
         const a = botChooseAction(this.state, botSeat);
         const res = applyAction(this.state, botSeat, a);
+        if (!res.ok) { this.emit({ toasts: [{ msg: (res.error && res.error.message) || 'Bot error', ms: 1600 }] }); return; }  // never spin
         this.emit({ toasts: this.eventToasts(res.events || []) });
         continue;
       }
@@ -1747,11 +1752,11 @@ function buildNameInputs() {
     box.appendChild(inp);
   }
 }
-function segWire(id, key, cfg, cast = (x) => x) {
+function segWire(id, key, cfg, dataKey, cast = (x) => x) {
   $(id).addEventListener('click', (e) => {
     const b = e.target.closest('button'); if (!b) return;
     [...$(id).children].forEach((x) => x.classList.remove('on')); b.classList.add('on');
-    cfg[key] = cast(b.dataset[Object.keys(b.dataset)[0]]);
+    cfg[key] = cast(b.dataset[dataKey]);
     if (id === 'humans-seg') buildNameInputs();
   });
 }
@@ -1777,10 +1782,10 @@ function wireSetup() {
     $('local-setup').style.display = isOnlineTab ? 'none' : 'block';
     $('online-setup').style.display = isOnlineTab ? 'block' : 'none';
   });
-  segWire('humans-seg', 'humans', localCfg, (x) => +x);
-  segWire('diff-seg', 'diff', localCfg);
-  segWire('mode-seg', 'mode', localCfg);
-  segWire('odiff-seg', 'diff', onlineCfg);
+  segWire('humans-seg', 'humans', localCfg, 'h', (x) => +x);
+  segWire('diff-seg', 'diff', localCfg, 'd');
+  segWire('mode-seg', 'mode', localCfg, 'm');
+  segWire('odiff-seg', 'diff', onlineCfg, 'd');
   $('sw-sevenpairs').addEventListener('click', (e) => { e.currentTarget.classList.toggle('on'); localCfg.sevenPairs = e.currentTarget.classList.contains('on'); });
   $('start-local').addEventListener('click', startLocal);
   $('online-name').addEventListener('input', (e) => { onlineCfg.name = e.target.value; });
