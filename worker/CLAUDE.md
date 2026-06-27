@@ -44,6 +44,32 @@ can rejoin by name and reclaim their kart. Protocol lives in
 `apps/fablekart/index.html` (`netHandle`) and `apps/fablekart/VISION.md`.
 Rooms self-destruct via alarm after 45 min or when the last socket leaves.
 
+### Sichuan Mahjong rooms (`/mahjong/*` — NO Google auth, origin-gated like kart3)
+
+Unlike `Kart3Room` (an opaque relay), `MahjongRoom` (`src/mahjongroom.ts`) is
+**server-authoritative**: the DO runs the shared rules engine
+(`src/mahjongCore.js` — the *same* file the browser inlines for local play) and
+is the sole holder of hidden state. Each client is sent only its own redacted
+`viewFor()` snapshot, so no client ever sees another player's concealed tiles
+(the anti-cheat property a host-authoritative model can't give a hidden-info
+game). Hibernation-safe: the whole engine state lives in DO storage as plain
+JSON; every message loads → mutates → saves → broadcasts. Bots run server-side,
+paced by the alarm. Disconnect → that seat is taken over by a bot so the hand
+continues; the human can rejoin by name. 45-min idle TTL.
+
+- `POST /mahjong/rooms` → `{code}` — create a room
+- `GET /mahjong/rooms/:code` → `{exists, phase, players}` — status
+- `GET /mahjong/rooms/:code/ws` — WebSocket (registered BEFORE cors, same as kart3)
+
+Client protocol (`apps/mahjong/index.html`, `OnlineConnection`): `hello` →
+`welcome`; lobby `ready`/`config`/`start`/`rematch`; in-game `action` → server
+validates via the engine and replies `view` (redacted) or `reject`.
+
+**Engine sync:** `src/mahjongCore.js` is the canonical engine. The identical
+region (between `==CORE-START==`/`==CORE-END==`) is inlined into the app by
+`node apps/mahjong/build-core.mjs`; `node tests/core-sync.mjs` asserts no drift.
+Engine tests: `node worker/test/core.test.mjs`.
+
 ## Auth
 
 Google ID tokens are verified using Google's public JWKS keys via the Web Crypto API. The middleware checks:

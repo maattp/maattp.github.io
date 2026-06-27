@@ -1,0 +1,1960 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="theme-color" content="#0b3d2e">
+<meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+<link rel="apple-touch-icon" href="../icon.png">
+<title>Sichuan Mahjong</title>
+<style>
+:root{
+  --felt:#0b6b43; --felt-dark:#084f31; --gold:#f4d58d;
+  --tile-bg:#fbf7ec; --tile-edge:#d8cfb8;
+  --man:#b23b3b; --sou:#1f8a4c; --pin:#2b6fb5; --ink:#222;
+}
+*{margin:0;padding:0;box-sizing:border-box;-webkit-tap-highlight-color:transparent;}
+html,body{height:100%;}
+body{
+  font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;
+  background:radial-gradient(circle at 50% 30%,#0e7a4c,#063d26 75%);
+  color:#fff; overflow:hidden; -webkit-user-select:none; user-select:none;
+  padding:env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
+}
+button{font-family:inherit;cursor:pointer;border:none;}
+
+/* ============ SETUP ============ */
+#setup{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:flex-start;
+  overflow-y:auto;-webkit-overflow-scrolling:touch;
+  padding:calc(env(safe-area-inset-top) + 22px) 20px calc(env(safe-area-inset-bottom) + 26px);}
+.brand{text-align:center;margin-bottom:4px;}
+.brand .cn{font-size:clamp(32px,10vw,50px);font-weight:800;letter-spacing:6px;color:var(--gold);text-shadow:0 3px 10px rgba(0,0,0,.5);}
+.brand .en{font-size:12px;letter-spacing:3px;text-transform:uppercase;opacity:.85;margin-top:2px;}
+.mode-tabs{display:flex;gap:8px;margin-top:16px;width:100%;max-width:460px;}
+.mode-tabs button{flex:1;padding:12px;border-radius:12px;background:rgba(255,255,255,.08);color:#fff;font-size:15px;font-weight:700;border:1.5px solid transparent;}
+.mode-tabs button.on{background:var(--gold);color:#1a1a1a;border-color:#fff;}
+.card{background:rgba(0,0,0,.28);border:1px solid rgba(255,255,255,.12);border-radius:18px;
+  padding:16px;width:100%;max-width:460px;margin-top:14px;backdrop-filter:blur(6px);}
+.card h2{font-size:13px;text-transform:uppercase;letter-spacing:2px;opacity:.8;margin-bottom:10px;font-weight:700;}
+.seg{display:flex;gap:8px;flex-wrap:wrap;}
+.seg button{flex:1;min-width:60px;padding:11px 6px;border-radius:11px;background:rgba(255,255,255,.08);
+  color:#fff;font-size:15px;font-weight:600;border:1.5px solid transparent;transition:.15s;}
+.seg button.on{background:var(--gold);color:#1a1a1a;border-color:#fff;}
+.seg button .sub{display:block;font-size:10px;opacity:.7;font-weight:500;margin-top:2px;}
+.names{display:flex;flex-direction:column;gap:8px;margin-top:12px;}
+.row-inline{display:flex;gap:8px;}
+input.txt{background:rgba(255,255,255,.1);border:1px solid rgba(255,255,255,.2);border-radius:10px;
+  padding:11px 12px;color:#fff;font-size:16px;width:100%;}
+input.txt::placeholder{color:rgba(255,255,255,.5);}
+.toggle-row{display:flex;align-items:center;justify-content:space-between;padding:8px 2px;font-size:14px;}
+.switch{width:46px;height:28px;border-radius:14px;background:rgba(255,255,255,.2);position:relative;transition:.2s;flex-shrink:0;}
+.switch.on{background:var(--sou);}
+.switch::after{content:"";position:absolute;top:3px;left:3px;width:22px;height:22px;border-radius:50%;background:#fff;transition:.2s;}
+.switch.on::after{transform:translateX(18px);}
+.start-btn{margin-top:18px;width:100%;max-width:460px;padding:16px;border-radius:14px;
+  background:linear-gradient(135deg,#f4d58d,#e0a93f);color:#3a2600;font-size:18px;font-weight:800;letter-spacing:1px;
+  box-shadow:0 6px 18px rgba(0,0,0,.35);}
+.start-btn:active{transform:scale(.98);}
+.start-btn.sec{background:rgba(255,255,255,.14);color:#fff;margin-top:10px;box-shadow:none;}
+.setup-foot{margin-top:14px;display:flex;gap:14px;font-size:13px;opacity:.85;}
+.setup-foot a,.setup-foot button{color:var(--gold);background:none;text-decoration:underline;font-size:13px;}
+.hostmsg{font-size:13px;opacity:.85;margin-top:8px;text-align:center;min-height:18px;}
+.hostmsg.err{color:#ff9a9a;}
+
+/* ============ GAME ============ */
+#game{position:absolute;inset:0;display:none;flex-direction:column;}
+.topbar{display:flex;align-items:center;gap:10px;padding:6px 12px;padding-top:calc(env(safe-area-inset-top) + 4px);
+  background:rgba(0,0,0,.25);font-size:13px;flex-shrink:0;}
+.topbar .title{font-weight:700;color:var(--gold);letter-spacing:1px;}
+.topbar .info{opacity:.85;font-variant-numeric:tabular-nums;}
+.topbar .spacer{flex:1;}
+.topbar button{background:rgba(255,255,255,.12);color:#fff;border-radius:8px;padding:6px 10px;font-size:13px;}
+.conpill{font-size:11px;padding:3px 8px;border-radius:10px;background:rgba(255,255,255,.12);}
+.conpill.ok{background:rgba(48,209,88,.25);} .conpill.bad{background:rgba(255,120,120,.3);}
+
+.table{flex:1;position:relative;min-height:0;display:flex;flex-direction:column;padding:6px;gap:4px;}
+.seat{display:flex;flex-direction:column;align-items:center;gap:3px;}
+.seat-top{order:0;}
+.midrow{order:1;flex:1;display:flex;align-items:stretch;gap:4px;min-height:0;}
+.seat-left,.seat-right{justify-content:center;flex-shrink:0;width:74px;}
+.center{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;position:relative;min-width:0;}
+.seat-bottom{order:2;}
+.nameplate{display:flex;align-items:center;gap:6px;font-size:12px;padding:3px 9px;border-radius:20px;
+  background:rgba(0,0,0,.3);border:1px solid rgba(255,255,255,.1);white-space:nowrap;}
+.nameplate.active{background:var(--gold);color:#1a1a1a;font-weight:700;box-shadow:0 0 12px rgba(244,213,141,.7);}
+.nameplate .dot{width:8px;height:8px;border-radius:50%;background:#888;}
+.nameplate.bot .dot{background:#5ac8fa;} .nameplate.human .dot{background:#30d158;}
+.nameplate.off{opacity:.5;} .nameplate.off .dot{background:#ff6b6b;}
+.nameplate .miss{font-weight:800;}
+.nameplate .sc{font-variant-numeric:tabular-nums;opacity:.9;}
+.nameplate .won{color:#3a2600;font-weight:800;}
+.nameplate.active .thinking{color:#1a1a1a;}
+.thinking{font-size:11px;opacity:.8;font-style:italic;}
+.dealer-mark{font-size:10px;background:#b23b3b;color:#fff;border-radius:4px;padding:0 3px;font-weight:700;}
+
+.tile{position:relative;background:linear-gradient(180deg,#fff,var(--tile-bg));border:1px solid var(--tile-edge);
+  border-bottom-width:3px;border-radius:6px;display:flex;flex-direction:column;align-items:center;justify-content:center;
+  color:var(--ink);flex-shrink:0;box-shadow:0 1px 2px rgba(0,0,0,.25);overflow:hidden;}
+.tile .num{font-weight:800;line-height:1;} .tile .glyph{line-height:1;opacity:.95;}
+.tile.m .num,.tile.m .glyph{color:var(--man);}
+.tile.s .num,.tile.s .glyph{color:var(--sou);}
+.tile.p .num,.tile.p .glyph{color:var(--pin);}
+.tile.back{background:linear-gradient(135deg,#1f7a4d,#0c5635);border-color:#0a4329;}
+.tile.back::after{content:"";position:absolute;inset:3px;border:1px solid rgba(255,255,255,.25);border-radius:4px;}
+
+.handarea{flex-shrink:0;background:rgba(0,0,0,.32);border-top:1px solid rgba(255,255,255,.1);
+  padding:6px 8px calc(env(safe-area-inset-bottom) + 8px);}
+.hand-row{display:flex;justify-content:center;align-items:flex-end;gap:3px;flex-wrap:wrap;min-height:54px;}
+.hand-row .tile{width:clamp(30px,8.4vw,46px);height:clamp(42px,11.6vw,64px);transition:transform .12s;}
+.hand-row .tile .num{font-size:clamp(17px,4.6vw,24px);} .hand-row .tile .glyph{font-size:clamp(9px,2.4vw,13px);}
+.hand-row .tile.drawn{margin-left:12px;}
+.hand-row .tile.dim{opacity:.4;}
+.hand-row .tile.playable{cursor:pointer;}
+.hand-row .tile.playable:active{transform:translateY(-6px);}
+.hand-row .tile.win-hint{outline:2px solid var(--gold);outline-offset:1px;}
+
+.melds{display:flex;gap:6px;flex-wrap:wrap;justify-content:center;}
+.meld{display:flex;gap:1px;}
+.meld .tile{width:20px;height:28px;border-bottom-width:2px;}
+.meld .tile .num{font-size:12px;} .meld .tile .glyph{font-size:7px;}
+.meld .tile.concealed{background:linear-gradient(135deg,#1f7a4d,#0c5635);}
+.meld .tile.concealed .num,.meld .tile.concealed .glyph{visibility:hidden;}
+
+.backs{display:flex;gap:1px;flex-wrap:wrap;justify-content:center;max-width:200px;}
+.backs .tile{width:13px;height:18px;border-bottom-width:2px;}
+.seat-left .backs,.seat-right .backs{max-width:20px;}
+.seat-left .backs .tile,.seat-right .backs .tile{width:18px;height:12px;}
+
+.river{display:flex;flex-wrap:wrap;gap:2px;justify-content:center;align-content:flex-start;}
+.river .tile{width:18px;height:25px;border-bottom-width:2px;}
+.river .tile .num{font-size:11px;} .river .tile .glyph{font-size:6px;}
+.river .tile.last{outline:2px solid var(--gold);outline-offset:1px;box-shadow:0 0 10px var(--gold);}
+.seat-top .river,.seat-bottom .river{max-width:min(94vw,620px);}
+.seat-left .river,.seat-right .river{max-width:72px;}
+
+.center .wall-info{font-size:12px;opacity:.7;margin-bottom:6px;text-align:center;}
+.center .last-played{display:flex;flex-direction:column;align-items:center;gap:4px;}
+.center .last-played .tile{width:34px;height:47px;}
+.center .last-played .tile .num{font-size:20px;} .center .last-played .tile .glyph{font-size:11px;}
+.center .last-played .lbl{font-size:10px;opacity:.7;}
+
+.ready-banner{font-size:12px;color:var(--gold);text-align:center;margin-bottom:4px;min-height:16px;}
+.actions{display:flex;gap:8px;justify-content:center;flex-wrap:wrap;margin-top:6px;min-height:44px;align-items:center;}
+.actions button{padding:11px 18px;border-radius:11px;font-size:16px;font-weight:800;letter-spacing:1px;
+  background:rgba(255,255,255,.14);color:#fff;border:1.5px solid rgba(255,255,255,.25);}
+.actions button:active{transform:scale(.96);}
+.actions .b-hu{background:linear-gradient(135deg,#ffcb52,#ff9d2e);color:#3a2600;border-color:#fff;}
+.actions .b-peng{background:linear-gradient(135deg,#5ac8fa,#2b6fb5);border-color:#fff;}
+.actions .b-gang{background:linear-gradient(135deg,#bd6cff,#7a3fd6);border-color:#fff;}
+.actions .b-pass{background:rgba(255,255,255,.1);}
+.actions .hint{font-size:13px;opacity:.8;font-weight:500;letter-spacing:0;}
+
+.dingque{display:flex;flex-direction:column;align-items:center;gap:12px;}
+.dingque .q{font-size:15px;text-align:center;}
+.dingque .opts{display:flex;gap:12px;}
+.dingque .opts button{display:flex;flex-direction:column;align-items:center;gap:4px;padding:14px 16px;border-radius:14px;
+  background:rgba(255,255,255,.12);color:#fff;border:2px solid rgba(255,255,255,.2);min-width:80px;}
+.dingque .opts button .big{font-size:30px;font-weight:800;}
+.dingque .opts button .ct{font-size:12px;opacity:.85;}
+.dingque .opts button.rec{border-color:var(--gold);}
+.dingque .opts button.rec .tag{font-size:9px;color:var(--gold);}
+
+#overlay{position:absolute;inset:0;display:none;align-items:center;justify-content:center;z-index:40;
+  background:rgba(0,0,0,.6);backdrop-filter:blur(4px);padding:24px;}
+.modal{background:#0d4d33;border:1px solid rgba(255,255,255,.18);border-radius:18px;padding:22px;
+  max-width:480px;width:100%;max-height:88vh;overflow-y:auto;box-shadow:0 12px 40px rgba(0,0,0,.5);}
+.modal h2{color:var(--gold);font-size:22px;margin-bottom:10px;text-align:center;}
+.modal p{font-size:14px;line-height:1.5;opacity:.92;margin-bottom:8px;}
+.modal .btn{margin-top:14px;width:100%;padding:14px;border-radius:12px;background:var(--gold);color:#2a1c00;font-weight:800;font-size:16px;}
+.modal .btn.alt{background:rgba(255,255,255,.14);color:#fff;margin-top:8px;}
+.reveal-gate{text-align:center;cursor:pointer;} .reveal-gate .big{font-size:48px;}
+.scoreboard{width:100%;border-collapse:collapse;margin-top:8px;font-size:14px;}
+.scoreboard td,.scoreboard th{padding:7px 8px;text-align:left;border-bottom:1px solid rgba(255,255,255,.1);}
+.scoreboard th{opacity:.6;font-size:11px;text-transform:uppercase;}
+.scoreboard .pos{text-align:right;font-variant-numeric:tabular-nums;font-weight:700;}
+.scoreboard .gain-pos{color:#5ad17a;} .scoreboard .gain-neg{color:#ff7b7b;}
+.delta{font-variant-numeric:tabular-nums;font-size:12px;opacity:.8;}
+
+.lobby{display:flex;flex-direction:column;gap:10px;}
+.lobby .code{font-size:34px;font-weight:800;letter-spacing:8px;color:var(--gold);text-align:center;
+  background:rgba(0,0,0,.3);border-radius:12px;padding:10px;}
+.lobby .seat-list{display:flex;flex-direction:column;gap:8px;}
+.lobby .seat-card{display:flex;align-items:center;gap:10px;padding:10px 12px;border-radius:12px;background:rgba(255,255,255,.08);font-size:15px;}
+.lobby .seat-card .badge{margin-left:auto;font-size:12px;padding:3px 8px;border-radius:8px;background:rgba(255,255,255,.15);}
+.lobby .seat-card .badge.ready{background:var(--sou);} .lobby .seat-card .badge.host{background:var(--gold);color:#1a1a1a;}
+.lobby .seat-card.me{border:1.5px solid var(--gold);}
+
+.toast{position:absolute;top:16%;left:50%;transform:translateX(-50%);z-index:50;
+  background:rgba(0,0,0,.82);border:2px solid var(--gold);color:var(--gold);
+  padding:13px 26px;border-radius:14px;font-size:24px;font-weight:800;letter-spacing:3px;
+  pointer-events:none;opacity:0;transition:opacity .2s;white-space:nowrap;text-align:center;}
+.toast.show{opacity:1;}
+.rules-content{text-align:left;}
+.rules-content h3{color:var(--gold);font-size:15px;margin:12px 0 4px;}
+.rules-content ul{margin-left:18px;font-size:13px;line-height:1.5;opacity:.92;}
+</style>
+</head>
+<body>
+
+<!-- ============ SETUP ============ -->
+<div id="setup">
+  <div class="brand"><div class="cn">四川麻將</div><div class="en">Sichuan Mahjong &middot; Bloody Battle</div></div>
+
+  <div class="mode-tabs">
+    <button data-tab="local" class="on">Local / Hot-seat</button>
+    <button data-tab="online">Play Online</button>
+  </div>
+
+  <!-- LOCAL setup -->
+  <div id="local-setup">
+    <div class="card">
+      <h2>Players at this device</h2>
+      <div class="seg" id="humans-seg">
+        <button data-h="1" class="on">1<span class="sub">+3 bots</span></button>
+        <button data-h="2">2<span class="sub">+2 bots</span></button>
+        <button data-h="3">3<span class="sub">+1 bot</span></button>
+        <button data-h="4">4<span class="sub">all human</span></button>
+      </div>
+      <div class="names" id="name-inputs"></div>
+    </div>
+    <div class="card">
+      <h2>Bot Difficulty</h2>
+      <div class="seg" id="diff-seg">
+        <button data-d="easy">Easy<span class="sub">loose</span></button>
+        <button data-d="normal" class="on">Normal<span class="sub">solid</span></button>
+        <button data-d="hard">Hard<span class="sub">defends</span></button>
+      </div>
+    </div>
+    <div class="card">
+      <h2>Rules</h2>
+      <div class="seg" id="mode-seg">
+        <button data-m="bloody" class="on">Bloody<span class="sub">to 3 winners</span></button>
+        <button data-m="single">Single<span class="sub">first win ends</span></button>
+      </div>
+      <div class="toggle-row"><span>Seven Pairs (七对)</span><div class="switch on" id="sw-sevenpairs"></div></div>
+    </div>
+    <button class="start-btn" id="start-local">Deal Tiles</button>
+  </div>
+
+  <!-- ONLINE setup -->
+  <div id="online-setup" style="display:none;width:100%;max-width:460px;">
+    <div class="card">
+      <h2>Your name</h2>
+      <input class="txt" id="online-name" placeholder="Name" maxlength="12">
+    </div>
+    <div class="card">
+      <h2>Bot Difficulty (for empty seats)</h2>
+      <div class="seg" id="odiff-seg">
+        <button data-d="easy">Easy</button>
+        <button data-d="normal" class="on">Normal</button>
+        <button data-d="hard">Hard</button>
+      </div>
+    </div>
+    <button class="start-btn" id="btn-create">Create Game</button>
+    <div class="card">
+      <h2>Join a Game</h2>
+      <div class="row-inline">
+        <input class="txt" id="join-code" placeholder="ROOM CODE" maxlength="5" style="text-transform:uppercase;letter-spacing:4px;font-weight:700;">
+        <button class="start-btn sec" id="btn-join" style="margin:0;width:auto;padding:0 20px;">Join</button>
+      </div>
+    </div>
+    <div class="hostmsg" id="online-msg"></div>
+  </div>
+
+  <div class="setup-foot">
+    <button id="rules-link">How to play</button>
+    <a href="../">&larr; All apps</a>
+  </div>
+</div>
+
+<!-- ============ GAME ============ -->
+<div id="game">
+  <div class="topbar">
+    <span class="title">四川麻將</span>
+    <span class="info" id="round-info"></span>
+    <span class="spacer"></span>
+    <span class="conpill" id="conpill" style="display:none;"></span>
+    <button id="rules-btn">Rules</button>
+    <button id="menu-btn">Menu</button>
+  </div>
+  <div class="table">
+    <div class="seat seat-top" id="seat-2"></div>
+    <div class="midrow">
+      <div class="seat seat-left" id="seat-3"></div>
+      <div class="center" id="center"></div>
+      <div class="seat seat-right" id="seat-1"></div>
+    </div>
+    <div class="seat seat-bottom" id="seat-0"></div>
+  </div>
+  <div class="handarea" id="handarea"></div>
+</div>
+
+<div id="overlay"></div>
+<div class="toast" id="toast"></div>
+
+<script type="module">
+"use strict";
+/* CORE-INLINE-START */
+// ==CORE-START== (synced region — keep identical with index.html)
+
+/* ---- tile model: suit 0=DOT(筒) 1=BAMBOO(条) 2=CHARACTER(萬), rank 1..9 ---- */
+const DOT = 0, BAMBOO = 1, CHARACTER = 2;
+const SUIT_GLYPH = ['筒', '条', '萬'];
+const SUIT_NAME = ['Dots', 'Bamboo', 'Characters'];
+const tileIndex = (suit, rank) => suit * 9 + (rank - 1);
+const tileSuit = (t) => (t / 9) | 0;
+const tileRank = (t) => (t % 9) + 1;
+const NUM_TYPES = 27;
+
+const emptyCounts = () => new Array(NUM_TYPES).fill(0);
+const countTotal = (c) => { let s = 0; for (let i = 0; i < NUM_TYPES; i++) s += c[i]; return s; };
+
+/* ---- deterministic RNG (mulberry32). state.rng is a serializable integer ---- */
+function rngNext(state) {
+  let x = (state.rng + 0x6D2B79F5) | 0;
+  state.rng = x;
+  x = Math.imul(x ^ (x >>> 15), 1 | x);
+  x = (x + Math.imul(x ^ (x >>> 7), 61 | x)) ^ x;
+  return ((x ^ (x >>> 14)) >>> 0) / 4294967296;
+}
+function rngInt(state, n) { return (rngNext(state) * n) | 0; }
+
+/* ---- default table rules (spec §21.4 / §26 "common digital rules") ---- */
+const DEFAULT_CONFIG = {
+  allowSevenPairs: true,
+  fourOfKindCountsAsTwoPairs: true,
+  mustDiscardMissingSuitFirst: true,
+  allowMeldsInMissingSuit: false,
+  allowKongInMissingSuit: false,
+  allowMultipleWinnersOnDiscard: true,
+  allowRobKong: true,
+  allowMultipleRobKongWinners: true,
+  wonPlayersExcludedFromFuturePayments: true,
+  fanLimit: 3,
+  baseWinPoints: 1,
+  selfDrawBonusFan: 1,
+  robKongBonusFan: 1,
+  kongBloomBonusFan: 1,
+  rootFan: 1,
+  allPungsFan: 1,
+  pureOneSuitFan: 2,
+  sevenPairsFan: 2,
+  luxurySevenPairsExtraFanPerQuad: 1,
+  lastTileFan: 1,
+  heavenlyEarthlyFan: 3,       // table-limit
+  enableMissingSuitPenaltyAtExhaustion: true,
+  missingSuitPenalty: 2,
+  kongExposedFromDiscard: 2,   // discarder pays
+  kongAdded: 1,                // each non-won opponent pays
+  kongConcealed: 2,            // each non-won opponent pays
+  mode: 'bloody',              // 'bloody' | 'single'
+};
+
+/* ---- meld types ---- */
+const PUNG = 'PUNG';
+const KONG_EXPOSED_FROM_DISCARD = 'KONG_EXPOSED_FROM_DISCARD';
+const KONG_ADDED = 'KONG_ADDED';
+const KONG_CONCEALED = 'KONG_CONCEALED';
+const isKong = (m) => m.type !== PUNG;
+const meldPhysical = (m) => (m.type === PUNG ? 3 : 4);
+
+/* ---- phases (spec §18) ---- */
+const PHASE = {
+  MISSING_SUIT: 'MISSING_SUIT_SELECTION',
+  ACTIVE_TURN: 'ACTIVE_TURN',
+  DISCARD_REACT: 'AWAITING_DISCARD_REACTIONS',
+  ROB_REACT: 'AWAITING_ROB_KONG_REACTIONS',
+  HAND_ENDED: 'HAND_ENDED',
+};
+
+/* =====================================================================
+ * Game creation & dealing
+ * ===================================================================== */
+function makeConfig(overrides) { return Object.assign({}, DEFAULT_CONFIG, overrides || {}); }
+
+function createGame(opts = {}) {
+  const config = makeConfig(opts.config);
+  const seed = (opts.seed != null ? opts.seed : 0x1a2b3c4d) | 0;
+  const dealer = (opts.dealer || 0) % 4;
+  const names = opts.names || ['East', 'South', 'West', 'North'];
+  const seats = opts.seats || [
+    { isBot: false, difficulty: 'normal' },
+    { isBot: true, difficulty: 'normal' },
+    { isBot: true, difficulty: 'normal' },
+    { isBot: true, difficulty: 'normal' },
+  ];
+
+  const state = {
+    config, seed, rng: seed, handNo: opts.handNo || 1,
+    phase: PHASE.MISSING_SUIT, dealer, active: dealer,
+    wall: [], wallHead: 0, wallTail: 0,
+    players: [],
+    pendingDiscard: null, reactions: null, robReactions: null,
+    turnFlags: { needsDraw: false, drewFromKong: false, lastDrawn: null, firstTurn: false, lastTileExhausted: false },
+    firstDiscardDone: false,
+    winnersThisHand: [], firstDealerSeat: null,
+    log: [],
+    ended: false, endReason: null,
+    seatScores: opts.seatScores || [0, 0, 0, 0],   // carry running scores across hands
+  };
+
+  for (let i = 0; i < 4; i++) {
+    state.players.push({
+      seat: i,
+      name: names[i] || ('P' + (i + 1)),
+      isBot: seats[i] ? !!seats[i].isBot : true,
+      difficulty: seats[i] ? (seats[i].difficulty || 'normal') : 'normal',
+      connected: true,
+      concealed: emptyCounts(),
+      melds: [],
+      discards: [],
+      missingSuit: null,
+      hasWon: false,
+      winOrder: null,
+      winRecords: [],
+      score: state.seatScores[i] || 0,
+      isDealer: i === dealer,
+    });
+  }
+
+  // build & shuffle the 108-tile wall (spec §3.1)
+  const wall = [];
+  for (let suit = 0; suit < 3; suit++)
+    for (let rank = 1; rank <= 9; rank++)
+      for (let k = 0; k < 4; k++) wall.push(tileIndex(suit, rank));
+  for (let i = wall.length - 1; i > 0; i--) {
+    const j = rngInt(state, i + 1);
+    const tmp = wall[i]; wall[i] = wall[j]; wall[j] = tmp;
+  }
+  state.wall = wall;
+  state.wallHead = 0;
+  state.wallTail = wall.length;
+  logEvent(state, { type: 'WallShuffled', seed });
+
+  // deal: dealer 14, others 13 (spec §3.2)
+  for (let i = 0; i < 4; i++) {
+    const p = state.players[(dealer + i) % 4];
+    const n = p.isDealer ? 14 : 13;
+    for (let k = 0; k < n; k++) p.concealed[drawFront(state)]++;
+  }
+  logEvent(state, { type: 'TilesDealt' });
+
+  // dealer keeps the 14th and acts first WITHOUT drawing (enables Heavenly Hand)
+  state.turnFlags.needsDraw = false;
+  state.turnFlags.firstTurn = true;
+  return state;
+}
+
+function drawFront(state) {
+  if (state.wallHead >= state.wallTail) return -1;
+  return state.wall[state.wallHead++];
+}
+function drawBack(state) {
+  if (state.wallTail <= state.wallHead) return -1;
+  return state.wall[--state.wallTail];
+}
+const wallRemaining = (state) => state.wallTail - state.wallHead;
+
+function logEvent(state, ev) { state.log.push(ev); return ev; }
+
+/* =====================================================================
+ * Winning-hand validation (spec §7)
+ * ===================================================================== */
+function canPartition(counts, groupsNeeded) {
+  let i = 0; while (i < NUM_TYPES && counts[i] === 0) i++;
+  if (i === NUM_TYPES) return groupsNeeded === 0;
+  if (groupsNeeded === 0) return false;
+  // pung
+  if (counts[i] >= 3) {
+    counts[i] -= 3;
+    if (canPartition(counts, groupsNeeded - 1)) { counts[i] += 3; return true; }
+    counts[i] += 3;
+  }
+  // chow (same suit, consecutive) — allowed in concealed shape only
+  const r = i % 9;
+  if (r <= 6 && counts[i + 1] > 0 && counts[i + 2] > 0) {
+    counts[i]--; counts[i + 1]--; counts[i + 2]--;
+    if (canPartition(counts, groupsNeeded - 1)) { counts[i]++; counts[i + 1]++; counts[i + 2]++; return true; }
+    counts[i]++; counts[i + 1]++; counts[i + 2]++;
+  }
+  return false;
+}
+function isStandardShape(counts, groupsNeeded) {
+  for (let p = 0; p < NUM_TYPES; p++) {
+    if (counts[p] >= 2) {
+      counts[p] -= 2;
+      const ok = canPartition(counts, groupsNeeded);   // canPartition fully backtracks, so no copy needed
+      counts[p] += 2;
+      if (ok) return true;
+    }
+  }
+  return false;
+}
+function isSevenPairs(counts, config) {
+  if (countTotal(counts) !== 14) return false;
+  let pairs = 0;
+  for (let t = 0; t < NUM_TYPES; t++) {
+    const c = counts[t];
+    if (c === 1 || c === 3) return false;
+    if (c === 2) pairs += 1;
+    if (c === 4) pairs += (config.fourOfKindCountsAsTwoPairs ? 2 : -100);
+  }
+  return pairs === 7;
+}
+function hasMissingSuitInCounts(counts, missingSuit) {
+  if (missingSuit == null) return false;
+  for (let r = 0; r < 9; r++) if (counts[missingSuit * 9 + r] > 0) return true;
+  return false;
+}
+/* Does player p's concealed counts (already at winning size) form a legal win? */
+function isWinningCounts(counts, melds, missingSuit, config) {
+  if (hasMissingSuitInCounts(counts, missingSuit)) return false;
+  const groupsNeeded = 4 - melds.length;
+  const total = countTotal(counts);
+  if (total !== groupsNeeded * 3 + 2) return false;
+  if (melds.length === 0 && config.allowSevenPairs && isSevenPairs(counts, config)) return true;
+  return isStandardShape(counts.slice(), groupsNeeded);
+}
+/* Player-level helper: would adding `tile` (or nothing) make a win? */
+function isWinningHand(player, config, addTile = null) {
+  const c = player.concealed.slice();
+  if (addTile != null) {
+    if (tileSuit(addTile) === player.missingSuit) return false;
+    c[addTile]++;
+  }
+  return isWinningCounts(c, player.melds, player.missingSuit, config);
+}
+const winsNow = (player, config) => isWinningHand(player, config, null);
+
+/* ---- ready / ting detection (spec §16) ---- */
+function getWinningTiles(player, config, state = null) {
+  const tiles = [];
+  if (hasMissingSuitInCounts(player.concealed, player.missingSuit)) return tiles;
+  const pending = state && state.pendingDiscard ? state.pendingDiscard.tile : -1;
+  for (let t = 0; t < NUM_TYPES; t++) {
+    if (tileSuit(t) === player.missingSuit) continue;
+    if (player.concealed[t] >= 4) continue;
+    // a tile with 0 unseen copies is unreachable — UNLESS it's the tile sitting on the
+    // table right now (the player can win on it this instant), so never filter that one out
+    if (state && t !== pending && remainingOf(state, t, player.seat) <= 0) continue;
+    if (isWinningHand(player, config, t)) tiles.push(t);
+  }
+  return tiles;
+}
+const isReady = (player, config, state = null) => getWinningTiles(player, config, state).length > 0;
+
+/* count of tile-type t not visible to seat `me` (public info + own hand) */
+function remainingOf(state, t, me) {
+  let seen = 0;
+  for (let s = 0; s < 4; s++) {
+    const p = state.players[s];
+    if (s === me) seen += p.concealed[t];
+    for (const m of p.melds) if (m.tile === t) seen += meldPhysical(m);
+    for (const d of p.discards) if (d === t) seen++;
+  }
+  if (state.pendingDiscard && state.pendingDiscard.tile === t) seen++;
+  return 4 - seen;
+}
+
+/* =====================================================================
+ * Legal-action generation (spec §17)
+ * Action shapes:
+ *   {type:'ChooseMissingSuit', suit}
+ *   {type:'Discard', tile}      {type:'Pass'}
+ *   {type:'ClaimPung', tile}    {type:'ClaimKongFromDiscard', tile}
+ *   {type:'DeclareConcealedKong', tile}  {type:'DeclareAddedKong', tile}
+ *   {type:'DeclareWinFromDiscard', tile} {type:'DeclareSelfDrawWin'}
+ *   {type:'RobKong', tile}
+ * ===================================================================== */
+const missingCount = (p) => {
+  if (p.missingSuit == null) return 0;
+  let s = 0; for (let r = 0; r < 9; r++) s += p.concealed[p.missingSuit * 9 + r]; return s;
+};
+function legalDiscards(player, config) {
+  const out = [];
+  const holdsMissing = missingCount(player) > 0;
+  for (let t = 0; t < NUM_TYPES; t++) {
+    if (player.concealed[t] === 0) continue;
+    if (config.mustDiscardMissingSuitFirst && holdsMissing && tileSuit(t) !== player.missingSuit) continue;
+    out.push(t);
+  }
+  return out;
+}
+
+function getLegalActions(state, seat) {
+  const p = state.players[seat];
+  if (state.phase === PHASE.HAND_ENDED) return [];
+  if (p.hasWon) return [];
+
+  if (state.phase === PHASE.MISSING_SUIT) {
+    if (p.missingSuit != null) return [];
+    return [
+      { type: 'ChooseMissingSuit', suit: DOT },
+      { type: 'ChooseMissingSuit', suit: BAMBOO },
+      { type: 'ChooseMissingSuit', suit: CHARACTER },
+    ];
+  }
+
+  if (state.phase === PHASE.ACTIVE_TURN) {
+    if (seat !== state.active) return [];
+    const acts = [];
+    const holdsMissing = missingCount(p) > 0;
+    const justDrew = state.turnFlags.lastDrawn != null || state.turnFlags.firstTurn;
+    // self-draw win
+    if (!holdsMissing && justDrew && winsNow(p, state.config)) acts.push({ type: 'DeclareSelfDrawWin' });
+    // kongs only gate on the kong tile's suit (spec §6.7/§6.8), not on whether the
+    // player has cleared their own missing suit (that rule restricts discards only, §8.2)
+    if (!state.turnFlags.afterPung) {
+      // concealed kong
+      for (let t = 0; t < NUM_TYPES; t++) {
+        if (p.concealed[t] === 4 && (state.config.allowKongInMissingSuit || tileSuit(t) !== p.missingSuit))
+          acts.push({ type: 'DeclareConcealedKong', tile: t });
+      }
+      // added kong (upgrade an exposed pung)
+      for (const m of p.melds) {
+        if (m.type === PUNG && p.concealed[m.tile] >= 1 &&
+            (state.config.allowKongInMissingSuit || tileSuit(m.tile) !== p.missingSuit))
+          acts.push({ type: 'DeclareAddedKong', tile: m.tile });
+      }
+    }
+    for (const t of legalDiscards(p, state.config)) acts.push({ type: 'Discard', tile: t });
+    return acts;
+  }
+
+  if (state.phase === PHASE.DISCARD_REACT) {
+    const r = state.reactions;
+    if (!r || r.discarder === seat || r.responses[seat] != null || !r.eligible.includes(seat)) return [];
+    const tile = r.tile;
+    const acts = [];
+    const holdsMissing = missingCount(p) > 0;
+    if (!holdsMissing && tileSuit(tile) !== p.missingSuit && isWinningHand(p, state.config, tile))
+      acts.push({ type: 'DeclareWinFromDiscard', tile });
+    // peng/kong-from-discard gate on the claimed tile's suit only (spec §6.5/§6.6)
+    const meldOk = (state.config.allowMeldsInMissingSuit || tileSuit(tile) !== p.missingSuit);
+    if (meldOk && p.concealed[tile] >= 3) acts.push({ type: 'ClaimKongFromDiscard', tile });
+    if (meldOk && p.concealed[tile] >= 2) acts.push({ type: 'ClaimPung', tile });
+    acts.push({ type: 'Pass' });
+    return acts;
+  }
+
+  if (state.phase === PHASE.ROB_REACT) {
+    const r = state.robReactions;
+    if (!r || r.declarer === seat || r.responses[seat] != null || !r.eligible.includes(seat)) return [];
+    const tile = r.tile;
+    const acts = [];
+    if (state.config.allowRobKong && tileSuit(tile) !== p.missingSuit && isWinningHand(p, state.config, tile))
+      acts.push({ type: 'RobKong', tile });
+    acts.push({ type: 'Pass' });
+    return acts;
+  }
+
+  return [];
+}
+
+/* Seats that currently owe a decision (driver: prompt humans, run bots). */
+function pendingDeciders(state) {
+  const out = [];
+  if (state.phase === PHASE.HAND_ENDED) return out;
+  for (let s = 0; s < 4; s++) if (getLegalActions(state, s).length > 0) out.push(s);
+  return out;
+}
+
+const actionsEqual = (a, b) =>
+  a && b && a.type === b.type && (a.tile ?? -1) === (b.tile ?? -1) && (a.suit ?? -1) === (b.suit ?? -1);
+
+/* =====================================================================
+ * applyAction — validates via getLegalActions, mutates state, cascades
+ * through auto-advances, returns {ok, events, error}.
+ * ===================================================================== */
+function invalid(code, message, details, suggested) {
+  return { ok: false, error: { code, message, details: details || '', suggestedActions: suggested || [] } };
+}
+function applyAction(state, seat, action) {
+  // reject malformed input cleanly (untrusted over the wire) — never throw
+  if (!action || typeof action.type !== 'string') return invalid('BAD_ACTION', 'Malformed action.');
+  const legal = getLegalActions(state, seat);
+  if (!legal.some((o) => actionsEqual(o, action))) {
+    return invalid(...explainIllegal(state, seat, action));
+  }
+  const before = state.log.length;
+  switch (action.type) {
+    case 'ChooseMissingSuit': doChooseMissing(state, seat, action.suit); break;
+    case 'Discard': doDiscard(state, seat, action.tile); break;
+    case 'Pass': doReactionResponse(state, seat, action); break;
+    case 'ClaimPung': doReactionResponse(state, seat, action); break;
+    case 'ClaimKongFromDiscard': doReactionResponse(state, seat, action); break;
+    case 'DeclareWinFromDiscard': doReactionResponse(state, seat, action); break;
+    case 'RobKong': doRobResponse(state, seat, action); break;
+    case 'DeclareConcealedKong': doConcealedKong(state, seat, action.tile); break;
+    case 'DeclareAddedKong': doAddedKong(state, seat, action.tile); break;
+    case 'DeclareSelfDrawWin': doSelfDrawWin(state, seat); break;
+    default: return invalid('UNKNOWN_ACTION', 'Unknown action.');
+  }
+  return { ok: true, events: state.log.slice(before) };
+}
+
+/* ---- missing-suit selection (spec §3.3) ---- */
+function doChooseMissing(state, seat, suit) {
+  const p = state.players[seat];
+  p.missingSuit = suit;
+  logEvent(state, { type: 'MissingSuitChosen', seat, suit });
+  if (state.players.every((q) => q.missingSuit != null)) {
+    // begin play: dealer acts first with 14 tiles, no draw
+    state.phase = PHASE.ACTIVE_TURN;
+    state.active = state.dealer;
+    state.turnFlags = { needsDraw: false, drewFromKong: false, lastDrawn: null, firstTurn: true, afterPung: false, lastTileExhausted: false };
+  }
+}
+
+/* ---- begin a fresh turn for `seat`: draw (unless suppressed), maybe end ---- */
+function beginTurn(state, seat, { draw = true, fromKong = false, afterPung = false } = {}) {
+  // skip won players
+  let guard = 0;
+  while (state.players[seat].hasWon) {
+    seat = (seat + 1) % 4;
+    if (++guard > 4) { endHand(state, 'exhaustion'); return; }
+  }
+  state.active = seat;
+  state.turnFlags = { needsDraw: false, drewFromKong: fromKong, lastDrawn: null, firstTurn: false, afterPung, lastTileExhausted: false };
+  if (draw) {
+    if (wallRemaining(state) <= 0) { endHand(state, 'exhaustion'); return; }
+    const t = fromKong ? drawBack(state) : drawFront(state);
+    state.players[seat].concealed[t]++;
+    state.turnFlags.lastDrawn = t;
+    state.turnFlags.lastTileExhausted = wallRemaining(state) <= 0;
+    logEvent(state, { type: fromKong ? 'ReplacementTileDrawn' : 'TileDrawn', seat, tile: t });
+  }
+  state.phase = PHASE.ACTIVE_TURN;
+}
+
+/* next non-won seat after `from` (exclusive). returns -1 if none. */
+function nextActiveSeat(state, from) {
+  for (let k = 1; k <= 4; k++) {
+    const s = (from + k) % 4;
+    if (!state.players[s].hasWon) return s;
+  }
+  return -1;
+}
+const nonWonCount = (state) => state.players.filter((p) => !p.hasWon).length;
+
+/* ---- discard (spec §6.3) ---- */
+function commitDiscardToPile(state) {
+  // move the pending discard into the discarder's river (unclaimed); §19 keeps the
+  // pending slot and the pile as distinct terms, so the tile lives in exactly one.
+  const pd = state.pendingDiscard;
+  if (!pd) return;
+  state.players[pd.discarder].discards.push(pd.tile);
+  state.pendingDiscard = null;
+}
+function doDiscard(state, seat, tile) {
+  const p = state.players[seat];
+  p.concealed[tile]--;
+  const wasFirstDiscard = !state.firstDiscardDone;
+  const dealerFirstDiscard = wasFirstDiscard && seat === state.dealer;
+  state.firstDiscardDone = true;
+  state.turnFlags.afterPung = false;
+  const cameFromKongDiscard = state.turnFlags.drewFromKong; // 杠上炮 attribution
+  state.pendingDiscard = { tile, discarder: seat, dealerFirstDiscard, afterKong: cameFromKongDiscard, lastTile: wallRemaining(state) <= 0 };
+  logEvent(state, { type: 'TileDiscarded', seat, tile });
+
+  // who can react? (non-won, non-discarder with a real option)
+  const eligible = [];
+  for (let k = 1; k <= 3; k++) {
+    const s = (seat + k) % 4;
+    const q = state.players[s];
+    if (q.hasWon) continue;
+    const opts = reactionOptions(state, s, tile);
+    if (opts.win || opts.kong || opts.pung) eligible.push(s);
+  }
+  if (eligible.length === 0) { commitDiscardToPile(state); beginTurn(state, nextActiveSeat(state, seat)); return; }
+  state.phase = PHASE.DISCARD_REACT;
+  state.reactions = { tile, discarder: seat, eligible, responses: {} };
+}
+function reactionOptions(state, seat, tile) {
+  const p = state.players[seat];
+  const holdsMissing = missingCount(p) > 0;
+  const meldOk = (state.config.allowMeldsInMissingSuit || tileSuit(tile) !== p.missingSuit);
+  return {
+    win: !holdsMissing && tileSuit(tile) !== p.missingSuit && isWinningHand(p, state.config, tile),
+    kong: meldOk && p.concealed[tile] >= 3,
+    pung: meldOk && p.concealed[tile] >= 2,
+  };
+}
+
+/* ---- record a discard-reaction response; resolve when all responded ---- */
+function doReactionResponse(state, seat, action) {
+  state.reactions.responses[seat] = action;
+  if (action.type !== 'Pass') logEvent(state, { type: 'Reaction', seat, action: action.type });
+  const r = state.reactions;
+  if (r.eligible.every((s) => r.responses[s] != null)) resolveDiscardReactions(state);
+}
+function resolveDiscardReactions(state) {
+  const r = state.reactions;
+  const tile = r.tile, discarder = r.discarder;
+  const pd = state.pendingDiscard;
+  // 1) wins (possibly multiple) — highest priority
+  const winners = r.eligible.filter((s) => r.responses[s] && r.responses[s].type === 'DeclareWinFromDiscard');
+  if (winners.length) {
+    const ordered = state.config.allowMultipleWinnersOnDiscard ? winners : [nearestInOrder(discarder, winners)];
+    state.reactions = null;
+    commitDiscardToPile(state);   // the won tile stays visible in the river, counted once
+    // §12.1: first winner becomes next dealer; if multiple win the same discard, the discarder does
+    if (state.winnersThisHand.length === 0) state.firstDealerSeat = (ordered.length >= 2 ? discarder : ordered[0]);
+    for (const w of ordered) {
+      // The winning tile is scored VIRTUALLY (not added to concealed) so one physical
+      // tile can feed multiple winners without breaking conservation (spec §19, §10.1).
+      const ctx = { winType: 'DISCARD', winningTile: tile, source: discarder, lastTile: pd.lastTile, afterKong: pd.afterKong, isEarthly: pd.dealerFirstDiscard && w !== state.dealer };
+      resolveWin(state, w, ctx);
+    }
+    if (!checkHandEnd(state)) beginTurn(state, nextActiveSeat(state, discarder));
+    return;
+  }
+  // 2) kong (only one possible holder) — tile is consumed into the meld
+  const konger = r.eligible.find((s) => r.responses[s] && r.responses[s].type === 'ClaimKongFromDiscard');
+  if (konger != null) { state.reactions = null; state.pendingDiscard = null; claimKongFromDiscard(state, konger, tile, discarder); return; }
+  // 3) pung (only one possible holder) — tile is consumed into the meld
+  const punger = r.eligible.find((s) => r.responses[s] && r.responses[s].type === 'ClaimPung');
+  if (punger != null) { state.reactions = null; state.pendingDiscard = null; claimPung(state, punger, tile, discarder); return; }
+  // 4) all pass — tile joins the river
+  state.reactions = null;
+  commitDiscardToPile(state);
+  beginTurn(state, nextActiveSeat(state, discarder));
+}
+function nearestInOrder(from, list) {
+  for (let k = 1; k <= 3; k++) { const s = (from + k) % 4; if (list.includes(s)) return s; }
+  return list[0];
+}
+
+/* ---- claim pung (spec §6.5): take discard, expose, must discard ---- */
+function claimPung(state, seat, tile, discarder) {
+  const p = state.players[seat];
+  p.concealed[tile] -= 2;
+  p.melds.push({ type: PUNG, tile, source: discarder, concealed: false });
+  logEvent(state, { type: 'PungClaimed', seat, tile, source: discarder });
+  state.active = seat;
+  state.phase = PHASE.ACTIVE_TURN;
+  state.turnFlags = { needsDraw: false, drewFromKong: false, lastDrawn: null, firstTurn: false, afterPung: true, lastTileExhausted: false };
+}
+
+/* ---- exposed kong from discard (spec §6.6) ---- */
+function claimKongFromDiscard(state, seat, tile, discarder) {
+  const p = state.players[seat];
+  p.concealed[tile] -= 3;
+  p.melds.push({ type: KONG_EXPOSED_FROM_DISCARD, tile, source: discarder, concealed: false });
+  logEvent(state, { type: 'KongClaimedFromDiscard', seat, tile, source: discarder });
+  payKong(state, seat, KONG_EXPOSED_FROM_DISCARD, discarder);
+  beginTurn(state, seat, { draw: true, fromKong: true });   // replacement draw, may win/kong/discard
+}
+
+/* ---- concealed kong (spec §6.7) ---- */
+function doConcealedKong(state, seat, tile) {
+  const p = state.players[seat];
+  p.concealed[tile] -= 4;
+  p.melds.push({ type: KONG_CONCEALED, tile, source: null, concealed: true });
+  logEvent(state, { type: 'ConcealedKongDeclared', seat, tile });
+  payKong(state, seat, KONG_CONCEALED, null);
+  beginTurn(state, seat, { draw: true, fromKong: true });
+}
+
+/* ---- added kong (spec §6.8) with rob window (spec §6.9) ---- */
+function doAddedKong(state, seat, tile) {
+  // open rob-the-kong window
+  const eligible = [];
+  for (let k = 1; k <= 3; k++) {
+    const s = (seat + k) % 4;
+    const q = state.players[s];
+    if (q.hasWon) continue;
+    if (state.config.allowRobKong && tileSuit(tile) !== q.missingSuit && isWinningHand(q, state.config, tile)) eligible.push(s);
+  }
+  logEvent(state, { type: 'AddedKongDeclared', seat, tile });
+  if (eligible.length === 0) { finalizeAddedKong(state, seat, tile); return; }
+  state.phase = PHASE.ROB_REACT;
+  state.robReactions = { tile, declarer: seat, eligible, responses: {} };
+}
+function doRobResponse(state, seat, action) {
+  state.robReactions.responses[seat] = action;
+  const r = state.robReactions;
+  if (r.eligible.every((s) => r.responses[s] != null)) resolveRobReactions(state);
+}
+function resolveRobReactions(state) {
+  const r = state.robReactions;
+  const tile = r.tile, declarer = r.declarer;
+  const robbers = r.eligible.filter((s) => r.responses[s] && r.responses[s].type === 'RobKong');
+  if (robbers.length) {
+    const ordered = state.config.allowMultipleRobKongWinners ? robbers : [nearestInOrder(declarer, robbers)];
+    state.robReactions = null;
+    logEvent(state, { type: 'KongRobbed', declarer, tile });
+    // The kong tile is consumed by the rob (like a discard handed to the winner):
+    // remove it from the declarer's hand into their river so the declarer returns to
+    // 13 effective tiles and conservation holds. The pung is NOT upgraded (kong cancelled).
+    state.players[declarer].concealed[tile] -= 1;
+    state.players[declarer].discards.push(tile);
+    if (state.winnersThisHand.length === 0) state.firstDealerSeat = (ordered.length >= 2 ? declarer : ordered[0]);
+    for (const w of ordered) {
+      // winning tile scored virtually (it now lives in the declarer's river, counted once)
+      resolveWin(state, w, { winType: 'ROB_KONG', winningTile: tile, source: declarer, lastTile: false, afterKong: false });
+    }
+    if (!checkHandEnd(state)) beginTurn(state, nextActiveSeat(state, declarer));
+    return;
+  }
+  state.robReactions = null;
+  finalizeAddedKong(state, declarer, tile);
+}
+function finalizeAddedKong(state, seat, tile) {
+  const p = state.players[seat];
+  const m = p.melds.find((x) => x.type === PUNG && x.tile === tile);
+  m.type = KONG_ADDED;
+  p.concealed[tile] -= 1;
+  payKong(state, seat, KONG_ADDED, null);
+  beginTurn(state, seat, { draw: true, fromKong: true });
+}
+
+/* ---- self-draw win (spec §6.11) ---- */
+function doSelfDrawWin(state, seat) {
+  const pd = state.turnFlags;
+  const isHeavenly = state.turnFlags.firstTurn && seat === state.dealer && !state.firstDiscardDone;
+  const ctx = { winType: 'SELF_DRAW', winningTile: state.turnFlags.lastDrawn, source: null,
+    lastTile: state.turnFlags.lastTileExhausted, afterKong: pd.drewFromKong, isHeavenly };
+  if (state.winnersThisHand.length === 0) state.firstDealerSeat = seat;
+  resolveWin(state, seat, ctx);
+  if (!checkHandEnd(state)) beginTurn(state, nextActiveSeat(state, seat));
+}
+
+/* =====================================================================
+ * Win resolution & payments (spec §13)
+ * ===================================================================== */
+function resolveWin(state, seat, ctx) {
+  const p = state.players[seat];
+  const sc = score(state, seat, ctx);
+  p.hasWon = true;
+  p.winOrder = state.winnersThisHand.length;
+  const rec = { winner: seat, winType: ctx.winType, winningTile: ctx.winningTile, source: ctx.source,
+    fanAwards: sc.fanAwards, finalFan: sc.finalFan, points: sc.points, deltas: [0, 0, 0, 0] };
+  // payments
+  if (ctx.winType === 'SELF_DRAW') {
+    for (let s = 0; s < 4; s++) {
+      if (s === seat) continue;
+      const o = state.players[s];
+      if (state.config.wonPlayersExcludedFromFuturePayments && o.hasWon) continue;
+      o.score -= sc.points; p.score += sc.points;
+      rec.deltas[s] -= sc.points; rec.deltas[seat] += sc.points;
+    }
+  } else { // DISCARD or ROB_KONG — single payer
+    const payer = state.players[ctx.source];
+    payer.score -= sc.points; p.score += sc.points;
+    rec.deltas[ctx.source] -= sc.points; rec.deltas[seat] += sc.points;
+  }
+  p.winRecords.push(rec);
+  state.winnersThisHand.push(seat);
+  logEvent(state, { type: 'WinResolved', seat, winType: ctx.winType, points: sc.points, fan: sc.finalFan, fanAwards: sc.fanAwards.map((f) => f.name) });
+}
+
+/* immediate kong payments (spec §11.3) */
+function payKong(state, seat, kongType, discarder) {
+  const g = state.players[seat];
+  const cfg = state.config;
+  let amount, log;
+  if (kongType === KONG_EXPOSED_FROM_DISCARD) {
+    amount = cfg.kongExposedFromDiscard;
+    const d = state.players[discarder];
+    if (!(cfg.wonPlayersExcludedFromFuturePayments && d.hasWon)) { d.score -= amount; g.score += amount; }
+    log = 'exposed';
+  } else {
+    amount = (kongType === KONG_ADDED) ? cfg.kongAdded : cfg.kongConcealed;
+    for (let s = 0; s < 4; s++) {
+      if (s === seat) continue;
+      const o = state.players[s];
+      if (cfg.wonPlayersExcludedFromFuturePayments && o.hasWon) continue;
+      o.score -= amount; g.score += amount;
+    }
+    log = (kongType === KONG_ADDED) ? 'added' : 'concealed';
+  }
+  logEvent(state, { type: 'KongScored', seat, kongType: log, amount });
+}
+
+/* =====================================================================
+ * Scoring / fan detection (spec §14)
+ * ===================================================================== */
+function decomposeAllPungs(counts, groupsNeeded) {
+  // pair + only triplets (no chow). counts = concealed (winning size minus melds)
+  for (let p = 0; p < NUM_TYPES; p++) {
+    if (counts[p] >= 2) {
+      const cc = counts.slice(); cc[p] -= 2;
+      if (onlyTriplets(cc, groupsNeeded)) return true;
+    }
+  }
+  return false;
+}
+function onlyTriplets(c, groups) {
+  let i = 0; while (i < NUM_TYPES && c[i] === 0) i++;
+  if (i === NUM_TYPES) return groups === 0;
+  if (groups > 0 && c[i] >= 3) { c[i] -= 3; if (onlyTriplets(c, groups - 1)) { c[i] += 3; return true; } c[i] += 3; }
+  return false;
+}
+function score(state, seat, ctx) {
+  const cfg = state.config;
+  const p = state.players[seat];
+  // For SELF_DRAW the winning tile is already in concealed (drawn); for DISCARD /
+  // ROB_KONG it is added virtually here only (never persisted) — see §10.1.
+  const concealed = p.concealed.slice();
+  if (ctx.winType !== 'SELF_DRAW' && ctx.winningTile != null) concealed[ctx.winningTile]++;
+  const groupsNeeded = 4 - p.melds.length;
+  const fanAwards = [];
+  const add = (name, fan) => { if (fan > 0) fanAwards.push({ name, fan }); };
+
+  // suits across full hand
+  const suitsUsed = new Set();
+  for (let t = 0; t < NUM_TYPES; t++) if (concealed[t] > 0) suitsUsed.add(tileSuit(t));
+  for (const m of p.melds) suitsUsed.add(tileSuit(m.tile));
+
+  const sevenP = p.melds.length === 0 && cfg.allowSevenPairs && isSevenPairs(concealed, cfg);
+
+  fanAwards.push({ name: 'Base Win', fan: 0 });   // 平胡 — always shown, contributes 0
+  if (ctx.winType === 'SELF_DRAW') add('Self-Draw', cfg.selfDrawBonusFan);
+  if (sevenP) {
+    add('Seven Pairs', cfg.sevenPairsFan);
+    // a quad in a seven-pairs hand is credited here as Luxury Seven Pairs (龙七对);
+    // it is NOT also counted as a Root below, which would double-credit the same tiles.
+    let quads = 0; for (let t = 0; t < NUM_TYPES; t++) if (concealed[t] === 4) quads++;
+    if (quads >= 1) add('Luxury Seven Pairs', cfg.luxurySevenPairsExtraFanPerQuad * quads);
+  } else {
+    // Sichuan has no chow melds, so every meld is already a pung/kong by construction
+    if (decomposeAllPungs(concealed, groupsNeeded)) add('All Pungs', cfg.allPungsFan);
+    // Root (根): four identical tiles in the hand (a kong, or 4 concealed) — standard hands only
+    let roots = 0;
+    for (let t = 0; t < NUM_TYPES; t++) {
+      let phys = concealed[t];
+      for (const m of p.melds) if (m.tile === t) phys += meldPhysical(m);
+      if (phys === 4) roots++;
+    }
+    if (roots > 0) add('Root', cfg.rootFan * roots);
+  }
+  if (suitsUsed.size === 1) add('Pure One Suit', cfg.pureOneSuitFan);
+
+  if (ctx.afterKong && ctx.winType === 'SELF_DRAW') add('Kong Bloom', cfg.kongBloomBonusFan);
+  if (ctx.winType === 'ROB_KONG') add('Robbing a Kong', cfg.robKongBonusFan);
+  if (ctx.lastTile) add(ctx.winType === 'SELF_DRAW' ? 'Last Tile Draw' : 'Last Discard Win', cfg.lastTileFan);
+  if (ctx.isHeavenly) add('Heavenly Hand', cfg.heavenlyEarthlyFan);
+  if (ctx.isEarthly) add('Earthly Hand', cfg.heavenlyEarthlyFan);
+
+  let fan = fanAwards.reduce((s, f) => s + f.fan, 0);
+  if (cfg.fanLimit != null) fan = Math.min(fan, cfg.fanLimit);
+  const points = cfg.baseWinPoints * Math.pow(2, fan);
+  return { fanAwards, finalFan: fan, points };
+}
+
+/* =====================================================================
+ * End of hand (spec §9, §12)
+ * ===================================================================== */
+function checkHandEnd(state) {
+  if (state.config.mode === 'single' && state.winnersThisHand.length >= 1) { endHand(state, 'win'); return true; }
+  if (nonWonCount(state) <= 1) { endHand(state, 'win'); return true; }
+  return false;
+}
+function endHand(state, reason) {
+  if (state.phase === PHASE.HAND_ENDED) return;
+  state.phase = PHASE.HAND_ENDED;
+  state.ended = true; state.endReason = reason;
+  state.pendingDiscard = null; state.reactions = null; state.robReactions = null;
+
+  if (reason === 'exhaustion' && state.config.enableMissingSuitPenaltyAtExhaustion) {
+    // 查花猪: players still holding missing suit pay each cleared / won player (spec §8.3)
+    const pen = state.config.missingSuitPenalty;
+    const holders = state.players.filter((p) => !p.hasWon && missingCount(p) > 0);
+    for (const h of holders) {
+      for (let s = 0; s < 4; s++) {
+        const o = state.players[s];
+        if (o === h) continue;
+        if (!h.hasWon && (o.hasWon || missingCount(o) === 0)) { h.score -= pen; o.score += pen; }
+      }
+      logEvent(state, { type: 'EndPenaltyApplied', seat: h.seat, kind: 'missingSuit' });
+    }
+  }
+  // next dealer (spec §12.1): the first winner (or discarder if the first win was a
+  // simultaneous multi-winner discard, tracked in firstDealerSeat); else dealer repeats
+  state.nextDealer = (state.firstDealerSeat != null) ? state.firstDealerSeat : state.dealer;
+  state.seatScores = state.players.map((p) => p.score);
+  logEvent(state, { type: 'HandEnded', reason, winners: state.winnersThisHand.slice() });
+}
+
+/* =====================================================================
+ * Tile conservation invariant (spec §19)
+ * ===================================================================== */
+function validateConservation(state) {
+  const total = emptyCounts();
+  for (let i = state.wallHead; i < state.wallTail; i++) total[state.wall[i]]++;
+  for (const p of state.players) {
+    for (let t = 0; t < NUM_TYPES; t++) total[t] += p.concealed[t];
+    for (const m of p.melds) total[m.tile] += meldPhysical(m);
+    for (const d of p.discards) total[d]++;
+  }
+  if (state.pendingDiscard) total[state.pendingDiscard.tile]++;
+  let sum = 0;
+  for (let t = 0; t < NUM_TYPES; t++) { sum += total[t]; if (total[t] !== 4) return { ok: false, tile: t, count: total[t] }; }
+  return { ok: sum === 108, sum };
+}
+
+/* =====================================================================
+ * Redaction — per-seat view for rendering (hides others' concealed tiles)
+ * ===================================================================== */
+function viewFor(state, seat, opts = {}) {
+  const me = state.players[seat];
+  const myActions = getLegalActions(state, seat);
+  const ready = (state.phase !== PHASE.HAND_ENDED) ? getWinningTiles(me, state.config, state) : [];
+  const deciders = pendingDeciders(state);
+  const view = {
+    phase: state.phase,
+    handNo: state.handNo,
+    mode: state.config.mode,
+    wallRemaining: wallRemaining(state),
+    dealer: state.dealer,
+    active: state.active,
+    mySeat: seat,
+    deciders,
+    pendingDiscard: state.pendingDiscard ? { tile: state.pendingDiscard.tile, by: state.pendingDiscard.discarder } : null,
+    lastDrawn: (seat === state.active && state.phase === PHASE.ACTIVE_TURN) ? state.turnFlags.lastDrawn : null,
+    winnersThisHand: state.winnersThisHand.slice(),
+    me: {
+      seat,
+      concealed: me.concealed.slice(),
+      melds: me.melds.map((m) => ({ ...m })),
+      missingSuit: me.missingSuit,
+      discards: me.discards.slice(),
+      hasWon: me.hasWon,
+      winOrder: me.winOrder,
+      score: me.score,
+      legalActions: myActions,
+      ready,
+    },
+    players: state.players.map((p) => ({
+      seat: p.seat,
+      name: p.name,
+      isBot: p.isBot,
+      connected: p.connected,
+      missingSuit: p.missingSuit,             // public after selection (default)
+      // an opponent's concealed kong (暗杠) stays hidden until the hand ends — never
+      // leak its tile to other seats (this is a hidden-info game)
+      melds: p.melds.map((m) =>
+        (m.type === KONG_CONCEALED && p.seat !== seat && state.phase !== PHASE.HAND_ENDED)
+          ? { type: m.type, tile: -1, hidden: true }
+          : { ...m }),
+      discards: p.discards.slice(),
+      handCount: countTotal(p.concealed),
+      hasWon: p.hasWon,
+      winOrder: p.winOrder,
+      score: p.score,
+      isDealer: p.isDealer,
+      isActive: p.seat === state.active && state.phase === PHASE.ACTIVE_TURN,
+      mustDecide: deciders.includes(p.seat),
+    })),
+  };
+  if (state.phase === PHASE.HAND_ENDED) {
+    view.results = {
+      reason: state.endReason,
+      winners: state.winnersThisHand.slice(),
+      records: state.players.flatMap((p) => p.winRecords),
+      scores: state.players.map((p) => p.score),
+      nextDealer: state.nextDealer,
+    };
+  }
+  return view;
+}
+
+/* =====================================================================
+ * Invalid-move explanations (spec §20)
+ * ===================================================================== */
+function explainIllegal(state, seat, action) {
+  const p = state.players[seat];
+  if (p.hasWon) return ['PLAYER_ALREADY_WON', 'You have already won this hand. In Bloody Battle, the remaining players continue without you.'];
+  if (state.phase === PHASE.ACTIVE_TURN && seat !== state.active)
+    return ['NOT_YOUR_TURN', 'You cannot do that because it is not your turn.'];
+  if (action.type === 'ClaimPung')
+    return ['PUNG_REQUIRES_TWO_IN_HAND', 'You need two matching tiles in your hand to claim a pung.'];
+  if (action.type === 'ClaimKongFromDiscard')
+    return ['KONG_REQUIRES_THREE_IN_HAND', 'You need three matching tiles in your hand to claim a kong from a discard.'];
+  if (action.type === 'DeclareWinFromDiscard' || action.type === 'DeclareSelfDrawWin' || action.type === 'RobKong') {
+    if (missingCount(p) > 0) {
+      const ms = SUIT_NAME[p.missingSuit];
+      return ['WIN_CONTAINS_MISSING_SUIT', 'You cannot win while holding tiles from your missing suit.', `Your missing suit is ${ms}.`, ['Discard your missing-suit tiles first.']];
+    }
+    return ['HAND_NOT_COMPLETE', 'This is not a legal winning hand.', 'A winning hand needs four groups and one pair (or seven pairs).'];
+  }
+  if (action.type === 'Discard' && state.config.mustDiscardMissingSuitFirst && missingCount(p) > 0)
+    return ['MUST_DISCARD_MISSING_SUIT', 'You still have tiles from your missing suit. You must discard those before discarding other suits.'];
+  return ['ILLEGAL_ACTION', 'That move is not available right now.'];
+}
+
+/* =====================================================================
+ * BOT decision logic (driver-side; reads only public info + own hand)
+ * Follows the addendum priority: win > mandatory > kong > meld > discard.
+ * ===================================================================== */
+function botChooseMissingSuit(player) {
+  const cnt = [0, 0, 0];
+  for (let t = 0; t < NUM_TYPES; t++) cnt[tileSuit(t)] += player.concealed[t];
+  let best = 0, bestScore = Infinity;
+  for (let s = 0; s < 3; s++) {
+    let conn = 0;
+    for (let r = 0; r < 9; r++) {
+      const t = s * 9 + r, v = player.concealed[t];
+      if (v && r < 8) conn += Math.min(v, player.concealed[t + 1]);
+      if (v >= 2) conn += 1;
+    }
+    const sc = cnt[s] * 10 + conn;
+    if (sc < bestScore) { bestScore = sc; best = s; }
+  }
+  return best;
+}
+
+/* shanten estimate (standard + seven pairs), ignoring missing-suit dead tiles */
+function shantenOf(player) {
+  const c = player.concealed.slice();
+  if (player.missingSuit != null) for (let r = 0; r < 9; r++) c[player.missingSuit * 9 + r] = 0;
+  let st = stdShanten(c, player.melds.length);
+  if (player.melds.length === 0) st = Math.min(st, sevenPairsShanten(c));
+  return st;
+}
+function sevenPairsShanten(c) {
+  let pairs = 0, kinds = 0;
+  for (let t = 0; t < NUM_TYPES; t++) { if (c[t] > 0) kinds++; if (c[t] >= 2) pairs++; }
+  let sh = 6 - pairs; if (kinds < 7) sh += 7 - kinds; return sh;
+}
+function stdShanten(c0, openMelds) {
+  let best = 8; const c = c0.slice();
+  function rec(i, melds, partials, pairUsed) {
+    while (i < NUM_TYPES && c[i] === 0) i++;
+    if (i === NUM_TYPES) {
+      let m = melds + openMelds, part = partials;
+      if (m + part > 4) part = 4 - m;
+      const sh = (4 - m) * 2 - part - (pairUsed ? 1 : 0);
+      if (sh < best) best = sh; return;
+    }
+    if (c[i] >= 3) { c[i] -= 3; rec(i, melds + 1, partials, pairUsed); c[i] += 3; }
+    if (i % 9 <= 6 && c[i + 1] > 0 && c[i + 2] > 0) { c[i]--; c[i + 1]--; c[i + 2]--; rec(i, melds + 1, partials, pairUsed); c[i]++; c[i + 1]++; c[i + 2]++; }
+    if (!pairUsed && c[i] >= 2) { c[i] -= 2; rec(i, melds, partials, true); c[i] += 2; }
+    if (c[i] >= 2) { c[i] -= 2; rec(i, melds, partials + 1, pairUsed); c[i] += 2; }
+    if (i % 9 <= 7 && c[i + 1] > 0) { c[i]--; c[i + 1]--; rec(i, melds, partials + 1, pairUsed); c[i]++; c[i + 1]++; }
+    if (i % 9 <= 6 && c[i + 2] > 0) { c[i]--; c[i + 2]--; rec(i, melds, partials + 1, pairUsed); c[i]++; c[i + 2]++; }
+    c[i]--; rec(i, melds, partials, pairUsed); c[i]++;
+  }
+  rec(0, 0, 0, false);
+  return best;
+}
+function ukeireOf(state, player) {
+  const base = shantenOf(player);
+  let total = 0;
+  for (let t = 0; t < NUM_TYPES; t++) {
+    if (tileSuit(t) === player.missingSuit) continue;
+    if (player.concealed[t] >= 4) continue;
+    const rem = remainingOf(state, t, player.seat);
+    if (rem <= 0) continue;
+    player.concealed[t]++; const sh = shantenOf(player); player.concealed[t]--;
+    if (sh < base) total += rem;
+  }
+  return total;
+}
+function opponentDanger(state, seat) {
+  let worst = 0;
+  for (let s = 0; s < 4; s++) {
+    if (s === seat) continue;
+    const o = state.players[s];
+    if (o.hasWon) continue;
+    // PUBLIC signals only — never inspect an opponent's concealed hand. We infer
+    // "has cleared their missing suit" from their discard river: they discarded
+    // missing-suit tiles earlier and their recent discards are no longer that suit.
+    const dumpedMissing = o.missingSuit != null && o.discards.some((t) => tileSuit(t) === o.missingSuit);
+    const recentOffMissing = o.discards.slice(-2).every((t) => o.missingSuit == null || tileSuit(t) !== o.missingSuit);
+    const voidedLikely = dumpedMissing && recentOffMissing && o.discards.length >= 3;
+    const d = o.melds.length * 0.2 + (voidedLikely ? 0.15 : 0) + Math.min(o.discards.length, 12) * 0.02;
+    worst = Math.max(worst, Math.min(1, d));
+  }
+  return worst;
+}
+function discardPreference(player, t) {
+  const r = tileRank(t), c = player.concealed;
+  let s = 0;
+  const l2 = r > 2 ? c[t - 2] : 0, l1 = r > 1 ? c[t - 1] : 0, r1 = r < 9 ? c[t + 1] : 0, r2 = r < 8 ? c[t + 2] : 0;
+  const nb = l2 + l1 + r1 + r2;
+  if (nb === 0 && c[t] === 1) s += 30;
+  if ((r === 1 || r === 9) && c[t] === 1) s += 10;
+  if (c[t] >= 2) s -= 25;
+  if (l1 && r1) s -= 18;
+  if (l1 || r1) s -= 6;
+  s -= Math.abs(r - 5);
+  return s;
+}
+function botChooseDiscard(state, seat, candidates, difficulty) {
+  const p = state.players[seat];
+  const miss = candidates.filter((t) => tileSuit(t) === p.missingSuit);
+  if (miss.length) {
+    // forced clear: these tiles are all leaving regardless, and their within-suit
+    // connectivity (which shanten zeroes out anyway) is a meaningless tiebreaker.
+    // Hard bots dump the safest one; others just take the lowest deterministically.
+    if (difficulty === 'hard') {
+      let best = miss[0], bd = Infinity;
+      for (const t of miss) { const d = tileDanger(state, seat, t); if (d < bd) { bd = d; best = t; } }
+      return best;
+    }
+    return miss[0];
+  }
+  if (difficulty === 'easy' && rngNext(state) < 0.35) return candidates[rngInt(state, candidates.length)];
+  const danger = difficulty === 'hard' ? opponentDanger(state, seat) : 0;   // constant across candidates — hoisted
+  let best = candidates[0], bestScore = -Infinity;
+  for (const t of candidates) {
+    p.concealed[t]--;
+    const sh = shantenOf(p);
+    const accept = (difficulty !== 'easy') ? ukeireOf(state, p) : 0;
+    p.concealed[t]++;
+    let sc = -sh * 1000 + accept * 4 + discardPreference(p, t);
+    if (difficulty === 'hard') sc -= tileDanger(state, seat, t) * 60 * danger;
+    if (sc > bestScore) { bestScore = sc; best = t; }
+  }
+  return best;
+}
+function tileDanger(state, seat, t) {
+  // a tile never seen in any river is more likely to be a live wait — count it ONCE
+  let seenRivers = 0;
+  for (const q of state.players) for (const d of q.discards) if (d === t) seenRivers++;
+  let danger = (seenRivers === 0 ? 0.5 : 0.1);
+  for (let s = 0; s < 4; s++) {
+    if (s === seat) continue;
+    const o = state.players[s];
+    if (o.hasWon) continue;
+    if (o.missingSuit != null && tileSuit(t) === o.missingSuit) danger -= 0.4;  // safe vs that opponent
+  }
+  return Math.max(0, danger);
+}
+function botChooseAction(state, seat, difficulty) {
+  difficulty = difficulty || state.players[seat].difficulty || 'normal';
+  const acts = getLegalActions(state, seat);
+  if (!acts.length) return null;
+  const p = state.players[seat];
+
+  // missing-suit selection
+  const choose = acts.filter((a) => a.type === 'ChooseMissingSuit');
+  if (choose.length) return { type: 'ChooseMissingSuit', suit: botChooseMissingSuit(p) };
+
+  // 1. winning move
+  const win = acts.find((a) => a.type === 'DeclareSelfDrawWin' || a.type === 'DeclareWinFromDiscard' || a.type === 'RobKong');
+  if (win) return win;
+
+  // reaction window (no win): consider pung/kong, else pass
+  if (state.phase === PHASE.DISCARD_REACT) {
+    const pung = acts.find((a) => a.type === 'ClaimPung');
+    const kong = acts.find((a) => a.type === 'ClaimKongFromDiscard');
+    const m = botChooseMeld(state, seat, pung, kong, difficulty);
+    return m || acts.find((a) => a.type === 'Pass');
+  }
+  if (state.phase === PHASE.ROB_REACT) return acts.find((a) => a.type === 'Pass');
+
+  // 3. kong decisions on own turn
+  const kongs = acts.filter((a) => a.type === 'DeclareConcealedKong' || a.type === 'DeclareAddedKong');
+  if (kongs.length) {
+    const g = botChooseKong(state, seat, kongs, difficulty);
+    if (g) return g;
+  }
+  // 5. best discard
+  const discards = acts.filter((a) => a.type === 'Discard').map((a) => a.tile);
+  if (discards.length) return { type: 'Discard', tile: botChooseDiscard(state, seat, discards, difficulty) };
+  return acts[0];
+}
+function botChooseKong(state, seat, kongs, difficulty) {
+  const p = state.players[seat];
+  if (difficulty === 'easy') return rngNext(state) < 0.7 ? kongs[0] : null;
+  const before = shantenOf(p);
+  for (const g of kongs) {
+    const snap = p.concealed.slice();
+    if (g.type === 'DeclareConcealedKong') p.concealed[g.tile] -= 4; else p.concealed[g.tile] -= 1;
+    const after = shantenOf(p);
+    p.concealed = snap;
+    if (after <= before) return g;
+  }
+  if (difficulty === 'hard') return kongs.find((g) => g.type === 'DeclareConcealedKong') || null;
+  return null;
+}
+function botChooseMeld(state, seat, pung, kong, difficulty) {
+  const p = state.players[seat];
+  if (!pung && !kong) return null;
+  const tile = (pung || kong).tile;
+  if (tileSuit(tile) === p.missingSuit) return null;
+  if (difficulty === 'easy') { if (rngNext(state) < 0.45) return null; return pung || kong; }
+  const before = shantenOf(p);
+  // simulate removing `remove` copies into a meld; return resulting shanten + tenpai
+  const evalClaim = (remove) => {
+    const snap = p.concealed.slice(), msnap = p.melds.map((m) => ({ ...m }));
+    p.concealed[tile] -= remove; p.melds.push({ type: remove === 2 ? PUNG : KONG_EXPOSED_FROM_DISCARD, tile });
+    const after = shantenOf(p), ready = isReady(p, state.config);
+    p.concealed = snap; p.melds = msnap;
+    return { after, ready };
+  };
+  // primary claim decision uses the pung (keeps a spare); fall back to kong if no pung
+  const primary = pung ? evalClaim(2) : evalClaim(3);
+  const claimGood = primary.after < before || primary.ready;
+  if (!claimGood) {
+    if (difficulty === 'hard') return null;
+    return primary.after <= before && rngNext(state) < 0.25 ? (pung || kong) : null;
+  }
+  if (difficulty === 'hard' && primary.after >= before && opponentDanger(state, seat) > 0.6) return null;
+  // both offered (3 in hand): take the kong for its replacement draw when the spare
+  // tile the pung would keep isn't improving the hand anyway.
+  if (pung && kong && evalClaim(3).after <= primary.after) return kong;
+  return pung || kong;
+}
+
+// ==CORE-END==
+/* CORE-INLINE-END */
+
+/* =====================================================================
+ * CLIENT — rendering + connection seam (Local / Online share one renderer)
+ * ===================================================================== */
+const $ = (id) => document.getElementById(id);
+const overlay = $('overlay');
+
+/* suit display: core order DOT=0(筒,blue) BAMBOO=1(条,green) CHARACTER=2(萬,red) */
+const SUIT_CSS = ['p', 's', 'm'];
+const SUIT_TINT = ['#8ec5ff', '#7be39a', '#ff8a8a'];
+
+function tileHTML(tile, cls = '') {
+  const s = tileSuit(tile), r = tileRank(tile);
+  return `<div class="tile ${SUIT_CSS[s]} ${cls}"><span class="num">${r}</span><span class="glyph">${SUIT_GLYPH[s]}</span></div>`;
+}
+const backHTML = (cls = '') => `<div class="tile back ${cls}"></div>`;
+function meldHTML(m) {
+  // an opponent's concealed kong is redacted (tile hidden) — show four backs
+  if (m.hidden || m.tile == null || m.tile < 0) return `<div class="meld">${'<div class="tile back"></div>'.repeat(4)}</div>`;
+  const n = m.type === PUNG ? 3 : 4;
+  let t = '';
+  for (let i = 0; i < n; i++) {
+    const concealed = (m.type === KONG_CONCEALED && (i === 0 || i === 3));
+    t += concealed ? `<div class="tile back concealed"></div>` : tileHTML(m.tile);
+  }
+  return `<div class="meld">${t}</div>`;
+}
+function escapeHtml(s) { return String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c])); }
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+/* ---- module-level render state ---- */
+let curView = null;          // last view received
+let conn = null;             // active connection
+let pendingReveal = null;    // {seat,name} gate not yet acknowledged
+let online = false;
+
+/* =====================================================================
+ * RENDER — pure function of a `view` (+ transient meta)
+ * ===================================================================== */
+function onUpdate(view, meta = {}) {
+  curView = view;
+  if (meta.reveal) pendingReveal = meta.reveal;
+  if (meta.toasts) for (const t of meta.toasts) toast(t.msg, t.ms || 950);
+  if (meta.conn) updateConnPill(meta.conn);
+  if (view.phase === 'HAND_ENDED') { render(); showResults(view); return; }
+  render();
+  if (pendingReveal) showRevealGate(pendingReveal);
+}
+
+function render() {
+  const view = curView; if (!view) return;
+  $('round-info').textContent =
+    `Wall ${view.wallRemaining} · ${view.mode === 'bloody' ? '血战' : 'Single'} · Won ${view.winnersThisHand.length}${view.mode === 'bloody' ? '/3' : ''}`;
+  const v = view.mySeat;
+  for (let rel = 0; rel < 4; rel++) renderSeat(view, (v + rel) % 4, rel);
+  renderCenter(view);
+  renderHandArea(view);
+}
+
+function renderSeat(view, seat, rel) {
+  const p = view.players[seat];
+  const el = $('seat-' + rel);
+  if (!el) return;
+  const tint = p.missingSuit != null ? `<span class="miss" style="color:${SUIT_TINT[p.missingSuit]}">缺${SUIT_GLYPH[p.missingSuit]}</span>` : '';
+  const thinking = (p.mustDecide && p.isBot && !p.hasWon) ? '<span class="thinking">thinking…</span>' : '';
+  const won = p.hasWon ? `<span class="won">胡#${(p.winOrder ?? 0) + 1}</span>` : '';
+  const dealer = p.isDealer ? '<span class="dealer-mark">庄</span>' : '';
+  const offline = (p.connected === false) ? 'off' : '';
+  const plate = `<div class="nameplate ${p.isActive ? 'active' : ''} ${p.isBot ? 'bot' : 'human'} ${offline}">
+      <span class="dot"></span>${dealer}<span>${escapeHtml(p.name)}</span>${tint}${won}
+      <span class="sc">${p.score >= 0 ? '+' : ''}${p.score}</span>${thinking}</div>`;
+  const melds = p.melds.length ? `<div class="melds">${p.melds.map(meldHTML).join('')}</div>` : '';
+  const river = `<div class="river">${p.discards.map((t, i) => tileHTML(t, i === p.discards.length - 1 ? 'last' : '')).join('')}</div>`;
+
+  if (rel === 0) { el.innerHTML = plate + melds + river; return; }
+  let backs = '';
+  for (let i = 0; i < p.handCount; i++) backs += backHTML();
+  backs = `<div class="backs">${backs}</div>`;
+  el.innerHTML = (rel === 2) ? plate + melds + backs + river : plate + backs + melds + river;
+}
+
+function renderCenter(view) {
+  const c = $('center');
+  let inner = `<div class="wall-info">剩 ${view.wallRemaining} tiles</div>`;
+  if (view.pendingDiscard) {
+    inner += `<div class="last-played"><span class="lbl">${escapeHtml(view.players[view.pendingDiscard.by].name)} discarded</span>${tileHTML(view.pendingDiscard.tile)}</div>`;
+  }
+  c.innerHTML = inner;
+}
+
+function renderHandArea(view) {
+  const area = $('handarea');
+  const me = view.me;
+  const acts = me.legalActions || [];
+
+  // Hot-seat privacy: while a reveal gate is pending, NEVER paint the incoming
+  // player's real tiles into the DOM (the gate backdrop alone isn't fully opaque).
+  if (pendingReveal) {
+    let backs = '';
+    for (let i = 0; i < (me.concealed ? me.concealed.reduce((s, n) => s + n, 0) : 13); i++) backs += backHTML();
+    area.innerHTML = `<div class="ready-banner"></div><div class="hand-row">${backs}</div><div class="actions"></div>`;
+    return;
+  }
+
+  // missing-suit chooser
+  if (acts.some((a) => a.type === 'ChooseMissingSuit')) { area.innerHTML = dingQueHTML(view); wireDingque(); return; }
+
+  // build hand tiles, pulling the freshly drawn tile to the end
+  const tiles = [];
+  for (let t = 0; t < NUM_TYPES; t++) for (let i = 0; i < me.concealed[t]; i++) tiles.push(t);
+  let drawn = null;
+  if (view.lastDrawn != null && me.concealed[view.lastDrawn] > 0) { const i = tiles.lastIndexOf(view.lastDrawn); if (i >= 0) { tiles.splice(i, 1); drawn = view.lastDrawn; } }
+
+  const discardable = new Set(acts.filter((a) => a.type === 'Discard').map((a) => a.tile));
+  const canDiscard = discardable.size > 0;
+  const readySet = new Set(me.ready || []);
+
+  let html = '';
+  if (me.ready && me.ready.length && !me.hasWon) {
+    html += `<div class="ready-banner">🀄 Ready — win on ${me.ready.map((t) => tileRank(t) + SUIT_GLYPH[tileSuit(t)]).join(' ')}</div>`;
+  } else html += `<div class="ready-banner"></div>`;
+  html += '<div class="hand-row">';
+  const tileCls = (t) => `${SUIT_CSS[tileSuit(t)]} ${canDiscard ? (discardable.has(t) ? 'playable' : 'dim') : ''} ${readySet.has(t) ? 'win-hint' : ''}`;
+  for (const t of tiles) html += `<div class="tile ${tileCls(t)}" data-k="${t}"><span class="num">${tileRank(t)}</span><span class="glyph">${SUIT_GLYPH[tileSuit(t)]}</span></div>`;
+  if (drawn != null) html += `<div class="tile ${tileCls(drawn)} drawn" data-k="${drawn}"><span class="num">${tileRank(drawn)}</span><span class="glyph">${SUIT_GLYPH[tileSuit(drawn)]}</span></div>`;
+  html += '</div><div class="actions" id="actions"></div>';
+  area.innerHTML = html;
+
+  if (canDiscard) area.querySelectorAll('.tile.playable').forEach((el) => el.addEventListener('click', () => submit({ type: 'Discard', tile: +el.dataset.k })));
+  renderActions(view);
+}
+
+function renderActions(view) {
+  const ab = $('actions'); if (!ab) return;
+  const me = view.me, acts = me.legalActions || [];
+  // Only the human(s) who must decide see buttons; spectators see waiting text.
+  if (!acts.length) {
+    const active = view.players[view.active];
+    ab.innerHTML = me.hasWon ? `<span class="hint">You won — watching the rest of the hand.</span>`
+      : `<span class="hint">Waiting for ${escapeHtml(active ? active.name : '…')}…</span>`;
+    return;
+  }
+  let html = '';
+  const win = acts.find((a) => a.type === 'DeclareSelfDrawWin' || a.type === 'DeclareWinFromDiscard' || a.type === 'RobKong');
+  if (win) html += `<button class="b-hu" data-i="${acts.indexOf(win)}">胡 HU</button>`;
+  acts.forEach((a, i) => {
+    if (a.type === 'DeclareConcealedKong') html += `<button class="b-gang" data-i="${i}">暗杠 ${tileRank(a.tile)}${SUIT_GLYPH[tileSuit(a.tile)]}</button>`;
+    if (a.type === 'DeclareAddedKong') html += `<button class="b-gang" data-i="${i}">补杠 ${tileRank(a.tile)}${SUIT_GLYPH[tileSuit(a.tile)]}</button>`;
+    if (a.type === 'ClaimKongFromDiscard') html += `<button class="b-gang" data-i="${i}">杠 GANG</button>`;
+    if (a.type === 'ClaimPung') html += `<button class="b-peng" data-i="${i}">碰 PENG</button>`;
+  });
+  const pass = acts.find((a) => a.type === 'Pass');
+  if (pass) html += `<button class="b-pass" data-i="${acts.indexOf(pass)}">Pass</button>`;
+  if (acts.some((a) => a.type === 'Discard') && !win && !acts.some((a) => a.type === 'ClaimPung' || a.type === 'ClaimKongFromDiscard')) {
+    const holdsMissing = missingCount({ concealed: me.concealed, missingSuit: me.missingSuit }) > 0;
+    html += `<span class="hint">Tap a tile to discard${holdsMissing ? ' (clear 缺 suit)' : ''}</span>`;
+  }
+  ab.innerHTML = html;
+  ab.querySelectorAll('button[data-i]').forEach((b) => b.addEventListener('click', () => submit(acts[+b.dataset.i])));
+}
+
+/* ---- ding que ---- */
+function dingQueHTML(view) {
+  const me = view.me;
+  const cnt = [0, 0, 0];
+  for (let t = 0; t < NUM_TYPES; t++) cnt[tileSuit(t)] += me.concealed[t];
+  const rec = botChooseMissingSuit({ concealed: me.concealed });
+  const tiles = [];
+  for (let t = 0; t < NUM_TYPES; t++) for (let i = 0; i < me.concealed[t]; i++) tiles.push(t);
+  let hand = '<div class="hand-row" style="margin-bottom:6px">' + tiles.map((t) => tileHTML(t)).join('') + '</div>';
+  let opts = '<div class="opts">';
+  for (let s = 0; s < 3; s++) {
+    opts += `<button class="${s === rec ? 'rec' : ''}" data-suit="${s}">
+      <span class="big" style="color:${SUIT_TINT[s]}">${SUIT_GLYPH[s]}</span>
+      <span class="ct">${cnt[s]} tiles</span>${s === rec ? '<span class="tag">suggested</span>' : ''}</button>`;
+  }
+  opts += '</div>';
+  return `<div class="ready-banner"></div>` + hand + `<div class="dingque"><div class="q">定缺 — choose the suit you will <b>not</b> use</div>${opts}</div>`;
+}
+function wireDingque() {
+  document.querySelectorAll('#handarea .dingque .opts button').forEach((b) =>
+    b.addEventListener('click', () => submit({ type: 'ChooseMissingSuit', suit: +b.dataset.suit })));
+}
+
+/* ---- submit routes the chosen action to the active connection ---- */
+function submit(action) { if (conn) conn.submit(action); }
+
+/* ---- reveal gate (hot-seat privacy) ---- */
+function showRevealGate(reveal) {
+  overlay.style.display = 'flex';
+  overlay.style.background = '#063d26';   // opaque — fully hide the board behind the gate
+  overlay.innerHTML = `<div class="modal reveal-gate" id="rg"><div class="big">🀄️</div>
+    <h2>${escapeHtml(reveal.name)}</h2>
+    <p>Pass the device. Tap when ready — keep your tiles hidden from the others.</p>
+    <button class="btn">I'm ready</button></div>`;
+  $('rg').querySelector('.btn').addEventListener('click', () => {
+    pendingReveal = null; overlay.style.display = 'none'; overlay.innerHTML = ''; overlay.style.background = ''; render();
+  });
+}
+
+/* ---- toasts ---- */
+let toastTimer = null;
+function toast(msg, ms = 950) {
+  const t = $('toast'); t.textContent = msg; t.classList.add('show');
+  clearTimeout(toastTimer); toastTimer = setTimeout(() => t.classList.remove('show'), ms);
+}
+function updateConnPill(c) {
+  const el = $('conpill'); el.style.display = 'inline-block';
+  el.textContent = c.text; el.className = 'conpill ' + (c.state || '');
+}
+
+/* ---- results / scoreboard ---- */
+const FAN_CN = { 'Base Win': '平胡', 'Self-Draw': '自摸', 'All Pungs': '碰碰胡', 'Pure One Suit': '清一色',
+  'Seven Pairs': '七对', 'Luxury Seven Pairs': '龙七对', 'Root': '根', 'Kong Bloom': '杠上花',
+  'Robbing a Kong': '抢杠', 'Last Tile Draw': '海底捞月', 'Last Discard Win': '海底炮',
+  'Heavenly Hand': '天胡', 'Earthly Hand': '地胡' };
+function showResults(view) {
+  const res = view.results;
+  const ranked = view.players.slice().sort((a, b) => b.score - a.score);
+  let rows = '';
+  for (const p of ranked) {
+    const rec = res.records.find((r) => r.winner === p.seat);
+    const hand = rec ? `<small>${rec.fanAwards.map((f) => FAN_CN[f.name] || f.name).join(' ')} (${rec.finalFan}番)</small>`
+      : (res.winners.includes(p.seat) ? '' : '<small style="opacity:.5">—</small>');
+    rows += `<tr><td>${escapeHtml(p.name)} ${p.isBot ? '<small style="opacity:.5">bot</small>' : ''}</td>
+      <td>${hand}</td><td class="pos ${p.score > 0 ? 'gain-pos' : p.score < 0 ? 'gain-neg' : ''}">${p.score >= 0 ? '+' : ''}${p.score}</td></tr>`;
+  }
+  const title = res.reason === 'exhaustion'
+    ? (res.winners.length ? '血战结束 Hand Over' : '荒庄 Draw')
+    : (view.mode === 'single' ? '胡牌 Winner!' : '血战结束 Hand Over');
+  const canDeal = !online || (conn && conn.host);
+  const againLabel = online ? 'Next Hand' : 'New Hand';
+  overlay.style.display = 'flex';
+  overlay.innerHTML = `<div class="modal"><h2>${title}</h2>
+    <table class="scoreboard"><tr><th>Player</th><th>Hand</th><th class="pos">Score</th></tr>${rows}</table>
+    ${canDeal ? `<button class="btn" id="again">${againLabel}</button>` : `<p style="text-align:center;opacity:.75;font-size:13px">Waiting for the host to deal the next hand…</p>`}
+    <button class="btn alt" id="tomenu">${online ? 'Leave Game' : 'Main Menu'}</button></div>`;
+  if ($('again')) $('again').addEventListener('click', () => { overlay.style.display = 'none'; overlay.innerHTML = ''; if (conn && conn.again) conn.again(); });
+  $('tomenu').addEventListener('click', () => { overlay.style.display = 'none'; overlay.innerHTML = ''; leaveGame(); });
+}
+
+/* ---- menu / rules ---- */
+function showMenu() {
+  overlay.style.display = 'flex';
+  overlay.innerHTML = `<div class="modal"><h2>Menu</h2>
+    <button class="btn" id="m-resume">Resume</button>
+    <button class="btn alt" id="m-rules">Rules</button>
+    <button class="btn alt" id="m-menu">Leave Game</button></div>`;
+  $('m-resume').onclick = () => { overlay.style.display = 'none'; overlay.innerHTML = ''; };
+  $('m-rules').onclick = showRules;
+  $('m-menu').onclick = () => { overlay.style.display = 'none'; overlay.innerHTML = ''; leaveGame(); };
+}
+function showRules() {
+  overlay.style.display = 'flex';
+  overlay.innerHTML = `<div class="modal"><div class="rules-content">
+    <h2>四川麻將 — How to Play</h2>
+    <h3>Tiles</h3><ul><li>108 tiles, three suits only: 筒 Dots, 条 Bamboo, 萬 Characters (1–9 ×4). No winds or dragons.</li></ul>
+    <h3>定缺 Missing Suit</h3><ul><li>After the deal each player picks one suit they will <b>not</b> use.</li>
+    <li>You must discard those tiles first and cannot win while holding any.</li></ul>
+    <h3>Melds</h3><ul><li><b>碰 Peng</b> — claim a discard for a triplet. <b>杠 Gang</b> — a kong (4): from a discard, added to a peng (robbable), or concealed; draw a replacement.</li>
+    <li>No chow — you cannot claim a discard to make a run (you may still form runs in your own concealed hand).</li></ul>
+    <h3>胡 Winning</h3><ul><li>Four groups + a pair, or seven pairs, using only your two suits.</li>
+    <li>Self-draw: all pay. On a discard: only the discarder pays. Several players may win on one discard.</li></ul>
+    <h3>血战到底 Bloody Battle</h3><ul><li>Winning doesn't end the hand — play continues until three players have won.</li></ul>
+    </div><button class="btn" id="r-close">Got it</button></div>`;
+  $('r-close').onclick = () => { overlay.style.display = 'none'; overlay.innerHTML = ''; };
+}
+
+function leaveGame() {
+  try { if (conn && conn.code) localStorage.removeItem('mjrt:' + conn.code); } catch {}  // drop our reconnect token
+  if (conn && conn.dispose) conn.dispose();
+  conn = null; curView = null; online = false; pendingReveal = null;
+  overlay.style.display = 'none'; overlay.innerHTML = ''; overlay.style.background = '';
+  $('conpill').style.display = 'none';
+  $('game').style.display = 'none'; $('setup').style.display = 'flex';
+}
+
+/* =====================================================================
+ * LOCAL CONNECTION — drives the core in-browser (hot-seat + bots)
+ * ===================================================================== */
+class LocalConnection {
+  constructor(cfg) {
+    this.cfg = cfg;
+    this.numHumans = cfg.seats.filter((s) => !s.isBot).length;
+    this.lastHuman = cfg.seats.findIndex((s) => !s.isBot);
+    this.pendingResolve = null;
+    this.alive = true;
+    this.gen = 0;                 // drive-loop generation: a new hand supersedes the old loop
+    this.newHand();
+  }
+  newHand() {
+    this.gen++;
+    const myGen = this.gen;
+    const r = this.pendingResolve; this.pendingResolve = null; if (r) r(null);  // unblock any prior loop
+    const seed = (Date.now() ^ (Math.random() * 1e9)) | 0;
+    this.state = createGame({ seed, config: this.cfg.config, names: this.cfg.names, seats: this.cfg.seats, dealer: this.cfg.dealer || 0, seatScores: this.scores });
+    this.drive(myGen);
+  }
+  dispose() { this.alive = false; const r = this.pendingResolve; this.pendingResolve = null; if (r) r(null); }
+  again() { this.scores = this.state.players.map((p) => p.score); this.cfg.dealer = this.state.nextDealer; this.newHand(); }
+
+  emit(meta) {
+    const viewer = (this.viewerSeat != null) ? this.viewerSeat : (this.lastHuman >= 0 ? this.lastHuman : 0);
+    onUpdate(viewFor(this.state, viewer), meta || {});
+  }
+  eventToasts(events) {
+    const out = [];
+    for (const e of events) {
+      if (e.type === 'PungClaimed') out.push({ msg: '碰 PENG' });
+      else if (e.type === 'KongClaimedFromDiscard' || e.type === 'ConcealedKongDeclared' || e.type === 'AddedKongDeclared') out.push({ msg: '杠 GANG' });
+      else if (e.type === 'KongRobbed') out.push({ msg: '抢杠 ROB!' });
+      else if (e.type === 'WinResolved') out.push({ msg: (e.winType === 'SELF_DRAW' ? '自摸 ZIMO' : '胡 HU') + ' +' + e.points });
+    }
+    return out;
+  }
+
+  async drive(myGen) {
+    const live = () => this.alive && this.gen === myGen;   // false once a newer hand supersedes us
+    while (live()) {
+      if (this.state.phase === 'HAND_ENDED') { this.viewerSeat = this.lastHuman >= 0 ? this.lastHuman : 0; this.emit({}); return; }
+      const deciders = pendingDeciders(this.state);
+      if (!deciders.length) return;
+      const botSeat = deciders.find((s) => this.state.players[s].isBot);
+      if (botSeat != null) {
+        this.viewerSeat = this.lastHuman >= 0 ? this.lastHuman : botSeat;
+        this.emit({});                                   // show the bot as "thinking"
+        await this.botThink(this.state.players[botSeat]);
+        if (!live()) return;
+        const a = botChooseAction(this.state, botSeat);
+        const res = applyAction(this.state, botSeat, a);
+        if (!res.ok) { this.emit({ toasts: [{ msg: (res.error && res.error.message) || 'Bot error', ms: 1600 }] }); return; }  // never spin
+        this.emit({ toasts: this.eventToasts(res.events || []) });
+        continue;
+      }
+      // a human must decide
+      const seat = deciders[0];
+      const reveal = (this.numHumans > 1 && seat !== this.lastHuman) ? { seat, name: this.state.players[seat].name } : null;
+      this.viewerSeat = seat; this.lastHuman = seat;
+      const action = await new Promise((r) => { this.pendingResolve = r; this.emit({ reveal }); });
+      if (!live() || !action) return;
+      const res = applyAction(this.state, seat, action);
+      if (!res.ok) { this.emit({ toasts: [{ msg: res.error.message, ms: 1600 }] }); continue; }
+      this.emit({ toasts: this.eventToasts(res.events || []) });
+    }
+  }
+  botThink(p) {
+    const base = p.difficulty === 'hard' ? 560 : p.difficulty === 'normal' ? 460 : 340;
+    return sleep(base + Math.random() * 420);
+  }
+  submit(action) { const r = this.pendingResolve; this.pendingResolve = null; if (r) r(action); }
+}
+
+/* =====================================================================
+ * SETUP wiring
+ * ===================================================================== */
+const localCfg = { humans: 1, diff: 'normal', mode: 'bloody', sevenPairs: true, names: [] };
+const onlineCfg = { name: '', diff: 'normal' };
+
+function buildNameInputs() {
+  const box = $('name-inputs'); box.innerHTML = '';
+  for (let i = 0; i < localCfg.humans; i++) {
+    const inp = document.createElement('input');
+    inp.className = 'txt'; inp.placeholder = `Player ${i + 1} name`; inp.value = localCfg.names[i] || ''; inp.maxLength = 12;
+    inp.addEventListener('input', () => { localCfg.names[i] = inp.value; });
+    box.appendChild(inp);
+  }
+}
+function segWire(id, key, cfg, dataKey, cast = (x) => x) {
+  $(id).addEventListener('click', (e) => {
+    const b = e.target.closest('button'); if (!b) return;
+    [...$(id).children].forEach((x) => x.classList.remove('on')); b.classList.add('on');
+    cfg[key] = cast(b.dataset[dataKey]);
+    if (id === 'humans-seg') buildNameInputs();
+  });
+}
+function startLocal() {
+  const seats = [];
+  for (let i = 0; i < 4; i++) seats.push({ isBot: i >= localCfg.humans, difficulty: localCfg.diff });
+  const names = [];
+  for (let i = 0; i < 4; i++) names[i] = i < localCfg.humans ? (localCfg.names[i] || `Player ${i + 1}`) : `Bot ${i}`;
+  const config = makeConfig({ mode: localCfg.mode, allowSevenPairs: localCfg.sevenPairs });
+  online = false;
+  conn = new LocalConnection({ config, names, seats });
+  $('conpill').style.display = 'none';
+  showGameScreen();
+}
+function showGameScreen() { $('setup').style.display = 'none'; $('game').style.display = 'flex'; }
+
+function wireSetup() {
+  // tabs
+  document.querySelector('.mode-tabs').addEventListener('click', (e) => {
+    const b = e.target.closest('button'); if (!b) return;
+    document.querySelectorAll('.mode-tabs button').forEach((x) => x.classList.remove('on')); b.classList.add('on');
+    const isOnlineTab = b.dataset.tab === 'online';
+    $('local-setup').style.display = isOnlineTab ? 'none' : 'block';
+    $('online-setup').style.display = isOnlineTab ? 'block' : 'none';
+  });
+  segWire('humans-seg', 'humans', localCfg, 'h', (x) => +x);
+  segWire('diff-seg', 'diff', localCfg, 'd');
+  segWire('mode-seg', 'mode', localCfg, 'm');
+  segWire('odiff-seg', 'diff', onlineCfg, 'd');
+  $('sw-sevenpairs').addEventListener('click', (e) => { e.currentTarget.classList.toggle('on'); localCfg.sevenPairs = e.currentTarget.classList.contains('on'); });
+  $('start-local').addEventListener('click', startLocal);
+  $('online-name').addEventListener('input', (e) => { onlineCfg.name = e.target.value; });
+  $('btn-create').addEventListener('click', () => startOnline('create'));
+  $('btn-join').addEventListener('click', () => startOnline('join'));
+  $('rules-link').addEventListener('click', showRules);
+  $('rules-btn').addEventListener('click', showRules);
+  $('menu-btn').addEventListener('click', showMenu);
+  buildNameInputs();
+}
+
+/* =====================================================================
+ * ONLINE CONNECTION — same submit/view contract over a WebSocket to the
+ * server-authoritative MahjongRoom Durable Object.
+ * ===================================================================== */
+const NET_HTTP = (location.hostname === 'localhost' || location.hostname === '127.0.0.1')
+  ? `http://${location.hostname}:8787` : 'https://cloudflare-backend.maattp.workers.dev';
+const NET_WS = NET_HTTP.replace(/^http/, 'ws');
+const NET_VER = 'mj.v1';   // bump on any protocol change so mismatched builds can't pair
+// per-room reconnect token, persisted so an app restart can still reclaim the seat
+const rtGet = (code) => { try { return code ? localStorage.getItem('mjrt:' + code) : null; } catch { return null; } };
+const rtSet = (code, t) => { try { if (code && t) localStorage.setItem('mjrt:' + code, t); } catch {} };
+
+class OnlineConnection {
+  constructor(opts) {
+    this.name = opts.name; this.difficulty = opts.difficulty;
+    this.code = opts.code || null; this.create = !!opts.create;
+    this.ws = null; this.seat = -1; this.host = false;
+    this.awaiting = false; this.alive = true; this.retries = 0; this.inGame = false; this.lobby = null;
+  }
+  async begin() {
+    if (this.create) {
+      onlineMsg('Creating game…');
+      try {
+        const r = await fetch(NET_HTTP + '/mahjong/rooms', { method: 'POST' });
+        const j = await r.json(); if (!j.code) throw new Error('no code');
+        this.code = j.code;
+      } catch (e) { onlineMsg('Could not reach the server. Try again.', true); return; }
+    }
+    this.connect();
+  }
+  connect() {
+    updateConnPill({ text: 'Connecting…', state: '' });
+    let ws; try { ws = new WebSocket(NET_WS + '/mahjong/rooms/' + this.code + '/ws'); } catch (e) { onlineMsg('Bad room code.', true); return; }
+    this.ws = ws;
+    ws.onopen = () => { this.retries = 0; updateConnPill({ text: 'Online', state: 'ok' });
+      const token = this.reconnectToken || rtGet(this.code);   // resend our seat token to reclaim it
+      this.rawsend({ t: 'hello', name: this.name, ver: NET_VER, token });
+      this.ping = setInterval(() => this.rawsend({ t: 'pp', ts: Date.now() }), 20000); };
+    ws.onmessage = (e) => { let m; try { m = JSON.parse(e.data); } catch { return; } this.handle(m); };
+    ws.onclose = () => { clearInterval(this.ping); this.onClose(); };
+    ws.onerror = () => {};
+  }
+  rawsend(o) { try { this.ws.send(JSON.stringify(o)); } catch {} }
+  handle(m) {
+    switch (m.t) {
+      case 'welcome': this.seat = m.id; this.host = m.host; this.code = m.code;
+        if (m.reconnect) { this.reconnectToken = m.reconnect; rtSet(this.code, m.reconnect); }
+        if (m.rejoin) toast('Reconnected', 900); break;
+      case 'lobby': this.lobby = m; if (!this.inGame) showOnlineLobby(this, m); break;
+      case 'view':
+        if (!this.inGame) { this.inGame = true; overlay.style.display = 'none'; overlay.innerHTML = ''; showGameScreen(); }
+        if (m.view.phase !== 'HAND_ENDED' && overlay.style.display === 'flex' && overlay.querySelector('.scoreboard')) { overlay.style.display = 'none'; overlay.innerHTML = ''; }
+        this.awaiting = false; clearTimeout(this._awaitTimer);
+        onUpdate(m.view, { conn: { text: 'Online', state: 'ok' } });
+        break;
+      case 'reject': this.awaiting = false; clearTimeout(this._awaitTimer); toast(m.error && m.error.message ? m.error.message : 'Invalid move', 1500); render(); break;
+      case 'error': onlineMsg(m.msg || 'Server error', true); updateConnPill({ text: 'Error', state: 'bad' }); this.alive = false; break;
+      case 'you-are-host': this.host = true; if (this.lobby && !this.inGame) showOnlineLobby(this, this.lobby); break;
+    }
+  }
+  onClose() {
+    if (!this.alive) return;
+    updateConnPill({ text: 'Reconnecting…', state: 'bad' });
+    if (this.retries < 6) { this.retries++; setTimeout(() => { if (this.alive) this.connect(); }, 700 * this.retries); }
+    else { updateConnPill({ text: 'Disconnected', state: 'bad' }); toast('Connection lost', 1600); }
+  }
+  setReady(r) { this.rawsend({ t: 'ready', ready: r }); }
+  setConfig(c) { this.rawsend({ t: 'config', ...c }); }
+  startGame() { this.rawsend({ t: 'start' }); }
+  again() { if (this.host) this.rawsend({ t: 'rematch' }); }
+  submit(action) {
+    if (this.awaiting) return;
+    this.awaiting = true;
+    clearTimeout(this._awaitTimer);
+    this._awaitTimer = setTimeout(() => { this.awaiting = false; }, 4000);  // safety net if a view is dropped
+    this.rawsend({ t: 'action', action });
+  }
+  dispose() { this.alive = false; clearInterval(this.ping); try { this.ws.close(); } catch {} }
+}
+function onlineMsg(s, err) { const el = $('online-msg'); el.textContent = s; el.className = 'hostmsg' + (err ? ' err' : ''); }
+
+/* ---- online lobby (rendered into the overlay until the host deals) ---- */
+function showOnlineLobby(conn, lobby) {
+  const me = lobby.players.find((p) => p.id === conn.seat);
+  const seatRows = [];
+  for (let i = 0; i < lobby.maxPlayers; i++) {
+    const p = lobby.players.find((x) => x.id === i);
+    if (p) {
+      const badges = `${p.host ? '<span class="badge host">host</span>' : ''}${p.ready ? '<span class="badge ready">ready</span>' : '<span class="badge">…</span>'}`;
+      seatRows.push(`<div class="seat-card ${p.id === conn.seat ? 'me' : ''}"><span style="width:9px;height:9px;border-radius:50%;background:#30d158;display:inline-block"></span>
+        <span>${escapeHtml(p.name)}${p.id === conn.seat ? ' (you)' : ''}</span>${badges}</div>`);
+    } else {
+      seatRows.push(`<div class="seat-card" style="opacity:.6"><span style="width:9px;height:9px;border-radius:50%;background:#5ac8fa;display:inline-block"></span><span>Bot</span><span class="badge">fills at start</span></div>`);
+    }
+  }
+  const cfg = lobby.cfg || { mode: 'bloody', sevenPairs: true, difficulty: 'normal' };
+  const hostControls = conn.host ? `
+    <div class="card" style="margin-top:8px;background:rgba(0,0,0,.2)">
+      <h2>Table rules</h2>
+      <div class="seg" id="lb-mode"><button data-m="bloody" class="${cfg.mode === 'bloody' ? 'on' : ''}">Bloody</button><button data-m="single" class="${cfg.mode === 'single' ? 'on' : ''}">Single</button></div>
+      <div class="seg" id="lb-diff" style="margin-top:8px"><button data-d="easy" class="${cfg.difficulty === 'easy' ? 'on' : ''}">Easy</button><button data-d="normal" class="${cfg.difficulty === 'normal' ? 'on' : ''}">Normal</button><button data-d="hard" class="${cfg.difficulty === 'hard' ? 'on' : ''}">Hard</button></div>
+      <div class="toggle-row"><span>Seven Pairs</span><div class="switch ${cfg.sevenPairs ? 'on' : ''}" id="lb-sp"></div></div>
+    </div>` : `<p style="text-align:center;opacity:.7;font-size:13px">Bot difficulty &amp; rules: <b>${cfg.difficulty}</b>, ${cfg.mode}${cfg.sevenPairs ? ', 7-pairs' : ''}</p>`;
+
+  overlay.style.display = 'flex';
+  overlay.innerHTML = `<div class="modal lobby">
+    <h2>Online Game</h2>
+    <div class="code">${escapeHtml(lobby.code)}</div>
+    <p style="text-align:center">Share this code. ${lobby.players.length}/${lobby.maxPlayers} seats taken — empty seats become bots.</p>
+    <div class="seat-list">${seatRows.join('')}</div>
+    ${hostControls}
+    <button class="btn ${me && me.ready ? 'alt' : ''}" id="lb-ready">${me && me.ready ? 'Ready ✓ (tap to unready)' : "I'm ready"}</button>
+    ${conn.host ? `<button class="btn" id="lb-start">Deal &amp; Start</button>` : `<p style="text-align:center;opacity:.7;font-size:13px;margin-top:8px">Waiting for the host to start…</p>`}
+    <button class="btn alt" id="lb-leave">Leave</button>
+  </div>`;
+
+  $('lb-ready').onclick = () => conn.setReady(!(me && me.ready));
+  $('lb-leave').onclick = () => leaveGame();
+  if (conn.host) {
+    $('lb-start').onclick = () => conn.startGame();
+    $('lb-mode').onclick = (e) => { const b = e.target.closest('button'); if (b) conn.setConfig({ mode: b.dataset.m, sevenPairs: cfg.sevenPairs, difficulty: cfg.difficulty }); };
+    $('lb-diff').onclick = (e) => { const b = e.target.closest('button'); if (b) conn.setConfig({ mode: cfg.mode, sevenPairs: cfg.sevenPairs, difficulty: b.dataset.d }); };
+    $('lb-sp').onclick = () => conn.setConfig({ mode: cfg.mode, sevenPairs: !cfg.sevenPairs, difficulty: cfg.difficulty });
+  }
+}
+
+function startOnline(mode) {
+  const name = (onlineCfg.name || '').trim() || 'Player';
+  if (mode === 'join') {
+    const code = ($('join-code').value || '').trim().toUpperCase();
+    if (!/^[A-Z2-9]{5}$/.test(code)) { onlineMsg('Enter a valid 5-character room code.', true); return; }
+    online = true; conn = new OnlineConnection({ name, difficulty: onlineCfg.diff, code, create: false }); conn.begin();
+  } else {
+    online = true; conn = new OnlineConnection({ name, difficulty: onlineCfg.diff, create: true }); conn.begin();
+  }
+}
+
+wireSetup();
+window.__mahjongClient = { onUpdate, render, get conn() { return conn; }, set conn(c) { conn = c; }, set online(v) { online = v; }, viewFor, createGame, makeConfig };
+</script>
+</body>
+</html>

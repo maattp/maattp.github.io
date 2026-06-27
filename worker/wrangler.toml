@@ -20,8 +20,15 @@ GOOGLE_CLIENT_ID = "611505411727-94u34em16j7sd0rdigejmvfdgnjj67ma.apps.googleuse
 ALLOWED_EMAILS = "m.polkiewicz@gmail.com,ting520143@gmail.com"
 
 [durable_objects]
-bindings = [{ name = "KART3_ROOM", class_name = "Kart3Room" }]
+bindings = [
+  { name = "KART3_ROOM", class_name = "Kart3Room" },
+  { name = "MAHJONG_ROOM", class_name = "MahjongRoom" },
+]
 
 [[migrations]]
 tag = "kart3-room-v1"
 new_sqlite_classes = ["Kart3Room"]
+
+[[migrations]]
+tag = "mahjong-room-v1"
+new_sqlite_classes = ["MahjongRoom"]
