@@ -1991,6 +1991,11 @@ function startOnline(mode) {
 
 wireSetup();
 window.__mahjongClient = { onUpdate, render, get conn() { return conn; }, set conn(c) { conn = c; }, set online(v) { online = v; }, viewFor, createGame, makeConfig };
+
+/* register the offline service worker (local play works with no network once cached) */
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', () => { navigator.serviceWorker.register('sw.js').catch(() => {}); });
+}
 </script>
 </body>
 </html>
