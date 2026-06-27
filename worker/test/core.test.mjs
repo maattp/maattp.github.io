@@ -127,7 +127,7 @@ function P(tiles, melds = [], missing = BAMBOO) {
   eq(sc.points, 8, 'points = base*2^3 = 8 at cap');
 }
 {
-  // seven pairs + luxury (a quad) -> includes root too
+  // seven pairs + luxury (a quad): the quad is credited as Luxury, NOT also as Root
   const s = makeBotState();
   s.players[0].missingSuit = DOT;
   s.players[0].concealed = counts([T(CHARACTER,1),T(CHARACTER,1),T(CHARACTER,1),T(CHARACTER,1),
@@ -137,6 +137,7 @@ function P(tiles, melds = [], missing = BAMBOO) {
   const names = sc.fanAwards.map(f => f.name);
   ok(names.includes('Seven Pairs'), 'scores Seven Pairs');
   ok(names.includes('Luxury Seven Pairs'), 'scores Luxury Seven Pairs (quad)');
+  ok(!names.includes('Root'), 'Root NOT double-counted on a seven-pairs quad (Luxury already credits it)');
 }
 
 /* ===== full random bot games: legality + conservation + determinism ===== */
@@ -177,7 +178,7 @@ function playOut(seed, checkCons) {
       wins += s.winnersThisHand.length;
     } catch (e) { errs++; failures.push('fuzz seed ' + seed + ': ' + e.message); }
   }
-  eq(errs, 0, `120 bot games ran with no engine/legality/conservation errors`);
+  eq(errs, 0, `300 bot games ran with no engine/legality/conservation errors`);
   eq(ended, games, 'every game reached HAND_ENDED');
   ok(wins >= 0, `total winners across games = ${wins}`);
 }

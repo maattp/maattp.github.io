@@ -734,23 +734,23 @@ function score(state, seat, ctx) {
   if (ctx.winType === 'SELF_DRAW') add('Self-Draw', cfg.selfDrawBonusFan);
   if (sevenP) {
     add('Seven Pairs', cfg.sevenPairsFan);
+    // a quad in a seven-pairs hand is credited here as Luxury Seven Pairs (龙七对);
+    // it is NOT also counted as a Root below, which would double-credit the same tiles.
     let quads = 0; for (let t = 0; t < NUM_TYPES; t++) if (concealed[t] === 4) quads++;
     if (quads >= 1) add('Luxury Seven Pairs', cfg.luxurySevenPairsExtraFanPerQuad * quads);
   } else {
-    // all pungs: every meld is a pung/kong (Sichuan melds always are) AND concealed = triplets + pair
-    const meldsAllPung = p.melds.every((m) => true);
-    if (meldsAllPung && decomposeAllPungs(concealed, groupsNeeded)) add('All Pungs', cfg.allPungsFan);
+    // Sichuan has no chow melds, so every meld is already a pung/kong by construction
+    if (decomposeAllPungs(concealed, groupsNeeded)) add('All Pungs', cfg.allPungsFan);
+    // Root (根): four identical tiles in the hand (a kong, or 4 concealed) — standard hands only
+    let roots = 0;
+    for (let t = 0; t < NUM_TYPES; t++) {
+      let phys = concealed[t];
+      for (const m of p.melds) if (m.tile === t) phys += meldPhysical(m);
+      if (phys === 4) roots++;
+    }
+    if (roots > 0) add('Root', cfg.rootFan * roots);
   }
   if (suitsUsed.size === 1) add('Pure One Suit', cfg.pureOneSuitFan);
-
-  // root (gen): 4 physical copies of a type in the full hand
-  let roots = 0;
-  for (let t = 0; t < NUM_TYPES; t++) {
-    let phys = concealed[t];
-    for (const m of p.melds) if (m.tile === t) phys += meldPhysical(m);
-    if (phys === 4) roots++;
-  }
-  if (roots > 0) add('Root', cfg.rootFan * roots);
 
   if (ctx.afterKong && ctx.winType === 'SELF_DRAW') add('Kong Bloom', cfg.kongBloomBonusFan);
   if (ctx.winType === 'ROB_KONG') add('Robbing a Kong', cfg.robKongBonusFan);
@@ -1016,15 +1016,15 @@ function botChooseDiscard(state, seat, candidates, difficulty) {
   return best;
 }
 function tileDanger(state, seat, t) {
-  let danger = 0;
+  // a tile never seen in any river is more likely to be a live wait — count it ONCE
+  let seenRivers = 0;
+  for (const q of state.players) for (const d of q.discards) if (d === t) seenRivers++;
+  let danger = (seenRivers === 0 ? 0.5 : 0.1);
   for (let s = 0; s < 4; s++) {
     if (s === seat) continue;
     const o = state.players[s];
     if (o.hasWon) continue;
-    let seenRivers = 0;
-    for (const q of state.players) for (const d of q.discards) if (d === t) seenRivers++;
-    danger += (seenRivers === 0 ? 0.5 : 0.1);
-    if (o.missingSuit != null && tileSuit(t) === o.missingSuit) danger -= 0.4;
+    if (o.missingSuit != null && tileSuit(t) === o.missingSuit) danger -= 0.4;  // safe vs that opponent
   }
   return Math.max(0, danger);
 }

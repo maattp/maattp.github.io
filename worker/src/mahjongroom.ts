@@ -171,17 +171,11 @@ export class MahjongRoom {
     const name = sanitizeName(msg.name);
     const ver = sanitizeVer(msg.ver);
     const players = this.roster();
-    // Gate against the room's pinned version (set by the creator), not the live host's,
-    // so it still works when the host seat is currently disconnected.
-    const roomVer = await this.state.storage.get<string>("roomVer");
-    if (roomVer && ver !== roomVer) {
-      ws.send(JSON.stringify({ t: "error", msg: "Game versions differ — fully close the app and reopen it, then rejoin" }));
-      ws.close(1008, "version mismatch");
-      return;
-    }
 
     if ((await this.phase()) === "playing") {
-      // mid-game REJOIN: reclaim a seat whose human dropped (now driven by a bot)
+      // mid-game REJOIN: reclaim a seat whose human dropped (now driven by a bot).
+      // No version gate here on purpose — the server runs the authoritative engine, the
+      // seat is already this player's, and a redeploy mid-hand shouldn't lock them out.
       const humanSeats = (await this.state.storage.get<number[]>("humanSeats")) || [];
       const connected = new Set(players.map((p) => p.id));
       const g = await this.loadGame();
@@ -204,6 +198,14 @@ export class MahjongRoom {
       return;
     }
 
+    // New lobby join: gate against the room's pinned version (set by the creator) so
+    // mismatched builds can't form a lobby together.
+    const roomVer = await this.state.storage.get<string>("roomVer");
+    if (roomVer && ver !== roomVer) {
+      ws.send(JSON.stringify({ t: "error", msg: "Game versions differ — fully close the app and reopen it, then rejoin" }));
+      ws.close(1008, "version mismatch");
+      return;
+    }
     if (players.length >= MAX_PLAYERS) { ws.send(JSON.stringify({ t: "error", msg: "room full" })); ws.close(1008, "room full"); return; }
     const used = new Set(players.map((p) => p.id));
     let id = 0; while (used.has(id)) id++;
