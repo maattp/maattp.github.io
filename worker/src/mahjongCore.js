@@ -718,7 +718,7 @@ function score(state, seat, ctx) {
 
   const sevenP = p.melds.length === 0 && cfg.allowSevenPairs && isSevenPairs(concealed, cfg);
 
-  add('Base Win', 0);
+  fanAwards.push({ name: 'Base Win', fan: 0 });   // 平胡 — always shown, contributes 0
   if (ctx.winType === 'SELF_DRAW') add('Self-Draw', cfg.selfDrawBonusFan);
   if (sevenP) {
     add('Seven Pairs', cfg.sevenPairsFan);
