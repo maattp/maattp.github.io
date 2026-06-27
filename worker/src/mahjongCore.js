@@ -395,6 +395,8 @@ function invalid(code, message, details, suggested) {
   return { ok: false, error: { code, message, details: details || '', suggestedActions: suggested || [] } };
 }
 function applyAction(state, seat, action) {
+  // reject malformed input cleanly (untrusted over the wire) — never throw
+  if (!action || typeof action.type !== 'string') return invalid('BAD_ACTION', 'Malformed action.');
   const legal = getLegalActions(state, seat);
   if (!legal.some((o) => actionsEqual(o, action))) {
     return invalid(...explainIllegal(state, seat, action));
