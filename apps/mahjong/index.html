@@ -1287,7 +1287,17 @@ function discardPreference(player, t) {
 function botChooseDiscard(state, seat, candidates, difficulty) {
   const p = state.players[seat];
   const miss = candidates.filter((t) => tileSuit(t) === p.missingSuit);
-  if (miss.length) candidates = miss;                       // forced clear first
+  if (miss.length) {
+    // forced clear: these tiles are all leaving regardless, and their within-suit
+    // connectivity (which shanten zeroes out anyway) is a meaningless tiebreaker.
+    // Hard bots dump the safest one; others just take the lowest deterministically.
+    if (difficulty === 'hard') {
+      let best = miss[0], bd = Infinity;
+      for (const t of miss) { const d = tileDanger(state, seat, t); if (d < bd) { bd = d; best = t; } }
+      return best;
+    }
+    return miss[0];
+  }
   if (difficulty === 'easy' && rngNext(state) < 0.35) return candidates[rngInt(state, candidates.length)];
   const danger = difficulty === 'hard' ? opponentDanger(state, seat) : 0;   // constant across candidates — hoisted
   let best = candidates[0], bestScore = -Infinity;

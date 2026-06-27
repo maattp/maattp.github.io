@@ -199,7 +199,8 @@ app.post("/mahjong/rooms", async (c) => {
     for (const b of bytes) code += ROOM_ALPHABET[b % ROOM_ALPHABET.length];
     const stub = c.env.MAHJONG_ROOM.get(c.env.MAHJONG_ROOM.idFromName(code));
     const res = await stub.fetch("https://do/init", { method: "POST", body: code });
-    if (res.status !== 409) return c.json({ code });   // 409 = code already in use; try another
+    if (res.ok) return c.json({ code });   // only a confirmed init returns the code
+    // 409 = code already in use; any other non-ok = transient DO error → try a fresh code
   }
   return c.json({ error: "could not allocate a room, please try again" }, 503);
 });
