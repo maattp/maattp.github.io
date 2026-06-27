@@ -1,8 +1,9 @@
 import { Hono } from "hono";
 import { cors } from "hono/cors";
 import { Kart3Room } from "./kart3room";
+import { MahjongRoom } from "./mahjongroom";
 
-export { Kart3Room };
+export { Kart3Room, MahjongRoom };
 
 const SESSION_TTL = 365 * 24 * 60 * 60; // 1 year in seconds
 const SESSION_PREFIX = "__session:";
@@ -12,6 +13,7 @@ type Bindings = {
   PHOTOS: R2Bucket;
   DB: D1Database;
   KART3_ROOM: DurableObjectNamespace;
+  MAHJONG_ROOM: DurableObjectNamespace;
   GOOGLE_CLIENT_ID: string;
   ALLOWED_EMAILS: string;
 };
@@ -132,6 +134,18 @@ app.get("/kart3/rooms/:code/ws", async (c) => {
   return stub.fetch("https://do/ws", c.req.raw);
 });
 
+// --- Sichuan Mahjong online rooms: WebSocket upgrade (server-authoritative) ---
+// Same origin-gated, code-as-credential model as kart3. Registered before cors
+// for the same reason (immutable 101 headers).
+app.get("/mahjong/rooms/:code/ws", async (c) => {
+  if (c.req.header("Upgrade") !== "websocket") return c.json({ error: "expected websocket" }, 426);
+  if (!kart3OriginOk(c.req.header("Origin"))) return c.json({ error: "forbidden" }, 403);
+  const code = c.req.param("code").toUpperCase();
+  if (!ROOM_CODE_RE.test(code)) return c.json({ error: "bad room code" }, 400);
+  const stub = c.env.MAHJONG_ROOM.get(c.env.MAHJONG_ROOM.idFromName(code));
+  return stub.fetch("https://do/ws", c.req.raw);
+});
+
 app.use("*", cors({
   // function form so any localhost port works for local development
   origin: (origin) => {
@@ -171,6 +185,26 @@ app.get("/kart3/rooms/:code", async (c) => {
     return c.json({ error: "bad room code" }, 400);
   }
   const stub = c.env.KART3_ROOM.get(c.env.KART3_ROOM.idFromName(code));
+  const res = await stub.fetch("https://do/status");
+  return c.json(await res.json());
+});
+
+// --- Sichuan Mahjong online rooms: create + status (CORS applies) ---
+app.post("/mahjong/rooms", async (c) => {
+  if (!kart3OriginOk(c.req.header("Origin"))) return c.json({ error: "forbidden" }, 403);
+  const bytes = new Uint8Array(5);
+  crypto.getRandomValues(bytes);
+  let code = "";
+  for (const b of bytes) code += ROOM_ALPHABET[b % ROOM_ALPHABET.length];
+  const stub = c.env.MAHJONG_ROOM.get(c.env.MAHJONG_ROOM.idFromName(code));
+  await stub.fetch("https://do/init", { method: "POST", body: code });
+  return c.json({ code });
+});
+
+app.get("/mahjong/rooms/:code", async (c) => {
+  const code = c.req.param("code").toUpperCase();
+  if (!ROOM_CODE_RE.test(code)) return c.json({ error: "bad room code" }, 400);
+  const stub = c.env.MAHJONG_ROOM.get(c.env.MAHJONG_ROOM.idFromName(code));
   const res = await stub.fetch("https://do/status");
   return c.json(await res.json());
 });
