@@ -20,6 +20,7 @@ type LobbyCfg = { mode: "bloody" | "single"; sevenPairs: boolean; difficulty: "e
 
 const MAX_PLAYERS = 4;
 const ROOM_TTL_MS = 45 * 60 * 1000;
+const EMPTY_GRACE_MS = 90 * 1000;   // keep an empty room briefly so a blip can reconnect
 const BOT_DELAY_MS = 650;
 const NAME_MAX = 12;
 
@@ -173,15 +174,19 @@ export class MahjongRoom {
     const players = this.roster();
 
     if ((await this.phase()) === "playing") {
-      // mid-game REJOIN: reclaim a seat whose human dropped (now driven by a bot).
-      // No version gate here on purpose — the server runs the authoritative engine, the
-      // seat is already this player's, and a redeploy mid-hand shouldn't lock them out.
+      // mid-game REJOIN: reclaim a seat using the secret reconnect TOKEN issued at join
+      // (persisted in the player's own browser). A name is public — matching on it would
+      // let anyone in the room steal a disconnected player's seat and see their hand.
+      // No version gate here on purpose: the server runs the authoritative engine, so a
+      // redeploy mid-hand shouldn't lock a reconnecting player out.
       const humanSeats = (await this.state.storage.get<number[]>("humanSeats")) || [];
+      const seatTokens = (await this.state.storage.get<Record<number, string>>("seatTokens")) || {};
       const connected = new Set(players.map((p) => p.id));
+      const token = typeof msg.token === "string" ? msg.token : "";
       const g = await this.loadGame();
       let seatId = -1;
-      for (const id of humanSeats) {
-        if (!connected.has(id) && g && g.players[id] && String(g.players[id].name).toLowerCase() === name.toLowerCase()) { seatId = id; break; }
+      if (token) for (const id of humanSeats) {
+        if (!connected.has(id) && seatTokens[id] && seatTokens[id] === token) { seatId = id; break; }
       }
       if (seatId < 0) { ws.send(JSON.stringify({ t: "error", msg: "Game in progress — seat unavailable" })); ws.close(1008, "in progress"); return; }
       const hostSeat = await this.state.storage.get<number>("hostSeat");
@@ -214,10 +219,15 @@ export class MahjongRoom {
       await this.state.storage.put("hostSeat", id);
     }
     const hostSeat = await this.state.storage.get<number>("hostSeat");
+    // issue a secret reconnect token for this seat (used to reclaim it after a drop)
+    const token = crypto.randomUUID();
+    const seatTokens = (await this.state.storage.get<Record<number, string>>("seatTokens")) || {};
+    seatTokens[id] = token;
+    await this.state.storage.put("seatTokens", seatTokens);
     const a: Attachment = { id, name, ready: false, host: id === hostSeat, ver };
     ws.serializeAttachment(a);
     const code = (await this.state.storage.get<string>("code")) || "";
-    ws.send(JSON.stringify({ t: "welcome", id, host: a.host, code }));
+    ws.send(JSON.stringify({ t: "welcome", id, host: a.host, code, reconnect: token }));
     await this.broadcastLobby();
     await this.bumpTtl();
   }
@@ -339,8 +349,15 @@ export class MahjongRoom {
       return;
     }
 
-    // lobby cleanup
-    if (remaining.length === 0) { await this.state.storage.deleteAll(); return; }
+    // lobby cleanup — don't destroy the room on a brief disconnect (a sole creator whose
+    // network blips would otherwise 404 on reconnect). Keep it alive for a short grace
+    // window; the alarm reaps it if still empty.
+    if (remaining.length === 0) {
+      const reapAt = Date.now() + EMPTY_GRACE_MS;
+      await this.state.storage.put("ttlAt", reapAt);
+      await this.state.storage.setAlarm(reapAt);
+      return;
+    }
     await this.broadcastLobby();
   }
 

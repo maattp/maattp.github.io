@@ -310,7 +310,6 @@ const NUM_TYPES = 27;
 
 const emptyCounts = () => new Array(NUM_TYPES).fill(0);
 const countTotal = (c) => { let s = 0; for (let i = 0; i < NUM_TYPES; i++) s += c[i]; return s; };
-const countsToList = (c) => { const a = []; for (let t = 0; t < NUM_TYPES; t++) for (let i = 0; i < c[t]; i++) a.push(t); return a; };
 
 /* ---- deterministic RNG (mulberry32). state.rng is a serializable integer ---- */
 function rngNext(state) {
@@ -1280,6 +1279,7 @@ function botChooseDiscard(state, seat, candidates, difficulty) {
   const miss = candidates.filter((t) => tileSuit(t) === p.missingSuit);
   if (miss.length) candidates = miss;                       // forced clear first
   if (difficulty === 'easy' && rngNext(state) < 0.35) return candidates[rngInt(state, candidates.length)];
+  const danger = difficulty === 'hard' ? opponentDanger(state, seat) : 0;   // constant across candidates — hoisted
   let best = candidates[0], bestScore = -Infinity;
   for (const t of candidates) {
     p.concealed[t]--;
@@ -1287,7 +1287,7 @@ function botChooseDiscard(state, seat, candidates, difficulty) {
     const accept = (difficulty !== 'easy') ? ukeireOf(state, p) : 0;
     p.concealed[t]++;
     let sc = -sh * 1000 + accept * 4 + discardPreference(p, t);
-    if (difficulty === 'hard') sc -= tileDanger(state, seat, t) * 60 * opponentDanger(state, seat);
+    if (difficulty === 'hard') sc -= tileDanger(state, seat, t) * 60 * danger;
     if (sc > bestScore) { bestScore = sc; best = t; }
   }
   return best;
@@ -1360,22 +1360,26 @@ function botChooseMeld(state, seat, pung, kong, difficulty) {
   if (tileSuit(tile) === p.missingSuit) return null;
   if (difficulty === 'easy') { if (rngNext(state) < 0.45) return null; return pung || kong; }
   const before = shantenOf(p);
-  const snap = p.concealed.slice(), msnap = p.melds.map((m) => ({ ...m }));
-  if (kong && !pung) { p.concealed[tile] -= 3; p.melds.push({ type: PUNG, tile }); }
-  else { p.concealed[tile] -= 2; p.melds.push({ type: PUNG, tile }); }
-  const after = shantenOf(p);
-  const ready = isReady(p, state.config);
-  p.concealed = snap; p.melds = msnap;
-  if (kong && !pung) {
-    if (after < before || ready) return kong;
-    return difficulty === 'hard' ? (after <= before ? kong : null) : (after < before ? kong : null);
+  // simulate removing `remove` copies into a meld; return resulting shanten + tenpai
+  const evalClaim = (remove) => {
+    const snap = p.concealed.slice(), msnap = p.melds.map((m) => ({ ...m }));
+    p.concealed[tile] -= remove; p.melds.push({ type: PUNG, tile });
+    const after = shantenOf(p), ready = isReady(p, state.config);
+    p.concealed = snap; p.melds = msnap;
+    return { after, ready };
+  };
+  // primary claim decision uses the pung (keeps a spare); fall back to kong if no pung
+  const primary = pung ? evalClaim(2) : evalClaim(3);
+  const claimGood = primary.after < before || primary.ready;
+  if (!claimGood) {
+    if (difficulty === 'hard') return null;
+    return primary.after <= before && rngNext(state) < 0.25 ? (pung || kong) : null;
   }
-  if (after < before || ready) {
-    if (difficulty === 'hard' && after >= before && opponentDanger(state, seat) > 0.6) return null;
-    return pung;
-  }
-  if (difficulty === 'hard') return null;
-  return after <= before && rngNext(state) < 0.25 ? pung : null;
+  if (difficulty === 'hard' && primary.after >= before && opponentDanger(state, seat) > 0.6) return null;
+  // both offered (3 in hand): take the kong for its replacement draw when the spare
+  // tile the pung would keep isn't improving the hand anyway.
+  if (pung && kong && evalClaim(3).after <= primary.after) return kong;
+  return pung || kong;
 }
 
 // ==CORE-END==
@@ -1500,7 +1504,7 @@ function renderHandArea(view) {
     html += `<div class="ready-banner">🀄 Ready — win on ${me.ready.map((t) => tileRank(t) + SUIT_GLYPH[tileSuit(t)]).join(' ')}</div>`;
   } else html += `<div class="ready-banner"></div>`;
   html += '<div class="hand-row">';
-  const tileCls = (t) => `${SUIT_CSS[tileSuit(t)]} ${canDiscard ? (discardable.has(t) ? 'playable' : 'dim') : ''}`;
+  const tileCls = (t) => `${SUIT_CSS[tileSuit(t)]} ${canDiscard ? (discardable.has(t) ? 'playable' : 'dim') : ''} ${readySet.has(t) ? 'win-hint' : ''}`;
   for (const t of tiles) html += `<div class="tile ${tileCls(t)}" data-k="${t}"><span class="num">${tileRank(t)}</span><span class="glyph">${SUIT_GLYPH[tileSuit(t)]}</span></div>`;
   if (drawn != null) html += `<div class="tile ${tileCls(drawn)} drawn" data-k="${drawn}"><span class="num">${tileRank(drawn)}</span><span class="glyph">${SUIT_GLYPH[tileSuit(drawn)]}</span></div>`;
   html += '</div><div class="actions" id="actions"></div>';
@@ -1796,6 +1800,9 @@ const NET_HTTP = (location.hostname === 'localhost' || location.hostname === '12
   ? `http://${location.hostname}:8787` : 'https://cloudflare-backend.maattp.workers.dev';
 const NET_WS = NET_HTTP.replace(/^http/, 'ws');
 const NET_VER = 'mj.v1';   // bump on any protocol change so mismatched builds can't pair
+// per-room reconnect token, persisted so an app restart can still reclaim the seat
+const rtGet = (code) => { try { return code ? localStorage.getItem('mjrt:' + code) : null; } catch { return null; } };
+const rtSet = (code, t) => { try { if (code && t) localStorage.setItem('mjrt:' + code, t); } catch {} };
 
 class OnlineConnection {
   constructor(opts) {
@@ -1819,7 +1826,9 @@ class OnlineConnection {
     updateConnPill({ text: 'Connecting…', state: '' });
     let ws; try { ws = new WebSocket(NET_WS + '/mahjong/rooms/' + this.code + '/ws'); } catch (e) { onlineMsg('Bad room code.', true); return; }
     this.ws = ws;
-    ws.onopen = () => { this.retries = 0; updateConnPill({ text: 'Online', state: 'ok' }); this.rawsend({ t: 'hello', name: this.name, ver: NET_VER });
+    ws.onopen = () => { this.retries = 0; updateConnPill({ text: 'Online', state: 'ok' });
+      const token = this.reconnectToken || rtGet(this.code);   // resend our seat token to reclaim it
+      this.rawsend({ t: 'hello', name: this.name, ver: NET_VER, token });
       this.ping = setInterval(() => this.rawsend({ t: 'pp', ts: Date.now() }), 20000); };
     ws.onmessage = (e) => { let m; try { m = JSON.parse(e.data); } catch { return; } this.handle(m); };
     ws.onclose = () => { clearInterval(this.ping); this.onClose(); };
@@ -1828,7 +1837,9 @@ class OnlineConnection {
   rawsend(o) { try { this.ws.send(JSON.stringify(o)); } catch {} }
   handle(m) {
     switch (m.t) {
-      case 'welcome': this.seat = m.id; this.host = m.host; this.code = m.code; if (m.rejoin) toast('Reconnected', 900); break;
+      case 'welcome': this.seat = m.id; this.host = m.host; this.code = m.code;
+        if (m.reconnect) { this.reconnectToken = m.reconnect; rtSet(this.code, m.reconnect); }
+        if (m.rejoin) toast('Reconnected', 900); break;
       case 'lobby': this.lobby = m; if (!this.inGame) showOnlineLobby(this, m); break;
       case 'view':
         if (!this.inGame) { this.inGame = true; overlay.style.display = 'none'; overlay.innerHTML = ''; showGameScreen(); }

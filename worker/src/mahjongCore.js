@@ -33,7 +33,6 @@ const NUM_TYPES = 27;
 
 const emptyCounts = () => new Array(NUM_TYPES).fill(0);
 const countTotal = (c) => { let s = 0; for (let i = 0; i < NUM_TYPES; i++) s += c[i]; return s; };
-const countsToList = (c) => { const a = []; for (let t = 0; t < NUM_TYPES; t++) for (let i = 0; i < c[t]; i++) a.push(t); return a; };
 
 /* ---- deterministic RNG (mulberry32). state.rng is a serializable integer ---- */
 function rngNext(state) {
@@ -1003,6 +1002,7 @@ function botChooseDiscard(state, seat, candidates, difficulty) {
   const miss = candidates.filter((t) => tileSuit(t) === p.missingSuit);
   if (miss.length) candidates = miss;                       // forced clear first
   if (difficulty === 'easy' && rngNext(state) < 0.35) return candidates[rngInt(state, candidates.length)];
+  const danger = difficulty === 'hard' ? opponentDanger(state, seat) : 0;   // constant across candidates — hoisted
   let best = candidates[0], bestScore = -Infinity;
   for (const t of candidates) {
     p.concealed[t]--;
@@ -1010,7 +1010,7 @@ function botChooseDiscard(state, seat, candidates, difficulty) {
     const accept = (difficulty !== 'easy') ? ukeireOf(state, p) : 0;
     p.concealed[t]++;
     let sc = -sh * 1000 + accept * 4 + discardPreference(p, t);
-    if (difficulty === 'hard') sc -= tileDanger(state, seat, t) * 60 * opponentDanger(state, seat);
+    if (difficulty === 'hard') sc -= tileDanger(state, seat, t) * 60 * danger;
     if (sc > bestScore) { bestScore = sc; best = t; }
   }
   return best;
@@ -1083,29 +1083,33 @@ function botChooseMeld(state, seat, pung, kong, difficulty) {
   if (tileSuit(tile) === p.missingSuit) return null;
   if (difficulty === 'easy') { if (rngNext(state) < 0.45) return null; return pung || kong; }
   const before = shantenOf(p);
-  const snap = p.concealed.slice(), msnap = p.melds.map((m) => ({ ...m }));
-  if (kong && !pung) { p.concealed[tile] -= 3; p.melds.push({ type: PUNG, tile }); }
-  else { p.concealed[tile] -= 2; p.melds.push({ type: PUNG, tile }); }
-  const after = shantenOf(p);
-  const ready = isReady(p, state.config);
-  p.concealed = snap; p.melds = msnap;
-  if (kong && !pung) {
-    if (after < before || ready) return kong;
-    return difficulty === 'hard' ? (after <= before ? kong : null) : (after < before ? kong : null);
+  // simulate removing `remove` copies into a meld; return resulting shanten + tenpai
+  const evalClaim = (remove) => {
+    const snap = p.concealed.slice(), msnap = p.melds.map((m) => ({ ...m }));
+    p.concealed[tile] -= remove; p.melds.push({ type: PUNG, tile });
+    const after = shantenOf(p), ready = isReady(p, state.config);
+    p.concealed = snap; p.melds = msnap;
+    return { after, ready };
+  };
+  // primary claim decision uses the pung (keeps a spare); fall back to kong if no pung
+  const primary = pung ? evalClaim(2) : evalClaim(3);
+  const claimGood = primary.after < before || primary.ready;
+  if (!claimGood) {
+    if (difficulty === 'hard') return null;
+    return primary.after <= before && rngNext(state) < 0.25 ? (pung || kong) : null;
   }
-  if (after < before || ready) {
-    if (difficulty === 'hard' && after >= before && opponentDanger(state, seat) > 0.6) return null;
-    return pung;
-  }
-  if (difficulty === 'hard') return null;
-  return after <= before && rngNext(state) < 0.25 ? pung : null;
+  if (difficulty === 'hard' && primary.after >= before && opponentDanger(state, seat) > 0.6) return null;
+  // both offered (3 in hand): take the kong for its replacement draw when the spare
+  // tile the pung would keep isn't improving the hand anyway.
+  if (pung && kong && evalClaim(3).after <= primary.after) return kong;
+  return pung || kong;
 }
 
 // ==CORE-END== (synced region)
 
 export {
   DOT, BAMBOO, CHARACTER, SUIT_GLYPH, SUIT_NAME, NUM_TYPES,
-  tileIndex, tileSuit, tileRank, emptyCounts, countTotal, countsToList,
+  tileIndex, tileSuit, tileRank, emptyCounts, countTotal,
   DEFAULT_CONFIG, makeConfig, createGame,
   getLegalActions, pendingDeciders, applyAction, actionsEqual,
   isWinningHand, winsNow, getWinningTiles, isReady, isSevenPairs,

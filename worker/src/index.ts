@@ -202,6 +202,7 @@ app.post("/mahjong/rooms", async (c) => {
 });
 
 app.get("/mahjong/rooms/:code", async (c) => {
+  if (!kart3OriginOk(c.req.header("Origin"))) return c.json({ error: "forbidden" }, 403);
   const code = c.req.param("code").toUpperCase();
   if (!ROOM_CODE_RE.test(code)) return c.json({ error: "bad room code" }, 400);
   const stub = c.env.MAHJONG_ROOM.get(c.env.MAHJONG_ROOM.idFromName(code));
