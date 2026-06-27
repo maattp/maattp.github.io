@@ -116,9 +116,9 @@ input.txt::placeholder{color:rgba(255,255,255,.5);}
   border-bottom-width:3px;border-radius:6px;display:flex;flex-direction:column;align-items:center;justify-content:center;
   color:var(--ink);flex-shrink:0;box-shadow:0 1px 2px rgba(0,0,0,.25);overflow:hidden;}
 .tile .num{font-weight:800;line-height:1;} .tile .glyph{line-height:1;opacity:.95;}
-.tile.m .num,.tile.m .glyph{color:var(--man);}
-.tile.s .num,.tile.s .glyph{color:var(--sou);}
-.tile.p .num,.tile.p .glyph{color:var(--pin);}
+.tile .face{width:100%;height:100%;display:block;}
+/* characters (萬): green numeral over a red 萬, the classic look */
+.tile.m .num{color:var(--sou);} .tile.m .glyph{color:var(--man);}
 .tile.back{background:linear-gradient(135deg,#1f7a4d,#0c5635);border-color:#0a4329;}
 .tile.back::after{content:"";position:absolute;inset:3px;border:1px solid rgba(255,255,255,.25);border-radius:4px;}
 
@@ -1462,9 +1462,42 @@ const overlay = $('overlay');
 const SUIT_CSS = ['p', 's', 'm'];
 const SUIT_TINT = ['#8ec5ff', '#7be39a', '#ff8a8a'];
 
+/* ---- authentic tile faces drawn as SVG (dots = 筒 circles, bamboo = 条 sticks,
+   characters = 萬 with a Chinese numeral). viewBox 100x140; scales to any tile size. ---- */
+const DOT_BLUE = '#2766a8', DOT_GREEN = '#1f8a4c', DOT_RED = '#c0392b';
+const BAM_G = '#2f8f4f', BAM_DG = '#1c6b39', BAM_RED = '#c0392b';
+const CH_NUM = ['', '一', '二', '三', '四', '五', '六', '七', '八', '九'];
+const faceMap = (px, py) => [16 + px * 68, 24 + py * 92];
+function dotAt(px, py, R, ornate) {
+  const [x, y] = faceMap(px, py);
+  if (ornate) return `<circle cx="${x}" cy="${y}" r="${R}" fill="${DOT_BLUE}"/><circle cx="${x}" cy="${y}" r="${R * 0.8}" fill="#fff"/><circle cx="${x}" cy="${y}" r="${R * 0.6}" fill="${DOT_GREEN}"/><circle cx="${x}" cy="${y}" r="${R * 0.42}" fill="#fff"/><circle cx="${x}" cy="${y}" r="${R * 0.24}" fill="${DOT_RED}"/>`;
+  return `<circle cx="${x}" cy="${y}" r="${R}" fill="${DOT_BLUE}"/><circle cx="${x}" cy="${y}" r="${R * 0.6}" fill="#fff"/><circle cx="${x}" cy="${y}" r="${R * 0.32}" fill="${DOT_RED}"/>`;
+}
+const DOTPOS = { 1: [[.5, .5]], 2: [[.5, .22], [.5, .78]], 3: [[.22, .22], [.5, .5], [.78, .78]], 4: [[.26, .26], [.74, .26], [.26, .74], [.74, .74]], 5: [[.26, .26], [.74, .26], [.5, .5], [.26, .74], [.74, .74]], 6: [[.26, .18], [.74, .18], [.26, .5], [.74, .5], [.26, .82], [.74, .82]], 7: [[.2, .16], [.5, .16], [.8, .16], [.3, .55], [.7, .55], [.3, .84], [.7, .84]], 8: [[.28, .12], [.72, .12], [.28, .37], [.72, .37], [.28, .63], [.72, .63], [.28, .88], [.72, .88]], 9: [[.22, .18], [.5, .18], [.78, .18], [.22, .5], [.5, .5], [.78, .5], [.22, .82], [.5, .82], [.78, .82]] };
+function dotsSVG(r) { if (r === 1) return dotAt(.5, .5, 26, true); const R = r <= 4 ? 14 : r <= 6 ? 12 : 10; return DOTPOS[r].map((p) => dotAt(p[0], p[1], R, false)).join(''); }
+function stick(px, py, w, h, red) {
+  const [x, y] = faceMap(px, py); const col = red ? BAM_RED : BAM_G, dark = red ? '#8c2a23' : BAM_DG; const x0 = x - w / 2, y0 = y - h / 2;
+  return `<rect x="${x0}" y="${y0}" width="${w}" height="${h}" rx="${w * 0.45}" fill="${col}" stroke="${dark}" stroke-width="1"/>`
+    + `<rect x="${x - w * 0.3}" y="${y0 + h * 0.08}" width="${w * 0.22}" height="${h * 0.84}" rx="${w * 0.11}" fill="#fff" opacity="0.28"/>`
+    + `<line x1="${x0}" y1="${y - h * 0.16}" x2="${x0 + w}" y2="${y - h * 0.16}" stroke="${dark}" stroke-width="1.3"/>`
+    + `<line x1="${x0}" y1="${y + h * 0.16}" x2="${x0 + w}" y2="${y + h * 0.16}" stroke="${dark}" stroke-width="1.3"/>`;
+}
+const BAMPOS = { 2: { p: [[.36, .5], [.64, .5]], w: 11, h: 62 }, 3: { p: [[.24, .5], [.5, .5], [.76, .5]], w: 10, h: 62 }, 4: { p: [[.3, .28], [.7, .28], [.3, .72], [.7, .72]], w: 10, h: 40 }, 5: { p: [[.3, .26], [.7, .26], [.5, .5], [.3, .74], [.7, .74]], w: 9.5, h: 36, reds: [2] }, 6: { p: [[.28, .3], [.5, .3], [.72, .3], [.28, .7], [.5, .7], [.72, .7]], w: 9, h: 40 }, 7: { p: [[.5, .14], [.28, .52], [.5, .52], [.72, .52], [.28, .85], [.5, .85], [.72, .85]], w: 8.5, h: 30, reds: [0] }, 8: { p: [[.22, .32], [.41, .32], [.59, .32], [.78, .32], [.22, .7], [.41, .7], [.59, .7], [.78, .7]], w: 7.5, h: 38 }, 9: { p: [[.24, .2], [.5, .2], [.76, .2], [.24, .5], [.5, .5], [.76, .5], [.24, .8], [.5, .8], [.76, .8]], w: 8, h: 28 } };
+function birdSVG() {
+  return `<path d="M30,95 L11,84 L15,99 Z" fill="${BAM_RED}"/><path d="M30,86 l-14,-5 M30,90 l-14,1" stroke="${BAM_DG}" stroke-width="1.6"/>`
+    + `<ellipse cx="50" cy="82" rx="22" ry="15" fill="${BAM_G}"/><path d="M33,77 Q49,93 65,82 Q50,87 41,75 Z" fill="${BAM_DG}"/>`
+    + `<circle cx="64" cy="61" r="11" fill="${BAM_G}"/><path d="M61,49 Q66,41 73,45" stroke="${BAM_RED}" stroke-width="2.6" fill="none" stroke-linecap="round"/>`
+    + `<path d="M74,59 L91,55 L76,66 Z" fill="#e6912e"/><circle cx="67" cy="59" r="2.7" fill="#1a1a1a"/>`
+    + `<path d="M46,95 l-3,11 M55,95 l3,11" stroke="#e6912e" stroke-width="2.2" fill="none" stroke-linecap="round"/>`;
+}
+function bambooSVG(r) { if (r === 1) return birdSVG(); const L = BAMPOS[r], reds = L.reds || []; return L.p.map((p, i) => stick(p[0], p[1], L.w, L.h, reds.includes(i))).join(''); }
+const tileFaceSVG = (s, r) => `<svg class="face" viewBox="0 0 100 140" preserveAspectRatio="xMidYMid meet">${s === 0 ? dotsSVG(r) : bambooSVG(r)}</svg>`;
+// inner face markup for a tile (characters = stacked numeral + 萬; dots/bamboo = SVG)
+const tileInner = (s, r) => (s === 2 ? `<span class="num">${CH_NUM[r]}</span><span class="glyph">萬</span>` : tileFaceSVG(s, r));
+
 function tileHTML(tile, cls = '') {
   const s = tileSuit(tile), r = tileRank(tile);
-  return `<div class="tile ${SUIT_CSS[s]} ${cls}"><span class="num">${r}</span><span class="glyph">${SUIT_GLYPH[s]}</span></div>`;
+  return `<div class="tile ${SUIT_CSS[s]} ${cls}">${tileInner(s, r)}</div>`;
 }
 const backHTML = (cls = '') => `<div class="tile back ${cls}"></div>`;
 /* hand-row CSS vars: fixed tile HEIGHT (--th, constant so the layout never shifts) and a
@@ -1635,8 +1668,8 @@ function renderHandArea(view) {
   } else html += `<div class="ready-banner"></div>`;
   html += `<div class="hand-row" style="${handRowVars(tiles.length + (drawn != null ? 1 : 0), drawn != null ? 12 : 0)}">`;
   const tileCls = (t) => `${SUIT_CSS[tileSuit(t)]} ${canDiscard ? (discardable.has(t) ? 'playable' : 'dim') : ''} ${readySet.has(t) ? 'win-hint' : ''} ${selectedTile === t ? 'sel' : ''}`;
-  for (const t of tiles) html += `<div class="tile ${tileCls(t)}" data-k="${t}"><span class="num">${tileRank(t)}</span><span class="glyph">${SUIT_GLYPH[tileSuit(t)]}</span></div>`;
-  if (drawn != null) html += `<div class="tile ${tileCls(drawn)} drawn" data-k="${drawn}"><span class="num">${tileRank(drawn)}</span><span class="glyph">${SUIT_GLYPH[tileSuit(drawn)]}</span></div>`;
+  for (const t of tiles) html += `<div class="tile ${tileCls(t)}" data-k="${t}">${tileInner(tileSuit(t), tileRank(t))}</div>`;
+  if (drawn != null) html += `<div class="tile ${tileCls(drawn)} drawn" data-k="${drawn}">${tileInner(tileSuit(drawn), tileRank(drawn))}</div>`;
   html += '</div><div class="actions" id="actions"></div>';
   area.innerHTML = html;
 
