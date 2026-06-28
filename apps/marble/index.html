@@ -148,6 +148,22 @@
   @keyframes spin { to { transform: rotate(360deg); } }
   #loader .lbl { font-size: 12px; letter-spacing: 4px; text-transform: uppercase; opacity: .6; }
   .scrollable { overflow-y: auto; -webkit-overflow-scrolling: touch; max-height: 84vh; width: 100%; display: flex; flex-direction: column; align-items: center; }
+
+  /* Dev tuning panel */
+  #tunePanel { position: absolute; top: calc(env(safe-area-inset-top) + 56px); right: calc(env(safe-area-inset-right) + 12px);
+    width: 270px; max-height: 78vh; overflow-y: auto; -webkit-overflow-scrolling: touch; display: none;
+    background: rgba(10,12,30,.82); backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
+    border-radius: 14px; padding: 12px 14px; pointer-events: auto; z-index: 80;
+    box-shadow: 0 18px 50px rgba(0,0,0,.5), inset 0 0 0 1px rgba(255,255,255,.12); font-size: 12px; }
+  #tunePanel.show { display: block; }
+  .tune-head { display: flex; justify-content: space-between; align-items: center; font-weight: 800; letter-spacing: 1px; text-transform: uppercase; font-size: 12px; opacity: .85; margin-bottom: 8px; }
+  .tune-head button, .tune-foot button { pointer-events: auto; cursor: pointer; border: none; background: rgba(255,255,255,.1); color: var(--ink); border-radius: 8px; font-family: inherit; font-weight: 700; padding: 5px 9px; font-size: 12px; }
+  .tune-row { margin: 9px 0; }
+  .tune-row label { display: flex; justify-content: space-between; opacity: .75; margin-bottom: 3px; }
+  .tune-row .tval { font-variant-numeric: tabular-nums; opacity: 1; font-weight: 700; color: var(--accent2); }
+  .tune-row input[type=range] { width: 100%; accent-color: var(--accent); height: 18px; }
+  .tune-foot { display: flex; justify-content: space-between; align-items: center; margin-top: 10px; }
+  .tune-hint { opacity: .45; font-size: 11px; }
 </style>
 </head>
 <body>
@@ -267,6 +283,13 @@
   </div>
 
   <div id="toast"></div>
+
+  <!-- Dev tuning panel -->
+  <div id="tunePanel">
+    <div class="tune-head"><span>Tuning</span><button id="tuneClose">✕</button></div>
+    <div id="tuneRows"></div>
+    <div class="tune-foot"><button id="tuneReset">Reset</button><span class="tune-hint">press T to toggle</span></div>
+  </div>
 </div>
 
 <div id="loader"><div class="spinner"></div><div class="lbl">Marble Odyssey</div></div>
@@ -322,9 +345,26 @@ function haptic(taps) {
 }
 
 const SAVE_KEY = 'marble_odyssey_v1';
-const defaults = { gfx: isMobile ? 'med' : 'high', music: 'on', sfx: 'on', ctl: 'drag', best: {}, cleared: {} };
+const defaults = { gfx: isMobile ? 'med' : 'high', music: 'on', sfx: 'on', ctl: 'drag', best: {}, cleared: {}, medals: {} };
 let save = Object.assign({}, defaults, JSON.parse(localStorage.getItem(SAVE_KEY) || '{}'));
 function persist() { localStorage.setItem(SAVE_KEY, JSON.stringify(save)); }
+
+// Live-tunable feel parameters (dev panel writes these; physics/camera read them).
+const TUNE_KEY = 'marble_tune_v1';
+const TUNE_DEF = {
+  grav: 28, maxTilt: 0.34, tiltResp: 10, maxSpeed: 30,
+  floorFric: 0.992, iceFric: 0.9992, restitution: 0.22,
+  camDist: 10.8, camHeight: 6.4, camFollow: 3.4, fov: 58, bloom: 0.5,
+};
+let TUNE = Object.assign({}, TUNE_DEF, JSON.parse(localStorage.getItem(TUNE_KEY) || '{}'));
+function persistTune() { localStorage.setItem(TUNE_KEY, JSON.stringify(TUNE)); }
+function applyTune() {
+  if (typeof MATS !== 'undefined') {
+    MATS.floor.fric = TUNE.floorFric; MATS.ramp.fric = TUNE.floorFric; MATS.ice.fric = TUNE.iceFric;
+    MATS.floor.rest = TUNE.restitution; MATS.ramp.rest = TUNE.restitution;
+  }
+  if (typeof bloom !== 'undefined' && bloom) bloom.strength = TUNE.bloom;
+}
 
 const TIER = () => save.gfx;                 // 'low' | 'med' | 'high'
 const useHalfFloat = !isMobile;
@@ -910,7 +950,7 @@ function loadLevel(idx) {
   camYaw = (gx || gz) ? Math.atan2(gx, gz) : 0;
   marbleRoot.getWorldPosition(_ballWorld);
   introTime = 1.7;
-  const yaw = camYaw + 0.55, dist = CAM_DIST + 8, height = CAM_HEIGHT + 6.5;
+  const yaw = camYaw + 0.55, dist = TUNE.camDist + 8, height = TUNE.camHeight + 6.5;
   camPos.set(_ballWorld.x - Math.sin(yaw) * dist, _ballWorld.y + height, _ballWorld.z - Math.cos(yaw) * dist);
   camLook.copy(_ballWorld);
 }
@@ -944,6 +984,7 @@ window.addEventListener('keydown', e => {
   if (['ArrowUp','ArrowDown','ArrowLeft','ArrowRight','Space'].includes(e.code)) e.preventDefault();
   keys[e.code] = true;
   if (e.code === 'Escape' || e.code === 'KeyP') { if (state === 'play') pause(); else if (state === 'pause') resume(); }
+  if (e.code === 'KeyT' && !e.repeat) toggleTune();
 }, { passive: false });
 window.addEventListener('keyup', e => { keys[e.code] = false; });
 
@@ -997,10 +1038,8 @@ function readKeyboard() {
 //============================================================================
 //  PHYSICS
 //============================================================================
-const MAX_TILT = 0.34, GRAV = 28;
 const ball = { pos: new THREE.Vector3(), vel: new THREE.Vector3(), prev: new THREE.Vector3() };
 const spawnPos = new THREE.Vector3();
-const MAX_SPEED = 30;
 let tiltX = 0, tiltZ = 0, grounded = false, groundMat = MATS.floor, lastSpeed = 0;
 let squash = 0, squashAxis = new THREE.Vector3(0, 1, 0);
 let shake = 0;
@@ -1010,12 +1049,12 @@ const _local = new THREE.Vector3(), _closest = new THREE.Vector3(), _delta = new
 const _n = new THREE.Vector3();
 
 function physicsStep(dt) {
-  tiltX += (tiltTarget.x * MAX_TILT - tiltX) * Math.min(1, dt * 10);
-  tiltZ += (-tiltTarget.y * MAX_TILT - tiltZ) * Math.min(1, dt * 10);
+  tiltX += (tiltTarget.x * TUNE.maxTilt - tiltX) * Math.min(1, dt * TUNE.tiltResp);
+  tiltZ += (-tiltTarget.y * TUNE.maxTilt - tiltZ) * Math.min(1, dt * TUNE.tiltResp);
   stage.rotation.set(tiltX, 0, tiltZ); stage.updateMatrixWorld();
 
   _e.set(tiltX, 0, tiltZ); _q.setFromEuler(_e).invert();
-  _g.set(0, -GRAV, 0).applyQuaternion(_q);
+  _g.set(0, -TUNE.grav, 0).applyQuaternion(_q);
   ball.vel.addScaledVector(_g, dt);
 
   if (grounded) {
@@ -1023,7 +1062,7 @@ function physicsStep(dt) {
     ball.vel.x *= f; ball.vel.z *= f;
   }
   ball.vel.multiplyScalar(Math.pow(0.997, dt * 60));
-  const sp0 = ball.vel.length(); if (sp0 > MAX_SPEED) ball.vel.multiplyScalar(MAX_SPEED / sp0);
+  const sp0 = ball.vel.length(); if (sp0 > TUNE.maxSpeed) ball.vel.multiplyScalar(TUNE.maxSpeed / sp0);
   ball.prev.copy(ball.pos);     // for swept goal detection
 
   // move movers, and carry the ball if it's resting on top (once per frame)
@@ -1133,8 +1172,7 @@ const _moverV = new THREE.Vector3(), _moverD = new THREE.Vector3();
 //============================================================================
 const camPos = new THREE.Vector3(0, 10, 15), camLook = new THREE.Vector3(), _ballWorld = new THREE.Vector3();
 const _camWant = new THREE.Vector3(), _lookTgt = new THREE.Vector3();
-let camYaw = 0, baseFov = 58, introTime = 0;
-const CAM_DIST = 10.8, CAM_HEIGHT = 6.4;
+let camYaw = 0, introTime = 0;
 function updateCamera(dt) {
   marbleRoot.getWorldPosition(_ballWorld);
   const speed = Math.hypot(ball.vel.x, ball.vel.z);
@@ -1146,15 +1184,15 @@ function updateCamera(dt) {
   // intro pull-in during countdown
   if (introTime > 0) introTime -= dt;
   const intro = clamp(introTime / 1.7, 0, 1), ease = intro * intro;
-  const dist = CAM_DIST + ease * 8, height = CAM_HEIGHT + ease * 6.5;
+  const dist = TUNE.camDist + ease * 8, height = TUNE.camHeight + ease * 6.5;
   const yaw = camYaw + ease * 0.55;
   _camWant.set(_ballWorld.x - Math.sin(yaw) * dist, _ballWorld.y + height, _ballWorld.z - Math.cos(yaw) * dist);
-  camPos.lerp(_camWant, Math.min(1, dt * 3.4));
+  camPos.lerp(_camWant, Math.min(1, dt * TUNE.camFollow));
   // look slightly ahead of the marble for anticipation
   _lookTgt.set(_ballWorld.x + ball.vel.x * 0.12, _ballWorld.y, _ballWorld.z + ball.vel.z * 0.12);
   camLook.lerp(_lookTgt, Math.min(1, dt * 6.5));
   // dynamic fov
-  const targetFov = baseFov + clamp(speed * 0.8, 0, 14);
+  const targetFov = TUNE.fov + clamp(speed * 0.8, 0, 14);
   camera.fov += (targetFov - camera.fov) * Math.min(1, dt * 3);
   // shake
   let ox = 0, oy = 0;
@@ -1261,6 +1299,46 @@ function updateHud() {
 }
 let toastTimer;
 function toast(msg) { const t = $('toast'); t.textContent = msg; t.classList.add('show'); clearTimeout(toastTimer); toastTimer = setTimeout(() => t.classList.remove('show'), 1600); }
+
+//============================================================================
+//  TUNING PANEL
+//============================================================================
+const TUNE_SPEC = [
+  { k: 'grav', l: 'Gravity', min: 12, max: 50, step: 0.5 },
+  { k: 'maxTilt', l: 'Max tilt', min: 0.15, max: 0.6, step: 0.01 },
+  { k: 'tiltResp', l: 'Tilt response', min: 3, max: 20, step: 0.5 },
+  { k: 'maxSpeed', l: 'Max speed', min: 12, max: 50, step: 1 },
+  { k: 'floorFric', l: 'Floor grip', min: 0.95, max: 1, step: 0.001 },
+  { k: 'iceFric', l: 'Ice grip', min: 0.99, max: 1, step: 0.0002 },
+  { k: 'restitution', l: 'Bounciness', min: 0, max: 0.6, step: 0.02 },
+  { k: 'camDist', l: 'Cam distance', min: 6, max: 18, step: 0.2 },
+  { k: 'camHeight', l: 'Cam height', min: 3, max: 12, step: 0.2 },
+  { k: 'camFollow', l: 'Cam follow', min: 1, max: 8, step: 0.1 },
+  { k: 'fov', l: 'Field of view', min: 45, max: 80, step: 1 },
+  { k: 'bloom', l: 'Bloom', min: 0, max: 1.2, step: 0.05 },
+];
+function buildTunePanel() {
+  const host = $('tuneRows'); host.innerHTML = '';
+  TUNE_SPEC.forEach(s => {
+    const row = document.createElement('div'); row.className = 'tune-row';
+    const dec = s.step < 0.01 ? 4 : s.step < 1 ? 2 : 0;
+    row.innerHTML = `<label>${s.l}<span class="tval" id="tv_${s.k}">${TUNE[s.k].toFixed(dec)}</span></label>
+      <input type="range" id="ts_${s.k}" min="${s.min}" max="${s.max}" step="${s.step}" value="${TUNE[s.k]}">`;
+    host.appendChild(row);
+    const input = row.querySelector('input');
+    input.addEventListener('input', () => {
+      TUNE[s.k] = parseFloat(input.value);
+      $('tv_' + s.k).textContent = TUNE[s.k].toFixed(dec);
+      applyTune(); persistTune();
+    });
+  });
+}
+function toggleTune(force) {
+  const p = $('tunePanel');
+  const show = force != null ? force : !p.classList.contains('show');
+  p.classList.toggle('show', show);
+  if (show) buildTunePanel();
+}
 function flash() { const f = $('fx-flash'); f.style.transition = 'none'; f.style.opacity = 0.85; void f.offsetWidth; f.style.transition = 'opacity .6s ease'; f.style.opacity = 0; }
 const fxSpeed = $('fx-speed');
 
@@ -1503,7 +1581,9 @@ function wireUI() {
   setupSeg('segMusic', 'music', () => SFX.setMusicVol());
   setupSeg('segSfx', 'sfx');
   setupSeg('segCtl', 'ctl', v => { if (v === 'tilt') enableTilt(); });
-  if (!isMobile) $('titleHint').textContent = 'WASD or Arrow keys to tilt the world toward the goal';
+  $('tuneClose').onclick = () => toggleTune(false);
+  $('tuneReset').onclick = () => { TUNE = Object.assign({}, TUNE_DEF); applyTune(); persistTune(); buildTunePanel(); toast('Tuning reset'); };
+  if (!isMobile) $('titleHint').textContent = 'WASD / Arrows to tilt · T for tuning panel';
   else $('titleHint').textContent = 'Drag anywhere to tilt the world · collect crystals · reach the ring';
 }
 function firstUnclearedOrFirst() { for (let i = 0; i < LEVELS.length; i++) if (!save.cleared[i]) return (i === 0 || save.cleared[i - 1]) ? i : 0; return 0; }
@@ -1559,6 +1639,7 @@ let lastTimeShown = -1;
 //============================================================================
 wireUI();
 applyGfx();
+applyTune();
 loadLevel(0);
 setState('title');
 showScreen('title');
@@ -1571,7 +1652,8 @@ setTimeout(() => $('loader').classList.add('hide'), 400);
 window.__dbg = { THREE, scene, camera, renderer, ball, keys, tiltTarget, get state() { return state; }, startLevel, loadLevel,
   get info() { return { state, levelIndex, gems, gemsTotal, lives, levelTime, ballPos: ball.pos.toArray(), grounded }; },
   get movers() { return movers.map(m => ({ x: +m.col.c.x.toFixed(2), z: +m.col.c.z.toFixed(2) })); },
-  get fades() { return fadeTiles.map(f => ({ t: f.col.fadeT == null ? null : +f.col.fadeT.toFixed(2), alive: f.col.alive })); } };
+  get fades() { return fadeTiles.map(f => ({ t: f.col.fadeT == null ? null : +f.col.fadeT.toFixed(2), alive: f.col.alive })); },
+  TUNE, toggleTune };
 
 } catch (e) { window.__err(e); }
 </script>
