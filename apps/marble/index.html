@@ -1340,7 +1340,7 @@ function startLevel(idxOrL) {
   ghostMesh.visible = ghostActive;
   updateHud();
   showScreen('hud'); state = 'countdown'; running = false;
-  SFX.music();
+  SFX.music(curLevel.theme);
   runCountdown();
 }
 function runCountdown() {
@@ -1708,6 +1708,9 @@ function gameplay(dt) {
   }
   // speed trail behind the marble
   const sp = Math.hypot(ball.vel.x, ball.vel.z);
+  // adaptive music intensity: faster + nearer the goal = brighter
+  const goalProx = goalGroup ? clamp(1 - Math.hypot(ball.pos.x - goalPos.x, ball.pos.z - goalPos.z) / 16, 0, 1) : 0;
+  SFX.setIntensity(clamp(sp / 15, 0, 1) * 0.7 + goalProx * 0.55);
   if (sp > 6.5 && Math.random() < dt * 40) {
     _trail.copy(ball.pos); _trail.y -= 0.15;
     spawn(_trail, 1, { color: [0xff6e90, 0xffb0c8, 0xffd0dc], speed: 0.6, size: 8, life: 0.38, grav: 1.5, up: 0.2 });
@@ -1808,14 +1811,17 @@ const SFX = (function () {
     o.start(); o.stop(ctx.currentTime + dur + 0.02);
   }
   // ---- generative music ----
-  let playing = false, schedTimer = null, step16 = 0, nextTime = 0;
+  let playing = false, schedTimer = null, step16 = 0, nextTime = 0, intensity = 0, intTarget = 0;
   const BPM = 92, beat = 60 / BPM, eighth = beat / 2;
-  const CHORDS = [
-    { pad: [57, 60, 64, 67], bass: 45 },   // Am
-    { pad: [53, 57, 60, 65], bass: 41 },   // F
-    { pad: [48, 52, 55, 60], bass: 36 },   // C
-    { pad: [55, 59, 62, 67], bass: 43 },   // G
-  ];
+  const PROGRESSIONS = {
+    // each: 4 bars of {pad chord, bass root} (MIDI)
+    a: [{ pad: [57, 60, 64, 67], bass: 45 }, { pad: [53, 57, 60, 65], bass: 41 }, { pad: [48, 52, 55, 60], bass: 36 }, { pad: [55, 59, 62, 67], bass: 43 }], // Am F C G
+    b: [{ pad: [48, 52, 55, 60], bass: 36 }, { pad: [55, 59, 62, 67], bass: 43 }, { pad: [57, 60, 64, 67], bass: 45 }, { pad: [53, 57, 60, 65], bass: 41 }], // C G Am F
+    c: [{ pad: [50, 53, 57, 62], bass: 38 }, { pad: [46, 50, 53, 58], bass: 34 }, { pad: [53, 57, 60, 65], bass: 41 }, { pad: [48, 52, 55, 60], bass: 36 }], // Dm Bb F C
+    d: [{ pad: [52, 55, 59, 64], bass: 40 }, { pad: [48, 52, 55, 60], bass: 36 }, { pad: [55, 59, 62, 67], bass: 43 }, { pad: [50, 54, 57, 62], bass: 38 }], // Em C G D
+  };
+  const THEME_PROG = { dawn: 'a', twilight: 'a', verdant: 'b', glacier: 'b', sunset: 'c', ember: 'c', _alt: 'd' };
+  let prog = PROGRESSIONS.a;
   const ARP = [0, 2, 1, 3, 2, 3, 1, 2];
   function voice(freq, t, dur, type, peak, atk, dest, send) {
     const o = ctx.createOscillator(), g = ctx.createGain();
@@ -1828,17 +1834,22 @@ const SFX = (function () {
     return o;
   }
   function schedNote(t) {
-    const bar = Math.floor(step16 / 8) % 4, ch = CHORDS[bar], e = step16 % 8;
+    intensity += (intTarget - intensity) * 0.06;
+    const bar = Math.floor(step16 / 8) % 4, ch = prog[bar], e = step16 % 8;
     if (e === 0) {
-      // pad chord
-      ch.pad.forEach((m, i) => { const o = voice(mf(m), t, beat * 4 * 0.98, i % 2 ? 'sawtooth' : 'triangle', 0.05, 0.45, musicGain, true); o.detune.value = (i % 2 ? 6 : -6); });
+      ch.pad.forEach((m, i) => { const o = voice(mf(m), t, beat * 4 * 0.98, i % 2 ? 'sawtooth' : 'triangle', 0.045 + intensity * 0.02, 0.45, musicGain, true); o.detune.value = (i % 2 ? 6 : -6); });
       voice(mf(ch.bass), t, beat * 3.6, 'sine', 0.13, 0.04, musicGain, false);
       voice(mf(ch.bass + 12), t, beat * 3.2, 'triangle', 0.03, 0.06, musicGain, false);
     }
-    // arpeggio bell
+    // arpeggio bell — brightens with intensity
     const note = ch.pad[ARP[e]] + 12;
-    voice(mf(note), t, 0.5, 'triangle', e % 2 ? 0.05 : 0.075, 0.006, musicGain, true);
+    voice(mf(note), t, 0.5, 'triangle', (e % 2 ? 0.05 : 0.075) * (0.6 + intensity * 0.7), 0.006, musicGain, true);
     if (e === 4) voice(mf(note + 12), t, 0.7, 'sine', 0.035, 0.006, musicGain, true);
+    // high shimmer + 16th fills when intense
+    if (intensity > 0.45) {
+      voice(mf(ch.pad[(ARP[e] + 1) % 4] + 24), t, 0.3, 'sine', 0.02 * intensity, 0.004, musicGain, true);
+      voice(mf(note + 7), t + eighth * 0.5, 0.18, 'triangle', 0.03 * intensity, 0.004, musicGain, true);
+    }
     step16++;
   }
   function scheduler() {
@@ -1868,8 +1879,11 @@ const SFX = (function () {
       rollOsc.frequency.value = 55 + speed * 5.5; rollOsc2.frequency.value = 82 + speed * 7; rollFilter.frequency.value = 220 + speed * 38;
     },
     duck(d) { if (musicGain && ctx) musicGain.gain.setTargetAtTime(save.music === 'on' ? (d ? 0.12 : 0.4) : 0, ctx.currentTime, 0.1); },
-    music() {
+    setProgression(theme) { prog = PROGRESSIONS[THEME_PROG[theme] || 'a'] || PROGRESSIONS.a; },
+    setIntensity(v) { intTarget = clamp(v, 0, 1); },
+    music(theme) {
       ensure(); if (!ctx) return;
+      this.setProgression(theme); intensity = 0; intTarget = 0;
       if (musicGain) musicGain.gain.setTargetAtTime(save.music === 'on' ? 0.4 : 0, ctx.currentTime, 0.2);
       if (playing) return; playing = true; step16 = 0; nextTime = ctx.currentTime + 0.1;
       schedTimer = setInterval(scheduler, 25);
