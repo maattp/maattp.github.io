@@ -269,6 +269,9 @@
       <div class="set-row">Touch Controls
         <div class="seg" id="segCtl"><button data-v="drag">Drag</button><button data-v="tilt">Tilt</button></div>
       </div>
+      <div class="set-row">Marble
+        <div class="seg" id="skinRow" style="flex-wrap:wrap;gap:6px;"></div>
+      </div>
       <div class="btn-row"><button class="btn ghost" id="btnSetReset">Reset Progress</button><button class="btn" id="btnSetBack">Done</button></div>
     </div>
   </div>
@@ -392,6 +395,7 @@ import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
+import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
 
 try {
 const $ = id => document.getElementById(id);
@@ -419,7 +423,7 @@ function haptic(taps) {
 }
 
 const SAVE_KEY = 'marble_odyssey_v1';
-const defaults = { gfx: isMobile ? 'med' : 'high', music: 'on', sfx: 'on', ctl: 'drag', best: {}, cleared: {}, medals: {} };
+const defaults = { gfx: isMobile ? 'med' : 'high', music: 'on', sfx: 'on', ctl: 'drag', skin: 'rose', best: {}, cleared: {}, medals: {} };
 let save = Object.assign({}, defaults, JSON.parse(localStorage.getItem(SAVE_KEY) || '{}'));
 function persist() { localStorage.setItem(SAVE_KEY, JSON.stringify(save)); }
 
@@ -548,6 +552,19 @@ const marbleMesh = new THREE.Mesh(new THREE.SphereGeometry(BALL_R, 56, 40),
   new THREE.MeshPhysicalMaterial({ color: 0xff4d72, metalness: 0.35, roughness: 0.16, envMapIntensity: 1.4,
     clearcoat: 1.0, clearcoatRoughness: 0.08, sheen: 0.4, sheenColor: 0xff9fc0,
     emissive: 0x2a000c, emissiveIntensity: 0.35 }));
+const MARBLE_SKINS = {
+  rose:     { sw: '#ff5d7e', color: 0xff4d72, metalness: 0.35, roughness: 0.16, clearcoat: 1.0, sheen: 0.4, sheenColor: 0xff9fc0, emissive: 0x2a000c, ei: 0.35 },
+  aqua:     { sw: '#35d6ff', color: 0x35d6ff, metalness: 0.4, roughness: 0.12, clearcoat: 1.0, sheen: 0.4, sheenColor: 0x9ff0ff, emissive: 0x002028, ei: 0.3 },
+  gold:     { sw: '#ffcf5a', color: 0xffcf5a, metalness: 1.0, roughness: 0.18, clearcoat: 0.6, sheen: 0.0, sheenColor: 0x000000, emissive: 0x1a1000, ei: 0.2 },
+  pearl:    { sw: '#eef0ff', color: 0xffffff, metalness: 0.2, roughness: 0.07, clearcoat: 1.0, sheen: 0.9, sheenColor: 0xbfd0ff, emissive: 0x101018, ei: 0.2 },
+  obsidian: { sw: '#2a2c40', color: 0x20223a, metalness: 0.6, roughness: 0.05, clearcoat: 1.0, sheen: 0.3, sheenColor: 0x6f8cff, emissive: 0x000008, ei: 0.2 },
+  magma:    { sw: '#ff5a2a', color: 0xff5a2a, metalness: 0.3, roughness: 0.3, clearcoat: 0.8, sheen: 0.2, sheenColor: 0xffaa66, emissive: 0x661500, ei: 1.2 },
+};
+function applySkin(name) {
+  const s = MARBLE_SKINS[name] || MARBLE_SKINS.rose, m = marbleMesh.material;
+  m.color.setHex(s.color); m.metalness = s.metalness; m.roughness = s.roughness; m.clearcoat = s.clearcoat;
+  m.sheen = s.sheen; m.sheenColor.setHex(s.sheenColor); m.emissive.setHex(s.emissive); m.emissiveIntensity = s.ei; m.needsUpdate = true;
+}
 marbleMesh.castShadow = true;
 marbleSquash.add(marbleMesh); marbleRoot.add(marbleSquash); stage.add(marbleRoot);
 
@@ -600,6 +617,15 @@ const MATS = {
 };
 const boxGeo = new THREE.BoxGeometry(1, 1, 1);
 const coneGeo = new THREE.ConeGeometry(0.34, 0.7, 4);
+// Cached rounded-box geometries (soft GameCube edges) keyed by quantized size.
+const roundedCache = {};
+function roundedGeo(w, h, d) {
+  const k = w.toFixed(2) + '_' + h.toFixed(2) + '_' + d.toFixed(2);
+  if (roundedCache[k]) return roundedCache[k];
+  const r = Math.min(0.14, w * 0.45, h * 0.45, d * 0.45);
+  const g = new RoundedBoxGeometry(w, h, d, 2, Math.max(0.04, r));
+  roundedCache[k] = g; return g;
+}
 const JUMP_VEL = 15, CONV_ACCEL = 8, FADE_TIME = 0.9;
 const fadeTiles = [], conveyors = [], padMats = [];
 
@@ -619,14 +645,14 @@ function addBox(x, y, z, w, h, d, opts = {}) {
   const type = opts.type || 'floor';
   const color = opts.color != null ? opts.color : (type === 'wall' ? theme.wall : theme.floor);
   const q = (opts.rx || opts.rz) ? new THREE.Quaternion().setFromEuler(new THREE.Euler(opts.rx || 0, 0, opts.rz || 0)) : null;
-  const mesh = new THREE.Mesh(boxGeo, surfaceMat(type, color));
-  mesh.scale.set(w, h, d); mesh.position.set(x, y, z); if (q) mesh.quaternion.copy(q);
+  const mesh = new THREE.Mesh(roundedGeo(w, h, d), surfaceMat(type, color));
+  mesh.position.set(x, y, z); if (q) mesh.quaternion.copy(q);
   mesh.castShadow = type !== 'ice'; mesh.receiveShadow = true; levelGroup.add(mesh);
   // Two-tone deck: a lighter, inset top cap turns plain boxes into crafted platforms.
   if ((type === 'floor' || type === 'ramp') && w > 1.4 && d > 1.4 && !opts.mover) {
-    const cap = new THREE.Mesh(boxGeo, deckMat(color));
+    const cap = new THREE.Mesh(roundedGeo(w - 0.35, 0.12, d - 0.35), deckMat(color));
     const up = new THREE.Vector3(0, h / 2 - 0.05, 0); if (q) up.applyQuaternion(q);
-    cap.scale.set(w - 0.35, 0.12, d - 0.35); cap.position.set(x + up.x, y + up.y, z + up.z);
+    cap.position.set(x + up.x, y + up.y, z + up.z);
     if (q) cap.quaternion.copy(q); cap.receiveShadow = true; levelGroup.add(cap);
   }
   const col = new Collider(new THREE.Vector3(x, y, z), new THREE.Vector3(w/2, h/2, d/2), q, MATS[type] || MATS.floor, type);
@@ -1889,6 +1915,15 @@ function wireUI() {
   setupSeg('segMusic', 'music', () => SFX.setMusicVol());
   setupSeg('segSfx', 'sfx');
   setupSeg('segCtl', 'ctl', v => { if (v === 'tilt') enableTilt(); });
+  // marble skin swatches
+  const skinRow = $('skinRow'); skinRow.innerHTML = '';
+  Object.keys(MARBLE_SKINS).forEach(name => {
+    const b = document.createElement('button'); b.dataset.v = name;
+    b.style.cssText = `width:26px;height:26px;border-radius:50%;padding:0;background:${MARBLE_SKINS[name].sw};box-shadow:${name === save.skin ? '0 0 0 2px #fff' : 'inset 0 0 0 1px rgba(255,255,255,.3)'};opacity:1;`;
+    b.onclick = () => { save.skin = name; persist(); applySkin(name); SFX.click();
+      [...skinRow.children].forEach(c => c.style.boxShadow = c === b ? '0 0 0 2px #fff' : 'inset 0 0 0 1px rgba(255,255,255,.3)'); };
+    skinRow.appendChild(b);
+  });
   $('tuneClose').onclick = () => toggleTune(false);
   $('tuneReset').onclick = () => { TUNE = Object.assign({}, TUNE_DEF); applyTune(); persistTune(); buildTunePanel(); toast('Tuning reset'); };
   if (!isMobile) $('titleHint').textContent = 'WASD / Arrows to tilt · T for tuning panel';
@@ -1950,6 +1985,7 @@ wireUI();
 wireEditorUI();
 applyGfx();
 applyTune();
+applySkin(save.skin);
 loadLevel(0);
 setState('title');
 showScreen('title');
@@ -1963,7 +1999,7 @@ window.__dbg = { THREE, scene, camera, renderer, ball, keys, tiltTarget, get sta
   get info() { return { state, levelIndex, gems, gemsTotal, lives, levelTime, ballPos: ball.pos.toArray(), grounded }; },
   get movers() { return movers.map(m => ({ x: +m.col.c.x.toFixed(2), z: +m.col.c.z.toFixed(2) })); },
   get fades() { return fadeTiles.map(f => ({ t: f.col.fadeT == null ? null : +f.col.fadeT.toFixed(2), alive: f.col.alive })); },
-  TUNE, toggleTune, editor, enterEditor, edTest, edToData };
+  TUNE, toggleTune, editor, enterEditor, edTest, edToData, applySkin, save };
 
 } catch (e) { window.__err(e); }
 </script>
