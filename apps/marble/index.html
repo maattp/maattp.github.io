@@ -76,6 +76,9 @@
   .lvl .lock { position: absolute; right: 12px; top: 12px; font-size: 16px; opacity: .8; }
   .lvl.cleared { box-shadow: inset 0 0 0 1.5px rgba(85,255,204,.45); }
   .lvl .star { color: var(--accent2); }
+  .lvl-world { grid-column: 1 / -1; text-align: left; font-weight: 800; letter-spacing: 1.5px; text-transform: uppercase;
+    font-size: 13px; opacity: .6; margin: 8px 2px 2px; display: flex; align-items: center; gap: 10px; }
+  .lvl-world::after { content: ''; flex: 1; height: 1px; background: linear-gradient(90deg, rgba(255,255,255,.18), transparent); }
 
   /* HUD */
   #hud { position: absolute; inset: 0; display: none; }
@@ -639,6 +642,7 @@ const fadeTiles = [], conveyors = [], padMats = [];
 //============================================================================
 const colliders = [];
 const movers = [];     // {collider, mesh, axis, amp, speed, phase, base}
+const rotors = [];     // {col, mesh, center, speed}  spinning platforms (yaw)
 class Collider {
   constructor(c, h, q, mat, type) {
     this.c = c; this.h = h; this.q = q || null; this.qi = q ? q.clone().invert() : null;
@@ -649,12 +653,12 @@ class Collider {
 function addBox(x, y, z, w, h, d, opts = {}) {
   const type = opts.type || 'floor';
   const color = opts.color != null ? opts.color : (type === 'wall' ? theme.wall : theme.floor);
-  const q = (opts.rx || opts.rz) ? new THREE.Quaternion().setFromEuler(new THREE.Euler(opts.rx || 0, 0, opts.rz || 0)) : null;
+  const q = (opts.rx || opts.rz || opts.rotor) ? new THREE.Quaternion().setFromEuler(new THREE.Euler(opts.rx || 0, 0, opts.rz || 0)) : null;
   const mesh = new THREE.Mesh(roundedGeo(w, h, d), surfaceMat(type, color));
   mesh.position.set(x, y, z); if (q) mesh.quaternion.copy(q);
   mesh.castShadow = type !== 'ice'; mesh.receiveShadow = true; levelGroup.add(mesh);
   // Two-tone deck: a lighter, inset top cap turns plain boxes into crafted platforms.
-  if ((type === 'floor' || type === 'ramp') && w > 1.4 && d > 1.4 && !opts.mover) {
+  if ((type === 'floor' || type === 'ramp') && w > 1.4 && d > 1.4 && !opts.mover && !opts.rotor) {
     const cap = new THREE.Mesh(roundedGeo(w - 0.35, 0.12, d - 0.35), deckMat(color));
     const up = new THREE.Vector3(0, h / 2 - 0.05, 0); if (q) up.applyQuaternion(q);
     cap.position.set(x + up.x, y + up.y, z + up.z);
@@ -668,6 +672,7 @@ function addBox(x, y, z, w, h, d, opts = {}) {
     fadeTiles.push({ col, mesh });
   }
   if (type === 'pad' && padMats.indexOf(mesh.material) < 0) padMats.push(mesh.material);
+  if (opts.rotor) rotors.push({ col, mesh, center: new THREE.Vector3(x, y, z), speed: opts.rotor.speed || 0.8 });
   if (type === 'conveyor') {
     const dir = new THREE.Vector3(opts.push ? opts.push[0] : 1, 0, opts.push ? opts.push[1] : 0);
     if (dir.lengthSq() < 1e-6) dir.set(1, 0, 0); dir.normalize();
@@ -1007,6 +1012,18 @@ const LEVELS = [
     }
   },
   {
+    name: 'Carousel', theme: 'verdant', par: 40, start: [0, 1.2, 9], goal: [0, 0, -9],
+    build() {
+      // big arena with a flush spinning disc in the middle that carries you around
+      addBox(0, -0.5, 0, 16, 1, 22);
+      addBox(-8.2, 0.4, 0, 0.7, 1.8, 22, { type: 'wall' }); addBox(8.2, 0.4, 0, 0.7, 1.8, 22, { type: 'wall' });
+      addBox(0, 0.4, -11.2, 16, 1.8, 0.7, { type: 'wall' }); addBox(0, 0.4, 11.2, 16, 1.8, 0.7, { type: 'wall' });
+      addBox(0, -0.5, 0, 8, 1, 8, { rotor: { speed: 0.75 }, color: 0x4fae6a });   // spinner (flush)
+      addCrystal(0, 1.2, 9); addCrystal(-3, 1.3, 0); addCrystal(3, 1.3, 0); addCrystal(0, 1.3, 3); addCrystal(0, 1.2, -9);
+      buildGoal(0, 0, -9);
+    }
+  },
+  {
     name: 'Apex', theme: 'twilight', par: 75, start: [-16, 1.2, 0], goal: [16, 0, 0],
     build() {
       // a medley of every mechanic on one connected run
@@ -1030,7 +1047,7 @@ const LEVELS = [
 function clearLevel() {
   // remove level meshes / colliders
   while (levelGroup.children.length) { const c = levelGroup.children.pop(); levelGroup.remove(c); }
-  colliders.length = 0; movers.length = 0; crystals = []; goalGroup = null; goalLight = null;
+  colliders.length = 0; movers.length = 0; rotors.length = 0; crystals = []; goalGroup = null; goalLight = null;
   fadeTiles.length = 0; conveyors.length = 0; padMats.length = 0;
 }
 
@@ -1186,6 +1203,18 @@ function physicsStep(dt) {
     }
   }
 
+  // spin rotors (yaw) and carry a resting ball tangentially
+  for (const r of rotors) {
+    const a = time * r.speed, prev = (r._a === undefined) ? a : r._a; r._a = a;
+    _rotQ.setFromAxisAngle(_UP, a); r.col.q.copy(_rotQ); r.col.qi.copy(_rotQ).invert(); r.mesh.quaternion.copy(_rotQ);
+    if (grounded && _groundCol === r.col) {
+      const da = a - prev, c = Math.cos(da), s = Math.sin(da);
+      const dx = ball.pos.x - r.center.x, dz = ball.pos.z - r.center.z;
+      ball.pos.x = r.center.x + dx * c - dz * s; ball.pos.z = r.center.z + dx * s + dz * c;
+      const vx = ball.vel.x, vz = ball.vel.z; ball.vel.x = vx * c - vz * s; ball.vel.z = vx * s + vz * c;
+    }
+  }
+
   const steps = Math.max(1, Math.min(8, Math.ceil(ball.vel.length() * dt / (BALL_R * 0.5))));
   const h = dt / steps;
   grounded = false; let hitBumper = false, hitPad = false, prevGround = false;
@@ -1273,6 +1302,7 @@ function collide() {
 }
 let _groundCol = null;
 const _moverV = new THREE.Vector3(), _moverD = new THREE.Vector3();
+const _rotQ = new THREE.Quaternion(), _UP = new THREE.Vector3(0, 1, 0);
 
 //============================================================================
 //  CAMERA
@@ -1897,10 +1927,13 @@ const SFX = (function () {
 //  UI WIRING
 //============================================================================
 const MEDAL_COLOR = { S: '#ffd35a', A: '#7df9ff', B: '#b6c2ff', C: '#cfd6ff' };
+const WORLDS = [{ name: 'Sky Meadow', from: 0 }, { name: 'Frozen Reach', from: 4 }, { name: 'The Mechanism', from: 8 }, { name: 'The Summit', from: 13 }];
 function buildLevelGrid() {
   const grid = $('lvlGrid'); grid.innerHTML = '';
   let clearedCount = 0;
   LEVELS.forEach((L, i) => {
+    const w = WORLDS.find(w => w.from === i);
+    if (w) { const hd = document.createElement('div'); hd.className = 'lvl-world'; hd.textContent = w.name; grid.appendChild(hd); }
     const unlocked = i === 0 || save.cleared[i - 1];
     if (save.cleared[i]) clearedCount++;
     const t = THEMES[L.theme];
@@ -1916,6 +1949,7 @@ function buildLevelGrid() {
     grid.appendChild(el);
   });
   // custom levels
+  const ch = document.createElement('div'); ch.className = 'lvl-world'; ch.textContent = 'Your Stages'; grid.appendChild(ch);
   (save.customLevels || []).forEach((d, i) => {
     const t = THEMES[d.theme] || THEMES.dawn;
     const el = document.createElement('div'); el.className = 'lvl cleared';
