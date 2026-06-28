@@ -23,6 +23,7 @@ const ROOM_TTL_MS = 45 * 60 * 1000;
 const EMPTY_GRACE_MS = 90 * 1000;   // keep an empty room briefly so a blip can reconnect
 const BOT_DELAY_MS = 950;   // relaxed pace so players can follow discards and claim (peng/gang/hu)
 const NAME_MAX = 12;
+const VOICE_MAX_B64 = 400_000;   // ~300KB clip cap for push-to-talk relay
 
 function sanitizeVer(raw: unknown): string { return String(raw ?? "legacy").slice(0, 24); }
 function sanitizeName(raw: unknown): string {
@@ -164,6 +165,15 @@ export class MahjongRoom {
       case "action": {
         if ((await this.phase()) !== "playing") return;
         await this.handleAction(me.id, msg.action);
+        return;
+      }
+      case "voice": {
+        // push-to-talk: opaquely relay a short recorded audio clip to the OTHER players,
+        // tagged with the speaker's seat + name (never stored; works in lobby and in-game)
+        if (typeof msg.audio !== "string" || msg.audio.length === 0 || msg.audio.length > VOICE_MAX_B64) return;
+        const mime = typeof msg.mime === "string" ? msg.mime.slice(0, 40) : "audio/mp4";
+        const out = JSON.stringify({ t: "voice", from: me.id, name: me.name, mime, audio: msg.audio });
+        for (const sock of this.state.getWebSockets()) { if (sock === ws) continue; try { sock.send(out); } catch { /* closing */ } }
         return;
       }
       case "pp": { ws.send(JSON.stringify({ t: "pp", ts: msg.ts })); return; }
