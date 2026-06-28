@@ -184,18 +184,30 @@ export class MahjongRoom {
       // redeploy mid-hand shouldn't lock a reconnecting player out.
       const humanSeats = (await this.state.storage.get<number[]>("humanSeats")) || [];
       const seatTokens = (await this.state.storage.get<Record<number, string>>("seatTokens")) || {};
-      const connected = new Set(players.map((p) => p.id));
       const token = typeof msg.token === "string" ? msg.token : "";
       const g = await this.loadGame();
       if (!g) { ws.send(JSON.stringify({ t: "error", msg: "Game state unavailable — please try again" })); ws.close(1011, "no game"); return; }
+      // Match purely on the secret token (the credential) — NOT on whether the seat looks
+      // free. On a mobile blip the reconnect can beat the old socket's close, so the seat may
+      // still look "connected"; the rightful owner (proven by token) must still get back in.
       let seatId = -1;
       if (token) for (const id of humanSeats) {
-        if (!connected.has(id) && seatTokens[id] && seatTokens[id] === token) { seatId = id; break; }
+        if (seatTokens[id] && seatTokens[id] === token) { seatId = id; break; }
       }
       if (seatId < 0) { ws.send(JSON.stringify({ t: "error", msg: "Game in progress — seat unavailable" })); ws.close(1008, "in progress"); return; }
+      // Attach the new socket to this seat BEFORE evicting any stale one. The eviction's
+      // webSocketClose can interleave at an await, and handleGone's stillHeld guard only
+      // short-circuits if it can see our attachment — otherwise it treats the close as a real
+      // disconnect and (if this seat is the host) reassigns the host out from under us.
       const hostSeat = await this.state.storage.get<number>("hostSeat");
       const a: Attachment = { id: seatId, name: g.players[seatId].name, ready: true, host: seatId === hostSeat, ver };
       ws.serializeAttachment(a);
+      // now evict any stale socket still holding this seat so the returning player takes over
+      for (const sock of this.state.getWebSockets()) {
+        if (sock === ws) continue;
+        const at = sock.deserializeAttachment() as Attachment | null;
+        if (at && at.id === seatId) { try { sock.close(1000, "reconnected"); } catch { /* */ } }
+      }
       g.players[seatId].isBot = false; g.players[seatId].connected = true;
       await this.saveGame(g);
       await this.bumpTtl();
@@ -228,6 +240,11 @@ export class MahjongRoom {
     const seatTokens = (await this.state.storage.get<Record<number, string>>("seatTokens")) || {};
     seatTokens[id] = token;
     await this.state.storage.put("seatTokens", seatTokens);
+    // remember the name too, so a player who's absent when the first hand is dealt (joined the
+    // lobby, then blipped) keeps their real name instead of falling back to "Bot N"
+    const seatNames = (await this.state.storage.get<Record<number, string>>("seatNames")) || {};
+    seatNames[id] = name;
+    await this.state.storage.put("seatNames", seatNames);
     const a: Attachment = { id, name, ready: false, host: id === hostSeat, ver };
     ws.serializeAttachment(a);
     const code = (await this.state.storage.get<string>("code")) || "";
@@ -240,13 +257,24 @@ export class MahjongRoom {
   private async startHand(prev?: any): Promise<void> {
     const cfg = await this.cfg();
     const roster = this.roster();
-    const humanSeats = roster.map((a) => a.id);
+    const connectedIds = new Set(roster.map((a) => a.id));
+    const seatTokens = (await this.state.storage.get<Record<number, string>>("seatTokens")) || {};
+    const seatNames = (await this.state.storage.get<Record<number, string>>("seatNames")) || {};
     const names: string[] = [];
     const seats: any[] = [];
+    const humanSeats: number[] = [];
     for (let i = 0; i < 4; i++) {
       const a = roster.find((p) => p.id === i);
+      // A seat is "human-owned" while someone holds its reconnect token. Keep that ownership
+      // ACROSS hands: a player who's briefly disconnected when the next hand is dealt would
+      // otherwise be dropped from humanSeats and could never rejoin (the reported bug). A bot
+      // plays the seat until they return; seats no human ever took are permanent bots.
+      const owned = !!a || !!seatTokens[i];
       seats.push({ isBot: !a, difficulty: cfg.difficulty });
-      names[i] = a ? a.name : `Bot ${i + 1}`;
+      // keep the absent owner's real name (from this hand's roster, or the name they joined
+      // with, or last hand's) — never let an owned seat show up as "Bot N"
+      names[i] = a ? a.name : (owned ? (seatNames[i] || (prev && prev.players[i] ? prev.players[i].name : `Bot ${i + 1}`)) : `Bot ${i + 1}`);
+      if (owned) humanSeats.push(i);
     }
     const seed = (Date.now() ^ (Math.floor(Math.random() * 0x7fffffff))) | 0;
     const config = makeConfig({ mode: cfg.mode, allowSevenPairs: cfg.sevenPairs });
@@ -256,8 +284,9 @@ export class MahjongRoom {
       seatScores: prev ? prev.players.map((p: any) => p.score) : [0, 0, 0, 0],
       handNo: prev ? (prev.handNo + 1) : 1,
     });
-    // mark which seats are humans (vs disconnected) for connection bookkeeping
-    for (let i = 0; i < 4; i++) game.players[i].connected = humanSeats.includes(i);
+    // a seat is "connected" only if its human is actually present right now (an owned seat
+    // whose player is away is played by a bot, but stays in humanSeats so they can rejoin)
+    for (let i = 0; i < 4; i++) game.players[i].connected = connectedIds.has(i);
     await this.state.storage.put("phase", "playing");
     await this.state.storage.put("humanSeats", humanSeats);
     await this.saveGame(game);
@@ -309,12 +338,20 @@ export class MahjongRoom {
       return;
     }
     if ((await this.phase()) !== "playing") { await this.state.storage.setAlarm(ttlAt); return; }
-    const game = await this.loadGame();
+    let game = await this.loadGame();
     const seat = this.botPending(game);
     if (seat < 0 || this.state.getWebSockets().length === 0) { await this.state.storage.setAlarm(ttlAt); return; }
     const action = botChooseAction(game, seat);
-    const res = action ? applyAction(game, seat, action) : { ok: false };
-    if (!res.ok) { await this.state.storage.setAlarm(ttlAt); return; }  // never spin the alarm on a stuck seat
+    let res = action ? applyAction(game, seat, action) : { ok: false };
+    if (!res.ok) {
+      // The bot returned no/an illegal action. Rather than freeze the whole table until TTL,
+      // reload a clean state and play ANY legal move so the hand always progresses. Defensive:
+      // botChooseAction shouldn't fail, but a single edge case must not strand real players.
+      game = await this.loadGame();
+      res = { ok: false };
+      for (const alt of getLegalActions(game, seat)) { const r = applyAction(game, seat, alt); if (r.ok) { res = r; break; } }
+      if (!res.ok) { await this.state.storage.setAlarm(ttlAt); return; }  // truly nothing legal — don't spin
+    }
     await this.saveGame(game);
     this.broadcastViews(game);
     await this.armAlarm(game);
@@ -330,6 +367,14 @@ export class MahjongRoom {
     const me = ws.deserializeAttachment() as Attachment | null;
     try { ws.close(); } catch { /* */ }
     if (!me) return;
+    // If a newer socket already holds this seat (a fast reconnect replaced us), this is just
+    // the stale socket closing — don't demote the seat or touch the roster.
+    const stillHeld = this.state.getWebSockets().some((s) => {
+      if (s === ws) return false;
+      const a2 = s.deserializeAttachment() as Attachment | null;
+      return a2 != null && a2.id === me.id;
+    });
+    if (stillHeld) return;
     const remaining = this.roster().filter((p) => p.id !== me.id);
 
     // if the host left and others remain, promote a connected player so host-only
