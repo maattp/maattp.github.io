@@ -133,6 +133,16 @@
     opacity: 0; transition: opacity .3s, transform .3s; pointer-events: none; box-shadow: inset 0 0 0 1px rgba(255,255,255,.12); }
   #toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
 
+  .popup { position: absolute; transform: translate(-50%, -50%); font-weight: 800; font-size: 20px;
+    color: var(--accent2); pointer-events: none; text-shadow: 0 2px 10px rgba(0,0,0,.55); white-space: nowrap;
+    animation: floatUp .9s ease-out forwards; z-index: 60; }
+  .popup .cx { color: #ffd35a; }
+  @keyframes floatUp {
+    0% { opacity: 0; transform: translate(-50%, -30%) scale(.6); }
+    20% { opacity: 1; transform: translate(-50%, -65%) scale(1.12); }
+    100% { opacity: 0; transform: translate(-50%, -165%) scale(1); }
+  }
+
   /* settings rows */
   .set-row { display: flex; align-items: center; justify-content: space-between; gap: 14px; padding: 14px 2px;
     border-bottom: 1px solid rgba(255,255,255,.08); font-size: 16px; }
@@ -1321,7 +1331,8 @@ function updateCamera(dt) {
   // intro pull-in during countdown
   if (introTime > 0) introTime -= dt;
   const intro = clamp(introTime / 1.7, 0, 1), ease = intro * intro;
-  const dist = TUNE.camDist + ease * 8, height = TUNE.camHeight + ease * 6.5;
+  const win = clamp(celebrate / 1.1, 0, 1);   // push in on win
+  const dist = (TUNE.camDist + ease * 8) * (1 - win * 0.4), height = TUNE.camHeight + ease * 6.5 - win * 1.2;
   const yaw = camYaw + ease * 0.55;
   _camWant.set(_ballWorld.x - Math.sin(yaw) * dist, _ballWorld.y + height, _ballWorld.z - Math.cos(yaw) * dist);
   camPos.lerp(_camWant, Math.min(1, dt * TUNE.camFollow));
@@ -1351,7 +1362,7 @@ const _keyOff = new THREE.Vector3(-22, 36, 16);
 //============================================================================
 //  GAME STATE
 //============================================================================
-let state = 'title', time = 0, levelTime = 0, lives = 3, gems = 0, running = false, levelDone = false;
+let state = 'title', time = 0, levelTime = 0, lives = 3, gems = 0, running = false, levelDone = false, celebrate = 0;
 const screens = { title: 'scrTitle', levels: 'scrLevels', settings: 'scrSettings', pause: 'scrPause', clear: 'scrClear', over: 'scrOver' };
 function showScreen(name) {
   Object.values(screens).forEach(id => $(id).classList.remove('show'));
@@ -1362,7 +1373,14 @@ function setState(s) { state = s; if (s in screens) showScreen(s); }
 
 function startLevel(idxOrL) {
   loadLevel(idxOrL);
-  gems = 0; lives = 3; levelTime = 0; levelDone = false;
+  gems = 0; lives = 3; levelTime = 0; levelDone = false; celebrate = 0; comboCount = 0; lastGemT = -9;
+  // first-time tutorial hints on stage 1
+  if (levelIndex === 0 && !save.tutDone && !editor.testing) {
+    save.tutDone = true; persist();
+    setTimeout(() => { if (state === 'play') toast('Tilt the world to roll the marble'); }, 3600);
+    setTimeout(() => { if (state === 'play') toast('Grab the glowing crystals ◆'); }, 7200);
+    setTimeout(() => { if (state === 'play') toast('Roll into the ring to finish'); }, 10800);
+  }
   // ghost replay setup (real stages only)
   recording = []; recAccum = 0; ghostIdx = 0;
   ghostFrames = (levelIndex >= 0 && save.ghosts[levelIndex] && save.ghosts[levelIndex].length) ? save.ghosts[levelIndex] : null;
@@ -1403,13 +1421,13 @@ function loseLife() {
   toast('Try again! ' + '●'.repeat(lives));
 }
 function winLevel() {
-  if (levelDone) return; levelDone = true; running = false;
+  if (levelDone) return; levelDone = true;
   ghostMesh.visible = false;
   SFX.goal(); SFX.stopMusic(); haptic(4);
-  flash(); shake = 0.5;
+  flash(); shake = 0.55;
   marbleRoot.getWorldPosition(_ballWorld);
-  for (let i = 0; i < 4; i++) setTimeout(() => spawn(_ballWorld, 40,
-    { color: [0x6effce, 0xffd27a, 0xff7ab0, 0x7df9ff, 0xffffff], speed: 11, size: 18, life: 1.4, up: 8, grav: 14 }), i * 130);
+  for (let i = 0; i < 6; i++) setTimeout(() => spawn(_ballWorld, 50,
+    { color: [0x6effce, 0xffd27a, 0xff7ab0, 0x7df9ff, 0xffffff], speed: 13, size: 20, life: 1.6, up: 9, grav: 13 }), i * 110);
   const t = levelTime;
   const L = curLevel;
   const allGems = gems === gemsTotal;
@@ -1437,8 +1455,9 @@ function winLevel() {
   $('clearBestTime').textContent = levelIndex >= 0 ? fmt(save.best[levelIndex]) : fmt(t);
   $('clearBest').textContent = isBest ? '★ NEW BEST ★' : '';
   $('btnNext').style.display = (levelIndex >= 0 && levelIndex < LEVELS.length - 1) ? '' : 'none';
-  setTimeout(() => setState('clear'), 700);
+  celebrate = 1.1;   // slow-mo celebration; results card shown when it ends (finishWin)
 }
+function finishWin() { setState('clear'); }
 
 function pause() { if (state !== 'play') return; state = 'pause'; running = false; showScreen('pause'); $('hud').classList.add('show'); SFX.duck(true); }
 function resume() { if (state !== 'pause') return; showScreen('hud'); state = 'play'; running = true; SFX.duck(false); }
@@ -1699,6 +1718,17 @@ function edExport() {
 }
 function flash() { const f = $('fx-flash'); f.style.transition = 'none'; f.style.opacity = 0.85; void f.offsetWidth; f.style.transition = 'opacity .6s ease'; f.style.opacity = 0; }
 const fxSpeed = $('fx-speed');
+// floating world-anchored popup (e.g. "+1 ×3")
+const _proj = new THREE.Vector3(), _proj2 = new THREE.Vector3();
+function showPopup(worldPos, html) {
+  _proj.copy(worldPos).project(camera);
+  if (_proj.z > 1) return;
+  const el = document.createElement('div'); el.className = 'popup'; el.innerHTML = html;
+  el.style.left = ((_proj.x * 0.5 + 0.5) * window.innerWidth) + 'px';
+  el.style.top = ((-_proj.y * 0.5 + 0.5) * window.innerHeight) + 'px';
+  $('ui').appendChild(el); setTimeout(() => el.remove(), 900);
+}
+let comboCount = 0, lastGemT = -9;
 
 //============================================================================
 //  GAMEPLAY UPDATE (crystals, goal, fall)
@@ -1751,7 +1781,11 @@ function gameplay(dt) {
     cr.mesh.position.y = cr.baseY + Math.sin(time * 2 + cr.pos.x) * 0.18;
     cr.gem.rotation.y += dt * 1.8; cr.gem.rotation.x += dt * 0.9;
     if (ball.pos.distanceToSquared(cr.pos) < 1.15 * 1.15) {
-      cr.got = true; cr.mesh.visible = false; gems++;
+      cr.got = true; gems++;
+      comboCount = (levelTime - lastGemT < 1.6) ? comboCount + 1 : 1; lastGemT = levelTime;
+      cr.mesh.getWorldPosition(_proj2);
+      showPopup(_proj2, comboCount > 1 ? '+1 <span class="cx">×' + comboCount + '</span>' : '+1');
+      cr.mesh.visible = false;
       updateHud(); SFX.crystal(gems); haptic(1);
       spawn(cr.pos, 18, { color: [0x7df9ff, 0xffffff, 0xb0ffff], speed: 6, size: 13, life: 0.7, up: 2 });
     }
@@ -2034,7 +2068,14 @@ function tick() {
   let dt = clock.getDelta(); if (dt > 0.05) dt = 0.05;
   time += dt;
 
-  if (running && state === 'play') {
+  if (running && state === 'play' && celebrate > 0) {
+    // win celebration: slow-mo, marble rolls on, camera pushes in, then results
+    celebrate -= dt;
+    physAcc += dt * 0.3; let n = 0;
+    while (physAcc >= FIXED_DT && n < 6) { physicsStep(FIXED_DT); physAcc -= FIXED_DT; n++; }
+    SFX.roll(Math.hypot(ball.vel.x, ball.vel.z) * 0.3, grounded);
+    if (celebrate <= 0) { celebrate = 0; running = false; finishWin(); }
+  } else if (running && state === 'play') {
     readKeyboard();
     // fixed-timestep physics → consistent feel across framerates, no tunneling
     physAcc += dt;
@@ -2085,7 +2126,8 @@ window.__dbg = { THREE, scene, camera, renderer, ball, keys, tiltTarget, get sta
   get movers() { return movers.map(m => ({ x: +m.col.c.x.toFixed(2), z: +m.col.c.z.toFixed(2) })); },
   get fades() { return fadeTiles.map(f => ({ t: f.col.fadeT == null ? null : +f.col.fadeT.toFixed(2), alive: f.col.alive })); },
   TUNE, toggleTune, editor, enterEditor, edTest, edToData, applySkin, save,
-  get ghost() { return { active: ghostActive, frames: ghostFrames ? ghostFrames.length : 0, vis: ghostMesh.visible, rec: recording.length }; } };
+  get ghost() { return { active: ghostActive, frames: ghostFrames ? ghostFrames.length : 0, vis: ghostMesh.visible, rec: recording.length }; },
+  get win() { return { celebrate, levelDone, running }; } };
 
 } catch (e) { window.__err(e); }
 </script>
