@@ -195,15 +195,19 @@ export class MahjongRoom {
         if (seatTokens[id] && seatTokens[id] === token) { seatId = id; break; }
       }
       if (seatId < 0) { ws.send(JSON.stringify({ t: "error", msg: "Game in progress — seat unavailable" })); ws.close(1008, "in progress"); return; }
-      // evict any stale socket still holding this seat so the returning player takes it over
+      // Attach the new socket to this seat BEFORE evicting any stale one. The eviction's
+      // webSocketClose can interleave at an await, and handleGone's stillHeld guard only
+      // short-circuits if it can see our attachment — otherwise it treats the close as a real
+      // disconnect and (if this seat is the host) reassigns the host out from under us.
+      const hostSeat = await this.state.storage.get<number>("hostSeat");
+      const a: Attachment = { id: seatId, name: g.players[seatId].name, ready: true, host: seatId === hostSeat, ver };
+      ws.serializeAttachment(a);
+      // now evict any stale socket still holding this seat so the returning player takes over
       for (const sock of this.state.getWebSockets()) {
         if (sock === ws) continue;
         const at = sock.deserializeAttachment() as Attachment | null;
         if (at && at.id === seatId) { try { sock.close(1000, "reconnected"); } catch { /* */ } }
       }
-      const hostSeat = await this.state.storage.get<number>("hostSeat");
-      const a: Attachment = { id: seatId, name: g.players[seatId].name, ready: true, host: seatId === hostSeat, ver };
-      ws.serializeAttachment(a);
       g.players[seatId].isBot = false; g.players[seatId].connected = true;
       await this.saveGame(g);
       await this.bumpTtl();
@@ -236,6 +240,11 @@ export class MahjongRoom {
     const seatTokens = (await this.state.storage.get<Record<number, string>>("seatTokens")) || {};
     seatTokens[id] = token;
     await this.state.storage.put("seatTokens", seatTokens);
+    // remember the name too, so a player who's absent when the first hand is dealt (joined the
+    // lobby, then blipped) keeps their real name instead of falling back to "Bot N"
+    const seatNames = (await this.state.storage.get<Record<number, string>>("seatNames")) || {};
+    seatNames[id] = name;
+    await this.state.storage.put("seatNames", seatNames);
     const a: Attachment = { id, name, ready: false, host: id === hostSeat, ver };
     ws.serializeAttachment(a);
     const code = (await this.state.storage.get<string>("code")) || "";
@@ -250,6 +259,7 @@ export class MahjongRoom {
     const roster = this.roster();
     const connectedIds = new Set(roster.map((a) => a.id));
     const seatTokens = (await this.state.storage.get<Record<number, string>>("seatTokens")) || {};
+    const seatNames = (await this.state.storage.get<Record<number, string>>("seatNames")) || {};
     const names: string[] = [];
     const seats: any[] = [];
     const humanSeats: number[] = [];
@@ -261,7 +271,9 @@ export class MahjongRoom {
       // plays the seat until they return; seats no human ever took are permanent bots.
       const owned = !!a || !!seatTokens[i];
       seats.push({ isBot: !a, difficulty: cfg.difficulty });
-      names[i] = a ? a.name : (owned && prev && prev.players[i] ? prev.players[i].name : `Bot ${i + 1}`);
+      // keep the absent owner's real name (from this hand's roster, or the name they joined
+      // with, or last hand's) — never let an owned seat show up as "Bot N"
+      names[i] = a ? a.name : (owned ? (seatNames[i] || (prev && prev.players[i] ? prev.players[i].name : `Bot ${i + 1}`)) : `Bot ${i + 1}`);
       if (owned) humanSeats.push(i);
     }
     const seed = (Date.now() ^ (Math.floor(Math.random() * 0x7fffffff))) | 0;
