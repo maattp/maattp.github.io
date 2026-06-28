@@ -282,7 +282,10 @@
         <div class="seg" id="segSfx"><button data-v="off">Off</button><button data-v="on">On</button></div>
       </div>
       <div class="set-row">Touch Controls
-        <div class="seg" id="segCtl"><button data-v="drag">Drag</button><button data-v="tilt">Tilt</button></div>
+        <div class="seg" id="segCtl"><button data-v="tilt">Tilt</button><button data-v="drag">Drag</button></div>
+      </div>
+      <div class="set-row">Screen Shake
+        <div class="seg" id="segShake"><button data-v="on">On</button><button data-v="off">Off</button></div>
       </div>
       <div class="set-row">Marble
         <div class="seg" id="skinRow" style="flex-wrap:wrap;gap:6px;"></div>
@@ -438,8 +441,10 @@ function haptic(taps) {
 }
 
 const SAVE_KEY = 'marble_odyssey_v1';
-const defaults = { gfx: isMobile ? 'med' : 'high', music: 'on', sfx: 'on', ctl: 'drag', skin: 'rose', best: {}, cleared: {}, medals: {}, ghosts: {} };
+const defaults = { gfx: isMobile ? 'med' : 'high', music: 'on', sfx: 'on', ctl: isMobile ? 'tilt' : 'drag', skin: 'rose', shake: 'on', best: {}, cleared: {}, medals: {}, ghosts: {}, v: 2 };
 let save = Object.assign({}, defaults, JSON.parse(localStorage.getItem(SAVE_KEY) || '{}'));
+// one-time migration: default mobile to tilt controls (the natural control for a tilt game)
+if (!(save.v >= 2)) { save.ctl = isMobile ? 'tilt' : 'drag'; save.shake = 'on'; save.v = 2; }
 function persist() { localStorage.setItem(SAVE_KEY, JSON.stringify(save)); }
 
 // Live-tunable feel parameters (dev panel writes these; physics/camera read them).
@@ -1136,15 +1141,15 @@ function loadLevel(idxOrL) {
   spawnPos.copy(ball.pos);
   marbleMesh.quaternion.identity();
   tiltX = tiltZ = 0; tiltTarget.set(0, 0);
-  stage.rotation.set(0, 0, 0); stage.updateMatrixWorld();
+  stage.quaternion.identity(); stage.position.set(0, 0, 0); stage.rotation.set(0, 0, 0); stage.updateMatrixWorld();
   marbleRoot.position.copy(ball.pos);
-  // camera: face goal, start wide for the intro pull-in
+  // camera: fixed yaw toward the goal, start a touch wide for a gentle intro
   const gx = goalPos.x - ball.pos.x, gz = goalPos.z - ball.pos.z;
   camYaw = (gx || gz) ? Math.atan2(gx, gz) : 0;
   marbleRoot.getWorldPosition(_ballWorld);
-  introTime = 1.7;
-  const yaw = camYaw + 0.55, dist = TUNE.camDist + 8, height = TUNE.camHeight + 6.5;
-  camPos.set(_ballWorld.x - Math.sin(yaw) * dist, _ballWorld.y + height, _ballWorld.z - Math.cos(yaw) * dist);
+  introTime = 1.4;
+  const dist = TUNE.camDist + 4, height = TUNE.camHeight + 3;
+  camPos.set(_ballWorld.x - Math.sin(camYaw) * dist, _ballWorld.y + height, _ballWorld.z - Math.cos(camYaw) * dist);
   camLook.copy(_ballWorld);
 }
 
@@ -1244,7 +1249,7 @@ const _n = new THREE.Vector3();
 function physicsStep(dt) {
   tiltX += (tiltTarget.x * TUNE.maxTilt - tiltX) * Math.min(1, dt * TUNE.tiltResp);
   tiltZ += (-tiltTarget.y * TUNE.maxTilt - tiltZ) * Math.min(1, dt * TUNE.tiltResp);
-  stage.rotation.set(tiltX, 0, tiltZ); stage.updateMatrixWorld();
+  // visual stage transform is applied once per frame in applyStageTransform()
 
   _e.set(tiltX, 0, tiltZ); _q.setFromEuler(_e).invert();
   _g.set(0, -TUNE.grav, 0).applyQuaternion(_q);
@@ -1304,7 +1309,7 @@ function physicsStep(dt) {
   if (hitPad && ball.vel.y < JUMP_VEL) {
     ball.vel.y = JUMP_VEL; SFX.bump(); haptic(2);
     spawn(ball.pos, 18, { color: [0x9fffd0, 0xffffff, 0xbff0ff], speed: 6, size: 15, life: 0.5, up: 5 });
-    shake = Math.max(shake, 0.3);
+    shake = Math.max(shake, 0.18);
   }
 
   // spin
@@ -1322,7 +1327,7 @@ function physicsStep(dt) {
   const vol = 1 / Math.sqrt(Math.max(0.2, sx * sy * sz));
   marbleSquash.scale.set(sx * vol, sy * vol, sz * vol);
 
-  if (hitBumper) { SFX.bump(); haptic(2); spawn(ball.pos, 16, { color: [0xffaa55, 0xffd27a], speed: 7, size: 16, life: 0.5 }); shake = Math.max(shake, 0.5); }
+  if (hitBumper) { SFX.bump(); haptic(2); spawn(ball.pos, 16, { color: [0xffaa55, 0xffd27a], speed: 7, size: 16, life: 0.5 }); shake = Math.max(shake, 0.3); }
 
   lastSpeed = ball.vel.length();
 }
@@ -1356,7 +1361,7 @@ function collide() {
       if (impact > 3.2) {
         squashAxis.copy(_n).multiplyScalar(0.5).set(Math.abs(_n.x), Math.abs(_n.y), Math.abs(_n.z));
         squash = Math.min(0.5, impact * 0.045);
-        if (_n.y < 0.5 && impact > 5) { SFX.wall(impact); shake = Math.max(shake, Math.min(0.6, impact * 0.05)); }
+        if (_n.y < 0.5 && impact > 5) { SFX.wall(impact); shake = Math.max(shake, Math.min(0.35, impact * 0.03)); }
       }
       ball.vel.addScaledVector(_n, -vn * (1 + rest));
       if (b.type === 'bumper') bumper = true;
@@ -1378,43 +1383,46 @@ const _rotQ = new THREE.Quaternion(), _UP = new THREE.Vector3(0, 1, 0);
 //============================================================================
 const camPos = new THREE.Vector3(0, 10, 15), camLook = new THREE.Vector3(), _ballWorld = new THREE.Vector3();
 const _camWant = new THREE.Vector3(), _lookTgt = new THREE.Vector3();
+const _stageQ = new THREE.Quaternion(), _pivot = new THREE.Vector3();
 let camYaw = 0, introTime = 0;
+// Tilt pivots around the MARBLE: the ball stays put in world space and the world
+// tips around it (instead of the whole stage swinging about its origin → far less nausea).
+function applyStageTransform() {
+  _e.set(tiltX, 0, tiltZ); _stageQ.setFromEuler(_e);
+  stage.quaternion.copy(_stageQ);
+  _pivot.copy(ball.pos).applyQuaternion(_stageQ);   // where the ball's local point would land
+  stage.position.set(ball.pos.x - _pivot.x, ball.pos.y - _pivot.y, ball.pos.z - _pivot.z);
+  stage.updateMatrixWorld();
+}
 function updateCamera(dt) {
+  if (state === 'play' || state === 'countdown' || celebrate > 0) applyStageTransform();
   marbleRoot.getWorldPosition(_ballWorld);
-  const speed = Math.hypot(ball.vel.x, ball.vel.z);
-  if (speed > 2.4) {
-    const heading = Math.atan2(ball.vel.x, ball.vel.z);
-    let d = ((heading - camYaw + Math.PI * 3) % (Math.PI * 2)) - Math.PI;
-    camYaw += d * Math.min(1, dt * 1.5);
-  }
-  // intro pull-in during countdown
+  // camera yaw is fixed (set per level toward the goal) — no velocity chasing, no spin
+  // intro pull-in during countdown (gentle, no yaw swoop)
   if (introTime > 0) introTime -= dt;
-  const intro = clamp(introTime / 1.7, 0, 1), ease = intro * intro;
-  const win = clamp(celebrate / 1.1, 0, 1);   // push in on win
-  const dist = (TUNE.camDist + ease * 8) * (1 - win * 0.4), height = TUNE.camHeight + ease * 6.5 - win * 1.2;
-  const yaw = camYaw + ease * 0.55;
-  _camWant.set(_ballWorld.x - Math.sin(yaw) * dist, _ballWorld.y + height, _ballWorld.z - Math.cos(yaw) * dist);
+  const intro = clamp(introTime / 1.4, 0, 1), ease = intro * intro;
+  const win = clamp(celebrate / 1.1, 0, 1);   // gentle push-in on win
+  const dist = (TUNE.camDist + ease * 4) * (1 - win * 0.25), height = TUNE.camHeight + ease * 3 - win * 0.8;
+  _camWant.set(_ballWorld.x - Math.sin(camYaw) * dist, _ballWorld.y + height, _ballWorld.z - Math.cos(camYaw) * dist);
   camPos.lerp(_camWant, Math.min(1, dt * TUNE.camFollow));
-  // look slightly ahead of the marble for anticipation
-  _lookTgt.set(_ballWorld.x + ball.vel.x * 0.12, _ballWorld.y, _ballWorld.z + ball.vel.z * 0.12);
-  camLook.lerp(_lookTgt, Math.min(1, dt * 6.5));
-  // dynamic fov
-  const targetFov = TUNE.fov + clamp(speed * 0.8, 0, 14);
-  camera.fov += (targetFov - camera.fov) * Math.min(1, dt * 3);
-  // shake
+  _lookTgt.copy(_ballWorld);
+  camLook.lerp(_lookTgt, Math.min(1, dt * 7));
+  // constant FOV (no zoom pulse)
+  camera.fov += (TUNE.fov - camera.fov) * Math.min(1, dt * 4);
+  // gentle, reduced shake (comfort)
   let ox = 0, oy = 0;
-  if (shake > 0.001) {
-    shake = lerp(shake, 0, Math.min(1, dt * 6));
-    ox = (Math.random() - 0.5) * shake; oy = (Math.random() - 0.5) * shake;
-  }
+  if (shake > 0.001 && save.shake !== 'off') {
+    shake = lerp(shake, 0, Math.min(1, dt * 8));
+    ox = (Math.random() - 0.5) * shake * 0.5; oy = (Math.random() - 0.5) * shake * 0.5;
+  } else shake = 0;
   camera.position.set(camPos.x + ox, camPos.y + oy, camPos.z);
   camera.lookAt(camLook.x, camLook.y + 0.8, camLook.z);
   camera.updateProjectionMatrix();
   // keep shadow camera on the marble
   key.target.position.copy(_ballWorld); key.position.copy(_ballWorld).add(_keyOff);
-  // speed lines + fov fx
-  const sl = clamp((speed - 9) / 12, 0, 1);
-  fxSpeed.style.opacity = sl * 0.9;
+  // subtle speed lines (gentle, comfort-friendly)
+  const sl = clamp((Math.hypot(ball.vel.x, ball.vel.z) - 12) / 14, 0, 1);
+  fxSpeed.style.opacity = sl * 0.5;
 }
 const _keyOff = new THREE.Vector3(-22, 36, 16);
 
@@ -1431,6 +1439,7 @@ function showScreen(name) {
 function setState(s) { state = s; if (s in screens) showScreen(s); }
 
 function startLevel(idxOrL) {
+  if (isMobile && save.ctl === 'tilt') enableTilt();   // request orientation permission in the tap gesture
   loadLevel(idxOrL);
   gems = 0; lives = 3; levelTime = 0; levelDone = false; celebrate = 0; comboCount = 0; lastGemT = -9;
   // first-time tutorial hints on stage 1
@@ -1469,21 +1478,21 @@ function loseLife() {
   spawn(spawnPos, 20, { color: [0xff5d7e, 0xffffff], speed: 5, life: 0.8, up: 3 });
   if (editor.testing) {       // infinite retries while testing in the editor
     ball.pos.copy(spawnPos); ball.vel.set(0, 0, 0); tiltX = tiltZ = 0; tiltTarget.set(0, 0);
-    marbleRoot.position.copy(ball.pos); shake = 0.4; return;
+    marbleRoot.position.copy(ball.pos); shake = 0.22; return;
   }
   lives--; updateHud();
   if (lives <= 0) { setState('over'); running = false; SFX.stopMusic(); return; }
   // respawn
   ball.pos.copy(spawnPos); ball.vel.set(0, 0, 0); tiltX = tiltZ = 0; tiltTarget.set(0, 0);
   marbleRoot.position.copy(ball.pos);
-  shake = 0.4;
+  shake = 0.22;
   toast('Try again! ' + '●'.repeat(lives));
 }
 function winLevel() {
   if (levelDone) return; levelDone = true;
   ghostMesh.visible = false;
   SFX.goal(); SFX.stopMusic(); haptic(4);
-  flash(); shake = 0.55;
+  flash(); shake = 0.3;
   marbleRoot.getWorldPosition(_ballWorld);
   for (let i = 0; i < 6; i++) setTimeout(() => spawn(_ballWorld, 50,
     { color: [0x6effce, 0xffd27a, 0xff7ab0, 0x7df9ff, 0xffffff], speed: 13, size: 20, life: 1.6, up: 9, grav: 13 }), i * 110);
@@ -2088,6 +2097,7 @@ function wireUI() {
   setupSeg('segMusic', 'music', () => SFX.setMusicVol());
   setupSeg('segSfx', 'sfx');
   setupSeg('segCtl', 'ctl', v => { if (v === 'tilt') enableTilt(); });
+  setupSeg('segShake', 'shake');
   // marble skin swatches
   const skinRow = $('skinRow'); skinRow.innerHTML = '';
   Object.keys(MARBLE_SKINS).forEach(name => {
@@ -2187,7 +2197,8 @@ window.__dbg = { THREE, scene, camera, renderer, ball, keys, tiltTarget, get sta
   get fades() { return fadeTiles.map(f => ({ t: f.col.fadeT == null ? null : +f.col.fadeT.toFixed(2), alive: f.col.alive })); },
   TUNE, toggleTune, editor, enterEditor, edTest, edToData, applySkin, save,
   get ghost() { return { active: ghostActive, frames: ghostFrames ? ghostFrames.length : 0, vis: ghostMesh.visible, rec: recording.length }; },
-  get win() { return { celebrate, levelDone, running }; } };
+  get win() { return { celebrate, levelDone, running }; },
+  get marbleWorld() { const v = new THREE.Vector3(); marbleRoot.getWorldPosition(v); return v.toArray().map(n => +n.toFixed(2)); } };
 
 } catch (e) { window.__err(e); }
 </script>
