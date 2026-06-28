@@ -2113,7 +2113,7 @@ class OnlineConnection {
  * relays it to the other players, whose nameplate glows while it plays.
  * Record-then-send (walkie-talkie) avoids WebRTC/TURN and works on iOS.
  * ===================================================================== */
-const pttSpeaking = new Set();   // absolute seat ids currently "speaking" → drives the nameplate glow
+const pttSpeaking = new Map();   // seat id → count of clips currently playing (refcount → nameplate glow)
 function refreshSpeaking() { if (curView && online && conn && conn.inGame) render(); }
 function b64ToBlob(b64, mime) {
   const bin = atob(b64), arr = new Uint8Array(bin.length);
@@ -2121,7 +2121,7 @@ function b64ToBlob(b64, mime) {
   return new Blob([arr], { type: mime || 'audio/mp4' });
 }
 function blobToB64(blob) {
-  return new Promise((res) => { const r = new FileReader(); r.onloadend = () => res(String(r.result).split(',')[1] || ''); r.readAsDataURL(blob); });
+  return new Promise((res) => { const r = new FileReader(); r.onerror = () => res(''); r.onloadend = () => res(String(r.result || '').split(',')[1] || ''); r.readAsDataURL(blob); });
 }
 const PTT = {
   stream: null, rec: null, chunks: [], mime: '', held: false, recording: false, denied: false, _idle: 0, _max: 0,
@@ -2142,7 +2142,7 @@ const PTT = {
     this.mime = this.mime || this.pickMime();
     this.chunks = [];
     try { this.rec = new MediaRecorder(this.stream, this.mime ? { mimeType: this.mime } : undefined); }
-    catch (e) { try { this.rec = new MediaRecorder(this.stream); } catch (e2) { toast('🎤 Recording unsupported', 1600); return; } }
+    catch (e) { try { this.rec = new MediaRecorder(this.stream); } catch (e2) { toast('🎤 Recording unsupported', 1600); try { this.stream.getTracks().forEach((t) => t.stop()); } catch {} this.stream = null; return; } }
     this.rec.ondataavailable = (ev) => { if (ev.data && ev.data.size) this.chunks.push(ev.data); };
     this.rec.onstop = () => this._finish();
     this.recording = true; const b = $('ptt-btn'); if (b) b.classList.add('rec');
@@ -2164,35 +2164,41 @@ const PTT = {
     if (!blob.size || !online || !conn || !conn.sendVoice) return;
     if (blob.size > 200000) { toast('Message too long', 1400); return; }
     const b64 = await blobToB64(blob);
-    if (b64) conn.sendVoice(b64, blob.type || this.mime);
+    if (!b64) { toast('🎤 Voice message failed', 1400); return; }
+    if (conn && conn.sendVoice) conn.sendVoice(b64, blob.type || this.mime);   // re-check conn: leaveGame() may have run during the await
   },
   onVoice(m) {
     if (!m || typeof m.audio !== 'string' || m.from == null) return;
     if (conn && m.from === conn.seat) return;   // never echo our own
     toast('🎤 ' + (m.name || 'Player'), 1200);
     let url; try { url = URL.createObjectURL(b64ToBlob(m.audio, m.mime)); } catch { return; }
-    pttSpeaking.add(m.from); refreshSpeaking();
+    // nameplate glow only exists in-game; a lobby clip just toasts (and won't dirty the glow)
+    const glow = !!(conn && conn.inGame);
+    if (glow) { pttSpeaking.set(m.from, (pttSpeaking.get(m.from) || 0) + 1); refreshSpeaking(); }
     const a = new Audio(url);
     let cleared = false;
-    const done = () => { if (cleared) return; cleared = true; pttSpeaking.delete(m.from); refreshSpeaking(); try { URL.revokeObjectURL(url); } catch {} };
+    const done = () => {
+      if (cleared) return; cleared = true;
+      if (glow) { const n = (pttSpeaking.get(m.from) || 1) - 1; if (n <= 0) pttSpeaking.delete(m.from); else pttSpeaking.set(m.from, n); refreshSpeaking(); }
+      try { URL.revokeObjectURL(url); } catch {}
+    };
     a.onended = done; a.onerror = done;
     setTimeout(done, 20000);   // safety: clear the glow even if playback never reports end
     a.play().catch(() => {});
   },
   dispose() {
-    this.held = false; this.recording = false;
+    this.held = false; this.recording = false; this.denied = false;
     clearTimeout(this._max); clearTimeout(this._idle);
     try { if (this.rec && this.rec.state !== 'inactive') this.rec.stop(); } catch {}
     try { if (this.stream) this.stream.getTracks().forEach((t) => t.stop()); } catch {}
     this.stream = null; this.rec = null; pttSpeaking.clear();
-    const b = $('ptt-btn'); if (b) b.classList.remove('rec');
+    const b = $('ptt-btn'); if (b) { b.classList.remove('rec'); b.classList.remove('denied'); }
   },
 };
+// only toggles button visibility — teardown happens in leaveGame()/dispose(), not on every render
 function updatePttVisibility() {
   const b = $('ptt-btn'); if (!b) return;
-  const show = !!(online && PTT.supported() && conn && conn.inGame);
-  b.style.display = show ? 'flex' : 'none';
-  if (!online) PTT.dispose();
+  b.style.display = (online && PTT.supported() && conn && conn.inGame) ? 'flex' : 'none';
 }
 function onlineMsg(s, err) { const el = $('online-msg'); el.textContent = s; el.className = 'hostmsg' + (err ? ' err' : ''); }
 

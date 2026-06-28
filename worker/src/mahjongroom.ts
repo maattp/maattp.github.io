@@ -23,7 +23,7 @@ const ROOM_TTL_MS = 45 * 60 * 1000;
 const EMPTY_GRACE_MS = 90 * 1000;   // keep an empty room briefly so a blip can reconnect
 const BOT_DELAY_MS = 950;   // relaxed pace so players can follow discards and claim (peng/gang/hu)
 const NAME_MAX = 12;
-const VOICE_MAX_B64 = 400_000;   // ~300KB clip cap for push-to-talk relay
+const VOICE_MAX_B64 = 267_000;   // matches the client's 200KB blob cap (base64 ≈ 4/3×) for PTT
 
 function sanitizeVer(raw: unknown): string { return String(raw ?? "legacy").slice(0, 24); }
 function sanitizeName(raw: unknown): string {
