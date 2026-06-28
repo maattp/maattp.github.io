@@ -164,6 +164,40 @@
   .tune-row input[type=range] { width: 100%; accent-color: var(--accent); height: 18px; }
   .tune-foot { display: flex; justify-content: space-between; align-items: center; margin-top: 10px; }
   .tune-hint { opacity: .45; font-size: 11px; }
+
+  /* Level editor */
+  #editor { position: absolute; inset: 0; display: none; pointer-events: none; z-index: 70; }
+  #editor.show { display: block; }
+  #edTopbar { position: absolute; top: calc(env(safe-area-inset-top) + 8px); left: 50%; transform: translateX(-50%); pointer-events: auto; }
+  #edTools { display: flex; gap: 5px; flex-wrap: wrap; justify-content: center; background: rgba(10,12,30,.8);
+    backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px); padding: 6px; border-radius: 12px; box-shadow: inset 0 0 0 1px rgba(255,255,255,.12); max-width: 94vw; }
+  .ed-tool { pointer-events: auto; cursor: pointer; border: none; background: rgba(255,255,255,.08); color: var(--ink);
+    font-family: inherit; font-weight: 700; font-size: 12px; padding: 7px 10px; border-radius: 8px; }
+  .ed-tool.on { background: linear-gradient(180deg, var(--accent), #5e6ce0); box-shadow: 0 3px 10px rgba(60,80,220,.4); }
+  #edSide { position: absolute; top: calc(env(safe-area-inset-top) + 58px); left: calc(env(safe-area-inset-left) + 10px);
+    width: 230px; pointer-events: auto; background: rgba(10,12,30,.82); backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
+    border-radius: 12px; padding: 12px; box-shadow: inset 0 0 0 1px rgba(255,255,255,.12); font-size: 12px; max-height: 76vh; overflow-y: auto; }
+  .ed-sec { margin-bottom: 12px; }
+  .ed-h { font-weight: 800; text-transform: uppercase; letter-spacing: 1px; opacity: .7; font-size: 11px; margin-bottom: 7px; }
+  #edSide label { display: flex; align-items: center; justify-content: space-between; gap: 6px; margin: 5px 0; opacity: .85; }
+  #edSide input, #edSide select { background: rgba(255,255,255,.08); border: none; color: var(--ink); font-family: inherit;
+    border-radius: 7px; padding: 5px 7px; font-size: 12px; width: 92px; }
+  #edSide input[type=text] { width: 130px; }
+  .ed-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 4px 8px; }
+  .ed-grid label { justify-content: space-between; }
+  .ed-grid input { width: 62px; }
+  .ed-btn { pointer-events: auto; cursor: pointer; border: none; background: linear-gradient(180deg, var(--accent), #5e6ce0); color: var(--ink);
+    font-family: inherit; font-weight: 700; font-size: 13px; padding: 9px 14px; border-radius: 10px; box-shadow: 0 4px 12px rgba(60,80,220,.3); }
+  .ed-btn.warn { background: rgba(255,90,120,.85); }
+  #edDel { width: 100%; margin-top: 8px; }
+  .ed-hint { opacity: .5; font-size: 11px; line-height: 1.5; }
+  #edActions { position: absolute; bottom: calc(env(safe-area-inset-bottom) + 12px); left: 50%; transform: translateX(-50%);
+    display: flex; gap: 8px; pointer-events: auto; background: rgba(10,12,30,.8); backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
+    padding: 8px; border-radius: 12px; box-shadow: inset 0 0 0 1px rgba(255,255,255,.12); }
+  #edExportText { position: absolute; bottom: calc(env(safe-area-inset-bottom) + 70px); left: 50%; transform: translateX(-50%);
+    width: min(640px, 92vw); height: 130px; display: none; pointer-events: auto; background: rgba(6,8,20,.95); color: #bfe0ff;
+    border: 1px solid rgba(255,255,255,.15); border-radius: 10px; padding: 10px; font: 11px/1.4 ui-monospace, Menlo, monospace; }
+  #edExportText.show { display: block; }
 </style>
 </head>
 <body>
@@ -283,6 +317,46 @@
   </div>
 
   <div id="toast"></div>
+
+  <!-- Level editor -->
+  <div id="editor">
+    <div id="edTopbar">
+      <div id="edTools"></div>
+    </div>
+    <div id="edSide">
+      <div class="ed-sec">
+        <div class="ed-h">Stage</div>
+        <label>Name <input id="edName" type="text" maxlength="22"></label>
+        <label>Theme <select id="edTheme"></select></label>
+        <label>Par (s) <input id="edPar" type="number" min="5" max="300" step="1"></label>
+      </div>
+      <div class="ed-sec" id="edSelBox">
+        <div class="ed-h">Selected <span id="edSelType"></span></div>
+        <div class="ed-grid">
+          <label>X <input id="edpx" type="number" step="0.5"></label>
+          <label>Y <input id="edpy" type="number" step="0.25"></label>
+          <label>Z <input id="edpz" type="number" step="0.5"></label>
+          <label>W <input id="edpw" type="number" step="0.5" min="0.5"></label>
+          <label>H <input id="edph" type="number" step="0.25" min="0.25"></label>
+          <label>D <input id="edpd" type="number" step="0.5" min="0.5"></label>
+          <label>rotX <input id="edprx" type="number" step="0.05"></label>
+          <label>rotZ <input id="edprz" type="number" step="0.05"></label>
+          <label id="edPushXrow">pushX <input id="edpushx" type="number" step="1"></label>
+          <label id="edPushZrow">pushZ <input id="edpushz" type="number" step="1"></label>
+        </div>
+        <button class="ed-btn warn" id="edDel">Delete tile</button>
+      </div>
+      <div class="ed-hint" id="edHint">Click ground to place · click a tile to select · drag to move</div>
+    </div>
+    <div id="edActions">
+      <button class="ed-btn" id="edTest">▶ Test</button>
+      <button class="ed-btn" id="edSave">Save</button>
+      <button class="ed-btn" id="edExport">Export</button>
+      <button class="ed-btn warn" id="edClear">Clear</button>
+      <button class="ed-btn" id="edExit">Exit</button>
+    </div>
+    <textarea id="edExportText" readonly></textarea>
+  </div>
 
   <!-- Dev tuning panel -->
   <div id="tunePanel">
@@ -929,12 +1003,14 @@ function clearLevel() {
   fadeTiles.length = 0; conveyors.length = 0; padMats.length = 0;
 }
 
-let levelIndex = 0, gemsTotal = 0;
-function loadLevel(idx) {
-  levelIndex = idx;
-  const L = LEVELS[idx];
+let levelIndex = 0, gemsTotal = 0, curLevel = null;
+function loadLevel(idxOrL) {
+  const isObj = typeof idxOrL !== 'number';
+  levelIndex = isObj ? -1 : idxOrL;
+  const L = isObj ? idxOrL : LEVELS[idxOrL];
+  curLevel = L;
   clearLevel();
-  applyTheme(THEMES[L.theme]);
+  applyTheme(THEMES[L.theme] || THEMES.dawn);
   L.build();
   gemsTotal = crystals.length;
   // place marble
@@ -1223,8 +1299,8 @@ function showScreen(name) {
 }
 function setState(s) { state = s; if (s in screens) showScreen(s); }
 
-function startLevel(idx) {
-  loadLevel(idx);
+function startLevel(idxOrL) {
+  loadLevel(idxOrL);
   gems = 0; lives = 3; levelTime = 0; levelDone = false;
   updateHud();
   showScreen('hud'); state = 'countdown'; running = false;
@@ -1246,9 +1322,13 @@ function runCountdown() {
   step();
 }
 function loseLife() {
-  lives--; updateHud();
   SFX.fall(); haptic(3);
   spawn(spawnPos, 20, { color: [0xff5d7e, 0xffffff], speed: 5, life: 0.8, up: 3 });
+  if (editor.testing) {       // infinite retries while testing in the editor
+    ball.pos.copy(spawnPos); ball.vel.set(0, 0, 0); tiltX = tiltZ = 0; tiltTarget.set(0, 0);
+    marbleRoot.position.copy(ball.pos); shake = 0.4; return;
+  }
+  lives--; updateHud();
   if (lives <= 0) { setState('over'); running = false; SFX.stopMusic(); return; }
   // respawn
   ball.pos.copy(spawnPos); ball.vel.set(0, 0, 0); tiltX = tiltZ = 0; tiltTarget.set(0, 0);
@@ -1264,36 +1344,43 @@ function winLevel() {
   for (let i = 0; i < 4; i++) setTimeout(() => spawn(_ballWorld, 40,
     { color: [0x6effce, 0xffd27a, 0xff7ab0, 0x7df9ff, 0xffffff], speed: 11, size: 18, life: 1.4, up: 8, grav: 14 }), i * 130);
   const t = levelTime;
-  const L = LEVELS[levelIndex];
-  const prevBest = save.best[levelIndex];
-  const isBest = prevBest == null || t < prevBest;
-  if (isBest) save.best[levelIndex] = t;
-  save.cleared[levelIndex] = Math.max(save.cleared[levelIndex] || 0, gems === gemsTotal ? 2 : 1);
-  persist();
-  // rank
+  const L = curLevel;
   const allGems = gems === gemsTotal;
   let rank = 'C';
   if (t <= L.par * 0.7 && allGems) rank = 'S';
   else if (t <= L.par * 0.9 && allGems) rank = 'A';
   else if (t <= L.par) rank = 'B';
-  else rank = 'C';
+  // editor test-play: skip the results card, hop back to the editor
+  if (editor.testing) { toast('Goal! ' + rank + ' · ' + fmt(t)); setTimeout(editorReturn, 1000); return; }
+  let isBest = false;
+  if (levelIndex >= 0) {
+    const prevBest = save.best[levelIndex];
+    isBest = prevBest == null || t < prevBest;
+    if (isBest) save.best[levelIndex] = t;
+    save.cleared[levelIndex] = Math.max(save.cleared[levelIndex] || 0, allGems ? 2 : 1);
+    const ord = { C: 0, B: 1, A: 2, S: 3 };
+    if (!save.medals[levelIndex] || ord[rank] > ord[save.medals[levelIndex]]) save.medals[levelIndex] = rank;
+    // ghost: keep the fastest run's recording
+    if (isBest && recording.length) save.ghost = { idx: levelIndex, frames: recording.slice() };
+    persist();
+  }
   $('clearRank').textContent = rank;
   $('clearTime').textContent = fmt(t);
   $('clearGems').textContent = gems + '/' + gemsTotal;
-  $('clearBestTime').textContent = fmt(save.best[levelIndex]);
+  $('clearBestTime').textContent = levelIndex >= 0 ? fmt(save.best[levelIndex]) : fmt(t);
   $('clearBest').textContent = isBest ? '★ NEW BEST ★' : '';
-  $('btnNext').style.display = levelIndex < LEVELS.length - 1 ? '' : 'none';
+  $('btnNext').style.display = (levelIndex >= 0 && levelIndex < LEVELS.length - 1) ? '' : 'none';
   setTimeout(() => setState('clear'), 700);
 }
 
 function pause() { if (state !== 'play') return; state = 'pause'; running = false; showScreen('pause'); $('hud').classList.add('show'); SFX.duck(true); }
 function resume() { if (state !== 'pause') return; showScreen('hud'); state = 'play'; running = true; SFX.duck(false); }
-function quitToMenu() { running = false; SFX.stopMusic(); buildLevelGrid(); setState('levels'); }
+function quitToMenu() { running = false; SFX.stopMusic(); if (editor.testing) { editorReturn(); return; } buildLevelGrid(); setState('levels'); }
 
 function fmt(t) { if (t == null) return '—'; return t.toFixed(2) + 's'; }
 function updateHud() {
-  $('hudLvl').textContent = 'Stage ' + (levelIndex + 1);
-  $('hudName').textContent = LEVELS[levelIndex].name;
+  $('hudLvl').textContent = levelIndex >= 0 ? 'Stage ' + (levelIndex + 1) : 'Custom';
+  $('hudName').textContent = curLevel ? curLevel.name : '';
   $('hudGems').textContent = gems; $('hudGemsTot').textContent = gemsTotal;
   $('hudLives').innerHTML = '<span style="color:#ff8aa0">' + '●'.repeat(Math.max(0, lives)) + '</span><span style="opacity:.22">' + '●'.repeat(Math.max(0, 3 - lives)) + '</span>';
 }
@@ -1338,6 +1425,209 @@ function toggleTune(force) {
   const show = force != null ? force : !p.classList.contains('show');
   p.classList.toggle('show', show);
   if (show) buildTunePanel();
+}
+
+//============================================================================
+//  LEVEL EDITOR
+//============================================================================
+let recording = [];   // ghost-recording buffer (populated by the ghost system)
+const editor = {
+  on: false, testing: false, tool: 'floor', sel: -1, dragging: false,
+  tiles: [], crystals: [], start: [-3, 1.2, 0], goal: [3, 0, 0],
+  name: 'My Stage', par: 40, theme: 'dawn',
+  camTarget: new THREE.Vector3(0, 0, 0), camDist: 34, camRot: 0.5,
+};
+const ED_TOOLS = ['select', 'floor', 'wall', 'ice', 'sticky', 'bumper', 'pad', 'conveyor', 'fade', 'crystal', 'start', 'goal', 'delete'];
+const TILE_DEF = {
+  floor: { w: 6, h: 1, d: 6, y: -0.5 }, wall: { w: 6, h: 1.6, d: 0.7, y: 0.4 }, ice: { w: 6, h: 1, d: 6, y: -0.5 },
+  sticky: { w: 6, h: 1, d: 6, y: -0.5 }, bumper: { w: 1.4, h: 2, d: 1.4, y: 0.6 }, pad: { w: 5, h: 1, d: 5, y: -0.5 },
+  conveyor: { w: 6, h: 1, d: 6, y: -0.5, push: [1, 0] }, fade: { w: 4, h: 1, d: 4, y: -0.5 },
+};
+const edRay = new THREE.Raycaster(), edPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
+const _ndc = new THREE.Vector2(), _hit = new THREE.Vector3();
+const edOutline = new THREE.LineSegments(new THREE.EdgesGeometry(boxGeo),
+  new THREE.LineBasicMaterial({ color: 0xffe24a }));
+edOutline.visible = false; stage.add(edOutline);
+
+function edToData() {
+  return { name: editor.name, theme: editor.theme, par: editor.par, start: editor.start.slice(), goal: editor.goal.slice(),
+    tiles: editor.tiles.map(t => Object.assign({}, t)), crystals: editor.crystals.map(c => c.slice()) };
+}
+function edFromData(d) {
+  editor.name = d.name || 'My Stage'; editor.theme = d.theme || 'dawn'; editor.par = d.par || 40;
+  editor.start = (d.start || [-3, 1.2, 0]).slice(); editor.goal = (d.goal || [3, 0, 0]).slice();
+  editor.tiles = (d.tiles || []).map(t => Object.assign({}, t)); editor.crystals = (d.crystals || []).map(c => c.slice());
+  editor.sel = -1;
+}
+function edLevelObject(d) {
+  d = d || edToData();
+  return { name: d.name, theme: d.theme, par: d.par, start: d.start.slice(), goal: d.goal.slice(),
+    build() {
+      d.tiles.forEach(t => { const o = { type: t.type, rx: t.rx || 0, rz: t.rz || 0 }; if (t.push) o.push = t.push; addBox(t.x, t.y, t.z, t.w, t.h, t.d, o); });
+      d.crystals.forEach(c => addCrystal(c[0], c[1], c[2]));
+      buildGoal(d.goal[0], d.goal[1], d.goal[2]);
+    } };
+}
+function edTopAt(x, z) {
+  let top = 0;
+  for (const t of editor.tiles) { if (Math.abs(x - t.x) <= t.w / 2 && Math.abs(z - t.z) <= t.d / 2) top = Math.max(top, t.y + t.h / 2); }
+  return top;
+}
+function edRebuild() {
+  clearLevel(); applyTheme(THEMES[editor.theme] || THEMES.dawn);
+  editor.tiles.forEach((t, i) => {
+    const o = { type: t.type, rx: t.rx || 0, rz: t.rz || 0 }; if (t.push) o.push = t.push;
+    const m = addBox(t.x, t.y, t.z, t.w, t.h, t.d, o); m.userData.edIndex = i;
+  });
+  editor.crystals.forEach(c => addCrystal(c[0], c[1], c[2]));
+  buildGoal(editor.goal[0], editor.goal[1], editor.goal[2]);
+  marbleRoot.position.set(editor.start[0], editor.start[1], editor.start[2]); marbleRoot.visible = true;
+  edUpdateOutline();
+}
+function edUpdateOutline() {
+  const t = editor.tiles[editor.sel];
+  if (!t) { edOutline.visible = false; return; }
+  edOutline.visible = true; edOutline.position.set(t.x, t.y, t.z); edOutline.scale.set(t.w + 0.08, t.h + 0.08, t.d + 0.08);
+  edOutline.quaternion.setFromEuler(new THREE.Euler(t.rx || 0, 0, t.rz || 0));
+}
+function setNDC(e) { _ndc.set((e.clientX / window.innerWidth) * 2 - 1, -(e.clientY / window.innerHeight) * 2 + 1); }
+function edGroundPoint(out) { edRay.setFromCamera(_ndc, camera); return edRay.ray.intersectPlane(edPlane, out) != null; }
+function edPick() {
+  edRay.setFromCamera(_ndc, camera);
+  const hits = edRay.intersectObjects(levelGroup.children, false);
+  for (const h of hits) if (h.object.userData.edIndex != null) return h.object.userData.edIndex;
+  return -1;
+}
+function edPointerDown(e) {
+  if (!editor.on || editor.testing) return;
+  setNDC(e);
+  if (editor.tool === 'select' || editor.tool === 'delete') {
+    const idx = edPick();
+    if (editor.tool === 'delete') { if (idx >= 0) { editor.tiles.splice(idx, 1); editor.sel = -1; edRebuild(); refreshProps(); } return; }
+    editor.sel = idx; editor.dragging = idx >= 0; refreshProps(); edUpdateOutline(); return;
+  }
+  if (!edGroundPoint(_hit)) return;
+  const gx = Math.round(_hit.x), gz = Math.round(_hit.z);
+  if (editor.tool === 'start') editor.start = [gx, edTopAt(gx, gz) + 1.2, gz];
+  else if (editor.tool === 'goal') editor.goal = [gx, edTopAt(gx, gz), gz];
+  else if (editor.tool === 'crystal') editor.crystals.push([gx, edTopAt(gx, gz) + 1.2, gz]);
+  else {
+    const def = TILE_DEF[editor.tool]; const t = { type: editor.tool, x: gx, y: def.y, z: gz, w: def.w, h: def.h, d: def.d, rx: 0, rz: 0 };
+    if (def.push) t.push = def.push.slice(); editor.tiles.push(t); editor.sel = editor.tiles.length - 1;
+  }
+  edRebuild(); refreshProps();
+}
+function edPointerMove(e) {
+  if (!editor.on || editor.testing || !editor.dragging || editor.sel < 0) return;
+  setNDC(e); if (!edGroundPoint(_hit)) return;
+  const t = editor.tiles[editor.sel]; t.x = Math.round(_hit.x); t.z = Math.round(_hit.z);
+  edRebuild(); refreshProps();
+}
+function edPointerUp() { editor.dragging = false; }
+cv.addEventListener('pointerdown', edPointerDown);
+cv.addEventListener('pointermove', edPointerMove);
+window.addEventListener('pointerup', edPointerUp);
+window.addEventListener('wheel', e => { if (editor.on && !editor.testing) editor.camDist = clamp(editor.camDist + Math.sign(e.deltaY) * 2, 14, 70); }, { passive: true });
+
+function edUpdate(dt) {
+  const sp = editor.camDist * dt * 0.9, cr = editor.camRot, fx = Math.sin(cr), fz = Math.cos(cr);
+  if (keys['KeyW'] || keys['ArrowUp']) { editor.camTarget.x += fx * sp; editor.camTarget.z += fz * sp; }
+  if (keys['KeyS'] || keys['ArrowDown']) { editor.camTarget.x -= fx * sp; editor.camTarget.z -= fz * sp; }
+  if (keys['KeyA'] || keys['ArrowLeft']) { editor.camTarget.x -= fz * sp; editor.camTarget.z += fx * sp; }
+  if (keys['KeyD'] || keys['ArrowRight']) { editor.camTarget.x += fz * sp; editor.camTarget.z -= fx * sp; }
+  if (keys['KeyQ']) editor.camRot -= dt * 1.4;
+  if (keys['KeyE']) editor.camRot += dt * 1.4;
+  const tgt = editor.camTarget, h = editor.camDist * 0.82, back = editor.camDist * 0.55;
+  camera.position.set(tgt.x - Math.sin(editor.camRot) * back, tgt.y + h, tgt.z - Math.cos(editor.camRot) * back);
+  camera.fov = 52; camera.lookAt(tgt.x, tgt.y, tgt.z); camera.updateProjectionMatrix();
+}
+
+// --- editor UI ---
+function buildEditorTools() {
+  const host = $('edTools'); host.innerHTML = '';
+  ED_TOOLS.forEach(tool => {
+    const b = document.createElement('button'); b.className = 'ed-tool' + (tool === editor.tool ? ' on' : '');
+    b.textContent = tool; b.onclick = () => { editor.tool = tool; [...host.children].forEach(c => c.classList.toggle('on', c === b)); };
+    host.appendChild(b);
+  });
+}
+function fillThemeSelect() {
+  const sel = $('edTheme'); sel.innerHTML = '';
+  Object.keys(THEMES).forEach(name => { const o = document.createElement('option'); o.value = name; o.textContent = name; sel.appendChild(o); });
+  sel.value = editor.theme;
+}
+function refreshProps() {
+  const t = editor.tiles[editor.sel];
+  $('edSelBox').style.display = t ? '' : 'none';
+  if (!t) { edUpdateOutline(); return; }
+  $('edSelType').textContent = t.type;
+  const set = (id, v) => { $(id).value = v; };
+  set('edpx', t.x); set('edpy', t.y); set('edpz', t.z); set('edpw', t.w); set('edph', t.h); set('edpd', t.d);
+  set('edprx', t.rx || 0); set('edprz', t.rz || 0);
+  const isConv = t.type === 'conveyor';
+  $('edPushXrow').style.display = isConv ? '' : 'none'; $('edPushZrow').style.display = isConv ? '' : 'none';
+  if (isConv) { set('edpushx', (t.push && t.push[0]) || 0); set('edpushz', (t.push && t.push[1]) || 0); }
+  edUpdateOutline();
+}
+function wireEditorUI() {
+  buildEditorTools(); fillThemeSelect();
+  const bindMeta = (id, key, num) => $(id).addEventListener('input', () => { editor[key] = num ? parseFloat($(id).value) || 0 : $(id).value; });
+  bindMeta('edName', 'name', false); bindMeta('edPar', 'par', true);
+  $('edTheme').addEventListener('change', () => { editor.theme = $('edTheme').value; edRebuild(); });
+  const fields = { edpx: 'x', edpy: 'y', edpz: 'z', edpw: 'w', edph: 'h', edpd: 'd', edprx: 'rx', edprz: 'rz' };
+  Object.entries(fields).forEach(([id, key]) => $(id).addEventListener('input', () => {
+    const t = editor.tiles[editor.sel]; if (!t) return; t[key] = parseFloat($(id).value) || 0; edRebuild(); refreshProps();
+  }));
+  ['edpushx', 'edpushz'].forEach((id, i) => $(id).addEventListener('input', () => {
+    const t = editor.tiles[editor.sel]; if (!t) return; t.push = t.push || [0, 0]; t.push[i] = parseFloat($(id).value) || 0; edRebuild();
+  }));
+  $('edDel').onclick = () => { if (editor.sel >= 0) { editor.tiles.splice(editor.sel, 1); editor.sel = -1; edRebuild(); refreshProps(); } };
+  $('edTest').onclick = () => edTest();
+  $('edSave').onclick = () => edSave();
+  $('edExport').onclick = () => edExport();
+  $('edClear').onclick = () => { if (confirm('Clear all tiles?')) { editor.tiles = []; editor.crystals = []; editor.sel = -1; edRebuild(); refreshProps(); } };
+  $('edExit').onclick = () => exitEditor();
+}
+function enterEditor(data) {
+  if (data) edFromData(data);
+  else if (!editor.tiles.length) {
+    editor.tiles = [{ type: 'floor', x: 0, y: -0.5, z: 0, w: 10, h: 1, d: 10, rx: 0, rz: 0 }];
+    editor.crystals = [[0, 1.2, 0]]; editor.start = [-3, 1.2, 0]; editor.goal = [3, 0, 0];
+  }
+  editor.on = true; editor.testing = false; editor.sel = -1; running = false; state = 'editor';
+  SFX.stopMusic(); showScreen(null); $('editor').classList.add('show'); $('edExportText').classList.remove('show');
+  $('edName').value = editor.name; $('edPar').value = editor.par; fillThemeSelect();
+  editor.camTarget.set(0, 0, 0); editor.camDist = 34;
+  edRebuild(); refreshProps();
+}
+function exitEditor() {
+  editor.on = false; editor.testing = false; edOutline.visible = false; $('editor').classList.remove('show');
+  loadLevel(0); setState('title');
+}
+function edTest() {
+  editor.testing = true; $('editor').classList.remove('show'); edOutline.visible = false;
+  startLevel(edLevelObject());
+}
+function editorReturn() {
+  editor.testing = false; running = false; state = 'editor';
+  SFX.stopMusic(); showScreen(null); $('editor').classList.add('show');
+  editor.camTarget.set(0, 0, 0);
+  edRebuild(); refreshProps();
+}
+function edSave() {
+  save.customLevels = save.customLevels || [];
+  const d = edToData(); const i = save.customLevels.findIndex(c => c.name === d.name);
+  if (i >= 0) save.customLevels[i] = d; else save.customLevels.push(d);
+  persist(); toast('Saved "' + d.name + '"');
+}
+function edExport() {
+  const d = edToData();
+  const ti = d.tiles.map(t => '      addBox(' + [t.x, t.y, t.z, t.w, t.h, t.d].join(', ') +
+    (t.type !== 'floor' || t.rx || t.rz || t.push ? ', { type: \'' + t.type + '\'' + (t.rx ? ', rx: ' + t.rx : '') + (t.rz ? ', rz: ' + t.rz : '') + (t.push ? ', push: [' + t.push + ']' : '') + ' }' : '') + ');').join('\n');
+  const cr = d.crystals.map(c => '      addCrystal(' + c.join(', ') + ');').join('\n');
+  const str = `  {\n    name: '${d.name}', theme: '${d.theme}', par: ${d.par}, start: [${d.start}], goal: [${d.goal}],\n    build() {\n${ti}\n${cr}\n      buildGoal(${d.goal});\n    }\n  },`;
+  const ta = $('edExportText'); ta.value = str; ta.classList.add('show'); ta.select();
+  try { navigator.clipboard.writeText(str); toast('Copied to clipboard'); } catch (e) { toast('Select + copy the text'); }
 }
 function flash() { const f = $('fx-flash'); f.style.transition = 'none'; f.style.opacity = 0.85; void f.offsetWidth; f.style.transition = 'opacity .6s ease'; f.style.opacity = 0; }
 const fxSpeed = $('fx-speed');
@@ -1535,6 +1825,7 @@ const SFX = (function () {
 //============================================================================
 //  UI WIRING
 //============================================================================
+const MEDAL_COLOR = { S: '#ffd35a', A: '#7df9ff', B: '#b6c2ff', C: '#cfd6ff' };
 function buildLevelGrid() {
   const grid = $('lvlGrid'); grid.innerHTML = '';
   let clearedCount = 0;
@@ -1542,16 +1833,33 @@ function buildLevelGrid() {
     const unlocked = i === 0 || save.cleared[i - 1];
     if (save.cleared[i]) clearedCount++;
     const t = THEMES[L.theme];
+    const medal = save.medals[i];
     const el = document.createElement('div');
     el.className = 'lvl' + (unlocked ? '' : ' locked') + (save.cleared[i] ? ' cleared' : '');
     el.innerHTML = `<div class="swatch" style="background:#${t.skyMid.toString(16).padStart(6,'0')}"></div>
       <div class="num">STAGE ${i + 1}</div><div class="nm">${L.name}</div>
       <div class="meta"><span>${save.best[i] != null ? '⏱ ' + fmt(save.best[i]) : 'Par ' + L.par + 's'}</span>
-      <span class="star">${save.cleared[i] === 2 ? '★ All' : save.cleared[i] ? '✓' : ''}</span></div>
+      <span class="star">${medal ? '<b style="color:' + MEDAL_COLOR[medal] + '">' + medal + '</b>' : ''} ${save.cleared[i] === 2 ? '◆' : save.cleared[i] ? '✓' : ''}</span></div>
       ${unlocked ? '' : '<div class="lock">🔒</div>'}`;
     if (unlocked) el.onclick = () => { SFX.click(); startLevel(i); };
     grid.appendChild(el);
   });
+  // custom levels
+  (save.customLevels || []).forEach((d, i) => {
+    const t = THEMES[d.theme] || THEMES.dawn;
+    const el = document.createElement('div'); el.className = 'lvl cleared';
+    el.innerHTML = `<div class="swatch" style="background:#${t.skyMid.toString(16).padStart(6,'0')}"></div>
+      <div class="num">CUSTOM</div><div class="nm">${d.name}</div>
+      <div class="meta"><span>Par ${d.par}s</span><span class="star" data-edit="${i}">✎ edit</span></div>`;
+    el.onclick = (ev) => { SFX.click(); if (ev.target.dataset && ev.target.dataset.edit != null) { enterEditor(d); } else { startLevel(edLevelObject(d)); } };
+    grid.appendChild(el);
+  });
+  // create-new card
+  const create = document.createElement('div'); create.className = 'lvl';
+  create.style.cssText = 'display:flex;align-items:center;justify-content:center;text-align:center;border:1.5px dashed rgba(255,255,255,.25);box-shadow:none;';
+  create.innerHTML = '<div><div style="font-size:26px">＋</div><div class="nm">Create Stage</div></div>';
+  create.onclick = () => { SFX.click(); enterEditor(); };
+  grid.appendChild(create);
   $('lvlProgress').textContent = clearedCount + ' of ' + LEVELS.length + ' cleared';
 }
 function setupSeg(id, key, after) {
@@ -1621,7 +1929,8 @@ function tick() {
     SFX.roll(0, false);
     if (state === 'title') { stage.rotation.y += dt * 0.04; }
   }
-  updateCamera(dt);
+  if (editor.on && !editor.testing) edUpdate(dt);
+  else updateCamera(dt);
   updateParticles(dt);
   // animate clouds
   for (const c of clouds) { c.position.x += dt * 2; if (c.position.x > 520) c.position.x = -520; }
@@ -1638,6 +1947,7 @@ let lastTimeShown = -1;
 //  BOOT
 //============================================================================
 wireUI();
+wireEditorUI();
 applyGfx();
 applyTune();
 loadLevel(0);
@@ -1653,7 +1963,7 @@ window.__dbg = { THREE, scene, camera, renderer, ball, keys, tiltTarget, get sta
   get info() { return { state, levelIndex, gems, gemsTotal, lives, levelTime, ballPos: ball.pos.toArray(), grounded }; },
   get movers() { return movers.map(m => ({ x: +m.col.c.x.toFixed(2), z: +m.col.c.z.toFixed(2) })); },
   get fades() { return fadeTiles.map(f => ({ t: f.col.fadeT == null ? null : +f.col.fadeT.toFixed(2), alive: f.col.alive })); },
-  TUNE, toggleTune };
+  TUNE, toggleTune, editor, enterEditor, edTest, edToData };
 
 } catch (e) { window.__err(e); }
 </script>
