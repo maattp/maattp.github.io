@@ -271,6 +271,8 @@
 
 <div id="loader"><div class="spinner"></div><div class="lbl">Marble Odyssey</div></div>
 <pre id="err"></pre>
+<!-- iOS haptics: clicking this native switch fires a system selection tap (navigator.vibrate is a no-op on iOS) -->
+<label id="hap" aria-hidden="true" style="position:absolute;left:-9999px;opacity:0;pointer-events:none"><input type="checkbox" switch tabindex="-1"></label>
 
 <script>
   window.__err = function (e) { var b = document.getElementById('err'); b.style.display = 'block'; b.textContent += (typeof e === 'string' ? e : (e && e.stack) || e) + '\n'; };
@@ -304,6 +306,20 @@ const lerp = (a,b,t) => a+(b-a)*t;
 //============================================================================
 const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent) ||
   (navigator.maxTouchPoints > 1 && /Mac/.test(navigator.platform));
+const isIOS = /iPhone|iPad|iPod/i.test(navigator.userAgent) ||
+  (navigator.maxTouchPoints > 1 && /Mac/.test(navigator.platform));
+
+// Programmatic haptics: iOS 17.4+ switch-tap hack, Android navigator.vibrate. Always safe.
+let lastHap = 0;
+function haptic(taps) {
+  taps = taps || 1;
+  const now = (performance && performance.now) ? performance.now() : 0;
+  if (now - lastHap < 22) return; lastHap = now;
+  try {
+    if (isIOS) { const el = $('hap'); if (!el) return; let i = 0; const tap = () => { el.click(); if (++i < taps) setTimeout(tap, 17); }; tap(); }
+    else if (navigator.vibrate) navigator.vibrate(Math.min(40, taps * 12));
+  } catch (e) {}
+}
 
 const SAVE_KEY = 'marble_odyssey_v1';
 const defaults = { gfx: isMobile ? 'med' : 'high', music: 'on', sfx: 'on', ctl: 'drag', best: {}, cleared: {} };
@@ -469,7 +485,7 @@ function addBox(x, y, z, w, h, d, opts = {}) {
   mesh.scale.set(w, h, d); mesh.position.set(x, y, z); if (q) mesh.quaternion.copy(q);
   mesh.castShadow = type !== 'ice'; mesh.receiveShadow = true; levelGroup.add(mesh);
   // Two-tone deck: a lighter, inset top cap turns plain boxes into crafted platforms.
-  if ((type === 'floor' || type === 'ramp') && w > 1.4 && d > 1.4) {
+  if ((type === 'floor' || type === 'ramp') && w > 1.4 && d > 1.4 && !opts.mover) {
     const cap = new THREE.Mesh(boxGeo, deckMat(color));
     const up = new THREE.Vector3(0, h / 2 - 0.05, 0); if (q) up.applyQuaternion(q);
     cap.scale.set(w - 0.35, 0.12, d - 0.35); cap.position.set(x + up.x, y + up.y, z + up.z);
@@ -695,6 +711,23 @@ const LEVELS = [
     }
   },
   {
+    name: 'Drift', theme: 'glacier', par: 40, start: [-10, 1.2, 0], goal: [10, 0, 0],
+    build() {
+      addBox(-10, -0.5, 0, 6, 1, 8);                              // start x-13..-7
+      addBox(-13.2, 0.4, 0, 0.7, 1.6, 8, { type: 'wall' });
+      addBox(-10, 0.4, -4.2, 6, 1.6, 0.7, { type: 'wall' });
+      addBox(-10, 0.4, 4.2, 6, 1.6, 0.7, { type: 'wall' });
+      // ferry platform oscillates across the gap on x (-7..7 at the extremes)
+      addBox(0, -0.5, 0, 4, 1, 6, { color: 0x9cd8f0, mover: { axis: 'x', amp: 5, speed: 0.85 } });
+      addBox(10, -0.5, 0, 6, 1, 8);                               // goal platform x7..13
+      addBox(13.2, 0.4, 0, 0.7, 1.6, 8, { type: 'wall' });
+      addBox(10, 0.4, -4.2, 6, 1.6, 0.7, { type: 'wall' });
+      addBox(10, 0.4, 4.2, 6, 1.6, 0.7, { type: 'wall' });
+      addCrystal(-10, 1.2, 0); addCrystal(0, 1.4, -2); addCrystal(0, 1.4, 2); addCrystal(10, 1.2, 0);
+      buildGoal(10, 0, 0);
+    }
+  },
+  {
     name: 'The Gauntlet', theme: 'twilight', par: 60, start: [-12, 1.2, 8], goal: [12, 3, -8],
     build() {
       addBox(-12, -0.5, 8, 6, 1, 6);                              // start, z5..11
@@ -847,12 +880,18 @@ function physicsStep(dt) {
   }
   ball.vel.multiplyScalar(Math.pow(0.997, dt * 60));
 
-  // move movers
+  // move movers, and carry the ball if it's resting on top (once per frame)
   for (const m of movers) {
-    m.col.prevC.copy(m.col.c);
     const o = Math.sin(time * m.speed + (m.phase || 0)) * m.amp;
-    const v = m.base.clone(); if (m.axis === 'x') v.x += o; else if (m.axis === 'z') v.z += o; else v.y += o;
-    m.col.c.copy(v); m.mesh.position.copy(v);
+    const v = _moverV.copy(m.base); if (m.axis === 'x') v.x += o; else if (m.axis === 'z') v.z += o; else v.y += o;
+    _moverD.copy(v).sub(m.col.c);          // movement this frame
+    m.col.prevC.copy(m.col.c); m.col.c.copy(v); m.mesh.position.copy(v);
+    const h = m.col.h;
+    if (grounded && ball.pos.x > v.x - h.x && ball.pos.x < v.x + h.x &&
+        ball.pos.z > v.z - h.z && ball.pos.z < v.z + h.z &&
+        Math.abs(ball.pos.y - (v.y + h.y) - BALL_R) < 0.3) {
+      ball.pos.add(_moverD);
+    }
   }
 
   const steps = Math.max(1, Math.min(8, Math.ceil(ball.vel.length() * dt / (BALL_R * 0.5))));
@@ -881,7 +920,7 @@ function physicsStep(dt) {
   const vol = 1 / Math.sqrt(Math.max(0.2, sx * sy * sz));
   marbleSquash.scale.set(sx * vol, sy * vol, sz * vol);
 
-  if (hitBumper) { SFX.bump(); spawn(ball.pos, 16, { color: [0xffaa55, 0xffd27a], speed: 7, size: 16, life: 0.5 }); shake = Math.max(shake, 0.5); }
+  if (hitBumper) { SFX.bump(); haptic(2); spawn(ball.pos, 16, { color: [0xffaa55, 0xffd27a], speed: 7, size: 16, life: 0.5 }); shake = Math.max(shake, 0.5); }
 
   lastSpeed = ball.vel.length();
 }
@@ -918,14 +957,11 @@ function collide() {
       ball.vel.addScaledVector(_n, -vn * (1 + rest));
       if (b.type === 'bumper') bumper = true;
     }
-    if (_n.y > 0.5) { gnd = true; groundMat = b.mat;
-      // carry on movers
-      if (b.prevC && !b.c.equals(b.prevC)) { ball.pos.add(_tmpDelta.copy(b.c).sub(b.prevC)); }
-    }
+    if (_n.y > 0.5) { gnd = true; groundMat = b.mat; }
   }
   return { grounded: gnd, bumper };
 }
-const _tmpDelta = new THREE.Vector3();
+const _moverV = new THREE.Vector3(), _moverD = new THREE.Vector3();
 
 //============================================================================
 //  CAMERA
@@ -993,14 +1029,14 @@ function runCountdown() {
     if (i >= seq.length) { cd.style.display = 'none'; state = 'play'; running = true; return; }
     num.textContent = seq[i]; num.className = i === 3 ? 'cd-pop go' : 'cd-pop';
     void num.offsetWidth; num.classList.add('cd-pop');
-    SFX.count(i === 3);
+    SFX.count(i === 3); haptic(i === 3 ? 2 : 1);
     i++; setTimeout(step, i === 4 ? 600 : 800);
   };
   step();
 }
 function loseLife() {
   lives--; updateHud();
-  SFX.fall();
+  SFX.fall(); haptic(3);
   spawn(spawnPos, 20, { color: [0xff5d7e, 0xffffff], speed: 5, life: 0.8, up: 3 });
   if (lives <= 0) { setState('over'); running = false; SFX.stopMusic(); return; }
   // respawn
@@ -1011,7 +1047,7 @@ function loseLife() {
 }
 function winLevel() {
   if (levelDone) return; levelDone = true; running = false;
-  SFX.goal(); SFX.stopMusic();
+  SFX.goal(); SFX.stopMusic(); haptic(4);
   flash(); shake = 0.5;
   marbleRoot.getWorldPosition(_ballWorld);
   for (let i = 0; i < 4; i++) setTimeout(() => spawn(_ballWorld, 40,
@@ -1076,7 +1112,7 @@ function gameplay(dt) {
     cr.mesh.rotation.y += dt * 1.8; cr.mesh.rotation.x += dt * 0.9;
     if (ball.pos.distanceToSquared(cr.pos) < 1.15 * 1.15) {
       cr.got = true; cr.mesh.visible = false; gems++;
-      updateHud(); SFX.crystal(gems);
+      updateHud(); SFX.crystal(gems); haptic(1);
       spawn(cr.pos, 18, { color: [0x7df9ff, 0xffffff, 0xb0ffff], speed: 6, size: 13, life: 0.7, up: 2 });
     }
   }
@@ -1324,7 +1360,8 @@ setTimeout(() => $('loader').classList.add('hide'), 400);
 ['pointerdown', 'keydown', 'touchstart'].forEach(ev => window.addEventListener(ev, () => SFX.resume(), { once: true }));
 
 window.__dbg = { THREE, scene, camera, renderer, ball, keys, tiltTarget, get state() { return state; }, startLevel, loadLevel,
-  get info() { return { state, levelIndex, gems, gemsTotal, lives, levelTime, ballPos: ball.pos.toArray(), grounded }; } };
+  get info() { return { state, levelIndex, gems, gemsTotal, lives, levelTime, ballPos: ball.pos.toArray(), grounded }; },
+  get movers() { return movers.map(m => ({ x: +m.col.c.x.toFixed(2), z: +m.col.c.z.toFixed(2) })); } };
 
 } catch (e) { window.__err(e); }
 </script>
