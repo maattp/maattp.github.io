@@ -2124,7 +2124,7 @@ function blobToB64(blob) {
   return new Promise((res) => { const r = new FileReader(); r.onerror = () => res(''); r.onloadend = () => res(String(r.result || '').split(',')[1] || ''); r.readAsDataURL(blob); });
 }
 const PTT = {
-  stream: null, rec: null, chunks: [], mime: '', held: false, recording: false, denied: false, _idle: 0, _max: 0,
+  stream: null, rec: null, chunks: [], mime: '', held: false, recording: false, denied: false, _starting: false, _idle: 0, _max: 0, _safety: [],
   supported() { return !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia && window.MediaRecorder); },
   pickMime() {
     for (const m of ['audio/mp4', 'audio/webm;codecs=opus', 'audio/webm', 'audio/ogg;codecs=opus']) {
@@ -2133,11 +2133,13 @@ const PTT = {
     return '';
   },
   async press() {
-    if (this.denied || this.recording || !this.supported()) return;
+    if (this.denied || this.recording || this._starting || !this.supported()) return;
+    this._starting = true;   // set synchronously so a 2nd tap during the permission prompt is ignored
     this.held = true; clearTimeout(this._idle);
     Sound.init();   // a user gesture — unlock audio output for incoming clips
     try { if (!this.stream) this.stream = await navigator.mediaDevices.getUserMedia({ audio: true }); }
-    catch (e) { this.denied = true; const b = $('ptt-btn'); if (b) b.classList.add('denied'); toast('🎤 Microphone blocked', 1800); return; }
+    catch (e) { this._starting = false; this.denied = true; const b = $('ptt-btn'); if (b) b.classList.add('denied'); toast('🎤 Microphone blocked', 1800); return; }
+    this._starting = false;
     if (!this.held) return;   // released during the permission prompt
     this.mime = this.mime || this.pickMime();
     this.chunks = [];
@@ -2161,11 +2163,12 @@ const PTT = {
   async _finish() {
     const blob = new Blob(this.chunks, { type: this.mime || 'audio/mp4' });
     this.chunks = [];
-    if (!blob.size || !online || !conn || !conn.sendVoice) return;
+    const c = conn;   // capture identity: a leave→rejoin during the await must not send this clip on a new conn
+    if (!blob.size || !online || !c || !c.sendVoice) return;
     if (blob.size > 200000) { toast('Message too long', 1400); return; }
     const b64 = await blobToB64(blob);
     if (!b64) { toast('🎤 Voice message failed', 1400); return; }
-    if (conn && conn.sendVoice) conn.sendVoice(b64, blob.type || this.mime);   // re-check conn: leaveGame() may have run during the await
+    if (conn === c && conn.sendVoice) conn.sendVoice(b64, blob.type || this.mime);
   },
   onVoice(m) {
     if (!m || typeof m.audio !== 'string' || m.from == null) return;
@@ -2179,16 +2182,17 @@ const PTT = {
     let cleared = false;
     const done = () => {
       if (cleared) return; cleared = true;
-      if (glow) { const n = (pttSpeaking.get(m.from) || 1) - 1; if (n <= 0) pttSpeaking.delete(m.from); else pttSpeaking.set(m.from, n); refreshSpeaking(); }
+      if (glow) { const n = Math.max(0, (pttSpeaking.get(m.from) || 0) - 1); if (n === 0) pttSpeaking.delete(m.from); else pttSpeaking.set(m.from, n); refreshSpeaking(); }
       try { URL.revokeObjectURL(url); } catch {}
     };
     a.onended = done; a.onerror = done;
-    setTimeout(done, 20000);   // safety: clear the glow even if playback never reports end
+    this._safety.push(setTimeout(done, 20000));   // safety: clear the glow even if playback never reports end (cancelled on dispose)
     a.play().catch(() => {});
   },
   dispose() {
-    this.held = false; this.recording = false; this.denied = false;
+    this.held = false; this.recording = false; this.denied = false; this._starting = false;
     clearTimeout(this._max); clearTimeout(this._idle);
+    this._safety.forEach(clearTimeout); this._safety = [];
     try { if (this.rec && this.rec.state !== 'inactive') this.rec.stop(); } catch {}
     try { if (this.stream) this.stream.getTracks().forEach((t) => t.stop()); } catch {}
     this.stream = null; this.rec = null; pttSpeaking.clear();

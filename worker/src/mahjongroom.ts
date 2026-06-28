@@ -15,7 +15,7 @@
 
 import { createGame, getLegalActions, pendingDeciders, applyAction, botChooseAction, viewFor, makeConfig } from "./mahjongCore.js";
 
-type Attachment = { id: number; name: string; ready: boolean; host: boolean; ver: string };
+type Attachment = { id: number; name: string; ready: boolean; host: boolean; ver: string; lastVoiceMs?: number };
 type LobbyCfg = { mode: "bloody" | "single"; sevenPairs: boolean; difficulty: "easy" | "normal" | "hard" };
 
 const MAX_PLAYERS = 4;
@@ -24,6 +24,8 @@ const EMPTY_GRACE_MS = 90 * 1000;   // keep an empty room briefly so a blip can 
 const BOT_DELAY_MS = 950;   // relaxed pace so players can follow discards and claim (peng/gang/hu)
 const NAME_MAX = 12;
 const VOICE_MAX_B64 = 267_000;   // matches the client's 200KB blob cap (base64 ≈ 4/3×) for PTT
+const VOICE_COOLDOWN_MS = 1000;  // per-sender rate limit so a client can't flood the relay
+const VOICE_MIME_OK = /^audio\/(mp4|webm|ogg|mpeg|aac|x-m4a|wav)\b/;   // reject non-audio mime types
 
 function sanitizeVer(raw: unknown): string { return String(raw ?? "legacy").slice(0, 24); }
 function sanitizeName(raw: unknown): string {
@@ -168,10 +170,14 @@ export class MahjongRoom {
         return;
       }
       case "voice": {
-        // push-to-talk: opaquely relay a short recorded audio clip to the OTHER players,
-        // tagged with the speaker's seat + name (never stored; works in lobby and in-game)
+        // push-to-talk: opaquely relay a short recorded audio clip to the OTHER players, tagged
+        // with the speaker's seat + name (never stored). Relayed in any phase; the client only
+        // exposes the mic button in-game today, so in practice this fires during play.
         if (typeof msg.audio !== "string" || msg.audio.length === 0 || msg.audio.length > VOICE_MAX_B64) return;
-        const mime = typeof msg.mime === "string" ? msg.mime.slice(0, 40) : "audio/mp4";
+        const now = Date.now();
+        if (now - (me.lastVoiceMs ?? 0) < VOICE_COOLDOWN_MS) return;   // drop floods (anti-amplification)
+        me.lastVoiceMs = now; ws.serializeAttachment(me);
+        const mime = (typeof msg.mime === "string" && VOICE_MIME_OK.test(msg.mime)) ? msg.mime.slice(0, 40) : "audio/mp4";
         const out = JSON.stringify({ t: "voice", from: me.id, name: me.name, mime, audio: msg.audio });
         for (const sock of this.state.getWebSockets()) { if (sock === ws) continue; try { sock.send(out); } catch { /* closing */ } }
         return;
