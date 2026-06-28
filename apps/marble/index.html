@@ -392,6 +392,21 @@ for (let i = 0; i < 14; i++) {
   scene.add(s); clouds.push(s);
 }
 
+// distant floating islands — parallax scenery in world space (does not tilt with the stage)
+const farIslands = [];
+const islandRockMat = new THREE.MeshStandardMaterial({ color: 0x4a4f86, roughness: 0.92, metalness: 0 });
+const islandCrysMat = new THREE.MeshStandardMaterial({ color: 0x8088cc, roughness: 0.5, metalness: 0.1 });
+const islTopGeo = new THREE.IcosahedronGeometry(1, 0), islBotGeo = new THREE.ConeGeometry(1, 2.4, 6);
+for (let i = 0; i < 9; i++) {
+  const g = new THREE.Group();
+  const top = new THREE.Mesh(islTopGeo, islandRockMat); top.scale.set(1, 0.45, 1); g.add(top);
+  const bot = new THREE.Mesh(islBotGeo, islandCrysMat); bot.position.y = -1.5; bot.rotation.x = Math.PI; g.add(bot);
+  const a = (i / 9) * Math.PI * 2 + 0.5, r = 65 + (i % 4) * 24, sc = 4 + (i % 5) * 3;
+  g.position.set(Math.cos(a) * r, -6 - (i % 3) * 11, Math.sin(a) * r);
+  g.scale.setScalar(sc); g.rotation.y = i * 1.3;
+  scene.add(g); farIslands.push({ g, baseY: g.position.y, ph: i * 1.7 });
+}
+
 //============================================================================
 //  LIGHTING
 //============================================================================
@@ -542,14 +557,19 @@ function rampX(z, x0, y0, x1, y1, w, opts = {}) {
 //============================================================================
 //  CRYSTALS + GOAL
 //============================================================================
-const crystalGeo = new THREE.OctahedronGeometry(0.42, 0);
-const crystalMat = new THREE.MeshStandardMaterial({ color: 0x7df9ff, metalness: 0.3, roughness: 0.1,
-  emissive: 0x33e6ff, emissiveIntensity: 1.6, envMapIntensity: 1.2 });
+const crystalGeo = new THREE.OctahedronGeometry(0.4, 0);
+const crystalMat = new THREE.MeshStandardMaterial({ color: 0x6fe6ff, metalness: 0.2, roughness: 0.05,
+  emissive: 0x2ad0ff, emissiveIntensity: 0.85, envMapIntensity: 1.4 });
+const crystalGlowTex = glowTex('rgba(255,255,255,0.85)', 'rgba(150,230,255,0.35)');
 let crystals = [];
 function addCrystal(x, y, z) {
-  const m = new THREE.Mesh(crystalGeo, crystalMat);
-  m.position.set(x, y, z); m.castShadow = false; levelGroup.add(m);
-  crystals.push({ mesh: m, pos: new THREE.Vector3(x, y, z), got: false, baseY: y });
+  const g = new THREE.Group(); g.position.set(x, y, z);
+  const gem = new THREE.Mesh(crystalGeo, crystalMat); g.add(gem);
+  const glow = new THREE.Sprite(new THREE.SpriteMaterial({ map: crystalGlowTex, color: 0x5fdcff,
+    transparent: true, opacity: 0.75, depthWrite: false, blending: THREE.AdditiveBlending }));
+  glow.scale.set(1.7, 1.7, 1); g.add(glow);
+  levelGroup.add(g);
+  crystals.push({ mesh: g, gem, pos: new THREE.Vector3(x, y, z), got: false, baseY: y });
 }
 
 let goalGroup, goalPos = new THREE.Vector3(), goalLight;
@@ -629,6 +649,7 @@ function applyTheme(t) {
   hemi.color.setHex(t.hemiSky || 0xbfd4ff); hemi.groundColor.setHex(t.hemiGround || 0x35324f);
   key.color.setHex(t.keyColor || 0xfff2d8);
   sun.position.set(t.sun ? t.sun[0] : -240, t.sun ? t.sun[1] : 230, t.sun ? t.sun[2] : -480);
+  islandRockMat.color.setHex(t.floor); islandCrysMat.color.setHex(t.wall);
 }
 const THEMES = {
   dawn:    { floor: 0x474d86, wall: 0x8088cc, skyTop: 0x1d34b0, skyMid: 0x6e92f0, skyBottom: 0xffc78f, fog: 0x8aa6ee, hemiSky: 0xbcd2ff, fogNear: 50, fogFar: 170 },
@@ -1270,7 +1291,7 @@ function gameplay(dt) {
   for (const cr of crystals) {
     if (cr.got) continue;
     cr.mesh.position.y = cr.baseY + Math.sin(time * 2 + cr.pos.x) * 0.18;
-    cr.mesh.rotation.y += dt * 1.8; cr.mesh.rotation.x += dt * 0.9;
+    cr.gem.rotation.y += dt * 1.8; cr.gem.rotation.x += dt * 0.9;
     if (ball.pos.distanceToSquared(cr.pos) < 1.15 * 1.15) {
       cr.got = true; cr.mesh.visible = false; gems++;
       updateHud(); SFX.crystal(gems); haptic(1);
@@ -1286,6 +1307,8 @@ function gameplay(dt) {
   if (goalGroup) {
     goalGroup.userData.ring.rotation.z += dt * 1.5;
     if (goalGroup.userData.gem) { goalGroup.userData.gem.rotation.y += dt * 1.6; goalGroup.userData.gem.position.y = 1.25 + Math.sin(time * 2.2) * 0.12; }
+    if (Math.random() < dt * 6) { moteSpawn.set(goalPos.x + (Math.random() - 0.5) * 2, goalPos.y + 0.2, goalPos.z + (Math.random() - 0.5) * 2);
+      spawn(moteSpawn, 1, { color: [0x6effce, 0xaeffe6], speed: 0.3, size: 5, life: 1.6, grav: -1.2, up: 1.5 }); }
     // swept check: distance from goal to the marble's travel segment this frame (avoids skipping at speed)
     if (Math.abs(ball.pos.y - goalPos.y) < 2.4 && segDistXZ(ball.prev, ball.pos, goalPos) < 1.35) winLevel();
   }
@@ -1522,6 +1545,8 @@ function tick() {
   updateParticles(dt);
   // animate clouds
   for (const c of clouds) { c.position.x += dt * 2; if (c.position.x > 520) c.position.x = -520; }
+  // drifting distant islands
+  for (const isl of farIslands) { isl.g.rotation.y += dt * 0.05; isl.g.position.y = isl.baseY + Math.sin(time * 0.4 + isl.ph) * 1.5; }
   if (goalLight) goalLight.intensity = 2.4 + Math.sin(time * 4) * 0.7;
 
   composer.render();
