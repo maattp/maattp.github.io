@@ -112,6 +112,8 @@
   .card { background: var(--panel); border-radius: 24px; padding: 30px 34px; width: min(440px, 92vw);
     box-shadow: 0 30px 80px rgba(0,0,0,.5), inset 0 0 0 1.5px rgba(255,255,255,.1); text-align: center; }
   .card h2 { font-size: 30px; font-weight: 800; letter-spacing: 1px; }
+  .screen.show .card { animation: cardPop .42s cubic-bezier(.2,.9,.3,1.2) both; }
+  @keyframes cardPop { 0% { transform: scale(.88); opacity: 0; } 100% { transform: scale(1); opacity: 1; } }
   .stat-row { display: flex; justify-content: space-between; align-items: center; padding: 12px 4px; font-size: 17px; border-bottom: 1px solid rgba(255,255,255,.08); }
   .stat-row:last-of-type { border-bottom: none; }
   .stat-row .v { font-weight: 800; font-variant-numeric: tabular-nums; }
@@ -2056,7 +2058,8 @@ function buildLevelGrid() {
   create.innerHTML = '<div><div style="font-size:26px">＋</div><div class="nm">Create Stage</div></div>';
   create.onclick = () => { SFX.click(); enterEditor(); };
   grid.appendChild(create);
-  $('lvlProgress').textContent = clearedCount + ' of ' + LEVELS.length + ' cleared';
+  const medalCount = Object.keys(save.medals).length;
+  $('lvlProgress').textContent = clearedCount + ' of ' + LEVELS.length + ' cleared · ' + medalCount + ' ★';
 }
 function setupSeg(id, key, after) {
   const seg = $(id);
