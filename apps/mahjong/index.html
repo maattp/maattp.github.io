@@ -2056,9 +2056,13 @@ class OnlineConnection {
   }
   onClose() {
     if (!this.alive) return;
+    this.retries++;
+    // Keep retrying with capped backoff for several minutes — the server holds your seat for
+    // ~45 min, so a tunnel / elevator / longer outage should recover on its own instead of
+    // stranding you after a few seconds. (retries resets to 0 on a successful reconnect.)
+    if (this.retries > 40) { updateConnPill({ text: 'Disconnected', state: 'bad' }); toast('Connection lost — reopen the app to rejoin', 2400); return; }
     updateConnPill({ text: 'Reconnecting…', state: 'bad' });
-    if (this.retries < 6) { this.retries++; setTimeout(() => { if (this.alive) this.connect(); }, 700 * this.retries); }
-    else { updateConnPill({ text: 'Disconnected', state: 'bad' }); toast('Connection lost', 1600); }
+    setTimeout(() => { if (this.alive) this.connect(); }, Math.min(6000, 700 * this.retries));
   }
   setReady(r) { this.rawsend({ t: 'ready', ready: r }); }
   setConfig(c) { this.rawsend({ t: 'config', ...c }); }

@@ -326,12 +326,20 @@ export class MahjongRoom {
       return;
     }
     if ((await this.phase()) !== "playing") { await this.state.storage.setAlarm(ttlAt); return; }
-    const game = await this.loadGame();
+    let game = await this.loadGame();
     const seat = this.botPending(game);
     if (seat < 0 || this.state.getWebSockets().length === 0) { await this.state.storage.setAlarm(ttlAt); return; }
     const action = botChooseAction(game, seat);
-    const res = action ? applyAction(game, seat, action) : { ok: false };
-    if (!res.ok) { await this.state.storage.setAlarm(ttlAt); return; }  // never spin the alarm on a stuck seat
+    let res = action ? applyAction(game, seat, action) : { ok: false };
+    if (!res.ok) {
+      // The bot returned no/an illegal action. Rather than freeze the whole table until TTL,
+      // reload a clean state and play ANY legal move so the hand always progresses. Defensive:
+      // botChooseAction shouldn't fail, but a single edge case must not strand real players.
+      game = await this.loadGame();
+      res = { ok: false };
+      for (const alt of getLegalActions(game, seat)) { const r = applyAction(game, seat, alt); if (r.ok) { res = r; break; } }
+      if (!res.ok) { await this.state.storage.setAlarm(ttlAt); return; }  // truly nothing legal — don't spin
+    }
     await this.saveGame(game);
     this.broadcastViews(game);
     await this.armAlarm(game);
