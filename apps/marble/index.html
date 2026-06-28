@@ -446,6 +446,8 @@ function surfaceMat(type, color) {
   else if (type === 'bumper') m = new THREE.MeshStandardMaterial({ color, metalness: 0.2, roughness: 0.4, emissive: color, emissiveIntensity: 0.35 });
   else if (type === 'sticky') m = new THREE.MeshStandardMaterial({ color, metalness: 0.0, roughness: 0.97 });
   else if (type === 'wall') m = new THREE.MeshStandardMaterial({ color, metalness: 0.0, roughness: 0.62, envMapIntensity: 0.5 });
+  else if (type === 'pad') m = new THREE.MeshStandardMaterial({ color, metalness: 0.3, roughness: 0.3, emissive: color, emissiveIntensity: 0.9 });
+  else if (type === 'conveyor') m = new THREE.MeshStandardMaterial({ color, metalness: 0.15, roughness: 0.5, emissive: color, emissiveIntensity: 0.4 });
   else m = new THREE.MeshStandardMaterial({ color, metalness: 0.0, roughness: 0.82, envMapIntensity: 0.45 });
   matCache[k] = m; return m;
 }
@@ -463,8 +465,14 @@ const MATS = {
   sticky: { fric: 0.95,  rest: 0.04 },
   bumper: { fric: 0.99,  rest: 0.9 },
   ramp:   { fric: 0.992, rest: 0.20 },
+  pad:    { fric: 0.99,  rest: 0.0 },
+  conveyor:{ fric: 0.97, rest: 0.18 },
+  fade:   { fric: 0.99,  rest: 0.18 },
 };
 const boxGeo = new THREE.BoxGeometry(1, 1, 1);
+const coneGeo = new THREE.ConeGeometry(0.34, 0.7, 4);
+const JUMP_VEL = 15, CONV_ACCEL = 8, FADE_TIME = 0.9;
+const fadeTiles = [], conveyors = [], padMats = [];
 
 //============================================================================
 //  COLLIDER (OBB) + LEVEL BUILDER
@@ -475,6 +483,7 @@ class Collider {
   constructor(c, h, q, mat, type) {
     this.c = c; this.h = h; this.q = q || null; this.qi = q ? q.clone().invert() : null;
     this.mat = mat; this.type = type; this.prevC = c.clone();
+    this.push = null; this.fadeT = null; this.alive = true;
   }
 }
 function addBox(x, y, z, w, h, d, opts = {}) {
@@ -494,6 +503,27 @@ function addBox(x, y, z, w, h, d, opts = {}) {
   const col = new Collider(new THREE.Vector3(x, y, z), new THREE.Vector3(w/2, h/2, d/2), q, MATS[type] || MATS.floor, type);
   colliders.push(col);
   if (opts.mover) { const m = { col, mesh, base: new THREE.Vector3(x, y, z), ...opts.mover }; movers.push(m); }
+  if (type === 'fade') {
+    mesh.material = new THREE.MeshStandardMaterial({ color, metalness: 0.1, roughness: 0.5, emissive: color, emissiveIntensity: 0.5, transparent: true, opacity: 1 });
+    fadeTiles.push({ col, mesh });
+  }
+  if (type === 'pad' && padMats.indexOf(mesh.material) < 0) padMats.push(mesh.material);
+  if (type === 'conveyor') {
+    const dir = new THREE.Vector3(opts.push ? opts.push[0] : 1, 0, opts.push ? opts.push[1] : 0);
+    if (dir.lengthSq() < 1e-6) dir.set(1, 0, 0); dir.normalize();
+    col.push = dir.clone();
+    // scrolling arrow decals along the belt direction
+    const cones = []; const top = y + h / 2 + 0.06;
+    const yaw = Math.atan2(dir.x, dir.z);
+    const span = Math.abs(dir.x) > Math.abs(dir.z) ? w : d;
+    const n = Math.max(2, Math.round(span / 2));
+    for (let i = 0; i < n; i++) {
+      const cone = new THREE.Mesh(coneGeo, new THREE.MeshStandardMaterial({ color: 0xffffff, emissive: 0xbff0ff, emissiveIntensity: 1.4, metalness: 0.2, roughness: 0.4 }));
+      cone.rotation.order = 'YXZ'; cone.rotation.y = yaw; cone.rotation.x = Math.PI / 2;
+      cones.push(cone); levelGroup.add(cone);
+    }
+    conveyors.push({ base: new THREE.Vector3(x, top, z), dir, span, cones, w, d });
+  }
   return mesh;
 }
 // Ramp connecting two platform-top points; its top surface meets both ends.
@@ -728,6 +758,68 @@ const LEVELS = [
     }
   },
   {
+    name: 'Launch Pads', theme: 'verdant', par: 32, start: [-10, 1.2, 0], goal: [7, 2.5, 0],
+    build() {
+      addBox(-10, -0.5, 0, 7, 1, 7);
+      addBox(-10, 0.4, -3.6, 7, 1.6, 0.7, { type: 'wall' }); addBox(-10, 0.4, 3.6, 7, 1.6, 0.7, { type: 'wall' });
+      addBox(-13.2, 0.4, 0, 0.7, 1.6, 7, { type: 'wall' });
+      addBox(-3, -0.5, 0, 5, 1, 5, { type: 'pad', color: 0x5fffa8 });   // bounce up + forward
+      addBox(5, 2.0, 0, 8, 1, 8);                                       // high platform top 2.5
+      addBox(5, 2.9, -3.8, 8, 1.8, 0.7, { type: 'wall' }); addBox(5, 2.9, 3.8, 8, 1.8, 0.7, { type: 'wall' }); addBox(9.2, 2.9, 0, 0.7, 1.8, 8, { type: 'wall' });
+      addCrystal(-10, 1.2, 0); addCrystal(-3, 2.8, 0); addCrystal(3, 3.0, 0); addCrystal(7, 3.0, 0);
+      buildGoal(7, 2.5, 0);
+    }
+  },
+  {
+    name: 'Updraft', theme: 'twilight', par: 36, start: [-12, 1.2, 0], goal: [11, 0, 0],
+    build() {
+      addBox(-9, -0.5, 0, 14, 1, 7);                                   // long runway x-16..-2
+      addBox(-9, 0.4, -3.6, 14, 1.6, 0.7, { type: 'wall' }); addBox(-9, 0.4, 3.6, 14, 1.6, 0.7, { type: 'wall' });
+      addBox(-15.2, 0.4, 0, 0.7, 1.6, 7, { type: 'wall' });
+      addBox(-3.5, -0.5, 0, 4, 1, 5, { type: 'pad', color: 0xc89fff }); // launch over the gap
+      addBox(11, -0.5, 0, 9, 1, 8);                                     // landing/goal x6.5..15.5
+      addBox(11, 0.4, -4.2, 9, 1.6, 0.7, { type: 'wall' }); addBox(11, 0.4, 4.2, 9, 1.6, 0.7, { type: 'wall' }); addBox(15.2, 0.4, 0, 0.7, 1.6, 8, { type: 'wall' });
+      addCrystal(-12, 1.2, 0); addCrystal(-3.5, 3.4, 0); addCrystal(3, 3.6, 0); addCrystal(9, 1.2, 0); addCrystal(11, 1.2, 0);
+      buildGoal(11, 0, 0);
+    }
+  },
+  {
+    name: 'Crosscurrent', theme: 'glacier', par: 36, start: [-12, 1.2, 0], goal: [12, 0, 0],
+    build() {
+      addBox(-12, -0.5, 0, 6, 1, 8);
+      addBox(-12, 0.4, -4.2, 6, 1.6, 0.7, { type: 'wall' }); addBox(-12, 0.4, 4.2, 6, 1.6, 0.7, { type: 'wall' }); addBox(-15.2, 0.4, 0, 0.7, 1.6, 8, { type: 'wall' });
+      addBox(0, -0.5, 0, 12, 1, 9, { type: 'conveyor', push: [0, 1], color: 0x3aa8c8 }); // shoves +z toward the open edge
+      addBox(0, 0.4, -4.7, 12, 1.6, 0.7, { type: 'wall' });            // only the -z side is railed
+      addBox(12, -0.5, 0, 6, 1, 8);
+      addBox(12, 0.4, -4.2, 6, 1.6, 0.7, { type: 'wall' }); addBox(12, 0.4, 4.2, 6, 1.6, 0.7, { type: 'wall' }); addBox(15.2, 0.4, 0, 0.7, 1.6, 8, { type: 'wall' });
+      addCrystal(-12, 1.2, 0); addCrystal(-4, 1.3, -2); addCrystal(2, 1.3, -2); addCrystal(8, 1.3, -2); addCrystal(12, 1.2, 0);
+      buildGoal(12, 0, 0);
+    }
+  },
+  {
+    name: 'Crumble', theme: 'twilight', par: 34, start: [0, 1.2, 11], goal: [0, 0, -11],
+    build() {
+      addBox(0, -0.5, 11, 7, 1, 5);
+      addBox(0, 0.4, 13.2, 7, 1.4, 0.7, { type: 'wall' });
+      [7, 3, -1, -5].forEach(z => addBox(0, -0.5, z, 5.5, 1, 4, { type: 'fade', color: 0x9a7ad0 }));
+      addBox(0, -0.5, -11, 7, 1, 5);
+      addCrystal(0, 1.2, 11); addCrystal(0, 1.3, 5); addCrystal(0, 1.3, -3); addCrystal(0, 1.2, -11);
+      buildGoal(0, 0, -11);
+    }
+  },
+  {
+    name: 'Collapse Run', theme: 'ember', par: 38, start: [-12, 1.2, 0], goal: [12, 0, 0],
+    build() {
+      addBox(-12, -0.5, 0, 6, 1, 6);
+      addBox(-12, 0.4, -3.2, 6, 1.4, 0.7, { type: 'wall' }); addBox(-12, 0.4, 3.2, 6, 1.4, 0.7, { type: 'wall' }); addBox(-15.2, 0.4, 0, 0.7, 1.4, 6, { type: 'wall' });
+      [-6, -2, 2, 6].forEach(x => addBox(x, -0.5, 0, 4, 1, 4, { type: 'fade', color: 0xe08a5a }));
+      addBox(12, -0.5, 0, 6, 1, 6);
+      addBox(12, 0.4, -3.2, 6, 1.4, 0.7, { type: 'wall' }); addBox(12, 0.4, 3.2, 6, 1.4, 0.7, { type: 'wall' }); addBox(15.2, 0.4, 0, 0.7, 1.4, 6, { type: 'wall' });
+      addCrystal(-12, 1.2, 0); addCrystal(-4, 1.3, 0); addCrystal(4, 1.3, 0); addCrystal(12, 1.2, 0);
+      buildGoal(12, 0, 0);
+    }
+  },
+  {
     name: 'The Gauntlet', theme: 'twilight', par: 60, start: [-12, 1.2, 8], goal: [12, 3, -8],
     build() {
       addBox(-12, -0.5, 8, 6, 1, 6);                              // start, z5..11
@@ -748,12 +840,32 @@ const LEVELS = [
       buildGoal(12, 3, -8);
     }
   },
+  {
+    name: 'Apex', theme: 'twilight', par: 75, start: [-16, 1.2, 0], goal: [16, 0, 0],
+    build() {
+      // a medley of every mechanic on one connected run
+      addBox(-16, -0.5, 0, 5, 1, 7);                                    // start x-18.5..-13.5
+      addBox(-16, 0.4, -3.6, 5, 1.4, 0.7, { type: 'wall' }); addBox(-16, 0.4, 3.6, 5, 1.4, 0.7, { type: 'wall' }); addBox(-18.2, 0.4, 0, 0.7, 1.4, 7, { type: 'wall' });
+      addBox(-10, -0.5, 0, 8, 1, 7, { type: 'ice', color: 0xbfeaff });  // ice  x-14..-6
+      addBox(-10, 0.4, -3.6, 8, 1.6, 0.7, { type: 'wall' }); addBox(-10, 0.4, 3.6, 8, 1.6, 0.7, { type: 'wall' });
+      addBox(-2, -0.5, 0, 9, 1, 8, { type: 'conveyor', push: [0, 1], color: 0x8a6ad0 }); // belt x-6.5..2.5
+      addBox(-2, 0.4, -4.2, 9, 1.6, 0.7, { type: 'wall' });            // -z rail only
+      addBox(5, -0.5, 0, 5, 1, 7);                                      // bumper pad x2.5..7.5
+      [[5, -1.8], [5, 1.8]].forEach(([x, z]) => addBox(x, 0.7, z, 1.3, 1.8, 1.3, { type: 'bumper', color: 0xc86fff }));
+      [9.5, 12.5].forEach(x => addBox(x, -0.5, 0, 3, 1, 5, { type: 'fade', color: 0x9a7ad0 })); // crumbling x8..14
+      addBox(16, -0.5, 0, 5, 1, 7);                                     // goal x13.5..18.5
+      addBox(16, 0.4, -3.6, 5, 1.4, 0.7, { type: 'wall' }); addBox(16, 0.4, 3.6, 5, 1.4, 0.7, { type: 'wall' }); addBox(18.2, 0.4, 0, 0.7, 1.4, 7, { type: 'wall' });
+      addCrystal(-16, 1.2, 0); addCrystal(-10, 1.3, -2); addCrystal(-2, 1.3, -2); addCrystal(5, 1.2, 0); addCrystal(11, 1.3, 0); addCrystal(16, 1.2, 0);
+      buildGoal(16, 0, 0);
+    }
+  },
 ];
 
 function clearLevel() {
   // remove level meshes / colliders
   while (levelGroup.children.length) { const c = levelGroup.children.pop(); levelGroup.remove(c); }
   colliders.length = 0; movers.length = 0; crystals = []; goalGroup = null; goalLight = null;
+  fadeTiles.length = 0; conveyors.length = 0; padMats.length = 0;
 }
 
 let levelIndex = 0, gemsTotal = 0;
@@ -772,11 +884,13 @@ function loadLevel(idx) {
   tiltX = tiltZ = 0; tiltTarget.set(0, 0);
   stage.rotation.set(0, 0, 0); stage.updateMatrixWorld();
   marbleRoot.position.copy(ball.pos);
-  // camera snap behind start, facing goal
+  // camera: face goal, start wide for the intro pull-in
   const gx = goalPos.x - ball.pos.x, gz = goalPos.z - ball.pos.z;
-  camYaw = Math.atan2(gx, gz);
+  camYaw = (gx || gz) ? Math.atan2(gx, gz) : 0;
   marbleRoot.getWorldPosition(_ballWorld);
-  camPos.set(_ballWorld.x - Math.sin(camYaw) * 11, _ballWorld.y + 6.5, _ballWorld.z - Math.cos(camYaw) * 11);
+  introTime = 1.7;
+  const yaw = camYaw + 0.55, dist = CAM_DIST + 8, height = CAM_HEIGHT + 6.5;
+  camPos.set(_ballWorld.x - Math.sin(yaw) * dist, _ballWorld.y + height, _ballWorld.z - Math.cos(yaw) * dist);
   camLook.copy(_ballWorld);
 }
 
@@ -812,15 +926,17 @@ window.addEventListener('keydown', e => {
 }, { passive: false });
 window.addEventListener('keyup', e => { keys[e.code] = false; });
 
+// All sources produce screen-relative intent: forward f (into screen) and right r.
 let touchActive = false; const touchStart = new THREE.Vector2();
+let dragF = 0, dragR = 0, devF = 0, devR = 0;
 const cv = renderer.domElement;
 cv.addEventListener('pointerdown', e => { if (state !== 'play') return; touchActive = true; touchStart.set(e.clientX, e.clientY); });
 cv.addEventListener('pointermove', e => {
   if (!touchActive || save.ctl !== 'drag') return;
-  tiltTarget.x = clamp((e.clientY - touchStart.y) / 80, -1, 1);
-  tiltTarget.y = clamp((e.clientX - touchStart.x) / 80, -1, 1);
+  dragR = clamp((e.clientX - touchStart.x) / 78, -1, 1);
+  dragF = clamp(-(e.clientY - touchStart.y) / 78, -1, 1);   // drag up = forward
 });
-window.addEventListener('pointerup', () => { touchActive = false; });
+window.addEventListener('pointerup', () => { touchActive = false; dragF = dragR = 0; });
 
 // device orientation
 let orientCal = null, orientOn = false;
@@ -830,7 +946,7 @@ function onOrient(e) {
   const land = Math.abs(window.orientation) === 90;
   let fb = e.beta - orientCal.beta, lr = e.gamma - orientCal.gamma;
   if (land) { const t = fb; fb = lr * (window.orientation === 90 ? 1 : -1); lr = t * (window.orientation === 90 ? -1 : 1); }
-  tiltTarget.x = clamp(fb / 26, -1, 1); tiltTarget.y = clamp(lr / 26, -1, 1);
+  devF = clamp(fb / 24, -1, 1); devR = clamp(lr / 24, -1, 1);
 }
 function enableTilt() {
   orientCal = null;
@@ -839,24 +955,31 @@ function enableTilt() {
     DeviceOrientationEvent.requestPermission().then(s => { if (s === 'granted') go(); }).catch(() => {});
   else go();
 }
+// Camera-relative: rotate (forward,right) by camYaw so "up" is always into the screen.
 function readKeyboard() {
-  if (save.ctl === 'tilt' && orientOn && isMobile) return;     // device tilt drives it
-  if (touchActive && save.ctl === 'drag') return;              // drag drives it
-  let px = 0, py = 0;
-  if (keys['KeyW'] || keys['ArrowUp']) py -= 1;
-  if (keys['KeyS'] || keys['ArrowDown']) py += 1;
-  if (keys['KeyA'] || keys['ArrowLeft']) px -= 1;
-  if (keys['KeyD'] || keys['ArrowRight']) px += 1;
-  if (px || py) { tiltTarget.x = py; tiltTarget.y = px; }
-  else { tiltTarget.x *= 0.82; tiltTarget.y *= 0.82; }          // ease back to flat
+  let f = 0, r = 0;
+  if (save.ctl === 'tilt' && orientOn && isMobile) { f = devF; r = devR; }
+  else if (touchActive && save.ctl === 'drag') { f = dragF; r = dragR; }
+  else {
+    if (keys['KeyW'] || keys['ArrowUp']) f += 1;
+    if (keys['KeyS'] || keys['ArrowDown']) f -= 1;
+    if (keys['KeyD'] || keys['ArrowRight']) r += 1;
+    if (keys['KeyA'] || keys['ArrowLeft']) r -= 1;
+  }
+  if (!f && !r) { tiltTarget.x *= 0.8; tiltTarget.y *= 0.8; return; }
+  const m = Math.hypot(f, r); if (m > 1) { f /= m; r /= m; }
+  const cs = Math.cos(camYaw), sn = Math.sin(camYaw);
+  tiltTarget.x = f * cs - r * sn;     // → z-axis push
+  tiltTarget.y = f * sn + r * cs;     // → x-axis push
 }
 
 //============================================================================
 //  PHYSICS
 //============================================================================
 const MAX_TILT = 0.34, GRAV = 28;
-const ball = { pos: new THREE.Vector3(), vel: new THREE.Vector3() };
+const ball = { pos: new THREE.Vector3(), vel: new THREE.Vector3(), prev: new THREE.Vector3() };
 const spawnPos = new THREE.Vector3();
+const MAX_SPEED = 30;
 let tiltX = 0, tiltZ = 0, grounded = false, groundMat = MATS.floor, lastSpeed = 0;
 let squash = 0, squashAxis = new THREE.Vector3(0, 1, 0);
 let shake = 0;
@@ -879,6 +1002,8 @@ function physicsStep(dt) {
     ball.vel.x *= f; ball.vel.z *= f;
   }
   ball.vel.multiplyScalar(Math.pow(0.997, dt * 60));
+  const sp0 = ball.vel.length(); if (sp0 > MAX_SPEED) ball.vel.multiplyScalar(MAX_SPEED / sp0);
+  ball.prev.copy(ball.pos);     // for swept goal detection
 
   // move movers, and carry the ball if it's resting on top (once per frame)
   for (const m of movers) {
@@ -896,14 +1021,26 @@ function physicsStep(dt) {
 
   const steps = Math.max(1, Math.min(8, Math.ceil(ball.vel.length() * dt / (BALL_R * 0.5))));
   const h = dt / steps;
-  grounded = false; let hitBumper = false, prevGround = false;
+  grounded = false; let hitBumper = false, hitPad = false, prevGround = false;
   for (let s = 0; s < steps; s++) {
     ball.pos.addScaledVector(ball.vel, h);
     const r = collide();
     if (r.bumper) hitBumper = true;
+    if (r.pad) hitPad = true;
     if (r.grounded) prevGround = true;
   }
   grounded = prevGround;
+
+  // conveyor push (while resting on a belt)
+  if (grounded && _groundCol && _groundCol.push) {
+    ball.vel.addScaledVector(_groundCol.push, CONV_ACCEL * dt);
+  }
+  // jump pad launch
+  if (hitPad && ball.vel.y < JUMP_VEL) {
+    ball.vel.y = JUMP_VEL; SFX.bump(); haptic(2);
+    spawn(ball.pos, 18, { color: [0x9fffd0, 0xffffff, 0xbff0ff], speed: 6, size: 15, life: 0.5, up: 5 });
+    shake = Math.max(shake, 0.3);
+  }
 
   // spin
   const horiz = Math.hypot(ball.vel.x, ball.vel.z);
@@ -926,9 +1063,11 @@ function physicsStep(dt) {
 }
 
 function collide() {
-  let gnd = false, bumper = false;
+  let gnd = false, bumper = false, pad = false;
+  _groundCol = null;
   for (let i = 0; i < colliders.length; i++) {
     const b = colliders[i];
+    if (!b.alive) continue;
     if (b.q) { _local.copy(ball.pos).sub(b.c).applyQuaternion(b.qi); } else { _local.copy(ball.pos).sub(b.c); }
     _closest.set(clamp(_local.x, -b.h.x, b.h.x), clamp(_local.y, -b.h.y, b.h.y), clamp(_local.z, -b.h.z, b.h.z));
     _delta.copy(_local).sub(_closest);
@@ -957,29 +1096,42 @@ function collide() {
       ball.vel.addScaledVector(_n, -vn * (1 + rest));
       if (b.type === 'bumper') bumper = true;
     }
-    if (_n.y > 0.5) { gnd = true; groundMat = b.mat; }
+    if (_n.y > 0.5) {
+      gnd = true; groundMat = b.mat; _groundCol = b;
+      if (b.type === 'pad') pad = true;
+      if (b.type === 'fade' && b.fadeT === null) b.fadeT = FADE_TIME;
+    }
   }
-  return { grounded: gnd, bumper };
+  return { grounded: gnd, bumper, pad };
 }
+let _groundCol = null;
 const _moverV = new THREE.Vector3(), _moverD = new THREE.Vector3();
 
 //============================================================================
 //  CAMERA
 //============================================================================
 const camPos = new THREE.Vector3(0, 10, 15), camLook = new THREE.Vector3(), _ballWorld = new THREE.Vector3();
-let camYaw = 0, baseFov = 58;
+const _camWant = new THREE.Vector3(), _lookTgt = new THREE.Vector3();
+let camYaw = 0, baseFov = 58, introTime = 0;
+const CAM_DIST = 10.8, CAM_HEIGHT = 6.4;
 function updateCamera(dt) {
   marbleRoot.getWorldPosition(_ballWorld);
   const speed = Math.hypot(ball.vel.x, ball.vel.z);
-  if (speed > 2.2) {
+  if (speed > 2.4) {
     const heading = Math.atan2(ball.vel.x, ball.vel.z);
     let d = ((heading - camYaw + Math.PI * 3) % (Math.PI * 2)) - Math.PI;
-    camYaw += d * Math.min(1, dt * 1.8);
+    camYaw += d * Math.min(1, dt * 1.5);
   }
-  const dist = 10.5, height = 6.0;
-  const want = new THREE.Vector3(_ballWorld.x - Math.sin(camYaw) * dist, _ballWorld.y + height, _ballWorld.z - Math.cos(camYaw) * dist);
-  camPos.lerp(want, Math.min(1, dt * 3.4));
-  camLook.lerp(_ballWorld, Math.min(1, dt * 6.5));
+  // intro pull-in during countdown
+  if (introTime > 0) introTime -= dt;
+  const intro = clamp(introTime / 1.7, 0, 1), ease = intro * intro;
+  const dist = CAM_DIST + ease * 8, height = CAM_HEIGHT + ease * 6.5;
+  const yaw = camYaw + ease * 0.55;
+  _camWant.set(_ballWorld.x - Math.sin(yaw) * dist, _ballWorld.y + height, _ballWorld.z - Math.cos(yaw) * dist);
+  camPos.lerp(_camWant, Math.min(1, dt * 3.4));
+  // look slightly ahead of the marble for anticipation
+  _lookTgt.set(_ballWorld.x + ball.vel.x * 0.12, _ballWorld.y, _ballWorld.z + ball.vel.z * 0.12);
+  camLook.lerp(_lookTgt, Math.min(1, dt * 6.5));
   // dynamic fov
   const targetFov = baseFov + clamp(speed * 0.8, 0, 14);
   camera.fov += (targetFov - camera.fov) * Math.min(1, dt * 3);
@@ -1097,6 +1249,15 @@ const fxSpeed = $('fx-speed');
 const KILL_Y = -14;
 const moteSpawn = new THREE.Vector3();
 const _trail = new THREE.Vector3();
+// shortest distance (in XZ) from point p to segment a→b
+function segDistXZ(a, b, p) {
+  const abx = b.x - a.x, abz = b.z - a.z, apx = p.x - a.x, apz = p.z - a.z;
+  const len2 = abx * abx + abz * abz;
+  let t = len2 > 1e-6 ? (apx * abx + apz * abz) / len2 : 0;
+  t = clamp(t, 0, 1);
+  const cx = a.x + abx * t - p.x, cz = a.z + abz * t - p.z;
+  return Math.hypot(cx, cz);
+}
 function gameplay(dt) {
   levelTime += dt;
   // speed trail behind the marble
@@ -1125,8 +1286,31 @@ function gameplay(dt) {
   if (goalGroup) {
     goalGroup.userData.ring.rotation.z += dt * 1.5;
     if (goalGroup.userData.gem) { goalGroup.userData.gem.rotation.y += dt * 1.6; goalGroup.userData.gem.position.y = 1.25 + Math.sin(time * 2.2) * 0.12; }
-    const dx = ball.pos.x - goalPos.x, dz = ball.pos.z - goalPos.z;
-    if (dx * dx + dz * dz < 1.3 * 1.3 && Math.abs(ball.pos.y - goalPos.y) < 2.2) winLevel();
+    // swept check: distance from goal to the marble's travel segment this frame (avoids skipping at speed)
+    if (Math.abs(ball.pos.y - goalPos.y) < 2.4 && segDistXZ(ball.prev, ball.pos, goalPos) < 1.35) winLevel();
+  }
+  // crumbling fade tiles
+  for (const ft of fadeTiles) {
+    if (ft.col.fadeT === null) continue;
+    ft.col.fadeT -= dt;
+    const f = clamp(ft.col.fadeT / FADE_TIME, 0, 1);
+    ft.mesh.material.opacity = f;
+    ft.mesh.material.emissiveIntensity = 0.5 + (1 - f) * 2.5;
+    ft.mesh.position.x = ft.col.c.x + (Math.random() - 0.5) * (1 - f) * 0.12;
+    if (ft.col.fadeT <= 0 && ft.col.alive) {
+      ft.col.alive = false; ft.mesh.visible = false;
+      spawn(ft.col.c, 12, { color: [ft.mesh.material.color.getHex(), 0xffffff], speed: 3, size: 10, life: 0.6, grav: 14 });
+    }
+  }
+  const pp = 0.9 + Math.sin(time * 5) * 0.5;
+  for (const pm of padMats) pm.emissiveIntensity = pp;
+  // animate conveyor arrows scrolling along the belt
+  for (const cv of conveyors) {
+    const half = cv.span / 2 - 0.4, n = cv.cones.length;
+    for (let i = 0; i < n; i++) {
+      let t = ((time * 2.2 + i / n * cv.span) % cv.span) - half - 0.4;
+      cv.cones[i].position.set(cv.base.x + cv.dir.x * t, cv.base.y, cv.base.z + cv.dir.z * t);
+    }
   }
   // fall
   if (ball.pos.y < KILL_Y) loseLife();
@@ -1361,7 +1545,8 @@ setTimeout(() => $('loader').classList.add('hide'), 400);
 
 window.__dbg = { THREE, scene, camera, renderer, ball, keys, tiltTarget, get state() { return state; }, startLevel, loadLevel,
   get info() { return { state, levelIndex, gems, gemsTotal, lives, levelTime, ballPos: ball.pos.toArray(), grounded }; },
-  get movers() { return movers.map(m => ({ x: +m.col.c.x.toFixed(2), z: +m.col.c.z.toFixed(2) })); } };
+  get movers() { return movers.map(m => ({ x: +m.col.c.x.toFixed(2), z: +m.col.c.z.toFixed(2) })); },
+  get fades() { return fadeTiles.map(f => ({ t: f.col.fadeT == null ? null : +f.col.fadeT.toFixed(2), alive: f.col.alive })); } };
 
 } catch (e) { window.__err(e); }
 </script>
