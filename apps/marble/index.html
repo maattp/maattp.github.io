@@ -423,7 +423,7 @@ function haptic(taps) {
 }
 
 const SAVE_KEY = 'marble_odyssey_v1';
-const defaults = { gfx: isMobile ? 'med' : 'high', music: 'on', sfx: 'on', ctl: 'drag', skin: 'rose', best: {}, cleared: {}, medals: {} };
+const defaults = { gfx: isMobile ? 'med' : 'high', music: 'on', sfx: 'on', ctl: 'drag', skin: 'rose', best: {}, cleared: {}, medals: {}, ghosts: {} };
 let save = Object.assign({}, defaults, JSON.parse(localStorage.getItem(SAVE_KEY) || '{}'));
 function persist() { localStorage.setItem(SAVE_KEY, JSON.stringify(save)); }
 
@@ -567,6 +567,11 @@ function applySkin(name) {
 }
 marbleMesh.castShadow = true;
 marbleSquash.add(marbleMesh); marbleRoot.add(marbleSquash); stage.add(marbleRoot);
+
+// ghost marble (replays your best run, in stage-local space so it rides the tilt)
+const ghostMesh = new THREE.Mesh(new THREE.SphereGeometry(BALL_R, 32, 24),
+  new THREE.MeshBasicMaterial({ color: 0x9fe8ff, transparent: true, opacity: 0.28, depthWrite: false }));
+ghostMesh.visible = false; stage.add(ghostMesh);
 
 // fake soft contact shadow blob (helps read height on platforms)
 const blobTex = (() => {
@@ -1328,6 +1333,11 @@ function setState(s) { state = s; if (s in screens) showScreen(s); }
 function startLevel(idxOrL) {
   loadLevel(idxOrL);
   gems = 0; lives = 3; levelTime = 0; levelDone = false;
+  // ghost replay setup (real stages only)
+  recording = []; recAccum = 0; ghostIdx = 0;
+  ghostFrames = (levelIndex >= 0 && save.ghosts[levelIndex] && save.ghosts[levelIndex].length) ? save.ghosts[levelIndex] : null;
+  ghostActive = !editor.testing && !!ghostFrames;
+  ghostMesh.visible = ghostActive;
   updateHud();
   showScreen('hud'); state = 'countdown'; running = false;
   SFX.music();
@@ -1364,6 +1374,7 @@ function loseLife() {
 }
 function winLevel() {
   if (levelDone) return; levelDone = true; running = false;
+  ghostMesh.visible = false;
   SFX.goal(); SFX.stopMusic(); haptic(4);
   flash(); shake = 0.5;
   marbleRoot.getWorldPosition(_ballWorld);
@@ -1386,8 +1397,8 @@ function winLevel() {
     save.cleared[levelIndex] = Math.max(save.cleared[levelIndex] || 0, allGems ? 2 : 1);
     const ord = { C: 0, B: 1, A: 2, S: 3 };
     if (!save.medals[levelIndex] || ord[rank] > ord[save.medals[levelIndex]]) save.medals[levelIndex] = rank;
-    // ghost: keep the fastest run's recording
-    if (isBest && recording.length) save.ghost = { idx: levelIndex, frames: recording.slice() };
+    // ghost: keep the fastest run's recording for this stage
+    if (isBest && recording.length) save.ghosts[levelIndex] = recording.slice();
     persist();
   }
   $('clearRank').textContent = rank;
@@ -1401,7 +1412,7 @@ function winLevel() {
 
 function pause() { if (state !== 'play') return; state = 'pause'; running = false; showScreen('pause'); $('hud').classList.add('show'); SFX.duck(true); }
 function resume() { if (state !== 'pause') return; showScreen('hud'); state = 'play'; running = true; SFX.duck(false); }
-function quitToMenu() { running = false; SFX.stopMusic(); if (editor.testing) { editorReturn(); return; } buildLevelGrid(); setState('levels'); }
+function quitToMenu() { running = false; ghostMesh.visible = false; SFX.stopMusic(); if (editor.testing) { editorReturn(); return; } buildLevelGrid(); setState('levels'); }
 
 function fmt(t) { if (t == null) return '—'; return t.toFixed(2) + 's'; }
 function updateHud() {
@@ -1456,7 +1467,8 @@ function toggleTune(force) {
 //============================================================================
 //  LEVEL EDITOR
 //============================================================================
-let recording = [];   // ghost-recording buffer (populated by the ghost system)
+let recording = [];   // ghost-recording buffer: [t, x, y, z] samples in stage-local space
+let recAccum = 0, ghostFrames = null, ghostActive = false, ghostIdx = 0;
 const editor = {
   on: false, testing: false, tool: 'floor', sel: -1, dragging: false,
   tiles: [], crystals: [], start: [-3, 1.2, 0], goal: [3, 0, 0],
@@ -1675,6 +1687,25 @@ function segDistXZ(a, b, p) {
 }
 function gameplay(dt) {
   levelTime += dt;
+  // record path for the ghost (stage-local samples)
+  recAccum += dt;
+  if (recAccum >= 0.05 && recording.length < 3000) {
+    recording.push([+levelTime.toFixed(3), +ball.pos.x.toFixed(2), +ball.pos.y.toFixed(2), +ball.pos.z.toFixed(2)]);
+    recAccum = 0;
+  }
+  // replay the ghost of the best run
+  if (ghostActive) {
+    const f = ghostFrames, t = levelTime, last = f[f.length - 1];
+    if (t <= last[0]) {
+      let i = ghostIdx;
+      while (i < f.length - 1 && f[i + 1][0] <= t) i++;
+      while (i > 0 && f[i][0] > t) i--;
+      ghostIdx = i;
+      const a = f[i], b = f[Math.min(i + 1, f.length - 1)], span = (b[0] - a[0]) || 1, u = clamp((t - a[0]) / span, 0, 1);
+      ghostMesh.position.set(a[1] + (b[1] - a[1]) * u, a[2] + (b[2] - a[2]) * u, a[3] + (b[3] - a[3]) * u);
+      ghostMesh.visible = true;
+    } else ghostMesh.visible = false;
+  }
   // speed trail behind the marble
   const sp = Math.hypot(ball.vel.x, ball.vel.z);
   if (sp > 6.5 && Math.random() < dt * 40) {
@@ -1999,7 +2030,8 @@ window.__dbg = { THREE, scene, camera, renderer, ball, keys, tiltTarget, get sta
   get info() { return { state, levelIndex, gems, gemsTotal, lives, levelTime, ballPos: ball.pos.toArray(), grounded }; },
   get movers() { return movers.map(m => ({ x: +m.col.c.x.toFixed(2), z: +m.col.c.z.toFixed(2) })); },
   get fades() { return fadeTiles.map(f => ({ t: f.col.fadeT == null ? null : +f.col.fadeT.toFixed(2), alive: f.col.alive })); },
-  TUNE, toggleTune, editor, enterEditor, edTest, edToData, applySkin, save };
+  TUNE, toggleTune, editor, enterEditor, edTest, edToData, applySkin, save,
+  get ghost() { return { active: ghostActive, frames: ghostFrames ? ghostFrames.length : 0, vis: ghostMesh.visible, rec: recording.length }; } };
 
 } catch (e) { window.__err(e); }
 </script>
