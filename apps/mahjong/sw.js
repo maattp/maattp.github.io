@@ -13,7 +13,7 @@
  *   - static assets (icons, manifest): cache-first, populated on first fetch.
  *
  * Bump VERSION on release to refresh the precached shell and drop old caches. */
-const VERSION = 'v1';
+const VERSION = 'v2';
 const CACHE = 'mahjong-' + VERSION;
 const SHELL = [
   './',                       // the start_url; GitHub Pages serves index.html (200) here

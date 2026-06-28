@@ -2029,7 +2029,7 @@ function wireSetup() {
 const NET_HTTP = (location.hostname === 'localhost' || location.hostname === '127.0.0.1')
   ? `http://${location.hostname}:8787` : 'https://cloudflare-backend.maattp.workers.dev';
 const NET_WS = NET_HTTP.replace(/^http/, 'ws');
-const NET_VER = 'mj.v1';   // bump on any protocol change so mismatched builds can't pair
+const NET_VER = 'mj.v2';   // bump on any protocol change so mismatched builds can't pair (v2: push-to-talk)
 // per-room reconnect token, persisted so an app restart can still reclaim the seat
 const rtGet = (code) => { try { return code ? localStorage.getItem('mjrt:' + code) : null; } catch { return null; } };
 const rtSet = (code, t) => { try { if (code && t) localStorage.setItem('mjrt:' + code, t); } catch {} };
