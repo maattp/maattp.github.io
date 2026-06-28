@@ -2027,6 +2027,8 @@ window.addEventListener('orientationchange', () => { setTimeout(onResize, 100); 
 //  MAIN LOOP
 //============================================================================
 const clock = new THREE.Clock();
+const FIXED_DT = 1 / 120;
+let physAcc = 0;
 function tick() {
   requestAnimationFrame(tick);
   let dt = clock.getDelta(); if (dt > 0.05) dt = 0.05;
@@ -2034,7 +2036,11 @@ function tick() {
 
   if (running && state === 'play') {
     readKeyboard();
-    physicsStep(dt);
+    // fixed-timestep physics → consistent feel across framerates, no tunneling
+    physAcc += dt;
+    let n = 0;
+    while (physAcc >= FIXED_DT && n < 6) { physicsStep(FIXED_DT); physAcc -= FIXED_DT; n++; }
+    if (physAcc > FIXED_DT * 4) physAcc = 0;   // avoid spiral-of-death after a stall
     gameplay(dt);
     SFX.roll(Math.hypot(ball.vel.x, ball.vel.z), grounded);
     if (Math.floor(levelTime * 100) !== lastTimeShown) { lastTimeShown = Math.floor(levelTime * 100); $('hudTime').textContent = levelTime.toFixed(2); }
