@@ -109,6 +109,19 @@ input.txt::placeholder{color:rgba(255,255,255,.5);}
 .nameplate .sc{font-variant-numeric:tabular-nums;opacity:.9;}
 .nameplate .won{color:#3a2600;font-weight:800;}
 .nameplate.active .thinking{color:#1a1a1a;}
+/* push-to-talk: a player is speaking */
+.nameplate.speaking{box-shadow:0 0 0 2px #30d158, 0 0 14px rgba(48,209,88,.8);animation:talkpulse .8s ease-in-out infinite;}
+.nameplate .speaking-ico{animation:talkpulse .8s ease-in-out infinite;}
+@keyframes talkpulse{0%,100%{opacity:1;}50%{opacity:.45;}}
+#ptt-btn{position:fixed;left:calc(env(safe-area-inset-left) + 12px);bottom:calc(env(safe-area-inset-bottom) + 168px);z-index:60;
+  display:flex;flex-direction:column;align-items:center;justify-content:center;gap:1px;width:62px;height:62px;border-radius:50%;
+  background:rgba(20,40,30,.78);border:2px solid rgba(255,255,255,.35);color:#fff;-webkit-tap-highlight-color:transparent;
+  touch-action:none;user-select:none;-webkit-user-select:none;box-shadow:0 3px 10px rgba(0,0,0,.45);transition:transform .1s, background .1s;}
+#ptt-btn .ptt-ico{font-size:22px;line-height:1;}
+#ptt-btn .ptt-lbl{font-size:7.5px;opacity:.85;letter-spacing:.2px;}
+#ptt-btn.rec{background:#c0392b;border-color:#fff;transform:scale(1.18);box-shadow:0 0 0 6px rgba(192,57,43,.35),0 4px 14px rgba(0,0,0,.5);}
+#ptt-btn.rec .ptt-lbl::after{content:"";}
+#ptt-btn.denied{opacity:.45;}
 .thinking{font-size:11px;opacity:.8;font-style:italic;}
 .dealer-mark{font-size:10px;background:#b23b3b;color:#fff;border-radius:4px;padding:0 3px;font-weight:700;}
 
@@ -332,6 +345,7 @@ input.txt::placeholder{color:rgba(255,255,255,.5);}
 
 <div id="overlay"></div>
 <div class="toast" id="toast"></div>
+<button id="ptt-btn" aria-label="Hold to talk" style="display:none"><span class="ptt-ico">🎤</span><span class="ptt-lbl">Hold to talk</span></button>
 
 <script type="module">
 "use strict";
@@ -1609,6 +1623,7 @@ function render() {
   for (let rel = 0; rel < 4; rel++) renderSeat(view, (v + rel) % 4, rel);
   renderCenter(view);
   renderHandArea(view);
+  updatePttVisibility();
 }
 
 function renderSeat(view, seat, rel) {
@@ -1620,9 +1635,11 @@ function renderSeat(view, seat, rel) {
   const won = p.hasWon ? `<span class="won">胡#${(p.winOrder ?? 0) + 1}</span>` : '';
   const dealer = p.isDealer ? '<span class="dealer-mark">庄</span>' : '';
   const offline = (p.connected === false) ? 'off' : '';
-  const plate = `<div class="nameplate ${p.isActive ? 'active' : ''} ${p.isBot ? 'bot' : 'human'} ${offline}">
+  const speaking = pttSpeaking.has(seat) ? 'speaking' : '';
+  const spk = pttSpeaking.has(seat) ? '<span class="speaking-ico">🎤</span>' : '';
+  const plate = `<div class="nameplate ${p.isActive ? 'active' : ''} ${p.isBot ? 'bot' : 'human'} ${offline} ${speaking}">
       <span class="dot"></span>${dealer}<span>${escapeHtml(p.name)}</span>${tint}${won}
-      <span class="sc">${p.score >= 0 ? '+' : ''}${p.score}</span>${thinking}</div>`;
+      <span class="sc">${p.score >= 0 ? '+' : ''}${p.score}</span>${spk}${thinking}</div>`;
   const melds = p.melds.length ? `<div class="melds">${p.melds.map(meldHTML).join('')}</div>` : '';
   const river = `<div class="river">${p.discards.map((t, i) => tileHTML(t, i === p.discards.length - 1 ? 'last' : '')).join('')}</div>`;
 
@@ -1850,6 +1867,7 @@ function leaveGame() {
   try { if (conn && conn.code) localStorage.removeItem('mjrt:' + conn.code); } catch {}  // drop our reconnect token
   if (conn && conn.dispose) conn.dispose();
   conn = null; curView = null; online = false; pendingReveal = null;
+  PTT.dispose(); const pb = $('ptt-btn'); if (pb) pb.style.display = 'none';
   overlay.style.display = 'none'; overlay.innerHTML = ''; overlay.style.background = '';
   $('conpill').style.display = 'none';
   $('game').style.display = 'none'; $('setup').style.display = 'flex';
@@ -1992,6 +2010,15 @@ function wireSetup() {
   const syncSoundIcon = () => { soundBtn.textContent = Sound.enabled ? '🔊' : '🔇'; soundBtn.style.opacity = Sound.enabled ? '1' : '0.6'; };
   syncSoundIcon();
   soundBtn.addEventListener('click', () => { Sound.setEnabled(!Sound.enabled); syncSoundIcon(); if (Sound.enabled) Sound.play('turn'); });
+  const pttBtn = $('ptt-btn');
+  if (pttBtn) {
+    const press = (e) => { e.preventDefault(); PTT.press(); };
+    const release = (e) => { e.preventDefault(); PTT.release(); };
+    pttBtn.addEventListener('pointerdown', press);
+    pttBtn.addEventListener('pointerup', release);
+    pttBtn.addEventListener('pointercancel', release);
+    pttBtn.addEventListener('pointerleave', release);
+  }
   buildNameInputs();
 }
 
@@ -2002,7 +2029,7 @@ function wireSetup() {
 const NET_HTTP = (location.hostname === 'localhost' || location.hostname === '127.0.0.1')
   ? `http://${location.hostname}:8787` : 'https://cloudflare-backend.maattp.workers.dev';
 const NET_WS = NET_HTTP.replace(/^http/, 'ws');
-const NET_VER = 'mj.v1';   // bump on any protocol change so mismatched builds can't pair
+const NET_VER = 'mj.v2';   // bump on any protocol change so mismatched builds can't pair (v2: push-to-talk)
 // per-room reconnect token, persisted so an app restart can still reclaim the seat
 const rtGet = (code) => { try { return code ? localStorage.getItem('mjrt:' + code) : null; } catch { return null; } };
 const rtSet = (code, t) => { try { if (code && t) localStorage.setItem('mjrt:' + code, t); } catch {} };
@@ -2053,6 +2080,7 @@ class OnlineConnection {
       case 'reject': this.awaiting = false; clearTimeout(this._awaitTimer); toast(m.error && m.error.message ? m.error.message : 'Invalid move', 1500); render(); break;
       case 'error': onlineMsg(m.msg || 'Server error', true); updateConnPill({ text: 'Error', state: 'bad' }); this.alive = false; break;
       case 'you-are-host': this.host = true; if (this.lobby && !this.inGame) showOnlineLobby(this, this.lobby); break;
+      case 'voice': PTT.onVoice(m); break;
     }
   }
   onClose() {
@@ -2069,6 +2097,7 @@ class OnlineConnection {
   setConfig(c) { this.rawsend({ t: 'config', ...c }); }
   startGame() { this.rawsend({ t: 'start' }); }
   again() { if (this.host) this.rawsend({ t: 'rematch' }); }
+  sendVoice(b64, mime) { this.rawsend({ t: 'voice', audio: b64, mime }); }
   submit(action) {
     if (this.awaiting) return;
     this.awaiting = true;
@@ -2077,6 +2106,103 @@ class OnlineConnection {
     this.rawsend({ t: 'action', action });
   }
   dispose() { this.alive = false; clearInterval(this.ping); try { this.ws.close(); } catch {} }
+}
+
+/* =====================================================================
+ * PUSH-TO-TALK — hold the mic button to record a short clip; the server
+ * relays it to the other players, whose nameplate glows while it plays.
+ * Record-then-send (walkie-talkie) avoids WebRTC/TURN and works on iOS.
+ * ===================================================================== */
+const pttSpeaking = new Map();   // seat id → count of clips currently playing (refcount → nameplate glow)
+function refreshSpeaking() { if (curView && online && conn && conn.inGame) render(); }
+function b64ToBlob(b64, mime) {
+  const bin = atob(b64), arr = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) arr[i] = bin.charCodeAt(i);
+  return new Blob([arr], { type: mime || 'audio/mp4' });
+}
+function blobToB64(blob) {
+  return new Promise((res) => { const r = new FileReader(); r.onerror = () => res(''); r.onloadend = () => res(String(r.result || '').split(',')[1] || ''); r.readAsDataURL(blob); });
+}
+const PTT = {
+  stream: null, rec: null, chunks: [], mime: '', held: false, recording: false, denied: false, _starting: false, _idle: 0, _max: 0, _safety: [],
+  supported() { return !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia && window.MediaRecorder); },
+  pickMime() {
+    for (const m of ['audio/mp4', 'audio/webm;codecs=opus', 'audio/webm', 'audio/ogg;codecs=opus']) {
+      try { if (MediaRecorder.isTypeSupported(m)) return m; } catch {}
+    }
+    return '';
+  },
+  async press() {
+    if (this.denied || this.recording || this._starting || !this.supported()) return;
+    this._starting = true;   // set synchronously so a 2nd tap during the permission prompt is ignored
+    this.held = true; clearTimeout(this._idle);
+    Sound.init();   // a user gesture — unlock audio output for incoming clips
+    try { if (!this.stream) this.stream = await navigator.mediaDevices.getUserMedia({ audio: true }); }
+    catch (e) { this._starting = false; this.denied = true; const b = $('ptt-btn'); if (b) b.classList.add('denied'); toast('🎤 Microphone blocked', 1800); return; }
+    this._starting = false;
+    if (!this.held) return;   // released during the permission prompt
+    this.mime = this.mime || this.pickMime();
+    this.chunks = [];
+    try { this.rec = new MediaRecorder(this.stream, this.mime ? { mimeType: this.mime } : undefined); }
+    catch (e) { try { this.rec = new MediaRecorder(this.stream); } catch (e2) { toast('🎤 Recording unsupported', 1600); try { this.stream.getTracks().forEach((t) => t.stop()); } catch {} this.stream = null; return; } }
+    this.rec.ondataavailable = (ev) => { if (ev.data && ev.data.size) this.chunks.push(ev.data); };
+    this.rec.onstop = () => this._finish();
+    this.recording = true; const b = $('ptt-btn'); if (b) b.classList.add('rec');
+    this.rec.start();
+    this._max = setTimeout(() => this.release(), 20000);   // hard cap 20s
+  },
+  release() {
+    this.held = false; clearTimeout(this._max);
+    const b = $('ptt-btn'); if (b) b.classList.remove('rec');
+    if (this.recording && this.rec && this.rec.state !== 'inactive') { try { this.rec.stop(); } catch {} }
+    this.recording = false;
+    // free the mic after a short idle so we're not holding it open the whole game
+    clearTimeout(this._idle);
+    this._idle = setTimeout(() => { try { if (this.stream) this.stream.getTracks().forEach((t) => t.stop()); } catch {} this.stream = null; }, 30000);
+  },
+  async _finish() {
+    const blob = new Blob(this.chunks, { type: this.mime || 'audio/mp4' });
+    this.chunks = [];
+    const c = conn;   // capture identity: a leave→rejoin during the await must not send this clip on a new conn
+    if (!blob.size || !online || !c || !c.sendVoice) return;
+    if (blob.size > 200000) { toast('Message too long', 1400); return; }
+    const b64 = await blobToB64(blob);
+    if (!b64) { toast('🎤 Voice message failed', 1400); return; }
+    if (conn === c && conn.sendVoice) conn.sendVoice(b64, blob.type || this.mime);
+  },
+  onVoice(m) {
+    if (!m || typeof m.audio !== 'string' || m.from == null) return;
+    if (conn && m.from === conn.seat) return;   // never echo our own
+    toast('🎤 ' + (m.name || 'Player'), 1200);
+    let url; try { url = URL.createObjectURL(b64ToBlob(m.audio, m.mime)); } catch { return; }
+    // nameplate glow only exists in-game; a lobby clip just toasts (and won't dirty the glow)
+    const glow = !!(conn && conn.inGame);
+    if (glow) { pttSpeaking.set(m.from, (pttSpeaking.get(m.from) || 0) + 1); refreshSpeaking(); }
+    const a = new Audio(url);
+    let cleared = false;
+    const done = () => {
+      if (cleared) return; cleared = true;
+      if (glow) { const n = Math.max(0, (pttSpeaking.get(m.from) || 0) - 1); if (n === 0) pttSpeaking.delete(m.from); else pttSpeaking.set(m.from, n); refreshSpeaking(); }
+      try { URL.revokeObjectURL(url); } catch {}
+    };
+    a.onended = done; a.onerror = done;
+    this._safety.push(setTimeout(done, 20000));   // safety: clear the glow even if playback never reports end (cancelled on dispose)
+    a.play().catch(() => {});
+  },
+  dispose() {
+    this.held = false; this.recording = false; this.denied = false; this._starting = false;
+    clearTimeout(this._max); clearTimeout(this._idle);
+    this._safety.forEach(clearTimeout); this._safety = [];
+    try { if (this.rec && this.rec.state !== 'inactive') this.rec.stop(); } catch {}
+    try { if (this.stream) this.stream.getTracks().forEach((t) => t.stop()); } catch {}
+    this.stream = null; this.rec = null; pttSpeaking.clear();
+    const b = $('ptt-btn'); if (b) { b.classList.remove('rec'); b.classList.remove('denied'); }
+  },
+};
+// only toggles button visibility — teardown happens in leaveGame()/dispose(), not on every render
+function updatePttVisibility() {
+  const b = $('ptt-btn'); if (!b) return;
+  b.style.display = (online && PTT.supported() && conn && conn.inGame) ? 'flex' : 'none';
 }
 function onlineMsg(s, err) { const el = $('online-msg'); el.textContent = s; el.className = 'hostmsg' + (err ? ' err' : ''); }
 
@@ -2137,7 +2263,7 @@ function startOnline(mode) {
 }
 
 wireSetup();
-window.__mahjongClient = { onUpdate, render, get conn() { return conn; }, set conn(c) { conn = c; }, set online(v) { online = v; }, viewFor, createGame, makeConfig };
+window.__mahjongClient = { onUpdate, render, get conn() { return conn; }, set conn(c) { conn = c; }, set online(v) { online = v; }, viewFor, createGame, makeConfig, PTT, pttSpeaking };
 
 /* register the offline service worker (local play works with no network once cached) */
 if ('serviceWorker' in navigator) {
