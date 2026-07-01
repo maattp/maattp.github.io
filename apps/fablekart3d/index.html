@@ -488,7 +488,7 @@ const canvas = document.getElementById('gl');
 const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: 'high-performance' });
 renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
 const scene = new THREE.Scene();
-scene.fog = new THREE.Fog(0xd4e6f6, 480, 1500);
+scene.fog = new THREE.Fog(0xd9ecfa, 480, 1500);   // matches the dome horizon exactly — no seam band
 renderer.setClearColor(0x9cc8ee);
 const camera = new THREE.PerspectiveCamera(68, 2, 0.1, 2600);
 let __freeCam = null;
@@ -616,7 +616,7 @@ function buildRoads() {
         roadPoint(sm, bands[b], vA);
         pos.push(vA.x, vA.y + lift, vA.z);
         let cc;
-        if (b === 0 || b === bands.length - 1) cc = tmp.copy(asphalt).multiplyScalar(0.7); // skirt
+        if (b === 0 || b === bands.length - 1) cc = tmp.copy(asphalt).multiplyScalar(0.88); // skirt
         else if (b === 1 || b === bands.length - 2) cc = ((i >> 2) & 1) ? curbA : curbB;   // curbs
         else cc = asphalt;
         // start line checker across the full width
@@ -651,7 +651,7 @@ function buildDeckBox(e) {
   if (run) runs.push(run);
   if (!runs.length) return;
   const pos = [], col = [], idx = [];
-  const side = new THREE.Color(0x596070), bot = new THREE.Color(0x3a3f4c);
+  const side = new THREE.Color(0x7b8494), bot = new THREE.Color(0x555b68);
   const vA = new THREE.Vector3();
   const bands = [
     { lat: -e.w - 1.4, dy: 0.10, c: side }, { lat: -e.w - 1.1, dy: -1.6, c: side },
@@ -714,8 +714,8 @@ function buildSceneryBake() {
         if (drop > 6 || sm.elevated) {
           const px = sm.x + sm.nx * side * (e.w + 0.7), pz = sm.z + sm.nz * side * (e.w + 0.7);
           const py = sm.y + sm.bank * side * (e.w + 0.7);
-          bake.add(boxG, tmtx(px, py + 0.55, pz, 0, 0.34, 1.5, 0.34), 0xdde3ee);
-          bake.add(boxG, tmtx(px, py + 1.18, pz, Math.atan2(sm.tx, sm.tz), 0.24, 0.24, SAMPLE_STEP * 4 + 0.6), 0xd23c3c);
+          bake.add(boxG, tmtx(px, py + 0.55, pz, 0, 0.42, 1.5, 0.42), 0xdde3ee);
+          bake.add(boxG, tmtx(px, py + 1.18, pz, Math.atan2(sm.tx, sm.tz), 0.34, 0.34, SAMPLE_STEP * 4 + 0.6), 0xd23c3c);
         }
       }
     }
@@ -767,6 +767,13 @@ function buildLake() {
   lake.rotation.x = -Math.PI / 2;
   lake.position.set(301, 0.25, 245);
   world.add(lake);
+  // the island sits in an ocean — without it the terrain rim is a hard void
+  // line at eye level (fog starts past the rim, so it never hid it)
+  const ocean = new THREE.Mesh(new THREE.CircleBufferGeometry(1850, 48),
+    new THREE.MeshLambertMaterial({ color: 0x3a7dc0 }));
+  ocean.rotation.x = -Math.PI / 2;
+  ocean.position.set(0, -2.5, 0);
+  world.add(ocean);
 }
 function buildSky() {
   // gradient dome + sun disc (fog-exempt so the horizon stays luminous)
