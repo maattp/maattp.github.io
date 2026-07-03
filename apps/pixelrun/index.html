@@ -69,6 +69,7 @@ const PIT_Y = 11 * TILE;             // below this = pit death
 const WORLD_LEN = 500;               // tiles per world before the flag
 const SAVE = 'pixelrun_';
 const VERSION = 16;                  // shown on the title screen — bump once per PR (see CLAUDE.md)
+const WONDER_DUR = 640;              // wonder-mode frames; the sky fade envelope derives from it
 
 // ---------- utils ----------
 const clamp = (v, a, b) => v < a ? a : v > b ? b : v;
@@ -2583,7 +2584,7 @@ function updateEnts() {
         e.x += e.vx * 1.6;
         e.y0 += (e.cruiseY - e.y0) * 0.08;
         e.y = e.y0;
-        if (e.wakeT > 40) e.sleep = 0;
+        if (e.wakeT > 40) { e.sleep = 0; e.t = 0; }   // t=0 restarts the bob at sin(0) — no snap
       } else {
         e.x += e.vx;
         e.y = e.y0 + Math.sin(e.t * 0.045) * 26;
@@ -2725,7 +2726,7 @@ function applyPow(kind, x, y) {
     addFloat(x, y - 8, 'COIN RAIN!', '#ffd93c');
     burst(x + 6, y + 6, '#ffd93c', 10, 2, 0.05);
   } else if (kind === 'wonder') {
-    game.wonder = 640;
+    game.wonder = WONDER_DUR;
     addFloat(x, y - 8, 'WONDER MODE!', '#c86bde');
     for (let i = 0; i < 16; i++)
       parts.push({ x: x + 6, y: y + 6, vx: R(-2.2, 2.2), vy: R(-2.6, 0.4), life: RI(20, 44),
@@ -2921,7 +2922,7 @@ function drawSkyAndParallax(camX, camY) {
   }
   // WONDER MODE 😵‍💫 — the sky forgets which world it's in
   const wI = game.wonder > 0
-    ? Math.min(1, (640 - game.wonder) / 40, game.wonder / 50) : 0;
+    ? Math.min(1, (WONDER_DUR - game.wonder) / 40, game.wonder / 50) : 0;
   if (wI > 0) {
     const t = game.frame;
     const g2 = ctx.createLinearGradient(0, 0, 0, H);
