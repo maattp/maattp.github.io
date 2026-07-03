@@ -17,7 +17,11 @@
   html, body { height:100%; width:100%; overflow:hidden; background:#63b9ff; overscroll-behavior:none; }
   body { touch-action:none; -webkit-user-select:none; user-select:none; }
   #game {
-    position:absolute; top:0; left:0;
+    /* fixed + inset:0 keeps the canvas glued to the FULL viewport even when iOS
+       reports a stale height at launch — CSS owns the element size, JS only sizes
+       the pixel buffer. dvh fallback chain covers older WebKit. */
+    position:fixed; inset:0;
+    width:100vw; height:100vh; height:100dvh;
     touch-action:none;
     image-rendering:pixelated; image-rendering:crisp-edges;
   }
@@ -91,10 +95,12 @@ let W = 240, H = 420, SCALE = 2;
 let lastSize = '';
 function resize() {
   const dpr = window.devicePixelRatio || 1;
-  // innerWidth/Height can lag on iOS standalone launch/rotation; prefer visualViewport
+  // CSS (fixed, inset:0, 100dvh) owns the canvas ELEMENT size; measure it and any
+  // viewport report, take the largest — iOS standalone lags these at launch/rotation
   const vv = window.visualViewport;
-  const cw = Math.round(Math.max(window.innerWidth, vv ? vv.width : 0));
-  const chh = Math.round(Math.max(window.innerHeight, vv ? vv.height : 0));
+  const rect = canvas.getBoundingClientRect();
+  const cw = Math.round(Math.max(window.innerWidth, vv ? vv.width : 0, rect.width));
+  const chh = Math.round(Math.max(window.innerHeight, vv ? vv.height : 0, rect.height));
   const sig = cw + 'x' + chh + '@' + dpr;
   if (sig === lastSize) return;
   lastSize = sig;
@@ -105,7 +111,6 @@ function resize() {
   W = Math.ceil(cw * dpr / SCALE);
   H = Math.ceil(chh * dpr / SCALE);
   canvas.width = W; canvas.height = H;
-  canvas.style.width = cw + 'px'; canvas.style.height = chh + 'px';
   ctx.imageSmoothingEnabled = false;
   readInsets(cw, chh);
 }
@@ -132,8 +137,11 @@ if (window.visualViewport) window.visualViewport.addEventListener('resize', resi
 setTimeout(resize, 350);        // iOS standalone reports the real viewport late
 resize();
 function tintPage() {
-  // keep the safe-area strips the same color as the current sky
+  // keep the safe-area strips the same color as the current sky — BOTH elements:
+  // the body's stylesheet background sits on top of html, so tinting only html
+  // left a bright hills-blue bar wherever the canvas fell short of the viewport
   document.documentElement.style.background = THEMES[game.themeIdx].skyTop;
+  document.body.style.background = THEMES[game.themeIdx].skyTop;
 }
 
 // ---------- 3x5 bitmap font ----------
