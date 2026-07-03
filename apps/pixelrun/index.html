@@ -102,6 +102,10 @@ function resize() {
   const rect = canvas.getBoundingClientRect();
   const cw = Math.round(Math.max(window.innerWidth, vv ? vv.width : 0, rect.width));
   const chh = Math.round(Math.max(window.innerHeight, vv ? vv.height : 0, rect.height));
+  // insets are cheap — refresh them on EVERY call. env() resolves late on iOS,
+  // and if the first size measurement is already correct no further resize fires,
+  // so gating this behind the size guard left safeTop stuck at 0 (HUD under the clock)
+  readInsets(cw, chh);
   const sig = cw + 'x' + chh + '@' + dpr;
   if (sig === lastSize) return;
   lastSize = sig;
@@ -113,29 +117,38 @@ function resize() {
   H = Math.ceil(chh * dpr / SCALE);
   canvas.width = W; canvas.height = H;
   ctx.imageSmoothingEnabled = false;
-  readInsets(cw, chh);
+  readInsets(cw, chh);          // again with the fresh SCALE
 }
 let safeTop = 0, safeBot = 0, safeL = 0, safeR = 0;
 function readInsets(cw, chh) {
-  // notch/home-indicator overlay the canvas in standalone mode; keep UI clear of them.
-  // uses the same visualViewport-corrected size as resize() so bottom/right insets
-  // aren't computed against a stale innerWidth/innerHeight on iOS launch/rotation
+  // notch/home-indicator overlay the canvas in standalone mode; keep UI clear of them
   const probe = document.createElement('div');
   probe.style.cssText = 'position:fixed;top:env(safe-area-inset-top);bottom:env(safe-area-inset-bottom);' +
     'left:env(safe-area-inset-left);right:env(safe-area-inset-right);pointer-events:none;visibility:hidden;';
   document.body.appendChild(probe);
   const r = probe.getBoundingClientRect();
   probe.remove();
+  let topCss = r.top;
+  let botCss = Math.max(0, chh - r.bottom);
+  // env() can report 0 before iOS settles; in a standalone app that is never true —
+  // fall back to device-class status-bar / home-indicator heights until it resolves
+  if (navigator.standalone) {
+    const notched = Math.max(screen.width, screen.height) >= 780;
+    if (topCss < 20) topCss = notched ? 47 : 20;
+    if (notched && botCss < 10) botCss = 34;
+  }
   const s = (window.devicePixelRatio || 1) / SCALE;
-  safeTop = Math.ceil(r.top * s);
-  safeBot = Math.ceil(Math.max(0, chh - r.bottom) * s);
+  safeTop = Math.ceil(topCss * s);
+  safeBot = Math.ceil(botCss * s);
   safeL = Math.ceil(r.left * s);
   safeR = Math.ceil(Math.max(0, cw - r.right) * s);
 }
 window.addEventListener('resize', resize);
 window.addEventListener('orientationchange', () => setTimeout(resize, 250));
+window.addEventListener('pageshow', () => setTimeout(resize, 60));
 if (window.visualViewport) window.visualViewport.addEventListener('resize', resize);
 setTimeout(resize, 350);        // iOS standalone reports the real viewport late
+setTimeout(resize, 1200);       // …and sometimes very late
 resize();
 function tintPage() {
   // keep the safe-area strips the same color as the current sky — BOTH elements:
