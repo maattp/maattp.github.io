@@ -2813,8 +2813,8 @@ function updateEnts() {
         burst(e.x + 8, e.y + 8, '#fff', 6, 1.4, 0.08);
         sfx.pop();
         e.pieces = null; e.reviveGrace = 22; e.t = 0;
-      } else if (player.slam && overlap(prect(), erect(e))) {
-        killEnemy(e, 150); sfx.brick();   // slamming the pile scatters it for good
+      } else if ((player.slam || game.star > 0 || game.giga > 0) && overlap(prect(), erect(e))) {
+        killEnemy(e, 150); sfx.brick();   // slam, star, or giga scatters the pile for good
       }
       continue;
     }
