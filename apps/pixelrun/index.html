@@ -2091,7 +2091,7 @@ function startRun() {
   for (let i = 0; i < 24; i++) C(0);             // opening runway
   player.x = 40; player.y = -player.h; player.vy = 0;
   player.onGround = true; player.coyote = 0; player.dj = true; player.slam = false;
-  player.mode = 'run'; player.runT = 0; player.inWater = false;
+  player.mode = 'run'; player.runT = 0; player.inWater = false; player.icyAir = false;
   cam.x = player.x - camOffX(); cam.y = camBaseY();
   announce('WORLD 1  ' + THEMES[0].name, 120);
   playSong('hills');
