@@ -6,25 +6,32 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="theme-color" content="#0b1030">
+<link rel="manifest" href="manifest.webmanifest">
 <link rel="apple-touch-icon" sizes="180x180" href="apple-touch-icon.png">
 <link rel="apple-touch-icon" href="apple-touch-icon.png">
 <link rel="icon" type="image/png" sizes="512x512" href="icon.png">
 <title>Pixel Run</title>
 <style>
   * { margin:0; padding:0; box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
-  /* the page bg is what iOS paints in the safe-area strips (notch/home bar), so it
-     must match the sky or the game looks cut off there; JS retints it per world */
-  html, body { height:100%; width:100%; overflow:hidden; background:#63b9ff; overscroll-behavior:none; }
+  /* the page bg is what iOS paints in the safe-area strips; JS retints per world —
+     html gets the sky, body gets the DIRT color (any exposed strip is at the
+     bottom of the screen, where the game shows ground) */
+  html, body { height:100vh; width:100%; overflow:hidden; background:#63b9ff; overscroll-behavior:none; }
   body { touch-action:none; -webkit-user-select:none; user-select:none; }
   #game {
-    /* In-browser: CSS owns the element size (fixed + dvh tracks the viewport
-       fluidly). In STANDALONE mode resize() overrides with inline styles sized to
-       the physical screen, because iOS's standalone layout viewport can end above
-       the home indicator and no CSS unit can reach past it. */
-    position:fixed; inset:0;
+    /* In-browser: dvh tracks the viewport fluidly. */
+    position:fixed; top:0; left:0;
     width:100vw; height:100vh; height:100dvh;
     touch-action:none;
     image-rendering:pixelated; image-rendering:crisp-edges;
+  }
+  /* iOS standalone + black-translucent lays the document out shifted UP by the
+     status-bar inset, so anything sized to the viewport ends that many px short
+     of the physical bottom — THE bottom bar. Documented fix: extend document and
+     canvas by env(safe-area-inset-top). */
+  @media (display-mode: standalone) {
+    html, body { height: calc(100vh + env(safe-area-inset-top)); }
+    #game { height: calc(100vh + env(safe-area-inset-top)); }
   }
 </style>
 </head>
@@ -61,7 +68,7 @@ const MAX_SPEED = 3.05;
 const PIT_Y = 11 * TILE;             // below this = pit death
 const WORLD_LEN = 500;               // tiles per world before the flag
 const SAVE = 'pixelrun_';
-const VERSION = 13;                  // shown on the title screen — bump once per PR (see CLAUDE.md)
+const VERSION = 14;                  // shown on the title screen — bump once per PR (see CLAUDE.md)
 
 // ---------- utils ----------
 const clamp = (v, a, b) => v < a ? a : v > b ? b : v;
@@ -165,11 +172,11 @@ setTimeout(resize, 350);        // iOS standalone reports the real viewport late
 setTimeout(resize, 1200);       // …and sometimes very late
 resize();
 function tintPage() {
-  // keep the safe-area strips the same color as the current sky — BOTH elements:
-  // the body's stylesheet background sits on top of html, so tinting only html
-  // left a bright hills-blue bar wherever the canvas fell short of the viewport
+  // camouflage any strip the canvas can't reach: html gets the sky (top/side
+  // strips), body gets the DIRT color — an exposed strip sits at the BOTTOM of
+  // the screen, where the game is showing ground, so dirt blends and sky glares
   document.documentElement.style.background = THEMES[game.themeIdx].skyTop;
-  document.body.style.background = THEMES[game.themeIdx].skyTop;
+  document.body.style.background = THEMES[game.themeIdx].dirt;
 }
 
 // ---------- 3x5 bitmap font ----------

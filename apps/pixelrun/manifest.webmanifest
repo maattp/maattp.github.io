@@ -1,0 +1,16 @@
+{
+  "name": "Pixel Run",
+  "short_name": "Pixel Run",
+  "description": "An endless platform dash",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "display_override": ["fullscreen", "standalone"],
+  "orientation": "portrait",
+  "background_color": "#63b9ff",
+  "theme_color": "#0b1030",
+  "icons": [
+    { "src": "icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any maskable" },
+    { "src": "icon.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable" }
+  ]
+}
