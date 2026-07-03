@@ -1452,7 +1452,10 @@ function qContents() {
   if (r < 0.95) return 'moon';
   return 'rain';
 }
-function coinAt(tx, ty) { coins.push({ x: tx * TILE + 8, y: ty * TILE + 8, vx: 0, vy: 0, taken: 0 }); }
+function coinAt(tx, ty) {
+  if (tiles.get(K(tx, ty)) !== undefined) return;   // never bury a coin inside a block
+  coins.push({ x: tx * TILE + 8, y: ty * TILE + 8, vx: 0, vy: 0, taken: 0 });
+}
 function coinRow(tx, ty, n) { for (let i = 0; i < n; i++) coinAt(tx + i, ty); }
 function coinArcOver(tx0, n, gTop) {
   // parabola over a gap starting at tx0, n tiles wide
@@ -2018,12 +2021,13 @@ function startBonus() {
   // sealed box: walls both ends, ceiling all the way across (no hopping out)
   for (let ty = -1; ty >= -6; ty--) { put(b + 1, ty, T_STONE); put(b + LEN - 2, ty, T_STONE); }
   for (let i = 1; i < LEN - 1; i++) put(b + i, -7, T_STONE);
-  coinRow(b + 5, -1, 10);
-  coinRow(b + 7, -4, 6);
-  coinArcOver(b + 15, 9, 0);
+  // blocks first, coins second — coinAt skips occupied cells
   qblock(b + 21, -4, 'heart');
   if (rng() < 0.65) qblock(b + 26, -4, pick(['star', 'wings', 'giga', 'moon', 'rain']));
   else coinRow(b + 26, -3, 4);
+  coinRow(b + 5, -1, 10);
+  coinRow(b + 7, -4, 6);
+  coinArcOver(b + 15, 9, 0);
   // full-height EXIT portal at the end wall — run into it any way you like
   const ex = b + LEN - 4;
   ents.push({ type: 'portal', x: ex * TILE, y: 0, w: 24, h: 96, ox: 0, oy: 0, dead: 0, t: 0 });
