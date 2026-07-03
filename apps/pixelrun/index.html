@@ -684,6 +684,60 @@ const PUFF0 = sprite([       // puffer: do not touch
 '................',
 '................'
 ]);
+const BONES0 = sprite([      // restless skeleton — collapses, never quits
+'....kkkkkk......',
+'...kwwwwwwk.....',
+'..kwwwwwwwwk....',
+'..kwekwwekwk....',
+'..kwwwwwwwwk....',
+'..kwkwkwkwwk....',
+'...kkwwwwkk.....',
+'.....kwwk.......',
+'...kkwwwwkk.....',
+'...kwkwwkwk.....',
+'...kkwwwwkk.....',
+'...kwkwwkwk.....',
+'.....kwwk.......',
+'....kwkkwk......',
+'...kwk..kwk.....',
+'...kk....kk.....'
+]);
+const BONES1 = sprite([
+'................',
+'....kkkkkk......',
+'...kwwwwwwk.....',
+'..kwwwwwwwwk....',
+'..kwekwwekwk....',
+'..kwwwwwwwwk....',
+'..kwkwkwkwwk....',
+'...kkwwwwkk.....',
+'.....kwwk.......',
+'...kkwwwwkk.....',
+'...kwkwwkwk.....',
+'...kkwwwwkk.....',
+'.....kwwk.......',
+'....kwwkwk......',
+'....kwk.kwk.....',
+'....kk...kk.....'
+]);
+const BONEPILE = sprite([    // temporarily inconvenienced
+'................',
+'................',
+'................',
+'................',
+'................',
+'................',
+'................',
+'................',
+'......kkkkk.....',
+'.....kwwwwwk....',
+'.....kwekwek....',
+'....kwwwwwwwk...',
+'...kwMwwkwwMwk..',
+'..kwwkwwwwkwwk..',
+'..kkkkkkkkkkkk..',
+'................'
+]);
 const WISP0 = sprite([       // castle ghost
 '.....kkkkkk.....',
 '...kkmmmmmmkk...',
@@ -940,7 +994,7 @@ const THEMES = [
     grass:'#7a68a0', grassHi:'#a292c4', dirt:'#3c2c54', dirtDk:'#281c3c',
     brick:'#54406c', brickDk:'#3a2c4e', pipe:'#7a5898', pipeDk:'#553a70',
     plat:'#645080', platDk:'#463858',
-    particle:'fog', enemies:['wisp','bat','chomp'], deco:'grave' },
+    particle:'fog', enemies:['wisp','bones','bat','chomp'], deco:'grave' },
   { name:'MAGMA KEEP',
     skyTop:'#1c0f22', skyBot:'#54182c', sun:'#ff6a3c',
     far:'#3a1830', far2:'#2a1024', near:'#54223c',
@@ -1812,6 +1866,7 @@ function spawnEnemy(type, tx, g) {
   const x = tx * TILE, top = -g * TILE;
   const e = { type, x, y: top - 16, vx: 0, vy: 0, w: 12, h: 12, ox: 2, oy: 4, dead: 0, t: RI(0, 100) };
   if (type === 'chomp') { e.vx = -0.35; }
+  else if (type === 'bones') { e.vx = -0.3; e.h = 14; e.oy = 1; }
   else if (type === 'rollo') { e.vx = -0.3; }
   else if (type === 'spiny') { e.vx = -0.3; e.h = 13; e.oy = 3; }
   else if (type === 'bat') {
@@ -2116,8 +2171,8 @@ function addScore(n, x, y, label) {
 
 // ---------- update ----------
 const THEME_SONGS = ['hills', 'dunes', 'caves', 'tide', 'sky', 'frost', 'haunt', 'keep'];
-const HOSTILE = new Set(['chomp', 'rollo', 'spiny', 'bat', 'snap', 'wisp', 'finn', 'puffer']);
-const STOMPABLE = new Set(['chomp', 'rollo', 'bat']);
+const HOSTILE = new Set(['chomp', 'rollo', 'spiny', 'bat', 'snap', 'wisp', 'finn', 'puffer', 'bones']);
+const STOMPABLE = new Set(['chomp', 'rollo', 'bat', 'bones']);
 function genThemeIdx() { return Math.floor(Math.max(0, gen.x) / WORLD_LEN) % THEMES.length; }
 
 function prect() { return { x: player.x, y: player.y, w: player.w, h: player.h }; }
@@ -2699,7 +2754,18 @@ function updateEnts() {
       if (e.t > 45) { e.dead = 2; e.deadT = 0; }
       continue;
     }
-    if (e.type === 'chomp' || e.type === 'rollo' || e.type === 'spiny' || e.type === 'shell') {
+    if (e.type === 'bones' && e.collapsed) {
+      // a pile of bones: harmless, patient, rattling back together
+      e.collapsed--;
+      if (e.collapsed === 0) {
+        burst(e.x + 8, e.y + 8, '#fff', 6, 1.4, 0.08);
+        sfx.pop();
+      } else if (player.slam && overlap(prect(), erect(e))) {
+        killEnemy(e, 150); sfx.brick();   // slamming the pile scatters it for good
+      }
+      continue;
+    }
+    if (e.type === 'chomp' || e.type === 'rollo' || e.type === 'spiny' || e.type === 'shell' || e.type === 'bones') {
       // walkers with gravity
       if (e.type === 'shell') {
         e.rot = (e.rot || 0) + 0.55;               // kicked shells spin
@@ -2832,6 +2898,10 @@ function updateEnts() {
       if (e.type === 'rollo') {
         e.type = 'shell'; e.vx = game.speed + 1.9; e.t = 0;
         sfx.kick();
+      } else if (e.type === 'bones') {
+        e.collapsed = 190;                 // Dry-Bones style: down, not out
+        burst(r.x + r.w / 2, r.y + r.h - 4, '#e8ecf4', 8, 1.8, 0.14);
+        sfx.brick();
       } else killEnemy(e, 0, true);
       player.vy = input.held ? -6.3 : -4.5;
       player.dj = true; player.stompT = 8; player.stretchT = 6;
@@ -3149,12 +3219,18 @@ function drawEnt(e, camX, camY) {
   const f = (e.t >> 4) & 1;
   let img = null;
   // hop-bob walk with squash & stretch for the ground critters
-  if (!e.dead && (e.type === 'chomp' || e.type === 'rollo' || e.type === 'spiny')) {
+  if (e.type === 'bones' && e.collapsed && !e.dead) {
+    const jit = e.collapsed < 40 ? ((game.frame & 2) ? 1 : -1) : 0;   // rattling awake
+    ctx.drawImage(BONEPILE, sx + jit, sy);
+    return;
+  }
+  if (!e.dead && (e.type === 'chomp' || e.type === 'rollo' || e.type === 'spiny' || e.type === 'bones')) {
     const ph = Math.abs(Math.sin(e.t * 0.11));
     const hop = ph * 1.6;
     const scl = 1 - 0.09 * (1 - ph);           // squash at the contact beat
     const wimg = e.type === 'chomp' ? (f ? CHOMP1 : CHOMP0)
                : e.type === 'rollo' ? (f ? ROLLO1 : ROLLO0)
+               : e.type === 'bones' ? (f ? BONES1 : BONES0)
                : (f ? SPINY1 : SPINY0);
     ctx.save();
     ctx.translate(sx + 8, sy + 16 - hop);
