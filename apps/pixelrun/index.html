@@ -17,9 +17,10 @@
   html, body { height:100%; width:100%; overflow:hidden; background:#63b9ff; overscroll-behavior:none; }
   body { touch-action:none; -webkit-user-select:none; user-select:none; }
   #game {
-    /* fixed + inset:0 keeps the canvas glued to the FULL viewport even when iOS
-       reports a stale height at launch — CSS owns the element size, JS only sizes
-       the pixel buffer. dvh fallback chain covers older WebKit. */
+    /* In-browser: CSS owns the element size (fixed + dvh tracks the viewport
+       fluidly). In STANDALONE mode resize() overrides with inline styles sized to
+       the physical screen, because iOS's standalone layout viewport can end above
+       the home indicator and no CSS unit can reach past it. */
     position:fixed; inset:0;
     width:100vw; height:100vh; height:100dvh;
     touch-action:none;
@@ -126,7 +127,9 @@ function resize() {
   W = Math.ceil(cw * dpr / SCALE);
   H = Math.ceil(chh * dpr / SCALE);
   canvas.width = W; canvas.height = H;
-  canvas.style.width = cw + 'px'; canvas.style.height = chh + 'px';   // JS wins over the CSS fallback
+  if (navigator.standalone) {   // only standalone needs the physical-screen override;
+    canvas.style.width = cw + 'px'; canvas.style.height = chh + 'px';
+  }                             // in-browser the CSS dvh keeps tracking the viewport fluidly
   ctx.imageSmoothingEnabled = false;
   readInsets(cw, chh);          // again with the fresh SCALE
 }
