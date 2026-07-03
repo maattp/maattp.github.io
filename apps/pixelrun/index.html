@@ -9,8 +9,10 @@
 <title>Pixel Run</title>
 <style>
   * { margin:0; padding:0; box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
-  html, body { height:100%; overflow:hidden; background:#000; overscroll-behavior:none; }
-  body { position:fixed; inset:0; touch-action:none; -webkit-user-select:none; user-select:none; }
+  /* the page bg is what iOS paints in the safe-area strips (notch/home bar), so it
+     must match the sky or the game looks cut off there; JS retints it per world */
+  html, body { height:100%; width:100%; overflow:hidden; background:#63b9ff; overscroll-behavior:none; }
+  body { touch-action:none; -webkit-user-select:none; user-select:none; }
   #game {
     position:absolute; top:0; left:0;
     touch-action:none;
@@ -64,6 +66,13 @@ function mulberry32(seed) {
     return ((t ^ t >>> 14) >>> 0) / 4294967296;
   };
 }
+// offline: cache the whole app via service worker (see sw.js)
+if ('serviceWorker' in navigator && location.protocol.startsWith('http')) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('sw.js').catch(() => {});
+  });
+}
+
 const urlSeed = new URLSearchParams(location.search).get('seed');
 let rng = mulberry32(urlSeed ? +urlSeed : (Math.random() * 1e9) | 0);
 const R = (a, b) => a + rng() * (b - a);
@@ -76,9 +85,16 @@ function load(k, d) { try { const v = localStorage.getItem(SAVE + k); return v =
 const canvas = document.getElementById('game');
 const ctx = canvas.getContext('2d');
 let W = 240, H = 420, SCALE = 2;
+let lastSize = '';
 function resize() {
   const dpr = window.devicePixelRatio || 1;
-  const cw = window.innerWidth, chh = window.innerHeight;
+  // innerWidth/Height can lag on iOS standalone launch/rotation; prefer visualViewport
+  const vv = window.visualViewport;
+  const cw = Math.round(Math.max(window.innerWidth, vv ? vv.width : 0));
+  const chh = Math.round(Math.max(window.innerHeight, vv ? vv.height : 0));
+  const sig = cw + 'x' + chh + '@' + dpr;
+  if (sig === lastSize) return;
+  lastSize = sig;
   const portrait = chh >= cw;
   SCALE = portrait
     ? Math.max(1, Math.round(cw * dpr / 250))
@@ -106,7 +122,14 @@ function readInsets() {
   safeR = Math.ceil(Math.max(0, window.innerWidth - r.right) * s);
 }
 window.addEventListener('resize', resize);
+window.addEventListener('orientationchange', () => setTimeout(resize, 250));
+if (window.visualViewport) window.visualViewport.addEventListener('resize', resize);
+setTimeout(resize, 350);        // iOS standalone reports the real viewport late
 resize();
+function tintPage() {
+  // keep the safe-area strips the same color as the current sky
+  document.documentElement.style.background = THEMES[game.themeIdx].skyTop;
+}
 
 // ---------- 3x5 bitmap font ----------
 const FONT = {
@@ -874,72 +897,228 @@ function parseTrack(str) {
   return { ev, len: t };
 }
 
-const SONGS = {
-  hills: { bpm: 152, lead:
-    'e5:2 g5:2 a5:2 g5:2 e5:2 c5:2 d5:2 e5:2 d5:2 e5:2 f5:2 e5:2 d5:2 b4:2 c5:2 d5:2 ' +
-    'e5:2 g5:2 a5:2 g5:2 c6:2 b5:2 a5:2 g5:2 a5:2 g5:2 e5:2 d5:2 c5:4 r:4',
-  harm:
-    'r:2 e4:2 r:2 g4:2 r:2 e4:2 r:2 g4:2 r:2 d4:2 r:2 g4:2 r:2 d4:2 r:2 b3:2 ' +
-    'r:2 e4:2 r:2 a4:2 r:2 f4:2 r:2 a4:2 r:2 d4:2 r:2 g4:2 r:2 e4:2 c4:2 r:2',
-  bass:
-    'c3:2 c3:2 g3:2 c3:2 c3:2 g3:2 c4:2 g3:2 g2:2 g2:2 d3:2 g3:2 g2:2 d3:2 g3:2 d3:2 ' +
-    'a2:2 a2:2 e3:2 a3:2 f3:2 f3:2 c4:2 a3:2 g2:2 g2:2 d3:2 g3:2 c3:2 g3:2 c3:4',
-  drum: 'k.hhs.h.k.hhs.hh' },
-  dunes: { bpm: 140, lead:
-    'a4:2 b4:1 c5:1 b4:2 a4:2 e5:4 d5:2 c5:2 b4:2 c5:1 d5:1 c5:2 b4:2 g4:4 a4:4 ' +
-    'a4:2 b4:1 c5:1 b4:2 a4:2 e5:2 f5:2 e5:2 d5:2 c5:2 b4:2 a4:2 g#4:2 a4:4 r:4',
-  harm:
-    'r:2 a3:2 r:2 e4:2 r:2 a3:2 r:2 e4:2 r:2 g3:2 r:2 d4:2 r:2 e4:2 r:2 e4:2 ' +
-    'r:2 a3:2 r:2 e4:2 r:2 a3:2 r:2 e4:2 r:2 f4:2 r:2 d4:2 r:2 e4:2 e4:2 r:2',
-  bass:
-    'a2:2 e3:2 a2:2 e3:2 g2:2 d3:2 g2:2 d3:2 f2:2 c3:2 f2:2 c3:2 e2:2 b2:2 e2:2 b2:2 ' +
-    'a2:2 e3:2 a2:2 e3:2 g2:2 d3:2 g2:2 d3:2 f2:2 c3:2 f2:2 c3:2 e2:4 e2:4',
-  drum: 'k..hs..hk.k.s..h' },
-  caves: { bpm: 112, lead:
-    'd5:4 f5:4 a5:4 f5:4 e5:4 g5:4 a5:2 g5:2 e5:4 d5:4 f5:4 c6:4 a5:4 a#5:4 a5:4 f5:4 e5:4',
-  harm:
-    'r:2 d4:6 r:2 a3:6 r:2 c4:6 r:2 a3:6 r:2 d4:6 r:2 g3:6 r:2 a3:6 r:2 c4:6',
-  bass:
-    'd2:8 d3:8 c2:8 c3:8 a#2:8 g2:8 a2:8 a2:8',
-  drum: 'k.......k...s...' },
-  sky: { bpm: 160, lead:
-    'f5:1 a5:1 c6:2 f5:1 a5:1 c6:2 c6:1 d6:1 c6:2 a5:2 f5:2 e5:1 a5:1 c6:2 e5:1 a5:1 c6:2 b5:2 c6:2 e6:2 c6:2 ' +
-    'f5:1 a#5:1 d6:2 f5:1 a#5:1 d6:2 d6:1 e6:1 f6:2 d6:2 a#5:2 g5:1 c6:1 e6:2 g5:1 c6:1 e6:2 d6:2 c6:2 g5:2 e5:2',
-  harm:
-    'r:2 a4:2 r:2 c5:2 r:2 a4:2 r:2 c5:2 r:2 a4:2 r:2 c5:2 r:2 e5:2 r:2 c5:2 ' +
-    'r:2 a#4:2 r:2 d5:2 r:2 a#4:2 r:2 d5:2 r:2 c5:2 r:2 e5:2 r:2 g5:2 r:2 e5:2',
-  bass:
-    'f2:2 c3:2 f3:2 c3:2 f2:2 c3:2 f3:2 c3:2 a2:2 e3:2 a3:2 e3:2 a2:2 e3:2 a3:2 e3:2 ' +
-    'a#2:2 f3:2 d3:2 f3:2 a#2:2 f3:2 d3:2 f3:2 c3:2 g3:2 e3:2 g3:2 c3:2 g3:2 c3:2 d3:2',
-  drum: 'k..h..s.h.k..s..' },
-  keep: { bpm: 168, lead:
-    'c5:2 r:2 d#5:2 r:2 g5:2 f5:1 d#5:1 d5:2 r:2 c5:2 r:2 d#5:2 r:2 g#5:2 g5:1 f5:1 d#5:2 r:2 ' +
-    'g5:2 r:2 f5:2 r:2 d#5:2 d5:1 c5:1 d5:2 r:2 c5:4 r:2 b4:2 c5:2 d5:2 d#5:2 d5:2',
-  harm:
-    'r:2 c4:2 r:2 c4:2 r:2 c4:2 r:2 c4:2 r:2 a#3:2 r:2 a#3:2 r:2 a#3:2 r:2 a#3:2 ' +
-    'r:2 g#3:2 r:2 g#3:2 r:2 g#3:2 r:2 g#3:2 r:2 g3:2 r:2 g3:2 r:2 g3:2 g3:2 r:2',
-  bass:
-    'c3:1 c3:1 c4:1 c3:1 c3:1 c4:1 c3:1 c4:1 a#2:1 a#2:1 a#3:1 a#2:1 a#2:1 a#3:1 a#2:1 a#3:1 ' +
-    'g#2:1 g#2:1 g#3:1 g#2:1 g#2:1 g#3:1 g#2:1 g#3:1 g2:1 g2:1 g3:1 g2:1 g2:1 g3:1 g3:1 g3:1',
-  drum: 'kh.hsh.hkh.hs.hh' },
-  star: { bpm: 204, lead:
-    'c5:1 e5:1 g5:1 c6:1 e6:1 c6:1 g5:1 e5:1 d5:1 f5:1 a5:1 d6:1 f6:1 d6:1 a5:1 f5:1 ' +
-    'e5:1 g5:1 b5:1 e6:1 g6:1 e6:1 b5:1 g5:1 c6:2 g5:2 e5:2 c5:2',
-  harm: 'c4:2 c4:2 c4:2 c4:2 d4:2 d4:2 d4:2 d4:2 e4:2 e4:2 e4:2 e4:2 g4:2 g4:2 e4:2 c4:2',
-  bass: 'c3:2 c3:2 c3:2 c3:2 d3:2 d3:2 d3:2 d3:2 e3:2 e3:2 e3:2 e3:2 c3:2 g3:2 c3:2 c3:2',
-  drum: 'kshskshskshsksss' },
-  title: { bpm: 120, lead:
-    'c5:4 e5:4 g5:4 e5:4 a5:4 g5:4 e5:2 d5:2 c5:4 d5:4 e5:4 f5:2 e5:2 d5:4 g5:8 r:4 e5:2 d5:2',
-  harm:
-    'r:4 c4:4 r:4 c4:4 r:4 e4:4 r:4 c4:4 r:4 d4:4 r:4 d4:4 r:4 d4:4 b3:4 r:4',
-  bass:
-    'c3:8 g2:8 f2:8 c3:8 d3:8 g2:8 g2:8 g2:4 g2:4',
-  drum: '................' },
-  over: { bpm: 100, oneshot: true, lead: 'e5:2 c5:2 g4:2 e4:2 f4:1 e4:1 d4:1 c4:5',
-  harm: 'r:2 r:2 r:2 c4:2 d4:1 c4:1 b3:1 g3:5', bass: 'c3:4 g2:4 g2:2 g2:2 c2:4', drum: '........k.......' },
-  flag: { bpm: 160, oneshot: true, lead: 'c5:1 e5:1 g5:1 c6:3 g5:1 c6:9',
-  harm: 'e4:1 g4:1 c5:1 e5:3 e5:1 e5:9', bass: 'c3:2 g3:2 c3:2 c3:10', drum: 'k...k...k.......' }
-};
+// --- songs: tracks are arrays of 16-step bars, validated at boot ---
+const MUSIC_ERRORS = [];
+function song(bpm, opts, lead, harm, bass, drum) {
+  for (const [name, arr] of [['lead', lead], ['harm', harm], ['bass', bass]]) {
+    arr.forEach((bar, i) => {
+      if (parseTrack(bar).len !== 16) MUSIC_ERRORS.push(name + ' bar ' + i + ' = ' + parseTrack(bar).len);
+    });
+    if (drum.length % 16) MUSIC_ERRORS.push('drum len ' + drum.length);
+  }
+  return Object.assign({ bpm, lead: lead.join(' '), harm: harm.join(' '), bass: bass.join(' '), drum }, opts);
+}
+// bass riff for MAGMA KEEP: driving root octaves, two per bar
+function riff(n, o) {
+  const lo = n + o, hi = n + (o + 1);
+  const half = lo + ':1 ' + lo + ':1 ' + hi + ':1 ' + lo + ':1 ' + lo + ':1 ' + hi + ':1 ' + lo + ':1 ' + hi + ':1';
+  return half + ' ' + half;
+}
+const SONGS = {};
+
+{ // GREEN HILLS — bright C-major gallop, 16 bars: A A' B A''
+  const h1 = 'e5:2 g5:2 a5:2 g5:2 e5:2 c5:2 d5:2 e5:2',
+        h2 = 'd5:2 e5:2 f5:2 e5:2 d5:2 b4:2 c5:2 d5:2',
+        h3 = 'e5:2 g5:2 a5:2 g5:2 c6:2 b5:2 a5:2 g5:2',
+        h4 = 'a5:2 g5:2 e5:2 d5:2 c5:4 r:2 g4:2',
+        h6 = 'd5:2 e5:2 f5:2 a5:2 g5:2 f5:2 e5:2 d5:2',
+        h7 = 'e5:2 g5:2 c6:2 b5:2 a5:2 g5:2 e5:2 g5:2',
+        h8 = 'a5:1 b5:1 c6:2 g5:2 e5:2 d5:6 r:2',
+        h9 = 'f5:2 a5:2 c6:2 a5:2 f5:2 a5:2 d6:2 c6:2',
+        h10 = 'e5:2 g5:2 c6:2 g5:2 e5:2 g5:2 b5:2 c6:2',
+        h11 = 'd6:2 c6:2 a5:2 f5:2 g5:2 a5:2 b5:2 d6:2',
+        h12 = 'c6:4 g5:2 e5:2 g5:4 d5:2 e5:2',
+        h15 = 'e5:2 g5:2 a5:2 g5:2 c6:2 d6:2 e6:2 d6:2',
+        h16 = 'c6:2 g5:2 e5:2 g5:2 c5:6 g4:1 b4:1';
+  const q1 = 'r:2 e4:2 r:2 g4:2 r:2 e4:2 r:2 g4:2',
+        q2 = 'r:2 d4:2 r:2 g4:2 r:2 b3:2 r:2 d4:2',
+        q3 = 'r:2 e4:2 r:2 a4:2 r:2 f4:2 r:2 a4:2',
+        q4 = 'r:2 d4:2 r:2 g4:2 r:2 e4:2 c4:2 r:2',
+        q9 = 'r:2 f4:2 r:2 a4:2 r:2 f4:2 r:2 a4:2',
+        q11 = 'r:2 f4:2 r:2 a4:2 r:2 g4:2 r:2 b4:2',
+        q12 = 'r:2 e4:2 r:2 g4:2 r:2 g4:2 b3:2 d4:2',
+        q16 = 'r:2 e4:2 r:2 g4:2 c4:4 e4:2 g4:2';
+  const b1 = 'c3:2 g3:2 c3:2 g3:2 c3:2 g3:2 c4:2 g3:2',
+        b2 = 'g2:2 d3:2 g2:2 d3:2 g2:2 d3:2 g3:2 d3:2',
+        b3 = 'a2:2 e3:2 a2:2 e3:2 f2:2 c3:2 f3:2 c3:2',
+        b4 = 'g2:2 d3:2 g2:2 d3:2 c3:2 g3:2 c3:2 g2:2',
+        b9 = 'f2:2 c3:2 f2:2 c3:2 f2:2 c3:2 f3:2 c3:2',
+        b10 = 'c3:2 g3:2 c3:2 g3:2 c3:2 g3:2 e3:2 g3:2',
+        b11 = 'f2:2 c3:2 f2:2 c3:2 g2:2 d3:2 g2:2 d3:2',
+        b12 = 'c3:2 g3:2 e3:2 g3:2 g2:2 d3:2 b2:2 d3:2',
+        b16 = 'c3:2 g3:2 c3:2 g3:2 c3:4 c2:4';
+  const dr = 'k.hhs.h.k.hhs.hh';
+  SONGS.hills = song(152, {},
+    [h1, h2, h3, h4, h1, h6, h7, h8, h9, h10, h11, h12, h1, h2, h15, h16],
+    [q1, q2, q3, q4, q1, q2, q3, q4, q9, q1, q11, q12, q1, q2, q3, q16],
+    [b1, b2, b3, b4, b1, b2, b3, b4, b9, b10, b11, b12, b1, b2, b3, b16],
+    dr + dr + dr + 'k.hhs.h.k.s.ssss');
+}
+
+{ // SUNSET DUNES — winding A-minor snake charmer, octave-answer verse
+  const d1 = 'a4:2 b4:1 c5:1 b4:2 a4:2 e5:4 d5:2 c5:2',
+        d2 = 'b4:2 c5:1 d5:1 c5:2 b4:2 g4:4 a4:4',
+        d3 = 'a4:2 b4:1 c5:1 b4:2 a4:2 e5:2 f5:2 e5:2 d5:2',
+        d4 = 'c5:2 b4:2 a4:2 g#4:2 a4:4 r:4',
+        d5 = 'a5:2 g5:1 f5:1 e5:2 d5:2 c5:4 d5:2 e5:2',
+        d6 = 'f5:2 e5:1 d5:1 e5:2 c5:2 b4:4 c5:4',
+        d7 = 'a4:1 c5:1 e5:1 a5:1 g5:2 f5:2 e5:2 d5:2 c5:2 b4:2',
+        d8 = 'a4:2 g#4:2 a4:2 b4:2 a4:6 r:2',
+        d9 = 'f5:2 e5:2 f5:2 g5:2 a5:4 g5:2 f5:2',
+        d10 = 'e5:2 d5:2 e5:2 f5:2 g5:4 f5:2 e5:2',
+        d11 = 'f5:2 g5:2 a5:2 a#5:2 a5:2 g5:2 f5:2 e5:2',
+        d12 = 'd5:2 e5:1 f5:1 e5:2 d5:2 e5:4 b4:4',
+        d16 = 'c5:2 b4:2 a4:2 g#4:2 a4:8';
+  const e1 = 'r:2 a3:2 r:2 e4:2 r:2 a3:2 r:2 e4:2',
+        e2 = 'r:2 g3:2 r:2 d4:2 r:2 g3:2 r:2 d4:2',
+        e3 = 'r:2 f3:2 r:2 c4:2 r:2 f3:2 r:2 c4:2',
+        e4 = 'r:2 e4:2 r:2 e4:2 r:2 g#3:2 e4:2 r:2',
+        e16 = 'r:2 a3:2 r:2 e4:2 a3:2 c4:2 e4:2 a4:2';
+  const f1 = 'a2:2 e3:2 a2:2 e3:2 a2:2 e3:2 a3:2 e3:2',
+        f2 = 'g2:2 d3:2 g2:2 d3:2 g2:2 d3:2 g3:2 d3:2',
+        f3 = 'f2:2 c3:2 f2:2 c3:2 f2:2 c3:2 f3:2 c3:2',
+        f4 = 'e2:2 b2:2 e2:2 b2:2 e2:2 b2:2 e3:2 b2:2',
+        f16 = 'a2:2 e3:2 a2:2 e3:2 a2:4 a1:4';
+  const dr = 'k..hs..hk.k.s..h';
+  SONGS.dunes = song(140, {},
+    [d1, d2, d3, d4, d5, d6, d7, d8, d9, d10, d11, d12, d1, d2, d3, d16],
+    [e1, e2, e1, e4, e1, e2, e1, e4, e3, e2, e3, e4, e1, e2, e1, e16],
+    [f1, f2, f1, f4, f1, f2, f1, f4, f3, f2, f3, f4, f1, f2, f1, f16],
+    dr + dr + dr + 'k..hs..hk.ksks.s');
+}
+
+{ // CRYSTAL CAVES — sparse D-minor arps with cave echo, melody rises in B
+  const c1 = 'd4:1 a4:1 d5:1 f5:1 e5:4 r:8',
+        c2 = 'c4:1 g4:1 c5:1 e5:1 d5:4 r:8',
+        c3 = 'a#3:1 f4:1 a#4:1 d5:1 c5:4 r:4 a4:4',
+        c4 = 'a4:2 g4:2 e4:2 g4:2 a4:8',
+        c5 = 'f5:4 e5:2 d5:2 e5:4 c5:4',
+        c6 = 'd5:4 c5:2 a4:2 c5:8',
+        c7 = 'f5:4 g5:2 a5:2 a#5:4 a5:4',
+        c8 = 'g5:2 f5:2 e5:2 d5:2 e5:8',
+        c13 = 'd5:1 f5:1 a5:1 d6:1 c6:4 r:8',
+        c14 = 'c5:1 e5:1 g5:1 c6:1 a5:4 r:8',
+        c15 = 'a#4:1 d5:1 f5:1 a#5:1 a5:4 g5:4 f5:4',
+        c16 = 'e5:2 f5:2 e5:2 c5:2 d5:8';
+  const g1 = 'r:4 d4:12', g2 = 'r:4 c4:12', g3 = 'r:4 a#3:12', g4 = 'r:4 a3:12',
+        g5 = 'r:4 f3:12',
+        g16 = 'r:2 a3:2 r:2 d4:2 r:2 f4:2 r:2 d4:2';
+  const v1 = 'd2:8 d3:8', v2 = 'c2:8 c3:8', v3 = 'a#2:8 f2:8', v4 = 'a2:8 a2:8',
+        v5 = 'f2:8 c3:8', v6 = 'd2:8 a2:8', v7 = 'a#2:8 a#2:8', v8 = 'a2:8 e2:8',
+        v16 = 'a2:4 a2:4 d2:8';
+  const dr = 'k.......k...s...';
+  SONGS.caves = song(112, { echo: 0.35 },
+    [c1, c2, c3, c4, c5, c6, c7, c8, c1, c2, c3, c4, c13, c14, c15, c16],
+    [g1, g2, g3, g4, g5, g1, g3, g4, g1, g2, g3, g4, g1, g2, g3, g16],
+    [v1, v2, v3, v4, v5, v6, v7, v8, v1, v2, v3, v4, v1, v2, v3, v16],
+    dr + dr + dr + 'k.......k..s.s.s');
+}
+
+{ // SKY GARDENS — F-major arpeggio flight; long soaring B section
+  const s1 = 'f5:1 a5:1 c6:2 f5:1 a5:1 c6:2 c6:1 d6:1 c6:2 a5:2 f5:2',
+        s2 = 'e5:1 a5:1 c6:2 e5:1 a5:1 c6:2 b5:2 c6:2 e6:2 c6:2',
+        s3 = 'f5:1 a#5:1 d6:2 f5:1 a#5:1 d6:2 d6:1 e6:1 f6:2 d6:2 a#5:2',
+        s4 = 'g5:1 c6:1 e6:2 g5:1 c6:1 e6:2 d6:2 c6:2 g5:2 e5:2',
+        s5 = 'a5:8 g5:4 f5:4',
+        s6 = 'g5:8 e5:4 c5:4',
+        s7 = 'a5:4 c6:4 d6:4 c6:2 a5:2',
+        s8 = 'g5:12 e5:2 g5:2',
+        s9 = 'f5:1 g5:1 a5:1 c6:1 f6:4 e6:2 d6:2 c6:4',
+        s10 = 'd6:1 c6:1 a5:1 g5:1 a5:4 g5:2 e5:2 f5:4',
+        s12 = 'e6:4 d6:2 c6:2 c6:4 g5:2 e5:2';
+  const t1 = 'r:2 a4:2 r:2 c5:2 r:2 a4:2 r:2 c5:2',
+        t2 = 'r:2 a4:2 r:2 c5:2 r:2 e5:2 r:2 c5:2',
+        t3 = 'r:2 a#4:2 r:2 d5:2 r:2 a#4:2 r:2 d5:2',
+        t4 = 'r:2 c5:2 r:2 e5:2 r:2 g5:2 r:2 e5:2',
+        t5 = 'f4:1 a4:1 c5:1 a4:1 f4:1 a4:1 c5:1 a4:1 d4:1 f4:1 a4:1 f4:1 d4:1 f4:1 a4:1 f4:1',
+        t6 = 'c4:1 e4:1 g4:1 e4:1 c4:1 e4:1 g4:1 e4:1 e4:1 g4:1 c5:1 g4:1 e4:1 g4:1 c5:1 g4:1',
+        t7 = 'f4:1 a4:1 c5:1 a4:1 f4:1 a4:1 c5:1 a4:1 a#3:1 d4:1 f4:1 d4:1 a#3:1 d4:1 f4:1 d4:1',
+        t8 = 'c4:1 e4:1 g4:1 e4:1 c4:1 e4:1 g4:1 e4:1 c4:1 e4:1 g4:1 e4:1 g4:1 e4:1 c4:1 g3:1';
+  const u1 = 'f2:2 c3:2 f3:2 c3:2 f2:2 c3:2 f3:2 c3:2',
+        u2 = 'a2:2 e3:2 a3:2 e3:2 a2:2 e3:2 a3:2 e3:2',
+        u3 = 'a#2:2 f3:2 d3:2 f3:2 a#2:2 f3:2 d3:2 f3:2',
+        u4 = 'c3:2 g3:2 e3:2 g3:2 c3:2 g3:2 c3:2 d3:2',
+        u5 = 'f2:4 c3:4 d3:4 a2:4',
+        u6 = 'c3:4 g2:4 c3:4 e3:4',
+        u7 = 'f2:4 f3:4 a#2:4 a#3:4',
+        u8 = 'c3:4 g2:4 c3:8';
+  const dr = 'k..h..s.h.k..s..';
+  SONGS.sky = song(160, { echo: 0.22 },
+    [s1, s2, s3, s4, s5, s6, s7, s8, s1, s2, s3, s4, s9, s10, s3, s12],
+    [t1, t2, t3, t4, t5, t6, t7, t8, t1, t2, t3, t4, t1, t2, t3, t4],
+    [u1, u2, u3, u4, u5, u6, u7, u8, u1, u2, u3, u4, u1, u2, u3, u4],
+    dr + dr + dr + 'k..h..s.h.ks.sks');
+}
+
+{ // MAGMA KEEP — C-minor riff machine; B section climbs through Fm to G
+  const k1 = 'c5:2 r:2 d#5:2 r:2 g5:2 f5:1 d#5:1 d5:2 r:2',
+        k2 = 'c5:2 r:2 d#5:2 r:2 g#5:2 g5:1 f5:1 d#5:2 r:2',
+        k3 = 'g5:2 r:2 f5:2 r:2 d#5:2 d5:1 c5:1 d5:2 r:2',
+        k4 = 'c5:4 r:2 b4:2 c5:2 d5:2 d#5:2 d5:2',
+        k5 = 'd#5:2 r:2 g5:2 r:2 a#5:2 g#5:1 g5:1 f5:2 r:2',
+        k6 = 'd#5:2 r:2 g5:2 r:2 c6:2 a#5:1 g#5:1 g5:2 r:2',
+        k7 = 'a#5:2 r:2 g#5:2 r:2 g5:2 f5:1 d#5:1 f5:2 r:2',
+        k8 = 'g5:4 r:2 f5:2 g5:2 g#5:2 g5:2 f5:2',
+        k9 = 'f5:2 r:2 g#5:2 r:2 c6:2 a#5:1 g#5:1 g5:2 r:2',
+        k10 = 'f5:2 r:2 g#5:2 r:2 c#6:2 c6:1 a#5:1 g#5:2 r:2',
+        k11 = 'g5:2 r:2 b4:2 r:2 d5:2 f5:1 g5:1 b5:2 r:2',
+        k12 = 'c6:2 b5:2 g5:2 d#5:2 d5:2 c5:2 b4:2 d5:2',
+        k16 = 'c5:4 r:2 b4:2 c5:2 g4:2 c5:4';
+  const mC = 'r:2 c4:2 r:2 c4:2 r:2 c4:2 r:2 c4:2',
+        mAb = 'r:2 g#3:2 r:2 g#3:2 r:2 g#3:2 r:2 g#3:2',
+        mG = 'r:2 g3:2 r:2 g3:2 r:2 g3:2 r:2 g3:2',
+        mBb = 'r:2 a#3:2 r:2 a#3:2 r:2 a#3:2 r:2 a#3:2',
+        mEb = 'r:2 d#4:2 r:2 d#4:2 r:2 d#4:2 r:2 d#4:2',
+        mF = 'r:2 f3:2 r:2 f3:2 r:2 f3:2 r:2 f3:2';
+  const dr = 'kh.hsh.hkh.hs.hh';
+  SONGS.keep = song(168, {},
+    [k1, k2, k3, k4, k5, k6, k7, k8, k9, k10, k11, k12, k1, k2, k3, k16],
+    [mC, mAb, mG, mC, mEb, mC, mBb, mG, mF, mAb, mG, mG, mC, mAb, mG, mC],
+    [riff('c', 3), riff('g#', 2), riff('g', 2), riff('c', 3),
+     riff('d#', 3), riff('c', 3), riff('a#', 2), riff('g', 2),
+     riff('f', 2), riff('g#', 2), riff('g', 2), riff('g', 2),
+     riff('c', 3), riff('g#', 2), riff('g', 2), riff('c', 3)],
+    dr + dr + dr + 'kh.hsh.hksskssss');
+}
+
+{ // STAR — double-time sparkle, now 4 bars
+  SONGS.star = song(204, {},
+    ['c5:1 e5:1 g5:1 c6:1 e6:1 c6:1 g5:1 e5:1 d5:1 f5:1 a5:1 d6:1 f6:1 d6:1 a5:1 f5:1',
+     'e5:1 g5:1 b5:1 e6:1 g6:1 e6:1 b5:1 g5:1 c6:2 g5:2 e5:2 c5:2',
+     'f5:1 a5:1 c6:1 f6:1 a6:1 f6:1 c6:1 a5:1 g5:1 b5:1 d6:1 g6:1 b6:1 g6:1 d6:1 b5:1',
+     'c6:1 e6:1 g6:1 e6:1 c6:1 g5:1 e5:1 g5:1 c6:4 g5:2 c6:2'],
+    ['c4:2 c4:2 c4:2 c4:2 d4:2 d4:2 d4:2 d4:2',
+     'e4:2 e4:2 e4:2 e4:2 g4:2 g4:2 e4:2 c4:2',
+     'f4:2 f4:2 f4:2 f4:2 g4:2 g4:2 g4:2 g4:2',
+     'c4:2 e4:2 g4:2 e4:2 c4:4 g4:2 c4:2'],
+    ['c3:2 c3:2 c3:2 c3:2 d3:2 d3:2 d3:2 d3:2',
+     'e3:2 e3:2 e3:2 e3:2 c3:2 g3:2 c3:2 c3:2',
+     'f3:2 f3:2 f3:2 f3:2 g3:2 g3:2 g3:2 g3:2',
+     'c3:2 c3:2 g2:2 g2:2 c3:4 g2:2 c3:2'],
+    'kshskshskshsksss');
+}
+
+{ // TITLE — dreamy 8-bar waltz-in-4 with soft hats
+  SONGS.title = song(120, { echo: 0.25 },
+    ['c5:4 e5:4 g5:4 e5:4',
+     'a5:4 g5:4 e5:2 d5:2 c5:4',
+     'd5:4 e5:4 f5:2 e5:2 d5:4',
+     'g5:8 r:4 e5:2 d5:2',
+     'c5:4 e5:4 g5:4 a5:4',
+     'b5:4 a5:4 g5:2 e5:2 g5:4',
+     'a5:2 g5:2 e5:2 g5:2 f5:2 e5:2 d5:2 e5:2',
+     'c5:12 r:4'],
+    ['r:4 e4:12', 'r:4 c4:12', 'r:4 d4:12', 'r:4 d4:12',
+     'r:4 e4:12', 'r:4 e4:12', 'r:4 f4:8 d4:4', 'r:4 e4:8 g4:4'],
+    ['c3:8 g2:8', 'f2:8 c3:8', 'd3:8 g2:8', 'g2:8 g2:8',
+     'c3:8 a2:8', 'e3:8 g2:8', 'f2:8 g2:8', 'c3:8 c2:8'],
+    '..h...h...h...h.');
+}
+
+SONGS.over = { bpm: 100, oneshot: true, lead: 'e5:2 c5:2 g4:2 e4:2 f4:1 e4:1 d4:1 c4:5',
+  harm: 'r:2 r:2 r:2 c4:2 d4:1 c4:1 b3:1 g3:5', bass: 'c3:4 g2:4 g2:2 g2:2 c2:4', drum: '........k.......' };
+SONGS.flag = { bpm: 160, oneshot: true, lead: 'c5:1 e5:1 g5:1 c6:3 g5:1 c6:9',
+  harm: 'e4:1 g4:1 c5:1 e5:3 e5:1 e5:9', bass: 'c3:2 g3:2 c3:2 c3:10', drum: 'k...k...k.......' };
 for (const k in SONGS) {
   const s = SONGS[k];
   s.pl = parseTrack(s.lead); s.ph = parseTrack(s.harm); s.pb = parseTrack(s.bass);
@@ -972,13 +1151,25 @@ function setMuted(m) {
   audio.muted = m; store('mute', m);
   if (audio.master) audio.master.gain.value = m ? 0 : 1;
 }
-function voice(dest, type, f, t0, dur, vol, slide) {
+function voice(dest, type, f, t0, dur, vol, slide, vib) {
   const ac = audio.ctx;
   const o = ac.createOscillator(), g = ac.createGain();
   o.type = type; o.frequency.setValueAtTime(f, t0);
   if (slide) o.frequency.exponentialRampToValueAtTime(Math.max(20, slide), t0 + dur);
   g.gain.setValueAtTime(vol, t0);
-  g.gain.exponentialRampToValueAtTime(0.001, t0 + dur);
+  if (dur > 0.18) {   // sustain-release for held notes, pluck for short ones
+    g.gain.exponentialRampToValueAtTime(Math.max(0.001, vol * 0.55), t0 + dur * 0.7);
+    g.gain.exponentialRampToValueAtTime(0.001, t0 + dur);
+  } else {
+    g.gain.exponentialRampToValueAtTime(0.001, t0 + dur);
+  }
+  if (vib) {          // gentle vibrato blooming partway into long notes
+    const l = ac.createOscillator(), lg = ac.createGain();
+    l.type = 'sine'; l.frequency.value = 5.4;
+    lg.gain.value = f * 0.012;
+    l.connect(lg); lg.connect(o.frequency);
+    l.start(t0 + dur * 0.3); l.stop(t0 + dur + 0.02);
+  }
   o.connect(g); g.connect(dest);
   o.start(t0); o.stop(t0 + dur + 0.02);
 }
@@ -1014,12 +1205,17 @@ function schedule() {
   const spb = 60 / s.bpm / 4;  // seconds per 16th
   while (audio.stepTime < ac.currentTime + 0.14) {
     const st = audio.nextStep, t0 = audio.stepTime;
-    for (const ev of s.pl.ev) if (ev.t === st % s.pl.len)
-      voice(audio.mgain, 'square', ev.f, t0, Math.min(ev.d, 6) * spb * 0.9, 0.10);
+    // groove: downbeats punch, offbeat 16ths sit back
+    const acc = st % 16 === 0 ? 1.18 : st % 4 === 0 ? 1.08 : st % 2 === 1 ? 0.78 : 1;
+    for (const ev of s.pl.ev) if (ev.t === st % s.pl.len) {
+      const dur = ev.d * spb * 0.92;
+      voice(audio.mgain, 'square', ev.f, t0, dur, 0.10 * acc, 0, ev.d >= 4);
+      if (s.echo) voice(audio.mgain, 'square', ev.f, t0 + 3 * spb, dur * 0.8, 0.10 * acc * s.echo);
+    }
     for (const ev of s.ph.ev) if (ev.t === st % s.ph.len)
-      voice(audio.mgain, 'square', ev.f, t0, Math.min(ev.d, 6) * spb * 0.85, 0.055);
+      voice(audio.mgain, 'square', ev.f, t0, ev.d * spb * 0.88, 0.05 * acc);
     for (const ev of s.pb.ev) if (ev.t === st % s.pb.len)
-      voice(audio.mgain, 'triangle', ev.f, t0, ev.d * spb * 0.95, 0.16);
+      voice(audio.mgain, 'triangle', ev.f, t0, ev.d * spb * 0.95, st % 8 === 0 ? 0.18 : 0.15);
     const dch = s.drum[st % s.drum.length];
     if (dch === 'k') { voice(audio.mgain, 'sine', 130, t0, 0.09, 0.30, 40); }
     else if (dch === 's') { noise(audio.mgain, t0, 0.09, 0.16, 900); }
@@ -1114,7 +1310,8 @@ let floats = [];             // floating score text
 const player = {
   x: 0, y: 0, vy: 0, w: 10, h: 14,
   onGround: false, coyote: 0, dj: true, slam: false,
-  runT: 0, mode: 'run', bubbleT: 0, stompT: 0
+  runT: 0, mode: 'run', bubbleT: 0, stompT: 0,
+  flipT: 0, landT: 0, stretchT: 0, spinA: 0    // juice: front-flip / squash / stretch / slam spin
 };
 const cam = { x: 0, y: 0 };
 const gen = { x: 0, g: 0, nextFlag: WORLD_LEN, sinceEnemy: 0, sinceCoin: 0, totalTiles: 0 };
@@ -1342,6 +1539,7 @@ function startRun() {
   rng = mulberry32(urlSeed ? +urlSeed : (Math.random() * 1e9) | 0);
   game.state = 'play'; game.frame = 0; game.score = 0; game.coins = 0; game.dist = 0;
   game.themeIdx = 0; game.worldNum = 1; game.speed = BASE_SPEED;
+  tintPage();
   game.hearts = 3; game.combo = 0; game.star = 0; game.magnet = 0; game.invuln = 0;
   game.shake = 0; game.newBest = false; game.themeFade = 0;
   input.jumpBuf = 0; input.slamReq = false; input.held = false;
@@ -1424,6 +1622,10 @@ function updatePlayer() {
   if (player.mode === 'dead') { player.vy += GRAV; player.y += player.vy; return; }
   if (player.mode === 'bubble') { updateBubble(); return; }
   if (player.stompT > 0) player.stompT--;
+  if (player.flipT > 0) player.flipT--;
+  if (player.landT > 0) player.landT--;
+  if (player.stretchT > 0) player.stretchT--;
+  if (player.slam) player.spinA += 0.38;
 
   // --- horizontal ---
   const sp = game.speed * (player.slam ? 0.4 : 1);
@@ -1450,11 +1652,12 @@ function updatePlayer() {
   if (input.jumpBuf > 0) {
     if (player.onGround || player.coyote > 0) {
       player.vy = JUMP_V; player.onGround = false; player.coyote = 0; input.jumpBuf = 0;
-      player.dj = true;
+      player.dj = true; player.stretchT = 8;
       sfx.jump(); buzz(1);
       burst(player.x + 5, player.y + player.h, '#e8e4d8', 4, 1.2, 0.05);
     } else if (player.dj && !player.slam) {
       player.vy = DJUMP_V; player.dj = false; input.jumpBuf = 0;
+      player.flipT = 22; player.stretchT = 6;      // front flip!
       sfx.djump(); buzz(1);
       burst(player.x + 5, player.y + player.h, '#9adfff', 7, 1.6, 0.02);
     }
@@ -1463,6 +1666,7 @@ function updatePlayer() {
     input.slamReq = false;
     if (!player.onGround && !player.slam && player.mode === 'run') {
       player.slam = true; player.vy = Math.max(player.vy, 2.4);
+      player.spinA = 0; player.flipT = 0;
       burst(player.x + 5, player.y + 6, '#fff', 3, 1, 0);
     }
   }
@@ -1524,14 +1728,17 @@ function updatePlayer() {
 
 function land(top, wasGround) {
   player.y = top - player.h; player.vy = 0; player.onGround = true; player.dj = true;
+  player.flipT = 0;
   if (player.slam) slamLand();
   else if (!wasGround) {
     game.combo = 0;
+    player.landT = 7;
     burst(player.x + 5, player.y + player.h, '#d8d4c8', 3, 1, 0.05);
   } else game.combo = 0;
 }
 function slamLand() {
   player.slam = false;
+  player.landT = 9;
   game.shake = 6;
   sfx.slam(); buzz(3);
   burst(player.x + 5, player.y + player.h, '#e8dcc8', 14, 2.6, 0.1);
@@ -1719,7 +1926,7 @@ function updateEnts() {
         sfx.kick();
       } else killEnemy(e, 0, true);
       player.vy = input.held ? -6.3 : -4.5;
-      player.dj = true; player.stompT = 8;
+      player.dj = true; player.stompT = 8; player.stretchT = 6;
       sfx.stomp(); if (game.combo > 1) sfx.combo(game.combo);
       buzz(Math.min(game.combo, 3));
       burst(r.x + r.w / 2, r.y, '#fff', 5, 1.6, 0.1);
@@ -1758,6 +1965,7 @@ function worldTransition(flag) {
   game.worldNum++;
   game.prevTheme = game.themeIdx;
   game.themeIdx = (game.worldNum - 1) % THEMES.length;
+  tintPage();
   game.themeFade = 55;
   if (game.hearts < game.maxHearts) game.hearts++;
   addScore(1000, player.x, player.y - 24);
@@ -2012,14 +2220,38 @@ function drawPlayer(camX, camY) {
     ctx.globalAlpha = 1;
     return;
   }
-  else if (player.slam) img = HERO_SLAM;
-  else if (!player.onGround) img = player.stompT > 0 ? HERO_SLAM : HERO_JUMP;
+  let running = false;
+  if (player.slam) img = HERO_SLAM;
+  else if (!player.onGround) img = player.stompT > 0 || player.flipT > 0 ? HERO_SLAM : HERO_JUMP;
   else if (game.invuln > 84) img = HERO_HURT;
   else {
     player.runT += game.speed * 0.16;
     img = HERO_CYCLE[Math.floor(player.runT) % 4];
+    running = true;
   }
-  ctx.drawImage(img, sx, sy);
+  // --- juice transform: spin/flip around the center, squash/stretch from the feet ---
+  let rot = 0;
+  if (player.slam) rot = player.spinA;
+  else if (player.flipT > 0) rot = (1 - player.flipT / 22) * Math.PI * 2;
+  let sclX = 1, sclY = 1;
+  if (player.landT > 0) { const t = player.landT / 9; sclX = 1 + 0.30 * t; sclY = 1 - 0.32 * t; }
+  else if (player.stretchT > 0) { const t = player.stretchT / 8; sclX = 1 - 0.20 * t; sclY = 1 + 0.24 * t; }
+  if (rot === 0 && sclX === 1 && sclY === 1) {
+    ctx.drawImage(img, sx, sy);
+  } else {
+    ctx.save();
+    ctx.translate(sx + 8, sy + 16);   // feet pivot for squash…
+    ctx.scale(sclX, sclY);
+    ctx.translate(0, -8);
+    ctx.rotate(rot);                  // …center pivot for spin
+    ctx.drawImage(img, -8, -8);
+    ctx.restore();
+  }
+  // idle blink: eyelid over the eye every ~3 seconds while running
+  if (running && game.frame % 173 < 5) {
+    ctx.fillStyle = PAL.S;
+    ctx.fillRect(sx + 9, sy + 5, 1, 2);
+  }
 }
 function drawHUD() {
   const y0 = safeTop + 5, x0 = 5 + safeL, xr = W - safeR;
@@ -2258,7 +2490,7 @@ const DBG = window.__dbg = {
   bot: false, errors: [], stats: { hurts: [], deaths: [] },
   game, player, input, cam, gen,
   ents: () => ents, ground: () => ground, tiles: () => tiles, coins: () => coins,
-  qmeta: () => qmeta, K, openQBlock, ui,
+  qmeta: () => qmeta, K, openQBlock, ui, musicErrors: MUSIC_ERRORS,
   toClient(r) { const dpr = window.devicePixelRatio || 1; return { x: (r.x + r.w / 2) * SCALE / dpr, y: (r.y + r.h / 2) * SCALE / dpr }; },
   startRun, step, botThink,
   stepN(n) { for (let i = 0; i < n; i++) { if (DBG.bot) botThink(); step(); } },
