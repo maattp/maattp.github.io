@@ -2,7 +2,7 @@
 // shell makes it fully playable offline. Strategy is stale-while-revalidate —
 // instant load from cache, silently refreshed from the network for next launch.
 // Bump CACHE when a deploy must invalidate old copies immediately.
-const CACHE = 'pixelrun-v4';
+const CACHE = 'pixelrun-v5';
 const SHELL = ['./', './index.html', './icon.png', './apple-touch-icon.png'];
 
 self.addEventListener('install', e => {
@@ -23,16 +23,18 @@ self.addEventListener('activate', e => {
 
 self.addEventListener('fetch', e => {
   if (e.request.method !== 'GET') return;
-  e.respondWith(
-    caches.match(e.request, { ignoreSearch: true }).then(hit => {
-      const refresh = fetch(e.request).then(res => {
-        if (res && res.ok) {
-          const copy = res.clone();
-          caches.open(CACHE).then(c => c.put(e.request, copy));
-        }
-        return res;
-      }).catch(() => hit);
-      return hit || refresh;
-    })
+  const cached = caches.match(e.request, { ignoreSearch: true });
+  const refresh = cached.then(hit =>
+    fetch(e.request).then(res => {
+      if (res && res.ok) {
+        const copy = res.clone();
+        return caches.open(CACHE).then(c => c.put(e.request, copy)).then(() => res);
+      }
+      return res;
+    }).catch(() => hit)
   );
+  // keep the worker alive until the background revalidation lands — without this
+  // the browser may kill the SW right after responding, so updates never stick
+  e.waitUntil(refresh);
+  e.respondWith(cached.then(hit => hit || refresh));
 });
