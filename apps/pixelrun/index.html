@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no, viewport-fit=cover">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-<meta name="theme-color" content="#0b1030">
+<meta name="theme-color" content="#63b9ff">
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="apple-touch-icon" sizes="180x180" href="apple-touch-icon.png">
 <link rel="apple-touch-icon" href="apple-touch-icon.png">
@@ -68,7 +68,7 @@ const MAX_SPEED = 3.05;
 const PIT_Y = 11 * TILE;             // below this = pit death
 const WORLD_LEN = 500;               // tiles per world before the flag
 const SAVE = 'pixelrun_';
-const VERSION = 14;                  // shown on the title screen — bump once per PR (see CLAUDE.md)
+const VERSION = 15;                  // shown on the title screen — bump once per PR (see CLAUDE.md)
 
 // ---------- utils ----------
 const clamp = (v, a, b) => v < a ? a : v > b ? b : v;
@@ -174,9 +174,13 @@ resize();
 function tintPage() {
   // camouflage any strip the canvas can't reach: html gets the sky (top/side
   // strips), body gets the DIRT color — an exposed strip sits at the BOTTOM of
-  // the screen, where the game is showing ground, so dirt blends and sky glares
+  // the screen, where the game is showing ground, so dirt blends and sky glares.
+  // Android standalone can't draw under the status-bar/camera strip at all —
+  // Chrome live-updates it from the theme-color meta, so tint that to the sky too
   document.documentElement.style.background = THEMES[game.themeIdx].skyTop;
   document.body.style.background = THEMES[game.themeIdx].dirt;
+  const tc = document.querySelector('meta[name="theme-color"]');
+  if (tc) tc.content = THEMES[game.themeIdx].skyTop;
 }
 
 // ---------- 3x5 bitmap font ----------
