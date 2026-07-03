@@ -17,9 +17,10 @@
   html, body { height:100%; width:100%; overflow:hidden; background:#63b9ff; overscroll-behavior:none; }
   body { touch-action:none; -webkit-user-select:none; user-select:none; }
   #game {
-    /* fixed + inset:0 keeps the canvas glued to the FULL viewport even when iOS
-       reports a stale height at launch — CSS owns the element size, JS only sizes
-       the pixel buffer. dvh fallback chain covers older WebKit. */
+    /* In-browser: CSS owns the element size (fixed + dvh tracks the viewport
+       fluidly). In STANDALONE mode resize() overrides with inline styles sized to
+       the physical screen, because iOS's standalone layout viewport can end above
+       the home indicator and no CSS unit can reach past it. */
     position:fixed; inset:0;
     width:100vw; height:100vh; height:100dvh;
     touch-action:none;
@@ -60,7 +61,7 @@ const MAX_SPEED = 3.05;
 const PIT_Y = 11 * TILE;             // below this = pit death
 const WORLD_LEN = 500;               // tiles per world before the flag
 const SAVE = 'pixelrun_';
-const VERSION = 12;                  // shown on the title screen — bump once per PR (see CLAUDE.md)
+const VERSION = 13;                  // shown on the title screen — bump once per PR (see CLAUDE.md)
 
 // ---------- utils ----------
 const clamp = (v, a, b) => v < a ? a : v > b ? b : v;
@@ -96,12 +97,22 @@ let W = 240, H = 420, SCALE = 2;
 let lastSize = '';
 function resize() {
   const dpr = window.devicePixelRatio || 1;
-  // CSS (fixed, inset:0, 100dvh) owns the canvas ELEMENT size; measure it and any
-  // viewport report, take the largest — iOS standalone lags these at launch/rotation
+  // measure the element and every viewport report, take the largest —
+  // iOS standalone lags these at launch/rotation
   const vv = window.visualViewport;
   const rect = canvas.getBoundingClientRect();
-  const cw = Math.round(Math.max(window.innerWidth, vv ? vv.width : 0, rect.width));
-  const chh = Math.round(Math.max(window.innerHeight, vv ? vv.height : 0, rect.height));
+  let cw = Math.round(Math.max(window.innerWidth, vv ? vv.width : 0, rect.width));
+  let chh = Math.round(Math.max(window.innerHeight, vv ? vv.height : 0, rect.height));
+  // Some iOS versions size the standalone layout viewport SHORT of the home
+  // indicator, so 100dvh / inset:0 / innerHeight all agree on a height that ends
+  // above the screen bottom (the bar). The physical screen doesn't lie: extend the
+  // canvas to it — fixed elements paint into the inset zone under viewport-fit=cover,
+  // and the inset math below then measures the home-indicator gap naturally.
+  if (navigator.standalone && screen && screen.width) {
+    const sMin = Math.min(screen.width, screen.height), sMax = Math.max(screen.width, screen.height);
+    if (chh >= cw) { cw = Math.max(cw, sMin); chh = Math.max(chh, sMax); }
+    else { cw = Math.max(cw, sMax); chh = Math.max(chh, sMin); }
+  }
   // insets are cheap — refresh them on EVERY call. env() resolves late on iOS,
   // and if the first size measurement is already correct no further resize fires,
   // so gating this behind the size guard left safeTop stuck at 0 (HUD under the clock)
@@ -116,6 +127,9 @@ function resize() {
   W = Math.ceil(cw * dpr / SCALE);
   H = Math.ceil(chh * dpr / SCALE);
   canvas.width = W; canvas.height = H;
+  if (navigator.standalone) {   // only standalone needs the physical-screen override;
+    canvas.style.width = cw + 'px'; canvas.style.height = chh + 'px';
+  }                             // in-browser the CSS dvh keeps tracking the viewport fluidly
   ctx.imageSmoothingEnabled = false;
   readInsets(cw, chh);          // again with the fresh SCALE
 }
