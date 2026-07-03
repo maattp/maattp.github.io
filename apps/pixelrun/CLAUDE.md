@@ -27,5 +27,5 @@ caches + unregister the SW and reload once before evaluating a fresh edit.
 Physics and generator constants are coupled — the derivation comments at the
 constants block (`JUMP_V`/`GRAV`) list which pattern heights, gap widths, and
 enemy-train spacings must move together. Song data is arrays of 16-step bars
-validated at boot; keep new bars exactly 16 steps. Theme indices are
-load-bearing (water=3, sky=4, castle=5) across parallax, songs, and palettes.
+validated at boot; keep new bars exactly 16 steps. Theme indices are load-bearing across parallax, songs, and palettes:
+water=3, sky=4, frost=5, haunt=6, castle=7 (8 worlds total, magma final).
