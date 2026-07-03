@@ -2686,14 +2686,24 @@ function renderTitle() {
   drawLogo(W / 2, safeTop + H * 0.12, 4);
   drawTextC(ctx, 'AN ENDLESS PLATFORM DASH', W / 2, safeTop + H * 0.12 + 62, 1, '#fff', '#1a1c2c');
   if ((game.frame >> 5) & 1)
-    drawTextC(ctx, 'TAP TO START', W / 2, gy - 112, 2, '#ffe97a', '#1a1c2c');
+    drawTextC(ctx, 'TAP TO START', W / 2, gy - 124, 2, '#ffe97a', '#1a1c2c');
   drawTextC(ctx, 'TAP: JUMP   AIR TAP: DOUBLE JUMP', W / 2, H - 68 - safeBot, 1, '#fff', '#1a1c2c');
   drawTextC(ctx, 'SWIPE DOWN: SLAM', W / 2, H - 58 - safeBot, 1, '#fff', '#1a1c2c');
   drawTextC(ctx, 'SLAM A ↓ PIPE TO EXPLORE', W / 2, H - 48 - safeBot, 1, '#ffe97a', '#1a1c2c');
-  if (game.best > 0)
-    drawTextC(ctx, 'BEST ' + game.best + '   ' + game.bestDist + 'M', W / 2, gy - 94, 1, '#9adfff', '#1a1c2c');
-  if (game.coinsAll > 0)
-    drawTextC(ctx, 'LIFETIME COINS ×' + game.coinsAll, W / 2, gy - 82, 1, '#ffd93c', '#1a1c2c');
+  // stats on a dark card — tiny colored text straight on the sky was unreadable
+  const stats = [];
+  if (game.best > 0) stats.push(['BEST ' + game.best + '   ' + game.bestDist + 'M', '#bfe8ff']);
+  if (game.coinsAll > 0) stats.push(['LIFETIME COINS ×' + game.coinsAll, '#ffe27a']);
+  if (stats.length) {
+    const bw = Math.max(...stats.map(s => textW(s[0], 1))) + 18;
+    const bh = stats.length * 11 + 9;
+    const bx = Math.round(W / 2 - bw / 2), by = gy - 78 - bh;
+    ctx.fillStyle = 'rgba(20,22,40,0.75)';
+    ctx.fillRect(bx, by, bw, bh);
+    ctx.fillStyle = 'rgba(255,255,255,0.3)';
+    ctx.fillRect(bx, by, bw, 1); ctx.fillRect(bx, by + bh - 1, bw, 1);
+    stats.forEach((s, i) => drawTextC(ctx, s[0], W / 2, by + 7 + i * 11, 1, s[1]));
+  }
   ui.sound = drawBtn('SOUND ' + (audio.muted ? 'OFF' : 'ON'), W / 2 - 44, H - 22 - safeBot, !audio.muted);
   ui.buzz = drawBtn('BUZZ ' + (hapticsOn ? 'ON' : 'OFF'), W / 2 + 44, H - 22 - safeBot, hapticsOn);
 }
