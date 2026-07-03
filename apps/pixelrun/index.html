@@ -1883,8 +1883,10 @@ function updatePlayer() {
   }
   if (player.onGround) player.coyote = COYOTE;
 
-  // --- bonus exit: landing anywhere past the exit pipe's leading edge sends you home ---
-  if (game.inBonus && player.onGround && player.x + player.w / 2 > game.inBonus.exitX + 2) {
+  // --- bonus exit: crossing into the portal (grounded or airborne) sends you home ---
+  // mode guard: enterPipe can fire mid-frame from slamLand, and this line would
+  // otherwise still run in that same frame with the placeholder exitX
+  if (game.inBonus && player.mode === 'run' && player.x + player.w / 2 > game.inBonus.exitX + 6) {
     leaveBonus();
     return;
   }
@@ -2003,7 +2005,7 @@ function breakBrick(tx, ty) {
 // main world; cleanup() is paused while inBonus so the world you left stays intact.
 const BONUS_TX = -4000;
 function enterPipe(w) {
-  game.inBonus = { retX: w.x, capY: w.y, theme: game.themeIdx, exitX: 0, exitCapY: 0 };
+  game.inBonus = { retX: w.x, capY: w.y, theme: game.themeIdx, exitX: Infinity };
   player.mode = 'pipein'; player.pipeT = 0;
   player.x = w.x + 16 - player.w / 2;
   player.slam = false; player.vy = 0; player.onGround = false;
@@ -2022,11 +2024,10 @@ function startBonus() {
   qblock(b + 21, -4, 'heart');
   if (rng() < 0.65) qblock(b + 26, -4, pick(['star', 'wings', 'giga', 'moon', 'rain']));
   else coinRow(b + 26, -3, 4);
-  const ex = b + LEN - 5;
-  put(ex, -1, T_PIPEL); put(ex + 1, -1, T_PIPER);
-  put(ex, -2, T_CAPL); put(ex + 1, -2, T_CAPR);
+  // full-height EXIT portal at the end wall — run into it any way you like
+  const ex = b + LEN - 4;
+  ents.push({ type: 'portal', x: ex * TILE, y: 0, w: 24, h: 96, ox: 0, oy: 0, dead: 0, t: 0 });
   game.inBonus.exitX = ex * TILE;
-  game.inBonus.exitCapY = -2 * TILE;
   player.x = (b + 3) * TILE; player.y = -player.h - 70; player.vy = 0;
   player.mode = 'run'; player.dj = true; player.onGround = false; player.pipeT = 0;
   game.prevTheme = game.themeIdx;
@@ -2174,6 +2175,11 @@ function updateEnts() {
       if (e.t % 26 === 0 && !game.inBonus)
         parts.push({ x: e.x + 4 + rng() * 24, y: e.y - 2, vx: 0, vy: -0.35,
           life: 24, color: '#ffe97a', size: 1, grav: 0 });
+      continue;
+    } else if (e.type === 'portal') {
+      if (e.t % 7 === 0)
+        parts.push({ x: e.x + 4 + rng() * 16, y: -rng() * 90, vx: R(-0.3, 0.3), vy: R(-0.5, -0.1),
+          life: 30, color: rng() < 0.5 ? '#7dffb0' : '#59c8ff', size: 1, grav: 0 });
       continue;
     } else if (e.type === 'flag') {
       if (!e.hit && player.x > e.x) worldTransition(e);
@@ -2475,6 +2481,19 @@ function drawEnt(e, camX, camY) {
   else if (e.type === 'warp') {
     const bob = Math.round(Math.sin(game.frame * 0.11) * 2);
     drawTextC(ctx, '↓', sx + 16, sy - 13 + bob, 1, '#ffe97a', '#1a1c2c');
+    return;
+  }
+  else if (e.type === 'portal') {
+    const t2 = game.frame * 0.09;
+    for (let i = 0; i < 6; i++) {
+      const yy = sy - 96 + i * 16 + Math.round(Math.sin(t2 + i * 1.1) * 2);
+      ctx.globalAlpha = 0.45 + 0.3 * Math.sin(t2 * 1.4 + i);
+      ctx.fillStyle = i % 2 ? '#7dffb0' : '#59c8ff';
+      ctx.fillRect(sx + 4, yy, 16, 15);
+    }
+    ctx.globalAlpha = 0.9;
+    drawTextC(ctx, 'EXIT', sx + 12, sy - 108, 1, '#ffe97a', '#1a1c2c');
+    ctx.globalAlpha = 1;
     return;
   }
   else if (e.type === 'flag') {
