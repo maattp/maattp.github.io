@@ -2,7 +2,7 @@
 // shell makes it fully playable offline. Strategy is stale-while-revalidate —
 // instant load from cache, silently refreshed from the network for next launch.
 // Bump CACHE when a deploy must invalidate old copies immediately.
-const CACHE = 'pixelrun-v10';
+const CACHE = 'pixelrun-v11';
 const SHELL = ['./', './index.html', './icon.png', './apple-touch-icon.png', './icon-192.png', './manifest.webmanifest'];
 
 self.addEventListener('install', e => {

@@ -68,7 +68,7 @@ const MAX_SPEED = 3.05;
 const PIT_Y = 11 * TILE;             // below this = pit death
 const WORLD_LEN = 500;               // tiles per world before the flag
 const SAVE = 'pixelrun_';
-const VERSION = 15;                  // shown on the title screen — bump once per PR (see CLAUDE.md)
+const VERSION = 16;                  // shown on the title screen — bump once per PR (see CLAUDE.md)
 
 // ---------- utils ----------
 const clamp = (v, a, b) => v < a ? a : v > b ? b : v;
@@ -859,6 +859,20 @@ const RAINICON = sprite([    // coin rain cloud
 '............',
 '............'
 ]);
+const WONDERICON = sprite([  // the spiral of questionable decisions
+'....kkkk....',
+'..kkpppkk...',
+'.kpp...ppk..',
+'kpp.kkk.ppk.',
+'kp.kyyyk.pk.',
+'kp.ky.ak.pk.',
+'kp.kyaak.pk.',
+'kp..kkk..pk.',
+'.kpp....ppk.',
+'..kkpp.ppk..',
+'....kkkk....',
+'............'
+]);
 const BUBBLE = sprite([      // drawn over hero when rescued
 '....kkkk....',
 '..kk....kk..',
@@ -1600,7 +1614,8 @@ const game = {
   shake: 0, stateT: 0, themeFade: 0, prevTheme: 0,
   hitstop: 0, heartFlash: 0, heartPop: 0,
   announce: '', announceT: 0,
-  best: load('best', 0), bestDist: load('bestDist', 0), newBest: false,
+  best: load('best', 0), bestDist: load('bestDist', 0), newBest: false, recordFete: false,
+  announceMax: 1, wonder: 0,
   coinsAll: load('coinsAll', 0)
 };
 let water = new Map();       // tx -> surface y in px (pool fills down to the ground floor)
@@ -1652,15 +1667,16 @@ function put(tx, ty, id) { tiles.set(K(tx, ty), id); }
 function qblock(tx, ty, what) { put(tx, ty, T_QBLOCK); qmeta.set(K(tx, ty), what); }
 function qContents() {
   const r = rng();
-  if (r < 0.40) return 'coin';
-  if (r < 0.52) return 'coins';
-  if (r < 0.64) return 'heart';
-  if (r < 0.71) return 'magnet';
-  if (r < 0.76) return 'star';
-  if (r < 0.83) return 'wings';
-  if (r < 0.89) return 'giga';
-  if (r < 0.95) return 'moon';
-  return 'rain';
+  if (r < 0.38) return 'coin';
+  if (r < 0.50) return 'coins';
+  if (r < 0.61) return 'heart';
+  if (r < 0.68) return 'magnet';
+  if (r < 0.73) return 'star';
+  if (r < 0.79) return 'wings';
+  if (r < 0.85) return 'giga';
+  if (r < 0.90) return 'moon';
+  if (r < 0.95) return 'rain';
+  return 'wonder';
 }
 function coinAt(tx, ty) {
   if (tiles.get(K(tx, ty)) !== undefined) return;   // never bury a coin inside a block
@@ -1681,7 +1697,14 @@ function spawnEnemy(type, tx, g) {
   if (type === 'chomp') { e.vx = -0.35; }
   else if (type === 'rollo') { e.vx = -0.3; }
   else if (type === 'spiny') { e.vx = -0.3; e.h = 13; e.oy = 3; }
-  else if (type === 'bat') { e.y = top - 16 - RI(28, 60); e.y0 = e.y; e.vx = -0.55; e.h = 9; e.oy = 2; }
+  else if (type === 'bat') {
+    e.y = top - 16 - RI(28, 60); e.y0 = e.y; e.vx = -0.55; e.h = 9; e.oy = 2;
+    if (genThemeIdx() === 2) {   // cave bats roost way up high and wake with a swoop
+      e.cruiseY = e.y0;
+      e.y0 -= RI(70, 110); e.y = e.y0;
+      e.sleep = 1;
+    }
+  }
   else if (type === 'wisp') { e.y = top - 60; e.h = 11; e.oy = 1; }
   ents.push(e);
   gen.sinceEnemy = 0;
@@ -1935,8 +1958,8 @@ function startRun() {
   game.themeIdx = 0; game.worldNum = 1; game.speed = BASE_SPEED;
   tintPage();
   game.hearts = 3; game.combo = 0; game.star = 0; game.magnet = 0; game.invuln = 0;
-  game.wings = 0; game.giga = 0; game.moon = 0; game.rain = 0;
-  game.shake = 0; game.newBest = false; game.themeFade = 0;
+  game.wings = 0; game.giga = 0; game.moon = 0; game.rain = 0; game.wonder = 0;
+  game.shake = 0; game.newBest = false; game.themeFade = 0; game.recordFete = false;
   game.hitstop = 0; game.heartFlash = 0; game.heartPop = 0;
   sfxState.coinStreak = 0; sfxState.coinFrame = -99;
   input.jumpBuf = 0; input.slamReq = false; input.held = false;
@@ -1951,7 +1974,7 @@ function startRun() {
   announce('WORLD 1  ' + THEMES[0].name, 120);
   playSong('hills');
 }
-function announce(txt, t) { game.announce = txt; game.announceT = t; }
+function announce(txt, t) { game.announce = txt; game.announceT = t; game.announceMax = t; }
 function camOffX() { return Math.round(W * (W > H ? 0.35 : 0.30)); }
 function camBaseY() { return Math.max(70, Math.round(H * 0.24)) - H; }
 
@@ -2013,6 +2036,13 @@ function update() {
   if (player.inWater && player.mode === 'run' && game.frame % 24 === 0)
     parts.push({ x: player.x + 11, y: player.y + 3, vx: R(-0.2, 0.1), vy: -0.5,
       life: 34, color: '#bfeaff', size: 1, grav: -0.01 });
+  if (game.wonder > 0) {
+    game.wonder--;
+    if (game.frame % 4 === 0)   // rainbow confetti drifting through the dream
+      parts.push({ x: cam.x + rng() * W, y: cam.y - 8, vx: R(-0.4, 0.4), vy: R(0.5, 1.1),
+        life: RI(60, 120), color: 'hsl(' + ((game.frame * 7) % 360) + ',95%,65%)',
+        size: rng() < 0.4 ? 2 : 1, grav: 0, sway: 1 });
+  }
   if (game.rain > 0 && !game.inBonus) {   // countdown pauses in bonus rooms so a
     game.rain--;                          // grotto-granted rain isn't silently wasted
     if (game.frame % 5 === 0)             // it's raining money
@@ -2035,6 +2065,19 @@ function update() {
   // go haywire fed the bonus room's negative x
   if (game.frame % 90 === 0 && !game.inBonus) cleanup();
   game.dist = Math.max(game.dist, Math.floor(player.x / TILE));
+  // dust kicked up at speed
+  if (player.onGround && player.mode === 'run' && game.speed > 2.1 && game.frame % 12 === 0)
+    parts.push({ x: player.x - 2, y: player.y + player.h - 1, vx: R(-0.7, -0.3), vy: R(-0.4, -0.1),
+      life: RI(10, 18), color: 'rgba(230,225,210,0.6)', size: 1, grav: 0.02 });
+  // crossing your own record, live: a moment worth celebrating
+  if (!game.recordFete && game.bestDist > 60 && game.dist > game.bestDist && game.state === 'play') {
+    game.recordFete = true;
+    addFloat(player.x - 8, player.y - 26, 'NEW RECORD!', '#ffe93c');
+    for (let i = 0; i < 18; i++)
+      parts.push({ x: player.x + R(-10, 20), y: player.y - R(0, 30), vx: R(-1.4, 1.4), vy: R(-2.2, -0.4),
+        life: RI(28, 55), color: pick(['#ffd93c', '#7dffb0', '#59c8ff', '#ff8a9a']), size: 2, grav: 0.06 });
+    sfx.power(); buzz(3); game.hitstop = 4;
+  }
   if (!game.inBonus) game.speed = Math.min(MAX_SPEED,
     BASE_SPEED + player.x / TILE * 0.0006 + Math.floor((game.worldNum - 1) / THEMES.length) * 0.15);
 }
@@ -2316,7 +2359,7 @@ function enterPipe(w) {
   burst(w.x + 16, w.y - 2, '#d8f4d8', 8, 1.6, 0.02);
   sfx.pipe(); buzz(2);
 }
-const SPECIALS = ['star', 'wings', 'giga', 'moon', 'rain'];
+const SPECIALS = ['star', 'wings', 'giga', 'moon', 'rain', 'wonder'];
 function startBonus() {
   // one hand-built design per world, each with its own palette and reward shape
   const layout = (game.worldNum - 1) % 6;
@@ -2460,7 +2503,7 @@ function die() {
   if (player.mode === 'dead') return;
   player.mode = 'dead'; game.state = 'dying'; game.stateT = 0;
   player.vy = -6.4; game.star = 0; game.magnet = 0;
-  game.wings = 0; game.giga = 0; game.moon = 0; game.rain = 0;
+  game.wings = 0; game.giga = 0; game.moon = 0; game.rain = 0; game.wonder = 0;
   game.hitstop = 10;
   playSong('over'); buzz(4); game.shake = 7;
 }
@@ -2479,6 +2522,8 @@ function killEnemy(e, pts, squash) {
   const r = erect(e);
   addScore(pts, pts > 0 ? r.x : undefined, r.y - 8);
   burst(r.x + r.w / 2, r.y + r.h / 2, '#fff', 6, 1.8, 0.1);
+  parts.push({ x: r.x + r.w / 2, y: r.y + r.h / 2, vx: 0, vy: 0, life: 12,
+    color: '#ffffff', size: 1, grav: 0, ring: 2 });
 }
 
 function updateEnts() {
@@ -2500,6 +2545,15 @@ function updateEnts() {
     }
     if (e.type === 'chomp' || e.type === 'rollo' || e.type === 'spiny' || e.type === 'shell') {
       // walkers with gravity
+      if (e.type === 'shell') {
+        e.rot = (e.rot || 0) + 0.55;               // kicked shells spin
+        if (e.t % 3 === 0)
+          parts.push({ x: e.x - 2, y: e.y + 10 + rng() * 4, vx: -1.2, vy: 0,
+            life: 10, color: 'rgba(190,230,255,0.7)', size: 1, grav: 0 });
+      } else if (e.type === 'chomp' && !e.noticed && player.x < e.x && e.x - player.x < 120) {
+        e.noticed = 1; e.vy = -1.8;                // startled hop: "someone's coming!"
+        addFloat(e.x + 2, e.y - 10, '!', '#fff');
+      }
       e.x += e.vx;
       // turn at walls
       const dir = e.vx > 0 ? 1 : -1;
@@ -2519,8 +2573,21 @@ function updateEnts() {
         }
       }
     } else if (e.type === 'bat') {
-      e.x += e.vx;
-      e.y = e.y0 + Math.sin(e.t * 0.045) * 26;
+      if (e.sleep === 1) {                         // roosting: hold still until prey nears
+        if (Math.abs(player.x - e.x) < 110) {
+          e.sleep = 2; e.wakeT = 0;
+          addFloat(e.x + 2, e.y - 10, '!', '#c86bde');
+        }
+      } else if (e.sleep === 2) {                  // wake: swoop down to cruising height
+        e.wakeT++;
+        e.x += e.vx * 1.6;
+        e.y0 += (e.cruiseY - e.y0) * 0.08;
+        e.y = e.y0;
+        if (e.wakeT > 40) e.sleep = 0;
+      } else {
+        e.x += e.vx;
+        e.y = e.y0 + Math.sin(e.t * 0.045) * 26;
+      }
     } else if (e.type === 'finn') {
       e.x += e.vx;
       if (e.x < e.minX || e.x > e.maxX) e.vx = -e.vx;
@@ -2529,12 +2596,20 @@ function updateEnts() {
         parts.push({ x: e.x + 8, y: e.y + 6, vx: 0, vy: -0.4, life: 26, color: '#bfeaff', size: 1, grav: -0.01 });
     } else if (e.type === 'puffer') {
       e.y = e.y0 + Math.sin(e.t * 0.045) * 9;
+      // puff up when the player closes in — a fair warning that also looks great
+      const near = Math.abs(player.x + 5 - (e.x + 8)) < 70 && Math.abs(player.y - e.y) < 60;
+      e.inf = clamp((e.inf || 0) + (near ? 0.09 : -0.05), 0, 1);
     } else if (e.type === 'snap') {
       // pipe plant cycle; shy when the player is close
       const near = Math.abs(player.x - e.x) < 42 && e.phase === 0;
       if (!near) e.phase++;
       if (e.phase < 30) e.out = e.phase / 30;
-      else if (e.phase < 150) e.out = 1;
+      else if (e.phase < 150) {
+        e.out = 1;
+        if (e.phase % 34 === 0)                    // spores drift from the open bloom
+          parts.push({ x: e.x + R(-5, 5), y: e.y + 2, vx: R(-0.3, 0.3), vy: 0.25,
+            life: 40, color: '#c86bde', size: 1, grav: 0.005, sway: 1 });
+      }
       else if (e.phase < 180) e.out = 1 - (e.phase - 150) / 30;
       else { e.out = 0; if (e.phase > 240) e.phase = 0; }
       e.y = e.capY - e.out * 22;
@@ -2545,6 +2620,24 @@ function updateEnts() {
       e.x += clamp(dx * 0.02, -1, 1) * mag + (mag > 0 ? game.speed * 0.32 : -0.6);
       e.y += clamp(dy * 0.02, -0.7, 0.7);
       e.y += Math.sin(e.t * 0.08) * 0.3;
+      if (e.t % 4 === 0) {                         // ghostly afterimages
+        e.trail = e.trail || [];
+        e.trail.unshift({ x: e.x, y: e.y });
+        if (e.trail.length > 3) e.trail.pop();
+      }
+    } else if (e.type === 'jumpfish') {            // cosmetic: leaping in the background
+      e.x += e.vx; e.vy += 0.11; e.y += e.vy;
+      if (e.vy > 0 && e.y >= e.surfY) {
+        for (let i = 0; i < 6; i++)
+          parts.push({ x: e.x + 8 + R(-3, 3), y: e.surfY, vx: R(-0.8, 0.8), vy: R(-1.6, -0.4),
+            life: RI(10, 20), color: '#bfeaff', size: 1, grav: 0.14 });
+        e.dead = 2; e.deadT = 0;
+      }
+      continue;
+    } else if (e.type === 'bird') {                // cosmetic: crossing the sky
+      e.x += e.vx;
+      e.y = e.y0 + Math.sin(e.t * 0.05) * 4;
+      continue;
     } else if (e.type === 'warp') {
       if (e.t % 26 === 0 && !game.inBonus)
         parts.push({ x: e.x + 4 + rng() * 24, y: e.y - 2, vx: 0, vy: -0.35,
@@ -2631,11 +2724,18 @@ function applyPow(kind, x, y) {
     game.rain = 480;
     addFloat(x, y - 8, 'COIN RAIN!', '#ffd93c');
     burst(x + 6, y + 6, '#ffd93c', 10, 2, 0.05);
+  } else if (kind === 'wonder') {
+    game.wonder = 640;
+    addFloat(x, y - 8, 'WONDER MODE!', '#c86bde');
+    for (let i = 0; i < 16; i++)
+      parts.push({ x: x + 6, y: y + 6, vx: R(-2.2, 2.2), vy: R(-2.6, 0.4), life: RI(20, 44),
+        color: 'hsl(' + ((i * 24) % 360) + ',95%,65%)', size: 2, grav: 0.05 });
+    game.shake = 3;
   }
 }
 
 function worldTransition(flag) {
-  flag.hit = 1;
+  flag.hit = 1; flag.hitFrame = game.frame;
   game.worldNum++;
   game.prevTheme = game.themeIdx;
   game.themeIdx = (game.worldNum - 1) % THEMES.length;
@@ -2687,7 +2787,7 @@ function updateCoins() {
 
 function updateFx() {
   let w = 0;
-  for (const p of parts) { p.x += p.vx; p.y += p.vy; p.vy += p.grav; if (--p.life > 0) parts[w++] = p; }
+  for (const p of parts) { p.x += p.vx; p.y += p.vy; p.vy += p.grav; if (p.ring) p.ring += 1.6; if (--p.life > 0) parts[w++] = p; }
   parts.length = w;
   w = 0;
   for (const f of floats) { f.y -= 0.55; if (--f.life > 0) floats[w++] = f; }
@@ -2695,6 +2795,27 @@ function updateFx() {
   for (const [k, v] of bumps) { if (v <= 1) bumps.delete(k); else bumps.set(k, v - 1); }
 }
 function ambient() {
+  // surprise-and-delight cameos (checked before the %7 gate so their cadence works)
+  if (game.themeIdx === 3 && game.frame % 150 === 0 && !game.inBonus) {
+    for (let tries = 0; tries < 4; tries++) {   // a fish leaps from a pool ahead
+      const tx = Math.floor(cam.x / TILE) + RI(6, Math.floor(W / TILE));
+      const s = water.get(tx);
+      if (s !== undefined) {
+        ents.push({ type: 'jumpfish', x: tx * TILE, y: s - 2, surfY: s, vx: 0.9, vy: -3.4,
+          w: 0, h: 0, ox: 0, oy: 0, dead: 0, t: 0 });
+        for (let i = 0; i < 5; i++)
+          parts.push({ x: tx * TILE + 8 + R(-3, 3), y: s, vx: R(-0.7, 0.7), vy: R(-1.4, -0.3),
+            life: RI(10, 18), color: '#bfeaff', size: 1, grav: 0.14 });
+        break;
+      }
+    }
+  }
+  if ((game.themeIdx === 0 || game.themeIdx === 1 || game.themeIdx === 4) &&
+      game.frame % 280 === 0 && rng() < 0.7 && !game.inBonus) {
+    const by = cam.y + RI(20, Math.max(40, Math.floor(H * 0.35)));
+    ents.push({ type: 'bird', x: cam.x + W + 20, y0: by, y: by,
+      vx: -(game.speed * 0.35 + 0.5), w: 0, h: 0, ox: 0, oy: 0, dead: 0, t: 0 });
+  }
   if (game.frame % 7 !== 0) return;
   const th = THEMES[game.themeIdx];
   const x = cam.x + rng() * (W + 40), yTop = cam.y - 10;
@@ -2798,12 +2919,36 @@ function drawSkyAndParallax(camX, camY) {
       ctx.fillRect(Math.round(xi) + 3, yi + 10, cw - 8, 3);
     }
   }
+  // WONDER MODE 😵‍💫 — the sky forgets which world it's in
+  const wI = game.wonder > 0
+    ? Math.min(1, (640 - game.wonder) / 40, game.wonder / 50) : 0;
+  if (wI > 0) {
+    const t = game.frame;
+    const g2 = ctx.createLinearGradient(0, 0, 0, H);
+    g2.addColorStop(0, 'hsl(' + (t * 2 % 360) + ',85%,60%)');
+    g2.addColorStop(0.5, 'hsl(' + ((t * 2 + 120) % 360) + ',85%,65%)');
+    g2.addColorStop(1, 'hsl(' + ((t * 2 + 240) % 360) + ',85%,70%)');
+    ctx.globalAlpha = 0.55 * wI;
+    ctx.fillStyle = g2;
+    ctx.fillRect(0, 0, W, H);
+    for (let i = 0; i < 3; i++) {   // extra suns, orbiting nothing in particular
+      const a = t * 0.02 + i * 2.1;
+      ctx.fillStyle = 'hsl(' + ((t * 3 + i * 120) % 360) + ',95%,72%)';
+      ctx.globalAlpha = 0.45 * wI;
+      ctx.beginPath();
+      ctx.arc(W / 2 + Math.cos(a) * W * 0.36, H * 0.28 + Math.sin(a * 1.3) * H * 0.16,
+        9 + Math.sin(t * 0.1 + i * 2) * 3, 0, 7);
+      ctx.fill();
+    }
+    ctx.globalAlpha = 1;
+  }
   const [far, near] = parallaxCache[game.themeIdx];
   const baseY = Math.round(-camY);
+  const wob = (x, ph) => wI > 0 ? Math.round(Math.sin(game.frame * 0.06 + x * 0.012 + ph) * 7 * wI) : 0;
   let ox = -((camX * 0.22) % 512);
-  for (let x = ox - 512; x < W; x += 512) ctx.drawImage(far, Math.round(x), baseY + 16 - 220);
+  for (let x = ox - 512; x < W; x += 512) ctx.drawImage(far, Math.round(x), baseY + 16 - 220 + wob(x, 0));
   ox = -((camX * 0.5) % 512);
-  for (let x = ox - 512; x < W; x += 512) ctx.drawImage(near, Math.round(x), baseY + 16 - 140);
+  for (let x = ox - 512; x < W; x += 512) ctx.drawImage(near, Math.round(x), baseY + 16 - 140 + wob(x, 2));
   ctx.globalAlpha = 1;
 }
 function drawTiles(camX, camY) {
@@ -2827,7 +2972,17 @@ function drawTiles(camX, camY) {
       let dy = 0;
       const b = bumps.get(k);
       if (b !== undefined) dy = -(b > 5 ? 10 - b : b);
-      ctx.drawImage(cache, id * TILE, 0, TILE, TILE, sx, ty * TILE - Math.round(camY) + dy, TILE, TILE);
+      const tyPx = ty * TILE - Math.round(camY) + dy;
+      ctx.drawImage(cache, id * TILE, 0, TILE, TILE, sx, tyPx, TILE, TILE);
+      if (id === T_QBLOCK) {                   // periodic shimmer: "open me!"
+        const ph = (game.frame + tx * 13) % 140;
+        if (ph < 10) {
+          ctx.globalAlpha = 0.35 * (1 - ph / 10);
+          ctx.fillStyle = '#fff';
+          ctx.fillRect(sx + 2, tyPx + 2, 12, 12);
+          ctx.globalAlpha = 1;
+        }
+      }
     }
   }
 }
@@ -2835,11 +2990,44 @@ function drawEnt(e, camX, camY) {
   const sx = Math.round(e.x - camX), sy = Math.round(e.y - camY);
   const f = (e.t >> 4) & 1;
   let img = null;
+  // hop-bob walk with squash & stretch for the ground critters
+  if (!e.dead && (e.type === 'chomp' || e.type === 'rollo' || e.type === 'spiny')) {
+    const ph = Math.abs(Math.sin(e.t * 0.11));
+    const hop = ph * 1.6;
+    const scl = 1 - 0.09 * (1 - ph);           // squash at the contact beat
+    const wimg = e.type === 'chomp' ? (f ? CHOMP1 : CHOMP0)
+               : e.type === 'rollo' ? (f ? ROLLO1 : ROLLO0)
+               : (f ? SPINY1 : SPINY0);
+    ctx.save();
+    ctx.translate(sx + 8, sy + 16 - hop);
+    ctx.scale(2 - scl, scl);
+    ctx.drawImage(wimg, -8, -16);
+    ctx.restore();
+    return;
+  }
   if (e.type === 'chomp') img = f ? CHOMP1 : CHOMP0;
   else if (e.type === 'rollo') img = f ? ROLLO1 : ROLLO0;
-  else if (e.type === 'shell') img = SHELL;
+  else if (e.type === 'shell') {
+    if (!e.dead) {                             // spinning as it slides
+      ctx.save(); ctx.translate(sx + 8, sy + 9);
+      ctx.rotate(e.rot || 0);
+      ctx.drawImage(SHELL, -8, -8);
+      ctx.restore();
+      return;
+    }
+    img = SHELL;
+  }
   else if (e.type === 'spiny') img = f ? SPINY1 : SPINY0;
-  else if (e.type === 'bat') img = ((e.t >> 3) & 1) ? BAT1 : BAT0;
+  else if (e.type === 'bat') {
+    if (e.sleep === 1 && !e.dead) {            // roosting: folded wings, upside down
+      ctx.save(); ctx.translate(sx + 8, sy + 6);
+      ctx.scale(1, -1 + Math.sin(e.t * 0.05) * 0.04);   // slow breathing
+      ctx.drawImage(BAT1, -8, -8);
+      ctx.restore();
+      return;
+    }
+    img = ((e.t >> 3) & 1) ? BAT1 : BAT0;
+  }
   else if (e.type === 'finn') {
     const fimg = ((e.t >> 3) & 1) ? FISH1 : FISH0;
     if (e.vx > 0 && !e.dead) {           // fish faces the way it swims
@@ -2849,10 +3037,47 @@ function drawEnt(e, camX, camY) {
     }
     img = fimg;
   }
-  else if (e.type === 'puffer') img = PUFF0;
-  else if (e.type === 'wisp') img = f ? WISP1 : WISP0;
+  else if (e.type === 'puffer') {
+    if (!e.dead && e.inf > 0.02) {             // inflating: bigger, angrier
+      const s = 1 + 0.4 * e.inf;
+      ctx.save(); ctx.translate(sx + 7, sy + 8);
+      ctx.scale(s, s);
+      ctx.drawImage(PUFF0, -7, -8);
+      ctx.restore();
+      return;
+    }
+    img = PUFF0;
+  }
+  else if (e.type === 'wisp') {
+    if (e.trail && !e.dead) {                  // ghostly afterimages
+      const timg = f ? WISP1 : WISP0;
+      for (let i = e.trail.length - 1; i >= 0; i--) {
+        ctx.globalAlpha = 0.14 - i * 0.04;
+        ctx.drawImage(timg, Math.round(e.trail[i].x - camX), Math.round(e.trail[i].y - camY));
+      }
+      ctx.globalAlpha = 1;
+    }
+    img = f ? WISP1 : WISP0;
+  }
+  else if (e.type === 'jumpfish') {            // background leaper, angled by velocity
+    ctx.save(); ctx.translate(sx + 8, sy + 8);
+    ctx.rotate(Math.atan2(e.vy, e.vx * 2) * 0.5);
+    ctx.scale(-1, 1);                          // fish art faces left; it leaps right
+    ctx.globalAlpha = 0.85;
+    ctx.drawImage(FISH0, -8, -8);
+    ctx.restore(); ctx.globalAlpha = 1;
+    return;
+  }
+  else if (e.type === 'bird') {                // tiny chevron flapping across the sky
+    const wf = (e.t >> 3) & 1;
+    ctx.fillStyle = 'rgba(30,40,60,0.75)';
+    ctx.fillRect(sx, sy + (wf ? 0 : 1), 2, 1);
+    ctx.fillRect(sx + 2, sy + 1, 2, 1);
+    ctx.fillRect(sx + 4, sy + (wf ? 0 : 1), 2, 1);
+    return;
+  }
   else if (e.type === 'powfx') img = { heart: HEART, star: STAR, magnet: MAGNET,
-    wings: WINGICON, giga: GIGAICON, moon: MOONICON, rain: RAINICON }[e.kind] || HEART;
+    wings: WINGICON, giga: GIGAICON, moon: MOONICON, rain: RAINICON, wonder: WONDERICON }[e.kind] || HEART;
   else if (e.type === 'snap') {
     if (e.dead) {   // knocked out of the pipe, tumbling
       ctx.save(); ctx.translate(sx + 1, Math.round(e.y - camY) + 4); ctx.scale(1, -1);
@@ -2893,9 +3118,11 @@ function drawEnt(e, camX, camY) {
     ctx.fillStyle = '#c8ccd8'; ctx.fillRect(px2, top, 2, 92);
     ctx.fillStyle = '#ffd93c'; ctx.fillRect(px2 - 2, top - 4, 6, 6);
     const wav = Math.sin(game.frame * 0.1) * 2;
+    // claimed flags slide down the pole, SMB-style
+    const drop = e.hit ? Math.min(58, (game.frame - (e.hitFrame || game.frame)) * 2) : 0;
     ctx.fillStyle = e.hit ? '#7dffb0' : '#e8453c';
     ctx.beginPath();
-    ctx.moveTo(px2 + 2, top + 4); ctx.lineTo(px2 + 26 + wav, top + 11); ctx.lineTo(px2 + 2, top + 20);
+    ctx.moveTo(px2 + 2, top + 4 + drop); ctx.lineTo(px2 + 26 + wav, top + 11 + drop); ctx.lineTo(px2 + 2, top + 20 + drop);
     ctx.fill();
     return;
   }
@@ -2978,6 +3205,7 @@ function drawPlayer(camX, camY) {
   if (player.slam) rot = player.spinA;
   else if (swimming) rot = Math.sin(game.frame * 0.09) * 0.12;   // lazy bob
   else if (player.flipT > 0) rot = (1 - player.flipT / 22) * Math.PI * 2;
+  else if (running && game.speed > 2.5) rot = 0.07;              // leaning into it
   let sclX = 1, sclY = 1;
   if (player.landT > 0) { const t = player.landT / 9; sclX = 1 + 0.30 * t; sclY = 1 - 0.32 * t; }
   else if (player.stretchT > 0) { const t = player.stretchT / 8; sclX = 1 - 0.20 * t; sclY = 1 + 0.24 * t; }
@@ -3034,8 +3262,12 @@ function drawHUD() {
     drawTextC(ctx, 'COMBO ×' + game.combo, W / 2, y0 + 26, 2, hot ? '#7dffb0' : '#d8ffe8', '#1a1c2c');
   }
   if (game.announceT > 0) {
+    // drop in with an overshoot bounce, fade out at the end
+    const p = Math.min(1, (game.announceMax - game.announceT) / 14);
+    const c1 = 1.70158, c3 = c1 + 1;
+    const ease = 1 + c3 * Math.pow(p - 1, 3) + c1 * Math.pow(p - 1, 2);
     ctx.globalAlpha = Math.min(1, game.announceT / 30);
-    drawTextC(ctx, game.announce, W / 2, safeTop + H * 0.22, 2, '#fff', '#1a1c2c');
+    drawTextC(ctx, game.announce, W / 2, safeTop + H * 0.22 - (1 - ease) * 26, 2, '#fff', '#1a1c2c');
     ctx.globalAlpha = 1;
   }
 }
@@ -3153,16 +3385,30 @@ function renderWorld() {
     }
   }
   const cf = [0, 1, 2, 1][(game.frame >> 3) % 4];
-  for (const c of coins) {
+  for (let ci = 0; ci < coins.length; ci++) {
+    const c = coins[ci];
     if (c.taken > 8 || c.x < camX - 16 || c.x > camX + W + 16) continue;
     if (c.taken > 0) { ctx.globalAlpha = Math.max(0, 1 - c.taken / 8); }
     ctx.drawImage(COIN[cf], Math.round(c.x - 6 - camX), Math.round(c.y - 6 - camY));
     ctx.globalAlpha = 1;
+    const gph = (game.frame + ci * 29) % 110;   // an occasional star-glint
+    if (gph < 6 && !c.taken) {
+      const gx = Math.round(c.x + 3 - camX), gy2 = Math.round(c.y - 6 - camY);
+      ctx.fillStyle = '#fff';
+      ctx.fillRect(gx, gy2 - 1, 1, 3); ctx.fillRect(gx - 1, gy2, 3, 1);
+    }
   }
   for (const e of ents) drawEnt(e, camX, camY);
   if (!inPipe) drawPlayer(camX, camY);
   drawWater(camX, camY);
   for (const p of parts) {
+    if (p.ring) {   // expanding kill ring
+      ctx.globalAlpha = p.life / 12;
+      ctx.strokeStyle = p.color; ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.arc(Math.round(p.x - camX), Math.round(p.y - camY), p.ring, 0, 7); ctx.stroke();
+      ctx.globalAlpha = 1;
+      continue;
+    }
     ctx.fillStyle = p.color;
     if (p.sway) p.x += Math.sin(p.life * 0.1) * 0.4;
     ctx.fillRect(Math.round(p.x - camX), Math.round(p.y - camY), p.size, p.size);
@@ -3194,7 +3440,9 @@ function renderOverlays() {
     ctx.fillRect(box.x, box.y, box.w, 1); ctx.fillRect(box.x, box.y + box.h - 1, box.w, 1);
     ctx.fillRect(box.x, box.y, 1, box.h); ctx.fillRect(box.x + box.w - 1, box.y, 1, box.h);
     drawText(ctx, 'SCORE', box.x + 8, box.y + 9, 1, '#8a8ea0');
-    drawText(ctx, String(game.score), box.x + 8, box.y + 18, 2, '#fff');
+    const tally = game.stateT >= 45 ? game.score
+      : Math.floor(game.score * Math.min(1, game.stateT / 42));
+    drawText(ctx, String(tally), box.x + 8, box.y + 18, 2, '#fff');
     if (game.newBest)   // steady text, slow celebratory color pulse
       drawText(ctx, 'NEW BEST!', box.x + 92, box.y + 18, 1, ((game.frame >> 5) & 1) ? '#ffe93c' : '#fff');
     else drawText(ctx, 'BEST ' + game.best, box.x + 92, box.y + 20, 1, '#9adfff');
@@ -3221,7 +3469,12 @@ function step() {
     if (game.shake > 0) game.shake *= 0.85;
     updatePlayer(); updateFx();
     if (game.stateT > 40 && player.y > cam.y + H + 60) gameOver();
-  } else { game.frame++; game.stateT++; updateFx(); }
+  } else {
+    game.frame++; game.stateT++; updateFx();
+    // ticking score tally on the game-over card
+    if (game.state === 'over' && game.stateT < 42 && game.stateT % 3 === 0 && game.score > 0)
+      sq(520 + game.stateT * 8, 0.03, 0.045);
+  }
 }
 let last = 0, acc = 0, lastW = 0, lastH = 0;
 function frame(ts) {
