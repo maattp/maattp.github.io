@@ -202,6 +202,7 @@ const FONT = {
 };
 function textW(str, s) { return str.length * 4 * s - s; }
 function drawText(c, str, x, y, s, color, shadow) {
+  x = Math.round(x); y = Math.round(y);   // half-pixel positions blur the pixel font
   str = String(str).toUpperCase();
   if (shadow) drawText(c, str, x + s, y + s, s, shadow);
   c.fillStyle = color;
@@ -3280,6 +3281,7 @@ function drawHUD() {
   }
 }
 function drawBtn(label, cx, y, on) {
+  y = Math.round(y);                      // fractional y blurred the pause buttons
   const w = textW(label, 1) + 16, h = 15;
   const x = Math.round(cx - w / 2);
   ctx.fillStyle = '#1a1c2c'; ctx.fillRect(x, y, w, h);
