@@ -805,8 +805,13 @@ function makeTiles(theme) {
   c.fillStyle = '#a86a1c'; c.fillRect(3 * t, 14, t, 2); c.fillRect(3 * t + 14, 0, 2, t);
   c.fillStyle = PAL.k;
   c.fillRect(3 * t + 1, 1, 2, 2); c.fillRect(3 * t + 13, 1, 2, 2); c.fillRect(3 * t + 1, 13, 2, 2); c.fillRect(3 * t + 13, 13, 2, 2);
-  drawText(c, '?', 3 * t + 7, 6, 1, '#7a4a10');
-  drawText(c, '?', 3 * t + 6, 5, 1, '#fff');
+  // chunky centered question mark (the 3x5 font glyph reads lopsided at this size)
+  const QM = ['.www.', 'w...w', '....w', '..ww.', '..w..', '.....', '..w..'];
+  for (const [dx, dy, col] of [[1, 1, '#a86a1c'], [0, 0, '#fff']])
+    QM.forEach((row, yy) => {
+      for (let xx = 0; xx < 5; xx++)
+        if (row[xx] === 'w') { c.fillStyle = col; c.fillRect(3 * t + 5 + xx + dx, 4 + yy + dy, 1, 1); }
+    });
   // 4 used block
   c.fillStyle = '#9a7448'; c.fillRect(4 * t, 0, t, t);
   c.fillStyle = '#7a5a34'; c.fillRect(4 * t, 14, t, 2); c.fillRect(4 * t + 14, 0, 2, t);
@@ -1935,6 +1940,16 @@ function land(top, wasGround) {
 }
 function slamLand() {
   player.slam = false;
+  // slamming onto a warp pipe dives straight in — the natural gesture
+  if (!game.inBonus) {
+    const pc = player.x + player.w / 2, feet = player.y + player.h;
+    for (const e of ents) {
+      if (e.type === 'warp' && !e.dead && pc > e.x + 2 && pc < e.x + 30 && Math.abs(feet - e.y) < 6) {
+        enterPipe(e);
+        return;
+      }
+    }
+  }
   player.landT = 9;
   game.shake = 6;
   sfx.slam(); buzz(3);
@@ -1947,10 +1962,13 @@ function slamLand() {
     if (Math.abs(r.x + r.w / 2 - (player.x + 5)) < 52 && Math.abs(r.y + r.h - feetY) < 26)
       killEnemy(e, 150);
   }
-  // crack bricks underfoot
+  // crack bricks and pop ? blocks underfoot
   const tyB = Math.floor((feetY + 2) / TILE);
-  for (let tx = Math.floor(player.x / TILE) - 1; tx <= Math.floor(player.x / TILE) + 1; tx++)
-    if (tiles.get(K(tx, tyB)) === T_BRICK) breakBrick(tx, tyB);
+  for (let tx = Math.floor(player.x / TILE) - 1; tx <= Math.floor(player.x / TILE) + 1; tx++) {
+    const id = tiles.get(K(tx, tyB));
+    if (id === T_BRICK) breakBrick(tx, tyB);
+    else if (id === T_QBLOCK) openQBlock(tx, tyB);
+  }
 }
 
 function openQBlock(tx, ty) {
@@ -2094,7 +2112,10 @@ function killEnemy(e, pts, squash) {
 }
 
 function updateEnts() {
-  const pr = prect();
+  // giga's contact zone matches the drawn giant, not the small physics box
+  const pr = game.giga > 0
+    ? { x: player.x - 9, y: player.y + player.h - 30, w: 28, h: 30 }
+    : prect();
   for (const e of ents) {
     if (e.dead) {
       e.deadT--;
@@ -2251,7 +2272,12 @@ function worldTransition(flag) {
 }
 
 function updateCoins() {
-  const pcx = player.x + 5, pcy = player.y + 7;
+  // giga draws the hero ~1.85x from the feet up; collect with the VISUAL body,
+  // not the physics hitbox, or head-height coins brush past uncollected
+  const giga = game.giga > 0;
+  const pcx = player.x + 5;
+  const pcy = giga ? player.y + player.h - 15 : player.y + 7;
+  const rr = giga ? 361 : 121;         // radius² : 19px vs 11px
   for (const c of coins) {
     if (c.taken > 0) { c.taken++; c.y -= 1.2; continue; }
     if (c.fall) {                       // rain coins drop until they clear the floor
@@ -2268,7 +2294,7 @@ function updateCoins() {
       }
     }
     const dx = pcx - c.x, dy = pcy - c.y;
-    if (dx * dx + dy * dy < 121) {
+    if (dx * dx + dy * dy < rr) {
       c.taken = 1;
       game.coins++; addScore(50, undefined);
       sfx.coin(); buzz(1);
@@ -2642,8 +2668,9 @@ function renderTitle() {
   drawTextC(ctx, 'AN ENDLESS PLATFORM DASH', W / 2, safeTop + H * 0.12 + 62, 1, '#fff', '#1a1c2c');
   if ((game.frame >> 5) & 1)
     drawTextC(ctx, 'TAP TO START', W / 2, gy - 112, 2, '#ffe97a', '#1a1c2c');
-  drawTextC(ctx, 'TAP: JUMP   AIR TAP: DOUBLE JUMP', W / 2, H - 58 - safeBot, 1, '#fff', '#1a1c2c');
-  drawTextC(ctx, 'SWIPE DOWN: SLAM', W / 2, H - 48 - safeBot, 1, '#fff', '#1a1c2c');
+  drawTextC(ctx, 'TAP: JUMP   AIR TAP: DOUBLE JUMP', W / 2, H - 68 - safeBot, 1, '#fff', '#1a1c2c');
+  drawTextC(ctx, 'SWIPE DOWN: SLAM', W / 2, H - 58 - safeBot, 1, '#fff', '#1a1c2c');
+  drawTextC(ctx, 'SLAM A ↓ PIPE TO EXPLORE', W / 2, H - 48 - safeBot, 1, '#ffe97a', '#1a1c2c');
   if (game.best > 0)
     drawTextC(ctx, 'BEST ' + game.best + '   ' + game.bestDist + 'M', W / 2, gy - 94, 1, '#9adfff', '#1a1c2c');
   if (game.coinsAll > 0)
