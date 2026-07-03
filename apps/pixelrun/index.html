@@ -6,6 +6,8 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="theme-color" content="#0b1030">
+<link rel="apple-touch-icon" href="icon.png">
+<link rel="icon" type="image/png" sizes="512x512" href="icon.png">
 <title>Pixel Run</title>
 <style>
   * { margin:0; padding:0; box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
@@ -660,6 +662,62 @@ const MAGNET = sprite([
 '.kkkk..kkkk.',
 '............'
 ]);
+const WINGICON = sprite([    // glide feathers
+'.......kk...',
+'.....kkwwk..',
+'...kwwwwMk..',
+'..kwwwwwMk..',
+'.kwwwwwwMk..',
+'.kwwwwwMk...',
+'..kMwwwMk...',
+'...kMMMk....',
+'....kkk.....',
+'............',
+'............',
+'............'
+]);
+const GIGAICON = sprite([    // grow-huge mushroom
+'...kkkkkk...',
+'..kOOOOOOk..',
+'.kOwwOOwwOk.',
+'kOOwwOOwwOOk',
+'kOOOOOOOOOOk',
+'kODDDDDDDDOk',
+'.kkssssssk..',
+'..kssekssk..',
+'..kssssssk..',
+'...kkkkkk...',
+'............',
+'............'
+]);
+const MOONICON = sprite([    // low gravity
+'....kkkk....',
+'..kkyyyyk...',
+'.kyyyykk....',
+'.kyyyk......',
+'kyyyk.......',
+'kyyyk.......',
+'kyyyk.......',
+'.kyyyk......',
+'.kyyyykk....',
+'..kkyyyyk...',
+'....kkkk....',
+'............'
+]);
+const RAINICON = sprite([    // coin rain cloud
+'..kkkk......',
+'.kwwwwkk....',
+'kwwwwwwwkk..',
+'kwwwwwwwwwk.',
+'.kMkMkMkMk..',
+'..ky..ky....',
+'.....y..y...',
+'...ky..ky...',
+'............',
+'............',
+'............',
+'............'
+]);
 const BUBBLE = sprite([      // drawn over hero when rescued
 '....kkkk....',
 '..kk....kk..',
@@ -900,12 +958,15 @@ function parseTrack(str) {
 // --- songs: tracks are arrays of 16-step bars, validated at boot ---
 const MUSIC_ERRORS = [];
 function song(bpm, opts, lead, harm, bass, drum) {
-  for (const [name, arr] of [['lead', lead], ['harm', harm], ['bass', bass]]) {
+  for (const [name, arr] of [['lead', lead], ['harm', harm], ['bass', bass]])
     arr.forEach((bar, i) => {
       if (parseTrack(bar).len !== 16) MUSIC_ERRORS.push(name + ' bar ' + i + ' = ' + parseTrack(bar).len);
     });
-    if (drum.length % 16) MUSIC_ERRORS.push('drum len ' + drum.length);
+  if (Array.isArray(drum)) {
+    drum.forEach((bar, i) => { if (bar.length !== 16) MUSIC_ERRORS.push('drum bar ' + i); });
+    drum = drum.join('');
   }
+  if (drum.length % 16) MUSIC_ERRORS.push('drum len ' + drum.length);
   return Object.assign({ bpm, lead: lead.join(' '), harm: harm.join(' '), bass: bass.join(' '), drum }, opts);
 }
 // bass riff for MAGMA KEEP: driving root octaves, two per bar
@@ -947,12 +1008,36 @@ const SONGS = {};
         b11 = 'f2:2 c3:2 f2:2 c3:2 g2:2 d3:2 g2:2 d3:2',
         b12 = 'c3:2 g3:2 e3:2 g3:2 g2:2 d3:2 b2:2 d3:2',
         b16 = 'c3:2 g3:2 c3:2 g3:2 c3:4 c2:4';
-  const dr = 'k.hhs.h.k.hhs.hh';
+  // C section: minor-key wander (Am) — real contrast, not another A repeat
+  const hc1 = 'a4:2 c5:2 e5:2 c5:2 a4:2 c5:2 e5:2 g5:2',
+        hc2 = 'f5:2 e5:2 d5:2 c5:2 b4:2 c5:2 d5:2 b4:2',
+        hc3 = 'a4:2 c5:2 e5:2 a5:2 g5:2 e5:2 c5:2 e5:2',
+        hc4 = 'd5:2 e5:2 f5:2 d5:2 g5:4 g4:2 b4:2';
+  // D section: breakdown — the tune catches its breath
+  const hd1 = 'c5:2 r:6 e5:2 r:6',
+        hd2 = 'g5:2 r:6 e5:2 r:2 d5:2 r:2',
+        hd3 = 'c5:2 r:6 a5:2 r:6',
+        hd4 = 'g5:2 e5:2 d5:2 e5:2 r:8',
+        hEnd = 'c6:2 g5:2 e5:2 g5:2 c5:8',
+        h12v = 'c6:4 g5:2 e5:2 g5:2 a5:2 b5:2 c6:2';
+  const qc1 = 'r:2 c4:2 r:2 e4:2 r:2 c4:2 r:2 e4:2',
+        qs = 'r:16',
+        ba1 = 'a2:2 e3:2 a2:2 e3:2 a2:2 e3:2 a3:2 e3:2',
+        bd1 = 'c2:8 c3:8', bd2 = 'g2:8 g3:8', bd3 = 'a2:8 a3:8', bd4 = 'g2:8 b2:4 d3:4';
+  const dm = 'k.hhs.h.k.hhs.hh',    // main groove
+        df = 'k.hhs.h.k.s.ssss',    // fill
+        ds = 'k.hh..s..hk.s.h.',    // syncopated (C section)
+        dq = 'k.......k.h.....';    // breakdown pulse
+  // 32 bars: A A' B C A'' D(breakdown) B' outro — ~50s before it repeats
   SONGS.hills = song(152, {},
-    [h1, h2, h3, h4, h1, h6, h7, h8, h9, h10, h11, h12, h1, h2, h15, h16],
-    [q1, q2, q3, q4, q1, q2, q3, q4, q9, q1, q11, q12, q1, q2, q3, q16],
-    [b1, b2, b3, b4, b1, b2, b3, b4, b9, b10, b11, b12, b1, b2, b3, b16],
-    dr + dr + dr + 'k.hhs.h.k.s.ssss');
+    [h1, h2, h3, h4,    h1, h6, h7, h8,    h9, h10, h11, h12,  hc1, hc2, hc3, hc4,
+     h1, h2, h15, h16,  hd1, hd2, hd3, hd4, h9, h10, h11, h12v, h1, h6, h15, hEnd],
+    [q1, q2, q3, q4,    q1, q2, q3, q4,    q9, q1, q11, q12,   qc1, q3, qc1, q2,
+     q1, q2, q3, q16,   qs, qs, qs, q2,    q9, q1, q11, q12,   q1, q2, q3, q16],
+    [b1, b2, b3, b4,    b1, b2, b3, b4,    b9, b10, b11, b12,  ba1, b11, ba1, b2,
+     b1, b2, b3, b4,    bd1, bd2, bd3, bd4, b9, b10, b11, b12, b1, b2, b3, b16],
+    [dm, dm, dm, df,    dm, dm, dm, df,    dm, dm, dm, df,     ds, ds, ds, df,
+     dm, dm, dm, df,    dq, dq, dq, dq,    dm, dm, dm, df,     dm, dm, ds, df]);
 }
 
 { // SUNSET DUNES — winding A-minor snake charmer, octave-answer verse
@@ -1247,6 +1332,7 @@ const sfx = {
   hurt()   { sq(392, 0.07, 0.11); sqAt(311, 0.07, 0.08, 0.11); sqAt(233, 0.14, 0.12, 0.11); },
   slam()   { if (audio.ctx) { noise(audio.sgain, audio.ctx.currentTime, 0.16, 0.22, 200); sq(90, 0.16, 0.14, 40); } },
   pop()    { sq(880, 0.05, 0.08, 1400); },
+  pipe()   { sq(340, 0.32, 0.13, 90); sqAt(240, 0.1, 0.26, 0.10, 70); },
   combo(n) { sq(523 * Math.pow(1.122, Math.min(n, 12)), 0.09, 0.10); }
 };
 
@@ -1295,6 +1381,7 @@ const game = {
   themeIdx: 0, worldNum: 1, speed: BASE_SPEED,
   hearts: 3, maxHearts: 3,
   combo: 0, star: 0, magnet: 0, invuln: 0,
+  wings: 0, giga: 0, moon: 0, rain: 0,
   shake: 0, stateT: 0, themeFade: 0, prevTheme: 0,
   announce: '', announceT: 0,
   best: load('best', 0), bestDist: load('bestDist', 0), newBest: false
@@ -1311,7 +1398,8 @@ const player = {
   x: 0, y: 0, vy: 0, w: 10, h: 14,
   onGround: false, coyote: 0, dj: true, slam: false,
   runT: 0, mode: 'run', bubbleT: 0, stompT: 0,
-  flipT: 0, landT: 0, stretchT: 0, spinA: 0    // juice: front-flip / squash / stretch / slam spin
+  flipT: 0, landT: 0, stretchT: 0, spinA: 0,   // juice: front-flip / squash / stretch / slam spin
+  pipeT: 0
 };
 const cam = { x: 0, y: 0 };
 const gen = { x: 0, g: 0, nextFlag: WORLD_LEN, sinceEnemy: 0, sinceCoin: 0, totalTiles: 0 };
@@ -1337,11 +1425,15 @@ function put(tx, ty, id) { tiles.set(K(tx, ty), id); }
 function qblock(tx, ty, what) { put(tx, ty, T_QBLOCK); qmeta.set(K(tx, ty), what); }
 function qContents() {
   const r = rng();
-  if (r < 0.55) return 'coin';
-  if (r < 0.72) return 'coins';
-  if (r < 0.84) return 'heart';
-  if (r < 0.94) return 'magnet';
-  return 'star';
+  if (r < 0.40) return 'coin';
+  if (r < 0.52) return 'coins';
+  if (r < 0.64) return 'heart';
+  if (r < 0.71) return 'magnet';
+  if (r < 0.76) return 'star';
+  if (r < 0.83) return 'wings';
+  if (r < 0.89) return 'giga';
+  if (r < 0.95) return 'moon';
+  return 'rain';
 }
 function coinAt(tx, ty) { coins.push({ x: tx * TILE + 8, y: ty * TILE + 8, vx: 0, vy: 0, taken: 0 }); }
 function coinRow(tx, ty, n) { for (let i = 0; i < n; i++) coinAt(tx + i, ty); }
@@ -1435,9 +1527,15 @@ const patterns = [
       put(tx + 1, -g - r, r === ph ? T_CAPR : T_PIPER);
     }
     const theme = THEMES[genThemeIdx()];
-    if (theme.enemies.includes('snap') && rng() < 0.55) {
+    const snapHere = theme.enemies.includes('snap') && rng() < 0.55;
+    if (snapHere) {
       ents.push({ type: 'snap', x: tx * TILE + 8, y: (-g - ph) * TILE, capY: (-g - ph) * TILE,
         w: 12, h: 14, ox: 2, oy: 0, dead: 0, t: RI(0, 60), phase: 0, out: 0 });
+    } else if (ph <= 3 && gen.totalTiles - gen.lastWarp > 220 && rng() < 0.5) {
+      // a warp pipe: swipe down on its cap to visit a bonus room
+      gen.lastWarp = gen.totalTiles;
+      ents.push({ type: 'warp', x: tx * TILE, y: (-g - ph) * TILE,
+        w: 32, h: 16, ox: 0, oy: 0, dead: 0, t: 0 });
     }
     if (ph >= 4) coinAt(tx, -g - ph - 3);        // hint: this one needs a double jump
     for (let i = 0; i < 3; i++) C(g);
@@ -1541,9 +1639,12 @@ function startRun() {
   game.themeIdx = 0; game.worldNum = 1; game.speed = BASE_SPEED;
   tintPage();
   game.hearts = 3; game.combo = 0; game.star = 0; game.magnet = 0; game.invuln = 0;
+  game.wings = 0; game.giga = 0; game.moon = 0; game.rain = 0;
   game.shake = 0; game.newBest = false; game.themeFade = 0;
   input.jumpBuf = 0; input.slamReq = false; input.held = false;
+  game.inBonus = null;
   gen.x = -6; gen.g = 0; gen.nextFlag = WORLD_LEN; gen.sinceEnemy = 0; gen.totalTiles = 0;
+  gen.lastWarp = -999;
   for (let i = 0; i < 24; i++) C(0);             // opening runway
   player.x = 40; player.y = -player.h; player.vy = 0;
   player.onGround = true; player.coyote = 0; player.dj = true; player.slam = false;
@@ -1600,6 +1701,20 @@ function update() {
       parts.push({ x: player.x + R(0, 10), y: player.y + R(0, 14), vx: R(-0.5, 0.5), vy: R(-1, 0),
         life: 18, color: 'hsl(' + ((game.frame * 14 + 120) % 360) + ',95%,70%)', size: 1, grav: 0 });
   }
+  if (game.wings > 0) game.wings--;
+  if (game.giga > 0) game.giga--;
+  if (game.moon > 0) {
+    game.moon--;
+    if (game.frame % 5 === 0)   // dreamy drifting sparkles
+      parts.push({ x: cam.x + rng() * W, y: cam.y + rng() * H * 0.7, vx: R(-0.2, 0.2), vy: 0.25,
+        life: 50, color: '#d8c8ff', size: 1, grav: 0 });
+  }
+  if (game.rain > 0) {
+    game.rain--;
+    if (game.frame % 5 === 0 && !game.inBonus)   // it's raining money
+      coins.push({ x: cam.x + 30 + rng() * (W - 50), y: cam.y - 14, vx: 0, vy: 0,
+        fall: 1.5 + rng() * 1.2, taken: 0 });
+  }
   updatePlayer();
   updateEnts();
   updateCoins();
@@ -1612,14 +1727,30 @@ function update() {
   const target = player.y < thresh ? player.y - H * 0.28 : cy0;
   cam.y += (target - cam.y) * 0.10;
   ensureTerrain();
-  if (game.frame % 90 === 0) cleanup();
+  // inBonus: the main world must survive the detour untouched, and speed would
+  // go haywire fed the bonus room's negative x
+  if (game.frame % 90 === 0 && !game.inBonus) cleanup();
   game.dist = Math.max(game.dist, Math.floor(player.x / TILE));
-  game.speed = Math.min(MAX_SPEED,
+  if (!game.inBonus) game.speed = Math.min(MAX_SPEED,
     BASE_SPEED + player.x / TILE * 0.0006 + Math.floor((game.worldNum - 1) / THEMES.length) * 0.15);
 }
 
 function updatePlayer() {
   if (player.mode === 'dead') { player.vy += GRAV; player.y += player.vy; return; }
+  if (player.mode === 'pipein') {
+    player.pipeT++; player.y += 0.8;
+    if (player.pipeT >= 34) startBonus();
+    return;
+  }
+  if (player.mode === 'pipeout') {
+    player.pipeT++; player.y -= 0.8;
+    if (player.pipeT >= 34) {
+      player.mode = 'run'; player.y = game.inBonus.capY - player.h; player.vy = 0;
+      player.onGround = true; player.dj = true; game.invuln = 45;
+      game.inBonus = null;
+    }
+    return;
+  }
   if (player.mode === 'bubble') { updateBubble(); return; }
   if (player.stompT > 0) player.stompT--;
   if (player.flipT > 0) player.flipT--;
@@ -1631,6 +1762,13 @@ function updatePlayer() {
   const sp = game.speed * (player.slam ? 0.4 : 1);
   player.x += sp;
   const rtx = Math.floor((player.x + player.w) / TILE);
+  if (game.giga > 0) {   // giga plows straight through brickwork
+    for (let ty = Math.floor(player.y / TILE) - 1; ty <= Math.floor((player.y + player.h - 1) / TILE); ty++) {
+      const id = tiles.get(K(rtx, ty));
+      if (id === T_BRICK) breakBrick(rtx, ty);
+      else if (id === T_QBLOCK) openQBlock(rtx, ty);
+    }
+  }
   let blockTy = null;
   for (let ty = Math.floor(player.y / TILE); ty <= Math.floor((player.y + player.h - 1) / TILE); ty++) {
     if (solidAt(rtx, ty)) { blockTy = blockTy === null ? ty : Math.min(blockTy, ty); }
@@ -1650,13 +1788,14 @@ function updatePlayer() {
   if (input.jumpBuf > 0) input.jumpBuf--;
   if (player.coyote > 0) player.coyote--;
   if (input.jumpBuf > 0) {
+    const jm = game.moon > 0 ? 0.85 : 1;   // moon: gentler launch, way longer hang
     if (player.onGround || player.coyote > 0) {
-      player.vy = JUMP_V; player.onGround = false; player.coyote = 0; input.jumpBuf = 0;
+      player.vy = JUMP_V * jm; player.onGround = false; player.coyote = 0; input.jumpBuf = 0;
       player.dj = true; player.stretchT = 8;
       sfx.jump(); buzz(1);
       burst(player.x + 5, player.y + player.h, '#e8e4d8', 4, 1.2, 0.05);
     } else if (player.dj && !player.slam) {
-      player.vy = DJUMP_V; player.dj = false; input.jumpBuf = 0;
+      player.vy = DJUMP_V * jm; player.dj = false; input.jumpBuf = 0;
       player.flipT = 22; player.stretchT = 6;      // front flip!
       sfx.djump(); buzz(1);
       burst(player.x + 5, player.y + player.h, '#9adfff', 7, 1.6, 0.02);
@@ -1668,15 +1807,31 @@ function updatePlayer() {
       player.slam = true; player.vy = Math.max(player.vy, 2.4);
       player.spinA = 0; player.flipT = 0;
       burst(player.x + 5, player.y + 6, '#fff', 3, 1, 0);
+    } else if (player.onGround && player.mode === 'run' && !game.inBonus) {
+      // swipe down while standing on a warp pipe: go in
+      const pc = player.x + player.w / 2, feet = player.y + player.h;
+      for (const e of ents) {
+        if (e.type === 'warp' && !e.dead && pc > e.x + 2 && pc < e.x + 30 && Math.abs(feet - e.y) < 5) {
+          enterPipe(e);
+          return;
+        }
+      }
     }
   }
 
   // --- gravity ---
   if (player.slam) player.vy = Math.min(player.vy + 0.9, SLAM_V);
   else {
+    const gm = game.moon > 0 ? 0.5 : 1;
     if (!input.held && player.vy < -2.4) player.vy = -2.4;   // variable jump height
-    player.vy += GRAV * (player.vy < 0 && input.held ? 0.78 : 1);
-    player.vy = Math.min(player.vy, MAX_FALL);
+    player.vy += GRAV * gm * (player.vy < 0 && input.held ? 0.78 : 1);
+    player.vy = Math.min(player.vy, game.moon > 0 ? MAX_FALL * 0.55 : MAX_FALL);
+    if (game.wings > 0 && input.held && !player.onGround && player.vy > 0.6) {
+      player.vy = 0.6;                                       // feathered glide
+      if (game.frame % 4 === 0)
+        parts.push({ x: player.x + R(-2, 8), y: player.y + R(6, 14), vx: R(-0.8, -0.3), vy: R(0, 0.3),
+          life: 22, color: '#f0f6ff', size: 1, grav: 0.01 });
+    }
   }
   const prevBottom = player.y + player.h;
   player.y += player.vy;
@@ -1706,11 +1861,23 @@ function updatePlayer() {
   }
   if (player.onGround) player.coyote = COYOTE;
 
+  // --- bonus exit: landing anywhere past the exit pipe's leading edge sends you home ---
+  if (game.inBonus && player.onGround && player.x + player.w / 2 > game.inBonus.exitX + 2) {
+    leaveBonus();
+    return;
+  }
+
   // --- hazard pass: spikes bite whatever occupies them, any velocity ---
   outer:
   for (let tx = tx0; tx <= tx1; tx++) {
     for (let ty = Math.floor(player.y / TILE); ty <= Math.floor((player.y + player.h) / TILE); ty++) {
       if (tileAt(tx, ty) === T_SPIKE && player.y + player.h > ty * TILE + 7) {
+        if (game.giga > 0) {   // giga crushes spikes flat
+          tiles.delete(K(tx, ty));
+          burst(tx * TILE + 8, ty * TILE + 10, '#c8ccd8', 8, 2, 0.15);
+          sfx.brick(); game.shake = Math.max(game.shake, 2);
+          continue;
+        }
         player.vy = -4.2;
         if (player.slam) player.slam = false;
         hurt();
@@ -1734,6 +1901,17 @@ function land(top, wasGround) {
     game.combo = 0;
     player.landT = 7;
     burst(player.x + 5, player.y + player.h, '#d8d4c8', 3, 1, 0.05);
+    if (game.giga > 0) {   // every giga landing is a small earthquake
+      game.shake = Math.max(game.shake, 3);
+      sfx.stomp(); buzz(2);
+      const feetY = player.y + player.h;
+      for (const e of ents) {
+        if (e.dead || !HOSTILE.has(e.type) || e.type === 'wisp' || e.type === 'bat') continue;
+        const r = erect(e);
+        if (Math.abs(r.x + r.w / 2 - (player.x + 5)) < 36 && Math.abs(r.y + r.h - feetY) < 22)
+          killEnemy(e, 100);
+      }
+    }
   } else game.combo = 0;
 }
 function slamLand() {
@@ -1767,9 +1945,10 @@ function openQBlock(tx, ty) {
     burst(bx, by, '#ffd93c', 6 * n, 2, 0.15);
     sfx.coin(); buzz(1);
   } else {
-    ents.push({ type: 'pow', kind: what, x: tx * TILE + 2, y: ty * TILE - 4, vx: 0.5, vy: 0,
-      w: 12, h: 12, ox: 0, oy: 0, dead: 0, t: 0, riseT: 26 });
-    sfx.pop(); buzz(1);
+    // grant instantly — a walking pickup is uncatchable at run speed
+    applyPow(what, bx - 6, by - 6);
+    ents.push({ type: 'powfx', kind: what, x: tx * TILE + 2, y: ty * TILE - 4,
+      w: 12, h: 12, ox: 0, oy: 0, dead: 0, t: 0 });
   }
 }
 function breakBrick(tx, ty) {
@@ -1780,6 +1959,55 @@ function breakBrick(tx, ty) {
   burst(tx * TILE + 8, ty * TILE + 8, th.brickDk, 5, 1.8, 0.2);
   addScore(10, undefined);
   sfx.brick(); buzz(1); game.shake = Math.max(game.shake, 2);
+}
+
+// ---------- warp pipes / bonus rooms ----------
+// The room is built at far-negative tile coords so it can never collide with the
+// main world; cleanup() is paused while inBonus so the world you left stays intact.
+const BONUS_TX = -4000;
+function enterPipe(w) {
+  game.inBonus = { retX: w.x, capY: w.y, theme: game.themeIdx, exitX: 0, exitCapY: 0 };
+  player.mode = 'pipein'; player.pipeT = 0;
+  player.x = w.x + 16 - player.w / 2;
+  player.slam = false; player.vy = 0; player.onGround = false;
+  sfx.pipe(); buzz(2);
+}
+function startBonus() {
+  const b = BONUS_TX, LEN = 40;
+  for (let i = 0; i < LEN; i++) ground.set(b + i, 0);
+  // sealed box: walls both ends, ceiling all the way across (no hopping out)
+  for (let ty = -1; ty >= -6; ty--) { put(b + 1, ty, T_STONE); put(b + LEN - 2, ty, T_STONE); }
+  for (let i = 1; i < LEN - 1; i++) put(b + i, -7, T_STONE);
+  coinRow(b + 5, -1, 10);
+  coinRow(b + 7, -4, 6);
+  coinArcOver(b + 15, 9, 0);
+  qblock(b + 21, -4, 'heart');
+  if (rng() < 0.65) qblock(b + 26, -4, pick(['star', 'wings', 'giga', 'moon', 'rain']));
+  else coinRow(b + 26, -3, 4);
+  const ex = b + LEN - 5;
+  put(ex, -1, T_PIPEL); put(ex + 1, -1, T_PIPER);
+  put(ex, -2, T_CAPL); put(ex + 1, -2, T_CAPR);
+  game.inBonus.exitX = ex * TILE;
+  game.inBonus.exitCapY = -2 * TILE;
+  player.x = (b + 3) * TILE; player.y = -player.h - 70; player.vy = 0;
+  player.mode = 'run'; player.dj = true; player.onGround = false; player.pipeT = 0;
+  game.prevTheme = game.themeIdx;
+  game.themeIdx = game.themeIdx === 2 ? 4 : 2;   // cave palette (castle if already caves)
+  game.themeFade = 0;
+  tintPage();
+  cam.x = player.x - camOffX();
+  announce('BONUS ROOM!', 90);
+}
+function leaveBonus() {
+  const b = game.inBonus;
+  player.mode = 'pipeout'; player.pipeT = 0;
+  player.x = b.retX + 16 - player.w / 2;
+  player.y = b.capY + 4;                          // rises out of the pipe you entered
+  player.vy = 0; player.onGround = false;
+  game.themeIdx = b.theme; game.themeFade = 0;
+  tintPage();
+  cam.x = player.x - camOffX();
+  sfx.pipe(); buzz(2);
 }
 
 function startBubble() {
@@ -1822,6 +2050,7 @@ function die() {
   if (player.mode === 'dead') return;
   player.mode = 'dead'; game.state = 'dying'; game.stateT = 0;
   player.vy = -6.4; game.star = 0; game.magnet = 0;
+  game.wings = 0; game.giga = 0; game.moon = 0; game.rain = 0;
   playSong('over'); buzz(4); game.shake = 7;
 }
 function gameOver() {
@@ -1849,10 +2078,14 @@ function updateEnts() {
       continue;
     }
     e.t++;
-    if (e.type === 'chomp' || e.type === 'rollo' || e.type === 'spiny' || e.type === 'pow' || e.type === 'shell') {
+    if (e.type === 'powfx') {          // cosmetic: reward rises out of the block and fades
+      e.y -= e.t < 14 ? 0.7 : 0.35;
+      if (e.t > 45) { e.dead = 2; e.deadT = 0; }
+      continue;
+    }
+    if (e.type === 'chomp' || e.type === 'rollo' || e.type === 'spiny' || e.type === 'shell') {
       // walkers with gravity
-      if (e.type === 'pow' && e.riseT > 0) { e.riseT--; e.y -= 0.6; }
-      else {
+      {
         const v = e.vx;
         e.x += v;
         // turn at walls
@@ -1892,12 +2125,13 @@ function updateEnts() {
       e.x += clamp(dx * 0.02, -1, 1) * mag + (mag > 0 ? game.speed * 0.32 : -0.6);
       e.y += clamp(dy * 0.02, -0.7, 0.7);
       e.y += Math.sin(e.t * 0.08) * 0.3;
+    } else if (e.type === 'warp') {
+      if (e.t % 26 === 0 && !game.inBonus)
+        parts.push({ x: e.x + 4 + rng() * 24, y: e.y - 2, vx: 0, vy: -0.35,
+          life: 24, color: '#ffe97a', size: 1, grav: 0 });
+      continue;
     } else if (e.type === 'flag') {
       if (!e.hit && player.x > e.x) worldTransition(e);
-      continue;
-    }
-    if (e.type === 'pow') {
-      if (overlap(pr, erect(e))) { collectPow(e); continue; }
       continue;
     }
     if (e.type === 'shell') {
@@ -1913,7 +2147,7 @@ function updateEnts() {
     if (e.type === 'snap' && e.out < 0.35) continue;
     const r = erect(e);
     if (!overlap(pr, r, 1)) continue;
-    if (game.star > 0) { killEnemy(e, 200); sfx.kick(); buzz(2); continue; }
+    if (game.star > 0 || game.giga > 0) { killEnemy(e, 200); sfx.kick(); buzz(2); continue; }
     if (player.slam && e.type !== 'wisp') { killEnemy(e, 150); sfx.stomp(); buzz(2); continue; }
     const stomp = player.vy > 0.5 && (player.y + player.h) - r.y < 7 + player.vy;
     if (stomp && STOMPABLE.has(e.type)) {
@@ -1940,23 +2174,38 @@ function updateEnts() {
   ents = ents.filter(e => !(e.dead && e.deadT <= 0));
 }
 
-function collectPow(e) {
-  e.dead = 2; e.deadT = 0;
+function applyPow(kind, x, y) {
   sfx.power(); buzz(2);
-  const r = erect(e);
-  if (e.kind === 'heart') {
-    if (game.hearts < game.maxHearts) { game.hearts++; addFloat(r.x, r.y - 8, '+1♥', '#ff8a9a'); }
-    else { addScore(500, r.x, r.y - 8); }
-    burst(r.x + 6, r.y + 6, '#e8453c', 8, 2, 0.1);
-  } else if (e.kind === 'star') {
+  if (kind === 'heart') {
+    if (game.hearts < game.maxHearts) { game.hearts++; addFloat(x, y - 8, '+1♥', '#ff8a9a'); }
+    else { addScore(500, x, y - 8); }
+    burst(x + 6, y + 6, '#e8453c', 8, 2, 0.1);
+  } else if (kind === 'star') {
     game.star = 430;
-    addFloat(r.x, r.y - 8, 'STAR!', '#ffe97a');
-    burst(r.x + 6, r.y + 6, '#ffd93c', 14, 2.6, 0.05);
+    addFloat(x, y - 8, 'STAR!', '#ffe97a');
+    burst(x + 6, y + 6, '#ffd93c', 14, 2.6, 0.05);
     playSong('star');
-  } else if (e.kind === 'magnet') {
+  } else if (kind === 'magnet') {
     game.magnet = 560;
-    addFloat(r.x, r.y - 8, 'MAGNET!', '#9adfff');
-    burst(r.x + 6, r.y + 6, '#59c8ff', 10, 2, 0.05);
+    addFloat(x, y - 8, 'MAGNET!', '#9adfff');
+    burst(x + 6, y + 6, '#59c8ff', 10, 2, 0.05);
+  } else if (kind === 'wings') {
+    game.wings = 780;
+    addFloat(x, y - 8, 'WINGS!', '#e8f4ff');
+    burst(x + 6, y + 6, '#ffffff', 12, 2.2, 0.02);
+  } else if (kind === 'giga') {
+    game.giga = 480;
+    addFloat(x, y - 8, 'GIGA!', '#ff9a3c');
+    burst(x + 6, y + 6, '#ff9a3c', 14, 2.6, 0.08);
+    game.shake = 4;
+  } else if (kind === 'moon') {
+    game.moon = 660;
+    addFloat(x, y - 8, 'MOON GRAVITY!', '#c8b4ff');
+    burst(x + 6, y + 6, '#c8b4ff', 12, 1.6, -0.02);
+  } else if (kind === 'rain') {
+    game.rain = 480;
+    addFloat(x, y - 8, 'COIN RAIN!', '#ffd93c');
+    burst(x + 6, y + 6, '#ffd93c', 10, 2, 0.05);
   }
 }
 
@@ -1981,6 +2230,10 @@ function updateCoins() {
   const pcx = player.x + 5, pcy = player.y + 7;
   for (const c of coins) {
     if (c.taken > 0) { c.taken++; c.y -= 1.2; continue; }
+    if (c.fall) {                       // rain coins drop until they clear the floor
+      c.y += c.fall;
+      if (c.y > 120) { c.taken = 9; continue; }
+    }
     if (game.magnet > 0) {
       const dx = pcx - c.x, dy = pcy - c.y, d2 = dx * dx + dy * dy;
       if (d2 < 4900) {
@@ -2150,7 +2403,8 @@ function drawEnt(e, camX, camY) {
   else if (e.type === 'spiny') img = f ? SPINY1 : SPINY0;
   else if (e.type === 'bat') img = ((e.t >> 3) & 1) ? BAT1 : BAT0;
   else if (e.type === 'wisp') img = f ? WISP1 : WISP0;
-  else if (e.type === 'pow') img = e.kind === 'heart' ? HEART : e.kind === 'star' ? STAR : MAGNET;
+  else if (e.type === 'powfx') img = { heart: HEART, star: STAR, magnet: MAGNET,
+    wings: WINGICON, giga: GIGAICON, moon: MOONICON, rain: RAINICON }[e.kind] || HEART;
   else if (e.type === 'snap') {
     if (e.dead) {   // knocked out of the pipe, tumbling
       ctx.save(); ctx.translate(sx + 1, Math.round(e.y - camY) + 4); ctx.scale(1, -1);
@@ -2166,6 +2420,11 @@ function drawEnt(e, camX, camY) {
     const head = ((e.t >> 3) & 1) ? SNAP0 : SNAP1;
     ctx.drawImage(head, sx - 7, Math.round(e.y - camY) - 4);
     ctx.restore();
+    return;
+  }
+  else if (e.type === 'warp') {
+    const bob = Math.round(Math.sin(game.frame * 0.11) * 2);
+    drawTextC(ctx, '↓', sx + 16, sy - 13 + bob, 1, '#ffe97a', '#1a1c2c');
     return;
   }
   else if (e.type === 'flag') {
@@ -2186,12 +2445,15 @@ function drawEnt(e, camX, camY) {
   } else if (e.dead === 1) {  // knocked flying, upside down
     ctx.save(); ctx.translate(sx + 8, sy + 8); ctx.scale(1, -1);
     ctx.drawImage(img, -8, -8); ctx.restore();
-  } else if (e.type === 'pow' && e.riseT > 0) {
-    ctx.save(); ctx.beginPath();
-    ctx.rect(sx - 2, sy - 20, 20, (e.y - camY) - sy + 32); ctx.clip();
-    ctx.drawImage(img, sx + 2, sy + 2); ctx.restore();
-  } else if (e.type === 'pow') {
-    ctx.drawImage(img, sx + 2, sy + 2 + Math.round(Math.sin(e.t * 0.15)));
+  } else if (e.type === 'powfx') {
+    if (e.t < 14) {           // clipped while emerging from the block
+      ctx.save(); ctx.beginPath();
+      ctx.rect(sx - 2, sy - 20, 20, (e.y - camY) - sy + 32); ctx.clip();
+      ctx.drawImage(img, sx + 2, sy + 2); ctx.restore();
+    } else {                  // free float, fading out
+      ctx.globalAlpha = Math.max(0, 1 - (e.t - 14) / 31);
+      ctx.drawImage(img, sx + 2, sy + 2);
+    }
   } else ctx.drawImage(img, sx, sy);
   ctx.globalAlpha = 1;
 }
@@ -2211,17 +2473,17 @@ function drawPlayer(camX, camY) {
     ctx.globalAlpha = 1;
   }
   let img;
-  if (player.mode === 'dead') img = HERO_HURT;
-  else if (player.mode === 'bubble') {
-    img = HERO_BUBBLE;
-    ctx.drawImage(img, sx, sy + 2);
+  if (player.mode === 'bubble') {
+    ctx.drawImage(HERO_BUBBLE, sx, sy + 2);
     ctx.globalAlpha = 0.75;
     ctx.drawImage(BUBBLE, sx - 3, sy - 2, 22, 22);
     ctx.globalAlpha = 1;
     return;
   }
   let running = false;
-  if (player.slam) img = HERO_SLAM;
+  if (player.mode === 'dead') img = HERO_HURT;
+  else if (player.mode === 'pipein' || player.mode === 'pipeout') img = HERO_RUN1;
+  else if (player.slam) img = HERO_SLAM;
   else if (!player.onGround) img = player.stompT > 0 || player.flipT > 0 ? HERO_SLAM : HERO_JUMP;
   else if (game.invuln > 84) img = HERO_HURT;
   else {
@@ -2236,6 +2498,14 @@ function drawPlayer(camX, camY) {
   let sclX = 1, sclY = 1;
   if (player.landT > 0) { const t = player.landT / 9; sclX = 1 + 0.30 * t; sclY = 1 - 0.32 * t; }
   else if (player.stretchT > 0) { const t = player.stretchT / 8; sclX = 1 - 0.20 * t; sclY = 1 + 0.24 * t; }
+  if (game.giga > 0) {   // grow in over ~8 frames, shrink out over the last 8
+    const gs = 1 + 0.85 * Math.min(1, (480 - game.giga) / 8, game.giga / 8);
+    sclX *= gs; sclY *= gs;
+  }
+  if (game.wings > 0 && player.mode === 'run') {
+    const wf = (game.frame >> 3) & 1;
+    ctx.drawImage(WINGICON, sx - 8, sy + 1 - wf * 2);
+  }
   if (rot === 0 && sclX === 1 && sclY === 1) {
     ctx.drawImage(img, sx, sy);
   } else {
@@ -2334,6 +2604,12 @@ function renderWorld() {
   const shY = game.shake > 0.5 ? R(-game.shake, game.shake) : 0;
   const camX = cam.x + shX, camY = cam.y + shY;
   drawSkyAndParallax(camX, camY);
+  if (game.moon > 0) {   // dreamlike violet wash
+    ctx.fillStyle = 'rgba(150,110,255,' + (0.12 * Math.min(1, game.moon / 40)) + ')';
+    ctx.fillRect(0, 0, W, H);
+  }
+  const inPipe = player.mode === 'pipein' || player.mode === 'pipeout';
+  if (inPipe) drawPlayer(camX, camY);      // behind tiles: the pipe swallows him
   drawTiles(camX, camY);
   const cf = [0, 1, 2, 1][(game.frame >> 3) % 4];
   for (const c of coins) {
@@ -2343,7 +2619,7 @@ function renderWorld() {
     ctx.globalAlpha = 1;
   }
   for (const e of ents) drawEnt(e, camX, camY);
-  drawPlayer(camX, camY);
+  if (!inPipe) drawPlayer(camX, camY);
   for (const p of parts) {
     ctx.fillStyle = p.color;
     if (p.sway) p.x += Math.sin(p.life * 0.1) * 0.4;
