@@ -107,11 +107,13 @@ function resize() {
   canvas.width = W; canvas.height = H;
   canvas.style.width = cw + 'px'; canvas.style.height = chh + 'px';
   ctx.imageSmoothingEnabled = false;
-  readInsets();
+  readInsets(cw, chh);
 }
 let safeTop = 0, safeBot = 0, safeL = 0, safeR = 0;
-function readInsets() {
-  // notch/home-indicator overlay the canvas in standalone mode; keep UI clear of them
+function readInsets(cw, chh) {
+  // notch/home-indicator overlay the canvas in standalone mode; keep UI clear of them.
+  // uses the same visualViewport-corrected size as resize() so bottom/right insets
+  // aren't computed against a stale innerWidth/innerHeight on iOS launch/rotation
   const probe = document.createElement('div');
   probe.style.cssText = 'position:fixed;top:env(safe-area-inset-top);bottom:env(safe-area-inset-bottom);' +
     'left:env(safe-area-inset-left);right:env(safe-area-inset-right);pointer-events:none;visibility:hidden;';
@@ -120,9 +122,9 @@ function readInsets() {
   probe.remove();
   const s = (window.devicePixelRatio || 1) / SCALE;
   safeTop = Math.ceil(r.top * s);
-  safeBot = Math.ceil(Math.max(0, window.innerHeight - r.bottom) * s);
+  safeBot = Math.ceil(Math.max(0, chh - r.bottom) * s);
   safeL = Math.ceil(r.left * s);
-  safeR = Math.ceil(Math.max(0, window.innerWidth - r.right) * s);
+  safeR = Math.ceil(Math.max(0, cw - r.right) * s);
 }
 window.addEventListener('resize', resize);
 window.addEventListener('orientationchange', () => setTimeout(resize, 250));
@@ -1362,6 +1364,7 @@ for (const k in SONGS) {
   const s = SONGS[k];
   s.pl = parseTrack(s.lead); s.ph = parseTrack(s.harm); s.pb = parseTrack(s.bass);
 }
+if (MUSIC_ERRORS.length) console.error('pixelrun: miscounted music bars:', MUSIC_ERRORS);
 
 const audio = {
   ctx: null, master: null, mgain: null, sgain: null,
@@ -1583,7 +1586,14 @@ function tileAt(tx, ty) {
 function solidAt(tx, ty) { return SOLID.has(tileAt(tx, ty)); }
 function groundTopPx(tx) { const g = ground.get(tx); return g === undefined ? Infinity : -g * TILE; }
 function waterSurfaceAt(px) { return water.get(Math.floor(px / TILE)); }
-function inWaterAt(px, py) { const s = waterSurfaceAt(px); return s !== undefined && py > s; }
+function warpUnderfoot() {
+  // the warp pipe the player is standing on, if any (shared by swipe + slam entry)
+  const pc = player.x + player.w / 2, feet = player.y + player.h;
+  for (const e of ents)
+    if (e.type === 'warp' && !e.dead && pc > e.x + 2 && pc < e.x + 30 && Math.abs(feet - e.y) < 6)
+      return e;
+  return null;
+}
 function difficulty() {
   return Math.min(1.25, gen.totalTiles / 2600 * 0.85 + Math.floor((game.worldNum - 1) / THEMES.length) * 0.3);
 }
@@ -1956,9 +1966,9 @@ function update() {
   if (player.inWater && player.mode === 'run' && game.frame % 24 === 0)
     parts.push({ x: player.x + 11, y: player.y + 3, vx: R(-0.2, 0.1), vy: -0.5,
       life: 34, color: '#bfeaff', size: 1, grav: -0.01 });
-  if (game.rain > 0) {
-    game.rain--;
-    if (game.frame % 5 === 0 && !game.inBonus)   // it's raining money
+  if (game.rain > 0 && !game.inBonus) {   // countdown pauses in bonus rooms so a
+    game.rain--;                          // grotto-granted rain isn't silently wasted
+    if (game.frame % 5 === 0)             // it's raining money
       coins.push({ x: cam.x + 30 + rng() * (W - 50), y: cam.y - 14, vx: 0, vy: 0,
         fall: 1.5 + rng() * 1.2, taken: 0 });
   }
@@ -2085,13 +2095,8 @@ function updatePlayer() {
       burst(player.x + 5, player.y + 6, '#fff', 3, 1, 0);
     } else if (player.onGround && player.mode === 'run' && !game.inBonus) {
       // swipe down while standing on a warp pipe: go in
-      const pc = player.x + player.w / 2, feet = player.y + player.h;
-      for (const e of ents) {
-        if (e.type === 'warp' && !e.dead && pc > e.x + 2 && pc < e.x + 30 && Math.abs(feet - e.y) < 5) {
-          enterPipe(e);
-          return;
-        }
-      }
+      const w = warpUnderfoot();
+      if (w) { enterPipe(w); return; }
     }
   }
 
@@ -2201,13 +2206,8 @@ function slamLand() {
   player.slam = false;
   // slamming onto a warp pipe dives straight in — the natural gesture
   if (!game.inBonus) {
-    const pc = player.x + player.w / 2, feet = player.y + player.h;
-    for (const e of ents) {
-      if (e.type === 'warp' && !e.dead && pc > e.x + 2 && pc < e.x + 30 && Math.abs(feet - e.y) < 6) {
-        enterPipe(e);
-        return;
-      }
-    }
+    const w = warpUnderfoot();
+    if (w) { enterPipe(w); return; }
   }
   player.landT = 9;
   game.shake = 6;
@@ -2453,25 +2453,22 @@ function updateEnts() {
     }
     if (e.type === 'chomp' || e.type === 'rollo' || e.type === 'spiny' || e.type === 'shell') {
       // walkers with gravity
-      {
-        const v = e.vx;
-        e.x += v;
-        // turn at walls
-        const dir = v > 0 ? 1 : -1;
-        const ftx = Math.floor((e.x + 8 + dir * 7) / TILE);
-        const fty = Math.floor((e.y + 12) / TILE);
-        if (solidAt(ftx, fty)) {
-          if (e.type === 'shell') { burst(e.x + 8, e.y + 8, '#59c8ff', 10, 2.4, 0.15); e.dead = 2; e.deadT = 1; sfx.kick(); }
-          else { e.vx = -e.vx; e.x += e.vx * 2; }
-        }
-        e.vy = Math.min(e.vy + GRAV, MAX_FALL);
-        e.y += e.vy;
-        const tyB = Math.floor((e.y + 16) / TILE);
-        for (let tx = Math.floor((e.x + 3) / TILE); tx <= Math.floor((e.x + 13) / TILE); tx++) {
-          const id = tileAt(tx, tyB);
-          if (SOLID.has(id) || (id === T_PLAT && e.vy >= 0 && e.y + 16 - e.vy <= tyB * TILE + 3)) {
-            e.y = tyB * TILE - 16; e.vy = 0; break;
-          }
+      e.x += e.vx;
+      // turn at walls
+      const dir = e.vx > 0 ? 1 : -1;
+      const ftx = Math.floor((e.x + 8 + dir * 7) / TILE);
+      const fty = Math.floor((e.y + 12) / TILE);
+      if (solidAt(ftx, fty)) {
+        if (e.type === 'shell') { burst(e.x + 8, e.y + 8, '#59c8ff', 10, 2.4, 0.15); e.dead = 2; e.deadT = 1; sfx.kick(); }
+        else { e.vx = -e.vx; e.x += e.vx * 2; }
+      }
+      e.vy = Math.min(e.vy + GRAV, MAX_FALL);
+      e.y += e.vy;
+      const tyB = Math.floor((e.y + 16) / TILE);
+      for (let tx = Math.floor((e.x + 3) / TILE); tx <= Math.floor((e.x + 13) / TILE); tx++) {
+        const id = tileAt(tx, tyB);
+        if (SOLID.has(id) || (id === T_PLAT && e.vy >= 0 && e.y + 16 - e.vy <= tyB * TILE + 3)) {
+          e.y = tyB * TILE - 16; e.vy = 0; break;
         }
       }
     } else if (e.type === 'bat') {
