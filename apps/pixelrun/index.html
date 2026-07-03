@@ -68,7 +68,7 @@ const MAX_SPEED = 3.05;
 const PIT_Y = 11 * TILE;             // below this = pit death
 const WORLD_LEN = 500;               // tiles per world before the flag
 const SAVE = 'pixelrun_';
-const VERSION = 16;                  // shown on the title screen — bump once per PR (see CLAUDE.md)
+const VERSION = 17;                  // shown on the title screen — bump once per PR (see CLAUDE.md)
 
 // ---------- utils ----------
 const clamp = (v, a, b) => v < a ? a : v > b ? b : v;
@@ -202,6 +202,7 @@ const FONT = {
 };
 function textW(str, s) { return str.length * 4 * s - s; }
 function drawText(c, str, x, y, s, color, shadow) {
+  x = Math.round(x); y = Math.round(y);   // half-pixel positions blur the pixel font
   str = String(str).toUpperCase();
   if (shadow) drawText(c, str, x + s, y + s, s, shadow);
   c.fillStyle = color;
@@ -2045,9 +2046,17 @@ function update() {
   }
   if (game.rain > 0 && !game.inBonus) {   // countdown pauses in bonus rooms so a
     game.rain--;                          // grotto-granted rain isn't silently wasted
-    if (game.frame % 5 === 0)             // it's raining money
-      coins.push({ x: player.x + 40 + rng() * (W * 0.9), y: cam.y - 14, vx: 0, vy: 0,
-        fall: 1.2 + rng() * 0.9, taken: 0 });   // biased ahead so they land in your path
+    if (game.frame % 5 === 0) {           // it's raining money — LEAD THE RUNNER:
+      // compute each coin's fall time and drop it where the player WILL be,
+      // plus 20-250px — otherwise everything lands behind you at run speed
+      const fall = 3 + rng() * 1.2;
+      const spawnY = cam.y + 26;
+      let gt = groundTopPx(Math.floor((player.x + 80) / TILE));
+      if (!Number.isFinite(gt)) gt = 0;
+      const T = Math.max(20, (gt - 6 - spawnY) / fall);
+      coins.push({ x: player.x + game.speed * T + 20 + rng() * 230, y: spawnY,
+        vx: 0, vy: 0, fall, taken: 0 });
+    }
   }
   updatePlayer();
   updateEnts();
@@ -3272,6 +3281,7 @@ function drawHUD() {
   }
 }
 function drawBtn(label, cx, y, on) {
+  y = Math.round(y);                      // fractional y blurred the pause buttons
   const w = textW(label, 1) + 16, h = 15;
   const x = Math.round(cx - w / 2);
   ctx.fillStyle = '#1a1c2c'; ctx.fillRect(x, y, w, h);
@@ -3337,7 +3347,7 @@ function renderTitle() {
   ui.sound = drawBtn('SOUND ' + (audio.muted ? 'OFF' : 'ON'), W / 2 - 44, H - 22 - safeBot, !audio.muted);
   ui.buzz = drawBtn('BUZZ ' + (hapticsOn ? 'ON' : 'OFF'), W / 2 + 44, H - 22 - safeBot, hapticsOn);
   const vs = 'V' + VERSION;
-  drawText(ctx, vs, W - textW(vs, 1) - 3 - safeR, H - 8 - safeBot, 1, 'rgba(255,255,255,0.6)', '#1a1c2c');
+  drawText(ctx, vs, W - textW(vs, 1) - 8 - safeR, H - 16 - safeBot, 1, 'rgba(255,255,255,0.6)', '#1a1c2c');
 }
 function drawWater(camX, camY) {
   if (!water.size) return;
