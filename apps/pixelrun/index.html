@@ -68,7 +68,7 @@ const MAX_SPEED = 3.05;
 const PIT_Y = 11 * TILE;             // below this = pit death
 const WORLD_LEN = 500;               // tiles per world before the flag
 const SAVE = 'pixelrun_';
-const VERSION = 18;                  // shown on the title screen — bump once per PR (see CLAUDE.md)
+const VERSION = 19;                  // shown on the title screen — bump once per PR (see CLAUDE.md)
 
 // ---------- utils ----------
 const clamp = (v, a, b) => v < a ? a : v > b ? b : v;
@@ -1732,6 +1732,7 @@ const sfx = {
   pop()    { sq(880, 0.05, 0.08, 1400); },
   pipe()   { sq(340, 0.32, 0.13, 90); sqAt(240, 0.1, 0.26, 0.10, 70); },
   rattle() { if (audio.ctx) for (let i = 0; i < 3; i++) noise(audio.sgain, audio.ctx.currentTime + i * 0.05, 0.03, 0.09, 2400); },
+  century() { sq(784, 0.06, 0.10); sqAt(988, 0.06, 0.06, 0.10); sqAt(1175, 0.12, 0.06, 0.10); sqAt(1568, 0.18, 0.18, 0.11); },
   splash() { if (audio.ctx) { noise(audio.sgain, audio.ctx.currentTime, 0.22, 0.16, 900); sq(180, 0.12, 0.07, 90); } },
   swim()   { sq(300, 0.07, 0.05, 420); },
   combo(n) { sq(523 * Math.pow(1.122, Math.min(n, 12)), 0.09, 0.10); }
@@ -1795,7 +1796,7 @@ const game = {
   combo: 0, star: 0, magnet: 0, invuln: 0,
   wings: 0, giga: 0, moon: 0, rain: 0,
   shake: 0, stateT: 0, themeFade: 0, prevTheme: 0,
-  hitstop: 0, heartFlash: 0, heartPop: 0,
+  hitstop: 0, heartFlash: 0, heartPop: 0, coinPop: 0, nextCoinFete: 100,
   announce: '', announceT: 0,
   best: load('best', 0), bestDist: load('bestDist', 0), newBest: false, recordFete: false,
   announceMax: 1, wonder: 0,
@@ -1980,8 +1981,8 @@ const patterns = [
     const theme = THEMES[genThemeIdx()];
     const snapHere = theme.enemies.includes('snap') && rng() < 0.55;
     if (snapHere) {
-      ents.push({ type: 'snap', x: tx * TILE + 8, y: (-g - ph) * TILE, capY: (-g - ph) * TILE,
-        w: 12, h: 14, ox: 2, oy: 0, dead: 0, t: RI(0, 60), phase: 0, out: 0 });
+      ents.push({ type: 'snap', x: tx * TILE + 16, y: (-g - ph) * TILE, capY: (-g - ph) * TILE,
+        w: 12, h: 14, ox: 2, oy: 0, dead: 0, t: RI(0, 60), phase: 0, out: 0 });   // x = pipe seam = visual center
     } else if (ph <= 3 && gen.totalTiles - gen.lastWarp > 220 && rng() < 0.5) {
       // a warp pipe: swipe down on its cap to visit a bonus room
       gen.lastWarp = gen.totalTiles;
@@ -2164,6 +2165,7 @@ function startRun(world) {
   game.shake = 0; game.newBest = false; game.themeFade = 0;
   game.recordFete = game.testRun;                // suppress NEW RECORD! in tests
   game.hitstop = 0; game.heartFlash = 0; game.heartPop = 0;
+  game.coinPop = 0; game.nextCoinFete = 100;
   sfxState.coinStreak = 0; sfxState.coinFrame = -99;
   input.jumpBuf = 0; input.slamReq = false; input.held = false;
   game.inBonus = null;
@@ -2220,6 +2222,21 @@ function update() {
   if (game.invuln > 0) game.invuln--;
   if (game.heartFlash > 0) game.heartFlash--;
   if (game.heartPop > 0) game.heartPop--;
+  if (game.coinPop > 0) game.coinPop--;
+  // every 100th coin is an event: points, fanfare, gold confetti
+  while (game.coins >= game.nextCoinFete && game.state === 'play') {
+    const n = game.nextCoinFete;
+    game.nextCoinFete += 100;
+    addScore(1000, undefined);
+    addFloat(player.x - 12, player.y - 34, '×' + n + ' COINS! +1000', '#ffd93c');
+    for (let i = 0; i < 14; i++)
+      parts.push({ x: player.x + R(-8, 18), y: player.y + R(-14, 10), vx: R(-1.4, 1.4), vy: R(-2.4, -0.6),
+        life: RI(24, 48), color: i % 3 ? '#ffd93c' : '#fff6c8', size: 2, grav: 0.06 });
+    parts.push({ x: player.x + 5, y: player.y + 6, vx: 0, vy: 0, life: 12,
+      color: '#ffd93c', size: 1, grav: 0, ring: 2 });
+    game.coinPop = 16;
+    sfx.century(); buzz(3); game.hitstop = 3;
+  }
   if (game.magnet > 0) game.magnet--;
   if (game.star > 0) {
     game.star--;
@@ -3594,8 +3611,11 @@ function drawHUD() {
       ctx.drawImage(HEART, x0 + i * 14 + hjit, y0);
   }
   ctx.globalAlpha = 1;
-  ctx.drawImage(COIN[0], x0 + 1, y0 + 14, 10, 10);
-  drawText(ctx, '×' + game.coins, x0 + 14, y0 + 16, 1, '#fff', '#1a1c2c');
+  if (game.coinPop > 0)   // the counter celebrates each century
+    ctx.drawImage(COIN[0], x0 - 1, y0 + 12, 14, 14);
+  else
+    ctx.drawImage(COIN[0], x0 + 1, y0 + 14, 10, 10);
+  drawText(ctx, '×' + game.coins, x0 + 14, y0 + 16, 1, game.coinPop > 0 ? '#ffd93c' : '#fff', '#1a1c2c');
   // pause button
   ui.pause = { x: xr - 22, y: y0 - 3, w: 20, h: 20 };
   ctx.fillStyle = 'rgba(0,0,0,0.25)'; ctx.fillRect(xr - 20, y0 - 1, 16, 14);
@@ -3643,10 +3663,8 @@ function drawLogo(cx, y, s) {
     drawText(ctx, word2[i], cx - textW(word2, s + 2) / 2 + i * 4 * (s + 2), y + 6 * s + 4 + b, s + 2, LOGO_COLORS[(i + 3) % 6], '#1a1c2c');
   }
 }
-function renderTitle() {
-  const camX = game.frame * 0.6, camY = camBaseY();
-  drawSkyAndParallax(camX, camY);
-  // ground strip
+function drawTitleGround(camX) {
+  // decorative ground strip shared by the title and level-select screens
   const cache = tileCache[game.themeIdx];
   const gy = -camBaseY();       // baseline ground on screen
   for (let x = -(Math.round(camX * 1.5) % TILE) - TILE; x < W + TILE; x += TILE) {
@@ -3654,6 +3672,12 @@ function renderTitle() {
     for (let y = gy + TILE; y < H; y += TILE)
       ctx.drawImage(cache, TILE, 0, TILE, TILE, x, y, TILE, TILE);
   }
+}
+function renderTitle() {
+  const camX = game.frame * 0.6, camY = camBaseY();
+  drawSkyAndParallax(camX, camY);
+  drawTitleGround(camX);
+  const gy = -camBaseY();       // baseline ground on screen (layout anchor below)
   // hero running in place, with an excited hop every few seconds
   player.runT += 0.28;
   const hopT = game.frame % 200;
@@ -3816,6 +3840,7 @@ function renderOverlays() {
 function renderLevels() {
   const camX = game.frame * 0.6, camY = camBaseY();
   drawSkyAndParallax(camX, camY);
+  drawTitleGround(camX);   // without it the dimmed sky-bottom reads as a weird bar
   ctx.fillStyle = 'rgba(10,12,28,0.74)';
   ctx.fillRect(0, 0, W, H);
   const y0 = safeTop + Math.max(24, H * 0.08);
