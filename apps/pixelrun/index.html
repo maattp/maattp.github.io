@@ -68,7 +68,7 @@ const MAX_SPEED = 3.05;
 const PIT_Y = 11 * TILE;             // below this = pit death
 const WORLD_LEN = 500;               // tiles per world before the flag
 const SAVE = 'pixelrun_';
-const VERSION = 34;                  // shown on the title screen — bump once per PR (see CLAUDE.md)
+const VERSION = 35;                  // shown on the title screen — bump once per PR (see CLAUDE.md)
 
 // ---------- utils ----------
 const clamp = (v, a, b) => v < a ? a : v > b ? b : v;
@@ -2033,6 +2033,7 @@ canvas.addEventListener('pointermove', e => {
   }
 });
 function endPointer(e) {
+  unlockAudio();                       // touchend is the unlock iOS always accepts
   if (e.pointerId !== input.pid) return;
   input.pid = -1;
   releaseJump();
@@ -2082,10 +2083,12 @@ let ground = new Map();      // tx -> elevation g (ground top px = -g*TILE)
 let tiles = new Map();       // packed key -> tile id
 let tufts = new Map();       // tx -> grass tuft variant (sways as you pass)
 // pet companion: purely cosmetic, trails the player's own path on a lag
-let petIdx = clamp(load('pet', 0), 0, PETS.length - 1);
+// petIdx === PETS.length means NO PET — the cycle's last stop before wrapping
+let petIdx = clamp(load('pet', 0), 0, PETS.length);
 const pet = { x: 0, y: 0, t: 0, celeb: 0 };
 let petHist = [];
 function updatePet() {
+  if (petIdx >= PETS.length) return;
   pet.t++;
   petHist.push({ x: player.x, y: player.y, g: player.onGround, w: player.inWater });
   if (petHist.length > 12) petHist.shift();   // short lag: stays right at the heel
@@ -2160,6 +2163,7 @@ function updatePet() {
   }
 }
 function drawPet(camX, camY) {
+  if (petIdx >= PETS.length) return;   // NO PET: running solo
   const def = PETS[petIdx];
   let dx = Math.round(pet.x - camX), dy = Math.round(pet.y - camY);
   let rot = 0;
@@ -3772,9 +3776,28 @@ function mkHit(cx, cy) {
   const p = cx >= 0 ? { x: cx * dpr / SCALE, y: cy * dpr / SCALE } : null;
   return r => p && r && p.x >= r.x && p.x <= r.x + r.w && p.y >= r.y && p.y <= r.y + r.h;
 }
-function onPress(cx, cy) {
+// iOS only reliably honors the WebAudio unlock inside a REAL gesture — and on
+// older WebKit specifically on touchEND. So: attempt on both press and release,
+// play the classic silent one-shot to complete the unlock, and kick the title
+// music off the very first touch (cold launches were silent until the first
+// in-game jump, whose gesture was the one that finally stuck).
+function unlockAudio() {
   if (!audio.ctx) AC();
-  if (audio.ctx && audio.ctx.state === 'suspended') audio.ctx.resume().catch(() => {});
+  const ac = audio.ctx;
+  if (!ac) return;
+  if (ac.state === 'suspended') ac.resume().catch(() => {});
+  if (!audio.unlocked) {
+    try {
+      const b = ac.createBuffer(1, 1, 22050);
+      const src = ac.createBufferSource(); src.buffer = b;
+      src.connect(ac.destination); src.start(0);
+      audio.unlocked = true;
+    } catch (e) {}
+  }
+  if (!audio.song && game.state === 'title') playSong('title');
+}
+function onPress(cx, cy) {
+  unlockAudio();
   const hit = mkHit(cx, cy);
   if (game.state === 'title') {
     // handled on RELEASE so Konami swipes don't launch the game; keyboard = start now
@@ -3802,7 +3825,7 @@ function onPress(cx, cy) {
 function titleRelease(hit) {
   if (settingsHit(hit)) return;
   if (hit(ui.petRect)) {                 // tap your companion to meet the next one
-    petIdx = (petIdx + 1) % PETS.length;
+    petIdx = (petIdx + 1) % (PETS.length + 1);   // the extra stop is NO PET
     store('pet', petIdx);
     ui.petNameT = game.frame;
     sfx.ui(); buzz(1);
@@ -4488,8 +4511,20 @@ function renderTitle() {
   ctx.restore();
   // your companion waits beside you — tap it to meet the next one
   {
-    const def = PETS[petIdx];
+    const def = petIdx < PETS.length ? PETS[petIdx] : null;
     const ppx = Math.round(W / 2 - 76);
+    if (!def) {   // NO PET: a faint pawprint marks the empty spot (still tappable)
+      const ppy0 = gy - 30;
+      ctx.globalAlpha = 0.35;
+      ctx.fillStyle = '#1a1c2c';
+      ctx.fillRect(ppx + 11, ppy0 + 18, 4, 3); ctx.fillRect(ppx + 17, ppy0 + 18, 4, 3);
+      ctx.fillRect(ppx + 10, ppy0 + 23, 5, 4); ctx.fillRect(ppx + 17, ppy0 + 23, 5, 4);
+      ctx.fillRect(ppx + 13, ppy0 + 26, 6, 4);
+      ctx.globalAlpha = 1;
+      ui.petRect = { x: ppx - 5, y: ppy0 - 7, w: 40, h: 44 };
+      if (game.frame - (ui.petNameT || -999) < 110)
+        drawTextC(ctx, 'NO PET', ppx + 15, gy + 6, 1, '#8a8ea0', '#1a1c2c');
+    } else {
     const bob = def.mode === 'fly' ? Math.round(Math.sin(game.frame * 0.09) * 3) - 22 : 0;
     // ground pets: plant the paw row exactly on the ground line (they hovered)
     const ppy = (def.mode === 'ground' ? gy + 1 - 2 * def.foot : gy - 30) + bob;
@@ -4512,6 +4547,7 @@ function renderTitle() {
     ui.petRect = { x: ppx - 5, y: ppy - 7, w: 40, h: 44 };
     if (game.frame - (ui.petNameT || -999) < 110)
       drawTextC(ctx, def.name, ppx + 15, gy + 6, 1, '#ffe97a', '#1a1c2c');
+    }
   }
   drawLogo(W / 2, safeTop + H * 0.12, 4);
   drawTextC(ctx, 'AN ENDLESS PLATFORM DASH', W / 2, safeTop + H * 0.12 + 62, 1, '#fff', '#1a1c2c');
