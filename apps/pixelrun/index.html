@@ -2081,7 +2081,14 @@ function updatePet() {
     ty2 += -12 + Math.sin(pet.t * 0.12) * 2.5;               // hover at the shoulder
   } else {
     const ws = waterSurfaceAt(tx2 + 8);
-    if (def.swims && ws !== undefined && trail.w) ty2 = ws - 9;   // paddle on the surface
+    if (def.swims && ws !== undefined && trail.w) {
+      // pillar gates poke above the waterline — dive under them along the
+      // player's own path instead of clipping through the stone
+      const fTx = Math.floor((tx2 + 8) / TILE), fTy = Math.floor((ws - 6) / TILE);
+      const blocked = solidAt(fTx, fTy) || solidAt(fTx + 1, fTy) ||
+                      solidAt(fTx + 2, fTy);   // look ahead: start the dive early
+      if (!blocked) ty2 = ws - 9;              // paddle on the surface
+    }
     else if (!trail.w && trail.g) {
       const gt2 = surfaceBelow(tx2 + 8, ty2, false);
       if (gt2 !== null) ty2 = gt2 - 13;                      // paws on the ground
