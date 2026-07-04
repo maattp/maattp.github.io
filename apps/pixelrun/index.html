@@ -2033,6 +2033,7 @@ canvas.addEventListener('pointermove', e => {
   }
 });
 function endPointer(e) {
+  unlockAudio();                       // touchend is the unlock iOS always accepts
   if (e.pointerId !== input.pid) return;
   input.pid = -1;
   releaseJump();
@@ -3775,9 +3776,28 @@ function mkHit(cx, cy) {
   const p = cx >= 0 ? { x: cx * dpr / SCALE, y: cy * dpr / SCALE } : null;
   return r => p && r && p.x >= r.x && p.x <= r.x + r.w && p.y >= r.y && p.y <= r.y + r.h;
 }
-function onPress(cx, cy) {
+// iOS only reliably honors the WebAudio unlock inside a REAL gesture — and on
+// older WebKit specifically on touchEND. So: attempt on both press and release,
+// play the classic silent one-shot to complete the unlock, and kick the title
+// music off the very first touch (cold launches were silent until the first
+// in-game jump, whose gesture was the one that finally stuck).
+function unlockAudio() {
   if (!audio.ctx) AC();
-  if (audio.ctx && audio.ctx.state === 'suspended') audio.ctx.resume().catch(() => {});
+  const ac = audio.ctx;
+  if (!ac) return;
+  if (ac.state === 'suspended') ac.resume().catch(() => {});
+  if (!audio.unlocked) {
+    try {
+      const b = ac.createBuffer(1, 1, 22050);
+      const src = ac.createBufferSource(); src.buffer = b;
+      src.connect(ac.destination); src.start(0);
+      audio.unlocked = true;
+    } catch (e) {}
+  }
+  if (!audio.song && game.state === 'title') playSong('title');
+}
+function onPress(cx, cy) {
+  unlockAudio();
   const hit = mkHit(cx, cy);
   if (game.state === 'title') {
     // handled on RELEASE so Konami swipes don't launch the game; keyboard = start now
