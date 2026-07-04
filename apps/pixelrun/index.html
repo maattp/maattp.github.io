@@ -3426,7 +3426,12 @@ function onPress(cx, cy) {
     if (hit(ui.quit)) { game.state = 'title'; game.stateT = 0; playSong('title'); sfx.ui(); return; }
     togglePause(); sfx.ui();
   } else if (game.state === 'over') {
-    if (game.stateT > 45) startRun(game.startWorld || 1);   // retry the world you were testing
+    if (game.stateT > 45) {
+      if (game.testRun && hit(ui.overTitle)) {
+        game.state = 'title'; game.stateT = 0; playSong('title'); sfx.ui(); return;
+      }
+      startRun(game.startWorld || 1);   // retry the world you were testing
+    }
   }
 }
 function titleRelease(hit) {
@@ -4300,7 +4305,9 @@ function renderOverlays() {
     drawText(ctx, 'WORLD ' + game.worldNum + ' ' + THEMES[game.themeIdx].name, box.x + 8, box.y + 64, 1, '#fff');
     drawText(ctx, 'BEST DIST ' + game.bestDist + 'M', box.x + 8, box.y + 78, 1, '#8a8ea0');
     if (game.stateT > 45 && (game.frame >> 5) & 1)
-      drawTextC(ctx, 'TAP TO RUN AGAIN', px, box.y + box.h + 18, 2, '#ffe97a', '#1a1c2c');
+      drawTextC(ctx, game.testRun ? 'TAP: RETRY WORLD ' + game.startWorld : 'TAP TO RUN AGAIN',
+        px, box.y + box.h + 18, 2, '#ffe97a', '#1a1c2c');
+    ui.overTitle = game.testRun ? drawBtn('BACK TO TITLE', px, box.y + box.h + 30, false) : null;
   }
 }
 function renderLevels() {
