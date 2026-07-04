@@ -68,7 +68,7 @@ const MAX_SPEED = 3.05;
 const PIT_Y = 11 * TILE;             // below this = pit death
 const WORLD_LEN = 500;               // tiles per world before the flag
 const SAVE = 'pixelrun_';
-const VERSION = 27;                  // shown on the title screen — bump once per PR (see CLAUDE.md)
+const VERSION = 28;                  // shown on the title screen — bump once per PR (see CLAUDE.md)
 
 // ---------- utils ----------
 const clamp = (v, a, b) => v < a ? a : v > b ? b : v;
@@ -3853,13 +3853,47 @@ function drawSkyAndParallax(camX, camY) {
   }
   ctx.fillStyle = skyGrad(game.themeIdx);
   ctx.fillRect(0, 0, W, H);
-  // sun / moon
-  ctx.fillStyle = th.sun;
-  const sunX = W - 46, sunY = safeTop + 34;
-  ctx.fillRect(sunX - 8, sunY - 8, 16, 16);
-  ctx.fillRect(sunX - 10, sunY - 5, 20, 10); ctx.fillRect(sunX - 5, sunY - 10, 10, 20);
+  // sun / moon — not in the caves: there's no sky down there
+  if (game.themeIdx !== 2) {
+    ctx.fillStyle = th.sun;
+    const sunX = W - 46, sunY = safeTop + 34;
+    ctx.fillRect(sunX - 8, sunY - 8, 16, 16);
+    ctx.fillRect(sunX - 10, sunY - 5, 20, 10); ctx.fillRect(sunX - 5, sunY - 10, 10, 20);
+  }
   // high-altitude dressing: stars in the dark worlds, drifting clouds elsewhere
-  if (game.themeIdx === 2 || game.themeIdx === 6 || game.themeIdx === 7) {
+  if (game.themeIdx === 2) {
+    // CRYSTAL CAVES is an enclosed cavern: a jagged rock ceiling with hanging
+    // teeth, and mineral glints embedded in the rock — stars made no sense here
+    ctx.fillStyle = '#0d0a1e';
+    const coff = camX * 0.15;
+    for (let x = 0; x < W; x += 8) {
+      const wx = x + coff;
+      const hh = 26 + Math.round(Math.sin(wx * 0.045) * 8 + Math.sin(wx * 0.013) * 6);
+      ctx.fillRect(x, 0, 8, hh);
+    }
+    for (let i = 0; i < 9; i++) {                 // stalactite teeth along the edge
+      let xi = ((i * 233 + 47) - coff) % (W + 40);
+      if (xi < 0) xi += W + 40;
+      xi -= 20;
+      const tl = 12 + (i * 71) % 16;
+      const base = 24 + Math.round(Math.sin((xi + coff) * 0.045) * 8);
+      ctx.beginPath();
+      ctx.moveTo(xi - 5, base - 2); ctx.lineTo(xi, base + tl); ctx.lineTo(xi + 5, base - 2);
+      ctx.fill();
+    }
+    const gems = ['#8a5ccc', '#59c8ff', '#c86bde'];
+    for (let i = 0; i < 20; i++) {                // embedded crystal glints, twinkling
+      let xi = ((i * 173 + 61) - camX * 0.06) % (W + 20);
+      if (xi < 0) xi += W + 20;
+      const yi = 3 + (i * 97 + 13) % Math.max(90, H * 0.42);
+      const tw = ((game.frame >> 3) + i * 5) % 11;
+      ctx.globalAlpha = tw < 2 ? 0.95 : 0.3;
+      ctx.fillStyle = gems[i % 3];
+      const sz = tw < 2 ? 2 : 1;
+      ctx.fillRect(Math.round(xi), yi, sz, sz);
+    }
+    ctx.globalAlpha = 1;
+  } else if (game.themeIdx === 6 || game.themeIdx === 7) {
     ctx.fillStyle = 'rgba(255,255,255,0.7)';
     for (let i = 0; i < 26; i++) {
       let xi = ((i * 199 + 31) - camX * 0.04) % (W + 20);
