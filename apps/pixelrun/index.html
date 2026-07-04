@@ -68,7 +68,7 @@ const MAX_SPEED = 3.05;
 const PIT_Y = 11 * TILE;             // below this = pit death
 const WORLD_LEN = 500;               // tiles per world before the flag
 const SAVE = 'pixelrun_';
-const VERSION = 26;                  // shown on the title screen — bump once per PR (see CLAUDE.md)
+const VERSION = 27;                  // shown on the title screen — bump once per PR (see CLAUDE.md)
 
 // ---------- utils ----------
 const clamp = (v, a, b) => v < a ? a : v > b ? b : v;
@@ -4377,14 +4377,24 @@ function drawBtn(label, cx, y, on) {
 }
 const LOGO_COLORS = ['#ff5a5a', '#ffb03c', '#ffe93c', '#7dff6a', '#59c8ff', '#c86bde'];
 function drawLogo(cx, y, s) {
-  const word1 = 'PIXEL', word2 = 'RUN';
-  for (let i = 0; i < word1.length; i++) {
-    const b = Math.sin(game.frame * 0.08 + i * 0.8) * 2;
-    drawText(ctx, word1[i], cx - textW(word1, s) / 2 + i * 4 * s, y + b, s, LOGO_COLORS[i % 6], '#1a1c2c');
-  }
-  for (let i = 0; i < word2.length; i++) {
-    const b = Math.sin(game.frame * 0.08 + (i + 5) * 0.8) * 2;
-    drawText(ctx, word2[i], cx - textW(word2, s + 2) / 2 + i * 4 * (s + 2), y + 6 * s + 4 + b, s + 2, LOGO_COLORS[(i + 3) % 6], '#1a1c2c');
+  // readability first: solid fills with a chunky outline and soft drop shadow,
+  // one gentle group bob — the rainbow lives on as an underline accent
+  const bob = Math.round(Math.sin(game.frame * 0.06) * 2);
+  const word = (str, yy, sc, fill) => {
+    const x0 = cx - textW(str, sc) / 2;
+    drawText(ctx, str, x0 + 3, yy + 4, sc, 'rgba(26,28,44,0.4)');
+    for (const [ox, oy] of [[-2, 0], [2, 0], [0, -2], [0, 2], [-2, -2], [2, -2], [-2, 2], [2, 2]])
+      drawText(ctx, str, x0 + ox, yy + oy, sc, '#1a1c2c');
+    drawText(ctx, str, x0, yy, sc, fill);
+  };
+  word('PIXEL', y + bob, s, '#ffffff');
+  word('RUN', y + 6 * s + 4 + bob, s + 2, '#ffe93c');
+  const uw = textW('RUN', s + 2) + 8;
+  const ux = cx - uw / 2, uy = y + 6 * s + 4 + 5 * (s + 2) + 8 + bob;
+  const seg = Math.ceil(uw / 6);
+  for (let i = 0; i < 6; i++) {
+    ctx.fillStyle = LOGO_COLORS[i];
+    ctx.fillRect(Math.round(ux + i * seg), Math.round(uy), Math.min(seg, uw - i * seg), 3);
   }
 }
 function drawTitleGround(camX) {
