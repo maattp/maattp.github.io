@@ -68,7 +68,7 @@ const MAX_SPEED = 3.05;
 const PIT_Y = 11 * TILE;             // below this = pit death
 const WORLD_LEN = 500;               // tiles per world before the flag
 const SAVE = 'pixelrun_';
-const VERSION = 24;                  // shown on the title screen — bump once per PR (see CLAUDE.md)
+const VERSION = 25;                  // shown on the title screen — bump once per PR (see CLAUDE.md)
 
 // ---------- utils ----------
 const clamp = (v, a, b) => v < a ? a : v > b ? b : v;
@@ -852,6 +852,226 @@ const COIN = [sprite([
 '....kyyk....',
 '.....kk.....'
 ])];
+// ---------- pets: cosmetic companions, one per player, endlessly loyal ----------
+const PET_BIRD = [sprite([
+'................',
+'................',
+'................',
+'................',
+'................',
+'.....kkk........',
+'....kaaak.......',
+'...kaaaeky......',
+'..kAAaaaak......',
+'...kaaaak.......',
+'....kaak........',
+'.....kk.........',
+'................',
+'................',
+'................',
+'................'
+]), sprite([
+'................',
+'................',
+'................',
+'................',
+'................',
+'.....kkk........',
+'....kaaak.......',
+'...kaaaeky......',
+'...kaaaaak......',
+'..kAAaaak.......',
+'....kaak........',
+'.....kk.........',
+'................',
+'................',
+'................',
+'................'
+])];
+const PET_PUP = [sprite([
+'................',
+'................',
+'................',
+'................',
+'................',
+'................',
+'....k...k.......',
+'...kbk.kbk......',
+'...kbbbbbk......',
+'..kbbebbbbk.....',
+'.k.kbbbbbbk.....',
+'.kbkbbbbbbk.....',
+'..kkbbbbbk......',
+'....kk..kk......',
+'................',
+'................'
+]), sprite([
+'................',
+'................',
+'................',
+'................',
+'................',
+'................',
+'................',
+'...kbk.kbk......',
+'...kbbbbbk......',
+'..kbbebbbbk.....',
+'.k.kbbbbbbk.....',
+'.kbkbbbbbbk.....',
+'..kkbbbbbk......',
+'...kk..kk.......',
+'................',
+'................'
+])];
+const PET_DUCK = [sprite([
+'................',
+'................',
+'................',
+'................',
+'................',
+'................',
+'.....kk.........',
+'....kyyk........',
+'...kyyeykY......',
+'...kyyyyk.......',
+'..kyyyyyyk......',
+'..kyYyyyyk......',
+'...kyyyyk.......',
+'....k..k........',
+'................',
+'................'
+]), sprite([
+'................',
+'................',
+'................',
+'................',
+'................',
+'................',
+'.....kk.........',
+'....kyyk........',
+'...kyyeykY......',
+'...kyyyyk.......',
+'..kyyyyyyk......',
+'..kyYyyyyk......',
+'...kyyyyk.......',
+'.....kk.........',
+'................',
+'................'
+])];
+const PET_DRAGON = [sprite([
+'................',
+'................',
+'................',
+'................',
+'....k.k.........',
+'...kGGGk........',
+'..kGGeGGkr......',
+'.knnkGGGGk......',
+'..knnGGGGk......',
+'...kGGGGk.......',
+'..kGGGGGGk......',
+'...kGGGGk.......',
+'....kk.kk.......',
+'................',
+'................',
+'................'
+]), sprite([
+'................',
+'................',
+'................',
+'................',
+'....k.k.........',
+'...kGGGk........',
+'..kGGeGGkr......',
+'...kGGGGGk......',
+'.knnkGGGGk......',
+'..knnGGGk.......',
+'..kGGGGGGk......',
+'...kGGGGk.......',
+'....kk.kk.......',
+'................',
+'................',
+'................'
+])];
+const PET_FOX = [sprite([
+'................',
+'................',
+'................',
+'................',
+'................',
+'................',
+'....k...k.......',
+'...kmk.kmk......',
+'...kmmmmmk......',
+'..kmmemmmmk.....',
+'.kMmkmmmmmk.....',
+'.kMMkmmmmmk.....',
+'..kk.kmmmk......',
+'.....kk.kk......',
+'................',
+'................'
+]), sprite([
+'................',
+'................',
+'................',
+'................',
+'................',
+'................',
+'....k...k.......',
+'...kmk.kmk......',
+'...kmmmmmk......',
+'..kmmemmmmk.....',
+'.kMMkmmmmmk.....',
+'.kMmkmmmmmk.....',
+'..kk.kmmmk......',
+'....kk..kk......',
+'................',
+'................'
+])];
+const PET_CAPY = [sprite([
+'................',
+'................',
+'................',
+'................',
+'................',
+'................',
+'...k.k..........',
+'..kbbbbbk.......',
+'.kbbbbbbbbk.....',
+'.kbbbbbbeb......',
+'.kbbbbbbbbsk....',
+'.kBbbbbbbBk.....',
+'..kk.kk.kk......',
+'................',
+'................',
+'................'
+]), sprite([
+'................',
+'................',
+'................',
+'................',
+'................',
+'................',
+'...k.k..........',
+'..kbbbbbk.......',
+'.kbbbbbbbbk.....',
+'.kbbbbbbeb......',
+'.kbbbbbbbbsk....',
+'.kBbbbbbbBk.....',
+'..kk.kk.kk......',
+'................',
+'................',
+'................'
+])];
+const PETS = [
+  { name: 'BLUEBIRD', mode: 'fly', img: PET_BIRD },
+  { name: 'PUP', mode: 'ground', img: PET_PUP },
+  { name: 'DUCKLING', mode: 'ground', swims: 1, img: PET_DUCK },
+  { name: 'FIREFLY', mode: 'fly', glow: 1, img: null },
+  { name: 'BABY DRAGON', mode: 'fly', ember: 1, img: PET_DRAGON },
+  { name: 'SNOW FOX', mode: 'ground', prints: 1, img: PET_FOX },
+  { name: 'CAPYBARA', mode: 'ground', swims: 1, chill: 1, img: PET_CAPY }
+];
 const HEART = sprite([
 '..kk....kk..',
 '.krrk..krrk.',
@@ -1845,6 +2065,89 @@ let water = new Map();       // tx -> surface y in px (pool fills down to the gr
 let ground = new Map();      // tx -> elevation g (ground top px = -g*TILE)
 let tiles = new Map();       // packed key -> tile id
 let tufts = new Map();       // tx -> grass tuft variant (sways as you pass)
+// pet companion: purely cosmetic, trails the player's own path on a lag
+let petIdx = clamp(load('pet', 0), 0, PETS.length - 1);
+const pet = { x: 0, y: 0, t: 0, celeb: 0 };
+let petHist = [];
+function updatePet() {
+  pet.t++;
+  petHist.push({ x: player.x, y: player.y, g: player.onGround, w: player.inWater });
+  if (petHist.length > 26) petHist.shift();
+  const trail = petHist[0];
+  const def = PETS[petIdx];
+  const tx2 = trail.x - 7;
+  let ty2 = trail.y;
+  const ws = waterSurfaceAt(tx2 + 8);
+  // pillar gates poke above the waterline — when one is coming, every pet
+  // abandons the surface and dives along the player's own path instead
+  let gateAhead = false;
+  if (ws !== undefined) {
+    const fTx = Math.floor((tx2 + 8) / TILE), fTy = Math.floor((ws - 6) / TILE);
+    gateAhead = solidAt(fTx, fTy) || solidAt(fTx + 1, fTy) || solidAt(fTx + 2, fTy);
+  }
+  if (def.mode === 'fly') {
+    ty2 += -12 + Math.sin(pet.t * 0.12) * 2.5;               // hover at the shoulder
+    if (ws !== undefined && !gateAhead && ty2 > ws - 14)
+      ty2 = ws - 14;                                         // birds skim, never submerge
+  } else {
+    if (ws !== undefined && trail.w) {
+      if (!gateAhead) ty2 = ws - 9;    // every land animal paddles at the surface
+    }
+    else if (!trail.w && trail.g) {
+      const gt2 = surfaceBelow(tx2 + 8, ty2, false);
+      if (gt2 !== null) ty2 = gt2 - 13;                      // paws on the ground
+    }
+  }
+  pet.x += (tx2 - pet.x) * 0.22;
+  pet.y += (ty2 - pet.y) * 0.22;
+  if (pet.celeb > 0) pet.celeb--;
+  if (def.ember && pet.t % 110 === 0)                        // dragon: a proud little puff
+    parts.push({ x: pet.x + 11, y: pet.y + 7, vx: 0.5, vy: R(-0.3, 0), life: RI(12, 20),
+      color: pick(['#ff9a3c', '#ffe97a']), size: 1, grav: -0.01 });
+  if (def.prints && pet.t % 10 === 0 && !player.inWater) {   // fox: its own paw trail
+    const onSnowSand = game.themeIdx === 5 || game.themeIdx === 1 ||
+      (game.themeIdx === 3 && !water.has(Math.floor((pet.x + 8) / TILE)));
+    const gt3 = surfaceBelow(pet.x + 8, pet.y, false);
+    if (onSnowSand && gt3 !== null && gt3 - (pet.y + 13) < 4)
+      parts.push({ x: pet.x + 6, y: gt3 - 1, vx: 0, vy: 0, grav: 0, size: 1, print: 1,
+        life: 90, color: game.themeIdx === 5 ? '#b8cfe4' : '#b9884f' });
+  }
+  // pipe teleports / run starts: don't fly across the map, just reappear
+  if (Math.abs(pet.x - player.x) > 300 || Math.abs(pet.y - player.y) > 300) {
+    pet.x = player.x - 20; pet.y = player.y - 12; petHist = [];
+  }
+}
+function drawPet(camX, camY) {
+  const def = PETS[petIdx];
+  let dx = Math.round(pet.x - camX), dy = Math.round(pet.y - camY);
+  let rot = 0;
+  if (pet.celeb > 0) {
+    const a = (1 - pet.celeb / 50) * Math.PI * 2;
+    if (def.mode === 'fly') { dx += Math.round(Math.cos(a) * 10); dy += Math.round(Math.sin(a) * 10) - 6; }
+    else { dy -= Math.round(Math.sin((1 - pet.celeb / 50) * Math.PI) * 14); rot = a; }
+  }
+  if (def.glow) {                                            // firefly: a living lantern
+    const pulse = 0.5 + 0.5 * Math.sin(pet.t * 0.1);
+    ctx.globalAlpha = (game.themeIdx === 6 ? 0.22 : 0.12) * pulse + 0.06;
+    ctx.fillStyle = '#d8ff8a';
+    ctx.beginPath(); ctx.arc(dx + 8, dy + 8, game.themeIdx === 6 ? 9 : 5, 0, 7); ctx.fill();
+    ctx.globalAlpha = 0.6 + 0.4 * pulse;
+    ctx.fillRect(dx + 7, dy + 7, 2, 2);
+    ctx.globalAlpha = 1;
+    return;
+  }
+  const wf = def.mode === 'fly' ? (pet.t >> 3) & 1 : (pet.t >> 4) & 1;
+  const img = def.img[wf];
+  const floating = def.swims && player.inWater && Math.abs(pet.y - ((waterSurfaceAt(pet.x + 8) ?? 1e9) - 9)) < 4;
+  ctx.save();
+  ctx.translate(dx + 8, dy + 8);
+  if (def.chill && floating) {                               // capybara: floats on its back
+    ctx.scale(1, -1);
+    ctx.rotate(Math.sin(pet.t * 0.05) * 0.08);
+  } else if (rot) ctx.rotate(rot);
+  ctx.drawImage(img, -8, -8);
+  ctx.restore();
+}
 let qmeta = new Map();       // packed key -> qblock contents
 let bumps = new Map();       // packed key -> bump anim frames left
 let ents = [];               // enemies, powerups, flags
@@ -2326,6 +2629,7 @@ function startRun(world) {
   player.onGround = true; player.coyote = 0; player.dj = true; player.slam = false;
   player.mode = 'run'; player.runT = 0; player.inWater = false; player.icyAir = false; player.wetT = 0;
   cam.x = player.x - camOffX(); cam.y = camBaseY();
+  pet.x = player.x - 20; pet.y = player.y - 12; pet.celeb = 0; petHist = [];
   announce('WORLD ' + world + '  ' + THEMES[game.themeIdx].name, 120);
   playSong(THEME_SONGS[game.themeIdx]);
 }
@@ -2428,6 +2732,7 @@ function update() {
     }
   }
   updatePlayer();
+  updatePet();
   updateEnts();
   updateCoins();
   updateFx();
@@ -3270,6 +3575,7 @@ function applyPow(kind, x, y) {
 
 function worldTransition(flag) {
   flag.hit = 1; flag.hitFrame = game.frame;
+  pet.celeb = 50;                              // the companion parties too
   game.worldNum++;
   game.prevTheme = game.themeIdx;
   game.themeIdx = (game.worldNum - 1) % THEMES.length;
@@ -3396,7 +3702,8 @@ function ambient() {
 }
 
 // ---------- UI / state entry ----------
-const ui = { pause: null, sound: null, buzz: null, resume: null, quit: null };
+const ui = { pause: null, sound: null, buzz: null, resume: null, quit: null,
+  petRect: null, petNameT: -999, overTitle: null, levelBtns: null, back: null };
 function settingsHit(hit) {
   if (hit(ui.sound)) { setMuted(!audio.muted); sfx.ui(); return true; }
   if (hit(ui.buzz)) { hapticsOn = !hapticsOn; store('haptics', hapticsOn); buzz(1); sfx.ui(); return true; }
@@ -3436,6 +3743,13 @@ function onPress(cx, cy) {
 }
 function titleRelease(hit) {
   if (settingsHit(hit)) return;
+  if (hit(ui.petRect)) {                 // tap your companion to meet the next one
+    petIdx = (petIdx + 1) % PETS.length;
+    store('pet', petIdx);
+    ui.petNameT = game.frame;
+    sfx.ui(); buzz(1);
+    return;
+  }
   startRun();
 }
 // ↑↑↓↓←→←→ swiped on the title screen (plus B A on a keyboard) opens level select
@@ -4078,6 +4392,37 @@ function renderTitle() {
   ctx.drawImage(img, 0, 0);
   if (!hop && game.frame % 173 < 5) { ctx.fillStyle = PAL.S; ctx.fillRect(9, 5, 1, 2); }
   ctx.restore();
+  // your companion waits beside you — tap it to meet the next one
+  {
+    const def = PETS[petIdx];
+    const ppx = Math.round(W / 2 - 76);
+    const bob = def.mode === 'fly' ? Math.round(Math.sin(game.frame * 0.09) * 3) - 22 : 0;
+    const ppy = gy - 30 + bob;
+    if (def.glow) {
+      const pulse = 0.5 + 0.5 * Math.sin(game.frame * 0.1);
+      ctx.globalAlpha = 0.15 * pulse + 0.08;
+      ctx.fillStyle = '#d8ff8a';
+      ctx.beginPath(); ctx.arc(ppx + 15, ppy + 15, 11, 0, 7); ctx.fill();
+      ctx.globalAlpha = 0.6 + 0.4 * pulse;
+      ctx.fillRect(ppx + 13, ppy + 13, 4, 4);
+      ctx.globalAlpha = 1;
+    } else {
+      const pf = (game.frame >> (def.mode === 'fly' ? 3 : 4)) & 1;
+      ctx.save();
+      ctx.translate(ppx + 15, ppy + 15);
+      ctx.scale(2, 2);           // pets get real presence beside the big hero
+      if (def.chill) {           // the capybara naps through the whole menu
+        ctx.rotate(-Math.PI / 2);
+        ctx.drawImage(def.img[0], -8, -6);
+      } else ctx.drawImage(def.img[pf], -8, -8);
+      ctx.restore();
+      if (def.chill && game.frame % 190 < 80)
+        drawText(ctx, 'Z', ppx + 26, ppy - Math.floor((game.frame % 190) / 26), 1, '#9fb7d8');
+    }
+    ui.petRect = { x: ppx - 5, y: ppy - 7, w: 40, h: 44 };
+    if (game.frame - (ui.petNameT || -999) < 110)
+      drawTextC(ctx, def.name, ppx + 15, gy + 6, 1, '#ffe97a', '#1a1c2c');
+  }
   drawLogo(W / 2, safeTop + H * 0.12, 4);
   drawTextC(ctx, 'AN ENDLESS PLATFORM DASH', W / 2, safeTop + H * 0.12 + 62, 1, '#fff', '#1a1c2c');
   if ((game.frame >> 5) & 1)
@@ -4199,6 +4544,7 @@ function renderWorld() {
     }
   }
   for (const e of ents) drawEnt(e, camX, camY);
+  drawPet(camX, camY);
   if (!inPipe) drawPlayer(camX, camY);
   drawWater(camX, camY);
   for (const p of parts) {
