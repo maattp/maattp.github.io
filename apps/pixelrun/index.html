@@ -68,7 +68,7 @@ const MAX_SPEED = 3.05;
 const PIT_Y = 11 * TILE;             // below this = pit death
 const WORLD_LEN = 500;               // tiles per world before the flag
 const SAVE = 'pixelrun_';
-const VERSION = 25;                  // shown on the title screen — bump once per PR (see CLAUDE.md)
+const VERSION = 26;                  // shown on the title screen — bump once per PR (see CLAUDE.md)
 
 // ---------- utils ----------
 const clamp = (v, a, b) => v < a ? a : v > b ? b : v;
@@ -895,13 +895,13 @@ const PET_PUP = [sprite([
 '................',
 '................',
 '................',
-'....k...k.......',
-'...kbk.kbk......',
-'...kbbbbbk......',
-'..kbbebbbbk.....',
-'.k.kbbbbbbk.....',
-'.kbkbbbbbbk.....',
-'..kkbbbbbk......',
+'.......k..k.....',
+'......kbkkbk....',
+'......kbbbbk....',
+'..k..kbbebbk....',
+'.kbk.kbbbbsk....',
+'..kbkbbbbbbk....',
+'...kbbbbbbk.....',
 '....kk..kk......',
 '................',
 '................'
@@ -913,13 +913,13 @@ const PET_PUP = [sprite([
 '................',
 '................',
 '................',
-'...kbk.kbk......',
-'...kbbbbbk......',
-'..kbbebbbbk.....',
-'.k.kbbbbbbk.....',
-'.kbkbbbbbbk.....',
-'..kkbbbbbk......',
-'...kk..kk.......',
+'......kbkkbk....',
+'......kbbbbk....',
+'..k..kbbebbk....',
+'.kbk.kbbbbsk....',
+'..kbkbbbbbbk....',
+'...kbbbbbbk.....',
+'...kk....kk.....',
 '................',
 '................'
 ])];
@@ -1000,14 +1000,14 @@ const PET_FOX = [sprite([
 '................',
 '................',
 '................',
-'....k...k.......',
-'...kmk.kmk......',
-'...kmmmmmk......',
-'..kmmemmmmk.....',
-'.kMmkmmmmmk.....',
-'.kMMkmmmmmk.....',
-'..kk.kmmmk......',
-'.....kk.kk......',
+'.......k..k.....',
+'......kmkkmk....',
+'......kmmmmk....',
+'.kM..kmmemmk....',
+'.kMm.kmmmmsk....',
+'.kMMkmmmmmmk....',
+'..kMkmmmmmk.....',
+'.....kk..kk.....',
 '................',
 '................'
 ]), sprite([
@@ -1017,14 +1017,14 @@ const PET_FOX = [sprite([
 '................',
 '................',
 '................',
-'....k...k.......',
-'...kmk.kmk......',
-'...kmmmmmk......',
-'..kmmemmmmk.....',
-'.kMMkmmmmmk.....',
-'.kMmkmmmmmk.....',
-'..kk.kmmmk......',
-'....kk..kk......',
+'.......k..k.....',
+'......kmkkmk....',
+'......kmmmmk....',
+'.kMm.kmmemmk....',
+'.kM..kmmmmsk....',
+'.kMMkmmmmmmk....',
+'..kMkmmmmmk.....',
+'....kk....kk....',
 '................',
 '................'
 ])];
@@ -2072,7 +2072,7 @@ let petHist = [];
 function updatePet() {
   pet.t++;
   petHist.push({ x: player.x, y: player.y, g: player.onGround, w: player.inWater });
-  if (petHist.length > 26) petHist.shift();
+  if (petHist.length > 12) petHist.shift();   // short lag: stays right at the heel
   const trail = petHist[0];
   const def = PETS[petIdx];
   const tx2 = trail.x - 7;
@@ -2083,23 +2083,34 @@ function updatePet() {
   let gateAhead = false;
   if (ws !== undefined) {
     const fTx = Math.floor((tx2 + 8) / TILE), fTy = Math.floor((ws - 6) / TILE);
-    gateAhead = solidAt(fTx, fTy) || solidAt(fTx + 1, fTy) || solidAt(fTx + 2, fTy);
+    gateAhead = solidAt(fTx, fTy) || solidAt(fTx + 1, fTy) || solidAt(fTx + 2, fTy) || solidAt(fTx + 3, fTy);
   }
+  // pets don't mimic coin-collection jumps: they hold their own line and only
+  // leave it when the terrain demands. scan anchor = the player's level when
+  // he's grounded, the pet's own level while he's off doing acrobatics
+  const anchorY = (trail.g ? trail.y : pet.y) - 24;
   if (def.mode === 'fly') {
-    ty2 += -12 + Math.sin(pet.t * 0.12) * 2.5;               // hover at the shoulder
-    if (ws !== undefined && !gateAhead && ty2 > ws - 14)
-      ty2 = ws - 14;                                         // birds skim, never submerge
+    if (gateAhead && ws !== undefined) {
+      ty2 = trail.y;                                         // thread the gap exactly
+    } else {
+      const gt3 = player.inWater || trail.w || ws !== undefined ? null
+        : surfaceBelow(tx2 + 8, anchorY, false);
+      ty2 = (gt3 !== null ? gt3 - 26 : ty2 - 12) + Math.sin(pet.t * 0.12) * 2.5;   // steady cruise
+      if (ws !== undefined && ty2 > ws - 14)
+        ty2 = ws - 14;                                       // birds skim, never submerge
+    }
   } else {
     if (ws !== undefined && trail.w) {
       if (!gateAhead) ty2 = ws - 9;    // every land animal paddles at the surface
-    }
-    else if (!trail.w && trail.g) {
-      const gt2 = surfaceBelow(tx2 + 8, ty2, false);
-      if (gt2 !== null) ty2 = gt2 - 13;                      // paws on the ground
+    } else if (!trail.w && ws === undefined) {               // real land only —
+      const gt2 = surfaceBelow(tx2 + 8, anchorY, false);     // never perch on gate caps
+      if (gt2 !== null) ty2 = gt2 - 13;   // paws on the ground; over a pit: sail the trail arc
     }
   }
   pet.x += (tx2 - pet.x) * 0.22;
-  pet.y += (ty2 - pet.y) * 0.22;
+  // climbs and dives are brisk (clears stair risers and gate caps before the
+  // body drifts into them); everything else is a soft glide
+  pet.y += (ty2 - pet.y) * (ty2 < pet.y - 4 ? 0.5 : gateAhead ? 0.4 : 0.22);
   if (pet.celeb > 0) pet.celeb--;
   if (def.ember && pet.t % 110 === 0)                        // dragon: a proud little puff
     parts.push({ x: pet.x + 11, y: pet.y + 7, vx: 0.5, vy: R(-0.3, 0), life: RI(12, 20),
@@ -3309,7 +3320,7 @@ function updateEnts() {
         e.opened = 1;
         for (let i = 0; i < 12; i++)
           coins.push({ x: e.x + 8, y: e.y + 4, vx: R(-1.5, 1.5), vy: 0, taken: 0,
-            fall: R(-3.6, -1.6), grav: 1 });
+            fall: R(-3.6, -1.6), grav: 1, home: RI(24, 46) });   // then they fly to YOU
         burst(e.x + 8, e.y + 4, '#ffe97a', 12, 2.2, 0.1);
         addFloat(e.x - 4, e.y - 14, 'TREASURE!', '#ffd93c');
         sfx.power(); buzz(3); game.shake = Math.max(game.shake, 3);
@@ -3610,6 +3621,14 @@ function updateCoins() {
       const gt = groundTopPx(Math.floor(c.x / TILE));   // trail off the ground is the fun
       if (c.fall > 0 && Number.isFinite(gt) && c.y >= gt - 6) { c.y = gt - 6; c.fall = 0; }
       else if (c.y > 170) { c.taken = 9; continue; }    // fell into a pit: gone
+    }
+    if (c.home !== undefined) {         // treasure is guaranteed: arc, then fly home
+      if (c.home > 0) c.home--;
+      else {
+        const dx = pcx - c.x, dy = pcy - c.y, m2 = Math.hypot(dx, dy) || 1;
+        c.x += dx / m2 * 3.4; c.y += dy / m2 * 3.4;
+        c.fall = 0;
+      }
     }
     if (game.magnet > 0) {
       const dx = pcx - c.x, dy = pcy - c.y, d2 = dx * dx + dy * dy;
@@ -4411,13 +4430,8 @@ function renderTitle() {
       ctx.save();
       ctx.translate(ppx + 15, ppy + 15);
       ctx.scale(2, 2);           // pets get real presence beside the big hero
-      if (def.chill) {           // the capybara naps through the whole menu
-        ctx.rotate(-Math.PI / 2);
-        ctx.drawImage(def.img[0], -8, -6);
-      } else ctx.drawImage(def.img[pf], -8, -8);
+      ctx.drawImage(def.img[pf], -8, -8);
       ctx.restore();
-      if (def.chill && game.frame % 190 < 80)
-        drawText(ctx, 'Z', ppx + 26, ppy - Math.floor((game.frame % 190) / 26), 1, '#9fb7d8');
     }
     ui.petRect = { x: ppx - 5, y: ppy - 7, w: 40, h: 44 };
     if (game.frame - (ui.petNameT || -999) < 110)
