@@ -1897,9 +1897,18 @@ const WSURF_G = 6;                   // surface 6 tiles above baseline (y = -96)
 const SAND_G = 7;                    // island sand sits above the waterline
 function AQCOL(g) { const tx = gen.x; C(g); water.set(tx, -WSURF_G * TILE); }
 function enterWater() {
-  // arriving on land (sandbar / world boundary): two sand columns, then dive off
-  if (gen.g > 3) { C(gen.g); C(gen.g); gen.g = -2; }
-  else gen.g = clamp(gen.g, -3, -1);
+  if (water.has(gen.x - 1)) {                 // already swimming: stay on the seabed
+    gen.g = clamp(gen.g, -3, -1);
+    return;
+  }
+  // dry land: the sea level sits ABOVE the lowlands, so climb a beach headland
+  // first and dive in off its top — never meet a freestanding wall of water
+  while (gen.g < SAND_G) C(gen.g + 1);
+  C(SAND_G); C(SAND_G);
+  coinAt(gen.x - 1, -SAND_G - 2);             // a little arc guiding the dive
+  coinAt(gen.x, -SAND_G);
+  coinAt(gen.x + 1, -SAND_G + 2);
+  gen.g = -2;
 }
 function put(tx, ty, id) { tiles.set(K(tx, ty), id); }
 function qblock(tx, ty, what) { put(tx, ty, T_QBLOCK); qmeta.set(K(tx, ty), what); }
