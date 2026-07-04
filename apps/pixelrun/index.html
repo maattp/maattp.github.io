@@ -68,7 +68,7 @@ const MAX_SPEED = 3.05;
 const PIT_Y = 11 * TILE;             // below this = pit death
 const WORLD_LEN = 500;               // tiles per world before the flag
 const SAVE = 'pixelrun_';
-const VERSION = 31;                  // shown on the title screen — bump once per PR (see CLAUDE.md)
+const VERSION = 32;                  // shown on the title screen — bump once per PR (see CLAUDE.md)
 
 // ---------- utils ----------
 const clamp = (v, a, b) => v < a ? a : v > b ? b : v;
@@ -1063,14 +1063,14 @@ const PET_CAPY = [sprite([
 '................',
 '................'
 ])];
-const PETS = [
+const PETS = [   // foot = bottom sprite row of the paws, for exact ground contact
   { name: 'BLUEBIRD', mode: 'fly', img: PET_BIRD },
-  { name: 'PUP', mode: 'ground', img: PET_PUP },
-  { name: 'DUCKLING', mode: 'ground', swims: 1, img: PET_DUCK },
+  { name: 'PUP', mode: 'ground', foot: 14, img: PET_PUP },
+  { name: 'DUCKLING', mode: 'ground', foot: 14, swims: 1, img: PET_DUCK },
   { name: 'FIREFLY', mode: 'fly', glow: 1, img: null },
   { name: 'BABY DRAGON', mode: 'fly', ember: 1, img: PET_DRAGON },
-  { name: 'SNOW FOX', mode: 'ground', prints: 1, img: PET_FOX },
-  { name: 'CAPYBARA', mode: 'ground', swims: 1, chill: 1, img: PET_CAPY }
+  { name: 'SNOW FOX', mode: 'ground', foot: 14, prints: 1, img: PET_FOX },
+  { name: 'CAPYBARA', mode: 'ground', foot: 13, swims: 1, chill: 1, img: PET_CAPY }
 ];
 const HEART = sprite([
 '..kk....kk..',
@@ -2110,11 +2110,15 @@ function updatePet() {
       if (!gateAhead) ty2 = ws - 9;    // every land animal paddles at the surface
     } else if (!trail.w && ws === undefined) {               // real land only —
       // asymmetric floor rule: RISE early for what's coming (look-ahead), but
-      // never DESCEND before the edge — falling starts only once the ground
-      // under the paws is actually gone, so drops never clip through the lip
-      const here = petFloor(tx2 + 8), ahead = petFloor(tx2 + 8 + 14);
-      const gt2 = here !== null && ahead !== null ? Math.min(here, ahead)
-        : here !== null ? here : ahead;
+      // never DESCEND before the edge. Crucially, "the ground under the paws"
+      // is sampled under the PET'S BODY (both foot columns), not at the trail
+      // point — the trail runs ~10px ahead of the body, which is why v31 still
+      // sank through pipe lips: the target dropped while the paws were still on
+      const back = petFloor(pet.x + 4), front = petFloor(pet.x + 12);
+      const ahead = petFloor(pet.x + 12 + 14);
+      let gt2 = null;
+      for (const f of [back, front, ahead])
+        if (f !== null && (gt2 === null || f < gt2)) gt2 = f;
       if (gt2 !== null) ty2 = gt2 - 13;   // paws on the ground; over a pit: sail the trail arc
     }
   }
@@ -4471,7 +4475,8 @@ function renderTitle() {
     const def = PETS[petIdx];
     const ppx = Math.round(W / 2 - 76);
     const bob = def.mode === 'fly' ? Math.round(Math.sin(game.frame * 0.09) * 3) - 22 : 0;
-    const ppy = gy - 30 + bob;
+    // ground pets: plant the paw row exactly on the ground line (they hovered)
+    const ppy = (def.mode === 'ground' ? gy + 1 - 2 * def.foot : gy - 30) + bob;
     if (def.glow) {
       const pulse = 0.5 + 0.5 * Math.sin(game.frame * 0.1);
       ctx.globalAlpha = 0.15 * pulse + 0.08;
