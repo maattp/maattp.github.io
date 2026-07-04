@@ -2072,7 +2072,7 @@ let petHist = [];
 function updatePet() {
   pet.t++;
   petHist.push({ x: player.x, y: player.y, g: player.onGround, w: player.inWater });
-  if (petHist.length > 26) petHist.shift();
+  if (petHist.length > 12) petHist.shift();   // short lag: stays right at the heel
   const trail = petHist[0];
   const def = PETS[petIdx];
   const tx2 = trail.x - 7;
@@ -2083,23 +2083,34 @@ function updatePet() {
   let gateAhead = false;
   if (ws !== undefined) {
     const fTx = Math.floor((tx2 + 8) / TILE), fTy = Math.floor((ws - 6) / TILE);
-    gateAhead = solidAt(fTx, fTy) || solidAt(fTx + 1, fTy) || solidAt(fTx + 2, fTy);
+    gateAhead = solidAt(fTx, fTy) || solidAt(fTx + 1, fTy) || solidAt(fTx + 2, fTy) || solidAt(fTx + 3, fTy);
   }
+  // pets don't mimic coin-collection jumps: they hold their own line and only
+  // leave it when the terrain demands. scan anchor = the player's level when
+  // he's grounded, the pet's own level while he's off doing acrobatics
+  const anchorY = (trail.g ? trail.y : pet.y) - 24;
   if (def.mode === 'fly') {
-    ty2 += -12 + Math.sin(pet.t * 0.12) * 2.5;               // hover at the shoulder
-    if (ws !== undefined && !gateAhead && ty2 > ws - 14)
-      ty2 = ws - 14;                                         // birds skim, never submerge
+    if (gateAhead && ws !== undefined) {
+      ty2 = trail.y;                                         // thread the gap exactly
+    } else {
+      const gt3 = player.inWater || trail.w || ws !== undefined ? null
+        : surfaceBelow(tx2 + 8, anchorY, false);
+      ty2 = (gt3 !== null ? gt3 - 26 : ty2 - 12) + Math.sin(pet.t * 0.12) * 2.5;   // steady cruise
+      if (ws !== undefined && ty2 > ws - 14)
+        ty2 = ws - 14;                                       // birds skim, never submerge
+    }
   } else {
     if (ws !== undefined && trail.w) {
       if (!gateAhead) ty2 = ws - 9;    // every land animal paddles at the surface
-    }
-    else if (!trail.w && trail.g) {
-      const gt2 = surfaceBelow(tx2 + 8, ty2, false);
-      if (gt2 !== null) ty2 = gt2 - 13;                      // paws on the ground
+    } else if (!trail.w && ws === undefined) {               // real land only —
+      const gt2 = surfaceBelow(tx2 + 8, anchorY, false);     // never perch on gate caps
+      if (gt2 !== null) ty2 = gt2 - 13;   // paws on the ground; over a pit: sail the trail arc
     }
   }
   pet.x += (tx2 - pet.x) * 0.22;
-  pet.y += (ty2 - pet.y) * 0.22;
+  // climbs and dives are brisk (clears stair risers and gate caps before the
+  // body drifts into them); everything else is a soft glide
+  pet.y += (ty2 - pet.y) * (ty2 < pet.y - 4 ? 0.5 : gateAhead ? 0.4 : 0.22);
   if (pet.celeb > 0) pet.celeb--;
   if (def.ember && pet.t % 110 === 0)                        // dragon: a proud little puff
     parts.push({ x: pet.x + 11, y: pet.y + 7, vx: 0.5, vy: R(-0.3, 0), life: RI(12, 20),
