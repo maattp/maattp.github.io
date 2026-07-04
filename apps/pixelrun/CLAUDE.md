@@ -7,6 +7,10 @@
 running build can be identified at a glance (the service worker makes staleness
 otherwise invisible). Started at 12 = the 12th Pixel Run PR (#238–#249).
 
+When bumping, ASSERT the old value is present (a search-and-replace bump
+against a stale base has silently no-opped twice — check open PRs for the
+true latest version before bumping).
+
 When a PR should reach installed players promptly, also bump `CACHE`
 (`pixelrun-vN`) in `sw.js` — the service worker serves stale-while-revalidate,
 so without a cache bump users get the previous build for one extra launch.
