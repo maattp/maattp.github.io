@@ -68,7 +68,7 @@ const MAX_SPEED = 3.05;
 const PIT_Y = 11 * TILE;             // below this = pit death
 const WORLD_LEN = 500;               // tiles per world before the flag
 const SAVE = 'pixelrun_';
-const VERSION = 21;                  // shown on the title screen — bump once per PR (see CLAUDE.md)
+const VERSION = 22;                  // shown on the title screen — bump once per PR (see CLAUDE.md)
 
 // ---------- utils ----------
 const clamp = (v, a, b) => v < a ? a : v > b ? b : v;
@@ -1785,6 +1785,7 @@ canvas.addEventListener('pointerdown', e => {
   try { canvas.setPointerCapture(e.pointerId); } catch (err) {}
   input.py = e.clientY; input.pt = performance.now();
   input.kx = e.clientX; input.ky = e.clientY;
+  input.downState = game.state;        // endPointer must know where the tap BEGAN
   onPress(e.clientX, e.clientY);
 });
 canvas.addEventListener('pointermove', e => {
@@ -1799,8 +1800,10 @@ function endPointer(e) {
   if (e.pointerId !== input.pid) return;
   input.pid = -1;
   releaseJump();
-  if (game.state === 'title' && e.type === 'pointerup') {
-    // title acts on release: taps start / hit buttons, swipes feed the secret code
+  if (game.state === 'title' && input.downState === 'title' && e.type === 'pointerup') {
+    // title acts on release: taps start / hit buttons, swipes feed the secret code.
+    // downState guard: QUIT TO TITLE switches state on pointerDOWN — without it,
+    // the same tap's release would read as a title tap and instantly restart
     const dx = e.clientX - input.kx, dy = e.clientY - input.ky;
     if (Math.abs(dx) < 16 && Math.abs(dy) < 16) titleRelease(mkHit(e.clientX, e.clientY));
     else konamiPush(Math.abs(dx) > Math.abs(dy) ? (dx > 0 ? 'R' : 'L') : (dy > 0 ? 'D' : 'U'));
@@ -2838,6 +2841,10 @@ function startBonus() {
     coinRow(b + 16, -1, 5);
     coinRow(b + 28, -1, 2);
   }
+  // furnishings: wall sconces down the hall, and a treasure chest before the door
+  for (let t = b + 5; t < b + LEN - 6; t += 7)
+    ents.push({ type: 'torch', x: t * TILE, y: (CEIL + 2) * TILE, w: 16, h: 16, ox: 0, oy: 0, dead: 0, t: RI(0, 26) });
+  ents.push({ type: 'chest', x: (b + LEN - 6) * TILE, y: -TILE, w: 14, h: 14, ox: 1, oy: 2, dead: 0, t: 0, opened: 0 });
   // full-height EXIT portal at the end wall — run into it any way you like
   const ex = b + LEN - 4;
   ents.push({ type: 'portal', x: ex * TILE, y: 0, w: 24, h: 96, ox: 0, oy: 0, dead: 0, t: 0 });
@@ -2944,6 +2951,24 @@ function updateEnts() {
     if (e.type === 'powfx') {          // cosmetic: reward rises out of the block and fades
       e.y -= e.t < 14 ? 0.7 : 0.35;
       if (e.t > 45) { e.dead = 2; e.deadT = 0; }
+      continue;
+    }
+    if (e.type === 'torch') {          // vault sconce: crackle and spit embers
+      if (e.t % 26 === 0)
+        parts.push({ x: e.x + 8 + R(-1, 1), y: e.y + 2, vx: R(-0.15, 0.15), vy: R(-0.5, -0.25),
+          life: RI(14, 30), color: pick(['#ff9a3c', '#ffe97a']), size: 1, grav: -0.008 });
+      continue;
+    }
+    if (e.type === 'chest') {          // the vault's prize: burst into a coin fountain
+      if (!e.opened && overlap(prect(), erect(e))) {
+        e.opened = 1;
+        for (let i = 0; i < 12; i++)
+          coins.push({ x: e.x + 8, y: e.y + 4, vx: R(-1.5, 1.5), vy: 0, taken: 0,
+            fall: R(-3.6, -1.6), grav: 1 });
+        burst(e.x + 8, e.y + 4, '#ffe97a', 12, 2.2, 0.1);
+        addFloat(e.x - 4, e.y - 14, 'TREASURE!', '#ffd93c');
+        sfx.power(); buzz(3); game.shake = Math.max(game.shake, 3);
+      }
       continue;
     }
     if (e.type === 'bones' && e.collapsed) {
@@ -3230,8 +3255,13 @@ function updateCoins() {
     if (c.taken > 0) { c.taken++; c.y -= 1.2; continue; }
     if (c.fall) {                       // rain coins land and SETTLE — catching them
       c.y += c.fall;                    // mid-air was near-impossible; scooping a
+      if (c.grav) {                     // chest-fountain coins fly a real arc
+        c.x += c.vx; c.vx *= 0.98;
+        c.fall += 0.14;
+        if (c.fall === 0) c.fall = 0.01;
+      }
       const gt = groundTopPx(Math.floor(c.x / TILE));   // trail off the ground is the fun
-      if (Number.isFinite(gt) && c.y >= gt - 6) { c.y = gt - 6; c.fall = 0; }
+      if (c.fall > 0 && Number.isFinite(gt) && c.y >= gt - 6) { c.y = gt - 6; c.fall = 0; }
       else if (c.y > 170) { c.taken = 9; continue; }    // fell into a pit: gone
     }
     if (game.magnet > 0) {
@@ -3263,6 +3293,12 @@ function updateFx() {
   for (const [k, v] of bumps) { if (v <= 1) bumps.delete(k); else bumps.set(k, v - 1); }
 }
 function ambient() {
+  if (game.inBonus) {                  // vault air: slow golden dust motes
+    if (game.frame % 9 === 0)
+      parts.push({ x: cam.x + rng() * W, y: cam.y + rng() * H * 0.7, vx: R(-0.1, 0.1),
+        vy: R(0.05, 0.2), life: RI(80, 160), color: 'rgba(255,220,140,0.35)', size: 1, grav: 0, sway: 1 });
+    return;
+  }
   // surprise-and-delight cameos (checked before the %7 gate so their cadence works)
   if (game.themeIdx === 3 && game.frame % 150 === 0 && !game.inBonus) {
     for (let tries = 0; tries < 4; tries++) {   // a fish leaps from a pool ahead
@@ -3389,6 +3425,27 @@ function skyGrad(idx) {
 }
 function drawSkyAndParallax(camX, camY) {
   const th = THEMES[game.themeIdx];
+  if (game.inBonus) {                  // vaults are UNDERGROUND: cave wall, not sky
+    ctx.fillStyle = '#0c0a14';
+    ctx.fillRect(0, 0, W, H);
+    // dim masonry courses drifting at half parallax
+    ctx.fillStyle = 'rgba(255,255,255,0.045)';
+    const off = Math.round(camX * 0.5);
+    for (let row = 0; row < Math.ceil(H / 12); row++) {
+      const shift = (row & 1) ? 14 : 0;
+      for (let x = -((off + shift) % 28) - 28; x < W + 28; x += 28)
+        ctx.fillRect(x, row * 12, 26, 10);
+    }
+    // hanging roots along the ceiling
+    ctx.fillStyle = 'rgba(140,110,80,0.35)';
+    for (let i = 0; i < 10; i++) {
+      const rx = ((i * 137 + 40) - off) % (W + 30);
+      const x2 = rx < 0 ? rx + W + 30 : rx;
+      const len = 8 + (i * 53) % 14;
+      ctx.fillRect(Math.round(x2), 0, 2, len + Math.round(Math.sin(game.frame * 0.03 + i) * 2));
+    }
+    return;
+  }
   if (game.themeFade > 0) {
     ctx.fillStyle = skyGrad(game.prevTheme);
     ctx.fillRect(0, 0, W, H);
@@ -3479,7 +3536,9 @@ function drawTiles(camX, camY) {
       const tyPx = ty * TILE - Math.round(camY) + dy;
       ctx.drawImage(cache, id * TILE, 0, TILE, TILE, sx, tyPx, TILE, TILE);
       if (id === T_QBLOCK) {                   // periodic shimmer: "open me!"
-        const ph = (game.frame + tx * 13) % 140;
+        // ((...)+140)%140 — JS % is signed, and bonus rooms live at tx=-4000:
+        // a negative phase made this a PERMANENT opaque white square down there
+        const ph = (((game.frame + tx * 13) % 140) + 140) % 140;
         if (ph < 10) {
           ctx.globalAlpha = 0.35 * (1 - ph / 10);
           ctx.fillStyle = '#fff';
@@ -3649,6 +3708,39 @@ function drawEnt(e, camX, camY) {
     const head = ((e.t >> 3) & 1) ? SNAP0 : SNAP1;
     ctx.drawImage(head, sx - 7, Math.round(e.y - camY) - 4);
     ctx.restore();
+    return;
+  }
+  else if (e.type === 'torch') {
+    ctx.globalAlpha = 0.08 + 0.02 * Math.sin(game.frame * 0.13 + e.x);   // warm halo
+    ctx.fillStyle = '#ff9a3c';
+    ctx.beginPath(); ctx.arc(sx + 8, sy + 5, 22, 0, 7); ctx.fill();
+    ctx.globalAlpha = 1;
+    ctx.fillStyle = '#6a4a2e';
+    ctx.fillRect(sx + 7, sy + 6, 2, 9);
+    const fl = ((game.frame >> 2) + (e.x >> 4)) & 1;
+    ctx.fillStyle = '#ff9a3c';
+    ctx.fillRect(sx + 6, sy + (fl ? 0 : 1), 4, 6);
+    ctx.fillStyle = '#ffe97a';
+    ctx.fillRect(sx + 7, sy + (fl ? 2 : 3), 2, 3);
+    return;
+  }
+  else if (e.type === 'chest') {
+    const o = e.opened;
+    if (o) {                                       // spilling light once opened
+      ctx.globalAlpha = 0.2 + 0.06 * Math.sin(game.frame * 0.17);
+      ctx.fillStyle = '#ffe97a';
+      ctx.beginPath(); ctx.arc(sx + 8, sy + 6, 14, 0, 7); ctx.fill();
+      ctx.globalAlpha = 1;
+    }
+    ctx.fillStyle = '#7a5230';                     // lid (raised when open)
+    ctx.fillRect(sx + 2, sy + (o ? 0 : 4), 12, 4);
+    ctx.fillStyle = '#5a3a22';                     // body
+    ctx.fillRect(sx + 2, sy + 8, 12, 8);
+    ctx.fillStyle = '#3c2614';
+    ctx.fillRect(sx + 3, sy + 9, 10, 2);
+    ctx.fillStyle = '#ffd93c';                     // gold band + clasp
+    ctx.fillRect(sx + 2, sy + 12, 12, 1);
+    ctx.fillRect(sx + 7, sy + (o ? 6 : 7), 2, 4);
     return;
   }
   else if (e.type === 'warp') {
