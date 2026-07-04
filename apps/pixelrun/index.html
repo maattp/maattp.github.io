@@ -68,7 +68,7 @@ const MAX_SPEED = 3.05;
 const PIT_Y = 11 * TILE;             // below this = pit death
 const WORLD_LEN = 500;               // tiles per world before the flag
 const SAVE = 'pixelrun_';
-const VERSION = 19;                  // shown on the title screen — bump once per PR (see CLAUDE.md)
+const VERSION = 20;                  // shown on the title screen — bump once per PR (see CLAUDE.md)
 
 // ---------- utils ----------
 const clamp = (v, a, b) => v < a ? a : v > b ? b : v;
@@ -662,6 +662,42 @@ const FISH1 = sprite([
 '.kk.kkkkkkOOk...',
 '..........kk....',
 '................',
+'................',
+'................',
+'................'
+]);
+const SQUID0 = sprite([      // blooper of the cove: drifts, then JETS
+'................',
+'....kkkkkk......',
+'...kwwwwwwk.....',
+'..kwwwwwwwwk....',
+'..kwwewwewwk....',
+'..kwwwwwwwwk....',
+'..kwwwwwwwwk....',
+'...kwkwwkwk.....',
+'..kwk.kk.kwk....',
+'..kw..ww..wk....',
+'..k...kk...k....',
+'................',
+'................',
+'................',
+'................',
+'................'
+]);
+const SQUID1 = sprite([      // jetting: tentacles trail tight
+'....kkkkkk......',
+'...kwwwwwwk.....',
+'..kwwwwwwwwk....',
+'..kwwewwewwk....',
+'..kwwwwwwwwk....',
+'..kwwwwwwwwk....',
+'...kwwwwwwk.....',
+'....kwwwwk......',
+'....kwwwwk......',
+'.....kwwk.......',
+'.....kwwk.......',
+'.....kwwk.......',
+'......kk........',
 '................',
 '................',
 '................'
@@ -1816,7 +1852,7 @@ const player = {
   onGround: false, coyote: 0, dj: true, slam: false,
   runT: 0, mode: 'run', bubbleT: 0, stompT: 0,
   flipT: 0, landT: 0, stretchT: 0, spinA: 0,   // juice: front-flip / squash / stretch / slam spin
-  pipeT: 0, inWater: false, icyAir: false
+  pipeT: 0, inWater: false, icyAir: false, diveT: 0
 };
 const cam = { x: 0, y: 0 };
 const gen = { x: 0, g: 0, nextFlag: WORLD_LEN, sinceEnemy: 0, sinceCoin: 0, totalTiles: 0 };
@@ -1856,6 +1892,24 @@ function difficulty() {
 // ---------- generation ----------
 function C(g) { ground.set(gen.x, g); gen.g = g; gen.x++; gen.totalTiles++; gen.sinceEnemy++; gen.sinceCoin++; }
 function GAP(n) { for (let i = 0; i < n; i++) { gen.x++; gen.totalTiles++; } }
+// --- TIDAL COVE is a real water level: sea-floor columns under a fixed surface ---
+const WSURF_G = 6;                   // surface 6 tiles above baseline (y = -96)
+const SAND_G = 7;                    // island sand sits above the waterline
+function AQCOL(g) { const tx = gen.x; C(g); water.set(tx, -WSURF_G * TILE); }
+function enterWater() {
+  if (water.has(gen.x - 1)) {                 // already swimming: stay on the seabed
+    gen.g = clamp(gen.g, -3, -1);
+    return;
+  }
+  // dry land: the sea level sits ABOVE the lowlands, so climb a beach headland
+  // first and dive in off its top — never meet a freestanding wall of water
+  while (gen.g < SAND_G) C(gen.g + 1);
+  C(SAND_G); C(SAND_G);
+  coinAt(gen.x - 1, -SAND_G - 2);             // a little arc guiding the dive
+  coinAt(gen.x, -SAND_G);
+  coinAt(gen.x + 1, -SAND_G + 2);
+  gen.g = -2;
+}
 function put(tx, ty, id) { tiles.set(K(tx, ty), id); }
 function qblock(tx, ty, what) { put(tx, ty, T_QBLOCK); qmeta.set(K(tx, ty), what); }
 function qContents() {
@@ -1873,6 +1927,8 @@ function qContents() {
 }
 function coinAt(tx, ty) {
   if (tiles.get(K(tx, ty)) !== undefined) return;   // never bury a coin inside a block
+  const g = ground.get(tx);
+  if (g !== undefined && ty >= -g) ty = -g - 1;     // ...nor inside the ground: sit on top
   coins.push({ x: tx * TILE + 8, y: ty * TILE + 8, vx: 0, vy: 0, taken: 0 });
 }
 function coinRow(tx, ty, n) { for (let i = 0; i < n; i++) coinAt(tx + i, ty); }
@@ -2036,25 +2092,98 @@ const patterns = [
     g = clamp(g - RI(2, 3), -2, 4);
     C(g); C(g);
   } },
-  { w: d => genThemeIdx() === 3 ? 5.5 : 0, f: d => {   // tidal pool: swim across
-    while (gen.g < 1) C(gen.g + 1);             // raise a shoreline first
-    const gl = gen.g;
-    for (let i = 0; i < 2; i++) C(gl);
-    const len = RI(9, 14 + Math.round(d * 4));
-    const floorG = gl - 4;                      // 3 tiles of water under a 1-tile lip
-    const surf = -(gl - 1) * TILE;
-    const x0 = gen.x;
-    for (let i = 0; i < len; i++) { const tx = gen.x; C(floorG); water.set(tx, surf); }
-    coinRow(x0 + 2, Math.round(surf / TILE), Math.min(6, len - 4));
-    coinRow(x0 + Math.floor(len / 2) - 1, -floorG - 2, 4);
-    const fy = surf + RI(16, 34);
-    ents.push({ type: 'finn', x: (x0 + 2) * TILE, y: fy, y0: fy, vx: -0.55,
+  { aqua: true, w: () => 5, f: d => {           // open water: swim, weave, collect
+    enterWater();
+    let g = clamp(gen.g, -3, -1);
+    const len = RI(12, 20), x0 = gen.x;
+    for (let i = 0; i < len; i++) {
+      if (rng() < 0.3) g = clamp(g + RI(-1, 1), -3, -1);
+      AQCOL(g);
+    }
+    if (rng() < 0.25) {                          // treasure ring: a circle of coins
+      const cx = (x0 + Math.floor(len / 2)) * TILE, cy = -RI(44, 66);
+      for (let a = 0; a < 8; a++)
+        coins.push({ x: cx + Math.cos(a / 8 * Math.PI * 2) * 22,
+          y: cy + Math.sin(a / 8 * Math.PI * 2) * 22, vx: 0, vy: 0, taken: 0 });
+    } else {
+      const cd = RI(-5, -2);                     // coin snake at a random depth
+      for (let i = 2; i < len - 2; i++)
+        coinAt(x0 + i, clamp(cd + Math.round(Math.sin(i * 0.6) * 1.2), -WSURF_G + 1, -1));
+    }
+    const fy = -RI(12, 84);
+    ents.push({ type: 'finn', x: (x0 + 3) * TILE, y: fy, y0: fy, vx: -0.55,
       w: 12, h: 6, ox: 2, oy: 6, dead: 0, t: RI(0, 80),
-      minX: x0 * TILE + 6, maxX: (x0 + len) * TILE - 20 });
-    if (d > 0.35 && rng() < 0.5 && len > 11)
-      ents.push({ type: 'puffer', x: (x0 + Math.floor(len / 2)) * TILE, y: surf + 22, y0: surf + 22,
+      minX: x0 * TILE, maxX: (x0 + len) * TILE - 16 });
+    if (rng() < 0.4) {
+      const py = -RI(24, 76);
+      ents.push({ type: 'puffer', x: (x0 + RI(5, len - 4)) * TILE, y: py, y0: py,
         vx: 0, w: 12, h: 11, ox: 1, oy: 2, dead: 0, t: RI(0, 90) });
-    for (let i = 0; i < 2; i++) C(gl);          // far shore: leap out onto the lip
+    }
+    if (d > 0.2 && rng() < 0.45)
+      ents.push({ type: 'squid', x: (x0 + Math.floor(len * 0.6)) * TILE, y: -RI(28, 80),
+        vx: 0, vy: 0.2, w: 12, h: 12, ox: 2, oy: 2, dead: 0, t: RI(0, 60), jetT: RI(30, 80) });
+  } },
+  { aqua: true, w: () => 3.5, f: d => {         // pillar gate: thread the gap
+    enterWater();
+    const g = clamp(gen.g, -3, -1);
+    for (let i = 0; i < RI(3, 5); i++) AQCOL(g);
+    let gapC = RI(-WSURF_G + 1, -g - 2);        // gap center: anywhere in the column
+    const gx0 = gen.x;
+    const half = rng() < 0.35;                  // some gates are reef mounds / hanging slabs
+    const mound = half && rng() < 0.5;
+    if (mound) gapC = Math.min(gapC, -g - 3);   // a mound must show at least one tile
+    for (let c = 0; c < 2; c++) {
+      const tx = gen.x; AQCOL(g);
+      for (let ty = -g - 1; ty >= -WSURF_G - 1; ty--) {
+        if (half) {
+          if (mound ? ty >= gapC + 2 : ty <= gapC - 2) put(tx, ty, T_STONE);
+        } else if (ty > gapC + 1 || ty < gapC - 1) put(tx, ty, T_STONE);
+      }
+    }
+    coinAt(gx0 - 1, gapC); coinAt(gx0, gapC); coinAt(gx0 + 1, gapC); coinAt(gx0 + 2, gapC);
+    for (let i = 0; i < RI(3, 5); i++) AQCOL(g);
+  } },
+  { aqua: true, w: () => 2, f: d => {           // urchin reef: spiny sea floor
+    enterWater();
+    const g = clamp(gen.g, -3, -1);
+    AQCOL(g); AQCOL(g);
+    const n = RI(2, 4), x0 = gen.x;
+    for (let i = 0; i < n; i++) { const tx = gen.x; AQCOL(g); put(tx, -g - 1, T_SPIKE); }
+    coinRow(x0, -g - 3, n);
+    AQCOL(g); AQCOL(g);
+  } },
+  { aqua: true, w: d => d > 0.25 ? 2.5 : 0.6, f: d => {   // squid alley: jet dodging
+    enterWater();
+    const len = RI(12, 16), x0 = gen.x;
+    for (let i = 0; i < len; i++) AQCOL(-2);
+    const nsq = RI(2, 3);
+    for (let s = 0; s < nsq; s++)
+      ents.push({ type: 'squid', x: (x0 + 3 + s * 4) * TILE, y: s % 2 ? -32 : -72,
+        vx: 0, vy: 0.2, w: 12, h: 12, ox: 2, oy: 2, dead: 0, t: RI(0, 60), jetT: RI(20, 70) });
+    for (let i = 2; i < len - 2; i++)
+      coinAt(x0 + i, (i & 2) ? -2 : -5);        // slalom line
+  } },
+  { aqua: true, w: () => 1.7, f: d => {         // sandbar island: come up for air
+    enterWater();
+    AQCOL(-1); AQCOL(1); AQCOL(3); AQCOL(5);    // quick shoal — you swim over it
+    const len = RI(6, 12), x0 = gen.x;
+    for (let i = 0; i < len; i++) C(SAND_G);    // a thin bar of dry sand
+    coinRow(x0 + 1, -SAND_G - 2, Math.min(5, len - 1));
+    if (len >= 9 && gen.totalTiles - gen.lastWarp > 220 && rng() < 0.5) {
+      // the cove's warp pipe lives on its islands — grotto access restored
+      gen.lastWarp = gen.totalTiles;
+      const px = x0 + len - 4;
+      put(px, -SAND_G - 1, T_PIPEL); put(px + 1, -SAND_G - 1, T_PIPER);
+      put(px, -SAND_G - 2, T_CAPL); put(px + 1, -SAND_G - 2, T_CAPR);
+      ents.push({ type: 'warp', x: px * TILE, y: (-SAND_G - 2) * TILE,
+        w: 32, h: 16, ox: 0, oy: 0, dead: 0, t: 0 });
+    } else if (rng() < 0.5) {
+      qblock(x0 + Math.floor(len / 2), -SAND_G - 4, qContents());
+    }
+    if (len > 8 && rng() < 0.4) {
+      spawnEnemy('chomp', x0 + 2, SAND_G);
+      ents[ents.length - 1].ledge = 1;          // beach chompers stay on the beach
+    }
   } },
   { hi: true, w: d => genThemeIdx() === 4 ? 6 : 0, f: d => {   // cloud climb: up and up
     let g = gen.g;
@@ -2113,7 +2242,14 @@ const patterns = [
 ];
 function genChunk() {
   if (gen.x >= gen.nextFlag) {                   // world boundary: safe flag zone
-    while (gen.g > 4) C(gen.g - 1);              // stroll down from the clouds first
+    // theme of the world ENDING here — genThemeIdx() at the seam reports the next one
+    const endWater = Math.floor(gen.nextFlag / WORLD_LEN - 1) % THEMES.length === 3;
+    const target = endWater ? SAND_G : 4;        // water-world flags stand on a sandbar
+    while (gen.g > target) C(gen.g - 1);         // stroll down from the clouds first
+    while (gen.g < target) {                     // ...or wade up out of the sea
+      const tx = gen.x; C(gen.g + 1);
+      if (endWater && gen.g < WSURF_G) water.set(tx, -WSURF_G * TILE);
+    }
     const g = gen.g;
     for (let i = 0; i < 4; i++) C(g);
     ents.push({ type: 'flag', x: gen.x * TILE, y: -g * TILE, w: 4, h: 96, ox: 0, oy: 0, dead: 0, t: 0, hit: 0 });
@@ -2122,8 +2258,10 @@ function genChunk() {
     return;
   }
   const d = difficulty();
-  // above the normal band only altitude-aware patterns may chain (sky climbs)
-  const pool = gen.g > 5 ? patterns.filter(p => p.hi) : patterns;
+  // theme gates: Tidal Cove runs only aqua patterns; the sky band only hi ones
+  const pool = genThemeIdx() === 3 ? patterns.filter(p => p.aqua)
+             : gen.g > 5 ? patterns.filter(p => p.hi)
+             : patterns.filter(p => !p.aqua);
   let total = 0;
   for (const p of pool) total += p.w(d);
   let r = rng() * total;
@@ -2200,7 +2338,7 @@ function addScore(n, x, y, label) {
 
 // ---------- update ----------
 const THEME_SONGS = ['hills', 'dunes', 'caves', 'tide', 'sky', 'frost', 'haunt', 'keep'];
-const HOSTILE = new Set(['chomp', 'rollo', 'spiny', 'bat', 'snap', 'wisp', 'finn', 'puffer', 'bones']);
+const HOSTILE = new Set(['chomp', 'rollo', 'spiny', 'bat', 'snap', 'wisp', 'finn', 'puffer', 'bones', 'squid']);
 const STOMPABLE = new Set(['chomp', 'rollo', 'bat', 'bones']);
 function genThemeIdx() { return Math.floor(Math.max(0, gen.x) / WORLD_LEN) % THEMES.length; }
 
@@ -2415,7 +2553,15 @@ function updatePlayer() {
   }
   if (input.slamReq) {
     input.slamReq = false;
-    if (!player.onGround && !player.slam && player.mode === 'run') {
+    if (player.inWater && player.mode === 'run') {
+      // swipe down underwater = dive stroke: real vertical control
+      player.vy = Math.min(player.vy + 3.2, 3.6);
+      player.diveT = 16;                 // lifts the sink cap while the stroke lasts
+      sq(230, 0.07, 0.05, 130);
+      for (let b = 0; b < 4; b++)
+        parts.push({ x: player.x + R(0, 10), y: player.y + 2, vx: R(-0.3, 0.3), vy: R(-0.8, -0.3),
+          life: RI(14, 26), color: '#bfeaff', size: 1, grav: -0.03 });
+    } else if (!player.onGround && !player.slam && player.mode === 'run') {
       player.slam = true; player.vy = Math.max(player.vy, 2.4);
       player.spinA = 0; player.flipT = 0;
       burst(player.x + 5, player.y + 6, '#fff', 3, 1, 0);
@@ -2429,7 +2575,8 @@ function updatePlayer() {
   // --- gravity ---
   if (player.inWater && !player.slam) {
     player.vy += 0.07;                                        // gentle sink
-    player.vy = clamp(player.vy, -3, 1.5);
+    player.vy = clamp(player.vy, -3, player.diveT > 0 ? 3.6 : 1.5);
+    if (player.diveT > 0) player.diveT--;
   } else if (player.slam) player.vy = Math.min(player.vy + (player.inWater ? 0.5 : 0.9), player.inWater ? 4.2 : SLAM_V);
   else {
     const gm = game.moon > 0 ? 0.5 : 1;
@@ -2855,6 +3002,8 @@ function updateEnts() {
       if (solidAt(ftx, fty)) {
         if (e.type === 'shell') { burst(e.x + 8, e.y + 8, '#59c8ff', 10, 2.4, 0.15); e.dead = 2; e.deadT = 1; sfx.kick(); }
         else { e.vx = -e.vx; e.x += e.vx * 2; }
+      } else if (e.ledge && e.vy === 0 && !(groundTopPx(ftx) <= e.y + 33)) {
+        e.vx = -e.vx; e.x += e.vx * 2;             // island patrollers turn at the shore
       }
       e.vy = Math.min(e.vy + GRAV, MAX_FALL);
       e.y += e.vy;
@@ -2892,6 +3041,26 @@ function updateEnts() {
       // puff up when the player closes in — a fair warning that also looks great
       const near = Math.abs(player.x + 5 - (e.x + 8)) < 70 && Math.abs(player.y - e.y) < 60;
       e.inf = clamp((e.inf || 0) + (near ? 0.09 : -0.05), 0, 1);
+    } else if (e.type === 'squid') {
+      // blooper rhythm: drift and sink, then jet toward where you are
+      e.jetT--;
+      if (e.jetT <= 0 && Math.abs(player.x - e.x) < 220 && player.inWater) {
+        const dx = (player.x + 5) - (e.x + 8), dy = (player.y + 7) - (e.y + 8);
+        const m = Math.hypot(dx, dy) || 1;
+        e.vx = dx / m * 1.9; e.vy = dy / m * 1.9;
+        e.jetT = RI(55, 95);
+        for (let b = 0; b < 3; b++)
+          parts.push({ x: e.x + 8, y: e.y + 10, vx: R(-0.3, 0.3), vy: R(0.2, 0.7),
+            life: RI(16, 30), color: '#bfeaff', size: 1, grav: -0.03 });
+      }
+      e.vx *= 0.94; e.vy *= 0.94;
+      e.x += e.vx;
+      e.y += e.vy + (Math.abs(e.vy) < 0.3 ? 0.15 : 0);   // lazy sink between jets
+      const s = waterSurfaceAt(e.x + 8);
+      const surfY = s !== undefined ? s : -WSURF_G * TILE;   // over dry land: hold sea level
+      if (e.y < surfY + 4) { e.y = surfY + 4; e.vy = Math.max(0, e.vy); }
+      const gt = groundTopPx(Math.floor((e.x + 8) / TILE));
+      if (Number.isFinite(gt) && e.y > gt - 14) { e.y = gt - 14; e.vy = Math.min(0, e.vy); }
     } else if (e.type === 'snap') {
       // pipe plant cycle; shy when the player is close
       const near = Math.abs(player.x - e.x) < 42 && e.phase === 0;
@@ -2960,7 +3129,8 @@ function updateEnts() {
     const r = erect(e);
     if (!overlap(pr, r, 1)) continue;
     if (game.star > 0 || game.giga > 0) { killEnemy(e, 200); sfx.kick(); buzz(2); continue; }
-    if (player.slam && e.type !== 'wisp') { killEnemy(e, 150); sfx.stomp(); buzz(2); continue; }
+    const plunging = player.slam || (player.inWater && player.diveT > 0);   // dive stroke = underwater slam
+    if (plunging && e.type !== 'wisp') { killEnemy(e, 150); sfx.stomp(); buzz(2); continue; }
     const stomp = player.vy > 0.5 && (player.y + player.h) - r.y < 7 + player.vy;
     if (stomp && STOMPABLE.has(e.type)) {
       game.combo++;
@@ -3126,7 +3296,18 @@ function ambient() {
     if (player.y < -140 && rng() < 0.55)
       parts.push({ x: cam.x + W + 10, y: cam.y + H * R(0.55, 0.95), vx: R(-1.6, -0.9), vy: 0, life: 300, color: 'rgba(255,255,255,0.65)', size: RI(2, 3), grav: 0 });
   }
-  else if (th.particle === 'foam') { if (rng() < 0.5) parts.push({ x, y: yTop, vx: R(-0.5, -0.1), vy: R(0.2, 0.5), life: 180, color: 'rgba(255,255,255,0.6)', size: 1, grav: 0, sway: 1 }); }
+  else if (th.particle === 'foam') {
+    if (rng() < 0.5) parts.push({ x, y: yTop, vx: R(-0.5, -0.1), vy: R(0.2, 0.5), life: 180, color: 'rgba(255,255,255,0.6)', size: 1, grav: 0, sway: 1 });
+    // vents on the sea floor exhale bubble columns
+    if (rng() < 0.4) {
+      const vtx = Math.floor((cam.x + rng() * W) / TILE);
+      const gt = groundTopPx(vtx);
+      if (Number.isFinite(gt) && water.has(vtx))
+        for (let b = 0; b < 3; b++)
+          parts.push({ x: vtx * TILE + 8 + R(-2, 2), y: gt - 4 - b * 7, vx: R(-0.15, 0.15),
+            vy: R(-0.55, -0.3), life: RI(60, 110), color: '#bfeaff', size: b ? 1 : 2, grav: -0.004, sway: 1 });
+    }
+  }
   else if (th.particle === 'ember') parts.push({ x, y: cam.y + H + 5, vx: R(-0.4, 0.2), vy: R(-1.1, -0.5), life: 140, color: pick(['#ff6a3c', '#ffb45c']), size: rng() < 0.4 ? 2 : 1, grav: -0.004 });
   else if (th.particle === 'snow') parts.push({ x, y: yTop, vx: R(-0.6, -0.1), vy: R(0.4, 0.9), life: 240, color: rng() < 0.3 ? '#ffffff' : '#e4f2ff', size: rng() < 0.25 ? 2 : 1, grav: 0, sway: 1 });
   else if (th.particle === 'fog') { if (rng() < 0.6) parts.push({ x: cam.x + W + 10, y: cam.y + H * R(0.45, 0.9), vx: R(-0.5, -0.2), vy: R(-0.05, 0.05), life: 320, color: 'rgba(170,150,200,0.22)', size: 3, grav: 0 }); }
@@ -3412,6 +3593,17 @@ function drawEnt(e, camX, camY) {
     }
     img = PUFF0;
   }
+  else if (e.type === 'squid') {
+    const jetting = Math.hypot(e.vx, e.vy) > 0.7;
+    img = jetting ? SQUID1 : SQUID0;
+    if (!e.dead && jetting) {                  // lean into the jet direction
+      ctx.save(); ctx.translate(sx + 8, sy + 8);
+      ctx.rotate(clamp(e.vx * 0.25, -0.5, 0.5));
+      ctx.drawImage(img, -8, -8);
+      ctx.restore();
+      return;
+    }
+  }
   else if (e.type === 'wisp') {
     if (e.trail && !e.dead) {                  // ghostly afterimages
       const timg = f ? WISP1 : WISP0;
@@ -3692,7 +3884,7 @@ function renderTitle() {
   if ((game.frame >> 5) & 1)
     drawTextC(ctx, 'TAP TO START', W / 2, gy - 124, 2, '#ffe97a', '#1a1c2c');
   drawTextC(ctx, 'TAP: JUMP   AIR TAP: DOUBLE JUMP', W / 2, H - 68 - safeBot, 1, '#fff', '#1a1c2c');
-  drawTextC(ctx, 'SWIPE DOWN: SLAM', W / 2, H - 58 - safeBot, 1, '#fff', '#1a1c2c');
+  drawTextC(ctx, 'SWIPE DOWN: SLAM / DIVE', W / 2, H - 58 - safeBot, 1, '#fff', '#1a1c2c');
   drawTextC(ctx, 'SLAM A ↓ PIPE TO EXPLORE', W / 2, H - 48 - safeBot, 1, '#ffe97a', '#1a1c2c');
   // stats on a dark card — tiny colored text straight on the sky was unreadable
   const stats = [];
@@ -3915,8 +4107,13 @@ function botThink() {
   const tx = Math.floor((player.x + 5) / TILE);
   const feetTy = Math.floor((player.y + player.h - 1) / TILE);
   if (player.inWater) {
-    // paddle: stroke rhythmically, harder when sinking, and ride near the surface
-    if (game.frame % 12 === 0 || player.vy > 1.1) botJump();
+    // paddle: stroke rhythmically, harder when sinking, and ride near the surface.
+    // pinned against a pillar gate? stop stroking and sink until the gap appears.
+    if (Math.abs(player.x - botLastX) < 0.25) botStill++; else botStill = 0;
+    botLastX = player.x;
+    if (botStill > 110) botStill = 0;
+    const sinking = botStill > 45;
+    if (!sinking && (game.frame % 12 === 0 || player.vy > 1.1)) botJump();
     input.held = false;
     return;
   }
