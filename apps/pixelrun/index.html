@@ -1605,39 +1605,36 @@ const SONGS = {};
      dBr, dBr, dBr, dBd, dA, dA, dA, dF,  dB, dB, dB, dF,    dA, dA, dB, dEnd]);
 }
 
-{ // SUNSET DUNES — A-harmonic-minor snake charmer: slink, lift, return (v2)
-  const d1 = 'a4:3 c5:3 b4:2 a4:2 g#4:2 a4:2 e5:2',
-        d2 = 'a4:3 c5:3 b4:2 a4:2 e5:4 d5:2',
-        d3 = 'f5:3 e5:3 d5:2 c5:2 b4:2 c5:2 d5:2',
-        d4 = 'c5:2 b4:2 a4:2 g#4:2 a4:6 r:2',
-        d4v = 'c5:2 b4:2 a4:2 b4:2 c5:4 e5:2 r:2',
-        d5 = 'a5:6 g5:2 f5:2 e5:4 d5:2',
-        d6 = 'f5:6 e5:2 d5:2 c5:4 b4:2',
-        d7 = 'e5:3 f5:3 g#5:2 a5:2 b5:2 c6:2 b5:2',
-        d8 = 'a5:4 e5:4 c5:4 b4:2 g#4:2',
-        dEnd = 'c5:2 b4:2 g#4:2 b4:2 a4:6 a5:2';
-  const sA = 'r:2 a3:2 r:2 c4:2 r:2 a3:2 r:2 c4:2',
-        sDm = 'r:2 d4:2 r:2 f4:2 r:2 d4:2 r:2 f4:2',
-        sE = 'r:2 e4:2 r:2 g#3:2 r:2 e4:2 r:2 g#3:2',
-        h5 = 'r:6 e4:2 f4:2 r:4 g#4:2',
-        h6 = 'r:6 a4:2 b4:2 r:4 e4:2',
-        pAm = 'a3:8 c4:8',
-        h8 = 'r:4 a4:2 g#4:2 r:4 e4:2 d4:2';
-  const uA = 'a2:4 e2:4 a2:4 g2:2 f2:2',
-        uA2 = 'a2:4 e2:4 a2:4 a2:2 e2:2',
-        uDm = 'd2:4 a2:4 d3:4 d2:2 c2:2',
-        uE = 'e2:4 b2:4 e2:4 e2:2 g#2:2',
+{ // SUNSET DUNES — A Phrygian dominant caravan: ornament turns, camel gallop (v3)
+  const d1 = 'a4:2 a#4:2 c#5:3 d5:1 c#5:2 a#4:2 a4:4',
+        d2 = 'e5:2 f5:2 e5:3 d5:1 c#5:2 d5:2 e5:4',
+        d3 = 'a5:3 g5:3 f5:2 e5:2 d5:2 c#5:2 d5:2',
+        d4 = 'e5:2 d5:2 c#5:2 a#4:2 a4:6 r:2',
+        d4v = 'e5:2 d5:2 c#5:2 d5:2 e5:4 f5:2 e5:2',
+        d5 = 'a5:6 a#5:2 a5:2 g5:4 f5:2',
+        d6 = 'e5:6 f5:2 g5:2 a5:4 g5:2',
+        d7 = 'f5:3 g5:3 a5:2 a#5:2 c#6:2 d6:2 c#6:2',
+        d8 = 'd6:2 c#6:2 a#5:2 a5:2 e5:4 c#5:2 a4:2',
+        dEnd = 'e5:2 d5:2 c#5:2 a#4:2 a4:6 a5:2';
+  const sA = 'r:2 a3:2 r:2 c#4:2 r:2 a3:2 r:2 e4:2',
+        sDm = 'r:2 d4:2 r:2 f4:2 r:2 d4:2 r:2 a4:2',
+        h5 = 'r:6 f4:2 e4:2 r:4 c#4:2',
+        h6 = 'r:6 c#4:2 d4:2 r:4 e4:2',
+        pDm = 'd4:8 f4:8',
+        h8 = 'r:4 e4:2 f4:2 r:4 e4:2 c#4:2';
+  const gA = 'a2:2 a2:1 a2:1 e2:2 a2:2 a2:2 a2:1 a2:1 e2:2 a2:2',
+        gDm = 'd2:2 d2:1 d2:1 a2:2 d3:2 d2:2 d2:1 d2:1 a2:2 d2:2',
         uDm8 = 'd2:2 d3:2 d2:2 d3:2 d2:2 d3:2 d2:2 d3:2',
-        uE8 = 'e2:2 e3:2 e2:2 e3:2 e2:2 e3:2 e2:2 e3:2',
-        uAm8 = 'a2:2 a3:2 a2:2 a3:2 a2:2 a3:2 a2:2 a3:2',
-        uEnd = 'a2:4 e2:4 a2:8';
-  const dr = 'k..k..s.k.k.s..h',
+        uBb8 = 'a#2:2 a#3:2 a#2:2 a#3:2 a#2:2 a#3:2 a#2:2 a#3:2',
+        uA8 = 'a2:2 a3:2 a2:2 a3:2 a2:2 a3:2 a2:2 a3:2',
+        gEnd = 'a2:4 e2:4 a2:8';
+  const dr = 'k..k..s.k.k.s.h.',
         drF = 'k..k..s.k.s.s.ss',
         drB = 'k.hk..s.k.hk.s.h';
-  SONGS.dunes = song(120, {},
+  SONGS.dunes = song(132, {},
     [d1, d2, d3, d4,  d1, d2, d3, d4v,  d5, d6, d7, d8,  d1, d2, d3, dEnd],
-    [sA, sA, sDm, sE, sA, sA, sDm, sE,  h5, h6, pAm, h8, sA, sA, sDm, sE],
-    [uA, uA2, uDm, uE, uA, uA2, uDm, uE, uDm8, uE8, uAm8, uE8, uA, uA2, uDm, uEnd],
+    [sA, sA, sDm, sA, sA, sA, sDm, sA,  h5, h6, pDm, h8, sA, sA, sDm, sA],
+    [gA, gA, gDm, gA, gA, gA, gDm, gA,  uDm8, uDm8, uBb8, uA8, gA, gA, gDm, gEnd],
     [dr, dr, dr, drF, dr, dr, dr, drF,  drB, drB, drB, drF, dr, dr, drB, drF]);
 }
 
@@ -1667,10 +1664,10 @@ const SONGS = {};
         wEm = 'e2:4 e2:4 b2:4 e3:4', wAm = 'a2:4 a2:4 e2:4 a2:4',
         wG = 'g2:4 g2:4 d3:4 b2:4', wE = 'e2:4 b2:4 e2:4 e2:4',
         vEnd = 'e2:4 b2:4 e2:8';
-  const cd = 'k.....s.....k...',
-        cdF = 'k.....s...s.k.s.',
+  const cd = 'k..h..s..h..k..h',
+        cdF = 'k..h..s..h..s.ss',
         cdB = 'k...h...s...h...';
-  SONGS.caves = song(108, { echo: 0.35 },
+  SONGS.caves = song(124, { echo: 0.35 },
     [c1, c2, c3, c4,  c5, c6, c7, c8,  c1, c2, c3, c4,  c13, c14, c15, c16],
     [gEm, gD, gC, gB, pEm2, pAm2, pG2, pE16, gEm, gD, gC, gB, a13, a14, a15, a16],
     [vEm, vD, vC, vB, wEm, wAm, wG, wE, vEm, vD, vC, vB, vEm, vD, vEm, vEnd],
