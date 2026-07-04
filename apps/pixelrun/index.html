@@ -68,7 +68,7 @@ const MAX_SPEED = 3.05;
 const PIT_Y = 11 * TILE;             // below this = pit death
 const WORLD_LEN = 500;               // tiles per world before the flag
 const SAVE = 'pixelrun_';
-const VERSION = 28;                  // shown on the title screen — bump once per PR (see CLAUDE.md)
+const VERSION = 29;                  // shown on the title screen — bump once per PR (see CLAUDE.md)
 
 // ---------- utils ----------
 const clamp = (v, a, b) => v < a ? a : v > b ? b : v;
@@ -4423,10 +4423,9 @@ function drawBtn(label, cx, y, on) {
   drawText(ctx, label, x + 8, y + 5, 1, on === false ? '#8a8ea0' : '#fff');
   return { x: x - 4, y: y - 4, w: w + 8, h: h + 8 };
 }
-const LOGO_COLORS = ['#ff5a5a', '#ffb03c', '#ffe93c', '#7dff6a', '#59c8ff', '#c86bde'];
 function drawLogo(cx, y, s) {
   // readability first: solid fills with a chunky outline and soft drop shadow,
-  // one gentle group bob — the rainbow lives on as an underline accent
+  // bobbing gently as one unit
   const bob = Math.round(Math.sin(game.frame * 0.06) * 2);
   const word = (str, yy, sc, fill) => {
     const x0 = cx - textW(str, sc) / 2;
@@ -4437,13 +4436,6 @@ function drawLogo(cx, y, s) {
   };
   word('PIXEL', y + bob, s, '#ffffff');
   word('RUN', y + 6 * s + 4 + bob, s + 2, '#ffe93c');
-  const uw = textW('RUN', s + 2) + 8;
-  const ux = cx - uw / 2, uy = y + 6 * s + 4 + 5 * (s + 2) + 8 + bob;
-  const seg = Math.ceil(uw / 6);
-  for (let i = 0; i < 6; i++) {
-    ctx.fillStyle = LOGO_COLORS[i];
-    ctx.fillRect(Math.round(ux + i * seg), Math.round(uy), Math.min(seg, uw - i * seg), 3);
-  }
 }
 function drawTitleGround(camX) {
   // decorative ground strip shared by the title and level-select screens
