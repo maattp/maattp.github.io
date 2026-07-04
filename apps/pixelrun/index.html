@@ -2085,16 +2085,22 @@ function updatePet() {
     const fTx = Math.floor((tx2 + 8) / TILE), fTy = Math.floor((ws - 6) / TILE);
     gateAhead = solidAt(fTx, fTy) || solidAt(fTx + 1, fTy) || solidAt(fTx + 2, fTy) || solidAt(fTx + 3, fTy);
   }
-  // pets don't mimic coin-collection jumps: they hold their own line and only
-  // leave it when the terrain demands. scan anchor = the player's level when
-  // he's grounded, the pet's own level while he's off doing acrobatics
-  const anchorY = (trail.g ? trail.y : pet.y) - 24;
+  // pets track the TERRAIN LINE — the ground map plus anything standing on it
+  // (pipes), never floating platforms/brick rows. That's what killed the yo-yo:
+  // the old scan climbed onto every ? platform the player touched.
+  const petFloor = px => {
+    const txc = Math.floor(px / TILE);
+    let fy = groundTopPx(txc);
+    if (!Number.isFinite(fy)) return null;
+    let row = fy / TILE - 1;
+    for (let n = 0; n < 4 && SOLID.has(tileAt(txc, row)); n++, row--) fy = row * TILE;
+    return fy;
+  };
   if (def.mode === 'fly') {
     if (gateAhead && ws !== undefined) {
       ty2 = trail.y;                                         // thread the gap exactly
     } else {
-      const gt3 = player.inWater || trail.w || ws !== undefined ? null
-        : surfaceBelow(tx2 + 8, anchorY, false);
+      const gt3 = player.inWater || trail.w || ws !== undefined ? null : petFloor(tx2 + 8);
       ty2 = (gt3 !== null ? gt3 - 26 : ty2 - 12) + Math.sin(pet.t * 0.12) * 2.5;   // steady cruise
       if (ws !== undefined && ty2 > ws - 14)
         ty2 = ws - 14;                                       // birds skim, never submerge
@@ -2103,7 +2109,7 @@ function updatePet() {
     if (ws !== undefined && trail.w) {
       if (!gateAhead) ty2 = ws - 9;    // every land animal paddles at the surface
     } else if (!trail.w && ws === undefined) {               // real land only —
-      const gt2 = surfaceBelow(tx2 + 8, anchorY, false);     // never perch on gate caps
+      const gt2 = petFloor(tx2 + 8);                         // never perch on gate caps
       if (gt2 !== null) ty2 = gt2 - 13;   // paws on the ground; over a pit: sail the trail arc
     }
   }
@@ -3546,7 +3552,15 @@ function applyPow(kind, x, y) {
   sfx.power(); buzz(2);
   if (kind === 'heart') {
     if (game.hearts < game.maxHearts) { game.hearts++; game.heartPop = 14; addFloat(x, y - 8, '+1♥', '#ff8a9a'); }
-    else { addScore(500, x, y - 8); }
+    else {   // already full: the heart converts to points, loudly
+      addScore(500, undefined);
+      addFloat(x, y - 8, 'FULL ♥ +500', '#ff8a9a');
+      game.heartFlash = 14; game.heartPop = 14;
+      sfx.century();
+      for (let i = 0; i < 8; i++)
+        parts.push({ x: x + 6 + R(-6, 6), y: y + R(-6, 6), vx: R(-1, 1), vy: R(-1.8, -0.5),
+          life: RI(16, 30), color: i % 2 ? '#ff8a9a' : '#fff', size: 1, grav: 0.05 });
+    }
     burst(x + 6, y + 6, '#e8453c', 8, 2, 0.1);
   } else if (kind === 'star') {
     game.star = 430;
