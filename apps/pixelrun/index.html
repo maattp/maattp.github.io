@@ -1785,6 +1785,7 @@ canvas.addEventListener('pointerdown', e => {
   try { canvas.setPointerCapture(e.pointerId); } catch (err) {}
   input.py = e.clientY; input.pt = performance.now();
   input.kx = e.clientX; input.ky = e.clientY;
+  input.downState = game.state;        // endPointer must know where the tap BEGAN
   onPress(e.clientX, e.clientY);
 });
 canvas.addEventListener('pointermove', e => {
@@ -1799,8 +1800,10 @@ function endPointer(e) {
   if (e.pointerId !== input.pid) return;
   input.pid = -1;
   releaseJump();
-  if (game.state === 'title' && e.type === 'pointerup') {
-    // title acts on release: taps start / hit buttons, swipes feed the secret code
+  if (game.state === 'title' && input.downState === 'title' && e.type === 'pointerup') {
+    // title acts on release: taps start / hit buttons, swipes feed the secret code.
+    // downState guard: QUIT TO TITLE switches state on pointerDOWN — without it,
+    // the same tap's release would read as a title tap and instantly restart
     const dx = e.clientX - input.kx, dy = e.clientY - input.ky;
     if (Math.abs(dx) < 16 && Math.abs(dy) < 16) titleRelease(mkHit(e.clientX, e.clientY));
     else konamiPush(Math.abs(dx) > Math.abs(dy) ? (dx > 0 ? 'R' : 'L') : (dy > 0 ? 'D' : 'U'));
