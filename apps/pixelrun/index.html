@@ -2077,17 +2077,21 @@ function updatePet() {
   const def = PETS[petIdx];
   const tx2 = trail.x - 7;
   let ty2 = trail.y;
+  const ws = waterSurfaceAt(tx2 + 8);
+  // pillar gates poke above the waterline — when one is coming, every pet
+  // abandons the surface and dives along the player's own path instead
+  let gateAhead = false;
+  if (ws !== undefined) {
+    const fTx = Math.floor((tx2 + 8) / TILE), fTy = Math.floor((ws - 6) / TILE);
+    gateAhead = solidAt(fTx, fTy) || solidAt(fTx + 1, fTy) || solidAt(fTx + 2, fTy);
+  }
   if (def.mode === 'fly') {
     ty2 += -12 + Math.sin(pet.t * 0.12) * 2.5;               // hover at the shoulder
+    if (ws !== undefined && !gateAhead && ty2 > ws - 14)
+      ty2 = ws - 14;                                         // birds skim, never submerge
   } else {
-    const ws = waterSurfaceAt(tx2 + 8);
-    if (def.swims && ws !== undefined && trail.w) {
-      // pillar gates poke above the waterline — dive under them along the
-      // player's own path instead of clipping through the stone
-      const fTx = Math.floor((tx2 + 8) / TILE), fTy = Math.floor((ws - 6) / TILE);
-      const blocked = solidAt(fTx, fTy) || solidAt(fTx + 1, fTy) ||
-                      solidAt(fTx + 2, fTy);   // look ahead: start the dive early
-      if (!blocked) ty2 = ws - 9;              // paddle on the surface
+    if (ws !== undefined && trail.w) {
+      if (!gateAhead) ty2 = ws - 9;    // every land animal paddles at the surface
     }
     else if (!trail.w && trail.g) {
       const gt2 = surfaceBelow(tx2 + 8, ty2, false);
@@ -3698,7 +3702,8 @@ function ambient() {
 }
 
 // ---------- UI / state entry ----------
-const ui = { pause: null, sound: null, buzz: null, resume: null, quit: null };
+const ui = { pause: null, sound: null, buzz: null, resume: null, quit: null,
+  petRect: null, petNameT: -999, overTitle: null, levelBtns: null, back: null };
 function settingsHit(hit) {
   if (hit(ui.sound)) { setMuted(!audio.muted); sfx.ui(); return true; }
   if (hit(ui.buzz)) { hapticsOn = !hapticsOn; store('haptics', hapticsOn); buzz(1); sfx.ui(); return true; }
