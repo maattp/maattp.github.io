@@ -68,7 +68,7 @@ const MAX_SPEED = 3.05;
 const PIT_Y = 11 * TILE;             // below this = pit death
 const WORLD_LEN = 500;               // tiles per world before the flag
 const SAVE = 'pixelrun_';
-const VERSION = 23;                  // shown on the title screen — bump once per PR (see CLAUDE.md)
+const VERSION = 24;                  // shown on the title screen — bump once per PR (see CLAUDE.md)
 
 // ---------- utils ----------
 const clamp = (v, a, b) => v < a ? a : v > b ? b : v;
@@ -1844,6 +1844,7 @@ const game = {
 let water = new Map();       // tx -> surface y in px (pool fills down to the ground floor)
 let ground = new Map();      // tx -> elevation g (ground top px = -g*TILE)
 let tiles = new Map();       // packed key -> tile id
+let tufts = new Map();       // tx -> grass tuft variant (sways as you pass)
 let qmeta = new Map();       // packed key -> qblock contents
 let bumps = new Map();       // packed key -> bump anim frames left
 let ents = [];               // enemies, powerups, flags
@@ -1855,7 +1856,7 @@ const player = {
   onGround: false, coyote: 0, dj: true, slam: false,
   runT: 0, mode: 'run', bubbleT: 0, stompT: 0,
   flipT: 0, landT: 0, stretchT: 0, spinA: 0,   // juice: front-flip / squash / stretch / slam spin
-  pipeT: 0, inWater: false, icyAir: false, diveT: 0
+  pipeT: 0, inWater: false, icyAir: false, diveT: 0, wetT: 0
 };
 const cam = { x: 0, y: 0 };
 const gen = { x: 0, g: 0, nextFlag: WORLD_LEN, sinceEnemy: 0, sinceCoin: 0, totalTiles: 0 };
@@ -1893,7 +1894,12 @@ function difficulty() {
 }
 
 // ---------- generation ----------
-function C(g) { ground.set(gen.x, g); gen.g = g; gen.x++; gen.totalTiles++; gen.sinceEnemy++; gen.sinceCoin++; }
+const TUFT_THEMES = new Set([0, 4, 6]);   // hills, sky gardens, withered hollow grass
+function C(g) {
+  ground.set(gen.x, g);
+  if (TUFT_THEMES.has(genThemeIdx()) && rng() < 0.12) tufts.set(gen.x, RI(0, 9));
+  gen.g = g; gen.x++; gen.totalTiles++; gen.sinceEnemy++; gen.sinceCoin++;
+}
 function GAP(n) { for (let i = 0; i < n; i++) { gen.x++; gen.totalTiles++; } }
 // --- TIDAL COVE is a real water level: sea-floor columns under a fixed surface ---
 const WSURF_G = 6;                   // surface 6 tiles above baseline (y = -96)
@@ -2283,6 +2289,7 @@ function cleanup() {
   const min = Math.floor(cam.x / TILE) - 12;
   for (const k of ground.keys()) if (k < min) ground.delete(k);
   for (const k of water.keys()) if (k < min) water.delete(k);
+  for (const k of tufts.keys()) if (k < min) tufts.delete(k);
   for (const k of tiles.keys()) if (Math.floor(k / 128) < min) { tiles.delete(k); qmeta.delete(k); }
   ents = ents.filter(e => !e.dead || e.deadT > 0);
   ents = ents.filter(e => e.x > cam.x - 80 && e.x < cam.x + W + 620 && e.y < PIT_Y + 40);
@@ -2294,6 +2301,7 @@ function startRun(world) {
   world = world || 1;
   const offT = (world - 1) * WORLD_LEN;          // level-select starts mid-progression
   ground = new Map(); tiles = new Map(); qmeta = new Map(); bumps = new Map(); water = new Map();
+  tufts = new Map();
   ents = []; coins = []; parts = []; floats = [];
   rng = mulberry32(urlSeed ? +urlSeed : (Math.random() * 1e9) | 0);
   game.state = 'play'; game.frame = 0; game.score = 0; game.coins = 0; game.dist = 0;
@@ -2316,7 +2324,7 @@ function startRun(world) {
   for (let i = 0; i < 24; i++) C(0);             // opening runway
   player.x = offT * TILE + 40; player.y = -player.h; player.vy = 0;
   player.onGround = true; player.coyote = 0; player.dj = true; player.slam = false;
-  player.mode = 'run'; player.runT = 0; player.inWater = false; player.icyAir = false;
+  player.mode = 'run'; player.runT = 0; player.inWater = false; player.icyAir = false; player.wetT = 0;
   cam.x = player.x - camOffX(); cam.y = camBaseY();
   announce('WORLD ' + world + '  ' + THEMES[game.themeIdx].name, 120);
   playSong(THEME_SONGS[game.themeIdx]);
@@ -2439,6 +2447,23 @@ function update() {
   if (player.onGround && player.mode === 'run' && game.speed > 2.1 && game.frame % 12 === 0)
     parts.push({ x: player.x - 2, y: player.y + player.h - 1, vx: R(-0.7, -0.3), vy: R(-0.4, -0.1),
       life: RI(10, 18), color: 'rgba(230,225,210,0.6)', size: 1, grav: 0.02 });
+  // footprints: the world remembers you crossed it
+  if (player.onGround && player.mode === 'run' && game.frame % 9 === 0) {
+    const onSand = game.themeIdx === 1 ||
+      (game.themeIdx === 3 && !water.has(Math.floor((player.x + 5) / TILE)));
+    const wet = player.wetT > 0;
+    if (game.themeIdx === 5 || onSand || wet) {
+      const alt = (game.frame / 9) & 1;             // left foot, right foot
+      parts.push({ x: player.x + 2 + alt * 5, y: player.y + player.h - 1,
+        vx: 0, vy: 0, grav: 0, size: 1, print: 1,
+        life: wet ? 70 : 110,
+        color: wet ? 'rgba(40,90,140,0.45)' : game.themeIdx === 5 ? '#b8cfe4' : '#b9884f' });
+    }
+  }
+  // hard landing on ice: a skid streak scored into the surface
+  if (player.landT === 8 && game.themeIdx === 5 && player.onGround)
+    parts.push({ x: player.x - 2, y: player.y + player.h - 1, vx: 0, vy: 0, grav: 0,
+      size: 1, skid: 8, life: 80, color: 'rgba(255,255,255,0.55)' });
   // crossing your own record, live: a moment worth celebrating
   if (!game.recordFete && game.bestDist > 60 && game.dist > game.bestDist && game.state === 'play') {
     game.recordFete = true;
@@ -2485,7 +2510,22 @@ function updatePlayer() {
         life: RI(14, 26), color: i % 3 ? '#bfeaff' : '#ffffff', size: rng() < 0.3 ? 2 : 1, grav: 0.16 });
     sfx.splash(); buzz(1);
     if (nowWater) { player.slam = false; player.flipT = 0; player.vy *= 0.35; player.dj = true; }
+    else player.wetT = 140;                       // dripping until you dry off
     player.inWater = nowWater;
+    if (wsurf !== undefined) {                    // surface ripple rolls outward
+      parts.push({ x: player.x + 5, y: wsurf, vx: 0, vy: 0, life: 16, color: '#e8f8ff', ripple: 2 });
+    }
+  }
+  // surface wake: swimming just under the waterline churns a foam trail
+  if (player.inWater && wsurf !== undefined && wsurf - player.y > -4 && player.y - wsurf < 12
+      && game.frame % 5 === 0)
+    parts.push({ x: player.x - 2, y: wsurf + R(-1, 1), vx: R(-0.9, -0.5), vy: R(-0.15, 0.05),
+      life: RI(12, 24), color: 'rgba(255,255,255,0.55)', size: 1, grav: 0 });
+  if (player.wetT > 0) {
+    player.wetT--;
+    if (player.wetT % 11 === 0)                   // drips shaken off mid-stride
+      parts.push({ x: player.x + R(1, 9), y: player.y + R(4, 12), vx: R(-0.2, 0.2), vy: 0.3,
+        life: RI(10, 20), color: '#9adfff', size: 1, grav: 0.14 });
   }
 
   // --- horizontal ---
@@ -3118,6 +3158,7 @@ function updateEnts() {
         for (let i = 0; i < 6; i++)
           parts.push({ x: e.x + 8 + R(-3, 3), y: e.surfY, vx: R(-0.8, 0.8), vy: R(-1.6, -0.4),
             life: RI(10, 20), color: '#bfeaff', size: 1, grav: 0.14 });
+        parts.push({ x: e.x + 8, y: e.surfY, vx: 0, vy: 0, life: 14, color: '#e8f8ff', ripple: 2 });
         e.dead = 2; e.deadT = 0;
       }
       continue;
@@ -3293,7 +3334,7 @@ function updateFx() {
   for (const [k, v] of bumps) { if (v <= 1) bumps.delete(k); else bumps.set(k, v - 1); }
 }
 function ambient() {
-  if (game.inBonus) {                  // vault air: slow golden dust motes
+  if (game.inBonus && player.x < -1000) {   // vault air: slow golden dust motes
     if (game.frame % 9 === 0)
       parts.push({ x: cam.x + rng() * W, y: cam.y + rng() * H * 0.7, vx: R(-0.1, 0.1),
         vy: R(0.05, 0.2), life: RI(80, 160), color: 'rgba(255,220,140,0.35)', size: 1, grav: 0, sway: 1 });
@@ -3346,7 +3387,12 @@ function ambient() {
   }
   else if (th.particle === 'ember') parts.push({ x, y: cam.y + H + 5, vx: R(-0.4, 0.2), vy: R(-1.1, -0.5), life: 140, color: pick(['#ff6a3c', '#ffb45c']), size: rng() < 0.4 ? 2 : 1, grav: -0.004 });
   else if (th.particle === 'snow') parts.push({ x, y: yTop, vx: R(-0.6, -0.1), vy: R(0.4, 0.9), life: 240, color: rng() < 0.3 ? '#ffffff' : '#e4f2ff', size: rng() < 0.25 ? 2 : 1, grav: 0, sway: 1 });
-  else if (th.particle === 'fog') { if (rng() < 0.6) parts.push({ x: cam.x + W + 10, y: cam.y + H * R(0.45, 0.9), vx: R(-0.5, -0.2), vy: R(-0.05, 0.05), life: 320, color: 'rgba(170,150,200,0.22)', size: 3, grav: 0 }); }
+  else if (th.particle === 'fog') {
+    if (rng() < 0.6) parts.push({ x: cam.x + W + 10, y: cam.y + H * R(0.45, 0.9), vx: R(-0.5, -0.2), vy: R(-0.05, 0.05), life: 320, color: 'rgba(170,150,200,0.22)', size: 3, grav: 0 });
+    if (rng() < 0.35)   // fireflies: slow pulsing lanterns wandering the dark
+      parts.push({ x: cam.x + W + 6, y: cam.y + H * R(0.3, 0.75), vx: R(-0.35, -0.1), vy: R(-0.1, 0.1),
+        life: RI(240, 420), color: '#d8ff8a', size: 1, grav: 0, sway: 1, fly: 1 });
+  }
 }
 
 // ---------- UI / state entry ----------
@@ -3425,7 +3471,9 @@ function skyGrad(idx) {
 }
 function drawSkyAndParallax(camX, camY) {
   const th = THEMES[game.themeIdx];
-  if (game.inBonus) {                  // vaults are UNDERGROUND: cave wall, not sky
+  // player.x check: inBonus is set while you're still riding the pipe at the
+  // surface (both directions) — only swap the sky once you're actually down there
+  if (game.inBonus && player.x < -1000) {   // vaults are UNDERGROUND: cave wall, not sky
     ctx.fillStyle = '#0c0a14';
     ctx.fillRect(0, 0, W, H);
     // dim masonry courses drifting at half parallax
@@ -3552,6 +3600,8 @@ function drawTiles(camX, camY) {
 function drawEnt(e, camX, camY) {
   const sx = Math.round(e.x - camX), sy = Math.round(e.y - camY);
   const f = (e.t >> 4) & 1;
+  if (!e.dead && !SHADOWLESS.has(e.type) && e.type !== 'chest')
+    drawBlobShadow(e.x + 8, e.y + 16, camX, camY, 6.5);
   let img = null;
   // hop-bob walk with squash & stretch for the ground critters
   if (e.type === 'bones' && !e.dead) {
@@ -3793,36 +3843,42 @@ function drawEnt(e, camX, camY) {
   } else ctx.drawImage(img, sx, sy);
   ctx.globalAlpha = 1;
 }
-function drawPlayer(camX, camY) {
-  // blob shadow, always: an ellipse pinned to whatever would catch the light —
-  // full-size underfoot, shrinking and fading with height, spreading on landing
-  if (player.mode === 'run' && !player.inWater) {
-    const feet = player.y + player.h;
-    let surf = null;
-    if (player.onGround) surf = feet;
-    else {
-      const ptx = Math.floor((player.x + 5) / TILE);
-      for (let ty = Math.floor(feet / TILE); ty <= 11; ty++) {
-        const id = tileAt(ptx, ty);
-        if (SOLID.has(id) || id === T_PLAT) { surf = ty * TILE; break; }
-      }
-      const ws = waterSurfaceAt(player.x + 5);            // over the sea: the shadow
-      if (ws !== undefined && ws > feet && (surf === null || ws < surf)) surf = ws;
-    }
-    if (surf !== null) {                                  // over a pit: nothing catches it
-      const hgt = Math.max(0, surf - feet);
-      const k = clamp(1 - hgt / 150, 0.3, 1);
-      let w2 = 8.5 * k * (game.giga > 0 ? 1.6 : 1);
-      if (player.landT > 0) w2 *= 1 + player.landT * 0.04;   // impact spread
-      ctx.globalAlpha = 0.3 * clamp(1 - hgt / 170, 0.25, 1);
-      ctx.fillStyle = '#1a1c2c';
-      ctx.beginPath();
-      ctx.ellipse(Math.round(player.x + 5 - camX), Math.round(surf - 1 - camY),
-        w2, Math.max(1.4, w2 * 0.26), 0, 0, 7);
-      ctx.fill();
-      ctx.globalAlpha = 1;
-    }
+function surfaceBelow(px, fromY, withWater) {
+  const tx = Math.floor(px / TILE);
+  let surf = null;
+  for (let ty = Math.floor(fromY / TILE); ty <= 11; ty++) {
+    const id = tileAt(tx, ty);
+    if (SOLID.has(id) || id === T_PLAT) { surf = ty * TILE; break; }
   }
+  if (withWater) {
+    const ws = waterSurfaceAt(px);
+    if (ws !== undefined && ws > fromY && (surf === null || ws < surf)) surf = ws;
+  }
+  return surf;
+}
+// one light source for everybody: an ellipse pinned to whatever catches it,
+// full-size underfoot, shrinking and fading with height
+function drawBlobShadow(cx, feet, camX, camY, baseW, spread) {
+  const surf = surfaceBelow(cx, feet, true);
+  if (surf === null) return;                              // over a pit: nothing catches it
+  const hgt = Math.max(0, surf - feet);
+  const k = clamp(1 - hgt / 150, 0.3, 1);
+  const w2 = baseW * k * (spread || 1);
+  ctx.globalAlpha = 0.3 * clamp(1 - hgt / 170, 0.25, 1);
+  ctx.fillStyle = '#1a1c2c';
+  ctx.beginPath();
+  ctx.ellipse(Math.round(cx - camX), Math.round(surf - 1 - camY),
+    w2, Math.max(1.4, w2 * 0.26), 0, 0, 7);
+  ctx.fill();
+  ctx.globalAlpha = 1;
+}
+const SHADOWLESS = new Set(['wisp', 'finn', 'puffer', 'squid', 'snap', 'flag', 'warp',
+  'portal', 'powfx', 'torch', 'jumpfish', 'bird']);   // ghosts famously cast none; fish live in one
+function drawPlayer(camX, camY) {
+  if (player.mode === 'run' && !player.inWater)
+    drawBlobShadow(player.x + 5, player.y + player.h, camX, camY,
+      8.5 * (game.giga > 0 ? 1.6 : 1),
+      player.landT > 0 ? 1 + player.landT * 0.04 : 1);   // impact spread
   if (game.invuln > 0 && (game.frame >> 2) & 1 && player.mode === 'run') return;
   const sx = Math.round(player.x - 3 - camX), sy = Math.round(player.y - 2 - camY);
   if (game.star > 0 && !(game.star < 90 && (game.frame >> 2) & 1)) {
@@ -3893,6 +3949,39 @@ function drawPlayer(camX, camY) {
   if (running && game.frame % 173 < 5) {
     ctx.fillStyle = PAL.S;
     ctx.fillRect(sx + 9, sy + 5, 1, 2);
+  }
+  // reflections: a wobbling shimmer on the sea, a crisp ghost in the ice
+  if (player.mode === 'run' && !player.inWater) {
+    const feet = player.y + player.h;
+    const px = Math.round(player.x + 5 - camX);
+    if (game.themeIdx === 3) {
+      const ws = waterSurfaceAt(player.x + 5);
+      const db = ws !== undefined ? ws - feet : -1;
+      if (db >= 0 && db < 70) {
+        const wob = Math.sin(game.frame * 0.15) * 1.2;
+        ctx.save();
+        ctx.beginPath();
+        ctx.rect(px - 12, Math.round(ws - camY), 24, 18);   // only below the surface
+        ctx.clip();
+        ctx.globalAlpha = Math.max(0.05, 0.15 - db / 700);
+        ctx.translate(px + wob, Math.round(ws + db - camY));
+        ctx.scale(1, -1);
+        ctx.drawImage(img, -8, -16);
+        ctx.restore();
+        ctx.globalAlpha = 1;
+      }
+    } else if (game.themeIdx === 5 && player.onGround) {    // ice mirror underfoot
+      ctx.save();
+      ctx.beginPath();
+      ctx.rect(px - 10, Math.round(feet - camY), 20, 7);
+      ctx.clip();
+      ctx.globalAlpha = 0.1;
+      ctx.translate(px, Math.round(feet - camY));
+      ctx.scale(1, -1);
+      ctx.drawImage(img, -8, -16);
+      ctx.restore();
+      ctx.globalAlpha = 1;
+    }
   }
 }
 function drawHUD() {
@@ -4010,6 +4099,32 @@ function renderTitle() {
   const vs = 'V' + VERSION + (hz.value ? '  ' + hz.value + 'HZ' : '');
   drawText(ctx, vs, W - textW(vs, 1) - 8 - safeR, H - 16 - safeBot, 1, 'rgba(255,255,255,0.6)', '#1a1c2c');
 }
+function drawTufts(camX, camY) {
+  if (!TUFT_THEMES.has(game.themeIdx) || game.inBonus) return;
+  const th = THEMES[game.themeIdx];
+  const tx0 = Math.floor(camX / TILE) - 1, tx1 = Math.floor((camX + W) / TILE) + 1;
+  for (let tx = tx0; tx <= tx1; tx++) {
+    const v = tufts.get(tx);
+    if (v === undefined) continue;
+    const g = ground.get(tx);
+    if (g === undefined) continue;
+    const by = -g * TILE;
+    const bx = tx * TILE + 4 + (v % 3) * 3;
+    const idle = Math.sin(game.frame * 0.05 + tx * 1.3) * 1.2;
+    // blades bow away from the runner as he brushes past, then spring back
+    const dxp = bx - (player.x + 5);
+    const bend = Math.abs(dxp) < 22 ? (dxp > 0 ? 1 : -1) * (1 - Math.abs(dxp) / 22) * 4 : 0;
+    const lean = idle + bend;
+    ctx.fillStyle = th.grassHi;
+    for (let b2 = 0; b2 < 3; b2++) {
+      const x0 = bx + b2 * 2 - 2;
+      const h2 = 4 + ((v + b2) % 3);
+      for (let r2 = 0; r2 < h2; r2++)
+        ctx.fillRect(Math.round(x0 + lean * r2 / h2 - camX), Math.round(by - 1 - r2 - camY), 1, 1);
+    }
+  }
+}
+const DEPTH_BANDS = [[56, 'rgba(30,85,160,0.22)'], [96, 'rgba(16,45,105,0.28)']];
 function drawWater(camX, camY) {
   if (!water.size) return;
   const th = THEMES[game.themeIdx];
@@ -4025,6 +4140,14 @@ function drawWater(camX, camY) {
     const sx = Math.round(tx * TILE - camX);
     ctx.fillStyle = body;
     ctx.fillRect(sx, Math.round(top - camY), TILE, Math.max(1, Math.round(bottom - top)));
+    // depth bands: the deep gets darker (also hides the pale sky-bottom that
+    // used to leak through as a light bar above the sea floor)
+    for (const [d0, col] of DEPTH_BANDS) {
+      const by = top + d0;
+      if (by >= bottom) break;
+      ctx.fillStyle = col;
+      ctx.fillRect(sx, Math.round(by - camY), TILE, Math.max(1, Math.round(bottom - by)));
+    }
     ctx.globalAlpha = 0.75;
     ctx.fillStyle = hi;
     ctx.fillRect(sx, Math.round(top - camY), TILE, 1);
@@ -4043,6 +4166,7 @@ function renderWorld() {
   const inPipe = player.mode === 'pipein' || player.mode === 'pipeout';
   if (inPipe) drawPlayer(camX, camY);      // behind tiles: the pipe swallows him
   drawTiles(camX, camY);
+  drawTufts(camX, camY);
   // golden post where your record run ended
   if (game.bestDist > 40 && !game.inBonus) {
     const bx = game.bestDist * TILE;
@@ -4080,6 +4204,40 @@ function renderWorld() {
       ctx.globalAlpha = 1;
       continue;
     }
+    if (p.print) {  // footprint: a flat mark that slowly fades from the trail
+      ctx.globalAlpha = Math.min(0.8, p.life / 60);
+      ctx.fillStyle = p.color;
+      ctx.fillRect(Math.round(p.x - camX), Math.round(p.y - camY), 2, 1);
+      ctx.globalAlpha = 1;
+      continue;
+    }
+    if (p.skid) {   // ice skid: a scored streak
+      ctx.globalAlpha = Math.min(0.7, p.life / 50);
+      ctx.fillStyle = p.color;
+      ctx.fillRect(Math.round(p.x - camX), Math.round(p.y - camY), p.skid, 1);
+      ctx.globalAlpha = 1;
+      continue;
+    }
+    if (p.ripple) { // surface ripple: two ticks rolling apart on the waterline
+      p.ripple += 0.9;
+      ctx.globalAlpha = Math.min(0.8, p.life / 12);
+      ctx.fillStyle = p.color;
+      ctx.fillRect(Math.round(p.x - p.ripple - camX), Math.round(p.y - camY), 2, 1);
+      ctx.fillRect(Math.round(p.x + p.ripple - camX), Math.round(p.y - camY), 2, 1);
+      ctx.globalAlpha = 1;
+      continue;
+    }
+    if (p.fly) {    // firefly: a pulsing point with a soft halo
+      const pulse = 0.5 + 0.5 * Math.sin(p.life * 0.12);
+      if (p.sway) { p.x += Math.sin(p.life * 0.07) * 0.35; p.y += Math.cos(p.life * 0.05) * 0.25; }
+      ctx.globalAlpha = 0.10 * pulse;
+      ctx.fillStyle = p.color;
+      ctx.beginPath(); ctx.arc(Math.round(p.x - camX), Math.round(p.y - camY), 4, 0, 7); ctx.fill();
+      ctx.globalAlpha = 0.35 + 0.6 * pulse;
+      ctx.fillRect(Math.round(p.x - camX), Math.round(p.y - camY), 1, 1);
+      ctx.globalAlpha = 1;
+      continue;
+    }
     ctx.fillStyle = p.color;
     if (p.sway) p.x += Math.sin(p.life * 0.1) * 0.4;
     ctx.fillRect(Math.round(p.x - camX), Math.round(p.y - camY), p.size, p.size);
@@ -4097,6 +4255,17 @@ function renderWorld() {
     g3.addColorStop(1, 'rgba(8,4,16,0.6)');
     ctx.fillStyle = g3;
     ctx.fillRect(0, 0, W, H);
+  }
+  if (game.themeIdx === 7 && !game.inBonus) {   // MAGMA KEEP: the air itself cooks
+    // re-draw thin strips near the ground, each nudged by a travelling sine —
+    // canvas self-blit, so everything (tiles, enemies, coins) wavers together
+    const gy = Math.round(-camY);               // world ground line on screen
+    for (let i = 0; i < 13; i++) {
+      const yy = gy - 40 + i * 3;
+      if (yy < 0 || yy + 3 > H) continue;
+      const off = Math.round(Math.sin(game.frame * 0.09 + i * 0.8) * (0.6 + i * 0.12));
+      if (off) ctx.drawImage(canvas, 0, yy, W, 3, off, yy, W, 3);
+    }
   }
   drawHUD();
 }
