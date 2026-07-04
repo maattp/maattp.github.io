@@ -68,7 +68,7 @@ const MAX_SPEED = 3.05;
 const PIT_Y = 11 * TILE;             // below this = pit death
 const WORLD_LEN = 500;               // tiles per world before the flag
 const SAVE = 'pixelrun_';
-const VERSION = 32;                  // shown on the title screen — bump once per PR (see CLAUDE.md)
+const VERSION = 33;                  // shown on the title screen — bump once per PR (see CLAUDE.md)
 
 // ---------- utils ----------
 const clamp = (v, a, b) => v < a ? a : v > b ? b : v;
@@ -1544,67 +1544,65 @@ function riff(n, o) {
 }
 const SONGS = {};
 
-{ // GREEN HILLS — bright C-major gallop, 16 bars: A A' B A''
-  const h1 = 'e5:2 g5:2 a5:2 g5:2 e5:2 c5:2 d5:2 e5:2',
-        h2 = 'd5:2 e5:2 f5:2 e5:2 d5:2 b4:2 c5:2 d5:2',
-        h3 = 'e5:2 g5:2 a5:2 g5:2 c6:2 b5:2 a5:2 g5:2',
-        h4 = 'a5:2 g5:2 e5:2 d5:2 c5:4 r:2 g4:2',
-        h6 = 'd5:2 e5:2 f5:2 a5:2 g5:2 f5:2 e5:2 d5:2',
-        h7 = 'e5:2 g5:2 c6:2 b5:2 a5:2 g5:2 e5:2 g5:2',
-        h8 = 'a5:1 b5:1 c6:2 g5:2 e5:2 d5:6 r:2',
-        h9 = 'f5:2 a5:2 c6:2 a5:2 f5:2 a5:2 d6:2 c6:2',
-        h10 = 'e5:2 g5:2 c6:2 g5:2 e5:2 g5:2 b5:2 c6:2',
-        h11 = 'd6:2 c6:2 a5:2 f5:2 g5:2 a5:2 b5:2 d6:2',
-        h12 = 'c6:4 g5:2 e5:2 g5:4 d5:2 e5:2',
-        h15 = 'e5:2 g5:2 a5:2 g5:2 c6:2 d6:2 e6:2 d6:2',
-        h16 = 'c6:2 g5:2 e5:2 g5:2 c5:6 g4:1 b4:1';
-  const q1 = 'r:2 e4:2 r:2 g4:2 r:2 e4:2 r:2 g4:2',
-        q2 = 'r:2 d4:2 r:2 g4:2 r:2 b3:2 r:2 d4:2',
-        q3 = 'r:2 e4:2 r:2 a4:2 r:2 f4:2 r:2 a4:2',
-        q4 = 'r:2 d4:2 r:2 g4:2 r:2 e4:2 c4:2 r:2',
-        q9 = 'r:2 f4:2 r:2 a4:2 r:2 f4:2 r:2 a4:2',
-        q11 = 'r:2 f4:2 r:2 a4:2 r:2 g4:2 r:2 b4:2',
-        q12 = 'r:2 e4:2 r:2 g4:2 r:2 g4:2 b3:2 d4:2',
-        q16 = 'r:2 e4:2 r:2 g4:2 c4:4 e4:2 g4:2';
-  const b1 = 'c3:2 g3:2 c3:2 g3:2 c3:2 g3:2 c4:2 g3:2',
-        b2 = 'g2:2 d3:2 g2:2 d3:2 g2:2 d3:2 g3:2 d3:2',
-        b3 = 'a2:2 e3:2 a2:2 e3:2 f2:2 c3:2 f3:2 c3:2',
-        b4 = 'g2:2 d3:2 g2:2 d3:2 c3:2 g3:2 c3:2 g2:2',
-        b9 = 'f2:2 c3:2 f2:2 c3:2 f2:2 c3:2 f3:2 c3:2',
-        b10 = 'c3:2 g3:2 c3:2 g3:2 c3:2 g3:2 e3:2 g3:2',
-        b11 = 'f2:2 c3:2 f2:2 c3:2 g2:2 d3:2 g2:2 d3:2',
-        b12 = 'c3:2 g3:2 e3:2 g3:2 g2:2 d3:2 b2:2 d3:2',
-        b16 = 'c3:2 g3:2 c3:2 g3:2 c3:4 c2:4';
-  // C section: minor-key wander (Am) — real contrast, not another A repeat
-  const hc1 = 'a4:2 c5:2 e5:2 c5:2 a4:2 c5:2 e5:2 g5:2',
-        hc2 = 'f5:2 e5:2 d5:2 c5:2 b4:2 c5:2 d5:2 b4:2',
-        hc3 = 'a4:2 c5:2 e5:2 a5:2 g5:2 e5:2 c5:2 e5:2',
-        hc4 = 'd5:2 e5:2 f5:2 d5:2 g5:4 g4:2 b4:2';
-  // D section: breakdown — the tune catches its breath
-  const hd1 = 'c5:2 r:6 e5:2 r:6',
-        hd2 = 'g5:2 r:6 e5:2 r:2 d5:2 r:2',
-        hd3 = 'c5:2 r:6 a5:2 r:6',
-        hd4 = 'g5:2 e5:2 d5:2 e5:2 r:8',
-        hEnd = 'c6:2 g5:2 e5:2 g5:2 c5:8',
-        h12v = 'c6:4 g5:2 e5:2 g5:2 a5:2 b5:2 c6:2';
-  const qc1 = 'r:2 c4:2 r:2 e4:2 r:2 c4:2 r:2 e4:2',
-        qs = 'r:16',
-        ba1 = 'a2:2 e3:2 a2:2 e3:2 a2:2 e3:2 a3:2 e3:2',
-        bd1 = 'c2:8 c3:8', bd2 = 'g2:8 g3:8', bd3 = 'a2:8 a3:8', bd4 = 'g2:8 b2:4 d3:4';
-  const dm = 'k.hhs.h.k.hhs.hh',    // main groove
-        df = 'k.hhs.h.k.s.ssss',    // fill
-        ds = 'k.hh..s..hk.s.h.',    // syncopated (C section)
-        dq = 'k.......k.h.....';    // breakdown pulse
-  // 32 bars: A A' B C A'' D(breakdown) B' outro — ~50s before it repeats
-  SONGS.hills = song(152, {},
-    [h1, h2, h3, h4,    h1, h6, h7, h8,    h9, h10, h11, h12,  hc1, hc2, hc3, hc4,
-     h1, h2, h15, h16,  hd1, hd2, hd3, hd4, h9, h10, h11, h12v, h1, h6, h15, hEnd],
-    [q1, q2, q3, q4,    q1, q2, q3, q4,    q9, q1, q11, q12,   qc1, q3, qc1, q2,
-     q1, q2, q3, q16,   qs, qs, qs, q2,    q9, q1, q11, q12,   q1, q2, q3, q16],
-    [b1, b2, b3, b4,    b1, b2, b3, b4,    b9, b10, b11, b12,  ba1, b11, ba1, b2,
-     b1, b2, b3, b4,    bd1, bd2, bd3, bd4, b9, b10, b11, b12, b1, b2, b3, b16],
-    [dm, dm, dm, df,    dm, dm, dm, df,    dm, dm, dm, df,     ds, ds, ds, df,
-     dm, dm, dm, df,    dq, dq, dq, dq,    dm, dm, dm, df,     dm, dm, ds, df]);
+{ // GREEN HILLS — syncopated C-major sunshine: a 3-3-2 calypso hook (v2)
+  // verse hook: the push lands on the "and" — classic overworld drive
+  const m1 = 'e5:3 g5:3 c5:2 e5:2 d5:2 c5:2 d5:2',
+        m2 = 'c5:3 e5:3 a4:2 c5:2 b4:2 a4:2 b4:2',
+        m3 = 'f5:3 a5:3 f5:2 c5:2 d5:2 f5:2 e5:2',
+        m4 = 'd5:3 e5:3 d5:2 b4:2 g4:4 r:2',
+        m4b = 'd5:3 e5:3 f5:2 d5:2 c5:4 r:2',
+        // chorus: octave lift, long singing notes (vibrato blooms at d>=4)
+        m5 = 'a5:6 g5:2 f5:2 a5:2 c6:4',
+        m6 = 'b5:6 a5:2 g5:2 b5:2 d6:4',
+        m7 = 'e6:3 d6:3 c6:2 b5:2 a5:2 g5:2 e5:2',
+        m8 = 'f5:2 g5:2 a5:2 b5:2 c6:3 d6:3 b5:2',
+        // bridge: the lead calls, the harmony answers in the rests
+        m9 = 'e5:2 c5:2 r:4 e5:2 g5:2 r:4',
+        m10 = 'd5:2 b4:2 r:4 d5:2 g5:2 r:4',
+        m11 = 'c5:2 e5:2 g5:2 c6:2 r:8',
+        m12 = 'g5:2 g5:2 a5:2 b5:2 c6:2 d6:2 e6:2 g6:2',
+        mEnd = 'd5:3 e5:3 d5:2 b4:2 c5:4 c6:2';
+  // verses: broken-triad arps with a breath; choruses: held organ pads
+  const aC = 'c4:2 e4:2 g4:2 r:2 c4:2 e4:2 g4:2 r:2',
+        aA = 'a3:2 c4:2 e4:2 r:2 a3:2 c4:2 e4:2 r:2',
+        aF = 'f3:2 a3:2 c4:2 r:2 f3:2 a3:2 c4:2 r:2',
+        aG = 'g3:2 b3:2 d4:2 r:2 g3:2 b3:2 d4:2 r:2',
+        aG2 = 'g3:2 b3:2 d4:2 r:2 c4:2 e4:2 g4:2 c5:2',
+        pF = 'f4:8 c4:8', pG = 'g4:8 d4:8', pEA = 'e4:8 c4:8', pFG = 'f4:8 g4:8',
+        c9h = 'r:4 g4:2 e4:2 r:4 c5:2 g4:2',
+        c10h = 'r:4 f4:2 d4:2 r:4 b4:2 g4:2',
+        c11h = 'r:8 e4:2 g4:2 c5:2 e5:2',
+        c12h = 'r:2 g3:2 r:2 b3:2 r:2 d4:2 r:2 g4:2';
+  // verse bass walks between roots; chorus bass pumps octaves
+  const bC = 'c3:4 g2:4 c3:4 a2:2 b2:2',
+        bA = 'a2:4 e2:4 a2:4 g2:2 f2:2',
+        bF = 'f2:4 c3:4 f2:4 f2:2 g2:2',
+        bG = 'g2:4 d3:4 g2:2 g2:2 b2:2 d3:2',
+        bG2 = 'g2:4 d3:4 g2:4 g2:2 b2:2',
+        bF8 = 'f2:2 f3:2 f2:2 f3:2 f2:2 f3:2 f2:2 f3:2',
+        bG8 = 'g2:2 g3:2 g2:2 g3:2 g2:2 g3:2 g2:2 g3:2',
+        bEA8 = 'e2:2 e3:2 e2:2 e3:2 a2:2 a3:2 a2:2 a3:2',
+        bFG8 = 'f2:2 f3:2 f2:2 f3:2 g2:2 g3:2 g2:2 g3:2',
+        brC = 'c3:8 g2:8', brG = 'g2:8 d3:8',
+        brB = 'g2:2 g2:2 b2:2 b2:2 d3:2 d3:2 f3:2 g3:2',
+        bEnd = 'c3:4 g2:4 c2:8';
+  // drums: hi-hat push carries the groove; snare backbeat; fills every 4th bar
+  const dA = 'k.h.s.h.k.hhs.h.',
+        dF = 'k.h.s.h.k.h.s.ss',
+        dB = 'k.hhs.h.k.hhs.hh',
+        dBr = 'k.h...h.k.h...h.',
+        dBd = 'k...k...s.s.ssss',
+        dEnd = 'k.h.s.h.k.s.s.s.';
+  // 32 bars: A A' B A'' bridge A B A(end) — ~49s before it repeats
+  SONGS.hills = song(156, {},
+    [m1, m2, m3, m4,   m1, m2, m3, m4b,  m5, m6, m7, m8,     m1, m2, m3, m4b,
+     m9, m10, m11, m12, m1, m2, m3, m4,   m5, m6, m7, m8,    m1, m2, m3, mEnd],
+    [aC, aA, aF, aG,   aC, aA, aF, aG,   pF, pG, pEA, pFG,   aC, aA, aF, aG,
+     c9h, c10h, c11h, c12h, aC, aA, aF, aG, pF, pG, pEA, pFG, aC, aA, aF, aG2],
+    [bC, bA, bF, bG,   bC, bA, bF, bG2,  bF8, bG8, bEA8, bFG8, bC, bA, bF, bG2,
+     brC, brG, brC, brB, bC, bA, bF, bG,  bF8, bG8, bEA8, bFG8, bC, bA, bF, bEnd],
+    [dA, dA, dA, dF,   dA, dA, dA, dF,   dB, dB, dB, dF,     dA, dA, dA, dF,
+     dBr, dBr, dBr, dBd, dA, dA, dA, dF,  dB, dB, dB, dF,    dA, dA, dB, dEnd]);
 }
 
 { // SUNSET DUNES — winding A-minor snake charmer, octave-answer verse
