@@ -3902,7 +3902,7 @@ function renderTitle() {
   }
   ui.sound = drawBtn('SOUND ' + (audio.muted ? 'OFF' : 'ON'), W / 2 - 44, H - 22 - safeBot, !audio.muted);
   ui.buzz = drawBtn('BUZZ ' + (hapticsOn ? 'ON' : 'OFF'), W / 2 + 44, H - 22 - safeBot, hapticsOn);
-  const vs = 'V' + VERSION;
+  const vs = 'V' + VERSION + (hz.value ? '  ' + hz.value + 'HZ' : '');
   drawText(ctx, vs, W - textW(vs, 1) - 8 - safeR, H - 16 - safeBot, 1, 'rgba(255,255,255,0.6)', '#1a1c2c');
 }
 function drawWater(camX, camY) {
@@ -4070,9 +4070,16 @@ function step() {
   }
 }
 let last = 0, acc = 0, lastW = 0, lastH = 0;
+const hz = { ticks: 0, t0: 0, value: 0 };      // measured display rate (rAF cadence)
 function frame(ts) {
   requestAnimationFrame(frame);
   if (!last) last = ts;
+  hz.ticks++;
+  if (!hz.t0) hz.t0 = ts;
+  else if (ts - hz.t0 >= 1000) {
+    hz.value = Math.round(hz.ticks * 1000 / (ts - hz.t0));
+    hz.ticks = 0; hz.t0 = ts;
+  }
   let dt = ts - last; last = ts;
   if (dt > 250) dt = 250;
   acc += dt;
@@ -4166,7 +4173,7 @@ const DBG = window.__dbg = {
   bot: false, errors: [], stats: { hurts: [], deaths: [] },
   game, player, input, cam, gen,
   ents: () => ents, ground: () => ground, tiles: () => tiles, coins: () => coins,
-  qmeta: () => qmeta, K, openQBlock, ui, musicErrors: MUSIC_ERRORS, water: () => water,
+  qmeta: () => qmeta, K, openQBlock, ui, musicErrors: MUSIC_ERRORS, water: () => water, hz,
   toClient(r) { const dpr = window.devicePixelRatio || 1; return { x: (r.x + r.w / 2) * SCALE / dpr, y: (r.y + r.h / 2) * SCALE / dpr }; },
   startRun, step, botThink,
   stepN(n) { for (let i = 0; i < n; i++) { if (DBG.bot) botThink(); step(); } },
