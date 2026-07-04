@@ -2127,10 +2127,11 @@ const patterns = [
     enterWater();
     const g = clamp(gen.g, -3, -1);
     for (let i = 0; i < RI(3, 5); i++) AQCOL(g);
-    const gapC = RI(-WSURF_G + 1, -g - 2);      // gap center: anywhere in the column
+    let gapC = RI(-WSURF_G + 1, -g - 2);        // gap center: anywhere in the column
     const gx0 = gen.x;
     const half = rng() < 0.35;                  // some gates are reef mounds / hanging slabs
     const mound = half && rng() < 0.5;
+    if (mound) gapC = Math.min(gapC, -g - 3);   // a mound must show at least one tile
     for (let c = 0; c < 2; c++) {
       const tx = gen.x; AQCOL(g);
       for (let ty = -g - 1; ty >= -WSURF_G - 1; ty--) {
@@ -2179,7 +2180,10 @@ const patterns = [
     } else if (rng() < 0.5) {
       qblock(x0 + Math.floor(len / 2), -SAND_G - 4, qContents());
     }
-    if (len > 8 && rng() < 0.4) spawnEnemy('chomp', x0 + 2, SAND_G);
+    if (len > 8 && rng() < 0.4) {
+      spawnEnemy('chomp', x0 + 2, SAND_G);
+      ents[ents.length - 1].ledge = 1;          // beach chompers stay on the beach
+    }
   } },
   { hi: true, w: d => genThemeIdx() === 4 ? 6 : 0, f: d => {   // cloud climb: up and up
     let g = gen.g;
@@ -2998,6 +3002,8 @@ function updateEnts() {
       if (solidAt(ftx, fty)) {
         if (e.type === 'shell') { burst(e.x + 8, e.y + 8, '#59c8ff', 10, 2.4, 0.15); e.dead = 2; e.deadT = 1; sfx.kick(); }
         else { e.vx = -e.vx; e.x += e.vx * 2; }
+      } else if (e.ledge && e.vy === 0 && !(groundTopPx(ftx) <= e.y + 33)) {
+        e.vx = -e.vx; e.x += e.vx * 2;             // island patrollers turn at the shore
       }
       e.vy = Math.min(e.vy + GRAV, MAX_FALL);
       e.y += e.vy;
@@ -3123,7 +3129,8 @@ function updateEnts() {
     const r = erect(e);
     if (!overlap(pr, r, 1)) continue;
     if (game.star > 0 || game.giga > 0) { killEnemy(e, 200); sfx.kick(); buzz(2); continue; }
-    if (player.slam && e.type !== 'wisp') { killEnemy(e, 150); sfx.stomp(); buzz(2); continue; }
+    const plunging = player.slam || (player.inWater && player.diveT > 0);   // dive stroke = underwater slam
+    if (plunging && e.type !== 'wisp') { killEnemy(e, 150); sfx.stomp(); buzz(2); continue; }
     const stomp = player.vy > 0.5 && (player.y + player.h) - r.y < 7 + player.vy;
     if (stomp && STOMPABLE.has(e.type)) {
       game.combo++;
