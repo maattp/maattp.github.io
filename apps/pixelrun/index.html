@@ -1893,13 +1893,13 @@ function difficulty() {
 function C(g) { ground.set(gen.x, g); gen.g = g; gen.x++; gen.totalTiles++; gen.sinceEnemy++; gen.sinceCoin++; }
 function GAP(n) { for (let i = 0; i < n; i++) { gen.x++; gen.totalTiles++; } }
 // --- TIDAL COVE is a real water level: sea-floor columns under a fixed surface ---
-const WSURF_G = 5;                   // surface 5 tiles above baseline (y = -80)
+const WSURF_G = 6;                   // surface 6 tiles above baseline (y = -96)
 const SAND_G = 7;                    // island sand sits above the waterline
 function AQCOL(g) { const tx = gen.x; C(g); water.set(tx, -WSURF_G * TILE); }
 function enterWater() {
   // arriving on land (sandbar / world boundary): two sand columns, then dive off
-  if (gen.g > 3) { C(gen.g); C(gen.g); gen.g = 0; }
-  else gen.g = clamp(gen.g, -1, 1);
+  if (gen.g > 3) { C(gen.g); C(gen.g); gen.g = -2; }
+  else gen.g = clamp(gen.g, -3, -1);
 }
 function put(tx, ty, id) { tiles.set(K(tx, ty), id); }
 function qblock(tx, ty, what) { put(tx, ty, T_QBLOCK); qmeta.set(K(tx, ty), what); }
@@ -1918,6 +1918,8 @@ function qContents() {
 }
 function coinAt(tx, ty) {
   if (tiles.get(K(tx, ty)) !== undefined) return;   // never bury a coin inside a block
+  const g = ground.get(tx);
+  if (g !== undefined && ty >= -g) ty = -g - 1;     // ...nor inside the ground: sit on top
   coins.push({ x: tx * TILE + 8, y: ty * TILE + 8, vx: 0, vy: 0, taken: 0 });
 }
 function coinRow(tx, ty, n) { for (let i = 0; i < n; i++) coinAt(tx + i, ty); }
@@ -2083,42 +2085,57 @@ const patterns = [
   } },
   { aqua: true, w: () => 5, f: d => {           // open water: swim, weave, collect
     enterWater();
-    let g = clamp(gen.g, -1, 1);
+    let g = clamp(gen.g, -3, -1);
     const len = RI(12, 20), x0 = gen.x;
     for (let i = 0; i < len; i++) {
-      if (rng() < 0.25) g = clamp(g + RI(-1, 1), -1, 1);
+      if (rng() < 0.3) g = clamp(g + RI(-1, 1), -3, -1);
       AQCOL(g);
     }
-    const cd = RI(-4, -2);                       // coin snake at a random depth
-    for (let i = 2; i < len - 2; i++)
-      coinAt(x0 + i, clamp(cd + Math.round(Math.sin(i * 0.6) * 1.2), -WSURF_G, -1));
-    const fy = -RI(20, 68);
+    if (rng() < 0.25) {                          // treasure ring: a circle of coins
+      const cx = (x0 + Math.floor(len / 2)) * TILE, cy = -RI(44, 66);
+      for (let a = 0; a < 8; a++)
+        coins.push({ x: cx + Math.cos(a / 8 * Math.PI * 2) * 22,
+          y: cy + Math.sin(a / 8 * Math.PI * 2) * 22, vx: 0, vy: 0, taken: 0 });
+    } else {
+      const cd = RI(-5, -2);                     // coin snake at a random depth
+      for (let i = 2; i < len - 2; i++)
+        coinAt(x0 + i, clamp(cd + Math.round(Math.sin(i * 0.6) * 1.2), -WSURF_G + 1, -1));
+    }
+    const fy = -RI(12, 84);
     ents.push({ type: 'finn', x: (x0 + 3) * TILE, y: fy, y0: fy, vx: -0.55,
       w: 12, h: 6, ox: 2, oy: 6, dead: 0, t: RI(0, 80),
       minX: x0 * TILE, maxX: (x0 + len) * TILE - 16 });
-    if (rng() < 0.4)
-      ents.push({ type: 'puffer', x: (x0 + RI(5, len - 4)) * TILE, y: -RI(24, 60), y0: -RI(24, 60),
+    if (rng() < 0.4) {
+      const py = -RI(24, 76);
+      ents.push({ type: 'puffer', x: (x0 + RI(5, len - 4)) * TILE, y: py, y0: py,
         vx: 0, w: 12, h: 11, ox: 1, oy: 2, dead: 0, t: RI(0, 90) });
+    }
     if (d > 0.2 && rng() < 0.45)
-      ents.push({ type: 'squid', x: (x0 + Math.floor(len * 0.6)) * TILE, y: -RI(28, 64),
+      ents.push({ type: 'squid', x: (x0 + Math.floor(len * 0.6)) * TILE, y: -RI(28, 80),
         vx: 0, vy: 0.2, w: 12, h: 12, ox: 2, oy: 2, dead: 0, t: RI(0, 60), jetT: RI(30, 80) });
   } },
   { aqua: true, w: () => 3.5, f: d => {         // pillar gate: thread the gap
     enterWater();
-    const g = clamp(gen.g, -1, 1);
+    const g = clamp(gen.g, -3, -1);
     for (let i = 0; i < RI(3, 5); i++) AQCOL(g);
-    const gapC = RI(-4, -2);                    // gap center row (3 rows open)
+    const gapC = RI(-WSURF_G + 1, -g - 2);      // gap center: anywhere in the column
+    const gx0 = gen.x;
+    const half = rng() < 0.35;                  // some gates are reef mounds / hanging slabs
+    const mound = half && rng() < 0.5;
     for (let c = 0; c < 2; c++) {
       const tx = gen.x; AQCOL(g);
-      for (let ty = -g - 1; ty >= -WSURF_G - 1; ty--)
-        if (ty > gapC + 1 || ty < gapC - 1) put(tx, ty, T_STONE);
+      for (let ty = -g - 1; ty >= -WSURF_G - 1; ty--) {
+        if (half) {
+          if (mound ? ty >= gapC + 2 : ty <= gapC - 2) put(tx, ty, T_STONE);
+        } else if (ty > gapC + 1 || ty < gapC - 1) put(tx, ty, T_STONE);
+      }
     }
-    coinAt(gen.x - 3, gapC); coinAt(gen.x, gapC); coinAt(gen.x + 1, gapC);
+    coinAt(gx0 - 1, gapC); coinAt(gx0, gapC); coinAt(gx0 + 1, gapC); coinAt(gx0 + 2, gapC);
     for (let i = 0; i < RI(3, 5); i++) AQCOL(g);
   } },
   { aqua: true, w: () => 2, f: d => {           // urchin reef: spiny sea floor
     enterWater();
-    const g = clamp(gen.g, -1, 1);
+    const g = clamp(gen.g, -3, -1);
     AQCOL(g); AQCOL(g);
     const n = RI(2, 4), x0 = gen.x;
     for (let i = 0; i < n; i++) { const tx = gen.x; AQCOL(g); put(tx, -g - 1, T_SPIKE); }
@@ -2128,22 +2145,32 @@ const patterns = [
   { aqua: true, w: d => d > 0.25 ? 2.5 : 0.6, f: d => {   // squid alley: jet dodging
     enterWater();
     const len = RI(12, 16), x0 = gen.x;
-    for (let i = 0; i < len; i++) AQCOL(0);
+    for (let i = 0; i < len; i++) AQCOL(-2);
     const nsq = RI(2, 3);
     for (let s = 0; s < nsq; s++)
-      ents.push({ type: 'squid', x: (x0 + 3 + s * 4) * TILE, y: s % 2 ? -24 : -56,
+      ents.push({ type: 'squid', x: (x0 + 3 + s * 4) * TILE, y: s % 2 ? -32 : -72,
         vx: 0, vy: 0.2, w: 12, h: 12, ox: 2, oy: 2, dead: 0, t: RI(0, 60), jetT: RI(20, 70) });
     for (let i = 2; i < len - 2; i++)
-      coinAt(x0 + i, (i & 2) ? -2 : -4);        // slalom line
+      coinAt(x0 + i, (i & 2) ? -2 : -5);        // slalom line
   } },
   { aqua: true, w: () => 1.7, f: d => {         // sandbar island: come up for air
     enterWater();
-    AQCOL(0); AQCOL(1); AQCOL(2); AQCOL(3); AQCOL(4);   // rising shoal
+    AQCOL(-1); AQCOL(1); AQCOL(3); AQCOL(5);    // quick shoal — you swim over it
     const len = RI(6, 12), x0 = gen.x;
-    for (let i = 0; i < len; i++) C(SAND_G);    // dry sand — no water here
+    for (let i = 0; i < len; i++) C(SAND_G);    // a thin bar of dry sand
     coinRow(x0 + 1, -SAND_G - 2, Math.min(5, len - 1));
-    if (rng() < 0.5) qblock(x0 + Math.floor(len / 2), -SAND_G - 4, qContents());
-    if (len > 8 && rng() < 0.5) spawnEnemy('chomp', x0 + Math.floor(len / 2), SAND_G);
+    if (len >= 9 && gen.totalTiles - gen.lastWarp > 220 && rng() < 0.5) {
+      // the cove's warp pipe lives on its islands — grotto access restored
+      gen.lastWarp = gen.totalTiles;
+      const px = x0 + len - 4;
+      put(px, -SAND_G - 1, T_PIPEL); put(px + 1, -SAND_G - 1, T_PIPER);
+      put(px, -SAND_G - 2, T_CAPL); put(px + 1, -SAND_G - 2, T_CAPR);
+      ents.push({ type: 'warp', x: px * TILE, y: (-SAND_G - 2) * TILE,
+        w: 32, h: 16, ox: 0, oy: 0, dead: 0, t: 0 });
+    } else if (rng() < 0.5) {
+      qblock(x0 + Math.floor(len / 2), -SAND_G - 4, qContents());
+    }
+    if (len > 8 && rng() < 0.4) spawnEnemy('chomp', x0 + 2, SAND_G);
   } },
   { hi: true, w: d => genThemeIdx() === 4 ? 6 : 0, f: d => {   // cloud climb: up and up
     let g = gen.g;
@@ -2202,11 +2229,13 @@ const patterns = [
 ];
 function genChunk() {
   if (gen.x >= gen.nextFlag) {                   // world boundary: safe flag zone
-    const target = genThemeIdx() === 3 ? SAND_G : 4;   // water-world flags stand on a sandbar
+    // theme of the world ENDING here — genThemeIdx() at the seam reports the next one
+    const endWater = Math.floor(gen.nextFlag / WORLD_LEN - 1) % THEMES.length === 3;
+    const target = endWater ? SAND_G : 4;        // water-world flags stand on a sandbar
     while (gen.g > target) C(gen.g - 1);         // stroll down from the clouds first
     while (gen.g < target) {                     // ...or wade up out of the sea
       const tx = gen.x; C(gen.g + 1);
-      if (genThemeIdx() === 3 && gen.g < WSURF_G) water.set(tx, -WSURF_G * TILE);
+      if (endWater && gen.g < WSURF_G) water.set(tx, -WSURF_G * TILE);
     }
     const g = gen.g;
     for (let i = 0; i < 4; i++) C(g);
@@ -3013,7 +3042,8 @@ function updateEnts() {
       e.x += e.vx;
       e.y += e.vy + (Math.abs(e.vy) < 0.3 ? 0.15 : 0);   // lazy sink between jets
       const s = waterSurfaceAt(e.x + 8);
-      if (s !== undefined && e.y < s + 4) { e.y = s + 4; e.vy = Math.max(0, e.vy); }
+      const surfY = s !== undefined ? s : -WSURF_G * TILE;   // over dry land: hold sea level
+      if (e.y < surfY + 4) { e.y = surfY + 4; e.vy = Math.max(0, e.vy); }
       const gt = groundTopPx(Math.floor((e.x + 8) / TILE));
       if (Number.isFinite(gt) && e.y > gt - 14) { e.y = gt - 14; e.vy = Math.min(0, e.vy); }
     } else if (e.type === 'snap') {
@@ -3250,7 +3280,18 @@ function ambient() {
     if (player.y < -140 && rng() < 0.55)
       parts.push({ x: cam.x + W + 10, y: cam.y + H * R(0.55, 0.95), vx: R(-1.6, -0.9), vy: 0, life: 300, color: 'rgba(255,255,255,0.65)', size: RI(2, 3), grav: 0 });
   }
-  else if (th.particle === 'foam') { if (rng() < 0.5) parts.push({ x, y: yTop, vx: R(-0.5, -0.1), vy: R(0.2, 0.5), life: 180, color: 'rgba(255,255,255,0.6)', size: 1, grav: 0, sway: 1 }); }
+  else if (th.particle === 'foam') {
+    if (rng() < 0.5) parts.push({ x, y: yTop, vx: R(-0.5, -0.1), vy: R(0.2, 0.5), life: 180, color: 'rgba(255,255,255,0.6)', size: 1, grav: 0, sway: 1 });
+    // vents on the sea floor exhale bubble columns
+    if (rng() < 0.4) {
+      const vtx = Math.floor((cam.x + rng() * W) / TILE);
+      const gt = groundTopPx(vtx);
+      if (Number.isFinite(gt) && water.has(vtx))
+        for (let b = 0; b < 3; b++)
+          parts.push({ x: vtx * TILE + 8 + R(-2, 2), y: gt - 4 - b * 7, vx: R(-0.15, 0.15),
+            vy: R(-0.55, -0.3), life: RI(60, 110), color: '#bfeaff', size: b ? 1 : 2, grav: -0.004, sway: 1 });
+    }
+  }
   else if (th.particle === 'ember') parts.push({ x, y: cam.y + H + 5, vx: R(-0.4, 0.2), vy: R(-1.1, -0.5), life: 140, color: pick(['#ff6a3c', '#ffb45c']), size: rng() < 0.4 ? 2 : 1, grav: -0.004 });
   else if (th.particle === 'snow') parts.push({ x, y: yTop, vx: R(-0.6, -0.1), vy: R(0.4, 0.9), life: 240, color: rng() < 0.3 ? '#ffffff' : '#e4f2ff', size: rng() < 0.25 ? 2 : 1, grav: 0, sway: 1 });
   else if (th.particle === 'fog') { if (rng() < 0.6) parts.push({ x: cam.x + W + 10, y: cam.y + H * R(0.45, 0.9), vx: R(-0.5, -0.2), vy: R(-0.05, 0.05), life: 320, color: 'rgba(170,150,200,0.22)', size: 3, grav: 0 }); }
