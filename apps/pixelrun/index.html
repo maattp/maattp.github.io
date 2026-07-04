@@ -2109,14 +2109,16 @@ function updatePet() {
     if (ws !== undefined && trail.w) {
       if (!gateAhead) ty2 = ws - 9;    // every land animal paddles at the surface
     } else if (!trail.w && ws === undefined) {               // real land only —
-      const gt2 = petFloor(tx2 + 8);                         // never perch on gate caps
+      // sample the floor a full tile ahead: climbs begin early and ramp up
+      // gently instead of snapping the pipe face at the last moment
+      const gt2 = petFloor(tx2 + 8 + 14) ?? petFloor(tx2 + 8);
       if (gt2 !== null) ty2 = gt2 - 13;   // paws on the ground; over a pit: sail the trail arc
     }
   }
   pet.x += (tx2 - pet.x) * 0.22;
-  // climbs and dives are brisk (clears stair risers and gate caps before the
-  // body drifts into them); everything else is a soft glide
-  pet.y += (ty2 - pet.y) * (ty2 < pet.y - 4 ? 0.5 : gateAhead ? 0.4 : 0.22);
+  // vertical speed is CAPPED so climbs, hops and dives read as movement,
+  // never teleports — dives get extra headroom to keep pace with the player
+  pet.y += clamp((ty2 - pet.y) * 0.3, -3, gateAhead ? 4 : 3.4);
   if (pet.celeb > 0) pet.celeb--;
   if (def.ember && pet.t % 110 === 0)                        // dragon: a proud little puff
     parts.push({ x: pet.x + 11, y: pet.y + 7, vx: 0.5, vy: R(-0.3, 0), life: RI(12, 20),
