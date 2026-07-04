@@ -68,7 +68,7 @@ const MAX_SPEED = 3.05;
 const PIT_Y = 11 * TILE;             // below this = pit death
 const WORLD_LEN = 500;               // tiles per world before the flag
 const SAVE = 'pixelrun_';
-const VERSION = 22;                  // shown on the title screen — bump once per PR (see CLAUDE.md)
+const VERSION = 23;                  // shown on the title screen — bump once per PR (see CLAUDE.md)
 
 // ---------- utils ----------
 const clamp = (v, a, b) => v < a ? a : v > b ? b : v;
@@ -3794,20 +3794,33 @@ function drawEnt(e, camX, camY) {
   ctx.globalAlpha = 1;
 }
 function drawPlayer(camX, camY) {
-  // blob shadow while airborne so landings are aimable
-  if (!player.onGround && player.mode === 'run') {
-    const ptx = Math.floor((player.x + 5) / TILE);
-    for (let ty = Math.floor((player.y + player.h) / TILE); ty <= 11; ty++) {
-      const id = tileAt(ptx, ty);
-      if (SOLID.has(id) || id === T_PLAT) {
-        const dist = ty * TILE - (player.y + player.h);
-        const w2 = Math.max(3, 8 - dist / 26);
-        ctx.globalAlpha = Math.max(0.08, 0.28 - dist / 600);
-        ctx.fillStyle = '#1a1c2c';
-        ctx.fillRect(Math.round(player.x + 5 - w2 - camX), Math.round(ty * TILE - 2 - camY), w2 * 2, 2);
-        ctx.globalAlpha = 1;
-        break;
+  // blob shadow, always: an ellipse pinned to whatever would catch the light —
+  // full-size underfoot, shrinking and fading with height, spreading on landing
+  if (player.mode === 'run' && !player.inWater) {
+    const feet = player.y + player.h;
+    let surf = null;
+    if (player.onGround) surf = feet;
+    else {
+      const ptx = Math.floor((player.x + 5) / TILE);
+      for (let ty = Math.floor(feet / TILE); ty <= 11; ty++) {
+        const id = tileAt(ptx, ty);
+        if (SOLID.has(id) || id === T_PLAT) { surf = ty * TILE; break; }
       }
+      const ws = waterSurfaceAt(player.x + 5);            // over the sea: the shadow
+      if (ws !== undefined && ws > feet && (surf === null || ws < surf)) surf = ws;
+    }
+    if (surf !== null) {                                  // over a pit: nothing catches it
+      const hgt = Math.max(0, surf - feet);
+      const k = clamp(1 - hgt / 150, 0.3, 1);
+      let w2 = 8.5 * k * (game.giga > 0 ? 1.6 : 1);
+      if (player.landT > 0) w2 *= 1 + player.landT * 0.04;   // impact spread
+      ctx.globalAlpha = 0.3 * clamp(1 - hgt / 170, 0.25, 1);
+      ctx.fillStyle = '#1a1c2c';
+      ctx.beginPath();
+      ctx.ellipse(Math.round(player.x + 5 - camX), Math.round(surf - 1 - camY),
+        w2, Math.max(1.4, w2 * 0.26), 0, 0, 7);
+      ctx.fill();
+      ctx.globalAlpha = 1;
     }
   }
   if (game.invuln > 0 && (game.frame >> 2) & 1 && player.mode === 'run') return;
