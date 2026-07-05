@@ -3437,6 +3437,10 @@ function killEnemy(e, pts, squash) {
     color: '#ffffff', size: 1, grav: 0, ring: 2 });
 }
 
+function hurtKnock() {   // boss-fight projectiles cost a heart AND ground on the treadmill
+  if (game.invuln <= 0) { hurt(); player.x -= 60; }
+  else hurt();
+}
 function bossHit(e) {
   e.hp--;
   e.hurtT = 55;
@@ -3625,7 +3629,7 @@ function updateEnts() {
       e.t++;
       e.timer--;
       const rage = 3 - e.hp;
-      const gap = e.x - (player.x + 10);
+      const gap = e.x - (player.x + 10);   // pre-move value, intentionally: thresholds are tuned against it
       if (e.st === 'entry') {                    // crashes down ahead, then runs for it
         e.vy += 0.55; e.y += e.vy;
         if (e.y >= floorB) {
@@ -3726,8 +3730,7 @@ function updateEnts() {
       }
       if (!e.dead && overlap(prect(), erect(e), 1)) {
         if (game.star > 0 || game.giga > 0) { killEnemy(e, 50); sfx.kick(); }
-        else if (game.invuln <= 0) { hurt(); player.x -= 60; }   // knocked off the pace
-        else hurt();
+        else hurtKnock();   // knocked off the pace
       }
       continue;
     } else if (e.type === 'wave') {
@@ -3739,8 +3742,7 @@ function updateEnts() {
       if (e.x < player.x - 120 || e.t > 900) { e.dead = 2; e.deadT = 0; }
       if (!e.dead && overlap(prect(), erect(e), 1)) {
         if (game.star > 0 || game.giga > 0) { killEnemy(e, 50); sfx.kick(); }
-        else if (game.invuln <= 0) { hurt(); player.x -= 60; }
-        else hurt();
+        else hurtKnock();
       }
       continue;
     } else if (e.type === 'shard') {
@@ -3754,8 +3756,7 @@ function updateEnts() {
       }
       if (!e.dead && overlap(prect(), erect(e), 1)) {
         if (game.star > 0 || game.giga > 0) { killEnemy(e, 50); sfx.kick(); }
-        else if (game.invuln <= 0) { hurt(); player.x -= 60; }
-        else hurt();
+        else hurtKnock();
       }
       continue;
     } else if (e.type === 'squid') {
@@ -5304,6 +5305,38 @@ const DBG = window.__dbg = {
   game, player, input, cam, gen,
   ents: () => ents, ground: () => ground, tiles: () => tiles, coins: () => coins,
   qmeta: () => qmeta, K, openQBlock, ui, musicErrors: MUSIC_ERRORS, water: () => water, hz,
+  // the boss merge gate, codified: fight the KING with jump presses only.
+  // returns { win, frames, hurts } — rerun after ANY boss tuning change.
+  bossGauntlet(maxFrames) {
+    maxFrames = maxFrames || 24000;
+    DBG.bot = true; startRun(THEMES.length);
+    let guard = 0, boss = null;
+    while (guard++ < 900) {
+      DBG.stepN(10); game.hearts = 3;
+      if (game.state === 'over') startRun(THEMES.length);
+      boss = ents.find(e2 => e2.type === 'boss');
+      if (boss && boss.st !== 'wait') break;
+    }
+    if (!boss || boss.st === 'wait') return { win: false, reason: 'no wake' };
+    DBG.bot = false;
+    let frames = 0, held = 0;
+    const hurts0 = DBG.stats.hurts.length;
+    while (!boss.dead && frames < maxFrames && game.state === 'play') {
+      const gap = boss.x - (player.x + 10);
+      let wantJump = false;
+      if (boss.st === 'stumble' && gap < 64 && gap > -20 && player.onGround) wantJump = true;
+      for (const fb of ents) {
+        if (fb.dead) continue;
+        if (fb.type === 'fireball' && fb.x - player.x > -12 && fb.x - player.x < 46 &&
+            player.onGround && boss.st !== 'stumble') wantJump = true;
+        if (fb.type === 'wave' && fb.x - player.x > -6 && fb.x - player.x < 44 && player.onGround) wantJump = true;
+      }
+      if (wantJump && held <= 0) { pressJump(); held = 16; }
+      if (held > 0 && --held === 0) releaseJump();
+      DBG.step(); frames++; game.hearts = 3;
+    }
+    return { win: !!boss.dead, frames, hurts: DBG.stats.hurts.length - hurts0 };
+  },
   toClient(r) { const dpr = window.devicePixelRatio || 1; return { x: (r.x + r.w / 2) * SCALE / dpr, y: (r.y + r.h / 2) * SCALE / dpr }; },
   startRun, step, botThink,
   stepN(n) { for (let i = 0; i < n; i++) { if (DBG.bot) botThink(); step(); } },
