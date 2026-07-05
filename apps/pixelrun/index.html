@@ -2475,7 +2475,10 @@ const patterns = [
         w: 32, h: 16, ox: 0, oy: 0, dead: 0, t: 0 });
     }
     if (ph >= 4) coinAt(tx, -g - ph - 3);        // hint: this one needs a double jump
-    for (let i = 0; i < 3; i++) C(g);
+    // tall pipes need a LANDING RUNWAY: the double-jump arc carries ~8 tiles,
+    // and a short tail let the next pattern's ? blocks spawn inside it —
+    // you'd soar clean over them with no way back
+    for (let i = 0; i < (ph >= 4 ? 9 : 3); i++) C(g);
   } },
   { w: d => 1 + d * 2.2, f: d => {              // floating platforms over a wide gap
     const g = gen.g;
