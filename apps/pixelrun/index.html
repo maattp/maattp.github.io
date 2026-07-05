@@ -2691,7 +2691,7 @@ function genChunk() {
       for (let i = 0; i < 6; i++) C(g);
       ents.push({ type: 'boss', x: (arenaX + 22) * TILE, y: -g * TILE - 300,
         w: 48, h: 46, ox: 0, oy: 2, dead: 0, t: 0, hp: 3, st: 'wait', timer: 0,
-        vx: 0, vy: 0, woke: 0, hurtT: 0, gTx, g, lobbed: 0 });
+        vx: 0, vy: 0, hurtT: 0, gTx, g, lobbed: 0 });
       gen.nextFlag += WORLD_LEN;
       return;
     }
@@ -3599,8 +3599,7 @@ function updateEnts() {
       // THE MAGMA KING: waits above the arena, crashes down, then cycles
       // fireball lobs and ground pounds — each pound ends in a dazed window
       // where his crown is stompable. Three stomps and the gate falls.
-      if (e.dead) { e.vy += GRAV; e.y += e.vy; continue; }
-      if (e.hurtT > 0) e.hurtT--;
+      if (e.hurtT > 0) e.hurtT--;   // (dead bosses are handled by the generic dead-ent path)
       const gtB = groundTopPx(Math.floor((e.x + 24) / TILE));
       const floorB = (Number.isFinite(gtB) ? gtB : -e.g * TILE) - 46;
       if (e.st === 'wait') {
