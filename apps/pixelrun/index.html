@@ -3156,7 +3156,7 @@ function land(top, wasGround) {
       sfx.stomp(); buzz(2);
       const feetY = player.y + player.h;
       for (const e of ents) {
-        if (e.dead || !HOSTILE.has(e.type) || e.type === 'wisp' || e.type === 'bat') continue;
+        if (e.dead || !HOSTILE.has(e.type) || e.type === 'wisp' || e.type === 'bat' || e.type === 'boss') continue;   // the KING only falls to crown stomps — killEnemy would skip bossDie and seal the gate forever
         const r = erect(e);
         if (Math.abs(r.x + r.w / 2 - (player.x + 5)) < 36 && Math.abs(r.y + r.h - feetY) < 22)
           killEnemy(e, 100);
@@ -3178,7 +3178,7 @@ function slamLand() {
   const feetY = player.y + player.h;
   // shockwave kills grounded enemies nearby (spiny's one weakness)
   for (const e of ents) {
-    if (e.dead || !HOSTILE.has(e.type) || e.type === 'wisp' || e.type === 'bat') continue;
+    if (e.dead || !HOSTILE.has(e.type) || e.type === 'wisp' || e.type === 'bat' || e.type === 'boss') continue;   // the KING only falls to crown stomps — killEnemy would skip bossDie and seal the gate forever
     const r = erect(e);
     if (Math.abs(r.x + r.w / 2 - (player.x + 5)) < 52 && Math.abs(r.y + r.h - feetY) < 26)
       killEnemy(e, 150);
@@ -3604,7 +3604,7 @@ function updateEnts() {
       const gtB = groundTopPx(Math.floor((e.x + 24) / TILE));
       const floorB = (Number.isFinite(gtB) ? gtB : -e.g * TILE) - 46;
       if (e.st === 'wait') {
-        if (player.x > e.x - 260 || player.x > e.x) {
+        if (player.x > e.x - 260) {
           e.st = 'entry'; e.vy = 0;
           game.bossRef = e;
           announce('THE MAGMA KING', 150);
