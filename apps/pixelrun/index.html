@@ -68,7 +68,7 @@ const MAX_SPEED = 3.05;
 const PIT_Y = 11 * TILE;             // below this = pit death
 const WORLD_LEN = 500;               // tiles per world before the flag
 const SAVE = 'pixelrun_';
-const VERSION = 38;                  // shown on the title screen — bump once per PR (see CLAUDE.md)
+const VERSION = 39;                  // shown on the title screen — bump once per PR (see CLAUDE.md)
 
 // ---------- utils ----------
 const clamp = (v, a, b) => v < a ? a : v > b ? b : v;
@@ -4098,6 +4098,14 @@ function unlockAudio() {
   }
   if (!audio.song && game.state === 'title') playSong('title');
 }
+function goTitle() {
+  // the title always wears WORLD 1's face — a test run at world 8 used to
+  // leave its theme behind, showing Magma Keep over a start that plays hills
+  game.state = 'title'; game.stateT = 0;
+  game.themeIdx = 0; game.prevTheme = 0; game.themeFade = 0;
+  tintPage();
+  playSong('title');
+}
 function onPress(cx, cy) {
   unlockAudio();
   const hit = mkHit(cx, cy);
@@ -4107,18 +4115,18 @@ function onPress(cx, cy) {
   } else if (game.state === 'levels') {
     for (const b of ui.levelBtns || [])
       if (hit(b.r)) { sfx.ui(); startRun(b.n); return; }
-    if (hit(ui.back)) { sfx.ui(); game.state = 'title'; game.stateT = 0; return; }
+    if (hit(ui.back)) { sfx.ui(); goTitle(); return; }
   } else if (game.state === 'play') {
     if (hit(ui.pause)) { togglePause(); sfx.ui(); return; }
     pressJump();
   } else if (game.state === 'pause') {
     if (settingsHit(hit)) return;
-    if (hit(ui.quit)) { game.state = 'title'; game.stateT = 0; playSong('title'); sfx.ui(); return; }
+    if (hit(ui.quit)) { goTitle(); sfx.ui(); return; }
     togglePause(); sfx.ui();
   } else if (game.state === 'over') {
     if (game.stateT > 45) {
       if (game.testRun && hit(ui.overTitle)) {
-        game.state = 'title'; game.stateT = 0; playSong('title'); sfx.ui(); return;
+        goTitle(); sfx.ui(); return;
       }
       startRun(game.startWorld || 1);   // retry the world you were testing
     }
