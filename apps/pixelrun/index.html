@@ -68,7 +68,7 @@ const MAX_SPEED = 3.05;
 const PIT_Y = 11 * TILE;             // below this = pit death
 const WORLD_LEN = 500;               // tiles per world before the flag
 const SAVE = 'pixelrun_';
-const VERSION = 35;                  // shown on the title screen — bump once per PR (see CLAUDE.md)
+const VERSION = 36;                  // shown on the title screen — bump once per PR (see CLAUDE.md)
 
 // ---------- utils ----------
 const clamp = (v, a, b) => v < a ? a : v > b ? b : v;
@@ -772,6 +772,42 @@ const BONEPILE = sprite([    // temporarily inconvenienced
 '...kwMwwkwwMwk..',
 '..kwwkwwwwkwwk..',
 '..kkkkkkkkkkkk..',
+'................'
+]);
+const BOSS0 = sprite([       // THE MAGMA KING — drawn at 3x, crown and all
+'....y...y..y....',
+'....yyyyyyyy....',
+'...kkkkkkkkkk...',
+'..kRRRRRRRRRRk..',
+'.kRRyyRRRRyyRRk.',
+'.kRRyyRRRRyyRRk.',
+'.kRRRRRRRRRRRRk.',
+'.kRkkkkkkkkkkRk.',
+'.kRkwwkwwkwwkRk.',
+'.kRRkkkkkkkkRRk.',
+'.kRRRrrrrrrRRRk.',
+'..kRRrrRRrrRRk..',
+'..kRRRRRRRRRRk..',
+'...kRRk..kRRk...',
+'...kkk....kkk...',
+'................'
+]);
+const BOSS1 = sprite([       // roaring: jaw drops, cracks glow wider
+'....y...y..y....',
+'....yyyyyyyy....',
+'...kkkkkkkkkk...',
+'..kRRRRRRRRRRk..',
+'.kRRyyRRRRyyRRk.',
+'.kRRyyRRRRyyRRk.',
+'.kRRRRRRRRRRRRk.',
+'.kRkkkkkkkkkkRk.',
+'.kRkeeeeeeeekRk.',
+'.kRkwwkwwkwwkRk.',
+'.kRrrrrrrrrrrRk.',
+'..kRrrrrrrrrRk..',
+'..kRRRrrrrRRRk..',
+'...kRRk..kRRk...',
+'...kkk....kkk...',
 '................'
 ]);
 const WISP0 = sprite([       // castle ghost
@@ -1826,6 +1862,41 @@ const SONGS = {};
     [kd, kd, kd, kdF, kd, kd, kd, kdF, kdB, kdB, kdB, kdF, kd, kd, kd, kdF]);
 }
 
+{ // THE MAGMA KING — tritone menace over a hammering riff; B section screams
+  const L1 = 'c5:2 c5:1 c5:1 f#5:2 c5:2 d#5:2 c5:2 f#5:2 g5:2',
+        L2 = 'c5:2 c5:1 c5:1 f#5:2 c5:2 g#5:2 g5:2 f#5:2 d#5:2',
+        L3 = 'f5:2 f5:1 f5:1 b5:2 f5:2 g#5:2 f5:2 b5:2 c6:2',
+        L4 = 'g5:2 f#5:2 f5:2 d#5:2 c5:4 c5:2 c6:2',
+        L5 = 'c6:6 b5:2 a#5:2 g#5:4 g5:2',
+        L6 = 'd#6:6 d6:2 c6:2 b5:4 a#5:2',
+        L7 = 'g#5:3 g5:3 f#5:2 g5:2 g#5:2 a#5:2 b5:2',
+        L8 = 'c6:2 b5:2 a#5:2 g#5:2 g5:8';
+  const tC = 'r:2 c4:2 r:2 f#4:2 r:2 c4:2 r:2 f#4:2',
+        tF = 'r:2 f3:2 r:2 b3:2 r:2 f3:2 r:2 b3:2',
+        tG = 'r:2 g3:2 r:2 c#4:2 r:2 g3:2 r:2 c#4:2',
+        pB1 = 'g#4:8 b4:8', pB2 = 'b4:8 c#5:8', pB3 = 'f#4:8 g#4:8', pB4 = 'g4:8 g4:8';
+  const bB1 = riff('c', 2), bB2 = riff('f', 2), bB3 = riff('g#', 1), bB4 = riff('g', 1);
+  const bd = 'k.hk.ks.k.hk.ks.',
+        bdF = 'k.k.s.s.k.k.ssss';
+  SONGS.boss = song(170, {},
+    [L1, L2, L3, L4, L1, L2, L3, L4, L5, L6, L7, L8, L1, L2, L3, L4],
+    [tC, tC, tF, tG, tC, tC, tF, tG, pB1, pB2, pB3, pB4, tC, tC, tF, tG],
+    [bB1, bB1, bB2, bB4, bB1, bB1, bB2, bB4, bB3, bB1, bB2, bB4, bB1, bB1, bB2, bB4],
+    [bd, bd, bd, bdF, bd, bd, bd, bdF, bd, bd, bd, bdF, bd, bd, bd, bdF]);
+}
+
+{ // VICTORY — a four-bar triumph, then the next world's song takes over
+  const v1 = 'c5:2 e5:2 g5:2 c6:2 g5:2 c6:2 e6:4',
+        v2 = 'f5:2 a5:2 c6:2 f6:4 e6:2 d6:2 e6:2',
+        v3 = 'g5:2 b5:2 d6:2 g6:4 e6:2 c6:2 g5:2',
+        v4 = 'c6:12 r:4';
+  SONGS.victory = song(140, { oneshot: true },
+    [v1, v2, v3, v4],
+    ['c4:4 e4:4 g4:4 c5:4', 'f4:4 a4:4 c5:4 a4:4', 'g4:4 b4:4 d5:4 b4:4', 'e4:2 g4:2 c5:12'],
+    ['c3:4 c3:4 g2:4 c3:4', 'f2:8 c3:8', 'g2:8 g2:8', 'c2:16'],
+    ['k.h.s.h.k.h.s.h.', 'k.h.s.h.k.h.s.h.', 'k.h.s.h.k.h.s.h.', 'k...s...k.....ss']);
+}
+
 { // STAR — double-time sparkle, now 4 bars
   SONGS.star = song(204, {},
     ['c5:1 e5:1 g5:1 c6:1 e6:1 c6:1 g5:1 e5:1 d5:1 f5:1 a5:1 d6:1 f6:1 d6:1 a5:1 f5:1',
@@ -2072,7 +2143,7 @@ const game = {
   combo: 0, star: 0, magnet: 0, invuln: 0,
   wings: 0, giga: 0, moon: 0, rain: 0,
   shake: 0, stateT: 0, themeFade: 0, prevTheme: 0,
-  hitstop: 0, heartFlash: 0, heartPop: 0, coinPop: 0, nextCoinFete: 100,
+  hitstop: 0, heartFlash: 0, heartPop: 0, coinPop: 0, nextCoinFete: 100, bossRef: null,
   announce: '', announceT: 0,
   best: load('best', 0), bestDist: load('bestDist', 0), newBest: false, recordFete: false,
   announceMax: 1, wonder: 0,
@@ -2601,7 +2672,29 @@ const patterns = [
 function genChunk() {
   if (gen.x >= gen.nextFlag) {                   // world boundary: safe flag zone
     // theme of the world ENDING here — genThemeIdx() at the seam reports the next one
-    const endWater = Math.floor(gen.nextFlag / WORLD_LEN - 1) % THEMES.length === 3;
+    const endWorld = Math.floor(gen.nextFlag / WORLD_LEN);
+    const endWater = (endWorld - 1) % THEMES.length === 3;
+    if (endWorld % THEMES.length === 0) {        // MAGMA KEEP ends at the KING's gate
+      while (gen.g > 4) C(gen.g - 1);
+      while (gen.g < 4) C(gen.g + 1);
+      const g = gen.g;
+      for (let i = 0; i < 6; i++) C(g);          // approach
+      const arenaX = gen.x;
+      for (let i = 0; i < 42; i++) C(g);         // the arena floor
+      const gTx = gen.x;                         // the sealed castle gate
+      for (let c2 = 0; c2 < 2; c2++) {
+        const tx = gen.x; C(g);
+        for (let ty = -g - 1; ty >= -g - 12; ty--) put(tx, ty, T_STONE);
+      }
+      for (let i = 0; i < 4; i++) C(g);
+      ents.push({ type: 'flag', x: gen.x * TILE, y: -g * TILE, w: 4, h: 96, ox: 0, oy: 0, dead: 0, t: 0, hit: 0 });
+      for (let i = 0; i < 6; i++) C(g);
+      ents.push({ type: 'boss', x: (arenaX + 22) * TILE, y: -g * TILE - 300,
+        w: 48, h: 46, ox: 0, oy: 2, dead: 0, t: 0, hp: 3, st: 'wait', timer: 0,
+        vx: 0, vy: 0, woke: 0, hurtT: 0, gTx, g, lobbed: 0 });
+      gen.nextFlag += WORLD_LEN;
+      return;
+    }
     const target = endWater ? SAND_G : 4;        // water-world flags stand on a sandbar
     while (gen.g > target) C(gen.g - 1);         // stroll down from the clouds first
     while (gen.g < target) {                     // ...or wade up out of the sea
@@ -2641,7 +2734,8 @@ function cleanup() {
   for (const k of tufts.keys()) if (k < min) tufts.delete(k);
   for (const k of tiles.keys()) if (Math.floor(k / 128) < min) { tiles.delete(k); qmeta.delete(k); }
   ents = ents.filter(e => !e.dead || e.deadT > 0);
-  ents = ents.filter(e => e.x > cam.x - 80 && e.x < cam.x + W + 620 && e.y < PIT_Y + 40);
+  ents = ents.filter(e => e.type === 'boss' ||
+    (e.x > cam.x - 80 && e.x < cam.x + W + 620 && e.y < PIT_Y + 40));
   coins = coins.filter(c => c.x > cam.x - 20 && !(c.taken > 8));
 }
 
@@ -2663,7 +2757,7 @@ function startRun(world) {
   game.shake = 0; game.newBest = false; game.themeFade = 0;
   game.recordFete = game.testRun;                // suppress NEW RECORD! in tests
   game.hitstop = 0; game.heartFlash = 0; game.heartPop = 0;
-  game.coinPop = 0; game.nextCoinFete = 100;
+  game.coinPop = 0; game.nextCoinFete = 100; game.bossRef = null;
   sfxState.coinStreak = 0; sfxState.coinFrame = -99;
   input.jumpBuf = 0; input.slamReq = false; input.held = false;
   game.inBonus = null;
@@ -2699,7 +2793,8 @@ function addScore(n, x, y, label) {
 
 // ---------- update ----------
 const THEME_SONGS = ['hills', 'dunes', 'caves', 'tide', 'sky', 'frost', 'haunt', 'keep'];
-const HOSTILE = new Set(['chomp', 'rollo', 'spiny', 'bat', 'snap', 'wisp', 'finn', 'puffer', 'bones', 'squid']);
+const HOSTILE = new Set(['chomp', 'rollo', 'spiny', 'bat', 'snap', 'wisp', 'finn', 'puffer', 'bones', 'squid',
+  'boss', 'fireball', 'shard']);
 const STOMPABLE = new Set(['chomp', 'rollo', 'bat', 'bones']);
 function genThemeIdx() { return Math.floor(Math.max(0, gen.x) / WORLD_LEN) % THEMES.length; }
 
@@ -3327,6 +3422,49 @@ function killEnemy(e, pts, squash) {
     color: '#ffffff', size: 1, grav: 0, ring: 2 });
 }
 
+function bossHit(e) {
+  e.hp--;
+  e.hurtT = 55;
+  game.combo++;
+  addScore(500, e.x + 10, e.y - 10);
+  game.shake = 7; game.hitstop = 5; sfx.stomp(); buzz(3);
+  burst(e.x + 24, e.y + 8, '#ffe97a', 14, 3, 0.1);
+  parts.push({ x: e.x + 24, y: e.y + 10, vx: 0, vy: 0, life: 14, color: '#ffe97a', ring: 3 });
+  if (e.hp <= 0) bossDie(e);
+  else {
+    addFloat(e.x + 8, e.y - 22, e.hp === 2 ? 'THE KING RAGES!' : 'ONE MORE!', '#ff8a9a');
+    e.st = 'idle'; e.timer = 50;
+  }
+}
+function bossDie(e) {
+  e.dead = 1; e.deadT = 60; e.vy = -4;
+  game.bossRef = null;
+  game.hitstop = 10; game.shake = 12; buzz(3);
+  addScore(5000, undefined);
+  announce('THE KEEP FALLS!  +5000', 170);
+  playSong('victory');
+  sfx.century(); sfx.brick();
+  // the crown pops off and the KING erupts
+  ents.push({ type: 'powfx', kind: 'crown', x: e.x + 16, y: e.y - 10, w: 16, h: 16, ox: 0, oy: 0, dead: 0, t: 0 });
+  for (let i = 0; i < 30; i++)
+    parts.push({ x: e.x + RI(0, 48), y: e.y + RI(0, 44), vx: R(-2.4, 2.4), vy: R(-3.4, -0.5),
+      life: RI(24, 60), color: pick(['#ff6a3c', '#ffb45c', '#ffe97a', '#fff']),
+      size: rng() < 0.4 ? 2 : 1, grav: 0.08 });
+  for (let i = 0; i < 3; i++)
+    parts.push({ x: e.x + 24, y: e.y + 22, vx: 0, vy: 0, life: 18 + i * 4, color: '#ffb45c', ring: 2 + i * 3 });
+  // treasure: the hoard flies to its new owner
+  for (let i = 0; i < 30; i++)
+    coins.push({ x: e.x + 24, y: e.y + 20, vx: R(-2.2, 2.2), vy: 0, taken: 0,
+      fall: R(-4, -1.5), grav: 1, home: RI(30, 80) });
+  // the gate comes down
+  for (let c2 = 0; c2 < 2; c2++)
+    for (let ty = -e.g - 1; ty >= -e.g - 12; ty--) {
+      tiles.delete(K(e.gTx + c2, ty));
+      if (ty % 2 === 0)
+        parts.push({ x: (e.gTx + c2) * TILE + 8, y: ty * TILE + 8, vx: R(-1.5, 1.5), vy: R(-2, -0.5),
+          life: RI(20, 40), color: pick(['#8c8ca4', '#54546c']), size: 2, grav: 0.12 });
+    }
+}
 function updateEnts() {
   // giga's contact zone matches the drawn giant, not the small physics box
   const pr = game.giga > 0
@@ -3457,6 +3595,125 @@ function updateEnts() {
       // puff up when the player closes in — a fair warning that also looks great
       const near = Math.abs(player.x + 5 - (e.x + 8)) < 70 && Math.abs(player.y - e.y) < 60;
       e.inf = clamp((e.inf || 0) + (near ? 0.09 : -0.05), 0, 1);
+    } else if (e.type === 'boss') {
+      // THE MAGMA KING: waits above the arena, crashes down, then cycles
+      // fireball lobs and ground pounds — each pound ends in a dazed window
+      // where his crown is stompable. Three stomps and the gate falls.
+      if (e.dead) { e.vy += GRAV; e.y += e.vy; continue; }
+      if (e.hurtT > 0) e.hurtT--;
+      const gtB = groundTopPx(Math.floor((e.x + 24) / TILE));
+      const floorB = (Number.isFinite(gtB) ? gtB : -e.g * TILE) - 46;
+      if (e.st === 'wait') {
+        if (player.x > e.x - 260 || player.x > e.x) {
+          e.st = 'entry'; e.vy = 0;
+          game.bossRef = e;
+          announce('THE MAGMA KING', 150);
+          playSong('boss');
+          sfx.rattle(); buzz(3);
+        }
+        continue;
+      }
+      e.t++;
+      e.timer--;
+      // stalk: hold position ahead of the runner
+      if (e.st !== 'pound' || e.sub !== 1) {
+        const targetX = player.x + 92;
+        e.x += clamp(targetX - e.x, -1.4, game.speed + 1.6);
+      }
+      e.x = Math.min(e.x, (e.gTx - 4) * TILE);   // the KING never abandons his gate
+      if (e.st === 'entry') {
+        e.vy += 0.55; e.y += e.vy;
+        if (e.y >= floorB) {
+          e.y = floorB; e.vy = 0;
+          e.st = 'idle'; e.timer = 70;
+          game.shake = 9; game.hitstop = 5; sfx.stomp(); buzz(3);
+          burst(e.x + 24, e.y + 44, '#ff9a3c', 18, 3, 0.12);
+          parts.push({ x: e.x + 24, y: e.y + 40, vx: 0, vy: 0, life: 14, color: '#ffe97a', ring: 3 });
+        }
+      } else if (e.st === 'idle') {
+        e.y = floorB + Math.round(Math.sin(e.t * 0.15) * 2);
+        if (e.timer <= 0) {
+          const rage = 3 - e.hp;
+          if (e.t % 2 === 0) { e.st = 'lob'; e.lobbed = 0; e.timer = 0; }
+          else { e.st = 'pound'; e.sub = 0; e.timer = 30 - rage * 6; }
+        }
+      } else if (e.st === 'lob') {
+        e.y = floorB;
+        if (e.timer <= 0 && e.lobbed < 3 + (3 - e.hp)) {
+          e.lobbed++;
+          e.timer = 30 - (3 - e.hp) * 6;
+          const dx3 = (player.x + 40 * e.lobbed) - (e.x + 24);
+          ents.push({ type: 'fireball', x: e.x + 18, y: e.y + 10, w: 8, h: 8, ox: 0, oy: 0,
+            dead: 0, t: 0, vx: dx3 / 46, vy: -4.2 });
+          sq(160, 0.12, 0.08, 90);
+        }
+        if (e.lobbed >= 3 + (3 - e.hp) && e.timer <= 0) { e.st = 'idle'; e.timer = 80 - (3 - e.hp) * 15; }
+      } else if (e.st === 'pound') {
+        if (e.sub === 0 && e.timer <= 0) {       // crouch, then leap
+          e.sub = 1; e.vy = -8.5;
+          e.leapX = player.x + 60;               // come down near the runner
+        } else if (e.sub === 1) {
+          e.vy += 0.5; e.y += e.vy;
+          e.x += clamp(e.leapX - e.x, -3, 3.2);
+          if (e.vy > 0 && e.y >= floorB) {       // SLAM
+            e.y = floorB; e.sub = 2; e.timer = 80 + e.hp * 10;
+            game.shake = 10; game.hitstop = 4; sfx.stomp(); buzz(3);
+            burst(e.x + 24, e.y + 44, '#ff6a3c', 22, 3.4, 0.14);
+            parts.push({ x: e.x + 24, y: e.y + 42, vx: 0, vy: 0, life: 16, color: '#ffb45c', ring: 4 });
+            // shockwave: grounded runners nearby get knocked — jump the slam!
+            if (player.onGround && Math.abs(player.x - (e.x + 24)) < 90) hurt();
+            // the ceiling sheds molten shards
+            for (let sh = 0; sh < 2 + (3 - e.hp); sh++)
+              ents.push({ type: 'shard', x: player.x + RI(-20, 130), y: cam.y - 12,
+                w: 8, h: 12, ox: 2, oy: 2, dead: 0, t: 0, vy: R(1.5, 2.5) });
+          }
+        } else if (e.sub === 2 && e.timer <= 0) {  // dazed window over
+          e.st = 'idle'; e.timer = 60 - (3 - e.hp) * 12;
+        }
+      }
+      // contact happens HERE — this branch continues before the generic section
+      if (!e.dead && e.st !== 'entry') {
+        const br = { x: e.x + 5, y: e.y + 4, w: 38, h: 40 };
+        if (overlap(prect(), br, 1)) {
+          const crowned = (player.vy > 0.5 && (player.y + player.h) - br.y < 12 + player.vy)
+            || game.star > 0 || game.giga > 0;   // star/giga punch through to the crown
+          if (crowned && e.hurtT <= 0) {
+            bossHit(e);
+            player.vy = JUMP_V * 0.95; player.dj = true; player.stompT = 8;
+          } else if (e.hurtT <= 0) hurt();
+        }
+      }
+      continue;
+    } else if (e.type === 'fireball') {
+      e.vy += 0.22;
+      e.x += e.vx; e.y += e.vy;
+      if (e.t % 3 === 0)
+        parts.push({ x: e.x + 4, y: e.y + 4, vx: R(-0.2, 0.2), vy: R(-0.4, 0), life: RI(8, 16),
+          color: pick(['#ff9a3c', '#ffe97a']), size: 1, grav: -0.01 });
+      const gtF = groundTopPx(Math.floor((e.x + 4) / TILE));
+      if (Number.isFinite(gtF) && e.y + 8 >= gtF) {
+        burst(e.x + 4, gtF - 2, '#ff9a3c', 6, 1.6, 0.08);
+        e.dead = 2; e.deadT = 0;
+      }
+      if (!e.dead && overlap(prect(), erect(e), 1)) {
+        if (game.star > 0 || game.giga > 0) { killEnemy(e, 50); sfx.kick(); }
+        else hurt();
+      }
+      continue;
+    } else if (e.type === 'shard') {
+      e.vy = Math.min(e.vy + 0.3, 5.5);
+      e.y += e.vy;
+      const gtS = groundTopPx(Math.floor((e.x + 4) / TILE));
+      if (Number.isFinite(gtS) && e.y + 12 >= gtS) {
+        burst(e.x + 4, gtS - 2, '#ffb45c', 5, 1.4, 0.1);
+        sfx.thud();
+        e.dead = 2; e.deadT = 0;
+      }
+      if (!e.dead && overlap(prect(), erect(e), 1)) {
+        if (game.star > 0 || game.giga > 0) { killEnemy(e, 50); sfx.kick(); }
+        else hurt();
+      }
+      continue;
     } else if (e.type === 'squid') {
       // blooper rhythm: drift and sink, then jet toward where you are
       e.jetT--;
@@ -4147,6 +4404,55 @@ function drawEnt(e, camX, camY) {
       return;
     }
   }
+  else if (e.type === 'boss') {
+    if (e.st === 'wait') return;               // still lurking above the arena
+    const roaring = e.st === 'lob' || (e.st === 'pound' && e.sub === 1);
+    const img2 = roaring ? BOSS1 : BOSS0;
+    const dazed = e.st === 'pound' && e.sub === 2;
+    let sclX = 3, sclY = 3;
+    if (e.st === 'pound' && e.sub === 2 && e.timer > 70) { sclX = 3.5; sclY = 2.4; }   // slam squash
+    else if (e.st === 'pound' && e.sub === 1) { sclX = 2.7; sclY = 3.3; }              // stretch in flight
+    ctx.save();
+    ctx.translate(sx + 24, sy + 46);
+    if (e.dead) ctx.rotate(Math.min(1.2, (60 - e.deadT) * 0.05));
+    ctx.scale(sclX, sclY);
+    if (e.hurtT > 40 && (game.frame & 2)) ctx.globalAlpha = 0.55;   // hit flash
+    ctx.drawImage(img2, -8, -16);
+    ctx.restore();
+    ctx.globalAlpha = 1;
+    if (dazed && !e.dead) {                    // stars circle the dazed crown
+      for (let s2 = 0; s2 < 3; s2++) {
+        const a2 = game.frame * 0.15 + s2 * 2.1;
+        ctx.fillStyle = '#ffe97a';
+        ctx.fillRect(sx + 24 + Math.round(Math.cos(a2) * 16), sy - 8 + Math.round(Math.sin(a2) * 4), 2, 2);
+      }
+      if ((game.frame >> 4) & 1)
+        drawTextC(ctx, 'STOMP THE CROWN!', sx + 24, sy - 22, 1, '#ffe97a', '#1a1c2c');
+    }
+    return;
+  }
+  else if (e.type === 'fireball') {
+    ctx.fillStyle = '#ff6a3c';
+    ctx.beginPath(); ctx.arc(sx + 4, sy + 4, 4, 0, 7); ctx.fill();
+    ctx.fillStyle = '#ffe97a';
+    ctx.fillRect(sx + 2, sy + 2, 3, 3);
+    return;
+  }
+  else if (e.type === 'shard') {
+    ctx.fillStyle = '#8c8ca4';
+    ctx.beginPath(); ctx.moveTo(sx, sy); ctx.lineTo(sx + 8, sy); ctx.lineTo(sx + 4, sy + 12); ctx.fill();
+    ctx.fillStyle = '#ff9a3c';
+    ctx.fillRect(sx + 3, sy + 1, 2, 4);
+    return;
+  }
+  else if (e.type === 'powfx' && e.kind === 'crown') {
+    ctx.fillStyle = '#ffd93c';
+    ctx.fillRect(sx + 2, sy + 6, 12, 5);
+    ctx.fillRect(sx + 2, sy + 2, 2, 4); ctx.fillRect(sx + 7, sy + 2, 2, 4); ctx.fillRect(sx + 12, sy + 2, 2, 4);
+    ctx.fillStyle = '#e8453c';
+    ctx.fillRect(sx + 7, sy + 8, 2, 2);
+    return;
+  }
   else if (e.type === 'wisp') {
     if (e.trail && !e.dead) {                  // ghostly afterimages
       const timg = f ? WISP1 : WISP0;
@@ -4742,6 +5048,24 @@ function renderWorld() {
       if (yy < 0 || yy + 3 > H) continue;
       const off = Math.round(Math.sin(game.frame * 0.09 + i * 0.8) * (0.6 + i * 0.12));
       if (off) ctx.drawImage(canvas, 0, yy, W, 3, off, yy, W, 3);
+    }
+  }
+  if (game.bossRef && !game.bossRef.dead && game.bossRef.st !== 'wait') {
+    // the KING's presence: crimson pressing in from the edges, pulsing
+    const bp = 0.1 + 0.05 * Math.sin(game.frame * 0.11);
+    const g4 = ctx.createRadialGradient(W / 2, H / 2, H * 0.3, W / 2, H / 2, H * 0.72);
+    g4.addColorStop(0, 'rgba(160,20,20,0)');
+    g4.addColorStop(1, 'rgba(160,20,20,' + bp.toFixed(3) + ')');
+    ctx.fillStyle = g4;
+    ctx.fillRect(0, 0, W, H);
+    // his three lives, worn as crowns
+    for (let i = 0; i < 3; i++) {
+      const cx2 = W / 2 - 20 + i * 16, cy2 = safeTop + 6;
+      ctx.globalAlpha = i < game.bossRef.hp ? 1 : 0.22;
+      ctx.fillStyle = '#ffd93c';
+      ctx.fillRect(cx2, cy2 + 4, 10, 4);
+      ctx.fillRect(cx2, cy2, 2, 4); ctx.fillRect(cx2 + 4, cy2, 2, 4); ctx.fillRect(cx2 + 8, cy2, 2, 4);
+      ctx.globalAlpha = 1;
     }
   }
   drawHUD();
