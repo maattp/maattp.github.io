@@ -68,7 +68,7 @@ const MAX_SPEED = 3.05;
 const PIT_Y = 11 * TILE;             // below this = pit death
 const WORLD_LEN = 500;               // tiles per world before the flag
 const SAVE = 'pixelrun_';
-const VERSION = 36;                  // shown on the title screen — bump once per PR (see CLAUDE.md)
+const VERSION = 37;                  // shown on the title screen — bump once per PR (see CLAUDE.md)
 
 // ---------- utils ----------
 const clamp = (v, a, b) => v < a ? a : v > b ? b : v;
@@ -4940,6 +4940,17 @@ function renderWorld() {
   const shY = game.shake > 0.5 ? R(-game.shake, game.shake) : 0;
   const camX = cam.x + shX, camY = cam.y + shY;
   drawSkyAndParallax(camX, camY);
+  if (game.themeIdx === 7 && !game.inBonus) {   // MAGMA KEEP: heat haze in the air
+    // shimmer ONLY the backdrop (nothing else is painted yet) — warping the
+    // tiles and enemies you're actually judging jumps by read as glitchy
+    const gy = Math.round(-camY);
+    for (let i = 0; i < 12; i++) {
+      const yy = gy - 60 + i * 4;
+      if (yy < 0 || yy + 4 > H) continue;
+      const off = Math.round(Math.sin(game.frame * 0.07 + i * 0.8) * (0.5 + i * 0.1));
+      if (off) ctx.drawImage(canvas, 0, yy, W, 4, off, yy, W, 4);
+    }
+  }
   if (game.moon > 0) {   // dreamlike violet wash
     ctx.fillStyle = 'rgba(150,110,255,' + (0.12 * Math.min(1, game.moon / 90)) + ')';
     ctx.fillRect(0, 0, W, H);
@@ -5037,17 +5048,6 @@ function renderWorld() {
     g3.addColorStop(1, 'rgba(8,4,16,0.6)');
     ctx.fillStyle = g3;
     ctx.fillRect(0, 0, W, H);
-  }
-  if (game.themeIdx === 7 && !game.inBonus) {   // MAGMA KEEP: the air itself cooks
-    // re-draw thin strips near the ground, each nudged by a travelling sine —
-    // canvas self-blit, so everything (tiles, enemies, coins) wavers together
-    const gy = Math.round(-camY);               // world ground line on screen
-    for (let i = 0; i < 13; i++) {
-      const yy = gy - 40 + i * 3;
-      if (yy < 0 || yy + 3 > H) continue;
-      const off = Math.round(Math.sin(game.frame * 0.09 + i * 0.8) * (0.6 + i * 0.12));
-      if (off) ctx.drawImage(canvas, 0, yy, W, 3, off, yy, W, 3);
-    }
   }
   if (game.bossRef && !game.bossRef.dead && game.bossRef.st !== 'wait') {
     // the KING's presence: crimson pressing in from the edges, pulsing
