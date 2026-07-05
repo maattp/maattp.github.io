@@ -607,7 +607,37 @@
             return m + ':' + (sec < 10 ? '0' : '') + sec.toFixed(1);
         }
         function hx(n) { return '#' + n.toString(16).padStart(6, '0'); }
-        function vibrate(ms) { try { if (navigator.vibrate) navigator.vibrate(ms); } catch (e) {} }
+        // navigator.vibrate is a silent no-op on iOS — the game's primary
+        // platform never felt a single bonk. iOS 17.4+ fires the system
+        // haptic when a native <input switch> toggles; we click a hidden one.
+        let hapticSwitch = null;
+        function initHaptics() {
+            if (navigator.vibrate || hapticSwitch) return;
+            try {
+                const lab = document.createElement('label');
+                lab.style.cssText = 'position:fixed;left:-100px;top:-100px;width:1px;height:1px;overflow:hidden';
+                const sw = document.createElement('input');
+                sw.type = 'checkbox';
+                sw.setAttribute('switch', '');
+                lab.appendChild(sw);
+                document.body.appendChild(lab);
+                hapticSwitch = lab;
+            } catch (e) {}
+        }
+        if ('serviceWorker' in navigator) {
+            // solo play works fully offline; sw.js also pins the Three.js CDN build
+            try { navigator.serviceWorker.register('sw.js'); } catch (e) {}
+        }
+        function vibrate(ms) {
+            try {
+                if (navigator.vibrate) { navigator.vibrate(ms); return; }
+                if (!hapticSwitch) initHaptics();
+                if (hapticSwitch) {
+                    hapticSwitch.click();                       // one system tick
+                    if (ms >= 40) setTimeout(() => hapticSwitch && hapticSwitch.click(), 60);
+                }
+            } catch (e) {}
+        }
 
         // ---------- DOM ----------
         const $ = (id) => document.getElementById(id);
@@ -1126,7 +1156,7 @@
         // ⚠ APP_VER: increment ONCE PER PR (CLAUDE.md rule). Shown on the
         // title screen and folded into NET_VER, so any two different builds
         // refuse to share a room.
-        const APP_VER = 36;
+        const APP_VER = 37;
         function hash32(str) {
             let h = 2166136261 >>> 0;
             for (let i = 0; i < str.length; i++) { h ^= str.charCodeAt(i); h = Math.imul(h, 16777619); }

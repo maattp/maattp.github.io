@@ -17,6 +17,21 @@ version gate: two phones only share a room when their tags match, so a
 forgotten bump lets a stale build pair with a new one and desync (the hash
 half auto-covers track geometry + core physics, but nothing else).
 
+## Offline / service worker (v37)
+
+`sw.js` makes SOLO play fully offline: stale-while-revalidate for the
+same-origin shell, cache-first for the pinned Three.js r128 cdnjs URL
+(versioned upstream = immutable). Cross-origin requests other than that CDN
+script — the multiplayer worker API above all — are deliberately NOT
+intercepted, so online play can never hit a stale cache. **Bump `CACHE`
+(`fablekart-vN`) alongside APP_VER when a deploy must reach installed
+players immediately.** Verified offline via CDP `Network.emulateNetworkConditions`:
+menu renders and a full solo race runs with the network hard-off.
+
+Haptics: `vibrate()` falls back to the hidden `<input switch>` toggle hack on
+iOS (navigator.vibrate is a silent no-op there — the game's primary platform
+had zero haptics until v37); iOS 17.4+ fires the system tick on toggle.
+
 ## What this is
 
 A single self-contained `index.html` — a **landscape** (horizontal) 3D kart
