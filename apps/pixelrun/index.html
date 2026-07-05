@@ -3609,8 +3609,7 @@ function updateEnts() {
       // THE TREADMILL HUNT: the KING flees ahead; you gain on him steadily
       // (faster while he slows to throw), he stumbles when caught — stomp the
       // crown — then panic-bursts away. Three catches end the dynasty.
-      if (e.dead) continue;                      // generic dead-ent path animates the fall
-      if (e.hurtT > 0) e.hurtT--;
+      if (e.hurtT > 0) e.hurtT--;   // (dead bosses ride the generic dead-ent path)
       const gtB = groundTopPx(Math.floor((e.x + 24) / TILE));
       const floorB = (Number.isFinite(gtB) ? gtB : -e.g * TILE) - 46;
       if (e.st === 'wait') {
@@ -3643,8 +3642,8 @@ function updateEnts() {
         // volley costs him ground. panic boost after a stumble reopens the gap
         let vx2 = game.speed - (throwing ? 1.15 : 0.4);
         if (e.boost > 0) { vx2 = game.speed + 2.8; e.boost--; }
-        e.x += Math.max(vx2, gap > 400 ? game.speed + 1 : vx2);   // never off-screen far
-        if (gap > 400) e.x = player.x + 410;
+        e.x += vx2;
+        if (gap > 400) e.x = player.x + 410;     // never escapes off-screen
         // sprint dust
         if (e.t % 5 === 0)
           parts.push({ x: e.x + 4, y: e.y + 44, vx: R(-0.8, -0.3), vy: R(-0.5, -0.1),
@@ -3713,7 +3712,8 @@ function updateEnts() {
           }
         }
       }
-      continue;    } else if (e.type === 'fireball') {
+      continue;
+    } else if (e.type === 'fireball') {
       e.vy += 0.22;
       e.x += e.vx; e.y += e.vy;
       if (e.t % 3 === 0)
