@@ -68,7 +68,7 @@ const MAX_SPEED = 3.05;
 const PIT_Y = 11 * TILE;             // below this = pit death
 const WORLD_LEN = 500;               // tiles per world before the flag
 const SAVE = 'pixelrun_';
-const VERSION = 40;                  // shown on the title screen — bump once per PR (see CLAUDE.md)
+const VERSION = 41;                  // shown on the title screen — bump once per PR (see CLAUDE.md)
 
 // ---------- utils ----------
 const clamp = (v, a, b) => v < a ? a : v > b ? b : v;
@@ -1100,13 +1100,13 @@ const PET_CAPY = [sprite([
 '................'
 ])];
 const PETS = [   // foot = bottom sprite row of the paws, for exact ground contact
-  { name: 'BLUEBIRD', mode: 'fly', img: PET_BIRD },
-  { name: 'PUP', mode: 'ground', foot: 14, img: PET_PUP },
-  { name: 'DUCKLING', mode: 'ground', foot: 14, swims: 1, img: PET_DUCK },
-  { name: 'FIREFLY', mode: 'fly', glow: 1, img: null },
-  { name: 'BABY DRAGON', mode: 'fly', ember: 1, img: PET_DRAGON },
-  { name: 'SNOW FOX', mode: 'ground', foot: 14, prints: 1, img: PET_FOX },
-  { name: 'CAPYBARA', mode: 'ground', foot: 13, swims: 1, chill: 1, img: PET_CAPY }
+  { name: 'BLUEBIRD', mode: 'fly', cost: 0, img: PET_BIRD },
+  { name: 'PUP', mode: 'ground', foot: 14, cost: 300, img: PET_PUP },
+  { name: 'DUCKLING', mode: 'ground', foot: 14, swims: 1, cost: 400, img: PET_DUCK },
+  { name: 'FIREFLY', mode: 'fly', glow: 1, cost: 500, img: null },
+  { name: 'BABY DRAGON', mode: 'fly', ember: 1, cost: 750, img: PET_DRAGON },
+  { name: 'SNOW FOX', mode: 'ground', foot: 14, prints: 1, cost: 750, img: PET_FOX },
+  { name: 'CAPYBARA', mode: 'ground', foot: 13, swims: 1, chill: 1, cost: 1000, img: PET_CAPY }
 ];
 const HEART = sprite([
 '..kk....kk..',
@@ -2144,6 +2144,8 @@ const game = {
   wings: 0, giga: 0, moon: 0, rain: 0,
   shake: 0, stateT: 0, themeFade: 0, prevTheme: 0,
   hitstop: 0, heartFlash: 0, heartPop: 0, coinPop: 0, nextCoinFete: 100, bossRef: null,
+  daily: false, dailyPending: false, secondWindUsed: false, lastSafeX: 40,
+  runStats: null, achToast: null,
   announce: '', announceT: 0,
   best: load('best', 0), bestDist: load('bestDist', 0), newBest: false, recordFete: false,
   announceMax: 1, wonder: 0,
@@ -2158,8 +2160,98 @@ let tufts = new Map();       // tx -> grass tuft variant (sways as you pass)
 let petIdx = clamp(load('pet', 0), 0, PETS.length);
 const pet = { x: 0, y: 0, t: 0, celeb: 0 };
 let petHist = [];
+
+// ---------- meta: daily run / coin economy / achievements ----------
+function todayKey() {
+  const d = new Date();
+  return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' +
+    String(d.getDate()).padStart(2, '0');
+}
+function dailySeedVal() {   // everyone gets the same world on the same date
+  const d = new Date();
+  const n = d.getFullYear() * 10000 + (d.getMonth() + 1) * 100 + d.getDate();
+  return (Math.imul(n, 2654435761) >>> 0) || 1;
+}
+let dailyBest = load('dailyBest', null);          // { date, score, dist }
+if (dailyBest && dailyBest.date !== todayKey()) dailyBest = null;
+let dailyStreak = load('dailyStreak', { last: '', count: 0 });
+function bumpDailyStreak() {
+  const today = todayKey();
+  if (dailyStreak.last === today) return;
+  const y = new Date(); y.setDate(y.getDate() - 1);
+  const yesterday = y.getFullYear() + '-' + String(y.getMonth() + 1).padStart(2, '0') + '-' +
+    String(y.getDate()).padStart(2, '0');
+  dailyStreak = { last: today, count: dailyStreak.last === yesterday ? dailyStreak.count + 1 : 1 };
+  store('dailyStreak', dailyStreak);
+  if (dailyStreak.count >= 3) achieve('regular');
+}
+
+// pets are bought with LIFETIME COINS (earned in game — never real money).
+// grandfather clause: whatever was equipped before the economy existed stays owned
+let petsOwned = new Set(load('petsOwned', null) ||
+  (petIdx > 0 && petIdx < PETS.length ? [0, petIdx] : [0]));
+function petOwned(i) { return i >= PETS.length || petsOwned.has(i); }
+function buyPet(i) {
+  const def = PETS[i];
+  if (!def || petsOwned.has(i)) return false;
+  if (game.coinsAll < def.cost) return false;
+  game.coinsAll -= def.cost; store('coinsAll', game.coinsAll);
+  petsOwned.add(i); store('petsOwned', [...petsOwned]);
+  if (PETS.every((_, j) => petsOwned.has(j))) achieve('menagerie');
+  return true;
+}
+
+// SECOND WIND: once per run, spend banked coins to get back up where you fell
+function secondWindCost() { return Math.min(1000, 150 + Math.floor(game.dist / 250) * 100); }
+function canSecondWind() {
+  return !game.secondWindUsed && !game.testRun && game.coinsAll >= secondWindCost();
+}
+function secondWind() {
+  game.coinsAll -= secondWindCost(); store('coinsAll', game.coinsAll);
+  game.secondWindUsed = true;
+  player.x = game.lastSafeX - 8;
+  const gt = groundTopPx(Math.floor((player.x + 5) / TILE));
+  player.y = (Number.isFinite(gt) ? gt : 0) - player.h;
+  player.vy = 0; player.slam = false; player.mode = 'run'; player.onGround = true;
+  game.hearts = 2; game.invuln = 170;
+  for (const e of ents)   // clear the immediate danger, quietly
+    if (HOSTILE.has(e.type) && !e.dead && e.type !== 'boss' && Math.abs(e.x - player.x) < 150)
+      { e.dead = 2; e.deadT = 8; }
+  game.state = 'play'; game.stateT = 0;
+  playSong(THEME_SONGS[game.themeIdx]);
+  announce('SECOND WIND!', 120);
+  sfx.power(); buzz(3);
+  for (let i = 0; i < 16; i++)
+    parts.push({ x: player.x + R(-6, 16), y: player.y + R(-10, 14), vx: R(-1.5, 1.5), vy: R(-2.5, -0.5),
+      life: RI(20, 44), color: i % 2 ? '#ffd93c' : '#fff', size: rng() < 0.4 ? 2 : 1, grav: 0.05 });
+}
+
+// achievements: earned once, kept forever, shown on the TROPHIES wall
+const ACH = [
+  { id: 'flag1',     name: 'FIRST FLAG',     desc: 'CLEAR WORLD 1' },
+  { id: 'tour',      name: 'WORLD TOUR',     desc: 'FINISH A FULL LOOP' },
+  { id: 'king',      name: 'KINGSLAYER',     desc: 'DEFEAT THE MAGMA KING' },
+  { id: 'untouched', name: 'UNTOUCHABLE',    desc: 'BEAT THE KING WITHOUT A SCRATCH' },
+  { id: 'cent',      name: 'CENTURION',      desc: '100 COINS IN ONE RUN' },
+  { id: 'pearl',     name: 'PEARL DIVER',    desc: '30 COINS UNDERWATER IN ONE RUN' },
+  { id: 'bones',     name: 'BONE COLLECTOR', desc: 'SCATTER 5 SKELETONS FOR GOOD' },
+  { id: 'combo5',    name: 'CHAIN REACTION', desc: 'A 5-STOMP COMBO' },
+  { id: 'night',     name: 'NIGHT LIGHT',    desc: 'CLEAR HAUNTED HOLLOW' },
+  { id: 'marathon',  name: 'MARATHON',       desc: 'RUN 2000M IN ONE RUN' },
+  { id: 'regular',   name: 'REGULAR',        desc: 'A 3-DAY DAILY STREAK' },
+  { id: 'menagerie', name: 'MENAGERIE',      desc: 'BEFRIEND EVERY PET' }
+];
+let achOwned = new Set(load('ach', []));
+function achieve(id) {
+  if (achOwned.has(id)) return;
+  achOwned.add(id); store('ach', [...achOwned]);
+  const def = ACH.find(a => a.id === id);
+  game.achQueue = game.achQueue || [];
+  game.achQueue.push(def ? def.name : id);   // queued: simultaneous unlocks each get their moment
+  sfx.century(); buzz(2);
+}
 function updatePet() {
-  if (petIdx >= PETS.length) return;
+  if (!petOwned(petIdx) || petIdx >= PETS.length) return;
   pet.t++;
   petHist.push({ x: player.x, y: player.y, g: player.onGround, w: player.inWater });
   if (petHist.length > 12) petHist.shift();   // short lag: stays right at the heel
@@ -2234,7 +2326,7 @@ function updatePet() {
   }
 }
 function drawPet(camX, camY) {
-  if (petIdx >= PETS.length) return;   // NO PET: running solo
+  if (!petOwned(petIdx) || petIdx >= PETS.length) return;   // NO PET / locked: solo
   const def = PETS[petIdx];
   let dx = Math.round(pet.x - camX), dy = Math.round(pet.y - camY);
   let rot = 0;
@@ -2760,7 +2852,12 @@ function startRun(world) {
   ground = new Map(); tiles = new Map(); qmeta = new Map(); bumps = new Map(); water = new Map();
   tufts = new Map();
   ents = []; coins = []; parts = []; floats = [];
-  rng = mulberry32(urlSeed ? +urlSeed : (Math.random() * 1e9) | 0);
+  game.daily = !!game.dailyPending; game.dailyPending = false;
+  rng = mulberry32(game.daily ? dailySeedVal() : urlSeed ? +urlSeed : (Math.random() * 1e9) | 0);
+  if (game.daily) bumpDailyStreak();
+  game.secondWindUsed = false;
+  game.lastSafeX = 40;
+  game.runStats = { wetCoins: 0, boneKills: 0, bossHurt: false };
   game.state = 'play'; game.frame = 0; game.score = 0; game.coins = 0; game.dist = 0;
   game.themeIdx = (world - 1) % THEMES.length; game.worldNum = world; game.speed = BASE_SPEED;
   game.startWorld = world;
@@ -2847,6 +2944,7 @@ function update() {
     parts.push({ x: player.x + 5, y: player.y + 6, vx: 0, vy: 0, life: 12,
       color: '#ffd93c', size: 1, grav: 0, ring: 2 });
     game.coinPop = 16;
+    if (!game.testRun) achieve('cent');
     sfx.century(); buzz(3); game.hitstop = 3;
   }
   if (game.magnet > 0) game.magnet--;
@@ -2911,6 +3009,16 @@ function update() {
   if (player.onGround && player.mode === 'run' && game.speed > 2.1 && game.frame % 12 === 0)
     parts.push({ x: player.x - 2, y: player.y + player.h - 1, vx: R(-0.7, -0.3), vy: R(-0.4, -0.1),
       life: RI(10, 18), color: 'rgba(230,225,210,0.6)', size: 1, grav: 0.02 });
+  if (player.onGround && player.mode === 'run' && !player.inWater && !game.inBonus)
+    game.lastSafeX = player.x;   // where SECOND WIND puts you back
+  // climate: the runner FEELS the worlds (kept deliberately subtle)
+  if (game.themeIdx === 5 && player.onGround && player.mode === 'run' && game.frame % 150 === 0)
+    for (let b = 0; b < 3; b++)          // breath fogs in the frost air
+      parts.push({ x: player.x + 11 + b, y: player.y + 4 + R(-1, 1), vx: 0.25 + b * 0.08, vy: R(-0.15, -0.05),
+        life: RI(22, 38), color: 'rgba(240,248,255,0.5)', size: 1, grav: -0.003, sway: 1 });
+  if (game.themeIdx === 7 && player.mode === 'run' && game.frame % 260 === 0)
+    parts.push({ x: player.x + 8, y: player.y + 2, vx: R(0.4, 0.8), vy: -1.2,   // one honest sweat drop
+      life: RI(16, 26), color: '#9adfff', size: 1, grav: 0.12 });
   // footprints: the world remembers you crossed it
   if (player.onGround && player.mode === 'run' && game.frame % 9 === 0) {
     const onSand = game.themeIdx === 1 ||
@@ -3404,6 +3512,8 @@ function updateBubble() {
 
 function hurt() {
   if (game.invuln > 0 || game.star > 0 || game.giga > 0 || player.mode !== 'run') return;
+  if (game.bossRef && !game.bossRef.dead && game.runStats)
+    game.runStats.bossHurt = true;   // only REAL hits void UNTOUCHABLE — star/giga contact doesn't
   game.hearts--;
   sfx.hurt(); buzz(2); game.shake = 5;
   game.hitstop = 8; game.heartFlash = 16;
@@ -3427,10 +3537,16 @@ function gameOver() {
   game.newBest = game.score > game.best;
   if (game.newBest) { game.best = game.score; store('best', game.best); }
   if (game.dist > game.bestDist) { game.bestDist = game.dist; store('bestDist', game.bestDist); }
+  if (game.daily && (!dailyBest || game.score > dailyBest.score)) {
+    dailyBest = { date: todayKey(), score: game.score, dist: game.dist };
+    store('dailyBest', dailyBest);
+  }
+  if (game.dist >= 2000) achieve('marathon');
 }
 
 function killEnemy(e, pts, squash) {
   if (e.dead) return;
+  if (e.type === 'bones' && game.runStats && ++game.runStats.boneKills >= 5 && !game.testRun) achieve('bones');
   e.dead = squash ? 2 : 1; e.deadT = 22;
   if (e.dead === 1) e.vy = -2.6;
   const r = erect(e);
@@ -3459,6 +3575,9 @@ function bossHit(e) {
   }
 }
 function bossDie(e) {
+  // combat trophies count however you reached him — level select included
+  achieve('king');
+  if (game.runStats && !game.runStats.bossHurt) achieve('untouched');
   e.dead = 1; e.deadT = 60; e.vy = -4;
   game.bossRef = null;
   game.hitstop = 10; game.shake = 12; buzz(3);
@@ -3856,6 +3975,7 @@ function updateEnts() {
     const stomp = player.vy > 0.5 && (player.y + player.h) - r.y < 7 + player.vy;
     if (stomp && STOMPABLE.has(e.type)) {
       game.combo++;
+      if (game.combo >= 5 && !game.testRun) achieve('combo5');
       const pts = 100 * Math.pow(2, Math.min(game.combo - 1, 5));
       addScore(pts, r.x, r.y - 10, false);
       addFloat(r.x, r.y - 10, game.combo > 1 ? pts + '  ×' + game.combo : '+' + pts, game.combo > 2 ? '#7dffb0' : '#ffe97a');
@@ -3936,6 +4056,11 @@ function worldTransition(flag) {
   flag.hit = 1; flag.hitFrame = game.frame;
   pet.celeb = 50;                              // the companion parties too
   game.worldNum++;
+  if (!game.testRun) {
+    if (game.worldNum === 2) achieve('flag1');
+    if (game.worldNum === 8) achieve('night');       // cleared Haunted Hollow
+    if (game.worldNum === 9) achieve('tour');        // a full loop, King and all
+  }
   game.prevTheme = game.themeIdx;
   game.themeIdx = (game.worldNum - 1) % THEMES.length;
   tintPage();
@@ -3991,6 +4116,7 @@ function updateCoins() {
     if (dx * dx + dy * dy < rr) {
       c.taken = 1;
       game.coins++; addScore(50, undefined);
+      if (player.inWater && game.runStats && ++game.runStats.wetCoins >= 30 && !game.testRun) achieve('pearl');
       sfx.coin(); buzz(1);
       burst(c.x, c.y, '#ffd93c', 4, 1.4, 0.08);
     }
@@ -4070,7 +4196,8 @@ function ambient() {
 
 // ---------- UI / state entry ----------
 const ui = { pause: null, sound: null, buzz: null, resume: null, quit: null,
-  petRect: null, petNameT: -999, overTitle: null, overAgain: null, levelBtns: null, back: null };
+  petRect: null, petNameT: -999, petNeedT: -999, petBuy: null, overTitle: null, overAgain: null,
+  dailyBtn: null, trophyBtn: null, windBtn: null, giveUpBtn: null, levelBtns: null, back: null };
 function settingsHit(hit) {
   if (hit(ui.sound)) { setMuted(!audio.muted); sfx.ui(); return true; }
   if (hit(ui.buzz)) { hapticsOn = !hapticsOn; store('haptics', hapticsOn); buzz(1); sfx.ui(); return true; }
@@ -4126,15 +4253,46 @@ function onPress(cx, cy) {
     if (settingsHit(hit)) return;
     if (hit(ui.quit)) { goTitle(); sfx.ui(); return; }
     togglePause(); sfx.ui();
+  } else if (game.state === 'downed') {
+    if (game.stateT > 20) {
+      if (hit(ui.windBtn)) { secondWind(); return; }
+      if (hit(ui.giveUpBtn)) { gameOver(); sfx.ui(); return; }
+    }
+  } else if (game.state === 'trophies') {
+    goTitle(); sfx.ui();
   } else if (game.state === 'over') {
     if (game.stateT > 45) {
       if (hit(ui.overTitle)) { goTitle(); sfx.ui(); return; }
+      if (game.daily) game.dailyPending = true;   // retry the same daily map
       startRun(game.startWorld || 1);   // RUN AGAIN button or any other tap
     }
   }
 }
 function titleRelease(hit) {
   if (settingsHit(hit)) return;
+  if (hit(ui.dailyBtn)) {                // one shared map per day, race the clock
+    game.dailyPending = true;
+    sfx.ui();
+    startRun();
+    return;
+  }
+  if (hit(ui.trophyBtn)) {
+    game.state = 'trophies'; game.stateT = 0;
+    sfx.ui();
+    return;
+  }
+  if (hit(ui.petBuy)) {                  // unlock the previewed friend
+    const def = PETS[petIdx];
+    if (buyPet(petIdx)) {
+      ui.petNameT = game.frame;
+      sfx.century(); buzz(3);
+    } else {
+      addFloat(0, 0, '', '#fff');        // no-op keeps floats array warm
+      ui.petNeedT = game.frame;
+      sfx.thud();
+    }
+    return;
+  }
   if (hit(ui.petRect)) {                 // tap your companion to meet the next one
     petIdx = (petIdx + 1) % (PETS.length + 1);   // the extra stop is NO PET
     store('pet', petIdx);
@@ -4737,8 +4895,17 @@ function drawPlayer(camX, camY) {
     const wf = (game.frame >> 3) & 1;
     ctx.drawImage(WINGICON, sx - 8, sy + 1 - wf * 2);
   }
+  // swim goggles: a tiny strap-and-lens overlay whenever he's in the water
+  const goggles = (px, py) => {
+    if (!swimming) return;
+    ctx.fillStyle = '#1a1c2c';
+    ctx.fillRect(px + 5, py + 4, 7, 1);            // strap across the head
+    ctx.fillStyle = '#9adfff';
+    ctx.fillRect(px + 8, py + 4, 2, 2);            // the lens catches the light
+  };
   if (rot === 0 && sclX === 1 && sclY === 1) {
     ctx.drawImage(img, sx, sy);
+    goggles(sx, sy);
   } else {
     ctx.save();
     ctx.translate(sx + 8, sy + 16);   // feet pivot for squash…
@@ -4746,6 +4913,7 @@ function drawPlayer(camX, camY) {
     ctx.translate(0, -8);
     ctx.rotate(rot);                  // …center pivot for spin
     ctx.drawImage(img, -8, -8);
+    goggles(-8, -8);
     ctx.restore();
   }
   // idle blink: eyelid over the eye every ~3 seconds while running
@@ -4815,6 +4983,23 @@ function drawHUD() {
   drawText(ctx, dStr, xr - 26 - textW(dStr, 1), y0 + 14, 1, '#ffe97a', '#1a1c2c');
   if (game.testRun)
     drawText(ctx, 'TEST', xr - 26 - textW('TEST', 1), y0 + 24, 1, '#ff8a9a', '#1a1c2c');
+  else if (game.daily)
+    drawText(ctx, 'DAILY', xr - 26 - textW('DAILY', 1), y0 + 24, 1, '#bfe8ff', '#1a1c2c');
+  if ((!game.achToast || game.achToast.t <= 0) && game.achQueue && game.achQueue.length)
+    game.achToast = { name: game.achQueue.shift(), t: 190 };
+  if (game.achToast && game.achToast.t > 0) {   // trophy toast slides in from the top
+    game.achToast.t--;
+    const tt = game.achToast.t;
+    const slide = tt > 160 ? (190 - tt) / 30 : tt < 24 ? tt / 24 : 1;
+    const ty2 = Math.round(safeTop + 30 * slide - 22);
+    const label = 'TROPHY  ' + game.achToast.name;
+    const bw2 = textW(label, 1) + 20;
+    ctx.fillStyle = 'rgba(26,28,44,0.92)';
+    ctx.fillRect(Math.round(W / 2 - bw2 / 2), ty2, bw2, 15);
+    ctx.fillStyle = '#ffd93c';
+    ctx.fillRect(Math.round(W / 2 - bw2 / 2), ty2, 3, 15);
+    drawText(ctx, label, Math.round(W / 2 - bw2 / 2) + 8, ty2 + 5, 1, '#ffe97a');
+  }
   if (game.combo >= 2 && game.state === 'play') {
     const hot = ((game.frame >> 2) & 1) === 0;
     drawTextC(ctx, 'COMBO ×' + game.combo, W / 2, y0 + 26, 2, hot ? '#7dffb0' : '#d8ffe8', '#1a1c2c');
@@ -4914,12 +5099,41 @@ function renderTitle() {
       ctx.restore();
     }
     ui.petRect = { x: ppx - 5, y: ppy - 7, w: 40, h: 44 };
-    if (game.frame - (ui.petNameT || -999) < 110)
-      drawTextC(ctx, def.name, ppx + 15, gy + 6, 1, '#ffe97a', '#1a1c2c');
+    const locked = !petOwned(petIdx);
+    if (locked) {                        // silhouette + price: earned coins buy friends
+      ctx.globalAlpha = 0.55;
+      ctx.fillStyle = 'rgba(20,22,40,0.8)';
+      ctx.fillRect(ppx - 2, ppy - 3, 34, 36);
+      ctx.globalAlpha = 1;
+      ctx.fillStyle = '#ffd93c';         // little padlock
+      ctx.fillRect(ppx + 12, ppy + 12, 8, 7);
+      ctx.fillRect(ppx + 14, ppy + 9, 1, 3); ctx.fillRect(ppx + 17, ppy + 9, 1, 3);
+      ctx.fillRect(ppx + 14, ppy + 8, 4, 1);
+      drawTextC(ctx, def.name + '  ×' + def.cost, ppx + 15, gy + 6, 1, '#ffe27a', '#1a1c2c');
+      ui.petBuy = drawBtn(game.coinsAll >= def.cost ? 'UNLOCK' : 'NEED ' + (def.cost - game.coinsAll) + ' MORE',
+        ppx + 15, ppy - 24, game.coinsAll >= def.cost);   // above the cage, clear of the help text
+      if (game.frame - (ui.petNeedT || -999) < 60 && game.coinsAll < def.cost)
+        drawTextC(ctx, 'KEEP RUNNING!', ppx + 15, ppy - 38, 1, '#ff8a9a', '#1a1c2c');
+    } else {
+      ui.petBuy = null;
+      if (game.frame - (ui.petNameT || -999) < 110)
+        drawTextC(ctx, def.name, ppx + 15, gy + 6, 1, '#ffe97a', '#1a1c2c');
+      }
     }
+    if (petIdx >= PETS.length) ui.petBuy = null;   // the NO PET slot sells nothing
   }
   drawLogo(W / 2, safeTop + H * 0.12, 4);
   drawTextC(ctx, 'AN ENDLESS PLATFORM DASH', W / 2, safeTop + H * 0.12 + 62, 1, '#fff', '#1a1c2c');
+  // daily + trophies live between the tagline and the start prompt
+  ui.dailyBtn = drawBtn('DAILY RUN', W / 2 - 52, gy - 168, true);
+  ui.trophyBtn = drawBtn('TROPHIES', W / 2 + 52, gy - 168, false);
+  {
+    const bits = [];
+    if (dailyBest) bits.push("TODAY'S BEST " + dailyBest.score);
+    if (dailyStreak.count > 1 && dailyStreak.last === todayKey()) bits.push(dailyStreak.count + ' DAY STREAK');
+    if (bits.length)
+      drawTextC(ctx, bits.join('  ·  '), W / 2, gy - 146, 1, '#bfe8ff', '#1a1c2c');
+  }
   if ((game.frame >> 5) & 1)
     drawTextC(ctx, 'TAP TO START', W / 2, gy - 124, 2, '#ffe97a', '#1a1c2c');
   drawTextC(ctx, 'TAP: JUMP   AIR TAP: DOUBLE JUMP', W / 2, H - 68 - safeBot, 1, '#fff', '#1a1c2c');
@@ -5133,7 +5347,23 @@ function renderWorld() {
   }
   drawHUD();
 }
+function drawDowned() {
+  ctx.fillStyle = 'rgba(10,8,20,0.66)';
+  ctx.fillRect(0, 0, W, H);
+  const py = Math.round(H * 0.3);
+  drawTextC(ctx, 'DOWNED!', W / 2, py, 3, '#ff8a9a', '#1a1c2c');
+  const cost = secondWindCost();
+  drawTextC(ctx, 'SPEND ' + cost + ' OF ' + game.coinsAll + ' COINS?', W / 2, py + 32, 1, '#ffe27a', '#1a1c2c');
+  ui.windBtn = drawBtn('SECOND WIND  ×' + cost, W / 2, py + 48, true);
+  ui.giveUpBtn = drawBtn('GIVE UP', W / 2, py + 74, false);
+  const left = 1 - game.stateT / 330;    // the offer drains away
+  ctx.fillStyle = 'rgba(255,255,255,0.25)';
+  ctx.fillRect(Math.round(W / 2 - 50), py + 96, 100, 3);
+  ctx.fillStyle = '#ffe97a';
+  ctx.fillRect(Math.round(W / 2 - 50), py + 96, Math.round(100 * Math.max(0, left)), 3);
+}
 function renderOverlays() {
+  if (game.state === 'downed') { drawDowned(); return; }
   if (game.state === 'pause') {
     ctx.fillStyle = 'rgba(10,12,28,0.6)'; ctx.fillRect(0, 0, W, H);
     drawTextC(ctx, 'PAUSED', W / 2, H * 0.28, 3, '#fff', '#1a1c2c');
@@ -5188,8 +5418,29 @@ function renderLevels() {
   }
   ui.back = drawBtn('BACK', W / 2, rows0 + THEMES.length * 24 + 8, false);
 }
+function renderTrophies() {
+  const camX = game.frame * 0.6, camY = camBaseY();
+  drawSkyAndParallax(camX, camY);
+  drawTitleGround(camX);
+  ctx.fillStyle = 'rgba(10,12,28,0.78)';
+  ctx.fillRect(0, 0, W, H);
+  const y0 = safeTop + Math.max(22, H * 0.06);
+  drawTextC(ctx, 'TROPHIES', W / 2, y0, 2, '#ffe97a', '#1a1c2c');
+  drawTextC(ctx, achOwned.size + ' / ' + ACH.length, W / 2, y0 + 14, 1, '#8a8ea0');
+  const rows0 = y0 + 30, rh = Math.min(24, (H - rows0 - 40) / ACH.length);
+  ACH.forEach((a, i) => {
+    const yy = rows0 + i * rh;
+    const got = achOwned.has(a.id);
+    ctx.fillStyle = got ? '#ffd93c' : 'rgba(255,255,255,0.15)';   // the cup
+    ctx.fillRect(24, yy + 1, 8, 6); ctx.fillRect(26, yy + 7, 4, 2); ctx.fillRect(25, yy + 9, 6, 1);
+    drawText(ctx, a.name, 40, yy, 1, got ? '#fff' : '#5a5e70');
+    drawText(ctx, a.desc, 40, yy + 9, 1, got ? '#9adfff' : 'rgba(90,94,112,0.8)');
+  });
+  drawTextC(ctx, 'TAP TO GO BACK', W / 2, H - 24 - safeBot, 1, '#8a8ea0', '#1a1c2c');
+}
 function render() {
   if (game.state === 'title') { renderTitle(); return; }
+  if (game.state === 'trophies') { renderTrophies(); return; }
   if (game.state === 'levels') { renderLevels(); return; }
   renderWorld();
   renderOverlays();
@@ -5203,9 +5454,13 @@ function step() {
     game.frame++; game.stateT++;
     if (game.shake > 0) game.shake *= 0.85;
     updatePlayer(); updateFx();
-    if (game.stateT > 40 && player.y > cam.y + H + 60) gameOver();
+    if (game.stateT > 40 && player.y > cam.y + H + 60) {
+      if (canSecondWind()) { game.state = 'downed'; game.stateT = 0; }
+      else gameOver();
+    }
   } else {
     game.frame++; game.stateT++; updateFx();
+    if (game.state === 'downed' && game.stateT > 330) gameOver();   // offer expires
     // ticking score tally on the game-over card
     if (game.state === 'over' && game.stateT < 42 && game.stateT % 3 === 0 && game.score > 0)
       sq(520 + game.stateT * 8, 0.03, 0.045);
