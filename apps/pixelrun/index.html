@@ -2246,7 +2246,8 @@ function achieve(id) {
   if (achOwned.has(id)) return;
   achOwned.add(id); store('ach', [...achOwned]);
   const def = ACH.find(a => a.id === id);
-  game.achToast = { name: def ? def.name : id, t: 190 };
+  game.achQueue = game.achQueue || [];
+  game.achQueue.push(def ? def.name : id);   // queued: simultaneous unlocks each get their moment
   sfx.century(); buzz(2);
 }
 function updatePet() {
@@ -3510,9 +3511,9 @@ function updateBubble() {
 }
 
 function hurt() {
-  if (game.bossRef && !game.bossRef.dead && game.runStats && game.invuln <= 0)
-    game.runStats.bossHurt = true;
   if (game.invuln > 0 || game.star > 0 || game.giga > 0 || player.mode !== 'run') return;
+  if (game.bossRef && !game.bossRef.dead && game.runStats)
+    game.runStats.bossHurt = true;   // only REAL hits void UNTOUCHABLE — star/giga contact doesn't
   game.hearts--;
   sfx.hurt(); buzz(2); game.shake = 5;
   game.hitstop = 8; game.heartFlash = 16;
@@ -3545,7 +3546,7 @@ function gameOver() {
 
 function killEnemy(e, pts, squash) {
   if (e.dead) return;
-  if (e.type === 'bones' && game.runStats && ++game.runStats.boneKills >= 5) achieve('bones');
+  if (e.type === 'bones' && game.runStats && ++game.runStats.boneKills >= 5 && !game.testRun) achieve('bones');
   e.dead = squash ? 2 : 1; e.deadT = 22;
   if (e.dead === 1) e.vy = -2.6;
   const r = erect(e);
@@ -3974,7 +3975,7 @@ function updateEnts() {
     const stomp = player.vy > 0.5 && (player.y + player.h) - r.y < 7 + player.vy;
     if (stomp && STOMPABLE.has(e.type)) {
       game.combo++;
-      if (game.combo >= 5) achieve('combo5');
+      if (game.combo >= 5 && !game.testRun) achieve('combo5');
       const pts = 100 * Math.pow(2, Math.min(game.combo - 1, 5));
       addScore(pts, r.x, r.y - 10, false);
       addFloat(r.x, r.y - 10, game.combo > 1 ? pts + '  ×' + game.combo : '+' + pts, game.combo > 2 ? '#7dffb0' : '#ffe97a');
@@ -4115,7 +4116,7 @@ function updateCoins() {
     if (dx * dx + dy * dy < rr) {
       c.taken = 1;
       game.coins++; addScore(50, undefined);
-      if (player.inWater && game.runStats && ++game.runStats.wetCoins >= 30) achieve('pearl');
+      if (player.inWater && game.runStats && ++game.runStats.wetCoins >= 30 && !game.testRun) achieve('pearl');
       sfx.coin(); buzz(1);
       burst(c.x, c.y, '#ffd93c', 4, 1.4, 0.08);
     }
@@ -4984,6 +4985,8 @@ function drawHUD() {
     drawText(ctx, 'TEST', xr - 26 - textW('TEST', 1), y0 + 24, 1, '#ff8a9a', '#1a1c2c');
   else if (game.daily)
     drawText(ctx, 'DAILY', xr - 26 - textW('DAILY', 1), y0 + 24, 1, '#bfe8ff', '#1a1c2c');
+  if ((!game.achToast || game.achToast.t <= 0) && game.achQueue && game.achQueue.length)
+    game.achToast = { name: game.achQueue.shift(), t: 190 };
   if (game.achToast && game.achToast.t > 0) {   // trophy toast slides in from the top
     game.achToast.t--;
     const tt = game.achToast.t;
@@ -5115,9 +5118,9 @@ function renderTitle() {
       ui.petBuy = null;
       if (game.frame - (ui.petNameT || -999) < 110)
         drawTextC(ctx, def.name, ppx + 15, gy + 6, 1, '#ffe97a', '#1a1c2c');
+      }
     }
-    }
-    if (petIdx >= PETS.length) ui.petBuy = null;
+    if (petIdx >= PETS.length) ui.petBuy = null;   // the NO PET slot sells nothing
   }
   drawLogo(W / 2, safeTop + H * 0.12, 4);
   drawTextC(ctx, 'AN ENDLESS PLATFORM DASH', W / 2, safeTop + H * 0.12 + 62, 1, '#fff', '#1a1c2c');
