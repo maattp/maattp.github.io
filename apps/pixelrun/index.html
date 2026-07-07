@@ -4941,7 +4941,7 @@ function renderTitle() {
   }
   ui.sound = drawBtn('SOUND ' + (audio.muted ? 'OFF' : 'ON'), W / 2 - 44, H - 22 - safeBot, !audio.muted);
   ui.buzz = drawBtn('BUZZ ' + (hapticsOn ? 'ON' : 'OFF'), W / 2 + 44, H - 22 - safeBot, hapticsOn);
-  const vs = 'V' + VERSION + (hz.value ? '  ' + hz.value + 'HZ' : '');
+  const vs = 'V' + VERSION;   // measured hz stays on __dbg.hz for the harness
   drawText(ctx, vs, W - textW(vs, 1) - 8 - safeR, H - 16 - safeBot, 1, 'rgba(255,255,255,0.6)', '#1a1c2c');
 }
 function drawTufts(camX, camY) {
