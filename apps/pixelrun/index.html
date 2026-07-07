@@ -68,7 +68,7 @@ const MAX_SPEED = 3.05;
 const PIT_Y = 11 * TILE;             // below this = pit death
 const WORLD_LEN = 500;               // tiles per world before the flag
 const SAVE = 'pixelrun_';
-const VERSION = 39;                  // shown on the title screen — bump once per PR (see CLAUDE.md)
+const VERSION = 40;                  // shown on the title screen — bump once per PR (see CLAUDE.md)
 
 // ---------- utils ----------
 const clamp = (v, a, b) => v < a ? a : v > b ? b : v;
@@ -4070,7 +4070,7 @@ function ambient() {
 
 // ---------- UI / state entry ----------
 const ui = { pause: null, sound: null, buzz: null, resume: null, quit: null,
-  petRect: null, petNameT: -999, overTitle: null, levelBtns: null, back: null };
+  petRect: null, petNameT: -999, overTitle: null, overAgain: null, levelBtns: null, back: null };
 function settingsHit(hit) {
   if (hit(ui.sound)) { setMuted(!audio.muted); sfx.ui(); return true; }
   if (hit(ui.buzz)) { hapticsOn = !hapticsOn; store('haptics', hapticsOn); buzz(1); sfx.ui(); return true; }
@@ -4128,10 +4128,8 @@ function onPress(cx, cy) {
     togglePause(); sfx.ui();
   } else if (game.state === 'over') {
     if (game.stateT > 45) {
-      if (game.testRun && hit(ui.overTitle)) {
-        goTitle(); sfx.ui(); return;
-      }
-      startRun(game.startWorld || 1);   // retry the world you were testing
+      if (hit(ui.overTitle)) { goTitle(); sfx.ui(); return; }
+      startRun(game.startWorld || 1);   // RUN AGAIN button or any other tap
     }
   }
 }
@@ -4943,7 +4941,7 @@ function renderTitle() {
   }
   ui.sound = drawBtn('SOUND ' + (audio.muted ? 'OFF' : 'ON'), W / 2 - 44, H - 22 - safeBot, !audio.muted);
   ui.buzz = drawBtn('BUZZ ' + (hapticsOn ? 'ON' : 'OFF'), W / 2 + 44, H - 22 - safeBot, hapticsOn);
-  const vs = 'V' + VERSION + (hz.value ? '  ' + hz.value + 'HZ' : '');
+  const vs = 'V' + VERSION;   // measured hz stays on __dbg.hz for the harness
   drawText(ctx, vs, W - textW(vs, 1) - 8 - safeR, H - 16 - safeBot, 1, 'rgba(255,255,255,0.6)', '#1a1c2c');
 }
 function drawTufts(camX, camY) {
@@ -5165,10 +5163,12 @@ function renderOverlays() {
     drawText(ctx, 'DIST ' + game.dist + 'M', box.x + 8, box.y + 52, 1, '#7dffb0');
     drawText(ctx, 'WORLD ' + game.worldNum + ' ' + THEMES[game.themeIdx].name, box.x + 8, box.y + 64, 1, '#fff');
     drawText(ctx, 'BEST DIST ' + game.bestDist + 'M', box.x + 8, box.y + 78, 1, '#8a8ea0');
-    if (game.stateT > 45 && (game.frame >> 5) & 1)
-      drawTextC(ctx, game.testRun ? 'TAP: RETRY WORLD ' + game.startWorld : 'TAP TO RUN AGAIN',
-        px, box.y + box.h + 18, 2, '#ffe97a', '#1a1c2c');
-    ui.overTitle = game.testRun ? drawBtn('BACK TO TITLE', px, box.y + box.h + 30, false) : null;
+    if (game.stateT > 45) {
+      // two explicit choices; tapping anywhere else still means "again"
+      ui.overAgain = drawBtn(game.testRun ? 'RETRY WORLD ' + game.startWorld : 'RUN AGAIN',
+        px, box.y + box.h + 14, true);
+      ui.overTitle = drawBtn('BACK TO TITLE', px, box.y + box.h + 38, false);
+    } else ui.overAgain = ui.overTitle = null;
   }
 }
 function renderLevels() {
