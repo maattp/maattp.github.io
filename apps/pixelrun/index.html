@@ -3472,6 +3472,16 @@ function startBonus() {
 }
 function leaveBonus() {
   const b = game.inBonus;
+  // guaranteed treasure is GUARANTEED: any chest coin still homing when you
+  // step through the portal comes with you (they were being culled mid-flight —
+  // measured: 11 of 12 lost when running straight from chest to door)
+  let swept = 0;
+  for (const c of coins)
+    if (c.home !== undefined && !c.taken) { c.taken = 9; game.coins++; swept++; }
+  if (swept > 0) {
+    addScore(swept * 50, undefined);
+    sfx.coin(); buzz(1);
+  }
   player.mode = 'pipeout'; player.pipeT = 0; player.inWater = false;
   player.x = b.retX + 16 - player.w / 2;
   player.y = b.capY + 4;                          // rises out of the pipe you entered
@@ -3629,7 +3639,7 @@ function updateEnts() {
         e.opened = 1;
         for (let i = 0; i < 12; i++)
           coins.push({ x: e.x + 8, y: e.y + 4, vx: R(-1.5, 1.5), vy: 0, taken: 0,
-            fall: R(-3.6, -1.6), grav: 1, home: RI(24, 46) });   // then they fly to YOU
+            fall: R(-3.6, -1.6), grav: 1, home: RI(6, 20) });   // then they fly to YOU, fast
         burst(e.x + 8, e.y + 4, '#ffe97a', 12, 2.2, 0.1);
         addFloat(e.x - 4, e.y - 14, 'TREASURE!', '#ffd93c');
         sfx.power(); buzz(3); game.shake = Math.max(game.shake, 3);
@@ -4099,7 +4109,7 @@ function updateCoins() {
       if (c.home > 0) c.home--;
       else {
         const dx = pcx - c.x, dy = pcy - c.y, m2 = Math.hypot(dx, dy) || 1;
-        c.x += dx / m2 * 3.4; c.y += dy / m2 * 3.4;
+        c.x += dx / m2 * 5; c.y += dy / m2 * 5;
         c.fall = 0;
       }
     }
