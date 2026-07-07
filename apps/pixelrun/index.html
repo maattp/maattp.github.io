@@ -68,7 +68,7 @@ const MAX_SPEED = 3.05;
 const PIT_Y = 11 * TILE;             // below this = pit death
 const WORLD_LEN = 500;               // tiles per world before the flag
 const SAVE = 'pixelrun_';
-const VERSION = 41;                  // shown on the title screen — bump once per PR (see CLAUDE.md)
+const VERSION = 42;                  // shown on the title screen — bump once per PR (see CLAUDE.md)
 
 // ---------- utils ----------
 const clamp = (v, a, b) => v < a ? a : v > b ? b : v;
@@ -5126,7 +5126,7 @@ function renderTitle() {
   drawTextC(ctx, 'AN ENDLESS PLATFORM DASH', W / 2, safeTop + H * 0.12 + 62, 1, '#fff', '#1a1c2c');
   // daily + trophies live between the tagline and the start prompt
   ui.dailyBtn = drawBtn('DAILY RUN', W / 2 - 52, gy - 168, true);
-  ui.trophyBtn = drawBtn('TROPHIES', W / 2 + 52, gy - 168, false);
+  ui.trophyBtn = drawBtn('TROPHIES', W / 2 + 52, gy - 168, true);   // equal choices, equal weight
   {
     const bits = [];
     if (dailyBest) bits.push("TODAY'S BEST " + dailyBest.score);
