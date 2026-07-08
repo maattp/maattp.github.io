@@ -18,11 +18,16 @@ database_id = "94b16b1f-ff69-4f23-b1d2-0df20febe2b3"
 [vars]
 GOOGLE_CLIENT_ID = "611505411727-94u34em16j7sd0rdigejmvfdgnjj67ma.apps.googleusercontent.com"
 ALLOWED_EMAILS = "m.polkiewicz@gmail.com,ting520143@gmail.com"
+# VAPID_PRIVATE_KEY is a secret: `wrangler secret put VAPID_PRIVATE_KEY`
+# (and worker/.dev.vars for local dev — gitignored).
+VAPID_PUBLIC_KEY = "BEh-HVZvaC3p5R3vm9vaddvI-SvWAJ2N6kcocMcyOcaWhLDEgVc5bQjzKT8knGN509v8GOGDujwu2OoQfwdKiLs"
+VAPID_SUBJECT = "mailto:m.polkiewicz@gmail.com"
 
 [durable_objects]
 bindings = [
   { name = "KART3_ROOM", class_name = "Kart3Room" },
   { name = "MAHJONG_ROOM", class_name = "MahjongRoom" },
+  { name = "HARD_ROOM", class_name = "HardRoom" },
 ]
 
 [[migrations]]
@@ -32,3 +37,10 @@ new_sqlite_classes = ["Kart3Room"]
 [[migrations]]
 tag = "mahjong-room-v1"
 new_sqlite_classes = ["MahjongRoom"]
+
+[[migrations]]
+tag = "hard-room-v1"
+new_sqlite_classes = ["HardRoom"]
+
+[triggers]
+crons = ["*/15 * * * *"]

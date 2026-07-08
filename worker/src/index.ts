@@ -2,20 +2,20 @@ import { Hono } from "hono";
 import { cors } from "hono/cors";
 import { Kart3Room } from "./kart3room";
 import { MahjongRoom } from "./mahjongroom";
+import { HardRoom } from "./hardroom";
+import { hardApp, WS_TICKET_PREFIX } from "./hard";
+import { scheduled } from "./hardcron";
+import type { HardEnv } from "./hardlogic";
 
-export { Kart3Room, MahjongRoom };
+export { Kart3Room, MahjongRoom, HardRoom };
 
 const SESSION_TTL = 365 * 24 * 60 * 60; // 1 year in seconds
 const SESSION_PREFIX = "__session:";
 
-type Bindings = {
-  KV: KVNamespace;
-  PHOTOS: R2Bucket;
-  DB: D1Database;
+type Bindings = HardEnv & {
   KART3_ROOM: DurableObjectNamespace;
   MAHJONG_ROOM: DurableObjectNamespace;
   GOOGLE_CLIENT_ID: string;
-  ALLOWED_EMAILS: string;
 };
 
 type Variables = {
@@ -144,6 +144,23 @@ app.get("/mahjong/rooms/:code/ws", async (c) => {
   if (!ROOM_CODE_RE.test(code)) return c.json({ error: "bad room code" }, 400);
   const stub = c.env.MAHJONG_ROOM.get(c.env.MAHJONG_ROOM.idFromName(code));
   return stub.fetch("https://do/ws", c.req.raw);
+});
+
+// --- 75 Hard: WebSocket upgrade (registered before cors, same reason as
+// kart3/mahjong). Auth is a short-lived single-use ticket minted by the
+// session-gated POST /hard/ws-ticket — a WebSocket can't send a Bearer header.
+app.get("/hard/ws", async (c) => {
+  if (c.req.header("Upgrade") !== "websocket") return c.json({ error: "expected websocket" }, 426);
+  if (!kart3OriginOk(c.req.header("Origin"))) return c.json({ error: "forbidden" }, 403);
+  const ticket = c.req.query("ticket") ?? "";
+  if (!/^[\w-]{16,64}$/.test(ticket)) return c.json({ error: "forbidden" }, 403);
+  const email = await c.env.KV.get(`${WS_TICKET_PREFIX}${ticket}`);
+  if (!email) return c.json({ error: "forbidden" }, 403);
+  await c.env.KV.delete(`${WS_TICKET_PREFIX}${ticket}`); // single use
+  const stub = c.env.HARD_ROOM.get(c.env.HARD_ROOM.idFromName("couple"));
+  const url = new URL("https://do/ws");
+  url.searchParams.set("email", email);
+  return stub.fetch(url.toString(), c.req.raw);
 });
 
 app.use("*", cors({
@@ -713,4 +730,10 @@ app.delete("/photos/:id", async (c) => {
   return c.json({ deleted: true });
 });
 
-export default app;
+// --- 75 Hard couples tracker: REST routes (session-gated inside hardApp) ---
+app.route("/hard", hardApp);
+
+export default {
+  fetch: app.fetch,
+  scheduled,
+};

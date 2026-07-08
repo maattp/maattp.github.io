@@ -7,11 +7,13 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@block65/webcrypto-web-push": "^1.0.2",
     "hono": "^4.12.18"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^4.20250226.0",
     "typescript": "^5.7.0",
-    "wrangler": "^4.5.0"
+    "wrangler": "^4.5.0",
+    "ws": "^8.21.0"
   }
 }
