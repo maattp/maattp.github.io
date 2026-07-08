@@ -1,0 +1,2169 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="75 Hard">
+<meta name="theme-color" content="#0d0f17">
+<title>75 Hard</title>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="icon-180.png">
+<link rel="icon" href="icon-192.png">
+<script src="https://accounts.google.com/gsi/client" async></script>
+<style>
+:root {
+  --bg: #0d0f17; --bg2: #141826; --card: #1a1f30; --card2: #222840;
+  --line: #2a3050; --text: #edeef4; --dim: #8f96b3; --faint: #565e80;
+  --hot: #ff6b4a; --amber: #ffb03a; --pink: #ff4d6d; --good: #3ddc84; --bad: #ff5252;
+  --blue: #4a9eff; --r: 14px;
+  --sat: env(safe-area-inset-top); --sab: env(safe-area-inset-bottom);
+  --sal: env(safe-area-inset-left); --sar: env(safe-area-inset-right);
+}
+* { margin: 0; padding: 0; box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+html, body { height: 100%; }
+body {
+  background: var(--bg); color: var(--text);
+  font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Segoe UI', Roboto, sans-serif;
+  overscroll-behavior: none; user-select: none; -webkit-user-select: none;
+}
+button { font: inherit; color: inherit; background: none; border: none; cursor: pointer; }
+input, select, textarea { font: inherit; color: var(--text); background: var(--bg2); border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; outline: none; }
+input:focus, textarea:focus { border-color: var(--hot); }
+
+#app { height: 100dvh; display: flex; flex-direction: column; }
+
+/* ===== header ===== */
+#hdr {
+  padding: calc(var(--sat) + 10px) calc(var(--sar) + 16px) 10px calc(var(--sal) + 16px);
+  display: flex; align-items: center; gap: 10px;
+  background: linear-gradient(180deg, #12162280, transparent);
+}
+#hdr .daypill {
+  font-weight: 800; font-size: 17px; letter-spacing: .3px;
+  background: linear-gradient(135deg, var(--hot), var(--amber));
+  -webkit-background-clip: text; background-clip: text; color: transparent;
+}
+#hdr .spacer { flex: 1; }
+#syncpill {
+  display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--dim);
+  background: var(--bg2); border: 1px solid var(--line); border-radius: 999px; padding: 5px 11px;
+}
+#syncpill .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--faint); }
+#syncpill.ok .dot { background: var(--good); }
+#syncpill.pending .dot { background: var(--amber); }
+#syncpill.offline .dot { background: var(--bad); }
+#syncpill.syncing .dot { background: var(--blue); animation: pulse 1s infinite; }
+@keyframes pulse { 50% { opacity: .3; } }
+
+/* ===== screens ===== */
+#screens { flex: 1; overflow: hidden; position: relative; }
+.screen {
+  display: none; position: absolute; inset: 0; overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  padding: 4px calc(var(--sar) + 14px) 24px calc(var(--sal) + 14px);
+}
+.screen.active { display: block; }
+h2.sect { font-size: 13px; text-transform: uppercase; letter-spacing: 1.2px; color: var(--faint); margin: 18px 4px 8px; }
+
+/* ===== tab bar ===== */
+#tabbar {
+  display: flex; border-top: 1px solid var(--line); background: #10131f;
+  padding: 6px calc(var(--sar) + 4px) calc(var(--sab) + 4px) calc(var(--sal) + 4px);
+}
+#tabbar button { flex: 1; display: flex; flex-direction: column; align-items: center; gap: 2px; padding: 5px 0 3px; color: var(--faint); border-radius: 10px; }
+#tabbar button .ic { font-size: 20px; line-height: 1.1; filter: grayscale(1) opacity(.6); }
+#tabbar button .lb { font-size: 9.5px; font-weight: 600; letter-spacing: .2px; }
+#tabbar button.active { color: var(--amber); }
+#tabbar button.active .ic { filter: none; }
+
+/* ===== cards & tasks ===== */
+.card { background: var(--card); border: 1px solid var(--line); border-radius: var(--r); padding: 14px; margin-bottom: 10px; }
+.task { display: flex; align-items: center; gap: 12px; }
+.task .ti { width: 40px; height: 40px; border-radius: 12px; background: var(--bg2); display: flex; align-items: center; justify-content: center; font-size: 20px; flex-shrink: 0; }
+.task .tt { flex: 1; min-width: 0; }
+.task .tt .nm { font-weight: 700; font-size: 15px; }
+.task .tt .sub { font-size: 12px; color: var(--dim); margin-top: 2px; }
+.task.done .ti { background: #12351f; }
+.task.done .nm { color: var(--good); }
+.check {
+  width: 30px; height: 30px; border-radius: 50%; border: 2px solid var(--line);
+  display: flex; align-items: center; justify-content: center; font-size: 15px; color: transparent; flex-shrink: 0;
+  transition: all .15s;
+}
+.check.on { background: var(--good); border-color: var(--good); color: #08240f; }
+
+/* water */
+#waterbar { height: 14px; border-radius: 7px; background: var(--bg2); overflow: hidden; margin: 10px 0; }
+#waterbar > div { height: 100%; border-radius: 7px; background: linear-gradient(90deg, #2d7ef7, #45c4ff); transition: width .25s; }
+.wbtns { display: flex; gap: 8px; }
+.wbtns button { flex: 1; background: var(--bg2); border: 1px solid var(--line); border-radius: 10px; padding: 10px 0; font-weight: 700; font-size: 14px; }
+.wbtns button:active { background: var(--card2); }
+.bignum { font-size: 26px; font-weight: 800; }
+.bignum small { font-size: 14px; color: var(--dim); font-weight: 600; }
+
+/* workout */
+.wko { display: flex; gap: 8px; margin-top: 10px; flex-wrap: wrap; align-items: center; }
+.wko input[type=number] { width: 72px; text-align: center; padding: 8px; }
+.chip { border: 1px solid var(--line); background: var(--bg2); border-radius: 999px; padding: 7px 13px; font-size: 13px; font-weight: 600; color: var(--dim); }
+.chip.on { background: #2a3b23; border-color: var(--good); color: var(--good); }
+.btn { border-radius: 12px; padding: 12px 16px; font-weight: 700; font-size: 15px; background: var(--bg2); border: 1px solid var(--line); }
+.btn:active { transform: scale(.98); }
+.btn.primary { background: linear-gradient(135deg, var(--hot), #ff8a3a); border: none; color: #23100a; }
+.btn.pink { background: var(--pink); border: none; color: #2a0a12; }
+.btn.small { padding: 8px 12px; font-size: 13px; border-radius: 10px; }
+.btn.wide { width: 100%; }
+.btn.ghost { background: none; border: 1px solid var(--line); color: var(--dim); }
+.btn:disabled { opacity: .45; }
+
+/* left-today strip */
+#leftstrip { display: flex; gap: 6px; flex-wrap: wrap; margin: 4px 2px 12px; }
+#leftstrip .lchip { font-size: 12px; font-weight: 600; padding: 5px 10px; border-radius: 999px; background: #33210f; color: var(--amber); border: 1px solid #4d3315; }
+#leftstrip .lchip.alldone { background: #12351f; color: var(--good); border-color: #1d4d2e; }
+
+/* partner */
+.duo { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.pcol { background: var(--card); border: 1px solid var(--line); border-radius: var(--r); padding: 12px; }
+.pcol.me { border-color: #3a3050; }
+.pcol h3 { font-size: 14px; display: flex; align-items: center; gap: 6px; margin-bottom: 2px; }
+.pcol .pday { font-size: 22px; font-weight: 800; margin: 2px 0 8px; }
+.livedot { width: 8px; height: 8px; border-radius: 50%; background: var(--faint); }
+.livedot.on { background: var(--good); box-shadow: 0 0 6px var(--good); }
+.prow { display: flex; align-items: center; gap: 8px; padding: 6px 0; border-top: 1px solid #232a44; font-size: 13px; }
+.prow .pi { width: 22px; text-align: center; }
+.prow .pn { flex: 1; color: var(--dim); }
+.prow.don .pn { color: var(--text); }
+.prow .st { font-size: 14px; }
+.prow .rx { font-size: 15px; padding: 2px 4px; border-radius: 8px; }
+.prow .rx:active { background: var(--card2); }
+.stale { font-size: 11.5px; color: var(--faint); margin-top: 8px; }
+#emojibar { display: none; position: fixed; z-index: 60; background: var(--card2); border: 1px solid var(--line); border-radius: 999px; padding: 6px 10px; gap: 4px; box-shadow: 0 6px 24px #0009; }
+#emojibar button { font-size: 22px; padding: 4px 6px; }
+.floatmoji { position: fixed; z-index: 70; font-size: 28px; pointer-events: none; animation: floatup 1.4s ease-out forwards; }
+@keyframes floatup { 0% { opacity: 0; transform: translateY(0) scale(.6);} 15% {opacity: 1;} 100% { opacity: 0; transform: translateY(-90px) scale(1.4);} }
+
+/* history */
+#calgrid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 5px; }
+.cday {
+  aspect-ratio: 1; border-radius: 9px; background: var(--bg2); border: 1px solid var(--line);
+  display: flex; flex-direction: column; align-items: center; justify-content: center; font-size: 11px; color: var(--dim);
+}
+.cday b { font-size: 13px; color: var(--text); }
+.cday.ok { background: #12351f; border-color: #1d4d2e; }
+.cday.ok b { color: var(--good); }
+.cday.miss { background: #3a1520; border-color: #58202f; }
+.cday.miss b { color: var(--bad); }
+.cday.today { border: 2px solid var(--amber); }
+.cday.future { opacity: .35; }
+.cday.restart { box-shadow: inset 0 -3px 0 var(--pink); }
+
+/* photos */
+#photogrid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; }
+#photogrid .ph { aspect-ratio: 1; border-radius: 10px; background: var(--bg2); overflow: hidden; position: relative; }
+#photogrid .ph img { width: 100%; height: 100%; object-fit: cover; }
+#photogrid .ph .dn { position: absolute; left: 6px; bottom: 5px; font-size: 11px; font-weight: 800; color: #fff; text-shadow: 0 1px 4px #000; }
+#photogrid .ph .sh { position: absolute; right: 5px; top: 5px; font-size: 11px; }
+
+/* settings */
+.srow { display: flex; align-items: center; gap: 10px; padding: 13px 2px; border-bottom: 1px solid #20263e; }
+.srow:last-child { border-bottom: none; }
+.srow .sl { flex: 1; }
+.srow .sl .n { font-weight: 600; font-size: 14.5px; }
+.srow .sl .d { font-size: 12px; color: var(--dim); margin-top: 2px; }
+.srow input[type=time] { width: 110px; }
+.srow input[type=number] { width: 80px; text-align: center; }
+.sw { position: relative; width: 50px; height: 30px; flex-shrink: 0; }
+.sw input { position: absolute; opacity: 0; width: 100%; height: 100%; margin: 0; z-index: 2; }
+.sw .tr { position: absolute; inset: 0; border-radius: 999px; background: var(--bg2); border: 1px solid var(--line); transition: background .15s; }
+.sw .tr::after { content: ''; position: absolute; top: 2px; left: 2px; width: 24px; height: 24px; border-radius: 50%; background: var(--dim); transition: all .15s; }
+.sw input:checked + .tr { background: #1d4d2e; border-color: var(--good); }
+.sw input:checked + .tr::after { left: 22px; background: var(--good); }
+
+/* overlays */
+.overlay {
+  position: fixed; inset: 0; z-index: 100; background: #0d0f17f2;
+  display: none; flex-direction: column; align-items: center; justify-content: center;
+  padding: calc(var(--sat) + 20px) 24px calc(var(--sab) + 24px); text-align: center;
+  overflow-y: auto;
+}
+.overlay.open { display: flex; }
+.overlay h1 { font-size: 30px; margin-bottom: 10px; }
+.overlay .big { font-size: 64px; margin-bottom: 6px; }
+.overlay p { color: var(--dim); font-size: 15px; line-height: 1.5; max-width: 320px; }
+.overlay .actions { display: flex; flex-direction: column; gap: 10px; margin-top: 26px; width: 100%; max-width: 320px; }
+
+/* onboarding */
+#ob .step { display: none; width: 100%; max-width: 340px; }
+#ob .step.on { display: block; }
+#ob .modecard { text-align: left; margin: 8px 0; padding: 14px; border: 2px solid var(--line); border-radius: var(--r); background: var(--card); }
+#ob .modecard.sel { border-color: var(--hot); }
+#ob .modecard b { font-size: 16px; }
+#ob .modecard p { font-size: 13px; margin-top: 4px; max-width: none; }
+#ob textarea { width: 100%; min-height: 84px; margin-top: 8px; }
+#ob .obdots { display: flex; gap: 6px; justify-content: center; margin-bottom: 22px; }
+#ob .obdots i { width: 8px; height: 8px; border-radius: 50%; background: var(--line); }
+#ob .obdots i.on { background: var(--amber); }
+
+/* timer */
+#timer .tval { font-size: 68px; font-weight: 800; font-variant-numeric: tabular-nums; margin: 12px 0; }
+
+/* celebration confetti */
+.confetti { position: fixed; top: -12px; z-index: 130; width: 9px; height: 15px; pointer-events: none; animation: cfall linear forwards; }
+@keyframes cfall { to { transform: translateY(110vh) rotate(720deg); } }
+
+/* envelope */
+#reward .env { font-size: 84px; transition: transform .3s; }
+#reward .env:active { transform: scale(.92); }
+#rewardtext { display: none; font-size: 21px; font-weight: 700; color: var(--amber); margin-top: 16px; line-height: 1.4; }
+
+/* toast */
+#toasts { position: fixed; top: calc(var(--sat) + 8px); left: 0; right: 0; z-index: 140; display: flex; flex-direction: column; align-items: center; gap: 8px; pointer-events: none; }
+.toast {
+  background: var(--card2); border: 1px solid var(--line); color: var(--text);
+  border-radius: 12px; padding: 11px 18px; font-size: 14px; font-weight: 600;
+  box-shadow: 0 8px 30px #000a; max-width: 86vw;
+  animation: tin .25s ease-out;
+}
+@keyframes tin { from { opacity: 0; transform: translateY(-14px); } }
+
+/* signin */
+#signin { background: var(--bg); z-index: 90; }
+#signin .logo { width: 96px; height: 96px; border-radius: 24px; margin-bottom: 18px; }
+
+/* photo viewer */
+#pview { background: #000e; }
+#pview img { max-width: 94vw; max-height: 68vh; border-radius: 12px; }
+#pview .cap { margin-top: 12px; font-weight: 800; font-size: 18px; }
+
+/* photo confirm */
+#pconfirm img { max-width: 82vw; max-height: 52vh; border-radius: 12px; }
+
+/* misc */
+.muted { color: var(--dim); font-size: 13px; }
+.row { display: flex; gap: 8px; align-items: center; }
+.grow { flex: 1; }
+.mt { margin-top: 10px; }
+.banner { background: #33210f; border: 1px solid #4d3315; color: var(--amber); border-radius: 12px; padding: 10px 14px; font-size: 13px; margin-bottom: 10px; }
+.banner.blue { background: #142236; border-color: #1f3a5c; color: var(--blue); }
+#haptic-switch { position: absolute; opacity: 0; pointer-events: none; width: 1px; height: 1px; }
+.trendbox { margin: 4px 0 10px; }
+.trendbox:last-child { margin-bottom: 0; }
+.trendtitle { font-size: 12px; font-weight: 700; color: var(--dim); margin-bottom: 2px; }
+#charttip {
+  position: absolute; z-index: 150; display: none; pointer-events: none;
+  background: var(--card2); border: 1px solid var(--line); border-radius: 8px;
+  padding: 5px 10px; font-size: 12px; font-weight: 600; white-space: nowrap;
+  box-shadow: 0 4px 16px #000a;
+}
+.bookrow { display: flex; align-items: center; gap: 10px; padding: 11px 2px; border-bottom: 1px solid #20263e; }
+.bookrow .bi { font-size: 22px; }
+.bookrow .bt { flex: 1; }
+.bookrow .bt .t { font-weight: 700; font-size: 14.5px; }
+.bookrow .bt .a { font-size: 12px; color: var(--dim); }
+.evrow { display: flex; gap: 10px; padding: 9px 2px; border-bottom: 1px solid #20263e; font-size: 13px; align-items: baseline; }
+.evrow .ee { font-size: 16px; }
+.evrow .et { flex: 1; color: var(--dim); }
+.evrow .ew { color: var(--faint); font-size: 11px; }
+</style>
+</head>
+<body>
+
+<div id="app">
+  <header id="hdr">
+    <div class="daypill" id="daypill">75 HARD</div>
+    <div class="spacer"></div>
+    <button id="syncpill" data-action="goto" data-arg="#/settings"><span class="dot"></span><span id="synctext">…</span></button>
+  </header>
+
+  <div id="screens">
+    <section class="screen" id="scr-today"></section>
+    <section class="screen" id="scr-partner"></section>
+    <section class="screen" id="scr-history"></section>
+    <section class="screen" id="scr-books"></section>
+    <section class="screen" id="scr-photos"></section>
+    <section class="screen" id="scr-settings"></section>
+  </div>
+
+  <nav id="tabbar">
+    <button data-action="goto" data-arg="#/today"><span class="ic">✅</span><span class="lb">Today</span></button>
+    <button data-action="goto" data-arg="#/partner"><span class="ic">❤️</span><span class="lb">Partner</span></button>
+    <button data-action="goto" data-arg="#/history"><span class="ic">📅</span><span class="lb">History</span></button>
+    <button data-action="goto" data-arg="#/books"><span class="ic">📚</span><span class="lb">Books</span></button>
+    <button data-action="goto" data-arg="#/photos"><span class="ic">📷</span><span class="lb">Photos</span></button>
+    <button data-action="goto" data-arg="#/settings"><span class="ic">⚙️</span><span class="lb">More</span></button>
+  </nav>
+</div>
+
+<!-- sign in -->
+<div class="overlay" id="signin">
+  <img class="logo" src="icon-192.png" alt="">
+  <h1>75 Hard</h1>
+  <p>The two-person edition. Sign in with the Google account on the allowlist.</p>
+  <div class="mt" id="gsi-holder">
+    <div id="g_id_onload"
+         data-client_id="611505411727-94u34em16j7sd0rdigejmvfdgnjj67ma.apps.googleusercontent.com"
+         data-callback="onSignIn"
+         data-auto_prompt="false"></div>
+    <div class="g_id_signin" data-type="standard" data-theme="filled_black" data-size="large" data-shape="pill"></div>
+  </div>
+  <p class="mt muted" id="signin-msg"></p>
+</div>
+
+<!-- onboarding wizard -->
+<div class="overlay" id="ob"></div>
+
+<!-- workout timer -->
+<div class="overlay" id="timer"></div>
+
+<!-- reset takeover -->
+<div class="overlay" id="resetov"></div>
+
+<!-- celebration -->
+<div class="overlay" id="celebrate"></div>
+
+<!-- reward reveal -->
+<div class="overlay" id="reward"></div>
+
+<!-- photo confirm (after capture) -->
+<div class="overlay" id="pconfirm"></div>
+
+<!-- photo viewer / timelapse -->
+<div class="overlay" id="pview"></div>
+
+<div id="emojibar"></div>
+<div id="toasts"></div>
+<div id="charttip"></div>
+<input type="checkbox" id="haptic-switch" switch>
+<input type="file" id="camfile" accept="image/*" capture="environment" style="display:none">
+
+<script>
+'use strict';
+/* =====================================================================
+   75 Hard — core: constants, utils, IndexedDB, day engine, state, sync
+   ===================================================================== */
+const APP_VER = 'v1';
+const API = localStorage.getItem('hard75_api') || 'https://cloudflare-backend.maattp.workers.dev';
+const VAPID_PUBLIC_KEY = 'BEh-HVZvaC3p5R3vm9vaddvI-SvWAJ2N6kcocMcyOcaWhLDEgVc5bQjzKT8knGN509v8GOGDujwu2OoQfwdKiLs';
+const SKEY = 'hard75_session', EKEY = 'hard75_email';
+const PAGES_GOAL = 10, TOTAL_DAYS = 75; // WATER_GOAL / WORKOUT_MIN live in the mirror block
+
+const $ = (s) => document.querySelector(s);
+const uuid = () => (crypto.randomUUID ? crypto.randomUUID() : 'x' + Math.random().toString(36).slice(2) + Date.now());
+const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const deviceTZ = () => Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
+
+// Every time read goes through here — window.__forceNow lets tests time-travel.
+const nowMs = () => (window.__forceNow || Date.now());
+
+/* iOS has no navigator.vibrate; toggling a hidden native switch input fires
+   the system haptic tap (iOS 17.4+). Harmless elsewhere. */
+function haptic() {
+  const sw = $('#haptic-switch');
+  if (sw) sw.checked = !sw.checked;
+  if (navigator.vibrate) navigator.vibrate(10);
+}
+
+function toast(msg, ms = 2600) {
+  const el = document.createElement('div');
+  el.className = 'toast';
+  el.textContent = msg;
+  $('#toasts').appendChild(el);
+  setTimeout(() => el.remove(), ms);
+}
+
+/* ===== IndexedDB (stores: queue, photos, kv) ===== */
+let _db = null;
+function idbOpen() {
+  return new Promise((res, rej) => {
+    const rq = indexedDB.open('hard75', 1);
+    rq.onupgradeneeded = () => {
+      const db = rq.result;
+      if (!db.objectStoreNames.contains('queue')) db.createObjectStore('queue', { keyPath: 'actionId' });
+      if (!db.objectStoreNames.contains('photos')) db.createObjectStore('photos', { keyPath: 'photoId' });
+      if (!db.objectStoreNames.contains('kv')) db.createObjectStore('kv', { keyPath: 'key' });
+    };
+    rq.onsuccess = () => {
+      _db = rq.result;
+      // Another tab upgrading/deleting the DB must not deadlock on us.
+      _db.onversionchange = () => { try { _db.close(); } catch (e) {} _db = null; };
+      res(_db);
+    };
+    rq.onerror = () => rej(rq.error);
+  });
+}
+function idbTx(store, mode, fn) {
+  return new Promise((res, rej) => {
+    if (!_db) return rej(new Error('idb not open'));
+    const tx = _db.transaction(store, mode);
+    const out = fn(tx.objectStore(store));
+    tx.oncomplete = () => res(out && out.result !== undefined ? out.result : undefined);
+    tx.onerror = () => rej(tx.error);
+  });
+}
+const idbPut = (store, val) => idbTx(store, 'readwrite', (s) => s.put(val));
+const idbDel = (store, key) => idbTx(store, 'readwrite', (s) => s.delete(key));
+const idbGet = (store, key) => idbTx(store, 'readonly', (s) => s.get(key));
+const idbAll = (store) => idbTx(store, 'readonly', (s) => s.getAll());
+const kvGet = async (key) => (await idbGet('kv', key))?.value;
+const kvSet = (key, value) => idbPut('kv', { key, value });
+
+/* =====================================================================
+   Day engine — MIRRORS worker/src/hardlogic.ts (shared rules 1-5).
+   The client's zone IS the user's zone, so plain Date methods apply.
+
+   ==MIRROR-START==
+   Everything between the MIRROR markers is a verbatim behavioral mirror of
+   worker/src/hardlogic.ts and is checked against it by
+   `node --experimental-strip-types worker/test/hard-mirror.test.mjs`.
+   Change both sides together; the block must stay self-contained (no
+   references to `state`, the DOM, or anything else outside it).
+   ===================================================================== */
+const WATER_GOAL_M = 128, WORKOUT_MIN_M = 45;
+const pad2 = (n) => String(n).padStart(2, '0');
+function localDateStr(ms) {
+  const d = new Date(ms);
+  return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
+}
+const dateToUTC = (date) => { const [y, m, d] = date.split('-').map(Number); return Date.UTC(y, m - 1, d); };
+const addDays = (date, n) => new Date(dateToUTC(date) + n * 86400000).toISOString().slice(0, 10);
+const nextDay = (d) => addDays(d, 1);
+const prevDay = (d) => addDays(d, -1);
+const daysBetween = (a, b) => Math.round((dateToUTC(b) - dateToUTC(a)) / 86400000);
+const dayNumberOf = (start, date) => daysBetween(start, date) + 1;
+
+function emptyDay(email, date) {
+  return {
+    email, date, diet: 0, reading_done: 0, pages: null, book_id: null,
+    workout1_done: 0, workout1_min: 0, workout1_outdoor: 0,
+    workout2_done: 0, workout2_min: 0, workout2_outdoor: 0,
+    water_oz: 0, photo_id: null, finalized: 0, complete: 0, day_number: null, updated_at: null,
+  };
+}
+const wDone = (d, s) => !!(s === 1 ? d.workout1_done && d.workout1_min >= WORKOUT_MIN_M : d.workout2_done && d.workout2_min >= WORKOUT_MIN_M);
+function isDayComplete(d) {
+  if (!d) return false;
+  return !!(d.diet && d.reading_done && wDone(d, 1) && wDone(d, 2) &&
+    (d.workout1_outdoor || d.workout2_outdoor) && d.water_oz >= WATER_GOAL_M && d.photo_id);
+}
+function missingTasks(d) {
+  const out = [];
+  if (!d) return ['diet', 'water', 'workout #1', 'workout #2', 'reading', 'photo'];
+  if (!d.diet) out.push('diet');
+  if (d.water_oz < WATER_GOAL_M) out.push(`water (${WATER_GOAL_M - d.water_oz}oz left)`);
+  if (!wDone(d, 1)) out.push('workout #1');
+  if (!wDone(d, 2)) out.push('workout #2');
+  if (wDone(d, 1) && wDone(d, 2) && !d.workout1_outdoor && !d.workout2_outdoor) out.push('outdoor workout');
+  if (!d.reading_done) out.push('reading');
+  if (!d.photo_id) out.push('photo');
+  return out;
+}
+function remainingCount(d) {
+  if (!d) return 5;
+  let n = 0;
+  if (!d.diet) n++;
+  if (d.water_oz < WATER_GOAL_M) n++;
+  if (!(wDone(d, 1) && wDone(d, 2) && (d.workout1_outdoor || d.workout2_outdoor))) n++;
+  if (!d.reading_done) n++;
+  if (!d.photo_id) n++;
+  return n;
+}
+const clampInt = (v, lo, hi) => {
+  const n = Math.round(Number(v));
+  return isFinite(n) ? Math.min(hi, Math.max(lo, n)) : lo;
+};
+// Same contract as the server reducer: returns the new row, or null if the
+// action is malformed.
+function applyDayActionM(day, a) {
+  const d = { ...day };
+  const p = a.payload ?? {};
+  switch (a.type) {
+    case 'set_task': {
+      if (p.field === 'diet') d.diet = p.value ? 1 : 0;
+      else if (p.field === 'reading') {
+        d.reading_done = p.value ? 1 : 0;
+        if (p.pages != null) d.pages = clampInt(p.pages, 0, 2000);
+        if (typeof p.bookId === 'string') d.book_id = p.bookId;
+      } else return null;
+      return d;
+    }
+    case 'set_workout': {
+      const slot = p.slot === 1 || p.slot === '1' ? 1 : p.slot === 2 || p.slot === '2' ? 2 : 0;
+      if (!slot) return null;
+      const done = p.done ? 1 : 0;
+      const min = clampInt(p.minutes, 0, 600);
+      const outdoor = p.outdoor ? 1 : 0;
+      if (slot === 1) { d.workout1_done = done; d.workout1_min = min; d.workout1_outdoor = outdoor; }
+      else { d.workout2_done = done; d.workout2_min = min; d.workout2_outdoor = outdoor; }
+      return d;
+    }
+    case 'add_water':
+      d.water_oz = clampInt(d.water_oz + clampInt(p.oz, -512, 512), 0, 1024);
+      return d;
+    case 'set_water':
+      d.water_oz = clampInt(p.oz, 0, 1024);
+      return d;
+    case 'attach_photo':
+      if (typeof p.photoId !== 'string' || !p.photoId) return null;
+      d.photo_id = p.photoId;
+      return d;
+    default:
+      return null;
+  }
+}
+/* ==MIRROR-END== */
+
+const WATER_GOAL = WATER_GOAL_M, WORKOUT_MIN = WORKOUT_MIN_M;
+function graceMin() { return state.view?.me?.graceMinutes ?? 180; }
+function effectiveToday() { return localDateStr(nowMs() - graceMin() * 60000); }
+const fmtDate = (date) => { const d = new Date(dateToUTC(date)); return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', timeZone: 'UTC' }); };
+
+/* ===== state ===== */
+const state = {
+  session: localStorage.getItem(SKEY),
+  email: localStorage.getItem(EKEY),
+  server: null,          // last server snapshot
+  queue: [],             // pending actions (mirror of IDB queue)
+  view: null,            // replay(server, queue) — everything renders from this
+  ui: {
+    route: '#/today', todayDate: null, editDate: null,
+    wsLive: false, syncing: false, lastSyncAt: null,
+    celebrated: {}, resetShowing: false, timerTask: null,
+  },
+};
+
+const clone = (o) => (o == null ? o : JSON.parse(JSON.stringify(o)));
+
+function defaultView() {
+  return {
+    challenge: { started: false, mode: 'solo', status: 'none', rewardSet: false, rewardText: null },
+    me: {
+      email: state.email, displayName: (state.email || 'Me').split('@')[0],
+      timezone: deviceTZ(), graceMinutes: 180, prefs: {},
+      started: false, startDate: null, streakStartDate: null, dayNumber: 0, completedAt: null,
+    },
+    partner: null, days: {}, books: [], photosByDate: {}, events: [], measurements: {},
+  };
+}
+
+const DAY_TYPES = new Set(['set_task', 'set_workout', 'add_water', 'set_water', 'attach_photo']);
+
+function applyLocal(view, a) {
+  const p = a.payload || {};
+  if (DAY_TYPES.has(a.type)) {
+    const d = view.days[a.date] || emptyDay(state.email || '', a.date);
+    if (d.finalized) return; // late — server will confirm
+    const next = applyDayActionM(d, a); // the mirrored reducer
+    if (!next) return;
+    view.days[a.date] = next;
+    if (a.type === 'attach_photo') {
+      view.photosByDate[a.date] = view.photosByDate[a.date] || { id: p.photoId, shared: 0 };
+      view.photosByDate[a.date].id = p.photoId;
+    }
+    return;
+  }
+  switch (a.type) {
+    case 'start_challenge':
+      view.challenge.started = true; view.challenge.status = 'active';
+      view.challenge.mode = p.mode === 'team' ? 'team' : 'solo';
+      view.me.started = true; view.me.startDate = p.startDate; view.me.streakStartDate = p.startDate;
+      view.me.completedAt = null;
+      return;
+    case 'set_settings':
+      if (p.timezone) view.me.timezone = p.timezone;
+      if (p.graceMinutes != null) view.me.graceMinutes = p.graceMinutes;
+      if (p.prefs) view.me.prefs = clone(p.prefs);
+      if (typeof p.displayName === 'string') view.me.displayName = p.displayName;
+      return;
+    case 'set_mode': view.challenge.mode = p.mode === 'team' ? 'team' : 'solo'; return;
+    case 'set_reward': view.challenge.rewardSet = true; return;
+    case 'add_book':
+      if (!view.books.find((b) => b.id === p.bookId)) {
+        view.books.push({ id: p.bookId, title: p.title, author: p.author || null, started_date: a.date, finished_date: null });
+      }
+      return;
+    case 'finish_book': {
+      const b = view.books.find((x) => x.id === (p.bookId || p.id));
+      if (b) b.finished_date = a.date;
+      return;
+    }
+    case 'set_photo_shared':
+      for (const date of Object.keys(view.photosByDate)) {
+        if (view.photosByDate[date].id === p.photoId) view.photosByDate[date].shared = p.shared ? 1 : 0;
+      }
+      return;
+    case 'react':
+      view.events.unshift({ id: a.actionId, email: state.email, type: 'reaction', payload: { emoji: p.emoji, targetDate: p.targetDate, task: p.task }, created_at: new Date(a.localTimestamp).toISOString() });
+      return;
+    case 'poke':
+      view.events.unshift({ id: a.actionId, email: state.email, type: 'poke', payload: {}, created_at: new Date(a.localTimestamp).toISOString() });
+      return;
+    case 'log_measurement': {
+      // Mirrors the server merge: weight-only never erases fat %, and vice versa.
+      const m = view.measurements[a.date] || (view.measurements[a.date] = { weight_kg: null, fat_pct: null });
+      if (p.weightKg != null) m.weight_kg = Math.round(Number(p.weightKg) * 100) / 100;
+      if (p.fatPct != null) m.fat_pct = Math.round(Number(p.fatPct) * 10) / 10;
+      return;
+    }
+    case 'reset':
+      // Local restart: server finalization is authoritative and will converge.
+      view.me.streakStartDate = p.newStartDate || effectiveToday();
+      return;
+  }
+}
+
+function rebuildView() {
+  const v = defaultView();
+  if (state.server) {
+    v.challenge = clone(state.server.challenge);
+    v.me = clone(state.server.me);
+    delete v.me.days; delete v.me.books; delete v.me.photosByDate; delete v.me.today; delete v.me.measurements;
+    v.partner = clone(state.server.partner);
+    v.days = {};
+    for (const row of state.server.me.days || []) v.days[row.date] = clone(row);
+    v.books = clone(state.server.me.books || []);
+    v.photosByDate = clone(state.server.me.photosByDate || {});
+    v.events = clone(state.server.events || []);
+    v.measurements = {};
+    for (const m of state.server.me.measurements || []) v.measurements[m.date] = { weight_kg: m.weight_kg, fat_pct: m.fat_pct };
+  }
+  for (const a of state.queue) applyLocal(v, a);
+  state.view = v;
+  deriveToday();
+}
+
+function deriveToday() {
+  const v = state.view;
+  state.ui.todayDate = effectiveToday();
+  if (v.me.started && v.me.streakStartDate) {
+    // May be <= 0 before a future start date ("start tomorrow") — consumers
+    // treat dayNumber < 1 as "not yet started".
+    v.me.dayNumber = v.me.completedAt ? TOTAL_DAYS : dayNumberOf(v.me.streakStartDate, state.ui.todayDate);
+  } else v.me.dayNumber = 0;
+  if (!v.days[state.ui.todayDate]) v.days[state.ui.todayDate] = emptyDay(state.email || '', state.ui.todayDate);
+}
+
+function today() { return state.view.days[state.ui.editDate || state.ui.todayDate] || emptyDay(state.email || '', state.ui.todayDate); }
+
+/* ===== scale measurements (stored kg, displayed per unit pref) ===== */
+const LB_PER_KG = 2.20462;
+function unitPref() { return state.view?.me?.prefs?.units === 'kg' ? 'kg' : 'lb'; }
+function wDisp(kg) {
+  if (kg == null) return null;
+  return unitPref() === 'lb' ? Math.round(kg * LB_PER_KG * 10) / 10 : Math.round(kg * 10) / 10;
+}
+function wToKg(val) { return unitPref() === 'lb' ? val / LB_PER_KG : val; }
+function measList(map) {
+  return Object.entries(map || state.view.measurements)
+    .map(([date, m]) => ({ date, weight_kg: m.weight_kg, fat_pct: m.fat_pct }))
+    .sort((a, b) => (a.date < b.date ? -1 : 1));
+}
+
+/* ===== dispatch ===== */
+let syncTimer = null;
+async function dispatch(type, payload, opts = {}) {
+  const date = opts.date || state.ui.editDate || state.ui.todayDate;
+  const a = { actionId: uuid(), type, payload, date, localTimestamp: nowMs(), timezone: deviceTZ() };
+  const wasComplete = isDayComplete(state.view.days[date]);
+  try {
+    await idbPut('queue', { ...a, createdAt: Date.now() }); // durable BEFORE the UI confirms
+  } catch (e) {
+    // Degraded (private mode / blocked IDB): keep working online-only.
+    if (!state.ui.warnedVolatile) { state.ui.warnedVolatile = true; toast('⚠️ Offline storage unavailable — entries only survive while online'); }
+  }
+  a.createdAt = Date.now();
+  state.queue.push(a);
+  applyLocal(state.view, a);
+  deriveToday();
+  render();
+  updateBadge();
+  if (!wasComplete && isDayComplete(state.view.days[date])) onDayCompleted(date);
+  clearTimeout(syncTimer);
+  syncTimer = setTimeout(() => syncNow('dispatch'), 900);
+  return a;
+}
+
+/* ===== auth ===== */
+async function apiFetch(path, opts = {}) {
+  const res = await fetch(API + path, {
+    ...opts,
+    headers: { Authorization: `Bearer ${state.session}`, ...(opts.headers || {}) },
+  });
+  if (res.status === 401) { doSignOut(false); throw new Error('401'); }
+  return res;
+}
+
+window.onSignIn = async (response) => {
+  try {
+    $('#signin-msg').textContent = 'Checking…';
+    const res = await fetch(API + '/auth', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token: response.credential }),
+    });
+    if (!res.ok) { $('#signin-msg').textContent = 'This account is not on the allowlist.'; return; }
+    const data = await res.json();
+    state.session = data.sessionId; state.email = data.email;
+    localStorage.setItem(SKEY, data.sessionId);
+    localStorage.setItem(EKEY, data.email);
+    $('#signin').classList.remove('open');
+    await afterSignIn();
+  } catch (e) {
+    $('#signin-msg').textContent = 'Sign-in failed — check your connection.';
+  }
+};
+
+function doSignOut(clearData) {
+  localStorage.removeItem(SKEY); localStorage.removeItem(EKEY);
+  if (clearData && _db) {
+    try { _db.close(); indexedDB.deleteDatabase('hard75'); } catch (e) {}
+  }
+  location.reload();
+}
+
+/* ===== sync engine ===== */
+async function uploadPhotos() {
+  const photos = (await idbAll('photos')).filter((p) => !p.uploaded);
+  for (const p of photos) {
+    const form = new FormData();
+    form.append('original', p.blob, 'photo.jpg');
+    form.append('thumbnail', p.thumbBlob, 'thumb.jpg');
+    form.append('date', p.dayDate);
+    form.append('photoId', p.photoId);
+    form.append('actionId', p.uploadActionId);
+    form.append('shared', p.share ? '1' : '0');
+    form.append('localTimestamp', String(p.createdAt));
+    form.append('timezone', p.timezone || deviceTZ());
+    const res = await apiFetch('/hard/photos/upload', { method: 'POST', body: form });
+    if (res.ok || res.status === 409) {
+      p.uploaded = true;
+      await idbPut('photos', p);
+    } else break; // server trouble — retry next sync
+  }
+}
+
+async function syncNow(reason) {
+  if (state.ui.syncing || !state.session || !navigator.onLine) { renderSyncPill(); return; }
+  state.ui.syncing = true;
+  renderSyncPill();
+  let merged = false;
+  try {
+    await uploadPhotos();
+    // FIFO batches of 50 (from IDB when available, else the in-memory queue)
+    for (let guard = 0; guard < 20; guard++) {
+      const all = _db
+        ? (await idbAll('queue')).sort((a, b) => a.createdAt - b.createdAt)
+        : state.queue.slice();
+      if (!all.length) break;
+      const batch = all.slice(0, 50).map(({ createdAt, ...a }) => a);
+      const res = await apiFetch('/hard/sync', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ actions: batch }),
+      });
+      if (!res.ok) break;
+      const data = await res.json();
+      for (const ack of data.results || []) {
+        if (_db) await idbDel('queue', ack.actionId).catch(() => {}); // applied|duplicate|late|rejected all clear the row
+        state.queue = state.queue.filter((q) => q.actionId !== ack.actionId);
+        if (ack.status === 'late') toast('⏰ One entry arrived after midnight — day already closed');
+        if (ack.status === 'rejected') toast('⚠️ An entry was rejected: ' + (ack.error || ''));
+      }
+      state.server = data.state;
+      merged = true;
+      await kvSet('cachedState', { snapshot: data.state, fetchedAt: Date.now() });
+      if (all.length <= 50) break;
+    }
+    // nothing queued → plain refresh (unless we just merged a sync response)
+    if (!merged && reason !== 'dispatch') {
+      const res = await apiFetch('/hard/state');
+      if (res.ok) {
+        state.server = await res.json();
+        merged = true;
+        await kvSet('cachedState', { snapshot: state.server, fetchedAt: Date.now() });
+      }
+    }
+    state.ui.lastSyncAt = Date.now();
+    await kvSet('lastSyncAt', state.ui.lastSyncAt);
+  } catch (e) {
+    /* offline or 401 — queue stays intact */
+  } finally {
+    if (_db) state.queue = (await idbAll('queue').catch(() => state.queue)).sort((a, b) => a.createdAt - b.createdAt);
+    if (merged) { rebuildView(); checkCelebrations(); checkReset(); }
+    state.ui.syncing = false;
+    render();
+    renderSyncPill();
+    updateBadge();
+  }
+}
+
+/* ===== websocket (live partner updates) ===== */
+const conn = {
+  ws: null, alive: false, retries: 0, pingIv: null,
+  async connect() {
+    if (this.ws || !state.session || document.hidden || !state.view?.me?.started) return;
+    try {
+      const res = await apiFetch('/hard/ws-ticket', { method: 'POST' });
+      if (!res.ok) return;
+      const { ticket } = await res.json();
+      const url = API.replace(/^http/, 'ws') + '/hard/ws?ticket=' + ticket;
+      const ws = new WebSocket(url);
+      this.ws = ws;
+      ws.onopen = () => {
+        this.alive = true; this.retries = 0; state.ui.wsLive = true;
+        renderIf('#/partner');
+        clearInterval(this.pingIv);
+        this.pingIv = setInterval(() => { try { ws.send(JSON.stringify({ t: 'ping' })); } catch (e) {} }, 25000);
+      };
+      ws.onmessage = (ev) => {
+        try { this.handle(JSON.parse(ev.data)); } catch (e) {}
+      };
+      ws.onclose = () => this.dropped(ws);
+      ws.onerror = () => this.dropped(ws);
+    } catch (e) { this.dropped(null); }
+  },
+  dropped(ws) {
+    if (ws && this.ws !== ws) return;
+    clearInterval(this.pingIv);
+    this.ws = null; this.alive = false; state.ui.wsLive = false;
+    renderIf('#/partner');
+    if (!document.hidden && state.session) {
+      this.retries++;
+      setTimeout(() => this.connect(), Math.min(8000, 800 * this.retries));
+    }
+  },
+  dispose() {
+    clearInterval(this.pingIv);
+    if (this.ws) { try { this.ws.close(); } catch (e) {} }
+    this.ws = null; this.alive = false; state.ui.wsLive = false;
+  },
+  handle(msg) {
+    if (msg.t === 'state' && msg.state) {
+      state.server = msg.state;
+      kvSet('cachedState', { snapshot: msg.state, fetchedAt: Date.now() }).catch(() => {});
+      rebuildView();
+      render();
+      updateBadge();
+      checkCelebrations();
+    } else if (msg.t === 'events') {
+      for (const e of msg.events || []) this.liveEvent(e);
+    }
+  },
+  liveEvent(e) {
+    if (e.email === state.email) return; // own echo
+    const who = state.view?.partner?.displayName || 'Partner';
+    if (e.type === 'poke') { toast(`👉 ${who} poked you!`); haptic(); }
+    else if (e.type === 'reaction') { floatEmoji(e.payload.emoji || '❤️'); haptic(); }
+    else if (e.type === 'task_done') toast(`${who}: ${e.payload.task} done ✓`);
+    else if (e.type === 'day_complete') { toast(`🎉 ${who} finished Day ${e.payload.dayNumber}!`); haptic(); }
+    else if (e.type === 'reset') toast(`💔 ${who} restarted at Day 1`);
+  },
+};
+
+function floatEmoji(emoji) {
+  const el = document.createElement('div');
+  el.className = 'floatmoji';
+  el.textContent = emoji;
+  el.style.left = (30 + Math.random() * 40) + 'vw';
+  el.style.top = '55vh';
+  document.body.appendChild(el);
+  setTimeout(() => el.remove(), 1500);
+}
+
+/* ===== push ===== */
+function isInstalled() {
+  return matchMedia('(display-mode: standalone)').matches || navigator.standalone === true;
+}
+function urlB64ToU8(b64) {
+  const pad = '='.repeat((4 - (b64.length % 4)) % 4);
+  const raw = atob((b64 + pad).replace(/-/g, '+').replace(/_/g, '/'));
+  return Uint8Array.from(raw, (c) => c.charCodeAt(0));
+}
+async function pushSubscribe(interactive) {
+  try {
+    if (!('serviceWorker' in navigator) || !('PushManager' in window)) return 'unsupported';
+    if (!isInstalled() && interactive) return 'notinstalled';
+    let perm = Notification.permission;
+    if (perm === 'default' && interactive) perm = await Notification.requestPermission();
+    if (perm !== 'granted') return perm;
+    const reg = await navigator.serviceWorker.ready;
+    let sub = await reg.pushManager.getSubscription();
+    if (!sub) {
+      sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: urlB64ToU8(VAPID_PUBLIC_KEY) });
+    }
+    await apiFetch('/hard/push/subscribe', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ...sub.toJSON(), ua: navigator.userAgent.slice(0, 120) }),
+    });
+    await kvSet('pushAckAt', Date.now());
+    return 'granted';
+  } catch (e) {
+    return 'error';
+  }
+}
+// Every launch: iOS subscriptions silently expire — re-subscribe + re-register.
+async function pushReconcile() {
+  if (Notification?.permission === 'granted') await pushSubscribe(false);
+}
+
+/* ===== badge ===== */
+function updateBadge() {
+  if (!('setAppBadge' in navigator)) return;
+  const v = state.view;
+  const n = v?.me?.started && !v.me.completedAt && v.me.dayNumber >= 1 ? remainingCount(v.days[state.ui.todayDate]) : 0;
+  (n > 0 ? navigator.setAppBadge(n) : navigator.clearAppBadge()).catch(() => {});
+}
+
+/* =====================================================================
+   Router + header
+   ===================================================================== */
+const ROUTES = ['#/today', '#/partner', '#/history', '#/books', '#/photos', '#/settings'];
+function setRoute(hash) {
+  if (!ROUTES.includes(hash)) hash = '#/today';
+  state.ui.route = hash;
+  if (location.hash !== hash) history.replaceState(null, '', hash);
+  const idx = ROUTES.indexOf(hash);
+  document.querySelectorAll('#tabbar button').forEach((b, i) => b.classList.toggle('active', i === idx));
+  document.querySelectorAll('.screen').forEach((s) => s.classList.remove('active'));
+  $('#scr-' + hash.slice(2)).classList.add('active');
+  render();
+}
+window.addEventListener('hashchange', () => setRoute(location.hash));
+function renderIf(route) { if (state.ui.route === route) render(); }
+
+function render() {
+  renderHeader();
+  const r = state.ui.route;
+  if (r === '#/today') renderToday();
+  else if (r === '#/partner') renderPartner();
+  else if (r === '#/history') renderHistory();
+  else if (r === '#/books') renderBooks();
+  else if (r === '#/photos') renderPhotos();
+  else if (r === '#/settings') renderSettings();
+}
+
+function renderHeader() {
+  const v = state.view;
+  $('#daypill').textContent = v?.me?.started
+    ? (v.me.completedAt || v.challenge.status === 'complete' ? '🏆 75 / 75'
+      : v.me.dayNumber < 1 ? `STARTS ${fmtDate(v.me.streakStartDate).toUpperCase()}`
+      : `DAY ${v.me.dayNumber} / ${TOTAL_DAYS}`)
+    : '75 HARD';
+  renderSyncPill();
+}
+
+function timeAgo(ms) {
+  if (!ms) return '';
+  const s = Math.floor((Date.now() - ms) / 1000);
+  if (s < 60) return 'now';
+  if (s < 3600) return Math.floor(s / 60) + 'm ago';
+  if (s < 86400) return Math.floor(s / 3600) + 'h ago';
+  return Math.floor(s / 86400) + 'd ago';
+}
+
+function renderSyncPill() {
+  const el = $('#syncpill'), txt = $('#synctext');
+  const pending = state.queue.length;
+  el.className = '';
+  if (state.ui.syncing) { el.className = 'syncing'; txt.textContent = 'Syncing…'; }
+  else if (!navigator.onLine) { el.className = 'offline'; txt.textContent = pending ? `Offline · ${pending} saved` : 'Offline'; }
+  else if (pending) { el.className = 'pending'; txt.textContent = `${pending} pending`; }
+  else { el.className = 'ok'; txt.textContent = state.ui.lastSyncAt ? 'Synced ' + timeAgo(state.ui.lastSyncAt) : 'Synced'; }
+  el.id = 'syncpill';
+}
+
+/* =====================================================================
+   Today
+   ===================================================================== */
+const TASK_ICONS = { diet: '🥗', water: '💧', workout1: '🏋️', workout2: '🏃', reading: '📖', photo: '📸' };
+
+function renderToday() {
+  const v = state.view;
+  const scr = $('#scr-today');
+  if (!v.me.started) {
+    scr.innerHTML = `
+      <div class="card" style="text-align:center; margin-top:40px; padding:30px 20px">
+        <div style="font-size:52px">💪</div>
+        <h2 style="margin:10px 0 6px">Ready for 75 Hard?</h2>
+        <p class="muted">Five daily tasks. Seventy-five days. Zero excuses.</p>
+        <button class="btn primary wide mt" data-action="obOpen">Set up the challenge</button>
+      </div>`;
+    return;
+  }
+  if (v.me.dayNumber < 1) {
+    scr.innerHTML = `
+      <div class="card" style="text-align:center; margin-top:40px; padding:30px 20px">
+        <div style="font-size:52px">🌅</div>
+        <h2 style="margin:10px 0 6px">Day 1 begins ${fmtDate(v.me.streakStartDate)}</h2>
+        <p class="muted">Rest up. Tomorrow it counts — all five tasks, before midnight.</p>
+      </div>`;
+    return;
+  }
+  if (v.challenge.status === 'complete') {
+    scr.innerHTML = `
+      <div class="card" style="text-align:center; padding:30px 20px">
+        <div style="font-size:52px">🏆</div>
+        <h2 style="margin:10px 0 6px">You both did it.</h2>
+        <p class="muted">75 days. Every task. Together.</p>
+        <button class="btn primary wide mt" data-action="rewardShow">Open the reward</button>
+        <button class="btn ghost wide mt" data-action="obOpen">Start a new challenge</button>
+      </div>`;
+    return;
+  }
+  const d = today();
+  const missing = missingTasks(d);
+  const editing = !!state.ui.editDate;
+  const pct = Math.min(100, Math.round((d.water_oz / WATER_GOAL) * 100));
+  const curBook = v.books.find((b) => !b.finished_date);
+  const w1 = wDone(d, 1), w2 = wDone(d, 2);
+  const outdoorWarn = w1 && w2 && !d.workout1_outdoor && !d.workout2_outdoor;
+
+  scr.innerHTML = `
+    ${editing ? `<div class="banner">✍️ Editing ${fmtDate(state.ui.editDate)} <button class="btn small ghost" style="float:right" data-action="editToday">back to today</button></div>` : ''}
+    <div id="leftstrip">${missing.length
+      ? missing.map((m) => `<span class="lchip">${esc(m)}</span>`).join('')
+      : '<span class="lchip alldone">✅ Day complete — see you tomorrow</span>'}
+    </div>
+
+    <div class="card task ${d.diet ? 'done' : ''}">
+      <div class="ti">${TASK_ICONS.diet}</div>
+      <div class="tt"><div class="nm">Diet</div><div class="sub">On plan · no alcohol · no cheat meals</div></div>
+      <button class="check ${d.diet ? 'on' : ''}" data-action="dietToggle">✓</button>
+    </div>
+
+    <div class="card">
+      <div class="task">
+        <div class="ti">${TASK_ICONS.water}</div>
+        <div class="tt"><div class="nm">Water</div><div class="sub">Goal: 1 gallon (128 oz)</div></div>
+        <div class="bignum">${d.water_oz}<small> / ${WATER_GOAL} oz</small></div>
+      </div>
+      <div id="waterbar"><div style="width:${pct}%"></div></div>
+      <div class="wbtns">
+        <button data-action="wadd" data-arg="8">+8</button>
+        <button data-action="wadd" data-arg="16">+16</button>
+        <button data-action="wadd" data-arg="32">+32</button>
+        <button data-action="wadd" data-arg="-8">−8</button>
+      </div>
+    </div>
+
+    ${[1, 2].map((slot) => {
+      const done = slot === 1 ? d.workout1_done : d.workout2_done;
+      const min = slot === 1 ? d.workout1_min : d.workout2_min;
+      const outdoor = slot === 1 ? d.workout1_outdoor : d.workout2_outdoor;
+      const satisfied = wDone(d, slot);
+      return `
+      <div class="card task-wko ${satisfied ? 'done' : ''}">
+        <div class="task">
+          <div class="ti">${slot === 1 ? TASK_ICONS.workout1 : TASK_ICONS.workout2}</div>
+          <div class="tt"><div class="nm" ${satisfied ? 'style="color:var(--good)"' : ''}>Workout #${slot}</div>
+            <div class="sub">45+ min ${outdoor ? '· outdoors 🌳' : ''}</div></div>
+          <button class="check ${satisfied ? 'on' : ''}" data-action="wkoDone" data-arg="${slot}">✓</button>
+        </div>
+        <div class="wko">
+          <input type="number" id="wko${slot}min" inputmode="numeric" min="0" max="600" value="${min || ''}" placeholder="min" data-change="wkoMin" data-arg="${slot}">
+          <button class="chip ${outdoor ? 'on' : ''}" data-action="wkoOutdoor" data-arg="${slot}">🌳 Outdoor</button>
+          <button class="chip" data-action="timerOpen" data-arg="${slot}">⏱ Timer</button>
+        </div>
+      </div>`;
+    }).join('')}
+    ${outdoorWarn ? '<div class="banner">🌳 At least one workout must be outdoors for the day to count.</div>' : ''}
+
+    <div class="card task ${d.reading_done ? 'done' : ''}">
+      <div class="ti">${TASK_ICONS.reading}</div>
+      <div class="tt"><div class="nm">Read 10 pages</div>
+        <div class="sub">${curBook ? esc(curBook.title) : 'No book yet — add one in Books'}</div></div>
+      <button class="check ${d.reading_done ? 'on' : ''}" data-action="readToggle">✓</button>
+    </div>
+
+    <div class="card task ${d.photo_id ? 'done' : ''}">
+      <div class="ti">${TASK_ICONS.photo}</div>
+      <div class="tt"><div class="nm">Progress photo</div>
+        <div class="sub">${d.photo_id ? 'Captured — tap to view or retake' : 'Daily photo, stamped Day ' + v.me.dayNumber}</div></div>
+      ${d.photo_id
+        ? `<img data-pid="${esc(d.photo_id)}" style="width:44px;height:44px;border-radius:10px;object-fit:cover;background:var(--bg2)" data-action="photoOpen" data-arg="${state.ui.editDate || state.ui.todayDate}" alt="">
+           <button class="btn small ghost" data-action="photoCapture">↻</button>`
+        : `<button class="btn small primary" data-action="photoCapture">📷 Take</button>`}
+    </div>
+
+    ${(() => {
+      const unit = unitPref();
+      const m = state.view.measurements[state.ui.editDate || state.ui.todayDate];
+      const all = measList().filter((x) => x.weight_kg != null);
+      let sub = 'Weight & body fat — optional, trend lives in History';
+      if (all.length >= 2) {
+        const d = wDisp(all[all.length - 1].weight_kg) - wDisp(all[0].weight_kg);
+        if (Math.abs(d) >= 0.1) sub = `${d < 0 ? '↓' : '↑'} ${Math.abs(d).toFixed(1)} ${unit} since ${fmtDate(all[0].date)}`;
+      }
+      return `
+    <div class="card">
+      <div class="task">
+        <div class="ti">⚖️</div>
+        <div class="tt"><div class="nm">Scale</div><div class="sub">${esc(sub)}</div></div>
+      </div>
+      <div class="wko">
+        <input type="number" inputmode="decimal" step="0.1" min="0" value="${wDisp(m?.weight_kg) ?? ''}" placeholder="—" data-change="measWeight" style="width:88px">
+        <span class="muted">${unit}</span>
+        <input type="number" inputmode="decimal" step="0.1" min="0" max="75" value="${m?.fat_pct ?? ''}" placeholder="—" data-change="measFat" style="width:74px">
+        <span class="muted">% fat</span>
+      </div>
+    </div>`;
+    })()}
+
+    <h2 class="sect">Activity</h2>
+    <div class="card" style="padding:6px 14px">${renderEvents(8)}</div>
+  `;
+  hydratePhotos(scr);
+}
+
+function renderEvents(limit) {
+  const evs = (state.view.events || []).slice(0, limit);
+  if (!evs.length) return '<div class="muted" style="padding:10px 0">Nothing yet today.</div>';
+  const who = (e) => (e.email === state.email ? 'You' : (state.view.partner?.displayName || 'Partner'));
+  const line = (e) => {
+    const p = e.payload || {};
+    switch (e.type) {
+      case 'task_done': return ['✓', `${who(e)} finished ${p.task}`];
+      case 'day_complete': return ['🎉', `${who(e)} completed Day ${p.dayNumber}`];
+      case 'reset': return ['💔', `${who(e)} restarted at Day 1${p.team ? ' (team)' : ''}`];
+      case 'milestone': return ['🏅', `${who(e)} hit Day ${p.day}`];
+      case 'poke': return ['👉', `${who(e)} sent a poke`];
+      case 'reaction': return [p.emoji || '❤️', `${who(e)} reacted${p.task ? ' to ' + p.task : ''}`];
+      case 'start': return ['🚀', `${who(e)} started the challenge`];
+      case 'challenge_complete': return ['🏆', 'Challenge complete!'];
+      case 'photo_shared': return ['📸', `${who(e)} shared a photo`];
+      case 'late_action': return ['⏰', `${who(e)} logged after midnight (didn't count)`];
+      default: return ['·', e.type];
+    }
+  };
+  return evs.map((e) => {
+    const [ic, tx] = line(e);
+    return `<div class="evrow"><span class="ee">${ic}</span><span class="et">${esc(tx)}</span><span class="ew">${timeAgo(Date.parse(e.created_at))}</span></div>`;
+  }).join('');
+}
+
+/* =====================================================================
+   Partner (side-by-side live dashboard)
+   ===================================================================== */
+function partnerTaskRows(t, mine, d) {
+  // t: redacted partner day | mine: raw own day
+  const rows = mine
+    ? [
+      ['diet', 'Diet', !!d.diet],
+      ['water', `Water ${d.water_oz}oz`, d.water_oz >= WATER_GOAL],
+      ['workout1', 'Workout #1', wDone(d, 1)],
+      ['workout2', 'Workout #2', wDone(d, 2)],
+      ['reading', 'Reading', !!d.reading_done],
+      ['photo', 'Photo', !!d.photo_id],
+    ]
+    : [
+      ['diet', 'Diet', t.diet],
+      ['water', `Water ${t.waterOz}oz`, t.waterOz >= WATER_GOAL],
+      ['workout1', 'Workout #1', t.workout1?.done],
+      ['workout2', 'Workout #2', t.workout2?.done],
+      ['reading', 'Reading', t.reading],
+      ['photo', 'Photo', t.photo],
+    ];
+  return rows.map(([key, label, done]) => `
+    <div class="prow ${done ? 'don' : ''}">
+      <span class="pi">${TASK_ICONS[key]}</span>
+      <span class="pn">${esc(label)}</span>
+      <span class="st">${done ? '✅' : '·'}</span>
+      ${!mine && done ? `<button class="rx" data-action="reactOpen" data-arg="${key}">➕</button>` : ''}
+    </div>`).join('');
+}
+
+function renderPartner() {
+  const v = state.view;
+  const scr = $('#scr-partner');
+  const p = v.partner;
+  if (!p) {
+    scr.innerHTML = '<div class="card" style="text-align:center;padding:30px"><div style="font-size:40px">💞</div><p class="muted mt">Waiting for your partner\'s first sign-in.</p></div>';
+    return;
+  }
+  const myDay = v.days[state.ui.todayDate] || emptyDay(state.email || '', state.ui.todayDate);
+  const updatedMs = p.updatedAt ? Date.parse(p.updatedAt) : null;
+  const fresh = state.ui.wsLive || (updatedMs && Date.now() - updatedMs < 2 * 60000);
+  scr.innerHTML = `
+    <div class="duo mt">
+      <div class="pcol me">
+        <h3>🧍 ${esc(v.me.displayName)} (you)</h3>
+        <div class="pday">${v.me.started ? (v.me.dayNumber >= 1 ? 'Day ' + v.me.dayNumber : 'starts soon') : '—'}</div>
+        ${partnerTaskRows(null, true, myDay)}
+      </div>
+      <div class="pcol">
+        <h3><span class="livedot ${fresh ? 'on' : ''}"></span> ${esc(p.displayName)}</h3>
+        <div class="pday">${p.started ? (p.dayNumber >= 1 ? 'Day ' + p.dayNumber : 'starts soon') : 'not started'}</div>
+        ${p.started ? partnerTaskRows(p.today, false) : '<p class="muted">They haven\'t set up yet.</p>'}
+        ${(() => {
+          const pm = (p.measurements || []).filter((m) => m.weight_kg != null || m.fat_pct != null);
+          if (!pm.length) return '';
+          const m = pm[0]; // server sends newest first
+          const bits = [];
+          if (m.weight_kg != null) bits.push(`${wDisp(m.weight_kg)} ${unitPref()}`);
+          if (m.fat_pct != null) bits.push(`${m.fat_pct}% fat`);
+          return `<div class="stale">⚖️ ${bits.join(' · ')} (${fmtDate(m.date)})</div>`;
+        })()}
+        <div class="stale">${state.ui.wsLive ? '🟢 live' : updatedMs ? 'Last update ' + timeAgo(updatedMs) : 'No activity yet'}</div>
+      </div>
+    </div>
+    <button class="btn pink wide mt" data-action="poke">👉 Poke ${esc(p.displayName)}</button>
+    ${v.challenge.mode === 'team' ? '<div class="banner mt">🤝 Team mode: if either of you misses a day, you both restart.</div>' : ''}
+    <h2 class="sect">Shared reward</h2>
+    <div class="card muted">${v.challenge.status === 'complete'
+      ? `🏆 ${esc(v.challenge.rewardText || '')}`
+      : v.challenge.rewardSet ? '🔒 Sealed until you both finish Day 75.' : 'Not set yet — add it in Settings.'}</div>
+    <h2 class="sect">Activity</h2>
+    <div class="card" style="padding:6px 14px">${renderEvents(20)}</div>
+  `;
+}
+
+const EMOJIS = ['❤️', '🔥', '💪', '👏', '😍', '🎉'];
+let reactTarget = null;
+function openEmojiBar(taskKey, anchorEl) {
+  reactTarget = taskKey;
+  const bar = $('#emojibar');
+  bar.innerHTML = EMOJIS.map((e) => `<button data-action="reactPick" data-arg="${e}">${e}</button>`).join('');
+  bar.style.display = 'flex';
+  const r = anchorEl.getBoundingClientRect();
+  bar.style.top = Math.max(60, r.top - 54) + 'px';
+  bar.style.left = Math.max(8, Math.min(innerWidth - 260, r.left - 180)) + 'px';
+  setTimeout(() => document.addEventListener('click', closeEmojiBarOnce, { once: true }), 0);
+}
+function closeEmojiBarOnce(e) {
+  if (!$('#emojibar').contains(e.target)) $('#emojibar').style.display = 'none';
+}
+
+/* =====================================================================
+   History
+   ===================================================================== */
+function renderHistory() {
+  const v = state.view;
+  const scr = $('#scr-history');
+  if (!v.me.started) { scr.innerHTML = '<div class="card muted" style="margin-top:20px">Start the challenge to build history.</div>'; return; }
+  const start = v.me.startDate;
+  const todayD = state.ui.todayDate;
+  const end = daysBetween(start, todayD) < 0 ? start : todayD;
+  const cells = [];
+  for (let dt = start; dt <= end; dt = nextDay(dt)) {
+    const row = v.days[dt];
+    let cls = '', icon = '';
+    if (dt === todayD) { cls = 'today'; icon = remainingCount(row) + ' left'; }
+    else if (row?.finalized && row.complete) { cls = 'ok'; icon = '✓'; }
+    else if (row?.finalized || dt < todayD) { cls = 'miss'; icon = '✗'; }
+    const restart = dt === v.me.streakStartDate && dt !== start;
+    const dayN = row?.day_number ?? (dt >= v.me.streakStartDate ? dayNumberOf(v.me.streakStartDate, dt) : null);
+    cells.push(`<div class="cday ${cls} ${restart ? 'restart' : ''}" title="${dt}">
+      <b>${dayN ?? '·'}</b><span>${fmtDate(dt).replace(' ', '')}</span></div>`);
+  }
+  const doneDays = Object.values(v.days).filter((d) => d.finalized && d.complete).length;
+  const missDays = Object.values(v.days).filter((d) => d.finalized && !d.complete).length;
+  scr.innerHTML = `
+    <h2 class="sect">You — current streak: Day ${v.me.dayNumber}</h2>
+    <div class="card"><div id="calgrid">${cells.join('')}</div>
+      <p class="muted mt">✓ ${doneDays} complete · ✗ ${missDays} missed · <span style="color:var(--pink)">▁</span> restart point</p></div>
+    ${renderTrendsSection()}
+    <h2 class="sect">${esc(v.partner?.displayName || 'Partner')}</h2>
+    <div class="card" id="phist"><p class="muted">Loading…</p></div>
+  `;
+  bindTrendCharts(scr);
+  loadPartnerHistory();
+}
+
+/* =====================================================================
+   Scale trends — two single-series line charts (weight, fat %). Different
+   scales, so deliberately two charts, never a dual axis. Colors validated
+   for the dark card surface (#1a1f30): weight #3b82e6, fat #c27e1a.
+   ===================================================================== */
+const trendMeta = {};
+
+function renderTrendsSection() {
+  const all = measList();
+  const wPts = all.filter((m) => m.weight_kg != null).map((m) => ({ date: m.date, val: wDisp(m.weight_kg) }));
+  const fPts = all.filter((m) => m.fat_pct != null).map((m) => ({ date: m.date, val: m.fat_pct }));
+  if (!wPts.length && !fPts.length) {
+    return '<h2 class="sect">Trends</h2><div class="card muted">Log weight or body fat on the Today screen and the trend shows up here.</div>';
+  }
+  const unit = unitPref();
+  return `<h2 class="sect">Trends</h2>
+    <div class="card">
+      ${wPts.length ? renderTrendChart('tw', `Weight (${unit})`, wPts, '#3b82e6', (v) => v.toFixed(1)) : ''}
+      ${fPts.length ? renderTrendChart('tf', 'Body fat (%)', fPts, '#c27e1a', (v) => v.toFixed(1) + '%') : ''}
+    </div>`;
+}
+
+function renderTrendChart(id, title, pts, color, fmt) {
+  const W = 340, H = 110, L = 40, R = 14, T = 20, B = 18;
+  const xs = pts.map((p) => dateToUTC(p.date));
+  const vs = pts.map((p) => p.val);
+  const x0 = Math.min(...xs), x1 = Math.max(...xs);
+  let lo = Math.min(...vs), hi = Math.max(...vs);
+  const pad = Math.max((hi - lo) * 0.15, 0.5);
+  lo -= pad; hi += pad;
+  const X = (t) => (x1 === x0 ? (L + W - R) / 2 : L + ((t - x0) / (x1 - x0)) * (W - L - R));
+  const Y = (v) => T + (1 - (v - lo) / (hi - lo)) * (H - T - B);
+  const px = pts.map((p, i) => ({ x: X(xs[i]), y: Y(p.val), date: p.date, val: p.val }));
+  const path = px.map((p, i) => `${i ? 'L' : 'M'}${p.x.toFixed(1)},${p.y.toFixed(1)}`).join('');
+  const last = px[px.length - 1];
+  const grid = [lo + pad, (lo + hi) / 2, hi - pad].map((v) =>
+    `<line x1="${L}" x2="${W - R}" y1="${Y(v).toFixed(1)}" y2="${Y(v).toFixed(1)}" stroke="#232a44" stroke-width="1"/>
+     <text x="${L - 5}" y="${(Y(v) + 3).toFixed(1)}" text-anchor="end" font-size="9" fill="#565e80">${v.toFixed(1)}</text>`).join('');
+  trendMeta[id] = { px, fmt, color };
+  return `
+    <div class="trendbox">
+      <div class="trendtitle">${esc(title)}</div>
+      <svg class="trend" id="${id}" viewBox="0 0 ${W} ${H}" style="width:100%;height:auto;display:block;touch-action:pan-y">
+        ${grid}
+        <text x="${L}" y="${H - 4}" font-size="9" fill="#565e80">${fmtDate(pts[0].date)}</text>
+        <text x="${W - R}" y="${H - 4}" text-anchor="end" font-size="9" fill="#565e80">${fmtDate(pts[pts.length - 1].date)}</text>
+        <path d="${path}" fill="none" stroke="${color}" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>
+        <line class="xhair" y1="${T}" y2="${H - B}" stroke="#565e80" stroke-width="1" visibility="hidden"/>
+        <circle class="xdot" r="4" fill="${color}" stroke="#1a1f30" stroke-width="2" visibility="hidden"/>
+        <circle cx="${last.x.toFixed(1)}" cy="${last.y.toFixed(1)}" r="3" fill="${color}"/>
+        <text x="${last.x.toFixed(1)}" y="${(last.y - 8).toFixed(1)}" text-anchor="${last.x > W - 60 ? 'end' : 'middle'}" font-size="11" font-weight="700" fill="#edeef4">${fmt(last.val)}</text>
+      </svg>
+    </div>`;
+}
+
+function bindTrendCharts(container) {
+  const tip = $('#charttip');
+  container.querySelectorAll('svg.trend').forEach((svg) => {
+    const meta = trendMeta[svg.id];
+    if (!meta) return;
+    const move = (ev) => {
+      const r = svg.getBoundingClientRect();
+      const mx = ((ev.clientX - r.left) / r.width) * 340;
+      let best = meta.px[0];
+      for (const p of meta.px) if (Math.abs(p.x - mx) < Math.abs(best.x - mx)) best = p;
+      svg.querySelector('.xhair').setAttribute('visibility', 'visible');
+      svg.querySelector('.xhair').setAttribute('x1', best.x);
+      svg.querySelector('.xhair').setAttribute('x2', best.x);
+      const dot = svg.querySelector('.xdot');
+      dot.setAttribute('visibility', 'visible');
+      dot.setAttribute('cx', best.x); dot.setAttribute('cy', best.y);
+      tip.textContent = `${fmtDate(best.date)} · ${meta.fmt(best.val)}`;
+      tip.style.display = 'block';
+      tip.style.left = Math.min(innerWidth - tip.offsetWidth - 8, Math.max(8, ev.clientX - tip.offsetWidth / 2)) + 'px';
+      tip.style.top = (r.top - 30 + scrollY) + 'px';
+    };
+    const leave = () => {
+      svg.querySelector('.xhair').setAttribute('visibility', 'hidden');
+      svg.querySelector('.xdot').setAttribute('visibility', 'hidden');
+      tip.style.display = 'none';
+    };
+    svg.addEventListener('pointermove', move);
+    svg.addEventListener('pointerdown', move);
+    svg.addEventListener('pointerleave', leave);
+  });
+}
+
+async function loadPartnerHistory() {
+  const box = $('#phist');
+  if (!box) return;
+  const p = state.view.partner;
+  if (!p?.started) { box.innerHTML = '<p class="muted">Not started yet.</p>'; return; }
+  try {
+    const res = await apiFetch('/hard/history');
+    const data = await res.json();
+    if (!$('#phist')) return;
+    const rows = data.partner || [];
+    if (!rows.length) { $('#phist').innerHTML = '<p class="muted">No days yet.</p>'; return; }
+    $('#phist').innerHTML = `<div id="calgrid">${rows.map((r) => `
+      <div class="cday ${r.finalized ? (r.complete ? 'ok' : 'miss') : 'today'}">
+        <b>${r.finalized ? (r.complete ? '✓' : '✗') : '…'}</b><span>${fmtDate(r.date).replace(' ', '')}</span>
+      </div>`).join('')}</div>
+      <p class="muted mt">Day ${p.dayNumber} of ${TOTAL_DAYS}</p>`;
+  } catch (e) {
+    if ($('#phist')) $('#phist').innerHTML = '<p class="muted">Offline — partner history unavailable.</p>';
+  }
+}
+
+/* =====================================================================
+   Books
+   ===================================================================== */
+function renderBooks() {
+  const v = state.view;
+  $('#scr-books').innerHTML = `
+    <h2 class="sect">Book log</h2>
+    <div class="card">
+      ${v.books.length ? v.books.map((b) => `
+        <div class="bookrow">
+          <span class="bi">${b.finished_date ? '✅' : '📖'}</span>
+          <div class="bt"><div class="t">${esc(b.title)}</div>
+            <div class="a">${esc(b.author || '')}${b.finished_date ? ' · finished ' + fmtDate(b.finished_date) : b.started_date ? ' · started ' + fmtDate(b.started_date) : ''}</div></div>
+          ${b.finished_date ? '' : `<button class="btn small ghost" data-action="bookFinish" data-arg="${esc(b.id)}">Finish</button>`}
+        </div>`).join('') : '<p class="muted" style="padding:8px 0">Log what you\'re reading through the challenge.</p>'}
+    </div>
+    <h2 class="sect">Add a book</h2>
+    <div class="card">
+      <input id="bk-title" placeholder="Title" style="width:100%">
+      <input id="bk-author" placeholder="Author (optional)" style="width:100%" class="mt">
+      <button class="btn primary wide mt" data-action="bookAdd">Add book</button>
+    </div>`;
+}
+
+/* =====================================================================
+   Photos: gallery, capture, Day-N compositor, viewer, time-lapse
+   ===================================================================== */
+// photoId -> objectURL. Deliberately never revoked: bounded at ~2 URLs per
+// photo × 75 days (same accepted trade-off as the Photos app's known
+// blob-URL limitation in the root CLAUDE.md).
+const photoURLs = {};
+
+async function getPhotoURL(photoId, kind = 'thumb') {
+  const key = kind + ':' + photoId;
+  if (photoURLs[key]) return photoURLs[key];
+  const local = await idbGet('photos', photoId).catch(() => null);
+  if (local) {
+    photoURLs[key] = URL.createObjectURL(kind === 'thumb' ? local.thumbBlob : local.blob);
+    return photoURLs[key];
+  }
+  try {
+    const res = await apiFetch(`/hard/photos/${photoId}/${kind === 'thumb' ? 'thumb' : 'original'}`);
+    if (!res.ok) return null;
+    photoURLs[key] = URL.createObjectURL(await res.blob());
+    return photoURLs[key];
+  } catch (e) { return null; }
+}
+
+function hydratePhotos(container) {
+  container.querySelectorAll('img[data-pid]').forEach(async (img) => {
+    const url = await getPhotoURL(img.dataset.pid, img.dataset.kind || 'thumb');
+    if (url) img.src = url;
+  });
+}
+
+function myPhotoList() {
+  const v = state.view;
+  return Object.entries(v.photosByDate)
+    .map(([date, p]) => ({ date, id: p.id, shared: p.shared }))
+    .sort((a, b) => (a.date < b.date ? -1 : 1));
+}
+
+function renderPhotos() {
+  const v = state.view;
+  const scr = $('#scr-photos');
+  const photos = myPhotoList();
+  scr.innerHTML = `
+    <div class="row mt" style="justify-content:space-between">
+      <h2 class="sect" style="margin:0 4px">Your daily photos</h2>
+      ${photos.length > 1 ? '<button class="btn small ghost" data-action="timelapse">▶ Time-lapse</button>' : ''}
+    </div>
+    <div class="card">
+      ${photos.length ? `<div id="photogrid">${photos.map((p) => {
+        const row = v.days[p.date];
+        const dayN = row?.day_number ?? (v.me.streakStartDate && p.date >= v.me.streakStartDate ? dayNumberOf(v.me.streakStartDate, p.date) : '·');
+        return `<div class="ph" data-action="photoOpen" data-arg="${p.date}">
+          <img data-pid="${esc(p.id)}" alt="">
+          <span class="dn">Day ${dayN}</span>
+          <span class="sh">${p.shared ? '💞' : '🔒'}</span>
+        </div>`;
+      }).join('')}</div>` : '<p class="muted">No photos yet — the Today screen is where you take them.</p>'}
+    </div>
+    ${v.partner?.started && Object.keys(v.partner.sharedPhotosByDate || {}).length ? `
+      <h2 class="sect">Shared by ${esc(v.partner.displayName)}</h2>
+      <div class="card"><div id="photogrid">
+        ${Object.entries(v.partner.sharedPhotosByDate).sort().map(([date, id]) => `
+          <div class="ph"><img data-pid="${esc(id)}" alt=""><span class="dn">${fmtDate(date)}</span></div>`).join('')}
+      </div></div>` : ''}
+  `;
+  hydratePhotos(scr);
+}
+
+/* -- capture + compositor -- */
+let pendingCapture = null; // {blob, thumbBlob, dataURL, share}
+
+async function compositePhoto(file) {
+  const dayN = state.view.me.dayNumber || 1;
+  let bmp;
+  try {
+    bmp = await createImageBitmap(file, { imageOrientation: 'from-image' });
+  } catch (e) {
+    bmp = await new Promise((res, rej) => {
+      const img = new Image();
+      img.onload = () => res(img);
+      img.onerror = rej;
+      img.src = URL.createObjectURL(file);
+    });
+  }
+  const maxEdge = 1600;
+  const scale = Math.min(1, maxEdge / Math.max(bmp.width, bmp.height));
+  const w = Math.round(bmp.width * scale), h = Math.round(bmp.height * scale);
+  const cv = document.createElement('canvas');
+  cv.width = w; cv.height = h;
+  const ctx = cv.getContext('2d');
+  ctx.drawImage(bmp, 0, 0, w, h);
+  // bottom scrim + Day N stamp, baked into pixels
+  const grad = ctx.createLinearGradient(0, h * 0.72, 0, h);
+  grad.addColorStop(0, 'rgba(0,0,0,0)');
+  grad.addColorStop(1, 'rgba(0,0,0,0.62)');
+  ctx.fillStyle = grad;
+  ctx.fillRect(0, h * 0.72, w, h * 0.28);
+  const fs = Math.round(h * 0.07);
+  ctx.fillStyle = '#fff';
+  ctx.font = `800 ${fs}px -apple-system, sans-serif`;
+  ctx.shadowColor = 'rgba(0,0,0,.7)'; ctx.shadowBlur = fs / 5;
+  ctx.fillText(`DAY ${dayN}`, Math.round(w * 0.045), h - Math.round(fs * 0.9));
+  ctx.font = `600 ${Math.round(fs * 0.42)}px -apple-system, sans-serif`;
+  ctx.fillStyle = 'rgba(255,255,255,.85)';
+  ctx.fillText(`${fmtDate(state.ui.todayDate)} · 75 HARD`, Math.round(w * 0.05), h - Math.round(fs * 0.28));
+  ctx.shadowBlur = 0;
+  const blob = await new Promise((r) => cv.toBlob(r, 'image/jpeg', 0.85));
+  // thumbnail (photos-app pattern)
+  const ts = Math.min(1, 400 / Math.max(w, h));
+  const tc = document.createElement('canvas');
+  tc.width = Math.round(w * ts); tc.height = Math.round(h * ts);
+  tc.getContext('2d').drawImage(cv, 0, 0, tc.width, tc.height);
+  const thumbBlob = await new Promise((r) => tc.toBlob(r, 'image/jpeg', 0.7));
+  return { blob, thumbBlob, dataURL: tc.toDataURL('image/jpeg', 0.7) };
+}
+
+async function onCameraFile(file) {
+  if (!file) return;
+  toast('Processing photo…', 1200);
+  try {
+    pendingCapture = { ...(await compositePhoto(file)), share: false };
+    const ov = $('#pconfirm');
+    ov.innerHTML = `
+      <h1 style="font-size:22px">Day ${state.view.me.dayNumber} photo</h1>
+      <img src="${pendingCapture.dataURL}" alt="">
+      <div class="row mt" style="justify-content:center">
+        <label class="row" style="gap:8px">
+          <span class="muted">Share with ${esc(state.view.partner?.displayName || 'partner')}</span>
+          <span class="sw"><input type="checkbox" id="pc-share"><span class="tr"></span></span>
+        </label>
+      </div>
+      <div class="actions">
+        <button class="btn primary" data-action="pcSave">Save photo</button>
+        <button class="btn ghost" data-action="pcCancel">Retake</button>
+      </div>`;
+    ov.classList.add('open');
+  } catch (e) {
+    toast('⚠️ Could not process that photo');
+  }
+}
+
+async function savePendingPhoto() {
+  const pc = pendingCapture;
+  if (!pc) return;
+  pendingCapture = null;
+  $('#pconfirm').classList.remove('open');
+  const share = $('#pc-share')?.checked || false;
+  const photoId = uuid();
+  const date = state.ui.editDate || state.ui.todayDate;
+  await idbPut('photos', {
+    photoId, dayDate: date, blob: pc.blob, thumbBlob: pc.thumbBlob,
+    share, uploaded: false, uploadActionId: uuid(),
+    createdAt: nowMs(), timezone: deviceTZ(),
+  });
+  if (share) state.view.photosByDate[date] = { id: photoId, shared: 1 };
+  await dispatch('attach_photo', { photoId }, { date });
+  toast('📸 Saved on this device' + (navigator.onLine ? ' — uploading…' : ''));
+}
+
+/* -- viewer / time-lapse -- */
+let lapseTimer = null;
+function openPhotoViewer(date) {
+  const p = state.view.photosByDate[date];
+  if (!p) return;
+  const row = state.view.days[date];
+  const dayN = row?.day_number ?? dayNumberOf(state.view.me.streakStartDate || date, date);
+  const ov = $('#pview');
+  ov.innerHTML = `
+    <img data-pid="${esc(p.id)}" data-kind="original" alt="">
+    <div class="cap">Day ${dayN} · ${fmtDate(date)}</div>
+    <div class="actions">
+      <button class="btn ghost" data-action="pShareToggle" data-arg="${date}">${p.shared ? '💞 Shared — make private' : '🔒 Private — share with partner'}</button>
+      <button class="btn ghost" data-action="pviewClose">Close</button>
+    </div>`;
+  ov.classList.add('open');
+  hydratePhotos(ov);
+}
+
+async function runTimelapse() {
+  const photos = myPhotoList();
+  if (photos.length < 2) return;
+  const ov = $('#pview');
+  ov.innerHTML = `<img id="lapse-img" alt=""><div class="cap" id="lapse-cap"></div>
+    <div class="actions"><button class="btn ghost" data-action="pviewClose">Stop</button></div>`;
+  ov.classList.add('open');
+  let i = 0;
+  const step = async () => {
+    if (!ov.classList.contains('open')) return;
+    const p = photos[i % photos.length];
+    const url = await getPhotoURL(p.id, 'thumb');
+    const img = $('#lapse-img'), cap = $('#lapse-cap');
+    if (img && url) img.src = url;
+    if (cap) {
+      const row = state.view.days[p.date];
+      cap.textContent = `Day ${row?.day_number ?? '·'} · ${fmtDate(p.date)}`;
+    }
+    i++;
+  };
+  step();
+  clearInterval(lapseTimer);
+  lapseTimer = setInterval(step, 450);
+}
+
+/* =====================================================================
+   Settings
+   ===================================================================== */
+const NOTIF_TYPES = [
+  ['partnerTask', 'Partner finished a task'],
+  ['partnerDay', 'Partner finished their day'],
+  ['poke', 'Pokes'],
+  ['reaction', 'Reactions'],
+  ['milestone', 'Milestones (25/50/75)'],
+  ['reset', 'Resets'],
+  ['atRisk', 'Partner at risk'],
+];
+
+function renderSettings() {
+  const v = state.view;
+  const prefs = v.me.prefs || {};
+  const notif = prefs.notif || {};
+  const qh = prefs.quietHours || null;
+  const tzMismatch = v.me.started && v.me.timezone !== deviceTZ();
+  const perm = ('Notification' in window) ? Notification.permission : 'unsupported';
+  $('#scr-settings').innerHTML = `
+    ${tzMismatch ? `<div class="banner blue mt">✈️ Device timezone (${esc(deviceTZ())}) differs from your setting (${esc(v.me.timezone)}). <button class="btn small ghost" data-action="tzUpdate">Update</button></div>` : ''}
+
+    <h2 class="sect">Profile</h2>
+    <div class="card">
+      <div class="srow"><div class="sl"><div class="n">Display name</div></div>
+        <input id="set-name" value="${esc(v.me.displayName)}" style="width:140px" data-change="setName"></div>
+      <div class="srow"><div class="sl"><div class="n">Signed in as</div><div class="d">${esc(state.email || '')}</div></div></div>
+    </div>
+
+    <h2 class="sect">Challenge</h2>
+    <div class="card">
+      <div class="srow"><div class="sl"><div class="n">Team mode</div><div class="d">A miss by either of you resets you both</div></div>
+        <span class="sw"><input type="checkbox" ${v.challenge.mode === 'team' ? 'checked' : ''} data-change="modeToggle"><span class="tr"></span></span></div>
+      <div class="srow"><div class="sl"><div class="n">Grace window</div><div class="d">Minutes past midnight to finish logging</div></div>
+        <input type="number" inputmode="numeric" min="0" max="720" value="${v.me.graceMinutes}" data-change="setGrace"></div>
+      <div class="srow"><div class="sl"><div class="n">Shared reward</div><div class="d">${v.challenge.status === 'complete' ? esc(v.challenge.rewardText || '') : v.challenge.rewardSet ? 'Sealed 🔒 (replace below)' : 'Not set'}</div></div>
+        <button class="btn small ghost" data-action="rewardEdit">${v.challenge.rewardSet ? 'Replace' : 'Set'}</button></div>
+    </div>
+
+    <h2 class="sect">Notifications</h2>
+    <div class="card">
+      <div class="srow"><div class="sl"><div class="n">Status</div>
+        <div class="d">${perm === 'granted' ? '✅ Enabled' : perm === 'denied' ? '🚫 Denied — enable in iOS Settings → Notifications → 75 Hard' : perm === 'unsupported' ? 'Not supported in this browser' : isInstalled() ? 'Tap to enable' : '📲 Install to Home Screen first (Share → Add to Home Screen)'}</div></div>
+        ${perm === 'default' && isInstalled() ? '<button class="btn small primary" data-action="pushEnable">Enable</button>' : ''}
+        ${perm === 'granted' ? '<button class="btn small ghost" data-action="pushTest">Test</button>' : ''}</div>
+      ${perm === 'granted' ? '<div class="srow"><div class="sl"><div class="n">Troubleshoot</div><div class="d">Re-create the push subscription</div></div><button class="btn small ghost" data-action="pushResub">Re-subscribe</button></div>' : ''}
+      ${NOTIF_TYPES.map(([k, label]) => `
+        <div class="srow"><div class="sl"><div class="n">${label}</div></div>
+          <span class="sw"><input type="checkbox" ${notif[k] !== false ? 'checked' : ''} data-change="notifToggle" data-arg="${k}"><span class="tr"></span></span></div>`).join('')}
+      <div class="srow"><div class="sl"><div class="n">Daily reminder</div><div class="d">A nudge if tasks are still open</div></div>
+        <input type="time" value="${esc((prefs.reminderTimes || [])[0] || '')}" data-change="remTime"></div>
+      <div class="srow"><div class="sl"><div class="n">Bedtime last-chance</div><div class="d">Minutes before midnight (0 = off)</div></div>
+        <input type="number" inputmode="numeric" min="0" max="240" value="${prefs.bedtimeNudgeMin ?? 60}" data-change="bedtime"></div>
+      <div class="srow"><div class="sl"><div class="n">Warn partner I'm at risk</div><div class="d">If I'm incomplete at this time</div></div>
+        <input type="time" value="${esc(prefs.atRiskTime || '')}" data-change="atrisk"></div>
+      <div class="srow"><div class="sl"><div class="n">Quiet hours</div><div class="d">No pushes in this window (except bedtime)</div></div>
+        <input type="time" value="${esc(qh?.start || '')}" data-change="quietStart" style="width:92px">
+        <input type="time" value="${esc(qh?.end || '')}" data-change="quietEnd" style="width:92px"></div>
+    </div>
+
+    <h2 class="sect">Scale</h2>
+    <div class="card">
+      <div class="srow"><div class="sl"><div class="n">Units</div><div class="d">How weight is entered and shown</div></div>
+        <select data-change="unitsSel"><option value="lb" ${unitPref() === 'lb' ? 'selected' : ''}>lb</option><option value="kg" ${unitPref() === 'kg' ? 'selected' : ''}>kg</option></select></div>
+      <div class="srow"><div class="sl"><div class="n">Share with ${esc(v.partner?.displayName || 'partner')}</div><div class="d">Weight & fat % are private unless you turn this on</div></div>
+        <span class="sw"><input type="checkbox" ${prefs.shareMeasurements ? 'checked' : ''} data-change="shareMeas"><span class="tr"></span></span></div>
+    </div>
+
+    <h2 class="sect">Sync</h2>
+    <div class="card">
+      <div class="srow"><div class="sl"><div class="n">Pending on this device</div>
+        <div class="d">${state.queue.length} action${state.queue.length === 1 ? '' : 's'} · last synced ${state.ui.lastSyncAt ? timeAgo(state.ui.lastSyncAt) : 'never'}</div></div>
+        <button class="btn small ghost" data-action="syncNowBtn">Sync now</button></div>
+    </div>
+
+    <h2 class="sect">Account</h2>
+    <div class="card">
+      <div class="srow"><div class="sl"><div class="n">Sign out</div><div class="d">Keeps local data on this device</div></div>
+        <button class="btn small ghost" data-action="signOut">Sign out</button></div>
+      <div class="srow"><div class="sl"><div class="n">Sign out & wipe device data</div><div class="d">Removes queued actions and local photos</div></div>
+        <button class="btn small ghost" style="color:var(--bad)" data-action="signOutFull">Wipe</button></div>
+      <div class="srow"><div class="sl"><div class="n">75 Hard ${APP_VER}</div><div class="d">${esc(API)}</div></div></div>
+    </div>`;
+}
+
+let prefsTimer = null;
+function pushPrefs(mutate) {
+  const prefs = clone(state.view.me.prefs || {});
+  mutate(prefs);
+  state.view.me.prefs = prefs; // instant local echo
+  render();
+  clearTimeout(prefsTimer);
+  prefsTimer = setTimeout(() => dispatch('set_settings', { prefs }), 700);
+}
+
+/* =====================================================================
+   Onboarding wizard
+   ===================================================================== */
+const ob = { step: 0, mode: 'solo', name: '', reward: '', startDate: null, grace: 180 };
+
+function openOnboarding() {
+  ob.step = isInstalled() ? 1 : 0;
+  ob.name = state.view.me.displayName || '';
+  ob.startDate = effectiveToday();
+  renderOnboarding();
+  $('#ob').classList.add('open');
+}
+
+function renderOnboarding() {
+  const steps = 5; // 0 install, 1 name, 2 mode, 3 reward, 4 start
+  const dots = Array.from({ length: steps }, (_, i) => `<i class="${i === ob.step ? 'on' : ''}"></i>`).join('');
+  const bodies = [
+    `<div class="big">📲</div><h1>Install first</h1>
+     <p>Open the <b>Share</b> menu in Safari and tap <b>Add to Home Screen</b>, then launch from the icon. That's what makes full-screen mode, notifications and the badge work.</p>
+     <div class="actions"><button class="btn primary" data-action="obNext">I've installed it — continue</button>
+     <button class="btn ghost" data-action="obNext">Continue in the browser anyway</button></div>`,
+    `<div class="big">👋</div><h1>Your name</h1>
+     <p>Shown to your partner on the dashboard and in notifications.</p>
+     <input id="ob-name" value="${esc(ob.name)}" placeholder="Name" style="width:100%; margin-top:14px; text-align:center; font-size:18px">
+     <div class="actions"><button class="btn primary" data-action="obNext">Next</button></div>`,
+    `<div class="big">⚔️</div><h1>Pick your mode</h1>
+     <div class="modecard ${ob.mode === 'solo' ? 'sel' : ''}" data-action="obMode" data-arg="solo">
+       <b>🧍 Solo</b><p>You each run your own 75-day count. A miss resets only the one who missed.</p></div>
+     <div class="modecard ${ob.mode === 'team' ? 'sel' : ''}" data-action="obMode" data-arg="team">
+       <b>🤝 Team</b><p><b>Brutal:</b> one shared streak. If <i>either</i> of you misses a single task, you <i>both</i> go back to Day 1. Opt in with eyes open.</p></div>
+     <div class="actions"><button class="btn primary" data-action="obNext">Next</button><button class="btn ghost" data-action="obBack">Back</button></div>`,
+    `<div class="big">🎁</div><h1>The shared reward</h1>
+     <p>What happens if you both finish? It stays sealed until Day 75. One of you sets it — or skip for now.</p>
+     <textarea id="ob-reward" placeholder="If we both hit 75, we…">${esc(ob.reward)}</textarea>
+     <div class="actions"><button class="btn primary" data-action="obNext">Next</button><button class="btn ghost" data-action="obBack">Back</button></div>`,
+    `<div class="big">🚀</div><h1>Start</h1>
+     <p>Timezone: <b>${esc(deviceTZ())}</b> · day rolls at local midnight with a ${ob.grace}-minute grace window (changeable in Settings).</p>
+     <div class="actions">
+       <button class="btn primary" data-action="obFinish" data-arg="today">Start today (${fmtDate(effectiveToday())})</button>
+       <button class="btn ghost" data-action="obFinish" data-arg="tomorrow">Start tomorrow</button>
+       <button class="btn ghost" data-action="obBack">Back</button>
+     </div>`,
+  ];
+  $('#ob').innerHTML = `<div class="obdots">${dots}</div><div class="step on">${bodies[ob.step]}</div>`;
+}
+
+async function finishOnboarding(when) {
+  const start = when === 'tomorrow' ? nextDay(effectiveToday()) : effectiveToday();
+  $('#ob').classList.remove('open');
+  await dispatch('set_settings', {
+    displayName: ob.name || state.view.me.displayName,
+    timezone: deviceTZ(),
+    graceMinutes: ob.grace,
+    prefs: { bedtimeNudgeMin: 60, notif: {} },
+  });
+  if (ob.reward.trim()) await dispatch('set_reward', { text: ob.reward.trim() });
+  await dispatch('start_challenge', { startDate: start, mode: ob.mode, timezone: deviceTZ() }, { date: start });
+  toast(ob.mode === 'team' ? '🤝 Team mode. No one gets left behind.' : '🚀 Day 1 begins!');
+  if (isInstalled() && Notification.permission === 'default') {
+    setTimeout(async () => {
+      const r = await pushSubscribe(true);
+      if (r === 'granted') toast('🔔 Notifications on');
+    }, 900);
+  }
+  conn.connect();
+}
+
+/* =====================================================================
+   Reset takeover + celebrations + reward
+   ===================================================================== */
+function checkReset() {
+  const v = state.view;
+  if (!v.me.started || v.me.completedAt || state.ui.resetShowing) return;
+  const todayD = state.ui.todayDate;
+  for (let dt = v.me.streakStartDate; dt < todayD; dt = nextDay(dt)) {
+    const row = v.days[dt];
+    if (row?.finalized) continue; // any finalized day is server-resolved (a miss already moved the streak)
+    if (isDayComplete(row)) continue;
+    // Unfinalized incomplete past day → offline-detected miss
+    const dayN = row?.day_number ?? dayNumberOf(v.me.streakStartDate, dt);
+    showResetTakeover(dt, dayN, missingTasks(row));
+    return;
+  }
+  if (v.me.dayNumber > TOTAL_DAYS) checkCelebrations();
+}
+
+function showResetTakeover(date, dayN, missing) {
+  state.ui.resetShowing = true;
+  const team = state.view.challenge.mode === 'team';
+  $('#resetov').innerHTML = `
+    <div class="big">💔</div>
+    <h1>Day ${dayN} ended incomplete</h1>
+    <p>${fmtDate(date)} was missing: <b>${esc(missing.join(', '))}</b>.</p>
+    <p class="mt">${team ? 'Team mode: you both restart at Day 1.' : 'The rule is the rule — back to Day 1.'} Everyone restarts sometime. What matters is starting again.</p>
+    <div class="actions">
+      <button class="btn primary" data-action="resetConfirm" data-arg="${date}">Restart at Day 1</button>
+    </div>`;
+  $('#resetov').classList.add('open');
+}
+
+function confetti(n = 80) {
+  const colors = ['#ff6b4a', '#ffb03a', '#ff4d6d', '#3ddc84', '#4a9eff'];
+  for (let i = 0; i < n; i++) {
+    const el = document.createElement('div');
+    el.className = 'confetti';
+    el.style.left = Math.random() * 100 + 'vw';
+    el.style.background = colors[i % colors.length];
+    el.style.animationDuration = (2 + Math.random() * 2) + 's';
+    el.style.animationDelay = Math.random() * 0.6 + 's';
+    el.style.transform = `rotate(${Math.random() * 360}deg)`;
+    document.body.appendChild(el);
+    setTimeout(() => el.remove(), 5000);
+  }
+}
+
+function onDayCompleted(date) {
+  haptic();
+  confetti(50);
+  const dayN = state.view.days[date]?.day_number ?? dayNumberOf(state.view.me.streakStartDate, date);
+  toast(`🎉 Day ${dayN} complete!`);
+  checkCelebrations();
+}
+
+async function checkCelebrations() {
+  const v = state.view;
+  if (!v.me.started) return;
+  // milestone overlays for 25/50/75 on a complete day
+  const dayN = v.me.dayNumber;
+  const todayRow = v.days[state.ui.todayDate];
+  for (const m of [25, 50, 75]) {
+    if (dayN === m && isDayComplete(todayRow) && !state.ui.celebrated[m]) {
+      state.ui.celebrated[m] = true;
+      await kvSet('celebrated', state.ui.celebrated).catch(() => {});
+      confetti(140);
+      $('#celebrate').innerHTML = `
+        <div class="big">${m === 75 ? '🏆' : '🏅'}</div>
+        <h1>DAY ${m}</h1>
+        <p>${m === 25 ? 'A third of the way. The habit is forming.' : m === 50 ? 'Two thirds down. This is who you are now.' : 'Seventy-five days. You finished 75 Hard.'}</p>
+        <div class="actions"><button class="btn primary" data-action="celebClose">Keep going</button></div>`;
+      $('#celebrate').classList.add('open');
+      return;
+    }
+  }
+  if (v.challenge.status === 'complete' && !state.ui.celebrated.reward) {
+    state.ui.celebrated.reward = true;
+    await kvSet('celebrated', state.ui.celebrated).catch(() => {});
+    showRewardReveal();
+  }
+}
+
+function showRewardReveal() {
+  confetti(160);
+  $('#reward').innerHTML = `
+    <h1>You both made it 🏆</h1>
+    <p>75 days. All ten hands on deck. The sealed reward:</p>
+    <div class="env" data-action="rewardOpen">✉️</div>
+    <div id="rewardtext">${esc(state.view.challenge.rewardText || 'Set your reward in Settings!')}</div>
+    <div class="actions"><button class="btn ghost" data-action="celebClose">Close</button></div>`;
+  $('#reward').classList.add('open');
+}
+
+/* =====================================================================
+   Workout timer (wall-clock based — iOS freezes JS timers in background)
+   ===================================================================== */
+let timerIv = null;
+// One start-timestamp per slot, so timing both workouts (or forgetting one is
+// running) never discards the other's start time.
+function timerMap() {
+  try { return JSON.parse(localStorage.getItem('hard75_timers') || '{}') || {}; } catch (e) { return {}; }
+}
+function saveTimerMap(m) { localStorage.setItem('hard75_timers', JSON.stringify(m)); }
+function openTimer(slot) {
+  state.ui.timerTask = slot;
+  renderTimer();
+  $('#timer').classList.add('open');
+}
+function renderTimer() {
+  const slot = state.ui.timerTask;
+  const startMs = timerMap()[slot];
+  const running = typeof startMs === 'number';
+  const elapsed = running ? Math.max(0, nowMs() - startMs) : 0;
+  const mm = Math.floor(elapsed / 60000), ss = Math.floor((elapsed % 60000) / 1000);
+  const otherRunning = typeof timerMap()[slot === 1 ? 2 : 1] === 'number';
+  $('#timer').innerHTML = `
+    <h1 style="font-size:20px">Workout #${slot}</h1>
+    <div class="tval">${pad2(mm)}:${pad2(ss)}</div>
+    <p>${running ? 'Running — safe to lock your phone; time is wall-clock.' : 'At least 45 minutes.'}</p>
+    ${otherRunning ? `<p class="muted">⏱ Workout #${slot === 1 ? 2 : 1}'s timer is also running.</p>` : ''}
+    <div class="actions">
+      ${running
+        ? `<button class="btn primary" data-action="timerStop">Finish (${Math.max(1, Math.round(elapsed / 60000))} min)</button>
+           <button class="btn ghost" data-action="timerCancel">Discard</button>`
+        : `<button class="btn primary" data-action="timerStart">Start</button>`}
+      <button class="btn ghost" data-action="timerClose">Close</button>
+    </div>`;
+  clearInterval(timerIv);
+  if (running) timerIv = setInterval(renderTimer, 1000);
+}
+
+/* =====================================================================
+   Delegated actions
+   ===================================================================== */
+function currentWorkout(slot) {
+  const d = today();
+  return slot === 1
+    ? { done: !!d.workout1_done, minutes: d.workout1_min, outdoor: !!d.workout1_outdoor }
+    : { done: !!d.workout2_done, minutes: d.workout2_min, outdoor: !!d.workout2_outdoor };
+}
+
+const ACTIONS = {
+  goto: (arg) => { location.hash = arg; },
+  obOpen: () => openOnboarding(),
+  obNext: () => { if (ob.step === 1) ob.name = $('#ob-name')?.value.trim() || ob.name; if (ob.step === 3) ob.reward = $('#ob-reward')?.value || ''; ob.step++; renderOnboarding(); },
+  obBack: () => { if (ob.step === 3) ob.reward = $('#ob-reward')?.value || ''; ob.step = Math.max(0, ob.step - 1); renderOnboarding(); },
+  obMode: (arg) => { ob.mode = arg; renderOnboarding(); },
+  obFinish: (arg) => finishOnboarding(arg),
+
+  dietToggle: () => { haptic(); dispatch('set_task', { field: 'diet', value: !today().diet }); },
+  readToggle: () => {
+    haptic();
+    const cur = today();
+    const book = state.view.books.find((b) => !b.finished_date);
+    dispatch('set_task', { field: 'reading', value: !cur.reading_done, pages: PAGES_GOAL, bookId: book?.id });
+  },
+  wadd: (arg) => { haptic(); dispatch('add_water', { oz: Number(arg) }); },
+  wkoDone: (arg) => {
+    haptic();
+    const slot = Number(arg);
+    const w = currentWorkout(slot);
+    const mins = Number($(`#wko${slot}min`)?.value) || w.minutes || 0;
+    dispatch('set_workout', { slot, done: !w.done, minutes: !w.done && mins === 0 ? WORKOUT_MIN : mins, outdoor: w.outdoor });
+  },
+  wkoOutdoor: (arg) => {
+    haptic();
+    const slot = Number(arg);
+    const w = currentWorkout(slot);
+    const mins = Number($(`#wko${slot}min`)?.value) || w.minutes || 0;
+    dispatch('set_workout', { slot, done: w.done, minutes: mins, outdoor: !w.outdoor });
+  },
+  timerOpen: (arg) => openTimer(Number(arg)),
+  timerClose: () => { clearInterval(timerIv); $('#timer').classList.remove('open'); },
+  timerStart: () => { const m = timerMap(); m[state.ui.timerTask] = nowMs(); saveTimerMap(m); renderTimer(); },
+  timerCancel: () => { const m = timerMap(); delete m[state.ui.timerTask]; saveTimerMap(m); renderTimer(); },
+  timerStop: () => {
+    const slot = state.ui.timerTask;
+    const m = timerMap();
+    const startMs = m[slot];
+    if (typeof startMs !== 'number') return;
+    delete m[slot];
+    saveTimerMap(m);
+    clearInterval(timerIv);
+    $('#timer').classList.remove('open');
+    const minutes = Math.max(1, Math.round((nowMs() - startMs) / 60000));
+    const w = currentWorkout(slot);
+    dispatch('set_workout', { slot, done: true, minutes, outdoor: w.outdoor });
+    toast(minutes >= WORKOUT_MIN ? `💪 Workout #${slot}: ${minutes} min` : `Logged ${minutes} min — needs ${WORKOUT_MIN}+ to count`);
+  },
+
+  photoCapture: () => $('#camfile').click(),
+  pcSave: () => savePendingPhoto(),
+  pcCancel: () => { pendingCapture = null; $('#pconfirm').classList.remove('open'); $('#camfile').click(); },
+  photoOpen: (arg) => openPhotoViewer(arg),
+  pviewClose: () => { clearInterval(lapseTimer); $('#pview').classList.remove('open'); },
+  timelapse: () => runTimelapse(),
+  pShareToggle: (arg) => {
+    const p = state.view.photosByDate[arg];
+    if (!p) return;
+    const share = !p.shared;
+    idbGet('photos', p.id).then((rec) => { if (rec) { rec.share = share; idbPut('photos', rec); } });
+    dispatch('set_photo_shared', { photoId: p.id, shared: share }, { date: arg });
+    $('#pview').classList.remove('open');
+    toast(share ? '💞 Shared with partner' : '🔒 Now private');
+  },
+
+  poke: () => { haptic(); dispatch('poke', {}); toast('👉 Poke sent'); },
+  reactOpen: (arg, el) => openEmojiBar(arg, el),
+  reactPick: (arg) => {
+    $('#emojibar').style.display = 'none';
+    haptic();
+    floatEmoji(arg);
+    dispatch('react', { emoji: arg, targetDate: state.view.partner?.todayDate, task: reactTarget });
+  },
+
+  bookAdd: () => {
+    const title = $('#bk-title')?.value.trim();
+    if (!title) { toast('Add a title'); return; }
+    dispatch('add_book', { bookId: uuid(), title, author: $('#bk-author')?.value.trim() || null });
+  },
+  bookFinish: (arg) => dispatch('finish_book', { bookId: arg }),
+
+  resetConfirm: (arg) => {
+    $('#resetov').classList.remove('open');
+    state.ui.resetShowing = false;
+    dispatch('reset', { failedDate: arg, newStartDate: effectiveToday() });
+    toast('Day 1. Let\'s go again. 💪');
+  },
+  celebClose: () => { $('#celebrate').classList.remove('open'); $('#reward').classList.remove('open'); },
+  rewardShow: () => showRewardReveal(),
+  rewardOpen: () => { $('#rewardtext').style.display = 'block'; confetti(60); haptic(); },
+  rewardEdit: () => {
+    const text = prompt('Shared reward (sealed until Day 75):');
+    if (text && text.trim()) { dispatch('set_reward', { text: text.trim() }); toast('🎁 Sealed.'); }
+  },
+  editToday: () => { state.ui.editDate = null; render(); },
+  tzUpdate: () => dispatch('set_settings', { timezone: deviceTZ() }),
+
+  syncNowBtn: () => syncNow('manual'),
+  pushEnable: async () => {
+    const r = await pushSubscribe(true);
+    if (r === 'granted') toast('🔔 Notifications enabled');
+    else if (r === 'notinstalled') toast('📲 Install to Home Screen first');
+    else if (r === 'denied') toast('🚫 Permission denied');
+    else toast('⚠️ Could not subscribe');
+    renderIf('#/settings');
+  },
+  pushTest: async () => {
+    try { await apiFetch('/hard/push/test', { method: 'POST' }); toast('Sent — should arrive momentarily'); }
+    catch (e) { toast('⚠️ Test failed'); }
+  },
+  pushResub: async () => {
+    try {
+      const reg = await navigator.serviceWorker.ready;
+      const sub = await reg.pushManager.getSubscription();
+      if (sub) {
+        await apiFetch('/hard/push/subscribe', { method: 'DELETE', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ endpoint: sub.endpoint }) }).catch(() => {});
+        await sub.unsubscribe();
+      }
+      const r = await pushSubscribe(true);
+      toast(r === 'granted' ? '✅ Re-subscribed' : '⚠️ Failed: ' + r);
+    } catch (e) { toast('⚠️ Failed'); }
+  },
+  signOut: () => { if (confirm('Sign out?')) doSignOut(false); },
+  signOutFull: () => { if (confirm('Sign out AND delete local data (queued actions, photos) from this device?')) doSignOut(true); },
+};
+
+const CHANGES = {
+  wkoMin: (el) => {
+    const slot = Number(el.dataset.arg);
+    const w = currentWorkout(slot);
+    const minutes = Math.max(0, Math.min(600, Number(el.value) || 0));
+    dispatch('set_workout', { slot, done: w.done || minutes >= WORKOUT_MIN, minutes, outdoor: w.outdoor });
+  },
+  setName: (el) => { const v = el.value.trim(); if (v) dispatch('set_settings', { displayName: v }); },
+  setGrace: (el) => {
+    const g = Math.max(0, Math.min(720, Number(el.value) || 0));
+    dispatch('set_settings', { graceMinutes: g });
+  },
+  modeToggle: (el) => {
+    const toTeam = el.checked;
+    if (toTeam && !confirm('Team mode: if EITHER of you misses a single task, you BOTH restart at Day 1. Enable?')) {
+      el.checked = false;
+      return;
+    }
+    dispatch('set_mode', { mode: toTeam ? 'team' : 'solo' });
+  },
+  measWeight: (el) => {
+    const raw = parseFloat(el.value);
+    if (!isFinite(raw)) return;
+    const kg = wToKg(raw);
+    if (kg < 20 || kg > 300) { toast('⚠️ Weight looks off — check the units'); return; }
+    dispatch('log_measurement', { weightKg: kg });
+  },
+  measFat: (el) => {
+    const raw = parseFloat(el.value);
+    if (!isFinite(raw)) return;
+    if (raw < 1 || raw > 75) { toast('⚠️ Body fat % looks off'); return; }
+    dispatch('log_measurement', { fatPct: raw });
+  },
+  unitsSel: (el) => pushPrefs((p) => { p.units = el.value === 'kg' ? 'kg' : 'lb'; }),
+  shareMeas: (el) => pushPrefs((p) => { p.shareMeasurements = el.checked; }),
+  notifToggle: (el) => pushPrefs((p) => { p.notif = p.notif || {}; p.notif[el.dataset.arg] = el.checked; }),
+  remTime: (el) => pushPrefs((p) => { p.reminderTimes = el.value ? [el.value] : []; }),
+  bedtime: (el) => pushPrefs((p) => { p.bedtimeNudgeMin = Math.max(0, Math.min(240, Number(el.value) || 0)); }),
+  atrisk: (el) => pushPrefs((p) => { p.atRiskTime = el.value || undefined; }),
+  quietStart: (el) => pushPrefs((p) => { p.quietHours = { ...(p.quietHours || {}), start: el.value }; }),
+  quietEnd: (el) => pushPrefs((p) => { p.quietHours = { ...(p.quietHours || {}), end: el.value }; }),
+};
+
+document.body.addEventListener('click', (e) => {
+  const el = e.target.closest('[data-action]');
+  if (!el) return;
+  const fn = ACTIONS[el.dataset.action];
+  if (fn) { e.preventDefault(); fn(el.dataset.arg, el, e); }
+});
+document.body.addEventListener('change', (e) => {
+  const el = e.target.closest('[data-change]');
+  if (!el) return;
+  const fn = CHANGES[el.dataset.change];
+  if (fn) fn(el);
+});
+$('#camfile').addEventListener('change', (e) => {
+  onCameraFile(e.target.files[0]);
+  e.target.value = '';
+});
+
+/* =====================================================================
+   Rollover + lifecycle + boot
+   ===================================================================== */
+function checkRollover() {
+  if (!state.view) return;
+  const t = effectiveToday();
+  if (t !== state.ui.todayDate) {
+    state.ui.editDate = null;
+    deriveToday();
+    checkReset();
+    render();
+    updateBadge();
+  }
+}
+
+window.addEventListener('online', () => { renderSyncPill(); syncNow('online'); });
+window.addEventListener('offline', () => renderSyncPill());
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden) { conn.dispose(); return; }
+  checkRollover();
+  syncNow('foreground').then(() => conn.connect());
+  pushReconcile();
+});
+setInterval(() => { checkRollover(); renderSyncPill(); }, 30000);
+
+async function afterSignIn() {
+  updateBadge();
+  if (!state.view.me.started) {
+    await syncNow('launch'); // the server may know about an existing challenge
+    if (!state.view.me.started && !state.queue.some((a) => a.type === 'start_challenge')) openOnboarding();
+  } else {
+    syncNow('launch');
+  }
+  checkReset();
+  checkCelebrations();
+  conn.connect();
+  pushReconcile();
+  if (navigator.storage?.persist) navigator.storage.persist().catch(() => {});
+}
+
+(async function boot() {
+  if ('serviceWorker' in navigator && location.protocol.startsWith('http')) {
+    try { navigator.serviceWorker.register('sw.js'); } catch (e) {}
+  }
+  // A blocked IDB open (another tab mid-versionchange) must degrade to
+  // online-only, never hang the boot.
+  try {
+    await Promise.race([idbOpen(), new Promise((_, rej) => setTimeout(() => rej(new Error('idb timeout')), 3000))]);
+  } catch (e) { /* private mode / blocked — app still works, without offline durability */ }
+  if (_db) {
+    const cached = await kvGet('cachedState').catch(() => null);
+    if (cached?.snapshot) state.server = cached.snapshot;
+    state.ui.celebrated = (await kvGet('celebrated').catch(() => null)) || {};
+    state.ui.lastSyncAt = (await kvGet('lastSyncAt').catch(() => null)) || null;
+    state.queue = ((await idbAll('queue').catch(() => [])) || []).sort((a, b) => a.createdAt - b.createdAt);
+  }
+  rebuildView();
+  setRoute(location.hash || '#/today');
+  updateBadge();
+  if (!state.session) { $('#signin').classList.add('open'); return; }
+  afterSignIn();
+})();
+
+// Debug surface (includes the session token via `state`) — only exposed on
+// localhost or with an explicit opt-in flag, never by default in production.
+if (location.hostname === 'localhost' || localStorage.getItem('hard75_debug')) {
+  window.__dbg = {
+    state, dispatch, syncNow, checkRollover, checkReset,
+    forceNow: (v) => { window.__forceNow = v; checkRollover(); },
+  };
+}
+</script>
+</body>
+</html>

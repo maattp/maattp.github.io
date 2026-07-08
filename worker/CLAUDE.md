@@ -1,16 +1,19 @@
 # Worker
 
-Cloudflare Worker providing a KV storage API and the Fable Kart multiplayer room
-backend. Built with Hono and deployed via Wrangler.
+Cloudflare Worker providing a KV storage API, the photos backend, the Fable
+Kart / Mahjong multiplayer rooms, and the 75 Hard couples-tracker backend.
+Built with Hono and deployed via Wrangler.
 
 ## Stack
 
-- **Runtime:** Cloudflare Workers
+- **Runtime:** Cloudflare Workers (default export is `{ fetch, scheduled }` —
+  the `scheduled` cron handler lives in `src/hardcron.ts`)
 - **Framework:** Hono
-- **Storage:** Cloudflare KV (bound as `KV`)
-- **Realtime:** `Kart3Room` Durable Object (`src/kart3room.ts`, SQLite-backed,
-  WebSocket hibernation)
-- **Auth:** Google JWT verification (single-user lockdown) for `/kv/*` etc.
+- **Storage:** KV (`KV`), D1 (`DB`, database `photos-db`), R2 (`PHOTOS`)
+- **Realtime:** `Kart3Room`, `MahjongRoom`, `HardRoom` Durable Objects
+  (SQLite-backed, WebSocket hibernation)
+- **Auth:** Google ID token verified once at `POST /auth` → opaque session UUID
+  in KV (1yr TTL); every authed request re-checks the `ALLOWED_EMAILS` allowlist
 
 ## API
 
@@ -72,18 +75,68 @@ Engine tests: `node worker/test/core.test.mjs`.
 
 ## Auth
 
-Google ID tokens are verified using Google's public JWKS keys via the Web Crypto API. The middleware checks:
+Google ID tokens are verified using Google's public JWKS keys via the Web Crypto API at `POST /auth`, which then issues an opaque session UUID (KV, 1-year TTL). Verification checks:
 - JWT signature
 - Issuer (`accounts.google.com`)
 - Audience (must match `GOOGLE_CLIENT_ID`)
-- Expiry
-- Email (must match `ALLOWED_EMAIL`)
+- Expiry + `email_verified`
+- Email must be in `ALLOWED_EMAILS` (comma-separated allowlist, re-checked on
+  every session-authed request — removing an email locks out live sessions)
+
+## 75 Hard (`/hard/*` — see `apps/75hard/`)
+
+Two-person couples tracker. All routes session-gated except the WS upgrade.
+
+- **Files:** `src/hard.ts` (routes), `src/hardroom.ts` (`HardRoom` DO),
+  `src/hardlogic.ts` (pure day-boundary/reset engine — **mirrored verbatim in
+  the app's inline JS; keep both in sync**), `src/hardpush.ts` (Web Push),
+  `src/hardcron.ts` (cron), `schema-hard.sql` (D1 tables, all `hard_`-prefixed).
+- **Architecture:** D1 is the source of truth. Every mutation flows through the
+  single `HardRoom` DO instance (`idFromName("couple")`) whose input gate
+  serializes writes; it holds the WebSockets and broadcasts after commit. The DO
+  stores nothing authoritative.
+- **Sync:** `POST /hard/sync` takes batched client actions
+  `{actionId, type, payload, date, localTimestamp, timezone}`; idempotent via
+  the `hard_actions` ledger; per-action acks `applied|duplicate|late|rejected`.
+  Day finalization (miss → reset, milestones, day-75 completion) runs lazily on
+  every apply/state AND on the cron tick; team mode resets both partners in one
+  `db.batch()`.
+- **WS:** `GET /hard/ws?ticket=` — ticket from `POST /hard/ws-ticket` (60s,
+  single-use, in KV). Registered BEFORE cors in index.ts (immutable 101
+  headers, same as kart3).
+- **Photos:** R2 keys `hard/original/<id>` + `hard/thumb/<id>`; metadata in
+  `hard_photos`; partner can read only `shared=1` photos.
+- **Push:** hand-rolled RFC 8291 (aes128gcm) + RFC 8292 (VAPID) directly on
+  WebCrypto in `hardpush.ts` — deliberately no library: the available
+  webcrypto packages emit the legacy `aesgcm` coding, and Apple's push
+  service requires `aes128gcm`. `test/push.test.mjs` proves the round-trip
+  by decrypting a payload with the subscriber's private key. Subs in
+  `hard_push_subs` (endpoint PK); 404/410 responses prune the row; other
+  failures are logged and dropped (push is best-effort by design).
+- **Cron:** `*/15 * * * *` — per-user local-time reminders, bedtime nudge,
+  at-risk partner warnings (exactly-once via `hard_notif_log` PK +
+  `INSERT OR IGNORE`), finalization kick, table pruning.
+- **Tests** (first three run in CI before every deploy):
+  `node --experimental-strip-types worker/test/hard.test.mjs` (pure logic);
+  `worker/test/hard-mirror.test.mjs` — **the enforcement of the client/server
+  mirror invariant above** (extracts the app's `==MIRROR==` block and runs
+  randomized vectors against hardlogic.ts — do not skip/disable it);
+  `worker/test/push.test.mjs` (Web Push crypto round-trip);
+  `worker/test/hard.integration.mjs` (manual, against `wrangler dev
+  --test-scheduled`; see file header for KV session seeding); headless
+  browser drills in `apps/75hard/test/` (manual, see its README).
 
 ## Environment Variables
 
 Set in `wrangler.toml`:
 - `GOOGLE_CLIENT_ID` — Google OAuth client ID
-- `ALLOWED_EMAIL` — the single email allowed to access the API
+- `ALLOWED_EMAILS` — comma-separated allowlist (the couple's two accounts)
+- `VAPID_PUBLIC_KEY` / `VAPID_SUBJECT` — Web Push VAPID config
+
+Secrets (NOT in wrangler.toml):
+- `VAPID_PRIVATE_KEY` — `wrangler secret put VAPID_PRIVATE_KEY` in production;
+  `worker/.dev.vars` (gitignored) for local dev. The keypair was generated at
+  setup; the public half is baked into `wrangler.toml` and `apps/75hard/index.html`.
 
 ## Development
 
