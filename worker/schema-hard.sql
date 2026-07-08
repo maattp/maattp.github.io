@@ -71,6 +71,18 @@ CREATE TABLE IF NOT EXISTS hard_photos (
 );
 CREATE INDEX IF NOT EXISTS idx_hard_photos_email_date ON hard_photos(email, date);
 
+-- Scale measurements: one row per user-local day, re-weighing updates it.
+-- Stored in kg (canonical); the client converts per its unit preference.
+-- Private by default — the partner sees them only when prefs.shareMeasurements.
+CREATE TABLE IF NOT EXISTS hard_measurements (
+  email TEXT NOT NULL,
+  date TEXT NOT NULL,                  -- user-LOCAL 'YYYY-MM-DD'
+  weight_kg REAL,
+  fat_pct REAL,
+  updated_at TEXT,
+  PRIMARY KEY (email, date)
+);
+
 -- Activity feed. type: task_done|day_complete|reset|milestone|poke|reaction|
 -- photo_shared|challenge_complete|late_action
 CREATE TABLE IF NOT EXISTS hard_events (

@@ -71,6 +71,8 @@ export type NotifPrefs = {
   atRiskTime?: string; // "HH:MM" local — if still incomplete then, warn partner
   quietHours?: { start: string; end: string } | null;
   notif?: Record<string, boolean>; // per-type on/off: poke, partnerTask, partnerDay, milestone, reset, atRisk, reminders
+  shareMeasurements?: boolean; // weight/fat % visible to partner (default false)
+  units?: string; // client display preference: 'lb' | 'kg'
 };
 
 export const TASK_LABELS: Record<string, string> = {

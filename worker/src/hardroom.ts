@@ -513,6 +513,24 @@ export class HardRoom {
           }
           break;
         }
+        // Scale entry — not one of the five tasks, so no completion rules and
+        // no late-window: back-filling yesterday's weigh-in is fine (the ±48h
+        // stamp sanity check still applies). One row per day; a re-weigh
+        // updates it, merging so weight-only doesn't erase fat % and vice versa.
+        case "log_measurement": {
+          const w = p.weightKg == null ? null : Math.round(Number(p.weightKg) * 100) / 100;
+          const f = p.fatPct == null ? null : Math.round(Number(p.fatPct) * 10) / 10;
+          if (w == null && f == null) return { status: "rejected", error: "empty measurement" };
+          if (w != null && !(w >= 20 && w <= 300)) return { status: "rejected", error: "bad weight" };
+          if (f != null && !(f >= 1 && f <= 75)) return { status: "rejected", error: "bad fat %" };
+          const cur = await db
+            .prepare("SELECT weight_kg, fat_pct FROM hard_measurements WHERE email = ? AND date = ?")
+            .bind(email, a.date).first<{ weight_kg: number | null; fat_pct: number | null }>();
+          stmts.push(db.prepare(
+            "INSERT OR REPLACE INTO hard_measurements (email, date, weight_kg, fat_pct, updated_at) VALUES (?, ?, ?, ?, ?)",
+          ).bind(email, a.date, w ?? cur?.weight_kg ?? null, f ?? cur?.fat_pct ?? null, new Date(nowMs).toISOString()));
+          break;
+        }
         case "reset": {
           // Client-side reset acknowledgement. Finalization is authoritative;
           // recording the ack in the ledger is all that's needed.
@@ -546,14 +564,17 @@ export class HardRoom {
     const today = effectiveDate(nowMs, tz, grace);
     const pToday = pUser ? effectiveDate(nowMs, pUser.timezone, pUser.grace_minutes) : null;
 
-    const [daysQ, booksQ, photosQ, pDayQ, pPhotosQ, eventsQ] = await db.batch([
+    const [daysQ, booksQ, photosQ, pDayQ, pPhotosQ, eventsQ, measQ, pMeasQ] = await db.batch([
       db.prepare("SELECT * FROM hard_days WHERE email = ? ORDER BY date DESC LIMIT 100").bind(email),
       db.prepare("SELECT * FROM hard_books WHERE email = ?").bind(email),
       db.prepare("SELECT id, date, shared FROM hard_photos WHERE email = ?").bind(email),
       db.prepare("SELECT * FROM hard_days WHERE email = ? AND date = ?").bind(partnerEmail ?? "", pToday ?? ""),
       db.prepare("SELECT id, date FROM hard_photos WHERE email = ? AND shared = 1").bind(partnerEmail ?? ""),
       db.prepare("SELECT * FROM hard_events ORDER BY created_at DESC LIMIT 50"),
+      db.prepare("SELECT date, weight_kg, fat_pct FROM hard_measurements WHERE email = ? ORDER BY date DESC LIMIT 120").bind(email),
+      db.prepare("SELECT date, weight_kg, fat_pct FROM hard_measurements WHERE email = ? ORDER BY date DESC LIMIT 120").bind(partnerEmail ?? ""),
     ]);
+    const partnerShares = parsePrefs(pUser?.prefs).shareMeasurements === true;
 
     const days = (daysQ.results ?? []) as DayRow[];
     const todayRow = days.find((d) => d.date === today) ?? emptyDay(email, today);
@@ -593,6 +614,7 @@ export class HardRoom {
         days,
         books: (booksQ.results ?? []) as BookRow[],
         photosByDate,
+        measurements: (measQ.results ?? []) as { date: string; weight_kg: number | null; fat_pct: number | null }[],
       },
       partner: pUser
         ? {
@@ -605,6 +627,10 @@ export class HardRoom {
             today: redactDay(pDayRow),
             updatedAt: pDayRow?.updated_at ?? null,
             sharedPhotosByDate,
+            // weight/fat stay private unless the partner opted in
+            measurements: partnerShares
+              ? ((pMeasQ.results ?? []) as { date: string; weight_kg: number | null; fat_pct: number | null }[])
+              : null,
           }
         : null,
       events: ((eventsQ.results ?? []) as { id: string; email: string; type: string; payload: string; created_at: string }[]).map((e) => ({

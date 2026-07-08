@@ -204,5 +204,42 @@ const startBatch = [
   ok(data.partner.every((r) => Object.keys(r).sort().join(',') === 'complete,date,finalized'), 'partner history redacted');
 }
 
+/* ===== measurements: merge, validation, partner privacy ===== */
+{
+  const today = '2026-07-08';
+  // weight only, then fat only — must merge into one row
+  const r1 = await api('test-matt', 'POST', '/hard/sync', {
+    actions: [act('log_measurement', { weightKg: 82.5 }, today, Date.now())],
+  });
+  const r2 = await api('test-matt', 'POST', '/hard/sync', {
+    actions: [act('log_measurement', { fatPct: 18.2 }, today, Date.now())],
+  });
+  const m = r2.data.state.me.measurements.find((x) => x.date === today);
+  eq(m?.weight_kg, 82.5, 'weight persisted');
+  eq(m?.fat_pct, 18.2, 'fat merged onto same row without erasing weight');
+  // re-weigh updates
+  const r3 = await api('test-matt', 'POST', '/hard/sync', {
+    actions: [act('log_measurement', { weightKg: 82.1 }, today, Date.now())],
+  });
+  const m3 = r3.data.state.me.measurements.find((x) => x.date === today);
+  eq(m3?.weight_kg, 82.1, 're-weigh updates the day');
+  eq(m3?.fat_pct, 18.2, 're-weigh keeps fat %');
+  // validation
+  const bad = await api('test-matt', 'POST', '/hard/sync', {
+    actions: [act('log_measurement', { weightKg: 999 }, today, Date.now()), act('log_measurement', {}, today, Date.now())],
+  });
+  eq(bad.data.results[0].status, 'rejected', 'absurd weight rejected');
+  eq(bad.data.results[1].status, 'rejected', 'empty measurement rejected');
+  // privacy: partner sees nothing until Matt opts in
+  const ting1 = await api('test-ting', 'GET', '/hard/state');
+  eq(ting1.data.partner.measurements, null, 'measurements private by default');
+  await api('test-matt', 'POST', '/hard/sync', {
+    actions: [act('set_settings', { prefs: { shareMeasurements: true } }, today, Date.now())],
+  });
+  const ting2 = await api('test-ting', 'GET', '/hard/state');
+  ok(Array.isArray(ting2.data.partner.measurements) && ting2.data.partner.measurements.some((x) => x.weight_kg === 82.1),
+    'shared measurements visible to partner after opt-in');
+}
+
 console.log(`hard.integration: ${pass} passed, ${fail} failed`);
 if (fail) { for (const f of failures) console.log('  FAIL:', f); process.exit(1); }
