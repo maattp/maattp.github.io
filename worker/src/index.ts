@@ -156,7 +156,10 @@ app.get("/hard/ws", async (c) => {
   if (!/^[\w-]{16,64}$/.test(ticket)) return c.json({ error: "forbidden" }, 403);
   const email = await c.env.KV.get(`${WS_TICKET_PREFIX}${ticket}`);
   if (!email) return c.json({ error: "forbidden" }, 403);
-  await c.env.KV.delete(`${WS_TICKET_PREFIX}${ticket}`); // single use
+  // Single use. KV get→delete isn't atomic, so two simultaneous upgrades with
+  // the same ticket could both pass — worst case is a duplicate connection
+  // under the same (already-authenticated) identity, so acceptable.
+  await c.env.KV.delete(`${WS_TICKET_PREFIX}${ticket}`);
   const stub = c.env.HARD_ROOM.get(c.env.HARD_ROOM.idFromName("couple"));
   const url = new URL("https://do/ws");
   url.searchParams.set("email", email);

@@ -19,11 +19,12 @@ type CronUser = {
   completed_at: string | null;
 };
 
-export async function scheduled(_controller: ScheduledController, env: HardEnv, ctx: ExecutionContext): Promise<void> {
-  // 1. Finalization kick — the DO no-ops when nothing is due, and handles
-  //    grace/team logic itself.
+export async function scheduled(_controller: ScheduledController, env: HardEnv, _ctx: ExecutionContext): Promise<void> {
+  // 1. Finalization kick — the DO no-ops if nothing is due, and handles
+  //    grace/team logic itself. Awaited so the reminder pass below reads
+  //    post-finalize state rather than racing it.
   const stub = env.HARD_ROOM.get(env.HARD_ROOM.idFromName("couple"));
-  ctx.waitUntil(stub.fetch("https://do/finalize", { method: "POST" }).catch(() => {}));
+  await stub.fetch("https://do/finalize", { method: "POST" }).catch(() => {});
 
   const now = Date.now();
   const { results } = await env.DB.prepare(

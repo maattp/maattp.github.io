@@ -1,8 +1,13 @@
 // 75 Hard: HardRoom Durable Object. A single instance (idFromName("couple"))
-// serializes ALL mutations — the input gate makes idempotency checks,
-// finalization, and team-mode double-resets race-free. D1 is the sole source
-// of truth; this DO stores nothing authoritative and holds the live
-// WebSockets (hibernation API) for broadcast-after-commit.
+// serializes ALL mutations. NOTE: the DO input gate only covers
+// `state.storage` awaits — D1 calls are external fetches, so every `await
+// env.DB...` is a yield point where a second request could interleave.
+// `runExclusive` therefore chains /apply and /finalize on an in-memory
+// promise queue (safe: exactly one live instance exists per name), making
+// idempotency checks, finalization, and team-mode double-resets actually
+// race-free. D1 is the sole source of truth; this DO stores nothing
+// authoritative and holds the live WebSockets (hibernation API) for
+// broadcast-after-commit.
 
 import {
   type HardEnv, type HardAction, type DayRow, type Participant,
@@ -43,17 +48,31 @@ const json = (data: unknown, status = 200) =>
 export class HardRoom {
   private state: DurableObjectState;
   private env: HardEnv;
+  private mutationChain: Promise<unknown> = Promise.resolve();
 
   constructor(state: DurableObjectState, env: HardEnv) {
     this.state = state;
     this.env = env;
   }
 
+  // All mutating entry points run one-at-a-time. The chain never rejects
+  // (each link swallows its predecessor's error), so one failed request
+  // can't poison the queue.
+  private runExclusive<T>(fn: () => Promise<T>): Promise<T> {
+    const run = this.mutationChain.then(fn, fn);
+    this.mutationChain = run.catch(() => {});
+    return run;
+  }
+
   async fetch(request: Request): Promise<Response> {
     const url = new URL(request.url);
     if (url.pathname === "/ws") return this.handleWs(request, url);
-    if (url.pathname === "/apply" && request.method === "POST") return this.handleApply(request);
-    if (url.pathname === "/finalize" && request.method === "POST") return this.handleFinalize();
+    if (url.pathname === "/apply" && request.method === "POST") {
+      return this.runExclusive(() => this.handleApply(request));
+    }
+    if (url.pathname === "/finalize" && request.method === "POST") {
+      return this.runExclusive(() => this.handleFinalize());
+    }
     return json({ error: "not found" }, 404);
   }
 
@@ -222,12 +241,12 @@ export class HardRoom {
       if (plan.completed75) events.push(this.ev(email, "milestone", { day: 75 }, nowMs));
     }
 
-    // Team mode: a miss restarts the partner too — their in-progress local day
-    // becomes Day 1 and any unfinalized days before it become moot.
+    // Team mode: any miss restarts BOTH partners at their current local day —
+    // including a partner whose own plan already reset them, so the two
+    // streak starts can never drift apart when both missed in the same pass.
+    // These UPDATEs run after the per-plan ones in the same batch, so they win.
     if (teamReset) {
       for (const email of ctx.emails) {
-        const own = plans.find((p) => p.email === email);
-        if (own && own.plan.resets.length > 0) continue; // already reset by their own plan
         const part = ctx.parts.get(email);
         const user = ctx.users.get(email);
         if (!part || !user || part.completed_at || completedNow.has(email)) continue;
@@ -235,7 +254,8 @@ export class HardRoom {
         stmts.push(db.prepare(
           "UPDATE hard_participants SET streak_start_date = ?, last_finalized_date = ? WHERE email = ?",
         ).bind(today, prevDay(today), email));
-        events.push(this.ev(email, "reset", { team: true, causedByPartner: true }, nowMs));
+        const ownMiss = plans.some((p) => p.email === email && p.plan.resets.length > 0);
+        if (!ownMiss) events.push(this.ev(email, "reset", { team: true, causedByPartner: true }, nowMs));
       }
     }
 
@@ -371,6 +391,9 @@ export class HardRoom {
     const stmts: D1PreparedStatement[] = [];
     let status: ActionResult["status"] = "applied";
 
+    // Rejected actions deliberately skip the ledger: rejections are pure
+    // payload/stamp checks, so a replay deterministically re-rejects — and the
+    // client clears its queue row on any ack status, so nothing retries anyway.
     const ledger = (result: string) =>
       db.prepare("INSERT OR IGNORE INTO hard_actions (action_id, email, type, result, created_at) VALUES (?, ?, ?, ?, ?)")
         .bind(a.actionId, email, a.type, result, new Date(nowMs).toISOString());

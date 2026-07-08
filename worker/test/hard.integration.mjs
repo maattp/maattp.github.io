@@ -241,5 +241,62 @@ const startBatch = [
     'shared measurements visible to partner after opt-in');
 }
 
+/* ===== concurrency: same actionId raced in parallel → applied exactly once ===== */
+{
+  const todayNY = new Intl.DateTimeFormat('en-CA', { timeZone: TZ, year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
+  const before = (await api('test-matt', 'GET', '/hard/state')).data.me.today.water_oz;
+  const a = act('add_water', { oz: 4 }, todayNY, Date.now());
+  const [r1, r2] = await Promise.all([
+    api('test-matt', 'POST', '/hard/sync', { actions: [a] }),
+    api('test-matt', 'POST', '/hard/sync', { actions: [a] }),
+  ]);
+  const statuses = [r1.data.results[0].status, r2.data.results[0].status].sort();
+  eq(statuses.join('/'), 'applied/duplicate', 'raced identical action: exactly one applied');
+  const after = (await api('test-matt', 'GET', '/hard/state')).data.me.today.water_oz;
+  eq(after, before + 4, 'raced water delta counted exactly once');
+}
+
+/* ===== concurrency: finalize raced against apply/state → no duplicate reset events ===== */
+{
+  await Promise.all([
+    api('test-matt', 'GET', '/hard/state'),
+    api('test-ting', 'GET', '/hard/state'),
+    api('test-matt', 'GET', '/hard/state'),
+    api('test-ting', 'GET', '/hard/state'),
+  ]);
+  const { data } = await api('test-matt', 'GET', '/hard/state');
+  const resets = data.events.filter((e) => e.type === 'reset');
+  const keys = resets.map((e) => `${e.email}|${e.payload.date ?? 'partner'}|${e.payload.causedByPartner ?? false}`);
+  eq(new Set(keys).size, keys.length, 'no duplicate reset events after racing finalizes');
+}
+
+/* ===== team mode: BOTH partners miss in the same pass → streaks reconciled to today ===== */
+{
+  const todayOf = (tz) => new Intl.DateTimeFormat('en-CA', { timeZone: tz, year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
+  const back = (date, n) => new Date(Date.parse(date + 'T12:00:00Z') - n * 86400000).toISOString().slice(0, 10);
+  const now = Date.now();
+  const mToday = todayOf(TZ), tToday = todayOf('Asia/Taipei');
+  // both restart the challenge 3 days in the past with no logging → both have misses
+  await api('test-matt', 'POST', '/hard/sync', {
+    actions: [
+      { actionId: uuid(), type: 'start_challenge', payload: { startDate: back(mToday, 3), mode: 'team', timezone: TZ }, date: mToday, localTimestamp: now, timezone: TZ },
+      { actionId: uuid(), type: 'set_settings', payload: { graceMinutes: 0 }, date: mToday, localTimestamp: now, timezone: TZ },
+    ],
+  });
+  await api('test-ting', 'POST', '/hard/sync', {
+    actions: [
+      { actionId: uuid(), type: 'start_challenge', payload: { startDate: back(tToday, 3), timezone: 'Asia/Taipei' }, date: tToday, localTimestamp: now, timezone: 'Asia/Taipei' },
+      { actionId: uuid(), type: 'set_settings', payload: { graceMinutes: 0 }, date: tToday, localTimestamp: now, timezone: 'Asia/Taipei' },
+    ],
+  });
+  // lazy finalize on the next reads
+  const m = (await api('test-matt', 'GET', '/hard/state')).data;
+  const t = (await api('test-ting', 'GET', '/hard/state')).data;
+  eq(m.me.streakStartDate, todayOf(TZ), 'matt reconciled to his local today');
+  eq(t.me.streakStartDate, todayOf('Asia/Taipei'), 'ting reconciled to her local today');
+  eq(m.me.dayNumber, 1, 'matt back at day 1');
+  eq(t.me.dayNumber, 1, 'ting back at day 1');
+}
+
 console.log(`hard.integration: ${pass} passed, ${fail} failed`);
 if (fail) { for (const f of failures) console.log('  FAIL:', f); process.exit(1); }

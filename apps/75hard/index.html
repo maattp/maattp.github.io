@@ -346,7 +346,7 @@ const APP_VER = 'v1';
 const API = localStorage.getItem('hard75_api') || 'https://cloudflare-backend.maattp.workers.dev';
 const VAPID_PUBLIC_KEY = 'BEh-HVZvaC3p5R3vm9vaddvI-SvWAJ2N6kcocMcyOcaWhLDEgVc5bQjzKT8knGN509v8GOGDujwu2OoQfwdKiLs';
 const SKEY = 'hard75_session', EKEY = 'hard75_email';
-const WATER_GOAL = 128, PAGES_GOAL = 10, WORKOUT_MIN = 45, TOTAL_DAYS = 75;
+const PAGES_GOAL = 10, TOTAL_DAYS = 75; // WATER_GOAL / WORKOUT_MIN live in the mirror block
 
 const $ = (s) => document.querySelector(s);
 const uuid = () => (crypto.randomUUID ? crypto.randomUUID() : 'x' + Math.random().toString(36).slice(2) + Date.now());
@@ -383,7 +383,12 @@ function idbOpen() {
       if (!db.objectStoreNames.contains('photos')) db.createObjectStore('photos', { keyPath: 'photoId' });
       if (!db.objectStoreNames.contains('kv')) db.createObjectStore('kv', { keyPath: 'key' });
     };
-    rq.onsuccess = () => { _db = rq.result; res(_db); };
+    rq.onsuccess = () => {
+      _db = rq.result;
+      // Another tab upgrading/deleting the DB must not deadlock on us.
+      _db.onversionchange = () => { try { _db.close(); } catch (e) {} _db = null; };
+      res(_db);
+    };
     rq.onerror = () => rej(rq.error);
   });
 }
@@ -406,41 +411,46 @@ const kvSet = (key, value) => idbPut('kv', { key, value });
 /* =====================================================================
    Day engine — MIRRORS worker/src/hardlogic.ts (shared rules 1-5).
    The client's zone IS the user's zone, so plain Date methods apply.
+
+   ==MIRROR-START==
+   Everything between the MIRROR markers is a verbatim behavioral mirror of
+   worker/src/hardlogic.ts and is checked against it by
+   `node --experimental-strip-types worker/test/hard-mirror.test.mjs`.
+   Change both sides together; the block must stay self-contained (no
+   references to `state`, the DOM, or anything else outside it).
    ===================================================================== */
+const WATER_GOAL_M = 128, WORKOUT_MIN_M = 45;
 const pad2 = (n) => String(n).padStart(2, '0');
 function localDateStr(ms) {
   const d = new Date(ms);
   return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
 }
-function graceMin() { return state.view?.me?.graceMinutes ?? 180; }
-function effectiveToday() { return localDateStr(nowMs() - graceMin() * 60000); }
 const dateToUTC = (date) => { const [y, m, d] = date.split('-').map(Number); return Date.UTC(y, m - 1, d); };
 const addDays = (date, n) => new Date(dateToUTC(date) + n * 86400000).toISOString().slice(0, 10);
 const nextDay = (d) => addDays(d, 1);
 const prevDay = (d) => addDays(d, -1);
 const daysBetween = (a, b) => Math.round((dateToUTC(b) - dateToUTC(a)) / 86400000);
 const dayNumberOf = (start, date) => daysBetween(start, date) + 1;
-const fmtDate = (date) => { const d = new Date(dateToUTC(date)); return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', timeZone: 'UTC' }); };
 
-function emptyDay(date) {
+function emptyDay(email, date) {
   return {
-    date, diet: 0, reading_done: 0, pages: null, book_id: null,
+    email, date, diet: 0, reading_done: 0, pages: null, book_id: null,
     workout1_done: 0, workout1_min: 0, workout1_outdoor: 0,
     workout2_done: 0, workout2_min: 0, workout2_outdoor: 0,
     water_oz: 0, photo_id: null, finalized: 0, complete: 0, day_number: null, updated_at: null,
   };
 }
-const wDone = (d, s) => (s === 1 ? d.workout1_done && d.workout1_min >= WORKOUT_MIN : d.workout2_done && d.workout2_min >= WORKOUT_MIN);
+const wDone = (d, s) => !!(s === 1 ? d.workout1_done && d.workout1_min >= WORKOUT_MIN_M : d.workout2_done && d.workout2_min >= WORKOUT_MIN_M);
 function isDayComplete(d) {
   if (!d) return false;
   return !!(d.diet && d.reading_done && wDone(d, 1) && wDone(d, 2) &&
-    (d.workout1_outdoor || d.workout2_outdoor) && d.water_oz >= WATER_GOAL && d.photo_id);
+    (d.workout1_outdoor || d.workout2_outdoor) && d.water_oz >= WATER_GOAL_M && d.photo_id);
 }
 function missingTasks(d) {
   const out = [];
   if (!d) return ['diet', 'water', 'workout #1', 'workout #2', 'reading', 'photo'];
   if (!d.diet) out.push('diet');
-  if (d.water_oz < WATER_GOAL) out.push(`water (${WATER_GOAL - d.water_oz}oz left)`);
+  if (d.water_oz < WATER_GOAL_M) out.push(`water (${WATER_GOAL_M - d.water_oz}oz left)`);
   if (!wDone(d, 1)) out.push('workout #1');
   if (!wDone(d, 2)) out.push('workout #2');
   if (wDone(d, 1) && wDone(d, 2) && !d.workout1_outdoor && !d.workout2_outdoor) out.push('outdoor workout');
@@ -452,12 +462,61 @@ function remainingCount(d) {
   if (!d) return 5;
   let n = 0;
   if (!d.diet) n++;
-  if (d.water_oz < WATER_GOAL) n++;
+  if (d.water_oz < WATER_GOAL_M) n++;
   if (!(wDone(d, 1) && wDone(d, 2) && (d.workout1_outdoor || d.workout2_outdoor))) n++;
   if (!d.reading_done) n++;
   if (!d.photo_id) n++;
   return n;
 }
+const clampInt = (v, lo, hi) => {
+  const n = Math.round(Number(v));
+  return isFinite(n) ? Math.min(hi, Math.max(lo, n)) : lo;
+};
+// Same contract as the server reducer: returns the new row, or null if the
+// action is malformed.
+function applyDayActionM(day, a) {
+  const d = { ...day };
+  const p = a.payload ?? {};
+  switch (a.type) {
+    case 'set_task': {
+      if (p.field === 'diet') d.diet = p.value ? 1 : 0;
+      else if (p.field === 'reading') {
+        d.reading_done = p.value ? 1 : 0;
+        if (p.pages != null) d.pages = clampInt(p.pages, 0, 2000);
+        if (typeof p.bookId === 'string') d.book_id = p.bookId;
+      } else return null;
+      return d;
+    }
+    case 'set_workout': {
+      const slot = p.slot === 1 || p.slot === '1' ? 1 : p.slot === 2 || p.slot === '2' ? 2 : 0;
+      if (!slot) return null;
+      const done = p.done ? 1 : 0;
+      const min = clampInt(p.minutes, 0, 600);
+      const outdoor = p.outdoor ? 1 : 0;
+      if (slot === 1) { d.workout1_done = done; d.workout1_min = min; d.workout1_outdoor = outdoor; }
+      else { d.workout2_done = done; d.workout2_min = min; d.workout2_outdoor = outdoor; }
+      return d;
+    }
+    case 'add_water':
+      d.water_oz = clampInt(d.water_oz + clampInt(p.oz, -512, 512), 0, 1024);
+      return d;
+    case 'set_water':
+      d.water_oz = clampInt(p.oz, 0, 1024);
+      return d;
+    case 'attach_photo':
+      if (typeof p.photoId !== 'string' || !p.photoId) return null;
+      d.photo_id = p.photoId;
+      return d;
+    default:
+      return null;
+  }
+}
+/* ==MIRROR-END== */
+
+const WATER_GOAL = WATER_GOAL_M, WORKOUT_MIN = WORKOUT_MIN_M;
+function graceMin() { return state.view?.me?.graceMinutes ?? 180; }
+function effectiveToday() { return localDateStr(nowMs() - graceMin() * 60000); }
+const fmtDate = (date) => { const d = new Date(dateToUTC(date)); return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', timeZone: 'UTC' }); };
 
 /* ===== state ===== */
 const state = {
@@ -487,37 +546,16 @@ function defaultView() {
   };
 }
 
-// Mirrors the server's applyDayAction reducer (hardlogic.ts).
-function applyDayActionLocal(d, a) {
-  const p = a.payload || {};
-  switch (a.type) {
-    case 'set_task':
-      if (p.field === 'diet') d.diet = p.value ? 1 : 0;
-      else if (p.field === 'reading') {
-        d.reading_done = p.value ? 1 : 0;
-        if (p.pages != null) d.pages = p.pages;
-        if (typeof p.bookId === 'string') d.book_id = p.bookId;
-      }
-      return;
-    case 'set_workout': {
-      const done = p.done ? 1 : 0, min = Math.max(0, Math.round(p.minutes) || 0), out = p.outdoor ? 1 : 0;
-      if (p.slot === 1) { d.workout1_done = done; d.workout1_min = min; d.workout1_outdoor = out; }
-      else { d.workout2_done = done; d.workout2_min = min; d.workout2_outdoor = out; }
-      return;
-    }
-    case 'add_water': d.water_oz = Math.min(1024, Math.max(0, d.water_oz + (Math.round(p.oz) || 0))); return;
-    case 'set_water': d.water_oz = Math.min(1024, Math.max(0, Math.round(p.oz) || 0)); return;
-    case 'attach_photo': d.photo_id = p.photoId; return;
-  }
-}
 const DAY_TYPES = new Set(['set_task', 'set_workout', 'add_water', 'set_water', 'attach_photo']);
 
 function applyLocal(view, a) {
   const p = a.payload || {};
   if (DAY_TYPES.has(a.type)) {
-    const d = view.days[a.date] || (view.days[a.date] = emptyDay(a.date));
+    const d = view.days[a.date] || emptyDay(state.email || '', a.date);
     if (d.finalized) return; // late — server will confirm
-    applyDayActionLocal(d, a);
+    const next = applyDayActionM(d, a); // the mirrored reducer
+    if (!next) return;
+    view.days[a.date] = next;
     if (a.type === 'attach_photo') {
       view.photosByDate[a.date] = view.photosByDate[a.date] || { id: p.photoId, shared: 0 };
       view.photosByDate[a.date].id = p.photoId;
@@ -598,12 +636,14 @@ function deriveToday() {
   const v = state.view;
   state.ui.todayDate = effectiveToday();
   if (v.me.started && v.me.streakStartDate) {
-    v.me.dayNumber = v.me.completedAt ? TOTAL_DAYS : Math.max(1, dayNumberOf(v.me.streakStartDate, state.ui.todayDate));
+    // May be <= 0 before a future start date ("start tomorrow") — consumers
+    // treat dayNumber < 1 as "not yet started".
+    v.me.dayNumber = v.me.completedAt ? TOTAL_DAYS : dayNumberOf(v.me.streakStartDate, state.ui.todayDate);
   } else v.me.dayNumber = 0;
-  if (!v.days[state.ui.todayDate]) v.days[state.ui.todayDate] = emptyDay(state.ui.todayDate);
+  if (!v.days[state.ui.todayDate]) v.days[state.ui.todayDate] = emptyDay(state.email || '', state.ui.todayDate);
 }
 
-function today() { return state.view.days[state.ui.editDate || state.ui.todayDate] || emptyDay(state.ui.todayDate); }
+function today() { return state.view.days[state.ui.editDate || state.ui.todayDate] || emptyDay(state.email || '', state.ui.todayDate); }
 
 /* ===== scale measurements (stored kg, displayed per unit pref) ===== */
 const LB_PER_KG = 2.20462;
@@ -868,7 +908,7 @@ async function pushReconcile() {
 function updateBadge() {
   if (!('setAppBadge' in navigator)) return;
   const v = state.view;
-  const n = v?.me?.started && !v.me.completedAt ? remainingCount(v.days[state.ui.todayDate]) : 0;
+  const n = v?.me?.started && !v.me.completedAt && v.me.dayNumber >= 1 ? remainingCount(v.days[state.ui.todayDate]) : 0;
   (n > 0 ? navigator.setAppBadge(n) : navigator.clearAppBadge()).catch(() => {});
 }
 
@@ -903,7 +943,9 @@ function render() {
 function renderHeader() {
   const v = state.view;
   $('#daypill').textContent = v?.me?.started
-    ? (v.me.completedAt || v.challenge.status === 'complete' ? '🏆 75 / 75' : `DAY ${v.me.dayNumber} / ${TOTAL_DAYS}`)
+    ? (v.me.completedAt || v.challenge.status === 'complete' ? '🏆 75 / 75'
+      : v.me.dayNumber < 1 ? `STARTS ${fmtDate(v.me.streakStartDate).toUpperCase()}`
+      : `DAY ${v.me.dayNumber} / ${TOTAL_DAYS}`)
     : '75 HARD';
   renderSyncPill();
 }
@@ -943,6 +985,15 @@ function renderToday() {
         <h2 style="margin:10px 0 6px">Ready for 75 Hard?</h2>
         <p class="muted">Five daily tasks. Seventy-five days. Zero excuses.</p>
         <button class="btn primary wide mt" data-action="obOpen">Set up the challenge</button>
+      </div>`;
+    return;
+  }
+  if (v.me.dayNumber < 1) {
+    scr.innerHTML = `
+      <div class="card" style="text-align:center; margin-top:40px; padding:30px 20px">
+        <div style="font-size:52px">🌅</div>
+        <h2 style="margin:10px 0 6px">Day 1 begins ${fmtDate(v.me.streakStartDate)}</h2>
+        <p class="muted">Rest up. Tomorrow it counts — all five tasks, before midnight.</p>
       </div>`;
     return;
   }
@@ -1127,19 +1178,19 @@ function renderPartner() {
     scr.innerHTML = '<div class="card" style="text-align:center;padding:30px"><div style="font-size:40px">💞</div><p class="muted mt">Waiting for your partner\'s first sign-in.</p></div>';
     return;
   }
-  const myDay = v.days[state.ui.todayDate] || emptyDay(state.ui.todayDate);
+  const myDay = v.days[state.ui.todayDate] || emptyDay(state.email || '', state.ui.todayDate);
   const updatedMs = p.updatedAt ? Date.parse(p.updatedAt) : null;
   const fresh = state.ui.wsLive || (updatedMs && Date.now() - updatedMs < 2 * 60000);
   scr.innerHTML = `
     <div class="duo mt">
       <div class="pcol me">
         <h3>🧍 ${esc(v.me.displayName)} (you)</h3>
-        <div class="pday">${v.me.started ? 'Day ' + v.me.dayNumber : '—'}</div>
+        <div class="pday">${v.me.started ? (v.me.dayNumber >= 1 ? 'Day ' + v.me.dayNumber : 'starts soon') : '—'}</div>
         ${partnerTaskRows(null, true, myDay)}
       </div>
       <div class="pcol">
         <h3><span class="livedot ${fresh ? 'on' : ''}"></span> ${esc(p.displayName)}</h3>
-        <div class="pday">${p.started ? 'Day ' + p.dayNumber : 'not started'}</div>
+        <div class="pday">${p.started ? (p.dayNumber >= 1 ? 'Day ' + p.dayNumber : 'starts soon') : 'not started'}</div>
         ${p.started ? partnerTaskRows(p.today, false) : '<p class="muted">They haven\'t set up yet.</p>'}
         ${(() => {
           const pm = (p.measurements || []).filter((m) => m.weight_kg != null || m.fat_pct != null);
@@ -1720,8 +1771,8 @@ function checkReset() {
   const todayD = state.ui.todayDate;
   for (let dt = v.me.streakStartDate; dt < todayD; dt = nextDay(dt)) {
     const row = v.days[dt];
-    if (row?.finalized) { if (row.complete) continue; } // finalized miss → server already reset; snapshot governs
-    else if (isDayComplete(row)) continue;
+    if (row?.finalized) continue; // any finalized day is server-resolved (a miss already moved the streak)
+    if (isDayComplete(row)) continue;
     // Unfinalized incomplete past day → offline-detected miss
     const dayN = row?.day_number ?? dayNumberOf(v.me.streakStartDate, dt);
     showResetTakeover(dt, dayN, missingTasks(row));
@@ -1809,32 +1860,38 @@ function showRewardReveal() {
    Workout timer (wall-clock based — iOS freezes JS timers in background)
    ===================================================================== */
 let timerIv = null;
-function timerState() {
-  try { return JSON.parse(localStorage.getItem('hard75_timer') || 'null'); } catch (e) { return null; }
+// One start-timestamp per slot, so timing both workouts (or forgetting one is
+// running) never discards the other's start time.
+function timerMap() {
+  try { return JSON.parse(localStorage.getItem('hard75_timers') || '{}') || {}; } catch (e) { return {}; }
 }
+function saveTimerMap(m) { localStorage.setItem('hard75_timers', JSON.stringify(m)); }
 function openTimer(slot) {
-  const t = timerState();
   state.ui.timerTask = slot;
-  renderTimer(t && t.slot === slot ? t : null);
+  renderTimer();
   $('#timer').classList.add('open');
 }
-function renderTimer(t) {
+function renderTimer() {
   const slot = state.ui.timerTask;
-  const elapsed = t ? Math.max(0, nowMs() - t.startMs) : 0;
+  const startMs = timerMap()[slot];
+  const running = typeof startMs === 'number';
+  const elapsed = running ? Math.max(0, nowMs() - startMs) : 0;
   const mm = Math.floor(elapsed / 60000), ss = Math.floor((elapsed % 60000) / 1000);
+  const otherRunning = typeof timerMap()[slot === 1 ? 2 : 1] === 'number';
   $('#timer').innerHTML = `
     <h1 style="font-size:20px">Workout #${slot}</h1>
     <div class="tval">${pad2(mm)}:${pad2(ss)}</div>
-    <p>${t ? 'Running — safe to lock your phone; time is wall-clock.' : 'At least 45 minutes.'}</p>
+    <p>${running ? 'Running — safe to lock your phone; time is wall-clock.' : 'At least 45 minutes.'}</p>
+    ${otherRunning ? `<p class="muted">⏱ Workout #${slot === 1 ? 2 : 1}'s timer is also running.</p>` : ''}
     <div class="actions">
-      ${t
+      ${running
         ? `<button class="btn primary" data-action="timerStop">Finish (${Math.max(1, Math.round(elapsed / 60000))} min)</button>
            <button class="btn ghost" data-action="timerCancel">Discard</button>`
         : `<button class="btn primary" data-action="timerStart">Start</button>`}
       <button class="btn ghost" data-action="timerClose">Close</button>
     </div>`;
   clearInterval(timerIv);
-  if (t) timerIv = setInterval(() => { const cur = timerState(); if (cur) renderTimer(cur); }, 1000);
+  if (running) timerIv = setInterval(renderTimer, 1000);
 }
 
 /* =====================================================================
@@ -1879,16 +1936,18 @@ const ACTIONS = {
   },
   timerOpen: (arg) => openTimer(Number(arg)),
   timerClose: () => { clearInterval(timerIv); $('#timer').classList.remove('open'); },
-  timerStart: () => { localStorage.setItem('hard75_timer', JSON.stringify({ slot: state.ui.timerTask, startMs: nowMs() })); renderTimer(timerState()); },
-  timerCancel: () => { localStorage.removeItem('hard75_timer'); renderTimer(null); },
+  timerStart: () => { const m = timerMap(); m[state.ui.timerTask] = nowMs(); saveTimerMap(m); renderTimer(); },
+  timerCancel: () => { const m = timerMap(); delete m[state.ui.timerTask]; saveTimerMap(m); renderTimer(); },
   timerStop: () => {
-    const t = timerState();
-    if (!t) return;
-    localStorage.removeItem('hard75_timer');
+    const slot = state.ui.timerTask;
+    const m = timerMap();
+    const startMs = m[slot];
+    if (typeof startMs !== 'number') return;
+    delete m[slot];
+    saveTimerMap(m);
     clearInterval(timerIv);
     $('#timer').classList.remove('open');
-    const slot = t.slot;
-    const minutes = Math.max(1, Math.round((nowMs() - t.startMs) / 60000));
+    const minutes = Math.max(1, Math.round((nowMs() - startMs) / 60000));
     const w = currentWorkout(slot);
     dispatch('set_workout', { slot, done: true, minutes, outdoor: w.outdoor });
     toast(minutes >= WORKOUT_MIN ? `💪 Workout #${slot}: ${minutes} min` : `Logged ${minutes} min — needs ${WORKOUT_MIN}+ to count`);
@@ -2094,10 +2153,14 @@ async function afterSignIn() {
   afterSignIn();
 })();
 
-window.__dbg = {
-  state, dispatch, syncNow, checkRollover, checkReset,
-  forceNow: (v) => { window.__forceNow = v; checkRollover(); },
-};
+// Debug surface (includes the session token via `state`) — only exposed on
+// localhost or with an explicit opt-in flag, never by default in production.
+if (location.hostname === 'localhost' || localStorage.getItem('hard75_debug')) {
+  window.__dbg = {
+    state, dispatch, syncNow, checkRollover, checkReset,
+    forceNow: (v) => { window.__forceNow = v; checkRollover(); },
+  };
+}
 </script>
 </body>
 </html>

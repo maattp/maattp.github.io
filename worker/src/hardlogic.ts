@@ -166,12 +166,12 @@ export function missingTasks(d: DayRow | undefined | null): string[] {
   if (!d) return ["diet", "water", "workout #1", "workout #2", "reading", "photo"];
   if (!d.diet) out.push("diet");
   if (d.water_oz < 128) out.push(`water (${128 - d.water_oz}oz left)`);
-  if (!d.workout1_done || d.workout1_min < 45) out.push("workout #1");
-  if (!d.workout2_done || d.workout2_min < 45) out.push("workout #2");
-  if (
-    d.workout1_done && d.workout2_done &&
-    !d.workout1_outdoor && !d.workout2_outdoor
-  ) out.push("outdoor workout");
+  const w1ok = !!(d.workout1_done && d.workout1_min >= 45);
+  const w2ok = !!(d.workout2_done && d.workout2_min >= 45);
+  if (!w1ok) out.push("workout #1");
+  if (!w2ok) out.push("workout #2");
+  // Only nag about outdoor once both workouts otherwise count.
+  if (w1ok && w2ok && !d.workout1_outdoor && !d.workout2_outdoor) out.push("outdoor workout");
   if (!d.reading_done) out.push("reading");
   if (!d.photo_id) out.push("photo");
   return out;

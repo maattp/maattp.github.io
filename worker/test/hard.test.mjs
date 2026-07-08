@@ -165,6 +165,54 @@ function zonedMs(date, hhmm, tz) {
   eq(plan.steps[0].date, '2026-07-06', 'cursor clamps to streak start (team-reset skip)');
 }
 
+/* ===== real DST instants (America/New_York 2026: spring-forward Mar 8, fall-back Nov 1) ===== */
+{
+  // 2026-03-08 02:30 EST does not exist; 06:59 UTC is 01:59 EST, 07:01 UTC is 03:01 EDT
+  eq(localDate(Date.UTC(2026, 2, 8, 6, 59), NY), '2026-03-08', 'pre-spring-forward date');
+  eq(localMinutes(Date.UTC(2026, 2, 8, 6, 59), NY), 119, '01:59 EST minutes');
+  eq(localMinutes(Date.UTC(2026, 2, 8, 7, 1), NY), 181, 'clock jumps to 03:01 EDT');
+  // grace across the transition: 03:30 EDT − 180min lands before the 23-hour day's midnight
+  eq(effectiveDate(Date.UTC(2026, 2, 8, 7, 30), NY, 180), '2026-03-07', '03:30 EDT with 3h grace is still Mar 7');
+  eq(effectiveDate(Date.UTC(2026, 2, 8, 8, 30), NY, 180), '2026-03-08', '04:30 EDT past grace is Mar 8');
+  // fall-back: 05:30 UTC = 01:30 EDT (first pass), 06:30 UTC = 01:30 EST (second pass) — same local date
+  eq(localDate(Date.UTC(2026, 10, 1, 5, 30), NY), '2026-11-01', 'first 01:30 on fall-back day');
+  eq(localDate(Date.UTC(2026, 10, 1, 6, 30), NY), '2026-11-01', 'second 01:30 on fall-back day');
+  eq(daysBetween('2026-03-07', '2026-03-09'), 2, 'spring-forward day still counts as one');
+  eq(daysBetween('2026-10-31', '2026-11-02'), 2, 'fall-back day still counts as one');
+}
+
+/* ===== finalize: consecutive misses collapse into one restart ===== */
+{
+  const p = { email: 'a@b.c', start_date: '2026-07-01', streak_start_date: '2026-07-01', last_finalized_date: null, completed_at: null };
+  // no rows at all: 07-01..07-04 all missed
+  const plan = planFinalize(p, new Map(), NY, 0, zonedMs('2026-07-05', '12:00', NY));
+  eq(plan.steps.length, 4, 'four missed days finalized');
+  eq(plan.resets.length, 4, 'each miss recorded');
+  eq(plan.newStreakStart, '2026-07-05', 'streak lands on today after consecutive misses');
+  eq(plan.resets[0].dayNumber, 1, 'first miss was day 1');
+  eq(plan.resets[1].dayNumber, 1, 'renumbered: second miss is day 1 of the next streak');
+}
+
+/* ===== finalize: day 75 reached on a streak that restarted mid-challenge ===== */
+{
+  const completeRow = (date) => ({ ...emptyDay('a@b.c', date),
+    diet: 1, reading_done: 1, water_oz: 128, photo_id: 'p',
+    workout1_done: 1, workout1_min: 45, workout2_done: 1, workout2_min: 45, workout2_outdoor: 1 });
+  const start = '2026-01-01';
+  const days = new Map();
+  // days 1-9 complete, day 10 missed, then 75 complete days
+  for (let i = 0; i < 9; i++) { const dt = addDays(start, i); days.set(dt, completeRow(dt)); }
+  const restart = addDays(start, 10);
+  for (let i = 0; i < 75; i++) { const dt = addDays(restart, i); days.set(dt, completeRow(dt)); }
+  const p = { email: 'a@b.c', start_date: start, streak_start_date: start, last_finalized_date: null, completed_at: null };
+  const plan = planFinalize(p, days, NY, 0, zonedMs('2026-07-01', '12:00', NY));
+  ok(plan.completed75, 'completed 75 after a mid-challenge restart');
+  eq(plan.resets.length, 1, 'one reset along the way');
+  eq(plan.newStreakStart, restart, 'streak start moved to the restart');
+  eq(plan.lastFinalized, addDays(restart, 74), 'walk stops at the new day 75');
+  eq(plan.milestones.join(','), '25,50', 'milestones renumbered against the restarted streak');
+}
+
 /* ===== quiet hours / prefs ===== */
 {
   const prefs = { quietHours: { start: '22:30', end: '07:00' } };
