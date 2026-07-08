@@ -78,6 +78,7 @@ hardApp.get("/history", async (c) => {
   const email = c.get("email");
   const from = c.req.query("from") ?? "0000-01-01";
   const to = c.req.query("to") ?? "9999-12-31";
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(from) || !/^\d{4}-\d{2}-\d{2}$/.test(to)) return c.json({ error: "bad range" }, 400);
   const partner = partnerOf(c.env.ALLOWED_EMAILS, email);
   const [mine, theirs] = await c.env.DB.batch([
     c.env.DB.prepare("SELECT * FROM hard_days WHERE email = ? AND date >= ? AND date <= ? ORDER BY date").bind(email, from, to),
@@ -112,11 +113,17 @@ hardApp.post("/photos/upload", async (c) => {
   if (!(original instanceof File) || !(thumbnail instanceof File)) return c.json({ error: "missing files" }, 400);
   if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return c.json({ error: "bad date" }, 400);
   if (!/^[\w-]{8,64}$/.test(photoId) || !/^[\w-]{8,64}$/.test(actionId)) return c.json({ error: "bad ids" }, 400);
-  if (original.size > 15 * 1024 * 1024) return c.json({ error: "too large" }, 413);
+  if (original.size > 15 * 1024 * 1024 || thumbnail.size > 2 * 1024 * 1024) return c.json({ error: "too large" }, 413);
 
   // Idempotent by actionId: a replayed upload skips the R2 writes entirely.
   const dupe = await c.env.DB.prepare("SELECT 1 FROM hard_actions WHERE action_id = ?").bind(actionId).first();
   if (dupe) return c.json({ id: photoId, status: "duplicate" });
+
+  // photoId is client-generated: refuse to write R2 bytes over an id that
+  // already belongs to someone else (INSERT OR IGNORE below would keep the
+  // old owner row while the object got replaced).
+  const existing = await c.env.DB.prepare("SELECT email FROM hard_photos WHERE id = ?").bind(photoId).first<{ email: string }>();
+  if (existing && existing.email !== email) return c.json({ error: "photo id in use" }, 409);
 
   await c.env.PHOTOS.put(`hard/original/${photoId}`, original.stream(), {
     httpMetadata: { contentType: original.type || "image/jpeg" },

@@ -81,7 +81,8 @@ export class HardRoom {
   private async handleWs(request: Request, url: URL): Promise<Response> {
     if (request.headers.get("Upgrade") !== "websocket") return json({ error: "expected websocket" }, 426);
     const email = url.searchParams.get("email") ?? "";
-    if (!email) return json({ error: "forbidden" }, 403);
+    // Defense-in-depth: callers pre-validate, but re-check the allowlist here.
+    if (!email || !coupleEmails(this.env.ALLOWED_EMAILS).includes(email)) return json({ error: "forbidden" }, 403);
     const pair = new WebSocketPair();
     this.state.acceptWebSocket(pair[1]);
     pair[1].serializeAttachment({ email });
@@ -98,6 +99,8 @@ export class HardRoom {
     }
   }
 
+  // Deliberate no-ops: no per-socket state to reap — the hibernation runtime
+  // drops closed sockets from getWebSockets() and attachments die with them.
   async webSocketClose(): Promise<void> {}
   async webSocketError(): Promise<void> {}
 
@@ -326,7 +329,8 @@ export class HardRoom {
   private async handleApply(request: Request): Promise<Response> {
     const body = (await request.json()) as { email?: string; actions?: HardAction[] };
     const email = (body.email ?? "").toLowerCase();
-    if (!email) return json({ error: "email required" }, 400);
+    // Defense-in-depth: callers pre-validate, but re-check the allowlist here.
+    if (!email || !coupleEmails(this.env.ALLOWED_EMAILS).includes(email)) return json({ error: "forbidden" }, 403);
     const nowMs = Date.now();
 
     const fin = await this.finalizeAll(nowMs);

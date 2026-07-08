@@ -27,7 +27,12 @@ const api = async (token, method, path, body, raw) => {
 };
 
 const TZ = 'America/New_York';
-// noon NY on a given date (UTC-4 in July)
+// All fixture dates are relative to the run day so the suite never rots.
+// D0 = matt's effective "today" under the default 180-min grace window.
+const nyEff = (graceMin = 180) => new Intl.DateTimeFormat('en-CA', { timeZone: TZ, year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date(Date.now() - graceMin * 60000));
+const D0 = nyEff();
+const D = (n) => new Date(Date.parse(D0 + 'T12:00:00Z') + n * 86400000).toISOString().slice(0, 10);
+// ~noon NY on a given date (16:00 UTC = 11:00 EST / 12:00 EDT — same local date either way)
 const noonNY = (date) => Date.UTC(...date.split('-').map((v, i) => (i === 1 ? v - 1 : +v)), 16, 0);
 const act = (type, payload, date, ts) => ({
   actionId: uuid(), type, payload, date, localTimestamp: ts ?? noonNY(date), timezone: TZ,
@@ -51,11 +56,11 @@ const completeDayActions = (date) => [
 
 /* ===== start challenge with history: 07-03 ✓, 07-04 ✗(water), 07-05 empty, 07-06 ✓ ===== */
 const startBatch = [
-  act('start_challenge', { startDate: '2026-07-03', mode: 'solo', timezone: TZ }, '2026-07-03'),
-  ...completeDayActions('2026-07-03'),
+  act('start_challenge', { startDate: D(-5), mode: 'solo', timezone: TZ }, D(-5)),
+  ...completeDayActions(D(-5)),
   // 07-04: everything but water
-  ...completeDayActions('2026-07-04').filter((a) => a.type !== 'set_water'),
-  ...completeDayActions('2026-07-06'),
+  ...completeDayActions(D(-4)).filter((a) => a.type !== 'set_water'),
+  ...completeDayActions(D(-2)),
 ];
 {
   const { status, data } = await api('test-matt', 'POST', '/hard/sync', { actions: startBatch });
@@ -73,33 +78,33 @@ const startBatch = [
 /* ===== lazy finalization on /state: misses on 07-04, 07-05, 07-07 → streak restarts today ===== */
 {
   const { data: state } = await api('test-matt', 'GET', '/hard/state');
-  eq(state.me.streakStartDate, '2026-07-08', 'streak restarted today after misses');
+  eq(state.me.streakStartDate, D0, 'streak restarted today after misses');
   eq(state.me.dayNumber, 1, 'back to day 1');
   const byDate = Object.fromEntries(state.me.days.map((d) => [d.date, d]));
-  eq(byDate['2026-07-03']?.complete, 1, '07-03 finalized complete');
-  eq(byDate['2026-07-03']?.day_number, 1, '07-03 was day 1');
-  eq(byDate['2026-07-04']?.complete, 0, '07-04 finalized incomplete (water)');
-  eq(byDate['2026-07-05']?.complete, 0, '07-05 (no row) finalized incomplete');
-  eq(byDate['2026-07-06']?.complete, 1, '07-06 finalized complete');
-  eq(byDate['2026-07-06']?.day_number, 1, '07-06 renumbered day 1 after miss');
-  ok(state.me.days.every((d) => d.date === '2026-07-08' || d.finalized === 1), 'all past days finalized');
-  ok(state.events.some((e) => e.type === 'reset' && e.payload.date === '2026-07-04'), 'reset event for 07-04');
+  eq(byDate[D(-5)]?.complete, 1, '07-03 finalized complete');
+  eq(byDate[D(-5)]?.day_number, 1, '07-03 was day 1');
+  eq(byDate[D(-4)]?.complete, 0, '07-04 finalized incomplete (water)');
+  eq(byDate[D(-3)]?.complete, 0, '07-05 (no row) finalized incomplete');
+  eq(byDate[D(-2)]?.complete, 1, '07-06 finalized complete');
+  eq(byDate[D(-2)]?.day_number, 1, '07-06 renumbered day 1 after miss');
+  ok(state.me.days.every((d) => d.date === D0 || d.finalized === 1), 'all past days finalized');
+  ok(state.events.some((e) => e.type === 'reset' && e.payload.date === D(-4)), 'reset event for 07-04');
 }
 
 /* ===== late action: finalized day rejected as late ===== */
 {
   const { data } = await api('test-matt', 'POST', '/hard/sync', {
-    actions: [act('set_water', { oz: 128 }, '2026-07-04')],
+    actions: [act('set_water', { oz: 128 }, D(-4))],
   });
   eq(data.results[0].status, 'late', 'action on finalized day → late');
-  const day = data.state.me.days.find((d) => d.date === '2026-07-04');
+  const day = data.state.me.days.find((d) => d.date === D(-4));
   eq(day.water_oz, 0, 'late action did not mutate the day');
 }
 
 /* ===== rejected: date too far from stamp / future stamp ===== */
 {
-  const far = { ...act('set_water', { oz: 8 }, '2026-07-01'), localTimestamp: Date.now() };
-  const future = act('set_water', { oz: 8 }, '2026-07-08', Date.now() + 27 * 3600e3);
+  const far = { ...act('set_water', { oz: 8 }, D(-7)), localTimestamp: Date.now() };
+  const future = act('set_water', { oz: 8 }, D0, Date.now() + 27 * 3600e3);
   const { data } = await api('test-matt', 'POST', '/hard/sync', { actions: [far, future] });
   eq(data.results[0].status, 'rejected', 'date far from stamp → rejected');
   eq(data.results[1].status, 'rejected', 'future stamp → rejected');
@@ -107,7 +112,7 @@ const startBatch = [
 
 /* ===== today: water accumulates, task_done event on crossing 128 ===== */
 {
-  const today = '2026-07-08';
+  const today = D0;
   const now = Date.now();
   const r1 = await api('test-matt', 'POST', '/hard/sync', {
     actions: [act('add_water', { oz: 100 }, today, now), act('add_water', { oz: 28 }, today, now)],
@@ -123,7 +128,7 @@ const startBatch = [
   eq(tingState.partner.today.waterOz, 128, 'partner water visible');
   ok(!('photo_id' in tingState.partner.today), 'partner day is redacted (no raw row)');
   const { data: poke } = await api('test-ting', 'POST', '/hard/sync', {
-    actions: [act('poke', {}, '2026-07-08', Date.now()), act('react', { emoji: '🔥', targetDate: '2026-07-08', task: 'water' }, '2026-07-08', Date.now())],
+    actions: [act('poke', {}, D0, Date.now()), act('react', { emoji: '🔥', targetDate: D0, task: 'water' }, D0, Date.now())],
   });
   ok(poke.results.every((r) => r.status === 'applied'), 'poke + reaction applied');
   ok(poke.state.events.some((e) => e.type === 'poke'), 'poke event exists');
@@ -133,7 +138,7 @@ const startBatch = [
 /* ===== reward stays sealed ===== */
 {
   const { data } = await api('test-matt', 'POST', '/hard/sync', {
-    actions: [act('set_reward', { text: 'Trip to Kyoto' }, '2026-07-08', Date.now())],
+    actions: [act('set_reward', { text: 'Trip to Kyoto' }, D0, Date.now())],
   });
   eq(data.state.challenge.rewardSet, true, 'reward set');
   eq(data.state.challenge.rewardText, null, 'reward text sealed until complete');
@@ -153,7 +158,7 @@ const startBatch = [
   ok(frames.some((f) => f.t === 'state'), 'received initial state frame');
   // partner action while socket open → events + state broadcast
   await api('test-ting', 'POST', '/hard/sync', {
-    actions: [act('start_challenge', { startDate: '2026-07-08', mode: 'solo', timezone: 'Asia/Taipei' }, '2026-07-08', Date.now())],
+    actions: [act('start_challenge', { startDate: D0, mode: 'solo', timezone: 'Asia/Taipei' }, D0, Date.now())],
   });
   await new Promise((r) => setTimeout(r, 800));
   ok(frames.filter((f) => f.t === 'state').length >= 2, 'received live state broadcast after partner sync');
@@ -188,25 +193,26 @@ const startBatch = [
 /* ===== cron: reminder exactly-once ===== */
 {
   await api('test-matt', 'POST', '/hard/sync', {
-    actions: [act('set_settings', { prefs: { reminderTimes: ['00:01'], bedtimeNudgeMin: 60 } }, '2026-07-08', Date.now())],
+    actions: [act('set_settings', { prefs: { reminderTimes: ['00:01'], bedtimeNudgeMin: 60 } }, D0, Date.now())],
   });
   const cron = () => fetch(API + '/__scheduled?cron=*%2F15+*+*+*+*').then((r) => r.status);
   eq(await cron(), 200, 'cron tick 1 ok');
   eq(await cron(), 200, 'cron tick 2 ok');
-  // exactly-once is enforced by hard_notif_log PK; verify via second tick not erroring
-  // and by the log row count staying 1 (checked below via history of no crash).
+  // Two ticks must both succeed; the exactly-once guarantee itself is the
+  // hard_notif_log PK + INSERT OR IGNORE (unit-verifiable only via D1 access,
+  // which this HTTP-level suite doesn't have).
 }
 
 /* ===== history endpoint ===== */
 {
-  const { data } = await api('test-matt', 'GET', '/hard/history?from=2026-07-01&to=2026-07-31');
+  const { data } = await api('test-matt', 'GET', `/hard/history?from=${D(-10)}&to=${D(1)}`);
   ok(data.me.length >= 5, 'history has my rows');
   ok(data.partner.every((r) => Object.keys(r).sort().join(',') === 'complete,date,finalized'), 'partner history redacted');
 }
 
 /* ===== measurements: merge, validation, partner privacy ===== */
 {
-  const today = '2026-07-08';
+  const today = D0;
   // weight only, then fat only — must merge into one row
   const r1 = await api('test-matt', 'POST', '/hard/sync', {
     actions: [act('log_measurement', { weightKg: 82.5 }, today, Date.now())],

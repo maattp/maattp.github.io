@@ -1054,7 +1054,7 @@ function renderToday() {
         <div class="task">
           <div class="ti">${slot === 1 ? TASK_ICONS.workout1 : TASK_ICONS.workout2}</div>
           <div class="tt"><div class="nm" ${satisfied ? 'style="color:var(--good)"' : ''}>Workout #${slot}</div>
-            <div class="sub">45+ min${slot === 2 || outdoor ? '' : ''} ${outdoor ? '· outdoors 🌳' : ''}</div></div>
+            <div class="sub">45+ min ${outdoor ? '· outdoors 🌳' : ''}</div></div>
           <button class="check ${satisfied ? 'on' : ''}" data-action="wkoDone" data-arg="${slot}">✓</button>
         </div>
         <div class="wko">
@@ -1402,7 +1402,10 @@ function renderBooks() {
 /* =====================================================================
    Photos: gallery, capture, Day-N compositor, viewer, time-lapse
    ===================================================================== */
-const photoURLs = {}; // photoId -> objectURL
+// photoId -> objectURL. Deliberately never revoked: bounded at ~2 URLs per
+// photo × 75 days (same accepted trade-off as the Photos app's known
+// blob-URL limitation in the root CLAUDE.md).
+const photoURLs = {};
 
 async function getPhotoURL(photoId, kind = 'thumb') {
   const key = kind + ':' + photoId;

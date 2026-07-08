@@ -106,14 +106,25 @@ Two-person couples tracker. All routes session-gated except the WS upgrade.
   headers, same as kart3).
 - **Photos:** R2 keys `hard/original/<id>` + `hard/thumb/<id>`; metadata in
   `hard_photos`; partner can read only `shared=1` photos.
-- **Push:** `@block65/webcrypto-web-push` (VAPID + aes128gcm on WebCrypto).
-  Subs in `hard_push_subs` (endpoint PK); 404/410 responses prune the row.
+- **Push:** hand-rolled RFC 8291 (aes128gcm) + RFC 8292 (VAPID) directly on
+  WebCrypto in `hardpush.ts` — deliberately no library: the available
+  webcrypto packages emit the legacy `aesgcm` coding, and Apple's push
+  service requires `aes128gcm`. `test/push.test.mjs` proves the round-trip
+  by decrypting a payload with the subscriber's private key. Subs in
+  `hard_push_subs` (endpoint PK); 404/410 responses prune the row; other
+  failures are logged and dropped (push is best-effort by design).
 - **Cron:** `*/15 * * * *` — per-user local-time reminders, bedtime nudge,
   at-risk partner warnings (exactly-once via `hard_notif_log` PK +
   `INSERT OR IGNORE`), finalization kick, table pruning.
-- **Tests:** `node --experimental-strip-types worker/test/hard.test.mjs` (pure
-  logic) and `node worker/test/hard.integration.mjs` (against `wrangler dev
-  --test-scheduled`; see file header for KV session seeding).
+- **Tests** (first three run in CI before every deploy):
+  `node --experimental-strip-types worker/test/hard.test.mjs` (pure logic);
+  `worker/test/hard-mirror.test.mjs` — **the enforcement of the client/server
+  mirror invariant above** (extracts the app's `==MIRROR==` block and runs
+  randomized vectors against hardlogic.ts — do not skip/disable it);
+  `worker/test/push.test.mjs` (Web Push crypto round-trip);
+  `worker/test/hard.integration.mjs` (manual, against `wrangler dev
+  --test-scheduled`; see file header for KV session seeding); headless
+  browser drills in `apps/75hard/test/` (manual, see its README).
 
 ## Environment Variables
 
