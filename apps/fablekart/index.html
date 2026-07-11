@@ -1080,6 +1080,7 @@
         let state = 'menu'; // menu, countdown, racing, finished, paused
         let steerInput = 0, keySteer = 0, touchSteer = 0;
         let driftHeld = false, pendingFire = false;
+        let padSteer = 0, padDrift = false, padBrake = false;   // gamepad (see padPoll)
         let steerReversed = false;           // touch-steer direction preference
         let mouseSteerOn = false, mouseSteerVal = 0;   // desktop pointer steering (settings opt-in)
         let steerRangePx = 64;               // thumb travel (px) for full lock
@@ -1156,7 +1157,7 @@
         // ⚠ APP_VER: increment ONCE PER PR (CLAUDE.md rule). Shown on the
         // title screen and folded into NET_VER, so any two different builds
         // refuse to share a room.
-        const APP_VER = 37;
+        const APP_VER = 38;
         function hash32(str) {
             let h = 2166136261 >>> 0;
             for (let i = 0; i < str.length; i++) { h ^= str.charCodeAt(i); h = Math.imul(h, 16777619); }
@@ -5397,8 +5398,8 @@
         // -------------------------------------------------------------------
         function localController(k) {
             k.ctrl.steer = steerInput;
-            k.ctrl.brake = false;
-            k.ctrl.drift = driftHeld;
+            k.ctrl.brake = padBrake;
+            k.ctrl.drift = driftHeld || padDrift;
             if (pendingFire) { k.ctrl.fire = true; pendingFire = false; }
         }
         function aiController(k, dt) {
@@ -6775,7 +6776,46 @@
             // screen-left), which on a laptop felt like being stuck in
             // Reversed if your muscle memory is the Standard scheme.
             const mouse = mouseSteerOn ? mouseSteerVal : 0;
-            steerInput = clamp((touchSteer + keySteer + mouse) * (steerReversed ? 1 : -1), -1, 1);
+            // padSteer joins AFTER the Standard/Reversed flip: a physical stick
+            // is geometric (stick right = kart right) no matter how the touch
+            // slide is configured — wheels don't slide, they point.
+            steerInput = clamp((touchSteer + keySteer + mouse) * (steerReversed ? 1 : -1) + padSteer, -1, 1);
+        }
+
+        // ---------------------------------------------------------------
+        // Gamepad (standard mapping — Backbone, DualSense, Xbox…): left
+        // stick steers, A / shoulders / triggers hold DRIFT, B brakes,
+        // X or Y fires the item, Start pauses (or confirms menus). Polled
+        // once per frame; everything flows through the same k.ctrl seam
+        // and pendingFire path the touch controls use.
+        // ---------------------------------------------------------------
+        const kpad = { prev: {} };
+        function padPoll() {
+            if (!navigator.getGamepads) return;
+            let gp = null;
+            for (const g of navigator.getGamepads()) if (g && g.connected && g.buttons.length) { gp = g; break; }
+            if (!gp) { padSteer = 0; padDrift = false; padBrake = false; return; }
+            const bt = (i) => !!(gp.buttons[i] && gp.buttons[i].pressed);
+            const raw = gp.axes.length ? gp.axes[0] : 0;
+            // deadzone + the same gentle curve the mouse steering uses
+            const dz = 0.12, m = Math.max(0, (Math.abs(raw) - dz) / (1 - dz));
+            padSteer = Math.sign(raw) * Math.min(1, m * m * 1.15);
+            padDrift = bt(0) || bt(4) || bt(5) || bt(6) || bt(7);
+            padBrake = bt(1);
+            const cur = { fire: bt(2) || bt(3), start: bt(9), a: bt(0) };
+            const was = kpad.prev; kpad.prev = cur;
+            if (cur.fire && !was.fire && state === 'racing') { pendingFire = true; net.fireCount++; }
+            if (cur.start && !was.start) {
+                if (state === 'racing') { if (!netActive()) pauseGame(); }
+                else if (state === 'paused') resumeGame();
+                else if (state === 'menu' && !dom.startScreen.classList.contains('hidden')) dom.startBtn.click();
+                else if (state === 'finished' && !dom.resultScreen.classList.contains('hidden')) dom.againBtn.click();
+            }
+            if (cur.a && !was.a) {   // A doubles as menu-confirm outside the race
+                if (state === 'paused') resumeGame();
+                else if (state === 'menu' && !dom.startScreen.classList.contains('hidden')) dom.startBtn.click();
+                else if (state === 'finished' && !dom.resultScreen.classList.contains('hidden')) dom.againBtn.click();
+            }
         }
         function sensToRange(v) { return Math.round(lerp(110, 36, clamp(v, 0, 100) / 100)); }
 
@@ -7128,6 +7168,8 @@
             requestAnimationFrame(animate);
             let dt = clock.getDelta();
             dt = Math.min(dt, 0.05);
+
+            padPoll();   // before the paused early-out — the controller must be able to resume
 
             if (state === 'paused') { renderer.render(scene, camera); return; }
 

@@ -427,6 +427,13 @@ work, and don't regress these four seams.
   hardwired geometric ("absolute"), but on a laptop that felt like being
   stuck in Reversed, so they follow the setting too (user request,
   2026-06-10). Do NOT "fix" the default back.
+- **Gamepad** (`padPoll()`, polled each frame before the paused early-out):
+  left stick steers, A/shoulders/triggers hold drift, B brakes, X/Y fire
+  (same `pendingFire` + `net.fireCount` path as touch), Start pauses /
+  confirms menus, A confirms menus outside the race. **The stick is ALWAYS
+  geometric** — `padSteer` is added AFTER the Standard/Reversed flip in
+  `computeSteer()`; the inverted default is a touch-slide preference and
+  must not apply to a physical stick.
 - Drift only engages while actually steering (|steer| > 0.28); hold DRIFT on
   GO! for a rocket start.
 - **Drift model (MKDS-style, tuned after playtest)**: engaging BLENDS from
