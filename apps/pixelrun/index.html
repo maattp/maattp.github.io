@@ -173,7 +173,7 @@ function readInsets(cw, chh) {
   if (navigator.standalone) {
     const notched = Math.max(screen.width, screen.height) >= 780;
     if (cw > chh) {   // landscape
-      if (notched && botCss < 8) botCss = 21;
+      if (notched && botCss < 10) botCss = 21;
       if (notched && leftCss < 10 && rightCss < 10) leftCss = rightCss = 44;
     } else {
       if (topCss < 20) topCss = notched ? 47 : 20;
