@@ -430,10 +430,12 @@ work, and don't regress these four seams.
 - **Gamepad** (`padPoll()`, polled each frame before the paused early-out):
   left stick steers, A/shoulders/triggers hold drift, B brakes, X/Y fire
   (same `pendingFire` + `net.fireCount` path as touch), Start pauses /
-  confirms menus, A confirms menus outside the race. **The stick is ALWAYS
-  geometric** — `padSteer` is added AFTER the Standard/Reversed flip in
-  `computeSteer()`; the inverted default is a touch-slide preference and
-  must not apply to a physical stick.
+  confirms menus, A confirms menus outside the race. **The stick follows the
+  Standard/Reversed setting exactly like touch and keys** — `padSteer` sits
+  INSIDE the flip in `computeSteer()`. A geometric-always stick was tried
+  first (PR #287) and the user immediately reported it as inverted
+  (2026-07-11); the Standard scheme is the muscle memory on every input
+  device. Do NOT move the stick outside the flip.
 - Drift only engages while actually steering (|steer| > 0.28); hold DRIFT on
   GO! for a rocket start.
 - **Drift model (MKDS-style, tuned after playtest)**: engaging BLENDS from

@@ -5,7 +5,7 @@
 // pinned CDN script. Everything else (worker API, websockets, cross-origin)
 // is deliberately NOT intercepted — multiplayer must never hit a stale cache.
 // Bump CACHE when a deploy must invalidate old copies immediately.
-const CACHE = 'fablekart-v2';
+const CACHE = 'fablekart-v3';
 const THREE_CDN = 'https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js';
 const SHELL = ['./', './index.html', './manifest.webmanifest',
   './icon-180.png', './icon-192.png', './icon-512.png'];
