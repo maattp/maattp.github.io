@@ -68,7 +68,7 @@ const MAX_SPEED = 3.05;
 const PIT_Y = 11 * TILE;             // below this = pit death
 const WORLD_LEN = 500;               // tiles per world before the flag
 const SAVE = 'pixelrun_';
-const VERSION = 43;                  // shown on the title screen — bump once per PR (see CLAUDE.md)
+const VERSION = 44;                  // shown on the title screen — bump once per PR (see CLAUDE.md)
 
 // ---------- utils ----------
 const clamp = (v, a, b) => v < a ? a : v > b ? b : v;
@@ -128,9 +128,11 @@ function resize() {
   if (sig === lastSize) return;
   lastSize = sig;
   const portrait = chh >= cw;
+  // landscape targets H≈240 so sprites keep the same on-screen size as
+  // portrait (which targets W≈250) — rotating must not zoom the world out
   SCALE = portrait
     ? Math.max(1, Math.round(cw * dpr / 250))
-    : Math.max(1, Math.round(chh * dpr / 270));
+    : Math.max(1, Math.round(chh * dpr / 240));
   W = Math.ceil(cw * dpr / SCALE);
   H = Math.ceil(chh * dpr / SCALE);
   canvas.width = W; canvas.height = H;
@@ -2133,6 +2135,82 @@ window.addEventListener('keydown', e => {
 window.addEventListener('keyup', e => {
   if (e.code === 'Space' || e.code === 'ArrowUp' || e.code === 'KeyW') releaseJump();
 });
+
+// ---------- gamepad (standard mapping — Backbone, DualSense, Xbox…) ----------
+// A = jump (hold for height), B/X/dpad-down/stick-down/R2 = slam/dive,
+// Start = pause. Menus: A confirm, B back, X daily run, Y cycle pet,
+// dpad swipes the secret code. Polled once per rAF; edges drive the same
+// primitives the touch layer uses, so behavior stays identical.
+const pad = { on: false, prev: {}, toastT: -9999 };
+window.addEventListener('gamepadconnected', () => { pad.on = true; pad.toastT = game.frame; sfx.ui(); });
+window.addEventListener('gamepaddisconnected', () => {
+  pad.on = false; pad.prev = {};
+  releaseJump();                       // never leave a jump latched by a dying pad
+});
+function padPoll() {
+  if (!navigator.getGamepads) return;
+  let gp = null;
+  for (const g of navigator.getGamepads()) if (g && g.connected && g.buttons.length) { gp = g; break; }
+  if (!gp) return;
+  if (!pad.on) { pad.on = true; pad.toastT = game.frame; }
+  const bt = i => !!(gp.buttons[i] && gp.buttons[i].pressed);
+  const ax = i => gp.axes.length > i ? gp.axes[i] : 0;
+  const cur = {
+    a: bt(0), b: bt(1), x: bt(2), y: bt(3), start: bt(9),
+    up: bt(12) || ax(1) < -0.6, down: bt(13) || ax(1) > 0.6,
+    left: bt(14) || ax(0) < -0.6, right: bt(15) || ax(0) > 0.6,
+    slam: bt(1) || bt(2) || bt(13) || bt(7) || ax(1) > 0.6
+  };
+  const was = pad.prev; pad.prev = cur;
+  const edge = k => cur[k] && !was[k];
+  const st = game.state;
+  if (st === 'play') {
+    if (edge('a')) pressJump();
+    if (!cur.a && was.a) releaseJump();
+    if (edge('slam')) input.slamReq = true;
+    if (edge('start')) { togglePause(); sfx.ui(); }
+  } else if (st === 'pause') {
+    if (edge('start') || edge('a')) { togglePause(); sfx.ui(); }
+  } else if (st === 'title') {
+    // the dpad feeds the secret code exactly like swipes do
+    for (const [k, ch] of [['up', 'U'], ['down', 'D'], ['left', 'L'], ['right', 'R']])
+      if (edge(k)) konamiPush(ch);
+    if (edge('y')) {                   // Y cycles your companion
+      petIdx = (petIdx + 1) % (PETS.length + 1);
+      store('pet', petIdx);
+      ui.petNameT = game.frame;
+      sfx.ui(); buzz(1);
+    }
+    if (edge('x')) { game.dailyPending = true; sfx.ui(); startRun(); return; }
+    if (edge('a') || edge('start')) startRun();
+  } else if (st === 'levels') {
+    const nOpts = THEMES.length + 1;   // the worlds + BACK
+    if (ui.padSel === undefined) ui.padSel = 0;
+    if (edge('up')) { ui.padSel = (ui.padSel + nOpts - 1) % nOpts; sfx.ui(); }
+    if (edge('down')) { ui.padSel = (ui.padSel + 1) % nOpts; sfx.ui(); }
+    if (edge('b')) { sfx.ui(); goTitle(); return; }
+    if (edge('a') || edge('start')) {
+      sfx.ui();
+      if (ui.padSel < THEMES.length) startRun(ui.padSel + 1);
+      else goTitle();
+    }
+  } else if (st === 'trophies') {
+    if (edge('a') || edge('b') || edge('start')) { goTitle(); sfx.ui(); }
+  } else if (st === 'downed') {
+    if (game.stateT > 20) {
+      if (edge('a')) { secondWind(); return; }
+      if (edge('b')) { gameOver(); sfx.ui(); }
+    }
+  } else if (st === 'over') {
+    if (game.stateT > 45) {
+      if (edge('b')) { goTitle(); sfx.ui(); return; }
+      if (edge('a') || edge('start')) {
+        if (game.daily) game.dailyPending = true;
+        startRun(game.startWorld || 1);
+      }
+    }
+  }
+}
 
 // ---------- world state ----------
 const game = {
@@ -4321,7 +4399,7 @@ function konamiPush(ch) {
 function openLevels() {
   konamiBuf = '';
   game.state = 'levels'; game.stateT = 0;
-  ui.levelBtns = [];
+  ui.levelBtns = []; ui.padSel = 0;
   sfx.power(); buzz(3);
 }
 function togglePause() {
@@ -5064,19 +5142,28 @@ function renderTitle() {
   drawSkyAndParallax(camX, camY);
   drawTitleGround(camX);
   const gy = -camBaseY();       // baseline ground on screen (layout anchor below)
+  // landscape: the vertical stack doesn't fit above the ground band, so the
+  // menu column compacts and centres while hero+pet run stage-right of it
+  const land = W > H;
+  const heroCX = land ? Math.round(W * 0.78) : Math.round(W / 2);
   // hero running in place, with an excited hop every few seconds
   player.runT += 0.28;
   const hopT = game.frame % 200;
   const hop = hopT < 26 ? Math.round(Math.sin(hopT / 26 * Math.PI) * 20) : 0;
   const img = hop > 0 ? HERO_JUMP : HERO_CYCLE[Math.floor(player.runT) % 4];
-  ctx.save(); ctx.translate(Math.round(W / 2 - 24), gy - 48 - hop); ctx.scale(3, 3);
+  ctx.save(); ctx.translate(heroCX - 24, gy - 48 - hop); ctx.scale(3, 3);
   ctx.drawImage(img, 0, 0);
   if (!hop && game.frame % 173 < 5) { ctx.fillStyle = PAL.S; ctx.fillRect(9, 5, 1, 2); }
   ctx.restore();
   // your companion waits beside you — tap it to meet the next one
   {
     const def = petIdx < PETS.length ? PETS[petIdx] : null;
-    const ppx = Math.round(W / 2 - 76);
+    // landscape: the pet leads the hero (to his right) — trailing him would
+    // put it back under the centred menu text
+    const ppx = land ? heroCX + 44 : Math.round(W / 2 - 76);
+    // one shared centre for the pet's labels + buy button, kept on-screen —
+    // clamping only some of them would detach the button from its caption
+    const petCX = clamp(ppx + 15, safeL + 70, W - safeR - 70);
     if (!def) {   // NO PET: a faint pawprint marks the empty spot (still tappable)
       const ppy0 = gy - 30;
       ctx.globalAlpha = 0.35;
@@ -5087,7 +5174,7 @@ function renderTitle() {
       ctx.globalAlpha = 1;
       ui.petRect = { x: ppx - 5, y: ppy0 - 7, w: 40, h: 44 };
       if (game.frame - (ui.petNameT || -999) < 110)
-        drawTextC(ctx, 'NO PET', ppx + 15, gy + 6, 1, '#8a8ea0', '#1a1c2c');
+        drawTextC(ctx, 'NO PET', petCX, gy + 6, 1, '#8a8ea0', '#1a1c2c');
     } else {
     const bob = def.mode === 'fly' ? Math.round(Math.sin(game.frame * 0.09) * 3) - 22 : 0;
     // ground pets: plant the paw row exactly on the ground line (they hovered)
@@ -5119,33 +5206,46 @@ function renderTitle() {
       ctx.fillRect(ppx + 12, ppy + 12, 8, 7);
       ctx.fillRect(ppx + 14, ppy + 9, 1, 3); ctx.fillRect(ppx + 17, ppy + 9, 1, 3);
       ctx.fillRect(ppx + 14, ppy + 8, 4, 1);
-      drawTextC(ctx, def.name + '  ×' + def.cost, ppx + 15, gy + 6, 1, '#ffe27a', '#1a1c2c');
+      drawTextC(ctx, def.name + '  ×' + def.cost, petCX, gy + 6, 1, '#ffe27a', '#1a1c2c');
       ui.petBuy = drawBtn(game.coinsAll >= def.cost ? 'UNLOCK' : 'NEED ' + (def.cost - game.coinsAll) + ' MORE',
-        ppx + 15, ppy - 24, game.coinsAll >= def.cost);   // above the cage, clear of the help text
+        petCX, ppy - 24, game.coinsAll >= def.cost);   // above the cage, clear of the help text
       if (game.frame - (ui.petNeedT || -999) < 60 && game.coinsAll < def.cost)
-        drawTextC(ctx, 'KEEP RUNNING!', ppx + 15, ppy - 38, 1, '#ff8a9a', '#1a1c2c');
+        drawTextC(ctx, 'KEEP RUNNING!', petCX, ppy - 38, 1, '#ff8a9a', '#1a1c2c');
     } else {
       ui.petBuy = null;
       if (game.frame - (ui.petNameT || -999) < 110)
-        drawTextC(ctx, def.name, ppx + 15, gy + 6, 1, '#ffe97a', '#1a1c2c');
+        drawTextC(ctx, def.name, petCX, gy + 6, 1, '#ffe97a', '#1a1c2c');
       }
     }
     if (petIdx >= PETS.length) ui.petBuy = null;   // the NO PET slot sells nothing
   }
-  drawLogo(W / 2, safeTop + H * 0.12, 4);
-  drawTextC(ctx, 'AN ENDLESS PLATFORM DASH', W / 2, safeTop + H * 0.12 + 62, 1, '#fff', '#1a1c2c');
+  let btnY, tapY;
+  if (land) {   // compact column, vertically centred in the sky above the ground band
+    const stackTop = safeTop + Math.max(6, Math.round((gy - safeTop - 118) / 2));
+    drawLogo(W / 2, stackTop, 3);
+    drawTextC(ctx, 'AN ENDLESS PLATFORM DASH', W / 2, stackTop + 58, 1, '#fff', '#1a1c2c');
+    btnY = stackTop + 72;
+    tapY = btnY + 34;
+  } else {
+    drawLogo(W / 2, safeTop + H * 0.12, 4);
+    drawTextC(ctx, 'AN ENDLESS PLATFORM DASH', W / 2, safeTop + H * 0.12 + 62, 1, '#fff', '#1a1c2c');
+    btnY = gy - 168;
+    tapY = gy - 124;
+  }
   // daily + trophies live between the tagline and the start prompt
-  ui.dailyBtn = drawBtn('DAILY RUN', W / 2 - 52, gy - 168, true);
-  ui.trophyBtn = drawBtn('TROPHIES', W / 2 + 52, gy - 168, true);   // equal choices, equal weight
+  ui.dailyBtn = drawBtn('DAILY RUN', W / 2 - 52, btnY, true);
+  ui.trophyBtn = drawBtn('TROPHIES', W / 2 + 52, btnY, true);   // equal choices, equal weight
   {
     const bits = [];
     if (dailyBest) bits.push("TODAY'S BEST " + dailyBest.score);
     if (dailyStreak.count > 1 && dailyStreak.last === todayKey()) bits.push(dailyStreak.count + ' DAY STREAK');
     if (bits.length)
-      drawTextC(ctx, bits.join('  ·  '), W / 2, gy - 146, 1, '#bfe8ff', '#1a1c2c');
+      drawTextC(ctx, bits.join('  ·  '), W / 2, btnY + 22, 1, '#bfe8ff', '#1a1c2c');
   }
   if ((game.frame >> 5) & 1)
-    drawTextC(ctx, 'TAP TO START', W / 2, gy - 124, 2, '#ffe97a', '#1a1c2c');
+    drawTextC(ctx, 'TAP TO START', W / 2, tapY, 2, '#ffe97a', '#1a1c2c');
+  if (game.frame - pad.toastT < 160)
+    drawTextC(ctx, 'CONTROLLER CONNECTED', W / 2, tapY + 18, 1, '#7dffb0', '#1a1c2c');
   drawTextC(ctx, 'TAP: JUMP   AIR TAP: DOUBLE JUMP', W / 2, H - 68 - safeBot, 1, '#fff', '#1a1c2c');
   drawTextC(ctx, 'SWIPE DOWN: SLAM / DIVE', W / 2, H - 58 - safeBot, 1, '#fff', '#1a1c2c');
   drawTextC(ctx, 'SLAM A ↓ PIPE TO EXPLORE', W / 2, H - 48 - safeBot, 1, '#ffe97a', '#1a1c2c');
@@ -5156,12 +5256,15 @@ function renderTitle() {
   if (stats.length) {
     const bw = Math.max(...stats.map(s => textW(s[0], 1))) + 18;
     const bh = stats.length * 11 + 9;
-    const bx = Math.round(W / 2 - bw / 2), by = gy - 78 - bh;
+    // landscape: the card moves to the top-left corner — its portrait slot
+    // (above the start prompt) is where the compact menu column now sits
+    const bx = land ? safeL + 8 : Math.round(W / 2 - bw / 2);
+    const by = land ? safeTop + 6 : gy - 78 - bh;
     ctx.fillStyle = 'rgba(20,22,40,0.75)';
     ctx.fillRect(bx, by, bw, bh);
     ctx.fillStyle = 'rgba(255,255,255,0.3)';
     ctx.fillRect(bx, by, bw, 1); ctx.fillRect(bx, by + bh - 1, bw, 1);
-    stats.forEach((s, i) => drawTextC(ctx, s[0], W / 2, by + 7 + i * 11, 1, s[1]));
+    stats.forEach((s, i) => drawTextC(ctx, s[0], bx + bw / 2, by + 7 + i * 11, 1, s[1]));
   }
   ui.sound = drawBtn('SOUND ' + (audio.muted ? 'OFF' : 'ON'), W / 2 - 44, H - 22 - safeBot, !audio.muted);
   ui.buzz = drawBtn('BUZZ ' + (hapticsOn ? 'ON' : 'OFF'), W / 2 + 44, H - 22 - safeBot, hapticsOn);
@@ -5404,12 +5507,25 @@ function renderOverlays() {
     drawText(ctx, 'WORLD ' + game.worldNum + ' ' + THEMES[game.themeIdx].name, box.x + 8, box.y + 64, 1, '#fff');
     drawText(ctx, 'BEST DIST ' + game.bestDist + 'M', box.x + 8, box.y + 78, 1, '#8a8ea0');
     if (game.stateT > 45) {
-      // two explicit choices; tapping anywhere else still means "again"
-      ui.overAgain = drawBtn(game.testRun ? 'RETRY WORLD ' + game.startWorld : 'RUN AGAIN',
-        px, box.y + box.h + 14, true);
-      ui.overTitle = drawBtn('BACK TO TITLE', px, box.y + box.h + 38, false);
+      // two explicit choices; tapping anywhere else still means "again".
+      // landscape: side by side — stacked they run off the short screen
+      const again = game.testRun ? 'RETRY WORLD ' + game.startWorld : 'RUN AGAIN';
+      if (W > H) {
+        ui.overAgain = drawBtn(again, px - 70, box.y + box.h + 14, true);
+        ui.overTitle = drawBtn('BACK TO TITLE', px + 70, box.y + box.h + 14, false);
+      } else {
+        ui.overAgain = drawBtn(again, px, box.y + box.h + 14, true);
+        ui.overTitle = drawBtn('BACK TO TITLE', px, box.y + box.h + 38, false);
+      }
     } else ui.overAgain = ui.overTitle = null;
   }
+}
+function padCursor(r) {   // controller selection marker: a small triangle by the button
+  ctx.fillStyle = '#ffe97a';
+  const cy = r.y + Math.round(r.h / 2);
+  ctx.fillRect(r.x - 9, cy - 3, 2, 7);
+  ctx.fillRect(r.x - 7, cy - 1, 2, 3);
+  ctx.fillRect(r.x - 5, cy, 2, 1);
 }
 function renderLevels() {
   const camX = game.frame * 0.6, camY = camBaseY();
@@ -5422,11 +5538,16 @@ function renderLevels() {
   drawTextC(ctx, 'A TESTER\'S SECRET', W / 2, y0 + 14, 1, '#8a8ea0');
   ui.levelBtns = [];
   const rows0 = y0 + 32;
+  // landscape: 8 stacked rows overflow the short screen — two columns of 4
+  const land = W > H, perCol = land ? 4 : THEMES.length;
   for (let i = 0; i < THEMES.length; i++) {
-    const r = drawBtn('W' + (i + 1) + '  ' + THEMES[i].name, W / 2, rows0 + i * 24, true);
+    const cx = land ? W / 2 + (i < perCol ? -80 : 80) : W / 2;
+    const r = drawBtn('W' + (i + 1) + '  ' + THEMES[i].name, cx, rows0 + (i % perCol) * 24, true);
     ui.levelBtns.push({ r, n: i + 1 });
+    if (pad.on && ui.padSel === i) padCursor(r);
   }
-  ui.back = drawBtn('BACK', W / 2, rows0 + THEMES.length * 24 + 8, false);
+  ui.back = drawBtn('BACK', W / 2, rows0 + perCol * 24 + 8, false);
+  if (pad.on && ui.padSel === THEMES.length) padCursor(ui.back);
 }
 function renderTrophies() {
   const camX = game.frame * 0.6, camY = camBaseY();
@@ -5437,14 +5558,18 @@ function renderTrophies() {
   const y0 = safeTop + Math.max(22, H * 0.06);
   drawTextC(ctx, 'TROPHIES', W / 2, y0, 2, '#ffe97a', '#1a1c2c');
   drawTextC(ctx, achOwned.size + ' / ' + ACH.length, W / 2, y0 + 14, 1, '#8a8ea0');
-  const rows0 = y0 + 30, rh = Math.min(24, (H - rows0 - 40) / ACH.length);
+  // landscape: 12 rows can't fit the short screen at a readable size — split
+  // the wall into two columns of 6
+  const perCol = W > H ? Math.ceil(ACH.length / 2) : ACH.length;
+  const rows0 = y0 + 30, rh = Math.min(24, (H - rows0 - 40) / perCol);
   ACH.forEach((a, i) => {
-    const yy = rows0 + i * rh;
+    const x0 = i < perCol ? 24 : Math.round(W / 2) + 12;
+    const yy = rows0 + (i % perCol) * rh;
     const got = achOwned.has(a.id);
     ctx.fillStyle = got ? '#ffd93c' : 'rgba(255,255,255,0.15)';   // the cup
-    ctx.fillRect(24, yy + 1, 8, 6); ctx.fillRect(26, yy + 7, 4, 2); ctx.fillRect(25, yy + 9, 6, 1);
-    drawText(ctx, a.name, 40, yy, 1, got ? '#fff' : '#5a5e70');
-    drawText(ctx, a.desc, 40, yy + 9, 1, got ? '#9adfff' : 'rgba(90,94,112,0.8)');
+    ctx.fillRect(x0, yy + 1, 8, 6); ctx.fillRect(x0 + 2, yy + 7, 4, 2); ctx.fillRect(x0 + 1, yy + 9, 6, 1);
+    drawText(ctx, a.name, x0 + 16, yy, 1, got ? '#fff' : '#5a5e70');
+    drawText(ctx, a.desc, x0 + 16, yy + 9, 1, got ? '#9adfff' : 'rgba(90,94,112,0.8)');
   });
   drawTextC(ctx, 'TAP TO GO BACK', W / 2, H - 24 - safeBot, 1, '#8a8ea0', '#1a1c2c');
 }
@@ -5489,6 +5614,7 @@ function frame(ts) {
   }
   let dt = ts - last; last = ts;
   if (dt > 250) dt = 250;
+  padPoll();                    // controller state is fresh for the sim steps below
   acc += dt;
   let n = 0;
   while (acc >= STEP && n < 5) { if (DBG.bot) botThink(); step(); acc -= STEP; n++; }

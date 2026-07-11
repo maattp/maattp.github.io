@@ -26,6 +26,21 @@ headless with Chrome CDP (see the repo memory / scratchpad `drive.mjs` recipe).
 **The service worker serves stale builds to localhost tests** — always clear
 caches + unregister the SW and reload once before evaluating a fresh edit.
 
+## Landscape & gamepad
+
+The game plays in both orientations. Portrait sizing targets W≈250, landscape
+targets H≈240 (same sprite scale on a given phone). Screens with portrait
+vertical stacks have explicit `W > H` layout branches: title (compact centred
+menu column, hero+pet stage-right, stats card top-left), game-over (buttons
+side by side), level select and trophies (two columns). When adding UI, check
+it against a ~420×195 canvas, not just portrait.
+
+Gamepad (`padPoll()`, standard mapping, polled per rAF): A jump, B/X/dpad-down
+slam, Start pause; menus A confirm / B back / X daily / Y pet cycle; dpad
+feeds the Konami code; level select has a pad cursor (`ui.padSel`). All pad
+input drives the same primitives as touch (pressJump/releaseJump,
+input.slamReq, startRun…), never a parallel path.
+
 ## Tuning contracts
 
 Physics and generator constants are coupled — the derivation comments at the
