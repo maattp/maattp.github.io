@@ -26,8 +26,6 @@ headless with Chrome CDP (see the repo memory / scratchpad `drive.mjs` recipe).
 **The service worker serves stale builds to localhost tests** — always clear
 caches + unregister the SW and reload once before evaluating a fresh edit.
 
-## Tuning contracts
-
 ## Landscape & gamepad
 
 The game plays in both orientations. Portrait sizing targets W≈250, landscape

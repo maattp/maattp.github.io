@@ -5161,6 +5161,9 @@ function renderTitle() {
     // landscape: the pet leads the hero (to his right) — trailing him would
     // put it back under the centred menu text
     const ppx = land ? heroCX + 44 : Math.round(W / 2 - 76);
+    // one shared centre for the pet's labels + buy button, kept on-screen —
+    // clamping only some of them would detach the button from its caption
+    const petCX = clamp(ppx + 15, safeL + 70, W - safeR - 70);
     if (!def) {   // NO PET: a faint pawprint marks the empty spot (still tappable)
       const ppy0 = gy - 30;
       ctx.globalAlpha = 0.35;
@@ -5171,7 +5174,7 @@ function renderTitle() {
       ctx.globalAlpha = 1;
       ui.petRect = { x: ppx - 5, y: ppy0 - 7, w: 40, h: 44 };
       if (game.frame - (ui.petNameT || -999) < 110)
-        drawTextC(ctx, 'NO PET', ppx + 15, gy + 6, 1, '#8a8ea0', '#1a1c2c');
+        drawTextC(ctx, 'NO PET', petCX, gy + 6, 1, '#8a8ea0', '#1a1c2c');
     } else {
     const bob = def.mode === 'fly' ? Math.round(Math.sin(game.frame * 0.09) * 3) - 22 : 0;
     // ground pets: plant the paw row exactly on the ground line (they hovered)
@@ -5203,16 +5206,15 @@ function renderTitle() {
       ctx.fillRect(ppx + 12, ppy + 12, 8, 7);
       ctx.fillRect(ppx + 14, ppy + 9, 1, 3); ctx.fillRect(ppx + 17, ppy + 9, 1, 3);
       ctx.fillRect(ppx + 14, ppy + 8, 4, 1);
-      drawTextC(ctx, def.name + '  ×' + def.cost, ppx + 15, gy + 6, 1, '#ffe27a', '#1a1c2c');
+      drawTextC(ctx, def.name + '  ×' + def.cost, petCX, gy + 6, 1, '#ffe27a', '#1a1c2c');
       ui.petBuy = drawBtn(game.coinsAll >= def.cost ? 'UNLOCK' : 'NEED ' + (def.cost - game.coinsAll) + ' MORE',
-        clamp(ppx + 15, safeL + 70, W - safeR - 70),      // keep the wide label on-screen
-        ppy - 24, game.coinsAll >= def.cost);   // above the cage, clear of the help text
+        petCX, ppy - 24, game.coinsAll >= def.cost);   // above the cage, clear of the help text
       if (game.frame - (ui.petNeedT || -999) < 60 && game.coinsAll < def.cost)
-        drawTextC(ctx, 'KEEP RUNNING!', ppx + 15, ppy - 38, 1, '#ff8a9a', '#1a1c2c');
+        drawTextC(ctx, 'KEEP RUNNING!', petCX, ppy - 38, 1, '#ff8a9a', '#1a1c2c');
     } else {
       ui.petBuy = null;
       if (game.frame - (ui.petNameT || -999) < 110)
-        drawTextC(ctx, def.name, ppx + 15, gy + 6, 1, '#ffe97a', '#1a1c2c');
+        drawTextC(ctx, def.name, petCX, gy + 6, 1, '#ffe97a', '#1a1c2c');
       }
     }
     if (petIdx >= PETS.length) ui.petBuy = null;   // the NO PET slot sells nothing
