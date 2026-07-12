@@ -1137,12 +1137,13 @@ function buildRig() {
     const y = tp.y - 1 - (i + 0.5) * L;
     const rb = world.createRigidBody(RAPIER.RigidBodyDesc.dynamic()
       .setTranslation(tp.x, y, tp.z).setCcdEnabled(true)
-      .setAngularDamping(0.7).setLinearDamping(0.06));
+      .setAngularDamping(1.2).setLinearDamping(0.25));   // high damping: slack chain must lie calm, not buzz
     // links are absurdly dense on purpose: the solver can only hold a joint
     // chain together when the ball outweighs a link by ~10x, not ~100x —
     // so link mass scales with whatever ball is equipped
     world.createCollider(RAPIER.ColliderDesc.capsule(L / 2 - rig.linkR, rig.linkR)
-      .setDensity(linkDensity).setCollisionGroups(G_CHAIN), rb);
+      .setDensity(linkDensity).setFriction(0.15).setRestitution(0)
+      .setCollisionGroups(G_CHAIN), rb);
     rig.joints.push(world.createImpulseJoint(
       RAPIER.JointData.spherical(prevAnchor, { x: 0, y: L / 2, z: 0 }), prev, rb, true));
     prev = rb; prevAnchor = { x: 0, y: -L / 2, z: 0 };
@@ -1153,7 +1154,7 @@ function buildRig() {
   const R = rig.ballDef.r;
   rig.ball = world.createRigidBody(RAPIER.RigidBodyDesc.dynamic()
     .setTranslation(tp.x, tp.y - 1 - LINKS * L - R, tp.z).setCcdEnabled(true)
-    .setAngularDamping(0.5).setLinearDamping(0.03));
+    .setAngularDamping(0.7).setLinearDamping(0.05));
   const bc = world.createCollider(RAPIER.ColliderDesc.ball(R)
     .setDensity(rig.ballDef.density).setCollisionGroups(G_CHAIN)
     .setActiveEvents(RAPIER.ActiveEvents.CONTACT_FORCE_EVENTS)
@@ -1181,6 +1182,21 @@ function buildRig() {
   const cable = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.06, 1, 6),
     new THREE.MeshBasicMaterial({ color: 0x30343c }));
   scene.add(cable); rig.cable = cable;
+  // previous-step transforms for render interpolation (the sim is 60Hz; on a
+  // 120Hz phone, rendering raw physics poses made the chain look like it was
+  // vibrating — every other frame showed no movement)
+  rig.prev = [...rig.links, rig.ball].map(b => {
+    const p = b.translation(), r = b.rotation();
+    return { p: new THREE.Vector3(p.x, p.y, p.z), q: new THREE.Quaternion(r.x, r.y, r.z, r.w) };
+  });
+}
+function snapshotRig() {
+  const bodies = [...rig.links, rig.ball];
+  for (let i = 0; i < bodies.length; i++) {
+    const p = bodies[i].translation(), r = bodies[i].rotation();
+    rig.prev[i].p.set(p.x, p.y, p.z);
+    rig.prev[i].q.set(r.x, r.y, r.z, r.w);
+  }
 }
 
 // ===================================================================
@@ -1336,6 +1352,7 @@ function step(dt) {
   readInput();
   if (state !== 'play') { ctrl.throttle = ctrl.steer = ctrl.slew = ctrl.winch = 0; }
   if (window.__dbg && window.__dbg.auto) Object.assign(ctrl, window.__dbg.auto);   // headless bot override
+  truck.px = truck.x; truck.pz = truck.z; truck.pyaw = truck.yaw; truck.pcab = truck.cabYaw;   // for render interpolation
   const eng = equipped('engine'), win = equipped('winch');
   // ---- drive (arcade kinematics on the height function) ----
   const target = ctrl.throttle * eng.speed;
@@ -1373,14 +1390,23 @@ function step(dt) {
   if (tl > MAXSTEP) v3b.multiplyScalar(MAXSTEP / tl);
   rig.tipPos.add(v3b);
   rig.tip.setNextKinematicTranslation({ x: rig.tipPos.x, y: rig.tipPos.y, z: rig.tipPos.z });
-  // ball speed ceiling: collision ejections can inject huge energy in one
-  // step, and it compounds through the joints — clamp before it cascades
+  // speed ceilings: collision ejections (a link pinched between falling
+  // blocks, the ball wedged under a slab) inject huge energy in one step and
+  // it compounds through the joints — clamp everything before it cascades
   {
     const bv = rig.ball.linvel();
     const sp2 = bv.x * bv.x + bv.y * bv.y + bv.z * bv.z;
     if (sp2 > 55 * 55) {
       const s = 55 / Math.sqrt(sp2);
       rig.ball.setLinvel({ x: bv.x * s, y: bv.y * s, z: bv.z * s }, true);
+    }
+    for (const l of rig.links) {
+      const lv = l.linvel();
+      const l2 = lv.x * lv.x + lv.y * lv.y + lv.z * lv.z;
+      if (l2 > 70 * 70) {
+        const s = 70 / Math.sqrt(l2);
+        l.setLinvel({ x: lv.x * s, y: lv.y * s, z: lv.z * s }, true);
+      }
     }
   }
   // failsafe: if the solver ever loses the chain anyway, quietly rebuild it
@@ -1404,6 +1430,7 @@ function step(dt) {
   }
 
   // ---- physics ----
+  snapshotRig();   // remember pre-step poses for render interpolation
   world.step(eventQueue);
   eventQueue.drainContactForceEvents(ev => {
     const c1 = ev.collider1(), c2 = ev.collider2();
@@ -1448,16 +1475,40 @@ function step(dt) {
 // ===================================================================
 //  render sync
 // ===================================================================
-function syncVisuals(dt) {
-  // chain + ball meshes track bodies
+const lerpQ = new THREE.Quaternion();
+function syncVisuals(dt, alpha) {
+  // chain + ball meshes: interpolate between the last two physics poses —
+  // rendering raw 60Hz poses on a 120Hz screen reads as violent jitter
+  const a = alpha === undefined ? 1 : alpha;
   for (let i = 0; i < rig.links.length; i++) {
     const p = rig.links[i].translation(), r = rig.links[i].rotation();
-    rig.linkMeshes[i].position.set(p.x, p.y, p.z);
-    rig.linkMeshes[i].quaternion.set(r.x, r.y, r.z, r.w);
+    const pv = rig.prev[i];
+    rig.linkMeshes[i].position.set(lerp(pv.p.x, p.x, a), lerp(pv.p.y, p.y, a), lerp(pv.p.z, p.z, a));
+    rig.linkMeshes[i].quaternion.copy(pv.q).slerp(lerpQ.set(r.x, r.y, r.z, r.w), a);
   }
-  const bp = rig.ball.translation(), br = rig.ball.rotation();
+  const bp0 = rig.prev[rig.prev.length - 1];
+  const bpc = rig.ball.translation(), br = rig.ball.rotation();
+  const bp = { x: lerp(bp0.p.x, bpc.x, a), y: lerp(bp0.p.y, bpc.y, a), z: lerp(bp0.p.z, bpc.z, a) };
   rig.ballMesh.position.set(bp.x, bp.y, bp.z);
-  rig.ballMesh.quaternion.set(br.x, br.y, br.z, br.w);
+  rig.ballMesh.quaternion.copy(bp0.q).slerp(lerpQ.set(br.x, br.y, br.z, br.w), a);
+  // the truck's VISUAL pose interpolates too (physics/anchor math in step()
+  // uses the exact 60Hz pose; this overwrite is render-only)
+  {
+    const ix = lerp(truck.px !== undefined ? truck.px : truck.x, truck.x, a);
+    const iz = lerp(truck.pz !== undefined ? truck.pz : truck.z, truck.z, a);
+    let dyaw = truck.yaw - (truck.pyaw !== undefined ? truck.pyaw : truck.yaw);
+    while (dyaw > Math.PI) dyaw -= 2 * Math.PI;
+    while (dyaw < -Math.PI) dyaw += 2 * Math.PI;
+    const iyaw = (truck.pyaw !== undefined ? truck.pyaw : truck.yaw) + dyaw * a;
+    const hI = terrainH(ix, iz);
+    const hF = terrainH(ix + Math.cos(iyaw) * 2.6, iz - Math.sin(iyaw) * 2.6);
+    const hS = terrainH(ix + Math.sin(iyaw) * 1.4, iz + Math.cos(iyaw) * 1.4);
+    truck.group.position.set(ix, hI, iz);
+    truck.group.rotation.set(0, iyaw, 0, 'YXZ');
+    truck.group.rotateZ(Math.atan2(hF - hI, 2.6));
+    truck.group.rotateX(-Math.atan2(hS - hI, 1.4));
+    crane.group.rotation.y = lerp(truck.pcab !== undefined ? truck.pcab : truck.cabYaw, truck.cabYaw, a);
+  }
   // beacon blink (faster while moving)
   beacon.t += dt * (2 + Math.abs(truck.speed) * 0.4);
   beacon.mesh.material.color.setHex((beacon.t | 0) % 2 === 0 ? 0xff7a00 : 0x6b3200);
@@ -1481,9 +1532,14 @@ function syncVisuals(dt) {
     d.material.opacity = Math.max(0, d.userData.life * 0.5);
     if (d.userData.life <= 0) d.visible = false;
   }
-  // camera: chase the truck, peek toward the ball
-  const back = 19.5, up = 11;
-  v3b.set(truck.x - Math.cos(truck.yaw) * back, terrainH(truck.x, truck.z) + up, truck.z + Math.sin(truck.yaw) * back);
+  // camera: locked chase behind the truck, TRUCK-CENTERED. The old look-at
+  // blended 40% toward the ball, so after any slewing the whole vehicle
+  // drifted off-frame ("my boom is off to the right side of the screen").
+  // Ball influence is now a small CLAMPED nudge — the truck always anchors
+  // the shot and the full rig stays in view.
+  const back = 18, up = 10;
+  const hT = terrainH(truck.x, truck.z);
+  v3b.set(truck.x - Math.cos(truck.yaw) * back, hT + up, truck.z + Math.sin(truck.yaw) * back);
   camPos.lerp(v3b, 1 - Math.exp(-dt * 3.2));
   const sh = game.shake;
   if (sh > 0.01) {
@@ -1491,8 +1547,14 @@ function syncVisuals(dt) {
     game.shake *= Math.pow(0.02, dt);
   }
   camera.position.copy(camPos);
-  camLook.lerp(v3b.set(truck.x * 0.6 + bp.x * 0.4, (terrainH(truck.x, truck.z) + 3) * 0.65 + bp.y * 0.35,
-    truck.z * 0.6 + bp.z * 0.4), 1 - Math.exp(-dt * 4));
+  let nx = bp.x - truck.x, nz = bp.z - truck.z;             // ball nudge, capped at 3.5m
+  const nl = Math.hypot(nx, nz);
+  if (nl > 3.5) { nx *= 3.5 / nl; nz *= 3.5 / nl; }
+  const ny = clamp((bp.y - hT) * 0.15, 0, 2.5);
+  camLook.lerp(v3b.set(
+    truck.x + Math.cos(truck.yaw) * 3 + nx * 0.6,
+    hT + 3 + ny,
+    truck.z - Math.sin(truck.yaw) * 3 + nz * 0.6), 1 - Math.exp(-dt * 4));
   camera.lookAt(camLook);
   // sun + shadow box follow; sky dome and mountains ride along (infinitely far)
   sun.position.set(truck.x + 30, 60, truck.z + 18);
@@ -1604,7 +1666,7 @@ function frame(ts) {
     readInput();   // paused/garage: the sim is stopped but the controller must still navigate
   }
   fragTick(dt);
-  syncVisuals(dt);
+  syncVisuals(dt, clamp(acc / STEP, 0, 1));   // interpolation fraction between physics steps
   renderer.render(scene, camera);
 }
 requestAnimationFrame(frame);
