@@ -1157,7 +1157,7 @@
         // ⚠ APP_VER: increment ONCE PER PR (CLAUDE.md rule). Shown on the
         // title screen and folded into NET_VER, so any two different builds
         // refuse to share a room.
-        const APP_VER = 38;
+        const APP_VER = 39;
         function hash32(str) {
             let h = 2166136261 >>> 0;
             for (let i = 0; i < str.length; i++) { h ^= str.charCodeAt(i); h = Math.imul(h, 16777619); }
@@ -6776,10 +6776,11 @@
             // screen-left), which on a laptop felt like being stuck in
             // Reversed if your muscle memory is the Standard scheme.
             const mouse = mouseSteerOn ? mouseSteerVal : 0;
-            // padSteer joins AFTER the Standard/Reversed flip: a physical stick
-            // is geometric (stick right = kart right) no matter how the touch
-            // slide is configured — wheels don't slide, they point.
-            steerInput = clamp((touchSteer + keySteer + mouse) * (steerReversed ? 1 : -1) + padSteer, -1, 1);
+            // the gamepad stick follows the Standard/Reversed setting exactly
+            // like keys do — a geometric stick was shipped first and the user
+            // immediately reported it as inverted (2026-07-11): the Standard
+            // scheme IS the muscle memory here, whatever the input device.
+            steerInput = clamp((touchSteer + keySteer + mouse + padSteer) * (steerReversed ? 1 : -1), -1, 1);
         }
 
         // ---------------------------------------------------------------

@@ -68,7 +68,7 @@ const MAX_SPEED = 3.05;
 const PIT_Y = 11 * TILE;             // below this = pit death
 const WORLD_LEN = 500;               // tiles per world before the flag
 const SAVE = 'pixelrun_';
-const VERSION = 44;                  // shown on the title screen — bump once per PR (see CLAUDE.md)
+const VERSION = 45;                  // shown on the title screen — bump once per PR (see CLAUDE.md)
 
 // ---------- utils ----------
 const clamp = (v, a, b) => v < a ? a : v > b ? b : v;
@@ -104,12 +104,23 @@ let W = 240, H = 420, SCALE = 2;
 let lastSize = '';
 function resize() {
   const dpr = window.devicePixelRatio || 1;
-  // measure the element and every viewport report, take the largest —
-  // iOS standalone lags these at launch/rotation
+  // CSS media orientation is the one report iOS keeps truthful through a
+  // standalone rotation — innerWidth/Height and screen.* can sit in the OLD
+  // orientation for a while, and our own canvas style feeds back through the
+  // element rect. Maxing raw axes let a stale portrait height (844) win in
+  // landscape → an 844×844 canvas on a 390-tall screen, bottom half cut off.
+  // So: orient every (w,h) source to the CSS orientation, THEN take the
+  // per-axis max (which still covers the launch-lag case max() was for).
+  const landscape = window.matchMedia('(orientation: landscape)').matches;
   const vv = window.visualViewport;
   const rect = canvas.getBoundingClientRect();
-  let cw = Math.round(Math.max(window.innerWidth, vv ? vv.width : 0, rect.width));
-  let chh = Math.round(Math.max(window.innerHeight, vv ? vv.height : 0, rect.height));
+  let cw = 0, chh = 0;
+  for (const [pw, ph] of [[window.innerWidth, window.innerHeight],
+                          [vv ? vv.width : 0, vv ? vv.height : 0],
+                          [rect.width, rect.height]]) {
+    cw = Math.max(cw, Math.round(landscape ? Math.max(pw, ph) : Math.min(pw, ph)));
+    chh = Math.max(chh, Math.round(landscape ? Math.min(pw, ph) : Math.max(pw, ph)));
+  }
   // Some iOS versions size the standalone layout viewport SHORT of the home
   // indicator, so 100dvh / inset:0 / innerHeight all agree on a height that ends
   // above the screen bottom (the bar). The physical screen doesn't lie: extend the
@@ -117,8 +128,8 @@ function resize() {
   // and the inset math below then measures the home-indicator gap naturally.
   if (navigator.standalone && screen && screen.width) {
     const sMin = Math.min(screen.width, screen.height), sMax = Math.max(screen.width, screen.height);
-    if (chh >= cw) { cw = Math.max(cw, sMin); chh = Math.max(chh, sMax); }
-    else { cw = Math.max(cw, sMax); chh = Math.max(chh, sMin); }
+    cw = Math.max(cw, landscape ? sMax : sMin);
+    chh = Math.max(chh, landscape ? sMin : sMax);
   }
   // insets are cheap — refresh them on EVERY call. env() resolves late on iOS,
   // and if the first size measurement is already correct no further resize fires,
@@ -127,7 +138,7 @@ function resize() {
   const sig = cw + 'x' + chh + '@' + dpr;
   if (sig === lastSize) return;
   lastSize = sig;
-  const portrait = chh >= cw;
+  const portrait = !landscape;
   // landscape targets H≈240 so sprites keep the same on-screen size as
   // portrait (which targets W≈250) — rotating must not zoom the world out
   SCALE = portrait
@@ -153,23 +164,34 @@ function readInsets(cw, chh) {
   probe.remove();
   let topCss = r.top;
   let botCss = Math.max(0, chh - r.bottom);
+  let leftCss = r.left, rightCss = Math.max(0, cw - r.right);
   // env() can report 0 before iOS settles; in a standalone app that is never true —
-  // fall back to device-class status-bar / home-indicator heights until it resolves
+  // fall back to device-class geometry until it resolves. The floors are
+  // ORIENTATION-SPECIFIC: landscape hides the status bar entirely (forcing the
+  // portrait 47px top floor there wasted a fifth of the short screen), moves
+  // the notch to the sides, and slims the home indicator to 21px.
   if (navigator.standalone) {
     const notched = Math.max(screen.width, screen.height) >= 780;
-    if (topCss < 20) topCss = notched ? 47 : 20;
-    if (notched && botCss < 10) botCss = 34;
+    if (cw > chh) {   // landscape
+      if (notched && botCss < 10) botCss = 21;
+      if (notched && leftCss < 10 && rightCss < 10) leftCss = rightCss = 44;
+    } else {
+      if (topCss < 20) topCss = notched ? 47 : 20;
+      if (notched && botCss < 10) botCss = 34;
+    }
   }
   const s = (window.devicePixelRatio || 1) / SCALE;
   safeTop = Math.ceil(topCss * s);
   safeBot = Math.ceil(botCss * s);
-  safeL = Math.ceil(r.left * s);
-  safeR = Math.ceil(Math.max(0, cw - r.right) * s);
+  safeL = Math.ceil(leftCss * s);
+  safeR = Math.ceil(rightCss * s);
 }
 window.addEventListener('resize', resize);
-window.addEventListener('orientationchange', () => setTimeout(resize, 250));
+window.addEventListener('orientationchange', () => { setTimeout(resize, 250); setTimeout(resize, 700); });
 window.addEventListener('pageshow', () => setTimeout(resize, 60));
 if (window.visualViewport) window.visualViewport.addEventListener('resize', resize);
+// the CSS orientation flip is the signal the whole sizing keys on — listen to it directly
+try { window.matchMedia('(orientation: landscape)').addEventListener('change', () => { resize(); setTimeout(resize, 250); }); } catch (e) {}
 setTimeout(resize, 350);        // iOS standalone reports the real viewport late
 setTimeout(resize, 1200);       // …and sometimes very late
 resize();
@@ -5246,9 +5268,13 @@ function renderTitle() {
     drawTextC(ctx, 'TAP TO START', W / 2, tapY, 2, '#ffe97a', '#1a1c2c');
   if (game.frame - pad.toastT < 160)
     drawTextC(ctx, 'CONTROLLER CONNECTED', W / 2, tapY + 18, 1, '#7dffb0', '#1a1c2c');
-  drawTextC(ctx, 'TAP: JUMP   AIR TAP: DOUBLE JUMP', W / 2, H - 68 - safeBot, 1, '#fff', '#1a1c2c');
-  drawTextC(ctx, 'SWIPE DOWN: SLAM / DIVE', W / 2, H - 58 - safeBot, 1, '#fff', '#1a1c2c');
-  drawTextC(ctx, 'SLAM A ↓ PIPE TO EXPLORE', W / 2, H - 48 - safeBot, 1, '#ffe97a', '#1a1c2c');
+  if (land)   // one line — three stacked rows collide with the menu column on short screens
+    drawTextC(ctx, 'TAP: JUMP   SWIPE DOWN: SLAM   SLAM A ↓ PIPE', W / 2, H - 44 - safeBot, 1, '#fff', '#1a1c2c');
+  else {
+    drawTextC(ctx, 'TAP: JUMP   AIR TAP: DOUBLE JUMP', W / 2, H - 68 - safeBot, 1, '#fff', '#1a1c2c');
+    drawTextC(ctx, 'SWIPE DOWN: SLAM / DIVE', W / 2, H - 58 - safeBot, 1, '#fff', '#1a1c2c');
+    drawTextC(ctx, 'SLAM A ↓ PIPE TO EXPLORE', W / 2, H - 48 - safeBot, 1, '#ffe97a', '#1a1c2c');
+  }
   // stats on a dark card — tiny colored text straight on the sky was unreadable
   const stats = [];
   if (game.best > 0) stats.push(['BEST ' + game.best + '   ' + game.bestDist + 'M', '#bfe8ff']);
