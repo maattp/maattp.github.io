@@ -531,7 +531,7 @@ function spawnBlock(x, y, z, sx, sy, sz, color, density, lot) {
   const coll = world.createCollider(RAPIER.ColliderDesc.cuboid(sx / 2, sy / 2, sz / 2)
     .setDensity(density).setFriction(0.75).setCollisionGroups(G_WORLD), body);
   body.sleep();
-  const b = { body, coll, inst, sx, sy, sz, home: { x, y, z }, lot, scored: false, wreckT: 0, coin: Math.ceil(density) };
+  const b = { body, coll, inst, sx, sy, sz, home: { x, y, z }, lot, scored: false, wreckT: 0, coin: Math.ceil(density), idx: blocks.length };
   blocks.push(b);
   collMap.set(coll.handle, b);
   tmpM4.compose(tmpV.set(x, y, z), tmpQ.identity(), tmpS.set(sx, sy, sz));
@@ -547,8 +547,9 @@ function removeBlock(b) {
   blockMesh.setMatrixAt(b.inst, ZERO_M4);
   blockMesh.instanceMatrix.needsUpdate = true;
   freeInst.push(b.inst);
-  const i = blocks.indexOf(b);
-  if (i >= 0) blocks.splice(i, 1);
+  // O(1) swap-remove — a full indexOf scan here made heavy-combo cleanup O(n²)
+  const last = blocks.pop();
+  if (last !== b) { blocks[b.idx] = last; last.idx = b.idx; }
   const ll = builtLots.get(b.lot);   // keep the lot list honest — a faded debris
   if (ll) {                          // block must not be double-freed by removeLot
     const j = ll.indexOf(b);
@@ -824,7 +825,7 @@ function buildLot(k) {
 function removeLot(k) {
   const list = builtLots.get(k);
   if (!list) return;
-  for (const b of list) removeBlock(b);
+  for (const b of [...list]) removeBlock(b);   // copy: removeBlock splices this very list
   builtLots.delete(k);
 }
 function syncBlock(b) {
@@ -1153,7 +1154,7 @@ function debrisTick() {
     }
     awake++;
     syncBlock(b);
-    if (!b.scored) {
+    if (!b.scored && state === 'play') {   // idling on the title must never bank points
       const p = b.body.translation(), h = b.home;
       if ((p.x - h.x) ** 2 + (p.y - h.y) ** 2 + (p.z - h.z) ** 2 > 1.2) {
         b.scored = true;
@@ -1162,11 +1163,13 @@ function debrisTick() {
       }
     }
   }
-  // hard body budget: too much rubble → dump the oldest scored sleepers
+  // hard body budget: too much rubble → retire scored sleepers, a few per step
+  // (bounded — a full filter sweep every step went quadratic in the biggest combos)
   if (awake > 420) {
-    for (const b of blocks.filter(b => b.scored && b.body.isSleeping())) {
-      removeBlock(b);
-      if (--awake < 380) break;
+    let toDrop = 8;
+    for (let i = blocks.length - 1; i >= 0 && toDrop > 0; i--) {
+      const b = blocks[i];
+      if (b.scored && b.body.isSleeping()) { removeBlock(b); toDrop--; }
     }
   }
   blockMesh.instanceMatrix.needsUpdate = true;
