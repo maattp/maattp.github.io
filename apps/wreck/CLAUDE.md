@@ -47,6 +47,19 @@ must reach installed players promptly.
   (`collMap`) — terrain/truck contacts must never score (the ball dragging
   on dirt farmed thousands of points before this guard).
 
+## Rendering
+
+ACES tone mapping (exposure 1.0) + a PMREM RoomEnvironment for Standard-material
+ambient — but env light washes the toy palette out fast, so every material
+carries a tuned `envMapIntensity` (terrain 0.15, blocks 0.35, truck 0.5) and
+the terrain colors are pre-deepened to survive ACES. Gradient-canvas sky dome,
+mountain ring + sun disc follow the truck (infinitely far). Blocks are ONE
+InstancedMesh of `RoundedBoxGeometry` (bevel highlights) with per-instance HSL
+jitter. Road dashes + bush/rock scatter are per-chunk InstancedMeshes disposed
+with the chunk. Impact shards: `burst()` pool, purely visual.
+`world.numSolverIterations` was verified to be a real accessor on
+rapier3d-compat 0.19.3 (prototype getter/setter — not a silent expando).
+
 ## World generation
 
 Deterministic from lot index: `lotAt(k)` at x≈30k, alternating road sides,

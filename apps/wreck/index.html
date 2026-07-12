@@ -156,11 +156,14 @@
 <script type="importmap">
 { "imports": {
   "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+  "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/",
   "rapier": "https://cdn.jsdelivr.net/npm/@dimforge/rapier3d-compat@0.19.3/rapier.mjs"
 }}
 </script>
 <script type="module">
 import * as THREE from 'three';
+import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
+import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
 import RAPIER from 'rapier';
 
 const VERSION = 1;   // bump once per PR (see CLAUDE.md)
@@ -310,8 +313,13 @@ bindStick($('stickR'), sticks.R);
 
 const keys = {};
 window.addEventListener('keydown', e => {
+  if (e.repeat) return;   // held P must not ping-pong pause/resume
   keys[e.code] = true;
-  if (e.code === 'KeyP' || e.code === 'Escape') { if (state === 'play') pauseGame(); else if (state === 'pause') resumeGame(); }
+  if (e.code === 'KeyP' || e.code === 'Escape') {
+    if (state === 'play') pauseGame();
+    else if (state === 'pause') resumeGame();
+    else if ($('garage').classList.contains('show')) $('garageBack').click();
+  }
 });
 window.addEventListener('keyup', e => { keys[e.code] = false; });
 
@@ -374,21 +382,64 @@ const G_TRUCK = (0x0004 << 16) | 0x0001;   // truck: pushes world stuff
 const renderer = new THREE.WebGLRenderer({ canvas: $('gl'), antialias: true });
 renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
 renderer.shadowMap.enabled = true;
-renderer.shadowMap.type = THREE.PCFShadowMap;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+renderer.toneMapping = THREE.ACESFilmicToneMapping;   // flat Lambert colors read
+renderer.toneMappingExposure = 1.0;                  // "basic" without it
 const scene = new THREE.Scene();
-scene.background = new THREE.Color(0x8ed4f7);
-scene.fog = new THREE.Fog(0x8ed4f7, 90, 240);
-const camera = new THREE.PerspectiveCamera(58, 2, 0.1, 500);
-scene.add(new THREE.HemisphereLight(0xeaf6ff, 0x8a9a4a, 0.95));
-const sun = new THREE.DirectionalLight(0xfff2dd, 1.5);
+// soft studio environment so Standard materials get real ambient reflections
+{
+  const pmrem = new THREE.PMREMGenerator(renderer);
+  scene.environment = pmrem.fromScene(new RoomEnvironment(renderer), 0.06).texture;
+  pmrem.dispose();
+}
+scene.fog = new THREE.Fog(0xbfe3f6, 125, 300);   // haze toward the horizon tint
+// gradient sky dome (a flat clear-color sky was doing the game no favors)
+{
+  const cv = document.createElement('canvas'); cv.width = 2; cv.height = 256;
+  const cx = cv.getContext('2d');
+  const g = cx.createLinearGradient(0, 0, 0, 256);
+  g.addColorStop(0, '#3f9de8'); g.addColorStop(0.55, '#8ed4f7');
+  g.addColorStop(0.82, '#cfeafc'); g.addColorStop(1, '#e8f4d8');
+  cx.fillStyle = g; cx.fillRect(0, 0, 2, 256);
+  const tex = new THREE.CanvasTexture(cv);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  const dome = new THREE.Mesh(new THREE.SphereGeometry(420, 24, 14),
+    new THREE.MeshBasicMaterial({ map: tex, side: THREE.BackSide, fog: false, depthWrite: false }));
+  dome.userData.sky = true;
+  scene.add(dome);
+  window.__skyDome = dome;
+}
+// sun disc glow in the dome
+const sunDisc = new THREE.Mesh(new THREE.CircleGeometry(22, 24),
+  new THREE.MeshBasicMaterial({ color: 0xfff7cf, fog: false, transparent: true, opacity: 0.95 }));
+scene.add(sunDisc);
+const camera = new THREE.PerspectiveCamera(58, 2, 0.1, 900);
+scene.add(new THREE.HemisphereLight(0xeaf6ff, 0x8a9a4a, 0.62));
+const sun = new THREE.DirectionalLight(0xfff0d6, 1.7);
 sun.position.set(30, 60, 18);
 sun.castShadow = true;
-sun.shadow.mapSize.set(1024, 1024);
-sun.shadow.camera.left = -50; sun.shadow.camera.right = 50;
-sun.shadow.camera.top = 50; sun.shadow.camera.bottom = -50;
-sun.shadow.camera.far = 160;
-sun.shadow.bias = -0.002;
+sun.shadow.mapSize.set(2048, 2048);
+sun.shadow.camera.left = -55; sun.shadow.camera.right = 55;
+sun.shadow.camera.top = 55; sun.shadow.camera.bottom = -55;
+sun.shadow.camera.far = 170;
+sun.shadow.bias = -0.0015;
+sun.shadow.radius = 4;
 scene.add(sun); scene.add(sun.target);
+// distant mountain ring — parallax-free (follows the truck), fog-hazed peaks
+const mountains = new THREE.Group();
+{
+  const rng = mulberry32(41);
+  for (let i = 0; i < 12; i++) {
+    const a = i / 12 * Math.PI * 2 + rng() * 0.3;
+    const r = 250 + rng() * 60, h = 40 + rng() * 55;
+    const m = new THREE.Mesh(new THREE.ConeGeometry(55 + rng() * 45, h, 5),
+      new THREE.MeshLambertMaterial({ color: new THREE.Color().setHSL(0.42 - rng() * 0.08, 0.28, 0.42 + rng() * 0.12) }));
+    m.position.set(Math.cos(a) * r, h / 2 - 6, Math.sin(a) * r);
+    m.rotation.y = rng() * Math.PI;
+    mountains.add(m);
+  }
+  scene.add(mountains);
+}
 // puffy clouds: cheap billboards way up high
 {
   const cg = new THREE.SphereGeometry(1, 7, 5);
@@ -456,9 +507,9 @@ function terrainH(x, z) {   // final height: hills blended flat around each near
 // terrain chunks: mesh + heightfield collider
 const CHUNK = 48, CHUNK_SEG = 32;
 const chunks = new Map();   // "cx,cz" -> { mesh, body }
-const grassC = new THREE.Color(0x7ec850), grassC2 = new THREE.Color(0x93d45e),
-      roadC = new THREE.Color(0x8a8f99), edgeC = new THREE.Color(0xd8c26a),
-      dirtC = new THREE.Color(0xc9a05a);
+const grassC = new THREE.Color(0x61b03a), grassC2 = new THREE.Color(0x76c24c),
+      roadC = new THREE.Color(0x767b85), edgeC = new THREE.Color(0xcdb45c),
+      dirtC = new THREE.Color(0xbd9450);
 function buildChunk(cx, cz) {
   const key = cx + ',' + cz;
   if (chunks.has(key)) return;
@@ -496,13 +547,71 @@ function buildChunk(cx, cz) {
     .setTranslation(ox + CHUNK / 2, 0, oz + CHUNK / 2));
   world.createCollider(RAPIER.ColliderDesc.heightfield(CHUNK_SEG, CHUNK_SEG, heights,
     { x: CHUNK, y: 1, z: CHUNK }).setCollisionGroups(G_WORLD).setFriction(0.9), body);
-  chunks.set(key, { mesh, body, cx, cz });
+  // road centre dashes where the road crosses this chunk
+  let dashMesh = null;
+  {
+    const spots = [];
+    for (let x = ox + 2; x < ox + CHUNK; x += 6.5) {
+      const z = roadZ(x);
+      if (z >= oz - 1 && z <= oz + CHUNK + 1) spots.push([x, z]);
+    }
+    if (spots.length) {
+      dashMesh = new THREE.InstancedMesh(dashGeo, dashMat, spots.length);
+      spots.forEach(([x, z], i) => {
+        const grade = (roadZ(x + 1) - roadZ(x - 1)) / 2;
+        tmpQ.setFromEuler(new THREE.Euler(0, -Math.atan2(grade, 1), 0));
+        tmpM4.compose(tmpV.set(x, terrainH(x, z) + 0.05, z), tmpQ, tmpS.set(1, 1, 1));
+        dashMesh.setMatrixAt(i, tmpM4);
+      });
+      scene.add(dashMesh);
+    }
+  }
+  // hillside scatter: bushes + rocks, deterministic per chunk, off road + pads
+  let scatMesh = null;
+  {
+    const rng = mulberry32(((cx * 73856093) ^ (cz * 19349663) ^ SEED) >>> 0);
+    const items = [];
+    for (let t = 0; t < 18; t++) {
+      const x = ox + rng() * CHUNK, z = oz + rng() * CHUNK;
+      if (Math.abs(z - roadZ(x)) < 9.5) continue;
+      const k0 = Math.round(x / 30);
+      let clear = true;
+      for (let k = k0 - 1; k <= k0 + 1; k++) {
+        const L = lotAt(k);
+        if (Math.hypot(x - L.x, z - L.z) < L.r + 3) { clear = false; break; }
+      }
+      if (clear) items.push({ x, z, s: 0.5 + rng() * 1.0, rock: rng() < 0.3, v: rng() });
+    }
+    if (items.length) {
+      scatMesh = new THREE.InstancedMesh(scatGeo, scatMat, items.length);
+      scatMesh.castShadow = true;
+      items.forEach((it, i) => {
+        tmpQ.setFromEuler(new THREE.Euler(0, it.v * Math.PI * 2, 0));
+        tmpM4.compose(
+          tmpV.set(it.x, terrainH(it.x, it.z) + it.s * 0.32, it.z), tmpQ,
+          it.rock ? tmpS.set(it.s * 0.9, it.s * 0.5, it.s * 0.7) : tmpS.set(it.s, it.s * 0.72, it.s));
+        scatMesh.setMatrixAt(i, tmpM4);
+        scatMesh.setColorAt(i, it.rock
+          ? tmpC.setHSL(0.08, 0.06, 0.5 + it.v * 0.14)
+          : tmpC.setHSL(0.29 + it.v * 0.06, 0.5, 0.32 + it.v * 0.12));
+      });
+      scene.add(scatMesh);
+    }
+  }
+  chunks.set(key, { mesh, body, cx, cz, dashMesh, scatMesh });
 }
-const terrainMat = new THREE.MeshLambertMaterial({ vertexColors: true });
+const terrainMat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.95, metalness: 0, envMapIntensity: 0.15 });
+// road centre dashes + hillside scatter (bushes/rocks) share instanced geometry
+const dashGeo = new THREE.BoxGeometry(2.2, 0.06, 0.34);
+const dashMat = new THREE.MeshBasicMaterial({ color: 0xf2f2e8 });
+const scatGeo = new THREE.IcosahedronGeometry(1, 0);
+const scatMat = new THREE.MeshStandardMaterial({ roughness: 0.9, envMapIntensity: 0.25 });
 function removeChunk(key) {
   const c = chunks.get(key);
   if (!c) return;
   scene.remove(c.mesh); c.mesh.geometry.dispose();
+  if (c.dashMesh) { scene.remove(c.dashMesh); c.dashMesh.dispose(); }
+  if (c.scatMesh) { scene.remove(c.scatMesh); c.scatMesh.dispose(); }
   world.removeRigidBody(c.body);
   chunks.delete(key);
 }
@@ -511,8 +620,11 @@ function removeChunk(key) {
 //  block pool — every building piece + debris is one InstancedMesh
 // ===================================================================
 const POOL = 2600;
-const blockGeo = new THREE.BoxGeometry(1, 1, 1);
-const blockMesh = new THREE.InstancedMesh(blockGeo, new THREE.MeshLambertMaterial(), POOL);
+// beveled unit box: the soft edge highlights are most of what makes the toy
+// blocks read as pieces instead of untextured slabs
+const blockGeo = new RoundedBoxGeometry(1, 1, 1, 2, 0.055);
+const blockMesh = new THREE.InstancedMesh(blockGeo,
+  new THREE.MeshStandardMaterial({ roughness: 0.82, metalness: 0.02, envMapIntensity: 0.35 }), POOL);
 blockMesh.castShadow = true; blockMesh.receiveShadow = true;
 blockMesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
 scene.add(blockMesh);
@@ -531,12 +643,13 @@ function spawnBlock(x, y, z, sx, sy, sz, color, density, lot) {
   const coll = world.createCollider(RAPIER.ColliderDesc.cuboid(sx / 2, sy / 2, sz / 2)
     .setDensity(density).setFriction(0.75).setCollisionGroups(G_WORLD), body);
   body.sleep();
-  const b = { body, coll, inst, sx, sy, sz, home: { x, y, z }, lot, scored: false, wreckT: 0, coin: Math.ceil(density), idx: blocks.length };
+  const b = { body, coll, inst, sx, sy, sz, home: { x, y, z }, lot, scored: false, wreckT: 0, coin: Math.ceil(density), idx: blocks.length, c: color };
   blocks.push(b);
   collMap.set(coll.handle, b);
   tmpM4.compose(tmpV.set(x, y, z), tmpQ.identity(), tmpS.set(sx, sy, sz));
   blockMesh.setMatrixAt(inst, tmpM4);
-  blockMesh.setColorAt(inst, tmpC.set(color));
+  // per-brick tint jitter: uniform-colored walls looked like untextured slabs
+  blockMesh.setColorAt(inst, tmpC.set(color).offsetHSL(0, 0, (Math.random() - 0.5) * 0.055));
   blockMesh.instanceMatrix.needsUpdate = true;
   if (blockMesh.instanceColor) blockMesh.instanceColor.needsUpdate = true;
   return b;
@@ -803,18 +916,14 @@ function buildLot(k) {
   const yaw = (L.rng() - 0.5) * 0.5 + (L.side < 0 ? Math.PI : 0);
   const cy = Math.cos(yaw), sy = Math.sin(yaw);
   const list = [];
+  const q = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), yaw);
   for (const s of out) {
     const x = L.x + s.x * cy - s.z * sy;
     const z = L.z + s.x * sy + s.z * cy;
-    const b = spawnBlock(x, padH + s.y + s.sy / 2 * 0, z, s.sx, s.sy, s.sz, s.c, s.d, k);
-    // NOTE: s.y is the block CENTER height above pad already in builders
+    // s.y is the block CENTER height above the pad
+    const b = spawnBlock(x, padH + s.y, z, s.sx, s.sy, s.sz, s.c, s.d, k);
     if (b) {
-      b.body.setTranslation({ x, y: padH + s.y, z }, false);
-      if (Math.abs(yaw) > 0.01) {
-        const q = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), yaw);
-        b.body.setRotation({ x: q.x, y: q.y, z: q.z, w: q.w }, false);
-      }
-      b.home = { x, y: padH + s.y, z };
+      if (Math.abs(yaw) > 0.01) b.body.setRotation({ x: q.x, y: q.y, z: q.z, w: q.w }, false);
       b.body.sleep();
       syncBlock(b);
       list.push(b);
@@ -845,7 +954,7 @@ truck.z = roadZ(0);
 const beacon = { mesh: null, t: 0 };
 {
   const g = truck.group;
-  const mat = c => new THREE.MeshLambertMaterial({ color: c });
+  const mat = c => new THREE.MeshStandardMaterial({ color: c, roughness: 0.62, metalness: 0.12, envMapIntensity: 0.5 });
   const box = (w, h, d, c, x, y, z, parent = g) => {
     const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), mat(c));
     m.position.set(x, y, z); m.castShadow = true; parent.add(m); return m;
@@ -909,7 +1018,7 @@ const beacon = { mesh: null, t: 0 };
 // crane assembly (child of truck group so it inherits truck pose)
 const crane = { group: new THREE.Group(), boomLen: 9.5, boomPitch: 0.86, piston: null, pistonRod: null };
 {
-  const mat = c => new THREE.MeshLambertMaterial({ color: c });
+  const mat = c => new THREE.MeshStandardMaterial({ color: c, roughness: 0.62, metalness: 0.12, envMapIntensity: 0.5 });
   const g = crane.group;
   // slew ring
   const base = new THREE.Mesh(new THREE.CylinderGeometry(1.15, 1.35, 0.6, 18), mat(0x2c2f38));
@@ -984,7 +1093,7 @@ const crane = { group: new THREE.Group(), boomLen: 9.5, boomPitch: 0.86, piston:
 // hook block at the winch anchor (the chain hangs from this)
 const hookMesh = new THREE.Group();
 {
-  const mat = c => new THREE.MeshLambertMaterial({ color: c });
+  const mat = c => new THREE.MeshStandardMaterial({ color: c, roughness: 0.62, metalness: 0.12, envMapIntensity: 0.5 });
   const hb = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.6, 0.34), mat(0xe8a020));
   hb.castShadow = true; hookMesh.add(hb);
   const sh = new THREE.Mesh(new THREE.CylinderGeometry(0.18, 0.18, 0.4, 10), mat(0x565d6b));
@@ -998,7 +1107,7 @@ world.createCollider(RAPIER.ColliderDesc.cuboid(3.3, 1.1, 1.5).setCollisionGroup
 // ---- chain + ball (rebuilt when garage equipment changes) ----
 const rig = { tip: null, links: [], ball: null, joints: [], linkMeshes: [], ballMesh: null, cable: null,
   linkL: 1.15, linkR: 0.15, ballDef: null, chainDef: null, tipPos: new THREE.Vector3(), resets: 0 };
-const chainMat = new THREE.MeshLambertMaterial({ color: 0x555c66 });
+const chainMat = new THREE.MeshStandardMaterial({ color: 0x555c66, roughness: 0.42, metalness: 0.65 });
 function boomTipWorld(out) {   // where the hoist cable leaves the boom
   const t = out.set(crane.boomLen, 0.25, 0);
   crane.boom.localToWorld(t);
@@ -1108,6 +1217,48 @@ function earnCoins(n, pos) {
   hud.coins.textContent = '🪙 ' + eco.coins;
   if (pos && Math.random() < 0.4) { popText(pos, '🪙+' + m); sfx.coin(); }
 }
+// impact fragments: chunky shards that fly off big hits and crumbling blocks
+const FRAGS = 90;
+const fragMesh = new THREE.InstancedMesh(new THREE.BoxGeometry(0.3, 0.24, 0.3),
+  new THREE.MeshStandardMaterial({ roughness: 0.85, envMapIntensity: 0.3 }), FRAGS);
+fragMesh.castShadow = true;
+scene.add(fragMesh);
+const frags = Array.from({ length: FRAGS }, () => ({ life: 0, p: new THREE.Vector3(), v: new THREE.Vector3(), rx: 0, rz: 0, s: 1 }));
+let fragCursor = 0;
+for (let i = 0; i < FRAGS; i++) fragMesh.setMatrixAt(i, ZERO_M4);
+function burst(x, y, z, color, n, speed) {
+  for (let i = 0; i < n; i++) {
+    const f = frags[fragCursor];
+    fragMesh.setColorAt(fragCursor, tmpC.set(color).offsetHSL(0, 0, (Math.random() - 0.5) * 0.1));
+    fragCursor = (fragCursor + 1) % FRAGS;
+    f.life = 1;
+    f.p.set(x, y, z);
+    const a = Math.random() * Math.PI * 2, up = 0.35 + Math.random() * 0.8;
+    f.v.set(Math.cos(a), up, Math.sin(a)).normalize().multiplyScalar(speed * (0.5 + Math.random()));
+    f.rx = (Math.random() - 0.5) * 14; f.rz = (Math.random() - 0.5) * 14;
+    f.s = 0.6 + Math.random() * 0.9;
+  }
+  if (fragMesh.instanceColor) fragMesh.instanceColor.needsUpdate = true;
+}
+function fragTick(dt) {
+  let any = false;
+  for (let i = 0; i < FRAGS; i++) {
+    const f = frags[i];
+    if (f.life <= 0) continue;
+    any = true;
+    f.life -= dt * 0.8;
+    f.v.y -= 30 * dt;
+    f.p.addScaledVector(f.v, dt);
+    const gy = terrainH(f.p.x, f.p.z);
+    if (f.p.y < gy + 0.1) { f.p.y = gy + 0.1; f.v.y *= -0.3; f.v.x *= 0.7; f.v.z *= 0.7; }
+    const s = f.s * Math.min(1, f.life * 2.5);
+    tmpQ.setFromEuler(new THREE.Euler(f.rx * f.life, 0, f.rz * f.life));
+    tmpM4.compose(f.p, tmpQ, tmpS.set(s, s, s));
+    fragMesh.setMatrixAt(i, tmpM4);
+    if (f.life <= 0) fragMesh.setMatrixAt(i, ZERO_M4);
+  }
+  if (any) fragMesh.instanceMatrix.needsUpdate = true;
+}
 // dust puffs: tiny sprite pool
 const dustGeo = new THREE.SphereGeometry(1, 6, 4);
 const dustMat = new THREE.MeshBasicMaterial({ color: 0xd8cfae, transparent: true, opacity: 0.55 });
@@ -1160,6 +1311,7 @@ function debrisTick() {
         b.scored = true;
         addScore(5 + b.coin * 3, p);
         earnCoins(b.coin, p);
+        burst(p.x, p.y, p.z, b.c, 3, 5);   // crumble shards
       }
     }
   }
@@ -1241,8 +1393,10 @@ function step(dt) {
       buildRig();
     }
   }
-  // wheels spin
+  // wheels spin; kick up dust when hustling off-road
   for (const c of truck.group.children) if (c.userData.wheel) c.rotation.y += truck.speed * dt * 1.6;
+  if (Math.abs(truck.speed) > 6 && Math.abs(truck.z - roadZ(truck.x)) > 6 && Math.random() < 0.3)
+    puff(truck.x - Math.cos(truck.yaw) * 3, hC + 0.5, truck.z + Math.sin(truck.yaw) * 3, 0.9);
   // engine sound
   if (audio.engineGain) {
     audio.engineGain.gain.value = state === 'play' ? 0.05 + Math.abs(truck.speed) * 0.006 : 0;
@@ -1267,6 +1421,7 @@ function step(dt) {
       game.shake = Math.max(game.shake, k * 0.9);
       if (f > 6500) {
         addScore(Math.round(20 + 60 * k), v3b.set(p.x, p.y + 1.5, p.z), true);
+        burst(p.x, p.y, p.z, hitBlock.c, Math.round(6 + 8 * k), 9 + 8 * k);
         if (rig.ballDef.spike) {   // spike ball: shockwave impulse to nearby blocks
           for (const b of blocks) {
             const q = b.body.translation();
@@ -1339,9 +1494,13 @@ function syncVisuals(dt) {
   camLook.lerp(v3b.set(truck.x * 0.6 + bp.x * 0.4, (terrainH(truck.x, truck.z) + 3) * 0.65 + bp.y * 0.35,
     truck.z * 0.6 + bp.z * 0.4), 1 - Math.exp(-dt * 4));
   camera.lookAt(camLook);
-  // sun + shadow box follow
+  // sun + shadow box follow; sky dome and mountains ride along (infinitely far)
   sun.position.set(truck.x + 30, 60, truck.z + 18);
   sun.target.position.set(truck.x, 0, truck.z);
+  window.__skyDome.position.copy(camera.position);
+  mountains.position.set(truck.x, 0, truck.z);
+  sunDisc.position.set(truck.x + 190, 150, truck.z + 105);
+  sunDisc.lookAt(camera.position);
 }
 
 // ===================================================================
@@ -1379,6 +1538,8 @@ $('resumeBtn').addEventListener('click', resumeGame);
 $('quitBtn').addEventListener('click', quitToTitle);
 
 function openGarage() {
+  // NOTE: the garage deliberately reuses state === 'title' — the idle sim keeps
+  // running behind the panel. Don't "fix" this into its own state.
   show('garage'); sfx.ui();
   $('garageCoins').textContent = '🪙 ' + eco.coins;
   const cards = $('cards');
@@ -1442,6 +1603,7 @@ function frame(ts) {
   } else {
     readInput();   // paused/garage: the sim is stopped but the controller must still navigate
   }
+  fragTick(dt);
   syncVisuals(dt);
   renderer.render(scene, camera);
 }
