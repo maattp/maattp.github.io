@@ -1,0 +1,68 @@
+<!DOCTYPE html>
+<html><body>
+<canvas id="c" width="512" height="512"></canvas>
+<script>
+const c = document.getElementById('c'), x = c.getContext('2d');
+// sky
+const g = x.createLinearGradient(0, 0, 0, 512);
+g.addColorStop(0, '#8ed4f7'); g.addColorStop(1, '#bfe8fb');
+x.fillStyle = g; x.fillRect(0, 0, 512, 512);
+// sun
+x.fillStyle = '#ffe27a'; x.beginPath(); x.arc(430, 80, 46, 0, 7); x.fill();
+// ground
+x.fillStyle = '#7ec850'; x.fillRect(0, 400, 512, 112);
+x.fillStyle = '#c9a05a'; x.fillRect(150, 428, 362, 84);
+// building being wrecked (right side): brick grid, crumbling top-left corner
+const bx = 300, by = 180, bw = 190, bh = 250;
+x.fillStyle = '#e07a4f'; x.fillRect(bx, by, bw, bh);
+x.strokeStyle = 'rgba(120,50,20,.35)'; x.lineWidth = 5;
+for (let r = 0; r < 6; r++) { x.beginPath(); x.moveTo(bx, by + r * 42); x.lineTo(bx + bw, by + r * 42); x.stroke(); }
+for (let r = 0; r < 4; r++) { x.beginPath(); x.moveTo(bx + 48 + r * 48, by); x.lineTo(bx + 48 + r * 48, by + bh); x.stroke(); }
+// windows
+x.fillStyle = '#9fd8f0';
+for (let wy = 0; wy < 4; wy++) for (let wx = 0; wx < 3; wx++)
+  x.fillRect(bx + 26 + wx * 58, by + 24 + wy * 56, 32, 34);
+// bite taken out of the corner + flying bricks
+x.save();
+x.fillStyle = '#8ed4f7';
+x.beginPath(); x.arc(bx + 10, by + 10, 86, 0, 7); x.fill();
+x.restore();
+x.fillStyle = '#e07a4f';
+for (const [fx, fy, s, a] of [[236, 96, 30, .4], [280, 60, 24, -.5], [330, 120, 26, .9], [206, 150, 20, -.9]]) {
+  x.save(); x.translate(fx, fy); x.rotate(a); x.fillRect(-s / 2, -s / 2, s, s * 0.66); x.restore();
+}
+// crane (left): mast + boom
+x.strokeStyle = '#ffb400'; x.lineWidth = 30; x.lineCap = 'round';
+x.beginPath(); x.moveTo(96, 470); x.lineTo(96, 210); x.lineTo(240, 96); x.stroke();
+x.strokeStyle = '#c27d00'; x.lineWidth = 9;
+x.beginPath(); x.moveTo(96, 400); x.lineTo(130, 340); x.moveTo(96, 340); x.lineTo(130, 280);
+x.moveTo(96, 280); x.lineTo(128, 232); x.stroke();
+// truck base
+x.fillStyle = '#ffb400'; x.fillRect(30, 430, 150, 44);
+x.fillStyle = '#22242c';
+x.beginPath(); x.arc(64, 480, 22, 0, 7); x.arc(146, 480, 22, 0, 7); x.fill();
+// chain + ball mid-swing
+x.strokeStyle = '#30343c'; x.lineWidth = 11; x.setLineDash([16, 12]);
+x.beginPath(); x.moveTo(240, 96); x.quadraticCurveTo(250, 160, 224, 208); x.stroke();
+x.setLineDash([]);
+const bg = x.createRadialGradient(210, 250, 10, 224, 262, 66);
+bg.addColorStop(0, '#5a6270'); bg.addColorStop(1, '#22252d');
+x.fillStyle = bg; x.beginPath(); x.arc(224, 262, 62, 0, 7); x.fill();
+x.fillStyle = 'rgba(255,255,255,.25)'; x.beginPath(); x.arc(202, 240, 18, 0, 7); x.fill();
+// impact star
+x.fillStyle = '#fff';
+x.save(); x.translate(282, 218);
+for (let i = 0; i < 8; i++) { x.rotate(Math.PI / 4); x.fillRect(20, -7, i % 2 ? 26 : 40, 14); }
+x.restore();
+window.icon512 = c.toDataURL('image/png');
+// downscales
+function scale(sz) {
+  const c2 = document.createElement('canvas'); c2.width = c2.height = sz;
+  c2.getContext('2d').drawImage(c, 0, 0, sz, sz);
+  return c2.toDataURL('image/png');
+}
+window.icon192 = scale(192);
+window.icon180 = scale(180);
+window.iconsReady = true;
+</script>
+</body></html>
