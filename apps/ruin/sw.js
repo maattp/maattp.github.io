@@ -12,7 +12,7 @@
 // Same-origin shell is stale-while-revalidate. The revalidation fetches by
 // URL with cache:'no-cache' — WebKit rejects fetch() of a navigation-mode
 // Request, which silently killed the V1 refresh of './' on iOS.
-const CACHE = 'ruin-v1';
+const CACHE = 'ruin-v2';
 const PINNED = [
   'https://cdn.jsdelivr.net/npm/es-module-shims@1.10.0/dist/es-module-shims.js',
   'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js',

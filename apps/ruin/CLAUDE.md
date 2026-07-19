@@ -95,6 +95,16 @@ with the chunk. Impact shards: `burst()` pool, purely visual.
 `world.numSolverIterations` was verified to be a real accessor on
 rapier3d-compat 0.19.3 (prototype getter/setter — not a silent expando).
 
+**The canvas MUST have explicit CSS `width:100%; height:100%`** — it's a
+replaced element, so `position:fixed; inset:0` does NOT stretch it; it lays
+out at its attribute size, which is buffer × pixelRatio because
+`renderer.setSize(w, h, false)` skips the style update. On every DPR>1 phone
+the canvas was 2× the viewport with only the top-left quarter on screen, so
+the camera-centered truck sat exactly on the right screen edge — this, not
+the camera, was the original "vehicle is always off to the right" bug.
+Desktop/headless DPR 1 masked it completely: **always verify with
+`Emulation.setDeviceMetricsOverride` at `deviceScaleFactor: 3`.**
+
 **Camera is a POLAR chase**: `cam.yaw` eases toward truck yaw but the position
 is rigidly `truck − dir(cam.yaw)·19` — the vehicle physically cannot leave the
 frame; only the shot angle lags in turns. (A positional lerp here trailed
