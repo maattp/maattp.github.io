@@ -166,7 +166,7 @@ import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
 import RAPIER from 'rapier';
 
-const VERSION = 2;   // bump once per PR (see CLAUDE.md)
+const VERSION = 3;   // bump once per PR (see CLAUDE.md)
 try {
 
 // ===================================================================
@@ -1088,11 +1088,14 @@ const crane = { group: new THREE.Group(), boomLen: 15, boomPitch: 1.18, piston: 
     new THREE.MeshStandardMaterial({ color: 0xc8ccd4, metalness: 0.8, roughness: 0.25 }));
   g.add(pist); g.add(rod);
   crane.piston = pist; crane.pistonRod = rod;
-  // boom pitch is fixed, so the piston pose is static: house hinge → mid-boom
+  // boom pitch is fixed, so the piston pose is static: house hinge → boom,
+  // attached at a PROPORTION of the boom (a fixed 3.2 units looked right on
+  // the old 9.5m boom but stubby on 15m)
   {
     const p0 = new THREE.Vector3(0.6, 0.25, 0);
     const c86 = Math.cos(crane.boomPitch), s86 = Math.sin(crane.boomPitch);
-    const p1 = new THREE.Vector3(0.5 + 3.2 * c86 + 0.15 * s86, 1.0 + 3.2 * s86 - 0.15 * c86, 0);
+    const along = crane.boomLen * 0.34;
+    const p1 = new THREE.Vector3(0.5 + along * c86 + 0.15 * s86, 1.0 + along * s86 - 0.15 * c86, 0);
     const dir = new THREE.Vector3().subVectors(p1, p0), len = dir.length();
     dir.normalize();
     const q = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 1, 0), dir);
@@ -1121,6 +1124,20 @@ world.createCollider(RAPIER.ColliderDesc.cuboid(3.3, 1.1, 1.5).setCollisionGroup
 const rig = { tip: null, links: [], ball: null, joints: [], linkMeshes: [], ballMesh: null, cable: null,
   linkL: 1.15, linkR: 0.15, ballDef: null, chainDef: null, tipPos: new THREE.Vector3(), resets: 0 };
 const chainMat = new THREE.MeshStandardMaterial({ color: 0x555c66, roughness: 0.42, metalness: 0.65 });
+// dev-time guard for the rig LAW (CLAUDE.md): every chain+ball combo must be
+// able to hang FREE under the boom with clearance. V1 shipped with this
+// silently violated — the ball spent every session buried under the map — so
+// any future chain/ball/boom balance tweak gets loudly checked here.
+// (console.error so the headless harness's error collector trips on it too.)
+{
+  const anchorTop = 1.95 + 1.0 + crane.boomLen * Math.sin(crane.boomPitch)
+    + 0.25 * Math.cos(crane.boomPitch) - 0.6;   // above the truck plane, flat ground
+  for (const c of CHAINS) for (const b of BALLS) {
+    const need = c.links * rig.linkL + b.r * 0.92 + b.r + 1.4;   // hang + ball + min clearance
+    if (need > anchorTop)
+      console.error(`RIG LAW VIOLATION: ${c.id}+${b.id} needs ${need.toFixed(1)}m of drop but the anchor tops out at ${anchorTop.toFixed(1)}m — the ball can never swing free`);
+  }
+}
 function boomTipWorld(out) {   // where the hoist cable leaves the boom
   const t = out.set(crane.boomLen, 0.25, 0);
   crane.boom.localToWorld(t);
