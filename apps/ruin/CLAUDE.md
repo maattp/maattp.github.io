@@ -1,5 +1,12 @@
 # Wreck & Ruin
 
+**Lives at `/apps/ruin/` — renamed from `/apps/wreck/` (2026-07-19).** The V1
+service worker at the old path pinned installed iOS players to a stale shell
+forever (fat install aborted by every quick relaunch; iOS stopped checking for
+worker updates entirely), so no fix served at that path could reach them. The
+old path is a tombstone: redirect page + kill-switch sw.js. Never resurrect a
+game at `/apps/wreck/`.
+
 Endless physics demolition sandbox: drive a crane truck through an infinite
 procedurally generated countryside and smash every building with a wrecking
 ball on a real simulated chain. Landscape-only. Touch + gamepad + keyboard.
@@ -8,7 +15,11 @@ ball on a real simulated chain. Landscape-only. Touch + gamepad + keyboard.
 
 **Bump `const VERSION` in `index.html` once per PR** (shown bottom-right of the
 title screen). ASSERT the old value when bumping (repo-wide rule — silent
-no-op bumps have shipped). Bump `CACHE` in `sw.js` (`wreck-vN`) when a deploy
+no-op bumps have shipped). The badge is rendered from the constant at boot
+(`$('ver').textContent`) — the static `V1` in the HTML is only a fallback. It
+was NOT wired up until V5: every earlier build displayed "V1" regardless of
+version, which made update debugging impossible ("I still see V1" against a
+fully-updated install). Bump `CACHE` in `sw.js` (`wreck-vN`) when a deploy
 must reach installed players promptly.
 
 **sw.js install must stay SHELL-ONLY and fast.** V1 gated install on
