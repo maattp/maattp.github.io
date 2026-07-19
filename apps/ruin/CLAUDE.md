@@ -48,8 +48,8 @@ stale-while-revalidate for `./` on iOS.
   detonates the chain (verified). Ball + links have CCD enabled.
 - **The tip anchor chases its target with a per-step speed cap (0.42/step)** —
   teleporting it across the boom's swing arc in one frame is what used to
-  explode the rig. The ball's linear velocity is hard-capped at 55 and cab
-  slew accelerates smoothly (instant reversals whip-crack the chain). A
+  explode the rig. The ball's linear velocity is hard-capped at 30 (links 40)
+  and cab slew accelerates smoothly (instant reversals whip-crack the chain). A
   failsafe rebuilds the rig if the ball ever ends up > 2.5× chain length
   from the anchor (`rig.resets` counts this; expect 0 in normal play, ~1 per
   1600-step slew-reversal torture run — more than that means a regression).
@@ -81,8 +81,22 @@ stale-while-revalidate for `./` on iOS.
 - **Contact-force scoring**: only when the ball hits a BLOCK collider
   (`collMap`) — terrain/truck contacts must never score (the ball dragging
   on dirt farmed thousands of points before this guard).
+- **Wrecking-ball FEEL is tuned to real crane numbers (V7)**: slew max
+  0.9 rad/s with a ~0.5s spool-up (real crawler cranes do 0.1–0.2 rad/s; the
+  old 2.0 rad/s read as a tetherball and flung the ball ABOVE the boom tip),
+  ball speeds land in the real 5–13 m/s demolition band, light ball damping
+  (0.1) so swings settle in a few periods. Scoring force thresholds are
+  scaled to these speeds (k = f/5500, big hit 4000, base 1600, terrain thud
+  3000) — if you change the speed caps, retune the thresholds WITH them.
 
 ## Rendering
+
+**Every InstancedMesh whose instance matrices hold WORLD coordinates must set
+`frustumCulled = false`** (blockMesh, fragMesh, per-chunk dashMesh/scatMesh):
+three.js culls against the BASE geometry's ~1m bounding sphere at the mesh
+origin, so the entire building pool vanished in one frame whenever the world
+origin left the view frustum — while the sun's shadow frustum still contained
+it ("buildings disappear, only their shadow remains").
 
 ACES tone mapping (exposure 1.0) + a PMREM RoomEnvironment for Standard-material
 ambient — but env light washes the toy palette out fast, so every material
