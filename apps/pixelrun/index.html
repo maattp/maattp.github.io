@@ -3597,10 +3597,11 @@ function leaveBonus() {
 }
 
 function endBonus() {
-  // leaving a vault by dying or quitting, not through the portal: the pipe-out
-  // ride never runs, so restore the surface world's theme and disarm the exit
-  // check here — a revived/next run in the main world (x > exitX) would
-  // otherwise trigger leaveBonus and teleport back onto the warp pipe
+  // leaving a vault by dying (gameOver / secondWind), not through the portal:
+  // the pipe-out ride never runs, so restore the surface world's theme and
+  // disarm the exit check here — a revived/next run in the main world
+  // (x > exitX) would otherwise trigger leaveBonus and teleport back onto
+  // the warp pipe. (goTitle disarms inline; it resets the theme itself.)
   if (!game.inBonus) return;
   game.themeIdx = game.inBonus.theme; game.themeFade = 0;
   game.inBonus = null;
@@ -4354,7 +4355,9 @@ function unlockAudio() {
   if (!audio.song && game.state === 'title') playSong('title');
 }
 function goTitle() {
-  endBonus();   // quit from inside a vault: the sky must come back with you
+  // quit from inside a vault: disarm the bonus exit state — no endBonus() theme
+  // restore here, the lines below reset the theme and tint to WORLD 1 anyway
+  game.inBonus = null;
   // the title always wears WORLD 1's face — a test run at world 8 used to
   // leave its theme behind, showing Magma Keep over a start that plays hills
   game.state = 'title'; game.stateT = 0;
