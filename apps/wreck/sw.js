@@ -2,7 +2,7 @@
 // CDN files (Three.js module, Rapier physics with inlined WASM, es-module-shims)
 // — all versioned upstream, safe to treat as immutable: cache-first.
 // Same-origin shell is stale-while-revalidate. Bump CACHE to force-invalidate.
-const CACHE = 'wreck-v1';
+const CACHE = 'wreck-v2';
 const PINNED = [
   'https://cdn.jsdelivr.net/npm/es-module-shims@1.10.0/dist/es-module-shims.js',
   'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js',
