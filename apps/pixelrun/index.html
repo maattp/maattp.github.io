@@ -68,7 +68,7 @@ const MAX_SPEED = 3.05;
 const PIT_Y = 11 * TILE;             // below this = pit death
 const WORLD_LEN = 500;               // tiles per world before the flag
 const SAVE = 'pixelrun_';
-const VERSION = 45;                  // shown on the title screen — bump once per PR (see CLAUDE.md)
+const VERSION = 46;                  // shown on the title screen — bump once per PR (see CLAUDE.md)
 
 // ---------- utils ----------
 const clamp = (v, a, b) => v < a ? a : v > b ? b : v;
@@ -2307,6 +2307,7 @@ function canSecondWind() {
   return !game.secondWindUsed && !game.testRun && game.coinsAll >= secondWindCost();
 }
 function secondWind() {
+  endBonus();   // downed in a vault: revive on the main track, exit check disarmed
   game.coinsAll -= secondWindCost(); store('coinsAll', game.coinsAll);
   game.secondWindUsed = true;
   player.x = game.lastSafeX - 8;
@@ -3593,6 +3594,17 @@ function leaveBonus() {
   sfx.pipe(); buzz(2);
 }
 
+function endBonus() {
+  // leaving a vault by dying or quitting, not through the portal: the pipe-out
+  // ride never runs, so restore the surface world's theme and disarm the exit
+  // check here — a revived/next run in the main world (x > exitX) would
+  // otherwise trigger leaveBonus and teleport back onto the warp pipe
+  if (!game.inBonus) return;
+  game.themeIdx = game.inBonus.theme; game.themeFade = 0;
+  game.inBonus = null;
+  tintPage();
+}
+
 function startBubble() {
   player.mode = 'bubble'; player.bubbleT = 0; player.vy = 0; player.slam = false;
   player.targetX = null;
@@ -3641,6 +3653,7 @@ function die() {
   playSong('over'); buzz(4); game.shake = 7;
 }
 function gameOver() {
+  endBonus();   // died in a vault: the card and backdrop show the real world
   game.state = 'over'; game.stateT = 0;
   if (game.testRun) { game.newBest = false; return; }   // level-select runs don't count
   game.coinsAll += game.coins; store('coinsAll', game.coinsAll);
@@ -4339,6 +4352,7 @@ function unlockAudio() {
   if (!audio.song && game.state === 'title') playSong('title');
 }
 function goTitle() {
+  endBonus();   // quit from inside a vault: the sky must come back with you
   // the title always wears WORLD 1's face — a test run at world 8 used to
   // leave its theme behind, showing Magma Keep over a start that plays hills
   game.state = 'title'; game.stateT = 0;
