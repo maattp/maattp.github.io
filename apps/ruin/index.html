@@ -14,7 +14,13 @@
   html, body { width: 100%; height: 100%; overflow: hidden; background: #8ed4f7;
     font-family: "Avenir Next", "Trebuchet MS", system-ui, -apple-system, sans-serif;
     color: #fff; -webkit-user-select: none; user-select: none; touch-action: none; }
-  canvas#gl { position: fixed; inset: 0; display: block; touch-action: none; }
+  /* width/height 100% is LOAD-BEARING: canvas is a replaced element, so
+     inset:0 alone does NOT stretch it — it lays out at its attribute size
+     (buffer × pixelRatio). On every DPR>1 phone that made the canvas 2× the
+     viewport with only the top-left quarter visible: the camera-centered
+     truck sat exactly on the right screen edge ("vehicle is always off to
+     the right hand side, I can't see it"). Desktop DPR 1 masked it. */
+  canvas#gl { position: fixed; inset: 0; width: 100%; height: 100%; display: block; touch-action: none; }
 
   /* ---------- HUD ---------- */
   #hud { position: fixed; inset: 0; pointer-events: none; display: none; z-index: 20; }
@@ -166,7 +172,7 @@ import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
 import RAPIER from 'rapier';
 
-const VERSION = 5;   // bump once per PR (see CLAUDE.md)
+const VERSION = 6;   // bump once per PR (see CLAUDE.md)
 try {
 
 // ===================================================================
