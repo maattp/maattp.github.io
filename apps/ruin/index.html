@@ -172,7 +172,7 @@ import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
 import RAPIER from 'rapier';
 
-const VERSION = 6;   // bump once per PR (see CLAUDE.md)
+const VERSION = 7;   // bump once per PR (see CLAUDE.md)
 try {
 
 // ===================================================================
@@ -573,6 +573,7 @@ function buildChunk(cx, cz) {
     }
     if (spots.length) {
       dashMesh = new THREE.InstancedMesh(dashGeo, dashMat, spots.length);
+      dashMesh.frustumCulled = false;   // world-space instances (see blockMesh)
       spots.forEach(([x, z], i) => {
         const grade = (roadZ(x + 1) - roadZ(x - 1)) / 2;
         tmpQ.setFromEuler(new THREE.Euler(0, -Math.atan2(grade, 1), 0));
@@ -600,6 +601,7 @@ function buildChunk(cx, cz) {
     }
     if (items.length) {
       scatMesh = new THREE.InstancedMesh(scatGeo, scatMat, items.length);
+      scatMesh.frustumCulled = false;   // world-space instances (see blockMesh)
       scatMesh.castShadow = true;
       items.forEach((it, i) => {
         tmpQ.setFromEuler(new THREE.Euler(0, it.v * Math.PI * 2, 0));
@@ -642,6 +644,11 @@ const blockGeo = new RoundedBoxGeometry(1, 1, 1, 2, 0.055);
 const blockMesh = new THREE.InstancedMesh(blockGeo,
   new THREE.MeshStandardMaterial({ roughness: 0.82, metalness: 0.02, envMapIntensity: 0.35 }), POOL);
 blockMesh.castShadow = true; blockMesh.receiveShadow = true;
+// instances live in WORLD space but the mesh's bounding sphere is the ~1m base
+// geometry at the origin — three.js culled the ENTIRE mesh (every building)
+// whenever the origin left the view frustum, while the sun's frustum still
+// contained it: "buildings disappear, only their shadow remains"
+blockMesh.frustumCulled = false;
 blockMesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
 scene.add(blockMesh);
 const ZERO_M4 = new THREE.Matrix4().makeScale(0, 0, 0);
@@ -1206,7 +1213,7 @@ function buildRig() {
   const R = rig.ballDef.r;
   rig.ball = world.createRigidBody(RAPIER.RigidBodyDesc.dynamic()
     .setTranslation(tp.x, Math.max(aY - LINKS * L - R * 0.92, gy + R + 0.1), tp.z).setCcdEnabled(true)
-    .setAngularDamping(0.7).setLinearDamping(0.05));
+    .setAngularDamping(0.7).setLinearDamping(0.1));   // light cable/air drag: swings settle in a few periods
   const bc = world.createCollider(RAPIER.ColliderDesc.ball(R)
     .setDensity(rig.ballDef.density).setCollisionGroups(G_CHAIN)
     .setActiveEvents(RAPIER.ActiveEvents.CONTACT_FORCE_EVENTS)
@@ -1290,6 +1297,7 @@ const FRAGS = 90;
 const fragMesh = new THREE.InstancedMesh(new THREE.BoxGeometry(0.3, 0.24, 0.3),
   new THREE.MeshStandardMaterial({ roughness: 0.85, envMapIntensity: 0.3 }), FRAGS);
 fragMesh.castShadow = true;
+fragMesh.frustumCulled = false;   // world-space instances, same culling trap as blockMesh
 scene.add(fragMesh);
 const frags = Array.from({ length: FRAGS }, () => ({ life: 0, p: new THREE.Vector3(), v: new THREE.Vector3(), rx: 0, rz: 0, s: 1 }));
 let fragCursor = 0;
@@ -1424,7 +1432,10 @@ function step(dt) {
   truck.group.rotateZ(pitch); truck.group.rotateX(-roll);
   // crane slew + winch — slew ACCELERATES rather than snapping to full rate:
   // instant reversals whip-crack the chain (the failsafe caught one in testing)
-  truck.slewV = lerp(truck.slewV || 0, ctrl.slew * 2.0, 1 - Math.exp(-dt * 8));
+  // real crawler cranes slew at ~0.1-0.2 rad/s; 0.9 with a slow ~0.5s spool-up
+  // is the arcade compromise — the ball lags into one wide heavy arc instead of
+  // whipping into orbit (2.0 rad/s dragged the anchor at 12+ m/s: tetherball)
+  truck.slewV = lerp(truck.slewV || 0, ctrl.slew * 0.9, 1 - Math.exp(-dt * 3));
   truck.cabYaw += truck.slewV * dt;
   crane.group.rotation.y = truck.cabYaw;
   truck.winchT = clamp(truck.winchT + ctrl.winch * dt * win.speed * -0.12, 0, 1);
@@ -1449,15 +1460,15 @@ function step(dt) {
   {
     const bv = rig.ball.linvel();
     const sp2 = bv.x * bv.x + bv.y * bv.y + bv.z * bv.z;
-    if (sp2 > 55 * 55) {
-      const s = 55 / Math.sqrt(sp2);
+    if (sp2 > 30 * 30) {   // real demolition balls work at 5-10 m/s; 30 leaves drop headroom
+      const s = 30 / Math.sqrt(sp2);
       rig.ball.setLinvel({ x: bv.x * s, y: bv.y * s, z: bv.z * s }, true);
     }
     for (const l of rig.links) {
       const lv = l.linvel();
       const l2 = lv.x * lv.x + lv.y * lv.y + lv.z * lv.z;
-      if (l2 > 70 * 70) {
-        const s = 70 / Math.sqrt(l2);
+      if (l2 > 40 * 40) {
+        const s = 40 / Math.sqrt(l2);
         l.setLinvel({ x: lv.x * s, y: lv.y * s, z: lv.z * s }, true);
       }
     }
@@ -1494,15 +1505,15 @@ function step(dt) {
     const hitBlock = collMap.get(c1 === rig.ballColl ? c2 : c1);
     const f = ev.totalForceMagnitude();
     const p = rig.ball.translation();
-    const k = clamp(f / 9000, 0, 1);
+    const k = clamp(f / 5500, 0, 1);   // rescaled for the slower, realistic ball speeds
     if (!hitBlock) {           // dirt / truck: a dull thud, never score — the ball
-      if (f > 4500) { thump(k * 0.4); puff(p.x, p.y - 1, p.z, 1.2); }   // dragging must not farm points
+      if (f > 3000) { thump(k * 0.4); puff(p.x, p.y - 1, p.z, 1.2); }   // dragging must not farm points
       return;
     }
     thump(k);
-    if (f > 2500) {
+    if (f > 1600) {
       game.shake = Math.max(game.shake, k * 0.9);
-      if (f > 6500) {
+      if (f > 4000) {
         addScore(Math.round(20 + 60 * k), v3b.set(p.x, p.y + 1.5, p.z), true);
         burst(p.x, p.y, p.z, hitBlock.c, Math.round(6 + 8 * k), 9 + 8 * k);
         if (rig.ballDef.spike) {   // spike ball: shockwave impulse to nearby blocks
