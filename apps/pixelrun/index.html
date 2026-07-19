@@ -2793,7 +2793,6 @@ const patterns = [
     AQCOL(-1); AQCOL(1); AQCOL(3); AQCOL(5);    // quick shoal — you swim over it
     const len = RI(6, 12), x0 = gen.x;
     for (let i = 0; i < len; i++) C(SAND_G);    // a thin bar of dry sand
-    coinRow(x0 + 1, -SAND_G - 2, Math.min(5, len - 1));
     if (len >= 9 && gen.totalTiles - gen.lastWarp > 220 && rng() < 0.5) {
       // the cove's warp pipe lives on its islands — grotto access restored
       gen.lastWarp = gen.totalTiles;
@@ -2805,6 +2804,9 @@ const patterns = [
     } else if (rng() < 0.5) {
       qblock(x0 + Math.floor(len / 2), -SAND_G - 4, qContents());
     }
+    // coins AFTER the pipe: at len 9 the left cap lands on the row's last cell
+    // (-SAND_G - 2), and coinAt can only skip occupied cells it can see
+    coinRow(x0 + 1, -SAND_G - 2, Math.min(5, len - 1));
     if (len > 8 && rng() < 0.4) {
       spawnEnemy('chomp', x0 + 2, SAND_G);
       ents[ents.length - 1].ledge = 1;          // beach chompers stay on the beach
