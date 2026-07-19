@@ -33,8 +33,23 @@ must reach installed players promptly.
   failsafe rebuilds the rig if the ball ever ends up > 2.5× chain length
   from the anchor (`rig.resets` counts this; expect 0 in normal play, ~1 per
   1600-step slew-reversal torture run — more than that means a regression).
-- Winch = the anchor sliding down a virtual rail from boom tip to near
-  ground; the visual hoist cable stretches tip→anchor. Boom pitch is fixed.
+- Winch = the anchor sliding down a virtual rail (`anchorRailY`): the top is
+  just under the boom sheave (ball hangs FREE and can swing), the bottom
+  leaves ~1.2m of chain slack so the ball rests and ploughs — the anchor must
+  never press-fit a taut chain into the terrain (that press-fit read as an
+  endless solver buzz, mean link vel ~2.5 m/s at "rest"). The visual hoist
+  cable stretches tip→anchor. Boom pitch is fixed (15m boom @ 1.18 rad).
+- **LAW: every chain + ball hang must stay ~2m shorter than the anchor top
+  (~16.2m over flat ground)** or the winch can never lift the ball. The
+  original 8–15m chains under a 10m boom left every loadout dragging in the
+  dirt with a 4cm total winch range (verified) — that's why chains are now
+  5/7/9 links.
+- `buildRig()` spawns every link and the ball clamped ABOVE `terrainH`: the
+  old straight drop from the tip buried the ball ~2m inside the paper-thin
+  heightfield, which depenetrated it DOWNWARD — the ball then lived under the
+  map, invisible and useless, for the whole session. The failsafe also
+  rebuilds the rig if the ball center is ever a full radius below terrainH
+  (tunnel recovery).
 - Collision groups: world/blocks 0x0001 (filter 7), chain+ball 0x0002
   (filter 1 — no self-collision, no truck), truck kinematic 0x0004 (filter 1).
 - **Truck is kinematic**, driven by an arcade model on the terrain *function*
@@ -60,6 +75,16 @@ with the chunk. Impact shards: `burst()` pool, purely visual.
 `world.numSolverIterations` was verified to be a real accessor on
 rapier3d-compat 0.19.3 (prototype getter/setter — not a silent expando).
 
+**Camera is a POLAR chase**: `cam.yaw` eases toward truck yaw but the position
+is rigidly `truck − dir(cam.yaw)·19` — the vehicle physically cannot leave the
+frame; only the shot angle lags in turns. (A positional lerp here trailed
+turning trucks by ~25° of arc and parked the vehicle at the screen edge.) It
+must track the INTERPOLATED truck pose (`ix/iyaw` in `syncVisuals`) — raw
+60Hz poses strobe on 120Hz phones. `resize()` orients `innerWidth/Height` to
+the CSS media orientation and listens on the orientation MediaQueryList —
+iOS standalone keeps stale JS viewport numbers after rotation (same bug
+PR #288 fixed for Pixel Run).
+
 ## World generation
 
 Deterministic from lot index: `lotAt(k)` at x≈30k, alternating road sides,
@@ -80,7 +105,10 @@ rebuild the rig (`buildRig()`).
 
 `window.__dbg`: `snapshot()`, `stepN(n)` (sync fast-forward), `auto`
 (bot ctrl override `{throttle, steer, slew, winch}`), `terrainProbe()`,
-`lotAt`, `rig`, `errors`. Drive headless via the scratchpad `drive.mjs` CDP
+`equip(slot, id)` (swap gear + rebuild rig), `camera` (project world points
+to NDC for framing asserts), `lotAt`, `rig`, `errors`. NOTE: `stepN` batches
+call `syncVisuals` only once — camera-convergence checks must interleave
+small `stepN` calls or run on the live RAF loop. Drive headless via the scratchpad `drive.mjs` CDP
 harness (`--url http://localhost:8765/apps/wreck/index.html`). Gamepad is
 testable by stubbing `navigator.getGamepads` (leave ≥2 frames between
 press/release so edges are sampled). Icons regenerate from `gen-icon.html`

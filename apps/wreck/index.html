@@ -166,7 +166,7 @@ import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
 import RAPIER from 'rapier';
 
-const VERSION = 1;   // bump once per PR (see CLAUDE.md)
+const VERSION = 2;   // bump once per PR (see CLAUDE.md)
 try {
 
 // ===================================================================
@@ -194,12 +194,15 @@ const BALLS = [
   { id: 'iron',  nm: 'CAST IRON',      ds: 'The classic. Reliable, round, angry.', cost: 0,    r: 1.5, density: 4,  color: 0x3a4048, coinMul: 1 },
   { id: 'big',   nm: 'BIG BERTHA',     ds: 'Half a ton of extra persuasion.',      cost: 600,  r: 2.1, density: 5,  color: 0x51322a, coinMul: 1 },
   { id: 'spike', nm: 'SPIKE STAR',     ds: 'Bites into walls. Shatters on impact.', cost: 1400, r: 1.6, density: 4.5, color: 0x6e6e78, coinMul: 1, spike: true },
-  { id: 'gold',  nm: 'GOLD GOLIATH',   ds: 'Heaviest. Shiniest. +50% coins.',      cost: 3200, r: 2.3, density: 6,  color: 0xffc24a, coinMul: 1.5 },
+  { id: 'gold',  nm: 'GOLD GOLIATH',   ds: 'Heaviest. Shiniest. +50% coins.',      cost: 3200, r: 2.0, density: 6.5, color: 0xffc24a, coinMul: 1.5 },
 ];
+// chain length + ball hang must stay comfortably SHORTER than the boom tip
+// height (~16.2m anchor) or the winch can never lift the ball off the ground
+// — even the gold+CRANE KING combo needs ~2m of flat-ground clearance
 const CHAINS = [
-  { id: 'chain1', nm: 'WORKS CHAIN',   ds: '8m of honest steel.',   cost: 0,   links: 7 },
-  { id: 'chain2', nm: 'LONG CHAIN',    ds: '11m. Wider arcs, bigger swings.', cost: 500, links: 10 },
-  { id: 'chain3', nm: 'CRANE KING',    ds: '14m. Wrecking-ball artillery.',   cost: 1100, links: 13 },
+  { id: 'chain1', nm: 'WORKS CHAIN',   ds: '6m of honest steel. High, fast swings.', cost: 0,   links: 5 },
+  { id: 'chain2', nm: 'LONG CHAIN',    ds: '8m. Wider arcs, bigger swings.', cost: 500, links: 7 },
+  { id: 'chain3', nm: 'CRANE KING',    ds: '10m. Wrecking-ball artillery.',   cost: 1100, links: 9 },
 ];
 const ENGINES = [
   { id: 'eng1', nm: 'DIESEL 4',  ds: 'Gets you there. Eventually.', cost: 0,   speed: 11, accel: 14 },
@@ -459,12 +462,19 @@ const mountains = new THREE.Group();
   }
 }
 
+// iOS standalone can keep innerWidth/innerHeight in the OLD orientation after
+// rotating (the CSS viewport rotates, the JS numbers don't — same bug PR #288
+// fixed for Pixel Run). Orient the reported pair to the CSS media orientation
+// so the buffer/aspect never end up portrait-sized on a landscape screen.
+const landscapeMQ = matchMedia('(orientation: landscape)');
 function resize() {
-  const w = innerWidth, h = innerHeight;
+  let w = innerWidth, h = innerHeight;
+  if (landscapeMQ.matches === (h > w)) { const t = w; w = h; h = t; }
   renderer.setSize(w, h, false);
   camera.aspect = w / h; camera.updateProjectionMatrix();
 }
 window.addEventListener('resize', resize);
+landscapeMQ.addEventListener('change', () => { resize(); setTimeout(resize, 250); });
 window.addEventListener('orientationchange', () => { setTimeout(resize, 250); setTimeout(resize, 700); });
 resize();
 
@@ -947,7 +957,7 @@ function syncBlock(b) {
 //  the truck — kinematic arcade body carrying a crane
 // ===================================================================
 const truck = {
-  x: 0, z: 0, yaw: 0, speed: 0, cabYaw: 0, winchT: 0.12,   // winchT: 0=high, 1=low
+  x: 0, z: 0, yaw: 0, speed: 0, cabYaw: 0, winchT: 0.25,   // winchT: 0=high, 1=low
   body: null, group: new THREE.Group(),
 };
 truck.z = roadZ(0);
@@ -1016,7 +1026,10 @@ const beacon = { mesh: null, t: 0 };
   scene.add(g);
 }
 // crane assembly (child of truck group so it inherits truck pose)
-const crane = { group: new THREE.Group(), boomLen: 9.5, boomPitch: 0.86, piston: null, pistonRod: null };
+// tall boom: the tip must clear (longest chain + biggest ball + margin) so a
+// raised winch means a free-hanging, swingable ball — 9.5m/0.86 left every
+// loadout dragging in (or under) the dirt
+const crane = { group: new THREE.Group(), boomLen: 15, boomPitch: 1.18, piston: null, pistonRod: null };
 {
   const mat = c => new THREE.MeshStandardMaterial({ color: c, roughness: 0.62, metalness: 0.12, envMapIntensity: 0.5 });
   const g = crane.group;
@@ -1113,6 +1126,16 @@ function boomTipWorld(out) {   // where the hoist cable leaves the boom
   crane.boom.localToWorld(t);
   return t;
 }
+// winch rail: anchor height for a given winchT. High end sits just under the
+// boom sheave (ball hangs free and can SWING); low end leaves ~1.2m of chain
+// slack so the ball rests and ploughs — but the anchor never presses a taut
+// chain into the terrain (that press-fit was the endless solver buzz)
+function anchorRailY(tip, winchT) {
+  const hang = rig.chainDef.links * rig.linkL + rig.ballDef.r * 0.92;
+  const high = tip.y - 0.6;
+  const low = Math.min(high, terrainH(tip.x, tip.z) + hang + rig.ballDef.r - 1.2);
+  return lerp(high, low, winchT);
+}
 function buildRig() {
   // tear down
   for (const j of rig.joints) world.removeImpulseJoint(j, true);
@@ -1129,12 +1152,18 @@ function buildRig() {
   const linkVol = Math.PI * rig.linkR ** 2 * (L - rig.linkR * 2) + (4 / 3) * Math.PI * rig.linkR ** 3;
   const linkDensity = ballMass / 10 / linkVol;
   const tp = boomTipWorld(tmpV);
-  rig.tipPos.set(tp.x, tp.y - 1, tp.z);
+  // spawn hanging from the winch rail, and NEVER below ground: the old
+  // straight-drop spawn buried the ball ~2m inside the (paper-thin)
+  // heightfield, which ejected it DOWNWARD — the ball then lived under the
+  // map, invisible and useless, for the whole session
+  const aY = anchorRailY(tp, truck.winchT);
+  const gy = terrainH(tp.x, tp.z);
+  rig.tipPos.set(tp.x, aY, tp.z);
   rig.tip = world.createRigidBody(RAPIER.RigidBodyDesc.kinematicPositionBased()
-    .setTranslation(tp.x, tp.y - 1, tp.z));
+    .setTranslation(tp.x, aY, tp.z));
   let prev = rig.tip, prevAnchor = { x: 0, y: 0, z: 0 };
   for (let i = 0; i < LINKS; i++) {
-    const y = tp.y - 1 - (i + 0.5) * L;
+    const y = Math.max(aY - (i + 0.5) * L, gy + 0.3);
     const rb = world.createRigidBody(RAPIER.RigidBodyDesc.dynamic()
       .setTranslation(tp.x, y, tp.z).setCcdEnabled(true)
       .setAngularDamping(1.2).setLinearDamping(0.25));   // high damping: slack chain must lie calm, not buzz
@@ -1153,7 +1182,7 @@ function buildRig() {
   }
   const R = rig.ballDef.r;
   rig.ball = world.createRigidBody(RAPIER.RigidBodyDesc.dynamic()
-    .setTranslation(tp.x, tp.y - 1 - LINKS * L - R, tp.z).setCcdEnabled(true)
+    .setTranslation(tp.x, Math.max(aY - LINKS * L - R * 0.92, gy + R + 0.1), tp.z).setCcdEnabled(true)
     .setAngularDamping(0.7).setLinearDamping(0.05));
   const bc = world.createCollider(RAPIER.ColliderDesc.ball(R)
     .setDensity(rig.ballDef.density).setCollisionGroups(G_CHAIN)
@@ -1346,7 +1375,8 @@ function debrisTick() {
 // ===================================================================
 //  main sim step
 // ===================================================================
-const camPos = new THREE.Vector3(-14, 10, 0), camLook = new THREE.Vector3();
+const cam = { yaw: 0, y: 12 };   // polar-follow state (see syncVisuals)
+const camLook = new THREE.Vector3();
 const v3a = new THREE.Vector3(), v3b = new THREE.Vector3(), qa = new THREE.Quaternion();
 function step(dt) {
   readInput();
@@ -1371,7 +1401,7 @@ function step(dt) {
   truck.group.rotateZ(pitch); truck.group.rotateX(-roll);
   // crane slew + winch — slew ACCELERATES rather than snapping to full rate:
   // instant reversals whip-crack the chain (the failsafe caught one in testing)
-  truck.slewV = lerp(truck.slewV || 0, ctrl.slew * 1.5, 1 - Math.exp(-dt * 5));
+  truck.slewV = lerp(truck.slewV || 0, ctrl.slew * 2.0, 1 - Math.exp(-dt * 8));
   truck.cabYaw += truck.slewV * dt;
   crane.group.rotation.y = truck.cabYaw;
   truck.winchT = clamp(truck.winchT + ctrl.winch * dt * win.speed * -0.12, 0, 1);
@@ -1380,9 +1410,9 @@ function step(dt) {
   qa.setFromEuler(new THREE.Euler(0, truck.yaw, 0));
   truck.body.setNextKinematicRotation({ x: qa.x, y: qa.y, z: qa.z, w: qa.w });
   const tip = boomTipWorld(v3a);
-  // winch: the anchor rides a virtual rail from just under the boom tip down
-  // to near the ground (letting the ball drag and plough is deliberate fun)
-  const anchorY = lerp(tip.y - 0.6, terrainH(tip.x, tip.z) + 1.4, truck.winchT);
+  // winch: the anchor rides the rail — free-hanging swings at the top,
+  // deliberate ground-ploughing at the bottom (see anchorRailY)
+  const anchorY = anchorRailY(tip, truck.winchT);
   // the anchor CHASES its target with a speed cap — teleporting it across the
   // boom's arc in one step is what detonated the joint chain
   v3b.set(tip.x, anchorY, tip.z).sub(rig.tipPos);
@@ -1409,12 +1439,15 @@ function step(dt) {
       }
     }
   }
-  // failsafe: if the solver ever loses the chain anyway, quietly rebuild it
+  // failsafe: if the solver ever loses the chain — flung out of range, NaN,
+  // or the ball tunnels through the thin heightfield and ends up UNDER the
+  // map (it then hangs there invisibly forever) — quietly rebuild the rig
   {
     const bp = rig.ball.translation();
     const maxLen = (rig.chainDef.links * rig.linkL + rig.ballDef.r * 2 + 4) * 2.5;
     const dx = bp.x - rig.tipPos.x, dy = bp.y - rig.tipPos.y, dz = bp.z - rig.tipPos.z;
-    if (!isFinite(dx + dy + dz) || dx * dx + dy * dy + dz * dz > maxLen * maxLen) {
+    if (!isFinite(dx + dy + dz) || dx * dx + dy * dy + dz * dz > maxLen * maxLen ||
+        bp.y < terrainH(bp.x, bp.z) - rig.ballDef.r) {
       rig.resets++;
       buildRig();
     }
@@ -1492,15 +1525,16 @@ function syncVisuals(dt, alpha) {
   rig.ballMesh.position.set(bp.x, bp.y, bp.z);
   rig.ballMesh.quaternion.copy(bp0.q).slerp(lerpQ.set(br.x, br.y, br.z, br.w), a);
   // the truck's VISUAL pose interpolates too (physics/anchor math in step()
-  // uses the exact 60Hz pose; this overwrite is render-only)
+  // uses the exact 60Hz pose; this overwrite is render-only). ix/iyaw/hI are
+  // reused below by the camera so it tracks the SMOOTH pose on 120Hz screens.
+  const ix = lerp(truck.px !== undefined ? truck.px : truck.x, truck.x, a);
+  const iz = lerp(truck.pz !== undefined ? truck.pz : truck.z, truck.z, a);
+  let dyaw = truck.yaw - (truck.pyaw !== undefined ? truck.pyaw : truck.yaw);
+  while (dyaw > Math.PI) dyaw -= 2 * Math.PI;
+  while (dyaw < -Math.PI) dyaw += 2 * Math.PI;
+  const iyaw = (truck.pyaw !== undefined ? truck.pyaw : truck.yaw) + dyaw * a;
+  const hI = terrainH(ix, iz);
   {
-    const ix = lerp(truck.px !== undefined ? truck.px : truck.x, truck.x, a);
-    const iz = lerp(truck.pz !== undefined ? truck.pz : truck.z, truck.z, a);
-    let dyaw = truck.yaw - (truck.pyaw !== undefined ? truck.pyaw : truck.yaw);
-    while (dyaw > Math.PI) dyaw -= 2 * Math.PI;
-    while (dyaw < -Math.PI) dyaw += 2 * Math.PI;
-    const iyaw = (truck.pyaw !== undefined ? truck.pyaw : truck.yaw) + dyaw * a;
-    const hI = terrainH(ix, iz);
     const hF = terrainH(ix + Math.cos(iyaw) * 2.6, iz - Math.sin(iyaw) * 2.6);
     const hS = terrainH(ix + Math.sin(iyaw) * 1.4, iz + Math.cos(iyaw) * 1.4);
     truck.group.position.set(ix, hI, iz);
@@ -1532,29 +1566,32 @@ function syncVisuals(dt, alpha) {
     d.material.opacity = Math.max(0, d.userData.life * 0.5);
     if (d.userData.life <= 0) d.visible = false;
   }
-  // camera: locked chase behind the truck, TRUCK-CENTERED. The old look-at
-  // blended 40% toward the ball, so after any slewing the whole vehicle
-  // drifted off-frame ("my boom is off to the right side of the screen").
-  // Ball influence is now a small CLAMPED nudge — the truck always anchors
-  // the shot and the full rig stays in view.
-  const back = 18, up = 10;
-  const hT = terrainH(truck.x, truck.z);
-  v3b.set(truck.x - Math.cos(truck.yaw) * back, hT + up, truck.z + Math.sin(truck.yaw) * back);
-  camPos.lerp(v3b, 1 - Math.exp(-dt * 3.2));
+  // camera: POLAR chase. The follow yaw eases toward the truck's yaw, but the
+  // position is rigidly (truck − dir(camYaw)·back) — the vehicle physically
+  // cannot leave the frame; only the shot ANGLE lags in a turn. (The old
+  // positional lerp trailed a turning truck by ~25° of arc, parking the whole
+  // vehicle at the screen edge — "it's always off to the right".)
+  const back = 19, up = 11;
+  let dyc = iyaw - cam.yaw;
+  while (dyc > Math.PI) dyc -= 2 * Math.PI;
+  while (dyc < -Math.PI) dyc += 2 * Math.PI;
+  cam.yaw += dyc * (1 - Math.exp(-dt * 6));
+  cam.y = lerp(cam.y, hI + up, 1 - Math.exp(-dt * 4));
+  camera.position.set(ix - Math.cos(cam.yaw) * back, cam.y, iz + Math.sin(cam.yaw) * back);
   const sh = game.shake;
   if (sh > 0.01) {
-    camPos.x += (Math.random() - 0.5) * sh; camPos.y += (Math.random() - 0.5) * sh * 0.7;
+    camera.position.x += (Math.random() - 0.5) * sh;
+    camera.position.y += (Math.random() - 0.5) * sh * 0.7;
     game.shake *= Math.pow(0.02, dt);
   }
-  camera.position.copy(camPos);
-  let nx = bp.x - truck.x, nz = bp.z - truck.z;             // ball nudge, capped at 3.5m
+  let nx = bp.x - ix, nz = bp.z - iz;             // ball nudge, capped at 3.5m
   const nl = Math.hypot(nx, nz);
   if (nl > 3.5) { nx *= 3.5 / nl; nz *= 3.5 / nl; }
-  const ny = clamp((bp.y - hT) * 0.15, 0, 2.5);
+  const ny = clamp((bp.y - hI) * 0.2, 0, 4);      // taller boom: let the shot tilt up more
   camLook.lerp(v3b.set(
-    truck.x + Math.cos(truck.yaw) * 3 + nx * 0.6,
-    hT + 3 + ny,
-    truck.z - Math.sin(truck.yaw) * 3 + nz * 0.6), 1 - Math.exp(-dt * 4));
+    ix + Math.cos(iyaw) * 3 + nx * 0.6,
+    hI + 3.2 + ny,
+    iz - Math.sin(iyaw) * 3 + nz * 0.6), 1 - Math.exp(-dt * 6));
   camera.lookAt(camLook);
   // sun + shadow box follow; sky dome and mountains ride along (infinitely far)
   sun.position.set(truck.x + 30, 60, truck.z + 18);
@@ -1679,9 +1716,10 @@ window.__dbg = {
   get score() { return game.score; },
   get coins() { return eco.coins; },
   get truck() { return truck; },
-  ctrl, world, blocks, rig, errors: dbgErrors, lotAt, terrainH,
+  ctrl, world, blocks, rig, camera, errors: dbgErrors, lotAt, terrainH,
   start: startGame,
   stepN(n) { for (let i = 0; i < n; i++) step(STEP); syncVisuals(STEP); },
+  equip(slot, id) { eco.owned.add(id); eco.equip[slot] = id; buildRig(); },   // test hook: swap gear + rebuild
   terrainProbe() {   // heightfield vs function agreement — only chunk colliders count
     const chunkBodies = new Set([...chunks.values()].map(c => c.body.handle));
     let worst = 0, hits = 0;
