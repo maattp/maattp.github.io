@@ -11,6 +11,15 @@ title screen). ASSERT the old value when bumping (repo-wide rule — silent
 no-op bumps have shipped). Bump `CACHE` in `sw.js` (`wreck-vN`) when a deploy
 must reach installed players promptly.
 
+**sw.js install must stay SHELL-ONLY and fast.** V1 gated install on
+`Promise.all` of the multi-MB pinned CDN downloads; on iOS standalone every
+quick launch/force-quit aborted the in-flight update install, so players were
+pinned to the old worker's stale shell forever ("still see V1"). CDN files
+cache lazily via the fetch handler and are copied forward across CACHE bumps
+in activate. Shell revalidation must fetch by URL with `cache: 'no-cache'` —
+WebKit rejects refetching a navigation-mode Request, which silently disabled
+stale-while-revalidate for `./` on iOS.
+
 ## Stack
 
 - **Three.js 0.160** (ES modules via jsdelivr importmap) + **Rapier 3D 0.19.3**
