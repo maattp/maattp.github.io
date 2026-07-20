@@ -18,8 +18,12 @@ in `sw.js`.
   never covers the ball. Tap = launch stuck ball(s).
 - Playfield is a fixed 250px logical width (`PF`) centered in the canvas —
   brick geometry never depends on device width.
-- Levels are `PATTERNS` (rows of `COLS` chars, '1'-'4' = brick hp/color tier,
-  '.' = empty). All patterns loop forever with `game.loop` speeding balls up.
+- Levels are `PATTERNS` (rows of `COLS` chars, '1'-'4' = brick point/color
+  tier, '.' = empty). **Every brick breaks in ONE hit** — color means points
+  (tier×10), never durability. Multi-hit bricks were shipped in V1 and read
+  as "bricks recolor instead of breaking" (user report); don't reintroduce
+  them without a visually distinct armored-brick treatment. All patterns loop
+  forever with `game.loop` speeding balls up.
 - Power-ups drop from destroyed bricks (12%): W = wide paddle 12s, M = +2 balls.
   Life is lost only when the LAST ball falls.
 - Ball sim runs 2 substeps/frame and clamps `|vy|` ≥ 0.22·speed so the ball can

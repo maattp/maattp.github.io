@@ -1,7 +1,7 @@
 // Breakout service worker: one self-contained file, so caching the shell makes
 // it fully playable offline. Stale-while-revalidate; bump CACHE when a deploy
 // must invalidate old copies immediately.
-const CACHE = 'breakout-v1';
+const CACHE = 'breakout-v2';
 const SHELL = ['./', './index.html', './icon.png', './apple-touch-icon.png', './icon-192.png', './manifest.webmanifest'];
 
 self.addEventListener('install', e => {
