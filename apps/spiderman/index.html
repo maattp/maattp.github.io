@@ -1,0 +1,1457 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="theme-color" content="#1c1233">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" sizes="180x180" href="apple-touch-icon.png">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
+<link rel="icon" type="image/png" sizes="512x512" href="icon.png">
+<title>Spider-Man</title>
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
+  /* html gets the sky, body the street color — any exposed strip is at the bottom */
+  html, body { height:100vh; width:100%; overflow:hidden; background:#1c1233; overscroll-behavior:none; }
+  body { touch-action:none; -webkit-user-select:none; user-select:none; }
+  #game {
+    position:fixed; top:0; left:0;
+    width:100vw; height:100vh; height:100dvh;
+    touch-action:none;
+    image-rendering:pixelated; image-rendering:crisp-edges;
+  }
+  /* iOS standalone + black-translucent shifts layout up by the status-bar inset —
+     extend document and canvas by it (same fix as pixelrun) */
+  @media (display-mode: standalone) {
+    html, body { height: calc(100vh + env(safe-area-inset-top)); }
+    #game { height: calc(100vh + env(safe-area-inset-top)); }
+  }
+</style>
+</head>
+<body>
+<canvas id="game"></canvas>
+<!-- iOS haptic hack: clicking a rendered native switch fires the system selection tap -->
+<label id="hap" aria-hidden="true" style="position:absolute;left:-9999px;top:0;opacity:0;pointer-events:none">
+  <input type="checkbox" switch tabindex="-1">
+</label>
+<script>
+'use strict';
+/* ============================================================
+   SPIDER-MAN — a one-thumb web-swinging city traversal game
+   HOLD in the air = shoot a web + swing, RELEASE = let go.
+   DRAG = run on roofs / crawl up and down walls. TAP = jump,
+   or leap off a wall. Touch a wall and you stick to it.
+   Handcrafted left-to-right levels with real vertical city
+   topology. Don't fall to the street.
+   ============================================================ */
+
+// ---------- constants ----------
+const T = 12;                       // tile size (px)
+const ROWS = 60;                    // world height in tiles
+const SR = 57;                      // street row — everything below is deadly
+const WH = ROWS * T;                // world pixel height
+const STEP = 1000 / 60;             // fixed 60 Hz simulation
+const GRAV = 0.22;
+const MAX_FALL = 6.2;
+const RUN = 1.7;
+const JUMP_V = -4.7;                // apex ≈ 4.2 tiles; flat jump ≈ 6 tiles with RUN.
+                                    // Level gaps meant for plain jumps must stay ≤ 5 tiles;
+                                    // wider gaps need a web anchor (taller building ahead or a hook).
+const LEAP_VX = 3.1;                // wall leap, away from the wall
+const LEAP_VY = -3.9;
+const CRAWL = 1.35;
+const AIR_CTRL = 0.06;
+const SWING_G = 0.20;               // gravity while roped (slightly floatier)
+const ROPE_MIN = 40, ROPE_MAX = 175;
+const REEL = 0.10;                  // rope shortens while held — pumps energy in
+const PUMP = 0.05;
+const SWING_MAX = 6.0;              // tangential speed cap
+const ANCHOR_NEAR = 26, ANCHOR_FAR = 190;
+const TAP_MS = 230, TAP_PX = 10;    // release under both = a tap
+const COYOTE = 7;
+const PW = 10, PH = 16;             // player hitbox
+const SAVE = 'spidey_';
+const VERSION = 1;                  // shown on the title screen — bump once per PR (see CLAUDE.md)
+
+// ---------- utils ----------
+const clamp = (v, a, b) => v < a ? a : v > b ? b : v;
+const lerp = (a, b, t) => a + (b - a) * t;
+const hyp = Math.hypot;
+function hash2(x, y) { let h = (x * 374761393 + y * 668265263) | 0; h = (h ^ h >> 13) * 1274126177 | 0; return ((h ^ h >> 16) >>> 0) / 4294967296; }
+function store(k, v) { try { localStorage.setItem(SAVE + k, JSON.stringify(v)); } catch (e) {} }
+function load(k, d) { try { const v = localStorage.getItem(SAVE + k); return v == null ? d : JSON.parse(v); } catch (e) { return d; } }
+
+// offline: cache the whole app via service worker (see sw.js)
+if ('serviceWorker' in navigator && location.protocol.startsWith('http')) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('sw.js').catch(() => {});
+  });
+}
+
+// ---------- canvas & scaling (pixelrun-proven iOS sizing) ----------
+const canvas = document.getElementById('game');
+const ctx = canvas.getContext('2d');
+let W = 270, H = 480, SCALE = 2;
+let lastSize = '';
+function resize() {
+  const dpr = window.devicePixelRatio || 1;
+  // orient every (w,h) source to the CSS orientation, THEN take the per-axis max
+  const landscape = window.matchMedia('(orientation: landscape)').matches;
+  const vv = window.visualViewport;
+  const rect = canvas.getBoundingClientRect();
+  let cw = 0, chh = 0;
+  for (const [pw, ph] of [[window.innerWidth, window.innerHeight],
+                          [vv ? vv.width : 0, vv ? vv.height : 0],
+                          [rect.width, rect.height]]) {
+    cw = Math.max(cw, Math.round(landscape ? Math.max(pw, ph) : Math.min(pw, ph)));
+    chh = Math.max(chh, Math.round(landscape ? Math.min(pw, ph) : Math.max(pw, ph)));
+  }
+  if (navigator.standalone && screen && screen.width) {
+    const sMin = Math.min(screen.width, screen.height), sMax = Math.max(screen.width, screen.height);
+    cw = Math.max(cw, landscape ? sMax : sMin);
+    chh = Math.max(chh, landscape ? sMin : sMax);
+  }
+  readInsets(cw, chh);
+  const sig = cw + 'x' + chh + '@' + dpr;
+  if (sig === lastSize) return;
+  lastSize = sig;
+  const portrait = !landscape;
+  // landscape targets H≈250 so sprites keep the same on-screen size as portrait (W≈270)
+  SCALE = portrait
+    ? Math.max(1, Math.round(cw * dpr / 270))
+    : Math.max(1, Math.round(chh * dpr / 250));
+  W = Math.ceil(cw * dpr / SCALE);
+  H = Math.ceil(chh * dpr / SCALE);
+  canvas.width = W; canvas.height = H;
+  if (navigator.standalone) {
+    canvas.style.width = cw + 'px'; canvas.style.height = chh + 'px';
+  }
+  ctx.imageSmoothingEnabled = false;
+  readInsets(cw, chh);
+}
+let safeTop = 0, safeBot = 0, safeL = 0, safeR = 0;
+function readInsets(cw, chh) {
+  const probe = document.createElement('div');
+  probe.style.cssText = 'position:fixed;top:env(safe-area-inset-top);bottom:env(safe-area-inset-bottom);' +
+    'left:env(safe-area-inset-left);right:env(safe-area-inset-right);pointer-events:none;visibility:hidden;';
+  document.body.appendChild(probe);
+  const r = probe.getBoundingClientRect();
+  probe.remove();
+  let topCss = r.top;
+  let botCss = Math.max(0, chh - r.bottom);
+  let leftCss = r.left, rightCss = Math.max(0, cw - r.right);
+  if (navigator.standalone) {
+    const notched = Math.max(screen.width, screen.height) >= 780;
+    if (cw > chh) {
+      if (notched && botCss < 10) botCss = 21;
+      if (notched && leftCss < 10 && rightCss < 10) leftCss = rightCss = 44;
+    } else {
+      if (topCss < 20) topCss = notched ? 47 : 20;
+      if (notched && botCss < 10) botCss = 34;
+    }
+  }
+  const s = (window.devicePixelRatio || 1) / SCALE;
+  safeTop = Math.ceil(topCss * s);
+  safeBot = Math.ceil(botCss * s);
+  safeL = Math.ceil(leftCss * s);
+  safeR = Math.ceil(rightCss * s);
+}
+window.addEventListener('resize', resize);
+window.addEventListener('orientationchange', () => { setTimeout(resize, 250); setTimeout(resize, 700); });
+window.addEventListener('pageshow', () => setTimeout(resize, 60));
+if (window.visualViewport) window.visualViewport.addEventListener('resize', resize);
+try { window.matchMedia('(orientation: landscape)').addEventListener('change', () => { resize(); setTimeout(resize, 250); }); } catch (e) {}
+setTimeout(resize, 350);
+setTimeout(resize, 1200);
+resize();
+
+// ---------- pixel font (3×5, shared design with pixelrun) ----------
+const FONT = {
+  A:'010101111101101',B:'110101110101110',C:'011100100100011',D:'110101101101110',
+  E:'111100110100111',F:'111100110100100',G:'011100101101011',H:'101101111101101',
+  I:'111010010010111',J:'001001001101010',K:'101101110101101',L:'100100100100111',
+  M:'101111101101101',N:'110101101101101',O:'010101101101010',P:'110101110100100',
+  Q:'010101101010001',R:'110101110101101',S:'011100010001110',T:'111010010010010',
+  U:'101101101101111',V:'101101101101010',W:'101101101111101',X:'101101010101101',
+  Y:'101101010010010',Z:'111001010100111',
+  '0':'111101101101111','1':'010110010010111','2':'111001111100111','3':'111001011001111',
+  '4':'101101111001001','5':'111100111001111','6':'111100111101111','7':'111001001010010',
+  '8':'111101111101111','9':'111101111001111',
+  '!':'010010010000010','?':'111001011000010','.':'000000000000010',',':'000000000010100',
+  ':':'000010000010000','-':'000000111000000','+':'000010111010000',"'":'010010000000000',
+  '/':'001001010100100','♥':'101111111010010','↑':'010111010010010','↓':'010010010111010',
+  '×':'000101010101000','(':'010100100100010',')':'010001001001010'
+};
+function textW(str, s) { return String(str).length * 4 * s - s; }
+function drawText(c, str, x, y, s, color, shadow) {
+  x = Math.round(x); y = Math.round(y);
+  str = String(str).toUpperCase();
+  if (shadow) drawText(c, str, x + s, y + s, s, shadow);
+  c.fillStyle = color;
+  for (let i = 0; i < str.length; i++) {
+    const g = FONT[str[i]];
+    if (!g) continue;
+    for (let r = 0; r < 5; r++) for (let col = 0; col < 3; col++)
+      if (g[r * 3 + col] === '1') c.fillRect(x + i * 4 * s + col * s, y + r * s, s, s);
+  }
+}
+function drawTextC(c, str, cx, y, s, color, shadow) {
+  drawText(c, str, Math.round(cx - textW(str, s) / 2), y, s, color, shadow);
+}
+
+// ---------- haptics (iOS switch hack — navigator.vibrate is a no-op there) ----------
+const hapEl = document.getElementById('hap');
+let lastHap = 0;
+function buzz(n) {
+  const now = performance.now();
+  if (now - lastHap < 22) return;
+  lastHap = now;
+  n = Math.min(n || 1, 4);
+  if (navigator.vibrate) { navigator.vibrate(n * 12); return; }
+  for (let i = 0; i < n; i++) setTimeout(() => { try { hapEl.click(); } catch (e) {} }, i * 24);
+}
+
+// ---------- audio (tiny procedural sfx) ----------
+let actx = null;
+function A() {
+  if (!actx) { try { actx = new (window.AudioContext || window.webkitAudioContext)(); } catch (e) {} }
+  if (actx && actx.state === 'suspended') actx.resume().catch(() => {});
+  return actx;
+}
+function beep(f0, f1, dur, type, vol, delay) {
+  const ac = actx; if (!ac) return;
+  try {
+    const t0 = ac.currentTime + (delay || 0);
+    const o = ac.createOscillator(), g = ac.createGain();
+    o.type = type || 'square';
+    o.frequency.setValueAtTime(f0, t0);
+    o.frequency.exponentialRampToValueAtTime(Math.max(30, f1), t0 + dur);
+    g.gain.setValueAtTime(vol || 0.07, t0);
+    g.gain.exponentialRampToValueAtTime(0.001, t0 + dur);
+    o.connect(g); g.connect(ac.destination);
+    o.start(t0); o.stop(t0 + dur + 0.02);
+  } catch (e) {}
+}
+const sfx = {
+  thwip() { beep(1300, 240, 0.08, 'square', 0.06); },
+  jump() { beep(430, 720, 0.08, 'triangle', 0.08); },
+  leap() { beep(360, 640, 0.09, 'triangle', 0.08); },
+  land() { beep(200, 120, 0.05, 'triangle', 0.05); },
+  cling() { beep(700, 500, 0.04, 'square', 0.04); },
+  star() { beep(880, 880, 0.07, 'square', 0.07); beep(1320, 1320, 0.1, 'square', 0.07, 0.07); },
+  hurt() { beep(300, 90, 0.2, 'sawtooth', 0.09); },
+  stomp() { beep(220, 60, 0.1, 'square', 0.09); },
+  die() { beep(400, 55, 0.45, 'sawtooth', 0.09); },
+  check() { beep(660, 660, 0.08, 'square', 0.06); beep(990, 990, 0.12, 'square', 0.06, 0.08); },
+  clear() { [523, 659, 784, 1047].forEach((f, i) => beep(f, f, 0.14, 'square', 0.07, i * 0.11)); },
+  ui() { beep(600, 600, 0.05, 'square', 0.05); }
+};
+
+// ---------- palettes ----------
+const PALS = [
+  { name: 'dusk', skyTop: '#1c1233', skyBot: '#d96a4e', starsky: false, moon: false,
+    far: '#241640', mid: '#2f1d52', fac: ['#3a2a60', '#453270', '#332355'],
+    edge: '#241845', cap: '#5c4a8a', win: '#ffd97a', winOff: '#2a1c48', street: '#181320', lane: '#453a55' },
+  { name: 'night', skyTop: '#070d24', skyBot: '#1d3260', starsky: true, moon: true,
+    far: '#0d1530', mid: '#152044', fac: ['#1b2a52', '#223260', '#182448'],
+    edge: '#101a38', cap: '#3c5088', win: '#ffe9a0', winOff: '#131d3a', street: '#0c1020', lane: '#2c3a5c' },
+  { name: 'sunset', skyTop: '#3a1440', skyBot: '#ff8c5a', starsky: false, moon: false,
+    far: '#43203f', mid: '#582a4c', fac: ['#63305a', '#71396a', '#552a50'],
+    edge: '#42224a', cap: '#96588c', win: '#ffe28a', winOff: '#44204a', street: '#241428', lane: '#583a58' },
+  { name: 'dawn', skyTop: '#0e2f3a', skyBot: '#ffd27a', starsky: false, moon: false,
+    far: '#14384a', mid: '#1c4a5c', fac: ['#245666', '#2c6474', '#1e4a58'],
+    edge: '#173a48', cap: '#4a8496', win: '#fff2b0', winOff: '#153542', street: '#0e2028', lane: '#2c505c' },
+  { name: 'storm', skyTop: '#181a26', skyBot: '#4a5064', starsky: false, moon: true,
+    far: '#20222f', mid: '#2a2d3d', fac: ['#343748', '#3e4254', '#2d3040'],
+    edge: '#23252f', cap: '#565a70', win: '#cfe0ff', winOff: '#262836', street: '#14161e', lane: '#383c4c' }
+];
+
+// ---------- levels ----------
+// Handcrafted city topology. Coordinates are tiles; SR=57 is the street.
+// b(x,w,h) raises a building from the street, h tiles tall → returns its roof row.
+// Reachability law: gaps > 5 tiles need a web anchor ahead — a TALLER building's
+// corner, or an explicit hook(). Every star/goal must be reachable via climb+swing.
+function buildLevel(def) {
+  const len = def.len;
+  const grid = new Uint8Array(len * ROWS);        // 0 = air, else building id
+  const spikes = new Set();
+  const L = {
+    stars: [], goons: [], drones: [], hooks: [], checks: [], goal: null, start: null, bId: 0,
+    b(x, w, h) {
+      this.bId = (this.bId % 250) + 1;
+      const top = SR - h;
+      for (let ty = top; ty < SR; ty++)
+        for (let tx = x; tx < x + w; tx++)
+          if (tx >= 0 && tx < len && ty >= 0) grid[ty * len + tx] = this.bId;
+      return top;
+    },
+    spike(x, ty, n) { for (let i = 0; i < (n || 1); i++) spikes.add((ty - 1) * len + (x + i)); },
+    star(x, ty) { this.stars.push({ tx: x, ty }); },
+    goon(x, ty, range) { this.goons.push({ tx: x, ty, range }); },
+    drone(x, ty, rx, ry) { this.drones.push({ tx: x, ty, rx, ry }); },
+    hook(x, ty) { this.hooks.push({ tx: x, ty }); },
+    check(x, ty) { this.checks.push({ tx: x, ty }); },
+    setGoal(x, ty) { this.goal = { tx: x, ty }; },
+    setStart(x, ty) { this.start = { tx: x, ty }; }
+  };
+  def.gen(L);
+  // anchors: exposed roof corners (solid cell, air above, air beside) + hooks
+  const anchors = [];
+  for (let ty = 1; ty < SR; ty++) for (let tx = 0; tx < len; tx++) {
+    if (!grid[ty * len + tx] || grid[(ty - 1) * len + tx]) continue;
+    if (tx === 0 || !grid[ty * len + tx - 1]) anchors.push({ x: tx * T, y: ty * T, hook: false });
+    if (tx === len - 1 || !grid[ty * len + tx + 1]) anchors.push({ x: (tx + 1) * T, y: ty * T, hook: false });
+  }
+  for (const h of L.hooks) anchors.push({ x: h.tx * T + T / 2, y: h.ty * T, hook: true });
+  return { name: def.name, pal: PALS[def.pal], len, grid, spikes, anchors,
+    stars: L.stars, goons: L.goons, drones: L.drones, hooks: L.hooks,
+    checks: L.checks, goal: L.goal, start: L.start };
+}
+
+const LEVEL_DEFS = [
+{ name: 'ROOKIE ROOFTOPS', pal: 0, len: 190, gen(L) {
+  const r1 = L.b(0, 16, 20); L.setStart(4, r1);
+  const r2 = L.b(20, 12, 24);
+  const r3 = L.b(36, 14, 20);
+  const r4 = L.b(54, 10, 30);           // taller: teaches wall cling + crawl
+  L.star(58, r4 - 2);
+  L.hook(69, 20);                        // first swing gap
+  const r5 = L.b(74, 14, 26); L.check(80, r5);
+  L.goon(78, r5, 4);
+  const r6 = L.b(92, 12, 34);           // climb again
+  L.star(106, 26);                       // floats in the gap — swing through it
+  const r7 = L.b(110, 16, 24);
+  const r8 = L.b(130, 12, 28); L.spike(135, r8, 2); L.star(139, r8 - 2);
+  L.hook(146, 16);
+  const r9 = L.b(150, 24, 22); L.setGoal(166, r9);
+  L.b(178, 12, 16);
+}},
+{ name: 'ALLEY NIGHTS', pal: 1, len: 200, gen(L) {
+  const r1 = L.b(0, 12, 26); L.setStart(4, r1);
+  const r2 = L.b(16, 10, 40); L.star(20, r2 - 2);        // climb the face
+  L.drone(29, 40, 2, 5); L.star(29, 50);                  // deep-alley star
+  const r3 = L.b(32, 10, 40);
+  const r4 = L.b(46, 16, 18); L.goon(50, r4, 5);
+  const r5 = L.b(66, 8, 44); L.check(68, r5);
+  const r6 = L.b(79, 8, 44); L.spike(84, r6, 2);
+  const r7 = L.b(92, 18, 22); L.drone(98, r7 - 8, 5, 3);
+  const r8 = L.b(114, 10, 36);
+  const r9 = L.b(128, 10, 48); L.star(132, r9 - 2);       // the big climb
+  const r10 = L.b(142, 14, 20); L.check(146, r10);
+  L.hook(160, 14);
+  const r11 = L.b(164, 24, 26); L.setGoal(176, r11);
+  L.goon(172, r11, 5);
+}},
+{ name: 'MIDTOWN LEAP', pal: 2, len: 230, gen(L) {
+  const r1 = L.b(0, 14, 28); L.setStart(4, r1);
+  L.hook(19, 16);
+  const r2 = L.b(26, 10, 30);
+  L.hook(42, 14); L.star(43, 30);
+  const r3 = L.b(54, 12, 26);
+  const r4 = L.b(70, 8, 38);
+  L.hook(84, 12); L.hook(92, 10); L.star(88, 26);
+  const r5 = L.b(98, 14, 24); L.check(102, r5);
+  L.goon(101, r5, 4); L.goon(107, r5, 3);
+  const r6 = L.b(122, 8, 32);
+  L.hook(134, 14);
+  const r7 = L.b(140, 10, 36); L.drone(150, 24, 3, 4);
+  const r8 = L.b(154, 8, 20); L.star(163, 48);           // dip low over the street
+  L.hook(168, 18);
+  const r9 = L.b(176, 12, 30); L.check(180, r9);
+  L.hook(194, 12);
+  const r10 = L.b(200, 20, 34); L.setGoal(212, r10);
+  L.b(222, 8, 20);
+}},
+{ name: 'UNDER CONSTRUCTION', pal: 3, len: 210, gen(L) {
+  const r1 = L.b(0, 12, 24); L.setStart(4, r1);
+  const g1 = L.b(18, 3, 32), g2 = L.b(27, 3, 36), g3 = L.b(36, 3, 40);   // girder hops
+  L.star(37, g3 - 2);
+  L.hook(45, 14);
+  const r2 = L.b(50, 14, 26); L.check(54, r2); L.spike(60, r2, 2);
+  const r3 = L.b(70, 10, 34); L.hook(84, 14);
+  const r4 = L.b(86, 12, 22); L.drone(90, r4 - 7, 4, 3); L.drone(96, r4 - 10, 3, 4);
+  const g4 = L.b(104, 3, 38), g5 = L.b(112, 3, 44), g6 = L.b(120, 3, 50);
+  L.star(121, g6 - 2);
+  const r5 = L.b(130, 16, 28); L.check(134, r5); L.goon(138, r5, 4);
+  L.hook(152, 12);
+  const r6 = L.b(158, 10, 30); L.spike(158, r6, 2); L.spike(166, r6, 2);
+  L.star(171, 52);                                        // street-level nerve test
+  const r7 = L.b(174, 14, 24); L.setGoal(182, r7);
+  L.b(192, 12, 18);
+}},
+{ name: 'THE SPIRE', pal: 4, len: 200, gen(L) {
+  const r1 = L.b(0, 14, 22); L.setStart(4, r1);
+  const r2 = L.b(20, 12, 30);
+  // the spire: tiered mega-tower, climbed in stages
+  L.b(40, 18, 34); L.b(44, 10, 42); const rt = L.b(47, 4, 50);
+  L.star(46, 15); L.star(48, rt - 2); L.check(48, rt);
+  L.star(62, 52);                                         // base-of-tower alley star
+  const r3 = L.b(66, 12, 18); L.goon(70, r3, 4);
+  const r4 = L.b(84, 10, 36);
+  L.hook(98, 10);
+  const r5 = L.b(104, 10, 40); L.drone(114, 22, 3, 5);
+  L.hook(120, 8);
+  const r6 = L.b(128, 12, 30); L.check(132, r6);
+  const r7 = L.b(146, 8, 34); L.spike(150, r7, 2);
+  L.hook(158, 12);
+  const r8 = L.b(164, 8, 38); L.drone(160, 30, 2, 6);
+  L.hook(176, 14);
+  const r9 = L.b(182, 18, 26); L.setGoal(190, r9);
+}}
+];
+const LEVELS = LEVEL_DEFS.map(buildLevel);
+
+// ---------- game state ----------
+const game = {
+  state: 'title',        // title | howto | select | play | pause | dying | clear
+  stateT: 0, frame: 0,
+  lvlIdx: 0, lvl: LEVELS[0],
+  hearts: 3, time: 0, kos: 0,
+  starsGot: [false, false, false],
+  respawn: null,         // {x,y}
+  shake: 0, hitstop: 0,
+  fromPause: false
+};
+const prog = {
+  stars: load('stars', [0, 0, 0, 0, 0]),
+  unlocked: load('unlocked', 1),
+  howtoSeen: load('howtoSeen', false)
+};
+const player = {
+  x: 0, y: 0, vx: 0, vy: 0, face: 1,
+  mode: 'ground',        // ground | air | cling | swing | dead
+  side: 1,               // cling: 1 = wall on the right
+  rope: null,            // {ax, ay, len}
+  coyote: 0, invuln: 0, animT: 0, webCd: 0
+};
+const input = {
+  down: false, uiTouch: false, id: -1,
+  x0: 0, y0: 0, x: 0, y: 0, t0: 0, moved: 0,
+  dir: 0, dirY: 0        // -1/0/1 from drag (deadzone applied)
+};
+const cam = { x: 0, y: 0 };
+let ents = [], fx = [], cars = [], starEnts = [], checksHit = [];
+const ui = { btns: [] };
+
+// ---------- level plumbing ----------
+function solid(tx, ty) {
+  const lvl = game.lvl;
+  if (tx < 0 || tx >= lvl.len) return true;     // world walls
+  if (ty < 0 || ty >= SR) return false;         // sky above, street below (deadly, not solid)
+  return lvl.grid[ty * lvl.len + tx] !== 0;
+}
+function solidAt(px, py) { return solid(Math.floor(px / T), Math.floor(py / T)); }
+function spikeAt(px, py) {
+  const lvl = game.lvl;
+  const tx = Math.floor(px / T), ty = Math.floor(py / T);
+  return lvl.spikes.has(ty * lvl.len + tx);
+}
+
+function startLevel(idx) {
+  game.lvlIdx = idx;
+  game.lvl = LEVELS[idx];
+  const lvl = game.lvl;
+  game.state = 'play'; game.stateT = 0;
+  game.hearts = 3; game.time = 0; game.kos = 0;
+  game.starsGot = lvl.stars.map(() => false);
+  game.shake = 0; game.hitstop = 0;
+  player.x = lvl.start.tx * T; player.y = lvl.start.ty * T - PH;
+  player.vx = 0; player.vy = 0; player.face = 1;
+  player.mode = 'ground'; player.rope = null; player.invuln = 0;
+  game.respawn = { x: player.x, y: player.y };
+  checksHit = lvl.checks.map(() => false);
+  ents = [];
+  for (const g of lvl.goons) ents.push({ type: 'goon', x: g.tx * T, y: g.ty * T - 14, w: 10, h: 14,
+    x0: (g.tx - g.range) * T, x1: (g.tx + g.range) * T, dir: 1, dead: false, t: 0 });
+  for (const d of lvl.drones) ents.push({ type: 'drone', cx: d.tx * T, cy: d.ty * T, rx: d.rx * T, ry: d.ry * T,
+    x: d.tx * T, y: d.ty * T, w: 12, h: 8, dead: false, t: (d.tx * 7) % 100 });
+  starEnts = lvl.stars.map((s, i) => ({ x: s.tx * T + 1, y: s.ty * T + 1, i }));
+  fx = []; cars = [];
+  cam.x = clamp(player.x + PW / 2 - W / 2, 0, Math.max(0, lvl.len * T - W));
+  cam.y = clamp(player.y - H * 0.45, Math.min(0, WH - H), Math.max(0, WH - H));
+  tintPage();
+}
+function tintPage() {
+  const p = game.lvl.pal;
+  document.documentElement.style.background = p.skyTop;
+  document.body.style.background = p.street;
+  const tc = document.querySelector('meta[name="theme-color"]');
+  if (tc) tc.content = p.skyTop;
+}
+
+// ---------- input ----------
+function cssToGame(e) {
+  const dpr = window.devicePixelRatio || 1;
+  return { x: e.clientX * dpr / SCALE, y: e.clientY * dpr / SCALE };
+}
+function inBtn(p) {
+  for (const b of ui.btns)
+    if (p.x >= b.x && p.x <= b.x + b.w && p.y >= b.y && p.y <= b.y + b.h) return b;
+  return null;
+}
+function touchStart(x, y) {
+  input.down = true; input.x0 = input.x = x; input.y0 = input.y = y;
+  input.t0 = performance.now(); input.moved = 0; input.dir = 0; input.dirY = 0;
+  input.uiTouch = !!inBtn({ x, y }) || game.state !== 'play';
+}
+function touchMove(x, y) {
+  if (!input.down) return;
+  input.x = x; input.y = y;
+  const dx = x - input.x0, dy = y - input.y0;
+  input.moved = Math.max(input.moved, hyp(dx, dy));
+  input.dir = Math.abs(dx) > 6 ? Math.sign(dx) : 0;
+  input.dirY = Math.abs(dy) > 6 ? Math.sign(dy) : 0;
+  // re-center a long drag so reversing direction responds immediately
+  if (Math.abs(dx) > 44) input.x0 = x - 44 * Math.sign(dx);
+  if (Math.abs(dy) > 44) input.y0 = y - 44 * Math.sign(dy);
+}
+function touchEnd() {
+  if (!input.down) return;
+  input.down = false;
+  const wasTap = (performance.now() - input.t0) < TAP_MS && input.moved < TAP_PX;
+  const p = { x: input.x, y: input.y };
+  const b = inBtn(p);
+  if (b && (input.uiTouch || game.state !== 'play')) { sfx.ui(); b.fn(); input.dir = input.dirY = 0; return; }
+  if (input.uiTouch) { input.dir = input.dirY = 0; return; }
+  if (game.state === 'play') {
+    if (player.mode === 'swing') releaseRope();
+    else if (wasTap) tapAction();
+  }
+  input.dir = 0; input.dirY = 0;
+}
+function tapAction() {
+  if (player.mode === 'ground' || player.coyote > 0) {
+    player.vy = JUMP_V; player.mode = 'air'; player.coyote = 0;
+    sfx.jump(); buzz(1);
+  } else if (player.mode === 'cling') {
+    wallLeap();
+  }
+}
+function wallLeap() {
+  player.vx = -player.side * LEAP_VX; player.vy = LEAP_VY;
+  player.mode = 'air'; player.face = -player.side;
+  sfx.leap(); buzz(1);
+}
+function releaseRope() {
+  if (!player.rope) return;
+  player.rope = null;
+  if (player.mode === 'swing') player.mode = 'air';
+  player.webCd = 5;
+}
+canvas.addEventListener('pointerdown', e => {
+  e.preventDefault(); A();
+  if (input.down) return;                 // single-touch game
+  input.id = e.pointerId;
+  try { canvas.setPointerCapture(e.pointerId); } catch (err) {}
+  const p = cssToGame(e); touchStart(p.x, p.y);
+});
+canvas.addEventListener('pointermove', e => {
+  if (e.pointerId !== input.id) return;
+  const p = cssToGame(e); touchMove(p.x, p.y);
+});
+canvas.addEventListener('pointerup', e => {
+  if (e.pointerId !== input.id) return;
+  input.id = -1; touchEnd();
+});
+canvas.addEventListener('pointercancel', e => {
+  if (e.pointerId !== input.id) return;
+  input.id = -1; touchEnd();
+});
+
+// ---------- web / swing ----------
+function findAnchor() {
+  const lvl = game.lvl;
+  const cx = player.x + PW / 2, cy = player.y + PH / 2;
+  let best = null, bs = 1e9;
+  for (const a of lvl.anchors) {
+    const dx = a.x - cx, dy = a.y - cy;
+    if (dy > -6) continue;                          // must be above
+    const d = hyp(dx, dy);
+    if (d < ANCHOR_NEAR || d > ANCHOR_FAR) continue;
+    // line of sight — a web through a building reads as a bug
+    const steps = Math.ceil(d / 10);
+    let blocked = false;
+    for (let i = 1; i < steps - 1; i++) {
+      if (solidAt(cx + dx * i / steps, cy + dy * i / steps)) { blocked = true; break; }
+    }
+    if (blocked) continue;
+    let s = Math.abs(d - 110);
+    if (dx * player.face < 0) s += 80;              // behind = last resort
+    if (Math.abs(dx) < 10) s += 25;                 // straight up is a weak swing
+    if (dy > -20) s += 30;                          // barely above = weak too
+    if (a.hook) s -= 15;                            // hooks are placed to be used
+    if (s < bs) { bs = s; best = a; }
+  }
+  return best;
+}
+function tryWeb() {
+  const a = findAnchor();
+  if (!a) return false;
+  const cx = player.x + PW / 2, cy = player.y + PH / 2;
+  const d = hyp(a.x - cx, a.y - cy);
+  player.rope = { ax: a.x, ay: a.y, len: clamp(d, ROPE_MIN, ROPE_MAX) };
+  player.mode = 'swing';
+  fx.push({ type: 'zip', x0: cx, y0: cy - 4, x1: a.x, y1: a.y, life: 6 });
+  sfx.thwip(); buzz(1);
+  return true;
+}
+
+// ---------- player physics ----------
+function moveX() {
+  player.x += player.vx;
+  const dir = Math.sign(player.vx);
+  if (!dir) return false;
+  const edge = dir > 0 ? player.x + PW - 1 : player.x;
+  const ys = [player.y + 1, player.y + PH / 2, player.y + PH - 2];
+  for (const y of ys) {
+    if (solidAt(edge, y)) {
+      const c = Math.floor(edge / T);
+      player.x = dir > 0 ? c * T - PW : (c + 1) * T;
+      const wasAir = player.mode === 'air' || player.mode === 'swing';
+      player.vx = 0;
+      if (wasAir) {                       // Spidey sticks to walls — that's the point
+        releaseRope();
+        player.mode = 'cling'; player.side = dir; player.vy = 0;
+        player.face = dir;
+        sfx.cling(); buzz(1);
+      }
+      return true;
+    }
+  }
+  return false;
+}
+function moveY() {
+  player.y += player.vy;
+  const dir = Math.sign(player.vy);
+  if (!dir) return false;
+  const edge = dir > 0 ? player.y + PH - 1 : player.y;
+  const xs = [player.x + 1, player.x + PW - 2];
+  for (const x of xs) {
+    if (solidAt(x, edge)) {
+      const r = Math.floor(edge / T);
+      player.y = dir > 0 ? r * T - PH : (r + 1) * T;
+      if (dir > 0) {
+        if (player.mode !== 'ground') { sfx.land(); }
+        releaseRope();
+        player.mode = 'ground';
+      }
+      player.vy = 0;
+      return true;
+    }
+  }
+  return false;
+}
+function groundBelow() {
+  const y = player.y + PH + 1;
+  return solidAt(player.x + 1, y) || solidAt(player.x + PW - 2, y);
+}
+
+function updatePlayer() {
+  player.animT++;
+  if (player.invuln > 0) player.invuln--;
+  if (player.webCd > 0) player.webCd--;
+  if (player.coyote > 0) player.coyote--;
+  const m = player.mode;
+
+  if (m === 'ground') {
+    const target = input.down ? input.dir * RUN : 0;
+    player.vx = lerp(player.vx, target, 0.3);
+    if (Math.abs(player.vx) < 0.05) player.vx = 0;
+    if (input.dir) player.face = input.dir;
+    const hitWall = moveX();
+    // walking into a wall while dragging up starts a climb
+    if (hitWall && input.down && input.dirY < 0) {
+      const dir = input.dir || player.face;
+      if (solidAt(dir > 0 ? player.x + PW + 1 : player.x - 2, player.y + PH / 2)) {
+        player.mode = 'cling'; player.side = dir; player.vx = 0; player.vy = 0;
+      }
+    }
+    player.vy = 1;                        // stick to the roof
+    moveY();
+    if (!groundBelow()) { player.mode = 'air'; player.coyote = COYOTE; player.vy = 0; }
+
+  } else if (m === 'air') {
+    player.vy = Math.min(player.vy + GRAV, MAX_FALL);
+    if (input.down && input.dir) {
+      player.vx = clamp(player.vx + input.dir * AIR_CTRL, -3.4, 3.4);
+      player.face = input.dir;
+    }
+    if (Math.abs(player.vx) > 0.3) player.face = Math.sign(player.vx);
+    moveX(); moveY();
+    // hold-to-web: retry while held so a swing chains the moment an anchor appears
+    if (input.down && !input.uiTouch && player.mode === 'air' && !player.rope &&
+        player.webCd === 0 && game.frame % 4 === 0) tryWeb();
+
+  } else if (m === 'swing') {
+    const r = player.rope;
+    player.vy += SWING_G;
+    // reel in while held — the energy pump that makes swings feel alive
+    r.len = Math.max(ROPE_MIN, r.len - REEL);
+    const cx = player.x + PW / 2, cy = player.y + PH / 2;
+    let dx = cx - r.ax, dy = cy - r.ay;
+    const d = hyp(dx, dy) || 1;
+    const nx = dx / d, ny = dy / d;
+    // tangential pump, strongest at the bottom of the arc
+    const tx2 = -ny, ty2 = nx;
+    const vt = player.vx * tx2 + player.vy * ty2;
+    const pump = PUMP * Math.max(0, ny);
+    if (Math.abs(vt) > 0.25) {
+      const s = Math.sign(vt);
+      if (Math.abs(vt) < SWING_MAX) { player.vx += tx2 * pump * s; player.vy += ty2 * pump * s; }
+    } else {
+      player.vx += tx2 * pump * player.face;
+    }
+    player.vx *= 0.998; player.vy *= 0.998;
+    // constrain the PREDICTED position to the rope circle, then move normally
+    const pxn = cx + player.vx, pyn = cy + player.vy;
+    let ddx = pxn - r.ax, ddy = pyn - r.ay;
+    const pd = hyp(ddx, ddy);
+    if (pd > r.len) {
+      const k = r.len / pd;
+      player.vx = (r.ax + ddx * k) - cx;
+      player.vy = (r.ay + ddy * k) - cy;
+    }
+    if (Math.abs(player.vx) > 0.3) player.face = Math.sign(player.vx);
+    moveX(); moveY();
+
+  } else if (m === 'cling') {
+    player.vx = 0;
+    player.vy = input.down ? input.dirY * CRAWL : 0;
+    moveY();
+    const wallCol = player.side > 0 ? Math.floor((player.x + PW) / T) : Math.floor((player.x - 1) / T);
+    let touching = false;
+    for (const y of [player.y + 1, player.y + PH / 2, player.y + PH - 2])
+      if (solid(wallCol, Math.floor(y / T))) { touching = true; break; }
+    if (!touching) {
+      if (input.dirY < 0) {
+        // crawled past the top — mantle onto the roof
+        let mantled = false;
+        const r0 = Math.floor((player.y + PH) / T);
+        for (let r = r0; r < r0 + 4 && r < SR; r++) {
+          if (solid(wallCol, r)) {
+            player.y = r * T - PH;
+            player.x = wallCol * T + (T - PW) / 2;
+            player.mode = 'ground'; player.vy = 0;
+            sfx.land(); buzz(1); mantled = true;
+            break;
+          }
+        }
+        if (!mantled) player.mode = 'air';
+      } else {
+        player.mode = 'air';
+      }
+    }
+    // dragging hard away from the wall = leap — but only on a clearly HORIZONTAL
+    // drag, or a vertical crawl with thumb wobble flings you off the wall
+    if (player.mode === 'cling' && input.down) {
+      const dxNow = input.x - input.x0, dyNow = input.y - input.y0;
+      if (dxNow * player.side < -14 && Math.abs(dxNow) > Math.abs(dyNow) + 6) wallLeap();
+    }
+  }
+
+  // hazards & pickups
+  const px = player.x, py = player.y;
+  if (py + PH >= SR * T + 2) { die('street'); return; }
+  if (py > WH + 40) { die('fell'); return; }
+  if (player.invuln === 0) {
+    for (const pt of [[px + 2, py + 2], [px + PW - 3, py + 2], [px + 2, py + PH - 3], [px + PW - 3, py + PH - 3], [px + PW / 2, py + PH / 2]])
+      if (spikeAt(pt[0], pt[1])) { hurt(px + PW / 2 < (Math.floor(pt[0] / T) + 0.5) * T ? -1 : 1); break; }
+  }
+  const lvl = game.lvl;
+  for (const s of starEnts) {
+    if (game.starsGot[s.i]) continue;
+    if (px < s.x + 10 && px + PW > s.x && py < s.y + 10 && py + PH > s.y) {
+      game.starsGot[s.i] = true;
+      sfx.star(); buzz(2);
+      burst(s.x + 5, s.y + 5, '#ffd97a', 10);
+    }
+  }
+  for (let i = 0; i < lvl.checks.length; i++) {
+    if (checksHit[i]) continue;
+    const c = lvl.checks[i];
+    const cxp = c.tx * T, cyp = c.ty * T - 20;
+    if (px < cxp + 12 && px + PW > cxp && py < cyp + 20 && py + PH > cyp) {
+      checksHit[i] = true;
+      game.respawn = { x: c.tx * T, y: c.ty * T - PH };
+      sfx.check(); buzz(2);
+      burst(cxp + 6, cyp + 6, '#7ad9ff', 8);
+    }
+  }
+  if (lvl.goal) {
+    const g = lvl.goal;
+    const gx = g.tx * T, gy = g.ty * T - 26;
+    if (px < gx + 14 && px + PW > gx && py < gy + 26 && py + PH > gy) levelClear();
+  }
+}
+
+function hurt(knockDir) {
+  if (player.invuln > 0 || game.state !== 'play') return;
+  game.hearts--;
+  sfx.hurt(); buzz(3);
+  game.shake = 6; game.hitstop = 5;
+  releaseRope();
+  if (game.hearts <= 0) { die('hurt'); return; }
+  player.invuln = 90;
+  player.vx = (knockDir || -player.face) * 2.6;
+  player.vy = -2.6;
+  player.mode = 'air';
+}
+function die(cause) {
+  if (game.state !== 'play') return;
+  game.state = 'dying'; game.stateT = 0;
+  releaseRope();
+  player.mode = 'dead';
+  sfx.die(); buzz(4);
+  game.shake = 8;
+  burst(player.x + PW / 2, Math.min(player.y + PH / 2, SR * T - 4), '#e03131', 14);
+}
+function respawnPlayer() {
+  player.x = game.respawn.x; player.y = game.respawn.y;
+  player.vx = 0; player.vy = 0;
+  player.mode = 'ground'; player.rope = null;
+  player.invuln = 60;
+  game.hearts = 3;
+  game.state = 'play'; game.stateT = 0;
+  cam.x = clamp(player.x + PW / 2 - W / 2, 0, Math.max(0, game.lvl.len * T - W));
+  cam.y = clamp(player.y - H * 0.45, Math.min(0, WH - H), Math.max(0, WH - H));
+}
+function levelClear() {
+  game.state = 'clear'; game.stateT = 0;
+  sfx.clear(); buzz(3);
+  const got = game.starsGot.filter(Boolean).length;
+  prog.stars[game.lvlIdx] = Math.max(prog.stars[game.lvlIdx] || 0, got);
+  prog.unlocked = Math.max(prog.unlocked, Math.min(LEVELS.length, game.lvlIdx + 2));
+  store('stars', prog.stars); store('unlocked', prog.unlocked);
+}
+
+// ---------- enemies / cars / fx ----------
+function updateEnts() {
+  const pcx = player.x + PW / 2;
+  for (const e of ents) {
+    if (e.dead) continue;
+    e.t++;
+    if (e.type === 'goon') {
+      e.x += e.dir * 0.55;
+      if (e.x < e.x0) { e.x = e.x0; e.dir = 1; }
+      if (e.x > e.x1) { e.x = e.x1; e.dir = -1; }
+      // don't walk off the roof
+      const ahead = e.x + (e.dir > 0 ? e.w + 1 : -1);
+      if (!solidAt(ahead, e.y + e.h + 2)) e.dir = -e.dir;
+    } else if (e.type === 'drone') {
+      e.x = e.cx + Math.sin(e.t * 0.018) * e.rx;
+      e.y = e.cy + Math.sin(e.t * 0.031) * e.ry;
+    }
+    // player collision
+    if (game.state !== 'play' || player.invuln > 0) continue;
+    if (player.x < e.x + e.w && player.x + PW > e.x &&
+        player.y < e.y + e.h && player.y + PH > e.y) {
+      const stomp = player.vy > 1.1 && (player.y + PH) - e.y < 9;
+      if (stomp) {
+        e.dead = true; game.kos++;
+        player.vy = -3.6;
+        sfx.stomp(); buzz(2);
+        game.hitstop = 4;
+        burst(e.x + e.w / 2, e.y + e.h / 2, e.type === 'drone' ? '#9ad0ff' : '#c9c9c9', 10);
+      } else {
+        hurt(pcx < e.x + e.w / 2 ? -1 : 1);
+      }
+    }
+  }
+}
+function updateCars() {
+  if (game.frame % 80 === 0 && cars.length < 6) {
+    const dir = hash2(game.frame, 7) < 0.5 ? 1 : -1;
+    const x = dir > 0 ? cam.x - 60 : cam.x + W + 60;
+    cars.push({ x, dir, spd: 1 + hash2(game.frame, 13) * 1.2,
+      col: ['#c94141', '#4179c9', '#c9a641', '#41c98a', '#8a8a9a'][(game.frame / 80 | 0) % 5] });
+  }
+  for (const c of cars) c.x += c.dir * c.spd;
+  cars = cars.filter(c => c.x > cam.x - 120 && c.x < cam.x + W + 120);
+}
+function burst(x, y, col, n) {
+  for (let i = 0; i < n; i++) {
+    const a = (i / n) * Math.PI * 2 + hash2(i, n);
+    const sp = 0.8 + hash2(i, x | 0) * 1.6;
+    fx.push({ type: 'p', x, y, vx: Math.cos(a) * sp, vy: Math.sin(a) * sp - 0.6, life: 22 + (i % 8), col });
+  }
+}
+function updateFx() {
+  for (const f of fx) {
+    f.life--;
+    if (f.type === 'p') { f.x += f.vx; f.y += f.vy; f.vy += 0.08; }
+  }
+  fx = fx.filter(f => f.life > 0);
+}
+function updateCam() {
+  const lvl = game.lvl;
+  const tx = player.x + PW / 2 + player.vx * 12 - W / 2;
+  const ty = player.y + PH / 2 - H * 0.45;
+  cam.x = lerp(cam.x, clamp(tx, 0, Math.max(0, lvl.len * T - W)), 0.12);
+  cam.y = lerp(cam.y, clamp(ty, Math.min(0, WH - H), Math.max(0, WH - H)), 0.1);
+}
+
+// ---------- update ----------
+function update() {
+  game.frame++; game.stateT++; game.time++;
+  if (game.shake > 0) game.shake *= 0.85;
+  updatePlayer();
+  updateEnts();
+  updateCars();
+  updateFx();
+  updateCam();
+}
+function step() {
+  if (game.hitstop > 0) { game.hitstop--; return; }
+  if (game.state === 'play') update();
+  else {
+    game.frame++; game.stateT++;
+    if (game.shake > 0) game.shake *= 0.85;
+    updateFx();
+    if (game.state === 'dying') {
+      updateCars();
+      if (game.stateT > 65) respawnPlayer();
+    } else if (game.state === 'title' || game.state === 'select' || game.state === 'clear' || game.state === 'howto') {
+      updateCars();
+    }
+  }
+}
+
+// ---------- render ----------
+function skyline(seed, y0, colH, gapMax) {
+  // deterministic silhouette strip: returns [x, w, h] runs for one parallax layer
+  const out = [];
+  let x = -40;
+  let i = 0;
+  while (x < game.lvl.len * T + 400) {
+    const w = 20 + hash2(seed, i) * 46;
+    const h = colH * (0.4 + hash2(seed + 1, i) * 0.6);
+    out.push([x, w, h]);
+    x += w + hash2(seed + 2, i) * gapMax;
+    i++;
+  }
+  return out;
+}
+const skylineCache = {};
+function getSkyline(seed, colH, gapMax) {
+  const k = seed + '_' + game.lvlIdx;
+  if (!skylineCache[k]) skylineCache[k] = skyline(seed, 0, colH, gapMax);
+  return skylineCache[k];
+}
+
+function drawSky() {
+  const p = game.lvl.pal;
+  const bands = 16;
+  for (let i = 0; i < bands; i++) {
+    const t = i / (bands - 1);
+    ctx.fillStyle = mix(p.skyTop, p.skyBot, t * t);
+    ctx.fillRect(0, Math.floor(H * i / bands), W, Math.ceil(H / bands) + 1);
+  }
+  if (p.starsky) {
+    ctx.fillStyle = '#e8ecff';
+    for (let i = 0; i < 40; i++) {
+      const sx = (hash2(i, 3) * 900 - cam.x * 0.05) % (W + 20);
+      const sy = hash2(i, 11) * H * 0.7;
+      const tw = (game.frame / 30 + i) % 7 < 1 ? 2 : 1;
+      ctx.fillRect(Math.floor((sx + W + 20) % (W + 20)) - 10, Math.floor(sy), tw, tw);
+    }
+  }
+  if (p.moon) {
+    const mx = W - 46 - cam.x * 0.02, my = 34 - cam.y * 0.04;
+    ctx.fillStyle = '#e8e4d8';
+    ctx.fillRect(mx, my, 14, 14);
+    ctx.fillRect(mx - 2, my + 2, 18, 10);
+    ctx.fillRect(mx + 2, my - 2, 10, 18);
+    ctx.fillStyle = '#c9c4b4';
+    ctx.fillRect(mx + 3, my + 4, 3, 3); ctx.fillRect(mx + 9, my + 8, 2, 2);
+  }
+}
+const mixCache = {};
+function mix(a, b, t) {
+  const k = a + b + (t * 32 | 0);
+  if (mixCache[k]) return mixCache[k];
+  const pa = parseInt(a.slice(1), 16), pb = parseInt(b.slice(1), 16);
+  const r = lerp(pa >> 16, pb >> 16, t) | 0, g = lerp(pa >> 8 & 255, pb >> 8 & 255, t) | 0, bl = lerp(pa & 255, pb & 255, t) | 0;
+  return mixCache[k] = '#' + ((1 << 24) + (r << 16) + (g << 8) + bl).toString(16).slice(1);
+}
+
+function drawParallax() {
+  const p = game.lvl.pal;
+  const horizon = SR * T;                 // street level in world coords
+  for (const [layer, fac, col] of [[getSkyline(5, 210, 60), 0.25, p.far], [getSkyline(9, 300, 40), 0.5, p.mid]]) {
+    ctx.fillStyle = col;
+    // vertical: anchor silhouettes to the street with reduced vertical parallax
+    const by = horizon - cam.y + (cam.y * (1 - fac)) * 0.15;
+    for (const [x, w, h] of layer) {
+      const sx = Math.floor(x - cam.x * fac);
+      if (sx + w < 0 || sx > W) continue;
+      ctx.fillRect(sx, Math.floor(by - h), Math.ceil(w), Math.ceil(h + 200));
+    }
+  }
+}
+
+function drawWorld() {
+  const lvl = game.lvl, p = lvl.pal;
+  const tx0 = Math.max(0, Math.floor(cam.x / T)), tx1 = Math.min(lvl.len - 1, Math.floor((cam.x + W) / T));
+  const ty0 = Math.max(0, Math.floor(cam.y / T)), ty1 = Math.min(ROWS - 1, Math.floor((cam.y + H) / T));
+  for (let ty = ty0; ty <= ty1; ty++) {
+    for (let tx = tx0; tx <= tx1; tx++) {
+      const id = ty < SR ? lvl.grid[ty * lvl.len + tx] : 0;
+      const x = tx * T - cam.x | 0, y = ty * T - cam.y | 0;
+      if (ty >= SR) {                     // street
+        ctx.fillStyle = p.street;
+        ctx.fillRect(x, y, T, T);
+        if (ty === SR + 1 && tx % 4 < 2) { ctx.fillStyle = p.lane; ctx.fillRect(x, y + 4, T, 2); }
+        continue;
+      }
+      if (!id) continue;
+      const above = ty === 0 ? 0 : lvl.grid[(ty - 1) * lvl.len + tx];
+      const leftE = tx === 0 || !lvl.grid[ty * lvl.len + tx - 1];
+      const rightE = tx === lvl.len - 1 || !lvl.grid[ty * lvl.len + tx + 1];
+      ctx.fillStyle = p.fac[id % 3];
+      ctx.fillRect(x, y, T, T);
+      if (!above) {                       // roof cap + parapet
+        ctx.fillStyle = p.cap; ctx.fillRect(x, y, T, 3);
+        ctx.fillStyle = p.edge; ctx.fillRect(x, y + 3, T, 1);
+      } else if ((tx % 2 === 0) && (ty % 2 === 0)) {   // window
+        ctx.fillStyle = hash2(tx, ty * 31 + id) < 0.55 ? p.win : p.winOff;
+        ctx.fillRect(x + 4, y + 3, 5, 6);
+      }
+      if (leftE) { ctx.fillStyle = p.edge; ctx.fillRect(x, y, 2, T); }
+      if (rightE) { ctx.fillStyle = p.edge; ctx.fillRect(x + T - 2, y, 2, T); }
+    }
+  }
+  // spikes (antennas)
+  ctx.fillStyle = '#9aa0b4';
+  for (const key of lvl.spikes) {
+    const tx = key % lvl.len, ty = (key / lvl.len) | 0;
+    const x = tx * T - cam.x, y = ty * T - cam.y;
+    if (x < -T || x > W || y < -T || y > H) continue;
+    ctx.fillRect(x + 5, y + 2, 2, T - 2);
+    ctx.fillRect(x + 2, y + T - 3, 8, 2);
+    ctx.fillStyle = game.frame % 40 < 20 ? '#ff5757' : '#8a2a2a';
+    ctx.fillRect(x + 4, y, 4, 3);
+    ctx.fillStyle = '#9aa0b4';
+  }
+  // hooks (crane arms with dangling anchor)
+  for (const hk of lvl.hooks) {
+    const x = hk.tx * T + T / 2 - cam.x, y = hk.ty * T - cam.y;
+    if (x < -60 || x > W + 60) continue;
+    ctx.fillStyle = '#d9a441';
+    ctx.fillRect(x - 14, y - 4, 28, 3);
+    for (let i = -12; i <= 10; i += 6) ctx.fillRect(x + i, y - 8, 2, 4);
+    ctx.fillRect(x - 14, y - 8, 28, 2);
+    ctx.fillStyle = '#e8e8e8';
+    ctx.fillRect(x - 1, y - 1, 3, 4);
+  }
+  // stars
+  for (const s of starEnts) {
+    if (game.starsGot[s.i]) continue;
+    const x = s.x - cam.x, y = s.y - cam.y + Math.sin((game.frame + s.i * 20) * 0.08) * 2;
+    if (x < -20 || x > W + 20) continue;
+    const ph = (game.frame / 8 + s.i) % 4 | 0;
+    ctx.fillStyle = '#ffd97a';
+    if (ph === 0 || ph === 2) {
+      ctx.fillRect(x + 3, y, 3, 9); ctx.fillRect(x, y + 3, 9, 3);
+    } else {
+      ctx.fillRect(x + 1, y + 1, 7, 7);
+      ctx.fillStyle = '#b48a2a'; ctx.fillRect(x + 3, y + 3, 3, 3);
+    }
+  }
+  // checkpoints
+  for (let i = 0; i < lvl.checks.length; i++) {
+    const c = lvl.checks[i];
+    const x = c.tx * T - cam.x, y = c.ty * T - cam.y;
+    if (x < -20 || x > W + 20) continue;
+    ctx.fillStyle = '#c9c9d9';
+    ctx.fillRect(x + 5, y - 20, 2, 20);
+    ctx.fillStyle = checksHit[i] ? '#7ad9ff' : '#556';
+    ctx.fillRect(x + 7, y - 19, 8, 6);
+  }
+  // goal beacon
+  if (lvl.goal) {
+    const g = lvl.goal;
+    const x = g.tx * T - cam.x, y = g.ty * T - cam.y;
+    if (x > -40 && x < W + 40) {
+      const pulse = 0.5 + Math.sin(game.frame * 0.1) * 0.5;
+      ctx.fillStyle = 'rgba(122,217,255,' + (0.10 + pulse * 0.12).toFixed(2) + ')';
+      ctx.fillRect(x - 2, 0, 18, y);
+      ctx.fillStyle = '#c9c9d9';
+      ctx.fillRect(x + 6, y - 26, 3, 26);
+      ctx.fillStyle = pulse > 0.5 ? '#7ad9ff' : '#3a8ab4';
+      ctx.fillRect(x + 2, y - 26, 11, 8);
+      drawText(ctx, '!', x + 6, y - 25, 1, '#08202c');
+    }
+  }
+}
+
+function drawCars() {
+  const y = SR * T - cam.y + 3;
+  if (y > H + 20 || y < -20) return;
+  for (const c of cars) {
+    const x = c.x - cam.x;
+    if (x < -30 || x > W + 30) continue;
+    const ly = y + (c.dir > 0 ? 8 : 1);
+    ctx.fillStyle = c.col;
+    ctx.fillRect(x, ly, 20, 6);
+    ctx.fillRect(x + 4, ly - 3, 11, 4);
+    ctx.fillStyle = '#101018';
+    ctx.fillRect(x + 3, ly + 5, 4, 2); ctx.fillRect(x + 13, ly + 5, 4, 2);
+    ctx.fillStyle = '#fff2b0';
+    ctx.fillRect(c.dir > 0 ? x + 19 : x - 1, ly + 1, 2, 2);
+  }
+}
+
+function drawEnts() {
+  for (const e of ents) {
+    if (e.dead) continue;
+    const x = e.x - cam.x | 0, y = e.y - cam.y | 0;
+    if (x < -24 || x > W + 24 || y < -24 || y > H + 24) continue;
+    if (e.type === 'goon') {
+      const st = (e.t / 12 | 0) % 2;
+      ctx.fillStyle = '#2c2c38';
+      ctx.fillRect(x + 1, y + 4, 8, 6);
+      ctx.fillStyle = '#d9b48a';
+      ctx.fillRect(x + 2, y, 6, 4);
+      ctx.fillStyle = '#1c1c26';
+      ctx.fillRect(x + (e.dir > 0 ? 5 : 2), y + 1, 3, 2);
+      ctx.fillStyle = '#3c3c4c';
+      if (st) { ctx.fillRect(x + 1, y + 10, 3, 4); ctx.fillRect(x + 6, y + 10, 3, 4); }
+      else { ctx.fillRect(x + 2, y + 10, 3, 4); ctx.fillRect(x + 5, y + 10, 3, 4); }
+    } else {
+      const bl = (e.t / 4 | 0) % 2;
+      ctx.fillStyle = '#6a7086';
+      ctx.fillRect(x + 2, y + 3, 8, 4);
+      ctx.fillStyle = '#9ad0ff';
+      ctx.fillRect(x + 4, y + 4, 4, 2);
+      ctx.fillStyle = bl ? '#c9d4e8' : '#8a94a8';
+      ctx.fillRect(x - 1, y + 1, 5, 2); ctx.fillRect(x + 8, y + 1, 5, 2);
+      ctx.fillStyle = '#ff5757';
+      ctx.fillRect(x + 5, y + 7, 2, 1);
+    }
+  }
+}
+
+function drawSpidey() {
+  if (game.state === 'dying' && game.stateT > 30) return;
+  if (player.invuln > 0 && (game.frame / 3 | 0) % 2) return;
+  const x = Math.round(player.x - cam.x - 1), y = Math.round(player.y - cam.y);
+  const f = player.face;
+  const RED = '#e03131', DRED = '#a61e1e', BLU = '#2145c9', EYE = '#e8ecf4';
+  // rope first (under the body)
+  if (player.rope) {
+    const r = player.rope;
+    ctx.strokeStyle = '#e8ecf4';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(player.x + PW / 2 - cam.x, player.y + 3 - cam.y);
+    ctx.lineTo(r.ax - cam.x, r.ay - cam.y);
+    ctx.stroke();
+  }
+  const m = player.mode;
+  if (m === 'cling') {
+    const wx = player.side > 0 ? x + 4 : x;     // hug the wall
+    ctx.fillStyle = RED; ctx.fillRect(wx + 2, y + 1, 6, 5);          // head
+    ctx.fillStyle = EYE; ctx.fillRect(player.side > 0 ? wx + 6 : wx + 2, y + 2, 2, 2);
+    ctx.fillStyle = RED; ctx.fillRect(wx + 1, y + 6, 8, 5);          // torso
+    ctx.fillStyle = BLU; ctx.fillRect(wx + 1, y + 11, 3, 5); ctx.fillRect(wx + 6, y + 11, 3, 5);
+    ctx.fillStyle = BLU;                                              // arms to wall
+    ctx.fillRect(player.side > 0 ? wx + 8 : wx - 1, y + 4, 3, 2);
+    ctx.fillRect(player.side > 0 ? wx + 8 : wx - 1, y + 9, 3, 2);
+  } else if (m === 'swing') {
+    ctx.fillStyle = BLU;                                              // arms up the rope
+    ctx.fillRect(x + 4, y - 1, 2, 4); ctx.fillRect(x + 6, y - 1, 2, 4);
+    ctx.fillStyle = RED; ctx.fillRect(x + 3, y + 2, 6, 5);
+    ctx.fillStyle = EYE; ctx.fillRect(f > 0 ? x + 6 : x + 4, y + 3, 2, 2);
+    ctx.fillStyle = RED; ctx.fillRect(x + 3, y + 7, 6, 5);
+    ctx.fillStyle = DRED; ctx.fillRect(x + 5, y + 7, 2, 5);
+    ctx.fillStyle = BLU;                                              // legs trail
+    ctx.fillRect(x + 2 - f, y + 12, 3, 4); ctx.fillRect(x + 6 + f, y + 12, 3, 3);
+  } else if (m === 'air' || m === 'dead') {
+    ctx.fillStyle = RED; ctx.fillRect(x + 3, y, 6, 5);
+    ctx.fillStyle = EYE; ctx.fillRect(f > 0 ? x + 6 : x + 4, y + 1, 2, 2);
+    ctx.fillStyle = RED; ctx.fillRect(x + 3, y + 5, 6, 6);
+    ctx.fillStyle = DRED; ctx.fillRect(x + 5, y + 5, 2, 6);
+    ctx.fillStyle = BLU;
+    ctx.fillRect(x + 1, y + 3, 2, 3); ctx.fillRect(x + 9, y + 3, 2, 3);     // arms out
+    if (player.vy < 0) { ctx.fillRect(x + 3, y + 11, 2, 4); ctx.fillRect(x + 7, y + 11, 2, 4); }
+    else { ctx.fillRect(x + 2, y + 11, 3, 5); ctx.fillRect(x + 7, y + 11, 3, 4); }
+  } else {  // ground
+    const running = Math.abs(player.vx) > 0.3;
+    const st = running ? (player.animT / 6 | 0) % 2 : 0;
+    ctx.fillStyle = RED; ctx.fillRect(x + 3, y + 1, 6, 5);
+    ctx.fillStyle = EYE; ctx.fillRect(f > 0 ? x + 6 : x + 4, y + 2, 2, 2);
+    ctx.fillStyle = RED; ctx.fillRect(x + 3, y + 6, 6, 6);
+    ctx.fillStyle = DRED; ctx.fillRect(x + 5, y + 6, 2, 6);
+    ctx.fillStyle = BLU;
+    if (st) { ctx.fillRect(x + 2, y + 12, 3, 4); ctx.fillRect(x + 7, y + 12, 3, 4); }
+    else { ctx.fillRect(x + 3, y + 12, 3, 4); ctx.fillRect(x + 6, y + 12, 3, 4); }
+    ctx.fillRect(f > 0 ? x + 9 : x + 1, y + 7, 2, running ? 4 : 3);          // lead arm
+  }
+}
+
+function drawFx() {
+  for (const f of fx) {
+    if (f.type === 'zip') {
+      const t = 1 - f.life / 6;
+      ctx.strokeStyle = 'rgba(232,236,244,' + (0.9 - t * 0.8).toFixed(2) + ')';
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(f.x0 - cam.x, f.y0 - cam.y);
+      ctx.lineTo(f.x1 - cam.x, f.y1 - cam.y);
+      ctx.stroke();
+    } else {
+      ctx.fillStyle = f.col;
+      const s = f.life > 10 ? 2 : 1;
+      ctx.fillRect(f.x - cam.x, f.y - cam.y, s, s);
+    }
+  }
+}
+
+// ---------- UI ----------
+function btn(label, x, y, w, h, fn, col, txtCol) {
+  ui.btns.push({ x, y, w, h, fn });
+  ctx.fillStyle = '#0c0a18';
+  ctx.fillRect(x + 2, y + 2, w, h);
+  ctx.fillStyle = col || '#e03131';
+  ctx.fillRect(x, y, w, h);
+  ctx.fillStyle = 'rgba(255,255,255,0.18)';
+  ctx.fillRect(x, y, w, 2);
+  drawTextC(ctx, label, x + w / 2, y + (h - 5 * 2) / 2, 2, txtCol || '#fff');
+}
+function starIcon(x, y, s, on) {
+  ctx.fillStyle = on ? '#ffd97a' : '#3a3450';
+  ctx.fillRect(x + s, y, s, s * 3); ctx.fillRect(x, y + s, s * 3, s);
+  ctx.fillRect(x, y + s * 2, s, s); ctx.fillRect(x + s * 2, y + s * 2, s, s);
+}
+
+function drawHud() {
+  const topY = safeTop + 4;
+  for (let i = 0; i < 3; i++)
+    drawText(ctx, '♥', safeL + 5 + i * 10, topY, 2, i < game.hearts ? '#ff5757' : '#3a3450');
+  const got = game.starsGot.filter(Boolean).length;
+  for (let i = 0; i < 3; i++) starIcon(safeL + 5 + i * 10, topY + 13, 2, i < got);
+  // pause button
+  const pb = { x: W - safeR - 22, y: topY, w: 18, h: 18 };
+  ui.btns.push({ ...pb, fn: () => { game.state = 'pause'; game.fromPause = true; } });
+  ctx.fillStyle = 'rgba(12,10,24,0.5)';
+  ctx.fillRect(pb.x, pb.y, pb.w, pb.h);
+  ctx.fillStyle = '#e8ecf4';
+  ctx.fillRect(pb.x + 5, pb.y + 4, 3, 10); ctx.fillRect(pb.x + 10, pb.y + 4, 3, 10);
+  // level name toast
+  if (game.time < 130) {
+    const a = game.time < 100 ? 1 : (130 - game.time) / 30;
+    ctx.globalAlpha = a;
+    drawTextC(ctx, game.lvl.name, W / 2, topY + 4, 2, '#fff', '#0c0a18');
+    ctx.globalAlpha = 1;
+  }
+}
+
+function fmtTime(fr) {
+  const s = fr / 60 | 0;
+  return (s / 60 | 0) + ':' + String(s % 60).padStart(2, '0');
+}
+
+function drawScreens() {
+  const land = W > H;
+  const cx = W / 2;
+  if (game.state === 'title') {
+    const ty = land ? safeTop + 14 : H * 0.16;
+    drawTextC(ctx, 'SPIDER-MAN', cx, ty, land ? 3 : 4, '#e03131', '#0c0a18');
+    drawTextC(ctx, 'SWING. CLIMB. SURVIVE.', cx, ty + (land ? 20 : 30), 1, '#e8ecf4');
+    // tiny swinging spidey
+    const sw = Math.sin(game.frame * 0.04) * 26;
+    const ax = cx + 70, ay = ty - 8;
+    ctx.strokeStyle = '#e8ecf4'; ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.moveTo(ax, ay); ctx.lineTo(ax + sw, ay + 40); ctx.stroke();
+    ctx.fillStyle = '#e03131'; ctx.fillRect(ax + sw - 3, ay + 40, 6, 8);
+    ctx.fillStyle = '#2145c9'; ctx.fillRect(ax + sw - 3, ay + 48, 6, 4);
+    const bw = 108, bh = 26;
+    const by = land ? H - safeBot - 66 : H * 0.52;
+    btn('PLAY', cx - bw / 2, by, bw, bh, () => { game.state = 'select'; game.stateT = 0; });
+    btn('HOW TO', cx - bw / 2, by + bh + 8, bw, bh, () => { game.state = 'howto'; game.stateT = 0; }, '#2145c9');
+    drawText(ctx, 'V' + VERSION, W - safeR - textW('V' + VERSION, 1) - 4, H - safeBot - 9, 1, 'rgba(255,255,255,0.45)');
+  } else if (game.state === 'howto') {
+    ctx.fillStyle = 'rgba(8,6,18,0.86)';
+    ctx.fillRect(0, 0, W, H);
+    const y0 = land ? safeTop + 12 : H * 0.16;
+    drawTextC(ctx, 'ONE THUMB', cx, y0, 2, '#ffd97a');
+    const lines = [
+      ['HOLD', 'SHOOT WEB + SWING', '#e03131'],
+      ['RELEASE', 'LET GO + FLY', '#e03131'],
+      ['DRAG', 'RUN + CRAWL WALLS', '#2145c9'],
+      ['TAP', 'JUMP / WALL LEAP', '#2145c9'],
+      ['WALLS', 'YOU STICK. YOU CLIMB.', '#7ad9ff'],
+      ['STREET', 'DO NOT TOUCH IT', '#ff5757']
+    ];
+    lines.forEach((l, i) => {
+      const y = y0 + 20 + i * (land ? 15 : 22);
+      drawText(ctx, l[0], cx - 92, y, 2, l[2]);
+      drawText(ctx, l[1], cx - 92 + 70, y + 2, 1, '#e8ecf4');
+    });
+    btn('GOT IT', cx - 54, y0 + 20 + lines.length * (land ? 15 : 22) + 6, 108, 24, () => {
+      prog.howtoSeen = true; store('howtoSeen', true);
+      game.state = prog.unlocked > 1 || prog.stars.some(s => s) ? 'select' : 'play';
+      if (game.state === 'play') startLevel(0);
+    });
+  } else if (game.state === 'select') {
+    drawTextC(ctx, 'CHOOSE LEVEL', cx, safeTop + 10, 2, '#fff', '#0c0a18');
+    const n = LEVELS.length;
+    const cw = land ? 150 : Math.min(200, W - safeL - safeR - 20);
+    const ch = 30, gap = 7;
+    const cols = land ? 2 : 1;
+    const rows = Math.ceil(n / cols);
+    const x0 = cx - (cols * cw + (cols - 1) * 10) / 2;
+    const y0 = safeTop + 28;
+    for (let i = 0; i < n; i++) {
+      const col = i % cols, row = (i / cols) | 0;
+      const x = x0 + col * (cw + 10), y = y0 + row * (ch + gap);
+      const locked = i >= prog.unlocked;
+      if (locked) {
+        ctx.fillStyle = '#1a1626'; ctx.fillRect(x, y, cw, ch);
+        drawText(ctx, (i + 1) + '', x + 8, y + 10, 2, '#4a4460');
+        drawTextC(ctx, 'LOCKED', x + cw / 2 + 8, y + 11, 1, '#4a4460');
+      } else {
+        btn('', x, y, cw, ch, (idx => () => startLevel(idx))(i), '#241c40');
+        drawText(ctx, (i + 1) + '', x + 8, y + 10, 2, '#ffd97a');
+        drawText(ctx, LEVELS[i].name, x + 24, y + 6, 1, '#fff');
+        for (let s = 0; s < 3; s++) starIcon(x + 24 + s * 9, y + 16, 2, s < (prog.stars[i] || 0));
+      }
+    }
+    btn('BACK', cx - 40, y0 + rows * (ch + gap) + 6, 80, 20, () => { game.state = 'title'; game.stateT = 0; }, '#3a3450');
+  } else if (game.state === 'clear') {
+    ctx.fillStyle = 'rgba(8,6,18,0.7)';
+    ctx.fillRect(0, 0, W, H);
+    const y0 = land ? safeTop + 10 : H * 0.2;
+    drawTextC(ctx, 'LEVEL CLEAR!', cx, y0, 3, '#ffd97a', '#0c0a18');
+    const got = game.starsGot.filter(Boolean).length;
+    for (let i = 0; i < 3; i++) {
+      const pop = game.stateT > 20 + i * 12;
+      starIcon(cx - 27 + i * 20, y0 + 24, 4, pop && i < got);
+    }
+    drawTextC(ctx, 'TIME ' + fmtTime(game.time) + '   KOS ' + game.kos, cx, y0 + 48, 1, '#e8ecf4');
+    const bw = 96, bh = 22;
+    const last = game.lvlIdx >= LEVELS.length - 1;
+    let by = y0 + 62;
+    if (!last) { btn('NEXT', cx - bw / 2, by, bw, bh, () => startLevel(game.lvlIdx + 1)); by += bh + 6; }
+    else { drawTextC(ctx, 'CITY CLEARED. YOU ARE SPIDER-MAN.', cx, by + 2, 1, '#7ad9ff'); by += 16; }
+    btn('AGAIN', cx - bw / 2, by, bw, bh, () => startLevel(game.lvlIdx), '#2145c9'); by += bh + 6;
+    btn('MENU', cx - bw / 2, by, bw, bh, () => { game.state = 'select'; game.stateT = 0; }, '#3a3450');
+  } else if (game.state === 'pause') {
+    ctx.fillStyle = 'rgba(8,6,18,0.7)';
+    ctx.fillRect(0, 0, W, H);
+    const y0 = land ? safeTop + 14 : H * 0.28;
+    drawTextC(ctx, 'PAUSED', cx, y0, 3, '#fff', '#0c0a18');
+    const bw = 96, bh = 22;
+    btn('RESUME', cx - bw / 2, y0 + 26, bw, bh, () => { game.state = 'play'; });
+    btn('RESTART', cx - bw / 2, y0 + 26 + bh + 6, bw, bh, () => startLevel(game.lvlIdx), '#2145c9');
+    btn('MENU', cx - bw / 2, y0 + 26 + (bh + 6) * 2, bw, bh, () => { game.state = 'select'; game.stateT = 0; }, '#3a3450');
+  } else if (game.state === 'dying') {
+    if (game.stateT < 12) {
+      ctx.fillStyle = 'rgba(224,49,49,' + (0.4 - game.stateT * 0.03).toFixed(2) + ')';
+      ctx.fillRect(0, 0, W, H);
+    }
+    if (game.stateT > 24) drawTextC(ctx, 'THWACK!', cx, H * 0.4, 3, '#ff5757', '#0c0a18');
+  }
+}
+
+function render() {
+  ui.btns.length = 0;
+  ctx.save();
+  if (game.shake > 0.5) {
+    ctx.translate((hash2(game.frame, 1) - 0.5) * game.shake, (hash2(game.frame, 2) - 0.5) * game.shake);
+  }
+  drawSky();
+  drawParallax();
+  drawWorld();
+  drawCars();
+  drawEnts();
+  if (game.state === 'play' || game.state === 'pause' || game.state === 'dying' || game.state === 'clear') drawSpidey();
+  drawFx();
+  ctx.restore();
+  if (game.state === 'play' || game.state === 'dying') drawHud();
+  drawScreens();
+}
+
+// ---------- main loop ----------
+let last = 0, acc = 0, lastW = 0, lastH = 0;
+function frame(ts) {
+  requestAnimationFrame(frame);
+  if (!last) last = ts;
+  let dt = ts - last; last = ts;
+  if (dt > 250) dt = 250;
+  acc += dt;
+  let n = 0;
+  while (acc >= STEP && n < 5) { if (DBG.bot) botThink(); step(); acc -= STEP; n++; }
+  if (n === 5) acc = 0;
+  if (n > 0 || lastW !== W || lastH !== H) {
+    lastW = W; lastH = H;
+    render();
+  }
+}
+requestAnimationFrame(frame);
+tintPage();
+
+// ---------- autopilot + debug harness ----------
+let botHoldT = 0, botNoWeb = 0;
+function botThink() {
+  if (game.state === 'title') { if (game.stateT > 30) { game.state = 'select'; game.stateT = 0; } return; }
+  if (game.state === 'select') { if (game.stateT > 30) startLevel(0); return; }
+  if (game.state === 'howto') { if (game.stateT > 30) { game.state = 'play'; startLevel(0); } return; }
+  if (game.state === 'clear') { if (game.stateT > 60) startLevel(Math.min(game.lvlIdx + 1, LEVELS.length - 1)); return; }
+  if (game.state !== 'play') return;
+  const p = player;
+  input.uiTouch = false;
+  if (botNoWeb > 0) botNoWeb--;
+  if (p.mode === 'ground') {
+    input.down = true; input.dir = 1; input.dirY = 0;
+    // gap, wall, or spikes ahead → jump
+    const aheadX = p.x + PW + 8;
+    let jump = (!solidAt(aheadX, p.y + PH + 4) && !solidAt(aheadX + 10, p.y + PH + 4)) ||
+               solidAt(aheadX, p.y + PH / 2);
+    for (let i = 1; i <= 2 && !jump; i++)
+      if (spikeAt(p.x + PW - 1 + i * T, p.y + PH - 4)) jump = true;
+    if (jump) { p.vy = JUMP_V; p.mode = 'air'; botNoWeb = 12; }
+  } else if (p.mode === 'cling') {
+    input.down = true; input.dir = 0; input.dirY = -1;
+    input.x0 = input.x = W / 2; input.y0 = W / 2 + 60; input.y = W / 2;   // vertical intent, no leap wobble
+  } else if (p.mode === 'air') {
+    input.dir = 1;
+    p.face = 1;                                          // always hunt anchors ahead
+    input.down = p.vy > 0.9 && !p.rope && botNoWeb === 0;   // falling → web
+  } else if (p.mode === 'swing') {
+    input.down = true;
+    const r = p.rope;
+    const past = p.x + PW / 2 > r.ax + 6;
+    if (past && p.vx > 0.6) {                            // forward upswing → let go, fly
+      releaseRope(); input.down = false; botHoldT = 0; botNoWeb = 40;
+    } else if (p.vx < -1.8 && p.x + PW / 2 < r.ax - 30) {   // swung way backward → bail, retry
+      releaseRope(); input.down = false; botHoldT = 0; botNoWeb = 8;
+    } else if (++botHoldT > 300) { releaseRope(); input.down = false; botHoldT = 0; botNoWeb = 20; }
+  }
+}
+const DBG = window.__dbg = {
+  bot: false, errors: [],
+  game, player, input, cam, LEVELS,
+  ents: () => ents, anchors: () => game.lvl.anchors, fx: () => fx,
+  startLevel, step, botThink,
+  stepN(n) { for (let i = 0; i < n; i++) { if (DBG.bot) botThink(); step(); } },
+  hold(dx, dy) { touchStart(W / 2, H / 2); if (dx || dy) touchMove(W / 2 + (dx || 0), H / 2 + (dy || 0)); },
+  drag(dx, dy) { if (!input.down) touchStart(W / 2, H / 2); touchMove(W / 2 + dx, H / 2 + dy); },
+  release() { touchEnd(); },
+  tap() { touchStart(W / 2, H / 2); input.t0 = performance.now(); touchEnd(); },
+  snapshot() {
+    return { state: game.state, lvl: game.lvlIdx, mode: player.mode,
+      x: Math.round(player.x), y: Math.round(player.y),
+      vx: +player.vx.toFixed(2), vy: +player.vy.toFixed(2),
+      rope: player.rope ? { ax: player.rope.ax, ay: player.rope.ay, len: Math.round(player.rope.len) } : null,
+      hearts: game.hearts, stars: game.starsGot.filter(Boolean).length,
+      time: game.time, kos: game.kos, ents: ents.filter(e => !e.dead).length, frame: game.frame };
+  }
+};
+window.addEventListener('error', e => DBG.errors.push(String(e.message) + ' @' + e.filename + ':' + e.lineno));
+if (new URLSearchParams(location.search).get('bot')) { DBG.bot = true; game.state = 'select'; game.stateT = 0; }
+</script>
+</body>
+</html>
