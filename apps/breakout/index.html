@@ -50,7 +50,7 @@ const PAD_H = 8, PAD_W = 44, PAD_WIDE = 68;
 const SPEED0 = 3.4, SPEED_MAX = 6.0, SPEED_UP = 0.08;   // per paddle hit
 const DRAG_GAIN = 1.5;
 const SAVE = 'breakout_';
-const VERSION = 1;                    // shown on the title screen — bump once per PR (see CLAUDE.md)
+const VERSION = 2;                    // shown on the title screen — bump once per PR (see CLAUDE.md)
 
 const clamp = (v, a, b) => v < a ? a : v > b ? b : v;
 function hash2(x, y) { let h = (x * 374761393 + y * 668265263) | 0; h = (h ^ h >> 13) * 1274126177 | 0; return ((h ^ h >> 16) >>> 0) / 4294967296; }
@@ -233,7 +233,9 @@ const sfx = {
 };
 
 // ---------- levels ----------
-// rows of COLS chars: '.' empty, '1'-'4' brick hp (score/color tier)
+// rows of COLS chars: '.' empty, '1'-'4' brick point/color tier.
+// EVERY brick breaks in ONE hit — classic breakout. Color means points
+// (tier×10), never durability; recoloring-on-hit reads as broken (user report).
 const PATTERNS = [
   ['1111111111',
    '1111111111',
@@ -432,10 +434,8 @@ function stepBall(b) {
         const penY = Math.min(b.y + BALL_R - br.y, br.y + br.h - (b.y - BALL_R));
         if (penX < penY) { b.vx = b.x < br.x + br.w / 2 ? -Math.abs(b.vx) : Math.abs(b.vx); }
         else { b.vy = b.y < br.y + br.h / 2 ? -Math.abs(b.vy) : Math.abs(b.vy); }
-        const hp = grid[r][c];
-        sfx.brick(hp); buzz(1);
-        if (hp > 1) { grid[r][c] = hp - 1; game.score += 5; burst(b.x, b.y, BRICK_COLS[hp][0], 3); }
-        else killBrick(r, c);
+        sfx.brick(grid[r][c]); buzz(1);
+        killBrick(r, c);
         hit = true;
       }
     }
