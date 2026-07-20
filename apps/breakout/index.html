@@ -90,6 +90,9 @@ function resize() {
   if (sig === lastSize) return;
   lastSize = sig;
   const portrait = !landscape;
+  // landscape targets H≈250 so brick/ball/paddle pixels keep the same on-screen
+  // size as portrait (W≈270) — rotating must not zoom the game out. Unrelated
+  // to PF; the playfield just recenters/reclamps via layout().
   SCALE = portrait
     ? Math.max(1, Math.round(cw * dpr / 270))
     : Math.max(1, Math.round(chh * dpr / 250));
@@ -296,7 +299,7 @@ let gridRows = 0;
 let balls = [];          // {x,y,vx,vy,stuck}
 let drops = [];          // falling power-ups {x,y,type}
 let fx = [];
-const pad = { x: 0, w: PAD_W, wideT: 0 };
+const pad = { x: 0, w: PAD_W, wideT: 0, hits: 0 };
 const input = { down: false, id: -1, lastX: 0, x0: 0, t0: 0, moved: 0 };
 const ui = { btns: [] };
 
@@ -463,7 +466,8 @@ function update() {
       sfx.over();
       return;
     }
-    serve();
+    drops = [];          // falling power-ups die with the ball — no stale
+    serve();             // MULTI catches while the fresh ball is still stuck
   }
   // falling power-ups
   for (const d of drops) d.y += 1.4;
