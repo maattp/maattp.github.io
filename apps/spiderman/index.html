@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no, viewport-fit=cover">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-<meta name="theme-color" content="#1c1233">
+<meta name="theme-color" content="#241448">
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="apple-touch-icon" sizes="180x180" href="apple-touch-icon.png">
 <link rel="apple-touch-icon" href="apple-touch-icon.png">
@@ -14,7 +14,7 @@
 <style>
   * { margin:0; padding:0; box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
   /* html gets the sky, body the street color — any exposed strip is at the bottom */
-  html, body { height:100vh; width:100%; overflow:hidden; background:#1c1233; overscroll-behavior:none; }
+  html, body { height:100vh; width:100%; overflow:hidden; background:#241448; overscroll-behavior:none; }
   body { touch-action:none; -webkit-user-select:none; user-select:none; }
   #game {
     position:fixed; top:0; left:0;
@@ -39,12 +39,12 @@
 <script>
 'use strict';
 /* ============================================================
-   SPIDER-MAN — a one-thumb web-swinging city traversal game
-   HOLD in the air = shoot a web + swing, RELEASE = let go.
-   DRAG = run on roofs / crawl up and down walls. TAP = jump,
-   or leap off a wall. Touch a wall and you stick to it.
-   Handcrafted left-to-right levels with real vertical city
-   topology. Don't fall to the street.
+   SPIDER-MAN V2 — a pure-momentum web-swinging runner.
+   You are ALWAYS moving. HOLD in the air = shoot a web and
+   swing, RELEASE = let go and fly. Hit a wall and you scurry
+   straight up it. TAP = jump. One thumb, zero friction.
+   (V1's drag-to-move controls were cut after playtesting —
+   see CLAUDE.md before reintroducing any drag input.)
    ============================================================ */
 
 // ---------- constants ----------
@@ -55,25 +55,22 @@ const WH = ROWS * T;                // world pixel height
 const STEP = 1000 / 60;             // fixed 60 Hz simulation
 const GRAV = 0.22;
 const MAX_FALL = 6.2;
-const RUN = 1.7;
-const JUMP_V = -4.7;                // apex ≈ 4.2 tiles; flat jump ≈ 6 tiles with RUN.
+const RUN = 2.1;                    // auto-run speed — you never stop moving
+const JUMP_V = -4.8;                // apex ≈ 4.4 tiles; flat jump ≈ 7 tiles at RUN.
                                     // Level gaps meant for plain jumps must stay ≤ 5 tiles;
                                     // wider gaps need a web anchor (taller building ahead or a hook).
-const LEAP_VX = 3.1;                // wall leap, away from the wall
-const LEAP_VY = -3.9;
-const CRAWL = 1.35;
-const AIR_CTRL = 0.06;
+const CLIMB = 2.2;                  // auto-scurry speed up walls
 const SWING_G = 0.20;               // gravity while roped (slightly floatier)
 const ROPE_MIN = 40, ROPE_MAX = 175;
 const REEL = 0.10;                  // rope shortens while held — pumps energy in
 const PUMP = 0.05;
-const SWING_MAX = 6.0;              // tangential speed cap
+const SWING_MAX = 6.4;              // tangential speed cap
 const ANCHOR_NEAR = 26, ANCHOR_FAR = 190;
-const TAP_MS = 230, TAP_PX = 10;    // release under both = a tap
+const TAP_MS = 230, TAP_PX = 12;    // release under both = a tap
 const COYOTE = 7;
 const PW = 10, PH = 16;             // player hitbox
 const SAVE = 'spidey_';
-const VERSION = 1;                  // shown on the title screen — bump once per PR (see CLAUDE.md)
+const VERSION = 2;                  // shown on the title screen — bump once per PR (see CLAUDE.md)
 
 // ---------- utils ----------
 const clamp = (v, a, b) => v < a ? a : v > b ? b : v;
@@ -201,6 +198,154 @@ function drawTextC(c, str, cx, y, s, color, shadow) {
   drawText(c, str, Math.round(cx - textW(str, s) / 2), y, s, color, shadow);
 }
 
+// ---------- sprites: chibi Spidey, authored as pixel strings, pre-rendered ----------
+const SPAL = {
+  K: '#181820', R: '#e8383a', D: '#b0202a', B: '#2b4fd8', N: '#1b338f', W: '#f4f7ff'
+};
+// 14×15 frames, facing RIGHT. Big head, big eyes — cute over anatomical.
+const SPR_SRC = {
+  runA: [
+    '..KKKKKKK.....',
+    '.KRRRRRRRK....',
+    '.KRRDRRDRRK...',
+    '.KRWWRDRWWK...',
+    '.KRWWWDWWWK...',
+    '.KRRWWRWWRK...',
+    '..KRRDRDRRK...',
+    '...KKRRRKK....',
+    '..KBRRRRRBK...',
+    '..KBRRDDRBK...',
+    '...KRRDDRK....',
+    '...KBBKBBK....',
+    '..KBB...KBB...',
+    '.KBB......KBB.',
+    '.KK........KK.'
+  ],
+  runB: [
+    '..KKKKKKK.....',
+    '.KRRRRRRRK....',
+    '.KRRDRRDRRK...',
+    '.KRWWRDRWWK...',
+    '.KRWWWDWWWK...',
+    '.KRRWWRWWRK...',
+    '..KRRDRDRRK...',
+    '...KKRRRKK....',
+    '..KBRRRRRBK...',
+    '..KBRRDDRBK...',
+    '...KRRDDRK....',
+    '...KBBKBBK....',
+    '....KBBKBB....',
+    '....KBB.KB....',
+    '....KK...KK...'
+  ],
+  jump: [
+    '..KKKKKKK..B..',
+    '.KRRRRRRRK.B..',
+    '.KRRDRRDRRKB..',
+    '.KRWWRDRWWK...',
+    '.KRWWWDWWWK...',
+    '.KRRWWRWWRK...',
+    '..KRRDRDRRK...',
+    '...KKRRRKKB...',
+    '..KBRRRRRBK...',
+    '..KBRRDDRBK...',
+    '...KRRDDRK....',
+    '...KBBBBBK....',
+    '....KBBBBK....',
+    '...KBK.KBK....',
+    '..............'
+  ],
+  fall: [
+    '.B.KKKKKKK.B..',
+    '.B.KRRRRRK.B..',
+    '.BKRRDRDRRKB..',
+    '..KRWWDWWRK...',
+    '..KRWWDWWRK...',
+    '..KRRWRWRRK...',
+    '...KRRDRRK....',
+    '...KKRRRKK....',
+    '..KBRRRRRBK...',
+    '..KBRRDDRBK...',
+    '...KRRDDRK....',
+    '...KBBKBBK....',
+    '..KBB...KBB...',
+    '..KB.....KB...',
+    '..KK.....KK...'
+  ],
+  swing: [
+    '.....KBBK.....',
+    '.....KBBK.....',
+    '...KKKKKKK....',
+    '..KRRRRRRRK...',
+    '..KRWWRWWRK...',
+    '..KRWWDWWRK...',
+    '...KRRDRRK....',
+    '...KBRRRBK....',
+    '...KRRDRRK....',
+    '...KRDDDRK....',
+    '...KBBBBBK....',
+    '....KBBBK.....',
+    '.....KBB......',
+    '......KBB.....',
+    '.......KK.....'
+  ],
+  climbA: [
+    '.......KBK....',
+    '..KKKKKKB.....',
+    '.KRRRRRRK.....',
+    '.KRDWWWWRK....',
+    '.KRDWWWWRK....',
+    '..KRRDRRK.....',
+    '...KRRRK......',
+    '..KBRRRBK.....',
+    '..KRRDRRK.....',
+    '..KRDDRRKB....',
+    '..KBBBBBKK....',
+    '..KB..KBK.....',
+    '..KBK.KB......',
+    '...KK.KK......',
+    '..............'
+  ],
+  climbB: [
+    '..............',
+    '..KKKKKKK.....',
+    '.KRRRRRRK.KB..',
+    '.KRDWWWWRKB...',
+    '.KRDWWWWRK....',
+    '..KRRDRRK.....',
+    '...KRRRK......',
+    '..KBRRRBK.....',
+    '..KRRDRRKB....',
+    '..KRDDRRKK....',
+    '..KBBBBBK.....',
+    '...KB.KBK.....',
+    '..KBK..KB.....',
+    '..KK...KK.....',
+    '..............'
+  ]
+};
+const SPR = {};
+(function bakeSprites() {
+  for (const [name, rows] of Object.entries(SPR_SRC)) {
+    const w = rows[0].length, h = rows.length;
+    const c = document.createElement('canvas');
+    c.width = w; c.height = h;
+    const g = c.getContext('2d');
+    for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+      const col = SPAL[rows[y][x]];
+      if (!col) continue;
+      g.fillStyle = col;
+      g.fillRect(x, y, 1, 1);
+    }
+    const f = document.createElement('canvas');          // horizontally flipped
+    f.width = w; f.height = h;
+    const fg = f.getContext('2d');
+    fg.translate(w, 0); fg.scale(-1, 1);
+    fg.drawImage(c, 0, 0);
+    SPR[name] = c; SPR[name + '_L'] = f;
+  }
+})();
+
 // ---------- haptics (iOS switch hack — navigator.vibrate is a no-op there) ----------
 const hapEl = document.getElementById('hap');
 let lastHap = 0;
@@ -237,7 +382,6 @@ function beep(f0, f1, dur, type, vol, delay) {
 const sfx = {
   thwip() { beep(1300, 240, 0.08, 'square', 0.06); },
   jump() { beep(430, 720, 0.08, 'triangle', 0.08); },
-  leap() { beep(360, 640, 0.09, 'triangle', 0.08); },
   land() { beep(200, 120, 0.05, 'triangle', 0.05); },
   cling() { beep(700, 500, 0.04, 'square', 0.04); },
   star() { beep(880, 880, 0.07, 'square', 0.07); beep(1320, 1320, 0.1, 'square', 0.07, 0.07); },
@@ -251,40 +395,47 @@ const sfx = {
 
 // ---------- palettes ----------
 const PALS = [
-  { name: 'dusk', skyTop: '#1c1233', skyBot: '#d96a4e', starsky: false, moon: false,
-    far: '#241640', mid: '#2f1d52', fac: ['#3a2a60', '#453270', '#332355'],
-    edge: '#241845', cap: '#5c4a8a', win: '#ffd97a', winOff: '#2a1c48', street: '#181320', lane: '#453a55' },
-  { name: 'night', skyTop: '#070d24', skyBot: '#1d3260', starsky: true, moon: true,
-    far: '#0d1530', mid: '#152044', fac: ['#1b2a52', '#223260', '#182448'],
-    edge: '#101a38', cap: '#3c5088', win: '#ffe9a0', winOff: '#131d3a', street: '#0c1020', lane: '#2c3a5c' },
-  { name: 'sunset', skyTop: '#3a1440', skyBot: '#ff8c5a', starsky: false, moon: false,
-    far: '#43203f', mid: '#582a4c', fac: ['#63305a', '#71396a', '#552a50'],
-    edge: '#42224a', cap: '#96588c', win: '#ffe28a', winOff: '#44204a', street: '#241428', lane: '#583a58' },
-  { name: 'dawn', skyTop: '#0e2f3a', skyBot: '#ffd27a', starsky: false, moon: false,
-    far: '#14384a', mid: '#1c4a5c', fac: ['#245666', '#2c6474', '#1e4a58'],
-    edge: '#173a48', cap: '#4a8496', win: '#fff2b0', winOff: '#153542', street: '#0e2028', lane: '#2c505c' },
-  { name: 'storm', skyTop: '#181a26', skyBot: '#4a5064', starsky: false, moon: true,
-    far: '#20222f', mid: '#2a2d3d', fac: ['#343748', '#3e4254', '#2d3040'],
-    edge: '#23252f', cap: '#565a70', win: '#cfe0ff', winOff: '#262836', street: '#14161e', lane: '#383c4c' }
+  { name: 'dusk', skyTop: '#241448', skyBot: '#ff8a5c', starsky: false, moon: false, clouds: '#4a3070',
+    far: '#2b1a4e', mid: '#382461', fac: ['#463170', '#523a80', '#3d2a64'],
+    edge: '#2b1c50', cap: '#6b568f', win: '#ffd97a', winOff: '#332257', street: '#181320', lane: '#453a55',
+    board: ['#ff8a5c', '#7ad9ff', '#ffd97a'] },
+  { name: 'night', skyTop: '#080f2c', skyBot: '#23407a', starsky: true, moon: true, clouds: '#1b2c56',
+    far: '#0f1836', mid: '#18254c', fac: ['#203058', '#283a68', '#1b2a4e'],
+    edge: '#131e40', cap: '#465a94', win: '#ffe9a0', winOff: '#152040', street: '#0c1020', lane: '#2c3a5c',
+    board: ['#ffe9a0', '#ff7a9a', '#7ad9ff'] },
+  { name: 'sunset', skyTop: '#42184a', skyBot: '#ff9a64', starsky: false, moon: false, clouds: '#6b3468',
+    far: '#4b2446', mid: '#603055', fac: ['#6d3862', '#7c4274', '#5e3058'],
+    edge: '#482652', cap: '#a06296', win: '#ffe28a', winOff: '#4a2450', street: '#241428', lane: '#583a58',
+    board: ['#ffe28a', '#7ad9ff', '#a2ff9a'] },
+  { name: 'dawn', skyTop: '#103642', skyBot: '#ffd98a', starsky: false, moon: false, clouds: '#2c5866',
+    far: '#164050', mid: '#1f5264', fac: ['#285e70', '#316c80', '#215260'],
+    edge: '#1a4050', cap: '#548ea0', win: '#fff2b0', winOff: '#173a48', street: '#0e2028', lane: '#2c505c',
+    board: ['#fff2b0', '#ff9a8a', '#7ad9ff'] },
+  { name: 'storm', skyTop: '#1a1c2a', skyBot: '#565c72', starsky: false, moon: true, clouds: '#31344a',
+    far: '#232532', mid: '#2e3142', fac: ['#383b4e', '#42465a', '#303345'],
+    edge: '#262834', cap: '#5c6078', win: '#cfe0ff', winOff: '#282a3a', street: '#14161e', lane: '#383c4c',
+    board: ['#cfe0ff', '#ff7a9a', '#ffd97a'] }
 ];
 
 // ---------- levels ----------
 // Handcrafted city topology. Coordinates are tiles; SR=57 is the street.
 // b(x,w,h) raises a building from the street, h tiles tall → returns its roof row.
-// Reachability law: gaps > 5 tiles need a web anchor ahead — a TALLER building's
-// corner, or an explicit hook(). Every star/goal must be reachable via climb+swing.
+// Reachability law (V2, auto-run: you can NEVER go backward): every crossing is
+// entered from its left edge — gaps > 5 tiles need a web anchor ahead (a TALLER
+// building's corner or an explicit hook()); everything else auto-climbs.
 function buildLevel(def) {
   const len = def.len;
   const grid = new Uint8Array(len * ROWS);        // 0 = air, else building id
   const spikes = new Set();
   const L = {
-    stars: [], goons: [], drones: [], hooks: [], checks: [], goal: null, start: null, bId: 0,
+    stars: [], goons: [], drones: [], hooks: [], checks: [], rects: [], goal: null, start: null, bId: 0,
     b(x, w, h) {
       this.bId = (this.bId % 250) + 1;
       const top = SR - h;
       for (let ty = top; ty < SR; ty++)
         for (let tx = x; tx < x + w; tx++)
           if (tx >= 0 && tx < len && ty >= 0) grid[ty * len + tx] = this.bId;
+      this.rects.push({ x, w, top, id: this.bId });
       return top;
     },
     spike(x, ty, n) { for (let i = 0; i < (n || 1); i++) spikes.add((ty - 1) * len + (x + i)); },
@@ -307,7 +458,7 @@ function buildLevel(def) {
   for (const h of L.hooks) anchors.push({ x: h.tx * T + T / 2, y: h.ty * T, hook: true });
   return { name: def.name, pal: PALS[def.pal], len, grid, spikes, anchors,
     stars: L.stars, goons: L.goons, drones: L.drones, hooks: L.hooks,
-    checks: L.checks, goal: L.goal, start: L.start };
+    checks: L.checks, rects: L.rects, goal: L.goal, start: L.start };
 }
 
 const LEVEL_DEFS = [
@@ -315,7 +466,7 @@ const LEVEL_DEFS = [
   const r1 = L.b(0, 16, 20); L.setStart(4, r1);
   const r2 = L.b(20, 12, 24);
   const r3 = L.b(36, 14, 20);
-  const r4 = L.b(54, 10, 30);           // taller: teaches wall cling + crawl
+  const r4 = L.b(54, 10, 30);           // taller: auto-climb moment
   L.star(58, r4 - 2);
   L.hook(69, 20);                        // first swing gap
   const r5 = L.b(74, 14, 26); L.check(80, r5);
@@ -331,7 +482,7 @@ const LEVEL_DEFS = [
 { name: 'ALLEY NIGHTS', pal: 1, len: 200, gen(L) {
   const r1 = L.b(0, 12, 26); L.setStart(4, r1);
   const r2 = L.b(16, 10, 40); L.star(20, r2 - 2);        // climb the face
-  L.drone(29, 40, 2, 5); L.star(29, 50);                  // deep-alley star
+  L.drone(29, 40, 2, 5); L.star(29, 50);                  // deep-alley star: fall in, climb out
   const r3 = L.b(32, 10, 40);
   const r4 = L.b(46, 16, 18); L.goon(50, r4, 5);
   const r5 = L.b(66, 8, 44); L.check(68, r5);
@@ -376,7 +527,7 @@ const LEVEL_DEFS = [
   L.star(121, g6 - 2);
   const r5 = L.b(130, 16, 28); L.check(134, r5); L.goon(138, r5, 4);
   L.hook(152, 12);
-  const r6 = L.b(158, 10, 30); L.spike(158, r6, 2); L.spike(166, r6, 2);
+  const r6 = L.b(158, 10, 30); L.spike(162, r6, 2);
   L.star(171, 52);                                        // street-level nerve test
   const r7 = L.b(174, 14, 24); L.setGoal(182, r7);
   L.b(192, 12, 18);
@@ -384,7 +535,7 @@ const LEVEL_DEFS = [
 { name: 'THE SPIRE', pal: 4, len: 200, gen(L) {
   const r1 = L.b(0, 14, 22); L.setStart(4, r1);
   const r2 = L.b(20, 12, 30);
-  // the spire: tiered mega-tower, climbed in stages
+  // the spire: tiered mega-tower, auto-climbed in stages
   L.b(40, 18, 34); L.b(44, 10, 42); const rt = L.b(47, 4, 50);
   L.star(46, 15); L.star(48, rt - 2); L.check(48, rt);
   L.star(62, 52);                                         // base-of-tower alley star
@@ -410,9 +561,8 @@ const game = {
   lvlIdx: 0, lvl: LEVELS[0],
   hearts: 3, time: 0, kos: 0,
   starsGot: [false, false, false],
-  respawn: null,         // {x,y}
-  shake: 0, hitstop: 0,
-  fromPause: false
+  respawn: null,
+  shake: 0, hitstop: 0
 };
 const prog = {
   stars: load('stars', [0, 0, 0, 0, 0]),
@@ -421,16 +571,12 @@ const prog = {
 };
 const player = {
   x: 0, y: 0, vx: 0, vy: 0, face: 1,
-  mode: 'ground',        // ground | air | cling | swing | dead
-  side: 1,               // cling: 1 = wall on the right
+  mode: 'ground',        // ground | air | climb | swing | dead
+  side: 1,               // climb: 1 = wall on the right
   rope: null,            // {ax, ay, len}
-  coyote: 0, invuln: 0, animT: 0, webCd: 0
+  coyote: 0, invuln: 0, animT: 0, webCd: 0, squash: 0
 };
-const input = {
-  down: false, uiTouch: false, id: -1,
-  x0: 0, y0: 0, x: 0, y: 0, t0: 0, moved: 0,
-  dir: 0, dirY: 0        // -1/0/1 from drag (deadzone applied)
-};
+const input = { down: false, uiTouch: false, id: -1, x: 0, y: 0, t0: 0, moved: 0, x0: 0, y0: 0 };
 const cam = { x: 0, y: 0 };
 let ents = [], fx = [], cars = [], starEnts = [], checksHit = [];
 const ui = { btns: [] };
@@ -438,8 +584,8 @@ const ui = { btns: [] };
 // ---------- level plumbing ----------
 function solid(tx, ty) {
   const lvl = game.lvl;
-  if (tx < 0 || tx >= lvl.len) return true;     // world walls
   if (ty < 0 || ty >= SR) return false;         // sky above, street below (deadly, not solid)
+  if (tx < 0 || tx >= lvl.len) return true;     // world walls (finite — not climbable to space)
   return lvl.grid[ty * lvl.len + tx] !== 0;
 }
 function solidAt(px, py) { return solid(Math.floor(px / T), Math.floor(py / T)); }
@@ -459,7 +605,7 @@ function startLevel(idx) {
   game.shake = 0; game.hitstop = 0;
   player.x = lvl.start.tx * T; player.y = lvl.start.ty * T - PH;
   player.vx = 0; player.vy = 0; player.face = 1;
-  player.mode = 'ground'; player.rope = null; player.invuln = 0;
+  player.mode = 'ground'; player.rope = null; player.invuln = 0; player.squash = 0;
   game.respawn = { x: player.x, y: player.y };
   checksHit = lvl.checks.map(() => false);
   ents = [];
@@ -481,7 +627,7 @@ function tintPage() {
   if (tc) tc.content = p.skyTop;
 }
 
-// ---------- input ----------
+// ---------- input: hold = web, tap = jump. Nothing else. ----------
 function cssToGame(e) {
   const dpr = window.devicePixelRatio || 1;
   return { x: e.clientX * dpr / SCALE, y: e.clientY * dpr / SCALE };
@@ -492,47 +638,34 @@ function inBtn(p) {
   return null;
 }
 function touchStart(x, y) {
-  input.down = true; input.x0 = input.x = x; input.y0 = input.y = y;
-  input.t0 = performance.now(); input.moved = 0; input.dir = 0; input.dirY = 0;
+  input.down = true; input.x = input.x0 = x; input.y = input.y0 = y;
+  input.t0 = performance.now(); input.moved = 0;
   input.uiTouch = !!inBtn({ x, y }) || game.state !== 'play';
 }
 function touchMove(x, y) {
   if (!input.down) return;
+  input.moved = Math.max(input.moved, hyp(x - input.x0, y - input.y0));
   input.x = x; input.y = y;
-  const dx = x - input.x0, dy = y - input.y0;
-  input.moved = Math.max(input.moved, hyp(dx, dy));
-  input.dir = Math.abs(dx) > 6 ? Math.sign(dx) : 0;
-  input.dirY = Math.abs(dy) > 6 ? Math.sign(dy) : 0;
-  // re-center a long drag so reversing direction responds immediately
-  if (Math.abs(dx) > 44) input.x0 = x - 44 * Math.sign(dx);
-  if (Math.abs(dy) > 44) input.y0 = y - 44 * Math.sign(dy);
 }
 function touchEnd() {
   if (!input.down) return;
   input.down = false;
   const wasTap = (performance.now() - input.t0) < TAP_MS && input.moved < TAP_PX;
-  const p = { x: input.x, y: input.y };
-  const b = inBtn(p);
-  if (b && (input.uiTouch || game.state !== 'play')) { sfx.ui(); b.fn(); input.dir = input.dirY = 0; return; }
-  if (input.uiTouch) { input.dir = input.dirY = 0; return; }
+  const b = inBtn({ x: input.x, y: input.y });
+  if (b && (input.uiTouch || game.state !== 'play')) { sfx.ui(); b.fn(); return; }
+  if (input.uiTouch) return;
   if (game.state === 'play') {
     if (player.mode === 'swing') releaseRope();
     else if (wasTap) tapAction();
   }
-  input.dir = 0; input.dirY = 0;
 }
 function tapAction() {
   if (player.mode === 'ground' || player.coyote > 0) {
     player.vy = JUMP_V; player.mode = 'air'; player.coyote = 0;
+    player.squash = -5;
+    dust(player.x + PW / 2, player.y + PH, 4);
     sfx.jump(); buzz(1);
-  } else if (player.mode === 'cling') {
-    wallLeap();
   }
-}
-function wallLeap() {
-  player.vx = -player.side * LEAP_VX; player.vy = LEAP_VY;
-  player.mode = 'air'; player.face = -player.side;
-  sfx.leap(); buzz(1);
 }
 function releaseRope() {
   if (!player.rope) return;
@@ -577,11 +710,11 @@ function findAnchor() {
       if (solidAt(cx + dx * i / steps, cy + dy * i / steps)) { blocked = true; break; }
     }
     if (blocked) continue;
+    if (dx < -14) continue;                         // forward-only game: never web backward
     let s = Math.abs(d - 110);
-    if (dx * player.face < 0) s += 80;              // behind = last resort
-    if (Math.abs(dx) < 10) s += 25;                 // straight up is a weak swing
-    if (dy > -20) s += 30;                          // barely above = weak too
-    if (a.hook) s -= 15;                            // hooks are placed to be used
+    if (Math.abs(dx) < 10) s += 25;
+    if (dy > -20) s += 30;
+    if (a.hook) s -= 15;
     if (s < bs) { bs = s; best = a; }
   }
   return best;
@@ -594,6 +727,7 @@ function tryWeb() {
   player.rope = { ax: a.x, ay: a.y, len: clamp(d, ROPE_MIN, ROPE_MAX) };
   player.mode = 'swing';
   fx.push({ type: 'zip', x0: cx, y0: cy - 4, x1: a.x, y1: a.y, life: 6 });
+  burst(a.x, a.y, '#f4f7ff', 5);
   sfx.thwip(); buzz(1);
   return true;
 }
@@ -609,12 +743,16 @@ function moveX() {
     if (solidAt(edge, y)) {
       const c = Math.floor(edge / T);
       player.x = dir > 0 ? c * T - PW : (c + 1) * T;
-      const wasAir = player.mode === 'air' || player.mode === 'swing';
+      // walls are never obstacles — airborne OR running, you go UP them.
+      // (Ground-hits matter for tiered towers: roof → wall with no gap between.)
+      const climbs = player.mode === 'air' || player.mode === 'swing' || player.mode === 'ground';
+      const speed = Math.abs(player.vx);
       player.vx = 0;
-      if (wasAir) {                       // Spidey sticks to walls — that's the point
+      if (climbs) {
         releaseRope();
-        player.mode = 'cling'; player.side = dir; player.vy = 0;
+        player.mode = 'climb'; player.side = dir; player.vy = 0;
         player.face = dir;
+        dust(dir > 0 ? player.x + PW : player.x, player.y + PH / 2, 3 + Math.min(3, speed | 0));
         sfx.cling(); buzz(1);
       }
       return true;
@@ -633,7 +771,11 @@ function moveY() {
       const r = Math.floor(edge / T);
       player.y = dir > 0 ? r * T - PH : (r + 1) * T;
       if (dir > 0) {
-        if (player.mode !== 'ground') { sfx.land(); }
+        if (player.mode !== 'ground') {
+          sfx.land();
+          player.squash = 5;
+          dust(player.x + PW / 2, player.y + PH, 3 + Math.min(4, player.vy | 0));
+        }
         releaseRope();
         player.mode = 'ground';
       }
@@ -653,32 +795,23 @@ function updatePlayer() {
   if (player.invuln > 0) player.invuln--;
   if (player.webCd > 0) player.webCd--;
   if (player.coyote > 0) player.coyote--;
+  if (player.squash !== 0) player.squash += player.squash > 0 ? -1 : 1;
   const m = player.mode;
 
   if (m === 'ground') {
-    const target = input.down ? input.dir * RUN : 0;
-    player.vx = lerp(player.vx, target, 0.3);
-    if (Math.abs(player.vx) < 0.05) player.vx = 0;
-    if (input.dir) player.face = input.dir;
-    const hitWall = moveX();
-    // walking into a wall while dragging up starts a climb
-    if (hitWall && input.down && input.dirY < 0) {
-      const dir = input.dir || player.face;
-      if (solidAt(dir > 0 ? player.x + PW + 1 : player.x - 2, player.y + PH / 2)) {
-        player.mode = 'cling'; player.side = dir; player.vx = 0; player.vy = 0;
-      }
+    // you never stop: momentum from a swing landing decays into run speed
+    player.vx = Math.abs(player.vx) > RUN ? player.vx * 0.97 : lerp(player.vx, RUN, 0.25);
+    if (player.vx < RUN * 0.5) player.vx = RUN * 0.5 + 0.1;
+    player.face = 1;
+    moveX();
+    if (player.mode === 'ground') {       // moveX may have started a climb via wall
+      player.vy = 1;                      // stick to the roof
+      moveY();
+      if (!groundBelow()) { player.mode = 'air'; player.coyote = COYOTE; player.vy = 0; }
     }
-    player.vy = 1;                        // stick to the roof
-    moveY();
-    if (!groundBelow()) { player.mode = 'air'; player.coyote = COYOTE; player.vy = 0; }
 
   } else if (m === 'air') {
     player.vy = Math.min(player.vy + GRAV, MAX_FALL);
-    if (input.down && input.dir) {
-      player.vx = clamp(player.vx + input.dir * AIR_CTRL, -3.4, 3.4);
-      player.face = input.dir;
-    }
-    if (Math.abs(player.vx) > 0.3) player.face = Math.sign(player.vx);
     moveX(); moveY();
     // hold-to-web: retry while held so a swing chains the moment an anchor appears
     if (input.down && !input.uiTouch && player.mode === 'air' && !player.rope &&
@@ -687,21 +820,19 @@ function updatePlayer() {
   } else if (m === 'swing') {
     const r = player.rope;
     player.vy += SWING_G;
-    // reel in while held — the energy pump that makes swings feel alive
-    r.len = Math.max(ROPE_MIN, r.len - REEL);
+    r.len = Math.max(ROPE_MIN, r.len - REEL);       // reel while held — the energy pump
     const cx = player.x + PW / 2, cy = player.y + PH / 2;
     let dx = cx - r.ax, dy = cy - r.ay;
     const d = hyp(dx, dy) || 1;
     const nx = dx / d, ny = dy / d;
-    // tangential pump, strongest at the bottom of the arc
     const tx2 = -ny, ty2 = nx;
     const vt = player.vx * tx2 + player.vy * ty2;
-    const pump = PUMP * Math.max(0, ny);
+    const pump = PUMP * Math.max(0, ny);            // strongest at the bottom of the arc
     if (Math.abs(vt) > 0.25) {
       const s = Math.sign(vt);
       if (Math.abs(vt) < SWING_MAX) { player.vx += tx2 * pump * s; player.vy += ty2 * pump * s; }
     } else {
-      player.vx += tx2 * pump * player.face;
+      player.vx += tx2 * pump;                      // kick forward from dead center
     }
     player.vx *= 0.998; player.vy *= 0.998;
     // constrain the PREDICTED position to the rope circle, then move normally
@@ -716,39 +847,39 @@ function updatePlayer() {
     if (Math.abs(player.vx) > 0.3) player.face = Math.sign(player.vx);
     moveX(); moveY();
 
-  } else if (m === 'cling') {
+  } else if (m === 'climb') {
+    // auto-scurry up — verticality as flow, not as chores
     player.vx = 0;
-    player.vy = input.down ? input.dirY * CRAWL : 0;
+    player.vy = -CLIMB;
     moveY();
     const wallCol = player.side > 0 ? Math.floor((player.x + PW) / T) : Math.floor((player.x - 1) / T);
     let touching = false;
     for (const y of [player.y + 1, player.y + PH / 2, player.y + PH - 2])
       if (solid(wallCol, Math.floor(y / T))) { touching = true; break; }
     if (!touching) {
-      if (input.dirY < 0) {
-        // crawled past the top — mantle onto the roof
-        let mantled = false;
-        const r0 = Math.floor((player.y + PH) / T);
-        for (let r = r0; r < r0 + 4 && r < SR; r++) {
-          if (solid(wallCol, r)) {
-            player.y = r * T - PH;
-            player.x = wallCol * T + (T - PW) / 2;
-            player.mode = 'ground'; player.vy = 0;
-            sfx.land(); buzz(1); mantled = true;
-            break;
-          }
+      // crawled past the top — mantle onto the roof and keep running
+      let mantled = false;
+      const r0 = Math.floor((player.y + PH) / T);
+      for (let r = r0; r < r0 + 4 && r < SR; r++) {
+        if (solid(wallCol, r)) {
+          player.y = r * T - PH;
+          player.x = wallCol * T + (T - PW) / 2;
+          player.mode = 'ground'; player.vy = 0; player.vx = RUN;
+          player.squash = 4;
+          dust(player.x + PW / 2, player.y + PH, 4);
+          sfx.land(); buzz(1); mantled = true;
+          break;
         }
-        if (!mantled) player.mode = 'air';
-      } else {
-        player.mode = 'air';
       }
+      if (!mantled) player.mode = 'air';
     }
-    // dragging hard away from the wall = leap — but only on a clearly HORIZONTAL
-    // drag, or a vertical crawl with thumb wobble flings you off the wall
-    if (player.mode === 'cling' && input.down) {
-      const dxNow = input.x - input.x0, dyNow = input.y - input.y0;
-      if (dxNow * player.side < -14 && Math.abs(dxNow) > Math.abs(dyNow) + 6) wallLeap();
-    }
+  }
+
+  // speed lines at high velocity
+  const spd = hyp(player.vx, player.vy);
+  if (spd > 4.6 && game.frame % 3 === 0) {
+    fx.push({ type: 'line', x: player.x + PW / 2 - player.vx * 2, y: player.y + PH / 2 - player.vy * 2,
+      vx: -player.vx * 0.4, vy: -player.vy * 0.4, life: 8, col: 'rgba(244,247,255,0.5)' });
   }
 
   // hazards & pickups
@@ -765,7 +896,8 @@ function updatePlayer() {
     if (px < s.x + 10 && px + PW > s.x && py < s.y + 10 && py + PH > s.y) {
       game.starsGot[s.i] = true;
       sfx.star(); buzz(2);
-      burst(s.x + 5, s.y + 5, '#ffd97a', 10);
+      burst(s.x + 5, s.y + 5, '#ffd97a', 12);
+      game.hitstop = 2;
     }
   }
   for (let i = 0; i < lvl.checks.length; i++) {
@@ -780,9 +912,10 @@ function updatePlayer() {
     }
   }
   if (lvl.goal) {
-    const g = lvl.goal;
-    const gx = g.tx * T, gy = g.ty * T - 26;
-    if (px < gx + 14 && px + PW > gx && py < gy + 26 && py + PH > gy) levelClear();
+    // the goal is a FINISH LINE, not a door: crossing the beacon's light pillar
+    // at any altitude clears — a glorious swing over the roof must count
+    const gx = lvl.goal.tx * T;
+    if (px + PW > gx && px < gx + 14) levelClear();
   }
 }
 
@@ -794,7 +927,7 @@ function hurt(knockDir) {
   releaseRope();
   if (game.hearts <= 0) { die('hurt'); return; }
   player.invuln = 90;
-  player.vx = (knockDir || -player.face) * 2.6;
+  player.vx = (knockDir || -1) * 2.2;
   player.vy = -2.6;
   player.mode = 'air';
 }
@@ -805,7 +938,7 @@ function die(cause) {
   player.mode = 'dead';
   sfx.die(); buzz(4);
   game.shake = 8;
-  burst(player.x + PW / 2, Math.min(player.y + PH / 2, SR * T - 4), '#e03131', 14);
+  burst(player.x + PW / 2, Math.min(player.y + PH / 2, SR * T - 4), '#e8383a', 14);
 }
 function respawnPlayer() {
   player.x = game.respawn.x; player.y = game.respawn.y;
@@ -836,21 +969,19 @@ function updateEnts() {
       e.x += e.dir * 0.55;
       if (e.x < e.x0) { e.x = e.x0; e.dir = 1; }
       if (e.x > e.x1) { e.x = e.x1; e.dir = -1; }
-      // don't walk off the roof
       const ahead = e.x + (e.dir > 0 ? e.w + 1 : -1);
       if (!solidAt(ahead, e.y + e.h + 2)) e.dir = -e.dir;
     } else if (e.type === 'drone') {
       e.x = e.cx + Math.sin(e.t * 0.018) * e.rx;
       e.y = e.cy + Math.sin(e.t * 0.031) * e.ry;
     }
-    // player collision
     if (game.state !== 'play' || player.invuln > 0) continue;
     if (player.x < e.x + e.w && player.x + PW > e.x &&
         player.y < e.y + e.h && player.y + PH > e.y) {
       const stomp = player.vy > 1.1 && (player.y + PH) - e.y < 9;
       if (stomp) {
         e.dead = true; game.kos++;
-        player.vy = -3.6;
+        player.vy = -3.8;
         sfx.stomp(); buzz(2);
         game.hitstop = 4;
         burst(e.x + e.w / 2, e.y + e.h / 2, e.type === 'drone' ? '#9ad0ff' : '#c9c9c9', 10);
@@ -865,7 +996,8 @@ function updateCars() {
     const dir = hash2(game.frame, 7) < 0.5 ? 1 : -1;
     const x = dir > 0 ? cam.x - 60 : cam.x + W + 60;
     cars.push({ x, dir, spd: 1 + hash2(game.frame, 13) * 1.2,
-      col: ['#c94141', '#4179c9', '#c9a641', '#41c98a', '#8a8a9a'][(game.frame / 80 | 0) % 5] });
+      taxi: hash2(game.frame, 3) < 0.3,
+      col: ['#e05252', '#5285e0', '#e0b652', '#52c99a', '#9a9aae'][(game.frame / 80 | 0) % 5] });
   }
   for (const c of cars) c.x += c.dir * c.spd;
   cars = cars.filter(c => c.x > cam.x - 120 && c.x < cam.x + W + 120);
@@ -877,16 +1009,23 @@ function burst(x, y, col, n) {
     fx.push({ type: 'p', x, y, vx: Math.cos(a) * sp, vy: Math.sin(a) * sp - 0.6, life: 22 + (i % 8), col });
   }
 }
+function dust(x, y, n) {
+  for (let i = 0; i < n; i++) {
+    fx.push({ type: 'p', x: x + (hash2(i, x | 0) - 0.5) * 8, y,
+      vx: (hash2(i, y | 0) - 0.5) * 1.4, vy: -0.4 - hash2(i, 9) * 0.8,
+      life: 14 + (i % 6), col: 'rgba(220,220,230,0.8)' });
+  }
+}
 function updateFx() {
   for (const f of fx) {
     f.life--;
-    if (f.type === 'p') { f.x += f.vx; f.y += f.vy; f.vy += 0.08; }
+    if (f.type === 'p' || f.type === 'line') { f.x += f.vx; f.y += f.vy; if (f.type === 'p') f.vy += 0.08; }
   }
   fx = fx.filter(f => f.life > 0);
 }
 function updateCam() {
   const lvl = game.lvl;
-  const tx = player.x + PW / 2 + player.vx * 12 - W / 2;
+  const tx = player.x + PW / 2 + 44 + player.vx * 8 - W / 2;   // strong forward lookahead
   const ty = player.y + PH / 2 - H * 0.45;
   cam.x = lerp(cam.x, clamp(tx, 0, Math.max(0, lvl.len * T - W)), 0.12);
   cam.y = lerp(cam.y, clamp(ty, Math.min(0, WH - H), Math.max(0, WH - H)), 0.1);
@@ -919,15 +1058,14 @@ function step() {
 }
 
 // ---------- render ----------
-function skyline(seed, y0, colH, gapMax) {
-  // deterministic silhouette strip: returns [x, w, h] runs for one parallax layer
+function skyline(seed, colH, gapMax) {
   const out = [];
-  let x = -40;
-  let i = 0;
+  let x = -40, i = 0;
   while (x < game.lvl.len * T + 400) {
     const w = 20 + hash2(seed, i) * 46;
     const h = colH * (0.4 + hash2(seed + 1, i) * 0.6);
-    out.push([x, w, h]);
+    const tower = hash2(seed + 3, i) < 0.3;               // silhouette water towers
+    out.push([x, w, h, tower]);
     x += w + hash2(seed + 2, i) * gapMax;
     i++;
   }
@@ -936,13 +1074,21 @@ function skyline(seed, y0, colH, gapMax) {
 const skylineCache = {};
 function getSkyline(seed, colH, gapMax) {
   const k = seed + '_' + game.lvlIdx;
-  if (!skylineCache[k]) skylineCache[k] = skyline(seed, 0, colH, gapMax);
+  if (!skylineCache[k]) skylineCache[k] = skyline(seed, colH, gapMax);
   return skylineCache[k];
+}
+const mixCache = {};
+function mix(a, b, t) {
+  const k = a + b + (t * 32 | 0);
+  if (mixCache[k]) return mixCache[k];
+  const pa = parseInt(a.slice(1), 16), pb = parseInt(b.slice(1), 16);
+  const r = lerp(pa >> 16, pb >> 16, t) | 0, g = lerp(pa >> 8 & 255, pb >> 8 & 255, t) | 0, bl = lerp(pa & 255, pb & 255, t) | 0;
+  return mixCache[k] = '#' + ((1 << 24) + (r << 16) + (g << 8) + bl).toString(16).slice(1);
 }
 
 function drawSky() {
   const p = game.lvl.pal;
-  const bands = 16;
+  const bands = 24;
   for (let i = 0; i < bands; i++) {
     const t = i / (bands - 1);
     ctx.fillStyle = mix(p.skyTop, p.skyBot, t * t);
@@ -959,38 +1105,53 @@ function drawSky() {
   }
   if (p.moon) {
     const mx = W - 46 - cam.x * 0.02, my = 34 - cam.y * 0.04;
-    ctx.fillStyle = '#e8e4d8';
+    ctx.fillStyle = '#eee8d8';
     ctx.fillRect(mx, my, 14, 14);
     ctx.fillRect(mx - 2, my + 2, 18, 10);
     ctx.fillRect(mx + 2, my - 2, 10, 18);
-    ctx.fillStyle = '#c9c4b4';
+    ctx.fillStyle = '#cfc8b4';
     ctx.fillRect(mx + 3, my + 4, 3, 3); ctx.fillRect(mx + 9, my + 8, 2, 2);
   }
-}
-const mixCache = {};
-function mix(a, b, t) {
-  const k = a + b + (t * 32 | 0);
-  if (mixCache[k]) return mixCache[k];
-  const pa = parseInt(a.slice(1), 16), pb = parseInt(b.slice(1), 16);
-  const r = lerp(pa >> 16, pb >> 16, t) | 0, g = lerp(pa >> 8 & 255, pb >> 8 & 255, t) | 0, bl = lerp(pa & 255, pb & 255, t) | 0;
-  return mixCache[k] = '#' + ((1 << 24) + (r << 16) + (g << 8) + bl).toString(16).slice(1);
+  // drifting clouds
+  ctx.fillStyle = p.clouds;
+  for (let i = 0; i < 4; i++) {
+    const cw2 = 40 + hash2(i, 21) * 50;
+    const span = W + cw2 + 60;
+    const cx2 = ((hash2(i, 17) * 900 + game.frame * (0.06 + i * 0.02) - cam.x * 0.1) % span + span) % span - cw2 - 20;
+    const cy2 = 20 + hash2(i, 19) * H * 0.3 - cam.y * 0.05;
+    ctx.fillRect(cx2, cy2 + 4, cw2, 8);
+    ctx.fillRect(cx2 + 8, cy2, cw2 * 0.6, 6);
+    ctx.fillRect(cx2 + cw2 * 0.45, cy2 + 2, cw2 * 0.4, 6);
+  }
 }
 
 function drawParallax() {
   const p = game.lvl.pal;
-  const horizon = SR * T;                 // street level in world coords
+  const horizon = SR * T;
   for (const [layer, fac, col] of [[getSkyline(5, 210, 60), 0.25, p.far], [getSkyline(9, 300, 40), 0.5, p.mid]]) {
     ctx.fillStyle = col;
-    // vertical: anchor silhouettes to the street with reduced vertical parallax
     const by = horizon - cam.y + (cam.y * (1 - fac)) * 0.15;
-    for (const [x, w, h] of layer) {
+    for (const [x, w, h, tower] of layer) {
       const sx = Math.floor(x - cam.x * fac);
       if (sx + w < 0 || sx > W) continue;
       ctx.fillRect(sx, Math.floor(by - h), Math.ceil(w), Math.ceil(h + 200));
+      if (tower) {                        // little water tower on the silhouette
+        ctx.fillRect(sx + w * 0.3, Math.floor(by - h) - 8, 8, 8);
+        ctx.fillRect(sx + w * 0.3 + 2, Math.floor(by - h) - 11, 4, 3);
+      }
     }
   }
 }
 
+// per-building decoration styles, derived from the building id
+function bStyle(id) {
+  return {
+    winStyle: (hash2(id, 41) * 3) | 0,             // 0 square grid, 1 tall, 2 wide bands
+    fireEscape: hash2(id, 43) < 0.35,
+    billboard: hash2(id, 47) < 0.3,
+    bandEvery: 4 + ((hash2(id, 53) * 4) | 0)
+  };
+}
 function drawWorld() {
   const lvl = game.lvl, p = lvl.pal;
   const tx0 = Math.max(0, Math.floor(cam.x / T)), tx1 = Math.min(lvl.len - 1, Math.floor((cam.x + W) / T));
@@ -1002,47 +1163,104 @@ function drawWorld() {
       if (ty >= SR) {                     // street
         ctx.fillStyle = p.street;
         ctx.fillRect(x, y, T, T);
+        if (ty === SR && (tx % 5 === 0)) { ctx.fillStyle = p.lane; ctx.fillRect(x + 2, y + 1, 3, 1); }
         if (ty === SR + 1 && tx % 4 < 2) { ctx.fillStyle = p.lane; ctx.fillRect(x, y + 4, T, 2); }
         continue;
       }
       if (!id) continue;
+      const st = bStyle(id);
       const above = ty === 0 ? 0 : lvl.grid[(ty - 1) * lvl.len + tx];
       const leftE = tx === 0 || !lvl.grid[ty * lvl.len + tx - 1];
       const rightE = tx === lvl.len - 1 || !lvl.grid[ty * lvl.len + tx + 1];
       ctx.fillStyle = p.fac[id % 3];
       ctx.fillRect(x, y, T, T);
-      if (!above) {                       // roof cap + parapet
+      if (ty % st.bandEvery === 0 && above) {        // masonry band course
+        ctx.fillStyle = 'rgba(0,0,0,0.12)';
+        ctx.fillRect(x, y, T, 2);
+      }
+      if (!above) {                       // roof cap + cornice with dentils
         ctx.fillStyle = p.cap; ctx.fillRect(x, y, T, 3);
         ctx.fillStyle = p.edge; ctx.fillRect(x, y + 3, T, 1);
-      } else if ((tx % 2 === 0) && (ty % 2 === 0)) {   // window
-        ctx.fillStyle = hash2(tx, ty * 31 + id) < 0.55 ? p.win : p.winOff;
-        ctx.fillRect(x + 4, y + 3, 5, 6);
+        ctx.fillStyle = 'rgba(255,255,255,0.14)';
+        for (let d = 1; d < T; d += 4) ctx.fillRect(x + d, y + 1, 2, 1);
+      } else {
+        // windows by style
+        const lit = hash2(tx, ty * 31 + id) < 0.55;
+        ctx.fillStyle = lit ? p.win : p.winOff;
+        if (st.winStyle === 0) { if (tx % 2 === 0 && ty % 2 === 0) ctx.fillRect(x + 4, y + 3, 5, 6); }
+        else if (st.winStyle === 1) { if (tx % 2 === 0) ctx.fillRect(x + 4, y + 2, 4, 9); }
+        else { if (ty % 3 === 1) ctx.fillRect(x + 1, y + 3, T - 2, 5); }
+        if (lit && hash2(tx * 3, ty * 7 + id) < 0.18) {   // warm spill on a few
+          ctx.fillStyle = 'rgba(255,217,122,0.12)';
+          ctx.fillRect(x + 2, y + 2, T - 4, T - 3);
+        }
       }
       if (leftE) { ctx.fillStyle = p.edge; ctx.fillRect(x, y, 2, T); }
       if (rightE) { ctx.fillStyle = p.edge; ctx.fillRect(x + T - 2, y, 2, T); }
+      // little balconies under some windows (contained in-tile — nothing floats)
+      if (above && st.fireEscape && tx % 2 === 0 && ty % 2 === 0) {
+        ctx.fillStyle = 'rgba(16,16,26,0.65)';
+        ctx.fillRect(x + 3, y + 9, 7, 2);
+        ctx.fillRect(x + 3, y + 7, 1, 2); ctx.fillRect(x + 9, y + 7, 1, 2);
+      }
+    }
+  }
+  // roof props + billboards per building
+  for (const r of lvl.rects) {
+    const rx = r.x * T - cam.x, ry = r.top * T - cam.y;
+    if (rx + r.w * T < -60 || rx > W + 60) continue;
+    const st = bStyle(r.id);
+    if (r.w >= 10) {                      // water tower on wide roofs
+      const wx = rx + r.w * T * 0.62, wy = ry - 18;
+      ctx.fillStyle = '#3a3242';
+      ctx.fillRect(wx + 2, wy + 14, 2, 4); ctx.fillRect(wx + 10, wy + 14, 2, 4);
+      ctx.fillStyle = '#5c4a52';
+      ctx.fillRect(wx, wy + 4, 14, 10);
+      ctx.fillStyle = '#6d5a62';
+      ctx.fillRect(wx, wy + 4, 14, 2);
+      ctx.fillStyle = '#4a3a44';
+      ctx.fillRect(wx + 3, wy, 8, 4);
+      ctx.fillRect(wx + 6, wy - 3, 2, 3);
+    }
+    if (r.w >= 6) {                       // AC unit
+      const ax = rx + r.w * T * 0.2;
+      ctx.fillStyle = '#8a8a96';
+      ctx.fillRect(ax, ry - 5, 8, 5);
+      ctx.fillStyle = '#5a5a66';
+      ctx.fillRect(ax + 1, ry - 4, 3, 3);
+    }
+    if (st.billboard && r.w >= 8 && SR - r.top >= 24) {   // billboard on tall faces
+      const bx = rx + r.w * T * 0.15, by = ry + 30;
+      const bw = 40, bh = 16;
+      ctx.fillStyle = '#14141e';
+      ctx.fillRect(bx - 2, by - 2, bw + 4, bh + 4);
+      ctx.fillStyle = p.board[r.id % 3];
+      ctx.fillRect(bx, by, bw, bh);
+      drawText(ctx, ['GO!', 'WOW', 'ZAP', 'POW', 'YUM'][r.id % 5], bx + 6, by + 5, 1, '#14141e');
+      ctx.fillStyle = '#3a3a48';
+      ctx.fillRect(bx + 4, by + bh + 2, 2, 4); ctx.fillRect(bx + bw - 6, by + bh + 2, 2, 4);
     }
   }
   // spikes (antennas)
-  ctx.fillStyle = '#9aa0b4';
   for (const key of lvl.spikes) {
     const tx = key % lvl.len, ty = (key / lvl.len) | 0;
     const x = tx * T - cam.x, y = ty * T - cam.y;
     if (x < -T || x > W || y < -T || y > H) continue;
+    ctx.fillStyle = '#9aa0b4';
     ctx.fillRect(x + 5, y + 2, 2, T - 2);
     ctx.fillRect(x + 2, y + T - 3, 8, 2);
     ctx.fillStyle = game.frame % 40 < 20 ? '#ff5757' : '#8a2a2a';
     ctx.fillRect(x + 4, y, 4, 3);
-    ctx.fillStyle = '#9aa0b4';
   }
   // hooks (crane arms with dangling anchor)
   for (const hk of lvl.hooks) {
     const x = hk.tx * T + T / 2 - cam.x, y = hk.ty * T - cam.y;
     if (x < -60 || x > W + 60) continue;
-    ctx.fillStyle = '#d9a441';
+    ctx.fillStyle = '#e0a844';
     ctx.fillRect(x - 14, y - 4, 28, 3);
     for (let i = -12; i <= 10; i += 6) ctx.fillRect(x + i, y - 8, 2, 4);
     ctx.fillRect(x - 14, y - 8, 28, 2);
-    ctx.fillStyle = '#e8e8e8';
+    ctx.fillStyle = '#f4f7ff';
     ctx.fillRect(x - 1, y - 1, 3, 4);
   }
   // stars
@@ -1051,12 +1269,14 @@ function drawWorld() {
     const x = s.x - cam.x, y = s.y - cam.y + Math.sin((game.frame + s.i * 20) * 0.08) * 2;
     if (x < -20 || x > W + 20) continue;
     const ph = (game.frame / 8 + s.i) % 4 | 0;
+    ctx.fillStyle = 'rgba(255,217,122,0.18)';
+    ctx.fillRect(x - 2, y - 2, 13, 13);
     ctx.fillStyle = '#ffd97a';
     if (ph === 0 || ph === 2) {
       ctx.fillRect(x + 3, y, 3, 9); ctx.fillRect(x, y + 3, 9, 3);
     } else {
       ctx.fillRect(x + 1, y + 1, 7, 7);
-      ctx.fillStyle = '#b48a2a'; ctx.fillRect(x + 3, y + 3, 3, 3);
+      ctx.fillStyle = '#c99a2a'; ctx.fillRect(x + 3, y + 3, 3, 3);
     }
   }
   // checkpoints
@@ -1068,6 +1288,7 @@ function drawWorld() {
     ctx.fillRect(x + 5, y - 20, 2, 20);
     ctx.fillStyle = checksHit[i] ? '#7ad9ff' : '#556';
     ctx.fillRect(x + 7, y - 19, 8, 6);
+    if (checksHit[i]) { ctx.fillStyle = 'rgba(122,217,255,0.25)'; ctx.fillRect(x + 4, y - 21, 12, 10); }
   }
   // goal beacon
   if (lvl.goal) {
@@ -1093,9 +1314,13 @@ function drawCars() {
     const x = c.x - cam.x;
     if (x < -30 || x > W + 30) continue;
     const ly = y + (c.dir > 0 ? 8 : 1);
-    ctx.fillStyle = c.col;
+    const col = c.taxi ? '#f2c94c' : c.col;
+    ctx.fillStyle = col;
     ctx.fillRect(x, ly, 20, 6);
     ctx.fillRect(x + 4, ly - 3, 11, 4);
+    ctx.fillStyle = '#1a2030';
+    ctx.fillRect(x + 5, ly - 2, 4, 3); ctx.fillRect(x + 11, ly - 2, 3, 3);
+    if (c.taxi) { ctx.fillStyle = '#14141e'; ctx.fillRect(x + 8, ly - 4, 4, 2); }
     ctx.fillStyle = '#101018';
     ctx.fillRect(x + 3, ly + 5, 4, 2); ctx.fillRect(x + 13, ly + 5, 4, 2);
     ctx.fillStyle = '#fff2b0';
@@ -1112,10 +1337,11 @@ function drawEnts() {
       const st = (e.t / 12 | 0) % 2;
       ctx.fillStyle = '#2c2c38';
       ctx.fillRect(x + 1, y + 4, 8, 6);
-      ctx.fillStyle = '#d9b48a';
+      ctx.fillStyle = '#e0b48e';
       ctx.fillRect(x + 2, y, 6, 4);
       ctx.fillStyle = '#1c1c26';
       ctx.fillRect(x + (e.dir > 0 ? 5 : 2), y + 1, 3, 2);
+      ctx.fillRect(x + 2, y - 1, 6, 1);               // beanie
       ctx.fillStyle = '#3c3c4c';
       if (st) { ctx.fillRect(x + 1, y + 10, 3, 4); ctx.fillRect(x + 6, y + 10, 3, 4); }
       else { ctx.fillRect(x + 2, y + 10, 3, 4); ctx.fillRect(x + 5, y + 10, 3, 4); }
@@ -1136,58 +1362,44 @@ function drawEnts() {
 function drawSpidey() {
   if (game.state === 'dying' && game.stateT > 30) return;
   if (player.invuln > 0 && (game.frame / 3 | 0) % 2) return;
-  const x = Math.round(player.x - cam.x - 1), y = Math.round(player.y - cam.y);
-  const f = player.face;
-  const RED = '#e03131', DRED = '#a61e1e', BLU = '#2145c9', EYE = '#e8ecf4';
-  // rope first (under the body)
+  const m = player.mode;
+  // rope under the body
   if (player.rope) {
     const r = player.rope;
-    ctx.strokeStyle = '#e8ecf4';
+    ctx.strokeStyle = '#f4f7ff';
     ctx.lineWidth = 1;
     ctx.beginPath();
-    ctx.moveTo(player.x + PW / 2 - cam.x, player.y + 3 - cam.y);
+    ctx.moveTo(player.x + PW / 2 - cam.x, player.y + 2 - cam.y);
     ctx.lineTo(r.ax - cam.x, r.ay - cam.y);
     ctx.stroke();
   }
-  const m = player.mode;
-  if (m === 'cling') {
-    const wx = player.side > 0 ? x + 4 : x;     // hug the wall
-    ctx.fillStyle = RED; ctx.fillRect(wx + 2, y + 1, 6, 5);          // head
-    ctx.fillStyle = EYE; ctx.fillRect(player.side > 0 ? wx + 6 : wx + 2, y + 2, 2, 2);
-    ctx.fillStyle = RED; ctx.fillRect(wx + 1, y + 6, 8, 5);          // torso
-    ctx.fillStyle = BLU; ctx.fillRect(wx + 1, y + 11, 3, 5); ctx.fillRect(wx + 6, y + 11, 3, 5);
-    ctx.fillStyle = BLU;                                              // arms to wall
-    ctx.fillRect(player.side > 0 ? wx + 8 : wx - 1, y + 4, 3, 2);
-    ctx.fillRect(player.side > 0 ? wx + 8 : wx - 1, y + 9, 3, 2);
-  } else if (m === 'swing') {
-    ctx.fillStyle = BLU;                                              // arms up the rope
-    ctx.fillRect(x + 4, y - 1, 2, 4); ctx.fillRect(x + 6, y - 1, 2, 4);
-    ctx.fillStyle = RED; ctx.fillRect(x + 3, y + 2, 6, 5);
-    ctx.fillStyle = EYE; ctx.fillRect(f > 0 ? x + 6 : x + 4, y + 3, 2, 2);
-    ctx.fillStyle = RED; ctx.fillRect(x + 3, y + 7, 6, 5);
-    ctx.fillStyle = DRED; ctx.fillRect(x + 5, y + 7, 2, 5);
-    ctx.fillStyle = BLU;                                              // legs trail
-    ctx.fillRect(x + 2 - f, y + 12, 3, 4); ctx.fillRect(x + 6 + f, y + 12, 3, 3);
-  } else if (m === 'air' || m === 'dead') {
-    ctx.fillStyle = RED; ctx.fillRect(x + 3, y, 6, 5);
-    ctx.fillStyle = EYE; ctx.fillRect(f > 0 ? x + 6 : x + 4, y + 1, 2, 2);
-    ctx.fillStyle = RED; ctx.fillRect(x + 3, y + 5, 6, 6);
-    ctx.fillStyle = DRED; ctx.fillRect(x + 5, y + 5, 2, 6);
-    ctx.fillStyle = BLU;
-    ctx.fillRect(x + 1, y + 3, 2, 3); ctx.fillRect(x + 9, y + 3, 2, 3);     // arms out
-    if (player.vy < 0) { ctx.fillRect(x + 3, y + 11, 2, 4); ctx.fillRect(x + 7, y + 11, 2, 4); }
-    else { ctx.fillRect(x + 2, y + 11, 3, 5); ctx.fillRect(x + 7, y + 11, 3, 4); }
-  } else {  // ground
-    const running = Math.abs(player.vx) > 0.3;
-    const st = running ? (player.animT / 6 | 0) % 2 : 0;
-    ctx.fillStyle = RED; ctx.fillRect(x + 3, y + 1, 6, 5);
-    ctx.fillStyle = EYE; ctx.fillRect(f > 0 ? x + 6 : x + 4, y + 2, 2, 2);
-    ctx.fillStyle = RED; ctx.fillRect(x + 3, y + 6, 6, 6);
-    ctx.fillStyle = DRED; ctx.fillRect(x + 5, y + 6, 2, 6);
-    ctx.fillStyle = BLU;
-    if (st) { ctx.fillRect(x + 2, y + 12, 3, 4); ctx.fillRect(x + 7, y + 12, 3, 4); }
-    else { ctx.fillRect(x + 3, y + 12, 3, 4); ctx.fillRect(x + 6, y + 12, 3, 4); }
-    ctx.fillRect(f > 0 ? x + 9 : x + 1, y + 7, 2, running ? 4 : 3);          // lead arm
+  const dx = Math.round(player.x - cam.x - 2), dy2 = Math.round(player.y - cam.y - 1);
+  let key;
+  if (m === 'climb') key = (player.animT / 7 | 0) % 2 ? 'climbA' : 'climbB';
+  else if (m === 'swing') key = 'swing';
+  else if (m === 'air' || m === 'dead') key = player.vy < -0.5 ? 'jump' : 'fall';
+  else key = (player.animT / 6 | 0) % 2 ? 'runA' : 'runB';
+  const flip = (m === 'climb' ? player.side < 0 : player.face < 0);
+  const spr = SPR[flip ? key + '_L' : key];
+  if (m === 'swing') {
+    // rotate the sprite to hang along the rope — the swing IS the pose
+    const r = player.rope;
+    const ang = Math.atan2((player.x + PW / 2) - r.ax, ((player.y + PH / 2) - r.ay));
+    ctx.save();
+    ctx.translate(player.x + PW / 2 - cam.x, player.y + PH / 2 - cam.y);
+    ctx.rotate(-ang * 0.8);
+    ctx.drawImage(spr, -7, -8);
+    ctx.restore();
+  } else if (m === 'ground' && player.squash !== 0) {
+    // landing squash / jump-anticipation stretch
+    const sq = player.squash / 14;
+    ctx.save();
+    ctx.translate(dx + 7, dy2 + 15);
+    ctx.scale(1 + Math.abs(sq) * 0.5, 1 - sq * 0.5);
+    ctx.drawImage(spr, -7, -15);
+    ctx.restore();
+  } else {
+    ctx.drawImage(spr, dx, dy2);
   }
 }
 
@@ -1195,11 +1407,18 @@ function drawFx() {
   for (const f of fx) {
     if (f.type === 'zip') {
       const t = 1 - f.life / 6;
-      ctx.strokeStyle = 'rgba(232,236,244,' + (0.9 - t * 0.8).toFixed(2) + ')';
+      ctx.strokeStyle = 'rgba(244,247,255,' + (0.9 - t * 0.8).toFixed(2) + ')';
       ctx.lineWidth = 1;
       ctx.beginPath();
       ctx.moveTo(f.x0 - cam.x, f.y0 - cam.y);
       ctx.lineTo(f.x1 - cam.x, f.y1 - cam.y);
+      ctx.stroke();
+    } else if (f.type === 'line') {
+      ctx.strokeStyle = f.col;
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(f.x - cam.x, f.y - cam.y);
+      ctx.lineTo(f.x - f.vx * 4 - cam.x, f.y - f.vy * 4 - cam.y);
       ctx.stroke();
     } else {
       ctx.fillStyle = f.col;
@@ -1214,7 +1433,7 @@ function btn(label, x, y, w, h, fn, col, txtCol) {
   ui.btns.push({ x, y, w, h, fn });
   ctx.fillStyle = '#0c0a18';
   ctx.fillRect(x + 2, y + 2, w, h);
-  ctx.fillStyle = col || '#e03131';
+  ctx.fillStyle = col || '#e8383a';
   ctx.fillRect(x, y, w, h);
   ctx.fillStyle = 'rgba(255,255,255,0.18)';
   ctx.fillRect(x, y, w, 2);
@@ -1232,14 +1451,12 @@ function drawHud() {
     drawText(ctx, '♥', safeL + 5 + i * 10, topY, 2, i < game.hearts ? '#ff5757' : '#3a3450');
   const got = game.starsGot.filter(Boolean).length;
   for (let i = 0; i < 3; i++) starIcon(safeL + 5 + i * 10, topY + 13, 2, i < got);
-  // pause button
   const pb = { x: W - safeR - 22, y: topY, w: 18, h: 18 };
-  ui.btns.push({ ...pb, fn: () => { game.state = 'pause'; game.fromPause = true; } });
+  ui.btns.push({ ...pb, fn: () => { game.state = 'pause'; } });
   ctx.fillStyle = 'rgba(12,10,24,0.5)';
   ctx.fillRect(pb.x, pb.y, pb.w, pb.h);
-  ctx.fillStyle = '#e8ecf4';
+  ctx.fillStyle = '#f4f7ff';
   ctx.fillRect(pb.x + 5, pb.y + 4, 3, 10); ctx.fillRect(pb.x + 10, pb.y + 4, 3, 10);
-  // level name toast
   if (game.time < 130) {
     const a = game.time < 100 ? 1 : (130 - game.time) / 30;
     ctx.globalAlpha = a;
@@ -1258,37 +1475,40 @@ function drawScreens() {
   const cx = W / 2;
   if (game.state === 'title') {
     const ty = land ? safeTop + 14 : H * 0.16;
-    drawTextC(ctx, 'SPIDER-MAN', cx, ty, land ? 3 : 4, '#e03131', '#0c0a18');
-    drawTextC(ctx, 'SWING. CLIMB. SURVIVE.', cx, ty + (land ? 20 : 30), 1, '#e8ecf4');
-    // tiny swinging spidey
-    const sw = Math.sin(game.frame * 0.04) * 26;
-    const ax = cx + 70, ay = ty - 8;
-    ctx.strokeStyle = '#e8ecf4'; ctx.lineWidth = 1;
-    ctx.beginPath(); ctx.moveTo(ax, ay); ctx.lineTo(ax + sw, ay + 40); ctx.stroke();
-    ctx.fillStyle = '#e03131'; ctx.fillRect(ax + sw - 3, ay + 40, 6, 8);
-    ctx.fillStyle = '#2145c9'; ctx.fillRect(ax + sw - 3, ay + 48, 6, 4);
+    drawTextC(ctx, 'SPIDER-MAN', cx, ty, land ? 3 : 4, '#e8383a', '#0c0a18');
+    drawTextC(ctx, "HOLD TO SWING. THAT'S IT.", cx, ty + (land ? 20 : 30), 1, '#f4f7ff');
+    // big swinging spidey on the title
+    const sw = Math.sin(game.frame * 0.04) * 30;
+    const ax = cx + 74, ay = ty - 10;
+    ctx.strokeStyle = '#f4f7ff'; ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.moveTo(ax, ay); ctx.lineTo(ax + sw, ay + 44); ctx.stroke();
+    ctx.save();
+    ctx.translate(ax + sw, ay + 48);
+    ctx.rotate(sw * 0.012);
+    ctx.drawImage(SPR.swing, -7, -8);
+    ctx.restore();
     const bw = 108, bh = 26;
     const by = land ? H - safeBot - 66 : H * 0.52;
     btn('PLAY', cx - bw / 2, by, bw, bh, () => { game.state = 'select'; game.stateT = 0; });
-    btn('HOW TO', cx - bw / 2, by + bh + 8, bw, bh, () => { game.state = 'howto'; game.stateT = 0; }, '#2145c9');
+    btn('HOW TO', cx - bw / 2, by + bh + 8, bw, bh, () => { game.state = 'howto'; game.stateT = 0; }, '#2b4fd8');
     drawText(ctx, 'V' + VERSION, W - safeR - textW('V' + VERSION, 1) - 4, H - safeBot - 9, 1, 'rgba(255,255,255,0.45)');
   } else if (game.state === 'howto') {
     ctx.fillStyle = 'rgba(8,6,18,0.86)';
     ctx.fillRect(0, 0, W, H);
-    const y0 = land ? safeTop + 12 : H * 0.16;
+    const y0 = land ? safeTop + 12 : H * 0.18;
     drawTextC(ctx, 'ONE THUMB', cx, y0, 2, '#ffd97a');
     const lines = [
-      ['HOLD', 'SHOOT WEB + SWING', '#e03131'],
-      ['RELEASE', 'LET GO + FLY', '#e03131'],
-      ['DRAG', 'RUN + CRAWL WALLS', '#2145c9'],
-      ['TAP', 'JUMP / WALL LEAP', '#2145c9'],
-      ['WALLS', 'YOU STICK. YOU CLIMB.', '#7ad9ff'],
-      ['STREET', 'DO NOT TOUCH IT', '#ff5757']
+      ['YOU RUN', 'ALWAYS. FOREVER.', '#f4f7ff'],
+      ['HOLD', 'WEB + SWING', '#e8383a'],
+      ['RELEASE', 'LET GO + FLY', '#e8383a'],
+      ['TAP', 'JUMP', '#2b4fd8'],
+      ['WALLS', 'YOU RUN UP THEM', '#7ad9ff'],
+      ['STREET', 'DO NOT TOUCH', '#ff5757']
     ];
     lines.forEach((l, i) => {
       const y = y0 + 20 + i * (land ? 15 : 22);
       drawText(ctx, l[0], cx - 92, y, 2, l[2]);
-      drawText(ctx, l[1], cx - 92 + 70, y + 2, 1, '#e8ecf4');
+      drawText(ctx, l[1], cx - 92 + 74, y + 2, 1, '#f4f7ff');
     });
     btn('GOT IT', cx - 54, y0 + 20 + lines.length * (land ? 15 : 22) + 6, 108, 24, () => {
       prog.howtoSeen = true; store('howtoSeen', true);
@@ -1330,13 +1550,13 @@ function drawScreens() {
       const pop = game.stateT > 20 + i * 12;
       starIcon(cx - 27 + i * 20, y0 + 24, 4, pop && i < got);
     }
-    drawTextC(ctx, 'TIME ' + fmtTime(game.time) + '   KOS ' + game.kos, cx, y0 + 48, 1, '#e8ecf4');
+    drawTextC(ctx, 'TIME ' + fmtTime(game.time) + '   KOS ' + game.kos, cx, y0 + 48, 1, '#f4f7ff');
     const bw = 96, bh = 22;
     const last = game.lvlIdx >= LEVELS.length - 1;
     let by = y0 + 62;
     if (!last) { btn('NEXT', cx - bw / 2, by, bw, bh, () => startLevel(game.lvlIdx + 1)); by += bh + 6; }
     else { drawTextC(ctx, 'CITY CLEARED. YOU ARE SPIDER-MAN.', cx, by + 2, 1, '#7ad9ff'); by += 16; }
-    btn('AGAIN', cx - bw / 2, by, bw, bh, () => startLevel(game.lvlIdx), '#2145c9'); by += bh + 6;
+    btn('AGAIN', cx - bw / 2, by, bw, bh, () => startLevel(game.lvlIdx), '#2b4fd8'); by += bh + 6;
     btn('MENU', cx - bw / 2, by, bw, bh, () => { game.state = 'select'; game.stateT = 0; }, '#3a3450');
   } else if (game.state === 'pause') {
     ctx.fillStyle = 'rgba(8,6,18,0.7)';
@@ -1345,11 +1565,11 @@ function drawScreens() {
     drawTextC(ctx, 'PAUSED', cx, y0, 3, '#fff', '#0c0a18');
     const bw = 96, bh = 22;
     btn('RESUME', cx - bw / 2, y0 + 26, bw, bh, () => { game.state = 'play'; });
-    btn('RESTART', cx - bw / 2, y0 + 26 + bh + 6, bw, bh, () => startLevel(game.lvlIdx), '#2145c9');
+    btn('RESTART', cx - bw / 2, y0 + 26 + bh + 6, bw, bh, () => startLevel(game.lvlIdx), '#2b4fd8');
     btn('MENU', cx - bw / 2, y0 + 26 + (bh + 6) * 2, bw, bh, () => { game.state = 'select'; game.stateT = 0; }, '#3a3450');
   } else if (game.state === 'dying') {
     if (game.stateT < 12) {
-      ctx.fillStyle = 'rgba(224,49,49,' + (0.4 - game.stateT * 0.03).toFixed(2) + ')';
+      ctx.fillStyle = 'rgba(232,56,58,' + (0.4 - game.stateT * 0.03).toFixed(2) + ')';
       ctx.fillRect(0, 0, W, H);
     }
     if (game.stateT > 24) drawTextC(ctx, 'THWACK!', cx, H * 0.4, 3, '#ff5757', '#0c0a18');
@@ -1394,7 +1614,7 @@ requestAnimationFrame(frame);
 tintPage();
 
 // ---------- autopilot + debug harness ----------
-let botHoldT = 0, botNoWeb = 0;
+let botNoWeb = 0, botHoldT = 0;
 function botThink() {
   if (game.state === 'title') { if (game.stateT > 30) { game.state = 'select'; game.stateT = 0; } return; }
   if (game.state === 'select') { if (game.stateT > 30) startLevel(0); return; }
@@ -1405,40 +1625,31 @@ function botThink() {
   input.uiTouch = false;
   if (botNoWeb > 0) botNoWeb--;
   if (p.mode === 'ground') {
-    input.down = true; input.dir = 1; input.dirY = 0;
-    // gap, wall, or spikes ahead → jump
-    const aheadX = p.x + PW + 8;
-    let jump = (!solidAt(aheadX, p.y + PH + 4) && !solidAt(aheadX + 10, p.y + PH + 4)) ||
-               solidAt(aheadX, p.y + PH / 2);
+    input.down = false;
+    // gap or spikes ahead → jump (auto-run does the rest)
+    const aheadX = p.x + PW + 10;
+    let jump = !solidAt(aheadX, p.y + PH + 4) && !solidAt(aheadX + 10, p.y + PH + 4);
     for (let i = 1; i <= 2 && !jump; i++)
       if (spikeAt(p.x + PW - 1 + i * T, p.y + PH - 4)) jump = true;
-    if (jump) { p.vy = JUMP_V; p.mode = 'air'; botNoWeb = 12; }
-  } else if (p.mode === 'cling') {
-    input.down = true; input.dir = 0; input.dirY = -1;
-    input.x0 = input.x = W / 2; input.y0 = W / 2 + 60; input.y = W / 2;   // vertical intent, no leap wobble
+    if (jump) { tapAction(); botNoWeb = 10; }
   } else if (p.mode === 'air') {
-    input.dir = 1;
-    p.face = 1;                                          // always hunt anchors ahead
-    input.down = p.vy > 0.9 && !p.rope && botNoWeb === 0;   // falling → web
+    input.down = p.vy > 0.9 && !p.rope && botNoWeb === 0;
   } else if (p.mode === 'swing') {
     input.down = true;
     const r = p.rope;
-    const past = p.x + PW / 2 > r.ax + 6;
-    if (past && p.vx > 0.6) {                            // forward upswing → let go, fly
-      releaseRope(); input.down = false; botHoldT = 0; botNoWeb = 40;
-    } else if (p.vx < -1.8 && p.x + PW / 2 < r.ax - 30) {   // swung way backward → bail, retry
-      releaseRope(); input.down = false; botHoldT = 0; botNoWeb = 8;
-    } else if (++botHoldT > 300) { releaseRope(); input.down = false; botHoldT = 0; botNoWeb = 20; }
+    if (p.vx > 1.5 && p.vy < 0.2) { releaseRope(); input.down = false; botHoldT = 0; botNoWeb = 40; }
+    else if (p.vx < -1.8 && p.x + PW / 2 < r.ax - 30) { releaseRope(); input.down = false; botHoldT = 0; botNoWeb = 8; }
+    else if (++botHoldT > 300) { releaseRope(); input.down = false; botHoldT = 0; botNoWeb = 20; }
   }
+  // climb is fully automatic — nothing to do
 }
 const DBG = window.__dbg = {
   bot: false, errors: [],
-  game, player, input, cam, LEVELS,
+  game, player, input, cam, LEVELS, SPR,
   ents: () => ents, anchors: () => game.lvl.anchors, fx: () => fx,
   startLevel, step, botThink,
   stepN(n) { for (let i = 0; i < n; i++) { if (DBG.bot) botThink(); step(); } },
-  hold(dx, dy) { touchStart(W / 2, H / 2); if (dx || dy) touchMove(W / 2 + (dx || 0), H / 2 + (dy || 0)); },
-  drag(dx, dy) { if (!input.down) touchStart(W / 2, H / 2); touchMove(W / 2 + dx, H / 2 + dy); },
+  hold() { touchStart(W / 2, H / 2); },
   release() { touchEnd(); },
   tap() { touchStart(W / 2, H / 2); input.t0 = performance.now(); touchEnd(); },
   snapshot() {
