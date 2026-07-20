@@ -960,7 +960,6 @@ function drawSky() {
   if (p.moon) {
     const mx = W - 46 - cam.x * 0.02, my = 34 - cam.y * 0.04;
     ctx.fillStyle = '#e8e4d8';
-    ctx.beginPath ? 0 : 0;
     ctx.fillRect(mx, my, 14, 14);
     ctx.fillRect(mx - 2, my + 2, 18, 10);
     ctx.fillRect(mx + 2, my - 2, 10, 18);
@@ -982,7 +981,6 @@ function drawParallax() {
   const horizon = SR * T;                 // street level in world coords
   for (const [layer, fac, col] of [[getSkyline(5, 210, 60), 0.25, p.far], [getSkyline(9, 300, 40), 0.5, p.mid]]) {
     ctx.fillStyle = col;
-    const base = horizon - cam.y * fac - (cam.y >= 0 ? (1 - fac) * cam.y : (1 - fac) * cam.y);
     // vertical: anchor silhouettes to the street with reduced vertical parallax
     const by = horizon - cam.y + (cam.y * (1 - fac)) * 0.15;
     for (const [x, w, h] of layer) {
