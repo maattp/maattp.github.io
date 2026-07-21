@@ -69,7 +69,7 @@
 <script type="module">
 import * as THREE from 'three';
 
-const VERSION = 1;
+const VERSION = 2;
 document.getElementById('ver').textContent = 'V' + VERSION;
 
 // ---------------------------------------------------------------------------
@@ -139,12 +139,15 @@ const anchors = [];     // THREE.Vector3 roof points
     h = Math.min(150, Math.max(14, h));
     const b = { x0: cx - w / 2, x1: cx + w / 2, z0: cz - d / 2, z1: cz + d / 2, h, cx, cz };
     buildings.push(b);
-    const inset = 0.6;
+    // anchors float just OUTSIDE the roof corners/edges — a straight rope to a
+    // fresh anchor must never graze its own building (the LOS + wrap tests
+    // treat all boxes uniformly because of this)
+    const o = 0.35, ay = h + 0.15;
     anchors.push(
-      new THREE.Vector3(b.x0 + inset, h, b.z0 + inset), new THREE.Vector3(b.x1 - inset, h, b.z0 + inset),
-      new THREE.Vector3(b.x0 + inset, h, b.z1 - inset), new THREE.Vector3(b.x1 - inset, h, b.z1 - inset),
-      new THREE.Vector3(cx, h, b.z0 + inset), new THREE.Vector3(cx, h, b.z1 - inset),
-      new THREE.Vector3(b.x0 + inset, h, cz), new THREE.Vector3(b.x1 - inset, h, cz));
+      new THREE.Vector3(b.x0 - o, ay, b.z0 - o), new THREE.Vector3(b.x1 + o, ay, b.z0 - o),
+      new THREE.Vector3(b.x0 - o, ay, b.z1 + o), new THREE.Vector3(b.x1 + o, ay, b.z1 + o),
+      new THREE.Vector3(cx, ay, b.z0 - o), new THREE.Vector3(cx, ay, b.z1 + o),
+      new THREE.Vector3(b.x0 - o, ay, cz), new THREE.Vector3(b.x1 + o, ay, cz));
   }
 })();
 
@@ -169,6 +172,74 @@ function nearBuildings(x, z, r) {
       if (arr) for (const i of arr) if (!out.includes(i)) out.push(i);
     }
   return out;
+}
+
+// --- rope-vs-building geometry ---------------------------------------------
+// All in 2D top-down: obstacles are AABBs and bends happen on vertical edges.
+const SHRINK = 0.25;   // rope tests use slightly shrunk boxes so wall contacts don't false-positive
+const wrapStats = { wrap: 0, unwrap: 0, snap: 0, losReject: 0 };
+
+// Liang-Barsky segment-vs-rect clip. Returns {t0, t1, axis} (axis = entered
+// face: 0 x0-side, 1 x1-side, 2 z0-side, 3 z1-side) or null if no overlap.
+function clip2D(px, pz, qx, qz, b) {
+  const rx0 = b.x0 + SHRINK, rx1 = b.x1 - SHRINK, rz0 = b.z0 + SHRINK, rz1 = b.z1 - SHRINK;
+  const dx = qx - px, dz = qz - pz;
+  const p = [-dx, dx, -dz, dz];
+  const q = [px - rx0, rx1 - px, pz - rz0, rz1 - pz];
+  let t0 = 0, t1 = 1, axis = -1;
+  for (let i = 0; i < 4; i++) {
+    if (Math.abs(p[i]) < 1e-9) { if (q[i] < 0) return null; continue; }
+    const r = q[i] / p[i];
+    if (p[i] < 0) { if (r > t1) return null; if (r > t0) { t0 = r; axis = i; } }
+    else { if (r < t0) return null; if (r < t1) t1 = r; }
+  }
+  return { t0, t1, axis };
+}
+function segBoxes(px, pz, qx, qz) {
+  const out = new Set();
+  const cx0 = Math.floor(Math.min(px, qx) / CELL), cx1 = Math.floor(Math.max(px, qx) / CELL);
+  const cz0 = Math.floor(Math.min(pz, qz) / CELL), cz1 = Math.floor(Math.max(pz, qz) / CELL);
+  for (let cx = cx0; cx <= cx1; cx++) for (let cz = cz0; cz <= cz1; cz++) {
+    const arr = bHash.get(hk(cx, cz));
+    if (arr) for (const i of arr) out.add(i);
+  }
+  return out;
+}
+// is the 3D segment p→q cut by any building (i.e. below a roof where it crosses)?
+function segBlocked(p, q) {
+  for (const i of segBoxes(p.x, p.z, q.x, q.z)) {
+    const b = buildings[i];
+    const c = clip2D(p.x, p.z, q.x, q.z, b);
+    if (!c) continue;
+    const y0 = p.y + (q.y - p.y) * c.t0, y1 = p.y + (q.y - p.y) * c.t1;
+    if (Math.min(y0, y1) < b.h - 0.05) return true;
+  }
+  return false;
+}
+// The rope from p to its pivot got cut: bend it around the vertical edge of
+// the first box it enters — the corner of the entered face nearest the entry
+// point, nudged outward so the new segment doesn't immediately re-collide.
+function findBend(p, piv) {
+  let bestT = Infinity, bend = null;
+  for (const i of segBoxes(p.x, p.z, piv.x, piv.z)) {
+    const b = buildings[i];
+    const c = clip2D(p.x, p.z, piv.x, piv.z, b);
+    if (!c || c.axis < 0 || c.t0 >= bestT) continue;
+    const y0 = p.y + (piv.y - p.y) * c.t0, y1 = p.y + (piv.y - p.y) * c.t1;
+    if (Math.min(y0, y1) >= b.h - 0.05) continue;         // passes over the roof
+    const ex = p.x + (piv.x - p.x) * c.t0, ez = p.z + (piv.z - p.z) * c.t0;
+    let bx, bz;
+    if (c.axis < 2) {         // entered an x face: corners differ in z
+      bx = (c.axis === 0 ? b.x0 : b.x1) + (c.axis === 0 ? -0.3 : 0.3);
+      bz = Math.abs(ez - b.z0) < Math.abs(ez - b.z1) ? b.z0 - 0.3 : b.z1 + 0.3;
+    } else {                  // entered a z face: corners differ in x
+      bz = (c.axis === 2 ? b.z0 : b.z1) + (c.axis === 2 ? -0.3 : 0.3);
+      bx = Math.abs(ex - b.x0) < Math.abs(ex - b.x1) ? b.x0 - 0.3 : b.x1 + 0.3;
+    }
+    bestT = c.t0;
+    bend = new THREE.Vector3(bx, Math.min(b.h - 0.2, Math.max(1, y0)), bz);
+  }
+  return bend;
 }
 
 // support height (feet level) at a point: roof if inside a footprint, else street
@@ -360,7 +431,7 @@ function moveDir(out) {
 function pickAnchor(side) {
   const md = moveDir(V.a);
   const rx = md.z, rz = -md.x;             // right vector of travel
-  let best = -1, bestScore = -1e9;
+  const cand = [];
   const x0 = Math.floor((P.pos.x - ANCHOR_R) / CELL), x1 = Math.floor((P.pos.x + ANCHOR_R) / CELL);
   const z0 = Math.floor((P.pos.z - ANCHOR_R) / CELL), z1 = Math.floor((P.pos.z + ANCHOR_R) / CELL);
   for (let cx = x0; cx <= x1; cx++) for (let cz = z0; cz <= z1; cz++) {
@@ -382,17 +453,25 @@ function pickAnchor(side) {
                 - 0.8 * Math.abs(len - LEN_IDEAL) / LEN_IDEAL
                 - 0.5 * Math.abs(elev - 0.9) / 0.9;
       if (fwd < 0) score -= 2.5;                             // forward-only game: behind is a last resort
-      if (score > bestScore) { bestScore = score; best = i; }
+      cand.push({ i, score });
     }
   }
-  return best >= 0 ? anchors[best] : null;
+  // best candidate with a clear line of sight — never start a rope through a building
+  cand.sort((a, b) => b.score - a.score);
+  const eye = { x: P.pos.x, y: P.pos.y + 1.5, z: P.pos.z };
+  for (let k = 0; k < Math.min(6, cand.length); k++) {
+    const a = anchors[cand[k].i];
+    if (!segBlocked(eye, a)) return a;
+    wrapStats.losReject++;
+  }
+  return null;
 }
 
 function tryAttach(side) {
   const a = pickAnchor(side === 'L' ? -1 : 1);
   if (a) {
     const len = P.pos.distanceTo(a) * 0.96;   // slight initial tug
-    P.ropes[side] = { anchor: a, len, len0: len };
+    P.ropes[side] = { pivots: [a], usedLen: 0, len, len0: len };
     return true;
   }
   // whiff: show a fizzle where the web aimed
@@ -505,18 +584,51 @@ function step(dt) {
 
   P.pos.addScaledVector(P.vel, dt);
 
-  // rope constraints: position projection + kill outward radial velocity.
-  // Reel while taut — this is where swing energy comes from.
+  // corner wrap / unwrap, once per rope per step. The rope is a pivot chain
+  // anchor → bends → player; the pendulum constraint acts from the LAST pivot
+  // with whatever length remains past the wrapped segments — wrapping shortens
+  // the radius, so cutting a corner slingshots you around it.
+  for (const s of ['L', 'R']) {
+    const r = P.ropes[s];
+    if (!r) continue;
+    // unwrap: the straight line to the previous pivot is clear again
+    while (r.pivots.length > 1) {
+      const prev = r.pivots[r.pivots.length - 2];
+      if (segBlocked(P.pos, prev)) break;
+      const bend = r.pivots.pop();
+      r.usedLen -= prev.distanceTo(bend);
+      wrapStats.unwrap++;
+    }
+    // wrap: the line to the active pivot got cut by a building → bend there
+    const piv = r.pivots[r.pivots.length - 1];
+    const bend = findBend(P.pos, piv);
+    if (bend) {
+      r.usedLen += piv.distanceTo(bend);
+      r.pivots.push(bend);
+      wrapStats.wrap++;
+    }
+    // wound down to nothing (or hopelessly tangled) → the web snaps
+    if (r.pivots.length > 5 || r.len - r.usedLen < 5.5) {
+      P.ropes[s] = null;
+      P.retry[s] = 20;
+      wrapStats.snap++;
+      continue;
+    }
+    // reel while taut — this is where swing energy comes from
+    r.len = Math.max(Math.max(10, r.len0 * 0.5), r.usedLen + 6, r.len - REEL * dt);
+  }
+  // constraint: position projection + kill outward radial velocity
   for (let iter = 0; iter < 2; iter++) {
     for (const s of ['L', 'R']) {
       const r = P.ropes[s];
       if (!r) continue;
-      if (iter === 0) r.len = Math.max(Math.max(10, r.len0 * 0.5), r.len - REEL * dt);
-      const d = V.a.subVectors(P.pos, r.anchor);
+      const piv = r.pivots[r.pivots.length - 1];
+      const eff = r.len - r.usedLen;
+      const d = V.a.subVectors(P.pos, piv);
       const dist = d.length();
-      if (dist > r.len) {
+      if (dist > eff) {
         d.multiplyScalar(1 / dist);
-        P.pos.addScaledVector(d, -(dist - r.len));
+        P.pos.addScaledVector(d, -(dist - eff));
         const vr = P.vel.dot(d);
         if (vr > 0) P.vel.addScaledVector(d, -vr);
       }
@@ -700,26 +812,43 @@ function updateSpidey(dt) {
     legL.rotation.x = pose.legL; legR.rotation.x = pose.legR;
     for (const [s, arm] of [['L', armL], ['R', armR]]) {
       const r = P.ropes[s];
-      if (r) { aimLimbAt(arm, r.anchor, Q); arm.quaternion.slerp(Q, Math.min(1, 18 * dt)); }
+      if (r) { aimLimbAt(arm, r.pivots[r.pivots.length - 1], Q); arm.quaternion.slerp(Q, Math.min(1, 18 * dt)); }
       else { Q.setFromEuler(new THREE.Euler(-2.5, 0, s === 'L' ? 0.5 : -0.5)); arm.quaternion.slerp(Q, k); } // arms up, skydive
     }
   }
 
-  // web lines with sag when slack
+  // web lines: polyline anchor → bends → hand; sag only on an unbent rope
   for (const [s, arm] of [['L', armL], ['R', armR]]) {
     const line = webLines[s], r = P.ropes[s];
     if (!r) { line.visible = false; continue; }
     line.visible = true;
+    const last = r.pivots[r.pivots.length - 1];
     arm.getWorldPosition(TMP);
-    TMP.addScaledVector(V.a.subVectors(r.anchor, TMP).normalize(), 0.62);   // hand ≈ arm tip
+    TMP.addScaledVector(V.a.subVectors(last, TMP).normalize(), 0.62);   // hand ≈ arm tip
     const posAttr = line.geometry.attributes.position;
-    const dist = TMP.distanceTo(r.anchor);
-    const slack = Math.max(0, r.len - dist) * 0.35;
-    for (let i = 0; i <= 10; i++) {
-      const t = i / 10;
-      V.b.lerpVectors(TMP, r.anchor, t);
-      V.b.y -= Math.sin(t * Math.PI) * slack;
-      posAttr.setXYZ(i, V.b.x, V.b.y, V.b.z);
+    if (r.pivots.length === 1) {
+      const dist = TMP.distanceTo(last);
+      const slack = Math.max(0, r.len - dist) * 0.35;
+      for (let i = 0; i <= 10; i++) {
+        const t = i / 10;
+        V.b.lerpVectors(last, TMP, t);
+        V.b.y -= Math.sin(t * Math.PI) * slack;
+        posAttr.setXYZ(i, V.b.x, V.b.y, V.b.z);
+      }
+    } else {
+      // walk the pivot chain by arc length so the 11 samples hug every bend
+      const nodes = [...r.pivots, TMP];
+      const lens = [0];
+      for (let i = 1; i < nodes.length; i++) lens.push(lens[i - 1] + nodes[i - 1].distanceTo(nodes[i]));
+      const total = lens[nodes.length - 1] || 1;
+      let seg = 1;
+      for (let i = 0; i <= 10; i++) {
+        const d = (i / 10) * total;
+        while (seg < nodes.length - 1 && lens[seg] < d) seg++;
+        const t = (d - lens[seg - 1]) / Math.max(0.001, lens[seg] - lens[seg - 1]);
+        V.b.lerpVectors(nodes[seg - 1], nodes[seg], t);
+        posAttr.setXYZ(i, V.b.x, V.b.y, V.b.z);
+      }
     }
     posAttr.needsUpdate = true;
   }
@@ -824,7 +953,8 @@ window.__dbg = {
       vel: P.vel.toArray().map(v => +v.toFixed(2)),
       speed: +P.vel.length().toFixed(2),
       grounded: P.grounded,
-      ropes: { L: !!P.ropes.L, R: !!P.ropes.R },
+      ropes: { L: P.ropes.L ? P.ropes.L.pivots.length : 0, R: P.ropes.R ? P.ropes.R.pivots.length : 0 },
+      wrapStats: { ...wrapStats },
       held: { ...P.held },
       splash: P.splash > 0,
       steps: P.steps,
@@ -833,7 +963,7 @@ window.__dbg = {
   press, release,
   tilt(v) { tiltOverride = v; },
   clearTilt() { tiltOverride = null; },
-  supportAt, pickAnchor,
+  supportAt, pickAnchor, segBlocked, wrapStats,
 };
 
 // ---------------------------------------------------------------------------

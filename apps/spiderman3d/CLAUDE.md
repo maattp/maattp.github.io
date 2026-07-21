@@ -43,6 +43,29 @@ re-decision:
   swings by just holding.
 - Landing always clears ropes (they must never drag you along the ground).
 
+## Web wrapping (V2)
+
+Ropes never pass through buildings. Each rope is a pivot chain
+(`r.pivots`: anchor → bends → player); the pendulum constraint acts from the
+LAST pivot with `r.len - r.usedLen`. Laws:
+
+- **Anchors sit OUTSIDE roof corners** (outset 0.35, +0.15 above roof) so a
+  straight rope to a fresh anchor never grazes its own building — this is what
+  lets `segBlocked()`/`findBend()` treat every box uniformly. Never move
+  anchors back inside the footprint.
+- **Attach requires line of sight**: `pickAnchor()` sorts candidates by score
+  and takes the best one `segBlocked()` clears (top 6 tried).
+- **Wrap**: when the segment to the active pivot crosses a box below its roof
+  (2D Liang-Barsky vs `SHRINK`-shrunk rects, height checked at the crossing),
+  a bend is pushed at the entered face's nearest vertical corner edge, nudged
+  0.3 outward. **Unwrap** pops when the line to the *previous* pivot is clear.
+  Wrapping shortens the effective radius → corner slingshot; that's a feature,
+  don't "fix" the speed-up.
+- **Snap**: > 5 pivots or effective length < 5.5 m breaks the web (no
+  tangled/stuck states). Reel floors at `usedLen + 6`.
+- `__dbg.wrapStats` counts wrap/unwrap/snap/losReject — the bot sweep should
+  show wraps > 0, and dead-hang wall-pins should be rare now.
+
 ## Physics tuning contract
 
 Constants at the top of the module script are coupled — the comment block
@@ -73,5 +96,6 @@ screenshot — the sim also steps fine without WebGL frames via `stepN`.
 ## Not yet built (deliberate V1 cuts)
 
 Sound, haptics, objectives/missions, real building graphics (windows,
-textures), rope-through-building collision, camera wall avoidance, landscape
-layout, bridges, pedestrians/traffic, big map (island is demo-scale).
+textures), horizontal roof-edge rope wrap (vertical-corner wrap only),
+landscape layout, bridges, pedestrians/traffic, big map (island is
+demo-scale).
