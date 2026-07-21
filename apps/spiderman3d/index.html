@@ -168,8 +168,14 @@ function addPark(t0, t1, dx0, dx1) {
   return PARKS[PARKS.length - 1];
 }
 const CENTRAL_PARK = addPark(8.7, 12.8, -420, 420);   // 59th → 110th
-addPark(0, 0.35, -2000, 2000);                        // Battery Park (clipped by shoreline)
+// Battery Park: wide bounds are for building placement only (insideIsland
+// already gates blocks); the LAWN is drawn shoreline-clipped below, so the
+// generic rectangle renderer must skip this entry.
+const BATTERY = addPark(0, 0.35, -2000, 2000);
+BATTERY.noLawn = true;
 addPark(3.55, 3.78, -140, 120);                       // Washington Square
+addPark(3.05, 3.25, 560, 780);                        // Tompkins Square
+addPark(4.15, 4.32, -40, 150);                        // Union Square
 addPark(4.7, 4.92, -60, 160);                         // Madison Square
 addPark(7.3, 7.48, -260, -40);                        // Bryant Park
 function inPark(x, z) {
@@ -180,32 +186,79 @@ function inPark(x, z) {
   return false;
 }
 
-// Neighborhood skyline: t = km north of the Battery, e = east-west position
-// in [-1 west, +1 east] across the island at that latitude.
-function nbhHeight(t, e) {
-  const r = rand();
-  let base = 20, varr = 40, superChance = 0, superH = 0;
-  if (t < 1.3)       { base = 50; varr = 180; superChance = 0.05; superH = 240 + rand() * 180; } // Financial District
+// Neighborhood skyline band: t = km north of the Battery, e = east-west
+// position in [-1 west, +1 east] across the island at that latitude. The band
+// also decides the BLOCK FABRIC: base ≤ 26 → rowhouse street walls,
+// base ≤ 55 (no supertall chance) → mid-rise frontages, else office slabs.
+function nbhBand(t, e) {
+  let base = 20, varr = 40, superChance = 0, superMin = 0, superVar = 0;
+  if (t < 1.3)       { base = 60; varr = 170; superChance = 0.05; superMin = 240; superVar = 180; } // Financial District
   else if (t < 2.3)  { base = 28; varr = 55; }                                   // Tribeca / Civic Center
   else if (t < 4.0)  { base = 15; varr = 32; }                                   // SoHo / Village / LES
   else if (t < 5.1)  { base = 35; varr = 85;
     if (e < -0.5 && t > 4.5) { base = 110; varr = 220; } }                       // Flatiron; Hudson Yards to the west
   else if (t < 6.5)  { base = 45; varr = 100; }                                  // Chelsea / Gramercy / Murray Hill
   else if (t < 8.8)  { base = 70; varr = 210;                                    // Midtown canyon
-    superChance = t > 7.0 ? 0.05 : 0.02; superH = 300 + rand() * 220;
-    if (t > 8.5) { superChance = 0.07; superH = 300 + rand() * 170; } }          // Billionaires' Row (57th)
+    superChance = t > 7.0 ? 0.05 : 0.02; superMin = 300; superVar = 220;
+    if (t > 8.5) { superChance = 0.07; superVar = 170; } }                       // Billionaires' Row (57th)
   else if (t < 12.8) { base = 38; varr = 75;
     if (Math.abs(e) > 0.28 && Math.abs(e) < 0.6) { base = 55; varr = 110; } }    // UES/UWS park-front walls
   else if (t < 15.6) { base = 20; varr = 42; }                                   // Harlem / Morningside
   else if (t < 19.2) { base = 24; varr = 48; }                                   // Washington Heights
   else               { base = 14; varr = 28; }                                   // Inwood
-  let h = base + r * r * varr;
-  if (rand() < superChance) h = superH;
-  return Math.min(540, Math.max(12, h));
+  return { base, varr, superChance, superMin, superVar };
+}
+function nbhHeight(band) {
+  const r = rand();
+  let h = band.base + r * r * band.varr;
+  if (rand() < band.superChance) h = band.superMin + rand() * band.superVar;
+  return Math.min(540, Math.max(10, h));
+}
+
+// Broadway — the one street that breaks the grid. Its path is defined in
+// island-relative e (like nbhBand): down the spine through SoHo, then the
+// famous diagonal cutting west past Union/Madison/Herald/Times Squares to
+// Columbus Circle, up the west side, and back to the spine in Inwood.
+// Buildings are never placed within its corridor.
+const BWAY_PTS = [[0.3, 0], [2, -0.03], [3.9, 0.03], [4.8, 0.05], [5.6, 0], [7, -0.08],
+  [8.75, -0.2], [10, -0.5], [12.8, -0.5], [15, -0.35], [17, -0.2], [19, -0.08], [21.3, 0]];
+const BWAY_HALF = 14;   // corridor half-width, m
+function bwayXAt(z) {
+  const t = kmN(z);
+  if (t < 0.3 || t > 21.3) return null;
+  return centerAt(z) + pw(BWAY_PTS, t) * widthAt(z) / 2;
 }
 
 const buildings = [];   // {x0,x1,z0,z1,h,cx,cz}
 const anchors = [];     // THREE.Vector3 roof points
+const blocks = [];      // {x0,x1,z0,z1} — for sidewalk plinths
+
+// anchors float just OUTSIDE the roof corners/edges — a straight rope to a
+// fresh anchor must never graze its own building (the LOS + wrap tests treat
+// all boxes uniformly because of this). o must stay comfortably above SHRINK:
+// o - SHRINK is the float-safety gap.
+function addBuilding(x0, x1, z0, z1, h, small) {
+  const cx = (x0 + x1) / 2, cz = (z0 + z1) / 2;
+  const bw = bwayXAt(cz);
+  if (bw !== null && x0 < bw + BWAY_HALF && x1 > bw - BWAY_HALF) return;   // Broadway right-of-way
+  buildings.push({ x0, x1, z0, z1, h, cx, cz });
+  const o = 0.5, ay = h + 0.15;
+  anchors.push(
+    new THREE.Vector3(x0 - o, ay, z0 - o), new THREE.Vector3(x1 + o, ay, z0 - o),
+    new THREE.Vector3(x0 - o, ay, z1 + o), new THREE.Vector3(x1 + o, ay, z1 + o));
+  // rowhouses share party walls, so corners alone give a dense parapet line;
+  // bigger footprints also get long-edge midpoints
+  if (!small) anchors.push(new THREE.Vector3(cx, ay, z0 - o), new THREE.Vector3(cx, ay, z1 + o));
+  // tall buildings also take webs on their FACES — otherwise supertall
+  // canyons (roofs above ANCHOR_R) would be unswingable from the street.
+  // The 55 m ring is the guarantee: always inside ANCHOR_R from street level,
+  // whatever the tower's height (proportional-only rings left dead zones).
+  for (const lvl of h > 220 ? [55, h * 0.45, h * 0.75] : h > 90 ? [55, h * 0.55] : [])
+    anchors.push(
+      new THREE.Vector3(cx, lvl, z0 - o), new THREE.Vector3(cx, lvl, z1 + o),
+      new THREE.Vector3(x0 - o, lvl, cz), new THREE.Vector3(x1 + o, lvl, cz));
+}
+
 (function genCity() {
   const rows = Math.floor(ISLAND_L / ST);
   for (let k = -8; k <= 12; k++) {
@@ -218,31 +271,49 @@ const anchors = [];     // THREE.Vector3 roof points
           !insideIsland(bx0, bz1) || !insideIsland(bx1, bz1)) continue;
       if (inPark(bcx, cz) || inPark(bx0, bz0) || inPark(bx1, bz1) ||
           inPark(bx0, bz1) || inPark(bx1, bz0)) continue;
-      // 2-3 buildings across the block, Manhattan style (wide E-W, shallow N-S)
-      const nb = rand() < 0.45 ? 3 : 2;
-      const gap = 6, slotW = (bx1 - bx0 - gap * (nb - 1)) / nb;
-      for (let s = 0; s < nb; s++) {
-        const w = slotW * (0.75 + rand() * 0.25), d = (bz1 - bz0) * (0.8 + rand() * 0.2);
-        const cx = bx0 + s * (slotW + gap) + slotW / 2;
-        const e = (cx - centerAt(cz)) / (widthAt(cz) / 2);
-        const h = nbhHeight(kmN(cz), e);
-        const b = { x0: cx - w / 2, x1: cx + w / 2, z0: cz - d / 2, z1: cz + d / 2, h, cx, cz };
-        buildings.push(b);
-        // anchors float just OUTSIDE the roof corners/edges — a straight rope
-        // to a fresh anchor must never graze its own building (the LOS + wrap
-        // tests treat all boxes uniformly because of this). o must stay
-        // comfortably above SHRINK: o - SHRINK is the float-safety gap.
-        const o = 0.5, ay = h + 0.15;
-        anchors.push(
-          new THREE.Vector3(b.x0 - o, ay, b.z0 - o), new THREE.Vector3(b.x1 + o, ay, b.z0 - o),
-          new THREE.Vector3(b.x0 - o, ay, b.z1 + o), new THREE.Vector3(b.x1 + o, ay, b.z1 + o),
-          new THREE.Vector3(cx, ay, b.z0 - o), new THREE.Vector3(cx, ay, b.z1 + o));
-        // tall buildings also take webs on their FACES — otherwise supertall
-        // canyons (roofs above ANCHOR_R) would be unswingable from the street
-        for (const lvl of h > 220 ? [h * 0.45, h * 0.75] : h > 90 ? [h * 0.55] : []) {
-          anchors.push(
-            new THREE.Vector3(cx, lvl, b.z0 - o), new THREE.Vector3(cx, lvl, b.z1 + o),
-            new THREE.Vector3(b.x0 - o, lvl, cz), new THREE.Vector3(b.x1 + o, lvl, cz));
+      blocks.push({ x0: bx0, x1: bx1, z0: bz0, z1: bz1 });
+      const t = kmN(cz), e = (bcx - centerAt(cz)) / (widthAt(cz) / 2);
+      const band = nbhBand(t, e);
+      if (band.base <= 26 && !band.superChance) {
+        // ROWHOUSE FABRIC (Village, Harlem, Heights, Inwood): two contiguous
+        // party-wall street walls facing the streets, courtyard gap between
+        for (const front of [true, false]) {
+          let x = bx0;
+          while (x < bx1 - 8) {
+            let w = 16 + rand() * 26;                    // 16-42 m lots
+            if (x + w > bx1 - 8) w = bx1 - x;            // corner lot takes the tail
+            const d = 20 + rand() * 6;                   // ~30 m real lot depth
+            addBuilding(x, x + w, front ? bz0 : bz1 - d, front ? bz0 + d : bz1,
+              nbhHeight(band), true);
+            x += w;
+          }
+        }
+      } else if (band.base <= 55 && !band.superChance) {
+        // MID-RISE (Tribeca, Chelsea, UES/UWS): wider frontage segments,
+        // occasional side gaps, still built to the street line
+        for (const front of [true, false]) {
+          let x = bx0;
+          while (x < bx1 - 12) {
+            let w = 34 + rand() * 44;
+            if (x + w > bx1 - 12) w = bx1 - x;
+            const d = 24 + rand() * 7;
+            addBuilding(x, x + w, front ? bz0 : bz1 - d, front ? bz0 + d : bz1,
+              nbhHeight(band), false);
+            x += w + (rand() < 0.3 ? 5 : 0);
+          }
+        }
+      } else {
+        // OFFICE/TOWER BLOCKS (FiDi, Midtown, Hudson Yards): 1-3 big slabs
+        // with plaza gaps; supertalls get slender footprints
+        const nb = 1 + Math.floor(rand() * 3);
+        const gap = 10, slotW = (bx1 - bx0 - gap * (nb - 1)) / nb;
+        for (let s = 0; s < nb; s++) {
+          let w = slotW * (0.8 + rand() * 0.2);
+          let d = (bz1 - bz0) * (0.75 + rand() * 0.25);
+          const h = nbhHeight(band);
+          if (h > 300) { w *= 0.55; d *= 0.7; }
+          const cx = bx0 + s * (slotW + gap) + slotW / 2;
+          addBuilding(cx - w / 2, cx + w / 2, cz - d / 2, cz + d / 2, h, false);
         }
       }
     }
@@ -405,7 +476,11 @@ scene.add(sun);
     p.position.set((x0 + x1) / 2, 0.05, (z0 + z1) / 2);
     scene.add(p);
   };
-  for (const p of PARKS) addLawn(p.x0, p.x1, p.z0, p.z1);
+  for (const p of PARKS) if (!p.noLawn) addLawn(p.x0, p.x1, p.z0, p.z1);
+  for (let i = 0; i < 5; i++) {         // Battery Park lawn hugs the shoreline
+    const t0 = i * 0.07, zm = zk(t0 + 0.035);
+    addLawn(centerAt(zm) - widthAt(zm) / 2, centerAt(zm) + widthAt(zm) / 2, zk(t0), zk(t0 + 0.07));
+  }
   // shore strips, segmented so they hug the shoreline profiles
   for (let i = 0; i < 10; i++) {        // Riverside Park
     const t0 = 9.5 + i * 0.5, zm = zk(t0 + 0.25);
@@ -415,6 +490,27 @@ scene.add(sun);
     const t0 = 2.6 + i * 0.4, zm = zk(t0 + 0.2);
     addLawn(centerAt(zm) + widthAt(zm) / 2 - 140, centerAt(zm) + widthAt(zm) / 2, zk(t0), zk(t0 + 0.4));
   }
+  // Broadway ribbon — drawn just above the sidewalk plinths so the diagonal
+  // reads against the grid (physically it's ordinary street: no buildings)
+  {
+    const shape = new THREE.Shape();
+    const NB = 120;
+    const zA = zk(0.3), zB = zk(21.3);
+    for (let i = 0; i <= NB; i++) {
+      const z = zA + (i / NB) * (zB - zA);
+      const x = bwayXAt(z);
+      i ? shape.lineTo(x - 11, -z) : shape.moveTo(x - 11, -z);
+    }
+    for (let i = NB; i >= 0; i--) {
+      const z = zA + (i / NB) * (zB - zA);
+      shape.lineTo(bwayXAt(z) + 11, -z);
+    }
+    const bway = new THREE.Mesh(new THREE.ShapeGeometry(shape),
+      new THREE.MeshLambertMaterial({ color: 0x474c54 }));
+    bway.rotation.x = -Math.PI / 2;   // shape (x, -z) → world (x, z)
+    bway.position.y = 0.19;
+    scene.add(bway);
+  }
   // Central Park reservoir (visual water — physically it's still park lawn)
   const res = new THREE.Mesh(new THREE.CircleGeometry(1, 32),
     new THREE.MeshLambertMaterial({ color: 0x2a6584 }));
@@ -423,15 +519,15 @@ scene.add(sun);
   res.position.set((CENTRAL_PARK.x0 + CENTRAL_PARK.x1) / 2, 0.08, zk(11.2));
   scene.add(res);
 }
-// sidewalk plinths — read the street grid
+// sidewalk plinths — one per BLOCK, so the street grid reads at any density
 {
   const geo = new THREE.BoxGeometry(1, 1, 1);
   const mat = new THREE.MeshLambertMaterial({ color: 0x8f959c });
-  const m = new THREE.InstancedMesh(geo, mat, buildings.length);
+  const m = new THREE.InstancedMesh(geo, mat, blocks.length);
   const M = new THREE.Matrix4();
-  buildings.forEach((b, i) => {
-    M.makeScale(b.x1 - b.x0 + 5, 0.3, b.z1 - b.z0 + 5);
-    M.setPosition(b.cx, 0.15, b.cz);
+  blocks.forEach((b, i) => {
+    M.makeScale(b.x1 - b.x0 + 8, 0.3, b.z1 - b.z0 + 8);
+    M.setPosition((b.x0 + b.x1) / 2, 0.15, (b.z0 + b.z1) / 2);
     m.setMatrixAt(i, M);
   });
   scene.add(m);

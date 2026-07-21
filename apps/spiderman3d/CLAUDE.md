@@ -107,16 +107,28 @@ width/centerline profiles in km-from-Battery (widest ~3.7 km at 14th St,
 spine drifting east going north); the shoreline slab, `insideIsland()`, bot
 recentering, and respawn all derive from them. The real grid: avenues `AV` =
 272 m (N-S), streets `ST` = 80 m (E-W), 2-3 buildings per block.
-`nbhHeight(t, e)` encodes the skyline bands: FiDi cluster, low
+`nbhBand(t, e)` encodes the skyline bands: FiDi cluster, low
 SoHo/Village, Hudson Yards west at ~4.5-5.1 km, Midtown supertall canyon
 (7-8.8 km, Billionaires' Row at the top), UES/UWS park-front walls, low
-Harlem/Heights/Inwood. Parks (Central Park 8.7-12.8 km + reservoir, Battery,
-Washington/Madison/Bryant Sq, Riverside + East River shore strips) are
-building-free; **Central Park is deliberately unswingable open ground** —
-crossing it on foot is the real-Manhattan tradeoff, not a bug. Individual
-buildings are invented; only scale/layout/heights follow reality. ~7k
-buildings / ~42k anchors — one InstancedMesh, fine on mobile; keep it that
-way (no per-building meshes).
+Harlem/Heights/Inwood. The band also picks the **block fabric** (this is the
+realism contract for building placement): base ≤ 26 → rowhouse street walls
+(two contiguous party-wall rows of 16-42 m lots facing the streets, courtyard
+gap mid-block, zero side gaps); base ≤ 55 → mid-rise frontage segments;
+tall/supertall bands → 1-3 office slabs with plaza gaps, and footprints
+shrink for h > 300 (slender supertalls). **Broadway** (`BWAY_PTS`, island-
+relative like the bands) is the one diagonal: spine downtown, cutting west
+past Union/Madison/Herald/Times Squares to Columbus Circle, up the west
+side, back to the spine in Inwood — `addBuilding` refuses its right-of-way
+and a ribbon mesh draws it. Parks (Central Park 8.7-12.8 km + reservoir,
+Battery, Washington/Tompkins/Union/Madison/Bryant Sq, Riverside + East River
+shore strips) are building-free; **Central Park is deliberately unswingable
+open ground** — crossing it on foot is the real-Manhattan tradeoff, not a
+bug. Individual buildings are invented; only scale/layout/fabric/heights
+follow reality. ~19k buildings / ~90k anchors (rowhouses: roof corners only;
+bigger footprints + long-edge midpoints; mid-FACE rings above 90 m — always
+including a street-reachable ring at 55 m, the guarantee that supertall
+canyons are swingable from the ground) — one InstancedMesh + one per-block
+plinth mesh; keep it that way (no per-building meshes).
 
 ## Physics tuning contract
 
@@ -153,5 +165,6 @@ checks, screenshot via CDP at deviceScaleFactor 3 (see repo memory recipe).
 
 Sound, haptics, objectives/missions, real building graphics (windows,
 textures), horizontal roof-edge rope wrap (vertical-corner wrap only),
-landscape layout, bridges, pedestrians/traffic, Broadway's diagonal,
-terrain elevation (northern ridges), landmark buildings.
+landscape layout, bridges, pedestrians/traffic, terrain elevation
+(northern ridges), landmark buildings, angled Flatiron-style wedge
+footprints along Broadway (blocks just gap at the right-of-way).
