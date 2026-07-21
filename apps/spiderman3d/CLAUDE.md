@@ -30,6 +30,9 @@ re-decision:
   steer (grounded: heading turn; airborne: lateral accel perpendicular to
   travel); which hand you swing with provides the coarse arc. iOS needs the
   one-time DeviceOrientation permission — requested from the GO button tap.
+  If no gyro reading ever arrives (permission denied, or no sensor),
+  dragging a held thumb sideways steers instead (`gyroLive` flag in
+  `readTilt()`) — the game must never be unsteerable (PR #301 review).
 - **Auto-run, no fail state**: grounded = always running forward at ≥ `RUN`;
   landing momentum bleeds off at `RUN_DECEL`, never below `RUN`, never stops,
   never moves backward. Falling to the street just means you keep running.

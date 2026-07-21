@@ -44,7 +44,7 @@
 <canvas id="gl"></canvas>
 <div id="hud">
   <div id="speed"><b>0</b> MPH</div>
-  <div id="hint">HOLD LEFT / RIGHT SIDE TO WEB &middot; TILT TO STEER</div>
+  <div id="hint">HOLD LEFT / RIGHT SIDE TO WEB &middot; TILT OR DRAG TO STEER</div>
   <div id="ver"></div>
 </div>
 <div id="fade"></div>
@@ -152,16 +152,14 @@ const anchors = [];     // THREE.Vector3 roof points
 const CELL = 48;
 const aHash = new Map(), bHash = new Map();
 const hk = (cx, cz) => cx * 100000 + cz;
+const bucket = (m, k) => { let a = m.get(k); if (!a) m.set(k, a = []); return a; };
 anchors.forEach((a, i) => {
-  const k = hk(Math.floor(a.x / CELL), Math.floor(a.z / CELL));
-  (aHash.get(k) || aHash.set(k, []).get(k)).push(i);
+  bucket(aHash, hk(Math.floor(a.x / CELL), Math.floor(a.z / CELL))).push(i);
 });
 buildings.forEach((b, i) => {
   for (let cx = Math.floor(b.x0 / CELL); cx <= Math.floor(b.x1 / CELL); cx++)
-    for (let cz = Math.floor(b.z0 / CELL); cz <= Math.floor(b.z1 / CELL); cz++) {
-      const k = hk(cx, cz);
-      (bHash.get(k) || bHash.set(k, []).get(k)).push(i);
-    }
+    for (let cz = Math.floor(b.z0 / CELL); cz <= Math.floor(b.z1 / CELL); cz++)
+      bucket(bHash, hk(cx, cz)).push(i);
 });
 function nearBuildings(x, z, r) {
   const out = [];
@@ -472,6 +470,7 @@ function step(dt) {
   if (P.grounded) {
     // auto-run: heading steered by tilt, excess landing speed bleeds off, never below RUN
     P.heading -= tiltInput * TURN_RATE * dt;
+    P.heading = ((P.heading + Math.PI) % (2 * Math.PI) + 2 * Math.PI) % (2 * Math.PI) - Math.PI;
     let hs = Math.hypot(P.vel.x, P.vel.z);
     hs = Math.max(RUN, hs - RUN_DECEL * dt);
     P.vel.set(Math.sin(P.heading) * hs, 0, Math.cos(P.heading) * hs);
@@ -592,26 +591,34 @@ function botThink() {
 // ---------------------------------------------------------------------------
 // INPUT — touch halves, gyro tilt, keyboard fallback
 // ---------------------------------------------------------------------------
-const pointers = new Map();   // pointerId → 'L' | 'R'
+const pointers = new Map();   // pointerId → {side, x0, dx}
 canvas.addEventListener('pointerdown', e => {
   if (!simRunning) return;
   e.preventDefault();
   const side = e.clientX < innerWidth / 2 ? 'L' : 'R';
   if (pointers.has(e.pointerId)) return;
-  pointers.set(e.pointerId, side);
+  pointers.set(e.pointerId, { side, x0: e.clientX, dx: 0 });
   press(side);
 });
+window.addEventListener('pointermove', e => {
+  const p = pointers.get(e.pointerId);
+  if (p) p.dx = e.clientX - p.x0;
+});
 function endPointer(e) {
-  const side = pointers.get(e.pointerId);
-  if (side) { pointers.delete(e.pointerId); if (![...pointers.values()].includes(side)) release(side); }
+  const p = pointers.get(e.pointerId);
+  if (p) { pointers.delete(e.pointerId); if (![...pointers.values()].some(q => q.side === p.side)) release(p.side); }
 }
 window.addEventListener('pointerup', endPointer);
 window.addEventListener('pointercancel', endPointer);
 canvas.addEventListener('contextmenu', e => e.preventDefault());
 
-let gyro = 0, gyroCal = null, gyroOn = false;
+let gyro = 0, gyroCal = null, gyroOn = false, gyroLive = false;
 function onOrient(e) {
   if (e.gamma == null) return;
+  if (!gyroLive) {   // first real reading: gyro exists and was permitted
+    gyroLive = true;
+    hintEl.textContent = 'HOLD LEFT / RIGHT SIDE TO WEB · TILT TO STEER';
+  }
   if (gyroCal === null) gyroCal = e.gamma;
   gyro = Math.max(-1, Math.min(1, (e.gamma - gyroCal) / 22));
 }
@@ -643,6 +650,9 @@ let tiltOverride = null;   // bot / __dbg steering
 function readTilt() {
   if (tiltOverride !== null) return tiltOverride;
   let t = gyro;
+  // no working gyro (permission denied, or no sensor): dragging a held thumb
+  // sideways steers instead, so the game is never unsteerable
+  if (!gyroLive) for (const p of pointers.values()) t += p.dx / (innerWidth * 0.3);
   if (keys['KeyA'] || keys['ArrowLeft']) t -= 1;
   if (keys['KeyD'] || keys['ArrowRight']) t += 1;
   return Math.max(-1, Math.min(1, t));
