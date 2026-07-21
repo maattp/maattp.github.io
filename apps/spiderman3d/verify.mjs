@@ -124,7 +124,10 @@ const mean = sweep.speeds.reduce((a, b) => a + b, 0) / sweep.speeds.length;
 console.log(`mean speed ${mean.toFixed(1)} m/s | clipViolations ${sweep.clipViolations} | wrapStats ${JSON.stringify(sweep.wrapStats)} | jsErrors ${sweep.errs.length + errors.length}`);
 
 let fail = false;
-if (!targeted.gotRope || targeted.maxY < 4 || targeted.maxSpeed < 15) { console.error('FAIL: street start is a dead hop again (ratchet regression)'); fail = true; }
+// dead-hop signature: no rope, maxY ~4.5 (bare jump), flat speed. Height with
+// a rope is the discriminator — on tall Midtown anchors the first hold climbs
+// more than it swings, so the speed bar is a sanity floor, not the signal.
+if (!targeted.gotRope || targeted.maxY < 8 || targeted.maxSpeed < 12) { console.error('FAIL: street start is a dead hop again (ratchet regression)'); fail = true; }
 if (targeted.maxGroundedY > 1.5) { console.error('FAIL: grounded runner left the street (roof-teleport regression)'); fail = true; }
 if (targeted.sideSamples >= 4 && targeted.meanSide < 0) { console.error('FAIL: right-hand anchors lean left (handedness mirror regression)'); fail = true; }
 if (targeted.errs.length || sweep.errs.length || errors.length) { console.error('FAIL: JS errors', targeted.errs, sweep.errs, errors); fail = true; }

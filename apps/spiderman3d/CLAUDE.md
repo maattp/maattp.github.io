@@ -99,6 +99,25 @@ Other V3 playtest laws:
 - Version badge must be visible on the **title screen** (`#tver`), not just
   the in-game HUD.
 
+## Manhattan geography (V4)
+
+The island is rough real Manhattan: 21.6 km Battery (z = Z0, south) → Inwood,
++z uptown, +x east. Layout is data-driven — `W_PTS`/`C_PTS` are piecewise
+width/centerline profiles in km-from-Battery (widest ~3.7 km at 14th St,
+spine drifting east going north); the shoreline slab, `insideIsland()`, bot
+recentering, and respawn all derive from them. The real grid: avenues `AV` =
+272 m (N-S), streets `ST` = 80 m (E-W), 2-3 buildings per block.
+`nbhHeight(t, e)` encodes the skyline bands: FiDi cluster, low
+SoHo/Village, Hudson Yards west at ~4.5-5.1 km, Midtown supertall canyon
+(7-8.8 km, Billionaires' Row at the top), UES/UWS park-front walls, low
+Harlem/Heights/Inwood. Parks (Central Park 8.7-12.8 km + reservoir, Battery,
+Washington/Madison/Bryant Sq, Riverside + East River shore strips) are
+building-free; **Central Park is deliberately unswingable open ground** —
+crossing it on foot is the real-Manhattan tradeoff, not a bug. Individual
+buildings are invented; only scale/layout/heights follow reality. ~7k
+buildings / ~42k anchors — one InstancedMesh, fine on mobile; keep it that
+way (no per-building meshes).
+
 ## Physics tuning contract
 
 Constants at the top of the module script are coupled — the comment block
@@ -134,5 +153,5 @@ checks, screenshot via CDP at deviceScaleFactor 3 (see repo memory recipe).
 
 Sound, haptics, objectives/missions, real building graphics (windows,
 textures), horizontal roof-edge rope wrap (vertical-corner wrap only),
-landscape layout, bridges, pedestrians/traffic, big map (island is
-demo-scale).
+landscape layout, bridges, pedestrians/traffic, Broadway's diagonal,
+terrain elevation (northern ridges), landmark buildings.
