@@ -180,9 +180,25 @@ geometry/material-level. The pillars:
 - **Set dressing** (water towers on mid-rise roofs, park trees) is instanced
   and decor-only — the one sanctioned exception to the supportAt law; small
   enough that clipping is acceptable.
-- **Rig**: jointed shoulder→elbow→hand and hip→knee chains (`buildArm`/
-  `buildLeg`); run cycle with knee lift, swing tuck scaled by speed,
-  reaching arm aims at the last rope pivot. Feet sit at y=0 exactly.
+- **Rig (V8, research-based)**: pelvis→chest→head trunk with clavicle-
+  mounted arms; every articulation covered by a joint sphere and limb
+  segments are TAPERED cylinders with cap spheres — bending never opens a
+  seam (the stick-figure killer). Elbows flex NEGATIVE x (forward), knees
+  POSITIVE (backward) — don't swap. Gait phase is DISTANCE-driven
+  (`gaitPh += hs*dt*1.35`, feet plant instead of skating) with the canonical
+  contact→down→passing→up shape: knee fold on recovery, foot plantarflex,
+  hip yaw + chest counter-rotation + head stabilization, landing squash from
+  `P.landK`. Webbed-suit canvas texture (meridians+latitudes reads correctly
+  on spheres/capsules from every angle). Blob shadow tracks `supportAt`
+  beneath the player (altitude cue). `__dbg.closeup(true)` orbits a portrait
+  camera for character work — use it for any rig change.
+- **Skyline (V8)**: towers > 120 m are wedding-cake SETBACK stacks (2-3
+  AABB columns, same grp/color) — ledges are real landable roofs; glass-
+  palette instances render as curtain wall (keyed on `vColor.b > vColor.r`),
+  masonry gets punched windows with lintel-shadow depth. Decor adds
+  bulkheads, antennas (>240 m), parked cars with yellow cabs along BOTH
+  street and avenue curbs (gaps at intersections), outer-borough silhouettes
+  across the rivers, and drifting procedural clouds in the sky dome.
 - **Webs** are pooled 3D cylinder strands laid along the pivot chain (max 6
   segments/hand), not lines.
 - **Speed feel**: FOV 76→98 with speed, camera banks with tilt, additive
