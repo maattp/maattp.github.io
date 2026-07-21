@@ -237,11 +237,10 @@ const blocks = [];      // {x0,x1,z0,z1} — for sidewalk plinths
 // fresh anchor must never graze its own building (the LOS + wrap tests treat
 // all boxes uniformly because of this). o must stay comfortably above SHRINK:
 // o - SHRINK is the float-safety gap.
-function addBuilding(x0, x1, z0, z1, h, small) {
+let grpId = 0;   // one visual identity (facade color) per placed building, shared by its wedge slices
+function addBuilding(x0, x1, z0, z1, h, small, grp) {
   const cx = (x0 + x1) / 2, cz = (z0 + z1) / 2;
-  const bw = bwayXAt(cz);
-  if (bw !== null && x0 < bw + BWAY_HALF && x1 > bw - BWAY_HALF) return;   // Broadway right-of-way
-  buildings.push({ x0, x1, z0, z1, h, cx, cz });
+  buildings.push({ x0, x1, z0, z1, h, cx, cz, grp });
   const o = 0.5, ay = h + 0.15;
   anchors.push(
     new THREE.Vector3(x0 - o, ay, z0 - o), new THREE.Vector3(x1 + o, ay, z0 - o),
@@ -253,10 +252,37 @@ function addBuilding(x0, x1, z0, z1, h, small) {
   // canyons (roofs above ANCHOR_R) would be unswingable from the street.
   // The 55 m ring is the guarantee: always inside ANCHOR_R from street level,
   // whatever the tower's height (proportional-only rings left dead zones).
-  for (const lvl of h > 220 ? [55, h * 0.45, h * 0.75] : h > 90 ? [55, h * 0.55] : [])
-    anchors.push(
-      new THREE.Vector3(cx, lvl, z0 - o), new THREE.Vector3(cx, lvl, z1 + o),
-      new THREE.Vector3(x0 - o, lvl, cz), new THREE.Vector3(x1 + o, lvl, cz));
+  // Width guard: wedge slices skip rings so a sliced tower doesn't multiply them.
+  if (x1 - x0 >= 25)
+    for (const lvl of h > 220 ? [55, h * 0.45, h * 0.75] : h > 90 ? [55, h * 0.55] : [])
+      anchors.push(
+        new THREE.Vector3(cx, lvl, z0 - o), new THREE.Vector3(cx, lvl, z1 + o),
+        new THREE.Vector3(x0 - o, lvl, cz), new THREE.Vector3(x1 + o, lvl, cz));
+}
+// Placement front door: buildings crossing Broadway aren't dropped — they're
+// carved into stair-stepped axis-aligned slices that track the diagonal, so
+// crossing blocks end in Flatiron-style prows while every collision/rope
+// invariant (AABB-only world) stays intact. Slices share the parent's grp so
+// they render as one building.
+function placeBuilding(x0, x1, z0, z1, h, small) {
+  // no building may touch a park — partial rows stop cleanly at the park line
+  if (inPark(x0, z0) || inPark(x1, z0) || inPark(x0, z1) || inPark(x1, z1) ||
+      inPark((x0 + x1) / 2, (z0 + z1) / 2)) return;
+  const g = grpId++;
+  const bwA = bwayXAt(z0), bwB = bwayXAt(z1);
+  if (bwA === null || bwB === null ||
+      x1 < Math.min(bwA, bwB) - BWAY_HALF || x0 > Math.max(bwA, bwB) + BWAY_HALF) {
+    addBuilding(x0, x1, z0, z1, h, small, g);
+    return;
+  }
+  const N = Math.max(2, Math.min(5, Math.round((z1 - z0) / 7)));
+  for (let i = 0; i < N; i++) {
+    const sz0 = z0 + (i / N) * (z1 - z0), sz1 = z0 + ((i + 1) / N) * (z1 - z0);
+    const bw = bwayXAt((sz0 + sz1) / 2);
+    const L1 = Math.min(x1, bw - BWAY_HALF), R0 = Math.max(x0, bw + BWAY_HALF);
+    if (L1 - x0 >= 4) addBuilding(x0, L1, sz0, sz1, h, true, g);   // west-of-Broadway slice
+    if (x1 - R0 >= 4) addBuilding(R0, x1, sz0, sz1, h, true, g);   // east-of-Broadway slice
+  }
 }
 
 (function genCity() {
@@ -266,11 +292,13 @@ function addBuilding(x0, x1, z0, z1, h, small) {
     for (let j = 0; j < rows; j++) {
       const bz0 = Z0 + j * ST + ST_W / 2, bz1 = Z0 + (j + 1) * ST - ST_W / 2;
       const cz = (bz0 + bz1) / 2, bcx = (bx0 + bx1) / 2;
-      // the whole block must be on land and out of every park
+      // the whole block must be on land (shore aprons read as waterfront
+      // highways — realistic). Parks clip PER BUILDING below, not per block:
+      // dropping any park-touching block left a ~240 m empty apron around
+      // every park, erasing the CPW/5th Ave park-front walls.
       if (!insideIsland(bx0, bz0) || !insideIsland(bx1, bz0) ||
           !insideIsland(bx0, bz1) || !insideIsland(bx1, bz1)) continue;
-      if (inPark(bcx, cz) || inPark(bx0, bz0) || inPark(bx1, bz1) ||
-          inPark(bx0, bz1) || inPark(bx1, bz0)) continue;
+      if (inPark(bcx, cz)) continue;   // block core inside a park
       blocks.push({ x0: bx0, x1: bx1, z0: bz0, z1: bz1 });
       const t = kmN(cz), e = (bcx - centerAt(cz)) / (widthAt(cz) / 2);
       const band = nbhBand(t, e);
@@ -283,7 +311,7 @@ function addBuilding(x0, x1, z0, z1, h, small) {
             let w = 16 + rand() * 26;                    // 16-42 m lots
             if (x + w > bx1 - 8) w = bx1 - x;            // corner lot takes the tail
             const d = 20 + rand() * 6;                   // ~30 m real lot depth
-            addBuilding(x, x + w, front ? bz0 : bz1 - d, front ? bz0 + d : bz1,
+            placeBuilding(x, x + w, front ? bz0 : bz1 - d, front ? bz0 + d : bz1,
               nbhHeight(band), true);
             x += w;
           }
@@ -297,7 +325,7 @@ function addBuilding(x0, x1, z0, z1, h, small) {
             let w = 34 + rand() * 44;
             if (x + w > bx1 - 12) w = bx1 - x;
             const d = 24 + rand() * 7;
-            addBuilding(x, x + w, front ? bz0 : bz1 - d, front ? bz0 + d : bz1,
+            placeBuilding(x, x + w, front ? bz0 : bz1 - d, front ? bz0 + d : bz1,
               nbhHeight(band), false);
             x += w + (rand() < 0.3 ? 5 : 0);
           }
@@ -313,7 +341,7 @@ function addBuilding(x0, x1, z0, z1, h, small) {
           const h = nbhHeight(band);
           if (h > 300) { w *= 0.55; d *= 0.7; }
           const cx = bx0 + s * (slotW + gap) + slotW / 2;
-          addBuilding(cx - w / 2, cx + w / 2, cz - d / 2, cz + d / 2, h, false);
+          placeBuilding(cx - w / 2, cx + w / 2, cz - d / 2, cz + d / 2, h, false);
         }
       }
     }
@@ -508,7 +536,7 @@ scene.add(sun);
     const bway = new THREE.Mesh(new THREE.ShapeGeometry(shape),
       new THREE.MeshLambertMaterial({ color: 0x474c54 }));
     bway.rotation.x = -Math.PI / 2;   // shape (x, -z) → world (x, z)
-    bway.position.y = 0.19;
+    bway.position.y = 0.32;           // above the 0.3 sidewalk plinths it crosses
     scene.add(bway);
   }
   // Central Park reservoir (visual water — physically it's still park lawn)
@@ -542,14 +570,15 @@ scene.add(sun);
   const PAL_LOW  = [0xa8763e, 0x92655a, 0xb0a293, 0x9c8f80, 0x8a5a48].map(c => new THREE.Color(c));
   const PAL_MID  = [0x8d9099, 0x9c8f80, 0xb0a293, 0x7f8ea3, 0x6b7686].map(c => new THREE.Color(c));
   const PAL_TALL = [0x7f8ea3, 0x77808f, 0x8fa3b8, 0x6b7686, 0x9fb2c4].map(c => new THREE.Color(c));
-  const paletteRand = mulberry32(seed + 1);
   buildings.forEach((b, i) => {
     M.makeScale(b.x1 - b.x0, b.h, b.z1 - b.z0);
     M.setPosition(b.cx, b.h / 2, b.cz);
     mesh.setMatrixAt(i, M);
+    // color keyed on grp, not index: a wedge's stair slices must match
+    const gr = mulberry32(seed + b.grp * 7919);
     const pal = b.h < 35 ? PAL_LOW : b.h < 110 ? PAL_MID : PAL_TALL;
-    const c = pal[Math.floor(paletteRand() * pal.length)].clone();
-    c.offsetHSL(0, 0, (paletteRand() - 0.5) * 0.08);
+    const c = pal[Math.floor(gr() * pal.length)].clone();
+    c.offsetHSL(0, 0, (gr() - 0.5) * 0.08);
     mesh.setColorAt(i, c);
   });
   scene.add(mesh);

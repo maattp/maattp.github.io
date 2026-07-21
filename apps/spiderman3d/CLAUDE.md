@@ -118,8 +118,13 @@ tall/supertall bands → 1-3 office slabs with plaza gaps, and footprints
 shrink for h > 300 (slender supertalls). **Broadway** (`BWAY_PTS`, island-
 relative like the bands) is the one diagonal: spine downtown, cutting west
 past Union/Madison/Herald/Times Squares to Columbus Circle, up the west
-side, back to the spine in Inwood — `addBuilding` refuses its right-of-way
-and a ribbon mesh draws it. Parks (Central Park 8.7-12.8 km + reservoir,
+side, back to the spine in Inwood — a ribbon mesh draws it, and
+`placeBuilding()` carves crossing buildings into **stair-stepped wedge
+slices** (2-5 z-strips, each clipped to the corridor at its own latitude, min
+4 m wide, `small` anchors, no face rings, shared `grp` facade color so a
+wedge reads as one building) — Flatiron-style prows out of pure AABBs. The
+world stays axis-aligned boxes ONLY; never introduce rotated footprints —
+the whole rope/collision stack depends on it. Parks (Central Park 8.7-12.8 km + reservoir,
 Battery, Washington/Tompkins/Union/Madison/Bryant Sq, Riverside + East River
 shore strips) are building-free; **Central Park is deliberately unswingable
 open ground** — crossing it on foot is the real-Manhattan tradeoff, not a
@@ -166,5 +171,4 @@ checks, screenshot via CDP at deviceScaleFactor 3 (see repo memory recipe).
 Sound, haptics, objectives/missions, real building graphics (windows,
 textures), horizontal roof-edge rope wrap (vertical-corner wrap only),
 landscape layout, bridges, pedestrians/traffic, terrain elevation
-(northern ridges), landmark buildings, angled Flatiron-style wedge
-footprints along Broadway (blocks just gap at the right-of-way).
+(northern ridges), landmark buildings.
