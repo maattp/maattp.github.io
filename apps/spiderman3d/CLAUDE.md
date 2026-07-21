@@ -77,8 +77,9 @@ same rule as a camera facing `f`. V2 shipped the mirror image and every
 control read swapped (right press → left web, inverted air steer). Every
 consumer must use this form: anchor side scoring, airborne tilt force, the
 character's limb placement (model faces +z, so its right arm sits at **-x**),
-bot steering, whiff puff offset. If you add anything lateral, derive it from
-this law, not from intuition.
+bot steering, whiff puff offset. All lateral math goes through the
+`rightOf(f)` helper — never inline the formula; that's how the mirror
+shipped in the first place.
 
 Other V3 playtest laws:
 

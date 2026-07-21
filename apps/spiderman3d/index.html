@@ -443,14 +443,17 @@ function moveDir(out) {
   else out.set(Math.sin(P.heading), 0, Math.cos(P.heading));
   return out;
 }
+// HANDEDNESS LAW: for travel dir f, anatomical/screen right = (-f.z, 0, f.x)
+// (same rule as a camera facing f). V2 shipped this mirrored — ALL lateral
+// math must go through this helper, never inline the formula.
+const RIGHT = { x: 0, z: 0 };
+function rightOf(f) { RIGHT.x = -f.z; RIGHT.z = f.x; return RIGHT; }
 
 // Pick the best anchor for a hand. side: -1 left, +1 right.
 function pickAnchor(side) {
   const md = moveDir(V.a);
-  // HANDEDNESS LAW: for travel dir f, anatomical/screen right = (-f.z, 0, f.x)
-  // (same rule as a camera facing f). V2 shipped this mirrored — every
-  // consumer (anchor side, air steer, arm placement, bot) must use this form.
-  const rx = -md.z, rz = md.x;             // right vector of travel
+  const r = rightOf(md);
+  const rx = r.x, rz = r.z;                // right vector of travel
   const cand = [];
   const x0 = Math.floor((P.pos.x - ANCHOR_R) / CELL), x1 = Math.floor((P.pos.x + ANCHOR_R) / CELL);
   const z0 = Math.floor((P.pos.z - ANCHOR_R) / CELL), z1 = Math.floor((P.pos.z + ANCHOR_R) / CELL);
@@ -496,8 +499,8 @@ function tryAttach(side) {
   }
   // whiff: show a fizzle where the web aimed (offset to that hand's side)
   const md = moveDir(V.b);
-  const off = side === 'L' ? -3 : 3;
-  puff.position.copy(P.pos).addScaledVector(md, 6).add(V.c.set(-md.z * off, 8, md.x * off));
+  const r = rightOf(md), off = side === 'L' ? -3 : 3;
+  puff.position.copy(P.pos).addScaledVector(md, 6).add(V.c.set(r.x * off, 8, r.z * off));
   puffT = 0.18;
   return false;
 }
@@ -577,10 +580,11 @@ function step(dt) {
     P.coyote = COYOTE;
   } else {
     P.vel.y -= G * dt;
-    // tilt = lateral force perpendicular to travel (right = (-f.z, f.x))
+    // tilt = lateral force toward the right of travel
     const md = moveDir(V.a);
-    P.vel.x += -md.z * tiltInput * AIR_STEER * dt;
-    P.vel.z += md.x * tiltInput * AIR_STEER * dt;
+    const rt = rightOf(md);
+    P.vel.x += rt.x * tiltInput * AIR_STEER * dt;
+    P.vel.z += rt.z * tiltInput * AIR_STEER * dt;
     // swing pump: a taut web is never a dead hang — below PUMP_MAX the
     // pendulum is driven forward along travel, fading out as speed builds
     const sp = P.vel.length();
@@ -712,8 +716,8 @@ function botThink() {
   const md = moveDir(V.c);
   let want = 0;
   if (Math.abs(ex) > 0.55 || Math.abs(ez) > 0.65) {
-    const tx = -P.pos.x, tz = -P.pos.z;
-    const dotR = -md.z * tx + md.x * tz;       // >0: center is to the right
+    const r = rightOf(md);
+    const dotR = r.x * -P.pos.x + r.z * -P.pos.z;   // >0: center is to the right
     want = dotR > 0 ? 0.7 : -0.7;
   }
   tiltOverride = want;
@@ -919,7 +923,8 @@ function updateCamera(dt) {
 // ---------------------------------------------------------------------------
 function viewH() {
   // iOS standalone under-reports the viewport height; the physical screen
-  // doesn't lie (pixelrun's fix — pairs with the standalone CSS height rule)
+  // doesn't lie (pixelrun's fix — pairs with the standalone CSS height rule).
+  // NOTE: the innerWidth-vs-screen comparison assumes a portrait-locked app.
   if (navigator.standalone && screen && screen.width) {
     const sMin = Math.min(screen.width, screen.height), sMax = Math.max(screen.width, screen.height);
     return innerWidth <= sMin ? sMax : sMin;
