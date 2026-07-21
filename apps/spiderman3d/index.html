@@ -123,7 +123,8 @@ const rand = mulberry32(seed);
 
 // ---------------------------------------------------------------------------
 // CITY — rough real Manhattan. Battery at the south (z = Z0), Inwood at the
-// north; +z is uptown, +x is east. Real scale: ~21.6 km long, ~3.7 km at the
+// north; +z is uptown, +x is WEST (see the AXIS LAW below — east is -x).
+// Real scale: ~21.6 km long, ~3.7 km at the
 // widest (14th St). Real grid: avenues (N-S corridors) every ~272 m, streets
 // (E-W) every ~80 m. Neighborhood skylines via nbhHeight(). Individual
 // buildings are invented; scale and layout follow the real island.
@@ -190,8 +191,8 @@ function inPark(x, z) {
   return false;
 }
 
-// Neighborhood skyline band: t = km north of the Battery, e = east-west
-// position in [-1 west, +1 east] across the island at that latitude. The band
+// Neighborhood skyline band: t = km north of the Battery, e = cross-island
+// position in [-1 east, +1 west] (axis law: +x is west). The band
 // also decides the BLOCK FABRIC: base ≤ 26 → rowhouse street walls,
 // base ≤ 55 (no supertall chance) → mid-rise frontages, else office slabs.
 function nbhBand(t, e) {
@@ -287,8 +288,8 @@ function placeBuilding(x0, x1, z0, z1, h, small) {
     const sz0 = z0 + (i / N) * (z1 - z0), sz1 = z0 + ((i + 1) / N) * (z1 - z0);
     const bw = bwayXAt((sz0 + sz1) / 2);
     const L1 = Math.min(x1, bw - BWAY_HALF), R0 = Math.max(x0, bw + BWAY_HALF);
-    if (L1 - x0 >= 4) slices.push([x0, L1, sz0, sz1]);   // west-of-Broadway slice
-    if (x1 - R0 >= 4) slices.push([R0, x1, sz0, sz1]);   // east-of-Broadway slice
+    if (L1 - x0 >= 4) slices.push([x0, L1, sz0, sz1]);   // east-of-Broadway slice (-x)
+    if (x1 - R0 >= 4) slices.push([R0, x1, sz0, sz1]);   // west-of-Broadway slice (+x)
   }
   // exactly ONE face-ring set per crossing building: the widest slice keeps
   // it (preserves the 55 m street-reach guarantee at the corridor without
@@ -515,12 +516,12 @@ scene.add(sun);
 {
   const shape = new THREE.Shape();
   const N = 160;
-  for (let i = 0; i <= N; i++) {        // east shore, south → north
+  for (let i = 0; i <= N; i++) {        // west shore (+x), south → north
     const z = Z0 + (i / N) * ISLAND_L;
     i ? shape.lineTo(centerAt(z) + widthAt(z) / 2, z)
       : shape.moveTo(centerAt(z) + widthAt(z) / 2, z);
   }
-  for (let i = N; i >= 0; i--) {        // west shore, north → south
+  for (let i = N; i >= 0; i--) {        // east shore (-x), north → south
     const z = Z0 + (i / N) * ISLAND_L;
     shape.lineTo(centerAt(z) - widthAt(z) / 2, z);
   }
