@@ -43,6 +43,9 @@
     padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left); }
   #tver { position: absolute; top: calc(env(safe-area-inset-top) + 12px); right: calc(env(safe-area-inset-right) + 14px);
     font-size: 13px; font-weight: 800; opacity: 0.7; }
+  #invRow { margin-top: 20px; font-size: 13px; font-weight: 600; opacity: 0.8;
+    display: flex; align-items: center; gap: 8px; }
+  #invRow input { width: 17px; height: 17px; accent-color: #e23636; }
   #title h1 { font-size: 42px; font-weight: 900; letter-spacing: 2px; color: #e23636;
     text-shadow: 0 3px 0 #7e1414, 0 8px 24px rgba(0,0,0,0.6); text-align: center; line-height: 1.05; }
   #title h1 span { display: block; font-size: 22px; color: #cfe0ff; text-shadow: 0 2px 0 #23305e; letter-spacing: 8px; }
@@ -64,6 +67,7 @@
   <p>Hold the <b>right</b> side to swing on your right web, the <b>left</b> side for your left.
      Hold <b>both</b> for a double-line swing. Release at the top of the arc. Tilt your phone to steer.</p>
   <button id="startBtn">GO SWING</button>
+  <label id="invRow"><input type="checkbox" id="invTilt"> Invert tilt steering</label>
   <div id="tver"></div>
 </div>
 
@@ -83,7 +87,7 @@ import * as THREE from 'three';
 
 const BOOT_T0 = performance.now();   // city gen + scene build cost, exposed as __dbg.bootMs
 
-const VERSION = 8;
+const VERSION = 9;
 // the version badge lives ONLY on the title screen (user decision, V5)
 document.getElementById('tver').textContent = 'V' + VERSION;
 
@@ -1672,18 +1676,50 @@ window.addEventListener('pointerup', endPointer);
 window.addEventListener('pointercancel', endPointer);
 canvas.addEventListener('contextmenu', e => e.preventDefault());
 
-let gyro = 0, gyroCal = null, gyroOn = false, gyroLive = false;
-function onOrient(e) {
-  if (e.gamma == null) return;
-  gyroLive = true;   // first real reading: gyro exists and was permitted
+// TILT SIGNAL LAW: steering derives from the GRAVITY VECTOR (devicemotion
+// accelerationIncludingGravity.x), NOT Euler gamma. gamma is gimbal-unstable
+// exactly at upright phone pitch — its sign flips as beta crosses ~90°, so
+// the same physical lean read as "inverted tilt" depending on posture (this
+// shipped as an inversion bug TWICE before the root cause was found). The
+// gravity vector is a direct measurement: sign-stable at any pitch. iOS
+// reports the reaction force (negated gravity); requestPermission existing
+// on DeviceMotionEvent is exactly the iOS discriminator. Neutral posture is
+// calibrated over the first ~24 samples after GO. localStorage invert flag
+// (title-screen toggle) is the escape hatch for anything still exotic.
+let gyro = 0, gyroLive = false, motionLive = false;
+let tiltBase = null, tiltSamples = 0, gyroCal = null, listenersOn = false;
+let invTilt = localStorage.getItem('sm3d_inv') === '1';
+const IOS_MOTION = typeof DeviceMotionEvent !== 'undefined' &&
+  typeof DeviceMotionEvent.requestPermission === 'function';
+function onMotion(e) {
+  const g = e.accelerationIncludingGravity;
+  if (!g || g.x == null) return;
+  const raw = IOS_MOTION ? -g.x : g.x;   // leaning right → positive
+  if (tiltSamples < 24) {                // settle the neutral-posture baseline
+    tiltBase = tiltBase === null ? raw : tiltBase + (raw - tiltBase) * 0.25;
+    tiltSamples++;
+    return;
+  }
+  motionLive = true;
+  gyroLive = true;
+  gyro = Math.max(-1, Math.min(1, (raw - tiltBase) / 3.4)) * (invTilt ? -1 : 1);
+}
+function onOrient(e) {                    // gamma fallback only if motion never delivers
+  if (motionLive || e.gamma == null) return;
+  gyroLive = true;
   if (gyroCal === null) gyroCal = e.gamma;
-  gyro = Math.max(-1, Math.min(1, (e.gamma - gyroCal) / 22));
+  gyro = Math.max(-1, Math.min(1, (e.gamma - gyroCal) / 22)) * (invTilt ? -1 : 1);
 }
 function enableTilt() {
-  gyroCal = null;
-  const go = () => { if (!gyroOn) { window.addEventListener('deviceorientation', onOrient); gyroOn = true; } };
-  if (typeof DeviceOrientationEvent !== 'undefined' && DeviceOrientationEvent.requestPermission)
-    DeviceOrientationEvent.requestPermission().then(s => { if (s === 'granted') go(); }).catch(() => {});
+  tiltBase = null; tiltSamples = 0; gyroCal = null;
+  const go = () => {
+    if (listenersOn) return;
+    listenersOn = true;
+    window.addEventListener('devicemotion', onMotion);
+    window.addEventListener('deviceorientation', onOrient);
+  };
+  if (IOS_MOTION)   // one iOS prompt covers motion + orientation
+    DeviceMotionEvent.requestPermission().then(s => { if (s === 'granted') go(); }).catch(() => {});
   else go();
 }
 
@@ -2046,6 +2082,12 @@ function start() {
   document.getElementById('hud').classList.remove('pre');
 }
 document.getElementById('startBtn').addEventListener('click', () => { enableTilt(); start(); });
+const invBox = document.getElementById('invTilt');
+invBox.checked = invTilt;
+invBox.addEventListener('change', () => {
+  invTilt = invBox.checked;
+  localStorage.setItem('sm3d_inv', invTilt ? '1' : '0');
+});
 if (bot.on || new URLSearchParams(location.search).has('autostart')) start();
 
 // ---------------------------------------------------------------------------
