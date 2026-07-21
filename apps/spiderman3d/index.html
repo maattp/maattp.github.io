@@ -30,10 +30,6 @@
   #speed { position: absolute; top: calc(env(safe-area-inset-top) + 10px); left: 0; right: 0; text-align: center;
     font-size: 15px; font-weight: 700; letter-spacing: 1px; opacity: 0.85; text-shadow: 0 1px 3px rgba(0,0,0,0.5); }
   #speed b { font-size: 26px; }
-  /* top-anchored like the badges: iOS standalone reports the bottom inset as
-     0, so bottom-anchored text hides under the home-indicator swipe bar */
-  #hint { position: absolute; top: calc(env(safe-area-inset-top) + 48px); left: 0; right: 0; text-align: center;
-    font-size: 13px; font-weight: 600; opacity: 0.75; text-shadow: 0 1px 3px rgba(0,0,0,0.6); transition: opacity 1s; }
   #mini { position: absolute; display: block; top: calc(env(safe-area-inset-top) + 10px); right: calc(env(safe-area-inset-right) + 10px);
     width: 44px; height: 216px; border-radius: 9px; background: rgba(8, 14, 30, 0.45);
     box-shadow: 0 2px 8px rgba(0,0,0,0.25); }
@@ -58,7 +54,6 @@
 <canvas id="gl"></canvas>
 <div id="hud">
   <div id="speed"><b>0</b> MPH</div>
-  <div id="hint">HOLD LEFT / RIGHT SIDE TO WEB &middot; TILT OR DRAG TO STEER</div>
   <canvas id="mini"></canvas>
 </div>
 <div id="fade"></div>
@@ -1105,10 +1100,7 @@ canvas.addEventListener('contextmenu', e => e.preventDefault());
 let gyro = 0, gyroCal = null, gyroOn = false, gyroLive = false;
 function onOrient(e) {
   if (e.gamma == null) return;
-  if (!gyroLive) {   // first real reading: gyro exists and was permitted
-    gyroLive = true;
-    hintEl.textContent = 'HOLD LEFT / RIGHT SIDE TO WEB · TILT TO STEER';
-  }
+  gyroLive = true;   // first real reading: gyro exists and was permitted
   if (gyroCal === null) gyroCal = e.gamma;
   gyro = Math.max(-1, Math.min(1, (e.gamma - gyroCal) / 22));
 }
@@ -1289,8 +1281,7 @@ setTimeout(resize, 350);    // iOS standalone reports the real viewport late
 setTimeout(resize, 1200);   // …and sometimes very late
 
 const speedEl = document.querySelector('#speed b');
-const hintEl = document.getElementById('hint');
-let acc = 0, last = 0, hudT = 0, hintT = 0;
+let acc = 0, last = 0, hudT = 0;
 
 function frame(now) {
   requestAnimationFrame(frame);
@@ -1317,7 +1308,6 @@ function frame(now) {
     speedEl.textContent = Math.round(P.vel.length() * 2.237);
     drawMini();
   }
-  if (simRunning && (hintT += dt) > 6 && hintEl.style.opacity !== '0') hintEl.style.opacity = '0';
 
   renderer.render(scene, camera);
 }

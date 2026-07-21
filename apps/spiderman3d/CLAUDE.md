@@ -103,6 +103,8 @@ Other V3 playtest laws:
   hides under the swipe bar. The in-game top-right corner belongs to the
   **minimap** (`#mini`): full-island silhouette prerendered from the same
   W/C profiles + parks + Broadway, player dot stamped at the HUD tick.
+- **No in-game instruction text** (user decision, V5): the HUD is speed +
+  minimap only; all control instructions live on the title screen.
 - **Ground decals need depth headroom (V5)**: lawns/reservoir/Broadway ribbon
   are near-coplanar with the island slab and z-fight at distance ("Central
   Park flashes") without BOTH a real y gap (≥ 0.2 m) and `polygonOffset`.
