@@ -217,7 +217,15 @@ geometry/material-level. The pillars:
   backward. Run arms swing biased BEHIND the body (+0.14 base, hands travel
   hip-to-chest). Suit zones are
   VERTEX COLORS under one neutral webbing texture (one material for the
-  whole body; the crisp belt line is two stations 5 mm apart). Boots are
+  whole body; the crisp belt line is two stations 5 mm apart). BODY PROFILE
+  LAW (V12): the trunk is a HUMAN profile, not a cylinder — V-taper with
+  chest WIDER than deep (rz/rx ≈ 0.6), waist dip, iliac flare, spine
+  S-curve via cz offsets, and the trunk ENDS at a narrow crotch nub where
+  the thighs take over (a broad bottom station reads as a skirt). Hands are
+  wrist→knuckle-flare→finger-taper with a relaxed cz curl (a flat ellipsoid
+  reads as a paddle). Eyes are near-flat decals (z-scale ≈ 0.12) hugging
+  the mask — bulging hemispheres read as bug eyes. Emblem depth must track
+  the pec surface (cz offset + rz) or it sinks into a smear. Boots are
   rigid on the ankle bones; eyes/emblem ride the head/chest bones. The
   animation controller poses BONES with the same setJ/aimLimbAt calls —
   elbows flex NEGATIVE x (forward), knees POSITIVE (backward), don't swap.

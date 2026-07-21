@@ -87,7 +87,7 @@ import * as THREE from 'three';
 
 const BOOT_T0 = performance.now();   // city gen + scene build cost, exposed as __dbg.bootMs
 
-const VERSION = 11;
+const VERSION = 12;
 // the version badge lives ONLY on the title screen (user decision, V5)
 document.getElementById('tver').textContent = 'V' + VERSION;
 
@@ -1058,8 +1058,8 @@ const bSpine = bone(bRoot, 0, 0.12, 0);         // 1.09
 const bChest = bone(bSpine, 0, 0.16, 0);        // 1.25
 const bHead  = bone(bChest, 0, 0.31, 0);        // 1.56
 const bShL = bone(bChest, 0.205, 0.17, 0), bShR = bone(bChest, -0.205, 0.17, 0);   // 1.42
-const bElL = bone(bShL, 0, -0.28, 0),     bElR = bone(bShR, 0, -0.28, 0);        // 1.16
-const bWrL = bone(bElL, 0, -0.26, 0),     bWrR = bone(bElR, 0, -0.26, 0);        // 0.90
+const bElL = bone(bShL, 0, -0.28, 0),     bElR = bone(bShR, 0, -0.28, 0);        // 1.14
+const bWrL = bone(bElL, 0, -0.26, 0),     bWrR = bone(bElR, 0, -0.26, 0);        // 0.88
 const bHipL = bone(bRoot, 0.10, -0.05, 0), bHipR = bone(bRoot, -0.10, -0.05, 0); // 0.92
 const bKnL = bone(bHipL, 0, -0.42, 0),    bKnR = bone(bHipR, 0, -0.42, 0);       // 0.50
 const bAnL = bone(bKnL, 0, -0.40, 0),     bAnR = bone(bKnR, 0, -0.40, 0);        // 0.10
@@ -1122,43 +1122,51 @@ function skinnedTube(stations, capTop = true, capBot = true) {
   return m;
 }
 const R = SUIT_RED, B = SUIT_BLUE;
-// trunk: crotch → hips → waist → chest → shoulders → neck → HEAD, one surface
+// trunk: a HUMAN profile, not a cylinder — V-taper (chest wider than deep),
+// waist dip, iliac hip flare, subtle spine S-curve via cz offsets, ending in
+// a NARROW crotch exactly where the thighs take over (no skirt below the
+// leg line). Ratios matter more than sizes: rz/rx ≈ 0.6 keeps it flat.
 skinnedTube([
-  { y: 0.76, rx: 0.115, rz: 0.085, w: [[bRoot, 1]], col: B },
-  { y: 0.90, rx: 0.150, rz: 0.105, w: [[bRoot, 1]], col: B },
-  { y: 1.00, rx: 0.145, rz: 0.100, w: [[bRoot, 0.6], [bSpine, 0.4]], col: B },
+  { y: 0.815, rx: 0.045, rz: 0.040, w: [[bRoot, 1]], col: B },              // crotch nub (hidden between thighs)
+  { y: 0.84, rx: 0.095, rz: 0.075, w: [[bRoot, 1]], col: B },
+  { y: 0.92, rx: 0.135, rz: 0.094, cz: -0.008, w: [[bRoot, 1]], col: B },   // glutes
+  { y: 1.00, rx: 0.142, rz: 0.096, cz: -0.004, w: [[bRoot, 0.6], [bSpine, 0.4]], col: B },  // iliac crest
   // crisp belt line: two stations a hair apart so red never gradients into blue
-  { y: 1.045, rx: 0.136, rz: 0.094, w: [[bSpine, 1]], col: B },
-  { y: 1.05, rx: 0.136, rz: 0.094, w: [[bSpine, 1]], col: R },
-  { y: 1.10, rx: 0.125, rz: 0.088, w: [[bSpine, 1]], col: R },
-  { y: 1.22, rx: 0.140, rz: 0.094, w: [[bSpine, 0.4], [bChest, 0.6]], col: R },
-  { y: 1.33, rx: 0.163, rz: 0.101, w: [[bChest, 1]], col: R },
-  { y: 1.42, rx: 0.185, rz: 0.100, w: [[bChest, 1]], col: R },
-  { y: 1.475, rx: 0.125, rz: 0.084, w: [[bChest, 1]], col: R },
-  { y: 1.51, rx: 0.052, rz: 0.048, w: [[bChest, 0.4], [bHead, 0.6]], col: R },
-  { y: 1.545, rx: 0.062, rz: 0.06, w: [[bHead, 1]], col: R },
-  { y: 1.60, rx: 0.112, rz: 0.104, w: [[bHead, 1]], col: R },
-  { y: 1.68, rx: 0.124, rz: 0.116, w: [[bHead, 1]], col: R },
-  { y: 1.75, rx: 0.104, rz: 0.100, w: [[bHead, 1]], col: R },
-  { y: 1.80, rx: 0.076, rz: 0.074, w: [[bHead, 1]], col: R },
-  { y: 1.832, rx: 0.048, rz: 0.048, w: [[bHead, 1]], col: R },
-  { y: 1.85, rx: 0.02, rz: 0.02, w: [[bHead, 1]], col: R },   // dome, not a point
+  { y: 1.045, rx: 0.126, rz: 0.088, w: [[bSpine, 1]], col: B },
+  { y: 1.05, rx: 0.126, rz: 0.088, w: [[bSpine, 1]], col: R },
+  { y: 1.10, rx: 0.113, rz: 0.082, cz: -0.004, w: [[bSpine, 1]], col: R },  // waist dip
+  { y: 1.20, rx: 0.138, rz: 0.092, cz: 0.004, w: [[bSpine, 0.4], [bChest, 0.6]], col: R },  // lats
+  { y: 1.30, rx: 0.160, rz: 0.099, cz: 0.010, w: [[bChest, 1]], col: R },   // pec mass
+  { y: 1.38, rx: 0.174, rz: 0.100, cz: 0.008, w: [[bChest, 1]], col: R },
+  { y: 1.43, rx: 0.184, rz: 0.097, w: [[bChest, 1]], col: R },              // shoulder line
+  { y: 1.472, rx: 0.120, rz: 0.082, w: [[bChest, 1]], col: R },             // trap slope
+  { y: 1.508, rx: 0.052, rz: 0.048, w: [[bChest, 0.4], [bHead, 0.6]], col: R },  // neck
+  { y: 1.545, rx: 0.062, rz: 0.058, w: [[bHead, 1]], col: R },              // jaw base
+  { y: 1.585, rx: 0.096, rz: 0.090, w: [[bHead, 1]], col: R },              // jaw
+  { y: 1.65, rx: 0.122, rz: 0.112, w: [[bHead, 1]], col: R },               // cheeks/ears line
+  { y: 1.73, rx: 0.114, rz: 0.107, w: [[bHead, 1]], col: R },
+  { y: 1.78, rx: 0.088, rz: 0.084, w: [[bHead, 1]], col: R },
+  { y: 1.812, rx: 0.060, rz: 0.058, w: [[bHead, 1]], col: R },
+  { y: 1.835, rx: 0.036, rz: 0.035, w: [[bHead, 1]], col: R },
+  { y: 1.848, rx: 0.016, rz: 0.016, w: [[bHead, 1]], col: R },              // crown dome
 ]);
-// arms: deltoid → bicep → elbow → forearm → wrist → mitt, smooth elbow bend
+// arms: bicep/forearm masses with a REAL hand — wrist, knuckle flare,
+// finger taper with a relaxed forward curl (the old mitt read as a paddle)
 function armTube(bSh, bEl, bWr, sx) {
   const x = 0.205 * sx;
   // stations MUST ascend in y (winding/caps assume it)
   return skinnedTube([
-    { y: 0.78, rx: 0.030, rz: 0.024, cx: x, w: [[bWr, 1]], col: R },
-    { y: 0.85, rx: 0.048, rz: 0.034, cx: x, w: [[bWr, 1]], col: R },
-    { y: 0.90, rx: 0.037, rz: 0.036, cx: x, w: [[bEl, 0.4], [bWr, 0.6]], col: R },
-    { y: 0.97, rx: 0.043, rz: 0.042, cx: x, w: [[bEl, 1]], col: R },
-    { y: 1.07, rx: 0.050, rz: 0.048, cx: x, w: [[bEl, 1]], col: R },
-    { y: 1.16, rx: 0.049, rz: 0.048, cx: x, w: [[bSh, 0.5], [bEl, 0.5]], col: R },
-    { y: 1.245, rx: 0.054, rz: 0.052, cx: x, w: [[bSh, 1]], col: R },
-    { y: 1.34, rx: 0.062, rz: 0.060, cx: x, w: [[bSh, 1]], col: R },
-    { y: 1.405, rx: 0.066, rz: 0.064, cx: x, w: [[bSh, 1]], col: R },
-    { y: 1.435, rx: 0.052, rz: 0.050, cx: x, w: [[bSh, 1]], col: R },
+    { y: 0.725, rx: 0.016, rz: 0.011, cx: x, cz: 0.010, w: [[bWr, 1]], col: R },  // fingertips
+    { y: 0.775, rx: 0.036, rz: 0.020, cx: x, cz: 0.006, w: [[bWr, 1]], col: R },  // fingers
+    { y: 0.84, rx: 0.045, rz: 0.025, cx: x, w: [[bWr, 1]], col: R },              // knuckles/palm
+    { y: 0.88, rx: 0.029, rz: 0.020, cx: x, w: [[bEl, 0.4], [bWr, 0.6]], col: R },  // wrist
+    { y: 0.95, rx: 0.040, rz: 0.037, cx: x, w: [[bEl, 1]], col: R },
+    { y: 1.04, rx: 0.052, rz: 0.048, cx: x, w: [[bEl, 1]], col: R },              // forearm bulge
+    { y: 1.14, rx: 0.046, rz: 0.044, cx: x, w: [[bSh, 0.5], [bEl, 0.5]], col: R },  // elbow
+    { y: 1.23, rx: 0.055, rz: 0.051, cx: x, w: [[bSh, 1]], col: R },
+    { y: 1.32, rx: 0.063, rz: 0.058, cx: x, w: [[bSh, 1]], col: R },              // bicep
+    { y: 1.405, rx: 0.066, rz: 0.062, cx: x, w: [[bSh, 1]], col: R },
+    { y: 1.435, rx: 0.050, rz: 0.048, cx: x, w: [[bSh, 1]], col: R },
   ]);
 }
 armTube(bShL, bElL, bWrL, 1);
@@ -1187,11 +1195,11 @@ for (const bAn of [bAnL, bAnR]) {
 }
 // eyes + emblem ride their bones
 for (const s of [-1, 1]) {
-  const outline = part(new THREE.SphereGeometry(0.052, 10, 8), MAT_DARK, 0.048 * s, 0.10, 0.096, bHead);
-  outline.scale.set(1.02, 1.32, 0.26);
+  const outline = part(new THREE.SphereGeometry(0.049, 10, 8), MAT_DARK, 0.047 * s, 0.095, 0.100, bHead);
+  outline.scale.set(1.0, 1.30, 0.13);   // near-flat: eyes are mask DECALS, not bulbs
   outline.rotation.z = -0.30 * s;
-  const lens = part(new THREE.SphereGeometry(0.044, 10, 8), MAT_EYE, 0.049 * s, 0.10, 0.104, bHead);
-  lens.scale.set(0.98, 1.26, 0.24);
+  const lens = part(new THREE.SphereGeometry(0.042, 10, 8), MAT_EYE, 0.048 * s, 0.095, 0.104, bHead);
+  lens.scale.set(0.96, 1.24, 0.12);
   lens.rotation.z = -0.30 * s;
 }
 {
