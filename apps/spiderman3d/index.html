@@ -963,39 +963,35 @@ timeUniforms.push(skyDome.material.uniforms.uTime);   // clouds drift
 }
 
 // ---------------------------------------------------------------------------
-// SPIDEY — character V4. Professional-read rules (per animation research):
-// - NO visible joints: every articulation is covered by a joint sphere, and
-//   limb segments are TAPERED (cylinder rTop≠rBottom + cap spheres) that
-//   overlap into the joints — bending never opens a seam.
-// - Heroic silhouette: V-taper chest, deltoids, calves, mitts, shaped boots.
-// - Webbed suit: procedural canvas texture (meridians + latitudes = classic
-//   mask webbing that reads correctly from every angle on spheres/capsules).
-// - Layered rig: pelvis→spine/chest→neck→head, clavicle-mounted arms; the
-//   gait animates hips AND counter-rotating chest AND stabilizing head.
+// SPIDEY — character V5: SKINNED MESH. The "plastic pieces" read of primitive
+// assemblies comes from rigid parts hinging at joints; real characters are a
+// continuous surface that BENDS. Each body part here is a procedurally lofted
+// tube of elliptical cross-sections (anatomy in the profile: chest taper,
+// bicep/calf bulges, neck flowing into the head) skinned to a real THREE
+// skeleton with smooth per-ring weights — elbows and knees curve like skin.
+// Suit zones (red/blue) are vertex colors under a neutral webbing texture, so
+// one material serves the whole body. Limb root rings sit embedded inside the
+// trunk volume, so there are no junction seams. The animation controller is
+// unchanged — bones pose exactly like the old joint groups.
 // Feet rest exactly at y = 0 (spidey.position = P.pos).
 // ---------------------------------------------------------------------------
-function webTexture(base, line) {
+function webTexture() {   // neutral webbing: white base, dark grid — tinted by vertex color
   const c = document.createElement('canvas');
-  c.width = c.height = 256;
+  c.width = c.height = 128;
   const x = c.getContext('2d');
-  x.fillStyle = base;
-  x.fillRect(0, 0, 256, 256);
-  x.strokeStyle = line;
-  x.lineWidth = 1.8;
-  for (let i = 0; i < 256; i += 36) {          // meridians (coarse, like the classic mask)
-    x.beginPath(); x.moveTo(i, 0); x.lineTo(i, 256); x.stroke();
-  }
-  for (let j = 0; j < 256; j += 30) {          // latitudes
-    x.beginPath(); x.moveTo(0, j); x.lineTo(256, j); x.stroke();
-  }
+  x.fillStyle = '#ffffff';
+  x.fillRect(0, 0, 128, 128);
+  x.strokeStyle = 'rgba(30, 6, 8, 0.42)';
+  x.lineWidth = 1.6;
+  for (let i = 0; i <= 128; i += 21) { x.beginPath(); x.moveTo(i, 0); x.lineTo(i, 128); x.stroke(); }
+  for (let j = 0; j <= 128; j += 18) { x.beginPath(); x.moveTo(0, j); x.lineTo(128, j); x.stroke(); }
   const t = new THREE.CanvasTexture(c);
   t.wrapS = t.wrapT = THREE.RepeatWrapping;
   return t;
 }
-const MAT_RED  = new THREE.MeshLambertMaterial({ map: webTexture('#c33430', 'rgba(88,10,12,0.5)') });
+const SUIT_RED = new THREE.Color(0xc33430), SUIT_BLUE = new THREE.Color(0x2b4494);
+const suitMat = new THREE.MeshLambertMaterial({ map: webTexture(), vertexColors: true });
 const MAT_RED_PLAIN = new THREE.MeshLambertMaterial({ color: 0xb92f2b });
-const MAT_BLUE = new THREE.MeshLambertMaterial({ color: 0x2b4494 });
-const MAT_BLUE2 = new THREE.MeshLambertMaterial({ color: 0x223a85 });
 const MAT_DARK = new THREE.MeshLambertMaterial({ color: 0x16181d });
 const MAT_EYE  = new THREE.MeshBasicMaterial({ color: 0xf4f7ff });
 function part(geo, mat, x, y, z, parent) {
@@ -1004,74 +1000,171 @@ function part(geo, mat, x, y, z, parent) {
   parent.add(m);
   return m;
 }
-function joint(parent, x, y, z) {
-  const g = new THREE.Group();
-  g.position.set(x, y, z);
-  parent.add(g);
-  return g;
+
+const spidey = new THREE.Group();
+// --- skeleton (rest pose: everything vertical, model faces +z; RIGHT = -x) --
+function bone(parent, x, y, z) {
+  const b = new THREE.Bone();
+  b.position.set(x, y, z);
+  if (parent) parent.add(b);
+  return b;
 }
-// tapered limb segment hanging from its joint, sphere-capped both ends
-function seg(rTop, rBot, len, mat, parent, sx = 1) {
-  const m = part(new THREE.CylinderGeometry(rTop, rBot, len, 10), mat, 0, -len / 2, 0, parent);
-  m.scale.x = sx;
-  part(new THREE.SphereGeometry(rTop, 10, 8), mat, 0, 0, 0, parent).scale.x = sx;
-  part(new THREE.SphereGeometry(rBot, 10, 8), mat, 0, -len, 0, parent).scale.x = sx;
+const bRoot  = bone(null, 0, 0.97, 0);          // pelvis
+const bSpine = bone(bRoot, 0, 0.12, 0);         // 1.09
+const bChest = bone(bSpine, 0, 0.16, 0);        // 1.25
+const bHead  = bone(bChest, 0, 0.31, 0);        // 1.56
+const bShL = bone(bChest, 0.20, 0.19, 0), bShR = bone(bChest, -0.20, 0.19, 0);   // 1.44
+const bElL = bone(bShL, 0, -0.28, 0),     bElR = bone(bShR, 0, -0.28, 0);        // 1.16
+const bWrL = bone(bElL, 0, -0.26, 0),     bWrR = bone(bElR, 0, -0.26, 0);        // 0.90
+const bHipL = bone(bRoot, 0.10, -0.05, 0), bHipR = bone(bRoot, -0.10, -0.05, 0); // 0.92
+const bKnL = bone(bHipL, 0, -0.42, 0),    bKnR = bone(bHipR, 0, -0.42, 0);       // 0.50
+const bAnL = bone(bKnL, 0, -0.40, 0),     bAnR = bone(bKnR, 0, -0.40, 0);        // 0.10
+const BONES = [bRoot, bSpine, bChest, bHead, bShL, bElL, bWrL, bShR, bElR, bWrR,
+  bHipL, bKnL, bAnL, bHipR, bKnR, bAnR];
+const BI = {}; BONES.forEach((b, i) => { BI[b.uuid] = i; });
+bRoot.updateMatrixWorld(true);   // bind pose must be realized BEFORE Skeleton computes inverses
+const skeleton = new THREE.Skeleton(BONES);
+
+// --- lofted skinned tube builder -------------------------------------------
+// stations: { y, rx, rz, cx?, cz?, w: [[bone, weight], [bone, weight]?], col }
+function skinnedTube(stations, capTop = true, capBot = true) {
+  const SEGS = 14;
+  const pos = [], nrm = [], uv = [], col = [], sIdx = [], sWgt = [], idx = [];
+  const push = (p, n, u, v, c, w) => {
+    pos.push(...p); nrm.push(...n); uv.push(u, v); col.push(c.r, c.g, c.b);
+    const w0 = w[0], w1 = w[1] || [w0[0], 0];
+    sIdx.push(BI[w0[0].uuid], BI[w1[0].uuid], 0, 0);
+    const tot = w0[1] + w1[1];
+    sWgt.push(w0[1] / tot, w1[1] / tot, 0, 0);
+  };
+  stations.forEach((st, si) => {
+    const prev = stations[Math.max(0, si - 1)], next = stations[Math.min(stations.length - 1, si + 1)];
+    const slope = ((prev.rx + prev.rz) - (next.rx + next.rz)) / Math.max(0.01, next.y - prev.y) * 0.5;
+    for (let k = 0; k <= SEGS; k++) {
+      const th = (k / SEGS) * Math.PI * 2;
+      const cx = st.cx || 0, cz = st.cz || 0;
+      push([cx + Math.cos(th) * st.rx, st.y, cz + Math.sin(th) * st.rz],
+        [Math.cos(th), slope, Math.sin(th)],
+        k / SEGS * 3, st.y * 4, st.col, st.w);
+    }
+  });
+  for (let si = 0; si < stations.length - 1; si++)
+    for (let k = 0; k < SEGS; k++) {
+      const a = si * (SEGS + 1) + k, b = a + SEGS + 1;
+      idx.push(a, b, a + 1, a + 1, b, b + 1);
+    }
+  const capIt = (st, dir) => {
+    const ci = pos.length / 3;
+    push([st.cx || 0, st.y + dir * Math.min(st.rx, st.rz) * 0.85, st.cz || 0], [0, dir, 0], 0.5, st.y * 4, st.col, st.w);
+    const base = stations.indexOf(st) * (SEGS + 1);
+    for (let k = 0; k < SEGS; k++)
+      dir > 0 ? idx.push(base + k, ci, base + k + 1) : idx.push(base + k, base + k + 1, ci);
+  };
+  if (capTop) capIt(stations[stations.length - 1], 1);
+  if (capBot) capIt(stations[0], -1);
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  g.setAttribute('normal', new THREE.Float32BufferAttribute(nrm, 3));
+  g.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
+  g.setAttribute('color', new THREE.Float32BufferAttribute(col, 3));
+  g.setAttribute('skinIndex', new THREE.Uint16BufferAttribute(sIdx, 4));
+  g.setAttribute('skinWeight', new THREE.Float32BufferAttribute(sWgt, 4));
+  g.setIndex(idx);
+  g.normalizeNormals();
+  const m = new THREE.SkinnedMesh(g, suitMat);
+  m.frustumCulled = false;   // bones carry it far from its static bounds
+  spidey.add(m);
+  m.bind(skeleton);
   return m;
 }
-const spidey = new THREE.Group();
-// model faces +z; anatomical RIGHT is -x (handedness law)
-const pelvisG = joint(spidey, 0, 0.97, 0);
-part(new THREE.SphereGeometry(0.155, 12, 10), MAT_BLUE, 0, 0, 0, pelvisG).scale.set(1.05, 0.72, 0.78);
-const chestG = joint(pelvisG, 0, 0.24, 0);
-{ // abdomen bridges pelvis and chest so spine bends never open a gap
-  part(new THREE.SphereGeometry(0.115, 12, 10), MAT_RED, 0, -0.10, 0, chestG).scale.set(1.0, 0.85, 0.68);
-  const chest = part(new THREE.CylinderGeometry(0.17, 0.115, 0.30, 12), MAT_RED, 0, 0.09, 0, chestG);
-  chest.scale.z = 0.68;
-  part(new THREE.SphereGeometry(0.17, 12, 10), MAT_RED, 0, 0.235, 0, chestG).scale.set(1, 0.6, 0.68);  // shoulder cap
-  const emblem = part(new THREE.SphereGeometry(0.024, 8, 6), MAT_DARK, 0, 0.10, 0.121, chestG);
-  emblem.scale.set(0.75, 1.5, 0.3);                                        // spider abdomen
-  for (const [ang, ly] of [[0.55, 0.115], [1.05, 0.10], [-0.55, 0.085], [-1.05, 0.10]])
-    for (const sxx of [-1, 1]) {
-      const leg = part(new THREE.BoxGeometry(0.075, 0.009, 0.012), MAT_DARK, 0.033 * sxx, ly, 0.119, chestG);
-      leg.rotation.z = ang * sxx;
-    }
-  part(new THREE.CylinderGeometry(0.05, 0.056, 0.09, 8), MAT_RED, 0, 0.29, 0, chestG);  // neck
+const R = SUIT_RED, B = SUIT_BLUE;
+// trunk: crotch → hips → waist → chest → shoulders → neck → HEAD, one surface
+skinnedTube([
+  { y: 0.76, rx: 0.115, rz: 0.085, w: [[bRoot, 1]], col: B },
+  { y: 0.90, rx: 0.150, rz: 0.105, w: [[bRoot, 1]], col: B },
+  { y: 1.00, rx: 0.145, rz: 0.100, w: [[bRoot, 0.6], [bSpine, 0.4]], col: B },
+  // crisp belt line: two stations a hair apart so red never gradients into blue
+  { y: 1.045, rx: 0.136, rz: 0.094, w: [[bSpine, 1]], col: B },
+  { y: 1.05, rx: 0.136, rz: 0.094, w: [[bSpine, 1]], col: R },
+  { y: 1.10, rx: 0.125, rz: 0.088, w: [[bSpine, 1]], col: R },
+  { y: 1.22, rx: 0.140, rz: 0.094, w: [[bSpine, 0.4], [bChest, 0.6]], col: R },
+  { y: 1.33, rx: 0.163, rz: 0.101, w: [[bChest, 1]], col: R },
+  { y: 1.42, rx: 0.172, rz: 0.100, w: [[bChest, 1]], col: R },
+  { y: 1.475, rx: 0.115, rz: 0.082, w: [[bChest, 1]], col: R },
+  { y: 1.51, rx: 0.052, rz: 0.048, w: [[bChest, 0.4], [bHead, 0.6]], col: R },
+  { y: 1.545, rx: 0.062, rz: 0.06, w: [[bHead, 1]], col: R },
+  { y: 1.60, rx: 0.112, rz: 0.104, w: [[bHead, 1]], col: R },
+  { y: 1.68, rx: 0.124, rz: 0.116, w: [[bHead, 1]], col: R },
+  { y: 1.75, rx: 0.104, rz: 0.100, w: [[bHead, 1]], col: R },
+  { y: 1.80, rx: 0.070, rz: 0.068, w: [[bHead, 1]], col: R },
+  { y: 1.828, rx: 0.032, rz: 0.032, w: [[bHead, 1]], col: R },   // dome, not a point
+]);
+// arms: deltoid → bicep → elbow → forearm → wrist → mitt, smooth elbow bend
+function armTube(bSh, bEl, bWr, sx) {
+  const x = 0.20 * sx;
+  // stations MUST ascend in y (winding/caps assume it)
+  return skinnedTube([
+    { y: 0.78, rx: 0.030, rz: 0.024, cx: x, w: [[bWr, 1]], col: R },
+    { y: 0.85, rx: 0.048, rz: 0.034, cx: x, w: [[bWr, 1]], col: R },
+    { y: 0.90, rx: 0.037, rz: 0.036, cx: x, w: [[bEl, 0.4], [bWr, 0.6]], col: R },
+    { y: 0.97, rx: 0.043, rz: 0.042, cx: x, w: [[bEl, 1]], col: R },
+    { y: 1.07, rx: 0.056, rz: 0.054, cx: x, w: [[bEl, 1]], col: R },
+    { y: 1.16, rx: 0.049, rz: 0.048, cx: x, w: [[bSh, 0.5], [bEl, 0.5]], col: R },
+    { y: 1.245, rx: 0.060, rz: 0.058, cx: x, w: [[bSh, 1]], col: R },
+    { y: 1.34, rx: 0.070, rz: 0.068, cx: x, w: [[bSh, 1]], col: R },
+    { y: 1.44, rx: 0.082, rz: 0.080, cx: x, w: [[bSh, 1]], col: R },
+    { y: 1.50, rx: 0.055, rz: 0.055, cx: x, w: [[bSh, 1]], col: R },
+  ]);
 }
-const headG = joint(chestG, 0, 0.41, 0);
-part(new THREE.SphereGeometry(0.132, 16, 12), MAT_RED, 0, 0, 0.012, headG).scale.set(0.9, 1.05, 0.96);
-for (const s of [-1, 1]) {           // lens eyes: dark outline behind white lens
-  const outline = part(new THREE.SphereGeometry(0.054, 10, 8), MAT_DARK, 0.049 * s, 0.008, 0.104, headG);
+armTube(bShL, bElL, bWrL, 1);
+armTube(bShR, bElR, bWrR, -1);
+// legs: hip → thigh → knee → calf → ankle, smooth knee bend
+function legTube(bHip, bKn, bAn, sx) {
+  const x = 0.10 * sx;
+  // stations MUST ascend in y (winding/caps assume it)
+  return skinnedTube([
+    { y: 0.13, rx: 0.038, rz: 0.038, cx: x, w: [[bKn, 0.4], [bAn, 0.6]], col: B },
+    { y: 0.24, rx: 0.046, rz: 0.045, cx: x, w: [[bKn, 1]], col: B },
+    { y: 0.40, rx: 0.064, rz: 0.062, cx: x, cz: -0.006, w: [[bKn, 1]], col: B },
+    { y: 0.50, rx: 0.056, rz: 0.055, cx: x, w: [[bHip, 0.5], [bKn, 0.5]], col: B },
+    { y: 0.66, rx: 0.076, rz: 0.073, cx: x, w: [[bHip, 1]], col: B },
+    { y: 0.84, rx: 0.090, rz: 0.086, cx: x, w: [[bHip, 1]], col: B },
+    { y: 0.98, rx: 0.098, rz: 0.094, cx: x, w: [[bHip, 1]], col: B },
+  ], true, false);   // top cap tucks into the pelvis; open bottom hides in the boot cuff
+}
+legTube(bHipL, bKnL, bAnL, 1);
+legTube(bHipR, bKnR, bAnR, -1);
+// boots: rigid on the ankle bones (boots ARE rigid objects)
+for (const bAn of [bAnL, bAnR]) {
+  part(new THREE.CylinderGeometry(0.05, 0.056, 0.14, 10), MAT_RED_PLAIN, 0, -0.02, 0, bAn);
+  part(new THREE.BoxGeometry(0.095, 0.07, 0.15), MAT_RED_PLAIN, 0, -0.065, 0.03, bAn);
+  part(new THREE.BoxGeometry(0.082, 0.052, 0.06), MAT_RED_PLAIN, 0, -0.074, 0.12, bAn);
+}
+// eyes + emblem ride their bones
+for (const s of [-1, 1]) {
+  const outline = part(new THREE.SphereGeometry(0.052, 10, 8), MAT_DARK, 0.048 * s, 0.10, 0.096, bHead);
   outline.scale.set(1.02, 1.32, 0.26);
   outline.rotation.z = -0.30 * s;
-  const lens = part(new THREE.SphereGeometry(0.046, 10, 8), MAT_EYE, 0.050 * s, 0.008, 0.112, headG);
+  const lens = part(new THREE.SphereGeometry(0.044, 10, 8), MAT_EYE, 0.049 * s, 0.10, 0.104, bHead);
   lens.scale.set(0.98, 1.26, 0.24);
   lens.rotation.z = -0.30 * s;
 }
-function buildArm(sx) {
-  const shoulder = joint(chestG, 0.21 * sx, 0.16, 0);
-  part(new THREE.SphereGeometry(0.075, 10, 8), MAT_RED, 0, 0.01, 0, shoulder);   // deltoid
-  seg(0.062, 0.049, 0.28, MAT_RED, shoulder);
-  const elbow = joint(shoulder, 0, -0.28, 0);
-  seg(0.052, 0.038, 0.26, MAT_RED, elbow);
-  const mitt = part(new THREE.SphereGeometry(0.05, 10, 8), MAT_RED, 0, -0.29, 0.005, elbow);
-  mitt.scale.set(0.9, 1.35, 0.72);
-  const hand = joint(elbow, 0, -0.31, 0);
-  return { shoulder, elbow, hand };
+{
+  const emblem = part(new THREE.SphereGeometry(0.022, 8, 6), MAT_DARK, 0, 0.14, 0.099, bChest);
+  emblem.scale.set(0.75, 1.5, 0.3);
+  for (const [ang, ly] of [[0.55, 0.155], [1.05, 0.14], [-0.55, 0.125], [-1.05, 0.14]])
+    for (const sxx of [-1, 1]) {
+      const leg = part(new THREE.BoxGeometry(0.07, 0.008, 0.012), MAT_DARK, 0.031 * sxx, ly, 0.097, bChest);
+      leg.rotation.z = ang * sxx;
+    }
 }
-function buildLeg(sx) {
-  const hip = joint(pelvisG, 0.10 * sx, -0.05, 0);
-  seg(0.082, 0.06, 0.44, MAT_BLUE, hip);
-  const knee = joint(hip, 0, -0.44, 0);
-  seg(0.063, 0.042, 0.40, MAT_BLUE2, knee);
-  part(new THREE.SphereGeometry(0.06, 10, 8), MAT_BLUE2, 0, -0.09, -0.012, knee).scale.set(0.9, 1.3, 0.95); // calf
-  const foot = joint(knee, 0, -0.40, 0);
-  part(new THREE.BoxGeometry(0.095, 0.075, 0.15), MAT_RED_PLAIN, 0, -0.028, 0.03, foot);      // boot
-  part(new THREE.BoxGeometry(0.085, 0.058, 0.07), MAT_RED_PLAIN, 0, -0.036, 0.115, foot);     // toe
-  part(new THREE.CylinderGeometry(0.048, 0.055, 0.10, 8), MAT_RED_PLAIN, 0, 0.0, -0.005, foot); // boot cuff
-  return { hip, knee, foot };
-}
-const armL = buildArm(1),  armR = buildArm(-1);
-const legL = buildLeg(1),  legR = buildLeg(-1);
+// animation refs — the controller poses these exactly like the old groups
+const pelvisG = bRoot, chestG = bChest, headG = bHead;
+const armL = { shoulder: bShL, elbow: bElL, hand: bWrL };
+const armR = { shoulder: bShR, elbow: bElR, hand: bWrR };
+const legL = { hip: bHipL, knee: bKnL, foot: bAnL };
+const legR = { hip: bHipR, knee: bKnR, foot: bAnR };
+spidey.add(bRoot);
 scene.add(spidey);
 // soft blob shadow — grounds the character and reads altitude while swinging
 const shadowTex = (() => {

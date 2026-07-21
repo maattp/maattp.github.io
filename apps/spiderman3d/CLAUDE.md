@@ -180,18 +180,27 @@ geometry/material-level. The pillars:
 - **Set dressing** (water towers on mid-rise roofs, park trees) is instanced
   and decor-only — the one sanctioned exception to the supportAt law; small
   enough that clipping is acceptable.
-- **Rig (V8, research-based)**: pelvis→chest→head trunk with clavicle-
-  mounted arms; every articulation covered by a joint sphere and limb
-  segments are TAPERED cylinders with cap spheres — bending never opens a
-  seam (the stick-figure killer). Elbows flex NEGATIVE x (forward), knees
-  POSITIVE (backward) — don't swap. Gait phase is DISTANCE-driven
-  (`gaitPh += hs*dt*1.35`, feet plant instead of skating) with the canonical
-  contact→down→passing→up shape: knee fold on recovery, foot plantarflex,
-  hip yaw + chest counter-rotation + head stabilization, landing squash from
-  `P.landK`. Webbed-suit canvas texture (meridians+latitudes reads correctly
-  on spheres/capsules from every angle). Blob shadow tracks `supportAt`
-  beneath the player (altitude cue). `__dbg.closeup(true)` orbits a portrait
-  camera for character work — use it for any rig change.
+- **Rig (V8: SKINNED MESH — the anti-"plastic toy" law)**: the body is five
+  procedurally lofted `SkinnedMesh` tubes (trunk-through-head, arms, legs) of
+  elliptical cross-section stations bound to one THREE.Skeleton — a
+  continuous surface that BENDS at elbows/knees instead of rigid pieces
+  hinging. Rules baked into `skinnedTube()`: stations MUST ascend in y
+  (winding/caps assume it); joint rings carry split weights (0.5/0.5) for
+  the smooth bend; limb root rings embed inside the trunk volume so there
+  are no junction seams; `bRoot.updateMatrixWorld(true)` must run BEFORE
+  `new Skeleton(...)` or bind inverses are identity garbage. Suit zones are
+  VERTEX COLORS under one neutral webbing texture (one material for the
+  whole body; the crisp belt line is two stations 5 mm apart). Boots are
+  rigid on the ankle bones; eyes/emblem ride the head/chest bones. The
+  animation controller poses BONES with the same setJ/aimLimbAt calls —
+  elbows flex NEGATIVE x (forward), knees POSITIVE (backward), don't swap.
+  Gait phase is DISTANCE-driven (`gaitPh += hs*dt*1.35`, feet plant instead
+  of skating) with the canonical contact→down→passing→up shape: knee fold
+  on recovery, foot plantarflex, hip yaw + chest counter-rotation + head
+  stabilization, landing squash from `P.landK`. Blob shadow tracks
+  `supportAt` beneath the player (altitude cue). `__dbg.closeup(true)`
+  orbits a portrait camera — use it for ANY rig change (it has caught a
+  backwards elbow, a conical skull, and a gradient belt).
 - **Skyline (V8)**: towers > 120 m are wedding-cake SETBACK stacks (2-3
   AABB columns, same grp/color) — ledges are real landable roofs; glass-
   palette instances render as curtain wall (keyed on `vColor.b > vColor.r`),
