@@ -97,7 +97,8 @@ const targeted = await evalJson(`(() => {
   }
   const meanDiff = diffs.length ? diffs.reduce((x, y) => x + y, 0) / diffs.length : 0;
   // deep supertall canyon (51st St): street starts must attach — guards the
-  // 55 m street-reachable face-ring guarantee
+  // 55 m street-reachable face-ring guarantee. Same spot every trial on
+  // purpose: this is a determinism/consistency check, not a spatial sweep.
   let canyonGot = 0;
   for (let t = 0; t < 6; t++) {
     __dbg.P.pos.set(272, 0, -10800 + 7800);

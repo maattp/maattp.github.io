@@ -32,16 +32,19 @@
   #speed b { font-size: 26px; }
   #hint { position: absolute; bottom: calc(env(safe-area-inset-bottom) + 26px); left: 0; right: 0; text-align: center;
     font-size: 13px; font-weight: 600; opacity: 0.75; text-shadow: 0 1px 3px rgba(0,0,0,0.6); transition: opacity 1s; }
-  #ver { position: absolute; bottom: calc(env(safe-area-inset-bottom) + 6px); right: calc(env(safe-area-inset-right) + 10px);
-    font-size: 11px; font-weight: 700; opacity: 0.4; }
+  /* version badges live TOP-right: iOS standalone reports safe-area-inset-
+     bottom as 0 (the layout viewport stops short of the home indicator), so
+     bottom-anchored text ends up hidden under the swipe bar */
+  #ver { position: absolute; top: calc(env(safe-area-inset-top) + 12px); right: calc(env(safe-area-inset-right) + 12px);
+    font-size: 11px; font-weight: 700; opacity: 0.55; }
 
   #fade { background: #0c2a3e; opacity: 0; pointer-events: none; transition: opacity 0.25s; }
 
   #title { display: flex; flex-direction: column; align-items: center; justify-content: center;
     background: linear-gradient(180deg, #0e1a38 0%, #1c2f5e 55%, #45262e 100%); color: #fff; z-index: 10;
     padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left); }
-  #tver { position: absolute; bottom: calc(env(safe-area-inset-bottom) + 10px); right: calc(env(safe-area-inset-right) + 12px);
-    font-size: 13px; font-weight: 800; opacity: 0.55; }
+  #tver { position: absolute; top: calc(env(safe-area-inset-top) + 12px); right: calc(env(safe-area-inset-right) + 14px);
+    font-size: 13px; font-weight: 800; opacity: 0.7; }
   #title h1 { font-size: 42px; font-weight: 900; letter-spacing: 2px; color: #e23636;
     text-shadow: 0 3px 0 #7e1414, 0 8px 24px rgba(0,0,0,0.6); text-align: center; line-height: 1.05; }
   #title h1 span { display: block; font-size: 22px; color: #cfe0ff; text-shadow: 0 2px 0 #23305e; letter-spacing: 8px; }
@@ -83,7 +86,7 @@ import * as THREE from 'three';
 
 const BOOT_T0 = performance.now();   // city gen + scene build cost, exposed as __dbg.bootMs
 
-const VERSION = 4;
+const VERSION = 5;
 document.getElementById('ver').textContent = 'V' + VERSION;
 document.getElementById('tver').textContent = 'V' + VERSION;
 
@@ -240,7 +243,7 @@ const blocks = [];      // {x0,x1,z0,z1} — for sidewalk plinths
 // all boxes uniformly because of this). o must stay comfortably above SHRINK:
 // o - SHRINK is the float-safety gap.
 let grpId = 0;   // one visual identity (facade color) per placed building, shared by its wedge slices
-function addBuilding(x0, x1, z0, z1, h, small, grp) {
+function addBuilding(x0, x1, z0, z1, h, small, grp, rings = true) {
   const cx = (x0 + x1) / 2, cz = (z0 + z1) / 2;
   buildings.push({ x0, x1, z0, z1, h, cx, cz, grp });
   const o = 0.5, ay = h + 0.15;
@@ -254,8 +257,9 @@ function addBuilding(x0, x1, z0, z1, h, small, grp) {
   // canyons (roofs above ANCHOR_R) would be unswingable from the street.
   // The 55 m ring is the guarantee: always inside ANCHOR_R from street level,
   // whatever the tower's height (proportional-only rings left dead zones).
-  // Width guard: wedge slices skip rings so a sliced tower doesn't multiply them.
-  if (x1 - x0 >= 25)
+  // rings=false on all but the widest wedge slice — slicing must never
+  // multiply a tower's ring set (placeBuilding enforces one per building).
+  if (rings && x1 - x0 >= 25)
     for (const lvl of h > 220 ? [55, h * 0.45, h * 0.75]
                    : h > 90 ? (h * 0.55 > 70 ? [55, h * 0.55] : [55]) : [])
       anchors.push(
@@ -279,13 +283,20 @@ function placeBuilding(x0, x1, z0, z1, h, small) {
     return;
   }
   const N = Math.max(2, Math.min(5, Math.round((z1 - z0) / 7)));
+  const slices = [];
   for (let i = 0; i < N; i++) {
     const sz0 = z0 + (i / N) * (z1 - z0), sz1 = z0 + ((i + 1) / N) * (z1 - z0);
     const bw = bwayXAt((sz0 + sz1) / 2);
     const L1 = Math.min(x1, bw - BWAY_HALF), R0 = Math.max(x0, bw + BWAY_HALF);
-    if (L1 - x0 >= 4) addBuilding(x0, L1, sz0, sz1, h, true, g);   // west-of-Broadway slice
-    if (x1 - R0 >= 4) addBuilding(R0, x1, sz0, sz1, h, true, g);   // east-of-Broadway slice
+    if (L1 - x0 >= 4) slices.push([x0, L1, sz0, sz1]);   // west-of-Broadway slice
+    if (x1 - R0 >= 4) slices.push([R0, x1, sz0, sz1]);   // east-of-Broadway slice
   }
+  // exactly ONE face-ring set per crossing building: the widest slice keeps
+  // it (preserves the 55 m street-reach guarantee at the corridor without
+  // multiplying rings once per z-strip)
+  let widest = -1, wbest = 0;
+  slices.forEach((s, i) => { if (s[1] - s[0] > wbest) { wbest = s[1] - s[0]; widest = i; } });
+  slices.forEach((s, i) => addBuilding(s[0], s[1], s[2], s[3], h, true, g, i === widest));
 }
 
 (function genCity() {
@@ -465,7 +476,11 @@ const scene = new THREE.Scene();
 const SKY = 0x9fc6ea;
 scene.background = new THREE.Color(SKY);
 scene.fog = new THREE.Fog(SKY, 200, 1500);
-const camera = new THREE.PerspectiveCamera(78, 1, 0.1, 3200);
+// far plane sits just past the fog wall — beyond 1500 everything is sky
+// color, so a longer far plane only rasterizes invisible fragments.
+// near = 0.5 (NOT 0.1): near-plane distance dominates depth precision, and
+// the ground-decal layers (lawns/ribbon) z-fight at distance without it.
+const camera = new THREE.PerspectiveCamera(78, 1, 0.5, 1700);
 
 scene.add(new THREE.HemisphereLight(0xbfd9ff, 0x5e5a52, 1.0));
 const sun = new THREE.DirectionalLight(0xfff2dd, 2.0);
@@ -500,11 +515,15 @@ scene.add(sun);
 }
 // parks
 {
-  const grass = new THREE.MeshLambertMaterial({ color: 0x4a7a44 });
+  // Ground decals (lawns/reservoir/ribbon) sit near-coplanar with the island
+  // slab: they need BOTH a real y gap (≥ 0.2) and polygonOffset, or they
+  // z-fight ("Central Park flashes") at distance. Don't thin these out.
+  const grass = new THREE.MeshLambertMaterial({ color: 0x4a7a44,
+    polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -1 });
   const addLawn = (x0, x1, z0, z1) => {
     const p = new THREE.Mesh(new THREE.PlaneGeometry(x1 - x0, z1 - z0), grass);
     p.rotation.x = -Math.PI / 2;
-    p.position.set((x0 + x1) / 2, 0.05, (z0 + z1) / 2);
+    p.position.set((x0 + x1) / 2, 0.2, (z0 + z1) / 2);
     scene.add(p);
   };
   for (const p of PARKS) if (!p.noLawn) addLawn(p.x0, p.x1, p.z0, p.z1);
@@ -538,17 +557,19 @@ scene.add(sun);
       shape.lineTo(bwayXAt(z) + RIBBON, -z);
     }
     const bway = new THREE.Mesh(new THREE.ShapeGeometry(shape),
-      new THREE.MeshLambertMaterial({ color: 0x474c54 }));
+      new THREE.MeshLambertMaterial({ color: 0x474c54,
+        polygonOffset: true, polygonOffsetFactor: -3, polygonOffsetUnits: -3 }));
     bway.rotation.x = -Math.PI / 2;   // shape (x, -z) → world (x, z)
-    bway.position.y = 0.32;           // above the 0.3 sidewalk plinths it crosses
+    bway.position.y = 0.5;            // clear of the 0.3 sidewalk plinths it crosses
     scene.add(bway);
   }
   // Central Park reservoir (visual water — physically it's still park lawn)
   const res = new THREE.Mesh(new THREE.CircleGeometry(1, 32),
-    new THREE.MeshLambertMaterial({ color: 0x2a6584 }));
+    new THREE.MeshLambertMaterial({ color: 0x2a6584,
+      polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2 }));
   res.rotation.x = -Math.PI / 2;
   res.scale.set(300, 380, 1);
-  res.position.set((CENTRAL_PARK.x0 + CENTRAL_PARK.x1) / 2, 0.08, zk(11.2));
+  res.position.set((CENTRAL_PARK.x0 + CENTRAL_PARK.x1) / 2, 0.4, zk(11.2));
   scene.add(res);
 }
 // sidewalk plinths — one per BLOCK, so the street grid reads at any density
