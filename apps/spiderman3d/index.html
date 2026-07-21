@@ -87,7 +87,7 @@ import * as THREE from 'three';
 
 const BOOT_T0 = performance.now();   // city gen + scene build cost, exposed as __dbg.bootMs
 
-const VERSION = 10;
+const VERSION = 11;
 // the version badge lives ONLY on the title screen (user decision, V5)
 document.getElementById('tver').textContent = 'V' + VERSION;
 
@@ -1057,7 +1057,7 @@ const bRoot  = bone(null, 0, 0.97, 0);          // pelvis
 const bSpine = bone(bRoot, 0, 0.12, 0);         // 1.09
 const bChest = bone(bSpine, 0, 0.16, 0);        // 1.25
 const bHead  = bone(bChest, 0, 0.31, 0);        // 1.56
-const bShL = bone(bChest, 0.215, 0.19, 0), bShR = bone(bChest, -0.215, 0.19, 0);   // 1.44
+const bShL = bone(bChest, 0.205, 0.17, 0), bShR = bone(bChest, -0.205, 0.17, 0);   // 1.42
 const bElL = bone(bShL, 0, -0.28, 0),     bElR = bone(bShR, 0, -0.28, 0);        // 1.16
 const bWrL = bone(bElL, 0, -0.26, 0),     bWrR = bone(bElR, 0, -0.26, 0);        // 0.90
 const bHipL = bone(bRoot, 0.10, -0.05, 0), bHipR = bone(bRoot, -0.10, -0.05, 0); // 0.92
@@ -1133,8 +1133,8 @@ skinnedTube([
   { y: 1.10, rx: 0.125, rz: 0.088, w: [[bSpine, 1]], col: R },
   { y: 1.22, rx: 0.140, rz: 0.094, w: [[bSpine, 0.4], [bChest, 0.6]], col: R },
   { y: 1.33, rx: 0.163, rz: 0.101, w: [[bChest, 1]], col: R },
-  { y: 1.42, rx: 0.172, rz: 0.100, w: [[bChest, 1]], col: R },
-  { y: 1.475, rx: 0.115, rz: 0.082, w: [[bChest, 1]], col: R },
+  { y: 1.42, rx: 0.185, rz: 0.100, w: [[bChest, 1]], col: R },
+  { y: 1.475, rx: 0.125, rz: 0.084, w: [[bChest, 1]], col: R },
   { y: 1.51, rx: 0.052, rz: 0.048, w: [[bChest, 0.4], [bHead, 0.6]], col: R },
   { y: 1.545, rx: 0.062, rz: 0.06, w: [[bHead, 1]], col: R },
   { y: 1.60, rx: 0.112, rz: 0.104, w: [[bHead, 1]], col: R },
@@ -1146,7 +1146,7 @@ skinnedTube([
 ]);
 // arms: deltoid → bicep → elbow → forearm → wrist → mitt, smooth elbow bend
 function armTube(bSh, bEl, bWr, sx) {
-  const x = 0.215 * sx;
+  const x = 0.205 * sx;
   // stations MUST ascend in y (winding/caps assume it)
   return skinnedTube([
     { y: 0.78, rx: 0.030, rz: 0.024, cx: x, w: [[bWr, 1]], col: R },
@@ -1157,8 +1157,8 @@ function armTube(bSh, bEl, bWr, sx) {
     { y: 1.16, rx: 0.049, rz: 0.048, cx: x, w: [[bSh, 0.5], [bEl, 0.5]], col: R },
     { y: 1.245, rx: 0.054, rz: 0.052, cx: x, w: [[bSh, 1]], col: R },
     { y: 1.34, rx: 0.062, rz: 0.060, cx: x, w: [[bSh, 1]], col: R },
-    { y: 1.44, rx: 0.072, rz: 0.070, cx: x, w: [[bSh, 1]], col: R },
-    { y: 1.50, rx: 0.055, rz: 0.055, cx: x, w: [[bSh, 1]], col: R },
+    { y: 1.405, rx: 0.066, rz: 0.064, cx: x, w: [[bSh, 1]], col: R },
+    { y: 1.435, rx: 0.052, rz: 0.050, cx: x, w: [[bSh, 1]], col: R },
   ]);
 }
 armTube(bShL, bElL, bWrL, 1);
@@ -1415,22 +1415,30 @@ function pickAnchor(side) {
       const fx = dx / hd, fz = dz / hd;
       const fwd = fx * md.x + fz * md.z;                     // ahead vs behind
       const sd = (fx * rx + fz * rz) * side;                 // matches this hand's side?
-      // side weight kept LOW (was 0.8): strongly-sided anchors weave you
-      // across the street — hugging the travel line makes straight runs easy
-      let score = 2.2 * fwd + 0.5 * sd
+      // forward-dominant scoring; straightness comes from the rail assist,
+      // hand INTENT comes from the hard side partition below
+      let score = 2.2 * fwd + 0.3 * sd
                 - 0.8 * Math.abs(len - LEN_IDEAL) / LEN_IDEAL
                 - 0.5 * Math.abs(elev - 0.9) / 0.9;
       if (fwd < 0) score -= 2.5;                             // forward-only game: behind is a last resort
-      cand.push({ i, score });
+      cand.push({ i, score, sd });
     }
   }
-  // best candidate with a clear line of sight — never start a rope through a building
+  // HAND-INTENT LAW: shooting from the right hand means "grab something on
+  // my right" — correct-side (and near-center) anchors are a hard first
+  // pass; wrong-side anchors are only a fallback when that side is empty.
   cand.sort((a, b) => b.score - a.score);
   const eye = { x: P.pos.x, y: P.pos.y + 1.5, z: P.pos.z };
-  for (let k = 0; k < Math.min(10, cand.length); k++) {
-    const a = anchors[cand[k].i];
-    if (!segBlocked(eye, a)) return a;
-    wrapStats.losReject++;
+  for (const wrongSideOk of [false, true]) {
+    let tried = 0;
+    for (let k = 0; k < cand.length && tried < 10; k++) {
+      if (!wrongSideOk && cand[k].sd < -0.06) continue;   // wrong side: skip in pass 1
+      if (wrongSideOk && cand[k].sd >= -0.06) continue;   // pass 2: only the leftovers
+      tried++;
+      const a = anchors[cand[k].i];
+      if (!segBlocked(eye, a)) return a;
+      wrapStats.losReject++;
+    }
   }
   return null;
 }
@@ -1866,8 +1874,8 @@ function updateSpidey(dt) {
     setJ(legL.foot, 0.30 * Math.sin(gaitPh + 0.7) - 0.12, 0, 0, k);
     setJ(legR.foot, 0.30 * Math.sin(gaitPh + Math.PI + 0.7) - 0.12, 0, 0, k);
     // arms counter-swing, elbows flex more on the forward swing
-    setJ(armL.shoulder,  s * swingAmp * 0.8, 0,  0.10, k);
-    setJ(armR.shoulder, -s * swingAmp * 0.8, 0, -0.10, k);
+    setJ(armL.shoulder, 0.14 + s * swingAmp * 0.8, 0,  0.10, k);
+    setJ(armR.shoulder, 0.14 - s * swingAmp * 0.8, 0, -0.10, k);
     // elbows flex FORWARD (negative x — opposite of knees), more on the front swing
     setJ(armL.elbow, -(1.2 + 0.25 * Math.max(0, -s)), 0, 0, k);
     setJ(armR.elbow, -(1.2 + 0.25 * Math.max(0,  s)), 0, 0, k);

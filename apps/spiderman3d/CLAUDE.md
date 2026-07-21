@@ -21,6 +21,11 @@ re-decision:
 - **Hold-to-swing** (not tap-toggle): finger down on a screen half = that
   hand's web attaches and you swing; lift = release and fly. Both halves at
   once = double-line swing (two rope constraints, stabler and straighter).
+- **HAND-INTENT LAW (V11)**: a right-hand web must grab something on the
+  RIGHT — correct-side (and near-center, sd ≥ -0.06) anchors are a hard
+  first pass in `pickAnchor()`; wrong-side anchors are a fallback only when
+  that side is empty. Straightness comes from the rail assist, NOT from
+  softening this bias (V10 tried that — it broke hand intent).
 - **Assisted auto-anchor** (not physical raycast): `pickAnchor()` scores roof
   points — ahead of travel, matching that hand's side, rope length near
   `LEN_IDEAL`, elevation near ~50°; behind is heavily penalized (forward-flow
@@ -206,7 +211,11 @@ geometry/material-level. The pillars:
   (winding/caps assume it); joint rings carry split weights (0.5/0.5) for
   the smooth bend; limb root rings embed inside the trunk volume so there
   are no junction seams; `bRoot.updateMatrixWorld(true)` must run BEFORE
-  `new Skeleton(...)` or bind inverses are identity garbage. Suit zones are
+  `new Skeleton(...)` or bind inverses are identity garbage. DELTOID LAW: the deltoid caps are FIXED
+  masses on the chest bone and the arm tube starts BELOW its pivot — an arm
+  tube extending above its pivot swings up into "horns" when the arm biases
+  backward. Run arms swing biased BEHIND the body (+0.14 base, hands travel
+  hip-to-chest). Suit zones are
   VERTEX COLORS under one neutral webbing texture (one material for the
   whole body; the crisp belt line is two stations 5 mm apart). Boots are
   rigid on the ankle bones; eyes/emblem ride the head/chest bones. The
