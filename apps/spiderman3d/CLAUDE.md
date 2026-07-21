@@ -111,13 +111,22 @@ Other V3 playtest laws:
   Camera near plane is 0.5 for the same reason — near distance dominates
   depth precision; don't drop it back to 0.1. Sidewalk plinth padding skips
   park-facing sides (a padded plinth under a lawn is back inside z-fight
-  range), and parks are physically 0.2 m raised terraces (`supportAt`), so
-  the runner stands ON the lawn decal rather than shin-deep in it.
+  range). Parks are physically 0.2 m raised terraces and sidewalks are
+  physically 0.3 m curbs (`supportAt` knows both, plinth rects are hashed in
+  `pHash`) — the runner stands ON lawns and sidewalks, never shin-deep in
+  visual-only geometry. Any new raised ground visual must get a `supportAt`
+  entry.
 
 ## Manhattan geography (V4)
 
 The island is rough real Manhattan: 21.6 km Battery (z = Z0, south) → Inwood,
-+z uptown, +x east. Layout is data-driven — `W_PTS`/`C_PTS` are piecewise
++z uptown. **AXIS LAW (V6): +x is WEST** — in a y-up right-handed world with
++z = north, a body facing north has its right hand (east) at -x. V5 shipped
+the island east-west mirrored because "west" was placed at low x; every
+east/west feature (centerline drift, Hudson Yards, Riverside, Broadway's
+curve, square parks) now follows the axis law, and the minimap draws -x
+(east) on the RIGHT so it reads as a normal north-up map AND the dot moves
+the same direction you steer. If you add geography, check it against this. Layout is data-driven — `W_PTS`/`C_PTS` are piecewise
 width/centerline profiles in km-from-Battery (widest ~3.7 km at 14th St,
 spine drifting east going north); the shoreline slab, `insideIsland()`, bot
 recentering, and respawn all derive from them. The real grid: avenues `AV` =
