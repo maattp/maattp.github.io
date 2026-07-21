@@ -3,7 +3,7 @@
 // Three.js comes from the CDN and is cached on first fetch below (runtime
 // cache), so the game works offline after one online play.
 // Bump CACHE when a deploy must invalidate old copies immediately.
-const CACHE = 'spiderman3d-v8';
+const CACHE = 'spiderman3d-v9';
 const SHELL = ['./', './index.html', './icon.png', './apple-touch-icon.png', './icon-192.png', './manifest.webmanifest'];
 
 self.addEventListener('install', e => {

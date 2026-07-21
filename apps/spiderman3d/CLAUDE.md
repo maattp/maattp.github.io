@@ -29,8 +29,16 @@ re-decision:
 - **Gyro tilt + swing-side steering**: tilt is continuous lateral
   steer (grounded: heading turn; airborne: lateral accel perpendicular to
   travel); which hand you swing with provides the coarse arc. iOS needs the
-  one-time DeviceOrientation permission — requested from the GO button tap.
-  If no gyro reading ever arrives (permission denied, or no sensor),
+  one-time motion permission — requested from the GO button tap.
+  **TILT SIGNAL LAW (V9)**: steering derives from the devicemotion GRAVITY
+  VECTOR (`accelerationIncludingGravity.x`), NEVER Euler gamma — gamma is
+  gimbal-unstable at upright phone pitch and its sign flips as beta crosses
+  ~90°, which shipped as "inverted tilt" TWICE (V5, V8 reports) before the
+  root cause was found. iOS reports the reaction force (negated);
+  `DeviceMotionEvent.requestPermission` existing is the iOS discriminator.
+  Neutral posture calibrates over ~24 samples after GO; the title screen has
+  a persisted invert toggle as the escape hatch; gamma remains only as a
+  fallback when motion never delivers. If no reading ever arrives,
   dragging a held thumb sideways steers instead (`gyroLive` flag in
   `readTilt()`) — the game must never be unsteerable (PR #301 review).
 - **Auto-run, no fail state**: grounded = always running forward at ≥ `RUN`;
