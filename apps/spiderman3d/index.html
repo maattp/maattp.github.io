@@ -83,7 +83,7 @@ import * as THREE from 'three';
 
 const BOOT_T0 = performance.now();   // city gen + scene build cost, exposed as __dbg.bootMs
 
-const VERSION = 7;
+const VERSION = 8;
 // the version badge lives ONLY on the title screen (user decision, V5)
 document.getElementById('tver').textContent = 'V' + VERSION;
 
@@ -245,9 +245,12 @@ const blocks = [];      // {x0,x1,z0,z1} — for sidewalk plinths
 // all boxes uniformly because of this). o must stay comfortably above SHRINK:
 // o - SHRINK is the float-safety gap.
 let grpId = 0;   // one visual identity (facade color) per placed building, shared by its wedge slices
-function addBuilding(x0, x1, z0, z1, h, small, grp, rings = true) {
+// palH: the height used for PALETTE bucketing — setback tiers pass the
+// tower's FULL height so every tier lands in the same palette (a tier
+// bucketed by its own height would render masonry base under a glass top)
+function addBuilding(x0, x1, z0, z1, h, small, grp, rings = true, palH = h) {
   const cx = (x0 + x1) / 2, cz = (z0 + z1) / 2;
-  buildings.push({ x0, x1, z0, z1, h, cx, cz, grp });
+  buildings.push({ x0, x1, z0, z1, h, cx, cz, grp, palH });
   const o = 0.5, ay = h + 0.15;
   anchors.push(
     new THREE.Vector3(x0 - o, ay, z0 - o), new THREE.Vector3(x1 + o, ay, z0 - o),
@@ -273,15 +276,18 @@ function addBuilding(x0, x1, z0, z1, h, small, grp, rings = true) {
 // crossing blocks end in Flatiron-style prows while every collision/rope
 // invariant (AABB-only world) stays intact. Slices share the parent's grp so
 // they render as one building.
-function placeBuilding(x0, x1, z0, z1, h, small) {
+function parkTouch(x0, x1, z0, z1) {
+  return inPark(x0, z0) || inPark(x1, z0) || inPark(x0, z1) || inPark(x1, z1) ||
+    inPark((x0 + x1) / 2, (z0 + z1) / 2);
+}
+function placeBuilding(x0, x1, z0, z1, h, small, grpOv, palH) {
   // no building may touch a park — partial rows stop cleanly at the park line
-  if (inPark(x0, z0) || inPark(x1, z0) || inPark(x0, z1) || inPark(x1, z1) ||
-      inPark((x0 + x1) / 2, (z0 + z1) / 2)) return;
-  const g = grpId++;
+  if (parkTouch(x0, x1, z0, z1)) return;
+  const g = grpOv !== undefined ? grpOv : grpId++;
   const bwA = bwayXAt(z0), bwB = bwayXAt(z1);
   if (bwA === null || bwB === null ||
       x1 < Math.min(bwA, bwB) - BWAY_HALF || x0 > Math.max(bwA, bwB) + BWAY_HALF) {
-    addBuilding(x0, x1, z0, z1, h, small, g);
+    addBuilding(x0, x1, z0, z1, h, small, g, true, palH);
     return;
   }
   const N = Math.max(2, Math.min(5, Math.round((z1 - z0) / 7)));
@@ -298,7 +304,7 @@ function placeBuilding(x0, x1, z0, z1, h, small) {
   // multiplying rings once per z-strip)
   let widest = -1, wbest = 0;
   slices.forEach((s, i) => { if (s[1] - s[0] > wbest) { wbest = s[1] - s[0]; widest = i; } });
-  slices.forEach((s, i) => addBuilding(s[0], s[1], s[2], s[3], h, true, g, i === widest));
+  slices.forEach((s, i) => addBuilding(s[0], s[1], s[2], s[3], h, true, g, i === widest, palH));
 }
 
 (function genCity() {
@@ -357,7 +363,24 @@ function placeBuilding(x0, x1, z0, z1, h, small) {
           const h = nbhHeight(band);
           if (h > 300) { w *= 0.55; d *= 0.7; }
           const cx = bx0 + s * (slotW + gap) + slotW / 2;
-          placeBuilding(cx - w / 2, cx + w / 2, cz - d / 2, cz + d / 2, h, false);
+          if (h > 120) {
+            // wedding-cake setbacks: stacked AABB columns (same grp AND same
+            // palette bucket via palH = full tower height). Ledges are real
+            // roofs — landable, anchor-bearing, wrap-tested like any
+            // building; the classic NYC zoning silhouette. The whole tower
+            // is skipped if its BASE touches a park (a rejected base with an
+            // accepted upper tier would float).
+            if (parkTouch(cx - w / 2, cx + w / 2, cz - d / 2, cz + d / 2)) continue;
+            const g2 = grpId++;
+            const tiers = h > 260 ? [[1, 0.42], [0.72, 0.72], [0.48, 1]] : [[1, 0.52], [0.66, 1]];
+            for (const [fr, hf] of tiers) {
+              const inX = (w * (1 - fr)) / 2, inZ = (d * (1 - fr)) / 2;
+              placeBuilding(cx - w / 2 + inX, cx + w / 2 - inX,
+                cz - d / 2 + inZ, cz + d / 2 - inZ, h * hf, false, g2, h);
+            }
+          } else {
+            placeBuilding(cx - w / 2, cx + w / 2, cz - d / 2, cz + d / 2, h, false);
+          }
         }
       }
     }
@@ -521,8 +544,13 @@ scene.add(sun);
 const skyDome = new THREE.Mesh(new THREE.SphereGeometry(1600, 24, 12),
   new THREE.ShaderMaterial({
     side: THREE.BackSide, depthWrite: false, fog: false,
+    uniforms: { uTime: { value: 0 } },
     vertexShader: 'varying vec3 vDir; void main(){ vDir = position; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }',
     fragmentShader: `varying vec3 vDir;
+      uniform float uTime;
+      float hc(vec2 p){ return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
+      float vn(vec2 p){ vec2 i = floor(p), f = fract(p); f = f * f * (3.0 - 2.0 * f);
+        return mix(mix(hc(i), hc(i + vec2(1.0, 0.0)), f.x), mix(hc(i + vec2(0.0, 1.0)), hc(i + vec2(1.0, 1.0)), f.x), f.y); }
       void main() {
         vec3 d = normalize(vDir);
         float h = clamp(d.y, 0.0, 1.0);
@@ -530,6 +558,11 @@ const skyDome = new THREE.Mesh(new THREE.SphereGeometry(1600, 24, 12),
         vec3 sunDir = normalize(vec3(${SUN_POS.toArray().map(v => v.toFixed(1)).join(', ')}));
         float s = max(dot(d, sunDir), 0.0);
         col += vec3(1.0, 0.87, 0.62) * (pow(s, 600.0) * 1.2 + pow(s, 20.0) * 0.14);
+        // drifting cumulus band: two-octave value noise projected on the sky
+        vec2 cp = d.xz / max(0.14, d.y + 0.08) * 0.5 + vec2(uTime * 0.004, 0.0);
+        float cl = vn(cp) * 0.62 + vn(cp * 2.6 + 13.0) * 0.38;
+        float cm = smoothstep(0.60, 0.78, cl) * smoothstep(0.04, 0.16, d.y) * (1.0 - smoothstep(0.34, 0.72, d.y));
+        col = mix(col, vec3(0.97, 0.98, 1.0), cm * 0.85);
         gl_FragColor = vec4(col, 1.0);
       }`
   }));
@@ -579,6 +612,7 @@ function surfaceMat(mat, body, animated = false) {
   };
   return mat;
 }
+timeUniforms.push(skyDome.material.uniforms.uTime);   // clouds drift
 
 // island slab traced from the width/centerline profiles
 {
@@ -722,6 +756,83 @@ function surfaceMat(mat, body, animated = false) {
   mkInst(new THREE.ConeGeometry(2.05, 1.3, 10), darkMat, towers,            // lid
     (t, M) => { M.makeScale(t[3], t[3], t[3]); M.setPosition(t[0], t[1] + (1.3 + 3.1 + 0.65) * t[3], t[2]); });
 
+  // rooftop bulkheads (elevator/stair housings) + antennas on the tallest
+  const bulks = [], antennas = [];
+  for (const b of buildings) {
+    const w = b.x1 - b.x0, d = b.z1 - b.z0;
+    if (b.h > 24 && b.h < 220 && w > 12 && decoRand() < 0.45)
+      bulks.push([b.x0 + w * 0.25 + decoRand() * w * 0.5, b.h, b.z0 + d * 0.25 + decoRand() * d * 0.5,
+        2.5 + decoRand() * 2.5, 2.2 + decoRand() * 1.6]);
+    if (b.h > 240 && w > 10 && decoRand() < 0.7)
+      antennas.push([b.cx, b.h, b.cz, 14 + decoRand() * 22]);
+  }
+  mkInst(new THREE.BoxGeometry(1, 1, 1), darkMat, bulks,
+    (t, M) => { M.makeScale(t[3], t[4], t[3] * 0.8); M.setPosition(t[0], t[1] + t[4] / 2, t[2]); });
+  mkInst(new THREE.CylinderGeometry(0.35, 0.6, 1, 6), darkMat, antennas,
+    (t, M) => { M.makeScale(1, t[3], 1); M.setPosition(t[0], t[1] + t[3] / 2, t[2]); });
+
+  // parked cars along the street curbs (with the mandatory yellow cabs) —
+  // parking lane sits just off the sidewalk; gaps at avenue intersections
+  const cars = [];   // [x, z, rand, alongZ]
+  for (const b of blocks) {
+    for (const zc of [b.z0 - 6.3, b.z1 + 6.3]) {          // street curbs (cars along x)
+      let x = b.x0 + 3 + decoRand() * 7;
+      while (x < b.x1 - 5) {
+        const am = ((x % AV) + AV) % AV;
+        if (Math.min(am, AV - am) > 24 && decoRand() < 0.4) cars.push([x, zc, decoRand(), 0]);
+        x += 8 + decoRand() * 5;
+      }
+    }
+    for (const xc of [b.x0 - 6.5, b.x1 + 6.5]) {          // avenue curbs (cars along z)
+      let z = b.z0 + 4 + decoRand() * 6;
+      while (z < b.z1 - 5) {
+        if (decoRand() < 0.4) cars.push([xc, z, decoRand(), 1]);
+        z += 8 + decoRand() * 5;
+      }
+    }
+  }
+  const carBody = new THREE.InstancedMesh(new THREE.BoxGeometry(4.3, 1.1, 1.75),
+    new THREE.MeshLambertMaterial({ color: 0xffffff }), cars.length);
+  const carCab = new THREE.InstancedMesh(new THREE.BoxGeometry(2.3, 0.55, 1.55),
+    new THREE.MeshLambertMaterial({ color: 0x22262e }), cars.length);
+  const CAR_COLS = [0xd8dade, 0x2c3038, 0x9aa0a6, 0x8a2f2b, 0x2e4a78, 0x565e68]
+    .map(c => new THREE.Color(c));
+  const TAXI = new THREE.Color(0xf3b31a);
+  cars.forEach((c, i) => {
+    if (c[3]) M.makeRotationY(Math.PI / 2);
+    else M.identity();
+    M.setPosition(c[0], 0.62, c[1]);
+    carBody.setMatrixAt(i, M);
+    M.setPosition(c[0] - (c[3] ? 0 : 0.25), 1.42, c[1] - (c[3] ? 0.25 : 0));
+    carCab.setMatrixAt(i, M);
+    carBody.setColorAt(i, c[2] < 0.16 ? TAXI : CAR_COLS[Math.floor(c[2] * 37) % CAR_COLS.length]);
+  });
+  // instances never change after boot (first bind uploads the buffers); set
+  // needsUpdate anyway so a future dynamic path doesn't silently no-op
+  carBody.instanceMatrix.needsUpdate = carCab.instanceMatrix.needsUpdate = true;
+  if (carBody.instanceColor) carBody.instanceColor.needsUpdate = true;
+  scene.add(carBody, carCab);
+
+  // outer boroughs: silhouette skylines across both rivers, mostly fog-washed
+  const boro = [];
+  for (let t = 1.0; t < 17; t += 0.12) {         // Jersey side (west = +x)
+    const z = zk(t);
+    const shore = centerAt(z) + widthAt(z) / 2;
+    let h = 12 + decoRand() * decoRand() * 55;
+    if (t > 1.8 && t < 4.4 && decoRand() < 0.3) h = 70 + decoRand() * 150;   // Jersey City cluster
+    boro.push([shore + 950 + decoRand() * 650, z + (decoRand() - 0.5) * 90, 45 + decoRand() * 70, h]);
+  }
+  for (let t = 0.2; t < 14.5; t += 0.10) {       // Brooklyn/Queens (east = -x)
+    const z = zk(t);
+    const shore = centerAt(z) - widthAt(z) / 2;
+    let h = 10 + decoRand() * decoRand() * 45;
+    if (t > 0.8 && t < 2.4 && decoRand() < 0.3) h = 60 + decoRand() * 120;   // downtown Brooklyn
+    boro.push([shore - 700 - decoRand() * 700, z + (decoRand() - 0.5) * 80, 45 + decoRand() * 70, h]);
+  }
+  mkInst(new THREE.BoxGeometry(1, 1, 1),
+    new THREE.MeshLambertMaterial({ color: 0x8d99a8 }), boro,
+    (t, M) => { M.makeScale(t[2], t[3], t[2] * (0.7 + 0.6 * ((t[3] * 7) % 1))); M.setPosition(t[0], t[3] / 2 - 2, t[1]); });
+
   // trees: fill every lawn (parks, Battery, shore strips), skip the reservoir
   const trees = [];
   const resCx = (CENTRAL_PARK.x0 + CENTRAL_PARK.x1) / 2, resCz = zk(11.2);
@@ -803,14 +914,35 @@ function surfaceMat(mat, body, animated = false) {
           diffuseColor.rgb = mix(diffuseColor.rgb * 0.8, sfCol, sf * 0.92);
           surfGlow += vec3(0.85, 0.66, 0.36) * (sf * sfLit * 0.35);   // storefront spill
         } else {
-          float win = step(0.17, f.x) * (1.0 - step(0.83, f.x)) * step(0.26, f.y) * (1.0 - step(0.80, f.y));
-          float lit = step(0.90, rnd);
-          vec3 glass = vec3(0.15, 0.20, 0.26) * (0.7 + 0.55 * hash2(cell * 2.13));
-          diffuseColor.rgb = mix(diffuseColor.rgb, glass, win * 0.9);
-          // lit windows are EMISSIVE so they read on shaded facades too
-          surfGlow += vec3(0.95, 0.72, 0.38) * (win * lit * 0.8);
-          // subtle floor slab shadow line under each window row
-          diffuseColor.rgb *= 1.0 - 0.10 * (1.0 - smoothstep(0.0, 0.10, f.y));
+          #ifdef USE_INSTANCING_COLOR
+          // COUPLING: this classifies by tint — every PAL_TALL entry must keep
+          // b > r*1.12 and every PAL_LOW/MID entry must not, or facades will
+          // silently switch styles when palettes are retuned
+          bool glassTower = vColor.b > vColor.r * 1.12;   // PAL_TALL tint → curtain wall
+          #else
+          bool glassTower = false;
+          #endif
+          if (glassTower) {
+            // curtain wall: continuous glass with floor bands + mullions,
+            // sky-reflection gradient up the height, sparse lit offices
+            float band = step(0.86, fract(fc.y / 3.6));
+            float mul = step(0.90, fract(fc.x / 1.6));
+            float shade = 0.72 + 0.5 * hash2(vec2(floor(fc.y / 3.6), floor(fc.x / 12.0)));
+            vec3 glassC = vec3(0.30, 0.40, 0.50) * shade + vec3(0.10, 0.10, 0.09) * clamp(vWP.y / 240.0, 0.0, 1.0);
+            float lit2 = step(0.93, hash2(floor(fc / vec2(1.6, 3.6)) + floor(vWP.xz * 0.013)));
+            surfGlow += vec3(0.9, 0.7, 0.4) * lit2 * (1.0 - max(band, mul)) * 0.5;
+            diffuseColor.rgb = mix(glassC, diffuseColor.rgb * 0.9, max(band, mul));
+          } else {
+            float win = step(0.17, f.x) * (1.0 - step(0.83, f.x)) * step(0.26, f.y) * (1.0 - step(0.80, f.y));
+            float lit = step(0.90, rnd);
+            vec3 glass = vec3(0.15, 0.20, 0.26) * (0.7 + 0.55 * hash2(cell * 2.13));
+            glass *= 1.0 - 0.35 * smoothstep(0.52, 0.80, f.y);   // lintel shadow = punched depth
+            diffuseColor.rgb = mix(diffuseColor.rgb, glass, win * 0.9);
+            // lit windows are EMISSIVE so they read on shaded facades too
+            surfGlow += vec3(0.95, 0.72, 0.38) * (win * lit * 0.8);
+            // subtle floor slab shadow line under each window row
+            diffuseColor.rgb *= 1.0 - 0.10 * (1.0 - smoothstep(0.0, 0.10, f.y));
+          }
         }
       } else if (n.y > 0.5 && vWP.y > 1.2) {
         diffuseColor.rgb = diffuseColor.rgb * 0.42 + vec3(0.055);
@@ -829,7 +961,7 @@ function surfaceMat(mat, body, animated = false) {
     mesh.setMatrixAt(i, M);
     // color keyed on grp, not index: a wedge's stair slices must match
     const gr = mulberry32(seed + b.grp * 7919);
-    const pal = b.h < 35 ? PAL_LOW : b.h < 110 ? PAL_MID : PAL_TALL;
+    const pal = b.palH < 35 ? PAL_LOW : b.palH < 110 ? PAL_MID : PAL_TALL;   // palH: tier-safe bucket
     const c = pal[Math.floor(gr() * pal.length)].clone();
     c.offsetHSL(0, 0, (gr() - 0.5) * 0.08);
     mesh.setColorAt(i, c);
@@ -838,14 +970,36 @@ function surfaceMat(mat, body, animated = false) {
 }
 
 // ---------------------------------------------------------------------------
-// SPIDEY — jointed rig built from primitives: shoulder→elbow and hip→knee
-// chains so runs have knee lift and swings have a straight reaching arm with
-// a bent trailing arm. Feet rest exactly at y = 0 (spidey.position = P.pos).
-// Suit: classic red torso/arms/head + boots, blue legs/hips/side panels.
+// SPIDEY — character V5: SKINNED MESH. The "plastic pieces" read of primitive
+// assemblies comes from rigid parts hinging at joints; real characters are a
+// continuous surface that BENDS. Each body part here is a procedurally lofted
+// tube of elliptical cross-sections (anatomy in the profile: chest taper,
+// bicep/calf bulges, neck flowing into the head) skinned to a real THREE
+// skeleton with smooth per-ring weights — elbows and knees curve like skin.
+// Suit zones (red/blue) are vertex colors under a neutral webbing texture, so
+// one material serves the whole body. Limb root rings sit embedded inside the
+// trunk volume, so there are no junction seams. The animation controller is
+// unchanged — bones pose exactly like the old joint groups.
+// Feet rest exactly at y = 0 (spidey.position = P.pos).
 // ---------------------------------------------------------------------------
-const MAT_RED  = new THREE.MeshLambertMaterial({ color: 0xc9302c });
-const MAT_BLUE = new THREE.MeshLambertMaterial({ color: 0x27418f });
-const MAT_DARK = new THREE.MeshLambertMaterial({ color: 0x1a1c22 });
+function webTexture() {   // neutral webbing: white base, dark grid — tinted by vertex color
+  const c = document.createElement('canvas');
+  c.width = c.height = 128;
+  const x = c.getContext('2d');
+  x.fillStyle = '#ffffff';
+  x.fillRect(0, 0, 128, 128);
+  x.strokeStyle = 'rgba(30, 6, 8, 0.42)';
+  x.lineWidth = 1.6;
+  for (let i = 0; i <= 128; i += 21) { x.beginPath(); x.moveTo(i, 0); x.lineTo(i, 128); x.stroke(); }
+  for (let j = 0; j <= 128; j += 18) { x.beginPath(); x.moveTo(0, j); x.lineTo(128, j); x.stroke(); }
+  const t = new THREE.CanvasTexture(c);
+  t.wrapS = t.wrapT = THREE.RepeatWrapping;
+  return t;
+}
+const SUIT_RED = new THREE.Color(0xc33430), SUIT_BLUE = new THREE.Color(0x2b4494);
+const suitMat = new THREE.MeshLambertMaterial({ map: webTexture(), vertexColors: true });
+const MAT_RED_PLAIN = new THREE.MeshLambertMaterial({ color: 0xb92f2b });
+const MAT_DARK = new THREE.MeshLambertMaterial({ color: 0x16181d });
 const MAT_EYE  = new THREE.MeshBasicMaterial({ color: 0xf4f7ff });
 function part(geo, mat, x, y, z, parent) {
   const m = new THREE.Mesh(geo, mat);
@@ -853,48 +1007,189 @@ function part(geo, mat, x, y, z, parent) {
   parent.add(m);
   return m;
 }
-function joint(parent, x, y, z) {
-  const g = new THREE.Group();
-  g.position.set(x, y, z);
-  parent.add(g);
-  return g;
-}
-// limb segment geometry hangs from its joint (origin at the top)
-const segGeo = (r, len) => new THREE.CapsuleGeometry(r, len - r * 2, 3, 8).translate(0, -len / 2, 0);
+
 const spidey = new THREE.Group();
-part(new THREE.BoxGeometry(0.30, 0.18, 0.20), MAT_BLUE, 0, 0.96, 0, spidey);                    // hips
-const torso = part(new THREE.BoxGeometry(0.36, 0.46, 0.22), MAT_RED, 0, 1.28, 0, spidey);       // chest
-part(new THREE.BoxGeometry(0.025, 0.42, 0.20), MAT_BLUE,  0.185, 1.26, 0, spidey);              // side panels
-part(new THREE.BoxGeometry(0.025, 0.42, 0.20), MAT_BLUE, -0.185, 1.26, 0, spidey);
-part(new THREE.BoxGeometry(0.10, 0.16, 0.02), MAT_DARK, 0, 1.34, 0.115, spidey);                // spider emblem
-const head = part(new THREE.SphereGeometry(0.145, 14, 12), MAT_RED, 0, 1.64, 0, spidey);
-head.scale.set(0.92, 1.08, 0.98);
-for (const s of [-1, 1]) {                                                                      // the big white eyes
-  const eye = part(new THREE.SphereGeometry(0.062, 10, 8), MAT_EYE, 0.062 * s, 1.665, 0.115, spidey);
-  eye.scale.set(1.0, 1.5, 0.45);
-  eye.rotation.z = -0.32 * s;
+// --- skeleton (rest pose: everything vertical, model faces +z; RIGHT = -x) --
+function bone(parent, x, y, z) {
+  const b = new THREE.Bone();
+  b.position.set(x, y, z);
+  if (parent) parent.add(b);
+  return b;
 }
-// model faces +z; anatomical RIGHT is -x (handedness law)
-function buildArm(sx) {
-  const shoulder = joint(spidey, 0.225 * sx, 1.44, 0);
-  part(segGeo(0.055, 0.30), MAT_RED, 0, 0, 0, shoulder);
-  const elbow = joint(shoulder, 0, -0.30, 0);
-  part(segGeo(0.048, 0.28), MAT_RED, 0, 0, 0, elbow);
-  const hand = joint(elbow, 0, -0.31, 0);
-  part(new THREE.SphereGeometry(0.055, 8, 6), MAT_RED, 0, 0.01, 0, elbow).position.y = -0.30;
-  return { shoulder, elbow, hand };
+const bRoot  = bone(null, 0, 0.97, 0);          // pelvis
+const bSpine = bone(bRoot, 0, 0.12, 0);         // 1.09
+const bChest = bone(bSpine, 0, 0.16, 0);        // 1.25
+const bHead  = bone(bChest, 0, 0.31, 0);        // 1.56
+const bShL = bone(bChest, 0.20, 0.19, 0), bShR = bone(bChest, -0.20, 0.19, 0);   // 1.44
+const bElL = bone(bShL, 0, -0.28, 0),     bElR = bone(bShR, 0, -0.28, 0);        // 1.16
+const bWrL = bone(bElL, 0, -0.26, 0),     bWrR = bone(bElR, 0, -0.26, 0);        // 0.90
+const bHipL = bone(bRoot, 0.10, -0.05, 0), bHipR = bone(bRoot, -0.10, -0.05, 0); // 0.92
+const bKnL = bone(bHipL, 0, -0.42, 0),    bKnR = bone(bHipR, 0, -0.42, 0);       // 0.50
+const bAnL = bone(bKnL, 0, -0.40, 0),     bAnR = bone(bKnR, 0, -0.40, 0);        // 0.10
+const BONES = [bRoot, bSpine, bChest, bHead, bShL, bElL, bWrL, bShR, bElR, bWrR,
+  bHipL, bKnL, bAnL, bHipR, bKnR, bAnR];
+const BI = {}; BONES.forEach((b, i) => { BI[b.uuid] = i; });
+bRoot.updateMatrixWorld(true);   // bind pose must be realized BEFORE Skeleton computes inverses
+const skeleton = new THREE.Skeleton(BONES);
+
+// --- lofted skinned tube builder -------------------------------------------
+// stations: { y, rx, rz, cx?, cz?, w: [[bone, weight], [bone, weight]?], col }
+function skinnedTube(stations, capTop = true, capBot = true) {
+  const SEGS = 14;
+  const pos = [], nrm = [], uv = [], col = [], sIdx = [], sWgt = [], idx = [];
+  const push = (p, n, u, v, c, w) => {
+    pos.push(...p); nrm.push(...n); uv.push(u, v); col.push(c.r, c.g, c.b);
+    const w0 = w[0], w1 = w[1] || [w0[0], 0];
+    sIdx.push(BI[w0[0].uuid], BI[w1[0].uuid], 0, 0);
+    const tot = w0[1] + w1[1];
+    sWgt.push(w0[1] / tot, w1[1] / tot, 0, 0);
+  };
+  stations.forEach((st, si) => {
+    const prev = stations[Math.max(0, si - 1)], next = stations[Math.min(stations.length - 1, si + 1)];
+    const slope = ((prev.rx + prev.rz) - (next.rx + next.rz)) / Math.max(0.01, next.y - prev.y) * 0.5;
+    for (let k = 0; k <= SEGS; k++) {
+      const th = (k / SEGS) * Math.PI * 2;
+      const cx = st.cx || 0, cz = st.cz || 0;
+      push([cx + Math.cos(th) * st.rx, st.y, cz + Math.sin(th) * st.rz],
+        [Math.cos(th), slope, Math.sin(th)],
+        k / SEGS * 3, st.y * 4, st.col, st.w);
+    }
+  });
+  for (let si = 0; si < stations.length - 1; si++)
+    for (let k = 0; k < SEGS; k++) {
+      const a = si * (SEGS + 1) + k, b = a + SEGS + 1;
+      idx.push(a, b, a + 1, a + 1, b, b + 1);
+    }
+  const capIt = (st, dir) => {
+    const ci = pos.length / 3;
+    push([st.cx || 0, st.y + dir * Math.min(st.rx, st.rz) * 0.85, st.cz || 0], [0, dir, 0], 0.5, st.y * 4, st.col, st.w);
+    const base = stations.indexOf(st) * (SEGS + 1);
+    for (let k = 0; k < SEGS; k++)
+      dir > 0 ? idx.push(base + k, ci, base + k + 1) : idx.push(base + k, base + k + 1, ci);
+  };
+  if (capTop) capIt(stations[stations.length - 1], 1);
+  if (capBot) capIt(stations[0], -1);
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  g.setAttribute('normal', new THREE.Float32BufferAttribute(nrm, 3));
+  g.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
+  g.setAttribute('color', new THREE.Float32BufferAttribute(col, 3));
+  g.setAttribute('skinIndex', new THREE.Uint16BufferAttribute(sIdx, 4));
+  g.setAttribute('skinWeight', new THREE.Float32BufferAttribute(sWgt, 4));
+  g.setIndex(idx);
+  g.normalizeNormals();
+  const m = new THREE.SkinnedMesh(g, suitMat);
+  m.frustumCulled = false;   // bones carry it far from its static bounds
+  spidey.add(m);
+  m.bind(skeleton);
+  return m;
 }
-function buildLeg(sx) {
-  const hip = joint(spidey, 0.105 * sx, 0.92, 0);
-  part(segGeo(0.07, 0.46), MAT_BLUE, 0, 0, 0, hip);
-  const knee = joint(hip, 0, -0.46, 0);
-  part(segGeo(0.06, 0.34), MAT_BLUE, 0, 0, 0, knee);
-  part(new THREE.BoxGeometry(0.10, 0.13, 0.19), MAT_RED, 0, -0.40, 0.035, knee);   // boot
-  return { hip, knee };
+const R = SUIT_RED, B = SUIT_BLUE;
+// trunk: crotch → hips → waist → chest → shoulders → neck → HEAD, one surface
+skinnedTube([
+  { y: 0.76, rx: 0.115, rz: 0.085, w: [[bRoot, 1]], col: B },
+  { y: 0.90, rx: 0.150, rz: 0.105, w: [[bRoot, 1]], col: B },
+  { y: 1.00, rx: 0.145, rz: 0.100, w: [[bRoot, 0.6], [bSpine, 0.4]], col: B },
+  // crisp belt line: two stations a hair apart so red never gradients into blue
+  { y: 1.045, rx: 0.136, rz: 0.094, w: [[bSpine, 1]], col: B },
+  { y: 1.05, rx: 0.136, rz: 0.094, w: [[bSpine, 1]], col: R },
+  { y: 1.10, rx: 0.125, rz: 0.088, w: [[bSpine, 1]], col: R },
+  { y: 1.22, rx: 0.140, rz: 0.094, w: [[bSpine, 0.4], [bChest, 0.6]], col: R },
+  { y: 1.33, rx: 0.163, rz: 0.101, w: [[bChest, 1]], col: R },
+  { y: 1.42, rx: 0.172, rz: 0.100, w: [[bChest, 1]], col: R },
+  { y: 1.475, rx: 0.115, rz: 0.082, w: [[bChest, 1]], col: R },
+  { y: 1.51, rx: 0.052, rz: 0.048, w: [[bChest, 0.4], [bHead, 0.6]], col: R },
+  { y: 1.545, rx: 0.062, rz: 0.06, w: [[bHead, 1]], col: R },
+  { y: 1.60, rx: 0.112, rz: 0.104, w: [[bHead, 1]], col: R },
+  { y: 1.68, rx: 0.124, rz: 0.116, w: [[bHead, 1]], col: R },
+  { y: 1.75, rx: 0.104, rz: 0.100, w: [[bHead, 1]], col: R },
+  { y: 1.80, rx: 0.070, rz: 0.068, w: [[bHead, 1]], col: R },
+  { y: 1.828, rx: 0.032, rz: 0.032, w: [[bHead, 1]], col: R },   // dome, not a point
+]);
+// arms: deltoid → bicep → elbow → forearm → wrist → mitt, smooth elbow bend
+function armTube(bSh, bEl, bWr, sx) {
+  const x = 0.20 * sx;
+  // stations MUST ascend in y (winding/caps assume it)
+  return skinnedTube([
+    { y: 0.78, rx: 0.030, rz: 0.024, cx: x, w: [[bWr, 1]], col: R },
+    { y: 0.85, rx: 0.048, rz: 0.034, cx: x, w: [[bWr, 1]], col: R },
+    { y: 0.90, rx: 0.037, rz: 0.036, cx: x, w: [[bEl, 0.4], [bWr, 0.6]], col: R },
+    { y: 0.97, rx: 0.043, rz: 0.042, cx: x, w: [[bEl, 1]], col: R },
+    { y: 1.07, rx: 0.056, rz: 0.054, cx: x, w: [[bEl, 1]], col: R },
+    { y: 1.16, rx: 0.049, rz: 0.048, cx: x, w: [[bSh, 0.5], [bEl, 0.5]], col: R },
+    { y: 1.245, rx: 0.060, rz: 0.058, cx: x, w: [[bSh, 1]], col: R },
+    { y: 1.34, rx: 0.070, rz: 0.068, cx: x, w: [[bSh, 1]], col: R },
+    { y: 1.44, rx: 0.082, rz: 0.080, cx: x, w: [[bSh, 1]], col: R },
+    { y: 1.50, rx: 0.055, rz: 0.055, cx: x, w: [[bSh, 1]], col: R },
+  ]);
 }
-const armL = buildArm(1),  armR = buildArm(-1);
-const legL = buildLeg(1),  legR = buildLeg(-1);
+armTube(bShL, bElL, bWrL, 1);
+armTube(bShR, bElR, bWrR, -1);
+// legs: hip → thigh → knee → calf → ankle, smooth knee bend
+function legTube(bHip, bKn, bAn, sx) {
+  const x = 0.10 * sx;
+  // stations MUST ascend in y (winding/caps assume it)
+  return skinnedTube([
+    { y: 0.13, rx: 0.038, rz: 0.038, cx: x, w: [[bKn, 0.4], [bAn, 0.6]], col: B },
+    { y: 0.24, rx: 0.046, rz: 0.045, cx: x, w: [[bKn, 1]], col: B },
+    { y: 0.40, rx: 0.064, rz: 0.062, cx: x, cz: -0.006, w: [[bKn, 1]], col: B },
+    { y: 0.50, rx: 0.056, rz: 0.055, cx: x, w: [[bHip, 0.5], [bKn, 0.5]], col: B },
+    { y: 0.66, rx: 0.076, rz: 0.073, cx: x, w: [[bHip, 1]], col: B },
+    { y: 0.84, rx: 0.090, rz: 0.086, cx: x, w: [[bHip, 1]], col: B },
+    { y: 0.98, rx: 0.098, rz: 0.094, cx: x, w: [[bHip, 1]], col: B },
+  ], true, false);   // top cap tucks into the pelvis; open bottom hides in the boot cuff
+}
+legTube(bHipL, bKnL, bAnL, 1);
+legTube(bHipR, bKnR, bAnR, -1);
+// boots: rigid on the ankle bones (boots ARE rigid objects)
+for (const bAn of [bAnL, bAnR]) {
+  part(new THREE.CylinderGeometry(0.05, 0.056, 0.14, 10), MAT_RED_PLAIN, 0, -0.02, 0, bAn);
+  part(new THREE.BoxGeometry(0.095, 0.07, 0.15), MAT_RED_PLAIN, 0, -0.065, 0.03, bAn);
+  part(new THREE.BoxGeometry(0.082, 0.052, 0.06), MAT_RED_PLAIN, 0, -0.074, 0.12, bAn);
+}
+// eyes + emblem ride their bones
+for (const s of [-1, 1]) {
+  const outline = part(new THREE.SphereGeometry(0.052, 10, 8), MAT_DARK, 0.048 * s, 0.10, 0.096, bHead);
+  outline.scale.set(1.02, 1.32, 0.26);
+  outline.rotation.z = -0.30 * s;
+  const lens = part(new THREE.SphereGeometry(0.044, 10, 8), MAT_EYE, 0.049 * s, 0.10, 0.104, bHead);
+  lens.scale.set(0.98, 1.26, 0.24);
+  lens.rotation.z = -0.30 * s;
+}
+{
+  const emblem = part(new THREE.SphereGeometry(0.022, 8, 6), MAT_DARK, 0, 0.14, 0.099, bChest);
+  emblem.scale.set(0.75, 1.5, 0.3);
+  for (const [ang, ly] of [[0.55, 0.155], [1.05, 0.14], [-0.55, 0.125], [-1.05, 0.14]])
+    for (const sxx of [-1, 1]) {
+      const leg = part(new THREE.BoxGeometry(0.07, 0.008, 0.012), MAT_DARK, 0.031 * sxx, ly, 0.097, bChest);
+      leg.rotation.z = ang * sxx;
+    }
+}
+// animation refs — the controller poses these exactly like the old groups
+const pelvisG = bRoot, chestG = bChest, headG = bHead;
+const armL = { shoulder: bShL, elbow: bElL, hand: bWrL };
+const armR = { shoulder: bShR, elbow: bElR, hand: bWrR };
+const legL = { hip: bHipL, knee: bKnL, foot: bAnL };
+const legR = { hip: bHipR, knee: bKnR, foot: bAnR };
+spidey.add(bRoot);
 scene.add(spidey);
+// soft blob shadow — grounds the character and reads altitude while swinging
+const shadowTex = (() => {
+  const c = document.createElement('canvas');
+  c.width = c.height = 128;
+  const x = c.getContext('2d');
+  const g = x.createRadialGradient(64, 64, 6, 64, 64, 62);
+  g.addColorStop(0, 'rgba(0,0,0,0.5)');
+  g.addColorStop(1, 'rgba(0,0,0,0)');
+  x.fillStyle = g;
+  x.fillRect(0, 0, 128, 128);
+  return new THREE.CanvasTexture(c);
+})();
+const blobShadow = new THREE.Mesh(new THREE.PlaneGeometry(2.2, 2.2),
+  new THREE.MeshBasicMaterial({ map: shadowTex, transparent: true, depthWrite: false,
+    polygonOffset: true, polygonOffsetFactor: -4, polygonOffsetUnits: -4 }));
+blobShadow.rotation.x = -Math.PI / 2;
+scene.add(blobShadow);
 
 // webs — 3D strands: pooled thin cylinders laid along each rope's pivot
 // chain (up to 6 segments per hand), so the web catches light and has
@@ -926,6 +1221,12 @@ const puff = new THREE.Mesh(new THREE.SphereGeometry(0.5, 6, 5),
   new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0 }));
 scene.add(puff);
 let puffT = 0;
+// attach flare: a quick white pop at the anchor the instant a web sticks
+const flare = new THREE.Mesh(new THREE.SphereGeometry(0.7, 8, 6),
+  new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0,
+    blending: THREE.AdditiveBlending, depthWrite: false }));
+scene.add(flare);
+let flareT = 0;
 // splash ring
 const splashRing = new THREE.Mesh(new THREE.RingGeometry(0.6, 1, 24),
   new THREE.MeshBasicMaterial({ color: 0xcfeaff, transparent: true, opacity: 0, side: THREE.DoubleSide }));
@@ -1099,6 +1400,8 @@ function tryAttach(side) {
   if (a) {
     const len = P.pos.distanceTo(a) * 0.96;   // slight initial tug
     P.ropes[side] = { pivots: [a], usedLen: 0, len, len0: len };
+    flare.position.copy(a);
+    flareT = 0.16;
     return true;
   }
   // whiff: show a fizzle where the web aimed (offset to that hand's side)
@@ -1302,6 +1605,7 @@ function step(dt) {
         dustRing.scale.setScalar(1);
         dustRing.material.opacity = Math.min(0.7, -P.vel.y * 0.022);
       }
+      if (P.vel.y < -6) P.landK = Math.min(1, -P.vel.y / 28);   // rig squash
       if (P.vel.y < -30) hs *= 0.8;        // hard landing: roll, keep most momentum
       if (hs > 1) P.heading = Math.atan2(P.vel.x, P.vel.z);
       hs = Math.max(RUN, hs);
@@ -1418,11 +1722,14 @@ const pose = { pitch: 0 };
 const Q = new THREE.Quaternion(), E = new THREE.Euler();
 const DOWN = new THREE.Vector3(0, -1, 0), TMP = new THREE.Vector3(), TMP2 = new THREE.Vector3();
 
+const Q2 = new THREE.Quaternion();
 function aimLimbAt(limbGroup, targetWorld, out) {
   limbGroup.getWorldPosition(TMP);
   V.a.subVectors(targetWorld, TMP).normalize();
-  // undo the character's world rotation so the quaternion is in spidey-local space
-  V.a.applyQuaternion(Q.copy(spidey.quaternion).invert());
+  // undo the PARENT CHAIN's world rotation (chest counter-rotation included)
+  // so the aim quaternion is exact in the limb's local space
+  limbGroup.parent.getWorldQuaternion(Q2);
+  V.a.applyQuaternion(Q2.invert());
   out.setFromUnitVectors(DOWN, V.a);
 }
 function setJ(g, x, y, z, k) {   // slerp a joint toward a Euler target
@@ -1430,6 +1737,7 @@ function setJ(g, x, y, z, k) {   // slerp a joint toward a Euler target
   g.quaternion.slerp(Q, k);
 }
 
+let gaitPh = 0, landT = 0, landAmt = 0;
 function updateSpidey(dt) {
   spidey.position.copy(P.pos);
   const hs = Math.hypot(P.vel.x, P.vel.z);
@@ -1438,59 +1746,96 @@ function updateSpidey(dt) {
   spidey.rotation.y += dy * Math.min(1, 12 * dt);
   let tp = 0;
   if (!P.grounded) tp = Math.max(-1.0, Math.min(1.0, Math.atan2(-P.vel.y, Math.max(hs, 8)) * 0.7));
-  else tp = 0.14;   // run lean
+  else tp = 0.15 + Math.min(0.1, hs * 0.004);   // run lean grows with speed
   pose.pitch += (tp - pose.pitch) * Math.min(1, 8 * dt);
   spidey.rotation.x = pose.pitch;
 
+  // landing squash (set by the sim on touch-down)
+  if (P.landK) { landT = 0.22; landAmt = P.landK; P.landK = 0; }
+  if (landT > 0) landT -= dt;
+  const land = landT > 0 ? (landT / 0.22) * landAmt : 0;
+
   const k = Math.min(1, 10 * dt);
   if (P.grounded) {
-    // run cycle: hips counter-swing, knees lift on recovery, elbows pump
-    const ph = P.time * (7 + hs * 0.5);
-    const s1 = Math.sin(ph), s1r = Math.sin(ph - 0.85);
-    const s2 = -s1, s2r = Math.sin(ph + Math.PI - 0.85);
-    spidey.position.y = P.pos.y + Math.abs(Math.sin(ph)) * 0.05;
-    setJ(legL.hip, -s1 * 0.8, 0, 0, k);
-    setJ(legR.hip, -s2 * 0.8, 0, 0, k);
-    setJ(legL.knee, 0.25 + 1.05 * Math.max(0, -s1r), 0, 0, k);
-    setJ(legR.knee, 0.25 + 1.05 * Math.max(0, -s2r), 0, 0, k);
-    setJ(armL.shoulder, -s2 * 0.75, 0,  0.10, k);
-    setJ(armR.shoulder, -s1 * 0.75, 0, -0.10, k);
-    setJ(armL.elbow, 0.9, 0, 0, k);
-    setJ(armR.elbow, 0.9, 0, 0, k);
+    // run cycle keyed to DISTANCE (feet plant instead of skating), with the
+    // canonical contact→down→passing→up shape: knees fold on recovery, feet
+    // plantarflex through toe-off, hips yaw toward the leading leg while the
+    // chest counter-rotates and the head stabilizes.
+    gaitPh += hs * dt * 1.35;
+    const s = Math.sin(gaitPh);
+    const swingAmp = 0.62 + Math.min(0.35, hs * 0.012);   // faster = bigger stride
+    spidey.position.y = P.pos.y + Math.abs(Math.sin(gaitPh)) * 0.055 - land * 0.16;
+    setJ(legL.hip, -s * swingAmp + land * 0.5, 0, 0, k);
+    setJ(legR.hip,  s * swingAmp + land * 0.5, 0, 0, k);
+    setJ(legL.knee, 0.22 + 1.15 * Math.max(0, Math.sin(gaitPh - 0.95)) + land * 1.1, 0, 0, k);
+    setJ(legR.knee, 0.22 + 1.15 * Math.max(0, Math.sin(gaitPh + Math.PI - 0.95)) + land * 1.1, 0, 0, k);
+    setJ(legL.foot, 0.30 * Math.sin(gaitPh + 0.7) - 0.12, 0, 0, k);
+    setJ(legR.foot, 0.30 * Math.sin(gaitPh + Math.PI + 0.7) - 0.12, 0, 0, k);
+    // arms counter-swing, elbows flex more on the forward swing
+    setJ(armL.shoulder,  s * (swingAmp + 0.12), 0,  0.10, k);
+    setJ(armR.shoulder, -s * (swingAmp + 0.12), 0, -0.10, k);
+    // elbows flex FORWARD (negative x — opposite of knees), more on the front swing
+    setJ(armL.elbow, -(0.6 + 0.5 * Math.max(0, -s)), 0, 0, k);
+    setJ(armR.elbow, -(0.6 + 0.5 * Math.max(0,  s)), 0, 0, k);
+    // hip yaw / chest counter / head stabilize + slight pelvis sway
+    setJ(pelvisG, 0, 0.10 * s, 0.045 * Math.sin(gaitPh), k);
+    setJ(chestG, land * 0.35, -0.16 * s, 0, k);
+    setJ(headG, -0.08, 0.06 * s, 0, k);
   } else {
+    const sp = P.vel.length();
+    const flutter = Math.min(1, sp / 30);
+    const fl = Math.sin(P.time * 9) * 0.07 * flutter;
     for (const [s, arm] of [['L', armL], ['R', armR]]) {
       const r = P.ropes[s];
       if (r) {
         // reaching arm: straight to the rope
         aimLimbAt(arm.shoulder, r.pivots[r.pivots.length - 1], Q);
         arm.shoulder.quaternion.slerp(Q, Math.min(1, 18 * dt));
-        setJ(arm.elbow, -0.08, 0, 0, k);
+        setJ(arm.elbow, -0.06, 0, 0, k);
       } else if (P.ropes[s === 'L' ? 'R' : 'L']) {
-        // free arm while the other swings: trails bent behind
-        setJ(arm.shoulder, 0.7, 0, s === 'L' ? 0.5 : -0.5, k);
-        setJ(arm.elbow, 1.15, 0, 0, k);
+        // free arm streams behind with the airflow
+        setJ(arm.shoulder, 0.8 + fl, 0, s === 'L' ? 0.55 : -0.55, k);
+        setJ(arm.elbow, -0.9, 0, 0, k);
       } else {
         // skydive: arms swept out and back
-        setJ(arm.shoulder, -1.3, 0, s === 'L' ? 1.0 : -1.0, k);
-        setJ(arm.elbow, 0.45, 0, 0, k);
+        setJ(arm.shoulder, -1.25 + fl, 0, s === 'L' ? 1.05 : -1.05, k);
+        setJ(arm.elbow, -0.4, 0, 0, k);
       }
     }
     const anyRope = P.ropes.L || P.ropes.R;
     if (anyRope) {
-      // swing: legs together and trailing, knees tucked at speed
-      const tuck = Math.min(1, P.vel.length() / 26);
-      setJ(legL.hip, 0.35 + tuck * 0.25, 0,  0.05, k);
-      setJ(legR.hip, 0.55 + tuck * 0.30, 0, -0.05, k);
-      setJ(legL.knee, 0.5 + tuck * 0.6, 0, 0, k);
-      setJ(legR.knee, 0.8 + tuck * 0.5, 0, 0, k);
+      // swing: legs trail with air flutter, knees tuck harder at speed
+      const tuck = Math.min(1, sp / 26);
+      setJ(legL.hip, 0.35 + tuck * 0.25 + fl, 0,  0.05, k);
+      setJ(legR.hip, 0.58 + tuck * 0.30 - fl, 0, -0.05, k);
+      setJ(legL.knee, 0.5 + tuck * 0.6 + fl * 1.5, 0, 0, k);
+      setJ(legR.knee, 0.85 + tuck * 0.5 - fl * 1.5, 0, 0, k);
+      setJ(legL.foot, 0.35, 0, 0, k);
+      setJ(legR.foot, 0.4, 0, 0, k);
+      setJ(pelvisG, 0, 0, fl * 0.5, k);
+      setJ(chestG, -0.1, 0, 0, k);
     } else {
-      // freefall: legs split slightly, loose knees
-      setJ(legL.hip, -0.30, 0,  0.16, k);
-      setJ(legR.hip, -0.10, 0, -0.16, k);
+      // freefall: spread, loose knees, slight tumble noise
+      setJ(legL.hip, -0.32 + fl, 0,  0.18, k);
+      setJ(legR.hip, -0.10 - fl, 0, -0.18, k);
       setJ(legL.knee, 0.45, 0, 0, k);
       setJ(legR.knee, 0.30, 0, 0, k);
+      setJ(legL.foot, 0.2, 0, 0, k);
+      setJ(legR.foot, 0.2, 0, 0, k);
+      setJ(pelvisG, 0, 0, 0, k);
+      setJ(chestG, 0, 0, 0, k);
     }
+    // head looks where you're going (clamped), keeps the character alive
+    const lookY = Math.max(-0.55, Math.min(0.55, dy * 2.0));
+    const lookX = Math.max(-0.35, Math.min(0.35, -pose.pitch * 0.5 + (P.vel.y > 0 ? -0.15 : 0.12)));
+    setJ(headG, lookX, lookY, 0, k);
   }
+  // blob shadow follows the ground beneath the player
+  const gy = supportAt(P.pos.x, P.pos.z);
+  const alt = Math.max(0, P.pos.y - gy);
+  blobShadow.position.set(P.pos.x, gy + 0.07, P.pos.z);
+  blobShadow.scale.setScalar(1 + Math.min(2.2, alt * 0.028));
+  blobShadow.material.opacity = Math.max(0.10, 0.5 - alt * 0.006);
 
   // web strands along each rope's pivot chain, hand → bends → anchor
   for (const [s, arm] of [['L', armL], ['R', armR]]) {
@@ -1582,8 +1927,15 @@ function updateTrail(dt) {
 }
 
 const camPos = new THREE.Vector3(AV, 6, zk(6.5) - 18), camLook = new THREE.Vector3(AV, 2, zk(6.5));
-let fov = 78, bank = 0;
+let fov = 78, bank = 0, closeupOn = false, closeA = 0;
 function updateCamera(dt) {
+  if (closeupOn) {   // __dbg portrait orbit for character screenshots
+    closeA += dt * 0.4;
+    camera.position.set(P.pos.x + Math.sin(closeA) * 2.6, P.pos.y + 1.3, P.pos.z + Math.cos(closeA) * 2.6);
+    camera.lookAt(P.pos.x, P.pos.y + 0.95, P.pos.z);
+    if (camera.fov !== 50) { camera.fov = 50; camera.updateProjectionMatrix(); }
+    return;
+  }
   const md = moveDir(V.a);
   const sp = P.vel.length();
   const back = 6.5 + Math.min(3.5, sp * 0.045);
@@ -1662,6 +2014,12 @@ function frame(now) {
   for (const u of timeUniforms) u.value = now / 1000;
 
   if (puffT > 0) { puffT -= dt; puff.material.opacity = Math.max(0, puffT / 0.18) * 0.8; }
+  if (flareT > 0) {
+    flareT -= dt;
+    const ft = Math.max(0, flareT / 0.16);
+    flare.material.opacity = ft * 0.9;
+    flare.scale.setScalar(1 + (1 - ft) * 2.2);
+  } else flare.material.opacity = 0;
   if (splashRing.material.opacity > 0) {
     splashRing.material.opacity -= dt * 1.4;
     splashRing.scale.multiplyScalar(1 + dt * 6);
@@ -1717,6 +2075,7 @@ window.__dbg = {
   clearTilt() { tiltOverride = null; },
   supportAt, pickAnchor, segBlocked, wrapStats,
   resetWrapStats() { wrapStats.wrap = wrapStats.unwrap = wrapStats.snap = wrapStats.losReject = 0; },
+  closeup(on) { closeupOn = on !== false; },
 };
 
 // ---------------------------------------------------------------------------

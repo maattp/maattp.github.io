@@ -96,6 +96,16 @@ const targeted = await evalJson(`(() => {
     diffs.push(sideVal(a) - sideVal(b));
   }
   const meanDiff = diffs.length ? diffs.reduce((x, y) => x + y, 0) / diffs.length : 0;
+  // grp-consistency: everything sharing a grp (wedge slices, setback tiers)
+  // must land in the same palette bucket, or a single building renders as a
+  // masonry/glass patchwork (PR #308 review)
+  const grpBucket = {};
+  let palMismatch = 0;
+  for (const b of __dbg.buildings) {
+    const v = b.palH < 35 ? 0 : b.palH < 110 ? 1 : 2;
+    if (grpBucket[b.grp] === undefined) grpBucket[b.grp] = v;
+    else if (grpBucket[b.grp] !== v) palMismatch++;
+  }
   // deep supertall canyon (51st St): street starts must attach — guards the
   // 55 m street-reachable face-ring guarantee. Same spot every trial on
   // purpose: this is a determinism/consistency check, not a spatial sweep.
@@ -111,7 +121,7 @@ const targeted = await evalJson(`(() => {
     __dbg.release('R'); __dbg.stepN(90);
   }
   return { maxY, maxSpeed, gotRope, maxGroundedY, sideSamples: diffs.length, meanDiff,
-           canyonGot, bootMs: __dbg.bootMs, errs: window.__errs };
+           canyonGot, palMismatch, bootMs: __dbg.bootMs, errs: window.__errs };
 })()`);
 console.log(`street start: y ${targeted.maxY.toFixed(1)} speed ${targeted.maxSpeed.toFixed(1)} rope ${targeted.gotRope} | wallRun groundedY ${targeted.maxGroundedY.toFixed(2)} | handedness R-vs-L diff ${targeted.meanDiff.toFixed(1)} (${targeted.sideSamples} samples) | canyon ${targeted.canyonGot}/6 | boot ${targeted.bootMs}ms`);
 
@@ -147,6 +157,7 @@ if (!targeted.gotRope || targeted.maxY < 8 || targeted.maxSpeed < 12) { console.
 if (targeted.maxGroundedY > 1.5) { console.error('FAIL: grounded runner left the street (roof-teleport regression)'); fail = true; }
 if (targeted.sideSamples >= 3 && targeted.meanDiff <= 0) { console.error('FAIL: right hand does not pick more-rightward anchors than left (handedness mirror regression)'); fail = true; }
 if (targeted.canyonGot < 5) { console.error('FAIL: supertall-canyon street starts whiff (face-ring guarantee regression)'); fail = true; }
+if (targeted.palMismatch > 0) { console.error('FAIL: ' + targeted.palMismatch + ' grp members land in different palette buckets (tier/slice color mismatch)'); fail = true; }
 if (targeted.bootMs > 2500) { console.error('FAIL: city gen + scene boot took ' + targeted.bootMs + 'ms'); fail = true; }
 if (targeted.errs.length || sweep.errs.length || errors.length) { console.error('FAIL: JS errors', targeted.errs, sweep.errs, errors); fail = true; }
 if (sweep.clipViolations > 0) { console.error('FAIL: rope crossed a building'); fail = true; }
