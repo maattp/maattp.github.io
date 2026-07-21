@@ -8,8 +8,8 @@ no post-processing, no render targets (so the iOS HalfFloat trap doesn't apply).
 
 ## Version Management
 
-**IMPORTANT: bump `const VERSION` in `index.html` once per PR.** It renders as
-`V1` bottom-right in the HUD. When bumping, ASSERT the old value is present
+**IMPORTANT: bump `const VERSION` in `index.html` once per PR.** It renders
+top-right on the title screen ONLY (`#tver` — see the V5 badge law below). When bumping, ASSERT the old value is present
 (check open PRs for the true latest). When a PR should reach installed players
 promptly, also bump `CACHE` (`spiderman3d-vN`) in `sw.js`.
 

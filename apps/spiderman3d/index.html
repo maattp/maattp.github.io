@@ -30,9 +30,11 @@
   #speed { position: absolute; top: calc(env(safe-area-inset-top) + 10px); left: 0; right: 0; text-align: center;
     font-size: 15px; font-weight: 700; letter-spacing: 1px; opacity: 0.85; text-shadow: 0 1px 3px rgba(0,0,0,0.5); }
   #speed b { font-size: 26px; }
-  #hint { position: absolute; bottom: calc(env(safe-area-inset-bottom) + 26px); left: 0; right: 0; text-align: center;
+  /* top-anchored like the badges: iOS standalone reports the bottom inset as
+     0, so bottom-anchored text hides under the home-indicator swipe bar */
+  #hint { position: absolute; top: calc(env(safe-area-inset-top) + 48px); left: 0; right: 0; text-align: center;
     font-size: 13px; font-weight: 600; opacity: 0.75; text-shadow: 0 1px 3px rgba(0,0,0,0.6); transition: opacity 1s; }
-  #mini { position: absolute; top: calc(env(safe-area-inset-top) + 10px); right: calc(env(safe-area-inset-right) + 10px);
+  #mini { position: absolute; display: block; top: calc(env(safe-area-inset-top) + 10px); right: calc(env(safe-area-inset-right) + 10px);
     width: 44px; height: 216px; border-radius: 9px; background: rgba(8, 14, 30, 0.45);
     box-shadow: 0 2px 8px rgba(0,0,0,0.25); }
 
@@ -683,7 +685,14 @@ scene.add(splashRing);
 // ---------------------------------------------------------------------------
 const mini = document.getElementById('mini');
 const MM_W = 44, MM_H = 216, MM_DPR = Math.min(devicePixelRatio, 2);
-const MM_X0 = -2000, MM_X1 = 2100, MM_PAD = 4;
+// x bounds derived from the profiles (+margin) so widening W_PTS/C_PTS can
+// never silently clip the silhouette
+let MM_X0 = 1e9, MM_X1 = -1e9;
+for (let t = 0; t <= 21.6; t += 0.2) {
+  MM_X0 = Math.min(MM_X0, pw(C_PTS, t) - pw(W_PTS, t) / 2 - 100);
+  MM_X1 = Math.max(MM_X1, pw(C_PTS, t) + pw(W_PTS, t) / 2 + 100);
+}
+const MM_PAD = 4;
 const mmX = x => MM_PAD + (x - MM_X0) / (MM_X1 - MM_X0) * (MM_W - MM_PAD * 2);
 const mmZ = z => MM_PAD + (1 - (z - Z0) / ISLAND_L) * (MM_H - MM_PAD * 2);
 mini.width = MM_W * MM_DPR;
