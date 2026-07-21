@@ -1,0 +1,837 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="theme-color" content="#0e1a38">
+<meta name="apple-mobile-web-app-title" content="Spidey 3D">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
+<link rel="icon" type="image/png" href="icon-192.png">
+<title>Spider-Man 3D</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body { width: 100%; height: 100%; overflow: hidden; background: #0e1a38; touch-action: none;
+    font-family: -apple-system, 'Helvetica Neue', sans-serif; -webkit-user-select: none; user-select: none; }
+  canvas#gl { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
+
+  #hud { position: fixed; inset: 0; pointer-events: none; color: #fff; }
+  #speed { position: absolute; top: calc(env(safe-area-inset-top) + 10px); left: 0; right: 0; text-align: center;
+    font-size: 15px; font-weight: 700; letter-spacing: 1px; opacity: 0.85; text-shadow: 0 1px 3px rgba(0,0,0,0.5); }
+  #speed b { font-size: 26px; }
+  #hint { position: absolute; bottom: calc(env(safe-area-inset-bottom) + 26px); left: 0; right: 0; text-align: center;
+    font-size: 13px; font-weight: 600; opacity: 0.75; text-shadow: 0 1px 3px rgba(0,0,0,0.6); transition: opacity 1s; }
+  #ver { position: absolute; bottom: calc(env(safe-area-inset-bottom) + 6px); right: calc(env(safe-area-inset-right) + 10px);
+    font-size: 11px; font-weight: 700; opacity: 0.4; }
+
+  #fade { position: fixed; inset: 0; background: #0c2a3e; opacity: 0; pointer-events: none; transition: opacity 0.25s; }
+
+  #title { position: fixed; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center;
+    background: linear-gradient(180deg, #0e1a38 0%, #1c2f5e 55%, #45262e 100%); color: #fff; z-index: 10;
+    padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left); }
+  #title h1 { font-size: 42px; font-weight: 900; letter-spacing: 2px; color: #e23636;
+    text-shadow: 0 3px 0 #7e1414, 0 8px 24px rgba(0,0,0,0.6); text-align: center; line-height: 1.05; }
+  #title h1 span { display: block; font-size: 22px; color: #cfe0ff; text-shadow: 0 2px 0 #23305e; letter-spacing: 8px; }
+  #title p { margin-top: 18px; font-size: 14px; line-height: 1.7; opacity: 0.85; text-align: center; max-width: 300px; }
+  #startBtn { margin-top: 34px; padding: 16px 44px; font-size: 18px; font-weight: 800; letter-spacing: 1px;
+    color: #fff; background: #e23636; border: none; border-radius: 999px; box-shadow: 0 4px 0 #7e1414, 0 10px 24px rgba(0,0,0,0.5); }
+  #startBtn:active { transform: translateY(3px); box-shadow: 0 1px 0 #7e1414; }
+</style>
+</head>
+<body>
+<canvas id="gl"></canvas>
+<div id="hud">
+  <div id="speed"><b>0</b> MPH</div>
+  <div id="hint">HOLD LEFT / RIGHT SIDE TO WEB &middot; TILT TO STEER</div>
+  <div id="ver"></div>
+</div>
+<div id="fade"></div>
+<div id="title">
+  <h1>SPIDER-MAN<span>3 D</span></h1>
+  <p>Hold the <b>right</b> side to swing on your right web, the <b>left</b> side for your left.
+     Hold <b>both</b> for a double-line swing. Release at the top of the arc. Tilt your phone to steer.</p>
+  <button id="startBtn">GO SWING</button>
+</div>
+
+<script>
+  // Error capture must exist before the module script so import/boot failures land in __dbg.errors.
+  window.__errs = [];
+  window.addEventListener('error', e => __errs.push(String(e.message || e)));
+  window.addEventListener('unhandledrejection', e => __errs.push('rejection: ' + String(e.reason)));
+</script>
+
+<script type="importmap">
+{ "imports": { "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js" } }
+</script>
+
+<script type="module">
+import * as THREE from 'three';
+
+const VERSION = 1;
+document.getElementById('ver').textContent = 'V' + VERSION;
+
+// ---------------------------------------------------------------------------
+// TUNING — these constants are coupled. G / JUMP_V set leap height (~3.6 m).
+// REEL injects the swing's energy: raise it and terminal speed (bounded by
+// DRAG_K → ~62 m/s) rises with it. ANCHOR_R bounds rope length, and the
+// anchor scorer's ideal length (LEN_IDEAL) must stay well inside ANCHOR_R or
+// every attach saturates the penalty. City block pitch (PITCH=44) was chosen
+// so LEN_IDEAL-length ropes always find a next building — if you change the
+// grid, re-run the bot sweep.
+// ---------------------------------------------------------------------------
+const SDT       = 1 / 120;   // sim step (120 Hz: rope constraint stays stable at 60 m/s)
+const G         = 25;        // gravity, m/s^2 (super-heroic, not Earth)
+const RUN       = 12;        // base auto-run speed, m/s
+const RUN_DECEL = 5;         // landing momentum bleeds to RUN at this rate
+const JUMP_V    = 13.5;      // web-leap vertical impulse
+const DRAG_K    = 0.0065;    // quadratic air drag  (terminal ~ sqrt(G/K) ≈ 62 m/s)
+const REEL      = 4.0;       // rope shortens while held, m/s (energy injection)
+const PUMP      = 14;        // swing pump: forward accel while roped & slow, m/s^2
+const PUMP_MAX  = 18;        // pump fades to zero at this speed
+const HANG_SNAP = 1.5;       // s of dead-hang (speed < 3) before the web snaps
+const AIR_STEER = 16;        // lateral accel from full tilt while airborne, m/s^2
+const TURN_RATE = 2.4;       // grounded heading turn at full tilt, rad/s
+const ANCHOR_R  = 85;        // max web reach
+const LEN_IDEAL = 38;        // anchor scorer's sweet-spot rope length
+const MIN_ELEV  = 0.30;      // rad — anchors below this elevation angle are unswingable
+const COYOTE    = 10;        // steps of jump grace after running off an edge
+
+// --- deterministic rand -----------------------------------------------------
+const seed = +(new URLSearchParams(location.search).get('seed') || 7);
+function mulberry32(a) { return function() {
+  a |= 0; a = a + 0x6D2B79F5 | 0;
+  let t = Math.imul(a ^ a >>> 15, 1 | a);
+  t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t;
+  return ((t ^ t >>> 14) >>> 0) / 4294967296; }; }
+const rand = mulberry32(seed);
+
+// ---------------------------------------------------------------------------
+// CITY — Manhattan-ish superellipse island, grid of blocks, one building per
+// block. All collision is AABB (bx0..bx1, bz0..bz1, h). Anchors = roof
+// corners + long-edge midpoints, spatially hashed.
+// ---------------------------------------------------------------------------
+const ISLE_A = 250, ISLE_B = 540;             // island half-extents (x, z)
+const PITCH = 44, BLOCK = 30;                 // grid pitch / building footprint max
+const PARK = { x0: -66, x1: 66, z0: 40, z1: 200 };
+
+function insideIsland(x, z) {
+  return Math.pow(Math.abs(x) / ISLE_A, 3) + Math.pow(Math.abs(z) / ISLE_B, 3) <= 1;
+}
+function inPark(x, z) { return x > PARK.x0 && x < PARK.x1 && z > PARK.z0 && z < PARK.z1; }
+
+const buildings = [];   // {x0,x1,z0,z1,h,cx,cz}
+const anchors = [];     // THREE.Vector3 roof points
+(function genCity() {
+  const nx = Math.floor(ISLE_A / PITCH), nz = Math.floor(ISLE_B / PITCH);
+  for (let i = -nx; i <= nx; i++) for (let j = -nz; j <= nz; j++) {
+    const cx = i * PITCH, cz = j * PITCH;
+    const w = BLOCK - 4 + rand() * 4, d = BLOCK - 4 + rand() * 4;
+    // whole footprint must be on land, and not in the park
+    if (!insideIsland(Math.abs(cx) + w / 2, Math.abs(cz) + d / 2)) continue;
+    if (inPark(cx, cz)) continue;
+    // skyline: midtown + downtown clusters over a modest base
+    let h = 16 + rand() * rand() * 34;
+    const mid = Math.exp(-Math.pow((cz - 300) / 130, 2)) * (1 - Math.abs(cx) / (ISLE_A * 1.2));
+    const dwn = Math.exp(-Math.pow((cz + 380) / 110, 2)) * (1 - Math.abs(cx) / (ISLE_A * 1.4));
+    h *= 1 + mid * 2.6 + dwn * 1.9;
+    h = Math.min(150, Math.max(14, h));
+    const b = { x0: cx - w / 2, x1: cx + w / 2, z0: cz - d / 2, z1: cz + d / 2, h, cx, cz };
+    buildings.push(b);
+    const inset = 0.6;
+    anchors.push(
+      new THREE.Vector3(b.x0 + inset, h, b.z0 + inset), new THREE.Vector3(b.x1 - inset, h, b.z0 + inset),
+      new THREE.Vector3(b.x0 + inset, h, b.z1 - inset), new THREE.Vector3(b.x1 - inset, h, b.z1 - inset),
+      new THREE.Vector3(cx, h, b.z0 + inset), new THREE.Vector3(cx, h, b.z1 - inset),
+      new THREE.Vector3(b.x0 + inset, h, cz), new THREE.Vector3(b.x1 - inset, h, cz));
+  }
+})();
+
+// spatial hashes (cell 48 m) for anchors and building AABBs
+const CELL = 48;
+const aHash = new Map(), bHash = new Map();
+const hk = (cx, cz) => cx * 100000 + cz;
+anchors.forEach((a, i) => {
+  const k = hk(Math.floor(a.x / CELL), Math.floor(a.z / CELL));
+  (aHash.get(k) || aHash.set(k, []).get(k)).push(i);
+});
+buildings.forEach((b, i) => {
+  for (let cx = Math.floor(b.x0 / CELL); cx <= Math.floor(b.x1 / CELL); cx++)
+    for (let cz = Math.floor(b.z0 / CELL); cz <= Math.floor(b.z1 / CELL); cz++) {
+      const k = hk(cx, cz);
+      (bHash.get(k) || bHash.set(k, []).get(k)).push(i);
+    }
+});
+function nearBuildings(x, z, r) {
+  const out = [];
+  for (let cx = Math.floor((x - r) / CELL); cx <= Math.floor((x + r) / CELL); cx++)
+    for (let cz = Math.floor((z - r) / CELL); cz <= Math.floor((z + r) / CELL); cz++) {
+      const arr = bHash.get(hk(cx, cz));
+      if (arr) for (const i of arr) if (!out.includes(i)) out.push(i);
+    }
+  return out;
+}
+
+// support height (feet level) at a point: roof if inside a footprint, else street
+function supportAt(x, z) {
+  let s = 0;
+  const arr = bHash.get(hk(Math.floor(x / CELL), Math.floor(z / CELL)));
+  if (arr) for (const i of arr) {
+    const b = buildings[i];
+    if (x >= b.x0 && x <= b.x1 && z >= b.z0 && z <= b.z1 && b.h > s) s = b.h;
+  }
+  return s;
+}
+
+// ---------------------------------------------------------------------------
+// RENDERER / SCENE
+// ---------------------------------------------------------------------------
+const canvas = document.getElementById('gl');
+const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+const scene = new THREE.Scene();
+const SKY = 0x9fc6ea;
+scene.background = new THREE.Color(SKY);
+scene.fog = new THREE.Fog(SKY, 140, 760);
+const camera = new THREE.PerspectiveCamera(78, 1, 0.1, 1200);
+
+scene.add(new THREE.HemisphereLight(0xbfd9ff, 0x5e5a52, 1.0));
+const sun = new THREE.DirectionalLight(0xfff2dd, 2.0);
+sun.position.set(240, 420, 180);
+scene.add(sun);
+
+// island slab (superellipse outline)
+{
+  const shape = new THREE.Shape();
+  for (let i = 0; i <= 96; i++) {
+    const t = i / 96 * Math.PI * 2;
+    const c = Math.cos(t), s = Math.sin(t);
+    const x = ISLE_A * Math.sign(c) * Math.pow(Math.abs(c), 2 / 3);
+    const z = ISLE_B * Math.sign(s) * Math.pow(Math.abs(s), 2 / 3);
+    i ? shape.lineTo(x, z) : shape.moveTo(x, z);
+  }
+  const geo = new THREE.ExtrudeGeometry(shape, { depth: 3, bevelEnabled: false });
+  const isle = new THREE.Mesh(geo, new THREE.MeshLambertMaterial({ color: 0x3c4148 }));
+  isle.rotation.x = Math.PI / 2;   // extrudes downward: top face lands at y=0
+  scene.add(isle);
+}
+// water
+{
+  const water = new THREE.Mesh(new THREE.PlaneGeometry(5000, 5000),
+    new THREE.MeshLambertMaterial({ color: 0x1c516e }));
+  water.rotation.x = -Math.PI / 2;
+  water.position.y = -2.5;
+  scene.add(water);
+}
+// park
+{
+  const park = new THREE.Mesh(
+    new THREE.PlaneGeometry(PARK.x1 - PARK.x0, PARK.z1 - PARK.z0),
+    new THREE.MeshLambertMaterial({ color: 0x4a7a44 }));
+  park.rotation.x = -Math.PI / 2;
+  park.position.set((PARK.x0 + PARK.x1) / 2, 0.05, (PARK.z0 + PARK.z1) / 2);
+  scene.add(park);
+}
+// sidewalk plinths — read the street grid
+{
+  const geo = new THREE.BoxGeometry(1, 1, 1);
+  const mat = new THREE.MeshLambertMaterial({ color: 0x8f959c });
+  const m = new THREE.InstancedMesh(geo, mat, buildings.length);
+  const M = new THREE.Matrix4();
+  buildings.forEach((b, i) => {
+    M.makeScale(b.x1 - b.x0 + 5, 0.3, b.z1 - b.z0 + 5);
+    M.setPosition(b.cx, 0.15, b.cz);
+    m.setMatrixAt(i, M);
+  });
+  scene.add(m);
+}
+// buildings — one instanced mesh, per-instance facade color
+{
+  const geo = new THREE.BoxGeometry(1, 1, 1);
+  const mat = new THREE.MeshLambertMaterial({ color: 0xffffff });
+  const mesh = new THREE.InstancedMesh(geo, mat, buildings.length);
+  const M = new THREE.Matrix4();
+  const palette = [0x8d9099, 0x9c8f80, 0xa8763e, 0x7f8ea3, 0x6b7686, 0xb0a293, 0x92655a, 0x77808f]
+    .map(c => new THREE.Color(c));
+  const paletteRand = mulberry32(seed + 1);
+  buildings.forEach((b, i) => {
+    M.makeScale(b.x1 - b.x0, b.h, b.z1 - b.z0);
+    M.setPosition(b.cx, b.h / 2, b.cz);
+    mesh.setMatrixAt(i, M);
+    const c = palette[Math.floor(paletteRand() * palette.length)].clone();
+    c.offsetHSL(0, 0, (paletteRand() - 0.5) * 0.08);
+    mesh.setColorAt(i, c);
+  });
+  scene.add(mesh);
+}
+
+// ---------------------------------------------------------------------------
+// SPIDEY — small articulated figure, posed per state (run / swing / fall)
+// ---------------------------------------------------------------------------
+const RED = 0xd42a2a, BLUE = 0x2a4bd4, DARK = 0x9e1f1f;
+function box(w, h, d, color, x, y, z) {
+  const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), new THREE.MeshLambertMaterial({ color }));
+  m.position.set(x, y, z);
+  return m;
+}
+const spidey = new THREE.Group();
+const torso = box(0.5, 0.62, 0.3, RED, 0, 1.15, 0);
+const hips  = box(0.44, 0.24, 0.28, BLUE, 0, 0.74, 0);
+const head  = new THREE.Mesh(new THREE.SphereGeometry(0.21, 12, 10), new THREE.MeshLambertMaterial({ color: RED }));
+head.position.set(0, 1.62, 0);
+head.scale.set(1, 1.1, 1.05);
+// eyes (white wedges so the character reads at distance)
+const eyeMat = new THREE.MeshBasicMaterial({ color: 0xffffff });
+for (const s of [-1, 1]) {
+  const eye = new THREE.Mesh(new THREE.SphereGeometry(0.075, 8, 6), eyeMat);
+  eye.position.set(0.09 * s, 1.66, 0.16);
+  eye.scale.set(0.9, 1.3, 0.5);
+  spidey.add(eye);
+}
+// limbs pivot at their joints: group at shoulder/hip, geometry hangs below
+function limb(len, thick, color, px, py, pz) {
+  const g = new THREE.Group();
+  g.position.set(px, py, pz);
+  g.add(box(thick, len, thick, color, 0, -len / 2, 0));
+  return g;
+}
+const armL = limb(0.62, 0.15, RED, -0.34, 1.42, 0);
+const armR = limb(0.62, 0.15, RED,  0.34, 1.42, 0);
+const legL = limb(0.76, 0.18, BLUE, -0.14, 0.64, 0);
+const legR = limb(0.76, 0.18, BLUE,  0.14, 0.64, 0);
+spidey.add(torso, hips, head, armL, armR, legL, legR);
+// chest spider mark
+spidey.add(box(0.1, 0.24, 0.02, DARK, 0, 1.2, 0.165));
+scene.add(spidey);
+
+// web lines (one per hand), drawn with sag when slack
+const webMats = { L: new THREE.LineBasicMaterial({ color: 0xf2f5ff }), R: new THREE.LineBasicMaterial({ color: 0xf2f5ff }) };
+const webLines = {};
+for (const s of ['L', 'R']) {
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.BufferAttribute(new Float32Array(11 * 3), 3));
+  webLines[s] = new THREE.Line(g, webMats[s]);
+  webLines[s].visible = false;
+  webLines[s].frustumCulled = false;
+  scene.add(webLines[s]);
+}
+// whiff puff: short-lived cross at the point a failed web aimed at
+const puff = new THREE.Mesh(new THREE.SphereGeometry(0.5, 6, 5),
+  new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0 }));
+scene.add(puff);
+let puffT = 0;
+// splash ring
+const splashRing = new THREE.Mesh(new THREE.RingGeometry(0.6, 1, 24),
+  new THREE.MeshBasicMaterial({ color: 0xcfeaff, transparent: true, opacity: 0, side: THREE.DoubleSide }));
+splashRing.rotation.x = -Math.PI / 2;
+scene.add(splashRing);
+
+// ---------------------------------------------------------------------------
+// PLAYER STATE + SIM
+// ---------------------------------------------------------------------------
+const P = {
+  pos: new THREE.Vector3(22, 0, -300),  // street corridor center, downtown, running north
+  vel: new THREE.Vector3(0, 0, RUN),
+  heading: Math.atan2(0, 1),            // yaw, atan2(x, z) convention (faces +z at 0)
+  grounded: true,
+  coyote: 0,
+  groundHold: 0,                        // steps grounded with a hand held (auto re-leap)
+  ropes: { L: null, R: null },          // {anchor:V3, len}
+  held: { L: false, R: false },
+  retry: { L: 0, R: 0 },
+  splash: 0,                            // >0: splash freeze countdown (seconds)
+  hang: 0,                              // steps spent dead-hanging on a rope
+  time: 0, steps: 0,
+};
+let tiltInput = 0;      // -1..1, composed from gyro/keys/__dbg each step
+let simRunning = false;
+
+const V = {  // scratch vectors (sim allocates nothing per step)
+  a: new THREE.Vector3(), b: new THREE.Vector3(), c: new THREE.Vector3(),
+};
+
+function moveDir(out) {
+  const vh = Math.hypot(P.vel.x, P.vel.z);
+  if (vh > 4) out.set(P.vel.x / vh, 0, P.vel.z / vh);
+  else out.set(Math.sin(P.heading), 0, Math.cos(P.heading));
+  return out;
+}
+
+// Pick the best anchor for a hand. side: -1 left, +1 right.
+function pickAnchor(side) {
+  const md = moveDir(V.a);
+  const rx = md.z, rz = -md.x;             // right vector of travel
+  let best = -1, bestScore = -1e9;
+  const x0 = Math.floor((P.pos.x - ANCHOR_R) / CELL), x1 = Math.floor((P.pos.x + ANCHOR_R) / CELL);
+  const z0 = Math.floor((P.pos.z - ANCHOR_R) / CELL), z1 = Math.floor((P.pos.z + ANCHOR_R) / CELL);
+  for (let cx = x0; cx <= x1; cx++) for (let cz = z0; cz <= z1; cz++) {
+    const arr = aHash.get(hk(cx, cz));
+    if (!arr) continue;
+    for (const i of arr) {
+      const a = anchors[i];
+      const dx = a.x - P.pos.x, dy = a.y - P.pos.y, dz = a.z - P.pos.z;
+      if (dy < 6) continue;                                  // must be meaningfully above
+      const len = Math.sqrt(dx * dx + dy * dy + dz * dz);
+      if (len > ANCHOR_R || len < 8) continue;
+      const hd = Math.hypot(dx, dz) || 0.001;
+      const elev = Math.atan2(dy, hd);
+      if (elev < MIN_ELEV) continue;
+      const fx = dx / hd, fz = dz / hd;
+      const fwd = fx * md.x + fz * md.z;                     // ahead vs behind
+      const sd = (fx * rx + fz * rz) * side;                 // matches this hand's side?
+      let score = 2.2 * fwd + 0.8 * sd
+                - 0.8 * Math.abs(len - LEN_IDEAL) / LEN_IDEAL
+                - 0.5 * Math.abs(elev - 0.9) / 0.9;
+      if (fwd < 0) score -= 2.5;                             // forward-only game: behind is a last resort
+      if (score > bestScore) { bestScore = score; best = i; }
+    }
+  }
+  return best >= 0 ? anchors[best] : null;
+}
+
+function tryAttach(side) {
+  const a = pickAnchor(side === 'L' ? -1 : 1);
+  if (a) {
+    const len = P.pos.distanceTo(a) * 0.96;   // slight initial tug
+    P.ropes[side] = { anchor: a, len, len0: len };
+    return true;
+  }
+  // whiff: show a fizzle where the web aimed
+  const md = moveDir(V.b);
+  puff.position.copy(P.pos).addScaledVector(md, 6).add(V.c.set((side === 'L' ? -3 : 3), 8, 0));
+  puffT = 0.18;
+  return false;
+}
+
+function leap() {
+  P.grounded = false;
+  P.coyote = 0;
+  P.vel.y = Math.max(P.vel.y, JUMP_V);
+  P.groundHold = 0;
+}
+
+function press(side) {
+  P.held[side] = true;
+  if (P.grounded || P.coyote > 0) {
+    leap();                     // web-leap: jump now, rope attaches on the next steps
+    P.retry[side] = 2;
+  } else if (!P.ropes[side]) {
+    if (!tryAttach(side)) P.retry[side] = 8;
+  }
+}
+function release(side) {
+  P.held[side] = false;
+  P.ropes[side] = null;
+}
+
+function doSplash() {
+  P.splash = 0.9;
+  splashRing.position.set(P.pos.x, -1.4, P.pos.z);
+  splashRing.scale.setScalar(1);
+  splashRing.material.opacity = 0.9;
+  document.getElementById('fade').style.opacity = 0.85;
+}
+function respawn() {
+  // walk toward island center until we're on a street (support 0, on land)
+  const p = V.a.set(P.pos.x, 0, P.pos.z);
+  const dir = V.b.set(-p.x, 0, -p.z).normalize();
+  for (let i = 0; i < 200; i++) {
+    p.addScaledVector(dir, 5);
+    if (insideIsland(p.x, p.z) && supportAt(p.x, p.z) === 0 && !inPark(p.x, p.z)) break;
+  }
+  P.pos.set(p.x, 0, p.z);
+  P.heading = Math.atan2(dir.x, dir.z);
+  P.vel.set(dir.x * RUN, 0, dir.z * RUN);
+  P.grounded = true;
+  P.ropes.L = P.ropes.R = null;
+  document.getElementById('fade').style.opacity = 0;
+}
+
+function step(dt) {
+  P.time += dt; P.steps++;
+  if (bot.on) botThink();
+
+  if (P.splash > 0) {
+    P.splash -= dt;
+    if (P.splash <= 0) respawn();
+    return;
+  }
+
+  // held with no rope: keep retrying so swings chain as soon as an anchor appears
+  for (const s of ['L', 'R']) {
+    if (P.held[s] && !P.ropes[s] && !P.grounded) {
+      if (--P.retry[s] <= 0) { tryAttach(s); P.retry[s] = 8; }
+    }
+  }
+  // holding on the ground re-leaps automatically → chained swings by just holding
+  if (P.grounded && (P.held.L || P.held.R)) {
+    if (++P.groundHold > 0.22 / dt) leap();
+  } else P.groundHold = 0;
+
+  if (P.grounded) {
+    // auto-run: heading steered by tilt, excess landing speed bleeds off, never below RUN
+    P.heading -= tiltInput * TURN_RATE * dt;
+    let hs = Math.hypot(P.vel.x, P.vel.z);
+    hs = Math.max(RUN, hs - RUN_DECEL * dt);
+    P.vel.set(Math.sin(P.heading) * hs, 0, Math.cos(P.heading) * hs);
+    P.coyote = COYOTE;
+  } else {
+    P.vel.y -= G * dt;
+    // tilt = lateral force perpendicular to travel
+    const md = moveDir(V.a);
+    P.vel.x += md.z * tiltInput * AIR_STEER * dt;
+    P.vel.z += -md.x * tiltInput * AIR_STEER * dt;
+    // swing pump: a taut web is never a dead hang — below PUMP_MAX the
+    // pendulum is driven forward along travel, fading out as speed builds
+    const sp = P.vel.length();
+    if ((P.ropes.L || P.ropes.R) && sp < PUMP_MAX) {
+      const w = 1 - sp / PUMP_MAX;
+      P.vel.x += md.x * PUMP * w * dt;
+      P.vel.z += md.z * PUMP * w * dt;
+    }
+    // and if we still end up dead-hanging (e.g. pinned on a wall), the web
+    // snaps — you fall, and the held-retry immediately hunts a fresh anchor
+    if ((P.ropes.L || P.ropes.R) && sp < 3) {
+      if (++P.hang > HANG_SNAP / dt) {
+        P.ropes.L = P.ropes.R = null;
+        P.retry.L = P.retry.R = 20;
+        P.hang = 0;
+      }
+    } else P.hang = 0;
+    // quadratic drag
+    if (sp > 1) P.vel.addScaledVector(P.vel, -DRAG_K * sp * dt);
+    if (P.coyote > 0) P.coyote--;
+  }
+
+  P.pos.addScaledVector(P.vel, dt);
+
+  // rope constraints: position projection + kill outward radial velocity.
+  // Reel while taut — this is where swing energy comes from.
+  for (let iter = 0; iter < 2; iter++) {
+    for (const s of ['L', 'R']) {
+      const r = P.ropes[s];
+      if (!r) continue;
+      if (iter === 0) r.len = Math.max(Math.max(10, r.len0 * 0.5), r.len - REEL * dt);
+      const d = V.a.subVectors(P.pos, r.anchor);
+      const dist = d.length();
+      if (dist > r.len) {
+        d.multiplyScalar(1 / dist);
+        P.pos.addScaledVector(d, -(dist - r.len));
+        const vr = P.vel.dot(d);
+        if (vr > 0) P.vel.addScaledVector(d, -vr);
+      }
+    }
+  }
+
+  // --- collision ---
+  const sup = supportAt(P.pos.x, P.pos.z);
+  if (!P.grounded) {
+    // walls: push out of any AABB we're inside below its roof
+    for (const i of nearBuildings(P.pos.x, P.pos.z, 1)) {
+      const b = buildings[i];
+      const R = 0.45;
+      if (P.pos.x > b.x0 - R && P.pos.x < b.x1 + R && P.pos.z > b.z0 - R && P.pos.z < b.z1 + R
+          && P.pos.y < b.h - 0.6) {
+        const pxl = P.pos.x - (b.x0 - R), pxr = (b.x1 + R) - P.pos.x;
+        const pzl = P.pos.z - (b.z0 - R), pzr = (b.z1 + R) - P.pos.z;
+        const m = Math.min(pxl, pxr, pzl, pzr);
+        if (m === pxl)      { P.pos.x = b.x0 - R; if (P.vel.x > 0) P.vel.x = 0; }
+        else if (m === pxr) { P.pos.x = b.x1 + R; if (P.vel.x < 0) P.vel.x = 0; }
+        else if (m === pzl) { P.pos.z = b.z0 - R; if (P.vel.z > 0) P.vel.z = 0; }
+        else                { P.pos.z = b.z1 + R; if (P.vel.z < 0) P.vel.z = 0; }
+      }
+    }
+    // landing
+    if (P.vel.y <= 0 && P.pos.y <= sup + 0.02) {
+      P.pos.y = sup;
+      P.grounded = true;
+      P.ropes.L = P.ropes.R = null;        // ropes never drag you along the ground
+      let hs = Math.hypot(P.vel.x, P.vel.z);
+      if (P.vel.y < -30) hs *= 0.8;        // hard landing: roll, keep most momentum
+      if (hs > 1) P.heading = Math.atan2(P.vel.x, P.vel.z);
+      hs = Math.max(RUN, hs);
+      P.vel.set(Math.sin(P.heading) * hs, 0, Math.cos(P.heading) * hs);
+    }
+  } else {
+    // ran off an edge (roof or curb)?
+    if (sup < P.pos.y - 0.5) P.grounded = false;
+    else P.pos.y = sup;
+  }
+
+  // water
+  if (P.pos.y < -1.2 || (!insideIsland(P.pos.x, P.pos.z) && P.pos.y < 0.5)) doSplash();
+}
+
+// ---------------------------------------------------------------------------
+// BOT — attract mode / headless verification autopilot
+// ---------------------------------------------------------------------------
+const bot = { on: new URLSearchParams(location.search).has('bot'), side: 'R' };
+function botThink() {
+  // steer back toward center when drifting off the island
+  const ex = P.pos.x / ISLE_A, ez = P.pos.z / ISLE_B;
+  const md = moveDir(V.c);
+  let want = 0;
+  if (Math.abs(ex) > 0.55 || Math.abs(ez) > 0.65) {
+    const tx = -P.pos.x, tz = -P.pos.z;
+    const cross = md.x * tz - md.z * tx;       // >0: center is to the left
+    want = cross > 0 ? -0.7 : 0.7;
+  }
+  tiltOverride = want;
+  const anyRope = P.ropes.L || P.ropes.R;
+  if (!anyRope && !P.grounded && P.vel.y < 2 && !P.held.L && !P.held.R) {
+    bot.side = bot.side === 'L' ? 'R' : 'L';
+    press(bot.side);
+  } else if (anyRope && P.vel.y > 5) {
+    release('L'); release('R');
+  } else if (P.grounded && !P.held.L && !P.held.R && P.steps % 90 === 0) {
+    press(bot.side);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// INPUT — touch halves, gyro tilt, keyboard fallback
+// ---------------------------------------------------------------------------
+const pointers = new Map();   // pointerId → 'L' | 'R'
+canvas.addEventListener('pointerdown', e => {
+  if (!simRunning) return;
+  e.preventDefault();
+  const side = e.clientX < innerWidth / 2 ? 'L' : 'R';
+  if (pointers.has(e.pointerId)) return;
+  pointers.set(e.pointerId, side);
+  press(side);
+});
+function endPointer(e) {
+  const side = pointers.get(e.pointerId);
+  if (side) { pointers.delete(e.pointerId); if (![...pointers.values()].includes(side)) release(side); }
+}
+window.addEventListener('pointerup', endPointer);
+window.addEventListener('pointercancel', endPointer);
+canvas.addEventListener('contextmenu', e => e.preventDefault());
+
+let gyro = 0, gyroCal = null, gyroOn = false;
+function onOrient(e) {
+  if (e.gamma == null) return;
+  if (gyroCal === null) gyroCal = e.gamma;
+  gyro = Math.max(-1, Math.min(1, (e.gamma - gyroCal) / 22));
+}
+function enableTilt() {
+  gyroCal = null;
+  const go = () => { if (!gyroOn) { window.addEventListener('deviceorientation', onOrient); gyroOn = true; } };
+  if (typeof DeviceOrientationEvent !== 'undefined' && DeviceOrientationEvent.requestPermission)
+    DeviceOrientationEvent.requestPermission().then(s => { if (s === 'granted') go(); }).catch(() => {});
+  else go();
+}
+
+const keys = {};
+window.addEventListener('keydown', e => {
+  if (keys[e.code]) return;
+  keys[e.code] = true;
+  if (!simRunning) return;
+  if (e.code === 'KeyF') press('L');
+  if (e.code === 'KeyJ') press('R');
+  if (e.code === 'Space') { press('L'); press('R'); e.preventDefault(); }
+});
+window.addEventListener('keyup', e => {
+  keys[e.code] = false;
+  if (e.code === 'KeyF') release('L');
+  if (e.code === 'KeyJ') release('R');
+  if (e.code === 'Space') { release('L'); release('R'); }
+});
+
+let tiltOverride = null;   // bot / __dbg steering
+function readTilt() {
+  if (tiltOverride !== null) return tiltOverride;
+  let t = gyro;
+  if (keys['KeyA'] || keys['ArrowLeft']) t -= 1;
+  if (keys['KeyD'] || keys['ArrowRight']) t += 1;
+  return Math.max(-1, Math.min(1, t));
+}
+
+// ---------------------------------------------------------------------------
+// VISUALS — pose spidey, draw webs, chase camera
+// ---------------------------------------------------------------------------
+const pose = { armL: new THREE.Quaternion(), armR: new THREE.Quaternion(), legL: 0, legR: 0, pitch: 0 };
+const Q = new THREE.Quaternion(), DOWN = new THREE.Vector3(0, -1, 0), TMP = new THREE.Vector3();
+
+function aimLimbAt(limbGroup, targetWorld, out) {
+  limbGroup.getWorldPosition(TMP);
+  V.a.subVectors(targetWorld, TMP).normalize();
+  // undo the character's world rotation so the quaternion is in spidey-local space
+  V.a.applyQuaternion(Q.copy(spidey.quaternion).invert());
+  out.setFromUnitVectors(DOWN, V.a);
+}
+
+function updateSpidey(dt) {
+  spidey.position.copy(P.pos);
+  const hs = Math.hypot(P.vel.x, P.vel.z);
+  // yaw follows travel
+  const yaw = P.grounded ? P.heading : (hs > 2 ? Math.atan2(P.vel.x, P.vel.z) : P.heading);
+  const dy = ((yaw - spidey.rotation.y + Math.PI * 3) % (Math.PI * 2)) - Math.PI;
+  spidey.rotation.y += dy * Math.min(1, 12 * dt);
+  // pitch: dive when falling, lean back on the rise
+  let tp = 0;
+  if (!P.grounded) tp = Math.max(-1.0, Math.min(1.0, Math.atan2(-P.vel.y, Math.max(hs, 8)) * 0.7));
+  else tp = 0.12;   // slight run lean
+  pose.pitch += (tp - pose.pitch) * Math.min(1, 8 * dt);
+  spidey.rotation.x = pose.pitch;
+
+  const k = Math.min(1, 10 * dt);
+  if (P.grounded) {
+    const ph = P.time * (6 + hs * 0.55);
+    const swing = Math.sin(ph) * 0.85;
+    pose.legL += (swing - pose.legL) * k;  pose.legR += (-swing - pose.legR) * k;
+    legL.rotation.x = pose.legL; legR.rotation.x = pose.legR;
+    Q.setFromEuler(new THREE.Euler(-swing * 0.9, 0, 0.06));  armR.quaternion.slerp(Q, k);
+    Q.setFromEuler(new THREE.Euler(swing * 0.9, 0, -0.06));  armL.quaternion.slerp(Q, k);
+  } else {
+    // legs trail together, slightly bent
+    pose.legL += (-0.5 - pose.legL) * k; pose.legR += (-0.62 - pose.legR) * k;
+    legL.rotation.x = pose.legL; legR.rotation.x = pose.legR;
+    for (const [s, arm] of [['L', armL], ['R', armR]]) {
+      const r = P.ropes[s];
+      if (r) { aimLimbAt(arm, r.anchor, Q); arm.quaternion.slerp(Q, Math.min(1, 18 * dt)); }
+      else { Q.setFromEuler(new THREE.Euler(-2.5, 0, s === 'L' ? 0.5 : -0.5)); arm.quaternion.slerp(Q, k); } // arms up, skydive
+    }
+  }
+
+  // web lines with sag when slack
+  for (const [s, arm] of [['L', armL], ['R', armR]]) {
+    const line = webLines[s], r = P.ropes[s];
+    if (!r) { line.visible = false; continue; }
+    line.visible = true;
+    arm.getWorldPosition(TMP);
+    TMP.addScaledVector(V.a.subVectors(r.anchor, TMP).normalize(), 0.62);   // hand ≈ arm tip
+    const posAttr = line.geometry.attributes.position;
+    const dist = TMP.distanceTo(r.anchor);
+    const slack = Math.max(0, r.len - dist) * 0.35;
+    for (let i = 0; i <= 10; i++) {
+      const t = i / 10;
+      V.b.lerpVectors(TMP, r.anchor, t);
+      V.b.y -= Math.sin(t * Math.PI) * slack;
+      posAttr.setXYZ(i, V.b.x, V.b.y, V.b.z);
+    }
+    posAttr.needsUpdate = true;
+  }
+}
+
+const camPos = new THREE.Vector3(22, 6, -318), camLook = new THREE.Vector3(22, 2, -300);
+let fov = 78;
+function updateCamera(dt) {
+  const md = moveDir(V.a);
+  const sp = P.vel.length();
+  const back = 6.5 + Math.min(3.5, sp * 0.045);
+  V.b.copy(P.pos).addScaledVector(md, -back);
+  V.b.y = P.pos.y + 3.1 + Math.max(0, -P.vel.y) * 0.02;
+  // march from the player toward the desired spot and stop before any wall,
+  // so the camera never buries itself inside a building
+  for (let i = 1; i <= 8; i++) {
+    TMP.lerpVectors(P.pos, V.b, i / 8);
+    TMP.y += 1.4;
+    if (supportAt(TMP.x, TMP.z) > TMP.y) {
+      V.b.lerpVectors(P.pos, V.b, Math.max(1, i - 1) / 8);
+      break;
+    }
+  }
+  // and keep it above whatever roof it's over
+  const camSup = supportAt(V.b.x, V.b.z);
+  if (V.b.y < camSup + 1.5) V.b.y = camSup + 1.5;
+  camPos.lerp(V.b, 1 - Math.exp(-5 * dt));
+  V.c.copy(P.pos).addScaledVector(P.vel, 0.22);
+  V.c.y = P.pos.y + 1.4 + P.vel.y * 0.1;
+  camLook.lerp(V.c, 1 - Math.exp(-8 * dt));
+  camera.position.copy(camPos);
+  camera.lookAt(camLook);
+  const tf = 78 + Math.min(16, sp * 0.28);
+  fov += (tf - fov) * Math.min(1, 4 * dt);
+  if (Math.abs(camera.fov - fov) > 0.01) { camera.fov = fov; camera.updateProjectionMatrix(); }
+}
+
+// ---------------------------------------------------------------------------
+// LOOP
+// ---------------------------------------------------------------------------
+function resize() {
+  renderer.setSize(innerWidth, innerHeight, false);
+  camera.aspect = innerWidth / innerHeight;
+  camera.updateProjectionMatrix();
+}
+window.addEventListener('resize', resize);
+resize();
+
+const speedEl = document.querySelector('#speed b');
+const hintEl = document.getElementById('hint');
+let acc = 0, last = 0, hudT = 0, hintT = 0;
+
+function frame(now) {
+  requestAnimationFrame(frame);
+  const dt = Math.min(0.1, (now - last) / 1000 || 0);
+  last = now;
+  if (simRunning) {
+    tiltInput = readTilt();
+    acc += dt;
+    let n = 0;
+    while (acc >= SDT && n < 12) { step(SDT); acc -= SDT; n++; }
+    if (n === 12) acc = 0;
+  }
+  updateSpidey(dt);
+  updateCamera(dt);
+
+  if (puffT > 0) { puffT -= dt; puff.material.opacity = Math.max(0, puffT / 0.18) * 0.8; }
+  if (splashRing.material.opacity > 0) {
+    splashRing.material.opacity -= dt * 1.4;
+    splashRing.scale.multiplyScalar(1 + dt * 6);
+  }
+  hudT += dt;
+  if (hudT > 0.12) {
+    hudT = 0;
+    speedEl.textContent = Math.round(P.vel.length() * 2.237);
+  }
+  if (simRunning && (hintT += dt) > 6 && hintEl.style.opacity !== '0') hintEl.style.opacity = '0';
+
+  renderer.render(scene, camera);
+}
+requestAnimationFrame(frame);
+
+function start() {
+  if (simRunning) return;
+  simRunning = true;
+  document.getElementById('title').style.display = 'none';
+}
+document.getElementById('startBtn').addEventListener('click', () => { enableTilt(); start(); });
+if (bot.on || new URLSearchParams(location.search).has('autostart')) start();
+
+// ---------------------------------------------------------------------------
+// DEBUG HARNESS
+// ---------------------------------------------------------------------------
+window.__dbg = {
+  errors: window.__errs,
+  P, buildings, anchors, bot,
+  start,
+  stepN(n) { for (let i = 0; i < n; i++) step(SDT); return this.snapshot(); },
+  snapshot() {
+    return {
+      pos: P.pos.toArray().map(v => +v.toFixed(2)),
+      vel: P.vel.toArray().map(v => +v.toFixed(2)),
+      speed: +P.vel.length().toFixed(2),
+      grounded: P.grounded,
+      ropes: { L: !!P.ropes.L, R: !!P.ropes.R },
+      held: { ...P.held },
+      splash: P.splash > 0,
+      steps: P.steps,
+    };
+  },
+  press, release,
+  tilt(v) { tiltOverride = v; },
+  clearTilt() { tiltOverride = null; },
+  supportAt, pickAnchor,
+};
+
+// ---------------------------------------------------------------------------
+// SERVICE WORKER (shell-only; ?nosw=1 skips for local testing)
+// ---------------------------------------------------------------------------
+if ('serviceWorker' in navigator && !new URLSearchParams(location.search).has('nosw')) {
+  addEventListener('load', () => navigator.serviceWorker.register('sw.js').catch(() => {}));
+}
+</script>
+</body>
+</html>
