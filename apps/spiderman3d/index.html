@@ -26,7 +26,8 @@
     html, body, canvas#gl, #hud, #fade, #title { height: calc(100vh + env(safe-area-inset-top)); }
   }
 
-  #hud { pointer-events: none; color: #fff; }
+  #hud { pointer-events: none; color: #fff; transition: opacity 0.6s; }
+  #hud.pre { opacity: 0; }   /* hidden behind the title until the run starts */
   #speed { position: absolute; top: calc(env(safe-area-inset-top) + 10px); left: 0; right: 0; text-align: center;
     font-size: 15px; font-weight: 700; letter-spacing: 1px; opacity: 0.85; text-shadow: 0 1px 3px rgba(0,0,0,0.5); }
   #speed b { font-size: 26px; }
@@ -37,7 +38,8 @@
   #fade { background: #0c2a3e; opacity: 0; pointer-events: none; transition: opacity 0.25s; }
 
   #title { display: flex; flex-direction: column; align-items: center; justify-content: center;
-    background: linear-gradient(180deg, #0e1a38 0%, #1c2f5e 55%, #45262e 100%); color: #fff; z-index: 10;
+    background: linear-gradient(180deg, rgba(13, 24, 52, 0.86) 0%, rgba(26, 44, 88, 0.62) 55%, rgba(64, 36, 44, 0.80) 100%);
+    color: #fff; z-index: 10;
     padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left); }
   #tver { position: absolute; top: calc(env(safe-area-inset-top) + 12px); right: calc(env(safe-area-inset-right) + 14px);
     font-size: 13px; font-weight: 800; opacity: 0.7; }
@@ -52,7 +54,7 @@
 </head>
 <body>
 <canvas id="gl"></canvas>
-<div id="hud">
+<div id="hud" class="pre">
   <div id="speed"><b>0</b> MPH</div>
   <canvas id="mini"></canvas>
 </div>
@@ -81,7 +83,7 @@ import * as THREE from 'three';
 
 const BOOT_T0 = performance.now();   // city gen + scene build cost, exposed as __dbg.bootMs
 
-const VERSION = 6;
+const VERSION = 7;
 // the version badge lives ONLY on the title screen (user decision, V5)
 document.getElementById('tver').textContent = 'V' + VERSION;
 
@@ -100,10 +102,10 @@ const G         = 25;        // gravity, m/s^2 (super-heroic, not Earth)
 const RUN       = 12;        // base auto-run speed, m/s
 const RUN_DECEL = 5;         // landing momentum bleeds to RUN at this rate
 const JUMP_V    = 15;        // web-leap vertical impulse (~4.5 m — enough to engage a street-start swing)
-const DRAG_K    = 0.0065;    // quadratic air drag  (terminal ~ sqrt(G/K) ≈ 62 m/s)
-const REEL      = 4.0;       // rope shortens while held, m/s (energy injection)
-const PUMP      = 14;        // swing pump: forward accel while roped & slow, m/s^2
-const PUMP_MAX  = 18;        // pump fades to zero at this speed
+const DRAG_K    = 0.0053;    // quadratic air drag  (terminal ~ sqrt(G/K) ≈ 69 m/s)
+const REEL      = 4.6;       // rope shortens while held, m/s (energy injection)
+const PUMP      = 15;        // swing pump: forward accel while roped & slow, m/s^2
+const PUMP_MAX  = 20;        // pump fades to zero at this speed
 const HANG_SNAP = 1.5;       // s of dead-hang (speed < 3) before the web snaps
 const AIR_STEER = 16;        // lateral accel from full tilt while airborne, m/s^2
 const TURN_RATE = 2.4;       // grounded heading turn at full tilt, rad/s
@@ -498,7 +500,7 @@ const canvas = document.getElementById('gl');
 const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
 renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
 const scene = new THREE.Scene();
-const SKY = 0x9fc6ea;
+const SKY = 0xcfdfec;   // haze color — fog + horizon must match
 scene.background = new THREE.Color(SKY);
 scene.fog = new THREE.Fog(SKY, 200, 1500);
 // far plane sits just past the fog wall — beyond 1500 everything is sky
@@ -507,10 +509,68 @@ scene.fog = new THREE.Fog(SKY, 200, 1500);
 // the ground-decal layers (lawns/ribbon) z-fight at distance without it.
 const camera = new THREE.PerspectiveCamera(78, 1, 0.5, 1700);
 
-scene.add(new THREE.HemisphereLight(0xbfd9ff, 0x5e5a52, 1.0));
-const sun = new THREE.DirectionalLight(0xfff2dd, 2.0);
+scene.add(new THREE.HemisphereLight(0xcfe2ff, 0x8a7f6e, 1.0));
+const sun = new THREE.DirectionalLight(0xffe9c4, 2.3);
 sun.position.set(240, 420, 180);
 scene.add(sun);
+
+// sky dome: horizon haze → zenith blue, with a sun disc + glow. Follows the
+// camera; drawn first with no depth write so the city overdraws it. NO
+// post-processing / render targets anywhere in this app (iOS HalfFloat trap).
+const skyDome = new THREE.Mesh(new THREE.SphereGeometry(1600, 24, 12),
+  new THREE.ShaderMaterial({
+    side: THREE.BackSide, depthWrite: false, fog: false,
+    vertexShader: 'varying vec3 vDir; void main(){ vDir = position; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }',
+    fragmentShader: `varying vec3 vDir;
+      void main() {
+        vec3 d = normalize(vDir);
+        float h = clamp(d.y, 0.0, 1.0);
+        vec3 col = mix(vec3(0.81, 0.87, 0.93), vec3(0.34, 0.56, 0.83), pow(h, 0.7));
+        vec3 sunDir = normalize(vec3(240.0, 420.0, 180.0));
+        float s = max(dot(d, sunDir), 0.0);
+        col += vec3(1.0, 0.87, 0.62) * (pow(s, 600.0) * 1.2 + pow(s, 20.0) * 0.14);
+        gl_FragColor = vec4(col, 1.0);
+      }`
+  }));
+skyDome.frustumCulled = false;
+skyDome.renderOrder = -1;
+scene.add(skyDome);
+
+// -- procedural world-space surface detail ----------------------------------
+// All world surfaces are axis-aligned, so facades/pavement can derive their
+// pattern from WORLD position in the fragment shader: windows are exact
+// meters, nothing stretches, one material per surface class, zero textures.
+const timeUniforms = [];   // shaders that want uTime, ticked in frame()
+function surfaceMat(mat, body, animated = false) {
+  mat.onBeforeCompile = sh => {
+    if (animated) { sh.uniforms.uTime = { value: 0 }; timeUniforms.push(sh.uniforms.uTime); }
+    sh.vertexShader = sh.vertexShader
+      .replace('#include <common>', '#include <common>\nvarying vec3 vWP;\nvarying vec3 vNW;')
+      .replace('#include <project_vertex>', `#include <project_vertex>
+        vec4 wp4 = vec4( transformed, 1.0 );
+        #ifdef USE_INSTANCING
+          wp4 = instanceMatrix * wp4;
+        #endif
+        vWP = ( modelMatrix * wp4 ).xyz;
+        vec3 nrm = normal;
+        #ifdef USE_INSTANCING
+          nrm = mat3( instanceMatrix ) * nrm;
+        #endif
+        vNW = normalize( mat3( modelMatrix ) * nrm );`);
+    sh.fragmentShader = sh.fragmentShader
+      .replace('#include <common>', `#include <common>
+        varying vec3 vWP;
+        varying vec3 vNW;
+        ${animated ? 'uniform float uTime;' : ''}
+        float hash2(vec2 p){ return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }`)
+      .replace('#include <color_fragment>', `#include <color_fragment>
+        vec3 surfGlow = vec3(0.0);
+        ${body}`)
+      .replace('#include <emissivemap_fragment>', `#include <emissivemap_fragment>
+        totalEmissiveRadiance += surfGlow;`);
+  };
+  return mat;
+}
 
 // island slab traced from the width/centerline profiles
 {
@@ -526,14 +586,36 @@ scene.add(sun);
     shape.lineTo(centerAt(z) - widthAt(z) / 2, z);
   }
   const geo = new THREE.ExtrudeGeometry(shape, { depth: 3, bevelEnabled: false });
-  const isle = new THREE.Mesh(geo, new THREE.MeshLambertMaterial({ color: 0x3c4148 }));
+  // asphalt: coarse + fine mottle, faint avenue/street lane lines on the grid
+  const isle = new THREE.Mesh(geo, surfaceMat(new THREE.MeshLambertMaterial({ color: 0x41464d }), `
+    if (vNW.y > 0.5) {
+      diffuseColor.rgb *= 0.90 + 0.12 * hash2(floor(vWP.xz * 0.31)) + 0.07 * hash2(floor(vWP.xz * 1.63) + 7.0);
+      float ax = abs(mod(vWP.x + ${AV / 2}.0, ${AV}.0) - ${AV / 2}.0);   // dist to avenue centerline
+      float sz = abs(mod(vWP.z - ${Z0}.0 + ${ST / 2}.0, ${ST}.0) - ${ST / 2}.0);
+      float dash = step(0.5, fract(vWP.z * 0.12)) * (1.0 - step(0.35, ax));
+      float dash2 = step(0.5, fract(vWP.x * 0.12)) * (1.0 - step(0.3, sz));
+      diffuseColor.rgb += vec3(0.28, 0.26, 0.16) * max(dash, dash2) * 0.5;
+      // zebra crosswalks where corridors meet
+      float cw1 = (1.0 - step(15.0, ax)) * step(9.0, sz) * (1.0 - step(13.0, sz)) * step(0.55, fract(vWP.x * 0.55));
+      float cw2 = (1.0 - step(9.0, sz)) * step(15.0, ax) * (1.0 - step(19.0, ax)) * step(0.55, fract(vWP.z * 0.55));
+      diffuseColor.rgb += vec3(0.45) * max(cw1, cw2) * 0.6;
+    }`));
   isle.rotation.x = Math.PI / 2;   // extrudes downward: top face lands at y=0
   scene.add(isle);
 }
-// water (Hudson + East River + harbor, effectively infinite)
+// water (Hudson + East River + harbor, effectively infinite): animated
+// two-scale shimmer + sparse sun glints — color-space only, no render targets
 {
   const water = new THREE.Mesh(new THREE.PlaneGeometry(60000, 60000),
-    new THREE.MeshLambertMaterial({ color: 0x1c516e }));
+    surfaceMat(new THREE.MeshLambertMaterial({ color: 0x2b5a78 }), `
+      {
+        vec2 p = vWP.xz * 0.021;
+        float w1 = sin(p.x * 2.7 + uTime * 0.8) * sin(p.y * 2.1 - uTime * 0.6);
+        float w2 = sin(p.x * 7.3 - uTime * 1.3 + p.y * 5.1);
+        diffuseColor.rgb *= 0.90 + 0.09 * w1 + 0.05 * w2;
+        float g = hash2(floor(vWP.xz * 0.4) + floor(uTime * 3.0));
+        diffuseColor.rgb += vec3(0.35, 0.33, 0.26) * step(0.994, g);
+      }`, true));
   water.rotation.x = -Math.PI / 2;
   water.position.y = -2.5;
   scene.add(water);
@@ -543,8 +625,9 @@ scene.add(sun);
   // Ground decals (lawns/reservoir/ribbon) sit near-coplanar with the island
   // slab: they need BOTH a real y gap (≥ 0.2) and polygonOffset, or they
   // z-fight ("Central Park flashes") at distance. Don't thin these out.
-  const grass = new THREE.MeshLambertMaterial({ color: 0x4a7a44,
-    polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -1 });
+  const grass = surfaceMat(new THREE.MeshLambertMaterial({ color: 0x517e42,
+    polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -1 }), `
+    diffuseColor.rgb *= (0.84 + 0.24 * hash2(floor(vWP.xz * 0.11))) * (0.92 + 0.13 * hash2(floor(vWP.xz * 0.9) + 3.0));`);
   const addLawn = (x0, x1, z0, z1) => {
     const p = new THREE.Mesh(new THREE.PlaneGeometry(x1 - x0, z1 - z0), grass);
     p.rotation.x = -Math.PI / 2;
@@ -582,26 +665,104 @@ scene.add(sun);
       shape.lineTo(bwayXAt(z) + RIBBON, -z);
     }
     const bway = new THREE.Mesh(new THREE.ShapeGeometry(shape),
-      new THREE.MeshLambertMaterial({ color: 0x474c54,
-        polygonOffset: true, polygonOffsetFactor: -3, polygonOffsetUnits: -3 }));
+      surfaceMat(new THREE.MeshLambertMaterial({ color: 0x4a4f57,
+        polygonOffset: true, polygonOffsetFactor: -3, polygonOffsetUnits: -3 }), `
+      diffuseColor.rgb *= 0.92 + 0.10 * hash2(floor(vWP.xz * 0.5));`));
     bway.rotation.x = -Math.PI / 2;   // shape (x, -z) → world (x, z)
     bway.position.y = 0.5;            // clear of the 0.3 sidewalk plinths it crosses
     scene.add(bway);
   }
   // Central Park reservoir (visual water — physically it's still park lawn)
   const res = new THREE.Mesh(new THREE.CircleGeometry(1, 32),
-    new THREE.MeshLambertMaterial({ color: 0x2a6584,
-      polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2 }));
+    surfaceMat(new THREE.MeshLambertMaterial({ color: 0x2f6987,
+      polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2 }), `
+      diffuseColor.rgb *= 0.92 + 0.10 * sin(vWP.x * 0.05 + uTime * 0.7) * sin(vWP.z * 0.04 - uTime * 0.5);`, true));
   res.rotation.x = -Math.PI / 2;
   res.scale.set(300, 380, 1);
   res.position.set((CENTRAL_PARK.x0 + CENTRAL_PARK.x1) / 2, 0.4, zk(11.2));
   scene.add(res);
 }
+// set dressing (decor only, no physics — small enough that clipping is
+// acceptable; if that ever reads badly, promote to tiny AABBs):
+// NYC rooftop water towers + park trees
+{
+  const decoRand = mulberry32(seed + 99);
+  // water towers on mid-rise roofs
+  const towers = [];
+  for (const b of buildings) {
+    if (b.h < 18 || b.h > 130 || (b.x1 - b.x0) < 14 || decoRand() > 0.16) continue;
+    towers.push([
+      b.x0 + 4 + decoRand() * (b.x1 - b.x0 - 8),
+      b.h,
+      b.z0 + 4 + decoRand() * (b.z1 - b.z0 - 8),
+      0.8 + decoRand() * 0.5,
+    ]);
+  }
+  const M = new THREE.Matrix4();
+  const mkInst = (geo, mat, items, place) => {
+    const m = new THREE.InstancedMesh(geo, mat, items.length);
+    items.forEach((it, i) => { place(it, M); m.setMatrixAt(i, M); });
+    scene.add(m);
+    return m;
+  };
+  const woodMat = new THREE.MeshLambertMaterial({ color: 0x6e4b31 });
+  const darkMat = new THREE.MeshLambertMaterial({ color: 0x3a3d42 });
+  mkInst(new THREE.CylinderGeometry(1.35, 1.35, 1.3, 8), darkMat, towers,   // leg base
+    (t, M) => { M.makeScale(t[3], t[3], t[3]); M.setPosition(t[0], t[1] + 0.65 * t[3], t[2]); });
+  mkInst(new THREE.CylinderGeometry(1.85, 1.7, 3.1, 10), woodMat, towers,   // tank
+    (t, M) => { M.makeScale(t[3], t[3], t[3]); M.setPosition(t[0], t[1] + (1.3 + 1.55) * t[3], t[2]); });
+  mkInst(new THREE.ConeGeometry(2.05, 1.3, 10), darkMat, towers,            // lid
+    (t, M) => { M.makeScale(t[3], t[3], t[3]); M.setPosition(t[0], t[1] + (1.3 + 3.1 + 0.65) * t[3], t[2]); });
+
+  // trees: fill every lawn (parks, Battery, shore strips), skip the reservoir
+  const trees = [];
+  const resCx = (CENTRAL_PARK.x0 + CENTRAL_PARK.x1) / 2, resCz = zk(11.2);
+  const scatter = (x0, x1, z0, z1, spacing) => {
+    const n = Math.floor((x1 - x0) * (z1 - z0) / (spacing * spacing));
+    for (let i = 0; i < n; i++) {
+      const x = x0 + decoRand() * (x1 - x0), z = z0 + decoRand() * (z1 - z0);
+      const rx = (x - resCx) / 315, rz = (z - resCz) / 395;
+      if (rx * rx + rz * rz < 1) continue;                 // reservoir
+      trees.push([x, z, 0.7 + decoRand() * 0.8]);
+    }
+  };
+  for (const p of PARKS) if (!p.noLawn) scatter(p.x0, p.x1, p.z0, p.z1, 30);
+  for (let i = 0; i < 10; i++) {                           // Riverside
+    const t0 = 9.5 + i * 0.5, zm = zk(t0 + 0.25);
+    scatter(centerAt(zm) + widthAt(zm) / 2 - 170, centerAt(zm) + widthAt(zm) / 2, zk(t0), zk(t0 + 0.5), 34);
+  }
+  for (let i = 0; i < 4; i++) {                            // East River Park
+    const t0 = 2.6 + i * 0.4, zm = zk(t0 + 0.2);
+    scatter(centerAt(zm) - widthAt(zm) / 2, centerAt(zm) - widthAt(zm) / 2 + 140, zk(t0), zk(t0 + 0.4), 34);
+  }
+  mkInst(new THREE.CylinderGeometry(0.28, 0.4, 2.6, 6), woodMat, trees,
+    (t, M) => { M.makeScale(t[2], t[2], t[2]); M.setPosition(t[0], 1.3 * t[2], t[1]); });
+  const canopyGeo = new THREE.IcosahedronGeometry(2.6, 1);
+  const canopyMat = new THREE.MeshLambertMaterial({ color: 0xffffff });
+  const canopy = new THREE.InstancedMesh(canopyGeo, canopyMat, trees.length);
+  const CGREENS = [0x3f7a35, 0x4c8a3e, 0x5d9448, 0x3a6e3f, 0x6f9a4a].map(c => new THREE.Color(c));
+  trees.forEach((t, i) => {
+    M.makeScale(t[2], t[2] * (0.85 + decoRand() * 0.4), t[2]);
+    M.setPosition(t[0], (2.4 + 2.0) * t[2], t[1]);
+    canopy.setMatrixAt(i, M);
+    canopy.setColorAt(i, CGREENS[Math.floor(decoRand() * CGREENS.length)]);
+  });
+  scene.add(canopy);
+}
 // sidewalk plinths — one per BLOCK (rects precomputed with the city data,
 // since supportAt treats them as physical 0.3 m curbs)
 {
   const geo = new THREE.BoxGeometry(1, 1, 1);
-  const mat = new THREE.MeshLambertMaterial({ color: 0x8f959c });
+  // concrete pavement: expansion joints every 2.4 m on top, darker curb sides
+  const mat = surfaceMat(new THREE.MeshLambertMaterial({ color: 0x9aa0a6 }), `
+    if (vNW.y > 0.5) {
+      vec2 j = fract(vWP.xz / 2.4);
+      float l = min(min(j.x, 1.0 - j.x), min(j.y, 1.0 - j.y));
+      diffuseColor.rgb *= 1.0 - 0.22 * (1.0 - smoothstep(0.0, 0.04, l));
+      diffuseColor.rgb *= 0.95 + 0.09 * hash2(floor(vWP.xz / 2.4));
+    } else {
+      diffuseColor.rgb *= 0.72;
+    }`);
   const m = new THREE.InstancedMesh(geo, mat, plinths.length);
   const M = new THREE.Matrix4();
   plinths.forEach((p, i) => {
@@ -611,16 +772,49 @@ scene.add(sun);
   });
   scene.add(m);
 }
-// buildings — one instanced mesh, per-instance facade color
+// buildings — one instanced mesh, per-instance facade tint. The window/roof
+// detail is procedural in world space (surfaceMat): every facade is axis-
+// aligned, so windows come out exact meters at every building size —
+// facades get a punched-window grid with a sparse fraction lit, street
+// level gets storefront glass, roofs get dark gravel.
 {
   const geo = new THREE.BoxGeometry(1, 1, 1);
-  const mat = new THREE.MeshLambertMaterial({ color: 0xffffff });
+  const mat = surfaceMat(new THREE.MeshLambertMaterial({ color: 0xffffff }), `
+    {
+      vec3 n = vNW;
+      if (abs(n.y) < 0.5) {
+        vec2 fc = abs(n.x) > 0.5 ? vWP.zy : vWP.xy;
+        vec2 g = vec2(3.1, 3.6);
+        vec2 cell = floor(fc / g);
+        vec2 f = fract(fc / g);
+        float rnd = hash2(cell + floor(vWP.xz * 0.013));
+        if (vWP.y < 4.6) {
+          float sf = step(0.07, f.x) * (1.0 - step(0.93, f.x)) * step(0.10, f.y) * (1.0 - step(0.82, f.y));
+          float sfLit = step(0.6, rnd);
+          vec3 sfCol = mix(vec3(0.09, 0.10, 0.12), vec3(0.62, 0.50, 0.30), sfLit);
+          diffuseColor.rgb = mix(diffuseColor.rgb * 0.8, sfCol, sf * 0.92);
+          surfGlow += vec3(0.85, 0.66, 0.36) * (sf * sfLit * 0.35);   // storefront spill
+        } else {
+          float win = step(0.17, f.x) * (1.0 - step(0.83, f.x)) * step(0.26, f.y) * (1.0 - step(0.80, f.y));
+          float lit = step(0.90, rnd);
+          vec3 glass = vec3(0.15, 0.20, 0.26) * (0.7 + 0.55 * hash2(cell * 2.13));
+          diffuseColor.rgb = mix(diffuseColor.rgb, glass, win * 0.9);
+          // lit windows are EMISSIVE so they read on shaded facades too
+          surfGlow += vec3(0.95, 0.72, 0.38) * (win * lit * 0.8);
+          // subtle floor slab shadow line under each window row
+          diffuseColor.rgb *= 1.0 - 0.10 * (1.0 - smoothstep(0.0, 0.10, f.y));
+        }
+      } else if (n.y > 0.5 && vWP.y > 1.2) {
+        diffuseColor.rgb = diffuseColor.rgb * 0.42 + vec3(0.055);
+        diffuseColor.rgb *= 0.90 + 0.18 * hash2(floor(vWP.xz * 0.8));
+      }
+    }`);
   const mesh = new THREE.InstancedMesh(geo, mat, buildings.length);
   const M = new THREE.Matrix4();
-  // facade palettes by height: low = brownstone/brick, mid = masonry, tall = glass
-  const PAL_LOW  = [0xa8763e, 0x92655a, 0xb0a293, 0x9c8f80, 0x8a5a48].map(c => new THREE.Color(c));
-  const PAL_MID  = [0x8d9099, 0x9c8f80, 0xb0a293, 0x7f8ea3, 0x6b7686].map(c => new THREE.Color(c));
-  const PAL_TALL = [0x7f8ea3, 0x77808f, 0x8fa3b8, 0x6b7686, 0x9fb2c4].map(c => new THREE.Color(c));
+  // facade palettes by height: low = brownstone/brick, mid = masonry/limestone, tall = glass/steel
+  const PAL_LOW  = [0xa1543c, 0x8f4a38, 0xb98a5f, 0xc4a484, 0x96604a].map(c => new THREE.Color(c));
+  const PAL_MID  = [0xb8ab98, 0x9d9789, 0xc0b8a8, 0x8d8578, 0xa87f62].map(c => new THREE.Color(c));
+  const PAL_TALL = [0x89a7c2, 0x6f8aa5, 0x9fb8cf, 0x5e7893, 0xa8bfd4].map(c => new THREE.Color(c));
   buildings.forEach((b, i) => {
     M.makeScale(b.x1 - b.x0, b.h, b.z1 - b.z0);
     M.setPosition(b.cx, b.h / 2, b.cz);
@@ -636,55 +830,88 @@ scene.add(sun);
 }
 
 // ---------------------------------------------------------------------------
-// SPIDEY — small articulated figure, posed per state (run / swing / fall)
+// SPIDEY — jointed rig built from primitives: shoulder→elbow and hip→knee
+// chains so runs have knee lift and swings have a straight reaching arm with
+// a bent trailing arm. Feet rest exactly at y = 0 (spidey.position = P.pos).
+// Suit: classic red torso/arms/head + boots, blue legs/hips/side panels.
 // ---------------------------------------------------------------------------
-const RED = 0xd42a2a, BLUE = 0x2a4bd4, DARK = 0x9e1f1f;
-function box(w, h, d, color, x, y, z) {
-  const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), new THREE.MeshLambertMaterial({ color }));
+const MAT_RED  = new THREE.MeshLambertMaterial({ color: 0xc9302c });
+const MAT_BLUE = new THREE.MeshLambertMaterial({ color: 0x27418f });
+const MAT_DARK = new THREE.MeshLambertMaterial({ color: 0x1a1c22 });
+const MAT_EYE  = new THREE.MeshBasicMaterial({ color: 0xf4f7ff });
+function part(geo, mat, x, y, z, parent) {
+  const m = new THREE.Mesh(geo, mat);
   m.position.set(x, y, z);
+  parent.add(m);
   return m;
 }
-const spidey = new THREE.Group();
-const torso = box(0.5, 0.62, 0.3, RED, 0, 1.15, 0);
-const hips  = box(0.44, 0.24, 0.28, BLUE, 0, 0.74, 0);
-const head  = new THREE.Mesh(new THREE.SphereGeometry(0.21, 12, 10), new THREE.MeshLambertMaterial({ color: RED }));
-head.position.set(0, 1.62, 0);
-head.scale.set(1, 1.1, 1.05);
-// eyes (white wedges so the character reads at distance)
-const eyeMat = new THREE.MeshBasicMaterial({ color: 0xffffff });
-for (const s of [-1, 1]) {
-  const eye = new THREE.Mesh(new THREE.SphereGeometry(0.075, 8, 6), eyeMat);
-  eye.position.set(0.09 * s, 1.66, 0.16);
-  eye.scale.set(0.9, 1.3, 0.5);
-  spidey.add(eye);
-}
-// limbs pivot at their joints: group at shoulder/hip, geometry hangs below
-function limb(len, thick, color, px, py, pz) {
+function joint(parent, x, y, z) {
   const g = new THREE.Group();
-  g.position.set(px, py, pz);
-  g.add(box(thick, len, thick, color, 0, -len / 2, 0));
+  g.position.set(x, y, z);
+  parent.add(g);
   return g;
 }
-// model faces +z; a body facing +z has its RIGHT side at -x (handedness law)
-const armL = limb(0.62, 0.15, RED,  0.34, 1.42, 0);
-const armR = limb(0.62, 0.15, RED, -0.34, 1.42, 0);
-const legL = limb(0.76, 0.18, BLUE,  0.14, 0.64, 0);
-const legR = limb(0.76, 0.18, BLUE, -0.14, 0.64, 0);
-spidey.add(torso, hips, head, armL, armR, legL, legR);
-// chest spider mark
-spidey.add(box(0.1, 0.24, 0.02, DARK, 0, 1.2, 0.165));
+// limb segment geometry hangs from its joint (origin at the top)
+const segGeo = (r, len) => new THREE.CapsuleGeometry(r, len - r * 2, 3, 8).translate(0, -len / 2, 0);
+const spidey = new THREE.Group();
+part(new THREE.BoxGeometry(0.30, 0.18, 0.20), MAT_BLUE, 0, 0.96, 0, spidey);                    // hips
+const torso = part(new THREE.BoxGeometry(0.36, 0.46, 0.22), MAT_RED, 0, 1.28, 0, spidey);       // chest
+part(new THREE.BoxGeometry(0.025, 0.42, 0.20), MAT_BLUE,  0.185, 1.26, 0, spidey);              // side panels
+part(new THREE.BoxGeometry(0.025, 0.42, 0.20), MAT_BLUE, -0.185, 1.26, 0, spidey);
+part(new THREE.BoxGeometry(0.10, 0.16, 0.02), MAT_DARK, 0, 1.34, 0.115, spidey);                // spider emblem
+const head = part(new THREE.SphereGeometry(0.145, 14, 12), MAT_RED, 0, 1.64, 0, spidey);
+head.scale.set(0.92, 1.08, 0.98);
+for (const s of [-1, 1]) {                                                                      // the big white eyes
+  const eye = part(new THREE.SphereGeometry(0.062, 10, 8), MAT_EYE, 0.062 * s, 1.665, 0.115, spidey);
+  eye.scale.set(1.0, 1.5, 0.45);
+  eye.rotation.z = -0.32 * s;
+}
+// model faces +z; anatomical RIGHT is -x (handedness law)
+function buildArm(sx) {
+  const shoulder = joint(spidey, 0.225 * sx, 1.44, 0);
+  part(segGeo(0.055, 0.30), MAT_RED, 0, 0, 0, shoulder);
+  const elbow = joint(shoulder, 0, -0.30, 0);
+  part(segGeo(0.048, 0.28), MAT_RED, 0, 0, 0, elbow);
+  const hand = joint(elbow, 0, -0.31, 0);
+  part(new THREE.SphereGeometry(0.055, 8, 6), MAT_RED, 0, 0.01, 0, elbow).position.y = -0.30;
+  return { shoulder, elbow, hand };
+}
+function buildLeg(sx) {
+  const hip = joint(spidey, 0.105 * sx, 0.92, 0);
+  part(segGeo(0.07, 0.46), MAT_BLUE, 0, 0, 0, hip);
+  const knee = joint(hip, 0, -0.46, 0);
+  part(segGeo(0.06, 0.34), MAT_BLUE, 0, 0, 0, knee);
+  part(new THREE.BoxGeometry(0.10, 0.13, 0.19), MAT_RED, 0, -0.40, 0.035, knee);   // boot
+  return { hip, knee };
+}
+const armL = buildArm(1),  armR = buildArm(-1);
+const legL = buildLeg(1),  legR = buildLeg(-1);
 scene.add(spidey);
 
-// web lines (one per hand), drawn with sag when slack
-const webMats = { L: new THREE.LineBasicMaterial({ color: 0xf2f5ff }), R: new THREE.LineBasicMaterial({ color: 0xf2f5ff }) };
-const webLines = {};
-for (const s of ['L', 'R']) {
-  const g = new THREE.BufferGeometry();
-  g.setAttribute('position', new THREE.BufferAttribute(new Float32Array(11 * 3), 3));
-  webLines[s] = new THREE.Line(g, webMats[s]);
-  webLines[s].visible = false;
-  webLines[s].frustumCulled = false;
-  scene.add(webLines[s]);
+// webs — 3D strands: pooled thin cylinders laid along each rope's pivot
+// chain (up to 6 segments per hand), so the web catches light and has
+// real thickness instead of a 1px line
+const webGeo = new THREE.CylinderGeometry(0.035, 0.035, 1, 5, 1);
+const webMat = new THREE.MeshBasicMaterial({ color: 0xeef2fa });
+const webPool = { L: [], R: [] };
+function webSeg(side, i) {
+  let m = webPool[side][i];
+  if (!m) {
+    m = new THREE.Mesh(webGeo, webMat);
+    m.frustumCulled = false;
+    m.visible = false;
+    scene.add(m);
+    webPool[side][i] = m;
+  }
+  return m;
+}
+const WEB_UP = new THREE.Vector3(0, 1, 0);
+function placeWebSeg(m, a, b) {
+  m.visible = true;
+  m.position.lerpVectors(a, b, 0.5);
+  const len = Math.max(0.001, a.distanceTo(b));
+  m.scale.set(1, len, 1);
+  m.quaternion.setFromUnitVectors(WEB_UP, V.c.subVectors(b, a).normalize());
 }
 // whiff puff: short-lived cross at the point a failed web aimed at
 const puff = new THREE.Mesh(new THREE.SphereGeometry(0.5, 6, 5),
@@ -696,6 +923,11 @@ const splashRing = new THREE.Mesh(new THREE.RingGeometry(0.6, 1, 24),
   new THREE.MeshBasicMaterial({ color: 0xcfeaff, transparent: true, opacity: 0, side: THREE.DoubleSide }));
 splashRing.rotation.x = -Math.PI / 2;
 scene.add(splashRing);
+// landing dust ring — kicked by hard landings for weight
+const dustRing = new THREE.Mesh(new THREE.RingGeometry(0.5, 0.95, 20),
+  new THREE.MeshBasicMaterial({ color: 0xcac2b2, transparent: true, opacity: 0, side: THREE.DoubleSide }));
+dustRing.rotation.x = -Math.PI / 2;
+scene.add(dustRing);
 
 // ---------------------------------------------------------------------------
 // MINIMAP — full-island silhouette (parks + Broadway, all profile-driven),
@@ -1057,6 +1289,11 @@ function step(dt) {
       P.grounded = true;
       P.ropes.L = P.ropes.R = null;        // ropes never drag you along the ground
       let hs = Math.hypot(P.vel.x, P.vel.z);
+      if (P.vel.y < -10) {                 // landing dust, scaled by impact
+        dustRing.position.set(P.pos.x, P.pos.y + 0.05, P.pos.z);
+        dustRing.scale.setScalar(1);
+        dustRing.material.opacity = Math.min(0.7, -P.vel.y * 0.022);
+      }
       if (P.vel.y < -30) hs *= 0.8;        // hard landing: roll, keep most momentum
       if (hs > 1) P.heading = Math.atan2(P.vel.x, P.vel.z);
       hs = Math.max(RUN, hs);
@@ -1167,10 +1404,11 @@ function readTilt() {
 }
 
 // ---------------------------------------------------------------------------
-// VISUALS — pose spidey, draw webs, chase camera
+// VISUALS — pose the rig, lay web strands, chase camera, speed effects
 // ---------------------------------------------------------------------------
-const pose = { armL: new THREE.Quaternion(), armR: new THREE.Quaternion(), legL: 0, legR: 0, pitch: 0 };
-const Q = new THREE.Quaternion(), DOWN = new THREE.Vector3(0, -1, 0), TMP = new THREE.Vector3();
+const pose = { pitch: 0 };
+const Q = new THREE.Quaternion(), E = new THREE.Euler();
+const DOWN = new THREE.Vector3(0, -1, 0), TMP = new THREE.Vector3(), TMP2 = new THREE.Vector3();
 
 function aimLimbAt(limbGroup, targetWorld, out) {
   limbGroup.getWorldPosition(TMP);
@@ -1179,75 +1417,160 @@ function aimLimbAt(limbGroup, targetWorld, out) {
   V.a.applyQuaternion(Q.copy(spidey.quaternion).invert());
   out.setFromUnitVectors(DOWN, V.a);
 }
+function setJ(g, x, y, z, k) {   // slerp a joint toward a Euler target
+  Q.setFromEuler(E.set(x, y, z));
+  g.quaternion.slerp(Q, k);
+}
 
 function updateSpidey(dt) {
   spidey.position.copy(P.pos);
   const hs = Math.hypot(P.vel.x, P.vel.z);
-  // yaw follows travel
   const yaw = P.grounded ? P.heading : (hs > 2 ? Math.atan2(P.vel.x, P.vel.z) : P.heading);
   const dy = ((yaw - spidey.rotation.y + Math.PI * 3) % (Math.PI * 2)) - Math.PI;
   spidey.rotation.y += dy * Math.min(1, 12 * dt);
-  // pitch: dive when falling, lean back on the rise
   let tp = 0;
   if (!P.grounded) tp = Math.max(-1.0, Math.min(1.0, Math.atan2(-P.vel.y, Math.max(hs, 8)) * 0.7));
-  else tp = 0.12;   // slight run lean
+  else tp = 0.14;   // run lean
   pose.pitch += (tp - pose.pitch) * Math.min(1, 8 * dt);
   spidey.rotation.x = pose.pitch;
 
   const k = Math.min(1, 10 * dt);
   if (P.grounded) {
-    const ph = P.time * (6 + hs * 0.55);
-    const swing = Math.sin(ph) * 0.85;
-    pose.legL += (swing - pose.legL) * k;  pose.legR += (-swing - pose.legR) * k;
-    legL.rotation.x = pose.legL; legR.rotation.x = pose.legR;
-    Q.setFromEuler(new THREE.Euler(-swing * 0.9, 0, -0.06)); armR.quaternion.slerp(Q, k);
-    Q.setFromEuler(new THREE.Euler(swing * 0.9, 0, 0.06));   armL.quaternion.slerp(Q, k);
+    // run cycle: hips counter-swing, knees lift on recovery, elbows pump
+    const ph = P.time * (7 + hs * 0.5);
+    const s1 = Math.sin(ph), s1r = Math.sin(ph - 0.85);
+    const s2 = -s1, s2r = Math.sin(ph + Math.PI - 0.85);
+    spidey.position.y = P.pos.y + Math.abs(Math.sin(ph)) * 0.05;
+    setJ(legL.hip, -s1 * 0.8, 0, 0, k);
+    setJ(legR.hip, -s2 * 0.8, 0, 0, k);
+    setJ(legL.knee, 0.25 + 1.05 * Math.max(0, -s1r), 0, 0, k);
+    setJ(legR.knee, 0.25 + 1.05 * Math.max(0, -s2r), 0, 0, k);
+    setJ(armL.shoulder, -s2 * 0.75, 0,  0.10, k);
+    setJ(armR.shoulder, -s1 * 0.75, 0, -0.10, k);
+    setJ(armL.elbow, 0.9, 0, 0, k);
+    setJ(armR.elbow, 0.9, 0, 0, k);
   } else {
-    // legs trail together, slightly bent
-    pose.legL += (-0.5 - pose.legL) * k; pose.legR += (-0.62 - pose.legR) * k;
-    legL.rotation.x = pose.legL; legR.rotation.x = pose.legR;
     for (const [s, arm] of [['L', armL], ['R', armR]]) {
       const r = P.ropes[s];
-      if (r) { aimLimbAt(arm, r.pivots[r.pivots.length - 1], Q); arm.quaternion.slerp(Q, Math.min(1, 18 * dt)); }
-      else { Q.setFromEuler(new THREE.Euler(-2.5, 0, s === 'L' ? 0.5 : -0.5)); arm.quaternion.slerp(Q, k); } // arms up, skydive
+      if (r) {
+        // reaching arm: straight to the rope
+        aimLimbAt(arm.shoulder, r.pivots[r.pivots.length - 1], Q);
+        arm.shoulder.quaternion.slerp(Q, Math.min(1, 18 * dt));
+        setJ(arm.elbow, -0.08, 0, 0, k);
+      } else if (P.ropes[s === 'L' ? 'R' : 'L']) {
+        // free arm while the other swings: trails bent behind
+        setJ(arm.shoulder, 0.7, 0, s === 'L' ? 0.5 : -0.5, k);
+        setJ(arm.elbow, 1.15, 0, 0, k);
+      } else {
+        // skydive: arms swept out and back
+        setJ(arm.shoulder, -1.3, 0, s === 'L' ? 1.0 : -1.0, k);
+        setJ(arm.elbow, 0.45, 0, 0, k);
+      }
+    }
+    const anyRope = P.ropes.L || P.ropes.R;
+    if (anyRope) {
+      // swing: legs together and trailing, knees tucked at speed
+      const tuck = Math.min(1, P.vel.length() / 26);
+      setJ(legL.hip, 0.35 + tuck * 0.25, 0,  0.05, k);
+      setJ(legR.hip, 0.55 + tuck * 0.30, 0, -0.05, k);
+      setJ(legL.knee, 0.5 + tuck * 0.6, 0, 0, k);
+      setJ(legR.knee, 0.8 + tuck * 0.5, 0, 0, k);
+    } else {
+      // freefall: legs split slightly, loose knees
+      setJ(legL.hip, -0.30, 0,  0.16, k);
+      setJ(legR.hip, -0.10, 0, -0.16, k);
+      setJ(legL.knee, 0.45, 0, 0, k);
+      setJ(legR.knee, 0.30, 0, 0, k);
     }
   }
 
-  // web lines: polyline anchor → bends → hand; sag only on an unbent rope
+  // web strands along each rope's pivot chain, hand → bends → anchor
   for (const [s, arm] of [['L', armL], ['R', armR]]) {
-    const line = webLines[s], r = P.ropes[s];
-    if (!r) { line.visible = false; continue; }
-    line.visible = true;
-    const last = r.pivots[r.pivots.length - 1];
-    arm.getWorldPosition(TMP);
-    TMP.addScaledVector(V.a.subVectors(last, TMP).normalize(), 0.62);   // hand ≈ arm tip
-    const posAttr = line.geometry.attributes.position;
-    if (r.pivots.length === 1) {
-      const dist = TMP.distanceTo(last);
-      const slack = Math.max(0, r.len - dist) * 0.35;
-      for (let i = 0; i <= 10; i++) {
-        const t = i / 10;
-        V.b.lerpVectors(last, TMP, t);
-        V.b.y -= Math.sin(t * Math.PI) * slack;
-        posAttr.setXYZ(i, V.b.x, V.b.y, V.b.z);
-      }
-    } else {
-      // walk the pivot chain by arc length so the 11 samples hug every bend
-      const nodes = [...r.pivots, TMP];
-      const lens = [0];
-      for (let i = 1; i < nodes.length; i++) lens.push(lens[i - 1] + nodes[i - 1].distanceTo(nodes[i]));
-      const total = lens[nodes.length - 1] || 1;
-      let seg = 1;
-      for (let i = 0; i <= 10; i++) {
-        const d = (i / 10) * total;
-        while (seg < nodes.length - 1 && lens[seg] < d) seg++;
-        const t = (d - lens[seg - 1]) / Math.max(0.001, lens[seg] - lens[seg - 1]);
-        V.b.lerpVectors(nodes[seg - 1], nodes[seg], t);
-        posAttr.setXYZ(i, V.b.x, V.b.y, V.b.z);
+    const r = P.ropes[s];
+    let used = 0;
+    if (r) {
+      arm.hand.getWorldPosition(TMP);
+      let prev = TMP;
+      for (let i = r.pivots.length - 1; i >= 0 && used < 6; i--) {
+        placeWebSeg(webSeg(s, used++), prev, r.pivots[i]);
+        prev = r.pivots[i];
       }
     }
-    posAttr.needsUpdate = true;
+    for (let i = used; i < webPool[s].length; i++) webPool[s][i].visible = false;
   }
+}
+
+// speed streaks: additive line segments blown past the camera at speed —
+// respawned ahead of travel, stretched along velocity
+const ST_N = 64;
+const stPos = new Float32Array(ST_N * 2 * 3);
+const stGeo = new THREE.BufferGeometry();
+stGeo.setAttribute('position', new THREE.BufferAttribute(stPos, 3));
+const stMat = new THREE.LineBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0,
+  blending: THREE.AdditiveBlending, depthWrite: false });
+const streaks = new THREE.LineSegments(stGeo, stMat);
+streaks.frustumCulled = false;
+scene.add(streaks);
+const stAnchor = [];
+for (let i = 0; i < ST_N; i++) stAnchor.push(new THREE.Vector3(0, -9999, 0));
+function updateStreaks(dt) {
+  const sp = P.vel.length();
+  const on = sp > 17;
+  stMat.opacity += ((on ? Math.min(0.55, (sp - 17) * 0.035) : 0) - stMat.opacity) * Math.min(1, 6 * dt);
+  if (stMat.opacity < 0.01) { streaks.visible = false; return; }
+  streaks.visible = true;
+  const vd = V.a.copy(P.vel).normalize();
+  const len = Math.min(7, sp * 0.11);
+  for (let i = 0; i < ST_N; i++) {
+    const a = stAnchor[i];
+    TMP.subVectors(a, camera.position);
+    if (TMP.dot(vd) < -6 || TMP.lengthSq() > 2500) {
+      // respawn ahead in a ring around the travel axis
+      const ang = Math.random() * Math.PI * 2, rad = 2.5 + Math.random() * 9;
+      TMP2.set(Math.cos(ang), Math.sin(ang), 0);
+      TMP2.applyQuaternion(camera.quaternion).multiplyScalar(rad);
+      a.copy(camera.position).addScaledVector(vd, 10 + Math.random() * 30).add(TMP2);
+    }
+    stPos[i * 6] = a.x; stPos[i * 6 + 1] = a.y; stPos[i * 6 + 2] = a.z;
+    stPos[i * 6 + 3] = a.x - vd.x * len; stPos[i * 6 + 4] = a.y - vd.y * len; stPos[i * 6 + 5] = a.z - vd.z * len;
+  }
+  stGeo.attributes.position.needsUpdate = true;
+}
+
+// motion trail: additive ribbon of the player's recent path, fades with age
+const TR_N = 18;
+const trPos = new Float32Array(TR_N * 3);
+const trCol = new Float32Array(TR_N * 3);
+const trGeo = new THREE.BufferGeometry();
+trGeo.setAttribute('position', new THREE.BufferAttribute(trPos, 3));
+trGeo.setAttribute('color', new THREE.BufferAttribute(trCol, 3));
+const trMat = new THREE.LineBasicMaterial({ vertexColors: true, transparent: true, opacity: 0,
+  blending: THREE.AdditiveBlending, depthWrite: false });
+const trail = new THREE.Line(trGeo, trMat);
+trail.frustumCulled = false;
+scene.add(trail);
+const trHist = [];
+for (let i = 0; i < TR_N; i++) trHist.push(new THREE.Vector3(P.pos.x, P.pos.y + 1.1, P.pos.z));
+let trTick = 0;
+function updateTrail(dt) {
+  const sp = P.vel.length();
+  trTick += dt;
+  if (trTick > 0.02) {
+    trTick = 0;
+    const tail = trHist.pop();
+    tail.set(P.pos.x, P.pos.y + 1.1, P.pos.z);
+    trHist.unshift(tail);   // newest at index 0
+  }
+  for (let i = 0; i < TR_N; i++) {
+    const p = trHist[i];
+    trPos[i * 3] = p.x; trPos[i * 3 + 1] = p.y; trPos[i * 3 + 2] = p.z;
+    const f = 1 - i / TR_N;
+    trCol[i * 3] = f * 0.9; trCol[i * 3 + 1] = f * 0.95; trCol[i * 3 + 2] = f;
+  }
+  trGeo.attributes.position.needsUpdate = true;
+  trGeo.attributes.color.needsUpdate = true;
+  trMat.opacity += ((sp > 20 ? Math.min(0.35, (sp - 20) * 0.025) : 0) - trMat.opacity) * Math.min(1, 5 * dt);
+  trail.visible = trMat.opacity > 0.01;
 }
 
 const camPos = new THREE.Vector3(AV, 6, zk(6.5) - 18), camLook = new THREE.Vector3(AV, 2, zk(6.5));
@@ -1277,10 +1600,14 @@ function updateCamera(dt) {
   camLook.lerp(V.c, 1 - Math.exp(-8 * dt));
   camera.position.copy(camPos);
   camera.lookAt(camLook);
-  const tf = 78 + Math.min(16, sp * 0.28);
-  fov += (tf - fov) * Math.min(1, 4 * dt);
+  // bank into turns (roll about the view axis with tilt), stronger FOV kick
+  bank += (-tiltInput * (P.grounded ? 0.04 : 0.11) - bank) * Math.min(1, 5 * dt);
+  camera.rotateZ(bank);
+  const tf = 76 + Math.min(22, sp * 0.34);
+  fov += (tf - fov) * Math.min(1, 6 * dt);
   if (Math.abs(camera.fov - fov) > 0.01) { camera.fov = fov; camera.updateProjectionMatrix(); }
 }
+let bank = 0;
 
 // ---------------------------------------------------------------------------
 // LOOP
@@ -1322,11 +1649,19 @@ function frame(now) {
   }
   updateSpidey(dt);
   updateCamera(dt);
+  updateStreaks(dt);
+  updateTrail(dt);
+  skyDome.position.copy(camera.position);
+  for (const u of timeUniforms) u.value = now / 1000;
 
   if (puffT > 0) { puffT -= dt; puff.material.opacity = Math.max(0, puffT / 0.18) * 0.8; }
   if (splashRing.material.opacity > 0) {
     splashRing.material.opacity -= dt * 1.4;
     splashRing.scale.multiplyScalar(1 + dt * 6);
+  }
+  if (dustRing.material.opacity > 0) {
+    dustRing.material.opacity -= dt * 2.2;
+    dustRing.scale.multiplyScalar(1 + dt * 8);
   }
   hudT += dt;
   if (hudT > 0.12) {
@@ -1343,6 +1678,7 @@ function start() {
   if (simRunning) return;
   simRunning = true;
   document.getElementById('title').style.display = 'none';
+  document.getElementById('hud').classList.remove('pre');
 }
 document.getElementById('startBtn').addEventListener('click', () => { enableTilt(); start(); });
 if (bot.on || new URLSearchParams(location.search).has('autostart')) start();
