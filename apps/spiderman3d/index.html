@@ -837,7 +837,8 @@ timeUniforms.push(skyDome.material.uniforms.uTime);   // clouds drift
   cars.forEach((c, i) => {
     if (c[3]) M.makeRotationY(Math.PI / 2);
     else M.identity();
-    if (c[2] > 0.58) M.multiply(FLIP);   // half the fleet faces the other way
+    if ((i * 2654435761 >>> 0) & 1) M.multiply(FLIP);   // half the fleet faces the other way
+                                                        // (index-hashed: decorrelated from c[2] color picks)
     M.setPosition(c[0], 0, c[1]);   // geometry carries its own heights now
     carBody.setMatrixAt(i, M);
     carCab.setMatrixAt(i, M);
