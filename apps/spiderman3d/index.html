@@ -32,11 +32,9 @@
   #speed b { font-size: 26px; }
   #hint { position: absolute; bottom: calc(env(safe-area-inset-bottom) + 26px); left: 0; right: 0; text-align: center;
     font-size: 13px; font-weight: 600; opacity: 0.75; text-shadow: 0 1px 3px rgba(0,0,0,0.6); transition: opacity 1s; }
-  /* version badges live TOP-right: iOS standalone reports safe-area-inset-
-     bottom as 0 (the layout viewport stops short of the home indicator), so
-     bottom-anchored text ends up hidden under the swipe bar */
-  #ver { position: absolute; top: calc(env(safe-area-inset-top) + 12px); right: calc(env(safe-area-inset-right) + 12px);
-    font-size: 11px; font-weight: 700; opacity: 0.55; }
+  #mini { position: absolute; top: calc(env(safe-area-inset-top) + 10px); right: calc(env(safe-area-inset-right) + 10px);
+    width: 44px; height: 216px; border-radius: 9px; background: rgba(8, 14, 30, 0.45);
+    box-shadow: 0 2px 8px rgba(0,0,0,0.25); }
 
   #fade { background: #0c2a3e; opacity: 0; pointer-events: none; transition: opacity 0.25s; }
 
@@ -59,7 +57,7 @@
 <div id="hud">
   <div id="speed"><b>0</b> MPH</div>
   <div id="hint">HOLD LEFT / RIGHT SIDE TO WEB &middot; TILT OR DRAG TO STEER</div>
-  <div id="ver"></div>
+  <canvas id="mini"></canvas>
 </div>
 <div id="fade"></div>
 <div id="title">
@@ -87,7 +85,7 @@ import * as THREE from 'three';
 const BOOT_T0 = performance.now();   // city gen + scene build cost, exposed as __dbg.bootMs
 
 const VERSION = 5;
-document.getElementById('ver').textContent = 'V' + VERSION;
+// the version badge lives ONLY on the title screen (user decision, V5)
 document.getElementById('tver').textContent = 'V' + VERSION;
 
 // ---------------------------------------------------------------------------
@@ -680,6 +678,76 @@ splashRing.rotation.x = -Math.PI / 2;
 scene.add(splashRing);
 
 // ---------------------------------------------------------------------------
+// MINIMAP — full-island silhouette (parks + Broadway, all profile-driven),
+// prerendered once at boot; the player dot is stamped at the HUD tick rate.
+// ---------------------------------------------------------------------------
+const mini = document.getElementById('mini');
+const MM_W = 44, MM_H = 216, MM_DPR = Math.min(devicePixelRatio, 2);
+const MM_X0 = -2000, MM_X1 = 2100, MM_PAD = 4;
+const mmX = x => MM_PAD + (x - MM_X0) / (MM_X1 - MM_X0) * (MM_W - MM_PAD * 2);
+const mmZ = z => MM_PAD + (1 - (z - Z0) / ISLAND_L) * (MM_H - MM_PAD * 2);
+mini.width = MM_W * MM_DPR;
+mini.height = MM_H * MM_DPR;
+const mmCtx = mini.getContext('2d');
+const mmBase = document.createElement('canvas');
+mmBase.width = mini.width;
+mmBase.height = mini.height;
+{
+  const c = mmBase.getContext('2d');
+  c.scale(MM_DPR, MM_DPR);
+  c.beginPath();
+  for (let i = 0; i <= 80; i++) {
+    const z = Z0 + (i / 80) * ISLAND_L;
+    i ? c.lineTo(mmX(centerAt(z) + widthAt(z) / 2), mmZ(z))
+      : c.moveTo(mmX(centerAt(z) + widthAt(z) / 2), mmZ(z));
+  }
+  for (let i = 80; i >= 0; i--) {
+    const z = Z0 + (i / 80) * ISLAND_L;
+    c.lineTo(mmX(centerAt(z) - widthAt(z) / 2), mmZ(z));
+  }
+  c.closePath();
+  c.fillStyle = 'rgba(200, 208, 218, 0.92)';
+  c.fill();
+  c.fillStyle = '#4a7a44';
+  for (const p of PARKS) {
+    if (p.noLawn) continue;   // Battery's wide placement rect would smear the tip
+    c.fillRect(mmX(p.x0), mmZ(p.z1), mmX(p.x1) - mmX(p.x0), mmZ(p.z0) - mmZ(p.z1));
+  }
+  c.strokeStyle = 'rgba(225, 195, 90, 0.9)';
+  c.lineWidth = 1;
+  c.beginPath();
+  for (let i = 0; i <= 60; i++) {
+    const z = zk(0.3 + (i / 60) * 21);
+    i ? c.lineTo(mmX(bwayXAt(z)), mmZ(z)) : c.moveTo(mmX(bwayXAt(z)), mmZ(z));
+  }
+  c.stroke();
+}
+function drawMini() {
+  mmCtx.setTransform(1, 0, 0, 1, 0, 0);
+  mmCtx.clearRect(0, 0, mini.width, mini.height);
+  mmCtx.drawImage(mmBase, 0, 0);
+  mmCtx.setTransform(MM_DPR, 0, 0, MM_DPR, 0, 0);
+  const px = mmX(P.pos.x), pz = mmZ(P.pos.z);
+  // heading tick, then the dot on top
+  const hs = Math.hypot(P.vel.x, P.vel.z);
+  const dx = hs > 2 ? P.vel.x / hs : Math.sin(P.heading);
+  const dz = hs > 2 ? P.vel.z / hs : Math.cos(P.heading);
+  mmCtx.strokeStyle = '#ffffff';
+  mmCtx.lineWidth = 1.4;
+  mmCtx.beginPath();
+  mmCtx.moveTo(px, pz);
+  mmCtx.lineTo(px + dx * 6, pz - dz * 6);
+  mmCtx.stroke();
+  mmCtx.fillStyle = '#e23636';
+  mmCtx.beginPath();
+  mmCtx.arc(px, pz, 2.6, 0, Math.PI * 2);
+  mmCtx.fill();
+  mmCtx.strokeStyle = 'rgba(255,255,255,0.9)';
+  mmCtx.lineWidth = 0.8;
+  mmCtx.stroke();
+}
+
+// ---------------------------------------------------------------------------
 // PLAYER STATE + SIM
 // ---------------------------------------------------------------------------
 const P = {
@@ -1238,6 +1306,7 @@ function frame(now) {
   if (hudT > 0.12) {
     hudT = 0;
     speedEl.textContent = Math.round(P.vel.length() * 2.237);
+    drawMini();
   }
   if (simRunning && (hintT += dt) > 6 && hintEl.style.opacity !== '0') hintEl.style.opacity = '0';
 

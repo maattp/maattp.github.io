@@ -96,10 +96,13 @@ Other V3 playtest laws:
   `env(safe-area-inset-top)`, `viewH()` sizes from `screen` when
   `navigator.standalone`, and `resize` re-runs at 350/1200 ms. Don't size
   from bare `innerHeight`.
-- Version badge must be visible on the **title screen** (`#tver`), not just
-  the in-game HUD — and both badges anchor **TOP-right** (V5): iOS standalone
-  reports `safe-area-inset-bottom` as 0 (the layout viewport stops short of
-  the home indicator), so bottom-anchored HUD text hides under the swipe bar.
+- The version badge lives **ONLY on the title screen** (`#tver`, top-right) —
+  user decision, V5; do not add an in-game version badge. Top-anchored
+  because iOS standalone reports `safe-area-inset-bottom` as 0 (the layout
+  viewport stops short of the home indicator), so bottom-anchored HUD text
+  hides under the swipe bar. The in-game top-right corner belongs to the
+  **minimap** (`#mini`): full-island silhouette prerendered from the same
+  W/C profiles + parks + Broadway, player dot stamped at the HUD tick.
 - **Ground decals need depth headroom (V5)**: lawns/reservoir/Broadway ribbon
   are near-coplanar with the island slab and z-fight at distance ("Central
   Park flashes") without BOTH a real y gap (≥ 0.2 m) and `polygonOffset`.
