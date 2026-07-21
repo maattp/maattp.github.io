@@ -87,7 +87,7 @@ import * as THREE from 'three';
 
 const BOOT_T0 = performance.now();   // city gen + scene build cost, exposed as __dbg.bootMs
 
-const VERSION = 9;
+const VERSION = 10;
 // the version badge lives ONLY on the title screen (user decision, V5)
 document.getElementById('tver').textContent = 'V' + VERSION;
 
@@ -111,7 +111,8 @@ const REEL      = 4.6;       // rope shortens while held, m/s (energy injection)
 const PUMP      = 15;        // swing pump: forward accel while roped & slow, m/s^2
 const PUMP_MAX  = 20;        // pump fades to zero at this speed
 const HANG_SNAP = 1.5;       // s of dead-hang (speed < 3) before the web snaps
-const AIR_STEER = 16;        // lateral accel from full tilt while airborne, m/s^2
+const AIR_STEER = 20;        // lateral accel from full tilt while airborne, m/s^2
+const RAIL      = 1.4;       // grid rail assist: cross-drift damping near cardinals, 1/s
 const TURN_RATE = 2.4;       // grounded heading turn at full tilt, rad/s
 const ANCHOR_R  = 85;        // max web reach
 const LEN_IDEAL = 38;        // anchor scorer's sweet-spot rope length
@@ -795,27 +796,59 @@ timeUniforms.push(skyDome.material.uniforms.uTime);   // clouds drift
       }
     }
   }
-  const carBody = new THREE.InstancedMesh(new THREE.BoxGeometry(4.3, 1.1, 1.75),
+  // real sedan silhouette: hood / belt line / trunk steps merged into ONE
+  // geometry (still one instanced draw call per material) — a single box
+  // "reads as a block" (playtest). Length along +x.
+  const mergeBoxes = boxes => {
+    const parts = boxes.map(([w, h, d, x, y, z]) =>
+      new THREE.BoxGeometry(w, h, d).translate(x, y, z));
+    const pos = [], nrm = [], idx = [];
+    let base = 0;
+    for (const g of parts) {
+      pos.push(...g.attributes.position.array);
+      nrm.push(...g.attributes.normal.array);
+      for (const i of g.index.array) idx.push(i + base);
+      base += g.attributes.position.count;
+    }
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+    g.setAttribute('normal', new THREE.Float32BufferAttribute(nrm, 3));
+    g.setIndex(idx);
+    return g;
+  };
+  const carBodyGeo = mergeBoxes([
+    [1.15, 0.34, 1.68, 1.62, 0.83, 0],    // hood (lower)
+    [2.30, 0.52, 1.78, 0.05, 0.78, 0],    // belt-line mid body
+    [1.00, 0.34, 1.68, -1.68, 0.83, 0],   // trunk (lower)
+    [4.34, 0.30, 1.74, 0, 0.52, 0],       // lower body band
+  ]);
+  const carGlassGeo = mergeBoxes([[1.85, 0.46, 1.50, -0.12, 1.24, 0]]);       // greenhouse
+  const carSkirtGeo = mergeBoxes([[3.95, 0.36, 1.58, 0, 0.24, 0]]);           // underbody/wheels
+  const carBody = new THREE.InstancedMesh(carBodyGeo,
     new THREE.MeshLambertMaterial({ color: 0xffffff }), cars.length);
-  const carCab = new THREE.InstancedMesh(new THREE.BoxGeometry(2.3, 0.55, 1.55),
+  const carCab = new THREE.InstancedMesh(carGlassGeo,
     new THREE.MeshLambertMaterial({ color: 0x22262e }), cars.length);
+  const carSkirt = new THREE.InstancedMesh(carSkirtGeo,
+    new THREE.MeshLambertMaterial({ color: 0x15171c }), cars.length);
   const CAR_COLS = [0xd8dade, 0x2c3038, 0x9aa0a6, 0x8a2f2b, 0x2e4a78, 0x565e68]
     .map(c => new THREE.Color(c));
   const TAXI = new THREE.Color(0xf3b31a);
+  const FLIP = new THREE.Matrix4().makeRotationY(Math.PI);
   cars.forEach((c, i) => {
     if (c[3]) M.makeRotationY(Math.PI / 2);
     else M.identity();
-    M.setPosition(c[0], 0.62, c[1]);
+    if (c[2] > 0.58) M.multiply(FLIP);   // half the fleet faces the other way
+    M.setPosition(c[0], 0, c[1]);   // geometry carries its own heights now
     carBody.setMatrixAt(i, M);
-    M.setPosition(c[0] - (c[3] ? 0 : 0.25), 1.42, c[1] - (c[3] ? 0.25 : 0));
     carCab.setMatrixAt(i, M);
+    carSkirt.setMatrixAt(i, M);
     carBody.setColorAt(i, c[2] < 0.16 ? TAXI : CAR_COLS[Math.floor(c[2] * 37) % CAR_COLS.length]);
   });
   // instances never change after boot (first bind uploads the buffers); set
   // needsUpdate anyway so a future dynamic path doesn't silently no-op
-  carBody.instanceMatrix.needsUpdate = carCab.instanceMatrix.needsUpdate = true;
+  carBody.instanceMatrix.needsUpdate = carCab.instanceMatrix.needsUpdate = carSkirt.instanceMatrix.needsUpdate = true;
   if (carBody.instanceColor) carBody.instanceColor.needsUpdate = true;
-  scene.add(carBody, carCab);
+  scene.add(carBody, carCab, carSkirt);
 
   // outer boroughs: silhouette skylines across both rivers, mostly fog-washed
   const boro = [];
@@ -1024,7 +1057,7 @@ const bRoot  = bone(null, 0, 0.97, 0);          // pelvis
 const bSpine = bone(bRoot, 0, 0.12, 0);         // 1.09
 const bChest = bone(bSpine, 0, 0.16, 0);        // 1.25
 const bHead  = bone(bChest, 0, 0.31, 0);        // 1.56
-const bShL = bone(bChest, 0.20, 0.19, 0), bShR = bone(bChest, -0.20, 0.19, 0);   // 1.44
+const bShL = bone(bChest, 0.215, 0.19, 0), bShR = bone(bChest, -0.215, 0.19, 0);   // 1.44
 const bElL = bone(bShL, 0, -0.28, 0),     bElR = bone(bShR, 0, -0.28, 0);        // 1.16
 const bWrL = bone(bElL, 0, -0.26, 0),     bWrR = bone(bElR, 0, -0.26, 0);        // 0.90
 const bHipL = bone(bRoot, 0.10, -0.05, 0), bHipR = bone(bRoot, -0.10, -0.05, 0); // 0.92
@@ -1107,23 +1140,24 @@ skinnedTube([
   { y: 1.60, rx: 0.112, rz: 0.104, w: [[bHead, 1]], col: R },
   { y: 1.68, rx: 0.124, rz: 0.116, w: [[bHead, 1]], col: R },
   { y: 1.75, rx: 0.104, rz: 0.100, w: [[bHead, 1]], col: R },
-  { y: 1.80, rx: 0.070, rz: 0.068, w: [[bHead, 1]], col: R },
-  { y: 1.828, rx: 0.032, rz: 0.032, w: [[bHead, 1]], col: R },   // dome, not a point
+  { y: 1.80, rx: 0.076, rz: 0.074, w: [[bHead, 1]], col: R },
+  { y: 1.832, rx: 0.048, rz: 0.048, w: [[bHead, 1]], col: R },
+  { y: 1.85, rx: 0.02, rz: 0.02, w: [[bHead, 1]], col: R },   // dome, not a point
 ]);
 // arms: deltoid → bicep → elbow → forearm → wrist → mitt, smooth elbow bend
 function armTube(bSh, bEl, bWr, sx) {
-  const x = 0.20 * sx;
+  const x = 0.215 * sx;
   // stations MUST ascend in y (winding/caps assume it)
   return skinnedTube([
     { y: 0.78, rx: 0.030, rz: 0.024, cx: x, w: [[bWr, 1]], col: R },
     { y: 0.85, rx: 0.048, rz: 0.034, cx: x, w: [[bWr, 1]], col: R },
     { y: 0.90, rx: 0.037, rz: 0.036, cx: x, w: [[bEl, 0.4], [bWr, 0.6]], col: R },
     { y: 0.97, rx: 0.043, rz: 0.042, cx: x, w: [[bEl, 1]], col: R },
-    { y: 1.07, rx: 0.056, rz: 0.054, cx: x, w: [[bEl, 1]], col: R },
+    { y: 1.07, rx: 0.050, rz: 0.048, cx: x, w: [[bEl, 1]], col: R },
     { y: 1.16, rx: 0.049, rz: 0.048, cx: x, w: [[bSh, 0.5], [bEl, 0.5]], col: R },
-    { y: 1.245, rx: 0.060, rz: 0.058, cx: x, w: [[bSh, 1]], col: R },
-    { y: 1.34, rx: 0.070, rz: 0.068, cx: x, w: [[bSh, 1]], col: R },
-    { y: 1.44, rx: 0.082, rz: 0.080, cx: x, w: [[bSh, 1]], col: R },
+    { y: 1.245, rx: 0.054, rz: 0.052, cx: x, w: [[bSh, 1]], col: R },
+    { y: 1.34, rx: 0.062, rz: 0.060, cx: x, w: [[bSh, 1]], col: R },
+    { y: 1.44, rx: 0.072, rz: 0.070, cx: x, w: [[bSh, 1]], col: R },
     { y: 1.50, rx: 0.055, rz: 0.055, cx: x, w: [[bSh, 1]], col: R },
   ]);
 }
@@ -1381,7 +1415,9 @@ function pickAnchor(side) {
       const fx = dx / hd, fz = dz / hd;
       const fwd = fx * md.x + fz * md.z;                     // ahead vs behind
       const sd = (fx * rx + fz * rz) * side;                 // matches this hand's side?
-      let score = 2.2 * fwd + 0.8 * sd
+      // side weight kept LOW (was 0.8): strongly-sided anchors weave you
+      // across the street — hugging the travel line makes straight runs easy
+      let score = 2.2 * fwd + 0.5 * sd
                 - 0.8 * Math.abs(len - LEN_IDEAL) / LEN_IDEAL
                 - 0.5 * Math.abs(elev - 0.9) / 0.9;
       if (fwd < 0) score -= 2.5;                             // forward-only game: behind is a last resort
@@ -1515,6 +1551,22 @@ function step(dt) {
         P.hang = 0;
       }
     } else P.hang = 0;
+    // street-grid rail assist: when flying near a cardinal direction with no
+    // deliberate tilt, gently rotate velocity onto the grid line — swinging
+    // straight down an avenue stops demanding constant micro-correction.
+    // Tilt overrides it (scaled out by |tilt|); diagonal flight (>20° off
+    // a cardinal, e.g. Broadway) is untouched.
+    const hv = Math.hypot(P.vel.x, P.vel.z);
+    if (hv > 6) {
+      const ang = Math.atan2(P.vel.x, P.vel.z);
+      const card = Math.round(ang / (Math.PI / 2)) * (Math.PI / 2);
+      const dAng = ang - card;
+      if (Math.abs(dAng) < 0.35) {
+        const newAng = ang - dAng * Math.min(1, RAIL * (1 - Math.abs(tiltInput)) * dt);
+        P.vel.x = Math.sin(newAng) * hv;
+        P.vel.z = Math.cos(newAng) * hv;
+      }
+    }
     // quadratic drag
     if (sp > 1) P.vel.addScaledVector(P.vel, -DRAG_K * sp * dt);
     if (P.coyote > 0) P.coyote--;
@@ -1688,13 +1740,19 @@ canvas.addEventListener('contextmenu', e => e.preventDefault());
 // (title-screen toggle) is the escape hatch for anything still exotic.
 let gyro = 0, gyroLive = false, motionLive = false;
 let tiltBase = null, tiltSamples = 0, gyroCal = null, listenersOn = false;
-let invTilt = localStorage.getItem('sm3d_inv') === '1';
+// key v2: users who enabled invert to correct the V9 wrong sign must NOT
+// stay inverted after the sign fix — new key resets everyone to default-off
+let invTilt = localStorage.getItem('sm3d_inv2') === '1';
 const IOS_MOTION = typeof DeviceMotionEvent !== 'undefined' &&
   typeof DeviceMotionEvent.requestPermission === 'function';
 function onMotion(e) {
   const g = e.accelerationIncludingGravity;
   if (!g || g.x == null) return;
-  const raw = IOS_MOTION ? -g.x : g.x;   // leaning right → positive
+  // EMPIRICAL LAW (settled on real hardware, V10): g.x is ALREADY positive
+  // when leaning right — no platform sign flip, on any platform. The V9
+  // reaction-force negation was wrong on an actual iPhone; IOS_MOTION is
+  // now used ONLY for the permission prompt, never for sign.
+  const raw = g.x;
   if (tiltSamples < 24) {                // settle the neutral-posture baseline
     tiltBase = tiltBase === null ? raw : tiltBase + (raw - tiltBase) * 0.25;
     tiltSamples++;
@@ -1799,7 +1857,7 @@ function updateSpidey(dt) {
     // chest counter-rotates and the head stabilizes.
     gaitPh += hs * dt * 1.35;
     const s = Math.sin(gaitPh);
-    const swingAmp = 0.62 + Math.min(0.35, hs * 0.012);   // faster = bigger stride
+    const swingAmp = 0.45 + Math.min(0.22, hs * 0.008);   // faster = bigger stride (kept tight — flailing reads janky)
     spidey.position.y = P.pos.y + Math.abs(Math.sin(gaitPh)) * 0.055 - land * 0.16;
     setJ(legL.hip, -s * swingAmp + land * 0.5, 0, 0, k);
     setJ(legR.hip,  s * swingAmp + land * 0.5, 0, 0, k);
@@ -1808,11 +1866,11 @@ function updateSpidey(dt) {
     setJ(legL.foot, 0.30 * Math.sin(gaitPh + 0.7) - 0.12, 0, 0, k);
     setJ(legR.foot, 0.30 * Math.sin(gaitPh + Math.PI + 0.7) - 0.12, 0, 0, k);
     // arms counter-swing, elbows flex more on the forward swing
-    setJ(armL.shoulder,  s * (swingAmp + 0.12), 0,  0.10, k);
-    setJ(armR.shoulder, -s * (swingAmp + 0.12), 0, -0.10, k);
+    setJ(armL.shoulder,  s * swingAmp * 0.8, 0,  0.10, k);
+    setJ(armR.shoulder, -s * swingAmp * 0.8, 0, -0.10, k);
     // elbows flex FORWARD (negative x — opposite of knees), more on the front swing
-    setJ(armL.elbow, -(0.6 + 0.5 * Math.max(0, -s)), 0, 0, k);
-    setJ(armR.elbow, -(0.6 + 0.5 * Math.max(0,  s)), 0, 0, k);
+    setJ(armL.elbow, -(1.2 + 0.25 * Math.max(0, -s)), 0, 0, k);
+    setJ(armR.elbow, -(1.2 + 0.25 * Math.max(0,  s)), 0, 0, k);
     // hip yaw / chest counter / head stabilize + slight pelvis sway
     setJ(pelvisG, 0, 0.10 * s, 0.045 * Math.sin(gaitPh), k);
     setJ(chestG, land * 0.35, -0.16 * s, 0, k);
@@ -1830,8 +1888,8 @@ function updateSpidey(dt) {
         setJ(arm.elbow, -0.06, 0, 0, k);
       } else if (P.ropes[s === 'L' ? 'R' : 'L']) {
         // free arm streams behind with the airflow
-        setJ(arm.shoulder, 0.8 + fl, 0, s === 'L' ? 0.55 : -0.55, k);
-        setJ(arm.elbow, -0.9, 0, 0, k);
+        setJ(arm.shoulder, 0.7 + fl, 0, s === 'L' ? 0.45 : -0.45, k);
+        setJ(arm.elbow, -1.15, 0, 0, k);
       } else {
         // skydive: arms swept out and back
         setJ(arm.shoulder, -1.25 + fl, 0, s === 'L' ? 1.05 : -1.05, k);
@@ -1842,8 +1900,8 @@ function updateSpidey(dt) {
     if (anyRope) {
       // swing: legs trail with air flutter, knees tuck harder at speed
       const tuck = Math.min(1, sp / 26);
-      setJ(legL.hip, 0.35 + tuck * 0.25 + fl, 0,  0.05, k);
-      setJ(legR.hip, 0.58 + tuck * 0.30 - fl, 0, -0.05, k);
+      setJ(legL.hip, 0.30 + tuck * 0.22 + fl, 0,  0.04, k);
+      setJ(legR.hip, 0.46 + tuck * 0.26 - fl, 0, -0.04, k);
       setJ(legL.knee, 0.5 + tuck * 0.6 + fl * 1.5, 0, 0, k);
       setJ(legR.knee, 0.85 + tuck * 0.5 - fl * 1.5, 0, 0, k);
       setJ(legL.foot, 0.35, 0, 0, k);
@@ -2086,7 +2144,7 @@ const invBox = document.getElementById('invTilt');
 invBox.checked = invTilt;
 invBox.addEventListener('change', () => {
   invTilt = invBox.checked;
-  localStorage.setItem('sm3d_inv', invTilt ? '1' : '0');
+  localStorage.setItem('sm3d_inv2', invTilt ? '1' : '0');
 });
 if (bot.on || new URLSearchParams(location.search).has('autostart')) start();
 
