@@ -129,7 +129,7 @@ Battery, Washington/Tompkins/Union/Madison/Bryant Sq, Riverside + East River
 shore strips) are building-free; **Central Park is deliberately unswingable
 open ground** — crossing it on foot is the real-Manhattan tradeoff, not a
 bug. Individual buildings are invented; only scale/layout/fabric/heights
-follow reality. ~19k buildings / ~90k anchors (rowhouses: roof corners only;
+follow reality. ~21.6k buildings / ~113k anchors (rowhouses: roof corners only;
 bigger footprints + long-edge midpoints; mid-FACE rings above 90 m — always
 including a street-reachable ring at 55 m, the guarantee that supertall
 canyons are swingable from the ground) — one InstancedMesh + one per-block
@@ -145,9 +145,10 @@ there is the source of truth. Key laws:
 - Rope = position projection + kill outward radial velocity, 2 iterations at
   120 Hz (`SDT`). Don't drop the sim to 60 Hz without re-checking constraint
   stability at top speed.
-- City pitch (`PITCH` 44 m) vs `LEN_IDEAL` (38 m) vs `ANCHOR_R` (85 m): a
-  swing released over the grid must always find a next anchor. Retune one,
-  re-run the bot sweep.
+- Grid (`ST` 80 m streets / `AV` 272 m avenues — see Manhattan geography
+  above) vs `LEN_IDEAL` (38 m) vs `ANCHOR_R` (85 m): a swing released over
+  the grid must always find a next anchor, and tall buildings must keep the
+  55 m street-reachable face ring. Retune any of these, re-run the bot sweep.
 
 ## Testing
 

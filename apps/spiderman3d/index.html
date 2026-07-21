@@ -81,6 +81,8 @@
 <script type="module">
 import * as THREE from 'three';
 
+const BOOT_T0 = performance.now();   // city gen + scene build cost, exposed as __dbg.bootMs
+
 const VERSION = 4;
 document.getElementById('ver').textContent = 'V' + VERSION;
 document.getElementById('tver').textContent = 'V' + VERSION;
@@ -254,7 +256,8 @@ function addBuilding(x0, x1, z0, z1, h, small, grp) {
   // whatever the tower's height (proportional-only rings left dead zones).
   // Width guard: wedge slices skip rings so a sliced tower doesn't multiply them.
   if (x1 - x0 >= 25)
-    for (const lvl of h > 220 ? [55, h * 0.45, h * 0.75] : h > 90 ? [55, h * 0.55] : [])
+    for (const lvl of h > 220 ? [55, h * 0.45, h * 0.75]
+                   : h > 90 ? (h * 0.55 > 70 ? [55, h * 0.55] : [55]) : [])
       anchors.push(
         new THREE.Vector3(cx, lvl, z0 - o), new THREE.Vector3(cx, lvl, z1 + o),
         new THREE.Vector3(x0 - o, lvl, cz), new THREE.Vector3(x1 + o, lvl, cz));
@@ -524,14 +527,15 @@ scene.add(sun);
     const shape = new THREE.Shape();
     const NB = 120;
     const zA = zk(0.3), zB = zk(21.3);
+    const RIBBON = BWAY_HALF - 3;   // stays tied to the corridor width
     for (let i = 0; i <= NB; i++) {
       const z = zA + (i / NB) * (zB - zA);
       const x = bwayXAt(z);
-      i ? shape.lineTo(x - 11, -z) : shape.moveTo(x - 11, -z);
+      i ? shape.lineTo(x - RIBBON, -z) : shape.moveTo(x - RIBBON, -z);
     }
     for (let i = NB; i >= 0; i--) {
       const z = zA + (i / NB) * (zB - zA);
-      shape.lineTo(bwayXAt(z) + 11, -z);
+      shape.lineTo(bwayXAt(z) + RIBBON, -z);
     }
     const bway = new THREE.Mesh(new THREE.ShapeGeometry(shape),
       new THREE.MeshLambertMaterial({ color: 0x474c54 }));
@@ -1225,6 +1229,7 @@ if (bot.on || new URLSearchParams(location.search).has('autostart')) start();
 // ---------------------------------------------------------------------------
 window.__dbg = {
   errors: window.__errs,
+  bootMs: Math.round(performance.now() - BOOT_T0),
   P, buildings, anchors, bot,
   start,
   stepN(n) { for (let i = 0; i < n; i++) step(SDT); return this.snapshot(); },
