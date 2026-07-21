@@ -141,8 +141,9 @@ const anchors = [];     // THREE.Vector3 roof points
     buildings.push(b);
     // anchors float just OUTSIDE the roof corners/edges — a straight rope to a
     // fresh anchor must never graze its own building (the LOS + wrap tests
-    // treat all boxes uniformly because of this)
-    const o = 0.35, ay = h + 0.15;
+    // treat all boxes uniformly because of this). o must stay comfortably
+    // above SHRINK: o - SHRINK is the float-safety gap that invariant rests on.
+    const o = 0.5, ay = h + 0.15;
     anchors.push(
       new THREE.Vector3(b.x0 - o, ay, b.z0 - o), new THREE.Vector3(b.x1 + o, ay, b.z0 - o),
       new THREE.Vector3(b.x0 - o, ay, b.z1 + o), new THREE.Vector3(b.x1 + o, ay, b.z1 + o),
@@ -176,7 +177,9 @@ function nearBuildings(x, z, r) {
 
 // --- rope-vs-building geometry ---------------------------------------------
 // All in 2D top-down: obstacles are AABBs and bends happen on vertical edges.
-const SHRINK = 0.25;   // rope tests use slightly shrunk boxes so wall contacts don't false-positive
+const SHRINK = 0.25;   // rope tests use slightly shrunk boxes so wall contacts don't
+                       // false-positive; must stay well below the anchor outset `o` (0.5)
+                       // and the 0.3 bend nudge — those gaps keep pivots off the test rects
 const wrapStats = { wrap: 0, unwrap: 0, snap: 0, losReject: 0 };
 
 // Liang-Barsky segment-vs-rect clip. Returns {t0, t1, axis} (axis = entered
@@ -406,7 +409,7 @@ const P = {
   grounded: true,
   coyote: 0,
   groundHold: 0,                        // steps grounded with a hand held (auto re-leap)
-  ropes: { L: null, R: null },          // {anchor:V3, len}
+  ropes: { L: null, R: null },          // {pivots: [anchor V3, ...bends], usedLen, len, len0}
   held: { L: false, R: false },
   retry: { L: 0, R: 0 },
   splash: 0,                            // >0: splash freeze countdown (seconds)
@@ -964,6 +967,7 @@ window.__dbg = {
   tilt(v) { tiltOverride = v; },
   clearTilt() { tiltOverride = null; },
   supportAt, pickAnchor, segBlocked, wrapStats,
+  resetWrapStats() { wrapStats.wrap = wrapStats.unwrap = wrapStats.snap = wrapStats.losReject = 0; },
 };
 
 // ---------------------------------------------------------------------------

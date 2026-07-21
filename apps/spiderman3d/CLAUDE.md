@@ -49,10 +49,11 @@ Ropes never pass through buildings. Each rope is a pivot chain
 (`r.pivots`: anchor → bends → player); the pendulum constraint acts from the
 LAST pivot with `r.len - r.usedLen`. Laws:
 
-- **Anchors sit OUTSIDE roof corners** (outset 0.35, +0.15 above roof) so a
-  straight rope to a fresh anchor never grazes its own building — this is what
-  lets `segBlocked()`/`findBend()` treat every box uniformly. Never move
-  anchors back inside the footprint.
+- **Anchors sit OUTSIDE roof corners** (outset `o` = 0.5, +0.15 above roof) so
+  a straight rope to a fresh anchor never grazes its own building — this is
+  what lets `segBlocked()`/`findBend()` treat every box uniformly. Never move
+  anchors back inside the footprint, and keep `o` comfortably above `SHRINK`
+  (0.25): `o - SHRINK` is the float-safety gap the whole invariant rests on.
 - **Attach requires line of sight**: `pickAnchor()` sorts candidates by score
   and takes the best one `segBlocked()` clears (top 6 tried).
 - **Wrap**: when the segment to the active pivot crosses a box below its roof
@@ -63,6 +64,9 @@ LAST pivot with `r.len - r.usedLen`. Laws:
   don't "fix" the speed-up.
 - **Snap**: > 5 pivots or effective length < 5.5 m breaks the web (no
   tangled/stuck states). Reel floors at `usedLen + 6`.
+- Known limitation: the bend nudge doesn't check *other* nearby buildings, so
+  in dense configurations a bend can land inside a neighbor and churn
+  wrap→rewrap until the 5-pivot snap resolves it (extra snaps, never a clip).
 - `__dbg.wrapStats` counts wrap/unwrap/snap/losReject — the bot sweep should
   show wraps > 0, and dead-hang wall-pins should be rare now.
 
@@ -90,8 +94,12 @@ steers back from the island edge); `?autostart=1` skips the title;
 `?nosw=1` skips service-worker registration (**use it for all localhost
 testing** — the SW serves stale builds otherwise); `?seed=N` reseeds the city.
 
-Drive headless via Chrome CDP with SwiftShader (see repo memory recipe) and
-screenshot — the sim also steps fine without WebGL frames via `stepN`.
+**`verify.mjs` is the regression gate**: with a local HTTP server + headless
+Chrome running (setup commands in its header), `node apps/spiderman3d/verify.mjs`
+runs a 90 sim-second bot sweep asserting no JS errors, no rope segment ever
+crossing a building, and mean speed ≥ 8 m/s (dead-hang canary). Run it after
+touching any coupled physics constant or the wrap/anchor geometry. For visual
+checks, screenshot via CDP at deviceScaleFactor 3 (see repo memory recipe).
 
 ## Not yet built (deliberate V1 cuts)
 
