@@ -104,7 +104,10 @@ Other V3 playtest laws:
   are near-coplanar with the island slab and z-fight at distance ("Central
   Park flashes") without BOTH a real y gap (≥ 0.2 m) and `polygonOffset`.
   Camera near plane is 0.5 for the same reason — near distance dominates
-  depth precision; don't drop it back to 0.1.
+  depth precision; don't drop it back to 0.1. Sidewalk plinth padding skips
+  park-facing sides (a padded plinth under a lawn is back inside z-fight
+  range), and parks are physically 0.2 m raised terraces (`supportAt`), so
+  the runner stands ON the lawn decal rather than shin-deep in it.
 
 ## Manhattan geography (V4)
 

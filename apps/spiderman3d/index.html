@@ -455,7 +455,9 @@ function findBend(p, piv) {
   return bend;
 }
 
-// support height (feet level) at a point: roof if inside a footprint, else street
+// support height (feet level) at a point: roof if inside a footprint, else
+// lawn (parks are 0.2 m raised terraces — matches the decal height so the
+// runner stands ON the grass, not shin-deep in it), else street
 function supportAt(x, z) {
   let s = 0;
   const arr = bHash.get(hk(Math.floor(x / CELL), Math.floor(z / CELL)));
@@ -463,6 +465,7 @@ function supportAt(x, z) {
     const b = buildings[i];
     if (x >= b.x0 && x <= b.x1 && z >= b.z0 && z <= b.z1 && b.h > s) s = b.h;
   }
+  if (s === 0 && inPark(x, z)) s = 0.2;
   return s;
 }
 
@@ -579,8 +582,13 @@ scene.add(sun);
   const m = new THREE.InstancedMesh(geo, mat, blocks.length);
   const M = new THREE.Matrix4();
   blocks.forEach((b, i) => {
-    M.makeScale(b.x1 - b.x0 + 8, 0.3, b.z1 - b.z0 + 8);
-    M.setPosition((b.x0 + b.x1) / 2, 0.15, (b.z0 + b.z1) / 2);
+    // sidewalk padding skips any side that faces a park — a padded plinth
+    // bleeding under a lawn would sit 0.1 m below it, inside z-fight range
+    const cx = (b.x0 + b.x1) / 2, cz = (b.z0 + b.z1) / 2;
+    const x0 = b.x0 - (inPark(b.x0 - 6, cz) ? 0 : 4), x1 = b.x1 + (inPark(b.x1 + 6, cz) ? 0 : 4);
+    const z0 = b.z0 - (inPark(cx, b.z0 - 6) ? 0 : 4), z1 = b.z1 + (inPark(cx, b.z1 + 6) ? 0 : 4);
+    M.makeScale(x1 - x0, 0.3, z1 - z0);
+    M.setPosition((x0 + x1) / 2, 0.15, (z0 + z1) / 2);
     m.setMatrixAt(i, M);
   });
   scene.add(m);
