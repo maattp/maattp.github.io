@@ -8,8 +8,8 @@ no post-processing, no render targets (so the iOS HalfFloat trap doesn't apply).
 
 ## Version Management
 
-**IMPORTANT: bump `const VERSION` in `index.html` once per PR.** It renders as
-`V1` bottom-right in the HUD. When bumping, ASSERT the old value is present
+**IMPORTANT: bump `const VERSION` in `index.html` once per PR.** It renders
+top-right on the title screen ONLY (`#tver` — see the V5 badge law below). When bumping, ASSERT the old value is present
 (check open PRs for the true latest). When a PR should reach installed players
 promptly, also bump `CACHE` (`spiderman3d-vN`) in `sw.js`.
 
@@ -96,8 +96,23 @@ Other V3 playtest laws:
   `env(safe-area-inset-top)`, `viewH()` sizes from `screen` when
   `navigator.standalone`, and `resize` re-runs at 350/1200 ms. Don't size
   from bare `innerHeight`.
-- Version badge must be visible on the **title screen** (`#tver`), not just
-  the in-game HUD.
+- The version badge lives **ONLY on the title screen** (`#tver`, top-right) —
+  user decision, V5; do not add an in-game version badge. Top-anchored
+  because iOS standalone reports `safe-area-inset-bottom` as 0 (the layout
+  viewport stops short of the home indicator), so bottom-anchored HUD text
+  hides under the swipe bar. The in-game top-right corner belongs to the
+  **minimap** (`#mini`): full-island silhouette prerendered from the same
+  W/C profiles + parks + Broadway, player dot stamped at the HUD tick.
+- **No in-game instruction text** (user decision, V5): the HUD is speed +
+  minimap only; all control instructions live on the title screen.
+- **Ground decals need depth headroom (V5)**: lawns/reservoir/Broadway ribbon
+  are near-coplanar with the island slab and z-fight at distance ("Central
+  Park flashes") without BOTH a real y gap (≥ 0.2 m) and `polygonOffset`.
+  Camera near plane is 0.5 for the same reason — near distance dominates
+  depth precision; don't drop it back to 0.1. Sidewalk plinth padding skips
+  park-facing sides (a padded plinth under a lawn is back inside z-fight
+  range), and parks are physically 0.2 m raised terraces (`supportAt`), so
+  the runner stands ON the lawn decal rather than shin-deep in it.
 
 ## Manhattan geography (V4)
 
@@ -121,8 +136,9 @@ past Union/Madison/Herald/Times Squares to Columbus Circle, up the west
 side, back to the spine in Inwood — a ribbon mesh draws it, and
 `placeBuilding()` carves crossing buildings into **stair-stepped wedge
 slices** (2-5 z-strips, each clipped to the corridor at its own latitude, min
-4 m wide, `small` anchors, no face rings, shared `grp` facade color so a
-wedge reads as one building) — Flatiron-style prows out of pure AABBs. The
+4 m wide, `small` anchors, face rings on the WIDEST slice only — one ring
+set per crossing building — shared `grp` facade color so a wedge reads as
+one building) — Flatiron-style prows out of pure AABBs. The
 world stays axis-aligned boxes ONLY; never introduce rotated footprints —
 the whole rope/collision stack depends on it. Parks (Central Park 8.7-12.8 km + reservoir,
 Battery, Washington/Tompkins/Union/Madison/Bryant Sq, Riverside + East River
