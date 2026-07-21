@@ -1689,11 +1689,21 @@ canvas.addEventListener('contextmenu', e => e.preventDefault());
 let gyro = 0, gyroLive = false, motionLive = false;
 let tiltBase = null, tiltSamples = 0, gyroCal = null, listenersOn = false;
 let invTilt = localStorage.getItem('sm3d_inv') === '1';
+// EMPIRICAL, not spec: requestPermission existing correlates with iOS, and
+// iOS reports the reaction force (negated gravity) where Android reports
+// gravity itself. Two unrelated facts that happen to align today — if a
+// future platform breaks the correlation, the title-screen invert toggle is
+// the user-facing recovery, and this comment is the developer-facing one.
 const IOS_MOTION = typeof DeviceMotionEvent !== 'undefined' &&
   typeof DeviceMotionEvent.requestPermission === 'function';
 function onMotion(e) {
   const g = e.accelerationIncludingGravity;
   if (!g || g.x == null) return;
+  // plausibility gate: some browsers emit all-zero readings when the sensor
+  // is really unsupported — latching motionLive on those would disable BOTH
+  // the gamma fallback and thumb-drag (gyroLive), leaving the game
+  // unsteerable. Real gravity has magnitude ~9.8.
+  if (Math.hypot(g.x, g.y, g.z) < 4) return;
   const raw = IOS_MOTION ? -g.x : g.x;   // leaning right → positive
   if (tiltSamples < 24) {                // settle the neutral-posture baseline
     tiltBase = tiltBase === null ? raw : tiltBase + (raw - tiltBase) * 0.25;
@@ -1702,6 +1712,7 @@ function onMotion(e) {
   }
   motionLive = true;
   gyroLive = true;
+  // 3.4 m/s² ≈ 9.8·sin(20°): full steer at ~20° of lean past neutral
   gyro = Math.max(-1, Math.min(1, (raw - tiltBase) / 3.4)) * (invTilt ? -1 : 1);
 }
 function onOrient(e) {                    // gamma fallback only if motion never delivers
