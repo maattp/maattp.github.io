@@ -160,6 +160,37 @@ including a street-reachable ring at 55 m, the guarantee that supertall
 canyons are swingable from the ground) — one InstancedMesh + one per-block
 plinth mesh; keep it that way (no per-building meshes).
 
+## Graphics architecture (V7)
+
+**NO post-processing / render targets anywhere** — iOS WebKit silently
+blackscreens HalfFloat RTs (repo memory); every effect below is
+geometry/material-level. The pillars:
+
+- **World-space procedural surfaces** (`surfaceMat()` injects into
+  MeshLambertMaterial): because every surface is axis-aligned, facades and
+  pavement derive their pattern from WORLD position — windows are exact
+  meters at any building size, zero textures, one material per class.
+  Buildings get window grids (sparse fraction lit via `surfGlow` — EMISSIVE,
+  so they read on shaded facades), storefront bases, gravel roofs; plinths
+  get expansion joints; asphalt gets lane dashes + zebra crosswalks derived
+  from the same AV/ST grid constants; water and the reservoir animate via
+  `uTime` (tick `timeUniforms` in frame()).
+- **Sky dome** (ShaderMaterial, fog:false, renderOrder -1, follows camera):
+  horizon haze must match `scene.fog` color.
+- **Set dressing** (water towers on mid-rise roofs, park trees) is instanced
+  and decor-only — the one sanctioned exception to the supportAt law; small
+  enough that clipping is acceptable.
+- **Rig**: jointed shoulder→elbow→hand and hip→knee chains (`buildArm`/
+  `buildLeg`); run cycle with knee lift, swing tuck scaled by speed,
+  reaching arm aims at the last rope pivot. Feet sit at y=0 exactly.
+- **Webs** are pooled 3D cylinder strands laid along the pivot chain (max 6
+  segments/hand), not lines.
+- **Speed feel**: FOV 76→98 with speed, camera banks with tilt, additive
+  streak lines past the camera (>17 m/s), additive motion trail (>20 m/s),
+  landing dust ring. Faster tuning: REEL 4.6 / DRAG_K 0.0053 (terminal
+  ~69 m/s) / PUMP 15 to 20 m/s.
+- Title overlay is translucent — the live city renders behind it.
+
 ## Physics tuning contract
 
 Constants at the top of the module script are coupled — the comment block
