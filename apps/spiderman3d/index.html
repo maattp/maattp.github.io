@@ -245,9 +245,12 @@ const blocks = [];      // {x0,x1,z0,z1} — for sidewalk plinths
 // all boxes uniformly because of this). o must stay comfortably above SHRINK:
 // o - SHRINK is the float-safety gap.
 let grpId = 0;   // one visual identity (facade color) per placed building, shared by its wedge slices
-function addBuilding(x0, x1, z0, z1, h, small, grp, rings = true) {
+// palH: the height used for PALETTE bucketing — setback tiers pass the
+// tower's FULL height so every tier lands in the same palette (a tier
+// bucketed by its own height would render masonry base under a glass top)
+function addBuilding(x0, x1, z0, z1, h, small, grp, rings = true, palH = h) {
   const cx = (x0 + x1) / 2, cz = (z0 + z1) / 2;
-  buildings.push({ x0, x1, z0, z1, h, cx, cz, grp });
+  buildings.push({ x0, x1, z0, z1, h, cx, cz, grp, palH });
   const o = 0.5, ay = h + 0.15;
   anchors.push(
     new THREE.Vector3(x0 - o, ay, z0 - o), new THREE.Vector3(x1 + o, ay, z0 - o),
@@ -273,15 +276,18 @@ function addBuilding(x0, x1, z0, z1, h, small, grp, rings = true) {
 // crossing blocks end in Flatiron-style prows while every collision/rope
 // invariant (AABB-only world) stays intact. Slices share the parent's grp so
 // they render as one building.
-function placeBuilding(x0, x1, z0, z1, h, small, grpOv) {
+function parkTouch(x0, x1, z0, z1) {
+  return inPark(x0, z0) || inPark(x1, z0) || inPark(x0, z1) || inPark(x1, z1) ||
+    inPark((x0 + x1) / 2, (z0 + z1) / 2);
+}
+function placeBuilding(x0, x1, z0, z1, h, small, grpOv, palH) {
   // no building may touch a park — partial rows stop cleanly at the park line
-  if (inPark(x0, z0) || inPark(x1, z0) || inPark(x0, z1) || inPark(x1, z1) ||
-      inPark((x0 + x1) / 2, (z0 + z1) / 2)) return;
+  if (parkTouch(x0, x1, z0, z1)) return;
   const g = grpOv !== undefined ? grpOv : grpId++;
   const bwA = bwayXAt(z0), bwB = bwayXAt(z1);
   if (bwA === null || bwB === null ||
       x1 < Math.min(bwA, bwB) - BWAY_HALF || x0 > Math.max(bwA, bwB) + BWAY_HALF) {
-    addBuilding(x0, x1, z0, z1, h, small, g);
+    addBuilding(x0, x1, z0, z1, h, small, g, true, palH);
     return;
   }
   const N = Math.max(2, Math.min(5, Math.round((z1 - z0) / 7)));
@@ -298,7 +304,7 @@ function placeBuilding(x0, x1, z0, z1, h, small, grpOv) {
   // multiplying rings once per z-strip)
   let widest = -1, wbest = 0;
   slices.forEach((s, i) => { if (s[1] - s[0] > wbest) { wbest = s[1] - s[0]; widest = i; } });
-  slices.forEach((s, i) => addBuilding(s[0], s[1], s[2], s[3], h, true, g, i === widest));
+  slices.forEach((s, i) => addBuilding(s[0], s[1], s[2], s[3], h, true, g, i === widest, palH));
 }
 
 (function genCity() {
@@ -358,15 +364,19 @@ function placeBuilding(x0, x1, z0, z1, h, small, grpOv) {
           if (h > 300) { w *= 0.55; d *= 0.7; }
           const cx = bx0 + s * (slotW + gap) + slotW / 2;
           if (h > 120) {
-            // wedding-cake setbacks: stacked AABB columns (same grp → one
-            // facade color). Ledges are real roofs — landable, anchor-bearing,
-            // wrap-tested like any building; the classic NYC zoning silhouette.
+            // wedding-cake setbacks: stacked AABB columns (same grp AND same
+            // palette bucket via palH = full tower height). Ledges are real
+            // roofs — landable, anchor-bearing, wrap-tested like any
+            // building; the classic NYC zoning silhouette. The whole tower
+            // is skipped if its BASE touches a park (a rejected base with an
+            // accepted upper tier would float).
+            if (parkTouch(cx - w / 2, cx + w / 2, cz - d / 2, cz + d / 2)) continue;
             const g2 = grpId++;
             const tiers = h > 260 ? [[1, 0.42], [0.72, 0.72], [0.48, 1]] : [[1, 0.52], [0.66, 1]];
             for (const [fr, hf] of tiers) {
               const inX = (w * (1 - fr)) / 2, inZ = (d * (1 - fr)) / 2;
               placeBuilding(cx - w / 2 + inX, cx + w / 2 - inX,
-                cz - d / 2 + inZ, cz + d / 2 - inZ, h * hf, false, g2);
+                cz - d / 2 + inZ, cz + d / 2 - inZ, h * hf, false, g2, h);
             }
           } else {
             placeBuilding(cx - w / 2, cx + w / 2, cz - d / 2, cz + d / 2, h, false);
@@ -944,7 +954,7 @@ timeUniforms.push(skyDome.material.uniforms.uTime);   // clouds drift
     mesh.setMatrixAt(i, M);
     // color keyed on grp, not index: a wedge's stair slices must match
     const gr = mulberry32(seed + b.grp * 7919);
-    const pal = b.h < 35 ? PAL_LOW : b.h < 110 ? PAL_MID : PAL_TALL;
+    const pal = b.palH < 35 ? PAL_LOW : b.palH < 110 ? PAL_MID : PAL_TALL;   // palH: tier-safe bucket
     const c = pal[Math.floor(gr() * pal.length)].clone();
     c.offsetHSL(0, 0, (gr() - 0.5) * 0.08);
     mesh.setColorAt(i, c);
