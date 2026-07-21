@@ -807,6 +807,10 @@ timeUniforms.push(skyDome.material.uniforms.uTime);   // clouds drift
     carCab.setMatrixAt(i, M);
     carBody.setColorAt(i, c[2] < 0.16 ? TAXI : CAR_COLS[Math.floor(c[2] * 37) % CAR_COLS.length]);
   });
+  // instances never change after boot (first bind uploads the buffers); set
+  // needsUpdate anyway so a future dynamic path doesn't silently no-op
+  carBody.instanceMatrix.needsUpdate = carCab.instanceMatrix.needsUpdate = true;
+  if (carBody.instanceColor) carBody.instanceColor.needsUpdate = true;
   scene.add(carBody, carCab);
 
   // outer boroughs: silhouette skylines across both rivers, mostly fog-washed
@@ -911,6 +915,9 @@ timeUniforms.push(skyDome.material.uniforms.uTime);   // clouds drift
           surfGlow += vec3(0.85, 0.66, 0.36) * (sf * sfLit * 0.35);   // storefront spill
         } else {
           #ifdef USE_INSTANCING_COLOR
+          // COUPLING: this classifies by tint — every PAL_TALL entry must keep
+          // b > r*1.12 and every PAL_LOW/MID entry must not, or facades will
+          // silently switch styles when palettes are retuned
           bool glassTower = vColor.b > vColor.r * 1.12;   // PAL_TALL tint → curtain wall
           #else
           bool glassTower = false;
