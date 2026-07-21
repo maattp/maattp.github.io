@@ -510,8 +510,9 @@ scene.fog = new THREE.Fog(SKY, 200, 1500);
 const camera = new THREE.PerspectiveCamera(78, 1, 0.5, 1700);
 
 scene.add(new THREE.HemisphereLight(0xcfe2ff, 0x8a7f6e, 1.0));
+const SUN_POS = new THREE.Vector3(240, 420, 180);   // single source for light AND sky disc
 const sun = new THREE.DirectionalLight(0xffe9c4, 2.3);
-sun.position.set(240, 420, 180);
+sun.position.copy(SUN_POS);
 scene.add(sun);
 
 // sky dome: horizon haze → zenith blue, with a sun disc + glow. Follows the
@@ -526,7 +527,7 @@ const skyDome = new THREE.Mesh(new THREE.SphereGeometry(1600, 24, 12),
         vec3 d = normalize(vDir);
         float h = clamp(d.y, 0.0, 1.0);
         vec3 col = mix(vec3(0.81, 0.87, 0.93), vec3(0.34, 0.56, 0.83), pow(h, 0.7));
-        vec3 sunDir = normalize(vec3(240.0, 420.0, 180.0));
+        vec3 sunDir = normalize(vec3(${SUN_POS.toArray().map(v => v.toFixed(1)).join(', ')}));
         float s = max(dot(d, sunDir), 0.0);
         col += vec3(1.0, 0.87, 0.62) * (pow(s, 600.0) * 1.2 + pow(s, 20.0) * 0.14);
         gl_FragColor = vec4(col, 1.0);
@@ -541,7 +542,14 @@ scene.add(skyDome);
 // pattern from WORLD position in the fragment shader: windows are exact
 // meters, nothing stretches, one material per surface class, zero textures.
 const timeUniforms = [];   // shaders that want uTime, ticked in frame()
+// GLSL float literal from a JS constant (123 → "123.0", 1.5 → "1.5") — bare
+// template interpolation breaks compilation the day a constant goes non-integer
+const gf = n => Number.isInteger(n) ? n + '.0' : String(n);
 function surfaceMat(mat, body, animated = false) {
+  // three.js keys its program cache on onBeforeCompile.toString(), which is
+  // IDENTICAL for every surfaceMat call — without an explicit key, plain
+  // Lambert materials could silently reuse each other's compiled shader
+  mat.customProgramCacheKey = () => body + (animated ? '|t' : '');
   mat.onBeforeCompile = sh => {
     if (animated) { sh.uniforms.uTime = { value: 0 }; timeUniforms.push(sh.uniforms.uTime); }
     sh.vertexShader = sh.vertexShader
@@ -590,8 +598,8 @@ function surfaceMat(mat, body, animated = false) {
   const isle = new THREE.Mesh(geo, surfaceMat(new THREE.MeshLambertMaterial({ color: 0x41464d }), `
     if (vNW.y > 0.5) {
       diffuseColor.rgb *= 0.90 + 0.12 * hash2(floor(vWP.xz * 0.31)) + 0.07 * hash2(floor(vWP.xz * 1.63) + 7.0);
-      float ax = abs(mod(vWP.x + ${AV / 2}.0, ${AV}.0) - ${AV / 2}.0);   // dist to avenue centerline
-      float sz = abs(mod(vWP.z - ${Z0}.0 + ${ST / 2}.0, ${ST}.0) - ${ST / 2}.0);
+      float ax = abs(mod(vWP.x + ${gf(AV / 2)}, ${gf(AV)}) - ${gf(AV / 2)});   // dist to avenue centerline
+      float sz = abs(mod(vWP.z - ${gf(Z0)} + ${gf(ST / 2)}, ${gf(ST)}) - ${gf(ST / 2)});
       float dash = step(0.5, fract(vWP.z * 0.12)) * (1.0 - step(0.35, ax));
       float dash2 = step(0.5, fract(vWP.x * 0.12)) * (1.0 - step(0.3, sz));
       diffuseColor.rgb += vec3(0.28, 0.26, 0.16) * max(dash, dash2) * 0.5;
@@ -1574,7 +1582,7 @@ function updateTrail(dt) {
 }
 
 const camPos = new THREE.Vector3(AV, 6, zk(6.5) - 18), camLook = new THREE.Vector3(AV, 2, zk(6.5));
-let fov = 78;
+let fov = 78, bank = 0;
 function updateCamera(dt) {
   const md = moveDir(V.a);
   const sp = P.vel.length();
@@ -1607,7 +1615,6 @@ function updateCamera(dt) {
   fov += (tf - fov) * Math.min(1, 6 * dt);
   if (Math.abs(camera.fov - fov) > 0.01) { camera.fov = fov; camera.updateProjectionMatrix(); }
 }
-let bank = 0;
 
 // ---------------------------------------------------------------------------
 // LOOP
