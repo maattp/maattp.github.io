@@ -34,13 +34,23 @@ re-decision:
   VECTOR (`accelerationIncludingGravity.x`), NEVER Euler gamma — gamma is
   gimbal-unstable at upright phone pitch and its sign flips as beta crosses
   ~90°, which shipped as "inverted tilt" TWICE (V5, V8 reports) before the
-  root cause was found. iOS reports the reaction force (negated);
-  `DeviceMotionEvent.requestPermission` existing is the iOS discriminator.
+  root cause was found. SIGN (V10, settled empirically on the user's iPhone): `g.x` is ALREADY
+  positive when leaning right — NO platform negation anywhere; the V9
+  reaction-force theory was wrong on real hardware, and
+  `DeviceMotionEvent.requestPermission` is used ONLY for the permission
+  prompt. The invert toggle's storage key is `sm3d_inv2` (bumped so users
+  who inverted to fix V9 aren't double-flipped).
   Neutral posture calibrates over ~24 samples after GO; the title screen has
   a persisted invert toggle as the escape hatch; gamma remains only as a
   fallback when motion never delivers. If no reading ever arrives,
   dragging a held thumb sideways steers instead (`gyroLive` flag in
   `readTilt()`) — the game must never be unsteerable (PR #301 review).
+- **Grid rail assist (V10)**: while airborne within ~20° of a cardinal
+  direction and not deliberately tilting, cross-drift damps toward the grid
+  line (`RAIL`) — swinging straight down an avenue must not demand constant
+  micro-correction. Tilt input scales the assist out; diagonal flight
+  (Broadway) is untouched. Anchor side-weight stays LOW (0.5) for the same
+  reason: strongly-sided anchors weave you across the street.
 - **Auto-run, no fail state**: grounded = always running forward at ≥ `RUN`;
   landing momentum bleeds off at `RUN_DECEL`, never below `RUN`, never stops,
   never moves backward. Falling to the street just means you keep running.
