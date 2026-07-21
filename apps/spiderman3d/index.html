@@ -81,18 +81,21 @@
 <script type="module">
 import * as THREE from 'three';
 
-const VERSION = 3;
+const BOOT_T0 = performance.now();   // city gen + scene build cost, exposed as __dbg.bootMs
+
+const VERSION = 4;
 document.getElementById('ver').textContent = 'V' + VERSION;
 document.getElementById('tver').textContent = 'V' + VERSION;
 
 // ---------------------------------------------------------------------------
-// TUNING — these constants are coupled. G / JUMP_V set leap height (~3.6 m).
+// TUNING — these constants are coupled. G / JUMP_V set leap height (~4.5 m).
 // REEL injects the swing's energy: raise it and terminal speed (bounded by
 // DRAG_K → ~62 m/s) rises with it. ANCHOR_R bounds rope length, and the
 // anchor scorer's ideal length (LEN_IDEAL) must stay well inside ANCHOR_R or
-// every attach saturates the penalty. City block pitch (PITCH=44) was chosen
-// so LEN_IDEAL-length ropes always find a next building — if you change the
-// grid, re-run the bot sweep.
+// every attach saturates the penalty. The Manhattan grid (ST=80 m streets,
+// AV=272 m avenues) keeps roof anchors within ANCHOR_R along any corridor —
+// if you change the grid or these radii, re-run the bot sweep. Central Park
+// is deliberately unswingable open ground.
 // ---------------------------------------------------------------------------
 const SDT       = 1 / 120;   // sim step (120 Hz: rope constraint stays stable at 60 m/s)
 const G         = 25;        // gravity, m/s^2 (super-heroic, not Earth)
@@ -121,47 +124,230 @@ function mulberry32(a) { return function() {
 const rand = mulberry32(seed);
 
 // ---------------------------------------------------------------------------
-// CITY — Manhattan-ish superellipse island, grid of blocks, one building per
-// block. All collision is AABB (bx0..bx1, bz0..bz1, h). Anchors = roof
-// corners + long-edge midpoints, spatially hashed.
+// CITY — rough real Manhattan. Battery at the south (z = Z0), Inwood at the
+// north; +z is uptown, +x is east. Real scale: ~21.6 km long, ~3.7 km at the
+// widest (14th St). Real grid: avenues (N-S corridors) every ~272 m, streets
+// (E-W) every ~80 m. Neighborhood skylines via nbhHeight(). Individual
+// buildings are invented; scale and layout follow the real island.
+// All collision is AABB (bx0..bx1, bz0..bz1, h); anchors = roof corners +
+// long-edge midpoints, spatially hashed.
 // ---------------------------------------------------------------------------
-const ISLE_A = 250, ISLE_B = 540;             // island half-extents (x, z)
-const PITCH = 44, BLOCK = 30;                 // grid pitch / building footprint max
-const PARK = { x0: -66, x1: 66, z0: 40, z1: 200 };
+const ISLAND_L = 21600;               // Battery → Inwood, meters
+const Z0 = -ISLAND_L / 2;             // z of the southern tip (the Battery)
+const AV = 272, AV_W = 30;            // avenue pitch / width
+const ST = 80,  ST_W = 18;            // street pitch / width
+const kmN = z => (z - Z0) / 1000;     // km north of the Battery
+const zk  = t => Z0 + t * 1000;       // inverse
 
-function insideIsland(x, z) {
-  return Math.pow(Math.abs(x) / ISLE_A, 3) + Math.pow(Math.abs(z) / ISLE_B, 3) <= 1;
+// width & centerline profiles (piecewise-linear over km-from-Battery).
+// The island widens to 14th St, tapers uptown, and drifts east going north.
+const W_PTS = [[0, 500], [0.5, 1400], [1, 2200], [2, 3100], [3, 3700], [5, 3500],
+  [6, 3400], [8, 2900], [10, 2700], [12, 2400], [14, 2100], [15.5, 1800],
+  [17, 1600], [19, 1400], [20.5, 900], [21.3, 400], [21.6, 120]];
+const C_PTS = [[0, 0], [4, 50], [6, 200], [9, 450], [12, 700], [15, 900], [18, 1050], [21.6, 1200]];
+function pw(pts, t) {
+  if (t <= pts[0][0]) return pts[0][1];
+  for (let i = 1; i < pts.length; i++) if (t <= pts[i][0]) {
+    const p0 = pts[i - 1], p1 = pts[i];
+    return p0[1] + (p1[1] - p0[1]) * (t - p0[0]) / (p1[0] - p0[0]);
+  }
+  return pts[pts.length - 1][1];
 }
-function inPark(x, z) { return x > PARK.x0 && x < PARK.x1 && z > PARK.z0 && z < PARK.z1; }
+const widthAt  = z => pw(W_PTS, kmN(z));
+const centerAt = z => pw(C_PTS, kmN(z));
+function insideIsland(x, z) {
+  const t = kmN(z);
+  if (t < 0 || t > 21.6) return false;
+  return Math.abs(x - centerAt(z)) <= widthAt(z) / 2;
+}
+
+// Parks: rectangles [t0, t1] km × x-range (computed at the park's mid-z), plus
+// the two shore strips handled functionally in inPark(). No buildings inside.
+const PARKS = [];
+function addPark(t0, t1, dx0, dx1) {
+  const c = centerAt(zk((t0 + t1) / 2));
+  PARKS.push({ x0: c + dx0, x1: c + dx1, z0: zk(t0), z1: zk(t1) });
+  return PARKS[PARKS.length - 1];
+}
+const CENTRAL_PARK = addPark(8.7, 12.8, -420, 420);   // 59th → 110th
+// Battery Park: wide bounds are for building placement only (insideIsland
+// already gates blocks); the LAWN is drawn shoreline-clipped below, so the
+// generic rectangle renderer must skip this entry.
+const BATTERY = addPark(0, 0.35, -2000, 2000);
+BATTERY.noLawn = true;
+addPark(3.55, 3.78, -140, 120);                       // Washington Square
+addPark(3.05, 3.25, 560, 780);                        // Tompkins Square
+addPark(4.15, 4.32, -40, 150);                        // Union Square
+addPark(4.7, 4.92, -60, 160);                         // Madison Square
+addPark(7.3, 7.48, -260, -40);                        // Bryant Park
+function inPark(x, z) {
+  for (const p of PARKS) if (x > p.x0 && x < p.x1 && z > p.z0 && z < p.z1) return true;
+  const t = kmN(z), c = centerAt(z), w = widthAt(z);
+  if (t > 9.5 && t < 14.5 && x < c - w / 2 + 170) return true;   // Riverside Park (west shore)
+  if (t > 2.6 && t < 4.2 && x > c + w / 2 - 140) return true;    // East River Park
+  return false;
+}
+
+// Neighborhood skyline band: t = km north of the Battery, e = east-west
+// position in [-1 west, +1 east] across the island at that latitude. The band
+// also decides the BLOCK FABRIC: base ≤ 26 → rowhouse street walls,
+// base ≤ 55 (no supertall chance) → mid-rise frontages, else office slabs.
+function nbhBand(t, e) {
+  let base = 20, varr = 40, superChance = 0, superMin = 0, superVar = 0;
+  if (t < 1.3)       { base = 60; varr = 170; superChance = 0.05; superMin = 240; superVar = 180; } // Financial District
+  else if (t < 2.3)  { base = 28; varr = 55; }                                   // Tribeca / Civic Center
+  else if (t < 4.0)  { base = 15; varr = 32; }                                   // SoHo / Village / LES
+  else if (t < 5.1)  { base = 35; varr = 85;
+    if (e < -0.5 && t > 4.5) { base = 110; varr = 220; } }                       // Flatiron; Hudson Yards to the west
+  else if (t < 6.5)  { base = 45; varr = 100; }                                  // Chelsea / Gramercy / Murray Hill
+  else if (t < 8.8)  { base = 70; varr = 210;                                    // Midtown canyon
+    superChance = t > 7.0 ? 0.05 : 0.02; superMin = 300; superVar = 220;
+    if (t > 8.5) { superChance = 0.07; superVar = 170; } }                       // Billionaires' Row (57th)
+  else if (t < 12.8) { base = 38; varr = 75;
+    if (Math.abs(e) > 0.28 && Math.abs(e) < 0.6) { base = 55; varr = 110; } }    // UES/UWS park-front walls
+  else if (t < 15.6) { base = 20; varr = 42; }                                   // Harlem / Morningside
+  else if (t < 19.2) { base = 24; varr = 48; }                                   // Washington Heights
+  else               { base = 14; varr = 28; }                                   // Inwood
+  return { base, varr, superChance, superMin, superVar };
+}
+function nbhHeight(band) {
+  const r = rand();
+  let h = band.base + r * r * band.varr;
+  if (rand() < band.superChance) h = band.superMin + rand() * band.superVar;
+  return Math.min(540, Math.max(10, h));
+}
+
+// Broadway — the one street that breaks the grid. Its path is defined in
+// island-relative e (like nbhBand): down the spine through SoHo, then the
+// famous diagonal cutting west past Union/Madison/Herald/Times Squares to
+// Columbus Circle, up the west side, and back to the spine in Inwood.
+// Buildings are never placed within its corridor.
+const BWAY_PTS = [[0.3, 0], [2, -0.03], [3.9, 0.03], [4.8, 0.05], [5.6, 0], [7, -0.08],
+  [8.75, -0.2], [10, -0.5], [12.8, -0.5], [15, -0.35], [17, -0.2], [19, -0.08], [21.3, 0]];
+const BWAY_HALF = 14;   // corridor half-width, m
+function bwayXAt(z) {
+  const t = kmN(z);
+  if (t < 0.3 || t > 21.3) return null;
+  return centerAt(z) + pw(BWAY_PTS, t) * widthAt(z) / 2;
+}
 
 const buildings = [];   // {x0,x1,z0,z1,h,cx,cz}
 const anchors = [];     // THREE.Vector3 roof points
+const blocks = [];      // {x0,x1,z0,z1} — for sidewalk plinths
+
+// anchors float just OUTSIDE the roof corners/edges — a straight rope to a
+// fresh anchor must never graze its own building (the LOS + wrap tests treat
+// all boxes uniformly because of this). o must stay comfortably above SHRINK:
+// o - SHRINK is the float-safety gap.
+let grpId = 0;   // one visual identity (facade color) per placed building, shared by its wedge slices
+function addBuilding(x0, x1, z0, z1, h, small, grp) {
+  const cx = (x0 + x1) / 2, cz = (z0 + z1) / 2;
+  buildings.push({ x0, x1, z0, z1, h, cx, cz, grp });
+  const o = 0.5, ay = h + 0.15;
+  anchors.push(
+    new THREE.Vector3(x0 - o, ay, z0 - o), new THREE.Vector3(x1 + o, ay, z0 - o),
+    new THREE.Vector3(x0 - o, ay, z1 + o), new THREE.Vector3(x1 + o, ay, z1 + o));
+  // rowhouses share party walls, so corners alone give a dense parapet line;
+  // bigger footprints also get long-edge midpoints
+  if (!small) anchors.push(new THREE.Vector3(cx, ay, z0 - o), new THREE.Vector3(cx, ay, z1 + o));
+  // tall buildings also take webs on their FACES — otherwise supertall
+  // canyons (roofs above ANCHOR_R) would be unswingable from the street.
+  // The 55 m ring is the guarantee: always inside ANCHOR_R from street level,
+  // whatever the tower's height (proportional-only rings left dead zones).
+  // Width guard: wedge slices skip rings so a sliced tower doesn't multiply them.
+  if (x1 - x0 >= 25)
+    for (const lvl of h > 220 ? [55, h * 0.45, h * 0.75]
+                   : h > 90 ? (h * 0.55 > 70 ? [55, h * 0.55] : [55]) : [])
+      anchors.push(
+        new THREE.Vector3(cx, lvl, z0 - o), new THREE.Vector3(cx, lvl, z1 + o),
+        new THREE.Vector3(x0 - o, lvl, cz), new THREE.Vector3(x1 + o, lvl, cz));
+}
+// Placement front door: buildings crossing Broadway aren't dropped — they're
+// carved into stair-stepped axis-aligned slices that track the diagonal, so
+// crossing blocks end in Flatiron-style prows while every collision/rope
+// invariant (AABB-only world) stays intact. Slices share the parent's grp so
+// they render as one building.
+function placeBuilding(x0, x1, z0, z1, h, small) {
+  // no building may touch a park — partial rows stop cleanly at the park line
+  if (inPark(x0, z0) || inPark(x1, z0) || inPark(x0, z1) || inPark(x1, z1) ||
+      inPark((x0 + x1) / 2, (z0 + z1) / 2)) return;
+  const g = grpId++;
+  const bwA = bwayXAt(z0), bwB = bwayXAt(z1);
+  if (bwA === null || bwB === null ||
+      x1 < Math.min(bwA, bwB) - BWAY_HALF || x0 > Math.max(bwA, bwB) + BWAY_HALF) {
+    addBuilding(x0, x1, z0, z1, h, small, g);
+    return;
+  }
+  const N = Math.max(2, Math.min(5, Math.round((z1 - z0) / 7)));
+  for (let i = 0; i < N; i++) {
+    const sz0 = z0 + (i / N) * (z1 - z0), sz1 = z0 + ((i + 1) / N) * (z1 - z0);
+    const bw = bwayXAt((sz0 + sz1) / 2);
+    const L1 = Math.min(x1, bw - BWAY_HALF), R0 = Math.max(x0, bw + BWAY_HALF);
+    if (L1 - x0 >= 4) addBuilding(x0, L1, sz0, sz1, h, true, g);   // west-of-Broadway slice
+    if (x1 - R0 >= 4) addBuilding(R0, x1, sz0, sz1, h, true, g);   // east-of-Broadway slice
+  }
+}
+
 (function genCity() {
-  const nx = Math.floor(ISLE_A / PITCH), nz = Math.floor(ISLE_B / PITCH);
-  for (let i = -nx; i <= nx; i++) for (let j = -nz; j <= nz; j++) {
-    const cx = i * PITCH, cz = j * PITCH;
-    const w = BLOCK - 4 + rand() * 4, d = BLOCK - 4 + rand() * 4;
-    // whole footprint must be on land, and not in the park
-    if (!insideIsland(Math.abs(cx) + w / 2, Math.abs(cz) + d / 2)) continue;
-    if (inPark(cx, cz)) continue;
-    // skyline: midtown + downtown clusters over a modest base
-    let h = 16 + rand() * rand() * 34;
-    const mid = Math.exp(-Math.pow((cz - 300) / 130, 2)) * (1 - Math.abs(cx) / (ISLE_A * 1.2));
-    const dwn = Math.exp(-Math.pow((cz + 380) / 110, 2)) * (1 - Math.abs(cx) / (ISLE_A * 1.4));
-    h *= 1 + mid * 2.6 + dwn * 1.9;
-    h = Math.min(150, Math.max(14, h));
-    const b = { x0: cx - w / 2, x1: cx + w / 2, z0: cz - d / 2, z1: cz + d / 2, h, cx, cz };
-    buildings.push(b);
-    // anchors float just OUTSIDE the roof corners/edges — a straight rope to a
-    // fresh anchor must never graze its own building (the LOS + wrap tests
-    // treat all boxes uniformly because of this). o must stay comfortably
-    // above SHRINK: o - SHRINK is the float-safety gap that invariant rests on.
-    const o = 0.5, ay = h + 0.15;
-    anchors.push(
-      new THREE.Vector3(b.x0 - o, ay, b.z0 - o), new THREE.Vector3(b.x1 + o, ay, b.z0 - o),
-      new THREE.Vector3(b.x0 - o, ay, b.z1 + o), new THREE.Vector3(b.x1 + o, ay, b.z1 + o),
-      new THREE.Vector3(cx, ay, b.z0 - o), new THREE.Vector3(cx, ay, b.z1 + o),
-      new THREE.Vector3(b.x0 - o, ay, cz), new THREE.Vector3(b.x1 + o, ay, cz));
+  const rows = Math.floor(ISLAND_L / ST);
+  for (let k = -8; k <= 12; k++) {
+    const bx0 = k * AV + AV_W / 2, bx1 = (k + 1) * AV - AV_W / 2;
+    for (let j = 0; j < rows; j++) {
+      const bz0 = Z0 + j * ST + ST_W / 2, bz1 = Z0 + (j + 1) * ST - ST_W / 2;
+      const cz = (bz0 + bz1) / 2, bcx = (bx0 + bx1) / 2;
+      // the whole block must be on land (shore aprons read as waterfront
+      // highways — realistic). Parks clip PER BUILDING below, not per block:
+      // dropping any park-touching block left a ~240 m empty apron around
+      // every park, erasing the CPW/5th Ave park-front walls.
+      if (!insideIsland(bx0, bz0) || !insideIsland(bx1, bz0) ||
+          !insideIsland(bx0, bz1) || !insideIsland(bx1, bz1)) continue;
+      if (inPark(bcx, cz)) continue;   // block core inside a park
+      blocks.push({ x0: bx0, x1: bx1, z0: bz0, z1: bz1 });
+      const t = kmN(cz), e = (bcx - centerAt(cz)) / (widthAt(cz) / 2);
+      const band = nbhBand(t, e);
+      if (band.base <= 26 && !band.superChance) {
+        // ROWHOUSE FABRIC (Village, Harlem, Heights, Inwood): two contiguous
+        // party-wall street walls facing the streets, courtyard gap between
+        for (const front of [true, false]) {
+          let x = bx0;
+          while (x < bx1 - 8) {
+            let w = 16 + rand() * 26;                    // 16-42 m lots
+            if (x + w > bx1 - 8) w = bx1 - x;            // corner lot takes the tail
+            const d = 20 + rand() * 6;                   // ~30 m real lot depth
+            placeBuilding(x, x + w, front ? bz0 : bz1 - d, front ? bz0 + d : bz1,
+              nbhHeight(band), true);
+            x += w;
+          }
+        }
+      } else if (band.base <= 55 && !band.superChance) {
+        // MID-RISE (Tribeca, Chelsea, UES/UWS): wider frontage segments,
+        // occasional side gaps, still built to the street line
+        for (const front of [true, false]) {
+          let x = bx0;
+          while (x < bx1 - 12) {
+            let w = 34 + rand() * 44;
+            if (x + w > bx1 - 12) w = bx1 - x;
+            const d = 24 + rand() * 7;
+            placeBuilding(x, x + w, front ? bz0 : bz1 - d, front ? bz0 + d : bz1,
+              nbhHeight(band), false);
+            x += w + (rand() < 0.3 ? 5 : 0);
+          }
+        }
+      } else {
+        // OFFICE/TOWER BLOCKS (FiDi, Midtown, Hudson Yards): 1-3 big slabs
+        // with plaza gaps; supertalls get slender footprints
+        const nb = 1 + Math.floor(rand() * 3);
+        const gap = 10, slotW = (bx1 - bx0 - gap * (nb - 1)) / nb;
+        for (let s = 0; s < nb; s++) {
+          let w = slotW * (0.8 + rand() * 0.2);
+          let d = (bz1 - bz0) * (0.75 + rand() * 0.25);
+          const h = nbhHeight(band);
+          if (h > 300) { w *= 0.55; d *= 0.7; }
+          const cx = bx0 + s * (slotW + gap) + slotW / 2;
+          placeBuilding(cx - w / 2, cx + w / 2, cz - d / 2, cz + d / 2, h, false);
+        }
+      }
+    }
   }
 })();
 
@@ -278,55 +464,102 @@ renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
 const scene = new THREE.Scene();
 const SKY = 0x9fc6ea;
 scene.background = new THREE.Color(SKY);
-scene.fog = new THREE.Fog(SKY, 140, 760);
-const camera = new THREE.PerspectiveCamera(78, 1, 0.1, 1200);
+scene.fog = new THREE.Fog(SKY, 200, 1500);
+const camera = new THREE.PerspectiveCamera(78, 1, 0.1, 3200);
 
 scene.add(new THREE.HemisphereLight(0xbfd9ff, 0x5e5a52, 1.0));
 const sun = new THREE.DirectionalLight(0xfff2dd, 2.0);
 sun.position.set(240, 420, 180);
 scene.add(sun);
 
-// island slab (superellipse outline)
+// island slab traced from the width/centerline profiles
 {
   const shape = new THREE.Shape();
-  for (let i = 0; i <= 96; i++) {
-    const t = i / 96 * Math.PI * 2;
-    const c = Math.cos(t), s = Math.sin(t);
-    const x = ISLE_A * Math.sign(c) * Math.pow(Math.abs(c), 2 / 3);
-    const z = ISLE_B * Math.sign(s) * Math.pow(Math.abs(s), 2 / 3);
-    i ? shape.lineTo(x, z) : shape.moveTo(x, z);
+  const N = 160;
+  for (let i = 0; i <= N; i++) {        // east shore, south → north
+    const z = Z0 + (i / N) * ISLAND_L;
+    i ? shape.lineTo(centerAt(z) + widthAt(z) / 2, z)
+      : shape.moveTo(centerAt(z) + widthAt(z) / 2, z);
+  }
+  for (let i = N; i >= 0; i--) {        // west shore, north → south
+    const z = Z0 + (i / N) * ISLAND_L;
+    shape.lineTo(centerAt(z) - widthAt(z) / 2, z);
   }
   const geo = new THREE.ExtrudeGeometry(shape, { depth: 3, bevelEnabled: false });
   const isle = new THREE.Mesh(geo, new THREE.MeshLambertMaterial({ color: 0x3c4148 }));
   isle.rotation.x = Math.PI / 2;   // extrudes downward: top face lands at y=0
   scene.add(isle);
 }
-// water
+// water (Hudson + East River + harbor, effectively infinite)
 {
-  const water = new THREE.Mesh(new THREE.PlaneGeometry(5000, 5000),
+  const water = new THREE.Mesh(new THREE.PlaneGeometry(60000, 60000),
     new THREE.MeshLambertMaterial({ color: 0x1c516e }));
   water.rotation.x = -Math.PI / 2;
   water.position.y = -2.5;
   scene.add(water);
 }
-// park
+// parks
 {
-  const park = new THREE.Mesh(
-    new THREE.PlaneGeometry(PARK.x1 - PARK.x0, PARK.z1 - PARK.z0),
-    new THREE.MeshLambertMaterial({ color: 0x4a7a44 }));
-  park.rotation.x = -Math.PI / 2;
-  park.position.set((PARK.x0 + PARK.x1) / 2, 0.05, (PARK.z0 + PARK.z1) / 2);
-  scene.add(park);
+  const grass = new THREE.MeshLambertMaterial({ color: 0x4a7a44 });
+  const addLawn = (x0, x1, z0, z1) => {
+    const p = new THREE.Mesh(new THREE.PlaneGeometry(x1 - x0, z1 - z0), grass);
+    p.rotation.x = -Math.PI / 2;
+    p.position.set((x0 + x1) / 2, 0.05, (z0 + z1) / 2);
+    scene.add(p);
+  };
+  for (const p of PARKS) if (!p.noLawn) addLawn(p.x0, p.x1, p.z0, p.z1);
+  for (let i = 0; i < 5; i++) {         // Battery Park lawn hugs the shoreline
+    const t0 = i * 0.07, zm = zk(t0 + 0.035);
+    addLawn(centerAt(zm) - widthAt(zm) / 2, centerAt(zm) + widthAt(zm) / 2, zk(t0), zk(t0 + 0.07));
+  }
+  // shore strips, segmented so they hug the shoreline profiles
+  for (let i = 0; i < 10; i++) {        // Riverside Park
+    const t0 = 9.5 + i * 0.5, zm = zk(t0 + 0.25);
+    addLawn(centerAt(zm) - widthAt(zm) / 2, centerAt(zm) - widthAt(zm) / 2 + 170, zk(t0), zk(t0 + 0.5));
+  }
+  for (let i = 0; i < 4; i++) {         // East River Park
+    const t0 = 2.6 + i * 0.4, zm = zk(t0 + 0.2);
+    addLawn(centerAt(zm) + widthAt(zm) / 2 - 140, centerAt(zm) + widthAt(zm) / 2, zk(t0), zk(t0 + 0.4));
+  }
+  // Broadway ribbon — drawn just above the sidewalk plinths so the diagonal
+  // reads against the grid (physically it's ordinary street: no buildings)
+  {
+    const shape = new THREE.Shape();
+    const NB = 120;
+    const zA = zk(0.3), zB = zk(21.3);
+    const RIBBON = BWAY_HALF - 3;   // stays tied to the corridor width
+    for (let i = 0; i <= NB; i++) {
+      const z = zA + (i / NB) * (zB - zA);
+      const x = bwayXAt(z);
+      i ? shape.lineTo(x - RIBBON, -z) : shape.moveTo(x - RIBBON, -z);
+    }
+    for (let i = NB; i >= 0; i--) {
+      const z = zA + (i / NB) * (zB - zA);
+      shape.lineTo(bwayXAt(z) + RIBBON, -z);
+    }
+    const bway = new THREE.Mesh(new THREE.ShapeGeometry(shape),
+      new THREE.MeshLambertMaterial({ color: 0x474c54 }));
+    bway.rotation.x = -Math.PI / 2;   // shape (x, -z) → world (x, z)
+    bway.position.y = 0.32;           // above the 0.3 sidewalk plinths it crosses
+    scene.add(bway);
+  }
+  // Central Park reservoir (visual water — physically it's still park lawn)
+  const res = new THREE.Mesh(new THREE.CircleGeometry(1, 32),
+    new THREE.MeshLambertMaterial({ color: 0x2a6584 }));
+  res.rotation.x = -Math.PI / 2;
+  res.scale.set(300, 380, 1);
+  res.position.set((CENTRAL_PARK.x0 + CENTRAL_PARK.x1) / 2, 0.08, zk(11.2));
+  scene.add(res);
 }
-// sidewalk plinths — read the street grid
+// sidewalk plinths — one per BLOCK, so the street grid reads at any density
 {
   const geo = new THREE.BoxGeometry(1, 1, 1);
   const mat = new THREE.MeshLambertMaterial({ color: 0x8f959c });
-  const m = new THREE.InstancedMesh(geo, mat, buildings.length);
+  const m = new THREE.InstancedMesh(geo, mat, blocks.length);
   const M = new THREE.Matrix4();
-  buildings.forEach((b, i) => {
-    M.makeScale(b.x1 - b.x0 + 5, 0.3, b.z1 - b.z0 + 5);
-    M.setPosition(b.cx, 0.15, b.cz);
+  blocks.forEach((b, i) => {
+    M.makeScale(b.x1 - b.x0 + 8, 0.3, b.z1 - b.z0 + 8);
+    M.setPosition((b.x0 + b.x1) / 2, 0.15, (b.z0 + b.z1) / 2);
     m.setMatrixAt(i, M);
   });
   scene.add(m);
@@ -337,15 +570,19 @@ scene.add(sun);
   const mat = new THREE.MeshLambertMaterial({ color: 0xffffff });
   const mesh = new THREE.InstancedMesh(geo, mat, buildings.length);
   const M = new THREE.Matrix4();
-  const palette = [0x8d9099, 0x9c8f80, 0xa8763e, 0x7f8ea3, 0x6b7686, 0xb0a293, 0x92655a, 0x77808f]
-    .map(c => new THREE.Color(c));
-  const paletteRand = mulberry32(seed + 1);
+  // facade palettes by height: low = brownstone/brick, mid = masonry, tall = glass
+  const PAL_LOW  = [0xa8763e, 0x92655a, 0xb0a293, 0x9c8f80, 0x8a5a48].map(c => new THREE.Color(c));
+  const PAL_MID  = [0x8d9099, 0x9c8f80, 0xb0a293, 0x7f8ea3, 0x6b7686].map(c => new THREE.Color(c));
+  const PAL_TALL = [0x7f8ea3, 0x77808f, 0x8fa3b8, 0x6b7686, 0x9fb2c4].map(c => new THREE.Color(c));
   buildings.forEach((b, i) => {
     M.makeScale(b.x1 - b.x0, b.h, b.z1 - b.z0);
     M.setPosition(b.cx, b.h / 2, b.cz);
     mesh.setMatrixAt(i, M);
-    const c = palette[Math.floor(paletteRand() * palette.length)].clone();
-    c.offsetHSL(0, 0, (paletteRand() - 0.5) * 0.08);
+    // color keyed on grp, not index: a wedge's stair slices must match
+    const gr = mulberry32(seed + b.grp * 7919);
+    const pal = b.h < 35 ? PAL_LOW : b.h < 110 ? PAL_MID : PAL_TALL;
+    const c = pal[Math.floor(gr() * pal.length)].clone();
+    c.offsetHSL(0, 0, (gr() - 0.5) * 0.08);
     mesh.setColorAt(i, c);
   });
   scene.add(mesh);
@@ -417,7 +654,7 @@ scene.add(splashRing);
 // PLAYER STATE + SIM
 // ---------------------------------------------------------------------------
 const P = {
-  pos: new THREE.Vector3(22, 0, -300),  // street corridor center, downtown, running north
+  pos: new THREE.Vector3(AV, 0, zk(6.5)),  // an avenue south of Midtown, running uptown
   vel: new THREE.Vector3(0, 0, RUN),
   heading: Math.atan2(0, 1),            // yaw, atan2(x, z) convention (faces +z at 0)
   grounded: true,
@@ -534,11 +771,13 @@ function doSplash() {
   document.getElementById('fade').style.opacity = 0.85;
 }
 function respawn() {
-  // walk toward island center until we're on a street (support 0, on land)
+  // walk toward the island spine at this latitude (clamped off the tips)
+  // until we're on a street (support 0, on land)
+  const tz = zk(Math.min(20.5, Math.max(1, kmN(P.pos.z))));
   const p = V.a.set(P.pos.x, 0, P.pos.z);
-  const dir = V.b.set(-p.x, 0, -p.z).normalize();
-  for (let i = 0; i < 200; i++) {
-    p.addScaledVector(dir, 5);
+  const dir = V.b.set(centerAt(tz) - p.x, 0, tz - p.z).normalize();
+  for (let i = 0; i < 400; i++) {
+    p.addScaledVector(dir, 10);
     if (insideIsland(p.x, p.z) && supportAt(p.x, p.z) === 0 && !inPark(p.x, p.z)) break;
   }
   P.pos.set(p.x, 0, p.z);
@@ -711,13 +950,14 @@ function step(dt) {
 // ---------------------------------------------------------------------------
 const bot = { on: new URLSearchParams(location.search).has('bot'), side: 'R' };
 function botThink() {
-  // steer back toward center when drifting off the island
-  const ex = P.pos.x / ISLE_A, ez = P.pos.z / ISLE_B;
+  // steer back toward the island spine when drifting toward a shore or a tip
   const md = moveDir(V.c);
+  const t = kmN(P.pos.z), c = centerAt(P.pos.z), w = widthAt(P.pos.z);
   let want = 0;
-  if (Math.abs(ex) > 0.55 || Math.abs(ez) > 0.65) {
+  if (Math.abs(P.pos.x - c) > w * 0.38 || t < 0.8 || t > 20.8) {
+    const tz = zk(Math.min(20, Math.max(1.5, t)));
     const r = rightOf(md);
-    const dotR = r.x * -P.pos.x + r.z * -P.pos.z;   // >0: center is to the right
+    const dotR = r.x * (c - P.pos.x) + r.z * (tz - P.pos.z);   // >0: spine is to the right
     want = dotR > 0 ? 0.7 : -0.7;
   }
   tiltOverride = want;
@@ -886,7 +1126,7 @@ function updateSpidey(dt) {
   }
 }
 
-const camPos = new THREE.Vector3(22, 6, -318), camLook = new THREE.Vector3(22, 2, -300);
+const camPos = new THREE.Vector3(AV, 6, zk(6.5) - 18), camLook = new THREE.Vector3(AV, 2, zk(6.5));
 let fov = 78;
 function updateCamera(dt) {
   const md = moveDir(V.a);
@@ -989,6 +1229,7 @@ if (bot.on || new URLSearchParams(location.search).has('autostart')) start();
 // ---------------------------------------------------------------------------
 window.__dbg = {
   errors: window.__errs,
+  bootMs: Math.round(performance.now() - BOOT_T0),
   P, buildings, anchors, bot,
   start,
   stepN(n) { for (let i = 0; i < n; i++) step(SDT); return this.snapshot(); },

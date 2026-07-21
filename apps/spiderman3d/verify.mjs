@@ -82,22 +82,37 @@ const targeted = await evalJson(`(() => {
     if (s.grounded) maxGroundedY = Math.max(maxGroundedY, s.pos[1]);
   }
   __dbg.clearTilt();
-  // handedness: right-hand anchors should average right of travel
-  const sides = [];
-  for (let t = 0; t < 8; t++) {
-    __dbg.press('R'); __dbg.stepN(240);
-    const r = __dbg.P.ropes.R;
-    if (r) {
-      const v = __dbg.P.vel, h = Math.hypot(v.x, v.z) || 1;
-      const dx = r.pivots[0].x - __dbg.P.pos.x, dz = r.pivots[0].z - __dbg.P.pos.z;
-      sides.push(dx * (-v.z / h) + dz * (v.x / h));   // dot with rightOf(travel)
-    }
-    __dbg.release('R'); __dbg.stepN(120);
+  // handedness — RELATIVE test, immune to city asymmetry (an absolute lean
+  // just measures local geography, e.g. Broadway carving one side of a path):
+  // at the same spot the right hand must pick a more-rightward anchor than
+  // the left hand. Travel +z → rightOf = (-1, 0, 0), so sideVal = -(dx).
+  const diffs = [];
+  for (let t = 0; t < 10; t++) {
+    __dbg.P.pos.set(272, 40, -4300 + t * 400);
+    __dbg.P.vel.set(0, 0, 20);
+    const a = __dbg.pickAnchor(1), b = __dbg.pickAnchor(-1);
+    if (!a || !b) continue;
+    const sideVal = p => -(p.x - __dbg.P.pos.x);
+    diffs.push(sideVal(a) - sideVal(b));
   }
-  const meanSide = sides.length ? sides.reduce((a, b) => a + b, 0) / sides.length : 0;
-  return { maxY, maxSpeed, gotRope, maxGroundedY, sideSamples: sides.length, meanSide, errs: window.__errs };
+  const meanDiff = diffs.length ? diffs.reduce((x, y) => x + y, 0) / diffs.length : 0;
+  // deep supertall canyon (51st St): street starts must attach — guards the
+  // 55 m street-reachable face-ring guarantee
+  let canyonGot = 0;
+  for (let t = 0; t < 6; t++) {
+    __dbg.P.pos.set(272, 0, -10800 + 7800);
+    __dbg.P.vel.set(0, 0, 12);
+    __dbg.P.grounded = true;
+    __dbg.press('R');
+    let got = false;
+    for (let i = 0; i < 16; i++) if (__dbg.stepN(30).ropes.R) got = true;
+    if (got) canyonGot++;
+    __dbg.release('R'); __dbg.stepN(90);
+  }
+  return { maxY, maxSpeed, gotRope, maxGroundedY, sideSamples: diffs.length, meanDiff,
+           canyonGot, bootMs: __dbg.bootMs, errs: window.__errs };
 })()`);
-console.log(`street start: y ${targeted.maxY.toFixed(1)} speed ${targeted.maxSpeed.toFixed(1)} rope ${targeted.gotRope} | wallRun groundedY ${targeted.maxGroundedY.toFixed(2)} | handedness meanSide ${targeted.meanSide.toFixed(1)} (${targeted.sideSamples} samples)`);
+console.log(`street start: y ${targeted.maxY.toFixed(1)} speed ${targeted.maxSpeed.toFixed(1)} rope ${targeted.gotRope} | wallRun groundedY ${targeted.maxGroundedY.toFixed(2)} | handedness R-vs-L diff ${targeted.meanDiff.toFixed(1)} (${targeted.sideSamples} samples) | canyon ${targeted.canyonGot}/6 | boot ${targeted.bootMs}ms`);
 
 // ---- Pass 2: autopilot sweep ---------------------------------------------
 await load('bot=1');
@@ -124,9 +139,14 @@ const mean = sweep.speeds.reduce((a, b) => a + b, 0) / sweep.speeds.length;
 console.log(`mean speed ${mean.toFixed(1)} m/s | clipViolations ${sweep.clipViolations} | wrapStats ${JSON.stringify(sweep.wrapStats)} | jsErrors ${sweep.errs.length + errors.length}`);
 
 let fail = false;
-if (!targeted.gotRope || targeted.maxY < 4 || targeted.maxSpeed < 15) { console.error('FAIL: street start is a dead hop again (ratchet regression)'); fail = true; }
+// dead-hop signature: no rope, maxY ~4.5 (bare jump), flat speed. Height with
+// a rope is the discriminator — on tall Midtown anchors the first hold climbs
+// more than it swings, so the speed bar is a sanity floor, not the signal.
+if (!targeted.gotRope || targeted.maxY < 8 || targeted.maxSpeed < 12) { console.error('FAIL: street start is a dead hop again (ratchet regression)'); fail = true; }
 if (targeted.maxGroundedY > 1.5) { console.error('FAIL: grounded runner left the street (roof-teleport regression)'); fail = true; }
-if (targeted.sideSamples >= 4 && targeted.meanSide < 0) { console.error('FAIL: right-hand anchors lean left (handedness mirror regression)'); fail = true; }
+if (targeted.sideSamples >= 3 && targeted.meanDiff <= 0) { console.error('FAIL: right hand does not pick more-rightward anchors than left (handedness mirror regression)'); fail = true; }
+if (targeted.canyonGot < 5) { console.error('FAIL: supertall-canyon street starts whiff (face-ring guarantee regression)'); fail = true; }
+if (targeted.bootMs > 2500) { console.error('FAIL: city gen + scene boot took ' + targeted.bootMs + 'ms'); fail = true; }
 if (targeted.errs.length || sweep.errs.length || errors.length) { console.error('FAIL: JS errors', targeted.errs, sweep.errs, errors); fail = true; }
 if (sweep.clipViolations > 0) { console.error('FAIL: rope crossed a building'); fail = true; }
 if (mean < 8) { console.error('FAIL: bot is not swinging (mean speed < 8 m/s — dead-hang regression?)'); fail = true; }

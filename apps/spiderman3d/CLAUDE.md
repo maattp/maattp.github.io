@@ -99,6 +99,42 @@ Other V3 playtest laws:
 - Version badge must be visible on the **title screen** (`#tver`), not just
   the in-game HUD.
 
+## Manhattan geography (V4)
+
+The island is rough real Manhattan: 21.6 km Battery (z = Z0, south) → Inwood,
++z uptown, +x east. Layout is data-driven — `W_PTS`/`C_PTS` are piecewise
+width/centerline profiles in km-from-Battery (widest ~3.7 km at 14th St,
+spine drifting east going north); the shoreline slab, `insideIsland()`, bot
+recentering, and respawn all derive from them. The real grid: avenues `AV` =
+272 m (N-S), streets `ST` = 80 m (E-W), 2-3 buildings per block.
+`nbhBand(t, e)` encodes the skyline bands: FiDi cluster, low
+SoHo/Village, Hudson Yards west at ~4.5-5.1 km, Midtown supertall canyon
+(7-8.8 km, Billionaires' Row at the top), UES/UWS park-front walls, low
+Harlem/Heights/Inwood. The band also picks the **block fabric** (this is the
+realism contract for building placement): base ≤ 26 → rowhouse street walls
+(two contiguous party-wall rows of 16-42 m lots facing the streets, courtyard
+gap mid-block, zero side gaps); base ≤ 55 → mid-rise frontage segments;
+tall/supertall bands → 1-3 office slabs with plaza gaps, and footprints
+shrink for h > 300 (slender supertalls). **Broadway** (`BWAY_PTS`, island-
+relative like the bands) is the one diagonal: spine downtown, cutting west
+past Union/Madison/Herald/Times Squares to Columbus Circle, up the west
+side, back to the spine in Inwood — a ribbon mesh draws it, and
+`placeBuilding()` carves crossing buildings into **stair-stepped wedge
+slices** (2-5 z-strips, each clipped to the corridor at its own latitude, min
+4 m wide, `small` anchors, no face rings, shared `grp` facade color so a
+wedge reads as one building) — Flatiron-style prows out of pure AABBs. The
+world stays axis-aligned boxes ONLY; never introduce rotated footprints —
+the whole rope/collision stack depends on it. Parks (Central Park 8.7-12.8 km + reservoir,
+Battery, Washington/Tompkins/Union/Madison/Bryant Sq, Riverside + East River
+shore strips) are building-free; **Central Park is deliberately unswingable
+open ground** — crossing it on foot is the real-Manhattan tradeoff, not a
+bug. Individual buildings are invented; only scale/layout/fabric/heights
+follow reality. ~21.6k buildings / ~113k anchors (rowhouses: roof corners only;
+bigger footprints + long-edge midpoints; mid-FACE rings above 90 m — always
+including a street-reachable ring at 55 m, the guarantee that supertall
+canyons are swingable from the ground) — one InstancedMesh + one per-block
+plinth mesh; keep it that way (no per-building meshes).
+
 ## Physics tuning contract
 
 Constants at the top of the module script are coupled — the comment block
@@ -109,9 +145,10 @@ there is the source of truth. Key laws:
 - Rope = position projection + kill outward radial velocity, 2 iterations at
   120 Hz (`SDT`). Don't drop the sim to 60 Hz without re-checking constraint
   stability at top speed.
-- City pitch (`PITCH` 44 m) vs `LEN_IDEAL` (38 m) vs `ANCHOR_R` (85 m): a
-  swing released over the grid must always find a next anchor. Retune one,
-  re-run the bot sweep.
+- Grid (`ST` 80 m streets / `AV` 272 m avenues — see Manhattan geography
+  above) vs `LEN_IDEAL` (38 m) vs `ANCHOR_R` (85 m): a swing released over
+  the grid must always find a next anchor, and tall buildings must keep the
+  55 m street-reachable face ring. Retune any of these, re-run the bot sweep.
 
 ## Testing
 
@@ -134,5 +171,5 @@ checks, screenshot via CDP at deviceScaleFactor 3 (see repo memory recipe).
 
 Sound, haptics, objectives/missions, real building graphics (windows,
 textures), horizontal roof-edge rope wrap (vertical-corner wrap only),
-landscape layout, bridges, pedestrians/traffic, big map (island is
-demo-scale).
+landscape layout, bridges, pedestrians/traffic, terrain elevation
+(northern ridges), landmark buildings.
