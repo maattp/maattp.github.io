@@ -70,6 +70,35 @@ LAST pivot with `r.len - r.usedLen`. Laws:
 - `__dbg.wrapStats` counts wrap/unwrap/snap/losReject — the bot sweep should
   show wraps > 0, and dead-hang wall-pins should be rare now.
 
+## Handedness law (V3 — the playtest mirror bug)
+
+For travel direction `f`, anatomical/screen **right = (-f.z, 0, f.x)** — the
+same rule as a camera facing `f`. V2 shipped the mirror image and every
+control read swapped (right press → left web, inverted air steer). Every
+consumer must use this form: anchor side scoring, airborne tilt force, the
+character's limb placement (model faces +z, so its right arm sits at **-x**),
+bot steering, whiff puff offset. All lateral math goes through the
+`rightOf(f)` helper — never inline the formula; that's how the mirror
+shipped in the first place.
+
+Other V3 playtest laws:
+
+- **Rope ratchet**: the constraint takes up slack (`len` shrinks to closest
+  approach, floor `usedLen + 6`) so a street-level web-leap engages the
+  pendulum instead of dead-hopping. Don't remove it, and keep `JUMP_V` high
+  enough (~15) that a leap clears the ratchet floor.
+- **Wall pushout runs grounded AND airborne**, for any point > 1 m below a
+  roof; landing snaps only from within 1 m *above-ish* (`pos.y > sup - 1`).
+  V2 ran pushout only airborne — street runners entering a footprint
+  teleported to the roof via the support snap.
+- **iOS standalone fullscreen** uses pixelrun's documented fix verbatim:
+  `@media (display-mode: standalone)` extends html/body/canvas/overlays by
+  `env(safe-area-inset-top)`, `viewH()` sizes from `screen` when
+  `navigator.standalone`, and `resize` re-runs at 350/1200 ms. Don't size
+  from bare `innerHeight`.
+- Version badge must be visible on the **title screen** (`#tver`), not just
+  the in-game HUD.
+
 ## Physics tuning contract
 
 Constants at the top of the module script are coupled — the comment block

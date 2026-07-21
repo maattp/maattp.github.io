@@ -13,11 +13,20 @@
 <title>Spider-Man 3D</title>
 <style>
   * { margin: 0; padding: 0; box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
-  html, body { width: 100%; height: 100%; overflow: hidden; background: #0e1a38; touch-action: none;
+  html, body { width: 100%; height: 100vh; overflow: hidden; background: #0e1a38; touch-action: none;
+    overscroll-behavior: none;
     font-family: -apple-system, 'Helvetica Neue', sans-serif; -webkit-user-select: none; user-select: none; }
-  canvas#gl { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
+  canvas#gl, #hud, #fade, #title { position: fixed; top: 0; left: 0; width: 100vw; height: 100vh; height: 100dvh; }
+  canvas#gl { display: block; }
+  /* iOS standalone sizes the layout viewport SHORT of the physical screen by
+     the status-bar inset — THE bottom bar. Pixelrun's documented fix: extend
+     the document and every full-screen layer past it (viewport-fit=cover lets
+     fixed elements paint into the inset zone). */
+  @media (display-mode: standalone) {
+    html, body, canvas#gl, #hud, #fade, #title { height: calc(100vh + env(safe-area-inset-top)); }
+  }
 
-  #hud { position: fixed; inset: 0; pointer-events: none; color: #fff; }
+  #hud { pointer-events: none; color: #fff; }
   #speed { position: absolute; top: calc(env(safe-area-inset-top) + 10px); left: 0; right: 0; text-align: center;
     font-size: 15px; font-weight: 700; letter-spacing: 1px; opacity: 0.85; text-shadow: 0 1px 3px rgba(0,0,0,0.5); }
   #speed b { font-size: 26px; }
@@ -26,11 +35,13 @@
   #ver { position: absolute; bottom: calc(env(safe-area-inset-bottom) + 6px); right: calc(env(safe-area-inset-right) + 10px);
     font-size: 11px; font-weight: 700; opacity: 0.4; }
 
-  #fade { position: fixed; inset: 0; background: #0c2a3e; opacity: 0; pointer-events: none; transition: opacity 0.25s; }
+  #fade { background: #0c2a3e; opacity: 0; pointer-events: none; transition: opacity 0.25s; }
 
-  #title { position: fixed; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center;
+  #title { display: flex; flex-direction: column; align-items: center; justify-content: center;
     background: linear-gradient(180deg, #0e1a38 0%, #1c2f5e 55%, #45262e 100%); color: #fff; z-index: 10;
     padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left); }
+  #tver { position: absolute; bottom: calc(env(safe-area-inset-bottom) + 10px); right: calc(env(safe-area-inset-right) + 12px);
+    font-size: 13px; font-weight: 800; opacity: 0.55; }
   #title h1 { font-size: 42px; font-weight: 900; letter-spacing: 2px; color: #e23636;
     text-shadow: 0 3px 0 #7e1414, 0 8px 24px rgba(0,0,0,0.6); text-align: center; line-height: 1.05; }
   #title h1 span { display: block; font-size: 22px; color: #cfe0ff; text-shadow: 0 2px 0 #23305e; letter-spacing: 8px; }
@@ -53,6 +64,7 @@
   <p>Hold the <b>right</b> side to swing on your right web, the <b>left</b> side for your left.
      Hold <b>both</b> for a double-line swing. Release at the top of the arc. Tilt your phone to steer.</p>
   <button id="startBtn">GO SWING</button>
+  <div id="tver"></div>
 </div>
 
 <script>
@@ -69,8 +81,9 @@
 <script type="module">
 import * as THREE from 'three';
 
-const VERSION = 2;
+const VERSION = 3;
 document.getElementById('ver').textContent = 'V' + VERSION;
+document.getElementById('tver').textContent = 'V' + VERSION;
 
 // ---------------------------------------------------------------------------
 // TUNING — these constants are coupled. G / JUMP_V set leap height (~3.6 m).
@@ -85,7 +98,7 @@ const SDT       = 1 / 120;   // sim step (120 Hz: rope constraint stays stable a
 const G         = 25;        // gravity, m/s^2 (super-heroic, not Earth)
 const RUN       = 12;        // base auto-run speed, m/s
 const RUN_DECEL = 5;         // landing momentum bleeds to RUN at this rate
-const JUMP_V    = 13.5;      // web-leap vertical impulse
+const JUMP_V    = 15;        // web-leap vertical impulse (~4.5 m — enough to engage a street-start swing)
 const DRAG_K    = 0.0065;    // quadratic air drag  (terminal ~ sqrt(G/K) ≈ 62 m/s)
 const REEL      = 4.0;       // rope shortens while held, m/s (energy injection)
 const PUMP      = 14;        // swing pump: forward accel while roped & slow, m/s^2
@@ -368,10 +381,11 @@ function limb(len, thick, color, px, py, pz) {
   g.add(box(thick, len, thick, color, 0, -len / 2, 0));
   return g;
 }
-const armL = limb(0.62, 0.15, RED, -0.34, 1.42, 0);
-const armR = limb(0.62, 0.15, RED,  0.34, 1.42, 0);
-const legL = limb(0.76, 0.18, BLUE, -0.14, 0.64, 0);
-const legR = limb(0.76, 0.18, BLUE,  0.14, 0.64, 0);
+// model faces +z; a body facing +z has its RIGHT side at -x (handedness law)
+const armL = limb(0.62, 0.15, RED,  0.34, 1.42, 0);
+const armR = limb(0.62, 0.15, RED, -0.34, 1.42, 0);
+const legL = limb(0.76, 0.18, BLUE,  0.14, 0.64, 0);
+const legR = limb(0.76, 0.18, BLUE, -0.14, 0.64, 0);
 spidey.add(torso, hips, head, armL, armR, legL, legR);
 // chest spider mark
 spidey.add(box(0.1, 0.24, 0.02, DARK, 0, 1.2, 0.165));
@@ -429,11 +443,17 @@ function moveDir(out) {
   else out.set(Math.sin(P.heading), 0, Math.cos(P.heading));
   return out;
 }
+// HANDEDNESS LAW: for travel dir f, anatomical/screen right = (-f.z, 0, f.x)
+// (same rule as a camera facing f). V2 shipped this mirrored — ALL lateral
+// math must go through this helper, never inline the formula.
+const RIGHT = { x: 0, z: 0 };
+function rightOf(f) { RIGHT.x = -f.z; RIGHT.z = f.x; return RIGHT; }
 
 // Pick the best anchor for a hand. side: -1 left, +1 right.
 function pickAnchor(side) {
   const md = moveDir(V.a);
-  const rx = md.z, rz = -md.x;             // right vector of travel
+  const r = rightOf(md);
+  const rx = r.x, rz = r.z;                // right vector of travel
   const cand = [];
   const x0 = Math.floor((P.pos.x - ANCHOR_R) / CELL), x1 = Math.floor((P.pos.x + ANCHOR_R) / CELL);
   const z0 = Math.floor((P.pos.z - ANCHOR_R) / CELL), z1 = Math.floor((P.pos.z + ANCHOR_R) / CELL);
@@ -462,7 +482,7 @@ function pickAnchor(side) {
   // best candidate with a clear line of sight — never start a rope through a building
   cand.sort((a, b) => b.score - a.score);
   const eye = { x: P.pos.x, y: P.pos.y + 1.5, z: P.pos.z };
-  for (let k = 0; k < Math.min(6, cand.length); k++) {
+  for (let k = 0; k < Math.min(10, cand.length); k++) {
     const a = anchors[cand[k].i];
     if (!segBlocked(eye, a)) return a;
     wrapStats.losReject++;
@@ -477,9 +497,10 @@ function tryAttach(side) {
     P.ropes[side] = { pivots: [a], usedLen: 0, len, len0: len };
     return true;
   }
-  // whiff: show a fizzle where the web aimed
+  // whiff: show a fizzle where the web aimed (offset to that hand's side)
   const md = moveDir(V.b);
-  puff.position.copy(P.pos).addScaledVector(md, 6).add(V.c.set((side === 'L' ? -3 : 3), 8, 0));
+  const r = rightOf(md), off = side === 'L' ? -3 : 3;
+  puff.position.copy(P.pos).addScaledVector(md, 6).add(V.c.set(r.x * off, 8, r.z * off));
   puffT = 0.18;
   return false;
 }
@@ -559,10 +580,11 @@ function step(dt) {
     P.coyote = COYOTE;
   } else {
     P.vel.y -= G * dt;
-    // tilt = lateral force perpendicular to travel
+    // tilt = lateral force toward the right of travel
     const md = moveDir(V.a);
-    P.vel.x += md.z * tiltInput * AIR_STEER * dt;
-    P.vel.z += -md.x * tiltInput * AIR_STEER * dt;
+    const rt = rightOf(md);
+    P.vel.x += rt.x * tiltInput * AIR_STEER * dt;
+    P.vel.z += rt.z * tiltInput * AIR_STEER * dt;
     // swing pump: a taut web is never a dead hang — below PUMP_MAX the
     // pendulum is driven forward along travel, fading out as speed builds
     const sp = P.vel.length();
@@ -626,9 +648,13 @@ function step(dt) {
       const r = P.ropes[s];
       if (!r) continue;
       const piv = r.pivots[r.pivots.length - 1];
-      const eff = r.len - r.usedLen;
       const d = V.a.subVectors(P.pos, piv);
       const dist = d.length();
+      // ratchet: the rope takes up slack — you can rise toward the anchor but
+      // never fall back below the closest approach. This is what makes a
+      // street-level web-leap engage the pendulum instead of a dead hop.
+      if (iter === 0) r.len = Math.max(r.usedLen + 6, Math.min(r.len, r.usedLen + dist));
+      const eff = r.len - r.usedLen;
       if (dist > eff) {
         d.multiplyScalar(1 / dist);
         P.pos.addScaledVector(d, -(dist - eff));
@@ -639,25 +665,28 @@ function step(dt) {
   }
 
   // --- collision ---
-  const sup = supportAt(P.pos.x, P.pos.z);
-  if (!P.grounded) {
-    // walls: push out of any AABB we're inside below its roof
-    for (const i of nearBuildings(P.pos.x, P.pos.z, 1)) {
-      const b = buildings[i];
-      const R = 0.45;
-      if (P.pos.x > b.x0 - R && P.pos.x < b.x1 + R && P.pos.z > b.z0 - R && P.pos.z < b.z1 + R
-          && P.pos.y < b.h - 0.6) {
-        const pxl = P.pos.x - (b.x0 - R), pxr = (b.x1 + R) - P.pos.x;
-        const pzl = P.pos.z - (b.z0 - R), pzr = (b.z1 + R) - P.pos.z;
-        const m = Math.min(pxl, pxr, pzl, pzr);
-        if (m === pxl)      { P.pos.x = b.x0 - R; if (P.vel.x > 0) P.vel.x = 0; }
-        else if (m === pxr) { P.pos.x = b.x1 + R; if (P.vel.x < 0) P.vel.x = 0; }
-        else if (m === pzl) { P.pos.z = b.z0 - R; if (P.vel.z > 0) P.vel.z = 0; }
-        else                { P.pos.z = b.z1 + R; if (P.vel.z < 0) P.vel.z = 0; }
-      }
+  // Walls first, grounded or not: you can never be inside a building more
+  // than a mantle-step below its roof. (V2 only ran this airborne — a street
+  // runner entering a footprint teleported to the roof via the support snap.)
+  for (const i of nearBuildings(P.pos.x, P.pos.z, 1)) {
+    const b = buildings[i];
+    const R = 0.45;
+    if (P.pos.x > b.x0 - R && P.pos.x < b.x1 + R && P.pos.z > b.z0 - R && P.pos.z < b.z1 + R
+        && P.pos.y < b.h - 1.0) {
+      const pxl = P.pos.x - (b.x0 - R), pxr = (b.x1 + R) - P.pos.x;
+      const pzl = P.pos.z - (b.z0 - R), pzr = (b.z1 + R) - P.pos.z;
+      const m = Math.min(pxl, pxr, pzl, pzr);
+      if (m === pxl)      { P.pos.x = b.x0 - R; if (P.vel.x > 0) P.vel.x = 0; }
+      else if (m === pxr) { P.pos.x = b.x1 + R; if (P.vel.x < 0) P.vel.x = 0; }
+      else if (m === pzl) { P.pos.z = b.z0 - R; if (P.vel.z > 0) P.vel.z = 0; }
+      else                { P.pos.z = b.z1 + R; if (P.vel.z < 0) P.vel.z = 0; }
     }
-    // landing
-    if (P.vel.y <= 0 && P.pos.y <= sup + 0.02) {
+  }
+  const sup = supportAt(P.pos.x, P.pos.z);   // after pushout
+  if (!P.grounded) {
+    // land only when arriving from within a mantle-step of the surface —
+    // never snap up from deep below (that read as teleporting)
+    if (P.vel.y <= 0 && P.pos.y <= sup + 0.02 && P.pos.y > sup - 1.0) {
       P.pos.y = sup;
       P.grounded = true;
       P.ropes.L = P.ropes.R = null;        // ropes never drag you along the ground
@@ -668,9 +697,9 @@ function step(dt) {
       P.vel.set(Math.sin(P.heading) * hs, 0, Math.cos(P.heading) * hs);
     }
   } else {
-    // ran off an edge (roof or curb)?
-    if (sup < P.pos.y - 0.5) P.grounded = false;
-    else P.pos.y = sup;
+    if (sup < P.pos.y - 0.5) P.grounded = false;    // ran off an edge
+    else if (sup <= P.pos.y + 1.0) P.pos.y = sup;   // flat ground / small step
+    // anything taller than a step was already resolved by the wall pushout
   }
 
   // water
@@ -687,9 +716,9 @@ function botThink() {
   const md = moveDir(V.c);
   let want = 0;
   if (Math.abs(ex) > 0.55 || Math.abs(ez) > 0.65) {
-    const tx = -P.pos.x, tz = -P.pos.z;
-    const cross = md.x * tz - md.z * tx;       // >0: center is to the left
-    want = cross > 0 ? -0.7 : 0.7;
+    const r = rightOf(md);
+    const dotR = r.x * -P.pos.x + r.z * -P.pos.z;   // >0: center is to the right
+    want = dotR > 0 ? 0.7 : -0.7;
   }
   tiltOverride = want;
   const anyRope = P.ropes.L || P.ropes.R;
@@ -807,8 +836,8 @@ function updateSpidey(dt) {
     const swing = Math.sin(ph) * 0.85;
     pose.legL += (swing - pose.legL) * k;  pose.legR += (-swing - pose.legR) * k;
     legL.rotation.x = pose.legL; legR.rotation.x = pose.legR;
-    Q.setFromEuler(new THREE.Euler(-swing * 0.9, 0, 0.06));  armR.quaternion.slerp(Q, k);
-    Q.setFromEuler(new THREE.Euler(swing * 0.9, 0, -0.06));  armL.quaternion.slerp(Q, k);
+    Q.setFromEuler(new THREE.Euler(-swing * 0.9, 0, -0.06)); armR.quaternion.slerp(Q, k);
+    Q.setFromEuler(new THREE.Euler(swing * 0.9, 0, 0.06));   armL.quaternion.slerp(Q, k);
   } else {
     // legs trail together, slightly bent
     pose.legL += (-0.5 - pose.legL) * k; pose.legR += (-0.62 - pose.legR) * k;
@@ -892,13 +921,26 @@ function updateCamera(dt) {
 // ---------------------------------------------------------------------------
 // LOOP
 // ---------------------------------------------------------------------------
+function viewH() {
+  // iOS standalone under-reports the viewport height; the physical screen
+  // doesn't lie (pixelrun's fix — pairs with the standalone CSS height rule).
+  // NOTE: the innerWidth-vs-screen comparison assumes a portrait-locked app.
+  if (navigator.standalone && screen && screen.width) {
+    const sMin = Math.min(screen.width, screen.height), sMax = Math.max(screen.width, screen.height);
+    return innerWidth <= sMin ? sMax : sMin;
+  }
+  return innerHeight;
+}
 function resize() {
-  renderer.setSize(innerWidth, innerHeight, false);
-  camera.aspect = innerWidth / innerHeight;
+  const h = viewH();
+  renderer.setSize(innerWidth, h, false);
+  camera.aspect = innerWidth / h;
   camera.updateProjectionMatrix();
 }
 window.addEventListener('resize', resize);
 resize();
+setTimeout(resize, 350);    // iOS standalone reports the real viewport late
+setTimeout(resize, 1200);   // …and sometimes very late
 
 const speedEl = document.querySelector('#speed b');
 const hintEl = document.getElementById('hint');
