@@ -221,6 +221,12 @@
   #loadTrack { width: min(320px, 70%); height: 5px; border-radius: 3px; background: rgba(255,255,255,0.12); overflow: hidden; }
   #loadBar { height: 100%; width: 0%; background: linear-gradient(90deg, #6fd7a0, #7ec8f0); transition: width .25s; }
   #loadMsg { font-size: 12px; opacity: .6; height: 16px; }
+  /* Which build you're actually running — the first thing to check when a fix
+     seems to be missing, since a stale service worker looks exactly like that. */
+  #build {
+    position: absolute; bottom: calc(env(safe-area-inset-bottom) + 14px);
+    font-size: 11px; letter-spacing: .18em; opacity: .4;
+  }
 
   #rotate {
     position: absolute; inset: 0; z-index: 60; display: none;
@@ -314,6 +320,8 @@
     <h1>AUTO</h1>
     <div id="loadTrack"><div id="loadBar"></div></div>
     <div id="loadMsg">Starting up</div>
+    <!-- Bumped once per change, in step with CACHE in sw.js. See CLAUDE.md. -->
+    <div id="build">v9</div>
   </div>
 
   <div id="rotate">

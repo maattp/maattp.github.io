@@ -82,6 +82,20 @@ The version is displayed in the Home Screen header as `v1`, `v2`, etc.
 
 Location: `<h1>Feed <span class="version">vX</span></h1>`
 
+## Auto App
+
+### Version Management
+
+**IMPORTANT:** Increment the build number in `/apps/auto/index.html` once per
+change, and move `CACHE` in `/apps/auto/sw.js` to match.
+
+The build number is displayed on the launch screen, so a player can say which
+build they are running — the first thing worth knowing when a fix looks like it
+didn't land, because a stale service worker is indistinguishable from one.
+
+Location: `<div id="build">vX</div>`, paired with `const CACHE = 'auto-vX';`.
+See `apps/auto/CLAUDE.md` for why these are deliberately two literals.
+
 ## Photos App
 
 ### Known Limitations

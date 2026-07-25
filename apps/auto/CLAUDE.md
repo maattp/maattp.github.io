@@ -367,3 +367,18 @@ cache bumps, and URL-based `cache: 'no-cache'` revalidation (WebKit refuses to
 `fetch()` a navigation-mode Request). **Bump `CACHE` in sw.js on any deploy that
 must invalidate immediately.** Never add `vendor/` or `src/` to `SHELL`: a slow
 install is what pins iOS players to a stale worker forever.
+
+## Build number
+
+**`#build` on the launch screen and `CACHE` in sw.js go up together, once per
+change** — `v9` next to `auto-v9`. The point is that a player can read the
+number off the loading screen and say which build they are on, which is the
+first thing worth knowing when a fix appears to be missing: a stale service
+worker looks exactly like a fix that didn't work.
+
+They stay two literals on purpose. Sharing one constant means either the page
+fetching the number out of sw.js, or sw.js pulling it in with `importScripts` —
+and in that second case sw.js's own bytes never change, so the browser has no
+reason to install the new worker and the cache never turns over. **The byte
+change to sw.js is the update trigger**, so that file has to carry its own
+literal. Bump both, and keep the digits equal so a mismatch is obvious on sight.
