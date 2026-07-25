@@ -99,8 +99,10 @@ export class Player {
     const run = input.sprint ? 6.4 : 3.3;
     let target = 0;
     if (mag > 0.12) {
-      // stick is camera-relative
-      const ang = Math.atan2(input.x, -input.y) + this.camYaw + Math.PI;
+      // Stick is camera-relative. Note HEADING_SENSE: heading is three.js
+      // rotation.y, so a LARGER heading turns anticlockwise = left on screen.
+      // Pushing the stick right therefore has to subtract from the heading.
+      const ang = Math.atan2(-input.x, -input.y) + this.camYaw + Math.PI;
       this.heading += clamp(angleWrap(ang - this.heading), -10 * dt, 10 * dt);
       target = run * clamp(mag, 0, 1);
     }
@@ -160,7 +162,7 @@ export class Player {
   updateDrive(dt, input, traffic, peds) {
     const v = this.vehicle;
     if (!v) { this.onFoot = true; this.h.group.visible = true; return; }
-    const steer = input.x;
+    const steer = -input.x; // HEADING_SENSE: +steer raises heading, which is a left turn
     const throttle = input.gas ? 1 : 0;
     const brake = input.brake ? 1 : 0;
     v.update(dt, { throttle, brake, steer, handbrake: input.hand ? 1 : 0 });
