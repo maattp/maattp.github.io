@@ -109,7 +109,12 @@ export class Player {
     this.speed = damp(this.speed, target, 9, dt);
     const nx = this.x + Math.sin(this.heading) * this.speed * dt;
     const nz = this.z + Math.cos(this.heading) * this.speed * dt;
-    if (!this.blocked(nx, nz)) {
+    // If we're already standing inside geometry -- put down in it, dumped out
+    // of a car into it, knocked into it -- then refusing to move traps the
+    // player permanently, walking on the spot with every direction blocked.
+    // Clipping out is always better than being stuck, so let them walk.
+    const stuck = this.blocked(this.x, this.z);
+    if (stuck || !this.blocked(nx, nz)) {
       this.x = G.clampToMap(nx);
       this.z = G.clampToMap(nz);
     } else if (!this.blocked(nx, this.z)) this.x = G.clampToMap(nx);
