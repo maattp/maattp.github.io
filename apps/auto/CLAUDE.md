@@ -268,6 +268,45 @@ split leaves behind.
 To check both at once, count ground-level segment intersections whose edges
 share no node. It must be zero.
 
+## Parks
+
+**The block grid does not run through a park.** Buildings already skipped them,
+so paving one produced a green rectangle with streets crossing it and nothing on
+them — a road to nowhere. `citygen` skips park ground for both node placement
+and `link()`. Hand-drawn arterials and highways in step 2 still go where they
+are drawn, which is correct: Aurora really does cut through Woodland Park.
+
+Tree scatter is *candidates per chunk*, filtered by `inPark`. At 46 a
+chunk-sized park got one tree per 60 m and read as bare ground; it is 230 now.
+If you add a large park, check it doesn't look empty.
+
+## How closely this matches real Seattle
+
+Downtown is good and the outskirts are not, and the error is not a uniform
+scale, so relative geography breaks down as you go out. Measured against real
+lat/lon converted about Westlake Center:
+
+| landmark | error | | landmark | error |
+|---|---|---|---|---|
+| Pike Place Market | 165 m | | Gas Works Park | 518 m |
+| Seattle Central Library | 205 m | | Husky Stadium | 1399 m |
+| Space Needle | 274 m | | Alki Beach | 2664 m |
+| Lumen Field | 414 m | | Green Lake Park | 3029 m |
+| Kerry Park | 594 m | | Seward Park | 4250 m |
+
+The game/real distance ratio averages 0.76 but ranges **0.55 to 1.16** — so it
+isn't a deliberate uniform compression, it's drift. `MAP_HALF` is 5200 m and
+Seward Park is genuinely 9.3 km out, so 1:1 will never fit; a *consistent* scale
+would still fix the relative layout.
+
+Known concrete errors, worth fixing before anything subtler: **Elliott Ave W and
+Alaskan Way both run through the Seattle Center campus**, which sits about a
+kilometre inland from either. Mercer St and Queen Anne Ave N cross it too, where
+they should bound it — the real campus is 74 acres enclosed by Mercer, Denny
+Way, 1st Ave N and 5th Ave N, with no through streets at all. Repairing this
+means editing the `ARTERIALS` polylines, and they are chained into bridges and
+ramps, so it wants doing as its own careful pass rather than as a side effect.
+
 ## Keeping buildings out of the road
 
 Two separate things put buildings in the middle of streets, and both are easy to

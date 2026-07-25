@@ -16,7 +16,7 @@ export class Player {
     this.x = G.SPAWN.x;
     this.z = G.SPAWN.z;
     this.y = city.groundAt(this.x, this.z, null);
-    this.heading = 2.58; // pointed down 4th Ave, toward Pioneer Square
+    this.heading = G.SPAWN_HEADING;
     this.vy = 0;
     this.grounded = true;
     this.speed = 0;

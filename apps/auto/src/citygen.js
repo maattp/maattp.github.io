@@ -271,6 +271,7 @@ export function* cityGenerator() {
         const [x, z] = pos(i, j);
         if (!G.pointInPolyCached(x, z, d)) continue;
         if (!owns(d, x, z)) continue; // a denser neighbour's grid holds this ground
+        if (G.inPark(x, z)) continue; // parks aren't blocks; see the note in link()
         if (!G.isBuildable(x, z)) continue;
         ids[(i - i0) * nh + (j - j0)] = g.addNode(x, z, null, false);
       }
@@ -284,6 +285,12 @@ export function* cityGenerator() {
       const mx = (x1 + x2) / 2, mz = (z1 + z2) / 2;
       if (!G.isBuildable(mx, mz)) return;
       if (!owns(d, mx, mz)) return; // don't reach across into a neighbour's grid
+      // The block grid does not run through a park. Buildings already skip
+      // parks, so paving one left a green rectangle with streets crossing it and
+      // nothing on them -- a road to nowhere. The hand-drawn arterials and
+      // highways in step 2 still go where they are drawn, which is right:
+      // Aurora really does cut through Woodland Park.
+      if (G.inPark(mx, mz)) return;
       g.addEdge(a, c, cls, d.name);
     };
     const streetCls = d.style === 'house' ? 'res' : 'st';

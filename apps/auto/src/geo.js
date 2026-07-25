@@ -598,7 +598,10 @@ export const LANDMARKS = [
 
 // Parks: rectangles that stay green and unbuilt.
 export const PARKS = [
-  { name: 'Seattle Center', x: -1180, z: -1080, w: 420, d: 380, rot: 0 },
+  // 74 acres bounded by Mercer, Denny Way, 1st Ave N and 5th Ave N, and a
+  // pedestrian campus -- no streets cross it. Sized to hold the Needle, MoPOP
+  // and the Arena, which all sit inside it.
+  { name: 'Seattle Center', x: -1180, z: -1075, w: 520, d: 450, rot: 0 },
   { name: 'Myrtle Edwards Park', x: -1320, z: -1750, w: 180, d: 900, rot: 0.32 },
   { name: 'Volunteer Park', x: 1350, z: -1560, w: 340, d: 300, rot: 0 },
   { name: 'Cal Anderson Park', x: 900, z: -180, w: 180, d: 260, rot: 0 },
@@ -647,7 +650,10 @@ export const RAMPS = [
   { name: 'I-5 Ravenna Ramp', pts: [[1210, -4500], [980, -4460], [760, -4480, 40], [665, -4500, 56]] },
 ];
 
-export const SPAWN = { x: 60, z: -20 }; // 4th & Olive: clear of buildings, on the block edge
+// Pavement at the south edge of Seattle Center, 164 m from the Space Needle and
+// looking straight at it. Kept clear of buildings by KEEP_CLEAR below.
+export const SPAWN = { x: -1163, z: -846 };
+export const SPAWN_HEADING = 3.06; // faces the Needle; see HEADING_SENSE in CLAUDE.md
 export const RESPAWN = { x: 1050, z: 300 }; // Harborview
 /**
  * Points the player gets put down on. citygen removes any building covering
