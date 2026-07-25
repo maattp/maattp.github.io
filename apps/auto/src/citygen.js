@@ -18,6 +18,8 @@ const CLASS_HW = { hwy: 15, art: 9.5, st: 6.5, res: 5.5, ramp: 5.5 };
 // Widest half-width any junction square can reach, so a lift query knows how
 // far to look for one without scanning the whole node grid.
 const MAX_HW = Math.max(...Object.values(CLASS_HW));
+// Widest pavement a junction ring can carry, for the same reason.
+const MAX_WALK = 3.2;
 const CLASS_SPEED = { hwy: 30, art: 17, st: 12, res: 9, ramp: 14 };
 
 // ---------------------------------------------------------------------------
@@ -514,8 +516,8 @@ export function* cityGenerator() {
       // outright rather than maxing against the strips the scan below reports.
       // Without this a car crossing an intersection samples ROAD_LIFT and sits
       // 3 cm inside the asphalt, which is the sinking-car bug in miniature.
-      const nl = this.nodeLift(x, z);
-      if (nl != null) return nl;
+      const ns = this.nodeSurface(x, z);
+      if (ns && ns.inSquare) return ns.lift;
 
       let lift = 0;
       const c0 = Math.floor(x / CHUNK), d0 = Math.floor(z / CHUNK);
@@ -539,18 +541,29 @@ export function* cityGenerator() {
           }
         }
       }
+      // The pavement ring around a junction reaches past the end of every strip
+      // -- its diagonal corners especially, which no radiating edge comes near.
+      // Where the strips find nothing but the ring is drawn, the ring is what
+      // you are standing on; without this you sink the full 44 cm at a corner.
+      if (ns && lift <= 0) return ns.lift;
       return lift;
     },
 
     /**
-     * NODE_LIFT if (x,z) stands on a junction's paved square, else null.
-     * Mirrors the square world.meshNode() draws -- half-size and orientation
-     * both come from the widest edge at the node -- because the two have to
-     * agree or things standing there sink into it.
+     * What a junction paints at (x,z), or null if it paints nothing there.
+     *
+     * Mirrors world.meshNode() exactly, because the two have to agree or things
+     * standing here sink into it: a square of carriageway at NODE_LIFT, sized
+     * and oriented by the widest edge at the node, and a ring of pavement at
+     * WALK_LIFT around it. `inSquare` marks the carriageway, which overrides the
+     * strip scan outright; the ring only fills in where the strips find nothing,
+     * since along a road direction the strips overlap it and know better.
      */
-    nodeLift(x, z) {
-      const c0 = Math.floor((x - MAX_HW) / nCell), c1 = Math.floor((x + MAX_HW) / nCell);
-      const d0 = Math.floor((z - MAX_HW) / nCell), d1 = Math.floor((z + MAX_HW) / nCell);
+    nodeSurface(x, z) {
+      const reach = MAX_HW + MAX_WALK;
+      const c0 = Math.floor((x - reach) / nCell), c1 = Math.floor((x + reach) / nCell);
+      const d0 = Math.floor((z - reach) / nCell), d1 = Math.floor((z + reach) / nCell);
+      let ring = null;
       for (let cx = c0; cx <= c1; cx++) {
         for (let cz = d0; cz <= d1; cz++) {
           const l = nGrid.get(skey(cx, cz));
@@ -559,21 +572,26 @@ export function* cityGenerator() {
             const n = g.nodes[ni];
             // elevated junctions ride their deck, not the terrain
             if (n.elev) continue;
-            let hw = 0, rot = 0;
+            let hw = 0, rot = 0, sw = 0;
             for (const ei of n.e) {
               const e = g.edges[ei];
               if (e.hw > hw) { hw = e.hw; rot = Math.atan2(e.dx, -e.dz); }
+              if (e.cls === 'st' || e.cls === 'art' || e.cls === 'res') {
+                sw = Math.max(sw, e.cls === 'art' ? 3.2 : 2.6);
+              }
             }
             if (hw <= 0) continue;
             // into the square's own frame: the inverse of meshNode's rotation
             const c = Math.cos(rot), s = Math.sin(rot);
             const ux = x - n.x, uz = z - n.z;
-            const lx = ux * c + uz * s, lz = -ux * s + uz * c;
-            if (Math.abs(lx) <= hw && Math.abs(lz) <= hw) return NODE_LIFT;
+            const lx = Math.abs(ux * c + uz * s), lz = Math.abs(-ux * s + uz * c);
+            if (lx <= hw && lz <= hw) return { lift: NODE_LIFT, inSquare: true };
+            // meshNode only rings a junction that some street actually reaches
+            if (sw > 0 && lx <= hw + sw && lz <= hw + sw) ring = { lift: WALK_LIFT, inSquare: false };
           }
         }
       }
-      return null;
+      return ring;
     },
 
     /** Ground height accounting for paved lift and for bridge decks under Y. */

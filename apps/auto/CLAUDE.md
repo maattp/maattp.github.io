@@ -73,6 +73,14 @@ overlay can open under the finger, and a captured element that gets
   set that may be under a thumb (exiting a car with GAS down stuck the throttle).
 - `blur` / `pagehide` / `visibilitychange` call `resetAll()`.
 
+Backgrounding has the same shape of trap one level up: **pause through
+`setPaused`, never by assigning `game.paused`.** `visibilitychange` used to set
+the flag directly, which stopped the world without showing the pause menu, so
+returning from the home screen looked exactly like a hung game — the only way
+out was the pause button, which is not what anyone taps on a frozen app.
+`setPaused(false)` also calls `audio.resume()`, because iOS suspends the
+AudioContext on the way out and does not hand it back.
+
 Regression test — dispatch synthetic `PointerEvent`s and simply never send the
 `pointerup`, then check a fresh press re-acquires:
 
@@ -105,6 +113,14 @@ to flip the horizontal sign. The three places that do:
 `util.dirDeg()` is the *other* convention (compass bearing, `0` = north,
 clockwise). It is only used for district grid axes in geo.js — never for an
 entity heading. Don't mix them.
+
+The minimap's **north tick** falls out of the same rule. The map image is drawn
+world-aligned and then turned by `camYaw`, and north is `-Z` (heading `0` faces
+`+Z`, which is *south*), so north lands at `(sin camYaw, -cos camYaw)` from the
+centre — the direction that was straight up before the rotation. It's drawn
+outside the rotated transform so the letter stays upright at any bearing. That
+expression is the same one a blip at `(p.x, p.z - d)` resolves to, which is the
+cheap way to re-check it if the map transform ever changes.
 
 To check a change, don't reason about it — measure. Project a world point to
 NDC and see which side of the screen it lands on:
@@ -253,6 +269,16 @@ edge at the node), so if you change one, change the other.
 Sidewalks stop short of each junction (`nodeRadius`) and the corner is filled by
 a ring drawn in `meshNode`. A strip run end to end marches straight across the
 cross street.
+
+**That ring needs its own entry in the lift lookup too.** It sits outside the
+junction square, and its diagonal corners are past the end of every strip that
+meets the node, so the edge scan finds *nothing* there and returns a lift of 0 —
+which dropped anyone standing on a corner the full 44 cm through the pavement.
+`nodeSurface()` reports the ring as well as the square, but the two are used
+differently: the square **overrides** the scan (it is the top surface there),
+while the ring only fills in where the scan came back empty, because along a road
+direction the strips overlap the ring and know better than it does. Sampling 250
+junctions, corner samples reading below the pavement went 828 → 3.
 
 ## Geometry building
 

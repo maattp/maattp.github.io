@@ -416,6 +416,9 @@ function wireUi() {
   const setPaused = (v) => {
     game.paused = v;
     pause.classList.toggle('show', v);
+    // iOS suspends the AudioContext when the app goes to the background and
+    // does not hand it back on its own, so the world would come back silent.
+    if (!v) audio.resume();
   };
   document.getElementById('pauseBtn').addEventListener('click', () => setPaused(!game.paused));
   document.getElementById('resumeBtn').addEventListener('click', () => setPaused(false));
@@ -490,8 +493,13 @@ function wireUi() {
   window.addEventListener('resize', fit);
   window.addEventListener('orientationchange', () => setTimeout(fit, 250));
   fit();
+  // Pause on the way out, but through setPaused so the menu comes WITH it.
+  // Setting game.paused directly stopped the world without showing anything to
+  // tap, so coming back from the home screen looked like a hung game -- the
+  // only way out was the pause button, which nobody presses on a frozen app.
   document.addEventListener('visibilitychange', () => {
-    if (document.hidden) game.paused = true;
+    if (document.hidden) setPaused(true);
+    else if (game.paused) pause.classList.add('show');
   });
 }
 
