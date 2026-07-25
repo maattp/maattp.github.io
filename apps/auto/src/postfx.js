@@ -105,7 +105,14 @@ function pass(fragmentShader, uniforms) {
     uniforms, vertexShader: VERT, fragmentShader,
     depthTest: false, depthWrite: false,
   });
-  return new THREE.Mesh(QUAD, mat);
+  const mesh = new THREE.Mesh(QUAD, mat);
+  mesh.frustumCulled = false;
+  // Each pass keeps its own scene. Re-parenting one quad between passes every
+  // frame is scene-graph churn on exactly the tiers trying to claw back time.
+  const scene = new THREE.Scene();
+  scene.add(mesh);
+  mesh.userData.scene = scene;
+  return mesh;
 }
 
 function makeRT(w, h, depth) {
@@ -145,7 +152,6 @@ export class PostFX {
       time: { value: 0 },
       fxaa: { value: 1 },
     });
-    this.holder = new THREE.Scene();
   }
 
   setSize(w, h, pixelRatio) {
@@ -170,10 +176,8 @@ export class PostFX {
     if (!this.enabled) return;
     const r = this.renderer;
     const draw = (mesh, rt) => {
-      this.holder.clear();
-      this.holder.add(mesh);
       r.setRenderTarget(rt);
-      r.render(this.holder, CAM);
+      r.render(mesh.userData.scene, CAM);
     };
 
     this.bright.material.uniforms.tScene.value = this.sceneRT.texture;
@@ -198,10 +202,18 @@ export class PostFX {
     draw(this.composite, null);
   }
 
+  dispose() {
+    for (const rt of [this.sceneRT, this.bloomA, this.bloomB]) rt.dispose();
+    for (const m of [this.bright, this.blur, this.composite]) m.material.dispose();
+    QUAD.dispose();
+  }
+
   setQuality(q) {
     const cu = this.composite.material.uniforms;
     this.enabled = q !== 'low';
-    cu.fxaa.value = q === 'high' ? 1 : 0;
+    // FXAA is a single fullscreen tap and the context has no MSAA, so keep it on
+    // for medium too -- dropping it entirely was a visible edge-quality cliff.
+    cu.fxaa.value = q === 'low' ? 0 : 1;
     cu.bloomStrength.value = q === 'high' ? 0.62 : 0.5;
     cu.grain.value = q === 'high' ? 0.016 : 0;
   }

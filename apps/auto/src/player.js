@@ -28,6 +28,7 @@ export class Player {
     this.ammo = 0;
     this.attackCd = 0;
     this.enterCd = 0;
+    this.lift = 0;
     this.dead = false;
 
     this.camYaw = this.heading + Math.PI;
@@ -115,7 +116,9 @@ export class Player {
     } else if (!this.blocked(nx, this.z)) this.x = G.clampToMap(nx);
     else if (!this.blocked(this.x, nz)) this.z = G.clampToMap(nz);
 
-    const ground = this.city.groundAt(this.x, this.z, this.y + 1.2);
+    // one paved-surface scan per frame, shared by the ground and camera queries
+    this.lift = this.city.roadLift(this.x, this.z);
+    const ground = this.city.groundAt(this.x, this.z, this.y + 1.2, this.lift);
     if (input.jump && this.grounded) {
       this.vy = 6.2;
       this.grounded = false;
@@ -241,7 +244,8 @@ export class Player {
     this.camPos.x = damp(this.camPos.x, wanted.x, rate, dt);
     this.camPos.y = damp(this.camPos.y, wanted.y, rate, dt);
     this.camPos.z = damp(this.camPos.z, wanted.z, rate, dt);
-    const minY = this.city.groundAt(this.camPos.x, this.camPos.z, null) + 1.1;
+    // the camera clamp does not need 22 cm of kerb accuracy, so skip the scan
+    const minY = this.city.groundAt(this.camPos.x, this.camPos.z, null, 0) + 1.1;
     if (this.camPos.y < minY) this.camPos.y = minY;
     this.camLook.set(
       damp(this.camLook.x, target.x, 16, dt),

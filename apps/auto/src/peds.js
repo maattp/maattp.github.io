@@ -133,11 +133,6 @@ const across = (jy, span, above, below) => (x, y) => {
 };
 const solid = (b) => () => [b, 1, 0, 0];
 
-function limbInto(b, segs, col) {
-  b.loftY(segs.map((sg) => ({ y: sg[0], pts: oval(sg[1], sg[2], 8) })), col,
-    { capStart: true, capEnd: true });
-}
-
 /**
  * Builds one character variant: a skinned geometry in the rest pose. Callers
  * pair it with a fresh skeleton per instance.
@@ -255,11 +250,9 @@ export function buildCharacter(opts = {}) {
 
   // --- arms ----------------------------------------------------------------
   for (const side of [-1, 1]) {
-    const arm = new Builder(false);
     const X = side * SHOULDER_X;
-    const seg = (y, rx, rz) => [y, rx, rz];
-    const upper = new Builder(false);
-    upper.loftY([
+    const arm = new Builder(false);
+    arm.loftY([
       // deltoid widest just BELOW the shoulder line, and capped under the
       // trapezius -- capping it above turns the shoulders into puffed sleeves
       { y: J.shoulder - 0.014, pts: oval(0.044, 0.042, 8, X, 0) },
@@ -273,7 +266,6 @@ export function buildCharacter(opts = {}) {
     ], shortSleeve
       ? [coat, coat, coat, coat, skin, skin, skin, skin]
       : coat, { capStart: true, capEnd: true });
-    arm.pos = upper.pos; arm.nor = upper.nor; arm.col = upper.col; arm.idx = upper.idx;
     acc.add(arm, (x, y) => {
       if (y > J.elbow) return across(J.elbow + 0.05, 0.09, side < 0 ? B.shoulderL : B.shoulderR, side < 0 ? B.elbowL : B.elbowR)(x, y);
       return [side < 0 ? B.elbowL : B.elbowR, 1, 0, 0];
@@ -332,6 +324,7 @@ function variants() {
 
 export function makeHumanoid(opts = {}) {
   const seed = opts.seed != null ? opts.seed : 0;
+  const pooled = !opts.geometry && !opts.unique;
   const geo = opts.geometry
     || (opts.unique ? buildCharacter(opts) : variants()[Math.floor(hash2(seed, 9) * 12) % 12]);
   const bones = makeSkeletonBones();
@@ -347,6 +340,9 @@ export function makeHumanoid(opts = {}) {
   g.scale.setScalar(scale);
   return {
     group: g, mesh, bones, height: 1.75 * scale, bob: 0,
+    // Pooled variants are shared by every pedestrian using that look, so only a
+    // uniquely-built character may dispose its own geometry.
+    dispose() { if (!pooled) geo.dispose(); },
     gait: 0.85 + hash2(seed, 11) * 0.3,
     lean: hash2(seed, 12) * 0.06,
     swing: 0.8 + hash2(seed, 13) * 0.45,
@@ -456,7 +452,7 @@ export class PedSystem {
         ? makeHumanoid({ seed, shirt: [0.12, 0.16, 0.3], pants: [0.1, 0.12, 0.2], hat: [0.08, 0.1, 0.18], vest: [0.16, 0.2, 0.36] })
         : makeHumanoid({ seed });
       const p = {
-        h, x, z, y: city.groundAt(x, z, null), heading: this.R.n() * Math.PI * 2,
+        h, x, z, y: city.groundAt(x, z, null), lift: 0, heading: this.R.n() * Math.PI * 2,
         edge: ei, side, t, dirSign: this.R.n() < 0.5 ? 1 : -1,
         speed: 0, phase: this.R.n() * 6.28, state: 'walk', timer: 0,
         cop: !!cop, shootCd: 1 + this.R.n(), down: 0, hp: cop ? 60 : 30,
@@ -472,7 +468,7 @@ export class PedSystem {
     const i = this.peds.indexOf(p);
     if (i >= 0) this.peds.splice(i, 1);
     this.scene.remove(p.h.group);
-    p.h.group.traverse((o) => { if (o.geometry) o.geometry.dispose(); });
+    p.h.dispose();
   }
 
   scare(x, z, radius) {
@@ -572,7 +568,8 @@ export class PedSystem {
       p.z += Math.cos(p.heading) * p.speed * dt;
       p.x = G.clampToMap(p.x);
       p.z = G.clampToMap(p.z);
-      p.y = city.groundAt(p.x, p.z, p.y + 1);
+      p.lift = city.roadLift(p.x, p.z);
+      p.y = city.groundAt(p.x, p.z, p.y + 1, p.lift);
 
       p.phase += (0.9 + p.speed * 2.2) * dt;
       animateWalk(p.h, p.phase, clamp(p.speed * 0.20, 0, 0.8), dt, p.speed);
@@ -601,7 +598,7 @@ export class PedSystem {
     p.fallDir = Math.random() < 0.5 ? 1 : -1;
     p.x += dir.x * clamp(force * 0.12, 0.4, 3);
     p.z += dir.z * clamp(force * 0.12, 0.4, 3);
-    p.y = this.city.groundAt(p.x, p.z, p.y + 1);
+    p.y = this.city.groundAt(p.x, p.z, p.y + 1, this.city.roadLift(p.x, p.z));
     p.h.group.position.set(p.x, p.y + 0.3, p.z);
   }
 

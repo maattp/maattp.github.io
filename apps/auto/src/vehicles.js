@@ -286,7 +286,6 @@ function buildType(spec) {
     return b;
   };
   const trimW = clone(trim), matteW = clone(matte);
-  const sink = new Builder(false);
   for (const [ax, ay, az] of wheels) addWheel(trimW, matteW, ax, ay, az, wr, tw);
   const wt = new Builder(false), wm = new Builder(false);
   addWheel(wt, wm, 0, 0, 0, wr, tw);

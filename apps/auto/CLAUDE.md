@@ -196,16 +196,34 @@ landmarks would otherwise cost hundreds of draw calls.
 
 ## Draw-call budget
 
-Target is ~250 draw calls / ~150k triangles. Costs that crept up during the
-build and how they were paid down:
+Roughly 300 draw calls / 300k triangles during a police chase at `high`.
+`__dbg.sceneStats` reports the scene pass specifically — read `renderer.info`
+yourself and you'll get the post chain's fullscreen quad instead, because the
+counters reset on every `render()`.
+
+Where the budget goes, and the rules that keep it there:
 
 - chunk streaming: `CHUNK = 400`, `NEAR_R = 2` (full detail), `MID_R = 4` (roads
-  only). Up to 7 merged meshes per near chunk.
-- traffic cars bake their wheels into the detail mesh (2 draws each); only the
-  player's car calls `setDetailed(true)` for steerable wheels.
-- crowd pedestrians bake their arms into the torso (3 draws each); the player
-  passes `animateArms: true` for 5.
+  only). Up to 8 merged meshes per near chunk (road, sidewalk, flat, glow, and
+  one per facade material).
+- **vehicles are 3 draws each** — `paint` / `trim` / `matte`, sharing geometry
+  and the two non-paint materials across every instance. Traffic uses the
+  `…GeoW` variants with the wheels baked in; only the player's car calls
+  `setDetailed(true)`, which swaps to the wheel-less geometry and adds four
+  articulated wheel groups.
+- **characters are 1 draw each.** They're `SkinnedMesh`es over a pool of 12
+  shared geometries (`variants()`), so per-instance cost is a skeleton, not a
+  buffer. **Never dispose a pooled geometry** — `makeHumanoid` returns a
+  `dispose()` that no-ops unless the character was built `unique`, and
+  `PedSystem.remove` must go through it. Disposing it directly yanks the GPU
+  buffers out from under every other pedestrian wearing that look.
 - every tall building in the whole city is one static "far skyline" mesh.
+- parked cars only exist within `PARKED_RADIUS` and hide past 140 m.
+
+`roadLift()` is a 3×3-chunk edge scan, so **anything that samples the ground
+more than once a frame computes the lift once and passes it in**: vehicles take
+seven samples, the player two, pedestrians one. Calling `groundAt(x, z, y)`
+without the 4th argument silently re-runs the scan.
 
 ## Verifying
 

@@ -97,7 +97,12 @@ export class Builder {
     const ux = b[0] - a[0], uy = b[1] - a[1], uz = b[2] - a[2];
     const vx = c[0] - a[0], vy = c[1] - a[1], vz = c[2] - a[2];
     const cx = uy * vz - uz * vy, cy = uz * vx - ux * vz, cz = ux * vy - uy * vx;
-    if (cx * nrm[0][0] + cy * nrm[0][1] + cz * nrm[0][2] < 0) {
+    // average the corner normals: with per-corner normals from loft(), a single
+    // unrepresentative corner could flip the whole quad at a high-curvature spot
+    const ax = (nrm[0][0] + nrm[1][0] + nrm[2][0] + nrm[3][0]) / 4;
+    const ay = (nrm[0][1] + nrm[1][1] + nrm[2][1] + nrm[3][1]) / 4;
+    const az = (nrm[0][2] + nrm[1][2] + nrm[2][2] + nrm[3][2]) / 4;
+    if (cx * ax + cy * ay + cz * az < 0) {
       const t = b; b = d; d = t;
       uvs = [uvs[0], uvs[1], uvs[6], uvs[7], uvs[4], uvs[5], uvs[2], uvs[3]];
       cols = [cols[0], cols[3], cols[2], cols[1]];
