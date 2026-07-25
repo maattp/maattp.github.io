@@ -56,6 +56,35 @@ console.log(G.isWater(-3000,-2500) /* Magnolia: must be false */,
 A shoreline polygon that doubles back swallows a whole neighbourhood; that is how
 Magnolia disappeared during the first build.
 
+## Input lifecycle (never latch a held pointer)
+
+`pointerup` is not guaranteed. iOS steals the gesture at a screen edge, an
+overlay can open under the finger, and a captured element that gets
+`display:none`'d on a mode switch drops its pointer silently. The rule:
+
+- **No input path may refuse a new press because an old one is still "held".**
+  `onStickDown` used to `return` when `_stickId` was set, so one missing
+  `pointerup` latched the stick at its last deflection *and* made it impossible
+  to ever grab again — the reported "stick stuck in one direction". Last touch
+  wins instead.
+- Held presses listen for `lostpointercapture` as well as `pointerup` /
+  `pointercancel`; that is the event you actually get in the failure cases.
+- `setMode()` clears every button, because switching foot/drive hides the button
+  set that may be under a thumb (exiting a car with GAS down stuck the throttle).
+- `blur` / `pagehide` / `visibilitychange` call `resetAll()`.
+
+Regression test — dispatch synthetic `PointerEvent`s and simply never send the
+`pointerup`, then check a fresh press re-acquires:
+
+```js
+const z = document.getElementById('stickZone');
+const ev = (t, id, x, y) => z.dispatchEvent(new PointerEvent(t,
+  { pointerId: id, clientX: x, clientY: y, bubbles: true, pointerType: 'touch' }));
+ev('pointerdown', 1, 100, 300); ev('pointermove', 1, 180, 300); // stick.x === 1
+ev('pointerdown', 2, 100, 300);                                 // must re-grab
+__dbg.controls.stick.x; // must be 0, and _stickId must be 2
+```
+
 ## Heading sense (the sign trap)
 
 `heading` is literally a three.js `rotation.y`, so **forward = `(sin h, cos h)`**
