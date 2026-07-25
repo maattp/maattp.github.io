@@ -122,6 +122,15 @@ Physically-shaded, image-based-lit, tone-mapped, with a hand-rolled post chain.
   sets it as `scene.background` and runs it through `PMREMGenerator` into
   `scene.environment`. The analytic lights are only a key plus a fill, so
   `envMapIntensity` on a material is the main dial for how a surface reads in shade.
+- **`PMREMGenerator` is the one half-float exception, and it's guarded.** It
+  hard-codes `HalfFloatType` targets internally with no capability check, which
+  is exactly what the rest of the pipeline avoids. `halfFloatRenders()` draws a
+  white pixel into a half-float target and reads it back before `buildSky` trusts
+  it; a definite black falls back to the raw equirect as `scene.environment`
+  (`world.envPrefiltered === false`) — no prefiltered roughness mips, so rough
+  surfaces reflect too sharply, but the city stays lit instead of going dark.
+  Anything that makes the probe inconclusive counts as a pass, so hardware that
+  renders correctly today keeps the PMREM path.
 - **Tone mapping is ACES**, applied during the scene pass. Exposure lives in main.js.
 - **Every surface is a set**: albedo + normal + roughness (+ emissive where there
   are lit windows). Normals are sobel'd from a purpose-drawn *height* pass, not
@@ -172,12 +181,22 @@ Bridges and freeway decks are separate: `city.groundAt(x, z, currentY)` returns
 the highest deck below `currentY + 2.6`, else the terrain.
 
 **Paved surfaces sit above the terrain and everything standing on them has to be
-lifted by the same amount.** `ROAD_LIFT` / `WALK_LIFT` in citygen.js are the
-single source of truth, shared with world.js. `city.roadLift(x, z)` reports the
-lift at a point; `groundAt` takes it as an optional 4th argument because
-vehicles sample the ground seven times a frame and the edge scan is too
-expensive to repeat per wheel. Forgetting this is what buried every car 22 cm
-into the asphalt.
+lifted by the same amount.** `ROAD_LIFT` / `NODE_LIFT` / `WALK_LIFT` in
+citygen.js are the single source of truth, shared with world.js.
+`city.roadLift(x, z)` reports the lift at a point; `groundAt` takes it as an
+optional 4th argument because vehicles sample the ground seven times a frame and
+the edge scan is too expensive to repeat per wheel. Forgetting this is what
+buried every car 22 cm into the asphalt.
+
+**All three lifts have to be reachable from `roadLift`, not just the two the
+strips use.** Junction squares are drawn at `NODE_LIFT` and they overlap the
+ends of every strip that meets there, so `roadLift` asks `nodeLift` first and
+takes its answer outright — a point inside the square is standing on the square.
+Maxing it against the strip scan instead gets both signs wrong: junction centres
+came back `ROAD_LIFT` and sat 3 cm *inside* the asphalt, and the corners of the
+square came back `WALK_LIFT` and floated 19 cm *above* it. `nodeLift` rebuilds
+the same square `meshNode` draws (half-size and orientation both from the widest
+edge at the node), so if you change one, change the other.
 
 Sidewalks stop short of each junction (`nodeRadius`) and the corner is filled by
 a ring drawn in `meshNode`. A strip run end to end marches straight across the

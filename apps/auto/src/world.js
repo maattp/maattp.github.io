@@ -14,6 +14,62 @@ const WALK_Y = WALK_LIFT;
 const NEAR_R = 2; // chunks of full detail around the player
 const MID_R = 4; // chunks that keep roads only
 
+/**
+ * Does this GPU actually put colour into a half-float target?
+ *
+ * The failure we're guarding is silent: iOS reports the extension, allocates
+ * the target, renders, and hands back black. So don't feature-detect -- draw a
+ * known white pixel and read it back.
+ *
+ * Anything that stops us reading the result is treated as a pass, so the only
+ * thing that trips the fallback is a definite black. That keeps hardware which
+ * simply can't be probed on the path it already renders correctly today. The
+ * readback is gated on the same extensions WebGLRenderer checks before its own
+ * readPixels, so an unsupported device skips it instead of logging an error.
+ */
+function halfFloatRenders(renderer) {
+  if (!renderer) return true;
+  const SENTINEL = 0xffff; // NaN as a half -- never a real render result
+  let rt = null, quad = null;
+  try {
+    const ext = renderer.extensions, caps = renderer.capabilities;
+    const readable = ext.has('EXT_color_buffer_half_float')
+      || (caps.isWebGL2 && ext.has('EXT_color_buffer_float'));
+    if (!readable) return true;
+
+    rt = new THREE.WebGLRenderTarget(2, 2, {
+      type: THREE.HalfFloatType,
+      format: THREE.RGBAFormat,
+      depthBuffer: false,
+      stencilBuffer: false,
+    });
+    quad = new THREE.Mesh(
+      new THREE.PlaneGeometry(2, 2),
+      new THREE.MeshBasicMaterial({ color: 0xffffff, toneMapped: false })
+    );
+    const probe = new THREE.Scene();
+    probe.add(quad);
+    const cam = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
+    cam.position.z = 1;
+
+    const prev = renderer.getRenderTarget();
+    renderer.setRenderTarget(rt);
+    renderer.render(probe, cam);
+    renderer.setRenderTarget(prev);
+
+    const buf = new Uint16Array(4).fill(SENTINEL);
+    renderer.readRenderTargetPixels(rt, 0, 0, 1, 1, buf);
+    // untouched buffer means the read never ran -- inconclusive, so pass
+    if (buf[0] === SENTINEL && buf[1] === SENTINEL && buf[2] === SENTINEL) return true;
+    return buf[0] !== 0 || buf[1] !== 0 || buf[2] !== 0;
+  } catch (e) {
+    return true;
+  } finally {
+    if (quad) { quad.geometry.dispose(); quad.material.dispose(); }
+    if (rt) rt.dispose();
+  }
+}
+
 function tint(seed, base, spread) {
   const r = hash2(seed, 1), g = hash2(seed, 2), b = hash2(seed, 3);
   return [
@@ -80,11 +136,24 @@ export class World {
   /** Sky doubles as the background and as the diffuse+specular IBL source. */
   buildSky() {
     this.scene.background = this.tx.sky;
-    const pmrem = new THREE.PMREMGenerator(this.renderer);
-    pmrem.compileEquirectangularShader();
-    this.envRT = pmrem.fromEquirectangular(this.tx.sky);
-    this.scene.environment = this.envRT.texture;
-    pmrem.dispose();
+    // PMREMGenerator allocates HalfFloatType targets internally, hard-coded,
+    // with no capability check -- and half-float is the one thing this renderer
+    // can't take on trust (silent black on iOS, which is why postfx.js is 8-bit
+    // throughout). Since the analytic lights are only a key and a fill, a dead
+    // environment map means a dead scene, so probe before relying on it.
+    if (halfFloatRenders(this.renderer)) {
+      const pmrem = new THREE.PMREMGenerator(this.renderer);
+      pmrem.compileEquirectangularShader();
+      this.envRT = pmrem.fromEquirectangular(this.tx.sky);
+      this.scene.environment = this.envRT.texture;
+      this.envPrefiltered = true;
+      pmrem.dispose();
+    } else {
+      // Raw equirect as the env map: no prefiltered roughness mips, so rough
+      // surfaces reflect too sharply, but the city stays lit.
+      this.scene.environment = this.tx.sky;
+      this.envPrefiltered = false;
+    }
   }
 
   *buildTerrain() {

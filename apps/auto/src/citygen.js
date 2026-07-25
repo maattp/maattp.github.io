@@ -15,6 +15,9 @@ export const NODE_LIFT = 0.25;
 export const WALK_LIFT = 0.44;
 
 const CLASS_HW = { hwy: 15, art: 9.5, st: 6.5, res: 5.5, ramp: 5.5 };
+// Widest half-width any junction square can reach, so a lift query knows how
+// far to look for one without scanning the whole node grid.
+const MAX_HW = Math.max(...Object.values(CLASS_HW));
 const CLASS_SPEED = { hwy: 30, art: 17, st: 12, res: 9, ramp: 14 };
 
 // ---------------------------------------------------------------------------
@@ -422,6 +425,14 @@ export function* cityGenerator() {
      * for the edge scan on every sample.
      */
     roadLift(x, z) {
+      // A junction square is drawn at NODE_LIFT and covers the ends of every
+      // strip that meets there, so inside one it IS the surface -- take it
+      // outright rather than maxing against the strips the scan below reports.
+      // Without this a car crossing an intersection samples ROAD_LIFT and sits
+      // 3 cm inside the asphalt, which is the sinking-car bug in miniature.
+      const nl = this.nodeLift(x, z);
+      if (nl != null) return nl;
+
       let lift = 0;
       const c0 = Math.floor(x / CHUNK), d0 = Math.floor(z / CHUNK);
       for (let cx = c0 - 1; cx <= c0 + 1; cx++) {
@@ -445,6 +456,40 @@ export function* cityGenerator() {
         }
       }
       return lift;
+    },
+
+    /**
+     * NODE_LIFT if (x,z) stands on a junction's paved square, else null.
+     * Mirrors the square world.meshNode() draws -- half-size and orientation
+     * both come from the widest edge at the node -- because the two have to
+     * agree or things standing there sink into it.
+     */
+    nodeLift(x, z) {
+      const c0 = Math.floor((x - MAX_HW) / nCell), c1 = Math.floor((x + MAX_HW) / nCell);
+      const d0 = Math.floor((z - MAX_HW) / nCell), d1 = Math.floor((z + MAX_HW) / nCell);
+      for (let cx = c0; cx <= c1; cx++) {
+        for (let cz = d0; cz <= d1; cz++) {
+          const l = nGrid.get(skey(cx, cz));
+          if (!l) continue;
+          for (const ni of l) {
+            const n = g.nodes[ni];
+            // elevated junctions ride their deck, not the terrain
+            if (n.elev) continue;
+            let hw = 0, rot = 0;
+            for (const ei of n.e) {
+              const e = g.edges[ei];
+              if (e.hw > hw) { hw = e.hw; rot = Math.atan2(e.dx, -e.dz); }
+            }
+            if (hw <= 0) continue;
+            // into the square's own frame: the inverse of meshNode's rotation
+            const c = Math.cos(rot), s = Math.sin(rot);
+            const ux = x - n.x, uz = z - n.z;
+            const lx = ux * c + uz * s, lz = -ux * s + uz * c;
+            if (Math.abs(lx) <= hw && Math.abs(lz) <= hw) return NODE_LIFT;
+          }
+        }
+      }
+      return null;
     },
 
     /** Ground height accounting for paved lift and for bridge decks under Y. */
