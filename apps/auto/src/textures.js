@@ -1,5 +1,10 @@
 // Every texture in the game is drawn procedurally into a canvas at boot, so the
 // app ships as code only and works offline with no image assets.
+//
+// Surfaces come as a set: albedo + normal + roughness (+ emissive for the ones
+// with lit windows). The normal maps are derived from a purpose-drawn height
+// pass rather than from the albedo, so window reveals actually read as recesses
+// instead of just as dark paint.
 
 import * as THREE from './three.js';
 import { mulberry32 } from './util.js';
@@ -11,14 +16,16 @@ function canvas(w, h) {
   return { c, g: c.getContext('2d') };
 }
 
-function tex(c, repeat = true, aniso = 8) {
+function tex(c, { repeat = true, aniso = 8, srgb = true, mips = true } = {}) {
   const t = new THREE.CanvasTexture(c);
   if (repeat) {
     t.wrapS = THREE.RepeatWrapping;
     t.wrapT = THREE.RepeatWrapping;
   }
   t.anisotropy = aniso;
-  t.colorSpace = THREE.SRGBColorSpace;
+  if (srgb) t.colorSpace = THREE.SRGBColorSpace;
+  t.generateMipmaps = mips;
+  if (!mips) t.minFilter = THREE.LinearFilter;
   return t;
 }
 
@@ -35,243 +42,482 @@ function noise(g, w, h, amount, seed) {
   g.putImageData(img, 0, 0);
 }
 
-// --- glass curtain wall -----------------------------------------------------
-function glassTexture() {
-  const S = 256, { c, g } = canvas(S, S);
+/** Sobel a greyscale height canvas into a tangent-space normal map. */
+function normalFrom(heightCanvas, strength = 2.0) {
+  const w = heightCanvas.width, h = heightCanvas.height;
+  const src = heightCanvas.getContext('2d').getImageData(0, 0, w, h).data;
+  const lum = new Float32Array(w * h);
+  for (let i = 0; i < w * h; i++) lum[i] = src[i * 4] / 255;
+  const { c, g } = canvas(w, h);
+  const img = g.createImageData(w, h);
+  const d = img.data;
+  const at = (x, y) => lum[(((y % h) + h) % h) * w + (((x % w) + w) % w)];
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      const dx = (at(x + 1, y) - at(x - 1, y)) * strength;
+      // canvas Y runs down, texture V runs up, so the sign flips back here
+      const dy = (at(x, y + 1) - at(x, y - 1)) * strength;
+      let nx = -dx, ny = dy, nz = 1;
+      const l = Math.hypot(nx, ny, nz);
+      const i = (y * w + x) * 4;
+      d[i] = ((nx / l) * 0.5 + 0.5) * 255;
+      d[i + 1] = ((ny / l) * 0.5 + 0.5) * 255;
+      d[i + 2] = ((nz / l) * 0.5 + 0.5) * 255;
+      d[i + 3] = 255;
+    }
+  }
+  g.putImageData(img, 0, 0);
+  return tex(c, { srgb: false });
+}
+
+const grey = (v) => {
+  const n = Math.max(0, Math.min(255, Math.round(v * 255)));
+  return `rgb(${n},${n},${n})`;
+};
+
+// ---------------------------------------------------------------------------
+// Facades. Each generator fills albedo / height / rough / emissive together.
+// ---------------------------------------------------------------------------
+
+function glassSurface() {
+  const S = 512;
+  const a = canvas(S, S), hgt = canvas(S, S), rgh = canvas(S, S), emi = canvas(S, S);
   const r = mulberry32(7);
-  g.fillStyle = '#a7b4bb';
-  g.fillRect(0, 0, S, S);
   const cols = 8, rows = 8;
   const cw = S / cols, ch = S / rows;
+
+  a.g.fillStyle = '#9fb0b9'; a.g.fillRect(0, 0, S, S);
+  hgt.g.fillStyle = grey(0.75); hgt.g.fillRect(0, 0, S, S);
+  rgh.g.fillStyle = grey(0.62); rgh.g.fillRect(0, 0, S, S);
+  emi.g.fillStyle = '#000'; emi.g.fillRect(0, 0, S, S);
+
   for (let y = 0; y < rows; y++) {
     for (let x = 0; x < cols; x++) {
       const px = x * cw, py = y * ch;
-      // spandrel band under each window
-      g.fillStyle = '#9aa6ad';
-      g.fillRect(px, py, cw, ch);
+      // spandrel panel between floors
+      a.g.fillStyle = '#8d9ba3';
+      a.g.fillRect(px, py + ch * 0.72, cw, ch * 0.28);
+      hgt.g.fillStyle = grey(0.82);
+      hgt.g.fillRect(px, py + ch * 0.72, cw, ch * 0.28);
+
+      const ix = px + 3, iy = py + 3, iw = cw - 6, ih = ch * 0.72 - 5;
       const v = r();
-      const b = 0.62 + v * 0.44;
-      const rr = Math.round(118 * b), gg = Math.round(148 * b), bb = Math.round(162 * b);
-      g.fillStyle = `rgb(${rr},${gg},${bb})`;
-      g.fillRect(px + 1.5, py + 2, cw - 3, ch - 6);
-      // sky reflection gradient inside the pane
-      const grad = g.createLinearGradient(px, py + 2, px, py + ch - 4);
-      grad.addColorStop(0, 'rgba(220,238,248,0.45)');
-      grad.addColorStop(0.45, 'rgba(150,180,200,0.10)');
-      grad.addColorStop(1, 'rgba(30,45,55,0.30)');
-      g.fillStyle = grad;
-      g.fillRect(px + 1.5, py + 2, cw - 3, ch - 6);
-      if (v > 0.93) {
-        g.fillStyle = 'rgba(255,236,180,0.55)';
-        g.fillRect(px + 1.5, py + 2, cw - 3, ch - 6);
+      // recessed pane
+      hgt.g.fillStyle = grey(0.22);
+      hgt.g.fillRect(ix, iy, iw, ih);
+      rgh.g.fillStyle = grey(0.07);
+      rgh.g.fillRect(ix, iy, iw, ih);
+
+      const b = 0.6 + v * 0.4;
+      a.g.fillStyle = `rgb(${Math.round(104 * b)},${Math.round(134 * b)},${Math.round(150 * b)})`;
+      a.g.fillRect(ix, iy, iw, ih);
+      const grad = a.g.createLinearGradient(ix, iy, ix, iy + ih);
+      grad.addColorStop(0, 'rgba(226,242,252,0.55)');
+      grad.addColorStop(0.4, 'rgba(150,182,204,0.12)');
+      grad.addColorStop(1, 'rgba(24,38,50,0.34)');
+      a.g.fillStyle = grad;
+      a.g.fillRect(ix, iy, iw, ih);
+      // blinds in some
+      if (v > 0.55 && v < 0.78) {
+        a.g.fillStyle = 'rgba(228,224,210,0.5)';
+        a.g.fillRect(ix, iy, iw, ih * (0.2 + v * 0.4));
+        rgh.g.fillStyle = grey(0.55);
+        rgh.g.fillRect(ix, iy, iw, ih * (0.2 + v * 0.4));
       }
-      // mullions
-      g.fillStyle = '#6d7981';
-      g.fillRect(px, py + ch - 4, cw, 4);
-      g.fillRect(px, py, 1.5, ch);
+      if (v > 0.955) { // lit office
+        a.g.fillStyle = 'rgba(255,232,178,0.6)';
+        a.g.fillRect(ix, iy, iw, ih);
+        emi.g.fillStyle = 'rgb(255,206,132)';
+        emi.g.fillRect(ix, iy, iw, ih);
+      }
+      // mullions stand proud
+      a.g.fillStyle = '#6e7c85';
+      a.g.fillRect(px, py, 3, ch);
+      a.g.fillRect(px, py + ch - 3, cw, 3);
+      hgt.g.fillStyle = grey(1.0);
+      hgt.g.fillRect(px, py, 3, ch);
+      hgt.g.fillRect(px, py + ch - 3, cw, 3);
+      rgh.g.fillStyle = grey(0.72);
+      rgh.g.fillRect(px, py, 3, ch);
+      rgh.g.fillRect(px, py + ch - 3, cw, 3);
     }
   }
-  noise(g, S, S, 12, 3);
-  return tex(c);
+  noise(a.g, S, S, 9, 3);
+  return {
+    map: tex(a.c), normalMap: normalFrom(hgt.c, 2.6),
+    roughnessMap: tex(rgh.c, { srgb: false }), emissiveMap: tex(emi.c),
+  };
 }
 
-// --- masonry / concrete with punched windows --------------------------------
-function masonryTexture() {
-  const S = 256, { c, g } = canvas(S, S);
+function masonrySurface() {
+  const S = 512;
+  const a = canvas(S, S), hgt = canvas(S, S), rgh = canvas(S, S), emi = canvas(S, S);
   const r = mulberry32(21);
-  g.fillStyle = '#b0a191';
-  g.fillRect(0, 0, S, S);
-  // subtle horizontal course lines
-  g.strokeStyle = 'rgba(0,0,0,0.06)';
-  for (let y = 0; y < S; y += 8) {
-    g.beginPath();
-    g.moveTo(0, y + 0.5);
-    g.lineTo(S, y + 0.5);
-    g.stroke();
+  a.g.fillStyle = '#b4a595'; a.g.fillRect(0, 0, S, S);
+  hgt.g.fillStyle = grey(0.72); hgt.g.fillRect(0, 0, S, S);
+  rgh.g.fillStyle = grey(0.88); rgh.g.fillRect(0, 0, S, S);
+  emi.g.fillStyle = '#000'; emi.g.fillRect(0, 0, S, S);
+
+  // stone courses
+  for (let y = 0; y < S; y += 16) {
+    a.g.fillStyle = 'rgba(0,0,0,0.05)';
+    a.g.fillRect(0, y + 14, S, 2);
+    hgt.g.fillStyle = grey(0.55);
+    hgt.g.fillRect(0, y + 14, S, 2);
   }
-  const cols = 5, rows = 5;
+
+  const cols = 4, rows = 4;
   const cw = S / cols, ch = S / rows;
   for (let y = 0; y < rows; y++) {
     for (let x = 0; x < cols; x++) {
-      const px = x * cw + cw * 0.22, py = y * ch + ch * 0.2;
-      const w = cw * 0.56, h = ch * 0.5;
-      g.fillStyle = '#6b6257';
-      g.fillRect(px - 2, py - 2, w + 4, h + 5);
+      const px = x * cw + cw * 0.2, py = y * ch + ch * 0.16;
+      const w = cw * 0.6, h = ch * 0.52;
+      // surround
+      a.g.fillStyle = '#c8bcab';
+      a.g.fillRect(px - 6, py - 6, w + 12, h + 14);
+      hgt.g.fillStyle = grey(0.95);
+      hgt.g.fillRect(px - 6, py - 6, w + 12, h + 14);
+      // recess
+      hgt.g.fillStyle = grey(0.12);
+      hgt.g.fillRect(px, py, w, h);
+      rgh.g.fillStyle = grey(0.12);
+      rgh.g.fillRect(px, py, w, h);
       const v = r();
-      g.fillStyle = v > 0.9 ? '#f0d79a' : `rgb(${40 + v * 26 | 0},${52 + v * 30 | 0},${62 + v * 34 | 0})`;
-      g.fillRect(px, py, w, h);
-      const grad = g.createLinearGradient(px, py, px, py + h);
-      grad.addColorStop(0, 'rgba(210,228,240,0.35)');
-      grad.addColorStop(1, 'rgba(0,0,0,0.25)');
-      g.fillStyle = grad;
-      g.fillRect(px, py, w, h);
-      g.fillStyle = '#cbbfae';
-      g.fillRect(px - 3, py + h + 2, w + 6, 3);
+      a.g.fillStyle = `rgb(${(36 + v * 26) | 0},${(48 + v * 30) | 0},${(58 + v * 34) | 0})`;
+      a.g.fillRect(px, py, w, h);
+      const grad = a.g.createLinearGradient(px, py, px, py + h);
+      grad.addColorStop(0, 'rgba(214,232,244,0.42)');
+      grad.addColorStop(1, 'rgba(0,0,0,0.3)');
+      a.g.fillStyle = grad;
+      a.g.fillRect(px, py, w, h);
+      if (v > 0.94) {
+        a.g.fillStyle = 'rgba(255,228,172,0.62)';
+        a.g.fillRect(px, py, w, h);
+        emi.g.fillStyle = 'rgb(250,198,124)';
+        emi.g.fillRect(px, py, w, h);
+      }
+      // glazing bars
+      a.g.fillStyle = 'rgba(220,214,200,0.7)';
+      a.g.fillRect(px + w / 2 - 1.5, py, 3, h);
+      hgt.g.fillStyle = grey(0.5);
+      hgt.g.fillRect(px + w / 2 - 1.5, py, 3, h);
+      // sill
+      a.g.fillStyle = '#d3c7b4';
+      a.g.fillRect(px - 8, py + h + 4, w + 16, 6);
+      hgt.g.fillStyle = grey(1.0);
+      hgt.g.fillRect(px - 8, py + h + 4, w + 16, 6);
     }
   }
-  noise(g, S, S, 20, 9);
-  return tex(c);
-}
-
-// --- industrial / warehouse -------------------------------------------------
-function industrialTexture() {
-  const S = 256, { c, g } = canvas(S, S);
-  g.fillStyle = '#9aa0a3';
-  g.fillRect(0, 0, S, S);
-  for (let x = 0; x < S; x += 16) {
-    g.fillStyle = 'rgba(255,255,255,0.10)';
-    g.fillRect(x, 0, 6, S);
-    g.fillStyle = 'rgba(0,0,0,0.13)';
-    g.fillRect(x + 10, 0, 5, S);
-  }
-  g.fillStyle = 'rgba(0,0,0,0.18)';
-  g.fillRect(0, 40, S, 4);
-  g.fillRect(0, 208, S, 4);
-  const r = mulberry32(31);
-  for (let i = 0; i < 6; i++) {
-    const x = 12 + i * 40;
-    g.fillStyle = '#3d4750';
-    g.fillRect(x, 16, 26, 18);
-    g.fillStyle = 'rgba(190,215,230,0.55)';
-    g.fillRect(x + 2, 18, 22, 14);
-    if (r() > 0.7) {
-      g.fillStyle = 'rgba(0,0,0,0.35)';
-      g.fillRect(x + 2, 18, 22, 14);
-    }
-  }
-  noise(g, S, S, 22, 5);
-  return tex(c);
-}
-
-// --- house siding (one tile == one wall) ------------------------------------
-function houseTexture() {
-  const S = 256, { c, g } = canvas(S, S);
-  g.fillStyle = '#d8d4cb';
-  g.fillRect(0, 0, S, S);
-  for (let y = 0; y < S; y += 11) {
-    g.fillStyle = 'rgba(0,0,0,0.07)';
-    g.fillRect(0, y + 8, S, 3);
-  }
-  const win = (x, y, w, h) => {
-    g.fillStyle = '#f4f2ec';
-    g.fillRect(x - 4, y - 4, w + 8, h + 8);
-    g.fillStyle = '#2c3742';
-    g.fillRect(x, y, w, h);
-    const grad = g.createLinearGradient(x, y, x, y + h);
-    grad.addColorStop(0, 'rgba(200,222,238,0.6)');
-    grad.addColorStop(1, 'rgba(20,30,40,0.5)');
-    g.fillStyle = grad;
-    g.fillRect(x, y, w, h);
-    g.fillStyle = '#f4f2ec';
-    g.fillRect(x + w / 2 - 2, y, 4, h);
-    g.fillRect(x, y + h / 2 - 2, w, 4);
+  noise(a.g, S, S, 16, 9);
+  noise(hgt.g, S, S, 10, 12);
+  return {
+    map: tex(a.c), normalMap: normalFrom(hgt.c, 2.2),
+    roughnessMap: tex(rgh.c, { srgb: false }), emissiveMap: tex(emi.c),
   };
-  win(40, 46, 56, 62);
-  win(160, 46, 56, 62);
-  win(40, 160, 56, 62);
-  // front door
-  g.fillStyle = '#6d4a34';
-  g.fillRect(158, 150, 56, 92);
-  g.fillStyle = 'rgba(255,255,255,0.25)';
-  g.fillRect(164, 158, 44, 34);
-  g.fillStyle = '#d9c47a';
-  g.fillRect(204, 196, 6, 6);
-  noise(g, S, S, 14, 11);
-  return tex(c);
 }
 
-// --- road surface -----------------------------------------------------------
-function roadTexture() {
-  const S = 256, { c, g } = canvas(S, S);
-  g.fillStyle = '#46484c';
-  g.fillRect(0, 0, S, S);
-  noise(g, S, S, 14, 17);
-  // patchy asphalt -- greyscale only, or the random channels tint the road purple
+function industrialSurface() {
+  const S = 512;
+  const a = canvas(S, S), hgt = canvas(S, S), rgh = canvas(S, S);
+  a.g.fillStyle = '#9ba2a6'; a.g.fillRect(0, 0, S, S);
+  hgt.g.fillStyle = grey(0.5); hgt.g.fillRect(0, 0, S, S);
+  rgh.g.fillStyle = grey(0.55); rgh.g.fillRect(0, 0, S, S);
+  // corrugation
+  for (let x = 0; x < S; x += 24) {
+    const g1 = a.g.createLinearGradient(x, 0, x + 24, 0);
+    g1.addColorStop(0, 'rgba(255,255,255,0.16)');
+    g1.addColorStop(0.5, 'rgba(0,0,0,0.02)');
+    g1.addColorStop(1, 'rgba(0,0,0,0.16)');
+    a.g.fillStyle = g1;
+    a.g.fillRect(x, 0, 24, S);
+    const g2 = hgt.g.createLinearGradient(x, 0, x + 24, 0);
+    g2.addColorStop(0, grey(0.95));
+    g2.addColorStop(0.5, grey(0.5));
+    g2.addColorStop(1, grey(0.08));
+    hgt.g.fillStyle = g2;
+    hgt.g.fillRect(x, 0, 24, S);
+  }
+  // banding rails
+  for (const y of [70, 430]) {
+    a.g.fillStyle = 'rgba(0,0,0,0.2)';
+    a.g.fillRect(0, y, S, 8);
+    hgt.g.fillStyle = grey(1.0);
+    hgt.g.fillRect(0, y, S, 8);
+  }
+  const r = mulberry32(31);
+  for (let i = 0; i < 5; i++) {
+    const x = 30 + i * 96;
+    a.g.fillStyle = '#39434c';
+    a.g.fillRect(x, 24, 56, 38);
+    hgt.g.fillStyle = grey(0.1);
+    hgt.g.fillRect(x, 24, 56, 38);
+    rgh.g.fillStyle = grey(0.18);
+    rgh.g.fillRect(x, 24, 56, 38);
+    a.g.fillStyle = r() > 0.6 ? 'rgba(30,40,50,0.8)' : 'rgba(196,220,236,0.6)';
+    a.g.fillRect(x + 3, 27, 50, 32);
+  }
+  // rust streaks
+  for (let i = 0; i < 26; i++) {
+    const x = r() * S;
+    a.g.fillStyle = `rgba(122,74,42,${0.04 + r() * 0.08})`;
+    a.g.fillRect(x, r() * S * 0.6, 3 + r() * 8, 40 + r() * 160);
+  }
+  noise(a.g, S, S, 16, 5);
+  return { map: tex(a.c), normalMap: normalFrom(hgt.c, 2.0), roughnessMap: tex(rgh.c, { srgb: false }) };
+}
+
+function houseSurface() {
+  const S = 512;
+  const a = canvas(S, S), hgt = canvas(S, S), rgh = canvas(S, S), emi = canvas(S, S);
+  a.g.fillStyle = '#dcd8cf'; a.g.fillRect(0, 0, S, S);
+  hgt.g.fillStyle = grey(0.6); hgt.g.fillRect(0, 0, S, S);
+  rgh.g.fillStyle = grey(0.8); rgh.g.fillRect(0, 0, S, S);
+  emi.g.fillStyle = '#000'; emi.g.fillRect(0, 0, S, S);
+  // lap siding: each board casts a shadow line under it
+  for (let y = 0; y < S; y += 22) {
+    a.g.fillStyle = 'rgba(0,0,0,0.10)';
+    a.g.fillRect(0, y + 18, S, 4);
+    const g1 = hgt.g.createLinearGradient(0, y, 0, y + 22);
+    g1.addColorStop(0, grey(0.35));
+    g1.addColorStop(0.82, grey(0.95));
+    g1.addColorStop(1, grey(0.1));
+    hgt.g.fillStyle = g1;
+    hgt.g.fillRect(0, y, S, 22);
+  }
+  const win = (x, y, w, h, lit) => {
+    a.g.fillStyle = '#f6f4ee'; a.g.fillRect(x - 9, y - 9, w + 18, h + 18);
+    hgt.g.fillStyle = grey(1.0); hgt.g.fillRect(x - 9, y - 9, w + 18, h + 18);
+    hgt.g.fillStyle = grey(0.16); hgt.g.fillRect(x, y, w, h);
+    rgh.g.fillStyle = grey(0.1); rgh.g.fillRect(x, y, w, h);
+    a.g.fillStyle = '#28323d'; a.g.fillRect(x, y, w, h);
+    const grad = a.g.createLinearGradient(x, y, x, y + h);
+    grad.addColorStop(0, 'rgba(206,228,244,0.66)');
+    grad.addColorStop(1, 'rgba(16,26,36,0.55)');
+    a.g.fillStyle = grad; a.g.fillRect(x, y, w, h);
+    if (lit) {
+      a.g.fillStyle = 'rgba(255,226,164,0.7)'; a.g.fillRect(x, y, w, h);
+      emi.g.fillStyle = 'rgb(252,206,140)'; emi.g.fillRect(x, y, w, h);
+    }
+    a.g.fillStyle = '#f6f4ee';
+    a.g.fillRect(x + w / 2 - 3, y, 6, h);
+    a.g.fillRect(x, y + h / 2 - 3, w, 6);
+    hgt.g.fillStyle = grey(0.8);
+    hgt.g.fillRect(x + w / 2 - 3, y, 6, h);
+    hgt.g.fillRect(x, y + h / 2 - 3, w, 6);
+  };
+  win(80, 92, 112, 124, false);
+  win(320, 92, 112, 124, true);
+  win(80, 320, 112, 124, false);
+  // front door with a step and a porch light
+  a.g.fillStyle = '#6f4c35'; a.g.fillRect(316, 300, 112, 184);
+  hgt.g.fillStyle = grey(0.3); hgt.g.fillRect(316, 300, 112, 184);
+  a.g.fillStyle = '#f6f4ee'; a.g.fillRect(306, 292, 132, 10);
+  hgt.g.fillStyle = grey(1.0); hgt.g.fillRect(306, 292, 132, 10);
+  a.g.fillStyle = 'rgba(255,255,255,0.22)'; a.g.fillRect(330, 316, 84, 62);
+  a.g.fillStyle = '#d8c07a'; a.g.fillRect(410, 396, 12, 12);
+  noise(a.g, S, S, 11, 11);
+  return {
+    map: tex(a.c), normalMap: normalFrom(hgt.c, 2.4),
+    roughnessMap: tex(rgh.c, { srgb: false }), emissiveMap: tex(emi.c),
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Ground surfaces
+// ---------------------------------------------------------------------------
+
+function roadSurface() {
+  const S = 512;
+  const a = canvas(S, S), hgt = canvas(S, S), rgh = canvas(S, S);
+  a.g.fillStyle = '#56595e'; a.g.fillRect(0, 0, S, S);
+  hgt.g.fillStyle = grey(0.5); hgt.g.fillRect(0, 0, S, S);
+  rgh.g.fillStyle = grey(0.72); rgh.g.fillRect(0, 0, S, S);
   const r = mulberry32(41);
-  for (let i = 0; i < 34; i++) {
+  // aggregate
+  for (let i = 0; i < 5200; i++) {
+    const x = r() * S, y = r() * S, s = 1 + r() * 3;
+    const l = 0.3 + r() * 0.5;
+    a.g.fillStyle = `rgba(${(120 * l) | 0},${(124 * l) | 0},${(130 * l) | 0},0.5)`;
+    a.g.fillRect(x, y, s, s);
+    hgt.g.fillStyle = grey(0.45 + r() * 0.35);
+    hgt.g.fillRect(x, y, s, s);
+  }
+  // patches and repairs, greyscale only so the asphalt never tints
+  for (let i = 0; i < 26; i++) {
     const l = r() > 0.5 ? 255 : 0;
-    g.fillStyle = `rgba(${l},${l},${l},0.028)`;
-    g.fillRect(r() * S, r() * S, 20 + r() * 60, 8 + r() * 30);
+    a.g.fillStyle = `rgba(${l},${l},${l},0.03)`;
+    a.g.fillRect(r() * S, r() * S, 40 + r() * 120, 16 + r() * 60);
+  }
+  // polished wheel tracks: darker and much glossier
+  for (const cx of [S * 0.26, S * 0.74]) {
+    const g1 = rgh.g.createLinearGradient(cx - 26, 0, cx + 26, 0);
+    g1.addColorStop(0, grey(0.72));
+    g1.addColorStop(0.5, grey(0.34));
+    g1.addColorStop(1, grey(0.72));
+    rgh.g.fillStyle = g1;
+    rgh.g.fillRect(cx - 26, 0, 52, S);
   }
   // U runs across the road width, V along its length
-  g.fillStyle = '#e8e6dd';
-  g.fillRect(6, 0, 4, S);
-  g.fillRect(S - 10, 0, 4, S);
-  g.fillStyle = '#e5c33d';
-  for (let y = 0; y < S; y += 40) g.fillRect(S / 2 - 3, y, 6, 24);
-  return tex(c);
-}
-
-function sidewalkTexture() {
-  const S = 128, { c, g } = canvas(S, S);
-  g.fillStyle = '#a8a49c';
-  g.fillRect(0, 0, S, S);
-  noise(g, S, S, 16, 23);
-  g.strokeStyle = 'rgba(0,0,0,0.16)';
-  g.lineWidth = 2;
-  for (let i = 0; i <= S; i += 32) {
-    g.beginPath(); g.moveTo(i, 0); g.lineTo(i, S); g.stroke();
-    g.beginPath(); g.moveTo(0, i); g.lineTo(S, i); g.stroke();
+  const paint = (g, style, x, y, w, h) => { g.fillStyle = style; g.fillRect(x, y, w, h); };
+  paint(a.g, '#e9e7de', 12, 0, 8, S);
+  paint(a.g, '#e9e7de', S - 20, 0, 8, S);
+  paint(hgt.g, grey(0.8), 12, 0, 8, S);
+  paint(hgt.g, grey(0.8), S - 20, 0, 8, S);
+  paint(rgh.g, grey(0.9), 12, 0, 8, S);
+  paint(rgh.g, grey(0.9), S - 20, 0, 8, S);
+  for (let y = 0; y < S; y += 80) {
+    paint(a.g, '#e4c23e', S / 2 - 6, y, 12, 48);
+    paint(hgt.g, grey(0.8), S / 2 - 6, y, 12, 48);
+    paint(rgh.g, grey(0.9), S / 2 - 6, y, 12, 48);
   }
-  return tex(c);
+  return { map: tex(a.c), normalMap: normalFrom(hgt.c, 1.1), roughnessMap: tex(rgh.c, { srgb: false }) };
 }
 
-// Deliberately neutral: the terrain's per-vertex colour decides whether a patch
-// reads as grass, pavement or beach, so this only supplies grain.
-function groundTexture() {
-  const S = 128, { c, g } = canvas(S, S);
-  g.fillStyle = '#b0b0ac';
-  g.fillRect(0, 0, S, S);
+function sidewalkSurface() {
+  const S = 256;
+  const a = canvas(S, S), hgt = canvas(S, S), rgh = canvas(S, S);
+  a.g.fillStyle = '#bab7ae'; a.g.fillRect(0, 0, S, S);
+  hgt.g.fillStyle = grey(0.85); hgt.g.fillRect(0, 0, S, S);
+  rgh.g.fillStyle = grey(0.82); rgh.g.fillRect(0, 0, S, S);
+  const r = mulberry32(23);
+  for (let i = 0; i < 2600; i++) {
+    const l = 0.55 + r() * 0.5;
+    a.g.fillStyle = `rgba(${(168 * l) | 0},${(166 * l) | 0},${(158 * l) | 0},0.45)`;
+    a.g.fillRect(r() * S, r() * S, 1 + r() * 3, 1 + r() * 3);
+  }
+  // expansion joints
+  for (let i = 0; i <= S; i += 64) {
+    a.g.fillStyle = 'rgba(0,0,0,0.22)';
+    a.g.fillRect(i - 2, 0, 4, S);
+    a.g.fillRect(0, i - 2, S, 4);
+    hgt.g.fillStyle = grey(0.08);
+    hgt.g.fillRect(i - 2, 0, 4, S);
+    hgt.g.fillRect(0, i - 2, S, 4);
+  }
+  // stains
+  for (let i = 0; i < 22; i++) {
+    a.g.fillStyle = `rgba(60,58,54,${0.03 + r() * 0.06})`;
+    a.g.beginPath();
+    a.g.ellipse(r() * S, r() * S, 6 + r() * 22, 6 + r() * 18, 0, 0, Math.PI * 2);
+    a.g.fill();
+  }
+  return { map: tex(a.c), normalMap: normalFrom(hgt.c, 1.6), roughnessMap: tex(rgh.c, { srgb: false }) };
+}
+
+// Neutral: the terrain's vertex colour decides grass vs pavement vs beach.
+function groundSurface() {
+  const S = 256;
+  const a = canvas(S, S), hgt = canvas(S, S);
+  a.g.fillStyle = '#b2b2ae'; a.g.fillRect(0, 0, S, S);
+  hgt.g.fillStyle = grey(0.5); hgt.g.fillRect(0, 0, S, S);
   const r = mulberry32(53);
-  for (let i = 0; i < 1100; i++) {
-    const v = 0.55 + r() * 0.6;
-    const l = Math.round(150 * v);
-    g.fillStyle = `rgba(${l},${l},${Math.round(l * 0.97)},0.45)`;
-    g.fillRect(r() * S, r() * S, 2 + r() * 5, 2 + r() * 5);
+  for (let i = 0; i < 4200; i++) {
+    const v = 0.78 + r() * 0.3;
+    const l = Math.round(170 * v);
+    a.g.fillStyle = `rgba(${l},${l},${Math.round(l * 0.98)},0.28)`;
+    const s = 2 + r() * 5;
+    a.g.fillRect(r() * S, r() * S, s, s);
+    hgt.g.fillStyle = grey(0.42 + r() * 0.22);
+    hgt.g.fillRect(r() * S, r() * S, s, s);
   }
-  noise(g, S, S, 22, 61);
-  return tex(c);
+  noise(a.g, S, S, 10, 61);
+  return { map: tex(a.c), normalMap: normalFrom(hgt.c, 1.4) };
 }
 
-function waterTexture() {
-  const S = 256, { c, g } = canvas(S, S);
-  g.fillStyle = '#33566b';
-  g.fillRect(0, 0, S, S);
+function waterSurface() {
+  const S = 512;
+  const hgt = canvas(S, S);
+  hgt.g.fillStyle = grey(0.5); hgt.g.fillRect(0, 0, S, S);
   const r = mulberry32(67);
-  for (let i = 0; i < 500; i++) {
-    const x = r() * S, y = r() * S, w = 8 + r() * 40;
-    g.strokeStyle = `rgba(200,225,240,${0.03 + r() * 0.07})`;
-    g.lineWidth = 1 + r() * 2;
-    g.beginPath();
-    g.moveTo(x, y);
-    g.quadraticCurveTo(x + w / 2, y + (r() - 0.5) * 6, x + w, y);
-    g.stroke();
+  // overlapping long swells + chop
+  for (let i = 0; i < 900; i++) {
+    const x = r() * S, y = r() * S, w = 30 + r() * 150, h = 2 + r() * 5;
+    const g1 = hgt.g.createLinearGradient(0, y - h, 0, y + h);
+    g1.addColorStop(0, grey(0.5));
+    g1.addColorStop(0.5, grey(0.5 + (r() - 0.5) * 0.55));
+    g1.addColorStop(1, grey(0.5));
+    hgt.g.fillStyle = g1;
+    hgt.g.beginPath();
+    hgt.g.ellipse(x, y, w, h, (r() - 0.5) * 0.4, 0, Math.PI * 2);
+    hgt.g.fill();
   }
-  return tex(c);
+  return { normalMap: normalFrom(hgt.c, 1.5) };
 }
 
-function skyTexture() {
-  const W = 512, H = 256, { c, g } = canvas(W, H);
+// ---------------------------------------------------------------------------
+// Sky (equirectangular: doubles as the background and the IBL source)
+// ---------------------------------------------------------------------------
+
+function skyEquirect() {
+  const W = 2048, H = 1024;
+  const { c, g } = canvas(W, H);
   const grad = g.createLinearGradient(0, 0, 0, H);
-  grad.addColorStop(0.0, '#4d6f92');
-  grad.addColorStop(0.42, '#8fa8bd');
-  grad.addColorStop(0.62, '#c3cdd4');
-  grad.addColorStop(0.78, '#d9dde0');
-  grad.addColorStop(1.0, '#b9c3c9');
+  grad.addColorStop(0.00, '#2f5680');
+  grad.addColorStop(0.22, '#4a749a');
+  grad.addColorStop(0.42, '#88a8c2');
+  grad.addColorStop(0.50, '#c2ced6');
+  grad.addColorStop(0.54, '#cdd6db');
+  grad.addColorStop(0.70, '#8e969b');
+  grad.addColorStop(1.00, '#5d6469');
   g.fillStyle = grad;
   g.fillRect(0, 0, W, H);
-  // soft overcast banks
+
+  // Sun: placed to match the key light direction so speculars line up.
+  const sx = 207, sy = 221;
+  const halo = g.createRadialGradient(sx, sy, 0, sx, sy, 460);
+  halo.addColorStop(0, 'rgba(255,247,228,0.95)');
+  halo.addColorStop(0.06, 'rgba(255,240,206,0.55)');
+  halo.addColorStop(0.3, 'rgba(226,232,236,0.22)');
+  halo.addColorStop(1, 'rgba(226,232,236,0)');
+  g.fillStyle = halo;
+  g.fillRect(0, 0, W, H);
+  const disc = g.createRadialGradient(sx, sy, 0, sx, sy, 42);
+  disc.addColorStop(0, 'rgba(255,255,250,1)');
+  disc.addColorStop(0.6, 'rgba(255,250,232,0.9)');
+  disc.addColorStop(1, 'rgba(255,246,220,0)');
+  g.fillStyle = disc;
+  g.fillRect(0, 0, W, H);
+
+  // Broken overcast: soft banks, flattened and denser toward the horizon.
   const r = mulberry32(83);
-  for (let i = 0; i < 90; i++) {
-    const x = r() * W, y = 20 + r() * 120, w = 60 + r() * 180, h = 12 + r() * 34;
-    g.fillStyle = `rgba(255,255,255,${0.03 + r() * 0.07})`;
-    g.beginPath();
-    g.ellipse(x, y, w, h, 0, 0, Math.PI * 2);
-    g.fill();
+  for (let layer = 0; layer < 3; layer++) {
+    const count = 120 + layer * 90;
+    for (let i = 0; i < count; i++) {
+      const y = 40 + Math.pow(r(), 0.6) * (H * 0.46);
+      const x = r() * W;
+      const squash = 0.12 + (y / H) * 0.5;
+      const w = (90 + r() * 340) * (1 + layer * 0.4);
+      const h = w * squash * (0.2 + r() * 0.35);
+      const near = 1 - Math.abs(y - sy) / 900;
+      const bright = 0.72 + Math.max(0, near) * 0.28;
+      const alpha = 0.035 + r() * 0.075;
+      const cg = g.createRadialGradient(x, y, 0, x, y, w);
+      const t = Math.round(255 * bright);
+      cg.addColorStop(0, `rgba(${t},${t},${Math.round(t * 0.99)},${alpha})`);
+      cg.addColorStop(0.55, `rgba(${t},${t},${t},${alpha * 0.5})`);
+      cg.addColorStop(1, 'rgba(255,255,255,0)');
+      g.fillStyle = cg;
+      g.beginPath();
+      g.ellipse(x, y, w, h, 0, 0, Math.PI * 2);
+      g.fill();
+      // undersides
+      g.fillStyle = `rgba(96,110,124,${alpha * 0.5})`;
+      g.beginPath();
+      g.ellipse(x, y + h * 0.55, w * 0.8, h * 0.4, 0, 0, Math.PI * 2);
+      g.fill();
+    }
   }
-  const t = tex(c, false, 2);
+  // horizon haze band
+  const haze = g.createLinearGradient(0, H * 0.44, 0, H * 0.56);
+  haze.addColorStop(0, 'rgba(206,216,222,0)');
+  haze.addColorStop(0.5, 'rgba(206,216,222,0.85)');
+  haze.addColorStop(1, 'rgba(206,216,222,0)');
+  g.fillStyle = haze;
+  g.fillRect(0, 0, W, H);
+
+  const t = tex(c, { repeat: false, aniso: 4, mips: true });
+  t.mapping = THREE.EquirectangularReflectionMapping;
   t.wrapS = THREE.RepeatWrapping;
-  t.wrapT = THREE.ClampToEdgeWrapping;
   return t;
 }
 
@@ -283,20 +529,20 @@ function particleTexture() {
   grad.addColorStop(1, 'rgba(255,255,255,0)');
   g.fillStyle = grad;
   g.fillRect(0, 0, S, S);
-  return tex(c, false, 1);
+  return tex(c, { repeat: false, aniso: 1, mips: false });
 }
 
 export function buildTextures() {
   return {
-    glass: glassTexture(),
-    masonry: masonryTexture(),
-    industrial: industrialTexture(),
-    house: houseTexture(),
-    road: roadTexture(),
-    sidewalk: sidewalkTexture(),
-    ground: groundTexture(),
-    water: waterTexture(),
-    sky: skyTexture(),
+    glass: glassSurface(),
+    masonry: masonrySurface(),
+    industrial: industrialSurface(),
+    house: houseSurface(),
+    road: roadSurface(),
+    sidewalk: sidewalkSurface(),
+    ground: groundSurface(),
+    water: waterSurface(),
+    sky: skyEquirect(),
     particle: particleTexture(),
   };
 }

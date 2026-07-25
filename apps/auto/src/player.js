@@ -11,7 +11,7 @@ export class Player {
     this.scene = scene;
     this.city = city;
     this.game = game;
-    this.h = makeHumanoid({ seed: 1, shirt: [0.15, 0.18, 0.24], pants: [0.12, 0.13, 0.16], hair: [0.1, 0.08, 0.07], scale: 1.02, animateArms: true });
+    this.h = makeHumanoid({ seed: 1, unique: true, shirt: [0.16, 0.2, 0.3], pants: [0.12, 0.13, 0.17], hair: [0.1, 0.08, 0.07], scale: 1.03 });
     scene.add(this.h.group);
     this.x = G.SPAWN.x;
     this.z = G.SPAWN.z;
@@ -131,8 +131,8 @@ export class Player {
     // drowning
     if (this.y < -0.6 && G.isWater(this.x, this.z)) this.game.onDrown();
 
-    this.phase += this.speed * 2.2 * dt;
-    animateWalk(this.h, this.phase, clamp(this.speed * 0.16, 0, 0.9), dt);
+    this.phase += (0.9 + this.speed * 2.0) * dt;
+    animateWalk(this.h, this.phase, clamp(this.speed * 0.16, 0, 0.85), dt, this.speed);
     this.h.group.position.set(this.x, this.y, this.z);
     this.h.group.rotation.y = this.heading;
 
@@ -219,7 +219,7 @@ export class Player {
       target.set(v.x, v.y, v.z);
       const sp = Math.abs(v.vLong);
       dist = 7.6 + v.spec.len * 0.42 + clamp(sp * 0.09, 0, 3.4);
-      height = 3.2 + v.spec.bodyH * 0.7;
+      height = 3.2 + v.spec.roof * 0.42;
       lookH = 1.05;
       // ease the camera behind the car when driving forward
       if (v.vLong > 3) {

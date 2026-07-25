@@ -114,6 +114,52 @@ NDC and see which side of the screen it lands on:
 new THREE.Vector3(p.x + 30, p.y + 1, p.z + 40).project(__dbg.camera).x
 ```
 
+## Rendering pipeline
+
+Physically-shaded, image-based-lit, tone-mapped, with a hand-rolled post chain.
+
+- **IBL is the ambient.** `textures.js` draws an equirectangular sky; `world.buildSky()`
+  sets it as `scene.background` and runs it through `PMREMGenerator` into
+  `scene.environment`. The analytic lights are only a key plus a fill, so
+  `envMapIntensity` on a material is the main dial for how a surface reads in shade.
+- **Tone mapping is ACES**, applied during the scene pass. Exposure lives in main.js.
+- **Every surface is a set**: albedo + normal + roughness (+ emissive where there
+  are lit windows). Normals are sobel'd from a purpose-drawn *height* pass, not
+  from the albedo, so window reveals read as recesses.
+- **`postfx.js` is deliberately not three's EffectComposer** — no addon files, and
+  every render target can be `UnsignedByteType`. Half-float targets are
+  unreliable on iOS (silent black screen), so the scene is tone-mapped into an
+  8-bit sRGB target and bloom / FXAA / grade / vignette all work in gamma space.
+  If you add a pass, keep it 8-bit.
+- **Adaptive quality.** The phone this ships to can't be profiled from here, so
+  the game measures its own frame rate and steps `high -> medium -> low`
+  (post off, then pixel ratio down). `applyQuality(q, true)` locks it manually.
+  When testing headlessly, set `window.__noAutoQuality = true` **before boot** or
+  SwiftShader's ~5 fps immediately drops the tier and every screenshot lies.
+
+## Models
+
+Cars and characters are the two things a player looks at closely, and both are
+built rather than blocked out:
+
+- **Vehicles** (`vehicles.js`) loft a shell through ~26 sampled cross-sections.
+  The bottom edge of that profile **arches up over each wheel** (`archLift`) —
+  without the cut, tyres just intersect a straight sill and the whole thing
+  reads as a toy. Three geometries per type share materials across all
+  instances: `paint` (tinted per car), `trim` (glass/chrome/lenses/rims,
+  metallic) and `matte` (tyres/plastic/arches). Cars keep a glass greenhouse
+  with a painted roof skin over it; vans, trucks and buses are **painted** bodies
+  with glazing cut in — lofting those in glass turns the upper body into one
+  dark slab.
+- **Characters** (`peds.js`) are `SkinnedMesh`es: one draw call each, but with an
+  18-bone skeleton, so elbows and knees actually bend. Geometry comes from a
+  pool of 12 pre-built looks (per-instance variety is skeleton, scale and gait),
+  and `animateWalk` is a procedural cycle — hip swing with knee flex through the
+  swing phase, counter-rotating chest, level head, breathing idle. The one
+  non-obvious term is the **hip scissor drop**: `hips.y` has to fall by
+  `legLen * (1 - cos(stride))` as the legs open, or the planted foot sinks
+  through the ground and the figure looks like it is floating.
+
 ## The one height surface
 
 `geo.rawTerrainHeight()` is expensive (polygon distance tests), so it is baked
@@ -124,6 +170,18 @@ surface from the one the terrain mesh is built on, roads sink into the ground.
 
 Bridges and freeway decks are separate: `city.groundAt(x, z, currentY)` returns
 the highest deck below `currentY + 2.6`, else the terrain.
+
+**Paved surfaces sit above the terrain and everything standing on them has to be
+lifted by the same amount.** `ROAD_LIFT` / `WALK_LIFT` in citygen.js are the
+single source of truth, shared with world.js. `city.roadLift(x, z)` reports the
+lift at a point; `groundAt` takes it as an optional 4th argument because
+vehicles sample the ground seven times a frame and the edge scan is too
+expensive to repeat per wheel. Forgetting this is what buried every car 22 cm
+into the asphalt.
+
+Sidewalks stop short of each junction (`nodeRadius`) and the corner is filled by
+a ring drawn in `meshNode`. A strip run end to end marches straight across the
+cross street.
 
 ## Geometry building
 

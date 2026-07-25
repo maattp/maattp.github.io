@@ -6,7 +6,7 @@ import { clamp, lerp, angleWrap, hash2, rng, dist2 } from './util.js';
 import * as G from './geo.js';
 
 const TRAFFIC_TARGET = 26;
-const PARKED_RADIUS = 155;
+const PARKED_RADIUS = 130;
 const DESPAWN = 520;
 
 export function collideWithBuildings(v, city, onHit) {
@@ -93,7 +93,7 @@ export class TrafficSystem {
       const slots = Math.floor(e.len / 13);
       for (let s = 1; s < slots; s++) {
         const h = hash2(ei * 31 + s, 7);
-        if (h > 0.42) continue;
+        if (h > 0.32) continue;
         const key = ei * 64 + s;
         seen.add(key);
         if (this.parkedSlots.has(key)) continue;
@@ -178,16 +178,26 @@ export class TrafficSystem {
       v.pathT = 0;
       v.repath = 0;
       v.rammed = 0;
-      // light bar strobes
+      // roof light bar: a dark housing with two strobing lenses
       const bar = new THREE.Group();
+      const y = v.spec.roof + 0.09;
+      const housing = new THREE.Mesh(
+        new THREE.BoxGeometry(1.24, 0.1, 0.34),
+        new THREE.MeshStandardMaterial({ color: 0x15181c, roughness: 0.6, metalness: 0.1 })
+      );
+      housing.position.set(0, y - 0.03, 0.05);
+      bar.add(housing);
       const mkL = (c, x) => {
-        const m = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.14, 0.3), new THREE.MeshBasicMaterial({ color: c }));
-        m.position.set(x, v.spec.bodyH + v.spec.cabH + (v.t.wheelR || 0.34) * 0.72 + 0.14, 0.1);
+        const m = new THREE.Mesh(
+          new THREE.BoxGeometry(0.52, 0.15, 0.3),
+          new THREE.MeshBasicMaterial({ color: c, toneMapped: false })
+        );
+        m.position.set(x, y + 0.07, 0.05);
         bar.add(m);
         return m;
       };
-      v.lightL = mkL(0x2244ff, -0.3);
-      v.lightR = mkL(0xff2222, 0.3);
+      v.lightL = mkL(0x3355ff, -0.31);
+      v.lightR = mkL(0xff2a2a, 0.31);
       v.tilt.add(bar);
       return v;
     }
@@ -310,7 +320,7 @@ export class TrafficSystem {
       if (v.mode === 'police' && game.wanted === 0 && d2 > 140 * 140) { this.remove(v); continue; }
 
       if (v.mode === 'parked') {
-        v.group.visible = d2 < 175 * 175;
+        v.group.visible = d2 < 140 * 140;
         continue;
       }
       v.group.visible = true;

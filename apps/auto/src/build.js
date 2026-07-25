@@ -90,18 +90,81 @@ export class Builder {
    * face goes -- getting that wrong silently backface-culls the whole surface.
    */
   quad(a, b, c, d, n, uvs, col) {
+    // `col` is one rgb triple, or four of them (per corner) for baked AO.
+    // `n` is one normal, or four of them (per corner) for smooth shading.
+    let cols = Array.isArray(col[0]) ? col : [col, col, col, col];
+    let nrm = Array.isArray(n[0]) ? n : [n, n, n, n];
     const ux = b[0] - a[0], uy = b[1] - a[1], uz = b[2] - a[2];
     const vx = c[0] - a[0], vy = c[1] - a[1], vz = c[2] - a[2];
     const cx = uy * vz - uz * vy, cy = uz * vx - ux * vz, cz = ux * vy - uy * vx;
-    if (cx * n[0] + cy * n[1] + cz * n[2] < 0) {
+    if (cx * nrm[0][0] + cy * nrm[0][1] + cz * nrm[0][2] < 0) {
       const t = b; b = d; d = t;
       uvs = [uvs[0], uvs[1], uvs[6], uvs[7], uvs[4], uvs[5], uvs[2], uvs[3]];
+      cols = [cols[0], cols[3], cols[2], cols[1]];
+      nrm = [nrm[0], nrm[3], nrm[2], nrm[1]];
     }
-    const i0 = this.vert(a[0], a[1], a[2], n[0], n[1], n[2], uvs[0], uvs[1], col[0], col[1], col[2]);
-    const i1 = this.vert(b[0], b[1], b[2], n[0], n[1], n[2], uvs[2], uvs[3], col[0], col[1], col[2]);
-    const i2 = this.vert(c[0], c[1], c[2], n[0], n[1], n[2], uvs[4], uvs[5], col[0], col[1], col[2]);
-    const i3 = this.vert(d[0], d[1], d[2], n[0], n[1], n[2], uvs[6], uvs[7], col[0], col[1], col[2]);
+    const i0 = this.vert(a[0], a[1], a[2], nrm[0][0], nrm[0][1], nrm[0][2], uvs[0], uvs[1], cols[0][0], cols[0][1], cols[0][2]);
+    const i1 = this.vert(b[0], b[1], b[2], nrm[1][0], nrm[1][1], nrm[1][2], uvs[2], uvs[3], cols[1][0], cols[1][1], cols[1][2]);
+    const i2 = this.vert(c[0], c[1], c[2], nrm[2][0], nrm[2][1], nrm[2][2], uvs[4], uvs[5], cols[2][0], cols[2][1], cols[2][2]);
+    const i3 = this.vert(d[0], d[1], d[2], nrm[3][0], nrm[3][1], nrm[3][2], uvs[6], uvs[7], cols[3][0], cols[3][1], cols[3][2]);
     this.idx.push(i0, i1, i2, i0, i2, i3);
+  }
+
+  /**
+   * Loft a smooth shell through a list of cross-sections. `rings` is
+   * [{ z, pts: [[x,y], ...] }] with the same point count in every ring; normals
+   * are computed from the surface itself so the result shades smoothly instead
+   * of faceting, which is the whole difference between a car and a box.
+   */
+  loft(rings, col, opts = {}) {
+    const { capStart = false, capEnd = false, colTop = null, topFrom = 1e9 } = opts;
+    const R = rings.length, K = rings[0].pts.length;
+    const P = [];
+    for (let i = 0; i < R; i++) {
+      P.push(rings[i].pts.map((p) => [p[0], p[1], rings[i].z]));
+    }
+    const sub = (a, b) => [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
+    const cross = (a, b) => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
+    const norm = (v) => {
+      const l = Math.hypot(v[0], v[1], v[2]) || 1;
+      return [v[0] / l, v[1] / l, v[2] / l];
+    };
+    // centroid per ring, used to force normals outward
+    const cen = P.map((ring) => {
+      let x = 0, y = 0;
+      for (const p of ring) { x += p[0]; y += p[1]; }
+      return [x / K, y / K];
+    });
+    const N = [];
+    for (let i = 0; i < R; i++) {
+      N.push([]);
+      for (let k = 0; k < K; k++) {
+        const ip = P[Math.max(0, i - 1)][k], inx = P[Math.min(R - 1, i + 1)][k];
+        const kp = P[i][(k - 1 + K) % K], kn = P[i][(k + 1) % K];
+        let n = norm(cross(sub(kn, kp), sub(inx, ip)));
+        const ox = P[i][k][0] - cen[i][0], oy = P[i][k][1] - cen[i][1];
+        if (n[0] * ox + n[1] * oy < 0) n = [-n[0], -n[1], -n[2]];
+        N[i].push(n);
+      }
+    }
+    for (let i = 0; i < R - 1; i++) {
+      for (let k = 0; k < K; k++) {
+        const k2 = (k + 1) % K;
+        const c0 = colTop && P[i][k][1] > topFrom ? colTop : col;
+        this.quad(P[i][k], P[i][k2], P[i + 1][k2], P[i + 1][k],
+          [N[i][k], N[i][k2], N[i + 1][k2], N[i + 1][k]],
+          [0, 0, 1, 0, 1, 1, 0, 1], c0);
+      }
+    }
+    const cap = (i, dir) => {
+      const c = [cen[i][0], cen[i][1], rings[i].z];
+      for (let k = 0; k < K; k++) {
+        const k2 = (k + 1) % K;
+        this.tri(c, P[i][k], P[i][k2], [0, 0, dir], col);
+      }
+    };
+    if (capStart) cap(0, -1);
+    if (capEnd) cap(R - 1, 1);
   }
 
   tri(a, b, c, n, col) {
@@ -120,7 +183,7 @@ export class Builder {
    * uScale/vScale give metres per texture tile; pass 0 for a 0..1 mapping.
    */
   box(cx, by, cz, w, h, d, rot, col, opts = {}) {
-    const { uScale = 0, vScale = 0, top = true, vOff = 0, sides = true } = opts;
+    const { uScale = 0, vScale = 0, top = true, vOff = 0, sides = true, ao = 0 } = opts;
     const cr = Math.cos(rot), sr = Math.sin(rot);
     const hw = w / 2, hd = d / 2;
     const P = (lx, ly, lz) => [cx + lx * cr - lz * sr, by + ly, cz + lx * sr + lz * cr];
@@ -129,19 +192,23 @@ export class Builder {
     const rd = uScale > 0 ? d / uScale : 1;
     const rv = vScale > 0 ? h / vScale : 1;
     const v0 = vOff;
+    // Cheap baked ambient occlusion: darken the bottom edge of the side faces so
+    // the mass reads as sitting on the ground rather than floating over it.
+    const lo = ao > 0 ? [col[0] * (1 - ao), col[1] * (1 - ao), col[2] * (1 - ao)] : col;
+    const sideCols = ao > 0 ? [lo, lo, col, col] : col;
     if (sides) {
       // +local z
       this.quad(P(-hw, 0, hd), P(hw, 0, hd), P(hw, h, hd), P(-hw, h, hd), N(0, 1),
-        [0, v0, ru, v0, ru, v0 + rv, 0, v0 + rv], col);
+        [0, v0, ru, v0, ru, v0 + rv, 0, v0 + rv], sideCols);
       // -local z
       this.quad(P(hw, 0, -hd), P(-hw, 0, -hd), P(-hw, h, -hd), P(hw, h, -hd), N(0, -1),
-        [0, v0, ru, v0, ru, v0 + rv, 0, v0 + rv], col);
+        [0, v0, ru, v0, ru, v0 + rv, 0, v0 + rv], sideCols);
       // +local x
       this.quad(P(hw, 0, hd), P(hw, 0, -hd), P(hw, h, -hd), P(hw, h, hd), N(1, 0),
-        [0, v0, rd, v0, rd, v0 + rv, 0, v0 + rv], col);
+        [0, v0, rd, v0, rd, v0 + rv, 0, v0 + rv], sideCols);
       // -local x
       this.quad(P(-hw, 0, -hd), P(-hw, 0, hd), P(-hw, h, hd), P(-hw, h, -hd), N(-1, 0),
-        [0, v0, rd, v0, rd, v0 + rv, 0, v0 + rv], col);
+        [0, v0, rd, v0, rd, v0 + rv, 0, v0 + rv], sideCols);
     }
     if (top) {
       this.quad(P(-hw, h, hd), P(hw, h, hd), P(hw, h, -hd), P(-hw, h, -hd), [0, 1, 0],
@@ -183,6 +250,56 @@ export class Builder {
       const mx = Math.cos((a0 + a1) / 2), mz = Math.sin((a0 + a1) / 2);
       this.tri([x0, by, z0], [x1, by, z1], [cx, by + h, cz], [mx, 0.45, mz], col);
     }
+  }
+
+  /**
+   * Loft swept along Y instead of Z, for anything that stands up: torsos,
+   * limbs, necks. `rings` is [{ y, pts: [[x,z], ...] }].
+   */
+  loftY(rings, col, opts = {}) {
+    const { capStart = false, capEnd = false } = opts;
+    const R = rings.length, K = rings[0].pts.length;
+    const P = rings.map((r) => r.pts.map((p) => [p[0], r.y, p[1]]));
+    const sub = (a, b) => [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
+    const cross = (a, b) => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
+    const norm = (v) => {
+      const l = Math.hypot(v[0], v[1], v[2]) || 1;
+      return [v[0] / l, v[1] / l, v[2] / l];
+    };
+    const cen = P.map((r) => {
+      let x = 0, z = 0;
+      for (const p of r) { x += p[0]; z += p[2]; }
+      return [x / K, z / K];
+    });
+    const N = [];
+    for (let i = 0; i < R; i++) {
+      N.push([]);
+      for (let k = 0; k < K; k++) {
+        const ip = P[Math.max(0, i - 1)][k], inx = P[Math.min(R - 1, i + 1)][k];
+        const kp = P[i][(k - 1 + K) % K], kn = P[i][(k + 1) % K];
+        let n = norm(cross(sub(kn, kp), sub(inx, ip)));
+        const ox = P[i][k][0] - cen[i][0], oz = P[i][k][2] - cen[i][1];
+        if (n[0] * ox + n[2] * oz < 0) n = [-n[0], -n[1], -n[2]];
+        N[i].push(n);
+      }
+    }
+    const colOf = (i) => (Array.isArray(col) && Array.isArray(col[0]) ? col[Math.min(col.length - 1, i)] : col);
+    for (let i = 0; i < R - 1; i++) {
+      for (let k = 0; k < K; k++) {
+        const k2 = (k + 1) % K;
+        this.quad(P[i][k], P[i][k2], P[i + 1][k2], P[i + 1][k],
+          [N[i][k], N[i][k2], N[i + 1][k2], N[i + 1][k]],
+          [0, 0, 1, 0, 1, 1, 0, 1], colOf(i));
+      }
+    }
+    const cap = (i, dir) => {
+      const c = [cen[i][0], rings[i].y, cen[i][1]];
+      for (let k = 0; k < K; k++) {
+        this.tri(c, P[i][k], P[i][(k + 1) % K], [0, dir, 0], colOf(i));
+      }
+    };
+    if (capStart) cap(0, -1);
+    if (capEnd) cap(R - 1, 1);
   }
 
   build() {

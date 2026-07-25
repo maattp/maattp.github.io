@@ -14,83 +14,375 @@ const SHIRTS = [
 const PANTS = [[0.18, 0.22, 0.34], [0.2, 0.2, 0.22], [0.35, 0.3, 0.25], [0.45, 0.45, 0.48], [0.12, 0.14, 0.18]];
 const HAIR = [[0.12, 0.09, 0.07], [0.35, 0.22, 0.1], [0.6, 0.5, 0.32], [0.75, 0.75, 0.75], [0.5, 0.15, 0.1]];
 
-const pedMat = new THREE.MeshLambertMaterial({ vertexColors: true });
+const pedMat = new THREE.MeshStandardMaterial({
+  vertexColors: true, roughness: 0.87, metalness: 0.0, envMapIntensity: 0.7,
+});
+
+// Skeleton layout. Characters are skinned meshes: one draw call each, but with
+// real elbows, knees and a spine, which is the difference between a walk cycle
+// and a pair of swinging planks.
+const B = {
+  root: 0, hips: 1, spine: 2, chest: 3, neck: 4, head: 5,
+  shoulderL: 6, elbowL: 7, handL: 8,
+  shoulderR: 9, elbowR: 10, handR: 11,
+  thighL: 12, kneeL: 13, footL: 14,
+  thighR: 15, kneeR: 16, footR: 17,
+};
+const BONE_COUNT = 18;
+
+// Joint heights in character space (feet at y = 0, nominal height 1.75 m)
+const J = {
+  hip: 0.90, spine: 1.02, chest: 1.22, neck: 1.46, head: 1.53,
+  shoulder: 1.385, elbow: 1.085, wrist: 0.805,
+  knee: 0.46, ankle: 0.055,
+};
+const SHOULDER_X = 0.150;
+const HIP_X = 0.068;
+
+function makeSkeletonBones() {
+  const bones = [];
+  for (let i = 0; i < BONE_COUNT; i++) bones.push(new THREE.Bone());
+  const set = (b, x, y, z) => bones[b].position.set(x, y, z);
+  const link = (parent, child) => bones[parent].add(bones[child]);
+
+  set(B.root, 0, 0, 0);
+  set(B.hips, 0, J.hip, 0);
+  set(B.spine, 0, J.spine - J.hip, 0);
+  set(B.chest, 0, J.chest - J.spine, 0);
+  set(B.neck, 0, J.neck - J.chest, 0);
+  set(B.head, 0, J.head - J.neck, 0);
+  set(B.shoulderL, -SHOULDER_X, J.shoulder - J.chest, 0);
+  set(B.elbowL, 0, J.elbow - J.shoulder, 0);
+  set(B.handL, 0, J.wrist - J.elbow, 0);
+  set(B.shoulderR, SHOULDER_X, J.shoulder - J.chest, 0);
+  set(B.elbowR, 0, J.elbow - J.shoulder, 0);
+  set(B.handR, 0, J.wrist - J.elbow, 0);
+  set(B.thighL, -HIP_X, 0, 0);
+  set(B.kneeL, 0, J.knee - J.hip, 0);
+  set(B.footL, 0, J.ankle - J.knee, 0);
+  set(B.thighR, HIP_X, 0, 0);
+  set(B.kneeR, 0, J.knee - J.hip, 0);
+  set(B.footR, 0, J.ankle - J.knee, 0);
+
+  link(B.root, B.hips);
+  link(B.hips, B.spine); link(B.spine, B.chest);
+  link(B.chest, B.neck); link(B.neck, B.head);
+  link(B.chest, B.shoulderL); link(B.shoulderL, B.elbowL); link(B.elbowL, B.handL);
+  link(B.chest, B.shoulderR); link(B.shoulderR, B.elbowR); link(B.elbowR, B.handR);
+  link(B.hips, B.thighL); link(B.thighL, B.kneeL); link(B.kneeL, B.footL);
+  link(B.hips, B.thighR); link(B.thighR, B.kneeR); link(B.kneeR, B.footR);
+  return bones;
+}
+
+/** Elliptical cross-section in the XZ plane. */
+function oval(rx, rz, n = 10, ox = 0, oz = 0) {
+  const pts = [];
+  for (let i = 0; i < n; i++) {
+    const a = (i / n) * Math.PI * 2;
+    pts.push([ox + Math.cos(a) * rx, oz + Math.sin(a) * rz]);
+  }
+  return pts;
+}
+
+const smoothT = (v) => v * v * (3 - 2 * v);
 
 /**
- * Builds a blocky humanoid. Returns the group plus the limb meshes so callers
- * can animate a walk cycle.
+ * Accumulates parts into one skinned geometry. Each part supplies a weight
+ * function so vertices near a joint blend between two bones instead of
+ * creasing.
  */
-export function makeHumanoid(opts = {}) {
+class SkinAcc {
+  constructor() {
+    this.pos = []; this.nor = []; this.col = []; this.idx = [];
+    this.si = []; this.sw = [];
+  }
+  add(builder, weightFn) {
+    const base = this.pos.length / 3;
+    for (let i = 0; i < builder.pos.length; i += 3) {
+      const x = builder.pos[i], y = builder.pos[i + 1], z = builder.pos[i + 2];
+      this.pos.push(x, y, z);
+      this.nor.push(builder.nor[i], builder.nor[i + 1], builder.nor[i + 2]);
+      this.col.push(builder.col[i], builder.col[i + 1], builder.col[i + 2]);
+      const w = weightFn(x, y, z);
+      this.si.push(w[0], w[2] != null ? w[2] : 0, 0, 0);
+      this.sw.push(w[1], w[3] != null ? w[3] : 0, 0, 0);
+    }
+    for (const ix of builder.idx) this.idx.push(base + ix);
+  }
+  build() {
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.Float32BufferAttribute(this.pos, 3));
+    g.setAttribute('normal', new THREE.Float32BufferAttribute(this.nor, 3));
+    g.setAttribute('color', new THREE.Float32BufferAttribute(this.col, 3));
+    g.setAttribute('skinIndex', new THREE.Uint16BufferAttribute(this.si, 4));
+    g.setAttribute('skinWeight', new THREE.Float32BufferAttribute(this.sw, 4));
+    g.setIndex(this.idx);
+    g.computeBoundingSphere();
+    g.computeBoundingBox();
+    return g;
+  }
+}
+
+/** Blend between two bones across a joint at height `jy`. */
+const across = (jy, span, above, below) => (x, y) => {
+  const t = smoothT(clamp((y - (jy - span)) / (span * 2), 0, 1));
+  return [above, t, below, 1 - t];
+};
+const solid = (b) => () => [b, 1, 0, 0];
+
+function limbInto(b, segs, col) {
+  b.loftY(segs.map((sg) => ({ y: sg[0], pts: oval(sg[1], sg[2], 8) })), col,
+    { capStart: true, capEnd: true });
+}
+
+/**
+ * Builds one character variant: a skinned geometry in the rest pose. Callers
+ * pair it with a fresh skeleton per instance.
+ */
+export function buildCharacter(opts = {}) {
   const seed = opts.seed != null ? opts.seed : 0;
   const skin = opts.skin || SKINS[Math.floor(hash2(seed, 1) * SKINS.length)];
   const shirt = opts.shirt || SHIRTS[Math.floor(hash2(seed, 2) * SHIRTS.length)];
   const pants = opts.pants || PANTS[Math.floor(hash2(seed, 3) * PANTS.length)];
   const hair = opts.hair || HAIR[Math.floor(hash2(seed, 4) * HAIR.length)];
-  const scale = opts.scale || (0.92 + hash2(seed, 5) * 0.18);
+  const build = 0.92 + hash2(seed, 6) * 0.16;
+  const jacket = opts.vest ? true : hash2(seed, 7) > 0.5;
+  const shortSleeve = !jacket && hash2(seed, 8) > 0.55;
+  const shoeCol = [0.11, 0.11, 0.12];
+  const coat = jacket ? [shirt[0] * 0.66, shirt[1] * 0.66, shirt[2] * 0.7] : shirt;
+
+  const acc = new SkinAcc();
+  const bw = 0.132 * build, bd = 0.096 * build;
+  const cw = 0.160 * build, cd = 0.112 * build;
+  const sw = 0.152 * build, sd = 0.107 * build;
+  const outer = jacket ? 1.05 : 1.0;
+
+  // --- pelvis + torso ------------------------------------------------------
+  const pelvis = new Builder(false);
+  pelvis.loftY([
+    { y: J.hip - 0.14, pts: oval(bw * 0.95, bd * 0.97, 10) },
+    { y: J.hip, pts: oval(bw, bd, 10) },
+    { y: J.hip + 0.07, pts: oval(bw * 0.95, bd * 0.95, 10) },
+  ], pants, { capStart: true });
+  acc.add(pelvis, across(J.spine - 0.06, 0.09, B.spine, B.hips));
 
   const torso = new Builder(false);
-  // hips -> shoulders
-  torso.box(0, 0, 0, 0.42, 0.52, 0.24, 0, shirt);
-  torso.box(0, 0.52, 0, 0.2, 0.12, 0.2, 0, skin); // neck
-  torso.box(0, 0.64, 0, 0.27, 0.28, 0.26, 0, skin); // head
-  torso.box(0, 0.85, 0, 0.29, 0.09, 0.28, 0, hair);
-  torso.box(0, 0.78, -0.02, 0.30, 0.09, 0.30, 0, hair);
-  if (opts.hat) torso.box(0, 0.9, 0, 0.34, 0.08, 0.36, 0, opts.hat);
-  if (opts.vest) torso.box(0, 0.06, 0, 0.45, 0.4, 0.27, 0, opts.vest);
-
-  const armB = () => {
-    const b = new Builder(false);
-    b.box(0, -0.44, 0, 0.13, 0.36, 0.14, 0, shirt);
-    b.box(0, -0.62, 0, 0.12, 0.2, 0.13, 0, skin);
-    return b.build();
-  };
-  // Crowd extras bake their arms into the torso: 3 draw calls per body instead
-  // of 5, which matters once there are two dozen of them on screen.
-  if (!opts.animateArms) {
-    for (const sx of [-0.28, 0.28]) {
-      torso.box(sx, -0.02, 0, 0.13, 0.36, 0.14, 0, shirt);
-      torso.box(sx, -0.20, 0, 0.12, 0.2, 0.13, 0, skin);
-    }
+  torso.loftY([
+    { y: J.hip + 0.06, pts: oval(bw * 0.93 * outer, bd * 0.94 * outer, 10) },
+    { y: J.spine, pts: oval(bw * 0.86 * outer, bd * 0.9 * outer, 10) },
+    { y: J.chest, pts: oval(cw * outer, cd * outer, 10) },
+    { y: J.shoulder - 0.02, pts: oval(sw * outer, sd * outer, 10) },
+    { y: J.shoulder + 0.045, pts: oval(sw * 0.7 * outer, sd * 0.88 * outer, 10) },
+    { y: J.shoulder + 0.085, pts: oval(sw * 0.42 * outer, sd * 0.66 * outer, 10) },
+  ], coat, {});
+  if (jacket) {
+    torso.box(0, J.hip + 0.07, bd * 0.92 * outer, 0.04, J.chest - J.hip + 0.18, 0.02, 0,
+      [coat[0] * 0.6, coat[1] * 0.6, coat[2] * 0.64]);
   }
-  const legB = () => {
-    const b = new Builder(false);
-    b.box(0, -0.44, 0, 0.16, 0.46, 0.16, 0, pants);
-    b.box(0, -0.52, 0.03, 0.17, 0.09, 0.26, 0, [0.14, 0.13, 0.13]);
-    return b.build();
-  };
-
-  const g = new THREE.Group();
-  const body = new THREE.Mesh(torso.build(), pedMat);
-  body.position.y = 0.86;
-  g.add(body);
-
-  const mkLimb = (geo, x, y) => {
-    const m = new THREE.Mesh(geo, pedMat);
-    m.position.set(x, y, 0);
-    g.add(m);
-    return m;
-  };
-  const legGeo = legB();
-  let armL = null, armR = null;
-  if (opts.animateArms) {
-    const armGeo = armB();
-    armL = mkLimb(armGeo, -0.28, 1.32);
-    armR = mkLimb(armGeo, 0.28, 1.32);
+  if (opts.vest) {
+    torso.loftY([
+      { y: J.hip + 0.12, pts: oval(bw * 1.03 * outer, bd * 1.05 * outer, 10) },
+      { y: J.chest + 0.06, pts: oval(cw * 1.03 * outer, cd * 1.05 * outer, 10) },
+      { y: J.shoulder - 0.04, pts: oval(sw * 0.98 * outer, sd * 1.02 * outer, 10) },
+    ], opts.vest, {});
   }
-  const legL = mkLimb(legGeo, -0.11, 0.88);
-  const legR = mkLimb(legGeo, 0.11, 0.88);
-  g.scale.setScalar(scale);
-  g.traverse((o) => { if (o.isMesh) o.castShadow = true; });
-  return { group: g, body, armL, armR, legL, legR, height: 1.75 * scale };
+  acc.add(torso, (x, y) => {
+    if (y < J.spine) return across(J.spine - 0.05, 0.1, B.spine, B.hips)(x, y);
+    return across(J.chest - 0.06, 0.12, B.chest, B.spine)(x, y);
+  });
+
+  // --- neck + head ---------------------------------------------------------
+  const head = new Builder(false);
+  head.loftY([
+    { y: J.shoulder + 0.03, pts: oval(0.061, 0.057, 8) },
+    { y: J.neck + 0.02, pts: oval(0.051, 0.049, 8) },
+  ], skin, {});
+  const HY = J.neck + 0.09;
+  head.loftY([
+    { y: J.neck - 0.01, pts: oval(0.056, 0.055, 10) },
+    { y: J.neck + 0.05, pts: oval(0.079, 0.086, 10, 0, 0.006) },
+    { y: HY, pts: oval(0.094, 0.102, 10, 0, 0.006) },
+    { y: HY + 0.07, pts: oval(0.091, 0.098, 10, 0, 0.002) },
+    { y: HY + 0.13, pts: oval(0.062, 0.066, 10, 0, -0.008) },
+    { y: HY + 0.16, pts: oval(0.026, 0.028, 10, 0, -0.012) },
+  ], skin, { capStart: true, capEnd: true });
+  head.loftY([
+    { y: HY - 0.075, pts: oval(0.086, 0.094, 10, 0, -0.032) },
+    { y: HY - 0.015, pts: oval(0.098, 0.106, 10, 0, -0.018) },
+    { y: HY + 0.072, pts: oval(0.096, 0.102, 10, 0, -0.018) },
+    { y: HY + 0.132, pts: oval(0.066, 0.070, 10, 0, -0.02) },
+    { y: HY + 0.163, pts: oval(0.027, 0.029, 10, 0, -0.016) },
+  ], hair, { capEnd: true });
+  head.box(0, HY + 0.03, 0.086, 0.125, 0.02, 0.028, 0, hair);
+  head.box(0, HY - 0.012, 0.09, 0.026, 0.048, 0.032, 0, skin);
+  for (const sx of [-0.04, 0.04]) head.box(sx, HY + 0.008, 0.088, 0.026, 0.016, 0.018, 0, [0.13, 0.12, 0.13]);
+  if (opts.hat) {
+    head.loftY([
+      { y: HY + 0.06, pts: oval(0.104, 0.111, 10) },
+      { y: HY + 0.15, pts: oval(0.097, 0.103, 10) },
+      { y: HY + 0.178, pts: oval(0.068, 0.073, 10) },
+    ], opts.hat, { capEnd: true });
+    head.box(0, HY + 0.055, 0.078, 0.196, 0.02, 0.13, 0, opts.hat);
+  }
+  acc.add(head, (x, y) => {
+    if (y < J.neck) return across(J.neck - 0.04, 0.07, B.neck, B.chest)(x, y);
+    return across(J.head + 0.01, 0.05, B.head, B.neck)(x, y);
+  });
+
+  // --- arms ----------------------------------------------------------------
+  for (const side of [-1, 1]) {
+    const arm = new Builder(false);
+    const X = side * SHOULDER_X;
+    const seg = (y, rx, rz) => [y, rx, rz];
+    const upper = new Builder(false);
+    upper.loftY([
+      { y: J.shoulder + 0.038, pts: oval(0.028, 0.026, 8, X, 0) },
+      { y: J.shoulder + 0.018, pts: oval(0.050, 0.047, 8, X, 0) },
+      { y: J.shoulder - 0.022, pts: oval(0.060, 0.057, 8, X, 0) },
+      { y: J.shoulder - 0.10, pts: oval(0.051, 0.049, 8, X, 0) },
+      { y: J.elbow + 0.02, pts: oval(0.044, 0.043, 8, X, 0) },
+      { y: J.elbow - 0.02, pts: oval(0.043, 0.042, 8, X, 0) },
+      { y: J.wrist + 0.03, pts: oval(0.035, 0.034, 8, X, 0) },
+    ], shortSleeve
+      ? [coat, coat, coat, coat, skin, skin, skin]
+      : coat, { capStart: true, capEnd: true });
+    arm.pos = upper.pos; arm.nor = upper.nor; arm.col = upper.col; arm.idx = upper.idx;
+    acc.add(arm, (x, y) => {
+      if (y > J.elbow) return across(J.elbow + 0.05, 0.09, side < 0 ? B.shoulderL : B.shoulderR, side < 0 ? B.elbowL : B.elbowR)(x, y);
+      return [side < 0 ? B.elbowL : B.elbowR, 1, 0, 0];
+    });
+    const hand = new Builder(false);
+    hand.loftY([
+      { y: J.wrist + 0.01, pts: oval(0.034, 0.031, 8, X, 0) },
+      { y: J.wrist - 0.05, pts: oval(0.039, 0.029, 8, X, 0.004) },
+      { y: J.wrist - 0.115, pts: oval(0.029, 0.022, 8, X, 0.006) },
+    ], skin, { capStart: true, capEnd: true });
+    acc.add(hand, solid(side < 0 ? B.handL : B.handR));
+  }
+
+  // --- legs ----------------------------------------------------------------
+  for (const side of [-1, 1]) {
+    const X = side * HIP_X;
+    const leg = new Builder(false);
+    leg.loftY([
+      { y: J.hip + 0.03, pts: oval(0.092, 0.09, 8, X, 0) },
+      { y: J.hip - 0.08, pts: oval(0.086, 0.085, 8, X, 0) },
+      { y: J.knee + 0.08, pts: oval(0.062, 0.062, 8, X, 0) },
+      { y: J.knee + 0.02, pts: oval(0.058, 0.059, 8, X, 0) },
+      { y: J.knee - 0.03, pts: oval(0.058, 0.060, 8, X, 0.004) },
+      { y: J.knee - 0.16, pts: oval(0.055, 0.058, 8, X, 0.002) },
+      { y: J.ankle + 0.09, pts: oval(0.042, 0.045, 8, X, 0) },
+    ], pants, { capStart: true, capEnd: true });
+    acc.add(leg, (x, y) => across(J.knee + 0.04, 0.1,
+      side < 0 ? B.thighL : B.thighR, side < 0 ? B.kneeL : B.kneeR)(x, y));
+
+    const foot = new Builder(false);
+    foot.loftY([
+      { y: J.ankle + 0.09, pts: oval(0.041, 0.044, 8, X, 0) },
+      { y: J.ankle, pts: oval(0.043, 0.05, 8, X, 0.012) },
+      { y: J.ankle - 0.04, pts: oval(0.048, 0.078, 8, X, 0.042) },
+      { y: J.ankle - 0.055, pts: oval(0.044, 0.082, 8, X, 0.05) },
+    ], shoeCol, { capStart: true, capEnd: true });
+    acc.add(foot, solid(side < 0 ? B.footL : B.footR));
+  }
+
+  return acc.build();
 }
 
-export function animateWalk(h, phase, amp, dt) {
-  const s = Math.sin(phase) * amp;
-  const c = Math.sin(phase + Math.PI) * amp;
-  h.legL.rotation.x = s;
-  h.legR.rotation.x = c;
-  if (h.armL) { h.armL.rotation.x = c * 0.8; h.armR.rotation.x = s * 0.8; }
-  h.body.rotation.z = Math.sin(phase * 2) * amp * 0.05;
+// A small pool of pre-built looks, shared by every pedestrian. Per-instance
+// variety comes from the skeleton, scale and gait rather than new geometry.
+let VARIANTS = null;
+function variants() {
+  if (!VARIANTS) {
+    VARIANTS = [];
+    for (let i = 0; i < 12; i++) VARIANTS.push(buildCharacter({ seed: i * 7919 + 13 }));
+  }
+  return VARIANTS;
+}
+
+export function makeHumanoid(opts = {}) {
+  const seed = opts.seed != null ? opts.seed : 0;
+  const geo = opts.geometry
+    || (opts.unique ? buildCharacter(opts) : variants()[Math.floor(hash2(seed, 9) * 12) % 12]);
+  const bones = makeSkeletonBones();
+  const mesh = new THREE.SkinnedMesh(geo, pedMat);
+  mesh.add(bones[B.root]);
+  mesh.bind(new THREE.Skeleton(bones));
+  mesh.castShadow = true;
+  mesh.frustumCulled = false;
+
+  const g = new THREE.Group();
+  g.add(mesh);
+  const scale = opts.scale || (0.94 + hash2(seed, 5) * 0.14);
+  g.scale.setScalar(scale);
+  return {
+    group: g, mesh, bones, height: 1.75 * scale, bob: 0,
+    gait: 0.85 + hash2(seed, 11) * 0.3,
+    lean: hash2(seed, 12) * 0.06,
+    swing: 0.8 + hash2(seed, 13) * 0.45,
+    t: hash2(seed, 14) * 10,
+  };
+}
+
+/**
+ * Procedural walk/idle cycle. Hips bob and sway, knees and elbows actually
+ * bend, the chest counter-rotates against the pelvis and the head stays level.
+ */
+export function animateWalk(h, phase, amp, dt, speed) {
+  const b = h.bones;
+  h.t += dt || 0;
+  const A = amp * h.gait;
+  const s = Math.sin(phase), c = Math.cos(phase);
+  const spd = speed != null ? speed : amp * 4;
+  const run = clamp(spd / 6, 0, 1);
+
+  // legs: hip swing with a knee that flexes through the swing phase
+  const kneeFor = (ph) => 0.12 + (0.55 + 0.5 * run) * A * Math.max(0, 1 - Math.cos(ph + 0.5)) * 0.5;
+  const stride = A * 0.95;
+  b[B.thighL].rotation.x = -stride * s;
+  b[B.thighR].rotation.x = stride * s;
+  b[B.kneeL].rotation.x = kneeFor(phase + Math.PI);
+  b[B.kneeR].rotation.x = kneeFor(phase);
+  b[B.footL].rotation.x = -0.35 * b[B.kneeL].rotation.x + A * 0.35 * s + 0.06;
+  b[B.footR].rotation.x = -0.35 * b[B.kneeR].rotation.x - A * 0.35 * s + 0.06;
+
+  // arms: opposite phase, elbows carried bent and tightening on the forward swing
+  const armA = A * 0.8 * h.swing;
+  b[B.shoulderL].rotation.x = armA * 1.1 * s;
+  b[B.shoulderR].rotation.x = -armA * 1.1 * s;
+  b[B.shoulderL].rotation.z = 0.06 + A * 0.1;
+  b[B.shoulderR].rotation.z = -0.06 - A * 0.1;
+  b[B.elbowL].rotation.x = -(0.22 + 0.5 * run) - Math.max(0, armA * 1.4 * s);
+  b[B.elbowR].rotation.x = -(0.22 + 0.5 * run) - Math.max(0, -armA * 1.4 * s);
+
+  // Pelvis: the hips have to DROP as the legs scissor, or the planted foot
+  // slides under the ground and the whole figure looks like it is floating.
+  const legLen = J.hip - J.ankle;
+  const scissor = legLen * (1 - Math.cos(stride * Math.abs(s)));
+  b[B.hips].position.y = J.hip - scissor - Math.abs(s) * A * 0.03;
+  b[B.hips].position.x = s * A * 0.035;
+  b[B.hips].rotation.z = -s * A * 0.11;
+  b[B.hips].rotation.y = -s * A * 0.30;
+  b[B.spine].rotation.y = s * A * 0.16;
+  b[B.chest].rotation.y = s * A * 0.30;
+  b[B.chest].rotation.x = h.lean + A * 0.10 + run * 0.10;
+  b[B.chest].rotation.z = -c * A * 0.05;
+
+  // head stays level and pointed where the body is going
+  b[B.neck].rotation.x = -h.lean * 0.6 - A * 0.06 - run * 0.08;
+  b[B.head].rotation.y = -s * A * 0.22 + Math.sin(h.t * 0.6) * 0.12 * (1 - run);
+  b[B.head].rotation.x = -A * 0.08 + Math.sin(h.t * 0.9) * 0.03;
+
+  // idle: breathing and a slow weight shift so nobody stands like a statue
+  if (A < 0.05) {
+    const br = Math.sin(h.t * 1.5);
+    b[B.chest].rotation.x = h.lean + br * 0.02;
+    b[B.hips].position.x = Math.sin(h.t * 0.5) * 0.012;
+    b[B.hips].rotation.z = Math.sin(h.t * 0.5) * 0.03;
+    b[B.shoulderL].rotation.x = br * 0.03;
+    b[B.shoulderR].rotation.x = -br * 0.03;
+  }
+  h.bob = 0;
 }
 
 // ---------------------------------------------------------------------------
@@ -248,8 +540,8 @@ export class PedSystem {
       p.z = G.clampToMap(p.z);
       p.y = city.groundAt(p.x, p.z, p.y + 1);
 
-      p.phase += p.speed * 2.6 * dt;
-      animateWalk(p.h, p.phase, clamp(p.speed * 0.22, 0, 0.85), dt);
+      p.phase += (0.9 + p.speed * 2.2) * dt;
+      animateWalk(p.h, p.phase, clamp(p.speed * 0.20, 0, 0.8), dt, p.speed);
       p.h.group.position.set(p.x, p.y, p.z);
       p.h.group.rotation.y = p.heading;
       p.h.group.rotation.z = 0;
