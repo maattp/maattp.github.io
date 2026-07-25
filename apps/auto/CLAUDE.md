@@ -163,11 +163,63 @@ built rather than blocked out:
 - **Characters** (`peds.js`) are `SkinnedMesh`es: one draw call each, but with an
   18-bone skeleton, so elbows and knees actually bend. Geometry comes from a
   pool of 12 pre-built looks (per-instance variety is skeleton, scale and gait),
-  and `animateWalk` is a procedural cycle — hip swing with knee flex through the
-  swing phase, counter-rotating chest, level head, breathing idle. The one
-  non-obvious term is the **hip scissor drop**: `hips.y` has to fall by
-  `legLen * (1 - cos(stride))` as the legs open, or the planted foot sinks
-  through the ground and the figure looks like it is floating.
+  and `animateWalk` is a procedural cycle — counter-rotating chest, level head,
+  breathing idle, and the legs described below.
+
+### The gait plants feet, it doesn't swing legs
+
+`animateWalk` places each **foot target** and solves the knee to reach it. A leg
+alternates a stance half-cycle, where the foot holds a fixed spot and travels
+back under the character, and a swing half-cycle, where it arcs forward.
+
+Everything hangs off one number, `stepLength()`. The phase advances
+`PI * speed / step` per second and the stance target runs linearly from
+`+step/2` to `-step/2`, so **the planted foot moves backwards at exactly the
+speed the body moves forwards** — no foot skate, by construction rather than by
+tuning. The hips then ride at whatever height the planted leg can actually reach
+(`sqrt(REACH² - z²)`), which is where the twice-per-cycle bob comes from; don't
+re-add a hand-dialled one.
+
+Rotating the hip on a sine is what this replaced, and it cannot work: sized to
+cover the step length *on average*, the foot still sweeps ~57% faster than the
+body through mid-stance and slower at the ends, grinding against the ground the
+whole way. Measured, the planted foot moved 24 mm/frame while the body moved 25
+— the feet were barely holding at all, which is what read as flailing legs. The
+IK version measures 1.9 mm. If you touch the legs, re-measure that number:
+sample the lower foot's world XZ per frame and compare it against
+`speed * dt`.
+
+Two standing traps. `animateWalk` owns `h.phase` — advancing the cycle anywhere
+else re-introduces exactly the cadence/stride split that caused the bug. And the
+bones are **unscaled**, so a step in world metres has to be divided by
+`h.scale` or taller pedestrians over-stride.
+
+## Keeping buildings out of the road
+
+Two separate things put buildings in the middle of streets, and both are easy to
+reintroduce.
+
+**Lots are rectangles, so test them as rectangles.** `roadFit()` measures the
+rotated footprint along the line to each road (`|hw*(u·n)| + |hd*(v·n)|`, a box's
+support function) against the carriageway *and* the pavement. The old test was a
+bounding *circle* of `3 + max(w,d) * 0.28` — roughly 60% of the half-diagonal it
+needed to be, which put 880 buildings in the roadway, the worst 14 m deep. A
+circle can't be made to work: one large enough to contain the rectangle rejects
+most of a block. An oversized lot is **shrunk to fit rather than dropped**,
+because a block that came out as a single big lot legitimately overlaps the road
+and rejecting it empties the whole block. Shrinking is also why the fix *added*
+buildings (8737 → 9284) while removing the overlaps.
+
+**Hand-placed towers don't get a say in where the roads went.** `G.TOWERS` carry
+real Seattle coordinates and real footprints, but the road grid is procedural and
+laid out with no knowledge of them, and several footprints are simply wider than
+the block interior they land in (Columbia Center is 62 m; a downtown block leaves
+about 60 × 42 m between kerbs). Untouched, 17 of the 22 had a street through them
+and 5 had their centre in a live carriageway. `placeTower()` searches outward for
+the nearest spot that fits, so the smallest displacement wins, and shrinks
+whatever still doesn't — with a floor, because past a point a landmark stops
+being recognisable. `reserved` is built from the *placed* position, not `t.p`.
+Residual: UW Campus, which hits the shrink floor and still clips a road.
 
 ## The one height surface
 

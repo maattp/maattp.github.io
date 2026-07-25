@@ -16,7 +16,7 @@
 // fetches by URL with cache:'no-cache' — WebKit rejects fetch() of a
 // navigation-mode Request, which would silently kill the refresh of './' on
 // iOS, and no-cache skips GitHub Pages' 10-minute heuristic.
-const CACHE = 'auto-v5';
+const CACHE = 'auto-v6';
 const PINNED = ['vendor/three-0.160.0.module.js'];
 const SHELL = ['./', './index.html', './manifest.webmanifest',
   './icon-180.png', './icon-192.png', './icon-512.png'];

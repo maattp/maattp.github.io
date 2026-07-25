@@ -213,7 +213,26 @@ export function* cityGenerator() {
         l.push(ei);
       }
   }
-  const clearOfRoads = (x, z, pad) => {
+  /**
+   * How much a footprint has to shrink to clear every ground-level road --
+   * carriageway and pavement both. Returns a scale in (0,1], or 0 if the lot
+   * is unsalvageable.
+   *
+   * Two things this gets right that the old radius test didn't. The lot is
+   * measured as the rotated RECTANGLE it actually is: a bounding circle can't
+   * work, because one that contains the rectangle rejects most of a block and
+   * anything smaller lets the corners stand in the carriageway -- which is what
+   * a pad of `3 + max(w,d) * 0.28` did, at only ~60% of the half-diagonal it
+   * needed to be. And an oversized lot is SHRUNK rather than dropped: a block
+   * that came out as one big lot legitimately overlaps the road, and rejecting
+   * it outright empties the whole block instead of putting a smaller building
+   * on it.
+   */
+  const roadFit = (x, z, w, d, rot, margin) => {
+    const hw = w / 2 + margin, hd = d / 2 + margin;
+    let fit = 1;
+    const ux = Math.cos(rot), uz = Math.sin(rot); // lot's local +x in world
+    const vx = -Math.sin(rot), vz = Math.cos(rot); // lot's local +z in world
     const cx = Math.floor(x / segCell), cz = Math.floor(z / segCell);
     for (let ax = cx - 1; ax <= cx + 1; ax++)
       for (let az = cz - 1; az <= cz + 1; az++) {
@@ -224,14 +243,73 @@ export function* cityGenerator() {
           if (e.elev) continue;
           const a = g.nodes[e.a], b = g.nodes[e.b];
           const r = distToSeg(x, z, a.x, a.z, b.x, b.z);
-          if (r.d < e.hw + pad) return false;
+          if (r.d < 1e-4) return 0;
+          // Buildings front the pavement, so clear that too -- same widths the
+          // sidewalk strips and roadLift() use.
+          const walk = (e.cls === 'st' || e.cls === 'art' || e.cls === 'res')
+            ? (e.cls === 'art' ? 3.2 : 2.6) : 0;
+          // How far the rectangle reaches along the line to this road: the
+          // support function of a box, |hw*(u.n)| + |hd*(v.n)|.
+          const nx = (x - r.x) / r.d, nz = (z - r.z) / r.d;
+          const reach = Math.abs(hw * (ux * nx + uz * nz))
+            + Math.abs(hd * (vx * nx + vz * nz));
+          const room = r.d - e.hw - walk;
+          if (room <= 0) return 0; // centre is in the road; nothing to salvage
+          if (reach > room) fit = Math.min(fit, room / reach);
         }
       }
-    return true;
+    return fit;
   };
 
+  /**
+   * Where a hand-placed tower can actually stand.
+   *
+   * The towers carry real Seattle footprints and real coordinates, but the road
+   * grid under them is procedural and is laid out with no knowledge of them --
+   * and several of these footprints are simply wider than the block interior
+   * they land in (Columbia Center is 62 m across; a downtown block leaves about
+   * 60 x 42 m between kerbs). Left alone, 17 of the 22 have a street through
+   * them and 5 have their centre in a live carriageway.
+   *
+   * So: keep the tower, and look for the nearest spot where it fits, growing
+   * the search outward so the smallest displacement wins. Whatever still
+   * doesn't fit gets shrunk, down to a floor -- past that point a landmark has
+   * stopped being recognisable and it's better to leave it slightly proud.
+   */
+  const placeTower = (x, z, w, d) => {
+    const MIN_SCALE = 0.62;
+    let best = null;
+    for (let ring = 0; ring <= 16; ring++) {
+      const rad = ring * 3.5;
+      const steps = ring === 0 ? 1 : ring * 8;
+      for (let k = 0; k < steps; k++) {
+        const th = (k / steps) * Math.PI * 2;
+        const cx = x + Math.cos(th) * rad, cz = z + Math.sin(th) * rad;
+        if (!G.isBuildable(cx, cz) || G.inPark(cx, cz)) continue;
+        // don't solve a road clash by parking a tower on the Space Needle
+        if (G.LANDMARKS.some((l) => {
+          const lx = l.p ? l.p[0] : l.x, lz = l.p ? l.p[1] : l.z;
+          return Math.abs(cx - lx) <= 80 && Math.abs(cz - lz) <= 80;
+        })) continue;
+        const fit = Math.min(1, roadFit(cx, cz, w, d, G.DT_ROT, 0.6));
+        if (fit <= 0) continue;
+        const score = fit - rad * 0.0015; // fit first, then stay near home
+        if (!best || score > best.score) best = { x: cx, z: cz, fit, rad, score };
+      }
+      if (best && best.fit >= 1) break; // a perfect spot this close won't be beaten
+    }
+    if (!best) return { x, z, scale: MIN_SCALE, moved: 0, fitted: false };
+    const scale = Math.max(MIN_SCALE, best.fit);
+    return { x: best.x, z: best.z, scale, moved: best.rad, fitted: best.fit >= 1 };
+  };
+  const towerAt = new Map();
+  for (const t of G.TOWERS) towerAt.set(t, placeTower(t.p[0], t.p[1], t.w, t.d));
+
   // --- 4. Reserved footprints (hand-placed towers + landmarks) -------------
-  for (const t of G.TOWERS) reserved.push({ x: t.p[0], z: t.p[1], hw: t.w * 0.75, hd: t.d * 0.75, rot: G.DT_ROT });
+  for (const t of G.TOWERS) {
+    const p = towerAt.get(t);
+    reserved.push({ x: p.x, z: p.z, hw: t.w * p.scale * 0.75, hd: t.d * p.scale * 0.75, rot: G.DT_ROT });
+  }
   for (const l of G.LANDMARKS) {
     const x = l.p ? l.p[0] : l.x, z = l.p ? l.p[1] : l.z;
     reserved.push({ x, z, hw: 80, hd: 80, rot: 0 });
@@ -296,7 +374,12 @@ export function* cityGenerator() {
             if (w < 6 || dp < 6) continue;
             const hs = hash2(Math.round(bx), Math.round(bz));
             if (hs > d.cover) continue;
-            if (!clearOfRoads(bx, bz, 3 + Math.max(w, dp) * 0.28)) continue;
+            // Pull the lot back off the road rather than dropping it, then
+            // re-check the minimum: a shrunk-to-nothing lot is still no lot.
+            const fit = roadFit(bx, bz, w, dp, d.rot, 0.8);
+            if (fit <= 0) continue;
+            if (fit < 1) { w *= fit; dp *= fit; }
+            if (w < 6 || dp < 6) continue;
             // Height: taller near the core, with a long tail.
             const coreD = Math.hypot(bx - 180, bz - 320);
             const coreBoost = clamp(1.35 - coreD / 1800, 0.6, 1.35);
@@ -322,11 +405,12 @@ export function* cityGenerator() {
     if (dn % 3 === 0) yield { p: 0.5 + 0.34 * (dn / districtNodes.length), msg: 'Building ' + d.name };
   }
 
-  // Hand-placed towers on top.
+  // Hand-placed towers on top, at the spot placeTower() found for each.
   for (const t of G.TOWERS) {
+    const p = towerAt.get(t);
     buildings.push({
-      x: t.p[0], z: t.p[1], w: t.w, d: t.d, rot: G.DT_ROT, h: t.h,
-      y: G.terrainHeight(t.p[0], t.p[1]),
+      x: p.x, z: p.z, w: t.w * p.scale, d: t.d * p.scale, rot: G.DT_ROT, h: t.h,
+      y: G.terrainHeight(p.x, p.z),
       style: 'tower', seed: (t.h * 977) | 0, kind: t.kind, name: t.name,
     });
   }
