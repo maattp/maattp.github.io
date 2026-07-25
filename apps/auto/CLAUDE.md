@@ -226,6 +226,17 @@ because a block that came out as a single big lot legitimately overlaps the road
 and rejecting it empties the whole block. Shrinking is also why the fix *added*
 buildings (8737 → 9284) while removing the overlaps.
 
+**Nothing may stand where the player is put down.** `G.KEEP_CLEAR` (spawn and
+the hospital respawn) is enforced by a filter pass at the end of the building
+step. This used to hold by luck — `SPAWN` sits on a block edge — until lots
+started being shrunk to fit rather than dropped, which put a tower back on 4th &
+Olive and left the player permanently jammed. `player.blocked()` also lets you
+move when you are *already* inside a footprint: refusing every direction is how
+that failure presents, and it looks exactly like the walk animation playing
+while nobody moves. Clipping out beats being stuck. Note the symptom gives no
+visual clue — 1.5 m inside a footprint edge you are flush against the facade
+with pavement in front of you, which reads as standing on the street.
+
 **Hand-placed towers don't get a say in where the roads went.** `G.TOWERS` carry
 real Seattle coordinates and real footprints, but the road grid is procedural and
 laid out with no knowledge of them, and several footprints are simply wider than
@@ -335,12 +346,18 @@ camera, renderer, controls, audio, pickups, G, THREE }`. Useful moves:
 __dbg.game.paused = true;                    // freeze and fly the camera
 __dbg.player.enterVehicle(__dbg.traffic.nearestEnterable(x, z, 400));
 __dbg.controls.btn.gas = true;               // drive
-__dbg.controls.stick.y = -1;                 // walk
 __dbg.game.addHeat(400);                     // summon the police
 ```
 
 Note SwiftShader runs at ~5 fps, and `dt` is clamped to 0.06 s, so game time
 advances far slower than wall-clock — measure displacement, not elapsed seconds.
+Ten wall-clock seconds of walking is only a few metres; don't read that as stuck.
+
+**To walk, send real keys** (`page.keyboard.down('w')`). Assigning
+`__dbg.controls.stick.y` does nothing: `read()` opens with
+`if (this._stickId === null && ...) this.releaseStick()`, the anti-latch guard
+from the stuck-stick fix, so a stick set without a live pointer is zeroed on the
+very next frame. This silently reads as "the player can't move."
 
 ## Offline
 

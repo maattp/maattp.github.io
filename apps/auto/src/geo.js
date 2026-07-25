@@ -648,6 +648,13 @@ export const RAMPS = [
 ];
 
 export const SPAWN = { x: 60, z: -20 }; // 4th & Olive: clear of buildings, on the block edge
+export const RESPAWN = { x: 1050, z: 300 }; // Harborview
+/**
+ * Points the player gets put down on. citygen removes any building covering
+ * one: land inside a footprint and `player.blocked()` refuses every direction,
+ * which reads in-game as the walk animation playing while nobody moves.
+ */
+export const KEEP_CLEAR = [SPAWN, RESPAWN];
 
 export function clampToMap(v) {
   return clamp(v, -MAP_HALF + 40, MAP_HALF - 40);

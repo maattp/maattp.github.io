@@ -417,6 +417,25 @@ export function* cityGenerator() {
     });
   }
 
+  // Nothing may stand where the player gets put down. This used to hold by
+  // luck -- SPAWN sits on a block edge -- until lots started being shrunk to
+  // fit instead of dropped, which put a tower back on 4th & Olive. Inside a
+  // footprint, blocked() refuses every direction and the player is stuck for
+  // good, walking on the spot.
+  const CLEAR = 2.2; // player's collision half-width, plus room to turn around
+  for (let bi = buildings.length - 1; bi >= 0; bi--) {
+    const bd = buildings[bi];
+    const c = Math.cos(-bd.rot), s = Math.sin(-bd.rot);
+    for (const p of G.KEEP_CLEAR) {
+      const dx = p.x - bd.x, dz = p.z - bd.z;
+      const lx = dx * c - dz * s, lz = dx * s + dz * c;
+      if (Math.abs(lx) < bd.w / 2 + CLEAR && Math.abs(lz) < bd.d / 2 + CLEAR) {
+        buildings.splice(bi, 1);
+        break;
+      }
+    }
+  }
+
   yield { p: 0.88, msg: 'Indexing the city' };
 
   // --- 6. Chunk index ------------------------------------------------------

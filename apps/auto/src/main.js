@@ -22,7 +22,7 @@ const loadMsg = document.getElementById('loadMsg');
 const loading = document.getElementById('loading');
 
 const STAR_POINTS = [0, 30, 90, 190, 340, 560];
-const HOSPITAL = { x: 1050, z: 300 };
+const HOSPITAL = G.RESPAWN; // kept clear of buildings by citygen, via G.KEEP_CLEAR
 
 class Game {
   constructor() {
