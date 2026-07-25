@@ -20,6 +20,12 @@ const CLASS_HW = { hwy: 15, art: 9.5, st: 6.5, res: 5.5, ramp: 5.5 };
 const MAX_HW = Math.max(...Object.values(CLASS_HW));
 // Widest pavement a junction ring can carry, for the same reason.
 const MAX_WALK = 3.2;
+// How far a paved surface tapers out at its outer edge, so nothing steps off a
+// cliff. Note this is the only place the lift is smoothed: the kerb between
+// road and pavement is a real 22 cm step and the query has to report it,
+// because world.js draws it that way. Smoothing belongs in the character and
+// the camera -- soften it here and you sink into the kerb instead.
+const RAMP = 0.5;
 const CLASS_SPEED = { hwy: 30, art: 17, st: 12, res: 9, ramp: 14 };
 
 // ---------------------------------------------------------------------------
@@ -704,7 +710,7 @@ export function* cityGenerator() {
             if (r.d > outer) continue;
             let l = r.d <= e.hw ? ROAD_LIFT : WALK_LIFT;
             // taper the last half metre so nothing steps off a cliff edge
-            if (r.d > outer - 0.5) l *= (outer - r.d) / 0.5;
+            if (r.d > outer - RAMP) l *= (outer - r.d) / RAMP;
             if (l > lift) lift = l;
           }
         }

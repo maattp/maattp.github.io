@@ -16,7 +16,13 @@ function canvas(w, h) {
   return { c, g: c.getContext('2d') };
 }
 
-function tex(c, { repeat = true, aniso = 8, srgb = true, mips = true } = {}) {
+// Ask for the most anisotropy any GPU offers; three clamps it to the device
+// maximum on upload. Road surfaces are the case this exists for -- lane
+// markings are 8-12 px lines in a 512 texture, seen at a grazing angle from eye
+// height, and at anisotropy 8 they shimmered as you walked. Removing the albedo
+// map dropped the frame-to-frame churn from a 4 mm camera move from 6.6% of
+// pixels to 0.7%, so the flicker was all in this one map.
+function tex(c, { repeat = true, aniso = 16, srgb = true, mips = true } = {}) {
   const t = new THREE.CanvasTexture(c);
   if (repeat) {
     t.wrapS = THREE.RepeatWrapping;
