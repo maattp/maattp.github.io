@@ -132,7 +132,11 @@ export class Hud {
     ctx.arc(S / 2, S / 2, S / 2, 0, Math.PI * 2);
     ctx.clip();
     ctx.translate(S / 2, S / 2);
-    ctx.rotate(-player.camYaw + Math.PI);
+    // The map image is drawn world-aligned (+X right, +Z down). Rotating by
+    // camYaw puts the camera's forward heading (camYaw + PI) at the top and,
+    // because a larger heading is a left turn, also puts the player's
+    // screen-right on the right of the dial.
+    ctx.rotate(player.camYaw);
     ctx.scale(zoom, zoom);
     const sx = (p.x + G.MAP_HALF) * SCALE;
     const sz = (p.z + G.MAP_HALF) * SCALE;
@@ -161,7 +165,8 @@ export class Hud {
     // player arrow, always upright at centre
     ctx.save();
     ctx.translate(S / 2, S / 2);
-    const rel = -player.camYaw + Math.PI + (player.onFoot ? player.heading : player.vehicle ? player.vehicle.heading : 0);
+    const heading = player.onFoot ? player.heading : player.vehicle ? player.vehicle.heading : 0;
+    const rel = player.camYaw + Math.PI - heading;
     ctx.rotate(rel);
     ctx.fillStyle = '#ffffff';
     ctx.strokeStyle = '#101418';
@@ -249,7 +254,8 @@ export class Hud {
     const [px, pz] = toC(p.x, p.z);
     ctx.save();
     ctx.translate(px, pz);
-    ctx.rotate(player.onFoot ? player.heading : player.vehicle ? player.vehicle.heading : 0);
+    // North-up map: heading 0 faces +Z, which is south, i.e. down the page.
+    ctx.rotate(Math.PI - (player.onFoot ? player.heading : player.vehicle ? player.vehicle.heading : 0));
     ctx.fillStyle = '#ffffff';
     ctx.strokeStyle = '#000';
     ctx.lineWidth = 1.5;

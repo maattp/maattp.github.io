@@ -56,6 +56,35 @@ console.log(G.isWater(-3000,-2500) /* Magnolia: must be false */,
 A shoreline polygon that doubles back swallows a whole neighbourhood; that is how
 Magnolia disappeared during the first build.
 
+## Heading sense (the sign trap)
+
+`heading` is literally a three.js `rotation.y`, so **forward = `(sin h, cos h)`**
+and heading `0` faces `+Z`, which in this world is *south*. That makes the sim
+consistent with the models (a car's local `+Z` is its nose) but it has one
+consequence that is easy to get backwards:
+
+> **A larger heading rotates anticlockwise — i.e. it turns LEFT on screen.**
+
+So anything converting a screen-space or compass-space intent into a heading has
+to flip the horizontal sign. The three places that do:
+
+- `player.updateDrive`: `steer = -input.x`.
+- `player.updateFoot`: `Math.atan2(-input.x, -input.y) + camYaw + PI`.
+- `hud`: minimap rotates by `camYaw` (not `-camYaw`), the minimap arrow uses
+  `camYaw + PI - heading`, and the north-up full map uses `PI - heading`.
+
+`util.dirDeg()` is the *other* convention (compass bearing, `0` = north,
+clockwise). It is only used for district grid axes in geo.js — never for an
+entity heading. Don't mix them.
+
+To check a change, don't reason about it — measure. Project a world point to
+NDC and see which side of the screen it lands on:
+
+```js
+// facing heading 0, world +X must land at NEGATIVE ndc.x (screen left)
+new THREE.Vector3(p.x + 30, p.y + 1, p.z + 40).project(__dbg.camera).x
+```
+
 ## The one height surface
 
 `geo.rawTerrainHeight()` is expensive (polygon distance tests), so it is baked
