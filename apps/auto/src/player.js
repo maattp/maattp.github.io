@@ -19,7 +19,6 @@ export class Player {
     this.heading = 2.58; // pointed down 4th Ave, toward Pioneer Square
     this.vy = 0;
     this.grounded = true;
-    this.phase = 0;
     this.speed = 0;
     this.onFoot = true;
     this.vehicle = null;
@@ -134,8 +133,7 @@ export class Player {
     // drowning
     if (this.y < -0.6 && G.isWater(this.x, this.z)) this.game.onDrown();
 
-    this.phase += (0.9 + this.speed * 2.0) * dt;
-    animateWalk(this.h, this.phase, clamp(this.speed * 0.16, 0, 0.85), dt, this.speed);
+    animateWalk(this.h, clamp(this.speed * 0.16, 0, 0.85), dt, this.speed);
     this.h.group.position.set(this.x, this.y, this.z);
     this.h.group.rotation.y = this.heading;
 

@@ -181,6 +181,33 @@ export class Hud {
     ctx.stroke();
     ctx.restore();
 
+    // North marker on the rim. The map is drawn world-aligned and then turned
+    // by camYaw, and north is -Z (heading 0 faces +Z, which is south), so the
+    // direction that was straight up before the rotation ends up here. Drawn
+    // outside that transform so the letter stays upright at any bearing.
+    ctx.save();
+    ctx.translate(S / 2, S / 2);
+    const nx = Math.sin(player.camYaw), nz = -Math.cos(player.camYaw);
+    const rr = S / 2 - 10;
+    ctx.beginPath();
+    ctx.moveTo(nx * (rr + 7), nz * (rr + 7));
+    ctx.lineTo(nx * rr - nz * 4.5, nz * rr + nx * 4.5);
+    ctx.lineTo(nx * rr + nz * 4.5, nz * rr - nx * 4.5);
+    ctx.closePath();
+    ctx.fillStyle = '#ff5a4d';
+    ctx.strokeStyle = 'rgba(16,20,24,0.9)';
+    ctx.lineWidth = 1.2;
+    ctx.fill();
+    ctx.stroke();
+    ctx.font = 'bold 11px system-ui, -apple-system, sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.lineWidth = 2.6;
+    ctx.strokeText('N', nx * (rr - 9), nz * (rr - 9));
+    ctx.fillStyle = '#ffffff';
+    ctx.fillText('N', nx * (rr - 9), nz * (rr - 9));
+    ctx.restore();
+
     // readouts
     this.money.textContent = formatMoney(game.money);
     this.healthFill.style.width = `${clamp(player.health, 0, 100)}%`;

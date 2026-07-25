@@ -339,7 +339,7 @@ export function makeHumanoid(opts = {}) {
   const scale = opts.scale || (0.94 + hash2(seed, 5) * 0.14);
   g.scale.setScalar(scale);
   return {
-    group: g, mesh, bones, height: 1.75 * scale, bob: 0,
+    group: g, mesh, bones, height: 1.75 * scale, bob: 0, scale,
     // Pooled variants are shared by every pedestrian using that look, so only a
     // uniquely-built character may dispose its own geometry.
     dispose() { if (!pooled) geo.dispose(); },
@@ -347,30 +347,101 @@ export function makeHumanoid(opts = {}) {
     lean: hash2(seed, 12) * 0.06,
     swing: 0.8 + hash2(seed, 13) * 0.45,
     t: hash2(seed, 14) * 10,
+    // so a crowd isn't marching in lockstep
+    phase: hash2(seed, 15) * Math.PI * 2,
   };
+}
+
+const TAU = Math.PI * 2;
+const LEG = J.hip - J.ankle;
+const L_THIGH = J.hip - J.knee;
+const L_SHIN = J.knee - J.ankle;
+// Never ask the IK for a fully locked leg -- at full extension the knee angle
+// is stationary against distance and the solve jitters.
+const REACH = LEG * 0.99;
+
+/**
+ * Metres of ground covered per step, with the per-person gait variation folded
+ * in. This is the ONE number the gait is built on -- see animateWalk.
+ */
+function stepLength(h, speed) {
+  return clamp(0.62 + 0.16 * speed, 0.5, 1.7) * h.gait;
 }
 
 /**
  * Procedural walk/idle cycle. Hips bob and sway, knees and elbows actually
  * bend, the chest counter-rotates against the pelvis and the head stays level.
+ *
+ * Feet are PLACED, not swung. Each leg alternates a stance half-cycle, where the
+ * foot holds a fixed spot on the ground and simply travels back under the
+ * character, and a swing half-cycle, where it arcs forward to the next plant;
+ * the knee is then solved to reach that target. Rotating the hip on a sine
+ * instead — which is what this did — cannot plant a foot: sized to cover the
+ * step length on average, the foot still sweeps ~57% faster than the body
+ * through mid-stance and slower at the ends, so it grinds forwards and
+ * backwards against the ground the entire time. Measured, the planted foot was
+ * moving 24 mm per frame while the body moved 25, i.e. barely holding at all,
+ * and legs paddling under a gliding body is what reads as flailing.
+ *
+ * `h.phase` lives on the character so the cycle can't be advanced by anything
+ * that doesn't also know the step length.
  */
-export function animateWalk(h, phase, amp, dt, speed) {
+export function animateWalk(h, amp, dt, speed) {
   const b = h.bones;
   h.t += dt || 0;
   const A = amp * h.gait;
-  const s = Math.sin(phase), c = Math.cos(phase);
   const spd = speed != null ? speed : amp * 4;
   const run = clamp(spd / 6, 0, 1);
 
-  // legs: hip swing with a knee that flexes through the swing phase
-  const kneeFor = (ph) => 0.12 + (0.55 + 0.5 * run) * A * Math.max(0, 1 - Math.cos(ph + 0.5)) * 0.5;
-  const stride = A * 0.95;
-  b[B.thighL].rotation.x = -stride * s;
-  b[B.thighR].rotation.x = stride * s;
-  b[B.kneeL].rotation.x = kneeFor(phase + Math.PI);
-  b[B.kneeR].rotation.x = kneeFor(phase);
-  b[B.footL].rotation.x = -0.35 * b[B.kneeL].rotation.x + A * 0.35 * s + 0.06;
-  b[B.footR].rotation.x = -0.35 * b[B.kneeR].rotation.x - A * 0.35 * s + 0.06;
+  const step = stepLength(h, spd);
+  // pi of phase per step, so one full 2pi cycle is a left-right pair. Paired
+  // with a stance that runs linearly from +step/2 to -step/2, this makes the
+  // planted foot travel backwards at exactly `spd` -- no skate by construction.
+  h.phase = (h.phase || 0) + (dt || 0) * Math.PI * spd / step;
+  const phase = h.phase;
+  const s = Math.sin(phase), c = Math.cos(phase);
+  // fold the legs back under the hips as the character stops, since a frozen
+  // phase would otherwise leave them stranded mid-stride
+  const settle = clamp((spd - 0.15) / 0.5, 0, 1);
+
+  // legs: foot targets in character space, +z forward, y up from the ground.
+  // The bones are unscaled, so a step measured in world metres has to come back
+  // through the character's own scale or a tall pedestrian over-strides.
+  const sc = h.scale || 1;
+  const swept = (step / sc) * settle;
+  const lift = ((0.09 + 0.07 * run) / sc) * settle;
+  const target = (ph) => {
+    const w = ((ph % TAU) + TAU) % TAU;
+    const stance = w < Math.PI;
+    const u = (stance ? w : w - Math.PI) / Math.PI;
+    return stance
+      ? { z: (0.5 - u) * swept, y: J.ankle, stance: true }
+      : { z: (u - 0.5) * swept, y: J.ankle + lift * Math.sin(Math.PI * u), stance: false };
+  };
+  const tl = target(phase), tr = target(phase + Math.PI);
+
+  // The hips can only ride as high as the planted leg can reach, so the classic
+  // two-bob-per-cycle rise and fall falls out of the geometry instead of being
+  // dialled in: highest at mid-stance, lowest as the legs scissor apart.
+  const planted = tl.stance ? tl : tr;
+  const hipY = J.ankle + Math.sqrt(Math.max(0.04, REACH * REACH - planted.z * planted.z));
+
+  // two-bone IK, sagittal plane only: solve thigh and knee to hit the target
+  const solveLeg = (thigh, knee, foot, t) => {
+    const dz = t.z, dy = hipY - t.y;
+    const D = clamp(Math.hypot(dz, dy), Math.abs(L_THIGH - L_SHIN) + 1e-3, L_THIGH + L_SHIN - 1e-3);
+    const aim = Math.atan2(dz, dy); // target angle off straight-down, +z forward
+    // knee sits FORWARD of the hip-to-ankle line, so the thigh leads it by `off`
+    const off = Math.acos(clamp((L_THIGH * L_THIGH + D * D - L_SHIN * L_SHIN) / (2 * L_THIGH * D), -1, 1));
+    const inner = Math.acos(clamp((L_THIGH * L_THIGH + L_SHIN * L_SHIN - D * D) / (2 * L_THIGH * L_SHIN), -1, 1));
+    b[thigh].rotation.x = -(aim + off); // negative x rotation swings a limb to +z
+    b[knee].rotation.x = Math.PI - inner;
+    // keep the sole level through stance, toe up a little as it swings through
+    b[foot].rotation.x = -(b[thigh].rotation.x + b[knee].rotation.x)
+      + (t.stance ? 0.04 : 0.16 * Math.sin(Math.PI * ((t.z / (swept || 1)) + 0.5)));
+  };
+  solveLeg(B.thighL, B.kneeL, B.footL, tl);
+  solveLeg(B.thighR, B.kneeR, B.footR, tr);
 
   // arms: opposite phase, elbows carried bent and tightening on the forward swing
   const armA = A * 0.8 * h.swing;
@@ -383,11 +454,10 @@ export function animateWalk(h, phase, amp, dt, speed) {
   b[B.elbowL].rotation.x = -(0.20 + 0.5 * run) - Math.max(0, armA * 1.4 * s);
   b[B.elbowR].rotation.x = -(0.20 + 0.5 * run) - Math.max(0, -armA * 1.4 * s);
 
-  // Pelvis: the hips have to DROP as the legs scissor, or the planted foot
-  // slides under the ground and the whole figure looks like it is floating.
-  const legLen = J.hip - J.ankle;
-  const scissor = legLen * (1 - Math.cos(stride * Math.abs(s)));
-  b[B.hips].position.y = J.hip - scissor - Math.abs(s) * A * 0.03;
+  // Pelvis rides at whatever height the planted leg can actually reach (see
+  // hipY): drop it any lower and the foot slides under the ground, hold it any
+  // higher and the figure floats.
+  b[B.hips].position.y = hipY;
   b[B.hips].position.x = s * A * 0.035;
   b[B.hips].rotation.z = -s * A * 0.11;
   b[B.hips].rotation.y = -s * A * 0.30;
@@ -454,7 +524,7 @@ export class PedSystem {
       const p = {
         h, x, z, y: city.groundAt(x, z, null), lift: 0, heading: this.R.n() * Math.PI * 2,
         edge: ei, side, t, dirSign: this.R.n() < 0.5 ? 1 : -1,
-        speed: 0, phase: this.R.n() * 6.28, state: 'walk', timer: 0,
+        speed: 0, state: 'walk', timer: 0,
         cop: !!cop, shootCd: 1 + this.R.n(), down: 0, hp: cop ? 60 : 30,
       };
       this.scene.add(h.group);
@@ -571,8 +641,7 @@ export class PedSystem {
       p.lift = city.roadLift(p.x, p.z);
       p.y = city.groundAt(p.x, p.z, p.y + 1, p.lift);
 
-      p.phase += (0.9 + p.speed * 2.2) * dt;
-      animateWalk(p.h, p.phase, clamp(p.speed * 0.20, 0, 0.8), dt, p.speed);
+      animateWalk(p.h, clamp(p.speed * 0.20, 0, 0.8), dt, p.speed);
       p.h.group.position.set(p.x, p.y, p.z);
       p.h.group.rotation.y = p.heading;
       p.h.group.rotation.z = 0;

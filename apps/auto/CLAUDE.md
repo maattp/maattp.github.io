@@ -73,6 +73,14 @@ overlay can open under the finger, and a captured element that gets
   set that may be under a thumb (exiting a car with GAS down stuck the throttle).
 - `blur` / `pagehide` / `visibilitychange` call `resetAll()`.
 
+Backgrounding has the same shape of trap one level up: **pause through
+`setPaused`, never by assigning `game.paused`.** `visibilitychange` used to set
+the flag directly, which stopped the world without showing the pause menu, so
+returning from the home screen looked exactly like a hung game — the only way
+out was the pause button, which is not what anyone taps on a frozen app.
+`setPaused(false)` also calls `audio.resume()`, because iOS suspends the
+AudioContext on the way out and does not hand it back.
+
 Regression test — dispatch synthetic `PointerEvent`s and simply never send the
 `pointerup`, then check a fresh press re-acquires:
 
@@ -106,6 +114,14 @@ to flip the horizontal sign. The three places that do:
 clockwise). It is only used for district grid axes in geo.js — never for an
 entity heading. Don't mix them.
 
+The minimap's **north tick** falls out of the same rule. The map image is drawn
+world-aligned and then turned by `camYaw`, and north is `-Z` (heading `0` faces
+`+Z`, which is *south*), so north lands at `(sin camYaw, -cos camYaw)` from the
+centre — the direction that was straight up before the rotation. It's drawn
+outside the rotated transform so the letter stays upright at any bearing. That
+expression is the same one a blip at `(p.x, p.z - d)` resolves to, which is the
+cheap way to re-check it if the map transform ever changes.
+
 To check a change, don't reason about it — measure. Project a world point to
 NDC and see which side of the screen it lands on:
 
@@ -122,6 +138,15 @@ Physically-shaded, image-based-lit, tone-mapped, with a hand-rolled post chain.
   sets it as `scene.background` and runs it through `PMREMGenerator` into
   `scene.environment`. The analytic lights are only a key plus a fill, so
   `envMapIntensity` on a material is the main dial for how a surface reads in shade.
+- **`PMREMGenerator` is the one half-float exception, and it's guarded.** It
+  hard-codes `HalfFloatType` targets internally with no capability check, which
+  is exactly what the rest of the pipeline avoids. `halfFloatRenders()` draws a
+  white pixel into a half-float target and reads it back before `buildSky` trusts
+  it; a definite black falls back to the raw equirect as `scene.environment`
+  (`world.envPrefiltered === false`) — no prefiltered roughness mips, so rough
+  surfaces reflect too sharply, but the city stays lit instead of going dark.
+  Anything that makes the probe inconclusive counts as a pass, so hardware that
+  renders correctly today keeps the PMREM path.
 - **Tone mapping is ACES**, applied during the scene pass. Exposure lives in main.js.
 - **Every surface is a set**: albedo + normal + roughness (+ emissive where there
   are lit windows). Normals are sobel'd from a purpose-drawn *height* pass, not
@@ -154,11 +179,63 @@ built rather than blocked out:
 - **Characters** (`peds.js`) are `SkinnedMesh`es: one draw call each, but with an
   18-bone skeleton, so elbows and knees actually bend. Geometry comes from a
   pool of 12 pre-built looks (per-instance variety is skeleton, scale and gait),
-  and `animateWalk` is a procedural cycle — hip swing with knee flex through the
-  swing phase, counter-rotating chest, level head, breathing idle. The one
-  non-obvious term is the **hip scissor drop**: `hips.y` has to fall by
-  `legLen * (1 - cos(stride))` as the legs open, or the planted foot sinks
-  through the ground and the figure looks like it is floating.
+  and `animateWalk` is a procedural cycle — counter-rotating chest, level head,
+  breathing idle, and the legs described below.
+
+### The gait plants feet, it doesn't swing legs
+
+`animateWalk` places each **foot target** and solves the knee to reach it. A leg
+alternates a stance half-cycle, where the foot holds a fixed spot and travels
+back under the character, and a swing half-cycle, where it arcs forward.
+
+Everything hangs off one number, `stepLength()`. The phase advances
+`PI * speed / step` per second and the stance target runs linearly from
+`+step/2` to `-step/2`, so **the planted foot moves backwards at exactly the
+speed the body moves forwards** — no foot skate, by construction rather than by
+tuning. The hips then ride at whatever height the planted leg can actually reach
+(`sqrt(REACH² - z²)`), which is where the twice-per-cycle bob comes from; don't
+re-add a hand-dialled one.
+
+Rotating the hip on a sine is what this replaced, and it cannot work: sized to
+cover the step length *on average*, the foot still sweeps ~57% faster than the
+body through mid-stance and slower at the ends, grinding against the ground the
+whole way. Measured, the planted foot moved 24 mm/frame while the body moved 25
+— the feet were barely holding at all, which is what read as flailing legs. The
+IK version measures 1.9 mm. If you touch the legs, re-measure that number:
+sample the lower foot's world XZ per frame and compare it against
+`speed * dt`.
+
+Two standing traps. `animateWalk` owns `h.phase` — advancing the cycle anywhere
+else re-introduces exactly the cadence/stride split that caused the bug. And the
+bones are **unscaled**, so a step in world metres has to be divided by
+`h.scale` or taller pedestrians over-stride.
+
+## Keeping buildings out of the road
+
+Two separate things put buildings in the middle of streets, and both are easy to
+reintroduce.
+
+**Lots are rectangles, so test them as rectangles.** `roadFit()` measures the
+rotated footprint along the line to each road (`|hw*(u·n)| + |hd*(v·n)|`, a box's
+support function) against the carriageway *and* the pavement. The old test was a
+bounding *circle* of `3 + max(w,d) * 0.28` — roughly 60% of the half-diagonal it
+needed to be, which put 880 buildings in the roadway, the worst 14 m deep. A
+circle can't be made to work: one large enough to contain the rectangle rejects
+most of a block. An oversized lot is **shrunk to fit rather than dropped**,
+because a block that came out as a single big lot legitimately overlaps the road
+and rejecting it empties the whole block. Shrinking is also why the fix *added*
+buildings (8737 → 9284) while removing the overlaps.
+
+**Hand-placed towers don't get a say in where the roads went.** `G.TOWERS` carry
+real Seattle coordinates and real footprints, but the road grid is procedural and
+laid out with no knowledge of them, and several footprints are simply wider than
+the block interior they land in (Columbia Center is 62 m; a downtown block leaves
+about 60 × 42 m between kerbs). Untouched, 17 of the 22 had a street through them
+and 5 had their centre in a live carriageway. `placeTower()` searches outward for
+the nearest spot that fits, so the smallest displacement wins, and shrinks
+whatever still doesn't — with a floor, because past a point a landmark stops
+being recognisable. `reserved` is built from the *placed* position, not `t.p`.
+Residual: UW Campus, which hits the shrink floor and still clips a road.
 
 ## The one height surface
 
@@ -172,16 +249,36 @@ Bridges and freeway decks are separate: `city.groundAt(x, z, currentY)` returns
 the highest deck below `currentY + 2.6`, else the terrain.
 
 **Paved surfaces sit above the terrain and everything standing on them has to be
-lifted by the same amount.** `ROAD_LIFT` / `WALK_LIFT` in citygen.js are the
-single source of truth, shared with world.js. `city.roadLift(x, z)` reports the
-lift at a point; `groundAt` takes it as an optional 4th argument because
-vehicles sample the ground seven times a frame and the edge scan is too
-expensive to repeat per wheel. Forgetting this is what buried every car 22 cm
-into the asphalt.
+lifted by the same amount.** `ROAD_LIFT` / `NODE_LIFT` / `WALK_LIFT` in
+citygen.js are the single source of truth, shared with world.js.
+`city.roadLift(x, z)` reports the lift at a point; `groundAt` takes it as an
+optional 4th argument because vehicles sample the ground seven times a frame and
+the edge scan is too expensive to repeat per wheel. Forgetting this is what
+buried every car 22 cm into the asphalt.
+
+**All three lifts have to be reachable from `roadLift`, not just the two the
+strips use.** Junction squares are drawn at `NODE_LIFT` and they overlap the
+ends of every strip that meets there, so `roadLift` asks `nodeLift` first and
+takes its answer outright — a point inside the square is standing on the square.
+Maxing it against the strip scan instead gets both signs wrong: junction centres
+came back `ROAD_LIFT` and sat 3 cm *inside* the asphalt, and the corners of the
+square came back `WALK_LIFT` and floated 19 cm *above* it. `nodeLift` rebuilds
+the same square `meshNode` draws (half-size and orientation both from the widest
+edge at the node), so if you change one, change the other.
 
 Sidewalks stop short of each junction (`nodeRadius`) and the corner is filled by
 a ring drawn in `meshNode`. A strip run end to end marches straight across the
 cross street.
+
+**That ring needs its own entry in the lift lookup too.** It sits outside the
+junction square, and its diagonal corners are past the end of every strip that
+meets the node, so the edge scan finds *nothing* there and returns a lift of 0 —
+which dropped anyone standing on a corner the full 44 cm through the pavement.
+`nodeSurface()` reports the ring as well as the square, but the two are used
+differently: the square **overrides** the scan (it is the top surface there),
+while the ring only fills in where the scan came back empty, because along a road
+direction the strips overlap the ring and know better than it does. Sampling 250
+junctions, corner samples reading below the pavement went 828 → 3.
 
 ## Geometry building
 
