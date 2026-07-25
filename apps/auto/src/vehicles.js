@@ -335,7 +335,11 @@ export class Vehicle {
     const t = A.types[typeName];
     this.city = city;
     this.typeName = typeName;
-    this.t = t;
+    // Named `assets`, not `t`. It used to be `this.t`, and traffic.js spawning a
+    // car did `v.t = t` with its position along the edge -- silently replacing
+    // the whole geometry table with a number. Nothing noticed until you tried to
+    // get in, because the meshes were already built by then.
+    this.assets = t;
     this.spec = t.spec;
     this.color = color;
     this.detailedWheels = false;
@@ -377,13 +381,13 @@ export class Vehicle {
     if (this.detailedWheels === on) return;
     this.detailedWheels = on;
     const A = vehicleAssets();
-    this.trimMesh.geometry = on ? this.t.trimGeo : this.t.trimGeoW;
-    this.matteMesh.geometry = on ? this.t.matteGeo : this.t.matteGeoW;
+    this.trimMesh.geometry = on ? this.assets.trimGeo : this.assets.trimGeoW;
+    this.matteMesh.geometry = on ? this.assets.matteGeo : this.assets.matteGeoW;
     if (on) {
-      for (const [wx, wy, wz] of this.t.wheels) {
+      for (const [wx, wy, wz] of this.assets.wheels) {
         const g = new THREE.Group();
-        const a = new THREE.Mesh(this.t.wheelTrim, A.trimMat);
-        const b = new THREE.Mesh(this.t.wheelMatte, A.matteMat);
+        const a = new THREE.Mesh(this.assets.wheelTrim, A.trimMat);
+        const b = new THREE.Mesh(this.assets.wheelMatte, A.matteMat);
         a.castShadow = b.castShadow = true;
         g.add(a, b);
         g.position.set(wx, wy, wz);
@@ -499,7 +503,7 @@ export class Vehicle {
     this.pitch = lerp(this.pitch, tgtPitch, 1 - Math.exp(-10 * dt));
     this.roll = lerp(this.roll, tgtRoll, 1 - Math.exp(-10 * dt));
 
-    this.wheelSpin += (this.vLong / (this.t.wheelR || 0.34)) * dt;
+    this.wheelSpin += (this.vLong / (this.assets.wheelR || 0.34)) * dt;
     this.sync();
     return { dx, dz };
   }

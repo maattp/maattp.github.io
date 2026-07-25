@@ -523,6 +523,28 @@ reason to install the new worker and the cache never turns over. **The byte
 change to sw.js is the update trigger**, so that file has to carry its own
 literal. Bump both, and keep the digits equal so a mismatch is obvious on sight.
 
+## Vehicle asset table is `assets`, never `t`
+
+`Vehicle.assets` holds the shared geometry for a type. It used to be
+`this.t`, and `traffic.js` spawning a car did `v.t = t` with the car's position
+along its edge — replacing the whole geometry table with a number. Nothing
+noticed, because the meshes were already built in the constructor and
+`this.t.wheelR` fell through to a default. It only surfaced when you got in:
+`setDetailed(true)` iterates `assets.wheels`, so **carjacking any moving traffic
+car threw**, and it threw *after* `this.vehicle = v` but *before*
+`this.onFoot = false`, leaving the player half in the car. The HUD read the
+car's speed while the sim still ran the player on foot, which is what "frozen
+but the speedo works" was.
+
+Parked cars were fine, which is what made it look intermittent — they spawn
+through a different path that never wrote the field.
+
+Two things follow. Don't give a shared, long-lived reference a one-letter name.
+And when a bug report says a system half-works, suspect an exception midway
+through a setup function rather than a stuck value: `requestAnimationFrame` is
+re-armed at the top of the frame, so a throw part-way through leaves the loop
+running with an object in a state no code path expects.
+
 ## Shimmer and jolt: two things that read as "janky"
 
 **Road markings flashing is the albedo map, not geometry.** Localise this kind
