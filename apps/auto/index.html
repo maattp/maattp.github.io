@@ -1,0 +1,322 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Auto</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Auto">
+<meta name="theme-color" content="#10151b">
+<meta name="description" content="Drive around a large, hand-laid Seattle.">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" sizes="180x180" href="icon-180.png">
+<link rel="apple-touch-icon" href="icon-180.png">
+<link rel="icon" type="image/png" sizes="512x512" href="icon-512.png">
+<style>
+  :root {
+    --safe-t: env(safe-area-inset-top, 0px);
+    --safe-b: env(safe-area-inset-bottom, 0px);
+    --safe-l: env(safe-area-inset-left, 0px);
+    --safe-r: env(safe-area-inset-right, 0px);
+    --ink: #eaf0f4;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body {
+    width: 100%; height: 100%; overflow: hidden; background: #10151b;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif;
+    color: var(--ink);
+    -webkit-tap-highlight-color: transparent;
+    -webkit-user-select: none; user-select: none;
+    overscroll-behavior: none;
+    touch-action: none;
+  }
+  #app { position: fixed; left: 0; top: 0; width: 100vw; height: 100vh; touch-action: none; }
+  canvas#gl { position: absolute; left: 0; top: 0; width: 100%; height: 100%; display: block; }
+  /* iOS standalone + black-translucent lays the document out shifted UP by the
+     status-bar inset, so anything sized to the viewport stops that many px short
+     of the physical bottom. Documented fix: extend the document by the top inset. */
+  @media (display-mode: standalone) {
+    html, body, #app { height: calc(100vh + env(safe-area-inset-top)); }
+  }
+
+  /* ---------- interaction zones ---------- */
+  #lookZone {
+    position: absolute; right: 0; top: 0; bottom: 0; width: 58%;
+    touch-action: none; z-index: 2;
+  }
+  #stickZone {
+    position: absolute; left: 0; bottom: 0; width: 46%; height: 62%;
+    touch-action: none; z-index: 3;
+  }
+  #stickBase {
+    position: absolute; width: 128px; height: 128px; margin: 0; border-radius: 50%;
+    border: 2px solid rgba(255,255,255,0.22); background: rgba(10,16,22,0.24);
+    transform: translate(-50%, -50%); opacity: 0; transition: opacity .12s;
+    pointer-events: none;
+  }
+  #stickBase.active { opacity: 1; }
+  #stickKnob {
+    position: absolute; left: 50%; top: 50%; width: 56px; height: 56px; border-radius: 50%;
+    background: rgba(235,244,250,0.5); border: 2px solid rgba(255,255,255,0.55);
+    transform: translate(-50%, -50%);
+  }
+
+  /* ---------- buttons ---------- */
+  #pad {
+    position: absolute; right: calc(14px + var(--safe-r)); bottom: calc(14px + var(--safe-b));
+    z-index: 6; display: grid; gap: 10px;
+    grid-template-columns: repeat(3, auto); align-items: end; justify-items: center;
+  }
+  .btn {
+    -webkit-tap-highlight-color: transparent;
+    display: flex; align-items: center; justify-content: center; text-align: center;
+    border-radius: 50%; font-weight: 700; letter-spacing: .04em;
+    background: rgba(18,26,34,0.5); border: 2px solid rgba(255,255,255,0.28);
+    color: var(--ink); backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
+    transition: transform .06s, background .1s;
+    touch-action: none; user-select: none;
+  }
+  .btn.down { transform: scale(0.93); background: rgba(120,180,220,0.45); }
+  .b-lg { width: 92px; height: 92px; font-size: 15px; }
+  .b-md { width: 74px; height: 74px; font-size: 13px; }
+  .b-sm { width: 60px; height: 60px; font-size: 11px; }
+  .b-gas { background: rgba(40,120,80,0.45); border-color: rgba(150,240,190,0.5); }
+  .b-brake { background: rgba(140,50,45,0.42); border-color: rgba(255,170,160,0.45); }
+  .b-atk { background: rgba(150,90,30,0.42); border-color: rgba(255,205,140,0.45); }
+
+  #app[data-mode="drive"] .foot-only { display: none; }
+  #app:not([data-mode="drive"]) .car-only { display: none; }
+
+  /* ---------- hud ---------- */
+  #hud { position: absolute; inset: 0; pointer-events: none; z-index: 4; }
+  #minimapWrap {
+    position: absolute; left: calc(12px + var(--safe-l)); top: calc(12px + var(--safe-t));
+    width: 138px; height: 138px; border-radius: 50%;
+    border: 2px solid rgba(255,255,255,0.3); overflow: hidden;
+    box-shadow: 0 6px 22px rgba(0,0,0,0.45); background: #22282a;
+  }
+  #minimap { width: 100%; height: 100%; display: block; }
+  #place {
+    position: absolute; left: calc(12px + var(--safe-l)); top: calc(156px + var(--safe-t));
+    font-size: 13px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase;
+    text-shadow: 0 2px 8px rgba(0,0,0,0.8); max-width: 200px;
+  }
+  #place.flash { animation: placeIn .5s ease-out; }
+  @keyframes placeIn { from { opacity: 0; transform: translateY(6px);} to { opacity: 1; transform: none; } }
+
+  #healthWrap {
+    position: absolute; left: calc(12px + var(--safe-l)); top: calc(178px + var(--safe-t));
+    width: 138px; height: 8px; border-radius: 4px; background: rgba(0,0,0,0.45);
+    border: 1px solid rgba(255,255,255,0.22); overflow: hidden;
+  }
+  #healthFill { height: 100%; width: 100%; background: #4fd07a; transition: width .15s; }
+
+  #topRight {
+    position: absolute; right: calc(12px + var(--safe-r)); top: calc(10px + var(--safe-t));
+    text-align: right; display: flex; flex-direction: column; align-items: flex-end; gap: 4px;
+  }
+  #money { font-size: 22px; font-weight: 800; color: #8ff0b0; text-shadow: 0 2px 8px rgba(0,0,0,0.7); }
+  #stars { font-size: 19px; letter-spacing: 2px; height: 22px; }
+  .star { color: rgba(255,255,255,0.16); }
+  .star.on { color: #ffd24a; text-shadow: 0 0 10px rgba(255,190,60,0.8); animation: starPulse 1.1s infinite; }
+  @keyframes starPulse { 0%,100% { opacity: 1; } 50% { opacity: .55; } }
+  #speedo { display: flex; align-items: baseline; gap: 3px; text-shadow: 0 2px 8px rgba(0,0,0,0.7); }
+  #speedVal { font-size: 26px; font-weight: 800; font-variant-numeric: tabular-nums; }
+  #speedo .u { font-size: 11px; opacity: .7; }
+  #ammo { font-size: 15px; font-weight: 700; opacity: .9; }
+  .hidden { display: none !important; }
+
+  #objective, #toast {
+    position: absolute; left: 50%; transform: translateX(-50%);
+    padding: 7px 15px; border-radius: 20px; font-size: 13px; font-weight: 600;
+    background: rgba(12,18,24,0.62); border: 1px solid rgba(255,255,255,0.16);
+    backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
+    opacity: 0; transition: opacity .25s; white-space: nowrap;
+  }
+  #objective { top: calc(12px + var(--safe-t)); }
+  #toast { top: calc(52px + var(--safe-t)); background: rgba(20,30,40,0.75); }
+  #objective.show, #toast.show { opacity: 1; }
+
+  #topBtns {
+    position: absolute; left: calc(160px + var(--safe-l)); top: calc(12px + var(--safe-t));
+    display: flex; flex-direction: row; gap: 8px; z-index: 6;
+  }
+  .mini {
+    width: 42px; height: 42px; border-radius: 12px; font-size: 16px;
+    background: rgba(18,26,34,0.5); border: 1px solid rgba(255,255,255,0.22);
+    color: var(--ink); display: flex; align-items: center; justify-content: center;
+  }
+
+  #hurt {
+    position: absolute; inset: 0; pointer-events: none; z-index: 5; opacity: 0;
+    background: radial-gradient(ellipse at center, transparent 40%, rgba(190,20,20,0.6) 100%);
+    transition: opacity .16s;
+  }
+  #hurt.flash { opacity: 1; }
+
+  #wasted {
+    position: absolute; inset: 0; z-index: 20; display: none;
+    align-items: center; justify-content: center; background: rgba(60,4,4,0.55);
+    backdrop-filter: grayscale(1) blur(2px); -webkit-backdrop-filter: grayscale(1) blur(2px);
+  }
+  #wasted.show { display: flex; animation: fadeIn .5s; }
+  @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+  #wasted span { font-size: 52px; font-weight: 900; letter-spacing: .14em; color: #e8cfa0; text-shadow: 0 6px 24px #000; }
+
+  /* ---------- overlays ---------- */
+  #mapOverlay, #pauseMenu {
+    position: absolute; inset: 0; z-index: 30; display: none;
+    align-items: center; justify-content: center;
+    background: rgba(8,12,16,0.86); backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px);
+    padding: calc(14px + var(--safe-t)) calc(14px + var(--safe-r)) calc(14px + var(--safe-b)) calc(14px + var(--safe-l));
+  }
+  #mapOverlay.show, #pauseMenu.show { display: flex; }
+  #bigMap { width: 100%; height: 100%; object-fit: contain; }
+  #pauseCard {
+    width: min(420px, 92%); background: rgba(20,27,34,0.94); border: 1px solid rgba(255,255,255,0.14);
+    border-radius: 18px; padding: 20px; max-height: 92%; overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+  #pauseCard h2 { font-size: 20px; margin-bottom: 4px; letter-spacing: .1em; }
+  #pauseCard p.sub { font-size: 12px; opacity: .6; margin-bottom: 14px; }
+  .row { display: flex; align-items: center; justify-content: space-between; padding: 9px 0; border-top: 1px solid rgba(255,255,255,0.08); font-size: 14px; }
+  .toggle {
+    width: 50px; height: 28px; border-radius: 14px; background: rgba(255,255,255,0.12);
+    border: 1px solid rgba(255,255,255,0.18); position: relative; transition: background .18s;
+  }
+  .toggle::after {
+    content: ''; position: absolute; left: 3px; top: 2px; width: 22px; height: 22px; border-radius: 50%;
+    background: #dfe7ec; transition: transform .18s;
+  }
+  .toggle.on { background: rgba(80,200,140,0.6); }
+  .toggle.on::after { transform: translateX(21px); }
+  .cta {
+    display: block; width: 100%; margin-top: 14px; padding: 12px; border-radius: 12px;
+    background: rgba(90,160,220,0.28); border: 1px solid rgba(150,210,255,0.4);
+    color: var(--ink); font-size: 15px; font-weight: 700;
+  }
+  .cta.ghost { background: rgba(255,255,255,0.06); border-color: rgba(255,255,255,0.16); }
+  input[type=range] { width: 130px; accent-color: #7ec8f0; }
+  .help { font-size: 12px; opacity: .65; line-height: 1.5; margin-top: 12px; }
+
+  /* ---------- loading ---------- */
+  #loading {
+    position: absolute; inset: 0; z-index: 50; display: flex; flex-direction: column;
+    align-items: center; justify-content: center; gap: 16px;
+    background: linear-gradient(160deg, #16202b, #0d1218 60%, #1a2029);
+    transition: opacity .6s;
+  }
+  #loading.hide { opacity: 0; pointer-events: none; }
+  #loading h1 { font-size: 44px; font-weight: 900; letter-spacing: .34em; margin-left: .34em; }
+  #loading .tag { font-size: 12px; letter-spacing: .3em; opacity: .55; text-transform: uppercase; }
+  #loadTrack { width: min(320px, 70%); height: 5px; border-radius: 3px; background: rgba(255,255,255,0.12); overflow: hidden; }
+  #loadBar { height: 100%; width: 0%; background: linear-gradient(90deg, #6fd7a0, #7ec8f0); transition: width .25s; }
+  #loadMsg { font-size: 12px; opacity: .6; height: 16px; }
+
+  #rotate {
+    position: absolute; inset: 0; z-index: 60; display: none;
+    align-items: center; justify-content: center; flex-direction: column; gap: 12px;
+    background: #10151b; font-size: 15px; text-align: center; padding: 24px;
+  }
+  @media (orientation: portrait) and (max-width: 900px) {
+    #rotate { display: flex; }
+  }
+</style>
+</head>
+<body>
+<div id="app" data-mode="foot">
+  <canvas id="gl"></canvas>
+
+  <div id="lookZone"></div>
+  <div id="stickZone">
+    <div id="stickBase"><div id="stickKnob"></div></div>
+  </div>
+
+  <div id="hud">
+    <div id="minimapWrap"><canvas id="minimap"></canvas></div>
+    <div id="healthWrap"><div id="healthFill"></div></div>
+    <div id="place">Downtown</div>
+    <div id="topRight">
+      <div id="money">$250</div>
+      <div id="stars"></div>
+      <div id="speedo" class="hidden"><span id="speedVal">0</span><span class="u">km/h</span></div>
+      <div id="ammo" class="hidden">⌖ 0</div>
+    </div>
+    <div id="objective"></div>
+    <div id="toast"></div>
+  </div>
+
+  <div id="hurt"></div>
+
+  <div id="topBtns">
+    <button class="mini" id="mapBtn" aria-label="Map">🗺</button>
+    <button class="mini" id="radioBtn" aria-label="Radio">📻</button>
+    <button class="mini" id="pauseBtn" aria-label="Menu">☰</button>
+  </div>
+
+  <div id="pad">
+    <!-- driving -->
+    <div class="btn b-sm car-only" data-btn="horn">HORN</div>
+    <div class="btn b-md car-only" data-btn="hand">HAND<br>BRAKE</div>
+    <div class="btn b-sm car-only" data-btn="enter" data-tap="1">EXIT</div>
+    <div class="btn b-md b-brake car-only" data-btn="brake">BRAKE</div>
+    <div class="btn b-sm car-only" style="visibility:hidden"></div>
+    <div class="btn b-lg b-gas car-only" data-btn="gas">GAS</div>
+    <!-- on foot -->
+    <div class="btn b-sm foot-only" data-btn="jump">JUMP</div>
+    <div class="btn b-md foot-only" data-btn="sprint">RUN</div>
+    <div class="btn b-sm foot-only" data-btn="enter" data-tap="1">ENTER</div>
+    <div class="btn b-sm foot-only" style="visibility:hidden"></div>
+    <div class="btn b-sm foot-only" style="visibility:hidden"></div>
+    <div class="btn b-lg b-atk foot-only" data-btn="attack">ATTACK</div>
+  </div>
+
+  <div id="wasted"><span>WASTED</span></div>
+
+  <div id="mapOverlay"><canvas id="bigMap"></canvas></div>
+
+  <div id="pauseMenu">
+    <div id="pauseCard">
+      <h2>AUTO</h2>
+      <p class="sub">Seattle, Washington</p>
+      <div class="row"><span>Shadows</span><div class="toggle" id="setShadows"></div></div>
+      <div class="row"><span>Radio</span><div class="toggle" id="setMusic"></div></div>
+      <div class="row"><span>Sound effects</span><div class="toggle" id="setSound"></div></div>
+      <div class="row"><span>Camera speed</span><input type="range" id="setSens" min="0.4" max="2.2" step="0.1" value="1"></div>
+      <button class="cta" id="resumeBtn">Resume</button>
+      <button class="cta ghost" id="respawnBtn">Respawn at Harborview</button>
+      <p class="help">
+        Left thumb steers and walks. Right side: drag to look, buttons to drive.
+        Walk up to any car and hit ENTER to take it. Deliveries pay — the gold ring
+        on the minimap is your drop-off. Hurt someone and the SPD will notice.
+        <br><br>Keyboard: WASD / arrows, F enter-exit, Space handbrake &amp; jump,
+        Shift run, J attack, H horn.
+      </p>
+    </div>
+  </div>
+
+  <div id="loading">
+    <div class="tag">Puget Sound</div>
+    <h1>AUTO</h1>
+    <div id="loadTrack"><div id="loadBar"></div></div>
+    <div id="loadMsg">Starting up</div>
+  </div>
+
+  <div id="rotate">
+    <div style="font-size:34px">📱↻</div>
+    <div>Rotate your device sideways to play.</div>
+  </div>
+</div>
+
+<script type="module" src="src/main.js"></script>
+<script>
+  if ('serviceWorker' in navigator) {
+    window.addEventListener('load', () => {
+      navigator.serviceWorker.register('sw.js').catch(() => {});
+    });
+  }
+</script>
+</body>
+</html>

@@ -1,0 +1,16 @@
+{
+  "name": "Auto",
+  "short_name": "Auto",
+  "description": "Drive around a large, hand-laid Seattle.",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "display_override": ["fullscreen", "standalone"],
+  "orientation": "landscape",
+  "background_color": "#10151b",
+  "theme_color": "#10151b",
+  "icons": [
+    { "src": "icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any maskable" },
+    { "src": "icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable" }
+  ]
+}
