@@ -299,13 +299,36 @@ isn't a deliberate uniform compression, it's drift. `MAP_HALF` is 5200 m and
 Seward Park is genuinely 9.3 km out, so 1:1 will never fit; a *consistent* scale
 would still fix the relative layout.
 
-Known concrete errors, worth fixing before anything subtler: **Elliott Ave W and
-Alaskan Way both run through the Seattle Center campus**, which sits about a
-kilometre inland from either. Mercer St and Queen Anne Ave N cross it too, where
-they should bound it — the real campus is 74 acres enclosed by Mercer, Denny
-Way, 1st Ave N and 5th Ave N, with no through streets at all. Repairing this
-means editing the `ARTERIALS` polylines, and they are chained into bridges and
-ramps, so it wants doing as its own careful pass rather than as a side effect.
+**Seattle Center has been rebuilt from real coordinates** and is the worked
+example of how to fix a district. Everything there was placed by converting
+lat/lon about Westlake Center (`M_LON = 111320·cos 47.61°`):
+
+- Needle, MoPOP and the Arena sat 140–290 m west of true, which is what put
+  Climate Pledge Arena on the Elliott Bay shoreline. They are now at their
+  converted positions.
+- The campus rect is set off the four streets that bound it: 1st Ave N
+  (x −1396), 5th Ave N (−735), Denny Way (z −790), Mercer St (−1469).
+- Mercer St was drawn at z ≈ −1085, nearly 400 m south of true, so it ran past
+  the Space Needle instead of bounding the campus. Denny Way was ~200 m south.
+- **Alaskan Way's north end was `[-1150,-1000]` — the Space Needle.** A seawall
+  road terminating in the middle of the campus, and why MoPOP had a street
+  through it. Elliott Ave W cut the same corner about 400 m inland of the real
+  road.
+- The shore itself drifted east going north, ~450 m of it by Seattle Center,
+  leaving metres of land between 1st Ave N and the bay. Pulled back west.
+
+Result: no edge of any class crosses the campus, MoPOP is 134 m from the nearest
+road, and the Arena is 570 m from the water against about 700 m in reality.
+
+**When you edit the shoreline, diff the land/water map, don't just spot-check
+it.** Sample a grid before and after and count points that flipped: the failure
+that matters is land becoming water (a doubled-back polygon swallowing a
+neighbourhood, which is how Magnolia disappeared). This edit flipped 0 points to
+water and 0.34 km² to land, which is the strip that should always have been
+there.
+
+The rest of the outskirts have not been touched and still carry the drift in the
+table above.
 
 ## Keeping buildings out of the road
 

@@ -94,7 +94,11 @@ export const WATER = [
       // Magnolia's south shore into Smith Cove
       [-4020, -2800], [-3900, -2400], [-3700, -2050], [-3300, -1880], [-2900, -1820],
       [-2600, -1880], [-2350, -1960], [-2150, -2160], [-1990, -2300], [-1900, -2080],
-      [-1800, -1880], [-1650, -1620], [-1500, -1320], [-1350, -980], dtShore(-14), dtShore(-8),
+      // The Belltown-to-Interbay shore drifted progressively east going north --
+      // about 450 m of it by Seattle Center, which left only metres of land
+      // between 1st Ave N and the bay and put Climate Pledge Arena on the beach.
+      // Pulled back west; re-run the land/water probe in CLAUDE.md after editing.
+      [-1980, -1880], [-1930, -1620], [-1850, -1320], [-1650, -980], dtShore(-14), dtShore(-8),
       dtShore(0), dtShore(6), dtShore(12), dtShore(15.5),
       [-150, 1700], [-330, 2000], [-380, 2400], [-400, 3000], [-430, 3600],
       [-520, 4400], [-700, 5300], [-1750, 5300], [-1700, 4300], [-1750, 3400],
@@ -497,11 +501,21 @@ export const HIGHWAYS = [
 
 // Surface arterials that stitch the neighbourhoods together.
 export const ARTERIALS = [
-  { name: 'Denny Way', pts: [[-1650, -520], [-1100, -540], [-700, -560], [-330, -580], [200, -600], [700, -620], [1250, -640], [1900, -660], [2600, -680], [3250, -700]] },
-  { name: 'Mercer St', pts: [[-1700, -1080], [-1200, -1090], [-700, -1100], [-200, -1110], [300, -1120], [700, -1130]] },
-  { name: 'Elliott Ave W', pts: [[...dt(-1.6, -8)], [-1180, -900], [-1500, -1500], [-1750, -2100], [-1950, -2650], [-2100, -3050], [-2200, -3400]] },
+  // Denny Way and Mercer St are the south and north edges of Seattle Center, so
+  // where they sit decides whether the campus has streets through it. Both were
+  // drawn too far south -- Mercer by nearly 400 m, which ran it straight past
+  // the Space Needle. Placed from real latitudes: Denny at 5th Ave N is
+  // 47.6185, Mercer is 47.6246.
+  { name: 'Denny Way', pts: [[-1650, -700], [-1100, -740], [-700, -770], [-330, -790], [200, -810], [700, -830], [1250, -850], [1900, -870], [2600, -890], [3250, -910]] },
+  { name: 'Mercer St', pts: [[-1700, -1455], [-1200, -1462], [-700, -1469], [-200, -1476], [300, -1483], [700, -1490]] },
+  // Elliott Ave W hugs the waterfront below the Queen Anne bluff. It used to cut
+  // the corner at [-1180,-900], which is inside the Seattle Center campus and
+  // about 400 m inland of where the road actually is.
+  { name: 'Elliott Ave W', pts: [[...dt(-1.6, -8)], [-1430, -760], [-1520, -1150], [-1620, -1560], [-1760, -2000], [-1900, -2450], [-2060, -2950], [-2200, -3400]] },
   { name: '15th Ave W', pts: [[-2200, -3400], [-2600, -3480], [-3000, -3420], [-3450, -3280]] },
-  { name: 'Queen Anne Ave N', pts: [[-1230, -620], [-1240, -1100], [-1250, -1600], [-1260, -2100], [-1270, -2600], [-1280, -2900]] },
+  // Queen Anne Ave N runs up the west side of the campus, not through it: it is
+  // the block past 1st Ave N, which is the campus's own western boundary.
+  { name: 'Queen Anne Ave N', pts: [[-1440, -800], [-1445, -1100], [-1450, -1600], [-1460, -2100], [-1470, -2600], [-1480, -2900]] },
   { name: 'Westlake Ave N', pts: [[-260, -640], [-420, -1100], [-560, -1600], [-680, -2100], [-800, -2700], [-870, -3200], [-960, -3600]] },
   { name: 'Dexter Ave N', pts: [[-520, -640], [-560, -1200], [-600, -1900], [-640, -2600], [-680, -3300]] },
   { name: 'Fairview Ave N', pts: [[100, -640], [80, -1200], [60, -1700], [130, -2100]] },
@@ -520,7 +534,11 @@ export const ARTERIALS = [
   { name: 'S Spokane St', pts: [[-180, 2700], [200, 2690], [700, 2680], [1150, 2670]] },
   { name: 'S Lander St', pts: [[-260, 2200], [200, 2190], [700, 2180], [1150, 2170]] },
   { name: 'S Holgate St', pts: [[-300, 1800], [200, 1790], [700, 1780], [1150, 1770]] },
-  { name: 'Alaskan Way', pts: [[-1150, -1000], [...dt(-2.6, -8)], [...dt(-2.6, 0)], [...dt(-2.6, 8)], [...dt(-2.6, 15)], [-120, 1600]] },
+  // Alaskan Way is the waterfront road. Its north end was [-1150,-1000], which
+  // is the Space Needle -- a seawall road terminating in the middle of Seattle
+  // Center, and the reason MoPOP had a street through it. It now stops where
+  // the pier front does, by Broad St.
+  { name: 'Alaskan Way', pts: [[-1230, -560], [...dt(-2.6, -8)], [...dt(-2.6, 0)], [...dt(-2.6, 8)], [...dt(-2.6, 15)], [-120, 1600]] },
   { name: 'N 45th St', pts: [[-1700, -4180], [-1100, -4190], [-500, -4200], [200, -4210], [900, -4220], [1600, -4230], [2400, -4240]] },
   { name: 'N 34th St', pts: [[-1700, -3900], [-1300, -3890], [-1060, -3900], [-700, -3880], [-300, -3870], [200, -3860]] },
   { name: 'NW Market St', pts: [[-4300, -4080], [-3800, -4070], [-3450, -4060], [-3000, -4050], [-2600, -4040]] },
@@ -575,9 +593,13 @@ export const TOWERS = [
 ];
 
 export const LANDMARKS = [
-  { kind: 'spaceNeedle', name: 'Space Needle', x: -1150, z: -1010, rot: 0 },
-  { kind: 'mopop', name: 'MoPOP', x: -1015, z: -1090, rot: 0.4 },
-  { kind: 'arena', name: 'Climate Pledge Arena', x: -1340, z: -1160, rot: 0 },
+  // Seattle Center, placed from real coordinates about Westlake Center. The
+  // cluster used to sit 140-290 m west of true, which is what pushed the Arena
+  // onto the Elliott Bay shoreline. Needle 47.6205/-122.3493, MoPOP
+  // 47.6215/-122.3486, Arena 47.6219/-122.3539.
+  { kind: 'spaceNeedle', name: 'Space Needle', x: -856, z: -1013, rot: 0 },
+  { kind: 'mopop', name: 'MoPOP', x: -803, z: -1124, rot: 0.4 },
+  { kind: 'arena', name: 'Climate Pledge Arena', x: -1201, z: -1169, rot: 0 },
   { kind: 'spheres', name: 'The Spheres', x: -345, z: -905, rot: 0 },
   { kind: 'market', name: 'Pike Place Market', p: dt(1.35, 1.0), rot: DT_ROT },
   { kind: 'wheel', name: 'Seattle Great Wheel', p: dt(-3.1, 3.4), rot: DT_ROT },
@@ -598,10 +620,10 @@ export const LANDMARKS = [
 
 // Parks: rectangles that stay green and unbuilt.
 export const PARKS = [
-  // 74 acres bounded by Mercer, Denny Way, 1st Ave N and 5th Ave N, and a
-  // pedestrian campus -- no streets cross it. Sized to hold the Needle, MoPOP
-  // and the Arena, which all sit inside it.
-  { name: 'Seattle Center', x: -1180, z: -1075, w: 520, d: 450, rot: 0 },
+  // 74 acres, and a pedestrian campus -- no streets cross it. Placed off the
+  // four streets that bound it: 1st Ave N (x -1396) and 5th Ave N (x -735),
+  // Denny Way (z -790) and Mercer St (z -1469).
+  { name: 'Seattle Center', x: -1066, z: -1130, w: 640, d: 650, rot: 0 },
   { name: 'Myrtle Edwards Park', x: -1320, z: -1750, w: 180, d: 900, rot: 0.32 },
   { name: 'Volunteer Park', x: 1350, z: -1560, w: 340, d: 300, rot: 0 },
   { name: 'Cal Anderson Park', x: 900, z: -180, w: 180, d: 260, rot: 0 },
@@ -650,10 +672,10 @@ export const RAMPS = [
   { name: 'I-5 Ravenna Ramp', pts: [[1210, -4500], [980, -4460], [760, -4480, 40], [665, -4500, 56]] },
 ];
 
-// Pavement at the south edge of Seattle Center, 164 m from the Space Needle and
-// looking straight at it. Kept clear of buildings by KEEP_CLEAR below.
-export const SPAWN = { x: -1163, z: -846 };
-export const SPAWN_HEADING = 3.06; // faces the Needle; see HEADING_SENSE in CLAUDE.md
+// Pavement on the 5th Ave N side of Seattle Center, 181 m from the Space Needle
+// and looking straight at it. Kept clear of buildings by KEEP_CLEAR below.
+export const SPAWN = { x: -679, z: -1050 };
+export const SPAWN_HEADING = -1.36; // faces the Needle; see HEADING_SENSE in CLAUDE.md
 export const RESPAWN = { x: 1050, z: 300 }; // Harborview
 /**
  * Points the player gets put down on. citygen removes any building covering
