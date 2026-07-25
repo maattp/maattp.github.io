@@ -30,14 +30,17 @@ const B = {
 };
 const BONE_COUNT = 18;
 
-// Joint heights in character space (feet at y = 0, nominal height 1.75 m)
+// Joint heights in character space, taken from adult anthropometry as
+// fractions of a 1.75 m stature (eye 0.936H, chin 0.870H, acromion 0.812H,
+// elbow 0.630H, wrist 0.485H, hip 0.530H, knee 0.285H, ankle 0.039H).
 const J = {
-  hip: 0.90, spine: 1.02, chest: 1.22, neck: 1.46, head: 1.53,
-  shoulder: 1.385, elbow: 1.085, wrist: 0.805,
-  knee: 0.46, ankle: 0.055,
+  hip: 0.927, spine: 1.06, chest: 1.26, neck: 1.47, head: 1.56,
+  shoulder: 1.421, elbow: 1.103, wrist: 0.849,
+  knee: 0.499, ankle: 0.068,
+  chin: 1.522, eye: 1.638, crown: 1.750,
 };
-const SHOULDER_X = 0.150;
-const HIP_X = 0.068;
+const SHOULDER_X = 0.150;   // glenohumeral centre; the deltoid takes it to 0.21
+const HIP_X = 0.085;
 
 function makeSkeletonBones() {
   const bones = [];
@@ -152,28 +155,33 @@ export function buildCharacter(opts = {}) {
   const coat = jacket ? [shirt[0] * 0.66, shirt[1] * 0.66, shirt[2] * 0.7] : shirt;
 
   const acc = new SkinAcc();
-  const bw = 0.132 * build, bd = 0.096 * build;
-  const cw = 0.160 * build, cd = 0.112 * build;
-  const sw = 0.152 * build, sd = 0.107 * build;
+  // half-breadths: hip 0.167, waist 0.131, chest 0.152, shoulder 0.140
+  const bw = 0.167 * build, bd = 0.115 * build;
+  const ww = 0.131 * build, wd = 0.100 * build;
+  const cw = 0.152 * build, cd = 0.118 * build;
+  const sw = 0.140 * build, sd = 0.104 * build;
   const outer = jacket ? 1.05 : 1.0;
 
   // --- pelvis + torso ------------------------------------------------------
   const pelvis = new Builder(false);
   pelvis.loftY([
-    { y: J.hip - 0.14, pts: oval(bw * 0.95, bd * 0.97, 10) },
-    { y: J.hip, pts: oval(bw, bd, 10) },
-    { y: J.hip + 0.07, pts: oval(bw * 0.95, bd * 0.95, 10) },
+    { y: J.hip - 0.15, pts: oval(bw * 0.88, bd * 0.92, 10) },
+    { y: J.hip - 0.06, pts: oval(bw, bd, 10, 0, -0.008) },
+    { y: J.hip + 0.04, pts: oval(bw * 0.94, bd * 0.94, 10) },
+    { y: J.hip + 0.10, pts: oval(bw * 0.86, bd * 0.9, 10) },
   ], pants, { capStart: true });
   acc.add(pelvis, across(J.spine - 0.06, 0.09, B.spine, B.hips));
 
   const torso = new Builder(false);
   torso.loftY([
-    { y: J.hip + 0.06, pts: oval(bw * 0.93 * outer, bd * 0.94 * outer, 10) },
-    { y: J.spine, pts: oval(bw * 0.86 * outer, bd * 0.9 * outer, 10) },
-    { y: J.chest, pts: oval(cw * outer, cd * outer, 10) },
-    { y: J.shoulder - 0.02, pts: oval(sw * outer, sd * outer, 10) },
-    { y: J.shoulder + 0.045, pts: oval(sw * 0.7 * outer, sd * 0.88 * outer, 10) },
-    { y: J.shoulder + 0.085, pts: oval(sw * 0.42 * outer, sd * 0.66 * outer, 10) },
+    { y: J.hip + 0.08, pts: oval(bw * 0.86 * outer, bd * 0.9 * outer, 10) },
+    { y: 1.085, pts: oval(ww * outer, wd * outer, 10) },
+    { y: J.chest, pts: oval(cw * outer, cd * outer, 10, 0, 0.006) },
+    { y: 1.34, pts: oval(cw * 1.02 * outer, cd * 0.98 * outer, 10) },
+    { y: J.shoulder - 0.02, pts: oval(sw * 1.08 * outer, sd * outer, 10) },
+    { y: J.shoulder + 0.012, pts: oval(sw * 0.92 * outer, sd * 0.92 * outer, 10) },
+    // trapezius sloping in to the neck, set back so the throat stays visible
+    { y: J.shoulder + 0.046, pts: oval(sw * 0.5 * outer, sd * 0.56 * outer, 10, 0, -0.014) },
   ], coat, {});
   if (jacket) {
     torso.box(0, J.hip + 0.07, bd * 0.92 * outer, 0.04, J.chest - J.hip + 0.18, 0.02, 0,
@@ -192,41 +200,57 @@ export function buildCharacter(opts = {}) {
   });
 
   // --- neck + head ---------------------------------------------------------
+  // Head width is 0.086H (half 0.075) and depth 0.115H (half 0.101). The old
+  // head was 25% too wide, which is most of what made these look wrong.
   const head = new Builder(false);
   head.loftY([
-    { y: J.shoulder + 0.03, pts: oval(0.061, 0.057, 8) },
-    { y: J.neck + 0.02, pts: oval(0.051, 0.049, 8) },
+    { y: J.chest + 0.09, pts: oval(0.062, 0.060, 8) },
+    { y: J.shoulder + 0.01, pts: oval(0.057, 0.055, 8, 0, -0.004) },
+    { y: J.chin - 0.01, pts: oval(0.052, 0.050, 8, 0, -0.006) },
   ], skin, {});
-  const HY = J.neck + 0.09;
   head.loftY([
-    { y: J.neck - 0.01, pts: oval(0.056, 0.055, 10) },
-    { y: J.neck + 0.05, pts: oval(0.079, 0.086, 10, 0, 0.006) },
-    { y: HY, pts: oval(0.094, 0.102, 10, 0, 0.006) },
-    { y: HY + 0.07, pts: oval(0.091, 0.098, 10, 0, 0.002) },
-    { y: HY + 0.13, pts: oval(0.062, 0.066, 10, 0, -0.008) },
-    { y: HY + 0.16, pts: oval(0.026, 0.028, 10, 0, -0.012) },
+    { y: J.chin - 0.012, pts: oval(0.040, 0.055, 10, 0, 0.020) },
+    { y: J.chin + 0.023, pts: oval(0.062, 0.082, 10, 0, 0.010) },
+    { y: J.chin + 0.063, pts: oval(0.073, 0.096, 10, 0, 0.004) },
+    { y: J.eye, pts: oval(0.075, 0.100, 10, 0, 0) },
+    { y: J.eye + 0.050, pts: oval(0.070, 0.092, 10, 0, -0.004) },
+    { y: J.crown - 0.025, pts: oval(0.055, 0.070, 10, 0, -0.010) },
+    { y: J.crown, pts: oval(0.022, 0.028, 10, 0, -0.014) },
   ], skin, { capStart: true, capEnd: true });
+
+  // hair: starts at the hairline so the forehead is not swallowed
   head.loftY([
-    { y: HY - 0.075, pts: oval(0.086, 0.094, 10, 0, -0.032) },
-    { y: HY - 0.015, pts: oval(0.098, 0.106, 10, 0, -0.018) },
-    { y: HY + 0.072, pts: oval(0.096, 0.102, 10, 0, -0.018) },
-    { y: HY + 0.132, pts: oval(0.066, 0.070, 10, 0, -0.02) },
-    { y: HY + 0.163, pts: oval(0.027, 0.029, 10, 0, -0.016) },
+    { y: J.chin + 0.038, pts: oval(0.070, 0.078, 10, 0, -0.030) },
+    { y: J.eye - 0.018, pts: oval(0.080, 0.094, 10, 0, -0.022) },
+    { y: J.eye + 0.050, pts: oval(0.077, 0.097, 10, 0, -0.012) },
+    { y: J.crown - 0.030, pts: oval(0.059, 0.074, 10, 0, -0.012) },
+    { y: J.crown + 0.003, pts: oval(0.024, 0.031, 10, 0, -0.014) },
   ], hair, { capEnd: true });
-  head.box(0, HY + 0.03, 0.086, 0.125, 0.02, 0.028, 0, hair);
-  head.box(0, HY - 0.012, 0.09, 0.026, 0.048, 0.032, 0, skin);
-  for (const sx of [-0.04, 0.04]) head.box(sx, HY + 0.008, 0.088, 0.026, 0.016, 0.018, 0, [0.13, 0.12, 0.13]);
+
+  // face: brow, eyes set into their sockets, a nose with a bridge, mouth, ears
+  const brow = [hair[0] * 0.75 + skin[0] * 0.2, hair[1] * 0.75 + skin[1] * 0.2, hair[2] * 0.75 + skin[2] * 0.2];
+  for (const sx of [-1, 1]) {
+    head.box(sx * 0.032, J.eye + 0.021, 0.088, 0.036, 0.011, 0.02, 0, brow);
+    head.box(sx * 0.031, J.eye, 0.090, 0.026, 0.013, 0.014, 0, [0.94, 0.93, 0.9]);
+    head.box(sx * 0.031, J.eye, 0.095, 0.012, 0.012, 0.008, 0, [0.16, 0.13, 0.11]);
+    head.box(sx * 0.077, J.eye - 0.014, 0.008, 0.014, 0.042, 0.028, 0, skin);
+  }
+  head.box(0, J.eye - 0.004, 0.098, 0.019, 0.052, 0.016, 0, skin);
+  head.box(0, J.eye - 0.034, 0.104, 0.026, 0.018, 0.018, 0, skin);
+  head.box(0, J.chin + 0.040, 0.092, 0.044, 0.009, 0.014, 0,
+    [skin[0] * 0.62, skin[1] * 0.42, skin[2] * 0.42]);
+
   if (opts.hat) {
     head.loftY([
-      { y: HY + 0.06, pts: oval(0.104, 0.111, 10) },
-      { y: HY + 0.15, pts: oval(0.097, 0.103, 10) },
-      { y: HY + 0.178, pts: oval(0.068, 0.073, 10) },
+      { y: J.eye + 0.014, pts: oval(0.085, 0.110, 10, 0, -0.006) },
+      { y: J.eye + 0.070, pts: oval(0.081, 0.104, 10, 0, -0.008) },
+      { y: J.crown - 0.006, pts: oval(0.056, 0.072, 10, 0, -0.01) },
     ], opts.hat, { capEnd: true });
-    head.box(0, HY + 0.055, 0.078, 0.196, 0.02, 0.13, 0, opts.hat);
+    head.box(0, J.eye + 0.012, 0.086, 0.166, 0.018, 0.11, 0, opts.hat);
   }
   acc.add(head, (x, y) => {
-    if (y < J.neck) return across(J.neck - 0.04, 0.07, B.neck, B.chest)(x, y);
-    return across(J.head + 0.01, 0.05, B.head, B.neck)(x, y);
+    if (y < J.neck) return across(J.neck - 0.06, 0.09, B.neck, B.chest)(x, y);
+    return across(J.head - 0.03, 0.04, B.head, B.neck)(x, y);
   });
 
   // --- arms ----------------------------------------------------------------
@@ -236,15 +260,18 @@ export function buildCharacter(opts = {}) {
     const seg = (y, rx, rz) => [y, rx, rz];
     const upper = new Builder(false);
     upper.loftY([
-      { y: J.shoulder + 0.038, pts: oval(0.028, 0.026, 8, X, 0) },
-      { y: J.shoulder + 0.018, pts: oval(0.050, 0.047, 8, X, 0) },
-      { y: J.shoulder - 0.022, pts: oval(0.060, 0.057, 8, X, 0) },
-      { y: J.shoulder - 0.10, pts: oval(0.051, 0.049, 8, X, 0) },
-      { y: J.elbow + 0.02, pts: oval(0.044, 0.043, 8, X, 0) },
-      { y: J.elbow - 0.02, pts: oval(0.043, 0.042, 8, X, 0) },
-      { y: J.wrist + 0.03, pts: oval(0.035, 0.034, 8, X, 0) },
+      // deltoid widest just BELOW the shoulder line, and capped under the
+      // trapezius -- capping it above turns the shoulders into puffed sleeves
+      { y: J.shoulder - 0.014, pts: oval(0.044, 0.042, 8, X, 0) },
+      { y: J.shoulder - 0.042, pts: oval(0.059, 0.056, 8, X, 0) },
+      { y: J.shoulder - 0.080, pts: oval(0.061, 0.058, 8, X, 0) },
+      { y: J.shoulder - 0.14, pts: oval(0.051, 0.050, 8, X, 0) },
+      { y: J.elbow + 0.03, pts: oval(0.045, 0.044, 8, X, 0) },
+      { y: J.elbow - 0.02, pts: oval(0.044, 0.043, 8, X, 0) },
+      { y: J.wrist + 0.05, pts: oval(0.031, 0.030, 8, X, 0) },
+      { y: J.wrist, pts: oval(0.028, 0.026, 8, X, 0) },
     ], shortSleeve
-      ? [coat, coat, coat, coat, skin, skin, skin]
+      ? [coat, coat, coat, coat, skin, skin, skin, skin]
       : coat, { capStart: true, capEnd: true });
     arm.pos = upper.pos; arm.nor = upper.nor; arm.col = upper.col; arm.idx = upper.idx;
     acc.add(arm, (x, y) => {
@@ -252,10 +279,12 @@ export function buildCharacter(opts = {}) {
       return [side < 0 ? B.elbowL : B.elbowR, 1, 0, 0];
     });
     const hand = new Builder(false);
+    // hand length is 0.108H = 0.189 m from wrist to fingertip
     hand.loftY([
-      { y: J.wrist + 0.01, pts: oval(0.034, 0.031, 8, X, 0) },
-      { y: J.wrist - 0.05, pts: oval(0.039, 0.029, 8, X, 0.004) },
-      { y: J.wrist - 0.115, pts: oval(0.029, 0.022, 8, X, 0.006) },
+      { y: J.wrist + 0.005, pts: oval(0.030, 0.028, 8, X, 0) },
+      { y: J.wrist - 0.045, pts: oval(0.038, 0.026, 8, X, 0.004) },
+      { y: J.wrist - 0.115, pts: oval(0.036, 0.023, 8, X, 0.006) },
+      { y: J.wrist - 0.189, pts: oval(0.022, 0.015, 8, X, 0.006) },
     ], skin, { capStart: true, capEnd: true });
     acc.add(hand, solid(side < 0 ? B.handL : B.handR));
   }
@@ -265,23 +294,24 @@ export function buildCharacter(opts = {}) {
     const X = side * HIP_X;
     const leg = new Builder(false);
     leg.loftY([
-      { y: J.hip + 0.03, pts: oval(0.092, 0.09, 8, X, 0) },
-      { y: J.hip - 0.08, pts: oval(0.086, 0.085, 8, X, 0) },
-      { y: J.knee + 0.08, pts: oval(0.062, 0.062, 8, X, 0) },
-      { y: J.knee + 0.02, pts: oval(0.058, 0.059, 8, X, 0) },
-      { y: J.knee - 0.03, pts: oval(0.058, 0.060, 8, X, 0.004) },
-      { y: J.knee - 0.16, pts: oval(0.055, 0.058, 8, X, 0.002) },
-      { y: J.ankle + 0.09, pts: oval(0.042, 0.045, 8, X, 0) },
+      { y: J.hip + 0.04, pts: oval(0.094, 0.092, 8, X, 0) },
+      { y: J.hip - 0.09, pts: oval(0.088, 0.087, 8, X, 0) },
+      { y: J.knee + 0.10, pts: oval(0.064, 0.064, 8, X, 0) },
+      { y: J.knee + 0.02, pts: oval(0.059, 0.060, 8, X, 0) },
+      { y: J.knee - 0.04, pts: oval(0.059, 0.062, 8, X, 0.005) },
+      { y: J.knee - 0.15, pts: oval(0.057, 0.060, 8, X, 0.002) },
+      { y: J.ankle + 0.10, pts: oval(0.037, 0.040, 8, X, 0) },
     ], pants, { capStart: true, capEnd: true });
     acc.add(leg, (x, y) => across(J.knee + 0.04, 0.1,
       side < 0 ? B.thighL : B.thighR, side < 0 ? B.kneeL : B.kneeR)(x, y));
 
     const foot = new Builder(false);
+    // foot length is 0.152H = 0.266 m; the old shoe was barely 0.16 m
     foot.loftY([
-      { y: J.ankle + 0.09, pts: oval(0.041, 0.044, 8, X, 0) },
-      { y: J.ankle, pts: oval(0.043, 0.05, 8, X, 0.012) },
-      { y: J.ankle - 0.04, pts: oval(0.048, 0.078, 8, X, 0.042) },
-      { y: J.ankle - 0.055, pts: oval(0.044, 0.082, 8, X, 0.05) },
+      { y: J.ankle + 0.10, pts: oval(0.036, 0.039, 8, X, 0) },
+      { y: J.ankle + 0.02, pts: oval(0.043, 0.056, 8, X, 0.018) },
+      { y: J.ankle - 0.030, pts: oval(0.050, 0.105, 8, X, 0.052) },
+      { y: J.ankle - 0.062, pts: oval(0.046, 0.112, 8, X, 0.060) },
     ], shoeCol, { capStart: true, capEnd: true });
     acc.add(foot, solid(side < 0 ? B.footL : B.footR));
   }
@@ -350,10 +380,12 @@ export function animateWalk(h, phase, amp, dt, speed) {
   const armA = A * 0.8 * h.swing;
   b[B.shoulderL].rotation.x = armA * 1.1 * s;
   b[B.shoulderR].rotation.x = -armA * 1.1 * s;
-  b[B.shoulderL].rotation.z = 0.06 + A * 0.1;
-  b[B.shoulderR].rotation.z = -0.06 - A * 0.1;
-  b[B.elbowL].rotation.x = -(0.22 + 0.5 * run) - Math.max(0, armA * 1.4 * s);
-  b[B.elbowR].rotation.x = -(0.22 + 0.5 * run) - Math.max(0, -armA * 1.4 * s);
+  // Abduction keeps the hands clear of the thighs. Positive Z swings a limb
+  // toward +X, so the LEFT arm (at -X) needs a negative angle to move outward.
+  b[B.shoulderL].rotation.z = -(0.12 + A * 0.07);
+  b[B.shoulderR].rotation.z = 0.12 + A * 0.07;
+  b[B.elbowL].rotation.x = -(0.20 + 0.5 * run) - Math.max(0, armA * 1.4 * s);
+  b[B.elbowR].rotation.x = -(0.20 + 0.5 * run) - Math.max(0, -armA * 1.4 * s);
 
   // Pelvis: the hips have to DROP as the legs scissor, or the planted foot
   // slides under the ground and the whole figure looks like it is floating.
@@ -381,6 +413,8 @@ export function animateWalk(h, phase, amp, dt, speed) {
     b[B.hips].rotation.z = Math.sin(h.t * 0.5) * 0.03;
     b[B.shoulderL].rotation.x = br * 0.03;
     b[B.shoulderR].rotation.x = -br * 0.03;
+    b[B.elbowL].rotation.x = -0.16 + br * 0.02;
+    b[B.elbowR].rotation.x = -0.16 - br * 0.02;
   }
   h.bob = 0;
 }
