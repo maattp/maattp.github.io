@@ -358,6 +358,9 @@ export class Vehicle {
     this.pitch = 0; this.roll = 0;
     this.health = 100;
     this.dead = false;
+    // Seconds before this vehicle can take collision damage again. One crash
+    // spans many frames -- see damage().
+    this.hitCd = 0;
     this.onGround = true;
     this.vy = 0;
     this.wheelSpin = 0;
@@ -412,6 +415,7 @@ export class Vehicle {
 
   update(dt, input) {
     const spec = this.spec;
+    if (this.hitCd > 0) this.hitCd -= dt;
     const throttle = input.throttle || 0;
     const brake = input.brake || 0;
     const hand = input.handbrake || 0;
@@ -507,13 +511,33 @@ export class Vehicle {
     this.tilt.rotation.z = this.roll;
     if (this.detailedWheels) {
       for (const m of this.wheelMeshes) {
+        // Steer OUTSIDE the spin. Euler order matters here: the default 'XYZ'
+        // builds Rx*Ry, i.e. it steers the wheel and then rolls it about the
+        // car's X axis rather than the wheel's own axle -- so a turned front
+        // wheel tumbles instead of rolling, which is the visible wobble.
+        // 'YXZ' gives Ry*Rx: roll on the axle first, then steer the whole thing.
+        m.rotation.order = 'YXZ';
         m.rotation.x = this.wheelSpin;
         m.rotation.y = m.userData.front ? this.steer : 0;
       }
     }
   }
 
-  damage(n) {
+  /**
+   * Collision damage, debounced.
+   *
+   * A crash is not one frame. The pair stays overlapping and closing for
+   * several, and the caller ran on every one of them: a 20 m/s shunt is 14
+   * damage a frame, so 100 health was gone in about an eighth of a second and
+   * any real impact detonated the car on contact. `hitCd` makes one collision
+   * count once. Gunfire and other scripted damage passes `force` and is never
+   * debounced.
+   */
+  damage(n, force) {
+    if (!force) {
+      if (this.hitCd > 0) return false;
+      this.hitCd = 0.4;
+    }
     this.health -= n;
     if (this.health <= 0 && !this.dead) {
       this.health = 0;

@@ -107,6 +107,139 @@ function polyRangeAlong(poly, ox, oz, ax, az) {
   return { lo, hi };
 }
 
+function polyArea(p) {
+  let a = 0;
+  for (let i = 0, j = p.length - 1; i < p.length; j = i++) a += (p[j][0] + p[i][0]) * (p[j][1] - p[i][1]);
+  return Math.abs(a / 2);
+}
+
+/**
+ * Decide which district owns a patch of ground, so only one street grid is
+ * laid on it.
+ *
+ * The district polygons are hand-drawn and 25 of the 32 overlap something --
+ * Belltown is 62% covered by Uptown and South Lake Union. That is survivable
+ * where the neighbours share a street angle, and ruinous where they don't:
+ * downtown's grid runs 58 deg off true north and its neighbours' run true, so
+ * laying both over the same block gives two sets of streets crossing at 58 deg
+ * with no junctions. That is what makes the map read as scribble.
+ *
+ * The smallest polygon covering a point wins, which is the rule that matches
+ * how the data is drawn: a small specific neighbourhood sits inside a large
+ * sprawling one and should keep its own grid. Equal areas fall back to
+ * declaration order, so the result never depends on sort stability.
+ */
+function districtOwner() {
+  const bbox = (p) => {
+    let x0 = Infinity, x1 = -Infinity, z0 = Infinity, z1 = -Infinity;
+    for (const q of p) {
+      if (q[0] < x0) x0 = q[0];
+      if (q[0] > x1) x1 = q[0];
+      if (q[1] < z0) z0 = q[1];
+      if (q[1] > z1) z1 = q[1];
+    }
+    return { x0, x1, z0, z1 };
+  };
+  const meta = G.DISTRICTS.map((d, i) => ({ d, i, area: polyArea(d.poly), bb: bbox(d.poly) }));
+  // For each district, only the higher-priority districts it could overlap at
+  // all -- usually one or two, so this stays a couple of point-in-poly tests.
+  const rivals = new Map();
+  for (const m of meta) {
+    rivals.set(m.d, meta.filter((o) => o !== m
+      && (o.area < m.area || (o.area === m.area && o.i < m.i))
+      && o.bb.x0 <= m.bb.x1 && o.bb.x1 >= m.bb.x0
+      && o.bb.z0 <= m.bb.z1 && o.bb.z1 >= m.bb.z0).map((o) => o.d));
+  }
+  return (d, x, z) => {
+    for (const o of rivals.get(d)) if (G.pointInPolyCached(x, z, o)) return false;
+    return true;
+  };
+}
+
+/**
+ * Split every pair of crossing ground-level edges and put a node at the
+ * crossing.
+ *
+ * An arterial drawn straight through a district's street grid otherwise just
+ * passes over it -- 896 crossings carried no junction node at all, which is
+ * both why the map looked like roads stacked on each other and why traffic
+ * could never turn off an arterial. Elevated edges are left alone: a bridge
+ * over a street is a crossing that is supposed to have no junction.
+ */
+function planarize(g) {
+  const CELL = 120;
+  const gk = (a, b) => a * 100003 + b;
+  const grid = new Map();
+  for (let ei = 0; ei < g.edges.length; ei++) {
+    const e = g.edges[ei];
+    if (e.elev) continue;
+    const a = g.nodes[e.a], b = g.nodes[e.b];
+    const steps = Math.max(1, Math.ceil(e.len / CELL));
+    for (let s = 0; s <= steps; s++) {
+      const x = a.x + (b.x - a.x) * s / steps, z = a.z + (b.z - a.z) * s / steps;
+      const k = gk(Math.floor(x / CELL), Math.floor(z / CELL));
+      let l = grid.get(k);
+      if (!l) grid.set(k, (l = new Set()));
+      l.add(ei);
+    }
+  }
+  const splits = new Map();
+  const addSplit = (ei, t, ni) => {
+    let l = splits.get(ei);
+    if (!l) splits.set(ei, (l = []));
+    l.push({ t, ni });
+  };
+  const seen = new Set();
+  for (const list of grid.values()) {
+    const arr = [...list];
+    for (let i = 0; i < arr.length; i++) {
+      for (let j = i + 1; j < arr.length; j++) {
+        const ei = arr[i], ej = arr[j];
+        const pk = ei < ej ? ei * 100000 + ej : ej * 100000 + ei;
+        if (seen.has(pk)) continue;
+        seen.add(pk);
+        const e1 = g.edges[ei], e2 = g.edges[ej];
+        // already meeting at a node is a junction, not a crossing
+        if (e1.a === e2.a || e1.a === e2.b || e1.b === e2.a || e1.b === e2.b) continue;
+        const p = g.nodes[e1.a], q = g.nodes[e1.b];
+        const r = g.nodes[e2.a], s = g.nodes[e2.b];
+        const d1x = q.x - p.x, d1z = q.z - p.z;
+        const d2x = s.x - r.x, d2z = s.z - r.z;
+        const den = d1x * d2z - d1z * d2x;
+        if (Math.abs(den) < 1e-9) continue; // parallel
+        const t = ((r.x - p.x) * d2z - (r.z - p.z) * d2x) / den;
+        const u = ((r.x - p.x) * d1z - (r.z - p.z) * d1x) / den;
+        if (t <= 0 || t >= 1 || u <= 0 || u >= 1) continue;
+        // addNode snaps to an existing node within its tolerance, so crossings
+        // that land on top of one another become a single junction
+        const ni = g.addNode(p.x + d1x * t, p.z + d1z * t, null, false);
+        addSplit(ei, t, ni);
+        addSplit(ej, u, ni);
+      }
+    }
+  }
+  if (!splits.size) return 0;
+  const specs = [];
+  for (let ei = 0; ei < g.edges.length; ei++) {
+    const e = g.edges[ei];
+    const l = splits.get(ei);
+    if (!l) { specs.push([e.a, e.b, e.cls, e.name]); continue; }
+    l.sort((m, n) => m.t - n.t);
+    let prev = e.a;
+    for (const sp of l) {
+      if (sp.ni !== prev) specs.push([prev, sp.ni, e.cls, e.name]);
+      prev = sp.ni;
+    }
+    if (prev !== e.b) specs.push([prev, e.b, e.cls, e.name]);
+  }
+  // addEdge recomputes length/heading and drops the sub-4 m slivers a split can
+  // leave behind, so rebuild through it rather than patching the arrays.
+  g.edges = [];
+  for (const n of g.nodes) n.e = [];
+  for (const sp of specs) g.addEdge(sp[0], sp[1], sp[2], sp[3]);
+  return splits.size;
+}
+
 // ---------------------------------------------------------------------------
 
 export function* cityGenerator() {
@@ -118,6 +251,7 @@ export function* cityGenerator() {
   yield { p: 0.02, msg: 'Surveying Puget Sound' };
 
   // --- 1. District street grids -------------------------------------------
+  const owns = districtOwner();
   const districtNodes = [];
   let di = 0;
   for (const d of G.DISTRICTS) {
@@ -136,6 +270,7 @@ export function* cityGenerator() {
       for (let j = j0; j <= j1; j++) {
         const [x, z] = pos(i, j);
         if (!G.pointInPolyCached(x, z, d)) continue;
+        if (!owns(d, x, z)) continue; // a denser neighbour's grid holds this ground
         if (!G.isBuildable(x, z)) continue;
         ids[(i - i0) * nh + (j - j0)] = g.addNode(x, z, null, false);
       }
@@ -148,6 +283,7 @@ export function* cityGenerator() {
       const [x1, z1] = pos(i, j), [x2, z2] = pos(i2, j2);
       const mx = (x1 + x2) / 2, mz = (z1 + z2) / 2;
       if (!G.isBuildable(mx, mz)) return;
+      if (!owns(d, mx, mz)) return; // don't reach across into a neighbour's grid
       g.addEdge(a, c, cls, d.name);
     };
     const streetCls = d.style === 'house' ? 'res' : 'st';
@@ -197,6 +333,11 @@ export function* cityGenerator() {
 
   // Stitch elevated ramp ends into their decks and grounded ends into streets.
   yield { p: 0.46, msg: 'Welding the interchanges' };
+
+  // Every ground-level crossing becomes a real junction. Do this before the
+  // segment index below, which reads the final edge list.
+  planarize(g);
+  yield { p: 0.48, msg: 'Cutting the intersections' };
 
   // --- 3. Segment index for building rejection ----------------------------
   const segCell = 90;
@@ -359,6 +500,7 @@ export function* cityGenerator() {
       for (let j = j0; j < j1; j++) {
         const [cx, cz] = pos(i + 0.5, j + 0.5);
         if (!G.pointInPolyCached(cx, cz, d)) continue;
+        if (!owns(d, cx, cz)) continue; // blocks belong to whoever owns the grid
         if (!G.isBuildable(cx, cz)) continue;
         const [nu, nv] = pickLot(d.style);
         const lu = (halfU * 2) / nu, lv = (halfV * 2) / nv;

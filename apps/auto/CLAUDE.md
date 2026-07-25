@@ -205,10 +205,68 @@ IK version measures 1.9 mm. If you touch the legs, re-measure that number:
 sample the lower foot's world XZ per frame and compare it against
 `speed * dt`.
 
-Two standing traps. `animateWalk` owns `h.phase` — advancing the cycle anywhere
-else re-introduces exactly the cadence/stride split that caused the bug. And the
-bones are **unscaled**, so a step in world metres has to be divided by
-`h.scale` or taller pedestrians over-stride.
+**Ground contact is capped, and that is what makes running work.** The hips can
+only ride as high as the planted leg reaches, so a stance spanning `c` forces
+them down to `sqrt(REACH² - (c/2)²)`. Letting stance grow with the step wrecked
+the run: at 6.4 m/s the step hit 1.64 m and the hips fell **63 cm** every
+stride — the character dropped into the splits twice a second, which is what
+"walking is janky, running is jankier" was. `CONTACT_MAX` holds the bob at about
+14 cm at every speed; past a jog the step outgrows contact, the duty factor
+falls below a half and a flight phase opens. Extra speed buys cadence and air,
+not a wider split — which is what people actually do.
+
+**Pose the pelvis before solving the legs, and aim through its inverse.** It
+sways, rolls and twists, and the hip sockets ride with it: a 0.09 rad roll lifts
+one socket by most of a centimetre. Solving against a character-space target and
+then moving the pelvis underneath left the foot floating and creeping. Related:
+`REACH_PLANT` is deliberately shorter than `REACH`, because a leg solved to
+exactly its reach is pushed past the IK clamp by that same socket rise and comes
+up short, lifting the planted foot clear of the ground.
+
+Three standing traps. `animateWalk` owns `h.phase` — advancing the cycle
+anywhere else re-introduces exactly the cadence/stride split that caused the
+original bug. The bones are **unscaled**, so a step in world metres has to be
+divided by `h.scale` or taller pedestrians over-stride. And when measuring
+skate, read `h.contact` (0 left, 1 right, −1 airborne) rather than guessing
+stance from foot height: a flight phase is not a foot sliding, and counting it
+as one buries the real number. Current figures, per frame at 60 fps:
+
+| speed | planted foot moves | body moves | skate | airborne |
+|---|---|---|---|---|
+| 1.5 m/s | 1.4 mm | 25 mm | 5.7% | 0% |
+| 4.2 m/s | 10.2 mm | 70 mm | 14.6% | 18% |
+| 7.5 m/s | 21.6 mm | 125 mm | 17.3% | 40% |
+
+The residual is the pelvis's lateral shift and yaw, which a sagittal two-bone
+solve cannot absorb; closing it needs a 3-DOF hip.
+
+## One grid per patch of ground, and no crossing without a junction
+
+Two rules keep the street network coherent. Both were absent, and together they
+made the map read as scribble.
+
+**Exactly one district owns any point.** The polygons in geo.js are hand-drawn
+and 25 of the 32 overlap something — Belltown is 62% covered by Uptown and South
+Lake Union. Overlap is harmless where neighbours share a street angle and fatal
+where they don't: downtown runs 58° off true north and its neighbours run true,
+so laying both grids on the same block gives two sets of streets meeting at 58°.
+`districtOwner()` resolves it — **the smallest polygon covering a point wins**,
+which matches how the data is drawn (a specific neighbourhood sitting inside a
+sprawling one should keep its own grid). Ties fall back to declaration order so
+the result never depends on sort stability. Node placement, `link()` and the
+building block centres all consult it.
+
+**Every ground-level crossing gets a node.** `planarize()` splits each pair of
+crossing edges and puts a junction at the intersection. Without it an arterial
+drawn through a district's grid simply passed over it: **896 crossings carried
+no node**, which is why roads looked stacked rather than connected, and why
+traffic could never turn off an arterial. Elevated edges are skipped — a bridge
+over a street is a crossing that is *supposed* to have no junction. It rebuilds
+through `addEdge`, which recomputes headings and drops the sub-4 m slivers a
+split leaves behind.
+
+To check both at once, count ground-level segment intersections whose edges
+share no node. It must be zero.
 
 ## Keeping buildings out of the road
 
@@ -247,6 +305,26 @@ the nearest spot that fits, so the smallest displacement wins, and shrinks
 whatever still doesn't — with a floor, because past a point a landmark stops
 being recognisable. `reserved` is built from the *placed* position, not `t.p`.
 Residual: UW Campus, which hits the shrink floor and still clips a road.
+
+## Vehicles
+
+**A collision lasts many frames — damage it once.** The contact pair stays
+overlapping and closing for several frames and the damage call ran on every one,
+so a 20 m/s shunt cost 14 health per frame and destroyed a 100-health car in
+about an eighth of a second. Any real impact detonated on contact.
+`Vehicle.hitCd` debounces it; scripted damage (gunfire) passes `force` and
+bypasses it. `collideWithBuildings` had the identical shape of bug on the player
+side — holding the throttle into a wall killed the player in about a sixth of a
+second — and `player.crashCd` does the same job there. **Anything driven by
+sustained contact needs this**; per-frame is never the right cadence for it.
+
+**Steer outside the spin.** A wheel carries a roll on X and a steer on Y, and
+Euler order decides which is applied in whose frame. The default `XYZ` builds
+`Rx·Ry`: the wheel is steered and then rolled about the *car's* X axis rather
+than its own axle, so a turned front wheel tumbles instead of rolling — the axle
+tilts off horizontal by `asin(sin(steer)·sin(spin))`, about 30° at half lock.
+That is the wheel wobble. `rotation.order = 'YXZ'` gives `Ry·Rx`: roll on the
+axle, then steer the lot.
 
 ## The one height surface
 
