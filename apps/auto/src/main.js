@@ -13,6 +13,7 @@ import { Controls } from './controls.js';
 import { Hud, buildMapCanvas } from './hud.js';
 import { Effects } from './effects.js';
 import { Audio } from './audio.js';
+import { PostFX } from './postfx.js';
 import { clamp, lerp, rng, dist2, formatMoney } from './util.js';
 
 const app = document.getElementById('app');
@@ -192,10 +193,11 @@ class Game {
 
 // ---------------------------------------------------------------------------
 
-let renderer, scene, camera, sun, world, cityRef, traffic, peds, player, controls, hud, fx, audio, game, marker;
+let renderer, scene, camera, sun, world, cityRef, traffic, peds, player, controls, hud, fx, audio, game, marker, postfx;
 let pickups = [];
 let last = 0;
 let accumFps = 0, frames = 0, fps = 60;
+let startedAt = 0;
 
 async function boot() {
   const step = async (p, msg) => {
@@ -233,8 +235,12 @@ async function boot() {
   // --- renderer ---
   const canvas = document.getElementById('gl');
   const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
-  renderer = new THREE.WebGLRenderer({ canvas, antialias: !isMobile, powerPreference: 'high-performance' });
+  // Antialiasing comes from FXAA in the post chain, so the context never needs
+  // MSAA -- which also means the scene can render into a target for free.
+  renderer = new THREE.WebGLRenderer({ canvas, antialias: false, powerPreference: 'high-performance' });
   renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, isMobile ? 2 : 1.6));
+  renderer.toneMapping = THREE.ACESFilmicToneMapping;
+  renderer.toneMappingExposure = 1.5;
   const viewW = () => canvas.clientWidth || window.innerWidth;
   const viewH = () => canvas.clientHeight || window.innerHeight;
   renderer.setSize(viewW(), viewH(), false);
@@ -243,27 +249,33 @@ async function boot() {
   renderer.outputColorSpace = THREE.SRGBColorSpace;
 
   scene = new THREE.Scene();
-  scene.fog = new THREE.FogExp2(0xbdc9d2, 0.00035);
-  camera = new THREE.PerspectiveCamera(64, viewW() / viewH(), 0.6, 9000);
+  scene.fog = new THREE.FogExp2(0xb9c6d0, 0.00032);
+  camera = new THREE.PerspectiveCamera(62, viewW() / viewH(), 0.5, 9000);
 
-  const hemi = new THREE.HemisphereLight(0xdfeaf2, 0x54604f, 1.0);
+  // The sky IBL supplies most of the ambient, so the analytic lights are just a
+  // key with a cool bounce fill.
+  const hemi = new THREE.HemisphereLight(0xdcecf6, 0x7b8474, 2.0);
   scene.add(hemi);
-  sun = new THREE.DirectionalLight(0xfff3e2, 1.15);
+  sun = new THREE.DirectionalLight(0xfff0d8, 2.5);
   sun.position.set(-160, 240, -110);
   sun.castShadow = true;
-  sun.shadow.mapSize.set(1024, 1024);
+  sun.shadow.mapSize.set(2048, 2048);
   sun.shadow.camera.near = 20;
-  sun.shadow.camera.far = 520;
-  const S = 90;
+  sun.shadow.camera.far = 620;
+  const S = 105;
   sun.shadow.camera.left = -S;
   sun.shadow.camera.right = S;
   sun.shadow.camera.top = S;
   sun.shadow.camera.bottom = -S;
-  sun.shadow.bias = -0.0012;
+  sun.shadow.bias = -0.0009;
+  sun.shadow.normalBias = 0.04;
   scene.add(sun);
   scene.add(sun.target);
 
-  world = new World(scene, city, tx, { shadows: true });
+  postfx = new PostFX(renderer);
+  postfx.setSize(viewW(), viewH(), renderer.getPixelRatio());
+
+  world = new World(scene, city, tx, { shadows: true, renderer });
   world.buildSky();
   const terrGen = world.buildTerrain();
   let tr = terrGen.next();
@@ -312,9 +324,11 @@ async function boot() {
   }
 
   await step(1, 'Welcome to Seattle');
-  window.__dbg = { game, city, player, world, traffic, peds, scene, camera, renderer, G, fx, hud, controls, audio, pickups, THREE };
+  window.__dbg = { game, city, player, world, traffic, peds, scene, camera, renderer, G, fx, hud, controls, audio, pickups, THREE, postfx, applyQuality, sun, sceneStats };
   wireUi();
   game.newTarget();
+  applyQuality('high', false);
+  startedAt = performance.now();
   loading.classList.add('hide');
   setTimeout(() => loading.remove(), 700);
   last = performance.now();
@@ -435,7 +449,10 @@ function wireUi() {
     });
     el.classList.toggle('on', game.settings[key]);
   };
-  bind('setShadows', 'shadows', (v) => { renderer.shadowMap.enabled = v; scene.traverse((o) => { if (o.isMesh) o.material.needsUpdate = true; }); });
+  bind('setShadows', 'shadows', (v) => { renderer.shadowMap.enabled = v && game.settings.quality !== 'low'; });
+  for (const el of document.querySelectorAll('[data-quality]')) {
+    el.addEventListener('click', () => applyQuality(el.dataset.quality, true));
+  }
   bind('setMusic', 'music', (v) => { audio.musicOn = v; });
   bind('setSound', 'sound', (v) => { audio.enabled = v; });
 
@@ -467,6 +484,7 @@ function wireUi() {
     renderer.setSize(w, h, false);
     camera.aspect = w / h;
     camera.updateProjectionMatrix();
+    postfx.setSize(w, h, renderer.getPixelRatio());
     hud.resize();
   };
   window.addEventListener('resize', fit);
@@ -506,7 +524,7 @@ function frame(now) {
   }
 
   if (game.paused || game.mapOpen) {
-    renderer.render(scene, camera);
+    draw(now);
     return;
   }
 
@@ -593,7 +611,54 @@ function frame(now) {
   });
 
   hud.update(dt, game, player, traffic);
+  world.animate(dt, now / 1000);
+  draw(now);
+  autoQuality(dt);
+}
+
+function draw(now) {
+  renderer.setRenderTarget(postfx.target);
   renderer.render(scene, camera);
+  // capture before the post passes reset the counters
+  sceneStats.calls = renderer.info.render.calls;
+  sceneStats.tris = renderer.info.render.triangles;
+  postfx.render(now / 1000);
+  renderer.setRenderTarget(null);
+}
+const sceneStats = { calls: 0, tris: 0 };
+
+// The phone this ships to can't be profiled from here, so the game measures
+// itself and steps the quality down if it can't hold frame rate.
+const TIERS = ['high', 'medium', 'low'];
+let tierIdx = 0;
+let slowFor = 0;
+let qualityLocked = false;
+
+function autoQuality(dt) {
+  if (qualityLocked || tierIdx >= TIERS.length - 1) return;
+  if (performance.now() - startedAt < 4000) return;
+  if (window.__noAutoQuality) return;
+  slowFor = fps < 40 ? slowFor + dt : 0;
+  if (slowFor > 2.5) {
+    slowFor = 0;
+    applyQuality(TIERS[++tierIdx], false);
+    hud.showToast(`Graphics: ${TIERS[tierIdx]}`);
+  }
+}
+
+function applyQuality(q, manual) {
+  if (manual) { qualityLocked = true; tierIdx = TIERS.indexOf(q); }
+  game.settings.quality = q;
+  postfx.setQuality(q);
+  renderer.shadowMap.enabled = q !== 'low' && game.settings.shadows;
+  const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
+  const cap = q === 'high' ? (isMobile ? 2 : 1.6) : q === 'medium' ? 1.5 : 1.15;
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, cap));
+  renderer.setSize(renderer.domElement.clientWidth, renderer.domElement.clientHeight, false);
+  postfx.setSize(renderer.domElement.clientWidth, renderer.domElement.clientHeight, renderer.getPixelRatio());
+  for (const el of document.querySelectorAll('[data-quality]')) {
+    el.classList.toggle('on', el.dataset.quality === q);
+  }
 }
 
 boot().catch((e) => {

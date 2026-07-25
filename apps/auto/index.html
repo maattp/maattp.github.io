@@ -199,6 +199,13 @@
   }
   .cta.ghost { background: rgba(255,255,255,0.06); border-color: rgba(255,255,255,0.16); }
   input[type=range] { width: 130px; accent-color: #7ec8f0; }
+  .seg { display: flex; gap: 4px; }
+  .segbtn {
+    padding: 6px 12px; border-radius: 9px; font-size: 12px; font-weight: 700;
+    background: rgba(255,255,255,0.07); border: 1px solid rgba(255,255,255,0.14);
+    color: var(--ink); opacity: .65;
+  }
+  .segbtn.on { background: rgba(90,170,230,0.34); border-color: rgba(150,215,255,0.5); opacity: 1; }
   .help { font-size: 12px; opacity: .65; line-height: 1.5; margin-top: 12px; }
 
   /* ---------- loading ---------- */
@@ -281,6 +288,11 @@
     <div id="pauseCard">
       <h2>AUTO</h2>
       <p class="sub">Seattle, Washington</p>
+      <div class="row"><span>Graphics</span><div class="seg">
+        <button class="segbtn" data-quality="high">High</button>
+        <button class="segbtn" data-quality="medium">Med</button>
+        <button class="segbtn" data-quality="low">Low</button>
+      </div></div>
       <div class="row"><span>Shadows</span><div class="toggle" id="setShadows"></div></div>
       <div class="row"><span>Radio</span><div class="toggle" id="setMusic"></div></div>
       <div class="row"><span>Sound effects</span><div class="toggle" id="setSound"></div></div>

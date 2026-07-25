@@ -6,6 +6,14 @@ import { rng, dirDeg, distToSeg, clamp, hash2, DEG } from './util.js';
 
 export const CHUNK = 400;
 
+// Road and sidewalk surfaces are drawn slightly proud of the terrain so they
+// don't z-fight it. Anything that stands ON them has to be lifted by the same
+// amount or it sinks into the asphalt -- these are the single source of truth,
+// shared with world.js.
+export const ROAD_LIFT = 0.22;
+export const NODE_LIFT = 0.25;
+export const WALK_LIFT = 0.44;
+
 const CLASS_HW = { hwy: 15, art: 9.5, st: 6.5, res: 5.5, ramp: 5.5 };
 const CLASS_SPEED = { hwy: 30, art: 17, st: 12, res: 9, ramp: 14 };
 
@@ -407,9 +415,41 @@ export function* cityGenerator() {
     drivable,
     surfaces,
 
-    /** Ground height accounting for bridge decks under the given Y. */
-    groundAt(x, z, curY) {
-      const terr = G.terrainHeight(x, z);
+    /**
+     * How far the paved surface at (x,z) sits above the raw terrain. Callers
+     * that sample the ground many times per frame (vehicles take five) should
+     * compute this once for the body centre and pass it in, rather than paying
+     * for the edge scan on every sample.
+     */
+    roadLift(x, z) {
+      let lift = 0;
+      const c0 = Math.floor(x / CHUNK), d0 = Math.floor(z / CHUNK);
+      for (let cx = c0 - 1; cx <= c0 + 1; cx++) {
+        for (let cz = d0 - 1; cz <= d0 + 1; cz++) {
+          const c = chunks.get(ck(cx, cz));
+          if (!c) continue;
+          for (const ei of c.edges) {
+            const e = g.edges[ei];
+            if (e.elev) continue;
+            const a = g.nodes[e.a], b = g.nodes[e.b];
+            const r = distToSeg(x, z, a.x, a.z, b.x, b.z);
+            const walk = (e.cls === 'st' || e.cls === 'art' || e.cls === 'res')
+              ? (e.cls === 'art' ? 3.2 : 2.6) : 0;
+            const outer = e.hw + walk;
+            if (r.d > outer) continue;
+            let l = r.d <= e.hw ? ROAD_LIFT : WALK_LIFT;
+            // taper the last half metre so nothing steps off a cliff edge
+            if (r.d > outer - 0.5) l *= (outer - r.d) / 0.5;
+            if (l > lift) lift = l;
+          }
+        }
+      }
+      return lift;
+    },
+
+    /** Ground height accounting for paved lift and for bridge decks under Y. */
+    groundAt(x, z, curY, lift) {
+      const terr = G.terrainHeight(x, z) + (lift != null ? lift : this.roadLift(x, z));
       let best = terr;
       const l = surfGrid.get(skey(Math.floor(x / surfCell), Math.floor(z / surfCell)));
       if (l) {
@@ -417,7 +457,7 @@ export function* cityGenerator() {
           const s = surfaces[si];
           const r = distToSeg(x, z, s.ax, s.az, s.bx, s.bz);
           if (r.d > s.hw) continue;
-          const y = s.ay + (s.by - s.ay) * r.t;
+          const y = s.ay + (s.by - s.ay) * r.t + ROAD_LIFT * 0.3;
           if (curY == null || y <= curY + 2.6) {
             if (y > best) best = y;
           }
