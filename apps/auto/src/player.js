@@ -16,7 +16,7 @@ export class Player {
     this.x = G.SPAWN.x;
     this.z = G.SPAWN.z;
     this.y = city.groundAt(this.x, this.z, null);
-    this.heading = 2.58; // pointed down 4th Ave, toward Pioneer Square
+    this.heading = G.SPAWN_HEADING;
     this.vy = 0;
     this.grounded = true;
     this.speed = 0;
@@ -29,6 +29,7 @@ export class Player {
     this.enterCd = 0;
     this.lift = 0;
     this.dead = false;
+    this.crashCd = 0; // see updateDrive: one wall scrape is one crash
 
     this.camYaw = this.heading + Math.PI;
     this.camPitch = 0.1;
@@ -96,7 +97,9 @@ export class Player {
 
   updateFoot(dt, input, traffic, peds) {
     const mag = Math.hypot(input.x, input.y);
-    const run = input.sprint ? 6.4 : 3.3;
+    // On-foot pace. The city is 10 km across, so these sit above real walking
+    // and jogging speeds -- crossing a block should not be a chore.
+    const run = input.sprint ? 7.5 : 4.2;
     let target = 0;
     if (mag > 0.12) {
       // Stick is camera-relative. Note HEADING_SENSE: heading is three.js
@@ -172,8 +175,16 @@ export class Player {
     const throttle = input.gas ? 1 : 0;
     const brake = input.brake ? 1 : 0;
     v.update(dt, { throttle, brake, steer, handbrake: input.hand ? 1 : 0 });
-    const impact = collideWithBuildings(v, this.city, (imp) => this.game.onCrash(imp, false));
-    if (impact > 8) this.game.damagePlayer(impact * 0.5, 'crash');
+    // Scraping a wall is many frames of contact, not many crashes. Debounced
+    // like vehicle-vehicle damage: unthrottled, holding the accelerator into a
+    // building killed the player in about a sixth of a second.
+    this.crashCd -= dt;
+    const impact = collideWithBuildings(v, this.city, (imp) => {
+      if (this.crashCd > 0) return;
+      this.crashCd = 0.4;
+      this.game.onCrash(imp, false);
+      if (imp > 8) this.game.damagePlayer(imp * 0.5, 'crash');
+    });
     if (v.y < -1.2 && G.isWater(v.x, v.z)) this.game.onCarSank(v);
     if (v.dead) this.game.onCarDestroyed(v);
   }
@@ -193,7 +204,7 @@ export class Player {
           if (p) return;
           for (const v of traffic.cars) {
             if (dist2(v.x, v.z, hx, hz) < v.radius * v.radius) {
-              v.damage(9);
+              v.damage(9, true);
               this.game.onShotVehicle(v, hx, hz);
               return;
             }

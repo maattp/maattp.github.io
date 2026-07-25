@@ -777,9 +777,12 @@ export class World {
       }
     }
 
-    // park trees
+    // Park trees. The count is candidates over the whole chunk, of which only
+    // the ones landing in a park survive -- at 46 a chunk-sized park got one
+    // tree per 60 m and read as an empty green rectangle, which is most of why
+    // the parks looked unfinished.
     const x0 = cx * CHUNK, z0 = cz * CHUNK;
-    for (let i = 0; i < 46; i++) {
+    for (let i = 0; i < 230; i++) {
       const hx = hash2(cx * 71 + i, cz * 131 + 7);
       const hz = hash2(cx * 37 + i, cz * 53 + 13);
       const x = x0 + hx * CHUNK, z = z0 + hz * CHUNK;

@@ -205,10 +205,130 @@ IK version measures 1.9 mm. If you touch the legs, re-measure that number:
 sample the lower foot's world XZ per frame and compare it against
 `speed * dt`.
 
-Two standing traps. `animateWalk` owns `h.phase` — advancing the cycle anywhere
-else re-introduces exactly the cadence/stride split that caused the bug. And the
-bones are **unscaled**, so a step in world metres has to be divided by
-`h.scale` or taller pedestrians over-stride.
+**Ground contact is capped, and that is what makes running work.** The hips can
+only ride as high as the planted leg reaches, so a stance spanning `c` forces
+them down to `sqrt(REACH² - (c/2)²)`. Letting stance grow with the step wrecked
+the run: at 6.4 m/s the step hit 1.64 m and the hips fell **63 cm** every
+stride — the character dropped into the splits twice a second, which is what
+"walking is janky, running is jankier" was. `CONTACT_MAX` holds the bob at about
+14 cm at every speed; past a jog the step outgrows contact, the duty factor
+falls below a half and a flight phase opens. Extra speed buys cadence and air,
+not a wider split — which is what people actually do.
+
+**Pose the pelvis before solving the legs, and aim through its inverse.** It
+sways, rolls and twists, and the hip sockets ride with it: a 0.09 rad roll lifts
+one socket by most of a centimetre. Solving against a character-space target and
+then moving the pelvis underneath left the foot floating and creeping. Related:
+`REACH_PLANT` is deliberately shorter than `REACH`, because a leg solved to
+exactly its reach is pushed past the IK clamp by that same socket rise and comes
+up short, lifting the planted foot clear of the ground.
+
+Three standing traps. `animateWalk` owns `h.phase` — advancing the cycle
+anywhere else re-introduces exactly the cadence/stride split that caused the
+original bug. The bones are **unscaled**, so a step in world metres has to be
+divided by `h.scale` or taller pedestrians over-stride. And when measuring
+skate, read `h.contact` (0 left, 1 right, −1 airborne) rather than guessing
+stance from foot height: a flight phase is not a foot sliding, and counting it
+as one buries the real number. Current figures, per frame at 60 fps:
+
+| speed | planted foot moves | body moves | skate | airborne |
+|---|---|---|---|---|
+| 1.5 m/s | 1.4 mm | 25 mm | 5.7% | 0% |
+| 4.2 m/s | 10.2 mm | 70 mm | 14.6% | 18% |
+| 7.5 m/s | 21.6 mm | 125 mm | 17.3% | 40% |
+
+The residual is the pelvis's lateral shift and yaw, which a sagittal two-bone
+solve cannot absorb; closing it needs a 3-DOF hip.
+
+## One grid per patch of ground, and no crossing without a junction
+
+Two rules keep the street network coherent. Both were absent, and together they
+made the map read as scribble.
+
+**Exactly one district owns any point.** The polygons in geo.js are hand-drawn
+and 25 of the 32 overlap something — Belltown is 62% covered by Uptown and South
+Lake Union. Overlap is harmless where neighbours share a street angle and fatal
+where they don't: downtown runs 58° off true north and its neighbours run true,
+so laying both grids on the same block gives two sets of streets meeting at 58°.
+`districtOwner()` resolves it — **the smallest polygon covering a point wins**,
+which matches how the data is drawn (a specific neighbourhood sitting inside a
+sprawling one should keep its own grid). Ties fall back to declaration order so
+the result never depends on sort stability. Node placement, `link()` and the
+building block centres all consult it.
+
+**Every ground-level crossing gets a node.** `planarize()` splits each pair of
+crossing edges and puts a junction at the intersection. Without it an arterial
+drawn through a district's grid simply passed over it: **896 crossings carried
+no node**, which is why roads looked stacked rather than connected, and why
+traffic could never turn off an arterial. Elevated edges are skipped — a bridge
+over a street is a crossing that is *supposed* to have no junction. It rebuilds
+through `addEdge`, which recomputes headings and drops the sub-4 m slivers a
+split leaves behind.
+
+To check both at once, count ground-level segment intersections whose edges
+share no node. It must be zero.
+
+## Parks
+
+**The block grid does not run through a park.** Buildings already skipped them,
+so paving one produced a green rectangle with streets crossing it and nothing on
+them — a road to nowhere. `citygen` skips park ground for both node placement
+and `link()`. Hand-drawn arterials and highways in step 2 still go where they
+are drawn, which is correct: Aurora really does cut through Woodland Park.
+
+Tree scatter is *candidates per chunk*, filtered by `inPark`. At 46 a
+chunk-sized park got one tree per 60 m and read as bare ground; it is 230 now.
+If you add a large park, check it doesn't look empty.
+
+## How closely this matches real Seattle
+
+Downtown is good and the outskirts are not, and the error is not a uniform
+scale, so relative geography breaks down as you go out. Measured against real
+lat/lon converted about Westlake Center:
+
+| landmark | error | | landmark | error |
+|---|---|---|---|---|
+| Pike Place Market | 165 m | | Gas Works Park | 518 m |
+| Seattle Central Library | 205 m | | Husky Stadium | 1399 m |
+| Space Needle | 274 m | | Alki Beach | 2664 m |
+| Lumen Field | 414 m | | Green Lake Park | 3029 m |
+| Kerry Park | 594 m | | Seward Park | 4250 m |
+
+The game/real distance ratio averages 0.76 but ranges **0.55 to 1.16** — so it
+isn't a deliberate uniform compression, it's drift. `MAP_HALF` is 5200 m and
+Seward Park is genuinely 9.3 km out, so 1:1 will never fit; a *consistent* scale
+would still fix the relative layout.
+
+**Seattle Center has been rebuilt from real coordinates** and is the worked
+example of how to fix a district. Everything there was placed by converting
+lat/lon about Westlake Center (`M_LON = 111320·cos 47.61°`):
+
+- Needle, MoPOP and the Arena sat 140–290 m west of true, which is what put
+  Climate Pledge Arena on the Elliott Bay shoreline. They are now at their
+  converted positions.
+- The campus rect is set off the four streets that bound it: 1st Ave N
+  (x −1396), 5th Ave N (−735), Denny Way (z −790), Mercer St (−1469).
+- Mercer St was drawn at z ≈ −1085, nearly 400 m south of true, so it ran past
+  the Space Needle instead of bounding the campus. Denny Way was ~200 m south.
+- **Alaskan Way's north end was `[-1150,-1000]` — the Space Needle.** A seawall
+  road terminating in the middle of the campus, and why MoPOP had a street
+  through it. Elliott Ave W cut the same corner about 400 m inland of the real
+  road.
+- The shore itself drifted east going north, ~450 m of it by Seattle Center,
+  leaving metres of land between 1st Ave N and the bay. Pulled back west.
+
+Result: no edge of any class crosses the campus, MoPOP is 134 m from the nearest
+road, and the Arena is 570 m from the water against about 700 m in reality.
+
+**When you edit the shoreline, diff the land/water map, don't just spot-check
+it.** Sample a grid before and after and count points that flipped: the failure
+that matters is land becoming water (a doubled-back polygon swallowing a
+neighbourhood, which is how Magnolia disappeared). This edit flipped 0 points to
+water and 0.34 km² to land, which is the strip that should always have been
+there.
+
+The rest of the outskirts have not been touched and still carry the drift in the
+table above.
 
 ## Keeping buildings out of the road
 
@@ -247,6 +367,26 @@ the nearest spot that fits, so the smallest displacement wins, and shrinks
 whatever still doesn't — with a floor, because past a point a landmark stops
 being recognisable. `reserved` is built from the *placed* position, not `t.p`.
 Residual: UW Campus, which hits the shrink floor and still clips a road.
+
+## Vehicles
+
+**A collision lasts many frames — damage it once.** The contact pair stays
+overlapping and closing for several frames and the damage call ran on every one,
+so a 20 m/s shunt cost 14 health per frame and destroyed a 100-health car in
+about an eighth of a second. Any real impact detonated on contact.
+`Vehicle.hitCd` debounces it; scripted damage (gunfire) passes `force` and
+bypasses it. `collideWithBuildings` had the identical shape of bug on the player
+side — holding the throttle into a wall killed the player in about a sixth of a
+second — and `player.crashCd` does the same job there. **Anything driven by
+sustained contact needs this**; per-frame is never the right cadence for it.
+
+**Steer outside the spin.** A wheel carries a roll on X and a steer on Y, and
+Euler order decides which is applied in whose frame. The default `XYZ` builds
+`Rx·Ry`: the wheel is steered and then rolled about the *car's* X axis rather
+than its own axle, so a turned front wheel tumbles instead of rolling — the axle
+tilts off horizontal by `asin(sin(steer)·sin(spin))`, about 30° at half lock.
+That is the wheel wobble. `rotation.order = 'YXZ'` gives `Ry·Rx`: roll on the
+axle, then steer the lot.
 
 ## The one height surface
 
@@ -367,3 +507,18 @@ cache bumps, and URL-based `cache: 'no-cache'` revalidation (WebKit refuses to
 `fetch()` a navigation-mode Request). **Bump `CACHE` in sw.js on any deploy that
 must invalidate immediately.** Never add `vendor/` or `src/` to `SHELL`: a slow
 install is what pins iOS players to a stale worker forever.
+
+## Build number
+
+**`#build` on the launch screen and `CACHE` in sw.js go up together, once per
+change** — `v9` next to `auto-v9`. The point is that a player can read the
+number off the loading screen and say which build they are on, which is the
+first thing worth knowing when a fix appears to be missing: a stale service
+worker looks exactly like a fix that didn't work.
+
+They stay two literals on purpose. Sharing one constant means either the page
+fetching the number out of sw.js, or sw.js pulling it in with `importScripts` —
+and in that second case sw.js's own bytes never change, so the browser has no
+reason to install the new worker and the cache never turns over. **The byte
+change to sw.js is the update trigger**, so that file has to carry its own
+literal. Bump both, and keep the digits equal so a mismatch is obvious on sight.

@@ -353,20 +353,43 @@ export function makeHumanoid(opts = {}) {
 }
 
 const TAU = Math.PI * 2;
+// Scratch for the leg solve, reused so a crowd doesn't allocate per frame.
+const _v = new THREE.Vector3();
+const _w = new THREE.Vector3();
+const _inv = new THREE.Quaternion();
 const LEG = J.hip - J.ankle;
 const L_THIGH = J.hip - J.knee;
 const L_SHIN = J.knee - J.ankle;
 // Never ask the IK for a fully locked leg -- at full extension the knee angle
 // is stationary against distance and the solve jitters.
 const REACH = LEG * 0.99;
+// What the hips are allowed to assume the planted leg can span. It has to be
+// shorter than REACH, because the pelvis rolls and carries its sockets up with
+// it -- HIP_X * sin(roll) is nearly a centimetre at a sprint. Set the hips by
+// the full reach and that rise pushes the leg past its limit, so it comes up
+// short and the planted foot lifts clear of the ground.
+const REACH_PLANT = REACH - 0.014;
 
 /**
- * Metres of ground covered per step, with the per-person gait variation folded
+ * How far the hips travel per step, with the per-person gait variation folded
  * in. This is the ONE number the gait is built on -- see animateWalk.
  */
 function stepLength(h, speed) {
-  return clamp(0.62 + 0.16 * speed, 0.5, 1.7) * h.gait;
+  return clamp(0.62 + 0.14 * speed, 0.5, 1.9) * h.gait;
 }
+
+/**
+ * Longest the foot may stay on the ground in one stance.
+ *
+ * The hips can only ride as high as the planted leg reaches, so a stance that
+ * spans `c` forces them down to sqrt(REACH^2 - (c/2)^2). Letting the stance grow
+ * with the step is what wrecked the run: at 6.4 m/s the step reached 1.64 m and
+ * the hips fell 63 cm on every stride -- the character dropped into the splits
+ * twice a second. Capping it holds the bob at about 14 cm and the extra speed
+ * goes into cadence and a flight phase instead, which is what actually happens
+ * when a person speeds up.
+ */
+const CONTACT_MAX = 0.95;
 
 /**
  * Procedural walk/idle cycle. Hips bob and sway, knees and elbows actually
@@ -408,12 +431,18 @@ export function animateWalk(h, amp, dt, speed) {
   // The bones are unscaled, so a step measured in world metres has to come back
   // through the character's own scale or a tall pedestrian over-strides.
   const sc = h.scale || 1;
-  const swept = (step / sc) * settle;
+  // Ground contact is capped, so above a jog the step outgrows it and the duty
+  // factor falls below a half -- the legs stop overlapping and a flight phase
+  // opens up. Speeding up therefore buys cadence and air, not a wider split.
+  const contactW = Math.min(step, CONTACT_MAX);
+  const duty = clamp(contactW / (2 * step), 0.2, 0.5);
+  const swept = (contactW / sc) * settle;
   const lift = ((0.09 + 0.07 * run) / sc) * settle;
+  const stanceSpan = TAU * duty;
   const target = (ph) => {
     const w = ((ph % TAU) + TAU) % TAU;
-    const stance = w < Math.PI;
-    const u = (stance ? w : w - Math.PI) / Math.PI;
+    const stance = w < stanceSpan;
+    const u = stance ? w / stanceSpan : (w - stanceSpan) / (TAU - stanceSpan);
     return stance
       ? { z: (0.5 - u) * swept, y: J.ankle, stance: true }
       : { z: (u - 0.5) * swept, y: J.ankle + lift * Math.sin(Math.PI * u), stance: false };
@@ -422,13 +451,44 @@ export function animateWalk(h, amp, dt, speed) {
 
   // The hips can only ride as high as the planted leg can reach, so the classic
   // two-bob-per-cycle rise and fall falls out of the geometry instead of being
-  // dialled in: highest at mid-stance, lowest as the legs scissor apart.
-  const planted = tl.stance ? tl : tr;
-  const hipY = J.ankle + Math.sqrt(Math.max(0.04, REACH * REACH - planted.z * planted.z));
+  // dialled in: highest at mid-stance, lowest as the legs scissor apart. It has
+  // to come from the PLANTED foot -- take it from the airborne one and the
+  // stance leg is asked for a reach it hasn't got, and the foot skates instead.
+  const planted = tl.stance ? tl : (tr.stance ? tr : null);
+  // Which foot is bearing weight: 0 left, 1 right, -1 airborne. Only the gait
+  // regression test reads it -- measuring skate needs the model's own idea of
+  // stance, or a flight phase gets counted as a foot sliding. See CLAUDE.md.
+  h.contact = tl.stance ? 0 : (tr.stance ? 1 : -1);
+  const lowHip = J.ankle + Math.sqrt(Math.max(0.04, REACH_PLANT * REACH_PLANT - (swept * 0.5) * (swept * 0.5)));
+  let hipY;
+  if (planted) {
+    hipY = J.ankle + Math.sqrt(Math.max(0.04, REACH_PLANT * REACH_PLANT - planted.z * planted.z));
+  } else {
+    // Airborne: nothing pins the hips, so arc over the gap. Both ends of a
+    // flight phase are the fully-scissored pose, so this stays continuous.
+    const gap = Math.PI - stanceSpan;
+    const w = ((phase % Math.PI) + Math.PI) % Math.PI;
+    const f = gap > 1e-6 ? clamp((w - stanceSpan) / gap, 0, 1) : 0;
+    hipY = lowHip + (0.035 + 0.05 * run) * Math.sin(Math.PI * f);
+  }
+
+  // The pelvis has to be posed BEFORE the legs are solved. It sways, rolls and
+  // twists, and the leg roots ride with it -- a roll of 0.09 rad lifts a hip
+  // socket by most of a centimetre. Solving against a character-space target and
+  // then moving the pelvis underneath leaves the foot floating and creeping;
+  // measured at a sprint that was 8 mm of float. So set it, then aim at the
+  // target through its inverse.
+  b[B.hips].position.set(s * A * 0.035, hipY, 0);
+  b[B.hips].rotation.set(0, -s * A * 0.30, -s * A * 0.11);
+  b[B.hips].updateMatrix();
+  _inv.copy(b[B.hips].quaternion).invert();
 
   // two-bone IK, sagittal plane only: solve thigh and knee to hit the target
   const solveLeg = (thigh, knee, foot, t) => {
-    const dz = t.z, dy = hipY - t.y;
+    // where this hip socket actually ended up, and the target seen from it
+    _v.copy(b[thigh].position).applyMatrix4(b[B.hips].matrix);
+    _w.set(0, t.y - _v.y, t.z - _v.z).applyQuaternion(_inv);
+    const dz = _w.z, dy = -_w.y;
     const D = clamp(Math.hypot(dz, dy), Math.abs(L_THIGH - L_SHIN) + 1e-3, L_THIGH + L_SHIN - 1e-3);
     const aim = Math.atan2(dz, dy); // target angle off straight-down, +z forward
     // knee sits FORWARD of the hip-to-ankle line, so the thigh leads it by `off`
@@ -454,13 +514,7 @@ export function animateWalk(h, amp, dt, speed) {
   b[B.elbowL].rotation.x = -(0.20 + 0.5 * run) - Math.max(0, armA * 1.4 * s);
   b[B.elbowR].rotation.x = -(0.20 + 0.5 * run) - Math.max(0, -armA * 1.4 * s);
 
-  // Pelvis rides at whatever height the planted leg can actually reach (see
-  // hipY): drop it any lower and the foot slides under the ground, hold it any
-  // higher and the figure floats.
-  b[B.hips].position.y = hipY;
-  b[B.hips].position.x = s * A * 0.035;
-  b[B.hips].rotation.z = -s * A * 0.11;
-  b[B.hips].rotation.y = -s * A * 0.30;
+  // Pelvis was posed above, before the legs were solved against it.
   b[B.spine].rotation.y = s * A * 0.16;
   b[B.chest].rotation.y = s * A * 0.30;
   b[B.chest].rotation.x = h.lean + A * 0.10 + run * 0.10;
