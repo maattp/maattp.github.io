@@ -218,6 +218,7 @@ async function main() {
       mkdirSync(OUT, { recursive: true });
       const views = [
         ['spawn', null],
+        ['needle', [-857, -1130]],
         ['downtown', [200, 400, 60]],
         // I-5 and Aurora-through-Woodland-Park are the two spots the road
         // complaints came from: a box across the freeway, and trees on the
@@ -242,6 +243,10 @@ async function main() {
       // Aerial. The frame loop still draws while paused but stops driving the
       // camera from the player, so it can just be posed.
       for (const [name, x, z, h] of [
+        // Posed at the Space Needle. A respawn faces wherever the camera
+        // happened to be, which is how a landmark can look missing when it is
+        // simply behind you.
+        ['needle-posed', -857, -1019, 55],
         ['aerial-downtown', 300, 700, 700],
         ['aerial-lakeunion', 200, -2600, 1100],
       ]) {
@@ -249,8 +254,8 @@ async function main() {
           const d = window.__dbg;
           d.game.paused = true;
           d.world.update(${x}, ${z}, 40);
-          d.camera.position.set(${x}, ${h}, ${z + h * 0.9});
-          d.camera.lookAt(${x}, 0, ${z});
+          d.camera.position.set(${x}, ${h}, ${z + (h > 200 ? h * 0.9 : 260)});
+          d.camera.lookAt(${x}, ${h > 200 ? 0 : 120}, ${z});
           d.camera.updateMatrixWorld(true);
         })()`);
         await sleep(6000);
