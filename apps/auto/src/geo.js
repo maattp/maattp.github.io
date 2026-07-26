@@ -111,16 +111,39 @@ export const WATER = [
     poly: [[-880, -3480], [240, -3480], [300, -2600], [130, -1780], [-360, -1620], [-720, -1950], [-890, -2750]],
   },
   {
+    // The point of a ship canal is that a boat can get from the sound to the
+    // lake, and this one couldn't: its west end stopped 177 m short of Elliott
+    // Bay, so the whole chain was a landlocked trench. It was also a six-point
+    // rectangle -- dead straight, square ends, one width for 3.4 km -- which
+    // from the air read as a slot cut in a lawn rather than water.
+    //
+    // Now it reaches into the bay and changes width along its length: Salmon
+    // Bay wide at the west, pinched at the Fremont cut, opening into Lake
+    // Union. Run the land/water probe after touching this.
     name: 'Lake Washington Ship Canal',
-    poly: [[-4250, -3920], [-3400, -3880], [-820, -3780], [-830, -3470], [-3400, -3420], [-4250, -3470]],
+    // Every vertex east of the bay sits ON or INSIDE the old outline, so the
+    // shape only ever loses water. The one place it gains is the west end,
+    // which is the whole point -- and that reaches the bay past x = -4350,
+    // clear of the Ballard district, so no built ground goes under.
+    poly: [
+      [-4700, -3960], [-4350, -3925], [-4250, -3920], [-3900, -3896], [-3400, -3874],
+      [-2800, -3850], [-2000, -3812], [-1400, -3796], [-820, -3780],
+      [-820, -3470], [-1400, -3462], [-2000, -3458], [-2800, -3455],
+      [-3400, -3452], [-3900, -3460], [-4250, -3470], [-4700, -3500],
+    ],
   },
   {
     name: 'Portage Bay',
-    poly: [[230, -3520], [1260, -3470], [1310, -2990], [420, -2940], [180, -3150]],
+    poly: [[230, -3520], [640, -3500], [1040, -3487], [1280, -3470], [1310, -2990],
+      [900, -2975], [420, -2940], [180, -3150]],
   },
   {
+    // A cut really is a straight channel, but 200 m of it was a canal-sized
+    // river; the real one is about 50 m across. Narrowed, and pulled out at
+    // both mouths so it meets Portage Bay and Lake Washington properly.
     name: 'Montlake Cut',
-    poly: [[1240, -3580], [1830, -3600], [1830, -3400], [1240, -3390]],
+    poly: [[1180, -3600], [1420, -3560], [1700, -3560], [1880, -3620],
+      [1880, -3390], [1700, -3450], [1420, -3450], [1180, -3420]],
   },
   {
     name: 'Lake Washington',
