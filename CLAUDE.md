@@ -103,6 +103,18 @@ data by the scripts in `/tools/`, into `/apps/auto/data/`. **OSM is ODbL, so the
 attribution on the launch screen and in the pause menu is a licence condition —
 don't remove it.** See `apps/auto/CLAUDE.md` for how to re-run the import.
 
+## Zombies App
+
+### Version Management
+
+**IMPORTANT:** Increment `const VERSION` in `/apps/zombies/index.html` once per
+PR, and bump `CACHE` in `/apps/zombies/sw.js` (`zombies-vN`) when a change must
+reach installed players promptly.
+
+The version renders bottom-right on the title screen. **Landscape-only** — see
+`apps/zombies/CLAUDE.md` for the rendering, navigation and character-model laws,
+each of which cost a real debugging session.
+
 ## Photos App
 
 ### Known Limitations
