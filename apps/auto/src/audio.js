@@ -196,11 +196,21 @@ export class Audio {
     // engine
     const rpm = state.inCar ? clamp(0.16 + state.speed / 34 + state.throttle * 0.22, 0, 1.5) : 0;
     const targetGain = state.inCar ? 0.055 + state.throttle * 0.05 : 0;
-    this.engGain.gain.setTargetAtTime(targetGain, t, 0.08);
-    const f = 48 + rpm * 130;
-    this.osc1.frequency.setTargetAtTime(f, t, 0.06);
-    this.osc2.frequency.setTargetAtTime(f * 0.5, t, 0.06);
-    this.engFilter.frequency.setTargetAtTime(500 + rpm * 1600, t, 0.1);
+    // An electric drivetrain is a single-ratio whine an octave and a half up,
+    // not a rumble: soft waveforms with no harmonic mush, and it tracks road
+    // speed exactly because there is nothing to change gear. Oscillator type
+    // is only reassigned when the mode actually flips -- setting it every
+    // frame is a per-frame allocation on some engines for no audible gain.
+    const ev = !!state.ev;
+    if (ev !== this._evTone) {
+      this._evTone = ev;
+      this.osc1.type = ev ? 'triangle' : 'sawtooth';
+      this.osc2.type = ev ? 'sine' : 'square';
+    }
+    const f = ev ? 132 + rpm * 430 : 48 + rpm * 130;
+    this.osc1.frequency.setTargetAtTime(f, t, ev ? 0.03 : 0.06);
+    this.osc2.frequency.setTargetAtTime(ev ? f * 2 : f * 0.5, t, ev ? 0.03 : 0.06);
+    this.engFilter.frequency.setTargetAtTime(ev ? 1400 + rpm * 2600 : 500 + rpm * 1600, t, 0.1);
 
     this.skidGain.gain.setTargetAtTime(state.skid * 0.16, t, 0.05);
     this.windGain.gain.setTargetAtTime(clamp(state.speed / 60, 0, 1) * 0.05, t, 0.2);

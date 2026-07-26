@@ -615,6 +615,7 @@ function frame(now) {
     speed: player.vehicle ? Math.abs(player.vehicle.vLong) : 0,
     throttle: input.gas ? 1 : 0,
     skid: player.vehicle ? player.vehicle.skid : 0,
+    ev: !!(player.vehicle && player.vehicle.assets.spec.ev),
     siren,
   });
 

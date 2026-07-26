@@ -437,6 +437,29 @@ side — holding the throttle into a wall killed the player in about a sixth of 
 second — and `player.crashCd` does the same job there. **Anything driven by
 sustained contact needs this**; per-frame is never the right cadence for it.
 
+**The electric car is a spec flag, not a special case.** `ev: true` in `TYPES`
+switches four things: a sealed nose with one full-width light bar at each end
+instead of a grille and paired lamps, a square-root torque falloff instead of a
+linear one (an electric motor is at full torque from zero, so it leaps off the
+line and runs out of road rather than out of revs), regen at 4.6 m/s² off
+throttle against 2.4, and more grip, because the battery floor puts the mass
+under the axle line. `audio.js` reads `state.ev` and moves the engine to a
+triangle/sine whine an octave and a half up — reassigned only when the mode
+flips, since setting `OscillatorNode.type` every frame allocates on some
+engines. **This last part cannot be checked headlessly**: the AudioContext
+never leaves `suspended` without a real gesture, so `update()` early-returns
+before it gets there.
+
+**Wheel wells are capped at the shoulder line.** The well is sized off
+`wheelR` and the bodywork off `belt`, so a big wheel under a low body pushed a
+black slab up through the top of each wing — two per side. It looked like
+broken geometry and it was on the sports car as well as the first pass at the
+EV. Don't diagnose this from a render: raycast the offending pixel and read
+back which builder it came from (`paint` / `trim` / `matte`) and the hit point
+in the car's local frame. That turns "some dark box" into "matte, at
+(0.71, 0.87, 1.66)", which is one arithmetic step from the line that drew it.
+Remember `scene.updateMatrixWorld(true)` first, or every ray misses.
+
 **Steer outside the spin.** A wheel carries a roll on X and a steer on Y, and
 Euler order decides which is applied in whose frame. The default `XYZ` builds
 `Rx·Ry`: the wheel is steered and then rolled about the *car's* X axis rather
