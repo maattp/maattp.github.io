@@ -33,6 +33,10 @@ export const TYPES = {
   compact: { len: 3.74, wid: 1.68, wheelR: 0.29, sill: 0.28, belt: 0.94, roof: 1.48, cab: [-0.28, 0.15], mass: 0.85, top: 36, acc: 8.6 },
   suv: { len: 4.94, wid: 1.96, wheelR: 0.38, sill: 0.42, belt: 1.24, roof: 1.86, cab: [-0.32, 0.24], boxy: 1, mass: 1.3, top: 40, acc: 8.8 },
   sports: { len: 4.42, wid: 1.92, wheelR: 0.34, sill: 0.24, belt: 0.80, roof: 1.20, cab: [-0.24, 0.06], spoiler: true, mass: 0.85, top: 62, acc: 15 },
+  // Cab-forward and low, on a long wheelbase with almost no overhang -- the
+  // shape a floor full of batteries gives you. Heavier than the sports car and
+  // quicker anyway, because the torque is all there from a standstill.
+  ev: { len: 4.62, wid: 1.98, wheelR: 0.36, sill: 0.22, belt: 0.79, roof: 1.25, cab: [-0.28, 0.09], ev: true, mass: 1.2, top: 68, acc: 19 },
   muscle: { len: 5.02, wid: 1.98, wheelR: 0.35, sill: 0.28, belt: 0.94, roof: 1.36, cab: [-0.24, 0.13], mass: 1.15, top: 55, acc: 13.5 },
   pickup: { len: 5.48, wid: 2.00, wheelR: 0.40, sill: 0.44, belt: 1.20, roof: 1.86, cab: [0.00, 0.28], bed: true, boxy: 1, mass: 1.4, top: 39, acc: 8.6 },
   van: { len: 5.26, wid: 2.00, wheelR: 0.35, sill: 0.36, belt: 1.10, roof: 2.28, cab: [-0.44, 0.30], boxy: 2, mass: 1.5, top: 36, acc: 7.6 },
@@ -44,7 +48,7 @@ export const TYPES = {
   garbage: { len: 8.1, wid: 2.48, wheelR: 0.50, sill: 0.66, belt: 1.62, roof: 2.6, cab: [0.20, 0.46], cargo: 2.5, boxy: 2, mass: 4, top: 26, acc: 4.4 },
 };
 
-export const CIVILIAN_TYPES = ['sedan', 'sedan', 'hatch', 'compact', 'suv', 'suv', 'sports', 'muscle', 'pickup', 'van', 'taxi', 'boxtruck', 'bus', 'garbage'];
+export const CIVILIAN_TYPES = ['sedan', 'sedan', 'hatch', 'compact', 'suv', 'suv', 'sports', 'ev', 'muscle', 'pickup', 'van', 'taxi', 'boxtruck', 'bus', 'garbage'];
 
 export const CAR_COLORS = [
   0x9fa4a9, 0x1b1d20, 0xe6e8ea, 0x6d0f14, 0x102b52, 0x14472f, 0x7a5a22,
@@ -206,10 +210,16 @@ function buildType(spec) {
   const tw = boxy >= 2 ? 0.32 : 0.24;
   const wheels = [[-wx, wr, front], [wx, wr, front], [-wx, wr, rear], [wx, wr, rear]];
   if (spec.bus || (spec.cargo && L > 7)) wheels.push([-wx, wr, rear + 1.05], [wx, wr, rear + 1.05]);
-  // dark wheel wells so you never see daylight through an arch
+  // Dark wheel wells so you never see daylight through an arch -- but capped at
+  // the shoulder line. The well is sized off the wheel and the bodywork off
+  // `belt`, so a big wheel under a low body pushed a black slab up through the
+  // top of the wing: two per side, which is what the electric car's first pass
+  // was covered in. The sports car had it too, less obviously.
   for (const [ax, , az] of wheels) {
     const sx = Math.sign(ax);
-    matte.box(ax - sx * 0.22, wr + 0.16, az, 0.22, wr * 1.3, wr * 1.9, 0, [0.035, 0.04, 0.045]);
+    const wellY = wr + 0.16;
+    const wellH = Math.max(0.12, Math.min(wr * 1.3, belt - wellY - 0.06));
+    matte.box(ax - sx * 0.22, wellY, az, 0.22, wellH, wr * 1.9, 0, [0.035, 0.04, 0.045]);
   }
 
   // --- lamps, grille, bumpers, trim ---------------------------------------
@@ -219,17 +229,35 @@ function buildType(spec) {
     const nw = W * widthAt(0.97), tw2 = W * widthAt(0.03);
     for (const sx of [-1, 1]) {
       // dark housing, then an inset lens, so the lamp reads even on a white car
-      matte.box(sx * nw * 0.62, lampY, zAt(0.968), nw * 0.54, 0.23, 0.14, 0, [0.05, 0.055, 0.06]);
-      trim.box(sx * nw * 0.62, lampY + 0.005, zAt(0.982), nw * 0.44, 0.16, 0.09, 0, LAMP);
-      matte.box(sx * tw2 * 0.62, lampY, zAt(0.032), tw2 * 0.56, 0.23, 0.14, 0, [0.05, 0.055, 0.06]);
-      trim.box(sx * tw2 * 0.62, lampY + 0.005, zAt(0.018), tw2 * 0.46, 0.17, 0.09, 0, TAILC);
+      // The housings are sized off the sill, but the bonnet line is set by
+      // beltAt(), which dips at the nose -- on a body this low they would poke
+      // up through it. The EV doesn't need them anyway: its bar is the lamp.
+      if (!spec.ev) {
+        matte.box(sx * nw * 0.62, lampY, zAt(0.968), nw * 0.54, 0.23, 0.14, 0, [0.05, 0.055, 0.06]);
+        trim.box(sx * nw * 0.62, lampY + 0.005, zAt(0.982), nw * 0.44, 0.16, 0.09, 0, LAMP);
+        matte.box(sx * tw2 * 0.62, lampY, zAt(0.032), tw2 * 0.56, 0.23, 0.14, 0, [0.05, 0.055, 0.06]);
+        trim.box(sx * tw2 * 0.62, lampY + 0.005, zAt(0.018), tw2 * 0.46, 0.17, 0.09, 0, TAILC);
+      }
       trim.box(sx * tw2 * 0.88, lampY + 0.005, zAt(0.02), tw2 * 0.16, 0.11, 0.07, 0, AMBER);
       trim.box(sx * nw * 0.92, lampY - 0.03, zAt(0.974), nw * 0.12, 0.08, 0.07, 0, AMBER);
     }
-    // grille between the lamps, plus a lower intake under the bumper
-    matte.box(0, lampY - 0.02, zAt(0.976), nw * 0.78, 0.2, 0.1, 0, [0.045, 0.05, 0.055]);
-    for (let i = 0; i < 3; i++) trim.box(0, lampY - 0.07 + i * 0.07, zAt(0.984), nw * 0.74, 0.024, 0.035, 0, CHROME);
-    matte.box(0, sill + 0.13, zAt(0.972), nw * 1.1, 0.14, 0.1, 0, [0.05, 0.055, 0.06]);
+    if (spec.ev) {
+      // One unbroken bar at each end and no grille: there is nothing behind it
+      // that needs cooling, and the sealed nose is most of what makes an
+      // electric car read as one at a glance.
+      trim.box(0, lampY + 0.03, zAt(0.981), nw * 1.74, 0.095, 0.1, 0, LAMP);
+      trim.box(0, lampY + 0.03, zAt(0.019), tw2 * 1.74, 0.095, 0.1, 0, TAILC);
+      matte.box(0, lampY - 0.11, zAt(0.973), nw * 1.3, 0.14, 0.08, 0, PLASTIC);
+      // charge flap behind the rear arch
+      for (const sx of [-1, 1]) {
+        matte.box(sx * (W + 0.004), belt - 0.19, zAt(0.115), 0.012, 0.13, 0.17, 0, [0.2, 0.21, 0.23]);
+      }
+    } else {
+      // grille between the lamps, plus a lower intake under the bumper
+      matte.box(0, lampY - 0.02, zAt(0.976), nw * 0.78, 0.2, 0.1, 0, [0.045, 0.05, 0.055]);
+      for (let i = 0; i < 3; i++) trim.box(0, lampY - 0.07 + i * 0.07, zAt(0.984), nw * 0.74, 0.024, 0.035, 0, CHROME);
+      matte.box(0, sill + 0.13, zAt(0.972), nw * 1.1, 0.14, 0.1, 0, [0.05, 0.055, 0.06]);
+    }
     matte.box(0, sill + 0.04, zAt(0.958), nw * 1.86, 0.22, 0.26, 0, PLASTIC);
     matte.box(0, sill + 0.04, zAt(0.042), tw2 * 1.86, 0.22, 0.26, 0, PLASTIC);
     trim.box(0, sill + 0.19, zAt(0.995), 0.44, 0.15, 0.03, 0, PLATE);
@@ -269,6 +297,12 @@ function buildType(spec) {
   if (spec.spoiler) {
     paint.box(0, belt + 0.17, tz + 0.3, W * 1.6, 0.06, 0.3, 0, WHITE);
     for (const sx of [-1, 1]) paint.box(sx * W * 0.62, belt + 0.02, tz + 0.3, 0.07, 0.17, 0.2, 0, WHITE);
+  }
+  if (spec.ev) {
+    // Ducktail rather than a wing -- it belongs to the bodywork, so it is
+    // painted with the car instead of bolted on in a contrast colour.
+    paint.box(0, belt + 0.02, tz + 0.20, W * 1.62, 0.05, 0.26, 0, WHITE);
+    matte.box(0, sill + 0.02, tz + 0.16, W * 1.5, 0.1, 0.22, 0, PLASTIC); // diffuser
   }
   if (spec.taxi) {
     trim.box(0, roof + 0.03, zAt(0.5), 0.88, 0.22, 0.3, 0, [1.0, 0.78, 0.06]);
@@ -448,7 +482,13 @@ export class Vehicle {
     const top = spec.top;
     let acc = 0;
     if (throttle > 0) {
-      acc += spec.acc * throttle * (1 - clamp(this.vLong / top, 0, 1));
+      // A combustion car has to wind up to make power, so its pull fades
+      // linearly with speed. An electric motor is at full torque from zero and
+      // only tails off near the top, which is the whole character of the
+      // thing -- squaring the falloff is what makes it leap off the line and
+      // still feel like it runs out of road rather than out of revs.
+      const fade = 1 - clamp(this.vLong / top, 0, 1);
+      acc += spec.acc * throttle * (spec.ev ? Math.sqrt(fade) : fade);
       if (this.vLong < -0.5) acc += spec.acc * 1.4 * throttle;
     }
     if (brake > 0) {
@@ -463,7 +503,8 @@ export class Vehicle {
     acc -= this.vLong * Math.abs(this.vLong) * 0.0016; // aero
     acc -= this.vLong * 0.07; // rolling resistance
     if (throttle === 0 && brake === 0 && Math.abs(this.vLong) > 0.3) {
-      acc -= Math.sign(this.vLong) * 2.4; // engine braking
+      // engine braking, or regen -- which bites noticeably harder
+      acc -= Math.sign(this.vLong) * (spec.ev ? 4.6 : 2.4);
     }
     if (hand > 0.5 && this.vLong > 0) acc -= 11;
     this.vLong += acc * dt;
@@ -474,7 +515,9 @@ export class Vehicle {
     const yawRate = (this.vLong / wheelbase) * Math.tan(this.steer);
     this.heading += yawRate * dt;
 
-    const gripBase = spec.bus || spec.cargo ? 7.5 : 9.5;
+    // The battery floor puts the mass under the axle line, so it holds on
+    // rather than leaning; the handbrake still breaks it loose.
+    const gripBase = spec.bus || spec.cargo ? 7.5 : spec.ev ? 11.5 : 9.5;
     const grip = hand > 0.5 ? 1.5 : gripBase;
     this.vLat += -yawRate * this.vLong * dt;
     const before = this.vLat;
