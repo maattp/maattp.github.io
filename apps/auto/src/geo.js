@@ -468,10 +468,27 @@ export const HIGHWAYS = [
     ],
   },
   {
+    // Aurora ran through Green Lake and then straight down the middle of Lake
+    // Union, and only the ship-canal third of that was marked elevated -- so
+    // chain() dropped 1.3 km of it as submerged and the viaduct's south end
+    // ramped down into open water. Absent is better than sunk, but for a
+    // through route neither is acceptable: this is the one road you are
+    // supposed to be able to drive the whole length of the map on.
+    //
+    // The lakes are where they are; the road moved. South of the canal it now
+    // runs the empty strip between the west shore (x about -880) and Queen
+    // Anne Ave N (-1460), which is also where the real road is relative to the
+    // water. At Green Lake it passes east instead of west, which is the wrong
+    // side -- the lake polygon sits about 600 m west of its converted position
+    // and passing west would put the road on top of Phinney Ave N.
     name: 'Aurora Ave N (SR 99)', cls: 'hwy', lanes: 6,
     pts: [
-      [-960, -5150], [-940, -4500], [-900, -4180], [-870, -4100, 46], [-850, -3600, 52],
-      [-830, -3200, 46], [-800, -2900], [-760, -2400], [-700, -1900], [-640, -1500],
+      [-880, -5150], [-720, -4820], [-710, -4620], [-800, -4380], [-870, -4230],
+      // the Aurora Bridge and its approach viaducts: the canal is 310 m wide
+      // here and both ends of the elevated run have to touch down on dry land
+      [-880, -4150, 44], [-905, -3830, 50], [-925, -3600, 52], [-965, -3360, 44],
+      [-1010, -3050], [-1030, -2700], [-1020, -2350], [-960, -1980], [-820, -1700],
+      [-640, -1500],
     ],
   },
   {
@@ -544,7 +561,8 @@ export const ARTERIALS = [
   { name: 'NW Market St', pts: [[-4300, -4080], [-3800, -4070], [-3450, -4060], [-3000, -4050], [-2600, -4040]] },
   { name: '15th Ave NW', pts: [[-3450, -3980], [-3460, -4400], [-3470, -4900], [-3480, -5150]] },
   { name: 'Leary Way NW', pts: [[-2600, -4040], [-2200, -4000], [-1900, -3960], [-1750, -3940]] },
-  { name: 'Aurora Ave N (north)', pts: [[-960, -5150], [-950, -4700], [-945, -4400]] },
+  // The frontage road beside Aurora, so it clears Green Lake on the same side.
+  { name: 'Aurora Ave N (north)', pts: [[-620, -5150], [-560, -4800], [-570, -4500], [-640, -4250]] },
   { name: 'Greenwood Ave N', pts: [[-1900, -5150], [-1890, -4700], [-1880, -4380]] },
   { name: 'Phinney Ave N', pts: [[-1700, -5150], [-1690, -4700], [-1680, -4200], [-1690, -3960]] },
   { name: 'Roosevelt Way NE', pts: [[1200, -5150], [1210, -4700], [1220, -4200], [1230, -3800], [1150, -3600]] },

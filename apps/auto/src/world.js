@@ -366,18 +366,147 @@ export class World {
 
   // --- road surfaces --------------------------------------------------------
 
+  /**
+   * Where a deck edge passes at a node, mitred into the next span.
+   *
+   * Offsetting each span by its own perpendicular leaves two spans meeting a
+   * bend at different points and different angles, so their guardrails end up
+   * splayed and never touch. Mitreing runs both spans' edges through one shared
+   * point, which is what makes the rail continuous around a curve.
+   */
+  deckEdgePoint(ni, e, sg, w) {
+    const city = this.city;
+    const n = city.nodes[ni];
+    let ox = -e.dz * sg, oz = e.dx * sg;
+    let dist = w;
+    let other = null, count = 0;
+    for (const oi of n.e) {
+      const o = city.edges[oi];
+      if (!o.elev || o === e) continue;
+      other = o; count++;
+    }
+    // Only a simple two-span joint can be mitred; a ramp merge has no single
+    // continuation to aim at, so it keeps the square end.
+    if (count === 1 && Math.abs(other.hw - e.hw) < 0.01) {
+      let qx = -other.dz * sg, qz = other.dx * sg;
+      if (qx * ox + qz * oz < 0) { qx = -qx; qz = -qz; }
+      let mx = ox + qx, mz = oz + qz;
+      const ml = Math.hypot(mx, mz);
+      if (ml > 1e-3) {
+        mx /= ml; mz /= ml;
+        const cos = mx * ox + mz * oz;
+        // A hairpin would send the mitre off to infinity; keep the square end.
+        if (cos > 0.5) { ox = mx; oz = mz; dist = w / cos; }
+      }
+    }
+    return [n.x + ox * dist, n.z + oz * dist];
+  }
+
+  /**
+   * An elevated span: deck, edge beam, parapets and piers.
+   *
+   * Everything is built off the same two mitred edge lines, so the deck, its
+   * beam and the rail on top of it stay registered with each other and with the
+   * neighbouring span. Barriers used to be independent boxes centred on segment
+   * midpoints, which is why they didn't line up end to end.
+   */
+  meshViaduct(road, flat, e, a, b) {
+    const GIRDER = 1.35;  // structural depth below the running surface
+    const PARAPET = 0.55; // parapet wall thickness, inboard of the deck edge
+    const RAIL = 0.95;    // parapet height above the running surface
+    const conc = [0.68, 0.68, 0.66], concLo = [0.5, 0.5, 0.49];
+    const soffit = [0.42, 0.42, 0.41];
+    const ay = a.y + 0.06, by = b.y + 0.06;
+    const hw = e.hw;
+    const along = Math.atan2(e.dx, e.dz);
+
+    // Two mitred offset lines per side: the running-surface edge, where the
+    // parapet stands, and the deck edge outboard of it. Keeping the carriageway
+    // at the full `hw` means a viaduct is as wide to drive as the street it
+    // continues, instead of losing a metre to its own walls.
+    const run = {}, deck = {};
+    for (const sg of [-1, 1]) {
+      const [rsx, rsz] = this.deckEdgePoint(e.a, e, sg, hw);
+      const [rex, rez] = this.deckEdgePoint(e.b, e, sg, hw);
+      run[sg] = { sx: rsx, sz: rsz, ex: rex, ez: rez };
+      const [dsx, dsz] = this.deckEdgePoint(e.a, e, sg, hw + PARAPET);
+      const [dex, dez] = this.deckEdgePoint(e.b, e, sg, hw + PARAPET);
+      deck[sg] = { sx: dsx, sz: dsz, ex: dex, ez: dez };
+    }
+
+    // Running surface, corner to corner off the mitred edges. One quad for the
+    // whole span: it is planar, so it can't stair-step the way the old
+    // per-segment boxes did.
+    const L = run[1], R = run[-1];
+    const vLen = e.len / (hw * 2);
+    road.quad(
+      [L.sx, ay, L.sz], [R.sx, ay, R.sz], [R.ex, by, R.ez], [L.ex, by, L.ez],
+      [0, 1, 0], [0, 0, 1, 0, 1, vLen, 0, vLen],
+      e.cls === 'hwy' ? [0.92, 0.92, 0.92] : [1, 1, 1]);
+
+    // Soffit, so the deck reads as a box girder rather than a sheet of paper.
+    const DL = deck[1], DR = deck[-1];
+    flat.quad(
+      [DR.sx, ay - GIRDER, DR.sz], [DL.sx, ay - GIRDER, DL.sz],
+      [DL.ex, by - GIRDER, DL.ez], [DR.ex, by - GIRDER, DR.ez],
+      [0, -1, 0], [0, 0, 1, 0, 1, 1, 0, 1], soffit);
+
+    for (const sg of [-1, 1]) {
+      const r = run[sg], d = deck[sg];
+      const ox = -e.dz * sg, oz = e.dx * sg;       // outward across the deck
+      // Fascia: girder and parapet in one plane, running the full length of the
+      // span between the mitred corners. Because both ends are the mitre point
+      // its neighbour also uses, consecutive spans meet edge to edge instead of
+      // each being splayed off its own perpendicular.
+      flat.quad(
+        [d.sx, ay - GIRDER, d.sz], [d.ex, by - GIRDER, d.ez],
+        [d.ex, by + RAIL, d.ez], [d.sx, ay + RAIL, d.sz],
+        [ox, 0, oz], [0, 0, 1, 0, 1, 1, 0, 1], [concLo, concLo, conc, conc]);
+      // Capping over the wall.
+      flat.quad(
+        [d.sx, ay + RAIL, d.sz], [d.ex, by + RAIL, d.ez],
+        [r.ex, by + RAIL, r.ez], [r.sx, ay + RAIL, r.sz],
+        [0, 1, 0], [0, 0, 1, 0, 1, 1, 0, 1], conc);
+      // Inner face, facing the traffic.
+      flat.quad(
+        [r.sx, ay, r.sz], [r.ex, by, r.ez],
+        [r.ex, by + RAIL, r.ez], [r.sx, ay + RAIL, r.sz],
+        [-ox, 0, -oz], [0, 0, 1, 0, 1, 1, 0, 1], [concLo, concLo, conc, conc]);
+    }
+
+    // Piers on a realistic bay. One slender post per span, whatever the span's
+    // length, read as scaffolding under a 30 m deck; a bent is a plinth, a
+    // stout column and a cap spanning the full deck width.
+    const bays = Math.max(1, Math.round(e.len / 52));
+    for (let p = 0; p < bays; p++) {
+      const t = (p + 0.5) / bays;
+      const cx = lerp(a.x, b.x, t), cz = lerp(a.z, b.z, t), cy = lerp(ay, by, t);
+      const capTop = cy - GIRDER;
+      let base = G.terrainHeight(cx, cz);
+      if (capTop - base <= 4) continue;
+      if (G.isWater(cx, cz)) {
+        // A column rising straight out of the lake looks unfounded. Break the
+        // surface with a pile cap and start the shaft on top of it.
+        flat.prism(cx, base, cz, 4.2, 1.4 - base, 8, concLo);
+        flat.box(cx, 1.4, cz, 9.4, 0.55, 9.4, along, conc);
+        base = 1.95;
+      } else {
+        flat.prism(cx, base - 1.2, cz, 3.2, 1.7, 8, concLo);   // plinth
+        base += 0.3;
+      }
+      flat.prism(cx, base, cz, 2.4, capTop - 1.8 - base, 8, conc);            // shaft
+      flat.box(cx, capTop - 1.8, cz, (hw + PARAPET) * 1.9, 1.8, 3.6, along, concLo); // cap
+    }
+  }
+
   meshRoad(road, walk, flat, e, a, b, lod, ei) {
+    if (e.elev) { this.meshViaduct(road, flat, e, a, b); return; }
     const hw = e.hw;
     const px = -e.dz, pz = e.dx;
-    // Elevated spans get subdivided too. A barrier is a box that can only yaw,
-    // so on a climbing ramp it stays level while the deck rises away from it:
-    // one box over a 117 m span puts its ends tens of metres above and below
-    // the road, which is the white spears sticking out of the freeway. Short
-    // segments keep each box close to the deck it belongs to.
-    const steps = Math.max(1, Math.round(e.len / (e.elev ? 12 : 16)));
+    const steps = Math.max(1, Math.round(e.len / 16));
     const col = e.cls === 'hwy' ? [0.92, 0.92, 0.92] : [1, 1, 1];
     let v = 0;
-    const yAt = (x, z, t) => (e.elev ? lerp(a.y, b.y, t) + 0.06 : G.terrainHeight(x, z) + ROAD_Y);
+    const yAt = (x, z) => G.terrainHeight(x, z) + ROAD_Y;
     for (let s = 0; s < steps; s++) {
       const t0 = s / steps, t1 = (s + 1) / steps;
       const x0 = lerp(a.x, b.x, t0), z0 = lerp(a.z, b.z, t0);
@@ -392,45 +521,17 @@ export class World {
       // Don't pave over a road that outranks this one. Where two carriageways
       // overlap, both used to draw and the depth buffer chose per pixel, which
       // is what made the centre line flicker between one stripe and two.
-      if (!e.elev && ei != null
+      if (ei != null
         && this.city.roadCoveredAt((x0 + x1) / 2, (z0 + z1) / 2, ei)) continue;
       road.quad(
-        [l0x, yAt(l0x, l0z, t0), l0z],
-        [r0x, yAt(r0x, r0z, t0), r0z],
-        [r1x, yAt(r1x, r1z, t1), r1z],
-        [l1x, yAt(l1x, l1z, t1), l1z],
+        [l0x, yAt(l0x, l0z), l0z],
+        [r0x, yAt(r0x, r0z), r0z],
+        [r1x, yAt(r1x, r1z), r1z],
+        [l1x, yAt(l1x, l1z), l1z],
         [0, 1, 0], [0, v0, 1, v0, 1, v1, 0, v1], col
       );
     }
-    if (e.elev) {
-      const bcol = [0.62, 0.62, 0.6];
-      const along = Math.atan2(e.dx, e.dz);
-      // Barriers run along each SEGMENT, so they are centred on segment
-      // midpoints. Centring them on the endpoints instead (s <= steps, t =
-      // s/steps) gives every deck two barriers as long as the whole span, each
-      // overhanging its end by half a span -- which is where the white spears
-      // shooting off the freeway came from.
-      for (let s = 0; s < steps; s++) {
-        const t = (s + 0.5) / steps;
-        const x = lerp(a.x, b.x, t), z = lerp(a.z, b.z, t), y = lerp(a.y, b.y, t);
-        for (const sg of [-1, 1]) {
-          flat.box(x + px * hw * sg, y - 0.1, z + pz * hw * sg, 0.55, 1.05, e.len / steps + 0.5, along, bcol);
-          flat.box(x + px * (hw - 0.25) * sg, y + 0.95, z + pz * (hw - 0.25) * sg, 0.13, 0.5,
-            e.len / steps + 0.5, along, [0.7, 0.71, 0.72]);
-        }
-      }
-      // Piers roughly every 35 m rather than one per span, whatever the span's
-      // length -- a 117 m viaduct on a single column reads as a mistake.
-      const piers = Math.max(1, Math.round(e.len / 35));
-      for (let p = 0; p < piers; p++) {
-        const t = (p + 0.5) / piers;
-        const cx = lerp(a.x, b.x, t), cz = lerp(a.z, b.z, t), cy = lerp(a.y, b.y, t);
-        const gy = G.terrainHeight(cx, cz);
-        if (cy - gy <= 5) continue;
-        flat.prism(cx, gy - 1, cz, 1.7, cy - gy - 1.6, 6, [0.58, 0.58, 0.56]);
-        flat.box(cx, cy - 1.6, cz, hw * 1.5, 1.1, 2.4, along, [0.54, 0.54, 0.52]);
-      }
-    } else if (lod === 1 && (e.cls === 'st' || e.cls === 'art' || e.cls === 'res')) {
+    if (lod === 1 && (e.cls === 'st' || e.cls === 'art' || e.cls === 'res')) {
       const sw = e.cls === 'art' ? 3.2 : 2.6;
       // Stop short of each intersection: a strip run end to end would march
       // straight across the cross street. The corner is filled by meshNode.
@@ -494,6 +595,16 @@ export class World {
     // ground with a single street running into it -- the "road to nowhere".
     // citygen.nodeSurface() skips these too; the two have to agree.
     if (n.e.length < 2) return;
+    // Two elevated spans meeting head to head are already mitred into one
+    // another by meshViaduct, so a crossing square here is a horizontal patch
+    // laid across a sloping deck -- it pokes through on the uphill side and
+    // hangs in the air on the downhill one. A ramp merge keeps its square:
+    // there the spans are square-ended and the square is what closes the gap.
+    if (n.elev && n.e.length === 2) {
+      const e0 = city.edges[n.e[0]], e1 = city.edges[n.e[1]];
+      if (e0.elev && e1.elev && Math.abs(e0.hw - e1.hw) < 0.01
+        && Math.abs(e0.dx * e1.dx + e0.dz * e1.dz) > 0.5) return;
+    }
     let hw = 0;
     let rot = 0;
     let sw = 0;
