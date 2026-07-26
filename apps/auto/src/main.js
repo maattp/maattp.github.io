@@ -119,6 +119,13 @@ class Game {
     audio.blip(300, 0.12, 'square', 0.2);
     if (v.mode === 'parked' || v.wasParked) this.addHeat(8);
     hud.showToast(v.typeName === 'police' ? 'Police cruiser commandeered' : 'Vehicle acquired');
+    // The radio comes on with the ignition. audio.update() starts the stream on
+    // the next frame; this is only the announcement.
+    if (this.settings.music) {
+      setTimeout(() => {
+        if (audio.liveStation()) hud.showToast(`♪ ${audio.stationName()} — live`);
+      }, 900);
+    }
   }
 
   onExitVehicle() {
@@ -296,6 +303,8 @@ async function boot() {
   await step(0.9, 'Waking the city');
   game = new Game();
   audio = new Audio();
+  // KEXP's now-playing feed drives a toast, so the radio names its own tracks.
+  audio.onTrack = (label) => { if (hud) hud.showToast(`♪ ${label}`); };
   controls = new Controls(document.getElementById('app'));
   player = new Player(scene, city, game);
   traffic = new TrafficSystem(scene, city, game);
@@ -628,6 +637,7 @@ function wireUi() {
   document.getElementById('radioBtn').addEventListener('click', () => {
     audio.init();
     audio.resume();
+    audio.primeLive();
     if (!audio.musicOn) {
       audio.musicOn = true;
       hud.showToast(audio.stationName());
@@ -666,6 +676,9 @@ function wireUi() {
   const startAudio = () => {
     audio.init();
     audio.resume();
+    // Same gesture, so Safari counts the stream as user-initiated. Getting into
+    // a car happens in the frame loop and would be rejected on its own.
+    audio.primeLive();
     window.removeEventListener('pointerdown', startAudio);
     window.removeEventListener('keydown', startAudio);
   };

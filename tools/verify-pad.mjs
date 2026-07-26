@@ -27,7 +27,11 @@ navigator.getGamepads = () => [{
 function launch() {
   return spawn(CHROME, [
     `--remote-debugging-port=${PORT}`, '--headless=new', '--use-gl=swiftshader',
-    '--enable-unsafe-swiftshader', '--window-size=1280,720', '--no-first-run',
+    '--enable-unsafe-swiftshader',
+    // Headless has no user gestures at all, so without this every
+    // media play() is rejected and the live radio can never be tested.
+    // The gesture path itself is covered on device by audio.primeLive().
+    '--autoplay-policy=no-user-gesture-required', '--window-size=1280,720', '--no-first-run',
     '--user-data-dir=/tmp/auto-pad-profile', 'about:blank',
   ], { stdio: 'ignore' });
 }

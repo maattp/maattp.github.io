@@ -10,11 +10,21 @@ function noiseBuffer(ctx, seconds = 2) {
 }
 
 const SCALE = [0, 3, 5, 7, 10];
+// Station 0 is the real KEXP when there is a network, and the synthesised
+// version of itself when there isn't -- every station keeps its synth voice so
+// the radio still works with the aeroplane on, which is the whole point of an
+// offline-first PWA.
 const STATIONS = [
-  { name: 'KEXP 90.3', root: 55, tempo: 104, wave: 'sawtooth', mood: 0.6 },
+  { name: 'KEXP 90.3', root: 55, tempo: 104, wave: 'sawtooth', mood: 0.6, live: true },
   { name: 'Rain City FM', root: 49, tempo: 86, wave: 'triangle', mood: 0.3 },
   { name: 'Pike St Radio', root: 62, tempo: 124, wave: 'square', mood: 0.85 },
 ];
+
+// Same stream and now-playing feed the /apps/radio app uses.
+const KEXP = {
+  stream: 'https://kexp.streamguys1.com/kexp160.aac',
+  nowPlaying: 'https://api.kexp.org/v2/plays/?limit=1&format=json',
+};
 
 export class Audio {
   constructor() {
@@ -23,6 +33,23 @@ export class Audio {
     this.musicOn = true;
     this.station = 0;
     this.volume = 0.8;
+    this.musicVolume = 0.55;
+
+    // Live radio state. `_liveFailed` latches for the session once the stream
+    // has proved unavailable, so a car with no signal doesn't retry every frame.
+    this._live = null;
+    this._liveState = 'idle';
+    this._liveFailed = false;
+    this._livePrimed = false;
+    this._liveWanted = false;
+    this._nowPlaying = null;
+    this._nowPlayingAt = 0;
+    this.onTrack = null; // set by main.js to toast the track
+    if (typeof window !== 'undefined') {
+      // Coming back onto the network earns one more attempt.
+      window.addEventListener('online', () => { this._liveFailed = false; });
+      window.addEventListener('offline', () => { this.stopLive(); });
+    }
   }
 
   init() {
@@ -107,8 +134,137 @@ export class Audio {
     this.ready = true;
   }
 
+  // --- live radio -----------------------------------------------------------
+  //
+  // A real stream, so it is the one part of this app that needs the network.
+  // Everything about it is written to fail back to the synthesised station
+  // rather than to silence: no network, a blocked autoplay, a dead stream and a
+  // stall all end with `_liveFailed` set and `scheduleMusic()` taking over.
+
+  _makeLive() {
+    if (this._live || typeof window === 'undefined' || !window.Audio) return this._live;
+    // `window.Audio`, not `Audio` -- this module exports a class of that name,
+    // so the bare identifier resolves to us, not to the DOM constructor.
+    const el = new window.Audio();
+    el.preload = 'none';
+    el.crossOrigin = 'anonymous';
+    // Streams have no duration to seek in, and iOS otherwise offers scrubbing.
+    el.loop = false;
+    el.volume = 0;
+    el.addEventListener('playing', () => {
+      this._liveState = 'playing';
+      this._liveFailed = false;
+      this._pollNowPlaying();
+    });
+    for (const ev of ['error', 'stalled', 'ended']) {
+      el.addEventListener(ev, () => {
+        // Don't thrash a dead network: give up on the live feed for this drive
+        // and let the synth station cover, rather than retrying every frame.
+        if (this._liveState !== 'idle') this._liveFailed = true;
+        this._liveState = 'idle';
+      });
+    }
+    this._live = el;
+    return el;
+  }
+
+  /**
+   * Satisfy iOS autoplay while we still have a user gesture.
+   *
+   * Getting into a car happens inside the frame loop, one or more rAF ticks
+   * after the button was pressed, so a play() there is not a gesture-initiated
+   * call and Safari rejects it. Starting (and immediately pausing) the element
+   * during the same gesture that boots the AudioContext marks it as unlocked
+   * for the rest of the session.
+   */
+  primeLive() {
+    const el = this._makeLive();
+    if (!el || this._livePrimed) return;
+    this._livePrimed = true;
+    try {
+      el.src = KEXP.stream;
+      el.volume = 0;
+      const p = el.play();
+      if (p && p.then) p.then(() => el.pause()).catch(() => { /* stays locked; we cope */ });
+      else el.pause();
+    } catch (e) { /* no autoplay, no live radio -- the synth still plays */ }
+  }
+
+  startLive() {
+    if (this._liveFailed || navigator.onLine === false) return;
+    const el = this._makeLive();
+    if (!el) return;
+    if (this._liveState === 'playing' || this._liveState === 'loading') return;
+    this._liveState = 'loading';
+    try {
+      if (el.src !== KEXP.stream) el.src = KEXP.stream;
+      // A live stream that has been paused for a while resumes where it left
+      // off, i.e. behind. Reloading puts us back at the live edge.
+      el.load();
+      el.volume = this.musicVolume;
+      const p = el.play();
+      if (p && p.catch) p.catch((err) => this._liveDown(err));
+    } catch (e) {
+      this._liveDown(e);
+    }
+  }
+
+  /**
+   * Give up on the live feed -- but only when it is actually broken.
+   *
+   * A rejected play() has two very different causes. `NotAllowedError` means
+   * the browser has not seen a gesture it will accept yet, which is temporary
+   * and self-healing: the next time the player gets into a car they will have
+   * pressed something. Latching on that would kill the radio for the whole
+   * session on the very platform this feature is for. Anything else (no
+   * network, dead stream) latches, so a car with no signal is not retrying the
+   * stream every frame.
+   */
+  _liveDown(err) {
+    this._liveState = 'idle';
+    if (!err || err.name !== 'NotAllowedError') this._liveFailed = true;
+  }
+
+  stopLive() {
+    this._liveState = 'idle';
+    if (this._live) {
+      try { this._live.pause(); } catch (e) { /* already gone */ }
+    }
+  }
+
+  get liveOn() {
+    return this._liveState === 'playing';
+  }
+
+  async _pollNowPlaying() {
+    if (this._nowPlayingAt && Date.now() - this._nowPlayingAt < 20000) return;
+    this._nowPlayingAt = Date.now();
+    try {
+      const r = await fetch(KEXP.nowPlaying, { cache: 'no-store' });
+      if (!r.ok) return;
+      const d = await r.json();
+      const play = d.results && d.results[0];
+      if (!play) return;
+      // Field names checked against the live API, not copied from /apps/radio:
+      // that app tests `play.playtype.name === 'Air break'`, but v2 returns
+      // `play_type: 'airbreak'` with artist/song at the top level, so its
+      // air-break branch never fires and its `track.*` fallbacks are dead.
+      const label = play.play_type === 'airbreak'
+        ? null
+        : [play.artist, play.song].filter(Boolean).join(' — ');
+      if (label && label !== this._nowPlaying) {
+        this._nowPlaying = label;
+        if (this.onTrack) this.onTrack(label);
+      }
+    } catch (e) { /* the music keeps playing without a title */ }
+  }
+
   resume() {
     if (this.ctx && this.ctx.state === 'suspended') this.ctx.resume();
+    if (this.liveOn && this._live) {
+      // iOS pauses media on the way to the background and does not resume it.
+      this._live.play().catch(() => { /* fall back to the synth */ });
+    }
   }
 
   setVolume(v) {
@@ -226,8 +382,24 @@ export class Audio {
       this.sirGain.gain.setTargetAtTime(0, t, 0.25);
     }
 
-    if (this.musicOn) this.scheduleMusic();
-    else this.musicBus.gain.setTargetAtTime(0, t, 0.3);
+    // Radio. The live stream is a car radio: it runs while you are in a car and
+    // stops when you get out, which is also what keeps a background tab quiet.
+    const wantLive = !!state.inCar && this.musicOn && this.enabled
+      && !!STATIONS[this.station].live;
+    if (wantLive !== this._liveWanted) {
+      this._liveWanted = wantLive;
+      if (wantLive) this.startLive(); else this.stopLive();
+    }
+    if (this.liveOn) {
+      this._live.volume = this.musicVolume;
+      this._pollNowPlaying();
+      // The synth station and the real one must never play together.
+      this.musicBus.gain.setTargetAtTime(0, t, 0.3);
+    } else if (this.musicOn) {
+      this.scheduleMusic();
+    } else {
+      this.musicBus.gain.setTargetAtTime(0, t, 0.3);
+    }
   }
 
   scheduleMusic() {
@@ -305,7 +477,18 @@ export class Audio {
 
   nextStation() {
     this.station = (this.station + 1) % STATIONS.length;
-    return STATIONS[this.station].name;
+    // Tuning away from KEXP has to actually stop the stream; the update loop
+    // only notices a change of intent, and station is not part of that.
+    if (!STATIONS[this.station].live) {
+      this._liveWanted = false;
+      this.stopLive();
+    }
+    return this.stationName();
+  }
+
+  /** True when this station is the real stream rather than its synth stand-in. */
+  liveStation() {
+    return !!STATIONS[this.station].live && this.liveOn;
   }
 
   stationName() {

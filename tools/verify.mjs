@@ -28,6 +28,10 @@ function launch() {
     '--disable-gpu-sandbox',
     '--use-gl=swiftshader',
     '--enable-unsafe-swiftshader',
+    // Headless has no user gestures at all, so without this every
+    // media play() is rejected and the live radio can never be tested.
+    // The gesture path itself is covered on device by audio.primeLive().
+    '--autoplay-policy=no-user-gesture-required',
     '--window-size=1280,720',
     '--no-first-run',
     '--user-data-dir=/tmp/auto-verify-profile',
@@ -256,6 +260,46 @@ async function main() {
       }
       await session.eval('window.__dbg.game.paused = false');
     }
+
+    // --- radio: live when online, synth when not --------------------------
+    // The offline half is the one that matters. This is an offline-first PWA and
+    // the radio must not go silent (or throw) on a plane.
+    console.log('\n--- radio -----------------------------------------------');
+    const radioOn = await session.eval(`(async () => {
+      const d = window.__dbg;
+      d.audio.init(); d.audio.resume(); d.audio.primeLive();
+      const p = d.player.position;
+      const v = d.traffic.nearestEnterable(p.x, p.z, 600);
+      if (v) d.player.enterVehicle(v);
+      await new Promise(r => setTimeout(r, 7000));
+      return { live: d.audio.liveOn, t: d.audio._live ? d.audio._live.currentTime : 0,
+               track: d.audio._nowPlaying };
+    })()`, true);
+    console.log(`  online:  live=${radioOn.live} streamed=${radioOn.t.toFixed(1)}s `
+      + `track=${radioOn.track ? JSON.stringify(radioOn.track) : 'none yet'}`);
+
+    await session.send('Network.emulateNetworkConditions', {
+      offline: true, latency: 0, downloadThroughput: 0, uploadThroughput: 0,
+    });
+    const radioOff = await session.eval(`(async () => {
+      const d = window.__dbg;
+      d.player.exitVehicle();
+      await new Promise(r => setTimeout(r, 1200));
+      d.audio._liveFailed = false;               // as if this drive were the first
+      const p = d.player.position;
+      const v = d.traffic.nearestEnterable(p.x, p.z, 600);
+      if (v) d.player.enterVehicle(v);
+      await new Promise(r => setTimeout(r, 7000));
+      return { live: d.audio.liveOn, synthGain: d.audio.musicBus.gain.value,
+               failed: d.audio._liveFailed };
+    })()`, true);
+    await session.send('Network.emulateNetworkConditions', {
+      offline: false, latency: 0, downloadThroughput: -1, uploadThroughput: -1,
+    });
+    const synthCovers = !radioOff.live && radioOff.synthGain > 0.01;
+    console.log(`  offline: live=${radioOff.live} synthGain=${radioOff.synthGain.toFixed(2)} `
+      + `-> ${synthCovers ? 'synth radio covers' : 'SILENT -- BUG'}`);
+    if (!synthCovers) process.exitCode = 1;
 
     // AUTO_PROBE lets a one-off diagnostic ride the same proven boot path
     // rather than maintaining a second, subtly different CDP harness.
