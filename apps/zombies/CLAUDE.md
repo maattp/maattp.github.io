@@ -164,6 +164,14 @@ Adding another perk is one `PERKS` entry, one map char, and one multiplier read.
   windows entirely. That is the whole reason a dog round feels different from a
   zombie round despite sharing the AI.
 
+**A CHECK THAT SHARES STATE WITH THE ROUND IS NOT A CHECK.** The down-state
+interaction test passed against a deliberately broken build because the round
+was live and spawning zombies were tearing the very window it was measuring.
+Any check that asserts on a specific window, drop or body must first quiet the
+round (`Zombies.reset()`, `Round.R.phase = 'idle'`). Always confirm a new check
+FAILS against the bug it is meant to catch — two of the checks here did not,
+until they were isolated.
+
 **PRECONDITIONS LIVE IN THE SYSTEM, NOT THE PROMPT.** `Pap.insert()`,
 `Perks.buy()` and `Box.open()` each re-check power / zone access themselves. The
 interaction scanner already gates them, but a rule enforced only in the UI is

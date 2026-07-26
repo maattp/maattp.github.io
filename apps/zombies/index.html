@@ -4240,8 +4240,12 @@ const Drops = (() => {
   function maybeDrop(x, z) {
     if (budget <= 0 || sinceLast < DROP.minGap) return null;
     if (Math.random() > DROP.chance) return null;
-    budget--; sinceLast = 0;
-    return spawnAt(x, z);
+    // only spend the budget on a roll that actually produced something: the
+    // pool can be full of drops inherited from the previous round, and charging
+    // for those silently eats this round's allowance
+    const d = spawnAt(x, z);
+    if (d) { budget--; sinceLast = 0; }
+    return d;
   }
 
   function collect(d) {
@@ -4258,14 +4262,16 @@ const Drops = (() => {
       case 'nuke': {
         // classic: everything currently on the map dies, and it pays a flat fee
         const n = Zombies.killAllForNuke();
-        Player.addPoints(400, true);
+        // the third argument is the whole point of `raw` — omitting it doubled
+        // this bounty under Double Points, exactly what the flag exists to stop
+        Player.addPoints(400, true, true);
         pl.kills += n;
         Game.shake(0.8);
         break;
       }
       case 'carpenter':
         for (const w of Level.windows) { w.planks = Level.PLANKS; Level.refreshPlanks(w); }
-        Player.addPoints(200, true);
+        Player.addPoints(200, true, true);
         break;
       default:
         timers[d.key] = P.secs;
@@ -4290,7 +4296,7 @@ const Drops = (() => {
       d.slot.beam.material.opacity = 0.14 * fade;
       d.slot.halo.material.transparent = true;
       d.slot.core.material.transparent = true;
-      if (Math.hypot(pl.pos.x - g.position.x, pl.pos.z - g.position.z) < DROP.radius && !pl.dead) {
+      if (Math.hypot(pl.pos.x - g.position.x, pl.pos.z - g.position.z) < DROP.radius && !pl.dead && !pl.down) {
         collect(d);
         d.slot.busy = false; g.visible = false; live.splice(i, 1);
         continue;
@@ -4321,7 +4327,13 @@ const Box = (() => {
      model of each gun that exists, and rebuilding a second set of world-space
      weapon meshes just to spin one above a crate would be silly. */
   function makePrize(key) {
-    if (prizeMesh) { Level.boxPrize.remove(prizeMesh); prizeMesh = null; }
+    if (prizeMesh) {
+      // the spin phase rebuilds this every ~50-270 ms; each rebuild clones a
+      // material per part, so they have to go back
+      prizeMesh.traverse(o => { if (o.isMesh && o.material) o.material.dispose(); });
+      Level.boxPrize.remove(prizeMesh);
+      prizeMesh = null;
+    }
     const src = ViewModel.get(key);
     const g = src.clone(true);
     for (let i = g.children.length - 1; i >= 0; i--) {
@@ -4681,6 +4693,17 @@ const Interact = (() => {
   }
 
   function update(dt, act) {
+    /* Being down disables movement, firing, damage and regen — but interaction
+       was left out, so a downed player could hold repair at a window (rebuilding
+       for free while untouchable), buy a perk, or take from the box. "You cannot
+       move, shoot, or be finished off" has to include "or do anything else". */
+    if (Player.P.down) {
+      cur = null;
+      $('prompt').style.display = 'none';
+      Input.setUseVisible(false);
+      repairT = 0;
+      return;
+    }
     const c = scan();
     cur = c;
     const el = $('prompt');

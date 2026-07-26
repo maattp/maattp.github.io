@@ -309,6 +309,37 @@ check('a downed player cannot be finished off', revive.immuneWhileDown, revive);
 check('you get back up on your own', revive.backUp && revive.hp > 0, revive);
 check('without the perk a lethal hit ends the run', revive.diesWithout, revive);
 
+// 10b. DOWN STATE GATES INTERACTION ------------------------------------------------
+// Being down disables movement, firing and damage; interaction was left out, so
+// a downed player could rebuild a barricade for free while untouchable.
+const downLock = await page.evaluate(() => {
+  const D = __dbg, P = D.Player.P, o = {};
+  D.start(); D.points(99999); D.openAll(); D.power();
+  for (let i = 0; i < 200; i++) D.stepN(1);
+  D.perk('revive');
+  // Isolate: with the round live, spawning zombies tear at the very window
+  // under test and the assertion stops measuring what it claims to.
+  D.Zombies.reset(); D.Round.R.phase = 'idle'; D.Round.R.timer = 1e9;
+  const w = D.Level.windows.find(x => x.zone === 'lobby');
+  w.planks = 0; D.Level.refreshPlanks(w);
+  D.teleport(w.inside.x, w.inside.z); D.stepN(4);
+  D.hold('useHeld', true); D.stepN(60);
+  o.planksStanding = w.planks;
+  o.repairsWhenUp = w.planks > 0;
+  w.planks = 0; D.Level.refreshPlanks(w);
+  D.Player.hurt(9999, null); D.stepN(2);
+  o.isDown = P.down;
+  const p0 = P.points;
+  for (let i = 0; i < 60 * 3; i++) D.stepN(1);        // still holding repair
+  o.planksWhileDown = w.planks;
+  o.pointsWhileDown = P.points - p0;
+  D.hold('useHeld', false);
+  return o;
+});
+check('repair works while standing', downLock.repairsWhenUp, downLock);
+check('a downed player cannot repair or earn from it',
+  downLock.isDown && downLock.planksWhileDown === 0 && downLock.pointsWhileDown === 0, downLock);
+
 // 11. POWER-UPS -------------------------------------------------------------------
 const drops = await page.evaluate(() => {
   const D = __dbg, P = D.Player.P, o = {};
@@ -323,6 +354,16 @@ const drops = await page.evaluate(() => {
   for (const w of D.Level.windows) { w.planks = 0; D.Level.refreshPlanks(w); }
   D.drop('carpenter', P.pos.x, P.pos.z); D.stepN(4);
   o.carpenter = D.Level.windows.every(w => w.planks === 6);
+  /* Point totals, not just side effects. Both reviews of #329 found that the
+     Nuke and Carpenter bounties were being doubled by an active Double Points
+     timer — the `raw` flag existed for exactly that and neither call site passed
+     it. The old checks asserted only "planks went back up" / "nobody survived",
+     so the bug sailed through. Double Points is deliberately still live here. */
+  o.dpActive = D.Drops.pointsMult === 2;
+  const pc0 = P.points;
+  for (const w of D.Level.windows) { w.planks = 0; D.Level.refreshPlanks(w); }
+  D.drop('carpenter', P.pos.x, P.pos.z); D.stepN(4);
+  o.carpenterPaid = P.points - pc0;
   D.setRound(6);
   for (let i = 0; i < 60 * 25; i++) { P.hp = 100; P.dead = false; if (D.Game.state === 'dying') D.Game.state = 'play'; D.stepN(1); }
   // Track the exact bodies present when the nuke lands. Measuring aliveCount a
@@ -330,8 +371,11 @@ const drops = await page.evaluate(() => {
   // walking in after the blast would read as a survivor.
   const present = D.Zombies.list.filter(z => !z.dead);
   o.before = present.length;
+  const pn0 = P.points;
   D.drop('nuke', P.pos.x, P.pos.z); D.stepN(4);
   o.survivors = present.filter(z => !z.dead).length;
+  // the flat bounty only — kills from a nuke pay nothing per body
+  o.nukePaid = P.points - pn0;
   // a nuke must not cascade into more drops
   o.dropsAfterNuke = D.Drops.live.length;
   return o;
@@ -342,6 +386,8 @@ check('Insta-Kill arms', drops.instakill, drops);
 check('Carpenter reboards every window', drops.carpenter, drops);
 check('Nuke kills every body on the map', drops.before > 0 && drops.survivors === 0, drops);
 check('Nuke does not cascade drops', drops.dropsAfterNuke === 0, drops);
+check('flat bounties ignore Double Points',
+  drops.dpActive && drops.carpenterPaid === 200 && drops.nukePaid === 400, drops);
 
 // 12. MYSTERY BOX ------------------------------------------------------------------
 const box = await page.evaluate(() => {
@@ -519,7 +565,7 @@ check('A buys at a wall-buy', pad.aBuys, pad);
 check('Start pauses, A resumes', pad.startPauses && pad.aResumes, pad);
 check('A starts a run from the title screen', pad.aStarts, pad);
 
-// 9. no errors anywhere -------------------------------------------------------
+// 14. no errors anywhere -------------------------------------------------------
 const gameErrors = await page.evaluate(() => __dbg.errors);
 check('no in-game errors', gameErrors.length === 0, gameErrors);
 check('no uncaught page errors', pageErrors.length === 0, pageErrors);
