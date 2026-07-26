@@ -151,7 +151,6 @@ export class TrafficSystem {
       const v = this.spawnAt(x + lo.x, z + lo.z, heading, tn, randomCarColor((this.R.n() * 1e6) | 0), 'traffic');
       v.edge = ei;
       v.dirSign = sign;
-      v.t = t;
       v.vLong = 6 + this.R.n() * 6;
       v.panic = 0;
       return v;

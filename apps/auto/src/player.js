@@ -36,6 +36,7 @@ export class Player {
     this.camDist = 6.5;
     this.camPos = new THREE.Vector3(this.x + Math.sin(this.camYaw) * 4.6, this.y + 1.6, this.z + Math.cos(this.camYaw) * 4.6);
     this.camLook = new THREE.Vector3(this.x, this.y + 1.4, this.z);
+    this.camFloor = null; // smoothed floor for the camera clamp; see updateCamera
   }
 
   get position() {
@@ -255,15 +256,25 @@ export class Player {
       target.z + Math.cos(this.camYaw) * dist * cp
     );
     const rate = this.onFoot ? 14 : 9;
+    // Vertical follows far slower than horizontal. The ground under a walking
+    // player is a staircase -- 22 cm off a kerb, another step across a junction
+    // -- and a camera tracking it at the horizontal rate reproduces every one of
+    // those as a jolt. Horizontal has to stay tight or the camera feels loose,
+    // so the two rates are deliberately different.
+    const rateY = this.onFoot ? 4.5 : 7;
     this.camPos.x = damp(this.camPos.x, wanted.x, rate, dt);
-    this.camPos.y = damp(this.camPos.y, wanted.y, rate, dt);
+    this.camPos.y = damp(this.camPos.y, wanted.y, rateY, dt);
     this.camPos.z = damp(this.camPos.z, wanted.z, rate, dt);
-    // the camera clamp does not need 22 cm of kerb accuracy, so skip the scan
-    const minY = this.city.groundAt(this.camPos.x, this.camPos.z, null, 0) + 1.1;
-    if (this.camPos.y < minY) this.camPos.y = minY;
+    // Keep the camera out of the ground, but clamp against a SMOOTHED floor.
+    // The raw surface is discontinuous, so clamping straight to it turns every
+    // kerb the camera passes over into a snap of its own. It doesn't need 22 cm
+    // of kerb accuracy either, hence the zero lift.
+    const rawFloor = this.city.groundAt(this.camPos.x, this.camPos.z, null, 0) + 1.1;
+    this.camFloor = this.camFloor == null ? rawFloor : damp(this.camFloor, rawFloor, 8, dt);
+    if (this.camPos.y < this.camFloor) this.camPos.y = this.camFloor;
     this.camLook.set(
       damp(this.camLook.x, target.x, 16, dt),
-      damp(this.camLook.y, target.y + lookH, 16, dt),
+      damp(this.camLook.y, target.y + lookH, this.onFoot ? 6 : 12, dt),
       damp(this.camLook.z, target.z, 16, dt)
     );
   }

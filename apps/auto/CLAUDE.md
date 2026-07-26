@@ -522,3 +522,56 @@ and in that second case sw.js's own bytes never change, so the browser has no
 reason to install the new worker and the cache never turns over. **The byte
 change to sw.js is the update trigger**, so that file has to carry its own
 literal. Bump both, and keep the digits equal so a mismatch is obvious on sight.
+
+## Vehicle asset table is `assets`, never `t`
+
+`Vehicle.assets` holds the shared geometry for a type. It used to be
+`this.t`, and `traffic.js` spawning a car did `v.t = t` with the car's position
+along its edge — replacing the whole geometry table with a number. Nothing
+noticed, because the meshes were already built in the constructor and
+`this.t.wheelR` fell through to a default. It only surfaced when you got in:
+`setDetailed(true)` iterates `assets.wheels`, so **carjacking any moving traffic
+car threw**, and it threw *after* `this.vehicle = v` but *before*
+`this.onFoot = false`, leaving the player half in the car. The HUD read the
+car's speed while the sim still ran the player on foot, which is what "frozen
+but the speedo works" was.
+
+Parked cars were fine, which is what made it look intermittent — they spawn
+through a different path that never wrote the field.
+
+Two things follow. Don't give a shared, long-lived reference a one-letter name.
+And when a bug report says a system half-works, suspect an exception midway
+through a setup function rather than a stuck value: `requestAnimationFrame` is
+re-armed at the top of the frame, so a throw part-way through leaves the loop
+running with an object in a state no code path expects.
+
+## Shimmer and jolt: two things that read as "janky"
+
+**Road markings flashing is the albedo map, not geometry.** Localise this kind
+of thing by moving the camera a few millimetres and counting pixels that change:
+a stable scene barely moves. With the road and pavement albedo maps in place,
+6.6% of pixels changed from a 4 mm move; with just those maps nulled it fell to
+0.7%. Removing the normal or roughness map changed nothing, so it isn't specular
+aliasing. Lane markings are 8–12 px lines in a 512 texture seen at a grazing
+angle — the canonical anisotropy case — and `tex()` was asking for 8 when phones
+offer 16.
+
+**SwiftShader cannot verify texture filtering.** Turning mipmaps off entirely
+produces the same churn as leaving them on, which means the software rasterizer
+is not honouring mip or anisotropy settings at all. Any filtering change has to
+be checked on a real device; do not conclude anything about it from a headless
+run.
+
+**Smooth the camera, not the ground.** The lift query has to report the kerb as
+the 22 cm step world.js draws, because the two agreeing is the whole contract in
+"The one height surface". Ramping the *surface* to make walking smoother was
+tried and reverted: it desyncs from the drawn kerb and you sink into the
+pavement, which is the same bug as feet-in-the-sidewalk. The jolt belongs to the
+camera, so that is where it is damped — vertical follow runs at 4.5 against 14
+horizontal, and the ground clamp works against a smoothed floor rather than
+snapping to a discontinuous surface. Measured over 900 frames at a fixed 60 fps
+step, worst-case camera movement per frame went 35.5 mm → 19.1 mm.
+
+Measure this at a **fixed dt**, driving `updateFoot`/`updateCamera` in a loop.
+SwiftShader runs about 4 fps, so real-time traces exaggerate every per-frame
+delta by an order of magnitude and are worthless for judging smoothness.
