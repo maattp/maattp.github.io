@@ -677,8 +677,8 @@ export class World {
       G.terrainHeight((a.x + b.x) / 2, (a.z + b.z) / 2) - (a.y + b.y) / 2
     );
     const grade = Math.abs(a.y - b.y) / Math.max(1, e.len);
-    const byGrade = grade > 0.08 ? 4 : grade > 0.03 ? 6 : 8;
-    const byBow = bow < 0.02 ? 8 : clamp(e.len * Math.sqrt(0.06 / bow), 3, 8);
+    const byGrade = grade > 0.08 ? 3 : grade > 0.03 ? 5 : 8;
+    const byBow = bow < 0.01 ? 8 : clamp(e.len * Math.sqrt(0.02 / bow), 2.5, 8);
     const segLen = Math.min(byGrade, byBow);
     const steps = Math.max(1, Math.round(e.len / segLen));
     const col = e.cls === 'hwy' ? [0.92, 0.92, 0.92] : [1, 1, 1];
@@ -756,6 +756,36 @@ export class World {
           const i1x = x1 + ox * hw, i1z = z1 + oz * hw;
           const o1x = x1 + ox * (hw + sw), o1z = z1 + oz * (hw + sw);
           if (!G.isBuildable(o0x, o0z) && !G.isBuildable(o1x, o1z)) continue;
+          // Pavement must not cross a carriageway. Stopping the strip at
+          // nodeRadius is not enough on its own: the strip is offset SIDEWAYS
+          // by hw + sw, so near a junction its far corner can sit in the cross
+          // street even though its centreline has stopped short -- and with
+          // real data a road that does not even meet this node can pass close
+          // enough to be under it. Test the piece itself against every nearby
+          // carriageway instead of trusting the geometry.
+          // Sample the piece's MIDDLE, not its inner edge: a pavement's inner
+          // edge lies exactly on its own carriageway's boundary by definition,
+          // so testing it rejects every piece in the city (95 % of the pavement
+          // vanished on the first attempt). The mid-depth line is a full sw/2
+          // clear of its own road and still inside any road it truly overlaps.
+          // Grid across the piece, at a quarter and three quarters of its
+          // depth. Depth 0 is the inner edge, which lies on this pavement's own
+          // carriageway boundary and would reject everything; a quarter of the
+          // way out is clear of it and still lands inside any road the piece
+          // genuinely overlaps. Three samples along caught the head-on cases but
+          // missed pieces clipping a junction corner diagonally.
+          let hits = false;
+          for (const fd of [0.25, 0.75]) {
+            for (const fl of [0, 0.5, 1]) {
+              const ex = i0x + (i1x - i0x) * fl, ez = i0z + (i1z - i0z) * fl;
+              const gx = o0x + (o1x - o0x) * fl, gz = o0z + (o1z - o0z) * fl;
+              if (this.city.onRoad(ex + (gx - ex) * fd, ez + (gz - ez) * fd, 0, false)) {
+                hits = true; break;
+              }
+            }
+            if (hits) break;
+          }
+          if (hits) continue;
           const y = (x, z) => G.terrainHeight(x, z) + WALK_Y;
           const seg = (e.len * span) / wsteps;
           const v0 = vv, v1 = vv + seg / sw;
@@ -790,6 +820,65 @@ export class World {
       if (e.hw > hw) hw = e.hw;
     }
     return hw;
+  }
+
+  /**
+   * Gabled roof fitted to a rectangular footprint.
+   *
+   * Built in the building's own frame and transformed out by `bd.rot`, so it
+   * lands on the walls at any orientation. The ridge runs along the LONGER
+   * side, which is what a house does -- run it the short way and a long terrace
+   * ends up with an absurdly tall roof and gable ends the width of the street.
+   */
+  meshGable(flat, bd, y0, col, seed) {
+    const cs = Math.cos(bd.rot), sn = Math.sin(bd.rot);
+    const OVER = 0.45;                       // eaves overhang, all four sides
+    const alongX = bd.w >= bd.d;             // which way the ridge runs
+    const hw = bd.w / 2 + OVER, hd = bd.d / 2 + OVER;
+    // Pitch from the span it has to cover, capped so a wide house doesn't get a
+    // spire and a narrow one still reads as a roof.
+    const span = alongX ? hd : hw;
+    const rise = clamp(span * 0.62, 1.0, 3.6);
+    const y1 = y0 + rise;
+    const P = (lx, lz, y) => [bd.x + lx * cs - lz * sn, y, bd.z + lx * sn + lz * cs];
+    // Ridge endpoints, pulled in a little so the gable ends are not knife-edged.
+    const rl = alongX ? hw : hd;
+    const A = alongX ? P(-rl, 0, y1) : P(0, -rl, y1);
+    const Bp = alongX ? P(rl, 0, y1) : P(0, rl, y1);
+    // Eaves corners
+    const c00 = P(-hw, -hd, y0), c10 = P(hw, -hd, y0);
+    const c11 = P(hw, hd, y0), c01 = P(-hw, hd, y0);
+    const dark = [col[0] * 0.82, col[1] * 0.82, col[2] * 0.84];
+    if (alongX) {
+      flat.quad(c00, c10, Bp, A, [0, 0.72, -0.7], ZERO_UV, col);      // slope -z
+      flat.quad(c11, c01, A, Bp, [0, 0.72, 0.7], ZERO_UV, dark);      // slope +z
+      flat.tri(c00, A, c01, [-1, 0.25, 0], col);                      // gable -x
+      flat.tri(c10, c11, Bp, [1, 0.25, 0], col);                      // gable +x
+    } else {
+      flat.quad(c00, A, Bp, c01, [-0.7, 0.72, 0], ZERO_UV, col);      // slope -x
+      flat.quad(c10, c11, Bp, A, [0.7, 0.72, 0], ZERO_UV, dark);      // slope +x
+      flat.tri(c00, c10, A, [0, 0.25, -1], col);                      // gable -z
+      flat.tri(c01, Bp, c11, [0, 0.25, 1], col);                      // gable +z
+    }
+    // Chimney, on the roof rather than beside it.
+    if (hash2(seed, 21) > 0.62) {
+      const t = (hash2(seed, 22) - 0.5) * 0.5;
+      const [px, , pz] = alongX ? P(rl * t, 0, 0) : P(0, rl * t, 0);
+      flat.box(px, y0 + rise * 0.45, pz, 0.72, rise * 0.75 + 0.7, 0.72, bd.rot,
+        [0.4, 0.29, 0.25]);
+    }
+  }
+
+  /** Square-based pyramid that honours the footprint and its rotation. */
+  meshPyramid(flat, x, y0, z, hw, hd, h, rot, col) {
+    const cs = Math.cos(rot), sn = Math.sin(rot);
+    const P = (lx, lz, yy) => [x + lx * cs - lz * sn, yy, z + lx * sn + lz * cs];
+    const apex = [x, y0 + h, z];
+    const c = [P(-hw, -hd, y0), P(hw, -hd, y0), P(hw, hd, y0), P(-hw, hd, y0)];
+    const nrm = [[0, 0.4, -1], [1, 0.4, 0], [0, 0.4, 1], [-1, 0.4, 0]];
+    for (let i = 0; i < 4; i++) {
+      flat.tri(c[i], c[(i + 1) % 4], apex, nrm[i], col);
+    }
   }
 
   meshNode(road, flat, ni, n, lod, walk) {
@@ -844,15 +933,10 @@ export class World {
     // pavement on the corners only -- drawn whole, the ring laid a footpath
     // straight over all four approaches, the same defect the trimmed strips
     // were meant to have fixed.
-    const onRoad = (x, z) => {
-      for (const ei of n.e) {
-        const e = city.edges[ei];
-        if (e.elev) continue;
-        const ea = city.nodes[e.a], eb = city.nodes[e.b];
-        if (distToSeg(x, z, ea.x, ea.z, eb.x, eb.z).d <= e.hw + 0.35) return true;
-      }
-      return false;
-    };
+    // Every nearby carriageway, not just the ones meeting THIS node. Junctions
+    // are close together in real data and a ring can easily reach into a
+    // neighbouring one's approach, which the old node-local test could not see.
+    const onRoad = (x, z) => city.onRoad(x, z, 0, false);
     const SEG = 16;
     const side = (ax, az, bx, bz, nx, nz) => {
       const wn = [-(nx * c - nz * s), 0, -(nx * s + nz * c)];
@@ -864,7 +948,19 @@ export class World {
         const [o0x, o0z] = P(sax + nx * sw, saz + nz * sw);
         const [o1x, o1z] = P(sbx + nx * sw, sbz + nz * sw);
         if (!G.isBuildable(o0x, o0z) && !G.isBuildable(o1x, o1z)) continue;
-        if (onRoad((i0x + o1x) / 2, (i0z + o1z) / 2)) continue;
+        // Mid-depth at both ends, for the same reason as the strips: the ring's
+        // inner edge sits on the junction square's boundary, so testing corners
+        // rejects the whole ring.
+        let ringHit = false;
+        for (const fd of [0.25, 0.75]) {
+          for (const fl of [0, 0.5, 1]) {
+            const ex = i0x + (i1x - i0x) * fl, ez = i0z + (i1z - i0z) * fl;
+            const gx = o0x + (o1x - o0x) * fl, gz = o0z + (o1z - o0z) * fl;
+            if (onRoad(ex + (gx - ex) * fd, ez + (gz - ez) * fd)) { ringHit = true; break; }
+          }
+          if (ringHit) break;
+        }
+        if (ringHit) continue;
         walk.quad(
           [i0x, wy(i0x, i0z), i0z], [o0x, wy(o0x, o0z), o0z],
           [o1x, wy(o1x, o1z), o1z], [i1x, wy(i1x, i1z), i1z],
@@ -921,11 +1017,15 @@ export class World {
       target.box(bd.x, base, bd.z, bd.w, wallH + 2, bd.d, bd.rot, col, { top: false, uScale: 0, vScale: 0, ao: 0.3 });
       const rc = tint(seed, [0.36, 0.31, 0.29], 0.14);
       flat.box(bd.x, base + wallH + 2, bd.z, bd.w + 0.7, 0.26, bd.d + 0.7, bd.rot, rc);
-      flat.cone(bd.x, base + wallH + 2.26, bd.z, Math.max(bd.w, bd.d) * 0.74, bd.h * 0.42, 4, rc);
-      if (hash2(seed, 21) > 0.7) {
-        const [px, pz] = off(bd.w * 0.26, 0);
-        flat.box(px, base + wallH + 2, pz, 1.0, bd.h * 0.5, 1.0, bd.rot, [0.4, 0.29, 0.25]);
-      }
+      // A gable that fits the house it sits on.
+      //
+      // This used to be `cone(..., max(w, d) * 0.74, ..., 4, ...)` -- a square
+      // pyramid sized off the LONGER side, and `cone()` takes no rotation, so
+      // it stayed axis-aligned in world space while the house was turned by
+      // bd.rot. On a 6 x 14 m house that is a 10 m roof, square, at the wrong
+      // angle: the overhang misses the walls entirely on the narrow axis, which
+      // is why roofs looked detached and randomly oriented.
+      this.meshGable(flat, bd, base + wallH + 2.26, rc, seed);
       const [sx, sz] = off(0, bd.d / 2 + 0.5);
       flat.box(sx, base + 1.6, sz, 2.0, 0.22, 1.2, bd.rot, [0.62, 0.6, 0.57]);
       return;
@@ -1014,7 +1114,11 @@ export class World {
       flat.box(bd.x, base + 22, bd.z, bd.w * 1.5 + 1.2, 1.1, bd.d * 1.5 + 1.2, bd.rot, [0.78, 0.77, 0.73]);
       bl.masonry.box(bd.x, base + 23.1, bd.z, bd.w, bd.h - 45, bd.d, bd.rot, white, { uScale: 11, vScale: 11, top: false });
       flat.box(bd.x, base + bd.h - 22, bd.z, bd.w + 1.6, 1.5, bd.d + 1.6, bd.rot, [0.78, 0.77, 0.73]);
-      flat.cone(bd.x, base + bd.h - 20.5, bd.z, bd.w * 0.72, 20, 4, [0.5, 0.56, 0.55]);
+      // cone() places its four vertices on the axes, so a 4-sided one is a
+      // DIAMOND in plan -- 45 deg out from the square tower under it, and it
+      // takes no rotation either. Smith Tower's cap is a real pyramid.
+      this.meshPyramid(flat, bd.x, base + bd.h - 20.5, bd.z, bd.w * 0.52, bd.d * 0.52,
+        20, bd.rot, [0.5, 0.56, 0.55]);
       flat.prism(bd.x, base + bd.h - 2, bd.z, 0.3, 12, 4, [0.4, 0.42, 0.44]);
       return;
     }

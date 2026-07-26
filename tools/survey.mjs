@@ -30,6 +30,8 @@ const SITES = [
   ['fwy-ws-bridge', -1900, 3050, 'elev'],
   ['fwy-i5-express', 1200, -1500, 'hwy'],
   ['fwy-ramp-mercer', 500, -1300, 'ramp'],
+  ['spawn-junction', -985, -807],
+  ['alki-shore', -5100, 3300],
   ['downtown-grid', 300, 500],
   ['downtown-3rd', 120, 700],
   ['i5-express', 1270, 2641],

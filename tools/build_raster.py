@@ -39,6 +39,10 @@ MASK_N = (MAP_HALF * 2) // MASK_STEP + 1      # 1601
 # The mask is flood-filled on a padded grid so the coastline barrier is closed
 # well outside anything the player can reach.
 PAD = 3000
+# Points known to be open salt water, used to seed the coastline flood fill and
+# again to decide which water is sea (level 0) rather than a lake.
+SEA_SEEDS = [(47.6000, -122.3800), (47.6500, -122.4400), (47.5500, -122.4300),
+             (47.6400, -122.4200), (47.5750, -122.3600)]
 PAD_N = (MAP_HALF + PAD) * 2 // MASK_STEP + 1
 
 
@@ -135,7 +139,7 @@ def build_masks():
     # land-on-the-left rule: it is one assertion instead of 2258 guesses, and if
     # it is wrong the probe below says so immediately.
     from proj import to_world
-    seed_ll = [(47.6000, -122.3800), (47.6500, -122.4400), (47.5500, -122.4300)]
+    seed_ll = SEA_SEEDS
     arr = np.asarray(sea, dtype=np.uint8).copy()
     seeds = []
     for lat, lon in seed_ll:
@@ -282,6 +286,7 @@ def carve_lakes(h, wet):
     """
     from collections import deque
     from proj import to_world as to_world_local
+    seed_ll_sea = SEA_SEEDS
 
     # mask (10 m) -> heightfield (40 m): a cell is wet by the fraction of the
     # mask cells inside it, so the shore ramps down instead of stepping.
@@ -295,9 +300,6 @@ def carve_lakes(h, wet):
             frac[j, i] = wet[mj0:mj1, mi0:min(MASK_N, mi0 + 5)].mean()
 
     surface = h.copy()
-    DEPTH = 7.0
-    h = h - DEPTH * frac
-    h = np.maximum(h, -25.0)
 
     # Connected water bodies standing above the sea, grouped on the mask grid.
     #
@@ -364,6 +366,39 @@ def carve_lakes(h, wet):
             "z1": round(float(ys.max() * MASK_STEP - MAP_HALF) + GROW, 1),
             "area": int(len(cells) * MASK_STEP * MASK_STEP),
         })
+    # Clamp the terrain below whatever water is on top of it.
+    #
+    # Subtracting a fixed depth is not enough: wherever the DEM disagrees with
+    # the mask -- a bad terrain-tile pixel, a pond the flood fill reached -- land
+    # is left standing in the middle of water. You could see islands in Puget
+    # Sound that were not on the minimap, because the minimap is drawn from the
+    # mask and the world from the DEM, so the two disagreeing is exactly what
+    # that looks like. 938 sea cells stood above sea level.
+    #
+    # Each cell is clamped below its OWN water surface: 0 for anything connected
+    # to the sea, the body's own level inside a labelled lake (Green Lake really
+    # is at 50 m), and the local DEM for the small ponds that are too small to
+    # label -- Volunteer Park Reservoir sits at 130 m and must not be dug to
+    # sea level.
+    level = np.where(frac > 0.05, surface, surface)   # default: local surface
+    sea_reach = flood((~wet).astype(np.uint8), [
+        (int((sx + MAP_HALF) / MASK_STEP), int((sz + MAP_HALF) / MASK_STEP))
+        for sx, sz in [to_world_local(la, lo) for la, lo in seed_ll_sea]
+    ])
+    seaHF = sea_reach[::4, ::4][:HF_N, :HF_N]
+    level = np.where(seaHF, 0.0, level)
+    for l in lakes:
+        i0 = max(0, int((l["x0"] + MAP_HALF) / HF_STEP))
+        i1 = min(HF_N, int((l["x1"] + MAP_HALF) / HF_STEP) + 1)
+        j0 = max(0, int((l["z0"] + MAP_HALF) / HF_STEP))
+        j1 = min(HF_N, int((l["z1"] + MAP_HALF) / HF_STEP) + 1)
+        sub = level[j0:j1, i0:i1]
+        wetsub = frac[j0:j1, i0:i1] > 0.5
+        level[j0:j1, i0:i1] = np.where(wetsub, l["level"], sub)
+    DEPTH = 7.0
+    h = np.where(frac > 0.05, np.minimum(h - DEPTH * frac, level - 1.2), h)
+    h = np.maximum(h, -25.0)
+
     lakes.sort(key=lambda l: -l["area"])
     with open(os.path.join(OUT, "water.json"), "w") as f:
         json.dump({"lakes": lakes}, f, separators=(",", ":"))
