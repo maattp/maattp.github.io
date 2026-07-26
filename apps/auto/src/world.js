@@ -14,6 +14,30 @@ const WALK_Y = WALK_LIFT;
 const NEAR_R = 2; // chunks of full detail around the player
 const MID_R = 4; // chunks that keep roads only
 
+// Ground tints, and the taps used to soften a district's edge into them.
+const GRASS = [0.42, 0.62, 0.28];
+const SUBURB = [0.48, 0.6, 0.37];
+const URBAN = [0.56, 0.56, 0.55];
+const BLEND_TAPS = [[0, 0], [-85, 55], [70, -75]];
+
+/**
+ * Smooth value noise on a 210 m lattice, in [0,1].
+ *
+ * Only used to push the district lookup off its own straight edges, so it wants
+ * to be continuous and cheap rather than good: `hash2` alone is per-cell random
+ * and turns a boundary into static instead of a curve.
+ */
+function vnoise(x, z) {
+  const S = 210;
+  const fx = x / S, fz = z / S;
+  const i0 = Math.floor(fx), j0 = Math.floor(fz);
+  const tx = fx - i0, tz = fz - j0;
+  const sx = tx * tx * (3 - 2 * tx), sz = tz * tz * (3 - 2 * tz);
+  const a = hash2(i0, j0), b = hash2(i0 + 1, j0);
+  const c = hash2(i0, j0 + 1), d = hash2(i0 + 1, j0 + 1);
+  return lerp(lerp(a, b, sx), lerp(c, d, sx), sz);
+}
+
 /**
  * Does this GPU actually put colour into a half-float target?
  *
@@ -186,12 +210,34 @@ export class World {
             pos[k] = x; pos[k + 1] = y; pos[k + 2] = z;
             uv[(j * w + i) * 2] = x / 13;
             uv[(j * w + i) * 2 + 1] = z / 13;
+            // District polygons are literally rect() calls, so colouring the
+            // ground by a straight districtAt() test drew the city from the air
+            // as grey rectangles on grass -- hard axis-aligned edges with a
+            // 40 m staircase on them, because that is the heightfield spacing.
+            // The query point is pushed around by smooth noise so the boundary
+            // wanders, and three offset samples give a coverage fraction to
+            // blend across rather than a switch to flip.
             let c;
-            const dist = G.districtAt(x, z);
             if (y < 1.2) c = [0.94, 0.86, 0.66];
             else if (G.inPark(x, z)) c = [0.42, 0.66, 0.3];
-            else if (dist) c = dist.style === 'house' ? [0.48, 0.6, 0.37] : [0.56, 0.56, 0.55];
-            else c = [0.42, 0.62, 0.28];
+            else {
+              const jx = (vnoise(x, z) - 0.5) * 190;
+              const jz = (vnoise(x + 3137, z - 2711) - 0.5) * 190;
+              let urban = 0, house = 0;
+              for (const [ox, oz] of BLEND_TAPS) {
+                const d2 = G.districtAt(x + jx + ox, z + jz + oz);
+                if (!d2) continue;
+                if (d2.style === 'house') house++; else urban++;
+              }
+              const cover = (urban + house) / BLEND_TAPS.length;
+              const built = cover > 0 ? (urban >= house ? URBAN : SUBURB) : URBAN;
+              const t = cover * cover * (3 - 2 * cover);
+              c = [
+                GRASS[0] + (built[0] - GRASS[0]) * t,
+                GRASS[1] + (built[1] - GRASS[1]) * t,
+                GRASS[2] + (built[2] - GRASS[2]) * t,
+              ];
+            }
             const n = hash2(gi, gj) * 0.14 + 0.93;
             col[k] = c[0] * n; col[k + 1] = c[1] * n; col[k + 2] = c[2] * n;
           }

@@ -268,6 +268,63 @@ split leaves behind.
 To check both at once, count ground-level segment intersections whose edges
 share no node. It must be zero.
 
+## What the map looks like from above
+
+Rendering the whole graph top-down is the cheapest way to find this class of
+bug, and none of it is visible at street level. Dump `__dbg.city` to JSON and
+draw it on a canvas — water, roads by class, degree-1 nodes in red, and any
+component that isn't the largest in magenta. Four things it turned up, all now
+fixed, all worth re-checking after any change to geo.js:
+
+**Water has to be one system.** The ship canal's west end stopped 177 m short of
+Elliott Bay, so no boat could get from the sound to Lake Washington and the
+canal read as a rectangular pond dropped on a lawn. It was also a six-point
+box — straight sides, square ends, one width for 3.4 km. Assert it: union the
+water polygons by intersection and count the groups. **Two** is correct — the
+chain, and Green Lake, which really is landlocked.
+
+**Editing a water polygon is still the dangerous edit.** Every vertex east of
+the bay was moved onto or inside the old outline so the shape could only lose
+water; the one place it gains is the west end, which is the point, and it
+crosses Ballard's western 100 m to reach the sea. Diff the land/water grid both
+ways and check no district loses ground it had buildings on.
+
+**A road that stops in a field is a data artefact, not a cul-de-sac.** The
+polylines end wherever the author stopped drawing: 99 dead ends inside the map,
+74 of them arterials, plus seven pockets of grid — Pioneer Square's 27 nodes,
+all of Harbor Island, the whole University Bridge — with no route to the rest of
+the city. `stitch()` welds a loose end to a node within 75 m, bridges a stranded
+component to the main one within 190 m, and trims what's left under 55 m.
+**Run it before `planarize()` runs a second time**, or a weld reintroduces the
+crossing-without-a-junction that planarize exists to remove.
+
+**"Roads merge in crazy ways" was one street drawn twice.** 363 pairs of edges
+met at under 22°, and 361 were an arterial against the district grid it runs
+through — N 45th St weaving across Wallingford's east-west streets 21 times,
+Broadway across Capitol Hill 19. The angle is a symptom: the distribution is
+flat from 0 to 20° with no natural cut, so raising the junction threshold does
+nothing. `dedupeGrid()` drops the block street instead, keeping the hand-drawn
+road — it's the named one and it continues past the district boundary. This is
+`roadCoveredAt` applied to the graph rather than the surface.
+
+| | before | after |
+|---|---|---|
+| dead ends inside the map | 99 | 44 |
+| road-graph components | 8 | 2 |
+| nodes unreachable from the main network | 83 | 9 |
+| edge pairs meeting under 22° | 359 | 146 |
+| separate water systems | 3 | 2 |
+
+The 9 stranded nodes are Harbor Island, which is genuinely an island — reaching
+it needs a bridge in the data, not a graph pass.
+
+**Ground colour is blended, not switched.** `buildTerrain` used to pick the
+vertex tint straight from `districtAt()`, and district polygons are literally
+`rect()` calls, so the city from the air was grey rectangles on grass with a
+40 m staircase on every edge — the heightfield spacing. The lookup point is now
+pushed around by `vnoise` so the boundary wanders, and three offset taps give a
+coverage fraction to blend across. Costs about 10 ms of boot.
+
 ## Parks
 
 **The block grid does not run through a park.** Buildings already skipped them,

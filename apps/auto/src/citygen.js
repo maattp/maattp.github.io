@@ -162,6 +162,193 @@ function districtOwner() {
   };
 }
 
+// sin of the shallowest crossing angle that still counts as an intersection
+const SLIVER_SIN = Math.sin(15 * Math.PI / 180);
+
+/**
+ * Drop a block street that a hand-drawn road has already paved.
+ *
+ * 363 pairs of edges met at under 22 degrees, and 361 of them were an arterial
+ * against the grid of the district it runs through: N 45th St weaving across
+ * Wallingford's east-west streets 21 times, Broadway across Capitol Hill 19.
+ * That is what "roads merge in crazy ways" looks like from above -- not one bad
+ * intersection but the same street laid twice at a few degrees' offset, forking
+ * and rejoining the whole way along.
+ *
+ * The angle is a symptom, so raising the junction threshold doesn't help: the
+ * distribution is flat from 0 to 20 degrees with no natural cut. The duplicate
+ * has to go instead, and the hand-drawn road is the one to keep -- it is the
+ * named one, and it carries on past the district boundary.
+ *
+ * `roadCoveredAt` does the same job for the drawn surface; this does it for the
+ * graph, so traffic stops seeing phantom forks too.
+ */
+function dedupeGrid(g) {
+  const NEAR = 19;                                   // metres, centreline to centreline
+  const COS = Math.cos(15 * Math.PI / 180);
+  const CELL = 120, gk = (a, b) => a * 100003 + b;
+  const grid = new Map();
+  for (let ei = 0; ei < g.edges.length; ei++) {
+    const e = g.edges[ei];
+    if (e.grid || e.elev) continue;                  // index the hand-drawn roads
+    const a = g.nodes[e.a], b = g.nodes[e.b];
+    const st = Math.max(1, Math.ceil(e.len / CELL));
+    for (let s = 0; s <= st; s++) {
+      const k = gk(Math.floor((a.x + (b.x - a.x) * s / st) / CELL),
+        Math.floor((a.z + (b.z - a.z) * s / st) / CELL));
+      let l = grid.get(k);
+      if (!l) grid.set(k, (l = new Set()));
+      l.add(ei);
+    }
+  }
+  const drop = new Set();
+  for (let ei = 0; ei < g.edges.length; ei++) {
+    const e = g.edges[ei];
+    if (!e.grid) continue;
+    const a = g.nodes[e.a], b = g.nodes[e.b];
+    // Every sample has to be covered, so a street that merely touches an
+    // arterial at one end keeps its own life.
+    let covered = true;
+    for (const t of [0.15, 0.5, 0.85]) {
+      const x = a.x + (b.x - a.x) * t, z = a.z + (b.z - a.z) * t;
+      let hit = false;
+      for (const oi of grid.get(gk(Math.floor(x / CELL), Math.floor(z / CELL))) || []) {
+        const o = g.edges[oi];
+        if (Math.abs(e.dx * o.dx + e.dz * o.dz) < COS) continue;
+        const oa = g.nodes[o.a], ob = g.nodes[o.b];
+        if (distToSeg(x, z, oa.x, oa.z, ob.x, ob.z).d <= NEAR) { hit = true; break; }
+      }
+      if (!hit) { covered = false; break; }
+    }
+    if (covered) drop.add(ei);
+  }
+  if (!drop.size) return 0;
+  const keep = g.edges.filter((_, ei) => !drop.has(ei));
+  g.edges = [];
+  for (const n of g.nodes) n.e = [];
+  for (const e of keep) {
+    const ei = g.addEdge(e.a, e.b, e.cls, e.name);
+    if (ei >= 0) g.edges[ei].grid = e.grid;
+  }
+  return drop.size;
+}
+
+/**
+ * Join up loose ends, and reel in the ones that have nothing to join to.
+ *
+ * The polylines in geo.js stop wherever the author stopped drawing, so 99 of
+ * them ended in mid-air -- 74 on arterials -- and seven pockets of street grid
+ * (Pioneer Square's 27 nodes, all of Harbor Island, the whole University
+ * Bridge) had no route to the rest of the city at all. Both read from above as
+ * roads that just give up.
+ *
+ * Two passes, cheapest first: weld a dangling end to a node it is already
+ * nearly touching, then bridge whole components that are still adrift. What
+ * neither can reach gets trimmed back, because a stub going nowhere is worse
+ * than no stub.
+ */
+function stitch(g) {
+  const WELD = 75;      // a loose end this close to a node was meant to meet it
+  const BRIDGE = 190;   // how far to reach to rescue a stranded component
+  const TRIM = 55;      // a leftover stub shorter than this is deleted
+  const EDGE = G.MAP_HALF - 80;
+  const atRim = (n) => Math.abs(n.x) > EDGE || Math.abs(n.z) > EDGE;
+  const stats = { welded: 0, bridged: 0, trimmed: 0 };
+
+  const cell = 90, gk = (a, b) => a * 100003 + b;
+  const index = () => {
+    const m = new Map();
+    for (let i = 0; i < g.nodes.length; i++) {
+      const n = g.nodes[i];
+      if (!n.e.length) continue;
+      const k = gk(Math.floor(n.x / cell), Math.floor(n.z / cell));
+      let l = m.get(k);
+      if (!l) m.set(k, (l = []));
+      l.push(i);
+    }
+    return m;
+  };
+  const nearest = (grid, ni, radius, ok) => {
+    const n = g.nodes[ni];
+    const r = Math.ceil(radius / cell);
+    const c0 = Math.floor(n.x / cell), d0 = Math.floor(n.z / cell);
+    let best = -1, bd = radius;
+    for (let cx = c0 - r; cx <= c0 + r; cx++) {
+      for (let cz = d0 - r; cz <= d0 + r; cz++) {
+        for (const oi of grid.get(gk(cx, cz)) || []) {
+          if (oi === ni || !ok(oi)) continue;
+          const o = g.nodes[oi];
+          const d = Math.hypot(o.x - n.x, o.z - n.z);
+          if (d < bd) { bd = d; best = oi; }
+        }
+      }
+    }
+    return best;
+  };
+
+  // --- 1. weld dangling ends ------------------------------------------------
+  let grid = index();
+  for (let ni = 0; ni < g.nodes.length; ni++) {
+    const n = g.nodes[ni];
+    if (n.e.length !== 1 || n.elev || atRim(n)) continue;
+    const own = g.edges[n.e[0]];
+    const far = own.a === ni ? own.b : own.a;
+    const hit = nearest(grid, ni, WELD, (oi) => oi !== far && !g.nodes[oi].elev);
+    if (hit < 0) continue;
+    if (g.addEdge(ni, hit, own.cls, own.name) >= 0) stats.welded++;
+  }
+
+  // --- 2. bridge components that are still cut off --------------------------
+  const par = new Array(g.nodes.length);
+  for (let i = 0; i < par.length; i++) par[i] = i;
+  const find = (a) => { while (par[a] !== a) { par[a] = par[par[a]]; a = par[a]; } return a; };
+  const uni = (a, b) => { a = find(a); b = find(b); if (a !== b) par[a] = b; };
+  for (const e of g.edges) uni(e.a, e.b);
+  const size = new Map();
+  for (let i = 0; i < g.nodes.length; i++) {
+    if (!g.nodes[i].e.length) continue;
+    const r = find(i);
+    size.set(r, (size.get(r) || 0) + 1);
+  }
+  let main = -1;
+  for (const [r, s] of size) if (main < 0 || s > size.get(main)) main = r;
+
+  grid = index();
+  for (const [root] of size) {
+    if (root === main) continue;
+    let bestFrom = -1, bestTo = -1, bd = BRIDGE;
+    for (let ni = 0; ni < g.nodes.length; ni++) {
+      if (!g.nodes[ni].e.length || find(ni) !== root) continue;
+      const hit = nearest(grid, ni, bd, (oi) => find(oi) === main && !g.nodes[oi].elev);
+      if (hit < 0) continue;
+      const d = Math.hypot(g.nodes[hit].x - g.nodes[ni].x, g.nodes[hit].z - g.nodes[ni].z);
+      if (d < bd) { bd = d; bestFrom = ni; bestTo = hit; }
+    }
+    if (bestFrom < 0) continue;
+    const cls = g.edges[g.nodes[bestFrom].e[0]].cls;
+    if (g.addEdge(bestFrom, bestTo, cls === 'hwy' ? 'art' : cls, 'link') >= 0) {
+      stats.bridged++;
+      uni(bestFrom, bestTo);
+    }
+  }
+
+  // --- 3. trim what is still dangling and too short to be a street ----------
+  const drop = new Set();
+  for (let ni = 0; ni < g.nodes.length; ni++) {
+    const n = g.nodes[ni];
+    if (n.e.length !== 1 || n.elev || atRim(n)) continue;
+    const ei = n.e[0];
+    if (g.edges[ei].len <= TRIM) { drop.add(ei); stats.trimmed++; }
+  }
+  if (drop.size) {
+    const keep = g.edges.filter((_, ei) => !drop.has(ei));
+    g.edges = [];
+    for (const n of g.nodes) n.e = [];
+    for (const e of keep) g.addEdge(e.a, e.b, e.cls, e.name);
+  }
+  return stats;
+}
+
 /**
  * Split every pair of crossing ground-level edges and put a node at the
  * crossing.
@@ -213,6 +400,14 @@ function planarize(g) {
         const d2x = s.x - r.x, d2z = s.z - r.z;
         const den = d1x * d2z - d1z * d2x;
         if (Math.abs(den) < 1e-9) continue; // parallel
+        // A crossing at a glancing angle is not an intersection, it is two
+        // roads that were drawn on top of each other. Splitting there produced
+        // 358 forks of under 22 deg across the city -- N 45th St alone made 41
+        // where it grazes the Wallingford and University grids it runs
+        // parallel to. Below 15 deg the pair is left whole; the overlapping
+        // surface is already suppressed by roadCoveredAt().
+        const l1 = Math.hypot(d1x, d1z), l2 = Math.hypot(d2x, d2z);
+        if (Math.abs(den) / (l1 * l2) < SLIVER_SIN) continue;
         const t = ((r.x - p.x) * d2z - (r.z - p.z) * d2x) / den;
         const u = ((r.x - p.x) * d1z - (r.z - p.z) * d1x) / den;
         if (t <= 0 || t >= 1 || u <= 0 || u >= 1) continue;
@@ -298,7 +493,10 @@ export function* cityGenerator() {
       // highways in step 2 still go where they are drawn, which is right:
       // Aurora really does cut through Woodland Park.
       if (G.inPark(mx, mz)) return;
-      g.addEdge(a, c, cls, d.name);
+      const ei = g.addEdge(a, c, cls, d.name);
+      // Tagged so dedupeGrid() can tell a procedural block street from a
+      // hand-drawn road, once the hand-drawn ones exist to compare against.
+      if (ei >= 0) g.edges[ei].grid = true;
     };
     const streetCls = d.style === 'house' ? 'res' : 'st';
     for (let i = i0; i <= i1; i++)
@@ -368,8 +566,19 @@ export function* cityGenerator() {
 
   // Every ground-level crossing becomes a real junction. Do this before the
   // segment index below, which reads the final edge list.
+  // Before any junctions are cut: a block street that an arterial has already
+  // paved should never have got a junction with it in the first place.
+  const deduped = dedupeGrid(g);
+
   planarize(g);
-  yield { p: 0.48, msg: 'Cutting the intersections' };
+  yield { p: 0.47, msg: 'Cutting the intersections' };
+
+  // Loose ends and marooned pockets get joined up, then anything the new edges
+  // now cross gets a junction too -- so a weld can't reintroduce the very
+  // crossing-without-a-node that planarize exists to remove.
+  const stitched = stitch(g);
+  planarize(g);
+  yield { p: 0.48, msg: 'Tying off the loose ends' };
 
   // --- 3. Segment index for building rejection ----------------------------
   const segCell = 90;
@@ -693,6 +902,8 @@ export function* cityGenerator() {
     edges: g.edges,
     buildings,
     waterDrops,
+    stitched,
+    deduped,
     chunks,
     chunkKey: ck,
     drivable,
