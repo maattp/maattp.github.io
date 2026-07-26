@@ -14,7 +14,7 @@
  *
  * Bump CACHE when a deploy must reach installed players promptly.
  */
-const CACHE = 'zombies-v1';
+const CACHE = 'zombies-v2';
 const SHELL = ['./', './index.html', './manifest.webmanifest', './icon-192.png', './icon-512.png', './icon-180.png'];
 
 self.addEventListener('install', e => {

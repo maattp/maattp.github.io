@@ -223,6 +223,32 @@ check('round 1 health is 150', ladder[0][2] === 150, ladder[0]);
 check('health compounds after round 9', ladder[19][2] > 2000 && ladder[29][2] > 6000,
   { r20: ladder[19][2], r30: ladder[29][2] });
 
+// 7b. EARLY-ROUND FAIRNESS -------------------------------------------------------
+// A player reported round 2 being hard. The measurable form of that complaint:
+// the starting kit must be able to clear the opening rounds at all. Round 3 is
+// deliberately tight (that is the nudge to buy a wall gun); rounds 1-2 must not
+// demand more ammunition than the M1911 carries.
+const early = await page.evaluate(() => {
+  const D = __dbg, w = D.WEAPONS.m1911;
+  const carried = w.mag + w.res;
+  const out = [];
+  for (let r = 1; r <= 4; r++) {
+    const hp = D.Zombies.healthFor(r), n = D.Zombies.countFor(r);
+    out.push({ r, n, hp, carried,
+      bodyNeeded: n * Math.ceil(hp / w.dmg),
+      headNeeded: n * Math.ceil(hp / (w.dmg * w.head)) });
+  }
+  return out;
+});
+check('rounds 1-2 clearable on body shots with the starting pistol',
+  early[0].bodyNeeded <= early[0].carried && early[1].bodyNeeded <= early[1].carried, early.slice(0, 2));
+check('rounds 1-3 clearable on headshots with the starting pistol',
+  early.slice(0, 3).every(e => e.headNeeded <= e.carried), early.slice(0, 3));
+check('round 1 opens gently', early[0].n <= 6, early[0]);
+check('round-to-round count growth stays sane early',
+  early.every((e, i) => i === 0 || e.n / early[i - 1].n <= 1.5),
+  early.map(e => e.n));
+
 // 8. death and restart --------------------------------------------------------
 const death = await page.evaluate(() => {
   __dbg.start();
@@ -237,6 +263,174 @@ check('death enters the dying state', death.dying, death);
 check('restart resets everything',
   death.state === 'play' && death.hp === 100 && death.round === 0 && death.alive === 0
   && death.planks && death.zones === 1, death);
+
+// 9. PERKS ---------------------------------------------------------------------
+const perks = await page.evaluate(() => {
+  const D = __dbg, P = D.Player.P, o = {};
+  D.start(); D.points(99999); D.openAll(); D.power();
+  for (let i = 0; i < 200; i++) D.stepN(1);
+  o.baseHp = D.Player.maxHp();
+  D.perk('jugg'); o.juggHp = D.Player.maxHp();
+  D.give('bar');
+  D.Player.gun().ammo = 0; D.tap('reload'); D.stepN(2);
+  const before = P.reloadT; D.stepN(400);
+  D.perk('speed');
+  D.Player.gun().ammo = 0; D.tap('reload'); D.stepN(2);
+  o.reloadFaster = P.reloadT < before - 0.4;
+  D.stepN(400);
+  D.perk('tap');
+  o.owned = D.perks().length;
+  return o;
+});
+check('Juggernog raises the health ceiling', perks.baseHp === 100 && perks.juggHp === 250, perks);
+check('Speed Cola shortens the reload', perks.reloadFaster, perks);
+check('all perks purchasable', perks.owned === 3, perks);
+
+// 10. DOWN / SELF-REVIVE ---------------------------------------------------------
+const revive = await page.evaluate(() => {
+  const D = __dbg, P = D.Player.P, o = {};
+  D.start(); D.points(99999); D.openAll(); D.power();
+  for (let i = 0; i < 200; i++) D.stepN(1);
+  D.perk('revive');
+  D.Player.hurt(9999, null); D.stepN(2);
+  o.down = P.down; o.alive = !P.dead; o.consumed = !D.Perks.has('revive');
+  // a zombie must not be able to finish you while you are down
+  D.Player.hurt(9999, null); D.stepN(2);
+  o.immuneWhileDown = !P.dead;
+  for (let i = 0; i < 60 * 7; i++) D.stepN(1);
+  o.backUp = !P.down && !P.dead; o.hp = Math.round(P.hp);
+  D.Player.hurt(9999, null); D.stepN(2);
+  o.diesWithout = P.dead;
+  return o;
+});
+check('Quick Revive downs you instead of killing you', revive.down && revive.alive, revive);
+check('the perk is consumed on use', revive.consumed, revive);
+check('a downed player cannot be finished off', revive.immuneWhileDown, revive);
+check('you get back up on your own', revive.backUp && revive.hp > 0, revive);
+check('without the perk a lethal hit ends the run', revive.diesWithout, revive);
+
+// 11. POWER-UPS -------------------------------------------------------------------
+const drops = await page.evaluate(() => {
+  const D = __dbg, P = D.Player.P, o = {};
+  D.start(); D.points(99999); D.openAll(); D.power();
+  D.give('bar'); D.Player.gun().res = 0;
+  D.drop('maxammo', P.pos.x, P.pos.z); D.stepN(4);
+  o.maxammo = D.Player.gun().res === D.WEAPONS[D.Player.gun().key].res;
+  D.drop('points', P.pos.x, P.pos.z); D.stepN(4);
+  o.doublePoints = D.Drops.pointsMult === 2;
+  D.drop('instakill', P.pos.x, P.pos.z); D.stepN(4);
+  o.instakill = D.Drops.instakill;
+  for (const w of D.Level.windows) { w.planks = 0; D.Level.refreshPlanks(w); }
+  D.drop('carpenter', P.pos.x, P.pos.z); D.stepN(4);
+  o.carpenter = D.Level.windows.every(w => w.planks === 6);
+  D.setRound(6);
+  for (let i = 0; i < 60 * 25; i++) { P.hp = 100; P.dead = false; if (D.Game.state === 'dying') D.Game.state = 'play'; D.stepN(1); }
+  // Track the exact bodies present when the nuke lands. Measuring aliveCount a
+  // few frames later is wrong: the round keeps spawning, so a fresh zombie
+  // walking in after the blast would read as a survivor.
+  const present = D.Zombies.list.filter(z => !z.dead);
+  o.before = present.length;
+  D.drop('nuke', P.pos.x, P.pos.z); D.stepN(4);
+  o.survivors = present.filter(z => !z.dead).length;
+  // a nuke must not cascade into more drops
+  o.dropsAfterNuke = D.Drops.live.length;
+  return o;
+});
+check('Max Ammo refills reserves', drops.maxammo, drops);
+check('Double Points doubles the multiplier', drops.doublePoints, drops);
+check('Insta-Kill arms', drops.instakill, drops);
+check('Carpenter reboards every window', drops.carpenter, drops);
+check('Nuke kills every body on the map', drops.before > 0 && drops.survivors === 0, drops);
+check('Nuke does not cascade drops', drops.dropsAfterNuke === 0, drops);
+
+// 12. MYSTERY BOX ------------------------------------------------------------------
+const box = await page.evaluate(() => {
+  const D = __dbg, P = D.Player.P, o = {};
+  D.start(); D.points(999999); D.openAll(); D.power();
+  o.startsReachable = D.Box.spot && D.Level.ZONES[D.Box.spot.zone].open;
+  o.tileSolid = D.Level.solid[D.Level.at(D.Box.spot.c, D.Box.spot.r)] === 1;
+  const g0 = P.guns.map(g => g.key).join(',');
+  o.opened = D.boxOpen();
+  for (let i = 0; i < 60 * 5; i++) D.stepN(1);
+  o.offered = D.box().phase === 'offer';
+  o.taken = D.boxTake();
+  o.gaveWeapon = P.guns.map(g => g.key).join(',') !== g0;
+  const first = D.Box.spot;
+  for (let k = 0; k < 14 && D.Box.spot === first; k++) {
+    D.points(999999);
+    if (D.boxOpen()) { for (let i = 0; i < 60 * 5; i++) D.stepN(1); D.boxTake(); }
+    for (let i = 0; i < 60 * 4; i++) D.stepN(1);
+  }
+  o.relocated = D.Box.spot !== first;
+  o.oldTileClear = D.Level.solid[D.Level.at(first.c, first.r)] === 0;
+  o.newTileSolid = D.Level.solid[D.Level.at(D.Box.spot.c, D.Box.spot.r)] === 1;
+  o.rayGunBoxOnly = D.WEAPONS.raygun.box === true;
+  return o;
+});
+check('box starts somewhere reachable', box.startsReachable, box);
+check('box opens, offers, and gives a weapon', box.opened && box.offered && box.taken && box.gaveWeapon, box);
+check('box relocates after its use limit', box.relocated, box);
+check('relocation moves the solid tile with it', box.oldTileClear && box.newTileSolid, box);
+check('Ray Gun is box-exclusive', box.rayGunBoxOnly, box);
+
+// 13. GAMEPAD ------------------------------------------------------------------------
+// The review on #328 flagged that the controller path had zero regression
+// coverage. Standard mapping is stubbed here so every binding is exercised.
+await page.addScriptTag({ content: `
+window.__pad = { axes:[0,0,0,0], buttons: Array.from({length:18},()=>({pressed:false,value:0})),
+                 connected:true, index:0, mapping:'standard', id:'stub' };
+navigator.getGamepads = () => [window.__pad, null, null, null];
+window.__btn = (i,on) => { window.__pad.buttons[i] = { pressed:!!on, value:on?1:0 }; };
+window.__ax  = (a,b,c,d) => { window.__pad.axes = [a,b,c,d]; };
+window.__tapPad = i => { __btn(i,true); __dbg.stepN(3); __btn(i,false); __dbg.stepN(3); };
+`});
+const pad = await page.evaluate(() => {
+  const D = __dbg, P = D.Player.P, o = {};
+  D.Game.menu(); D.stepN(3);
+  __tapPad(0); o.aStarts = D.Game.state === 'play';
+  D.Zombies.reset(); D.Round.R.phase = 'idle'; D.Round.R.timer = 1e9;
+  o.detected = D.Input.st.hasPad;
+  const p0 = [P.pos.x, P.pos.z];
+  __ax(0, -1, 0, 0); D.stepN(45); __ax(0, 0, 0, 0); D.stepN(4);
+  o.moved = Math.hypot(P.pos.x - p0[0], P.pos.z - p0[1]) > 0.6;
+  const y0 = P.yaw; __ax(0, 0, 1, 0); D.stepN(25); __ax(0, 0, 0, 0); D.stepN(2);
+  o.turned = Math.abs(P.yaw - y0) > 0.3;
+  const pit0 = P.pitch; __ax(0, 0, 0, -1); D.stepN(25); __ax(0, 0, 0, 0); D.stepN(2);
+  o.looksUpOnStickUp = P.pitch > pit0 + 0.2;      // non-inverted default
+  P.pitch = 0;
+  const a0 = D.Player.gun().ammo;
+  __btn(7, true); D.stepN(30); __btn(7, false); D.stepN(2);
+  o.rtFires = D.Player.gun().ammo < a0;
+  __tapPad(2); D.stepN(150);
+  o.xReloads = D.Player.gun().ammo === D.WEAPONS[D.Player.gun().key].mag;
+  __btn(6, true); D.stepN(30); o.ltAds = P.ads > 0.8; __btn(6, false); D.stepN(20);
+  D.points(9999); D.give('mp40');
+  const g0 = D.Player.gun().key; __tapPad(3); D.stepN(20);
+  o.ySwaps = D.Player.gun().key !== g0;
+  __tapPad(1); D.stepN(2); o.bKnifes = P.knifeT > 0; D.stepN(60);
+  const n0 = P.nades; __tapPad(5); D.stepN(40); o.rbNades = P.nades === n0 - 1;
+  const wb = D.Level.wallbuys.find(w => w.char === 'a');
+  D.teleport(wb.use.x, wb.use.z); D.points(9999); D.stepN(4);
+  const owned = P.guns.map(g => g.key).join(',');
+  __tapPad(0); D.stepN(6);
+  o.aBuys = P.guns.map(g => g.key).join(',') !== owned;
+  __tapPad(9); D.stepN(2); o.startPauses = D.Game.state === 'pause';
+  __tapPad(0); D.stepN(3); o.aResumes = D.Game.state === 'play';
+  return o;
+});
+check('gamepad is detected', pad.detected, pad);
+check('left stick moves', pad.moved, pad);
+check('right stick turns', pad.turned, pad);
+check('stick up looks up (not inverted)', pad.looksUpOnStickUp, pad);
+check('RT fires', pad.rtFires, pad);
+check('X reloads', pad.xReloads, pad);
+check('LT aims', pad.ltAds, pad);
+check('Y swaps weapon', pad.ySwaps, pad);
+check('B knifes', pad.bKnifes, pad);
+check('RB throws a frag', pad.rbNades, pad);
+check('A buys at a wall-buy', pad.aBuys, pad);
+check('Start pauses, A resumes', pad.startPauses && pad.aResumes, pad);
+check('A starts a run from the title screen', pad.aStarts, pad);
 
 // 9. no errors anywhere -------------------------------------------------------
 const gameErrors = await page.evaluate(() => __dbg.errors);

@@ -88,8 +88,12 @@ individually coloured — shirt, trousers and skin all separate — with one sha
 material per part class.
 
 `RIG` drives **both** the visible pose and the hit shapes, so proportions cannot
-silently desync from what you can shoot. Head centre sits at 1.60 m against a
-1.62 m eye height: aiming level at a zombie on your own floor is a headshot.
+silently desync from what you can shoot. **HEAD-OVER-EYE LAW:** the head sphere
+must span the 1.62 m eye height at every value of the per-body scale jitter, or
+a level shot sails over the shorter bodies and connecting comes down to random
+spread. headY 1.63 with scale ≥ 0.96 holds across the range; changing either
+value means re-checking the other, and `verify.mjs` asserts it against the
+actual sampled distribution.
 
 Rendering is ~11 draw calls for the whole horde regardless of size (one
 `InstancedMesh` per body part, no skeletons — limb transforms are solved
@@ -104,6 +108,8 @@ moving a wall-buy or cutting a new window is a text edit.
 ```
 '#' wall   '.' floor   ' ' outside   'W' window (breach point)
 '1'-'6' purchasable barrier (BARRIERS)   'a'-'h' wall-buy (WALLBUYS)
+'J' 'C' 'T' 'Q' perk machine (PERKS, wall-mounted)
+'M' mystery box location (floor; one active at a time)
 'X' power switch   'S' player spawn
 ```
 
@@ -112,16 +118,71 @@ is ambiguous — the boot assert catches row-width mistakes, but not this. Zones
 gate spawning: a window only goes live once its room has been bought open, so
 opening the map genuinely widens the front you have to hold.
 
-## What is deliberately not built (v1 scope, agreed with the user)
+## Meta systems (V2)
 
-Mystery box, Pack-a-Punch, perk machines, power-ups (Max Ammo / Insta-Kill /
-Nuke / Double Points / Carpenter), hellhound rounds. The registries they would
-hang off (`WEAPONS`, `WALLBUYS`, `BARRIERS`, zone gating, the `Interact.scan()`
-candidate list) are already the extension points — adding a perk machine is a
-map char plus a table entry plus a branch in `activate()`.
+`Drops`, `Box` and `Perks` sit between the round director and the interaction
+scanner. All three hang off structures the core loop already had, which is what
+the V1 registries were for.
 
-Also absent: multiplayer, saves mid-run, multi-floor maps (the nav grid is
-single-layer).
+- **Power-ups** drop from kills on a per-round budget with a minimum gap, so a
+  long round cannot rain them. `POWERUPS` entries with `secs` install a timed
+  effect (`Drops.instakill`, `Drops.pointsMult`); the rest apply once. The Nuke
+  marks its victims `noDrop` before killing them — a nuke that rolled another
+  nuke would cascade.
+- **The mystery box** always starts in the lobby (a box you cannot reach on
+  round one is not a choice, it is a locked door), relocates after a random
+  number of uses, and **moves its solid tile with it** — the box is furniture,
+  so `Level.solid` and the nav field are updated on every move. Its display
+  weapon is the *viewmodel* clone with unlit materials and the hand groups
+  stripped; there is no second set of world-space weapon meshes.
+- **Perks** are read at the point of use (`maxHp()`, `reloadMul()`, `rpmMul()`),
+  never baked into player state, so gaining or losing one takes effect with no
+  bookkeeping. Quick Revive is the one with real machinery: it downs you instead
+  of killing you, makes you untouchable while down, and is **consumed**, so it
+  must be re-bought — that is the solo behaviour, and it is what stops it being
+  a free extra life every round.
+
+Adding another perk is one `PERKS` entry, one map char, and one multiplier read.
+
+## Playtest laws (V2)
+
+From the first real session on a phone. Each of these was a complaint, not a
+theory:
+
+- **Windows must be the brightest thing on a wall.** Walls read as black and
+  breach points were hard to find, because the authored lamps are sparse and a
+  boarded window is dark timber on a dark wall against a night sky. Every window
+  now carries an always-on cool moonlight spill, and the boards carry a brighter
+  baked term than the wall behind them. Do not remove either: the contrast is
+  the whole reason a barricade is legible across a room.
+- **ADS aligns the SIGHT LINE, not the weapon.** Dropping the model at screen
+  centre put the receiver on top of whatever you were aiming at. `ViewModel.
+  SIGHT_Y` holds each weapon's sight height and ADS offsets by it, which puts
+  the body below the crosshair where it belongs. A new weapon needs an entry.
+- **Repair must beat one zombie's teardown.** Boards came down faster than any
+  player could replace them, which reads as unfair rather than tense. Tearing is
+  ~2.25 s a plank falling to ~0.9 s deep, with an extra beat before the first
+  plank; repair is 0.3 s a plank. Keep repair comfortably ahead.
+- **The early ramp has to let the starting kit work.** Round 2 was reported as
+  already hard: round 1 -> 2 raised the count 67% *and* doubled the headshots
+  needed (150 -> 250 hp), and 10 zombies at 5 body shots each exceeded the
+  M1911's entire ammo supply — unwinnable without perfect aim, not difficult.
+  Counts open at 6/8/12/17 and the pistol hits harder, so rounds 1-3 are
+  clearable with what you start with and round 4 is where a wall gun becomes
+  necessary. `verify.mjs` asserts this directly (ammo needed vs ammo carried),
+  because it is the kind of thing a late-game tuning pass silently breaks.
+- **Menus must fit a 390 px-tall viewport.** A landscape phone is short; the
+  menu stack was authored at a comfortable height and ran off the bottom. The
+  `max-height: 470px` block is not cosmetic.
+- **A mechanic nobody can find does not exist.** A player asked whether
+  reloading was possible at all — it always was (button, `R`, `X`, and an
+  auto-reload on a dry trigger), but nothing announced it. The dry-mag hint and
+  the pulsing reload button are not decoration.
+
+## What is deliberately not built
+
+Pack-a-Punch, hellhound rounds, multiplayer, mid-run saves, and multi-floor maps
+(the nav grid is single-layer).
 
 ## Testing
 
