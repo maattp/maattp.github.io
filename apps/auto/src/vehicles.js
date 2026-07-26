@@ -451,7 +451,11 @@ export class Vehicle {
     const lh = at(rx * this.halfWid, rz * this.halfWid);
     const rh = at(-rx * this.halfWid, -rz * this.halfWid);
     this.pitch = Math.atan2(bh - fh, this.halfLen * 2);
-    this.roll = Math.atan2(rh - lh, this.halfWid * 2);
+    this.roll = Math.atan2(lh - rh, this.halfWid * 2); // see update(): +X is raised by +rotation.z
+    // Rest on the plane through the four contact patches, not on the ground
+    // under the centre -- otherwise a car parked across a camber sits with one
+    // pair of wheels buried and the other pair in the air.
+    this.y = (fh + bh + lh + rh) / 4;
     this.sync();
   }
 
@@ -534,8 +538,20 @@ export class Vehicle {
     this.x = G.clampToMap(this.x);
     this.z = G.clampToMap(this.z);
 
+    // Ground under each contact patch. Sampled BEFORE the vertical follow,
+    // because the height the body should sit at is the plane through its four
+    // wheels, not the ground under its centre. On a crest the centre reads high
+    // and the wheels hang; in a dip it reads low and they sink.
+    const f2 = this.forward;
+    const rx2 = f2.z, rz2 = -f2.x;
+    const gAt = (ox, oz) => this.city.groundAt(this.x + ox, this.z + oz, this.y + 1.5, this.lift);
+    const fh = gAt(f2.x * this.halfLen, f2.z * this.halfLen);
+    const bh = gAt(-f2.x * this.halfLen, -f2.z * this.halfLen);
+    const lh = gAt(rx2 * this.halfWid, rz2 * this.halfWid);
+    const rh = gAt(-rx2 * this.halfWid, -rz2 * this.halfWid);
+
     // vertical: follow ground, with a little air time over crests
-    const target = this.city.groundAt(this.x, this.z, this.y + 1.2, this.lift);
+    const target = (fh + bh + lh + rh) / 4;
     if (this.y > target + 0.25) {
       this.vy -= 22 * dt;
       this.y += this.vy * dt;
@@ -548,13 +564,14 @@ export class Vehicle {
       this.onGround = true;
     }
 
-    // body attitude
-    const fh = this.city.groundAt(this.x + f.x * this.halfLen, this.z + f.z * this.halfLen, this.y + 1.5, this.lift);
-    const bh = this.city.groundAt(this.x - f.x * this.halfLen, this.z - f.z * this.halfLen, this.y + 1.5, this.lift);
-    const lh = this.city.groundAt(this.x + rx * this.halfWid, this.z + rz * this.halfWid, this.y + 1.5, this.lift);
-    const rh = this.city.groundAt(this.x - rx * this.halfWid, this.z - rz * this.halfWid, this.y + 1.5, this.lift);
+    // body attitude, from the samples taken above
     const tgtPitch = Math.atan2(bh - fh, this.halfLen * 2) - clamp(acc, -12, 12) * 0.0045;
-    const tgtRoll = Math.atan2(rh - lh, this.halfWid * 2) + clamp(this.vLat, -9, 9) * 0.016;
+    // `lh` is sampled along the body's local +X, and a positive rotation.z
+    // raises local +X -- so the far side has to be SUBTRACTED, not the near one.
+    // Reversed, the car leaned into the slope instead of along it: measured on
+    // a 2.4 deg cross-slope, the +X wheels sat 7.2 cm under the road while the
+    // other pair floated 7.1 cm above it, which is the two-wheels-in-the-air.
+    const tgtRoll = Math.atan2(lh - rh, this.halfWid * 2) + clamp(this.vLat, -9, 9) * 0.016;
     this.pitch = lerp(this.pitch, tgtPitch, 1 - Math.exp(-10 * dt));
     this.roll = lerp(this.roll, tgtRoll, 1 - Math.exp(-10 * dt));
 

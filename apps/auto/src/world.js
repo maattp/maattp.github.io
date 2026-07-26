@@ -621,11 +621,20 @@ export class World {
       );
     };
 
+    // Paint stops short of a junction, the same way the pavement strips do.
+    // Run end to end and each road lays its edge lines straight across every
+    // cross street it meets -- white lines cutting the carriageway diagonally
+    // and centre dashes doubling back on themselves. The crossing itself is
+    // bare tarmac, which is what a real junction mostly is.
+    const from = this.nodeRadius(e.a);
+    const till = e.len - this.nodeRadius(e.b);
+    if (till <= from) return;
+
     // Edge lines, set in from the kerb by about a shoulder's width.
     const edge = hw - Math.min(0.7, hw * 0.06);
     const step = 8; // subdivide so a line follows the terrain rather than spanning it
-    for (let s = 0; s < e.len; s += step) {
-      const to = Math.min(e.len, s + step);
+    for (let s = from; s < till; s += step) {
+      const to = Math.min(till, s + step);
       stripe(edge, s, to, WHITE);
       stripe(-edge, s, to, WHITE);
     }
@@ -634,8 +643,10 @@ export class World {
     // everything else is two-way here, so it gets a broken yellow one.
     if (e.cls === 'hwy' || e.oneway) return;
     const DASH = 3, GAP = 6;
-    for (let s = 0; s < e.len; s += DASH + GAP) {
-      stripe(0, s, Math.min(e.len, s + DASH), YELLOW);
+    // Phase the dashes off the edge's own start so they stay evenly spaced
+    // rather than restarting at each junction.
+    for (let s = from; s < till; s += DASH + GAP) {
+      stripe(0, s, Math.min(till, s + DASH), YELLOW);
     }
   }
 
@@ -644,7 +655,32 @@ export class World {
     const hw = e.hw;
     const U1 = (hw * 2) / ROAD_TILE;
     const px = -e.dz, pz = e.dx;
-    const steps = Math.max(1, Math.round(e.len / 16));
+    // Segment length follows the gradient. A flat street is fine in 16 m
+    // pieces, but a road quad is a CHORD and its error grows with the square of
+    // its length: McGraw Street on Queen Anne drops 5.4 m across one 18 m
+    // segment and the chord cut 1.39 m under the crest, which is terrain
+    // standing proud of the asphalt -- the grass growing over the road. At 4 m
+    // the same crest costs about 7 cm, comfortably under the 22 cm road lift.
+    // Only steep roads pay for the extra pieces.
+    // Measure the BOW, not the gradient. A street that climbs steadily is a
+    // chord's best case; what defeats a chord is curvature, and a road can be
+    // level end to end while cresting a rise in the middle -- that is the
+    // downtown case a gradient test missed entirely. One extra terrain sample
+    // gives the sag at the midpoint, and chord error falls with the square of
+    // the piece length, so the length that keeps it under ~6 cm is direct.
+    // The two tests fail on different shapes, so take whichever is finer.
+    // Gradient alone misses a road that is level end to end but crests in the
+    // middle; bow alone misses one whose crest is off-centre or S-shaped, where
+    // the midpoint happens to land on the chord -- measured on its own it was
+    // worse than the gradient test on Queen Anne (36.7 cm against 11.8 cm).
+    const bow = Math.abs(
+      G.terrainHeight((a.x + b.x) / 2, (a.z + b.z) / 2) - (a.y + b.y) / 2
+    );
+    const grade = Math.abs(a.y - b.y) / Math.max(1, e.len);
+    const byGrade = grade > 0.08 ? 4 : grade > 0.03 ? 6 : 8;
+    const byBow = bow < 0.02 ? 8 : clamp(e.len * Math.sqrt(0.06 / bow), 3, 8);
+    const segLen = Math.min(byGrade, byBow);
+    const steps = Math.max(1, Math.round(e.len / segLen));
     const col = e.cls === 'hwy' ? [0.92, 0.92, 0.92] : [1, 1, 1];
     let v = 0;
     // Deterministic sub-centimetre lift per edge, so two carriageways that
@@ -660,32 +696,43 @@ export class World {
     // surface". 3 cm is far below the 22 cm kerb, so roadLift need not know.
     const bias = hash2(ei | 0, 7) * 0.03;
     const yAt = (x, z) => G.terrainHeight(x, z) + ROAD_Y + bias;
+    // Subdivide ACROSS the width as well as along the length.
+    //
+    // The quad used to span the full carriageway with terrain sampled only at
+    // its four corners, so the drawn surface was the bilinear of those -- and on
+    // a cross-slope the real ground in between bulges straight through it. On
+    // Queen Anne that put terrain up to 1.39 m above the asphalt, which is the
+    // grass growing over the road. The heightfield is 40 m, so cells of roughly
+    // 8 m follow it closely without paying for detail that isn't there.
+    const across = Math.max(1, Math.round((hw * 2) / 8));
     for (let s = 0; s < steps; s++) {
       const t0 = s / steps, t1 = (s + 1) / steps;
-      const x0 = lerp(a.x, b.x, t0), z0 = lerp(a.z, b.z, t0);
-      const x1 = lerp(a.x, b.x, t1), z1 = lerp(a.z, b.z, t1);
       const seg = e.len / steps;
       // Fixed metres per texture repeat, in BOTH directions. This used to be
       // `seg / (hw * 2)` with u spanning 0..1 across the road, which tied the
       // asphalt's grain to how wide the road happened to be.
       const v0 = v, v1 = v + seg / ROAD_TILE;
       v = v1;
-      const l0x = x0 + px * hw, l0z = z0 + pz * hw;
-      const r0x = x0 - px * hw, r0z = z0 - pz * hw;
-      const l1x = x1 + px * hw, l1z = z1 + pz * hw;
-      const r1x = x1 - px * hw, r1z = z1 - pz * hw;
-      // Don't pave over a road that outranks this one. Where two carriageways
-      // overlap, both used to draw and the depth buffer chose per pixel, which
-      // is what made the centre line flicker between one stripe and two.
-      if (ei != null
-        && this.city.roadCoveredAt((x0 + x1) / 2, (z0 + z1) / 2, ei)) continue;
-      road.quad(
-        [l0x, yAt(l0x, l0z), l0z],
-        [r0x, yAt(r0x, r0z), r0z],
-        [r1x, yAt(r1x, r1z), r1z],
-        [l1x, yAt(l1x, l1z), l1z],
-        [0, 1, 0], [0, v0, U1, v0, U1, v1, 0, v1], col
-      );
+      // Don't pave over a road that outranks this one. Asked once per segment
+      // rather than per cell -- it is a 3x3-chunk scan and the answer cannot
+      // meaningfully differ across one carriageway's width.
+      const mx = lerp(a.x, b.x, (t0 + t1) / 2), mz = lerp(a.z, b.z, (t0 + t1) / 2);
+      if (ei != null && this.city.roadCoveredAt(mx, mz, ei)) continue;
+      for (let k = 0; k < across; k++) {
+        const o0 = hw - (hw * 2 * k) / across;
+        const o1 = hw - (hw * 2 * (k + 1)) / across;
+        const u0 = (hw - o0) / ROAD_TILE, u1 = (hw - o1) / ROAD_TILE;
+        const P = (t, o) => [lerp(a.x, b.x, t) + px * o, lerp(a.z, b.z, t) + pz * o];
+        const [ax, az] = P(t0, o0), [bx, bz] = P(t0, o1);
+        const [cx, cz] = P(t1, o1), [dx, dz] = P(t1, o0);
+        road.quad(
+          [ax, yAt(ax, az), az],
+          [bx, yAt(bx, bz), bz],
+          [cx, yAt(cx, cz), cz],
+          [dx, yAt(dx, dz), dz],
+          [0, 1, 0], [u0, v0, u1, v0, u1, v1, u0, v1], col
+        );
+      }
     }
     this.meshRoadMarks(flat, e, a, b, ei);
     if (lod === 1 && (e.cls === 'st' || e.cls === 'art' || e.cls === 'res')) {
