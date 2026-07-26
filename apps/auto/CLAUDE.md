@@ -547,7 +547,32 @@ running with an object in a state no code path expects.
 
 ## Shimmer and jolt: two things that read as "janky"
 
-**Road markings flashing is the albedo map, not geometry.** Localise this kind
+**Road markings flashing was two carriageways in the same place.** The hand-drawn
+arterials and highways overlap each other and the district grids — 187
+near-parallel pairs, and beside the spawn a street and a ramp run 0.7 m apart.
+Both drew a full-width surface, each with its own centre line, and the depth
+buffer picked a winner per pixel per frame: the road flips between one yellow
+line and two. `city.roadCoveredAt()` ranks by width then edge order, and
+`meshRoad` skips any 16 m segment a higher-ranked road already paves. Only the
+surface is dropped — the edge stays in the graph and traffic still routes over
+it. Around the spawn, road area carrying two parallel carriageways went 70.9%
+→ 2.4%, and the city emits 22% fewer road quads.
+
+**A caution about the churn metric below.** Moving the camera 4 mm and counting
+changed pixels does *not* isolate this. It reads ~6.6% before and after the fix,
+and it read the same with mipmaps disabled entirely — SwiftShader's own sampling
+is unstable enough to swamp the signal. It pointed at the albedo map (removing
+it dropped churn to 0.7%) and that was a red herring: with the markings gone,
+two fighting grey surfaces look identical. **Overlapping geometry is measured on
+the geometry**, by asking how much road area is covered by more than one
+near-parallel carriageway. Keep the paragraph below for what it does show, but
+don't use it to chase flicker.
+
+**Anisotropy is set to the device maximum** (`tex()` asks for 16, three clamps
+it). That is standard for road surfaces at grazing angles and worth having, but
+it was *not* the flicker fix, despite being committed as one.
+
+**The albedo map is where high-frequency detail lives.** Localise this kind
 of thing by moving the camera a few millimetres and counting pixels that change:
 a stable scene barely moves. With the road and pavement albedo maps in place,
 6.6% of pixels changed from a 4 mm move; with just those maps nulled it fell to
