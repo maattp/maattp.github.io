@@ -50,6 +50,15 @@
   #cross .h { width:9px; height:2px; top:16px; }
   #cross .v { width:2px; height:9px; left:16px; }
   #cross .l { left:0 } #cross .r { right:0 } #cross .t { top:0 } #cross .b { bottom:0 }
+  /* PLAYTEST FIX: a player asked whether reloading was even possible. It was —
+     button, R, X on a pad, and an auto-reload on a dry trigger — but none of
+     that announces itself mid-fight. The mechanic was discoverable only if you
+     already knew to look for it, so it now tells you. */
+  #reloadHint { position:fixed; left:50%; top:calc(50% + 44px); transform:translateX(-50%); z-index:12;
+    pointer-events:none; font-size:14px; font-weight:800; letter-spacing:3px; color:#ffcf4a;
+    text-shadow:0 2px 8px #000; opacity:0; white-space:nowrap; }
+  @keyframes needpulse { 0%,100% { opacity:.45 } 50% { opacity:1 } }
+  .btn.need { animation:needpulse .7s ease-in-out infinite; border-color:#ffcf4a; color:#ffcf4a; }
   #hit { position:fixed; left:50%; top:50%; width:44px; height:44px; margin:-22px 0 0 -22px; z-index:12;
     pointer-events:none; opacity:0; }
   #hit svg { width:100%; height:100% }
@@ -83,6 +92,24 @@
   #toast { left:50%; top:calc(env(safe-area-inset-top) + 42px); transform:translateX(-50%);
     font-size:14px; font-weight:700; color:#ffd257; opacity:0; white-space:nowrap; }
   #dmgArrows { position:fixed; inset:0; z-index:11; pointer-events:none; }
+
+  #perks { position:absolute; left:calc(env(safe-area-inset-left) + 18px);
+    bottom:calc(env(safe-area-inset-bottom) + 74px); display:flex; gap:6px; }
+  #perks span { font-size:10px; font-weight:800; letter-spacing:1px; padding:3px 7px; border-radius:5px;
+    color:#fff; text-shadow:0 1px 2px rgba(0,0,0,.8); box-shadow:0 0 10px rgba(0,0,0,.5) inset; }
+  #pwr { left:50%; top:calc(env(safe-area-inset-top) + 34px); transform:translateX(-50%);
+    display:flex; gap:10px; font-size:12px; font-weight:800; letter-spacing:2px; }
+  #pwr b { font-weight:800; }
+  #banner { position:fixed; left:0; right:0; top:38%; z-index:11; pointer-events:none; text-align:center;
+    opacity:0; }
+  #banner span { font-family:Impact,Haettenschweiler,"Arial Narrow",sans-serif; font-size:min(9vw,58px);
+    letter-spacing:5px; text-shadow:0 0 34px rgba(0,0,0,.85), 0 3px 0 rgba(0,0,0,.5); }
+  #downMsg { position:fixed; left:0; right:0; top:52%; z-index:11; pointer-events:none; text-align:center;
+    display:none; }
+  #downMsg b { font-family:Impact,Haettenschweiler,"Arial Narrow",sans-serif; font-size:min(7vw,44px);
+    letter-spacing:4px; color:#c8544a; text-shadow:0 0 30px rgba(160,10,0,.7); }
+  #downMsg i { display:block; font-style:normal; font-size:13px; letter-spacing:4px; color:#9aa39c;
+    font-weight:700; margin-top:4px; }
 
   /* touch controls */
   #touch { position:fixed; inset:0; z-index:13; display:none; }
@@ -167,18 +194,23 @@
     <line x1="12" y1="12" x2="18" y2="18"/><line x1="32" y1="12" x2="26" y2="18"/>
     <line x1="12" y1="32" x2="18" y2="26"/><line x1="32" y1="32" x2="26" y2="26"/></g></svg></div>
   <div id="dmgArrows"></div>
+  <div id="reloadHint"></div>
   <div class="safe">
     <div id="rnd" class="hud">ROUND 1</div>
     <div id="pts" class="hud">0<small>POINTS</small></div>
     <div id="ptsPop"></div>
     <div id="ammo" class="hud">8<em>/40</em><small>M1911</small></div>
     <div id="gren" class="hud">✦ 2</div>
+    <div id="perks"></div>
+    <div id="pwr" class="hud"></div>
     <div id="prompt" class="hud"></div>
     <div id="toast" class="hud"></div>
     <div id="bPause" class="btn" style="pointer-events:auto">❚❚</div>
   </div>
 </div>
 <div id="rndBig"><span>1</span></div>
+<div id="banner"><span></span></div>
+<div id="downMsg"><b>YOU ARE DOWN</b><i>GETTING BACK UP…</i></div>
 
 <div id="touch">
   <div id="stickL" class="stick"><div class="nub"></div></div>
@@ -251,8 +283,18 @@
 <div id="load">LOADING</div>
 <div id="err"></div>
 
+<!-- Subresource integrity on the pinned module. The version is already exact,
+     but the service worker caches this file for offline play, so without a hash
+     a compromised CDN response would be persisted and served from disk forever
+     after. Browsers that predate import-map integrity ignore the key; those
+     that support it enforce it on the cached copy too. -->
 <script type="importmap">
-{ "imports": { "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js" } }
+{
+  "imports": { "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js" },
+  "integrity": {
+    "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js": "sha384-61S/Nu32S3E5+n+KpCOTb2eRYps6fVKm+9Gz1QBvSePFthb46f063Aa/qe/lykFZ"
+  }
+}
 </script>
 <script type="module">
 'use strict';
@@ -272,7 +314,7 @@ import * as THREE from 'three';
      4  map data + level build    9  FX, HUD, loop, debug harness
    ============================================================================ */
 
-const VERSION = 1;                    // bump once per PR (shown bottom-right)
+const VERSION = 2;                    // bump once per PR (shown bottom-right)
 
 // ---------------------------------------------------------------- 0. config
 const CFG = {
@@ -308,7 +350,20 @@ function mulberry32(seed) {
 }
 const $ = id => document.getElementById(id);
 const store = {
-  get(k, d) { try { const v = localStorage.getItem(SAVE + k); return v === null ? d : JSON.parse(v); } catch { return d; } },
+  /* Values come back as whatever is on disk — a hand-edited or corrupted entry
+     can be any shape. Coerce to the DEFAULT's type so a bad value degrades to
+     the default instead of propagating a wrong shape into the score display or
+     the audio state. */
+  get(k, d) {
+    try {
+      const raw = localStorage.getItem(SAVE + k);
+      if (raw === null) return d;
+      const v = JSON.parse(raw);
+      if (typeof d === 'number') return Number.isFinite(+v) ? +v : d;
+      if (typeof d === 'boolean') return typeof v === 'boolean' ? v : d;
+      return v === null || v === undefined ? d : v;
+    } catch { return d; }
+  },
   set(k, v) { try { localStorage.setItem(SAVE + k, JSON.stringify(v)); } catch {} },
 };
 
@@ -484,6 +539,41 @@ const Snd = (() => {
     heartbeat() { tone('sine', 58, 34, 0.16, 0.32); setTimeout(() => tone('sine', 52, 30, 0.2, 0.22), 200); },
     step(hard) { noise(0.07, hard ? 0.1 : 0.055, 'lowpass', 420, 140, 0.7); },
     death() { tone('sawtooth', 130, 42, 2.4, 0.24); noise(2.2, 0.16, 'lowpass', 700, 90, 0.5); },
+
+    /* --- perks, drops, the box -------------------------------------------- */
+    // each perk gets its own little three-note motif, keyed off its index so
+    // they are distinguishable by ear across a room
+    perkJingle(i) {
+      if (!ready) return;
+      const root = [262, 330, 392, 220][i % 4];
+      const seq = [[0, 1], [110, 1.25], [230, 1.5], [400, 2]];
+      for (const [ms, mul] of seq) {
+        setTimeout(() => { tone('triangle', root * mul, root * mul, 0.22, 0.13); tone('sine', root * mul * 2, root * mul * 2, 0.16, 0.05); }, ms);
+      }
+    },
+    powerupDrop() { tone('sine', 300, 900, 0.5, 0.1); },
+    powerupGrab(kind) {
+      if (!ready) return;
+      if (kind === 'nuke') { tone('sine', 180, 40, 1.8, 0.5); noise(1.6, 0.4, 'lowpass', 1200, 120, 0.5); return; }
+      tone('triangle', 440, 880, 0.18, 0.2);
+      setTimeout(() => tone('triangle', 660, 1320, 0.26, 0.16), 110);
+    },
+    boxOpen() { noise(0.7, 0.3, 'bandpass', 900, 280, 1.2); tone('sine', 140, 320, 0.6, 0.14); },
+    boxCycle() { tone('square', rand(500, 1100), rand(400, 900), 0.05, 0.045); },
+    boxTake() { tone('sine', 520, 1040, 0.22, 0.18); setTimeout(() => tone('sine', 780, 1560, 0.3, 0.13), 120); },
+    // the bear: a wobbling music-box phrase, then it is gone
+    bear() {
+      if (!ready) return;
+      const notes = [880, 988, 1047, 880, 784, 880];
+      notes.forEach((n, i) => setTimeout(() => tone('sine', n, n * 0.99, 0.3, 0.11), i * 150));
+      setTimeout(() => noise(0.8, 0.2, 'lowpass', 700, 150, 0.6), 900);
+    },
+    revive() {
+      if (!ready) return;
+      tone('sine', 90, 260, 1.4, 0.18);
+      setTimeout(() => { tone('triangle', 392, 523, 0.4, 0.16); tone('sine', 523, 659, 0.5, 0.1); }, 900);
+    },
+    down() { tone('sawtooth', 160, 50, 1.6, 0.26); noise(1.2, 0.22, 'lowpass', 500, 90, 0.5); },
 
     /* --- ambience -------------------------------------------------------- */
     ambience(on) {
@@ -962,6 +1052,8 @@ function phong(color, spec, shin) {
             'W' window (barricaded breach point)
             '1'-'6' purchasable barrier (see BARRIERS)
             'a'-'h' wall-mounted purchase (see WALLBUYS)
+            'J' 'C' 'T' 'Q' perk machine (see PERKS, wall-mounted)
+            'M' mystery box location (floor; one is active at a time)
             'X' power switch          'S' player spawn
    ========================================================================= */
 const MAP = [
@@ -970,13 +1062,13 @@ const MAP = [
   '                                            ',
   '  ####h###W##########   #########W########  ',
   '  #.................#   #................#  ',
-  '  #.................#   #................#  ',
+  '  #.............M...#   #...M............#  ',
   '  W.................#   #................W  ',
   '  #.................#   #................#  ',
   '  #.................#   X................g  ',
   '  #.................#   #................#  ',
   '  #.................#   #................#  ',
-  '  W.................#   #................W  ',
+  '  W.................#   T................W  ',
   '  #.................#   #................#  ',
   '  #.................#   #................#  ',
   '  #######666##########W#######555#########  ',
@@ -985,17 +1077,17 @@ const MAP = [
   '   #....................................#   ',
   '  ####111###########444###################  ',
   '  #...........#..............#...........#  ',
-  '  #...........#..............#...........#  ',
-  '  #...........#..............#...........#  ',
+  '  C...........#..............#...........J  ',
+  '  #...........#.....M........#...........#  ',
   '  W...........#..............#...........W  ',
   '  #...........2..............3...........#  ',
   '  d...........2..............3...........e  ',
   '  #...........2..............3...........#  ',
   '  W...........#..............#...........W  ',
-  '  #...........#..............#...........#  ',
+  '  #........M..#..............#.....M.....#  ',
   '  #...........#......S.......#...........#  ',
   '  #...........#..............#...........#  ',
-  '  #####W########b#W#c#W#a#W#########W#####  ',
+  '  #####W#######Qb#W#c#W#a#W#########W#####  ',
   '                                            ',
   '                                            ',
   '                                            ',
@@ -1043,6 +1135,10 @@ const WEAPONS = {
   stg:    { name: 'STG-44',     cost: 1200, mag: 30, res: 180, dmg: 140,  head: 2.7, rpm: 560, auto: true,  reload: 3.0, spread: 1.15, recoil: 1.9, kick: 0.09, snd: { f0: 430, low: 120, punch: 1.1 } },
   trench: { name: 'TRENCH GUN', cost: 1500, mag: 6,  res: 48,  dmg: 105,  head: 1.6, rpm: 92,  auto: false, reload: 0.5, shell: true, pellets: 8, spread: 5.4, recoil: 4.6, kick: 0.22, range: 17, snd: { f0: 300, low: 88, punch: 1.5 } },
   bar:    { name: 'BAR',        cost: 1800, mag: 20, res: 160, dmg: 190,  head: 2.8, rpm: 500, auto: true,  reload: 3.4, spread: 1.5,  recoil: 2.6, kick: 0.12, snd: { f0: 360, low: 100, punch: 1.3 } },
+  // box-exclusive. `splash` makes each shot detonate on impact, which is what
+  // makes it a crowd-clearer rather than just a high-damage rifle.
+  raygun: { name: 'RAY GUN',    cost: 0,    mag: 20, res: 160, dmg: 1000, head: 1.5, rpm: 200, auto: false, reload: 2.4, spread: 0.7,  recoil: 2.4, kick: 0.16,
+            box: true, splash: 2.7, splashDmg: 700, tracer: 0x66ff88, snd: { f0: 900, low: 210, punch: 1.2 } },
 };
 // wall-mount char -> what it sells. `nade` entries top up grenades instead.
 const WALLBUYS = {
@@ -1057,6 +1153,47 @@ const WALLBUYS = {
 };
 const KNIFE = { dmg: 160, head: 1, reach: 2.3, cool: 0.62 };
 const NADE = { dmg: 1400, radius: 4.6, fuse: 3.0, max: 4 };
+
+/* Perk machines. Every perk is a passive multiplier read at the point of use
+   (see Player), so adding one is an entry here plus a map char — no branching
+   in the systems it affects. All of them need the power on, which is what turns
+   the generator room from a curiosity into the mid-game objective. */
+const PERKS = {
+  jugg:  { char: 'J', name: 'JUGGERNOG',   cost: 2500, colour: 0xb33b3b, tag: 'JUG',
+           blurb: 'takes more to put you down' },
+  speed: { char: 'C', name: 'SPEED COLA',  cost: 3000, colour: 0x49a84e, tag: 'SPD',
+           blurb: 'reload half again as fast' },
+  tap:   { char: 'T', name: 'DOUBLE TAP',  cost: 2000, colour: 0xc9a13a, tag: 'TAP',
+           blurb: 'fire a third again as fast' },
+  revive:{ char: 'Q', name: 'QUICK REVIVE', cost: 500, colour: 0x3f7fc4, tag: 'REV',
+           blurb: 'get back up once, on your own' },
+};
+const PERK_BY_CHAR = {};
+for (const k in PERKS) PERK_BY_CHAR[PERKS[k].char] = k;
+const JUGG_HP = 250;              // vs CFG.hp 100 — three hits instead of one
+const REVIVE_TIME = 5.0;
+
+/* Power-up drops. `apply` runs once on pickup; `secs` (when present) also
+   installs a timed effect read elsewhere. Drop budget is per round, which is
+   what stops a long round from raining them. */
+const POWERUPS = {
+  maxammo: { name: 'MAX AMMO',     colour: 0xe8e2c0, weight: 26 },
+  instakill:{ name: 'INSTA-KILL',  colour: 0xff5a3c, weight: 22, secs: 30 },
+  points:  { name: 'DOUBLE POINTS', colour: 0xffd257, weight: 22, secs: 30 },
+  nuke:    { name: 'NUKE',         colour: 0x7fe0ff, weight: 16 },
+  carpenter:{ name: 'CARPENTER',   colour: 0xc08a4a, weight: 14 },
+};
+const DROP = { chance: 0.026, perRound: 4, minGap: 12, life: 26, radius: 1.7 };
+
+const BOX = {
+  cost: 950,
+  spin: 3.6,                       // seconds the weapon cycles above the box
+  grab: 8,                         // seconds it waits to be taken
+  usesMin: 4, usesMax: 9,          // uses before the bear takes it away
+  // weighted pool; the Ray Gun is deliberately rare and box-only
+  pool: [['raygun', 4], ['bar', 12], ['stg', 14], ['trench', 14], ['thomp', 15],
+         ['mp40', 15], ['m14', 13], ['kar98k', 13]],
+};
 
 /* ============================================================================
    4b. GEOMETRY BUILDER
@@ -1121,14 +1258,14 @@ const Level = (() => {
   const zoneOf = new Array(MW * MH).fill(null);
   const at = (c, r) => r * MW + c;
 
-  const windows = [], barriers = {}, wallbuys = [], lights = [];
+  const windows = [], barriers = {}, wallbuys = [], lights = [], perkMachines = [], boxSpots = [];
   let powerSwitch = null, spawnPos = new THREE.Vector3();
   const groups = { planks: null, barrier: {}, signs: [] };
 
   // ---- pass 1: classify tiles ------------------------------------------
   for (let r = 0; r < MH; r++) for (let c = 0; c < MW; c++) {
     const k = MAP[r][c], i = at(c, r);
-    if (k === '.' || k === 'S') { isFloor[i] = 1; }
+    if (k === '.' || k === 'S' || k === 'M') { isFloor[i] = 1; }
     else if (k === ' ') { solid[i] = 0; }               // outside: walkable void, no floor
     else { solid[i] = 1; }                               // walls, windows, barriers, mounts
   }
@@ -1183,6 +1320,17 @@ const Level = (() => {
         use: new THREE.Vector3(wx(c) + inD[0] * T * 1.0, 0, wz(r) + inD[1] * T * 1.0),
         nx: inD[0], nz: inD[1],
       });
+    } else if (PERK_BY_CHAR[k]) {
+      const d = faceDir(c, r), inD = DIRS[d];
+      const key = PERK_BY_CHAR[k];
+      perkMachines.push({
+        key, ...PERKS[key], c, r, dir: d, zone: zoneOf[at(c + inD[0], r + inD[1])],
+        pos: new THREE.Vector3(wx(c) + inD[0] * T * 0.46, 0, wz(r) + inD[1] * T * 0.46),
+        use: new THREE.Vector3(wx(c) + inD[0] * T * 1.05, 0, wz(r) + inD[1] * T * 1.05),
+        nx: inD[0], nz: inD[1],
+      });
+    } else if (k === 'M') {
+      boxSpots.push({ c, r, zone: zoneOf[at(c, r)], pos: new THREE.Vector3(wx(c), 0, wz(r)) });
     } else if (k === 'X') {
       const d = faceDir(c, r), inD = DIRS[d];
       powerSwitch = {
@@ -1197,25 +1345,41 @@ const Level = (() => {
   // ---- lights (authored; `p` = needs power) -----------------------------
   function L(c, r, y, col, inten, range, p) { lights.push({ x: wx(c), y, z: wz(r), col: new THREE.Color(col), i: inten, range, p }); }
   // always-on: a couple of guttering emergency lamps + the moon spill
-  L(21, 24, 3.6, 0xffb066, 3.91, 15, false);            // lobby lantern
-  L(19, 28, 2.2, 0xff8a3c, 2.53, 11, false);            // lobby brazier
-  L(26, 20, 2.4, 0xff8a3c, 2.07, 10, false);
-  L(17, 21, 2.6, 0xff9a4c, 1.84, 10, false);
-  L(27, 27, 2.6, 0xff9a4c, 1.84, 10, false);
+  L(21, 24, 3.6, 0xffb066, 2.82, 15, false);            // lobby lantern
+  L(19, 28, 2.2, 0xff8a3c, 1.82, 11, false);            // lobby brazier
+  L(26, 20, 2.4, 0xff8a3c, 1.49, 10, false);
+  L(17, 21, 2.6, 0xff9a4c, 1.32, 10, false);
+  L(27, 27, 2.6, 0xff9a4c, 1.32, 10, false);
   // powered
-  L(8, 24, 3.0, 0xffe2b0, 2.88, 11, true);            // storage
-  L(11, 21, 3.0, 0xffe2b0, 2.3, 10, true);
-  L(21, 22, 4.6, 0xfff0d0, 3.45, 15, true);            // lobby chandelier
-  L(24, 27, 4.6, 0xfff0d0, 2.53, 13, true);
-  L(35, 22, 3.0, 0xffe8c0, 2.76, 11, true);            // mess
-  L(33, 27, 3.0, 0xffe8c0, 2.3, 10, true);
-  L(10, 16, 2.5, 0xd6f0ff, 2.3, 11, true);            // corridor strip
-  L(22, 16, 2.5, 0xd6f0ff, 2.3, 11, true);
-  L(34, 16, 2.5, 0xd6f0ff, 2.3, 11, true);
-  L(8, 8, 3.1, 0xcaf6e6, 3.1, 13, true);            // lab (cold green-white)
-  L(15, 10, 3.1, 0xcaf6e6, 2.64, 12, true);
-  L(30, 8, 4.0, 0xffd08a, 3.22, 14, true);            // generator (warm)
-  L(37, 11, 4.0, 0xffd08a, 2.53, 12, true);
+  L(8, 24, 3.0, 0xffe2b0, 2.07, 11, true);            // storage
+  L(11, 21, 3.0, 0xffe2b0, 1.66, 10, true);
+  L(21, 22, 4.6, 0xfff0d0, 2.48, 15, true);            // lobby chandelier
+  L(24, 27, 4.6, 0xfff0d0, 1.82, 13, true);
+  L(35, 22, 3.0, 0xffe8c0, 1.99, 11, true);            // mess
+  L(33, 27, 3.0, 0xffe8c0, 1.66, 10, true);
+  L(10, 16, 2.5, 0xd6f0ff, 1.66, 11, true);            // corridor strip
+  L(22, 16, 2.5, 0xd6f0ff, 1.66, 11, true);
+  L(34, 16, 2.5, 0xd6f0ff, 1.66, 11, true);
+  L(8, 8, 3.1, 0xcaf6e6, 2.23, 13, true);            // lab (cold green-white)
+  L(15, 10, 3.1, 0xcaf6e6, 1.9, 12, true);
+  L(30, 8, 4.0, 0xffd08a, 2.32, 14, true);            // generator (warm)
+  L(37, 11, 4.0, 0xffd08a, 1.82, 12, true);
+
+  /* PLAYTEST FIX: moonlight spill at every window.
+     Two complaints, one cause — walls read as black, and windows were hard to
+     pick out. The authored lamps are sparse and range-limited, so wall faces
+     between them got almost nothing, and a boarded window is dark timber on a
+     dark wall with a night sky behind it: no contrast anywhere.
+     A cool always-on light just inside each opening fixes both at once. It is
+     physically motivated (it is night, and there is a moon), it makes the
+     breach points the brightest thing on any wall — which is exactly where the
+     eye should go — and it lights the wall faces the lamps could not reach. */
+  for (const w of windows) {
+    lights.push({
+      x: w.pos.x + w.inX * T * 0.55, y: 1.55, z: w.pos.z + w.inZ * T * 0.55,
+      col: new THREE.Color(0x9dc4ee), i: 1.30, range: 8.0, p: false,
+    });
+  }
 
   // grid ray for the bake — a wall between a surface and a lamp must kill it,
   // otherwise light bleeds through the whole bunker and the rooms stop reading
@@ -1246,8 +1410,8 @@ const Level = (() => {
     if (v === 0) { v = blocked(sx, sz, lx, lz) ? 1 : 2; visMemo[k] = v; }
     return v === 2;
   }
-  const AMB_DARK = new THREE.Color(0x2b3644);
-  const AMB_LIT = new THREE.Color(0x3d464c);
+  const AMB_DARK = new THREE.Color(0x28313d);
+  const AMB_LIT = new THREE.Color(0x39424a);
   function bake(geo) {
     if (!visMemo) visMemo = new Uint8Array(lights.length * MW * MH);
     const pos = geo.attributes.position.array, nrm = geo.attributes.normal.array;
@@ -1589,7 +1753,10 @@ const Level = (() => {
   {
     const n = windows.length * PLANKS;
     const A = new Float32Array(n * 3), Bk = new Float32Array(n * 3);
-    for (let i = 0; i < n; i++) { A[i*3]=0.10; A[i*3+1]=0.095; A[i*3+2]=0.085; Bk[i*3]=0.20; Bk[i*3+1]=0.19; Bk[i*3+2]=0.17; }
+    // boards sit in the moonlight from their own window, so they carry a
+    // brighter baked term than the wall behind them — that contrast is what
+    // makes a barricade legible from across a room
+    for (let i = 0; i < n; i++) { A[i*3]=0.30; A[i*3+1]=0.29; A[i*3+2]=0.26; Bk[i*3]=0.40; Bk[i*3+1]=0.38; Bk[i*3+2]=0.34; }
     plankGeo.setAttribute('bakeA', new THREE.InstancedBufferAttribute(A, 3));
     plankGeo.setAttribute('bakeB', new THREE.InstancedBufferAttribute(Bk, 3));
   }
@@ -1611,7 +1778,7 @@ const Level = (() => {
   function refreshPlanks(w) {
     for (let i = 0; i < PLANKS; i++) {
       plankMesh.setMatrixAt(w.id * PLANKS + i, i < w.planks ? plankMatrix(w, i) : HIDE);
-      plankColor.setHSL(0.09, 0.34, 0.20 + (i % 3) * 0.03);
+      plankColor.setHSL(0.085, 0.42, 0.40 + (i % 3) * 0.04);
       plankMesh.setColorAt(w.id * PLANKS + i, plankColor);
     }
     plankMesh.instanceMatrix.needsUpdate = true;
@@ -1687,6 +1854,90 @@ const Level = (() => {
     }
     scene.add(swGroup);
   }
+
+  /* ---- perk machines ----------------------------------------------------
+     A lit cabinet against the wall. The front panel is an unlit (toneMapped:
+     false) emissive plane so it glows in a dark room — that glow is the whole
+     navigational point of a perk machine, and it only switches on with the
+     power, which is what makes the generator worth the trip. */
+  const perkGroup = new THREE.Group(); scene.add(perkGroup);
+  for (const pm of perkMachines) {
+    const g = new THREE.Group();
+    const bb = new Builder();
+    const c = new THREE.Color(pm.colour);
+    bb.box(0, 0.95, 0, 0.86, 1.90, 0.52, 0.13, 0.13, 0.14);            // cabinet
+    bb.box(0, 1.93, 0, 0.94, 0.10, 0.60, c.r * 0.5, c.g * 0.5, c.b * 0.5);
+    bb.box(0, 0.06, 0, 0.94, 0.12, 0.60, 0.10, 0.10, 0.11);            // plinth
+    bb.box(0, 0.62, 0.24, 0.60, 0.30, 0.10, 0.08, 0.08, 0.09);         // dispenser recess
+    g.add(new THREE.Mesh(bake(bb.geo()), siteMat(phong(0xffffff, 0x3c3c40, 34), SURF.metal, 'perk' + pm.key)));
+    // glowing face
+    const face = new THREE.Mesh(new THREE.PlaneGeometry(0.66, 0.78),
+      new THREE.MeshBasicMaterial({ map: signTexture(pm.name.split(' ')[0], '◆ ' + pm.cost, '#' + c.getHexString()), toneMapped: false }));
+    face.position.set(0, 1.30, 0.27);
+    face.material.color.setScalar(0.22);                                // dark until powered
+    g.add(face);
+    const glow = new THREE.Mesh(new THREE.PlaneGeometry(0.80, 1.86),
+      new THREE.MeshBasicMaterial({ color: pm.colour, transparent: true, opacity: 0, blending: THREE.AdditiveBlending, depthWrite: false, toneMapped: false }));
+    glow.position.set(0, 1.0, 0.29);
+    g.add(glow);
+    g.position.copy(pm.pos);
+    g.rotation.y = Math.atan2(pm.nx, pm.nz);
+    perkGroup.add(g);
+    pm.mesh = g; pm.face = face; pm.glow = glow;
+    // the cabinet is furniture: it must not be walkable
+    solid[at(pm.c + pm.nx, pm.r + pm.nz)] = 1;
+  }
+
+  /* ---- mystery box ------------------------------------------------------
+     One box exists at a time, at one of the authored 'M' spots. The lid hinges
+     open, a weapon cycles above it, and after a random number of uses the bear
+     takes it somewhere else. */
+  const boxGroup = new THREE.Group(); scene.add(boxGroup);
+  const boxBody = (() => {
+    const bb = new Builder();
+    bb.box(0, 0.30, 0, 1.10, 0.60, 0.72, 0.30, 0.21, 0.12);
+    bb.box(0, 0.60, 0, 1.14, 0.06, 0.76, 0.20, 0.14, 0.08);
+    for (const sx of [-1, 1]) bb.box(sx * 0.52, 0.30, 0, 0.08, 0.62, 0.76, 0.22, 0.16, 0.09);
+    bb.box(0, 0.05, 0, 1.16, 0.10, 0.78, 0.17, 0.12, 0.07);
+    return new THREE.Mesh(bake(bb.geo()), siteMat(phong(0xffffff, 0x14120e, 8), SURF.plank, 'boxbody'));
+  })();
+  const boxLid = (() => {
+    const bb = new Builder();
+    bb.box(0, 0.05, 0.34, 1.12, 0.10, 0.74, 0.32, 0.23, 0.13);
+    const m = new THREE.Mesh(bake(bb.geo()), siteMat(phong(0xffffff, 0x14120e, 8), SURF.plank, 'boxlid'));
+    return m;
+  })();
+  boxLid.position.set(0, 0.62, -0.36);           // hinge at the back edge
+  boxGroup.add(boxBody, boxLid);
+  // the light that spills out of an open box
+  const boxGlow = new THREE.Mesh(new THREE.PlaneGeometry(1.0, 0.66),
+    new THREE.MeshBasicMaterial({ color: 0xffdca0, transparent: true, opacity: 0, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide, toneMapped: false }));
+  boxGlow.rotation.x = -Math.PI / 2;
+  boxGlow.position.set(0, 0.63, 0);
+  boxGroup.add(boxGlow);
+  // the weapon that hovers while the box cycles
+  const boxPrize = new THREE.Group();
+  boxPrize.visible = false;
+  boxGroup.add(boxPrize);
+  // teddy bear — the reason the box is somewhere else next time
+  const teddy = (() => {
+    const bb = new Builder();
+    bb.box(0, 0.16, 0, 0.20, 0.24, 0.14, 0.62, 0.40, 0.20);
+    bb.box(0, 0.36, 0.01, 0.17, 0.17, 0.15, 0.68, 0.45, 0.24);
+    for (const sx of [-1, 1]) {
+      bb.box(sx * 0.075, 0.44, 0, 0.07, 0.07, 0.05, 0.60, 0.38, 0.20);   // ears
+      bb.box(sx * 0.135, 0.18, 0, 0.09, 0.09, 0.09, 0.64, 0.42, 0.22);   // arms
+      bb.box(sx * 0.06, 0.03, 0.02, 0.09, 0.09, 0.12, 0.64, 0.42, 0.22); // legs
+    }
+    bb.box(0, 0.355, 0.08, 0.06, 0.04, 0.02, 0.10, 0.07, 0.05);          // snout
+    const m = new THREE.Mesh(bake(bb.geo()), siteMat(phong(0xffffff, 0x1a1410, 6), SURF.plank, 'teddy'));
+    m.visible = false;
+    return m;
+  })();
+  boxGroup.add(teddy);
+  const boxLight = new THREE.PointLight(0xffd9a0, 0, 7, 1.4);
+  boxGroup.add(boxLight);
+  boxGroup.visible = false;
 
   /* ---- navigation -------------------------------------------------------
      8-way Dijkstra distance field from the player's cell, rebuilt a few times a
@@ -1871,7 +2122,8 @@ const Level = (() => {
 
   return {
     T, OX, OZ, MW, MH, wx, wz, cx, cz, at, solid, isFloor, zoneOf, dist,
-    windows, barriers, wallbuys, powerSwitch, spawnPos, lights,
+    windows, barriers, wallbuys, powerSwitch, spawnPos, lights, perkMachines, boxSpots,
+    boxGroup, boxLid, boxGlow, boxPrize, teddy, boxLight, perkGroup,
     ZONES, WIN_Y0, WIN_Y1,
     meshes, propMesh, moon, lamp, flash, sky, swGroup, plankMesh, refreshPlanks, PLANKS,
     rebuildNav, flowDir, sampleDist, reachable, collide, rayWall, openBarrier, setPower,
@@ -2203,6 +2455,16 @@ const ViewModel = (() => {
     },
   };
 
+  /* Height of each weapon's sight line in model-local units.
+     PLAYTEST FIX: aiming down the sights used to drop the whole weapon at the
+     centre of the screen, so on several guns the receiver sat on top of
+     whatever you were aiming at. Real sighting puts the SIGHT LINE at the
+     crosshair, which necessarily puts the body below it — so ADS now offsets
+     each model by its own sight height instead of using one shared guess. */
+  const SIGHT_Y = {
+    m1911: 0.040, kar98k: 0.054, m14: 0.060, mp40: 0.056,
+    thomp: 0.062, stg: 0.068, trench: 0.074, bar: 0.068, raygun: 0.042,
+  };
   const models = {};
   function get(k) {
     if (models[k]) return models[k];
@@ -2234,7 +2496,7 @@ const ViewModel = (() => {
   flashG.visible = false; viewScene.add(flashG);
 
   return {
-    scene: viewScene, cam: viewCam, models, get, knifeG, nadeG, flashG, fmat,
+    scene: viewScene, cam: viewCam, models, get, knifeG, nadeG, flashG, fmat, SIGHT_Y,
     hideAll() { for (const k in models) models[k].visible = false; knifeG.visible = false; nadeG.visible = false; },
   };
 })();
@@ -2247,7 +2509,7 @@ const Player = (() => {
   const P = {
     pos: new THREE.Vector3(), vel: new THREE.Vector3(),
     yaw: 0, pitch: 0,
-    hp: CFG.hp, lastHurt: -99, dead: false,
+    hp: CFG.hp, lastHurt: -99, dead: false, down: false, downT: 0, eyeY: CFG.eye,
     points: CFG.startPoints, kills: 0, headshots: 0, spent: 0,
     guns: [{ key: 'm1911', ammo: WEAPONS.m1911.mag, res: WEAPONS.m1911.res }],
     slot: 0,
@@ -2262,11 +2524,17 @@ const Player = (() => {
   };
   const gun = () => P.guns[P.slot];
   const spec = () => WEAPONS[gun().key];
+  // Perks are read at the point of use rather than baked into player state, so
+  // buying or losing one takes effect immediately with no bookkeeping.
+  const maxHp = () => (Perks.has('jugg') ? JUGG_HP : CFG.hp);
+  const reloadMul = () => (Perks.has('speed') ? 1 / 1.6 : 1);
+  const rpmMul = () => (Perks.has('tap') ? 1.33 : 1);
 
   function reset() {
     P.pos.copy(Level.spawnPos); P.pos.y = 0; P.vel.set(0, 0, 0);
     P.yaw = Math.PI; P.pitch = 0;
     P.hp = CFG.hp; P.dead = false; P.lastHurt = -99;
+    P.down = false; P.downT = 0; P.eyeY = CFG.eye;
     P.points = CFG.startPoints; P.kills = 0; P.headshots = 0; P.spent = 0;
     P.guns = [{ key: 'm1911', ammo: WEAPONS.m1911.mag, res: WEAPONS.m1911.res }];
     P.slot = 0; P.nades = 2;
@@ -2296,15 +2564,15 @@ const Player = (() => {
     const g = gun(), w = spec();
     if (P.reloadT > 0 || P.knifeT > 0 || P.nadeT > 0) return;
     if (g.ammo >= w.mag || g.res <= 0) return;
-    if (w.shell) { P.reloadShells = 1; P.reloadT = w.reload; }
-    else P.reloadT = w.reload;
+    if (w.shell) { P.reloadShells = 1; P.reloadT = w.reload * reloadMul(); }
+    else P.reloadT = w.reload * reloadMul();
     Snd.reloadClick(true);
   }
   function finishReload() {
     const g = gun(), w = spec();
     if (w.shell) {
       if (g.ammo < w.mag && g.res > 0) { g.ammo++; g.res--; Snd.reloadClick(false); }
-      if (g.ammo < w.mag && g.res > 0 && Input.st.fire !== true) { P.reloadT = w.reload; return; }
+      if (g.ammo < w.mag && g.res > 0 && Input.st.fire !== true) { P.reloadT = w.reload * reloadMul(); return; }
       P.reloadShells = 0;
     } else {
       const need = Math.min(w.mag - g.ammo, g.res);
@@ -2320,13 +2588,13 @@ const Player = (() => {
     const cp = Math.cos(P.pitch);
     return out.set(-Math.sin(P.yaw) * cp, Math.sin(P.pitch), -Math.cos(P.yaw) * cp).normalize();
   }
-  function eyePos(out) { return out.set(P.pos.x, CFG.eye + P.bob, P.pos.z); }
+  function eyePos(out) { return out.set(P.pos.x, P.eyeY + P.bob, P.pos.z); }
 
   function fireOnce() {
     const g = gun(), w = spec();
     if (g.ammo <= 0) { Snd.dryFire(); P.fireCd = 0.28; startReload(); return; }
     g.ammo--;
-    P.fireCd = 60 / w.rpm;
+    P.fireCd = 60 / (w.rpm * rpmMul());
     eyePos(eye); forward(fwd);
     right.crossVectors(fwd, up).normalize();
     const moving = P.moveAmt > 0.25;
@@ -2342,13 +2610,16 @@ const Player = (() => {
       const hit = Zombies.raycast(eye, sdir, Math.min(wallD, maxD));
       if (hit) {
         hitAny = true;
-        const dmg = w.dmg * (hit.head ? w.head : 1);
+        const dmg = Drops.instakill ? 1e9 : w.dmg * (hit.head ? w.head : 1);
         const res = Zombies.damage(hit.z, dmg, hit.head, sdir);
         FX.bloodHit(hit.p.x, hit.p.y, hit.p.z, sdir.x, sdir.y, sdir.z, hit.head ? 0.9 : 0.4);
         if (res.killed) { killed++; if (hit.head) head = true; }
         else addPoints(10);
+        if (w.splash) killed += splash(hit.p, hit.z);
       } else if (wallD < maxD) {
-        FX.impact(eye.x + sdir.x * wallD, eye.y + sdir.y * wallD, eye.z + sdir.z * wallD, -sdir.x, -sdir.y, -sdir.z);
+        const ix = eye.x + sdir.x * wallD, iy = eye.y + sdir.y * wallD, iz = eye.z + sdir.z * wallD;
+        FX.impact(ix, iy, iz, -sdir.x, -sdir.y, -sdir.z);
+        if (w.splash) { _sp.set(ix, iy, iz); killed += splash(_sp, null); }
       }
     }
     if (killed) { addPoints(head ? 100 : 60, true); P.kills += killed; if (head) P.headshots += killed; }
@@ -2373,6 +2644,29 @@ const Player = (() => {
       right.x * rand(1.5, 3) + rand(-.4,.4), rand(1.4, 2.6), right.z * rand(1.5, 3) + rand(-.4,.4));
   }
 
+  // Ray-Gun-style detonation at the impact point. Returns extra kills so the
+  // caller's points and kill count stay in one place.
+  const _sp = new THREE.Vector3(), _spDir = new THREE.Vector3();
+  function splash(point, direct) {
+    const w = spec();
+    FX.explosion(point.x, point.y, point.z);
+    Snd.explode();
+    Level.flash.position.copy(point);
+    Level.flash.intensity = 90;
+    P.shake = Math.min(1, P.shake + 0.28);
+    let extra = 0;
+    for (const z of Zombies.list) {
+      if (z.dead || z === direct) continue;
+      const d = Math.hypot(z.pos.x - point.x, z.pos.z - point.z);
+      if (d > w.splash) continue;
+      const falloff = 1 - (d / w.splash) * 0.6;
+      _spDir.set(z.pos.x - point.x, 0, z.pos.z - point.z).normalize();
+      const r = Zombies.damage(z, Drops.instakill ? 1e9 : w.splashDmg * falloff, false, _spDir);
+      if (r.killed) extra++; else addPoints(10);
+    }
+    return extra;
+  }
+
   function knife() {
     if (P.knifeT > 0 || P.nadeT > 0) return;
     P.knifeT = KNIFE.cool;
@@ -2382,7 +2676,7 @@ const Player = (() => {
       eyePos(eye); forward(fwd);
       const hit = Zombies.coneHit(eye, fwd, KNIFE.reach, 0.62);
       if (hit) {
-        const res = Zombies.damage(hit, KNIFE.dmg, false, fwd);
+        const res = Zombies.damage(hit, Drops.instakill ? 1e9 : KNIFE.dmg, false, fwd);
         FX.bloodHit(hit.pos.x, 1.25, hit.pos.z, fwd.x, 0, fwd.z, 0.6);
         if (res.killed) { addPoints(130, true); P.kills++; } else addPoints(10);
         UI.hitMark(res.killed);
@@ -2430,7 +2724,7 @@ const Player = (() => {
         Snd.explode();
         Level.flash.position.copy(n.p); Level.flash.intensity = 260;
         P.shake = 1;
-        const k = Zombies.areaDamage(n.p, NADE.radius, NADE.dmg);
+        const k = Zombies.areaDamage(n.p, NADE.radius, Drops.instakill ? 1e9 : NADE.dmg);
         if (k) { addPoints(60 * k, true); P.kills += k; }
         // the blast hurts the thrower too, at a reduced rate
         const d = Math.hypot(P.pos.x - n.p.x, P.pos.z - n.p.z);
@@ -2441,9 +2735,12 @@ const Player = (() => {
     }
   }
 
-  function addPoints(n, big) {
-    P.points += n;
-    UI.pointsPop(n);
+  // `raw` skips the Double Points multiplier: flat awards (the Nuke bounty,
+  // Carpenter) are fixed in the original and doubling them reads as a bug.
+  function addPoints(n, big, raw) {
+    const amt = raw ? n : n * Drops.pointsMult;
+    P.points += amt;
+    UI.pointsPop(amt);
     Snd.points(big);
   }
   function spend(n) {
@@ -2451,14 +2748,27 @@ const Player = (() => {
     P.points -= n; P.spent += n; Snd.buy(); return true;
   }
   function hurt(amount, from) {
-    if (P.dead || Game.state !== 'play') return;
+    if (P.dead || P.down || Game.state !== 'play') return;   // no finishing a downed player
     P.hp -= amount;
     P.lastHurt = Game.time;
     P.hitFlash = 1;
     P.shake = Math.min(1, P.shake + 0.5);
     if (from) P.dmgDir = Math.atan2(from.x - P.pos.x, from.z - P.pos.z);
     Snd.hurt();
-    if (P.hp <= 0) { P.hp = 0; P.dead = true; Snd.death(); Game.gameOver(); }
+    if (P.hp > 0) return;
+    P.hp = 0;
+    /* Quick Revive: you go down instead of dying, and get yourself back up.
+       The perk is consumed, so it has to be re-bought — that is the solo
+       behaviour in the original, and it is what stops it being a free extra
+       life every round. */
+    if (Perks.has('revive')) {
+      Perks.consume('revive');
+      P.down = true; P.downT = REVIVE_TIME;
+      Snd.down();
+      Game.shake(1);
+      return;
+    }
+    P.dead = true; Snd.death(); Game.gameOver();
   }
 
   // ---- per-frame --------------------------------------------------------
@@ -2475,14 +2785,24 @@ const Player = (() => {
     P.recoilVY += -P.recoilY * 110 * dt; P.recoilVY *= Math.exp(-10 * dt); P.recoilY += P.recoilVY * dt;
     P.kickVZ += -P.kickZ * 260 * dt; P.kickVZ *= Math.exp(-16 * dt); P.kickZ += P.kickVZ * dt;
 
+    // downed: you cannot move or shoot, only wait it out
+    if (P.down) {
+      P.downT -= dt;
+      if (P.downT <= 0) {
+        P.down = false; P.hp = maxHp() * 0.5; P.lastHurt = Game.time;
+        Snd.revive(); UI.toast('BACK UP');
+      }
+    }
+
     // movement
-    const mag = Math.min(1, Math.hypot(I.mx, I.my));
+    const mag = P.down ? 0 : Math.min(1, Math.hypot(I.mx, I.my));
     P.moveAmt = mag;
     P.sprinting = I.sprint && I.my > 0.2 && mag > 0.55 && P.ads < 0.4 && P.reloadT <= 0;
     const speed = P.sprinting ? CFG.sprint : CFG.walk * (P.ads > 0.5 ? 0.55 : 1);
     const s = Math.sin(P.yaw), c = Math.cos(P.yaw);
-    const wishX = (-s * I.my) + (-c * I.mx) * -1;
-    const wishZ = (-c * I.my) + (s * I.mx) * -1;
+    const my = P.down ? 0 : I.my, mxi = P.down ? 0 : I.mx;
+    const wishX = (-s * my) + (-c * mxi) * -1;
+    const wishZ = (-c * my) + (s * mxi) * -1;
     tmp.set(wishX, 0, wishZ);
     if (tmp.lengthSq() > 1) tmp.normalize();
     tmp.multiplyScalar(speed);
@@ -2522,7 +2842,7 @@ const Player = (() => {
     // shooting
     const w = spec();
     P.fireCd -= dt;
-    const canFire = P.reloadT <= 0 && P.knifeT <= 0 && P.nadeT <= 0 && !P.sprinting && P.vmSwitch <= 0;
+    const canFire = !P.down && P.reloadT <= 0 && P.knifeT <= 0 && P.nadeT <= 0 && !P.sprinting && P.vmSwitch <= 0;
     if (canFire && I.fire && P.fireCd <= 0) {
       if (w.auto || !P.firePrev) fireOnce();
     }
@@ -2532,14 +2852,14 @@ const Player = (() => {
     updateNades(dt);
 
     // regeneration + low-health cues
-    if (!P.dead && Game.time - P.lastHurt > CFG.regenDelay && P.hp < CFG.hp) {
-      P.hp = Math.min(CFG.hp, P.hp + CFG.regenRate * dt);
+    if (!P.dead && !P.down && Game.time - P.lastHurt > CFG.regenDelay && P.hp < maxHp()) {
+      P.hp = Math.min(maxHp(), P.hp + CFG.regenRate * dt);
     }
     P.hitFlash = Math.max(0, P.hitFlash - dt * 3.4);
     P.shake = Math.max(0, P.shake - dt * 3.2);
-    if (P.hp < 34 && !P.dead) {
+    if (P.hp < maxHp() * 0.34 && !P.dead) {
       P.beatT = (P.beatT || 0) - dt;
-      if (P.beatT <= 0) { P.beatT = 0.55 + (P.hp / 34) * 0.5; Snd.heartbeat(); }
+      if (P.beatT <= 0) { P.beatT = 0.55 + (P.hp / (maxHp() * 0.34)) * 0.5; Snd.heartbeat(); }
     }
   }
 
@@ -2547,7 +2867,10 @@ const Player = (() => {
   function applyCamera(dt) {
     const shake = P.shake * P.shake;
     const sx = (Math.random() - 0.5) * shake * 0.05, sy = (Math.random() - 0.5) * shake * 0.05;
-    camera.position.set(P.pos.x, CFG.eye + P.bob, P.pos.z);
+    // eye height eases to the floor while downed — the single clearest signal
+    // that you are not dead, just not upright
+    P.eyeY = dampTo(P.eyeY, P.down ? 0.42 : CFG.eye, 6, dt);
+    camera.position.set(P.pos.x, P.eyeY + P.bob, P.pos.z);
     camera.rotation.set(0, 0, 0);
     camera.rotation.order = 'YXZ';
     camera.rotation.y = P.yaw + P.recoilY * 0.006 + sx;
@@ -2582,7 +2905,9 @@ const Player = (() => {
     const bx = Math.sin(P.bobPhase) * halfW * 0.11 * P.moveAmt * (1 - a);
     const by = Math.abs(Math.cos(P.bobPhase)) * halfH * 0.07 * P.moveAmt * (1 - a);
     const hipX = halfW * 0.40, hipY = -halfH * 0.26, hipZ = -0.30;
-    const adsX = 0.0, adsY = -halfH * 0.10, adsZ = -0.26;
+    // put this weapon's own sight line on the crosshair; the body falls below it
+    const sightY = ViewModel.SIGHT_Y[gun().key] !== undefined ? ViewModel.SIGHT_Y[gun().key] : 0.055;
+    const adsX = 0.0, adsY = -sightY * vmScale, adsZ = -0.30;
     g.position.set(lerp(hipX, adsX, a) + bx + P.sway.x, lerp(hipY, adsY, a) - by - P.bob * 0.25, lerp(hipZ, adsZ, a) + P.kickZ * 0.06);
     const sprintT = P.sprinting ? 1 : 0;
     g.rotation.set(
@@ -2592,7 +2917,7 @@ const Player = (() => {
     if (P.vmSwitch > 0) g.position.y -= P.vmSwitch * halfH * 2.6;
     if (P.reloadT > 0) {
       const w2 = spec();
-      const t = 1 - P.reloadT / (w2.reload || 1);
+      const t = 1 - P.reloadT / ((w2.reload * reloadMul()) || 1);
       const wob = Math.sin(t * Math.PI);
       g.position.y -= wob * 0.13; g.rotation.x += wob * 0.55; g.rotation.z += wob * 0.3;
     }
@@ -2623,7 +2948,7 @@ const Player = (() => {
   }
 
   return {
-    P, reset, update, applyCamera, giveWeapon, spend, addPoints, hurt, forward, eyePos,
+    P, reset, update, applyCamera, giveWeapon, spend, addPoints, hurt, forward, eyePos, maxHp,
     gun, spec, nades,
     clearNades() { for (const n of nades) { scene.remove(n.mesh); } nades.length = 0; },
   };
@@ -2908,7 +3233,13 @@ const Zombies = (() => {
     const base = clamp(0.95 + r * 0.235, 0.95, 4.35);
     return base * rand(0.84, 1.16);
   }
-  const tearTime = r => clamp(1.55 - r * 0.045, 0.42, 1.55);
+  /* PLAYTEST FIX: boards were coming down faster than any player could put them
+     back, which read as unfair rather than tense. Tearing is now roughly twice
+     as slow at every round and never drops below ~0.9 s a plank, so a full
+     barricade takes ~13 s early and ~6 s deep — and repair (0.3 s a plank) is
+     comfortably faster than one zombie can strip it. Holding a window is now a
+     real option instead of a losing race. */
+  const tearTime = r => clamp(2.25 - r * 0.05, 0.9, 2.25);
   const spawnGap = r => clamp(2.1 - r * 0.105, 0.30, 2.1);
 
   // ---- lifecycle --------------------------------------------------------
@@ -2935,8 +3266,11 @@ const Zombies = (() => {
     // onesie, and the shirt/trouser split is most of what makes a crowd look
     // like people rather than copies
     z.pants = pick(CLOTHS).map(v => v * rand(0.7, 1.05));
-    const d = new THREE.Vector3().subVectors(win.stand, z.pos).normalize();
-    z.fx = d.x; z.fz = d.z;
+    // face the window without allocating: spawn runs on a timer, but this is
+    // the same discipline the per-frame paths use
+    const dfx = win.stand.x - z.pos.x, dfz = win.stand.z - z.pos.z;
+    const dfl = Math.hypot(dfx, dfz) || 1;
+    z.fx = dfx / dfl; z.fz = dfz / dfl;
     list.push(z);
     return z;
   }
@@ -2956,11 +3290,28 @@ const Zombies = (() => {
       else FX.gore(z.pos.x, RIG.waistY * z.scale, z.pos.z, false);
       if (z.win && z.win.claimed === z) z.win.claimed = 0;
       Round.onKill();
+      if (!z.noDrop) Drops.maybeDrop(z.pos.x, z.pos.z);
       return { killed: true };
     }
     return { killed: false };
   }
 
+  /* Nuke. Everything currently on the map dies at once, without paying the
+     usual per-kill points (the power-up has its own flat bounty) and without
+     rolling for further drops — a nuke that spawned a nuke would cascade. */
+  function killAllForNuke() {
+    let n = 0;
+    for (const z of list) {
+      if (z.dead) continue;
+      z.noDrop = true;
+      FX.gore(z.pos.x, RIG.waistY * z.scale, z.pos.z, false);
+      damage(z, 1e9, false, null);
+      n++;
+    }
+    return n;
+  }
+
+  const _blast = new THREE.Vector3();
   function areaDamage(p, radius, dmg) {
     let killed = 0;
     for (const z of list) {
@@ -2968,7 +3319,8 @@ const Zombies = (() => {
       const d = Math.hypot(z.pos.x - p.x, z.pos.z - p.z);
       if (d > radius) continue;
       const falloff = 1 - (d / radius) * 0.65;
-      const res = damage(z, dmg * falloff, false, new THREE.Vector3(z.pos.x - p.x, 0, z.pos.z - p.z).normalize());
+      _blast.set(z.pos.x - p.x, 0, z.pos.z - p.z).normalize();
+      const res = damage(z, dmg * falloff, false, _blast);
       if (res.killed) killed++;
     }
     return killed;
@@ -3101,7 +3453,10 @@ const Zombies = (() => {
             if (d > 1.9) { moveX = dx / d; moveZ = dz / d; speed *= 0.5; }
             break;
           }
-          z.tearT = (z.tearT || tearTime(Round.round)) - dt;
+          // a beat of clawing before the first plank gives the player time to
+          // react to the breach rather than hearing it already half-open
+          if (z.tearT === undefined) z.tearT = tearTime(Round.round) * 1.5;
+          z.tearT -= dt;
           if (z.tearT <= 0) {
             z.tearT = tearTime(Round.round);
             w.planks--;
@@ -3357,7 +3712,7 @@ const Zombies = (() => {
   }
 
   return {
-    list, spawn, damage, areaDamage, raycast, coneHit, update, reset, hideAll,
+    list, spawn, damage, areaDamage, raycast, coneHit, update, reset, hideAll, killAllForNuke, RIG,
     healthFor, countFor, speedFor, tearTime, spawnGap,
     get aliveCount() { let n = 0; for (const z of list) if (!z.dead) n++; return n; },
   };
@@ -3389,6 +3744,7 @@ const Round = (() => {
     R.total = Zombies.countFor(n);
     R.toSpawn = R.total; R.spawned = 0; R.killedThis = 0;
     R.phase = 'active'; R.spawnT = 1.2;
+    Drops.onRound();
     UI.roundBanner(n);
     Snd.roundStart(n);
     store.set('best', Math.max(store.get('best', 0), n));
@@ -3425,6 +3781,295 @@ const Round = (() => {
   }
   function reset() { R.round = 0; R.phase = 'idle'; R.timer = 2.4; R.toSpawn = 0; R.spawned = 0; R.total = 0; }
   return { R, begin, update, reset, onKill, get round() { return R.round; }, get phase() { return R.phase; } };
+})();
+
+
+/* ============================================================================
+   10b. POWER-UPS, THE MYSTERY BOX, PERKS
+   The three systems that turn a survival shooter into this particular one.
+   All of them hang off structures the core loop already had — the map grid, the
+   weapon table, the interaction scanner, the points economy — which is what the
+   v1 registries were for.
+   ========================================================================= */
+
+const Drops = (() => {
+  const MAX = 6;
+  const live = [];                       // {key, pos, t, mesh, halo}
+  const timers = { instakill: 0, points: 0 };
+  let budget = DROP.perRound, sinceLast = 99;
+
+  // pooled visuals: a glowing core and a flat halo that reads from across a room
+  const pool = [];
+  const coreGeo = new THREE.BoxGeometry(0.30, 0.30, 0.30);
+  const haloGeo = new THREE.PlaneGeometry(1.1, 1.1);
+  for (let i = 0; i < MAX; i++) {
+    const g = new THREE.Group();
+    const core = new THREE.Mesh(coreGeo, new THREE.MeshBasicMaterial({ toneMapped: false }));
+    const halo = new THREE.Mesh(haloGeo, new THREE.MeshBasicMaterial({
+      transparent: true, opacity: 0.5, blending: THREE.AdditiveBlending, depthWrite: false, toneMapped: false }));
+    halo.rotation.x = -Math.PI / 2;
+    halo.position.y = -0.34;
+    const beam = new THREE.Mesh(new THREE.PlaneGeometry(0.5, 2.2), new THREE.MeshBasicMaterial({
+      transparent: true, opacity: 0.14, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide, toneMapped: false }));
+    beam.position.y = 0.7;
+    g.add(core, halo, beam);
+    g.visible = false;
+    scene.add(g);
+    pool.push({ g, core, halo, beam, busy: false });
+  }
+  const weightedKey = () => {
+    const keys = Object.keys(POWERUPS);
+    let total = 0; for (const k of keys) total += POWERUPS[k].weight;
+    let r = Math.random() * total;
+    for (const k of keys) { r -= POWERUPS[k].weight; if (r <= 0) return k; }
+    return keys[0];
+  };
+
+  function spawnAt(x, z, forced) {
+    const slot = pool.find(p => !p.busy);
+    if (!slot) return null;
+    const key = forced || weightedKey();
+    const P = POWERUPS[key];
+    const col = new THREE.Color(P.colour);
+    slot.busy = true;
+    slot.core.material.color.copy(col);
+    slot.halo.material.color.copy(col);
+    slot.beam.material.color.copy(col);
+    slot.g.visible = true;
+    const d = { key, pos: new THREE.Vector3(x, 0.55, z), t: DROP.life, slot };
+    slot.g.position.copy(d.pos);
+    live.push(d);
+    Snd.powerupDrop();
+    return d;
+  }
+  // called on every kill; the budget and gap are what stop a long round raining
+  function maybeDrop(x, z) {
+    if (budget <= 0 || sinceLast < DROP.minGap) return null;
+    if (Math.random() > DROP.chance) return null;
+    budget--; sinceLast = 0;
+    return spawnAt(x, z);
+  }
+
+  function collect(d) {
+    const P = POWERUPS[d.key];
+    const pl = Player.P;
+    Snd.powerupGrab(d.key);
+    UI.toast(P.name);
+    UI.banner(P.name, P.colour);
+    switch (d.key) {
+      case 'maxammo':
+        for (const g of pl.guns) { g.res = WEAPONS[g.key].res; g.ammo = Math.max(g.ammo, WEAPONS[g.key].mag); }
+        pl.nades = NADE.max;
+        break;
+      case 'nuke': {
+        // classic: everything currently on the map dies, and it pays a flat fee
+        const n = Zombies.killAllForNuke();
+        Player.addPoints(400, true);
+        pl.kills += n;
+        Game.shake(0.8);
+        break;
+      }
+      case 'carpenter':
+        for (const w of Level.windows) { w.planks = Level.PLANKS; Level.refreshPlanks(w); }
+        Player.addPoints(200, true);
+        break;
+      default:
+        timers[d.key] = P.secs;
+        break;
+    }
+  }
+
+  function update(dt) {
+    sinceLast += dt;
+    for (const k in timers) if (timers[k] > 0) timers[k] = Math.max(0, timers[k] - dt);
+    const pl = Player.P;
+    for (let i = live.length - 1; i >= 0; i--) {
+      const d = live[i];
+      d.t -= dt;
+      const g = d.slot.g;
+      g.position.y = 0.55 + Math.sin(Game.time * 2.2 + i) * 0.10;
+      g.rotation.y += dt * 1.9;
+      // flash out the last few seconds so a drop about to expire is obvious
+      const fade = d.t < 5 ? (Math.sin(d.t * 12) * 0.5 + 0.5) : 1;
+      d.slot.core.material.opacity = fade;
+      d.slot.halo.material.opacity = 0.5 * fade;
+      d.slot.beam.material.opacity = 0.14 * fade;
+      d.slot.halo.material.transparent = true;
+      d.slot.core.material.transparent = true;
+      if (Math.hypot(pl.pos.x - g.position.x, pl.pos.z - g.position.z) < DROP.radius && !pl.dead) {
+        collect(d);
+        d.slot.busy = false; g.visible = false; live.splice(i, 1);
+        continue;
+      }
+      if (d.t <= 0) { d.slot.busy = false; g.visible = false; live.splice(i, 1); }
+    }
+  }
+  function reset() {
+    for (const d of live) { d.slot.busy = false; d.slot.g.visible = false; }
+    live.length = 0;
+    for (const k in timers) timers[k] = 0;
+    budget = DROP.perRound; sinceLast = 99;
+  }
+  return {
+    update, reset, maybeDrop, spawnAt, live, timers,
+    onRound() { budget = DROP.perRound; },
+    get instakill() { return timers.instakill > 0; },
+    get pointsMult() { return timers.points > 0 ? 2 : 1; },
+  };
+})();
+
+const Box = (() => {
+  const B = { spot: null, uses: 0, limit: 0, phase: 'idle', t: 0, prize: null, bearT: 0 };
+  let prizeMesh = null;
+
+  /* The display weapon is the VIEWMODEL clone with its materials swapped for
+     unlit ones and its hand groups stripped — the viewmodel is already the best
+     model of each gun that exists, and rebuilding a second set of world-space
+     weapon meshes just to spin one above a crate would be silly. */
+  function makePrize(key) {
+    if (prizeMesh) { Level.boxPrize.remove(prizeMesh); prizeMesh = null; }
+    const src = ViewModel.get(key);
+    const g = src.clone(true);
+    for (let i = g.children.length - 1; i >= 0; i--) {
+      const c = g.children[i];
+      if (c.isMesh) {
+        c.material = new THREE.MeshBasicMaterial({
+          color: c.material.color.clone().multiplyScalar(1.5), toneMapped: false });
+      } else {
+        g.remove(c);                                     // the hands
+      }
+    }
+    g.position.set(0, 0, 0);
+    g.rotation.set(0, 0, 0);
+    g.scale.setScalar(1.5);
+    prizeMesh = g;
+    Level.boxPrize.add(g);
+    Level.boxPrize.visible = true;
+  }
+  const roll = () => {
+    let total = 0; for (const [, w] of BOX.pool) total += w;
+    let r = Math.random() * total;
+    for (const [k, w] of BOX.pool) { r -= w; if (r <= 0) return k; }
+    return BOX.pool[0][0];
+  };
+
+  function place(spot) {
+    // the box occupies its tile: it is furniture, not decoration
+    if (B.spot) Level.solid[Level.at(B.spot.c, B.spot.r)] = 0;
+    B.spot = spot;
+    Level.solid[Level.at(spot.c, spot.r)] = 1;
+    Level.boxGroup.position.copy(spot.pos);
+    Level.boxGroup.visible = true;
+    Level.boxLid.rotation.x = 0;
+    Level.teddy.visible = false;
+    Level.boxPrize.visible = false;
+    B.uses = 0;
+    B.limit = (BOX.usesMin + Math.floor(Math.random() * (BOX.usesMax - BOX.usesMin + 1)));
+    B.phase = 'idle'; B.t = 0;
+    Level.rebuildNav(Player.P.pos.x, Player.P.pos.z);
+  }
+  function relocate() {
+    const others = Level.boxSpots.filter(sp => sp !== B.spot);
+    place(others.length ? pick(others) : B.spot);
+  }
+  function open() {
+    if (B.phase !== 'idle') return false;
+    if (!Player.spend(BOX.cost)) return false;
+    B.phase = 'spin'; B.t = BOX.spin;
+    B.prize = roll();
+    Snd.boxOpen();
+    return true;
+  }
+  function take() {
+    if (B.phase !== 'offer') return false;
+    Player.giveWeapon(B.prize);
+    UI.toast(WEAPONS[B.prize].name);
+    Snd.boxTake();
+    close();
+    return true;
+  }
+  function close() {
+    B.uses++;
+    Level.boxPrize.visible = false;
+    if (B.uses >= B.limit) { B.phase = 'bear'; B.t = 2.6; Level.teddy.visible = true; Snd.bear(); }
+    else { B.phase = 'idle'; B.t = 0; }
+  }
+
+  function update(dt) {
+    if (!B.spot) return;
+    const lid = Level.boxLid, glow = Level.boxGlow;
+    let openness = 0;
+    if (B.phase === 'spin' || B.phase === 'offer') openness = 1;
+    lid.rotation.x = dampTo(lid.rotation.x, -openness * 1.9, 9, dt);
+    glow.material.opacity = dampTo(glow.material.opacity, openness * 0.55, 7, dt);
+    Level.boxLight.intensity = dampTo(Level.boxLight.intensity, openness * 9, 7, dt);
+    Level.boxLight.position.set(0, 1.1, 0);
+
+    if (B.phase === 'spin') {
+      B.t -= dt;
+      // cycle the displayed weapon, slowing as it settles on the real prize
+      B.cyc = (B.cyc || 0) - dt;
+      const rate = clamp(B.t / BOX.spin, 0.08, 1) * 0.22 + 0.05;
+      if (B.cyc <= 0) {
+        B.cyc = rate;
+        makePrize(B.t < 0.6 ? B.prize : pick(BOX.pool)[0]);
+        Snd.boxCycle();
+      }
+      Level.boxPrize.position.set(0, 1.15 + Math.sin(Game.time * 3) * 0.05, 0);
+      Level.boxPrize.rotation.y += dt * 2.6;
+      if (B.t <= 0) { B.phase = 'offer'; B.t = BOX.grab; makePrize(B.prize); }
+    } else if (B.phase === 'offer') {
+      B.t -= dt;
+      Level.boxPrize.position.set(0, 1.15 + Math.sin(Game.time * 3) * 0.05, 0);
+      Level.boxPrize.rotation.y += dt * 1.4;
+      if (B.t <= 0) close();                              // not taken in time
+    } else if (B.phase === 'bear') {
+      B.t -= dt;
+      Level.teddy.position.y = (2.6 - B.t) * 0.9;
+      Level.teddy.rotation.y += dt * 3;
+      if (B.t <= 0) { Level.teddy.visible = false; relocate(); }
+    }
+  }
+  function reset() {
+    for (const sp of Level.boxSpots) Level.solid[Level.at(sp.c, sp.r)] = 0;
+    B.spot = null;
+    // always start in the lobby: a box you cannot reach on round one is not a
+    // choice, it is just a locked door
+    const start = Level.boxSpots.find(sp => sp.zone === 'lobby') || Level.boxSpots[0];
+    place(start);
+  }
+  return { B, update, reset, open, take, relocate, place,
+           get phase() { return B.phase; }, get spot() { return B.spot; } };
+})();
+
+const Perks = (() => {
+  const owned = new Set();
+  function has(k) { return owned.has(k); }
+  function buy(key) {
+    const P = PERKS[key];
+    if (owned.has(key)) { Snd.deny(); UI.toast('ALREADY HAVE ' + P.name); return false; }
+    if (!Player.spend(P.cost)) return false;
+    owned.add(key);
+    Snd.perkJingle(Object.keys(PERKS).indexOf(key));
+    UI.toast(P.name);
+    UI.banner(P.name, P.colour);
+    if (key === 'jugg') Player.P.hp = Player.maxHp();   // top up to the new ceiling
+    UI.perks(owned);
+    return true;
+  }
+  function consume(key) { owned.delete(key); UI.perks(owned); }
+  function reset() { owned.clear(); UI.perks(owned); }
+  function update(dt) {
+    // machines only light up once the power is on
+    const on = !!(Level.powerSwitch && Level.powerSwitch.on);
+    for (const pm of Level.perkMachines) {
+      const want = on ? 1 : 0;
+      pm.face.material.color.setScalar(lerp(pm.face.material.color.r, 0.22 + want * 0.78, 1 - Math.exp(-3 * dt)));
+      const pulse = on ? 0.16 + Math.sin(Game.time * 2.2 + pm.c) * 0.05 : 0;
+      pm.glow.material.opacity = lerp(pm.glow.material.opacity, owned.has(pm.key) ? pulse * 0.4 : pulse, 1 - Math.exp(-3 * dt));
+    }
+  }
+  return { has, buy, consume, reset, update, owned };
 })();
 
 /* ============================================================================
@@ -3475,6 +4120,25 @@ const Interact = (() => {
       const d = near(ps.use);
       if (d < bestD) { best = { kind: 'power', cost: 0, text: 'TURN ON THE <b>POWER</b>', d }; bestD = d; }
     }
+    // mystery box
+    const box = Box.spot;
+    if (box && Level.ZONES[box.zone] && Level.ZONES[box.zone].open) {
+      const d = near(box.pos);
+      if (d < Math.min(bestD, 2.6)) {
+        if (Box.phase === 'offer') { best = { kind: 'boxtake', cost: 0, text: `TAKE <b>${WEAPONS[Box.B.prize].name}</b>`, d }; bestD = d; }
+        else if (Box.phase === 'idle') { best = { kind: 'box', cost: BOX.cost, text: 'MYSTERY BOX', d }; bestD = d; }
+        else { best = { kind: 'full', text: '…', d }; bestD = d; }
+      }
+    }
+    // perk machines
+    for (const pm of Level.perkMachines) {
+      if (!Level.ZONES[pm.zone] || !Level.ZONES[pm.zone].open) continue;
+      const d = near(pm.use);
+      if (d >= Math.min(bestD, 2.4)) continue;
+      if (!(Level.powerSwitch && Level.powerSwitch.on)) { best = { kind: 'locked', text: 'POWER REQUIRED', d }; bestD = d; continue; }
+      if (Perks.has(pm.key)) { best = { kind: 'full', text: pm.name + ' — ' + pm.blurb.toUpperCase(), d }; bestD = d; continue; }
+      best = { kind: 'perk', pm, cost: pm.cost, text: `BUY <b>${pm.name}</b>`, d }; bestD = d;
+    }
     for (const w of Level.windows) {
       if (w.planks >= Level.PLANKS) continue;
       const zone = Level.ZONES[w.zone];
@@ -3502,6 +4166,12 @@ const Interact = (() => {
       FX.dust(c.bar.pos.x, 1.0, c.bar.pos.z, 16, 0.8);
       UI.toast(Level.ZONES[c.bar.opens].label + ' OPEN');
       Game.shake(0.6);
+    } else if (c.kind === 'box') {
+      Box.open();
+    } else if (c.kind === 'boxtake') {
+      Box.take();
+    } else if (c.kind === 'perk') {
+      Perks.buy(c.pm.key);
     } else if (c.kind === 'power') {
       Level.powerSwitch.on = true;
       Game.powerT = 0.0001;
@@ -3528,11 +4198,11 @@ const Interact = (() => {
                    (Input.st.hasPad ? 'Ⓐ ' : (Input.st.mode === 'kb' ? '[F] ' : ''));
       el.innerHTML = verb + c.text + price;
       Input.setUseVisible(c.kind !== 'full' && c.kind !== 'locked');
-      $('bUse').textContent = c.kind === 'repair' ? 'FIX' : 'BUY';
+      $('bUse').textContent = c.kind === 'repair' ? 'FIX' : (c.kind === 'boxtake' ? 'TAKE' : 'BUY');
 
       if (c.hold && Input.st.useHeld) {
         repairT += dt;
-        if (repairT >= 0.52) {
+        if (repairT >= 0.30) {
           repairT = 0;
           c.w.planks = Math.min(Level.PLANKS, c.w.planks + 1);
           Level.refreshPlanks(c.w);
@@ -3554,8 +4224,10 @@ const Interact = (() => {
 const UI = (() => {
   const elPts = $('pts'), elAmmo = $('ammo'), elGren = $('gren'), elRnd = $('rnd'),
         elVig = $('vig'), elFlash = $('flash'), elHit = $('hit'), elPop = $('ptsPop'),
-        elToast = $('toast'), elBig = $('rndBig'), elCross = $('cross');
-  let popT = 0, popVal = 0, toastT = 0, hitT = 0, hitKill = false, bigT = 0;
+        elToast = $('toast'), elBig = $('rndBig'), elCross = $('cross'),
+        elPerks = $('perks'), elPwr = $('pwr'), elBan = $('banner'), elDown = $('downMsg'),
+        elRel = $('reloadHint'), elRelBtn = $('bReload');
+  let popT = 0, popVal = 0, toastT = 0, hitT = 0, hitKill = false, bigT = 0, banT = 0;
 
   function pointsPop(n) {
     popVal = popT > 0 ? popVal + n : n;
@@ -3568,6 +4240,24 @@ const UI = (() => {
     bigT = 2.6;
     elBig.firstElementChild.textContent = n;
   }
+  // the loud, centred announcement a power-up or perk deserves
+  function banner(text, colour) {
+    banT = 1.9;
+    const sp = elBan.firstElementChild;
+    sp.textContent = text;
+    sp.style.color = '#' + new THREE.Color(colour || 0xffd257).getHexString();
+  }
+  // perk pills, rebuilt only when the set changes
+  function perks(owned) {
+    elPerks.innerHTML = '';
+    for (const k in PERKS) {
+      if (!owned.has(k)) continue;
+      const sp = document.createElement('span');
+      sp.textContent = PERKS[k].tag;
+      sp.style.background = '#' + new THREE.Color(PERKS[k].colour).getHexString();
+      elPerks.appendChild(sp);
+    }
+  }
   function frame(dt) {
     const P = Player.P;
     elPts.firstChild.nodeValue = String(P.points);
@@ -3575,13 +4265,43 @@ const UI = (() => {
     elAmmo.innerHTML = `${g.ammo}<em>/${g.res}</em><small>${w.name}</small>`;
     elAmmo.style.color = g.ammo === 0 ? '#c8544a' : (g.ammo <= w.mag * 0.25 ? '#e0a03a' : '#e8e4dc');
     elGren.textContent = '✦ ' + P.nades;
+    // reload affordance: say it out loud when the mag is dry or nearly so
+    const dry = g.ammo === 0, low = g.ammo <= Math.max(1, Math.ceil(w.mag * 0.25));
+    const canRel = g.res > 0 && g.ammo < w.mag && P.reloadT <= 0 && !P.down;
+    if (P.reloadT > 0) {
+      elRel.style.opacity = '1'; elRel.textContent = 'RELOADING…';
+    } else if (canRel && (dry || low)) {
+      elRel.style.opacity = '1';
+      elRel.textContent = dry
+        ? 'RELOAD  ' + (Input.st.hasPad ? '✕' : (Input.st.mode === 'kb' ? '[R]' : 'TAP RELOAD'))
+        : 'LOW AMMO';
+    } else elRel.style.opacity = '0';
+    elRelBtn.classList.toggle('need', canRel && dry);
     elRnd.textContent = Round.phase === 'idle' && Round.round > 0 ? 'ROUND ' + Round.round + ' CLEARED'
       : 'ROUND ' + Math.max(1, Round.round);
 
     // damage + low health
-    const hurtT = clamp(1 - P.hp / CFG.hp, 0, 1);
+    const hurtT = clamp(1 - P.hp / Player.maxHp(), 0, 1);
     elVig.style.opacity = String(clamp(hurtT * 0.85 + P.hitFlash * 0.35, 0, 0.82));
     elFlash.style.opacity = String(P.hitFlash * 0.28);
+
+    // active power-up timers
+    let pwr = '';
+    for (const k in Drops.timers) {
+      const t = Drops.timers[k];
+      if (t <= 0) continue;
+      const c = new THREE.Color(POWERUPS[k].colour).getHexString();
+      pwr += `<b style="color:#${c}">${POWERUPS[k].name} ${Math.ceil(t)}</b>`;
+    }
+    elPwr.innerHTML = pwr;
+
+    if (banT > 0) { banT -= dt; elBan.style.opacity = String(clamp(Math.sin((banT / 1.9) * Math.PI) * 2, 0, 1)); }
+    else elBan.style.opacity = '0';
+
+    if (P.down) {
+      elDown.style.display = 'block';
+      elDown.querySelector('i').textContent = 'GETTING BACK UP… ' + P.downT.toFixed(1);
+    } else elDown.style.display = 'none';
 
     if (popT > 0) { popT -= dt; elPop.style.opacity = String(clamp(popT * 1.6, 0, 1)); elPop.style.transform = `translateY(${-(1.1 - popT) * 14}px)`; }
     else elPop.style.opacity = '0';
@@ -3611,7 +4331,7 @@ const UI = (() => {
       else i.style.transform = `translateY(${px}px)`;
     }
   }
-  return { frame, pointsPop, toast, hitMark, roundBanner };
+  return { frame, pointsPop, toast, hitMark, roundBanner, banner, perks };
 })();
 
 /* ============================================================================
@@ -3638,6 +4358,8 @@ const Game = (() => {
     Zombies.reset();
     FX.reset();
     Round.reset();
+    Perks.reset();
+    Drops.reset();
     // restore the map to its sealed state
     for (const id in Level.barriers) {
       const bar = Level.barriers[id];
@@ -3650,6 +4372,7 @@ const Game = (() => {
     if (Level.powerSwitch) Level.powerSwitch.on = false;
     Level.swGroup.userData.lever.rotation.x = -0.9;
     G.powerT = 0; uPower.value = 0; Level.setPower(false);
+    Box.reset();
     Level.rebuildNav(Player.P.pos.x, Player.P.pos.z);
     G.time = 0;
     show(null);
@@ -3736,6 +4459,8 @@ const Game = (() => {
       if (G.navT <= 0) { G.navT = 0.13; Level.rebuildNav(Player.P.pos.x, Player.P.pos.z); }
       Zombies.update(dt);
       Round.update(dt);
+      Drops.update(dt);
+      Box.update(dt);
       Player.applyCamera(dt);
       UI.frame(dt);
     } else {
@@ -3761,6 +4486,7 @@ const Game = (() => {
       Level.lamp.intensity = lerp(5.5, 2.6, uPower.value);
     }
     for (const u of uTimeList) u.value = G.time;
+    Perks.update(dt);
     FX.update(dt);
 
     // wall-buy boards brighten as you approach so a dark room stays dark
@@ -3871,12 +4597,23 @@ window.__dbg = {
       gun: Player.gun().key, ammo: Player.gun().ammo, res: Player.gun().res, nades: P.nades,
       zones: Object.keys(Level.ZONES).filter(k => Level.ZONES[k].open),
       power: !!(Level.powerSwitch && Level.powerSwitch.on),
+      perks: [...Perks.owned], down: P.down, downT: +P.downT.toFixed(2),
+      maxHp: Player.maxHp(), drops: Drops.live.length,
+      instakill: Drops.instakill, pointsMult: Drops.pointsMult,
+      boxPhase: Box.phase, boxSpot: Box.spot ? Box.spot.zone : null,
       planks: Level.windows.map(w => w.planks),
       fps: Math.round(Game.G.fps), q: Q.level, errors: errors.length,
     };
   },
   // world pokes
   give(key) { Player.giveWeapon(key); return Player.gun(); },
+  drop(key, x, z) { const p = Player.P.pos; return !!Drops.spawnAt(x === undefined ? p.x + 1 : x, z === undefined ? p.z : z, key); },
+  perk(key) { return Perks.buy(key); },
+  perks() { return [...Perks.owned]; },
+  box() { return { phase: Box.phase, spot: Box.spot && [Box.spot.c, Box.spot.r], uses: Box.B.uses, limit: Box.B.limit, prize: Box.B.prize }; },
+  boxOpen() { return Box.open(); },
+  boxTake() { return Box.take(); },
+  Drops, Box, Perks, POWERUPS, PERKS, BOX,
   points(n) { Player.P.points += n; return Player.P.points; },
   openAll() { for (const id in Level.barriers) Level.openBarrier(Level.barriers[id]); return this.snapshot(); },
   power() { Level.powerSwitch.on = true; Game.powerT = 0.0001; return true; },
