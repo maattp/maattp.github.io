@@ -163,6 +163,17 @@ theory:
   player could replace them, which reads as unfair rather than tense. Tearing is
   ~2.25 s a plank falling to ~0.9 s deep, with an extra beat before the first
   plank; repair is 0.3 s a plank. Keep repair comfortably ahead.
+- **The early ramp has to let the starting kit work.** Round 2 was reported as
+  already hard: round 1 -> 2 raised the count 67% *and* doubled the headshots
+  needed (150 -> 250 hp), and 10 zombies at 5 body shots each exceeded the
+  M1911's entire ammo supply — unwinnable without perfect aim, not difficult.
+  Counts open at 6/8/12/17 and the pistol hits harder, so rounds 1-3 are
+  clearable with what you start with and round 4 is where a wall gun becomes
+  necessary. `verify.mjs` asserts this directly (ammo needed vs ammo carried),
+  because it is the kind of thing a late-game tuning pass silently breaks.
+- **Menus must fit a 390 px-tall viewport.** A landscape phone is short; the
+  menu stack was authored at a comfortable height and ran off the bottom. The
+  `max-height: 470px` block is not cosmetic.
 - **A mechanic nobody can find does not exist.** A player asked whether
   reloading was possible at all — it always was (button, `R`, `X`, and an
   auto-reload on a dry trigger), but nothing announced it. The dry-mag hint and

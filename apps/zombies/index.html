@@ -159,11 +159,31 @@
   .stat b { color:#ffd257; font-size:22px; display:block; }
   .grid2 { display:flex; gap:30px; }
   #ver { position:fixed; right:calc(env(safe-area-inset-right) + 12px); bottom:calc(env(safe-area-inset-bottom) + 10px);
-    font-size:11px; color:#4a504c; letter-spacing:2px; z-index:21; font-weight:700; }
+    font-size:11px; color:#6f7872; letter-spacing:2px; z-index:21; font-weight:700; }
+  /* the corner badge is easy to miss on a phone, and knowing which build you are
+     running is the first thing worth knowing when a fix looks like it did not
+     land — a stale service worker is indistinguishable from one */
+  .build { font-size:11px; letter-spacing:3px; color:#6c746d; font-weight:700; margin-top:2px; }
+  .build b { color:#c9a24a; font-size:12px; }
   #load { position:fixed; inset:0; z-index:30; display:flex; align-items:center; justify-content:center;
     background:#000; color:#6b3028; font-size:13px; letter-spacing:6px; font-weight:800; }
   .kbd { display:inline-block; padding:1px 6px; border:1px solid #444; border-radius:4px; color:#c3c9c3;
     font-size:11px; margin:0 1px; }
+  /* A landscape phone is only ~390 px tall, and the menus were authored at a
+     comfortable height — at that size the bottom of the stack (the build badge,
+     the secondary button) runs off the screen. Compact everything for short
+     viewports rather than letting content clip. */
+  @media (max-height: 470px) {
+    .screen { gap:7px; padding-top:calc(env(safe-area-inset-top) + 8px); padding-bottom:calc(env(safe-area-inset-bottom) + 8px); }
+    .screen h1 { font-size:min(11vw,54px); letter-spacing:3px; }
+    .screen h2 { font-size:12px; letter-spacing:3px; }
+    .screen p { font-size:12px; line-height:1.45; max-width:560px; }
+    .go { padding:10px 34px; font-size:15px; margin-top:0; }
+    .go.alt { padding:8px 22px; font-size:12.5px; }
+    .stat b { font-size:17px; }
+    .grid2 { gap:22px; }
+  }
+
   /* Landscape-only. iOS ignores the manifest's `orientation`, so the CSS gate
      is the real enforcement — and it is a gate, not a hint: the game pauses
      behind it. */
@@ -233,6 +253,7 @@
   </div>
   <div class="go" id="btnStart">BEGIN</div>
   <div class="row"><div class="go alt" id="btnHow">CONTROLS</div></div>
+  <div class="build">BUILD <b id="tVer">V1</b></div>
 </div>
 
 <div id="how" class="screen">
@@ -1127,7 +1148,7 @@ const BARRIERS = {
 // Everything a weapon needs to exist is in this table: adding one is one entry
 // plus (optionally) a silhouette in VIEWMODELS.
 const WEAPONS = {
-  m1911:  { name: 'M1911',      cost: 0,    mag: 8,  res: 40,  dmg: 60,   head: 2.6, rpm: 380, auto: false, reload: 1.7, spread: 0.9,  recoil: 1.5, kick: 0.09, snd: { f0: 520, low: 130, punch: 0.9 } },
+  m1911:  { name: 'M1911',      cost: 0,    mag: 8,  res: 64,  dmg: 70,   head: 2.6, rpm: 380, auto: false, reload: 1.7, spread: 0.9,  recoil: 1.5, kick: 0.09, snd: { f0: 520, low: 130, punch: 0.9 } },
   kar98k: { name: 'KAR98K',     cost: 200,  mag: 5,  res: 60,  dmg: 520,  head: 3.2, rpm: 62,  auto: false, reload: 3.0, spread: 0.35, recoil: 5.2, kick: 0.20, snd: { f0: 340, low: 96,  punch: 1.5 } },
   m14:    { name: 'M14',        cost: 500,  mag: 8,  res: 120, dmg: 210,  head: 3.0, rpm: 400, auto: false, reload: 2.5, spread: 0.55, recoil: 2.8, kick: 0.13, snd: { f0: 400, low: 110, punch: 1.15 } },
   mp40:   { name: 'MP40',       cost: 1000, mag: 32, res: 192, dmg: 95,   head: 2.4, rpm: 900, auto: true,  reload: 2.6, spread: 1.55, recoil: 1.1, kick: 0.06, snd: { f0: 600, low: 140, punch: 0.8 } },
@@ -3224,13 +3245,20 @@ const Zombies = (() => {
   // which is what turns a wall gun from a workhorse into a pea-shooter and
   // forces the player deeper into the map.
   function healthFor(r) { return r <= 9 ? 150 + (r - 1) * 100 : Math.round(950 * Math.pow(1.1, r - 9)); }
+  /* PLAYTEST FIX: the early ramp was too steep — round 2 was already hard.
+     Round 1 -> 2 used to raise the count 67% AND double the headshots needed
+     (150 -> 250 hp), and at 10 zombies x 5 body shots that was more ammo than
+     the starting pistol carries in total: not difficult, unwinnable without
+     perfect aim. Early counts are gentler and the pistol hits harder, so rounds
+     1-3 are clearable with the starting kit and round 4 is where a wall gun
+     becomes necessary. The late game is barely touched (r20 134 -> 123). */
   function countFor(r) {
-    if (r <= 4) return [6, 10, 15, 21][r - 1];
-    return Math.round(21 + (r - 4) * 3.6 + Math.pow(r - 4, 1.45));
+    if (r <= 4) return [6, 8, 12, 17][r - 1];
+    return Math.round(17 + (r - 4) * 3.4 + Math.pow(r - 4, 1.42));
   }
   function speedFor(r) {
     // walkers → shamblers → runners → sprinters
-    const base = clamp(0.95 + r * 0.235, 0.95, 4.35);
+    const base = clamp(0.85 + r * 0.19, 0.85, 4.3);
     return base * rand(0.84, 1.16);
   }
   /* PLAYTEST FIX: boards were coming down faster than any player could put them
@@ -3240,7 +3268,8 @@ const Zombies = (() => {
      comfortably faster than one zombie can strip it. Holding a window is now a
      real option instead of a losing race. */
   const tearTime = r => clamp(2.25 - r * 0.05, 0.9, 2.25);
-  const spawnGap = r => clamp(2.1 - r * 0.105, 0.30, 2.1);
+  // slower early so a wave arrives as a wave, not a stream you can never turn from
+  const spawnGap = r => clamp(2.7 - r * 0.105, 0.32, 2.7);
 
   // ---- lifecycle --------------------------------------------------------
   function spawn(win, round) {
@@ -4533,6 +4562,7 @@ const Game = (() => {
    14. BOOT
    ========================================================================= */
 $('ver').textContent = 'V' + VERSION;
+$('tVer').textContent = 'V' + VERSION;
 $('btnStart').addEventListener('click', () => Game.start());
 $('btnHow').addEventListener('click', () => Game.show('how'));
 $('btnHowBack').addEventListener('click', () => Game.menu());

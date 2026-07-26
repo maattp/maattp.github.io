@@ -223,6 +223,32 @@ check('round 1 health is 150', ladder[0][2] === 150, ladder[0]);
 check('health compounds after round 9', ladder[19][2] > 2000 && ladder[29][2] > 6000,
   { r20: ladder[19][2], r30: ladder[29][2] });
 
+// 7b. EARLY-ROUND FAIRNESS -------------------------------------------------------
+// A player reported round 2 being hard. The measurable form of that complaint:
+// the starting kit must be able to clear the opening rounds at all. Round 3 is
+// deliberately tight (that is the nudge to buy a wall gun); rounds 1-2 must not
+// demand more ammunition than the M1911 carries.
+const early = await page.evaluate(() => {
+  const D = __dbg, w = D.WEAPONS.m1911;
+  const carried = w.mag + w.res;
+  const out = [];
+  for (let r = 1; r <= 4; r++) {
+    const hp = D.Zombies.healthFor(r), n = D.Zombies.countFor(r);
+    out.push({ r, n, hp, carried,
+      bodyNeeded: n * Math.ceil(hp / w.dmg),
+      headNeeded: n * Math.ceil(hp / (w.dmg * w.head)) });
+  }
+  return out;
+});
+check('rounds 1-2 clearable on body shots with the starting pistol',
+  early[0].bodyNeeded <= early[0].carried && early[1].bodyNeeded <= early[1].carried, early.slice(0, 2));
+check('rounds 1-3 clearable on headshots with the starting pistol',
+  early.slice(0, 3).every(e => e.headNeeded <= e.carried), early.slice(0, 3));
+check('round 1 opens gently', early[0].n <= 6, early[0]);
+check('round-to-round count growth stays sane early',
+  early.every((e, i) => i === 0 || e.n / early[i - 1].n <= 1.5),
+  early.map(e => e.n));
+
 // 8. death and restart --------------------------------------------------------
 const death = await page.evaluate(() => {
   __dbg.start();
@@ -299,9 +325,13 @@ const drops = await page.evaluate(() => {
   o.carpenter = D.Level.windows.every(w => w.planks === 6);
   D.setRound(6);
   for (let i = 0; i < 60 * 25; i++) { P.hp = 100; P.dead = false; if (D.Game.state === 'dying') D.Game.state = 'play'; D.stepN(1); }
-  o.before = D.Zombies.aliveCount;
+  // Track the exact bodies present when the nuke lands. Measuring aliveCount a
+  // few frames later is wrong: the round keeps spawning, so a fresh zombie
+  // walking in after the blast would read as a survivor.
+  const present = D.Zombies.list.filter(z => !z.dead);
+  o.before = present.length;
   D.drop('nuke', P.pos.x, P.pos.z); D.stepN(4);
-  o.after = D.Zombies.aliveCount;
+  o.survivors = present.filter(z => !z.dead).length;
   // a nuke must not cascade into more drops
   o.dropsAfterNuke = D.Drops.live.length;
   return o;
@@ -310,7 +340,7 @@ check('Max Ammo refills reserves', drops.maxammo, drops);
 check('Double Points doubles the multiplier', drops.doublePoints, drops);
 check('Insta-Kill arms', drops.instakill, drops);
 check('Carpenter reboards every window', drops.carpenter, drops);
-check('Nuke clears the map', drops.before > 0 && drops.after === 0, drops);
+check('Nuke kills every body on the map', drops.before > 0 && drops.survivors === 0, drops);
 check('Nuke does not cascade drops', drops.dropsAfterNuke === 0, drops);
 
 // 12. MYSTERY BOX ------------------------------------------------------------------
