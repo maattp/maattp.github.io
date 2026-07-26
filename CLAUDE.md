@@ -96,6 +96,18 @@ didn't land, because a stale service worker is indistinguishable from one.
 Location: `<div id="build">vX</div>`, paired with `const CACHE = 'auto-vX';`.
 See `apps/auto/CLAUDE.md` for why these are deliberately two literals.
 
+## Zombies App
+
+### Version Management
+
+**IMPORTANT:** Increment `const VERSION` in `/apps/zombies/index.html` once per
+PR, and bump `CACHE` in `/apps/zombies/sw.js` (`zombies-vN`) when a change must
+reach installed players promptly.
+
+The version renders bottom-right on the title screen. **Landscape-only** — see
+`apps/zombies/CLAUDE.md` for the rendering, navigation and character-model laws,
+each of which cost a real debugging session.
+
 ## Photos App
 
 ### Known Limitations
