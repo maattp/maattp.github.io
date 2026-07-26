@@ -253,6 +253,10 @@ export class Hud {
     ctx.drawImage(this.mapCanvas, 0, 0, MAP_PX, MAP_PX, ox, oy, size, size);
     const p = player.position;
     const toC = (x, z) => [ox + ((x + G.MAP_HALF) / (G.MAP_HALF * 2)) * size, oy + ((z + G.MAP_HALF) / (G.MAP_HALF * 2)) * size];
+    // Remember the projection so a tap can be turned back into world metres.
+    // The map is letterboxed inside the canvas and the canvas is scaled by dpr,
+    // so neither offset can be inferred from the element's size alone.
+    this._mapView = { ox, oy, size, dpr, w: c.width, h: c.height };
 
     ctx.font = `${Math.round(size * 0.013)}px -apple-system, Helvetica, sans-serif`;
     ctx.fillStyle = 'rgba(255,255,255,0.72)';
@@ -290,5 +294,51 @@ export class Hud {
     ctx.fill();
     ctx.stroke();
     ctx.restore();
+
+    // Warp crosshair: where the tap landed, and the road it snapped to.
+    if (this.warp) {
+      const [wx, wz] = toC(this.warp.x, this.warp.z);
+      const r = size * 0.016;
+      ctx.strokeStyle = this.warp.ok ? '#7ee0a4' : '#e5645d';
+      ctx.lineWidth = Math.max(1.5, size * 0.0022);
+      ctx.beginPath();
+      ctx.arc(wx, wz, r, 0, Math.PI * 2);
+      ctx.moveTo(wx - r * 1.7, wz); ctx.lineTo(wx - r * 0.5, wz);
+      ctx.moveTo(wx + r * 0.5, wz); ctx.lineTo(wx + r * 1.7, wz);
+      ctx.moveTo(wx, wz - r * 1.7); ctx.lineTo(wx, wz - r * 0.5);
+      ctx.moveTo(wx, wz + r * 0.5); ctx.lineTo(wx, wz + r * 1.7);
+      ctx.stroke();
+      if (this.warp.ok && this.warp.snap) {
+        // Draw the leg from the tap to the road it actually snapped to, so a
+        // long snap is visible rather than a surprise on arrival.
+        const [sx, sz] = toC(this.warp.snap.x, this.warp.snap.z);
+        ctx.setLineDash([size * 0.008, size * 0.006]);
+        ctx.beginPath();
+        ctx.moveTo(wx, wz);
+        ctx.lineTo(sx, sz);
+        ctx.stroke();
+        ctx.setLineDash([]);
+        ctx.fillStyle = '#7ee0a4';
+        ctx.beginPath();
+        ctx.arc(sx, sz, size * 0.006, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    }
+  }
+
+  /**
+   * Canvas/client point -> world metres, or null outside the map square.
+   * Inverse of drawBigMap's toC(); it needs the view drawBigMap recorded.
+   */
+  mapToWorld(clientX, clientY) {
+    const v = this._mapView;
+    if (!v) return null;
+    const r = this.bigMap.getBoundingClientRect();
+    const cx = (clientX - r.left) * (v.w / r.width);
+    const cy = (clientY - r.top) * (v.h / r.height);
+    const u = (cx - v.ox) / v.size;
+    const w = (cy - v.oy) / v.size;
+    if (u < 0 || u > 1 || w < 0 || w > 1) return null;
+    return { x: u * G.MAP_HALF * 2 - G.MAP_HALF, z: w * G.MAP_HALF * 2 - G.MAP_HALF };
   }
 }

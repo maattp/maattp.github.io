@@ -410,6 +410,189 @@ function updatePickups(dt) {
 
 // ---------------------------------------------------------------------------
 
+/**
+ * Cursor over the pause menu for a pad.
+ *
+ * A cursor is not an action: being able to confirm and go back is useless if
+ * the player cannot see WHICH row is about to be pressed, so every move paints
+ * `.padfocus`. The ring keys off a pad being present rather than off "the last
+ * input was a stick", because a player using only the d-pad would otherwise
+ * navigate a menu that never highlights anything.
+ */
+function makePadMenu() {
+  let rows = [];
+  let i = 0;
+  let on = false;
+  const paint = () => {
+    for (const r of rows) r.el.classList.toggle('padfocus', on && r === rows[i]);
+  };
+  return {
+    open() {
+      // Same order as the menu reads on screen -- Resume first.
+      rows = [
+        { el: document.getElementById('resumeBtn'), kind: 'click' },
+        { el: document.getElementById('respawnBtn'), kind: 'click' },
+        { el: document.getElementById('rowQuality'), kind: 'seg' },
+        { el: document.getElementById('setShadows'), kind: 'click' },
+        { el: document.getElementById('setMusic'), kind: 'click' },
+        { el: document.getElementById('setSound'), kind: 'click' },
+        { el: document.getElementById('setSens'), kind: 'range' },
+      ].filter((r) => r.el);
+      i = 0;
+      on = true;
+      paint();
+    },
+    close() {
+      on = false;
+      paint();
+      rows = [];
+    },
+    get active() { return on && rows.length > 0; },
+    move(d) {
+      if (!this.active) return;
+      i = (i + d + rows.length) % rows.length;
+      paint();
+    },
+    adjust(d) {
+      if (!this.active) return;
+      const r = rows[i];
+      if (r.kind === 'range') {
+        const el = r.el;
+        const step = parseFloat(el.step) || 0.1;
+        el.value = String(clamp(parseFloat(el.value) + d * step,
+          parseFloat(el.min), parseFloat(el.max)));
+        el.dispatchEvent(new Event('input', { bubbles: true }));
+      } else if (r.kind === 'seg') {
+        const opts = Array.from(document.querySelectorAll('[data-quality]'));
+        const cur = opts.findIndex((o) => o.classList.contains('on'));
+        const next = opts[clamp((cur < 0 ? 0 : cur) + d, 0, opts.length - 1)];
+        if (next) next.click();
+      }
+    },
+    confirm() {
+      if (!this.active) return;
+      const r = rows[i];
+      if (r.kind === 'click') r.el.click();
+      else if (r.kind === 'seg') this.adjust(1);
+    },
+  };
+}
+const padMenu = makePadMenu();
+let setPausedRef = null;
+let warpArmed = false;
+
+function setMapOpen(v) {
+  game.mapOpen = v;
+  document.getElementById('mapOverlay').classList.toggle('show', v);
+  if (v) hud.drawBigMap(player, game);
+  else setWarpArmed(false);
+}
+
+function setWarpArmed(v) {
+  warpArmed = v;
+  document.getElementById('warpBtn').classList.toggle('on', v);
+  document.getElementById('mapHint').textContent = v
+    ? (controls.hasPad ? 'Stick to aim, Ⓐ to drop in' : 'Tap anywhere to drop in')
+    : (controls.hasPad ? 'Ⓧ to set spawn, Ⓑ to close' : 'Tap the map to close');
+  if (v) {
+    // Start the crosshair on the player, so a pad has something to move.
+    hud.warp = { x: player.position.x, z: player.position.z, ok: true, snap: null };
+    refreshWarp(hud.warp.x, hud.warp.z);
+  } else {
+    hud.warp = null;
+  }
+  if (game.mapOpen) hud.drawBigMap(player, game);
+}
+
+/** Resolve a map point to the road it would drop you on, for the preview. */
+function refreshWarp(x, z) {
+  const snap = cityRef.respawnPointNear(x, z);
+  hud.warp = { x, z, ok: !!snap, snap };
+  if (game.mapOpen) hud.drawBigMap(player, game);
+  return snap;
+}
+
+/**
+ * Drop the player at a point picked off the map.
+ *
+ * Always snapped to a road node -- the tap is nearly always mid-block, and the
+ * point of the feature is to arrive somewhere you can drive away from. If there
+ * is no road within range (open water, the middle of Discovery Park) it refuses
+ * and says so rather than putting the player in the trees.
+ */
+function warpTo(x, z) {
+  const snap = refreshWarp(x, z);
+  if (!snap) {
+    hud.showToast('No road near there');
+    return;
+  }
+  setMapOpen(false);
+  player.respawn(snap.x, snap.z);
+  controls.setMode('foot');
+  game.dead = false;
+  document.getElementById('wasted').classList.remove('show');
+  world.update(snap.x, snap.z, 40);
+  hud.showToast(`Dropped in — ${G.placeNameAt(snap.x, snap.z)}`);
+  game.newTarget();
+}
+
+/**
+ * Everything the pad drives outside gameplay. Runs before the pause check in
+ * frame(), because the pad that opened the menu has to be able to work it.
+ */
+function handlePadUi(dt) {
+  const u = controls.takeUi();
+
+  if (u.pause) {
+    if (game.mapOpen) setMapOpen(false);
+    else if (setPausedRef) setPausedRef(!game.paused);
+    return;
+  }
+  if (game.mapOpen) {
+    if (u.warp) setWarpArmed(!warpArmed);
+    if (warpArmed) {
+      // The crosshair flies at a fixed metres-per-second so it crosses the
+      // 16 km map in a sane time; the map is drawn at whatever zoom fits, so
+      // moving in screen pixels would change speed with the window.
+      const s = controls.padLook();
+      const m = controls.padMove();
+      const vx = (Math.abs(m.x) > Math.abs(s.x) ? m.x : s.x);
+      const vz = (Math.abs(m.y) > Math.abs(s.y) ? m.y : s.y);
+      if (vx || vz) {
+        const sp = 2600 * dt;
+        refreshWarp(
+          G.clampToMap((hud.warp ? hud.warp.x : player.position.x) + vx * sp),
+          G.clampToMap((hud.warp ? hud.warp.z : player.position.z) + vz * sp),
+        );
+      }
+      if (u.confirm && hud.warp) { warpTo(hud.warp.x, hud.warp.z); return; }
+      if (u.back) { setWarpArmed(false); return; }
+      if (u.map) setMapOpen(false);
+      return;
+    }
+    if (u.map || u.back || u.confirm) setMapOpen(false);
+    return;
+  }
+  if (game.paused) {
+    if (u.nav) padMenu.move(u.nav);
+    if (u.navX) padMenu.adjust(u.navX);
+    if (u.confirm) padMenu.confirm();
+    if (u.back && setPausedRef) setPausedRef(false);
+    return;
+  }
+  if (u.map) setMapOpen(true);
+  if (u.radio) {
+    audio.init();
+    audio.resume();
+    if (!audio.musicOn) {
+      audio.musicOn = true;
+      hud.showToast(audio.stationName());
+    } else {
+      hud.showToast(u.radio > 0 ? audio.nextStation() : audio.nextStation());
+    }
+  }
+}
+
 function wireUi() {
   const pause = document.getElementById('pauseMenu');
   const bigMapWrap = document.getElementById('mapOverlay');
@@ -417,20 +600,30 @@ function wireUi() {
   const setPaused = (v) => {
     game.paused = v;
     pause.classList.toggle('show', v);
+    if (v) padMenu.open(); else padMenu.close();
     // iOS suspends the AudioContext when the app goes to the background and
     // does not hand it back on its own, so the world would come back silent.
     if (!v) audio.resume();
   };
+  setPausedRef = setPaused;
   document.getElementById('pauseBtn').addEventListener('click', () => setPaused(!game.paused));
   document.getElementById('resumeBtn').addEventListener('click', () => setPaused(false));
-  document.getElementById('mapBtn').addEventListener('click', () => {
-    game.mapOpen = !game.mapOpen;
-    bigMapWrap.classList.toggle('show', game.mapOpen);
-    if (game.mapOpen) hud.drawBigMap(player, game);
+  // Tap the minimap to open the full map -- it replaced a dedicated button.
+  document.getElementById('minimapWrap').addEventListener('click', () => {
+    setMapOpen(!game.mapOpen);
   });
-  bigMapWrap.addEventListener('click', () => {
-    game.mapOpen = false;
-    bigMapWrap.classList.remove('show');
+  document.getElementById('warpBtn').addEventListener('click', (e) => {
+    e.stopPropagation(); // the overlay's own click closes the map
+    setWarpArmed(!warpArmed);
+  });
+  bigMapWrap.addEventListener('click', (e) => {
+    // Armed, a tap on the map is a destination rather than "close". Disarmed,
+    // the old behaviour is untouched: tap anywhere to dismiss.
+    if (warpArmed) {
+      const w = hud.mapToWorld(e.clientX, e.clientY);
+      if (w) { warpTo(w.x, w.z); return; }
+    }
+    setMapOpen(false);
   });
   document.getElementById('radioBtn').addEventListener('click', () => {
     audio.init();
@@ -532,7 +725,15 @@ function frame(now) {
     accumFps = 0;
   }
 
+  // Poll and service the pad BEFORE the pause check: the pad that opened the
+  // menu is the one that has to be able to work it, and a paused frame returns
+  // early. takeLook() below then throws away any stick look accumulated while
+  // the menu was up, so the camera doesn't lurch on resume.
+  controls.poll(dt);
+  handlePadUi(dt);
+
   if (game.paused || game.mapOpen) {
+    controls.takeLook();
     draw(now);
     return;
   }

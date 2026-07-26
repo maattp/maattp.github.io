@@ -173,8 +173,11 @@ export class Player {
     const v = this.vehicle;
     if (!v) { this.onFoot = true; this.h.group.visible = true; return; }
     const steer = -input.x; // HEADING_SENSE: +steer raises heading, which is a left turn
-    const throttle = input.gas ? 1 : 0;
-    const brake = input.brake ? 1 : 0;
+    // Analogue where the input is analogue. vehicles.js has always taken a
+    // continuous throttle; a trigger just stops throwing away the resolution,
+    // which is most of what makes a pad feel different from a touch button.
+    const throttle = input.gasAmt != null ? input.gasAmt : (input.gas ? 1 : 0);
+    const brake = input.brakeAmt != null ? input.brakeAmt : (input.brake ? 1 : 0);
     v.update(dt, { throttle, brake, steer, handbrake: input.hand ? 1 : 0 });
     // Scraping a wall is many frames of contact, not many crashes. Debounced
     // like vehicle-vehicle damage: unthrottled, holding the accelerator into a

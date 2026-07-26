@@ -89,14 +89,34 @@
   #app[data-mode="drive"] .foot-only { display: none; }
   #app:not([data-mode="drive"]) .car-only { display: none; }
 
+  /* A pad takes the thumb controls off the screen -- they cover a third of it
+     and nothing is going to press them. The look zone stays: it costs nothing
+     and a phone on a stand is still a touchscreen. */
+  #app[data-pad="1"] #pad,
+  #app[data-pad="1"] #stickZone { display: none; }
+
+  /* The controller cursor. A cursor that cannot be seen is not a cursor: being
+     able to confirm without showing WHICH row is about to be pressed is the
+     whole bug this exists to avoid. */
+  .padfocus {
+    position: relative;
+    box-shadow: 0 0 0 2px rgba(126, 200, 240, 0.95), 0 0 16px rgba(126, 200, 240, 0.45);
+    border-radius: 10px;
+  }
+
   /* ---------- hud ---------- */
   #hud { position: absolute; inset: 0; pointer-events: none; z-index: 4; }
+  /* The minimap IS the map button -- #hud is pointer-events:none, so this has
+     to opt back in for the tap to land. */
   #minimapWrap {
     position: absolute; left: calc(12px + var(--safe-l)); top: calc(12px + var(--safe-t));
     width: 138px; height: 138px; border-radius: 50%;
     border: 2px solid rgba(255,255,255,0.3); overflow: hidden;
     box-shadow: 0 6px 22px rgba(0,0,0,0.45); background: #22282a;
+    pointer-events: auto; cursor: pointer; -webkit-tap-highlight-color: transparent;
+    touch-action: manipulation; transition: transform .06s;
   }
+  #minimapWrap:active { transform: scale(0.96); }
   #minimap { width: 100%; height: 100%; display: block; }
   #place {
     position: absolute; left: calc(12px + var(--safe-l)); top: calc(156px + var(--safe-t));
@@ -174,6 +194,24 @@
   }
   #mapOverlay.show, #pauseMenu.show { display: flex; }
   #bigMap { width: 100%; height: 100%; object-fit: contain; }
+
+  #mapBar {
+    position: absolute; left: 50%; transform: translateX(-50%);
+    bottom: calc(16px + var(--safe-b)); z-index: 31;
+    display: flex; align-items: center; gap: 12px;
+    background: rgba(16,22,28,0.82); border: 1px solid rgba(255,255,255,0.16);
+    border-radius: 999px; padding: 8px 16px 8px 8px;
+    backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
+  }
+  .mapchip {
+    -webkit-tap-highlight-color: transparent;
+    font: 700 12px/1 -apple-system, Helvetica, sans-serif; letter-spacing: .08em;
+    color: var(--ink); background: rgba(40,52,64,0.9);
+    border: 1px solid rgba(255,255,255,0.22); border-radius: 999px;
+    padding: 9px 15px; touch-action: manipulation;
+  }
+  .mapchip.on { background: rgba(70,180,120,0.55); border-color: rgba(150,240,190,0.7); }
+  #mapHint { font-size: 11px; opacity: .62; letter-spacing: .03em; white-space: nowrap; }
   #pauseCard {
     width: min(420px, 92%); background: rgba(20,27,34,0.94); border: 1px solid rgba(255,255,255,0.14);
     border-radius: 18px; padding: 20px; max-height: 92%; overflow-y: auto;
@@ -270,7 +308,6 @@
   <div id="hurt"></div>
 
   <div id="topBtns">
-    <button class="mini" id="mapBtn" aria-label="Map">🗺</button>
     <button class="mini" id="radioBtn" aria-label="Radio">📻</button>
     <button class="mini" id="pauseBtn" aria-label="Menu">☰</button>
   </div>
@@ -294,13 +331,23 @@
 
   <div id="wasted"><span>WASTED</span></div>
 
-  <div id="mapOverlay"><canvas id="bigMap"></canvas></div>
+  <div id="mapOverlay">
+    <canvas id="bigMap"></canvas>
+    <div id="mapBar">
+      <button id="warpBtn" class="mapchip">SET SPAWN</button>
+      <span id="mapHint">Tap the map to close</span>
+    </div>
+  </div>
 
   <div id="pauseMenu">
     <div id="pauseCard">
       <h2>AUTO</h2>
       <p class="sub">Seattle, Washington</p>
-      <div class="row"><span>Graphics</span><div class="seg">
+      <!-- Resume first: it is what the menu is opened to do, and burying it
+           under the settings meant scrolling to get back into the game. -->
+      <button class="cta" id="resumeBtn">Resume</button>
+      <button class="cta ghost" id="respawnBtn">Respawn at Harborview</button>
+      <div class="row" id="rowQuality"><span>Graphics</span><div class="seg">
         <button class="segbtn" data-quality="high">High</button>
         <button class="segbtn" data-quality="medium">Med</button>
         <button class="segbtn" data-quality="low">Low</button>
@@ -309,8 +356,6 @@
       <div class="row"><span>Radio</span><div class="toggle" id="setMusic"></div></div>
       <div class="row"><span>Sound effects</span><div class="toggle" id="setSound"></div></div>
       <div class="row"><span>Camera speed</span><input type="range" id="setSens" min="0.4" max="2.2" step="0.1" value="1"></div>
-      <button class="cta" id="resumeBtn">Resume</button>
-      <button class="cta ghost" id="respawnBtn">Respawn at Harborview</button>
       <p class="help">
         Left thumb steers and walks. Right side: drag to look, buttons to drive.
         Walk up to any car and hit ENTER to take it. Deliveries pay — the gold ring
@@ -329,7 +374,7 @@
     <div id="loadTrack"><div id="loadBar"></div></div>
     <div id="loadMsg">Starting up</div>
     <!-- Bumped once per change, in step with CACHE in sw.js. See CLAUDE.md. -->
-    <div id="build">v20</div>
+    <div id="build">v21</div>
     <div id="attrib">Map data © OpenStreetMap contributors (ODbL) · elevation USGS 3DEP</div>
   </div>
 

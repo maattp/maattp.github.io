@@ -382,6 +382,42 @@ export function* cityGenerator(md) {
       return out;
     },
 
+    /**
+     * A point on a road near (x,z), for dropping the player somewhere they
+     * picked off the map.
+     *
+     * Snaps to a graph node rather than to the raw tap: nodes sit ~50 m apart
+     * along every carriageway, so one is always on tarmac, whereas the tap
+     * itself is usually in the middle of a block. Ground-level nodes are
+     * preferred over decks -- landing on an unmarked freeway bridge is a worse
+     * surprise than walking 30 m -- but a deck is still better than refusing,
+     * which is what happens out on Harbor Island or the far shore.
+     */
+    respawnPointNear(x, z, maxR = 1200) {
+      let best = -1, bd = maxR * maxR;
+      let anyBest = -1, anyBd = maxR * maxR;
+      const c0 = Math.floor((x - maxR) / nCell), c1 = Math.floor((x + maxR) / nCell);
+      const d0 = Math.floor((z - maxR) / nCell), d1 = Math.floor((z + maxR) / nCell);
+      for (let cx = c0; cx <= c1; cx++) {
+        for (let cz = d0; cz <= d1; cz++) {
+          const l = nGrid.get(skey(cx, cz));
+          if (!l) continue;
+          for (const ni of l) {
+            const n = g.nodes[ni];
+            if (!n.e.length) continue;
+            const dd = (n.x - x) * (n.x - x) + (n.z - z) * (n.z - z);
+            if (dd < anyBd) { anyBd = dd; anyBest = ni; }
+            if (n.elev) continue;
+            if (dd < bd) { bd = dd; best = ni; }
+          }
+        }
+      }
+      const ni = best >= 0 ? best : anyBest;
+      if (ni < 0) return null;
+      const n = g.nodes[ni];
+      return { x: n.x, z: n.z, elev: !!n.elev, dist: Math.hypot(n.x - x, n.z - z) };
+    },
+
     nearestNode(x, z, maxR = 260) {
       let best = -1, bd = maxR * maxR;
       const c0 = Math.floor((x - maxR) / nCell), c1 = Math.floor((x + maxR) / nCell);
