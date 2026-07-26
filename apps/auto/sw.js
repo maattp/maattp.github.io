@@ -16,8 +16,16 @@
 // fetches by URL with cache:'no-cache' — WebKit rejects fetch() of a
 // navigation-mode Request, which would silently kill the refresh of './' on
 // iOS, and no-cache skips GitHub Pages' 10-minute heuristic.
-const CACHE = 'auto-v19';
+//
+// data/ (the imported Seattle: elevation, roads, buildings, places -- ~3.8 MB)
+// is cache-first WITHIN a version but deliberately not carried forward across a
+// CACHE bump. Stale-while-revalidate would re-fetch the whole map on every
+// launch to prove it hadn't changed, and PINNED is wrong too: these URLs carry
+// no version, so a bump has to be able to replace them. The map only changes
+// when tools/ re-imports it, and that comes with a bump.
+const CACHE = 'auto-v20';
 const PINNED = ['vendor/three-0.160.0.module.js'];
+const isMapData = (url) => new URL(url).pathname.includes('/apps/auto/data/');
 const SHELL = ['./', './index.html', './manifest.webmanifest',
   './icon-180.png', './icon-192.png', './icon-512.png'];
 
@@ -58,6 +66,20 @@ self.addEventListener('fetch', e => {
           if (res && res.ok) {
             const copy = res.clone();
             return caches.open(CACHE).then(c => c.put(url, copy)).then(() => res);
+          }
+          return res;
+        }))
+    );
+    return;
+  }
+
+  if (isMapData(url)) { // cache-first, no revalidation; a CACHE bump replaces it
+    e.respondWith(
+      caches.match(e.request, { ignoreSearch: true }).then(hit => hit ||
+        fetch(e.request).then(res => {
+          if (res && res.ok) {
+            const copy = res.clone();
+            return caches.open(CACHE).then(c => c.put(e.request, copy)).then(() => res);
           }
           return res;
         }))

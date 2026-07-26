@@ -15,42 +15,37 @@ export function buildMapCanvas(city) {
   const X = (x) => (x + G.MAP_HALF) * SCALE;
   const Z = (z) => (z + G.MAP_HALF) * SCALE;
 
-  g.fillStyle = '#2b3b30';
-  g.fillRect(0, 0, MAP_PX, MAP_PX);
-
-  // land: district blocks
-  g.fillStyle = '#4a4f46';
-  for (const d of G.DISTRICTS) {
-    g.beginPath();
-    d.poly.forEach((p, i) => (i ? g.lineTo(X(p[0]), Z(p[1])) : g.moveTo(X(p[0]), Z(p[1]))));
-    g.closePath();
-    g.fill();
+  // Ground, water and parks come straight off the imported masks. Drawing the
+  // raster and letting the canvas scale it up beats stroking polygons: the
+  // shoreline on the map is then the same shoreline the game drives on, pixel
+  // for pixel, instead of a second hand-drawn copy of it that can disagree.
+  const { water, green, n } = G.masks();
+  const src = document.createElement('canvas');
+  src.width = src.height = n;
+  const sg = src.getContext('2d');
+  const img = sg.createImageData(n, n);
+  const px = img.data;
+  const WATER_C = [29, 59, 82], PARK_C = [57, 96, 58];
+  const GRASS_C = [43, 59, 48], BUILT_C = [74, 79, 70];
+  for (let j = 0, i = 0, p = 0; j < n; j++) {
+    for (let k = 0; k < n; k++, i++, p += 4) {
+      let c;
+      if (water[i]) c = WATER_C;
+      else if (green[i]) c = PARK_C;
+      else {
+        const t = clamp(city.builtAt(-G.MAP_HALF + k * 10, -G.MAP_HALF + j * 10) / 0.2, 0, 1);
+        c = [
+          GRASS_C[0] + (BUILT_C[0] - GRASS_C[0]) * t,
+          GRASS_C[1] + (BUILT_C[1] - GRASS_C[1]) * t,
+          GRASS_C[2] + (BUILT_C[2] - GRASS_C[2]) * t,
+        ];
+      }
+      px[p] = c[0]; px[p + 1] = c[1]; px[p + 2] = c[2]; px[p + 3] = 255;
+    }
   }
-  // parks
-  g.fillStyle = '#39603a';
-  for (const p of G.PARKS) {
-    const px = p.p ? p.p[0] : p.x, pz = p.p ? p.p[1] : p.z;
-    g.save();
-    g.translate(X(px), Z(pz));
-    g.rotate(p.rot);
-    g.fillRect(-p.w / 2 * SCALE, -p.d / 2 * SCALE, p.w * SCALE, p.d * SCALE);
-    g.restore();
-  }
-  // water
-  g.fillStyle = '#1d3b52';
-  for (const w of G.WATER) {
-    g.beginPath();
-    w.poly.forEach((p, i) => (i ? g.lineTo(X(p[0]), Z(p[1])) : g.moveTo(X(p[0]), Z(p[1]))));
-    g.closePath();
-    g.fill();
-  }
-  g.fillStyle = '#4a4f46';
-  for (const isl of G.ISLANDS) {
-    g.beginPath();
-    isl.poly.forEach((p, i) => (i ? g.lineTo(X(p[0]), Z(p[1])) : g.moveTo(X(p[0]), Z(p[1]))));
-    g.closePath();
-    g.fill();
-  }
+  sg.putImageData(img, 0, 0);
+  g.imageSmoothingEnabled = true;
+  g.drawImage(src, 0, 0, MAP_PX, MAP_PX);
 
   // roads, thin classes first
   const order = ['res', 'st', 'ramp', 'art', 'hwy'];
