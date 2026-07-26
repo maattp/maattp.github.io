@@ -155,6 +155,14 @@
   .go.alt { background:linear-gradient(#26292c,#15171a); border-color:#42484d; color:#c9d0ca;
     padding:12px 30px; font-size:14px; letter-spacing:2px; box-shadow:none; }
   .row { display:flex; gap:12px; flex-wrap:wrap; justify-content:center; pointer-events:auto; }
+  /* Menu focus ring. A controller gave you actions but no cursor, so there was
+     no way to see what A was about to do. Shown only for pad/keyboard — a touch
+     player is pointing at the thing they want and a ring is just noise. */
+  .go.focus { outline:2px solid #ffd257; outline-offset:3px;
+    box-shadow:0 0 0 4px rgba(255,210,87,.16), 0 8px 26px rgba(140,20,0,.34);
+    transform:translateY(-1px); }
+  .go.alt.focus { outline-color:#e8e4dc; box-shadow:0 0 0 4px rgba(232,228,220,.14); }
+  .go.focus::after { content:''; position:absolute; }
   .stat { font-size:13px; color:#8b938c; letter-spacing:2px; }
   .stat b { color:#ffd257; font-size:22px; display:block; }
   .grid2 { display:flex; gap:30px; }
@@ -196,6 +204,13 @@
   #rot h3 { font-family:Impact,Haettenschweiler,"Arial Narrow",sans-serif; font-size:30px;
     letter-spacing:4px; color:#a8180c; }
   #rot p { font-size:13px; color:#8b938c; letter-spacing:1px; }
+  /* The menu screens are deliberately translucent so the bunker shows through
+     behind them — but the HUD was showing through too, so the title screen
+     carried a live points counter, ammo, crosshair and whatever toast happened
+     to be mid-fade. Everything diegetic stays; everything HUD goes. */
+  body.inmenu #ui, body.inmenu #cross, body.inmenu #hit, body.inmenu #reloadHint,
+  body.inmenu #vig, body.inmenu #flash, body.inmenu #rndBig, body.inmenu #banner,
+  body.inmenu #downMsg, body.inmenu #touch { display:none !important; }
   #err { position:fixed; left:0; right:0; bottom:0; z-index:40; background:#300; color:#fbb; font-size:11px;
     padding:8px 12px; display:none; max-height:38vh; overflow:auto; white-space:pre-wrap; font-family:monospace; }
 </style>
@@ -335,7 +350,7 @@ import * as THREE from 'three';
      4  map data + level build    9  FX, HUD, loop, debug harness
    ============================================================================ */
 
-const VERSION = 2;                    // bump once per PR (shown bottom-right)
+const VERSION = 3;                    // bump once per PR (shown bottom-right)
 
 // ---------------------------------------------------------------- 0. config
 const CFG = {
@@ -533,6 +548,33 @@ const Snd = (() => {
       o.start(); lfo.start(); o.stop(now() + dur + 0.05); lfo.stop(now() + dur + 0.05);
     },
     hitFlesh() { noise(0.09, 0.24, 'lowpass', 700, 200, 0.8); },
+    // hellhound: a snarl rather than a moan — higher, rougher, much shorter
+    growl(pos, listener, yaw) {
+      if (!ready) return;
+      const p = place(0.34, pos, listener, yaw, 30);
+      if (p.g < 0.012) return;
+      const f = rand(120, 210);
+      const o = ctx.createOscillator(); o.type = 'sawtooth'; o.frequency.value = f;
+      const lfo = ctx.createOscillator(); lfo.type = 'square'; lfo.frequency.value = rand(18, 34);
+      const lg = ctx.createGain(); lg.gain.value = f * 0.22;
+      lfo.connect(lg); lg.connect(o.frequency);
+      const bp = ctx.createBiquadFilter(); bp.type = 'bandpass';
+      bp.frequency.setValueAtTime(rand(700, 1200), now());
+      bp.frequency.exponentialRampToValueAtTime(rand(300, 600), now() + 0.4);
+      bp.Q.value = 3;
+      const g = ctx.createGain();
+      const dur = rand(0.28, 0.6);
+      g.gain.setValueAtTime(0.0001, now());
+      g.gain.exponentialRampToValueAtTime(p.g, now() + 0.05);
+      g.gain.exponentialRampToValueAtTime(0.0008, now() + dur);
+      o.connect(bp); bp.connect(g); g.connect(master);
+      o.start(); lfo.start(); o.stop(now() + dur + 0.05); lfo.stop(now() + dur + 0.05);
+    },
+    dogRound() {
+      if (!ready) return;
+      noise(2.2, 0.18, 'lowpass', 800, 160, 0.5);
+      [0, 220, 470, 700].forEach((ms, i) => setTimeout(() => tone('sawtooth', 150 - i * 14, 70, 0.5, 0.14), ms));
+    },
     headPop() { noise(0.2, 0.42, 'lowpass', 900, 160, 0.7); tone('sine', 160, 50, 0.2, 0.22); },
     zombieHit() { noise(0.2, 0.5, 'lowpass', 500, 120, 0.7); tone('sine', 70, 40, 0.3, 0.4); },
 
@@ -637,11 +679,12 @@ const Input = (() => {
     fire: false, ads: false, sprint: false,
     // edge-triggered actions, consumed by the reader
     reload: false, knife: false, nade: false, swap: false, use: false, pause: false,
+    menuNav: 0,            // -1 up / +1 down, edge-triggered, for menu cursors
     useHeld: false,        // level (for holding to repair a barricade)
     hasPad: false, mode: 'touch',
   };
   const keys = new Set();
-  let padIdx = null, prevPad = [];
+  let padIdx = null, prevPad = [], prevNav = 0;
   const LOOK_TOUCH = 0.0038, LOOK_MOUSE = 0.0022, LOOK_PAD = 2.6;
 
   // ---- touch ----------------------------------------------------------
@@ -737,6 +780,8 @@ const Input = (() => {
     if (KEY[e.code]) { st[KEY[e.code]] = true; if (e.code === 'KeyF') st.useHeld = true; }
     if (e.code === 'Escape') st.pause = true;
     if (e.code === 'Enter' || e.code === 'Space') st.use = true;   // menu confirm
+    if (e.code === 'ArrowDown') st.menuNav = 1;
+    if (e.code === 'ArrowUp') st.menuNav = -1;
     if (e.code === 'KeyM') Snd.toggleMute();
     if (['KeyW','KeyA','KeyS','KeyD','Space','KeyR','KeyF'].includes(e.code)) e.preventDefault();
   });
@@ -778,6 +823,11 @@ const Input = (() => {
     st.lookY += ly * Math.abs(ly) * LOOK_PAD * dt;
     const b = gp.buttons;
     const down = i => !!(b[i] && (b[i].pressed || b[i].value > 0.4));
+    // buttons count as pad input too — otherwise a d-pad-only player is still
+    // treated as a touch player and keeps the on-screen thumb controls
+    for (let i = 0; i < b.length; i++) {
+      if (b[i] && (b[i].pressed || b[i].value > 0.4)) { st.mode = 'pad'; touchLayer.classList.remove('on'); break; }
+    }
     st.fire = down(PAD.fire);
     st.ads = down(PAD.ads);
     for (const k of ['use', 'knife', 'reload', 'swap', 'nade', 'pause']) {
@@ -786,6 +836,11 @@ const Input = (() => {
       if (k === 'use') st.useHeld = on;
     }
     if (down(PAD.sprint) && !prevPad[PAD.sprint]) st.sprint = !st.sprint;
+    // d-pad or left stick drives a menu cursor; edge-triggered so a held
+    // direction moves one item, not forty
+    const nav = (down(13) || my < -0.55) ? 1 : ((down(12) || my > 0.55) ? -1 : 0);
+    if (nav && !prevNav) st.menuNav = nav;
+    prevNav = nav;
     prevPad = b.map(x => x.pressed || x.value > 0.4);
   }
 
@@ -804,8 +859,10 @@ const Input = (() => {
     },
     // consume() clears the edge flags — call once per frame, after reading
     consume() {
-      const out = { reload: st.reload, knife: st.knife, nade: st.nade, swap: st.swap, use: st.use, pause: st.pause };
+      const out = { reload: st.reload, knife: st.knife, nade: st.nade, swap: st.swap,
+                    use: st.use, pause: st.pause, menuNav: st.menuNav };
       st.reload = st.knife = st.nade = st.swap = st.use = st.pause = false;
+      st.menuNav = 0;
       return out;
     },
     takeLook() { const x = st.lookX, y = st.lookY; st.lookX = 0; st.lookY = 0; return [x, y]; },
@@ -1075,6 +1132,7 @@ function phong(color, spec, shin) {
             'a'-'h' wall-mounted purchase (see WALLBUYS)
             'J' 'C' 'T' 'Q' perk machine (see PERKS, wall-mounted)
             'M' mystery box location (floor; one is active at a time)
+            'K' Pack-a-Punch (wall-mounted, needs power)
             'X' power switch          'S' player spawn
    ========================================================================= */
 const MAP = [
@@ -1086,7 +1144,7 @@ const MAP = [
   '  #.............M...#   #...M............#  ',
   '  W.................#   #................W  ',
   '  #.................#   #................#  ',
-  '  #.................#   X................g  ',
+  '  #.................K   X................g  ',
   '  #.................#   #................#  ',
   '  #.................#   #................#  ',
   '  W.................#   T................W  ',
@@ -1206,6 +1264,19 @@ const POWERUPS = {
 };
 const DROP = { chance: 0.026, perRound: 4, minGap: 12, life: 26, radius: 1.7 };
 
+/* Pack-a-Punch. The upgrade is expressed as MULTIPLIERS applied on top of the
+   base weapon rather than a second weapon table, and resolved through `spec()`
+   at the point of use — the same discipline the perks use. Every consumer of
+   weapon stats (damage, magazine, reserve, reload, the HUD name) therefore picks
+   the upgrade up for free, and a new weapon needs no Pack-a-Punch entry beyond
+   an optional name. */
+const PAP = { cost: 5000, dmgMul: 2.6, magMul: 1.5, resMul: 1.5, insert: 4.5, grab: 12 };
+const PAP_NAMES = {
+  m1911: 'MUSTANG', kar98k: 'ARMAGEDDON', m14: 'MNESIA', mp40: 'THE AFTERBURNER',
+  thomp: 'GIBS-O-MATIC', stg: 'SPATZ-447+', trench: 'THE GUT SHREDDER',
+  bar: 'THE WIDOW MAKER', raygun: 'PORTER\'S X2 RAY GUN',
+};
+
 const BOX = {
   cost: 950,
   spin: 3.6,                       // seconds the weapon cycles above the box
@@ -1280,6 +1351,7 @@ const Level = (() => {
   const at = (c, r) => r * MW + c;
 
   const windows = [], barriers = {}, wallbuys = [], lights = [], perkMachines = [], boxSpots = [];
+  let papMachine = null;
   let powerSwitch = null, spawnPos = new THREE.Vector3();
   const groups = { planks: null, barrier: {}, signs: [] };
 
@@ -1350,6 +1422,14 @@ const Level = (() => {
         use: new THREE.Vector3(wx(c) + inD[0] * T * 1.05, 0, wz(r) + inD[1] * T * 1.05),
         nx: inD[0], nz: inD[1],
       });
+    } else if (k === 'K') {
+      const d = faceDir(c, r), inD = DIRS[d];
+      papMachine = {
+        c, r, dir: d, zone: zoneOf[at(c + inD[0], r + inD[1])],
+        pos: new THREE.Vector3(wx(c) + inD[0] * T * 0.46, 0, wz(r) + inD[1] * T * 0.46),
+        use: new THREE.Vector3(wx(c) + inD[0] * T * 1.05, 0, wz(r) + inD[1] * T * 1.05),
+        nx: inD[0], nz: inD[1],
+      };
     } else if (k === 'M') {
       boxSpots.push({ c, r, zone: zoneOf[at(c, r)], pos: new THREE.Vector3(wx(c), 0, wz(r)) });
     } else if (k === 'X') {
@@ -1909,6 +1989,38 @@ const Level = (() => {
     solid[at(pm.c + pm.nx, pm.r + pm.nz)] = 1;
   }
 
+  /* ---- Pack-a-Punch ------------------------------------------------------
+     A heavier, wider cabinet than a perk machine, with a slot the weapon sinks
+     into and a hot glow that only comes up with the power. */
+  const papGroup = new THREE.Group(); scene.add(papGroup);
+  if (papMachine) {
+    const bb = new Builder();
+    bb.box(0, 1.00, 0, 1.24, 2.00, 0.62, 0.12, 0.11, 0.10);
+    bb.box(0, 2.06, 0, 1.34, 0.12, 0.70, 0.20, 0.13, 0.06);
+    bb.box(0, 0.07, 0, 1.34, 0.14, 0.70, 0.10, 0.09, 0.09);
+    bb.box(0, 1.02, 0.30, 0.90, 0.26, 0.10, 0.05, 0.05, 0.05);   // the slot
+    for (const sx of [-1, 1]) bb.box(sx * 0.56, 1.30, 0.22, 0.10, 1.10, 0.16, 0.24, 0.16, 0.05);
+    papGroup.add(new THREE.Mesh(bake(bb.geo()), siteMat(phong(0xffffff, 0x4a4038, 30), SURF.metal, 'pap')));
+    const papFace = new THREE.Mesh(new THREE.PlaneGeometry(0.86, 0.44),
+      new THREE.MeshBasicMaterial({ map: signTexture('PACK-A-PUNCH', '◆ ' + PAP.cost, '#ff9a2e'), toneMapped: false }));
+    papFace.position.set(0, 1.62, 0.32);
+    papFace.material.color.setScalar(0.20);
+    papGroup.add(papFace);
+    const papGlow = new THREE.Mesh(new THREE.PlaneGeometry(1.0, 0.34),
+      new THREE.MeshBasicMaterial({ color: 0xff8a1e, transparent: true, opacity: 0, blending: THREE.AdditiveBlending, depthWrite: false, toneMapped: false }));
+    papGlow.position.set(0, 1.02, 0.33);
+    papGroup.add(papGlow);
+    const papSlot = new THREE.Group();       // the weapon being worked on
+    papGroup.add(papSlot);
+    const papLight = new THREE.PointLight(0xff8a1e, 0, 8, 1.4);
+    papLight.position.set(0, 1.2, 0.5);
+    papGroup.add(papLight);
+    papGroup.position.copy(papMachine.pos);
+    papGroup.rotation.y = Math.atan2(papMachine.nx, papMachine.nz);
+    papMachine.face = papFace; papMachine.glow = papGlow; papMachine.slot = papSlot; papMachine.light = papLight;
+    solid[at(papMachine.c + papMachine.nx, papMachine.r + papMachine.nz)] = 1;
+  }
+
   /* ---- mystery box ------------------------------------------------------
      One box exists at a time, at one of the authored 'M' spots. The lid hinges
      open, a weapon cycles above it, and after a random number of uses the bear
@@ -2144,7 +2256,7 @@ const Level = (() => {
   return {
     T, OX, OZ, MW, MH, wx, wz, cx, cz, at, solid, isFloor, zoneOf, dist,
     windows, barriers, wallbuys, powerSwitch, spawnPos, lights, perkMachines, boxSpots,
-    boxGroup, boxLid, boxGlow, boxPrize, teddy, boxLight, perkGroup,
+    boxGroup, boxLid, boxGlow, boxPrize, teddy, boxLight, perkGroup, papMachine, papGroup,
     ZONES, WIN_Y0, WIN_Y1,
     meshes, propMesh, moon, lamp, flash, sky, swGroup, plankMesh, refreshPlanks, PLANKS,
     rebuildNav, flowDir, sampleDist, reachable, collide, rayWall, openBarrier, setPower,
@@ -2487,12 +2599,23 @@ const ViewModel = (() => {
     thomp: 0.062, stg: 0.068, trench: 0.074, bar: 0.068, raygun: 0.042,
   };
   const models = {};
-  function get(k) {
-    if (models[k]) return models[k];
+  /* `pap` builds a SEPARATE model with cloned, tinted materials. Tinting the
+     shared ones in place would recolour every weapon that uses them (they are
+     shared by design), and would stay tinted after the upgraded gun was gone. */
+  function get(k, pap) {
+    const id = pap ? k + '#pap' : k;
+    if (models[id]) return models[id];
     const g = new THREE.Group();
     (BUILD[k] || BUILD.m1911)(g);
+    if (pap) g.traverse(o => {
+      if (!o.isMesh) return;
+      o.material = o.material.clone();
+      o.material.color.multiplyScalar(1.1);
+      o.material.emissive = new THREE.Color(0x2e1000);
+      o.material.specular = new THREE.Color(0xffb060);
+    });
     g.visible = false; viewScene.add(g);
-    models[k] = g; return g;
+    models[id] = g; return g;
   }
   // knife and grenade share the viewmodel slot during their animations
   const knifeG = new THREE.Group();
@@ -2544,7 +2667,26 @@ const Player = (() => {
     shake: 0, hitFlash: 0, dmgDir: 0,
   };
   const gun = () => P.guns[P.slot];
-  const spec = () => WEAPONS[gun().key];
+  /* Pack-a-Punch is multipliers on the base weapon, resolved HERE. Because every
+     consumer already goes through spec(), damage, magazine, reserve, reload and
+     the HUD name all pick the upgrade up with no further changes. */
+  const PAP_CACHE = {};
+  function papSpec(key) {
+    if (PAP_CACHE[key]) return PAP_CACHE[key];
+    const w = WEAPONS[key];
+    const u = Object.assign({}, w, {
+      name: PAP_NAMES[key] || (w.name + ' +'),
+      dmg: Math.round(w.dmg * PAP.dmgMul),
+      mag: Math.round(w.mag * PAP.magMul),
+      res: Math.round(w.res * PAP.resMul),
+      pap: true,
+    });
+    if (w.splashDmg) u.splashDmg = Math.round(w.splashDmg * PAP.dmgMul);
+    PAP_CACHE[key] = u;
+    return u;
+  }
+  const specOf = g => (g.pap ? papSpec(g.key) : WEAPONS[g.key]);
+  const spec = () => specOf(gun());
   // Perks are read at the point of use rather than baked into player state, so
   // buying or losing one takes effect immediately with no bookkeeping.
   const maxHp = () => (Perks.has('jugg') ? JUGG_HP : CFG.hp);
@@ -2569,12 +2711,13 @@ const Player = (() => {
     const w = WEAPONS[key];
     const have = P.guns.findIndex(g => g.key === key);
     if (have >= 0) {                                     // already owned -> ammo refill
-      P.guns[have].res = w.res;
-      P.guns[have].ammo = Math.max(P.guns[have].ammo, w.mag);
+      const ew = specOf(P.guns[have]);                   // upgraded guns refill deeper
+      P.guns[have].res = ew.res;
+      P.guns[have].ammo = Math.max(P.guns[have].ammo, ew.mag);
       P.slot = have;
       return 'ammo';
     }
-    const entry = { key, ammo: w.mag, res: w.res };
+    const entry = { key, ammo: w.mag, res: w.res, pap: false };
     if (P.guns.length < 2) { P.guns.push(entry); P.slot = P.guns.length - 1; }
     else { P.guns[P.slot] = entry; }                     // classic: replaces what you're holding
     cancelActions();
@@ -2912,7 +3055,7 @@ const Player = (() => {
     let g;
     if (P.knifeT > 0) { g = vm.knifeG; g.visible = true; }
     else if (P.nadeT > 0) { g = vm.nadeG; g.visible = true; }
-    else { g = vm.get(gun().key); g.visible = true; }
+    else { g = vm.get(gun().key, gun().pap); g.visible = true; }
     const a = P.ads;
     // The gun is positioned as a FRACTION OF THE VISIBLE FRUSTUM at its own
     // depth, not in fixed metres — fixed offsets authored for one aspect put it
@@ -2969,7 +3112,7 @@ const Player = (() => {
   }
 
   return {
-    P, reset, update, applyCamera, giveWeapon, spend, addPoints, hurt, forward, eyePos, maxHp,
+    P, reset, update, applyCamera, giveWeapon, spend, addPoints, hurt, forward, eyePos, maxHp, specOf, papSpec,
     gun, spec, nades,
     clearNades() { for (const n of nades) { scene.remove(n.mesh); } nades.length = 0; },
   };
@@ -3159,6 +3302,15 @@ const Zombies = (() => {
     m.customProgramCacheKey = () => 'zskin' + color + '_' + NS;
     return m;
   }
+  function mkN(geo, mat, cap, per) {
+    const m = new THREE.InstancedMesh(geo, mat, cap * per);
+    m.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+    m.frustumCulled = false;
+    m.castShadow = true; m.receiveShadow = true;
+    m.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(cap * per * 3), 3);
+    scene.add(m);
+    return m;
+  }
   function mk(geo, mat, per) {
     const m = new THREE.InstancedMesh(geo, mat, CAP * per);
     m.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
@@ -3268,6 +3420,15 @@ const Zombies = (() => {
      comfortably faster than one zombie can strip it. Holding a window is now a
      real option instead of a losing race. */
   const tearTime = r => clamp(2.25 - r * 0.05, 0.9, 2.25);
+  // hellhounds: fewer, far faster, less health, and they bite harder
+  const KIND = {
+    zombie: { lunge: 1.45, wind: 0.42, reach: 1.75, dmg: 34, cycle: 1.00 },
+    dog:    { lunge: 1.35, wind: 0.26, reach: 1.70, dmg: 46, cycle: 0.78 },
+  };
+  const isDogRound = r => r >= 5 && r % 5 === 0;
+  const dogCount = r => Math.min(6 + Math.floor(r / 5) * 2, 13);
+  const dogHealth = r => Math.round(healthFor(r) * 0.52);
+  const dogSpeed = r => clamp(4.3 + r * 0.05, 4.3, 6.4) * rand(0.9, 1.1);
   // slower early so a wave arrives as a wave, not a stream you can never turn from
   const spawnGap = r => clamp(2.7 - r * 0.105, 0.32, 2.7);
 
@@ -3304,6 +3465,47 @@ const Zombies = (() => {
     return z;
   }
 
+  /* Hellhounds ignore the barricades entirely — they come up out of the floor
+     wherever you are not, which is the whole reason a dog round feels different
+     from a zombie round even though the AI underneath is the same. */
+  function spawnDog(round) {
+    if (list.length >= CAP) return null;
+    const L = Level;
+    let best = null, bestD = -1;
+    for (let tries = 0; tries < 60; tries++) {
+      const c = 1 + Math.floor(Math.random() * (L.MW - 2));
+      const r = 1 + Math.floor(Math.random() * (L.MH - 2));
+      if (!L.isFloor[L.at(c, r)] || L.solid[L.at(c, r)]) continue;
+      const zn = L.zoneOf[L.at(c, r)];
+      if (!zn || !L.ZONES[zn].open) continue;
+      const x = L.wx(c), zz = L.wz(r);
+      const d = Math.hypot(x - Player.P.pos.x, zz - Player.P.pos.z);
+      if (d < 6) continue;
+      if (!(L.sampleDist(x, zz) < 1e5)) continue;         // must be able to reach you
+      if (d > bestD) { bestD = d; best = [x, zz]; }
+      if (bestD > 12) break;
+    }
+    if (!best) return null;
+    const z = {
+      kind: 'dog',
+      pos: new THREE.Vector3(best[0], 0, best[1]),
+      vel: new THREE.Vector3(), fx: 0, fz: 1,
+      hp: dogHealth(round), maxHp: dogHealth(round), speed: dogSpeed(round),
+      state: 'hunt', win: null, t: 0, ph: Math.random() * TAU, style: 0,
+      scale: rand(0.94, 1.08),
+      skin: [rand(0.16, 0.26), rand(0.11, 0.17), rand(0.09, 0.14)],
+      cloth: [0.1, 0.1, 0.1], pants: [0.1, 0.1, 0.1],
+      headless: false, dead: false, dieT: 0, fall: 0, fallDir: 1,
+      attackT: 0, groanT: rand(0.5, 3), lastHit: 0,
+      slot: -1, inside: true, climbT: 0, lean: 0, hurtFlash: 0,
+      stuckT: 0, checkT: rand(0.4, 1.2), ckD: 1e6, moveSpeed: 0,
+    };
+    FX.dust(z.pos.x, 0.3, z.pos.z, 16, 0.7);
+    Snd.growl(z.pos, Player.P.pos, Player.P.yaw);
+    list.push(z);
+    return z;
+  }
+
   function damage(z, amount, head, dir) {
     if (z.dead) return { killed: false };
     z.hp -= amount;
@@ -3315,8 +3517,9 @@ const Zombies = (() => {
       z.dead = true; z.dieT = 0;
       z.fallDir = head ? 1 : (Math.random() < 0.6 ? 1 : -1);
       if (dir) { z.vel.set(dir.x * 1.6, 0, dir.z * 1.6); }
-      if (head) { z.headless = true; Snd.headPop(); FX.gore(z.pos.x, RIG.headY * z.scale, z.pos.z, true); }
-      else FX.gore(z.pos.x, RIG.waistY * z.scale, z.pos.z, false);
+      const hgt = z.kind === 'dog' ? DRIG.bodyY : RIG.waistY;
+      if (head) { z.headless = true; Snd.headPop(); FX.gore(z.pos.x, (z.kind === 'dog' ? DRIG.headY : RIG.headY) * z.scale, z.pos.z, z.kind !== 'dog'); }
+      else FX.gore(z.pos.x, hgt * z.scale, z.pos.z, false);
       if (z.win && z.win.claimed === z) z.win.claimed = 0;
       Round.onKill();
       if (!z.noDrop) Drops.maybeDrop(z.pos.x, z.pos.z);
@@ -3361,9 +3564,14 @@ const Zombies = (() => {
     let best = null, bestT = maxD;
     for (const z of list) {
       if (z.dead) continue;
-      const hy = RIG.headY * z.scale, hr = RIG.headR * z.scale;
+      const dog = z.kind === 'dog';
+      // a dog's head is out in front of its body, not on top of it
+      const hy = (dog ? DRIG.headY : RIG.headY) * z.scale;
+      const hr = (dog ? DRIG.headR : RIG.headR) * z.scale;
+      const hfx = dog ? z.fx * DRIG.headFwd * z.scale : 0;
+      const hfz = dog ? z.fz * DRIG.headFwd * z.scale : 0;
       // sphere
-      const ox = origin.x - z.pos.x, oy = origin.y - (z.pos.y + hy), oz = origin.z - z.pos.z;
+      const ox = origin.x - (z.pos.x + hfx), oy = origin.y - (z.pos.y + hy), oz = origin.z - (z.pos.z + hfz);
       const b = ox * dir.x + oy * dir.y + oz * dir.z;
       const c = ox * ox + oy * oy + oz * oz - hr * hr;
       const disc = b * b - c;
@@ -3373,7 +3581,7 @@ const Zombies = (() => {
       }
       // vertical capsule from 0.5 to 1.42 (radius 0.30) — solved in 2D since
       // the axis is world-up
-      const r2 = RIG.bodyR * z.scale;
+      const r2 = (dog ? DRIG.bodyR : RIG.bodyR) * z.scale;
       const dx = origin.x - z.pos.x, dz = origin.z - z.pos.z;
       const A = dir.x * dir.x + dir.z * dir.z;
       if (A > 1e-6) {
@@ -3384,7 +3592,9 @@ const Zombies = (() => {
           const t = (-Bq - Math.sqrt(dq)) / (2 * A);
           if (t > 0.1 && t < bestT) {
             const y = origin.y + dir.y * t - z.pos.y;
-            if (y > RIG.bodyY0 * z.scale && y < RIG.bodyY1 * z.scale) { bestT = t; best = { z, head: false, t }; }
+            const y0 = (dog ? DRIG.bodyY0 : RIG.bodyY0) * z.scale;
+            const y1 = (dog ? DRIG.bodyY1 : RIG.bodyY1) * z.scale;
+            if (y > y0 && y < y1) { bestT = t; best = { z, head: false, t }; }
           }
         }
       }
@@ -3456,7 +3666,10 @@ const Zombies = (() => {
 
       // ambient groaning, distance-attenuated
       z.groanT -= dt;
-      if (z.groanT <= 0) { z.groanT = rand(3.5, 11); Snd.groan(z.pos, P.pos, P.yaw); }
+      if (z.groanT <= 0) {
+        if (z.kind === 'dog') { z.groanT = rand(1.4, 4.5); Snd.growl(z.pos, P.pos, P.yaw); }
+        else { z.groanT = rand(3.5, 11); Snd.groan(z.pos, P.pos, P.yaw); }
+      }
 
       let moveX = 0, moveZ = 0, speed = z.speed;
 
@@ -3513,7 +3726,7 @@ const Zombies = (() => {
         case 'hunt': {
           const dxp = P.pos.x - z.pos.x, dzp = P.pos.z - z.pos.z;
           const dp = Math.hypot(dxp, dzp);
-          if (dp < 1.45) { z.state = 'attack'; z.attackT = 0; break; }
+          if (dp < KIND[z.kind || 'zombie'].lunge) { z.state = 'attack'; z.attackT = 0; break; }
           // Beeline only with true line of sight. This uses losBlocked, not the
           // bullet ray: a bullet passes through a window opening, a body does
           // not, and trusting the bullet ray here walked zombies face-first
@@ -3533,11 +3746,12 @@ const Zombies = (() => {
           const dxp = P.pos.x - z.pos.x, dzp = P.pos.z - z.pos.z;
           const dp = Math.hypot(dxp, dzp);
           z.fx = dxp / (dp || 1); z.fz = dzp / (dp || 1);
-          if (z.attackT > 0.42 && !z.swung) {
+          const K = KIND[z.kind || 'zombie'];
+          if (z.attackT > K.wind && !z.swung) {
             z.swung = true;
-            if (dp < 1.75 && !P.dead) Player.hurt(34, z.pos);
+            if (dp < K.reach && !P.dead) Player.hurt(K.dmg, z.pos);
           }
-          if (z.attackT > 1.0) { z.swung = false; z.attackT = 0; if (dp > 1.7) z.state = 'hunt'; }
+          if (z.attackT > K.cycle) { z.swung = false; z.attackT = 0; if (dp > K.reach - 0.05) z.state = 'hunt'; }
           break;
         }
       }
@@ -3593,11 +3807,177 @@ const Zombies = (() => {
     render();
   }
 
+  /* ------------------------------------------------------------------
+     HELLHOUNDS
+
+     A second enemy sharing the zombie list (`kind: 'dog'`) rather than a
+     parallel system: damage, the ray tests, the flow field, the round counters
+     and the drop rolls are all already written and correct, and duplicating
+     them for a second body type is how the two drift apart. Only the parts that
+     genuinely differ are branched — the model, the gait, the hit shape, and a
+     spawn that ignores windows entirely.
+     ------------------------------------------------------------------ */
+  const DCAP = 14;
+  const G_DOG_BODY = (() => {
+    const g = loft([
+      { y: -0.42, rx: 0.11, rz: 0.13, c: [0.72, 0.72, 0.72] },   // rump
+      { y: -0.30, rx: 0.15, rz: 0.17, c: [1, 1, 1] },
+      { y: -0.05, rx: 0.155, rz: 0.175, c: [1, 1, 1] },          // barrel
+      { y: 0.18, rx: 0.145, rz: 0.185, c: [1, 1, 1] },           // chest, deeper
+      { y: 0.34, rx: 0.105, rz: 0.135, c: [0.9, 0.9, 0.9] },
+      { y: 0.44, rx: 0.075, rz: 0.088, c: [0.84, 0.84, 0.84] },  // neck
+    ], 11);
+    g.rotateX(Math.PI / 2);                                       // spine runs +z
+    return g;
+  })();
+  const dogHeadShape = (th, s, st) => {
+    const f = Math.sin(th);
+    let k = 1;
+    if (st.snout) k *= 1 + st.snout * Math.pow(Math.max(0, f), 2);
+    if (st.brow) k *= 1 + st.brow * Math.pow(Math.max(0, f), 3);
+    return k;
+  };
+  const G_DOG_HEAD = (() => {
+    const g = loft([
+      { y: -0.10, rx: 0.058, rz: 0.062, c: [0.8, 0.8, 0.8] },
+      { y: -0.04, rx: 0.072, rz: 0.078, brow: 0.10, c: [0.95, 0.95, 0.95] },
+      { y: 0.02, rx: 0.070, rz: 0.074, brow: 0.12, c: [1, 1, 1] },
+      { y: 0.08, rx: 0.050, rz: 0.052, snout: 0.30, c: [0.9, 0.9, 0.9] },
+      { y: 0.15, rx: 0.036, rz: 0.038, snout: 0.42, c: [0.7, 0.68, 0.66] },
+      { y: 0.19, rx: 0.026, rz: 0.026, snout: 0.30, c: [0.4, 0.36, 0.34] },   // nose
+    ], 10, dogHeadShape);
+    g.rotateX(Math.PI / 2);                                       // muzzle faces +z
+    return g;
+  })();
+  const G_DOG_EAR = loft([
+    { y: 0, rx: 0.030, rz: 0.014, c: [0.8, 0.8, 0.8] },
+    { y: 0.05, rx: 0.020, rz: 0.010, c: [0.6, 0.6, 0.6] },
+    { y: 0.085, rx: 0.006, rz: 0.004, c: [0.45, 0.42, 0.4] },
+  ], 7);
+  const G_DOG_LEG = loft([
+    { y: 0.00, rx: 1.15, rz: 1.15, c: [0.9, 0.9, 0.9] },
+    { y: 0.45, rx: 0.85, rz: 0.85, c: [1, 1, 1] },
+    { y: 1.00, rx: 0.55, rz: 0.55, c: [0.75, 0.75, 0.75] },
+  ], 8);
+  const G_DOG_TAIL = loft([
+    { y: 0.00, rx: 0.9, rz: 0.9, c: [0.9, 0.9, 0.9] },
+    { y: 1.00, rx: 0.30, rz: 0.30, c: [0.6, 0.6, 0.6] },
+  ], 7);
+
+  const DRIG = {
+    shoulderY: 0.60, hipY: 0.58, bodyY: 0.62,
+    headY: 0.70, headFwd: 0.46, headR: 0.13,
+    legUp: 0.29, legLo: 0.29, legR: 0.042,
+    frontZ: 0.24, backZ: -0.26, legX: 0.115,
+    bodyR: 0.34, bodyY0: 0.20, bodyY1: 0.98,
+  };
+  const matDog = skinMat(0xffffff, 0x241c16, 16, 14);
+  const MD = {
+    body: mkN(G_DOG_BODY, matDog, DCAP, 1),
+    head: mkN(G_DOG_HEAD, matDog, DCAP, 1),
+    ear:  mkN(G_DOG_EAR, matDog, DCAP, 2),
+    leg:  mkN(G_DOG_LEG, matDog, DCAP, 8),
+    tail: mkN(G_DOG_TAIL, matDog, DCAP, 1),
+  };
+  const dogEyes = new THREE.InstancedMesh(G_EYE,
+    new THREE.MeshBasicMaterial({ vertexColors: true, blending: THREE.AdditiveBlending, transparent: true, depthWrite: false, toneMapped: false }), DCAP * 2);
+  dogEyes.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+  dogEyes.frustumCulled = false;
+  dogEyes.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(DCAP * 2 * 3), 3);
+  scene.add(dogEyes);
+  const ALLD = [MD.body, MD.head, MD.ear, MD.leg, MD.tail, dogEyes];
+
+  const dslots = []; for (let i = DCAP - 1; i >= 0; i--) dslots.push(i);
+  function hideDog(s) {
+    MD.body.setMatrixAt(s, HIDE); MD.head.setMatrixAt(s, HIDE); MD.tail.setMatrixAt(s, HIDE);
+    for (let i = 0; i < 2; i++) { MD.ear.setMatrixAt(s * 2 + i, HIDE); dogEyes.setMatrixAt(s * 2 + i, HIDE); }
+    for (let i = 0; i < 8; i++) MD.leg.setMatrixAt(s * 8 + i, HIDE);
+  }
+  function hideAllDogs() { for (let s = 0; s < DCAP; s++) hideDog(s); }
+
+  const DPV = []; for (let i = 0; i < 12; i++) DPV.push(new THREE.Vector3());
+  function poseDog(z, s) {
+    const sc = z.scale;
+    const fx = z.fx, fz = z.fz;
+    const rx = -fz, rz = fx;
+    const yaw = Math.atan2(fx, fz);
+    const px = z.pos.x, pz = z.pos.z, py = z.pos.y;
+
+    let deathPitch = 0, sink = 0, fade = 1;
+    if (z.dead) {
+      const t = smooth(clamp(z.fall, 0, 1));
+      deathPitch = t * 1.35 * z.fallDir;
+      sink = Math.max(0, z.dieT - 1.4) * 0.6;
+      fade = clamp(1 - Math.max(0, z.dieT - 1.7) / 0.6, 0, 1);
+    }
+    const cosD = Math.cos(deathPitch), sinD = Math.sin(deathPitch);
+    const W = (lx, ly, lz, out) => {
+      const y2 = ly * cosD - lz * sinD, z2 = ly * sinD + lz * cosD;
+      return out.set(px + rx * lx * sc + fx * z2 * sc, py + y2 * sc - sink, pz + rz * lx * sc + fz * z2 * sc);
+    };
+
+    const ph = z.ph * 1.7;
+    const mv = clamp(z.moveSpeed / 5, 0, 1.3);
+    const bob = Math.sin(ph * 2) * 0.035 * mv;
+    const lunge = z.state === 'attack' ? Math.sin(clamp(z.attackT / 0.4, 0, 1) * Math.PI) : 0;
+
+    const SK = [lerp(z.skin[0], 1.0, z.hurtFlash * 0.6) * fade,
+                lerp(z.skin[1], 0.22, z.hurtFlash * 0.6) * fade,
+                lerp(z.skin[2], 0.20, z.hurtFlash * 0.6) * fade];
+
+    // body: nose-down when lunging, level otherwise
+    const B = W(0, DRIG.bodyY + bob, 0, DPV[0]);
+    partAt(MD.body, s, B.x, B.y, B.z, sc, yaw, deathPitch - lunge * 0.30, 0, SK);
+
+    // head rides the front of the spine
+    const H = W(0, DRIG.headY + bob * 1.2 + lunge * 0.06, DRIG.headFwd, DPV[1]);
+    partAt(MD.head, s, H.x, H.y, H.z, sc, yaw, deathPitch - lunge * 0.5 + Math.sin(ph) * 0.05, 0, SK);
+    for (let e = 0; e < 2; e++) {
+      const E = W((e ? 0.05 : -0.05), DRIG.headY + 0.09 + bob * 1.2, DRIG.headFwd - 0.05, DPV[2 + e]);
+      partAt(MD.ear, s * 2 + e, E.x, E.y, E.z, sc, yaw, deathPitch - 0.25, (e ? -1 : 1) * 0.30, SK);
+      const EY = W((e ? 0.045 : -0.045), DRIG.headY + 0.035 + bob * 1.2, DRIG.headFwd + 0.075, DPV[4 + e]);
+      partAt(dogEyes, s * 2 + e, EY.x, EY.y, EY.z, 0.020 * sc, yaw, 0, 0,
+        [1.3 * fade, 0.22 * fade, 0.08 * fade]);
+    }
+
+    // trot: diagonal pairs, front and back offset half a cycle
+    for (let i = 0; i < 4; i++) {
+      const front = i < 2, side = i % 2 ? 1 : -1;
+      const p2 = ph + (front ? 0 : Math.PI) + (side > 0 ? Math.PI : 0);
+      const swing = Math.sin(p2) * (0.42 + mv * 0.5);
+      const lift = Math.max(0, Math.sin(p2 + 1.5)) * mv * 0.10;
+      const sx = side * DRIG.legX, sz = front ? DRIG.frontZ : DRIG.backZ;
+      const sy = (front ? DRIG.shoulderY : DRIG.hipY) + bob;
+      const kz = sz + Math.sin(swing) * DRIG.legUp;
+      const ky = sy - Math.cos(swing) * DRIG.legUp + lift;
+      const bend = Math.max(0, Math.sin(p2 + 0.8)) * 0.7 * (front ? 1 : -1);
+      const az = kz + Math.sin(swing - bend) * DRIG.legLo;
+      const ay = ky - Math.cos(swing - bend) * DRIG.legLo;
+      const A = W(sx, sy, sz, DPV[6]), K = W(sx, ky, kz, DPV[7]), F = W(sx, ay, az, DPV[8]);
+      limb(MD.leg, s * 8 + i * 2, A, K, DRIG.legR * sc, SK);
+      limb(MD.leg, s * 8 + i * 2 + 1, K, F, DRIG.legR * 0.85 * sc, SK);
+    }
+    const T0 = W(0, DRIG.bodyY + 0.06 + bob, -0.44, DPV[9]);
+    const T1 = W(Math.sin(ph) * 0.12, DRIG.bodyY + 0.16 + bob, -0.66, DPV[10]);
+    limb(MD.tail, s, T0, T1, 0.035 * sc, SK);
+  }
+
   // ---- pose + write instances -------------------------------------------
   const slots = [];
   for (let i = 0; i < CAP; i++) slots.push(i);
-  function claim(z) { if (z.slot < 0) { z.slot = slots.pop(); if (z.slot === undefined) z.slot = -1; } return z.slot; }
-  function free(z) { if (z.slot >= 0) { hideSlot(z.slot); slots.push(z.slot); z.slot = -1; } }
+  function claim(z) {
+    if (z.slot >= 0) return z.slot;
+    const pool = z.kind === 'dog' ? dslots : slots;
+    const v = pool.pop();
+    z.slot = v === undefined ? -1 : v;
+    return z.slot;
+  }
+  function free(z) {
+    if (z.slot < 0) return;
+    if (z.kind === 'dog') { hideDog(z.slot); dslots.push(z.slot); }
+    else { hideSlot(z.slot); slots.push(z.slot); }
+    z.slot = -1;
+  }
   function hideSlot(s) {
     M.head.setMatrixAt(s, HIDE); M.torso.setMatrixAt(s, HIDE); M.pelvis.setMatrixAt(s, HIDE);
     for (let i = 0; i < 2; i++) {
@@ -3607,13 +3987,16 @@ const Zombies = (() => {
       eyes.setMatrixAt(k, HIDE);
     }
   }
-  function hideAll() { for (let s = 0; s < CAP; s++) hideSlot(s); flagAll(); }
-  function flagAll() { for (const m of ALLM) { m.instanceMatrix.needsUpdate = true; m.instanceColor.needsUpdate = true; } }
+  function hideAll() { for (let s = 0; s < CAP; s++) hideSlot(s); hideAllDogs(); flagAll(); }
+  function flagAll() {
+    for (const m of ALLM) { m.instanceMatrix.needsUpdate = true; m.instanceColor.needsUpdate = true; }
+    for (const m of ALLD) { m.instanceMatrix.needsUpdate = true; m.instanceColor.needsUpdate = true; }
+  }
 
   function render() {
     for (const z of list) {
       const s = claim(z); if (s < 0) continue;
-      pose(z, s);
+      if (z.kind === 'dog') poseDog(z, s); else pose(z, s);
     }
     flagAll();
   }
@@ -3735,13 +4118,15 @@ const Zombies = (() => {
   function reset() {
     for (const z of list) free(z);
     list.length = 0;
-    slots.length = 0;
+    slots.length = 0; dslots.length = 0;
     for (let i = CAP - 1; i >= 0; i--) slots.push(i);
+    for (let i = DCAP - 1; i >= 0; i--) dslots.push(i);
     hideAll();
   }
 
   return {
-    list, spawn, damage, areaDamage, raycast, coneHit, update, reset, hideAll, killAllForNuke, RIG,
+    list, spawn, spawnDog, damage, areaDamage, raycast, coneHit, update, reset, hideAll, killAllForNuke, RIG, DRIG,
+    isDogRound, dogCount, dogHealth,
     healthFor, countFor, speedFor, tearTime, spawnGap,
     get aliveCount() { let n = 0; for (const z of list) if (!z.dead) n++; return n; },
   };
@@ -3770,12 +4155,14 @@ const Round = (() => {
   }
   function begin(n) {
     R.round = n;
-    R.total = Zombies.countFor(n);
+    R.dog = Zombies.isDogRound(n);
+    R.total = R.dog ? Zombies.dogCount(n) : Zombies.countFor(n);
     R.toSpawn = R.total; R.spawned = 0; R.killedThis = 0;
-    R.phase = 'active'; R.spawnT = 1.2;
+    R.phase = 'active'; R.spawnT = R.dog ? 2.6 : 1.2;
     Drops.onRound();
-    UI.roundBanner(n);
-    Snd.roundStart(n);
+    UI.roundBanner(n, R.dog);
+    if (R.dog) { Snd.dogRound(); UI.banner('HELLHOUNDS', 0xff5a3c); }
+    else Snd.roundStart(n);
     store.set('best', Math.max(store.get('best', 0), n));
   }
   function onKill() { R.killedThis++; }
@@ -3788,7 +4175,13 @@ const Round = (() => {
     // spawn drip
     if (R.spawned < R.total) {
       R.spawnT -= dt;
-      if (R.spawnT <= 0 && Zombies.aliveCount < CFG.maxAlive) {
+      if (R.spawnT <= 0 && Zombies.aliveCount < (R.dog ? 8 : CFG.maxAlive)) {
+        if (R.dog) {
+          // hellhounds arrive in ones and twos out of the floor, not at windows
+          if (Zombies.spawnDog(R.round)) { R.spawned++; R.spawnT = clamp(2.4 - R.round * 0.03, 0.9, 2.4) * rand(0.7, 1.3); }
+          else R.spawnT = 0.5;
+          return;
+        }
         const wins = eligibleWindows();
         if (wins.length) {
           // bias toward windows nearer the player: pressure should follow you
@@ -3804,12 +4197,14 @@ const Round = (() => {
         } else R.spawnT = 0.5;
       }
     } else if (Zombies.aliveCount === 0) {
+      // surviving a dog round pays a Max Ammo, as it should
+      if (R.dog) { Drops.spawnAt(Player.P.pos.x + 1.2, Player.P.pos.z, 'maxammo'); R.dog = false; }
       R.phase = 'idle';
       R.timer = 5.5;
     }
   }
-  function reset() { R.round = 0; R.phase = 'idle'; R.timer = 2.4; R.toSpawn = 0; R.spawned = 0; R.total = 0; }
-  return { R, begin, update, reset, onKill, get round() { return R.round; }, get phase() { return R.phase; } };
+  function reset() { R.round = 0; R.phase = 'idle'; R.timer = 2.4; R.toSpawn = 0; R.spawned = 0; R.total = 0; R.dog = false; }
+  return { R, begin, update, reset, onKill, get round() { return R.round; }, get phase() { return R.phase; }, get dog() { return R.dog; } };
 })();
 
 
@@ -3875,8 +4270,12 @@ const Drops = (() => {
   function maybeDrop(x, z) {
     if (budget <= 0 || sinceLast < DROP.minGap) return null;
     if (Math.random() > DROP.chance) return null;
-    budget--; sinceLast = 0;
-    return spawnAt(x, z);
+    // only spend the budget on a roll that actually produced something: the
+    // pool can be full of drops inherited from the previous round, and charging
+    // for those silently eats this round's allowance
+    const d = spawnAt(x, z);
+    if (d) { budget--; sinceLast = 0; }
+    return d;
   }
 
   function collect(d) {
@@ -3887,20 +4286,22 @@ const Drops = (() => {
     UI.banner(P.name, P.colour);
     switch (d.key) {
       case 'maxammo':
-        for (const g of pl.guns) { g.res = WEAPONS[g.key].res; g.ammo = Math.max(g.ammo, WEAPONS[g.key].mag); }
+        for (const g of pl.guns) { const w = Player.specOf(g); g.res = w.res; g.ammo = Math.max(g.ammo, w.mag); }
         pl.nades = NADE.max;
         break;
       case 'nuke': {
         // classic: everything currently on the map dies, and it pays a flat fee
         const n = Zombies.killAllForNuke();
-        Player.addPoints(400, true);
+        // the third argument is the whole point of `raw` — omitting it doubled
+        // this bounty under Double Points, exactly what the flag exists to stop
+        Player.addPoints(400, true, true);
         pl.kills += n;
         Game.shake(0.8);
         break;
       }
       case 'carpenter':
         for (const w of Level.windows) { w.planks = Level.PLANKS; Level.refreshPlanks(w); }
-        Player.addPoints(200, true);
+        Player.addPoints(200, true, true);
         break;
       default:
         timers[d.key] = P.secs;
@@ -3925,7 +4326,7 @@ const Drops = (() => {
       d.slot.beam.material.opacity = 0.14 * fade;
       d.slot.halo.material.transparent = true;
       d.slot.core.material.transparent = true;
-      if (Math.hypot(pl.pos.x - g.position.x, pl.pos.z - g.position.z) < DROP.radius && !pl.dead) {
+      if (Math.hypot(pl.pos.x - g.position.x, pl.pos.z - g.position.z) < DROP.radius && !pl.dead && !pl.down) {
         collect(d);
         d.slot.busy = false; g.visible = false; live.splice(i, 1);
         continue;
@@ -3956,7 +4357,13 @@ const Box = (() => {
      model of each gun that exists, and rebuilding a second set of world-space
      weapon meshes just to spin one above a crate would be silly. */
   function makePrize(key) {
-    if (prizeMesh) { Level.boxPrize.remove(prizeMesh); prizeMesh = null; }
+    if (prizeMesh) {
+      // the spin phase rebuilds this every ~50-270 ms; each rebuild clones a
+      // material per part, so they have to go back
+      prizeMesh.traverse(o => { if (o.isMesh && o.material) o.material.dispose(); });
+      Level.boxPrize.remove(prizeMesh);
+      prizeMesh = null;
+    }
     const src = ViewModel.get(key);
     const g = src.clone(true);
     for (let i = g.children.length - 1; i >= 0; i--) {
@@ -4003,6 +4410,7 @@ const Box = (() => {
   }
   function open() {
     if (B.phase !== 'idle') return false;
+    if (!B.spot || !(Level.ZONES[B.spot.zone] && Level.ZONES[B.spot.zone].open)) { Snd.deny(); return false; }
     if (!Player.spend(BOX.cost)) return false;
     B.phase = 'spin'; B.t = BOX.spin;
     B.prize = roll();
@@ -4071,11 +4479,100 @@ const Box = (() => {
            get phase() { return B.phase; }, get spot() { return B.spot; } };
 })();
 
+const Pap = (() => {
+  const S = { phase: 'idle', t: 0, key: null };
+  let slotMesh = null;
+
+  function showSlot(key, pap) {
+    const M = Level.papMachine;
+    if (!M) return;
+    if (slotMesh) { M.slot.remove(slotMesh); slotMesh = null; }
+    const src = ViewModel.get(key, pap);
+    const g = src.clone(true);
+    for (let i = g.children.length - 1; i >= 0; i--) {
+      const c = g.children[i];
+      if (c.isMesh) c.material = new THREE.MeshBasicMaterial({
+        color: c.material.color.clone().multiplyScalar(pap ? 1.8 : 1.3), toneMapped: false });
+      else g.remove(c);                                  // hands
+    }
+    g.position.set(0, 0, 0); g.rotation.set(0, 0, 0); g.scale.setScalar(1.4);
+    slotMesh = g; M.slot.add(g); M.slot.visible = true;
+  }
+  function clearSlot() {
+    const M = Level.papMachine;
+    if (M && slotMesh) { M.slot.remove(slotMesh); slotMesh = null; M.slot.visible = false; }
+  }
+
+  function insert() {
+    if (S.phase !== 'idle') return false;
+    // The interaction prompt already gates on power, but a precondition that
+    // lives only in the UI is one caller away from being bypassed — the system
+    // that owns the rule enforces it.
+    if (!(Level.powerSwitch && Level.powerSwitch.on)) { Snd.deny(); return false; }
+    const g = Player.gun();
+    if (g.pap) { Snd.deny(); UI.toast('ALREADY UPGRADED'); return false; }
+    if (!Player.spend(PAP.cost)) return false;
+    S.phase = 'work'; S.t = PAP.insert; S.key = g.key;
+    showSlot(g.key, false);
+    Snd.boxOpen();
+    return true;
+  }
+  function collect() {
+    if (S.phase !== 'ready') return false;
+    // upgrade the carried weapon of that key — it may not be the one in hand
+    // any more if the player swapped while the machine was working
+    const g = Player.P.guns.find(x => x.key === S.key);
+    if (g) {
+      g.pap = true;
+      const w = Player.specOf(g);
+      g.ammo = w.mag; g.res = w.res;
+      UI.toast(w.name);
+      UI.banner(w.name, 0xff9a2e);
+    }
+    Snd.boxTake();
+    S.phase = 'idle'; S.t = 0; S.key = null;
+    clearSlot();
+    return true;
+  }
+
+  function update(dt) {
+    const M = Level.papMachine;
+    if (!M) return;
+    const on = !!(Level.powerSwitch && Level.powerSwitch.on);
+    const busy = S.phase !== 'idle';
+    M.face.material.color.setScalar(lerp(M.face.material.color.r, on ? 1 : 0.20, 1 - Math.exp(-3 * dt)));
+    const want = on ? (busy ? 0.55 : 0.16 + Math.sin(Game.time * 2) * 0.05) : 0;
+    M.glow.material.opacity = lerp(M.glow.material.opacity, want, 1 - Math.exp(-4 * dt));
+    M.light.intensity = dampTo(M.light.intensity, on ? (busy ? 14 : 3) : 0, 5, dt);
+
+    if (S.phase === 'work') {
+      S.t -= dt;
+      // the weapon sinks into the slot, works, then rises upgraded
+      const k = 1 - clamp(S.t / PAP.insert, 0, 1);
+      M.slot.position.set(0, lerp(1.05, 0.80, Math.sin(k * Math.PI)), lerp(0.34, 0.05, Math.sin(k * Math.PI)));
+      M.slot.rotation.y += dt * 5.5;
+      if (S.t <= 0) { S.phase = 'ready'; S.t = PAP.grab; showSlot(S.key, true); Snd.powerupGrab(); }
+    } else if (S.phase === 'ready') {
+      S.t -= dt;
+      M.slot.position.set(0, 1.18 + Math.sin(Game.time * 3) * 0.04, 0.36);
+      M.slot.rotation.y += dt * 1.6;
+      if (S.t <= 0) {                                    // left too long: it goes back in
+        const g = Player.P.guns.find(x => x.key === S.key);
+        if (g) { g.pap = true; const w = Player.specOf(g); g.ammo = w.mag; g.res = w.res; }
+        S.phase = 'idle'; S.key = null; clearSlot();
+      }
+    }
+  }
+  function reset() { S.phase = 'idle'; S.t = 0; S.key = null; clearSlot(); }
+  return { S, insert, collect, update, reset, get phase() { return S.phase; } };
+})();
+
 const Perks = (() => {
   const owned = new Set();
   function has(k) { return owned.has(k); }
   function buy(key) {
     const P = PERKS[key];
+    if (!(Level.powerSwitch && Level.powerSwitch.on)) { Snd.deny(); return false; }
     if (owned.has(key)) { Snd.deny(); UI.toast('ALREADY HAVE ' + P.name); return false; }
     if (!Player.spend(P.cost)) return false;
     owned.add(key);
@@ -4125,7 +4622,7 @@ const Interact = (() => {
         best = { kind: 'wallbuy', wb, cost: wb.cost, text: `BUY <b>${wb.name}</b>`, d }; bestD = d;
       } else {
         const own = P.guns.find(g => g.key === wb.key);
-        const w = WEAPONS[wb.key];
+        const w = own ? Player.specOf(own) : WEAPONS[wb.key];
         if (own) {
           if (own.res >= w.res && own.ammo >= w.mag) { best = { kind: 'full', text: `${w.name} AMMO FULL`, d }; bestD = d; continue; }
           best = { kind: 'wallbuy', wb, cost: Math.round(w.cost / 2) || 250, ammo: true, text: `<b>${w.name}</b> AMMO`, d }; bestD = d;
@@ -4157,6 +4654,17 @@ const Interact = (() => {
         if (Box.phase === 'offer') { best = { kind: 'boxtake', cost: 0, text: `TAKE <b>${WEAPONS[Box.B.prize].name}</b>`, d }; bestD = d; }
         else if (Box.phase === 'idle') { best = { kind: 'box', cost: BOX.cost, text: 'MYSTERY BOX', d }; bestD = d; }
         else { best = { kind: 'full', text: '…', d }; bestD = d; }
+      }
+    }
+    // Pack-a-Punch
+    const pm2 = Level.papMachine;
+    if (pm2 && Level.ZONES[pm2.zone] && Level.ZONES[pm2.zone].open) {
+      const d = near(pm2.use);
+      if (d < Math.min(bestD, 2.4)) {
+        if (!(Level.powerSwitch && Level.powerSwitch.on)) { best = { kind: 'locked', text: 'POWER REQUIRED', d }; bestD = d; }
+        else if (Pap.phase === 'ready') { best = { kind: 'papTake', cost: 0, text: 'COLLECT <b>UPGRADED</b> WEAPON', d }; bestD = d; }
+        else if (Pap.phase === 'work') { best = { kind: 'full', text: 'WORKING…', d }; bestD = d; }
+        else { best = { kind: 'pap', cost: PAP.cost, text: 'PACK-A-PUNCH', d }; bestD = d; }
       }
     }
     // perk machines
@@ -4199,6 +4707,10 @@ const Interact = (() => {
       Box.open();
     } else if (c.kind === 'boxtake') {
       Box.take();
+    } else if (c.kind === 'pap') {
+      Pap.insert();
+    } else if (c.kind === 'papTake') {
+      Pap.collect();
     } else if (c.kind === 'perk') {
       Perks.buy(c.pm.key);
     } else if (c.kind === 'power') {
@@ -4211,6 +4723,17 @@ const Interact = (() => {
   }
 
   function update(dt, act) {
+    /* Being down disables movement, firing, damage and regen — but interaction
+       was left out, so a downed player could hold repair at a window (rebuilding
+       for free while untouchable), buy a perk, or take from the box. "You cannot
+       move, shoot, or be finished off" has to include "or do anything else". */
+    if (Player.P.down) {
+      cur = null;
+      $('prompt').style.display = 'none';
+      Input.setUseVisible(false);
+      repairT = 0;
+      return;
+    }
     const c = scan();
     cur = c;
     const el = $('prompt');
@@ -4227,7 +4750,8 @@ const Interact = (() => {
                    (Input.st.hasPad ? 'Ⓐ ' : (Input.st.mode === 'kb' ? '[F] ' : ''));
       el.innerHTML = verb + c.text + price;
       Input.setUseVisible(c.kind !== 'full' && c.kind !== 'locked');
-      $('bUse').textContent = c.kind === 'repair' ? 'FIX' : (c.kind === 'boxtake' ? 'TAKE' : 'BUY');
+      $('bUse').textContent = c.kind === 'repair' ? 'FIX'
+        : (c.kind === 'boxtake' || c.kind === 'papTake') ? 'TAKE' : 'BUY';
 
       if (c.hold && Input.st.useHeld) {
         repairT += dt;
@@ -4265,9 +4789,11 @@ const UI = (() => {
   }
   function toast(txt) { elToast.textContent = txt; toastT = 1.8; }
   function hitMark(kill) { hitT = kill ? 0.32 : 0.18; hitKill = kill; }
-  function roundBanner(n) {
+  function roundBanner(n, dog) {
     bigT = 2.6;
-    elBig.firstElementChild.textContent = n;
+    const sp = elBig.firstElementChild;
+    sp.textContent = n;
+    sp.style.color = dog ? '#8a2f10' : '#8c150c';
   }
   // the loud, centred announcement a power-up or perk deserves
   function banner(text, colour) {
@@ -4372,12 +4898,58 @@ const Game = (() => {
     navT: 0, frames: 0, fpsAcc: 0, fpsT: 0, fps: 60, degradeT: 0,
   };
   const screens = { title: $('title'), how: $('how'), pause: $('pause'), over: $('over') };
+
+  /* Menu cursor. The controller could already confirm and go back, but with no
+     highlight there was nothing to tell you WHICH item A was about to press —
+     actions without a cursor are not navigation. The focused element is clicked
+     directly, so the existing click handlers stay the single source of truth
+     for what each button does. */
+  const Menu = {
+    items: [], idx: 0, screen: null,
+    // where B / Escape goes from each screen
+    backTo: { how: 'menu', over: 'menu', pause: 'quit', title: 'how' },
+    bind(name) {
+      this.screen = name;
+      const el = name ? screens[name] : null;
+      this.items = el ? Array.from(el.querySelectorAll('.go')) : [];
+      this.idx = 0;
+      this.paint();
+    },
+    paint() {
+      /* Key this off a pad BEING PRESENT, not off the input mode. `mode` only
+         flips to 'pad' on stick movement, so a player navigating with the d-pad
+         and A — the obvious way to use a menu — never saw a highlight at all.
+         That was the original bug, and gating the new ring the same way
+         reproduced it exactly. */
+      const showRing = Input.st.hasPad || Input.st.mode === 'kb';
+      this.items.forEach((b, i) => b.classList.toggle('focus', showRing && i === this.idx));
+    },
+    move(dir) {
+      if (!this.items.length) return;
+      this.idx = (this.idx + dir + this.items.length) % this.items.length;
+      Snd.reloadClick(false);
+      this.paint();
+    },
+    activate() {
+      const b = this.items[this.idx];
+      if (b) b.click();
+    },
+    back() {
+      const where = this.backTo[this.screen];
+      if (where === 'menu') menu();
+      else if (where === 'quit') { Zombies.reset(); Player.clearNades(); menu(); }
+      else if (where === 'how') show('how');
+    },
+  };
+
   function show(name) {
     for (const k in screens) screens[k].classList.toggle('on', k === name);
     G.state = name === 'how' ? 'how' : (name || 'play');
     Input.showTouch(!name);
     document.body.style.cursor = name ? 'default' : 'none';
     if (name && document.pointerLockElement) document.exitPointerLock?.();
+    document.body.classList.toggle('inmenu', !!name);
+    Menu.bind(name);
   }
 
   function start() {
@@ -4402,6 +4974,7 @@ const Game = (() => {
     Level.swGroup.userData.lever.rotation.x = -0.9;
     G.powerT = 0; uPower.value = 0; Level.setPower(false);
     Box.reset();
+    Pap.reset();
     Level.rebuildNav(Player.P.pos.x, Player.P.pos.z);
     G.time = 0;
     show(null);
@@ -4463,21 +5036,13 @@ const Game = (() => {
     else if (act.pause) {
       if (G.state === 'play') pause();
       else if (G.state === 'pause') resume();
-    } else if (G.state !== 'play' && G.state !== 'dying' && (act.use || act.knife)) {
-      /* Menus have to be driveable from the pad too. Pausing and resuming was
-         never the hard part — without this you could not START a run or hit
-         TRY AGAIN without reaching over and tapping the screen, which is not
-         controller support. A = confirm, B = back. */
-      if (act.use) {
-        if (G.state === 'title') start();
-        else if (G.state === 'pause') resume();
-        else if (G.state === 'over') start();
-        else if (G.state === 'how') menu();
-      } else if (act.knife) {
-        if (G.state === 'how' || G.state === 'over') menu();
-        else if (G.state === 'pause') { Zombies.reset(); Player.clearNades(); menu(); }
-        else if (G.state === 'title') Game.show('how');
-      }
+    } else if (G.state !== 'play' && G.state !== 'dying') {
+      // A confirms the HIGHLIGHTED item, B backs out, the stick or d-pad moves
+      // the cursor. Keyboard arrows and Enter drive the same path.
+      if (act.menuNav) Menu.move(act.menuNav);
+      if (act.use) Menu.activate();
+      else if (act.knife) Menu.back();
+      else Menu.paint();          // the ring appears the moment a pad is used
     }
     if (G.state === 'play' || G.state === 'dying') {
       G.time += dt;
@@ -4490,6 +5055,7 @@ const Game = (() => {
       Round.update(dt);
       Drops.update(dt);
       Box.update(dt);
+      Pap.update(dt);
       Player.applyCamera(dt);
       UI.frame(dt);
     } else {
@@ -4551,7 +5117,7 @@ const Game = (() => {
   }
 
   return {
-    G, start, gameOver, pause, resume, menu, shake, step, render, show,
+    G, start, gameOver, pause, resume, menu, shake, step, render, show, Menu,
     get state() { return G.state; }, set state(v) { G.state = v; },
     get time() { return G.time; },
     get powerT() { return G.powerT; }, set powerT(v) { G.powerT = v; },
@@ -4627,10 +5193,12 @@ window.__dbg = {
       gun: Player.gun().key, ammo: Player.gun().ammo, res: Player.gun().res, nades: P.nades,
       zones: Object.keys(Level.ZONES).filter(k => Level.ZONES[k].open),
       power: !!(Level.powerSwitch && Level.powerSwitch.on),
+      dogRound: !!Round.R.dog, dogs: Zombies.list.filter(z => !z.dead && z.kind === 'dog').length,
       perks: [...Perks.owned], down: P.down, downT: +P.downT.toFixed(2),
       maxHp: Player.maxHp(), drops: Drops.live.length,
       instakill: Drops.instakill, pointsMult: Drops.pointsMult,
       boxPhase: Box.phase, boxSpot: Box.spot ? Box.spot.zone : null,
+      papPhase: Pap.phase, papUpgraded: Player.gun().pap === true,
       planks: Level.windows.map(w => w.planks),
       fps: Math.round(Game.G.fps), q: Q.level, errors: errors.length,
     };
@@ -4643,7 +5211,13 @@ window.__dbg = {
   box() { return { phase: Box.phase, spot: Box.spot && [Box.spot.c, Box.spot.r], uses: Box.B.uses, limit: Box.B.limit, prize: Box.B.prize }; },
   boxOpen() { return Box.open(); },
   boxTake() { return Box.take(); },
-  Drops, Box, Perks, POWERUPS, PERKS, BOX,
+  Drops, Box, Perks, Pap, POWERUPS, PERKS, BOX, PAP,
+  menu() { const M = Game.Menu; return { screen: M.screen, idx: M.idx, count: M.items.length,
+    focused: M.items[M.idx] ? M.items[M.idx].textContent.trim() : null,
+    ringed: M.items.filter(b => b.classList.contains('focus')).map(b => b.textContent.trim()) }; },
+  pap() { return { phase: Pap.phase, key: Pap.S.key }; },
+  papInsert() { return Pap.insert(); },
+  papTake() { return Pap.collect(); },
   points(n) { Player.P.points += n; return Player.P.points; },
   openAll() { for (const id in Level.barriers) Level.openBarrier(Level.barriers[id]); return this.snapshot(); },
   power() { Level.powerSwitch.on = true; Game.powerT = 0.0001; return true; },

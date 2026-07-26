@@ -309,6 +309,37 @@ check('a downed player cannot be finished off', revive.immuneWhileDown, revive);
 check('you get back up on your own', revive.backUp && revive.hp > 0, revive);
 check('without the perk a lethal hit ends the run', revive.diesWithout, revive);
 
+// 10b. DOWN STATE GATES INTERACTION ------------------------------------------------
+// Being down disables movement, firing and damage; interaction was left out, so
+// a downed player could rebuild a barricade for free while untouchable.
+const downLock = await page.evaluate(() => {
+  const D = __dbg, P = D.Player.P, o = {};
+  D.start(); D.points(99999); D.openAll(); D.power();
+  for (let i = 0; i < 200; i++) D.stepN(1);
+  D.perk('revive');
+  // Isolate: with the round live, spawning zombies tear at the very window
+  // under test and the assertion stops measuring what it claims to.
+  D.Zombies.reset(); D.Round.R.phase = 'idle'; D.Round.R.timer = 1e9;
+  const w = D.Level.windows.find(x => x.zone === 'lobby');
+  w.planks = 0; D.Level.refreshPlanks(w);
+  D.teleport(w.inside.x, w.inside.z); D.stepN(4);
+  D.hold('useHeld', true); D.stepN(60);
+  o.planksStanding = w.planks;
+  o.repairsWhenUp = w.planks > 0;
+  w.planks = 0; D.Level.refreshPlanks(w);
+  D.Player.hurt(9999, null); D.stepN(2);
+  o.isDown = P.down;
+  const p0 = P.points;
+  for (let i = 0; i < 60 * 3; i++) D.stepN(1);        // still holding repair
+  o.planksWhileDown = w.planks;
+  o.pointsWhileDown = P.points - p0;
+  D.hold('useHeld', false);
+  return o;
+});
+check('repair works while standing', downLock.repairsWhenUp, downLock);
+check('a downed player cannot repair or earn from it',
+  downLock.isDown && downLock.planksWhileDown === 0 && downLock.pointsWhileDown === 0, downLock);
+
 // 11. POWER-UPS -------------------------------------------------------------------
 const drops = await page.evaluate(() => {
   const D = __dbg, P = D.Player.P, o = {};
@@ -323,6 +354,16 @@ const drops = await page.evaluate(() => {
   for (const w of D.Level.windows) { w.planks = 0; D.Level.refreshPlanks(w); }
   D.drop('carpenter', P.pos.x, P.pos.z); D.stepN(4);
   o.carpenter = D.Level.windows.every(w => w.planks === 6);
+  /* Point totals, not just side effects. Both reviews of #329 found that the
+     Nuke and Carpenter bounties were being doubled by an active Double Points
+     timer — the `raw` flag existed for exactly that and neither call site passed
+     it. The old checks asserted only "planks went back up" / "nobody survived",
+     so the bug sailed through. Double Points is deliberately still live here. */
+  o.dpActive = D.Drops.pointsMult === 2;
+  const pc0 = P.points;
+  for (const w of D.Level.windows) { w.planks = 0; D.Level.refreshPlanks(w); }
+  D.drop('carpenter', P.pos.x, P.pos.z); D.stepN(4);
+  o.carpenterPaid = P.points - pc0;
   D.setRound(6);
   for (let i = 0; i < 60 * 25; i++) { P.hp = 100; P.dead = false; if (D.Game.state === 'dying') D.Game.state = 'play'; D.stepN(1); }
   // Track the exact bodies present when the nuke lands. Measuring aliveCount a
@@ -330,8 +371,11 @@ const drops = await page.evaluate(() => {
   // walking in after the blast would read as a survivor.
   const present = D.Zombies.list.filter(z => !z.dead);
   o.before = present.length;
+  const pn0 = P.points;
   D.drop('nuke', P.pos.x, P.pos.z); D.stepN(4);
   o.survivors = present.filter(z => !z.dead).length;
+  // the flat bounty only — kills from a nuke pay nothing per body
+  o.nukePaid = P.points - pn0;
   // a nuke must not cascade into more drops
   o.dropsAfterNuke = D.Drops.live.length;
   return o;
@@ -342,6 +386,8 @@ check('Insta-Kill arms', drops.instakill, drops);
 check('Carpenter reboards every window', drops.carpenter, drops);
 check('Nuke kills every body on the map', drops.before > 0 && drops.survivors === 0, drops);
 check('Nuke does not cascade drops', drops.dropsAfterNuke === 0, drops);
+check('flat bounties ignore Double Points',
+  drops.dpActive && drops.carpenterPaid === 200 && drops.nukePaid === 400, drops);
 
 // 12. MYSTERY BOX ------------------------------------------------------------------
 const box = await page.evaluate(() => {
@@ -372,6 +418,93 @@ check('box opens, offers, and gives a weapon', box.opened && box.offered && box.
 check('box relocates after its use limit', box.relocated, box);
 check('relocation moves the solid tile with it', box.oldTileClear && box.newTileSolid, box);
 check('Ray Gun is box-exclusive', box.rayGunBoxOnly, box);
+
+// 12b. PACK-A-PUNCH ---------------------------------------------------------------
+const pap = await page.evaluate(() => {
+  const D = __dbg, o = {};
+  D.start(); D.points(99999); D.openAll();
+  o.refusedWithoutPower = D.papInsert() === false;      // the system, not just the prompt
+  D.power(); for (let i = 0; i < 200; i++) D.stepN(1);
+  D.give('thomp');
+  const base = D.WEAPONS.thomp;
+  o.inserted = D.papInsert();
+  o.working = D.pap().phase === 'work';
+  o.notUpgradedYet = D.Player.gun().pap !== true;       // must be collected first
+  for (let i = 0; i < 60 * 5; i++) D.stepN(1);
+  o.ready = D.pap().phase === 'ready';
+  o.collected = D.papTake();
+  const up = D.Player.specOf(D.Player.gun());
+  o.renamed = up.name !== base.name;
+  o.dmgRatio = +(up.dmg / base.dmg).toFixed(2);
+  o.magBigger = up.mag > base.mag;
+  o.ammoRefilled = D.Player.gun().ammo === up.mag;
+  o.secondRefused = D.papInsert() === false;
+  D.give('mp40');
+  o.freshWeaponClean = D.Player.gun().pap !== true;
+  D.Player.gun().res = 0;
+  D.drop('maxammo', D.Player.P.pos.x, D.Player.P.pos.z); D.stepN(4);
+  o.maxAmmoUsesEffective = D.Player.gun().res === D.Player.specOf(D.Player.gun()).res;
+  return o;
+});
+check('Pack-a-Punch refuses without power', pap.refusedWithoutPower, pap);
+check('Pack-a-Punch runs then offers the weapon', pap.inserted && pap.working && pap.ready && pap.collected, pap);
+check('upgrade only lands once collected', pap.notUpgradedYet, pap);
+check('upgraded weapon is renamed and stronger',
+  pap.renamed && pap.dmgRatio > 2 && pap.magBigger && pap.ammoRefilled, pap);
+check('an upgraded weapon cannot be upgraded twice', pap.secondRefused, pap);
+check('a fresh weapon does not inherit the upgrade', pap.freshWeaponClean, pap);
+check('Max Ammo honours upgraded reserves', pap.maxAmmoUsesEffective, pap);
+
+// 12c. HELLHOUNDS ------------------------------------------------------------------
+const dogs = await page.evaluate(() => {
+  const D = __dbg, P = D.Player.P, o = {};
+  o.schedule = [1, 4, 5, 6, 9, 10, 15].map(r => D.Zombies.isDogRound(r));
+  D.start(); D.points(99999); D.openAll(); D.power(); D.give('bar');
+  D.setRound(5);
+  o.flagged = D.snapshot().dogRound;
+  for (let i = 0; i < 60 * 20; i++) { P.hp = 100; P.dead = false; if (D.Game.state === 'dying') D.Game.state = 'play'; D.stepN(1); }
+  const s = D.snapshot();
+  o.spawned = s.dogs;
+  o.onlyDogs = s.alive === s.dogs;
+  const live = D.Zombies.list.filter(z => !z.dead && z.kind === 'dog');
+  o.skipBarricades = live.every(z => z.win === null);
+  o.allReachable = live.every(z => D.navAt(z.pos.x, z.pos.z) < 1e5);
+  o.fasterThanZombies = live.length > 0 && Math.min(...live.map(z => z.speed)) > D.Zombies.speedFor(5);
+  // a dog must be hittable when you aim at its body
+  if (live.length) {
+    const z = live.sort((a, b) => a.pos.distanceToSquared(P.pos) - b.pos.distanceToSquared(P.pos))[0];
+    P.yaw = Math.atan2(-(z.pos.x - P.pos.x), -(z.pos.z - P.pos.z));
+    const d = Math.hypot(z.pos.x - P.pos.x, z.pos.z - P.pos.z);
+    P.pitch = Math.atan2(D.Zombies.DRIG.bodyY * z.scale - 1.62, d);
+    D.stepN(1);
+    const eye = new D.THREE.Vector3(), dir = new D.THREE.Vector3();
+    D.Player.eyePos(eye); D.Player.forward(dir);
+    o.hittable = !!D.Zombies.raycast(eye, dir, 40);
+    const hp0 = z.hp;
+    for (let i = 0; i < 40; i++) { D.hold('fire', i % 3 !== 0); D.stepN(1); }
+    D.hold('fire', false);
+    o.damageable = z.hp < hp0 || z.dead;
+  }
+  // clearing a dog round pays a Max Ammo and the round advances
+  D.Player.gun().res = 0;
+  for (let i = 0; i < 60 * 40; i++) {
+    P.hp = 100; P.dead = false; if (D.Game.state === 'dying') D.Game.state = 'play';
+    if (D.Zombies.aliveCount > 0) D.killAll();
+    D.stepN(1);
+    if (D.snapshot().round > 5) break;
+  }
+  o.advanced = D.snapshot().round > 5;
+  o.paidMaxAmmo = D.Player.gun().res > 0 || D.Drops.live.some(x => x.key === 'maxammo');
+  return o;
+});
+check('dog rounds land on 5 and every 5th after', 
+  JSON.stringify(dogs.schedule) === JSON.stringify([false, false, true, false, false, true, true]), dogs.schedule);
+check('a dog round spawns only hellhounds', dogs.flagged && dogs.spawned > 0 && dogs.onlyDogs, dogs);
+check('hellhounds ignore the barricades', dogs.skipBarricades, dogs);
+check('hellhounds spawn somewhere that can reach you', dogs.allReachable, dogs);
+check('hellhounds are faster than zombies of that round', dogs.fasterThanZombies, dogs);
+check('hellhounds are hittable and take damage', dogs.hittable && dogs.damageable, dogs);
+check('clearing a dog round advances and pays Max Ammo', dogs.advanced && dogs.paidMaxAmmo, dogs);
 
 // 13. GAMEPAD ------------------------------------------------------------------------
 // The review on #328 flagged that the controller path had zero regression
@@ -432,7 +565,46 @@ check('A buys at a wall-buy', pad.aBuys, pad);
 check('Start pauses, A resumes', pad.startPauses && pad.aResumes, pad);
 check('A starts a run from the title screen', pad.aStarts, pad);
 
-// 9. no errors anywhere -------------------------------------------------------
+// 13b. MENU CURSOR ------------------------------------------------------------------
+/* The controller could confirm and go back long before it could show you WHAT
+   it was about to confirm. `ringed` is the load-bearing assertion here: the
+   first version of this cursor navigated perfectly and highlighted nothing,
+   because the ring was gated on an input mode that button presses never set. */
+const menuNav = await page.evaluate(() => {
+  const D = __dbg, o = {};
+  D.Game.menu(); D.stepN(4);
+  __tapPad(13);
+  o.first = D.menu();
+  __tapPad(12);
+  o.afterUp = D.menu().focused;
+  __tapPad(12);
+  o.wraps = D.menu().focused;                       // up from the top wraps round
+  while (D.menu().focused !== 'CONTROLS') __tapPad(13);
+  __tapPad(0); D.stepN(4);
+  o.activatedHighlighted = D.Game.state === 'how';  // A pressed the ringed item
+  o.ringOnHow = D.menu().ringed.length === 1;
+  __tapPad(1); D.stepN(4);
+  o.backedOut = D.Game.state === 'title';
+  while (D.menu().focused !== 'BEGIN') __tapPad(13);
+  __tapPad(0); D.stepN(4);
+  o.started = D.Game.state === 'play';
+  o.hudHiddenInMenu = (D.Game.menu(), D.stepN(2), document.body.classList.contains('inmenu'));
+  D.Game.show(null); D.stepN(2);
+  o.hudBackInGame = !document.body.classList.contains('inmenu');
+  return o;
+});
+check('menu cursor moves and wraps',
+  menuNav.first.focused === 'CONTROLS' && menuNav.afterUp === 'BEGIN' && menuNav.wraps === 'CONTROLS', menuNav);
+check('the focused item is actually highlighted',
+  menuNav.first.ringed.length === 1 && menuNav.first.ringed[0] === menuNav.first.focused, menuNav.first);
+check('every screen gets its own highlight', menuNav.ringOnHow, menuNav);
+check('A activates the highlighted item', menuNav.activatedHighlighted, menuNav);
+check('B backs out', menuNav.backedOut, menuNav);
+check('BEGIN still starts a run', menuNav.started, menuNav);
+check('HUD is hidden behind menus and restored in game',
+  menuNav.hudHiddenInMenu && menuNav.hudBackInGame, menuNav);
+
+// 14. no errors anywhere -------------------------------------------------------
 const gameErrors = await page.evaluate(() => __dbg.errors);
 check('no in-game errors', gameErrors.length === 0, gameErrors);
 check('no uncaught page errors', pageErrors.length === 0, pageErrors);
