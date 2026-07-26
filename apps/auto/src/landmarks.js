@@ -377,6 +377,23 @@ function aquarium() {
 
 // ---------------------------------------------------------------------------
 
+/**
+ * Radius, in metres, that each landmark needs to itself.
+ *
+ * OSM has footprints for these too -- the Space Needle is a 38 x 38 m building
+ * tagged 184 m tall -- so without this the importer draws a generic grey tower
+ * in exactly the same place as the hand-built mesh and swallows it whole. That
+ * is where the Space Needle went. This file owns the meshes, so it is the file
+ * that knows how much room each one takes; keep a new entry here whenever a
+ * landmark is added or `buildLandmarks` will quietly be building it inside a box.
+ */
+export const LANDMARK_CLEAR = {
+  spaceNeedle: 48, mopop: 62, arena: 95, spheres: 44, market: 75, wheel: 42,
+  aquarium: 48, ferry: 72, library: 48, pier: 52, gasworks: 95, troll: 18,
+  locks: 75, kerry: 30, ferriswheelPier: 42, convention: 62,
+  stadiumF: 135, stadiumB: 128, stadiumH: 122,
+};
+
 export function buildLandmarks(scene) {
   const root = new THREE.Group();
   for (const l of G.LANDMARKS) {
@@ -419,6 +436,7 @@ export function buildLandmarks(scene) {
     root.add(g);
   }
   const merged = mergeByMaterial(root);
+  merged.name = 'landmarks';
   merged.traverse((o) => { if (o.isMesh) o.frustumCulled = false; });
   scene.add(merged);
   return merged;

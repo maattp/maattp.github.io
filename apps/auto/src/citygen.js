@@ -11,6 +11,7 @@
 
 import * as G from './geo.js';
 import { CLS_NAME, F_ELEV, F_TUNNEL, F_ONEWAY, F_ONEWAY_REV } from './mapdata.js';
+import { LANDMARK_CLEAR } from './landmarks.js';
 import { distToSeg, clamp, hash2 } from './util.js';
 
 export const CHUNK = 400;
@@ -51,7 +52,7 @@ function styleFor(cls, h) {
 
 // Counters the verify harness asserts on, so a regression in the clearing
 // passes shows up as a number rather than as a screenshot nobody looks at.
-export const cityStats = { buildingsShrunk: 0, buildingsDropped: 0, treesSkipped: 0 };
+export const cityStats = { buildingsShrunk: 0, buildingsDropped: 0, treesSkipped: 0, landmarkCleared: 0 };
 
 const skey = (cx, cz) => cx * 100003 + cz;
 
@@ -227,6 +228,36 @@ export function* cityGenerator(md) {
   }
   cityStats.buildingsShrunk = shrunk;
   cityStats.buildingsDropped = dropped;
+
+  // --- 2c. Landmarks get their site to themselves -------------------------
+  //
+  // We draw our own Space Needle, and OSM has a building footprint for it as
+  // well -- 38 x 38 m, tagged 184 m tall. Imported as an ordinary tower it
+  // lands on exactly the same spot and encloses the hand-built mesh, which is
+  // where the Space Needle went. Same for the stadiums, the Market and the
+  // locks. `reserved` did this job before the import rewrite and was dropped on
+  // the reasoning that "towers are just buildings" -- true of towers, false of
+  // anything we model ourselves.
+  let landmarkCleared = 0;
+  for (const l of G.LANDMARKS) {
+    const r = LANDMARK_CLEAR[l.kind] || 55;
+    const lx = l.p ? l.p[0] : l.x, lz = l.p ? l.p[1] : l.z;
+    for (let bi = buildings.length - 1; bi >= 0; bi--) {
+      const bd = buildings[bi];
+      const dx = lx - bd.x, dz = lz - bd.z;
+      if (dx * dx + dz * dz > (r + 90) * (r + 90)) continue;
+      // Nearest point of the rotated box to the landmark centre.
+      const c = Math.cos(-bd.rot), s = Math.sin(-bd.rot);
+      const px = dx * c - dz * s, pz = dx * s + dz * c;
+      const qx = clamp(px, -bd.w / 2, bd.w / 2);
+      const qz = clamp(pz, -bd.d / 2, bd.d / 2);
+      if ((px - qx) ** 2 + (pz - qz) ** 2 < r * r) {
+        buildings.splice(bi, 1);
+        landmarkCleared++;
+      }
+    }
+  }
+  cityStats.landmarkCleared = landmarkCleared;
 
   // Nothing may stand where the player gets put down. Inside a footprint,
   // blocked() refuses every direction and the player is stuck for good, walking
