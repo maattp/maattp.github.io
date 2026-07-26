@@ -614,15 +614,35 @@ Otherwise a single street running out to nothing gets a full crossing square and
 a kerbed ring sitting on bare ground — the "road to nowhere". `nodeSurface()`
 skips the same nodes, because the drawn surface and the lift query have to agree.
 
-**Elevated spans get subdivided like any other road.** A barrier is a box that
-can only yaw, so on a climbing ramp it stays level while the deck rises away
-from it. At `steps = 1` a 117 m span drew one 117 m barrier centred at
-mid-height, stabbing tens of metres above and below the road — the white spears
-sticking out of the freeway. Piers are placed every ~35 m along the span rather
-than one per edge.
+**An elevated span is built from two mitred edge lines, not from boxes.**
+`meshViaduct` offsets each side of the deck at the *node*, and where two spans
+meet head to head it mitres them onto one shared point (`deckEdgePoint`). Deck,
+soffit, fascia and parapet are all lofted between those same four corners, so
+they stay registered with each other and with the neighbouring span by
+construction.
+
+The version this replaced drew a barrier as a `box` per 12 m segment, and a box
+can only yaw. Two consequences, both of which were reported as bugs:
+
+- On a climbing ramp the box stays level while the deck rises away from it. At
+  `steps = 1` a 117 m span drew one 117 m barrier centred at mid-height,
+  stabbing tens of metres above and below the road — the white spears sticking
+  out of the freeway.
+- Each span offset its rails by *its own* perpendicular, so at a bend the two
+  spans' rails started at different points and different angles: "the guardrails
+  are slightly angled so they don't touch back to front". Subdividing does not
+  fix this — the splay is at the joint, not along the span.
+
+**A junction square at an elevated node fights the deck.** The square is
+horizontal at `n.y + 0.07`; a sloping deck passes through it. `meshNode` skips
+the node where two same-width elevated spans meet at under 60°, because the
+mitre has already closed that joint. A ramp merge keeps its square: there the
+spans are square-ended and the square is what fills the gap. `nodeSurface()`
+already skips `n.elev` entirely, so this costs nothing on the lift side —
+elevated ground comes from `groundAt`'s per-segment deck query.
 
 Note the "long thin triangle" probe is *not* diagnostic here: a pier is
-legitimately 30 m tall and 1.7 m wide, so it trips any aspect-ratio filter. Judge
+legitimately 30 m tall and 2.4 m wide, so it trips any aspect-ratio filter. Judge
 deck geometry from a close render alongside and down the deck.
 
 ## Nothing stands on the water, and parked cars sit on the slope
@@ -634,6 +654,35 @@ at 4 to 9 m below the surface, and Delridge Way through Elliott Bay: 182 edges
 in all. A span meant to cross water is marked elevated in the data and is left
 alone. Absent beats submerged, and connectivity went *up* (98.1% → 98.4%),
 because those edges only ever connected things across a lake.
+
+**Dropping the edge is damage control, not a fix.** The route still has a hole
+in it, and if the hole happens to sit at the end of a deck, the viaduct ramps
+down into open water — which is what Aurora did: 1.3 km of it was drawn through
+Lake Union at ground level, the ship-canal third of that was the only part
+marked elevated, and the bridge's south end touched down 200 m offshore. You
+could not drive the length of the map on the one road that is meant for it.
+Measured as the longest gap between consecutive nodes on the route, Aurora went
+**949 m → 76 m** (55 m is the normal node spacing).
+
+`city.waterDrops` records every edge dropped this way, so the condition can be
+asserted on instead of being discovered by driving into a lake. **A named
+through route is not allowed to appear in it.** Thirteen still do — Westlake,
+Dexter, Fairview, Eastlake, Delridge, Alaskan Way and others.
+
+**The lakes are where they are; move the road.** Lake Union is drawn about
+600 m west of its converted position, which is the whole reason its shore roads
+end up in it, but shifting the polygon east would put 0.8 km² of built South
+Lake Union and Eastlake under water — the Magnolia failure again, in the
+direction that actually destroys a neighbourhood. Shrinking water is safe;
+growing it is not. Aurora was re-routed instead, into the empty 580 m strip
+between the west shore (x ≈ −880) and Queen Anne Ave N (−1460), which is also
+where the real road sits relative to the water.
+
+The exception is Green Lake, where Aurora now passes **east** and the real road
+passes west. Going west means threading between the lake's west shore (−1500)
+and Phinney Ave N (−1690), and the north–south compression out here — Green
+Lake to the Aurora Bridge is 3.7 km in reality and about 700 m on this map —
+turns that into a 64° dogleg. The wrong side of a lake beats a hairpin.
 
 **`Vehicle.place()` sets pitch and roll, not just height.** A parked car never
 runs `update()`, so left at zero pitch it stays level on a hillside street and

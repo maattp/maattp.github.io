@@ -251,6 +251,7 @@ function planarize(g) {
 export function* cityGenerator() {
   const g = new Graph();
   const buildings = [];
+  const waterDrops = [];
   const reserved = [];
   const R = rng(20260725);
 
@@ -345,6 +346,12 @@ export function* cityGenerator() {
           const wet = !elev && !p.elev
             && G.isWater((p.x + x) / 2, (p.z + z) / 2);
           if (!wet) g.addEdge(prev, id, cls, name);
+          // Dropping it is damage control, not a fix: the route still has a
+          // hole in it, and if the gap happens to sit at the end of a deck the
+          // viaduct ramps down into open water. Aurora was 1.3 km of exactly
+          // that. Record every drop so `city.waterDrops` can be asserted on --
+          // a named through route is not allowed to lose a segment this way.
+          else waterDrops.push({ name, cls, x, z });
         }
         prev = id;
       }
@@ -685,6 +692,7 @@ export function* cityGenerator() {
     nodes: g.nodes,
     edges: g.edges,
     buildings,
+    waterDrops,
     chunks,
     chunkKey: ck,
     drivable,
