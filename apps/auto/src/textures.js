@@ -363,19 +363,16 @@ function roadSurface() {
     rgh.g.fillStyle = g1;
     rgh.g.fillRect(cx - 26, 0, 52, S);
   }
-  // U runs across the road width, V along its length
-  const paint = (g, style, x, y, w, h) => { g.fillStyle = style; g.fillRect(x, y, w, h); };
-  paint(a.g, '#e9e7de', 12, 0, 8, S);
-  paint(a.g, '#e9e7de', S - 20, 0, 8, S);
-  paint(hgt.g, grey(0.8), 12, 0, 8, S);
-  paint(hgt.g, grey(0.8), S - 20, 0, 8, S);
-  paint(rgh.g, grey(0.9), 12, 0, 8, S);
-  paint(rgh.g, grey(0.9), S - 20, 0, 8, S);
-  for (let y = 0; y < S; y += 80) {
-    paint(a.g, '#e4c23e', S / 2 - 6, y, 12, 48);
-    paint(hgt.g, grey(0.8), S / 2 - 6, y, 12, 48);
-    paint(rgh.g, grey(0.9), S / 2 - 6, y, 12, 48);
-  }
+  // No lane markings in here.
+  //
+  // They used to be painted into this texture, which forced world.js to stretch
+  // one repeat across the full road width so the lines landed at the edges and
+  // the centre. That made the ASPHALT scale with the road too: a residential
+  // street got 1.8 cm per texel and a 27 m highway got 5.3 cm, so on anything
+  // wide the aggregate became gravel and the repair patches became 8 m smudges.
+  // That is what the wide roads' "messy" surface was. The texture now tiles at a
+  // fixed size in metres and world.js lays the markings down as geometry, which
+  // also gets them the right real-world width and dash spacing on every class.
   return { map: tex(a.c), normalMap: normalFrom(hgt.c, 1.1), roughnessMap: tex(rgh.c, { srgb: false }) };
 }
 
