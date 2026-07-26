@@ -211,7 +211,7 @@
     <b>FIRE</b> can be dragged to aim while shooting. Tap <b>BUY</b> when a prompt appears; hold it at a
     broken window to rebuild the boards.<br><br>
     <b>Controller</b> — left stick move, right stick look, <b>RT</b> fire, <b>LT</b> aim, <b>A</b> buy / repair,
-    <b>X</b> reload, <b>B</b> knife, <b>RB</b> frag, <b>Y</b> swap weapon, <b>L3</b> sprint, <b>Start</b> pause.<br><br>
+    <b>X</b> reload, <b>B</b> knife, <b>RB</b> frag, <b>Y</b> swap weapon, <b>L3</b> sprint, <b>Start</b> pause. In menus: <b>A</b> confirm, <b>B</b> back.<br><br>
     <b>Keyboard</b> — <span class="kbd">WASD</span> move, <span class="kbd">Shift</span> sprint,
     mouse look &amp; fire, <span class="kbd">R</span> reload, <span class="kbd">V</span> knife,
     <span class="kbd">G</span> frag, <span class="kbd">Q</span> swap, <span class="kbd">F</span> buy,
@@ -625,6 +625,7 @@ const Input = (() => {
     keys.add(e.code); st.mode = 'kb'; Snd.resume();
     if (KEY[e.code]) { st[KEY[e.code]] = true; if (e.code === 'KeyF') st.useHeld = true; }
     if (e.code === 'Escape') st.pause = true;
+    if (e.code === 'Enter' || e.code === 'Space') st.use = true;   // menu confirm
     if (e.code === 'KeyM') Snd.toggleMute();
     if (['KeyW','KeyA','KeyS','KeyD','Space','KeyR','KeyF'].includes(e.code)) e.preventDefault();
   });
@@ -2758,13 +2759,21 @@ const Zombies = (() => {
 
   /* One rig definition drives BOTH the visible pose and the hit shapes, so a
      proportion change can never silently desync what you see from what you can
-     shoot. Head centre sits at 1.60 m against a 1.62 m eye height: aiming level
-     at a zombie on your own floor is a headshot, which is exactly the habit the
-     mode should reward. */
+     shoot.
+
+     HEAD-OVER-EYE LAW: the head sphere must span the 1.62 m eye height at EVERY
+     value of the per-body scale jitter, or a level shot sails clean over the
+     shorter bodies and whether it connects comes down to random spread. At
+     headY 1.60 with scale 0.93 the crown sat at 1.611 — just under the eye line
+     — and shots at small zombies silently missed; it surfaced as a verify check
+     that failed about one run in four. headY 1.63 with scale >= 0.96 puts the
+     eye line inside the sphere across the whole range, so aiming level at a
+     body on your own floor is always a headshot: the habit the mode rewards.
+     Changing either value means re-checking the other. */
   const RIG = {
     hipY: 0.90, hipX: 0.104, waistY: 0.985, pelvisY: 1.00,
     shoulderY: 1.425, shoulderX: 0.188,
-    headY: 1.60, headR: 0.132,
+    headY: 1.63, headR: 0.132,
     upArm: 0.30, loArm: 0.27, handL: 0.115,
     thigh: 0.44, shin: 0.43,
     armR: 0.058, foreR: 0.050, handR: 0.058, thighR: 0.086, shinR: 0.072,
@@ -2913,7 +2922,7 @@ const Zombies = (() => {
       speed: speedFor(round),
       state: 'approach', win, t: 0, ph: Math.random() * TAU,
       style: (Math.random() * 4) | 0,
-      scale: rand(0.93, 1.07),
+      scale: rand(0.96, 1.07),          // see the HEAD-OVER-EYE LAW on RIG
       skin: pick(SKINS).slice(), cloth: pick(CLOTHS).slice(),
       headless: false, dead: false, dieT: 0, fall: 0, fallDir: 1,
       attackT: 0, groanT: rand(1, 6), lastHit: 0,
@@ -3698,9 +3707,25 @@ const Game = (() => {
   function step(dt) {
     Input.poll(dt);
     const act = Input.consume();
-    if (act.pause) {
+    if (act.pause && (G.state === 'title' || G.state === 'over')) { start(); }
+    else if (act.pause) {
       if (G.state === 'play') pause();
       else if (G.state === 'pause') resume();
+    } else if (G.state !== 'play' && G.state !== 'dying' && (act.use || act.knife)) {
+      /* Menus have to be driveable from the pad too. Pausing and resuming was
+         never the hard part — without this you could not START a run or hit
+         TRY AGAIN without reaching over and tapping the screen, which is not
+         controller support. A = confirm, B = back. */
+      if (act.use) {
+        if (G.state === 'title') start();
+        else if (G.state === 'pause') resume();
+        else if (G.state === 'over') start();
+        else if (G.state === 'how') menu();
+      } else if (act.knife) {
+        if (G.state === 'how' || G.state === 'over') menu();
+        else if (G.state === 'pause') { Zombies.reset(); Player.clearNades(); menu(); }
+        else if (G.state === 'title') Game.show('how');
+      }
     }
     if (G.state === 'play' || G.state === 'dying') {
       G.time += dt;

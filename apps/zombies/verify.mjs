@@ -88,13 +88,49 @@ const aim = await page.evaluate(() => {
   const eye = new __dbg.THREE.Vector3(), dir = new __dbg.THREE.Vector3();
   __dbg.Player.eyePos(eye); __dbg.Player.forward(dir);
   const rc = __dbg.Zombies.raycast(eye, dir, 60);
-  for (let i = 0; i < 12; i++) { __dbg.hold('fire', i % 3 !== 0); __dbg.stepN(1); }
+  // long enough to clear the semi-auto's fire cooldown several times over
+  for (let i = 0; i < 40; i++) { __aim(z.pos); __dbg.hold('fire', i % 3 !== 0); __dbg.stepN(1); }
   __dbg.hold('fire', false);
-  return { hit: !!rc, head: rc && rc.head, damaged: z.hp < hp0 };
+  return { hit: !!rc, head: rc && rc.head, damaged: z.hp < hp0, scale: +z.scale.toFixed(3) };
 });
 check('level aim hits', aim.hit, aim);
 check('level aim is a headshot', aim.head, aim);
 check('shots do damage', aim.damaged, aim);
+
+// 1b. HIT-SHAPE INVARIANT — a level shot must be a headshot at every body
+//     scale. This is deterministic on purpose: the probabilistic shot test
+//     above only caught the small-zombie miss about one run in four, because
+//     whether it connected came down to random spread.
+const rig = await page.evaluate(() => {
+  const D = __dbg, P = D.Player.P;
+  const w = D.Level.windows.find(x => x.zone === 'lobby');
+  const eye = new D.THREE.Vector3(), dir = new D.THREE.Vector3();
+  // sample the ACTUAL per-body scale jitter rather than hardcoding it, so
+  // widening the range later cannot slip past this check
+  D.start(); D.Zombies.reset();
+  let lo = 9, hi = 0;
+  for (let i = 0; i < 400; i++) {
+    const z = D.Zombies.spawn(w, 1);
+    if (!z) { D.Zombies.reset(); continue; }
+    lo = Math.min(lo, z.scale); hi = Math.max(hi, z.scale);
+  }
+  D.Zombies.reset();
+  const out = [];
+  for (const sc of [lo, (lo + hi) / 2, hi]) {
+    D.start(); D.Zombies.reset();
+    const z = D.Zombies.spawn(w, 1);
+    z.state = 'hunt'; z.scale = sc;
+    z.pos.set(P.pos.x, 0, P.pos.z - 5);
+    P.pitch = 0; P.yaw = 0;                       // forward = -z, straight at it
+    D.stepN(1);
+    D.Player.eyePos(eye); D.Player.forward(dir);
+    const rc = D.Zombies.raycast(eye, dir, 40);
+    out.push({ sc: +sc.toFixed(3), hit: !!rc, head: !!(rc && rc.head) });
+  }
+  return out;
+});
+check('level shot is a headshot at every body scale',
+  rig.every(r => r.hit && r.head), rig);
 
 // 2. an idle player must die to round 1: spawn -> approach -> tear -> climb
 //    -> hunt -> swing, the whole chain ---------------------------------------
@@ -164,9 +200,16 @@ const soak = await page.evaluate(() => {
   return { marks, final: __dbg.snapshot() };
 });
 const rounds = soak.marks.map(m => m.round);
+const kills = soak.marks.map(m => m.kills);
 check('rounds advance past 3 in a 3 min soak', soak.final.round >= 4, rounds);
-check('kills keep accruing (no deadlock)',
-  soak.marks[soak.marks.length - 1].kills > soak.marks[3].kills, soak.marks.map(m => m.kills));
+/* Deadlock canary. Compare EVERY interval, not just first-vs-last: the bot is
+   stochastic and a single slow stretch (a reload cycle against a crowd on the
+   far side of a wall) made a first-vs-last comparison fail about one run in
+   four. What actually distinguishes "wedged forever" from "having a bad
+   minute" is whether progress resumes, so require most intervals to advance. */
+const advancing = kills.filter((k, i) => i > 0 && k > kills[i - 1]).length;
+check('kills keep accruing (no deadlock)', advancing >= kills.length - 3,
+  { kills, advancing, needed: kills.length - 3 });
 
 // 7. round scaling is monotonic and matches the classic curve -----------------
 const ladder = await page.evaluate(() => {
