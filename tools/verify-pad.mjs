@@ -84,6 +84,10 @@ async function main() {
     await s.send('Page.enable');
     await s.send('Network.enable');
     await s.send('Network.setBypassServiceWorker', { bypass: true });
+    // Bypassing the service worker is not enough: Chrome's own disk cache will
+    // still hand back the previous build's modules, which reads exactly like a
+    // change that didn't land.
+    await s.send('Network.setCacheDisabled', { cacheDisabled: true });
     await s.send('Page.addScriptToEvaluateOnNewDocument', { source: SHIM });
     await s.send('Page.navigate', { url: URL_BASE });
 

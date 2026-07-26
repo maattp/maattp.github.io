@@ -3,7 +3,7 @@
 
 import * as THREE from './three.js';
 import * as G from './geo.js';
-import { CHUNK, ROAD_LIFT, NODE_LIFT, WALK_LIFT } from './citygen.js';
+import { CHUNK, ROAD_LIFT, NODE_LIFT, WALK_LIFT, cityStats } from './citygen.js';
 import { Builder } from './build.js';
 import { hash2, clamp, lerp, distToSeg } from './util.js';
 
@@ -16,7 +16,13 @@ const MID_R = 4; // chunks that keep roads only
 
 // Ground tints, and the taps used to soften a district's edge into them.
 const GRASS = [0.42, 0.62, 0.28];
-const SUBURB = [0.48, 0.6, 0.37];
+// SUBURB used to be [0.48, 0.60, 0.37], which is the same colour as GRASS to
+// within a rounding error -- so ground that had blended all the way to "fully
+// developed" still rendered as a bright meadow, and the I-5 trench through
+// Chinatown looked like a lawn. Developed ground is lawn AND roof AND tarmac
+// mixed together, so it has to be visibly more muted than grass or the blend
+// has nothing to say.
+const SUBURB = [0.52, 0.53, 0.41];
 const URBAN = [0.56, 0.56, 0.55];
 const BLEND_TAPS = [[0, 0], [-85, 55], [70, -75]];
 
@@ -234,10 +240,12 @@ export class World {
                 dense += this.city.builtAt(x + jx + ox, z + jz + oz);
               }
               dense /= BLEND_TAPS.length;
-              // Downtown runs about 0.35 footprint coverage, suburbs about 0.10,
-              // so 0.22 is the line between "grey" and "green with houses on it".
-              const cover = clamp(dense / 0.2, 0, 1);
-              const built = dense > 0.22 ? URBAN : SUBURB;
+              // `builtAt` is footprint + tarmac area per chunk. Anything with a
+              // street grid on it is developed ground, so this saturates early:
+              // a normal residential chunk runs ~0.25 and should read as a
+              // neighbourhood, not as a meadow with houses dropped on it.
+              const cover = clamp(dense / 0.16, 0, 1);
+              const built = dense > 0.6 ? URBAN : SUBURB;
               const t = cover * cover * (3 - 2 * cover);
               c = [
                 GRASS[0] + (built[0] - GRASS[0]) * t,
@@ -1009,11 +1017,19 @@ export class World {
     // tree per 60 m and read as an empty green rectangle, which is most of why
     // the parks looked unfinished.
     const x0 = cx * CHUNK, z0 = cz * CHUNK;
+    let treeSkip = 0;
     for (let i = 0; i < 230; i++) {
       const hx = hash2(cx * 71 + i, cz * 131 + 7);
       const hz = hash2(cx * 37 + i, cz * 53 + 13);
       const x = x0 + hx * CHUNK, z = z0 + hz * CHUNK;
       if (!G.inPark(x, z)) continue;
+      // Parks are a raster of OSM greenspace and real roads run straight
+      // through them -- Aurora crosses Woodland Park, Lake Washington Blvd runs
+      // the length of its parks. 6.4% of sampled carriageway centres sit inside
+      // the green mask, which is exactly where a tree would be planted in the
+      // middle of the road. Nothing else filters this: `inPark` knows about
+      // grass, not about tarmac.
+      if (this.city.onRoad(x, z, 2.5)) { treeSkip++; continue; }
       const h = hash2(Math.round(x), Math.round(z));
       const gy = G.terrainHeight(x, z);
       const th = 7 + h * 7;
@@ -1025,5 +1041,6 @@ export class World {
       flat.cone(x, gy + th * 0.58, z, 2.1 + h * 1.7, th * 0.44, 7, g);
       flat.cone(x, gy + th * 0.82, z, 1.4 + h * 1.2, th * 0.4, 6, g);
     }
+    cityStats.treesSkipped += treeSkip;
   }
 }

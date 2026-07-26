@@ -46,6 +46,10 @@ CLS = {
 }
 ALLEY_HW = 3.6
 CLASS_HW = {"hwy": 15.0, "art": 9.5, "st": 6.5, "res": 5.5, "ramp": 5.5}
+# Narrowest a class is allowed to get once lanes have had their say. A motorway
+# carriageway is only ever half a freeway, so its floor is lower than the old
+# whole-freeway CLASS_HW would suggest.
+CLASS_MIN_HW = {"hwy": 7.0, "art": 6.0, "st": 5.0, "res": 4.2, "ramp": 3.4}
 CLASS_ID = {"hwy": 0, "art": 1, "st": 2, "res": 3, "ramp": 4}
 DEFAULT_LANES = {"hwy": 6, "art": 4, "st": 3, "res": 2, "ramp": 1}
 
@@ -225,9 +229,16 @@ def half_width(cls, tags):
             pass
     if lanes is None:
         lanes = DEFAULT_LANES[cls]
-    # 3.3 m a lane plus a metre of shoulder each side; never narrower than the
-    # class default, so a mis-tagged 1-lane arterial doesn't become an alley.
-    return max(CLASS_HW[cls] * 0.72, min(20.0, lanes * 1.65 + 1.0))
+    # 3.6 m a lane plus a metre of shoulder each side.
+    #
+    # `lanes` counts the lanes on THIS way, and OSM splits a divided road into
+    # one way per carriageway -- so a motorway way is half the freeway, not all
+    # of it. The old floor (CLASS_HW * 0.72) was 10.8 m for anything tagged
+    # motorway, which made every I-5 carriageway 21.6 m wide whether it carried
+    # three lanes or six, and put the two carriageways' tarmac within 10 m of
+    # touching across the median. Lane counts have to actually drive the width.
+    hw = lanes * 1.8 + 1.0
+    return max(CLASS_MIN_HW[cls], min(20.0, hw))
 
 
 def main():

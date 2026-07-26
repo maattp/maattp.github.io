@@ -104,7 +104,7 @@ caused. It is all deleted, and the reasons it existed no longer apply:
 | `districtOwner()` | 25 of 32 district polygons overlapped, so two grids met at 58 deg | there are no procedural grids left to collide |
 | `dedupeGrid()` | 363 edge pairs were one street drawn twice | a street is in the data once |
 | `stitch()` | 99 dead ends and 8 components from where the author stopped drawing | roads end where they really end |
-| `roadFit()` / lot shrinking | 880 buildings stood in the carriageway | a real footprint is not in a real road |
+| ~~`roadFit()` / lot shrinking~~ | 880 buildings stood in the carriageway | **it came back — see below. This row was wrong.** |
 | `placeTower()` | 17 of 22 towers had a street through them | towers are just buildings, from the same source as the roads |
 | `waterDrops` | 182 edges ran through Lake Union | the lakes and the roads come from the same survey |
 
@@ -194,6 +194,67 @@ polygons. Buildings land in the right place at the right size, orientation and
 height, which is what reads from a car; the corner detail of 125k footprints does
 not. That is also what lets world.js's existing rectangle mesher, facade system
 and box collision keep working untouched.
+
+## Keeping the roads clear
+
+Three passes, all at load time and all measured. They exist because "the data is
+real, so the geometry is right" turned out to be false in three different ways.
+
+**`roadFit()` came back, and the note that deleted it was wrong.** "A real
+footprint is not standing in a real road, because the road is real too" is true
+of the FOOTPRINT and false of what actually ships, which is the footprint's
+minimum-area oriented rectangle. An L-shaped or U-shaped building's bounding box
+covers the notch, and a street through that notch is under the box. Measured:
+**11,131 boxes (8.9%) overlapped a carriageway, 8,290 of them by more than 3 m**,
+including a 274 x 68 m box sitting 38 m into I-5. The pass shrinks a box to clear
+the carriageway and drops it only if that would take it under 4 m a side --
+12,039 shrunk, 3,172 dropped, and the overlap count is now **0**. It clears the
+carriageway only, not the pavement: real buildings front the pavement, and
+clearing that too shrinks most of downtown for no gain in drivability.
+
+It runs at load time over the shipped boxes rather than as a filter in the
+importer, so the correction travels with the geometry and cannot go stale
+against a re-import.
+
+**`roadCoveredAt()` was suppressing real tarmac.** The old test skipped a road's
+surface wherever its CENTRELINE fell inside a wider road's half-width. A
+motorway's half-width spans several lanes, so *every ramp running beside it
+qualified*: **30% of all ramp segments were drawn with no surface at all**, plus
+9-13% of every other class. That is what "I-5 isn't fully navigable" was -- you
+took an off-ramp and there was nothing under you. Two fixes: require the roads to
+be near-parallel (a crossing at a junction has each centre inside the other and
+neither is redundant), and test **containment** rather than centreline proximity
+-- a road is only redundant where its whole width is inside the other's. Ramps
+went 30% -> 8%, arterials/streets/residential 9-13% -> **0%**. A tunnel, which is
+still drawn at ground level, may never suppress the street above it.
+
+| skipped as "already paved" | before | after |
+|---|---|---|
+| ramp | 30% | 8% |
+| hwy | 8% | 6% |
+| art / st / res | 9-13% | 0% |
+
+**Trees plant themselves on roads unless told not to.** Parks are a raster of OSM
+greenspace and real roads run through them -- Aurora crosses Woodland Park, Lake
+Washington Boulevard runs the length of its own. 6.4% of sampled carriageway
+centres sit inside the green mask. `inPark()` knows about grass, not about
+tarmac, so the scatter asks `city.onRoad(x, z, pad)` as well. Anything else
+scattered on the ground needs the same call.
+
+**Ground tint: tarmac is built-up too, and `SUBURB` has to look different from
+`GRASS`.** Two separate bugs made the I-5 trench through Chinatown render as a
+lawn. `builtAt()` counted building footprints only, and a freeway corridor has no
+buildings in it -- it now adds paved area per chunk, so "urban" means buildings
+OR pavement. And `SUBURB` was `[0.48, 0.60, 0.37]` against `GRASS`'s
+`[0.42, 0.62, 0.28]`: the same colour to within a rounding error, so ground that
+had blended all the way to "fully developed" still came out a bright meadow.
+
+**Widths: `lanes` counts the lanes on THIS way, and OSM splits a divided road
+into one way per carriageway.** A motorway way is half the freeway, not all of
+it. The old floor (`CLASS_HW * 0.72`) was 10.8 m for anything tagged motorway,
+which made every I-5 carriageway 21.6 m wide whether it carried three lanes or
+six. `CLASS_MIN_HW` is per-class and low enough that the lane count actually
+drives the width.
 
 ## What the map looks like from above
 
