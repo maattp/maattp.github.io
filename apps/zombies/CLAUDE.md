@@ -223,6 +223,24 @@ theory:
 - **Menus must fit a 390 px-tall viewport.** A landscape phone is short; the
   menu stack was authored at a comfortable height and ran off the bottom. The
   `max-height: 470px` block is not cosmetic.
+- **COLOUR CONSTANTS ARE sRGB UNLESS YOU SAY OTHERWISE.** `new THREE.Color(hex)`
+  is read as sRGB and converted to linear by ColorManagement, so a hex that looks
+  like 0.19 grey reaches the shader at about 0.03 — a 6x crush. Several rounds of
+  "the rooms are still too dark" were spent nudging numbers that were being
+  gamma-crushed on the way in. Ambient is authored with
+  `setRGB(..., THREE.LinearSRGBColorSpace)`; do the same for anything whose value
+  the bake maths depends on.
+- **WRAPPED DIFFUSE, NOT HARD N·L.** Measured, walls came out 83-90% pure black
+  against 55% for floors under the same lamps, because a wall's normal is
+  near-perpendicular to the direction of a ceiling light. Wrapping the diffuse
+  term (`(nd + 0.55) / 1.55`) is what makes a room read as a room; it also stands
+  in for the bounce light a single-pass bake has no other way to get. Every zone
+  additionally carries one dim always-on fill so an unpowered room is gloomy
+  rather than a black void.
+- **BOARDS MUST FIT THEIR OPENING.** Planks were authored at `1.02 * TILE`
+  against a `2 * WIN_HW * TILE` (1.008 m) opening, so the ends overhung the frame
+  and poked through the window reveals — from any oblique angle you saw plank
+  stubs floating in the dark cavity beside the window.
 - **A mechanic nobody can find does not exist.** A player asked whether
   reloading was possible at all — it always was (button, `R`, `X`, and an
   auto-reload on a dry trigger), but nothing announced it. The dry-mag hint and
@@ -232,6 +250,27 @@ theory:
 
 Pack-a-Punch, hellhound rounds, multiplayer, mid-run saves, and multi-floor maps
 (the nav grid is single-layer).
+
+## Audio
+
+All synthesised, no files. Signal path is voices -> `master` -> compressor ->
+destination, with a parallel convolution reverb (`route(node, send)`) fed from a
+synthesised impulse. Two things that were missing and mattered more than any
+individual voice:
+
+- **A limiter on the master.** Dozens of one-shot voices summed with no headroom
+  management, so a firefight clipped into mush while a distant groan was
+  inaudible.
+- **Reverb.** The bunker is concrete and everything was landing bone dry, which
+  is most of why the mix read as thin. Distant sources send MORE to the reverb,
+  which is what sells distance better than volume alone.
+
+A gunshot is five layers — action transient, supersonic crack, barrel body, sub
+thump, and a long tail sent almost entirely to the reverb. The tail is what makes
+it a rifle in a concrete room rather than a click in a vacuum.
+
+`verify.mjs` fires every voice once: a broken node graph is a silent runtime
+throw inside a one-shot, not a missing file, so nothing else would catch it.
 
 ## Testing
 

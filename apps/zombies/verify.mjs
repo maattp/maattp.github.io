@@ -615,6 +615,35 @@ check('BEGIN still starts a run', menuNav.started, menuNav);
 check('HUD is hidden behind menus and restored in game',
   menuNav.hudHiddenInMenu && menuNav.hudBackInGame, menuNav);
 
+// 13c. AUDIO GRAPH ------------------------------------------------------------------
+// Everything is synthesised, so a broken node graph is a silent runtime throw
+// inside a one-shot rather than a missing file. Fire every voice at least once.
+const audio = await page.evaluate(() => {
+  const D = __dbg, S = D.Snd, o = {};
+  S.boot();
+  o.hasCtx = !!S.ctx;
+  const P = D.Player.P.pos, yaw = 0;
+  const calls = [
+    () => S.shot(D.WEAPONS.m1911), () => S.shot(D.WEAPONS.trench), () => S.dryFire(),
+    () => S.reloadClick(true), () => S.shellDrop(), () => S.knife(), () => S.explode(),
+    () => S.groan(P, P, yaw), () => S.growl(P, P, yaw), () => S.hitFlesh(), () => S.headPop(),
+    () => S.zombieHit(), () => S.plankTear(), () => S.plankFix(), () => S.buy(), () => S.deny(),
+    () => S.points(true), () => S.doorOpen(), () => S.powerUp(), () => S.roundStart(7),
+    () => S.hurt(), () => S.heartbeat(), () => S.step(true), () => S.death(),
+    () => S.perkJingle(0), () => S.powerupDrop(), () => S.powerupGrab('nuke'),
+    () => S.boxOpen(), () => S.boxCycle(), () => S.boxTake(), () => S.bear(),
+    () => S.revive(), () => S.down(), () => S.dogRound(), () => S.ambience(true),
+  ];
+  const failed = [];
+  calls.forEach((f, i) => { try { f(); } catch (e) { failed.push(i + ':' + e.message); } });
+  S.ambience(false);
+  o.voices = calls.length;
+  o.failed = failed;
+  return o;
+});
+check('audio context builds', audio.hasCtx, audio);
+check('every synthesised voice plays without throwing', audio.failed.length === 0, audio);
+
 // 14. no errors anywhere -------------------------------------------------------
 const gameErrors = await page.evaluate(() => __dbg.errors);
 check('no in-game errors', gameErrors.length === 0, gameErrors);
