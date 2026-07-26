@@ -164,6 +164,12 @@ Adding another perk is one `PERKS` entry, one map char, and one multiplier read.
   windows entirely. That is the whole reason a dog round feels different from a
   zombie round despite sharing the AI.
 
+**PAD BINDINGS FOLLOW CALL OF DUTY, NOT CONVENIENCE.** Hold L3 to sprint —
+never a toggle, which latches the state after the stick is released so you round
+a corner already sprinting and unable to shoot. R3 melees. B melees as well
+(harmless, and it is what earlier builds trained) but menus back out on B only,
+because a stick-click is a melee button and should not also mean "go back".
+
 **A CURSOR IS NOT AN ACTION.** The controller could confirm and go back for a
 whole release before it could show you WHICH item it was about to press, and the
 first attempt at a fix navigated perfectly while highlighting nothing — the ring

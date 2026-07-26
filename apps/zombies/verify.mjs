@@ -541,6 +541,15 @@ const pad = await page.evaluate(() => {
   const g0 = D.Player.gun().key; __tapPad(3); D.stepN(20);
   o.ySwaps = D.Player.gun().key !== g0;
   __tapPad(1); D.stepN(2); o.bKnifes = P.knifeT > 0; D.stepN(60);
+  // R3 melee — a Call of Duty player's thumb goes here, not to B
+  __tapPad(11); D.stepN(2); o.r3Melees = P.knifeT > 0; D.stepN(60);
+  /* HOLD L3 to sprint. It was a toggle, which latches: you let go of the stick
+     and stay "sprinting", so you round a corner already unable to shoot. */
+  __btn(10, true); __ax(0, -1, 0, 0); D.stepN(10);
+  o.sprintWhileHeld = P.sprinting;
+  __btn(10, false); D.stepN(10);
+  o.sprintStopsOnRelease = !P.sprinting;
+  __ax(0, 0, 0, 0); D.stepN(4);
   const n0 = P.nades; __tapPad(5); D.stepN(40); o.rbNades = P.nades === n0 - 1;
   const wb = D.Level.wallbuys.find(w => w.char === 'a');
   D.teleport(wb.use.x, wb.use.z); D.points(9999); D.stepN(4);
@@ -560,6 +569,8 @@ check('X reloads', pad.xReloads, pad);
 check('LT aims', pad.ltAds, pad);
 check('Y swaps weapon', pad.ySwaps, pad);
 check('B knifes', pad.bKnifes, pad);
+check('R3 melees', pad.r3Melees, pad);
+check('L3 sprints only while held', pad.sprintWhileHeld && pad.sprintStopsOnRelease, pad);
 check('RB throws a frag', pad.rbNades, pad);
 check('A buys at a wall-buy', pad.aBuys, pad);
 check('Start pauses, A resumes', pad.startPauses && pad.aResumes, pad);
