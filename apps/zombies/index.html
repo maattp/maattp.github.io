@@ -278,8 +278,10 @@
     <b>Touch</b> — drag the left half to move (push forward to sprint), drag the right half to look.
     <b>FIRE</b> can be dragged to aim while shooting. Tap <b>BUY</b> when a prompt appears; hold it at a
     broken window to rebuild the boards.<br><br>
-    <b>Controller</b> — left stick move, right stick look, <b>RT</b> fire, <b>LT</b> aim, <b>A</b> buy / repair,
-    <b>X</b> reload, <b>B</b> knife, <b>RB</b> frag, <b>Y</b> swap weapon, <b>L3</b> sprint, <b>Start</b> pause. In menus: <b>A</b> confirm, <b>B</b> back.<br><br>
+    <b>Controller</b> — left stick move, right stick look, <b>RT</b> fire, <b>LT</b> aim,
+    <b>hold L3</b> sprint, <b>R3</b> melee, <b>A</b> buy / repair, <b>X</b> reload,
+    <b>RB</b> frag, <b>Y</b> swap weapon, <b>Start</b> pause.
+    In menus: stick or d-pad moves the highlight, <b>A</b> confirm, <b>B</b> back.<br><br>
     <b>Keyboard</b> — <span class="kbd">WASD</span> move, <span class="kbd">Shift</span> sprint,
     mouse look &amp; fire, <span class="kbd">R</span> reload, <span class="kbd">V</span> knife,
     <span class="kbd">G</span> frag, <span class="kbd">Q</span> swap, <span class="kbd">F</span> buy,
@@ -350,7 +352,7 @@ import * as THREE from 'three';
      4  map data + level build    9  FX, HUD, loop, debug harness
    ============================================================================ */
 
-const VERSION = 3;                    // bump once per PR (shown bottom-right)
+const VERSION = 4;                    // bump once per PR (shown bottom-right)
 
 // ---------------------------------------------------------------- 0. config
 const CFG = {
@@ -678,13 +680,13 @@ const Input = (() => {
     lookX: 0, lookY: 0,    // look delta accumulated this frame (radians)
     fire: false, ads: false, sprint: false,
     // edge-triggered actions, consumed by the reader
-    reload: false, knife: false, nade: false, swap: false, use: false, pause: false,
+    reload: false, knife: false, nade: false, swap: false, use: false, pause: false, back: false,
     menuNav: 0,            // -1 up / +1 down, edge-triggered, for menu cursors
     useHeld: false,        // level (for holding to repair a barricade)
     hasPad: false, mode: 'touch',
   };
   const keys = new Set();
-  let padIdx = null, prevPad = [], prevNav = 0;
+  let padIdx = null, prevPad = [], prevNav = 0, prevMelee = false;
   const LOOK_TOUCH = 0.0038, LOOK_MOUSE = 0.0022, LOOK_PAD = 2.6;
 
   // ---- touch ----------------------------------------------------------
@@ -782,6 +784,7 @@ const Input = (() => {
     if (e.code === 'Enter' || e.code === 'Space') st.use = true;   // menu confirm
     if (e.code === 'ArrowDown') st.menuNav = 1;
     if (e.code === 'ArrowUp') st.menuNav = -1;
+    if (e.code === 'Backspace') st.back = true;
     if (e.code === 'KeyM') Snd.toggleMute();
     if (['KeyW','KeyA','KeyS','KeyD','Space','KeyR','KeyF'].includes(e.code)) e.preventDefault();
   });
@@ -802,7 +805,11 @@ const Input = (() => {
 
   // ---- gamepad ---------------------------------------------------------
   // Standard mapping, which is what every MFi/Xbox/DualSense pad reports on iOS.
-  const PAD = { fire: 7, ads: 6, use: 0, knife: 1, reload: 2, swap: 3, nade: 5, sprint: 10, pause: 9, start2: 17 };
+  /* Standard mapping, laid out the way a Call of Duty player's hands already
+     work: HOLD L3 to sprint (not a toggle), click R3 to melee. B keeps meleeing
+     too — it costs nothing and it is what the earlier builds trained. */
+  const PAD = { fire: 7, ads: 6, use: 0, back: 1, knife: 1, melee: 11,
+                reload: 2, swap: 3, nade: 5, sprint: 10, pause: 9 };
   addEventListener('gamepadconnected', e => { padIdx = e.gamepad.index; st.hasPad = true; st.mode = 'pad'; touchLayer.classList.remove('on'); Snd.resume(); });
   addEventListener('gamepaddisconnected', () => { padIdx = null; st.hasPad = false; });
   function pollPad(dt) {
@@ -830,12 +837,18 @@ const Input = (() => {
     }
     st.fire = down(PAD.fire);
     st.ads = down(PAD.ads);
-    for (const k of ['use', 'knife', 'reload', 'swap', 'nade', 'pause']) {
+    for (const k of ['use', 'back', 'reload', 'swap', 'nade', 'pause']) {
       const on = down(PAD[k]);
       if (on && !prevPad[PAD[k]]) st[k] = true;
       if (k === 'use') st.useHeld = on;
     }
-    if (down(PAD.sprint) && !prevPad[PAD.sprint]) st.sprint = !st.sprint;
+    // melee from either stick-click or B, edge-detected across the pair
+    const meleeNow = down(PAD.melee) || down(PAD.knife);
+    if (meleeNow && !prevMelee) st.knife = true;
+    prevMelee = meleeNow;
+    // HOLD to sprint. A toggle leaves the state latched after you let go of the
+    // stick, so you round a corner already sprinting and cannot shoot.
+    st.sprint = down(PAD.sprint);
     // d-pad or left stick drives a menu cursor; edge-triggered so a held
     // direction moves one item, not forty
     const nav = (down(13) || my < -0.55) ? 1 : ((down(12) || my > 0.55) ? -1 : 0);
@@ -860,8 +873,8 @@ const Input = (() => {
     // consume() clears the edge flags — call once per frame, after reading
     consume() {
       const out = { reload: st.reload, knife: st.knife, nade: st.nade, swap: st.swap,
-                    use: st.use, pause: st.pause, menuNav: st.menuNav };
-      st.reload = st.knife = st.nade = st.swap = st.use = st.pause = false;
+                    use: st.use, pause: st.pause, back: st.back, menuNav: st.menuNav };
+      st.reload = st.knife = st.nade = st.swap = st.use = st.pause = st.back = false;
       st.menuNav = 0;
       return out;
     },
@@ -5041,7 +5054,7 @@ const Game = (() => {
       // the cursor. Keyboard arrows and Enter drive the same path.
       if (act.menuNav) Menu.move(act.menuNav);
       if (act.use) Menu.activate();
-      else if (act.knife) Menu.back();
+      else if (act.back) Menu.back();
       else Menu.paint();          // the ring appears the moment a pad is used
     }
     if (G.state === 'play' || G.state === 'dying') {
