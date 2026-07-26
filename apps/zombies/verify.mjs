@@ -565,6 +565,45 @@ check('A buys at a wall-buy', pad.aBuys, pad);
 check('Start pauses, A resumes', pad.startPauses && pad.aResumes, pad);
 check('A starts a run from the title screen', pad.aStarts, pad);
 
+// 13b. MENU CURSOR ------------------------------------------------------------------
+/* The controller could confirm and go back long before it could show you WHAT
+   it was about to confirm. `ringed` is the load-bearing assertion here: the
+   first version of this cursor navigated perfectly and highlighted nothing,
+   because the ring was gated on an input mode that button presses never set. */
+const menuNav = await page.evaluate(() => {
+  const D = __dbg, o = {};
+  D.Game.menu(); D.stepN(4);
+  __tapPad(13);
+  o.first = D.menu();
+  __tapPad(12);
+  o.afterUp = D.menu().focused;
+  __tapPad(12);
+  o.wraps = D.menu().focused;                       // up from the top wraps round
+  while (D.menu().focused !== 'CONTROLS') __tapPad(13);
+  __tapPad(0); D.stepN(4);
+  o.activatedHighlighted = D.Game.state === 'how';  // A pressed the ringed item
+  o.ringOnHow = D.menu().ringed.length === 1;
+  __tapPad(1); D.stepN(4);
+  o.backedOut = D.Game.state === 'title';
+  while (D.menu().focused !== 'BEGIN') __tapPad(13);
+  __tapPad(0); D.stepN(4);
+  o.started = D.Game.state === 'play';
+  o.hudHiddenInMenu = (D.Game.menu(), D.stepN(2), document.body.classList.contains('inmenu'));
+  D.Game.show(null); D.stepN(2);
+  o.hudBackInGame = !document.body.classList.contains('inmenu');
+  return o;
+});
+check('menu cursor moves and wraps',
+  menuNav.first.focused === 'CONTROLS' && menuNav.afterUp === 'BEGIN' && menuNav.wraps === 'CONTROLS', menuNav);
+check('the focused item is actually highlighted',
+  menuNav.first.ringed.length === 1 && menuNav.first.ringed[0] === menuNav.first.focused, menuNav.first);
+check('every screen gets its own highlight', menuNav.ringOnHow, menuNav);
+check('A activates the highlighted item', menuNav.activatedHighlighted, menuNav);
+check('B backs out', menuNav.backedOut, menuNav);
+check('BEGIN still starts a run', menuNav.started, menuNav);
+check('HUD is hidden behind menus and restored in game',
+  menuNav.hudHiddenInMenu && menuNav.hudBackInGame, menuNav);
+
 // 14. no errors anywhere -------------------------------------------------------
 const gameErrors = await page.evaluate(() => __dbg.errors);
 check('no in-game errors', gameErrors.length === 0, gameErrors);

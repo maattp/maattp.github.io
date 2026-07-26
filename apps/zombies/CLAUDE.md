@@ -164,6 +164,15 @@ Adding another perk is one `PERKS` entry, one map char, and one multiplier read.
   windows entirely. That is the whole reason a dog round feels different from a
   zombie round despite sharing the AI.
 
+**A CURSOR IS NOT AN ACTION.** The controller could confirm and go back for a
+whole release before it could show you WHICH item it was about to press, and the
+first attempt at a fix navigated perfectly while highlighting nothing — the ring
+was gated on `Input.st.mode`, which only flips to `'pad'` on stick movement, so a
+player using the d-pad and A never saw it. The ring keys off `st.hasPad`, and any
+button press now counts as pad input. `verify.mjs` asserts the ring is actually
+applied (`menu().ringed`), not merely that navigation works; asserting behaviour
+without appearance is what let the original bug ship.
+
 **A CHECK THAT SHARES STATE WITH THE ROUND IS NOT A CHECK.** The down-state
 interaction test passed against a deliberately broken build because the round
 was live and spawning zombies were tearing the very window it was measuring.

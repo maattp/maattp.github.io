@@ -155,6 +155,14 @@
   .go.alt { background:linear-gradient(#26292c,#15171a); border-color:#42484d; color:#c9d0ca;
     padding:12px 30px; font-size:14px; letter-spacing:2px; box-shadow:none; }
   .row { display:flex; gap:12px; flex-wrap:wrap; justify-content:center; pointer-events:auto; }
+  /* Menu focus ring. A controller gave you actions but no cursor, so there was
+     no way to see what A was about to do. Shown only for pad/keyboard — a touch
+     player is pointing at the thing they want and a ring is just noise. */
+  .go.focus { outline:2px solid #ffd257; outline-offset:3px;
+    box-shadow:0 0 0 4px rgba(255,210,87,.16), 0 8px 26px rgba(140,20,0,.34);
+    transform:translateY(-1px); }
+  .go.alt.focus { outline-color:#e8e4dc; box-shadow:0 0 0 4px rgba(232,228,220,.14); }
+  .go.focus::after { content:''; position:absolute; }
   .stat { font-size:13px; color:#8b938c; letter-spacing:2px; }
   .stat b { color:#ffd257; font-size:22px; display:block; }
   .grid2 { display:flex; gap:30px; }
@@ -196,6 +204,13 @@
   #rot h3 { font-family:Impact,Haettenschweiler,"Arial Narrow",sans-serif; font-size:30px;
     letter-spacing:4px; color:#a8180c; }
   #rot p { font-size:13px; color:#8b938c; letter-spacing:1px; }
+  /* The menu screens are deliberately translucent so the bunker shows through
+     behind them — but the HUD was showing through too, so the title screen
+     carried a live points counter, ammo, crosshair and whatever toast happened
+     to be mid-fade. Everything diegetic stays; everything HUD goes. */
+  body.inmenu #ui, body.inmenu #cross, body.inmenu #hit, body.inmenu #reloadHint,
+  body.inmenu #vig, body.inmenu #flash, body.inmenu #rndBig, body.inmenu #banner,
+  body.inmenu #downMsg, body.inmenu #touch { display:none !important; }
   #err { position:fixed; left:0; right:0; bottom:0; z-index:40; background:#300; color:#fbb; font-size:11px;
     padding:8px 12px; display:none; max-height:38vh; overflow:auto; white-space:pre-wrap; font-family:monospace; }
 </style>
@@ -664,11 +679,12 @@ const Input = (() => {
     fire: false, ads: false, sprint: false,
     // edge-triggered actions, consumed by the reader
     reload: false, knife: false, nade: false, swap: false, use: false, pause: false,
+    menuNav: 0,            // -1 up / +1 down, edge-triggered, for menu cursors
     useHeld: false,        // level (for holding to repair a barricade)
     hasPad: false, mode: 'touch',
   };
   const keys = new Set();
-  let padIdx = null, prevPad = [];
+  let padIdx = null, prevPad = [], prevNav = 0;
   const LOOK_TOUCH = 0.0038, LOOK_MOUSE = 0.0022, LOOK_PAD = 2.6;
 
   // ---- touch ----------------------------------------------------------
@@ -764,6 +780,8 @@ const Input = (() => {
     if (KEY[e.code]) { st[KEY[e.code]] = true; if (e.code === 'KeyF') st.useHeld = true; }
     if (e.code === 'Escape') st.pause = true;
     if (e.code === 'Enter' || e.code === 'Space') st.use = true;   // menu confirm
+    if (e.code === 'ArrowDown') st.menuNav = 1;
+    if (e.code === 'ArrowUp') st.menuNav = -1;
     if (e.code === 'KeyM') Snd.toggleMute();
     if (['KeyW','KeyA','KeyS','KeyD','Space','KeyR','KeyF'].includes(e.code)) e.preventDefault();
   });
@@ -805,6 +823,11 @@ const Input = (() => {
     st.lookY += ly * Math.abs(ly) * LOOK_PAD * dt;
     const b = gp.buttons;
     const down = i => !!(b[i] && (b[i].pressed || b[i].value > 0.4));
+    // buttons count as pad input too — otherwise a d-pad-only player is still
+    // treated as a touch player and keeps the on-screen thumb controls
+    for (let i = 0; i < b.length; i++) {
+      if (b[i] && (b[i].pressed || b[i].value > 0.4)) { st.mode = 'pad'; touchLayer.classList.remove('on'); break; }
+    }
     st.fire = down(PAD.fire);
     st.ads = down(PAD.ads);
     for (const k of ['use', 'knife', 'reload', 'swap', 'nade', 'pause']) {
@@ -813,6 +836,11 @@ const Input = (() => {
       if (k === 'use') st.useHeld = on;
     }
     if (down(PAD.sprint) && !prevPad[PAD.sprint]) st.sprint = !st.sprint;
+    // d-pad or left stick drives a menu cursor; edge-triggered so a held
+    // direction moves one item, not forty
+    const nav = (down(13) || my < -0.55) ? 1 : ((down(12) || my > 0.55) ? -1 : 0);
+    if (nav && !prevNav) st.menuNav = nav;
+    prevNav = nav;
     prevPad = b.map(x => x.pressed || x.value > 0.4);
   }
 
@@ -831,8 +859,10 @@ const Input = (() => {
     },
     // consume() clears the edge flags — call once per frame, after reading
     consume() {
-      const out = { reload: st.reload, knife: st.knife, nade: st.nade, swap: st.swap, use: st.use, pause: st.pause };
+      const out = { reload: st.reload, knife: st.knife, nade: st.nade, swap: st.swap,
+                    use: st.use, pause: st.pause, menuNav: st.menuNav };
       st.reload = st.knife = st.nade = st.swap = st.use = st.pause = false;
+      st.menuNav = 0;
       return out;
     },
     takeLook() { const x = st.lookX, y = st.lookY; st.lookX = 0; st.lookY = 0; return [x, y]; },
@@ -4868,12 +4898,58 @@ const Game = (() => {
     navT: 0, frames: 0, fpsAcc: 0, fpsT: 0, fps: 60, degradeT: 0,
   };
   const screens = { title: $('title'), how: $('how'), pause: $('pause'), over: $('over') };
+
+  /* Menu cursor. The controller could already confirm and go back, but with no
+     highlight there was nothing to tell you WHICH item A was about to press —
+     actions without a cursor are not navigation. The focused element is clicked
+     directly, so the existing click handlers stay the single source of truth
+     for what each button does. */
+  const Menu = {
+    items: [], idx: 0, screen: null,
+    // where B / Escape goes from each screen
+    backTo: { how: 'menu', over: 'menu', pause: 'quit', title: 'how' },
+    bind(name) {
+      this.screen = name;
+      const el = name ? screens[name] : null;
+      this.items = el ? Array.from(el.querySelectorAll('.go')) : [];
+      this.idx = 0;
+      this.paint();
+    },
+    paint() {
+      /* Key this off a pad BEING PRESENT, not off the input mode. `mode` only
+         flips to 'pad' on stick movement, so a player navigating with the d-pad
+         and A — the obvious way to use a menu — never saw a highlight at all.
+         That was the original bug, and gating the new ring the same way
+         reproduced it exactly. */
+      const showRing = Input.st.hasPad || Input.st.mode === 'kb';
+      this.items.forEach((b, i) => b.classList.toggle('focus', showRing && i === this.idx));
+    },
+    move(dir) {
+      if (!this.items.length) return;
+      this.idx = (this.idx + dir + this.items.length) % this.items.length;
+      Snd.reloadClick(false);
+      this.paint();
+    },
+    activate() {
+      const b = this.items[this.idx];
+      if (b) b.click();
+    },
+    back() {
+      const where = this.backTo[this.screen];
+      if (where === 'menu') menu();
+      else if (where === 'quit') { Zombies.reset(); Player.clearNades(); menu(); }
+      else if (where === 'how') show('how');
+    },
+  };
+
   function show(name) {
     for (const k in screens) screens[k].classList.toggle('on', k === name);
     G.state = name === 'how' ? 'how' : (name || 'play');
     Input.showTouch(!name);
     document.body.style.cursor = name ? 'default' : 'none';
     if (name && document.pointerLockElement) document.exitPointerLock?.();
+    document.body.classList.toggle('inmenu', !!name);
+    Menu.bind(name);
   }
 
   function start() {
@@ -4960,21 +5036,13 @@ const Game = (() => {
     else if (act.pause) {
       if (G.state === 'play') pause();
       else if (G.state === 'pause') resume();
-    } else if (G.state !== 'play' && G.state !== 'dying' && (act.use || act.knife)) {
-      /* Menus have to be driveable from the pad too. Pausing and resuming was
-         never the hard part — without this you could not START a run or hit
-         TRY AGAIN without reaching over and tapping the screen, which is not
-         controller support. A = confirm, B = back. */
-      if (act.use) {
-        if (G.state === 'title') start();
-        else if (G.state === 'pause') resume();
-        else if (G.state === 'over') start();
-        else if (G.state === 'how') menu();
-      } else if (act.knife) {
-        if (G.state === 'how' || G.state === 'over') menu();
-        else if (G.state === 'pause') { Zombies.reset(); Player.clearNades(); menu(); }
-        else if (G.state === 'title') Game.show('how');
-      }
+    } else if (G.state !== 'play' && G.state !== 'dying') {
+      // A confirms the HIGHLIGHTED item, B backs out, the stick or d-pad moves
+      // the cursor. Keyboard arrows and Enter drive the same path.
+      if (act.menuNav) Menu.move(act.menuNav);
+      if (act.use) Menu.activate();
+      else if (act.knife) Menu.back();
+      else Menu.paint();          // the ring appears the moment a pad is used
     }
     if (G.state === 'play' || G.state === 'dying') {
       G.time += dt;
@@ -5049,7 +5117,7 @@ const Game = (() => {
   }
 
   return {
-    G, start, gameOver, pause, resume, menu, shake, step, render, show,
+    G, start, gameOver, pause, resume, menu, shake, step, render, show, Menu,
     get state() { return G.state; }, set state(v) { G.state = v; },
     get time() { return G.time; },
     get powerT() { return G.powerT; }, set powerT(v) { G.powerT = v; },
@@ -5144,6 +5212,9 @@ window.__dbg = {
   boxOpen() { return Box.open(); },
   boxTake() { return Box.take(); },
   Drops, Box, Perks, Pap, POWERUPS, PERKS, BOX, PAP,
+  menu() { const M = Game.Menu; return { screen: M.screen, idx: M.idx, count: M.items.length,
+    focused: M.items[M.idx] ? M.items[M.idx].textContent.trim() : null,
+    ringed: M.items.filter(b => b.classList.contains('focus')).map(b => b.textContent.trim()) }; },
   pap() { return { phase: Pap.phase, key: Pap.S.key }; },
   papInsert() { return Pap.insert(); },
   papTake() { return Pap.collect(); },
