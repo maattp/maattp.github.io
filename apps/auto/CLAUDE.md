@@ -256,6 +256,50 @@ which made every I-5 carriageway 21.6 m wide whether it carried three lanes or
 six. `CLASS_MIN_HW` is per-class and low enough that the lane count actually
 drives the width.
 
+### Pavement, roofs and water surfaces
+
+**Pavement must not cross a carriageway, and geometry alone will not enforce
+it.** Strips stop at `nodeRadius` along their own direction, but a pavement is
+offset SIDEWAYS by `hw + sw`, so near a junction its far corner can sit in the
+cross street even though its centreline stopped short -- and with real data a
+road that does not meet this node at all can pass close enough to be underneath
+it. Both the strips and the junction ring now test themselves against
+`city.onRoad()`. Measured at the spawn, 5.64 % of pavement vertices sat on a
+carriageway, the worst 8 m deep; now 0.7 % and 0.67 m.
+
+Two traps in writing that test. Sample the piece's MIDDLE, not its inner edge:
+a pavement's inner edge lies on its own carriageway's boundary by definition, so
+testing it rejects every piece in the city -- the first attempt deleted 95 % of
+the pavement. And sample a grid across the piece, because three samples down the
+centre catch head-on overlaps but miss a piece clipping a junction corner
+diagonally. `onRoad()` takes an `includeElev` flag for this: scattered props
+must respect a viaduct overhead, pavement must not.
+
+**A roof has to know which way its house is facing.** House roofs were
+`cone(..., max(w, d) * 0.74, ..., 4, ...)` -- a square pyramid sized off the
+LONGER side, and `cone()` takes no rotation, so it stayed axis-aligned in world
+space while the house was turned by `bd.rot`. On a 6 x 14 m house that is a 10 m
+square roof at the wrong angle, missing the walls entirely on the narrow axis.
+`meshGable()` builds a gable in the building's own frame with the ridge along
+the longer side. Smith Tower's cap had the same defect: a 4-sided `cone` puts
+its vertices on the axes, so it is a diamond in plan, 45 deg out from the square
+tower under it.
+
+**Nothing may stand above the water that covers it.** The minimap is drawn from
+the water mask and the world from the DEM, so the two disagreeing looks exactly
+like an island that is not on the map -- 938 sea cells stood above sea level.
+Subtracting a fixed depth is not enough wherever the DEM and the mask disagree.
+Every wet cell is now clamped below ITS OWN water surface: 0 for anything the
+sea flood reaches, the body's own level inside a labelled lake (Green Lake
+really is at 50 m), and the local DEM for ponds too small to label -- Volunteer
+Park Reservoir sits at 130 m and must not be dug to sea level.
+
+**`ROAD_LIFT` is 0.30, not 0.22.** Adaptive tessellation got terrain poking
+through the asphalt from 139 cm down to about 28 cm, but a road quad is a chord
+and some residue is unavoidable on a curved 40 m heightfield. 28 cm through a
+22 cm lift is grass growing on the road; 30 cm clears the measured worst case.
+The kerb is still 22 cm (`WALK_LIFT - ROAD_LIFT`).
+
 ### The road surface itself
 
 **Coplanar asphalt is what "messy" looked like.** `roadCoveredAt` only drops a

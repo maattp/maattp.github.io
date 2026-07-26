@@ -20,9 +20,15 @@ export const CHUNK = 400;
 // don't z-fight it. Anything that stands ON them has to be lifted by the same
 // amount or it sinks into the asphalt -- these are the single source of truth,
 // shared with world.js.
-export const ROAD_LIFT = 0.22;
-export const NODE_LIFT = 0.25;
-export const WALK_LIFT = 0.44;
+// Raised from 0.22/0.25/0.44. Adaptive tessellation got terrain poking through
+// the asphalt down from 139 cm to about 28 cm, but a road quad is a chord and
+// some residue is unavoidable on a curved 40 m heightfield -- and 28 cm through
+// a 22 cm lift is grass growing on the road. 30 cm clears the measured worst
+// case. The kerb is still 22 cm (WALK_LIFT - ROAD_LIFT), which is the number
+// world.js draws and the lift query reports.
+export const ROAD_LIFT = 0.30;
+export const NODE_LIFT = 0.33;
+export const WALK_LIFT = 0.52;
 
 // Half-widths now come per-edge from the import (real lane counts), so these are
 // only the fallback and the bounds a lift query scans within.
@@ -557,7 +563,7 @@ export function* cityGenerator(md) {
      * so a road crossing a park (Aurora through Woodland Park, Lake Washington
      * Boulevard down the length of its own) reads as plantable ground.
      */
-    onRoad(x, z, pad = 0) {
+    onRoad(x, z, pad = 0, includeElev = true) {
       const c0 = Math.floor((x - MAX_HW - pad) / CHUNK);
       const c1 = Math.floor((x + MAX_HW + pad) / CHUNK);
       const d0 = Math.floor((z - MAX_HW - pad) / CHUNK);
@@ -568,10 +574,12 @@ export function* cityGenerator(md) {
           if (!c) continue;
           for (const ei of c.edges) {
             const e = g.edges[ei];
-            // Elevated edges count. Anything scattered on the ground under a
-            // viaduct grows straight up through the deck -- there was a pine
-            // tree in the middle of the I-90 bridge because this said
-            // `if (e.elev) continue`, and a tree does not know it is indoors.
+            // Elevated edges count BY DEFAULT: anything scattered on the ground
+            // under a viaduct grows straight up through the deck -- there was a
+            // pine tree in the middle of the I-90 bridge because this skipped
+            // them. Pavement is the exception: a bridge passing overhead is no
+            // reason to leave a hole in the footpath under it.
+            if (e.elev && !includeElev) continue;
             const a = g.nodes[e.a], b = g.nodes[e.b];
             if (distToSeg(x, z, a.x, a.z, b.x, b.z).d <= e.hw + pad) return true;
           }
