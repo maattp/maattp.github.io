@@ -5,7 +5,7 @@ import * as THREE from './three.js';
 import * as G from './geo.js';
 import { CHUNK, ROAD_LIFT, NODE_LIFT, WALK_LIFT } from './citygen.js';
 import { Builder } from './build.js';
-import { hash2, clamp, lerp } from './util.js';
+import { hash2, clamp, lerp, distToSeg } from './util.js';
 
 const ROAD_Y = ROAD_LIFT;
 const NODE_Y = NODE_LIFT;
@@ -369,7 +369,12 @@ export class World {
   meshRoad(road, walk, flat, e, a, b, lod, ei) {
     const hw = e.hw;
     const px = -e.dz, pz = e.dx;
-    const steps = e.elev ? 1 : Math.max(1, Math.round(e.len / 16));
+    // Elevated spans get subdivided too. A barrier is a box that can only yaw,
+    // so on a climbing ramp it stays level while the deck rises away from it:
+    // one box over a 117 m span puts its ends tens of metres above and below
+    // the road, which is the white spears sticking out of the freeway. Short
+    // segments keep each box close to the deck it belongs to.
+    const steps = Math.max(1, Math.round(e.len / (e.elev ? 12 : 16)));
     const col = e.cls === 'hwy' ? [0.92, 0.92, 0.92] : [1, 1, 1];
     let v = 0;
     const yAt = (x, z, t) => (e.elev ? lerp(a.y, b.y, t) + 0.06 : G.terrainHeight(x, z) + ROAD_Y);
@@ -400,8 +405,13 @@ export class World {
     if (e.elev) {
       const bcol = [0.62, 0.62, 0.6];
       const along = Math.atan2(e.dx, e.dz);
-      for (let s = 0; s <= steps; s++) {
-        const t = s / steps;
+      // Barriers run along each SEGMENT, so they are centred on segment
+      // midpoints. Centring them on the endpoints instead (s <= steps, t =
+      // s/steps) gives every deck two barriers as long as the whole span, each
+      // overhanging its end by half a span -- which is where the white spears
+      // shooting off the freeway came from.
+      for (let s = 0; s < steps; s++) {
+        const t = (s + 0.5) / steps;
         const x = lerp(a.x, b.x, t), z = lerp(a.z, b.z, t), y = lerp(a.y, b.y, t);
         for (const sg of [-1, 1]) {
           flat.box(x + px * hw * sg, y - 0.1, z + pz * hw * sg, 0.55, 1.05, e.len / steps + 0.5, along, bcol);
@@ -409,11 +419,16 @@ export class World {
             e.len / steps + 0.5, along, [0.7, 0.71, 0.72]);
         }
       }
-      const gy = G.terrainHeight((a.x + b.x) / 2, (a.z + b.z) / 2);
-      const my = (a.y + b.y) / 2;
-      if (my - gy > 5) {
-        flat.prism((a.x + b.x) / 2, gy - 1, (a.z + b.z) / 2, 1.7, my - gy - 1.6, 6, [0.58, 0.58, 0.56]);
-        flat.box((a.x + b.x) / 2, my - 1.6, (a.z + b.z) / 2, hw * 1.5, 1.1, 2.4, along, [0.54, 0.54, 0.52]);
+      // Piers roughly every 35 m rather than one per span, whatever the span's
+      // length -- a 117 m viaduct on a single column reads as a mistake.
+      const piers = Math.max(1, Math.round(e.len / 35));
+      for (let p = 0; p < piers; p++) {
+        const t = (p + 0.5) / piers;
+        const cx = lerp(a.x, b.x, t), cz = lerp(a.z, b.z, t), cy = lerp(a.y, b.y, t);
+        const gy = G.terrainHeight(cx, cz);
+        if (cy - gy <= 5) continue;
+        flat.prism(cx, gy - 1, cz, 1.7, cy - gy - 1.6, 6, [0.58, 0.58, 0.56]);
+        flat.box(cx, cy - 1.6, cz, hw * 1.5, 1.1, 2.4, along, [0.54, 0.54, 0.52]);
       }
     } else if (lod === 1 && (e.cls === 'st' || e.cls === 'art' || e.cls === 'res')) {
       const sw = e.cls === 'art' ? 3.2 : 2.6;
@@ -474,6 +489,11 @@ export class World {
 
   meshNode(road, flat, ni, n, lod, walk) {
     const city = this.city;
+    // A dead end is not a junction. Paving a crossing square and a kerbed
+    // pavement ring at one leaves a slab of road furniture sitting on bare
+    // ground with a single street running into it -- the "road to nowhere".
+    // citygen.nodeSurface() skips these too; the two have to agree.
+    if (n.e.length < 2) return;
     let hw = 0;
     let rot = 0;
     let sw = 0;
@@ -504,21 +524,41 @@ export class World {
     const wy = (x, z) => G.terrainHeight(x, z) + WALK_Y;
     const ry = (x, z) => G.terrainHeight(x, z) + ROAD_Y;
     const cc = [0.72, 0.72, 0.7], ccLo = [0.4, 0.4, 0.39];
+    // Pavement must not cross a carriageway. Each side of the ring is cut into
+    // pieces and the pieces covering an approach road are dropped, which leaves
+    // pavement on the corners only -- drawn whole, the ring laid a footpath
+    // straight over all four approaches, the same defect the trimmed strips
+    // were meant to have fixed.
+    const onRoad = (x, z) => {
+      for (const ei of n.e) {
+        const e = city.edges[ei];
+        if (e.elev) continue;
+        const ea = city.nodes[e.a], eb = city.nodes[e.b];
+        if (distToSeg(x, z, ea.x, ea.z, eb.x, eb.z).d <= e.hw + 0.35) return true;
+      }
+      return false;
+    };
+    const SEG = 16;
     const side = (ax, az, bx, bz, nx, nz) => {
-      // inner edge a->b, pushed out by sw to make the outer edge
-      const [i0x, i0z] = P(ax, az), [i1x, i1z] = P(bx, bz);
-      const [o0x, o0z] = P(ax + nx * sw, az + nz * sw);
-      const [o1x, o1z] = P(bx + nx * sw, bz + nz * sw);
-      if (!G.isBuildable(o0x, o0z) && !G.isBuildable(o1x, o1z)) return;
-      walk.quad(
-        [i0x, wy(i0x, i0z), i0z], [o0x, wy(o0x, o0z), o0z],
-        [o1x, wy(o1x, o1z), o1z], [i1x, wy(i1x, i1z), i1z],
-        [0, 1, 0], [0, 0, 1, 0, 1, 1, 0, 1], [1, 1, 1]);
       const wn = [-(nx * c - nz * s), 0, -(nx * s + nz * c)];
-      flat.quad(
-        [i0x, ry(i0x, i0z), i0z], [i1x, ry(i1x, i1z), i1z],
-        [i1x, wy(i1x, i1z), i1z], [i0x, wy(i0x, i0z), i0z],
-        wn, [0, 0, 1, 0, 1, 1, 0, 1], [ccLo, ccLo, cc, cc]);
+      for (let k = 0; k < SEG; k++) {
+        const t0 = k / SEG, t1 = (k + 1) / SEG;
+        const sax = ax + (bx - ax) * t0, saz = az + (bz - az) * t0;
+        const sbx = ax + (bx - ax) * t1, sbz = az + (bz - az) * t1;
+        const [i0x, i0z] = P(sax, saz), [i1x, i1z] = P(sbx, sbz);
+        const [o0x, o0z] = P(sax + nx * sw, saz + nz * sw);
+        const [o1x, o1z] = P(sbx + nx * sw, sbz + nz * sw);
+        if (!G.isBuildable(o0x, o0z) && !G.isBuildable(o1x, o1z)) continue;
+        if (onRoad((i0x + o1x) / 2, (i0z + o1z) / 2)) continue;
+        walk.quad(
+          [i0x, wy(i0x, i0z), i0z], [o0x, wy(o0x, o0z), o0z],
+          [o1x, wy(o1x, o1z), o1z], [i1x, wy(i1x, i1z), i1z],
+          [0, 1, 0], [0, 0, 1, 0, 1, 1, 0, 1], [1, 1, 1]);
+        flat.quad(
+          [i0x, ry(i0x, i0z), i0z], [i1x, ry(i1x, i1z), i1z],
+          [i1x, wy(i1x, i1z), i1z], [i0x, wy(i0x, i0z), i0z],
+          wn, [0, 0, 1, 0, 1, 1, 0, 1], [ccLo, ccLo, cc, cc]);
+      }
     };
     const R = hw;
     side(-R, R, R, R, 0, 1);

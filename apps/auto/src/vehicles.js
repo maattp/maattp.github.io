@@ -406,6 +406,18 @@ export class Vehicle {
     this.heading = heading;
     this.lift = this.city.roadLift(x, z);
     this.y = this.city.groundAt(x, z, null, this.lift);
+    // Sit on the slope, the same way update() does. A parked car never runs
+    // update(), so left at zero pitch it stays level on a hillside street and
+    // its downhill end is buried -- the sunken cars on Queen Anne.
+    const f = this.forward;
+    const rx = f.z, rz = -f.x;
+    const at = (dx, dz) => this.city.groundAt(this.x + dx, this.z + dz, this.y + 1.5, this.lift);
+    const fh = at(f.x * this.halfLen, f.z * this.halfLen);
+    const bh = at(-f.x * this.halfLen, -f.z * this.halfLen);
+    const lh = at(rx * this.halfWid, rz * this.halfWid);
+    const rh = at(-rx * this.halfWid, -rz * this.halfWid);
+    this.pitch = Math.atan2(bh - fh, this.halfLen * 2);
+    this.roll = Math.atan2(rh - lh, this.halfWid * 2);
     this.sync();
   }
 

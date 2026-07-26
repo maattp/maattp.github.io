@@ -333,7 +333,19 @@ export function* cityGenerator() {
         const ground = G.terrainHeight(x, z);
         const elev = hasY && y - ground > 3.5;
         const id = g.addNode(x, z, elev ? y : null, elev);
-        if (prev >= 0) g.addEdge(prev, id, cls, name);
+        if (prev >= 0) {
+          // Never lay a road on the lake bed. These polylines are hand-drawn and
+          // carry the same positional drift as everything else, which put four
+          // arterials -- Aurora, Westlake, Dexter and Fairview -- straight
+          // through Lake Union at 4 to 9 m below the surface, plus Delridge Way
+          // through Elliott Bay. A span that is meant to cross water is marked
+          // elevated in the data and is left alone; anything else that lands on
+          // water is a mistake and is better absent than submerged.
+          const p = g.nodes[prev];
+          const wet = !elev && !p.elev
+            && G.isWater((p.x + x) / 2, (p.z + z) / 2);
+          if (!wet) g.addEdge(prev, id, cls, name);
+        }
         prev = id;
       }
     }
@@ -785,6 +797,8 @@ export function* cityGenerator() {
             const n = g.nodes[ni];
             // elevated junctions ride their deck, not the terrain
             if (n.elev) continue;
+            // a dead end draws no square, so it reports no lift -- see meshNode
+            if (n.e.length < 2) continue;
             let hw = 0, rot = 0, sw = 0;
             for (const ei of n.e) {
               const e = g.edges[ei];
