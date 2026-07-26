@@ -1,7 +1,8 @@
 # Auto
 
-An open-world driving/on-foot game set in a ~10.4 km × 10.4 km Seattle. Landscape
-iPhone PWA: left thumb stick, right-side buttons, drag the right half to look.
+An open-world driving/on-foot game set in a ~16 km x 16 km Seattle, built from
+real map data. Landscape iPhone PWA: left thumb stick, right-side buttons, drag
+the right half to look.
 
 ## Layout
 
@@ -9,10 +10,14 @@ iPhone PWA: left thumb stick, right-side buttons, drag the right half to look.
 index.html                  shell: meta, CSS, HUD DOM, control zones
 sw.js                       offline cache (see "Offline" below)
 vendor/three-0.160.0.module.js   vendored Three.js (NOT a CDN import)
+data/                       the imported city -- see "Where the map comes from"
 src/three.js                re-export shim; every module imports THREE from here
 src/util.js                 math, seeded RNG, 2D geometry helpers
-src/geo.js                  ALL Seattle geography (see below)
-src/citygen.js              road graph + building footprints (load-time coroutine)
+src/mapdata.js              fetches and decodes data/; the other half of the
+                            binary formats that tools/ writes
+src/geo.js                  coordinate frame + the lookups over the rasters
+src/citygen.js              decodes the road graph and footprints, indexes them,
+                            and owns the paved-surface queries
 src/build.js                Builder (merged geometry) + mergeByMaterial
 src/textures.js             every texture, drawn into canvases at boot
 src/world.js                terrain, water, sky, streamed chunks, far skyline
@@ -26,35 +31,184 @@ src/hud.js                  minimap, full map, readouts
 src/effects.js              particles + tracers
 src/audio.js                synthesised engine, siren, SFX, procedural radio
 src/main.js                 boot sequence, game rules, frame loop
+
+tools/proj.py               THE projection. Mirrored by geo.js -- change both.
+tools/osm_extract.py        .osm.pbf -> projected raw_*.json  (slow, rare)
+tools/build_raster.py       DEM tiles + water polygons -> height/surface/water
+tools/build_roads.py        OSM ways -> roads.bin, and the graph assertions
+tools/build_buildings.py    OSM footprints -> buildings.bin
+tools/build_places.py       landmarks, neighbourhood names, spawn points
+tools/fetch_dem.py          downloads the USGS terrain tiles
+tools/render_map.py         draws the whole graph top-down, for eyeballing
+tools/verify.mjs            headless CDP boot + assertions + screenshots
 ```
 
-## Coordinate frame (geo.js)
+## Where the map comes from
 
-`+X` = east, `+Z` = south, `Y` = up, **1 unit = 1 metre**. Origin `(0,0)` is
-Westlake Center (4th Ave & Pine St).
+Seattle is **imported, not generated**. Streets, shoreline, parks, building
+footprints and landmark positions are OpenStreetMap; elevation is USGS 3DEP via
+the AWS terrain tiles. Nothing about the city's shape is authored here any more.
 
-Downtown's grid is rotated ~32° from true north. `dt(ave, st)` converts downtown
-grid coordinates to world metres — `dt(5, 8)` is 5th & Columbia (Columbia
-Center). North of Denny Way the districts use a true-north grid (`rot: 0`).
-`DT_STREETS` / `DT_AVENUES` give the real street index for each name.
+```
+tools/data/washington-latest.osm.pbf   Geofabrik extract (350 MB, gitignored)
+tools/data/dem/*.png                   132 terrarium tiles, z14 (~6.4 m/px)
+        |  python tools/osm_extract.py            (~3 min, one full scan)
+tools/data/raw_*.json                  projected + clipped intermediates
+        |  build_raster / build_roads / build_buildings / build_places
+apps/auto/data/height.png     401x401 @ 40 m   h = ((R<<8)|G)/10 - 100
+apps/auto/data/surface.png   1601x1601 @ 10 m  R = water, G = green
+apps/auto/data/roads.bin      64k nodes, 70k edges          1.95 MB
+apps/auto/data/buildings.bin  125k oriented boxes, chunked  1.51 MB
+apps/auto/data/places.json    19 landmarks, 84 neighbourhoods
+apps/auto/data/water.json     lake surface levels
+```
 
-Everything else in geo.js is data: `WATER` polygons, `HILLS` (Queen Anne,
-Capitol Hill, Beacon Hill, …), `DISTRICTS` (rotated grid + building style per
-neighbourhood), `HIGHWAYS` / `ARTERIALS` / `RAMPS` (hand-drawn polylines; a third
-number in a point makes that stretch an elevated deck), `TOWERS` (hand-placed
-skyline with real heights), `LANDMARKS` and `PARKS`.
+About 3.8 MB, ~2.2 MB over the wire. **Licence: OpenStreetMap is ODbL**, so the
+attribution on the launch screen and in the pause menu is required, not
+decorative. Don't remove it.
 
-**When editing water or districts, re-run the land/water probe:**
+**Re-running the import is a four-command job**, and only the first is slow:
 
 ```bash
-node --input-type=module -e "
-import * as G from './apps/auto/src/geo.js';
-console.log(G.isWater(-3000,-2500) /* Magnolia: must be false */,
-            G.isWater(-1600,600)   /* Elliott Bay: must be true  */);
-"
+tools/.venv/bin/python tools/osm_extract.py     # only after a new .pbf
+tools/.venv/bin/python tools/build_raster.py    # must run before build_roads
+tools/.venv/bin/python tools/build_roads.py
+tools/.venv/bin/python tools/build_buildings.py && ... build_places.py
 ```
-A shoreline polygon that doubles back swallows a whole neighbourhood; that is how
-Magnolia disappeared during the first build.
+
+`build_roads.py` reads `height.png`, so **the raster step has to run first** or
+every road node gets its height from the previous terrain.
+
+Each tool asserts on its own output and exits non-zero: the raster probe checks
+18 points against USGS NED elevations and known land/water, and the road build
+checks connectivity and crossings. Believe those numbers over a screenshot.
+
+### The projection
+
+`tools/proj.py` and the top of `geo.js` hold the same constants and the same
+formula. Origin `(0,0)` is Westlake Center (47.61134 N, 122.33790 W), `+X` east,
+`+Z` south, 1 unit = 1 metre. It is a local equirectangular: over the 8 km half
+-width the distortion is under 0.1 %, an order of magnitude below the DEM's 40 m
+resolution, so a conformal projection would buy nothing. **If you change one
+copy, change the other** -- everything in `data/` is baked in that frame, and a
+mismatch moves the whole city relative to its own heightfield.
+
+### What the import made unnecessary
+
+Most of what citygen used to do was repairing damage that hand-drawn data
+caused. It is all deleted, and the reasons it existed no longer apply:
+
+| gone | why it existed | why it can't recur |
+|---|---|---|
+| `planarize()` | 896 crossings carried no node | OSM shares a node at every ground-level crossing, by mapping convention |
+| `districtOwner()` | 25 of 32 district polygons overlapped, so two grids met at 58 deg | there are no procedural grids left to collide |
+| `dedupeGrid()` | 363 edge pairs were one street drawn twice | a street is in the data once |
+| `stitch()` | 99 dead ends and 8 components from where the author stopped drawing | roads end where they really end |
+| `roadFit()` / lot shrinking | 880 buildings stood in the carriageway | a real footprint is not in a real road |
+| `placeTower()` | 17 of 22 towers had a street through them | towers are just buildings, from the same source as the roads |
+| `waterDrops` | 182 edges ran through Lake Union | the lakes and the roads come from the same survey |
+
+The measured result, from `tools/build_roads.py`:
+
+| | hand-drawn | imported |
+|---|---|---|
+| ground crossings with no junction | 896 (pre-planarize) | **0** |
+| road-graph components | 8 | 377, but see below |
+| separate water systems | 3 | one coastline + 3 lakes |
+| landmark position error, mean | ~1000 m | **21 m** |
+| landmark position error, worst | 4250 m (Seward Park) | **53 m** |
+
+**Read the component count carefully.** 96 % of nodes are on one network. Of the
+rest, the big pieces (Evergreen Point Road, West Mercer Way) reach the map rim:
+they connect to Seattle over bridges whose far ends are outside the box, which is
+honest clipping rather than a broken graph. The remaining ~1650 nodes are ~338
+pockets averaging five nodes, reached in life through a driveway or parking
+aisle -- `service` roads, which the extractor drops on purpose because including
+them would add tens of thousands of parking aisles. They render and you can drive
+on them; they are just not routable. **Deleting them would make the map less
+accurate, so the assertion is on a whole neighbourhood being cut off** (largest
+inner component < 80 nodes), not on the long tail.
+
+### Traps the import has of its own
+
+**A bare-earth DEM reports standing water's surface as ground.** Straight out of
+the tiles, Lake Union is a 5 m plateau and Green Lake a 51 m one, and with a
+single sea-level water plane both rendered as solid grass you could drive across.
+`carve_lakes()` digs a 7 m bed under every water cell and reports each body's
+level; world.js gives each its own plane. Anything measuring clearance over water
+has to work from the *local* surface -- a fixed 5.5 m bridge floor put decks
+under the lakes they cross.
+
+**A lake is water not connected to the sea, not water that reads high.**
+Thresholding on DEM height picks up patches of Puget Sound, which terrarium has
+at 2.7 to 5.7 m -- the same band Lake Washington sits in. Label connectivity and
+discard whatever component holds an open-water seed.
+
+**Erode the water mask before labelling it.** At the shore the 40 m DEM blends
+land into water, so the outermost ring of water cells reads well above sea level,
+and that ring is continuous: without eroding it, Lake Washington, Lake Union and
+Puget Sound label as one 49 km2 body. Eroding 40 m also parts the ship canal,
+which is what separates the lakes from the sea in reality anyway.
+
+**The coastline flood fill needs a closed barrier.** Coastline ways alone don't
+close it -- the fill walks around the outside and the entire map comes back as
+ocean (99.7 %). Seal the padded grid's border too. And seed from known open water
+rather than deriving the wet side from OSM's land-on-the-left rule: that is one
+assertion instead of 2258 guesses, and the probe catches it if it's wrong.
+
+**Some OSM `height` tags are storey counts.** Benaroya Hall is tagged `height=4`,
+which taken literally is a 6100 m2 building four metres tall -- it rendered as a
+white plain across the middle of downtown. A small whole number on a footprint
+over 600 m2 with no `building:levels` is treated as levels. Six buildings in the
+box trip this and they are all landmarks.
+
+**Bridge decks: don't put `elev` in the node key.** A bridge and its approach
+ramp share an OSM node, so keying node identity on the elevated flag splits that
+junction into two nodes at the same spot and leaves every deck disconnected from
+the street network. Decide which nodes are on a deck afterwards, from the edges:
+a node is elevated only if everything meeting it is.
+
+**Roads over water are piers now, not mistakes.** citygen dropped them, because
+with a hand-drawn shoreline an edge over water meant one of the two had drifted.
+With both sides real it is Alaskan Way or Colman Dock and it is *supposed* to be
+there -- dropping them tore a hole in the waterfront route. 56 edges get a low
+deck instead. This is the opposite of the old rule and worth knowing.
+
+### How accurate it actually is
+
+Landmark meshes sit a **mean 21 m and at worst 53 m** from their true lat/lon,
+and most of that residual is the difference between a POI node and the centroid
+of the complex it names, not error. `tools/verify.mjs` asserts this on every run.
+For comparison, the hand-drawn map averaged about a kilometre and put Seward Park
+4.25 km from where it belongs.
+
+Building heights: 125k footprints, 23 over 100 m, 9 over 150 m, tallest 259 m
+(Rainier Square, which is its real height). Real Seattle has about 25 buildings
+over 100 m. Only 3 % of footprints carry a height tag overall -- but that is
+dominated by 100k houses, which correctly take a 6.4 m default; downtown the
+coverage is 55 %, and 72 % for footprints over 1200 m2, which is why the skyline
+comes out right.
+
+Footprints are reduced to their **minimum-area oriented rectangle**, not kept as
+polygons. Buildings land in the right place at the right size, orientation and
+height, which is what reads from a car; the corner detail of 125k footprints does
+not. That is also what lets world.js's existing rectangle mesher, facade system
+and box collision keep working untouched.
+
+## What the map looks like from above
+
+Still the cheapest way to find a layout bug, and none of it is visible at street
+level. `tools/render_map.py` draws the whole graph over the water and park masks,
+with elevated spans in red. It should read as Seattle at a glance: Elliott Bay,
+the ship canal, Green Lake, downtown's grid rotated ~32 deg off true north, I-5
+running north-south, I-90 and SR-520 crossing Lake Washington, and a red mark at
+every real bridge.
+
+**Ground colour is blended from real building density.** `city.builtAt(x,z)` is
+the footprint area packed into each 400 m chunk, so the edge of the city follows
+the city instead of a rectangle. The query point is still pushed around by smooth
+noise and sampled three times, because the chunk grid is 400 m and a straight
+lookup draws its staircase on the ground.
 
 ## Input lifecycle (never latch a held pointer)
 
@@ -240,190 +394,16 @@ as one buries the real number. Current figures, per frame at 60 fps:
 The residual is the pelvis's lateral shift and yaw, which a sagittal two-bone
 solve cannot absorb; closing it needs a 3-DOF hip.
 
-## One grid per patch of ground, and no crossing without a junction
-
-Two rules keep the street network coherent. Both were absent, and together they
-made the map read as scribble.
-
-**Exactly one district owns any point.** The polygons in geo.js are hand-drawn
-and 25 of the 32 overlap something — Belltown is 62% covered by Uptown and South
-Lake Union. Overlap is harmless where neighbours share a street angle and fatal
-where they don't: downtown runs 58° off true north and its neighbours run true,
-so laying both grids on the same block gives two sets of streets meeting at 58°.
-`districtOwner()` resolves it — **the smallest polygon covering a point wins**,
-which matches how the data is drawn (a specific neighbourhood sitting inside a
-sprawling one should keep its own grid). Ties fall back to declaration order so
-the result never depends on sort stability. Node placement, `link()` and the
-building block centres all consult it.
-
-**Every ground-level crossing gets a node.** `planarize()` splits each pair of
-crossing edges and puts a junction at the intersection. Without it an arterial
-drawn through a district's grid simply passed over it: **896 crossings carried
-no node**, which is why roads looked stacked rather than connected, and why
-traffic could never turn off an arterial. Elevated edges are skipped — a bridge
-over a street is a crossing that is *supposed* to have no junction. It rebuilds
-through `addEdge`, which recomputes headings and drops the sub-4 m slivers a
-split leaves behind.
-
-To check both at once, count ground-level segment intersections whose edges
-share no node. It must be zero.
-
-## What the map looks like from above
-
-Rendering the whole graph top-down is the cheapest way to find this class of
-bug, and none of it is visible at street level. Dump `__dbg.city` to JSON and
-draw it on a canvas — water, roads by class, degree-1 nodes in red, and any
-component that isn't the largest in magenta. Four things it turned up, all now
-fixed, all worth re-checking after any change to geo.js:
-
-**Water has to be one system.** The ship canal's west end stopped 177 m short of
-Elliott Bay, so no boat could get from the sound to Lake Washington and the
-canal read as a rectangular pond dropped on a lawn. It was also a six-point
-box — straight sides, square ends, one width for 3.4 km. Assert it: union the
-water polygons by intersection and count the groups. **Two** is correct — the
-chain, and Green Lake, which really is landlocked.
-
-**Editing a water polygon is still the dangerous edit.** Every vertex east of
-the bay was moved onto or inside the old outline so the shape could only lose
-water; the one place it gains is the west end, which is the point, and it
-crosses Ballard's western 100 m to reach the sea. Diff the land/water grid both
-ways and check no district loses ground it had buildings on.
-
-**A road that stops in a field is a data artefact, not a cul-de-sac.** The
-polylines end wherever the author stopped drawing: 99 dead ends inside the map,
-74 of them arterials, plus seven pockets of grid — Pioneer Square's 27 nodes,
-all of Harbor Island, the whole University Bridge — with no route to the rest of
-the city. `stitch()` welds a loose end to a node within 75 m, bridges a stranded
-component to the main one within 190 m, and trims what's left under 55 m.
-**Run it before `planarize()` runs a second time**, or a weld reintroduces the
-crossing-without-a-junction that planarize exists to remove.
-
-**"Roads merge in crazy ways" was one street drawn twice.** 363 pairs of edges
-met at under 22°, and 361 were an arterial against the district grid it runs
-through — N 45th St weaving across Wallingford's east-west streets 21 times,
-Broadway across Capitol Hill 19. The angle is a symptom: the distribution is
-flat from 0 to 20° with no natural cut, so raising the junction threshold does
-nothing. `dedupeGrid()` drops the block street instead, keeping the hand-drawn
-road — it's the named one and it continues past the district boundary. This is
-`roadCoveredAt` applied to the graph rather than the surface.
-
-| | before | after |
-|---|---|---|
-| dead ends inside the map | 99 | 44 |
-| road-graph components | 8 | 2 |
-| nodes unreachable from the main network | 83 | 9 |
-| edge pairs meeting under 22° | 359 | 146 |
-| separate water systems | 3 | 2 |
-
-The 9 stranded nodes are Harbor Island, which is genuinely an island — reaching
-it needs a bridge in the data, not a graph pass.
-
-**Ground colour is blended, not switched.** `buildTerrain` used to pick the
-vertex tint straight from `districtAt()`, and district polygons are literally
-`rect()` calls, so the city from the air was grey rectangles on grass with a
-40 m staircase on every edge — the heightfield spacing. The lookup point is now
-pushed around by `vnoise` so the boundary wanders, and three offset taps give a
-coverage fraction to blend across. Costs about 10 ms of boot.
-
 ## Parks
 
-**The block grid does not run through a park.** Buildings already skipped them,
-so paving one produced a green rectangle with streets crossing it and nothing on
-them — a road to nowhere. `citygen` skips park ground for both node placement
-and `link()`. Hand-drawn arterials and highways in step 2 still go where they
-are drawn, which is correct: Aurora really does cut through Woodland Park.
+Parks come from the green channel of `surface.png` (OSM `leisure=park`,
+`landuse=forest/grass`, `natural=wood` and friends), and `inPark()` is a raster
+lookup. Nothing has to keep streets out of them any more: roads go where OSM says
+they go, which correctly includes Aurora cutting straight through Woodland Park.
 
 Tree scatter is *candidates per chunk*, filtered by `inPark`. At 46 a
 chunk-sized park got one tree per 60 m and read as bare ground; it is 230 now.
 If you add a large park, check it doesn't look empty.
-
-## How closely this matches real Seattle
-
-Downtown is good and the outskirts are not, and the error is not a uniform
-scale, so relative geography breaks down as you go out. Measured against real
-lat/lon converted about Westlake Center:
-
-| landmark | error | | landmark | error |
-|---|---|---|---|---|
-| Pike Place Market | 165 m | | Gas Works Park | 518 m |
-| Seattle Central Library | 205 m | | Husky Stadium | 1399 m |
-| Space Needle | 274 m | | Alki Beach | 2664 m |
-| Lumen Field | 414 m | | Green Lake Park | 3029 m |
-| Kerry Park | 594 m | | Seward Park | 4250 m |
-
-The game/real distance ratio averages 0.76 but ranges **0.55 to 1.16** — so it
-isn't a deliberate uniform compression, it's drift. `MAP_HALF` is 5200 m and
-Seward Park is genuinely 9.3 km out, so 1:1 will never fit; a *consistent* scale
-would still fix the relative layout.
-
-**Seattle Center has been rebuilt from real coordinates** and is the worked
-example of how to fix a district. Everything there was placed by converting
-lat/lon about Westlake Center (`M_LON = 111320·cos 47.61°`):
-
-- Needle, MoPOP and the Arena sat 140–290 m west of true, which is what put
-  Climate Pledge Arena on the Elliott Bay shoreline. They are now at their
-  converted positions.
-- The campus rect is set off the four streets that bound it: 1st Ave N
-  (x −1396), 5th Ave N (−735), Denny Way (z −790), Mercer St (−1469).
-- Mercer St was drawn at z ≈ −1085, nearly 400 m south of true, so it ran past
-  the Space Needle instead of bounding the campus. Denny Way was ~200 m south.
-- **Alaskan Way's north end was `[-1150,-1000]` — the Space Needle.** A seawall
-  road terminating in the middle of the campus, and why MoPOP had a street
-  through it. Elliott Ave W cut the same corner about 400 m inland of the real
-  road.
-- The shore itself drifted east going north, ~450 m of it by Seattle Center,
-  leaving metres of land between 1st Ave N and the bay. Pulled back west.
-
-Result: no edge of any class crosses the campus, MoPOP is 134 m from the nearest
-road, and the Arena is 570 m from the water against about 700 m in reality.
-
-**When you edit the shoreline, diff the land/water map, don't just spot-check
-it.** Sample a grid before and after and count points that flipped: the failure
-that matters is land becoming water (a doubled-back polygon swallowing a
-neighbourhood, which is how Magnolia disappeared). This edit flipped 0 points to
-water and 0.34 km² to land, which is the strip that should always have been
-there.
-
-The rest of the outskirts have not been touched and still carry the drift in the
-table above.
-
-## Keeping buildings out of the road
-
-Two separate things put buildings in the middle of streets, and both are easy to
-reintroduce.
-
-**Lots are rectangles, so test them as rectangles.** `roadFit()` measures the
-rotated footprint along the line to each road (`|hw*(u·n)| + |hd*(v·n)|`, a box's
-support function) against the carriageway *and* the pavement. The old test was a
-bounding *circle* of `3 + max(w,d) * 0.28` — roughly 60% of the half-diagonal it
-needed to be, which put 880 buildings in the roadway, the worst 14 m deep. A
-circle can't be made to work: one large enough to contain the rectangle rejects
-most of a block. An oversized lot is **shrunk to fit rather than dropped**,
-because a block that came out as a single big lot legitimately overlaps the road
-and rejecting it empties the whole block. Shrinking is also why the fix *added*
-buildings (8737 → 9284) while removing the overlaps.
-
-**Nothing may stand where the player is put down.** `G.KEEP_CLEAR` (spawn and
-the hospital respawn) is enforced by a filter pass at the end of the building
-step. This used to hold by luck — `SPAWN` sits on a block edge — until lots
-started being shrunk to fit rather than dropped, which put a tower back on 4th &
-Olive and left the player permanently jammed. `player.blocked()` also lets you
-move when you are *already* inside a footprint: refusing every direction is how
-that failure presents, and it looks exactly like the walk animation playing
-while nobody moves. Clipping out beats being stuck. Note the symptom gives no
-visual clue — 1.5 m inside a footprint edge you are flush against the facade
-with pavement in front of you, which reads as standing on the street.
-
-**Hand-placed towers don't get a say in where the roads went.** `G.TOWERS` carry
-real Seattle coordinates and real footprints, but the road grid is procedural and
-laid out with no knowledge of them, and several footprints are simply wider than
-the block interior they land in (Columbia Center is 62 m; a downtown block leaves
-about 60 × 42 m between kerbs). Untouched, 17 of the 22 had a street through them
-and 5 had their centre in a live carriageway. `placeTower()` searches outward for
-the nearest spot that fits, so the smallest displacement wins, and shrinks
-whatever still doesn't — with a floor, because past a point a landmark stops
-being recognisable. `reserved` is built from the *placed* position, not `t.p`.
-Residual: UW Campus, which hits the shrink floor and still clips a road.
 
 ## Vehicles
 
@@ -470,11 +450,16 @@ axle, then steer the lot.
 
 ## The one height surface
 
-`geo.rawTerrainHeight()` is expensive (polygon distance tests), so it is baked
-once into a 40 m heightfield (`bakeHeightfield`). **After boot, every consumer —
-terrain mesh, road quads, buildings, cars, pedestrians — reads the same bilinear
-`terrainHeight()`.** Keep it that way: the moment roads sample a different
-surface from the one the terrain mesh is built on, roads sink into the ground.
+The heightfield is now **imported** rather than baked from polygon distance
+tests, but the law is unchanged and is still the one that bites:
+
+> After boot, every consumer -- terrain mesh, road quads, buildings, cars,
+> pedestrians -- reads the same bilinear `terrainHeight()`.
+
+`height.png` is 401x401 at 40 m. **That spacing is not free to change**: it is
+also the terrain mesh's vertex spacing, and the two have to agree. A finer query
+grid floats roads over bulges the mesh doesn't resolve; and at 20 m the mesh
+would cost 1.28 M triangles across a 16 km map, which is the whole frame budget.
 
 Bridges and freeway decks are separate: `city.groundAt(x, z, currentY)` returns
 the highest deck below `currentY + 2.6`, else the terrain.
@@ -490,26 +475,20 @@ buried every car 22 cm into the asphalt.
 **All three lifts have to be reachable from `roadLift`, not just the two the
 strips use.** Junction squares are drawn at `NODE_LIFT` and they overlap the
 ends of every strip that meets there, so `roadLift` asks `nodeLift` first and
-takes its answer outright — a point inside the square is standing on the square.
+takes its answer outright -- a point inside the square is standing on the square.
 Maxing it against the strip scan instead gets both signs wrong: junction centres
 came back `ROAD_LIFT` and sat 3 cm *inside* the asphalt, and the corners of the
-square came back `WALK_LIFT` and floated 19 cm *above* it. `nodeLift` rebuilds
-the same square `meshNode` draws (half-size and orientation both from the widest
-edge at the node), so if you change one, change the other.
+square came back `WALK_LIFT` and floated 19 cm *above* it.
 
 Sidewalks stop short of each junction (`nodeRadius`) and the corner is filled by
-a ring drawn in `meshNode`. A strip run end to end marches straight across the
-cross street.
-
-**That ring needs its own entry in the lift lookup too.** It sits outside the
-junction square, and its diagonal corners are past the end of every strip that
-meets the node, so the edge scan finds *nothing* there and returns a lift of 0 —
-which dropped anyone standing on a corner the full 44 cm through the pavement.
-`nodeSurface()` reports the ring as well as the square, but the two are used
-differently: the square **overrides** the scan (it is the top surface there),
-while the ring only fills in where the scan came back empty, because along a road
-direction the strips overlap the ring and know better than it does. Sampling 250
-junctions, corner samples reading below the pavement went 828 → 3.
+a ring drawn in `meshNode`. **That ring needs its own entry in the lift lookup
+too.** It sits outside the junction square, and its diagonal corners are past the
+end of every strip that meets the node, so the edge scan finds *nothing* there
+and returns a lift of 0 -- which dropped anyone standing on a corner the full
+44 cm through the pavement. `nodeSurface()` reports the ring as well as the
+square, but the two are used differently: the square **overrides** the scan (it
+is the top surface there), while the ring only fills in where the scan came back
+empty, because along a road direction the strips overlap the ring and know better.
 
 ## Geometry building
 
@@ -524,7 +503,9 @@ landmarks would otherwise cost hundreds of draw calls.
 
 ## Draw-call budget
 
-Roughly 300 draw calls / 300k triangles during a police chase at `high`.
+Roughly 290-320 draw calls / 400k triangles at `high`, measured across downtown,
+Ballard and the spawn. Triangles are up on the pre-import city (~300k) because the
+building density is real; draw calls are not.
 `__dbg.sceneStats` reports the scene pass specifically — read `renderer.info`
 yourself and you'll get the post chain's fullscreen quad instead, because the
 counters reset on every `render()`.
@@ -546,6 +527,11 @@ Where the budget goes, and the rules that keep it there:
   `PedSystem.remove` must go through it. Disposing it directly yanks the GPU
   buffers out from under every other pedestrian wearing that look.
 - every tall building in the whole city is one static "far skyline" mesh.
+- **terrain is 12 x 12 tiles.** Tile size trades draw calls against wasted
+  triangles, and on a phone the draw calls are what hurt. 20 x 20 put 132 terrain
+  meshes on screen at once -- a third of the entire budget -- for ground that is
+  mostly behind buildings; 8 x 8 makes each tile 2 km wide on a 16 km map and the
+  frustum never culls one.
 - parked cars only exist within `PARKED_RADIUS` and hide past 140 m.
 
 `roadLift()` is a 3×3-chunk edge scan, so **anything that samples the ground
@@ -555,9 +541,17 @@ without the 4th argument silently re-runs the scan.
 
 ## Verifying
 
-Headless Chrome + CDP, per the repo's usual recipe. **Bypass the service worker**
-(`Network.setBypassServiceWorker`) or you will test a stale build and chase
-phantom bugs.
+`node tools/verify.mjs [--shots]` with `python3 -m http.server 8000` running. It
+boots the game headlessly, asserts landmark positions against real lat/lon, checks
+graph and budget numbers, drives a car, and writes screenshots including two
+aerials. `AUTO_PROBE='<expr>' node tools/verify.mjs` evaluates a one-off
+diagnostic on the same proven boot path -- use that rather than writing a second
+CDP harness, which is how the first one drifted.
+
+It does two things you must keep doing by hand if you write your own: **bypass
+the service worker** (`Network.setBypassServiceWorker`) or you will test a stale
+build and chase phantom bugs, and set `window.__noAutoQuality = true` *before*
+boot or SwiftShader's ~5 fps drops the tier and every screenshot lies.
 
 `window.__dbg` exposes `{ game, city, player, world, traffic, peds, scene,
 camera, renderer, controls, audio, pickups, G, THREE }`. Useful moves:
@@ -627,16 +621,18 @@ running with an object in a state no code path expects.
 
 ## Shimmer and jolt: two things that read as "janky"
 
-**Road markings flashing was two carriageways in the same place.** The hand-drawn
-arterials and highways overlap each other and the district grids — 187
-near-parallel pairs, and beside the spawn a street and a ramp run 0.7 m apart.
-Both drew a full-width surface, each with its own centre line, and the depth
-buffer picked a winner per pixel per frame: the road flips between one yellow
-line and two. `city.roadCoveredAt()` ranks by width then edge order, and
+**Road markings flashing was two carriageways in the same place.** Two
+full-width surfaces on the same ground each paint their own centre line, and the
+depth buffer picks a winner per pixel per frame: the road flips between one
+yellow line and two. `city.roadCoveredAt()` ranks by width then edge order, and
 `meshRoad` skips any 16 m segment a higher-ranked road already paves. Only the
-surface is dropped — the edge stays in the graph and traffic still routes over
-it. Around the spawn, road area carrying two parallel carriageways went 70.9%
-→ 2.4%, and the city emits 22% fewer road quads.
+surface is dropped — the edge stays in the graph and traffic still routes over it.
+
+The import made this far rarer — it was 187 near-parallel pairs when hand-drawn
+arterials were laid over procedural district grids, and beside the old spawn a
+street and a ramp ran 0.7 m apart. Real carriageways don't overlap like that.
+**Keep the check anyway**: a motorway and its frontage road still share ground,
+and so does a tunnel drawn at surface level under the streets above it.
 
 **A caution about the churn metric below.** Moving the camera 4 mm and counting
 changed pixels does *not* isolate this. It reads ~6.6% before and after the fix,
@@ -725,46 +721,27 @@ Note the "long thin triangle" probe is *not* diagnostic here: a pier is
 legitimately 30 m tall and 2.4 m wide, so it trips any aspect-ratio filter. Judge
 deck geometry from a close render alongside and down the deck.
 
-## Nothing stands on the water, and parked cars sit on the slope
-
-**`chain()` refuses to lay a ground-level edge whose midpoint is over water.**
-The hand-drawn polylines carry the usual positional drift, which had put four
-arterials — Aurora, Westlake, Dexter and Fairview — straight through Lake Union
-at 4 to 9 m below the surface, and Delridge Way through Elliott Bay: 182 edges
-in all. A span meant to cross water is marked elevated in the data and is left
-alone. Absent beats submerged, and connectivity went *up* (98.1% → 98.4%),
-because those edges only ever connected things across a lake.
-
-**Dropping the edge is damage control, not a fix.** The route still has a hole
-in it, and if the hole happens to sit at the end of a deck, the viaduct ramps
-down into open water — which is what Aurora did: 1.3 km of it was drawn through
-Lake Union at ground level, the ship-canal third of that was the only part
-marked elevated, and the bridge's south end touched down 200 m offshore. You
-could not drive the length of the map on the one road that is meant for it.
-Measured as the longest gap between consecutive nodes on the route, Aurora went
-**949 m → 76 m** (55 m is the normal node spacing).
-
-`city.waterDrops` records every edge dropped this way, so the condition can be
-asserted on instead of being discovered by driving into a lake. **A named
-through route is not allowed to appear in it.** Thirteen still do — Westlake,
-Dexter, Fairview, Eastlake, Delridge, Alaskan Way and others.
-
-**The lakes are where they are; move the road.** Lake Union is drawn about
-600 m west of its converted position, which is the whole reason its shore roads
-end up in it, but shifting the polygon east would put 0.8 km² of built South
-Lake Union and Eastlake under water — the Magnolia failure again, in the
-direction that actually destroys a neighbourhood. Shrinking water is safe;
-growing it is not. Aurora was re-routed instead, into the empty 580 m strip
-between the west shore (x ≈ −880) and Queen Anne Ave N (−1460), which is also
-where the real road sits relative to the water.
-
-The exception is Green Lake, where Aurora now passes **east** and the real road
-passes west. Going west means threading between the lake's west shore (−1500)
-and Phinney Ave N (−1690), and the north–south compression out here — Green
-Lake to the Aurora Bridge is 3.7 km in reality and about 700 m on this map —
-turns that into a 64° dogleg. The wrong side of a lake beats a hairpin.
+## Parked cars sit on the slope
 
 **`Vehicle.place()` sets pitch and roll, not just height.** A parked car never
 runs `update()`, so left at zero pitch it stays level on a hillside street and
 its downhill end is buried. That was the sunken cars on Queen Anne — a 20% grade
-needs `atan(0.2)` ≈ 0.2 rad of pitch, and it was getting none.
+needs `atan(0.2)` ≈ 0.2 rad of pitch, and it was getting none. Seattle's real
+grades are steeper than the hand-drawn hills were, so this matters more now, not
+less.
+
+## Known gaps
+
+- **Tunnels are drawn at ground level.** 102 OSM ways in the box are tunnels
+  (SR-99, the Battery St and Mount Baker ridge bores). They keep the network
+  connected and are flagged `tunnel` on the edge, but nothing renders a bore, so
+  they read as surface roads overlapping the streets above them. Routing is
+  right; the picture isn't.
+- **Traffic ignores `oneway`.** The flag is imported and sits on every edge
+  (`F_ONEWAY`, `F_ONEWAY_REV`), and nothing reads it yet.
+- **Buildings are oriented boxes**, not polygons — see "How accurate it actually
+  is" for why that was the right trade, but it does mean a curved facade or an
+  L-shaped block is squared off.
+- **997 buildings (0.8 %) stand over water.** Most are real: Lake Union's
+  houseboats, the Alaskan Way piers, Harbor Island. Not worth a filter that would
+  also delete the real ones.

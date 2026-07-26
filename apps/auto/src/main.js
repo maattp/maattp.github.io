@@ -3,6 +3,7 @@
 import * as THREE from './three.js';
 import * as G from './geo.js';
 import { cityGenerator } from './citygen.js';
+import { loadMapData } from './mapdata.js';
 import { buildTextures } from './textures.js';
 import { World } from './world.js';
 import { buildLandmarks } from './landmarks.js';
@@ -209,17 +210,17 @@ async function boot() {
   await step(0.02, 'Painting the city');
   const tx = buildTextures();
 
-  await step(0.06, 'Carving the hills');
-  const hfGen = G.bakeHeightfield();
-  let hfr = hfGen.next();
-  while (!hfr.done) {
-    loadBar.style.width = `${Math.round((0.06 + hfr.value * 0.12) * 100)}%`;
-    await new Promise((r) => requestAnimationFrame(r));
-    hfr = hfGen.next();
-  }
+  // The map is real data now -- USGS elevation and OpenStreetMap -- so the hills
+  // and the street grid are downloaded rather than generated. About 3.8 MB, and
+  // the service worker keeps it in the same lazy tier as the Three.js build.
+  await step(0.06, 'Downloading Seattle');
+  let mdMsg = 'Downloading Seattle';
+  const md = await loadMapData((m) => { mdMsg = m; loadMsg.textContent = m; });
+  loadMsg.textContent = mdMsg;
+  G.initGeo(md);
 
   await step(0.18, 'Laying out the streets');
-  const gen = cityGenerator();
+  const gen = cityGenerator(md);
   let r = gen.next();
   while (!r.done) {
     loadBar.style.width = `${Math.round((0.18 + r.value.p * 0.44) * 100)}%`;
@@ -275,7 +276,7 @@ async function boot() {
   postfx = new PostFX(renderer);
   postfx.setSize(viewW(), viewH(), renderer.getPixelRatio());
 
-  world = new World(scene, city, tx, { shadows: true, renderer });
+  world = new World(scene, city, tx, { shadows: true, renderer, lakes: md.lakes });
   world.buildSky();
   const terrGen = world.buildTerrain();
   let tr = terrGen.next();

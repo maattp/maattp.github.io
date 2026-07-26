@@ -3,3 +3,5 @@
 dXpoeFdjNmc=
 SAP
 worker/.wrangler/
+tools/.venv/
+tools/__pycache__/

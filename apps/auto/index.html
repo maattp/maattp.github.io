@@ -224,8 +224,14 @@
   /* Which build you're actually running — the first thing to check when a fix
      seems to be missing, since a stale service worker looks exactly like that. */
   #build {
-    position: absolute; bottom: calc(env(safe-area-inset-bottom) + 14px);
+    position: absolute; bottom: calc(env(safe-area-inset-bottom) + 28px);
     font-size: 11px; letter-spacing: .18em; opacity: .4;
+  }
+  /* OpenStreetMap is ODbL: attribution is required wherever its data is shown,
+     and the whole street network here is derived from it. */
+  #attrib {
+    position: absolute; bottom: calc(env(safe-area-inset-bottom) + 12px);
+    font-size: 10px; opacity: .32; text-align: center; padding: 0 18px;
   }
 
   #rotate {
@@ -311,6 +317,8 @@
         on the minimap is your drop-off. Hurt someone and the SPD will notice.
         <br><br>Keyboard: WASD / arrows, F enter-exit, Space handbrake &amp; jump,
         Shift run, J attack, H horn.
+        <br><br>Streets, shoreline and buildings are real: map data ©
+        OpenStreetMap contributors, licensed ODbL. Elevation from USGS 3DEP.
       </p>
     </div>
   </div>
@@ -321,7 +329,8 @@
     <div id="loadTrack"><div id="loadBar"></div></div>
     <div id="loadMsg">Starting up</div>
     <!-- Bumped once per change, in step with CACHE in sw.js. See CLAUDE.md. -->
-    <div id="build">v19</div>
+    <div id="build">v20</div>
+    <div id="attrib">Map data © OpenStreetMap contributors (ODbL) · elevation USGS 3DEP</div>
   </div>
 
   <div id="rotate">

@@ -119,6 +119,7 @@ export class World {
     this.tx = tx;
     this.renderer = opts.renderer;
     this.shadows = opts.shadows !== false;
+    this.lakeSpecs = opts.lakes || [];
     this.chunks = new Map();
 
     const surf = (s, o = {}) => {
@@ -183,7 +184,14 @@ export class World {
   *buildTerrain() {
     const hf = G.heightfield();
     const N = G.HF_N, S = G.HF_STEP, H = G.MAP_HALF;
-    const TILES = 8;
+    // Tile size trades draw calls against wasted triangles, and on a phone the
+    // draw calls are what hurt. The map is 16 km across now, so the old 8 x 8
+    // would make each tile 2 km wide and the frustum would never cull one; 20
+    // x 20 went the other way and put 132 terrain meshes on screen at once,
+    // a third of the entire draw budget, for ground that is mostly behind
+    // buildings anyway. 12 x 12 is a ~1.3 km tile, which is about what the
+    // 10.4 km map used to have.
+    const TILES = 12;
     const per = Math.ceil((N - 1) / TILES);
     const mat = new THREE.MeshStandardMaterial({
       map: this.tx.ground.map, normalMap: this.tx.ground.normalMap,
@@ -210,27 +218,26 @@ export class World {
             pos[k] = x; pos[k + 1] = y; pos[k + 2] = z;
             uv[(j * w + i) * 2] = x / 13;
             uv[(j * w + i) * 2 + 1] = z / 13;
-            // District polygons are literally rect() calls, so colouring the
-            // ground by a straight districtAt() test drew the city from the air
-            // as grey rectangles on grass -- hard axis-aligned edges with a
-            // 40 m staircase on them, because that is the heightfield spacing.
-            // The query point is pushed around by smooth noise so the boundary
-            // wanders, and three offset samples give a coverage fraction to
-            // blend across rather than a switch to flip.
+            // How built-up the ground is comes from the real footprint area in
+            // each 400 m chunk, so the edge of the city follows the city rather
+            // than a rectangle. The query point is still pushed around by smooth
+            // noise and sampled three times, because the chunk grid is 400 m and
+            // a straight lookup would draw its staircase on the ground.
             let c;
             if (y < 1.2) c = [0.94, 0.86, 0.66];
             else if (G.inPark(x, z)) c = [0.42, 0.66, 0.3];
             else {
               const jx = (vnoise(x, z) - 0.5) * 190;
               const jz = (vnoise(x + 3137, z - 2711) - 0.5) * 190;
-              let urban = 0, house = 0;
+              let dense = 0;
               for (const [ox, oz] of BLEND_TAPS) {
-                const d2 = G.districtAt(x + jx + ox, z + jz + oz);
-                if (!d2) continue;
-                if (d2.style === 'house') house++; else urban++;
+                dense += this.city.builtAt(x + jx + ox, z + jz + oz);
               }
-              const cover = (urban + house) / BLEND_TAPS.length;
-              const built = cover > 0 ? (urban >= house ? URBAN : SUBURB) : URBAN;
+              dense /= BLEND_TAPS.length;
+              // Downtown runs about 0.35 footprint coverage, suburbs about 0.10,
+              // so 0.22 is the line between "grey" and "green with houses on it".
+              const cover = clamp(dense / 0.2, 0, 1);
+              const built = dense > 0.22 ? URBAN : SUBURB;
               const t = cover * cover * (3 - 2 * cover);
               c = [
                 GRASS[0] + (built[0] - GRASS[0]) * t,
@@ -279,6 +286,24 @@ export class World {
     this.scene.add(m);
     this.water = m;
     this.waterNormal = n;
+
+    // The lakes are not at sea level, and one plane cannot serve both. A
+    // bare-earth DEM reports the *surface* of standing water as ground, so
+    // Lake Union arrives as a 5 m plateau and Green Lake as a 51 m one; with
+    // only the sea plane at y=0 both rendered as solid grass you could drive
+    // across. tools/build_raster.py digs a bed under each and reports its
+    // level, and each gets its own plane here.
+    this.lakes = [];
+    for (const l of (this.lakeSpecs || [])) {
+      const w = l.x1 - l.x0, d = l.z1 - l.z0;
+      const lg = new THREE.PlaneGeometry(w, d, 1, 1);
+      lg.rotateX(-Math.PI / 2);
+      const lm = new THREE.Mesh(lg, mat);
+      lm.position.set((l.x0 + l.x1) / 2, l.level, (l.z0 + l.z1) / 2);
+      lm.renderOrder = -4;
+      this.scene.add(lm);
+      this.lakes.push(lm);
+    }
   }
 
   /** Every tall building in the city as one cheap silhouette mesh. */
