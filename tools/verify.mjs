@@ -100,6 +100,10 @@ async function main() {
     await session.send('Network.enable');
     // THE rule for this app: never test through the service worker.
     await session.send('Network.setBypassServiceWorker', { bypass: true });
+    // Bypassing the service worker is not enough: Chrome's own disk cache will
+    // still hand back the previous build's modules, which reads exactly like a
+    // change that didn't land.
+    await session.send('Network.setCacheDisabled', { cacheDisabled: true });
     await session.send('Page.addScriptToEvaluateOnNewDocument', {
       source: 'window.__noAutoQuality = true;',
     });
@@ -211,7 +215,12 @@ async function main() {
       const views = [
         ['spawn', null],
         ['downtown', [200, 400, 60]],
-        ['freeway', [700, -300, 40]],
+        // I-5 and Aurora-through-Woodland-Park are the two spots the road
+        // complaints came from: a box across the freeway, and trees on the
+        // carriageway where a road crosses greenspace.
+        ['i5', [1270, 2641, 40]],
+        ['i5-north', [1294, -2400, 40]],
+        ['woodland-park', [-676, -4842, 40]],
         ['aurora-bridge', [-880, -4550, 60]],
       ];
       for (const [name, at] of views) {

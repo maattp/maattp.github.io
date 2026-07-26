@@ -49,6 +49,12 @@ function styleFor(cls, h) {
 
 // ---------------------------------------------------------------------------
 
+// Counters the verify harness asserts on, so a regression in the clearing
+// passes shows up as a number rather than as a screenshot nobody looks at.
+export const cityStats = { buildingsShrunk: 0, buildingsDropped: 0, treesSkipped: 0 };
+
+const skey = (cx, cz) => cx * 100003 + cz;
+
 export function* cityGenerator(md) {
   yield { p: 0.02, msg: 'Unpacking the street graph' };
 
@@ -121,6 +127,107 @@ export function* cityGenerator(md) {
     if (cj % 6 === 0) yield { p: 0.3 + 0.5 * (cj / B.nz), msg: 'Raising the skyline' };
   }
 
+  // --- 2b. Keep buildings out of the carriageway ---------------------------
+  //
+  // This pass came back after being deleted. The reasoning for deleting it --
+  // "a real footprint is not standing in a real road, because the road is real
+  // too" -- is true of the FOOTPRINT and false of what actually ships, which is
+  // the footprint's minimum-area oriented rectangle. An L-shaped or U-shaped
+  // building's bounding box covers the notch, and if a street runs through that
+  // notch the box lands squarely on it. Measured on the built data: 11,131
+  // boxes (8.9%) overlapped a carriageway and 8,290 of them by more than 3 m,
+  // including a 274 x 68 m box sitting 38 m into I-5. That is what "so many
+  // roads are blocked" was, and it is what made the freeway impassable.
+  //
+  // Deliberately a runtime pass over the shipped boxes rather than a filter in
+  // the importer: the road graph is right there, so the fix travels with the
+  // geometry it is correcting and cannot go stale against a re-import.
+  const FIT_CELL = 60;
+  const fitGrid = new Map();
+  for (let ei = 0; ei < g.edges.length; ei++) {
+    const e = g.edges[ei];
+    // A bridge passes over, and a tunnel under, so neither blocks anything --
+    // and a building above a tunnel is where buildings normally are.
+    if (e.elev || e.tunnel) continue;
+    const a = g.nodes[e.a], b = g.nodes[e.b];
+    const x0 = Math.floor((Math.min(a.x, b.x) - e.hw) / FIT_CELL);
+    const x1 = Math.floor((Math.max(a.x, b.x) + e.hw) / FIT_CELL);
+    const z0 = Math.floor((Math.min(a.z, b.z) - e.hw) / FIT_CELL);
+    const z1 = Math.floor((Math.max(a.z, b.z) + e.hw) / FIT_CELL);
+    for (let cx = x0; cx <= x1; cx++) {
+      for (let cz = z0; cz <= z1; cz++) {
+        const k = skey(cx, cz);
+        let l = fitGrid.get(k);
+        if (!l) fitGrid.set(k, (l = []));
+        l.push(ei);
+      }
+    }
+  }
+
+  /**
+   * Scale in (0,1] that pulls a box clear of every carriageway near it, or 0
+   * if it cannot be saved.
+   *
+   * The box is measured as the rotated rectangle it is, via its support
+   * function `|hw*(u.n)| + |hd*(v.n)|` along the line to each road. A bounding
+   * circle cannot do this job: one large enough to contain the rectangle
+   * rejects half a block, and anything smaller lets the corners stand in the
+   * road, which is the bug the original version of this was written for.
+   *
+   * Only the carriageway is cleared, not the pavement. Real buildings front the
+   * pavement -- that is what a pavement is for -- and clearing it too would
+   * shrink most of downtown for no gain in drivability.
+   */
+  const CLEAR_MARGIN = 0.8;
+  const roadFit = (x, z, w, d, rot) => {
+    const hw = w / 2, hd = d / 2;
+    const rad = Math.hypot(hw, hd);
+    const ux = Math.cos(rot), uz = Math.sin(rot);
+    const vx = -Math.sin(rot), vz = Math.cos(rot);
+    let fit = 1;
+    const c0 = Math.floor((x - rad) / FIT_CELL), c1 = Math.floor((x + rad) / FIT_CELL);
+    const d0 = Math.floor((z - rad) / FIT_CELL), d1 = Math.floor((z + rad) / FIT_CELL);
+    for (let cx = c0; cx <= c1; cx++) {
+      for (let cz = d0; cz <= d1; cz++) {
+        const l = fitGrid.get(skey(cx, cz));
+        if (!l) continue;
+        for (const ei of l) {
+          const e = g.edges[ei];
+          const a = g.nodes[e.a], b = g.nodes[e.b];
+          const r = distToSeg(x, z, a.x, a.z, b.x, b.z);
+          const room = r.d - e.hw - CLEAR_MARGIN;
+          if (room <= 0) return 0; // the centre itself is in the road
+          if (r.d > rad + e.hw) continue;
+          const nx = (x - r.x) / r.d, nz = (z - r.z) / r.d;
+          const reach = Math.abs(hw * (ux * nx + uz * nz)) + Math.abs(hd * (vx * nx + vz * nz));
+          if (reach > room) fit = Math.min(fit, room / reach);
+        }
+      }
+    }
+    return fit;
+  };
+
+  const MIN_SIDE = 4.0; // below this it is a kiosk, not a building
+  let shrunk = 0, dropped = 0;
+  for (let bi = buildings.length - 1; bi >= 0; bi--) {
+    const bd = buildings[bi];
+    const fit = roadFit(bd.x, bd.z, bd.w, bd.d, bd.rot);
+    if (fit >= 1) continue;
+    // Shrink to fit rather than dropping where possible: a block that came out
+    // as one big box legitimately overlaps the road, and deleting it empties
+    // the whole block instead of putting a smaller building on it.
+    if (fit > 0 && bd.w * fit >= MIN_SIDE && bd.d * fit >= MIN_SIDE) {
+      bd.w *= fit;
+      bd.d *= fit;
+      shrunk++;
+    } else {
+      buildings.splice(bi, 1);
+      dropped++;
+    }
+  }
+  cityStats.buildingsShrunk = shrunk;
+  cityStats.buildingsDropped = dropped;
+
   // Nothing may stand where the player gets put down. Inside a footprint,
   // blocked() refuses every direction and the player is stuck for good, walking
   // on the spot -- and 1.5 m inside a facade there is no visual clue why.
@@ -143,7 +250,6 @@ export function* cityGenerator(md) {
   // --- 3. Chunk index ------------------------------------------------------
   const chunks = new Map();
   const ck = (cx, cz) => cx * 100003 + cz;
-  const skey = (cx, cz) => cx * 100003 + cz;
   const getChunk = (cx, cz) => {
     const k = ck(cx, cz);
     let c = chunks.get(k);
@@ -160,6 +266,21 @@ export function* cityGenerator(md) {
   for (let bi = 0; bi < buildings.length; bi++) {
     const bd = buildings[bi];
     getChunk(Math.floor(bd.x / CHUNK), Math.floor(bd.z / CHUNK)).buildings.push(bi);
+  }
+
+  // Tarmac counts as built-up too. Keyed on footprints alone, a freeway corridor
+  // has no buildings in it and came out as bright green meadow -- the I-5 trench
+  // through Chinatown was a lawn. Adding the paved area per chunk makes "urban"
+  // mean buildings OR pavement, which is what it should have meant.
+  const HALF_CHUNKS = B.nx / 2;
+  for (let ei = 0; ei < g.edges.length; ei++) {
+    const e = g.edges[ei];
+    const a = g.nodes[e.a], b = g.nodes[e.b];
+    const ci = Math.floor((a.x + b.x) / 2 / CHUNK) + HALF_CHUNKS;
+    const cj = Math.floor((a.z + b.z) / 2 / CHUNK) + HALF_CHUNKS;
+    if (ci < 0 || ci >= B.nx || cj < 0 || cj >= B.nz) continue;
+    built[cj * B.nx + ci] = Math.min(1, built[cj * B.nx + ci]
+      + (e.len * e.hw * 2) / (CHUNK * CHUNK));
   }
 
   // --- 4. Elevated deck surfaces for vehicle physics -----------------------
@@ -264,9 +385,24 @@ export function* cityGenerator(md) {
             if (oi === ei) continue;
             const o = g.edges[oi];
             if (o.elev) continue;
-            if (o.hw < me.hw || (o.hw === me.hw && oi > ei)) continue;
+            // A tunnel is drawn at ground level for now, so it must never be
+            // the thing that suppresses the street above it.
+            if (o.tunnel && !me.tunnel) continue;
+            const surfaceWins = me.tunnel && !o.tunnel;
+            if (!surfaceWins && (o.hw < me.hw || (o.hw === me.hw && oi > ei))) continue;
+            // Near-parallel only. Two roads crossing at a junction each have the
+            // other's centre inside their width, and neither is redundant.
+            if (!surfaceWins && Math.abs(me.dx * o.dx + me.dz * o.dz) < 0.93) continue;
             const a = g.nodes[o.a], b = g.nodes[o.b];
-            if (distToSeg(x, z, a.x, a.z, b.x, b.z).d <= o.hw) return true;
+            const d = distToSeg(x, z, a.x, a.z, b.x, b.z).d;
+            // Containment, not centreline proximity. The old test skipped this
+            // road whenever its CENTRE fell inside the other's width -- but a
+            // motorway's half-width spans several lanes, so every ramp running
+            // beside it qualified and 30% of all ramp segments were drawn with
+            // no tarmac at all. That is what made the freeway impassable: you
+            // took an off-ramp and there was nothing under you. A road is only
+            // redundant where its whole width is inside the other's.
+            if (surfaceWins ? d <= o.hw : d + me.hw <= o.hw + 0.5) return true;
           }
         }
       }
@@ -380,6 +516,34 @@ export function* cityGenerator(md) {
           }
         }
       return out;
+    },
+
+    /**
+     * Is (x,z) on (or within `pad` of) a paved carriageway?
+     *
+     * For anything scattered over the ground -- trees, and whatever comes next.
+     * `G.inPark()` is a raster of OSM greenspace and knows nothing about tarmac,
+     * so a road crossing a park (Aurora through Woodland Park, Lake Washington
+     * Boulevard down the length of its own) reads as plantable ground.
+     */
+    onRoad(x, z, pad = 0) {
+      const c0 = Math.floor((x - MAX_HW - pad) / CHUNK);
+      const c1 = Math.floor((x + MAX_HW + pad) / CHUNK);
+      const d0 = Math.floor((z - MAX_HW - pad) / CHUNK);
+      const d1 = Math.floor((z + MAX_HW + pad) / CHUNK);
+      for (let cx = c0; cx <= c1; cx++) {
+        for (let cz = d0; cz <= d1; cz++) {
+          const c = chunks.get(ck(cx, cz));
+          if (!c) continue;
+          for (const ei of c.edges) {
+            const e = g.edges[ei];
+            if (e.elev) continue;
+            const a = g.nodes[e.a], b = g.nodes[e.b];
+            if (distToSeg(x, z, a.x, a.z, b.x, b.z).d <= e.hw + pad) return true;
+          }
+        }
+      }
+      return false;
     },
 
     /**
