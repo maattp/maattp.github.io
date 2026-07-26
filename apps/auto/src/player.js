@@ -100,7 +100,11 @@ export class Player {
     const mag = Math.hypot(input.x, input.y);
     // On-foot pace. The city is 10 km across, so these sit above real walking
     // and jogging speeds -- crossing a block should not be a chore.
-    const run = input.sprint ? 7.5 : 4.2;
+    // 4.2 m/s is a 4:00/km jog and 7.5 is world-class sprinting -- at those
+    // speeds the gait correctly came out looking like track athletics. The
+    // character is a person moving around a city, so the speeds come down and
+    // the pose follows: 3.6 is an easy run, 5.4 a hard one.
+    const run = input.sprint ? 5.4 : 3.6;
     let target = 0;
     if (mag > 0.12) {
       // Stick is camera-relative. Note HEADING_SENSE: heading is three.js

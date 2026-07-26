@@ -8,7 +8,7 @@ import { buildTextures } from './textures.js';
 import { World } from './world.js';
 import { buildLandmarks } from './landmarks.js';
 import { TrafficSystem } from './traffic.js';
-import { PedSystem } from './peds.js';
+import { PedSystem, animateWalk } from './peds.js';
 import { Player } from './player.js';
 import { Controls } from './controls.js';
 import { Hud, buildMapCanvas } from './hud.js';
@@ -334,7 +334,7 @@ async function boot() {
   }
 
   await step(1, 'Welcome to Seattle');
-  window.__dbg = { game, city, player, world, traffic, peds, scene, camera, renderer, G, fx, hud, controls, audio, pickups, THREE, postfx, applyQuality, sun, sceneStats, cityStats };
+  window.__dbg = { game, city, player, world, traffic, peds, scene, camera, renderer, G, fx, hud, controls, audio, pickups, THREE, postfx, applyQuality, sun, sceneStats, cityStats, animateWalk };
   wireUi();
   game.newTarget();
   applyQuality('high', false);
