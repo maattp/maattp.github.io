@@ -684,6 +684,45 @@ export function* cityGenerator() {
      * compute this once for the body centre and pass it in, rather than paying
      * for the edge scan on every sample.
      */
+    /**
+     * Is edge `ei`'s carriageway at (x,z) already paved by a road that outranks
+     * it?
+     *
+     * The hand-drawn arterials and highways overlap each other and the district
+     * grids -- 187 near-parallel pairs, and next to the spawn a street and a
+     * ramp run 0.7 m apart. Two full-width surfaces then land on the same
+     * ground, each painting its own centre line, and the depth buffer picks a
+     * winner per pixel per frame: the road appears to flip between one yellow
+     * line and two. That is a data problem, but the renderer should not put two
+     * carriageways in the same place regardless, so world.js asks this per
+     * segment and skips the ones that are covered.
+     *
+     * Rank is width first, then edge order, so the pairing is antisymmetric and
+     * exactly one of any overlapping pair draws. Only the surface is dropped --
+     * the edge stays in the graph and traffic still routes over it.
+     */
+    roadCoveredAt(x, z, ei) {
+      const me = g.edges[ei];
+      if (!me || me.elev) return false;
+      const c0 = Math.floor(x / CHUNK), d0 = Math.floor(z / CHUNK);
+      for (let cx = c0 - 1; cx <= c0 + 1; cx++) {
+        for (let cz = d0 - 1; cz <= d0 + 1; cz++) {
+          const c = chunks.get(ck(cx, cz));
+          if (!c) continue;
+          for (const oi of c.edges) {
+            if (oi === ei) continue;
+            const o = g.edges[oi];
+            if (o.elev) continue;
+            // outranked only by something wider, or equal-width and earlier
+            if (o.hw < me.hw || (o.hw === me.hw && oi > ei)) continue;
+            const a = g.nodes[o.a], b = g.nodes[o.b];
+            if (distToSeg(x, z, a.x, a.z, b.x, b.z).d <= o.hw) return true;
+          }
+        }
+      }
+      return false;
+    },
+
     roadLift(x, z) {
       // A junction square is drawn at NODE_LIFT and covers the ends of every
       // strip that meets there, so inside one it IS the surface -- take it

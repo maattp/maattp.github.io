@@ -330,7 +330,7 @@ export class World {
       const a = city.nodes[e.a], b = city.nodes[e.b];
       const mx = (a.x + b.x) / 2, mz = (a.z + b.z) / 2;
       if (!own(mx, mz)) continue;
-      this.meshRoad(road, walk, flat, e, a, b, lod);
+      this.meshRoad(road, walk, flat, e, a, b, lod, ei);
       for (const ni of [e.a, e.b]) {
         if (nodesDone.has(ni)) continue;
         const n = city.nodes[ni];
@@ -366,7 +366,7 @@ export class World {
 
   // --- road surfaces --------------------------------------------------------
 
-  meshRoad(road, walk, flat, e, a, b, lod) {
+  meshRoad(road, walk, flat, e, a, b, lod, ei) {
     const hw = e.hw;
     const px = -e.dz, pz = e.dx;
     const steps = e.elev ? 1 : Math.max(1, Math.round(e.len / 16));
@@ -384,6 +384,11 @@ export class World {
       const r0x = x0 - px * hw, r0z = z0 - pz * hw;
       const l1x = x1 + px * hw, l1z = z1 + pz * hw;
       const r1x = x1 - px * hw, r1z = z1 - pz * hw;
+      // Don't pave over a road that outranks this one. Where two carriageways
+      // overlap, both used to draw and the depth buffer chose per pixel, which
+      // is what made the centre line flicker between one stripe and two.
+      if (!e.elev && ei != null
+        && this.city.roadCoveredAt((x0 + x1) / 2, (z0 + z1) / 2, ei)) continue;
       road.quad(
         [l0x, yAt(l0x, l0z, t0), l0z],
         [r0x, yAt(r0x, r0z, t0), r0z],
