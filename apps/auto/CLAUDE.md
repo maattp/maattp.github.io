@@ -488,60 +488,69 @@ built rather than blocked out:
 ### The gait plants feet, it doesn't swing legs
 
 `animateWalk` places each **foot target** and solves the knee to reach it. A leg
-alternates a stance half-cycle, where the foot holds a fixed spot and travels
-back under the character, and a swing half-cycle, where it arcs forward.
+alternates a stance half-cycle, where the foot holds a spot on the ground and
+travels back under the character, and a swing half-cycle, where it arcs forward.
+Rotating the hip on a sine cannot plant a foot -- sized to cover the step on
+average, it still sweeps ~57 % faster than the body through mid-stance -- and
+legs paddling under a gliding body is what reads as flailing.
 
-Everything hangs off one number, `stepLength()`. The phase advances
-`PI * speed / step` per second and the stance target runs linearly from
-`+step/2` to `-step/2`, so **the planted foot moves backwards at exactly the
-speed the body moves forwards** — no foot skate, by construction rather than by
-tuning. The hips then ride at whatever height the planted leg can actually reach
-(`sqrt(REACH² - z²)`), which is where the twice-per-cycle bob comes from; don't
-re-add a hand-dialled one.
+**Everything here is judged by `tools/gait.mjs`, not by looking at it.** The rig
+drives one character at a fixed 60 Hz across five speeds and reports cadence,
+step length, per-limb duty, double support, flight fraction, hip height, joint
+ranges and foot skate against published adult bands. Three separate attempts at
+this were tuned against screenshots and none of them held up; the rig found
+eight defects in its first run. If you change the gait, run it.
 
-Rotating the hip on a sine is what this replaced, and it cannot work: sized to
-cover the step length *on average*, the foot still sweeps ~57% faster than the
-body through mid-stance and slower at the ends, grinding against the ground the
-whole way. Measured, the planted foot moved 24 mm/frame while the body moved 25
-— the feet were barely holding at all, which is what read as flailing legs. The
-IK version measures 1.9 mm. If you touch the legs, re-measure that number:
-sample the lower foot's world XZ per frame and compare it against
-`speed * dt`.
+**A foot has length, and that is what keeps a person standing up.** The hips are
+limited by a straight line from hip to ANKLE -- but the ground contact is not the
+ankle. Through stance it rolls from heel to toe while the ankle lifts, which is
+worth about 0.22 m of sweep the leg never has to span. Without modelling that, a
+0.86 m leg is asked to cover a 0.98 m stance sweep and the only way to do it is
+to squat: measured, the hips sat at **85 % of standing height walking and 69 %
+sprinting** against a real ~97 %. That is the "creeping around low to the ground"
+look, and no amount of tuning the bob touches it, because it is the MEAN height
+that is wrong, not the oscillation. The contact still travels at body speed --
+the no-skate identity is unchanged -- it is the ankle that travels less, with the
+foot rotating through the difference. `h.ankleTrack` reports the ratio, because a
+skate check that watches the ankle bone has to expect it.
 
-**Ground contact is capped, and that is what makes running work.** The hips can
-only ride as high as the planted leg reaches, so a stance spanning `c` forces
-them down to `sqrt(REACH² - (c/2)²)`. Letting stance grow with the step wrecked
-the run: at 6.4 m/s the step hit 1.64 m and the hips fell **63 cm** every
-stride — the character dropped into the splits twice a second, which is what
-"walking is janky, running is jankier" was. `CONTACT_MAX` holds the bob at about
-14 cm at every speed; past a jog the step outgrows contact, the duty factor
-falls below a half and a flight phase opens. Extra speed buys cadence and air,
-not a wider split — which is what people actually do.
+**One number turns a walk into a run.** A straight planted leg puts the hips on a
+circle, highest at mid-stance. `compress` is how much of that circle the knee
+absorbs. Below 1 the hips still peak at mid-stance: an inverted pendulum vaulting
+over a stiff leg, which is walking. Above 1 the knee absorbs more than the circle
+rises, so the hips are LOWEST at mid-stance: a spring compressing, which is
+running. The two are opposite in phase, and having one curve for both is why
+every speed used to bob an identical 13-14 cm and a run looked like a hurried
+walk.
 
-**Pose the pelvis before solving the legs, and aim through its inverse.** It
-sways, rolls and twists, and the hip sockets ride with it: a 0.09 rad roll lifts
-one socket by most of a centimetre. Solving against a character-space target and
-then moving the pelvis underneath left the foot floating and creeping. Related:
-`REACH_PLANT` is deliberately shorter than `REACH`, because a leg solved to
-exactly its reach is pushed past the IK clamp by that same socket rise and comes
-up short, lifting the planted foot clear of the ground.
+**Double support exists.** Stance used to be capped at exactly 0.5 of the cycle,
+so there was always precisely one foot down. A real walk has both feet down for
+about a fifth of the cycle; without it a walk reads as a march. `dutyFactor()`
+goes above 0.5 below about 2.5 m/s and the two stances overlap. `h.contactL` and
+`h.contactR` are per-foot for that reason -- the single `h.contact` index cannot
+express it.
 
-Three standing traps. `animateWalk` owns `h.phase` — advancing the cycle
-anywhere else re-introduces exactly the cadence/stride split that caused the
-original bug. The bones are **unscaled**, so a step in world metres has to be
-divided by `h.scale` or taller pedestrians over-stride. And when measuring
-skate, read `h.contact` (0 left, 1 right, −1 airborne) rather than guessing
-stance from foot height: a flight phase is not a foot sliding, and counting it
-as one buries the real number. Current figures, per frame at 60 fps:
+**Gait keys off `runBlend`, not raw speed.** People change gait around 2.5-3 m/s.
+Hip oscillation phase, foot clearance, trunk lean, elbow carry and arm swing all
+key off that blend, or a brisk walk gets treated as a slow run.
 
-| speed | planted foot moves | body moves | skate | airborne |
-|---|---|---|---|---|
-| 1.5 m/s | 1.4 mm | 25 mm | 5.7% | 0% |
-| 4.2 m/s | 10.2 mm | 70 mm | 14.6% | 18% |
-| 7.5 m/s | 21.6 mm | 125 mm | 17.3% | 40% |
+Current figures, all inside their bands:
 
-The residual is the pelvis's lateral shift and yaw, which a sagittal two-bone
-solve cannot absorb; closing it needs a 3-DOF hip.
+| | cadence | step | duty | bob | knee swing | hip height | skate |
+|---|---|---|---|---|---|---|---|
+| walk 1.4 | 106 | 0.79 m | 0.62 | 3.4 cm | 58 deg | 96 % | 0.4 % |
+| jog 3.5 | 161 | 1.31 m | 0.43 | 7.5 cm | 113 deg | 100 % | 1.8 % |
+| sprint 7.5 | 196 | 2.29 m | 0.27 | 11.0 cm | 125 deg | 96 % | 1.9 % |
+
+Two standing traps. `animateWalk` owns `h.phase` -- advancing the cycle anywhere
+else reintroduces the cadence/stride split. And the bones are **unscaled**, so a
+step in world metres has to be divided by `h.scale` or taller pedestrians
+over-stride.
+
+The reference bands in `tools/gait.mjs` are published adult gait-analysis
+values -- cadence and step-length curves, duty factor against speed, joint-angle
+ranges -- so the rig judges against an outside standard rather than against a
+screenshot.
 
 ## Parks
 

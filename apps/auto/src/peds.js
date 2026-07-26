@@ -343,7 +343,7 @@ export function makeHumanoid(opts = {}) {
     // Pooled variants are shared by every pedestrian using that look, so only a
     // uniquely-built character may dispose its own geometry.
     dispose() { if (!pooled) geo.dispose(); },
-    gait: 0.85 + hash2(seed, 11) * 0.3,
+    gait: 0.92 + hash2(seed, 11) * 0.16,
     lean: hash2(seed, 12) * 0.06,
     swing: 0.8 + hash2(seed, 13) * 0.45,
     t: hash2(seed, 14) * 10,
@@ -375,21 +375,26 @@ const REACH_PLANT = REACH - 0.014;
  * in. This is the ONE number the gait is built on -- see animateWalk.
  */
 function stepLength(h, speed) {
-  return clamp(0.62 + 0.14 * speed, 0.5, 1.9) * h.gait;
+  // Fitted so cadence AND step length land inside published adult bands at
+  // every speed from a stroll to a sprint -- tools/gait.mjs checks all ten
+  // numbers. The old `0.62 + 0.14 v` over-strided a walk (0.93 m at 1.4 m/s,
+  // against a real 0.68-0.82) and under-strided a run, which is why the walk
+  // reached and the run took little quick steps.
+  return clamp(0.45 + 0.245 * speed, 0.42, 2.6) * h.gait;
 }
 
 /**
- * Longest the foot may stay on the ground in one stance.
+ * Fraction of the cycle one foot is on the ground.
  *
- * The hips can only ride as high as the planted leg reaches, so a stance that
- * spans `c` forces them down to sqrt(REACH^2 - (c/2)^2). Letting the stance grow
- * with the step is what wrecked the run: at 6.4 m/s the step reached 1.64 m and
- * the hips fell 63 cm on every stride -- the character dropped into the splits
- * twice a second. Capping it holds the bob at about 14 cm and the extra speed
- * goes into cadence and a flight phase instead, which is what actually happens
- * when a person speeds up.
+ * Above 0.5 the two stances overlap and the character is in DOUBLE SUPPORT --
+ * both feet down, which a real walk is in for about a fifth of the cycle and
+ * which this model previously could not represent at all: stance was capped at
+ * exactly 0.5, so there was always precisely one foot on the ground. A walk
+ * without double support reads as a march.
  */
-const CONTACT_MAX = 0.95;
+function dutyFactor(speed) {
+  return clamp(0.684 - 0.2055 * Math.log(Math.max(0.35, speed)), 0.22, 0.68);
+}
 
 /**
  * Procedural walk/idle cycle. Hips bob and sway, knees and elbows actually
@@ -415,6 +420,12 @@ export function animateWalk(h, amp, dt, speed) {
   const A = amp * h.gait;
   const spd = speed != null ? speed : amp * 4;
   const run = clamp(spd / 6, 0, 1);
+  // How much of a RUN this is, as opposed to how fast a walk. People switch
+  // gait around 2.5-3 m/s, and everything that distinguishes the two -- hip
+  // oscillation phase, foot clearance, lean -- has to key off this rather than
+  // off raw speed, or a brisk walk gets treated as a slow run.
+  const rb = clamp((spd - 2.2) / 1.2, 0, 1);
+  const runBlend = rb * rb * (3 - 2 * rb);
 
   const step = stepLength(h, spd);
   // pi of phase per step, so one full 2pi cycle is a left-right pair. Paired
@@ -434,18 +445,50 @@ export function animateWalk(h, amp, dt, speed) {
   // Ground contact is capped, so above a jog the step outgrows it and the duty
   // factor falls below a half -- the legs stop overlapping and a flight phase
   // opens up. Speeding up therefore buys cadence and air, not a wider split.
-  const contactW = Math.min(step, CONTACT_MAX);
-  const duty = clamp(contactW / (2 * step), 0.2, 0.5);
-  const swept = (contactW / sc) * settle;
-  const lift = ((0.09 + 0.07 * run) / sc) * settle;
+  // A foot in stance must travel backwards by the whole distance the body
+  // covers while it is down, or it skates: cycle distance is 2 * step and the
+  // foot is down for `duty` of it. That is the no-skate identity, and it is
+  // what the old CONTACT_MAX broke -- it clamped the sweep to hold the bob
+  // down, which is the wrong lever (see `compress` and the foot roll below).
+  const duty = dutyFactor(spd);
+  const swept = Math.min(2 * step * duty, REACH_PLANT * 1.94) / sc * settle;
+  // Swing clearance, and the main thing that sets how much the knee folds. A
+  // sprinter's heel comes most of the way to the backside, which is where the
+  // 120-155 deg of swing-phase knee flexion comes from.
+  const lift = ((0.085 + 0.20 * runBlend) / sc) * settle;
   const stanceSpan = TAU * duty;
+  // THE FOOT HAS LENGTH, and that is what keeps a person standing up.
+  //
+  // The hips are limited by a straight line from hip to ANKLE, but the ground
+  // contact is not the ankle: through stance it rolls from heel to toe while
+  // the ankle lifts. That roll is worth ~0.22 m of sweep the leg never has to
+  // span. Without it a 0.86 m leg was asked to cover a 0.98 m stance sweep and
+  // the only way to do that is to squat -- measured, the hips sat at 85% of
+  // standing height walking and 69% sprinting, against a real ~97%. That is
+  // exactly the "creeping around low to the ground" look, and no amount of
+  // tuning the bob fixes it, because it is the mean height that is wrong.
+  //
+  // The CONTACT still travels at body speed -- that is the no-skate identity
+  // and it is unchanged. It is the ANKLE that travels less, with the foot
+  // rotating to take up the difference.
+  const roll = (0.22 + 0.08 * runBlend) / sc;
+  const ankleExc = Math.max(0.25, swept - roll);
+  const riseMax = (0.05 + 0.06 * runBlend) / sc;
   const target = (ph) => {
     const w = ((ph % TAU) + TAU) % TAU;
     const stance = w < stanceSpan;
     const u = stance ? w / stanceSpan : (w - stanceSpan) / (TAU - stanceSpan);
-    return stance
-      ? { z: (0.5 - u) * swept, y: J.ankle, stance: true }
-      : { z: (u - 0.5) * swept, y: J.ankle + lift * Math.sin(Math.PI * u), stance: false };
+    if (!stance) {
+      return { z: (u - 0.5) * ankleExc, y: J.ankle + lift * Math.sin(Math.PI * u), stance: false };
+    }
+    // Ankle rides up at both ends of stance: a little at heel strike, more at
+    // toe-off, which is where the heel is high and the foot is up on its toes.
+    const u2 = Math.abs(2 * u - 1);
+    // Pitch that keeps the sole planted while the contact rolls: toes up at
+    // heel strike, heel up at toe-off, flat through the middle.
+    const rollPitch = (0.5 - u) * 2 * (0.10 + 0.30 * runBlend);
+    return { z: (0.5 - u) * ankleExc, y: J.ankle + riseMax * u2 * u2,
+             roll: rollPitch, stance: true };
   };
   const tl = target(phase), tr = target(phase + Math.PI);
 
@@ -454,22 +497,48 @@ export function animateWalk(h, amp, dt, speed) {
   // dialled in: highest at mid-stance, lowest as the legs scissor apart. It has
   // to come from the PLANTED foot -- take it from the airborne one and the
   // stance leg is asked for a reach it hasn't got, and the foot skates instead.
-  const planted = tl.stance ? tl : (tr.stance ? tr : null);
+  // With duty above 0.5 both feet can be down at once, and then BOTH legs
+  // constrain the hips -- take the lower of the two, or the trailing leg is
+  // asked for a reach it hasn't got and its foot lifts.
+  const planted = tl.stance && tr.stance
+    ? (Math.abs(tl.z) > Math.abs(tr.z) ? tl : tr)
+    : (tl.stance ? tl : (tr.stance ? tr : null));
   // Which foot is bearing weight: 0 left, 1 right, -1 airborne. Only the gait
   // regression test reads it -- measuring skate needs the model's own idea of
   // stance, or a flight phase gets counted as a foot sliding. See CLAUDE.md.
   h.contact = tl.stance ? 0 : (tr.stance ? 1 : -1);
-  const lowHip = J.ankle + Math.sqrt(Math.max(0.04, REACH_PLANT * REACH_PLANT - (swept * 0.5) * (swept * 0.5)));
+  // Per-foot, because with double support the single index cannot say that
+  // both are down. The gait rig reads these to measure duty and skate.
+  h.contactL = tl.stance; h.contactR = tr.stance;
+  // What fraction of the body's travel the ANKLE covers during stance. The
+  // contact point still moves at body speed -- the foot rotates through the
+  // difference -- so a skate check that watches the ankle has to expect this.
+  h.ankleTrack = swept > 1e-6 ? ankleExc / swept : 1;
+  const lowHip = J.ankle + riseMax + Math.sqrt(Math.max(0.04, REACH_PLANT * REACH_PLANT - (ankleExc * 0.5) * (ankleExc * 0.5)));
+  // ONE number turns a walk into a run.
+  //
+  // A straight planted leg puts the hips on a circle: highest at mid-stance,
+  // lowest as the legs scissor. Taken literally that is the "compass gait", and
+  // it bobs about 16 cm at walking speed against a real 4-5 cm -- people flatten
+  // it with stance-phase knee flexion. `compress` is how much of that circle the
+  // knee absorbs. Below 1 the hips still peak at mid-stance, which is walking:
+  // an inverted pendulum vaulting over a stiff leg. Above 1 the knee absorbs
+  // MORE than the circle rises, so the hips are at their LOWEST at mid-stance --
+  // which is running: a spring compressing under the body. Those two are
+  // opposite in phase, and having one curve for both is why every speed here
+  // used to bob an identical 13-14 cm and a run looked like a hurried walk.
+  const compress = 0.05 + 1.75 * runBlend;
   let hipY;
   if (planted) {
-    hipY = J.ankle + Math.sqrt(Math.max(0.04, REACH_PLANT * REACH_PLANT - planted.z * planted.z));
+    const raw = planted.y + Math.sqrt(Math.max(0.04, REACH_PLANT * REACH_PLANT - planted.z * planted.z));
+    hipY = lowHip + (raw - lowHip) * (1 - compress);
   } else {
     // Airborne: nothing pins the hips, so arc over the gap. Both ends of a
     // flight phase are the fully-scissored pose, so this stays continuous.
     const gap = Math.PI - stanceSpan;
     const w = ((phase % Math.PI) + Math.PI) % Math.PI;
     const f = gap > 1e-6 ? clamp((w - stanceSpan) / gap, 0, 1) : 0;
-    hipY = lowHip + (0.035 + 0.05 * run) * Math.sin(Math.PI * f);
+    hipY = lowHip + (0.02 + 0.055 * runBlend) * Math.sin(Math.PI * f);
   }
 
   // The pelvis has to be posed BEFORE the legs are solved. It sways, rolls and
@@ -497,31 +566,57 @@ export function animateWalk(h, amp, dt, speed) {
     b[thigh].rotation.x = -(aim + off); // negative x rotation swings a limb to +z
     b[knee].rotation.x = Math.PI - inner;
     // keep the sole level through stance, toe up a little as it swings through
-    b[foot].rotation.x = -(b[thigh].rotation.x + b[knee].rotation.x)
-      + (t.stance ? 0.04 : 0.16 * Math.sin(Math.PI * ((t.z / (swept || 1)) + 0.5)));
+    // Level the sole, but only as far as an ankle actually goes. Cancelling
+    // thigh+knee outright gave a 77-108 deg range against a real 25-30, which
+    // is a foot flapping on the end of the leg rather than pushing off one.
+    const level = -(b[thigh].rotation.x + b[knee].rotation.x);
+    const wanted = level + (t.stance ? t.roll : 0.16 * Math.sin(Math.PI * ((t.z / (ankleExc || 1)) + 0.5)));
+    b[foot].rotation.x = clamp(wanted, -0.42, 0.38);
   };
   solveLeg(B.thighL, B.kneeL, B.footL, tl);
   solveLeg(B.thighR, B.kneeR, B.footR, tr);
 
-  // arms: opposite phase, elbows carried bent and tightening on the forward swing
-  const armA = A * 0.8 * h.swing;
-  b[B.shoulderL].rotation.x = armA * 1.1 * s;
-  b[B.shoulderR].rotation.x = -armA * 1.1 * s;
+  // Arms. A walk has a loose 30-40 deg swing from a nearly straight arm; a run
+  // has an 80-90 deg elbow driving hard. Both the amplitude and the elbow have
+  // to move with the gait -- carrying one elbow angle across the whole range is
+  // what made a sprint read as a hurried walk with the arms along for the ride.
+  const armA = (0.09 * settle + A * 0.52) * h.swing;
+  b[B.shoulderL].rotation.x = armA * 0.95 * s;
+  b[B.shoulderR].rotation.x = -armA * 0.95 * s;
   // Abduction keeps the hands clear of the thighs. Positive Z swings a limb
   // toward +X, so the LEFT arm (at -X) needs a negative angle to move outward.
-  b[B.shoulderL].rotation.z = -(0.12 + A * 0.07);
-  b[B.shoulderR].rotation.z = 0.12 + A * 0.07;
-  b[B.elbowL].rotation.x = -(0.20 + 0.5 * run) - Math.max(0, armA * 1.4 * s);
-  b[B.elbowR].rotation.x = -(0.20 + 0.5 * run) - Math.max(0, -armA * 1.4 * s);
+  // Abduction keeps the hands off the thighs at a stroll, but it has to come
+  // BACK IN as the pace rises: a runner's arms track forward close to the ribs,
+  // and holding a walk's clearance at speed reads as flapping.
+  const abduct = 0.15 - 0.09 * runBlend + A * 0.04;
+  b[B.shoulderL].rotation.z = -abduct;
+  b[B.shoulderR].rotation.z = abduct;
+  // A touch of internal rotation so the forearms swing across the body rather
+  // than out to the sides, which is what the elbow bend does on its own.
+  b[B.shoulderL].rotation.y = 0.10 * runBlend;
+  b[B.shoulderR].rotation.y = -0.10 * runBlend;
+  // A street runner carries the elbow near 70 deg, not the 90-plus of someone
+  // racing, and does not hold the forearms up horizontal.
+  const elbowCarry = 0.25 + 0.80 * runBlend;
+  b[B.elbowL].rotation.x = -elbowCarry - Math.max(0, armA * 1.1 * s);
+  b[B.elbowR].rotation.x = -elbowCarry - Math.max(0, -armA * 1.1 * s);
 
+  // Trunk lean. Kept on the spine and chest rather than the pelvis: the legs
+  // are solved against the pelvis, and pitching it would move the hip sockets
+  // out from under a solve that has already been given its ground targets.
+  const lean = h.lean + 0.02 + 0.10 * runBlend;
   // Pelvis was posed above, before the legs were solved against it.
   b[B.spine].rotation.y = s * A * 0.16;
+  b[B.spine].rotation.x = lean * 0.45;
   b[B.chest].rotation.y = s * A * 0.30;
-  b[B.chest].rotation.x = h.lean + A * 0.10 + run * 0.10;
+  b[B.chest].rotation.x = lean * 0.55 + A * 0.06;
   b[B.chest].rotation.z = -c * A * 0.05;
 
   // head stays level and pointed where the body is going
-  b[B.neck].rotation.x = -h.lean * 0.6 - A * 0.06 - run * 0.08;
+  // The head stays up and looking ahead however far the trunk pitches over --
+  // a runner does not stare at their own feet. Cancel most of the lean the
+  // spine and chest just applied.
+  b[B.neck].rotation.x = -lean * 0.85 - A * 0.05;
   b[B.head].rotation.y = -s * A * 0.22 + Math.sin(h.t * 0.6) * 0.12 * (1 - run);
   b[B.head].rotation.x = -A * 0.08 + Math.sin(h.t * 0.9) * 0.03;
 
