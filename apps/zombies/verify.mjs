@@ -25,7 +25,9 @@ const browser = await chromium.launch({
 });
 const page = await browser.newPage({ viewport: { width: 900, height: 420 } });
 const pageErrors = [];
+const consoleErrors = [];
 page.on('pageerror', e => pageErrors.push(String(e && e.stack || e)));
+page.on('console', m => { if (m.type() === 'error') consoleErrors.push(m.text().slice(0, 800)); });
 await page.goto(URL, { waitUntil: 'load' });
 await page.waitForFunction(() => window.__dbg !== undefined, { timeout: 30000 }).catch(() => {});
 if (!await page.evaluate(() => !!window.__dbg)) {
@@ -372,12 +374,19 @@ const drops = await page.evaluate(() => {
   const present = D.Zombies.list.filter(z => !z.dead);
   o.before = present.length;
   const pn0 = P.points;
+  /* Count the drops ALREADY on the ground. The absolute count after the blast
+     is not the nuke's doing: anything still lying around from the twenty-five
+     seconds of round 6 above is in that number too, and this check failed about
+     one run in six on a drop it did not create. Same trap as the down-state
+     check — assert on the delta, never on shared state. */
+  const dropsBefore = D.Drops.live.length;
   D.drop('nuke', P.pos.x, P.pos.z); D.stepN(4);
   o.survivors = present.filter(z => !z.dead).length;
   // the flat bounty only — kills from a nuke pay nothing per body
   o.nukePaid = P.points - pn0;
   // a nuke must not cascade into more drops
-  o.dropsAfterNuke = D.Drops.live.length;
+  o.dropsBefore = dropsBefore;
+  o.dropsCascaded = D.Drops.live.length - dropsBefore;
   return o;
 });
 check('Max Ammo refills reserves', drops.maxammo, drops);
@@ -385,7 +394,7 @@ check('Double Points doubles the multiplier', drops.doublePoints, drops);
 check('Insta-Kill arms', drops.instakill, drops);
 check('Carpenter reboards every window', drops.carpenter, drops);
 check('Nuke kills every body on the map', drops.before > 0 && drops.survivors === 0, drops);
-check('Nuke does not cascade drops', drops.dropsAfterNuke === 0, drops);
+check('Nuke does not cascade drops', drops.dropsCascaded <= 0, drops);
 check('flat bounties ignore Double Points',
   drops.dpActive && drops.carpenterPaid === 200 && drops.nukePaid === 400, drops);
 
@@ -470,31 +479,62 @@ const dogs = await page.evaluate(() => {
   o.skipBarricades = live.every(z => z.win === null);
   o.allReachable = live.every(z => D.navAt(z.pos.x, z.pos.z) < 1e5);
   o.fasterThanZombies = live.length > 0 && Math.min(...live.map(z => z.speed)) > D.Zombies.speedFor(5);
-  // a dog must be hittable when you aim at its body
+  /* A dog must be hittable when you aim at its body.
+     AIM AFTER THE LAST STEP, NOT BEFORE. The first version aimed, stepped, then
+     raycast — and a hellhound covers ~9 cm in that one frame, which at three
+     metres is far enough off-axis to miss a 35 cm body. The check failed about
+     one run in four and looked like a game bug. Nothing here needs a step
+     between aiming and firing the ray: eyePos/forward read yaw and pitch
+     directly. */
+  /* PARK THE DOG. Sampling whatever the AI happened to be doing meant testing
+     at 0.95 m with the animal already chewing on you: at that range the aim
+     line down onto a 0.34 m body cylinder enters it a hair ABOVE the dog's
+     back (DRIG.bodyY1), and the check failed about one run in four for a
+     reason that had nothing to do with the property under test — which is that
+     the hit shape lines up with the drawn body at a range you would actually
+     shoot from. Placing it removes the AI from the assertion entirely. */
   if (live.length) {
-    const z = live.sort((a, b) => a.pos.distanceToSquared(P.pos) - b.pos.distanceToSquared(P.pos))[0];
-    P.yaw = Math.atan2(-(z.pos.x - P.pos.x), -(z.pos.z - P.pos.z));
-    const d = Math.hypot(z.pos.x - P.pos.x, z.pos.z - P.pos.z);
-    P.pitch = Math.atan2(D.Zombies.DRIG.bodyY * z.scale - 1.62, d);
     D.stepN(1);
-    const eye = new D.THREE.Vector3(), dir = new D.THREE.Vector3();
-    D.Player.eyePos(eye); D.Player.forward(dir);
-    o.hittable = !!D.Zombies.raycast(eye, dir, 40);
+    const z = live[0];
+    let spot = null;
+    for (let a = 0; a < 32 && !spot; a++) {
+      const th = a / 32 * Math.PI * 2;
+      const x = P.pos.x + Math.cos(th) * 6, zz = P.pos.z + Math.sin(th) * 6;
+      if (D.Level.walkable(x, zz) && !D.Level.losBlocked(P.pos.x, P.pos.z, x, zz)) spot = [x, zz];
+    }
+    o.parked = !!spot;
+    if (spot) {
+      z.pos.set(spot[0], 0, spot[1]);
+      const eye = new D.THREE.Vector3(), dir = new D.THREE.Vector3();
+      // aim from the EYE, not from the feet and a hard-coded 1.62 — eyePos
+      // carries the view bob
+      D.Player.eyePos(eye);
+      P.yaw = Math.atan2(-(z.pos.x - eye.x), -(z.pos.z - eye.z));
+      const d = Math.hypot(z.pos.x - eye.x, z.pos.z - eye.z);
+      P.pitch = Math.atan2(D.Zombies.DRIG.bodyY * z.scale - eye.y, d);
+      D.Player.forward(dir);
+      o.hittable = !!D.Zombies.raycast(eye, dir, 40);
+    }
     const hp0 = z.hp;
     for (let i = 0; i < 40; i++) { D.hold('fire', i % 3 !== 0); D.stepN(1); }
     D.hold('fire', false);
     o.damageable = z.hp < hp0 || z.dead;
   }
-  // clearing a dog round pays a Max Ammo and the round advances
+  /* Clearing a dog round pays a Max Ammo and the round advances.
+     The drop is spawned as the round ends, so sampling on the same frame the
+     counter ticks over races it — watch for the payout across the whole run
+     instead, and keep stepping for a moment after the advance. */
   D.Player.gun().res = 0;
-  for (let i = 0; i < 60 * 40; i++) {
+  let sawMaxAmmo = false, grace = 0;
+  for (let i = 0; i < 60 * 45; i++) {
     P.hp = 100; P.dead = false; if (D.Game.state === 'dying') D.Game.state = 'play';
     if (D.Zombies.aliveCount > 0) D.killAll();
     D.stepN(1);
-    if (D.snapshot().round > 5) break;
+    if (D.Player.gun().res > 0 || D.Drops.live.some(x => x.key === 'maxammo')) sawMaxAmmo = true;
+    if (D.snapshot().round > 5 && ++grace > 90) break;
   }
   o.advanced = D.snapshot().round > 5;
-  o.paidMaxAmmo = D.Player.gun().res > 0 || D.Drops.live.some(x => x.key === 'maxammo');
+  o.paidMaxAmmo = sawMaxAmmo;
   return o;
 });
 check('dog rounds land on 5 and every 5th after', 
@@ -644,10 +684,25 @@ const audio = await page.evaluate(() => {
 check('audio context builds', audio.hasCtx, audio);
 check('every synthesised voice plays without throwing', audio.failed.length === 0, audio);
 
-// 14. no errors anywhere -------------------------------------------------------
+/* 14. every shader links --------------------------------------------------
+   A broken onBeforeCompile injection does not throw, does not stop the frame
+   loop and does not fail any other check here: three logs the compile error to
+   the console and draws the affected material as nothing. Both shader bugs hit
+   while building the material system were invisible to every other assertion in
+   this file, so the program list is now checked directly. `runnable` is only
+   populated when the renderer's debug.checkShaderErrors is on, which is three's
+   default; the console sweep below is the backstop for the case where it is
+   not. */
+const shaders = await page.evaluate(() => __dbg.compileAll());
+check('every shader program links', shaders.broken === 0, shaders);
+check('the material system compiled its full set of variants', shaders.total >= 40, shaders);
+
+// 15. no errors anywhere -------------------------------------------------------
 const gameErrors = await page.evaluate(() => __dbg.errors);
 check('no in-game errors', gameErrors.length === 0, gameErrors);
 check('no uncaught page errors', pageErrors.length === 0, pageErrors);
+check('no shader errors on the console',
+  !consoleErrors.some(t => /Shader Error|not compiled|VALIDATE_STATUS/i.test(t)), consoleErrors.slice(0, 3));
 
 await browser.close();
 

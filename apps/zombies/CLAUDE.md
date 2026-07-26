@@ -72,6 +72,66 @@ These each cost a real debugging session. Do not undo them.
 - **`frustumCulled = false` on every InstancedMesh** whose matrices hold world
   coordinates — three culls against the base geometry's bounding sphere at the
   mesh origin.
+- **`renderer.compile()` DOES NOT CHECK THAT A SHADER COMPILED.** three defers
+  the link check to the first `getUniforms()` call (`onFirstUse` in
+  `WebGLProgram`), so a program that has been created but never drawn with
+  reports no diagnostics and logs nothing. `renderer.compile()` alone called a
+  fragment shader containing the literal text `@@@ THIS IS NOT GLSL @@@`
+  perfectly healthy. `__dbg.compileAll()` touches every program's uniforms for
+  exactly this reason, and the `every shader program links` check in verify.mjs
+  is worthless without it.
+- **`renderer.info.programs` only lists what has actually been DRAWN.** A
+  material on a mesh the test camera never happened to face is invisible to any
+  assertion about shaders — the first version of the shader check passed against
+  a deliberately broken `SURF.metal` because no wall-buy was on screen.
+- **GLSL RESERVED WORDS BITE.** `cast` is reserved; `float cast = ...` fails to
+  compile with a syntax error pointing at the next line. Prefer boring names.
+- **BACKTICKS IN AN INJECTED GLSL COMMENT END THE TEMPLATE LITERAL.** Writing
+  ``/* `vHE` is ... */`` inside a shader string is a JavaScript syntax error, not
+  a shader error, and the page simply never boots.
+
+## Material system (V6)
+
+Three layers, all procedural, no textures and no UV sets anywhere.
+
+- `siteMat` — world surfaces. Each `SURF` program writes `diffuseColor`, a
+  height field `gH` and a gloss `gGloss`; shared code turns the screen-space
+  derivatives of `gH` into a perturbed normal (three's `perturbNormalArb`) and
+  multiplies `specularStrength` by `gGloss`. Also carries the two-state baked
+  light and a baked AO attribute.
+- `skinMat` — characters. Four detail kinds (`flesh`, `cloth`, `hide`, `fur`)
+  plus a fresnel rim. **The rim is not decoration**: a dark body in a dark room
+  is a flat blob, and the edge light is what makes a zombie read as a solid
+  object rather than a silhouette.
+- `vmMat` — the viewmodel, which sits closer to the camera than anything else
+  and is on screen every frame. Detail is keyed on **box-local** space, never
+  world space: the group sways and bobs, and a world-keyed pattern swims across
+  the metal as you walk.
+
+Laws for all three:
+
+- **BUMP AMPLITUDE IS NOT A TASTE KNOB.** The perturbed normal is driven by the
+  SLOPE of the height field, so amplitude must fall as pattern frequency rises.
+  A grip checker at 150 cycles/unit carrying a wood ring's amplitude turned
+  every receiver into flickering black-and-white diamonds. Rule of thumb:
+  amplitude ≈ 0.1 / dominant frequency. `skinMat` normalises this twice — by
+  `nscale`, and by the per-pixel ratio of view-space to local-space derivative
+  lengths, because a limb loft is unit-sized and draws 0.3 m tall while the
+  torso loft is already in metres.
+- **A HALO IS A BULB, NOT A VOLUME OF FOG.** Lamp glows scale with reach only
+  faintly and stay under ~0.7 m. Scaling with range put translucent orange
+  beachballs in the lobby.
+- **PATTERN ON THE END CAP.** A 2D pattern keyed on two axes leaves every face
+  perpendicular to the third one flat. Wood rings are radial about the length
+  axis for this reason; before that the BAR forearm's end cap was the largest
+  unshaded area on screen.
+- **A MATERIAL SERVES EVERY PART IT IS ON.** `DARK` covers 4 cm grips and 40 cm
+  receivers alike, so grip checkering sized for the former made a lattice of the
+  latter. A fragment has no access to part dimensions; pick a finish both parts
+  genuinely share.
+- **Still no post-processing.** Bloom was considered and rejected: the vignette
+  and film grain are CSS (`#cine`, `#grain`), and the "things glow" read comes
+  from additive glow spheres on the lamps, not from a render target.
 
 ## Character models
 
@@ -289,3 +349,25 @@ Note the two bot rules it encodes, because a naive bot reports false failures:
 only shoot what `losBlocked` says you can see, and **stay on a target until it
 drops** (re-picking the nearest body every frame in a crowd of 24 spreads damage
 across all of them and kills none).
+
+### Writing a check that is not flaky
+
+Three flakes were hunted down in V6, and all three were harness bugs dressed up
+as game bugs. The patterns generalise:
+
+- **Never assert on shared state; assert on the delta.** "Nuke does not cascade
+  drops" counted every live drop, including ones lying around from the previous
+  twenty-five seconds of play. Same trap as the down-state check before it.
+- **Never sample on the frame an event fires.** The Max Ammo payout is spawned
+  as the round ends, so reading it the instant the round counter ticks races the
+  drop. Watch for the condition across the whole run instead.
+- **Place the actor; do not sample whatever the AI is doing.** The "hellhounds
+  are hittable" check aimed at whichever dog was nearest, which after twenty
+  seconds meant 0.95 m — point blank, where a downward aim line enters the body
+  cylinder just above `DRIG.bodyY1` and misses. The property under test is that
+  the hit shape matches the drawn body at normal range, so the dog is now parked
+  at a known clear spot six metres out.
+
+And the standing rule: **confirm a new check FAILS against the bug it guards.**
+Doing this caught the shader check passing against a fragment shader containing
+`@@@ THIS IS NOT GLSL @@@` — twice, for two different reasons.
