@@ -44,6 +44,7 @@ const SITES = [
   ['woodland-park', -676, -4842],
   ['alaskan-way', -400, 500],
   ['queen-anne-hill', -1436, -2853],
+  ['queen-anne-mcgraw', -1118, -3181],
   ['ud-45th', 1900, -4400],
   ['rainier-ave', 3200, 4200],
 ];

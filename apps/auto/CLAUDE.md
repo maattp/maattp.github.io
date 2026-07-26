@@ -300,6 +300,50 @@ sun, whose shadow camera is only ~105 m wide and follows the player -- the stale
 shadow map painted dark blotches on the asphalt that looked exactly like the bug
 being hunted.
 
+### Terrain through the tarmac, and cars that won't sit down
+
+**A road quad is a chord, and its error grows with the square of its length.**
+`meshRoad` used fixed 16 m pieces spanning the FULL carriageway width, sampling
+terrain only at the four corners. McGraw Street on Queen Anne drops 5.4 m across
+one such piece and the chord cut **1.39 m** under the crest -- terrain standing
+proud of the asphalt, which is grass growing over the road. Pieces are now sized
+from the terrain, and subdivided across the width as well as along the length
+(~8 m cells; the heightfield is 40 m, so finer than that buys nothing).
+
+Sizing needs **both** tests, taking whichever is finer. Gradient alone misses a
+road that is level end to end but crests in the middle -- the downtown case. Bow
+(the sag at the midpoint) alone misses one whose crest is off-centre or is
+S-shaped, where the midpoint happens to land on the chord; measured on its own it
+was *worse* than the gradient test on Queen Anne, 36.7 cm against 11.8 cm.
+
+| worst terrain above the asphalt | before | after |
+|---|---|---|
+| Queen Anne | 139 cm | **12 cm** |
+| downtown | 106 cm | **24 cm** |
+| West Seattle | -- | **3 cm** |
+
+Under the 22 cm `ROAD_LIFT` nothing shows through, so that is the number to beat.
+Costs about 6 % more triangles and no extra draw calls.
+
+**Paint stops short of a junction, like the pavement does.** Markings that run
+end to end lay each road's edge lines straight across every cross street it
+meets: white lines cutting the carriageway diagonally, centre dashes doubling
+back. `meshRoadMarks` trims to `nodeRadius` at both ends. A crossing is mostly
+bare tarmac in life too.
+
+**`rotation.z` raises local +X, so the far side is the one you subtract.** The
+body attitude used `atan2(rh - lh, ...)` with `lh` sampled along local +X, which
+leans the car INTO the slope instead of along it. On a 2.4 deg cross-slope the
++X wheels sat 7.2 cm under the road and the other pair floated 7.1 cm above it --
+the two-wheels-in-the-air. `place()` had the same inverted formula, so parked
+cars leaned wrong too.
+
+**A car rides the plane through its four contact patches, not the ground under
+its centre.** On a crest the centre reads high and the wheels hang; in a dip it
+reads low and they sink. Both `update()` and `place()` now average the four wheel
+samples. Measured after both fixes, all four wheels sit within 0.2 cm of the
+ground on a Queen Anne cross-slope, against +/-7 cm before.
+
 ## What the map looks like from above
 
 Still the cheapest way to find a layout bug, and none of it is visible at street
