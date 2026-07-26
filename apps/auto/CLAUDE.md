@@ -600,3 +600,42 @@ step, worst-case camera movement per frame went 35.5 mm → 19.1 mm.
 Measure this at a **fixed dt**, driving `updateFoot`/`updateCamera` in a loop.
 SwiftShader runs about 4 fps, so real-time traces exaggerate every per-frame
 delta by an order of magnitude and are worthless for judging smoothness.
+
+## Junctions, dead ends, bridges
+
+**Pavement must not cross a carriageway, and the ring is where that breaks.**
+Strips stop at `nodeRadius` and `meshNode` fills the corner with a square ring —
+but drawn as four whole sides, that ring lays a footpath straight over all four
+approach roads. Each side is cut into pieces and the pieces covering an approach
+are dropped, leaving pavement on the corners only.
+
+**A dead end is not a junction.** `meshNode` returns early below degree 2.
+Otherwise a single street running out to nothing gets a full crossing square and
+a kerbed ring sitting on bare ground — the "road to nowhere". `nodeSurface()`
+skips the same nodes, because the drawn surface and the lift query have to agree.
+
+**Elevated spans get subdivided like any other road.** A barrier is a box that
+can only yaw, so on a climbing ramp it stays level while the deck rises away
+from it. At `steps = 1` a 117 m span drew one 117 m barrier centred at
+mid-height, stabbing tens of metres above and below the road — the white spears
+sticking out of the freeway. Piers are placed every ~35 m along the span rather
+than one per edge.
+
+Note the "long thin triangle" probe is *not* diagnostic here: a pier is
+legitimately 30 m tall and 1.7 m wide, so it trips any aspect-ratio filter. Judge
+deck geometry from a close render alongside and down the deck.
+
+## Nothing stands on the water, and parked cars sit on the slope
+
+**`chain()` refuses to lay a ground-level edge whose midpoint is over water.**
+The hand-drawn polylines carry the usual positional drift, which had put four
+arterials — Aurora, Westlake, Dexter and Fairview — straight through Lake Union
+at 4 to 9 m below the surface, and Delridge Way through Elliott Bay: 182 edges
+in all. A span meant to cross water is marked elevated in the data and is left
+alone. Absent beats submerged, and connectivity went *up* (98.1% → 98.4%),
+because those edges only ever connected things across a lake.
+
+**`Vehicle.place()` sets pitch and roll, not just height.** A parked car never
+runs `update()`, so left at zero pitch it stays level on a hillside street and
+its downhill end is buried. That was the sunken cars on Queen Anne — a 20% grade
+needs `atan(0.2)` ≈ 0.2 rad of pitch, and it was getting none.
