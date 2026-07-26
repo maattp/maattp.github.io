@@ -52,7 +52,7 @@ function styleFor(cls, h) {
 
 // Counters the verify harness asserts on, so a regression in the clearing
 // passes shows up as a number rather than as a screenshot nobody looks at.
-export const cityStats = { buildingsShrunk: 0, buildingsDropped: 0, treesSkipped: 0, landmarkCleared: 0 };
+export const cityStats = { buildingsShrunk: 0, buildingsDropped: 0, treesSkipped: 0, landmarkCleared: 0, propsSkipped: 0 };
 
 const skey = (cx, cz) => cx * 100003 + cz;
 
@@ -568,7 +568,10 @@ export function* cityGenerator(md) {
           if (!c) continue;
           for (const ei of c.edges) {
             const e = g.edges[ei];
-            if (e.elev) continue;
+            // Elevated edges count. Anything scattered on the ground under a
+            // viaduct grows straight up through the deck -- there was a pine
+            // tree in the middle of the I-90 bridge because this said
+            // `if (e.elev) continue`, and a tree does not know it is indoors.
             const a = g.nodes[e.a], b = g.nodes[e.b];
             if (distToSeg(x, z, a.x, a.z, b.x, b.z).d <= e.hw + pad) return true;
           }

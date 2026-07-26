@@ -8,6 +8,13 @@ import { Builder } from './build.js';
 import { hash2, clamp, lerp, distToSeg } from './util.js';
 
 const ROAD_Y = ROAD_LIFT;
+// Metres per road-texture repeat. Fixed, so the asphalt's grain is the same
+// size on an alley and on a freeway.
+const ROAD_TILE = 9;
+// Paint sits just proud of the asphalt; any less and it z-fights at distance.
+const MARK_Y = ROAD_LIFT + 0.012;
+// `flat` has no map, but Builder.quad indexes the uv array unconditionally.
+const ZERO_UV = [0, 0, 0, 0, 0, 0, 0, 0];
 const NODE_Y = NODE_LIFT;
 const WALK_Y = WALK_LIFT;
 
@@ -578,20 +585,90 @@ export class World {
     }
   }
 
+  /**
+   * Lane markings, as geometry rather than baked into the asphalt texture.
+   *
+   * Drawn in real metres, so a line is 12 cm wide and a dash is 3 m long with a
+   * 6 m gap on every class instead of scaling with the carriageway -- baked into
+   * the texture, a 27 m highway got 4.3 m dashes and a residential street got
+   * 1.4 m ones. Alleys and the narrowest streets get nothing, which is also
+   * what they have in life.
+   */
+  meshRoadMarks(flat, e, a, b, ei) {
+    const hw = e.hw;
+    const bias = hash2(ei | 0, 7) * 0.03;
+    if (hw < 4.0) return;                       // alleys and lanes are unmarked
+    const px = -e.dz, pz = e.dx;
+    const yAt = (x, z) => G.terrainHeight(x, z) + MARK_Y + bias;
+    const W = 0.06;                             // half-width of a painted line
+    const WHITE = [0.94, 0.93, 0.88];
+    const YELLOW = [0.88, 0.72, 0.2];
+
+    const stripe = (off, from, to, col) => {
+      if (to <= from) return;
+      const t0 = from / e.len, t1 = to / e.len;
+      const cx0 = lerp(a.x, b.x, t0) + px * off, cz0 = lerp(a.z, b.z, t0) + pz * off;
+      const cx1 = lerp(a.x, b.x, t1) + px * off, cz1 = lerp(a.z, b.z, t1) + pz * off;
+      if (ei != null && this.city.roadCoveredAt((cx0 + cx1) / 2, (cz0 + cz1) / 2, ei)) return;
+      const l0x = cx0 + px * W, l0z = cz0 + pz * W, r0x = cx0 - px * W, r0z = cz0 - pz * W;
+      const l1x = cx1 + px * W, l1z = cz1 + pz * W, r1x = cx1 - px * W, r1z = cz1 - pz * W;
+      flat.quad(
+        [l0x, yAt(l0x, l0z), l0z],
+        [r0x, yAt(r0x, r0z), r0z],
+        [r1x, yAt(r1x, r1z), r1z],
+        [l1x, yAt(l1x, l1z), l1z],
+        [0, 1, 0], ZERO_UV, col
+      );
+    };
+
+    // Edge lines, set in from the kerb by about a shoulder's width.
+    const edge = hw - Math.min(0.7, hw * 0.06);
+    const step = 8; // subdivide so a line follows the terrain rather than spanning it
+    for (let s = 0; s < e.len; s += step) {
+      const to = Math.min(e.len, s + step);
+      stripe(edge, s, to, WHITE);
+      stripe(-edge, s, to, WHITE);
+    }
+
+    // Centre line. A motorway carriageway is one-way and has no centre line;
+    // everything else is two-way here, so it gets a broken yellow one.
+    if (e.cls === 'hwy' || e.oneway) return;
+    const DASH = 3, GAP = 6;
+    for (let s = 0; s < e.len; s += DASH + GAP) {
+      stripe(0, s, Math.min(e.len, s + DASH), YELLOW);
+    }
+  }
+
   meshRoad(road, walk, flat, e, a, b, lod, ei) {
     if (e.elev) { this.meshViaduct(road, flat, e, a, b); return; }
     const hw = e.hw;
+    const U1 = (hw * 2) / ROAD_TILE;
     const px = -e.dz, pz = e.dx;
     const steps = Math.max(1, Math.round(e.len / 16));
     const col = e.cls === 'hwy' ? [0.92, 0.92, 0.92] : [1, 1, 1];
     let v = 0;
-    const yAt = (x, z) => G.terrainHeight(x, z) + ROAD_Y;
+    // Deterministic sub-centimetre lift per edge, so two carriageways that
+    // genuinely overlap resolve instead of fighting.
+    //
+    // roadCoveredAt only drops a surface whose WHOLE width is inside another's
+    // -- it has to, or every ramp beside a motorway loses its tarmac. What that
+    // leaves is partial overlaps, and those used to be drawn coplanar: a
+    // raycast over one freeway found a second road surface within half a metre
+    // behind 129 of 148 sampled pixels. Coplanar asphalt z-fights, and because
+    // the two quads face slightly differently it reads as soft dark blotches
+    // smeared over the road rather than as obvious flicker. That is the "messy
+    // surface". 3 cm is far below the 22 cm kerb, so roadLift need not know.
+    const bias = hash2(ei | 0, 7) * 0.03;
+    const yAt = (x, z) => G.terrainHeight(x, z) + ROAD_Y + bias;
     for (let s = 0; s < steps; s++) {
       const t0 = s / steps, t1 = (s + 1) / steps;
       const x0 = lerp(a.x, b.x, t0), z0 = lerp(a.z, b.z, t0);
       const x1 = lerp(a.x, b.x, t1), z1 = lerp(a.z, b.z, t1);
       const seg = e.len / steps;
-      const v0 = v, v1 = v + seg / (hw * 2);
+      // Fixed metres per texture repeat, in BOTH directions. This used to be
+      // `seg / (hw * 2)` with u spanning 0..1 across the road, which tied the
+      // asphalt's grain to how wide the road happened to be.
+      const v0 = v, v1 = v + seg / ROAD_TILE;
       v = v1;
       const l0x = x0 + px * hw, l0z = z0 + pz * hw;
       const r0x = x0 - px * hw, r0z = z0 - pz * hw;
@@ -607,9 +684,10 @@ export class World {
         [r0x, yAt(r0x, r0z), r0z],
         [r1x, yAt(r1x, r1z), r1z],
         [l1x, yAt(l1x, l1z), l1z],
-        [0, 1, 0], [0, v0, 1, v0, 1, v1, 0, v1], col
+        [0, 1, 0], [0, v0, U1, v0, U1, v1, 0, v1], col
       );
     }
+    this.meshRoadMarks(flat, e, a, b, ei);
     if (lod === 1 && (e.cls === 'st' || e.cls === 'art' || e.cls === 'res')) {
       const sw = e.cls === 'art' ? 3.2 : 2.6;
       // Stop short of each intersection: a strip run end to end would march
@@ -946,6 +1024,10 @@ export class World {
         const ox = x + px * sg * (e.hw + 1.4);
         const oz = z + pz * sg * (e.hw + 1.4);
         if (!G.isBuildable(ox, oz)) continue;
+        // Offsetting sideways off THIS road can land on a different one -- a
+        // ramp beside a freeway puts its lamp posts and trees on the freeway,
+        // and beneath a viaduct they grow through the deck.
+        if (city.onRoad(ox, oz, 0.8)) { cityStats.propsSkipped++; continue; }
         const gy = G.terrainHeight(ox, oz) + WALK_Y;
         const armRot = Math.atan2(-px * sg, -pz * sg);
         if (h < 0.42) {

@@ -256,6 +256,50 @@ which made every I-5 carriageway 21.6 m wide whether it carried three lanes or
 six. `CLASS_MIN_HW` is per-class and low enough that the lane count actually
 drives the width.
 
+### The road surface itself
+
+**Coplanar asphalt is what "messy" looked like.** `roadCoveredAt` only drops a
+surface whose whole width is inside another's -- it has to, or every ramp beside
+a motorway loses its tarmac -- so partial overlaps are drawn, and they used to be
+drawn at exactly the same height. A raycast over one freeway found a second road
+surface within half a metre behind **129 of 148 sampled pixels**. Coplanar quads
+z-fight, and because the two face slightly differently it reads as soft dark
+blotches smeared over the road rather than as obvious flicker, which is why it
+looks like a texture problem and is not one. Each edge now takes a deterministic
+`hash2(ei, 7) * 0.03` lift, so overlaps resolve instead of fighting: median
+separation went 0 -> 29 mm and 93 % of coplanar samples cleared. 3 cm is far
+under the 22 cm kerb, so `roadLift` doesn't need to know.
+
+**Don't diagnose this from a render.** Nulling the albedo, the normal map, the
+roughness map and the vertex colours in turn all failed to explain it, and a
+luminance dump of the road texture came back flat (84-93 across a 16x16 grid).
+Raycasting the offending pixels and asking what was behind them found it in one
+step. Same lesson as the wheel-well slab in "Vehicles".
+
+**Lane markings are geometry, not texture.** They used to be painted into the
+asphalt texture, which forced one repeat to stretch across the full road width so
+the lines landed at the edges and the centre -- and that tied the ASPHALT's grain
+to the road's width too: 1.8 cm per texel on a residential street, 5.3 cm on a
+27 m highway, so the aggregate became gravel on anything wide. The texture now
+tiles at a fixed `ROAD_TILE` metres and `meshRoadMarks()` lays lines down in real
+metres: 12 cm wide, 3 m dashes with 6 m gaps, on every class. Under 4 m of
+half-width gets nothing, which is what an alley has.
+
+**Nothing scattered may stand on a carriageway, including above one.**
+`city.onRoad()` deliberately counts **elevated** edges: anything placed on the
+ground under a viaduct grows straight through the deck, and there was a pine tree
+in the middle of the I-90 bridge because it didn't. Street furniture needs the
+same check for a different reason -- it offsets sideways from its own road, which
+beside a ramp lands it on the freeway.
+
+**Survey the freeways specifically, and pose the camera.** `tools/survey.mjs`
+poses a camera on the carriageway looking along it, at a spread of sites. Two
+things it got wrong at first and now doesn't: it skipped elevated edges, so every
+viaduct in the city went unlooked-at; and it posed the camera without moving the
+sun, whose shadow camera is only ~105 m wide and follows the player -- the stale
+shadow map painted dark blotches on the asphalt that looked exactly like the bug
+being hunted.
+
 ## What the map looks like from above
 
 Still the cheapest way to find a layout bug, and none of it is visible at street
