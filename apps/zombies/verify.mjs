@@ -373,6 +373,93 @@ check('box relocates after its use limit', box.relocated, box);
 check('relocation moves the solid tile with it', box.oldTileClear && box.newTileSolid, box);
 check('Ray Gun is box-exclusive', box.rayGunBoxOnly, box);
 
+// 12b. PACK-A-PUNCH ---------------------------------------------------------------
+const pap = await page.evaluate(() => {
+  const D = __dbg, o = {};
+  D.start(); D.points(99999); D.openAll();
+  o.refusedWithoutPower = D.papInsert() === false;      // the system, not just the prompt
+  D.power(); for (let i = 0; i < 200; i++) D.stepN(1);
+  D.give('thomp');
+  const base = D.WEAPONS.thomp;
+  o.inserted = D.papInsert();
+  o.working = D.pap().phase === 'work';
+  o.notUpgradedYet = D.Player.gun().pap !== true;       // must be collected first
+  for (let i = 0; i < 60 * 5; i++) D.stepN(1);
+  o.ready = D.pap().phase === 'ready';
+  o.collected = D.papTake();
+  const up = D.Player.specOf(D.Player.gun());
+  o.renamed = up.name !== base.name;
+  o.dmgRatio = +(up.dmg / base.dmg).toFixed(2);
+  o.magBigger = up.mag > base.mag;
+  o.ammoRefilled = D.Player.gun().ammo === up.mag;
+  o.secondRefused = D.papInsert() === false;
+  D.give('mp40');
+  o.freshWeaponClean = D.Player.gun().pap !== true;
+  D.Player.gun().res = 0;
+  D.drop('maxammo', D.Player.P.pos.x, D.Player.P.pos.z); D.stepN(4);
+  o.maxAmmoUsesEffective = D.Player.gun().res === D.Player.specOf(D.Player.gun()).res;
+  return o;
+});
+check('Pack-a-Punch refuses without power', pap.refusedWithoutPower, pap);
+check('Pack-a-Punch runs then offers the weapon', pap.inserted && pap.working && pap.ready && pap.collected, pap);
+check('upgrade only lands once collected', pap.notUpgradedYet, pap);
+check('upgraded weapon is renamed and stronger',
+  pap.renamed && pap.dmgRatio > 2 && pap.magBigger && pap.ammoRefilled, pap);
+check('an upgraded weapon cannot be upgraded twice', pap.secondRefused, pap);
+check('a fresh weapon does not inherit the upgrade', pap.freshWeaponClean, pap);
+check('Max Ammo honours upgraded reserves', pap.maxAmmoUsesEffective, pap);
+
+// 12c. HELLHOUNDS ------------------------------------------------------------------
+const dogs = await page.evaluate(() => {
+  const D = __dbg, P = D.Player.P, o = {};
+  o.schedule = [1, 4, 5, 6, 9, 10, 15].map(r => D.Zombies.isDogRound(r));
+  D.start(); D.points(99999); D.openAll(); D.power(); D.give('bar');
+  D.setRound(5);
+  o.flagged = D.snapshot().dogRound;
+  for (let i = 0; i < 60 * 20; i++) { P.hp = 100; P.dead = false; if (D.Game.state === 'dying') D.Game.state = 'play'; D.stepN(1); }
+  const s = D.snapshot();
+  o.spawned = s.dogs;
+  o.onlyDogs = s.alive === s.dogs;
+  const live = D.Zombies.list.filter(z => !z.dead && z.kind === 'dog');
+  o.skipBarricades = live.every(z => z.win === null);
+  o.allReachable = live.every(z => D.navAt(z.pos.x, z.pos.z) < 1e5);
+  o.fasterThanZombies = live.length > 0 && Math.min(...live.map(z => z.speed)) > D.Zombies.speedFor(5);
+  // a dog must be hittable when you aim at its body
+  if (live.length) {
+    const z = live.sort((a, b) => a.pos.distanceToSquared(P.pos) - b.pos.distanceToSquared(P.pos))[0];
+    P.yaw = Math.atan2(-(z.pos.x - P.pos.x), -(z.pos.z - P.pos.z));
+    const d = Math.hypot(z.pos.x - P.pos.x, z.pos.z - P.pos.z);
+    P.pitch = Math.atan2(D.Zombies.DRIG.bodyY * z.scale - 1.62, d);
+    D.stepN(1);
+    const eye = new D.THREE.Vector3(), dir = new D.THREE.Vector3();
+    D.Player.eyePos(eye); D.Player.forward(dir);
+    o.hittable = !!D.Zombies.raycast(eye, dir, 40);
+    const hp0 = z.hp;
+    for (let i = 0; i < 40; i++) { D.hold('fire', i % 3 !== 0); D.stepN(1); }
+    D.hold('fire', false);
+    o.damageable = z.hp < hp0 || z.dead;
+  }
+  // clearing a dog round pays a Max Ammo and the round advances
+  D.Player.gun().res = 0;
+  for (let i = 0; i < 60 * 40; i++) {
+    P.hp = 100; P.dead = false; if (D.Game.state === 'dying') D.Game.state = 'play';
+    if (D.Zombies.aliveCount > 0) D.killAll();
+    D.stepN(1);
+    if (D.snapshot().round > 5) break;
+  }
+  o.advanced = D.snapshot().round > 5;
+  o.paidMaxAmmo = D.Player.gun().res > 0 || D.Drops.live.some(x => x.key === 'maxammo');
+  return o;
+});
+check('dog rounds land on 5 and every 5th after', 
+  JSON.stringify(dogs.schedule) === JSON.stringify([false, false, true, false, false, true, true]), dogs.schedule);
+check('a dog round spawns only hellhounds', dogs.flagged && dogs.spawned > 0 && dogs.onlyDogs, dogs);
+check('hellhounds ignore the barricades', dogs.skipBarricades, dogs);
+check('hellhounds spawn somewhere that can reach you', dogs.allReachable, dogs);
+check('hellhounds are faster than zombies of that round', dogs.fasterThanZombies, dogs);
+check('hellhounds are hittable and take damage', dogs.hittable && dogs.damageable, dogs);
+check('clearing a dog round advances and pays Max Ammo', dogs.advanced && dogs.paidMaxAmmo, dogs);
+
 // 13. GAMEPAD ------------------------------------------------------------------------
 // The review on #328 flagged that the controller path had zero regression
 // coverage. Standard mapping is stubbed here so every binding is exercised.

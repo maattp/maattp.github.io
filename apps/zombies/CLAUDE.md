@@ -144,6 +144,32 @@ the V1 registries were for.
 
 Adding another perk is one `PERKS` entry, one map char, and one multiplier read.
 
+## Pack-a-Punch and hellhounds (V3)
+
+- **Pack-a-Punch** is multipliers on the base weapon resolved inside `spec()`,
+  not a second weapon table. Every consumer of weapon stats already goes through
+  `spec()`, so damage, magazine, reserve, reload, Max Ammo and the HUD name all
+  pick the upgrade up for free; a new weapon needs nothing beyond an optional
+  `PAP_NAMES` entry. Upgraded weapons get their **own** viewmodel with cloned,
+  tinted materials — tinting the shared ones in place would recolour every
+  weapon that uses them and stay tinted afterwards.
+- **Hellhounds** are a second enemy sharing the zombie list (`kind: 'dog'`)
+  rather than a parallel system. Damage, the ray tests, the flow field, the
+  round counters and the drop rolls are already written and correct; duplicating
+  them is how two enemy types drift apart. Only the model, the gait, the hit
+  shape and the spawn are branched. `KIND` holds the per-type combat numbers,
+  `DRIG` the per-type hit shape — a dog's head sphere sits **in front of** its
+  body, not on top of it, so the ray test offsets by facing.
+- Dogs spawn out of the floor anywhere reachable and at least 6 m away, ignoring
+  windows entirely. That is the whole reason a dog round feels different from a
+  zombie round despite sharing the AI.
+
+**PRECONDITIONS LIVE IN THE SYSTEM, NOT THE PROMPT.** `Pap.insert()`,
+`Perks.buy()` and `Box.open()` each re-check power / zone access themselves. The
+interaction scanner already gates them, but a rule enforced only in the UI is
+one caller away from being bypassed — verify caught exactly that on
+Pack-a-Punch, which happily upgraded a weapon with the power off.
+
 ## Playtest laws (V2)
 
 From the first real session on a phone. Each of these was a complaint, not a
