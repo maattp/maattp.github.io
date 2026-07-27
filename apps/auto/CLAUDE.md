@@ -494,7 +494,22 @@ Physically-shaded, image-based-lit, tone-mapped, with a hand-rolled post chain.
   surfaces reflect too sharply, but the city stays lit instead of going dark.
   Anything that makes the probe inconclusive counts as a pass, so hardware that
   renders correctly today keeps the PMREM path.
-- **Tone mapping is ACES**, applied during the scene pass. Exposure lives in main.js.
+- **Tone mapping is ACES, and getting it to run at all took a flag.**
+  `WebGLRenderer` applies `toneMapping` only when the current render target is
+  null -- when it draws straight to the canvas -- or when the target is marked
+  `isXRRenderTarget`. The whole scene goes into postfx's 8-bit target, so for a
+  long time **ACES and `toneMappingExposure` never ran**, and this file claimed
+  they did. Highlights had no shoulder and hard-clipped to flat 255 plateaus
+  that read as missing textures; the scene floor sat where the toe should have
+  been, so light added at the source was eaten before it reached the
+  framebuffer (hemisphere and ambient pushed 2.6x bought 1.6x on screen) and
+  three separate value bugs were attacked through albedo instead. The tell was
+  that moving exposure 1.02 -> 1.55 changed the measured output by less than a
+  thousandth of a stop. `postfx.sceneRT.isXRRenderTarget = true` is the only
+  way to get the curve applied before an 8-bit target quantises the highlights;
+  it is pinned to the vendored r160, so **re-check it on a three bump**.
+  Exposure lives in main.js and is meaningful now -- tune it against
+  `tools/values.py`, not by eye.
 - **Every surface is a set**: albedo + normal + roughness (+ emissive where there
   are lit windows). Normals are sobel'd from a purpose-drawn *height* pass, not
   from the albedo, so window reveals read as recesses.
