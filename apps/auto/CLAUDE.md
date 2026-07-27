@@ -531,6 +531,87 @@ Physically-shaded, image-based-lit, tone-mapped, with a hand-rolled post chain.
   When testing headlessly, set `window.__noAutoQuality = true` **before boot** or
   SwiftShader's ~5 fps immediately drops the tier and every screenshot lies.
 
+## Judging how it looks
+
+Four separate visual bugs were each diagnosed two or three times as something
+else, because the thing doing the judging was wrong. The rule that came out of
+it: **measure the composited frame, and check the harness before the renderer.**
+
+`tools/beauty.mjs` captures a fixed set of framed views; `tools/values.py`
+reports the linear value structure of the resulting PNGs -- percentiles, the
+median of the lit and shadowed quartiles, and the ratio between them. A daylight
+open world of the target era runs a lit-to-shadow ratio of roughly **2.2-3.3:1**.
+At 13.8:1 the shadows are night values under a daylight sky, and no amount of
+albedo tuning fixes it, because every base colour is being multiplied by an
+ambient term near zero.
+
+**Measure the PNG, not the scene pass.** `renderer.render(scene, camera)` in a
+probe skips the whole post chain, and AO, grade and vignette are a large part of
+where the values land. A probe that renders directly reported a shadowed
+quartile of 0.19 for a frame whose actual pixels were at 0.004 -- a factor of
+fifty, in the direction that hides the bug.
+
+**The harness lights the shot, so the harness can be the bug.** `beauty.mjs`
+used to place the sun relative to the camera and aim it at the LOOK-AT point.
+That is fine for a shot 20 m deep and badly wrong for one 2400 m deep: the
+skyline view ended up with the light 240 m above a target 2400 m away, a sun
+**5.7 degrees above the horizon**. Every up-facing surface in the aerial got a
+tenth of the key and the mid-ground rendered as a black band. It reproduces
+main.js's own `(-215, 200, -150)` offset now. Same class of error as the stale
+shadow map in `survey.mjs`.
+
+**Spawning is not placing.** Traffic and pedestrians set their logical position
+on spawn; only each system's `update()` moves the meshes. The beauty shots pause
+the game so the camera can be flown, so for several passes they counted a dozen
+vehicles in the frustum and drew none of them. Seed, then step the systems.
+
+**Frame the views from the map, not from coordinates.** Hardcoded camera
+positions went stale the moment the city became real data -- the shot named
+`park` contained no park and `residential` framed an office block, so vegetation
+and housing were never actually being looked at. The views resolve at capture
+time from the loaded city: densest cluster of `style === 'house'`, densest
+cluster of buildings over 60 m, the fully-green patch nearest downtown.
+
+### Four bugs that all looked like a material problem
+
+- **A shadow with no bottom is the shadow map running out.** A tower's shadow
+  was sliced off mid-facade in a straight vertical line. The ortho box was 190 m
+  and shadowing simply stops at its edge. The proof is one render: widen the box
+  and previously *lit* pixels go dark. No real shadow gains area when you
+  enlarge the camera that draws it.
+- **Vertex tint multiplies the windows too.** Glazing drawn at `rgb(36,48,58)`
+  and then multiplied by a red-brick family colour lands at `(29,18,16)` --
+  black holes, on brick buildings only. Panes start bright now, which is also
+  what a daylight window actually is: mostly a reflection of the sky.
+- **Banding in the sky was the cloud generator.** 390 ellipses squashed to about
+  a fifteenth of their width at 3-11% alpha are individually invisible and stack
+  into continuous horizontal streaks across the equirect. It was twice blamed on
+  dither and precision in the post chain.
+- **A canopy built from `prism` has no top or bottom.** `Builder.prism` is an
+  open drum, so a squashed one seen from eye level is a single band of vertical
+  wall -- the "green slab on a stick" that trees rendered as. `spheroid` is
+  closed and costs about the same.
+
+## Solid street objects
+
+Until recently the **only** solid thing in the entire map was a building: trees
+and lamp posts were scenery you drove and walked straight through.
+`world.buildChunk` registers trunks and poles into `city.obstacles`, keyed by
+chunk so they are cleared with the geometry that drew them, and
+`city.obstacleHit(x, z, r)` returns the deepest overlap.
+
+Both collision paths consult it: `collideWithBuildings` tests obstacles *first*
+(a tree is nearer than the building line and is what you actually hit coming off
+a kerb) with a softer response than a wall, and `Player.blocked` uses a circle so
+you slide around a trunk instead of sticking to it. The radius is the **trunk**,
+not the canopy -- blocking the full spread makes a park impassable.
+
+**Greenspace and footprints are separate OSM layers and they overlap.** Park
+polygons are mapped straight over the museum, pavilion or house standing in
+them, so `inPark()` happily says yes in the middle of a building: 9.3 % of
+surviving park-tree candidates stood inside a footprint. Anything scattered on
+open ground needs `inBuilding()` as well as `inPark()` and `onRoad()`.
+
 ## Models
 
 Cars and characters are the two things a player looks at closely, and both are
