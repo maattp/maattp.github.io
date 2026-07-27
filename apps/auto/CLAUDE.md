@@ -494,7 +494,22 @@ Physically-shaded, image-based-lit, tone-mapped, with a hand-rolled post chain.
   surfaces reflect too sharply, but the city stays lit instead of going dark.
   Anything that makes the probe inconclusive counts as a pass, so hardware that
   renders correctly today keeps the PMREM path.
-- **Tone mapping is ACES**, applied during the scene pass. Exposure lives in main.js.
+- **Tone mapping is ACES, and getting it to run at all took a flag.**
+  `WebGLRenderer` applies `toneMapping` only when the current render target is
+  null -- when it draws straight to the canvas -- or when the target is marked
+  `isXRRenderTarget`. The whole scene goes into postfx's 8-bit target, so for a
+  long time **ACES and `toneMappingExposure` never ran**, and this file claimed
+  they did. Highlights had no shoulder and hard-clipped to flat 255 plateaus
+  that read as missing textures; the scene floor sat where the toe should have
+  been, so light added at the source was eaten before it reached the
+  framebuffer (hemisphere and ambient pushed 2.6x bought 1.6x on screen) and
+  three separate value bugs were attacked through albedo instead. The tell was
+  that moving exposure 1.02 -> 1.55 changed the measured output by less than a
+  thousandth of a stop. `postfx.sceneRT.isXRRenderTarget = true` is the only
+  way to get the curve applied before an 8-bit target quantises the highlights;
+  it is pinned to the vendored r160, so **re-check it on a three bump**.
+  Exposure lives in main.js and is meaningful now -- tune it against
+  `tools/values.py`, not by eye.
 - **Every surface is a set**: albedo + normal + roughness (+ emissive where there
   are lit windows). Normals are sobel'd from a purpose-drawn *height* pass, not
   from the albedo, so window reveals read as recesses.
@@ -503,11 +518,119 @@ Physically-shaded, image-based-lit, tone-mapped, with a hand-rolled post chain.
   unreliable on iOS (silent black screen), so the scene is tone-mapped into an
   8-bit sRGB target and bloom / FXAA / grade / vignette all work in gamma space.
   If you add a pass, keep it 8-bit.
+- **Key-to-ambient is the whole look.** At hemisphere 2.0 against sun 2.5, with
+  full IBL on top, ambient dominated at roughly 1.3:1 and two faces of the same
+  building differed only by texture, never by light. Nothing downstream can read
+  under a shadowless sky -- AO, normal maps and geometry all score flat however
+  good they are. It is now nearer 4:1 (hemi 0.55, sun 3.6, envMapIntensity
+  roughly halved on every material, exposure 1.25). **Change this ratio before
+  reaching for any other visual fix**, because everything else is measured
+  against it.
+- **SSAO reads the scene pass's own depth attachment.** `postfx.sceneRT` carries
+  a `DepthTexture` (integer, so it obeys the no-half-float rule), which the scene
+  pass fills for free -- a separate depth prepass would have doubled the scene's
+  draw calls. Half res, blurred, multiplied BEFORE bloom so bloom cannot bleed
+  back into the crevices AO just darkened.
+- **Dither belongs in the output pass, not in the sky texture.** Baked into the
+  equirect it magnifies across the screen as clumped grain, shows up on the water
+  as well as the sky, and pollutes the IBL that the same texture feeds. It is now
+  screen-space, +/-1/255, after tonemap.
+- **Per-building colour varies TONALLY, in families.** Jittering R, G and B
+  independently manufactures a candy palette; jittering one base colour per style
+  instead produces a whole downtown of the same beige. `tint()` shares its
+  brightness jitter across channels and pulls toward grey, and
+  `buildingFamily()` picks one of eight named families weighted by height.
+  **A family needs its own MATERIAL, not just its own tint.** With one wall
+  texture, concrete, stucco and red brick were three values of the same thing
+  and a street of five families still read as one stone -- no tint can turn
+  ashlar into a running bond. `masonrySurface()` is parameterised and called
+  twice, for stone and for brick.
 - **Adaptive quality.** The phone this ships to can't be profiled from here, so
   the game measures its own frame rate and steps `high -> medium -> low`
   (post off, then pixel ratio down). `applyQuality(q, true)` locks it manually.
   When testing headlessly, set `window.__noAutoQuality = true` **before boot** or
   SwiftShader's ~5 fps immediately drops the tier and every screenshot lies.
+
+## Judging how it looks
+
+Four separate visual bugs were each diagnosed two or three times as something
+else, because the thing doing the judging was wrong. The rule that came out of
+it: **measure the composited frame, and check the harness before the renderer.**
+
+`tools/beauty.mjs` captures a fixed set of framed views; `tools/values.py`
+reports the linear value structure of the resulting PNGs -- percentiles, the
+median of the lit and shadowed quartiles, and the ratio between them. A daylight
+open world of the target era runs a lit-to-shadow ratio of roughly **2.2-3.3:1**.
+At 13.8:1 the shadows are night values under a daylight sky, and no amount of
+albedo tuning fixes it, because every base colour is being multiplied by an
+ambient term near zero.
+
+**Measure the PNG, not the scene pass.** `renderer.render(scene, camera)` in a
+probe skips the whole post chain, and AO, grade and vignette are a large part of
+where the values land. A probe that renders directly reported a shadowed
+quartile of 0.19 for a frame whose actual pixels were at 0.004 -- a factor of
+fifty, in the direction that hides the bug.
+
+**The harness lights the shot, so the harness can be the bug.** `beauty.mjs`
+used to place the sun relative to the camera and aim it at the LOOK-AT point.
+That is fine for a shot 20 m deep and badly wrong for one 2400 m deep: the
+skyline view ended up with the light 240 m above a target 2400 m away, a sun
+**5.7 degrees above the horizon**. Every up-facing surface in the aerial got a
+tenth of the key and the mid-ground rendered as a black band. It reproduces
+main.js's own `(-215, 200, -150)` offset now. Same class of error as the stale
+shadow map in `survey.mjs`.
+
+**Spawning is not placing.** Traffic and pedestrians set their logical position
+on spawn; only each system's `update()` moves the meshes. The beauty shots pause
+the game so the camera can be flown, so for several passes they counted a dozen
+vehicles in the frustum and drew none of them. Seed, then step the systems.
+
+**Frame the views from the map, not from coordinates.** Hardcoded camera
+positions went stale the moment the city became real data -- the shot named
+`park` contained no park and `residential` framed an office block, so vegetation
+and housing were never actually being looked at. The views resolve at capture
+time from the loaded city: densest cluster of `style === 'house'`, densest
+cluster of buildings over 60 m, the fully-green patch nearest downtown.
+
+### Four bugs that all looked like a material problem
+
+- **A shadow with no bottom is the shadow map running out.** A tower's shadow
+  was sliced off mid-facade in a straight vertical line. The ortho box was 190 m
+  and shadowing simply stops at its edge. The proof is one render: widen the box
+  and previously *lit* pixels go dark. No real shadow gains area when you
+  enlarge the camera that draws it.
+- **Vertex tint multiplies the windows too.** Glazing drawn at `rgb(36,48,58)`
+  and then multiplied by a red-brick family colour lands at `(29,18,16)` --
+  black holes, on brick buildings only. Panes start bright now, which is also
+  what a daylight window actually is: mostly a reflection of the sky.
+- **Banding in the sky was the cloud generator.** 390 ellipses squashed to about
+  a fifteenth of their width at 3-11% alpha are individually invisible and stack
+  into continuous horizontal streaks across the equirect. It was twice blamed on
+  dither and precision in the post chain.
+- **A canopy built from `prism` has no top or bottom.** `Builder.prism` is an
+  open drum, so a squashed one seen from eye level is a single band of vertical
+  wall -- the "green slab on a stick" that trees rendered as. `spheroid` is
+  closed and costs about the same.
+
+## Solid street objects
+
+Until recently the **only** solid thing in the entire map was a building: trees
+and lamp posts were scenery you drove and walked straight through.
+`world.buildChunk` registers trunks and poles into `city.obstacles`, keyed by
+chunk so they are cleared with the geometry that drew them, and
+`city.obstacleHit(x, z, r)` returns the deepest overlap.
+
+Both collision paths consult it: `collideWithBuildings` tests obstacles *first*
+(a tree is nearer than the building line and is what you actually hit coming off
+a kerb) with a softer response than a wall, and `Player.blocked` uses a circle so
+you slide around a trunk instead of sticking to it. The radius is the **trunk**,
+not the canopy -- blocking the full spread makes a park impassable.
+
+**Greenspace and footprints are separate OSM layers and they overlap.** Park
+polygons are mapped straight over the museum, pavilion or house standing in
+them, so `inPark()` happily says yes in the middle of a building: 9.3 % of
+surviving park-tree candidates stood inside a footprint. Anything scattered on
+open ground needs `inBuilding()` as well as `inPark()` and `onRoad()`.
 
 ## Models
 

@@ -46,7 +46,14 @@ const CLASS_SPEED = { hwy: 30, art: 17, st: 12, res: 9, ramp: 14 };
 const walkWidth = (cls) => (cls === 'st' || cls === 'res' ? 2.6 : cls === 'art' ? 3.2 : 0);
 
 // Building class (tools/build_buildings.py) + height -> facade style.
-function styleFor(cls, h) {
+function styleFor(cls, h, w, d) {
+  // An untagged, unnamed OSM building falls to cls 0, which used to mean
+  // "house" outright -- so a 30 m commercial block with no tags came out clad
+  // in clapboard siding at domestic plank scale. Size overrides the tag: a
+  // house is small AND low.
+  if (cls === 0 && (h > 11 || (w != null && w * d > 260))) {
+    return h > 22 ? 'midrise' : 'brick';
+  }
   if (cls === 0) return 'house';
   if (cls === 1) return h > 25 ? 'midrise' : 'lowrise';
   if (cls === 3) return 'industrial';
@@ -124,7 +131,7 @@ export function* cityGenerator(md) {
         buildings.push({
           x, z, w, d, rot, h,
           y: G.terrainHeight(x, z),
-          style: styleFor(cls, h),
+          style: styleFor(cls, h, w, d),
           seed: (hash2(Math.round(x), Math.round(z)) * 65536) | 0,
           kind: null,
         });
@@ -531,6 +538,58 @@ export function* cityGenerator(md) {
           const y = s.ay + (s.by - s.ay) * r.t + ROAD_LIFT * 0.3;
           if (curY == null || y <= curY + 2.6) {
             if (y > best) best = y;
+          }
+        }
+      }
+      return best;
+    },
+
+    /**
+     * Solid street objects -- tree trunks and poles -- recorded by world.js as
+     * it meshes each chunk.
+     *
+     * They live here rather than in world.js because collision already takes
+     * `city` and nothing else does: a tree you can drive through is a tree the
+     * player does not believe in, and until now the ONLY solid thing in the
+     * whole map was a building. Only near chunks are meshed, which is exactly
+     * the range collision needs, so the store is filled and cleared with them.
+     *
+     * Keyed by chunk so it can be pruned when a chunk unloads without walking
+     * the whole city.
+     */
+    obstacles: new Map(),
+
+    addObstacle(ck, x, z, r) {
+      let l = this.obstacles.get(ck);
+      if (!l) this.obstacles.set(ck, (l = []));
+      l.push(x, z, r);
+    },
+
+    clearObstacles(ck) {
+      this.obstacles.delete(ck);
+    },
+
+    /**
+     * Nearest solid street object overlapping a circle, or null. Returns the
+     * deepest overlap rather than the first, so a car wedged between a tree and
+     * a pole is pushed out of the one it is furthest into.
+     */
+    obstacleHit(x, z, rad) {
+      let best = null;
+      const c0 = Math.floor((x - rad) / CHUNK), c1 = Math.floor((x + rad) / CHUNK);
+      const d0 = Math.floor((z - rad) / CHUNK), d1 = Math.floor((z + rad) / CHUNK);
+      for (let cx = c0; cx <= c1; cx++) {
+        for (let cz = d0; cz <= d1; cz++) {
+          const l = this.obstacles.get(skey(cx, cz));
+          if (!l) continue;
+          for (let i = 0; i < l.length; i += 3) {
+            const dx = x - l[i], dz = z - l[i + 1];
+            const rr = rad + l[i + 2];
+            const d2 = dx * dx + dz * dz;
+            if (d2 >= rr * rr) continue;
+            const d = Math.sqrt(d2) || 1e-4;
+            const pen = rr - d;
+            if (!best || pen > best.pen) best = { pen, nx: dx / d, nz: dz / d };
           }
         }
       }
