@@ -524,7 +524,12 @@ Physically-shaded, image-based-lit, tone-mapped, with a hand-rolled post chain.
   independently manufactures a candy palette; jittering one base colour per style
   instead produces a whole downtown of the same beige. `tint()` shares its
   brightness jitter across channels and pulls toward grey, and
-  `buildingFamily()` picks one of five material families weighted by height.
+  `buildingFamily()` picks one of eight named families weighted by height.
+  **A family needs its own MATERIAL, not just its own tint.** With one wall
+  texture, concrete, stucco and red brick were three values of the same thing
+  and a street of five families still read as one stone -- no tint can turn
+  ashlar into a running bond. `masonrySurface()` is parameterised and called
+  twice, for stone and for brick.
 - **Adaptive quality.** The phone this ships to can't be profiled from here, so
   the game measures its own frame rate and steps `high -> medium -> low`
   (post off, then pixel ratio down). `applyQuality(q, true)` locks it manually.
