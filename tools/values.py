@@ -40,15 +40,26 @@ def stats(path):
     lit = hi[len(hi) // 2]
     clipped = sum(1 for y in range(0, h, 2) for x in range(0, w, 2)
                   if min(px[x, y]) > 250) / ((h // 2) * (w // 2))
+    # Mean HSV saturation of the same region. ACES desaturates saturated hues,
+    # and greens worst -- once the curve was actually running, foliage that had
+    # been tuned against no curve at all came out as pale sage.
+    sat, n2 = 0.0, 0
+    for y in range(h // 2, h, 4):
+        for x in range(0, w, 4):
+            r, g, b = px[x, y]
+            mx, mn = max(r, g, b), min(r, g, b)
+            sat += 0.0 if mx == 0 else (mx - mn) / mx
+            n2 += 1
     return dict(p5=q(0.05), median=q(0.5), p95=q(0.95),
                 shadow=shadow, lit=lit, ratio=lit / max(shadow, 1e-5),
-                clip=clipped * 100)
+                clip=clipped * 100, sat=sat / n2)
 
 for tag in sys.argv[1:]:
     d = Path('tools/data/beauty') / tag
     print(f'--- {tag}')
-    print(f'{"shot":<12}{"p5":>8}{"median":>9}{"p95":>8}{"shadowQ":>9}{"litQ":>8}{"ratio":>7}{"clip%":>7}')
+    print(f'{"shot":<12}{"p5":>8}{"median":>9}{"p95":>8}{"shadowQ":>9}{"litQ":>8}{"ratio":>7}{"clip%":>7}{"sat":>7}')
     for p in sorted(d.glob('*.png')):
         s = stats(p)
         print(f'{p.stem:<12}{s["p5"]:>8.4f}{s["median"]:>9.4f}{s["p95"]:>8.4f}'
-              f'{s["shadow"]:>9.4f}{s["lit"]:>8.4f}{s["ratio"]:>7.1f}{s["clip"]:>7.2f}')
+              f'{s["shadow"]:>9.4f}{s["lit"]:>8.4f}{s["ratio"]:>7.1f}{s["clip"]:>7.2f}'
+              f'{s["sat"]:>7.3f}')

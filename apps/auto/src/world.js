@@ -1580,8 +1580,8 @@ export class World {
           flat.prism(ox, gy + th * 0.42, oz, 0.16, th * 0.28, 5, trunk);
           // Same muted range as the park canopies, or a street of trees reads
           // brighter than the buildings behind them.
-          const vw = 0.74 + h * 0.46;
-          const g = [0.21 * vw, 0.30 * vw, 0.18 * vw];
+          const vw = 0.72 + h * 0.44;
+          const g = [0.165 * vw, 0.315 * vw, 0.14 * vw];
           const gd = [g[0] * 0.64, g[1] * 0.64, g[2] * 0.70];
           // Street trees are broadleaf: a row of conifers down a city block is
           // the giveaway that one asset is doing all the work.
@@ -1734,9 +1734,25 @@ export class World {
       flat.prism(x, gy, z, 0.28 + h * 0.18, th * (kind === 1 ? 0.52 : 0.4), 6, trunk);
       // Hue drifts a little yellow-to-blue between individuals; value does most
       // of the work, exactly as with the building palette.
+      // Canopies were pulled toward grey back when the emerald cone was the
+      // most out-of-gamut thing in every frame -- but that was tuned with no
+      // tone curve in front of it. With ACES running and its saturation paid
+      // back, the same values leave a tree paler than the lawn it stands on.
+      // Foliage carries more chroma than grass and sits darker, which is also
+      // what a conifer against a mown park actually looks like.
       const warm = (h2 - 0.5) * 0.06;
-      const v = 0.72 + h * 0.5;
-      const g = [(0.20 + warm) * v, (0.29 + h * 0.05) * v, (0.17 - warm * 0.5) * v];
+      const v = 0.70 + h * 0.48;
+      const g = [(0.155 + warm) * v, (0.305 + h * 0.05) * v, (0.13 - warm * 0.5) * v];
+      // A conifer is not a green tree, it is a DARK one.
+      //
+      // Sharing one foliage colour across all three silhouettes left the
+      // Douglas firs the same value as the lawn they stand on, which is the
+      // one thing a Pacific Northwest park never looks like. Deep forest green
+      // is darker and cooler than broadleaf, not merely a shade of it -- so
+      // red comes down hardest and blue is held up.
+      if (kind === 0) {
+        g[0] *= 0.60; g[1] *= 0.76; g[2] *= 0.82;
+      }
       const gd = [g[0] * 0.62, g[1] * 0.62, g[2] * 0.68];
       this.meshCanopy(flat, x, gy, z, th, kind, h, g, gd);
       // A tree is solid. Radius is the trunk, not the canopy: you walk and
