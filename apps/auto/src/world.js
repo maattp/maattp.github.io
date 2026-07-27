@@ -171,7 +171,12 @@ export class World {
     this.mats = {
       road: surf(tx.road, { env: 0.62, ns: 0.9 }),
       walk: surf(tx.sidewalk, { env: 0.52, ns: 0.8 }),
-      glass: surf(tx.glass, { env: 1.9, metalness: 0.34, roughness: 0.22, ns: 1.1, emissive: 0.02 }),
+      // Glass was the one material already sitting at clamp. env 1.9 on a
+      // 0.9-albedo curtain wall survived the old ambient floor and saturates
+      // through ACES once the scene moves up the curve -- hard-edged white
+      // polygon faces that read as a missing texture, not as sunlight. Pulling
+      // it down is what makes the exposure headroom available.
+      glass: surf(tx.glass, { env: 0.9, metalness: 0.34, roughness: 0.22, ns: 1.1, emissive: 0.02 }),
       masonry: surf(tx.masonry, { env: 0.66, ns: 1.5, emissive: 0.015 }),
       brick: surf(tx.brick, { env: 0.60, ns: 1.5, emissive: 0.015 }),
       // Signage. Emissive is high because a fifth of the atlas cells are lit
@@ -400,18 +405,27 @@ export class World {
       let cw = bd.w * s, cd = bd.d * s;
       const style = hash2(bd.seed, 29);
       const setbacks = style < 0.4 ? 1 : style < 0.8 ? 2 : 3;
+      // The crown has to fit INSIDE the building's own height. Built on top of
+      // it, the penthouse and mast stood proud of the real roofline drawn by
+      // the near-chunk mesh -- so every tall building in the city wore an
+      // untextured pale box floating above its actual roof, which clipped to
+      // white slabs across downtown.
       const rest = bd.h - shaftH;
+      const plant = Math.min(4.5, rest * 0.35);
+      const stepped = rest - plant;
       for (let t = 0; t < setbacks; t++) {
-        const th = rest / setbacks;
+        const th = stepped / setbacks;
         cw *= 0.78; cd *= 0.78;
         b.box(bd.x, cy, bd.z, cw, th, cd, bd.rot, t % 2 ? col : dk, { top: true, ao: 0 });
         cy += th;
       }
       // Mechanical penthouse: the boxy plant room every real tower carries.
-      b.box(bd.x, cy, bd.z, cw * 0.62, 3.5 + hash2(bd.seed, 31) * 3, cd * 0.62, bd.rot, dk, { top: true });
+      b.box(bd.x, cy, bd.z, cw * 0.62, plant, cd * 0.62, bd.rot, dk, { top: true });
+      // A mast is the one thing that legitimately stands above the parapet, and
+      // it is thin enough not to read as a slab.
       if (bd.h > 80 && hash2(bd.seed, 37) > 0.45) {
         const mh = 8 + hash2(bd.seed, 41) * 22;
-        b.box(bd.x, cy + 3.5, bd.z, 1.1, mh, 1.1, bd.rot, dk, { top: true });
+        b.box(bd.x, cy + plant, bd.z, 0.9, mh, 0.9, bd.rot, dk, { top: true });
       }
     }
     const m = new THREE.Mesh(b.build(), this.mats.far);
@@ -1146,7 +1160,7 @@ export class World {
     // texture cannot express however far you push it.
     const FAMS = [
       { m: 'masonry', c: [0.76, 0.75, 0.72], u: 14, v: 13.6 },   // grey concrete
-      { m: 'glass', c: [0.78, 0.86, 0.92], u: 14, v: 13.6 },     // curtain wall
+      { m: 'glass', c: [0.55, 0.60, 0.66], u: 14, v: 13.6 },     // curtain wall
       { m: 'brick', c: [0.80, 0.38, 0.28], u: 12, v: 12 },       // red brick
       { m: 'brick', c: [0.86, 0.72, 0.46], u: 12, v: 12 },       // buff brick
       { m: 'masonry', c: [0.92, 0.90, 0.84], u: 13, v: 13 },     // painted white
@@ -1232,7 +1246,7 @@ export class World {
       // near-field went near-black from above while the fogged far skyline
       // stayed bright, so the city read inside-out: the closest thing in the
       // frame was the darkest. Roofs are a light-to-mid grey with real spread.
-      const rv = 0.42 + hash2(seed, 91) * 0.16;
+      const rv = 0.32 + hash2(seed, 91) * 0.14;
       const rc2 = [rv, rv * 1.01, rv * 1.05];
       const n = 1 + Math.floor(hash2(seed, 51) * 3);
       for (let i = 0; i < n; i++) {

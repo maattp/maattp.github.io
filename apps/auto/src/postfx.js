@@ -140,7 +140,7 @@ void main() {
   // on the darkest values keeps detail out of the crush; a shoulder that only
   // acts above the knee keeps the bright faces from flattening.
   c += vec3(0.024) * pow(1.0 - c, vec3(4.0));
-  c -= vec3(0.11) * pow(max(c - 0.62, vec3(0.0)), vec3(1.6));
+  c -= vec3(0.20) * pow(max(c - 0.52, vec3(0.0)), vec3(1.5));
   c = mix(c, c * c * (3.0 - 2.0 * c), 0.05);
   c = mix(vec3(dot(c, vec3(0.2126, 0.7152, 0.0722))), c, 1.12);
   c += vec3(-0.008, 0.0, 0.014) * (1.0 - c);
@@ -265,6 +265,26 @@ export class PostFX {
     this.quadScene = new THREE.Scene();
 
     this.sceneRT = makeRT(2, 2, true);
+    // Make three tone-map INTO this target.
+    //
+    // WebGLRenderer applies `toneMapping` only when the current render target
+    // is null -- i.e. only when drawing straight to the canvas -- or when the
+    // target is flagged as an XR target:
+    //
+    //   if ( currentRenderTarget === null || currentRenderTarget.isXRRenderTarget === true )
+    //
+    // The whole scene is drawn into this target, so ACES and
+    // `toneMappingExposure` were never running at ALL. The consequences were
+    // everywhere and each was chased as something else: highlights had no
+    // shoulder and hard-clipped to flat 255 plateaus (read as missing
+    // textures on the glass towers), and exposure was a dial connected to
+    // nothing -- moving it 1.02 to 1.55 changed the output by less than a
+    // thousandth of a stop, which is what finally gave it away.
+    //
+    // The flag is the documented condition three tests, and it is the only
+    // way to get tone mapping applied before an 8-bit target quantises the
+    // highlights. Pinned to the vendored r160; re-check it on a three bump.
+    this.sceneRT.isXRRenderTarget = true;
     // Integer depth attachment, filled by the scene pass at no extra cost. This
     // is what SSAO reads; a separate depth prepass would double the draw calls.
     this.sceneRT.depthTexture = new THREE.DepthTexture(2, 2);

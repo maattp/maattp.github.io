@@ -250,7 +250,14 @@ async function boot() {
   renderer = new THREE.WebGLRenderer({ canvas, antialias: false, powerPreference: 'high-performance' });
   renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, isMobile ? 2 : 1.6));
   renderer.toneMapping = THREE.ACESFilmicToneMapping;
-  renderer.toneMappingExposure = 1.25;
+  // EXPOSURE, not ambient, is the lever on a scene sitting in the ACES toe.
+  //
+  // The city floor was at 0.02-0.04 scene-referred, which is exactly where the
+  // ACES curve compresses hardest, so light added at the source was eaten
+  // before it reached the framebuffer: hemisphere and ambient were pushed 2.6x
+  // and bought 1.6x on screen. Exposure slides the whole scene up the curve
+  // instead of pushing harder into the compressed region.
+  renderer.toneMappingExposure = 0.46;
   const viewW = () => canvas.clientWidth || window.innerWidth;
   const viewH = () => canvas.clientHeight || window.innerHeight;
   renderer.setSize(viewW(), viewH(), false);
@@ -323,7 +330,7 @@ function installHeightFog() {
   // downstream can read under a shadowless sky: AO, normal maps and geometry all
   // score flat no matter how good they are. Daylight open-worlds run nearer 4:1,
   // warm key against cool sky fill.
-  const hemi = new THREE.HemisphereLight(0xdcecf6, 0x8d968a, 1.15);
+  const hemi = new THREE.HemisphereLight(0xdcecf6, 0x8d968a, 0.72);
   scene.add(hemi);
   // A floor under the shadows.
   //
@@ -340,8 +347,8 @@ function installHeightFog() {
   // zero. Raising the floor fixes the aerial value inversion, the near-black
   // street asphalt and the black tower bodies at once, and it lets the roof
   // albedo go back where it belongs.
-  scene.add(new THREE.AmbientLight(0xb4c2cc, 0.62));
-  sun = new THREE.DirectionalLight(0xfff2dc, 3.6);
+  scene.add(new THREE.AmbientLight(0xb4c2cc, 0.36));
+  sun = new THREE.DirectionalLight(0xfff2dc, 4.3);
   // ~38 deg elevation: high enough to light the streets, low enough that every
   // shot has a lit face and a shadowed one.
   sun.position.set(-215, 200, -150);
