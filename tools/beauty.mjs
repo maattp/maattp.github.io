@@ -12,6 +12,10 @@ import { writeFileSync, mkdirSync } from 'node:fs';
 import { setTimeout as sleep } from 'node:timers/promises';
 
 const PORT = 9228;
+// The page port is overridable so a second checkout -- a worktree at master,
+// say -- can be captured with THIS harness for an honest before/after. Framing
+// has to come from the same code or the two sets are not comparable.
+const HTTP_PORT = process.env.AUTO_HTTP_PORT || 8000;
 const CHROME = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
 const TAG = process.argv[2] || 'now';
 const OUT = `tools/data/beauty/${TAG}`;
@@ -145,7 +149,7 @@ async function main() {
     await send('Network.setBypassServiceWorker', { bypass: true });
     await send('Network.setCacheDisabled', { cacheDisabled: true });
     await send('Page.addScriptToEvaluateOnNewDocument', { source: 'window.__noAutoQuality = true;' });
-    await send('Page.navigate', { url: 'http://localhost:8000/apps/auto/' });
+    await send('Page.navigate', { url: `http://localhost:${HTTP_PORT}/apps/auto/` });
     for (let i = 0; i < 400; i++) {
       await sleep(500);
       if (await evaluate('!!window.__dbg')) break;
