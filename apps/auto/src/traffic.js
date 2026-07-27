@@ -10,6 +10,25 @@ const PARKED_RADIUS = 130;
 const DESPAWN = 520;
 
 export function collideWithBuildings(v, city, onHit) {
+  // Street objects first: a tree or a lamp post is closer than the building
+  // line and is what you actually hit coming off a kerb. Until this existed
+  // the only solid thing in the entire map was a building, so every tree in
+  // Seattle was scenery you drove straight through.
+  //
+  // Softer than a wall: a mast shears and a trunk gives, so the car is pushed
+  // out and loses most of its speed rather than stopping dead against it.
+  const ob = city.obstacleHit(v.x, v.z, v.radius * 0.7);
+  if (ob) {
+    v.x += ob.nx * ob.pen;
+    v.z += ob.nz * ob.pen;
+    const f = v.forward;
+    const along = f.x * ob.nx + f.z * ob.nz;
+    const impact = Math.abs(v.vLong) * Math.abs(along) * 0.7 + Math.abs(v.vLat) * 0.3;
+    v.vLong *= along > 0 ? -0.1 : 0.2;
+    v.vLat *= 0.3;
+    if (onHit && impact > 3) onHit(impact);
+    return impact;
+  }
   const near = city.buildingsNear(v.x, v.z, 14);
   for (const b of near) {
     const c = Math.cos(-b.rot), s = Math.sin(-b.rot);
@@ -93,12 +112,17 @@ export class TrafficSystem {
       const slots = Math.floor(e.len / 13);
       for (let s = 1; s < slots; s++) {
         const h = hash2(ei * 31 + s, 7);
-        if (h > 0.32) continue;
+        // Kerbside occupancy. 0.32 across BOTH sides is about one car in six
+        // per kerb, which reads as a street where nobody lives. Parked cars do
+        // more for a populated city than any amount of shader work, and they
+        // share geometry and two of their three materials across every
+        // instance, so the cost is draw calls rather than memory.
+        if (h > 0.48) continue;
         const key = ei * 64 + s;
         seen.add(key);
         if (this.parkedSlots.has(key)) continue;
         const t = s / slots;
-        const side = h < 0.21 ? 1 : -1;
+        const side = h < 0.24 ? 1 : -1;
         const off = e.hw - 1.15;
         const x = lerp(a.x, b.x, t) - e.dz * off * side;
         const z = lerp(a.z, b.z, t) + e.dx * off * side;

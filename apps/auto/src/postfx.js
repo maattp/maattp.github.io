@@ -44,6 +44,44 @@ void main() {
   gl_FragColor = vec4(sum, 1.0);
 }`;
 
+// Depth-aware blur, for the AO buffer only.
+//
+// The Gaussian above is depth-blind, so smoothing the AO with it drags a
+// building's contact darkening several pixels out over the road behind it and
+// washes the crevice darkening back out of the crevice. The result is AO you
+// are paying for and cannot see -- which is why the strength had to stay low
+// to avoid haloing. Weighting each tap by how close its depth is to the
+// centre's keeps the occlusion on the surface that generated it, and lets the
+// strength go up.
+const AOBLUR = `
+precision highp float;
+uniform sampler2D tSrc;
+uniform sampler2D tDepth;
+uniform vec2 dir;
+uniform float depthScale;
+varying vec2 vUv;
+
+void main() {
+  float zc = texture2D(tDepth, vUv).x;
+  float sum = texture2D(tSrc, vUv).r * 0.2270270270;
+  float wsum = 0.2270270270;
+  for (int i = 0; i < 2; i++) {
+    float off = i == 0 ? 1.3846153846 : 3.2307692308;
+    float base = i == 0 ? 0.3162162162 : 0.0702702703;
+    for (int s = 0; s < 2; s++) {
+      vec2 uv = vUv + dir * off * (s == 0 ? 1.0 : -1.0);
+      float z = texture2D(tDepth, uv).x;
+      // Depth here is the non-linear device value, so the same absolute
+      // difference means very different distances near and far. Scaling by the
+      // centre depth's own gradient keeps the falloff usable across the frame.
+      float w = base * exp(-abs(z - zc) * depthScale / max(1.0 - zc, 1e-4));
+      sum += texture2D(tSrc, uv).r * w;
+      wsum += w;
+    }
+  }
+  gl_FragColor = vec4(vec3(sum / wsum), 1.0);
+}`;
+
 const COMPOSITE = `
 uniform sampler2D tScene;
 uniform sampler2D tBloom;
@@ -93,8 +131,17 @@ void main() {
   }
   c += texture2D(tBloom, vUv).rgb * bloomStrength;
 
-  // grade: lift the shadows slightly cool, warm the highlights, add contrast
-  c = mix(c, c * c * (3.0 - 2.0 * c), 0.09);
+  // Toe and shoulder.
+  //
+  // The grade was a smoothstep, which is symmetric: it pushed the shadows
+  // DOWN as hard as it pushed the highlights up. Road, glass and grazing-angle
+  // water all clamped to near zero and the tower tops all clamped near one, so
+  // both ends of the image carried no separation at all. A toe that only acts
+  // on the darkest values keeps detail out of the crush; a shoulder that only
+  // acts above the knee keeps the bright faces from flattening.
+  c += vec3(0.024) * pow(1.0 - c, vec3(4.0));
+  c -= vec3(0.11) * pow(max(c - 0.62, vec3(0.0)), vec3(1.6));
+  c = mix(c, c * c * (3.0 - 2.0 * c), 0.05);
   c = mix(vec3(dot(c, vec3(0.2126, 0.7152, 0.0722))), c, 1.12);
   c += vec3(-0.008, 0.0, 0.014) * (1.0 - c);
   c *= vec3(1.015, 1.0, 0.985);
@@ -102,12 +149,19 @@ void main() {
   float d = distance(vUv, vec2(0.5));
   c *= 1.0 - vignette * smoothstep(0.35, 0.95, d);
 
-  // Screen-space dither at the output, one 8-bit step, unmagnified. Baking
-  // this into the sky equirect instead put clumped multi-pixel grain across the
-  // sky AND the water, and polluted the IBL that the sky feeds.
-  float n1 = fract(sin(dot(vUv, vec2(12.9898, 78.233)) + time) * 43758.5453);
-  float n2 = fract(sin(dot(vUv, vec2(93.9898, 47.233)) + time) * 24634.6345);
-  c += ((n1 - n2) * (1.0 / 255.0)) + (n1 - 0.5) * grain;
+  // Dither from PIXEL coordinates, not from uv.
+  //
+  // A sin-of-dot hash on uv is periodic along both screen axes, so it lays down
+  // a regular comb across the sky and a diagonal weave on the water -- an
+  // aligned pattern beating against a smooth gradient, which reads as a broken
+  // shader and is worse than the banding it was meant to hide. Hashing integer
+  // pixel coordinates with a per-frame offset gives actual noise, and the
+  // triangular PDF (two uniforms differenced) is what removes the banding
+  // rather than merely covering it.
+  vec2 px = vUv / texel + vec2(fract(time * 71.0) * 977.0, fract(time * 53.0) * 331.0);
+  float n1 = fract(sin(dot(floor(px), vec2(12.9898, 78.233))) * 43758.5453);
+  float n2 = fract(sin(dot(floor(px) + 17.0, vec2(39.3468, 11.135))) * 24634.6345);
+  c += (n1 - n2) * (0.5 / 255.0) + (n1 - 0.5) * grain;
 
   gl_FragColor = vec4(clamp(c, 0.0, 1.0), 1.0);
 }`;
@@ -225,13 +279,17 @@ export class PostFX {
       tScene: { value: null }, threshold: { value: 0.86 }, softness: { value: 0.22 },
     });
     this.blur = pass(BLUR, { tSrc: { value: null }, dir: { value: new THREE.Vector2() } });
+    this.aoBlur = pass(AOBLUR, {
+      tSrc: { value: null }, tDepth: { value: null },
+      dir: { value: new THREE.Vector2() }, depthScale: { value: 0.02 },
+    });
     this.ssao = pass(SSAO, {
       tDepth: { value: null },
       projInv: { value: new THREE.Matrix4() },
       proj: { value: new THREE.Matrix4() },
       texel: { value: new THREE.Vector2() },
       radius: { value: 0.85 },
-      strength: { value: 1.5 },
+      strength: { value: 2.1 },
       bias: { value: 0.035 },
     });
     this.composite = pass(COMPOSITE, {
@@ -239,11 +297,11 @@ export class PostFX {
       texel: { value: new THREE.Vector2() },
       bloomStrength: { value: 0.62 },
       vignette: { value: 0.15 },
-      grain: { value: 0.016 },
+      grain: { value: 0.005 },
       time: { value: 0 },
       fxaa: { value: 1 },
       tAO: { value: null },
-      aoAmount: { value: 0.85 },
+      aoAmount: { value: 1.0 },
     });
   }
 
@@ -290,13 +348,14 @@ export class PostFX {
       draw(this.ssao, this.aoA);
       // Two cheap separable passes: the sample kernel is noisy by design and
       // unblurred AO reads as dirt on the lens.
-      const bu2 = this.blur.material.uniforms;
+      const bu2 = this.aoBlur.material.uniforms;
+      bu2.tDepth.value = this.sceneRT.depthTexture;
       bu2.tSrc.value = this.aoA.texture;
       bu2.dir.value.set(1 / this._aw, 0);
-      draw(this.blur, this.aoB);
+      draw(this.aoBlur, this.aoB);
       bu2.tSrc.value = this.aoB.texture;
       bu2.dir.value.set(0, 1 / this._ah);
-      draw(this.blur, this.aoA);
+      draw(this.aoBlur, this.aoA);
       this.composite.material.uniforms.tAO.value = this.aoA.texture;
     }
 
@@ -324,7 +383,7 @@ export class PostFX {
 
   dispose() {
     for (const rt of [this.sceneRT, this.bloomA, this.bloomB, this.aoA, this.aoB]) rt.dispose();
-    for (const m of [this.bright, this.blur, this.composite, this.ssao]) m.material.dispose();
+    for (const m of [this.bright, this.blur, this.aoBlur, this.composite, this.ssao]) m.material.dispose();
     QUAD.dispose();
   }
 
@@ -335,9 +394,11 @@ export class PostFX {
     // for medium too -- dropping it entirely was a visible edge-quality cliff.
     cu.fxaa.value = q === 'low' ? 0 : 1;
     cu.bloomStrength.value = q === 'high' ? 0.62 : 0.5;
-    cu.grain.value = q === 'high' ? 0.016 : 0;
+    // Film grain is separate from the dither and much larger; at 0.016 it was
+    // reading as texture across the sky now that the dither is per-pixel.
+    cu.grain.value = q === 'high' ? 0.005 : 0;
     // SSAO is the most expensive pass here, so it is the first thing to go.
     this.ssaoOn = q === 'high';
-    cu.aoAmount.value = this.ssaoOn ? 0.85 : 0.0;
+    cu.aoAmount.value = this.ssaoOn ? 1.0 : 0.0;
   }
 }

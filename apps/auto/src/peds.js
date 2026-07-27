@@ -636,7 +636,11 @@ export function animateWalk(h, amp, dt, speed) {
 
 // ---------------------------------------------------------------------------
 
-const MAX_PEDS = 26;
+// A pavement with 26 people spread over a 150 m radius is a pavement with
+// nobody on it at any given moment. Characters are one draw call each -- the
+// cheapest population in the game -- so this is the least expensive density
+// there is to buy.
+const MAX_PEDS = 34;
 const PED_RADIUS = 150;
 
 export class PedSystem {
@@ -664,7 +668,10 @@ export class PedSystem {
       const x = lerp(a.x, b.x, t) - e.dz * off * side;
       const z = lerp(a.z, b.z, t) + e.dx * off * side;
       const d = Math.hypot(x - px, z - pz);
-      if (d < (cop ? 22 : 26) || d > PED_RADIUS) continue;
+      // Don't spawn on top of the player, but 26 m was far enough that the
+      // pavement directly in front of you was permanently empty -- which is
+      // the stretch of pavement you spend the whole game looking at.
+      if (d < (cop ? 20 : 15) || d > PED_RADIUS) continue;
       if (!G.isBuildable(x, z)) continue;
       const seed = (this.R.n() * 1e6) | 0;
       const h = cop

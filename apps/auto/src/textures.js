@@ -114,7 +114,11 @@ function glassSurface() {
       rgh.g.fillStyle = grey(0.07);
       rgh.g.fillRect(ix, iy, iw, ih);
 
-      const b = 0.6 + v * 0.4;
+      // Per-pane value jitter has to be SMALL. At 0.6..1.0 the panes varied
+      // more than the mullions separating them, so from any distance the
+      // curtain wall resolved as mottled camouflage rather than as a window
+      // grid -- the grid was there, it was just quieter than the noise on it.
+      const b = 0.82 + v * 0.18;
       a.g.fillStyle = `rgb(${Math.round(104 * b)},${Math.round(134 * b)},${Math.round(150 * b)})`;
       a.g.fillRect(ix, iy, iw, ih);
       const grad = a.g.createLinearGradient(ix, iy, ix, iy + ih);
@@ -137,39 +141,113 @@ function glassSurface() {
         emi.g.fillRect(ix, iy, iw, ih);
       }
       // mullions stand proud
-      a.g.fillStyle = '#6e7c85';
-      a.g.fillRect(px, py, 3, ch);
-      a.g.fillRect(px, py + ch - 3, cw, 3);
+      a.g.fillStyle = '#68767f';
+      a.g.fillRect(px, py, 5, ch);
+      a.g.fillRect(px, py + ch - 5, cw, 5);
       hgt.g.fillStyle = grey(1.0);
-      hgt.g.fillRect(px, py, 3, ch);
-      hgt.g.fillRect(px, py + ch - 3, cw, 3);
+      hgt.g.fillRect(px, py, 5, ch);
+      hgt.g.fillRect(px, py + ch - 5, cw, 5);
       rgh.g.fillStyle = grey(0.72);
-      rgh.g.fillRect(px, py, 3, ch);
-      rgh.g.fillRect(px, py + ch - 3, cw, 3);
+      rgh.g.fillRect(px, py, 5, ch);
+      rgh.g.fillRect(px, py + ch - 5, cw, 5);
     }
   }
-  noise(a.g, S, S, 9, 3);
+  for (let y = 0; y < rows; y += 2) {
+    a.g.fillStyle = 'rgba(46,56,64,0.5)';
+    a.g.fillRect(0, y * ch + ch - 7, S, 9);
+    hgt.g.fillStyle = grey(1.0);
+    hgt.g.fillRect(0, y * ch + ch - 7, S, 9);
+  }
+  noise(a.g, S, S, 5, 3);
   return {
     map: tex(a.c), normalMap: normalFrom(hgt.c, 2.6),
     roughnessMap: tex(rgh.c, { srgb: false }), emissiveMap: tex(emi.c),
   };
 }
 
-function masonrySurface() {
+/**
+ * Wall surface generator, shared by the stone and brick materials.
+ *
+ * One texture with one per-building tint was not enough: a family colour can
+ * only scale what the texture already is, so concrete, stucco and red brick
+ * came out as three values of the same material and the whole city read as one
+ * stone. What actually separates brick from stone at street distance is the
+ * COURSING -- a fine mortar grid against a plain banded ashlar -- and no tint
+ * can produce that. Two calls, two textures, one draw call each.
+ *
+ * `opts.course` is the mortar pitch in pixels; 0 draws smooth ashlar banding
+ * instead. `opts.mortar` is the joint colour, which is what makes brick read
+ * as brick from across a street.
+ */
+function masonrySurface(opts = {}) {
+  const {
+    base = '#adaba6', mortar = null, course = 0, seedN = 21,
+    surround = '#c2c0ba', sill = '#cdcbc4', flecks = 900,
+  } = opts;
   const S = 512;
   const a = canvas(S, S), hgt = canvas(S, S), rgh = canvas(S, S), emi = canvas(S, S);
-  const r = mulberry32(21);
-  a.g.fillStyle = '#b4a595'; a.g.fillRect(0, 0, S, S);
+  const r = mulberry32(seedN);
+  // The base has to be NEUTRAL. At the old warm tan (#b4a595) every family
+  // colour multiplied through to the same beige-orange: concrete, painted
+  // stucco and red brick were one material with three names, which is why a
+  // street of five families still read as one. Grey lets the tints separate.
+  a.g.fillStyle = base; a.g.fillRect(0, 0, S, S);
   hgt.g.fillStyle = grey(0.72); hgt.g.fillRect(0, 0, S, S);
   rgh.g.fillStyle = grey(0.88); rgh.g.fillRect(0, 0, S, S);
   emi.g.fillStyle = '#000'; emi.g.fillRect(0, 0, S, S);
 
-  // stone courses
-  for (let y = 0; y < S; y += 16) {
-    a.g.fillStyle = 'rgba(0,0,0,0.05)';
-    a.g.fillRect(0, y + 14, S, 2);
-    hgt.g.fillStyle = grey(0.55);
-    hgt.g.fillRect(0, y + 14, S, 2);
+  // Masonry grain: fine, irregular, and albedo-only.
+  //
+  // This used to be 32 hard courses per tile with a height notch under each.
+  // The tile spans 13.6 m, so those "brick courses" were 42 cm apart and cut
+  // 42 cm deep grooves -- at that pitch and depth they read as clapboard
+  // siding lapped across a masonry wall, which is two material metaphors on
+  // one surface. Real coursing at this texel density is sub-pixel, so it
+  // belongs in the grain rather than as geometry-scale relief.
+  if (course > 0) {
+    // Brick: a real running bond. The mortar is drawn as its own colour rather
+    // than as a black line, because a warm brick against a pale joint is most
+    // of what the eye uses to name the material at a distance, and a grey line
+    // just reads as dirt.
+    const bw = course * 2.4;
+    for (let y = 0, row = 0; y < S; y += course, row++) {
+      a.g.fillStyle = mortar;
+      a.g.fillRect(0, y + course - 2, S, 2);
+      const off = (row % 2) * (bw / 2);
+      for (let x = -bw; x < S + bw; x += bw) {
+        a.g.fillRect(x + off, y, 2, course);
+        // Per-brick value jitter, small enough to stay one material.
+        a.g.fillStyle = r() > 0.5
+          ? `rgba(255,255,255,${0.03 + r() * 0.06})`
+          : `rgba(0,0,0,${0.03 + r() * 0.07})`;
+        a.g.fillRect(x + off + 2, y, bw - 2, course - 2);
+        a.g.fillStyle = mortar;
+      }
+      hgt.g.fillStyle = grey(0.5);
+      hgt.g.fillRect(0, y + course - 2, S, 2);
+    }
+  } else {
+    for (let y = 6; y < S; y += 6) {
+      a.g.fillStyle = `rgba(0,0,0,${0.012 + r() * 0.016})`;
+      a.g.fillRect(0, y, S, 1);
+    }
+    for (let i = 0; i < flecks; i++) {
+      const bx = r() * S, by = ((r() * S) / 6 | 0) * 6;
+      a.g.fillStyle = r() > 0.5 ? 'rgba(255,255,255,0.04)' : 'rgba(0,0,0,0.05)';
+      a.g.fillRect(bx, by, 8 + r() * 14, 5);
+    }
+  }
+
+  // One spandrel band per storey -- an actual architectural feature at an
+  // actual architectural pitch, unlike the courses it replaces.
+  const storey = S / 4;
+  for (let y = 0; y < S; y += storey) {
+    a.g.fillStyle = 'rgba(0,0,0,0.07)';
+    a.g.fillRect(0, y + storey - 7, S, 5);
+    hgt.g.fillStyle = grey(0.58);
+    hgt.g.fillRect(0, y + storey - 7, S, 5);
+    hgt.g.fillStyle = grey(0.86);
+    hgt.g.fillRect(0, y + storey - 10, S, 3);
   }
 
   const cols = 4, rows = 4;
@@ -179,7 +257,7 @@ function masonrySurface() {
       const px = x * cw + cw * 0.2, py = y * ch + ch * 0.16;
       const w = cw * 0.6, h = ch * 0.52;
       // surround
-      a.g.fillStyle = '#c8bcab';
+      a.g.fillStyle = surround;
       a.g.fillRect(px - 6, py - 6, w + 12, h + 14);
       hgt.g.fillStyle = grey(0.95);
       hgt.g.fillRect(px - 6, py - 6, w + 12, h + 14);
@@ -189,18 +267,50 @@ function masonrySurface() {
       rgh.g.fillStyle = grey(0.12);
       rgh.g.fillRect(px, py, w, h);
       const v = r();
-      a.g.fillStyle = `rgb(${(36 + v * 26) | 0},${(48 + v * 30) | 0},${(58 + v * 34) | 0})`;
+      // Glazing is BRIGHT, not black.
+      //
+      // The panes were rgb(36,48,58) -- and the whole facade, windows
+      // included, is then multiplied by the building's family colour, so on a
+      // red brick block the windows came out at (29,18,16): solid black holes.
+      // It is also just wrong. A window seen from outside in daylight is
+      // mostly a reflection of the sky, which is the brightest thing around;
+      // it only goes dark where the reveal shades it. Starting bright means
+      // the tint darkens it to a believable place instead of to nothing.
+      a.g.fillStyle = `rgb(${(122 + v * 34) | 0},${(144 + v * 34) | 0},${(164 + v * 32) | 0})`;
       a.g.fillRect(px, py, w, h);
       const grad = a.g.createLinearGradient(px, py, px, py + h);
-      grad.addColorStop(0, 'rgba(214,232,244,0.42)');
-      grad.addColorStop(1, 'rgba(0,0,0,0.3)');
+      grad.addColorStop(0, 'rgba(226,240,250,0.55)');
+      grad.addColorStop(0.55, 'rgba(150,172,190,0.15)');
+      grad.addColorStop(1, 'rgba(28,38,48,0.42)');
       a.g.fillStyle = grad;
       a.g.fillRect(px, py, w, h);
+      // Per-window content. Every window in the city being the identical unit
+      // is what makes a facade read as wallpaper; a floor where one blind is
+      // down and the next is half up is what makes it read as occupied.
+      if (v > 0.30 && v < 0.62) {
+        // blind, pulled to a different height in each
+        const bh = h * (0.18 + v * 0.62);
+        a.g.fillStyle = 'rgba(226,220,202,0.72)';
+        a.g.fillRect(px, py, w, bh);
+        rgh.g.fillStyle = grey(0.6);
+        rgh.g.fillRect(px, py, w, bh);
+      } else if (v > 0.72 && v < 0.80) {
+        // dark interior, a room with nothing behind the glass
+        a.g.fillStyle = 'rgba(22,26,32,0.55)';
+        a.g.fillRect(px, py, w, h);
+      }
       if (v > 0.94) {
         a.g.fillStyle = 'rgba(255,228,172,0.62)';
         a.g.fillRect(px, py, w, h);
         emi.g.fillStyle = 'rgb(250,198,124)';
         emi.g.fillRect(px, py, w, h);
+      }
+      // Air-conditioner in a few openings, hung on the sill.
+      if (v > 0.86 && v < 0.92) {
+        a.g.fillStyle = '#8d8f90';
+        a.g.fillRect(px + w * 0.2, py + h * 0.62, w * 0.6, h * 0.38);
+        hgt.g.fillStyle = grey(0.9);
+        hgt.g.fillRect(px + w * 0.2, py + h * 0.62, w * 0.6, h * 0.38);
       }
       // glazing bars
       a.g.fillStyle = 'rgba(220,214,200,0.7)';
@@ -208,14 +318,14 @@ function masonrySurface() {
       hgt.g.fillStyle = grey(0.5);
       hgt.g.fillRect(px + w / 2 - 1.5, py, 3, h);
       // sill
-      a.g.fillStyle = '#d3c7b4';
+      a.g.fillStyle = sill;
       a.g.fillRect(px - 8, py + h + 4, w + 16, 6);
       hgt.g.fillStyle = grey(1.0);
       hgt.g.fillRect(px - 8, py + h + 4, w + 16, 6);
     }
   }
   noise(a.g, S, S, 16, 9);
-  noise(hgt.g, S, S, 10, 12);
+  noise(hgt.g, S, S, 3, 12);
   return {
     map: tex(a.c), normalMap: normalFrom(hgt.c, 2.2),
     roughnessMap: tex(rgh.c, { srgb: false }), emissiveMap: tex(emi.c),
@@ -335,24 +445,63 @@ function houseSurface() {
 function roadSurface() {
   const S = 512;
   const a = canvas(S, S), hgt = canvas(S, S), rgh = canvas(S, S);
-  a.g.fillStyle = '#56595e'; a.g.fillRect(0, 0, S, S);
+  // Judge the asphalt by its MEAN, not by its base colour.
+  //
+  // The base was #56595e -- about 0.095 linear, which is right for tarmac --
+  // but the aggregate, seams and patches painted on top all skew dark, and the
+  // rendered mean came out at 0.043: less than half of real asphalt. Street
+  // level got away with it because bright facades fill the frame; from the air,
+  // where road is most of what you can see, the whole near-field went black
+  // while the fogged skyline stayed bright and the city read inside-out.
+  a.g.fillStyle = '#63666c'; a.g.fillRect(0, 0, S, S);
   hgt.g.fillStyle = grey(0.5); hgt.g.fillRect(0, 0, S, S);
   rgh.g.fillStyle = grey(0.72); rgh.g.fillRect(0, 0, S, S);
   const r = mulberry32(41);
   // aggregate
   for (let i = 0; i < 5200; i++) {
     const x = r() * S, y = r() * S, s = 1 + r() * 3;
-    const l = 0.3 + r() * 0.5;
+    const l = 0.5 + r() * 0.55;
     a.g.fillStyle = `rgba(${(120 * l) | 0},${(124 * l) | 0},${(130 * l) | 0},0.5)`;
     a.g.fillRect(x, y, s, s);
     hgt.g.fillStyle = grey(0.45 + r() * 0.35);
     hgt.g.fillRect(x, y, s, s);
   }
-  // patches and repairs, greyscale only so the asphalt never tints
-  for (let i = 0; i < 26; i++) {
-    const l = r() > 0.5 ? 255 : 0;
-    a.g.fillStyle = `rgba(${l},${l},${l},0.03)`;
-    a.g.fillRect(r() * S, r() * S, 40 + r() * 120, 16 + r() * 60);
+  // Patches, repairs and crack seams. These were at 3% alpha, which is under
+  // one 8-bit step -- literally invisible, so the asphalt was uniform pepper
+  // noise over a flat value. Greyscale only, so the tarmac never tints.
+  for (let i = 0; i < 22; i++) {
+    const l = r() > 0.5 ? 210 : 40;
+    a.g.fillStyle = `rgba(${l},${l},${l},${0.05 + r() * 0.07})`;
+    const pw = 40 + r() * 130, ph = 20 + r() * 70;
+    const px = r() * S, py = r() * S;
+    a.g.fillRect(px, py, pw, ph);
+    hgt.g.fillStyle = grey(0.42 + r() * 0.2);
+    hgt.g.fillRect(px, py, pw, ph);
+    rgh.g.fillStyle = grey(0.5 + r() * 0.3);
+    rgh.g.fillRect(px, py, pw, ph);
+  }
+  // Crack seams: thin dark lines with a height notch, so they catch the key
+  // light at a grazing angle instead of being a flat decal.
+  for (let i = 0; i < 30; i++) {
+    let cx = r() * S, cy = r() * S;
+    let ang = r() * Math.PI * 2;
+    a.g.strokeStyle = 'rgba(18,18,20,0.5)';
+    a.g.lineWidth = 1 + r();
+    a.g.beginPath();
+    a.g.moveTo(cx, cy);
+    hgt.g.strokeStyle = grey(0.2);
+    hgt.g.lineWidth = 2;
+    hgt.g.beginPath();
+    hgt.g.moveTo(cx, cy);
+    for (let k = 0; k < 5; k++) {
+      ang += (r() - 0.5) * 1.1;
+      cx += Math.cos(ang) * (10 + r() * 24);
+      cy += Math.sin(ang) * (10 + r() * 24);
+      a.g.lineTo(cx, cy);
+      hgt.g.lineTo(cx, cy);
+    }
+    a.g.stroke();
+    hgt.g.stroke();
   }
   // polished wheel tracks: darker and much glossier
   for (const cx of [S * 0.26, S * 0.74]) {
@@ -388,6 +537,20 @@ function sidewalkSurface() {
     a.g.fillStyle = `rgba(${(168 * l) | 0},${(166 * l) | 0},${(158 * l) | 0},0.45)`;
     a.g.fillRect(r() * S, r() * S, 1 + r() * 3, 1 + r() * 3);
   }
+  // Large-scale staining, several times the tile period, so the eye stops
+  // locking onto the 1 m slab grid repeating to the horizon.
+  for (let i = 0; i < 14; i++) {
+    const bx = r() * S, by = r() * S, br = 40 + r() * 90;
+    const sg = a.g.createRadialGradient(bx, by, 0, bx, by, br);
+    const dark = r() > 0.5;
+    sg.addColorStop(0, dark ? 'rgba(96,94,88,0.20)' : 'rgba(206,203,194,0.18)');
+    sg.addColorStop(1, 'rgba(0,0,0,0)');
+    a.g.fillStyle = sg;
+    a.g.beginPath();
+    a.g.ellipse(bx, by, br, br * (0.6 + r() * 0.6), r() * 3.14, 0, Math.PI * 2);
+    a.g.fill();
+  }
+
   // expansion joints
   for (let i = 0; i <= S; i += 64) {
     a.g.fillStyle = 'rgba(0,0,0,0.22)';
@@ -481,18 +644,31 @@ function skyEquirect() {
   g.fillRect(0, 0, W, H);
 
   // Broken overcast: soft banks, flattened and denser toward the horizon.
+  //
+  // These used to be 390 ellipses squashed to about a fifteenth of their width
+  // at 3-11 % alpha. Individually invisible, they stacked into continuous
+  // horizontal streaks right across the equirect -- which reads in-game as a
+  // banded, combed sky and was twice diagnosed as a dither or precision bug in
+  // the post chain. It was never post. Fewer, larger, rounder banks with real
+  // gaps between them, and enough alpha each to be a cloud rather than a wash.
   const r = mulberry32(83);
   for (let layer = 0; layer < 3; layer++) {
-    const count = 120 + layer * 90;
+    const count = 46 + layer * 30;
     for (let i = 0; i < count; i++) {
-      const y = 40 + Math.pow(r(), 0.6) * (H * 0.46);
+      // Keep out of the zenith. Equirect x spans a full 360 deg at every
+      // latitude, so a bank drawn near y=0 is stretched across an enormous arc
+      // and renders as a grey swirl rather than a cloud. From about 25 deg
+      // down to the horizon is the band a player actually looks at anyway.
+      const y = H * 0.17 + Math.pow(r(), 0.75) * (H * 0.30);
       const x = r() * W;
-      const squash = 0.12 + (y / H) * 0.5;
-      const w = (90 + r() * 340) * (1 + layer * 0.4);
-      const h = w * squash * (0.2 + r() * 0.35);
+      // Perspective still flattens a bank toward the horizon, but the floor is
+      // high enough that the shape stays a cloud and not a line.
+      const squash = 0.46 + (y / H) * 0.5;
+      const w = (110 + r() * 260) * (1 + layer * 0.35);
+      const h = w * squash * (0.34 + r() * 0.3);
       const near = 1 - Math.abs(y - sy) / 900;
-      const bright = 0.72 + Math.max(0, near) * 0.28;
-      const alpha = 0.035 + r() * 0.075;
+      const bright = 0.88 + Math.max(0, near) * 0.12;
+      const alpha = 0.07 + r() * 0.11;
       const cg = g.createRadialGradient(x, y, 0, x, y, w);
       const t = Math.round(255 * bright);
       cg.addColorStop(0, `rgba(${t},${t},${Math.round(t * 0.99)},${alpha})`);
@@ -503,7 +679,7 @@ function skyEquirect() {
       g.ellipse(x, y, w, h, 0, 0, Math.PI * 2);
       g.fill();
       // undersides
-      g.fillStyle = `rgba(96,110,124,${alpha * 0.5})`;
+      g.fillStyle = `rgba(138,150,162,${alpha * 0.42})`;
       g.beginPath();
       g.ellipse(x, y + h * 0.55, w * 0.8, h * 0.4, 0, 0, Math.PI * 2);
       g.fill();
@@ -534,10 +710,97 @@ function particleTexture() {
   return tex(c, { repeat: false, aniso: 1, mips: false });
 }
 
+
+/**
+ * Signage atlas: a 4 x 4 grid of shopfront fascia plates.
+ *
+ * There was not one sign anywhere in the city, which is the single loudest
+ * difference between this and an open world of the era -- a real street is
+ * something like a third signage by visual weight. One texture with sixteen
+ * designs lets every shopfront in the map pick a different one through its UVs
+ * and still cost a single draw call for the whole chunk.
+ *
+ * Wordmarks are blocks, not glyphs. At the distance a fascia is ever read the
+ * eye is resolving the rhythm of a word, not its letters, and blocks mip
+ * cleanly where real type turns to mush.
+ */
+function signSurface() {
+  const S = 512, N = 4, C = S / N;
+  const a = canvas(S, S), emi = canvas(S, S), rgh = canvas(S, S);
+  const r = mulberry32(313);
+  a.g.fillStyle = '#1a1c1f'; a.g.fillRect(0, 0, S, S);
+  emi.g.fillStyle = '#000'; emi.g.fillRect(0, 0, S, S);
+  rgh.g.fillStyle = grey(0.6); rgh.g.fillRect(0, 0, S, S);
+
+  // Plate colours a high street actually uses: saturated but not primary.
+  const PLATES = [
+    ['#1f3f6b', '#eef2f6'], ['#7a1f22', '#f2e6d2'], ['#1d4a35', '#f0efe6'],
+    ['#e8e4d8', '#23282e'], ['#2b2f36', '#e6c568'], ['#8a4a12', '#f6efe0'],
+    ['#4a2a5c', '#efe6f4'], ['#0f5566', '#e8f4f2'],
+  ];
+  for (let cy = 0; cy < N; cy++) {
+    for (let cx = 0; cx < N; cx++) {
+      const ox = cx * C, oy = cy * C;
+      const [bg, fg] = PLATES[(cy * N + cx) % PLATES.length];
+      a.g.fillStyle = bg;
+      a.g.fillRect(ox, oy, C, C);
+      // A frame, so the plate has an edge instead of bleeding into the wall.
+      a.g.strokeStyle = 'rgba(0,0,0,0.45)';
+      a.g.lineWidth = 3;
+      a.g.strokeRect(ox + 1.5, oy + 1.5, C - 3, C - 3);
+
+      // Wordmark: one or two words of block "letters" on the middle band.
+      const lit = r() > 0.78;          // a fifth of them are illuminated
+      const words = 1 + (r() > 0.55 ? 1 : 0);
+      const bandY = oy + C * (words === 1 ? 0.40 : 0.30);
+      let wy = bandY;
+      for (let w = 0; w < words; w++) {
+        const gh = C * (words === 1 ? 0.2 : 0.16);
+        const nGlyph = 3 + Math.floor(r() * 5);
+        const gw = C * 0.06 + r() * C * 0.02;
+        const gap = gw * 0.36;
+        const total = nGlyph * gw + (nGlyph - 1) * gap;
+        let gx = ox + (C - total) / 2;
+        for (let g = 0; g < nGlyph; g++) {
+          const hh = gh * (0.72 + r() * 0.28);
+          a.g.fillStyle = fg;
+          a.g.fillRect(gx, wy + (gh - hh), gw, hh);
+          if (lit) { emi.g.fillStyle = fg; emi.g.fillRect(gx, wy + (gh - hh), gw, hh); }
+          gx += gw + gap;
+        }
+        wy += gh * 1.5;
+      }
+      if (lit) {
+        // A lit plate glows a little all over, not only in the letters.
+        emi.g.fillStyle = 'rgba(80,70,50,1)';
+        emi.g.fillRect(ox + 4, oy + 4, C - 8, C - 8);
+        rgh.g.fillStyle = grey(0.3);
+        rgh.g.fillRect(ox, oy, C, C);
+      }
+      // Grime along the bottom lip, where every fascia collects it.
+      const gg = a.g.createLinearGradient(ox, oy + C * 0.7, ox, oy + C);
+      gg.addColorStop(0, 'rgba(0,0,0,0)');
+      gg.addColorStop(1, 'rgba(0,0,0,0.32)');
+      a.g.fillStyle = gg;
+      a.g.fillRect(ox, oy + C * 0.7, C, C * 0.3);
+    }
+  }
+  noise(a.g, S, S, 7, 5);
+  return { map: tex(a.c), emissiveMap: tex(emi.c), roughnessMap: tex(rgh.c, { srgb: false }) };
+}
+
 export function buildTextures() {
   return {
     glass: glassSurface(),
+    signs: signSurface(),
     masonry: masonrySurface(),
+    // Brick is its own texture, not a tint of the stone one. 11 px courses over
+    // a 12 m tile is a ~26 cm brick -- coarser than life, because at 512 px a
+    // true 7 cm course is sub-texel and mips straight to flat grey.
+    brick: masonrySurface({
+      base: '#a89a90', mortar: '#c9c2b4', course: 11, seedN: 47,
+      surround: '#cfc9bc', sill: '#d6d1c6',
+    }),
     industrial: industrialSurface(),
     house: houseSurface(),
     road: roadSurface(),

@@ -169,15 +169,26 @@ export class World {
     };
 
     this.mats = {
-      road: surf(tx.road, { env: 0.45, ns: 0.7 }),
-      walk: surf(tx.sidewalk, { env: 0.42, ns: 0.8 }),
-      glass: surf(tx.glass, { env: 1.05, metalness: 0.22, ns: 1.1, emissive: 0.02 }),
-      masonry: surf(tx.masonry, { env: 0.5, ns: 1.0, emissive: 0.015 }),
-      industrial: surf(tx.industrial, { env: 0.5, metalness: 0.25, ns: 1.0 }),
-      house: surf(tx.house, { env: 0.45, ns: 1.0, emissive: 0.015 }),
+      road: surf(tx.road, { env: 0.62, ns: 0.9 }),
+      walk: surf(tx.sidewalk, { env: 0.52, ns: 0.8 }),
+      glass: surf(tx.glass, { env: 1.9, metalness: 0.34, roughness: 0.22, ns: 1.1, emissive: 0.02 }),
+      masonry: surf(tx.masonry, { env: 0.66, ns: 1.5, emissive: 0.015 }),
+      brick: surf(tx.brick, { env: 0.60, ns: 1.5, emissive: 0.015 }),
+      // Signage. Emissive is high because a fifth of the atlas cells are lit
+      // plates and the rest have a black emissive, so the intensity only ever
+      // applies to the ones meant to glow.
+      signs: surf(tx.signs, { env: 0.5, roughness: 0.62, emissive: 1.5 }),
+      industrial: surf(tx.industrial, { env: 0.5, metalness: 0.25, ns: 1.7 }),
+      house: surf(tx.house, { env: 0.45, ns: 1.8, emissive: 0.015 }),
       flat: new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.82, metalness: 0.04, envMapIntensity: 0.45 }),
       glow: new THREE.MeshBasicMaterial({ vertexColors: true, toneMapped: false }),
-      far: new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.85, metalness: 0.05, envMapIntensity: 0.5 }),
+      // The far skyline is a silhouette mesh: what matters is that a mass two
+      // kilometres out sits at a believable fraction of sky luminance, not
+      // that its shaded side has readable detail. At 0.5 its away-from-sun
+      // faces fell to about 4 % of the sky and downtown read as a row of black
+      // cutouts pasted over the horizon -- which looks like a broken renderer,
+      // not like distance.
+      far: new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.9, metalness: 0.02, envMapIntensity: 0.85 }),
     };
     this.group = new THREE.Group();
     scene.add(this.group);
@@ -274,8 +285,20 @@ export class World {
                 GRASS[2] + (built[2] - GRASS[2]) * t,
               ];
             }
+            // Two grass tones, in patches.
+            //
+            // Per-vertex hash noise alone is high-frequency speckle: at 40 m
+            // spacing it varies faster than the eye groups it, so a park read
+            // as one flat saturated carpet however much jitter was on it. A
+            // smooth low-frequency field on top gives patches you can actually
+            // see -- lush against dry, which is what a real park looks like
+            // from any distance.
+            const patch = vnoise(x * 0.35 + 811, z * 0.35 - 553);
+            const dry = (patch - 0.42) * 0.55;
             const n = hash2(gi, gj) * 0.14 + 0.93;
-            col[k] = c[0] * n; col[k + 1] = c[1] * n; col[k + 2] = c[2] * n;
+            col[k] = c[0] * n * (1 + dry * 0.34);
+            col[k + 1] = c[1] * n * (1 - dry * 0.16);
+            col[k + 2] = c[2] * n * (1 - dry * 0.30);
           }
         }
         const idx = [];
@@ -309,8 +332,19 @@ export class World {
       // Roughness up and normal amplitude down: at 0.09 every wavelet past a
       // couple of hundred metres aliased into one blown white specular sheet
       // along the horizon.
-      color: 0x2a4658, normalMap: n, roughness: 0.22, metalness: 0.2,
-      envMapIntensity: 1.0, normalScale: new THREE.Vector2(0.28, 0.28),
+      // 0.22 killed the blown horizon sheet but also every highlight, leaving a
+      // dead black sheet. 0.15 keeps a sun lobe; the tiling weave is broken by
+      // scrolling two copies of the normal map at different rates below.
+      // Water is a DIELECTRIC, and its Fresnel is the whole look. At
+      // metalness 0.22 the surface was mostly a dark diffuse body colour with
+      // a weak reflection on top, so near water sat at about a fifth of the
+      // sky's luminance while far water was carried entirely by fog -- the
+      // same lake reading 34 close in and 151 out at the horizon. Dropping
+      // metalness to near zero gives F0 = 0.04 with a real grazing-angle
+      // ramp, which is what puts the sky into the water and produces the
+      // shore-to-horizon gradient without a reflection pass.
+      color: 0x33556e, normalMap: n, roughness: 0.10, metalness: 0.02,
+      envMapIntensity: 1.4, normalScale: new THREE.Vector2(0.36, 0.36),
     });
     const m = new THREE.Mesh(geo, mat);
     m.position.y = 0;
@@ -345,10 +379,40 @@ export class World {
       if (bd.h < 30) continue;
       const v = 0.86 + hash2(bd.seed, 17) * 0.26;
       const col = bd.style === 'tower'
-        ? [0.5 * v, 0.54 * v, 0.58 * v]
-        : [0.56 * v, 0.52 * v, 0.46 * v];
+        ? [0.54 * v, 0.58 * v, 0.63 * v]
+        : [0.60 * v, 0.56 * v, 0.51 * v];
       const s = 0.985;
-      b.box(bd.x, bd.y - 2, bd.z, bd.w * s, bd.h + 2, bd.d * s, bd.rot, col, { top: true, ao: 0.3 });
+      // A tower is read almost entirely by its top. Extruded to full height
+      // and capped flat, every building in the skyline is the same rectangle
+      // with a different length -- the reason the downtown silhouette scored
+      // worst of anything in the frame. Anything tall enough to stand out of
+      // the mass gets its shaft stopped short and a crown built on top: a
+      // setback, a mechanical penthouse, and sometimes a mast.
+      //
+      // This is the far mesh, so it is silhouette only -- four boxes at most,
+      // and only for the few hundred buildings over 45 m.
+      const crown = bd.h > 45;
+      const shaftH = crown ? bd.h * (0.80 + hash2(bd.seed, 23) * 0.10) : bd.h;
+      b.box(bd.x, bd.y - 2, bd.z, bd.w * s, shaftH + 2, bd.d * s, bd.rot, col, { top: true, ao: 0.3 });
+      if (!crown) continue;
+      const dk = [col[0] * 0.86, col[1] * 0.88, col[2] * 0.92];
+      let cy = bd.y - 2 + shaftH + 2;
+      let cw = bd.w * s, cd = bd.d * s;
+      const style = hash2(bd.seed, 29);
+      const setbacks = style < 0.4 ? 1 : style < 0.8 ? 2 : 3;
+      const rest = bd.h - shaftH;
+      for (let t = 0; t < setbacks; t++) {
+        const th = rest / setbacks;
+        cw *= 0.78; cd *= 0.78;
+        b.box(bd.x, cy, bd.z, cw, th, cd, bd.rot, t % 2 ? col : dk, { top: true, ao: 0 });
+        cy += th;
+      }
+      // Mechanical penthouse: the boxy plant room every real tower carries.
+      b.box(bd.x, cy, bd.z, cw * 0.62, 3.5 + hash2(bd.seed, 31) * 3, cd * 0.62, bd.rot, dk, { top: true });
+      if (bd.h > 80 && hash2(bd.seed, 37) > 0.45) {
+        const mh = 8 + hash2(bd.seed, 41) * 22;
+        b.box(bd.x, cy + 3.5, bd.z, 1.1, mh, 1.1, bd.rot, dk, { top: true });
+      }
     }
     const m = new THREE.Mesh(b.build(), this.mats.far);
     m.frustumCulled = false;
@@ -358,8 +422,13 @@ export class World {
 
   animate(dt, t) {
     if (this.waterNormal) {
-      this.waterNormal.offset.x = (t * 0.004) % 1;
-      this.waterNormal.offset.y = (t * 0.0026) % 1;
+      // Scroll BOTH axes at incommensurate rates. Scrolling x alone slides the
+      // tile along one screen direction and the repeat reads as a fixed diagonal
+      // weave across the open water. MeshStandardMaterial takes a single normal
+      // map, so two summed layers would need a custom shader; two irrational-ish
+      // rates on one map breaks the pattern for nothing.
+      this.waterNormal.offset.x = (t * 0.0040) % 1;
+      this.waterNormal.offset.y = (t * 0.0017) % 1;
     }
   }
 
@@ -403,6 +472,9 @@ export class World {
   }
 
   disposeChunk(c) {
+    // Solid street objects belong to the chunk that drew them, so they go when
+    // it does. Leaving them behind means invisible trees you keep hitting.
+    this.city.clearObstacles(this.city.chunkKey(c.cx, c.cz));
     if (!c.group) return;
     c.group.traverse((o) => {
       if (o.geometry) o.geometry.dispose();
@@ -414,14 +486,18 @@ export class World {
 
   buildChunk(cx, cz, lod) {
     const city = this.city;
-    const ch = city.chunks.get(city.chunkKey(cx, cz));
+    const ck = city.chunkKey(cx, cz);
+    const ch = city.chunks.get(ck);
     if (!ch) return null;
+    city.clearObstacles(ck);
+    this._ck = ck;
     const road = new Builder(true);
     const walk = new Builder(true);
     const flat = new Builder(false);
     const glow = new Builder(false);
     const bl = {
-      glass: new Builder(true), masonry: new Builder(true),
+      glass: new Builder(true), masonry: new Builder(true), brick: new Builder(true),
+      signs: new Builder(true),
       industrial: new Builder(true), house: new Builder(true),
     };
 
@@ -462,6 +538,8 @@ export class World {
     add(glow, this.mats.glow, false, false);
     add(bl.glass, this.mats.glass, true, true);
     add(bl.masonry, this.mats.masonry, true, true);
+    add(bl.brick, this.mats.brick, true, true);
+    add(bl.signs, this.mats.signs, true, false);
     add(bl.industrial, this.mats.industrial, true, true);
     add(bl.house, this.mats.house, true, true);
     return grp.children.length ? grp : null;
@@ -721,7 +799,28 @@ export class World {
     // Queen Anne that put terrain up to 1.39 m above the asphalt, which is the
     // grass growing over the road. The heightfield is 40 m, so cells of roughly
     // 8 m follow it closely without paying for detail that isn't there.
-    const across = Math.max(1, Math.round((hw * 2) / 8));
+    //
+    // Cells are also what carries the cross-section shading below, and a road
+    // shaded from its four corners has no cross-section at all, so anything
+    // over about three lanes gets at least three cells. Three is the cheapest
+    // count that can put a bright band down the middle and grime at both kerbs;
+    // four looked no better and cost 40 % more road triangles.
+    const across = Math.max(hw > 4.5 ? 3 : 1, Math.round((hw * 2) / 8));
+    /**
+     * Traffic polishes the middle of a carriageway and grime collects at its
+     * edges. Without it the asphalt is one flat value from kerb to kerb --
+     * which is exactly what made the largest surface in every street-level
+     * frame read as a hole in the image rather than as a road.
+     *
+     * `f` is the distance from the centreline as a fraction of the half-width.
+     */
+    const wear = (o) => {
+      const f = Math.min(1, Math.abs(o) / Math.max(hw, 0.01));
+      const polish = 1 + 0.12 * (1 - f * f);        // worn smooth down the middle
+      const edge = 1 - 0.30 * Math.max(0, f - 0.55) / 0.45;  // grime at the kerb
+      const k = polish * edge;
+      return [col[0] * k, col[1] * k, col[2] * k];
+    };
     for (let s = 0; s < steps; s++) {
       const t0 = s / steps, t1 = (s + 1) / steps;
       const seg = e.len / steps;
@@ -747,7 +846,8 @@ export class World {
           [bx, yAt(bx, bz), bz],
           [cx, yAt(cx, cz), cz],
           [dx, yAt(dx, dz), dz],
-          [0, 1, 0], [u0, v0, u1, v0, u1, v1, u0, v1], col
+          [0, 1, 0], [u0, v0, u1, v0, u1, v1, u0, v1],
+          [wear(o0), wear(o1), wear(o1), wear(o0)]
         );
       }
     }
@@ -810,10 +910,37 @@ export class World {
           const q = sg > 0
             ? [[i0x, y(i0x, i0z), i0z], [o0x, y(o0x, o0z), o0z], [o1x, y(o1x, o1z), o1z], [i1x, y(i1x, i1z), i1z]]
             : [[o0x, y(o0x, o0z), o0z], [i0x, y(i0x, i0z), i0z], [i1x, y(i1x, i1z), i1z], [o1x, y(o1x, o1z), o1z]];
-          walk.quad(q[0], q[1], q[2], q[3], [0, 1, 0], [0, v0, 1, v0, 1, v1, 0, v1], [1, 1, 1]);
+          // Per-piece value jitter, plus a darker inner edge against the
+          // building line. Every slab drawn at exactly 1.0 left a perfect
+          // lattice of identical slabs running to the horizon; the texture's
+          // own staining can only break the tile, not the repeat of the tile.
+          const wj = 0.9 + hash2(Math.round(x0 * 0.7), Math.round(z0 * 0.7)) * 0.2;
+          const wIn = [wj, wj, wj];
+          const wOut = [wj * 0.9, wj * 0.9, wj * 0.91];
+          const wc = sg > 0 ? [wIn, wOut, wOut, wIn] : [wOut, wIn, wIn, wOut];
+          walk.quad(q[0], q[1], q[2], q[3], [0, 1, 0], [0, v0, 1, v0, 1, v1, 0, v1], wc);
           const cy0 = G.terrainHeight(i0x, i0z), cy1 = G.terrainHeight(i1x, i1z);
           const cc = [0.72, 0.72, 0.7];
           const ccLo = [0.4, 0.4, 0.39];
+          // Gutter. Road met pavement on a mathematically clean seam, which is
+          // the single loudest "this is a textured plane, not a street" tell --
+          // every real kerb has a strip of accumulated grime against it. Drawn
+          // here rather than in the road loop so it stays registered with the
+          // kerb face by construction, on the same lift the lane markings use.
+          const gW = 0.5;
+          const gv0 = (t0 * e.len) / ROAD_TILE, gv1 = (t1 * e.len) / ROAD_TILE;
+          const gy0 = cy0 + MARK_Y + bias, gy1 = cy1 + MARK_Y + bias;
+          const j0x = i0x - ox * gW, j0z = i0z - oz * gW;
+          const j1x = i1x - ox * gW, j1z = i1z - oz * gW;
+          const gDark = [0.44, 0.45, 0.46];
+          const gLite = [0.92, 0.93, 0.93];
+          road.quad(
+            [i0x, gy0, i0z], [j0x, G.terrainHeight(j0x, j0z) + MARK_Y + bias, j0z],
+            [j1x, G.terrainHeight(j1x, j1z) + MARK_Y + bias, j1z], [i1x, gy1, i1z],
+            [0, 1, 0],
+            [0, gv0, gW / ROAD_TILE, gv0, gW / ROAD_TILE, gv1, 0, gv1],
+            [gDark, gLite, gLite, gDark]
+          );
           if (sg > 0) {
             flat.quad([i0x, cy0 + ROAD_Y, i0z], [i1x, cy1 + ROAD_Y, i1z],
               [i1x, cy1 + WALK_Y, i1z], [i0x, cy0 + WALK_Y, i0z], [-ox, 0, -oz],
@@ -865,7 +992,7 @@ export class World {
     // Eaves corners
     const c00 = P(-hw, -hd, y0), c10 = P(hw, -hd, y0);
     const c11 = P(hw, hd, y0), c01 = P(-hw, hd, y0);
-    const dark = [col[0] * 0.82, col[1] * 0.82, col[2] * 0.84];
+    const dark = [col[0] * 0.62, col[1] * 0.62, col[2] * 0.66];
     if (alongX) {
       flat.quad(c00, c10, Bp, A, [0, 0.72, -0.7], ZERO_UV, col);      // slope -z
       flat.quad(c11, c01, A, Bp, [0, 0.72, 0.7], ZERO_UV, dark);      // slope +z
@@ -1013,15 +1140,22 @@ export class World {
     // Taller and newer skews to glass and dark curtain wall; low and old skews
     // to brick and stucco, which is roughly how a city stratifies by era.
     const modern = clamp((bd.h - 18) / 55, 0, 1);
+    // A named palette, not a jitter. Every family carries its own hue AND its
+    // own material, so a street reads as a mix of buildings put up in different
+    // decades out of different stuff -- which is the thing a tint of one shared
+    // texture cannot express however far you push it.
     const FAMS = [
-      { m: 'masonry', c: [0.74, 0.73, 0.70], u: 14, v: 13.6 },   // concrete
+      { m: 'masonry', c: [0.76, 0.75, 0.72], u: 14, v: 13.6 },   // grey concrete
       { m: 'glass', c: [0.78, 0.86, 0.92], u: 14, v: 13.6 },     // curtain wall
-      { m: 'masonry', c: [0.72, 0.46, 0.38], u: 12, v: 12 },     // red brick
-      { m: 'masonry', c: [0.86, 0.82, 0.74], u: 13, v: 13 },     // painted stucco
-      { m: 'glass', c: [0.42, 0.46, 0.50], u: 14, v: 13.6 },     // dark modern
+      { m: 'brick', c: [0.80, 0.38, 0.28], u: 12, v: 12 },       // red brick
+      { m: 'brick', c: [0.86, 0.72, 0.46], u: 12, v: 12 },       // buff brick
+      { m: 'masonry', c: [0.92, 0.90, 0.84], u: 13, v: 13 },     // painted white
+      { m: 'brick', c: [0.74, 0.44, 0.34], u: 12, v: 12 },       // terracotta
+      { m: 'masonry', c: [0.52, 0.62, 0.58], u: 13, v: 13 },     // painted-over green
+      { m: 'glass', c: [0.56, 0.60, 0.64], u: 14, v: 13.6 },     // dark modern
     ];
-    const wOld = [0.30, 0.06, 0.34, 0.26, 0.04];
-    const wNew = [0.26, 0.34, 0.10, 0.08, 0.22];
+    const wOld = [0.20, 0.04, 0.26, 0.16, 0.16, 0.10, 0.05, 0.03];
+    const wNew = [0.22, 0.30, 0.08, 0.06, 0.08, 0.04, 0.02, 0.20];
     let acc = 0;
     for (let i = 0; i < FAMS.length; i++) {
       acc += wOld[i] + (wNew[i] - wOld[i]) * modern;
@@ -1037,11 +1171,15 @@ export class World {
       || bd.style === 'brick' || bd.style === 'lowrise')
       ? this.buildingFamily(bd) : null;
     if (fam) {
-      target = fam.m === 'glass' ? bl.glass : bl.masonry;
+      target = fam.m === 'glass' ? bl.glass : fam.m === 'brick' ? bl.brick : bl.masonry;
       // Jitter stays INSIDE the family, so a brick street varies in weathering
       // rather than becoming a different material every other lot.
       col = tint(seed, fam.c, 0.26);
-      uS = fam.u; vS = fam.v;
+      uS = fam.u;
+      // Snap the vertical repeat so a whole number of tiles spans the wall.
+      // Each tile is four window rows; at an arbitrary vScale the top row is
+      // sliced through by the parapet on every building in the city.
+      vS = bd.h / Math.max(1, Math.round(bd.h / fam.v));
     } else if (bd.style === 'industrial') {
       target = bl.industrial; col = tint(seed, [0.84, 0.86, 0.86], 0.3); uS = 16; vS = 16;
     } else {
@@ -1057,8 +1195,12 @@ export class World {
     if (bd.style === 'house') {
       const wallH = bd.h * 0.72;
       target.box(bd.x, base, bd.z, bd.w, wallH + 2, bd.d, bd.rot, col, { top: false, uScale: 0, vScale: 0, ao: 0.3 });
-      const rc = tint(seed, [0.36, 0.31, 0.29], 0.14);
-      flat.box(bd.x, base + wallH + 2, bd.z, bd.w + 0.7, 0.26, bd.d + 0.7, bd.rot, rc);
+      // Roofs were a flat near-black polygon that can fill a third of a frame
+      // with no material at all. Route them through the industrial builder so
+      // they take a texture, and lift them off black.
+      const rc = tint(seed, [0.46, 0.43, 0.41], 0.16);
+      bl.industrial.box(bd.x, base + wallH + 2, bd.z, bd.w + 0.7, 0.26, bd.d + 0.7, bd.rot, rc,
+        { uScale: 5, vScale: 5 });
       // A gable that fits the house it sits on.
       //
       // This used to be `cone(..., max(w, d) * 0.74, ..., 4, ...)` -- a square
@@ -1067,6 +1209,9 @@ export class World {
       // bd.rot. On a 6 x 14 m house that is a 10 m roof, square, at the wrong
       // angle: the overhang misses the walls entirely on the narrow axis, which
       // is why roofs looked detached and randomly oriented.
+      // Gable stays on `flat`: Builder.tri takes no UVs, so a textured builder
+      // would sample one texel across the whole slope. Its believability comes
+      // from the two slopes shading differently against the key light instead.
       this.meshGable(flat, bd, base + wallH + 2.26, rc, seed);
       const [sx, sz] = off(0, bd.d / 2 + 0.5);
       flat.box(sx, base + 1.6, sz, 2.0, 0.22, 1.2, bd.rot, [0.62, 0.6, 0.57]);
@@ -1082,7 +1227,12 @@ export class World {
       // Roofs vary per building. One flat grey across a whole downtown reads
       // as untextured cap geometry from every elevated view, which is the
       // angle roofs are actually seen from.
-      const rv = 0.30 + hash2(seed, 91) * 0.22;
+      // Tar-and-gravel is about 0.22 albedo, not 0.05, and a roof is the
+      // largest surface in any elevated view. At the old values the whole
+      // near-field went near-black from above while the fogged far skyline
+      // stayed bright, so the city read inside-out: the closest thing in the
+      // frame was the darkest. Roofs are a light-to-mid grey with real spread.
+      const rv = 0.42 + hash2(seed, 91) * 0.16;
       const rc2 = [rv, rv * 1.01, rv * 1.05];
       const n = 1 + Math.floor(hash2(seed, 51) * 3);
       for (let i = 0; i < n; i++) {
@@ -1093,9 +1243,40 @@ export class World {
         const bh2 = 0.9 + hash2(seed, 81 + i) * 1.5;
         flat.box(gx, rt, gz, bw2, bh2, bw2 * 0.8, bd.rot, rc2);
       }
+      // Roof kit. A correctly-exposed roof is still a blank lid, and roofs are
+      // in shot from every elevated view in the game. A stair bulkhead, a vent
+      // cluster and a tank are what a real roof carries, and they cost a
+      // handful of boxes that merge into the chunk's existing flat mesh.
+      const dk = [rv * 0.74, rv * 0.75, rv * 0.78];
+      if (bd.w > 13 && bd.d > 13) {
+        // stair bulkhead -- the one thing on a roof with a door in it
+        const [sx2, sz2] = off(bd.w * 0.24, -bd.d * 0.22);
+        flat.box(sx2, rt, sz2, 3.0, 2.6, 2.4, bd.rot, dk);
+        flat.box(sx2, rt + 2.6, sz2, 3.3, 0.2, 2.7, bd.rot, rc2);
+      }
+      // vent stacks
+      const vn = 2 + Math.floor(hash2(seed, 93) * 3);
+      for (let i = 0; i < vn; i++) {
+        const [vx, vz] = off((hash2(seed, 94 + i) - 0.5) * (bd.w - 3),
+          (hash2(seed, 97 + i) - 0.5) * (bd.d - 3));
+        flat.prism(vx, rt, vz, 0.16, 0.7 + hash2(seed, 99 + i) * 0.8, 6, dk);
+      }
+      // water tank, on a minority of mid-rises
+      if (bd.h > 16 && hash2(seed, 88) > 0.82) {
+        const [tx2, tz2] = off(-bd.w * 0.2, bd.d * 0.18);
+        for (const lg of [[-1, -1], [1, -1], [-1, 1], [1, 1]]) {
+          flat.box(tx2 + lg[0] * 1.1, rt, tz2 + lg[1] * 1.1, 0.18, 1.8, 0.18, bd.rot, dk);
+        }
+        flat.prism(tx2, rt + 1.8, tz2, 1.5, 2.4, 8, [0.42, 0.34, 0.27]);
+        flat.cone(tx2, rt + 4.2, tz2, 1.55, 0.7, 8, [0.36, 0.29, 0.23]);
+      }
       // parapet lip, so the roof edge has a silhouette rather than a clean cut
       flat.box(bd.x, rt, bd.z, bd.w + 0.5, 0.85, bd.d + 0.5, bd.rot,
-        [rv * 1.25, rv * 1.25, rv * 1.22]);
+        [rv * 1.2, rv * 1.2, rv * 1.17]);
+      // The lid itself, on a textured builder. A roof is seen from every
+      // elevated view in the game and it was one flat untextured colour.
+      bl.industrial.box(bd.x, rt - 0.12, bd.z, bd.w + 0.2, 0.14, bd.d + 0.2, bd.rot,
+        [rv * 0.92, rv * 0.93, rv * 0.96], { uScale: 7, vScale: 7 });
     }
 
     const dense = bd.style !== 'industrial';
@@ -1104,16 +1285,29 @@ export class World {
     let remaining = bd.h + 2;
 
     if (plinthH > 2) {
-      // ground-floor storefront: darker glazing under a cornice
-      const sc = [col[0] * 0.5, col[1] * 0.54, col[2] * 0.6];
+      // Ground-floor storefront.
+      //
+      // This is the most-looked-at surface in the game -- it wraps every
+      // commercial building at exactly eye level -- and it was the curtain-wall
+      // texture at uScale/vScale 9. The glass tile carries eight panes each
+      // way, so nine metres per tile made them 1.1 m across and a whole storey
+      // tall stack of them fitted in the plinth: every shopfront in the city
+      // read as a band of blue fish scales.
+      //
+      // A shopfront is ONE row of tall panes. Pick the scales so exactly that
+      // lands in the plinth: 8 panes over 18 m is a 2.25 m bay, and a vScale of
+      // 8x the plinth height puts the plinth on row 0 -- full-height glazing
+      // with the spandrel above it, which is what a shopfront is.
+      const sc = [col[0] * 0.74, col[1] * 0.78, col[2] * 0.84];
       bl.glass.box(bd.x, y, bd.z, bd.w + 0.3, plinthH, bd.d + 0.3, bd.rot, sc,
-        { uScale: 9, vScale: 9, top: false, ao: 0.5 });
+        { uScale: 18, vScale: plinthH * 8, top: false, ao: 0.5 });
       flat.box(bd.x, y + plinthH, bd.z, bd.w + 1.0, 0.5, bd.d + 1.0, bd.rot, TRIM);
       if (hash2(seed, 41) > 0.55) {
         const ac = AWNING[Math.floor(hash2(seed, 42) * AWNING.length)];
         const [ax, az] = off(0, bd.d / 2 + 0.9);
         flat.box(ax, y + plinthH - 1.4, az, bd.w * 0.62, 0.22, 1.8, bd.rot, ac);
       }
+      this.meshSigns(bl.signs, flat, bd, y + plinthH, plinthH, seed, off);
       y += plinthH + 0.5;
       remaining -= plinthH + 0.5;
     }
@@ -1215,6 +1409,113 @@ export class World {
     flat.prism(bd.x, y, bd.z, 0.3, 10, 4, [0.4, 0.4, 0.42]);
   }
 
+  /**
+   * Shopfront signage.
+   *
+   * Signs are the largest single thing separating this from an open world of
+   * the era -- there was not one anywhere in the city. Everything here hangs
+   * off the shopfront band the plinth already establishes, so the fascia lands
+   * exactly on top of the glazing on every building without a second set of
+   * measurements to keep in sync.
+   *
+   * UVs index a 4 x 4 atlas cell, so sixteen designs cost one draw call for the
+   * whole chunk. Quads rather than boxes: a fascia is seen from the front and
+   * from below, and the two faces it would gain are two faces of overdraw on
+   * every commercial building in the map.
+   */
+  meshSigns(sg, flat, bd, topY, plinthH, seed, off) {
+    if (bd.w < 6 && bd.d < 6) return;
+    const N = 4, C = 1 / N;
+    const cell = (k) => {
+      const i = Math.floor(hash2(seed, k) * 16);
+      return [(i % N) * C, Math.floor(i / N) * C];
+    };
+    // Everything is expressed in the building's OWN frame and pushed through
+    // `off`, which is the one rotation the rest of this function already
+    // trusts. Writing the face normals out by hand got the sign of the x term
+    // wrong and buried every sign inside its own building on any lot that was
+    // not axis-aligned -- which, with real OSM footprints, is nearly all of
+    // them.
+    const dirOf = (lx, lz) => {
+      const [wx, wz] = off(lx, lz);
+      return [wx - bd.x, 0, wz - bd.z];
+    };
+    const fh = Math.min(1.25, plinthH * 0.3);
+    const faces = [
+      { half: bd.d / 2, span: bd.w, out: [0, 1], along: [1, 0] },
+      { half: bd.w / 2, span: bd.d, out: [1, 0], along: [0, 1] },
+    ];
+    for (let f = 0; f < faces.length; f++) {
+      const fc = faces[f];
+      // Two faces of a corner lot front a street; one of a mid-block lot does.
+      // Signing every face of every building makes the city a retail park.
+      if (f === 1 && hash2(seed, 200) > 0.55) continue;
+      if (fc.span < 5) continue;
+      const [u0, v0] = cell(201 + f * 7);
+      const nrm = dirOf(fc.out[0], fc.out[1]);
+      const halfW = fc.span * 0.38;
+      // Stand a little proud of the plinth, which is itself 0.15 m wider than
+      // the wall, so the plate catches its own edge light.
+      const d = fc.half + 0.24;
+      const pt = (t, yy) => {
+        const [wx, wz] = off(fc.out[0] * d + fc.along[0] * t, fc.out[1] * d + fc.along[1] * t);
+        return [wx, yy, wz];
+      };
+      const yTop = topY - 0.18, yBot = yTop - fh;
+      sg.quad(pt(-halfW, yBot), pt(halfW, yBot), pt(halfW, yTop), pt(-halfW, yTop),
+        nrm, [u0, v0, u0 + C, v0, u0 + C, v0 + C, u0, v0 + C], [1, 1, 1]);
+
+      // Projecting blade sign: hung near one end and read from ALONG the
+      // street rather than across it, which is the whole point of a blade.
+      if (hash2(seed, 210 + f) > 0.62) {
+        const [bu, bv] = cell(220 + f * 3);
+        const bt = halfW * (hash2(seed, 230 + f) > 0.5 ? 0.72 : -0.72);
+        const bladeN = dirOf(fc.along[0], fc.along[1]);
+        const byTop = yTop + 0.4, byBot = byTop - 1.5;
+        const q = (proj, yy) => {
+          const [wx, wz] = off(fc.out[0] * (fc.half + proj) + fc.along[0] * bt,
+            fc.out[1] * (fc.half + proj) + fc.along[1] * bt);
+          return [wx, yy, wz];
+        };
+        sg.quad(q(0.05, byBot), q(1.0, byBot), q(1.0, byTop), q(0.05, byTop),
+          bladeN, [bu, bv, bu + C, bv, bu + C, bv + C, bu, bv + C], [1, 1, 1]);
+      }
+    }
+
+    // Rooftop billboard, on low and mid buildings only: on a tower it sits
+    // 150 m up where nobody reads it, and on a house it is absurd.
+    if (bd.h > 10 && bd.h < 42 && bd.w > 14 && hash2(seed, 240) > 0.72) {
+      const [bu, bv] = cell(241);
+      const bw = Math.min(bd.w * 0.7, 16), bh = bw * 0.42;
+      const yb = bd.y - 2 + bd.h + 3.4;
+      const p0 = off(-bw / 2, bd.d * 0.2), p1 = off(bw / 2, bd.d * 0.2);
+      const nrm = dirOf(0, 1);
+      sg.quad([p0[0], yb, p0[1]], [p1[0], yb, p1[1]],
+        [p1[0], yb + bh, p1[1]], [p0[0], yb + bh, p0[1]],
+        nrm, [bu, bv, bu + C, bv, bu + C, bv + C, bu, bv + C], [1, 1, 1]);
+      // Legs, so it stands on the roof instead of floating over it.
+      for (const lt of [-bw * 0.34, bw * 0.34]) {
+        const [lx, lz] = off(lt, bd.d * 0.2);
+        flat.box(lx, yb - 3.4, lz, 0.22, 3.4, 0.22, bd.rot, [0.25, 0.26, 0.28]);
+      }
+    }
+  }
+
+  /**
+   * Is this point inside a building footprint? Shared by every scatter, since
+   * "the data says this is open ground" and "there is nothing standing here"
+   * are different questions and only the second one matters to a prop.
+   */
+  inBuilding(x, z, pad) {
+    for (const b of this.city.buildingsNear(x, z, 30)) {
+      const c = Math.cos(-b.rot), s = Math.sin(-b.rot);
+      const dx = x - b.x, dz = z - b.z;
+      const lx = dx * c - dz * s, lz = dx * s + dz * c;
+      if (Math.abs(lx) < b.w / 2 + pad && Math.abs(lz) < b.d / 2 + pad) return true;
+    }
+    return false;
+  }
+
   // --- street furniture -----------------------------------------------------
 
   meshProps(flat, glow, ch, cx, cz) {
@@ -1252,6 +1553,7 @@ export class World {
           // street light: base, tapered mast, cranked arm, lit lens
           flat.box(ox, gy, oz, 0.42, 0.22, 0.42, armRot, [0.24, 0.25, 0.27]);
           flat.prism(ox, gy + 0.2, oz, 0.115, 6.4, 8, poleCol);
+          this.city.addObstacle(this._ck, ox, oz, 0.35);
           flat.prism(ox - px * sg * 0.28, gy + 6.6, oz - pz * sg * 0.28, 0.1, 0.9, 6, poleCol);
           flat.box(ox - px * sg * 1.0, gy + 7.4, oz - pz * sg * 1.0, 1.9, 0.16, 0.16, armRot, poleCol);
           flat.box(ox - px * sg * 1.85, gy + 7.15, oz - pz * sg * 1.85, 0.85, 0.26, 0.42, armRot, [0.3, 0.31, 0.33]);
@@ -1262,11 +1564,15 @@ export class World {
           flat.box(ox, gy - 0.02, oz, 1.5, 0.06, 1.5, armRot, [0.3, 0.3, 0.31]);
           flat.prism(ox, gy, oz, 0.26 + h * 0.1, th * 0.5, 6, trunk);
           flat.prism(ox, gy + th * 0.42, oz, 0.16, th * 0.28, 5, trunk);
-          const g = [0.2 + h * 0.16, 0.4 + h * 0.2, 0.16 + h * 0.12];
-          const gd = [g[0] * 0.72, g[1] * 0.72, g[2] * 0.72];
-          flat.cone(ox, gy + th * 0.4, oz, 1.7 + h * 1.4, th * 0.42, 7, gd);
-          flat.cone(ox, gy + th * 0.62, oz, 1.5 + h * 1.2, th * 0.42, 7, g);
-          flat.cone(ox, gy + th * 0.84, oz, 1.0 + h * 0.9, th * 0.38, 6, g);
+          // Same muted range as the park canopies, or a street of trees reads
+          // brighter than the buildings behind them.
+          const vw = 0.74 + h * 0.46;
+          const g = [0.21 * vw, 0.30 * vw, 0.18 * vw];
+          const gd = [g[0] * 0.64, g[1] * 0.64, g[2] * 0.70];
+          // Street trees are broadleaf: a row of conifers down a city block is
+          // the giveaway that one asset is doing all the work.
+          this.meshCanopy(flat, ox, gy, oz, th, 1, h, g, gd);
+          this.city.addObstacle(this._ck, ox, oz, 0.5);
         } else if (h < 0.88) {
           flat.prism(ox, gy, oz, 0.2, 0.55, 8, [0.72, 0.16, 0.12]);
           flat.prism(ox, gy + 0.55, oz, 0.15, 0.24, 8, [0.72, 0.16, 0.12]);
@@ -1287,6 +1593,69 @@ export class World {
           glow.box(ox + px * sg * 0.5, gy + 1.7, oz + pz * sg * 0.5, 0.9, 1.2, 0.06, along, [0.8, 0.86, 0.95]);
         }
       }
+      // --- small clutter ----------------------------------------------------
+      //
+      // The structural pass above places one item every 30-34 m, ALTERNATING
+      // sides, so a given kerb gets a lamp or a tree about every 65 m and
+      // nothing in between. That is an empty street: a real block carries a
+      // hydrant, a bin, a meter, a mailbox and a sign between every pair of
+      // lamps.
+      //
+      // Kept separate rather than folded into the cascade above because these
+      // want a different cadence and a much smaller triangle budget -- they are
+      // knee-height objects whose whole job is to interrupt the kerb line, so
+      // six-sided prisms and boxes are enough. Both sides, every ~22 m.
+      if (e.cls !== 'ramp') {
+        const cSpace = 22;
+        const cCount = Math.floor(e.len / cSpace);
+        for (let i = 1; i <= cCount; i++) {
+          const t = (i - 0.5) / (cCount + 1);
+          const x = lerp(a.x, b.x, t), z = lerp(a.z, b.z, t);
+          const hc = hash2(Math.round(x * 7) + 3, Math.round(z * 7) + 11);
+          const sg = hc < 0.5 ? 1 : -1;
+          // Sit tight against the kerb, where street furniture actually goes.
+          const ox = x + px * sg * (e.hw + 0.85);
+          const oz = z + pz * sg * (e.hw + 0.85);
+          if (!G.isBuildable(ox, oz)) continue;
+          if (city.onRoad(ox, oz, 0.4)) { cityStats.propsSkipped++; continue; }
+          const gy = G.terrainHeight(ox, oz) + WALK_Y;
+          const rot = Math.atan2(-px * sg, -pz * sg);
+          const k = hash2(Math.round(x * 13) + 5, Math.round(z * 13) + 29);
+          if (k < 0.20) {
+            // fire hydrant
+            const hy = [0.68, 0.16, 0.12];
+            flat.prism(ox, gy, oz, 0.17, 0.6, 6, hy);
+            flat.prism(ox, gy + 0.6, oz, 0.12, 0.14, 6, hy);
+            flat.box(ox, gy + 0.34, oz, 0.52, 0.14, 0.16, rot, hy);
+          } else if (k < 0.40) {
+            // litter bin
+            const bc = [0.22, 0.26, 0.24];
+            flat.prism(ox, gy, oz, 0.34, 0.9, 8, bc);
+            flat.prism(ox, gy + 0.9, oz, 0.37, 0.09, 8, [0.14, 0.16, 0.15]);
+          } else if (k < 0.58) {
+            // parking meter or ticket machine
+            flat.prism(ox, gy, oz, 0.06, 1.05, 6, [0.3, 0.32, 0.34]);
+            flat.box(ox, gy + 1.05, oz, 0.2, 0.34, 0.16, rot, [0.36, 0.38, 0.4]);
+          } else if (k < 0.72) {
+            // mailbox / newspaper box
+            const mc = k < 0.65 ? [0.16, 0.28, 0.44] : [0.5, 0.14, 0.14];
+            flat.box(ox, gy, oz, 0.48, 0.5, 0.4, rot, [0.24, 0.25, 0.26]);
+            flat.box(ox, gy + 0.5, oz, 0.56, 0.66, 0.46, rot, mc);
+          } else if (k < 0.86) {
+            // sign on a post -- the tallest of the clutter, so it breaks the
+            // kerb line against the facades behind it
+            flat.prism(ox, gy, oz, 0.045, 2.3, 5, [0.4, 0.42, 0.44]);
+            flat.box(ox, gy + 2.3, oz, 0.5, 0.42, 0.05, rot, [0.72, 0.74, 0.76]);
+          } else {
+            // bollards, in a short run
+            for (let bIdx = -1; bIdx <= 1; bIdx++) {
+              const bx = ox + e.dx * bIdx * 1.4, bz = oz + e.dz * bIdx * 1.4;
+              flat.prism(bx, gy, bz, 0.09, 0.85, 6, [0.3, 0.31, 0.33]);
+            }
+          }
+        }
+      }
+
       // traffic signals at busy corners
       if (e.cls === 'art' && e.len > 40) {
         for (const nid of [e.a, e.b]) {
@@ -1330,17 +1699,66 @@ export class World {
       // middle of the road. Nothing else filters this: `inPark` knows about
       // grass, not about tarmac.
       if (this.city.onRoad(x, z, 2.5)) { treeSkip++; continue; }
+      // ...nor inside a building. Parks and footprints come from two different
+      // OSM layers and they overlap: greenspace is mapped right up to and over
+      // the museum, pavilion or house standing in it, so `inPark` happily says
+      // yes in the middle of a building. Measured, 9.3 % of surviving park
+      // candidates stood inside a footprint -- trees growing through roofs.
+      if (this.inBuilding(x, z, 0.8)) { treeSkip++; continue; }
       const h = hash2(Math.round(x), Math.round(z));
       const gy = G.terrainHeight(x, z);
-      const th = 7 + h * 7;
-      flat.prism(x, gy, z, 0.34 + h * 0.2, th * 0.46, 6, trunk);
-      flat.prism(x, gy + th * 0.4, z, 0.2, th * 0.3, 5, trunk);
-      const g = [0.17 + h * 0.15, 0.38 + h * 0.22, 0.14 + h * 0.12];
-      const gd = [g[0] * 0.7, g[1] * 0.7, g[2] * 0.7];
-      flat.cone(x, gy + th * 0.34, z, 2.4 + h * 2, th * 0.42, 7, gd);
-      flat.cone(x, gy + th * 0.58, z, 2.1 + h * 1.7, th * 0.44, 7, g);
-      flat.cone(x, gy + th * 0.82, z, 1.4 + h * 1.2, th * 0.4, 6, g);
+      // Foliage that isn't one emerald cone.
+      //
+      // A single saturated green was the most out-of-gamut thing in every frame
+      // -- once the rest of the palette was pulled toward grey it stopped
+      // reading as a tree and started reading as a marker. Real canopies are
+      // desaturated, vary between individuals, and are darker underneath than
+      // on top. Three silhouettes keep a stand from looking stamped.
+      const h2 = hash2(Math.round(x * 3), Math.round(z * 3));
+      const th = 6 + h * 8;
+      const kind = h2 < 0.42 ? 0 : h2 < 0.78 ? 1 : 2;   // conifer, broadleaf, scrub
+      flat.prism(x, gy, z, 0.28 + h * 0.18, th * (kind === 1 ? 0.52 : 0.4), 6, trunk);
+      // Hue drifts a little yellow-to-blue between individuals; value does most
+      // of the work, exactly as with the building palette.
+      const warm = (h2 - 0.5) * 0.06;
+      const v = 0.72 + h * 0.5;
+      const g = [(0.20 + warm) * v, (0.29 + h * 0.05) * v, (0.17 - warm * 0.5) * v];
+      const gd = [g[0] * 0.62, g[1] * 0.62, g[2] * 0.68];
+      this.meshCanopy(flat, x, gy, z, th, kind, h, g, gd);
+      // A tree is solid. Radius is the trunk, not the canopy: you walk and
+      // drive under a canopy, and blocking its full spread would make a park
+      // impassable.
+      this.city.addObstacle(this._ck, x, z, 0.45 + h * 0.25);
     }
     cityStats.treesSkipped += treeSkip;
+  }
+
+  /**
+   * One tree crown. Shared by park scatter and street trees so the two can't
+   * drift apart -- a street of one species beside a park of another was how the
+   * old duplicated code read.
+   *
+   * `prism` is open at both ends: a squashed one seen from eye level is a
+   * single band of vertical wall with no top and no bottom, which is why the
+   * broadleaf canopy rendered as a flat green slab on a stick. Crowns are
+   * closed spheroids now.
+   */
+  meshCanopy(flat, x, gy, z, th, kind, h, g, gd) {
+    if (kind === 0) {
+      // Conifer: a stack of narrowing cones, widest and darkest at the bottom.
+      flat.cone(x, gy + th * 0.26, z, 1.9 + h * 1.6, th * 0.40, 7, gd);
+      flat.cone(x, gy + th * 0.48, z, 1.55 + h * 1.3, th * 0.40, 7, g);
+      flat.cone(x, gy + th * 0.70, z, 1.05 + h * 0.95, th * 0.40, 6, g);
+    } else if (kind === 1) {
+      // Broadleaf: three overlapping lobes, the lower one wider and in shade,
+      // so the crown has a lumpy silhouette rather than one clean ball.
+      const cr = 2.1 + h * 1.8;
+      flat.spheroid(x, gy + th * 0.62, z, cr, 7, 3, gd, 0.74, 0.26);
+      flat.spheroid(x + cr * 0.3, gy + th * 0.8, z - cr * 0.2, cr * 0.66, 6, 3, g, 0.88, 0.3);
+    } else {
+      // Scrub: low, wide and squat.
+      const cr = 1.5 + h * 1.1;
+      flat.spheroid(x, gy + th * 0.36, z, cr, 6, 3, gd, 0.7, 0.34);
+    }
   }
 }

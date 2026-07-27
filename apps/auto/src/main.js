@@ -7,7 +7,7 @@ import { loadMapData } from './mapdata.js';
 import { buildTextures } from './textures.js';
 import { World } from './world.js';
 import { buildLandmarks } from './landmarks.js';
-import { TrafficSystem } from './traffic.js';
+import { TrafficSystem, collideWithBuildings } from './traffic.js';
 import { PedSystem, animateWalk } from './peds.js';
 import { Player } from './player.js';
 import { Controls } from './controls.js';
@@ -203,6 +203,8 @@ class Game {
 
 let renderer, scene, camera, sun, world, cityRef, traffic, peds, player, controls, hud, fx, audio, game, marker, postfx;
 let pickups = [];
+// Scratch vector for the shadow-camera aim, so the frame loop allocates none.
+const LOOK_AHEAD = new THREE.Vector3();
 let last = 0;
 let accumFps = 0, frames = 0, fps = 60;
 let startedAt = 0;
@@ -256,13 +258,61 @@ async function boot() {
   renderer.shadowMap.type = THREE.PCFSoftShadowMap;
   renderer.outputColorSpace = THREE.SRGBColorSpace;
 
+/**
+ * Height falloff on the exponential fog.
+ *
+ * FogExp2 is uniform in every direction, so haze that reads correctly along a
+ * street also fills the sky at the top of a tower: a 180 m building three
+ * kilometres out dissolves at its crown exactly as much as at its base, and
+ * the downtown silhouette flattens into one grey wash. Real aerial haze sits
+ * in the lower atmosphere, which is why distant towers punch out of it.
+ *
+ * Patched into three's fog shader chunks rather than done with a custom
+ * material, because it has to apply to every lit surface in the scene --
+ * terrain, roads, buildings, water, vehicles, characters -- and those are a
+ * dozen different materials. `transformed` is the final local position by the
+ * time <fog_vertex> is included (skinning and morphs have already run), so
+ * skinned pedestrians fog from where they actually stand.
+ *
+ * This is per-fragment height rather than a true integral along the view ray.
+ * The integral is the physically right answer and costs an exp and a divide
+ * per pixel; at the scale of the error over a 16 km map it is not visible.
+ */
+function installHeightFog() {
+  const C = THREE.ShaderChunk;
+  if (C.__heightFog) return;
+  C.__heightFog = true;
+  C.fog_pars_vertex = `${C.fog_pars_vertex}\n#ifdef USE_FOG\n  varying float vFogWorldY;\n#endif`;
+  C.fog_vertex = `${C.fog_vertex}\n#ifdef USE_FOG\n  vFogWorldY = (modelMatrix * vec4(transformed, 1.0)).y;\n#endif`;
+  C.fog_pars_fragment = `${C.fog_pars_fragment}\n#ifdef USE_FOG\n  varying float vFogWorldY;\n#endif`;
+  // Scale the density by the fragment's height above sea level. At a scale
+  // height of 130 m a street is fully hazed and a 200 m crown keeps about a
+  // fifth of the density, which is the separation the skyline needs.
+  //
+  // The scale height is a shader constant, not a uniform. ShaderLib.physical
+  // COPIES UniformsLib.fog when three's module is evaluated, so a key added to
+  // UniformsLib afterwards never reaches the program and the shader compiles
+  // against an undeclared name.
+  C.fog_fragment = C.fog_fragment.replace(
+    'float fogFactor = 1.0 - exp( - fogDensity * fogDensity * vFogDepth * vFogDepth );',
+    'float heightScale = exp( - max( vFogWorldY, 0.0 ) / 130.0 );\n'
+    + '\tfloat hDensity = fogDensity * heightScale;\n'
+    + '\tfloat fogFactor = 1.0 - exp( - hDensity * hDensity * vFogDepth * vFogDepth );'
+  );
+}
+
   scene = new THREE.Scene();
   // Aerial perspective. At 0.00032 a tower 3 km away reads at nearly the same
   // contrast and saturation as one across the street, which is what made the
   // city look like a diorama. The colour is matched to the sky near the
   // horizon so distance resolves INTO the sky rather than toward a grey haze
   // sitting in front of it.
-  scene.fog = new THREE.FogExp2(0xc4ccd4, 0.00060);
+  // 0.00060 overshot: it dissolved the downtown silhouette into the sky rather
+  // than giving it depth. Aerial perspective should separate planes, not erase
+  // them, and the fog is tinted slightly cooler than the horizon so towers
+  // still read against it.
+  scene.fog = new THREE.FogExp2(0xb9c3cf, 0.00040);
+  installHeightFog();
   camera = new THREE.PerspectiveCamera(62, viewW() / viewH(), 0.5, 9000);
 
   // The sky IBL supplies most of the ambient, so the analytic lights are just a
@@ -273,8 +323,24 @@ async function boot() {
   // downstream can read under a shadowless sky: AO, normal maps and geometry all
   // score flat no matter how good they are. Daylight open-worlds run nearer 4:1,
   // warm key against cool sky fill.
-  const hemi = new THREE.HemisphereLight(0xdcecf6, 0x6d7668, 0.55);
+  const hemi = new THREE.HemisphereLight(0xdcecf6, 0x8d968a, 1.15);
   scene.add(hemi);
+  // A floor under the shadows.
+  //
+  // Measured on the composited frame -- which is the only honest place to
+  // measure it, since the post chain is part of the value structure -- the
+  // aerial city ran a lit-to-shadow ratio of 13.8:1, with the shadowed quarter
+  // sitting at 0.004 linear under a 0.43 sky. That is a night value and a
+  // daylight sky in the same picture. Console open worlds of this era ran
+  // roughly 2.2-3.3:1, because a shadowed surface outdoors still sees most of
+  // the sky dome plus bounce off everything around it.
+  //
+  // Four passes were spent lifting albedos against this, which is the wrong
+  // lever: no base colour survives being multiplied by an ambient term near
+  // zero. Raising the floor fixes the aerial value inversion, the near-black
+  // street asphalt and the black tower bodies at once, and it lets the roof
+  // albedo go back where it belongs.
+  scene.add(new THREE.AmbientLight(0xb4c2cc, 0.62));
   sun = new THREE.DirectionalLight(0xfff2dc, 3.6);
   // ~38 deg elevation: high enough to light the streets, low enough that every
   // shot has a lit face and a shadowed one.
@@ -282,21 +348,33 @@ async function boot() {
   sun.castShadow = true;
   sun.shadow.mapSize.set(2048, 2048);
   sun.shadow.camera.near = 20;
-  sun.shadow.camera.far = 780;
+  sun.shadow.camera.far = 1150;
   // 105 m covered barely a block: buildings cast no shadow on the streets they
   // line, which is most of why the city read as flat. 190 m reaches across a
   // downtown block and its far side at the cost of shadow-map resolution,
   // which 2048 absorbs.
-  const S = 190;
+  //
+  // 190 was still not enough, and the way it failed was mistaken three times
+  // for a material bug. Where the ortho box ends, shadowing simply stops, so a
+  // tower's shadow on the block behind it was cut off mid-facade in a straight
+  // vertical line with no bottom to it -- a black band with a hard edge and no
+  // caster you could point at, which is not a shape any real shadow has. The
+  // giveaway is that widening the box turns previously LIT pixels dark: a real
+  // shadow does not gain area when you enlarge the camera that renders it.
+  //
+  // 260 m at 2048 is 0.25 m per texel, which is inside the range this era of
+  // console shadow ran at. `far` goes up with it, or tall casters fall out of
+  // the frustum at the same edge for the same reason.
+  const S = 260;
   sun.shadow.camera.left = -S;
   sun.shadow.camera.right = S;
   sun.shadow.camera.top = S;
   sun.shadow.camera.bottom = -S;
-  // Widening the shadow camera to 190 m took the texel from ~0.10 m to ~0.19 m,
-  // and the old bias no longer spanned one: acne came back as dark blotches
-  // across sunlit facades. normalBias has to scale with texel size.
+  // The texel is now ~0.25 m and the old bias no longer spans one: acne comes
+  // back as dark blotches across sunlit facades. normalBias scales with texel
+  // size, so it goes up whenever S does.
   sun.shadow.bias = -0.0006;
-  sun.shadow.normalBias = 0.09;
+  sun.shadow.normalBias = 0.12;
   scene.add(sun);
   scene.add(sun.target);
 
@@ -354,7 +432,7 @@ async function boot() {
   }
 
   await step(1, 'Welcome to Seattle');
-  window.__dbg = { game, city, player, world, traffic, peds, scene, camera, renderer, G, fx, hud, controls, audio, pickups, THREE, postfx, applyQuality, sun, sceneStats, cityStats, animateWalk };
+  window.__dbg = { game, city, player, world, traffic, peds, scene, camera, renderer, G, fx, hud, controls, audio, pickups, THREE, postfx, applyQuality, sun, sceneStats, cityStats, animateWalk, collideWithBuildings };
   wireUi();
   game.newTarget();
   applyQuality('high', false);
@@ -834,8 +912,14 @@ function frame(now) {
   world.update(p.x, p.z, fps < 45 ? 1 : 2);
 
   player.applyCamera(camera);
-  sun.position.set(p.x - 215, p.y + 200, p.z - 150);
-  sun.target.position.set(p.x, p.y, p.z);
+  // Aim the shadow box down the view, not at the player's feet. Centred on the
+  // player, half of its area covers ground that is behind the camera and can
+  // never be seen, so the useful reach forward is only half what is paid for.
+  // Pushing the centre ahead roughly doubles the forward coverage for nothing.
+  const fwd = LOOK_AHEAD.set(0, 0, -1).applyQuaternion(camera.quaternion);
+  const sx = p.x + fwd.x * 90, sz = p.z + fwd.z * 90;
+  sun.position.set(sx - 215, p.y + 200, sz - 150);
+  sun.target.position.set(sx, p.y, sz);
   sun.target.updateMatrixWorld();
 
   // audio state

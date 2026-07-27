@@ -2,6 +2,7 @@
 // BufferGeometries through this.
 
 import * as THREE from './three.js';
+import { hash2 } from './util.js';
 
 /**
  * Flattens a group of static meshes into one mesh per material. Landmarks are
@@ -254,6 +255,50 @@ export class Builder {
       const x1 = cx + Math.cos(a1) * r, z1 = cz + Math.sin(a1) * r;
       const mx = Math.cos((a0 + a1) / 2), mz = Math.sin((a0 + a1) / 2);
       this.tri([x0, by, z0], [x1, by, z1], [cx, by + h, cz], [mx, 0.45, mz], col);
+    }
+  }
+
+  /**
+   * Low-poly spheroid, for anything that has to read as ROUND rather than as a
+   * drum. `prism` is open at both ends, so a squashed one seen from eye level
+   * shows a single band of vertical wall and nothing else -- which is why a
+   * broadleaf canopy built from squashed prisms rendered as a flat green slab
+   * on a stick. A closed, tapered lathe costs about the same triangles and has
+   * an actual silhouette.
+   *
+   * `squash` scales Y against the horizontal radius: below 1 is a flattened
+   * canopy, above 1 an upright one.
+   */
+  spheroid(cx, cy, cz, r, sides, stacks, col, squash = 1, jitter = 0) {
+    const ry = r * squash;
+    const ptAt = (si, i) => {
+      // Latitude from the south pole to the north; radius follows the sine so
+      // the profile closes at both ends instead of ending in a flat disc.
+      const t = si / stacks;
+      const lat = (t - 0.5) * Math.PI;
+      // A little per-vertex wobble breaks the lathe's obvious symmetry without
+      // needing more segments.
+      const wob = jitter ? 1 + (hash2(si * 31 + i * 7, 3) - 0.5) * jitter : 1;
+      const rr = Math.cos(lat) * r * wob;
+      const ang = (i / sides) * Math.PI * 2;
+      return [cx + Math.cos(ang) * rr, cy + Math.sin(lat) * ry * wob, cz + Math.sin(ang) * rr];
+    };
+    for (let si = 0; si < stacks; si++) {
+      for (let i = 0; i < sides; i++) {
+        const a = ptAt(si, i), b = ptAt(si, i + 1);
+        const c = ptAt(si + 1, i + 1), d = ptAt(si + 1, i);
+        // Normals point out from the centre, which is what makes a faceted
+        // lathe still shade like a ball.
+        const nrm = (p) => {
+          const vx = p[0] - cx, vy = p[1] - cy, vz = p[2] - cz;
+          const l = Math.hypot(vx, vy, vz) || 1;
+          return [vx / l, vy / l, vz / l];
+        };
+        const n = nrm([(a[0] + c[0]) / 2, (a[1] + c[1]) / 2, (a[2] + c[2]) / 2]);
+        if (si === 0) this.tri(b, a, d, n, col);
+        else if (si === stacks - 1) this.tri(a, b, c, n, col);
+        else this.quad(a, b, c, d, n, [0, 0, 1, 0, 1, 1, 0, 1], col);
+      }
     }
   }
 
