@@ -107,20 +107,34 @@ function halfFloatRenders(renderer) {
   }
 }
 
+/**
+ * Per-building colour variation.
+ *
+ * Jittering R, G and B INDEPENDENTLY is what manufactured the candy palette:
+ * three uncorrelated offsets push a muted base straight off into saturated
+ * primaries, so a street of weathered brick came out fluorescent pink, lime and
+ * orange. Real variation between buildings is mostly TONAL -- the same material
+ * dirtier or paler -- with only a slight drift in hue. So the brightness jitter
+ * is shared across all three channels, the chroma jitter is a fifth of it, and
+ * everything is pulled toward its own grey.
+ */
+const SATURATION = 0.62;
 function tint(seed, base, spread) {
-  const r = hash2(seed, 1), g = hash2(seed, 2), b = hash2(seed, 3);
-  return [
-    clamp(base[0] + (r - 0.5) * spread, 0.15, 1.4),
-    clamp(base[1] + (g - 0.5) * spread, 0.15, 1.4),
-    clamp(base[2] + (b - 0.5) * spread, 0.15, 1.4),
-  ];
+  const v = 1 + (hash2(seed, 1) - 0.5) * spread * 0.85;
+  const dr = (hash2(seed, 2) - 0.5) * spread * 0.18;
+  const db = (hash2(seed, 3) - 0.5) * spread * 0.18;
+  const lum = base[0] * 0.2126 + base[1] * 0.7152 + base[2] * 0.0722;
+  const mute = (c, d) => clamp((lum + (c - lum) * SATURATION + d) * v, 0.12, 1.35);
+  return [mute(base[0], dr), mute(base[1], 0), mute(base[2], db)];
 }
 
 const DARK = [0.26, 0.27, 0.29];
 const TRIM = [0.55, 0.55, 0.56];
+// Accents stay the one place saturated colour is allowed, but pulled back:
+// these are awnings and shopfronts, not the whole facade.
 const AWNING = [
-  [0.55, 0.12, 0.12], [0.12, 0.28, 0.5], [0.14, 0.34, 0.22],
-  [0.42, 0.34, 0.16], [0.2, 0.2, 0.24], [0.5, 0.42, 0.3],
+  [0.42, 0.16, 0.15], [0.15, 0.25, 0.38], [0.16, 0.29, 0.21],
+  [0.36, 0.30, 0.18], [0.21, 0.21, 0.24], [0.42, 0.37, 0.29],
 ];
 
 // ---------------------------------------------------------------------------
@@ -155,15 +169,15 @@ export class World {
     };
 
     this.mats = {
-      road: surf(tx.road, { env: 0.9, ns: 0.7 }),
-      walk: surf(tx.sidewalk, { env: 0.85, ns: 0.8 }),
-      glass: surf(tx.glass, { env: 1.5, metalness: 0.18, ns: 1.1, emissive: 0.12 }),
-      masonry: surf(tx.masonry, { env: 1.05, ns: 1.0, emissive: 0.1 }),
-      industrial: surf(tx.industrial, { env: 1.0, metalness: 0.25, ns: 1.0 }),
-      house: surf(tx.house, { env: 0.95, ns: 1.0, emissive: 0.1 }),
-      flat: new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.82, metalness: 0.04, envMapIntensity: 1.0 }),
+      road: surf(tx.road, { env: 0.45, ns: 0.7 }),
+      walk: surf(tx.sidewalk, { env: 0.42, ns: 0.8 }),
+      glass: surf(tx.glass, { env: 1.05, metalness: 0.22, ns: 1.1, emissive: 0.02 }),
+      masonry: surf(tx.masonry, { env: 0.5, ns: 1.0, emissive: 0.015 }),
+      industrial: surf(tx.industrial, { env: 0.5, metalness: 0.25, ns: 1.0 }),
+      house: surf(tx.house, { env: 0.45, ns: 1.0, emissive: 0.015 }),
+      flat: new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.82, metalness: 0.04, envMapIntensity: 0.45 }),
       glow: new THREE.MeshBasicMaterial({ vertexColors: true, toneMapped: false }),
-      far: new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.85, metalness: 0.05, envMapIntensity: 0.95 }),
+      far: new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.85, metalness: 0.05, envMapIntensity: 0.5 }),
     };
     this.group = new THREE.Group();
     scene.add(this.group);
@@ -292,8 +306,11 @@ export class World {
     const n = this.tx.water.normalMap;
     n.repeat.set(520, 520);
     const mat = new THREE.MeshStandardMaterial({
-      color: 0x2c4d63, normalMap: n, roughness: 0.09, metalness: 0.25,
-      envMapIntensity: 1.6, normalScale: new THREE.Vector2(0.55, 0.55),
+      // Roughness up and normal amplitude down: at 0.09 every wavelet past a
+      // couple of hundred metres aliased into one blown white specular sheet
+      // along the horizon.
+      color: 0x2a4658, normalMap: n, roughness: 0.22, metalness: 0.2,
+      envMapIntensity: 1.0, normalScale: new THREE.Vector2(0.28, 0.28),
     });
     const m = new THREE.Mesh(geo, mat);
     m.position.y = 0;
@@ -980,30 +997,55 @@ export class World {
 
   // --- buildings ------------------------------------------------------------
 
+  /**
+   * Material families.
+   *
+   * Per-building random jitter around ONE base colour per style gave a downtown
+   * that was almost entirely the same beige-orange brick -- the palette fix
+   * removed the candy colours but replaced them with monotony. Real cities are a
+   * handful of distinct material families (concrete, curtain-wall glass, red
+   * brick, painted stucco, dark modern) mixed on one street, with variation
+   * INSIDE each family rather than across the whole city.
+   */
+  buildingFamily(bd) {
+    const seed = bd.seed;
+    const pick = hash2(seed, 101);
+    // Taller and newer skews to glass and dark curtain wall; low and old skews
+    // to brick and stucco, which is roughly how a city stratifies by era.
+    const modern = clamp((bd.h - 18) / 55, 0, 1);
+    const FAMS = [
+      { m: 'masonry', c: [0.74, 0.73, 0.70], u: 14, v: 13.6 },   // concrete
+      { m: 'glass', c: [0.78, 0.86, 0.92], u: 14, v: 13.6 },     // curtain wall
+      { m: 'masonry', c: [0.72, 0.46, 0.38], u: 12, v: 12 },     // red brick
+      { m: 'masonry', c: [0.86, 0.82, 0.74], u: 13, v: 13 },     // painted stucco
+      { m: 'glass', c: [0.42, 0.46, 0.50], u: 14, v: 13.6 },     // dark modern
+    ];
+    const wOld = [0.30, 0.06, 0.34, 0.26, 0.04];
+    const wNew = [0.26, 0.34, 0.10, 0.08, 0.22];
+    let acc = 0;
+    for (let i = 0; i < FAMS.length; i++) {
+      acc += wOld[i] + (wNew[i] - wOld[i]) * modern;
+      if (pick <= acc) return FAMS[i];
+    }
+    return FAMS[0];
+  }
+
   meshBuilding(bl, flat, glow, bd) {
     const seed = bd.seed;
     let target, col, uS = 14, vS = 13.6;
-    switch (bd.style) {
-      case 'tower':
-        if (hash2(seed, 11) > 0.55) { target = bl.glass; col = tint(seed, [0.92, 0.97, 1.0], 0.28); }
-        else { target = bl.masonry; col = tint(seed, [0.9, 0.85, 0.78], 0.3); }
-        break;
-      case 'midrise':
-        if (hash2(seed, 11) > 0.62) { target = bl.glass; col = tint(seed, [0.9, 0.95, 1.0], 0.3); }
-        else { target = bl.masonry; col = tint(seed, [0.92, 0.84, 0.72], 0.34); }
-        break;
-      case 'brick':
-        target = bl.masonry; col = tint(seed, [0.82, 0.55, 0.44], 0.34); uS = 12; vS = 12;
-        break;
-      case 'lowrise':
-        if (hash2(seed, 11) > 0.62) { target = bl.glass; col = tint(seed, [0.88, 0.94, 1.0], 0.3); }
-        else { target = bl.masonry; col = tint(seed, [0.92, 0.86, 0.76], 0.36); }
-        break;
-      case 'industrial':
-        target = bl.industrial; col = tint(seed, [0.84, 0.86, 0.86], 0.3); uS = 16; vS = 16;
-        break;
-      default:
-        target = bl.house; col = tint(seed, [0.94, 0.92, 0.88], 0.36); uS = 0; vS = 0;
+    const fam = (bd.style === 'tower' || bd.style === 'midrise'
+      || bd.style === 'brick' || bd.style === 'lowrise')
+      ? this.buildingFamily(bd) : null;
+    if (fam) {
+      target = fam.m === 'glass' ? bl.glass : bl.masonry;
+      // Jitter stays INSIDE the family, so a brick street varies in weathering
+      // rather than becoming a different material every other lot.
+      col = tint(seed, fam.c, 0.26);
+      uS = fam.u; vS = fam.v;
+    } else if (bd.style === 'industrial') {
+      target = bl.industrial; col = tint(seed, [0.84, 0.86, 0.86], 0.3); uS = 16; vS = 16;
+    } else {
+      target = bl.house; col = tint(seed, [0.94, 0.92, 0.88], 0.36); uS = 0; vS = 0;
     }
 
     if (bd.kind) return this.meshLandmarkTower(bl, flat, bd, col);
@@ -1029,6 +1071,31 @@ export class World {
       const [sx, sz] = off(0, bd.d / 2 + 0.5);
       flat.box(sx, base + 1.6, sz, 2.0, 0.22, 1.2, bd.rot, [0.62, 0.6, 0.57]);
       return;
+    }
+
+    // Roof clutter. The top face is the most-seen surface of a low building
+    // from any elevated view, and a bare extrusion cap is the loudest tell that
+    // this is untextured programmer geometry. A handful of boxes per roof is
+    // within budget because they merge into the chunk's existing flat mesh.
+    if (bd.h < 70 && bd.w > 9 && bd.d > 9) {
+      const rt = base + bd.h + 2;
+      // Roofs vary per building. One flat grey across a whole downtown reads
+      // as untextured cap geometry from every elevated view, which is the
+      // angle roofs are actually seen from.
+      const rv = 0.30 + hash2(seed, 91) * 0.22;
+      const rc2 = [rv, rv * 1.01, rv * 1.05];
+      const n = 1 + Math.floor(hash2(seed, 51) * 3);
+      for (let i = 0; i < n; i++) {
+        const ux = (hash2(seed, 52 + i) - 0.5) * (bd.w - 6);
+        const uz = (hash2(seed, 61 + i) - 0.5) * (bd.d - 6);
+        const [gx, gz] = off(ux, uz);
+        const bw2 = 1.4 + hash2(seed, 71 + i) * 2.2;
+        const bh2 = 0.9 + hash2(seed, 81 + i) * 1.5;
+        flat.box(gx, rt, gz, bw2, bh2, bw2 * 0.8, bd.rot, rc2);
+      }
+      // parapet lip, so the roof edge has a silhouette rather than a clean cut
+      flat.box(bd.x, rt, bd.z, bd.w + 0.5, 0.85, bd.d + 0.5, bd.rot,
+        [rv * 1.25, rv * 1.25, rv * 1.22]);
     }
 
     const dense = bd.style !== 'industrial';

@@ -248,7 +248,7 @@ async function boot() {
   renderer = new THREE.WebGLRenderer({ canvas, antialias: false, powerPreference: 'high-performance' });
   renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, isMobile ? 2 : 1.6));
   renderer.toneMapping = THREE.ACESFilmicToneMapping;
-  renderer.toneMappingExposure = 1.5;
+  renderer.toneMappingExposure = 1.25;
   const viewW = () => canvas.clientWidth || window.innerWidth;
   const viewH = () => canvas.clientHeight || window.innerHeight;
   renderer.setSize(viewW(), viewH(), false);
@@ -257,26 +257,46 @@ async function boot() {
   renderer.outputColorSpace = THREE.SRGBColorSpace;
 
   scene = new THREE.Scene();
-  scene.fog = new THREE.FogExp2(0xb9c6d0, 0.00032);
+  // Aerial perspective. At 0.00032 a tower 3 km away reads at nearly the same
+  // contrast and saturation as one across the street, which is what made the
+  // city look like a diorama. The colour is matched to the sky near the
+  // horizon so distance resolves INTO the sky rather than toward a grey haze
+  // sitting in front of it.
+  scene.fog = new THREE.FogExp2(0xc4ccd4, 0.00060);
   camera = new THREE.PerspectiveCamera(62, viewW() / viewH(), 0.5, 9000);
 
   // The sky IBL supplies most of the ambient, so the analytic lights are just a
   // key with a cool bounce fill.
-  const hemi = new THREE.HemisphereLight(0xdcecf6, 0x7b8474, 2.0);
+  // KEY-TO-AMBIENT IS THE WHOLE LOOK. At hemi 2.0 against sun 2.5, plus full
+  // IBL on top, the ambient dominated and the ratio was about 1.3:1 -- so two
+  // faces of the same building differed only by texture, never by light. Nothing
+  // downstream can read under a shadowless sky: AO, normal maps and geometry all
+  // score flat no matter how good they are. Daylight open-worlds run nearer 4:1,
+  // warm key against cool sky fill.
+  const hemi = new THREE.HemisphereLight(0xdcecf6, 0x6d7668, 0.55);
   scene.add(hemi);
-  sun = new THREE.DirectionalLight(0xfff0d8, 2.5);
-  sun.position.set(-160, 240, -110);
+  sun = new THREE.DirectionalLight(0xfff2dc, 3.6);
+  // ~38 deg elevation: high enough to light the streets, low enough that every
+  // shot has a lit face and a shadowed one.
+  sun.position.set(-215, 200, -150);
   sun.castShadow = true;
   sun.shadow.mapSize.set(2048, 2048);
   sun.shadow.camera.near = 20;
-  sun.shadow.camera.far = 620;
-  const S = 105;
+  sun.shadow.camera.far = 780;
+  // 105 m covered barely a block: buildings cast no shadow on the streets they
+  // line, which is most of why the city read as flat. 190 m reaches across a
+  // downtown block and its far side at the cost of shadow-map resolution,
+  // which 2048 absorbs.
+  const S = 190;
   sun.shadow.camera.left = -S;
   sun.shadow.camera.right = S;
   sun.shadow.camera.top = S;
   sun.shadow.camera.bottom = -S;
-  sun.shadow.bias = -0.0009;
-  sun.shadow.normalBias = 0.04;
+  // Widening the shadow camera to 190 m took the texel from ~0.10 m to ~0.19 m,
+  // and the old bias no longer spanned one: acne came back as dark blotches
+  // across sunlit facades. normalBias has to scale with texel size.
+  sun.shadow.bias = -0.0006;
+  sun.shadow.normalBias = 0.09;
   scene.add(sun);
   scene.add(sun.target);
 
@@ -814,7 +834,7 @@ function frame(now) {
   world.update(p.x, p.z, fps < 45 ? 1 : 2);
 
   player.applyCamera(camera);
-  sun.position.set(p.x - 150, p.y + 230, p.z - 110);
+  sun.position.set(p.x - 215, p.y + 200, p.z - 150);
   sun.target.position.set(p.x, p.y, p.z);
   sun.target.updateMatrixWorld();
 
@@ -846,7 +866,7 @@ function draw(now) {
   // capture before the post passes reset the counters
   sceneStats.calls = renderer.info.render.calls;
   sceneStats.tris = renderer.info.render.triangles;
-  postfx.render(now / 1000);
+  postfx.render(now / 1000, camera);
   renderer.setRenderTarget(null);
 }
 const sceneStats = { calls: 0, tris: 0 };

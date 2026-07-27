@@ -503,6 +503,28 @@ Physically-shaded, image-based-lit, tone-mapped, with a hand-rolled post chain.
   unreliable on iOS (silent black screen), so the scene is tone-mapped into an
   8-bit sRGB target and bloom / FXAA / grade / vignette all work in gamma space.
   If you add a pass, keep it 8-bit.
+- **Key-to-ambient is the whole look.** At hemisphere 2.0 against sun 2.5, with
+  full IBL on top, ambient dominated at roughly 1.3:1 and two faces of the same
+  building differed only by texture, never by light. Nothing downstream can read
+  under a shadowless sky -- AO, normal maps and geometry all score flat however
+  good they are. It is now nearer 4:1 (hemi 0.55, sun 3.6, envMapIntensity
+  roughly halved on every material, exposure 1.25). **Change this ratio before
+  reaching for any other visual fix**, because everything else is measured
+  against it.
+- **SSAO reads the scene pass's own depth attachment.** `postfx.sceneRT` carries
+  a `DepthTexture` (integer, so it obeys the no-half-float rule), which the scene
+  pass fills for free -- a separate depth prepass would have doubled the scene's
+  draw calls. Half res, blurred, multiplied BEFORE bloom so bloom cannot bleed
+  back into the crevices AO just darkened.
+- **Dither belongs in the output pass, not in the sky texture.** Baked into the
+  equirect it magnifies across the screen as clumped grain, shows up on the water
+  as well as the sky, and pollutes the IBL that the same texture feeds. It is now
+  screen-space, +/-1/255, after tonemap.
+- **Per-building colour varies TONALLY, in families.** Jittering R, G and B
+  independently manufactures a candy palette; jittering one base colour per style
+  instead produces a whole downtown of the same beige. `tint()` shares its
+  brightness jitter across channels and pulls toward grey, and
+  `buildingFamily()` picks one of five material families weighted by height.
 - **Adaptive quality.** The phone this ships to can't be profiled from here, so
   the game measures its own frame rate and steps `high -> medium -> low`
   (post off, then pixel ratio down). `applyQuality(q, true)` locks it manually.

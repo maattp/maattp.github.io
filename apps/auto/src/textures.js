@@ -464,7 +464,6 @@ function skyEquirect() {
   grad.addColorStop(1.00, '#5d6469');
   g.fillStyle = grad;
   g.fillRect(0, 0, W, H);
-
   // Sun: placed to match the key light direction so speculars line up.
   const sx = 207, sy = 221;
   const halo = g.createRadialGradient(sx, sy, 0, sx, sy, 460);

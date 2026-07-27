@@ -53,6 +53,8 @@ uniform float vignette;
 uniform float grain;
 uniform float time;
 uniform float fxaa;
+uniform sampler2D tAO;
+uniform float aoAmount;
 varying vec2 vUv;
 
 // FXAA 3.11 console variant -- cheap, and plenty at phone resolutions.
@@ -83,6 +85,12 @@ vec3 fxaaFilter(vec2 uv) {
 
 void main() {
   vec3 c = fxaa > 0.5 ? fxaaFilter(vUv) : texture2D(tScene, vUv).rgb;
+  // AO before bloom: occlusion belongs to the surface, and applying it after
+  // would let bloom bleed back into the crevices it just darkened.
+  if (aoAmount > 0.0) {
+    float ao = texture2D(tAO, vUv).r;
+    c *= mix(1.0, ao, aoAmount);
+  }
   c += texture2D(tBloom, vUv).rgb * bloomStrength;
 
   // grade: lift the shadows slightly cool, warm the highlights, add contrast
@@ -94,10 +102,77 @@ void main() {
   float d = distance(vUv, vec2(0.5));
   c *= 1.0 - vignette * smoothstep(0.35, 0.95, d);
 
-  float n = fract(sin(dot(vUv * time, vec2(12.9898, 78.233))) * 43758.5453);
-  c += (n - 0.5) * grain;
+  // Screen-space dither at the output, one 8-bit step, unmagnified. Baking
+  // this into the sky equirect instead put clumped multi-pixel grain across the
+  // sky AND the water, and polluted the IBL that the sky feeds.
+  float n1 = fract(sin(dot(vUv, vec2(12.9898, 78.233)) + time) * 43758.5453);
+  float n2 = fract(sin(dot(vUv, vec2(93.9898, 47.233)) + time) * 24634.6345);
+  c += ((n1 - n2) * (1.0 / 255.0)) + (n1 - 0.5) * grain;
 
   gl_FragColor = vec4(clamp(c, 0.0, 1.0), 1.0);
+}`;
+
+// Screen-space ambient occlusion.
+//
+// Reads the DEPTH TEXTURE the scene pass already filled -- an integer depth
+// attachment, not a half-float colour target, so it stays inside the rule that
+// keeps this chain working on iOS. It also costs no extra draw calls: the depth
+// is a by-product of the pass that was happening anyway, where a separate depth
+// prepass would have doubled the scene's 215 draws.
+const SSAO = `
+precision highp float;
+varying vec2 vUv;
+uniform sampler2D tDepth;
+uniform mat4 projInv;
+uniform mat4 proj;
+uniform vec2 texel;
+uniform float radius;
+uniform float strength;
+uniform float bias;
+
+vec3 viewPos(vec2 uv) {
+  float z = texture2D(tDepth, uv).x;
+  vec4 clip = vec4(uv * 2.0 - 1.0, z * 2.0 - 1.0, 1.0);
+  vec4 v = projInv * clip;
+  return v.xyz / v.w;
+}
+
+// 12 points on a hemisphere, weighted toward the centre so near-contact
+// darkening reads without the far samples turning into banding.
+const vec3 K[12] = vec3[12](
+  vec3( 0.5381, 0.1856, 0.4319), vec3( 0.1379, 0.2486, 0.4430),
+  vec3( 0.3371, 0.5679, 0.0057), vec3(-0.6999,-0.0451, 0.0019),
+  vec3( 0.0689,-0.1598, 0.8547), vec3( 0.0560, 0.0069, 0.1843),
+  vec3(-0.0146, 0.1402, 0.0762), vec3( 0.0100,-0.1924, 0.0344),
+  vec3(-0.3577,-0.5301, 0.4358), vec3(-0.3169, 0.1063, 0.0158),
+  vec3( 0.0103,-0.5869, 0.0046), vec3(-0.0897,-0.4940, 0.3287)
+);
+
+void main() {
+  float z = texture2D(tDepth, vUv).x;
+  // Sky: depth 1.0. Occluding it produces a dark halo along every roofline.
+  if (z >= 0.9999) { gl_FragColor = vec4(1.0); return; }
+  vec3 P = viewPos(vUv);
+  vec3 N = normalize(cross(dFdx(P), dFdy(P)));
+  float rnd = fract(sin(dot(vUv, vec2(12.9898, 78.233))) * 43758.5453);
+  float ca = cos(rnd * 6.2831), sa = sin(rnd * 6.2831);
+  float occ = 0.0;
+  for (int i = 0; i < 12; i++) {
+    vec3 k = K[i];
+    k.xy = vec2(k.x * ca - k.y * sa, k.x * sa + k.y * ca);
+    if (dot(k, N) < 0.0) k = -k;
+    vec3 sp = P + k * radius;
+    vec4 cp = proj * vec4(sp, 1.0);
+    vec2 suv = (cp.xy / cp.w) * 0.5 + 0.5;
+    if (suv.x < 0.0 || suv.x > 1.0 || suv.y < 0.0 || suv.y > 1.0) continue;
+    float sz = viewPos(suv).z;
+    // Range check: a foreground object must not occlude the distant ground
+    // behind it, which is what produces black outlines around everything.
+    float rc = smoothstep(0.0, 1.0, radius / abs(P.z - sz));
+    occ += (sz >= sp.z + bias ? 1.0 : 0.0) * rc;
+  }
+  float ao = clamp(1.0 - (occ / 12.0) * strength, 0.0, 1.0);
+  gl_FragColor = vec4(vec3(ao), 1.0);
 }`;
 
 function pass(fragmentShader, uniforms) {
@@ -136,13 +211,29 @@ export class PostFX {
     this.quadScene = new THREE.Scene();
 
     this.sceneRT = makeRT(2, 2, true);
+    // Integer depth attachment, filled by the scene pass at no extra cost. This
+    // is what SSAO reads; a separate depth prepass would double the draw calls.
+    this.sceneRT.depthTexture = new THREE.DepthTexture(2, 2);
+    this.sceneRT.depthTexture.type = THREE.UnsignedIntType;
     this.bloomA = makeRT(2, 2, false);
     this.bloomB = makeRT(2, 2, false);
+    this.aoA = makeRT(2, 2, false);
+    this.aoB = makeRT(2, 2, false);
+    this.ssaoOn = true;
 
     this.bright = pass(BRIGHT, {
-      tScene: { value: null }, threshold: { value: 0.72 }, softness: { value: 0.28 },
+      tScene: { value: null }, threshold: { value: 0.86 }, softness: { value: 0.22 },
     });
     this.blur = pass(BLUR, { tSrc: { value: null }, dir: { value: new THREE.Vector2() } });
+    this.ssao = pass(SSAO, {
+      tDepth: { value: null },
+      projInv: { value: new THREE.Matrix4() },
+      proj: { value: new THREE.Matrix4() },
+      texel: { value: new THREE.Vector2() },
+      radius: { value: 0.85 },
+      strength: { value: 1.5 },
+      bias: { value: 0.035 },
+    });
     this.composite = pass(COMPOSITE, {
       tScene: { value: null }, tBloom: { value: null },
       texel: { value: new THREE.Vector2() },
@@ -151,6 +242,8 @@ export class PostFX {
       grain: { value: 0.016 },
       time: { value: 0 },
       fxaa: { value: 1 },
+      tAO: { value: null },
+      aoAmount: { value: 0.85 },
     });
   }
 
@@ -163,6 +256,15 @@ export class PostFX {
     const bw = Math.max(2, Math.floor(W / 4)), bh = Math.max(2, Math.floor(H / 4));
     this.bloomA.setSize(bw, bh);
     this.bloomB.setSize(bw, bh);
+    this.sceneRT.depthTexture.image.width = W;
+    this.sceneRT.depthTexture.image.height = H;
+    this.sceneRT.depthTexture.needsUpdate = true;
+    // Half res: AO is a low-frequency term and full res buys nothing visible.
+    const aw = Math.max(2, Math.floor(W / 2)), ah = Math.max(2, Math.floor(H / 2));
+    this.aoA.setSize(aw, ah);
+    this.aoB.setSize(aw, ah);
+    this.ssao.material.uniforms.texel.value.set(1 / aw, 1 / ah);
+    this._aw = aw; this._ah = ah;
     this.composite.material.uniforms.texel.value.set(1 / W, 1 / H);
     this._bw = bw; this._bh = bh;
   }
@@ -172,13 +274,31 @@ export class PostFX {
   }
 
   /** Run the chain. The scene must already have been rendered into `target`. */
-  render(time) {
+  render(time, camera) {
     if (!this.enabled) return;
     const r = this.renderer;
     const draw = (mesh, rt) => {
       r.setRenderTarget(rt);
       r.render(mesh.userData.scene, CAM);
     };
+
+    if (this.ssaoOn && camera) {
+      const su = this.ssao.material.uniforms;
+      su.tDepth.value = this.sceneRT.depthTexture;
+      su.proj.value.copy(camera.projectionMatrix);
+      su.projInv.value.copy(camera.projectionMatrixInverse);
+      draw(this.ssao, this.aoA);
+      // Two cheap separable passes: the sample kernel is noisy by design and
+      // unblurred AO reads as dirt on the lens.
+      const bu2 = this.blur.material.uniforms;
+      bu2.tSrc.value = this.aoA.texture;
+      bu2.dir.value.set(1 / this._aw, 0);
+      draw(this.blur, this.aoB);
+      bu2.tSrc.value = this.aoB.texture;
+      bu2.dir.value.set(0, 1 / this._ah);
+      draw(this.blur, this.aoA);
+      this.composite.material.uniforms.tAO.value = this.aoA.texture;
+    }
 
     this.bright.material.uniforms.tScene.value = this.sceneRT.texture;
     draw(this.bright, this.bloomA);
@@ -203,8 +323,8 @@ export class PostFX {
   }
 
   dispose() {
-    for (const rt of [this.sceneRT, this.bloomA, this.bloomB]) rt.dispose();
-    for (const m of [this.bright, this.blur, this.composite]) m.material.dispose();
+    for (const rt of [this.sceneRT, this.bloomA, this.bloomB, this.aoA, this.aoB]) rt.dispose();
+    for (const m of [this.bright, this.blur, this.composite, this.ssao]) m.material.dispose();
     QUAD.dispose();
   }
 
@@ -216,5 +336,8 @@ export class PostFX {
     cu.fxaa.value = q === 'low' ? 0 : 1;
     cu.bloomStrength.value = q === 'high' ? 0.62 : 0.5;
     cu.grain.value = q === 'high' ? 0.016 : 0;
+    // SSAO is the most expensive pass here, so it is the first thing to go.
+    this.ssaoOn = q === 'high';
+    cu.aoAmount.value = this.ssaoOn ? 0.85 : 0.0;
   }
 }
