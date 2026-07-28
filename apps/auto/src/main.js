@@ -393,11 +393,20 @@ function installHeightFog() {
   sun.shadow.camera.right = S;
   sun.shadow.camera.top = S;
   sun.shadow.camera.bottom = -S;
-  // The texel is now ~0.25 m and the old bias no longer spans one: acne comes
-  // back as dark blotches across sunlit facades. normalBias scales with texel
-  // size, so it goes up whenever S does.
+  // Bias is DERIVED from texel size, not written down.
+  //
+  // The rule is that normalBias has to span a shadow texel, and the texel is
+  // 2*S/mapSize -- so it changes whenever either the box or the map does. That
+  // coupling was noted in the docs and then promptly broken: dropping the phone
+  // to a 1024 map made its texel 0.37 m against the desktop's 0.25, and the
+  // bias was moved DOWN at the same time, from 0.12 to 0.09. The result is
+  // classic acne, dark cloudy blotches over flat sunlit ground, and it was
+  // mistaken for an SSAO artefact because it looks like one.
+  //
+  // Computing it removes the chance of getting it wrong again.
+  const shadowTexel = (S * 2) / sun.shadow.mapSize.x;
   sun.shadow.bias = -0.0006;
-  sun.shadow.normalBias = ON_PHONE ? 0.09 : 0.12;
+  sun.shadow.normalBias = shadowTexel * 0.48;
   scene.add(sun);
   scene.add(sun.target);
 

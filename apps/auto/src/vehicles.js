@@ -58,6 +58,12 @@ const V0_100 = 100 / 3.6;
 // corner dangerous, and they are not what makes a car feel slow.
 const ARCADE_PUNCH = 2.4;
 
+// And how much more grip than real. Same bargain as ARCADE_PUNCH: the ratios
+// between classes stay honest, the whole scale moves. At true road-tyre grip a
+// sedan's cornering radius at 72 km/h is 46 m, which in a city built from real
+// street widths means you cannot make a junction at any speed worth driving.
+const ARCADE_GRIP = 2.2;
+
 export const TYPES = {
   sedan: deriveSpec({ wheelbase: 2.98,len: 5.06, wid: 1.90, wheelR: 0.34, sill: 0.30, belt: 1.06, roof: 1.50, cab: [-0.26, 0.10], hand: 'sedan', mass: 1.0, acc: 4.1, topKph: 205, brakeM: 40, latG: 0.88 }),
   hatch: deriveSpec({ wheelbase: 2.6,len: 4.10, wid: 1.76, wheelR: 0.31, sill: 0.29, belt: 0.96, roof: 1.50, cab: [-0.30, 0.16], mass: 0.9, acc: 3.6, topKph: 185, brakeM: 41, latG: 0.85 }),
@@ -2935,7 +2941,7 @@ export class Vehicle {
     this.pitch = 0; this.roll = 0;
     this.health = 100;
     this.dead = false;
-    this.understeer = 0;   // how far past the grip limit the front tyres are
+    this.latAcc = 0;       // lateral acceleration, which is what a bike leans to
     // Seconds before this vehicle can take collision damage again. One crash
     // spans many frames -- see damage().
     this.hitCd = 0;
@@ -3024,8 +3030,29 @@ export class Vehicle {
     this.lift = this.city.roadLift(this.x, this.z);
     const sp = Math.abs(this.vLong);
     // Steering authority falls off with speed so the car stays controllable.
+    // Steer within grip, rather than demanding more than the tyres have and
+    // clawing it back afterwards.
+    //
+    // The bicycle model turns steering angle straight into yaw, so at 72 km/h
+    // full lock asks for FIVE g. The friction circle then removed 82 % of it
+    // again, every frame, at every speed above walking pace -- so the limiter
+    // was permanently engaged, the car never went where it was pointed, and the
+    // leftover lateral velocity read as a permanent drift. It felt broken
+    // because functionally it was: the input was being thrown away.
+    //
+    // Solving for the angle the tyres can actually hold means the wheel always
+    // does something, and the car turns as hard as it is able to. Below about
+    // 45 km/h the mechanical lock is the smaller of the two and nothing
+    // changes; above it, grip takes over smoothly.
+    //
+    //   lat = v^2 / L * tan(steer)  <=  latA   ->   steer <= atan(latA * L / v^2)
+    const wheelbase = spec.wheelbase || spec.len * 0.62;
+    const latA = spec.latA * ARCADE_GRIP * (hand > 0.5 ? 0.45 : 1)
+      * (brake > 0 && this.vLong > 0.4 ? 0.8 : 1);
     const maxSteer = lerp(0.62, 0.16, clamp(sp / 34, 0, 1));
-    this.steer = lerp(this.steer, steerIn * maxSteer, 1 - Math.exp(-11 * dt));
+    const gripSteer = sp > 3 ? Math.atan((latA * wheelbase) / (sp * sp)) : maxSteer;
+    const lock = Math.min(maxSteer, gripSteer);
+    this.steer = lerp(this.steer, steerIn * lock, 1 - Math.exp(-11 * dt));
 
     const top = spec.fadeTop;
     let acc = 0;
@@ -3062,14 +3089,10 @@ export class Vehicle {
     this.vLong += acc * dt;
     if (Math.abs(this.vLong) < 0.12 && throttle === 0) this.vLong *= 0.82;
 
-    // Bicycle-model yaw plus lateral slip for arcade drift.
-    // The authored builders each declare their real axle centres, so use them.
-    // `len * 0.62` was a guess made before any vehicle had a wheelbase to read:
-    // it happens to land within 2 cm on the sports car and puts the bus's axles
-    // 7.4 m apart, against a real 6. The handling and the model disagreeing
-    // about where the wheels are is the kind of thing nobody notices directly
-    // and everybody feels.
-    const wheelbase = spec.wheelbase || spec.len * 0.62;
+    // Bicycle-model yaw plus lateral slip for arcade drift. `wheelbase` comes
+    // from the authored builders' real axle centres -- `len * 0.62` was a guess
+    // made before any vehicle had a wheelbase to read, and it put the bus's
+    // axles 7.4 m apart against a real 6.
     const yawRate = (this.vLong / wheelbase) * Math.tan(this.steer);
     this.heading += yawRate * dt;
 
@@ -3081,31 +3104,16 @@ export class Vehicle {
     const before = this.vLat;
     this.vLat *= Math.exp(-grip * dt);
 
-    // The friction circle. There was no lateral limit at ALL: yaw came
-    // straight from the steering angle, so a bus cornered at 1.1 g and a sedan
-    // at 4.4 g, and no amount of speed could ever push a car wide. Nothing in
-    // the game could be taken too fast, which removes most of what driving is.
-    //
-    // Beyond the limit the front tyres stop turning the car and it runs wide,
-    // which is understeer -- the failure a road car actually has. Braking eats
-    // into the same budget, so trail-braking into a corner lets go.
-    const latDemand = Math.abs(yawRate * this.vLong);
-    const braking = brake > 0 && this.vLong > 0.4 ? 0.75 : 1;
-    const latMax = spec.latA * braking * (hand > 0.5 ? 0.45 : 1);
-    // Signed lateral acceleration the tyres are actually delivering, which is
-    // what a bike leans against -- the demand before the limiter would lay one
-    // flat on the road at a cornering speed it cannot hold anyway.
-    let latAcc = yawRate * this.vLong;
-    if (latDemand > latMax && Math.abs(this.vLong) > 1) {
-      const excess = latMax / latDemand;
-      // Give back the yaw the tyres cannot support.
-      this.heading -= yawRate * dt * (1 - excess);
-      this.understeer = clamp((latDemand / latMax - 1) * 1.6, 0, 1);
-      latAcc *= excess;
-    } else {
-      this.understeer = 0;
-    }
-    this.skid = clamp(Math.max(Math.abs(before) * 0.35, this.understeer * 0.8), 0, 1);
+    // Grip is spent in the steering limit above, so there is nothing left to
+    // claw back here. What remains is the slide itself: lateral velocity that
+    // the tyres are scrubbing off, which is what the handbrake unleashes and
+    // what the skid sound and marks read from.
+    // What the bike is actually pulling laterally. This used to come out of the
+    // friction-circle block that the steering clamp replaced; with steering
+    // limited to what grip supports, the yaw the car achieves IS the lateral
+    // acceleration, so there is nothing to correct for.
+    this.latAcc = yawRate * this.vLong;
+    this.skid = clamp(Math.abs(before) * 0.35, 0, 1);
 
     const f = this.forward;
     const rx = f.z, rz = -f.x;
@@ -3163,7 +3171,7 @@ export class Vehicle {
     // backwards here, and a bike leaning out of its corners is unmissable.
     // Faded out below walking pace so a parked bike stands up straight.
     const tgtRoll = two
-      ? -Math.atan2(latAcc, 9.81) * clamp((sp - 0.8) / 2.5, 0, 1)
+      ? -Math.atan2(this.latAcc, 9.81) * clamp((sp - 0.8) / 2.5, 0, 1)
       : Math.atan2(lh - rh, this.halfWid * 2) + clamp(this.vLat, -9, 9) * 0.016;
     this.pitch = lerp(this.pitch, tgtPitch, 1 - Math.exp(-10 * dt));
     this.roll = lerp(this.roll, tgtRoll, 1 - Math.exp(-10 * dt));
