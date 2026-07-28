@@ -39,6 +39,12 @@ const BANDS = {
   sports: { name: 'sports coupe', accel: [4, 5.5], top: [250, 300], brake: [31, 36], lat: [0.95, 1.10] },
   ev: { name: 'performance EV', accel: [3, 4.5], top: [200, 260], brake: [33, 38], lat: [0.90, 1.02] },
   muscle: { name: 'muscle car', accel: [4.2, 6], top: [240, 290], brake: [33, 39], lat: [0.88, 1.00] },
+  convertible: { name: 'muscle convertible', accel: [4.5, 6.5], top: [230, 270], brake: [34, 40], lat: [0.85, 0.95] },
+  // Motorcycles. Both stop in a LONGER distance than any car here and the
+  // cruiser corners below a family sedan: two contact patches, no weight
+  // transfer to speak of and a rider who has to stay on it.
+  cruiser: { name: 'cruiser motorcycle', accel: [4.5, 6], top: [180, 200], brake: [45, 52], lat: [0.75, 0.85] },
+  sportbike: { name: 'sport motorcycle', accel: [3, 3.5], top: [270, 300], brake: [38, 42], lat: [1.00, 1.15] },
   pickup: { name: 'full-size pickup', accel: [6.5, 9], top: [170, 200], brake: [40, 50], lat: [0.72, 0.82] },
   van: { name: 'panel van', accel: [11, 16], top: [140, 170], brake: [42, 52], lat: [0.68, 0.78] },
   taxi: { name: 'taxi (sedan)', accel: [8, 12], top: [180, 220], brake: [36, 45], lat: [0.80, 0.90] },

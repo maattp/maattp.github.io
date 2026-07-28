@@ -10,6 +10,7 @@
 
 import * as THREE from './three.js';
 import { Builder } from './build.js';
+import { makeHumanoid, buildCharacter, BONES } from './peds.js';
 import { clamp, lerp, hash2 } from './util.js';
 import * as G from './geo.js';
 
@@ -57,6 +58,17 @@ export const TYPES = {
   // quicker anyway, because the torque is all there from a standstill.
   ev: deriveSpec({len: 4.62, wid: 1.98, wheelR: 0.36, sill: 0.22, belt: 0.79, roof: 1.25, cab: [-0.28, 0.09], ev: true, mass: 1.2, acc: 9.0, topKph: 235, brakeM: 35, latG: 0.96 }),
   muscle: deriveSpec({len: 5.02, wid: 1.98, wheelR: 0.35, sill: 0.26, belt: 1.02, roof: 1.40, cab: [-0.24, 0.13], hand: 'muscle', mass: 1.15, acc: 7.0, topKph: 265, brakeM: 36, latG: 0.94 }),
+  // Roofless muscle. `roof` is the top of the windscreen frame, 16 cm under the
+  // coupe's, and there is no greenhouse above the beltline at all -- which is
+  // why the interior has to be built: you look straight down into it.
+  convertible: deriveSpec({len: 4.86, wid: 1.94, wheelR: 0.35, sill: 0.26, belt: 1.00, roof: 1.34, cab: [-0.24, 0.10], hand: 'convertible', mass: 1.10, acc: 6.6, topKph: 250, brakeM: 37, latG: 0.90 }),
+  // Motorcycles. `moto` is not a styling flag: it switches the ground solve to
+  // two contact patches and turns on lean, both of which are wrong for a car
+  // and both of which a bike looks broken without. Light, quick, and with LESS
+  // braking distance in hand and less lateral grip than a car of the same era
+  // -- two contact patches the size of a credit card is what that costs.
+  cruiser: deriveSpec({len: 2.56, wid: 0.95, wheelR: 0.40, sill: 0.30, belt: 0.80, roof: 1.24, cab: [-0.2, 0.1], hand: 'cruiser', moto: true, mass: 0.22, acc: 7.2, topKph: 190, brakeM: 48, latG: 0.80 }),
+  sportbike: deriveSpec({len: 2.05, wid: 0.72, wheelR: 0.32, sill: 0.28, belt: 0.78, roof: 1.18, cab: [-0.2, 0.1], hand: 'sportbike', moto: true, mass: 0.16, acc: 10.2, topKph: 285, brakeM: 40, latG: 1.08 }),
   pickup: deriveSpec({len: 5.92, wid: 2.05, wheelR: 0.42, sill: 0.48, belt: 1.26, roof: 1.98, cab: [-0.15, 0.22], hand: 'pickup', mass: 1.4, acc: 4.4, topKph: 185, brakeM: 45, latG: 0.77 }),
   van: deriveSpec({len: 5.26, wid: 2.00, wheelR: 0.35, sill: 0.36, belt: 1.10, roof: 2.28, cab: [-0.44, 0.30], boxy: 2, mass: 1.5, acc: 2.9, topKph: 155, brakeM: 47, latG: 0.73 }),
   taxi: deriveSpec({len: 4.76, wid: 1.85, wheelR: 0.33, sill: 0.30, belt: 0.98, roof: 1.48, cab: [-0.28, 0.19], taxi: true, mass: 1.0, acc: 3.8, topKph: 195, brakeM: 41, latG: 0.85 }),
@@ -106,7 +118,9 @@ function deriveSpec(s) {
   return s;
 }
 
-export const CIVILIAN_TYPES = ['sedan', 'sedan', 'hatch', 'compact', 'suv', 'suv', 'sports', 'ev', 'muscle', 'pickup', 'van', 'taxi', 'boxtruck', 'bus', 'garbage'];
+// Weighted by repetition. Two bikes in eighteen is about one vehicle in nine,
+// which is a summer afternoon in a American city and not a bike show.
+export const CIVILIAN_TYPES = ['sedan', 'sedan', 'hatch', 'compact', 'suv', 'suv', 'sports', 'ev', 'muscle', 'convertible', 'pickup', 'van', 'taxi', 'boxtruck', 'bus', 'garbage', 'cruiser', 'sportbike'];
 
 export const CAR_COLORS = [
   0x9fa4a9, 0x1b1d20, 0xe6e8ea, 0x6d0f14, 0x102b52, 0x14472f, 0x7a5a22,
@@ -208,12 +222,16 @@ function maxY(pts) {
  * `out` is which way the OUTBOARD face points, +1 or -1. The spokes, disc and
  * caliper are only built on that side: the inboard face is never seen, and
  * building both doubles the cost on every vehicle in the fleet.
+ *
+ * `out` 0 dresses BOTH faces and skips the plain inboard dish. That is for a
+ * motorcycle, whose wheels are on the centreline: there is no inboard side, a
+ * player walks round the bike, and a dished blank facing the kerb would be the
+ * most obvious thing on it.
  */
 function addWheel(trim, matte, cx, cy, cz, r, w, out = 1) {
   const SEG = 18;
   const hw = w / 2;
   const bead = r * 0.70;              // where the tyre grips the rim
-  const face = out * hw * 0.55;       // rim face plane, set in from the sidewall
   const ang = (i) => (i / SEG) * Math.PI * 2;
 
   /**
@@ -258,37 +276,42 @@ function addWheel(trim, matte, cx, cy, cz, r, w, out = 1) {
     band(matte, sx * hw * 1.10, r * 0.87, sx * hw * 0.96, bead, TYRE, [sx, 0.3]);
     band(trim, sx * hw * 0.96, bead, sx * hw * 0.55, bead * 0.99, RIM, [0, 1]);
   }
-  // inboard face is a plain dish -- nothing behind a wheel is ever in frame
-  disc(trim, -face, bead * 0.99, r * 0.16, -out, HUB);
+  // inboard face is a plain dish -- nothing behind a car's wheel is ever in
+  // frame, and a bike (out 0) has no inboard face to hide
+  if (out !== 0) disc(trim, -out * hw * 0.55, bead * 0.99, r * 0.16, -out, HUB);
 
-  // outboard: brake disc first, so it shows through the gaps between spokes
-  band(trim, face * 0.30, r * 0.60, face * 0.46, r * 0.60, DISC, [0, 1]);
-  disc(trim, face * 0.46, r * 0.60, r * 0.22, out, DISC);
-  const ca = 2.35;
-  trim.tube(
-    [cx + face * 0.14, cy + Math.cos(ca - 0.34) * r * 0.52, cz + Math.sin(ca - 0.34) * r * 0.52],
-    [cx + face * 0.14, cy + Math.cos(ca + 0.34) * r * 0.52, cz + Math.sin(ca + 0.34) * r * 0.52],
-    r * 0.11, 6, CALIPER, true);
+  const dress = (o) => {
+    const face = o * hw * 0.55;       // rim face plane, set in from the sidewall
+    // brake disc first, so it shows through the gaps between spokes
+    band(trim, face * 0.30, r * 0.60, face * 0.46, r * 0.60, DISC, [0, 1]);
+    disc(trim, face * 0.46, r * 0.60, r * 0.22, o, DISC);
+    const ca = 2.35;
+    trim.tube(
+      [cx + face * 0.14, cy + Math.cos(ca - 0.34) * r * 0.52, cz + Math.sin(ca - 0.34) * r * 0.52],
+      [cx + face * 0.14, cy + Math.cos(ca + 0.34) * r * 0.52, cz + Math.sin(ca + 0.34) * r * 0.52],
+      r * 0.11, 6, CALIPER, true);
 
-  disc(trim, face, bead * 0.99, bead * 0.88, out, RIM);            // rim lip
-  band(trim, face, bead * 0.88, face * 0.62, bead * 0.88, RIM, [0, 1]);
-  const SPOKES = 5;
-  const hubR = r * 0.20, spokeX = face * 0.62;
-  for (let s = 0; s < SPOKES; s++) {
-    const a = (s / SPOKES) * Math.PI * 2 + 0.35;
-    const p = (rr, da, x) => [cx + x, cy + Math.cos(a + da) * rr, cz + Math.sin(a + da) * rr];
-    const wo = 0.30, wi = 0.17;
-    trim.quad(p(bead * 0.89, -wo, face), p(bead * 0.89, wo, face), p(hubR, wi, spokeX), p(hubR, -wi, spokeX),
-      [out, 0, 0], [0, 0, 1, 0, 1, 1, 0, 1], RIM);
-    // sides, so a spoke has depth and catches the light along its edge
-    for (const sg of [-1, 1]) {
-      trim.quad(p(bead * 0.89, sg * wo, face), p(hubR, sg * wi, spokeX),
-        p(hubR, sg * wi, spokeX - out * 0.03), p(bead * 0.89, sg * wo, face - out * 0.03),
-        [0, -Math.sin(a + sg * wo) * sg, Math.cos(a + sg * wo) * sg], [0, 0, 1, 0, 1, 1, 0, 1], HUB);
+    disc(trim, face, bead * 0.99, bead * 0.88, o, RIM);            // rim lip
+    band(trim, face, bead * 0.88, face * 0.62, bead * 0.88, RIM, [0, 1]);
+    const SPOKES = 5;
+    const hubR = r * 0.20, spokeX = face * 0.62;
+    for (let s = 0; s < SPOKES; s++) {
+      const a = (s / SPOKES) * Math.PI * 2 + 0.35;
+      const p = (rr, da, x) => [cx + x, cy + Math.cos(a + da) * rr, cz + Math.sin(a + da) * rr];
+      const wo = 0.30, wi = 0.17;
+      trim.quad(p(bead * 0.89, -wo, face), p(bead * 0.89, wo, face), p(hubR, wi, spokeX), p(hubR, -wi, spokeX),
+        [o, 0, 0], [0, 0, 1, 0, 1, 1, 0, 1], RIM);
+      // sides, so a spoke has depth and catches the light along its edge
+      for (const sg of [-1, 1]) {
+        trim.quad(p(bead * 0.89, sg * wo, face), p(hubR, sg * wi, spokeX),
+          p(hubR, sg * wi, spokeX - o * 0.03), p(bead * 0.89, sg * wo, face - o * 0.03),
+          [0, -Math.sin(a + sg * wo) * sg, Math.cos(a + sg * wo) * sg], [0, 0, 1, 0, 1, 1, 0, 1], HUB);
+      }
     }
-  }
-  disc(trim, spokeX, hubR, r * 0.05, out, HUB);
-  disc(trim, spokeX + out * 0.012, r * 0.09, 0.001, out, CHROME);
+    disc(trim, spokeX, hubR, r * 0.05, o, HUB);
+    disc(trim, spokeX + o * 0.012, r * 0.09, 0.001, o, CHROME);
+  };
+  if (out === 0) { dress(1); dress(-1); } else dress(out);
 }
 
 /**
@@ -432,7 +455,7 @@ function bodyCore(spec, paint, matte, cfg) {
     halfW, sillY, beltY, tuckAt, topAt, zF, zR,
     archR = 0.55, archGap = 0.05, archPow = 2, creaseAt = 0.60, tumble = 0.90,
     deckDrop = 0.030, lipOut = 0.07, endRound = 0.12, endMin = 0.88,
-    lipInto = paint, lipCol = WHITE,
+    lipInto = paint, lipCol = WHITE, deckDip = null,
     stations = 44,
   } = cfg;
   const W = spec.wid / 2, wr = spec.wheelR;
@@ -468,8 +491,32 @@ function bodyCore(spec, paint, matte, cfg) {
   // sharp the numbers are; two coincident points give the surfaces either side
   // their own normal and the flank gets a hard folded line down it. That line
   // is most of what says a body was styled rather than extruded.
+  //
+  // `deckDip` sinks the two innermost points to a floor height, which turns
+  // the closed deck into an open tub -- the convertible's cockpit. It is done
+  // HERE, in the section, rather than by laying an interior over the deck,
+  // because there is no boolean operation in this builder: bodywork drawn at
+  // the beltline across the middle of the car hides anything put underneath it,
+  // and no amount of interior helps if the lid is still on.
   const half = (z, s) => {
     const g = geom(z);
+    const dip = deckDip ? Math.max(deckDip(z), g.y0 + 0.06) : null;
+    if (dip !== null && dip < g.y1 - 0.02) {
+      return [
+        [s * g.wb * 0.58, g.y0],
+        [s * g.wb, g.y0 + g.h * 0.06],
+        [s * g.w * 0.975, g.y0 + g.h * 0.30],
+        [s * g.w, g.yc - g.h * 0.10],
+        [s * g.w, g.yc],
+        [s * g.w, g.yc + 0.006],
+        [s * g.w * 0.965, g.yc + g.h * 0.16],
+        [s * g.w * tumble, g.y1 - g.h * 0.22],
+        [s * g.tw, g.y1 - deckDrop],
+        [s * g.tw * 0.965, g.y1 - deckDrop - 0.030],   // the door's inner lip
+        [s * g.tw * 0.72, dip],                        // tub wall, then floor
+        [s * g.tw * 0.24, dip],
+      ];
+    }
     return [
       [s * g.wb * 0.58, g.y0],
       [s * g.wb, g.y0 + g.h * 0.06],            // sill outer -- the arch edge
@@ -1694,20 +1741,760 @@ function buildPickup(spec, paint, trim, matte) {
       matte.box(sx * (geom(0).wb - 0.02), 0.600, bz, 0.14, 0.055, 0.07, 0, PLASTIC);
     }
     // Tow mirror: a tall flat glass on a double arm, which is the detail that
-    // makes a truck read as a truck from the front. Both arms START at the
-    // door's own glass line (`wGlassB` at `sgFB`) -- floated out on their own
-    // coordinates they leave the head hanging beside the wing with daylight
-    // between it and the cab.
-    for (const ay of [1.400, 1.590]) {
-      matte.tube([sx * (wGlassB - 0.02), ay, sgFB[0] - 0.05], [sx * 1.100, ay + 0.030, sgFB[0] - 0.09],
-        0.021, 6, PLASTIC, true);
+    // makes a truck read as a truck from the front.
+    //
+    // The arms have to START ON THE DOOR SKIN, not on the glass line. The
+    // glass is 12 cm inboard of the door at this station, so arms run from
+    // there spent their first 12 cm INSIDE the bodywork and only 16 cm of arm
+    // ever emerged -- and from a front three-quarter, where the cab hides that
+    // 16 cm, the head read as a block floating in mid-air beside the truck.
+    // Now: a base plate on the door, two arms out from it, and a riser joining
+    // them at the head, so the whole thing is one visible ladder from any
+    // angle rather than a mirror with its supports behind the cab.
+    // The arms have to START ON THE DOOR SKIN and reach FORWARD, past the
+    // cowl. Two things were wrong before. They began at the glass line, 12 cm
+    // inboard of the door, so a third of each arm was buried in the bodywork.
+    // And the head sat level with the A-pillar, where the cab -- 72 cm taller
+    // than the mirror -- hides every centimetre of arm on the far side: from a
+    // front three-quarter the far head read as a block floating in the air
+    // beside the truck, which is exactly what it was, visually. Ahead of the
+    // cowl the arms cross only the BONNET, whose deck is 14 cm below them, so
+    // they are seen against the sky and the mirror reads as bolted on from
+    // every angle a player can stand in.
+    const mz = sgFB[0] - 0.02, hz = mz + 0.22, mx = geom(mz).w;
+    // Mounted ACROSS the beltline, where a door skin is, rather than up on the
+    // glass -- the arms have to land on something a bracket could bolt to.
+    matte.box(sx * (mx + 0.010), 1.250, mz, 0.030, 0.240, 0.140, 0, PLASTIC);   // base plate
+    for (const ay of [1.315, 1.505]) {
+      matte.tube([sx * (mx + 0.015), ay, mz], [sx * 1.190, ay + 0.020, hz], 0.026, 6, PLASTIC, true);
     }
-    paint.box(sx * 1.150, 1.352, sgFB[0] - 0.125, 0.075, 0.295, 0.085, 0, WHITE);
-    trim.box(sx * 1.150, 1.366, sgFB[0] - 0.169, 0.062, 0.262, 0.02, 0, GLASS);
+    matte.tube([sx * 1.190, 1.305, hz], [sx * 1.190, 1.535, hz], 0.024, 6, PLASTIC, true);
+    paint.box(sx * 1.228, 1.272, hz - 0.030, 0.075, 0.300, 0.085, 0, WHITE);
+    trim.box(sx * 1.228, 1.286, hz - 0.074, 0.062, 0.266, 0.02, 0, GLASS);
     // Bed rail cap and a tie-down, so the rail has a top edge that catches light.
     trim.box(sx * wallX, bedY + railH - 0.006, bedMid, 0.078, 0.014, bedLen - 0.02, 0, [0.22, 0.23, 0.25]);
     // Fuel filler on the bed side, ahead of the rear arch.
     matte.box(sx * (geom(-1.10).w + 0.004), 0.900, -1.10, 0.014, 0.150, 0.190, 0, [0.20, 0.21, 0.23]);
+  }
+
+  return wheels;
+}
+
+// ---------------------------------------------------------------------------
+// Motorcycles
+//
+// A bike is not a car with two of its wheels deleted, so none of it goes
+// through `bodyCore`: there is no shell to loft, no arches to cut and no
+// greenhouse. What there is instead is a frame, and everything hangs off it --
+// which is why these are built almost entirely from `tube` between named
+// points rather than from boxes. `box` and `prism` can only yaw, and on a
+// motorcycle nearly every member is diagonal in Y: forks, downtube, swingarm,
+// shocks, headers. Built from boxes they come out as level bars floating in
+// the air, which is what the viaduct barriers looked like.
+// ---------------------------------------------------------------------------
+
+const LEATHER = [0.075, 0.075, 0.085];   // seat, grips, boots
+const ENGINE = [0.15, 0.16, 0.175];
+const ALLOY = [0.58, 0.60, 0.63];
+
+/** Closed ellipse in the (x, y) plane, for a `loft` ring: tanks, mufflers. */
+function ring2(hx, cy, hy, n = 12, cx = 0) {
+  const p = [];
+  for (let i = 0; i < n; i++) {
+    const a = (i / n) * Math.PI * 2;
+    p.push([cx + Math.cos(a) * hx, cy + Math.sin(a) * hy]);
+  }
+  return p;
+}
+
+/**
+ * Mudguard: a crowned strip of sheet wrapped round a wheel.
+ *
+ * `a0`/`a1` are angles about the axle with 0 straight up and positive toward
+ * the nose, so a front guard and a bobbed rear one differ only in their arc.
+ * The section is crowned across its width because a flat one reads as a plank
+ * laid over the tyre -- the same reason the roofs are cambered.
+ */
+function fender(b, cy, cz, r, halfW, a0, a1, col) {
+  const rows = [];
+  for (let i = 0; i <= 12; i++) {
+    const a = a0 + ((a1 - a0) * i) / 12;
+    const row = [];
+    for (let j = 0; j <= 4; j++) {
+      const u = -1 + j / 2;
+      const rr = r * (1 - 0.05 * u * u);
+      row.push([u * halfW, cy + Math.cos(a) * rr, cz + Math.sin(a) * rr]);
+    }
+    rows.push(row);
+  }
+  b.patch(rows, col, [0, 1, 0]);
+}
+
+/** A round mirror head on a stalk, aimed back down the bike. */
+function mirror(trim, x, y, z, r, stalkFrom, col) {
+  trim.tube(stalkFrom, [x, y, z], 0.011, 6, col, true);
+  trim.tube([x, y, z + 0.020], [x, y, z - 0.012], r, 10, col, true);
+  trim.box(x, y, z - 0.016, r * 1.7, r * 1.7, 0.014, 0, GLASS);
+}
+
+/**
+ * The cruiser: long, low and raked, with a 45-degree V-twin standing in an
+ * open cradle frame where a player can see straight through it.
+ *
+ * Everything that separates this from the sportbike is deliberate and
+ * measurable in the numbers below: 28 degrees of rake against 23, a 1.66 m
+ * wheelbase against 1.36, bars 88 cm across against clip-ons that sit BELOW
+ * the top yoke, feet forward of the engine rather than tucked behind it, and a
+ * seat 20 cm lower. Two bikes that share a builder and differ by a scale
+ * factor would read as the same bike twice, which is the mistake the whole
+ * fleet used to make.
+ */
+function buildCruiser(spec, paint, trim, matte) {
+  const zF = 0.86, rF = 0.42, twF = 0.11;      // 21 inch front, skinny
+  const zR = -0.80, rR = spec.wheelR, twR = 0.20;
+  // `out` 0: both faces of a bike's wheel are outboard faces.
+  const wheels = [[0, rF, zF, rF, twF, 0], [0, rR, zR, rR, twR, 0]];
+
+  // The steering axis, as ONE function of height. The forks, both yokes, the
+  // headlamp and the bars all read their z from it, so raking the bike is a
+  // change to two numbers rather than to fifteen coordinates that have to stay
+  // in step -- the same reason the wheel arches read their x from `half()`.
+  const fz = (y) => 0.545 - 0.525 * (y - 1.02);      // 28 deg from vertical
+  const topY = 1.00, botY = 0.74;
+
+  // --- frame ---------------------------------------------------------------
+  const FRAME = [0.13, 0.135, 0.145];
+  matte.tube([0, topY + 0.02, fz(topY) - 0.055], [0, botY - 0.02, fz(botY) - 0.055], 0.048, 8, FRAME, true);
+  // backbone under the tank, then down behind the engine
+  matte.tube([0, 0.985, 0.50], [0, 0.870, -0.12], 0.030, 8, FRAME, true);
+  matte.tube([0, 0.870, -0.12], [0, 0.560, -0.36], 0.028, 8, FRAME, true);
+  // downtube and cradle: the loop the engine sits in
+  matte.tube([0, 0.760, 0.545], [0, 0.330, 0.400], 0.030, 8, FRAME, true);
+  for (const sx of [-1, 1]) {
+    matte.tube([0, 0.330, 0.400], [sx * 0.105, 0.300, 0.300], 0.024, 6, FRAME, true);
+    matte.tube([sx * 0.105, 0.300, 0.300], [sx * 0.105, 0.290, -0.180], 0.024, 6, FRAME, true);
+    matte.tube([sx * 0.105, 0.290, -0.180], [sx * 0.100, 0.560, -0.320], 0.024, 6, FRAME, true);
+    // seat rails out to the back
+    matte.tube([sx * 0.075, 0.735, -0.180], [sx * 0.095, 0.700, -0.760], 0.022, 6, FRAME, true);
+  }
+
+  // --- front end -----------------------------------------------------------
+  for (const sx of [-1, 1]) {
+    const x = sx * 0.105;
+    trim.tube([x, 1.055, fz(1.055)], [x, 0.700, fz(0.700)], 0.026, 8, CHROME, true);  // stanchion
+    matte.tube([x, 0.760, fz(0.760)], [x, rF, zF], 0.036, 8, [0.10, 0.11, 0.12], true); // slider
+  }
+  for (const y of [topY, botY]) {
+    trim.tube([-0.155, y, fz(y)], [0.155, y, fz(y)], 0.030, 8, ALLOY, true);          // yokes
+  }
+  fender(paint, rF, zF, rF + 0.050, 0.078, -0.30, 1.05, WHITE);
+  // Headlamp: a chrome bucket with the lens across its MOUTH. Buried at the
+  // back of a bucket a lens catches nothing and renders as more shadow -- the
+  // same trap as the muscle car's sealed beams.
+  trim.tube([0, 0.945, 0.545], [0, 0.945, 0.660], 0.098, 12, CHROME, true);
+  trim.tube([0, 0.945, 0.655], [0, 0.945, 0.678], 0.084, 12, LAMP, true);
+  for (const sx of [-1, 1]) {
+    trim.tube([sx * 0.135, 0.985, 0.560], [sx * 0.150, 0.985, 0.595], 0.030, 8, AMBER, true);
+  }
+
+  // --- bars: pulled back, high, and 84 cm across ---------------------------
+  // The grips sit where the RIDER's hands reach, not where a bar looks best on
+  // its own: shoulder to grip is 64 cm on this humanoid and the arms simply do
+  // not stretch further, so a bar 10 cm too far forward leaves him steering
+  // thin air with his fingertips.
+  for (const sx of [-1, 1]) {
+    trim.tube([sx * 0.075, topY + 0.01, fz(topY)], [sx * 0.085, 1.150, 0.500], 0.024, 6, CHROME, true);
+    trim.tube([sx * 0.085, 1.170, 0.495], [sx * 0.230, 1.185, 0.455], 0.017, 8, CHROME, true);
+    trim.tube([sx * 0.230, 1.185, 0.455], [sx * 0.410, 1.205, 0.392], 0.017, 8, CHROME, true);
+    matte.tube([sx * 0.275, 1.194, 0.425], [sx * 0.402, 1.204, 0.395], 0.021, 8, LEATHER, true);
+    trim.tube([sx * 0.270, 1.170, 0.432], [sx * 0.370, 1.170, 0.400], 0.010, 6, CHROME, true);  // lever
+    mirror(trim, sx * 0.275, 1.345, 0.420, 0.055, [sx * 0.215, 1.190, 0.462], CHROME);
+  }
+  trim.box(0, 1.195, 0.462, 0.150, 0.055, 0.10, 0, ALLOY);      // clocks on the risers
+
+  // --- V-twin --------------------------------------------------------------
+  matte.box(0, 0.255, -0.030, 0.235, 0.230, 0.420, 0, ENGINE);   // crankcase
+  matte.box(0, 0.215, -0.030, 0.290, 0.110, 0.360, 0, [0.11, 0.12, 0.13]); // sump
+  // Two barrels in a 45 degree V, finned. The fins are what make a cylinder
+  // read as an engine rather than as a can, and they cost eight rings each.
+  const barrel = (z0, ang) => {
+    const dy = Math.cos(ang), dz = Math.sin(ang);
+    const base = [0, 0.360, z0];
+    const top = [0, 0.360 + dy * 0.300, z0 + dz * 0.300];
+    matte.tube(base, top, 0.072, 10, [0.09, 0.10, 0.11], true);
+    for (let i = 0; i < 7; i++) {
+      const t = 0.10 + i * 0.115;
+      const p = [0, 0.360 + dy * 0.300 * t, z0 + dz * 0.300 * t];
+      const q = [0, 0.360 + dy * 0.300 * (t + 0.03), z0 + dz * 0.300 * (t + 0.03)];
+      trim.tube(p, q, 0.100, 10, ALLOY, true);
+    }
+    trim.tube(top, [0, 0.360 + dy * 0.375, z0 + dz * 0.375], 0.088, 10, ALLOY, true); // rocker box
+  };
+  barrel(0.115, 0.42);
+  barrel(-0.115, -0.42);
+  // Primary case on the left, air cleaner on the right: a V-twin is not
+  // symmetrical, and which side each lands on is most of what tells the two
+  // flanks apart. Offset in x, not centred -- a cover built on the centreline
+  // is a lump growing out of the middle of the engine.
+  paint.loft([
+    { z: -0.180, pts: ring2(0.050, 0.300, 0.130, 12, 0.140) },
+    { z: -0.030, pts: ring2(0.058, 0.300, 0.155, 12, 0.150) },
+    { z: 0.130, pts: ring2(0.045, 0.310, 0.125, 12, 0.140) },
+  ], WHITE, { capStart: true, capEnd: true });
+  trim.tube([-0.135, 0.560, -0.010], [-0.245, 0.560, -0.010], 0.105, 12, CHROME, true);
+  trim.tube([-0.245, 0.560, -0.010], [-0.262, 0.560, -0.010], 0.088, 12, ALLOY, true);
+
+  // --- tank, seat, tail ----------------------------------------------------
+  paint.loft([
+    { z: 0.500, pts: ring2(0.055, 0.905, 0.055, 12) },
+    { z: 0.360, pts: ring2(0.140, 0.905, 0.100, 12) },
+    { z: 0.140, pts: ring2(0.185, 0.900, 0.120, 12) },
+    { z: -0.040, pts: ring2(0.155, 0.885, 0.105, 12) },
+    { z: -0.160, pts: ring2(0.070, 0.860, 0.055, 12) },
+  ], WHITE, { capStart: true, capEnd: true });
+  trim.box(0, 1.008, 0.150, 0.075, 0.020, 0.34, 0, CHROME);      // tank console
+  trim.tube([0, 1.010, 0.320], [0, 1.010, 0.360], 0.030, 10, CHROME, true);  // filler cap
+
+  matte.loft([
+    { z: -0.150, pts: ring2(0.090, 0.735, 0.045, 10) },
+    { z: -0.300, pts: ring2(0.160, 0.715, 0.055, 10) },
+    { z: -0.460, pts: ring2(0.165, 0.730, 0.050, 10) },
+    { z: -0.600, pts: ring2(0.135, 0.790, 0.055, 10) },
+    { z: -0.720, pts: ring2(0.080, 0.815, 0.040, 10) },
+  ], LEATHER, { capStart: true, capEnd: true });
+  // Bobbed: the guard follows the top of the tyre and stops, rather than
+  // wrapping down round the back of it. Carried too far round it stops being a
+  // mudguard and becomes a skirt, which is a different decade of motorcycle.
+  fender(paint, rR, zR, rR + 0.050, 0.115, -1.20, 0.75, WHITE);
+  // Sissy bar. Nothing else on the bike stands up above the rear wheel, and
+  // the silhouette from across a street is the point of it.
+  for (const sx of [-1, 1]) {
+    trim.tube([sx * 0.080, 0.760, -0.905], [sx * 0.070, 1.150, -0.980], 0.012, 6, CHROME, true);
+  }
+  trim.tube([-0.070, 1.146, -0.978], [0.070, 1.146, -0.978], 0.012, 6, CHROME, true);
+  matte.loft([
+    { z: -0.930, pts: ring2(0.070, 0.980, 0.105, 10) },
+    { z: -0.968, pts: ring2(0.078, 0.975, 0.115, 10) },
+  ], LEATHER, { capStart: true, capEnd: true });
+
+  // --- rear end ------------------------------------------------------------
+  for (const sx of [-1, 1]) {
+    matte.tube([sx * 0.105, 0.330, -0.170], [sx * 0.085, rR, zR], 0.028, 8, [0.11, 0.12, 0.13], true);
+    trim.tube([sx * 0.110, 0.690, -0.400], [sx * 0.090, 0.430, -0.720], 0.021, 8, CHROME, true);  // shock
+    matte.tube([sx * 0.150, 0.300, 0.330], [sx * 0.265, 0.288, 0.355], 0.022, 6, PLASTIC, true);  // forward peg
+  }
+  // Staggered pipes down the right: two lengths, two heights, which is the
+  // arrangement the shape is named after.
+  matte.tube([-0.060, 0.640, 0.230], [-0.170, 0.420, 0.190], 0.036, 8, [0.10, 0.11, 0.12], true);
+  trim.tube([-0.170, 0.420, 0.190], [-0.205, 0.355, 0.010], 0.038, 8, CHROME, true);
+  trim.tube([-0.205, 0.355, 0.010], [-0.225, 0.345, -0.870], 0.049, 10, CHROME, true);
+  matte.tube([-0.060, 0.615, -0.230], [-0.190, 0.330, -0.190], 0.034, 8, [0.10, 0.11, 0.12], true);
+  trim.tube([-0.190, 0.330, -0.190], [-0.255, 0.275, -0.720], 0.044, 10, CHROME, true);
+  hole(trim, matte, -0.225, 0.345, -0.872, 0.038, 0.07, -1);
+  hole(trim, matte, -0.255, 0.275, -0.722, 0.034, 0.07, -1);
+
+  // Lamp and plate ON the end of the guard, at the radius the guard actually
+  // reaches -- placed by eye they hang in the air behind it.
+  trim.box(0, 0.612, -1.198, 0.095, 0.060, 0.030, 0, TAILC);
+  matte.box(0, 0.478, -1.205, 0.185, 0.125, 0.014, 0, PLASTIC);
+  trim.box(0, 0.482, -1.214, 0.160, 0.100, 0.014, 0, PLATE);
+
+  return wheels;
+}
+
+/**
+ * The sportbike: everything the cruiser is not. Mass carried high and forward,
+ * a fairing wrapped round the front of the engine, clip-ons under the top yoke
+ * and a tail that runs up and away to nothing behind the rider.
+ *
+ * The fairing is a closed `loft`, not an open shell. A real one is open at the
+ * bottom and along the flanks, but the section that is left when you close it
+ * IS the belly pan, and a closed loft shades continuously round the nose where
+ * two mirrored open patches would show a seam straight down the middle of the
+ * thing a player looks at from in front.
+ */
+function buildSportbike(spec, paint, trim, matte) {
+  const zF = 0.70, rF = 0.31, twF = 0.12;
+  const zR = -0.66, rR = spec.wheelR, twR = 0.19;
+  const wheels = [[0, rF, zF, rF, twF, 0], [0, rR, zR, rR, twR, 0]];
+
+  const fz = (y) => 0.440 - 0.425 * (y - 0.900);     // 23 deg of rake
+  const topY = 0.885, botY = 0.660;
+
+  // --- frame: twin alloy beams round the outside of the engine -------------
+  for (const sx of [-1, 1]) {
+    trim.tube([sx * 0.075, 0.845, fz(0.845) - 0.030], [sx * 0.150, 0.760, 0.180], 0.038, 8, ALLOY, true);
+    trim.tube([sx * 0.150, 0.760, 0.180], [sx * 0.140, 0.680, -0.120], 0.040, 8, ALLOY, true);
+    trim.tube([sx * 0.140, 0.680, -0.120], [sx * 0.110, 0.430, -0.150], 0.034, 8, ALLOY, true);
+  }
+  matte.tube([0, topY + 0.03, fz(topY + 0.03) - 0.045], [0, botY - 0.02, fz(botY - 0.02) - 0.045],
+    0.042, 8, [0.13, 0.135, 0.145], true);
+
+  // --- front end -----------------------------------------------------------
+  for (const sx of [-1, 1]) {
+    const x = sx * 0.092;
+    matte.tube([x, 0.925, fz(0.925)], [x, 0.640, fz(0.640)], 0.032, 8, [0.28, 0.29, 0.31], true); // upside-down
+    trim.tube([x, 0.660, fz(0.660)], [x, rF, zF], 0.024, 8, CHROME, true);
+  }
+  for (const y of [topY, botY]) {
+    trim.tube([-0.135, y, fz(y)], [0.135, y, fz(y)], 0.026, 8, ALLOY, true);
+  }
+  fender(paint, rF, zF, rF + 0.045, 0.075, -0.55, 1.05, WHITE);
+  // Clip-ons: BELOW the top yoke and angled down. Bars above it would be the
+  // cruiser's riding position on a different frame, and the rider's pose is
+  // built on where these end up.
+  for (const sx of [-1, 1]) {
+    trim.tube([sx * 0.092, 0.858, fz(0.858)], [sx * 0.245, 0.840, 0.360], 0.016, 8, ALLOY, true);
+    matte.tube([sx * 0.180, 0.848, 0.385], [sx * 0.242, 0.841, 0.362], 0.020, 8, LEATHER, true);
+    trim.tube([sx * 0.185, 0.826, 0.372], [sx * 0.268, 0.822, 0.344], 0.009, 6, ALLOY, true);
+  }
+
+  // --- fairing -------------------------------------------------------------
+  // Slim. The first pass ran this out to a 43 cm section and the bike came
+  // back as one red torpedo with a rider sitting on it -- a fairing has to
+  // read as a skin stretched over the front of a narrow machine, and the
+  // wheel, forks and engine all have to stay visible past it.
+  // Two-tone by height, which `loft` will do for nothing: the lower half of a
+  // fairing is dark on most of these bikes, and without that break the
+  // fairing, the tank and the tail run together into one red mass from nose to
+  // tail with a rider sitting on top of it.
+  paint.loft([
+    { z: 0.860, pts: ring2(0.080, 0.860, 0.070, 14) },
+    { z: 0.740, pts: ring2(0.120, 0.820, 0.115, 14) },
+    { z: 0.580, pts: ring2(0.155, 0.760, 0.145, 14) },
+    { z: 0.400, pts: ring2(0.155, 0.690, 0.155, 14) },
+    { z: 0.220, pts: ring2(0.115, 0.618, 0.118, 14) },
+  ], [0.26, 0.26, 0.28], { capStart: true, capEnd: false, colTop: WHITE, topFrom: 0.790 });
+  // Screen: a small bubble standing off the top of the nose.
+  const scr = [];
+  for (let i = 0; i <= 3; i++) {
+    const t = i / 3, row = [];
+    const cz = 0.795 - 0.275 * t, cy = 0.928 + 0.145 * t;
+    for (let j = 0; j <= 6; j++) {
+      const u = -1 + j / 3;
+      row.push([u * (0.085 + 0.060 * t), cy - 0.030 * u * u, cz + 0.028 * u * u]);
+    }
+    scr.push(row);
+  }
+  trim.patch(scr, GLASS, [0, 0.6, 1]);
+  // Twin headlamps stacked into the nose, and mirrors on the fairing rather
+  // than on the bars -- both are sportbike signatures.
+  for (const sx of [-1, 1]) {
+    const hp = pocket(paint, matte, sx * 0.040, 0.862, 0.856, 0.032, 0.036, 0.06, 1, { rim: 0.012 });
+    // Lens at the MOUTH of the housing. Sunk to the back of the pocket it has
+    // nothing to catch and renders as more shadow -- see `pocket`.
+    trim.box(sx * 0.040, 0.868, 0.870, hp.hw * 1.8, 0.046, 0.018, 0, LAMP);
+    trim.box(sx * 0.120, 0.812, 0.775, 0.050, 0.028, 0.028, 0, AMBER);
+    mirror(trim, sx * 0.235, 0.955, 0.665, 0.046, [sx * 0.120, 0.900, 0.740], [0.16, 0.17, 0.18]);
+  }
+  // Duct in the flank of the fairing, so the side is not one blank panel.
+  for (const sx of [-1, 1]) {
+    matte.box(sx * 0.168, 0.690, 0.420, 0.018, 0.070, 0.170, 0, [0.09, 0.10, 0.11]);
+  }
+
+  // --- engine and exhaust --------------------------------------------------
+  matte.box(0, 0.330, 0.020, 0.290, 0.250, 0.320, 0, ENGINE);
+  trim.box(0, 0.560, 0.060, 0.250, 0.090, 0.230, 0, ALLOY);       // cam cover
+  // Four headers sweeping down and back into one collector under the engine,
+  // then up to a can on the right. `tube` between arbitrary points is the only
+  // thing here that can follow that.
+  for (const sx of [-1, 1]) {
+    for (const dx of [0.040, 0.110]) {
+      trim.tube([sx * dx, 0.520, 0.185], [sx * dx * 0.9, 0.330, 0.290], 0.021, 6, CHROME, true);
+      trim.tube([sx * dx * 0.9, 0.330, 0.290], [sx * dx * 0.5, 0.185, 0.090], 0.021, 6, CHROME, true);
+    }
+  }
+  trim.tube([0, 0.175, 0.100], [-0.040, 0.190, -0.230], 0.048, 10, CHROME, true);
+  matte.loft([
+    { z: -0.240, pts: ring2(0.045, 0.235, 0.045, 10, -0.055) },
+    { z: -0.420, pts: ring2(0.070, 0.360, 0.070, 10, -0.135) },
+    { z: -0.640, pts: ring2(0.062, 0.470, 0.062, 10, -0.185) },
+  ], [0.24, 0.25, 0.27], { capStart: true, capEnd: true });
+  hole(trim, matte, -0.185, 0.470, -0.642, 0.048, 0.07, -1);
+  matte.box(0, 0.145, 0.020, 0.285, 0.080, 0.430, 0, [0.09, 0.095, 0.105]);   // belly pan
+
+  // --- tank, seat, tail unit -----------------------------------------------
+  paint.loft([
+    { z: 0.440, pts: ring2(0.085, 0.815, 0.055, 12) },
+    { z: 0.280, pts: ring2(0.165, 0.840, 0.092, 12) },
+    { z: 0.060, pts: ring2(0.178, 0.845, 0.096, 12) },
+    { z: -0.090, pts: ring2(0.118, 0.855, 0.062, 12) },
+  ], WHITE, { capStart: true, capEnd: true });
+  matte.loft([
+    { z: -0.090, pts: ring2(0.105, 0.872, 0.035, 10) },
+    { z: -0.260, pts: ring2(0.130, 0.882, 0.040, 10) },
+    { z: -0.380, pts: ring2(0.115, 0.905, 0.038, 10) },
+  ], LEATHER, { capStart: false, capEnd: true });
+  // The tail runs UP and back and finishes almost at a point. A level tail is
+  // a commuter; this is the one line that carries the whole bike from behind.
+  // It is also SHORT -- carried out to the end of the wheelbase it stops being
+  // a tail unit and becomes a rocket with a bike underneath.
+  paint.loft([
+    { z: -0.340, pts: ring2(0.118, 0.898, 0.062, 12) },
+    { z: -0.520, pts: ring2(0.102, 0.938, 0.062, 12) },
+    { z: -0.660, pts: ring2(0.062, 0.976, 0.048, 12) },
+    { z: -0.730, pts: ring2(0.028, 0.992, 0.026, 12) },
+  ], WHITE, { capStart: false, capEnd: true });
+  trim.box(0, 0.988, -0.742, 0.062, 0.026, 0.018, 0, TAILC);
+  // Plate on a hanger off the swingarm side, which is where an undertail
+  // exhaust leaves room for it.
+  matte.tube([0, 0.930, -0.700], [0, 0.800, -0.775], 0.012, 6, PLASTIC, true);
+  trim.box(0, 0.760, -0.790, 0.115, 0.075, 0.012, 0, PLATE);
+
+  // --- single-sided swingarm, rear sets ------------------------------------
+  // Only one arm, which is what the name means: from the other side the wheel
+  // hangs on nothing, and that is the look. It is on the LEFT (+X), opposite
+  // the silencer, the way the bikes that have one are built.
+  matte.loft([
+    { z: -0.140, pts: ring2(0.038, 0.395, 0.075, 8, 0.140) },
+    { z: -0.420, pts: ring2(0.034, 0.360, 0.062, 8, 0.150) },
+    { z: zR, pts: ring2(0.030, rR, 0.048, 8, 0.140) },
+  ], [0.30, 0.31, 0.33], { capStart: true, capEnd: true });
+  trim.tube([0.140, rR, zR], [0.190, rR, zR], 0.055, 10, ALLOY, true);   // hub nut
+  trim.tube([0, 0.700, -0.240], [0.020, 0.430, -0.230], 0.026, 8, [0.55, 0.20, 0.16], true); // shock
+  for (const sx of [-1, 1]) {
+    trim.tube([sx * 0.115, 0.420, -0.180], [sx * 0.185, 0.400, -0.235], 0.012, 6, ALLOY, true);
+    matte.tube([sx * 0.185, 0.400, -0.235], [sx * 0.245, 0.398, -0.250], 0.017, 6, PLASTIC, true);
+  }
+
+  return wheels;
+}
+
+/**
+ * Where a rider sits, and how. One entry per bike, because the two riding
+ * positions are as different as the bikes: a cruiser rider is upright with his
+ * feet ahead of him, a sportbike rider is folded over the tank with his knees
+ * behind his hips.
+ *
+ * Signs, all of which are easy to get backwards: the limb bones hang down the
+ * -Y axis, so +x on a thigh or an upper arm swings it BACKWARD and -x swings
+ * it forward; +x on the spine leans the torso forward; +z on a bone swings it
+ * toward +X, which is the vehicle's left.
+ */
+const RIDERS = {
+  // Sitting up, hands out on pullback bars, feet on forward controls -- so the
+  // legs are nearly straight and the reach is almost horizontal.
+  cruiser: {
+    z: -0.200, hipY: 0.870, seed: 31,
+    lean: 0.08, head: -0.14,
+    shoulder: [-1.10, 0.30], elbow: [-0.40, 0.06],
+    thigh: [-0.90, 0.18], knee: 0.28, foot: -0.20,
+  },
+  // Folded over the tank: chest down 35 degrees, head back up to look through
+  // the screen, knees behind the hips and tucked into the tank.
+  sportbike: {
+    z: -0.120, hipY: 0.930, seed: 57,
+    lean: 0.74, head: -0.82,
+    shoulder: [-0.60, 0.22], elbow: [-0.22, 0.06],
+    thigh: [-1.35, 0.26], knee: 1.55, foot: -0.25,
+  },
+};
+
+// One rider mesh for the whole fleet, built once. Leathers and a helmet, so a
+// rider is legible at the distance a bike is usually seen from.
+let RIDER_GEO = null;
+function riderGeometry() {
+  if (!RIDER_GEO) {
+    RIDER_GEO = buildCharacter({
+      seed: 4242,
+      shirt: [0.14, 0.15, 0.18], pants: [0.10, 0.10, 0.12],
+      vest: [0.11, 0.12, 0.15], hat: [0.10, 0.11, 0.14],
+    });
+  }
+  return RIDER_GEO;
+}
+
+/** Poses a humanoid onto a bike and returns it, ready to add to the tilt group. */
+function makeRider(hand) {
+  const p = RIDERS[hand];
+  const h = makeHumanoid({ geometry: riderGeometry(), seed: p.seed, scale: 0.96 });
+  const b = h.bones;
+  b[BONES.spine].rotation.x = p.lean * 0.45;
+  b[BONES.chest].rotation.x = p.lean * 0.55;
+  b[BONES.neck].rotation.x = p.head * 0.4;
+  b[BONES.head].rotation.x = p.head * 0.6;
+  for (const [s, sh, el, th, kn, ft] of [
+    [-1, BONES.shoulderL, BONES.elbowL, BONES.thighL, BONES.kneeL, BONES.footL],
+    [1, BONES.shoulderR, BONES.elbowR, BONES.thighR, BONES.kneeR, BONES.footR],
+  ]) {
+    b[sh].rotation.set(p.shoulder[0] - p.lean, 0, s * p.shoulder[1]);
+    b[el].rotation.set(p.elbow[0], 0, s * p.elbow[1]);
+    b[th].rotation.set(p.thigh[0], 0, s * p.thigh[1]);
+    b[kn].rotation.x = p.knee;
+    b[ft].rotation.x = p.foot;
+  }
+  // 0.927 is the hip height of the unscaled character -- see peds.js `J`.
+  h.group.position.set(0, p.hipY - 0.927 * h.scale, p.z);
+  return h;
+}
+
+/**
+ * The convertible: a US two-seater with the roof taken off, which is a
+ * different problem from every other body here rather than the same one with
+ * fewer panels.
+ *
+ * Nothing is lofted above the beltline at all -- no greenhouse, no roof, no
+ * pillars past the screen header. What that leaves is an open box, and the
+ * whole shape depends on what is INSIDE it: a floor, a tub, two seats, a dash
+ * and a wheel. Without those you are looking down through the beltline at the
+ * far sill and the car reads as an empty shell, which is exactly what a
+ * roofless body is if nobody builds the interior.
+ *
+ * The cockpit is built the same way every other opening here is: as a recess
+ * whose rim stands proud of the deck. There is no boolean operation in this
+ * builder, so the aperture cannot be cut out of the loft -- but a tub dropped
+ * in with its rim standing 2 cm above the deck hides the shell underneath from
+ * every angle, and what reads is an opening.
+ */
+function buildConvertible(spec, paint, trim, matte) {
+  const wr = spec.wheelR;
+  const nose = spec.len / 2, tail = -spec.len / 2;
+  const zF = 1.34, zR = -1.30;                 // 2.64 m wheelbase
+
+  const halfW = curve([
+    [tail, 0.90], [-2.00, 0.97], [zR, 1.00], [-0.55, 0.93], [0.30, 0.93],
+    [zF, 0.99], [2.00, 0.94], [nose, 0.86],
+  ]);
+  const sillY = curve([
+    [tail, 0.32], [-1.90, 0.26], [-0.60, 0.24], [0.60, 0.24], [1.90, 0.26], [nose, 0.32],
+  ]);
+  // Flat and low along the whole flank. With no roof over it the beltline IS
+  // the top of the car, and a dipping one would leave the doors looking like a
+  // coupe someone had cut the roof off with a saw.
+  const beltY = curve([
+    [tail, 0.985], [-1.95, 1.010], [zR, 1.020], [-0.60, 1.005], [0.30, 1.000],
+    [0.90, 0.998], [1.40, 0.980], [1.95, 0.945], [nose, 0.920],
+  ]);
+  const tuckAt = curve([
+    [tail, 0.88], [zR, 0.95], [-0.60, 0.88], [0.60, 0.88], [zF, 0.95], [nose, 0.88],
+  ]);
+  const topAt = curve([
+    [tail, 0.90], [-1.80, 0.95], [0.80, 0.95], [1.50, 0.93], [2.10, 0.86], [nose, 0.78],
+  ]);
+  // The cockpit floor, as a curve rather than a step: the ramp up at the front
+  // is the scuttle the dash sits under and the ramp at the back is the deck
+  // the folded top stacks on, both of which a convertible has to have.
+  const cockF = 0.88, cockR = -1.06, floorY = 0.520;
+  // The ramp in FRONT is short on purpose: it is the firewall, and the screen
+  // stands just behind it. Drawn out over 30 cm instead it becomes a wall
+  // rising in front of the windscreen, which is a scuttle in the wrong place.
+  const deckDip = curve([
+    [cockR - 0.24, 1.06], [cockR, floorY], [cockF, floorY], [cockF + 0.14, 1.06],
+  ]);
+  const { geom, half, endProf } = bodyCore(spec, paint, matte, {
+    halfW, sillY, beltY, tuckAt, topAt, zF, zR,
+    archR: 0.56, archGap: 0.06, creaseAt: 0.64, tumble: 0.95,
+    deckDrop: 0.026, lipOut: 0.048, endRound: 0.14, endMin: 0.90,
+    deckDip,
+  });
+
+  const twF = 0.235, twR = 0.275;
+  const wxF = geom(zF).wb - twF / 2 + 0.02;
+  const wxR = geom(zR).wb - twR / 2 + 0.02;
+  const wheels = [
+    [-wxF, wr, zF, wr, twF], [wxF, wr, zF, wr, twF],
+    [-wxR, wr, zR, wr, twR], [wxR, wr, zR, wr, twR],
+  ];
+
+  // --- cockpit: the tub the loft dips into ---------------------------------
+  // The interior is laid ON the dipped section's own points, 5 mm proud, the
+  // same trick the roof panels use. Registered by construction, so the trim
+  // cannot drift off the opening it is lining -- and it has to be a surface of
+  // its own regardless, because a `loft` forces every normal outward from the
+  // ring's centre and the inside of a tub faces the other way.
+  const NZ = 18;
+  const tubRows = [], topEdge = [];
+  for (let i = 0; i <= NZ; i++) {
+    const z = cockR - 0.16 + ((cockF - cockR + 0.30) * i) / NZ;
+    const L = half(z, -1), R = half(z, 1);
+    const row = [];
+    for (const k of [9, 10, 11]) row.push([L[k][0] * 0.985, L[k][1] + 0.005, z]);
+    for (const k of [11, 10, 9]) row.push([R[k][0] * 0.985, R[k][1] + 0.005, z]);
+    tubRows.push(row);
+    topEdge.push([L[8], R[8], z]);
+  }
+  matte.patch(tubRows, [0.055, 0.058, 0.065], [0, 1, 0]);
+  for (const sx of [-1, 1]) {
+    // Roll over the top of the door: painted, between the shoulder and the
+    // inner lip, which is what a convertible has instead of a window frame.
+    paint.patch([
+      topEdge.map(([L, R, z]) => (sx < 0 ? [L[0], L[1], z] : [R[0], R[1], z])),
+      tubRows.map((r) => (sx < 0 ? [r[0][0], r[0][1] + 0.004, r[0][2]] : [r[5][0], r[5][1] + 0.004, r[5][2]])),
+    ], WHITE, [sx, 0.5, 0]);
+  }
+  // Tunnel and a rear bulkhead, so the floor is not one flat sheet.
+  matte.box(0, floorY, -0.200, 0.240, 0.105, 1.00, 0, [0.125, 0.128, 0.138]);
+  matte.box(0, floorY, cockR + 0.075, 0.860, 0.230, 0.070, 0, [0.09, 0.095, 0.105]);
+
+  // Seats: a cushion and a raked back, built as a lathe up Y so the back can
+  // lean without `box`'s yaw-only rotation getting in the way.
+  const seat = (sx) => {
+    const cx = sx * 0.300, cz = -0.320;
+    matte.loftY([
+      { y: floorY + 0.030, pts: ring2(0.220, cz, 0.240, 10, cx) },
+      { y: floorY + 0.150, pts: ring2(0.235, cz, 0.250, 10, cx) },
+      { y: floorY + 0.200, pts: ring2(0.210, cz + 0.02, 0.220, 10, cx) },
+    ], LEATHER, { capStart: true, capEnd: true });
+    // Backrest, raked and tall enough to stand above the beltline -- a seat
+    // whose top is under the door line cannot be seen from outside the car at
+    // all, and the interior is the whole point of this body.
+    matte.loftY([
+      { y: floorY + 0.180, pts: ring2(0.215, cz - 0.190, 0.085, 10, cx) },
+      { y: floorY + 0.380, pts: ring2(0.220, cz - 0.245, 0.080, 10, cx) },
+      { y: floorY + 0.560, pts: ring2(0.190, cz - 0.305, 0.070, 10, cx) },
+    ], LEATHER, { capStart: true, capEnd: true });
+    matte.box(cx, floorY + 0.575, cz - 0.330, 0.185, 0.135, 0.095, 0, LEATHER);   // head restraint
+  };
+  seat(-1); seat(1);
+
+  // Dash, binnacle and a wheel on a raked column. The wheel is a ring of tubes
+  // rather than a torus primitive, since there is not one here.
+  const cowlY = beltY(cockF);
+  matte.patch([
+    [[-0.560, cowlY - 0.020, cockF - 0.030], [0, cowlY - 0.010, cockF - 0.045], [0.560, cowlY - 0.020, cockF - 0.030]],
+    [[-0.545, cowlY - 0.150, cockF - 0.220], [0, cowlY - 0.140, cockF - 0.235], [0.545, cowlY - 0.150, cockF - 0.220]],
+    [[-0.520, floorY + 0.130, cockF - 0.250], [0, floorY + 0.140, cockF - 0.265], [0.520, floorY + 0.130, cockF - 0.250]],
+  ], [0.145, 0.150, 0.160], [0, 0.6, -1]);
+  // Bright strip along the top edge of the dash. Without it the dash, the tub
+  // and the footwell are three dark surfaces meeting at unlit angles and the
+  // whole front of the cockpit reads as one hole.
+  trim.tube([-0.545, cowlY - 0.014, cockF - 0.034], [0.545, cowlY - 0.014, cockF - 0.034],
+    0.014, 6, CHROME, true);
+  // Left-hand drive: the wheel goes on the +X side, which is the vehicle's own
+  // left. Built on -X it is on the kerb side of an American street.
+  trim.tube([0.170, cowlY - 0.085, cockF - 0.160], [0.470, cowlY - 0.085, cockF - 0.150],
+    0.078, 10, [0.19, 0.20, 0.21], true);        // instrument binnacle
+  // The wheel goes where a DRIVER's hands are -- about 35 cm in front of the
+  // seat back, not up against the dash. Pushed forward to look tidy against
+  // the bulkhead it leaves the cockpit reading as an empty tub with a screen.
+  const wc = [0.330, 0.915, 0.155];
+  matte.tube([0.395, 1.000, 0.560], wc, 0.024, 8, [0.16, 0.17, 0.18], true);
+  for (let i = 0; i < 12; i++) {
+    const a0 = (i / 12) * Math.PI * 2, a1 = ((i + 1) / 12) * Math.PI * 2;
+    // The rim lies in a plane raked back 30 degrees, so its z varies with the
+    // point's height -- a wheel built flat reads as a plate on the dash.
+    const p = (a) => [wc[0] + Math.cos(a) * 0.175, wc[1] + Math.sin(a) * 0.175 * 0.87,
+      wc[2] - Math.sin(a) * 0.175 * 0.50];
+    // Bright rim, into `trim`. A dark-grey wheel in a dark tub is invisible
+    // however carefully it is placed -- and a period wheel is chrome and wood
+    // anyway, so the thing that reads is also the thing that is right.
+    trim.tube(p(a0), p(a1), 0.020, 6, [0.62, 0.50, 0.34]);
+  }
+  for (const a of [1.7, 3.8, 5.9]) {
+    trim.tube(wc, [wc[0] + Math.cos(a) * 0.155, wc[1] + Math.sin(a) * 0.135, wc[2] - Math.sin(a) * 0.078],
+      0.013, 6, ALLOY, true);
+  }
+  trim.tube([wc[0], wc[1], wc[2] + 0.010], [wc[0], wc[1], wc[2] - 0.020], 0.048, 10, CHROME, true);
+  matte.box(-0.180, cowlY - 0.110, cockF - 0.185, 0.320, 0.105, 0.14, 0, [0.19, 0.20, 0.21]);  // glovebox lid
+  trim.tube([-0.055, floorY + 0.150, -0.080], [-0.060, floorY + 0.290, -0.045], 0.016, 6, CHROME, true); // shifter
+
+  // --- windscreen frame and roll hoops -------------------------------------
+  const hdrZ = 0.460, hdrY = spec.roof, baseY = cowlY + 0.010;
+  const scrRows = [];
+  for (let i = 0; i <= 3; i++) {
+    const t = i / 3, row = [];
+    const cz = cockF - 0.020 + (hdrZ - cockF + 0.020) * t, cy = baseY + (hdrY - baseY) * t;
+    for (let j = 0; j <= 6; j++) {
+      const u = -1 + j / 3;
+      row.push([u * (0.560 - 0.055 * t), cy - 0.030 * u * u, cz - 0.075 * u * u]);
+    }
+    scrRows.push(row);
+  }
+  trim.patch(scrRows, GLASS, [0, 0.5, 1]);
+  // A-pillars off the screen's OWN edge points, and a header across the top.
+  // Sized by eye they end up beside the glass rather than on it -- the sports
+  // car's first pillar was a pipe lying on the roof for the same reason.
+  for (const sx of [-1, 1]) {
+    for (let i = 0; i < 3; i++) {
+      const a = scrRows[i][scrRows[i].length - 1], b2 = scrRows[i + 1][scrRows[i + 1].length - 1];
+      trim.tube([sx * a[0], a[1], a[2]], [sx * b2[0], b2[1], b2[2]], 0.028, 8, CHROME, true);
+    }
+  }
+  const hdr = scrRows[3];
+  trim.tube([hdr[0][0], hdr[0][1], hdr[0][2]], [hdr[hdr.length - 1][0], hdr[hdr.length - 1][1], hdr[hdr.length - 1][2]],
+    0.030, 8, CHROME, true);
+  // Roll hoops behind the seats. Two of them, and they are the only thing that
+  // stands above the beltline behind the screen.
+  for (const sx of [-1, 1]) {
+    const hz = -0.760, hy = beltY(hz);
+    const arc = [];
+    for (let i = 0; i <= 5; i++) {
+      const a = (i / 5) * Math.PI * 0.5;
+      arc.push([sx * (0.370 - 0.155 * Math.sin(a) * Math.sin(a)), hy + 0.300 * Math.sin(a), hz - 0.030 * Math.sin(a)]);
+    }
+    for (let i = 0; i < 5; i++) trim.tube(arc[i], arc[i + 1], 0.030, 8, [0.55, 0.57, 0.60], true);
+  }
+
+  // --- folded top stack ----------------------------------------------------
+  // A soft top does not disappear; it stacks behind the seats, and the deck
+  // over it is the reason a convertible's tail is longer than a coupe's.
+  matte.loft([
+    { z: -0.980, pts: ring2(0.520, beltY(-0.98) - 0.055, 0.085, 12) },
+    { z: -1.180, pts: ring2(0.545, beltY(-1.18) - 0.010, 0.115, 12) },
+    { z: -1.420, pts: ring2(0.500, beltY(-1.42) - 0.020, 0.100, 12) },
+  ], [0.085, 0.09, 0.10], { capStart: true, capEnd: true });
+  for (let i = 0; i < 3; i++) {
+    // The bows showing through the cover. Evenly spaced bright bars read as a
+    // grille laid on the deck; three dark ones read as folded fabric.
+    matte.box(0, beltY(-1.18) + 0.090 - i * 0.006, -1.075 - i * 0.115, 0.980 - i * 0.05, 0.014, 0.028, 0,
+      [0.055, 0.058, 0.065]);
+  }
+  // Body-colour lip round the front of the well, which is what the tonneau
+  // shuts against.
+  paint.box(0, beltY(-0.98) - 0.030, -0.950, 1.120, 0.045, 0.075, 0, WHITE);
+
+  // --- front fascia --------------------------------------------------------
+  const GRILLE = [0, 0.640, 0.520, 0.090], LAMP_A = [0.610, 0.680, 0.140, 0.070];
+  const INTAKE = [0, 0.440, 0.440, 0.045];
+  const TAILA = [0.400, 0.700, 0.230, 0.080], PIPE = [0.420, 0.560, 0.038, 0.038];
+  endFace(paint, nose, 1, endProf(nose), [GRILLE, LAMP_A, INTAKE], WHITE);
+  endFace(paint, tail, -1, endProf(tail), [TAILA, PIPE], WHITE);
+
+  const gp = pocket(paint, matte, GRILLE[0], GRILLE[1], nose, GRILLE[2], GRILLE[3], 0.14, 1,
+    { rim: 0.032, rimCol: CHROME });
+  for (let i = -6; i <= 6; i++) {
+    trim.box(i * 0.078, GRILLE[1], gp.z + 0.015, 0.018, 0.150, 0.03, 0, [0.28, 0.29, 0.31]);
+  }
+  for (const sx of [-1, 1]) {
+    const hp = pocket(paint, matte, sx * LAMP_A[0], LAMP_A[1], nose, LAMP_A[2], LAMP_A[3], 0.10, 1,
+      { rim: 0.024, rimCol: CHROME });
+    trim.box(sx * LAMP_A[0], 0.692, nose - 0.030, hp.hw * 1.9, 0.074, 0.024, 0, LAMP);
+    trim.box(sx * LAMP_A[0], 0.632, hp.z + 0.045, hp.hw * 1.9, 0.022, 0.024, 0, AMBER);
+  }
+  pocket(paint, matte, INTAKE[0], INTAKE[1], nose, INTAKE[2], INTAKE[3], 0.11, 1, { rim: 0.024 });
+  trim.box(0, 0.370, nose + 0.008, 1.52, 0.085, 0.12, 0, CHROME);
+  trim.box(0, 0.395, nose + 0.046, 0.42, 0.135, 0.02, 0, PLATE);
+
+  // --- rear ----------------------------------------------------------------
+  for (const sx of [-1, 1]) {
+    const tp = pocket(paint, matte, sx * TAILA[0], TAILA[1], tail, TAILA[2], TAILA[3], 0.07, -1,
+      { rim: 0.026, rimCol: CHROME });
+    trim.box(sx * TAILA[0], 0.700, tail + 0.022, tp.hw * 1.9, 0.135, 0.026, 0, TAILC);
+    trim.box(sx * (TAILA[0] + 0.140), 0.700, tail + 0.022, 0.075, 0.135, 0.026, 0, AMBER);
+    hole(trim, matte, sx * PIPE[0], PIPE[1], tail, 0.050, 0.12, -1);
+  }
+  trim.box(0, 0.370, tail - 0.008, 1.52, 0.085, 0.12, 0, CHROME);
+  trim.box(0, 0.560, tail - 0.026, 0.42, 0.135, 0.02, 0, PLATE);
+
+  // --- flanks --------------------------------------------------------------
+  for (const sx of [-1, 1]) {
+    trim.box(sx * (geom(0).wb + 0.008), 0.250, 0, 0.028, 0.048, 2.00, 0, CHROME);
+    // One shut line: this is a two-door, and the door is long.
+    const rows = [-0.009, 0.009].map((dz) =>
+      half(0.94 + dz, sx).slice(2, 9).map(([x, y]) => [x + sx * 0.005, y, 0.94 + dz]));
+    matte.patch(rows, [0.13, 0.14, 0.15], [sx, 0, 0]);
+    const hg = geom(-0.10);
+    trim.tube([sx * hg.w * 0.985, hg.yc + 0.09, -0.20], [sx * hg.w * 0.985, hg.yc + 0.09, 0.00],
+      0.017, 6, CHROME, true);
+    // Mirror on the door shoulder, at the base of the A-pillar.
+    paint.tube([sx * 0.760, 1.000, 0.760], [sx * 0.870, 1.020, 0.720], 0.020, 6, WHITE, true);
+    paint.box(sx * 0.905, 0.985, 0.688, 0.100, 0.085, 0.055, 0, WHITE);
+    trim.box(sx * 0.905, 0.992, 0.660, 0.086, 0.066, 0.02, 0, GLASS);
+    // Side gill behind the front arch, the one flank feature.
+    for (let i = 0; i < 3; i++) {
+      matte.box(sx * (geom(0.70).w + 0.004), geom(0.70).yc - 0.08 + i * 0.048, 0.70,
+        0.012, 0.030, 0.22, 0, [0.10, 0.11, 0.12]);
+    }
   }
 
   return wheels;
@@ -1994,6 +2781,7 @@ function buildGeneric(spec, paint, trim, matte) {
 const HAND_BUILT = {
   sports: buildSports, muscle: buildMuscle,
   sedan: buildSedan, suv: buildSuv, pickup: buildPickup,
+  convertible: buildConvertible, cruiser: buildCruiser, sportbike: buildSportbike,
 };
 
 function buildType(spec) {
@@ -2010,15 +2798,19 @@ function buildType(spec) {
     return b;
   };
   const trimW = clone(trim), matteW = clone(matte);
-  for (const [ax, ay, az, r, w] of wheels) addWheel(trimW, matteW, ax, ay, az, r, w, Math.sign(ax) || 1);
+  // A wheel may declare its own outboard side; a bike's are on the centreline,
+  // where `Math.sign(ax)` says nothing.
+  const outOf = ([ax, , , , , o]) => (o !== undefined ? o : (Math.sign(ax) || 1));
+  for (const wl of wheels) addWheel(trimW, matteW, wl[0], wl[1], wl[2], wl[3], wl[4], outOf(wl));
   // The detailed build needs a wheel geometry per distinct size AND per side:
   // the spokes and brake disc are only on the outboard face, so the left and
   // right wheels are mirror images and cannot share a buffer. Staggered tyres
   // (a wider rear than front) are what makes that worth indexing rather than
   // building one.
   const geoKey = new Map(), wheelGeos = [];
-  const placed = wheels.map(([ax, ay, az, r, w]) => {
-    const out = Math.sign(ax) || 1;
+  const placed = wheels.map((wl) => {
+    const [ax, ay, az, r, w] = wl;
+    const out = outOf(wl);
     const k = `${r}|${w}|${out}`;
     let gi = geoKey.get(k);
     if (gi === undefined) {
@@ -2093,6 +2885,11 @@ export class Vehicle {
     this.tilt = new THREE.Group();
     this.tilt.add(paintMesh, this.trimMesh, this.matteMesh);
     this.group.add(this.tilt);
+    // A bike carries its rider. He goes in the tilt group, so he leans with it
+    // -- parented to `group` instead he would stay bolt upright through every
+    // corner while the bike went over underneath him.
+    this.rider = this.spec.moto ? makeRider(this.spec.hand) : null;
+    if (this.rider) this.tilt.add(this.rider.group);
     this.wheelMeshes = [];
 
     this.x = 0; this.y = 0; this.z = 0;
@@ -2155,14 +2952,18 @@ export class Vehicle {
     const at = (dx, dz) => this.city.groundAt(this.x + dx, this.z + dz, this.y + 1.5, this.lift);
     const fh = at(f.x * this.halfLen, f.z * this.halfLen);
     const bh = at(-f.x * this.halfLen, -f.z * this.halfLen);
-    const lh = at(rx * this.halfWid, rz * this.halfWid);
-    const rh = at(-rx * this.halfWid, -rz * this.halfWid);
+    // Two contact patches for a bike, four for a car -- see update() for why
+    // the cross-car pair is wrong on something with no track at all.
+    const two = !!this.spec.moto;
+    const lh = two ? 0 : at(rx * this.halfWid, rz * this.halfWid);
+    const rh = two ? 0 : at(-rx * this.halfWid, -rz * this.halfWid);
     this.pitch = Math.atan2(bh - fh, this.halfLen * 2);
-    this.roll = Math.atan2(lh - rh, this.halfWid * 2); // see update(): +X is raised by +rotation.z
-    // Rest on the plane through the four contact patches, not on the ground
-    // under the centre -- otherwise a car parked across a camber sits with one
-    // pair of wheels buried and the other pair in the air.
-    this.y = (fh + bh + lh + rh) / 4;
+    // see update(): +X is raised by +rotation.z. A parked bike stands upright.
+    this.roll = two ? 0 : Math.atan2(lh - rh, this.halfWid * 2);
+    // Rest on the plane through the contact patches, not on the ground under
+    // the centre -- otherwise a car parked across a camber sits with one pair
+    // of wheels buried and the other pair in the air.
+    this.y = two ? (fh + bh) / 2 : (fh + bh + lh + rh) / 4;
     this.sync();
   }
 
@@ -2249,11 +3050,16 @@ export class Vehicle {
     const latDemand = Math.abs(yawRate * this.vLong);
     const braking = brake > 0 && this.vLong > 0.4 ? 0.75 : 1;
     const latMax = spec.latA * braking * (hand > 0.5 ? 0.45 : 1);
+    // Signed lateral acceleration the tyres are actually delivering, which is
+    // what a bike leans against -- the demand before the limiter would lay one
+    // flat on the road at a cornering speed it cannot hold anyway.
+    let latAcc = yawRate * this.vLong;
     if (latDemand > latMax && Math.abs(this.vLong) > 1) {
       const excess = latMax / latDemand;
       // Give back the yaw the tyres cannot support.
       this.heading -= yawRate * dt * (1 - excess);
       this.understeer = clamp((latDemand / latMax - 1) * 1.6, 0, 1);
+      latAcc *= excess;
     } else {
       this.understeer = 0;
     }
@@ -2278,11 +3084,17 @@ export class Vehicle {
     const gAt = (ox, oz) => this.city.groundAt(this.x + ox, this.z + oz, this.y + 1.5, this.lift);
     const fh = gAt(f2.x * this.halfLen, f2.z * this.halfLen);
     const bh = gAt(-f2.x * this.halfLen, -f2.z * this.halfLen);
-    const lh = gAt(rx2 * this.halfWid, rz2 * this.halfWid);
-    const rh = gAt(-rx2 * this.halfWid, -rz2 * this.halfWid);
+    // A bike has TWO contact patches, both on the centreline. Sampling out to
+    // the half-width and averaging four is right for a car straddling a road's
+    // camber; on a bike those two samples are the gutter and the crown of a
+    // road it is nowhere near, and the average buries it or floats it by half
+    // the camber. Two samples also cost two `groundAt` calls instead of four.
+    const two = !!spec.moto;
+    const lh = two ? 0 : gAt(rx2 * this.halfWid, rz2 * this.halfWid);
+    const rh = two ? 0 : gAt(-rx2 * this.halfWid, -rz2 * this.halfWid);
 
     // vertical: follow ground, with a little air time over crests
-    const target = (fh + bh + lh + rh) / 4;
+    const target = two ? (fh + bh) / 2 : (fh + bh + lh + rh) / 4;
     if (this.y > target + 0.25) {
       this.vy -= 22 * dt;
       this.y += this.vy * dt;
@@ -2302,7 +3114,15 @@ export class Vehicle {
     // Reversed, the car leaned into the slope instead of along it: measured on
     // a 2.4 deg cross-slope, the +X wheels sat 7.2 cm under the road while the
     // other pair floated 7.1 cm above it, which is the two-wheels-in-the-air.
-    const tgtRoll = Math.atan2(lh - rh, this.halfWid * 2) + clamp(this.vLat, -9, 9) * 0.016;
+    // A motorcycle leans INTO the corner instead of rolling out of it, at the
+    // angle that balances it: tan(lean) = lateral acceleration / g. `rotation.z`
+    // raises local +X and a positive yaw rate turns the bike toward +X, so
+    // leaning in is a NEGATIVE roll -- the sign that is easiest to get
+    // backwards here, and a bike leaning out of its corners is unmissable.
+    // Faded out below walking pace so a parked bike stands up straight.
+    const tgtRoll = two
+      ? -Math.atan2(latAcc, 9.81) * clamp((sp - 0.8) / 2.5, 0, 1)
+      : Math.atan2(lh - rh, this.halfWid * 2) + clamp(this.vLat, -9, 9) * 0.016;
     this.pitch = lerp(this.pitch, tgtPitch, 1 - Math.exp(-10 * dt));
     this.roll = lerp(this.roll, tgtRoll, 1 - Math.exp(-10 * dt));
 
