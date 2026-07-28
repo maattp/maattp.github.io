@@ -44,6 +44,20 @@ const DRAG = 0.00040;
 const ROLL = 0.020;
 const V0_100 = 100 / 3.6;
 
+// How much punchier than real the throttle is.
+//
+// The bench measures against real-world 0-100 figures and the table declares
+// them, which is the right way to keep a bus from out-dragging a hatchback --
+// but a real family sedan takes 8.6 s to 100 km/h and in a game that feels
+// broken. You spend the whole time waiting for the car to do something.
+//
+// So the ratios between vehicles stay real and the whole scale is compressed:
+// everything accelerates ARCADE_PUNCH times harder than its spec sheet, which
+// keeps a sports car quicker than a van by the right margin while making both
+// enjoyable. Top speed, braking and grip stay honest -- those are what make a
+// corner dangerous, and they are not what makes a car feel slow.
+const ARCADE_PUNCH = 2.4;
+
 export const TYPES = {
   sedan: deriveSpec({ wheelbase: 2.98,len: 5.06, wid: 1.90, wheelR: 0.34, sill: 0.30, belt: 1.06, roof: 1.50, cab: [-0.26, 0.10], hand: 'sedan', mass: 1.0, acc: 4.1, topKph: 205, brakeM: 40, latG: 0.88 }),
   hatch: deriveSpec({ wheelbase: 2.6,len: 4.10, wid: 1.76, wheelR: 0.31, sill: 0.29, belt: 0.96, roof: 1.50, cab: [-0.30, 0.16], mass: 0.9, acc: 3.6, topKph: 185, brakeM: 41, latG: 0.85 }),
@@ -76,7 +90,7 @@ export const TYPES = {
   bus: deriveSpec({ wheelbase: 6.0,len: 12.0, wid: 2.55, wheelR: 0.50, sill: 0.50, belt: 1.30, roof: 3.10, cab: [-0.48, 0.48], bus: true, boxy: 3, mass: 4.5, acc: 1.4, topKph: 95, brakeM: 52, latG: 0.62 }),
   boxtruck: deriveSpec({ wheelbase: 4.3,len: 7.5, wid: 2.38, wheelR: 0.46, sill: 0.62, belt: 1.55, roof: 2.55, cab: [0.14, 0.46], cargo: 2.55, boxy: 2, mass: 3.0, acc: 2.5, topKph: 125, brakeM: 51, latG: 0.66 }),
   ambulance: deriveSpec({ wheelbase: 3.9,len: 6.3, wid: 2.28, wheelR: 0.42, sill: 0.56, belt: 1.42, roof: 2.35, cab: [0.16, 0.46], cargo: 2.25, boxy: 2, emergency: true, mass: 2.4, acc: 3.2, topKph: 155, brakeM: 48, latG: 0.72 }),
-  garbage: deriveSpec({ wheelbase: 4.6,len: 8.1, wid: 2.48, wheelR: 0.50, sill: 0.66, belt: 1.62, roof: 2.6, cab: [0.20, 0.46], cargo: 2.5, boxy: 2, mass: 4.0, acc: 1.2, topKph: 90, brakeM: 55, latG: 0.61 }),
+  garbage: deriveSpec({ wheelbase: 4.6,len: 8.1, wid: 2.48, wheelR: 0.50, sill: 0.66, belt: 1.62, roof: 2.6, cab: [0.20, 0.46], cargo: 2.5, boxy: 2, mass: 4.0, acc: 1.45, topKph: 90, brakeM: 55, latG: 0.61 }),
 };
 
 /**
@@ -100,6 +114,7 @@ function deriveSpec(s) {
   // The EV's pull tails off as sqrt(fade), not linearly, so the same parameter
   // carries it a good deal further -- solved as if it were linear it overshot
   // its declared top by 47 km/h.
+  s.acc *= ARCADE_PUNCH;
   const frac = s.ev ? 1 - (resist / s.acc) ** 2 : 1 - resist / s.acc;
   // A vehicle whose launch acceleration cannot even overcome its own drag at
   // the declared top speed is a table error, not a tuning choice.

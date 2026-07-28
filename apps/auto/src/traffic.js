@@ -6,7 +6,9 @@ import { clamp, lerp, angleWrap, hash2, rng, dist2 } from './util.js';
 import * as G from './geo.js';
 
 const TRAFFIC_TARGET = 26;
-const PARKED_RADIUS = 130;
+// Parked cars only exist within this radius, and each is 3 draw calls, so this
+// is a draw-call dial as much as a distance one.
+const PARKED_RADIUS = 105;
 const DESPAWN = 520;
 
 export function collideWithBuildings(v, city, onHit) {
@@ -117,7 +119,11 @@ export class TrafficSystem {
         // more for a populated city than any amount of shader work, and they
         // share geometry and two of their three materials across every
         // instance, so the cost is draw calls rather than memory.
-        if (h > 0.48) continue;
+        // Kerbside occupancy. Every parked car is 3 draw calls and there are a
+        // lot of kerbs in view at once -- measured on device, 67 vehicles were
+        // alive at once and the fleet was over half the frame's draw calls.
+        // 0.30 still reads as a lived-in street.
+        if (h > 0.30) continue;
         const key = ei * 64 + s;
         seen.add(key);
         if (this.parkedSlots.has(key)) continue;

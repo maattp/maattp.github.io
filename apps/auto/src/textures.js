@@ -469,9 +469,9 @@ function roadSurface() {
   // Patches, repairs and crack seams. These were at 3% alpha, which is under
   // one 8-bit step -- literally invisible, so the asphalt was uniform pepper
   // noise over a flat value. Greyscale only, so the tarmac never tints.
-  for (let i = 0; i < 22; i++) {
-    const l = r() > 0.5 ? 210 : 40;
-    a.g.fillStyle = `rgba(${l},${l},${l},${0.05 + r() * 0.07})`;
+  for (let i = 0; i < 8; i++) {
+    const l = r() > 0.5 ? 190 : 70;
+    a.g.fillStyle = `rgba(${l},${l},${l},${0.03 + r() * 0.03})`;
     const pw = 40 + r() * 130, ph = 20 + r() * 70;
     const px = r() * S, py = r() * S;
     a.g.fillRect(px, py, pw, ph);
@@ -480,28 +480,26 @@ function roadSurface() {
     rgh.g.fillStyle = grey(0.5 + r() * 0.3);
     rgh.g.fillRect(px, py, pw, ph);
   }
-  // Crack seams: thin dark lines with a height notch, so they catch the key
-  // light at a grazing angle instead of being a flat decal.
-  for (let i = 0; i < 30; i++) {
+  // Crack seams: a FEW, faint.
+  //
+  // This was 30 seams per tile at 50 % opacity. The tile repeats every few
+  // metres of road, so the whole city ended up under a dense net of black
+  // squiggles and the tarmac read as dried mud rather than asphalt. A road has
+  // the odd seam, not a craquelure.
+  for (let i = 0; i < 5; i++) {
     let cx = r() * S, cy = r() * S;
     let ang = r() * Math.PI * 2;
-    a.g.strokeStyle = 'rgba(18,18,20,0.5)';
-    a.g.lineWidth = 1 + r();
+    a.g.strokeStyle = 'rgba(38,38,42,0.20)';
+    a.g.lineWidth = 1 + r() * 0.6;
     a.g.beginPath();
     a.g.moveTo(cx, cy);
-    hgt.g.strokeStyle = grey(0.2);
-    hgt.g.lineWidth = 2;
-    hgt.g.beginPath();
-    hgt.g.moveTo(cx, cy);
-    for (let k = 0; k < 5; k++) {
-      ang += (r() - 0.5) * 1.1;
-      cx += Math.cos(ang) * (10 + r() * 24);
-      cy += Math.sin(ang) * (10 + r() * 24);
+    for (let k = 0; k < 4; k++) {
+      ang += (r() - 0.5) * 0.9;
+      cx += Math.cos(ang) * (14 + r() * 26);
+      cy += Math.sin(ang) * (14 + r() * 26);
       a.g.lineTo(cx, cy);
-      hgt.g.lineTo(cx, cy);
     }
     a.g.stroke();
-    hgt.g.stroke();
   }
   // polished wheel tracks: darker and much glossier
   for (const cx of [S * 0.26, S * 0.74]) {

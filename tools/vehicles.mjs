@@ -24,6 +24,8 @@ const PORT = 9231;
 const CHROME = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
 const HTTP_PORT = process.env.AUTO_HTTP_PORT || 8000;
 const JSON_OUT = process.argv.includes('--json');
+// Keep in step with ARCADE_PUNCH in apps/auto/src/vehicles.js.
+const ARCADE_PUNCH = 2.4;
 
 // Real-world bands per class, for the types we ship. 0-100 km/h in seconds,
 // top speed in km/h, 100-0 braking in metres, lateral grip in g.
@@ -31,6 +33,13 @@ const JSON_OUT = process.argv.includes('--json');
 // These are ranges a competent example of the class actually occupies, not
 // targets to hit exactly -- the point is to catch a bus that out-accelerates a
 // hatchback, not to argue about a tenth.
+//
+// ACCELERATION is the exception. The game applies ARCADE_PUNCH to every
+// throttle, because a real sedan's 8.6 s to 100 km/h feels broken to drive --
+// you spend the whole time waiting. The RATIOS between classes stay real, so
+// the accel band is divided by the same constant here and the check still
+// catches a van out-dragging a sports car. Top speed, braking and grip are
+// compared against the real figures unchanged.
 const BANDS = {
   sedan: { name: 'mid-size sedan', accel: [7.5, 11], top: [190, 235], brake: [36, 44], lat: [0.82, 0.92] },
   hatch: { name: 'small hatchback', accel: [9, 13], top: [170, 200], brake: [36, 45], lat: [0.80, 0.90] },
@@ -196,7 +205,7 @@ async function main() {
       const b = BANDS[name];
       if (!b) { console.log(`${name}: no band`); continue; }
       const marks = [
-        band(r.accel, b.accel), band(r.top, b.top),
+        band(r.accel, b.accel.map((v) => v / ARCADE_PUNCH)), band(r.top, b.top),
         band(r.brake, b.brake), band(r.lat, b.lat),
       ];
       bad += marks.filter((m) => m !== 'ok').length;
