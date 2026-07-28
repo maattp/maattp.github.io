@@ -37,6 +37,32 @@
     padding:calc(env(safe-area-inset-top) + 10px) calc(env(safe-area-inset-right) + 14px)
             calc(env(safe-area-inset-bottom) + 10px) calc(env(safe-area-inset-left) + 14px); }
 
+  /* Cinematic layer: a permanent lens vignette and a film grain, composited in
+     CSS rather than in a post-processing pass. iOS WebKit silently blackscreens
+     the render targets a real post chain would need (see CLAUDE.md), and these
+     two effects — the two that carry most of the "shot on film" read — need no
+     render target at all. Neither costs per-frame JavaScript: the grain tile is
+     rasterised once and only its transform animates, which stays on the
+     compositor. */
+  #cine { position:fixed; inset:0; pointer-events:none; z-index:9;
+    background:radial-gradient(ellipse 78% 78% at 50% 50%,
+      rgba(0,0,0,0) 38%, rgba(0,0,0,.30) 76%, rgba(0,0,0,.66) 100%); }
+  #grain { position:fixed; inset:-8%; pointer-events:none; z-index:9; opacity:.055;
+    mix-blend-mode:overlay; will-change:transform;
+    background-repeat:repeat; background-size:150px 150px;
+    background-image:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='150' height='150'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='3' stitchTiles='stitch'/></filter><rect width='150' height='150' filter='url(%23n)'/></svg>");
+    animation:grainshift .5s steps(1) infinite; }
+  /* the grain tile is a filtered SVG; on a device already dropping frames it is
+     the one part of the cinematic layer worth giving up */
+  body.lowfx #grain { display:none }
+  @keyframes grainshift {
+    0%   { transform:translate(0,0) }
+    25%  { transform:translate(-3%,2%) }
+    50%  { transform:translate(2%,-3%) }
+    75%  { transform:translate(-2%,-2%) }
+    100% { transform:translate(3%,1%) }
+  }
+
   /* blood / damage vignette */
   #vig { position:fixed; inset:0; pointer-events:none; z-index:11; opacity:0;
     background:radial-gradient(ellipse at center, rgba(90,0,0,0) 52%, rgba(120,0,0,.42) 80%, rgba(70,0,0,.86) 100%);
@@ -218,6 +244,8 @@
 <body>
 <canvas id="gl"></canvas>
 
+<div id="cine"></div>
+<div id="grain"></div>
 <div id="vig"></div>
 <div id="flash"></div>
 
@@ -352,7 +380,7 @@ import * as THREE from 'three';
      4  map data + level build    9  FX, HUD, loop, debug harness
    ============================================================================ */
 
-const VERSION = 4;                    // bump once per PR (shown bottom-right)
+const VERSION = 6;                    // bump once per PR (shown bottom-right)
 
 // ---------------------------------------------------------------- 0. config
 const CFG = {
@@ -430,6 +458,7 @@ if ('serviceWorker' in navigator && location.protocol.startsWith('http') && !QS.
    ========================================================================= */
 const Snd = (() => {
   let ctx = null, master = null, noiseBuf = null, ready = false;
+  let comp = null, verb = null, verbSend = null;
   let ambGain = null, ambNodes = [];
   let muted = store.get('mute', false);
 
@@ -439,8 +468,23 @@ const Snd = (() => {
     if (!AC) return;
     ctx = new AC();
     master = ctx.createGain();
-    master.gain.value = muted ? 0 : 0.85;
-    master.connect(ctx.destination);
+    master.gain.value = muted ? 0 : 0.9;
+    /* A limiter on the master bus. Dozens of one-shot voices summed with no
+       headroom management, so a firefight clipped into mush while a distant
+       groan was inaudible. The compressor buys back both ends at once. */
+    comp = ctx.createDynamicsCompressor();
+    comp.threshold.value = -13; comp.knee.value = 22; comp.ratio.value = 5;
+    comp.attack.value = 0.004; comp.release.value = 0.20;
+    master.connect(comp); comp.connect(ctx.destination);
+    /* Convolution reverb off a synthesised impulse. The bunker is concrete and
+       every sound in it was landing bone dry — that, more than the voices
+       themselves, is why the mix read as thin and toy-like. Voices send a
+       little by default; tails and impacts send a lot. */
+    verb = ctx.createConvolver();
+    verb.buffer = makeIR(1.6, 3.2);
+    verbSend = ctx.createGain(); verbSend.gain.value = 1;
+    const verbOut = ctx.createGain(); verbOut.gain.value = 0.55;
+    verbSend.connect(verb); verb.connect(verbOut); verbOut.connect(master);
     // 2 s of white noise, reused by every percussive/textural voice
     noiseBuf = ctx.createBuffer(1, ctx.sampleRate * 2, ctx.sampleRate);
     const d = noiseBuf.getChannelData(0);
@@ -448,9 +492,36 @@ const Snd = (() => {
     ready = true;
   }
   function resume() { if (ctx && ctx.state === 'suspended') ctx.resume(); }
+  // exponentially decaying noise plus a few discrete early reflections — the
+  // reflections are what give the tail a sense of room SIZE rather than wash
+  function makeIR(dur, decay) {
+    const n = Math.floor(ctx.sampleRate * dur);
+    const buf = ctx.createBuffer(2, n, ctx.sampleRate);
+    for (let ch = 0; ch < 2; ch++) {
+      const d = buf.getChannelData(ch);
+      for (let i = 0; i < n; i++) {
+        const t = i / n;
+        d[i] = (Math.random() * 2 - 1) * Math.pow(1 - t, decay) * (i < n * 0.015 ? 0.35 : 1);
+      }
+      for (const [ms, amp] of [[9, 0.55], [17, 0.4], [31, 0.3], [47, 0.2], [67, 0.13]]) {
+        const k = Math.floor(ctx.sampleRate * ms / 1000) + ch * 11;
+        if (k < n) d[k] += amp * (ch ? -1 : 1);
+      }
+    }
+    return buf;
+  }
+  const SEND = 0.22;
+  function route(node, send) {
+    node.connect(master);
+    const amt = send === undefined ? SEND : send;
+    if (amt > 0 && verbSend) {
+      const g = ctx.createGain(); g.gain.value = amt;
+      node.connect(g); g.connect(verbSend);
+    }
+  }
   const now = () => ctx.currentTime;
 
-  function noise(dur, gain, type, f0, f1, q) {
+  function noise(dur, gain, type, f0, f1, q, send) {
     if (!ready) return null;
     const s = ctx.createBufferSource(); s.buffer = noiseBuf; s.loop = true;
     s.playbackRate.value = 0.7 + Math.random() * 0.6;
@@ -461,11 +532,11 @@ const Snd = (() => {
     const g = ctx.createGain();
     g.gain.setValueAtTime(gain, now());
     g.gain.exponentialRampToValueAtTime(0.0008, now() + dur);
-    s.connect(bp); bp.connect(g); g.connect(master);
+    s.connect(bp); bp.connect(g); route(g, send);
     s.start(); s.stop(now() + dur + 0.02);
     return g;
   }
-  function tone(type, f0, f1, dur, gain, dest) {
+  function tone(type, f0, f1, dur, gain, dest, send) {
     if (!ready) return null;
     const o = ctx.createOscillator(); o.type = type;
     o.frequency.setValueAtTime(f0, now());
@@ -474,7 +545,8 @@ const Snd = (() => {
     g.gain.setValueAtTime(0.0001, now());
     g.gain.exponentialRampToValueAtTime(gain, now() + Math.min(0.012, dur * 0.2));
     g.gain.exponentialRampToValueAtTime(0.0008, now() + dur);
-    o.connect(g); g.connect(dest || master);
+    o.connect(g);
+    if (dest) g.connect(dest); else route(g, send);
     o.start(); o.stop(now() + dur + 0.02);
     return o;
   }
@@ -503,19 +575,21 @@ const Snd = (() => {
     toggleMute() { muted = !muted; store.set('mute', muted); if (master) master.gain.value = muted ? 0 : 0.85; return !muted; },
 
     /* --- weapons --------------------------------------------------------- */
+    /* A gunshot is five layers, not one. Mechanical transient, supersonic
+       crack, barrel body, sub thump, and a long tail that goes almost entirely
+       to the reverb — the tail is what makes it sound like a rifle in a
+       concrete room rather than a click in a vacuum. */
     shot(w, atten) {
       if (!ready) return;
       const a = atten === undefined ? 1 : atten;
-      const body = w.snd || {};
-      const punch = body.punch || 1;
-      // transient crack
-      noise(0.045 * punch, 0.55 * a, 'highpass', 2600, 900, 0.7);
-      // barrel body
-      noise(0.16 * punch, 0.42 * a, 'bandpass', body.f0 || 420, (body.f0 || 420) * 0.35, 1.1);
-      // low thump you feel more than hear
-      tone('sine', body.low || 120, (body.low || 120) * 0.4, 0.13 * punch, 0.34 * a);
-      // room tail
-      noise(0.42 * punch, 0.09 * a, 'lowpass', 1400, 300, 0.5);
+      const b = w.snd || {};
+      const punch = b.punch || 1;
+      const f0 = b.f0 || 420;
+      noise(0.016, 0.42 * a, 'highpass', 5400, 3800, 0.6, 0.04);           // action
+      noise(0.05 * punch, 0.62 * a, 'bandpass', 2500, 850, 0.8, 0.22);     // crack
+      noise(0.20 * punch, 0.52 * a, 'lowpass', f0 * 2.6, f0 * 0.5, 0.9, 0.42); // body
+      tone('sine', b.low || 120, (b.low || 120) * 0.34, 0.17 * punch, 0.44 * a, null, 0.16);
+      noise(0.60 * punch, 0.15 * a, 'lowpass', 1900, 240, 0.5, 0.95);      // tail
     },
     dryFire() { noise(0.05, 0.2, 'highpass', 3200, 1800, 1); },
     reloadClick(hard) { noise(0.05, hard ? 0.28 : 0.16, 'bandpass', hard ? 1500 : 2600, hard ? 700 : 1400, 3); },
@@ -546,10 +620,11 @@ const Snd = (() => {
       g.gain.setValueAtTime(0.0001, now());
       g.gain.exponentialRampToValueAtTime(p.g, now() + 0.12);
       g.gain.exponentialRampToValueAtTime(0.0008, now() + dur);
-      o.connect(fm); fm.connect(g); g.connect(master);
+      o.connect(fm); fm.connect(g);
+      route(g, 0.18 + (1 - clamp(p.g / 0.3, 0, 1)) * 0.55);   // distant = wetter
       o.start(); lfo.start(); o.stop(now() + dur + 0.05); lfo.stop(now() + dur + 0.05);
     },
-    hitFlesh() { noise(0.09, 0.24, 'lowpass', 700, 200, 0.8); },
+    hitFlesh() { noise(0.085, 0.34, 'lowpass', 760, 210, 0.8, 0.3); tone('sine', 150, 80, 0.07, 0.12, null, 0.2); },
     // hellhound: a snarl rather than a moan — higher, rougher, much shorter
     growl(pos, listener, yaw) {
       if (!ready) return;
@@ -569,7 +644,8 @@ const Snd = (() => {
       g.gain.setValueAtTime(0.0001, now());
       g.gain.exponentialRampToValueAtTime(p.g, now() + 0.05);
       g.gain.exponentialRampToValueAtTime(0.0008, now() + dur);
-      o.connect(bp); bp.connect(g); g.connect(master);
+      o.connect(bp); bp.connect(g);
+      route(g, 0.18 + (1 - clamp(p.g / 0.34, 0, 1)) * 0.55);
       o.start(); lfo.start(); o.stop(now() + dur + 0.05); lfo.stop(now() + dur + 0.05);
     },
     dogRound() {
@@ -602,7 +678,11 @@ const Snd = (() => {
     },
     hurt() { noise(0.28, 0.4, 'lowpass', 600, 140, 0.6); tone('sine', 110, 55, 0.3, 0.25); },
     heartbeat() { tone('sine', 58, 34, 0.16, 0.32); setTimeout(() => tone('sine', 52, 30, 0.2, 0.22), 200); },
-    step(hard) { noise(0.07, hard ? 0.1 : 0.055, 'lowpass', 420, 140, 0.7); },
+    step(hard) {
+      // footsteps were near-inaudible; they are the main cue that you are moving
+      noise(0.055, hard ? 0.22 : 0.13, 'lowpass', 380, 130, 0.7, 0.3);
+      noise(0.03, hard ? 0.10 : 0.05, 'highpass', 2600, 1500, 0.8, 0.15);
+    },
     death() { tone('sawtooth', 130, 42, 2.4, 0.24); noise(2.2, 0.16, 'lowpass', 700, 90, 0.5); },
 
     /* --- perks, drops, the box -------------------------------------------- */
@@ -952,13 +1032,21 @@ const uPower = { value: 0 };          // 0 = bunker dark, 1 = power on
 const uTimeList = [];
 let matSeq = 0;
 
-/* Injects the game's two signature material features into any built-in
-   material: (a) baked per-vertex light with a dark/powered pair blended by
-   uPower, (b) a world-space procedural surface pass. Both are additive to the
-   stock lighting, so dynamic lights (muzzle flash, the player's lamp) still
-   work on the same surfaces. */
-function siteMat(mat, fragBody, name) {
+/* Injects the game's surface features into any built-in material:
+     (a) baked per-vertex light, dark/powered pair blended by uPower
+     (b) baked ambient occlusion
+     (c) a world-space procedural surface that outputs albedo, HEIGHT and GLOSS
+
+   (c) is what moved this off a PS2 look. A flat lit polygon reads as flat no
+   matter how good the lighting is; what sells a modern surface is per-pixel
+   RELIEF and per-pixel gloss variation. Each SURF program writes `gH` (a height
+   field) and `gGloss`, and the shared code below turns the screen-space
+   derivatives of `gH` into a perturbed normal — real bump mapping with no
+   texture, no UVs and no extra memory, derived from the same noise that already
+   drew the pattern. */
+function siteMat(mat, fragBody, name, bump) {
   const key = 'site' + (++matSeq);
+  const BUMP = (bump === undefined ? 0.12 : bump).toFixed(3);
   mat.onBeforeCompile = sh => {
     sh.uniforms.uPower = uPower;
     sh.uniforms.uTime = { value: 0 };
@@ -967,21 +1055,26 @@ function siteMat(mat, fragBody, name) {
       .replace('#include <common>', `#include <common>
         attribute vec3 bakeA;
         attribute vec3 bakeB;
+        attribute float ao;
         uniform float uPower;
         varying vec3 vBake;
+        varying float vAO;
         varying vec3 vWPos;
         varying vec3 vWNrm;`)
       .replace('#include <begin_vertex>', `#include <begin_vertex>
         vBake = mix(bakeA, bakeB, uPower);
+        vAO = ao;
         vWPos = (modelMatrix * vec4(transformed, 1.0)).xyz;
         vWNrm = normalize(mat3(modelMatrix) * objectNormal);`);
     sh.fragmentShader = sh.fragmentShader
       .replace('#include <common>', `#include <common>
         varying vec3 vBake;
+        varying float vAO;
         varying vec3 vWPos;
         varying vec3 vWNrm;
         uniform float uTime;
         uniform float uPower;
+        float gH; float gGloss;
         float h21(vec2 p){ return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453123); }
         float vnoise(vec2 p){
           vec2 i = floor(p), f = fract(p); f = f * f * (3.0 - 2.0 * f);
@@ -989,9 +1082,24 @@ function siteMat(mat, fragBody, name) {
                      mix(h21(i + vec2(0,1)), h21(i + vec2(1,1)), f.x), f.y);
         }
         float fbm(vec2 p){ return vnoise(p) * 0.6 + vnoise(p * 2.03) * 0.26 + vnoise(p * 4.11) * 0.14; }
-        float band(float v, float w){ return smoothstep(0.0, w, v) * smoothstep(0.0, w, 1.0 - v); }`)
+        float band(float v, float w){ return smoothstep(0.0, w, v) * smoothstep(0.0, w, 1.0 - v); }
+        // three's perturbNormalArb: rebuild a normal from the screen-space
+        // gradient of a height field. This is the whole bump-mapping trick.
+        vec3 perturbN(vec3 n, vec3 pos, float h){
+          vec3 dPdx = dFdx(pos), dPdy = dFdy(pos);
+          float dHdx = dFdx(h), dHdy = dFdy(h);
+          vec3 r1 = cross(dPdy, n), r2 = cross(n, dPdx);
+          float det = dot(dPdx, r1);
+          vec3 grad = sign(det) * (dHdx * r1 + dHdy * r2);
+          return normalize(abs(det) * n - grad);
+        }`)
       .replace('#include <map_fragment>', `#include <map_fragment>
+        gH = 0.0; gGloss = 0.5;
         { ${fragBody || ''} }`)
+      .replace('#include <specularmap_fragment>', `#include <specularmap_fragment>
+        specularStrength *= gGloss;`)
+      .replace('#include <normal_fragment_maps>', `#include <normal_fragment_maps>
+        normal = perturbN(normal, -vViewPosition, gH * ${BUMP});`)
       /* INJECTION POINT LAW: `opaque_fragment` is the chunk that writes
          gl_FragColor from outgoingLight; everything after it (tonemapping,
          colorspace, fog, dithering) operates on gl_FragColor. Adding to
@@ -999,7 +1107,8 @@ function siteMat(mat, fragBody, name) {
          absolutely no effect — the entire baked lighting solve was invisible
          until this moved up. */
       .replace('#include <opaque_fragment>', `
-        outgoingLight += diffuseColor.rgb * vBake;
+        outgoingLight *= vAO;
+        outgoingLight += diffuseColor.rgb * vBake * vAO;
         #include <opaque_fragment>`);
   };
   // three keys its program cache on this string; without a unique key every
@@ -1012,50 +1121,77 @@ function siteMat(mat, fragBody, name) {
 // ---------------- surface programs -------------------------------------
 // Everything here is axis-aligned, so world position alone is enough to derive
 // planks, brick courses, tiling and grime at exact real-world sizes — no
-// textures, no UV authoring, and it stays crisp at any distance.
+// textures, no UV authoring, and it stays crisp at any distance. Each program
+// writes diffuseColor, gH (relief) and gGloss (specular strength).
 const SURF = {
   plank: `
     float up = abs(vWNrm.y);
     vec2 uv = mix(mix(vec2(vWPos.z, vWPos.y), vec2(vWPos.x, vWPos.y), step(abs(vWNrm.x), abs(vWNrm.z))),
                   vec2(vWPos.x, vWPos.z), up);
-    float row = floor(uv.y * 4.2);
-    float seam = band(fract(uv.y * 4.2), 0.09);
+    float rowF = uv.y * 4.2;
+    float row = floor(rowF);
+    float seam = band(fract(rowF), 0.09);
     float grain = fbm(vec2(uv.x * 7.0 + row * 13.0, uv.y * 1.2));
+    float fine = fbm(vec2(uv.x * 46.0 + row * 31.0, uv.y * 6.0));
     diffuseColor.rgb *= 0.72 + 0.36 * grain;
     diffuseColor.rgb *= 0.55 + 0.45 * seam;
     float nail = step(0.965, h21(floor(uv * vec2(1.4, 4.2))));
-    diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.14, 0.12, 0.11), nail * 0.5);`,
+    diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.14, 0.12, 0.11), nail * 0.5);
+    // boards stand proud, the gaps between them cut in, the grain ripples
+    gH = seam * 0.75 + grain * 0.22 + fine * 0.10 - nail * 0.5;
+    gGloss = 0.18 + grain * 0.34 + seam * 0.15;`,
   concrete: `
     vec2 uv = mix(vec2(vWPos.x + vWPos.z, vWPos.y), vec2(vWPos.x, vWPos.z), abs(vWNrm.y));
     float g = fbm(uv * 2.6) * 0.5 + fbm(uv * 11.0) * 0.5;
+    float pit = fbm(uv * 34.0);
     diffuseColor.rgb *= 0.74 + 0.42 * g;
-    float crack = smoothstep(0.47, 0.5, fbm(uv * 1.5 + 4.0)) * smoothstep(0.53, 0.5, fbm(uv * 1.5 + 4.0));
-    diffuseColor.rgb *= 1.0 - crack * 2.2;
+    /* Hairline cracks. The first version ran at 1.5 cycles/m and drove the
+       albedo negative, which drew fat black meanders over every wall and
+       ceiling — the surface read as polished marble, not poured concrete.
+       Real cracks are thin, frequent, and only a little darker than the slab. */
+    float cr = fbm(uv * 6.5 + 4.0);
+    float crack = smoothstep(0.485, 0.5, cr) * smoothstep(0.515, 0.5, cr);
+    diffuseColor.rgb *= 1.0 - crack * 0.62;
     float damp = smoothstep(1.4, 0.0, vWPos.y) * 0.35 * abs(vWNrm.y - 1.0);
-    diffuseColor.rgb *= 1.0 - damp * (0.4 + 0.6 * fbm(uv * 3.3));`,
+    diffuseColor.rgb *= 1.0 - damp * (0.4 + 0.6 * fbm(uv * 3.3));
+    // cracks cut in hard; the aggregate gives it tooth
+    gH = g * 0.35 + pit * 0.22 - crack * 0.9;
+    gGloss = 0.10 + damp * 0.9 + pit * 0.15;`,
   tile: `
     vec2 uv = vec2(vWPos.x, vWPos.z) * 3.4;
     float gx = band(fract(uv.x), 0.10), gy = band(fract(uv.y), 0.10);
     float grout = min(gx, gy);
     float dirt = fbm(vec2(vWPos.x, vWPos.z) * 1.1);
+    float chip = fbm(uv * 9.0);
     diffuseColor.rgb *= 0.5 + 0.55 * grout;
     diffuseColor.rgb *= 0.62 + 0.55 * dirt;
-    diffuseColor.rgb += vec3(0.03, 0.032, 0.028) * grout * (0.4 + h21(floor(uv)) * 0.6);`,
+    diffuseColor.rgb += vec3(0.03, 0.032, 0.028) * grout * (0.4 + h21(floor(uv)) * 0.6);
+    // tiles proud, grout recessed — the single most readable relief in the map
+    gH = grout * 1.0 + chip * 0.06;
+    gGloss = 0.15 + grout * 0.75 * (0.5 + 0.5 * dirt);`,
   metal: `
     vec2 uv = mix(vec2(vWPos.x + vWPos.z, vWPos.y), vec2(vWPos.x, vWPos.z), abs(vWNrm.y));
     float rib = band(fract(uv.x * 2.2), 0.22);
     diffuseColor.rgb *= 0.72 + 0.4 * rib;
     float rust = smoothstep(0.52, 0.78, fbm(uv * 1.9 + 9.0));
     diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.30, 0.13, 0.06), rust * 0.65);
-    float rivet = step(0.93, h21(floor(uv * vec2(2.2, 2.2))));
-    diffuseColor.rgb *= 1.0 - rivet * 0.25;`,
+    vec2 rc = floor(uv * vec2(2.2, 2.2));
+    float rivet = step(0.93, h21(rc));
+    float rd = length(fract(uv * vec2(2.2, 2.2)) - 0.5);
+    float dome = rivet * smoothstep(0.34, 0.10, rd);
+    diffuseColor.rgb *= 1.0 - rivet * 0.25;
+    // ribbed panels with proud rivet heads; rust eats the shine
+    gH = rib * 0.55 + dome * 1.2 - rust * 0.25;
+    gGloss = (0.55 + rib * 0.35) * (1.0 - rust * 0.8);`,
   dirt: `
     vec2 uv = vec2(vWPos.x, vWPos.z);
     float g = fbm(uv * 0.55) * 0.6 + fbm(uv * 3.1) * 0.4;
+    float grit = fbm(uv * 16.0);
     diffuseColor.rgb *= 0.55 + 0.75 * g;
-    diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.09, 0.10, 0.07), smoothstep(0.6, 0.95, fbm(uv * 0.9 + 20.0)) * 0.6);`,
+    diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.09, 0.10, 0.07), smoothstep(0.6, 0.95, fbm(uv * 0.9 + 20.0)) * 0.6);
+    gH = g * 0.5 + grit * 0.35;
+    gGloss = 0.06 + grit * 0.10;`,
 };
-
 /* three's color_fragment applies vColor only under USE_COLOR, and USE_COLOR
    makes the vertex shader read a `color` attribute. So an InstancedMesh that
    wants per-instance colour needs BOTH `vertexColors: true` AND a real colour
@@ -1126,7 +1262,6 @@ function loft(stations, seg, shape, tone) {
   g.computeVertexNormals();
   return g;
 }
-
 function phong(color, spec, shin) {
   const m = new THREE.MeshPhongMaterial({ color, specular: spec === undefined ? 0x0a0a0a : spec, shininess: shin === undefined ? 6 : shin, vertexColors: true });
   return m;
@@ -1491,7 +1626,19 @@ const Level = (() => {
   for (const w of windows) {
     lights.push({
       x: w.pos.x + w.inX * T * 0.55, y: 1.55, z: w.pos.z + w.inZ * T * 0.55,
-      col: new THREE.Color(0x9dc4ee), i: 1.30, range: 8.0, p: false,
+      col: new THREE.Color(0x9dc4ee), i: 1.30, range: 8.0, p: false, fill: true,
+    });
+  }
+
+  /* A room with no power should read as gloomy, not as a black void. Each zone
+     gets one dim, cool, always-on fill at its centre — enough to see the shape
+     of the space and find the windows, nowhere near enough to fight for. */
+  for (const zn in ZONES) {
+    const Z = ZONES[zn], [c0, r0, c1, r1] = Z.r;
+    const span = Math.max((c1 - c0), (r1 - r0)) * T;
+    lights.push({
+      x: wx((c0 + c1) / 2), y: Z.ceil * 0.62, z: wz((r0 + r1) / 2),
+      col: new THREE.Color(0x8fa6bd), i: 1.5, range: Math.max(15, span * 0.85), p: false, fill: true,
     });
   }
 
@@ -1524,13 +1671,53 @@ const Level = (() => {
     if (v === 0) { v = blocked(sx, sz, lx, lz) ? 1 : 2; visMemo[k] = v; }
     return v === 2;
   }
-  const AMB_DARK = new THREE.Color(0x28313d);
-  const AMB_LIT = new THREE.Color(0x39424a);
+  /* AUTHOR THESE IN LINEAR. `new THREE.Color(0x28313d)` is read as sRGB and
+     converted to linear by ColorManagement, so a hex that looks like 0.19 grey
+     arrives in the shader at about 0.03 — a 6x crush. Every "the rooms are too
+     dark" round-trip in this file traces back to tuning numbers that were being
+     gamma-crushed on the way in. setRGB with an explicit colour space is the
+     only way to mean what you type. */
+  const AMB_DARK = new THREE.Color().setRGB(0.075, 0.092, 0.120, THREE.LinearSRGBColorSpace);
+  const AMB_LIT = new THREE.Color().setRGB(0.150, 0.163, 0.175, THREE.LinearSRGBColorSpace);
+  /* Baked ambient occlusion. Corners, alcoves and the ground next to a wall
+     darken because less of the sky/room reaches them. Nothing sells "this is a
+     real space" faster, and nothing makes untextured geometry look flatter than
+     its absence — every surface meeting every other surface at exactly the same
+     brightness is the PS1 tell. Sampled as short grid rays over a hemisphere,
+     which is cheap because the world is already a tile grid. */
+  const AO_DIRS = [];
+  for (let i = 0; i < 10; i++) {
+    const a = (i / 10) * TAU;
+    AO_DIRS.push([Math.cos(a), 0.35, Math.sin(a)]);
+  }
+  AO_DIRS.push([0, 1, 0]);
+  function occlusion(px, py, pz, nx, ny, nz) {
+    let open = 0, total = 0;
+    for (const d of AO_DIRS) {
+      // only sample the hemisphere the surface actually faces
+      const dot = d[0] * nx + d[1] * ny + d[2] * nz;
+      if (dot <= 0.05) continue;
+      total += dot;
+      let blocked = 0;
+      for (let step = 1; step <= 4; step++) {
+        const t = step * 0.55;
+        const sx = px + d[0] * t, sy = py + d[1] * t, sz = pz + d[2] * t;
+        if (sy < 0.02) { blocked = 1 - (step - 1) / 4; break; }
+        const c = cx(sx), r = cz(sz);
+        if (c < 0 || r < 0 || c >= MW || r >= MH) continue;
+        if (solid[at(c, r)] || (!isFloor[at(c, r)] && sy < 0.1)) { blocked = 1 - (step - 1) / 4; break; }
+      }
+      open += dot * (1 - blocked * 0.85);
+    }
+    return total > 0 ? clamp(open / total, 0.25, 1) : 1;
+  }
+
   function bake(geo) {
     if (!visMemo) visMemo = new Uint8Array(lights.length * MW * MH);
     const pos = geo.attributes.position.array, nrm = geo.attributes.normal.array;
     const n = pos.length / 3;
     const A = new Float32Array(n * 3), B = new Float32Array(n * 3);
+    const AO = new Float32Array(n);
     for (let i = 0; i < n; i++) {
       const px = pos[i * 3], py = pos[i * 3 + 1], pz = pos[i * 3 + 2];
       const nx = nrm[i * 3], ny = nrm[i * 3 + 1], nz = nrm[i * 3 + 2];
@@ -1544,21 +1731,29 @@ const Level = (() => {
         const d = Math.sqrt(dx * dx + dy * dy + dz * dz);
         if (d > L2.range) continue;
         const nd = (dx * nx + dy * ny + dz * nz) / (d || 1);
-        if (nd <= 0.02) continue;
+        /* WRAPPED DIFFUSE. A hard N·L gives the floor under a lamp full value
+           and the wall beside it almost nothing — measured, walls came out 83-90%
+           pure black against 55% for floors, which is the whole "walls are all
+           black" complaint. Wrapping lets a surface angled away still catch some
+           of the source, which is also what a real room does via bounce. */
+        const wrap = clamp((nd + 0.55) / 1.55, 0, 1);
+        if (wrap <= 0.02) continue;
         if (!litFrom(li, sx, sz, L2.x, L2.z)) continue;
         // gentler than inverse-square: a squared falloff on a hand-placed
         // lamp set leaves everything past a couple of metres unreadably black
         const f = (1 - d / L2.range); const att = Math.pow(f, 1.35);
-        const k = L2.i * att * (0.25 + 0.75 * nd);
+        const k = L2.i * att * (0.18 + 0.82 * wrap);
         const cr = L2.col.r * k, cg2 = L2.col.g * k, cb = L2.col.b * k;
         br += cr; bg += cg2; bb += cb;
         if (!L2.p) { ar += cr; ag += cg2; ab += cb; }
       }
       A[i * 3] = ar; A[i * 3 + 1] = ag; A[i * 3 + 2] = ab;
       B[i * 3] = br; B[i * 3 + 1] = bg; B[i * 3 + 2] = bb;
+      AO[i] = occlusion(sx, sy, sz, nx, ny, nz);
     }
     geo.setAttribute('bakeA', new THREE.BufferAttribute(A, 3));
     geo.setAttribute('bakeB', new THREE.BufferAttribute(B, 3));
+    geo.setAttribute('ao', new THREE.BufferAttribute(AO, 1));
     return geo;
   }
 
@@ -1771,19 +1966,36 @@ const Level = (() => {
       fragmentShader: `
         varying vec3 vD; uniform float uPower;
         float h(vec2 p){ return fract(sin(dot(p, vec2(127.1,311.7))) * 43758.5453); }
+        float vn2(vec2 p){
+          vec2 i = floor(p), f = fract(p); f = f * f * (3.0 - 2.0 * f);
+          return mix(mix(h(i), h(i + vec2(1,0)), f.x), mix(h(i + vec2(0,1)), h(i + vec2(1,1)), f.x), f.y);
+        }
         void main(){
           float y = clamp(vD.y, -1.0, 1.0);
-          vec3 top = vec3(0.012, 0.020, 0.040);
-          vec3 hz  = vec3(0.075, 0.062, 0.058);
+          /* The zenith used to be vec3(0.012, 0.020, 0.040), which after ACES
+             reads as literally rgb(0,0,0). The ROOF_HOLES are the one place the
+             player looks straight up, and through them the sky was not dark —
+             it was ABSENT, so a deliberate bombed-out roof read as a hole in the
+             render. It stays night, but it is now visibly night. */
+          vec3 top = vec3(0.030, 0.044, 0.082);
+          vec3 hz  = vec3(0.085, 0.072, 0.066);
           vec3 col = mix(hz, top, smoothstep(-0.05, 0.62, y));
           // moon
           vec3 md = normalize(vec3(0.42, 0.66, -0.62));
           float m = dot(vD, md);
+          // broad glow first, so the sky brightens toward the moon rather than
+          // holding one flat value up to a hard disc
+          col += vec3(0.10, 0.12, 0.19) * pow(max(0.0, m), 6.0) * 0.55;
           col += vec3(0.85, 0.88, 1.0) * smoothstep(0.9988, 0.9997, m) * 1.6;
           col += vec3(0.25, 0.28, 0.42) * pow(max(0.0, m), 90.0) * 0.5;
-          // stars, thinned near the horizon haze
+          // thin high cloud: breaks the flat gradient so the opening reads as
+          // depth rather than as a painted panel
+          float cl = vn2(vD.xz * 3.2 + vD.y) * 0.6 + vn2(vD.xz * 7.7) * 0.4;
+          cl = smoothstep(0.45, 0.95, cl) * smoothstep(0.0, 0.35, y);
+          col = mix(col, col * 0.72 + vec3(0.028, 0.031, 0.040), cl * 0.7);
+          // stars, thinned near the horizon haze and behind the cloud
           vec2 g = floor(vD.xz * 190.0 + vD.y * 40.0);
-          float s = step(0.9975, h(g)) * smoothstep(0.06, 0.5, y);
+          float s = step(0.9965, h(g)) * smoothstep(0.06, 0.5, y) * (1.0 - cl * 0.85);
           col += vec3(s) * (0.5 + 0.5 * h(g + 3.0));
           gl_FragColor = vec4(col, 1.0);
         }`,
@@ -1873,6 +2085,7 @@ const Level = (() => {
     for (let i = 0; i < n; i++) { A[i*3]=0.30; A[i*3+1]=0.29; A[i*3+2]=0.26; Bk[i*3]=0.40; Bk[i*3+1]=0.38; Bk[i*3+2]=0.34; }
     plankGeo.setAttribute('bakeA', new THREE.InstancedBufferAttribute(A, 3));
     plankGeo.setAttribute('bakeB', new THREE.InstancedBufferAttribute(Bk, 3));
+    plankGeo.setAttribute('ao', new THREE.InstancedBufferAttribute(new Float32Array(n).fill(0.9), 1));
   }
   const plankColor = new THREE.Color();
   scene.add(plankMesh);
@@ -1886,7 +2099,11 @@ const Level = (() => {
     _v.set(wx(w.c) - w.inX * 0.06, y, wz(w.r) - w.inZ * 0.06);
     const ang = Math.atan2(az, ax);
     _q.setFromEuler(new THREE.Euler(0, -ang, tilt, 'YXZ'));
-    _s.set(T * 1.02, 0.13, 0.09);
+    /* Fit INSIDE the opening (2 * WIN_HW * T = 1.008 m). At 1.02 * T the ends
+       overhung the frame by ~10 cm each side and poked through the reveals, so
+       from any oblique angle you saw two plank stubs floating in the dark
+       cavity beside the window — the "weird line sticking out of the wall". */
+    _s.set(WIN_HW * 2 * T * 0.97, 0.13, 0.09);
     return _m.compose(_v, _q, _s);
   }
   function refreshPlanks(w) {
@@ -2261,12 +2478,133 @@ const Level = (() => {
     rebuildNav(spawnPos.x, spawnPos.z);
   }
 
+  /* ---- atmosphere -------------------------------------------------------
+     Two things were missing that no amount of surface work could supply.
+
+     (1) NOTHING GLOWED. Every authored lamp lit the room and was itself
+         invisible, so the map had light with no light SOURCES in it — the flat,
+         evenly-lit look of an early-2000s renderer. Each lamp now carries an
+         additive glow sphere. A sphere rather than a billboard so it needs no
+         per-frame orientation, with the alpha falling off toward its rim so it
+         reads as a soft volume rather than a ball.
+
+     (2) THE AIR WAS EMPTY. Real interiors are full of suspended dust, and it is
+         the single strongest cue that a space has depth: motes drift between
+         you and the far wall and the room stops being a painted backdrop. They
+         wrap inside a box that follows the player, so a few hundred cover the
+         whole map.
+
+     Deliberately NOT bloom. Bloom needs a render target, and iOS WebKit
+     silently blackscreens the ones this would want (see CLAUDE.md) — an
+     unshippable failure mode in exchange for an effect these two approximate. */
+  // instColors: instanceColor without a real `color` attribute renders black
+  const glowGeo = instColors(new THREE.SphereGeometry(1, 10, 7));
+  function softAdditive(mat, power) {
+    mat.onBeforeCompile = sh => {
+      sh.vertexShader = sh.vertexShader
+        .replace('#include <common>', `#include <common>
+          varying vec3 vGN; varying vec3 vGV;`)
+        /* `normal`, not `objectNormal`: MeshBasicMaterial has no lighting, so
+           it never includes <beginnormal_vertex> and objectNormal does not
+           exist. And the view position has to come from `mvPosition` AFTER
+           <project_vertex> — that is the only point at which the instance
+           matrix has been applied, and these are instanced. */
+        .replace('#include <begin_vertex>', `#include <begin_vertex>
+          vGN = normalize(normalMatrix * normal);`)
+        .replace('#include <project_vertex>', `#include <project_vertex>
+          vGV = mvPosition.xyz;`);
+      sh.fragmentShader = sh.fragmentShader
+        .replace('#include <common>', `#include <common>
+          varying vec3 vGN; varying vec3 vGV;`)
+        .replace('#include <opaque_fragment>', `
+          // 1 through the middle of the sphere, 0 at its silhouette
+          diffuseColor.a *= pow(abs(dot(normalize(vGN), normalize(-vGV))), ${power.toFixed(2)});
+          #include <opaque_fragment>`);
+    };
+    mat.customProgramCacheKey = () => 'soft' + power;
+    return mat;
+  }
+  const glowMesh = new THREE.InstancedMesh(glowGeo,
+    softAdditive(new THREE.MeshBasicMaterial({
+      vertexColors: true, transparent: true, opacity: 0.78, depthWrite: false,
+      blending: THREE.AdditiveBlending, toneMapped: false,
+    }), 3.4), Math.max(1, lights.length));
+  glowMesh.frustumCulled = false;
+  glowMesh.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(lights.length * 3), 3);
+  scene.add(glowMesh);
+  {
+    const m = new THREE.Matrix4();
+    lights.forEach((L2, i) => {
+      /* A halo is a BULB, not a volume of fog. Scaling it with the lamp's
+         reach (a 15 m lantern got a 1.35 m ball) put translucent orange
+         beachballs in the middle of the lobby and blew out the ceiling above
+         the chandelier. It scales with reach only faintly, and stays small. */
+      const r = clamp(0.30 + L2.range * 0.022, 0.32, 0.70) * (L2.p ? 1 : 0.9);
+      m.makeScale(r, r, r); m.setPosition(L2.x, L2.y, L2.z);
+      glowMesh.setMatrixAt(i, m);
+    });
+    glowMesh.instanceMatrix.needsUpdate = true;
+  }
+  function refreshGlow(pw) {
+    const c = glowMesh.instanceColor;
+    lights.forEach((L2, i) => {
+      // `fill` marks the structural lights — the per-zone ambient and the
+      // moonlight spill at each window. They are not fixtures and must not
+      // sprout a visible bulb in mid-air. Tagged at the call site rather than
+      // inferred from range, because the lobby lantern is a real lamp with a
+      // 15 m reach and any range test large enough to catch the fills ate it.
+      const k = (L2.fill ? 0.0 : 1.0) * (L2.p ? pw : 1) * Math.min(1, L2.i * 0.42);
+      c.setXYZ(i, L2.col.r * k, L2.col.g * k, L2.col.b * k);
+    });
+    c.needsUpdate = true;
+  }
+  refreshGlow(0);
+
+  const MOTES = 340, MOTE_BOX = 15;
+  const moteMesh = new THREE.InstancedMesh(instColors(new THREE.SphereGeometry(1, 5, 4)),
+    softAdditive(new THREE.MeshBasicMaterial({
+      vertexColors: true, transparent: true, opacity: 0.5, depthWrite: false,
+      blending: THREE.AdditiveBlending, toneMapped: false,
+    }), 1.4), MOTES);
+  moteMesh.frustumCulled = false;
+  moteMesh.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(MOTES * 3), 3);
+  scene.add(moteMesh);
+  const moteP = new Float32Array(MOTES * 3), moteV = new Float32Array(MOTES * 3), moteR = new Float32Array(MOTES);
+  for (let i = 0; i < MOTES; i++) {
+    moteP[i * 3] = rand(-MOTE_BOX, MOTE_BOX); moteP[i * 3 + 1] = rand(0.2, 4.2); moteP[i * 3 + 2] = rand(-MOTE_BOX, MOTE_BOX);
+    moteV[i * 3] = rand(-0.10, 0.10); moteV[i * 3 + 1] = rand(-0.035, 0.055); moteV[i * 3 + 2] = rand(-0.10, 0.10);
+    moteR[i] = rand(0.006, 0.017);
+    const w = rand(0.55, 1.0);
+    moteMesh.instanceColor.setXYZ(i, 0.42 * w, 0.40 * w, 0.36 * w);
+  }
+  moteMesh.instanceColor.needsUpdate = true;
+  const moteM = new THREE.Matrix4();
+  function updateMotes(dt, px, py, pz) {
+    if (!moteMesh.visible) return;
+    for (let i = 0; i < MOTES; i++) {
+      const o = i * 3;
+      moteP[o] += moteV[o] * dt; moteP[o + 1] += moteV[o + 1] * dt; moteP[o + 2] += moteV[o + 2] * dt;
+      // wrap relative to the player, so the box travels with them
+      let dx = moteP[o] - px, dz = moteP[o + 2] - pz;
+      if (dx > MOTE_BOX) moteP[o] -= MOTE_BOX * 2; else if (dx < -MOTE_BOX) moteP[o] += MOTE_BOX * 2;
+      if (dz > MOTE_BOX) moteP[o + 2] -= MOTE_BOX * 2; else if (dz < -MOTE_BOX) moteP[o + 2] += MOTE_BOX * 2;
+      if (moteP[o + 1] > 4.6) moteP[o + 1] = 0.15; else if (moteP[o + 1] < 0.1) moteP[o + 1] = 4.5;
+      const r = moteR[i];
+      moteM.makeScale(r, r, r);
+      moteM.setPosition(moteP[o], moteP[o + 1], moteP[o + 2]);
+      moteMesh.setMatrixAt(i, moteM);
+    }
+    moteMesh.instanceMatrix.needsUpdate = true;
+  }
+
   function setPower(on) {
     if (powerSwitch) powerSwitch.on = on;
     scene.fog.density = on ? CFG.fogLit : CFG.fogNear;
+    refreshGlow(on ? 1 : 0);
   }
 
   return {
+    refreshGlow, updateMotes, glowMesh, moteMesh,
     T, OX, OZ, MW, MH, wx, wz, cx, cz, at, solid, isFloor, zoneOf, dist,
     windows, barriers, wallbuys, powerSwitch, spawnPos, lights, perkMachines, boxSpots,
     boxGroup, boxLid, boxGlow, boxPrize, teddy, boxLight, perkGroup, papMachine, papGroup,
@@ -2437,18 +2775,164 @@ const FX = (() => {
 const ViewModel = (() => {
   // the viewmodel gets its own lighting so the weapon stays readable in a room
   // that is deliberately almost black
-  viewScene.add(new THREE.HemisphereLight(0x8fa4bb, 0x241d16, 1.5));
-  const key = new THREE.DirectionalLight(0xffe9cc, 2.6); key.position.set(-0.6, 1.2, 1.4); viewScene.add(key);
-  const rim = new THREE.DirectionalLight(0x7f9ee0, 1.5); rim.position.set(1.2, 0.3, -1.0); viewScene.add(rim);
+  // Three-point, and deliberately contrastier than "readable" would need: with
+  // the fill up at 1.5 every face of every part landed inside a narrow band of
+  // greys and the weapon flattened into a silhouette of boxes. The relief and
+  // the chamfers below only show up if there is a light direction to show them.
+  viewScene.add(new THREE.HemisphereLight(0x8fa4bb, 0x241d16, 0.85));
+  const key = new THREE.DirectionalLight(0xffe9cc, 2.9); key.position.set(-0.6, 1.2, 1.4); viewScene.add(key);
+  const rim = new THREE.DirectionalLight(0x8fb0ea, 2.0); rim.position.set(1.2, 0.3, -1.0); viewScene.add(rim);
 
-  const MET = new THREE.MeshPhongMaterial({ color: 0x44484d, specular: 0xa8aeb6, shininess: 62 });
-  const BLU = new THREE.MeshPhongMaterial({ color: 0x303439, specular: 0x8b929c, shininess: 90 });
-  const WOOD = new THREE.MeshPhongMaterial({ color: 0x6b4527, specular: 0x3a2c20, shininess: 24 });
-  const DARK = new THREE.MeshPhongMaterial({ color: 0x24262a, specular: 0x4a4e54, shininess: 30 });
-  const HAND = new THREE.MeshPhongMaterial({ color: 0x9c7a5e, specular: 0x241b14, shininess: 8 });
+  /* The weapon is on screen for every frame of the game and sits closer to the
+     camera than anything else, so it is the surface the player actually studies.
+     Flat phong on a box reads as a box. Each viewmodel material therefore gets
+     the same treatment as the world: a procedural albedo, a height field turned
+     into a per-pixel normal, a gloss mask, and a fresnel edge light.
 
+     Detail is keyed on the part's own box-local space rather than world space:
+     the group sways and bobs every frame, and a world-keyed pattern would swim
+     across the metal as you walk. Neighbouring boxes therefore share a pattern
+     phase, which on scratches and grain is invisible.
+
+     BUMP AMPLITUDE IS NOT A TASTE KNOB. The perturbed normal is driven by the
+     SLOPE of the height field, so amplitude has to fall as the pattern's
+     frequency rises: a checker at 150 cycles per unit with the same amplitude
+     as a wood ring at 42 tilts the normal roughly four times as far and the
+     part turns into flickering black-and-white diamonds (it did). Rule of
+     thumb used below: amplitude ≈ 0.1 / dominant frequency. */
+  let vmSeq = 0;
+  const CHAM = (0.0034).toFixed(4);     // chamfer width, metres
+  function vmMat(color, spec, shin, body, bump) {
+    const m = new THREE.MeshPhongMaterial({ color, specular: spec, shininess: shin });
+    const key = 'vm' + (++vmSeq);
+    const B = (bump === undefined ? 0.0010 : bump).toFixed(6);
+    m.onBeforeCompile = sh => {
+      sh.vertexShader = sh.vertexShader
+        .replace('#include <common>', `#include <common>
+          attribute vec3 hext;
+          varying vec3 vLP;
+          varying vec3 vHE;`)
+        .replace('#include <begin_vertex>', `#include <begin_vertex>
+          vLP = position;
+          vHE = hext;`);
+      sh.fragmentShader = sh.fragmentShader
+        .replace('#include <common>', `#include <common>
+          varying vec3 vLP;
+          varying vec3 vHE;
+          float gH; float gG;
+          float h21(vec2 p){ return fract(sin(dot(p, vec2(127.1,311.7))) * 43758.5453); }
+          float vn(vec2 p){ vec2 i=floor(p), f=fract(p); f=f*f*(3.0-2.0*f);
+            return mix(mix(h21(i),h21(i+vec2(1,0)),f.x), mix(h21(i+vec2(0,1)),h21(i+vec2(1,1)),f.x), f.y); }
+          float fbm2(vec2 p){ return vn(p) * 0.62 + vn(p * 2.07) * 0.25 + vn(p * 4.13) * 0.13; }
+          vec3 perturbV(vec3 n, vec3 pos, float h){
+            vec3 dPdx = dFdx(pos), dPdy = dFdy(pos);
+            float dHdx = dFdx(h), dHdy = dFdy(h);
+            vec3 r1 = cross(dPdy, n), r2 = cross(n, dPdx);
+            float det = dot(dPdx, r1);
+            return normalize(abs(det) * n - sign(det) * (dHdx * r1 + dHdy * r2));
+          }`)
+        .replace('#include <map_fragment>', `#include <map_fragment>
+          gH = 0.0; gG = 1.0;
+          { ${body} }`)
+        .replace('#include <specularmap_fragment>', `#include <specularmap_fragment>
+          specularStrength *= gG;`)
+        .replace('#include <normal_fragment_maps>', `#include <normal_fragment_maps>
+          {
+            float h = gH * ${B};
+            /* Chamfer. vHE - abs(vLP) is the distance from this fragment to
+               each of the three face planes; on any face the smallest is ~0
+               (the face you are standing on), so the MEDIAN is the distance to
+               the nearest edge. Rolling the height field off over CHAM metres
+               there swings the normal through 45 degrees across the chamfer,
+               and the edge finally has somewhere for a highlight to sit.
+               Lofted parts (the hands) carry no hext attribute and opt out. */
+            if (vHE.x + vHE.y + vHE.z > 1e-5) {
+              vec3 d = max(vHE - abs(vLP), 0.0);
+              float med = max(min(d.x, d.y), min(max(d.x, d.y), d.z));
+              h -= ${CHAM} * (1.0 - smoothstep(0.0, ${CHAM}, med));
+            }
+            normal = perturbV(normal, -vViewPosition, h);
+          }`)
+        .replace('#include <opaque_fragment>', `
+          {
+            float fres = 1.0 - clamp(dot(normal, normalize(vViewPosition)), 0.0, 1.0);
+            outgoingLight += vec3(0.085, 0.105, 0.145) * pow(fres, 3.0) * (0.4 + 0.6 * gG);
+          }
+          #include <opaque_fragment>`);
+    };
+    m.customProgramCacheKey = () => key;
+    return m;
+  }
+  // brushed receiver steel: fine streaks along the barrel axis, worn bright on
+  // the edges a hand and a holster actually touch
+  const MET = vmMat(0x4a4f55, 0xb4bac2, 66, `
+    float brush = vn(vec2(vLP.x * 140.0 + vLP.y * 50.0, vLP.z * 5.0));
+    diffuseColor.rgb *= 0.90 + 0.18 * brush;
+    float wear = smoothstep(0.62, 0.94, fbm2(vLP.xz * 14.0 + 3.0));
+    diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.60, 0.62, 0.66), wear * 0.40);
+    float scratch = smoothstep(0.975, 1.0, vn(vec2(vLP.z * 90.0, vLP.y * 9.0)));
+    diffuseColor.rgb += vec3(0.09, 0.095, 0.10) * scratch;
+    gH = brush * 0.35 + scratch * 0.8 - wear * 0.25;
+    gG = 0.60 + 0.40 * wear + 0.20 * brush;`, 0.0007);
+  // blued barrel steel: nearly featureless, which is the point — the mottle only
+  // has to break the mirror so the highlight has something to travel across
+  const BLU = vmMat(0x33373d, 0x9aa2ad, 96, `
+    float m1 = fbm2(vLP.xz * 20.0);
+    diffuseColor.rgb *= 0.88 + 0.20 * m1;
+    float pit = smoothstep(0.90, 1.0, vn(vLP.xy * 70.0 + 7.0));
+    diffuseColor.rgb *= 1.0 - pit * 0.40;
+    gH = m1 * 0.30 - pit * 0.9;
+    gG = 0.78 + 0.26 * m1;`, 0.0022);
+  /* Stock walnut, modelled as an actual log: growth rings are concentric about
+     the length axis (+z, how every stock here is built), so the flat-sawn sides
+     get long cathedral arcs and the END GRAIN gets rings. Keying the rings on z
+     alone — the obvious version — leaves every end cap a solid flat brown,
+     which on the BAR forearm was the largest single unshaded area on screen. */
+  const WOOD = vmMat(0x6f4828, 0x54402e, 30, `
+    float r = length(vLP.xy) + vn(vLP.zy * 4.0) * 0.010;
+    float ring = fbm2(vec2(r * 230.0, vLP.z * 2.0));
+    float fine = vn(vec2(vLP.z * 90.0, r * 60.0));
+    diffuseColor.rgb *= 0.62 + 0.62 * ring;
+    diffuseColor.rgb *= 0.93 + 0.12 * fine;
+    diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.11, 0.062, 0.032), smoothstep(0.72, 0.96, ring) * 0.52);
+    gH = ring * 0.55 + fine * 0.18;
+    gG = 0.32 + 0.50 * (1.0 - ring);`, 0.0012);
+  /* Matte phosphate. This started as moulded grip checkering, which was wrong
+     for the same material's OTHER job: DARK covers grips (4 cm) and whole
+     receivers (40 cm) alike, and a diamond pattern sized for a grip turned a
+     BAR receiver into a lattice you could count the cells of. A part-relative
+     pattern needs part dimensions, which a fragment does not have — so the
+     finish is one a receiver and a grip genuinely share. */
+  const DARK = vmMat(0x26282c, 0x53585f, 34, `
+    float sand = fbm2(vLP.xy * 34.0) * 0.6 + fbm2(vLP.zy * 41.0) * 0.4;
+    float grime = fbm2(vLP.xz * 8.0 + 5.0);
+    diffuseColor.rgb *= 0.88 + 0.20 * sand;
+    diffuseColor.rgb *= 0.90 + 0.16 * grime;
+    gH = sand * 0.55 + grime * 0.25;
+    gG = 0.26 + 0.34 * sand * (0.5 + 0.5 * grime);`, 0.0014);
+  // hands: pores and knuckle creases, kept deliberately quiet — this is the
+  // surface closest to the camera and any pattern here reads as a rash
+  const HAND = vmMat(0xa07d60, 0x3a2c22, 12, `
+    float pore = fbm2(vLP.xy * 120.0);
+    float crease = 1.0 - smoothstep(0.0, 0.12, abs(fbm2(vLP.xz * 16.0 + 2.0) - 0.5));
+    float blotch = fbm2(vLP.xy * 11.0);
+    diffuseColor.rgb *= 0.92 + 0.14 * blotch;
+    diffuseColor.rgb *= 0.95 + 0.09 * pore;
+    diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.46, 0.30, 0.24), crease * 0.26);
+    gH = pore * 0.25 - crease * 0.7 + blotch * 0.2;
+    gG = 0.28 + 0.34 * (1.0 - crease);`, 0.0028);
+
+  /* Every part carries its own half-extents so the shader can find the box
+     edges and chamfer them (see vmMat). Without this the weapon is a stack of
+     mathematically perfect cubes, and a perfect cube edge catches no
+     highlight at all — which is exactly what "made of blocks" looks like. */
   function part(g, m, x, y, z, sx, sy, sz, rx, ry, rz) {
-    const box = new THREE.Mesh(new THREE.BoxGeometry(sx, sy, sz), m);
+    const geo = new THREE.BoxGeometry(sx, sy, sz);
+    const n = geo.attributes.position.count;
+    const he = new Float32Array(n * 3);
+    for (let i = 0; i < n; i++) { he[i * 3] = sx / 2; he[i * 3 + 1] = sy / 2; he[i * 3 + 2] = sz / 2; }
+    geo.setAttribute('hext', new THREE.BufferAttribute(he, 3));
+    const box = new THREE.Mesh(geo, m);
     box.position.set(x, y, z);
     if (rx || ry || rz) box.rotation.set(rx || 0, ry || 0, rz || 0);
     g.add(box); return box;
@@ -3282,9 +3766,85 @@ const Zombies = (() => {
     bodyR: 0.30, bodyY0: 0.42, bodyY1: 1.50,
   };
 
-  function skinMat(color, spec, shin, nscale) {
+  /* ---------------- character surfaces ---------------------------------
+     A character reads as cheap for two reasons, and neither is polygon count:
+     the surface has no RELIEF (a lit polygon is uniformly lit, so you see the
+     polygon) and the silhouette has no separation from the background (a dark
+     body in a dark room is a flat blob). Both are fixed here without a single
+     texture:
+
+       • each part class writes a height field `sH` and a gloss `sG`; the
+         height field is turned into a perturbed normal from its own
+         screen-space derivatives, so the same noise that drew the pattern also
+         lights it. Cloth gets a weave and folds, flesh gets pores and veins,
+         hide gets pebble grain, fur gets strands.
+       • a rim term adds a cold edge light at grazing angles. This is the whole
+         reason a zombie stops being a silhouette: the edge of the body picks up
+         a light the interior doesn't, which is what the eye uses to read depth.
+
+     `nscale` is cycles per unit of the part's OWN local space, and the limb
+     lofts are unit-sized while the torso is roughly metres — that is why the
+     numbers at the call sites differ by 5x and are not interchangeable. */
+  const SKIN_DETAIL = {
+    flesh: `
+      float g = vn(vLP.xy * NS) * 0.5 + vn(vLP.zy * NS * 2.1) * 0.5;
+      diffuseColor.rgb *= 0.70 + 0.56 * g;
+      float rot = smoothstep(0.62, 0.93, vn(vLP.xz * NS * 0.55 + 3.0));
+      diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.19, 0.12, 0.10), rot * 0.5);
+      // veins: the ridge line of a noise field, thin and raised
+      float vein = 1.0 - smoothstep(0.0, 0.06, abs(vn(vLP.xy * NS * 0.5 + 7.0) - 0.5));
+      diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.17, 0.07, 0.08), vein * 0.34);
+      float pore = vn(vLP.xy * NS * 5.0) * 0.6 + vn(vLP.zy * NS * 6.1) * 0.4;
+      sH = pore * 0.30 + vein * 0.85 + g * 0.30 - rot * 0.75;
+      sG = 0.30 + 0.55 * (1.0 - rot) * (0.35 + 0.65 * g);`,
+    cloth: `
+      float g = vn(vLP.xy * NS) * 0.5 + vn(vLP.zy * NS * 2.1) * 0.5;
+      diffuseColor.rgb *= 0.70 + 0.56 * g;
+      // coarse twill: two crossed sinusoids. Cheap, and it is the single cue
+      // that separates "fabric" from "painted plastic".
+      float weave = (sin(vLP.x * NS * 3.0) * sin(vLP.y * NS * 3.0)) * 0.5 + 0.5;
+      diffuseColor.rgb *= 0.88 + 0.20 * weave;
+      float fold = vn(vLP.xy * NS * 0.55 + 11.0);
+      diffuseColor.rgb *= 0.80 + 0.34 * fold;
+      float tear = smoothstep(0.70, 0.95, vn(vLP.xz * NS * 0.5 + 3.0));
+      diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.055, 0.048, 0.045), tear * 0.62);
+      sH = weave * 0.30 + fold * 0.85 - tear * 0.7;
+      sG = 0.08 + fold * 0.18;`,
+    hide: `
+      float g = vn(vLP.xy * NS) * 0.5 + vn(vLP.zy * NS * 2.1) * 0.5;
+      diffuseColor.rgb *= 0.66 + 0.52 * g;
+      float peb = vn(vLP.xy * NS * 3.4 + 5.0) * 0.6 + vn(vLP.zy * NS * 4.1) * 0.4;
+      float scuff = smoothstep(0.55, 0.90, vn(vLP.xz * NS * 0.7 + 2.0));
+      diffuseColor.rgb *= 1.0 - scuff * 0.34;
+      sH = peb * 0.70 + g * 0.30;
+      sG = 0.50 + 0.40 * (1.0 - scuff) * peb;`,
+    fur: `
+      float g = vn(vLP.xy * NS) * 0.5 + vn(vLP.zy * NS * 2.1) * 0.5;
+      diffuseColor.rgb *= 0.60 + 0.62 * g;
+      // strands: stretched hard along the body axis so they read as hair
+      float str = vn(vec2((vLP.x + vLP.z) * NS * 6.0, vLP.y * NS * 0.9));
+      diffuseColor.rgb *= 0.76 + 0.42 * str;
+      float burn = smoothstep(0.50, 0.90, vn(vLP.xz * NS * 0.5 + 8.0));
+      diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.10, 0.045, 0.03), burn * 0.72);
+      sH = str * 0.80 + g * 0.30 - burn * 0.35;
+      sG = 0.18 + 0.30 * str * (1.0 - burn);`,
+  };
+  /* Height amplitude has to be normalised twice or one number cannot serve
+     every part. The perturbed normal is driven by SLOPE, and slope scales with
+     (a) the pattern frequency, which here is always a multiple of `nscale`, and
+     (b) how many local units fit in a view metre — a limb loft is unit-sized
+     and draws 0.3 m tall, the torso loft is already in metres, so identical
+     numbers would give the limbs three times the relief. Dividing by nscale
+     handles (a); the per-pixel ratio of the two derivative lengths handles (b).
+     What is left, `SKIN_BUMP`, is a real physical-ish knob: relief depth per
+     unit of pattern. */
+  const SKIN_BUMP = 0.055;
+  function skinMat(color, spec, shin, nscale, kind, rim) {
     const m = new THREE.MeshPhongMaterial({ color, specular: spec, shininess: shin, vertexColors: true });
     const NS = (nscale || 8).toFixed(1);
+    const K = kind || 'flesh';
+    const R = rim || [0.085, 0.106, 0.148];   // cold edge light, linear
+    const RIM = `vec3(${R.map(v => v.toFixed(4)).join(', ')})`;
     m.onBeforeCompile = sh => {
       sh.vertexShader = sh.vertexShader
         .replace('#include <common>', `#include <common>
@@ -3294,25 +3854,40 @@ const Zombies = (() => {
       sh.fragmentShader = sh.fragmentShader
         .replace('#include <common>', `#include <common>
           varying vec3 vLP;
+          const float NS = ${NS};
+          float sH; float sG;
           float h21(vec2 p){ return fract(sin(dot(p, vec2(127.1,311.7))) * 43758.5453); }
           float vn(vec2 p){ vec2 i=floor(p), f=fract(p); f=f*f*(3.0-2.0*f);
-            return mix(mix(h21(i),h21(i+vec2(1,0)),f.x), mix(h21(i+vec2(0,1)),h21(i+vec2(1,1)),f.x), f.y); }`)
-        .replace('#include <map_fragment>', `#include <map_fragment>
-          {
-            // mottling and rot, keyed on the part's own local space — detail
-            // without a UV set, and the frequency is tuned per part class
-            float g = vn(vLP.xy * ${NS}) * 0.5 + vn(vLP.zy * ${NS} * 2.1) * 0.5;
-            diffuseColor.rgb *= 0.70 + 0.56 * g;
-            float rot = smoothstep(0.62, 0.93, vn(vLP.xz * ${NS} * 0.55 + 3.0));
-            diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.19, 0.12, 0.10), rot * 0.5);
+            return mix(mix(h21(i),h21(i+vec2(1,0)),f.x), mix(h21(i+vec2(0,1)),h21(i+vec2(1,1)),f.x), f.y); }
+          vec3 perturbS(vec3 n, vec3 pos, float h){
+            vec3 dPdx = dFdx(pos), dPdy = dFdy(pos);
+            float dHdx = dFdx(h), dHdy = dFdy(h);
+            vec3 r1 = cross(dPdy, n), r2 = cross(n, dPdx);
+            float det = dot(dPdx, r1);
+            return normalize(abs(det) * n - sign(det) * (dHdx * r1 + dHdy * r2));
           }`)
-        // a faint self-lit term so a body never vanishes into a black room
-        // (before opaque_fragment — see the injection point law in siteMat)
+        .replace('#include <map_fragment>', `#include <map_fragment>
+          sH = 0.0; sG = 0.5;
+          { ${SKIN_DETAIL[K]} }`)
+        .replace('#include <specularmap_fragment>', `#include <specularmap_fragment>
+          specularStrength *= sG;`)
+        .replace('#include <normal_fragment_maps>', `#include <normal_fragment_maps>
+          {
+            vec3 vp = -vViewPosition;
+            float sc = length(dFdx(vp)) / max(length(dFdx(vLP)), 1e-7);
+            normal = perturbS(normal, vp, sH * (${SKIN_BUMP} / NS) * sc);
+          }`)
+        // a faint self-lit term so a body never vanishes into a black room,
+        // plus the rim (before opaque_fragment — see the law in siteMat)
         .replace('#include <opaque_fragment>', `
           outgoingLight += diffuseColor.rgb * vec3(0.075, 0.070, 0.066);
+          {
+            float fres = 1.0 - clamp(dot(normal, normalize(vViewPosition)), 0.0, 1.0);
+            outgoingLight += ${RIM} * pow(fres, 3.2) * (0.55 + 0.45 * sG);
+          }
           #include <opaque_fragment>`);
     };
-    m.customProgramCacheKey = () => 'zskin' + color + '_' + NS;
+    m.customProgramCacheKey = () => 'zskin' + color + '_' + NS + '_' + K + '_' + RIM;
     return m;
   }
   function mkN(geo, mat, cap, per) {
@@ -3333,11 +3908,11 @@ const Zombies = (() => {
     scene.add(m);
     return m;
   }
-  const matSkin = skinMat(0xffffff, 0x1b1714, 14, 26);
-  const matCloth = skinMat(0xffffff, 0x0d0d0d, 4, 22);
-  const matLimbSkin = skinMat(0xffffff, 0x1b1714, 14, 5);
-  const matLimbCloth = skinMat(0xffffff, 0x0d0d0d, 4, 4.5);
-  const matBoot = skinMat(0xffffff, 0x232019, 22, 30);
+  const matSkin = skinMat(0xffffff, 0x2b241e, 18, 26, 'flesh');
+  const matCloth = skinMat(0xffffff, 0x131313, 6, 22, 'cloth');
+  const matLimbSkin = skinMat(0xffffff, 0x2b241e, 18, 5, 'flesh');
+  const matLimbCloth = skinMat(0xffffff, 0x131313, 6, 4.5, 'cloth');
+  const matBoot = skinMat(0xffffff, 0x2e2a22, 26, 30, 'hide');
   const M = {
     head:  mk(G_HEAD, matSkin, 1),
     torso: mk(G_TORSO, matCloth, 1),
@@ -3436,12 +4011,18 @@ const Zombies = (() => {
   // hellhounds: fewer, far faster, less health, and they bite harder
   const KIND = {
     zombie: { lunge: 1.45, wind: 0.42, reach: 1.75, dmg: 34, cycle: 1.00 },
-    dog:    { lunge: 1.35, wind: 0.26, reach: 1.70, dmg: 46, cycle: 0.78 },
+    dog:    { lunge: 1.35, wind: 0.26, reach: 1.70, dmg: 32, cycle: 0.78 },
   };
+  /* PLAYTEST FIX: the first dog round killed a player on arrival. It was eight
+     hounds at 4.1-5.0 m/s — matching a full sprint, so they could not be
+     outrun — hitting for 46, i.e. three bites, against a player who cannot
+     possibly own Juggernog yet (the power alone costs more than round 5 pays).
+     Now: fewer, slower than a sprint until very deep, and four bites. A dog
+     round should be a scramble you can win by moving, not an ambush. */
   const isDogRound = r => r >= 5 && r % 5 === 0;
-  const dogCount = r => Math.min(6 + Math.floor(r / 5) * 2, 13);
-  const dogHealth = r => Math.round(healthFor(r) * 0.52);
-  const dogSpeed = r => clamp(4.3 + r * 0.05, 4.3, 6.4) * rand(0.9, 1.1);
+  const dogCount = r => Math.min(3 + Math.floor(r / 5) * 2, 12);
+  const dogHealth = r => Math.round(healthFor(r) * 0.42);
+  const dogSpeed = r => clamp(3.4 + r * 0.06, 3.4, 5.6) * rand(0.9, 1.1);
   // slower early so a wave arrives as a wave, not a stream you can never turn from
   const spawnGap = r => clamp(2.7 - r * 0.105, 0.32, 2.7);
 
@@ -3884,7 +4465,9 @@ const Zombies = (() => {
     frontZ: 0.24, backZ: -0.26, legX: 0.115,
     bodyR: 0.34, bodyY0: 0.20, bodyY1: 0.98,
   };
-  const matDog = skinMat(0xffffff, 0x241c16, 16, 14);
+  // hellhounds carry a hot rim rather than the cold one: they are lit from
+  // inside in the fiction, and it is what picks them out of a dark doorway
+  const matDog = skinMat(0xffffff, 0x241c16, 16, 14, 'fur', [0.230, 0.085, 0.040]);
   const MD = {
     body: mkN(G_DOG_BODY, matDog, DCAP, 1),
     head: mkN(G_DOG_HEAD, matDog, DCAP, 1),
@@ -4171,7 +4754,7 @@ const Round = (() => {
     R.dog = Zombies.isDogRound(n);
     R.total = R.dog ? Zombies.dogCount(n) : Zombies.countFor(n);
     R.toSpawn = R.total; R.spawned = 0; R.killedThis = 0;
-    R.phase = 'active'; R.spawnT = R.dog ? 2.6 : 1.2;
+    R.phase = 'active'; R.spawnT = R.dog ? 4.2 : 1.2;   // a beat to hear them coming
     Drops.onRound();
     UI.roundBanner(n, R.dog);
     if (R.dog) { Snd.dogRound(); UI.banner('HELLHOUNDS', 0xff5a3c); }
@@ -4188,7 +4771,7 @@ const Round = (() => {
     // spawn drip
     if (R.spawned < R.total) {
       R.spawnT -= dt;
-      if (R.spawnT <= 0 && Zombies.aliveCount < (R.dog ? 8 : CFG.maxAlive)) {
+      if (R.spawnT <= 0 && Zombies.aliveCount < (R.dog ? 5 : CFG.maxAlive)) {
         if (R.dog) {
           // hellhounds arrive in ones and twos out of the floor, not at windows
           if (Zombies.spawnDog(R.round)) { R.spawned++; R.spawnT = clamp(2.4 - R.round * 0.03, 0.9, 2.4) * rand(0.7, 1.3); }
@@ -5033,8 +5616,11 @@ const Game = (() => {
       G.degradeT++;
       if (G.degradeT >= 2) {
         G.degradeT = 0; Q.level--;
-        if (Q.level === 1) { Q.dpr = Math.min(Q.dpr, 1.35); resize(); }
-        else if (Q.level === 0) { Q.dpr = Math.min(Q.dpr, 1.0); Q.shadows = false; renderer.shadowMap.enabled = false; Level.moon.castShadow = false; resize(); }
+        // the dust is the cheapest thing to lose and the least missed: a few
+        // hundred additive spheres are pure overdraw, and the halos that carry
+        // the actual atmosphere stay
+        if (Q.level === 1) { Q.dpr = Math.min(Q.dpr, 1.35); Level.moteMesh.visible = false; resize(); }
+        else if (Q.level === 0) { Q.dpr = Math.min(Q.dpr, 1.0); Q.shadows = false; renderer.shadowMap.enabled = false; Level.moon.castShadow = false; document.body.classList.add('lowfx'); resize(); }
       }
     } else G.degradeT = 0;
   }
@@ -5092,7 +5678,9 @@ const Game = (() => {
       uPower.value = smooth(G.powerT);
       scene.fog.density = lerp(CFG.fogNear, CFG.fogLit, uPower.value);
       Level.lamp.intensity = lerp(5.5, 2.6, uPower.value);
+      Level.refreshGlow(uPower.value);
     }
+    Level.updateMotes(dt, camera.position.x, camera.position.y, camera.position.z);
     for (const u of uTimeList) u.value = G.time;
     Perks.update(dt);
     FX.update(dt);
@@ -5232,6 +5820,25 @@ window.__dbg = {
   papInsert() { return Pap.insert(); },
   papTake() { return Pap.collect(); },
   points(n) { Player.P.points += n; return Player.P.points; },
+  /* renderer.info.programs only lists what has actually been DRAWN, so a
+     material on a mesh the test camera never happened to face is invisible to
+     any assertion about shaders. Forcing both scenes through renderer.compile
+     builds every variant up front, which is what makes the shader check in
+     verify.mjs deterministic instead of a function of where the bot is
+     standing. */
+  compileAll() {
+    renderer.compile(scene, camera);
+    renderer.compile(ViewModel.scene, ViewModel.cam);
+    const ps = renderer.info.programs || [];
+    /* And the link status has to be ASKED FOR. three defers it to the first
+       getUniforms() call (WebGLProgram's onFirstUse), so a program that has
+       been created but never drawn with reports no diagnostics and logs
+       nothing — renderer.compile() on its own called a fragment shader
+       containing the literal text "@@@ THIS IS NOT GLSL @@@" perfectly
+       healthy. Touching the uniforms is what runs the check. */
+    for (const p of ps) { try { p.getUniforms(); } catch (e) { /* reported via diagnostics */ } }
+    return { total: ps.length, broken: ps.filter(p => p.diagnostics && p.diagnostics.runnable === false).length };
+  },
   openAll() { for (const id in Level.barriers) Level.openBarrier(Level.barriers[id]); return this.snapshot(); },
   power() { Level.powerSwitch.on = true; Game.powerT = 0.0001; return true; },
   teleport(x, z) { Player.P.pos.set(x, 0, z); Level.rebuildNav(x, z); return this.snapshot(); },
