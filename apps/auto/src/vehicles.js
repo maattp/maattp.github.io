@@ -27,26 +27,76 @@ const WHITE = [1, 1, 1];
 
 // len/wid in metres; sill = bottom of the visible bodywork, belt = shoulder
 // line, roof = roof height, cab = greenhouse extent as a fraction of length.
+// Longitudinal resistance, shared by the integrator and by deriveSpec so the
+// solved top speed is the one the integrator actually converges to.
+// These were 0.0016 and 0.07, which at 57 m/s cost a sedan 5.2 and 4.0 m/s^2
+// against a real ~0.9 and ~0.12 -- roughly five times too much drag and thirty
+// times too much rolling resistance. That is what held every top speed far
+// under its class and forced the launch accelerations up to compensate, so a
+// family sedan did 0-100 in 3.5 s and still could not reach 100 km/h.
+const DRAG = 0.00040;
+const ROLL = 0.020;
+const V0_100 = 100 / 3.6;
+
 export const TYPES = {
-  sedan: { len: 4.72, wid: 1.83, wheelR: 0.33, sill: 0.30, belt: 0.98, roof: 1.46, cab: [-0.28, 0.19], mass: 1, top: 42, acc: 9.5 },
-  hatch: { len: 4.10, wid: 1.76, wheelR: 0.31, sill: 0.29, belt: 0.96, roof: 1.50, cab: [-0.30, 0.16], mass: 0.9, top: 38, acc: 9 },
-  compact: { len: 3.74, wid: 1.68, wheelR: 0.29, sill: 0.28, belt: 0.94, roof: 1.48, cab: [-0.28, 0.15], mass: 0.85, top: 36, acc: 8.6 },
-  suv: { len: 4.94, wid: 1.96, wheelR: 0.38, sill: 0.42, belt: 1.24, roof: 1.86, cab: [-0.32, 0.24], boxy: 1, mass: 1.3, top: 40, acc: 8.8 },
-  sports: { len: 4.42, wid: 1.92, wheelR: 0.34, sill: 0.24, belt: 0.80, roof: 1.20, cab: [-0.24, 0.06], spoiler: true, mass: 0.85, top: 62, acc: 15 },
+  sedan: deriveSpec({len: 4.72, wid: 1.83, wheelR: 0.33, sill: 0.30, belt: 0.98, roof: 1.46, cab: [-0.28, 0.19], mass: 1.0, acc: 4.1, topKph: 205, brakeM: 40, latG: 0.88 }),
+  hatch: deriveSpec({len: 4.10, wid: 1.76, wheelR: 0.31, sill: 0.29, belt: 0.96, roof: 1.50, cab: [-0.30, 0.16], mass: 0.9, acc: 3.6, topKph: 185, brakeM: 41, latG: 0.85 }),
+  compact: deriveSpec({len: 3.74, wid: 1.68, wheelR: 0.29, sill: 0.28, belt: 0.94, roof: 1.48, cab: [-0.28, 0.15], mass: 0.85, acc: 3.0, topKph: 170, brakeM: 43, latG: 0.83 }),
+  suv: deriveSpec({len: 4.94, wid: 1.96, wheelR: 0.38, sill: 0.42, belt: 1.24, roof: 1.86, cab: [-0.32, 0.24], boxy: 1, mass: 1.3, acc: 4.0, topKph: 195, brakeM: 42, latG: 0.8 }),
+  sports: deriveSpec({len: 4.42, wid: 1.92, wheelR: 0.34, sill: 0.24, belt: 0.80, roof: 1.20, cab: [-0.24, 0.06], spoiler: true, mass: 0.85, acc: 7.4, topKph: 275, brakeM: 33, latG: 1.02 }),
   // Cab-forward and low, on a long wheelbase with almost no overhang -- the
   // shape a floor full of batteries gives you. Heavier than the sports car and
   // quicker anyway, because the torque is all there from a standstill.
-  ev: { len: 4.62, wid: 1.98, wheelR: 0.36, sill: 0.22, belt: 0.79, roof: 1.25, cab: [-0.28, 0.09], ev: true, mass: 1.2, top: 68, acc: 19 },
-  muscle: { len: 5.02, wid: 1.98, wheelR: 0.35, sill: 0.28, belt: 0.94, roof: 1.36, cab: [-0.24, 0.13], mass: 1.15, top: 55, acc: 13.5 },
-  pickup: { len: 5.48, wid: 2.00, wheelR: 0.40, sill: 0.44, belt: 1.20, roof: 1.86, cab: [0.00, 0.28], bed: true, boxy: 1, mass: 1.4, top: 39, acc: 8.6 },
-  van: { len: 5.26, wid: 2.00, wheelR: 0.35, sill: 0.36, belt: 1.10, roof: 2.28, cab: [-0.44, 0.30], boxy: 2, mass: 1.5, top: 36, acc: 7.6 },
-  taxi: { len: 4.76, wid: 1.85, wheelR: 0.33, sill: 0.30, belt: 0.98, roof: 1.48, cab: [-0.28, 0.19], taxi: true, mass: 1, top: 42, acc: 9.5 },
-  police: { len: 4.98, wid: 1.92, wheelR: 0.34, sill: 0.30, belt: 1.00, roof: 1.48, cab: [-0.28, 0.19], police: true, mass: 1.1, top: 56, acc: 14 },
-  bus: { len: 12.0, wid: 2.55, wheelR: 0.50, sill: 0.50, belt: 1.30, roof: 3.10, cab: [-0.48, 0.48], bus: true, boxy: 3, mass: 4.5, top: 26, acc: 4.2 },
-  boxtruck: { len: 7.5, wid: 2.38, wheelR: 0.46, sill: 0.62, belt: 1.55, roof: 2.55, cab: [0.14, 0.46], cargo: 2.55, boxy: 2, mass: 3, top: 30, acc: 5.2 },
-  ambulance: { len: 6.3, wid: 2.28, wheelR: 0.42, sill: 0.56, belt: 1.42, roof: 2.35, cab: [0.16, 0.46], cargo: 2.25, boxy: 2, emergency: true, mass: 2.4, top: 40, acc: 8 },
-  garbage: { len: 8.1, wid: 2.48, wheelR: 0.50, sill: 0.66, belt: 1.62, roof: 2.6, cab: [0.20, 0.46], cargo: 2.5, boxy: 2, mass: 4, top: 26, acc: 4.4 },
+  ev: deriveSpec({len: 4.62, wid: 1.98, wheelR: 0.36, sill: 0.22, belt: 0.79, roof: 1.25, cab: [-0.28, 0.09], ev: true, mass: 1.2, acc: 9.0, topKph: 235, brakeM: 35, latG: 0.96 }),
+  muscle: deriveSpec({len: 5.02, wid: 1.98, wheelR: 0.35, sill: 0.28, belt: 0.94, roof: 1.36, cab: [-0.24, 0.13], mass: 1.15, acc: 7.0, topKph: 265, brakeM: 36, latG: 0.94 }),
+  pickup: deriveSpec({len: 5.48, wid: 2.00, wheelR: 0.40, sill: 0.44, belt: 1.20, roof: 1.86, cab: [0.00, 0.28], bed: true, boxy: 1, mass: 1.4, acc: 4.4, topKph: 185, brakeM: 45, latG: 0.77 }),
+  van: deriveSpec({len: 5.26, wid: 2.00, wheelR: 0.35, sill: 0.36, belt: 1.10, roof: 2.28, cab: [-0.44, 0.30], boxy: 2, mass: 1.5, acc: 2.9, topKph: 155, brakeM: 47, latG: 0.73 }),
+  taxi: deriveSpec({len: 4.76, wid: 1.85, wheelR: 0.33, sill: 0.30, belt: 0.98, roof: 1.48, cab: [-0.28, 0.19], taxi: true, mass: 1.0, acc: 3.8, topKph: 195, brakeM: 41, latG: 0.85 }),
+  police: deriveSpec({len: 4.98, wid: 1.92, wheelR: 0.34, sill: 0.30, belt: 1.00, roof: 1.48, cab: [-0.28, 0.19], police: true, mass: 1.1, acc: 5.6, topKph: 230, brakeM: 37, latG: 0.93 }),
+  bus: deriveSpec({len: 12.0, wid: 2.55, wheelR: 0.50, sill: 0.50, belt: 1.30, roof: 3.10, cab: [-0.48, 0.48], bus: true, boxy: 3, mass: 4.5, acc: 1.4, topKph: 95, brakeM: 52, latG: 0.62 }),
+  boxtruck: deriveSpec({len: 7.5, wid: 2.38, wheelR: 0.46, sill: 0.62, belt: 1.55, roof: 2.55, cab: [0.14, 0.46], cargo: 2.55, boxy: 2, mass: 3.0, acc: 2.5, topKph: 125, brakeM: 51, latG: 0.66 }),
+  ambulance: deriveSpec({len: 6.3, wid: 2.28, wheelR: 0.42, sill: 0.56, belt: 1.42, roof: 2.35, cab: [0.16, 0.46], cargo: 2.25, boxy: 2, emergency: true, mass: 2.4, acc: 3.2, topKph: 155, brakeM: 48, latG: 0.72 }),
+  garbage: deriveSpec({len: 8.1, wid: 2.48, wheelR: 0.50, sill: 0.66, belt: 1.62, roof: 2.6, cab: [0.20, 0.46], cargo: 2.5, boxy: 2, mass: 4.0, acc: 1.2, topKph: 90, brakeM: 55, latG: 0.61 }),
 };
+
+/**
+ * Turn the declared class figures into the constants the driving model wants.
+ *
+ * `top` used to be a curve parameter that the code called a top speed, and the
+ * two are not the same number: drag and rolling resistance balance the engine
+ * well before it. Measured, a sedan declaring 42 m/s actually stopped at 27.8,
+ * and NINE of the fifteen types could not reach 100 km/h at all -- including
+ * the pickup, the SUV and the panel van.
+ *
+ * The table now declares what a vehicle DOES: real top speed in km/h, real
+ * 100-0 braking in metres, real lateral grip in g. Everything the integrator
+ * needs is solved from those, so the table can be read against a spec sheet and
+ * `tools/vehicles.mjs` can check it.
+ */
+function deriveSpec(s) {
+  const V = s.topKph / 3.6;                       // target terminal velocity
+  // At terminal: acc * (1 - V/param) == drag + rolling. Solve for param.
+  const resist = DRAG * V * V + ROLL * V;
+  // The EV's pull tails off as sqrt(fade), not linearly, so the same parameter
+  // carries it a good deal further -- solved as if it were linear it overshot
+  // its declared top by 47 km/h.
+  const frac = s.ev ? 1 - (resist / s.acc) ** 2 : 1 - resist / s.acc;
+  // A vehicle whose launch acceleration cannot even overcome its own drag at
+  // the declared top speed is a table error, not a tuning choice.
+  if (frac <= 0.02) {
+    throw new Error(`vehicle spec: acc ${s.acc} too low to reach ${s.topKph} km/h`);
+  }
+  s.fadeTop = V / frac;
+  // 100-0 in `brakeM` metres, at constant deceleration: a = v^2 / 2d.
+  // Drag and rolling resistance help stop the car too, so the brakes have to
+  // supply the target deceleration MINUS what the air and the tyres already
+  // give. Ignoring it made every vehicle stop about 15 % shorter than declared.
+  const vMean = V0_100 / 2;
+  s.brakeA = (V0_100 * V0_100) / (2 * s.brakeM) - (DRAG * vMean * vMean + ROLL * vMean);
+  // Lateral limit in m/s^2, which is what the friction circle below compares.
+  s.latA = s.latG * 9.81;
+  return s;
+}
 
 export const CIVILIAN_TYPES = ['sedan', 'sedan', 'hatch', 'compact', 'suv', 'suv', 'sports', 'ev', 'muscle', 'pickup', 'van', 'taxi', 'boxtruck', 'bus', 'garbage'];
 
@@ -396,6 +446,7 @@ export class Vehicle {
     this.pitch = 0; this.roll = 0;
     this.health = 100;
     this.dead = false;
+    this.understeer = 0;   // how far past the grip limit the front tyres are
     // Seconds before this vehicle can take collision damage again. One crash
     // spans many frames -- see damage().
     this.hitCd = 0;
@@ -483,7 +534,7 @@ export class Vehicle {
     const maxSteer = lerp(0.62, 0.16, clamp(sp / 34, 0, 1));
     this.steer = lerp(this.steer, steerIn * maxSteer, 1 - Math.exp(-11 * dt));
 
-    const top = spec.top;
+    const top = spec.fadeTop;
     let acc = 0;
     if (throttle > 0) {
       // A combustion car has to wind up to make power, so its pull fades
@@ -496,7 +547,11 @@ export class Vehicle {
       if (this.vLong < -0.5) acc += spec.acc * 1.4 * throttle;
     }
     if (brake > 0) {
-      if (this.vLong > 0.4) acc -= 16 * brake;
+      // Braking is per-class now. A fixed 16 m/s^2 is 1.63 g -- beyond any road
+      // tyre -- and it was applied to the refuse truck and the sports car
+      // alike, so every vehicle in the game stopped from 100 km/h in exactly
+      // 21.6 m. `brakeA` comes from the declared 100-0 distance.
+      if (this.vLong > 0.4) acc -= spec.brakeA * brake;
       else acc -= spec.acc * 0.55 * brake * (1 - clamp(-this.vLong / (top * 0.42), 0, 1));
     }
     // slope
@@ -504,8 +559,8 @@ export class Vehicle {
     const ahead = this.city.groundAt(this.x + this.forward.x * 3, this.z + this.forward.z * 3, this.y + 2.5, this.lift);
     acc -= clamp((ahead - gy) / 3, -0.7, 0.7) * 9.0;
 
-    acc -= this.vLong * Math.abs(this.vLong) * 0.0016; // aero
-    acc -= this.vLong * 0.07; // rolling resistance
+    acc -= this.vLong * Math.abs(this.vLong) * DRAG; // aero
+    acc -= this.vLong * ROLL; // rolling resistance
     if (throttle === 0 && brake === 0 && Math.abs(this.vLong) > 0.3) {
       // engine braking, or regen -- which bites noticeably harder
       acc -= Math.sign(this.vLong) * (spec.ev ? 4.6 : 2.4);
@@ -526,7 +581,27 @@ export class Vehicle {
     this.vLat += -yawRate * this.vLong * dt;
     const before = this.vLat;
     this.vLat *= Math.exp(-grip * dt);
-    this.skid = clamp(Math.abs(before) * 0.35, 0, 1);
+
+    // The friction circle. There was no lateral limit at ALL: yaw came
+    // straight from the steering angle, so a bus cornered at 1.1 g and a sedan
+    // at 4.4 g, and no amount of speed could ever push a car wide. Nothing in
+    // the game could be taken too fast, which removes most of what driving is.
+    //
+    // Beyond the limit the front tyres stop turning the car and it runs wide,
+    // which is understeer -- the failure a road car actually has. Braking eats
+    // into the same budget, so trail-braking into a corner lets go.
+    const latDemand = Math.abs(yawRate * this.vLong);
+    const braking = brake > 0 && this.vLong > 0.4 ? 0.75 : 1;
+    const latMax = spec.latA * braking * (hand > 0.5 ? 0.45 : 1);
+    if (latDemand > latMax && Math.abs(this.vLong) > 1) {
+      const excess = latMax / latDemand;
+      // Give back the yaw the tyres cannot support.
+      this.heading -= yawRate * dt * (1 - excess);
+      this.understeer = clamp((latDemand / latMax - 1) * 1.6, 0, 1);
+    } else {
+      this.understeer = 0;
+    }
+    this.skid = clamp(Math.max(Math.abs(before) * 0.35, this.understeer * 0.8), 0, 1);
 
     const f = this.forward;
     const rx = f.z, rz = -f.x;

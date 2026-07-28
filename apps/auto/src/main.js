@@ -8,6 +8,7 @@ import { buildTextures } from './textures.js';
 import { World } from './world.js';
 import { buildLandmarks } from './landmarks.js';
 import { TrafficSystem, collideWithBuildings } from './traffic.js';
+import { TYPES as VEHICLE_TYPES } from './vehicles.js';
 import { PedSystem, animateWalk } from './peds.js';
 import { Player } from './player.js';
 import { Controls } from './controls.js';
@@ -439,7 +440,7 @@ function installHeightFog() {
   }
 
   await step(1, 'Welcome to Seattle');
-  window.__dbg = { game, city, player, world, traffic, peds, scene, camera, renderer, G, fx, hud, controls, audio, pickups, THREE, postfx, applyQuality, sun, sceneStats, cityStats, animateWalk, collideWithBuildings };
+  window.__dbg = { game, city, player, world, traffic, peds, scene, camera, renderer, G, fx, hud, controls, audio, pickups, THREE, postfx, applyQuality, sun, sceneStats, cityStats, animateWalk, collideWithBuildings, TYPES: VEHICLE_TYPES };
   wireUi();
   game.newTarget();
   applyQuality('high', false);
