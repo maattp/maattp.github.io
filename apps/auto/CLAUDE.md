@@ -551,6 +551,35 @@ Physically-shaded, image-based-lit, tone-mapped, with a hand-rolled post chain.
   and a street of five families still read as one stone -- no tint can turn
   ashlar into a running bond. `masonrySurface()` is parameterised and called
   twice, for stone and for brick.
+- **One material for every wall, and the tiling is what makes that hard.**
+  `Builder.box` emits UVs running 0..n and leans on `RepeatWrapping`, and GL
+  repeat wraps the whole texture rather than a sub-rect, so a naive atlas cannot
+  carry a tiling surface at all. `facadeAtlas()` lays the families out in a
+  HORIZONTAL strip one tile tall: V still wraps natively, so a 100 m tower's
+  seven vertical repeats cost nothing, and only U has to stay inside a cell —
+  which `box` does by cutting a face into one quad per horizontal repeat. Plain
+  textures, plain UVs, no `onBeforeCompile` and no `sampler2DArray`: the same
+  reason postfx.js is 8-bit throughout is the reason this route was taken over a
+  shader one. It costs about 41 % more facade triangles (0.2 % of the frame) and
+  saves 91 draw calls downtown.
+
+  Everything that used to differ per material is baked into the maps, because
+  one material has only one of each: `normalScale` into the normal's xy (three
+  scales the DECODED vector then normalises, so pre-scaling by `ns / nsMax`
+  reproduces the old value exactly), `roughness` and `metalness` into their own
+  channels, and `envMapIntensity` into the AO channel — three's AO term
+  attenuates the image-based light, which is the only thing env drove. Emissive
+  spans a hundredfold (a lit shop sign against a lit office window) and survives
+  anyway because the map is **sRGB-encoded**: the window lands on texel 31, not
+  on texel 2.
+
+  **Glass stays its own material.** It is the one facade whose look is mostly
+  indirect SPECULAR, which is the part of `envMapIntensity` the AO channel can
+  only approximate.
+
+  Cells carry 8 px of wrap-padding — the cell's own opposite edge — so bilinear
+  and the first three mips filter as if the tile repeated rather than pulling in
+  the neighbouring family.
 - **Adaptive quality.** The phone this ships to can't be profiled from here, so
   the game measures its own frame rate and steps `high -> medium -> low`
   (post off, then pixel ratio down). `applyQuality(q, true)` locks it manually.
@@ -872,8 +901,11 @@ counters reset on every `render()`.
 Where the budget goes, and the rules that keep it there:
 
 - chunk streaming: `CHUNK = 400`, `NEAR_R = 2` (full detail), `MID_R = 4` (roads
-  only). Up to 8 merged meshes per near chunk (road, sidewalk, flat, glow, and
-  one per facade material).
+  only). Up to 6 merged meshes per near chunk: road, sidewalk, flat, glow, glass
+  and **one for every other wall material**. Stone, brick, industrial, house and
+  signage used to be five meshes and were 115 draws downtown for 25k triangles —
+  216 triangles a draw, on a target where the draw calls are what bind. They
+  share one atlased material now; see "One material for every wall" below.
 - **vehicles are 3 draws each** — `paint` / `trim` / `matte`, sharing geometry
   and the two non-paint materials across every instance. Traffic uses the
   `…GeoW` variants with the wheels baked in; only the player's car calls

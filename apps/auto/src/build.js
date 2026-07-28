@@ -280,9 +280,13 @@ export class Builder {
   /**
    * Axis box rotated about Y. (cx,cz) is the centre, `by` the base height.
    * uScale/vScale give metres per texture tile; pass 0 for a 0..1 mapping.
+   *
+   * `opts.cell` is `[u0, du]`, a horizontal sub-rect of the facade atlas. It is
+   * how five wall materials became one: see `stripAtlas` in textures.js for why
+   * only U needs confining, and `faceU` below for what it costs.
    */
   box(cx, by, cz, w, h, d, rot, col, opts = {}) {
-    const { uScale = 0, vScale = 0, top = true, vOff = 0, sides = true, ao = 0 } = opts;
+    const { uScale = 0, vScale = 0, top = true, vOff = 0, sides = true, ao = 0, cell = null } = opts;
     const cr = Math.cos(rot), sr = Math.sin(rot);
     const hw = w / 2, hd = d / 2;
     const P = (lx, ly, lz) => [cx + lx * cr - lz * sr, by + ly, cz + lx * sr + lz * cr];
@@ -295,23 +299,50 @@ export class Builder {
     // the mass reads as sitting on the ground rather than floating over it.
     const lo = ao > 0 ? [col[0] * (1 - ao), col[1] * (1 - ao), col[2] * (1 - ao)] : col;
     const sideCols = ao > 0 ? [lo, lo, col, col] : col;
+    /**
+     * One rectangular face, `un` texture repeats wide and running v0..v1 up.
+     *
+     * With no atlas cell this is the single quad it always was. With one, the
+     * face is cut into one quad per horizontal repeat, because GL repeat wraps
+     * the whole texture and not a sub-rect -- so the UVs have to be inside the
+     * cell before the sampler ever sees them. V is left alone: the atlas is one
+     * tile tall, so vertical repeats still wrap for free and a 100 m tower
+     * costs nothing extra. Corner order is bottom-left, bottom-right,
+     * top-right, top-left, so the baked-AO colours stay on the bottom edge
+     * through the cut.
+     */
+    const faceU = (a, b, c, e, n, un, vA, vB, cols) => {
+      if (!cell) {
+        this.quad(a, b, c, e, n, [0, vA, un, vA, un, vB, 0, vB], cols);
+        return;
+      }
+      const [cu0, cdu] = cell;
+      const mix = (p, q, t) => [p[0] + (q[0] - p[0]) * t, p[1] + (q[1] - p[1]) * t, p[2] + (q[2] - p[2]) * t];
+      const steps = Math.max(1, Math.ceil(un - 1e-4));
+      for (let i = 0; i < steps; i++) {
+        const t0 = i / un, t1 = Math.min(1, (i + 1) / un);
+        const u1 = cu0 + Math.min(1, un - i) * cdu;
+        this.quad(mix(a, b, t0), mix(a, b, t1), mix(e, c, t1), mix(e, c, t0), n,
+          [cu0, vA, u1, vA, u1, vB, cu0, vB], cols);
+      }
+    };
     if (sides) {
       // +local z
-      this.quad(P(-hw, 0, hd), P(hw, 0, hd), P(hw, h, hd), P(-hw, h, hd), N(0, 1),
-        [0, v0, ru, v0, ru, v0 + rv, 0, v0 + rv], sideCols);
+      faceU(P(-hw, 0, hd), P(hw, 0, hd), P(hw, h, hd), P(-hw, h, hd), N(0, 1),
+        ru, v0, v0 + rv, sideCols);
       // -local z
-      this.quad(P(hw, 0, -hd), P(-hw, 0, -hd), P(-hw, h, -hd), P(hw, h, -hd), N(0, -1),
-        [0, v0, ru, v0, ru, v0 + rv, 0, v0 + rv], sideCols);
+      faceU(P(hw, 0, -hd), P(-hw, 0, -hd), P(-hw, h, -hd), P(hw, h, -hd), N(0, -1),
+        ru, v0, v0 + rv, sideCols);
       // +local x
-      this.quad(P(hw, 0, hd), P(hw, 0, -hd), P(hw, h, -hd), P(hw, h, hd), N(1, 0),
-        [0, v0, rd, v0, rd, v0 + rv, 0, v0 + rv], sideCols);
+      faceU(P(hw, 0, hd), P(hw, 0, -hd), P(hw, h, -hd), P(hw, h, hd), N(1, 0),
+        rd, v0, v0 + rv, sideCols);
       // -local x
-      this.quad(P(-hw, 0, -hd), P(-hw, 0, hd), P(-hw, h, hd), P(-hw, h, -hd), N(-1, 0),
-        [0, v0, rd, v0, rd, v0 + rv, 0, v0 + rv], sideCols);
+      faceU(P(-hw, 0, -hd), P(-hw, 0, hd), P(-hw, h, hd), P(-hw, h, -hd), N(-1, 0),
+        rd, v0, v0 + rv, sideCols);
     }
     if (top) {
-      this.quad(P(-hw, h, hd), P(hw, h, hd), P(hw, h, -hd), P(-hw, h, -hd), [0, 1, 0],
-        [0, 0, ru, 0, ru, rd, 0, rd], col);
+      faceU(P(-hw, h, hd), P(hw, h, hd), P(hw, h, -hd), P(-hw, h, -hd), [0, 1, 0],
+        ru, 0, rd, col);
     }
   }
 

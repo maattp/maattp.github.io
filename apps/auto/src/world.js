@@ -132,6 +132,38 @@ function tint(seed, base, spread) {
   return [mute(base[0], dr), mute(base[1], 0), mute(base[2], db)];
 }
 
+/**
+ * The one wall material.
+ *
+ * Each family's old parameters are already folded into the atlas, so what is
+ * left here is the maxima they were folded against: `roughness` and `metalness`
+ * multiply their own channels, `normalScale` multiplies the pre-scaled xy, and
+ * `envMapIntensity` is recovered per-texel through the AO channel -- three's AO
+ * term attenuates the image-based light, which is the only thing env drove.
+ * `aoMap.channel` is pinned to 0 because AO is the one slot three historically
+ * read from a SECOND uv set, and there isn't one here: a wall sampling AO at a
+ * missing uv1 comes back uniformly dark over the whole city.
+ */
+function facadeMat(f) {
+  const m = new THREE.MeshStandardMaterial({
+    map: f.map,
+    normalMap: f.normalMap,
+    roughnessMap: f.packed,
+    metalnessMap: f.packed,
+    aoMap: f.packed,
+    emissiveMap: f.emissiveMap,
+    vertexColors: true,
+    roughness: 1,
+    metalness: f.metalMax,
+    envMapIntensity: f.envMax,
+  });
+  f.packed.channel = 0;
+  m.emissive = new THREE.Color(0xffffff);
+  m.emissiveIntensity = f.emiMax;
+  m.normalScale = new THREE.Vector2(f.nsMax, f.nsMax);
+  return m;
+}
+
 const DARK = [0.26, 0.27, 0.29];
 const TRIM = [0.55, 0.55, 0.56];
 // Accents stay the one place saturated colour is allowed, but pulled back:
@@ -181,14 +213,13 @@ export class World {
       // polygon faces that read as a missing texture, not as sunlight. Pulling
       // it down is what makes the exposure headroom available.
       glass: surf(tx.glass, { env: 0.9, metalness: 0.34, roughness: 0.22, ns: 1.1, emissive: 0.02 }),
-      masonry: surf(tx.masonry, { env: 0.66, ns: 1.5, emissive: 0.015 }),
-      brick: surf(tx.brick, { env: 0.60, ns: 1.5, emissive: 0.015 }),
-      // Signage. Emissive is high because a fifth of the atlas cells are lit
-      // plates and the rest have a black emissive, so the intensity only ever
-      // applies to the ones meant to glow.
-      signs: surf(tx.signs, { env: 0.5, roughness: 0.62, emissive: 1.5 }),
-      industrial: surf(tx.industrial, { env: 0.5, metalness: 0.25, ns: 1.7 }),
-      house: surf(tx.house, { env: 0.45, ns: 1.8, emissive: 0.015 }),
+      // Stone, brick, corrugated industrial, lap-sided house and shop signage,
+      // in one material. They were five, and five merged meshes per chunk was
+      // 115 draw calls downtown for 25k triangles. Everything that used to
+      // differ between them now rides in the maps -- see `facadeAtlas` in
+      // textures.js -- so the surfaces themselves are untouched: brick still
+      // has its own running bond, not a tint of the ashlar.
+      facade: facadeMat(tx.facade),
       flat: new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.82, metalness: 0.04, envMapIntensity: 0.45 }),
       glow: new THREE.MeshBasicMaterial({ vertexColors: true, toneMapped: false }),
       // The far skyline is a silhouette mesh: what matters is that a mass two
@@ -199,6 +230,8 @@ export class World {
       // not like distance.
       far: new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.9, metalness: 0.02, envMapIntensity: 0.85 }),
     };
+    // [u0, du] per wall family in the facade atlas, passed to Builder.box.
+    this.cells = tx.facade.cells;
     this.group = new THREE.Group();
     scene.add(this.group);
   }
@@ -513,11 +546,7 @@ export class World {
     const walk = new Builder(true);
     const flat = new Builder(false);
     const glow = new Builder(false);
-    const bl = {
-      glass: new Builder(true), masonry: new Builder(true), brick: new Builder(true),
-      signs: new Builder(true),
-      industrial: new Builder(true), house: new Builder(true),
-    };
+    const bl = { glass: new Builder(true), facade: new Builder(true) };
 
     const own = (x, z) => Math.floor(x / CHUNK) === cx && Math.floor(z / CHUNK) === cz;
     const nodesDone = new Set();
@@ -563,11 +592,7 @@ export class World {
     add(flat, this.mats.flat, true, true);
     add(glow, this.mats.glow, false, false);
     add(bl.glass, this.mats.glass, true, true);
-    add(bl.masonry, this.mats.masonry, true, true);
-    add(bl.brick, this.mats.brick, true, true);
-    add(bl.signs, this.mats.signs, true, false);
-    add(bl.industrial, this.mats.industrial, true, true);
-    add(bl.house, this.mats.house, true, true);
+    add(bl.facade, this.mats.facade, true, true);
     return grp.children.length ? grp : null;
   }
 
@@ -1192,12 +1217,18 @@ export class World {
 
   meshBuilding(bl, flat, glow, bd) {
     const seed = bd.seed;
-    let target, col, uS = 14, vS = 13.6;
+    const C = this.cells;
+    let target, col, cell = null, uS = 14, vS = 13.6;
     const fam = (bd.style === 'tower' || bd.style === 'midrise'
       || bd.style === 'brick' || bd.style === 'lowrise')
       ? this.buildingFamily(bd) : null;
     if (fam) {
-      target = fam.m === 'glass' ? bl.glass : fam.m === 'brick' ? bl.brick : bl.masonry;
+      // Glass keeps its own material: it is the one facade whose look is mostly
+      // indirect SPECULAR, and that is the part of envMapIntensity the AO
+      // channel can only approximate. Everything else joins the atlas.
+      const glassy = fam.m === 'glass';
+      target = glassy ? bl.glass : bl.facade;
+      if (!glassy) cell = C[fam.m];
       // Jitter stays INSIDE the family, so a brick street varies in weathering
       // rather than becoming a different material every other lot.
       col = tint(seed, fam.c, 0.26);
@@ -1207,9 +1238,11 @@ export class World {
       // sliced through by the parapet on every building in the city.
       vS = bd.h / Math.max(1, Math.round(bd.h / fam.v));
     } else if (bd.style === 'industrial') {
-      target = bl.industrial; col = tint(seed, [0.84, 0.86, 0.86], 0.3); uS = 16; vS = 16;
+      target = bl.facade; cell = C.industrial;
+      col = tint(seed, [0.84, 0.86, 0.86], 0.3); uS = 16; vS = 16;
     } else {
-      target = bl.house; col = tint(seed, [0.94, 0.92, 0.88], 0.36); uS = 0; vS = 0;
+      target = bl.facade; cell = C.house;
+      col = tint(seed, [0.94, 0.92, 0.88], 0.36); uS = 0; vS = 0;
     }
 
     if (bd.kind) return this.meshLandmarkTower(bl, flat, bd, col);
@@ -1220,13 +1253,14 @@ export class World {
 
     if (bd.style === 'house') {
       const wallH = bd.h * 0.72;
-      target.box(bd.x, base, bd.z, bd.w, wallH + 2, bd.d, bd.rot, col, { top: false, uScale: 0, vScale: 0, ao: 0.3 });
+      target.box(bd.x, base, bd.z, bd.w, wallH + 2, bd.d, bd.rot, col,
+        { top: false, uScale: 0, vScale: 0, ao: 0.3, cell });
       // Roofs were a flat near-black polygon that can fill a third of a frame
-      // with no material at all. Route them through the industrial builder so
+      // with no material at all. Route them through the industrial cell so
       // they take a texture, and lift them off black.
       const rc = tint(seed, [0.46, 0.43, 0.41], 0.16);
-      bl.industrial.box(bd.x, base + wallH + 2, bd.z, bd.w + 0.7, 0.26, bd.d + 0.7, bd.rot, rc,
-        { uScale: 5, vScale: 5 });
+      bl.facade.box(bd.x, base + wallH + 2, bd.z, bd.w + 0.7, 0.26, bd.d + 0.7, bd.rot, rc,
+        { uScale: 5, vScale: 5, cell: C.industrial });
       // A gable that fits the house it sits on.
       //
       // This used to be `cone(..., max(w, d) * 0.74, ..., 4, ...)` -- a square
@@ -1301,8 +1335,16 @@ export class World {
         [rv * 1.2, rv * 1.2, rv * 1.17]);
       // The lid itself, on a textured builder. A roof is seen from every
       // elevated view in the game and it was one flat untextured colour.
-      bl.industrial.box(bd.x, rt - 0.12, bd.z, bd.w + 0.2, 0.14, bd.d + 0.2, bd.rot,
-        [rv * 0.92, rv * 0.93, rv * 0.96], { uScale: 7, vScale: 7 });
+      // At 7 m a tile this slab is the single biggest thing splitting into
+      // per-repeat quads for the atlas -- about half the facade set's triangles
+      // across a downtown chunk, for a 12 cm band. Dropping its sides is the
+      // obvious saving and it is NOT free: the band is the only part of the lid
+      // you can see (the parapet box above covers its top face outright), and
+      // removing it visibly cleans the corrugated grain out from under every
+      // cornice in the city. That is a look change, not a perf change, so it
+      // stays.
+      bl.facade.box(bd.x, rt - 0.12, bd.z, bd.w + 0.2, 0.14, bd.d + 0.2, bd.rot,
+        [rv * 0.92, rv * 0.93, rv * 0.96], { uScale: 7, vScale: 7, cell: C.industrial });
     }
 
     const dense = bd.style !== 'industrial';
@@ -1333,7 +1375,7 @@ export class World {
         const [ax, az] = off(0, bd.d / 2 + 0.9);
         flat.box(ax, y + plinthH - 1.4, az, bd.w * 0.62, 0.22, 1.8, bd.rot, ac);
       }
-      this.meshSigns(bl.signs, flat, bd, y + plinthH, plinthH, seed, off);
+      this.meshSigns(bl.facade, flat, bd, y + plinthH, plinthH, seed, off);
       y += plinthH + 0.5;
       remaining -= plinthH + 0.5;
     }
@@ -1344,7 +1386,7 @@ export class World {
       const frac = t === tiers - 1 ? 1 : t === 0 ? 0.62 : 0.6;
       const hh = remaining * frac;
       target.box(bd.x, y, bd.z, w, hh, d, bd.rot, col,
-        { uScale: uS, vScale: vS, top: false, vOff: (y - base) / (vS || 1), ao: t === 0 ? 0.22 : 0 });
+        { uScale: uS, vScale: vS, top: false, vOff: (y - base) / (vS || 1), ao: t === 0 ? 0.22 : 0, cell });
       y += hh;
       remaining -= hh;
       if (t < tiers - 1) {
@@ -1382,6 +1424,7 @@ export class World {
 
   meshLandmarkTower(bl, flat, bd, col) {
     const base = bd.y - 2;
+    const stone = this.cells.masonry;
     if (bd.kind === 'columbia') {
       const dark = [0.24, 0.26, 0.3];
       const c = Math.cos(bd.rot), s = Math.sin(bd.rot);
@@ -1397,9 +1440,11 @@ export class World {
     }
     if (bd.kind === 'smith') {
       const white = [1.05, 1.02, 0.96];
-      bl.masonry.box(bd.x, base, bd.z, bd.w * 1.5, 22, bd.d * 1.5, bd.rot, white, { uScale: 12, vScale: 12, top: false, ao: 0.35 });
+      bl.facade.box(bd.x, base, bd.z, bd.w * 1.5, 22, bd.d * 1.5, bd.rot, white,
+        { uScale: 12, vScale: 12, top: false, ao: 0.35, cell: stone });
       flat.box(bd.x, base + 22, bd.z, bd.w * 1.5 + 1.2, 1.1, bd.d * 1.5 + 1.2, bd.rot, [0.78, 0.77, 0.73]);
-      bl.masonry.box(bd.x, base + 23.1, bd.z, bd.w, bd.h - 45, bd.d, bd.rot, white, { uScale: 11, vScale: 11, top: false });
+      bl.facade.box(bd.x, base + 23.1, bd.z, bd.w, bd.h - 45, bd.d, bd.rot, white,
+        { uScale: 11, vScale: 11, top: false, cell: stone });
       flat.box(bd.x, base + bd.h - 22, bd.z, bd.w + 1.6, 1.5, bd.d + 1.6, bd.rot, [0.78, 0.77, 0.73]);
       // cone() places its four vertices on the axes, so a 4-sided one is a
       // DIAMOND in plan -- 45 deg out from the square tower under it, and it
@@ -1414,7 +1459,8 @@ export class World {
       let y = base, w = bd.w, d = bd.d, h = bd.h + 2;
       for (let t = 0; t < 4; t++) {
         const hh = h * (t === 3 ? 1 : 0.34);
-        bl.masonry.box(bd.x, y, bd.z, w, hh, d, bd.rot, c2, { uScale: 12, vScale: 12, top: false, ao: t === 0 ? 0.28 : 0 });
+        bl.facade.box(bd.x, y, bd.z, w, hh, d, bd.rot, c2,
+          { uScale: 12, vScale: 12, top: false, ao: t === 0 ? 0.28 : 0, cell: stone });
         flat.box(bd.x, y + hh, bd.z, w + 0.8, 0.7, d + 0.8, bd.rot, TRIM);
         y += hh + 0.7; h -= hh; w *= 0.84; d *= 0.84;
         if (h < 6) break;
@@ -1422,11 +1468,13 @@ export class World {
       flat.prism(bd.x, y, bd.z, 0.35, 16, 4, [0.4, 0.4, 0.42]);
       return;
     }
-    const target = bd.kind === 'stone' ? bl.masonry : bl.glass;
+    const isStone = bd.kind === 'stone';
+    const target = isStone ? bl.facade : bl.glass;
     let y = base, h = bd.h + 2, w = bd.w, d = bd.d;
     for (let t = 0; t < 3; t++) {
       const hh = t === 2 ? h : h * 0.5;
-      target.box(bd.x, y, bd.z, w, hh, d, bd.rot, col, { uScale: 13, vScale: 13, top: false, ao: t === 0 ? 0.28 : 0 });
+      target.box(bd.x, y, bd.z, w, hh, d, bd.rot, col,
+        { uScale: 13, vScale: 13, top: false, ao: t === 0 ? 0.28 : 0, cell: isStone ? stone : null });
       flat.box(bd.x, y + hh, bd.z, w + 0.8, 0.6, d + 0.8, bd.rot, TRIM);
       y += hh + 0.6; h -= hh; w *= 0.86; d *= 0.86;
       if (h < 8) break;
@@ -1452,7 +1500,12 @@ export class World {
   meshSigns(sg, flat, bd, topY, plinthH, seed, off) {
     if (bd.w < 6 && bd.d < 6) return;
     const N = 4, C = 1 / N;
-    const cell = (k) => {
+    // The 4 x 4 plate grid now sits inside the facade atlas's signage cell, so
+    // every U goes through `su`. V is untouched -- these UVs are already inside
+    // 0..1 and the atlas is exactly one tile tall.
+    const [su0, sdu] = this.cells.signs;
+    const su = (u) => su0 + u * sdu;
+    const plate = (k) => {
       const i = Math.floor(hash2(seed, k) * 16);
       return [(i % N) * C, Math.floor(i / N) * C];
     };
@@ -1477,7 +1530,7 @@ export class World {
       // Signing every face of every building makes the city a retail park.
       if (f === 1 && hash2(seed, 200) > 0.55) continue;
       if (fc.span < 5) continue;
-      const [u0, v0] = cell(201 + f * 7);
+      const [u0, v0] = plate(201 + f * 7);
       const nrm = dirOf(fc.out[0], fc.out[1]);
       const halfW = fc.span * 0.38;
       // Stand a little proud of the plinth, which is itself 0.15 m wider than
@@ -1489,12 +1542,12 @@ export class World {
       };
       const yTop = topY - 0.18, yBot = yTop - fh;
       sg.quad(pt(-halfW, yBot), pt(halfW, yBot), pt(halfW, yTop), pt(-halfW, yTop),
-        nrm, [u0, v0, u0 + C, v0, u0 + C, v0 + C, u0, v0 + C], [1, 1, 1]);
+        nrm, [su(u0), v0, su(u0 + C), v0, su(u0 + C), v0 + C, su(u0), v0 + C], [1, 1, 1]);
 
       // Projecting blade sign: hung near one end and read from ALONG the
       // street rather than across it, which is the whole point of a blade.
       if (hash2(seed, 210 + f) > 0.62) {
-        const [bu, bv] = cell(220 + f * 3);
+        const [bu, bv] = plate(220 + f * 3);
         const bt = halfW * (hash2(seed, 230 + f) > 0.5 ? 0.72 : -0.72);
         const bladeN = dirOf(fc.along[0], fc.along[1]);
         const byTop = yTop + 0.4, byBot = byTop - 1.5;
@@ -1504,21 +1557,21 @@ export class World {
           return [wx, yy, wz];
         };
         sg.quad(q(0.05, byBot), q(1.0, byBot), q(1.0, byTop), q(0.05, byTop),
-          bladeN, [bu, bv, bu + C, bv, bu + C, bv + C, bu, bv + C], [1, 1, 1]);
+          bladeN, [su(bu), bv, su(bu + C), bv, su(bu + C), bv + C, su(bu), bv + C], [1, 1, 1]);
       }
     }
 
     // Rooftop billboard, on low and mid buildings only: on a tower it sits
     // 150 m up where nobody reads it, and on a house it is absurd.
     if (bd.h > 10 && bd.h < 42 && bd.w > 14 && hash2(seed, 240) > 0.72) {
-      const [bu, bv] = cell(241);
+      const [bu, bv] = plate(241);
       const bw = Math.min(bd.w * 0.7, 16), bh = bw * 0.42;
       const yb = bd.y - 2 + bd.h + 3.4;
       const p0 = off(-bw / 2, bd.d * 0.2), p1 = off(bw / 2, bd.d * 0.2);
       const nrm = dirOf(0, 1);
       sg.quad([p0[0], yb, p0[1]], [p1[0], yb, p1[1]],
         [p1[0], yb + bh, p1[1]], [p0[0], yb + bh, p0[1]],
-        nrm, [bu, bv, bu + C, bv, bu + C, bv + C, bu, bv + C], [1, 1, 1]);
+        nrm, [su(bu), bv, su(bu + C), bv, su(bu + C), bv + C, su(bu), bv + C], [1, 1, 1]);
       // Legs, so it stands on the roof instead of floating over it.
       for (const lt of [-bw * 0.34, bw * 0.34]) {
         const [lx, lz] = off(lt, bd.d * 0.2);
