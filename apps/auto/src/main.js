@@ -23,6 +23,11 @@ const loadBar = document.getElementById('loadBar');
 const loadMsg = document.getElementById('loadMsg');
 const loading = document.getElementById('loading');
 
+// One definition of "is this a phone", used by the light rig, the starting
+// quality tier and the pixel-ratio cap. Three separate copies of this test had
+// already started to drift.
+const ON_PHONE = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
+
 const STAR_POINTS = [0, 30, 90, 190, 340, 560];
 const HOSPITAL = G.RESPAWN; // kept clear of buildings by citygen, via G.KEEP_CLEAR
 
@@ -46,6 +51,7 @@ class Game {
       sound: true,
       sensitivity: 1,
       debug: false,
+      post: true,
     };
   }
 
@@ -264,7 +270,11 @@ async function boot() {
   const viewH = () => canvas.clientHeight || window.innerHeight;
   renderer.setSize(viewW(), viewH(), false);
   renderer.shadowMap.enabled = true;
-  renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+  // PCFSoft is the most expensive filter three offers and it is a fill-rate
+  // cost paid on every shadowed pixel. On a phone that is not where the budget
+  // should go; plain PCF is a fraction of the cost and the difference at this
+  // resolution is a slightly harder shadow edge.
+  renderer.shadowMap.type = ON_PHONE ? THREE.PCFShadowMap : THREE.PCFSoftShadowMap;
   renderer.outputColorSpace = THREE.SRGBColorSpace;
 
 /**
@@ -320,7 +330,7 @@ function installHeightFog() {
   // than giving it depth. Aerial perspective should separate planes, not erase
   // them, and the fog is tinted slightly cooler than the horizon so towers
   // still read against it.
-  scene.fog = new THREE.FogExp2(0xb9c3cf, 0.00040);
+  scene.fog = new THREE.FogExp2(0xb9c3cf, 0.00026);
   installHeightFog();
   camera = new THREE.PerspectiveCamera(62, viewW() / viewH(), 0.5, 9000);
 
@@ -355,9 +365,13 @@ function installHeightFog() {
   // shot has a lit face and a shadowed one.
   sun.position.set(-215, 200, -150);
   sun.castShadow = true;
-  sun.shadow.mapSize.set(2048, 2048);
+  sun.shadow.mapSize.set(ON_PHONE ? 1024 : 2048, ON_PHONE ? 1024 : 2048);
   sun.shadow.camera.near = 20;
-  sun.shadow.camera.far = 1150;
+  // 1150 was set to stop tall casters falling out of the frustum at the box
+  // edge. That is still the reason, but the far plane costs geometry in the
+  // shadow pass every frame, and the pass measured 152 draw calls and 318k
+  // triangles -- a third of the whole frame.
+  sun.shadow.camera.far = 980;
   // 105 m covered barely a block: buildings cast no shadow on the streets they
   // line, which is most of why the city read as flat. 190 m reaches across a
   // downtown block and its far side at the cost of shadow-map resolution,
@@ -374,7 +388,7 @@ function installHeightFog() {
   // 260 m at 2048 is 0.25 m per texel, which is inside the range this era of
   // console shadow ran at. `far` goes up with it, or tall casters fall out of
   // the frustum at the same edge for the same reason.
-  const S = 260;
+  const S = ON_PHONE ? 190 : 260;
   sun.shadow.camera.left = -S;
   sun.shadow.camera.right = S;
   sun.shadow.camera.top = S;
@@ -383,7 +397,7 @@ function installHeightFog() {
   // back as dark blotches across sunlit facades. normalBias scales with texel
   // size, so it goes up whenever S does.
   sun.shadow.bias = -0.0006;
-  sun.shadow.normalBias = 0.12;
+  sun.shadow.normalBias = ON_PHONE ? 0.09 : 0.12;
   scene.add(sun);
   scene.add(sun.target);
 
@@ -444,7 +458,10 @@ function installHeightFog() {
   window.__dbg = { game, city, player, world, traffic, peds, scene, camera, renderer, G, fx, hud, controls, audio, pickups, THREE, postfx, applyQuality, sun, sceneStats, cityStats, animateWalk, collideWithBuildings, TYPES: VEHICLE_TYPES };
   wireUi();
   game.newTarget();
-  applyQuality('high', false);
+  // A phone starts on medium. `high` was only ever reachable downward, so
+  // every player paid 2.5 s of stutter to discover their device could not run
+  // the desktop preset.
+  applyQuality(ON_PHONE ? 'medium' : 'high', false);
   startedAt = performance.now();
   loading.classList.add('hide');
   setTimeout(() => loading.remove(), 700);
@@ -770,6 +787,25 @@ function wireUi() {
   bind('setMusic', 'music', (v) => { audio.musicOn = v; });
   bind('setSound', 'sound', (v) => { audio.enabled = v; });
   bind('setDebug', 'debug', (v) => { debugEl.classList.toggle('on', v); });
+  bind('setPost', 'post', (v) => { postfx.setPostEnabled(v); });
+
+  // Per-pass switches. `scene.fog` is nulled rather than zeroed because the fog
+  // term is compiled into every material -- setting density to 0 still pays for
+  // it, and the question being answered is what things cost as well as what
+  // they look like.
+  let savedFog = null;
+  for (const b of document.querySelectorAll('.dbg')) {
+    b.addEventListener('click', () => {
+      const on = !b.classList.contains('on');
+      b.classList.toggle('on', on);
+      if (b.dataset.fx) postfx.setFx(b.dataset.fx, on);
+      else if (b.dataset.world === 'fog') {
+        if (on) { scene.fog = savedFog || scene.fog; }
+        else { savedFog = scene.fog; scene.fog = null; }
+        scene.traverse((o) => { if (o.material) o.material.needsUpdate = true; });
+      }
+    });
+  }
 
   const sens = document.getElementById('setSens');
   sens.addEventListener('input', () => {
@@ -1013,8 +1049,11 @@ function autoQuality(dt) {
   if (qualityLocked || tierIdx >= TIERS.length - 1) return;
   if (performance.now() - startedAt < 4000) return;
   if (window.__noAutoQuality) return;
-  slowFor = fps < 40 ? slowFor + dt : 0;
-  if (slowFor > 2.5) {
+  slowFor = fps < 45 ? slowFor + dt : 0;
+  // 2.5 s at under 40 fps is a long time to be stuttering before anything
+  // happens, and 40 is already well into "feels wrong" -- by the time it fired
+  // the player had formed an opinion.
+  if (slowFor > 1.2) {
     slowFor = 0;
     applyQuality(TIERS[++tierIdx], false);
     hud.showToast(`Graphics: ${TIERS[tierIdx]}`);
@@ -1022,12 +1061,19 @@ function autoQuality(dt) {
 }
 
 function applyQuality(q, manual) {
-  if (manual) { qualityLocked = true; tierIdx = TIERS.indexOf(q); }
+  if (manual) qualityLocked = true;
+  // Keep the ladder position in step whether the change was manual or not --
+  // starting a phone on `medium` with tierIdx still at 0 made the first
+  // automatic step down re-apply medium and waste a rung.
+  tierIdx = Math.max(0, TIERS.indexOf(q));
   game.settings.quality = q;
   postfx.setQuality(q);
   renderer.shadowMap.enabled = q !== 'low' && game.settings.shadows;
-  const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
-  const cap = q === 'high' ? (isMobile ? 2 : 1.6) : q === 'medium' ? 1.5 : 1.15;
+  // Pixel ratio is the single biggest fill-rate dial there is: 2.0 against
+  // 1.45 is 1.9x the pixels through every one of the post chain's fullscreen
+  // passes. A phone was capped at 2 on `high`, which is where most of the cost
+  // went.
+  const cap = q === 'high' ? (ON_PHONE ? 1.45 : 1.6) : q === 'medium' ? (ON_PHONE ? 1.3 : 1.5) : 1.15;
   renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, cap));
   renderer.setSize(renderer.domElement.clientWidth, renderer.domElement.clientHeight, false);
   postfx.setSize(renderer.domElement.clientWidth, renderer.domElement.clientHeight, renderer.getPixelRatio());

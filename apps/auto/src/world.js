@@ -1516,6 +1516,22 @@ export class World {
   }
 
   /**
+   * Height of the water surface covering a point, or null if it is dry.
+   *
+   * The sea is at y=0 and every labelled lake gets its own plane at its own
+   * level -- Green Lake really is at 50 m -- so "is this under water" is not a
+   * comparison against zero, and anything measuring clearance over water has to
+   * ask for the LOCAL surface. A fixed 5.5 m bridge floor put decks under the
+   * lakes they crossed by assuming otherwise.
+   */
+  waterLevelAt(x, z) {
+    for (const l of (this.lakeSpecs || [])) {
+      if (x >= l.x0 && x <= l.x1 && z >= l.z0 && z <= l.z1) return l.level;
+    }
+    return G.isWater(x, z) ? 0 : null;
+  }
+
+  /**
    * Is this point inside a building footprint? Shared by every scatter, since
    * "the data says this is open ground" and "there is nothing standing here"
    * are different questions and only the second one matters to a prop.

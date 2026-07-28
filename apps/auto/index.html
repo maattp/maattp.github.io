@@ -292,6 +292,13 @@
     white-space: pre;
   }
   #debugStats.on { display: block; }
+  .dbgrid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; margin: 2px 0 10px; }
+  .dbg {
+    font: 600 11px/1 ui-sans-serif, system-ui; padding: 8px 4px; border-radius: 8px;
+    border: 1px solid rgba(255,255,255,0.16); background: rgba(255,255,255,0.06);
+    color: #97a2ad; -webkit-tap-highlight-color: transparent;
+  }
+  .dbg.on { background: rgba(90,190,140,0.22); border-color: rgba(90,190,140,0.5); color: #dff3e8; }
 </style>
 </head>
 <body>
@@ -369,6 +376,20 @@
       <div class="row"><span>Sound effects</span><div class="toggle" id="setSound"></div></div>
       <div class="row"><span>Camera speed</span><input type="range" id="setSens" min="0.4" max="2.2" step="0.1" value="1"></div>
       <div class="row"><span>Debug stats</span><div class="toggle" id="setDebug"></div></div>
+      <!-- One switch per screen-space pass. A single "post on/off" cannot answer
+           "which of these is hazing the picture", and that is the question that
+           actually gets asked. -->
+      <div class="row"><span>Post effects</span><div class="toggle" id="setPost"></div></div>
+      <div class="dbgrid">
+        <button class="dbg on" data-fx="bloom">Bloom</button>
+        <button class="dbg on" data-fx="ssao">SSAO</button>
+        <button class="dbg on" data-fx="grade">Grade</button>
+        <button class="dbg on" data-fx="vignette">Vignette</button>
+        <button class="dbg on" data-fx="grain">Grain</button>
+        <button class="dbg on" data-fx="dither">Dither</button>
+        <button class="dbg on" data-fx="fxaa">FXAA</button>
+        <button class="dbg on" data-world="fog">Fog</button>
+      </div>
       <p class="help">
         Left thumb steers and walks. Right side: drag to look, buttons to drive.
         Walk up to any car and hit ENTER to take it. Deliveries pay — the gold ring
@@ -393,7 +414,7 @@
     <div id="loadTrack"><div id="loadBar"></div></div>
     <div id="loadMsg">Starting up</div>
     <!-- Bumped once per change, in step with CACHE in sw.js. See CLAUDE.md. -->
-    <div id="build">v33</div>
+    <div id="build">v34</div>
     <div id="attrib">Map data © OpenStreetMap contributors (ODbL) · elevation USGS 3DEP</div>
   </div>
 

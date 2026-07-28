@@ -644,7 +644,7 @@ export function animateWalk(h, amp, dt, speed) {
 // nobody on it at any given moment. Characters are one draw call each -- the
 // cheapest population in the game -- so this is the least expensive density
 // there is to buy.
-const MAX_PEDS = 34;
+const MAX_PEDS = 24;
 const PED_RADIUS = 150;
 
 export class PedSystem {

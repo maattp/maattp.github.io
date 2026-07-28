@@ -23,7 +23,7 @@
 // launch to prove it hadn't changed, and PINNED is wrong too: these URLs carry
 // no version, so a bump has to be able to replace them. The map only changes
 // when tools/ re-imports it, and that comes with a bump.
-const CACHE = 'auto-v33';
+const CACHE = 'auto-v34';
 const PINNED = ['vendor/three-0.160.0.module.js'];
 const isMapData = (url) => new URL(url).pathname.includes('/apps/auto/data/');
 const SHELL = ['./', './index.html', './manifest.webmanifest',

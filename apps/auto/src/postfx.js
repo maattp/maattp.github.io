@@ -91,6 +91,8 @@ uniform float vignette;
 uniform float grain;
 uniform float time;
 uniform float fxaa;
+uniform float grade;
+uniform float dither;
 uniform sampler2D tAO;
 uniform float aoAmount;
 varying vec2 vUv;
@@ -131,6 +133,7 @@ void main() {
   }
   c += texture2D(tBloom, vUv).rgb * bloomStrength;
 
+  if (grade > 0.5) {
   // Toe and shoulder.
   //
   // The grade was a smoothstep, which is symmetric: it pushed the shadows
@@ -139,8 +142,8 @@ void main() {
   // both ends of the image carried no separation at all. A toe that only acts
   // on the darkest values keeps detail out of the crush; a shoulder that only
   // acts above the knee keeps the bright faces from flattening.
-  c += vec3(0.024) * pow(1.0 - c, vec3(4.0));
-  c -= vec3(0.20) * pow(max(c - 0.52, vec3(0.0)), vec3(1.5));
+  c += vec3(0.010) * pow(1.0 - c, vec3(4.0));
+  c -= vec3(0.09) * pow(max(c - 0.62, vec3(0.0)), vec3(1.5));
   c = mix(c, c * c * (3.0 - 2.0 * c), 0.05);
   // Saturation compensation for ACES.
   //
@@ -154,6 +157,7 @@ void main() {
   c = mix(vec3(dot(c, vec3(0.2126, 0.7152, 0.0722))), c, 1.45);
   c += vec3(-0.008, 0.0, 0.014) * (1.0 - c);
   c *= vec3(1.015, 1.0, 0.985);
+  }
 
   float d = distance(vUv, vec2(0.5));
   c *= 1.0 - vignette * smoothstep(0.35, 0.95, d);
@@ -170,7 +174,7 @@ void main() {
   vec2 px = vUv / texel + vec2(fract(time * 71.0) * 977.0, fract(time * 53.0) * 331.0);
   float n1 = fract(sin(dot(floor(px), vec2(12.9898, 78.233))) * 43758.5453);
   float n2 = fract(sin(dot(floor(px) + 17.0, vec2(39.3468, 11.135))) * 24634.6345);
-  c += (n1 - n2) * (0.5 / 255.0) + (n1 - 0.5) * grain;
+  c += dither * ((n1 - n2) * (0.5 / 255.0)) + (n1 - 0.5) * grain;
 
   gl_FragColor = vec4(clamp(c, 0.0, 1.0), 1.0);
 }`;
@@ -273,6 +277,13 @@ export class PostFX {
     this.scenePass = new THREE.Scene();
     this.quadScene = new THREE.Scene();
 
+    this.fx = { bloom: true, ssao: true, grain: true, vignette: true, fxaa: true, grade: true, dither: true };
+    this.base = { bloom: 0.34, grain: 0.0025, vignette: 0.10, fxaa: 1, ao: 1.0 };
+    this.bloomPasses = 2;
+    // Set by the pause-menu switch; kept apart from the tier so a debug session
+    // survives an automatic quality change.
+    this.forceOff = false;
+    this._tierEnabled = true;
     this.sceneRT = makeRT(2, 2, true);
     // Make three tone-map INTO this target.
     //
@@ -324,11 +335,13 @@ export class PostFX {
     this.composite = pass(COMPOSITE, {
       tScene: { value: null }, tBloom: { value: null },
       texel: { value: new THREE.Vector2() },
-      bloomStrength: { value: 0.62 },
-      vignette: { value: 0.15 },
-      grain: { value: 0.005 },
+      bloomStrength: { value: 0.34 },
+      vignette: { value: 0.10 },
+      grain: { value: 0.0025 },
       time: { value: 0 },
       fxaa: { value: 1 },
+      grade: { value: 1 },
+      dither: { value: 1 },
       tAO: { value: null },
       aoAmount: { value: 1.0 },
     });
@@ -369,7 +382,7 @@ export class PostFX {
       r.render(mesh.userData.scene, CAM);
     };
 
-    if (this.ssaoOn && camera) {
+    if (this.ssaoOn && this.fx.ssao && camera) {
       const su = this.ssao.material.uniforms;
       su.tDepth.value = this.sceneRT.depthTexture;
       su.proj.value.copy(camera.projectionMatrix);
@@ -388,11 +401,12 @@ export class PostFX {
       this.composite.material.uniforms.tAO.value = this.aoA.texture;
     }
 
+    if (this.fx.bloom) {
     this.bright.material.uniforms.tScene.value = this.sceneRT.texture;
     draw(this.bright, this.bloomA);
 
     const bu = this.blur.material.uniforms;
-    for (let i = 0; i < 3; i++) {
+    for (let i = 0; i < this.bloomPasses; i++) {
       const spread = 1 + i * 1.6;
       bu.tSrc.value = this.bloomA.texture;
       bu.dir.value.set(spread / this._bw, 0);
@@ -400,6 +414,7 @@ export class PostFX {
       bu.tSrc.value = this.bloomB.texture;
       bu.dir.value.set(0, spread / this._bh);
       draw(this.blur, this.bloomA);
+    }
     }
 
     const cu = this.composite.material.uniforms;
@@ -416,18 +431,54 @@ export class PostFX {
     QUAD.dispose();
   }
 
-  setQuality(q) {
+  /**
+   * Individual effect switches, for finding out which pass is responsible for
+   * something. A single "post on/off" is no use when the question is *which*
+   * of eight screen-space passes is putting a haze over the picture -- the only
+   * way to answer that is to turn them off one at a time while looking at it.
+   *
+   * Quality sets the BASE strengths; these flags gate them. Keeping the two
+   * separate matters because `setQuality` runs on every tier change and would
+   * otherwise wipe whatever was being debugged.
+   */
+  /** Master switch for the whole chain, independent of the quality tier. */
+  setPostEnabled(on) {
+    this.forceOff = !on;
+    this.enabled = this._tierEnabled && !this.forceOff;
+  }
+
+  setFx(name, on) {
+    this.fx[name] = on;
+    this.applyFx();
+  }
+
+  applyFx() {
     const cu = this.composite.material.uniforms;
-    this.enabled = q !== 'low';
+    const f = this.fx;
+    cu.bloomStrength.value = f.bloom ? this.base.bloom : 0;
+    cu.grain.value = f.grain ? this.base.grain : 0;
+    cu.vignette.value = f.vignette ? this.base.vignette : 0;
+    cu.fxaa.value = f.fxaa ? this.base.fxaa : 0;
+    cu.grade.value = f.grade ? 1 : 0;
+    cu.dither.value = f.dither ? 1 : 0;
+    cu.aoAmount.value = this.ssaoOn && f.ssao ? this.base.ao : 0;
+  }
+
+  setQuality(q) {
+    this.enabled = q !== 'low' && !this.forceOff;
+    this._tierEnabled = q !== 'low';
     // FXAA is a single fullscreen tap and the context has no MSAA, so keep it on
     // for medium too -- dropping it entirely was a visible edge-quality cliff.
-    cu.fxaa.value = q === 'low' ? 0 : 1;
-    cu.bloomStrength.value = q === 'high' ? 0.62 : 0.5;
+    this.base.fxaa = q === 'low' ? 0 : 1;
+    this.base.bloom = q === 'high' ? 0.34 : 0.26;
+    // Three blur iterations is six fullscreen passes. Two is most of the look
+    // for two thirds of the fill cost, and fill is what a phone runs out of.
+    this.bloomPasses = q === 'high' ? 2 : 1;
     // Film grain is separate from the dither and much larger; at 0.016 it was
     // reading as texture across the sky now that the dither is per-pixel.
-    cu.grain.value = q === 'high' ? 0.005 : 0;
+    this.base.grain = q === 'high' ? 0.0025 : 0;
     // SSAO is the most expensive pass here, so it is the first thing to go.
     this.ssaoOn = q === 'high';
-    cu.aoAmount.value = this.ssaoOn ? 1.0 : 0.0;
+    this.applyFx();
   }
 }
