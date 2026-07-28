@@ -45,38 +45,38 @@ const ROLL = 0.020;
 const V0_100 = 100 / 3.6;
 
 export const TYPES = {
-  sedan: deriveSpec({len: 5.06, wid: 1.90, wheelR: 0.34, sill: 0.30, belt: 1.06, roof: 1.50, cab: [-0.26, 0.10], hand: 'sedan', mass: 1.0, acc: 4.1, topKph: 205, brakeM: 40, latG: 0.88 }),
-  hatch: deriveSpec({len: 4.10, wid: 1.76, wheelR: 0.31, sill: 0.29, belt: 0.96, roof: 1.50, cab: [-0.30, 0.16], mass: 0.9, acc: 3.6, topKph: 185, brakeM: 41, latG: 0.85 }),
-  compact: deriveSpec({len: 3.74, wid: 1.68, wheelR: 0.29, sill: 0.28, belt: 0.94, roof: 1.48, cab: [-0.28, 0.15], mass: 0.85, acc: 3.0, topKph: 170, brakeM: 43, latG: 0.83 }),
-  suv: deriveSpec({len: 4.94, wid: 1.98, wheelR: 0.38, sill: 0.46, belt: 1.30, roof: 1.88, cab: [-0.34, 0.20], hand: 'suv', mass: 1.3, acc: 4.0, topKph: 195, brakeM: 42, latG: 0.8 }),
+  sedan: deriveSpec({ wheelbase: 2.98,len: 5.06, wid: 1.90, wheelR: 0.34, sill: 0.30, belt: 1.06, roof: 1.50, cab: [-0.26, 0.10], hand: 'sedan', mass: 1.0, acc: 4.1, topKph: 205, brakeM: 40, latG: 0.88 }),
+  hatch: deriveSpec({ wheelbase: 2.6,len: 4.10, wid: 1.76, wheelR: 0.31, sill: 0.29, belt: 0.96, roof: 1.50, cab: [-0.30, 0.16], mass: 0.9, acc: 3.6, topKph: 185, brakeM: 41, latG: 0.85 }),
+  compact: deriveSpec({ wheelbase: 2.42,len: 3.74, wid: 1.68, wheelR: 0.29, sill: 0.28, belt: 0.94, roof: 1.48, cab: [-0.28, 0.15], mass: 0.85, acc: 3.0, topKph: 170, brakeM: 43, latG: 0.83 }),
+  suv: deriveSpec({ wheelbase: 2.87,len: 4.94, wid: 1.98, wheelR: 0.38, sill: 0.46, belt: 1.30, roof: 1.88, cab: [-0.34, 0.20], hand: 'suv', mass: 1.3, acc: 4.0, topKph: 195, brakeM: 42, latG: 0.8 }),
   // `hand` sends a type to its own authored builder instead of the shared
   // loft. sill/belt/roof are then a DESCRIPTION of what that builder draws
   // rather than an input to it, so they stay readable next to the other rows.
-  sports: deriveSpec({len: 4.42, wid: 1.92, wheelR: 0.34, sill: 0.22, belt: 0.94, roof: 1.32, cab: [-0.24, 0.06], hand: 'sports', mass: 0.85, acc: 7.4, topKph: 275, brakeM: 33, latG: 1.02 }),
+  sports: deriveSpec({ wheelbase: 2.72,len: 4.42, wid: 1.92, wheelR: 0.34, sill: 0.22, belt: 0.94, roof: 1.32, cab: [-0.24, 0.06], hand: 'sports', mass: 0.85, acc: 7.4, topKph: 275, brakeM: 33, latG: 1.02 }),
   // Cab-forward and low, on a long wheelbase with almost no overhang -- the
   // shape a floor full of batteries gives you. Heavier than the sports car and
   // quicker anyway, because the torque is all there from a standstill.
-  ev: deriveSpec({len: 4.62, wid: 1.98, wheelR: 0.36, sill: 0.22, belt: 0.79, roof: 1.25, cab: [-0.28, 0.09], ev: true, mass: 1.2, acc: 9.0, topKph: 235, brakeM: 35, latG: 0.96 }),
-  muscle: deriveSpec({len: 5.02, wid: 1.98, wheelR: 0.35, sill: 0.26, belt: 1.02, roof: 1.40, cab: [-0.24, 0.13], hand: 'muscle', mass: 1.15, acc: 7.0, topKph: 265, brakeM: 36, latG: 0.94 }),
+  ev: deriveSpec({ wheelbase: 2.96,len: 4.62, wid: 1.98, wheelR: 0.36, sill: 0.22, belt: 0.79, roof: 1.25, cab: [-0.28, 0.09], ev: true, mass: 1.2, acc: 9.0, topKph: 235, brakeM: 35, latG: 0.96 }),
+  muscle: deriveSpec({ wheelbase: 2.95,len: 5.02, wid: 1.98, wheelR: 0.35, sill: 0.26, belt: 1.02, roof: 1.40, cab: [-0.24, 0.13], hand: 'muscle', mass: 1.15, acc: 7.0, topKph: 265, brakeM: 36, latG: 0.94 }),
   // Roofless muscle. `roof` is the top of the windscreen frame, 16 cm under the
   // coupe's, and there is no greenhouse above the beltline at all -- which is
   // why the interior has to be built: you look straight down into it.
-  convertible: deriveSpec({len: 4.86, wid: 1.94, wheelR: 0.35, sill: 0.26, belt: 1.00, roof: 1.34, cab: [-0.24, 0.10], hand: 'convertible', mass: 1.10, acc: 6.6, topKph: 250, brakeM: 37, latG: 0.90 }),
+  convertible: deriveSpec({ wheelbase: 2.95,len: 4.86, wid: 1.94, wheelR: 0.35, sill: 0.26, belt: 1.00, roof: 1.34, cab: [-0.24, 0.10], hand: 'convertible', mass: 1.10, acc: 6.6, topKph: 250, brakeM: 37, latG: 0.90 }),
   // Motorcycles. `moto` is not a styling flag: it switches the ground solve to
   // two contact patches and turns on lean, both of which are wrong for a car
   // and both of which a bike looks broken without. Light, quick, and with LESS
   // braking distance in hand and less lateral grip than a car of the same era
   // -- two contact patches the size of a credit card is what that costs.
-  cruiser: deriveSpec({len: 2.56, wid: 0.95, wheelR: 0.40, sill: 0.30, belt: 0.80, roof: 1.24, cab: [-0.2, 0.1], hand: 'cruiser', moto: true, mass: 0.22, acc: 7.2, topKph: 190, brakeM: 48, latG: 0.80 }),
-  sportbike: deriveSpec({len: 2.05, wid: 0.72, wheelR: 0.32, sill: 0.28, belt: 0.78, roof: 1.18, cab: [-0.2, 0.1], hand: 'sportbike', moto: true, mass: 0.16, acc: 10.2, topKph: 285, brakeM: 40, latG: 1.08 }),
-  pickup: deriveSpec({len: 5.92, wid: 2.05, wheelR: 0.42, sill: 0.48, belt: 1.26, roof: 1.98, cab: [-0.15, 0.22], hand: 'pickup', mass: 1.4, acc: 4.4, topKph: 185, brakeM: 45, latG: 0.77 }),
-  van: deriveSpec({len: 5.26, wid: 2.00, wheelR: 0.35, sill: 0.36, belt: 1.10, roof: 2.28, cab: [-0.44, 0.30], boxy: 2, mass: 1.5, acc: 2.9, topKph: 155, brakeM: 47, latG: 0.73 }),
-  taxi: deriveSpec({len: 4.76, wid: 1.85, wheelR: 0.33, sill: 0.30, belt: 0.98, roof: 1.48, cab: [-0.28, 0.19], taxi: true, mass: 1.0, acc: 3.8, topKph: 195, brakeM: 41, latG: 0.85 }),
-  police: deriveSpec({len: 4.98, wid: 1.92, wheelR: 0.34, sill: 0.30, belt: 1.00, roof: 1.48, cab: [-0.28, 0.19], police: true, mass: 1.1, acc: 5.6, topKph: 230, brakeM: 37, latG: 0.93 }),
-  bus: deriveSpec({len: 12.0, wid: 2.55, wheelR: 0.50, sill: 0.50, belt: 1.30, roof: 3.10, cab: [-0.48, 0.48], bus: true, boxy: 3, mass: 4.5, acc: 1.4, topKph: 95, brakeM: 52, latG: 0.62 }),
-  boxtruck: deriveSpec({len: 7.5, wid: 2.38, wheelR: 0.46, sill: 0.62, belt: 1.55, roof: 2.55, cab: [0.14, 0.46], cargo: 2.55, boxy: 2, mass: 3.0, acc: 2.5, topKph: 125, brakeM: 51, latG: 0.66 }),
-  ambulance: deriveSpec({len: 6.3, wid: 2.28, wheelR: 0.42, sill: 0.56, belt: 1.42, roof: 2.35, cab: [0.16, 0.46], cargo: 2.25, boxy: 2, emergency: true, mass: 2.4, acc: 3.2, topKph: 155, brakeM: 48, latG: 0.72 }),
-  garbage: deriveSpec({len: 8.1, wid: 2.48, wheelR: 0.50, sill: 0.66, belt: 1.62, roof: 2.6, cab: [0.20, 0.46], cargo: 2.5, boxy: 2, mass: 4.0, acc: 1.2, topKph: 90, brakeM: 55, latG: 0.61 }),
+  cruiser: deriveSpec({ wheelbase: 1.66,len: 2.56, wid: 0.95, wheelR: 0.40, sill: 0.30, belt: 0.80, roof: 1.24, cab: [-0.2, 0.1], hand: 'cruiser', moto: true, mass: 0.22, acc: 7.2, topKph: 190, brakeM: 48, latG: 0.80 }),
+  sportbike: deriveSpec({ wheelbase: 1.36,len: 2.05, wid: 0.72, wheelR: 0.32, sill: 0.28, belt: 0.78, roof: 1.18, cab: [-0.2, 0.1], hand: 'sportbike', moto: true, mass: 0.16, acc: 10.2, topKph: 285, brakeM: 40, latG: 1.08 }),
+  pickup: deriveSpec({ wheelbase: 3.68,len: 5.92, wid: 2.05, wheelR: 0.42, sill: 0.48, belt: 1.26, roof: 1.98, cab: [-0.15, 0.22], hand: 'pickup', mass: 1.4, acc: 4.4, topKph: 185, brakeM: 45, latG: 0.77 }),
+  van: deriveSpec({ wheelbase: 3.5,len: 5.26, wid: 2.00, wheelR: 0.35, sill: 0.36, belt: 1.10, roof: 2.28, cab: [-0.44, 0.30], boxy: 2, mass: 1.5, acc: 2.9, topKph: 155, brakeM: 47, latG: 0.73 }),
+  taxi: deriveSpec({ wheelbase: 2.98,len: 4.76, wid: 1.85, wheelR: 0.33, sill: 0.30, belt: 0.98, roof: 1.48, cab: [-0.28, 0.19], taxi: true, mass: 1.0, acc: 3.8, topKph: 195, brakeM: 41, latG: 0.85 }),
+  police: deriveSpec({ wheelbase: 2.95,len: 4.98, wid: 1.92, wheelR: 0.34, sill: 0.30, belt: 1.00, roof: 1.48, cab: [-0.28, 0.19], police: true, mass: 1.1, acc: 5.6, topKph: 230, brakeM: 37, latG: 0.93 }),
+  bus: deriveSpec({ wheelbase: 6.0,len: 12.0, wid: 2.55, wheelR: 0.50, sill: 0.50, belt: 1.30, roof: 3.10, cab: [-0.48, 0.48], bus: true, boxy: 3, mass: 4.5, acc: 1.4, topKph: 95, brakeM: 52, latG: 0.62 }),
+  boxtruck: deriveSpec({ wheelbase: 4.3,len: 7.5, wid: 2.38, wheelR: 0.46, sill: 0.62, belt: 1.55, roof: 2.55, cab: [0.14, 0.46], cargo: 2.55, boxy: 2, mass: 3.0, acc: 2.5, topKph: 125, brakeM: 51, latG: 0.66 }),
+  ambulance: deriveSpec({ wheelbase: 3.9,len: 6.3, wid: 2.28, wheelR: 0.42, sill: 0.56, belt: 1.42, roof: 2.35, cab: [0.16, 0.46], cargo: 2.25, boxy: 2, emergency: true, mass: 2.4, acc: 3.2, topKph: 155, brakeM: 48, latG: 0.72 }),
+  garbage: deriveSpec({ wheelbase: 4.6,len: 8.1, wid: 2.48, wheelR: 0.50, sill: 0.66, belt: 1.62, roof: 2.6, cab: [0.20, 0.46], cargo: 2.5, boxy: 2, mass: 4.0, acc: 1.2, topKph: 90, brakeM: 55, latG: 0.61 }),
 };
 
 /**
@@ -120,7 +120,28 @@ function deriveSpec(s) {
 
 // Weighted by repetition. Two bikes in eighteen is about one vehicle in nine,
 // which is a summer afternoon in a American city and not a bike show.
-export const CIVILIAN_TYPES = ['sedan', 'sedan', 'hatch', 'compact', 'suv', 'suv', 'sports', 'ev', 'muscle', 'convertible', 'pickup', 'van', 'taxi', 'boxtruck', 'bus', 'garbage', 'cruiser', 'sportbike'];
+/**
+ * What actually drives past, weighted like an American city.
+ *
+ * This was a flat array sampled uniformly, so a refuse truck was exactly as
+ * likely to appear as a hatchback and heavy freight was a fifth of all traffic
+ * -- both moving and parked at the kerb. Sedans, SUVs and pickups are most of
+ * what a Seattle street holds, and they should be most of what spawns.
+ */
+export const CIVILIAN_TYPES = [
+  ...Array(9).fill('sedan'),
+  ...Array(8).fill('suv'),
+  ...Array(7).fill('pickup'),
+  ...Array(4).fill('compact'),
+  ...Array(4).fill('hatch'),
+  ...Array(3).fill('ev'),
+  ...Array(3).fill('taxi'),
+  ...Array(3).fill('van'),
+  ...Array(2).fill('muscle'),
+  ...Array(2).fill('sports'),
+  ...Array(2).fill('cruiser'),
+  'convertible', 'sportbike', 'boxtruck', 'bus', 'garbage',
+];
 
 export const CAR_COLORS = [
   0x9fa4a9, 0x1b1d20, 0xe6e8ea, 0x6d0f14, 0x102b52, 0x14472f, 0x7a5a22,
@@ -3027,7 +3048,13 @@ export class Vehicle {
     if (Math.abs(this.vLong) < 0.12 && throttle === 0) this.vLong *= 0.82;
 
     // Bicycle-model yaw plus lateral slip for arcade drift.
-    const wheelbase = spec.len * 0.62;
+    // The authored builders each declare their real axle centres, so use them.
+    // `len * 0.62` was a guess made before any vehicle had a wheelbase to read:
+    // it happens to land within 2 cm on the sports car and puts the bus's axles
+    // 7.4 m apart, against a real 6. The handling and the model disagreeing
+    // about where the wheels are is the kind of thing nobody notices directly
+    // and everybody feels.
+    const wheelbase = spec.wheelbase || spec.len * 0.62;
     const yawRate = (this.vLong / wheelbase) * Math.tan(this.steer);
     this.heading += yawRate * dt;
 

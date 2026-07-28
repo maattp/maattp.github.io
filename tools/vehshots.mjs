@@ -70,7 +70,7 @@ async function main() {
     await send('Page.navigate', { url: `http://localhost:${HTTP_PORT}/apps/auto/` });
     for (let i = 0; i < 400; i++) {
       await sleep(500);
-      if (await evaluate('!!window.__dbg && !!window.__dbg.TYPES')) break;
+      if (await evaluate('!!window.__dbg')) break;
     }
 
     await evaluate(`(() => {
@@ -104,7 +104,15 @@ async function main() {
 
     rmSync(OUT, { recursive: true, force: true });
     mkdirSync(OUT, { recursive: true });
-    const types = await evaluate('Object.keys(window.__dbg.TYPES)');
+    // `__dbg.TYPES` only exists on builds that export it. Capturing an older
+    // checkout for a before/after comparison has to fall back to asking the
+    // traffic system what it can spawn, or the harness can only ever photograph
+    // the branch it was written on.
+    const types = await evaluate(`(() => {
+      const d = window.__dbg;
+      if (d.TYPES) return Object.keys(d.TYPES);
+      return [...new Set(d.traffic.assets ? Object.keys(d.traffic.assets) : [])];
+    })()`) || [];
 
     for (const name of types) {
       await evaluate(`(() => {
