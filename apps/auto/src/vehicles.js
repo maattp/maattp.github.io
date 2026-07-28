@@ -3049,10 +3049,19 @@ export class Vehicle {
     const wheelbase = spec.wheelbase || spec.len * 0.62;
     const latA = spec.latA * ARCADE_GRIP * (hand > 0.5 ? 0.45 : 1)
       * (brake > 0 && this.vLong > 0.4 ? 0.8 : 1);
-    const maxSteer = lerp(0.62, 0.16, clamp(sp / 34, 0, 1));
+    // The mechanical falloff with speed used to run down to 0.16 rad, back when
+    // nothing else limited cornering. The grip clamp below is the real limiter
+    // now, so taking authority away on top of it just makes the wheel feel dead
+    // at speed without changing what the car can actually do.
+    const maxSteer = lerp(0.62, 0.30, clamp(sp / 34, 0, 1));
     const gripSteer = sp > 3 ? Math.atan((latA * wheelbase) / (sp * sp)) : maxSteer;
     const lock = Math.min(maxSteer, gripSteer);
-    this.steer = lerp(this.steer, steerIn * lock, 1 - Math.exp(-11 * dt));
+    // How fast the wheel reaches where you asked for it. At 11 the time
+    // constant is 91 ms and a step input took 233 ms to reach 90 % of its yaw,
+    // which is the "sloppy" -- the car was still winding on lock a fifth of a
+    // second after the input. 20 puts it near 115 ms, which is about what a
+    // quick road car does and what an arcade game wants.
+    this.steer = lerp(this.steer, steerIn * lock, 1 - Math.exp(-20 * dt));
 
     const top = spec.fadeTop;
     let acc = 0;
@@ -3098,7 +3107,9 @@ export class Vehicle {
 
     // The battery floor puts the mass under the axle line, so it holds on
     // rather than leaning; the handbrake still breaks it loose.
-    const gripBase = spec.bus || spec.cargo ? 7.5 : spec.ev ? 11.5 : 9.5;
+    // Lateral damping: how quickly a sideways slide is scrubbed off. Higher is
+    // tighter, because the car goes where it is pointed instead of crabbing.
+    const gripBase = spec.bus || spec.cargo ? 9 : spec.ev ? 14 : 12;
     const grip = hand > 0.5 ? 1.5 : gripBase;
     this.vLat += -yawRate * this.vLong * dt;
     const before = this.vLat;

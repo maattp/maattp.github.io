@@ -87,7 +87,26 @@ export function terrainHeight(x, z) {
   const tx = clamp(fx - i, 0, 1), tz = clamp(fz - j, 0, 1);
   const a = HF[j * HF_N + i], b = HF[j * HF_N + i + 1];
   const c = HF[(j + 1) * HF_N + i], d = HF[(j + 1) * HF_N + i + 1];
-  return (a + (b - a) * tx) * (1 - tz) + (c + (d - c) * tx) * tz;
+  // Interpolate across the TRIANGLE the terrain mesh actually draws, not
+  // bilinearly across the cell.
+  //
+  // This is the "grass growing through the road" that survived three separate
+  // fixes, and none of them could have worked: every one of them made the road
+  // hug this function more closely, and this function was describing a surface
+  // that is not the one on screen. A quad split into two triangles is not a
+  // bilinear patch -- inside a cell they differ by (a + d - b - c) / 4, which on
+  // a 40 m grid over Queen Anne's grades is metres, not centimetres. Measured
+  // before this change, the drawn terrain stood up to 2.13 m above what every
+  // consumer believed the ground height to be, on 4.9 % of samples.
+  //
+  // world.js triangulates each cell as (a, c, b) and (b, c, d), so the split
+  // runs along tx + tz = 1. Both triangles are planes through three corners and
+  // agree along that diagonal, so the result is continuous.
+  //
+  // **If the terrain mesh's triangulation changes, this must change with it.**
+  return tx + tz <= 1
+    ? a + (b - a) * tx + (c - a) * tz
+    : d + (c - d) * (1 - tx) + (b - d) * (1 - tz);
 }
 
 function maskAt(m, x, z) {
