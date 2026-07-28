@@ -110,13 +110,72 @@ export const CAR_COLORS = [
 // Geometry
 // ---------------------------------------------------------------------------
 
-/** Rounded-rectangle cross-section: an octagon with chamfered corners. */
-function ring(w, y0, y1, r) {
-  const rr = Math.min(r, Math.abs(y1 - y0) / 2.2, w / 2.2);
-  return [
-    [-w, y0 + rr], [-w + rr, y0], [w - rr, y0], [w, y0 + rr],
-    [w, y1 - rr], [w - rr, y1], [-w + rr, y1], [-w, y1 - rr],
+/**
+ * Body cross-section: 16 points with the features a car section actually has.
+ *
+ * This replaced an eight-point octagon with one corner radius, which is why
+ * every car in the fleet was the same shape at a different scale -- a sedan, a
+ * hatchback, a compact, a muscle car, a taxi and a police cruiser all came out
+ * at exactly 1430 triangles because the only thing separating them was the
+ * numbers fed to the same tube.
+ *
+ * The parameters are the ones a body engineer would name:
+ *
+ *   shoulder  height of the widest point, as a fraction of the section. Low is
+ *             a truck, high is a coupe with its waist up by the glass.
+ *   tumble    tumblehome: how far the section leans IN above the shoulder.
+ *             Dead vertical sides are the strongest "untextured box" signal a
+ *             vehicle can give, and every one of these had zero.
+ *   tuck      how far the sill pulls in underneath, so the body sits on the
+ *             wheels rather than resting on a slab.
+ *   crown     roof camber. Flat roofs read as cardboard.
+ *   edge      how sharp the shoulder crease is: 0 is a soft radius, 1 a hard
+ *             folded line down the side.
+ *
+ * Point count is fixed at 16 because `loft` requires every ring to have the
+ * same number, and nothing may index into the result by position -- use
+ * `maxX`/`maxY`, or the next profile change silently reshapes the roof.
+ */
+function section(w, y0, y1, o = {}) {
+  const {
+    r = 0.12, shoulder = 0.52, tumble = 0.05, tuck = 0.07, crown = 0.03, edge = 0.4,
+  } = o;
+  const h = Math.abs(y1 - y0);
+  const rr = Math.min(r, h / 2.6, w / 2.6);
+  const wb = w * (1 - tuck);
+  const wt = w * (1 - tumble);
+  const ysh = y0 + h * shoulder;
+  const yc = y1 + h * crown;
+  // Above and below the crease the section pulls in by `edge`: a hard crease
+  // leaves the surfaces meeting at an angle, a soft one rounds them together.
+  const lo = w - (w - wb) * (1 - edge) * 0.5;
+  const hi = w - (w - wt) * (1 - edge) * 0.5;
+  const half = (sx) => [
+    [sx * wb, y0],
+    [sx * lo, y0 + h * 0.16],
+    [sx * w, ysh - h * 0.09],
+    [sx * w, ysh],
+    [sx * hi, ysh + h * 0.20],
+    [sx * wt, y1 - rr],
+    [sx * (wt - rr), yc],
+    [sx * wt * 0.34, yc],
   ];
+  // Left side bottom-to-top, then right side top-to-bottom: a closed loop.
+  return [...half(-1), ...half(1).reverse()];
+}
+
+/** Widest half-width of a section, so nothing has to index into it. */
+function maxX(pts) {
+  let m = 0;
+  for (const p of pts) m = Math.max(m, Math.abs(p[0]));
+  return m;
+}
+
+/** Highest point of a section. */
+function maxY(pts) {
+  let m = -1e9;
+  for (const p of pts) m = Math.max(m, p[1]);
+  return m;
 }
 
 /** Tyre into `matte`, rim and spokes into `trim`. */
@@ -157,6 +216,31 @@ function buildType(spec) {
   const boxy = spec.boxy || 0;
   const round = boxy >= 2 ? 0.20 : boxy === 1 ? 0.16 : 0.13;
 
+  // Per-type body language. Defaults are a generic sedan; every entry in TYPES
+  // overrides what makes it that vehicle rather than a scaled copy of the last
+  // one. These are authored numbers, not derived from a flag.
+  const P = {
+    shoulder: 0.55,   // height of the widest point up the section
+    tumble: 0.06,     // how far the sides lean in above it
+    tuck: 0.08,       // how far the sill pulls under
+    crown: 0.03,      // roof camber
+    edge: 0.4,        // 0 soft radius, 1 hard folded crease
+    glassTumble: 0.10,
+    roofCrown: 0.02,
+    flare: 0.0,       // extra width over the arches
+    ...(spec.profile || {}),
+  };
+  // Arches flare the body outward locally rather than the whole side being one
+  // width -- a muscle car and a pickup are mostly arch, and neither had any.
+  const bodySec = (t) => ({
+    r: round,
+    shoulder: P.shoulder,
+    tumble: P.tumble,
+    tuck: P.tuck,
+    crown: P.crown,
+    edge: P.edge,
+  });
+
   // --- lower body ----------------------------------------------------------
   // Sampled as a continuous profile rather than a handful of key stations, so
   // the bottom edge can arch up over each wheel. Without that cut the tyres
@@ -177,7 +261,17 @@ function buildType(spec) {
   const endWidth = boxy >= 2 ? 0.86 : 0.72;
   const widthAt = (t) => {
     const e = clamp(Math.min(t, 1 - t) / endTaper, 0, 1);
-    return endWidth + (1 - endWidth) * Math.sqrt(e);
+    const base = endWidth + (1 - endWidth) * Math.sqrt(e);
+    // Local flare over each axle. A muscle car and a pickup are mostly arch;
+    // with one width down the whole side they were slab-sided instead.
+    let fl = 0;
+    if (P.flare > 0) {
+      for (const wt of [rearT, frontT]) {
+        const dz = Math.abs(t - wt) * L;
+        if (dz < archR * 1.5) fl = Math.max(fl, P.flare * (1 - (dz / (archR * 1.5)) ** 2));
+      }
+    }
+    return base + fl;
   };
   const beltAt = (t) => {
     if (boxy >= 2) return belt;
@@ -192,7 +286,7 @@ function buildType(spec) {
     const t = i / STATIONS;
     bodyRings.push({
       z: zAt(t),
-      pts: ring(W * widthAt(t), Math.max(sill, archLift(t)), beltAt(t), round),
+      pts: section(W * widthAt(t), Math.max(sill, archLift(t)), beltAt(t), bodySec(t)),
     });
   }
   paint.loft(bodyRings, WHITE, { capStart: true, capEnd: true });
@@ -200,36 +294,56 @@ function buildType(spec) {
   // --- greenhouse ----------------------------------------------------------
   const c0 = 0.5 + spec.cab[0], c1 = 0.5 + spec.cab[1];
   const gw = boxy >= 2 ? 0.985 : boxy === 1 ? 0.93 : 0.88;
-  const cabRings = spec.cargo ? [
-    { z: zAt(c0), pts: ring(W * gw * 0.94, belt - 0.02, belt + 0.06, 0.1) },
-    { z: zAt(c0 + 0.02), pts: ring(W * gw, belt - 0.02, roof - 0.02, 0.14) },
-    { z: zAt(c1 - 0.05), pts: ring(W * gw, belt - 0.02, roof, 0.14) },
-    { z: zAt(c1 - 0.015), pts: ring(W * gw * 0.95, belt - 0.02, roof - 0.08, 0.12) },
-    { z: zAt(c1), pts: ring(W * gw * 0.82, belt - 0.02, belt + 0.22, 0.1) },
+  // The greenhouse leans in much harder than the body does -- that taper is
+  // most of what separates a car's silhouette from a box, and it was dead
+  // vertical on every vehicle in the fleet.
+  const cabSec = { shoulder: 0.16, tumble: P.glassTumble, tuck: 0.03, crown: P.roofCrown, edge: 0.25, r: 0.14 };
+  // Cab stations as PLAIN NUMBERS first, so the roof skin can be built from the
+  // same width and height rather than measured back off a finished section.
+  // Reading them back off `maxY` picked up the section's own crown and then
+  // added another, which floated the roof clear of the glass as a separate
+  // plank.
+  const cabPlan = spec.cargo ? [
+    [c0, gw * 0.94, belt - 0.02, belt + 0.06],
+    [c0 + 0.02, gw, belt - 0.02, roof - 0.02],
+    [c1 - 0.05, gw, belt - 0.02, roof],
+    [c1 - 0.015, gw * 0.95, belt - 0.02, roof - 0.08],
+    [c1, gw * 0.82, belt - 0.02, belt + 0.22],
   ] : [
-    { z: zAt(c0), pts: ring(W * gw * 0.80, belt - 0.03, belt + 0.05, 0.1) },
-    { z: zAt(c0 + (boxy ? 0.03 : 0.075)), pts: ring(W * gw * 0.93, belt - 0.03, roof - 0.04, 0.13) },
-    { z: zAt(c0 + 0.17), pts: ring(W * gw, belt - 0.03, roof, 0.14) },
-    { z: zAt(c1 - 0.15), pts: ring(W * gw, belt - 0.03, roof, 0.14) },
-    { z: zAt(c1 - (boxy ? 0.03 : 0.085)), pts: ring(W * gw * 0.94, belt - 0.03, roof - 0.05, 0.13) },
-    { z: zAt(c1), pts: ring(W * gw * 0.78, belt - 0.03, belt + (boxy ? 0.3 : 0.12), 0.1) },
+    [c0, gw * 0.80, belt - 0.03, belt + 0.05],
+    [c0 + (boxy ? 0.03 : 0.075), gw * 0.93, belt - 0.03, roof - 0.04],
+    [c0 + 0.17, gw, belt - 0.03, roof],
+    [c1 - 0.15, gw, belt - 0.03, roof],
+    [c1 - (boxy ? 0.03 : 0.085), gw * 0.94, belt - 0.03, roof - 0.05],
+    [c1, gw * 0.78, belt - 0.03, belt + (boxy ? 0.3 : 0.12)],
   ];
+  const cabRings = cabPlan.map(([t, wf, y0, y1]) =>
+    ({ z: zAt(t), pts: section(W * wf, y0, y1, cabSec) }));
   // Cars get a glass greenhouse with a painted roof skin over it. Vans, trucks
   // and buses are painted boxes with glazing cut into them instead -- lofting
   // those in glass turned the whole upper body into one dark slab.
   const glassCab = boxy < 2;
   if (glassCab) {
     trim.loft(cabRings, GLASS, { capStart: false, capEnd: false });
-    const roofRings = cabRings.slice(1, -1).map((r0) => {
-      const topY = Math.max.apply(null, r0.pts.map((p) => p[1]));
-      return { z: r0.z, pts: ring(Math.abs(r0.pts[5][0]) * 0.998, topY - 0.075, topY + 0.006, 0.04) };
+    // The painted roof skin is the SAME section as the glass it caps, inset a
+    // little and only as deep as the roof panel -- so it sits on the greenhouse
+    // instead of hovering over it.
+    // The skin has to CAP the glass, which means meeting the crown the glass
+    // section already adds on top of its own y1. Ignoring that left the glass
+    // poking a couple of centimetres proud all the way round, so the roof read
+    // as a separate plank floating over the cabin. Flat-topped and very
+    // slightly wider, ending exactly where the glass does.
+    const roofSec = { ...cabSec, shoulder: 0.5, crown: 0, r: 0.06 };
+    const roofRings = cabPlan.slice(1, -1).map(([t, wf, y0, y1]) => {
+      const top = y1 + (y1 - y0) * cabSec.crown;
+      return { z: zAt(t), pts: section(W * wf * 1.006, top - 0.16, top, roofSec) };
     });
     if (roofRings.length > 1) paint.loft(roofRings, WHITE, { capStart: true, capEnd: true });
   } else {
     paint.loft(cabRings, WHITE, { capStart: true, capEnd: true });
     // windscreen raked into the painted cab front
     const fz = cabRings[cabRings.length - 1].z;
-    const fw = Math.abs(cabRings[cabRings.length - 2].pts[2][0]);
+    const fw = maxX(cabRings[cabRings.length - 2].pts);
     trim.box(0, belt + 0.16, fz - 0.1, fw * 1.72, (roof - belt) * 0.62, 0.1, 0, GLASS);
     if (!spec.cargo && !spec.bus) {
       const bz2 = cabRings[0].z;
@@ -241,8 +355,8 @@ function buildType(spec) {
   if (spec.cargo) {
     const bz0 = zAt(0.015), bz1 = zAt(c0 - 0.005);
     paint.loft([
-      { z: bz0, pts: ring(W * 1.005, sill + 0.05, belt + spec.cargo, 0.1) },
-      { z: bz1, pts: ring(W * 1.005, sill + 0.05, belt + spec.cargo, 0.1) },
+      { z: bz0, pts: section(W * 1.005, sill + 0.05, belt + spec.cargo, { r: 0.1 }) },
+      { z: bz1, pts: section(W * 1.005, sill + 0.05, belt + spec.cargo, { r: 0.1 }) },
     ], WHITE, { capStart: true, capEnd: true });
     matte.box(0, belt + spec.cargo, (bz0 + bz1) / 2, W * 2.04, 0.09, bz1 - bz0, 0, PLASTIC);
     matte.box(0, sill + 0.1, bz0 + 0.05, W * 1.86, belt + spec.cargo - sill - 0.3, 0.06, 0, [0.28, 0.29, 0.3]);
