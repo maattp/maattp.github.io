@@ -277,8 +277,8 @@ export class PostFX {
     this.scenePass = new THREE.Scene();
     this.quadScene = new THREE.Scene();
 
-    this.fx = { bloom: true, ssao: true, grain: true, vignette: true, fxaa: true, grade: true, dither: true };
-    this.base = { bloom: 0.34, grain: 0.0025, vignette: 0.10, fxaa: 1, ao: 1.0 };
+    this.fx = { bloom: true, ssao: false, grain: true, vignette: true, fxaa: true, grade: true, dither: true };
+    this.base = { bloom: 0.34, grain: 0.0025, vignette: 0.10, fxaa: 1, ao: 0.55 };
     this.bloomPasses = 2;
     // Set by the pause-menu switch; kept apart from the tier so a debug session
     // survives an automatic quality change.
@@ -430,6 +430,23 @@ export class PostFX {
     for (const m of [this.bright, this.blur, this.aoBlur, this.composite, this.ssao]) m.material.dispose();
     QUAD.dispose();
   }
+
+  /**
+   * SSAO is OFF by default, and that is not a performance decision.
+   *
+   * It reconstructs its normal from `dFdx/dFdy` of view-space position, which
+   * on a road running away from the camera means neighbouring samples differ
+   * mostly in depth -- so the range check reads occlusion across open tarmac
+   * and lays down large soft dark clouds. On a phone at half resolution,
+   * upscaled through the bilateral blur, they read as smears of dirt on the
+   * screen that follow the camera. It has looked like this since it was added
+   * and it went unnoticed because the beauty harness frames buildings.
+   *
+   * It is also the most expensive pass in the chain, so leaving it off costs
+   * nothing to reclaim. Bringing it back needs the occlusion test to reject by
+   * SURFACE ORIENTATION rather than by depth alone; the switch is there to
+   * check that work against what it does now.
+   */
 
   /**
    * Individual effect switches, for finding out which pass is responsible for

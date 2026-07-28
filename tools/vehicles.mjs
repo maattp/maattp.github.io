@@ -24,8 +24,9 @@ const PORT = 9231;
 const CHROME = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
 const HTTP_PORT = process.env.AUTO_HTTP_PORT || 8000;
 const JSON_OUT = process.argv.includes('--json');
-// Keep in step with ARCADE_PUNCH in apps/auto/src/vehicles.js.
+// Keep in step with apps/auto/src/vehicles.js.
 const ARCADE_PUNCH = 2.4;
+const ARCADE_GRIP = 2.2;
 
 // Real-world bands per class, for the types we ship. 0-100 km/h in seconds,
 // top speed in km/h, 100-0 braking in metres, lateral grip in g.
@@ -40,6 +41,11 @@ const ARCADE_PUNCH = 2.4;
 // the accel band is divided by the same constant here and the check still
 // catches a van out-dragging a sports car. Top speed, braking and grip are
 // compared against the real figures unchanged.
+//
+// GRIP is the same bargain and has one extra caveat worth stating: steering is
+// now CLAMPED to the angle grip supports, so a steady-state corner returns the
+// limit by construction. That makes this column a check that the clamp is wired
+// up and scaled per class, not evidence that the cornering model is right.
 const BANDS = {
   sedan: { name: 'mid-size sedan', accel: [7.5, 11], top: [190, 235], brake: [36, 44], lat: [0.82, 0.92] },
   hatch: { name: 'small hatchback', accel: [9, 13], top: [170, 200], brake: [36, 45], lat: [0.80, 0.90] },
@@ -206,7 +212,7 @@ async function main() {
       if (!b) { console.log(`${name}: no band`); continue; }
       const marks = [
         band(r.accel, b.accel.map((v) => v / ARCADE_PUNCH)), band(r.top, b.top),
-        band(r.brake, b.brake), band(r.lat, b.lat),
+        band(r.brake, b.brake), band(r.lat, b.lat.map((v) => v * ARCADE_GRIP)),
       ];
       bad += marks.filter((m) => m !== 'ok').length;
       const f = (v, m) => `${v === null ? '  --' : v.toFixed(v < 100 ? 1 : 0).padStart(6)}${m === 'ok' ? ' ' : '!'}`;
