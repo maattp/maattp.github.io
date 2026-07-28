@@ -138,6 +138,11 @@ export class TrafficSystem {
         const tn = CIVILIAN_TYPES[Math.floor(hash2(ei + s * 7, 11) * CIVILIAN_TYPES.length)];
         if (tn === 'bus' || tn === 'garbage') continue;
         const v = this.spawnAt(x, z, heading, tn, randomCarColor(ei * 13 + s), 'parked');
+        // A parked car sits against a kerb with buildings behind it, so its
+        // shadow lands almost entirely on ground that is already shaded -- and
+        // it is three more meshes through the shadow pass. Measured, the parked
+        // cars in one downtown frame were 10 draws and 19k triangles of it.
+        v.group.traverse((o) => { if (o.isMesh) o.castShadow = false; });
         v.slot = key;
         this.parkedSlots.add(key);
       }

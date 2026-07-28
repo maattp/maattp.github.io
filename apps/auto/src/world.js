@@ -3,6 +3,10 @@
 
 import * as THREE from './three.js';
 import * as G from './geo.js';
+
+// Kept in step with main.js. Shadow-caster policy differs by platform, and the
+// difference is worth roughly 40 draw calls a frame.
+const ON_PHONE = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
 import { CHUNK, ROAD_LIFT, NODE_LIFT, WALK_LIFT, cityStats } from './citygen.js';
 import { Builder } from './build.js';
 import { hash2, clamp, lerp, distToSeg } from './util.js';
@@ -542,7 +546,15 @@ export class World {
     const add = (bld, mat, cast, recv) => {
       if (bld.empty) return;
       const m = new THREE.Mesh(bld.build(), mat);
-      m.castShadow = cast && this.shadows;
+      // Not everything that can cast a shadow earns one.
+      //
+      // The shadow pass re-renders every caster, so each one costs a second
+      // draw call and a second pass over its geometry. Measured downtown, the
+      // props/trees/roof-kit mesh alone was 10 draws and 122k triangles of
+      // shadow -- 13 % of the frame's geometry -- for shadows that at street
+      // level fall mostly on surfaces already in shade. On a phone that is not
+      // where the budget goes; on a desktop it is worth having.
+      m.castShadow = cast && this.shadows && !(ON_PHONE && mat === this.mats.flat);
       m.receiveShadow = recv && this.shadows;
       grp.add(m);
     };
