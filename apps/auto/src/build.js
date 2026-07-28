@@ -173,6 +173,99 @@ export class Builder {
     if (capEnd) cap(R - 1, 1);
   }
 
+  /**
+   * Quad mesh through a grid of points -- the workhorse for an authored panel
+   * (a windscreen, a bonnet, a wheel-arch liner). `rows[i][j]` is [x,y,z], and
+   * every row must have the same length.
+   *
+   * Normals come from the grid itself, so two patches that share an edge shade
+   * continuously instead of showing a crease where the panels meet. `loft` can
+   * only sweep a CLOSED section along an axis; a car panel is an open sheet
+   * with its own outline, which is the difference between modelling a car and
+   * scaling a tube.
+   *
+   * `flip` reverses the outward direction when the grid is wound the other way.
+   * Pass a direction vector instead of a boolean to say which way OUT is and
+   * let it work the winding out -- mirroring a panel to the other side of a car
+   * silently reverses it, and a panel whose normals point inward is
+   * backface-culled to nothing, which looks like the panel was never built.
+   */
+  patch(rows, col, flip = false) {
+    const R = rows.length, C = rows[0].length;
+    const sub = (a, b) => [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
+    const norm = (v) => {
+      const l = Math.hypot(v[0], v[1], v[2]) || 1;
+      return [v[0] / l, v[1] / l, v[2] / l];
+    };
+    const N = [];
+    let mx = 0, my = 0, mz = 0;
+    for (let i = 0; i < R; i++) {
+      N.push([]);
+      for (let j = 0; j < C; j++) {
+        const dr = sub(rows[Math.min(R - 1, i + 1)][j], rows[Math.max(0, i - 1)][j]);
+        const dc = sub(rows[i][Math.min(C - 1, j + 1)], rows[i][Math.max(0, j - 1)]);
+        const n = norm([dr[1] * dc[2] - dr[2] * dc[1], dr[2] * dc[0] - dr[0] * dc[2], dr[0] * dc[1] - dr[1] * dc[0]]);
+        N[i].push(n);
+        mx += n[0]; my += n[1]; mz += n[2];
+      }
+    }
+    const s = Array.isArray(flip)
+      ? (mx * flip[0] + my * flip[1] + mz * flip[2] < 0 ? -1 : 1)
+      : (flip ? -1 : 1);
+    if (s < 0) for (const r of N) for (const n of r) { n[0] = -n[0]; n[1] = -n[1]; n[2] = -n[2]; }
+    for (let i = 0; i < R - 1; i++) {
+      for (let j = 0; j < C - 1; j++) {
+        this.quad(rows[i][j], rows[i][j + 1], rows[i + 1][j + 1], rows[i + 1][j],
+          [N[i][j], N[i][j + 1], N[i + 1][j + 1], N[i + 1][j]],
+          [j / (C - 1), i / (R - 1), (j + 1) / (C - 1), i / (R - 1),
+            (j + 1) / (C - 1), (i + 1) / (R - 1), j / (C - 1), (i + 1) / (R - 1)], col);
+      }
+    }
+  }
+
+  /**
+   * Round tube between two arbitrary points -- mirror stalks, wing stanchions,
+   * roll hoops. `prism` and `box` can only yaw, so anything that runs diagonally
+   * in Y has to be built here or it comes out as a level bar hanging in the air,
+   * which is exactly what the viaduct barriers did.
+   */
+  tube(a, b, r, sides, col, capEnds = false) {
+    const ax = b[0] - a[0], ay = b[1] - a[1], az = b[2] - a[2];
+    const len = Math.hypot(ax, ay, az) || 1;
+    const d = [ax / len, ay / len, az / len];
+    // any vector not parallel to the axis gives a usable frame
+    const up = Math.abs(d[1]) > 0.9 ? [1, 0, 0] : [0, 1, 0];
+    const norm = (v) => {
+      const l = Math.hypot(v[0], v[1], v[2]) || 1;
+      return [v[0] / l, v[1] / l, v[2] / l];
+    };
+    const u = norm([up[1] * d[2] - up[2] * d[1], up[2] * d[0] - up[0] * d[2], up[0] * d[1] - up[1] * d[0]]);
+    const v = [d[1] * u[2] - d[2] * u[1], d[2] * u[0] - d[0] * u[2], d[0] * u[1] - d[1] * u[0]];
+    const ring = (p, rr) => {
+      const out = [];
+      for (let i = 0; i < sides; i++) {
+        const t = (i / sides) * Math.PI * 2;
+        const c = Math.cos(t) * rr, s = Math.sin(t) * rr;
+        out.push([p[0] + u[0] * c + v[0] * s, p[1] + u[1] * c + v[1] * s, p[2] + u[2] * c + v[2] * s]);
+      }
+      return out;
+    };
+    const A = ring(a, r), B = ring(b, r);
+    for (let i = 0; i < sides; i++) {
+      const j = (i + 1) % sides;
+      const na = norm([A[i][0] - a[0], A[i][1] - a[1], A[i][2] - a[2]]);
+      const nb = norm([A[j][0] - a[0], A[j][1] - a[1], A[j][2] - a[2]]);
+      this.quad(A[i], A[j], B[j], B[i], [na, nb, nb, na], [0, 0, 1, 0, 1, 1, 0, 1], col);
+    }
+    if (capEnds) {
+      for (let i = 0; i < sides; i++) {
+        const j = (i + 1) % sides;
+        this.tri(a, A[j], A[i], [-d[0], -d[1], -d[2]], col);
+        this.tri(b, B[i], B[j], d, col);
+      }
+    }
+  }
+
   tri(a, b, c, n, col) {
     const ux = b[0] - a[0], uy = b[1] - a[1], uz = b[2] - a[2];
     const vx = c[0] - a[0], vy = c[1] - a[1], vz = c[2] - a[2];
