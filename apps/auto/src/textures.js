@@ -22,10 +22,10 @@ function canvas(w, h) {
 // height, and at anisotropy 8 they shimmered as you walked. Removing the albedo
 // map dropped the frame-to-frame churn from a 4 mm camera move from 6.6% of
 // pixels to 0.7%, so the flicker was all in this one map.
-function tex(c, { repeat = true, aniso = 16, srgb = true, mips = true } = {}) {
+function tex(c, { repeat = true, aniso = 16, srgb = true, mips = true, clampS = false } = {}) {
   const t = new THREE.CanvasTexture(c);
   if (repeat) {
-    t.wrapS = THREE.RepeatWrapping;
+    t.wrapS = clampS ? THREE.ClampToEdgeWrapping : THREE.RepeatWrapping;
     t.wrapT = THREE.RepeatWrapping;
   }
   t.anisotropy = aniso;
@@ -48,8 +48,8 @@ function noise(g, w, h, amount, seed) {
   g.putImageData(img, 0, 0);
 }
 
-/** Sobel a greyscale height canvas into a tangent-space normal map. */
-function normalFrom(heightCanvas, strength = 2.0) {
+/** Sobel a greyscale height canvas into a tangent-space normal map canvas. */
+function normalCanvas(heightCanvas, strength = 2.0) {
   const w = heightCanvas.width, h = heightCanvas.height;
   const src = heightCanvas.getContext('2d').getImageData(0, 0, w, h).data;
   const lum = new Float32Array(w * h);
@@ -73,7 +73,11 @@ function normalFrom(heightCanvas, strength = 2.0) {
     }
   }
   g.putImageData(img, 0, 0);
-  return tex(c, { srgb: false });
+  return c;
+}
+
+function normalFrom(heightCanvas, strength = 2.0) {
+  return tex(normalCanvas(heightCanvas, strength), { srgb: false });
 }
 
 const grey = (v) => {
@@ -326,10 +330,7 @@ function masonrySurface(opts = {}) {
   }
   noise(a.g, S, S, 16, 9);
   noise(hgt.g, S, S, 3, 12);
-  return {
-    map: tex(a.c), normalMap: normalFrom(hgt.c, 2.2),
-    roughnessMap: tex(rgh.c, { srgb: false }), emissiveMap: tex(emi.c),
-  };
+  return { albedo: a.c, height: hgt.c, rough: rgh.c, emissive: emi.c, nrm: 2.2 };
 }
 
 function industrialSurface() {
@@ -379,7 +380,7 @@ function industrialSurface() {
     a.g.fillRect(x, r() * S * 0.6, 3 + r() * 8, 40 + r() * 160);
   }
   noise(a.g, S, S, 16, 5);
-  return { map: tex(a.c), normalMap: normalFrom(hgt.c, 2.0), roughnessMap: tex(rgh.c, { srgb: false }) };
+  return { albedo: a.c, height: hgt.c, rough: rgh.c, emissive: null, nrm: 2.0 };
 }
 
 function houseSurface() {
@@ -432,10 +433,7 @@ function houseSurface() {
   a.g.fillStyle = 'rgba(255,255,255,0.22)'; a.g.fillRect(330, 316, 84, 62);
   a.g.fillStyle = '#d8c07a'; a.g.fillRect(410, 396, 12, 12);
   noise(a.g, S, S, 11, 11);
-  return {
-    map: tex(a.c), normalMap: normalFrom(hgt.c, 2.4),
-    roughnessMap: tex(rgh.c, { srgb: false }), emissiveMap: tex(emi.c),
-  };
+  return { albedo: a.c, height: hgt.c, rough: rgh.c, emissive: emi.c, nrm: 2.4 };
 }
 
 // ---------------------------------------------------------------------------
@@ -784,23 +782,191 @@ function signSurface() {
     }
   }
   noise(a.g, S, S, 7, 5);
-  return { map: tex(a.c), emissiveMap: tex(emi.c), roughnessMap: tex(rgh.c, { srgb: false }) };
+  return { albedo: a.c, height: null, rough: rgh.c, emissive: emi.c, nrm: 0 };
+}
+
+// ---------------------------------------------------------------------------
+// Facade atlas
+// ---------------------------------------------------------------------------
+
+// Guard columns each side of a cell, filled with the cell's OWN opposite edge,
+// so bilinear and the first three mip levels filter as if the tile wrapped
+// rather than pulling in the neighbouring family. Eight is what covers mip 3;
+// past that a whole cell is a handful of texels and the wall is a few pixels
+// on screen.
+const GUARD = 8;
+const FS = 512;
+const CELL_W = FS + GUARD * 2;
+
+/**
+ * Lay a list of 512-square cells out side by side, with wrap-padding.
+ *
+ * The strip is HORIZONTAL on purpose. GL repeat wraps the whole texture rather
+ * than a sub-rect, so an atlas normally can't carry tiling surfaces at all --
+ * but a strip one tile TALL still wraps correctly in V, so vertical repeats (a
+ * 100 m tower is seven of them) cost nothing and only U has to be confined to a
+ * cell. Builder.box pre-splits a face into one quad per horizontal repeat, so
+ * every UV that reaches the sampler is already inside. That keeps this to plain
+ * textures and plain UVs -- no onBeforeCompile, no sampler2DArray, nothing this
+ * renderer has to take on trust on a phone, which is the same reason postfx.js
+ * is 8-bit throughout.
+ */
+function stripAtlas(cells) {
+  const { c, g } = canvas(CELL_W * cells.length, FS);
+  cells.forEach((src, i) => {
+    const ox = i * CELL_W;
+    g.drawImage(src, ox + GUARD, 0);
+    g.drawImage(src, FS - GUARD, 0, GUARD, FS, ox, 0, GUARD, FS);
+    g.drawImage(src, 0, 0, GUARD, FS, ox + CELL_W - GUARD, 0, GUARD, FS);
+  });
+  return c;
+}
+
+function solidCell(css) {
+  const { c, g } = canvas(FS, FS);
+  g.fillStyle = css;
+  g.fillRect(0, 0, FS, FS);
+  return c;
+}
+
+const px = (src) => src.getContext('2d').getImageData(0, 0, FS, FS).data;
+
+/**
+ * Pre-scale a normal map's xy exactly the way `normalScale` would, so one
+ * material can carry five families' relief strengths. The shader does
+ * `mapN.xy *= normalScale` on the decoded [-1,1] vector and only then
+ * normalises, so scaling by ns/nsMax here and setting normalScale to nsMax
+ * reproduces each family's old value to the byte -- and every ratio is <= 1,
+ * so nothing clips.
+ */
+function scaledNormal(heightCanvas, strength, k) {
+  if (!heightCanvas) return solidCell('rgb(128,128,255)');
+  const src = px(normalCanvas(heightCanvas, strength));
+  const { c, g } = canvas(FS, FS);
+  const img = g.createImageData(FS, FS);
+  const d = img.data;
+  for (let i = 0; i < d.length; i += 4) {
+    d[i] = Math.round(127.5 + (src[i] - 127.5) * k);
+    d[i + 1] = Math.round(127.5 + (src[i + 1] - 127.5) * k);
+    d[i + 2] = src[i + 2];
+    d[i + 3] = 255;
+  }
+  g.putImageData(img, 0, 0);
+  return c;
+}
+
+/**
+ * R = ambient occlusion, G = roughness, B = metalness -- one map read through
+ * three slots.
+ *
+ * `roughness` and `metalness` are plain multipliers on their channels, so those
+ * two bake exactly. `envMapIntensity` has no per-texel channel of its own, but
+ * three's AO term multiplies the indirect (image-based) light, which is the
+ * only thing env was ever dialling; putting each family's env ratio in R gets
+ * the diffuse IBL back exactly and the indirect specular to within the
+ * occlusion curve.
+ */
+function packedCell(roughCanvas, env, rough, metal) {
+  const src = roughCanvas ? px(roughCanvas) : null;
+  const { c, g } = canvas(FS, FS);
+  const img = g.createImageData(FS, FS);
+  const d = img.data;
+  const r = Math.round(env * 255), b = Math.round(metal * 255);
+  for (let i = 0; i < d.length; i += 4) {
+    d[i] = r;
+    d[i + 1] = Math.round((src ? src[i] : 255) * rough);
+    d[i + 2] = b;
+    d[i + 3] = 255;
+  }
+  g.putImageData(img, 0, 0);
+  return c;
+}
+
+const toLinear = (v) => (v <= 0.04045 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4));
+const toSRGB = (v) => (v <= 0.0031308 ? v * 12.92 : 1.055 * Math.pow(v, 1 / 2.4) - 0.055);
+
+/**
+ * Scale an emissive cell in LINEAR space, so one `emissiveIntensity` covers
+ * both a lit shop sign and a lit office window a hundred times fainter.
+ *
+ * The hundredfold gap is what makes this look impossible, and sRGB is what
+ * makes it fine: the map is sRGB-encoded, so a window at 1/100 of a sign still
+ * lands on texel 31 rather than on texel 2.
+ */
+function scaledEmissive(src, k) {
+  if (!src || k === 0) return solidCell('#000');
+  const s = px(src);
+  const { c, g } = canvas(FS, FS);
+  const img = g.createImageData(FS, FS);
+  const d = img.data;
+  for (let i = 0; i < d.length; i += 4) {
+    for (let ch = 0; ch < 3; ch++) {
+      d[i + ch] = Math.round(toSRGB(toLinear(s[i + ch] / 255) * k) * 255);
+    }
+    d[i + 3] = 255;
+  }
+  g.putImageData(img, 0, 0);
+  return c;
+}
+
+/**
+ * One material for every wall in the city.
+ *
+ * Six facade materials cost 139 draw calls a frame downtown to carry 34k
+ * triangles -- 247 triangles a draw, on a target where draw calls are the
+ * binding constraint and triangles are not. They are one material now, and the
+ * per-family differences that used to force them apart are all baked into the
+ * maps: relief into the normal's xy, roughness and metalness into their own
+ * channels, env into AO, emissive brightness into the emissive canvas itself.
+ * The coursing, the corrugation and the lap siding stay entirely distinct,
+ * which is the part no tint could ever have produced.
+ */
+function facadeAtlas(fams) {
+  const nsMax = Math.max(...fams.map((f) => f.ns));
+  const envMax = Math.max(...fams.map((f) => f.env));
+  const metalMax = Math.max(...fams.map((f) => f.metal));
+  const emiMax = Math.max(...fams.map((f) => f.emissive));
+  const W = CELL_W * fams.length;
+  const cells = {};
+  fams.forEach((f, i) => {
+    cells[f.name] = [(i * CELL_W + GUARD) / W, FS / W];
+  });
+  return {
+    map: tex(stripAtlas(fams.map((f) => f.s.albedo)), { clampS: true }),
+    normalMap: tex(stripAtlas(fams.map((f) => scaledNormal(f.s.height, f.s.nrm, f.ns / nsMax))),
+      { srgb: false, clampS: true }),
+    packed: tex(stripAtlas(fams.map((f) => packedCell(f.s.rough, f.env / envMax, f.rough, f.metal / metalMax))),
+      { srgb: false, clampS: true }),
+    emissiveMap: tex(stripAtlas(fams.map((f) => scaledEmissive(f.s.emissive, f.emissive / emiMax))),
+      { clampS: true }),
+    cells, envMax, nsMax, metalMax, emiMax,
+  };
 }
 
 export function buildTextures() {
   return {
     glass: glassSurface(),
-    signs: signSurface(),
-    masonry: masonrySurface(),
-    // Brick is its own texture, not a tint of the stone one. 11 px courses over
-    // a 12 m tile is a ~26 cm brick -- coarser than life, because at 512 px a
-    // true 7 cm course is sub-texel and mips straight to flat grey.
-    brick: masonrySurface({
-      base: '#a89a90', mortar: '#c9c2b4', course: 11, seedN: 47,
-      surround: '#cfc9bc', sill: '#d6d1c6',
-    }),
-    industrial: industrialSurface(),
-    house: houseSurface(),
+    // Every family's old material parameters travel with it here; `facadeAtlas`
+    // is what folds them into the one material's maps.
+    facade: facadeAtlas([
+      { name: 'masonry', s: masonrySurface(), env: 0.66, ns: 1.5, rough: 1, metal: 0, emissive: 0.015 },
+      // Brick is its own cell, not a tint of the stone one. 11 px courses over
+      // a 12 m tile is a ~26 cm brick -- coarser than life, because at 512 px a
+      // true 7 cm course is sub-texel and mips straight to flat grey. What
+      // separates brick from stone at street distance is the COURSING, and no
+      // tint and no shared cell can produce that.
+      {
+        name: 'brick',
+        s: masonrySurface({
+          base: '#a89a90', mortar: '#c9c2b4', course: 11, seedN: 47,
+          surround: '#cfc9bc', sill: '#d6d1c6',
+        }),
+        env: 0.60, ns: 1.5, rough: 1, metal: 0, emissive: 0.015,
+      },
+      { name: 'industrial', s: industrialSurface(), env: 0.5, ns: 1.7, rough: 1, metal: 0.25, emissive: 0 },
+      { name: 'house', s: houseSurface(), env: 0.45, ns: 1.8, rough: 1, metal: 0, emissive: 0.015 },
+      { name: 'signs', s: signSurface(), env: 0.5, ns: 0, rough: 0.62, metal: 0, emissive: 1.5 },
+    ]),
     road: roadSurface(),
     sidewalk: sidewalkSurface(),
     ground: groundSurface(),
