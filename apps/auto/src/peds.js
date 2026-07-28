@@ -1,6 +1,8 @@
 // Pedestrians: civilians wandering the sidewalks and cops on foot.
 
 import * as THREE from './three.js';
+
+const ON_PHONE = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
 import { Builder } from './build.js';
 import { clamp, lerp, angleWrap, hash2, rng, dist2 } from './util.js';
 import * as G from './geo.js';
@@ -335,7 +337,12 @@ export function makeHumanoid(opts = {}) {
   const mesh = new THREE.SkinnedMesh(geo, pedMat);
   mesh.add(bones[B.root]);
   mesh.bind(new THREE.Skeleton(bones));
-  mesh.castShadow = true;
+  // A background pedestrian's shadow is a few dozen pixels at street level and
+  // costs a whole extra draw call plus a second pass over an 18-bone skinned
+  // mesh -- measured, 21 pedestrians were 21 draws and 27k triangles of shadow.
+  // The player is the exception: their own shadow is how you read where you are
+  // standing.
+  mesh.castShadow = !ON_PHONE || !!opts.unique;
   mesh.frustumCulled = false;
 
   const g = new THREE.Group();
