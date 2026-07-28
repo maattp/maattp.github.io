@@ -204,8 +204,34 @@ vec3 viewPos(vec2 uv) {
   return v.xyz / v.w;
 }
 
-// 12 points on a hemisphere, weighted toward the centre so near-contact
-// darkening reads without the far samples turning into banding.
+/**
+ * Normal from depth, rejecting silhouettes.
+ *
+ * The obvious cross(dFdx(P), dFdy(P)) is computed across a 2x2 quad, so at
+ * any edge in the scene -- a roofline, a kerb, the side of a car -- one pixel of
+ * that quad is on a near surface and one is on a far one, and the normal comes
+ * out as nonsense. That was a band of garbage normals along every edge in the
+ * frame, one quad wide at half resolution and then smeared wider by the blur.
+ *
+ * Taking four neighbours and keeping whichever of each pair is closer in depth
+ * picks the one that is on the SAME surface, so an edge no longer contaminates
+ * the normal on the side of it that is being shaded.
+ */
+vec3 viewNormal(vec2 uv, vec3 P) {
+  vec3 l = viewPos(uv - vec2(texel.x, 0.0));
+  vec3 r = viewPos(uv + vec2(texel.x, 0.0));
+  vec3 d = viewPos(uv - vec2(0.0, texel.y));
+  vec3 u = viewPos(uv + vec2(0.0, texel.y));
+  vec3 dx = abs(l.z - P.z) < abs(r.z - P.z) ? P - l : r - P;
+  vec3 dy = abs(d.z - P.z) < abs(u.z - P.z) ? P - d : u - P;
+  vec3 n = normalize(cross(dx, dy));
+  // View space looks down -Z, so a visible surface faces the camera.
+  return n.z < 0.0 ? -n : n;
+}
+
+// A hemisphere, weighted toward the centre so near-contact darkening reads
+// without the far samples banding. z is kept positive: these are oriented
+// along the surface normal below, not flipped into a half-space.
 const vec3 K[12] = vec3[12](
   vec3( 0.5381, 0.1856, 0.4319), vec3( 0.1379, 0.2486, 0.4430),
   vec3( 0.3371, 0.5679, 0.0057), vec3(-0.6999,-0.0451, 0.0019),
@@ -220,25 +246,56 @@ void main() {
   // Sky: depth 1.0. Occluding it produces a dark halo along every roofline.
   if (z >= 0.9999) { gl_FragColor = vec4(1.0); return; }
   vec3 P = viewPos(vUv);
-  vec3 N = normalize(cross(dFdx(P), dFdy(P)));
+  vec3 N = viewNormal(vUv, P);
+  float dist = -P.z;
+
+  /**
+   * Orient the kernel to the SURFACE, which is the whole ball game.
+   *
+   * The previous version rotated a fixed kernel about the view axis and then
+   * flipped each sample with dot(k, N) < 0. Flipping only guarantees a
+   * sample is on the correct side of the surface -- it does not build a
+   * hemisphere around the normal. On a road raking away from the camera most
+   * samples therefore ended up nearly TANGENT to the tarmac, skimming along it
+   * at essentially the surface's own depth, where whether they counted as
+   * occluders came down entirely to the bias. That is what laid soft dark
+   * clouds over open ground, worse with distance and worse at grazing angles.
+   */
   float rnd = fract(sin(dot(vUv, vec2(12.9898, 78.233))) * 43758.5453);
-  float ca = cos(rnd * 6.2831), sa = sin(rnd * 6.2831);
+  vec3 rvec = vec3(cos(rnd * 6.2831), sin(rnd * 6.2831), 0.0);
+  vec3 T = normalize(rvec - N * dot(rvec, N));
+  mat3 TBN = mat3(T, cross(N, T), N);
+
+  // Bias has to scale with distance. A constant 3.5 cm is fine at 2 m and
+  // meaningless at 40 m, where the depth difference across one sample step on a
+  // receding surface is far larger -- so open road self-occluded.
+  float bi = bias * (1.0 + dist * 0.35);
+
   float occ = 0.0;
   for (int i = 0; i < 12; i++) {
     vec3 k = K[i];
-    k.xy = vec2(k.x * ca - k.y * sa, k.x * sa + k.y * ca);
-    if (dot(k, N) < 0.0) k = -k;
-    vec3 sp = P + k * radius;
+    k.z = abs(k.z);
+    vec3 sp = P + (TBN * k) * radius;
     vec4 cp = proj * vec4(sp, 1.0);
     vec2 suv = (cp.xy / cp.w) * 0.5 + 0.5;
     if (suv.x < 0.0 || suv.x > 1.0 || suv.y < 0.0 || suv.y > 1.0) continue;
     float sz = viewPos(suv).z;
-    // Range check: a foreground object must not occlude the distant ground
-    // behind it, which is what produces black outlines around everything.
-    float rc = smoothstep(0.0, 1.0, radius / abs(P.z - sz));
-    occ += (sz >= sp.z + bias ? 1.0 : 0.0) * rc;
+    // Occluded when the surface actually drawn at that pixel sits nearer the
+    // camera than the sample point does -- i.e. the sample is buried.
+    if (sz >= sp.z + bi) {
+      // Reject occluders that are simply a long way in front: a foreground
+      // object must not darken the distant ground behind it, which is what
+      // draws black outlines around everything.
+      occ += smoothstep(0.0, 1.0, radius / max(abs(P.z - sz), 1e-4));
+    }
   }
-  float ao = clamp(1.0 - (occ / 12.0) * strength, 0.0, 1.0);
+
+  // Fade out with distance. The kernel is a fixed size in metres, so past a few
+  // tens of metres it projects into a pixel or two and all twelve samples read
+  // the same texel -- correlated noise, which the blur turns into a blob rather
+  // than removing.
+  float fade = 1.0 - smoothstep(30.0, 65.0, dist);
+  float ao = clamp(1.0 - (occ / 12.0) * strength * fade, 0.0, 1.0);
   gl_FragColor = vec4(vec3(ao), 1.0);
 }`;
 
@@ -328,9 +385,12 @@ export class PostFX {
       projInv: { value: new THREE.Matrix4() },
       proj: { value: new THREE.Matrix4() },
       texel: { value: new THREE.Vector2() },
-      radius: { value: 0.85 },
-      strength: { value: 2.1 },
-      bias: { value: 0.035 },
+      radius: { value: 0.7 },
+      // Strength was 2.1 to make a broken effect visible. With the kernel
+      // oriented to the surface the occlusion it reports is real, so it needs
+      // far less pushing.
+      strength: { value: 1.1 },
+      bias: { value: 0.02 },
     });
     this.composite = pass(COMPOSITE, {
       tScene: { value: null }, tBloom: { value: null },

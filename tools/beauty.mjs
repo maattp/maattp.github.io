@@ -157,6 +157,10 @@ async function main() {
     await evaluate(`(() => {
       const d = window.__dbg;
       d.applyQuality('high', true);
+      // SSAO ships off, so the harness needs a way to photograph it -- the only
+      // reason it stayed broken for so long is that nothing ever framed a road
+      // with it enabled.
+      if (${JSON.stringify(!!process.env.AUTO_SSAO)}) d.postfx.setFx('ssao', true);
       for (const id of ['hud','pad','stickZone','lookZone','objective','toast','rotate'])
         { const e = document.getElementById(id); if (e) e.style.display = 'none'; }
       d.game.paused = true;
