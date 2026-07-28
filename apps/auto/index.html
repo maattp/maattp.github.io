@@ -281,6 +281,18 @@
     #rotate { display: flex; }
   }
 </style>
+<style>
+  #debugStats {
+    position: absolute; top: calc(env(safe-area-inset-top) + 8px);
+    left: calc(env(safe-area-inset-left) + 96px);
+    display: none; pointer-events: none; z-index: 40;
+    font: 600 11px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace;
+    color: #d8e2ea; text-shadow: 0 1px 2px rgba(0,0,0,0.75);
+    background: rgba(10,12,16,0.55); border-radius: 8px; padding: 6px 9px;
+    white-space: pre;
+  }
+  #debugStats.on { display: block; }
+</style>
 </head>
 <body>
 <div id="app" data-mode="foot">
@@ -356,6 +368,7 @@
       <div class="row"><span>Radio</span><div class="toggle" id="setMusic"></div></div>
       <div class="row"><span>Sound effects</span><div class="toggle" id="setSound"></div></div>
       <div class="row"><span>Camera speed</span><input type="range" id="setSens" min="0.4" max="2.2" step="0.1" value="1"></div>
+      <div class="row"><span>Debug stats</span><div class="toggle" id="setDebug"></div></div>
       <p class="help">
         Left thumb steers and walks. Right side: drag to look, buttons to drive.
         Walk up to any car and hit ENTER to take it. Deliveries pay — the gold ring
@@ -368,13 +381,19 @@
     </div>
   </div>
 
+  <!-- Performance readout. The draw-call and triangle budget in CLAUDE.md was
+       a convention written against "it ships to a phone", never a measurement
+       on one, and the scene has quietly been over it for some time with
+       nothing going wrong. This is how it gets settled with a real number. -->
+  <div id="debugStats"></div>
+
   <div id="loading">
     <div class="tag">Puget Sound</div>
     <h1>AUTO</h1>
     <div id="loadTrack"><div id="loadBar"></div></div>
     <div id="loadMsg">Starting up</div>
     <!-- Bumped once per change, in step with CACHE in sw.js. See CLAUDE.md. -->
-    <div id="build">v30</div>
+    <div id="build">v33</div>
     <div id="attrib">Map data © OpenStreetMap contributors (ODbL) · elevation USGS 3DEP</div>
   </div>
 

@@ -388,6 +388,12 @@ reads low and they sink. Both `update()` and `place()` now average the four whee
 samples. Measured after both fixes, all four wheels sit within 0.2 cm of the
 ground on a Queen Anne cross-slope, against +/-7 cm before.
 
+**A motorcycle has TWO of them, both on the centreline.** `spec.moto` switches
+`update()` and `place()` to the front/rear pair only. The cross-car samples are
+taken at `halfWid` either side, which for a bike is the gutter and the crown of
+a road it is nowhere near, so averaging them sinks or floats it by half the
+camber. It also takes two `groundAt` calls a frame instead of four.
+
 ## What the map looks like from above
 
 Still the cheapest way to find a layout bug, and none of it is visible at street
@@ -754,6 +760,34 @@ flips, since setting `OscillatorNode.type` every frame allocates on some
 engines. **This last part cannot be checked headlessly**: the AudioContext
 never leaves `suspended` without a real gesture, so `update()` early-returns
 before it gets there.
+
+**An open car needs the deck OPENED, not an interior laid under it.** There is
+no boolean here, so `bodyCore`'s section closes across the top at the beltline
+and any interior built below that is simply hidden by it -- seats, dash and
+wheel all present and none of them visible. `deckDip` sinks the two innermost
+section points to a floor height instead, so the loft itself dives into a tub.
+The trim over it is a separate `patch` on those same points because `loft`
+forces every normal outward from the ring centre, and the inside of a tub faces
+the other way. And in a dark tub, contrast is the whole game: the steering
+wheel was there for two renders before it was moved into `trim` in a bright
+colour and became visible.
+
+**A bike leans into the corner, and the sign is the same trap as the camber.**
+`tan(lean) = lateral acceleration / g`, and it is built from the acceleration
+the tyres are actually delivering -- the demand *before* the friction circle
+limits it would lay the bike flat at a speed it cannot hold anyway. Because
+`rotation.z` raises local +X and a positive yaw rate turns the vehicle toward
++X, leaning IN is a *negative* roll. Verify it by driving a circle and reading
+`v.tilt.rotation.z` against the sign of the heading change; a bike leaning out
+of its corners is unmissable and the arithmetic looks right either way.
+
+**The rider is the pedestrian humanoid, posed.** `makeRider` in vehicles.js
+takes `makeHumanoid` with a shared geometry and sets bone rotations from the
+`RIDERS` table: one SkinnedMesh, one draw call, and it inherits every fix to
+the character body. The bones hang down -Y, so **+x on a limb bone swings it
+backward** and +x on the spine leans the torso forward. The reach is the
+constraint that matters: shoulder to grip is about 64 cm on this humanoid, so
+the bars are placed where the hands land, not the other way round.
 
 **Wheel wells are capped at the shoulder line.** The well is sized off
 `wheelR` and the bodywork off `belt`, so a big wheel under a low body pushed a

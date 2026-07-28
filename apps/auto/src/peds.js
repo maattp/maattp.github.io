@@ -29,6 +29,10 @@ const B = {
   thighR: 15, kneeR: 16, footR: 17,
 };
 const BONE_COUNT = 18;
+// Exported so vehicles.js can pose a rider on a motorcycle. A bike's rider is
+// this same humanoid held in a static pose rather than a model of its own --
+// one SkinnedMesh, one draw call, and it inherits every future fix to the body.
+export { B as BONES };
 
 // Joint heights in character space, taken from adult anthropometry as
 // fractions of a 1.75 m stature (eye 0.936H, chin 0.870H, acromion 0.812H,

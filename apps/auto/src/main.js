@@ -8,6 +8,7 @@ import { buildTextures } from './textures.js';
 import { World } from './world.js';
 import { buildLandmarks } from './landmarks.js';
 import { TrafficSystem, collideWithBuildings } from './traffic.js';
+import { TYPES as VEHICLE_TYPES } from './vehicles.js';
 import { PedSystem, animateWalk } from './peds.js';
 import { Player } from './player.js';
 import { Controls } from './controls.js';
@@ -44,6 +45,7 @@ class Game {
       music: true,
       sound: true,
       sensitivity: 1,
+      debug: false,
     };
   }
 
@@ -439,7 +441,7 @@ function installHeightFog() {
   }
 
   await step(1, 'Welcome to Seattle');
-  window.__dbg = { game, city, player, world, traffic, peds, scene, camera, renderer, G, fx, hud, controls, audio, pickups, THREE, postfx, applyQuality, sun, sceneStats, cityStats, animateWalk, collideWithBuildings };
+  window.__dbg = { game, city, player, world, traffic, peds, scene, camera, renderer, G, fx, hud, controls, audio, pickups, THREE, postfx, applyQuality, sun, sceneStats, cityStats, animateWalk, collideWithBuildings, TYPES: VEHICLE_TYPES };
   wireUi();
   game.newTarget();
   applyQuality('high', false);
@@ -767,6 +769,7 @@ function wireUi() {
   }
   bind('setMusic', 'music', (v) => { audio.musicOn = v; });
   bind('setSound', 'sound', (v) => { audio.enabled = v; });
+  bind('setDebug', 'debug', (v) => { debugEl.classList.toggle('on', v); });
 
   const sens = document.getElementById('setSens');
   sens.addEventListener('input', () => {
@@ -949,6 +952,7 @@ function frame(now) {
   world.animate(dt, now / 1000);
   draw(now);
   autoQuality(dt);
+  updateDebug(dt);
 }
 
 function draw(now) {
@@ -961,6 +965,42 @@ function draw(now) {
   renderer.setRenderTarget(null);
 }
 const sceneStats = { calls: 0, tris: 0 };
+const debugEl = document.getElementById('debugStats');
+let debugAcc = 0;
+let fpsMin = 999;
+
+/**
+ * On-device performance readout.
+ *
+ * The draw-call and triangle budget this game is written against was a
+ * convention -- "it ships to a phone" -- and was never measured on one. The
+ * scene has been over the documented 290-320 calls / 400k triangles for a
+ * while with nothing going wrong, which means nobody knows where the real
+ * ceiling is. Reading it off the device settles that.
+ *
+ * Worst-case frame rate matters more than the mean: a mean of 60 with a
+ * regular dip to 38 is what actually trips `autoQuality`, and an average hides
+ * it. `fpsMin` holds the floor since the last redraw of this panel.
+ */
+function updateDebug(dt) {
+  if (!game.settings.debug) return;
+  fpsMin = Math.min(fpsMin, fps);
+  debugAcc += dt;
+  if (debugAcc < 0.25) return;
+  debugAcc = 0;
+  const q = game.settings.quality;
+  const dpr = renderer.getPixelRatio().toFixed(2);
+  const w = Math.round(renderer.domElement.clientWidth * renderer.getPixelRatio());
+  const h = Math.round(renderer.domElement.clientHeight * renderer.getPixelRatio());
+  const cars = traffic.cars.length;
+  const people = peds.peds.length;
+  debugEl.textContent =
+    `${fps.toFixed(0)} fps  (min ${fpsMin.toFixed(0)})\n`
+    + `${sceneStats.calls} draws  ${(sceneStats.tris / 1000).toFixed(0)}k tris\n`
+    + `${w}x${h} @ ${dpr}x  ${q}\n`
+    + `${cars} vehicles  ${people} peds`;
+  fpsMin = fps;
+}
 
 // The phone this ships to can't be profiled from here, so the game measures
 // itself and steps the quality down if it can't hold frame rate.
