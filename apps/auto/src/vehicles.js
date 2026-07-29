@@ -3051,7 +3051,20 @@ export class Vehicle {
     // which the bench caught as a class-order failure. Wide enough now that the
     // table means something at both ends.
     const agility = clamp(spec.latG / 0.88, 0.70, 1.32);
-    const lock = lerp(0.62, 0.22 * agility, clamp(sp / 34, 0, 1))
+    // Think in TURN RADIUS, not steering angle.
+    //
+    // A fixed angle means the yaw it produces scales with 1/wheelbase, and a
+    // motorcycle has a 1.36 m one. Measured, the sportbike was pulling 340
+    // degrees a second at 60 km/h -- a full circle in about a second. It was
+    // not cornering, it was spinning, and the resulting "radius" was worse than
+    // the sedan's at every speed above walking pace. That is the bike that
+    // leaned hard and would not go round corners.
+    //
+    // Asking for a radius and solving `atan(L / R)` for the angle gives every
+    // vehicle a comparable, controllable turn, and short wheelbases correctly
+    // come out slightly tighter rather than uncontrollable.
+    const turnR = lerp(4.5, 11.0, clamp(sp / 34, 0, 1)) / agility;
+    const lock = Math.min(0.62, Math.atan(wheelbase / turnR))
       * (hand > 0.5 ? 1.25 : 1)
       * (brake > 0 && this.vLong > 0.4 ? 0.92 : 1);
     // How fast the wheel reaches where you asked for it. At 11 the time
@@ -3185,10 +3198,17 @@ export class Vehicle {
     // backwards here, and a bike leaning out of its corners is unmissable.
     // Faded out below walking pace so a parked bike stands up straight.
     const tgtRoll = two
-      // Capped, because the lean follows the ACHIEVED lateral acceleration and
-      // arcade grip is 2.2x real -- solved honestly that is a 67 deg lean, which
-      // is MotoGP and reads as the bike falling over. 45 deg is hard riding.
-      ? -clamp(Math.atan2(this.latAcc, 9.81), -0.78, 0.78) * clamp((sp - 0.8) / 2.5, 0, 1)
+      // Lean is now a function of how hard you are STEERING, not of the
+      // lateral acceleration that produces.
+      //
+      // Cornering is several g by design, so the physical balance angle
+      // `atan(lat/g)` saturates any sane cap the moment you touch the bars --
+      // measured, the bike sat pinned at its 45 deg limit at 30, 60 and 100
+      // km/h alike, which is why it looked like it was falling over in every
+      // turn regardless of how gentle. Steering as a fraction of available lock
+      // gives a lean that is proportional to what the rider asked for, and it
+      // still fades out below walking pace so a parked bike stands up.
+      ? -0.70 * clamp(this.steer / Math.max(lock, 1e-3), -1, 1) * clamp((sp - 0.8) / 6, 0, 1)
       : Math.atan2(lh - rh, this.halfWid * 2) + clamp(this.vLat, -9, 9) * 0.016;
     this.pitch = lerp(this.pitch, tgtPitch, 1 - Math.exp(-10 * dt));
     // A bike's lean IS its steering, visually, so it has to arrive with the
