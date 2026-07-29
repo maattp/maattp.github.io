@@ -614,13 +614,22 @@ function skyEquirect() {
   const W = 2048, H = 1024;
   const { c, g } = canvas(W, H);
   const grad = g.createLinearGradient(0, 0, 0, H);
-  grad.addColorStop(0.00, '#2f5680');
-  grad.addColorStop(0.22, '#4a749a');
-  grad.addColorStop(0.42, '#88a8c2');
-  grad.addColorStop(0.50, '#c2ced6');
-  grad.addColorStop(0.54, '#cdd6db');
-  grad.addColorStop(0.70, '#8e969b');
-  grad.addColorStop(1.00, '#5d6469');
+  // Chroma, at the luminance the sky already had.
+  //
+  // The stops were never the problem -- #88a8c2 is saturation 0.227. Measured
+  // off the rendered frames, the sky arrives on screen at **0.010 to 0.020**:
+  // achromatic grey across a third to a half of most frames, and it is also
+  // 100 % of the image-based light, so every shaded facade and the whole surface
+  // of Puget Sound were being lit by grey. The bleaching happens below, in the
+  // cloud pass and the haze band. These stops keep their luminance and take
+  // their hue back.
+  grad.addColorStop(0.00, '#1f4f8c');
+  grad.addColorStop(0.22, '#3f74ab');
+  grad.addColorStop(0.42, '#7ba7cd');
+  grad.addColorStop(0.50, '#b6cbdb');
+  grad.addColorStop(0.54, '#c6d4dd');
+  grad.addColorStop(0.70, '#8b979f');
+  grad.addColorStop(1.00, '#5a6469');
   g.fillStyle = grad;
   g.fillRect(0, 0, W, H);
   // Sun: placed to match the key light direction so speculars line up.
@@ -649,22 +658,30 @@ function skyEquirect() {
   // gaps between them, and enough alpha each to be a cloud rather than a wash.
   const r = mulberry32(83);
   for (let layer = 0; layer < 3; layer++) {
-    const count = 46 + layer * 30;
+    const count = 14 + layer * 9;
     for (let i = 0; i < count; i++) {
       // Keep out of the zenith. Equirect x spans a full 360 deg at every
       // latitude, so a bank drawn near y=0 is stretched across an enormous arc
       // and renders as a grey swirl rather than a cloud. From about 25 deg
       // down to the horizon is the band a player actually looks at anyway.
-      const y = H * 0.17 + Math.pow(r(), 0.75) * (H * 0.30);
+      const y = H * 0.26 + Math.pow(r(), 0.8) * (H * 0.21);
       const x = r() * W;
       // Perspective still flattens a bank toward the horizon, but the floor is
       // high enough that the shape stays a cloud and not a line.
       const squash = 0.46 + (y / H) * 0.5;
-      const w = (110 + r() * 260) * (1 + layer * 0.35);
+      // Clamp the width. At 630 px this reached 110 degrees of azimuth, and a
+      // bank that wide sitting 59 degrees up wraps the zenith region and reads
+      // as one grey smear across the top of the frame -- visible in five of the
+      // seven beauty shots. The comment below always said to keep out of the
+      // zenith; nothing enforced it.
+      const w = Math.min(W * 0.11, (110 + r() * 200) * (1 + layer * 0.3));
       const h = w * squash * (0.34 + r() * 0.3);
       const near = 1 - Math.abs(y - sy) / 900;
       const bright = 0.88 + Math.max(0, near) * 0.12;
-      const alpha = 0.07 + r() * 0.11;
+      // Higher per-cloud, far fewer clouds. 228 banks over a 2048x307 band was
+      // roughly thirty times overdraw at 0.12 alpha -- about an 80 % white wash
+      // over the entire sky, which is what took the chroma out.
+      const alpha = 0.16 + r() * 0.16;
       const cg = g.createRadialGradient(x, y, 0, x, y, w);
       const t = Math.round(255 * bright);
       cg.addColorStop(0, `rgba(${t},${t},${Math.round(t * 0.99)},${alpha})`);
@@ -682,10 +699,14 @@ function skyEquirect() {
     }
   }
   // horizon haze band
-  const haze = g.createLinearGradient(0, H * 0.44, 0, H * 0.56);
-  haze.addColorStop(0, 'rgba(206,216,222,0)');
-  haze.addColorStop(0.5, 'rgba(206,216,222,0.85)');
-  haze.addColorStop(1, 'rgba(206,216,222,0)');
+  // Narrower and much weaker, and tinted to scene.fog's own colour so the
+  // horizon and the fog agree instead of meeting at a seam. At 0.85 alpha across
+  // v 0.44-0.56 this was a near-opaque grey wash over the horizon plus or minus
+  // 22 degrees -- which is exactly where every street-level shot points.
+  const haze = g.createLinearGradient(0, H * 0.47, 0, H * 0.53);
+  haze.addColorStop(0, 'rgba(185,195,207,0)');
+  haze.addColorStop(0.5, 'rgba(185,195,207,0.35)');
+  haze.addColorStop(1, 'rgba(185,195,207,0)');
   g.fillStyle = haze;
   g.fillRect(0, 0, W, H);
 
