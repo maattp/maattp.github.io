@@ -183,7 +183,15 @@ async function main() {
       const lz = t.z + Math.cos(bear) * V.ahead;
       const counts = await evaluate(`(() => {
         const d = window.__dbg;
+        // Settle the streamer. Chunk geometry is time-sliced across frames now,
+        // and this harness pauses the game -- so a single update builds a few
+        // milliseconds of geometry and nothing ever continues it. Every shot
+        // taken since that change was a photograph of bare terrain with cars
+        // standing on dirt, which is the third time a harness has quietly
+        // invalidated the thing it was built to measure.
+        const pending = () => [...d.world.chunks.values()].filter((c) => c.lod !== c.wantLod).length;
         d.world.update(${cx}, ${cz}, 60);
+        for (let i = 0; i < 2000 && pending() > 0; i++) d.world.update(${cx}, ${cz}, 60);
         const gy = (x, z) => Math.max(0, d.city.groundAt(x, z, null));
         const cy = gy(${cx}, ${cz}) + ${V.eye};
         const ly = gy(${lx}, ${lz}) + ${V.look};

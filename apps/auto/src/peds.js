@@ -353,7 +353,19 @@ export function makeHumanoid(opts = {}) {
     group: g, mesh, bones, height: 1.75 * scale, bob: 0, scale,
     // Pooled variants are shared by every pedestrian using that look, so only a
     // uniquely-built character may dispose its own geometry.
-    dispose() { if (!pooled) geo.dispose(); },
+    //
+    // The SKELETON is always per-instance, and three backs each one with a bone
+    // texture on the GPU. Not disposing it leaked one texture per pedestrian
+    // that walked out of range -- measured, `renderer.info.memory.textures` rose
+    // from 62 to 80 over two minutes of driving and never came down. Every
+    // spawn also uploads a fresh one, and a texture upload is a synchronous
+    // stall on the main thread, which is what the intermittent stutter while
+    // driving actually was: pedestrians churning in and out of the 150 m spawn
+    // radius, each one costing an upload.
+    dispose() {
+      if (!pooled) geo.dispose();
+      if (mesh.skeleton) mesh.skeleton.dispose();
+    },
     gait: 0.92 + hash2(seed, 11) * 0.16,
     lean: hash2(seed, 12) * 0.06,
     swing: 0.8 + hash2(seed, 13) * 0.45,
