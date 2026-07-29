@@ -3030,37 +3030,34 @@ export class Vehicle {
     this.lift = this.city.roadLift(this.x, this.z);
     const sp = Math.abs(this.vLong);
     // Steering authority falls off with speed so the car stays controllable.
-    // Steer within grip, rather than demanding more than the tyres have and
-    // clawing it back afterwards.
+    // Steering is a GAME CONTROL here, not a tyre model.
     //
-    // The bicycle model turns steering angle straight into yaw, so at 72 km/h
-    // full lock asks for FIVE g. The friction circle then removed 82 % of it
-    // again, every frame, at every speed above walking pace -- so the limiter
-    // was permanently engaged, the car never went where it was pointed, and the
-    // leftover lateral velocity read as a permanent drift. It felt broken
-    // because functionally it was: the input was being thrown away.
+    // It has been through both extremes. First there was no lateral limit at
+    // all, and the friction circle added later clawed back 82 % of the input
+    // every frame at any real speed, which felt like the car ignoring you.
+    // Solving for the angle the tyres could actually hold fixed that, and was
+    // still wrong: honest grip at 110 km/h is a 49 m radius, and a city built
+    // from real street widths is not drivable at that.
     //
-    // Solving for the angle the tyres can actually hold means the wheel always
-    // does something, and the car turns as hard as it is able to. Below about
-    // 45 km/h the mechanical lock is the smaller of the two and nothing
-    // changes; above it, grip takes over smoothly.
-    //
-    //   lat = v^2 / L * tan(steer)  <=  latA   ->   steer <= atan(latA * L / v^2)
+    // So grip no longer limits steering. What is left is a mechanical lock that
+    // eases off with speed -- enough that the car is not twitchy at 110, not so
+    // much that it stops turning. The resulting cornering is several g and
+    // entirely unrealistic, which is the point.
     const wheelbase = spec.wheelbase || spec.len * 0.62;
-    const latA = spec.latA * ARCADE_GRIP * (hand > 0.5 ? 0.45 : 1)
-      * (brake > 0 && this.vLong > 0.4 ? 0.8 : 1);
-    // The mechanical falloff with speed used to run down to 0.16 rad, back when
-    // nothing else limited cornering. The grip clamp below is the real limiter
-    // now, so taking authority away on top of it just makes the wheel feel dead
-    // at speed without changing what the car can actually do.
-    const maxSteer = lerp(0.62, 0.30, clamp(sp / 34, 0, 1));
-    const gripSteer = sp > 3 ? Math.atan((latA * wheelbase) / (sp * sp)) : maxSteer;
-    const lock = Math.min(maxSteer, gripSteer);
+    // Heavy things still turn worse than light ones -- a bus does not corner
+    // like a hatchback -- so the class stays in it through `agility`.
+    // The clamp was tight enough at the top that a sportbike's declared grip
+    // never reached the steering lock -- it and a muscle car came out the same,
+    // which the bench caught as a class-order failure. Wide enough now that the
+    // table means something at both ends.
+    const agility = clamp(spec.latG / 0.88, 0.70, 1.32);
+    const lock = lerp(0.62, 0.22 * agility, clamp(sp / 34, 0, 1))
+      * (hand > 0.5 ? 1.25 : 1)
+      * (brake > 0 && this.vLong > 0.4 ? 0.92 : 1);
     // How fast the wheel reaches where you asked for it. At 11 the time
     // constant is 91 ms and a step input took 233 ms to reach 90 % of its yaw,
     // which is the "sloppy" -- the car was still winding on lock a fifth of a
-    // second after the input. 20 puts it near 115 ms, which is about what a
-    // quick road car does and what an arcade game wants.
+    // second after the input. 20 puts it near 115 ms.
     this.steer = lerp(this.steer, steerIn * lock, 1 - Math.exp(-20 * dt));
 
     const top = spec.fadeTop;
@@ -3111,7 +3108,11 @@ export class Vehicle {
     // tighter, because the car goes where it is pointed instead of crabbing.
     // Two wheels barely slide until they let go completely, so a bike that
     // crabs like a car reads as vague.
-    const gripBase = spec.moto ? 17 : spec.bus || spec.cargo ? 9 : spec.ev ? 14 : 12;
+    // Lateral damping. Higher is tighter: the car goes where it is pointed
+    // rather than crabbing. With the grip clamp gone the yaw is much larger, so
+    // without scrubbing the slip off harder all of that extra rotation would
+    // come out as slide.
+    const gripBase = spec.moto ? 30 : spec.bus || spec.cargo ? 18 : spec.ev ? 26 : 24;
     const grip = hand > 0.5 ? 1.5 : gripBase;
     this.vLat += -yawRate * this.vLong * dt;
     const before = this.vLat;
