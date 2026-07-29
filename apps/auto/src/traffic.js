@@ -11,6 +11,22 @@ const TRAFFIC_TARGET = 26;
 const PARKED_RADIUS = 105;
 const DESPAWN = 520;
 
+/**
+ * Free everything under a node.
+ *
+ * Only safe on geometry that is genuinely per-instance. Vehicles share their
+ * geometry and their trim/matte materials across every instance in the game --
+ * see the "never dispose a pooled geometry" law in CLAUDE.md, which is the same
+ * trap one level down.
+ */
+function disposeTree(root) {
+  root.traverse((o) => {
+    if (o.geometry) o.geometry.dispose();
+    const ms = o.material ? (Array.isArray(o.material) ? o.material : [o.material]) : [];
+    for (const m of ms) m.dispose();
+  });
+}
+
 export function collideWithBuildings(v, city, onHit) {
   // Street objects first: a tree or a lamp post is closer than the building
   // line and is what you actually hit coming off a kerb. Until this existed
@@ -91,6 +107,7 @@ export class TrafficSystem {
     this.scene.remove(v.group);
     if (v.slot != null) this.parkedSlots.delete(v.slot);
     v.bodyMat.dispose();
+    if (v.extra) { disposeTree(v.extra); v.extra = null; }
   }
 
   spawnAt(x, z, heading, typeName, color, mode) {
@@ -233,6 +250,12 @@ export class TrafficSystem {
       v.lightL = mkL(0x3355ff, -0.31);
       v.lightR = mkL(0xff2a2a, 0.31);
       v.tilt.add(bar);
+      // Remember the light bar so `remove` can free it. A vehicle SHARES its
+      // trim and matte geometry and materials with every other instance, so
+      // nothing may traverse-and-dispose a car -- only the per-instance extras
+      // built here. Cops churn continuously during a chase, and this was three
+      // geometries and three materials leaked every time one despawned.
+      v.extra = bar;
       return v;
     }
     return null;
@@ -275,6 +298,10 @@ export class TrafficSystem {
       this.heli = { g, rotor, tr, beacon, a: 0, ang: 0 };
     } else if (!active && this.heli) {
       this.scene.remove(this.heli.g);
+      // Nothing in the helicopter is shared, and it is rebuilt from scratch
+      // every time the wanted level crosses four -- so without this an entire
+      // airframe leaked on each transition, in both directions.
+      disposeTree(this.heli.g);
       this.heli = null;
     }
   }
