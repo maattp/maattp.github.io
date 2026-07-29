@@ -548,7 +548,6 @@ export class World {
       if (!this._build) {
         const c = todo.find((k) => k.lod !== k.wantLod && k !== this._buildFor);
         if (!c) break;
-        if (c.group) this.disposeChunk(c);
         this._buildFor = c;
         this._buildLod = c.wantLod;
         this._build = this.buildChunkStep(c.cx, c.cz, c.wantLod);
@@ -559,9 +558,23 @@ export class World {
       if (c.wantLod !== this._buildLod) { this._build = null; this._buildFor = null; continue; }
       const step = this._build.next();
       if (!step.done) continue;
+      // **Swap, never dispose-then-build.**
+      //
+      // The old geometry has to stay on screen until its replacement is ready.
+      // Disposing first was fine when a build finished inside the same frame;
+      // now that it is spread over a dozen or more, it leaves a 400 m square of
+      // bare terrain where the chunk used to be -- a hard straight edge across
+      // the road, with the ground showing through beyond it, for a fifth of a
+      // second or longer. Chunk borders are axis-aligned, which is exactly what
+      // makes the seam look like a rendering fault rather than a missing chunk.
+      const old = c.group;
       c.group = step.value || null;
       c.lod = this._buildLod;
       if (c.group) this.group.add(c.group);
+      if (old) {
+        old.traverse((o) => { if (o.geometry) o.geometry.dispose(); });
+        this.group.remove(old);
+      }
       this._build = null;
       this._buildFor = null;
     }
@@ -606,7 +619,6 @@ export class World {
     const ck = city.chunkKey(cx, cz);
     const ch = city.chunks.get(ck);
     if (!ch) return null;
-    city.clearObstacles(ck);
     this._ck = ck;
     const road = new Builder(true);
     const walk = new Builder(true);
@@ -616,6 +628,11 @@ export class World {
 
     const own = (x, z) => Math.floor(x / CHUNK) === cx && Math.floor(z / CHUNK) === cz;
     const nodesDone = new Set();
+    // Solid objects are registered as the geometry is generated, so the old
+    // set is dropped here rather than at the top: a build now spans many frames,
+    // and clearing first would leave the trees still on screen with no collision
+    // until it finished.
+    city.clearObstacles(ck);
 
     // Yield every so many items rather than every one: the check itself costs
     // something, and a handful of roads or buildings is well under a frame.

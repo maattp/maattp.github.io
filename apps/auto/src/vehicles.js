@@ -3109,7 +3109,9 @@ export class Vehicle {
     // rather than leaning; the handbrake still breaks it loose.
     // Lateral damping: how quickly a sideways slide is scrubbed off. Higher is
     // tighter, because the car goes where it is pointed instead of crabbing.
-    const gripBase = spec.bus || spec.cargo ? 9 : spec.ev ? 14 : 12;
+    // Two wheels barely slide until they let go completely, so a bike that
+    // crabs like a car reads as vague.
+    const gripBase = spec.moto ? 17 : spec.bus || spec.cargo ? 9 : spec.ev ? 14 : 12;
     const grip = hand > 0.5 ? 1.5 : gripBase;
     this.vLat += -yawRate * this.vLong * dt;
     const before = this.vLat;
@@ -3182,10 +3184,16 @@ export class Vehicle {
     // backwards here, and a bike leaning out of its corners is unmissable.
     // Faded out below walking pace so a parked bike stands up straight.
     const tgtRoll = two
-      ? -Math.atan2(this.latAcc, 9.81) * clamp((sp - 0.8) / 2.5, 0, 1)
+      // Capped, because the lean follows the ACHIEVED lateral acceleration and
+      // arcade grip is 2.2x real -- solved honestly that is a 67 deg lean, which
+      // is MotoGP and reads as the bike falling over. 45 deg is hard riding.
+      ? -clamp(Math.atan2(this.latAcc, 9.81), -0.78, 0.78) * clamp((sp - 0.8) / 2.5, 0, 1)
       : Math.atan2(lh - rh, this.halfWid * 2) + clamp(this.vLat, -9, 9) * 0.016;
     this.pitch = lerp(this.pitch, tgtPitch, 1 - Math.exp(-10 * dt));
-    this.roll = lerp(this.roll, tgtRoll, 1 - Math.exp(-10 * dt));
+    // A bike's lean IS its steering, visually, so it has to arrive with the
+    // turn rather than a tenth of a second behind it -- lagging the yaw is what
+    // makes the controls feel like they are wallowing.
+    this.roll = lerp(this.roll, tgtRoll, 1 - Math.exp(-(two ? 17 : 10) * dt));
 
     this.wheelSpin += (this.vLong / (this.assets.wheelR || 0.34)) * dt;
     this.sync();
