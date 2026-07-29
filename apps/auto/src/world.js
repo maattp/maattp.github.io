@@ -1461,21 +1461,22 @@ export class World {
         flat.prism(tx2, rt + 1.8, tz2, 1.5, 2.4, 8, [0.42, 0.34, 0.27]);
         flat.cone(tx2, rt + 4.2, tz2, 1.55, 0.7, 8, [0.36, 0.29, 0.23]);
       }
-      // parapet lip, so the roof edge has a silhouette rather than a clean cut
+      // The parapet does not get a top face, because the lid goes on top of it.
+      //
+      // It used to: `box` defaults to `top: true`, so the surface you actually
+      // saw when you looked at a roof was the parapet's lid at rt + 0.85, on
+      // `flat` -- which has no map and no normal map. The textured lid was
+      // underneath it at rt - 0.12, contributing a 12 cm band nobody could see.
+      // Roofs are roughly 40 % of the pixels in the skyline shot and every one
+      // of them was a flat colour.
       flat.box(bd.x, rt, bd.z, bd.w + 0.5, 0.85, bd.d + 0.5, bd.rot,
-        [rv * 1.2, rv * 1.2, rv * 1.17]);
-      // The lid itself, on a textured builder. A roof is seen from every
-      // elevated view in the game and it was one flat untextured colour.
-      // At 7 m a tile this slab is the single biggest thing splitting into
-      // per-repeat quads for the atlas -- about half the facade set's triangles
-      // across a downtown chunk, for a 12 cm band. Dropping its sides is the
-      // obvious saving and it is NOT free: the band is the only part of the lid
-      // you can see (the parapet box above covers its top face outright), and
-      // removing it visibly cleans the corrugated grain out from under every
-      // cornice in the city. That is a look change, not a perf change, so it
-      // stays.
-      bl.facade.box(bd.x, rt - 0.12, bd.z, bd.w + 0.2, 0.14, bd.d + 0.2, bd.rot,
-        [rv * 0.92, rv * 0.93, rv * 0.96], { uScale: 7, vScale: 7, cell: C.industrial });
+        [rv * 1.2, rv * 1.2, rv * 1.17], { top: false });
+      // The lid, capping the parapet flush. `box` draws no bottom face, so
+      // there is nothing to see through where the two meet. 4 m a tile rather
+      // than 7 so the industrial cell's corrugation reads as roof seams instead
+      // of grain.
+      bl.facade.box(bd.x, rt + 0.71, bd.z, bd.w + 0.5, 0.14, bd.d + 0.5, bd.rot,
+        [rv * 0.92, rv * 0.93, rv * 0.96], { uScale: 4, vScale: 4, cell: C.industrial });
     }
 
     const dense = bd.style !== 'industrial';

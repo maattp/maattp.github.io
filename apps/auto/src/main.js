@@ -265,7 +265,7 @@ async function boot() {
   // before it reached the framebuffer: hemisphere and ambient were pushed 2.6x
   // and bought 1.6x on screen. Exposure slides the whole scene up the curve
   // instead of pushing harder into the compressed region.
-  renderer.toneMappingExposure = 0.46;
+  renderer.toneMappingExposure = 0.53;
   const viewW = () => canvas.clientWidth || window.innerWidth;
   const viewH = () => canvas.clientHeight || window.innerHeight;
   renderer.setSize(viewW(), viewH(), false);

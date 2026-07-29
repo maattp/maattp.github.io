@@ -213,7 +213,21 @@ async function main() {
         // the shot so the shadow box covers what is in frame.
         const ax = ${cx} + (${lx} - ${cx}) * 0.25, az = ${cz} + (${lz} - ${cz}) * 0.25;
         const ay = gy(ax, az);
-        d.sun.position.set(ax - 215, ay + 200, az - 150);
+        // Put the sun ACROSS the view, not behind it.
+        //
+        // main.js's fixed (-215, 200, -150) offset throws shadows toward xz
+        // (0.82, 0.57). Every view here is framed on a bearing of 0.9, which
+        // looks toward (0.78, 0.62) -- 4.5 degrees apart. So in every shot the
+        // sun was almost directly behind the camera and every shadow fell away
+        // from it, hidden behind its own caster. That is why the park shot measured a
+        // 1.3:1 lit-to-shadow ratio and looked unlit: the numbers were reading
+        // bounce and baked AO, not the key light at all.
+        //
+        // Same elevation (38 deg) and the same distance, rotated 100 degrees off
+        // the view bearing so shadows cross the frame and can be seen.
+        const SUN_AZ = 0.9 + 1.75;
+        const sr = Math.hypot(215, 150);
+        d.sun.position.set(ax - Math.sin(SUN_AZ) * sr, ay + 200, az - Math.cos(SUN_AZ) * sr);
         d.sun.target.position.set(ax, ay, az);
         d.sun.target.updateMatrixWorld();
         // Populate the shot. The game is paused so the camera can be flown, and
