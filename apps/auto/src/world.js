@@ -1208,21 +1208,7 @@ export class World {
       pts.push(x, z);
       ys.push(n.elev ? n.y + 0.07 : G.terrainHeight(x, z) + NODE_Y);
     }
-    // UVs in METRES, at the same ROAD_TILE the strips use.
-    //
-    // This was a hardcoded 0.16 x 0.14 slice of the asphalt texture stretched
-    // across the whole junction -- which at a 20 m crossing is a repeat every
-    // 130 m against the strips' 9 m. Roughly a hundred times less UV density,
-    // so the junction magnified mip 0 while the road beside it sampled real
-    // detail, and the two met at a hard line with sharp tarmac on one side and
-    // a smear on the other. It reads as a rendering fault and was mistaken in
-    // turn for post-processing, a shadow and a missing chunk.
-    //
-    // Aligned to world axes rather than to the junction's rotation, so the two
-    // triangles of a crossing cannot disagree about which way the grain runs.
-    const uq = [];
-    for (let i = 0; i < 4; i++) uq.push(pts[i * 2] / ROAD_TILE, pts[i * 2 + 1] / ROAD_TILE);
-    road.flat(pts, ys, [1, 1, 1], uq);
+    road.flat(pts, ys, [1, 1, 1], [0.18, 0.62, 0.34, 0.62, 0.34, 0.76, 0.18, 0.76]);
 
     if (lod !== 1 || sw <= 0 || n.elev || !walk) return;
     // Square ring of pavement around the junction; its inner edge lines up with
