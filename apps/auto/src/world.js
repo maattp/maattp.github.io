@@ -14,6 +14,33 @@ import { hash2, clamp, lerp, distToSeg } from './util.js';
 const ROAD_Y = ROAD_LIFT;
 // Metres per road-texture repeat. Fixed, so the asphalt's grain is the same
 // size on an alley and on a freeway.
+/**
+ * The tiers a tall building steps back through.
+ *
+ * Shared by the near chunk mesh and the far skyline mesh, because they were
+ * modelling the same building differently and each poked through the other. The
+ * near mesh stepped back at 62 % of the height; the far mesh at 80-90 %. Between
+ * those the far version was WIDER, so it stood proud of the textured geometry
+ * all the way round -- and the far mesh has no map, so every tall building in
+ * downtown wore a blank pale slab across its upper third. Measured by raycast,
+ * the far mesh was the frontmost surface at 235-353 m, well inside the 800 m
+ * near radius where it has no business being visible at all.
+ *
+ * One profile, two consumers. They cannot drift again.
+ */
+function* buildingTiers(bd, baseY, totalH) {
+  const n = bd.h > 100 ? 3 : bd.h > 55 ? 2 : 1;
+  let y = baseY, remaining = totalH, w = bd.w, d = bd.d;
+  for (let t = 0; t < n; t++) {
+    const frac = t === n - 1 ? 1 : t === 0 ? 0.62 : 0.6;
+    const h = remaining * frac;
+    yield { t, last: t === n - 1, y, h, w, d };
+    y += h;
+    remaining -= h;
+    if (t < n - 1) { y += 0.55; w *= 0.78; d *= 0.78; }
+  }
+}
+
 const ROAD_TILE = 9;
 // Metres per repeat of the paving texture, which carries four slabs -- so a
 // slab is a metre, everywhere.
@@ -443,36 +470,28 @@ export class World {
       //
       // This is the far mesh, so it is silhouette only -- four boxes at most,
       // and only for the few hundred buildings over 45 m.
-      const crown = bd.h > 45;
-      const shaftH = crown ? bd.h * (0.80 + hash2(bd.seed, 23) * 0.10) : bd.h;
-      b.box(bd.x, bd.y - 2, bd.z, bd.w * s, shaftH + 2, bd.d * s, bd.rot, col, { top: true, ao: 0.3 });
-      if (!crown) continue;
+      // Same tiers the near mesh draws, inset and stopped 2 m short, so the far
+      // version is strictly INSIDE the textured geometry wherever both exist.
+      const plant = bd.h > 45 ? Math.min(4.5, bd.h * 0.05) : 0;
+      const totalH = bd.h + 2 - plant;
       const dk = [col[0] * 0.86, col[1] * 0.88, col[2] * 0.92];
-      let cy = bd.y - 2 + shaftH + 2;
-      let cw = bd.w * s, cd = bd.d * s;
-      const style = hash2(bd.seed, 29);
-      const setbacks = style < 0.4 ? 1 : style < 0.8 ? 2 : 3;
-      // The crown has to fit INSIDE the building's own height. Built on top of
-      // it, the penthouse and mast stood proud of the real roofline drawn by
-      // the near-chunk mesh -- so every tall building in the city wore an
-      // untextured pale box floating above its actual roof, which clipped to
-      // white slabs across downtown.
-      const rest = bd.h - shaftH;
-      const plant = Math.min(4.5, rest * 0.35);
-      const stepped = rest - plant;
-      for (let t = 0; t < setbacks; t++) {
-        const th = stepped / setbacks;
-        cw *= 0.78; cd *= 0.78;
-        b.box(bd.x, cy, bd.z, cw, th, cd, bd.rot, t % 2 ? col : dk, { top: true, ao: 0 });
-        cy += th;
+      let topY = bd.y - 2, topW = bd.w * s, topD = bd.d * s;
+      for (const tier of buildingTiers(bd, bd.y - 2, totalH)) {
+        b.box(bd.x, tier.y, bd.z, tier.w * s, tier.h, tier.d * s, bd.rot,
+          tier.t % 2 ? dk : col, { top: true, ao: tier.t === 0 ? 0.3 : 0 });
+        topY = tier.y + tier.h; topW = tier.w * s; topD = tier.d * s;
       }
-      // Mechanical penthouse: the boxy plant room every real tower carries.
-      b.box(bd.x, cy, bd.z, cw * 0.62, plant, cd * 0.62, bd.rot, dk, { top: true });
-      // A mast is the one thing that legitimately stands above the parapet, and
-      // it is thin enough not to read as a slab.
+      // Mechanical penthouse, within the top tier's footprint and within the
+      // building's own height -- so it cannot stand proud of the near mesh.
+      if (plant > 0) {
+        b.box(bd.x, topY, bd.z, topW * 0.6, plant, topD * 0.6, bd.rot, dk, { top: true });
+        topY += plant;
+      }
+      // A mast is the one thing that legitimately rises above a parapet, and it
+      // is thin enough to read as an antenna rather than as a slab.
       if (bd.h > 80 && hash2(bd.seed, 37) > 0.45) {
         const mh = 8 + hash2(bd.seed, 41) * 22;
-        b.box(bd.x, cy + plant, bd.z, 0.9, mh, 0.9, bd.rot, dk, { top: true });
+        b.box(bd.x, topY, bd.z, 0.9, mh, 0.9, bd.rot, dk, { top: true });
       }
     }
     const m = new THREE.Mesh(b.build(), this.mats.far);
@@ -1493,19 +1512,13 @@ export class World {
     }
 
     let w = bd.w, d = bd.d;
-    const tiers = bd.h > 100 ? 3 : bd.h > 55 ? 2 : 1;
-    for (let t = 0; t < tiers; t++) {
-      const frac = t === tiers - 1 ? 1 : t === 0 ? 0.62 : 0.6;
-      const hh = remaining * frac;
-      target.box(bd.x, y, bd.z, w, hh, d, bd.rot, col,
-        { uScale: uS, vScale: vS, top: false, vOff: (y - base) / (vS || 1), ao: t === 0 ? 0.22 : 0, cell });
-      y += hh;
-      remaining -= hh;
-      if (t < tiers - 1) {
-        flat.box(bd.x, y, bd.z, w + 0.8, 0.55, d + 0.8, bd.rot, TRIM);
-        y += 0.55;
-        w *= 0.78; d *= 0.78;
-      }
+    for (const tier of buildingTiers(bd, y, remaining)) {
+      target.box(bd.x, tier.y, bd.z, tier.w, tier.h, tier.d, bd.rot, col,
+        { uScale: uS, vScale: vS, top: false, vOff: (tier.y - base) / (vS || 1),
+          ao: tier.t === 0 ? 0.22 : 0, cell });
+      y = tier.y + tier.h;
+      w = tier.w; d = tier.d;
+      if (!tier.last) flat.box(bd.x, y, bd.z, tier.w + 0.8, 0.55, tier.d + 0.8, bd.rot, TRIM);
     }
 
     // cornice, roof deck, then a parapet wall standing above it
