@@ -10,6 +10,14 @@
 // whole 16 km map and driven to zero, and a regression shows up as a number
 // rather than as someone noticing months later.
 //
+// A check is only worth its output if it measures what is DRAWN. Two of the
+// original nine compared an analytic surface -- the chord between an edge's end
+// nodes, or where a pavement strip would be offset to -- against the terrain,
+// and both reported large problems that do not exist: road-poke read 9.2 % and
+// walk-on-road 2.95 %, and raycasting the actual meshes puts them at 0.28 % and
+// 0 %. Measuring intent instead of geometry does not just give a wrong number,
+// it sends someone to fix a bug that is not there.
+//
 // Every check reports a count, a rate against however many samples it took, and
 // the worst offenders with coordinates -- so a bad one can be walked to with
 // `AUTO_PROBE` or photographed with tools/survey.mjs instead of being argued
@@ -145,33 +153,44 @@ const CHECKS = `(() => {
 
   // --- terrain poking through the road surface ---------------------------
   //
-  // A road quad is a chord and the heightfield bulges under it. ROAD_LIFT is
-  // 30 cm; anything above that is grass growing through the tarmac.
+  // Raycast the DRAWN meshes. Comparing the terrain against the chord between
+  // an edge's two end nodes measured a surface nobody renders -- meshRoad
+  // subdivides by grade and by bow and samples the heightfield at every corner,
+  // so the tarmac follows the ground far more closely than a chord does. That
+  // check reported 9.2 % and was wrong; the only honest question is which mesh
+  // the ray hits first.
   if (want('road-poke')) {
+    d.scene.updateMatrixWorld(true);
+    const rc = new THREE.Raycaster();
+    const down = new THREE.Vector3(0, -1, 0);
     const worst = [];
     let n = 0, of = 0;
-    const step = Math.max(1, Math.floor(city.edges.length / 4000));
+    const step = Math.max(1, Math.floor(city.edges.length / 700));
     for (let ei = 0; ei < city.edges.length; ei += step) {
       const e = city.edges[ei];
-      if (e.elev || e.len < 8) continue;
+      if (e.elev || e.len < 12) continue;
       const a = city.nodes[e.a], b = city.nodes[e.b];
-      for (let s = 1; s < 5; s++) {
-        const t = s / 5;
+      for (let sI = 1; sI < 4; sI++) {
+        const t = sI / 4;
         const x = a.x + (b.x - a.x) * t, z = a.z + (b.z - a.z) * t;
-        // The drawn surface interpolates the ends; the ground is what is really
-        // there. The gap is what pokes through.
-        const drawn = (a.y + (b.y - a.y) * t);
-        const real = G.terrainHeight(x, z);
+        world.update(x, z, 60);
+        const top = G.terrainHeight(x, z) + 8;
+        rc.set(new THREE.Vector3(x, top, z), down);
+        rc.far = 20;
+        const hits = rc.intersectObject(world.group, true).filter((h) => h.object.isMesh);
+        const terr = rc.intersectObject(world.terrainGroup, true);
+        if (!hits.length || !terr.length) continue;
         of++;
-        const over = real - drawn;
-        if (over > 0.30) {
+        // Positive: the ground is drawn ABOVE the road surface at this point.
+        const over = terr[0].point.y - hits[0].point.y;
+        if (over > 0.02) {
           n++;
           if (worst.length < 40) worst.push({ x: Math.round(x), z: Math.round(z), over: +over.toFixed(2), cls: e.cls });
         }
       }
     }
-    worst.sort((a, b) => b.over - a.over);
-    add('road-poke', n, of, worst, 'terrain standing more than ROAD_LIFT above the road it carries');
+    worst.sort((p, q) => q.over - p.over);
+    add('road-poke', n, of, worst, 'terrain drawn above the road surface it carries');
   }
 
   // --- things you sink into ----------------------------------------------
@@ -200,7 +219,11 @@ const CHECKS = `(() => {
         const stand = city.groundAt(x, z, null, lift);
         rc.set(new THREE.Vector3(x, stand + 12, z), down);
         rc.far = 24;
-        const hits = rc.intersectObject(world.group, true).filter((h) => h.object.isMesh);
+        // Ground surfaces only. A ray that lands on a bollard, a bin or a kerb
+        // face is not evidence that the pavement is at the wrong height, and
+        // counting those inflated this check by about a twentieth.
+        const hits = rc.intersectObject(world.group, true).filter((h) => h.object.isMesh
+          && (h.object.material === world.mats.road || h.object.material === world.mats.walk));
         if (!hits.length) continue;
         of++;
         const surf = hits[0].point.y;
@@ -280,35 +303,51 @@ const CHECKS = `(() => {
       }
     }
     worst.sort((a, b) => b.buried - a.buried);
-    add('bridge', n, of, worst, 'elevated deck buried under the terrain it spans');
+    add('bridge', n, of, worst,
+      'elevated deck buried under the terrain it spans'
+      + ' -- UNVERIFIED: compares the node-to-node chord, not the drawn deck,'
+      + ' which is the same flaw that made road-poke read 9.2% and'
+      + ' walk-on-road 2.95% when both are actually clean');
   }
 
   // --- pavement crossing a carriageway -----------------------------------
+  //
+  // Raycast for the pavement MATERIAL at points that are on a carriageway. The
+  // previous version computed where a strip would be offset to and asked
+  // whether that spot was tarmac -- which measures intent, not geometry: a
+  // piece the builder already rejected still counted, and the figure never
+  // moved when the builder's own test was improved. Only what is drawn counts.
   if (want('walk-on-road')) {
+    d.scene.updateMatrixWorld(true);
+    const rc = new THREE.Raycaster();
+    const down = new THREE.Vector3(0, -1, 0);
     const worst = [];
     let n = 0, of = 0;
-    const step = Math.max(1, Math.floor(city.edges.length / 2500));
+    const step = Math.max(1, Math.floor(city.edges.length / 500));
     for (let ei = 0; ei < city.edges.length; ei += step) {
       const e = city.edges[ei];
       if (e.elev || e.len < 20) continue;
-      if (e.cls !== 'st' && e.cls !== 'art' && e.cls !== 'res') continue;
       const a = city.nodes[e.a], b = city.nodes[e.b];
-      const px = -e.dz, pz = e.dx;
-      const sw = e.cls === 'art' ? 3.2 : 2.6;
-      for (const sg of [-1, 1]) {
-        for (let s = 1; s < 4; s++) {
-          const t = s / 4;
-          const x = a.x + (b.x - a.x) * t + px * sg * (e.hw + sw * 0.5);
-          const z = a.z + (b.z - a.z) * t + pz * sg * (e.hw + sw * 0.5);
-          of++;
-          if (city.onRoad(x, z, 0, false)) {
-            n++;
-            if (worst.length < 6) worst.push({ x: Math.round(x), z: Math.round(z), cls: e.cls });
-          }
+      for (let sI = 1; sI < 4; sI++) {
+        const t = sI / 4;
+        // Sample the carriageway itself: pavement drawn here is pavement in the
+        // road, whichever strip put it there.
+        const x = a.x + (b.x - a.x) * t, z = a.z + (b.z - a.z) * t;
+        if (!city.onRoad(x, z, 0, false)) continue;
+        world.update(x, z, 60);
+        rc.set(new THREE.Vector3(x, G.terrainHeight(x, z) + 8, z), down);
+        rc.far = 20;
+        const hits = rc.intersectObject(world.group, true).filter((h) => h.object.isMesh
+          && (h.object.material === world.mats.road || h.object.material === world.mats.walk));
+        if (!hits.length) continue;
+        of++;
+        if (hits[0].object.material === world.mats.walk) {
+          n++;
+          if (worst.length < 8) worst.push({ x: Math.round(x), z: Math.round(z), cls: e.cls });
         }
       }
     }
-    add('walk-on-road', n, of, worst, 'pavement mid-line sitting on a carriageway');
+    add('walk-on-road', n, of, worst, 'pavement drawn as the top surface of a carriageway');
   }
 
   return JSON.stringify(out);
