@@ -436,7 +436,7 @@ function installHeightFog() {
   // KEXP's now-playing feed drives a toast, so the radio names its own tracks.
   audio.onTrack = (label) => { if (hud) hud.showToast(`♪ ${label}`); };
   controls = new Controls(document.getElementById('app'));
-  player = new Player(scene, city, game);
+  player = new Player(scene, city, game, world);
   traffic = new TrafficSystem(scene, city, game);
   peds = new PedSystem(scene, city, game);
   fx = new Effects(scene, tx);
@@ -486,23 +486,47 @@ function installHeightFog() {
 // ---------------------------------------------------------------------------
 
 function buildPickups(scene, city) {
-  const spots = [
-    { x: -1150, z: -900, kind: 'gun' },
-    { x: 240, z: 1400, kind: 'gun' },
-    { x: -300, z: -1300, kind: 'health' },
-    { x: 900, z: -1400, kind: 'gun' },
-    { x: 1050, z: 240, kind: 'health' },
-    { x: -960, z: -3760, kind: 'gun' },
-    { x: 1400, z: -3900, kind: 'health' },
-    { x: -2900, z: 2400, kind: 'health' },
-    { x: -3400, z: -4000, kind: 'gun' },
-    { x: 300, z: 1900, kind: 'health' },
-    { x: 2000, z: 600, kind: 'gun' },
-    { x: -1300, z: -1500, kind: 'health' },
-    { x: 1250, z: 2500, kind: 'gun' },
-    { x: -2600, z: 3600, kind: 'health' },
-    { x: 620, z: -4200, kind: 'gun' },
+  // Pickup sites are found in the map, not written down.
+  //
+  // These were fifteen hardcoded coordinates from the hand-drawn city. Against
+  // real OSM data four of them had gone wrong: a health pack under Puget Sound
+  // at y = -2.1, a pistol floating on the water at (620, -4200), and two more
+  // sitting in a live carriageway. That is one of eight guns unobtainable, and
+  // it is the same failure the beauty harness had -- coordinates outlive the
+  // world they were measured in.
+  //
+  // Anchored to real places so they stay spread across the map and stay put
+  // between sessions, then nudged to the nearest spot that is dry land, off the
+  // carriageway and not inside a building.
+  const anchors = [
+    [-1150, -900], [240, 1400], [-2200, 1100], [900, -1400], [1500, -2400],
+    [-960, -3760], [-300, 700], [-3400, -4000], [300, 1900], [2000, 600],
+    [-1300, -1500], [1250, 2500], [-2600, 3600], [620, -4200], [-1800, -2600],
   ];
+  const usable = (x, z) => !G.isWater(x, z) && G.terrainHeight(x, z) > 1.2
+    && !city.onRoad(x, z, 1.5, false) && !world.inBuilding(x, z, 1.5);
+  // Snap each anchor to the nearest street, then step off the carriageway onto
+  // the verge. Spiralling out from the raw anchor is not enough on its own --
+  // one of these sits well out in Puget Sound, and no search radius that stays
+  // in the right neighbourhood will ever find land. A road node is guaranteed
+  // to be somewhere you could stand.
+  const spots = anchors.map(([ax, az], i) => {
+    let nd = null, bestD = Infinity;
+    for (const n of city.nodes) {
+      if (n.elev) continue;
+      const d2 = (n.x - ax) ** 2 + (n.z - az) ** 2;
+      if (d2 < bestD) { bestD = d2; nd = n; }
+    }
+    const cx0 = nd ? nd.x : ax, cz0 = nd ? nd.z : az;
+    for (let r = 6; r <= 60; r += 6) {
+      for (let a = 0; a < 16; a++) {
+        const th = (a / 16) * Math.PI * 2 + i;
+        const x = cx0 + Math.cos(th) * r, z = cz0 + Math.sin(th) * r;
+        if (usable(x, z)) return { x, z, kind: i % 2 ? 'health' : 'gun' };
+      }
+    }
+    return { x: cx0, z: cz0, kind: i % 2 ? 'health' : 'gun' };
+  });
   for (const s of spots) {
     const y = city.groundAt(s.x, s.z, null) + 1.1;
     const g = new THREE.Group();

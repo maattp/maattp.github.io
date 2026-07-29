@@ -7,10 +7,13 @@ import { clamp, lerp, angleWrap, damp, dist2 } from './util.js';
 import * as G from './geo.js';
 
 export class Player {
-  constructor(scene, city, game) {
+  constructor(scene, city, game, world) {
     this.scene = scene;
     this.city = city;
     this.game = game;
+    // Needed for `waterLevelAt`: drowning is against the local surface, and
+    // the lakes are not at sea level.
+    this.world = world;
     this.h = makeHumanoid({ seed: 1, unique: true, shirt: [0.16, 0.2, 0.3], pants: [0.12, 0.13, 0.17], hair: [0.1, 0.08, 0.07], scale: 1.03 });
     scene.add(this.h.group);
     this.x = G.SPAWN.x;
@@ -30,6 +33,7 @@ export class Player {
     this.lift = 0;
     this.dead = false;
     this.crashCd = 0; // see updateDrive: one wall scrape is one crash
+    this.fellFrom = 0; // height a fall started at, for landing damage
 
     this.camYaw = this.heading + Math.PI;
     this.camPitch = 0.1;
@@ -46,6 +50,11 @@ export class Player {
   enterVehicle(v) {
     if (!v || v.dead) return false;
     this.vehicle = v;
+    // Remember it was parked BEFORE the mode is overwritten. `game.onEnterVehicle`
+    // tests `v.mode === 'parked' || v.wasParked` to decide whether this is theft
+    // -- but mode is set to 'free' on the line below, and nothing in the repo
+    // ever wrote `wasParked`, so taking a parked car has never added heat.
+    v.wasParked = v.mode === 'parked';
     v.mode = 'free';
     v.setDetailed(true);
     this.onFoot = false;
@@ -67,6 +76,13 @@ export class Player {
     this.heading = v.heading;
     this.onFoot = true;
     this.h.group.visible = true;
+    // Step out with the vertical state the car had, not whatever was left over
+    // from before you got in -- jumping, entering and exiting used to launch you
+    // upward on the stale `vy`.
+    this.vy = 0;
+    this.speed = 0;
+    this.grounded = true;
+    this.fellFrom = 0;
     v.mode = 'free';
     v.setDetailed(false);
     this.vehicle = null;
@@ -135,16 +151,45 @@ export class Player {
       this.vy = 6.2;
       this.grounded = false;
     }
+    // Walk off an edge and you FALL.
+    //
+    // `grounded` was only ever cleared by jumping, so stepping off a viaduct or
+    // a sea wall eased you down on the same exponential the camera uses for
+    // kerbs -- measured, dropped 25 m the player descended smoothly with
+    // `grounded` still true the whole way. No arc, no fall, and nothing that
+    // could ever cost you health. Anything more than a kerb below your feet is
+    // air, and air is not something you stand on.
+    const KERB = 0.45;
+    if (this.grounded && this.y - ground > KERB) {
+      this.grounded = false;
+      this.vy = 0;
+      this.fellFrom = this.y;
+    }
     if (!this.grounded) {
       this.vy -= 20 * dt;
       this.y += this.vy * dt;
-      if (this.y <= ground) { this.y = ground; this.vy = 0; this.grounded = true; }
+      if (this.y <= ground) {
+        // Landing. Below about four metres a person absorbs it; past that it
+        // hurts, and it scales with the square of the drop the way the energy
+        // does.
+        const drop = (this.fellFrom || this.y) - ground;
+        this.y = ground;
+        this.vy = 0;
+        this.grounded = true;
+        this.fellFrom = 0;
+        if (drop > 4.5) this.game.damagePlayer(Math.min(100, (drop - 4.5) ** 1.6 * 1.6), 'fall');
+      }
     } else {
       this.y = lerp(this.y, ground, 1 - Math.exp(-16 * dt));
     }
 
-    // drowning
-    if (this.y < -0.6 && G.isWater(this.x, this.z)) this.game.onDrown();
+    // Drowning is against the LOCAL water surface, not sea level.
+    //
+    // `y < -0.6` only ever describes the sea. Green Lake sits at 50 m and Lake
+    // Union at 5, so you could stand on a lake bed indefinitely -- and
+    // `world.waterLevelAt()`, written for exactly this, had no callers at all.
+    const wl = this.world.waterLevelAt(this.x, this.z);
+    if (wl !== null && this.y < wl - 0.6) this.game.onDrown();
 
     animateWalk(this.h, clamp(this.speed * 0.16, 0, 0.85), dt, this.speed);
     this.h.group.position.set(this.x, this.y, this.z);
