@@ -467,10 +467,15 @@ function installHeightFog() {
   window.__dbg = { game, city, player, world, traffic, peds, scene, camera, renderer, G, fx, hud, controls, audio, pickups, THREE, postfx, applyQuality, sun, sceneStats, cityStats, animateWalk, collideWithBuildings, TYPES: VEHICLE_TYPES };
   wireUi();
   game.newTarget();
-  // A phone starts on medium. `high` was only ever reachable downward, so
-  // every player paid 2.5 s of stutter to discover their device could not run
-  // the desktop preset.
-  applyQuality(ON_PHONE ? 'medium' : 'high', false);
+  // Start on `high` everywhere.
+  //
+  // Phones were dropped to `medium` when the frame was 509 draws and a chunk
+  // build could block for a quarter of a second. Both are fixed -- 299 draws
+  // and a 17 ms worst frame -- and a modern phone measured 61 fps with a floor
+  // of 57 at `high`. `autoQuality` is still watching, so a device that cannot
+  // hold it steps down on its own rather than everyone being pre-emptively
+  // demoted.
+  applyQuality('high', false);
   startedAt = performance.now();
   loading.classList.add('hide');
   setTimeout(() => loading.remove(), 700);
