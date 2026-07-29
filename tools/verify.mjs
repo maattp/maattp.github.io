@@ -174,6 +174,7 @@ async function main() {
         terrain: G.terrainHeight(G.SPAWN.x, G.SPAWN.z),
         place: G.placeNameAt(G.SPAWN.x, G.SPAWN.z),
         calls: d.sceneStats.calls, tris: d.sceneStats.tris,
+        pendingChunks: [...d.world.chunks.values()].filter((c) => c.lod !== c.wantLod).length,
       };
     })()`);
 
@@ -185,7 +186,12 @@ async function main() {
     console.log(`  spawn (${report.spawn.x.toFixed(0)}, ${report.spawn.z.toFixed(0)}) `
       + `in ${report.place}; terrain ${report.terrain.toFixed(1)} m, `
       + `ground ${report.ground.toFixed(1)} m, player Y ${report.playerY.toFixed(1)} m`);
-    console.log(`  scene pass: ${report.calls} draws, ${report.tris} triangles`);
+    // Chunk geometry is time-sliced across frames, so this is taken mid-stream
+    // and is NOT the steady-state cost. The outstanding count is printed with it
+    // so the figure can never be read as a draw-call win that is really just an
+    // unfinished city.
+    console.log(`  scene pass: ${report.calls} draws, ${report.tris} triangles`
+      + (report.pendingChunks ? `  (mid-stream: ${report.pendingChunks} chunks outstanding)` : ''));
 
     console.log('\n--- landmark accuracy vs real lat/lon --------------------');
     let worst = 0;

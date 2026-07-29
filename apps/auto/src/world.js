@@ -15,6 +15,16 @@ const ROAD_Y = ROAD_LIFT;
 // Metres per road-texture repeat. Fixed, so the asphalt's grain is the same
 // size on an alley and on a freeway.
 const ROAD_TILE = 9;
+// Metres per repeat of the paving texture, which carries four slabs -- so a
+// slab is a metre, everywhere.
+//
+// The pavement used to tile at its OWN WIDTH: 2.6 m on a residential street and
+// 3.2 m on an arterial, so slabs were 65 cm on one and 80 cm on the other and
+// the size visibly changed wherever the two met. The junction ring was worse --
+// it emitted a full 0..1 tile per piece regardless of how big the piece was, so
+// corner slabs were whatever size that corner happened to be. The asphalt was
+// given a fixed tile long ago for exactly this reason; the pavement never was.
+const WALK_TILE = 4;
 // Paint sits just proud of the asphalt; any less and it z-fights at distance.
 const MARK_Y = ROAD_LIFT + 0.012;
 // `flat` has no map, but Builder.quad indexes the uv array unconditionally.
@@ -512,17 +522,55 @@ export class World {
     const todo = [];
     for (const c of this.chunks.values()) if (c.lod !== c.wantLod) todo.push(c);
     todo.sort((a, b) => a.dist - b.dist);
-    for (let i = 0; i < Math.min(budget, todo.length); i++) {
-      const c = todo[i];
-      if (c.group) this.disposeChunk(c);
-      c.group = this.buildChunk(c.cx, c.cz, c.wantLod);
-      c.lod = c.wantLod;
+
+    // Spend a fixed slice of the frame on geometry, however much of a chunk
+    // that turns out to buy. `budget` used to be a COUNT of whole chunks, which
+    // is a number of unknown cost: two near chunks is about 100 ms of blocking
+    // JavaScript, and the frame it lands on is simply lost.
+    //
+    // One build is carried across frames at a time. If the player has moved far
+    // enough that the chunk in progress is no longer wanted, it is dropped --
+    // nothing was added to the scene, so there is nothing to undo.
+    // A phone's JavaScript is slower than the machine this was tuned on, and
+    // the slice can only be checked BETWEEN yields -- so the real spike is the
+    // slice plus one step. Keep both small.
+    //
+    // Spend more when a long way behind. During normal driving only a chunk or
+    // two changes at a time and a small slice keeps up easily -- at 4 ms a
+    // chunk lands in about a fifth of a second, against the thirteen seconds it
+    // takes to cross one at speed. After a respawn or a fast run across the map
+    // there can be dozens outstanding, and creeping through those at 4 ms a
+    // frame means watching the city assemble around you.
+    const behind = todo.length;
+    const sliceMs = budget < 2 ? 2 : behind > 12 ? 9 : 4;
+    const t0 = performance.now();
+    while (performance.now() - t0 < sliceMs) {
+      if (!this._build) {
+        const c = todo.find((k) => k.lod !== k.wantLod && k !== this._buildFor);
+        if (!c) break;
+        if (c.group) this.disposeChunk(c);
+        this._buildFor = c;
+        this._buildLod = c.wantLod;
+        this._build = this.buildChunkStep(c.cx, c.cz, c.wantLod);
+      }
+      const c = this._buildFor;
+      // The chunk stopped being wanted, or wants a different detail level than
+      // the one being built. Start again rather than finish work nobody needs.
+      if (c.wantLod !== this._buildLod) { this._build = null; this._buildFor = null; continue; }
+      const step = this._build.next();
+      if (!step.done) continue;
+      c.group = step.value || null;
+      c.lod = this._buildLod;
       if (c.group) this.group.add(c.group);
+      this._build = null;
+      this._buildFor = null;
     }
     return todo.length;
   }
 
   disposeChunk(c) {
+    // An in-flight build for this chunk is now stale.
+    if (this._buildFor === c) { this._build = null; this._buildFor = null; }
     // Solid street objects belong to the chunk that drew them, so they go when
     // it does. Leaving them behind means invisible trees you keep hitting.
     this.city.clearObstacles(this.city.chunkKey(c.cx, c.cz));
@@ -535,7 +583,25 @@ export class World {
     c.lod = -1;
   }
 
-  buildChunk(cx, cz, lod) {
+  /**
+   * Build a chunk a piece at a time.
+   *
+   * This used to be one synchronous call and the streamer ran TWO of them per
+   * frame. Measured, a near chunk takes a median 48.7 ms and up to 137 ms, so
+   * any frame that crossed into new territory spent about 100 ms -- and at
+   * worst 274 ms -- inside this function, against a 16.7 ms budget. That is the
+   * dropped frames and stalls while driving: not the renderer at all, but the
+   * geometry being generated in the middle of a frame.
+   *
+   * Yielding lets the caller stop partway and come back next frame, so the cost
+   * per frame is bounded by a clock rather than by how much happens to be in
+   * this particular 400 m square. Same shape as `cityGenerator`, which already
+   * does this for the initial load.
+   *
+   * Nothing is added to the scene until the last yield, so an abandoned build
+   * leaves nothing half-drawn.
+   */
+  *buildChunkStep(cx, cz, lod) {
     const city = this.city;
     const ck = city.chunkKey(cx, cz);
     const ch = city.chunks.get(ck);
@@ -551,6 +617,9 @@ export class World {
     const own = (x, z) => Math.floor(x / CHUNK) === cx && Math.floor(z / CHUNK) === cz;
     const nodesDone = new Set();
 
+    // Yield every so many items rather than every one: the check itself costs
+    // something, and a handful of roads or buildings is well under a frame.
+    let since = 0;
     for (const ei of ch.edges) {
       const e = city.edges[ei];
       const a = city.nodes[e.a], b = city.nodes[e.b];
@@ -564,11 +633,18 @@ export class World {
         nodesDone.add(ni);
         this.meshNode(road, flat, ni, n, lod, walk);
       }
+      if (++since >= 3) { since = 0; yield; }
     }
 
     if (lod === 1) {
-      for (const bi of ch.buildings) this.meshBuilding(bl, flat, glow, city.buildings[bi]);
+      since = 0;
+      for (const bi of ch.buildings) {
+        this.meshBuilding(bl, flat, glow, city.buildings[bi]);
+        if (++since >= 10) { since = 0; yield; }
+      }
+      yield;
       this.meshProps(flat, glow, ch, cx, cz);
+      yield;
     }
 
     const grp = new THREE.Group();
@@ -956,7 +1032,7 @@ export class World {
           if (hits) continue;
           const y = (x, z) => G.terrainHeight(x, z) + WALK_Y;
           const seg = (e.len * span) / wsteps;
-          const v0 = vv, v1 = vv + seg / sw;
+          const v0 = vv, v1 = vv + seg / WALK_TILE;
           vv = v1;
           const q = sg > 0
             ? [[i0x, y(i0x, i0z), i0z], [o0x, y(o0x, o0z), o0z], [o1x, y(o1x, o1z), o1z], [i1x, y(i1x, i1z), i1z]]
@@ -969,7 +1045,8 @@ export class World {
           const wIn = [wj, wj, wj];
           const wOut = [wj * 0.9, wj * 0.9, wj * 0.91];
           const wc = sg > 0 ? [wIn, wOut, wOut, wIn] : [wOut, wIn, wIn, wOut];
-          walk.quad(q[0], q[1], q[2], q[3], [0, 1, 0], [0, v0, 1, v0, 1, v1, 0, v1], wc);
+          const wu = sw / WALK_TILE;
+          walk.quad(q[0], q[1], q[2], q[3], [0, 1, 0], [0, v0, wu, v0, wu, v1, 0, v1], wc);
           const cy0 = G.terrainHeight(i0x, i0z), cy1 = G.terrainHeight(i1x, i1z);
           const cc = [0.72, 0.72, 0.7];
           const ccLo = [0.4, 0.4, 0.39];
@@ -1156,10 +1233,14 @@ export class World {
           if (ringHit) break;
         }
         if (ringHit) continue;
+        // Size the ring's UVs from the piece's real dimensions, or its slabs
+        // come out as whatever shape the corner happens to be.
+        const ru = Math.hypot(o0x - i0x, o0z - i0z) / WALK_TILE;
+        const rv = Math.hypot(i1x - i0x, i1z - i0z) / WALK_TILE;
         walk.quad(
           [i0x, wy(i0x, i0z), i0z], [o0x, wy(o0x, o0z), o0z],
           [o1x, wy(o1x, o1z), o1z], [i1x, wy(i1x, i1z), i1z],
-          [0, 1, 0], [0, 0, 1, 0, 1, 1, 0, 1], [1, 1, 1]);
+          [0, 1, 0], [0, 0, ru, 0, ru, rv, 0, rv], [1, 1, 1]);
         flat.quad(
           [i0x, ry(i0x, i0z), i0z], [i1x, ry(i1x, i1z), i1z],
           [i1x, wy(i1x, i1z), i1z], [i0x, wy(i0x, i0z), i0z],
