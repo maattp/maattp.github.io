@@ -65,6 +65,49 @@ const CHECKS = `(() => {
     return pts;
   };
 
+  // Chunk geometry is time-sliced across frames, so ONE world.update builds a
+  // few milliseconds of it and returns. Raycasting straight after leaves you
+  // measuring a half-built chunk -- which is how the beauty harness spent
+  // several passes photographing bare terrain, and it is why sink read 11.7 %:
+  // most of those samples found no road mesh at all because it had not been
+  // generated yet.
+  // A settle rebuilds up to a 9x9 grid of chunks, so it is far too expensive to
+  // do per sample. The raycast checks therefore work SITE BY SITE: settle once,
+  // then take every sample that falls inside the built area before moving on.
+  // Sampling in node-index order instead walks the whole 16 km map at random
+  // and settles thousands of times, which does not finish.
+  //
+  // The budget is a per-call millisecond slice; a large one builds a whole
+  // chunk per call, so a site settles in a handful of calls rather than
+  // hundreds.
+  const settle = (x, z) => {
+    const pending = () => [...world.chunks.values()].filter((c) => c.lod !== c.wantLod).length;
+    // Measured: a cold site converges in ~243 calls, a neighbouring one in
+    // ~126. The budget arg is NOT milliseconds -- world.update only reads it
+    // as a less-than-2 flag and then picks its own 2/4/9 ms slice, so the
+    // only way to finish is to keep calling until nothing is pending.
+    for (let i = 0; i < 20000 && (i === 0 || pending() > 0); i++) world.update(x, z, 9);
+    d.scene.updateMatrixWorld(true);
+  };
+
+  // NEAR_R = 2 at CHUNK = 400, so full-detail geometry exists within 800 m of
+  // the site centre. Stay well inside that.
+  const SITE_R = 600;
+  const nearSite = (x, z, sx, sz) => Math.abs(x - sx) < SITE_R && Math.abs(z - sz) < SITE_R;
+
+  // Deterministic spread of road-bearing sites across the map.
+  const roadSites = (n, seed) => {
+    const r = R(seed), out = [];
+    const nodes = city.nodes;
+    for (let i = 0; i < n * 40 && out.length < n; i++) {
+      const nd = nodes[Math.floor(r() * nodes.length)];
+      if (!nd || nd.elev) continue;
+      if (out.some(([x, z]) => Math.abs(x - nd.x) < SITE_R && Math.abs(z - nd.z) < SITE_R)) continue;
+      out.push([nd.x, nd.z]);
+    }
+    return out;
+  };
+
   const add = (name, n, of, worst, note) =>
     out.push({ name, n, of, rate: of ? +(100 * n / of).toFixed(2) : 0, worst: worst.slice(0, 6), note });
 
@@ -75,7 +118,8 @@ const CHECKS = `(() => {
   // between them to the metre, so a tree can be planted in Puget Sound.
   if (want('tree-in-water')) {
     const CHUNK = 400;
-    let cand = 0, wet = 0;
+    let cand = 0, wet = 0, planted = 0;
+    const wetCand = [], sites = [], seen = new Set();
     const worst = [];
     const h2 = (a, b) => { const t = Math.sin(a * 127.1 + b * 311.7) * 43758.5453; return t - Math.floor(t); };
     for (let cx = -18; cx <= 18; cx++) {
@@ -88,14 +132,49 @@ const CHECKS = `(() => {
           if (city.onRoad(x, z, 2.5)) continue;
           if (world.inBuilding && world.inBuilding(x, z, 0.8)) continue;
           cand++;
-          if (G.isWater(x, z) || G.terrainHeight(x, z) < 0.35) {
+          if (G.isWater(x, z) || G.terrainHeight(x, z) < 0.35) wetCand.push([x, z]);
+        }
+      }
+    }
+    // Those are CANDIDATES -- points the scatter considers. Counting them
+    // measures the raster disagreement, which is a fixed property of the map:
+    // this check reported an unchanged 16 before and after the scatter learned
+    // to reject them, because it never looked at a tree that got built.
+    //
+    // world.buildChunk registers each trunk into city.obstacles, so the
+    // obstacle list IS the drawn record. Settle over each wet candidate and
+    // count the trunks that actually stand in water.
+    for (const [wx, wz] of wetCand) {
+      if (sites.some(([x, z]) => Math.abs(x - wx) < SITE_R && Math.abs(z - wz) < SITE_R)) continue;
+      sites.push([wx, wz]);
+    }
+    for (const [sx, sz] of sites) {
+      settle(sx, sz);
+      // addObstacle pushes x, z, r onto ONE flat array per chunk -- these are
+      // not objects, and iterating them as if they were silently matched
+      // nothing and reported a clean 0 of 0.
+      for (const list of city.obstacles.values()) {
+        for (let i = 0; i < list.length; i += 3) {
+          const ox = list[i], oz = list[i + 1];
+          if (!nearSite(ox, oz, sx, sz)) continue;
+          // Trunks and lamp posts share this list. Street furniture offsets
+          // from its own road, and a road over water here is a PIER -- Alaskan
+          // Way and Colman Dock are supposed to be out there -- so a pole above
+          // the tide line is correct and only a tree is a bug.
+          if (city.onRoad(ox, oz, 4.0)) continue;
+          const key = Math.round(ox) + ',' + Math.round(oz);
+          if (seen.has(key)) continue;
+          seen.add(key);
+          planted++;
+          if (G.isWater(ox, oz) || G.terrainHeight(ox, oz) < 0.35) {
             wet++;
-            if (worst.length < 6) worst.push({ x: Math.round(x), z: Math.round(z), y: +G.terrainHeight(x, z).toFixed(2) });
+            if (worst.length < 6) worst.push({ x: Math.round(ox), z: Math.round(oz), y: +G.terrainHeight(ox, oz).toFixed(2) });
           }
         }
       }
     }
-    add('tree-in-water', wet, cand, worst, 'park trees standing in water or below the tide line');
+    add('tree-in-water', wet, planted, worst,
+      'trunks actually standing in water (from ' + cand + ' candidates, ' + wetCand.length + ' of them wet)');
   }
 
   // --- ground that stands above the water covering it --------------------
@@ -165,15 +244,18 @@ const CHECKS = `(() => {
     const down = new THREE.Vector3(0, -1, 0);
     const worst = [];
     let n = 0, of = 0;
-    const step = Math.max(1, Math.floor(city.edges.length / 700));
-    for (let ei = 0; ei < city.edges.length; ei += step) {
-      const e = city.edges[ei];
+    for (const [sx, sz] of roadSites(20, 31)) {
+      settle(sx, sz);
+      let took = 0;
+      for (const e of city.edges) {
+      if (took >= 140) break;
       if (e.elev || e.len < 12) continue;
       const a = city.nodes[e.a], b = city.nodes[e.b];
+      if (!nearSite(a.x, a.z, sx, sz) || !nearSite(b.x, b.z, sx, sz)) continue;
+      took++;
       for (let sI = 1; sI < 4; sI++) {
         const t = sI / 4;
         const x = a.x + (b.x - a.x) * t, z = a.z + (b.z - a.z) * t;
-        world.update(x, z, 60);
         const top = G.terrainHeight(x, z) + 8;
         rc.set(new THREE.Vector3(x, top, z), down);
         rc.far = 20;
@@ -187,6 +269,7 @@ const CHECKS = `(() => {
           n++;
           if (worst.length < 40) worst.push({ x: Math.round(x), z: Math.round(z), over: +over.toFixed(2), cls: e.cls });
         }
+      }
       }
     }
     worst.sort((p, q) => q.over - p.over);
@@ -207,14 +290,16 @@ const CHECKS = `(() => {
     // Sample on the paved surface specifically -- that is where the two
     // sources of truth exist and can disagree.
     const nodes = city.nodes;
-    const stepN = Math.max(1, Math.floor(nodes.length / 900));
-    for (let ni = 0; ni < nodes.length; ni += stepN) {
-      const nd = nodes[ni];
-      if (nd.elev) continue;
+    for (const [sx, sz] of roadSites(20, 53)) {
+      settle(sx, sz);
+      let took = 0;
+      for (const nd of nodes) {
+      if (took >= 60) break;
+      if (nd.elev || !nearSite(nd.x, nd.z, sx, sz)) continue;
+      took++;
       for (const [ox, oz] of [[0, 0], [4, 0], [0, 4], [-4, 0], [0, -4], [5, 5]]) {
         const x = nd.x + ox, z = nd.z + oz;
         if (!city.onRoad(x, z, 1.5, false) && city.roadLift(x, z) <= 0) continue;
-        world.update(x, z, 60);
         const lift = city.roadLift(x, z);
         const stand = city.groundAt(x, z, null, lift);
         rc.set(new THREE.Vector3(x, stand + 12, z), down);
@@ -233,6 +318,7 @@ const CHECKS = `(() => {
           if (worst.length < 40) worst.push({ x: Math.round(x), z: Math.round(z), gap: +gap.toFixed(2) });
         }
       }
+      }
     }
     worst.sort((a, b) => Math.abs(b.gap) - Math.abs(a.gap));
     add('sink', n, of, worst, 'drawn pavement disagreeing with the height you stand at');
@@ -247,16 +333,17 @@ const CHECKS = `(() => {
       const bd = city.buildings[bi];
       if (bd.style !== 'house') continue;
       of++;
-      // meshGable builds in the building's own frame; the failure mode this
-      // catches is a roof sized off the wrong axis, which leaves the gable
-      // hanging past the wall on the narrow side.
+      // Ask world.js's OWN decision. Re-deriving the threshold here measured
+      // the DATA -- how many elongated houses exist, which is a fixed property
+      // of the map and never changes -- so the check reported the same 3 before
+      // and after the guard that fixed it, and could not have noticed either.
       const over = Math.max(bd.w, bd.d) / Math.min(bd.w, bd.d);
-      if (over > 4.5) {
+      if (over > 4.5 && world.constructor.gables(bd)) {
         n++;
         if (worst.length < 6) worst.push({ x: Math.round(bd.x), z: Math.round(bd.z), w: +bd.w.toFixed(1), d: +bd.d.toFixed(1) });
       }
     }
-    add('roof', n, of, worst, 'houses so elongated a gable cannot sit on them');
+    add('roof', n, of, worst, 'houses given a gable that cannot sit on them');
   }
 
   // --- buildings standing in water ---------------------------------------
@@ -334,7 +421,7 @@ const CHECKS = `(() => {
         // road, whichever strip put it there.
         const x = a.x + (b.x - a.x) * t, z = a.z + (b.z - a.z) * t;
         if (!city.onRoad(x, z, 0, false)) continue;
-        world.update(x, z, 60);
+        settle(x, z);
         rc.set(new THREE.Vector3(x, G.terrainHeight(x, z) + 8, z), down);
         rc.far = 20;
         const hits = rc.intersectObject(world.group, true).filter((h) => h.object.isMesh
