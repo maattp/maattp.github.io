@@ -515,6 +515,7 @@ export function* cityGenerator(md) {
       // sink 11.8% -> 12.44%. Fixing this properly means teaching nodeSurface
       // the approach-dropping that meshNode does; until then the empty-scan test
       // is the conservative approximation.
+      if (ns && lift <= 0) return ns.lift;
       return lift;
     },
 

@@ -1138,22 +1138,6 @@ export class World {
    * side, which is what a house does -- run it the short way and a long terrace
    * ends up with an absurdly tall roof and gable ends the width of the street.
    */
-  /**
-   * Does this footprint get a pitched roof?
-   *
-   * A gable needs a ridge to run along, and it is sized off the longer side, so
-   * on a very elongated box it hangs metres past the walls on the narrow axis.
-   * The worst in the map is 24:1 -- a min-area rectangle fitted to a terrace.
-   * Those take the flat cap the roof lid already gives them.
-   *
-   * This is a static method so tools/jank.mjs can ask the same question the
-   * mesher asks. A check carrying its OWN copy of the threshold measures the
-   * data, not the geometry, and cannot notice this guard being deleted.
-   */
-  static gables(bd) {
-    return Math.max(bd.w, bd.d) / Math.min(bd.w, bd.d) < 4.5;
-  }
-
   meshGable(flat, bd, y0, col, seed) {
     const cs = Math.cos(bd.rot), sn = Math.sin(bd.rot);
     const OVER = 0.45;                       // eaves overhang, all four sides
@@ -1452,7 +1436,7 @@ export class World {
       // -- a pitched roof sized off the longer side hangs metres past the walls
       // on the narrow axis. Three of these exist; they take the flat cap the
       // lid already gives them.
-      if (World.gables(bd)) this.meshGable(flat, bd, base + wallH + 2.26, rc, seed);
+      this.meshGable(flat, bd, base + wallH + 2.26, rc, seed);
       const [sx, sz] = off(0, bd.d / 2 + 0.5);
       flat.box(sx, base + 1.6, sz, 2.0, 0.22, 1.2, bd.rot, [0.62, 0.6, 0.57]);
       return;

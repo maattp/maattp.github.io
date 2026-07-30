@@ -651,10 +651,24 @@ filters and counted the points that passed — which is a property of the raster
 and never changes, so it reported an unchanged 16 before and after the scatter
 was fixed and could not have detected its own fix in either direction. Against
 the trees that actually get planted the real figure was **63**. `roof` had the
-same shape. Both now read the built result: `city.obstacles` is the record
-`buildChunk` writes as it plants each trunk, and `World.gables()` is the one
-decision the mesher and the check both ask. **If a check and the code under test
-each hold their own copy of a threshold, the check is decorative.**
+same shape, and a first attempt at fixing it made things worse rather than
+better: the check was changed to ask the mesher's own `World.gables()` guard,
+which made the condition `aspect > 4.5 && aspect < 4.5` — a tautology that
+reports 0 however the mesher behaves. **If a check and the code under test each
+hold their own copy of a threshold, the check is decorative; if the check asks
+the code under test whether the code under test did its job, it is worse than
+decorative.** `tree-in-water` now reads `city.obstacles`, the record
+`buildChunk` writes as it plants each trunk.
+
+**The `roof` check was deleted, because its defect did not exist.** It counted
+footprints more elongated than 4.5:1 — a threshold invented in the check and
+never checked against `meshGable`, which sizes eaves from the actual `w` and `d`
+(a fixed 0.45 m overhang) and runs the ridge along the longer side. Measured on
+the three footprints it named, contiguous roof past the narrow wall was 0.4 /
+6.0 / 5.8 m with the gable built and 0 / 6.0 / 5.8 m with it **suppressed** —
+the metres are neighbouring terrace roofs, which touch and cannot be separated
+by contiguity. A guard was briefly added to skip gables on elongated houses;
+that was a regression on three correct terraces, and is reverted.
 
 **Settle the streamer before raycasting anything.** Chunk geometry is
 time-sliced, so one `world.update` builds a few milliseconds of it and returns.

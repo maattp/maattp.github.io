@@ -3,7 +3,7 @@
 //   node tools/jank.mjs [--json] [--only=name,name]
 //
 // The defects this looks for -- pavement that does not meet, props standing in
-// water, terrain poking through the asphalt, roofs that miss their building,
+// water, terrain poking through the asphalt,
 // things you sink into -- are all things a screenshot can only find one at a
 // time, by luck, in whichever direction the camera happened to be pointing.
 // They are also all *measurable*, which means they can be counted over the
@@ -259,7 +259,15 @@ const CHECKS = `(() => {
         const top = G.terrainHeight(x, z) + 8;
         rc.set(new THREE.Vector3(x, top, z), down);
         rc.far = 20;
-        const hits = rc.intersectObject(world.group, true).filter((h) => h.object.isMesh);
+        // Road surface only. world.group also carries flat/glow/glass/facade
+        // meshes and tree canopies -- the scatter keeps a 0.8 m pad off the
+        // TRUNK, not the canopy, so a canopy overhanging a narrow residential
+        // street sits inside this ray's span. A hit on one makes the overlap
+        // deeply negative, so the sample silently passes -- hiding a real
+        // poke-through at exactly the points most likely to have clutter
+        // overhead. Samples are on centrelines, so mats.walk is not expected.
+        const hits = rc.intersectObject(world.group, true)
+          .filter((h) => h.object.isMesh && h.object.material === world.mats.road);
         const terr = rc.intersectObject(world.terrainGroup, true);
         if (!hits.length || !terr.length) continue;
         of++;
@@ -325,26 +333,25 @@ const CHECKS = `(() => {
   }
 
   // --- roofs that miss their building ------------------------------------
-  if (want('roof')) {
-    const worst = [];
-    let n = 0, of = 0;
-    const step = Math.max(1, Math.floor(city.buildings.length / 6000));
-    for (let bi = 0; bi < city.buildings.length; bi += step) {
-      const bd = city.buildings[bi];
-      if (bd.style !== 'house') continue;
-      of++;
-      // Ask world.js's OWN decision. Re-deriving the threshold here measured
-      // the DATA -- how many elongated houses exist, which is a fixed property
-      // of the map and never changes -- so the check reported the same 3 before
-      // and after the guard that fixed it, and could not have noticed either.
-      const over = Math.max(bd.w, bd.d) / Math.min(bd.w, bd.d);
-      if (over > 4.5 && world.constructor.gables(bd)) {
-        n++;
-        if (worst.length < 6) worst.push({ x: Math.round(bd.x), z: Math.round(bd.z), w: +bd.w.toFixed(1), d: +bd.d.toFixed(1) });
-      }
-    }
-    add('roof', n, of, worst, 'houses given a gable that cannot sit on them');
-  }
+  //
+  // REMOVED, because the defect it reported does not exist.
+  //
+  // It counted houses whose min-area rectangle is more elongated than 4.5:1 and
+  // called them roofs a gable cannot sit on. That threshold was invented here
+  // and never checked against meshGable, which sizes its eaves from the actual
+  // w and d (a fixed 0.45 m overhang on all four sides) and runs the ridge along
+  // the longer side -- so a terrace gets a long ridge and a low pitch, which is
+  // what a terrace has. Nothing about elongation breaks it.
+  //
+  // Measured, on the three footprints this check named: with the gable built,
+  // contiguous roof surface past the narrow wall was 0.4 m, 6.0 m and 5.8 m --
+  // and with the gable SUPPRESSED it was 0 m, 6.0 m and 5.8 m. The metres are
+  // neighbouring terrace roofs, which touch and so cannot be told apart by
+  // contiguity; the gable's own contribution is the 0.45 m eave it is supposed
+  // to have. The check was reporting the map's shape, not a defect.
+  //
+  // A drawn-geometry version would have to attribute roof surface to one
+  // building, which in a terrace it cannot do. Better absent than green.
 
   // --- buildings standing in water ---------------------------------------
   if (want('building-in-water')) {
