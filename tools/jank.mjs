@@ -147,9 +147,17 @@ const CHECKS = `(() => {
     // world.buildChunk registers each trunk into city.obstacles, so the
     // obstacle list IS the drawn record. Settle over each wet candidate and
     // count the trunks that actually stand in water.
+    // Capped, like roadSites and bridge. Seattle's shoreline is long enough to
+    // dedupe into many 600 m clusters and each one costs a settle (~243
+    // world.update calls cold), so an uncapped list can quietly dominate the
+    // whole battery's runtime. Report what was dropped rather than letting the
+    // rate imply every wet candidate was visited.
+    const SITE_CAP = 24;
+    let clusters = 0;
     for (const [wx, wz] of wetCand) {
       if (sites.some(([x, z]) => Math.abs(x - wx) < SITE_R && Math.abs(z - wz) < SITE_R)) continue;
-      sites.push([wx, wz]);
+      clusters++;
+      if (sites.length < SITE_CAP) sites.push([wx, wz]);
     }
     for (const [sx, sz] of sites) {
       settle(sx, sz);
@@ -169,7 +177,7 @@ const CHECKS = `(() => {
           if (seen.has(key)) continue;
           seen.add(key);
           planted++;
-          if (G.isWater(ox, oz) || G.terrainHeight(ox, oz) < 0.35) {
+          if (G.isWater(ox, oz) || G.terrainHeight(ox, oz) < d.WET_FLOOR) {
             wet++;
             if (worst.length < 6) worst.push({ x: Math.round(ox), z: Math.round(oz), y: +G.terrainHeight(ox, oz).toFixed(2) });
           }
@@ -177,7 +185,9 @@ const CHECKS = `(() => {
       }
     }
     add('tree-in-water', wet, planted, worst,
-      'trunks actually standing in water (from ' + cand + ' candidates, ' + wetCand.length + ' of them wet)');
+      'trunks actually standing in water (from ' + cand + ' candidates, '
+      + wetCand.length + ' of them wet, in ' + sites.length + ' of '
+      + clusters + ' clusters)');
   }
 
   // --- ground that stands above the water covering it --------------------
@@ -251,36 +261,36 @@ const CHECKS = `(() => {
       settle(sx, sz);
       let took = 0;
       for (const e of city.edges) {
-      if (took >= 140) break;
-      if (e.elev || e.len < 12) continue;
-      const a = city.nodes[e.a], b = city.nodes[e.b];
-      if (!nearSite(a.x, a.z, sx, sz) || !nearSite(b.x, b.z, sx, sz)) continue;
-      took++;
-      for (let sI = 1; sI < 4; sI++) {
-        const t = sI / 4;
-        const x = a.x + (b.x - a.x) * t, z = a.z + (b.z - a.z) * t;
-        const top = G.terrainHeight(x, z) + 8;
-        rc.set(new THREE.Vector3(x, top, z), down);
-        rc.far = 20;
-        // Road surface only. world.group also carries flat/glow/glass/facade
-        // meshes and tree canopies -- the scatter keeps a 0.8 m pad off the
-        // TRUNK, not the canopy, so a canopy overhanging a narrow residential
-        // street sits inside this ray's span. A hit on one makes the overlap
-        // deeply negative, so the sample silently passes -- hiding a real
-        // poke-through at exactly the points most likely to have clutter
-        // overhead. Samples are on centrelines, so mats.walk is not expected.
-        const hits = rc.intersectObject(world.group, true)
-          .filter((h) => h.object.isMesh && h.object.material === world.mats.road);
-        const terr = rc.intersectObject(world.terrainGroup, true);
-        if (!hits.length || !terr.length) continue;
-        of++;
-        // Positive: the ground is drawn ABOVE the road surface at this point.
-        const over = terr[0].point.y - hits[0].point.y;
-        if (over > 0.02) {
-          n++;
-          if (worst.length < 40) worst.push({ x: Math.round(x), z: Math.round(z), over: +over.toFixed(2), cls: e.cls });
+        if (took >= 140) break;
+        if (e.elev || e.len < 12) continue;
+        const a = city.nodes[e.a], b = city.nodes[e.b];
+        if (!nearSite(a.x, a.z, sx, sz) || !nearSite(b.x, b.z, sx, sz)) continue;
+        took++;
+        for (let sI = 1; sI < 4; sI++) {
+          const t = sI / 4;
+          const x = a.x + (b.x - a.x) * t, z = a.z + (b.z - a.z) * t;
+          const top = G.terrainHeight(x, z) + 8;
+          rc.set(new THREE.Vector3(x, top, z), down);
+          rc.far = 20;
+          // Road surface only. world.group also carries flat/glow/glass/facade
+          // meshes and tree canopies -- the scatter keeps a 0.8 m pad off the
+          // TRUNK, not the canopy, so a canopy overhanging a narrow residential
+          // street sits inside this ray's span. A hit on one makes the overlap
+          // deeply negative, so the sample silently passes -- hiding a real
+          // poke-through at exactly the points most likely to have clutter
+          // overhead. Samples are on centrelines, so mats.walk is not expected.
+          const hits = rc.intersectObject(world.group, true)
+            .filter((h) => h.object.isMesh && h.object.material === world.mats.road);
+          const terr = rc.intersectObject(world.terrainGroup, true);
+          if (!hits.length || !terr.length) continue;
+          of++;
+          // Positive: the ground is drawn ABOVE the road surface at this point.
+          const over = terr[0].point.y - hits[0].point.y;
+          if (over > 0.02) {
+            n++;
+            if (worst.length < 40) worst.push({ x: Math.round(x), z: Math.round(z), over: +over.toFixed(2), cls: e.cls });
+          }
         }
-      }
       }
     }
     worst.sort((p, q) => q.over - p.over);
