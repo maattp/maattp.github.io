@@ -41,6 +41,19 @@ const MAX_WALK = 3.2;
 // because world.js draws it that way. Smoothing belongs in the character and
 // the camera -- soften it here and you sink into the kerb instead.
 const RAMP = 0.5;
+
+// How far ABOVE its current ride height a vehicle may be captured by a bridge
+// deck. This was 2.6 m, which is taller than a car: driving along ground-level
+// I-5 under an overpass, the deck was within reach, the car was lifted onto it,
+// and when the deck ended it fell back down -- measured on I-5, held at 47.3 m
+// over ground descending 45.3 -> 43.6, then a 3.76 m drop. Those are the jumps
+// and bumps on the freeways.
+//
+// A car is only ever ON a deck when the deck is essentially at its wheels.
+// 0.9 m is far more than a ramp can climb between frames (a 10 % grade at
+// 30 m/s rises 5 cm a frame), so joining a viaduct still works, while an
+// overpass a metre or more overhead can no longer pick the car up.
+const DECK_REACH = 0.9;
 const CLASS_SPEED = { hwy: 30, art: 17, st: 12, res: 9, ramp: 14 };
 
 const walkWidth = (cls) => (cls === 'st' || cls === 'res' ? 2.6 : cls === 'art' ? 3.2 : 0);
@@ -457,7 +470,10 @@ export function* cityGenerator(md) {
             if (oi === ei) continue;
             const o = g.edges[oi];
             if (o.elev) continue;
-            // A tunnel is drawn at ground level for now, so it must never be
+            // Dead since tunnels stopped being drawn at all (world.meshRoad
+            // returns before either caller reaches here), and kept only so the
+            // rule is written down if a bore is ever rendered: a tunnel must
+            // never be
             // the thing that suppresses the street above it.
             if (o.tunnel && !me.tunnel) continue;
             const surfaceWins = me.tunnel && !o.tunnel;
@@ -496,7 +512,10 @@ export function* cityGenerator(md) {
           if (!c) continue;
           for (const ei of c.edges) {
             const e = g.edges[ei];
-            if (e.elev) continue;
+            // A tunnel draws no surface (world.meshRoad skips it), so it must
+            // not lift anything either -- that would stand you on a road that
+            // is not there.
+            if (e.elev || e.tunnel) continue;
             const a = g.nodes[e.a], b = g.nodes[e.b];
             const r = distToSeg(x, z, a.x, a.z, b.x, b.z);
             const outer = e.hw + walkWidth(e.cls);
@@ -547,6 +566,9 @@ export function* cityGenerator(md) {
             let hw = 0, rot = 0, sw = 0;
             for (const ei of n.e) {
               const e = g.edges[ei];
+              // Mirrors world.meshNode: a tunnel draws no surface, so it must
+              // not size the crossing square nor lift anything standing on it.
+              if (e.tunnel) continue;
               if (e.hw > hw) { hw = e.hw; rot = Math.atan2(e.dx, -e.dz); }
               sw = Math.max(sw, walkWidth(e.cls));
             }
@@ -566,6 +588,19 @@ export function* cityGenerator(md) {
     groundAt(x, z, curY, lift) {
       const terr = G.terrainHeight(x, z) + (lift != null ? lift : this.roadLift(x, z));
       let best = terr;
+      // NEAREST deck to where you already are, not the highest one within
+      // reach. Taking the highest meant any deck up to 2.6 m above the car
+      // captured it -- so on a freeway, where decks stack, driving along the
+      // ground under an overpass snapped you up onto it, and the next frame's
+      // curY was higher again, so the car ratcheted up through the whole stack.
+      // Measured on I-5, 25 % of 3 m steps along a freeway moved more than
+      // 10 cm and the worst was an 11 m leap. That is the bumps and jumps.
+      //
+      // Nearest keeps every case that mattered: climbing a ramp, the deck you
+      // are joining is the closest surface; driving off a bridge, the terrain
+      // becomes closest and you fall; sitting on a deck, the deck is 0.6 m away
+      // and the ground is metres, so it wins easily.
+      let bestD = curY == null ? Infinity : Math.abs(terr - curY);
       const l = surfGrid.get(skey(Math.floor(x / surfCell), Math.floor(z / surfCell)));
       if (l) {
         for (const si of l) {
@@ -573,8 +608,13 @@ export function* cityGenerator(md) {
           const r = distToSeg(x, z, s.ax, s.az, s.bx, s.bz);
           if (r.d > s.hw) continue;
           const y = s.ay + (s.by - s.ay) * r.t + ROAD_LIFT * 0.3;
-          if (curY == null || y <= curY + 2.6) {
+          if (curY == null) {
+            // No reference height -- a spawn or a placement query. The highest
+            // deck is the only sane answer, and is what this always did.
             if (y > best) best = y;
+          } else if (y <= curY + DECK_REACH) {
+            const dd = Math.abs(y - curY);
+            if (dd < bestD) { bestD = dd; best = y; }
           }
         }
       }

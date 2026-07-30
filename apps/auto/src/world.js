@@ -917,6 +917,22 @@ export class World {
 
   meshRoad(road, walk, flat, e, a, b, lod, ei) {
     if (e.elev) { this.meshViaduct(road, flat, e, a, b); return; }
+    // A bore is not a carriageway on the surface.
+    //
+    // Tunnels are kept in the graph so the network stays connected and
+    // routable, and they were drawn at ground level as ordinary road. But
+    // roadFit() deliberately does NOT clear buildings off a tunnel -- "a
+    // building above a tunnel is where buildings normally are" -- so the two
+    // decisions together painted a freeway straight through the houses above
+    // it. Measured, 46 of the 63 buildings standing in a carriageway were over
+    // a bore: the Mount Baker Ridge Tunnel under Mercer Island and SR-99. Those
+    // are the obstacles in the middle of the freeway.
+    //
+    // Nothing is lost by not drawing it. Traffic still routes through, because
+    // routing is the graph; what goes away is a road surface laid across
+    // somebody's front garden. `roadLift` skips them for the same reason -- a
+    // lift with no drawn road under it is a step into thin air.
+    if (e.tunnel) return;
     const hw = e.hw;
     const U1 = (hw * 2) / ROAD_TILE;
     const px = -e.dz, pz = e.dx;
@@ -1132,6 +1148,7 @@ export class World {
     let hw = 0;
     for (const ei of n.e) {
       const e = this.city.edges[ei];
+      if (e.tunnel) continue;   // draws nothing, so it sizes nothing
       if (e.hw > hw) hw = e.hw;
     }
     return hw;
@@ -1218,6 +1235,13 @@ export class World {
     let sw = 0;
     for (const ei of n.e) {
       const e = city.edges[ei];
+      // A bore paves nothing on the surface, so it cannot size a crossing
+      // either. Skipping the edge in meshRoad but not here left a junction
+      // square sitting on the ground over the tunnel -- a patch of carriageway
+      // in somebody's garden, and 638 centreline samples still reporting a
+      // paved lift with no road drawn. nodeSurface() does the same, because the
+      // drawn surface and the lift query have to agree.
+      if (e.tunnel) continue;
       if (e.hw > hw) { hw = e.hw; rot = Math.atan2(e.dx, -e.dz); }
       if (e.cls === 'st' || e.cls === 'art' || e.cls === 'res') {
         sw = Math.max(sw, e.cls === 'art' ? 3.2 : 2.6);

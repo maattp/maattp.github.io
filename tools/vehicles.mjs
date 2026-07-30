@@ -26,6 +26,9 @@ const HTTP_PORT = process.env.AUTO_HTTP_PORT || 8000;
 const JSON_OUT = process.argv.includes('--json');
 // Keep in step with apps/auto/src/vehicles.js.
 const ARCADE_PUNCH = 2.4;
+// Braking is scaled the same way now (vehicles.js ARCADE_BRAKE), so its band
+// gets divided by it for the same reason the accel band does. Keep in step.
+const ARCADE_BRAKE = 2.2;
 const ARCADE_GRIP = 2.2;
 
 // Real-world bands per class, for the types we ship. 0-100 km/h in seconds,
@@ -39,8 +42,10 @@ const ARCADE_GRIP = 2.2;
 // throttle, because a real sedan's 8.6 s to 100 km/h feels broken to drive --
 // you spend the whole time waiting. The RATIOS between classes stay real, so
 // the accel band is divided by the same constant here and the check still
-// catches a van out-dragging a sports car. Top speed, braking and grip are
-// compared against the real figures unchanged.
+// catches a van out-dragging a sports car. BRAKING is now scaled the same way
+// by ARCADE_BRAKE and its band is divided to match -- it was the one axis left
+// at real-world scale, which is precisely why it felt slow next to a throttle
+// running at 2.4x. Top speed is compared against the real figures unchanged.
 //
 // GRIP is no longer checked against a real-world band at all, and pretending
 // otherwise would be dishonest. Steering is a game control here: grip does not
@@ -219,7 +224,7 @@ async function main() {
       if (!b) { console.log(`${name}: no band`); continue; }
       const marks = [
         band(r.accel, b.accel.map((v) => v / ARCADE_PUNCH)), band(r.top, b.top),
-        band(r.brake, b.brake), 'ok',
+        band(r.brake, b.brake.map((v) => v / ARCADE_BRAKE)), 'ok',
       ];
       bad += marks.filter((m) => m !== 'ok').length;
       const f = (v, m) => `${v === null ? '  --' : v.toFixed(v < 100 ? 1 : 0).padStart(6)}${m === 'ok' ? ' ' : '!'}`;
@@ -250,11 +255,15 @@ async function main() {
       for (const [nb, rb] of rows) {
         if (group(na) !== group(nb)) continue;
         if ((ra.latG || 0) - (rb.latG || 0) < 0.12) continue;
-        // Take the wheelbase out. lat ~= v^2 * tan(steer) / L, so a motorcycle
-        // out-corners a saloon on geometry alone and a bus loses on it -- the
-        // grip term only enters through the steering lock. Multiplying by the
-        // wheelbase leaves the part that grip is actually responsible for.
-        if (ra.lat * ra.wheelbase < rb.lat * rb.wheelbase) {
+        // Compare lateral acceleration DIRECTLY. This used to multiply by the
+        // wheelbase, and had to: the steering lock was a fixed radius curve, so
+        // lat came out as v^2 * tan(steer) / L and geometry had to be divided
+        // back out before grip was visible. The lock is now solved from the
+        // grip itself (r = v^2 / a), which makes lat independent of wheelbase --
+        // so multiplying by it no longer removes a bias, it ADDS one, and it
+        // reported a short-wheelbase sports car as cornering worse than a
+        // pickup that it out-corners by 0.7 g. Normalise for the model you have.
+        if (ra.lat < rb.lat) {
           wrong.push(`${na} (latG ${ra.latG}) corners worse than ${nb} (latG ${rb.latG})`);
         }
       }

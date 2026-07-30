@@ -54,8 +54,9 @@ const V0_100 = 100 / 3.6;
 // So the ratios between vehicles stay real and the whole scale is compressed:
 // everything accelerates ARCADE_PUNCH times harder than its spec sheet, which
 // keeps a sports car quicker than a van by the right margin while making both
-// enjoyable. Top speed, braking and grip stay honest -- those are what make a
-// corner dangerous, and they are not what makes a car feel slow.
+// enjoyable. Top speed stays honest; grip and braking are scaled together by
+// ARCADE_GRIP / ARCADE_BRAKE, so the ratios between classes survive and the
+// whole scale moves as one.
 const ARCADE_PUNCH = 2.4;
 
 // And how much more grip than real. Same bargain as ARCADE_PUNCH: the ratios
@@ -63,6 +64,23 @@ const ARCADE_PUNCH = 2.4;
 // sedan's cornering radius at 72 km/h is 46 m, which in a city built from real
 // street widths means you cannot make a junction at any speed worth driving.
 const ARCADE_GRIP = 2.2;
+
+// How hard a corner may be asked for, as a fraction of the grip that exists.
+// Above 1 on purpose: this is a GTA-style car, not a simulator. It should feel
+// planted and willing -- lane changes and sweeping bends at speed take no
+// thought, a hairpin at 120 km/h is simply not on -- so the car leans on its
+// tyres a bit harder than physics allows without ever demanding the multiples
+// that made it pivot on rails.
+const STEER_BITE = 1.25;
+
+// Braking was the one axis left at real-world scale, and that is why it felt
+// slow: you accelerated 2.4x harder than the spec sheet and cornered at 2.2x
+// the grip, then braked at exactly 1.0x. The comment above used to claim
+// braking stayed honest alongside grip -- but grip has not been honest since
+// ARCADE_GRIP arrived, so all that survived was an inconsistency. A tyre that
+// gives 2.2x laterally gives it longitudinally too, which also keeps the
+// friction budget isotropic.
+const ARCADE_BRAKE = 2.2;
 
 export const TYPES = {
   sedan: deriveSpec({ wheelbase: 2.98,len: 5.06, wid: 1.90, wheelR: 0.34, sill: 0.30, belt: 1.06, roof: 1.50, cab: [-0.26, 0.10], hand: 'sedan', mass: 1.0, acc: 4.1, topKph: 205, brakeM: 40, latG: 0.88 }),
@@ -133,7 +151,8 @@ function deriveSpec(s) {
   // supply the target deceleration MINUS what the air and the tyres already
   // give. Ignoring it made every vehicle stop about 15 % shorter than declared.
   const vMean = V0_100 / 2;
-  s.brakeA = (V0_100 * V0_100) / (2 * s.brakeM) - (DRAG * vMean * vMean + ROLL * vMean);
+  s.brakeA = ((V0_100 * V0_100) / (2 * s.brakeM) - (DRAG * vMean * vMean + ROLL * vMean))
+    * ARCADE_BRAKE;
   // Lateral limit in m/s^2, which is what the friction circle below compares.
   s.latA = s.latG * 9.81;
   return s;
@@ -3063,7 +3082,23 @@ export class Vehicle {
     // Asking for a radius and solving `atan(L / R)` for the angle gives every
     // vehicle a comparable, controllable turn, and short wheelbases correctly
     // come out slightly tighter rather than uncontrollable.
-    const turnR = lerp(4.5, 11.0, clamp(sp / 34, 0, 1)) / agility;
+    //
+    // The radius has to come from the grip that EXISTS, not from a curve picked
+    // by feel. Lerping 4.5 -> 11 m across the speed range asked a sedan at
+    // 122 km/h to hold an 11 m radius, which is 10.7 g of lateral acceleration
+    // against the 1.9 g its tyres actually have -- a demand 5.5x over the
+    // limit, rising with speed. The block below states that the steering limit
+    // IS the grip limit ("the yaw the car achieves IS the lateral
+    // acceleration"); with a radius like that the statement was simply untrue,
+    // nothing anywhere enforced grip, and the car pivoted on rails at a rate no
+    // tyre could produce. That is the wild high-speed steering.
+    //
+    // r = v^2 / a is the whole of it. STEER_BITE sits just over 1 so a corner
+    // taken flat out is at the limit with a little left to provoke, and every
+    // class differs by its own latG rather than by a fudge. The low-speed floor
+    // is unchanged, so parking-lot lock is exactly as tight as before -- below
+    // about 34 km/h the floor is what applies.
+    const turnR = Math.max(4.5 / agility, (sp * sp) / (spec.latA * ARCADE_GRIP * STEER_BITE));
     const lock = Math.min(0.62, Math.atan(wheelbase / turnR))
       * (hand > 0.5 ? 1.25 : 1)
       * (brake > 0 && this.vLong > 0.4 ? 0.92 : 1);
