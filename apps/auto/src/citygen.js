@@ -75,9 +75,34 @@ export function* cityGenerator(md) {
   // --- 1. Road graph ------------------------------------------------------
   const R = md.roads;
   const nodes = new Array(R.nodeCount);
+  let reheighted = 0, worstReheight = 0;
   for (let i = 0; i < R.nodeCount; i++) {
-    nodes[i] = { x: R.nx[i], z: R.nz[i], y: R.ny[i], elev: R.nElev[i] !== 0, e: [] };
+    const elev = R.nElev[i] !== 0;
+    let y = R.ny[i];
+    // Re-read a ground node's height from the ONE height surface.
+    //
+    // build_roads.py bakes node heights with a bilinear sample, and its comment
+    // still claims that matches geo.terrainHeight() -- which it did until
+    // terrainHeight was changed to interpolate the way the terrain MESH is
+    // triangulated, to stop grass showing through the road. The two differ by
+    // (a + d - b - c) / 4 on a 40 m cell, which on Seattle's grades reaches
+    // 1.18 m: junction squares are drawn at n.y while groundAt stands you at
+    // terrainHeight, so you sank into your own crossroads by over a metre.
+    //
+    // Done here rather than in the importer for the same reason roadFit() is:
+    // the correction travels with the geometry and cannot go stale against a
+    // re-import. Elevated nodes keep their baked height -- that is a deck, not
+    // the ground under it.
+    if (!elev) {
+      const t = G.terrainHeight(R.nx[i], R.nz[i]);
+      const d = Math.abs(t - y);
+      if (d > 0.01) { reheighted++; if (d > worstReheight) worstReheight = d; }
+      y = t;
+    }
+    nodes[i] = { x: R.nx[i], z: R.nz[i], y, elev, e: [] };
   }
+  cityStats.nodesReheighted = reheighted;
+  cityStats.worstReheight = +worstReheight.toFixed(2);
   const edges = new Array(R.edgeCount);
   for (let i = 0; i < R.edgeCount; i++) {
     const a = R.ea[i], b = R.eb[i];
@@ -481,7 +506,15 @@ export function* cityGenerator(md) {
       }
       // The pavement ring around a junction reaches past the end of every strip
       // -- its diagonal corners especially, which no radiating edge comes near.
-      if (ns && lift <= 0) return ns.lift;
+      //
+      // Only where the scan found NOTHING. Taking the ring wherever it is
+      // higher was tried and is wrong: nodeSurface reports the ring as a plain
+      // box, but meshNode cuts the ring into pieces and DROPS the ones covering
+      // each approach road, so over an approach the ring is reported and not
+      // drawn -- the override floated you above the carriageway there and moved
+      // sink 11.8% -> 12.44%. Fixing this properly means teaching nodeSurface
+      // the approach-dropping that meshNode does; until then the empty-scan test
+      // is the conservative approximation.
       return lift;
     },
 

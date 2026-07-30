@@ -241,6 +241,18 @@ centres sit inside the green mask. `inPark()` knows about grass, not about
 tarmac, so the scatter asks `city.onRoad(x, z, pad)` as well. Anything else
 scattered on the ground needs the same call.
 
+**And they plant themselves in the sea.** The green mask and the water mask are
+separate rasters whose shorelines do not agree to the metre, so `inPark()` says
+yes on cells that are under Puget Sound. **63 trunks** stood in the water. The
+scatter tests `G.isWater()` plus a 0.35 m floor for the shoreline band where the
+40 m DEM blends land into sea.
+
+**Do not reach for `waterLevelAt()` to do it.** It answers over a lake's
+axis-aligned BOUNDING BOX, so it reports Green Lake's 50.3 m for the whole park
+ringing it — testing terrain against that level deleted 105 of Green Lake's 717
+trees and 251 around Lake Union. The water mask is the authority on what is wet;
+a lake's level is a reference height, not a region test.
+
 **Ground tint: tarmac is built-up too, and `SUBURB` has to look different from
 `GRASS`.** Two separate bugs made the I-5 trench through Chinatown render as a
 lawn. `builtAt()` counted building footprints only, and a freeway corridor has no
@@ -393,6 +405,47 @@ ground on a Queen Anne cross-slope, against +/-7 cm before.
 taken at `halfWid` either side, which for a bike is the gutter and the crown of
 a road it is nowhere near, so averaging them sinks or floats it by half the
 camber. It also takes two `groundAt` calls a frame instead of four.
+
+**A junction square is a chord too, and it was the last big one.** `meshNode`
+drew the crossing as ONE quad up to ~9 m across, sampling terrain at its four
+corners; `groundAt` samples the heightfield at the exact point. Those are
+different surfaces the moment the ground is not planar, and at a residential
+crossing whose corners spread 2.4 m the drawn square stood **0.67 m** above the
+height you were standing at — you sank into your own junction. The corner
+samples were never wrong; the middle was. It subdivides into ~4 m cells now,
+exactly as `meshRoad` does. Measured on a 5x5 grid across that crossing:
+
+| gap between drawn surface and standing height | one quad | ~4 m cells |
+|---|---|---|
+| worst | 74.2 cm | **31.3 cm** |
+| mean | 31.1 cm | **9.8 cm** |
+| samples over 10 cm (of 25) | 22 | **7** |
+
+Going finer does not pay: at 2.5 m cells the mean improves to 5.6 cm but the
+worst does not move at all (31.3 cm), so the residual there is not the square —
+and the extra triangles regress `trisFrame` past the guard. **Don't screenshot
+this one.** The tarmac is continuous either way and before/after renders are
+indistinguishable; the defect is where you *stand* relative to what is drawn, so
+the raycast is the evidence and a picture is not.
+
+**Gate that subdivision on BOW, not on spread.** A junction on a uniform grade
+has a large corner spread and is still exactly representable by one quad,
+because a plane is a plane. What one quad cannot follow is curvature — the
+centre's deviation from the plane of the corners. Gating on spread subdivided
+nearly every junction downtown (Seattle is hilly) and saved almost nothing:
+432814 triangles against 432214. Gating on bow costs +2.7 % steady triangles and
+passes `tools/perfguard.mjs --check`.
+
+**The junction ring may not override the strip scan, however wrong the scan
+looks.** `roadLift` ramps a strip's lift to zero across the last `RAMP` metres,
+so a point under the ring can pick up a small tail — 0.06 m — and the ring's
+0.52 m used to be discarded, leaving you 0.46 m inside visible pavement. Taking
+the ring wherever it is higher is the obvious fix and it is **wrong**:
+`nodeSurface` reports the ring as a plain box, but `meshNode` cuts the ring up
+and drops the pieces covering each approach, so over an approach the ring is
+reported and not drawn. Measured, that override moved `sink` 11.8 % -> 12.44 %.
+Fixing it properly means teaching `nodeSurface` the approach-dropping that
+`meshNode` does.
 
 ## What the map looks like from above
 
@@ -591,6 +644,32 @@ Physically-shaded, image-based-lit, tone-mapped, with a hand-rolled post chain.
 Four separate visual bugs were each diagnosed two or three times as something
 else, because the thing doing the judging was wrong. The rule that came out of
 it: **measure the composited frame, and check the harness before the renderer.**
+
+**A check that re-derives its own answer measures the map, not the game.**
+`tools/jank.mjs` had two of these. `tree-in-water` re-implemented the scatter's
+filters and counted the points that passed — which is a property of the rasters
+and never changes, so it reported an unchanged 16 before and after the scatter
+was fixed and could not have detected its own fix in either direction. Against
+the trees that actually get planted the real figure was **63**. `roof` had the
+same shape. Both now read the built result: `city.obstacles` is the record
+`buildChunk` writes as it plants each trunk, and `World.gables()` is the one
+decision the mesher and the check both ask. **If a check and the code under test
+each hold their own copy of a threshold, the check is decorative.**
+
+**Settle the streamer before raycasting anything.** Chunk geometry is
+time-sliced, so one `world.update` builds a few milliseconds of it and returns.
+Querying straight after measures a half-built city: every worst-point diagnosis
+came back `drawn: null` because the road mesh did not exist yet. Note
+`world.update`'s `budget` argument is **not** a millisecond budget — it is read
+only as a `< 2` flag and the function then picks its own 2/4/9 ms slice — so
+settling means calling until nothing is pending (~243 calls cold, ~126 for a
+neighbouring site). Settling is far too expensive to do per sample: work
+site-by-site, settle once, then take every sample inside the built area.
+
+**`city.obstacles` is a flat stride-3 array** (`x, z, r, x, z, r, …`), one per
+chunk — not a list of objects. Iterating it as objects matched nothing and
+reported a clean `0 of 0`, which is the most dangerous possible result: a green
+number that means "measured nothing at all". Always check the denominator.
 
 `tools/beauty.mjs` captures a fixed set of framed views; `tools/values.py`
 reports the linear value structure of the resulting PNGs -- percentiles, the
@@ -842,7 +921,27 @@ The heightfield is now **imported** rather than baked from polygon distance
 tests, but the law is unchanged and is still the one that bites:
 
 > After boot, every consumer -- terrain mesh, road quads, buildings, cars,
-> pedestrians -- reads the same bilinear `terrainHeight()`.
+> pedestrians -- reads the same `terrainHeight()`.
+
+**It is not bilinear any more, and the importer never got the message.**
+`terrainHeight()` interpolates the way the terrain MESH is triangulated, because
+a bilinear query over a triangulated mesh disagrees by `(a + d - b - c) / 4` and
+that is what grass growing through the road was. `tools/build_roads.py` still
+bakes node heights with a bilinear sample, and its `terrain_at()` docstring
+still claims *"Bilinear, matching geo.terrainHeight() exactly."* — which is now
+false. Measured: **55,282 of 64,170 nodes (86 %) carried a wrong height, worst
+by 6.63 m.**
+
+Ground nodes therefore re-read their height from `terrainHeight()` at load, in
+`cityGenerator`. Elevated nodes keep their baked value — that is a deck, not the
+ground under it. Done at load rather than in the importer for the same reason
+`roadFit()` is: the correction travels with the geometry and cannot go stale
+against a re-import. `cityStats.nodesReheighted` / `worstReheight` report it.
+
+Note this did **not** move `sink` (11.8 % -> 11.82 %): `meshRoad` draws strips
+from `terrainHeight` directly and only uses node `y` for its bow/grade
+subdivision heuristics. It is a correctness fix for the invariant above, not a
+fix for anything visible, and shipping it as the latter would have been a lie.
 
 `height.png` is 401x401 at 40 m. **That spacing is not free to change**: it is
 also the terrain mesh's vertex spacing, and the two have to agree. A finer query

@@ -1234,15 +1234,6 @@ export class World {
     }
     if (hw <= 0) return;
     const c = Math.cos(rot), s = Math.sin(rot);
-    const pts = [];
-    const ys = [];
-    const corners = [[-hw, -hw], [hw, -hw], [hw, hw], [-hw, hw]];
-    for (const [lx, lz] of corners) {
-      const x = n.x + lx * c - lz * s;
-      const z = n.z + lx * s + lz * c;
-      pts.push(x, z);
-      ys.push(n.elev ? n.y + 0.07 : G.terrainHeight(x, z) + NODE_Y);
-    }
     // UVs in METRES, at the same ROAD_TILE the strips use.
     //
     // This was a hardcoded 0.16 x 0.14 slice of the asphalt texture stretched
@@ -1255,9 +1246,46 @@ export class World {
     //
     // Aligned to world axes rather than to the junction's rotation, so the two
     // triangles of a crossing cannot disagree about which way the grain runs.
-    const uq = [];
-    for (let i = 0; i < 4; i++) uq.push(pts[i * 2] / ROAD_TILE, pts[i * 2 + 1] / ROAD_TILE);
-    road.flat(pts, ys, [1, 1, 1], uq);
+    // Subdivide the square, for the same reason meshRoad subdivides a strip.
+    //
+    // Drawn as ONE quad it interpolates linearly between its four corners,
+    // while groundAt samples the heightfield at the exact point -- and those
+    // are different surfaces as soon as the ground is not planar. Measured at a
+    // 9.2 m residential crossing whose corners spread 2.4 m, the drawn square
+    // stood 0.67 m above the height you were standing at: you sank into your
+    // own junction. The corner samples were never the problem; the middle was.
+    //
+    // ~4 m cells, and only where the ground actually moves. The heightfield is
+    // 40 m, so finer buys nothing, and subdividing every junction cost 5.6 % of
+    // the scene's triangles to fix a defect most of them do not have.
+    //
+    // Gate on BOW, not on spread. A junction on a uniform grade has a large
+    // corner spread and is still exactly representable by one quad -- a plane
+    // is a plane. What one quad cannot follow is curvature, which is the
+    // centre's deviation from the plane of the corners. Gating on spread
+    // subdivided nearly every junction downtown, Seattle being hilly, and saved
+    // almost nothing: 432814 triangles against 432214. Bow costs +2.7 % and
+    // passes tools/perfguard.mjs --check.
+    const cy = (x, z) => (n.elev ? n.y + 0.07 : G.terrainHeight(x, z) + NODE_Y);
+    const at = (lx, lz) => cy(n.x + lx * c - lz * s, n.z + lx * s + lz * c);
+    const bow = Math.abs(
+      at(0, 0) - (at(-hw, -hw) + at(hw, -hw) + at(hw, hw) + at(-hw, hw)) / 4
+    );
+    const sub = bow < 0.08 ? 1 : Math.max(2, Math.min(6, Math.round((hw * 2) / 4)));
+    for (let iz = 0; iz < sub; iz++) {
+      for (let ix = 0; ix < sub; ix++) {
+        const qp = [], qy = [], qu = [];
+        for (const [fx, fz] of [[ix, iz], [ix + 1, iz], [ix + 1, iz + 1], [ix, iz + 1]]) {
+          const lx = -hw + (fx / sub) * hw * 2, lz = -hw + (fz / sub) * hw * 2;
+          const x = n.x + lx * c - lz * s;
+          const z = n.z + lx * s + lz * c;
+          qp.push(x, z);
+          qy.push(cy(x, z));
+          qu.push(x / ROAD_TILE, z / ROAD_TILE);
+        }
+        road.flat(qp, qy, [1, 1, 1], qu);
+      }
+    }
 
     if (lod !== 1 || sw <= 0 || n.elev || !walk) return;
     // Square ring of pavement around the junction; its inner edge lines up with

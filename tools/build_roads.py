@@ -66,7 +66,18 @@ def load_rasters():
 
 
 def terrain_at(height, x, z):
-    """Bilinear, matching geo.terrainHeight() exactly."""
+    """Bilinear. This NO LONGER matches geo.terrainHeight().
+
+    terrainHeight() now interpolates the way the terrain mesh is triangulated,
+    which was the fix for grass showing through the road; bilinear differs from
+    it by (a + d - b - c) / 4, up to 6.63 m on Seattle's grades. Node heights
+    baked here are therefore corrected at load time in cityGenerator, which is
+    where the runtime and the drawn geometry can be guaranteed to agree.
+
+    Only the node heights are affected -- anything using this for a coarse
+    land/water or grade decision is fine. If you make this triangulated to match,
+    the load-time correction becomes a no-op rather than a conflict.
+    """
     fx = min(max((x + MAP_HALF) / HF_STEP, 0), HF_N - 1.001)
     fz = min(max((z + MAP_HALF) / HF_STEP, 0), HF_N - 1.001)
     i, j = int(fx), int(fz)
