@@ -212,6 +212,13 @@ const AWNING = [
 
 // ---------------------------------------------------------------------------
 
+// Ground at or below this reads as wet even where the water mask says dry:
+// the 40 m DEM blends land into sea at the shoreline, so the two rasters
+// disagree by about a metre there. Exported so tools/jank.mjs can select the
+// same candidate set -- the constant is shared, the VERDICT is not, which is
+// what keeps the check from being a tautology.
+export const WET_FLOOR = 0.35;
+
 export class World {
   constructor(scene, city, tx, opts = {}) {
     this.scene = scene;
@@ -1431,11 +1438,14 @@ export class World {
       // Gable stays on `flat`: Builder.tri takes no UVs, so a textured builder
       // would sample one texel across the whole slope. Its believability comes
       // from the two slopes shading differently against the key light instead.
-      // A gable needs a ridge to run along. On a footprint this elongated -- the
-      // worst in the map is 24:1, from a min-area rectangle fitted to a terrace
-      // -- a pitched roof sized off the longer side hangs metres past the walls
-      // on the narrow axis. Three of these exist; they take the flat cap the
-      // lid already gives them.
+      // Every house, however elongated. A guard was once added here to skip the
+      // gable above 4.5:1, on the theory that a roof sized off the longer side
+      // hangs past the walls on the narrow axis. It does not: meshGable sizes
+      // its eaves from the actual w and d with a fixed 0.45 m overhang, so a
+      // terrace gets a long ridge and a low pitch, which is what a terrace has.
+      // Measured, the drawn roof reached 0.4 m past the narrow wall; the metres
+      // that looked like overhang were the NEIGHBOURING terrace's roof, which
+      // touches this one. The guard was suppressing three correct roofs.
       this.meshGable(flat, bd, base + wallH + 2.26, rc, seed);
       const [sx, sz] = off(0, bd.d / 2 + 0.5);
       flat.box(sx, base + 1.6, sz, 2.0, 0.22, 1.2, bd.rot, [0.62, 0.6, 0.57]);
@@ -1966,16 +1976,15 @@ export class World {
       // that actually get planted, not off the raster candidates, which is a
       // number that cannot move and reported 16 either way.
       //
-      // The water mask is the authority on what is wet; the 0.35 m floor only
-      // catches the shoreline band where the 40 m DEM blends land into sea and
-      // the two rasters disagree by a metre or so.
+      // The water mask is the authority on what is wet; WET_FLOOR only catches
+      // the shoreline band where the two rasters disagree.
       //
       // Do NOT reach for waterLevelAt here. It answers over a lake's
       // axis-aligned BOUNDING BOX, so it reports "Green Lake, 50.3 m" for the
       // whole park ringing it -- and testing terrain against that level deleted
       // 105 of Green Lake's 717 trees and 251 around Lake Union. Measured, both
       // times, which is the only reason it did not ship.
-      if (G.isWater(x, z) || G.terrainHeight(x, z) < 0.35) { treeSkip++; continue; }
+      if (G.isWater(x, z) || G.terrainHeight(x, z) < WET_FLOOR) { treeSkip++; continue; }
       const h = hash2(Math.round(x), Math.round(z));
       const gy = G.terrainHeight(x, z);
       // Foliage that isn't one emerald cone.

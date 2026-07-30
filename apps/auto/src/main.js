@@ -5,7 +5,7 @@ import * as G from './geo.js';
 import { cityGenerator, cityStats } from './citygen.js';
 import { loadMapData } from './mapdata.js';
 import { buildTextures } from './textures.js';
-import { World } from './world.js';
+import { World, WET_FLOOR } from './world.js';
 import { buildLandmarks } from './landmarks.js';
 import { TrafficSystem, collideWithBuildings } from './traffic.js';
 import { TYPES as VEHICLE_TYPES } from './vehicles.js';
@@ -464,7 +464,7 @@ function installHeightFog() {
   }
 
   await step(1, 'Welcome to Seattle');
-  window.__dbg = { game, city, player, world, traffic, peds, scene, camera, renderer, G, fx, hud, controls, audio, pickups, THREE, postfx, applyQuality, sun, sceneStats, cityStats, animateWalk, collideWithBuildings, TYPES: VEHICLE_TYPES };
+  window.__dbg = { game, city, player, world, traffic, peds, scene, camera, renderer, G, fx, hud, controls, audio, pickups, THREE, postfx, applyQuality, sun, sceneStats, cityStats, WET_FLOOR, animateWalk, collideWithBuildings, TYPES: VEHICLE_TYPES };
   wireUi();
   game.newTarget();
   // Start on `high` everywhere.

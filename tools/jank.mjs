@@ -132,7 +132,10 @@ const CHECKS = `(() => {
           if (city.onRoad(x, z, 2.5)) continue;
           if (world.inBuilding && world.inBuilding(x, z, 0.8)) continue;
           cand++;
-          if (G.isWater(x, z) || G.terrainHeight(x, z) < 0.35) wetCand.push([x, z]);
+          // world.js's own constant, so the candidate set cannot drift from
+          // what the scatter treats as wet. Only site SELECTION uses it -- the
+          // verdict below comes from city.obstacles, the built record.
+          if (G.isWater(x, z) || G.terrainHeight(x, z) < d.WET_FLOOR) wetCand.push([x, z]);
         }
       }
     }
