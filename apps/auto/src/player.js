@@ -120,7 +120,14 @@ export class Player {
     // speeds the gait correctly came out looking like track athletics. The
     // character is a person moving around a city, so the speeds come down and
     // the pose follows: 3.6 is an easy run, 5.4 a hard one.
-    const run = input.sprint ? 5.4 : 3.6;
+    // 3.6 / 5.4 was too slow to cross a city this size, and slowing the
+    // character down was the wrong lever anyway: it was done to stop the gait
+    // reading as track athletics, but the gait keys off runBlend and is judged
+    // by tools/gait.mjs against published bands at 1.4 / 3.5 / 7.5 m/s -- all
+    // of which it already passes. So the pose was never the speed's problem.
+    // 5.0 is a purposeful run and 7.2 a sprint, which is about where a game of
+    // this kind sits.
+    const run = input.sprint ? 7.2 : 5.0;
     let target = 0;
     if (mag > 0.12) {
       // Stick is camera-relative. Note HEADING_SENSE: heading is three.js
@@ -231,7 +238,30 @@ export class Player {
     // which is most of what makes a pad feel different from a touch button.
     const throttle = input.gasAmt != null ? input.gasAmt : (input.gas ? 1 : 0);
     const brake = input.brakeAmt != null ? input.brakeAmt : (input.brake ? 1 : 0);
-    v.update(dt, { throttle, brake, steer, handbrake: input.hand ? 1 : 0 });
+
+    // Water is against the LOCAL surface, the same law the on-foot path above
+    // already follows -- and this was the one place that never learned it. The
+    // test used to be `v.y < -1.2 && G.isWater(...)`, which only ever describes
+    // the sea: with Green Lake at 50.3 m and Lake Union at 5, a car on a lake
+    // bed never came close to tripping it, so you could drive the bottom of
+    // Green Lake at 200 km/h, dry and at full throttle.
+    //
+    // Sampled before the step, so an engine that has drowned cannot make power
+    // for the frame that put it under.
+    const wl = this.world.waterLevelAt(v.x, v.z);
+    const wading = wl !== null && v.y < wl - 0.35;
+
+    v.update(dt, {
+      // A drowned engine makes no power and the wheels find nothing to push
+      // against, which is what makes water read as water and not as a
+      // differently-coloured road.
+      throttle: wading ? 0 : throttle,
+      brake, steer, handbrake: input.hand ? 1 : 0,
+    });
+    if (wading) {
+      v.vLong -= v.vLong * Math.min(1, 2.6 * dt);
+      v.vLat -= v.vLat * Math.min(1, 2.6 * dt);
+    }
     // Scraping a wall is many frames of contact, not many crashes. Debounced
     // like vehicle-vehicle damage: unthrottled, holding the accelerator into a
     // building killed the player in about a sixth of a second.
@@ -242,7 +272,9 @@ export class Player {
       this.game.onCrash(imp, false);
       if (imp > 8) this.game.damagePlayer(imp * 0.5, 'crash');
     });
-    if (v.y < -1.2 && G.isWater(v.x, v.z)) this.game.onCarSank(v);
+    // Deep enough to be over the roof rather than merely through a ford. One
+    // test now, against the local surface, instead of a separate sea-only path.
+    if (wl !== null && v.y < wl - 1.6) this.game.onCarSank(v);
     if (v.dead) this.game.onCarDestroyed(v);
   }
 

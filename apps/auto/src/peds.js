@@ -478,7 +478,12 @@ export function animateWalk(h, amp, dt, speed) {
   // Swing clearance, and the main thing that sets how much the knee folds. A
   // sprinter's heel comes most of the way to the backside, which is where the
   // 120-155 deg of swing-phase knee flexion comes from.
-  const lift = ((0.085 + 0.20 * runBlend) / sc) * settle;
+  // Measured against tools/gait.mjs, this was short at every pace above a
+  // walk: knee swing came out 59 deg at brisk (band 65-85), 105 at run
+  // (110-140) and 108 at sprint (120-155). Too little fold is a leg that
+  // swings through nearly straight, which is the stiff, skating look. The heel
+  // has to come much closer to the backside as the pace rises.
+  const lift = ((0.105 + 0.295 * runBlend) / sc) * settle;
   const stanceSpan = TAU * duty;
   // THE FOOT HAS LENGTH, and that is what keeps a person standing up.
   //

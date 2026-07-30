@@ -917,6 +917,22 @@ export class World {
 
   meshRoad(road, walk, flat, e, a, b, lod, ei) {
     if (e.elev) { this.meshViaduct(road, flat, e, a, b); return; }
+    // A bore is not a carriageway on the surface.
+    //
+    // Tunnels are kept in the graph so the network stays connected and
+    // routable, and they were drawn at ground level as ordinary road. But
+    // roadFit() deliberately does NOT clear buildings off a tunnel -- "a
+    // building above a tunnel is where buildings normally are" -- so the two
+    // decisions together painted a freeway straight through the houses above
+    // it. Measured, 46 of the 63 buildings standing in a carriageway were over
+    // a bore: the Mount Baker Ridge Tunnel under Mercer Island and SR-99. Those
+    // are the obstacles in the middle of the freeway.
+    //
+    // Nothing is lost by not drawing it. Traffic still routes through, because
+    // routing is the graph; what goes away is a road surface laid across
+    // somebody's front garden. `roadLift` skips them for the same reason -- a
+    // lift with no drawn road under it is a step into thin air.
+    if (e.tunnel) return;
     const hw = e.hw;
     const U1 = (hw * 2) / ROAD_TILE;
     const px = -e.dz, pz = e.dx;

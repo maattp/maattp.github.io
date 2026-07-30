@@ -837,6 +837,20 @@ Current figures, all inside their bands:
 | jog 3.5 | 161 | 1.31 m | 0.43 | 7.5 cm | 113 deg | 100 % | 1.8 % |
 | sprint 7.5 | 196 | 2.29 m | 0.27 | 11.0 cm | 125 deg | 96 % | 1.9 % |
 
+**Swing clearance is what folds the knee, and it was short at every pace above
+a walk.** `tools/gait.mjs` measured knee swing at 59 deg brisk (band 65-85),
+105 at run (110-140) and 108 at sprint (120-155) -- too little fold is a leg
+swinging through nearly straight, which is the stiff, skating look. The heel has
+to come much closer to the backside as the pace rises. Raising the clearance
+curve puts jog/run/sprint at 116/123/126, all in band. Tune it against the rig:
+the first value tried overshot jog to 121 (HIGH) while fixing run and sprint.
+
+On-foot pace is **5.0 m/s running and 7.2 sprinting**. It was 3.6/5.4, lowered
+at some point to stop the gait reading as track athletics -- which was the wrong
+lever, because the gait keys off `runBlend` and the rig judges it at 1.4/3.5/7.5
+where it already passed. The pose was never the speed's problem, and a 16 km
+city at 3.6 m/s is a chore.
+
 Two standing traps. `animateWalk` owns `h.phase` -- advancing the cycle anywhere
 else reintroduces the cadence/stride split. And the bones are **unscaled**, so a
 step in world metres has to be divided by `h.scale` or taller pedestrians
@@ -893,6 +907,48 @@ forces every normal outward from the ring centre, and the inside of a tub faces
 the other way. And in a dark tub, contrast is the whole game: the steering
 wheel was there for two renders before it was moved into `trim` in a bright
 colour and became visible.
+
+**Steering asks for a radius the tyres can actually hold.** The lock used to
+come from a fixed curve -- a target radius lerped 4.5 -> 11 m across the speed
+range -- and that is not a grip limit, it is a shape. At 122 km/h it asked a
+sedan for an 11 m radius, which is **10.7 g** of lateral acceleration against
+the **1.9 g** its tyres have: a demand 5.5x over the limit, and rising with
+speed. The block that applies the yaw states that the steering limit IS the grip
+limit ("with steering limited to what grip supports, the yaw the car achieves IS
+the lateral acceleration"), so with a radius like that the statement was untrue
+and *nothing anywhere enforced grip*. The car pivoted on rails at a rate no tyre
+could produce. That is what wild high-speed steering was.
+
+`r = v^2 / a` is the whole fix, with `STEER_BITE` just over 1 so a bend taken
+flat out is at the limit with a little left to provoke. Measured, sedan:
+
+| | 20 kph | 40 | 60 | 90 | 120 |
+|---|---|---|---|---|---|
+| radius before | 5.5 m | 6.6 | 7.7 | 9.3 | 10.9 |
+| radius after | 4.5 m | 5.2 | 11.7 | 26.3 | 46.8 |
+| lateral g before | 0.57 | 1.91 | 3.69 | 6.87 | **10.42** |
+| lateral g after | 0.71 | 2.43 | 2.43 | 2.42 | **2.42** |
+
+Low-speed lock is unchanged -- below about 34 km/h a fixed floor applies, so
+parking-lot agility is exactly as tight as it was.
+
+**Braking is scaled with grip, not left honest.** The throttle ran at
+`ARCADE_PUNCH` 2.4x and cornering at `ARCADE_GRIP` 2.2x while braking sat at
+exactly 1.0x, and the comment above them claimed braking "stays honest" as
+though that were a decision rather than the one axis nobody had revisited. It is
+why braking felt slow: you accelerated at 2.4x and stopped at 1x. `ARCADE_BRAKE`
+matches `ARCADE_GRIP`, which also keeps the tyre isotropic. 100-0 went 39.3 m ->
+18.4 m. **`tools/vehicles.mjs` divides the brake band by it**, exactly as it
+already divided the accel band by `ARCADE_PUNCH`.
+
+**And its class-order check compares lateral g DIRECTLY now.** It used to
+multiply by the wheelbase, and had to: with a fixed-radius lock, lat came out as
+`v^2 tan(steer) / L` and geometry had to be divided back out before grip was
+visible. Solving the lock from grip makes lat independent of wheelbase, so that
+multiply stopped removing a bias and started adding one -- it reported a
+short-wheelbase sports car as cornering worse than a pickup it out-corners by
+0.7 g. **Normalise for the model you have, not the one the check was written
+against.**
 
 **A bike leans into the corner, and the sign is the same trap as the camber.**
 `tan(lean) = lateral acceleration / g`, and it is built from the acceleration
@@ -1234,13 +1290,75 @@ needs `atan(0.2)` ≈ 0.2 rad of pitch, and it was getting none. Seattle's real
 grades are steeper than the hand-drawn hills were, so this matters more now, not
 less.
 
+## Bumpy freeways: one fix, and one failure worth not repeating
+
+**A deck may only pick you up if it is at your wheels.** `groundAt` took the
+highest deck within `curY + 2.6` -- taller than a car -- so driving along
+ground-level I-5 *under* an overpass, the deck was in reach, the car was lifted
+onto it, and it fell off when the deck ended. Measured on I-5: held at 47.3 m
+over ground descending 45.3 -> 43.6, then a **3.76 m drop**. `DECK_REACH` is
+0.9 m, which is far more than a ramp climbs between frames (a 10 % grade at
+30 m/s rises 5 cm a frame) and far less than an overpass clears a roof.
+
+**The rest of the bumpiness is the heightfield, and smoothing it is NOT a small
+change.** Roads follow the 40 m triangulated DEM exactly, so every triangle
+crossing is a kink in the grade. Measured along the freeways, 5.6 % of 3 m steps
+change grade by more than 5 % -- about 1.5 g through the seat at 30 m/s -- and
+**raw terrain on its own already accounts for 4.2 %**. A real freeway is cut and
+filled; this one drapes.
+
+Two attempts, both **measured worse**, both reverted:
+
+| | over 5 % grade change |
+|---|---|
+| as-is | 5.62 % |
+| per-edge upper envelope (10 m) | **9.48 %** |
+| ...plus shared node heights | **12.21 %** |
+
+The envelope itself is sound in isolation -- a rolling max then a smooth, which
+fills dips instead of cutting crests, so terrain poke-through is zero by
+construction (plain smoothing put 1.01 m of ground through the tarmac at a 15 m
+window). In isolation it gave 5.09 % -> 3.19 % with a median 7 cm of float.
+
+It failed because **a freeway is chopped into ~35 m edges and each profile was
+built independently**, so the two disagreed at every junction: smooth within a
+piece is not smooth. Forcing agreement by taking each node's highest envelope
+then shifting each edge onto it was worse again, because a ramp meeting a
+freeway at a different height tilts the whole edge.
+
+Doing this properly means profiling a whole connected freeway *chain* rather
+than an edge, and deciding what happens where a ramp joins. **Don't attempt it
+as a tuning change.**
+
+## Water, and the law that keeps being learned one caller at a time
+
+**Every height test is against the LOCAL water surface**, because Green Lake is
+at 50.3 m and Lake Union at 5. `world.waterLevelAt()` exists for this. The
+on-foot path learned it; `updateDrive` did not, and its test was
+`v.y < -1.2 && G.isWater(...)`, which only ever describes the sea. So a car on a
+lake bed never tripped anything and **you could drive the bottom of Green Lake
+at 200 km/h, dry and at full throttle**. Driving now samples the local surface
+before the step, cuts the engine, drags the car down and sinks it. Verified at
+Green Lake (surface 50.3, bed 43.4) and in Elliott Bay (surface 0, bed -5.4):
+200 km/h -> 0 in both.
+
+The lesson is not about water. **When a law is added, grep for every caller of
+the thing it replaces** -- this one sat one function away from the code that
+documented it, for as long as the game has had lakes.
+
 ## Known gaps
 
-- **Tunnels are drawn at ground level.** 102 OSM ways in the box are tunnels
-  (SR-99, the Battery St and Mount Baker ridge bores). They keep the network
-  connected and are flagged `tunnel` on the edge, but nothing renders a bore, so
-  they read as surface roads overlapping the streets above them. Routing is
-  right; the picture isn't.
+- **Tunnels are no longer drawn at all.** 102 OSM ways in the box are tunnels
+  (SR-99, the Battery St and Mount Baker ridge bores). They used to be drawn at
+  ground level as ordinary carriageway, which collided with a deliberate
+  decision in `roadFit()`: it does *not* clear buildings off a tunnel, because
+  "a building above a tunnel is where buildings normally are". The two together
+  painted a freeway through the houses on top of it -- **46 of the 63 buildings
+  standing in a carriageway were over a bore**, which is what the obstacles on
+  I-90 at Mercer Island and on SR-99 were. `meshRoad` and `roadLift` both skip
+  tunnel edges now; routing is unaffected, because routing is the graph. What is
+  still missing is any rendered bore, so a tunnel is a gap in the road you drive
+  over rather than through.
 - **Traffic ignores `oneway`.** The flag is imported and sits on every edge
   (`F_ONEWAY`, `F_ONEWAY_REV`), and nothing reads it yet.
 - **Buildings are oriented boxes**, not polygons — see "How accurate it actually
