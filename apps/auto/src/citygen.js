@@ -65,7 +65,10 @@ function styleFor(cls, h, w, d) {
 
 // Counters the verify harness asserts on, so a regression in the clearing
 // passes shows up as a number rather than as a screenshot nobody looks at.
-export const cityStats = { buildingsShrunk: 0, buildingsDropped: 0, treesSkipped: 0, landmarkCleared: 0, propsSkipped: 0 };
+export const cityStats = {
+  buildingsShrunk: 0, buildingsDropped: 0, treesSkipped: 0, landmarkCleared: 0,
+  propsSkipped: 0, nodesReheighted: 0, worstReheight: 0,
+};
 
 const skey = (cx, cz) => cx * 100003 + cz;
 

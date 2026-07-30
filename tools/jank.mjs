@@ -302,9 +302,9 @@ const CHECKS = `(() => {
       settle(sx, sz);
       let took = 0;
       for (const nd of nodes) {
-      if (took >= 60) break;
-      if (nd.elev || !nearSite(nd.x, nd.z, sx, sz)) continue;
-      took++;
+        if (took >= 60) break;
+        if (nd.elev || !nearSite(nd.x, nd.z, sx, sz)) continue;
+        took++;
       for (const [ox, oz] of [[0, 0], [4, 0], [0, 4], [-4, 0], [0, -4], [5, 5]]) {
         const x = nd.x + ox, z = nd.z + oz;
         if (!city.onRoad(x, z, 1.5, false) && city.roadLift(x, z) <= 0) continue;
@@ -393,9 +393,12 @@ const CHECKS = `(() => {
     const sites = [];
     for (const e of city.edges) {
       if (!e.elev) continue;
-      const a = city.nodes[e.a];
-      if (sites.some(([x, z]) => Math.abs(x - a.x) < SITE_R && Math.abs(z - a.z) < SITE_R)) continue;
-      sites.push([a.x, a.z]);
+      // Cluster on the span's MIDPOINT. Keying on endpoint a alone can seat a
+      // site off the end of a long span.
+      const a = city.nodes[e.a], bN = city.nodes[e.b];
+      const mx = (a.x + bN.x) / 2, mz = (a.z + bN.z) / 2;
+      if (sites.some(([x, z]) => Math.abs(x - mx) < SITE_R && Math.abs(z - mz) < SITE_R)) continue;
+      sites.push([mx, mz]);
       if (sites.length >= 22) break;
     }
     for (const [sx, sz] of sites) {
@@ -447,27 +450,34 @@ const CHECKS = `(() => {
     const down = new THREE.Vector3(0, -1, 0);
     const worst = [];
     let n = 0, of = 0;
-    const step = Math.max(1, Math.floor(city.edges.length / 500));
-    for (let ei = 0; ei < city.edges.length; ei += step) {
-      const e = city.edges[ei];
-      if (e.elev || e.len < 20) continue;
-      const a = city.nodes[e.a], b = city.nodes[e.b];
-      for (let sI = 1; sI < 4; sI++) {
-        const t = sI / 4;
-        // Sample the carriageway itself: pavement drawn here is pavement in the
-        // road, whichever strip put it there.
-        const x = a.x + (b.x - a.x) * t, z = a.z + (b.z - a.z) * t;
-        if (!city.onRoad(x, z, 0, false)) continue;
-        settle(x, z);
-        rc.set(new THREE.Vector3(x, G.terrainHeight(x, z) + 8, z), down);
-        rc.far = 20;
-        const hits = rc.intersectObject(world.group, true).filter((h) => h.object.isMesh
-          && (h.object.material === world.mats.road || h.object.material === world.mats.walk));
-        if (!hits.length) continue;
-        of++;
-        if (hits[0].object.material === world.mats.walk) {
-          n++;
-          if (worst.length < 8) worst.push({ x: Math.round(x), z: Math.round(z), cls: e.cls });
+    // Site-by-site, like every other raycast check. This one settled inside the
+    // innermost loop -- once per sample, scattered across the whole map --
+    // which is the exact cost the settle helper's own comment warns against.
+    for (const [sx, sz] of roadSites(20, 71)) {
+      settle(sx, sz);
+      let took = 0;
+      for (const e of city.edges) {
+        if (took >= 140) break;
+        if (e.elev || e.len < 20) continue;
+        const a = city.nodes[e.a], b = city.nodes[e.b];
+        if (!nearSite(a.x, a.z, sx, sz) || !nearSite(b.x, b.z, sx, sz)) continue;
+        took++;
+        for (let sI = 1; sI < 4; sI++) {
+          const t = sI / 4;
+          // Sample the carriageway itself: pavement drawn here is pavement in
+          // the road, whichever strip put it there.
+          const x = a.x + (b.x - a.x) * t, z = a.z + (b.z - a.z) * t;
+          if (!city.onRoad(x, z, 0, false)) continue;
+          rc.set(new THREE.Vector3(x, G.terrainHeight(x, z) + 8, z), down);
+          rc.far = 20;
+          const hits = rc.intersectObject(world.group, true).filter((h) => h.object.isMesh
+            && (h.object.material === world.mats.road || h.object.material === world.mats.walk));
+          if (!hits.length) continue;
+          of++;
+          if (hits[0].object.material === world.mats.walk) {
+            n++;
+            if (worst.length < 8) worst.push({ x: Math.round(x), z: Math.round(z), cls: e.cls });
+          }
         }
       }
     }
