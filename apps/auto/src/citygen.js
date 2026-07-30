@@ -470,7 +470,10 @@ export function* cityGenerator(md) {
             if (oi === ei) continue;
             const o = g.edges[oi];
             if (o.elev) continue;
-            // A tunnel is drawn at ground level for now, so it must never be
+            // Dead since tunnels stopped being drawn at all (world.meshRoad
+            // returns before either caller reaches here), and kept only so the
+            // rule is written down if a bore is ever rendered: a tunnel must
+            // never be
             // the thing that suppresses the street above it.
             if (o.tunnel && !me.tunnel) continue;
             const surfaceWins = me.tunnel && !o.tunnel;
@@ -563,6 +566,9 @@ export function* cityGenerator(md) {
             let hw = 0, rot = 0, sw = 0;
             for (const ei of n.e) {
               const e = g.edges[ei];
+              // Mirrors world.meshNode: a tunnel draws no surface, so it must
+              // not size the crossing square nor lift anything standing on it.
+              if (e.tunnel) continue;
               if (e.hw > hw) { hw = e.hw; rot = Math.atan2(e.dx, -e.dz); }
               sw = Math.max(sw, walkWidth(e.cls));
             }

@@ -220,6 +220,90 @@ async function main() {
     console.log('\n--- drive test ------------------------------------------');
     console.log('  ' + JSON.stringify(drive));
 
+    // --- water and tunnels ------------------------------------------------
+    //
+    // Both of these were shipped broken once and neither had an assertion.
+    // waterLevelAt answers over a lake's axis-aligned BOUNDING BOX, so a height
+    // test alone drowns you on the dry park ringing Green Lake -- the same trap
+    // that once deleted 105 of its trees. And a tunnel drawn as surface road
+    // put 46 buildings in a freeway.
+    const water = await session.eval(`(() => {
+      const d = window.__dbg, w = d.world, G = d.G, city = d.city;
+      const out = { dryInsideLakeBox: 0, checked: 0, wetDetected: 0, tunnelLift: 0, tunnelSampled: 0 };
+      for (const l of (w.lakeSpecs || [])) {
+        for (let i = 0; i <= 12; i++) {
+          for (let j = 0; j <= 12; j++) {
+            const x = l.x0 + (l.x1 - l.x0) * (i / 12);
+            const z = l.z0 + (l.z1 - l.z0) * (j / 12);
+            const wl = w.waterLevelAt(x, z);
+            if (wl === null) continue;
+            out.checked++;
+            const wet = G.isWater(x, z);
+            const lowEnough = G.terrainHeight(x, z) < wl - 0.6;
+            if (wet && lowEnough) out.wetDetected++;
+            // Dry ground that a height-only test would call submerged.
+            if (!wet && lowEnough) out.dryInsideLakeBox++;
+          }
+        }
+      }
+      // A tunnel must not lift anything BY ITSELF. It may still be under a real
+      // street -- that is what a bore is -- and the street above legitimately
+      // paves the ground, so the honest test is: where nothing but the tunnel
+      // covers this point, the lift has to be zero.
+      const covered = (x, z) => {
+        for (const e of city.edges) {
+          if (e.tunnel || e.elev) continue;
+          const a = city.nodes[e.a], b = city.nodes[e.b];
+          const dx = b.x - a.x, dz = b.z - a.z;
+          const L2 = dx * dx + dz * dz || 1;
+          let t = ((x - a.x) * dx + (z - a.z) * dz) / L2;
+          t = t < 0 ? 0 : t > 1 ? 1 : t;
+          const px = a.x + dx * t - x, pz = a.z + dz * t - z;
+          if (Math.hypot(px, pz) <= e.hw + 3.4) return true;
+        }
+        // A junction ring reaches past the strips, and its DIAGONAL corner is
+        // sqrt(2) x (hw + sw) from the node -- further than any straight-line
+        // test along an edge gets. Four samples sat in exactly that gap.
+        for (const n of city.nodes) {
+          if (n.elev) continue;
+          let hw = 0, any = false;
+          for (const ei of n.e) {
+            const e = city.edges[ei];
+            if (e.tunnel) continue;
+            any = true;
+            if (e.hw > hw) hw = e.hw;
+          }
+          if (!any || hw <= 0) continue;
+          if (Math.hypot(n.x - x, n.z - z) <= (hw + 3.2) * 1.45) return true;
+        }
+        return false;
+      };
+      for (const e of city.edges) {
+        if (!e.tunnel || e.elev) continue;
+        const a = city.nodes[e.a], b = city.nodes[e.b];
+        for (let k = 1; k < 4; k++) {
+          const t = k / 4;
+          const x = a.x + (b.x - a.x) * t, z = a.z + (b.z - a.z) * t;
+          if (covered(x, z)) continue;   // a real street above the bore
+          out.tunnelSampled++;
+          if (city.roadLift(x, z) > 0.01) out.tunnelLift++;
+        }
+      }
+      return out;
+    })()`, true);
+    console.log('\n--- water and tunnels -----------------------------------');
+    console.log(`  lake-box points: ${water.checked}, genuinely wet ${water.wetDetected},`
+      + ` dry-but-below-level ${water.dryInsideLakeBox}`);
+    console.log(`  ${water.dryInsideLakeBox > 0
+      ? 'those are why the mask must be tested as well as the height'
+      : 'no dry points below level in any lake box'}`);
+    console.log(`  tunnel-only samples (no street above) ${water.tunnelSampled},`
+      + ` with a paved lift ${water.tunnelLift}`);
+    if (water.tunnelLift > 0) {
+      console.error(`FAIL: ${water.tunnelLift} tunnel-only samples report a paved lift with no road drawn`);
+      process.exitCode = 1;
+    }
+
     if (SHOTS) {
       mkdirSync(OUT, { recursive: true });
       const views = [

@@ -1148,6 +1148,7 @@ export class World {
     let hw = 0;
     for (const ei of n.e) {
       const e = this.city.edges[ei];
+      if (e.tunnel) continue;   // draws nothing, so it sizes nothing
       if (e.hw > hw) hw = e.hw;
     }
     return hw;
@@ -1234,6 +1235,13 @@ export class World {
     let sw = 0;
     for (const ei of n.e) {
       const e = city.edges[ei];
+      // A bore paves nothing on the surface, so it cannot size a crossing
+      // either. Skipping the edge in meshRoad but not here left a junction
+      // square sitting on the ground over the tunnel -- a patch of carriageway
+      // in somebody's garden, and 638 centreline samples still reporting a
+      // paved lift with no road drawn. nodeSurface() does the same, because the
+      // drawn surface and the lift query have to agree.
+      if (e.tunnel) continue;
       if (e.hw > hw) { hw = e.hw; rot = Math.atan2(e.dx, -e.dz); }
       if (e.cls === 'st' || e.cls === 'art' || e.cls === 'res') {
         sw = Math.max(sw, e.cls === 'art' ? 3.2 : 2.6);

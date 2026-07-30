@@ -196,7 +196,7 @@ export class Player {
     // Union at 5, so you could stand on a lake bed indefinitely -- and
     // `world.waterLevelAt()`, written for exactly this, had no callers at all.
     const wl = this.world.waterLevelAt(this.x, this.z);
-    if (wl !== null && this.y < wl - 0.6) this.game.onDrown();
+    if (wl !== null && G.isWater(this.x, this.z) && this.y < wl - 0.6) this.game.onDrown();
 
     animateWalk(this.h, clamp(this.speed * 0.16, 0, 0.85), dt, this.speed);
     this.h.group.position.set(this.x, this.y, this.z);
@@ -248,8 +248,14 @@ export class Player {
     //
     // Sampled before the step, so an engine that has drowned cannot make power
     // for the frame that put it under.
+    // BOTH tests, and the mask is the one that says whether this is water.
+    // waterLevelAt answers over a lake's axis-aligned BOUNDING BOX, so inside
+    // Green Lake's rectangle it reports 50.3 m for the dry park ringing it --
+    // the trap this file's own notes describe, which once deleted 105 real
+    // trees. Height alone would cut the engine on a street that happens to dip
+    // below the lake beside it. The level is a reference height, not a region.
     const wl = this.world.waterLevelAt(v.x, v.z);
-    const wading = wl !== null && v.y < wl - 0.35;
+    const wading = wl !== null && G.isWater(v.x, v.z) && v.y < wl - 0.35;
 
     v.update(dt, {
       // A drowned engine makes no power and the wheels find nothing to push
@@ -274,7 +280,7 @@ export class Player {
     });
     // Deep enough to be over the roof rather than merely through a ford. One
     // test now, against the local surface, instead of a separate sea-only path.
-    if (wl !== null && v.y < wl - 1.6) this.game.onCarSank(v);
+    if (wading && v.y < wl - 1.6) this.game.onCarSank(v);
     if (v.dead) this.game.onCarDestroyed(v);
   }
 

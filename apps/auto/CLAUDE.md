@@ -1019,7 +1019,11 @@ grid floats roads over bulges the mesh doesn't resolve; and at 20 m the mesh
 would cost 1.28 M triangles across a 16 km map, which is the whole frame budget.
 
 Bridges and freeway decks are separate: `city.groundAt(x, z, currentY)` returns
-the highest deck below `currentY + 2.6`, else the terrain.
+the deck NEAREST `currentY` within `DECK_REACH` (0.9 m above it), else the
+terrain. It used to take the *highest* deck within 2.6 m, which is taller than a
+car -- see "Bumpy freeways" for the 3.76 m drop that caused. With no `currentY`
+(a spawn or a placement query) it still takes the highest, which is the only
+sane answer without a reference height.
 
 **Paved surfaces sit above the terrain and everything standing on them has to be
 lifted by the same amount.** `ROAD_LIFT` / `NODE_LIFT` / `WALK_LIFT` in
