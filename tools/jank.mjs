@@ -371,30 +371,55 @@ const CHECKS = `(() => {
   // A deck that sits below the terrain it spans is a bridge through a hill; one
   // that meets its neighbour at a different height is a step in the road.
   if (want('bridge')) {
+    // Raycast the DRAWN deck, not the node-to-node chord.
+    //
+    // meshViaduct lofts a deck between mitred edge points and the chord is not
+    // that surface -- the same flaw that made road-poke read 9.2 % and
+    // walk-on-road 2.95 % when both are actually clean. Settle a site over each
+    // elevated span, then ask what is really there.
+    d.scene.updateMatrixWorld(true);
+    const rc = new THREE.Raycaster();
+    const down = new THREE.Vector3(0, -1, 0);
     const worst = [];
     let n = 0, of = 0;
-    for (let ei = 0; ei < city.edges.length; ei++) {
-      const e = city.edges[ei];
+    // Deck sites: one per cluster of elevated spans.
+    const sites = [];
+    for (const e of city.edges) {
       if (!e.elev) continue;
-      const a = city.nodes[e.a], b = city.nodes[e.b];
-      for (let s = 0; s <= 4; s++) {
-        const t = s / 4;
-        const x = a.x + (b.x - a.x) * t, z = a.z + (b.z - a.z) * t;
-        const deck = a.y + (b.y - a.y) * t;
-        const ground = G.terrainHeight(x, z);
-        of++;
-        if (ground > deck + 0.5) {
-          n++;
-          if (worst.length < 40) worst.push({ x: Math.round(x), z: Math.round(z), buried: +(ground - deck).toFixed(2) });
+      const a = city.nodes[e.a];
+      if (sites.some(([x, z]) => Math.abs(x - a.x) < SITE_R && Math.abs(z - a.z) < SITE_R)) continue;
+      sites.push([a.x, a.z]);
+      if (sites.length >= 22) break;
+    }
+    for (const [sx, sz] of sites) {
+      settle(sx, sz);
+      for (const e of city.edges) {
+        if (!e.elev) continue;
+        const a = city.nodes[e.a], b = city.nodes[e.b];
+        if (!nearSite(a.x, a.z, sx, sz) || !nearSite(b.x, b.z, sx, sz)) continue;
+        for (let sI = 1; sI < 4; sI++) {
+          const t = sI / 4;
+          const x = a.x + (b.x - a.x) * t, z = a.z + (b.z - a.z) * t;
+          const ground = G.terrainHeight(x, z);
+          // Look down from well above the chord and take the highest road
+          // surface -- that is the deck as drawn.
+          const top = Math.max(ground, a.y + (b.y - a.y) * t) + 30;
+          rc.set(new THREE.Vector3(x, top, z), down);
+          rc.far = 80;
+          const hits = rc.intersectObject(world.group, true)
+            .filter((h) => h.object.isMesh && h.object.material === world.mats.road);
+          if (!hits.length) continue;
+          const deck = hits[0].point.y;
+          of++;
+          if (ground > deck + 0.5) {
+            n++;
+            if (worst.length < 40) worst.push({ x: Math.round(x), z: Math.round(z), buried: +(ground - deck).toFixed(2) });
+          }
         }
       }
     }
     worst.sort((a, b) => b.buried - a.buried);
-    add('bridge', n, of, worst,
-      'elevated deck buried under the terrain it spans'
-      + ' -- UNVERIFIED: compares the node-to-node chord, not the drawn deck,'
-      + ' which is the same flaw that made road-poke read 9.2% and'
-      + ' walk-on-road 2.95% when both are actually clean');
+    add('bridge', n, of, worst, 'elevated deck buried under the terrain it spans');
   }
 
   // --- pavement crossing a carriageway -----------------------------------
