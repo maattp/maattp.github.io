@@ -304,6 +304,69 @@ async function main() {
       process.exitCode = 1;
     }
 
+    // --- decks: DECK_REACH must not strand anyone ---------------------------
+    //
+    // groundAt's reach shrank from 2.6 m to 0.9 m above the caller's reference
+    // height, which fixed cars being picked up by overpasses they drive under.
+    // But every caller with a curY shares it -- pedestrians and the vehicle's
+    // own wheel and lookahead samplers -- so the two things that would break
+    // are riding a viaduct and getting onto one. Both are asserted rather than
+    // reasoned about.
+    const decks = await session.eval(`(() => {
+      const d = window.__dbg, city = d.city, G = d.G;
+      let rode = 0, fell = 0, cases = 0, failed = 0;
+      for (const e of city.edges) {
+        if (!e.elev || e.len < 30) continue;
+        const a = city.nodes[e.a], b = city.nodes[e.b];
+        let cur = a.y + 0.6;
+        const n = Math.max(6, Math.floor(e.len / 3));
+        for (let k = 0; k <= n; k++) {
+          const t = k / n;
+          const x = a.x + (b.x - a.x) * t, z = a.z + (b.z - a.z) * t;
+          const deck = a.y + (b.y - a.y) * t;
+          const y = city.groundAt(x, z, cur, city.roadLift(x, z));
+          rode++;
+          if (y < deck - 1.0) fell++;
+          cur = y + 0.6;
+        }
+      }
+      for (const e of city.edges) {
+        if (!e.elev) continue;
+        for (const [nid, oid] of [[e.a, e.b], [e.b, e.a]]) {
+          const nd = city.nodes[nid];
+          let g = null;
+          for (const ei of nd.e) {
+            const c = city.edges[ei];
+            if (c === e || c.elev || c.tunnel || c.len < 12) continue;
+            g = c; break;
+          }
+          if (!g) continue;
+          cases++;
+          const far = city.nodes[g.a === nid ? g.b : g.a], o = city.nodes[oid];
+          const pts = [];
+          for (let k = 10; k >= 0; k--) {
+            const t = k / 10 * Math.min(1, 20 / g.len);
+            pts.push([far.x + (nd.x - far.x) * (1 - t), far.z + (nd.z - far.z) * (1 - t)]);
+          }
+          for (let k = 1; k <= 10; k++) {
+            const t = k / 10 * Math.min(1, 20 / e.len);
+            pts.push([nd.x + (o.x - nd.x) * t, nd.z + (o.z - nd.z) * t]);
+          }
+          let cur = G.terrainHeight(far.x, far.z) + 0.6, y = cur;
+          for (const [x, z] of pts) { y = city.groundAt(x, z, cur, city.roadLift(x, z)); cur = y + 0.6; }
+          if (y < nd.y + (o.y - nd.y) * Math.min(1, 20 / e.len) - 1.0) failed++;
+        }
+      }
+      return { rode, fell, cases, failed };
+    })()`, true);
+    console.log('\n--- decks -----------------------------------------------');
+    console.log(`  riding viaducts: ${decks.fell} of ${decks.rode} samples fell through`);
+    console.log(`  driving onto one: ${decks.failed} of ${decks.cases} approaches failed to climb`);
+    if (decks.fell > 0 || decks.failed > 0) {
+      console.error(`FAIL: DECK_REACH strands drivers (${decks.fell} fell, ${decks.failed} could not climb)`);
+      process.exitCode = 1;
+    }
+
     if (SHOTS) {
       mkdirSync(OUT, { recursive: true });
       const views = [
