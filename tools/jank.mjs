@@ -426,7 +426,12 @@ const CHECKS = `(() => {
       }
     }
     worst.sort((a, b) => b.buried - a.buried);
-    add('bridge', n, of, worst, 'elevated deck buried under the terrain it spans');
+    // Say what the sampling misses, rather than letting a rate imply the whole
+    // map was looked at. 22 sites cover 62.1 % of elevated edges; measured, no
+    // span over 100 m is dropped, so the long floating crossings are all in.
+    // The same cap applies to sink / road-poke / walk-on-road.
+    add('bridge', n, of, worst,
+      'elevated deck buried under the terrain it spans (22 sites, ~62 % of elevated edges)');
   }
 
   // --- pavement crossing a carriageway -----------------------------------

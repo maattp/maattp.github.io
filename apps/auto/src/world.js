@@ -1960,10 +1960,12 @@ export class World {
       // candidates stood inside a footprint -- trees growing through roofs.
       if (this.inBuilding(x, z, 0.8)) { treeSkip++; continue; }
       // ...nor in the water. The green mask and the water mask are separate
-      // rasters and their shorelines do not agree to the metre, so `inPark` says
-      // yes on cells that are under Puget Sound or below the tide line. Sixteen
-      // trees across the map were standing in the sea. `waterLevelAt` is the
-      // local surface, because the lakes are not at sea level.
+      // rasters and their shorelines do not agree to the metre, so inPark says
+      // yes on cells that are under Puget Sound or below the tide line. 63
+      // trunks across the map were standing in the sea -- counted off the trees
+      // that actually get planted, not off the raster candidates, which is a
+      // number that cannot move and reported 16 either way.
+      //
       // The water mask is the authority on what is wet; the 0.35 m floor only
       // catches the shoreline band where the 40 m DEM blends land into sea and
       // the two rasters disagree by a metre or so.
