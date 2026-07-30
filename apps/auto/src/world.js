@@ -212,6 +212,13 @@ const AWNING = [
 
 // ---------------------------------------------------------------------------
 
+// Ground at or below this reads as wet even where the water mask says dry:
+// the 40 m DEM blends land into sea at the shoreline, so the two rasters
+// disagree by about a metre there. Exported so tools/jank.mjs can select the
+// same candidate set -- the constant is shared, the VERDICT is not, which is
+// what keeps the check from being a tautology.
+export const WET_FLOOR = 0.35;
+
 export class World {
   constructor(scene, city, tx, opts = {}) {
     this.scene = scene;
@@ -1218,15 +1225,6 @@ export class World {
     }
     if (hw <= 0) return;
     const c = Math.cos(rot), s = Math.sin(rot);
-    const pts = [];
-    const ys = [];
-    const corners = [[-hw, -hw], [hw, -hw], [hw, hw], [-hw, hw]];
-    for (const [lx, lz] of corners) {
-      const x = n.x + lx * c - lz * s;
-      const z = n.z + lx * s + lz * c;
-      pts.push(x, z);
-      ys.push(n.elev ? n.y + 0.07 : G.terrainHeight(x, z) + NODE_Y);
-    }
     // UVs in METRES, at the same ROAD_TILE the strips use.
     //
     // This was a hardcoded 0.16 x 0.14 slice of the asphalt texture stretched
@@ -1239,9 +1237,46 @@ export class World {
     //
     // Aligned to world axes rather than to the junction's rotation, so the two
     // triangles of a crossing cannot disagree about which way the grain runs.
-    const uq = [];
-    for (let i = 0; i < 4; i++) uq.push(pts[i * 2] / ROAD_TILE, pts[i * 2 + 1] / ROAD_TILE);
-    road.flat(pts, ys, [1, 1, 1], uq);
+    // Subdivide the square, for the same reason meshRoad subdivides a strip.
+    //
+    // Drawn as ONE quad it interpolates linearly between its four corners,
+    // while groundAt samples the heightfield at the exact point -- and those
+    // are different surfaces as soon as the ground is not planar. Measured at a
+    // 9.2 m residential crossing whose corners spread 2.4 m, the drawn square
+    // stood 0.67 m above the height you were standing at: you sank into your
+    // own junction. The corner samples were never the problem; the middle was.
+    //
+    // ~4 m cells, and only where the ground actually moves. The heightfield is
+    // 40 m, so finer buys nothing, and subdividing every junction cost 5.6 % of
+    // the scene's triangles to fix a defect most of them do not have.
+    //
+    // Gate on BOW, not on spread. A junction on a uniform grade has a large
+    // corner spread and is still exactly representable by one quad -- a plane
+    // is a plane. What one quad cannot follow is curvature, which is the
+    // centre's deviation from the plane of the corners. Gating on spread
+    // subdivided nearly every junction downtown, Seattle being hilly, and saved
+    // almost nothing: 432814 triangles against 432214. Bow costs +2.7 % and
+    // passes tools/perfguard.mjs --check.
+    const cy = (x, z) => (n.elev ? n.y + 0.07 : G.terrainHeight(x, z) + NODE_Y);
+    const at = (lx, lz) => cy(n.x + lx * c - lz * s, n.z + lx * s + lz * c);
+    const bow = Math.abs(
+      at(0, 0) - (at(-hw, -hw) + at(hw, -hw) + at(hw, hw) + at(-hw, hw)) / 4
+    );
+    const sub = bow < 0.08 ? 1 : Math.max(2, Math.min(6, Math.round((hw * 2) / 4)));
+    for (let iz = 0; iz < sub; iz++) {
+      for (let ix = 0; ix < sub; ix++) {
+        const qp = [], qy = [], qu = [];
+        for (const [fx, fz] of [[ix, iz], [ix + 1, iz], [ix + 1, iz + 1], [ix, iz + 1]]) {
+          const lx = -hw + (fx / sub) * hw * 2, lz = -hw + (fz / sub) * hw * 2;
+          const x = n.x + lx * c - lz * s;
+          const z = n.z + lx * s + lz * c;
+          qp.push(x, z);
+          qy.push(cy(x, z));
+          qu.push(x / ROAD_TILE, z / ROAD_TILE);
+        }
+        road.flat(qp, qy, [1, 1, 1], qu);
+      }
+    }
 
     if (lod !== 1 || sw <= 0 || n.elev || !walk) return;
     // Square ring of pavement around the junction; its inner edge lines up with
@@ -1403,6 +1438,14 @@ export class World {
       // Gable stays on `flat`: Builder.tri takes no UVs, so a textured builder
       // would sample one texel across the whole slope. Its believability comes
       // from the two slopes shading differently against the key light instead.
+      // Every house, however elongated. A guard was once added here to skip the
+      // gable above 4.5:1, on the theory that a roof sized off the longer side
+      // hangs past the walls on the narrow axis. It does not: meshGable sizes
+      // its eaves from the actual w and d with a fixed 0.45 m overhang, so a
+      // terrace gets a long ridge and a low pitch, which is what a terrace has.
+      // Measured, the drawn roof reached 0.4 m past the narrow wall; the metres
+      // that looked like overhang were the NEIGHBOURING terrace's roof, which
+      // touches this one. The guard was suppressing three correct roofs.
       this.meshGable(flat, bd, base + wallH + 2.26, rc, seed);
       const [sx, sz] = off(0, bd.d / 2 + 0.5);
       flat.box(sx, base + 1.6, sz, 2.0, 0.22, 1.2, bd.rot, [0.62, 0.6, 0.57]);
@@ -1926,6 +1969,22 @@ export class World {
       // yes in the middle of a building. Measured, 9.3 % of surviving park
       // candidates stood inside a footprint -- trees growing through roofs.
       if (this.inBuilding(x, z, 0.8)) { treeSkip++; continue; }
+      // ...nor in the water. The green mask and the water mask are separate
+      // rasters and their shorelines do not agree to the metre, so inPark says
+      // yes on cells that are under Puget Sound or below the tide line. 63
+      // trunks across the map were standing in the sea -- counted off the trees
+      // that actually get planted, not off the raster candidates, which is a
+      // number that cannot move and reported 16 either way.
+      //
+      // The water mask is the authority on what is wet; WET_FLOOR only catches
+      // the shoreline band where the two rasters disagree.
+      //
+      // Do NOT reach for waterLevelAt here. It answers over a lake's
+      // axis-aligned BOUNDING BOX, so it reports "Green Lake, 50.3 m" for the
+      // whole park ringing it -- and testing terrain against that level deleted
+      // 105 of Green Lake's 717 trees and 251 around Lake Union. Measured, both
+      // times, which is the only reason it did not ship.
+      if (G.isWater(x, z) || G.terrainHeight(x, z) < WET_FLOOR) { treeSkip++; continue; }
       const h = hash2(Math.round(x), Math.round(z));
       const gy = G.terrainHeight(x, z);
       // Foliage that isn't one emerald cone.

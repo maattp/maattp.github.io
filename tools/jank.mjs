@@ -3,12 +3,20 @@
 //   node tools/jank.mjs [--json] [--only=name,name]
 //
 // The defects this looks for -- pavement that does not meet, props standing in
-// water, terrain poking through the asphalt, roofs that miss their building,
+// water, terrain poking through the asphalt,
 // things you sink into -- are all things a screenshot can only find one at a
 // time, by luck, in whichever direction the camera happened to be pointing.
 // They are also all *measurable*, which means they can be counted over the
 // whole 16 km map and driven to zero, and a regression shows up as a number
 // rather than as someone noticing months later.
+//
+// A check is only worth its output if it measures what is DRAWN. Two of the
+// original nine compared an analytic surface -- the chord between an edge's end
+// nodes, or where a pavement strip would be offset to -- against the terrain,
+// and both reported large problems that do not exist: road-poke read 9.2 % and
+// walk-on-road 2.95 %, and raycasting the actual meshes puts them at 0.28 % and
+// 0 %. Measuring intent instead of geometry does not just give a wrong number,
+// it sends someone to fix a bug that is not there.
 //
 // Every check reports a count, a rate against however many samples it took, and
 // the worst offenders with coordinates -- so a bad one can be walked to with
@@ -57,6 +65,49 @@ const CHECKS = `(() => {
     return pts;
   };
 
+  // Chunk geometry is time-sliced across frames, so ONE world.update builds a
+  // few milliseconds of it and returns. Raycasting straight after leaves you
+  // measuring a half-built chunk -- which is how the beauty harness spent
+  // several passes photographing bare terrain, and it is why sink read 11.7 %:
+  // most of those samples found no road mesh at all because it had not been
+  // generated yet.
+  // A settle rebuilds up to a 9x9 grid of chunks, so it is far too expensive to
+  // do per sample. The raycast checks therefore work SITE BY SITE: settle once,
+  // then take every sample that falls inside the built area before moving on.
+  // Sampling in node-index order instead walks the whole 16 km map at random
+  // and settles thousands of times, which does not finish.
+  //
+  // The budget is a per-call millisecond slice; a large one builds a whole
+  // chunk per call, so a site settles in a handful of calls rather than
+  // hundreds.
+  const settle = (x, z) => {
+    const pending = () => [...world.chunks.values()].filter((c) => c.lod !== c.wantLod).length;
+    // Measured: a cold site converges in ~243 calls, a neighbouring one in
+    // ~126. The budget arg is NOT milliseconds -- world.update only reads it
+    // as a less-than-2 flag and then picks its own 2/4/9 ms slice, so the
+    // only way to finish is to keep calling until nothing is pending.
+    for (let i = 0; i < 20000 && (i === 0 || pending() > 0); i++) world.update(x, z, 9);
+    d.scene.updateMatrixWorld(true);
+  };
+
+  // NEAR_R = 2 at CHUNK = 400, so full-detail geometry exists within 800 m of
+  // the site centre. Stay well inside that.
+  const SITE_R = 600;
+  const nearSite = (x, z, sx, sz) => Math.abs(x - sx) < SITE_R && Math.abs(z - sz) < SITE_R;
+
+  // Deterministic spread of road-bearing sites across the map.
+  const roadSites = (n, seed) => {
+    const r = R(seed), out = [];
+    const nodes = city.nodes;
+    for (let i = 0; i < n * 40 && out.length < n; i++) {
+      const nd = nodes[Math.floor(r() * nodes.length)];
+      if (!nd || nd.elev) continue;
+      if (out.some(([x, z]) => Math.abs(x - nd.x) < SITE_R && Math.abs(z - nd.z) < SITE_R)) continue;
+      out.push([nd.x, nd.z]);
+    }
+    return out;
+  };
+
   const add = (name, n, of, worst, note) =>
     out.push({ name, n, of, rate: of ? +(100 * n / of).toFixed(2) : 0, worst: worst.slice(0, 6), note });
 
@@ -67,7 +118,8 @@ const CHECKS = `(() => {
   // between them to the metre, so a tree can be planted in Puget Sound.
   if (want('tree-in-water')) {
     const CHUNK = 400;
-    let cand = 0, wet = 0;
+    let cand = 0, wet = 0, planted = 0;
+    const wetCand = [], sites = [], seen = new Set();
     const worst = [];
     const h2 = (a, b) => { const t = Math.sin(a * 127.1 + b * 311.7) * 43758.5453; return t - Math.floor(t); };
     for (let cx = -18; cx <= 18; cx++) {
@@ -80,14 +132,62 @@ const CHECKS = `(() => {
           if (city.onRoad(x, z, 2.5)) continue;
           if (world.inBuilding && world.inBuilding(x, z, 0.8)) continue;
           cand++;
-          if (G.isWater(x, z) || G.terrainHeight(x, z) < 0.35) {
+          // world.js's own constant, so the candidate set cannot drift from
+          // what the scatter treats as wet. Only site SELECTION uses it -- the
+          // verdict below comes from city.obstacles, the built record.
+          if (G.isWater(x, z) || G.terrainHeight(x, z) < d.WET_FLOOR) wetCand.push([x, z]);
+        }
+      }
+    }
+    // Those are CANDIDATES -- points the scatter considers. Counting them
+    // measures the raster disagreement, which is a fixed property of the map:
+    // this check reported an unchanged 16 before and after the scatter learned
+    // to reject them, because it never looked at a tree that got built.
+    //
+    // world.buildChunk registers each trunk into city.obstacles, so the
+    // obstacle list IS the drawn record. Settle over each wet candidate and
+    // count the trunks that actually stand in water.
+    // Capped, like roadSites and bridge. Seattle's shoreline is long enough to
+    // dedupe into many 600 m clusters and each one costs a settle (~243
+    // world.update calls cold), so an uncapped list can quietly dominate the
+    // whole battery's runtime. Report what was dropped rather than letting the
+    // rate imply every wet candidate was visited.
+    const SITE_CAP = 24;
+    let clusters = 0;
+    for (const [wx, wz] of wetCand) {
+      if (sites.some(([x, z]) => Math.abs(x - wx) < SITE_R && Math.abs(z - wz) < SITE_R)) continue;
+      clusters++;
+      if (sites.length < SITE_CAP) sites.push([wx, wz]);
+    }
+    for (const [sx, sz] of sites) {
+      settle(sx, sz);
+      // addObstacle pushes x, z, r onto ONE flat array per chunk -- these are
+      // not objects, and iterating them as if they were silently matched
+      // nothing and reported a clean 0 of 0.
+      for (const list of city.obstacles.values()) {
+        for (let i = 0; i < list.length; i += 3) {
+          const ox = list[i], oz = list[i + 1];
+          if (!nearSite(ox, oz, sx, sz)) continue;
+          // Trunks and lamp posts share this list. Street furniture offsets
+          // from its own road, and a road over water here is a PIER -- Alaskan
+          // Way and Colman Dock are supposed to be out there -- so a pole above
+          // the tide line is correct and only a tree is a bug.
+          if (city.onRoad(ox, oz, 4.0)) continue;
+          const key = Math.round(ox) + ',' + Math.round(oz);
+          if (seen.has(key)) continue;
+          seen.add(key);
+          planted++;
+          if (G.isWater(ox, oz) || G.terrainHeight(ox, oz) < d.WET_FLOOR) {
             wet++;
-            if (worst.length < 6) worst.push({ x: Math.round(x), z: Math.round(z), y: +G.terrainHeight(x, z).toFixed(2) });
+            if (worst.length < 6) worst.push({ x: Math.round(ox), z: Math.round(oz), y: +G.terrainHeight(ox, oz).toFixed(2) });
           }
         }
       }
     }
-    add('tree-in-water', wet, cand, worst, 'park trees standing in water or below the tide line');
+    add('tree-in-water', wet, planted, worst,
+      'trunks actually standing in water (from ' + cand + ' candidates, '
+      + wetCand.length + ' of them wet, in ' + sites.length + ' of '
+      + clusters + ' clusters)');
   }
 
   // --- ground that stands above the water covering it --------------------
@@ -145,33 +245,56 @@ const CHECKS = `(() => {
 
   // --- terrain poking through the road surface ---------------------------
   //
-  // A road quad is a chord and the heightfield bulges under it. ROAD_LIFT is
-  // 30 cm; anything above that is grass growing through the tarmac.
+  // Raycast the DRAWN meshes. Comparing the terrain against the chord between
+  // an edge's two end nodes measured a surface nobody renders -- meshRoad
+  // subdivides by grade and by bow and samples the heightfield at every corner,
+  // so the tarmac follows the ground far more closely than a chord does. That
+  // check reported 9.2 % and was wrong; the only honest question is which mesh
+  // the ray hits first.
   if (want('road-poke')) {
+    d.scene.updateMatrixWorld(true);
+    const rc = new THREE.Raycaster();
+    const down = new THREE.Vector3(0, -1, 0);
     const worst = [];
     let n = 0, of = 0;
-    const step = Math.max(1, Math.floor(city.edges.length / 4000));
-    for (let ei = 0; ei < city.edges.length; ei += step) {
-      const e = city.edges[ei];
-      if (e.elev || e.len < 8) continue;
-      const a = city.nodes[e.a], b = city.nodes[e.b];
-      for (let s = 1; s < 5; s++) {
-        const t = s / 5;
-        const x = a.x + (b.x - a.x) * t, z = a.z + (b.z - a.z) * t;
-        // The drawn surface interpolates the ends; the ground is what is really
-        // there. The gap is what pokes through.
-        const drawn = (a.y + (b.y - a.y) * t);
-        const real = G.terrainHeight(x, z);
-        of++;
-        const over = real - drawn;
-        if (over > 0.30) {
-          n++;
-          if (worst.length < 40) worst.push({ x: Math.round(x), z: Math.round(z), over: +over.toFixed(2), cls: e.cls });
+    for (const [sx, sz] of roadSites(20, 31)) {
+      settle(sx, sz);
+      let took = 0;
+      for (const e of city.edges) {
+        if (took >= 140) break;
+        if (e.elev || e.len < 12) continue;
+        const a = city.nodes[e.a], b = city.nodes[e.b];
+        if (!nearSite(a.x, a.z, sx, sz) || !nearSite(b.x, b.z, sx, sz)) continue;
+        took++;
+        for (let sI = 1; sI < 4; sI++) {
+          const t = sI / 4;
+          const x = a.x + (b.x - a.x) * t, z = a.z + (b.z - a.z) * t;
+          const top = G.terrainHeight(x, z) + 8;
+          rc.set(new THREE.Vector3(x, top, z), down);
+          rc.far = 20;
+          // Road surface only. world.group also carries flat/glow/glass/facade
+          // meshes and tree canopies -- the scatter keeps a 0.8 m pad off the
+          // TRUNK, not the canopy, so a canopy overhanging a narrow residential
+          // street sits inside this ray's span. A hit on one makes the overlap
+          // deeply negative, so the sample silently passes -- hiding a real
+          // poke-through at exactly the points most likely to have clutter
+          // overhead. Samples are on centrelines, so mats.walk is not expected.
+          const hits = rc.intersectObject(world.group, true)
+            .filter((h) => h.object.isMesh && h.object.material === world.mats.road);
+          const terr = rc.intersectObject(world.terrainGroup, true);
+          if (!hits.length || !terr.length) continue;
+          of++;
+          // Positive: the ground is drawn ABOVE the road surface at this point.
+          const over = terr[0].point.y - hits[0].point.y;
+          if (over > 0.02) {
+            n++;
+            if (worst.length < 40) worst.push({ x: Math.round(x), z: Math.round(z), over: +over.toFixed(2), cls: e.cls });
+          }
         }
       }
     }
-    worst.sort((a, b) => b.over - a.over);
-    add('road-poke', n, of, worst, 'terrain standing more than ROAD_LIFT above the road it carries');
+    worst.sort((p, q) => q.over - p.over);
+    add('road-poke', n, of, worst, 'terrain drawn above the road surface it carries');
   }
 
   // --- things you sink into ----------------------------------------------
@@ -188,19 +311,25 @@ const CHECKS = `(() => {
     // Sample on the paved surface specifically -- that is where the two
     // sources of truth exist and can disagree.
     const nodes = city.nodes;
-    const stepN = Math.max(1, Math.floor(nodes.length / 900));
-    for (let ni = 0; ni < nodes.length; ni += stepN) {
-      const nd = nodes[ni];
-      if (nd.elev) continue;
+    for (const [sx, sz] of roadSites(20, 53)) {
+      settle(sx, sz);
+      let took = 0;
+      for (const nd of nodes) {
+        if (took >= 60) break;
+        if (nd.elev || !nearSite(nd.x, nd.z, sx, sz)) continue;
+        took++;
       for (const [ox, oz] of [[0, 0], [4, 0], [0, 4], [-4, 0], [0, -4], [5, 5]]) {
         const x = nd.x + ox, z = nd.z + oz;
         if (!city.onRoad(x, z, 1.5, false) && city.roadLift(x, z) <= 0) continue;
-        world.update(x, z, 60);
         const lift = city.roadLift(x, z);
         const stand = city.groundAt(x, z, null, lift);
         rc.set(new THREE.Vector3(x, stand + 12, z), down);
         rc.far = 24;
-        const hits = rc.intersectObject(world.group, true).filter((h) => h.object.isMesh);
+        // Ground surfaces only. A ray that lands on a bollard, a bin or a kerb
+        // face is not evidence that the pavement is at the wrong height, and
+        // counting those inflated this check by about a twentieth.
+        const hits = rc.intersectObject(world.group, true).filter((h) => h.object.isMesh
+          && (h.object.material === world.mats.road || h.object.material === world.mats.walk));
         if (!hits.length) continue;
         of++;
         const surf = hits[0].point.y;
@@ -210,31 +339,32 @@ const CHECKS = `(() => {
           if (worst.length < 40) worst.push({ x: Math.round(x), z: Math.round(z), gap: +gap.toFixed(2) });
         }
       }
+      }
     }
     worst.sort((a, b) => Math.abs(b.gap) - Math.abs(a.gap));
     add('sink', n, of, worst, 'drawn pavement disagreeing with the height you stand at');
   }
 
   // --- roofs that miss their building ------------------------------------
-  if (want('roof')) {
-    const worst = [];
-    let n = 0, of = 0;
-    const step = Math.max(1, Math.floor(city.buildings.length / 6000));
-    for (let bi = 0; bi < city.buildings.length; bi += step) {
-      const bd = city.buildings[bi];
-      if (bd.style !== 'house') continue;
-      of++;
-      // meshGable builds in the building's own frame; the failure mode this
-      // catches is a roof sized off the wrong axis, which leaves the gable
-      // hanging past the wall on the narrow side.
-      const over = Math.max(bd.w, bd.d) / Math.min(bd.w, bd.d);
-      if (over > 4.5) {
-        n++;
-        if (worst.length < 6) worst.push({ x: Math.round(bd.x), z: Math.round(bd.z), w: +bd.w.toFixed(1), d: +bd.d.toFixed(1) });
-      }
-    }
-    add('roof', n, of, worst, 'houses so elongated a gable cannot sit on them');
-  }
+  //
+  // REMOVED, because the defect it reported does not exist.
+  //
+  // It counted houses whose min-area rectangle is more elongated than 4.5:1 and
+  // called them roofs a gable cannot sit on. That threshold was invented here
+  // and never checked against meshGable, which sizes its eaves from the actual
+  // w and d (a fixed 0.45 m overhang on all four sides) and runs the ridge along
+  // the longer side -- so a terrace gets a long ridge and a low pitch, which is
+  // what a terrace has. Nothing about elongation breaks it.
+  //
+  // Measured, on the three footprints this check named: with the gable built,
+  // contiguous roof surface past the narrow wall was 0.4 m, 6.0 m and 5.8 m --
+  // and with the gable SUPPRESSED it was 0 m, 6.0 m and 5.8 m. The metres are
+  // neighbouring terrace roofs, which touch and so cannot be told apart by
+  // contiguity; the gable's own contribution is the 0.45 m eave it is supposed
+  // to have. The check was reporting the map's shape, not a defect.
+  //
+  // A drawn-geometry version would have to attribute roof surface to one
+  // building, which in a terrace it cannot do. Better absent than green.
 
   // --- buildings standing in water ---------------------------------------
   if (want('building-in-water')) {
@@ -261,54 +391,110 @@ const CHECKS = `(() => {
   // A deck that sits below the terrain it spans is a bridge through a hill; one
   // that meets its neighbour at a different height is a step in the road.
   if (want('bridge')) {
+    // Raycast the DRAWN deck, not the node-to-node chord.
+    //
+    // meshViaduct lofts a deck between mitred edge points and the chord is not
+    // that surface -- the same flaw that made road-poke read 9.2 % and
+    // walk-on-road 2.95 % when both are actually clean. Settle a site over each
+    // elevated span, then ask what is really there.
+    d.scene.updateMatrixWorld(true);
+    const rc = new THREE.Raycaster();
+    const down = new THREE.Vector3(0, -1, 0);
     const worst = [];
     let n = 0, of = 0;
-    for (let ei = 0; ei < city.edges.length; ei++) {
-      const e = city.edges[ei];
+    // Deck sites: one per cluster of elevated spans.
+    const sites = [];
+    for (const e of city.edges) {
       if (!e.elev) continue;
-      const a = city.nodes[e.a], b = city.nodes[e.b];
-      for (let s = 0; s <= 4; s++) {
-        const t = s / 4;
-        const x = a.x + (b.x - a.x) * t, z = a.z + (b.z - a.z) * t;
-        const deck = a.y + (b.y - a.y) * t;
-        const ground = G.terrainHeight(x, z);
-        of++;
-        if (ground > deck + 0.5) {
-          n++;
-          if (worst.length < 40) worst.push({ x: Math.round(x), z: Math.round(z), buried: +(ground - deck).toFixed(2) });
-        }
-      }
+      // Cluster on the span's MIDPOINT. Keying on endpoint a alone can seat a
+      // site off the end of a long span.
+      const a = city.nodes[e.a], bN = city.nodes[e.b];
+      const mx = (a.x + bN.x) / 2, mz = (a.z + bN.z) / 2;
+      if (sites.some(([x, z]) => Math.abs(x - mx) < SITE_R && Math.abs(z - mz) < SITE_R)) continue;
+      sites.push([mx, mz]);
+      if (sites.length >= 22) break;
     }
-    worst.sort((a, b) => b.buried - a.buried);
-    add('bridge', n, of, worst, 'elevated deck buried under the terrain it spans');
-  }
-
-  // --- pavement crossing a carriageway -----------------------------------
-  if (want('walk-on-road')) {
-    const worst = [];
-    let n = 0, of = 0;
-    const step = Math.max(1, Math.floor(city.edges.length / 2500));
-    for (let ei = 0; ei < city.edges.length; ei += step) {
-      const e = city.edges[ei];
-      if (e.elev || e.len < 20) continue;
-      if (e.cls !== 'st' && e.cls !== 'art' && e.cls !== 'res') continue;
-      const a = city.nodes[e.a], b = city.nodes[e.b];
-      const px = -e.dz, pz = e.dx;
-      const sw = e.cls === 'art' ? 3.2 : 2.6;
-      for (const sg of [-1, 1]) {
-        for (let s = 1; s < 4; s++) {
-          const t = s / 4;
-          const x = a.x + (b.x - a.x) * t + px * sg * (e.hw + sw * 0.5);
-          const z = a.z + (b.z - a.z) * t + pz * sg * (e.hw + sw * 0.5);
+    for (const [sx, sz] of sites) {
+      settle(sx, sz);
+      for (const e of city.edges) {
+        if (!e.elev) continue;
+        const a = city.nodes[e.a], b = city.nodes[e.b];
+        if (!nearSite(a.x, a.z, sx, sz) || !nearSite(b.x, b.z, sx, sz)) continue;
+        for (let sI = 1; sI < 4; sI++) {
+          const t = sI / 4;
+          const x = a.x + (b.x - a.x) * t, z = a.z + (b.z - a.z) * t;
+          const ground = G.terrainHeight(x, z);
+          // Look down from well above the chord and take the highest road
+          // surface -- that is the deck as drawn.
+          const top = Math.max(ground, a.y + (b.y - a.y) * t) + 30;
+          rc.set(new THREE.Vector3(x, top, z), down);
+          rc.far = 80;
+          const hits = rc.intersectObject(world.group, true)
+            .filter((h) => h.object.isMesh && h.object.material === world.mats.road);
+          if (!hits.length) continue;
+          const deck = hits[0].point.y;
           of++;
-          if (city.onRoad(x, z, 0, false)) {
+          if (ground > deck + 0.5) {
             n++;
-            if (worst.length < 6) worst.push({ x: Math.round(x), z: Math.round(z), cls: e.cls });
+            if (worst.length < 40) worst.push({ x: Math.round(x), z: Math.round(z), buried: +(ground - deck).toFixed(2) });
           }
         }
       }
     }
-    add('walk-on-road', n, of, worst, 'pavement mid-line sitting on a carriageway');
+    worst.sort((a, b) => b.buried - a.buried);
+    // Say what the sampling misses, rather than letting a rate imply the whole
+    // map was looked at. 22 sites cover 62.1 % of elevated edges; measured, no
+    // span over 100 m is dropped, so the long floating crossings are all in.
+    // The same cap applies to sink / road-poke / walk-on-road.
+    add('bridge', n, of, worst,
+      'elevated deck buried under the terrain it spans (22 sites, ~62 % of elevated edges)');
+  }
+
+  // --- pavement crossing a carriageway -----------------------------------
+  //
+  // Raycast for the pavement MATERIAL at points that are on a carriageway. The
+  // previous version computed where a strip would be offset to and asked
+  // whether that spot was tarmac -- which measures intent, not geometry: a
+  // piece the builder already rejected still counted, and the figure never
+  // moved when the builder's own test was improved. Only what is drawn counts.
+  if (want('walk-on-road')) {
+    d.scene.updateMatrixWorld(true);
+    const rc = new THREE.Raycaster();
+    const down = new THREE.Vector3(0, -1, 0);
+    const worst = [];
+    let n = 0, of = 0;
+    // Site-by-site, like every other raycast check. This one settled inside the
+    // innermost loop -- once per sample, scattered across the whole map --
+    // which is the exact cost the settle helper's own comment warns against.
+    for (const [sx, sz] of roadSites(20, 71)) {
+      settle(sx, sz);
+      let took = 0;
+      for (const e of city.edges) {
+        if (took >= 140) break;
+        if (e.elev || e.len < 20) continue;
+        const a = city.nodes[e.a], b = city.nodes[e.b];
+        if (!nearSite(a.x, a.z, sx, sz) || !nearSite(b.x, b.z, sx, sz)) continue;
+        took++;
+        for (let sI = 1; sI < 4; sI++) {
+          const t = sI / 4;
+          // Sample the carriageway itself: pavement drawn here is pavement in
+          // the road, whichever strip put it there.
+          const x = a.x + (b.x - a.x) * t, z = a.z + (b.z - a.z) * t;
+          if (!city.onRoad(x, z, 0, false)) continue;
+          rc.set(new THREE.Vector3(x, G.terrainHeight(x, z) + 8, z), down);
+          rc.far = 20;
+          const hits = rc.intersectObject(world.group, true).filter((h) => h.object.isMesh
+            && (h.object.material === world.mats.road || h.object.material === world.mats.walk));
+          if (!hits.length) continue;
+          of++;
+          if (hits[0].object.material === world.mats.walk) {
+            n++;
+            if (worst.length < 8) worst.push({ x: Math.round(x), z: Math.round(z), cls: e.cls });
+          }
+        }
+      }
+    }
+    add('walk-on-road', n, of, worst, 'pavement drawn as the top surface of a carriageway');
   }
 
   return JSON.stringify(out);
