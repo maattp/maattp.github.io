@@ -633,11 +633,22 @@ Physically-shaded, image-based-lit, tone-mapped, with a hand-rolled post chain.
   Cells carry 8 px of wrap-padding — the cell's own opposite edge — so bilinear
   and the first three mips filter as if the tile repeated rather than pulling in
   the neighbouring family.
-- **Adaptive quality.** The phone this ships to can't be profiled from here, so
-  the game measures its own frame rate and steps `high -> medium -> low`
-  (post off, then pixel ratio down). `applyQuality(q, true)` locks it manually.
-  When testing headlessly, set `window.__noAutoQuality = true` **before boot** or
-  SwiftShader's ~5 fps immediately drops the tier and every screenshot lies.
+- **Quality is MANUAL ONLY, and it persists.** The adaptive ladder is gone,
+  by explicit request: it watched fps with no idea why a frame was slow,
+  demoted players after warps (the post-teleport streaming burst is CPU that
+  a lower tier cannot help), and kept overriding a deliberate choice. The
+  pause-menu picker is the single authority; the choice is saved to
+  localStorage ('auto-quality') and restored at boot.
+- **Tunnel interiors are drawn UNLIT** (the glow material), light baked into
+  vertex colours: lamp pools every 18 m, walls lighter than the ceiling, a
+  warm strip overhead. Sun-lit materials inside a bore sit in the shadow
+  map's darkness and render near-black -- "you can't see anything" -- so the
+  interior owes the sun nothing and reads the same at any depth.
+- **Haze thickens with altitude** (fog density up to 3.2x by ~480 m). The
+  streaming rings -- massing at 1.6 km, detail at 800 m -- are a crawling
+  boundary from a plane, and no draw budget pushes them past a 6 km
+  sightline; atmosphere hides them honestly. If more is ever needed, the
+  answer is a static supertile impostor layer, not wider rings.
 
 ## Judging how it looks
 
@@ -1145,6 +1156,14 @@ cache bumps, and URL-based `cache: 'no-cache'` revalidation (WebKit refuses to
 `fetch()` a navigation-mode Request). **Bump `CACHE` in sw.js on any deploy that
 must invalidate immediately.** Never add `vendor/` or `src/` to `SHELL`: a slow
 install is what pins iOS players to a stale worker forever.
+
+## Pull requests
+
+**Every auto PR title carries the version it ships**, e.g. "Auto v57: ...".
+The version is the one fact a bug report always needs and the one thing a
+merge list otherwise hides -- and this repo has already shipped two releases
+whose version bumps silently did not happen (a sed with no match exits 0).
+The title makes a missing bump visible at review time.
 
 ## Build number
 

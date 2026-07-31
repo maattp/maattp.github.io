@@ -215,7 +215,7 @@ let pickups = [];
 const LOOK_AHEAD = new THREE.Vector3();
 let last = 0;
 let accumFps = 0, frames = 0, fps = 60;
-let streamBehind = 0;
+let baseFogDensity = 0.00026;
 let startedAt = 0;
 
 async function boot() {
@@ -332,6 +332,7 @@ function installHeightFog() {
   // them, and the fog is tinted slightly cooler than the horizon so towers
   // still read against it.
   scene.fog = new THREE.FogExp2(0xb9c3cf, 0.00026);
+  baseFogDensity = scene.fog.density;
   installHeightFog();
   camera = new THREE.PerspectiveCamera(62, viewW() / viewH(), 0.5, 9000);
 
@@ -500,7 +501,10 @@ function installHeightFog() {
   // of 57 at `high`. `autoQuality` is still watching, so a device that cannot
   // hold it steps down on its own rather than everyone being pre-emptively
   // demoted.
-  applyQuality('high', false);
+  let savedQ = null;
+  try { savedQ = localStorage.getItem('auto-quality'); } catch (e) { /* private mode */ }
+  // literal, not TIERS: that const lives further down and this runs at boot
+  applyQuality(['high', 'medium', 'low'].includes(savedQ) ? savedQ : 'high', !!savedQ);
   startedAt = performance.now();
   loading.classList.add('hide');
   setTimeout(() => loading.remove(), 700);
@@ -1018,7 +1022,17 @@ function frame(now) {
     marker.material.opacity = 0.22 + Math.sin(now * 0.004) * 0.1;
   }
 
-  streamBehind = world.update(p.x, p.z, fps < 45 ? 1 : 2);
+  world.update(p.x, p.z, fps < 45 ? 1 : 2);
+  // Atmospheric haze thickens with altitude. From 300 m up the streaming
+  // rings are visible as a crawling boundary -- massing at 1.6 km, detail at
+  // 800 m -- and no draw budget pushes them past a 6 km sightline. Real air
+  // does the job instead: by ~250 m up the density has doubled, so chunks
+  // arrive inside the haze the way a distant city fades in from a real
+  // light aircraft. On the ground this is exactly the old constant.
+  if (scene.fog) {
+    const alt = Math.max(0, p.y - G.terrainHeight(p.x, p.z));
+    scene.fog.density = baseFogDensity * (1 + Math.min(2.2, alt / 220));
+  }
 
   player.applyCamera(camera);
   // Aim the shadow box down the view, not at the player's feet. Centred on the
@@ -1050,7 +1064,7 @@ function frame(now) {
   hud.update(dt, game, player, traffic);
   world.animate(dt, now / 1000);
   draw(now);
-  autoQuality(dt);
+
   updateDebug(dt);
 }
 
@@ -1108,39 +1122,18 @@ let tierIdx = 0;
 let slowFor = 0;
 let qualityLocked = false;
 
-let fastFor = 0;
-function autoQuality(dt) {
-  if (qualityLocked) return;
-  if (performance.now() - startedAt < 4000) return;
-  if (window.__noAutoQuality) return;
-  // A warp or respawn leaves the streamer dozens of chunks behind, and the
-  // rebuild burst is CPU, not rendering: stepping the tier down cannot help
-  // it, and it used to fire here and then stick (the ladder only went down).
-  // While the streamer is catching up, the frame rate says nothing about the
-  // device, so the meter is held at zero.
-  if (streamBehind > 6) { slowFor = 0; fastFor = 0; return; }
-  slowFor = fps < 45 ? slowFor + dt : 0;
-  // 2.5 s at under 40 fps is a long time to be stuttering before anything
-  // happens, and 40 is already well into "feels wrong" -- by the time it fired
-  // the player had formed an opinion.
-  if (slowFor > 1.2 && tierIdx < TIERS.length - 1) {
-    slowFor = 0; fastFor = 0;
-    applyQuality(TIERS[++tierIdx], false);
-    hud.showToast(`Graphics: ${TIERS[tierIdx]}`);
-  }
-  // ...and the ladder climbs back. A tier drop caused by a transient -- the
-  // post-warp burst before the guard above existed, a thermal dip -- was a
-  // life sentence. Twelve seconds sustained over 57 fps is not a transient.
-  fastFor = fps > 57 ? fastFor + dt : 0;
-  if (fastFor > 12 && tierIdx > 0) {
-    fastFor = 0; slowFor = 0;
-    applyQuality(TIERS[--tierIdx], false);
-    hud.showToast(`Graphics: ${TIERS[tierIdx]}`);
-  }
-}
+// The adaptive quality ladder is GONE, by request. It watched fps with no
+// idea why a frame was slow, demoted people after warps, and even with a
+// streaming guard and a recovery rung it kept overriding a choice the player
+// had made on purpose. The picker in the pause menu is now the only
+// authority, and the choice persists in localStorage.
+function autoQuality() {}
 
 function applyQuality(q, manual) {
-  if (manual) qualityLocked = true;
+  if (manual) {
+    qualityLocked = true;
+    try { localStorage.setItem('auto-quality', q); } catch (e) { /* private mode */ }
+  }
   // Keep the ladder position in step whether the change was manual or not --
   // starting a phone on `medium` with tierIdx still at 0 made the first
   // automatic step down re-apply medium and waste a rung.
