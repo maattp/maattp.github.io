@@ -1022,6 +1022,16 @@ function frame(now) {
     marker.material.opacity = 0.22 + Math.sin(now * 0.004) * 0.1;
   }
 
+  // Feed the streamer the two facts that let it keep up with a plane: how
+  // high we are (build massing-only near chunks at altitude) and which way we
+  // are moving (build ahead of the nose first).
+  world.playerAlt = Math.max(0, p.y - G.terrainHeight(p.x, p.z));
+  {
+    const pv = player.vehicle;
+    const fast = pv && Math.abs(pv.vLong) > 8;
+    world.playerFwdX = fast ? pv.forward.x * Math.sign(pv.vLong) : 0;
+    world.playerFwdZ = fast ? pv.forward.z * Math.sign(pv.vLong) : 0;
+  }
   world.update(p.x, p.z, fps < 45 ? 1 : 2);
   // Atmospheric haze thickens with altitude. From 300 m up the streaming
   // rings are visible as a crawling boundary -- massing at 1.6 km, detail at

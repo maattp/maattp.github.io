@@ -529,6 +529,17 @@ export class World {
   update(px, pz, budget = 2) {
     const ccx = Math.floor(px / CHUNK), ccz = Math.floor(pz / CHUNK);
     const want = new Set();
+    // FLYING LOD. At 400 km/h a full-detail chunk build (~50-100 ms, sliced)
+    // cannot keep pace with a 400 m grid -- the maths is simply against it,
+    // and the city materialised directly under the plane. From 100 m up you
+    // cannot read facades anyway, so the near ring builds MASSING-ONLY while
+    // high: box chunks build in a few milliseconds and the streamer stays
+    // ahead at any speed the plane can reach. Hysteresis (100 up / 60 down)
+    // so skimming rooftops does not flap the whole ring between LODs.
+    if (this.flyLod === undefined) this.flyLod = false;
+    const alt = this.playerAlt || 0;
+    if (!this.flyLod && alt > 100) this.flyLod = true;
+    else if (this.flyLod && alt < 60) this.flyLod = false;
     for (let dz = -MID_R; dz <= MID_R; dz++) {
       for (let dx = -MID_R; dx <= MID_R; dx++) {
         const cx = ccx + dx, cz = ccz + dz;
@@ -536,7 +547,7 @@ export class World {
         const key = this.city.chunkKey(cx, cz);
         want.add(key);
         const have = this.chunks.get(key);
-        const lod = r <= NEAR_R ? 1 : 0;
+        const lod = (r <= NEAR_R && !this.flyLod) ? 1 : 0;
         if (have && have.lod === lod) continue;
         if (!have) this.chunks.set(key, { key, cx, cz, lod: -1, group: null, dist: dx * dx + dz * dz });
         const c = this.chunks.get(key);
@@ -552,7 +563,13 @@ export class World {
     }
     const todo = [];
     for (const c of this.chunks.values()) if (c.lod !== c.wantLod) todo.push(c);
-    todo.sort((a, b) => a.dist - b.dist);
+    // Build AHEAD of the nose first. Sorted by distance alone, the chunk you
+    // are about to overfly ranks equal with the one you just left; at speed
+    // that is exactly backwards.
+    const fx = this.playerFwdX || 0, fz = this.playerFwdZ || 0;
+    todo.sort((a, b) =>
+      (a.dist - 2.5 * (((a.cx + 0.5) * CHUNK - px) / CHUNK * fx + ((a.cz + 0.5) * CHUNK - pz) / CHUNK * fz))
+      - (b.dist - 2.5 * (((b.cx + 0.5) * CHUNK - px) / CHUNK * fx + ((b.cz + 0.5) * CHUNK - pz) / CHUNK * fz)));
 
     // Spend a fixed slice of the frame on geometry, however much of a chunk
     // that turns out to buy. `budget` used to be a COUNT of whole chunks, which
@@ -573,7 +590,7 @@ export class World {
     // there can be dozens outstanding, and creeping through those at 4 ms a
     // frame means watching the city assemble around you.
     const behind = todo.length;
-    const sliceMs = budget < 2 ? 2 : behind > 12 ? 9 : 4;
+    const sliceMs = budget < 2 ? 2 : behind > 30 ? 14 : behind > 12 ? 9 : 4;
     const t0 = performance.now();
     while (performance.now() - t0 < sliceMs) {
       if (!this._build) {
