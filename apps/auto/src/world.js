@@ -740,7 +740,9 @@ export class World {
       // Builder.box anchors y at the BASE (by..by+h) -- review caught that
       // these walls had been passed a CENTRE y since v56, floating half their
       // height with the new roof slab buried inside them. The wall now starts
-      // half a metre into the ground like the real building mesher's does.
+      // half a metre into the ground -- deliberately LESS than the real
+      // mesher's 2 m embed: a massing box lives 800 m away where a slope gap
+      // under a corner is invisible, and the shallower skirt is cheaper.
       for (const bi of ch.buildings) {
         const bd = city.buildings[bi];
         if (bd.h >= 16 || bd.w * bd.d >= 1400) continue;   // skyline draws these
