@@ -215,6 +215,7 @@ let pickups = [];
 const LOOK_AHEAD = new THREE.Vector3();
 let last = 0;
 let accumFps = 0, frames = 0, fps = 60;
+let streamBehind = 0;
 let startedAt = 0;
 
 async function boot() {
@@ -1017,7 +1018,7 @@ function frame(now) {
     marker.material.opacity = 0.22 + Math.sin(now * 0.004) * 0.1;
   }
 
-  world.update(p.x, p.z, fps < 45 ? 1 : 2);
+  streamBehind = world.update(p.x, p.z, fps < 45 ? 1 : 2);
 
   player.applyCamera(camera);
   // Aim the shadow box down the view, not at the player's feet. Centred on the
@@ -1107,17 +1108,33 @@ let tierIdx = 0;
 let slowFor = 0;
 let qualityLocked = false;
 
+let fastFor = 0;
 function autoQuality(dt) {
-  if (qualityLocked || tierIdx >= TIERS.length - 1) return;
+  if (qualityLocked) return;
   if (performance.now() - startedAt < 4000) return;
   if (window.__noAutoQuality) return;
+  // A warp or respawn leaves the streamer dozens of chunks behind, and the
+  // rebuild burst is CPU, not rendering: stepping the tier down cannot help
+  // it, and it used to fire here and then stick (the ladder only went down).
+  // While the streamer is catching up, the frame rate says nothing about the
+  // device, so the meter is held at zero.
+  if (streamBehind > 6) { slowFor = 0; fastFor = 0; return; }
   slowFor = fps < 45 ? slowFor + dt : 0;
   // 2.5 s at under 40 fps is a long time to be stuttering before anything
   // happens, and 40 is already well into "feels wrong" -- by the time it fired
   // the player had formed an opinion.
-  if (slowFor > 1.2) {
-    slowFor = 0;
+  if (slowFor > 1.2 && tierIdx < TIERS.length - 1) {
+    slowFor = 0; fastFor = 0;
     applyQuality(TIERS[++tierIdx], false);
+    hud.showToast(`Graphics: ${TIERS[tierIdx]}`);
+  }
+  // ...and the ladder climbs back. A tier drop caused by a transient -- the
+  // post-warp burst before the guard above existed, a thermal dip -- was a
+  // life sentence. Twelve seconds sustained over 57 fps is not a transient.
+  fastFor = fps > 57 ? fastFor + dt : 0;
+  if (fastFor > 12 && tierIdx > 0) {
+    fastFor = 0; slowFor = 0;
+    applyQuality(TIERS[--tierIdx], false);
     hud.showToast(`Graphics: ${TIERS[tierIdx]}`);
   }
 }
