@@ -74,7 +74,10 @@ async function main() {
     // line, and stand the character side-on facing screen right.
     await evaluate(`(() => {
       const d = window.__dbg;
-      for (const id of ['hud','pad','stickZone','lookZone','objective','toast','rotate'])
+      // Including the pause menu: backgrounded headless pages can fire
+      // visibilitychange, which calls setPaused(true) and opens the overlay --
+      // one judge pass scored eight frames of the settings card because of it.
+      for (const id of ['hud','pad','stickZone','lookZone','objective','toast','rotate','topBtns','pauseMenu','loading'])
         { const e = document.getElementById(id); if (e) e.style.display = 'none'; }
       d.game.paused = true;
       d.scene.fog = null;
@@ -100,6 +103,8 @@ async function main() {
       const ph = (i / FRAMES) * Math.PI * 2;
       await evaluate(`(() => {
         const d = window.__dbg, h = d.player.h;
+        const pm = document.getElementById('pauseMenu');
+        if (pm) pm.style.display = 'none';
         h.phase = ${ph};
         d.animateWalk(h, ${amp}, 0, ${SPEED});   // dt = 0: pose, don't advance
         h.group.updateMatrixWorld(true);
