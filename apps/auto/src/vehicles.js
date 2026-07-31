@@ -87,7 +87,7 @@ export const TYPES = {
   // sends update() to the flight model; wid is the FUSELAGE (collision), the
   // 11 m wingspan lives in the builder. Speeds in kph as everywhere: rotates
   // ~100, cruises ~190.
-  plane: deriveSpec({ wheelbase: 4.6, len: 8.3, wid: 2.0, wheelR: 0.30, sill: 0.55, belt: 1.35, roof: 2.10, cab: [0.6, 0.3], hand: 'plane', plane: true, mass: 0.8, acc: 5.0, topKph: 190, brakeM: 60, latG: 0.7 }),
+  plane: deriveSpec({ wheelbase: 4.6, len: 8.3, wid: 2.0, wheelR: 0.30, sill: 0.55, belt: 1.35, roof: 2.10, cab: [0.6, 0.3], hand: 'plane', plane: true, mass: 0.8, acc: 6.5, topKph: 330, brakeM: 60, latG: 0.7 }),
   sedan: deriveSpec({ wheelbase: 2.98,len: 5.06, wid: 1.90, wheelR: 0.34, sill: 0.30, belt: 1.06, roof: 1.50, cab: [-0.26, 0.10], hand: 'sedan', mass: 1.0, acc: 4.1, topKph: 205, brakeM: 40, latG: 0.88 }),
   hatch: deriveSpec({ wheelbase: 2.6,len: 4.10, wid: 1.76, wheelR: 0.31, sill: 0.29, belt: 0.96, roof: 1.50, cab: [-0.30, 0.16], mass: 0.9, acc: 3.6, topKph: 185, brakeM: 41, latG: 0.85 }),
   compact: deriveSpec({ wheelbase: 2.42,len: 3.74, wid: 1.68, wheelR: 0.29, sill: 0.28, belt: 0.94, roof: 1.48, cab: [-0.28, 0.15], mass: 0.85, acc: 3.0, topKph: 170, brakeM: 43, latG: 0.83 }),
@@ -3150,7 +3150,9 @@ export class Vehicle {
     let acc = 0;
     if (throttle > 0) acc += spec.acc * throttle * (1 - clamp(this.vLong / top, 0, 1));
     if (brake > 0) acc -= (this.airborne ? 2.2 : spec.brakeA * 0.6) * brake;
-    acc -= this.vLong * Math.abs(this.vLong) * DRAG * 2.2;   // draggier than a car
+    // 0.45x, not 2.2x: with the heavy drag the measured cruise was 170 kph
+    // against a requested 300 -- the arcade bargain applies in the air too.
+    acc -= this.vLong * Math.abs(this.vLong) * DRAG * 0.45;
     if (!this.airborne) acc -= this.vLong * ROLL * 1.6;      // rolling on grass/tarmac
     if (this.airborne) acc -= this.vy * 0.55;                // climb bleeds, dive builds
     this.vLong = Math.max(0, this.vLong + acc * dt);
@@ -3180,7 +3182,7 @@ export class Vehicle {
       let vyT = pitchIn * (4 + 14 * excess);
       if (this.vLong < STALL) vyT = Math.min(vyT, -6 * (1 - this.vLong / STALL) * 3);
       // soft ceiling: the air runs out, gently
-      if (this.y > 420) vyT = Math.min(vyT, (460 - this.y) * 0.08);
+      if (this.y > 520) vyT = Math.min(vyT, (560 - this.y) * 0.08);
       this.vy = damp(this.vy, vyT, 2.2, dt);
       this.pitchA = damp(this.pitchA, Math.atan2(this.vy, Math.max(this.vLong, 8)), 5, dt);
       this.y += this.vy * dt;

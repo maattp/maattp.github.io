@@ -448,8 +448,15 @@ function installHeightFog() {
       // Same explicit axes as the landmark: ALONG = runway bearing 150.
       const AL = [Math.sin(0.52), Math.cos(0.52)], AC = [Math.cos(0.52), -Math.sin(0.52)];
       const off = (dx, dz) => [ap.x + dx * AC[0] + dz * AL[0], ap.z + dx * AC[1] + dz * AL[1]];
-      for (let i = 0; i < 3; i++) {
-        const [px, pz] = off(-195, -60 + i * 95);
+      // Three clusters, all on pavement, all reachable from the west-side
+      // streets: the apron row, the north threshold turnpad, and the south.
+      const spots = [
+        [-195, -50], [-195, 45], [-195, 140],   // apron row
+        [-150, -1380], [-150, -1290],           // by the north threshold
+        [-150, 1290], [-150, 1380],             // by the south threshold
+      ];
+      for (const [dx, dz] of spots) {
+        const [px, pz] = off(dx, dz);
         const v = traffic.spawnAt(px, pz, 0.52, 'plane', 0xdfe3e6, 'apron');
         v.vLong = 0;
       }
