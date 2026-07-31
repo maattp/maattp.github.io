@@ -462,7 +462,12 @@ export class World {
   buildSkyline() {
     const b = new Builder(false);
     for (const bd of this.city.buildings) {
-      if (bd.h < 30) continue;
+      // Height OR footprint. The gate was pure height at 30 m, so a 10 m
+      // Boeing shed the size of a city block popped in at the 800 m ring while
+      // a skinny 32 m tower never did -- from a plane, footprint is what you
+      // see. 4032 buildings pass; the sub-30 additions take the plain-box path
+      // (plant and crown are height-gated) at ~12 triangles each.
+      if (bd.h < 16 && bd.w * bd.d < 1400) continue;
       const v = 0.86 + hash2(bd.seed, 17) * 0.26;
       const col = bd.style === 'tower'
         ? [0.54 * v, 0.58 * v, 0.63 * v]
@@ -687,6 +692,24 @@ export class World {
       }
       yield;
       this.meshProps(flat, glow, ch, cx, cz);
+      yield;
+    } else {
+      // Mid-ring massing: every building the far skyline skips, as one merged
+      // box mesh per chunk. From the air the old mid ring was bare ground, so
+      // the whole housing stock materialised at the 800 m detail ring -- the
+      // pop-in. A box at 800-1600 m is indistinguishable from the real
+      // building at that size; when the chunk promotes, the swap reads as
+      // detail arriving, not a city appearing. ~12 triangles a building, one
+      // draw a chunk.
+      since = 0;
+      for (const bi of ch.buildings) {
+        const bd = city.buildings[bi];
+        if (bd.h >= 16 || bd.w * bd.d >= 1400) continue;   // skyline draws these
+        const t = 0.5 + hash2(bd.seed, 3) * 0.18;
+        flat.box(bd.x, bd.y + bd.h / 2, bd.z, bd.w, bd.h, bd.d, bd.rot,
+          [0.60 * t + 0.28, 0.58 * t + 0.27, 0.55 * t + 0.26], { ao: 0.35 });
+        if (++since >= 40) { since = 0; yield; }
+      }
       yield;
     }
 
