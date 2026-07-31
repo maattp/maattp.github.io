@@ -547,7 +547,12 @@ export class World {
         const key = this.city.chunkKey(cx, cz);
         want.add(key);
         const have = this.chunks.get(key);
-        const lod = (r <= NEAR_R && !this.flyLod) ? 1 : 0;
+        // The 3x3 directly under the player stays FULL DETAIL even in the
+        // flying LOD: v58 boxed the whole near ring and the closest buildings
+        // became the crudest thing on screen. Three detailed chunks per row
+        // crossed is a build rate the streamer holds at 400 km/h -- it was
+        // the full 5x5 it could not.
+        const lod = (r <= NEAR_R && (!this.flyLod || r <= 1)) ? 1 : 0;
         if (have && have.lod === lod) continue;
         if (!have) this.chunks.set(key, { key, cx, cz, lod: -1, group: null, dist: dx * dx + dz * dz });
         const c = this.chunks.get(key);
@@ -719,12 +724,24 @@ export class World {
       // detail arriving, not a city appearing. ~12 triangles a building, one
       // draw a chunk.
       since = 0;
+      // Tinted by STYLE with a darker roof slab, because one pale beige for
+      // every box read as a city of white blocks -- from the air, wall tone
+      // and a roof line are most of what says "building".
+      const MASS_TINT = {
+        house: [0.66, 0.61, 0.54], brick: [0.55, 0.42, 0.36],
+        lowrise: [0.58, 0.58, 0.60], midrise: [0.56, 0.57, 0.60],
+        industrial: [0.50, 0.52, 0.55], campus: [0.58, 0.55, 0.50],
+        tower: [0.52, 0.55, 0.60],
+      };
       for (const bi of ch.buildings) {
         const bd = city.buildings[bi];
         if (bd.h >= 16 || bd.w * bd.d >= 1400) continue;   // skyline draws these
-        const t = 0.5 + hash2(bd.seed, 3) * 0.18;
-        flat.box(bd.x, bd.y + bd.h / 2, bd.z, bd.w, bd.h, bd.d, bd.rot,
-          [0.60 * t + 0.28, 0.58 * t + 0.27, 0.55 * t + 0.26], { ao: 0.35 });
+        const base = MASS_TINT[bd.style] || MASS_TINT.lowrise;
+        const t = 0.86 + hash2(bd.seed, 3) * 0.28;
+        const wall = [base[0] * t, base[1] * t, base[2] * t];
+        flat.box(bd.x, bd.y + bd.h / 2, bd.z, bd.w, bd.h, bd.d, bd.rot, wall, { ao: 0.35, top: false });
+        flat.box(bd.x, bd.y + bd.h + 0.12, bd.z, bd.w * 0.96, 0.24, bd.d * 0.96, bd.rot,
+          [wall[0] * 0.45, wall[1] * 0.45, wall[2] * 0.47]);
         if (++since >= 40) { since = 0; yield; }
       }
       yield;
