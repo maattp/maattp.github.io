@@ -122,7 +122,12 @@ class SkinAcc {
     for (const ix of builder.idx) this.idx.push(base + ix);
   }
   build() {
-    // Baked vertex ambient occlusion. One matte material over flat colour is
+    // Baked vertex ambient occlusion, computed ONCE from the BIND POSE --
+    // it does not respond to the current pose (an armpit stays dark with the
+    // arm raised). That is the standard trade for a vertex-baked single-
+    // material character, and at street distances it is invisible; it is a
+    // choice, not an oversight.
+    // One matte material over flat colour is
     // what makes a figure read as injection-moulded plastic: real characters
     // carry occlusion in their maps, and with no maps the vertex colour is
     // where it has to live. Three cheap terms that stand in for the real thing:
@@ -135,11 +140,11 @@ class SkinAcc {
     for (let i = 0; i < this.pos.length; i += 3) {
       const x = this.pos[i], y = this.pos[i + 1];
       const ny = this.nor[i + 1];
-      let ao = 0.86 + 0.14 * clamp(ny * 0.5 + 0.5, 0, 1) * 1.0;   // sky
+      let ao = 0.86 + 0.14 * clamp(ny * 0.5 + 0.5, 0, 1);         // sky
       const ax = Math.abs(x);
       if (y > 1.10 && y < 1.45 && ax > 0.10 && ax < 0.19) ao *= 0.90;  // armpit band
       if (y > 0.45 && y < 0.95 && ax < 0.075) ao *= 0.92;             // inner thigh
-      ao *= 0.92 + 0.08 * clamp(y / 1.0, 0, 1);                       // grounding
+      ao *= 0.92 + 0.08 * clamp(y, 0, 1);                             // grounding
       this.col[i] *= ao; this.col[i + 1] *= ao; this.col[i + 2] *= ao;
     }
     const g = new THREE.BufferGeometry();
@@ -174,7 +179,7 @@ export function buildCharacter(opts = {}) {
   const hair = opts.hair || HAIR[Math.floor(hash2(seed, 4) * HAIR.length)];
   const build = 0.92 + hash2(seed, 6) * 0.16;
   const jacket = opts.vest ? true : hash2(seed, 7) > 0.5;
-  const shortSleeve = !jacket && hash2(seed, 10) > 0.55;
+  const shortSleeve = !jacket && hash2(seed, 8) > 0.55;
   const shoeCol = [0.11, 0.11, 0.12];
   const coat = jacket ? [shirt[0] * 0.66, shirt[1] * 0.66, shirt[2] * 0.7] : shirt;
 
