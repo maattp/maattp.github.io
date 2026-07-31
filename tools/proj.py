@@ -19,7 +19,7 @@ _p = math.radians(LAT0)
 M_LAT = 111132.92 - 559.82 * math.cos(2 * _p) + 1.175 * math.cos(4 * _p) - 0.0023 * math.cos(6 * _p)
 M_LON = 111412.84 * math.cos(_p) - 93.5 * math.cos(3 * _p) + 0.118 * math.cos(5 * _p)
 
-MAP_HALF = 8000  # world spans -8000..8000 on both axes (16 km)
+MAP_HALF = 13000  # world spans -13000..13000 on both axes (26 km)
 
 
 def to_world(lat, lon):

@@ -41,6 +41,10 @@ LANDMARKS = [
     ("ferriswheelPier", "Alki Beach Park", 47.5811, -122.4058),
     ("convention", "Seattle Convention Center Arch", 47.6116, -122.3316),
     ("pier", "Pier 66", 47.6113, -122.3494),
+    # Boeing Field: the ARP is mid-airfield; landmarks.js lays the runway out
+    # in real metres from here, so the POI-vs-centroid caveat does not apply.
+    ("airport", "King County International Airport", 47.5299, -122.3019),
+    ("bellevueDT", "Bellevue Downtown Park", 47.6144, -122.2030),
 ]
 
 # Where the player starts, and where the hospital puts them back. Both are real
@@ -87,13 +91,22 @@ def main():
     buildings = json.load(open(os.path.join(DATA, "raw_buildings.json")))["buildings"]
     named = [b for b in buildings if b.get("n")]
 
+    # Landmarks whose hint IS the answer. The POI snap works when the node
+    # names a building; an airport's POI is wherever the mapper dropped it --
+    # here 783 m from the reference point, which would lay the runway across
+    # the terminal. The ARP is a surveyed coordinate; trust it.
+    PINNED = {"airport"}
     out_lm, missing = [], []
     for kind, name, lat, lon in LANDMARKS:
         p = best(pois["pois"], name, (lat, lon))
-        if p is None:
+        if p is None and kind not in PINNED:
             missing.append(name)
             continue
         hx, hz = to_world(lat, lon)
+        if kind in PINNED or p is None:
+            out_lm.append({"kind": kind, "name": name, "x": hx, "z": hz, "rot": 0.0})
+            print(f"  {kind:16s} {name[:34]:36s} ({hx:7.0f},{hz:7.0f})  pinned to the hint")
+            continue
         err = math.hypot(p["x"] - hx, p["z"] - hz)
         out_lm.append({"kind": kind, "name": name, "x": p["x"], "z": p["z"],
                        "rot": orientation(p["n"], named)})

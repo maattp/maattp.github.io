@@ -271,6 +271,42 @@ def probe(h, wet):
     return bad == 0
 
 
+def grade_airfield(h):
+    """Flatten Boeing Field's movement area to its field elevation.
+
+    The airfield is genuinely flat -- it was graded when it was built -- but
+    the 40 m bare-earth DEM smears the 20 m bluff at its north boundary into
+    the strip, so the imported ground climbs where the real runway does not.
+    Same philosophy as carve_lakes: the raster is corrected to match a known
+    physical fact about the place, at the raster, so every consumer (terrain
+    mesh, roads, landmark pavement, taxiing planes) agrees for free.
+
+    Rectangle matches the landmark layout in landmarks.js: ARP (2707, 9055),
+    bearing -0.52 rad, half-extents 520 x 1680 m, blended out over 120 m so
+    the field meets the surrounding ground with a shoulder instead of a cliff.
+    """
+    import numpy as np
+    AX, AZ, RY = 2707.0, 9055.0, -0.52
+    HW, HL, FIELD, BLEND = 520.0, 1680.0, 5.2, 120.0
+    c, sn = math.cos(RY), math.sin(RY)
+    n = h.shape[0]
+    step = (2 * MAP_HALF) / (n - 1)
+    xs = -MAP_HALF + np.arange(n) * step
+    X, Z = np.meshgrid(xs, xs)   # Z rows, X cols -- match the raster layout
+    dx, dz = X - AX, Z - AZ
+    lx = dx * c + dz * sn
+    lz = -dx * sn + dz * c
+    dxo = np.maximum(np.abs(lx) - HW, 0)
+    dzo = np.maximum(np.abs(lz) - HL, 0)
+    d = np.hypot(dxo, dzo)
+    w = np.clip(1 - d / BLEND, 0, 1)
+    graded = np.where(w > 0, h * (1 - w) + FIELD * w, h)
+    inside = w >= 1
+    print(f"  airfield graded: {int(inside.sum())} cells set to {FIELD} m, "
+          f"blend touched {int(((w > 0) & ~inside).sum())}")
+    return graded
+
+
 def carve_lakes(h, wet):
     """Dig a bed under every water body, and report each body's surface level.
 
@@ -422,6 +458,7 @@ if __name__ == "__main__":
     h = build_height()
     wet = build_masks()
     h = carve_lakes(h, wet)
+    h = grade_airfield(h)
     save_height(h)
     ok = probe(h, wet)
     for fn in ("height.png", "surface.png"):

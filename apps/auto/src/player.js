@@ -263,6 +263,9 @@ export class Player {
       // differently-coloured road.
       throttle: wading ? 0 : throttle,
       brake, steer, handbrake: input.hand ? 1 : 0,
+      // Planes read the stick's other axis: pull back (stick down, +y) to
+      // climb, aviation-style. Cars ignore it.
+      pitch: input.y || 0,
     });
     if (wading) {
       v.vLong -= v.vLong * Math.min(1, 2.6 * dt);
@@ -272,7 +275,11 @@ export class Player {
     // like vehicle-vehicle damage: unthrottled, holding the accelerator into a
     // building killed the player in about a sixth of a second.
     this.crashCd -= dt;
-    const impact = collideWithBuildings(v, this.city, (imp) => {
+    // An airborne plane is not scraping along building WALLS -- the box test
+    // is 2D and would wreck it against towers it is far above. Overflight is
+    // handled by altitude; only a grounded plane collides like a vehicle.
+    const airborne = v.spec.plane && v.airborne;
+    const impact = airborne ? 0 : collideWithBuildings(v, this.city, (imp) => {
       if (this.crashCd > 0) return;
       this.crashCd = 0.4;
       this.game.onCrash(imp, false);
@@ -333,6 +340,15 @@ export class Player {
       dist = 7.6 + v.spec.len * 0.42 + clamp(sp * 0.09, 0, 3.4);
       height = 3.2 + v.spec.roof * 0.42;
       lookH = 1.05;
+      if (v.spec.plane) {
+        // further back and higher, and the camera rides the CLIMB: keep some
+        // of the vertical velocity in the look target so pulling up reads as
+        // the horizon dropping, which is what flying looks like from a chase
+        // camera.
+        dist = 15.5 + clamp(sp * 0.05, 0, 3);
+        height = 4.6 - clamp((v.vy || 0) * 0.18, -1.6, 1.6);
+        lookH = 2.2 + clamp((v.vy || 0) * 0.22, -2, 2);
+      }
       // ease the camera behind the car when driving forward
       if (v.vLong > 3) {
         const want = v.heading + Math.PI;

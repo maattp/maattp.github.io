@@ -387,11 +387,87 @@ function aquarium() {
  * that knows how much room each one takes; keep a new entry here whenever a
  * landmark is added or `buildLandmarks` will quietly be building it inside a box.
  */
+
+/**
+ * Boeing Field. The ARP sits mid-airfield and the runway is laid out in real
+ * metres from it: 14R/32L is 3048 m on a ~150 deg true bearing, which in this
+ * frame (+X east, +Z south) is a yaw of about -0.52 rad. The hangars along the
+ * east apron are real OSM buildings and arrive on their own; what this builds
+ * is the pavement the data has no layer for -- runway, parallel taxiway,
+ * apron -- plus the tower, a windsock, and threshold markings, so it reads as
+ * an airfield from the air. The apron's parked planes are spawned by main.js.
+ */
+function airport() {
+  const g = new THREE.Group();
+  const asphalt = M(0x53565b);
+  const paintW = new THREE.MeshBasicMaterial({ color: 0xe8e8e2 });
+  // Axes SPELLED OUT, because two rotation conventions meet here and they
+  // disagree in the sign of x. landmark box() rotates a THREE mesh: its
+  // rotation.y = t maps local +z to (sin t, cos t). build.js's box() maps
+  // local +z to (-sin t, cos t). A helper derived from the wrong one laid the
+  // whole 3 km runway along bearing 210 instead of 150 -- present, raycastable,
+  // and buried under the un-graded hillside 60 degrees away from its markings.
+  // ALONG is the runway direction (bearing 150), ACROSS is 90 right of it.
+  const RY = 0.52;                       // THREE rotation.y: sin/cos = (0.497, 0.868)
+  const ALONG = [Math.sin(RY), Math.cos(RY)];
+  const ACROSS = [Math.cos(RY), -Math.sin(RY)];
+  const off = (dx, dz) => [dx * ACROSS[0] + dz * ALONG[0], dx * ACROSS[1] + dz * ALONG[1]];
+  // The landmark's origin sits at the terrain height of ONE point, and the
+  // field undulates a metre and a half over its 3 km. A single flat slab is
+  // therefore always part buried and part plinth -- both were built and both
+  // looked wrong. Pavement here drapes the way meshRoad's does: SECTIONS, each
+  // sampling the heightfield at its own centre. `base` converts a world
+  // terrain sample into this group's local frame.
+  // The raster grades the field dead flat at 5.2 m (build_raster's
+  // grade_airfield), so pavement is SINGLE slabs -- the earlier per-section
+  // drape existed for undulating ground and its seams read as jagged teeth
+  // once the ground stopped undulating. Local frame: group origin sits at the
+  // field elevation, so a slab top at +0.35 is 35 cm proud everywhere.
+  const P = (dx, dz) => off(dx, dz);
+  const pav = (dx, dz, w, len) => {
+    const [lx, lz] = P(dx, dz);
+    g.add(box(w, 2.6, len, asphalt, lx, 0.35 - 2.6, lz, RY));
+  };
+  const mark = (dx, dz, w, len) => {
+    const [lx, lz] = P(dx, dz);
+    g.add(box(w, 0.04, len, paintW, lx, 0.36, lz, RY));
+  };
+  pav(0, 0, 46, 3048);                       // runway 14R/32L
+  pav(150, 0, 23, 2600);                     // parallel taxiway, east
+  for (let k = -2; k <= 2; k++) {            // stubs joining them
+    const [sx, sz] = P(75, k * 520);
+    g.add(box(150, 2.6, 18, asphalt, sx, 0.33 - 2.6, sz, RY + Math.PI / 2));
+  }
+  pav(-205, 70, 130, 380);                   // GA apron, west
+  for (const kz of [-40, 180]) {             // apron connectors to the runway
+    const [sx, sz] = P(-105, kz);
+    g.add(box(160, 2.6, 16, asphalt, sx, 0.33 - 2.6, sz, RY + Math.PI / 2));
+  }
+  for (let k = -22; k <= 22; k++) mark(0, k * 66, 0.9, 30);          // centreline
+  for (const e of [-1, 1]) for (let j = -3; j <= 3; j++) mark(j * 5.4, e * 1470, 1.8, 40);
+  for (const e of [-1, 1]) for (const sdx of [-21.5, 21.5])          // edge stripes
+    mark(sdx, e * 762, 0.7, 1500);
+
+  // tower on the apron edge
+  const [twx, twz] = off(-300, -190);
+  g.add(box(9, 26, 9, mat.concrete, twx, 13, twz, RY));
+  g.add(box(12, 4.4, 12, mat.glassSolid, twx, 28.2, twz, RY + 0.4));
+  g.add(box(13, 0.7, 13, mat.darkSteel, twx, 30.7, twz, RY + 0.4));
+  // windsock
+  const [wx, wz] = off(-120, -900);
+  g.add(cyl(0.12, 0.12, 7, mat.darkSteel, wx, 3.5, wz, 6));
+  g.add(cyl(0.02, 0.55, 2.2, M(0xd9601f), wx, 6.6, wz, 8).rotateZ(Math.PI / 2));
+  return g;
+}
+
 export const LANDMARK_CLEAR = {
   spaceNeedle: 48, mopop: 62, arena: 95, spheres: 44, market: 75, wheel: 42,
   aquarium: 48, ferry: 72, library: 48, pier: 52, gasworks: 95, troll: 18,
   locks: 75, kerry: 30, ferriswheelPier: 42, convention: 62,
   stadiumF: 135, stadiumB: 128, stadiumH: 122,
+  // the tower/apron cluster only -- the runway lies over real open ground and
+  // the hangars beside it are real buildings that must stay
+  airport: 90, bellevueDT: 40,
 };
 
 export function buildLandmarks(scene) {
@@ -417,6 +493,7 @@ export function buildLandmarks(scene) {
       case 'kerry': g = kerryPark(); break;
       case 'ferriswheelPier': g = statueLiberty(); break;
       case 'convention': g = convention(); break;
+      case 'airport': g = airport(); break;
       case 'stadiumF':
         g = stadium({ rx: 118, rz: 92, h: 24, roof: true, name: 'LUMEN FIELD', colA: M(0x2c3e50), colB: M(0x69be28), turf: true });
         break;
@@ -429,6 +506,7 @@ export function buildLandmarks(scene) {
       default: break;
     }
     if (!g) continue;
+    if (g.userData && g.userData.build) g.userData.build(x, z);
     g.position.set(x, G.terrainHeight(x, z), z);
     g.rotation.y = l.rot || 0;
     g.traverse((o) => { if (o.isMesh) { o.castShadow = false; o.receiveShadow = false; } });
