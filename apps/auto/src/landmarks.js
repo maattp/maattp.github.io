@@ -439,10 +439,12 @@ function airport() {
     g.add(box(150, 2.6, 18, asphalt, sx, 0.33 - 2.6, sz, RY + Math.PI / 2));
   }
   pav(-205, 70, 130, 380);                   // GA apron, west
-  for (const kz of [-40, 180]) {             // apron connectors to the runway
-    const [sx, sz] = P(-105, kz);
-    g.add(box(160, 2.6, 16, asphalt, sx, 0.33 - 2.6, sz, RY + Math.PI / 2));
+  pav(-120, 0, 20, 2900);                    // full-length west taxiway
+  for (const kz of [-1380, -900, -450, -40, 180, 620, 1100, 1380]) {
+    const [sx, sz] = P(-60, kz);             // stubs: west taxiway <-> runway
+    g.add(box(126, 2.6, 16, asphalt, sx, 0.33 - 2.6, sz, RY + Math.PI / 2));
   }
+  for (const e of [-1, 1]) pav(0, e * 1500, 76, 60);   // threshold turnpads
   for (let k = -22; k <= 22; k++) mark(0, k * 66, 0.9, 30);          // centreline
   for (const e of [-1, 1]) for (let j = -3; j <= 3; j++) mark(j * 5.4, e * 1470, 1.8, 40);
   for (const e of [-1, 1]) for (const sdx of [-21.5, 21.5])          // edge stripes

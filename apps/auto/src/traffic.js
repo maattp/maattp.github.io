@@ -555,6 +555,10 @@ export class TrafficSystem {
       }
       for (let j = i + 1; j < all.length; j++) {
         const b = all[j];
+        // The test is 2D, so gate on height or a plane at 200 m gets shunted
+        // by the traffic it overflies -- the "invisible collision in the air".
+        // Also stops a viaduct car trading paint with the street below it.
+        if (Math.abs((a.y || 0) - (b.y || 0)) > 3) continue;
         const dx = b.x - a.x, dz = b.z - a.z;
         const rr = a.radius + b.radius;
         const d2 = dx * dx + dz * dz;
