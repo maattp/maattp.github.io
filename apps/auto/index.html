@@ -414,7 +414,7 @@
     <div id="loadTrack"><div id="loadBar"></div></div>
     <div id="loadMsg">Starting up</div>
     <!-- Bumped once per change, in step with CACHE in sw.js. See CLAUDE.md. -->
-    <div id="build">v52</div>
+    <div id="build">v53</div>
     <div id="attrib">Map data © OpenStreetMap contributors (ODbL) · elevation USGS 3DEP</div>
   </div>
 
@@ -428,7 +428,20 @@
 <script>
   if ('serviceWorker' in navigator) {
     window.addEventListener('load', () => {
-      navigator.serviceWorker.register('sw.js').catch(() => {});
+      // updateViaCache: 'none' makes the BROWSER's HTTP cache irrelevant to
+      // the update check: without it, GitHub Pages' max-age=600 means a
+      // relaunch inside ten minutes of a deploy refetches the OLD sw.js and
+      // sees "no change" -- which, byte-compare being the update trigger,
+      // reads as no update at all. And check again whenever the app comes
+      // back to the foreground, because an iOS PWA can sit resident for days
+      // without a fresh launch.
+      navigator.serviceWorker.register('sw.js', { updateViaCache: 'none' })
+        .then((reg) => {
+          document.addEventListener('visibilitychange', () => {
+            if (!document.hidden) reg.update().catch(() => {});
+          });
+        })
+        .catch(() => {});
     });
   }
 </script>
