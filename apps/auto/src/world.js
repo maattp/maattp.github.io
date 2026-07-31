@@ -668,7 +668,7 @@ export class World {
       const a = city.nodes[e.a], b = city.nodes[e.b];
       const mx = (a.x + b.x) / 2, mz = (a.z + b.z) / 2;
       if (!own(mx, mz)) continue;
-      this.meshRoad(road, walk, flat, e, a, b, lod, ei);
+      this.meshRoad(road, walk, flat, glow, e, a, b, lod, ei);
       for (const ni of [e.a, e.b]) {
         if (nodesDone.has(ni)) continue;
         const n = city.nodes[ni];
@@ -915,24 +915,76 @@ export class World {
     }
   }
 
-  meshRoad(road, walk, flat, e, a, b, lod, ei) {
+  /**
+   * One tunnel edge: deck, two walls, ceiling, lamp strip, and -- where an end
+   * node also carries a surface edge -- a portal frame. Heights come straight
+   * from the nodes' profiled y, the same numbers groundAt serves, so a car's
+   * ride height and the drawn deck agree by construction.
+   */
+  meshTunnel(road, flat, glow, e, a, b) {
+    const hw = e.hw;
+    const px = -e.dz, pz = e.dx;
+    const WALL = 5.4, DECK = 0.3;
+    const wallCol = [0.34, 0.35, 0.37];
+    const soffit = [0.24, 0.25, 0.27];
+    const kerbCol = [0.45, 0.46, 0.48];
+    const ay = a.y + DECK, by = b.y + DECK;
+    const P = (t, o) => [lerp(a.x, b.x, t) + px * o, lerp(a.z, b.z, t) + pz * o];
+    const Y = (t) => lerp(ay, by, t);
+    // deck
+    const [a0x, a0z] = P(0, hw), [a1x, a1z] = P(0, -hw);
+    const [b0x, b0z] = P(1, hw), [b1x, b1z] = P(1, -hw);
+    const v1 = e.len / ROAD_TILE, u1 = (hw * 2) / ROAD_TILE;
+    road.quad([a0x, ay, a0z], [a1x, ay, a1z], [b1x, by, b1z], [b0x, by, b0z],
+      [0, 1, 0], [0, 0, u1, 0, u1, v1, 0, v1], [1, 1, 1]);
+    // walls: inner faces, lofted between the same corners
+    for (const sd of [1, -1]) {
+      const [w0x, w0z] = P(0, hw * sd), [w1x, w1z] = P(1, hw * sd);
+      flat.quad(
+        [w0x, Y(0), w0z], [w1x, Y(1), w1z],
+        [w1x, Y(1) + WALL, w1z], [w0x, Y(0) + WALL, w0z],
+        [-px * sd, 0, -pz * sd], ZERO_UV, wallCol);
+      // low kerb strip so the wall base reads in headlightless gloom
+      flat.quad(
+        [w0x, Y(0), w0z], [w1x, Y(1), w1z],
+        [w1x, Y(1) + 0.8, w1z], [w0x, Y(0) + 0.8, w0z],
+        [-px * sd, 0, -pz * sd], ZERO_UV, kerbCol);
+    }
+    // ceiling
+    flat.quad([a0x, ay + WALL, a0z], [b0x, by + WALL, b0z], [b1x, by + WALL, b1z], [a1x, ay + WALL, a1z],
+      [0, -1, 0], ZERO_UV, soffit);
+    // lamp strip down the centre, in the glow material so it self-illuminates
+    const g0 = P(0, 0), g1 = P(1, 0);
+    glow.quad(
+      [g0[0] - px * 0.5, Y(0) + WALL - 0.06, g0[1] - pz * 0.5],
+      [g0[0] + px * 0.5, Y(0) + WALL - 0.06, g0[1] + pz * 0.5],
+      [g1[0] + px * 0.5, Y(1) + WALL - 0.06, g1[1] + pz * 0.5],
+      [g1[0] - px * 0.5, Y(1) + WALL - 0.06, g1[1] - pz * 0.5],
+      [0, -1, 0], ZERO_UV, [1, 0.95, 0.8]);
+    // portal frame wherever an end node meets the surface network
+    for (const [nd, t] of [[this.city.nodes[e.a], 0], [this.city.nodes[e.b], 1]]) {
+      if (!nd.e.some((ei2) => !this.city.edges[ei2].tunnel)) continue;
+      const dir = t === 0 ? 1 : -1;
+      const [cx, cz] = P(t, 0);
+      const yb = t === 0 ? ay : by;
+      // header beam + cheeks, slightly wider than the bore
+      flat.box(cx, yb + WALL + 0.6, cz, hw * 2 + 3.2, 1.6, 1.4, Math.atan2(e.dx, e.dz), [0.4, 0.41, 0.43]);
+      for (const sd of [1, -1]) {
+        flat.box(cx + px * (hw + 0.9) * sd, yb + WALL / 2, cz + pz * (hw + 0.9) * sd,
+          1.8, WALL + 1.2, 1.4, Math.atan2(e.dx, e.dz), [0.4, 0.41, 0.43]);
+      }
+    }
+  }
+
+  meshRoad(road, walk, flat, glow, e, a, b, lod, ei) {
     if (e.elev) { this.meshViaduct(road, flat, e, a, b); return; }
-    // A bore is not a carriageway on the surface.
-    //
-    // Tunnels are kept in the graph so the network stays connected and
-    // routable, and they were drawn at ground level as ordinary road. But
-    // roadFit() deliberately does NOT clear buildings off a tunnel -- "a
-    // building above a tunnel is where buildings normally are" -- so the two
-    // decisions together painted a freeway straight through the houses above
-    // it. Measured, 46 of the 63 buildings standing in a carriageway were over
-    // a bore: the Mount Baker Ridge Tunnel under Mercer Island and SR-99. Those
-    // are the obstacles in the middle of the freeway.
-    //
-    // Nothing is lost by not drawing it. Traffic still routes through, because
-    // routing is the graph; what goes away is a road surface laid across
-    // somebody's front garden. `roadLift` skips them for the same reason -- a
-    // lift with no drawn road under it is a step into thin air.
-    if (e.tunnel) return;
+    // A bore is not a carriageway on the surface -- it is a carriageway in a
+    // BOX. citygen gives tunnel nodes a real underground profile and registers
+    // the deck with groundAt; this draws what you see driving it: deck, walls,
+    // ceiling, a lamp strip, and a portal frame at each end. Everything hangs
+    // off the same two node heights the physics uses, so the drawn bore and
+    // the driven bore cannot disagree.
+    if (e.tunnel) { this.meshTunnel(road, flat, glow, e, a, b); return; }
     const hw = e.hw;
     const U1 = (hw * 2) / ROAD_TILE;
     const px = -e.dz, pz = e.dx;

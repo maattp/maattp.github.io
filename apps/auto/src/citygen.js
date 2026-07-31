@@ -368,12 +368,97 @@ export function* cityGenerator(md) {
       + (e.len * e.hw * 2) / (CHUNK * CHUNK));
   }
 
+  // --- 3.9 Tunnel vertical profiles ---------------------------------------
+  //
+  // Tunnels have always been in the graph but never in the WORLD: their nodes
+  // carried ground heights and nothing drew a bore, so SR-99 and the Mount
+  // Baker tunnels read as surface roads through the buildings above them --
+  // or, once their drawing was suppressed, as gaps.
+  //
+  // A bore's profile: PORTALS (nodes where a tunnel edge meets a surface
+  // edge) sit at grade. Interior nodes take the graph-distance interpolation
+  // between their two nearest portals -- the chord through the hill -- pushed
+  // down to at least CLEAR below the terrain above them so the bore never
+  // breaks the surface mid-hill. Near a portal the clearance requirement is
+  // relaxed over RELAX metres, because the ground there IS the portal cut.
+  {
+    const CLEAR = 7, RELAX = 60;
+    const tunNodes = new Set();
+    for (const e of g.edges) if (e.tunnel && !e.elev) { tunNodes.add(e.a); tunNodes.add(e.b); }
+    const portals = new Set();
+    for (const ni of tunNodes) {
+      const n = g.nodes[ni];
+      if (n.e.some((ei) => !g.edges[ei].tunnel)) portals.add(ni);
+    }
+    // multi-source Dijkstra over tunnel edges, tracking the two nearest
+    // DISTINCT portals per node
+    const best = new Map();   // ni -> [{p, d}, {p, d}]
+    const heap = [];
+    for (const p of portals) { heap.push([0, p, p]); }
+    heap.sort((a, b) => a[0] - b[0]);
+    const seen = new Set();
+    while (heap.length) {
+      heap.sort((a, b) => a[0] - b[0]);
+      const [d, ni, src] = heap.shift();
+      const key = ni + '|' + src;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      let b2 = best.get(ni);
+      if (!b2) best.set(ni, (b2 = []));
+      if (!b2.some((x) => x.p === src)) {
+        if (b2.length < 2) b2.push({ p: src, d });
+        else continue;
+      }
+      for (const ei of g.nodes[ni].e) {
+        const e = g.edges[ei];
+        if (!e.tunnel) continue;
+        const other = e.a === ni ? e.b : e.a;
+        heap.push([d + e.len, other, src]);
+      }
+    }
+    let profiled = 0, worstDrop = 0;
+    for (const ni of tunNodes) {
+      if (portals.has(ni)) continue;         // portals stay at grade
+      const n = g.nodes[ni];
+      const b2 = best.get(ni) || [];
+      let y;
+      if (b2.length >= 2) {
+        const [A, B] = b2;
+        const ya = g.nodes[A.p].y, yb = g.nodes[B.p].y;
+        y = ya + (yb - ya) * (A.d / (A.d + B.d));
+      } else if (b2.length === 1) {
+        // one reachable portal (a stub clipped by the map edge): shallow dive
+        y = g.nodes[b2[0].p].y - Math.min(12, b2[0].d * 0.05);
+      } else {
+        continue;                            // isolated fragment: leave as-is
+      }
+      const dPortal = b2.length ? b2[0].d : 1e9;
+      const relax = clamp(dPortal / RELAX, 0, 1);
+      const cap = n.y - CLEAR * relax;       // n.y is the reheighted terrain
+      const yFinal = Math.min(y, cap);
+      if (n.y - yFinal > worstDrop) worstDrop = n.y - yFinal;
+      n.y = yFinal;
+      n.tunnel = true;
+      profiled++;
+    }
+    cityStats.tunnelNodes = profiled;
+    cityStats.tunnelWorstDepth = +worstDrop.toFixed(1);
+  }
+
   // --- 4. Elevated deck surfaces for vehicle physics -----------------------
+  //
+  // ...and tunnel decks, which are the same contract from below: a drivable
+  // surface at the edge's own heights that groundAt's nearest-deck rule picks
+  // when you are down there and ignores when you are on the street above.
   const surfaces = [];
+  const isPortal = (ni) => g.nodes[ni].e.some((ei) => !g.edges[ei].tunnel);
   for (const e of g.edges) {
-    if (!e.elev) continue;
+    if (!e.elev && !e.tunnel) continue;
     const a = g.nodes[e.a], b = g.nodes[e.b];
-    surfaces.push({ ax: a.x, az: a.z, ay: a.y, bx: b.x, bz: b.z, by: b.y, hw: e.hw + 1.5 });
+    surfaces.push({ ax: a.x, az: a.z, ay: a.y, bx: b.x, bz: b.z, by: b.y, hw: e.hw + 1.5,
+      tun: !!e.tunnel,
+      // a MOUTH is the first span of a bore -- one end is a portal node
+      mouth: !!e.tunnel && (isPortal(e.a) || isPortal(e.b)) });
   }
   const surfCell = 120;
   const surfGrid = new Map();
@@ -614,7 +699,22 @@ export function* cityGenerator(md) {
             if (y > best) best = y;
           } else if (y <= curY + DECK_REACH) {
             const dd = Math.abs(y - curY);
-            if (dd < bestD) { bestD = dd; best = y; }
+            // A bore is entered at its MOUTH, and no distance heuristic can
+            // say so: the portal bank rises in frame-legal steps, so terrain
+            // recaptures the tracker every frame and a 3 km ride through
+            // SR-99 measured 0 m below ground -- twice, under two different
+            // tie-break rules. The data has to say it instead. Over a mouth
+            // span, anyone at portal grade is going IN: terrain stops being a
+            // floor (the portal face is a wall). Over deeper spans, whoever
+            // is below the midpoint between deck and ground above is in the
+            // tunnel and keeps it; whoever is above is on the street and
+            // never sees the bore.
+            const inBore = s.tun && (s.mouth
+              ? curY < Math.max(s.ay, s.by) + 1.6
+              : curY < (terr + y) / 2);
+            if (inBore) {
+              if (best === terr || dd < bestD) { bestD = dd; best = y; }
+            } else if (dd < bestD) { bestD = dd; best = y; }
           }
         }
       }
