@@ -862,7 +862,7 @@ export function animateWalk(h, amp, dt, speed) {
     b[B.chest].rotation.x = h.lean + br * 0.02;
     b[B.hips].position.x = handed * 0.016 + Math.sin(h.t * 0.5) * 0.010;
     b[B.hips].rotation.z = handed * 0.035 + Math.sin(h.t * 0.5) * 0.02;
-    b[B.hips].rotation.y = handed * 0.06;
+    b[B.hips].rotation.y = handed * 0.08;
     // one foot slightly ahead of the other, knees soft rather than locked
     b[B.thighL].rotation.x = handed * 0.055 - 0.02;
     b[B.thighR].rotation.x = -handed * 0.055 - 0.02;
@@ -870,18 +870,14 @@ export function animateWalk(h, amp, dt, speed) {
     b[B.kneeR].rotation.x = 0.06 + handed * 0.02;
     b[B.footL].rotation.x = -(b[B.thighL].rotation.x + b[B.kneeL].rotation.x);
     b[B.footR].rotation.x = -(b[B.thighR].rotation.x + b[B.kneeR].rotation.x);
-    b[B.shoulderL].rotation.x = br * 0.03 + handed * 0.02;
-    b[B.shoulderR].rotation.x = -br * 0.03 - handed * 0.02;
-    b[B.elbowL].rotation.x = -0.44 + br * 0.02;
-    b[B.elbowR].rotation.x = -0.22 - br * 0.02;
-    b[B.shoulderL].rotation.z = -0.12;
-    b[B.shoulderR].rotation.z = 0.16;
-    b[B.shoulderL].rotation.y = 0.10;
-    b[B.hips].rotation.y = handed * 0.08;
     b[B.shoulderL].rotation.x = br * 0.03 + handed * 0.07;
     b[B.shoulderR].rotation.x = -br * 0.03 - handed * 0.07;
     b[B.shoulderL].rotation.y = handed * 0.05;
     b[B.shoulderR].rotation.y = handed * 0.05;
+    b[B.shoulderL].rotation.z = -0.12;
+    b[B.shoulderR].rotation.z = 0.16;
+    b[B.elbowL].rotation.x = -0.44 + br * 0.02;
+    b[B.elbowR].rotation.x = -0.22 - br * 0.02;
     b[B.head].rotation.z = handed * 0.02;
   }
   h.bob = 0;

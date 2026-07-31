@@ -18,7 +18,7 @@ import { spawn } from 'node:child_process';
 import { writeFileSync, mkdirSync, rmSync } from 'node:fs';
 import { setTimeout as sleep } from 'node:timers/promises';
 
-const PORT = 9226;
+const PORT = 9229;
 const CHROME = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
 const HTTP_PORT = process.env.AUTO_HTTP_PORT || 8000;
 const TAG = process.argv[2] || 'now';
