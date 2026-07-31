@@ -52,6 +52,15 @@ const ROAD_TILE = 9;
 // corner slabs were whatever size that corner happened to be. The asphalt was
 // given a fixed tile long ago for exactly this reason; the pavement never was.
 const WALK_TILE = 4;
+
+// Massing-box wall tints by building style; see the massing branch in
+// buildChunkStep. Module scope alongside the other style tables.
+const MASS_TINT = {
+  house: [0.66, 0.61, 0.54], brick: [0.55, 0.42, 0.36],
+  lowrise: [0.58, 0.58, 0.60], midrise: [0.56, 0.57, 0.60],
+  industrial: [0.50, 0.52, 0.55], campus: [0.58, 0.55, 0.50],
+  tower: [0.52, 0.55, 0.60],
+};
 // Paint sits just proud of the asphalt; any less and it z-fights at distance.
 const MARK_Y = ROAD_LIFT + 0.012;
 // `flat` has no map, but Builder.quad indexes the uv array unconditionally.
@@ -547,7 +556,12 @@ export class World {
         const key = this.city.chunkKey(cx, cz);
         want.add(key);
         const have = this.chunks.get(key);
-        const lod = (r <= NEAR_R && !this.flyLod) ? 1 : 0;
+        // The 3x3 directly under the player stays FULL DETAIL even in the
+        // flying LOD: v58 boxed the whole near ring and the closest buildings
+        // became the crudest thing on screen. Three detailed chunks per row
+        // crossed is a build rate the streamer holds at 400 km/h -- it was
+        // the full 5x5 it could not.
+        const lod = (r <= NEAR_R && (!this.flyLod || r <= 1)) ? 1 : 0;
         if (have && have.lod === lod) continue;
         if (!have) this.chunks.set(key, { key, cx, cz, lod: -1, group: null, dist: dx * dx + dz * dz });
         const c = this.chunks.get(key);
@@ -716,15 +730,28 @@ export class World {
       // the whole housing stock materialised at the 800 m detail ring -- the
       // pop-in. A box at 800-1600 m is indistinguishable from the real
       // building at that size; when the chunk promotes, the swap reads as
-      // detail arriving, not a city appearing. ~12 triangles a building, one
-      // draw a chunk.
+      // detail arriving, not a city appearing. ~18 triangles a building
+      // (walls plus the roof slab), one draw a chunk.
       since = 0;
+      // Tinted by STYLE with a darker roof slab, because one pale beige for
+      // every box read as a city of white blocks -- from the air, wall tone
+      // and a roof line are most of what says "building".
+      //
+      // Builder.box anchors y at the BASE (by..by+h) -- review caught that
+      // these walls had been passed a CENTRE y since v56, floating half their
+      // height with the new roof slab buried inside them. The wall now starts
+      // half a metre into the ground -- deliberately LESS than the real
+      // mesher's 2 m embed: a massing box lives 800 m away where a slope gap
+      // under a corner is invisible, and the shallower skirt is cheaper.
       for (const bi of ch.buildings) {
         const bd = city.buildings[bi];
         if (bd.h >= 16 || bd.w * bd.d >= 1400) continue;   // skyline draws these
-        const t = 0.5 + hash2(bd.seed, 3) * 0.18;
-        flat.box(bd.x, bd.y + bd.h / 2, bd.z, bd.w, bd.h, bd.d, bd.rot,
-          [0.60 * t + 0.28, 0.58 * t + 0.27, 0.55 * t + 0.26], { ao: 0.35 });
+        const base = MASS_TINT[bd.style] || MASS_TINT.lowrise;
+        const t = 0.86 + hash2(bd.seed, 3) * 0.28;
+        const wall = [base[0] * t, base[1] * t, base[2] * t];
+        flat.box(bd.x, bd.y - 0.5, bd.z, bd.w, bd.h + 0.5, bd.d, bd.rot, wall, { ao: 0.35, top: false });
+        flat.box(bd.x, bd.y + bd.h, bd.z, bd.w * 0.96, 0.24, bd.d * 0.96, bd.rot,
+          [wall[0] * 0.45, wall[1] * 0.45, wall[2] * 0.47]);
         if (++since >= 40) { since = 0; yield; }
       }
       yield;
