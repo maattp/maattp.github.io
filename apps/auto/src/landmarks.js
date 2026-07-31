@@ -399,11 +399,19 @@ function aquarium() {
  */
 function airport() {
   const g = new THREE.Group();
-  const asphalt = M(0x3f4246);
+  const asphalt = M(0x53565b);
   const paintW = new THREE.MeshBasicMaterial({ color: 0xe8e8e2 });
-  const RY = -0.52;
-  const c = Math.cos(RY), sn = Math.sin(RY);
-  const off = (dx, dz) => [dx * c - dz * sn, dx * sn + dz * c];
+  // Axes SPELLED OUT, because two rotation conventions meet here and they
+  // disagree in the sign of x. landmark box() rotates a THREE mesh: its
+  // rotation.y = t maps local +z to (sin t, cos t). build.js's box() maps
+  // local +z to (-sin t, cos t). A helper derived from the wrong one laid the
+  // whole 3 km runway along bearing 210 instead of 150 -- present, raycastable,
+  // and buried under the un-graded hillside 60 degrees away from its markings.
+  // ALONG is the runway direction (bearing 150), ACROSS is 90 right of it.
+  const RY = 0.52;                       // THREE rotation.y: sin/cos = (0.497, 0.868)
+  const ALONG = [Math.sin(RY), Math.cos(RY)];
+  const ACROSS = [Math.cos(RY), -Math.sin(RY)];
+  const off = (dx, dz) => [dx * ACROSS[0] + dz * ALONG[0], dx * ACROSS[1] + dz * ALONG[1]];
   // The landmark's origin sits at the terrain height of ONE point, and the
   // field undulates a metre and a half over its 3 km. A single flat slab is
   // therefore always part buried and part plinth -- both were built and both

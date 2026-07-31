@@ -445,11 +445,12 @@ function installHeightFog() {
   {
     const ap = (G.LANDMARKS || []).find((l) => l.kind === 'airport');
     if (ap) {
-      const RY = -0.52, c = Math.cos(RY), sn = Math.sin(RY);
-      const off = (dx, dz) => [ap.x + dx * c - dz * sn, ap.z + dx * sn + dz * c];
+      // Same explicit axes as the landmark: ALONG = runway bearing 150.
+      const AL = [Math.sin(0.52), Math.cos(0.52)], AC = [Math.cos(0.52), -Math.sin(0.52)];
+      const off = (dx, dz) => [ap.x + dx * AC[0] + dz * AL[0], ap.z + dx * AC[1] + dz * AL[1]];
       for (let i = 0; i < 3; i++) {
         const [px, pz] = off(-195, -60 + i * 95);
-        const v = traffic.spawnAt(px, pz, RY + Math.PI / 2, 'plane', 0xdfe3e6, 'apron');
+        const v = traffic.spawnAt(px, pz, 0.52, 'plane', 0xdfe3e6, 'apron');
         v.vLong = 0;
       }
     }

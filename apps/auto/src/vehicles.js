@@ -2878,11 +2878,14 @@ function buildPlane(spec, paint, trim, matte) {
   // one continuous span: two halves plus a root section bridging the cabin
   // roof -- without the root the wing floats as two detached planks
   for (const sd of [-1, 1]) {
-    paint.box(sd * 3.30, 2.21, 1.60, 4.6, 0.18, 1.50, 0, WHITE);
+    paint.box(sd * 3.30, 2.13, 1.60, 4.6, 0.18, 1.50, 0, WHITE);
   }
-  paint.box(0, 2.19, 1.60, 2.1, 0.22, 1.56, 0, WHITE);
+  paint.box(0, 2.09, 1.60, 2.1, 0.22, 1.56, 0, WHITE);
   // tail: fin and stabiliser
-  paint.box(0, 1.92, -half + 0.42, 0.12, 1.12, 0.80, 0, WHITE);
+  // stepped taper: two boxes, the upper shorter and set back, which is as
+  // close to a swept fin as an axis-aligned box gets
+  paint.box(0, 1.50, -half + 0.50, 0.12, 0.62, 0.95, 0, WHITE);
+  paint.box(0, 2.10, -half + 0.34, 0.10, 0.55, 0.60, 0, WHITE);
   paint.box(0, 1.52, -half + 0.40, 3.0, 0.10, 0.80, 0, WHITE);
   // windscreen and side glazing
   trim.loft([
@@ -2891,8 +2894,8 @@ function buildPlane(spec, paint, trim, matte) {
     ring(half - 2.95, 0.64, 0.36, 1.76),
   ], [0.16, 0.2, 0.24], { capStart: true, capEnd: true });
   // prop: two blades + spinner, in trim so main.js can spin the group later
-  trim.box(0, 1.12, half + 0.30, 0.13, 1.62, 0.06, 0, [0.12, 0.12, 0.13]);
-  trim.box(0, 1.12, half + 0.30, 1.62, 0.13, 0.06, 0, [0.12, 0.12, 0.13]);
+  matte.box(0, 1.12, half + 0.30, 0.13, 1.25, 0.06, 0, [0.09, 0.09, 0.10]);
+  matte.box(0, 1.12, half + 0.30, 1.25, 0.13, 0.06, 0, [0.09, 0.09, 0.10]);
   paint.loft([
     ring(half + 0.02, 0.17, 0.17, 1.12),
     ring(half + 0.24, 0.10, 0.10, 1.12),

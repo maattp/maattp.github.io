@@ -1791,12 +1791,14 @@ export class World {
   inAirfield(x, z) {
     if (this._airfield === undefined) {
       const ap = (G.LANDMARKS || []).find((l) => l.kind === 'airport');
-      this._airfield = ap ? { x: ap.x, z: ap.z, c: Math.cos(-0.52), s: Math.sin(-0.52) } : null;
+      // explicit runway axes (bearing 150): along (0.497, 0.868), across
+      // (0.868, -0.497) -- see the landmark for why no trig shorthand
+      this._airfield = ap ? { x: ap.x, z: ap.z } : null;
     }
     const a = this._airfield;
     if (!a) return false;
     const dx = x - a.x, dz = z - a.z;
-    const lx = dx * a.c - dz * a.s, lz = dx * a.s + dz * a.c;
+    const lx = dx * 0.868 - dz * 0.497, lz = dx * 0.497 + dz * 0.868;
     return Math.abs(lx) < 520 && Math.abs(lz) < 1680;
   }
 
