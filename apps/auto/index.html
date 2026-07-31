@@ -414,13 +414,17 @@
     <div id="loadTrack"><div id="loadBar"></div></div>
     <div id="loadMsg">Starting up</div>
     <!-- Bumped once per change, in step with CACHE in sw.js. See CLAUDE.md. -->
-    <div id="build">v53</div>
+    <div id="build">v54</div>
     <div id="attrib">Map data © OpenStreetMap contributors (ODbL) · elevation USGS 3DEP</div>
   </div>
 
   <div id="rotate">
     <div style="font-size:34px">📱↻</div>
     <div>Rotate your device sideways to play.</div>
+    <!-- Filled from #build at boot: the version must be readable in portrait
+         too, because "which build are you on" is asked of a phone being held
+         upright, and the rotate overlay covers the launch screen's badge. -->
+    <div id="rotateBuild" style="font-size:11px;letter-spacing:.18em;opacity:.4"></div>
   </div>
 </div>
 
@@ -435,6 +439,8 @@
       // reads as no update at all. And check again whenever the app comes
       // back to the foreground, because an iOS PWA can sit resident for days
       // without a fresh launch.
+      const rb = document.getElementById('rotateBuild');
+      if (rb) rb.textContent = document.getElementById('build').textContent;
       navigator.serviceWorker.register('sw.js', { updateViaCache: 'none' })
         .then((reg) => {
           document.addEventListener('visibilitychange', () => {
