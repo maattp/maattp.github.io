@@ -1782,6 +1782,24 @@ export class World {
    * ask for the LOCAL surface. A fixed 5.5 m bridge floor put decks under the
    * lakes they crossed by assuming otherwise.
    */
+  /**
+   * Inside the airfield's movement area? Boeing Field's ground is grass in
+   * the green mask, so the tree scatter plants a forest through the runway
+   * the landmark lays on top of it. One rotated rectangle over the
+   * runway/taxiway/apron, sized to the landmark's own layout constants.
+   */
+  inAirfield(x, z) {
+    if (this._airfield === undefined) {
+      const ap = (G.LANDMARKS || []).find((l) => l.kind === 'airport');
+      this._airfield = ap ? { x: ap.x, z: ap.z, c: Math.cos(-0.52), s: Math.sin(-0.52) } : null;
+    }
+    const a = this._airfield;
+    if (!a) return false;
+    const dx = x - a.x, dz = z - a.z;
+    const lx = dx * a.c - dz * a.s, lz = dx * a.s + dz * a.c;
+    return Math.abs(lx) < 520 && Math.abs(lz) < 1680;
+  }
+
   waterLevelAt(x, z) {
     for (const l of (this.lakeSpecs || [])) {
       if (x >= l.x0 && x <= l.x1 && z >= l.z0 && z <= l.z1) return l.level;
@@ -1987,6 +2005,7 @@ export class World {
       // middle of the road. Nothing else filters this: `inPark` knows about
       // grass, not about tarmac.
       if (this.city.onRoad(x, z, 2.5)) { treeSkip++; continue; }
+      if (this.inAirfield(x, z)) { treeSkip++; continue; }
       // ...nor inside a building. Parks and footprints come from two different
       // OSM layers and they overlap: greenspace is mapped right up to and over
       // the museum, pavilion or house standing in it, so `inPark` happily says

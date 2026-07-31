@@ -15,7 +15,7 @@
 
 import { clamp } from './util.js';
 
-export const MAP_HALF = 8000; // world spans -8000..8000 on both axes (16 km)
+export const MAP_HALF = 13000; // world spans -13000..13000 on both axes (26 km)
 
 export const LAT0 = 47.61134;
 export const LON0 = -122.33790;

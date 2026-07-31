@@ -11,7 +11,7 @@
 import * as THREE from './three.js';
 import { Builder } from './build.js';
 import { makeHumanoid, buildCharacter, BONES } from './peds.js';
-import { clamp, lerp, hash2 } from './util.js';
+import { clamp, lerp, hash2, damp } from './util.js';
 import * as G from './geo.js';
 
 const TYRE = [0.05, 0.05, 0.055];
@@ -83,6 +83,11 @@ const STEER_BITE = 1.25;
 const ARCADE_BRAKE = 2.2;
 
 export const TYPES = {
+  // Boeing Field's resident: a high-wing single-prop trainer. `plane: true`
+  // sends update() to the flight model; wid is the FUSELAGE (collision), the
+  // 11 m wingspan lives in the builder. Speeds in kph as everywhere: rotates
+  // ~100, cruises ~190.
+  plane: deriveSpec({ wheelbase: 4.6, len: 8.3, wid: 2.0, wheelR: 0.30, sill: 0.55, belt: 1.35, roof: 2.10, cab: [0.6, 0.3], hand: 'plane', plane: true, mass: 0.8, acc: 5.0, topKph: 190, brakeM: 60, latG: 0.7 }),
   sedan: deriveSpec({ wheelbase: 2.98,len: 5.06, wid: 1.90, wheelR: 0.34, sill: 0.30, belt: 1.06, roof: 1.50, cab: [-0.26, 0.10], hand: 'sedan', mass: 1.0, acc: 4.1, topKph: 205, brakeM: 40, latG: 0.88 }),
   hatch: deriveSpec({ wheelbase: 2.6,len: 4.10, wid: 1.76, wheelR: 0.31, sill: 0.29, belt: 0.96, roof: 1.50, cab: [-0.30, 0.16], mass: 0.9, acc: 3.6, topKph: 185, brakeM: 41, latG: 0.85 }),
   compact: deriveSpec({ wheelbase: 2.42,len: 3.74, wid: 1.68, wheelR: 0.29, sill: 0.28, belt: 0.94, roof: 1.48, cab: [-0.28, 0.15], mass: 0.85, acc: 3.0, topKph: 170, brakeM: 43, latG: 0.83 }),
@@ -2838,8 +2843,75 @@ function buildGeneric(spec, paint, trim, matte) {
   return wheels;
 }
 
+/**
+ * High-wing single-prop trainer, nose at +z. Wingspan 11 m against a 2 m
+ * fuselage: `wid` stays the fuselage so street-scale collision works, and the
+ * wings are simply drawn wider. Gear is drawn into `matte` rather than
+ * returned as wheels -- aircraft wheels neither steer nor need articulation,
+ * and an empty wheel list keeps setDetailed() a no-op.
+ */
+function buildPlane(spec, paint, trim, matte) {
+  const L = spec.len, half = L / 2;
+  const ring = (z, w, h, yc) => ({
+    z, pts: (() => {
+      const P = [];
+      const N = 10;
+      for (let i = 0; i <= N; i++) {
+        const a = (i / N) * Math.PI * 2;
+        P.push([Math.cos(a) * w, yc + Math.sin(a) * h]);
+      }
+      return P;
+    })(),
+  });
+  // fuselage: spinner, cowl, cabin, tapering tailcone
+  paint.loft([
+    ring(half, 0.16, 0.16, 1.15),
+    ring(half - 0.35, 0.52, 0.50, 1.10),
+    ring(half - 1.15, 0.62, 0.66, 1.18),
+    ring(half - 2.0, 0.66, 0.86, 1.32),   // windscreen / cabin
+    ring(half - 3.1, 0.62, 0.80, 1.30),
+    ring(half - 4.6, 0.40, 0.46, 1.28),
+    ring(-half + 1.2, 0.24, 0.28, 1.34),
+    ring(-half + 0.2, 0.14, 0.34, 1.46),
+  ], WHITE, { capStart: true, capEnd: true });
+  // wing: one slab across the top, slight dihedral via two halves
+  // one continuous span: two halves plus a root section bridging the cabin
+  // roof -- without the root the wing floats as two detached planks
+  for (const sd of [-1, 1]) {
+    paint.box(sd * 3.30, 2.21, 1.60, 4.6, 0.18, 1.50, 0, WHITE);
+  }
+  paint.box(0, 2.19, 1.60, 2.1, 0.22, 1.56, 0, WHITE);
+  // tail: fin and stabiliser
+  paint.box(0, 1.92, -half + 0.42, 0.12, 1.12, 0.80, 0, WHITE);
+  paint.box(0, 1.52, -half + 0.40, 3.0, 0.10, 0.80, 0, WHITE);
+  // windscreen and side glazing
+  trim.loft([
+    ring(half - 1.30, 0.60, 0.34, 1.74),
+    ring(half - 2.05, 0.68, 0.40, 1.80),
+    ring(half - 2.95, 0.64, 0.36, 1.76),
+  ], [0.16, 0.2, 0.24], { capStart: true, capEnd: true });
+  // prop: two blades + spinner, in trim so main.js can spin the group later
+  trim.box(0, 1.12, half + 0.30, 0.13, 1.62, 0.06, 0, [0.12, 0.12, 0.13]);
+  trim.box(0, 1.12, half + 0.30, 1.62, 0.13, 0.06, 0, [0.12, 0.12, 0.13]);
+  paint.loft([
+    ring(half + 0.02, 0.17, 0.17, 1.12),
+    ring(half + 0.24, 0.10, 0.10, 1.12),
+    ring(half + 0.36, 0.03, 0.03, 1.12),
+  ], WHITE, { capEnd: true });
+  // fixed gear: two mains + nosewheel, drawn as matte cylinders
+  const gearWheel = (x, z) => {
+    matte.box(x, 0.30, z, 0.14, 0.60, 0.60, 0, [0.10, 0.10, 0.11]);
+    matte.box(x * 0.55, 0.62, z, Math.abs(x) * 0.95, 0.07, 0.16, 0, [0.25, 0.26, 0.27]);
+  };
+  gearWheel(-1.15, 0.35); gearWheel(1.15, 0.35);
+  matte.box(0, 0.30, half - 0.75, 0.13, 0.55, 0.55, 0, [0.10, 0.10, 0.11]);
+  matte.box(0, 0.68, half - 0.75, 0.08, 0.5, 0.08, 0, [0.25, 0.26, 0.27]);
+  return [];
+}
+
 /** Types with their own authored builder, keyed by `spec.hand`. */
 const HAND_BUILT = {
+  plane: buildPlane,
   sports: buildSports, muscle: buildMuscle,
   sedan: buildSedan, suv: buildSuv, pickup: buildPickup,
   convertible: buildConvertible, cruiser: buildCruiser, sportbike: buildSportbike,
@@ -3036,9 +3108,112 @@ export class Vehicle {
     return { x: Math.sin(this.heading), z: Math.cos(this.heading) };
   }
 
+  /**
+   * Arcade flight. The bar is the rest of the game's: responsive first,
+   * plausible second. Ground roll steers like a taxiing aircraft, rotation
+   * happens at VR with the stick back, and in the air the stick banks to
+   * turn and pitches to climb -- turn rate follows bank the way a
+   * coordinated turn does, but nothing here asks the wings for lift they
+   * cannot give except the stall, which mushes rather than spins.
+   *
+   * Same conventions as everything else: heading is rotation.y, forward is
+   * (sin h, cos h), +steer turns LEFT. Pull the stick back (input.pitch > 0)
+   * to climb, aviation-style -- the same axis that walks the player backward,
+   * which nobody notices because flying replaces walking wholesale.
+   */
+  updatePlane(dt, input) {
+    const spec = this.spec;
+    const throttle = input.throttle || 0;
+    const brake = input.brake || 0;
+    const steerIn = clamp(input.steer || 0, -1, 1);
+    const pitchIn = clamp(input.pitch || 0, -1, 1);
+    // Each field guarded on ITS OWN. The constructor already defines vy for
+    // the falling code, so a single vy-keyed guard never ran and rollA went
+    // into damp() undefined -- NaN heading, a plane that climbed straight
+    // ahead forever while x and z dissolved.
+    if (this.rollA === undefined) this.rollA = 0;
+    if (this.pitchA === undefined) this.pitchA = 0;
+    if (this.vy === undefined) this.vy = 0;
+    if (this.airborne === undefined) this.airborne = false;
+
+    this.lift = this.city.roadLift(this.x, this.z);
+    const ground = this.city.groundAt(this.x, this.z, this.y + 1.2, this.lift);
+    const top = spec.fadeTop;
+    const VR = 27;                       // rotation speed, m/s (~100 kph)
+    const STALL = 21;
+
+    // airspeed along the nose. Diving trades height for speed and climbing
+    // pays for it, which is most of what makes flight feel like flight.
+    let acc = 0;
+    if (throttle > 0) acc += spec.acc * throttle * (1 - clamp(this.vLong / top, 0, 1));
+    if (brake > 0) acc -= (this.airborne ? 2.2 : spec.brakeA * 0.6) * brake;
+    acc -= this.vLong * Math.abs(this.vLong) * DRAG * 2.2;   // draggier than a car
+    if (!this.airborne) acc -= this.vLong * ROLL * 1.6;      // rolling on grass/tarmac
+    if (this.airborne) acc -= this.vy * 0.55;                // climb bleeds, dive builds
+    this.vLong = Math.max(0, this.vLong + acc * dt);
+
+    if (!this.airborne) {
+      // ground roll: nosewheel steering, authority falling with speed
+      const yawRate = clamp(this.vLong, 0, 14) / 9 * steerIn * 0.55;
+      this.heading += yawRate * dt;
+      this.rollA = damp(this.rollA, 0, 6, dt);
+      this.pitchA = damp(this.pitchA, 0, 6, dt);
+      this.y = ground;
+      this.vy = 0;
+      if (this.vLong > VR && pitchIn > 0.25) {
+        this.airborne = true;
+        this.vy = 3.5;
+      }
+    } else {
+      // banked turn: the bank IS the turn, like a car's steer is its yaw
+      this.rollA = damp(this.rollA, -steerIn * 0.72, 4.5, dt);
+      // ~30 deg/s at full bank. 1.6 here was a 67 deg/s snap-turn -- a probe
+      // measured 335 degrees in a five-second bank, which is a dogfighter, not
+      // a trainer over a city.
+      this.heading += -this.rollA * 0.9 * clamp(this.vLong / 34, 0.3, 1.2) * dt * 0.75;
+      // pitch: stick back climbs. Climb rate scales with excess airspeed, and
+      // below the stall the nose mushes down no matter what you ask for.
+      const excess = clamp((this.vLong - STALL) / (top - STALL), 0, 1);
+      let vyT = pitchIn * (4 + 14 * excess);
+      if (this.vLong < STALL) vyT = Math.min(vyT, -6 * (1 - this.vLong / STALL) * 3);
+      // soft ceiling: the air runs out, gently
+      if (this.y > 420) vyT = Math.min(vyT, (460 - this.y) * 0.08);
+      this.vy = damp(this.vy, vyT, 2.2, dt);
+      this.pitchA = damp(this.pitchA, Math.atan2(this.vy, Math.max(this.vLong, 8)), 5, dt);
+      this.y += this.vy * dt;
+
+      if (this.y <= ground + 0.05) {
+        // touchdown. A sink rate a real trainer's gear takes is fine; past it
+        // the airframe pays, scaled like a crash.
+        this.y = ground;
+        this.airborne = false;
+        if (this.vy < -7) this.damage(Math.min(70, (-this.vy - 7) * 9), true);
+        else if (this.vy < -3.5) this.damage((-this.vy - 3.5) * 3, true);
+        this.vy = 0;
+      }
+    }
+
+    // integrate position along the nose
+    const f = this.forward;
+    this.x += f.x * this.vLong * dt;
+    this.z += f.z * this.vLong * dt;
+
+    this.group.position.set(this.x, this.y + (spec.wheelR || 0.3) + 0.25, this.z);
+    this.group.rotation.set(0, this.heading, 0);
+    // nose attitude on the tilt child, like a bike's lean
+    if (this.tilt) {
+      this.tilt.rotation.x = -this.pitchA;
+      this.tilt.rotation.z = this.rollA;
+    }
+    if (this.prop) this.prop.rotation.z += (2 + this.vLong * 0.5 + throttle * 20) * dt;
+    this.latAcc = 0;
+    this.skid = 0;
+  }
+
   update(dt, input) {
     const spec = this.spec;
     if (this.hitCd > 0) this.hitCd -= dt;
+    if (spec.plane) { this.updatePlane(dt, input); return; }
     const throttle = input.throttle || 0;
     const brake = input.brake || 0;
     const hand = input.handbrake || 0;

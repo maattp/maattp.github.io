@@ -377,7 +377,9 @@ export class TrafficSystem {
       const v = this.cars[i];
       if (v === player.vehicle) continue;
       const d2 = dist2(v.x, v.z, px, pz);
-      if (d2 > DESPAWN * DESPAWN && v.mode !== 'parked') { this.remove(v); continue; }
+      // 'apron' is the airport's planes: player-flyable set dressing that has
+      // to still be there when you drive back an hour later.
+      if (d2 > DESPAWN * DESPAWN && v.mode !== 'parked' && v.mode !== 'apron') { this.remove(v); continue; }
       if (v.mode === 'police' && game.wanted === 0 && d2 > 140 * 140) { this.remove(v); continue; }
 
       if (v.mode === 'parked') {

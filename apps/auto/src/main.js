@@ -438,6 +438,22 @@ function installHeightFog() {
   controls = new Controls(document.getElementById('app'));
   player = new Player(scene, city, game, world);
   traffic = new TrafficSystem(scene, city, game);
+  // Boeing Field's apron: three trainers, parked nose-out along the taxiway
+  // side, matching the landmark's own layout constants (bearing -0.52, apron
+  // centred 260 m east, 120 m south of the ARP). Mode 'apron' so they never
+  // despawn -- flying one away and driving back must find the others waiting.
+  {
+    const ap = (G.LANDMARKS || []).find((l) => l.kind === 'airport');
+    if (ap) {
+      const RY = -0.52, c = Math.cos(RY), sn = Math.sin(RY);
+      const off = (dx, dz) => [ap.x + dx * c - dz * sn, ap.z + dx * sn + dz * c];
+      for (let i = 0; i < 3; i++) {
+        const [px, pz] = off(-195, -60 + i * 95);
+        const v = traffic.spawnAt(px, pz, RY + Math.PI / 2, 'plane', 0xdfe3e6, 'apron');
+        v.vLong = 0;
+      }
+    }
+  }
   peds = new PedSystem(scene, city, game);
   fx = new Effects(scene, tx);
   const mapCanvas = buildMapCanvas(city);
