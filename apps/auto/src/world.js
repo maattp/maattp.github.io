@@ -995,75 +995,98 @@ export class World {
     const ay = a.y + DECK, by = b.y + DECK;
     const P = (t, o) => [lerp(a.x, b.x, t) + px * o, lerp(a.z, b.z, t) + pz * o];
     const Y = (t) => lerp(ay, by, t);
-    // The INTERIOR is drawn ENTIRELY in the unlit glow material, with its
-    // light baked into vertex colours: bright pools under the lamps fading
-    // between them, walls lighter than the ceiling, a warm strip overhead.
-    // MeshBasicMaterial owes the sun nothing, so the bore reads the same at
-    // any depth, which is what a lit tunnel does.
-    const pool = (t) => 0.72 + 0.28 * Math.cos((lerp(0, e.len, t) / 18) * Math.PI * 2);
+    const conc = [0.42, 0.43, 0.45];
+
+    // A BORE IS ONLY A BORE WHERE THE GROUND COVERS IT.
+    //
+    // Approaching a portal the road is in an open CUT -- retaining walls, sky
+    // overhead -- and the portal face is the wall of earth where the hill
+    // finally closes over the carriageway. Drawing the closed box the whole
+    // length put a lidded concrete tube standing on flat ground at the north
+    // SR-99 portal: no cut, no mouth, nothing to drive into. So each segment
+    // asks the terrain what it is.
     const seg = Math.max(2, Math.ceil(e.len / 9));
+    const covered = (t) => {
+      const [cx, cz] = P(t, 0);
+      return G.terrainHeight(cx, cz) - (Y(t) + WALL) > 0.4;
+    };
+
+    const pool = (t) => 0.72 + 0.28 * Math.cos((lerp(0, e.len, t) / 18) * Math.PI * 2);
     for (let i = 0; i < seg; i++) {
       const t0 = i / seg, t1 = (i + 1) / seg;
-      const l0 = pool(t0), l1 = pool(t1);
-      const deckC0 = [0.34 * l0, 0.34 * l0, 0.36 * l0];
-      const deckC1 = [0.34 * l1, 0.34 * l1, 0.36 * l1];
+      const tm = (t0 + t1) / 2;
+      const bur = covered(tm);
+      const l0 = bur ? pool(t0) : 1, l1 = bur ? pool(t1) : 1;
       const [a0x, a0z] = P(t0, hw), [a1x, a1z] = P(t0, -hw);
       const [b0x, b0z] = P(t1, hw), [b1x, b1z] = P(t1, -hw);
-      glow.quad([a0x, Y(t0), a0z], [a1x, Y(t0), a1z], [b1x, Y(t1), b1z], [b0x, Y(t1), b0z],
-        [0, 1, 0], ZERO_UV, [deckC0, deckC0, deckC1, deckC1]);
-      // centreline dash, every other segment
-      if (i % 2 === 0) {
-        const [c0x, c0z] = P(t0, 0.10), [c1x, c1z] = P(t0 + (t1 - t0) * 0.55, 0.10);
-        const [d0x, d0z] = P(t0, -0.10), [d1x, d1z] = P(t0 + (t1 - t0) * 0.55, -0.10);
-        glow.quad([c0x, Y(t0) + 0.02, c0z], [d0x, Y(t0) + 0.02, d0z],
-          [d1x, Y(t1) + 0.02, d1z], [c1x, Y(t1) + 0.02, c1z],
-          [0, 1, 0], ZERO_UV, [0.85, 0.8, 0.55]);
+
+      // Deck: unlit inside (the shadow map makes a bore black), ordinary road
+      // material in the open cut, where the sun genuinely reaches it.
+      if (bur) {
+        const d0 = [0.34 * l0, 0.34 * l0, 0.36 * l0], d1 = [0.34 * l1, 0.34 * l1, 0.36 * l1];
+        glow.quad([a0x, Y(t0), a0z], [a1x, Y(t0), a1z], [b1x, Y(t1), b1z], [b0x, Y(t1), b0z],
+          [0, 1, 0], ZERO_UV, [d0, d0, d1, d1]);
+        if (i % 2 === 0) {
+          const [c0x, c0z] = P(t0, 0.10), [c1x, c1z] = P(t0 + (t1 - t0) * 0.55, 0.10);
+          const [e0x, e0z] = P(t0, -0.10), [e1x, e1z] = P(t0 + (t1 - t0) * 0.55, -0.10);
+          glow.quad([c0x, Y(t0) + 0.02, c0z], [e0x, Y(t0) + 0.02, e0z],
+            [e1x, Y(t1) + 0.02, e1z], [c1x, Y(t1) + 0.02, c1z],
+            [0, 1, 0], ZERO_UV, [0.85, 0.8, 0.55]);
+        }
+      } else {
+        const u1 = (hw * 2) / ROAD_TILE, v0 = (t0 * e.len) / ROAD_TILE, v1 = (t1 * e.len) / ROAD_TILE;
+        road.quad([a0x, Y(t0), a0z], [a1x, Y(t0), a1z], [b1x, Y(t1), b1z], [b0x, Y(t1), b0z],
+          [0, 1, 0], [0, v0, u1, v0, u1, v1, 0, v1], [1, 1, 1]);
       }
+
       for (const sd of [1, -1]) {
         const [w0x, w0z] = P(t0, hw * sd), [w1x, w1z] = P(t1, hw * sd);
-        const wc0 = [0.42 * l0, 0.43 * l0, 0.45 * l0];
-        const wc1 = [0.42 * l1, 0.43 * l1, 0.45 * l1];
-        glow.quad(
-          [w0x, Y(t0), w0z], [w1x, Y(t1), w1z],
-          [w1x, Y(t1) + WALL, w1z], [w0x, Y(t0) + WALL, w0z],
-          [-px * sd, 0, -pz * sd], ZERO_UV, [wc0, wc1, wc1, wc0]);
+        if (bur) {
+          const c0 = [0.42 * l0, 0.43 * l0, 0.45 * l0], c1 = [0.42 * l1, 0.43 * l1, 0.45 * l1];
+          glow.quad([w0x, Y(t0), w0z], [w1x, Y(t1), w1z],
+            [w1x, Y(t1) + WALL, w1z], [w0x, Y(t0) + WALL, w0z],
+            [-px * sd, 0, -pz * sd], ZERO_UV, [c0, c1, c1, c0]);
+        } else {
+          // Open cut: the retaining wall runs from the deck up to the GROUND
+          // beside it, so the road sits in a trench instead of behind a free-
+          // standing slab. Lit, because the sky is right there.
+          const g0 = G.terrainHeight(w0x, w0z), g1 = G.terrainHeight(w1x, w1z);
+          const h0 = Math.max(1.2, g0 - Y(t0) + 0.5), h1 = Math.max(1.2, g1 - Y(t1) + 0.5);
+          flat.quad([w0x, Y(t0), w0z], [w1x, Y(t1), w1z],
+            [w1x, Y(t1) + h1, w1z], [w0x, Y(t0) + h0, w0z],
+            [-px * sd, 0, -pz * sd], ZERO_UV, conc);
+          // capping strip along the top, so the wall reads as a wall from above
+          flat.quad([w0x, Y(t0) + h0, w0z], [w1x, Y(t1) + h1, w1z],
+            [w1x + px * sd * 1.1, Y(t1) + h1, w1z + pz * sd * 1.1],
+            [w0x + px * sd * 1.1, Y(t0) + h0, w0z + pz * sd * 1.1],
+            [0, 1, 0], ZERO_UV, [0.48, 0.49, 0.51]);
+        }
       }
-      const cc0 = [0.20 * l0, 0.20 * l0, 0.22 * l0];
-      const cc1 = [0.20 * l1, 0.20 * l1, 0.22 * l1];
-      glow.quad([a0x, Y(t0) + WALL, a0z], [b0x, Y(t1) + WALL, b0z],
-        [b1x, Y(t1) + WALL, b1z], [a1x, Y(t0) + WALL, a1z],
-        [0, -1, 0], ZERO_UV, [cc0, cc1, cc1, cc0]);
-    }
-    // lamp strip down the centre
-    const g0 = P(0, 0), g1 = P(1, 0);
-    glow.quad(
-      [g0[0] - px * 0.5, Y(0) + WALL - 0.06, g0[1] - pz * 0.5],
-      [g0[0] + px * 0.5, Y(0) + WALL - 0.06, g0[1] + pz * 0.5],
-      [g1[0] + px * 0.5, Y(1) + WALL - 0.06, g1[1] + pz * 0.5],
-      [g1[0] - px * 0.5, Y(1) + WALL - 0.06, g1[1] - pz * 0.5],
-      [0, -1, 0], ZERO_UV, [1, 0.95, 0.8]);
 
-    // Portal treatment where an end meets the surface: an APPROACH TRENCH,
-    // not just a floating frame. Wing walls run from the frame back along the
-    // cut at grade height, so the mouth reads as a cut into the hill instead
-    // of a doorway standing in a field.
-    for (const [nd, t] of [[this.city.nodes[e.a], 0], [this.city.nodes[e.b], 1]]) {
-      if (!nd.e.some((ei2) => !this.city.edges[ei2].tunnel)) continue;
-      const [cx, cz] = P(t, 0);
-      const yb = t === 0 ? ay : by;
-      const rot = Math.atan2(e.dx, e.dz);
-      const conc = [0.42, 0.43, 0.45];
-      flat.box(cx, yb + WALL + 0.6, cz, hw * 2 + 3.6, 1.6, 1.5, rot, conc);
-      for (const sd of [1, -1]) {
-        flat.box(cx + px * (hw + 0.9) * sd, yb + WALL / 2, cz + pz * (hw + 0.9) * sd,
-          1.8, WALL + 1.2, 1.5, rot, conc);
-        // wing wall tapering back along the approach
-        const inward = t === 0 ? 1 : -1;
-        for (let k = 1; k <= 3; k++) {
-          const wx = cx - e.dx * inward * k * 9, wz = cz - e.dz * inward * k * 9;
-          const hgt = Math.max(1.2, (WALL + 1.0) * (1 - k * 0.28));
-          flat.box(wx + px * (hw + 0.7) * sd, yb + hgt / 2, wz + pz * (hw + 0.7) * sd,
-            1.4, hgt, 9.6, rot, conc);
+      if (bur) {
+        const cc0 = [0.20 * l0, 0.20 * l0, 0.22 * l0], cc1 = [0.20 * l1, 0.20 * l1, 0.22 * l1];
+        glow.quad([a0x, Y(t0) + WALL, a0z], [b0x, Y(t1) + WALL, b0z],
+          [b1x, Y(t1) + WALL, b1z], [a1x, Y(t0) + WALL, a1z],
+          [0, -1, 0], ZERO_UV, [cc0, cc1, cc1, cc0]);
+        glow.quad(
+          [P(t0, 0)[0] - px * 0.5, Y(t0) + WALL - 0.06, P(t0, 0)[1] - pz * 0.5],
+          [P(t0, 0)[0] + px * 0.5, Y(t0) + WALL - 0.06, P(t0, 0)[1] + pz * 0.5],
+          [P(t1, 0)[0] + px * 0.5, Y(t1) + WALL - 0.06, P(t1, 0)[1] + pz * 0.5],
+          [P(t1, 0)[0] - px * 0.5, Y(t1) + WALL - 0.06, P(t1, 0)[1] - pz * 0.5],
+          [0, -1, 0], ZERO_UV, [1, 0.95, 0.8]);
+      }
+
+      // THE PORTAL FACE is drawn where cover begins -- the boundary between an
+      // open segment and a buried one -- not at the graph's portal node, which
+      // is out in the daylight at the top of the ramp.
+      if (bur && i > 0 && !covered((t0 - 1 / seg / 2))) {
+        const [fx, fz] = P(t0, 0);
+        const fy = Y(t0);
+        const rot = Math.atan2(e.dx, e.dz);
+        flat.box(fx, fy + WALL + 0.7, fz, hw * 2 + 4.0, 1.8, 1.6, rot, conc);
+        for (const sd of [1, -1]) {
+          flat.box(fx + px * (hw + 1.0) * sd, fy + WALL / 2, fz + pz * (hw + 1.0) * sd,
+            2.0, WALL + 1.6, 1.6, rot, conc);
         }
       }
     }

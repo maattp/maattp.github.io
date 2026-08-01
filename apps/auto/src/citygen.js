@@ -382,7 +382,7 @@ export function* cityGenerator(md) {
   // breaks the surface mid-hill. Near a portal the clearance requirement is
   // relaxed over RELAX metres, because the ground there IS the portal cut.
   {
-    const CLEAR = 7, RELAX = 60;
+    const CLEAR = 7;
     const tunNodes = new Set();
     for (const e of g.edges) if (e.tunnel && !e.elev) { tunNodes.add(e.a); tunNodes.add(e.b); }
     const portals = new Set();
@@ -432,10 +432,19 @@ export function* cityGenerator(md) {
       } else {
         continue;                            // isolated fragment: leave as-is
       }
+      // DESCEND AT A REAL GRADE FROM THE PORTAL. Interpolating portal-to-
+      // portal over a 3 km bore leaves the first 100 m within a metre of grade,
+      // so the tunnel's walls and ceiling were drawn standing on flat ground --
+      // a concrete box in the open, which is what the north SR-99 portal was.
+      // 5.5 % gets under the hill in about 130 m, which is both drivable and
+      // what a real portal approach does.
       const dPortal = b2.length ? b2[0].d : 1e9;
-      const relax = clamp(dPortal / RELAX, 0, 1);
-      const cap = n.y - CLEAR * relax;       // n.y is the reheighted terrain
-      const yFinal = Math.min(y, cap);
+      const portalY = b2.length ? g.nodes[b2[0].p].y : n.y;
+      let yFinal = Math.min(y, portalY - 0.055 * dPortal);
+      // Past the approach, never break the surface mid-hill. Inside it, the
+      // GEOMETRY decides: world.js draws an open cut until the ground closes
+      // over the bore, so there is nothing to clamp here.
+      if (dPortal > 80) yFinal = Math.min(yFinal, n.y - CLEAR);
       if (n.y - yFinal > worstDrop) worstDrop = n.y - yFinal;
       n.y = yFinal;
       n.tunnel = true;
