@@ -997,97 +997,110 @@ export class World {
     const Y = (t) => lerp(ay, by, t);
     const conc = [0.42, 0.43, 0.45];
 
-    // A BORE IS ONLY A BORE WHERE THE GROUND COVERS IT.
+    // THE TERRAIN IS NEVER EXCAVATED, SO THERE IS NO SUCH THING AS AN OPEN CUT.
     //
-    // Approaching a portal the road is in an open CUT -- retaining walls, sky
-    // overhead -- and the portal face is the wall of earth where the hill
-    // finally closes over the carriageway. Drawing the closed box the whole
-    // length put a lidded concrete tube standing on flat ground at the north
-    // SR-99 portal: no cut, no mouth, nothing to drive into. So each segment
-    // asks the terrain what it is.
+    // The obvious way to draw a portal is a descending trench with retaining
+    // walls, and it cannot work here: the heightfield is one surface every
+    // consumer shares ("The one height surface"), nothing cuts a slot in it,
+    // and a deck that descends below it is simply *inside the hill*. Measured
+    // at the north SR-99 mouth, a ray dropped on the carriageway hit terrain at
+    // 26.3 / 26.8 / 27.1 m while the deck ran 26.1 / 23.4 / 20.7 -- the trench
+    // was drawn, and buried. That is why the entrance read as nothing at all.
+    //
+    // So the bore is always a closed tube, and the portal is a STRUCTURE
+    // standing at grade: you drive in at ground level and the tube dives away
+    // behind the headwall. Where the tube is still above ground it gets an
+    // earth berm over it, which is what a portal approach in flat ground looks
+    // like in life -- a concrete face in a landscaped mound, not a lidded
+    // culvert lying on a lawn, which is what the free-standing slabs were.
     const seg = Math.max(2, Math.ceil(e.len / 9));
-    const covered = (t) => {
+    const BERM = [0.34, 0.36, 0.26];
+    const exposed = (t) => {
       const [cx, cz] = P(t, 0);
-      return G.terrainHeight(cx, cz) - (Y(t) + WALL) > 0.4;
+      return (Y(t) + WALL) - G.terrainHeight(cx, cz);   // >0 means the tube is proud
     };
 
     const pool = (t) => 0.72 + 0.28 * Math.cos((lerp(0, e.len, t) / 18) * Math.PI * 2);
     for (let i = 0; i < seg; i++) {
       const t0 = i / seg, t1 = (i + 1) / seg;
       const tm = (t0 + t1) / 2;
-      const bur = covered(tm);
-      const l0 = bur ? pool(t0) : 1, l1 = bur ? pool(t1) : 1;
+      const l0 = pool(t0), l1 = pool(t1);
       const [a0x, a0z] = P(t0, hw), [a1x, a1z] = P(t0, -hw);
       const [b0x, b0z] = P(t1, hw), [b1x, b1z] = P(t1, -hw);
 
-      // Deck: unlit inside (the shadow map makes a bore black), ordinary road
-      // material in the open cut, where the sun genuinely reaches it.
-      if (bur) {
-        const d0 = [0.34 * l0, 0.34 * l0, 0.36 * l0], d1 = [0.34 * l1, 0.34 * l1, 0.36 * l1];
-        glow.quad([a0x, Y(t0), a0z], [a1x, Y(t0), a1z], [b1x, Y(t1), b1z], [b0x, Y(t1), b0z],
-          [0, 1, 0], ZERO_UV, [d0, d0, d1, d1]);
-        if (i % 2 === 0) {
-          const [c0x, c0z] = P(t0, 0.10), [c1x, c1z] = P(t0 + (t1 - t0) * 0.55, 0.10);
-          const [e0x, e0z] = P(t0, -0.10), [e1x, e1z] = P(t0 + (t1 - t0) * 0.55, -0.10);
-          glow.quad([c0x, Y(t0) + 0.02, c0z], [e0x, Y(t0) + 0.02, e0z],
-            [e1x, Y(t1) + 0.02, e1z], [c1x, Y(t1) + 0.02, c1z],
-            [0, 1, 0], ZERO_UV, [0.85, 0.8, 0.55]);
-        }
-      } else {
-        const u1 = (hw * 2) / ROAD_TILE, v0 = (t0 * e.len) / ROAD_TILE, v1 = (t1 * e.len) / ROAD_TILE;
-        road.quad([a0x, Y(t0), a0z], [a1x, Y(t0), a1z], [b1x, Y(t1), b1z], [b0x, Y(t1), b0z],
-          [0, 1, 0], [0, v0, u1, v0, u1, v1, 0, v1], [1, 1, 1]);
+      // Deck, walls and ceiling are all UNLIT: a bore sits in the shadow map's
+      // darkness, so sun-lit materials render near-black in it. The light is
+      // baked into the vertex colours instead -- lamp pools every 18 m.
+      const d0 = [0.34 * l0, 0.34 * l0, 0.36 * l0], d1 = [0.34 * l1, 0.34 * l1, 0.36 * l1];
+      glow.quad([a0x, Y(t0), a0z], [a1x, Y(t0), a1z], [b1x, Y(t1), b1z], [b0x, Y(t1), b0z],
+        [0, 1, 0], ZERO_UV, [d0, d0, d1, d1]);
+      if (i % 2 === 0) {
+        const [c0x, c0z] = P(t0, 0.10), [c1x, c1z] = P(t0 + (t1 - t0) * 0.55, 0.10);
+        const [q0x, q0z] = P(t0, -0.10), [q1x, q1z] = P(t0 + (t1 - t0) * 0.55, -0.10);
+        glow.quad([c0x, Y(t0) + 0.02, c0z], [q0x, Y(t0) + 0.02, q0z],
+          [q1x, Y(t1) + 0.02, q1z], [c1x, Y(t1) + 0.02, c1z],
+          [0, 1, 0], ZERO_UV, [0.85, 0.8, 0.55]);
       }
-
       for (const sd of [1, -1]) {
         const [w0x, w0z] = P(t0, hw * sd), [w1x, w1z] = P(t1, hw * sd);
-        if (bur) {
-          const c0 = [0.42 * l0, 0.43 * l0, 0.45 * l0], c1 = [0.42 * l1, 0.43 * l1, 0.45 * l1];
-          glow.quad([w0x, Y(t0), w0z], [w1x, Y(t1), w1z],
-            [w1x, Y(t1) + WALL, w1z], [w0x, Y(t0) + WALL, w0z],
-            [-px * sd, 0, -pz * sd], ZERO_UV, [c0, c1, c1, c0]);
-        } else {
-          // Open cut: the retaining wall runs from the deck up to the GROUND
-          // beside it, so the road sits in a trench instead of behind a free-
-          // standing slab. Lit, because the sky is right there.
-          const g0 = G.terrainHeight(w0x, w0z), g1 = G.terrainHeight(w1x, w1z);
-          const h0 = Math.max(1.2, g0 - Y(t0) + 0.5), h1 = Math.max(1.2, g1 - Y(t1) + 0.5);
-          flat.quad([w0x, Y(t0), w0z], [w1x, Y(t1), w1z],
-            [w1x, Y(t1) + h1, w1z], [w0x, Y(t0) + h0, w0z],
-            [-px * sd, 0, -pz * sd], ZERO_UV, conc);
-          // capping strip along the top, so the wall reads as a wall from above
-          flat.quad([w0x, Y(t0) + h0, w0z], [w1x, Y(t1) + h1, w1z],
-            [w1x + px * sd * 1.1, Y(t1) + h1, w1z + pz * sd * 1.1],
-            [w0x + px * sd * 1.1, Y(t0) + h0, w0z + pz * sd * 1.1],
-            [0, 1, 0], ZERO_UV, [0.48, 0.49, 0.51]);
-        }
+        const c0 = [0.42 * l0, 0.43 * l0, 0.45 * l0], c1 = [0.42 * l1, 0.43 * l1, 0.45 * l1];
+        glow.quad([w0x, Y(t0), w0z], [w1x, Y(t1), w1z],
+          [w1x, Y(t1) + WALL, w1z], [w0x, Y(t0) + WALL, w0z],
+          [-px * sd, 0, -pz * sd], ZERO_UV, [c0, c1, c1, c0]);
       }
+      const cc0 = [0.20 * l0, 0.20 * l0, 0.22 * l0], cc1 = [0.20 * l1, 0.20 * l1, 0.22 * l1];
+      glow.quad([a0x, Y(t0) + WALL, a0z], [b0x, Y(t1) + WALL, b0z],
+        [b1x, Y(t1) + WALL, b1z], [a1x, Y(t0) + WALL, a1z],
+        [0, -1, 0], ZERO_UV, [cc0, cc1, cc1, cc0]);
+      glow.quad(
+        [P(t0, 0)[0] - px * 0.5, Y(t0) + WALL - 0.06, P(t0, 0)[1] - pz * 0.5],
+        [P(t0, 0)[0] + px * 0.5, Y(t0) + WALL - 0.06, P(t0, 0)[1] + pz * 0.5],
+        [P(t1, 0)[0] + px * 0.5, Y(t1) + WALL - 0.06, P(t1, 0)[1] + pz * 0.5],
+        [P(t1, 0)[0] - px * 0.5, Y(t1) + WALL - 0.06, P(t1, 0)[1] - pz * 0.5],
+        [0, -1, 0], ZERO_UV, [1, 0.95, 0.8]);
 
-      if (bur) {
-        const cc0 = [0.20 * l0, 0.20 * l0, 0.22 * l0], cc1 = [0.20 * l1, 0.20 * l1, 0.22 * l1];
-        glow.quad([a0x, Y(t0) + WALL, a0z], [b0x, Y(t1) + WALL, b0z],
-          [b1x, Y(t1) + WALL, b1z], [a1x, Y(t0) + WALL, a1z],
-          [0, -1, 0], ZERO_UV, [cc0, cc1, cc1, cc0]);
-        glow.quad(
-          [P(t0, 0)[0] - px * 0.5, Y(t0) + WALL - 0.06, P(t0, 0)[1] - pz * 0.5],
-          [P(t0, 0)[0] + px * 0.5, Y(t0) + WALL - 0.06, P(t0, 0)[1] + pz * 0.5],
-          [P(t1, 0)[0] + px * 0.5, Y(t1) + WALL - 0.06, P(t1, 0)[1] + pz * 0.5],
-          [P(t1, 0)[0] - px * 0.5, Y(t1) + WALL - 0.06, P(t1, 0)[1] - pz * 0.5],
-          [0, -1, 0], ZERO_UV, [1, 0.95, 0.8]);
-      }
-
-      // THE PORTAL FACE is drawn where cover begins -- the boundary between an
-      // open segment and a buried one -- not at the graph's portal node, which
-      // is out in the daylight at the top of the ramp.
-      if (bur && i > 0 && !covered((t0 - 1 / seg / 2))) {
-        const [fx, fz] = P(t0, 0);
-        const fy = Y(t0);
-        const rot = Math.atan2(e.dx, e.dz);
-        flat.box(fx, fy + WALL + 0.7, fz, hw * 2 + 4.0, 1.8, 1.6, rot, conc);
+      // THE BERM. Where the roof is still above the ground, the tube is a bare
+      // concrete culvert lying on the grass -- the thing the old portal looked
+      // like. Cover it: an earth crown over the ceiling and a 1:1.8 slope off
+      // each side down to wherever the terrain actually is. Once the ground
+      // closes over the roof these quads fall below it and cost only their
+      // triangles, so no boundary has to be found or kept consistent.
+      const x0 = exposed(t0), x1 = exposed(t1);
+      if (x0 > -0.6 || x1 > -0.6) {
+        const r0 = Y(t0) + WALL + 0.35, r1 = Y(t1) + WALL + 0.35;
+        flat.quad([a0x, r0, a0z], [a1x, r0, a1z], [b1x, r1, b1z], [b0x, r1, b0z],
+          [0, 1, 0], ZERO_UV, BERM);
         for (const sd of [1, -1]) {
-          flat.box(fx + px * (hw + 1.0) * sd, fy + WALL / 2, fz + pz * (hw + 1.0) * sd,
-            2.0, WALL + 1.6, 1.6, rot, conc);
+          const [w0x, w0z] = P(t0, hw * sd), [w1x, w1z] = P(t1, hw * sd);
+          const g0 = G.terrainHeight(w0x, w0z), g1 = G.terrainHeight(w1x, w1z);
+          const s0 = Math.max(0, r0 - g0) * 1.8, s1 = Math.max(0, r1 - g1) * 1.8;
+          const [o0x, o0z] = P(t0, (hw + s0) * sd), [o1x, o1z] = P(t1, (hw + s1) * sd);
+          flat.quad([w0x, r0, w0z], [w1x, r1, w1z], [o1x, g1, o1z], [o0x, g0, o0z],
+            [0, 1, 0], ZERO_UV, BERM);
         }
+      }
+    }
+
+    // THE PORTAL FACE, at the mouth itself.
+    //
+    // Not at a cover boundary somewhere down the bore -- that boundary is under
+    // the ground by definition, so a face drawn there is invisible, which is
+    // what the previous attempt shipped. It goes on the portal NODE: the one
+    // end of the tunnel that also carries a surface edge, i.e. where you drive
+    // in. A 1.8 m lintel is invisible from a car, so this is a headwall -- a
+    // slab standing across the road with a black hole in it, rising clear of
+    // the berm, with wing walls running the full height down to the deck.
+    for (const [nd, t] of [[a, 0], [b, 1]]) {
+      if (!nd.e.some((ei) => !this.city.edges[ei].tunnel)) continue;
+      const [fx, fz] = P(t, 0);
+      const fy = Y(t);
+      const rot = Math.atan2(e.dx, e.dz);
+      const roof = fy + WALL;
+      const cap = Math.max(G.terrainHeight(fx, fz), roof) + 2.4;
+      flat.box(fx, roof, fz, hw * 2 + 5.2, cap - roof, 2.0, rot, conc);
+      for (const sd of [1, -1]) {
+        flat.box(fx + px * (hw + 1.35) * sd, fy, fz + pz * (hw + 1.35) * sd,
+          2.7, cap - fy, 2.0, rot, conc);
       }
     }
   }

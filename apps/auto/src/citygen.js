@@ -438,9 +438,20 @@ export function* cityGenerator(md) {
       // a concrete box in the open, which is what the north SR-99 portal was.
       // 5.5 % gets under the hill in about 130 m, which is both drivable and
       // what a real portal approach does.
+      //
+      // BUT 5.5 % ON FLAT GROUND IS NOT A PORTAL YOU CAN SEE. world.js closes
+      // the bore only where the ground covers it -- roof plus 0.4 m, so 5.8 m
+      // of cut -- and at 5.5 % that boundary is 105 m from the mouth. Standing
+      // at the mouth you were looking down a shallow trench with the tunnel
+      // starting somewhere out of sight: no entrance to drive into, which is
+      // exactly what the north SR-99 portal looked like. The first stretch
+      // dives at 9 % (steep, but real portal approaches are: SR-99's own is
+      // about 8 %) until it is 8 m down, which brings the mouth to ~65 m --
+      // inside the frame from the approach, and legible from a car.
       const dPortal = b2.length ? b2[0].d : 1e9;
       const portalY = b2.length ? g.nodes[b2[0].p].y : n.y;
-      let yFinal = Math.min(y, portalY - 0.055 * dPortal);
+      const dive = Math.max(0.055 * dPortal, Math.min(0.09 * dPortal, 8));
+      let yFinal = Math.min(y, portalY - dive);
       // Past the approach, never break the surface mid-hill. Inside it, the
       // GEOMETRY decides: world.js draws an open cut until the ground closes
       // over the bore, so there is nothing to clamp here.
