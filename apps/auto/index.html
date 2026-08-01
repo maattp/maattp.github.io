@@ -272,6 +272,36 @@
     font-size: 10px; opacity: .32; text-align: center; padding: 0 18px;
   }
 
+  #racePanel {
+    position: absolute; top: calc(env(safe-area-inset-top) + 6px); left: 50%;
+    transform: translateX(-50%); z-index: 42; display: none; text-align: center;
+    background: rgba(10,16,22,0.55); border-radius: 10px; padding: 6px 14px 5px;
+    pointer-events: none; min-width: 172px;
+  }
+  #racePanel.on { display: block; }
+  #raceName { font-size: 10px; letter-spacing: .14em; opacity: .68; text-transform: uppercase; }
+  #raceRow { display: flex; gap: 12px; justify-content: center; align-items: baseline; }
+  #raceTime { font: 800 21px/1.1 ui-monospace, SFMono-Regular, Menlo, monospace; }
+  #raceLeft { font-size: 11px; opacity: .78; }
+  #raceFoot { display: flex; gap: 10px; justify-content: center; font-size: 11px; }
+  #raceDelta.ahead { color: #7ee0a4; } #raceDelta.behind { color: #ff8f7a; }
+  #raceBest { opacity: .5; }
+  #raceRestart {
+    pointer-events: auto; margin-top: 4px; font-size: 10px; letter-spacing: .12em;
+    opacity: .62; border: 1px solid rgba(255,255,255,0.22); border-radius: 6px;
+    padding: 2px 8px; display: inline-block;
+  }
+  #jobsBox { margin: 10px 0 4px; text-align: left; }
+  .rowHead { font-size: 10px; letter-spacing: .14em; opacity: .55; margin: 8px 0 4px; display: flex; justify-content: space-between; }
+  #jobsList { max-height: 34vh; overflow-y: auto; -webkit-overflow-scrolling: touch; font-size: 12px; }
+  .jobRow { display: flex; justify-content: space-between; gap: 8px; padding: 3px 0; border-bottom: 1px solid rgba(255,255,255,0.06); }
+  .jobRow .nm { opacity: .9; }
+  .jobRow .bt { font-variant-numeric: tabular-nums; opacity: .7; }
+  .jobRow .md { width: 9px; height: 9px; border-radius: 50%; display: inline-block; margin-left: 6px; }
+  #buyRow { display: flex; flex-wrap: wrap; gap: 6px; }
+  .buy { font-size: 11px; padding: 5px 9px; border-radius: 7px; background: #1d2a36;
+         color: #dce6ee; border: 1px solid rgba(255,255,255,0.14); }
+  .buy:disabled { opacity: .35; }
   #rotate {
     position: absolute; inset: 0; z-index: 60; display: none;
     align-items: center; justify-content: center; flex-direction: column; gap: 12px;
@@ -365,6 +395,22 @@
       <!-- Resume first: it is what the menu is opened to do, and burying it
            under the settings meant scrolling to get back into the game. -->
       <button class="cta" id="resumeBtn">Resume</button>
+      <!-- Jobs and the delivery service. A design review's sharpest note was
+           that money had no sink: activities paying into an economy that buys
+           nothing is a scoreboard, not a reward. -->
+      <div id="jobsBox">
+        <div class="rowHead">JOBS <span id="jobsCount"></span></div>
+        <div id="jobsList"></div>
+        <div class="rowHead">DELIVERY <span id="jobsMoney"></span></div>
+        <div id="buyRow">
+          <button class="buy" data-buy="sports" data-cost="900">Sports $900</button>
+          <button class="buy" data-buy="muscle" data-cost="900">Muscle $900</button>
+          <button class="buy" data-buy="police" data-cost="1500">Police $1500</button>
+          <button class="buy" data-buy="plane" data-cost="4000">Plane $4000</button>
+          <button class="buy" data-buy="sportplane" data-cost="6000">Sport plane $6000</button>
+          <button class="buy" data-buy="floatplane" data-cost="6500">Floatplane $6500</button>
+        </div>
+      </div>
       <button class="cta ghost" id="respawnBtn">Respawn at Harborview</button>
       <div class="row" id="rowQuality"><span>Graphics</span><div class="seg">
         <button class="segbtn" data-quality="high">High</button>
@@ -414,10 +460,18 @@
     <div id="loadTrack"><div id="loadBar"></div></div>
     <div id="loadMsg">Starting up</div>
     <!-- Bumped once per change, in step with CACHE in sw.js. See CLAUDE.md. -->
-    <div id="build">v60</div>
+    <div id="build">v62</div>
     <div id="attrib">Map data © OpenStreetMap contributors (ODbL) · elevation USGS 3DEP</div>
   </div>
 
+  <!-- Race readout. TOP-CENTRE deliberately: thumbs occlude the bottom
+       corners on a phone, and this is the one thing you read mid-corner. -->
+  <div id="racePanel">
+    <div id="raceName"></div>
+    <div id="raceRow"><span id="raceTime"></span><span id="raceLeft"></span></div>
+    <div id="raceFoot"><span id="raceDelta"></span><span id="raceBest"></span></div>
+    <div id="raceRestart">RESTART</div>
+  </div>
   <div id="rotate">
     <div style="font-size:34px">📱↻</div>
     <div>Rotate your device sideways to play.</div>
