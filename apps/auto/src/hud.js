@@ -110,6 +110,27 @@ export class Hud {
     this.toastTimer = ms / 1000;
   }
 
+  /** Race readout, plus the off-screen arrow to the next checkpoint. */
+  setRace(r, player) {
+    if (!this._rp) {
+      this._rp = document.getElementById('racePanel');
+      this._rn = document.getElementById('raceName');
+      this._rt = document.getElementById('raceTime');
+      this._rl = document.getElementById('raceLeft');
+      this._rd = document.getElementById('raceDelta');
+      this._rb = document.getElementById('raceBest');
+    }
+    if (!this._rp) return;
+    this._rp.classList.toggle('on', !!r);
+    if (!r) return;
+    this._rn.textContent = r.name;
+    this._rt.textContent = r.time;
+    this._rl.textContent = r.left || '';
+    this._rd.textContent = r.delta || '';
+    this._rd.className = r.delta ? (r.ahead ? 'ahead' : 'behind') : '';
+    this._rb.textContent = r.best ? `best ${r.best}` : '';
+  }
+
   setObjective(text) {
     this.objective.textContent = text || '';
     this.objective.classList.toggle('show', !!text);
@@ -117,6 +138,7 @@ export class Hud {
 
   update(dt, game, player, traffic) {
     const p = player.position;
+    this.setRace(this.race, player);
     // minimap
     const ctx = this.mctx;
     const S = this.miniSize;
@@ -154,6 +176,25 @@ export class Hud {
       ctx.beginPath();
       ctx.arc(bx, bz, 4.5 / zoom, 0, Math.PI * 2);
       ctx.fill();
+    }
+    // Activity and collectible icons live on the MINIMAP, not as world meshes:
+    // sixty markers would be sixty draws against a ~300 budget, and a canvas
+    // dot is free. This is also the discoverability path -- you find things by
+    // seeing them on the map, with no tutorial.
+    for (const a of (this.activities || [])) {
+      const [bx, bz] = toMap(a.x, a.z);
+      if (Math.abs(bx) > S || Math.abs(bz) > S) continue;
+      ctx.fillStyle = a.best ? (a.best.medal === 'gold' ? '#f4c542'
+        : a.best.medal === 'silver' ? '#c8d0d8' : '#c0763c') : '#4fd0ff';
+      ctx.beginPath();
+      ctx.arc(bx, bz, 3.8 / zoom, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    for (const c of (this.finds || [])) {
+      const [bx, bz] = toMap(c.x, c.z);
+      if (Math.abs(bx) > S || Math.abs(bz) > S) continue;
+      ctx.fillStyle = '#f4c542';
+      ctx.fillRect(bx - 1.6 / zoom, bz - 1.6 / zoom, 3.2 / zoom, 3.2 / zoom);
     }
     ctx.restore();
 

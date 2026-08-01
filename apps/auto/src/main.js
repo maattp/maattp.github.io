@@ -13,6 +13,7 @@ import { PedSystem, animateWalk } from './peds.js';
 import { Player } from './player.js';
 import { Controls } from './controls.js';
 import { Hud, buildMapCanvas } from './hud.js';
+import { Activities } from './activities.js';
 import { Effects } from './effects.js';
 import { Audio } from './audio.js';
 import { PostFX } from './postfx.js';
@@ -209,7 +210,7 @@ class Game {
 
 // ---------------------------------------------------------------------------
 
-let renderer, scene, camera, sun, world, cityRef, traffic, peds, player, controls, hud, fx, audio, game, marker, postfx;
+let renderer, scene, camera, sun, world, cityRef, traffic, peds, player, controls, hud, fx, audio, game, marker, postfx, acts;
 let pickups = [];
 // Scratch vector for the shadow-camera aim, so the frame loop allocates none.
 const LOOK_AHEAD = new THREE.Vector3();
@@ -479,6 +480,31 @@ function installHeightFog() {
   fx = new Effects(scene, tx);
   const mapCanvas = buildMapCanvas(city);
   hud = new Hud(document.getElementById('app'), city, mapCanvas);
+  {
+    // One tap, never behind a menu: a lost run on a phone ends the session.
+    const rb = document.getElementById('raceRestart');
+    if (rb) rb.addEventListener('click', (ev) => { ev.stopPropagation(); if (acts) acts.restart(player); });
+    // The delivery service: the money sink. Spend winnings and the vehicle
+    // arrives beside you -- including aircraft, which is how you get a plane
+    // without driving to Boeing Field first.
+    for (const b of document.querySelectorAll('.buy')) {
+      b.addEventListener('click', () => {
+        const cost = +b.dataset.cost, type = b.dataset.buy;
+        if (game.money < cost) { hud.showToast('Not enough money'); return; }
+        game.money -= cost;
+        const p = player.position;
+        const f = { x: Math.sin(player.camYaw + Math.PI), z: Math.cos(player.camYaw + Math.PI) };
+        const dx = p.x + f.x * 12, dz = p.z + f.z * 12;
+        const v = traffic.spawnAt(dx, dz, player.camYaw + Math.PI, type, 0xdfe3e6, 'free');
+        v.y = city.groundAt(dx, dz, null);
+        v.group.position.y = v.y + (v.spec.wheelR || 0.3) + 0.25;
+        hud.showToast(`${type} delivered — $${cost}`);
+        if (setPausedRef) setPausedRef(false);
+      });
+    }
+  }
+  // after the HUD: Activities writes its readout and map icons through it
+  acts = new Activities(scene, city, world, game, hud, audio, traffic);
 
   // delivery marker
   const mg = new THREE.CylinderGeometry(6, 6, 26, 18, 1, true);
@@ -501,7 +527,8 @@ function installHeightFog() {
   }
 
   await step(1, 'Welcome to Seattle');
-  window.__dbg = { game, city, player, world, traffic, peds, scene, camera, renderer, G, fx, hud, controls, audio, pickups, THREE, postfx, applyQuality, sun, sceneStats, cityStats, WET_FLOOR, animateWalk, collideWithBuildings, TYPES: VEHICLE_TYPES };
+  window.__refreshJobs = refreshJobs;
+  window.__dbg = { game, city, player, world, traffic, peds, acts, scene, camera, renderer, G, fx, hud, controls, audio, pickups, THREE, postfx, applyQuality, sun, sceneStats, cityStats, WET_FLOOR, animateWalk, collideWithBuildings, TYPES: VEHICLE_TYPES };
   wireUi();
   game.newTarget();
   // Start on `high` everywhere.
@@ -690,6 +717,24 @@ function makePadMenu() {
 }
 const padMenu = makePadMenu();
 let setPausedRef = null;
+
+/** Fill the Jobs list and the delivery buttons. Read only when paused. */
+function refreshJobs() {
+  if (!acts) return;
+  const s = acts.summary();
+  const cnt = document.getElementById('jobsCount');
+  const mon = document.getElementById('jobsMoney');
+  const list = document.getElementById('jobsList');
+  if (cnt) cnt.textContent = `${s.done}/${s.total} · ${s.golds} gold · finds ${s.found}/${s.findTotal}`;
+  if (mon) mon.textContent = formatMoney(game.money);
+  for (const b of document.querySelectorAll('.buy')) b.disabled = game.money < +b.dataset.cost;
+  if (!list) return;
+  const COL = { gold: '#f4c542', silver: '#c8d0d8', bronze: '#c0763c' };
+  list.innerHTML = s.rows.map((r) => `<div class="jobRow"><span class="nm">${r.name}</span>`
+    + `<span class="bt">${r.best || '--'}`
+    + (r.medal && r.medal !== 'none' ? `<i class="md" style="background:${COL[r.medal]}"></i>` : '')
+    + '</span></div>').join('');
+}
 let warpArmed = false;
 
 function setMapOpen(v) {
@@ -811,6 +856,7 @@ function wireUi() {
   const setPaused = (v) => {
     game.paused = v;
     pause.classList.toggle('show', v);
+    if (v) refreshJobs();          // the Jobs list is only ever read here
     if (v) padMenu.open(); else padMenu.close();
     // iOS suspends the AudioContext when the app goes to the background and
     // does not hand it back on its own, so the world would come back silent.
@@ -991,6 +1037,20 @@ function frame(now) {
 
   traffic.update(dt, p.x, p.z, camDir, player);
   peds.update(dt, p.x, p.z, player, traffic);
+  if (acts) acts.update(dt, player);
+  // UNDERGROUND, THE HELICOPTER LOSES YOU. This is what makes a bore a
+  // tactical option rather than scenery you drive through: the roof over your
+  // head is the only place in the city the air unit cannot see.
+  {
+    const terr = G.terrainHeight(p.x, p.z);
+    const buried = terr - p.y > 3;
+    traffic.heliBlind = buried;
+    if (buried && game.wanted > 0 && !hud.__toldTunnel) {
+      hud.__toldTunnel = true;
+      hud.showToast('Off the radar — the chopper has lost you');
+    }
+    if (!buried) hud.__toldTunnel = false;
+  }
   updatePickups(dt);
   fx.update(dt);
 

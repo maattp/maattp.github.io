@@ -262,6 +262,10 @@ export class TrafficSystem {
   }
 
   ensureHeli(active, px, pz) {
+    // main.js sets heliBlind while the player is under the ground: in a bore
+    // the air unit has no line of sight, which is what makes a tunnel worth
+    // driving into with the police behind you.
+    if (this.heliBlind) active = false;
     if (active && !this.heli) {
       const g = new THREE.Group();
       const mat = new THREE.MeshLambertMaterial({ color: 0x1b2733 });
