@@ -255,7 +255,8 @@ export class Player {
     // trees. Height alone would cut the engine on a street that happens to dip
     // below the lake beside it. The level is a reference height, not a region.
     const wl = this.world.waterLevelAt(v.x, v.z);
-    const wading = wl !== null && G.isWater(v.x, v.z) && v.y < wl - 0.35;
+    // A floatplane's pontoons make water a surface, not a hazard.
+    const wading = !v.spec.floats && wl !== null && G.isWater(v.x, v.z) && v.y < wl - 0.35;
 
     v.update(dt, {
       // A drowned engine makes no power and the wheels find nothing to push

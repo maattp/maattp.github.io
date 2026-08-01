@@ -8,7 +8,7 @@ import { buildTextures } from './textures.js';
 import { World, WET_FLOOR } from './world.js';
 import { buildLandmarks } from './landmarks.js';
 import { TrafficSystem, collideWithBuildings } from './traffic.js';
-import { TYPES as VEHICLE_TYPES } from './vehicles.js';
+import { TYPES as VEHICLE_TYPES, setWaterQuery } from './vehicles.js';
 import { PedSystem, animateWalk } from './peds.js';
 import { Player } from './player.js';
 import { Controls } from './controls.js';
@@ -440,6 +440,7 @@ function installHeightFog() {
   controls = new Controls(document.getElementById('app'));
   player = new Player(scene, city, game, world);
   traffic = new TrafficSystem(scene, city, game);
+  setWaterQuery((x, z) => world.waterLevelAt(x, z));
   // Boeing Field's apron: three trainers, parked nose-out along the taxiway
   // side, matching the landmark's own layout constants (bearing -0.52, apron
   // centred 260 m east, 120 m south of the ARP). Mode 'apron' so they never
@@ -453,14 +454,24 @@ function installHeightFog() {
       // Three clusters, all on pavement, all reachable from the west-side
       // streets: the apron row, the north threshold turnpad, and the south.
       const spots = [
-        [-195, -50], [-195, 45], [-195, 140],   // apron row
-        [-150, -1380], [-150, -1290],           // by the north threshold
-        [-150, 1290], [-150, 1380],             // by the south threshold
+        ['plane', -195, -50], ['sportplane', -195, 45], ['plane', -195, 140],
+        ['sportplane', -150, -1380], ['plane', -150, -1290],
+        ['floatplane', -150, 1290], ['sportplane', -150, 1380],
       ];
-      for (const [dx, dz] of spots) {
+      const PLANE_PAINT = { plane: 0xdfe3e6, sportplane: 0xc8452e, floatplane: 0xe8c53a };
+      for (const [ty, dx, dz] of spots) {
         const [px, pz] = off(dx, dz);
-        const v = traffic.spawnAt(px, pz, 0.52, 'plane', 0xdfe3e6, 'apron');
+        const v = traffic.spawnAt(px, pz, 0.52, ty, PLANE_PAINT[ty], 'apron');
         v.vLong = 0;
+      }
+      // ...and the Kenmore-style floatplane at its Lake Union dock. The lake
+      // is at 5.31 m; place() would sink it to the lakebed, so the height is
+      // set by hand and the float physics holds it on the surface after.
+      {
+        const fp = traffic.spawnAt(-95, -2800, -1.5, 'floatplane', 0xe8c53a, 'apron');
+        fp.vLong = 0;
+        fp.y = 5.31 + 0.12;
+        fp.group.position.y = fp.y + (fp.spec.wheelR || 0.3) + 0.25;
       }
     }
   }

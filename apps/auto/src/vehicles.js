@@ -65,6 +65,11 @@ const ARCADE_PUNCH = 2.4;
 // street widths means you cannot make a junction at any speed worth driving.
 const ARCADE_GRIP = 2.2;
 
+// The flight model needs the LOCAL water surface for floatplanes, and lakes
+// live on world, which vehicles never see. main.js injects the query at boot.
+let waterQuery = null;
+export function setWaterQuery(fn) { waterQuery = fn; }
+
 // How hard a corner may be asked for, as a fraction of the grip that exists.
 // Above 1 on purpose: this is a GTA-style car, not a simulator. It should feel
 // planted and willing -- lane changes and sweeping bends at speed take no
@@ -88,6 +93,11 @@ export const TYPES = {
   // 11 m wingspan lives in the builder. Speeds in kph as everywhere: rotates
   // ~100, cruises ~190.
   plane: deriveSpec({ wheelbase: 4.6, len: 8.3, wid: 2.0, wheelR: 0.30, sill: 0.55, belt: 1.35, roof: 2.10, cab: [0.6, 0.3], hand: 'plane', plane: true, mass: 0.8, acc: 6.5, topKph: 330, brakeM: 60, latG: 0.7 }),
+  // Low-wing sport single: hotter (cruise ~380), rotates later, banks harder.
+  sportplane: deriveSpec({ wheelbase: 4.2, len: 7.6, wid: 1.9, wheelR: 0.28, sill: 0.5, belt: 1.2, roof: 1.7, cab: [0.4, 0.3], hand: 'plane', plane: true, wing: 'low', mass: 0.75, acc: 8.0, topKph: 385, brakeM: 55, latG: 0.85 }),
+  // Floatplane: pontoons instead of gear, lands on WATER (spec.floats routes
+  // the flight model's ground query through the lake surface).
+  floatplane: deriveSpec({ wheelbase: 5.0, len: 9.0, wid: 2.1, wheelR: 0.55, sill: 0.6, belt: 1.4, roof: 2.2, cab: [0.6, 0.3], hand: 'plane', plane: true, floats: true, mass: 0.95, acc: 5.5, topKph: 280, brakeM: 70, latG: 0.62 }),
   sedan: deriveSpec({ wheelbase: 2.98,len: 5.06, wid: 1.90, wheelR: 0.34, sill: 0.30, belt: 1.06, roof: 1.50, cab: [-0.26, 0.10], hand: 'sedan', mass: 1.0, acc: 4.1, topKph: 205, brakeM: 40, latG: 0.88 }),
   hatch: deriveSpec({ wheelbase: 2.6,len: 4.10, wid: 1.76, wheelR: 0.31, sill: 0.29, belt: 0.96, roof: 1.50, cab: [-0.30, 0.16], mass: 0.9, acc: 3.6, topKph: 185, brakeM: 41, latG: 0.85 }),
   compact: deriveSpec({ wheelbase: 2.42,len: 3.74, wid: 1.68, wheelR: 0.29, sill: 0.28, belt: 0.94, roof: 1.48, cab: [-0.28, 0.15], mass: 0.85, acc: 3.0, topKph: 170, brakeM: 43, latG: 0.83 }),
@@ -2875,12 +2885,14 @@ function buildPlane(spec, paint, trim, matte) {
     ring(-half + 0.2, 0.14, 0.34, 1.46),
   ], WHITE, { capStart: true, capEnd: true });
   // wing: one slab across the top, slight dihedral via two halves
-  // one continuous span: two halves plus a root section bridging the cabin
-  // roof -- without the root the wing floats as two detached planks
+  // one continuous span: two halves plus a root section bridging the body --
+  // without the root the wing floats as two detached planks. Low-wing planes
+  // carry it at the sill instead of the cabin roof.
+  const wingY = spec.wing === 'low' ? 0.95 : 2.13;
   for (const sd of [-1, 1]) {
-    paint.box(sd * 3.30, 2.13, 1.60, 4.6, 0.18, 1.50, 0, WHITE);
+    paint.box(sd * 3.30, wingY, 1.45, 4.6, 0.18, 1.50, 0, WHITE);
   }
-  paint.box(0, 2.09, 1.60, 2.1, 0.22, 1.56, 0, WHITE);
+  paint.box(0, wingY - 0.04, 1.45, 2.1, 0.22, 1.56, 0, WHITE);
   // tail: fin and stabiliser
   // stepped taper: two boxes, the upper shorter and set back, which is as
   // close to a swept fin as an axis-aligned box gets
@@ -2893,22 +2905,37 @@ function buildPlane(spec, paint, trim, matte) {
     ring(half - 2.05, 0.68, 0.40, 1.80),
     ring(half - 2.95, 0.64, 0.36, 1.76),
   ], [0.16, 0.2, 0.24], { capStart: true, capEnd: true });
-  // prop: two blades + spinner, in trim so main.js can spin the group later
-  matte.box(0, 1.12, half + 0.30, 0.13, 1.25, 0.06, 0, [0.09, 0.09, 0.10]);
-  matte.box(0, 1.12, half + 0.30, 1.25, 0.13, 0.06, 0, [0.09, 0.09, 0.10]);
+  // No baked blades: the constructor hangs a LIVE prop group at the nose for
+  // spec.plane, and baked ones underneath it would show as a frozen ghost
+  // cross behind the spinning one.
   paint.loft([
     ring(half + 0.02, 0.17, 0.17, 1.12),
     ring(half + 0.24, 0.10, 0.10, 1.12),
     ring(half + 0.36, 0.03, 0.03, 1.12),
   ], WHITE, { capEnd: true });
-  // fixed gear: two mains + nosewheel, drawn as matte cylinders
-  const gearWheel = (x, z) => {
-    matte.box(x, 0.30, z, 0.14, 0.60, 0.60, 0, [0.10, 0.10, 0.11]);
-    matte.box(x * 0.55, 0.62, z, Math.abs(x) * 0.95, 0.07, 0.16, 0, [0.25, 0.26, 0.27]);
-  };
-  gearWheel(-1.15, 0.35); gearWheel(1.15, 0.35);
-  matte.box(0, 0.30, half - 0.75, 0.13, 0.55, 0.55, 0, [0.10, 0.10, 0.11]);
-  matte.box(0, 0.68, half - 0.75, 0.08, 0.5, 0.08, 0, [0.25, 0.26, 0.27]);
+  if (spec.floats) {
+    // pontoons: two long hulls with upswept bows, on struts
+    for (const sd of [-1, 1]) {
+      paint.loft([
+        ring(half - 1.0, 0.30, 0.24, 0.34),
+        ring(half - 2.2, 0.34, 0.30, 0.30),
+        ring(-half + 2.2, 0.34, 0.30, 0.30),
+        ring(-half + 1.1, 0.28, 0.22, 0.36),
+      ].map((r) => ({ z: r.z, pts: r.pts.map(([x, y]) => [x + sd * 1.05, y]) })),
+        WHITE, { capStart: true, capEnd: true });
+      matte.box(sd * 1.05, 0.55, 1.4, 0.10, 0.55, 0.10, 0, [0.25, 0.26, 0.27]);
+      matte.box(sd * 1.05, 0.55, -1.2, 0.10, 0.55, 0.10, 0, [0.25, 0.26, 0.27]);
+    }
+  } else {
+    // fixed gear: two mains + nosewheel, drawn as matte cylinders
+    const gearWheel = (x, z) => {
+      matte.box(x, 0.30, z, 0.14, 0.60, 0.60, 0, [0.10, 0.10, 0.11]);
+      matte.box(x * 0.55, 0.62, z, Math.abs(x) * 0.95, 0.07, 0.16, 0, [0.25, 0.26, 0.27]);
+    };
+    gearWheel(-1.15, 0.35); gearWheel(1.15, 0.35);
+    matte.box(0, 0.30, half - 0.75, 0.13, 0.55, 0.55, 0, [0.10, 0.10, 0.11]);
+    matte.box(0, 0.68, half - 0.75, 0.08, 0.5, 0.08, 0, [0.25, 0.26, 0.27]);
+  }
   return [];
 }
 
@@ -3021,6 +3048,19 @@ export class Vehicle {
     this.tilt = new THREE.Group();
     this.tilt.add(paintMesh, this.trimMesh, this.matteMesh);
     this.group.add(this.tilt);
+    if (t.spec.plane) {
+      // The LIVE propeller: updatePlane spins this.prop, and it used to spin
+      // nothing -- the blades were baked static into the trim mesh. One
+      // builder-made cross in the shared matte material, one extra draw.
+      const pb = new Builder(false);
+      pb.box(0, -0.80, 0, 0.15, 1.60, 0.06, 0, [0.09, 0.09, 0.10]);
+      pb.box(0, -0.075, 0, 1.60, 0.15, 0.06, 0, [0.09, 0.09, 0.10]);
+      const pm = new THREE.Mesh(pb.build(), A.matteMat);
+      this.prop = new THREE.Group();
+      this.prop.add(pm);
+      this.prop.position.set(0, 1.12, t.spec.len / 2 + 0.30);
+      this.tilt.add(this.prop);
+    }
     // A bike carries its rider. He goes in the tilt group, so he leans with it
     // -- parented to `group` instead he would stay bolt upright through every
     // corner while the bike went over underneath him.
@@ -3140,7 +3180,14 @@ export class Vehicle {
     if (this.airborne === undefined) this.airborne = false;
 
     this.lift = this.city.roadLift(this.x, this.z);
-    const ground = this.city.groundAt(this.x, this.z, this.y + 1.2, this.lift);
+    let ground = this.city.groundAt(this.x, this.z, this.y + 1.2, this.lift);
+    if (spec.floats && waterQuery) {
+      // Pontoons make water a runway: the lake surface IS the ground. Lakes
+      // are at their own levels (Lake Union 5.3, Green Lake 50.3), so this
+      // must be the local surface, never a constant.
+      const wl = waterQuery(this.x, this.z);
+      if (wl !== null && wl > ground) ground = wl + 0.12;
+    }
     const top = spec.fadeTop;
     const VR = 27;                       // rotation speed, m/s (~100 kph)
     const STALL = 21;

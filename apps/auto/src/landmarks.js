@@ -462,6 +462,30 @@ function airport() {
   return g;
 }
 
+/**
+ * A small floatplane dock on Lake Union's west shore. Not an OSM landmark --
+ * it is the game's own fixture, so it is placed by hand from measured
+ * shoreline coordinates (land ends at x -160 near z -2800; the lake sits at
+ * 5.31 m) rather than through places.json.
+ */
+function seadock() {
+  const g = new THREE.Group();
+  const deckM = M(0x8a6f4d), postM = M(0x5b4632);
+  // pier: from the shore out over the water, planked
+  g.add(box(44, 0.5, 4.6, deckM, 2, 0.9, 0));
+  for (let k = -4; k <= 4; k++) {
+    g.add(cyl(0.18, 0.18, 2.6, postM, -18 + (k + 4) * 5, -0.4, 2.0, 6));
+    g.add(cyl(0.18, 0.18, 2.6, postM, -18 + (k + 4) * 5, -0.4, -2.0, 6));
+  }
+  // L-head at the end, where the plane ties up
+  g.add(box(4.6, 0.5, 16, deckM, 22, 0.9, 6));
+  // a small shed and a fuel drum at the shore end
+  g.add(box(4.4, 3.0, 3.6, M(0x77593c), -16, 2.5, 0));
+  g.add(box(5.0, 0.4, 4.2, M(0x64492f), -16, 4.1, 0));
+  g.add(cyl(0.55, 0.55, 1.3, M(0xa33d2a), -12.5, 1.7, 1.2, 10));
+  return g;
+}
+
 export const LANDMARK_CLEAR = {
   spaceNeedle: 48, mopop: 62, arena: 95, spheres: 44, market: 75, wheel: 42,
   aquarium: 48, ferry: 72, library: 48, pier: 52, gasworks: 95, troll: 18,
@@ -474,6 +498,12 @@ export const LANDMARK_CLEAR = {
 
 export function buildLandmarks(scene) {
   const root = new THREE.Group();
+  // hand-placed fixtures first (see seadock's comment for why no places.json)
+  {
+    const d = seadock();
+    d.position.set(-140, 5.31, -2800);
+    root.add(d);
+  }
   for (const l of G.LANDMARKS) {
     const x = l.p ? l.p[0] : l.x;
     const z = l.p ? l.p[1] : l.z;
