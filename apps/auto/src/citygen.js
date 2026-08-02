@@ -450,7 +450,22 @@ export function* cityGenerator(md) {
       // inside the frame from the approach, and legible from a car.
       const dPortal = b2.length ? b2[0].d : 1e9;
       const portalY = b2.length ? g.nodes[b2[0].p].y : n.y;
-      const dive = Math.max(0.055 * dPortal, Math.min(0.09 * dPortal, 8));
+      // THE MOUTH IS LEVEL. Starting the dive at the portal node puts a 9 %
+      // break in the road exactly where you drive in, which reads as a floor
+      // that is not flat -- the surface road arrives at grade and the deck
+      // pitches away from under it in the same metre. APRON metres of level
+      // deck carry the grade change back inside the bore, where a car is
+      // already committed and nothing outside has to line up with it.
+      // ...but LEVEL IS NOT AN OPTION EITHER. A dead-flat apron sits at grade
+      // while the ground beside it keeps rising, so the terrain mesh comes up
+      // through the tunnel deck a few metres inside the mouth -- a wedge of
+      // hillside lying across the carriageway you are about to drive onto.
+      // The apron is a gentle 6 % instead: enough to stay under the terrain the
+      // whole way in, shallow enough that the road does not break at the mouth
+      // the way a 9 % ramp starting at the portal node did.
+      const APRON = 12;
+      const dive = Math.max(0.06 * dPortal,
+        Math.min(0.09 * Math.max(0, dPortal - APRON), 8));
       let yFinal = Math.min(y, portalY - dive);
       // Past the approach, never break the surface mid-hill. Inside it, the
       // GEOMETRY decides: world.js draws an open cut until the ground closes

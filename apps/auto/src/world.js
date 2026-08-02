@@ -988,7 +988,7 @@ export class World {
    * from the nodes' profiled y, the same numbers groundAt serves, so a car's
    * ride height and the drawn deck agree by construction.
    */
-  meshTunnel(road, flat, glow, e, a, b) {
+  meshTunnel(road, flat, glow, e, a, b, ei) {
     const hw = e.hw;
     const px = -e.dz, pz = e.dx;
     const WALL = 5.4, DECK = 0.3;
@@ -1095,27 +1095,135 @@ export class World {
       }
     }
 
-    // THE PORTAL FACE, at the mouth itself.
-    //
-    // Not at a cover boundary somewhere down the bore -- that boundary is under
-    // the ground by definition, so a face drawn there is invisible, which is
-    // what the previous attempt shipped. It goes on the portal NODE: the one
-    // end of the tunnel that also carries a surface edge, i.e. where you drive
-    // in. A 1.8 m lintel is invisible from a car, so this is a headwall -- a
-    // slab standing across the road with a black hole in it, rising clear of
-    // the berm, with wing walls running the full height down to the deck.
-    for (const [nd, t] of [[a, 0], [b, 1]]) {
-      if (!nd.e.some((ei) => !this.city.edges[ei].tunnel)) continue;
-      const [fx, fz] = P(t, 0);
-      const fy = Y(t);
-      const rot = Math.atan2(e.dx, e.dz);
-      const roof = fy + WALL;
-      const cap = Math.max(G.terrainHeight(fx, fz), roof) + 2.4;
-      flat.box(fx, roof, fz, hw * 2 + 5.2, cap - roof, 2.0, rot, conc);
-      for (const sd of [1, -1]) {
-        flat.box(fx + px * (hw + 1.35) * sd, fy, fz + pz * (hw + 1.35) * sd,
-          2.7, cap - fy, 2.0, rot, conc);
+    // THE PORTAL FACE is ONE HEADWALL FOR THE WHOLE MOUTH, drawn by
+    // meshPortalWall below. Every bore that surfaces here shares it. This edge
+    // only decides whether it is the one that owns the drawing.
+    for (const ndi of [e.a, e.b]) {
+      const grp = this.portalGroups().get(ndi);
+      if (!grp || grp.owner.ni !== ndi || grp.owner.ei !== ei) continue;
+      this.meshPortalWall(flat, grp, WALL, DECK, conc);
+    }
+  }
+
+  /**
+   * Portal nodes grouped into MOUTHS, computed once and cached.
+   *
+   * A portal node is a tunnel node that also carries a surface edge. A divided
+   * road has one per carriageway, a few metres apart and a few metres offset
+   * along the road, and drawing a frame per node is what produced the reported
+   * mess: two goalposts at different stations and different heights, the gap
+   * between them reading as a third opening, and four jambs that reach nothing.
+   *
+   * Nodes within 60 m whose bores run near-parallel (either sense -- one
+   * carriageway goes in as the other comes out) are one mouth. The member with
+   * the lowest tunnel-edge index owns it, so every chunk makes the same
+   * decision without sharing any state.
+   */
+  portalGroups() {
+    if (this._pgroups) return this._pgroups;
+    const city = this.city;
+    const ports = [];
+    for (let ni = 0; ni < city.nodes.length; ni++) {
+      const n = city.nodes[ni];
+      const tun = n.e.filter((k) => city.edges[k].tunnel && !city.edges[k].elev);
+      if (!tun.length || !n.e.some((k) => !city.edges[k].tunnel)) continue;
+      let be = city.edges[tun[0]];
+      for (const k of tun) if (city.edges[k].hw > be.hw) be = city.edges[k];
+      const o = city.nodes[be.a === ni ? be.b : be.a];
+      const L = Math.hypot(o.x - n.x, o.z - n.z) || 1;
+      ports.push({
+        ni, x: n.x, y: n.y, z: n.z, hw: be.hw,
+        dx: (o.x - n.x) / L, dz: (o.z - n.z) / L,
+        ei: Math.min(...tun),
+      });
+    }
+    const groups = [];
+    for (const p of ports) {
+      let g = null;
+      for (const q of groups) {
+        const h = q.members[0];
+        if (Math.hypot(h.x - p.x, h.z - p.z) > 60) continue;
+        if (Math.abs(h.dx * p.dx + h.dz * p.dz) < 0.87) continue;   // within ~30 deg
+        g = q; break;
       }
+      if (!g) groups.push((g = { members: [] }));
+      g.members.push(p);
+    }
+    const byNode = new Map();
+    for (const g of groups) {
+      g.owner = g.members.reduce((x, y) => (y.ei < x.ei ? y : x));
+      for (const m of g.members) byNode.set(m.ni, g);
+    }
+    this._pgroups = byNode;
+    return byNode;
+  }
+
+  /**
+   * One slab across the whole mouth with a hole per bore.
+   *
+   * Everything is built in the OWNER's frame and at ONE height, which is the
+   * point: the lintel is a single box with a single top and a single soffit,
+   * and the piers are whatever is left of the wall between the holes. Nothing
+   * can end in mid-air, because nothing is placed independently -- the piers
+   * are defined by the gaps, not positioned.
+   */
+  meshPortalWall(flat, grp, WALL, DECK, conc) {
+    const O = grp.owner;
+    const px = -O.dz, pz = O.dx;
+    const rot = Math.atan2(O.dx, O.dz);
+    const DEPTH = 1.8, SHOULDER = 1.8;
+
+    // Lateral extent of each bore, in the owner's cross-road axis, merged so
+    // two overlapping carriageways cannot leave a sliver of pier between them.
+    // THE WALL PLANE GOES IN FRONT OF EVERY BORE IN THE GROUP. Members sit at
+    // different stations along the road, and a wall built at the owner's node
+    // leaves the ones further out sticking through it -- an open-sided tube
+    // standing in the daylight beside the mouth, which is what read as a third
+    // and fourth opening. Take the most outward member's station.
+    const along = (m) => (m.x - O.x) * O.dx + (m.z - O.z) * O.dz;
+    const v0 = Math.min(0, ...grp.members.map(along));
+    const ox = O.x + O.dx * v0, oz = O.z + O.dz * v0;
+
+    const holes = grp.members
+      .map((m) => {
+        const u = (m.x - ox) * px + (m.z - oz) * pz;
+        return [u - m.hw, u + m.hw];
+      })
+      .sort((h, k) => h[0] - k[0]);
+    const merged = [holes[0].slice()];
+    for (const h of holes.slice(1)) {
+      const last = merged[merged.length - 1];
+      if (h[0] <= last[1] + 1.6) last[1] = Math.max(last[1], h[1]);
+      else merged.push(h.slice());
+    }
+
+    // ONE Y for the whole wall. Members sit at slightly different heights; a
+    // lintel that follows each of them is the stepped headwall that read as
+    // separate beams.
+    // ONE Y, taken from the OWNER's bore rather than from the extremes across
+    // the group. min/max looks safer and is not: one member sitting on higher
+    // ground drags the lintel metres above every roof it is supposed to cap,
+    // and the mouth reads as a freeway overpass with a gap under it.
+    const deckY = O.y + DECK;
+    const roofY = O.y + DECK + WALL;
+    const capY = Math.max(roofY, G.terrainHeight(ox, oz)) + 2.4;
+    const uMin = merged[0][0] - SHOULDER;
+    const uMax = merged[merged.length - 1][1] + SHOULDER;
+    const at = (u) => [ox + px * u, oz + pz * u];
+
+    const [lx, lz] = at((uMin + uMax) / 2);
+    flat.box(lx, roofY, lz, uMax - uMin, capY - roofY, DEPTH, rot, conc);
+
+    // The piers ARE the gaps: outer shoulders and whatever lies between two
+    // bores. Defined by subtraction, so none of them can float.
+    const piers = [[uMin, merged[0][0]]];
+    for (let i = 0; i < merged.length - 1; i++) piers.push([merged[i][1], merged[i + 1][0]]);
+    piers.push([merged[merged.length - 1][1], uMax]);
+    for (const [p0, p1] of piers) {
+      if (p1 - p0 < 0.4) continue;
+      const [cx, cz] = at((p0 + p1) / 2);
+      const foot = Math.min(deckY, G.terrainHeight(cx, cz)) - 1.5;
+      flat.box(cx, foot, cz, p1 - p0, roofY - foot, DEPTH, rot, conc);
     }
   }
 
@@ -1127,7 +1235,7 @@ export class World {
     // ceiling, a lamp strip, and a portal frame at each end. Everything hangs
     // off the same two node heights the physics uses, so the drawn bore and
     // the driven bore cannot disagree.
-    if (e.tunnel) { this.meshTunnel(road, flat, glow, e, a, b); return; }
+    if (e.tunnel) { this.meshTunnel(road, flat, glow, e, a, b, ei); return; }
     const hw = e.hw;
     const U1 = (hw * 2) / ROAD_TILE;
     const px = -e.dz, pz = e.dx;
