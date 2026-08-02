@@ -1759,7 +1759,12 @@ export class World {
     const merged = [holes[0].slice()];
     for (const h of holes.slice(1)) {
       const last = merged[merged.length - 1];
-      if (h[0] <= last[1] + 1.6) last[1] = Math.max(last[1], h[1]);
+      // MERGE ONLY WHAT ACTUALLY OVERLAPS. A 1.6 m tolerance swallowed the
+      // pier between adjacent carriageways, so three bores became one black
+      // band as wide as the cutting -- read as a missing wall rather than an
+      // entrance. Real portals put a pier between barrels; leaving the gap
+      // means one gets built, because the piers ARE the gaps.
+      if (h[0] <= last[1]) last[1] = Math.max(last[1], h[1]);
       else merged.push(h.slice());
     }
     // ONE Y for the whole wall, from the bore it stands on. min/max across the
@@ -1786,7 +1791,10 @@ export class World {
     // all, so you drive straight through it.
     for (const [h0, h1] of merged) {
       const [m0x, m0z] = at(h0), [m1x, m1z] = at(h1);
-      const bx = O.dx * (DEPTH / 2 - 0.15), bz = O.dz * (DEPTH / 2 - 0.15);
+      // Inset behind the face, so the headwall shows a reveal on all four
+      // sides of the opening instead of the black sitting flush with it.
+      // Flush, it reads as a hole in a sheet; recessed, as a portal.
+      const bx = O.dx * (DEPTH / 2 - 0.9), bz = O.dz * (DEPTH / 2 - 0.9);
       // THE SILL GOES UNDER THE TARMAC. The bore's deck and the drawn road are
       // not the same height: the road is laid on the carved ground plus
       // ROAD_LIFT, which sits about 0.4 m below the deck the bore is profiled
