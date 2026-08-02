@@ -390,6 +390,21 @@ export function* cityGenerator(md) {
       const n = g.nodes[ni];
       if (n.e.some((ei) => !g.edges[ei].tunnel)) portals.add(ni);
     }
+    // A PORTAL DOES NOT SIT AT STREET LEVEL. Left at grade, the cutting can
+    // only begin where the bore does, so everything you can see on the
+    // approach is flat road and the trench is a foreshortened sliver at the
+    // horizon -- judged three times as "there is no cutting; the road never
+    // goes down or under anything". Dropping the portal itself puts the ramp
+    // in FRONT of the mouth, where a driver is looking: the surface road
+    // descends into a walled channel, then the headwall.
+    //
+    // The surface approach follows automatically. The cut is part of
+    // terrainHeight now (geo.setCarve), and meshRoad draws its strips from
+    // terrainHeight, so lowering the ground along the approach lowers the road
+    // on it without touching a single road vertex.
+    const PORTAL_DROP = 5;
+    for (const ni of portals) g.nodes[ni].y -= PORTAL_DROP;
+
     // multi-source Dijkstra over tunnel edges, tracking the two nearest
     // DISTINCT portals per node
     const best = new Map();   // ni -> [{p, d}, {p, d}]

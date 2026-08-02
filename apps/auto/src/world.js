@@ -31,6 +31,10 @@ const CUT_BANK = 2.4;
 // nothing. 3.5 m of cover puts the face at the bottom of a ~9 m cutting, which
 // is what makes it a portal rather than a kerb.
 const CUT_COVER = 3.5;
+// How far in front of a portal the approach ramp runs. Long enough that the
+// descent is gentle at the drop citygen applies, short enough that it does not
+// swallow the junction behind it.
+const APPROACH = 70;
 
 const ROAD_Y = ROAD_LIFT;
 // Metres per road-texture repeat. Fixed, so the asphalt's grain is the same
@@ -524,8 +528,39 @@ export class World {
       for (const m of grp.members) {
         if (seen.has(m.ni)) continue;
         seen.add(m.ni);
+        // THE RAMP IN FRONT OF THE MOUTH. citygen drops the portal node below
+        // grade; this carves the ground from true terrain down to it along the
+        // surface approach, so the road you are driving descends into the
+        // cutting instead of meeting it as a wall at the horizon. These points
+        // come FIRST, so the corridor starts out on the street.
+        const P0 = city.nodes[m.ni];
+        const app = [];
+        {
+          let cur = m.ni, prev = -1, d = 0;
+          while (d < APPROACH) {
+            const n = city.nodes[cur];
+            let best = null;
+            for (const k of n.e) {
+              const e = city.edges[k];
+              if (e.tunnel || e.elev || k === prev) continue;
+              if (best === null || e.hw > city.edges[best].hw) best = k;
+            }
+            if (best === null) break;
+            const e = city.edges[best];
+            const nx = e.a === cur ? e.b : e.a;
+            const nn = city.nodes[nx];
+            d += e.len; prev = best; cur = nx;
+            const t = Math.min(1, d / APPROACH);
+            app.push({
+              x: nn.x, z: nn.z, hw: Math.max(m.hw, e.hw),
+              // ramp from the dropped portal up to untouched ground
+              y: P0.y + (G.terrainRaw(nn.x, nn.z) - P0.y) * (t * t * (3 - 2 * t)),
+            });
+          }
+        }
+        app.reverse();
         let cur = m.ni, prev = -1, dist = 0;
-        const pts = [{ x: city.nodes[cur].x, z: city.nodes[cur].z, y: city.nodes[cur].y, hw: m.hw }];
+        const pts = [...app, { x: P0.x, z: P0.z, y: P0.y, hw: m.hw }];
         while (dist < 240) {
           const n = city.nodes[cur];
           let best = null;
