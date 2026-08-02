@@ -5,6 +5,7 @@ import { makeHumanoid, animateWalk } from './peds.js';
 import { collideWithBuildings } from './traffic.js';
 import { clamp, lerp, angleWrap, damp, dist2 } from './util.js';
 import * as G from './geo.js';
+import { TUNNEL_H } from './citygen.js';
 
 export class Player {
   constructor(scene, city, game, world) {
@@ -380,9 +381,33 @@ export class Player {
     // The raw surface is discontinuous, so clamping straight to it turns every
     // kerb the camera passes over into a snap of its own. It doesn't need 22 cm
     // of kerb accuracy either, hence the zero lift.
-    const rawFloor = this.city.groundAt(this.camPos.x, this.camPos.z, null, 0) + 1.1;
+    //
+    // ASK FOR THE FLOOR THE PLAYER IS ON, not the highest one. `groundAt` with
+    // no reference height returns the HIGHEST deck at that point, which is the
+    // right answer for a spawn and completely wrong here: inside a bore the
+    // highest deck is the street overhead. Measured 150 m into the SR-99 tunnel
+    // -- deck 7.1, roof 12.5, ground above 31.5 -- the camera's floor came back
+    // as 31.5 and the clamp shoved the camera 20 m up through the roof and out
+    // onto the surface. Passing the target's height picks the deck the player
+    // is actually driving on.
+    const rawFloor = this.city.groundAt(this.camPos.x, this.camPos.z, target.y, 0) + 1.1;
     this.camFloor = this.camFloor == null ? rawFloor : damp(this.camFloor, rawFloor, 8, dt);
     if (this.camPos.y < this.camFloor) this.camPos.y = this.camFloor;
+    // AND UNDER THE CEILING. Nothing else stops it: clearCamDist only tests
+    // buildings, so a bore's walls and roof are invisible to the boom, and the
+    // rig rides 3.2 + roof*0.42 above the car plus sin(pitch)*dist -- looking
+    // up 15 deg adds about 3 m, which is more headroom than a 5.4 m bore has.
+    // Only clamp where there really is ground overhead, so an open road is
+    // untouched.
+    // Measured off the TARGET's deck, not the damped camera floor. camFloor
+    // lags by design -- that is what stops kerbs snapping the camera -- so a
+    // ceiling derived from it lags too, and the camera was still coming
+    // through the roof on 2 of 24 stations while the lag caught up.
+    const deckAt = this.city.groundAt(target.x, target.z, target.y, 0);
+    const ceil = deckAt + TUNNEL_H - 0.6;
+    if (G.terrainHeight(this.camPos.x, this.camPos.z) > ceil && this.camPos.y > ceil) {
+      this.camPos.y = ceil;
+    }
     this.camLook.set(
       damp(this.camLook.x, target.x, 16, dt),
       damp(this.camLook.y, target.y + lookH, this.onFoot ? 6 : 12, dt),
