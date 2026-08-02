@@ -1014,7 +1014,7 @@ export class World {
     // like in life -- a concrete face in a landscaped mound, not a lidded
     // culvert lying on a lawn, which is what the free-standing slabs were.
     const seg = Math.max(2, Math.ceil(e.len / 9));
-    const BERM = [0.34, 0.36, 0.26];
+    const BERM = [0.30, 0.32, 0.24];
     const exposed = (t) => {
       const [cx, cz] = P(t, 0);
       return (Y(t) + WALL) - G.terrainHeight(cx, cz);   // >0 means the tube is proud
@@ -1059,24 +1059,29 @@ export class World {
         [P(t1, 0)[0] - px * 0.5, Y(t1) + WALL - 0.06, P(t1, 0)[1] - pz * 0.5],
         [0, -1, 0], ZERO_UV, [1, 0.95, 0.8]);
 
-      // THE BERM. Where the roof is still above the ground, the tube is a bare
-      // concrete culvert lying on the grass -- the thing the old portal looked
-      // like. Cover it: an earth crown over the ceiling and a 1:1.8 slope off
-      // each side down to wherever the terrain actually is. Once the ground
-      // closes over the roof these quads fall below it and cost only their
-      // triangles, so no boundary has to be found or kept consistent.
-      const x0 = exposed(t0), x1 = exposed(t1);
-      if (x0 > -0.6 || x1 > -0.6) {
-        const r0 = Y(t0) + WALL + 0.35, r1 = Y(t1) + WALL + 0.35;
+      // CLOSE THE OUTSIDE OF THE TUBE.
+      //
+      // The bore's own walls face INWARD -- they are the inside of a tunnel --
+      // so from outside they are backface-culled and the whole thing reads as
+      // an open-sided carport. Wherever the tube stands proud of the ground it
+      // needs an exterior too: a vertical face from the terrain up to the roof,
+      // and a slab over the top. A sloped earth berm was tried first and is
+      // the wrong tool -- at 1:1.8 it is nearly horizontal, so it is a thin
+      // sliver from a driver's eye and a 30 m flap in the sky on a hillside.
+      //
+      // Once the ground closes over the roof these quads fall below it and
+      // cost only their triangles, so no cover boundary has to be found or
+      // kept consistent between here and citygen.
+      const r0 = Y(t0) + WALL + 0.4, r1 = Y(t1) + WALL + 0.4;
+      if (exposed(t0) > -0.8 || exposed(t1) > -0.8) {
         flat.quad([a0x, r0, a0z], [a1x, r0, a1z], [b1x, r1, b1z], [b0x, r1, b0z],
           [0, 1, 0], ZERO_UV, BERM);
         for (const sd of [1, -1]) {
-          const [w0x, w0z] = P(t0, hw * sd), [w1x, w1z] = P(t1, hw * sd);
-          const g0 = G.terrainHeight(w0x, w0z), g1 = G.terrainHeight(w1x, w1z);
-          const s0 = Math.max(0, r0 - g0) * 1.8, s1 = Math.max(0, r1 - g1) * 1.8;
-          const [o0x, o0z] = P(t0, (hw + s0) * sd), [o1x, o1z] = P(t1, (hw + s1) * sd);
-          flat.quad([w0x, r0, w0z], [w1x, r1, w1z], [o1x, g1, o1z], [o0x, g0, o0z],
-            [0, 1, 0], ZERO_UV, BERM);
+          const [w0x, w0z] = P(t0, (hw + 0.4) * sd), [w1x, w1z] = P(t1, (hw + 0.4) * sd);
+          const g0 = Math.min(G.terrainHeight(w0x, w0z), r0) - 0.5;
+          const g1 = Math.min(G.terrainHeight(w1x, w1z), r1) - 0.5;
+          flat.quad([w0x, g0, w0z], [w1x, g1, w1z], [w1x, r1, w1z], [w0x, r0, w0z],
+            [px * sd, 0, pz * sd], ZERO_UV, conc);
         }
       }
     }
