@@ -1312,7 +1312,22 @@ export class World {
           // terrainRaw: the wall's job is to hold back the ground that WAS
           // there. Against the carved surface it stops at the trench floor it
           // is standing in and retains nothing.
-          const g0 = G.terrainRaw(r0x, r0z) + 0.35, g1 = G.terrainRaw(r1x, r1z) + 0.35;
+          // A MINIMUM HEIGHT, so the channel exists from the first metre. Left
+          // to follow the ground the wall tapers to nothing at the mouth,
+          // where the deck is still near grade -- and a 0.5 m wall seen from a
+          // driver's eye is a pale ribbon lying on the ground, not a wall. A
+          // real cutting carries its parapet the whole way out. 3.2 m is above
+          // the windows of a car, which is what makes the road read as being
+          // IN something.
+          // 3.2 m was tried and is too much HERE, because a mouth is rarely
+          // one bore: at SR-99 north three carriageways fan out, each with two
+          // walls, and at car-window height they merge into a fence of slabs
+          // across the whole approach -- the exact shape of the original
+          // complaint. 1.8 m reads as a channel from a driver's eye and still
+          // lets you see the portal you are aiming at.
+          const MINW = 1.8;
+          const g0 = Math.max(G.terrainRaw(r0x, r0z) + 0.35, Y(t0) + MINW);
+          const g1 = Math.max(G.terrainRaw(r1x, r1z) + 0.35, Y(t1) + MINW);
           flat.quad([w0x, Y(t0) - 0.5, w0z], [w1x, Y(t1) - 0.5, w1z],
             [w1x, g1, w1z], [w0x, g0, w0z],
             [-px * sd, 0, -pz * sd], ZERO_UV, conc);
