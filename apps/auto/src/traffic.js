@@ -35,7 +35,7 @@ export function collideWithBuildings(v, city, onHit) {
   //
   // Softer than a wall: a mast shears and a trunk gives, so the car is pushed
   // out and loses most of its speed rather than stopping dead against it.
-  const ob = city.obstacleHit(v.x, v.z, v.radius * 0.7);
+  const ob = city.obstacleHit(v.x, v.z, v.radius * 0.7, v.y);
   if (ob) {
     v.x += ob.nx * ob.pen;
     v.z += ob.nz * ob.pen;

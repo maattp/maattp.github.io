@@ -662,40 +662,44 @@ export class World {
         const L = Math.hypot(b.x - a.x, b.z - a.z) || 1;
         const qx = -(b.z - a.z) / L, qz = (b.x - a.x) / L;
         const floorY = (a.y + b.y) / 2;
-        // AT THE RIM OF THE UNION, in short pieces.
+        // THERE IS DELIBERATELY NO FENCE ALONG THE CUTTING RIM.
         //
-        // Three placements failed before this one. On the wall line, the
-        // carve's bank is drivable heightfield -- a 73 degree ramp -- so cars
-        // rode the bank down and wedged in the slot outside the wall. On this
-        // corridor's own rim offset, tested per 40 m pair, the mouth broke:
-        // corridors overlap there, so one corridor's fence line stands on its
-        // NEIGHBOUR'S carved ground -- a fence in mid-air over a pit at best,
-        // a fence across the neighbour's carriageway at worst, which walled
-        // off the tunnel entrance itself.
+        // Five schemes were built and measured, and every one was net-negative:
+        // wall-line pieces let cars ride the 73-degree bank down and wedge in
+        // the CUT_OVER ledge; own-rim pieces stood on the neighbouring
+        // excavation at the mouth; road-skipped pieces left a gap with a
+        // run-up; independently-pulled pieces zigzagged with seams; and the
+        // connected polyline blocked the SR-99 entrance itself, stalling the
+        // drive-in test at the same station on three consecutive builds while
+        // STILL not keeping the side-approach test out (it drives down the
+        // bank, 2 m per frame, under any step threshold, and then cannot get
+        // back out of the outer ledge -- measured stuck, not recovered).
         //
-        // So each piece asks the ground, not the corridor: fence only where
-        // the fence line itself is UNCARVED (this is the union's rim, whoever
-        // dug the pit inside it) and the ground just inside is genuinely
-        // dropped. 8 m pieces, because a 40 m piece straddles the answer.
-        const STEP = 8;
-        const nPieces = Math.max(1, Math.ceil(L / STEP));
-        for (let k = 0; k < nPieces; k++) {
-          const t0 = k / nPieces, t1 = (k + 1) / nPieces;
-          for (const sd of [1, -1]) {
-            const w = (a.hw + CUT_SH + CUT_BANK + 0.4) * sd;
-            const win = (a.hw + CUT_SH - 1.0) * sd;
-            const tm = (t0 + t1) / 2;
-            const mxF = a.x + (b.x - a.x) * tm + qx * w;
-            const mzF = a.z + (b.z - a.z) * tm + qz * w;
-            const mxI = a.x + (b.x - a.x) * tm + qx * win;
-            const mzI = a.z + (b.z - a.z) * tm + qz * win;
-            if (G.terrainRaw(mxF, mzF) - G.terrainHeight(mxF, mzF) > 0.7) continue;
-            if (G.terrainRaw(mxI, mzI) - G.terrainHeight(mxI, mzI) < 1.6) continue;
-            bsegs.push(
-              a.x + (b.x - a.x) * t0 + qx * w, a.z + (b.z - a.z) * t0 + qz * w,
-              a.x + (b.x - a.x) * t1 + qx * w, a.z + (b.z - a.z) * t1 + qz * w);
-          }
-        }
+        // So the honest state ships: you CAN drive off the rim into an open
+        // cutting, exactly as v66 shipped it. Fixing that for real means
+        // reshaping the CUT_OVER ledge so a fallen car can drive out along it,
+        // which is corridor geometry work, not fence work -- do not add a
+        // sixth fence.
+      }
+    }
+    // THE BORE'S OWN WALLS ARE SOLID TOO -- "once you are in you are in."
+    // They were visual only: steer into one and the car crossed the tube's
+    // half-width, groundAt found no tunnel surface there and answered with
+    // the street 25 m overhead, and the car popped out of the tunnel onto the
+    // surface. Every tunnel edge now carries a barrier at each wall line,
+    // banded from a little under its deck to its roof, so the same wall that
+    // is drawn is the wall that is hit -- and a car on the street above, or a
+    // plane over the cutting, is outside the band and never feels it.
+    for (const e of this.city.edges) {
+      if (!e.tunnel || e.elev) continue;
+      const a = this.city.nodes[e.a], b = this.city.nodes[e.b];
+      const qx = -e.dz, qz = e.dx;
+      const w = e.hw + 0.4;
+      const y0 = Math.min(a.y, b.y) - 1.5;
+      const y1 = Math.max(a.y, b.y) + TUNNEL_H - 0.5;
+      for (const sd of [1, -1]) {
+        bsegs.push(a.x + qx * w * sd, a.z + qz * w * sd,
+          b.x + qx * w * sd, b.z + qz * w * sd, y0, y1);
       }
     }
     this.city.setBarriers(bsegs);
