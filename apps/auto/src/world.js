@@ -644,6 +644,96 @@ export class World {
       }
     }
     this._pcuts = cuts;
+
+    // THE WALLS ARE SOLID, from the same polylines that draw them. Segments
+    // along each side of every corridor at the wall line, gated on there being
+    // a genuine drop to retain -- the apron start, where trench and street
+    // meet at grade, gets none, which is also what lets you drive in. Installed
+    // into the city's analytic barrier store: position-indexed, so no chunk
+    // build or dispose can lose them, which is how two obstacle-based attempts
+    // at this died. Side walls run the corridor's full length; the closed
+    // middle of the far end is real ground, so no cap is needed there and none
+    // may exist -- a cap across the carriageway would seal the bore.
+    const bsegs = [];
+    for (const c of cuts) {
+      for (let i = 0; i < c.pts.length - 1; i++) {
+        const a = c.pts[i], b = c.pts[i + 1];
+        if (a.cap || b.cap) continue;
+        const L = Math.hypot(b.x - a.x, b.z - a.z) || 1;
+        const qx = -(b.z - a.z) / L, qz = (b.x - a.x) / L;
+        const floorY = (a.y + b.y) / 2;
+        // AT THE RIM OF THE UNION, in short pieces.
+        //
+        // Three placements failed before this one. On the wall line, the
+        // carve's bank is drivable heightfield -- a 73 degree ramp -- so cars
+        // rode the bank down and wedged in the slot outside the wall. On this
+        // corridor's own rim offset, tested per 40 m pair, the mouth broke:
+        // corridors overlap there, so one corridor's fence line stands on its
+        // NEIGHBOUR'S carved ground -- a fence in mid-air over a pit at best,
+        // a fence across the neighbour's carriageway at worst, which walled
+        // off the tunnel entrance itself.
+        //
+        // So each piece asks the ground, not the corridor: fence only where
+        // the fence line itself is UNCARVED (this is the union's rim, whoever
+        // dug the pit inside it) and the ground just inside is genuinely
+        // dropped. 8 m pieces, because a 40 m piece straddles the answer.
+        const STEP = 8;
+        const nPieces = Math.max(1, Math.ceil(L / STEP));
+        for (let k = 0; k < nPieces; k++) {
+          const t0 = k / nPieces, t1 = (k + 1) / nPieces;
+          for (const sd of [1, -1]) {
+            const w = (a.hw + CUT_SH + CUT_BANK + 0.4) * sd;
+            const win = (a.hw + CUT_SH - 1.0) * sd;
+            const tm = (t0 + t1) / 2;
+            const mxF = a.x + (b.x - a.x) * tm + qx * w;
+            const mzF = a.z + (b.z - a.z) * tm + qz * w;
+            const mxI = a.x + (b.x - a.x) * tm + qx * win;
+            const mzI = a.z + (b.z - a.z) * tm + qz * win;
+            if (G.terrainRaw(mxF, mzF) - G.terrainHeight(mxF, mzF) > 0.7) continue;
+            if (G.terrainRaw(mxI, mzI) - G.terrainHeight(mxI, mzI) < 1.6) continue;
+            bsegs.push(
+              a.x + (b.x - a.x) * t0 + qx * w, a.z + (b.z - a.z) * t0 + qz * w,
+              a.x + (b.x - a.x) * t1 + qx * w, a.z + (b.z - a.z) * t1 + qz * w);
+          }
+        }
+      }
+    }
+    this.city.setBarriers(bsegs);
+
+    // DRY TUNNELS. A corridor that dips below sea level intersects the water
+    // plane, and the plane knows nothing about bores: the SR-99 tube rendered
+    // as a canal. Each low pair of corridor points gets an invisible quad just
+    // above sea level that writes DEPTH ONLY (renderOrder 3, before the water
+    // at 4): the deck below it is already drawn and keeps its pixels, and the
+    // sea behind it fails the depth test and never draws inside the tube.
+    if (!this.tunnelWaterMask) {
+      // Over the tunnel EDGES, not the carved corridors: a corridor ends
+      // ~140 m in where the ground closes, and the first mask followed it --
+      // so the first 140 m of SR-99 were dry and the remaining 3 km, all of it
+      // below sea level, still rendered flooded. The graph is the authority on
+      // where the bore runs; the profile on its nodes is the authority on how
+      // deep.
+      const wb = new Builder(false);
+      for (const e of this.city.edges) {
+        if (!e.tunnel || e.elev) continue;
+        const a = this.city.nodes[e.a], b = this.city.nodes[e.b];
+        if (Math.min(a.y, b.y) > 1.2) continue;
+        const w = e.hw + 2;
+        const qx = -e.dz, qz = e.dx;
+        wb.quad(
+          [a.x + qx * w, 0.02, a.z + qz * w], [a.x - qx * w, 0.02, a.z - qz * w],
+          [b.x - qx * w, 0.02, b.z - qz * w], [b.x + qx * w, 0.02, b.z + qz * w],
+          [0, 1, 0], ZERO_UV, [1, 1, 1]);
+      }
+      if (!wb.empty) {
+        const mm = new THREE.Mesh(wb.build(),
+          new THREE.MeshBasicMaterial({ colorWrite: false }));
+        mm.renderOrder = 3;
+        this.scene.add(mm);
+      }
+      this.tunnelWaterMask = true;
+    }
+
     // A node now yields ONE CUT PER BRANCH, so this cannot be a 1:1 map --
     // keyed by node it kept only the last branch, and every other branch's
     // corridor ended with no wall at its head. That is a bore mouth packed
@@ -764,7 +854,13 @@ export class World {
     });
     const m = new THREE.Mesh(geo, mat);
     m.position.y = 0;
-    m.renderOrder = -5;
+    // AFTER the opaque scene, not before it (was -5). A bore below sea level
+    // -- SR-99 bottoms out around -16 m, like the real one -- has nothing
+    // between its interior and the sea plane, so the tunnel rendered flooded.
+    // The fix is a depth-only mask over those corridors (see portalCuts), and
+    // a mask can only shield water that draws AFTER it. Opaque water is
+    // order-independent under the depth buffer, so moving it costs nothing.
+    m.renderOrder = 4;
     this.scene.add(m);
     this.water = m;
     this.waterNormal = n;
@@ -782,7 +878,7 @@ export class World {
       lg.rotateX(-Math.PI / 2);
       const lm = new THREE.Mesh(lg, mat);
       lm.position.set((l.x0 + l.x1) / 2, l.level, (l.z0 + l.z1) / 2);
-      lm.renderOrder = -4;
+      lm.renderOrder = 5;   // after the sea, as before -- see note above
       this.scene.add(lm);
       this.lakes.push(lm);
     }

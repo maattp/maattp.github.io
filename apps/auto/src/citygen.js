@@ -809,6 +809,72 @@ export function* cityGenerator(md) {
      */
     obstacles: new Map(),
 
+    // --- Portal-cutting barriers ------------------------------------------
+    //
+    // The retaining walls of a portal cutting, as COLLISION. Two attempts to
+    // register these through addObstacle failed the same way: obstacles are
+    // keyed by the chunk that drew them and cleared on both build and dispose,
+    // so wall segments spanning chunk lines or registered mid-build quietly
+    // vanished -- and a 14 m trench had no solid edge, which is "a hole that I
+    // ran into". These are installed ONCE by world from the same corridor
+    // polylines that draw the walls (setBarriers), indexed by POSITION, so the
+    // store and the lookup cannot disagree and no chunk lifecycle touches them.
+    barrierSegs: null,
+    barrierGrid: new Map(),
+
+    setBarriers(segs) {
+      this.barrierSegs = segs;
+      this.barrierGrid = new Map();
+      for (let i = 0; i < segs.length; i += 4) {
+        const c0 = Math.floor((Math.min(segs[i], segs[i + 2]) - 2) / CHUNK);
+        const c1 = Math.floor((Math.max(segs[i], segs[i + 2]) + 2) / CHUNK);
+        const d0 = Math.floor((Math.min(segs[i + 1], segs[i + 3]) - 2) / CHUNK);
+        const d1 = Math.floor((Math.max(segs[i + 1], segs[i + 3]) + 2) / CHUNK);
+        for (let cx = c0; cx <= c1; cx++) {
+          for (let cz = d0; cz <= d1; cz++) {
+            const k = skey(cx, cz);
+            let l = this.barrierGrid.get(k);
+            if (!l) this.barrierGrid.set(k, (l = []));
+            l.push(i);
+          }
+        }
+      }
+    },
+
+    /** Deepest barrier overlap for a circle, same shape obstacleHit returns. */
+    barrierHit(x, z, rad) {
+      if (!this.barrierSegs) return null;
+      const HALF = 0.8; // wall half-thickness
+      let best = null;
+      const c0 = Math.floor((x - rad) / CHUNK), c1 = Math.floor((x + rad) / CHUNK);
+      const d0 = Math.floor((z - rad) / CHUNK), d1 = Math.floor((z + rad) / CHUNK);
+      // Allocated lazily: this runs inside obstacleHit for every vehicle and
+      // pedestrian every frame, and almost everywhere on the map every queried
+      // cell is empty.
+      let seen = null;
+      for (let cx = c0; cx <= c1; cx++) {
+        for (let cz = d0; cz <= d1; cz++) {
+          const l = this.barrierGrid.get(skey(cx, cz));
+          if (!l) continue;
+          for (const i of l) {
+            if (!seen) seen = new Set();
+            if (seen.has(i)) continue;
+            seen.add(i);
+            const S = this.barrierSegs;
+            const r = distToSeg(x, z, S[i], S[i + 1], S[i + 2], S[i + 3]);
+            const rr = rad + HALF;
+            if (r.d >= rr) continue;
+            const d = r.d || 1e-4;
+            const pen = rr - d;
+            if (!best || pen > best.pen) {
+              best = { pen, nx: (x - r.x) / d, nz: (z - r.z) / d };
+            }
+          }
+        }
+      }
+      return best;
+    },
+
     addObstacle(ck, x, z, r) {
       let l = this.obstacles.get(ck);
       if (!l) this.obstacles.set(ck, (l = []));
@@ -843,6 +909,11 @@ export function* cityGenerator(md) {
           }
         }
       }
+      // The cutting walls answer through the same query, so every consumer --
+      // traffic AI, the player's car, walking -- collides with them without a
+      // single call site changing.
+      const b = this.barrierHit(x, z, rad);
+      if (b && (!best || b.pen > best.pen)) best = b;
       return best;
     },
 
