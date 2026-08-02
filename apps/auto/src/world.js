@@ -587,7 +587,7 @@ export class World {
             x0 = Math.min(x0, q.x - r); x1 = Math.max(x1, q.x + r);
             z0 = Math.min(z0, q.z - r); z1 = Math.max(z1, q.z + r);
           }
-          cuts.push({ ni: m.ni, pts, x0, x1, z0, z1 });
+          cuts.push({ ni: m.ni, pts, apron: app.length, x0, x1, z0, z1 });
         }
       }
     }
@@ -1534,6 +1534,38 @@ export class World {
       else clusters.push([m]);
     }
     for (const M of clusters) this._portalWall(flat, O, M, WALL, DECK, conc);
+    // FACE THE APPROACH RAMP TOO. The bore's own stretch is walled; the ramp in
+    // front of it was left as raw earth batters, so the last thing you see
+    // before the portal is a dirt trench -- the "construction scene" again, at
+    // exactly the point the player is looking. The walls run from the floor of
+    // the cut up to untouched ground, on the same line the ground was carved
+    // to, so the batter is faced the whole way in.
+    for (const m of grp.members) {
+      const c = this._pcutBy.get(m.ni);
+      if (!c || !c.apron) continue;
+      for (let i = 0; i < c.apron; i++) {
+        const a = c.pts[i], b = c.pts[i + 1];
+        const L = Math.hypot(b.x - a.x, b.z - a.z) || 1;
+        const ux = (b.x - a.x) / L, uz = (b.z - a.z) / L;
+        const qx = -uz, qz = ux;
+        const steps = Math.max(1, Math.ceil(L / 8));
+        for (let k = 0; k < steps; k++) {
+          const t0 = k / steps, t1 = (k + 1) / steps;
+          const p0 = { x: a.x + (b.x - a.x) * t0, z: a.z + (b.z - a.z) * t0, y: a.y + (b.y - a.y) * t0 };
+          const p1 = { x: a.x + (b.x - a.x) * t1, z: a.z + (b.z - a.z) * t1, y: a.y + (b.y - a.y) * t1 };
+          for (const sd of [1, -1]) {
+            const w = (a.hw + CUT_SH) * sd;
+            const w0x = p0.x + qx * w, w0z = p0.z + qz * w;
+            const w1x = p1.x + qx * w, w1z = p1.z + qz * w;
+            const g0 = G.terrainRaw(w0x, w0z) + 0.35, g1 = G.terrainRaw(w1x, w1z) + 0.35;
+            if (g0 - p0.y < 0.6 && g1 - p1.y < 0.6) continue;   // nothing to retain yet
+            flat.quad([w0x, p0.y - 0.5, w0z], [w1x, p1.y - 0.5, w1z],
+              [w1x, g1, w1z], [w0x, g0, w0z],
+              [-qx * sd, 0, -qz * sd], ZERO_UV, conc);
+          }
+        }
+      }
+    }
   }
 
   _portalWall(flat, Oin, M, WALL, DECK, conc) {
