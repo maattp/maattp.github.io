@@ -484,7 +484,14 @@ export class World {
    * its edges by construction rather than by luck.
    */
   patchCell(b, cx, cz, S, colour) {
-    const SUB = 8, q = S / SUB;
+    // 8 was not enough. The bank rises from the trench floor to untouched
+    // ground -- up to 14 m -- across CUT_BANK, about 2.4 m. At 5 m sub-quads a
+    // single quad spans from inside the corridor to outside it and comes out
+    // as one huge diagonal face that pokes through the retaining wall in front
+    // of it: the sand wedges every judging pass reported intruding on the
+    // carriageway. 2 m resolves the bank instead of straddling it, and only
+    // cells within a portal corridor pay for it.
+    const SUB = 20, q = S / SUB;
     // Heights come straight from terrainHeight, which already carries the cut.
     // The patch exists only to RESOLVE it: a 40 m cell cannot show a 14 m
     // trench however correct the height function is.
@@ -1352,10 +1359,10 @@ export class World {
           glow.quad([w0x, Y(t0), w0z], [w1x, Y(t1), w1z],
             [w1x, Y(t1) + WALL, w1z], [w0x, Y(t0) + WALL, w0z],
             [-px * sd, 0, -pz * sd], ZERO_UV, [c0, c1, c1, c0]);
-        } else {
-          // Retaining wall, deck to grade, standing on the line the hole in the
-          // terrain was cut to -- so the raw edge of the patched ground lands
-          // on concrete rather than overhanging a void.
+        } else if (false) {
+          // Superseded: the cutting is faced in one pass off portalCuts, so
+          // that the walls cannot stop where this function's idea of "open"
+          // does. Kept as a marker of why it moved.
           const [r0x, r0z] = P(t0, (hw + CUT_SH) * sd), [r1x, r1z] = P(t1, (hw + CUT_SH) * sd);
           // terrainRaw: the wall's job is to hold back the ground that WAS
           // there. Against the carved surface it stops at the trench floor it
@@ -1587,7 +1594,13 @@ export class World {
     for (const m of grp.members) {
       const c = this._pcutBy.get(m.ni);
       if (!c || !c.apron) continue;
-      for (let i = 0; i < c.apron; i++) {
+      // THE WHOLE CORRIDOR, not just the ramp. The walls used to come from two
+      // places -- this loop for the approach and meshTunnel for the open-cut
+      // segments -- and neither covered the stretch right at the mouth, where
+      // meshTunnel has already flipped to drawing a bore. That is where the
+      // bank was left bare, and it is the sand that filled the opening in
+      // every close shot.
+      for (let i = 0; i < c.pts.length - 1; i++) {
         const a = c.pts[i], b = c.pts[i + 1];
         const L = Math.hypot(b.x - a.x, b.z - a.z) || 1;
         const ux = (b.x - a.x) / L, uz = (b.z - a.z) / L;
