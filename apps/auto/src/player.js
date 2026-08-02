@@ -226,9 +226,12 @@ export class Player {
       const dx = x - b.x, dz = z - b.z;
       const lx = dx * c - dz * s, lz = dx * s + dz * c;
       // Below the base as well as above the roof: on foot in a bore under
-      // downtown, the buildings overhead are not walls.
+      // downtown, the buildings overhead are not walls. "Below" is judged
+      // against the ground under the PLAYER -- b.y is the footprint centroid's
+      // terrain, and a big box on a grade drops metres from centroid to corner.
       if (Math.abs(lx) < b.w / 2 + 0.35 && Math.abs(lz) < b.d / 2 + 0.35
-        && this.y < b.y + b.h - 0.5 && this.y > b.y - 2.5) return true;
+        && this.y < b.y + b.h - 0.5
+        && G.terrainRaw(x, z) - this.y < 2.5) return true;
     }
     return false;
   }

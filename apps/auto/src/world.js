@@ -700,6 +700,40 @@ export class World {
     }
     this.city.setBarriers(bsegs);
 
+    // DRY TUNNELS. A corridor that dips below sea level intersects the water
+    // plane, and the plane knows nothing about bores: the SR-99 tube rendered
+    // as a canal. Each low pair of corridor points gets an invisible quad just
+    // above sea level that writes DEPTH ONLY (renderOrder 3, before the water
+    // at 4): the deck below it is already drawn and keeps its pixels, and the
+    // sea behind it fails the depth test and never draws inside the tube.
+    if (!this.tunnelWaterMask) {
+      // Over the tunnel EDGES, not the carved corridors: a corridor ends
+      // ~140 m in where the ground closes, and the first mask followed it --
+      // so the first 140 m of SR-99 were dry and the remaining 3 km, all of it
+      // below sea level, still rendered flooded. The graph is the authority on
+      // where the bore runs; the profile on its nodes is the authority on how
+      // deep.
+      const wb = new Builder(false);
+      for (const e of this.city.edges) {
+        if (!e.tunnel || e.elev) continue;
+        const a = this.city.nodes[e.a], b = this.city.nodes[e.b];
+        if (Math.min(a.y, b.y) > 1.2) continue;
+        const w = e.hw + 2;
+        const qx = -e.dz, qz = e.dx;
+        wb.quad(
+          [a.x + qx * w, 0.02, a.z + qz * w], [a.x - qx * w, 0.02, a.z - qz * w],
+          [b.x - qx * w, 0.02, b.z - qz * w], [b.x + qx * w, 0.02, b.z + qz * w],
+          [0, 1, 0], ZERO_UV, [1, 1, 1]);
+      }
+      if (!wb.empty) {
+        const mm = new THREE.Mesh(wb.build(),
+          new THREE.MeshBasicMaterial({ colorWrite: false }));
+        mm.renderOrder = 3;
+        this.scene.add(mm);
+      }
+      this.tunnelWaterMask = true;
+    }
+
     // A node now yields ONE CUT PER BRANCH, so this cannot be a 1:1 map --
     // keyed by node it kept only the last branch, and every other branch's
     // corridor ended with no wall at its head. That is a bore mouth packed
@@ -820,7 +854,13 @@ export class World {
     });
     const m = new THREE.Mesh(geo, mat);
     m.position.y = 0;
-    m.renderOrder = -5;
+    // AFTER the opaque scene, not before it (was -5). A bore below sea level
+    // -- SR-99 bottoms out around -16 m, like the real one -- has nothing
+    // between its interior and the sea plane, so the tunnel rendered flooded.
+    // The fix is a depth-only mask over those corridors (see portalCuts), and
+    // a mask can only shield water that draws AFTER it. Opaque water is
+    // order-independent under the depth buffer, so moving it costs nothing.
+    m.renderOrder = 4;
     this.scene.add(m);
     this.water = m;
     this.waterNormal = n;
@@ -838,7 +878,7 @@ export class World {
       lg.rotateX(-Math.PI / 2);
       const lm = new THREE.Mesh(lg, mat);
       lm.position.set((l.x0 + l.x1) / 2, l.level, (l.z0 + l.z1) / 2);
-      lm.renderOrder = -4;
+      lm.renderOrder = 5;   // after the sea, as before -- see note above
       this.scene.add(lm);
       this.lakes.push(lm);
     }

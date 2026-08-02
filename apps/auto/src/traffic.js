@@ -60,7 +60,18 @@ export function collideWithBuildings(v, city, onHit) {
     // bore under downtown ended at the first footprint overhead -- an
     // invisible wall ~140 m into SR-99, hit at the same station on every run.
     // "You can't even traverse this damn tunnel" was this line.
-    if (v.y < b.y - 2.5) continue;
+    //
+    // Underground is judged against the PRE-CUT ground under the car,
+    // terrainRaw, and both alternatives shipped a bug each. The building's
+    // stored base height b.y is terrain sampled once at the footprint's
+    // centroid, and a large box on a Seattle grade drops more than 2.5 m from
+    // centroid to corner -- reviewer-caught; it let cars through the downhill
+    // corner of big sloped buildings. terrainHeight is carved near portals, so
+    // where the cut tapers it hugs the deck, the difference read ~0, and the
+    // invisible wall came back at the corridor's end -- measured, the same
+    // traversal that passed 20/20 waypoints stalled at 5 again. Raw ground is
+    // what "underground" actually means.
+    if (G.terrainRaw(v.x, v.z) - v.y > 2.5) continue;
     const px = ex - Math.abs(lx), pz = ez - Math.abs(lz);
     let nx, nz, pen;
     if (px < pz) { nx = Math.sign(lx) || 1; nz = 0; pen = px; }

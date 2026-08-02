@@ -848,12 +848,16 @@ export function* cityGenerator(md) {
       let best = null;
       const c0 = Math.floor((x - rad) / CHUNK), c1 = Math.floor((x + rad) / CHUNK);
       const d0 = Math.floor((z - rad) / CHUNK), d1 = Math.floor((z + rad) / CHUNK);
-      const seen = new Set();
+      // Allocated lazily: this runs inside obstacleHit for every vehicle and
+      // pedestrian every frame, and almost everywhere on the map every queried
+      // cell is empty.
+      let seen = null;
       for (let cx = c0; cx <= c1; cx++) {
         for (let cz = d0; cz <= d1; cz++) {
           const l = this.barrierGrid.get(skey(cx, cz));
           if (!l) continue;
           for (const i of l) {
+            if (!seen) seen = new Set();
             if (seen.has(i)) continue;
             seen.add(i);
             const S = this.barrierSegs;

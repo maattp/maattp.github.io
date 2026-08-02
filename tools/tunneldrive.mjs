@@ -5,7 +5,7 @@
 // and make a before/after pair incomparable. The camera is a driver's eye on
 // the surface approach looking at the mouth -- the view the complaint is about.
 import { spawn } from 'node:child_process';
-import { writeFileSync, mkdirSync } from 'node:fs';
+import { writeFileSync } from 'node:fs';
 import { setTimeout as sleep } from 'node:timers/promises';
 const TAG = process.argv[2] || 'now';
 const PORT = 9240;
