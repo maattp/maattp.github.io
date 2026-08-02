@@ -17,6 +17,19 @@ const TUN_WALL = 5.4, TUN_DECK = 0.3;
 // How far past the carriageway the trench is cut. The retaining wall stands on
 // this line, so it is also the width of the hole in the terrain.
 const CUT_SH = 1.2;
+// How far PAST the wall line the trench keeps its full depth before the bank
+// starts. THIS MUST BE AT LEAST ONE TERRAIN PATCH QUAD (patchCell's 4 m): the
+// patch samples terrainHeight on a fixed grid, so a quad that reaches from in
+// front of the wall plane onto the bank draws a diagonal earth face jutting
+// into the trench, in front of the concrete. With the bank starting ON the
+// wall line those faces stood up to 2.9 m proud -- measured sand ridges
+// running the length of every cutting, which is most of what "raw earth at
+// the mouth" was. At 2.0 (half a quad) they still stood 0.5-2.2 m proud at 94
+// of 3260 lattice points: partway is not enough, because a quad crossing the
+// wall can still have its back corner partway up the bank. At one full quad,
+// any quad crossing the wall plane has BOTH corners on the floor, so the
+// whole rise happens behind concrete -- by construction, not by tuning.
+const CUT_OVER = 4.0;
 // How far the bank takes to climb from the trench floor back to true ground.
 // Steep enough to read as an excavation, wide enough that the 5 m patch can
 // actually resolve the slope.
@@ -429,7 +442,7 @@ export class World {
         // vertex spacing is 40 m and a road cut is 14 m wide, so the hole
         // cannot be expressed on this grid at all -- which is exactly why
         // every earlier attempt at an open cut failed. Such a cell is dropped
-        // here and re-tessellated at ~5 m in `patchCell`, with the sub-quads
+        // here and re-tessellated at ~4 m in `patchCell`, with the sub-quads
         // over the corridor left out. Only cells near a portal pay for it.
         const idx = [];
         const patch = [];
@@ -484,14 +497,15 @@ export class World {
    * its edges by construction rather than by luck.
    */
   patchCell(b, cx, cz, S, colour) {
-    // 8 was not enough. The bank rises from the trench floor to untouched
-    // ground -- up to 14 m -- across CUT_BANK, about 2.4 m. At 5 m sub-quads a
-    // single quad spans from inside the corridor to outside it and comes out
-    // as one huge diagonal face that pokes through the retaining wall in front
-    // of it: the sand wedges every judging pass reported intruding on the
-    // carriageway. 2 m resolves the bank instead of straddling it, and only
-    // cells within a portal corridor pay for it.
-    const SUB = 20, q = S / SUB;
+    // The quad size is bound to the carve profile: CUT_OVER must be at least
+    // one of these quads, so that any quad crossing the wall plane has both
+    // corners on the trench floor and every earth face the bank draws stands
+    // behind the concrete. Change one and you must change the other. 2 m quads
+    // were used before CUT_OVER existed -- the bank started ON the wall line
+    // then, so every straddling quad poked into the trench -- and at 2 m the
+    // patches were a fifth of the frame's triangles once the carve reached its
+    // full width.
+    const SUB = 10, q = S / SUB;
     // Heights come straight from terrainHeight, which already carries the cut.
     // The patch exists only to RESOLVE it: a 40 m cell cannot show a 14 m
     // trench however correct the height function is.
@@ -598,7 +612,7 @@ export class World {
         if (pts.length > 1) {
           let x0 = 1e9, x1 = -1e9, z0 = 1e9, z1 = -1e9;
           for (const q of pts) {
-            const r = q.hw + CUT_SH + 4;
+            const r = q.hw + CUT_SH + CUT_OVER + CUT_BANK + 2;
             x0 = Math.min(x0, q.x - r); x1 = Math.max(x1, q.x + r);
             z0 = Math.min(z0, q.z - r); z1 = Math.max(z1, q.z + r);
           }
@@ -658,7 +672,7 @@ export class World {
       for (let i = 0; i < c.pts.length - 1; i++) {
         const a = c.pts[i], b = c.pts[i + 1];
         const r = distToSeg(x, z, a.x, a.z, b.x, b.z);
-        const w = a.hw + CUT_SH;
+        const w = a.hw + CUT_SH + CUT_OVER;
         if (r.d > w + CUT_BANK) continue;
         const deck = a.y + (b.y - a.y) * r.t;
         const t = clamp((r.d - w) / CUT_BANK, 0, 1);
@@ -1553,7 +1567,12 @@ export class World {
     // it like a sheet. A 5 m depth was tried once BEFORE every crossing bore
     // got a hole, and it planted a solid pier in a driving lane -- that was the
     // missing hole, not the depth.
-    const DEPTH = 6.0, SHOULDER = CUT_SH + 2.6;
+    // The shoulder reaches past the whole cut cross-section -- shelf, overcut
+    // and bank -- so the terminal earth face where the cutting dead-ends into
+    // the hill is behind concrete for its full width. At CUT_SH + 2.6 the wall
+    // stopped 1.8 m short of the bank top and a full-height strip of dirt
+    // showed beyond each end of the headwall.
+    const DEPTH = 6.0, SHOULDER = CUT_SH + CUT_OVER + CUT_BANK + 0.6;
 
     // Lateral extent of each bore, in the owner's cross-road axis, merged so
     // two overlapping carriageways cannot leave a sliver of pier between them.
@@ -1614,10 +1633,25 @@ export class World {
             const w = (a.hw + CUT_SH) * sd;
             const w0x = p0.x + qx * w, w0z = p0.z + qz * w;
             const w1x = p1.x + qx * w, w1z = p1.z + qz * w;
-            const g0 = G.terrainRaw(w0x, w0z) + 0.35, g1 = G.terrainRaw(w1x, w1z) + 0.35;
-            if (g0 - p0.y < 0.6 && g1 - p1.y < 0.6) continue;   // nothing to retain yet
+            // THE WALL RETAINS THE UNION, NOT THIS CORRIDOR. At a divided mouth
+            // the carriageways enter staggered, and each corridor's excavation
+            // overlaps its neighbour's. Topping every wall at terrainRaw built
+            // a 13 m slab wherever a wall line ran through a neighbour's pit --
+            // freestanding concrete fins criss-crossing the shared cutting, one
+            // of them standing in the neighbour's driving lane. What a wall has
+            // to hold back is whatever the ground BEHIND it actually is after
+            // every corridor has dug, which is terrainHeight past this
+            // corridor's own bank: untouched ground gives the full-height wall
+            // exactly as before, a shallower neighbouring pit gives a terraced
+            // step up to its floor, and a deeper one gives nothing to retain,
+            // so the fin is simply not built. Bounded -- one carved sample per
+            // wall quad end, no marching.
+            const wb = (a.hw + CUT_SH + CUT_OVER + CUT_BANK + 0.5) * sd;
+            const g0 = G.terrainHeight(p0.x + qx * wb, p0.z + qz * wb) + 0.35;
+            const g1 = G.terrainHeight(p1.x + qx * wb, p1.z + qz * wb) + 0.35;
+            if (g0 - p0.y < 0.6 && g1 - p1.y < 0.6) continue;   // nothing to retain
             flat.quad([w0x, p0.y - 0.5, w0z], [w1x, p1.y - 0.5, w1z],
-              [w1x, g1, w1z], [w0x, g0, w0z],
+              [w1x, Math.max(g1, p1.y - 0.45), w1z], [w0x, Math.max(g0, p0.y - 0.45), w0z],
               [-qx * sd, 0, -qz * sd], ZERO_UV, conc);
           }
         }
@@ -1637,7 +1671,12 @@ export class World {
     // it like a sheet. A 5 m depth was tried once BEFORE every crossing bore
     // got a hole, and it planted a solid pier in a driving lane -- that was the
     // missing hole, not the depth.
-    const DEPTH = 6.0, SHOULDER = CUT_SH + 2.6;
+    // The shoulder reaches past the whole cut cross-section -- shelf, overcut
+    // and bank -- so the terminal earth face where the cutting dead-ends into
+    // the hill is behind concrete for its full width. At CUT_SH + 2.6 the wall
+    // stopped 1.8 m short of the bank top and a full-height strip of dirt
+    // showed beyond each end of the headwall.
+    const DEPTH = 6.0, SHOULDER = CUT_SH + CUT_OVER + CUT_BANK + 0.6;
     // The wall plane sits on the FIRST bore of the cluster, so no member is
     // ever in front of it and every throat is short by construction.
     const along = (m) => (m.x - O.x) * O.dx + (m.z - O.z) * O.dz;
