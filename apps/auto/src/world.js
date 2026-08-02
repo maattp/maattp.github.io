@@ -1059,40 +1059,21 @@ export class World {
         [P(t1, 0)[0] - px * 0.5, Y(t1) + WALL - 0.06, P(t1, 0)[1] - pz * 0.5],
         [0, -1, 0], ZERO_UV, [1, 0.95, 0.8]);
 
-      // CLOSE THE OUTSIDE OF THE TUBE.
+      // NO EXTERIOR SHELL ON THE BORE ITSELF.
       //
-      // The bore's own walls face INWARD -- they are the inside of a tunnel --
-      // so from outside they are backface-culled and the whole thing reads as
-      // an open-sided carport. Wherever the tube stands proud of the ground it
-      // needs an exterior too: a vertical face from the terrain up to the roof,
-      // and a slab over the top. A sloped earth berm was tried first and is
-      // the wrong tool -- at 1:1.8 it is nearly horizontal, so it is a thin
-      // sliver from a driver's eye and a 30 m flap in the sky on a hillside.
+      // Three versions of one were tried -- an earth berm, a sloped bank, and
+      // a crown-plus-side-wall box -- and every one of them fails the same way
+      // for the same reason: a shell over a tube that is only sometimes above
+      // ground has to END somewhere, and wherever it ends it is a slab
+      // cantilevered into open air. Head-on that is invisible, which is how
+      // all three got signed off; from an oblique camera it is a lid hanging
+      // in the sky, and it scored 2/10 on connected geometry.
       //
-      // Once the ground closes over the roof these quads fall below it and
-      // cost only their triangles, so no cover boundary has to be found or
-      // kept consistent between here and citygen.
-      const r0 = Y(t0) + WALL + 0.4, r1 = Y(t1) + WALL + 0.4;
-      // ...but ONLY where the tube is genuinely above ground, and only for the
-      // few segments that are actually the portal. Run this shell down the
-      // whole bore and it does the one thing a tunnel must never do: on a bend
-      // the far side's exterior wall swings across the opening, so the mouth
-      // has a slab standing inside it instead of opening onto a tunnel.
-      // Strictly `> 0` (no slack) and a bottom clamped to the deck keep every
-      // quad outside the interior volume; the segment bound keeps it near the
-      // mouth, which is the only place it is ever seen from.
-      const nearMouth = i < 8 || i >= seg - 8;
-      if (nearMouth && (exposed(t0) > 0 || exposed(t1) > 0)) {
-        flat.quad([a0x, r0, a0z], [a1x, r0, a1z], [b1x, r1, b1z], [b0x, r1, b0z],
-          [0, 1, 0], ZERO_UV, BERM);
-        for (const sd of [1, -1]) {
-          const [w0x, w0z] = P(t0, (hw + 0.4) * sd), [w1x, w1z] = P(t1, (hw + 0.4) * sd);
-          const g0 = clamp(G.terrainHeight(w0x, w0z) - 0.5, Y(t0), r0);
-          const g1 = clamp(G.terrainHeight(w1x, w1z) - 0.5, Y(t1), r1);
-          flat.quad([w0x, g0, w0z], [w1x, g1, w1z], [w1x, r1, w1z], [w0x, r0, w0z],
-            [px * sd, 0, pz * sd], ZERO_UV, conc);
-        }
-      }
+      // The mouth is enclosed by the headwall and the throat, both of which are
+      // bounded structures with every edge landing on something. Past them the
+      // bore is underground and needs no outside at all. What the terrain does
+      // in between is a heightfield problem -- see the note in citygen -- and
+      // not something another slab can paper over.
     }
 
     // THE PORTAL FACE is ONE HEADWALL FOR THE WHOLE MOUTH, drawn by
@@ -1144,6 +1125,12 @@ export class World {
         const h = q.members[0];
         if (Math.hypot(h.x - p.x, h.z - p.z) > 60) continue;
         if (Math.abs(h.dx * p.dx + h.dz * p.dz) < 0.87) continue;   // within ~30 deg
+        // Bores staggered along the road are still ONE mouth -- a divided
+        // highway's two carriageways routinely enter 20-30 m apart. Splitting
+        // on station instead produced three walls at three depths, which from
+        // the road is a slab standing in front of the holes. They are joined
+        // by a throat below rather than separated here.
+        if (Math.abs((p.x - h.x) * h.dx + (p.z - h.z) * h.dz) > 50) continue;
         g = q; break;
       }
       if (!g) groups.push((g = { members: [] }));
@@ -1175,11 +1162,12 @@ export class World {
 
     // Lateral extent of each bore, in the owner's cross-road axis, merged so
     // two overlapping carriageways cannot leave a sliver of pier between them.
-    // THE WALL PLANE GOES IN FRONT OF EVERY BORE IN THE GROUP. Members sit at
-    // different stations along the road, and a wall built at the owner's node
-    // leaves the ones further out sticking through it -- an open-sided tube
-    // standing in the daylight beside the mouth, which is what read as a third
-    // and fourth opening. Take the most outward member's station.
+    // THE WALL GOES AHEAD OF EVERY BORE, AND EVERY BORE IS THEN CONNECTED TO
+    // IT. Either half alone is a defect that shipped: the wall at the owner's
+    // station leaves a bore further out poking through it, and the wall pushed
+    // forward without the throat leaves it standing free ahead of the holes
+    // with daylight behind -- the floating pillar. The throat is what makes
+    // the wall part of the tunnel instead of a screen near it.
     const along = (m) => (m.x - O.x) * O.dx + (m.z - O.z) * O.dz;
     const v0 = Math.min(0, ...grp.members.map(along));
     const ox = O.x + O.dx * v0, oz = O.z + O.dz * v0;
@@ -1211,8 +1199,23 @@ export class World {
     const uMax = merged[merged.length - 1][1] + SHOULDER;
     const at = (u) => [ox + px * u, oz + pz * u];
 
+    // The throat: bore cross-section carried forward from each mouth to the
+    // wall plane, so there is no gap between the two.
+    for (const m of grp.members) {
+      const L = along(m) - v0;
+      if (L < 0.5) continue;
+      m.__throat = true;
+      const q0x = m.x - O.dx * L, q0z = m.z - O.dz * L;
+      const dy = m.y + DECK, ry = m.y + DECK + WALL;
+      const e0 = [q0x + px * m.hw, q0z + pz * m.hw], e1 = [q0x - px * m.hw, q0z - pz * m.hw];
+      const f0 = [m.x + px * m.hw, m.z + pz * m.hw], f1 = [m.x - px * m.hw, m.z - pz * m.hw];
+      this._throat(flat, e0, e1, f0, f1, dy, ry, px, pz, conc);
+    }
+
+    const parts = [];
     const [lx, lz] = at((uMin + uMax) / 2);
     flat.box(lx, roofY, lz, uMax - uMin, capY - roofY, DEPTH, rot, conc);
+    parts.push({ kind: 'lintel', x: lx, z: lz, base: roofY, top: capY, w: uMax - uMin });
 
     // The piers ARE the gaps: outer shoulders and whatever lies between two
     // bores. Defined by subtraction, so none of them can float.
@@ -1224,7 +1227,32 @@ export class World {
       const [cx, cz] = at((p0 + p1) / 2);
       const foot = Math.min(deckY, G.terrainHeight(cx, cz)) - 1.5;
       flat.box(cx, foot, cz, p1 - p0, roofY - foot, DEPTH, rot, conc);
+      parts.push({ kind: 'pier', x: cx, z: cz, base: foot, top: roofY, w: p1 - p0 });
     }
+    // Kept so a check can ask what was actually built rather than look at a
+    // picture of it: every part's foot against the ground under it, and every
+    // mouth's station against the wall's. Both defects that shipped -- a pier
+    // hanging in the air and a wall detached in front of the holes -- are one
+    // subtraction each from this, and neither is visible in a front-on render.
+    (this.portalParts || (this.portalParts = [])).push({
+      x: ox, z: oz, dx: O.dx, dz: O.dz, roofY, deckY, uMin, uMax, parts,
+      mouths: grp.members.map((m) => ({
+        x: m.x, y: m.y, z: m.z, hw: m.hw, throat: !!m.__throat,
+        along: (m.x - ox) * O.dx + (m.z - oz) * O.dz,
+      })),
+    });
+  }
+
+  /** Deck, two walls and a ceiling between two cross-sections of a bore. */
+  _throat(flat, e0, e1, f0, f1, dy, ry, px, pz, conc) {
+    flat.quad([e0[0], dy, e0[1]], [e1[0], dy, e1[1]], [f1[0], dy, f1[1]], [f0[0], dy, f0[1]],
+      [0, 1, 0], ZERO_UV, [0.30, 0.30, 0.32]);
+    flat.quad([e0[0], ry, e0[1]], [f0[0], ry, f0[1]], [f1[0], ry, f1[1]], [e1[0], ry, e1[1]],
+      [0, -1, 0], ZERO_UV, [0.22, 0.22, 0.24]);
+    flat.quad([e0[0], dy, e0[1]], [f0[0], dy, f0[1]], [f0[0], ry, f0[1]], [e0[0], ry, e0[1]],
+      [-px, 0, -pz], ZERO_UV, conc);
+    flat.quad([e1[0], dy, e1[1]], [f1[0], dy, f1[1]], [f1[0], ry, f1[1]], [e1[0], ry, e1[1]],
+      [px, 0, pz], ZERO_UV, conc);
   }
 
   meshRoad(road, walk, flat, glow, e, a, b, lod, ei) {
