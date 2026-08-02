@@ -16,7 +16,17 @@ import { hash2, clamp, lerp, distToSeg } from './util.js';
 const TUN_WALL = 5.4, TUN_DECK = 0.3;
 // How far past the carriageway the trench is cut. The retaining wall stands on
 // this line, so it is also the width of the hole in the terrain.
-const CUT_SH = 2.6;
+const CUT_SH = 1.2;
+// How far the bank takes to climb from the trench floor back to true ground.
+// Steep enough to read as an excavation, wide enough that the 5 m patch can
+// actually resolve the slope.
+const CUT_BANK = 9;
+// How much ground must lie over the roof before the bore counts as buried and
+// the trench ends. At 0.4 m the headwall stood in a cut barely deeper than the
+// bore is tall, so the portal was a metre of concrete 60 m away and read as
+// nothing. 3.5 m of cover puts the face at the bottom of a ~9 m cutting, which
+// is what makes it a portal rather than a kerb.
+const CUT_COVER = 3.5;
 
 const ROAD_Y = ROAD_LIFT;
 // Metres per road-texture repeat. Fixed, so the asphalt's grain is the same
@@ -322,6 +332,10 @@ export class World {
   }
 
   *buildTerrain() {
+    // Before a single terrain vertex is generated: the portal trenches become
+    // part of the height surface, so this mesh and every road drawn on it
+    // describe the same ground.
+    G.setCarve((x, z) => this.cutDepth(x, z));
     const hf = G.heightfield();
     const N = G.HF_N, S = G.HF_STEP, H = G.MAP_HALF;
     // Tile size trades draw calls against wasted triangles, and on a phone the
@@ -448,7 +462,7 @@ export class World {
     if (!this.portalCuts().length) return false;
     for (let j = 0; j <= 2; j++) {
       for (let i = 0; i <= 2; i++) {
-        if (this.inCut(cx + (i * S) / 2, cz + (j * S) / 2)) return true;
+        if (this.cutFloor(cx + (i * S) / 2, cz + (j * S) / 2)) return true;
       }
     }
     return false;
@@ -463,17 +477,29 @@ export class World {
    */
   patchCell(b, cx, cz, S, colour) {
     const SUB = 8, q = S / SUB;
+    const DIRT = [0.40, 0.36, 0.29];
+    // Heights come straight from terrainHeight, which already carries the cut.
+    // The patch exists only to RESOLVE it: a 40 m cell cannot show a 14 m
+    // trench however correct the height function is.
+    const y = (x, z) => G.terrainHeight(x, z);
+    const tint = (x, z) => {
+      const c = this.cutFloor(x, z);
+      if (!c) return colour;
+      return [colour[0] + (DIRT[0] - colour[0]) * (1 - c.t),
+        colour[1] + (DIRT[1] - colour[1]) * (1 - c.t),
+        colour[2] + (DIRT[2] - colour[2]) * (1 - c.t)];
+    };
     for (let j = 0; j < SUB; j++) {
       for (let i = 0; i < SUB; i++) {
         const x = cx + i * q, z = cz + j * q;
-        if (this.inCut(x + q / 2, z + q / 2)) continue;
         b.quad(
-          [x, G.terrainHeight(x, z), z],
-          [x, G.terrainHeight(x, z + q), z + q],
-          [x + q, G.terrainHeight(x + q, z + q), z + q],
-          [x + q, G.terrainHeight(x + q, z), z],
+          [x, y(x, z), z],
+          [x, y(x, z + q), z + q],
+          [x + q, y(x + q, z + q), z + q],
+          [x + q, y(x + q, z), z],
           [0, 1, 0], [x / 13, z / 13, x / 13, (z + q) / 13,
-            (x + q) / 13, (z + q) / 13, (x + q) / 13, z / 13], colour);
+            (x + q) / 13, (z + q) / 13, (x + q) / 13, z / 13],
+          [tint(x, z), tint(x, z + q), tint(x + q, z + q), tint(x + q, z)]);
       }
     }
   }
@@ -515,7 +541,10 @@ export class World {
           const nn = city.nodes[nx];
           dist += e.len; prev = best; cur = nx;
           pts.push({ x: nn.x, z: nn.z, y: nn.y, hw: e.hw });
-          if (G.terrainHeight(nn.x, nn.z) - (nn.y + TUN_DECK + TUN_WALL) > 0.4) break;
+          // terrainRaw, not terrainHeight: this decides where the trench ends,
+          // so it must ask what the ground was BEFORE the trench was dug.
+          // Asking the carved surface makes the corridor define itself.
+          if (G.terrainRaw(nn.x, nn.z) - (nn.y + TUN_DECK + TUN_WALL) > CUT_COVER) break;
         }
         if (pts.length > 1) {
           let x0 = 1e9, x1 = -1e9, z0 = 1e9, z1 = -1e9;
@@ -524,21 +553,87 @@ export class World {
             x0 = Math.min(x0, q.x - r); x1 = Math.max(x1, q.x + r);
             z0 = Math.min(z0, q.z - r); z1 = Math.max(z1, q.z + r);
           }
-          cuts.push({ pts, x0, x1, z0, z1 });
+          cuts.push({ ni: m.ni, pts, x0, x1, z0, z1 });
         }
       }
     }
     this._pcuts = cuts;
+    this._pcutBy = new Map(cuts.map((c) => [c.ni, c]));
     return cuts;
   }
 
-  /** Is (x,z) inside a portal trench -- i.e. is the ground removed there? */
+  /**
+   * The trench floor at (x,z), and how far out of the trench that point is.
+   *
+   * THE GROUND IS DEFORMED, NOT REMOVED. Cutting a hole was tried first and is
+   * a trap: a hole is an open boundary, and every open boundary needs another
+   * piece of geometry to close it. Each one that got missed showed through --
+   * carriageway at grade bridging the cut, pavement bridging it, and finally
+   * the map-wide water plane visible at the bottom of a 40 m pit. That is an
+   * unbounded list of fixes.
+   *
+   * Pushing the vertices down instead keeps the terrain a single closed
+   * surface: there is no gap for anything to show through, the banks are real
+   * triangles, and the edges of the patch still meet the surrounding 40 m grid
+   * because the blend reaches true terrain before it gets there.
+   *
+   * Returns null outside the trench and its banks.
+   */
+  /**
+   * How deep the ground is dug at (x,z), in metres. Installed into geo as the
+   * carve, so terrainHeight() -- and therefore roads, pavement, scatter and
+   * every ground query -- all see the trench.
+   *
+   * Reads terrainRaw, never terrainHeight: the carve is an input to that
+   * function and calling it here recurses.
+   */
+  cutDepth(x, z) {
+    const c = this.cutFloor(x, z);
+    if (!c) return 0;
+    const raw = G.terrainRaw(x, z);
+    // full depth over the carriageway, tapering to nothing at the top of the
+    // bank, and never a raised mound where the ground is already lower
+    return Math.max(0, (raw - c.y) * (1 - c.t));
+  }
+
+  cutFloor(x, z) {
+    // THE DEEPEST TRENCH WINS. Taking the first corridor that matches is wrong
+    // wherever two overlap -- and at a divided mouth three bores share the
+    // ground. Measured down the north SR-99 corridor, the neighbouring
+    // carriageway's shallower profile answered first and left the floor 1.9 m
+    // ABOVE the road it was supposed to expose, so the trench was dug and the
+    // carriageway still buried in it.
+    let best = null;
+    for (const c of this.portalCuts()) {
+      if (x < c.x0 || x > c.x1 || z < c.z0 || z > c.z1) continue;
+      for (let i = 0; i < c.pts.length - 1; i++) {
+        const a = c.pts[i], b = c.pts[i + 1];
+        const r = distToSeg(x, z, a.x, a.z, b.x, b.z);
+        const w = a.hw + CUT_SH;
+        if (r.d > w + CUT_BANK) continue;
+        const deck = a.y + (b.y - a.y) * r.t;
+        const t = clamp((r.d - w) / CUT_BANK, 0, 1);
+        const cand = { y: deck - 0.7, t: t * t * (3 - 2 * t) };
+        // compare at the point itself, banks included
+        const yHere = (q) => q.y + (1e4 - q.y) * q.t;
+        if (!best || yHere(cand) < yHere(best)) best = cand;
+      }
+    }
+    return best;
+  }
+
+  /** Is (x,z) over the floor of a portal trench (not its banks)? */
   inCut(x, z) {
     for (const c of this.portalCuts()) {
       if (x < c.x0 || x > c.x1 || z < c.z0 || z > c.z1) continue;
       for (let i = 0; i < c.pts.length - 1; i++) {
         const a = c.pts[i], b = c.pts[i + 1];
-        if (distToSeg(x, z, a.x, a.z, b.x, b.z) < a.hw + CUT_SH) return true;
+        // distToSeg returns {d, t, x, z}, NOT a number. Comparing the object
+        // to a radius is always false, so the trench was computed for all 155
+        // corridors and cut for none of them -- the hole silently did not
+        // exist, and every portal shape was judged against ground that had
+        // never been removed.
+        if (distToSeg(x, z, a.x, a.z, b.x, b.z).d < a.hw + CUT_SH) return true;
       }
     }
     return false;
@@ -1141,15 +1236,23 @@ export class World {
     // culvert lying on a lawn, which is what the free-standing slabs were.
     const seg = Math.max(2, Math.ceil(e.len / 9));
     const BERM = [0.30, 0.32, 0.24];
+    // Against the RAW ground: terrainHeight now carries the trench, so asking
+    // it whether the bore is covered inside its own cut always answers "no".
     const exposed = (t) => {
       const [cx, cz] = P(t, 0);
-      return (Y(t) + WALL) - G.terrainHeight(cx, cz);   // >0 means the tube is proud
+      return (Y(t) + WALL + CUT_COVER) - G.terrainRaw(cx, cz);
     };
 
     const pool = (t) => 0.72 + 0.28 * Math.cos((lerp(0, e.len, t) / 18) * Math.PI * 2);
     for (let i = 0; i < seg; i++) {
       const t0 = i / seg, t1 = (i + 1) / seg;
       const tm = (t0 + t1) / 2;
+      // OPEN WHERE THE GROUND IS CUT AWAY, a bore where it is not. This is the
+      // distinction the branch could not express until the terrain gained a
+      // hole: with ground drawn over the corridor there was nothing an open cut
+      // could be open TO, so the roof had to stay on the whole way and the
+      // mouth had nothing to read as an entrance.
+      const bur = !(exposed(t0) > 0 || exposed(t1) > 0);
       const l0 = pool(t0), l1 = pool(t1);
       const [a0x, a0z] = P(t0, hw), [a1x, a1z] = P(t0, -hw);
       const [b0x, b0z] = P(t1, hw), [b1x, b1z] = P(t1, -hw);
@@ -1158,8 +1261,16 @@ export class World {
       // darkness, so sun-lit materials render near-black in it. The light is
       // baked into the vertex colours instead -- lamp pools every 18 m.
       const d0 = [0.34 * l0, 0.34 * l0, 0.36 * l0], d1 = [0.34 * l1, 0.34 * l1, 0.36 * l1];
-      glow.quad([a0x, Y(t0), a0z], [a1x, Y(t0), a1z], [b1x, Y(t1), b1z], [b0x, Y(t1), b0z],
-        [0, 1, 0], ZERO_UV, [d0, d0, d1, d1]);
+      if (bur) {
+        glow.quad([a0x, Y(t0), a0z], [a1x, Y(t0), a1z], [b1x, Y(t1), b1z], [b0x, Y(t1), b0z],
+          [0, 1, 0], ZERO_UV, [d0, d0, d1, d1]);
+      } else {
+        // In the cut the sun reaches the road, so it is ordinary asphalt rather
+        // than the unlit interior material a bore needs.
+        const u1 = (hw * 2) / ROAD_TILE, v0 = (t0 * e.len) / ROAD_TILE, v1 = (t1 * e.len) / ROAD_TILE;
+        road.quad([a0x, Y(t0), a0z], [a1x, Y(t0), a1z], [b1x, Y(t1), b1z], [b0x, Y(t1), b0z],
+          [0, 1, 0], [0, v0, u1, v0, u1, v1, 0, v1], [1, 1, 1]);
+      }
       if (i % 2 === 0) {
         const [c0x, c0z] = P(t0, 0.10), [c1x, c1z] = P(t0 + (t1 - t0) * 0.55, 0.10);
         const [q0x, q0z] = P(t0, -0.10), [q1x, q1z] = P(t0 + (t1 - t0) * 0.55, -0.10);
@@ -1169,12 +1280,32 @@ export class World {
       }
       for (const sd of [1, -1]) {
         const [w0x, w0z] = P(t0, hw * sd), [w1x, w1z] = P(t1, hw * sd);
-        const c0 = [0.42 * l0, 0.43 * l0, 0.45 * l0], c1 = [0.42 * l1, 0.43 * l1, 0.45 * l1];
-        glow.quad([w0x, Y(t0), w0z], [w1x, Y(t1), w1z],
-          [w1x, Y(t1) + WALL, w1z], [w0x, Y(t0) + WALL, w0z],
-          [-px * sd, 0, -pz * sd], ZERO_UV, [c0, c1, c1, c0]);
+        if (bur) {
+          const c0 = [0.42 * l0, 0.43 * l0, 0.45 * l0], c1 = [0.42 * l1, 0.43 * l1, 0.45 * l1];
+          glow.quad([w0x, Y(t0), w0z], [w1x, Y(t1), w1z],
+            [w1x, Y(t1) + WALL, w1z], [w0x, Y(t0) + WALL, w0z],
+            [-px * sd, 0, -pz * sd], ZERO_UV, [c0, c1, c1, c0]);
+        } else {
+          // Retaining wall, deck to grade, standing on the line the hole in the
+          // terrain was cut to -- so the raw edge of the patched ground lands
+          // on concrete rather than overhanging a void.
+          const [r0x, r0z] = P(t0, (hw + CUT_SH) * sd), [r1x, r1z] = P(t1, (hw + CUT_SH) * sd);
+          const g0 = G.terrainHeight(r0x, r0z) + 0.35, g1 = G.terrainHeight(r1x, r1z) + 0.35;
+          flat.quad([w0x, Y(t0) - 0.5, w0z], [w1x, Y(t1) - 0.5, w1z],
+            [w1x, g1, w1z], [w0x, g0, w0z],
+            [-px * sd, 0, -pz * sd], ZERO_UV, conc);
+          flat.quad([w0x, g0, w0z], [w1x, g1, w1z], [r1x, g1, r1z], [r0x, g0, r0z],
+            [0, 1, 0], ZERO_UV, conc);
+          // Verge: the hole is cut CUT_SH wider than the carriageway, so
+          // without this strip the floor of the trench has a gap at each edge
+          // and the map-wide water plane shows through it as a blue sliver.
+          flat.quad([w0x, Y(t0), w0z], [w1x, Y(t1), w1z],
+            [r1x, Y(t1), r1z], [r0x, Y(t0), r0z],
+            [0, 1, 0], ZERO_UV, [0.44, 0.45, 0.42]);
+        }
       }
       const cc0 = [0.20 * l0, 0.20 * l0, 0.22 * l0], cc1 = [0.20 * l1, 0.20 * l1, 0.22 * l1];
+      if (bur) {
       glow.quad([a0x, Y(t0) + WALL, a0z], [b0x, Y(t1) + WALL, b0z],
         [b1x, Y(t1) + WALL, b1z], [a1x, Y(t0) + WALL, a1z],
         [0, -1, 0], ZERO_UV, [cc0, cc1, cc1, cc0]);
@@ -1184,21 +1315,6 @@ export class World {
         [P(t1, 0)[0] + px * 0.5, Y(t1) + WALL - 0.06, P(t1, 0)[1] + pz * 0.5],
         [P(t1, 0)[0] - px * 0.5, Y(t1) + WALL - 0.06, P(t1, 0)[1] - pz * 0.5],
         [0, -1, 0], ZERO_UV, [1, 0.95, 0.8]);
-
-      // LINE THE TRENCH. The ground is now cut away over the corridor, so the
-      // bore has an open cut around it near the mouth -- which is what a portal
-      // approach actually is, and what could never be drawn before because the
-      // heightfield had no hole in it. The retaining wall stands on the same
-      // line the hole was cut to, so the raw edge of the terrain patch lands on
-      // concrete instead of hanging over a void.
-      if (exposed(t0) > 0 || exposed(t1) > 0) {
-        for (const sd of [1, -1]) {
-          const [w0x, w0z] = P(t0, (hw + CUT_SH) * sd), [w1x, w1z] = P(t1, (hw + CUT_SH) * sd);
-          const g0 = G.terrainHeight(w0x, w0z), g1 = G.terrainHeight(w1x, w1z);
-          flat.quad([w0x, Y(t0) - 0.4, w0z], [w1x, Y(t1) - 0.4, w1z],
-            [w1x, g1 + 0.3, w1z], [w0x, g0 + 0.3, w0z],
-            [-px * sd, 0, -pz * sd], ZERO_UV, conc);
-        }
       }
 
       // NO EXTERIOR SHELL ON THE BORE ITSELF.
@@ -1297,7 +1413,27 @@ export class World {
    * are defined by the gaps, not positioned.
    */
   meshPortalWall(flat, grp, WALL, DECK, conc) {
-    const O = grp.owner;
+    // THE WALL STANDS WHERE THE GROUND CLOSES OVER THE ROAD, not at the kerb.
+    // With the corridor cut out of the terrain the approach is an open trench,
+    // and a headwall at the near end has that trench behind it: you look
+    // straight through the opening and out the far side, which reads as a
+    // gantry over the road. The portal is the FAR end of the cut -- drive down
+    // the trench, then under the hill.
+    this.portalCuts();
+    const endOf = (m) => {
+      const c = this._pcutBy.get(m.ni);
+      if (!c || c.pts.length < 2) return { x: m.x, y: m.y, z: m.z, hw: m.hw, ni: m.ni };
+      const p = c.pts[c.pts.length - 1];
+      return { x: p.x, y: p.y, z: p.z, hw: p.hw, ni: m.ni };
+    };
+    const ends = new Map(grp.members.map((m) => [m.ni, endOf(m)]));
+    const O = { ...ends.get(grp.owner.ni) };
+    const oc = this._pcutBy.get(grp.owner.ni);
+    if (oc && oc.pts.length >= 2) {
+      const q = oc.pts[oc.pts.length - 1], r = oc.pts[oc.pts.length - 2];
+      const L = Math.hypot(q.x - r.x, q.z - r.z) || 1;
+      O.dx = (q.x - r.x) / L; O.dz = (q.z - r.z) / L;
+    } else { O.dx = grp.owner.dx; O.dz = grp.owner.dz; }
     const px = -O.dz, pz = O.dx;
     const rot = Math.atan2(O.dx, O.dz);
     const DEPTH = 1.8, SHOULDER = 1.8;
@@ -1310,11 +1446,12 @@ export class World {
     // forward without the throat leaves it standing free ahead of the holes
     // with daylight behind -- the floating pillar. The throat is what makes
     // the wall part of the tunnel instead of a screen near it.
+    const M = grp.members.map((m) => ends.get(m.ni));
     const along = (m) => (m.x - O.x) * O.dx + (m.z - O.z) * O.dz;
-    const v0 = Math.min(0, ...grp.members.map(along));
+    const v0 = Math.min(0, ...M.map(along));
     const ox = O.x + O.dx * v0, oz = O.z + O.dz * v0;
 
-    const holes = grp.members
+    const holes = M
       .map((m) => {
         const u = (m.x - ox) * px + (m.z - oz) * pz;
         return [u - m.hw, u + m.hw];
@@ -1343,7 +1480,7 @@ export class World {
 
     // The throat: bore cross-section carried forward from each mouth to the
     // wall plane, so there is no gap between the two.
-    for (const m of grp.members) {
+    for (const m of M) {
       const L = along(m) - v0;
       if (L < 0.5) continue;
       m.__throat = true;
@@ -1378,7 +1515,7 @@ export class World {
     // subtraction each from this, and neither is visible in a front-on render.
     (this.portalParts || (this.portalParts = [])).push({
       x: ox, z: oz, dx: O.dx, dz: O.dz, roofY, deckY, uMin, uMax, parts,
-      mouths: grp.members.map((m) => ({
+      mouths: M.map((m) => ({
         x: m.x, y: m.y, z: m.z, hw: m.hw, throat: !!m.__throat,
         along: (m.x - ox) * O.dx + (m.z - oz) * O.dz,
       })),
@@ -1693,6 +1830,11 @@ export class World {
     // ground with a single street running into it -- the "road to nowhere".
     // citygen.nodeSurface() skips these too; the two have to agree.
     if (n.e.length < 2) return;
+    // Nothing has to be skipped over a portal trench any more. The cut lives in
+    // terrainHeight, so the carriageway, the pavement and this square all
+    // descend into it of their own accord -- and while they were being skipped
+    // instead, the approach simply stopped at the lip with a hole where the
+    // road into the cutting should have been.
     // Two elevated spans meeting head to head are already mitred into one
     // another by meshViaduct, so a crossing square here is a horizontal patch
     // laid across a sloping deck -- it pokes through on the uphill side and
