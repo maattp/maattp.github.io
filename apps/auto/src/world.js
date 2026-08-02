@@ -11,6 +11,13 @@ import { CHUNK, ROAD_LIFT, NODE_LIFT, WALK_LIFT, cityStats } from './citygen.js'
 import { Builder } from './build.js';
 import { hash2, clamp, lerp, distToSeg } from './util.js';
 
+// The bore's cross-section, shared by the mesher and by the trench that has to
+// be cut out of the ground to make room for it.
+const TUN_WALL = 5.4, TUN_DECK = 0.3;
+// How far past the carriageway the trench is cut. The retaining wall stands on
+// this line, so it is also the width of the hole in the terrain.
+const CUT_SH = 2.6;
+
 const ROAD_Y = ROAD_LIFT;
 // Metres per road-texture repeat. Fixed, so the asphalt's grain is the same
 // size on an alley and on a freeway.
@@ -396,10 +403,19 @@ export class World {
             col[k + 2] = c[2] * n * (1 - dry * 0.30);
           }
         }
+        // CELLS OVER A PORTAL TRENCH ARE NOT DRAWN AT 40 M. The heightfield's
+        // vertex spacing is 40 m and a road cut is 14 m wide, so the hole
+        // cannot be expressed on this grid at all -- which is exactly why
+        // every earlier attempt at an open cut failed. Such a cell is dropped
+        // here and re-tessellated at ~5 m in `patchCell`, with the sub-quads
+        // over the corridor left out. Only cells near a portal pay for it.
         const idx = [];
+        const patch = [];
         for (let j = 0; j < d - 1; j++) {
           for (let i = 0; i < w - 1; i++) {
             const a = j * w + i, b = a + 1, c2 = a + w, e = c2 + 1;
+            const cx = -H + (i0 + i) * S, cz = -H + (j0 + j) * S;
+            if (this.cellCut(cx, cz, S)) { patch.push([cx, cz, a]); continue; }
             idx.push(a, c2, b, b, c2, e);
           }
         }
@@ -413,9 +429,119 @@ export class World {
         const m = new THREE.Mesh(geo, mat);
         m.receiveShadow = this.shadows;
         this.terrainGroup.add(m);
+        if (patch.length) {
+          const pb = new Builder();
+          for (const [cx, cz, a] of patch) {
+            this.patchCell(pb, cx, cz, S, [col[a * 3], col[a * 3 + 1], col[a * 3 + 2]]);
+          }
+          const pm = new THREE.Mesh(pb.build(), mat);
+          pm.receiveShadow = this.shadows;
+          this.terrainGroup.add(pm);
+        }
       }
       yield (tz + 1) / TILES;
     }
+  }
+
+  /** Does this 40 m terrain cell touch a portal trench? */
+  cellCut(cx, cz, S) {
+    if (!this.portalCuts().length) return false;
+    for (let j = 0; j <= 2; j++) {
+      for (let i = 0; i <= 2; i++) {
+        if (this.inCut(cx + (i * S) / 2, cz + (j * S) / 2)) return true;
+      }
+    }
+    return false;
+  }
+
+  /**
+   * One dropped terrain cell, redrawn at SUB x SUB with the trench left out.
+   *
+   * Heights come from `G.terrainHeight`, which interpolates the way the terrain
+   * mesh is triangulated -- so the patch meets the surrounding 40 m grid along
+   * its edges by construction rather than by luck.
+   */
+  patchCell(b, cx, cz, S, colour) {
+    const SUB = 8, q = S / SUB;
+    for (let j = 0; j < SUB; j++) {
+      for (let i = 0; i < SUB; i++) {
+        const x = cx + i * q, z = cz + j * q;
+        if (this.inCut(x + q / 2, z + q / 2)) continue;
+        b.quad(
+          [x, G.terrainHeight(x, z), z],
+          [x, G.terrainHeight(x, z + q), z + q],
+          [x + q, G.terrainHeight(x + q, z + q), z + q],
+          [x + q, G.terrainHeight(x + q, z), z],
+          [0, 1, 0], [x / 13, z / 13, x / 13, (z + q) / 13,
+            (x + q) / 13, (z + q) / 13, (x + q) / 13, z / 13], colour);
+      }
+    }
+  }
+
+  /**
+   * The corridor each portal needs cut out of the ground.
+   *
+   * A bore is 5.4 m tall, so between a mouth at grade and the point where the
+   * roof is finally under the hill, the terrain surface crosses the tunnel
+   * INTERIOR -- in at floor level, out at roof level. No grade removes that and
+   * no slab hides it: the ground is simply drawn where the tunnel is. Every
+   * portal shape tried before this one failed on it.
+   *
+   * So the ground gets cut. Walk the graph inward from each portal along the
+   * widest tunnel edge, collecting the real node heights, and stop where the
+   * roof is genuinely buried. That polyline is the trench.
+   */
+  portalCuts() {
+    if (this._pcuts) return this._pcuts;
+    const city = this.city, cuts = [];
+    const seen = new Set();
+    for (const [, grp] of this.portalGroups()) {
+      for (const m of grp.members) {
+        if (seen.has(m.ni)) continue;
+        seen.add(m.ni);
+        let cur = m.ni, prev = -1, dist = 0;
+        const pts = [{ x: city.nodes[cur].x, z: city.nodes[cur].z, y: city.nodes[cur].y, hw: m.hw }];
+        while (dist < 240) {
+          const n = city.nodes[cur];
+          let best = null;
+          for (const k of n.e) {
+            const e = city.edges[k];
+            if (!e.tunnel || k === prev) continue;
+            if (best === null || e.hw > city.edges[best].hw) best = k;
+          }
+          if (best === null) break;
+          const e = city.edges[best];
+          const nx = e.a === cur ? e.b : e.a;
+          const nn = city.nodes[nx];
+          dist += e.len; prev = best; cur = nx;
+          pts.push({ x: nn.x, z: nn.z, y: nn.y, hw: e.hw });
+          if (G.terrainHeight(nn.x, nn.z) - (nn.y + TUN_DECK + TUN_WALL) > 0.4) break;
+        }
+        if (pts.length > 1) {
+          let x0 = 1e9, x1 = -1e9, z0 = 1e9, z1 = -1e9;
+          for (const q of pts) {
+            const r = q.hw + CUT_SH + 4;
+            x0 = Math.min(x0, q.x - r); x1 = Math.max(x1, q.x + r);
+            z0 = Math.min(z0, q.z - r); z1 = Math.max(z1, q.z + r);
+          }
+          cuts.push({ pts, x0, x1, z0, z1 });
+        }
+      }
+    }
+    this._pcuts = cuts;
+    return cuts;
+  }
+
+  /** Is (x,z) inside a portal trench -- i.e. is the ground removed there? */
+  inCut(x, z) {
+    for (const c of this.portalCuts()) {
+      if (x < c.x0 || x > c.x1 || z < c.z0 || z > c.z1) continue;
+      for (let i = 0; i < c.pts.length - 1; i++) {
+        const a = c.pts[i], b = c.pts[i + 1];
+        if (distToSeg(x, z, a.x, a.z, b.x, b.z) < a.hw + CUT_SH) return true;
+      }
+    }
+    return false;
   }
 
   buildWater() {
@@ -1058,6 +1184,22 @@ export class World {
         [P(t1, 0)[0] + px * 0.5, Y(t1) + WALL - 0.06, P(t1, 0)[1] + pz * 0.5],
         [P(t1, 0)[0] - px * 0.5, Y(t1) + WALL - 0.06, P(t1, 0)[1] - pz * 0.5],
         [0, -1, 0], ZERO_UV, [1, 0.95, 0.8]);
+
+      // LINE THE TRENCH. The ground is now cut away over the corridor, so the
+      // bore has an open cut around it near the mouth -- which is what a portal
+      // approach actually is, and what could never be drawn before because the
+      // heightfield had no hole in it. The retaining wall stands on the same
+      // line the hole was cut to, so the raw edge of the terrain patch lands on
+      // concrete instead of hanging over a void.
+      if (exposed(t0) > 0 || exposed(t1) > 0) {
+        for (const sd of [1, -1]) {
+          const [w0x, w0z] = P(t0, (hw + CUT_SH) * sd), [w1x, w1z] = P(t1, (hw + CUT_SH) * sd);
+          const g0 = G.terrainHeight(w0x, w0z), g1 = G.terrainHeight(w1x, w1z);
+          flat.quad([w0x, Y(t0) - 0.4, w0z], [w1x, Y(t1) - 0.4, w1z],
+            [w1x, g1 + 0.3, w1z], [w0x, g0 + 0.3, w0z],
+            [-px * sd, 0, -pz * sd], ZERO_UV, conc);
+        }
+      }
 
       // NO EXTERIOR SHELL ON THE BORE ITSELF.
       //
