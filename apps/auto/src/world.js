@@ -1073,13 +1073,22 @@ export class World {
       // cost only their triangles, so no cover boundary has to be found or
       // kept consistent between here and citygen.
       const r0 = Y(t0) + WALL + 0.4, r1 = Y(t1) + WALL + 0.4;
-      if (exposed(t0) > -0.8 || exposed(t1) > -0.8) {
+      // ...but ONLY where the tube is genuinely above ground, and only for the
+      // few segments that are actually the portal. Run this shell down the
+      // whole bore and it does the one thing a tunnel must never do: on a bend
+      // the far side's exterior wall swings across the opening, so the mouth
+      // has a slab standing inside it instead of opening onto a tunnel.
+      // Strictly `> 0` (no slack) and a bottom clamped to the deck keep every
+      // quad outside the interior volume; the segment bound keeps it near the
+      // mouth, which is the only place it is ever seen from.
+      const nearMouth = i < 8 || i >= seg - 8;
+      if (nearMouth && (exposed(t0) > 0 || exposed(t1) > 0)) {
         flat.quad([a0x, r0, a0z], [a1x, r0, a1z], [b1x, r1, b1z], [b0x, r1, b0z],
           [0, 1, 0], ZERO_UV, BERM);
         for (const sd of [1, -1]) {
           const [w0x, w0z] = P(t0, (hw + 0.4) * sd), [w1x, w1z] = P(t1, (hw + 0.4) * sd);
-          const g0 = Math.min(G.terrainHeight(w0x, w0z), r0) - 0.5;
-          const g1 = Math.min(G.terrainHeight(w1x, w1z), r1) - 0.5;
+          const g0 = clamp(G.terrainHeight(w0x, w0z) - 0.5, Y(t0), r0);
+          const g1 = clamp(G.terrainHeight(w1x, w1z) - 0.5, Y(t1), r1);
           flat.quad([w0x, g0, w0z], [w1x, g1, w1z], [w1x, r1, w1z], [w0x, r0, w0z],
             [px * sd, 0, pz * sd], ZERO_UV, conc);
         }
