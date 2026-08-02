@@ -49,8 +49,16 @@ try {
     d.world.portalParts = [];
     const seen = new Set();
     const pending = () => [...d.world.chunks.values()].filter((c) => c.lod !== c.wantLod).length;
-    for (const [ni] of d.world.portalGroups()) {
-      const nd = d.city.nodes[ni];
+    // Build at every corridor END as well as every portal node. A branch's cut
+    // can end 200 m from the mouth it belongs to, in a chunk this loop never
+    // visited -- so its wall was never meshed, portalParts never saw it, and
+    // the slice check reported a defect that only the harness had.
+    const sites = [];
+    for (const [ni] of d.world.portalGroups()) sites.push(d.city.nodes[ni]);
+    for (const c of d.world.portalCuts()) {
+      for (const p of c.pts) sites.push(p);
+    }
+    for (const nd of sites) {
       const k = Math.round(nd.x / 400) + ':' + Math.round(nd.z / 400);
       if (seen.has(k)) continue;
       seen.add(k);
@@ -153,11 +161,29 @@ try {
         // cross-section. It is covered by the headwall, which is why the mouth
         // card exists. What this check is for is the same thing happening
         // where no portal wall stands -- a bore no corridor reached.
-        const nearWall = (d.world.portalParts || []).some((w) =>
-          Math.hypot(w.x - x, w.z - z) < 34);
+        //
+        // Tested against the wall's real FOOTPRINT, not a radius. A radius is a
+        // magic number that hides defects when generous and invents them when
+        // tight; the wall knows how wide and how deep it is.
+        const nearWall = (d.world.portalParts || []).some((w) => {
+          const rx = x - w.x, rz = z - w.z;
+          const along = rx * w.dx + rz * w.dz;
+          const lat = rx * -w.dz + rz * w.dx;
+          // BEHIND the wall is hidden -- that is the whole point of a
+          // headwall, and the transition is deliberately put there. In FRONT
+          // of it is a defect: a driver on the approach sees it. So the test
+          // is which side, not how far. Measured, every remaining slice sat
+          // 11-20 m behind a wall, which is where the carve's run-out and bank
+          // land by design.
+          return along >= -2 && along <= 34 && lat >= w.uMin - 2 && lat <= w.uMax + 2;
+        });
         if (g > deck + 0.4 && g < deck + 5.4 - 0.4 && !d.world.inCut(x, z) && !nearWall) {
+          let wd = 9999;
+          for (const w of (d.world.portalParts || [])) {
+            wd = Math.min(wd, Math.hypot(w.x - x, w.z - z));
+          }
           slice.push({ ei, at: [Math.round(x), Math.round(z)],
-                       into: +(g - deck).toFixed(1) });
+                       into: +(g - deck).toFixed(1), wall: Math.round(wd) });
           break;
         }
       }
@@ -181,6 +207,7 @@ try {
   if (cov.length) bad += cov.length;
   const sl = report.slice || [];
   console.log(`bores sliced by terrain (no corridor): ${sl.length}` +
-    (sl.length ? `  worst ${Math.max(...sl.map((q) => q.into))} m into the bore, e.g. ${JSON.stringify(sl[0].at)}` : ''));
+    (sl.length ? `  worst ${Math.max(...sl.map((q) => q.into))} m into the bore` : ''));
+  for (const q of sl.slice(0, 20)) console.log(`   slice at ${JSON.stringify(q.at)} ${q.into} m, nearest wall ${q.wall} m`);
 } finally { chrome.kill(); }
 process.exit(bad ? 1 : 0);
