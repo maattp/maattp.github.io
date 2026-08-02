@@ -1508,7 +1508,11 @@ export class World {
     } else { O.dx = grp.owner.dx; O.dz = grp.owner.dz; }
     const px = -O.dz, pz = O.dx;
     const rot = Math.atan2(O.dx, O.dz);
-    const DEPTH = 1.8, SHOULDER = 1.8;
+    // The shoulder has to reach past the CUTTING, not just past the bore: the
+    // trench is dug CUT_SH wider than the carriageway on each side, so a wall
+    // sized to the bore alone leaves a strip of raw earth face showing beyond
+    // each end of it.
+    const DEPTH = 1.8, SHOULDER = CUT_SH + 2.6;
 
     // Lateral extent of each bore, in the owner's cross-road axis, merged so
     // two overlapping carriageways cannot leave a sliver of pier between them.
@@ -1578,7 +1582,11 @@ export class World {
     const O = { ...Oin, x: M[0].x, y: M[0].y, z: M[0].z };
     const px = -O.dz, pz = O.dx;
     const rot = Math.atan2(O.dx, O.dz);
-    const DEPTH = 1.8, SHOULDER = 1.8;
+    // The shoulder has to reach past the CUTTING, not just past the bore: the
+    // trench is dug CUT_SH wider than the carriageway on each side, so a wall
+    // sized to the bore alone leaves a strip of raw earth face showing beyond
+    // each end of it.
+    const DEPTH = 1.8, SHOULDER = CUT_SH + 2.6;
     // The wall plane sits on the FIRST bore of the cluster, so no member is
     // ever in front of it and every throat is short by construction.
     const along = (m) => (m.x - O.x) * O.dx + (m.z - O.z) * O.dz;
