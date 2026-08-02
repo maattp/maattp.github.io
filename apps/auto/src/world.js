@@ -1686,8 +1686,16 @@ export class World {
     for (const [h0, h1] of merged) {
       const [m0x, m0z] = at(h0), [m1x, m1z] = at(h1);
       const bx = O.dx * (DEPTH / 2 - 0.15), bz = O.dz * (DEPTH / 2 - 0.15);
+      // THE SILL GOES UNDER THE TARMAC. The bore's deck and the drawn road are
+      // not the same height: the road is laid on the carved ground plus
+      // ROAD_LIFT, which sits about 0.4 m below the deck the bore is profiled
+      // from. Starting the card at deck level left a strip of daylight along
+      // the bottom with the carriageway and its centreline running visibly
+      // underneath -- the mouth read as a panel hung above the road rather
+      // than a hole in the end of it.
+      const sill = Math.min(deckY, G.terrainHeight(m0x, m0z), G.terrainHeight(m1x, m1z)) - 0.6;
       flat.quad(
-        [m0x + bx, deckY, m0z + bz], [m1x + bx, deckY, m1z + bz],
+        [m0x + bx, sill, m0z + bz], [m1x + bx, sill, m1z + bz],
         [m1x + bx, roofY, m1z + bz], [m0x + bx, roofY, m0z + bz],
         [-O.dx, 0, -O.dz], ZERO_UV, [0.035, 0.035, 0.045]);
     }
