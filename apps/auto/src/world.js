@@ -1518,19 +1518,25 @@ export class World {
     // forward without the throat leaves it standing free ahead of the holes
     // with daylight behind -- the floating pillar. The throat is what makes
     // the wall part of the tunnel instead of a screen near it.
-    // ONE WALL PER STATION CLUSTER. Members of a mouth share a bearing but
-    // their cuts can end hundreds of metres apart, and a single wall serving
-    // all of them throats the stragglers forward to reach it -- portalcheck
-    // measured throats of 165, 207 and 274 m, which is a quarter kilometre of
-    // invented tunnel tube. Bores whose cuts end within 25 m of each other get
-    // one wall; the rest get their own.
+    // ONE WALL PER STATION CLUSTER, AND THE WINDOW IS TIGHT.
+    //
+    // A wall has one job: to stand at the face of earth where the cutting ends
+    // and carry the openings through it. The wall goes on the FIRST member of
+    // its cluster, so the window is also how far short of that face the wall
+    // may land -- at 25 m it landed 26 m short and 3 m low, and the player
+    // drove down a correct cutting into solid ground with the portal stranded
+    // behind them. 6 m merges only ends that genuinely coincide.
+    //
+    // The window still has to exist: without it a single wall served every
+    // bore of a mouth and threw a throat forward to reach the stragglers,
+    // which portalcheck measured at 165, 207 and 274 m of invented tube.
     const all = grp.members.map((m) => ends.get(m.ni));
     const key = (m) => (m.x - O.x) * O.dx + (m.z - O.z) * O.dz;
     all.sort((a, b) => key(a) - key(b));
     const clusters = [];
     for (const m of all) {
       const last = clusters[clusters.length - 1];
-      if (last && key(m) - key(last[0]) <= 25) last.push(m);
+      if (last && key(m) - key(last[0]) <= 6) last.push(m);
       else clusters.push([m]);
     }
     for (const M of clusters) this._portalWall(flat, O, M, WALL, DECK, conc);
