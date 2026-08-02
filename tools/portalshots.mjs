@@ -74,7 +74,15 @@ try {
     // reports "no tunnel". The mouth is the far end of the carved corridor.
     const cuts = d.world.portalCuts ? d.world.portalCuts() : [];
     const endBy = new Map();
-    for (const c of cuts) endBy.set(c.ni, c.pts[c.pts.length - 1]);
+    // The last point of a corridor is the CAP -- the raised closure over the
+    // bore, 14 m past the mouth and 7 m above it. Framing on it put the
+    // "inside" camera BEHIND the headwall, photographing the closure mound from
+    // a spot no driver can reach. The mouth is the last real corridor point.
+    for (const c of cuts) {
+      let li = c.pts.length - 1;
+      while (li > 0 && c.pts[li].cap) li--;
+      endBy.set(c.ni, c.pts[li]);
+    }
     for (const r of raw) {
       const e = endBy.get(r.ni);
       if (!e) continue;
@@ -94,7 +102,7 @@ try {
     return sites.length;
   })()`);
   console.log(`${n} portals`);
-  const list = JSON.parse(await ev('JSON.stringify(window.__sites.map((s,i)=>({i,x:Math.round(s.x),z:Math.round(s.z),hw:+s.hw.toFixed(1)})).filter(s=>s.i===14))'));
+  const list = JSON.parse(await ev('JSON.stringify(window.__sites.map((s,i)=>({i,x:Math.round(s.x),z:Math.round(s.z),hw:+s.hw.toFixed(1)})))'));
   mkdirSync('docs/tun', { recursive: true });
   const out = [];
 

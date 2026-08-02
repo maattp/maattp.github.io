@@ -496,7 +496,14 @@ export function* cityGenerator(md) {
       // Past the approach, never break the surface mid-hill. Inside it, the
       // GEOMETRY decides: world.js draws an open cut until the ground closes
       // over the bore, so there is nothing to clamp here.
-      if (dPortal > 80) yFinal = Math.min(yFinal, n.y - CLEAR);
+      // The clamp and the portal cutting have to MEET. Inside the approach the
+      // geometry decides (world.js carves an open cut); past it the bore must
+      // be genuinely buried. At 80 m there was a gap: corridors reach roughly
+      // 50-70 m at these grades, so between the two the roof sat inside the
+      // ground with the terrain surface passing through the bore -- earth
+      // across the carriageway with an unlined hole in it, which portalcheck
+      // counts as a sliced bore.
+      if (dPortal > 50) yFinal = Math.min(yFinal, n.y - CLEAR);
       if (n.y - yFinal > worstDrop) worstDrop = n.y - yFinal;
       n.y = yFinal;
       n.tunnel = true;

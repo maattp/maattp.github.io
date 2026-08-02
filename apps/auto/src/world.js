@@ -580,27 +580,49 @@ export class World {
           }
         }
         app.reverse();
-        let cur = m.ni, prev = -1, dist = 0;
-        const pts = [...app, { x: P0.x, z: P0.z, y: P0.y, hw: m.hw }];
-        while (dist < 240) {
-          const n = city.nodes[cur];
-          let best = null;
-          for (const k of n.e) {
-            const e = city.edges[k];
-            if (!e.tunnel || k === prev) continue;
-            if (best === null || e.hw > city.edges[best].hw) best = k;
+        // WALK EVERY BRANCH, not just the widest. Taking one edge per node
+        // leaves ramps and side bores uncarved, and a shallow uncarved bore has
+        // the terrain surface passing through its interior -- earth lying
+        // across the carriageway with an unlined hole in it. portalcheck
+        // measured 22 of them, worst 4.7 m into the bore. Each branch gets its
+        // own corridor, sharing this portal's approach ramp.
+        const seenE = new Set();
+        const branches = [];
+        const stack = [{ ni: m.ni, pts: [{ x: P0.x, z: P0.z, y: P0.y, hw: m.hw }], dist: 0 }];
+        while (stack.length) {
+          const br = stack.pop();
+          let cur = br.ni, dist = br.dist;
+          const pts2 = br.pts;
+          for (;;) {
+            const n = city.nodes[cur];
+            const outs = n.e.filter((k) => {
+              const e = city.edges[k];
+              return e.tunnel && !e.elev && !seenE.has(k);
+            });
+            if (!outs.length || dist > 240) break;
+            outs.sort((k1, k2) => city.edges[k2].hw - city.edges[k1].hw);
+            // spawn the side branches from here, continue along the widest
+            for (const k of outs.slice(1)) {
+              const e2 = city.edges[k];
+              seenE.add(k);
+              const nx2 = e2.a === cur ? e2.b : e2.a;
+              const nn2 = city.nodes[nx2];
+              stack.push({ ni: nx2, dist: dist + e2.len,
+                pts: [...pts2, { x: nn2.x, z: nn2.z, y: nn2.y, hw: e2.hw }] });
+            }
+            const k0 = outs[0];
+            const e = city.edges[k0];
+            seenE.add(k0);
+            const nx = e.a === cur ? e.b : e.a;
+            const nn = city.nodes[nx];
+            dist += e.len; cur = nx;
+            pts2.push({ x: nn.x, z: nn.z, y: nn.y, hw: e.hw });
+            if (G.terrainRaw(nn.x, nn.z) - (nn.y + TUN_DECK + TUN_WALL) > CUT_COVER) break;
           }
-          if (best === null) break;
-          const e = city.edges[best];
-          const nx = e.a === cur ? e.b : e.a;
-          const nn = city.nodes[nx];
-          dist += e.len; prev = best; cur = nx;
-          pts.push({ x: nn.x, z: nn.z, y: nn.y, hw: e.hw });
-          // terrainRaw, not terrainHeight: this decides where the trench ends,
-          // so it must ask what the ground was BEFORE the trench was dug.
-          // Asking the carved surface makes the corridor define itself.
-          if (G.terrainRaw(nn.x, nn.z) - (nn.y + TUN_DECK + TUN_WALL) > CUT_COVER) break;
+          if (pts2.length > 1) branches.push(pts2);
         }
+        for (const bp of branches) {
+          const pts = [...app, ...bp];
         if (pts.length > 1) {
           const q = pts[pts.length - 1], r = pts[pts.length - 2];
           const L = Math.hypot(q.x - r.x, q.z - r.z) || 1;
@@ -617,6 +639,7 @@ export class World {
             z0 = Math.min(z0, q.z - r); z1 = Math.max(z1, q.z + r);
           }
           cuts.push({ ni: m.ni, pts, apron: app.length, x0, x1, z0, z1 });
+          }
         }
       }
     }
