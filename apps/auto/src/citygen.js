@@ -467,6 +467,13 @@ export function* cityGenerator(md) {
       // 6 % approach put the portal 60 m away at the bottom of a 2 m scrape;
       // a judge scoring the render called the cut depth "essentially zero".
       // 9 % from the kerb, 13 % once clear of the apron, to 12 m.
+      // 9 % from the kerb, 13 % once clear of the apron, to 12 m. Steeper was
+      // tried -- 15/19 % -- to make the retaining walls tall enough to read as
+      // walls rather than as pale ribbons on the ground. It does that and
+      // costs more than it buys: the bore reaches its cover so fast that the
+      // cutting is over before it starts, and the headwall ends up buried out
+      // of sight of the approach. The walls are a geometry problem, not a
+      // gradient one.
       const APRON = 10;
       const dive = Math.max(0.09 * dPortal,
         Math.min(0.13 * Math.max(0, dPortal - APRON), 12));

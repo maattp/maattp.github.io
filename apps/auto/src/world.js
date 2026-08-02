@@ -20,7 +20,11 @@ const CUT_SH = 1.2;
 // How far the bank takes to climb from the trench floor back to true ground.
 // Steep enough to read as an excavation, wide enough that the 5 m patch can
 // actually resolve the slope.
-const CUT_BANK = 9;
+// A FINISHED CUTTING, NOT AN EXCAVATION. Wide earth banks read as a building
+// site: a real portal approach is walled. The bank is only the thin bevel
+// between the top of the retaining wall and the pavement above it -- the wall
+// does the work of holding the ground back.
+const CUT_BANK = 2.4;
 // How much ground must lie over the roof before the bore counts as buried and
 // the trench ends. At 0.4 m the headwall stood in a cut barely deeper than the
 // bore is tall, so the portal was a metre of concrete 60 m away and read as
@@ -477,18 +481,13 @@ export class World {
    */
   patchCell(b, cx, cz, S, colour) {
     const SUB = 8, q = S / SUB;
-    const DIRT = [0.40, 0.36, 0.29];
     // Heights come straight from terrainHeight, which already carries the cut.
     // The patch exists only to RESOLVE it: a 40 m cell cannot show a 14 m
     // trench however correct the height function is.
     const y = (x, z) => G.terrainHeight(x, z);
-    const tint = (x, z) => {
-      const c = this.cutFloor(x, z);
-      if (!c) return colour;
-      return [colour[0] + (DIRT[0] - colour[0]) * (1 - c.t),
-        colour[1] + (DIRT[1] - colour[1]) * (1 - c.t),
-        colour[2] + (DIRT[2] - colour[2]) * (1 - c.t)];
-    };
+    // No excavation tint. The cutting is faced in concrete by the retaining
+    // walls; the ground above it is the same ground as everywhere else.
+    const tint = () => colour;
     for (let j = 0; j < SUB; j++) {
       for (let i = 0; i < SUB; i++) {
         const x = cx + i * q, z = cz + j * q;
@@ -499,7 +498,7 @@ export class World {
           [x + q, y(x + q, z), z],
           [0, 1, 0], [x / 13, z / 13, x / 13, (z + q) / 13,
             (x + q) / 13, (z + q) / 13, (x + q) / 13, z / 13],
-          [tint(x, z), tint(x, z + q), tint(x + q, z + q), tint(x + q, z)]);
+          tint());
       }
     }
   }
@@ -1088,7 +1087,7 @@ export class World {
     flat.quad(
       [DR.sx, ay - GIRDER, DR.sz], [DL.sx, ay - GIRDER, DL.sz],
       [DL.ex, by - GIRDER, DL.ez], [DR.ex, by - GIRDER, DR.ez],
-      [0, -1, 0], [0, 0, 1, 0, 1, 1, 0, 1], soffit);
+      [0, -1, 0], [0, 0, 1, 0, 1, 1, 0, 1], conc);
 
     for (const sg of [-1, 1]) {
       const r = run[sg], d = deck[sg];
@@ -1100,7 +1099,7 @@ export class World {
       flat.quad(
         [d.sx, ay - GIRDER, d.sz], [d.ex, by - GIRDER, d.ez],
         [d.ex, by + RAIL, d.ez], [d.sx, ay + RAIL, d.sz],
-        [ox, 0, oz], [0, 0, 1, 0, 1, 1, 0, 1], [concLo, concLo, conc, conc]);
+        [ox, 0, oz], [0, 0, 1, 0, 1, 1, 0, 1], conc);
       // Capping over the wall.
       flat.quad(
         [d.sx, ay + RAIL, d.sz], [d.ex, by + RAIL, d.ez],
@@ -1110,7 +1109,7 @@ export class World {
       flat.quad(
         [r.sx, ay, r.sz], [r.ex, by, r.ez],
         [r.ex, by + RAIL, r.ez], [r.sx, ay + RAIL, r.sz],
-        [-ox, 0, -oz], [0, 0, 1, 0, 1, 1, 0, 1], [concLo, concLo, conc, conc]);
+        [-ox, 0, -oz], [0, 0, 1, 0, 1, 1, 0, 1], conc);
     }
 
     // Piers on a realistic bay. One slender post per span, whatever the span's
@@ -1252,8 +1251,22 @@ export class World {
       // hole: with ground drawn over the corridor there was nothing an open cut
       // could be open TO, so the roof had to stay on the whole way and the
       // mouth had nothing to read as an entrance.
-      const bur = !(exposed(t0) > 0 || exposed(t1) > 0);
-      const l0 = pool(t0), l1 = pool(t1);
+      // A BORE IS OPEN EXACTLY WHERE THE GROUND WAS DUG, and nowhere else.
+      // Deciding it from cover instead -- "less than CUT_COVER over the roof,
+      // therefore open" -- is true of every shallow tunnel in the city, not
+      // just the approaches, so retaining walls were raised along buried
+      // stretches that have no trench and they blanketed the ground for
+      // hundreds of metres either side of the mouth. inCut is the same test
+      // that decided whether to dig, so the two cannot disagree.
+      const [mx, mz] = P(tm, 0);
+      const bur = !this.inCut(mx, mz);
+      // A MOUTH IS A BLACK HOLE. The lamp pools start at full strength right
+      // behind the headwall, so the bore was a pale grey box and the opening
+      // read as a recess in a wall rather than as somewhere the road goes.
+      // Eyes adapted to daylight see nothing for the first stretch inside a
+      // real portal; this darkens the same way, recovering over ~30 m of cover.
+      const dark = (t) => 0.16 + 0.84 * clamp(-exposed(t) / 30, 0, 1);
+      const l0 = pool(t0) * dark(t0), l1 = pool(t1) * dark(t1);
       const [a0x, a0z] = P(t0, hw), [a1x, a1z] = P(t0, -hw);
       const [b0x, b0z] = P(t1, hw), [b1x, b1z] = P(t1, -hw);
 
@@ -1267,9 +1280,15 @@ export class World {
       } else {
         // In the cut the sun reaches the road, so it is ordinary asphalt rather
         // than the unlit interior material a bore needs.
+        // Match the tint ordinary asphalt is drawn with. At [1,1,1] the
+        // approach ramps came out markedly paler than every road around them
+        // and read as poured concrete slabs fanning out of the mouth -- the
+        // "pale ramps going nowhere" that survived five rounds of elimination
+        // precisely because they ARE road, just the wrong shade of it.
         const u1 = (hw * 2) / ROAD_TILE, v0 = (t0 * e.len) / ROAD_TILE, v1 = (t1 * e.len) / ROAD_TILE;
+        const ac = [0.74, 0.74, 0.75], ae = [0.62, 0.62, 0.63];
         road.quad([a0x, Y(t0), a0z], [a1x, Y(t0), a1z], [b1x, Y(t1), b1z], [b0x, Y(t1), b0z],
-          [0, 1, 0], [0, v0, u1, v0, u1, v1, 0, v1], [1, 1, 1]);
+          [0, 1, 0], [0, v0, u1, v0, u1, v1, 0, v1], [ae, ae, ac, ac]);
       }
       if (i % 2 === 0) {
         const [c0x, c0z] = P(t0, 0.10), [c1x, c1z] = P(t0 + (t1 - t0) * 0.55, 0.10);
@@ -1290,7 +1309,10 @@ export class World {
           // terrain was cut to -- so the raw edge of the patched ground lands
           // on concrete rather than overhanging a void.
           const [r0x, r0z] = P(t0, (hw + CUT_SH) * sd), [r1x, r1z] = P(t1, (hw + CUT_SH) * sd);
-          const g0 = G.terrainHeight(r0x, r0z) + 0.35, g1 = G.terrainHeight(r1x, r1z) + 0.35;
+          // terrainRaw: the wall's job is to hold back the ground that WAS
+          // there. Against the carved surface it stops at the trench floor it
+          // is standing in and retains nothing.
+          const g0 = G.terrainRaw(r0x, r0z) + 0.35, g1 = G.terrainRaw(r1x, r1z) + 0.35;
           flat.quad([w0x, Y(t0) - 0.5, w0z], [w1x, Y(t1) - 0.5, w1z],
             [w1x, g1, w1z], [w0x, g0, w0z],
             [-px * sd, 0, -pz * sd], ZERO_UV, conc);
@@ -1446,11 +1468,48 @@ export class World {
     // forward without the throat leaves it standing free ahead of the holes
     // with daylight behind -- the floating pillar. The throat is what makes
     // the wall part of the tunnel instead of a screen near it.
-    const M = grp.members.map((m) => ends.get(m.ni));
-    const along = (m) => (m.x - O.x) * O.dx + (m.z - O.z) * O.dz;
-    const v0 = Math.min(0, ...M.map(along));
-    const ox = O.x + O.dx * v0, oz = O.z + O.dz * v0;
+    // ONE WALL PER STATION CLUSTER. Members of a mouth share a bearing but
+    // their cuts can end hundreds of metres apart, and a single wall serving
+    // all of them throats the stragglers forward to reach it -- portalcheck
+    // measured throats of 165, 207 and 274 m, which is a quarter kilometre of
+    // invented tunnel tube. Bores whose cuts end within 25 m of each other get
+    // one wall; the rest get their own.
+    const all = grp.members.map((m) => ends.get(m.ni));
+    const key = (m) => (m.x - O.x) * O.dx + (m.z - O.z) * O.dz;
+    all.sort((a, b) => key(a) - key(b));
+    const clusters = [];
+    for (const m of all) {
+      const last = clusters[clusters.length - 1];
+      if (last && key(m) - key(last[0]) <= 25) last.push(m);
+      else clusters.push([m]);
+    }
+    for (const M of clusters) this._portalWall(flat, O, M, WALL, DECK, conc);
+  }
 
+  _portalWall(flat, Oin, M, WALL, DECK, conc) {
+    const O = { ...Oin, x: M[0].x, y: M[0].y, z: M[0].z };
+    const px = -O.dz, pz = O.dx;
+    const rot = Math.atan2(O.dx, O.dz);
+    const DEPTH = 1.8, SHOULDER = 1.8;
+    // The wall plane sits on the FIRST bore of the cluster, so no member is
+    // ever in front of it and every throat is short by construction.
+    const along = (m) => (m.x - O.x) * O.dx + (m.z - O.z) * O.dz;
+    const ox = O.x, oz = O.z;
+    // The throat: bore cross-section carried forward from each mouth to the
+    // wall plane, so there is no gap between the two.
+    for (const m of M) {
+      const L = along(m);
+      if (L < 0.5) continue;
+      m.__throat = true;
+      const q0x = m.x - O.dx * L, q0z = m.z - O.dz * L;
+      const dy = m.y + DECK, ry = m.y + DECK + WALL;
+      const e0 = [q0x + px * m.hw, q0z + pz * m.hw], e1 = [q0x - px * m.hw, q0z - pz * m.hw];
+      const f0 = [m.x + px * m.hw, m.z + pz * m.hw], f1 = [m.x - px * m.hw, m.z - pz * m.hw];
+      this._throat(flat, e0, e1, f0, f1, dy, ry, px, pz, conc);
+    }
+
+    // Lateral extent of each bore in the cross-road axis, merged so two
+    // overlapping carriageways cannot leave a sliver of pier between them.
     const holes = M
       .map((m) => {
         const u = (m.x - ox) * px + (m.z - oz) * pz;
@@ -1463,33 +1522,15 @@ export class World {
       if (h[0] <= last[1] + 1.6) last[1] = Math.max(last[1], h[1]);
       else merged.push(h.slice());
     }
-
-    // ONE Y for the whole wall. Members sit at slightly different heights; a
-    // lintel that follows each of them is the stepped headwall that read as
-    // separate beams.
-    // ONE Y, taken from the OWNER's bore rather than from the extremes across
-    // the group. min/max looks safer and is not: one member sitting on higher
-    // ground drags the lintel metres above every roof it is supposed to cap,
-    // and the mouth reads as a freeway overpass with a gap under it.
+    // ONE Y for the whole wall, from the bore it stands on. min/max across the
+    // cluster looks safer and is not: one member on higher ground drags the
+    // lintel metres above every roof it caps.
     const deckY = O.y + DECK;
     const roofY = O.y + DECK + WALL;
-    const capY = Math.max(roofY, G.terrainHeight(ox, oz)) + 2.4;
+    const capY = Math.max(roofY, G.terrainRaw(ox, oz)) + 2.4;
     const uMin = merged[0][0] - SHOULDER;
     const uMax = merged[merged.length - 1][1] + SHOULDER;
     const at = (u) => [ox + px * u, oz + pz * u];
-
-    // The throat: bore cross-section carried forward from each mouth to the
-    // wall plane, so there is no gap between the two.
-    for (const m of M) {
-      const L = along(m) - v0;
-      if (L < 0.5) continue;
-      m.__throat = true;
-      const q0x = m.x - O.dx * L, q0z = m.z - O.dz * L;
-      const dy = m.y + DECK, ry = m.y + DECK + WALL;
-      const e0 = [q0x + px * m.hw, q0z + pz * m.hw], e1 = [q0x - px * m.hw, q0z - pz * m.hw];
-      const f0 = [m.x + px * m.hw, m.z + pz * m.hw], f1 = [m.x - px * m.hw, m.z - pz * m.hw];
-      this._throat(flat, e0, e1, f0, f1, dy, ry, px, pz, conc);
-    }
 
     const parts = [];
     const [lx, lz] = at((uMin + uMax) / 2);
@@ -1715,6 +1756,12 @@ export class World {
           const wOut = [wj * 0.9, wj * 0.9, wj * 0.91];
           const wc = sg > 0 ? [wIn, wOut, wOut, wIn] : [wOut, wIn, wIn, wOut];
           const wu = sw / WALK_TILE;
+          // A FOOTWAY DOES NOT FOLLOW A ROAD INTO A TUNNEL. The carriageway
+          // descends into the cutting and should; pavement drawn from the same
+          // carved surface swept down after it as a pair of ramps flanking the
+          // mouth, which is what made the approach look like a building site.
+          // It stops at the retaining wall instead.
+          if (this.inCut((q[0][0] + q[2][0]) / 2, (q[0][2] + q[2][2]) / 2)) continue;
           walk.quad(q[0], q[1], q[2], q[3], [0, 1, 0], [0, v0, wu, v0, wu, v1, 0, v1], wc);
           const cy0 = G.terrainHeight(i0x, i0z), cy1 = G.terrainHeight(i1x, i1z);
           const cc = [0.72, 0.72, 0.7];
@@ -1830,11 +1877,27 @@ export class World {
     // ground with a single street running into it -- the "road to nowhere".
     // citygen.nodeSurface() skips these too; the two have to agree.
     if (n.e.length < 2) return;
-    // Nothing has to be skipped over a portal trench any more. The cut lives in
-    // terrainHeight, so the carriageway, the pavement and this square all
-    // descend into it of their own accord -- and while they were being skipped
-    // instead, the approach simply stopped at the lip with a hole where the
-    // road into the cutting should have been.
+    // A JUNCTION IS NOT BUILT INSIDE A CUTTING, and testing only its centre is
+    // not enough: a node standing just clear of the trench still paves a square
+    // whose far corners reach into it, and drawn from the carved surface those
+    // corners dive. That is the pale plate fanning out of the mouth -- apex at
+    // the headwall, a straight unclosed edge over the bank, and full-white
+    // vertex colour making it read as poured concrete rather than tarmac.
+    // The strips cover the tarmac here on their own.
+    {
+      let rr = 0;
+      for (const ei of n.e) { const e = city.edges[ei]; if (!e.tunnel && e.hw > rr) rr = e.hw; }
+      // Generous: the square, its kerbed ring and the ring's diagonal corners
+      // all reach past the node, and cutFloor covers the banks as well as the
+      // floor. A junction anywhere near a cutting is simply not drawn -- the
+      // approach strips pave it on their own, and a crossing does not belong
+      // in the mouth of a tunnel anyway.
+      const rq = rr + 8;
+      for (const [ox, oz] of [[0, 0], [rq, 0], [-rq, 0], [0, rq], [0, -rq],
+        [rq, rq], [rq, -rq], [-rq, rq], [-rq, -rq]]) {
+        if (this.cutFloor(n.x + ox, n.z + oz)) return;
+      }
+    }
     // Two elevated spans meeting head to head are already mitred into one
     // another by meshViaduct, so a crossing square here is a horizontal patch
     // laid across a sloping deck -- it pokes through on the uphill side and
@@ -1957,6 +2020,11 @@ export class World {
           if (ringHit) break;
         }
         if (ringHit) continue;
+        // A ring piece belonging to a node just OUTSIDE a cutting can still
+        // reach into it, and drawn from the carved surface it dives after the
+        // road as a pale ramp beside the mouth. Skipping the node is not
+        // enough; the pieces have to be tested too.
+        if (this.inCut((i0x + o1x) / 2, (i0z + o1z) / 2)) continue;
         // Size the ring's UVs from the piece's real dimensions, or its slabs
         // come out as whatever shape the corner happens to be.
         const ru = Math.hypot(o0x - i0x, o0z - i0z) / WALK_TILE;
