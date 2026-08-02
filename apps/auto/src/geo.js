@@ -77,7 +77,30 @@ export function masks() {
   return { water: WET, green: GRN, n: MASK_N, step: MASK_STEP };
 }
 
+// A PORTAL CUT IS PART OF THE HEIGHT SURFACE, not a decoration on top of it.
+//
+// The trench a tunnel mouth needs is 14 m wide and the heightfield is sampled
+// every 40 m, so it cannot be baked into the raster. Deforming only the terrain
+// MESH does not work either: roads, pavement and every ground query read
+// terrainHeight(), so the carriageway stayed at grade and the cut appeared as a
+// deck stitched on top of the ground rather than a road descending into it.
+//
+// Applying it here instead keeps the law in "The one height surface" intact --
+// every consumer still reads the same function, and they all see the cut. The
+// deformation is analytic, so 40 m sampling costs it nothing; world.js only has
+// to tessellate finely enough to draw what this already describes.
+let carve = null;
+export function setCarve(fn) { carve = fn; }
+
+/** The ground before any portal cut. Only the carve itself may use this. */
+export function terrainRaw(x, z) { return sampleHF(x, z); }
+
 export function terrainHeight(x, z) {
+  const h = sampleHF(x, z);
+  return carve ? h - carve(x, z) : h;
+}
+
+function sampleHF(x, z) {
   if (!HF) return 0;
   const fx = (x + MAP_HALF) / HF_STEP;
   const fz = (z + MAP_HALF) / HF_STEP;
