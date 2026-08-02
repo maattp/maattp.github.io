@@ -189,13 +189,106 @@ try {
       raw: +d.G.terrainRaw(sx, sz).toFixed(1), floor: +a.y.toFixed(1) });
   } catch (err) { return JSON.stringify({ err: err.message }); } })()`));
   console.log('B start:', JSON.stringify(B));
+  await ev(`(() => {
+    // sample continuously: an end-state check cannot distinguish "blocked at
+    // the rim" from "crossed the trench and climbed out the far side"
+    window.__bMax = 0;
+    window.__bWatch = setInterval(() => {
+      const d = window.__dbg, v = d.player.vehicle; if (!v) return;
+      const under = d.G.terrainRaw(v.x, v.z) - v.y;
+      if (under > window.__bMax) window.__bMax = under;
+    }, 150);
+    return 1;
+  })()`);
   await sleep(35000);
   const Bres = JSON.parse(await ev(`(() => { try {
     const d = window.__dbg, v = d.player.vehicle;
     d.controls.btn.gas = false;
+    clearInterval(window.__bWatch);
     return JSON.stringify({ y: +v.y.toFixed(1),
       raw: +d.G.terrainRaw(v.x, v.z).toFixed(1),
-      fellIn: v.y < d.G.terrainRaw(v.x, v.z) - 2.5 });
+      maxUnder: +window.__bMax.toFixed(1),
+      fellIn: window.__bMax > 2.5 });
   } catch (err) { return JSON.stringify({ err: err.message }); } })()`));
   console.log('B result:', JSON.stringify(Bres));
+
+  // B2: RECOVERABILITY. Falling into an open excavation you drove at is fair
+  // game-world physics; being STUCK in it is the defect. From wherever B
+  // ended, drive along the cutting toward the apron and prove the car gets
+  // back to grade or onto the tunnel carriageway.
+  const B2 = JSON.parse(await ev(`(() => { try {
+    const d = window.__dbg, c = d.city, p = d.player, v = p.vehicle;
+    const cuts = d.world.portalCuts();
+    let cut = null, cd = 1e18;
+    for (const q of cuts) {
+      const dd = (q.pts[0].x + 490) ** 2 + (q.pts[0].z + 1209) ** 2;
+      if (dd < cd) { cd = dd; cut = q; }
+    }
+    // aim back along the corridor toward its start (the at-grade apron)
+    const a = cut.pts[0], b = cut.pts[2] || cut.pts[1];
+    const L = Math.hypot(a.x - v.x, a.z - v.z) || 1;
+    v.heading = Math.atan2((a.x - v.x) / L, (a.z - v.z) / L);
+    v.vLong = 0;
+    d.controls.btn.gas = true;
+    return JSON.stringify({ aiming: [Math.round(a.x), Math.round(a.z)] });
+  } catch (err) { return JSON.stringify({ err: err.message }); } })()`));
+  console.log('B2 start:', JSON.stringify(B2));
+  await sleep(30000);
+  const B2res = JSON.parse(await ev(`(() => {
+    const d = window.__dbg, v = d.player.vehicle;
+    d.controls.btn.gas = false;
+    const raw = d.G.terrainRaw(v.x, v.z);
+    const under = raw - v.y;
+    return JSON.stringify({ y: +v.y.toFixed(1), under: +under.toFixed(1),
+      onRoad: d.city.onRoad(v.x, v.z, 0.5),
+      recovered: under < 1.5 || d.city.onRoad(v.x, v.z, 0.5) });
+  })()`));
+  console.log('B2 result:', JSON.stringify(B2res));
+
+  // ---- Test C: hit the wall INSIDE the bore -- you must stay inside --------
+  // The reported bug: steer into the tunnel wall and the car pops out onto
+  // the surface, because the drawn walls had no collision and groundAt,
+  // finding no tunnel surface outside the tube's half-width, answered with
+  // the street overhead.
+  const cinfo = await ev(`(() => { try {
+    const d = window.__dbg, c = d.city, p = d.player, v = p.vehicle;
+    let best = null, bd = 1e18;
+    for (const e of c.edges) {
+      if (!e.tunnel || e.elev) continue;
+      for (const ni of [e.a, e.b]) {
+        const n = c.nodes[ni];
+        if (!n.e.some((k) => !c.edges[k].tunnel)) continue;
+        const dd = (n.x + 490) ** 2 + (n.z + 1209) ** 2;
+        if (dd < bd) { bd = dd; best = { ni, e }; }
+      }
+    }
+    let cur = best.ni, prev = -1, dist = 0, at = null, dir = null;
+    while (dist < 250) {
+      const n = c.nodes[cur]; let pick = null;
+      for (const k of n.e) { const e = c.edges[k];
+        if (!e.tunnel || k === prev) continue;
+        if (pick === null || e.hw > c.edges[pick].hw) pick = k; }
+      if (pick === null) break;
+      const e = c.edges[pick]; const nx = e.a === cur ? e.b : e.a;
+      at = c.nodes[nx]; dir = { x: e.a === cur ? e.dx : -e.dx, z: e.a === cur ? e.dz : -e.dz };
+      dist += e.len; prev = pick; cur = nx;
+    }
+    v.x = at.x; v.z = at.z; v.y = at.y + 0.6;
+    v.heading = Math.atan2(dir.x, dir.z) + 0.6;   // ~35 deg into the wall
+    v.vLong = 14;
+    p.x = v.x; p.z = v.z; p.y = v.y; p.camFloor = null;
+    d.controls.btn.gas = true;
+    return JSON.stringify({ at: [Math.round(at.x), Math.round(at.z)],
+      deck: +at.y.toFixed(1), raw: +d.G.terrainRaw(at.x, at.z).toFixed(1) });
+  } catch (err) { return JSON.stringify({ err: err.message }); } })()`);
+  console.log('C start:', cinfo);
+  await sleep(30000);
+  const cres = await ev(`(() => {
+    const d = window.__dbg, v = d.player.vehicle;
+    d.controls.btn.gas = false;
+    const raw = d.G.terrainRaw(v.x, v.z);
+    return JSON.stringify({ y: +v.y.toFixed(1), raw: +raw.toFixed(1),
+      stillUnder: raw - v.y > 4 });
+  })()`);
+  console.log('C result:', cres);
 } finally { chrome.kill(); }

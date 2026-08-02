@@ -219,7 +219,7 @@ export class Player {
     // Trunks and poles. `blocked` is tried on each axis separately by the
     // caller, so a circle here lets you slide around a tree rather than
     // sticking to it.
-    if (this.city.obstacleHit(x, z, 0.32)) return true;
+    if (this.city.obstacleHit(x, z, 0.32, this.y)) return true;
     const near = this.city.buildingsNear(x, z, 6);
     for (const b of near) {
       const c = Math.cos(-b.rot), s = Math.sin(-b.rot);

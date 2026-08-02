@@ -822,10 +822,14 @@ export function* cityGenerator(md) {
     barrierSegs: null,
     barrierGrid: new Map(),
 
+    // Stride 6: ax, az, bx, bz, y0, y1. The band is what lets a barrier be a
+    // TUNNEL wall: a 2D fence along 3 km of bore under downtown would wall
+    // off every surface street above it, so a segment only exists for
+    // entities inside its height range.
     setBarriers(segs) {
       this.barrierSegs = segs;
       this.barrierGrid = new Map();
-      for (let i = 0; i < segs.length; i += 4) {
+      for (let i = 0; i < segs.length; i += 6) {
         const c0 = Math.floor((Math.min(segs[i], segs[i + 2]) - 2) / CHUNK);
         const c1 = Math.floor((Math.max(segs[i], segs[i + 2]) + 2) / CHUNK);
         const d0 = Math.floor((Math.min(segs[i + 1], segs[i + 3]) - 2) / CHUNK);
@@ -842,7 +846,7 @@ export function* cityGenerator(md) {
     },
 
     /** Deepest barrier overlap for a circle, same shape obstacleHit returns. */
-    barrierHit(x, z, rad) {
+    barrierHit(x, z, rad, y) {
       if (!this.barrierSegs) return null;
       const HALF = 0.8; // wall half-thickness
       let best = null;
@@ -861,6 +865,7 @@ export function* cityGenerator(md) {
             if (seen.has(i)) continue;
             seen.add(i);
             const S = this.barrierSegs;
+            if (y !== undefined && (y < S[i + 4] || y > S[i + 5])) continue;
             const r = distToSeg(x, z, S[i], S[i + 1], S[i + 2], S[i + 3]);
             const rr = rad + HALF;
             if (r.d >= rr) continue;
@@ -890,7 +895,7 @@ export function* cityGenerator(md) {
      * deepest overlap rather than the first, so a car wedged between a tree and
      * a pole is pushed out of the one it is furthest into.
      */
-    obstacleHit(x, z, rad) {
+    obstacleHit(x, z, rad, y) {
       let best = null;
       const c0 = Math.floor((x - rad) / CHUNK), c1 = Math.floor((x + rad) / CHUNK);
       const d0 = Math.floor((z - rad) / CHUNK), d1 = Math.floor((z + rad) / CHUNK);
@@ -912,7 +917,7 @@ export function* cityGenerator(md) {
       // The cutting walls answer through the same query, so every consumer --
       // traffic AI, the player's car, walking -- collides with them without a
       // single call site changing.
-      const b = this.barrierHit(x, z, rad);
+      const b = this.barrierHit(x, z, rad, y);
       if (b && (!best || b.pen > best.pen)) best = b;
       return best;
     },
