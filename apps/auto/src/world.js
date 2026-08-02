@@ -7,13 +7,13 @@ import * as G from './geo.js';
 // Kept in step with main.js. Shadow-caster policy differs by platform, and the
 // difference is worth roughly 40 draw calls a frame.
 const ON_PHONE = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
-import { CHUNK, ROAD_LIFT, NODE_LIFT, WALK_LIFT, cityStats } from './citygen.js';
+import { CHUNK, ROAD_LIFT, NODE_LIFT, WALK_LIFT, TUNNEL_H, cityStats } from './citygen.js';
 import { Builder } from './build.js';
 import { hash2, clamp, lerp, distToSeg } from './util.js';
 
 // The bore's cross-section, shared by the mesher and by the trench that has to
 // be cut out of the ground to make room for it.
-const TUN_WALL = 5.4, TUN_DECK = 0.3;
+const TUN_WALL = TUNNEL_H, TUN_DECK = 0.3;
 // How far past the carriageway the trench is cut. The retaining wall stands on
 // this line, so it is also the width of the hole in the terrain.
 const CUT_SH = 1.2;

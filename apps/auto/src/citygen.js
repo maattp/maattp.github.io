@@ -54,6 +54,11 @@ const RAMP = 0.5;
 // 30 m/s rises 5 cm a frame), so joining a viaduct still works, while an
 // overpass a metre or more overhead can no longer pick the car up.
 const DECK_REACH = 0.9;
+// The bore's interior height, shared with world.js (which draws it) and
+// player.js (whose camera has to stay under it). One literal, because a camera
+// that thinks the ceiling is somewhere else than where it is drawn is exactly
+// the kind of disagreement "The one height surface" exists to prevent.
+export const TUNNEL_H = 5.4;
 const CLASS_SPEED = { hwy: 30, art: 17, st: 12, res: 9, ramp: 14 };
 
 const walkWidth = (cls) => (cls === 'st' || cls === 'res' ? 2.6 : cls === 'art' ? 3.2 : 0);
