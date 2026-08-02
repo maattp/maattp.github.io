@@ -11,8 +11,44 @@
 //     immediately and every screenshot lies
 
 import { spawn } from 'node:child_process';
-import { writeFileSync, mkdirSync } from 'node:fs';
+import { writeFileSync, mkdirSync, readFileSync, readdirSync, statSync } from 'node:fs';
 import { setTimeout as sleep } from 'node:timers/promises';
+
+// NOTHING SHIPS WITH A CONFLICT MARKER IN IT.
+//
+// v64 went live with `<<<<<<< HEAD` printed on the launch screen. A merge was
+// "resolved" by regexing the version literal instead of resolving it, which
+// left the markers in index.html with the same value on both sides -- so the
+// next version bump rewrote both and the markers survived another release.
+//
+// Nothing in the pipeline could have caught it: git does not reject markers,
+// `node --check` does not parse HTML, and an HTML parser renders a stray
+// `<<<<<<< HEAD` as ordinary text, which is exactly how it reached a player's
+// screen. This is a file scan, run before the browser is even started, because
+// no amount of looking at a render was going to find it either.
+function scanForConflictMarkers(dir) {
+  const hits = [];
+  const walk = (d) => {
+    for (const name of readdirSync(d)) {
+      if (name === 'node_modules' || name === '.git' || name === 'vendor') continue;
+      const full = d + '/' + name;
+      if (statSync(full).isDirectory()) { walk(full); continue; }
+      if (!/\.(html|js|mjs|json|css)$/.test(name)) continue;
+      const text = readFileSync(full, 'utf8');
+      const line = text.split('\n').findIndex((l) =>
+        /^<{7} |^={7}$|^>{7} /.test(l));
+      if (line >= 0) hits.push(`${full}:${line + 1}`);
+    }
+  };
+  walk(dir);
+  return hits;
+}
+const markers = scanForConflictMarkers('apps/auto');
+if (markers.length) {
+  console.log('\nFAIL: merge conflict markers left in shipped files:');
+  for (const m of markers) console.log('  ' + m);
+  process.exit(1);
+}
 
 const PORT = 9222;
 const URL_BASE = process.env.AUTO_URL || 'http://localhost:8000/apps/auto/';
