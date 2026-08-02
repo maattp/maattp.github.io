@@ -581,6 +581,14 @@ export class World {
           if (G.terrainRaw(nn.x, nn.z) - (nn.y + TUN_DECK + TUN_WALL) > CUT_COVER) break;
         }
         if (pts.length > 1) {
+          const q = pts[pts.length - 1], r = pts[pts.length - 2];
+          const L = Math.hypot(q.x - r.x, q.z - r.z) || 1;
+          pts.push({
+            x: q.x + ((q.x - r.x) / L) * 14, z: q.z + ((q.z - r.z) / L) * 14,
+            y: q.y + TUN_WALL + 1.6, hw: q.hw, cap: true,
+          });
+        }
+        if (pts.length > 1) {
           let x0 = 1e9, x1 = -1e9, z0 = 1e9, z1 = -1e9;
           for (const q of pts) {
             const r = q.hw + CUT_SH + 4;
@@ -667,6 +675,11 @@ export class World {
         // corridors and cut for none of them -- the hole silently did not
         // exist, and every portal shape was judged against ground that had
         // never been removed.
+        // The closing segment shapes the GROUND over the bore; it is not open
+        // cut. Counting it as such drew road, retaining walls and a lit deck
+        // underneath ground that had just been raised over them -- an earth
+        // mound sitting on the carriageway.
+        if (b.cap) continue;
         if (distToSeg(x, z, a.x, a.z, b.x, b.z).d < a.hw + CUT_SH) return true;
       }
     }
@@ -1495,8 +1508,25 @@ export class World {
     const endOf = (m) => {
       const c = this._pcutBy.get(m.ni);
       if (!c || c.pts.length < 2) return { x: m.x, y: m.y, z: m.z, hw: m.hw, ni: m.ni };
-      const p = c.pts[c.pts.length - 1];
-      return { x: p.x, y: p.y, z: p.z, hw: p.hw, ni: m.ni };
+      // STAND CLEAR OF THE CLIFF. The carve stops at the last corridor point
+      // and tapers over CUT_BANK, so the ground drops ~14 m across 2.4 m
+      // there -- a cliff, which the 5 m terrain patch resolves into a stack of
+      // blocky sand faces. A wall on that exact station has the blocks poking
+      // out around it, which is the sand that judges kept reading AS the
+      // headwall. Pulled back a few metres, the wall hides the whole thing.
+      // The last point is the CAP -- the raised closure that brings the ground
+      // over the bore. The wall belongs at the last real corridor point, where
+      // the cutting actually ends; anchored on the cap it climbs 7 m and walks
+      // 14 m down the tunnel, leaving an earth mound facing the driver.
+      let li = c.pts.length - 1;
+      while (li > 0 && c.pts[li].cap) li--;
+      const p = c.pts[li];
+      const q = c.pts[li - 1] || p;
+      const L = Math.hypot(p.x - q.x, p.z - q.z) || 1;
+      const bx = (p.x - q.x) / L, bz = (p.z - q.z) / L;
+      const BACK = 1.5;
+      return { x: p.x - bx * BACK, y: p.y + (p.y - q.y) * (-BACK / L),
+               z: p.z - bz * BACK, hw: p.hw, ni: m.ni };
     };
     const ends = new Map(grp.members.map((m) => [m.ni, endOf(m)]));
     const O = { ...ends.get(grp.owner.ni) };
@@ -1512,7 +1542,11 @@ export class World {
     // trench is dug CUT_SH wider than the carriageway on each side, so a wall
     // sized to the bore alone leaves a strip of raw earth face showing beyond
     // each end of it.
-    const DEPTH = 1.8, SHOULDER = CUT_SH + 2.6;
+    // Deep, so the box swallows the blocky terrain face instead of sitting on
+    // it like a sheet. A 5 m depth was tried once BEFORE every crossing bore
+    // got a hole, and it planted a solid pier in a driving lane -- that was the
+    // missing hole, not the depth.
+    const DEPTH = 6.0, SHOULDER = CUT_SH + 2.6;
 
     // Lateral extent of each bore, in the owner's cross-road axis, merged so
     // two overlapping carriageways cannot leave a sliver of pier between them.
@@ -1543,7 +1577,7 @@ export class World {
       if (last && key(m) - key(last[0]) <= 6) last.push(m);
       else clusters.push([m]);
     }
-    for (const M of clusters) this._portalWall(flat, O, M, WALL, DECK, conc);
+    for (const M of clusters) this._portalWall(flat, O, M, all, WALL, DECK, conc);
     // FACE THE APPROACH RAMP TOO. The bore's own stretch is walled; the ramp in
     // front of it was left as raw earth batters, so the last thing you see
     // before the portal is a dirt trench -- the "construction scene" again, at
@@ -1578,7 +1612,7 @@ export class World {
     }
   }
 
-  _portalWall(flat, Oin, M, WALL, DECK, conc) {
+  _portalWall(flat, Oin, M, allEnds, WALL, DECK, conc) {
     const O = { ...Oin, x: M[0].x, y: M[0].y, z: M[0].z };
     const px = -O.dz, pz = O.dx;
     const rot = Math.atan2(O.dx, O.dz);
@@ -1586,7 +1620,11 @@ export class World {
     // trench is dug CUT_SH wider than the carriageway on each side, so a wall
     // sized to the bore alone leaves a strip of raw earth face showing beyond
     // each end of it.
-    const DEPTH = 1.8, SHOULDER = CUT_SH + 2.6;
+    // Deep, so the box swallows the blocky terrain face instead of sitting on
+    // it like a sheet. A 5 m depth was tried once BEFORE every crossing bore
+    // got a hole, and it planted a solid pier in a driving lane -- that was the
+    // missing hole, not the depth.
+    const DEPTH = 6.0, SHOULDER = CUT_SH + 2.6;
     // The wall plane sits on the FIRST bore of the cluster, so no member is
     // ever in front of it and every throat is short by construction.
     const along = (m) => (m.x - O.x) * O.dx + (m.z - O.z) * O.dz;
@@ -1606,7 +1644,12 @@ export class World {
 
     // Lateral extent of each bore in the cross-road axis, merged so two
     // overlapping carriageways cannot leave a sliver of pier between them.
-    const holes = M
+    // EVERY BORE THAT CROSSES THIS WALL GETS A HOLE, not only the ones in this
+    // cluster. The wall spans its own members plus shoulders, and at a mouth
+    // where carriageways sit a few metres apart that span reaches over a
+    // neighbouring bore belonging to a different cluster -- where the wall was
+    // solid, so a pier stood square in a driving lane.
+    const holes = allEnds
       .map((m) => {
         const u = (m.x - ox) * px + (m.z - oz) * pz;
         return [u - m.hw, u + m.hw];
