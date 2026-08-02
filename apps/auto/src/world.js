@@ -1671,6 +1671,27 @@ export class World {
     const uMax = merged[merged.length - 1][1] + SHOULDER;
     const at = (u) => [ox + px * u, oz + pz * u];
 
+    // THE MOUTH CARD. A heightfield cannot express a tunnel entrance: ground is
+    // one value per point, so where the cutting ends it must step from road
+    // level to above the roof, and that step is a vertical column filling
+    // exactly the bore's cross-section -- the face of earth seen through every
+    // opening on this branch. It is not a placement bug; the wall is measurably
+    // where it belongs.
+    //
+    // So the opening shows the TUNNEL rather than what is behind it: an unlit
+    // near-black quad across each hole, set just inside the wall plane, facing
+    // out. From the road it is the dark mouth the whole portal exists to
+    // present. From inside the bore it is backfacing and therefore not there at
+    // all, so you drive straight through it.
+    for (const [h0, h1] of merged) {
+      const [m0x, m0z] = at(h0), [m1x, m1z] = at(h1);
+      const bx = O.dx * (DEPTH / 2 - 0.15), bz = O.dz * (DEPTH / 2 - 0.15);
+      flat.quad(
+        [m0x + bx, deckY, m0z + bz], [m1x + bx, deckY, m1z + bz],
+        [m1x + bx, roofY, m1z + bz], [m0x + bx, roofY, m0z + bz],
+        [-O.dx, 0, -O.dz], ZERO_UV, [0.035, 0.035, 0.045]);
+    }
+
     const parts = [];
     const [lx, lz] = at((uMin + uMax) / 2);
     flat.box(lx, roofY, lz, uMax - uMin, capY - roofY, DEPTH, rot, conc);
