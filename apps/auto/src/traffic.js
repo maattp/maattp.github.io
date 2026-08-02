@@ -55,6 +55,12 @@ export function collideWithBuildings(v, city, onHit) {
     const ex = b.w / 2 + v.radius * 0.8, ez = b.d / 2 + v.radius * 0.8;
     if (Math.abs(lx) > ex || Math.abs(lz) > ez) continue;
     if (v.y > b.y + b.h - 1) continue;
+    // A TUNNEL PASSES UNDER BUILDINGS, and this test is 2D. The skip above
+    // frees a plane over the roof; nothing freed a car UNDER the base, so a
+    // bore under downtown ended at the first footprint overhead -- an
+    // invisible wall ~140 m into SR-99, hit at the same station on every run.
+    // "You can't even traverse this damn tunnel" was this line.
+    if (v.y < b.y - 2.5) continue;
     const px = ex - Math.abs(lx), pz = ez - Math.abs(lz);
     let nx, nz, pen;
     if (px < pz) { nx = Math.sign(lx) || 1; nz = 0; pen = px; }

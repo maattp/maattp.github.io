@@ -225,7 +225,10 @@ export class Player {
       const c = Math.cos(-b.rot), s = Math.sin(-b.rot);
       const dx = x - b.x, dz = z - b.z;
       const lx = dx * c - dz * s, lz = dx * s + dz * c;
-      if (Math.abs(lx) < b.w / 2 + 0.35 && Math.abs(lz) < b.d / 2 + 0.35 && this.y < b.y + b.h - 0.5) return true;
+      // Below the base as well as above the roof: on foot in a bore under
+      // downtown, the buildings overhead are not walls.
+      if (Math.abs(lx) < b.w / 2 + 0.35 && Math.abs(lz) < b.d / 2 + 0.35
+        && this.y < b.y + b.h - 0.5 && this.y > b.y - 2.5) return true;
     }
     return false;
   }

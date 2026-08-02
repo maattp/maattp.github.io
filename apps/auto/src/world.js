@@ -644,6 +644,62 @@ export class World {
       }
     }
     this._pcuts = cuts;
+
+    // THE WALLS ARE SOLID, from the same polylines that draw them. Segments
+    // along each side of every corridor at the wall line, gated on there being
+    // a genuine drop to retain -- the apron start, where trench and street
+    // meet at grade, gets none, which is also what lets you drive in. Installed
+    // into the city's analytic barrier store: position-indexed, so no chunk
+    // build or dispose can lose them, which is how two obstacle-based attempts
+    // at this died. Side walls run the corridor's full length; the closed
+    // middle of the far end is real ground, so no cap is needed there and none
+    // may exist -- a cap across the carriageway would seal the bore.
+    const bsegs = [];
+    for (const c of cuts) {
+      for (let i = 0; i < c.pts.length - 1; i++) {
+        const a = c.pts[i], b = c.pts[i + 1];
+        if (a.cap || b.cap) continue;
+        const L = Math.hypot(b.x - a.x, b.z - a.z) || 1;
+        const qx = -(b.z - a.z) / L, qz = (b.x - a.x) / L;
+        const floorY = (a.y + b.y) / 2;
+        // AT THE RIM OF THE UNION, in short pieces.
+        //
+        // Three placements failed before this one. On the wall line, the
+        // carve's bank is drivable heightfield -- a 73 degree ramp -- so cars
+        // rode the bank down and wedged in the slot outside the wall. On this
+        // corridor's own rim offset, tested per 40 m pair, the mouth broke:
+        // corridors overlap there, so one corridor's fence line stands on its
+        // NEIGHBOUR'S carved ground -- a fence in mid-air over a pit at best,
+        // a fence across the neighbour's carriageway at worst, which walled
+        // off the tunnel entrance itself.
+        //
+        // So each piece asks the ground, not the corridor: fence only where
+        // the fence line itself is UNCARVED (this is the union's rim, whoever
+        // dug the pit inside it) and the ground just inside is genuinely
+        // dropped. 8 m pieces, because a 40 m piece straddles the answer.
+        const STEP = 8;
+        const nPieces = Math.max(1, Math.ceil(L / STEP));
+        for (let k = 0; k < nPieces; k++) {
+          const t0 = k / nPieces, t1 = (k + 1) / nPieces;
+          for (const sd of [1, -1]) {
+            const w = (a.hw + CUT_SH + CUT_BANK + 0.4) * sd;
+            const win = (a.hw + CUT_SH - 1.0) * sd;
+            const tm = (t0 + t1) / 2;
+            const mxF = a.x + (b.x - a.x) * tm + qx * w;
+            const mzF = a.z + (b.z - a.z) * tm + qz * w;
+            const mxI = a.x + (b.x - a.x) * tm + qx * win;
+            const mzI = a.z + (b.z - a.z) * tm + qz * win;
+            if (G.terrainRaw(mxF, mzF) - G.terrainHeight(mxF, mzF) > 0.7) continue;
+            if (G.terrainRaw(mxI, mzI) - G.terrainHeight(mxI, mzI) < 1.6) continue;
+            bsegs.push(
+              a.x + (b.x - a.x) * t0 + qx * w, a.z + (b.z - a.z) * t0 + qz * w,
+              a.x + (b.x - a.x) * t1 + qx * w, a.z + (b.z - a.z) * t1 + qz * w);
+          }
+        }
+      }
+    }
+    this.city.setBarriers(bsegs);
+
     // A node now yields ONE CUT PER BRANCH, so this cannot be a 1:1 map --
     // keyed by node it kept only the last branch, and every other branch's
     // corridor ended with no wall at its head. That is a bore mouth packed
