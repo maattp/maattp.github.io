@@ -695,11 +695,39 @@ export class World {
       const a = this.city.nodes[e.a], b = this.city.nodes[e.b];
       const qx = -e.dz, qz = e.dx;
       const w = e.hw + 0.4;
-      const y0 = Math.min(a.y, b.y) - 1.5;
-      const y1 = Math.max(a.y, b.y) + TUNNEL_H - 0.5;
-      for (const sd of [1, -1]) {
-        bsegs.push(a.x + qx * w * sd, a.z + qz * w * sd,
-          b.x + qx * w * sd, b.z + qz * w * sd, y0, y1);
+      // In ~12 m pieces, each banded against the CARVED ground above its own
+      // midpoint. One band per edge leaked in both directions: where the
+      // profile runs shallow the roof pokes past the surface, and where a
+      // cross street is draped down into an excavation the street descends
+      // INTO the band -- 127 street-level samples sat inside one, which is a
+      // car on an ordinary road clipping an invisible tunnel wall, taking the
+      // impact effect and the pushout jolt: the reported "little explosion
+      // while driving". Where the local drawn ground is at deck level the
+      // piece dies (nothing to be inside of); where the tube is buried,
+      // carved equals raw and the wall stands -- so "once you are in you are
+      // in" holds exactly where being IN is a fact.
+      const segN = Math.max(1, Math.ceil(e.len / 12));
+      for (let k = 0; k < segN; k++) {
+        const t0 = k / segN, t1 = (k + 1) / segN, tm = (t0 + t1) / 2;
+        const mx = a.x + (b.x - a.x) * tm, mz = a.z + (b.z - a.z) * tm;
+        const deck0 = a.y + (b.y - a.y) * t0, deck1 = a.y + (b.y - a.y) * t1;
+        const y0 = Math.min(deck0, deck1) - 1.5;
+        // min of three ground samples, because a piece straddling a dip's
+        // lip keeps a midpoint-only band top while its end hangs into the dip
+        // -- the last 5 of the 127 leaks were exactly that.
+        const g0x = a.x + (b.x - a.x) * t0, g0z = a.z + (b.z - a.z) * t0;
+        const g1x = a.x + (b.x - a.x) * t1, g1z = a.z + (b.z - a.z) * t1;
+        const y1 = Math.min(
+          Math.max(deck0, deck1) + TUNNEL_H - 0.5,
+          Math.min(G.terrainHeight(mx, mz),
+            G.terrainHeight(g0x, g0z), G.terrainHeight(g1x, g1z)) - 0.4);
+        if (y1 - y0 < 1.0) continue;
+        for (const sd of [1, -1]) {
+          bsegs.push(
+            a.x + (b.x - a.x) * t0 + qx * w * sd, a.z + (b.z - a.z) * t0 + qz * w * sd,
+            a.x + (b.x - a.x) * t1 + qx * w * sd, a.z + (b.z - a.z) * t1 + qz * w * sd,
+            y0, y1);
+        }
       }
     }
     this.city.setBarriers(bsegs);

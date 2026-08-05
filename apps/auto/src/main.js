@@ -469,7 +469,9 @@ function installHeightFog() {
       // is at 5.31 m; place() would sink it to the lakebed, so the height is
       // set by hand and the float physics holds it on the surface after.
       {
-        const fp = traffic.spawnAt(-95, -2800, -1.5, 'floatplane', 0xe8c53a, 'apron');
+        // Southwest corner of the lake, where Kenmore Air's terminal really
+        // is -- it was parked 900 m north along the wrong shore.
+        const fp = traffic.spawnAt(-125, -1960, -1.5, 'floatplane', 0xe8c53a, 'apron');
         fp.vLong = 0;
         fp.y = 5.31 + 0.12;
         fp.group.position.y = fp.y + (fp.spec.wheelR || 0.3) + 0.25;

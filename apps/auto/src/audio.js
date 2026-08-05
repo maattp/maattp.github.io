@@ -395,7 +395,11 @@ export class Audio {
       this._pollNowPlaying();
       // The synth station and the real one must never play together.
       this.musicBus.gain.setTargetAtTime(0, t, 0.3);
-    } else if (this.musicOn) {
+    } else if (this.musicOn && state.inCar) {
+      // The SYNTH stations are the car radio too. Only the live stream was
+      // gated on being in a car, so on foot the synthesised KEXP played on --
+      // walking around town scored like a menu screen. One radio, one rule:
+      // it plays in a car and stops the moment you step out.
       this.scheduleMusic();
     } else {
       this.musicBus.gain.setTargetAtTime(0, t, 0.3);
