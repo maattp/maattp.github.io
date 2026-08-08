@@ -495,8 +495,13 @@ export function* cityGenerator(md) {
       // of sight of the approach. The walls are a geometry problem, not a
       // gradient one.
       const APRON = 10;
-      const dive = Math.max(0.09 * dPortal,
-        Math.min(0.13 * Math.max(0, dPortal - APRON), 12));
+      // THE CAP GOES AROUND THE WHOLE DIVE. max(0.09 d, min(0.13 d, 12))
+      // caps only the second branch: the 9 % floor grows without bound, so a
+      // node a kilometre from its nearest portal was driven 90 m underground
+      // -- phantom bores at -93 under downtown in a tunnel whose real floor
+      // is -16, found by probing a mid-ride stall that sat 2 m from one.
+      const dive = Math.min(12, Math.max(0.09 * dPortal,
+        0.13 * Math.max(0, dPortal - APRON)));
       let yFinal = Math.min(y, portalY - dive);
       // Past the approach, never break the surface mid-hill. Inside it, the
       // GEOMETRY decides: world.js draws an open cut until the ground closes
@@ -764,7 +769,24 @@ export function* cityGenerator(md) {
         for (const si of l) {
           const s = surfaces[si];
           const r = distToSeg(x, z, s.ax, s.az, s.bx, s.bz);
-          if (r.d > s.hw) continue;
+          // A BORE HOLDS ITS CAR WITH A MARGIN. At exact half-width, a car
+          // weaving at a bend where two tunnel edges of different widths join
+          // can sit outside BOTH segments for a frame; the deck query then
+          // falls back to the terrain 20 m overhead, the car's y climbs, and
+          // the in-bore midpoint rule -- a ratchet -- flips: it can never be
+          // recaptured and surfaces through the roof. Measured on the SR-99
+          // ride: one +5 m sample around 150 m in, then a smooth climb out.
+          // The margin only widens the DECK's catch for a car already riding
+          // it; the walls at hw + 0.4 still stop the CAR itself, and a street
+          // query from above is untouched because the midpoint rule already
+          // rejects it there.
+          // 4.0, not 2.4: measured at the first bend past the SR-99 north
+          // mouth, a point 4.5 m off-centre escapes BOTH adjacent segments at
+          // hw + 2.4 and the carried ground jumps 19.9 -> 29.1. The walls hold
+          // the car's centre inside about hw - 0.8, so hw + 4 covers every
+          // position a car can physically reach, bend corners included.
+          const margin = s.tun ? 4.0 : 0;
+          if (r.d > s.hw + margin) continue;
           const y = s.ay + (s.by - s.ay) * r.t + ROAD_LIFT * 0.3;
           if (curY == null) {
             // No reference height -- a spawn or a placement query. The highest
