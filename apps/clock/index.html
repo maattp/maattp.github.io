@@ -627,6 +627,13 @@
         const flipAmpmText = document.getElementById('flip-ampm-text');
         let lastFlipValues = { h1: '', h2: '', m1: '', m2: '', s1: '', s2: '' };
 
+        // The new digit is hidden behind the falling top leaf until that leaf is
+        // edge-on, so it only becomes readable FLIP_TOP_MS into the animation.
+        // Start the flip that far ahead of the tick and the reveal lands exactly
+        // on the second instead of trailing it. Must match the flipTop duration
+        // in the CSS (.flip-card-flip-top.flipping).
+        const FLIP_TOP_MS = 300;
+
         // Swipe handling
         let touchStartX = 0;
         let touchEndX = 0;
@@ -934,7 +941,8 @@
         }
 
         function updateFlipClock() {
-            const now = new Date();
+            // Run the digits FLIP_TOP_MS ahead so the reveal lands on the tick.
+            const now = new Date(Date.now() + FLIP_TOP_MS);
             let hours = now.getHours();
             const minutes = now.getMinutes().toString().padStart(2, '0');
             const seconds = now.getSeconds().toString().padStart(2, '0');
@@ -944,7 +952,9 @@
                 flipAmpm.classList.remove('visible');
             } else {
                 flipAmpm.classList.add('visible');
-                flipAmpmText.textContent = hours >= 12 ? 'PM' : 'AM';
+                // AM/PM has no flip animation, so it tracks the real time rather
+                // than the lead — otherwise it would switch early at noon.
+                flipAmpmText.textContent = new Date().getHours() >= 12 ? 'PM' : 'AM';
                 hours = hours % 12 || 12;
             }
 
