@@ -3433,7 +3433,34 @@ export class Vehicle {
     const rh = two ? 0 : gAt(-rx2 * this.halfWid, -rz2 * this.halfWid);
 
     // vertical: follow ground, with a little air time over crests
-    const target = two ? (fh + bh) / 2 : (fh + bh + lh + rh) / 4;
+    let target = two ? (fh + bh) / 2 : (fh + bh + lh + rh) / 4;
+    // THE FLOOR OF A TUNNEL DOES NOT TELEPORT UPWARD. The four wheel samples
+    // are what eject a car from a bore: at a bend seam one wheel's query can
+    // escape the deck and read the bank 9-20 m overhead, the average jumps
+    // metres in a frame, and the rise launcher below fires the car through
+    // the roof -- after which the in-bore rule ratchets and it never comes
+    // back. A car genuinely underground (raw ground 4+ m above it) whose
+    // floor "rises" 3+ m in one frame is reading the world above, not the
+    // road below: hold height and let the deck's widened capture re-acquire
+    // next frame. Legitimate driving cannot trip this -- kerbs are
+    // centimetres, ramps are grades, and leaving a portal the raw cover
+    // shrinks below 4 m well before any real climb.
+    // HOLD ONLY THE SPIKE. Three shapes of this guard were measured and two
+    // were worse than none: refusing every rise over 2.2 m and rate-limiting
+    // all underground rises both destroyed the follow's self-healing -- the
+    // exponential snap-back is what recovers a car from one lost-capture
+    // frame -- and test rides sank away (below sea level the water drag then
+    // compounds it, and nothing comes back from that). Only a JUMP of 3+ m in
+    // a single frame is ever the world-above leaking through a wheel sample;
+    // everything smaller must pass through untouched at full speed.
+    //
+    // The underground gate is 2.5 m of raw cover, not 4: the SR-99 tube runs
+    // its last few hundred metres under thin cover, and at 4 the guard stood
+    // down exactly there -- measured, a +3.28 eject at (-52, 450) under 3.4 m
+    // of cover after 1.9 km ridden underground.
+    if (target - this.y > 3 && G.terrainRaw(this.x, this.z) - this.y > 2.5) {
+      target = this.y;
+    }
     if (this.y > target + 0.25) {
       this.vy -= 22 * dt;
       this.y += this.vy * dt;
