@@ -1,0 +1,132 @@
+<!DOCTYPE html>
+<html><body style="background:#222">
+<canvas id="c" width="512" height="512"></canvas>
+<script>
+// Home Screen icon for Claw: the chrome claw closing on a pink plush, lit by
+// the cabinet's marquee. Open this page and the three PNGs are exposed on
+// window for tools/clawicon.mjs to save.
+const c = document.getElementById('c'), x = c.getContext('2d');
+const R = 512;
+
+// --- cabinet interior backdrop ---
+const bg = x.createLinearGradient(0, 0, 0, R);
+bg.addColorStop(0, '#3b0d4f'); bg.addColorStop(0.55, '#6e1360'); bg.addColorStop(1, '#200a2e');
+x.fillStyle = bg; x.fillRect(0, 0, R, R);
+
+// starburst behind everything
+x.save(); x.translate(R / 2, R * 0.44);
+for (let i = 0; i < 24; i++) {
+  x.rotate(Math.PI * 2 / 24);
+  x.fillStyle = i % 2 ? 'rgba(255,255,255,.09)' : 'rgba(255,63,164,.10)';
+  x.beginPath(); x.moveTo(0, 0); x.lineTo(760, -60); x.lineTo(760, 60); x.fill();
+}
+x.restore();
+
+// marquee glow along the top
+const mg = x.createLinearGradient(0, 0, 0, 120);
+mg.addColorStop(0, 'rgba(255,63,164,.85)'); mg.addColorStop(1, 'rgba(255,63,164,0)');
+x.fillStyle = mg; x.fillRect(0, 0, R, 120);
+
+// --- cable ---
+x.strokeStyle = '#c9d2dc'; x.lineWidth = 12; x.lineCap = 'round';
+x.beginPath(); x.moveTo(R / 2, 0); x.lineTo(R / 2, 150); x.stroke();
+
+// --- claw head ---
+function chrome(x0, y0, x1, y1) {
+  const g = x.createLinearGradient(x0, y0, x1, y1);
+  g.addColorStop(0, '#ffffff'); g.addColorStop(0.35, '#c3ccd8');
+  g.addColorStop(0.6, '#7f8b9c'); g.addColorStop(1, '#e6edf5');
+  return g;
+}
+x.fillStyle = chrome(180, 140, 330, 220);
+x.beginPath(); x.ellipse(R / 2, 178, 78, 44, 0, 0, 7); x.fill();
+x.fillStyle = '#ff2b48';
+x.beginPath(); x.ellipse(R / 2, 206, 62, 20, 0, 0, 7); x.fill();
+x.fillStyle = 'rgba(255,255,255,.35)';
+x.beginPath(); x.ellipse(R / 2 - 26, 164, 30, 14, -0.3, 0, 7); x.fill();
+
+// --- three fingers, the outer two mirrored, the middle one behind the plush ---
+function finger(dir, scaleX) {
+  x.save();
+  x.translate(R / 2, 200); x.scale(dir * scaleX, 1);
+  x.strokeStyle = chrome(0, 0, 120, 200);
+  x.lineWidth = 30; x.lineJoin = 'round'; x.lineCap = 'round';
+  x.beginPath();
+  x.moveTo(30, 8);
+  x.bezierCurveTo(96, 40, 122, 120, 96, 196);
+  x.bezierCurveTo(88, 222, 66, 236, 44, 236);
+  x.stroke();
+  // tip highlight
+  x.strokeStyle = 'rgba(255,255,255,.55)'; x.lineWidth = 8;
+  x.beginPath();
+  x.moveTo(34, 2); x.bezierCurveTo(92, 34, 112, 116, 88, 190);
+  x.stroke();
+  x.restore();
+}
+finger(1, 0.42);   // rear finger, foreshortened
+
+// --- plush: a pink bunny caught in the grip ---
+function plush() {
+  const cx = R / 2, cy = 352;
+  const body = x.createRadialGradient(cx - 26, cy - 34, 12, cx, cy, 120);
+  body.addColorStop(0, '#ffd6e8'); body.addColorStop(0.55, '#ff9dc8'); body.addColorStop(1, '#e05fa0');
+  // ears
+  x.fillStyle = body;
+  for (const s of [-1, 1]) {
+    x.save(); x.translate(cx + s * 34, cy - 96); x.rotate(s * 0.22);
+    x.beginPath(); x.ellipse(0, 0, 20, 48, 0, 0, 7); x.fill();
+    x.restore();
+    x.fillStyle = '#ffe6f2';
+    x.save(); x.translate(cx + s * 34, cy - 96); x.rotate(s * 0.22);
+    x.beginPath(); x.ellipse(0, 4, 9, 30, 0, 0, 7); x.fill();
+    x.restore();
+    x.fillStyle = body;
+  }
+  // arms + legs
+  for (const [ax, ay, r] of [[-72, -6, 26], [72, -6, 26], [-42, 68, 30], [42, 68, 30]]) {
+    x.beginPath(); x.arc(cx + ax, cy + ay, r, 0, 7); x.fill();
+  }
+  // torso + head
+  x.beginPath(); x.ellipse(cx, cy + 24, 72, 64, 0, 0, 7); x.fill();
+  x.beginPath(); x.arc(cx, cy - 40, 56, 0, 7); x.fill();
+  // belly + muzzle
+  x.fillStyle = 'rgba(255,255,255,.55)';
+  x.beginPath(); x.ellipse(cx, cy + 34, 42, 40, 0, 0, 7); x.fill();
+  x.beginPath(); x.ellipse(cx, cy - 22, 26, 18, 0, 0, 7); x.fill();
+  // face
+  x.fillStyle = '#2a1a2c';
+  x.beginPath(); x.arc(cx - 22, cy - 50, 9, 0, 7); x.arc(cx + 22, cy - 50, 9, 0, 7); x.fill();
+  x.beginPath(); x.ellipse(cx, cy - 26, 8, 6, 0, 0, 7); x.fill();
+  x.fillStyle = '#fff';
+  x.beginPath(); x.arc(cx - 19, cy - 53, 3.4, 0, 7); x.arc(cx + 25, cy - 53, 3.4, 0, 7); x.fill();
+  // blush
+  x.fillStyle = 'rgba(255,90,150,.45)';
+  x.beginPath(); x.ellipse(cx - 42, cy - 30, 15, 10, 0, 0, 7); x.fill();
+  x.beginPath(); x.ellipse(cx + 42, cy - 30, 15, 10, 0, 0, 7); x.fill();
+}
+plush();
+
+finger(-1, 1);     // front-left
+finger(1, 1);      // front-right
+
+// glass sheen across the whole tile
+const sheen = x.createLinearGradient(0, R, R, 0);
+sheen.addColorStop(0, 'rgba(255,255,255,0)');
+sheen.addColorStop(0.48, 'rgba(255,255,255,0)');
+sheen.addColorStop(0.52, 'rgba(255,255,255,.10)');
+sheen.addColorStop(1, 'rgba(255,255,255,0)');
+x.fillStyle = sheen; x.fillRect(0, 0, R, R);
+
+window.icon512 = c.toDataURL('image/png');
+function scale(sz) {
+  const c2 = document.createElement('canvas'); c2.width = c2.height = sz;
+  const g2 = c2.getContext('2d');
+  g2.imageSmoothingQuality = 'high';
+  g2.drawImage(c, 0, 0, sz, sz);
+  return c2.toDataURL('image/png');
+}
+window.icon192 = scale(192);
+window.icon180 = scale(180);
+window.iconsReady = true;
+</script>
+</body></html>
