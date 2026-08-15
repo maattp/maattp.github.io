@@ -1,0 +1,1903 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="theme-color" content="#0a0714">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="icon-180.png">
+<title>Claw</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body { width: 100%; height: 100%; overflow: hidden; background: #0a0714;
+    font-family: "Avenir Next", "Trebuchet MS", system-ui, -apple-system, sans-serif;
+    color: #fff; -webkit-user-select: none; user-select: none; touch-action: none; }
+
+  /* width/height 100% is load-bearing on DPR>1 phones: a canvas is a replaced
+     element, so inset:0 alone lays it out at its attribute size (see ruin). */
+  canvas#gl { position: fixed; inset: 0; width: 100%; height: 100%; display: block; touch-action: none; }
+
+  /* arcade gloom: a vignette sells the dim room more cheaply than postprocessing */
+  #vig { position: fixed; inset: 0; pointer-events: none; z-index: 5;
+    background: radial-gradient(ellipse at 50% 42%, rgba(0,0,0,0) 38%, rgba(0,0,0,.55) 100%); }
+
+  /* ---------- HUD ---------- */
+  #hud { position: fixed; inset: 0; pointer-events: none; z-index: 20; display: none; }
+  #hud.on { display: block; }
+  .chip { position: absolute; background: rgba(14,10,28,.6); border: 1px solid rgba(255,255,255,.12);
+    border-radius: 13px; padding: 7px 13px; font-weight: 800; letter-spacing: .6px; font-size: 15px;
+    backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px); }
+  #timeChip { top: calc(env(safe-area-inset-top) + 10px); left: 50%; transform: translateX(-50%);
+    font-variant-numeric: tabular-nums; font-size: 20px; color: #ffd94a; min-width: 96px; text-align: center; }
+  #timeChip.low { color: #ff5b6e; animation: pulse .5s infinite alternate; }
+  @keyframes pulse { to { transform: translateX(-50%) scale(1.08); } }
+  #prizeChip { top: calc(env(safe-area-inset-top) + 10px); left: calc(env(safe-area-inset-left) + 12px);
+    color: #ff9bd2; pointer-events: auto; }
+  #menuBtn, #viewBtn { position: absolute; top: calc(env(safe-area-inset-top) + 10px);
+    right: calc(env(safe-area-inset-right) + 12px); pointer-events: auto;
+    width: 42px; height: 36px; text-align: center; line-height: 22px; font-size: 16px; }
+  #viewBtn { top: calc(env(safe-area-inset-top) + 56px); font-size: 18px; }
+  #status { position: absolute; top: calc(env(safe-area-inset-top) + 52px); left: 50%;
+    transform: translateX(-50%); font-size: 12px; font-weight: 800; letter-spacing: 3px;
+    text-transform: uppercase; opacity: 0; transition: opacity .25s; text-shadow: 0 2px 8px #000; }
+  #status.on { opacity: .9; }
+  #hint { position: absolute; bottom: calc(env(safe-area-inset-bottom) + 178px); left: 50%;
+    transform: translateX(-50%); font-size: 11px; letter-spacing: 2px; opacity: .45;
+    text-transform: uppercase; text-align: center; width: 90%; }
+
+  /* ---------- control deck ---------- */
+  #deck { position: absolute; left: 0; right: 0; bottom: 0; height: 172px; pointer-events: none;
+    padding: 0 calc(env(safe-area-inset-left) + 18px) calc(env(safe-area-inset-bottom) + 14px)
+             calc(env(safe-area-inset-right) + 18px);
+    display: flex; align-items: flex-end; justify-content: space-between; }
+  #stick { position: relative; width: 132px; height: 132px; border-radius: 50%; pointer-events: auto;
+    background: radial-gradient(circle at 50% 38%, #2b2440, #14101f 70%);
+    box-shadow: inset 0 0 0 2px rgba(255,255,255,.14), inset 0 12px 26px rgba(0,0,0,.6),
+                0 10px 26px rgba(0,0,0,.5); }
+  #stick::before, #stick::after { content: ''; position: absolute; left: 50%; top: 50%;
+    background: rgba(255,255,255,.09); transform: translate(-50%,-50%); }
+  #stick::before { width: 84%; height: 2px; }
+  #stick::after { width: 2px; height: 84%; }
+  #nub { position: absolute; left: 50%; top: 50%; width: 58px; height: 58px; border-radius: 50%;
+    background: radial-gradient(circle at 36% 30%, #ff6b8a, #b3123a 66%, #6d0722);
+    box-shadow: 0 6px 14px rgba(0,0,0,.55), inset 0 -6px 10px rgba(0,0,0,.35),
+                inset 0 4px 8px rgba(255,255,255,.35);
+    transform: translate(-50%,-50%); will-change: transform; }
+  #dropBtn { position: relative; width: 112px; height: 112px; border-radius: 50%; pointer-events: auto;
+    border: none; font-family: inherit; font-weight: 900; font-size: 21px; letter-spacing: 2px;
+    color: #4a0512; text-shadow: 0 1px 0 rgba(255,255,255,.35);
+    background: radial-gradient(circle at 38% 30%, #ff8095, #e01c3f 55%, #a10f2b);
+    box-shadow: 0 9px 0 #6d0a1d, 0 16px 30px rgba(0,0,0,.5), inset 0 -5px 12px rgba(0,0,0,.3);
+    transition: transform .06s, box-shadow .06s; }
+  #dropBtn:active, #dropBtn.down { transform: translateY(7px); box-shadow: 0 2px 0 #6d0a1d, 0 6px 14px rgba(0,0,0,.5); }
+  #dropBtn:disabled { filter: saturate(.25) brightness(.55); }
+  .deckTag { position: absolute; left: 50%; transform: translateX(-50%); bottom: -2px;
+    font-size: 10px; font-weight: 800; letter-spacing: 3px; opacity: .5; }
+
+  /* ---------- screens ---------- */
+  .screen { position: fixed; inset: 0; z-index: 40; display: none; flex-direction: column;
+    align-items: center; justify-content: center; text-align: center;
+    padding: calc(env(safe-area-inset-top) + 18px) calc(env(safe-area-inset-right) + 20px)
+             calc(env(safe-area-inset-bottom) + 18px) calc(env(safe-area-inset-left) + 20px);
+    background: rgba(8,5,16,.78); backdrop-filter: blur(9px); -webkit-backdrop-filter: blur(9px); }
+  .screen.show { display: flex; }
+  #title { background: linear-gradient(180deg, rgba(10,6,22,.45), rgba(8,5,16,.9)); }
+  .logo { font-weight: 900; letter-spacing: 10px; font-size: clamp(52px, 15vw, 108px); line-height: 1;
+    color: #fff; text-shadow: 0 0 12px #ff3fa4, 0 0 34px #ff3fa4, 0 0 70px rgba(255,63,164,.6); }
+  .tagline { margin-top: 12px; font-size: clamp(10px, 2.6vw, 13px); letter-spacing: 5px;
+    font-weight: 700; opacity: .7; text-transform: uppercase; }
+  h2 { font-size: 22px; letter-spacing: 5px; font-weight: 900; text-transform: uppercase;
+    color: #6ef2ff; text-shadow: 0 0 16px rgba(110,242,255,.55); margin-bottom: 4px; }
+  .btn { pointer-events: auto; cursor: pointer; border: none; font-family: inherit;
+    font-weight: 900; letter-spacing: 2px; color: #2b0512;
+    background: linear-gradient(180deg, #ffd2e0, #ff3fa4); padding: 15px 34px;
+    border-radius: 15px; font-size: 18px; box-shadow: 0 6px 0 #a80f5f, 0 14px 26px rgba(0,0,0,.45);
+    text-transform: uppercase; }
+  .btn:active { transform: translateY(4px); box-shadow: 0 2px 0 #a80f5f; }
+  .btn.ghost { background: rgba(255,255,255,.1); color: #fff; box-shadow: 0 6px 0 rgba(0,0,0,.4); }
+  .btn.small { font-size: 14px; padding: 11px 22px; }
+  .btn-row { margin-top: 22px; display: flex; gap: 12px; flex-wrap: wrap; justify-content: center; }
+  .sub { margin-top: 14px; font-size: 12px; opacity: .55; letter-spacing: 1px; line-height: 1.7; }
+  #ver { position: fixed; right: calc(env(safe-area-inset-right) + 12px);
+    bottom: calc(env(safe-area-inset-bottom) + 10px); font-size: 11px; opacity: .35;
+    letter-spacing: 2px; font-weight: 800; z-index: 45; }
+  #attrib { position: fixed; left: 50%; transform: translateX(-50%);
+    bottom: calc(env(safe-area-inset-bottom) + 10px); font-size: 10px; opacity: .3; letter-spacing: 1px; }
+
+  /* ---------- collection ---------- */
+  #collection { justify-content: flex-start; }
+  #collStats { font-size: 12px; letter-spacing: 2px; opacity: .6; margin: 6px 0 14px; }
+  #shelf { width: 100%; max-width: 560px; flex: 1; overflow-y: auto; -webkit-overflow-scrolling: touch;
+    display: grid; grid-template-columns: repeat(auto-fill, minmax(94px, 1fr)); gap: 10px;
+    padding: 4px 2px 14px; }
+  .card { background: rgba(255,255,255,.055); border: 1px solid rgba(255,255,255,.09);
+    border-radius: 14px; padding: 8px 4px 9px; position: relative; overflow: hidden; }
+  .card img { width: 100%; aspect-ratio: 1; object-fit: contain; display: block; }
+  .card .nm { font-size: 10px; font-weight: 800; letter-spacing: .6px; margin-top: 3px;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .card .ct { position: absolute; top: 5px; right: 7px; font-size: 10px; font-weight: 900; opacity: .65; }
+  .card.locked img { filter: brightness(0) saturate(0); opacity: .28; }
+  .card.locked .nm { opacity: .35; }
+  .card .rar { position: absolute; left: 0; right: 0; bottom: 0; height: 3px; }
+  .r0 { background: #8a94a6 } .r1 { background: #4bc0ff } .r2 { background: #b06bff } .r3 { background: #ffc23c }
+  .card.r3n { box-shadow: inset 0 0 24px rgba(255,194,60,.22); }
+
+  /* ---------- win card ---------- */
+  #win .prizeArt { width: min(58vw, 230px); aspect-ratio: 1; object-fit: contain;
+    filter: drop-shadow(0 14px 26px rgba(0,0,0,.6)); animation: bob 2.4s ease-in-out infinite alternate; }
+  @keyframes bob { to { transform: translateY(-10px) rotate(3deg); } }
+  #winName { font-size: 30px; font-weight: 900; letter-spacing: 2px; margin-top: 6px; }
+  #winRar { font-size: 12px; letter-spacing: 5px; font-weight: 800; text-transform: uppercase; margin-top: 4px; }
+  #winNew { display: none; margin-top: 8px; font-size: 12px; font-weight: 900; letter-spacing: 4px;
+    color: #2b0512; background: #ffd94a; padding: 4px 12px; border-radius: 20px; }
+  #winNew.on { display: inline-block; }
+
+  /* settings rows */
+  .row { display: flex; align-items: center; justify-content: space-between; gap: 18px;
+    width: min(88vw, 340px); padding: 12px 4px; border-bottom: 1px solid rgba(255,255,255,.08);
+    font-size: 15px; font-weight: 700; letter-spacing: 1px; }
+  .tgl { pointer-events: auto; cursor: pointer; border: none; font-family: inherit; font-weight: 900;
+    font-size: 13px; letter-spacing: 2px; padding: 7px 16px; border-radius: 20px;
+    background: rgba(255,255,255,.12); color: #fff; }
+  .tgl.on { background: #2fe08a; color: #05301c; }
+
+  #err { position: fixed; inset: 0; z-index: 90; display: none; padding: 24px; overflow: auto;
+    background: #150009; color: #ff9bb5; font: 12px/1.5 ui-monospace, Menlo, monospace; white-space: pre-wrap; }
+</style>
+</head>
+<body>
+<canvas id="gl"></canvas>
+<div id="vig"></div>
+
+<!-- iOS haptic hack: clicking a rendered native switch fires the system tap -->
+<label id="hap" aria-hidden="true" style="position:absolute;left:-9999px;top:0;opacity:0;pointer-events:none">
+  <input type="checkbox" switch tabindex="-1">
+</label>
+
+<div id="hud">
+  <div class="chip" id="prizeChip">🧸 0</div>
+  <div class="chip" id="timeChip">0.0</div>
+  <div class="chip" id="viewBtn">⟲</div>
+  <div class="chip" id="menuBtn">⏸</div>
+  <div id="status"></div>
+  <div id="hint">drag to look around · pinch to zoom</div>
+  <div id="deck">
+    <div id="stick"><div id="nub"></div><div class="deckTag">MOVE</div></div>
+    <button id="dropBtn" disabled>DROP<div class="deckTag">GRAB</div></button>
+  </div>
+</div>
+
+<div class="screen show" id="title">
+  <div class="logo">CLAW</div>
+  <div class="tagline">Nobody beats the house</div>
+  <div class="btn-row">
+    <button class="btn" id="playBtn">Insert Coin</button>
+  </div>
+  <div class="btn-row" style="margin-top:12px">
+    <button class="btn ghost small" id="collBtn">Prizes</button>
+    <button class="btn ghost small" id="setBtn">Settings</button>
+  </div>
+  <div class="sub" id="titleStats"></div>
+</div>
+
+<div class="screen" id="collection">
+  <h2>Prize Shelf</h2>
+  <div id="collStats"></div>
+  <div id="shelf"></div>
+  <div class="btn-row" style="margin-top:0"><button class="btn small ghost" id="collBack">Back</button></div>
+</div>
+
+<div class="screen" id="settings">
+  <h2>Settings</h2>
+  <div class="row">Sound <button class="tgl" id="tSound">ON</button></div>
+  <div class="row">Haptics <button class="tgl" id="tHaptics">ON</button></div>
+  <div class="row">Shadows <button class="tgl" id="tShadow">ON</button></div>
+  <div class="btn-row"><button class="btn small ghost" id="setBack">Back</button></div>
+  <div class="sub">Grip strength is decided by the machine,<br>not by you. Same as the real thing.</div>
+</div>
+
+<div class="screen" id="pause">
+  <h2>Paused</h2>
+  <div class="btn-row">
+    <button class="btn" id="resumeBtn">Resume</button>
+  </div>
+  <div class="btn-row" style="margin-top:12px">
+    <button class="btn ghost small" id="pauseColl">Prizes</button>
+    <button class="btn ghost small" id="quitBtn">Leave</button>
+  </div>
+</div>
+
+<div class="screen" id="win">
+  <img class="prizeArt" id="winArt" alt="">
+  <div id="winName"></div>
+  <div id="winRar"></div>
+  <div id="winNew">NEW</div>
+  <div class="btn-row"><button class="btn" id="winOk">Take It</button></div>
+</div>
+
+<div id="ver">V1</div>
+<div id="err"></div>
+
+<script async src="https://cdn.jsdelivr.net/npm/es-module-shims@1.10.0/dist/es-module-shims.js"></script>
+<script type="importmap">
+{ "imports": {
+  "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+  "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/",
+  "rapier": "https://cdn.jsdelivr.net/npm/@dimforge/rapier3d-compat@0.19.3/rapier.mjs"
+}}
+</script>
+<script type="module">
+import * as THREE from 'three';
+import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
+import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
+import RAPIER from 'rapier';
+
+const VERSION = 1;   // bump once per PR (see apps/claw/CLAUDE.md)
+try {
+
+// ===================================================================
+//  helpers
+// ===================================================================
+const $ = id => document.getElementById(id);
+const clamp = (v, a, b) => v < a ? a : v > b ? b : v;
+const lerp = (a, b, t) => a + (b - a) * t;
+const rnd = (a, b) => a + Math.random() * (b - a);
+const pick = arr => arr[(Math.random() * arr.length) | 0];
+const load = (k, d) => { try { const v = localStorage.getItem('claw_' + k); return v === null ? d : JSON.parse(v); } catch (e) { return d; } };
+const store = (k, v) => { try { localStorage.setItem('claw_' + k, JSON.stringify(v)); } catch (e) {} };
+
+$('ver').textContent = 'V' + VERSION;   // rendered from the constant: a static
+                                        // badge in the HTML lies after every bump
+
+// ===================================================================
+//  machine geometry (metres, machine-local space).
+//  y=0 is the play-field floor; the visual root sits MO above the room floor.
+// ===================================================================
+const IN = {                      // interior of the glass box
+  x0: -0.50, x1: 0.50,
+  z0: -0.45, z1: 0.45,
+  top: 1.06,
+};
+const CHUTE = { x0: -0.50, x1: -0.24, z0: 0.19, z1: 0.45 };   // hole in the floor, front-left
+const HOME = { x: -0.37, z: 0.32 };                            // claw parks over the hole
+const GANTRY = { x0: -0.40, x1: 0.42, z0: -0.36, z1: 0.34, yTop: 0.86, yBot: 0.178 };
+const MO = 0.78;                  // machine floor height above the room floor
+
+// ---- tuning constants (physics is at real scale: prizes are ~100 g, so the
+//      torques involved are small — these are all in N·m/rad) -------------
+// Every number here came out of tools/clawgrip.mjs. Notably: raising STRONG_K
+// past ~3 stops helping (the talons punt the plush instead of scooping it),
+// and dropping the claw the last 15 mm to the floor helped more than any
+// stiffness change did — getting under the prize is most of the grab.
+const GRIP = {
+  OPEN_K:   6.0,    // solenoid snapping the fingers open: strong, no subtlety
+  CLOSE_K:  0.90,   // how gently the talons draw in — the SAME on every play
+  STRONG_K: 3.00,   // a "paying" grab. Lifts a plush that is properly hooked.
+  WEAK_K:   0.11,   // the default. Closes fully, holds almost nothing.
+  FADE_K:   0.03,   // weak grabs bleed down to this during the lift
+  DAMP:     0.06,
+  OPEN_A:   0.40,   // radians: fingers splayed (a 38 cm gape scoops nothing)
+  SHUT_A:  -0.80,   // radians: fully curled (contact stops them long before this)
+};
+const TIMINGS = { aim: 25, descend: 2.2, settle: 0.25, close: 0.75, lift: 1.9, travel: 2.2, open: 0.45 };
+const FIXED = 1 / 120;
+
+// collision groups: (membership << 16) | filter
+const G_PRIZE = (0x0001 << 16) | 0x0007;
+const G_CLAW  = (0x0002 << 16) | 0x0005;   // claw parts ignore each other
+const G_WALL  = (0x0004 << 16) | 0x0007;
+
+// ===================================================================
+//  prize species
+// ===================================================================
+// ear: 'long' | 'round' | 'none' | 'frill' | 'horn' | 'fin'
+const SPECIES = [
+  { id:'bunny',  nm:'Bunny',      rar:0, body:0xf07fae, belly:0xffe3ee, ear:'long',  scale:1.00 },
+  { id:'bear',   nm:'Bear',       rar:0, body:0x8f5a2f, belly:0xd8ab74, ear:'round', scale:1.05 },
+  { id:'duck',   nm:'Duckling',   rar:0, body:0xf7b500, belly:0xffe58a, ear:'none',  scale:0.92 },
+  { id:'frog',   nm:'Frog',       rar:0, body:0x3f9e2c, belly:0xcdeda8, ear:'none',  scale:0.95, eyesTop:true },
+  { id:'cat',    nm:'Tabby Cat',  rar:1, body:0x6b7686, belly:0xdde5ee, ear:'round', scale:1.00, pointy:true },
+  { id:'panda',  nm:'Panda',      rar:1, body:0xf3f3f3, belly:0xffffff, ear:'round', scale:1.06, patch:true },
+  { id:'axolotl',nm:'Axolotl',    rar:1, body:0xffa8d2, belly:0xffe0ef, ear:'frill', scale:0.96 },
+  { id:'penguin',nm:'Penguin',    rar:1, body:0x2b3350, belly:0xf2f5ff, ear:'none',  scale:0.98 },
+  { id:'octo',   nm:'Octopus',    rar:2, body:0xe62f3f, belly:0xff9d94, ear:'fin',   scale:1.02 },
+  { id:'dragon', nm:'Dragon',     rar:2, body:0x6a2fd6, belly:0xc4a7ff, ear:'horn',  scale:1.10 },
+  { id:'unicorn',nm:'Unicorn',    rar:2, body:0xfdfbff, belly:0xffe8f6, ear:'horn',  scale:1.08, mane:true },
+  { id:'gold',   nm:'Golden Bear',rar:3, body:0xffc23c, belly:0xfff0c0, ear:'round', scale:1.22, shiny:true },
+];
+const RARITY = ['Common', 'Uncommon', 'Rare', 'Legendary'];
+const RAR_COLOR = ['#8a94a6', '#4bc0ff', '#b06bff', '#ffc23c'];
+// draw weights: legendaries are genuinely scarce in the machine
+const RAR_WEIGHT = [1.0, 0.55, 0.22, 0.05];
+const byId = Object.fromEntries(SPECIES.map(s => [s.id, s]));
+
+function rollSpecies() {
+  let total = 0;
+  for (const s of SPECIES) total += RAR_WEIGHT[s.rar];
+  let r = Math.random() * total;
+  for (const s of SPECIES) { r -= RAR_WEIGHT[s.rar]; if (r <= 0) return s; }
+  return SPECIES[0];
+}
+
+// ===================================================================
+//  save state
+// ===================================================================
+const save = {
+  owned: load('owned', {}),     // id -> count
+  plays: load('plays', 0),
+  wins:  load('wins', 0),
+  pot:   load('pot', 0),        // the machine's hidden payout counter
+  target: load('target', 0),    // plays required before it pays out
+  sound: load('sound', true),
+  haptics: load('haptics', true),
+  shadows: load('shadows', true),
+};
+if (!save.target) save.target = 8 + ((Math.random() * 7) | 0);
+const persist = () => {
+  store('owned', save.owned); store('plays', save.plays); store('wins', save.wins);
+  store('pot', save.pot); store('target', save.target);
+};
+const ownedCount = () => Object.values(save.owned).reduce((a, b) => a + b, 0);
+
+// ===================================================================
+//  haptics
+// ===================================================================
+const hapEl = $('hap');
+let lastHap = 0;
+function buzz(n) {
+  if (!save.haptics) return;
+  const now = performance.now();
+  if (now - lastHap < 24) return;
+  lastHap = now;
+  n = Math.min(n || 1, 4);
+  if (navigator.vibrate) { navigator.vibrate(n * 12); return; }
+  for (let i = 0; i < n; i++) setTimeout(() => { try { hapEl.click(); } catch (e) {} }, i * 26);
+}
+
+// ===================================================================
+//  audio — everything synthesised, no asset files
+// ===================================================================
+const audio = {
+  ctx: null, master: null, motorGain: null, motorOsc: null, ready: false,
+  unlock() {
+    if (this.ctx) { if (this.ctx.state === 'suspended') this.ctx.resume(); return; }
+    const AC = window.AudioContext || window.webkitAudioContext;
+    if (!AC) return;
+    const c = this.ctx = new AC();
+    const m = this.master = c.createGain();
+    m.gain.value = save.sound ? 0.9 : 0;
+    m.connect(c.destination);
+
+    // room tone: a low hum plus a wash of distant cabinets
+    const hum = c.createOscillator(); hum.type = 'sine'; hum.frequency.value = 58;
+    const hg = c.createGain(); hg.gain.value = 0.035;
+    hum.connect(hg).connect(m); hum.start();
+
+    const noise = c.createBufferSource();
+    const buf = c.createBuffer(1, c.sampleRate * 2, c.sampleRate);
+    const d = buf.getChannelData(0);
+    for (let i = 0; i < d.length; i++) d[i] = (Math.random() * 2 - 1) * 0.4;
+    noise.buffer = buf; noise.loop = true;
+    const nf = c.createBiquadFilter(); nf.type = 'bandpass'; nf.frequency.value = 420; nf.Q.value = 0.7;
+    const ng = c.createGain(); ng.gain.value = 0.012;
+    noise.connect(nf).connect(ng).connect(m); noise.start();
+
+    // gantry motor: always running, gated by motorGain
+    const osc = this.motorOsc = c.createOscillator(); osc.type = 'sawtooth'; osc.frequency.value = 116;
+    const lp = c.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = 900; lp.Q.value = 3;
+    const g = this.motorGain = c.createGain(); g.gain.value = 0;
+    osc.connect(lp).connect(g).connect(m); osc.start();
+
+    this.ready = true;
+    this.bleepLoop();
+  },
+  setSound(on) { if (this.master) this.master.gain.value = on ? 0.9 : 0; },
+  motor(level, pitch) {
+    if (!this.ready) return;
+    const t = this.ctx.currentTime;
+    this.motorGain.gain.setTargetAtTime(level * 0.055, t, 0.05);
+    this.motorOsc.frequency.setTargetAtTime(96 + (pitch || 0) * 60, t, 0.08);
+  },
+  blip(f, dur, type, vol, slide) {
+    if (!this.ready) return;
+    const c = this.ctx, t = c.currentTime;
+    const o = c.createOscillator(); o.type = type || 'square'; o.frequency.value = f;
+    if (slide) o.frequency.exponentialRampToValueAtTime(Math.max(30, slide), t + dur);
+    const g = c.createGain();
+    g.gain.setValueAtTime(0.0001, t);
+    g.gain.exponentialRampToValueAtTime(vol || 0.16, t + 0.008);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+    o.connect(g).connect(this.master); o.start(t); o.stop(t + dur + 0.02);
+  },
+  thump(f, dur, vol) {
+    if (!this.ready) return;
+    const c = this.ctx, t = c.currentTime;
+    const src = c.createBufferSource();
+    const buf = c.createBuffer(1, c.sampleRate * dur, c.sampleRate);
+    const d = buf.getChannelData(0);
+    for (let i = 0; i < d.length; i++) d[i] = (Math.random() * 2 - 1) * (1 - i / d.length) ** 2;
+    src.buffer = buf;
+    const bp = c.createBiquadFilter(); bp.type = 'lowpass'; bp.frequency.value = f || 260;
+    const g = c.createGain(); g.gain.value = vol == null ? 0.5 : vol;
+    src.connect(bp).connect(g).connect(this.master); src.start(t);
+  },
+  coin() { this.blip(1750, 0.07, 'square', 0.14); setTimeout(() => this.blip(2300, 0.13, 'square', 0.12), 70);
+           setTimeout(() => this.thump(500, 0.12, 0.25), 190); },
+  clunk() { this.thump(180, 0.10, 0.55); this.blip(90, 0.07, 'square', 0.10, 55); },
+  servo() { this.blip(340, 0.16, 'sawtooth', 0.06, 210); },
+  thud() { this.thump(120, 0.28, 0.8); },
+  tick() { this.blip(1400, 0.03, 'square', 0.07); },
+  fail() { this.blip(300, 0.20, 'sawtooth', 0.11, 110); setTimeout(() => this.blip(220, 0.3, 'sawtooth', 0.09, 80), 150); },
+  jingle() {
+    const notes = [523, 659, 784, 1047, 1319];
+    notes.forEach((f, i) => setTimeout(() => { this.blip(f, 0.22, 'square', 0.13); this.blip(f * 2, 0.16, 'triangle', 0.05); }, i * 105));
+    setTimeout(() => { this.blip(1568, 0.5, 'square', 0.14); this.blip(2093, 0.5, 'triangle', 0.06); }, 560);
+  },
+  bleepLoop() {   // distant arcade chatter, quiet and irregular
+    const go = () => {
+      if (this.ready && Math.random() < 0.55) {
+        const f = 400 + Math.random() * 1400;
+        this.blip(f, 0.06, 'square', 0.012, f * (Math.random() < 0.5 ? 1.6 : 0.6));
+      }
+      setTimeout(go, 900 + Math.random() * 2600);
+    };
+    setTimeout(go, 1500);
+  },
+};
+
+// ===================================================================
+//  renderer / scene
+// ===================================================================
+const renderer = new THREE.WebGLRenderer({ canvas: $('gl'), antialias: true });
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.shadowMap.enabled = save.shadows;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 0.82;
+
+const scene = new THREE.Scene();
+scene.fog = new THREE.FogExp2(0x0a0714, 0.055);
+{
+  const pmrem = new THREE.PMREMGenerator(renderer);
+  scene.environment = pmrem.fromScene(new RoomEnvironment(renderer), 0.05).texture;
+  pmrem.dispose();
+}
+
+const camera = new THREE.PerspectiveCamera(42, 1, 0.05, 60);
+function resize() {
+  const w = innerWidth, h = innerHeight;
+  renderer.setSize(w, h, false);
+  camera.aspect = w / h;
+  camera.updateProjectionMatrix();
+}
+addEventListener('resize', resize);
+
+// ---- canvas textures -----------------------------------------------------
+function canvasTex(w, h, draw) {
+  const cv = document.createElement('canvas'); cv.width = w; cv.height = h;
+  draw(cv.getContext('2d'), w, h);
+  const t = new THREE.CanvasTexture(cv);
+  t.colorSpace = THREE.SRGBColorSpace;
+  t.anisotropy = 4;
+  return t;
+}
+
+const marqueeTex = canvasTex(1024, 256, (g, w, h) => {
+  const bg = g.createLinearGradient(0, 0, 0, h);
+  bg.addColorStop(0, '#2a0a3d'); bg.addColorStop(0.5, '#4b0f5e'); bg.addColorStop(1, '#12061f');
+  g.fillStyle = bg; g.fillRect(0, 0, w, h);
+  // starburst
+  g.save(); g.translate(w / 2, h / 2);
+  for (let i = 0; i < 28; i++) {
+    g.rotate(Math.PI * 2 / 28);
+    g.fillStyle = i % 2 ? 'rgba(255,63,164,.16)' : 'rgba(110,242,255,.10)';
+    g.beginPath(); g.moveTo(0, 0); g.lineTo(900, -50); g.lineTo(900, 50); g.fill();
+  }
+  g.restore();
+  g.textAlign = 'center'; g.textBaseline = 'middle';
+  g.font = '900 150px "Avenir Next", Trebuchet MS, sans-serif';
+  g.shadowColor = '#ff3fa4'; g.shadowBlur = 46;
+  g.fillStyle = '#fff'; g.fillText('C L A W', w / 2, h / 2 - 14);
+  g.shadowBlur = 0;
+  g.font = '800 34px "Avenir Next", sans-serif';
+  g.fillStyle = '#6ef2ff'; g.fillText('P R I Z E   Z O N E', w / 2, h - 44);
+});
+
+const backTex = canvasTex(512, 512, (g, w, h) => {
+  const bg = g.createRadialGradient(w / 2, h * 0.42, 20, w / 2, h * 0.42, w * 0.8);
+  bg.addColorStop(0, '#ffd7ec'); bg.addColorStop(0.45, '#ff86c4'); bg.addColorStop(1, '#8b2f9e');
+  g.fillStyle = bg; g.fillRect(0, 0, w, h);
+  g.save(); g.translate(w / 2, h * 0.42);
+  for (let i = 0; i < 20; i++) {
+    g.rotate(Math.PI * 2 / 20);
+    g.fillStyle = i % 2 ? 'rgba(255,255,255,.20)' : 'rgba(255,255,255,0)';
+    g.beginPath(); g.moveTo(0, 0); g.lineTo(700, -60); g.lineTo(700, 60); g.fill();
+  }
+  g.restore();
+  g.textAlign = 'center';
+  g.font = '900 64px "Avenir Next", sans-serif';
+  g.fillStyle = '#fff'; g.strokeStyle = '#7d1d63'; g.lineWidth = 9;
+  g.strokeText('EVERY', w / 2, h * 0.34); g.fillText('EVERY', w / 2, h * 0.34);
+  g.strokeText('PLUSH', w / 2, h * 0.46); g.fillText('PLUSH', w / 2, h * 0.46);
+  g.strokeText('A WINNER', w / 2, h * 0.58); g.fillText('A WINNER', w / 2, h * 0.58);
+  g.font = '700 22px "Avenir Next", sans-serif';
+  g.fillStyle = 'rgba(255,255,255,.75)';
+  g.fillText('skill claw · no refunds', w / 2, h * 0.70);
+});
+
+// ===================================================================
+//  arcade room (world space; the machine lives in its own group)
+// ===================================================================
+const room = new THREE.Group();
+scene.add(room);
+{
+  const floorMat = new THREE.MeshStandardMaterial({ color: 0x120d20, roughness: 0.28, metalness: 0.35 });
+  const floor = new THREE.Mesh(new THREE.PlaneGeometry(40, 40), floorMat);
+  floor.rotation.x = -Math.PI / 2; floor.receiveShadow = true;
+  room.add(floor);
+
+  // carpet ring under the machine — a lit pool so the cabinet sits somewhere
+  const carpet = new THREE.Mesh(
+    new THREE.CircleGeometry(2.4, 48),
+    new THREE.MeshStandardMaterial({ color: 0x2a1140, roughness: 0.95, metalness: 0 }));
+  carpet.rotation.x = -Math.PI / 2; carpet.position.y = 0.002; carpet.receiveShadow = true;
+  room.add(carpet);
+
+  const wallMat = new THREE.MeshStandardMaterial({ color: 0x0d0a18, roughness: 0.9, metalness: 0.05 });
+  const mkWall = (w, h, x, y, z, ry) => {
+    const m = new THREE.Mesh(new THREE.PlaneGeometry(w, h), wallMat);
+    m.position.set(x, y, z); m.rotation.y = ry; room.add(m);
+  };
+  mkWall(24, 6, 0, 3, -7, 0);
+  mkWall(24, 6, -8, 3, 0, Math.PI / 2);
+  mkWall(24, 6, 8, 3, 0, -Math.PI / 2);
+
+  // neon tubes on the back wall + matching lights
+  const neonColors = [0xff3fa4, 0x6ef2ff, 0xffd23c, 0x8f5bff];
+  for (let i = 0; i < 6; i++) {
+    const c = neonColors[i % neonColors.length];
+    const tube = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.035, 0.035, 3.2, 8),
+      new THREE.MeshBasicMaterial({ color: c }));
+    tube.rotation.z = Math.PI / 2;
+    tube.position.set(-6 + i * 2.4, 2.4 + (i % 2) * 1.1, -6.92);
+    room.add(tube);
+    const pl = new THREE.PointLight(c, 6, 7, 2);
+    pl.position.set(tube.position.x, tube.position.y, -6.2);
+    room.add(pl);
+  }
+
+  // neighbouring cabinets, dim silhouettes with glowing screens
+  const cabMat = new THREE.MeshStandardMaterial({ color: 0x191428, roughness: 0.6, metalness: 0.3 });
+  for (let i = 0; i < 8; i++) {
+    const side = i < 4 ? -1 : 1;
+    const k = i % 4;
+    const g = new THREE.Group();
+    g.position.set(side * (2.6 + k * 0.15), 0, -4.6 + k * 1.5 + (side > 0 ? 0.6 : 0));
+    g.rotation.y = side * (0.5 + k * 0.06);
+    const body = new THREE.Mesh(new RoundedBoxGeometry(0.85, 1.9, 0.8, 2, 0.05), cabMat);
+    body.position.y = 0.95; body.castShadow = false; g.add(body);
+    const screenC = neonColors[(i * 3) % neonColors.length];
+    const scr = new THREE.Mesh(new THREE.PlaneGeometry(0.6, 0.45),
+      new THREE.MeshBasicMaterial({ color: screenC }));
+    scr.position.set(0, 1.35, 0.41); g.add(scr);
+    const sl = new THREE.PointLight(screenC, 2.2, 3.4, 2);
+    sl.position.set(0, 1.4, 0.7); g.add(sl);
+    room.add(g);
+  }
+
+  const amb = new THREE.HemisphereLight(0x3a2a55, 0x0a0714, 0.55);
+  scene.add(amb);
+}
+
+// ===================================================================
+//  cabinet + gantry (machine space, parented to `machine`)
+// ===================================================================
+const machine = new THREE.Group();
+machine.position.y = MO;
+scene.add(machine);
+
+const MAT = {
+  shell:  new THREE.MeshStandardMaterial({ color: 0xd6224f, roughness: 0.35, metalness: 0.25 }),
+  shellD: new THREE.MeshStandardMaterial({ color: 0x6e0f26, roughness: 0.45, metalness: 0.2 }),
+  chrome: new THREE.MeshStandardMaterial({ color: 0xcfd6df, roughness: 0.22, metalness: 0.95 }),
+  dark:   new THREE.MeshStandardMaterial({ color: 0x14101f, roughness: 0.55, metalness: 0.4 }),
+  glass:  new THREE.MeshPhysicalMaterial({
+            color: 0xdff2ff, transparent: true, opacity: 0.085, roughness: 0.02,
+            metalness: 0, side: THREE.DoubleSide, depthWrite: false,
+            envMapIntensity: 1.6, clearcoat: 1, clearcoatRoughness: 0.02 }),
+};
+
+function box(w, h, d, mat, x, y, z, parent, radius) {
+  const geo = radius ? new RoundedBoxGeometry(w, h, d, 2, radius) : new THREE.BoxGeometry(w, h, d);
+  const m = new THREE.Mesh(geo, mat);
+  m.position.set(x, y, z);
+  m.castShadow = true; m.receiveShadow = true;
+  (parent || machine).add(m);
+  return m;
+}
+
+const T = 0.045;                 // frame thickness
+const BASE_H = MO;               // pedestal height (down to the room floor)
+
+// --- pedestal ---
+// The cabinet body is built AROUND the prize-bin cavity, not as a solid box
+// with a hole punched in its front skin. A solid core left the bin walled in
+// behind red panelling: the door opening was there, and behind it you saw the
+// front face of the core, so the entire payoff — watching the plush land in
+// the tray — happened inside an opaque cabinet.
+const DOOR = { x0: -0.53, x1: -0.11, y0: -0.42, y1: -0.01, z0: 0.10 };
+{
+  const FZ = 0.54;                                     // front face of the cabinet
+  const blk = (x0, x1, y0, y1, z0, z1, mat) => {
+    if (x1 - x0 < 1e-4 || y1 - y0 < 1e-4 || z1 - z0 < 1e-4) return;
+    box(x1 - x0, y1 - y0, z1 - z0, mat || MAT.shell,
+        (x0 + x1) / 2, (y0 + y1) / 2, (z0 + z1) / 2, machine);
+  };
+  blk(-0.59, 0.59, -BASE_H, 0, -0.54, DOOR.z0);        // core, behind the cavity
+  blk(DOOR.x1, 0.59, -BASE_H, 0, DOOR.z0, FZ);         // right of the door
+  blk(-0.59, DOOR.x0, -BASE_H, 0, DOOR.z0, FZ);        // left of the door
+  blk(DOOR.x0, DOOR.x1, -BASE_H, DOOR.y0, DOOR.z0, FZ);// below the door
+  blk(DOOR.x0, DOOR.x1, DOOR.y1, 0, DOOR.z0, FZ);      // above the door
+
+  // chrome surround so the opening reads as a prize door, not a missing panel
+  const sw = 0.020;
+  box(DOOR.x1 - DOOR.x0 + sw * 2, sw, 0.022, MAT.chrome, (DOOR.x0 + DOOR.x1) / 2, DOOR.y1, FZ, machine);
+  box(DOOR.x1 - DOOR.x0 + sw * 2, sw, 0.022, MAT.chrome, (DOOR.x0 + DOOR.x1) / 2, DOOR.y0, FZ, machine);
+  box(sw, DOOR.y1 - DOOR.y0, 0.022, MAT.chrome, DOOR.x0, (DOOR.y0 + DOOR.y1) / 2, FZ, machine);
+  box(sw, DOOR.y1 - DOOR.y0, 0.022, MAT.chrome, DOOR.x1, (DOOR.y0 + DOOR.y1) / 2, FZ, machine);
+  // PRIZES plate above the door
+  box(DOOR.x1 - DOOR.x0, 0.055, 0.014, MAT.shellD, (DOOR.x0 + DOOR.x1) / 2, DOOR.y1 + 0.045, FZ, machine, 0.004);
+}
+box(1.22, 0.05, 1.12, MAT.shellD, 0, -BASE_H + 0.025, 0, machine, 0.015);   // plinth
+// front fascia detailing
+box(1.19, 0.016, 0.02, MAT.chrome, 0, 0.001, 0.545, machine);
+box(1.19, 0.016, 0.02, MAT.chrome, 0, -0.60, 0.545, machine);
+
+// --- play-field floor + interior shell ---
+{
+  // floor is split into four slabs around the chute hole
+  const fm = new THREE.MeshStandardMaterial({ color: 0x1b1630, roughness: 0.75, metalness: 0.15 });
+  const slab = (x0, x1, z0, z1) => {
+    const m = box(x1 - x0, 0.03, z1 - z0, fm, (x0 + x1) / 2, -0.015, (z0 + z1) / 2);
+    m.receiveShadow = true;
+  };
+  slab(IN.x0, CHUTE.x1, IN.z0, CHUTE.z0);
+  slab(CHUTE.x1, IN.x1, IN.z0, IN.z1);
+  slab(CHUTE.x0, CHUTE.x1, CHUTE.z1, IN.z1);   // (zero-depth sliver: chute reaches the front wall)
+
+  // chute kerb — the raised lip a prize has to clear (see the physics note)
+  const kerbMat = new THREE.MeshStandardMaterial({
+    color: 0xffc23c, roughness: 0.4, metalness: 0.5,
+    emissive: 0x3a2400, emissiveIntensity: 1 });
+  box(0.024, 0.055, CHUTE.z1 - CHUTE.z0 + 0.024, kerbMat,
+    CHUTE.x1 + 0.012, 0.0275, (CHUTE.z0 + CHUTE.z1) / 2, machine, 0.006);
+  box(CHUTE.x1 - CHUTE.x0, 0.055, 0.024, kerbMat,
+    (CHUTE.x0 + CHUTE.x1) / 2, 0.0275, CHUTE.z0 - 0.012, machine, 0.006);
+
+  // back wall graphic
+  const bw = new THREE.Mesh(new THREE.PlaneGeometry(1.0, 1.06),
+    new THREE.MeshStandardMaterial({ map: backTex, color: 0xc6c6cc, roughness: 0.9, metalness: 0 }));
+  bw.position.set(0, 0.53, IN.z0 - 0.001);
+  machine.add(bw);
+  // side walls, dark and mirrored-ish so the pile reads deep
+  const sideMat = new THREE.MeshStandardMaterial({ color: 0x241a3a, roughness: 0.35, metalness: 0.5 });
+  for (const sx of [IN.x0, IN.x1]) {
+    const m = new THREE.Mesh(new THREE.PlaneGeometry(0.9, 1.06), sideMat);
+    m.position.set(sx + (sx < 0 ? 0.001 : -0.001), 0.53, 0);
+    m.rotation.y = sx < 0 ? Math.PI / 2 : -Math.PI / 2;
+    machine.add(m);
+  }
+}
+
+// --- glass box + corner posts ---
+{
+  const gx = IN.x1 - IN.x0, gz = IN.z1 - IN.z0, gy = IN.top;
+  const front = new THREE.Mesh(new THREE.PlaneGeometry(gx, gy), MAT.glass);
+  front.position.set(0, gy / 2, IN.z1); machine.add(front);
+  const left = new THREE.Mesh(new THREE.PlaneGeometry(gz, gy), MAT.glass);
+  left.position.set(IN.x0, gy / 2, 0); left.rotation.y = Math.PI / 2; machine.add(left);
+  const right = left.clone(); right.position.x = IN.x1; machine.add(right);
+
+  for (const [px, pz] of [[IN.x0, IN.z0], [IN.x1, IN.z0], [IN.x0, IN.z1], [IN.x1, IN.z1]])
+    box(T, gy + 0.02, T, MAT.chrome, px, gy / 2, pz);
+  // top + bottom rails
+  for (const y of [0.006, gy]) {
+    box(gx + T, T * 0.8, T * 0.8, MAT.chrome, 0, y, IN.z0);
+    box(gx + T, T * 0.8, T * 0.8, MAT.chrome, 0, y, IN.z1);
+    box(T * 0.8, T * 0.8, gz, MAT.chrome, IN.x0, y, 0);
+    box(T * 0.8, T * 0.8, gz, MAT.chrome, IN.x1, y, 0);
+  }
+}
+
+// --- marquee crown ---
+{
+  const crown = new THREE.Group();
+  crown.position.y = IN.top + 0.02;
+  machine.add(crown);
+  box(1.18, 0.30, 1.06, MAT.shellD, 0, 0.15, 0, crown, 0.03);
+  const face = new THREE.Mesh(new THREE.PlaneGeometry(1.06, 0.24),
+    new THREE.MeshBasicMaterial({ map: marqueeTex }));
+  face.position.set(0, 0.16, 0.532); crown.add(face);
+  const back = face.clone(); back.position.z = -0.532; back.rotation.y = Math.PI; crown.add(back);
+  box(1.24, 0.045, 1.12, MAT.chrome, 0, 0.32, 0, crown, 0.015);
+  // chase lights around the crown
+  const bulbs = [];
+  const bulbGeo = new THREE.SphereGeometry(0.019, 10, 8);
+  for (let i = 0; i < 26; i++) {
+    const t = i / 26 * Math.PI * 2;
+    const m = new THREE.Mesh(bulbGeo, new THREE.MeshBasicMaterial({ color: 0xffe9a8 }));
+    // rounded rectangle path around the crown lip
+    m.position.set(clamp(Math.cos(t) * 0.9, -0.58, 0.58), 0.345, clamp(Math.sin(t) * 0.85, -0.52, 0.52));
+    crown.add(m); bulbs.push(m);
+  }
+  machine.userData.bulbs = bulbs;
+  const glow = new THREE.PointLight(0xff6cc0, 9, 4, 2);
+  glow.position.set(0, 0.2, 0.6); crown.add(glow);
+}
+
+// --- control panel with a real joystick and button ---
+const panel = new THREE.Group();
+panel.position.set(0, -0.16, 0.60);
+panel.rotation.x = -0.22;
+machine.add(panel);
+{
+  box(0.66, 0.05, 0.30, MAT.dark, 0, 0, 0, panel, 0.012);
+  const skirt = box(0.66, 0.20, 0.05, MAT.shellD, 0, -0.10, 0.10, panel, 0.01);
+  skirt.castShadow = false;
+}
+const stickPivot = new THREE.Group();
+stickPivot.position.set(-0.14, 0.045, -0.01);
+panel.add(stickPivot);
+{
+  box(0.10, 0.022, 0.10, MAT.chrome, -0.14, 0.02, -0.01, panel, 0.008);   // stick plate
+  const shaft = new THREE.Mesh(new THREE.CylinderGeometry(0.011, 0.013, 0.10, 10), MAT.chrome);
+  shaft.position.y = 0.05; stickPivot.add(shaft);
+  const ball = new THREE.Mesh(new THREE.SphereGeometry(0.032, 20, 16),
+    new THREE.MeshStandardMaterial({ color: 0xe01c3f, roughness: 0.18, metalness: 0.1 }));
+  ball.position.y = 0.105; ball.castShadow = true; stickPivot.add(ball);
+}
+const btnCap = new THREE.Mesh(new THREE.CylinderGeometry(0.042, 0.042, 0.022, 24),
+  new THREE.MeshStandardMaterial({ color: 0xff2b48, roughness: 0.25, metalness: 0.05,
+    emissive: 0x5a0010, emissiveIntensity: 1 }));
+btnCap.position.set(0.15, 0.045, -0.02);
+btnCap.castShadow = true;
+panel.add(btnCap);
+box(0.098, 0.016, 0.098, MAT.chrome, 0.15, 0.03, -0.02, panel, 0.006);
+const BTN_Y = btnCap.position.y;
+
+// coin slot + coin return
+box(0.05, 0.11, 0.02, MAT.chrome, 0.40, -0.30, 0.545, machine, 0.005);
+box(0.014, 0.055, 0.01, MAT.dark, 0.40, -0.28, 0.556, machine);
+box(0.13, 0.07, 0.02, MAT.dark, -0.40, -0.32, 0.545, machine, 0.006);
+
+// --- prize bin: the hole drops into a lit box you can see into ---
+const BIN = { x0: -0.51, x1: -0.13, z0: 0.13, z1: 0.52, yTop: -0.03, yBot: -0.38 };
+{
+  const binMat = new THREE.MeshStandardMaterial({ color: 0x0d0a18, roughness: 0.8, metalness: 0.2 });
+  const w = BIN.x1 - BIN.x0, d = BIN.z1 - BIN.z0, h = BIN.yTop - BIN.yBot;
+  const cx = (BIN.x0 + BIN.x1) / 2, cz = (BIN.z0 + BIN.z1) / 2;
+  box(w, 0.02, d, binMat, cx, BIN.yBot, cz);                    // tray floor
+  box(0.02, h, d, binMat, BIN.x0, BIN.yBot + h / 2, cz);        // left
+  box(w, h, 0.02, binMat, cx, BIN.yBot + h / 2, BIN.z0);        // back
+  box(0.02, h, d, binMat, BIN.x1, BIN.yBot + h / 2, cz);        // right
+  // plexi flap at the front so the prize is visible sitting in the tray
+  const flap = new THREE.Mesh(new THREE.PlaneGeometry(w, h * 0.95), MAT.glass);
+  flap.position.set(cx, BIN.yBot + h / 2, BIN.z1);
+  machine.add(flap);
+  box(w + 0.03, 0.02, 0.02, MAT.chrome, cx, BIN.yTop, BIN.z1);
+  const binLight = new THREE.PointLight(0xfff0c8, 0.9, 1.4, 2);
+  binLight.position.set(cx, BIN.yTop - 0.05, cz + 0.06);
+  machine.add(binLight);
+}
+
+// --- gantry rig -----------------------------------------------------------
+const rig = new THREE.Group();
+machine.add(rig);
+const railY = GANTRY.yTop + 0.13;
+box(1.0, 0.03, 0.03, MAT.chrome, 0, railY, IN.z0 + 0.05, rig);
+box(1.0, 0.03, 0.03, MAT.chrome, 0, railY, IN.z1 - 0.05, rig);
+const bridge = box(0.05, 0.035, 0.86, MAT.chrome, 0, railY, 0, rig);
+const trolley = box(0.09, 0.06, 0.09, MAT.dark, 0, railY - 0.02, 0, rig, 0.01);
+const cable = new THREE.Mesh(new THREE.CylinderGeometry(0.004, 0.004, 1, 6),
+  new THREE.MeshStandardMaterial({ color: 0x9aa3ae, roughness: 0.5, metalness: 0.7 }));
+rig.add(cable);
+
+// claw head visual
+const headVis = new THREE.Group();
+rig.add(headVis);
+// A real claw head is a spun bell: a swivel eye on top, a tapering polished
+// body, a machined knuckle collar the fingers pivot out of, and an anodised
+// ring around the lip. A cylinder with a ball on top reads as a lamp.
+const MAT_POLISH = new THREE.MeshStandardMaterial({
+  color: 0xeef3f8, roughness: 0.10, metalness: 1.0, envMapIntensity: 1.5 });
+const MAT_STEEL = new THREE.MeshStandardMaterial({
+  color: 0xa9b3c0, roughness: 0.34, metalness: 1.0, envMapIntensity: 1.2 });
+const MAT_ANOD = new THREE.MeshStandardMaterial({
+  color: 0xd91b3c, roughness: 0.28, metalness: 0.65, envMapIntensity: 1.1 });
+{
+  // bell profile, revolved: lip → shoulder → neck → crown
+  const prof = [
+    [0.0000, 0.098], [0.0130, 0.096], [0.0150, 0.086], [0.0165, 0.074],
+    [0.0330, 0.064], [0.0540, 0.048], [0.0680, 0.024], [0.0730, 0.002],
+    [0.0745, -0.014], [0.0700, -0.026], [0.0560, -0.032], [0.0400, -0.034],
+    [0.0000, -0.034],
+  ].map(([r, y]) => new THREE.Vector2(r, y));
+  const bell = new THREE.Mesh(new THREE.LatheGeometry(prof, 36), MAT_POLISH);
+  bell.castShadow = true; headVis.add(bell);
+
+  // swivel eye the cable terminates in
+  const eye = new THREE.Mesh(new THREE.TorusGeometry(0.014, 0.005, 8, 18), MAT_STEEL);
+  eye.position.y = 0.112; eye.rotation.y = Math.PI / 2; headVis.add(eye);
+  const nut = new THREE.Mesh(new THREE.CylinderGeometry(0.017, 0.017, 0.014, 6), MAT_STEEL);
+  nut.position.y = 0.090; headVis.add(nut);
+
+  // anodised ring around the lip + the machined knuckle collar beneath it
+  const ring = new THREE.Mesh(new THREE.TorusGeometry(0.0705, 0.0085, 10, 36), MAT_ANOD);
+  ring.rotation.x = Math.PI / 2; ring.position.y = 0.000; headVis.add(ring);
+  const collar = new THREE.Mesh(new THREE.CylinderGeometry(0.048, 0.040, 0.026, 24), MAT_STEEL);
+  collar.position.y = -0.040; collar.castShadow = true; headVis.add(collar);
+
+  // three hex bolts on the shoulder, because cast parts are bolted together
+  for (let i = 0; i < 3; i++) {
+    const a = i * Math.PI * 2 / 3 + Math.PI / 3;
+    const b = new THREE.Mesh(new THREE.CylinderGeometry(0.006, 0.006, 0.008, 6), MAT_STEEL);
+    b.position.set(Math.cos(a) * 0.050, 0.040, Math.sin(a) * 0.050);
+    b.rotation.x = 0.5; b.rotation.y = -a;
+    headVis.add(b);
+  }
+  const lamp = new THREE.PointLight(0xffdca8, 1.2, 0.5, 2);
+  lamp.position.y = -0.05; headVis.add(lamp);
+}
+
+// interior lighting
+{
+  const key = new THREE.SpotLight(0xfff3dc, 11, 3.4, 0.72, 0.45, 1.6);
+  key.position.set(0.1, IN.top + 0.9, 0.55);
+  key.target.position.set(0, 0.1, 0);
+  key.castShadow = save.shadows;
+  key.shadow.mapSize.set(1024, 1024);
+  key.shadow.camera.near = 0.4; key.shadow.camera.far = 3.2;
+  key.shadow.bias = -0.0012;
+  machine.add(key); machine.add(key.target);
+  machine.userData.key = key;
+
+  for (const [x, z, c] of [[-0.34, -0.3, 0xff8fd0], [0.34, -0.3, 0x8fd8ff], [0, 0.34, 0xfff0c8]]) {
+    const pl = new THREE.PointLight(c, 0.8, 1.5, 2);
+    pl.position.set(x, IN.top - 0.06, z);
+    machine.add(pl);
+  }
+}
+
+// ===================================================================
+//  plush construction — one builder drives both the mesh and the colliders
+// ===================================================================
+const SPHERE = new THREE.SphereGeometry(1, 18, 14);
+const CAP = new THREE.CapsuleGeometry(1, 1, 6, 12);
+const CONE = new THREE.ConeGeometry(1, 1, 12);
+
+function feltMat(color, shiny) {
+  return new THREE.MeshStandardMaterial({
+    color, roughness: shiny ? 0.28 : 0.94, metalness: shiny ? 0.75 : 0.0,
+    emissive: shiny ? new THREE.Color(color).multiplyScalar(0.12) : 0x000000,
+  });
+}
+
+// returns { group, shapes: [{x,y,z,r}], radius }
+function buildPlush(spec) {
+  const g = new THREE.Group();
+  const s = spec.scale;
+  const body = feltMat(spec.body, spec.shiny);
+  const belly = feltMat(spec.belly, spec.shiny);
+  const dark = new THREE.MeshStandardMaterial({ color: 0x1a1520, roughness: 0.4, metalness: 0.05 });
+  const shapes = [];
+  const ball = (mat, r, x, y, z, sx, sy, sz, phys) => {
+    const m = new THREE.Mesh(SPHERE, mat);
+    m.position.set(x, y, z);
+    m.scale.set(r * (sx || 1), r * (sy || 1), r * (sz || 1));
+    m.castShadow = true; m.receiveShadow = true;
+    g.add(m);
+    if (phys !== false) shapes.push({ x, y, z, r: r * 0.92 });
+    return m;
+  };
+
+  // torso + head
+  ball(body, 0.050 * s, 0, 0, 0, 1.05, 0.95, 1.0);
+  ball(belly, 0.036 * s, 0, -0.006 * s, 0.030 * s, 0.95, 0.85, 0.6, false);
+  const headY = 0.062 * s;
+  ball(body, 0.040 * s, 0, headY, 0, 1.0, 0.95, 0.98);
+  ball(belly, 0.024 * s, 0, headY - 0.010 * s, 0.028 * s, 1.0, 0.75, 0.6, false);
+
+  // limbs
+  ball(body, 0.021 * s, -0.052 * s, 0.008 * s, 0.004 * s, 1.0, 0.9, 1.0);
+  ball(body, 0.021 * s,  0.052 * s, 0.008 * s, 0.004 * s, 1.0, 0.9, 1.0);
+  ball(body, 0.024 * s, -0.030 * s, -0.048 * s, 0.010 * s, 1.0, 0.85, 1.1);
+  ball(body, 0.024 * s,  0.030 * s, -0.048 * s, 0.010 * s, 1.0, 0.85, 1.1);
+
+  // ears / crowns
+  const ey = headY + 0.030 * s;
+  if (spec.ear === 'long') {
+    for (const sx of [-1, 1]) {
+      const e = new THREE.Mesh(CAP, body);
+      e.position.set(sx * 0.020 * s, ey + 0.030 * s, -0.004 * s);
+      e.scale.set(0.014 * s, 0.040 * s, 0.013 * s);
+      e.rotation.z = sx * 0.22; e.castShadow = true; g.add(e);
+      shapes.push({ x: e.position.x, y: e.position.y, z: 0, r: 0.017 * s });
+    }
+  } else if (spec.ear === 'round') {
+    for (const sx of [-1, 1]) {
+      const r = spec.patch ? 0.024 : 0.022;
+      ball(spec.patch ? dark : body, r * s, sx * 0.032 * s, ey + 0.004 * s, -0.002 * s,
+           1, 1, 0.6);
+      if (spec.pointy) {
+        const c = new THREE.Mesh(CONE, body);
+        c.position.set(sx * 0.030 * s, ey + 0.020 * s, 0);
+        c.scale.set(0.019 * s, 0.030 * s, 0.012 * s);
+        c.castShadow = true; g.add(c);
+      }
+    }
+  } else if (spec.ear === 'frill') {
+    for (const sx of [-1, 1]) for (let i = 0; i < 3; i++) {
+      const a = -0.35 + i * 0.35;
+      ball(belly, 0.013 * s, sx * 0.046 * s, headY + 0.012 * s + Math.sin(a) * 0.024 * s,
+           Math.cos(a) * -0.014 * s, 1.4, 0.7, 0.7);
+    }
+  } else if (spec.ear === 'horn') {
+    const c = new THREE.Mesh(CONE, spec.shiny ? body : feltMat(spec.belly, true));
+    c.position.set(0, ey + 0.024 * s, 0.004 * s);
+    c.scale.set(0.013 * s, 0.046 * s, 0.013 * s);
+    c.castShadow = true; g.add(c);
+    shapes.push({ x: 0, y: c.position.y, z: 0, r: 0.016 * s });
+    if (spec.ear === 'horn' && spec.id === 'dragon') {
+      for (const sx of [-1, 1]) {   // stubby wings give the claw something to hook
+        const w = new THREE.Mesh(SPHERE, belly);
+        w.position.set(sx * 0.055 * s, 0.020 * s, -0.030 * s);
+        w.scale.set(0.030 * s, 0.026 * s, 0.010 * s);
+        w.rotation.z = sx * 0.5; w.castShadow = true; g.add(w);
+        shapes.push({ x: w.position.x, y: w.position.y, z: w.position.z, r: 0.021 * s });
+      }
+    }
+  } else if (spec.ear === 'fin') {
+    for (let i = 0; i < 6; i++) {   // tentacles
+      const a = i / 6 * Math.PI * 2;
+      const t = new THREE.Mesh(CAP, body);
+      t.position.set(Math.cos(a) * 0.040 * s, -0.048 * s, Math.sin(a) * 0.040 * s);
+      t.scale.set(0.011 * s, 0.018 * s, 0.011 * s);
+      t.rotation.z = Math.cos(a) * 0.6; t.rotation.x = -Math.sin(a) * 0.6;
+      t.castShadow = true; g.add(t);
+      if (i % 2 === 0) shapes.push({ x: t.position.x, y: t.position.y, z: t.position.z, r: 0.018 * s });
+    }
+  }
+  if (spec.mane) {
+    for (let i = 0; i < 5; i++)
+      ball(feltMat(0xffa8d2), 0.014 * s, (i - 2) * 0.010 * s, headY + 0.026 * s - i * 0.006 * s,
+           -0.030 * s - i * 0.004 * s, 1.3, 1.0, 1.0, false);
+  }
+
+  // face
+  const eyeY = headY + 0.006 * s, eyeZ = 0.034 * s;
+  for (const sx of [-1, 1]) {
+    const e = new THREE.Mesh(SPHERE, dark);
+    e.position.set(sx * 0.019 * s, spec.eyesTop ? eyeY + 0.020 * s : eyeY, eyeZ);
+    e.scale.setScalar(0.0115 * s);
+    g.add(e);
+    const gl = new THREE.Mesh(SPHERE, new THREE.MeshBasicMaterial({ color: 0xffffff }));
+    gl.position.set(sx * 0.019 * s + 0.004 * s, e.position.y + 0.004 * s, eyeZ + 0.008 * s);
+    gl.scale.setScalar(0.0042 * s);
+    g.add(gl);
+    if (spec.patch) ball(dark, 0.014 * s, sx * 0.018 * s, eyeY, 0.030 * s, 1, 1.15, 0.4, false);
+  }
+  const snout = new THREE.Mesh(SPHERE, belly);
+  snout.position.set(0, headY - 0.010 * s, 0.034 * s);
+  snout.scale.set(0.019 * s, 0.014 * s, 0.012 * s);
+  g.add(snout);
+  const nose = new THREE.Mesh(SPHERE, dark);
+  nose.position.set(0, headY - 0.006 * s, 0.042 * s);
+  nose.scale.set(0.0075 * s, 0.006 * s, 0.006 * s);
+  g.add(nose);
+
+  // a fabric tag: pure decoration, but it is what sells "plush"
+  const tag = new THREE.Mesh(new THREE.PlaneGeometry(0.016 * s, 0.010 * s),
+    new THREE.MeshStandardMaterial({ color: 0xfff6e0, roughness: 1, side: THREE.DoubleSide }));
+  tag.position.set(0.048 * s, -0.030 * s, -0.020 * s);
+  tag.rotation.set(0.4, 0.6, 0.3);
+  g.add(tag);
+
+  let radius = 0;
+  for (const sh of shapes) radius = Math.max(radius, Math.hypot(sh.x, sh.y, sh.z) + sh.r);
+  return { group: g, shapes, radius };
+}
+
+// ===================================================================
+//  physics
+// ===================================================================
+await RAPIER.init();
+const world = new RAPIER.World({ x: 0, y: -9.81, z: 0 });
+world.timestep = FIXED;
+try { world.integrationParameters.numSolverIterations = 8; } catch (e) {}
+
+function fixedBox(hx, hy, hz, x, y, z, friction) {
+  const b = world.createRigidBody(RAPIER.RigidBodyDesc.fixed().setTranslation(x, y, z));
+  const c = RAPIER.ColliderDesc.cuboid(hx, hy, hz).setFriction(friction == null ? 0.6 : friction)
+    .setRestitution(0.02).setCollisionGroups(G_WALL);
+  world.createCollider(c, b);
+  return b;
+}
+
+// interior walls + ceiling
+{
+  const W = 0.06;
+  const cx = (IN.x0 + IN.x1) / 2, cz = (IN.z0 + IN.z1) / 2;
+  const hw = (IN.x1 - IN.x0) / 2, hd = (IN.z1 - IN.z0) / 2, hh = IN.top / 2;
+  fixedBox(W, hh, hd + W, IN.x0 - W, hh, cz, 0.25);
+  fixedBox(W, hh, hd + W, IN.x1 + W, hh, cz, 0.25);
+  fixedBox(hw + W, hh, W, cx, hh, IN.z0 - W, 0.25);
+  fixedBox(hw + W, hh, W, cx, hh, IN.z1 + W, 0.25);
+  fixedBox(hw, W, hd, cx, IN.top + W, cz, 0.25);
+
+  // floor slabs around the chute hole (must mirror the visual slabs above)
+  const floorY = -0.015, fh = 0.015;
+  const slab = (x0, x1, z0, z1) => {
+    if (x1 - x0 < 1e-4 || z1 - z0 < 1e-4) return;
+    fixedBox((x1 - x0) / 2, fh, (z1 - z0) / 2, (x0 + x1) / 2, floorY, (z0 + z1) / 2, 0.7);
+  };
+  slab(IN.x0, CHUTE.x1, IN.z0, CHUTE.z0);
+  slab(CHUTE.x1, IN.x1, IN.z0, IN.z1);
+
+  // Kerb around the two interior edges of the chute. Real cabinets have one,
+  // and without it the machine is trivially beatable in a way that voids the
+  // whole payout schedule: a plush shoved along the floor by the descending
+  // claw slides into the hole, so a grip too weak to lift anything still won
+  // a quarter of its plays. The prize now has to go in from above.
+  const KERB = 0.055;
+  fixedBox(0.012, KERB / 2, (CHUTE.z1 - CHUTE.z0) / 2 + 0.012,
+    CHUTE.x1 + 0.012, KERB / 2, (CHUTE.z0 + CHUTE.z1) / 2, 0.4);
+  fixedBox((CHUTE.x1 - CHUTE.x0) / 2, KERB / 2, 0.012,
+    (CHUTE.x0 + CHUTE.x1) / 2, KERB / 2, CHUTE.z0 - 0.012, 0.4);
+
+  // prize bin below the hole
+  const bw = (BIN.x1 - BIN.x0) / 2, bd = (BIN.z1 - BIN.z0) / 2;
+  const bcx = (BIN.x0 + BIN.x1) / 2, bcz = (BIN.z0 + BIN.z1) / 2;
+  fixedBox(bw, 0.01, bd, bcx, BIN.yBot, bcz, 0.85);
+  fixedBox(0.01, 0.16, bd, BIN.x0 - 0.01, BIN.yBot + 0.16, bcz, 0.5);
+  fixedBox(0.01, 0.16, bd, BIN.x1 + 0.01, BIN.yBot + 0.16, bcz, 0.5);
+  fixedBox(bw, 0.16, 0.01, bcx, BIN.yBot + 0.16, BIN.z0 - 0.01, 0.5);
+  fixedBox(bw, 0.16, 0.01, bcx, BIN.yBot + 0.16, BIN.z1 + 0.01, 0.5);
+}
+
+// ---- claw head + fingers -------------------------------------------------
+const claw = {
+  x: HOME.x, z: HOME.z, y: GANTRY.yTop,
+  body: null, fingers: [], joints: [],
+  gripK: GRIP.OPEN_K, target: GRIP.OPEN_A,
+};
+{
+  claw.body = world.createRigidBody(
+    RAPIER.RigidBodyDesc.kinematicPositionBased().setTranslation(claw.x, claw.y, claw.z));
+  world.createCollider(
+    RAPIER.ColliderDesc.ball(0.05).setFriction(0.4).setRestitution(0.0)
+      .setDensity(1).setCollisionGroups(G_CLAW), claw.body);
+
+  const FING_DENSITY = 1150;      // ~80 g per finger: light enough that the
+                                  // open-solenoid torque stays small
+  const FING = [                  // local: hangs down, tip curls back inward
+    { x: 0.028, y: -0.038, r: 0.018 },
+    { x: 0.062, y: -0.086, r: 0.016 },
+    { x: 0.075, y: -0.138, r: 0.015 },
+    { x: 0.056, y: -0.176, r: 0.014 },
+  ];
+  // RAPIER.JointData.revolute() takes ONE axis vector and applies it to both
+  // bodies' local frames. Building each finger body pre-rotated by θ therefore
+  // could not work: the joint aligned every finger's local +Z with the head's
+  // +Z, i.e. it spent the whole simulation undoing the θ rotation, and only
+  // finger 0 (θ = 0) ever hinged correctly. That single line is why no amount
+  // of grip stiffness made the claw hold anything. So: every finger body is
+  // axis-aligned, the θ rotation is baked into the collider offsets, and the
+  // hinge axis is the tangential direction — identical in both frames.
+  for (let i = 0; i < 3; i++) {
+    const th = i * Math.PI * 2 / 3;
+    const cs = Math.cos(th), sn = Math.sin(th);
+    const radial = (x, y) => ({ x: x * cs, y, z: -x * sn });   // rotY(th) of (x, y, 0)
+    const fb = world.createRigidBody(
+      RAPIER.RigidBodyDesc.dynamic()
+        .setTranslation(claw.x, claw.y, claw.z)
+        .setLinearDamping(0.2).setAngularDamping(0.4)
+        .setCcdEnabled(true));
+    for (const s of FING) {
+      const v = radial(s.x, s.y);
+      world.createCollider(
+        RAPIER.ColliderDesc.ball(s.r).setTranslation(v.x, v.y, v.z)
+          .setDensity(FING_DENSITY).setFriction(1.6).setRestitution(0.0)
+          .setCollisionGroups(G_CLAW), fb);
+    }
+
+    const jd = RAPIER.JointData.revolute(
+      radial(0.038, -0.014),          // anchor in head space
+      { x: 0, y: 0, z: 0 },           // anchor in finger space
+      { x: sn, y: 0, z: cs });        // tangential hinge, same in both frames
+    const j = world.createImpulseJoint(jd, claw.body, fb, true);
+    try { j.setContactsEnabled(false); } catch (e) {}
+    try { j.setLimits(GRIP.SHUT_A - 0.05, GRIP.OPEN_A + 0.05); } catch (e) {}
+    try { j.configureMotorModel(RAPIER.MotorModel.ForceBased); } catch (e) {}
+    j.configureMotorPosition(GRIP.OPEN_A, GRIP.OPEN_K, GRIP.DAMP);
+    claw.fingers.push(fb);
+    claw.joints.push(j);
+  }
+
+  // Visual fingers: a real claw finger is a stamped talon — wide at the
+  // knuckle, tapering along an outward sweep, hooking back inward to a point.
+  // A chain of capsules reads as a robot arm, which is why this is an extruded
+  // profile with a bevel instead. It still wraps the same collider chain.
+  const blade = new THREE.Shape();
+  blade.moveTo(-0.014, 0.014);
+  blade.bezierCurveTo(0.030, 0.008, 0.070, -0.030, 0.086, -0.086);   // outer sweep
+  blade.bezierCurveTo(0.098, -0.130, 0.092, -0.166, 0.062, -0.192);  // outer hook
+  blade.lineTo(0.046, -0.186);                                        // point
+  blade.bezierCurveTo(0.066, -0.158, 0.070, -0.128, 0.060, -0.096);  // inner hook
+  blade.bezierCurveTo(0.046, -0.052, 0.020, -0.024, -0.016, -0.016); // inner sweep
+  blade.lineTo(-0.014, 0.014);
+  const bladeGeo = new THREE.ExtrudeGeometry(blade, {
+    depth: 0.024, bevelEnabled: true, bevelSize: 0.005, bevelThickness: 0.004,
+    bevelSegments: 2, curveSegments: 14,
+  });
+  bladeGeo.translate(0, 0, -0.012);   // extrude runs along +Z; centre it on the hinge
+
+  claw.fingerVis = [];
+  for (let i = 0; i < 3; i++) {
+    const outer = new THREE.Group();          // synced to the (unrotated) body
+    const g = new THREE.Group();              // carries the baked θ rotation
+    g.rotation.y = i * Math.PI * 2 / 3;
+    outer.add(g);
+    const b = new THREE.Mesh(bladeGeo, MAT_STEEL);
+    b.castShadow = true; b.receiveShadow = true;
+    g.add(b);
+    // knuckle: the pivot pin the blade swings on, capped both sides
+    const pin = new THREE.Mesh(new THREE.CylinderGeometry(0.011, 0.011, 0.040, 14), MAT_POLISH);
+    pin.rotation.x = Math.PI / 2; pin.castShadow = true;
+    g.add(pin);
+    for (const sz of [-0.021, 0.021]) {
+      const cap = new THREE.Mesh(new THREE.CylinderGeometry(0.008, 0.008, 0.004, 10), MAT_STEEL);
+      cap.rotation.x = Math.PI / 2; cap.position.z = sz;
+      g.add(cap);
+    }
+    // hardened tip: real claws have a darker, blunted rubber-capped point
+    const tip = new THREE.Mesh(new THREE.SphereGeometry(0.011, 12, 10),
+      new THREE.MeshStandardMaterial({ color: 0x2a2f38, roughness: 0.55, metalness: 0.25 }));
+    tip.position.set(0.054, -0.190, 0);
+    tip.scale.set(1, 0.85, 1.05);
+    tip.castShadow = true;
+    g.add(tip);
+    rig.add(outer);
+    claw.fingerVis.push(outer);
+  }
+}
+
+function setGrip(k, target) {
+  claw.gripK = k; claw.target = target;
+  for (const j of claw.joints) j.configureMotorPosition(target, k, GRIP.DAMP);
+}
+
+// ---- prizes --------------------------------------------------------------
+const prizes = [];
+function spawnPrize(spec, x, y, z, sleepy) {
+  const built = buildPlush(spec);
+  machine.add(built.group);
+  const body = world.createRigidBody(
+    RAPIER.RigidBodyDesc.dynamic().setTranslation(x, y, z)
+      .setRotation(randQuat())
+      .setLinearDamping(0.45).setAngularDamping(0.75)
+      .setCcdEnabled(true));
+  const density = 120 / (spec.scale ** 1.5);   // bigger plush ≈ heavier, not denser
+  for (const s of built.shapes)
+    world.createCollider(
+      RAPIER.ColliderDesc.ball(s.r).setTranslation(s.x, s.y, s.z)
+        .setDensity(density).setFriction(1.2).setRestitution(0.03)
+        .setCollisionGroups(G_PRIZE), body);
+  const p = { spec, body, mesh: built.group, won: false, binned: false };
+  prizes.push(p);
+  if (sleepy) body.sleep();
+  return p;
+}
+function randQuat() {
+  const q = new THREE.Quaternion().setFromEuler(
+    new THREE.Euler(rnd(-3, 3), rnd(-3, 3), rnd(-3, 3)));
+  return { x: q.x, y: q.y, z: q.z, w: q.w };
+}
+function removePrize(p) {
+  const i = prizes.indexOf(p);
+  if (i >= 0) prizes.splice(i, 1);
+  machine.remove(p.mesh);
+  p.mesh.traverse(o => {
+    if (o.geometry && o.geometry !== SPHERE && o.geometry !== CAP && o.geometry !== CONE) o.geometry.dispose();
+    if (o.material) o.material.dispose();
+  });
+  world.removeRigidBody(p.body);
+}
+
+const STOCK = 26;
+function fillMachine() {
+  for (let i = prizes.length; i < STOCK; i++) {
+    const s = rollSpecies();
+    // avoid stacking spawns straight into the chute hole
+    let x, z;
+    do { x = rnd(IN.x0 + 0.10, IN.x1 - 0.10); z = rnd(IN.z0 + 0.10, IN.z1 - 0.10); }
+    while (x < CHUTE.x1 + 0.04 && z > CHUTE.z0 - 0.04);
+    spawnPrize(s, x, 0.14 + (i % 7) * 0.10, z);
+  }
+}
+fillMachine();
+// Settle the initial pile off-screen so play starts on a natural heap. The
+// chute is capped while it settles: without the cap, a plush shoved sideways
+// by the collapsing stack drops straight into the bin and the machine hands
+// out a free prize before the first coin.
+{
+  const cap = fixedBox((CHUTE.x1 - CHUTE.x0) / 2, 0.012, (CHUTE.z1 - CHUTE.z0) / 2,
+    (CHUTE.x0 + CHUTE.x1) / 2, -0.012, (CHUTE.z0 + CHUTE.z1) / 2, 0.7);
+  for (let i = 0; i < 480; i++) world.step();
+  // anything that came to rest over the capped hole gets moved onto the floor
+  for (const p of prizes) {
+    const t = p.body.translation();
+    if (t.x < CHUTE.x1 + 0.04 && t.z > CHUTE.z0 - 0.04) {
+      p.body.setTranslation({ x: t.x + 0.30, y: 0.22, z: t.z - 0.30 }, true);
+      p.body.setLinvel({ x: 0, y: 0, z: 0 }, true);
+    }
+  }
+  world.removeRigidBody(cap);
+  for (let i = 0; i < 240; i++) world.step();
+}
+
+// ===================================================================
+//  camera rig
+// ===================================================================
+const cam = {
+  az: 0, el: 0.16, dist: 3.5, target: new THREE.Vector3(0, MO + 0.52, 0),
+  wantAz: 0, wantEl: 0.16, wantDist: 3.5, wantTarget: new THREE.Vector3(0, MO + 0.52, 0),
+  shake: 0,
+  manual: false, mAz: 0, mEl: 0.16, mDist: 3.05,
+};
+// Once the player has dragged, the angle belongs to them: presets may still
+// move the target and the distance, but they stop yanking the view back to
+// front-on every time the phase changes. `force` is for the one shot that has
+// to be cinematic — the chute cam on a win — and even that hands the angle
+// back on the next play.
+function camGoto(az, el, dist, tx, ty, tz, force) {
+  if (cam.manual && !force) { cam.wantAz = cam.mAz; cam.wantEl = cam.mEl; }
+  else { cam.wantAz = az; cam.wantEl = el; }
+  cam.wantDist = cam.manual && !force ? cam.mDist : dist;
+  cam.wantTarget.set(tx, ty, tz);
+}
+// Framing note: the cabinet front sits at z≈0.6, so anything at the glass is
+// ~0.6 m nearer than the orbit target and looms accordingly. These distances
+// were picked from screenshots, not from the distance to the box centre.
+const VIEW = {
+  play:  () => camGoto(cam.az, cam.el, 3.05, 0, MO + 0.50, 0),
+  wide:  () => camGoto(0, 0.15, 3.70, 0, MO + 0.52, 0),
+  grab:  () => camGoto(cam.az * 0.5, 0.13, 2.35, claw.x * 0.4, MO + 0.20, 0.02),
+  chute: () => camGoto(-0.30, 0.24, 1.35, -0.32, MO - 0.26, 0.30, true),
+};
+function updateCam(dt) {
+  const k = 1 - Math.pow(0.0015, dt);
+  cam.az = lerp(cam.az, cam.wantAz, k);
+  cam.el = lerp(cam.el, cam.wantEl, k);
+  cam.dist = lerp(cam.dist, cam.wantDist, k);
+  cam.target.lerp(cam.wantTarget, k);
+  const x = cam.target.x + Math.sin(cam.az) * Math.cos(cam.el) * cam.dist;
+  const z = cam.target.z + Math.cos(cam.az) * Math.cos(cam.el) * cam.dist;
+  const y = cam.target.y + Math.sin(cam.el) * cam.dist;
+  camera.position.set(x, y, z);
+  if (cam.shake > 0) {
+    cam.shake = Math.max(0, cam.shake - dt * 2.4);
+    const s = cam.shake * 0.012;
+    camera.position.x += rnd(-s, s); camera.position.y += rnd(-s, s);
+  }
+  camera.lookAt(cam.target);
+}
+
+// ===================================================================
+//  game state machine
+// ===================================================================
+let mode = 'title';          // title | play | paused | over
+let phase = 'idle';          // idle | aim | descend | settle | close | lift | travel | open | judge
+let phaseT = 0;
+let aimLeft = TIMINGS.aim;
+let strongPlay = false;      // the payout schedule's verdict for this grab
+let joy = { x: 0, z: 0 };
+let travelPhase = 0;
+let lastTick = -1;
+
+const statusEl = $('status');
+function setStatus(txt, color) {
+  statusEl.textContent = txt || '';
+  statusEl.style.color = color || '#fff';
+  statusEl.classList.toggle('on', !!txt);
+}
+
+function startPlay() {
+  save.plays++; save.pot++;
+  // The schedule: the machine only makes a paying grab once its pot clears the
+  // target. Everything in between closes with a grip that cannot hold a plush.
+  strongPlay = save.pot >= save.target;
+  persist();
+  phase = 'aim'; phaseT = 0; aimLeft = TIMINGS.aim;
+  setGrip(GRIP.OPEN_K, GRIP.OPEN_A);
+  $('dropBtn').disabled = false;
+  setStatus('');
+  VIEW.play();
+  updateHud();
+}
+
+function commitDrop() {
+  if (phase !== 'aim') return;
+  phase = 'descend'; phaseT = 0;
+  $('dropBtn').disabled = true;
+  audio.clunk(); buzz(2);
+  setStatus('descending');
+  VIEW.grab();
+}
+
+function beginTravel() {
+  phase = 'travel'; phaseT = 0; travelPhase = 0;
+  setStatus('returning');
+  camGoto(-0.35, 0.18, 1.9, -0.2, MO + 0.4, 0.15);
+}
+
+function finishPlay() {
+  phase = 'idle';
+  const carried = heldPrize();
+  if (!carried) {
+    // nothing in the bin and nothing in the claw
+    setStatus('so close', '#ff5b6e');
+    audio.fail();
+  }
+  restock();
+  setTimeout(() => { if (mode === 'play' && phase === 'idle') startPlay(); }, 900);
+}
+
+function heldPrize() {
+  const hp = claw.body.translation();
+  for (const p of prizes) {
+    if (p.won) continue;
+    const t = p.body.translation();
+    if (Math.hypot(t.x - hp.x, t.z - hp.z) < 0.10 && t.y > hp.y - 0.22) return p;
+  }
+  return null;
+}
+
+function restock() {
+  if (prizes.length >= STOCK) return;
+  const s = rollSpecies();
+  let x, z;
+  do { x = rnd(IN.x0 + 0.12, IN.x1 - 0.12); z = rnd(IN.z0 + 0.10, IN.z1 - 0.14); }
+  while (x < CHUTE.x1 + 0.06 && z > CHUTE.z0 - 0.06);
+  spawnPrize(s, x, IN.top - 0.20, z);
+  audio.blip(600, 0.05, 'triangle', 0.05);
+}
+
+// --- physics-rate machine logic ------------------------------------------
+function stepMachine(dt) {
+  phaseT += dt;
+  const t = claw;
+
+  if (phase === 'aim') {
+    aimLeft -= dt;
+    const sp = 0.34;
+    if (joy.x || joy.z) {
+      t.x = clamp(t.x + joy.x * sp * dt, GANTRY.x0, GANTRY.x1);
+      t.z = clamp(t.z + joy.z * sp * dt, GANTRY.z0, GANTRY.z1);
+    }
+    t.y = GANTRY.yTop;
+    const mag = Math.hypot(joy.x, joy.z);
+    audio.motor(mag > 0.05 ? 1 : 0, mag);
+    const secs = Math.ceil(aimLeft);
+    if (aimLeft < 6 && secs !== lastTick) { lastTick = secs; audio.tick(); }
+    if (aimLeft <= 0) commitDrop();
+  }
+
+  else if (phase === 'descend') {
+    const target = GANTRY.yBot;
+    const v = (GANTRY.yTop - GANTRY.yBot) / TIMINGS.descend;
+    t.y = Math.max(target, t.y - v * dt);
+    audio.motor(0.85, 0.15);
+    if (t.y <= target + 1e-4) { phase = 'settle'; phaseT = 0; audio.motor(0, 0); }
+  }
+
+  else if (phase === 'settle') {
+    if (phaseT >= TIMINGS.settle) {
+      phase = 'close'; phaseT = 0;
+      audio.servo(); buzz(1);
+      setStatus('grabbing');
+    }
+  }
+
+  else if (phase === 'close') {
+    // Closing and holding are separate forces, exactly as they are in the
+    // cabinet: the solenoid draws the talons in at one current, then switches
+    // to the holding current for the lift. Closing at the *holding* stiffness
+    // was the bug behind an unwinnable machine — a strong grab slapped the
+    // plush out from under the claw before the talons could scoop it, so more
+    // grip strength measurably made things worse.
+    //
+    // It also means the close looks and sounds identical on every play. You
+    // cannot tell whether the machine is paying until it starts to lift.
+    const f = clamp(phaseT / TIMINGS.close, 0, 1);
+    setGrip(GRIP.CLOSE_K, lerp(GRIP.OPEN_A, GRIP.SHUT_A, f * f));
+    if (phaseT >= TIMINGS.close) {
+      phase = 'lift'; phaseT = 0; setStatus('lifting'); audio.motor(0.9, 0.4);
+      setGrip(strongPlay ? GRIP.STRONG_K : GRIP.WEAK_K, GRIP.SHUT_A);
+    }
+  }
+
+  else if (phase === 'lift') {
+    const v = (GANTRY.yTop - GANTRY.yBot) / TIMINGS.lift;
+    t.y = Math.min(GANTRY.yTop, t.y + v * dt);
+    // the authentic cruelty: a non-paying grab bleeds its grip away mid-lift
+    if (!strongPlay) {
+      const f = clamp(phaseT / 0.9, 0, 1);
+      setGrip(lerp(GRIP.WEAK_K, GRIP.FADE_K, f), GRIP.SHUT_A);
+    }
+    if (t.y >= GANTRY.yTop - 1e-4) { audio.motor(0, 0); beginTravel(); }
+  }
+
+  else if (phase === 'travel') {
+    const sp = 0.42;
+    if (travelPhase === 0) {          // slide along X first, like the real gantry
+      t.x = t.x > HOME.x ? Math.max(HOME.x, t.x - sp * dt) : Math.min(HOME.x, t.x + sp * dt);
+      if (Math.abs(t.x - HOME.x) < 1e-3) { travelPhase = 1; audio.clunk(); }
+    } else if (travelPhase === 1) {   // then along Z
+      t.z = t.z > HOME.z ? Math.max(HOME.z, t.z - sp * dt) : Math.min(HOME.z, t.z + sp * dt);
+      if (Math.abs(t.z - HOME.z) < 1e-3) {
+        travelPhase = 2; phaseT = 0;
+        audio.clunk(); cam.shake = 1; buzz(3);
+        VIEW.chute();
+      }
+    } else {                          // the arrival jolt: the last thief
+      const j = Math.sin(phaseT * 46) * Math.exp(-phaseT * 5) * 0.014;
+      t.x = HOME.x + j; t.z = HOME.z + j * 0.6;
+      if (phaseT > 0.55) {
+        phase = 'open'; phaseT = 0;
+        setGrip(GRIP.OPEN_K, GRIP.OPEN_A);
+        audio.servo();
+        setStatus('release');
+      }
+    }
+    audio.motor(travelPhase < 2 ? 0.8 : 0, 0.25);
+  }
+
+  else if (phase === 'open') {
+    if (phaseT >= TIMINGS.open + 0.9) { phase = 'judge'; phaseT = 0; }
+  }
+
+  else if (phase === 'judge') {
+    if (phaseT >= 0.6) finishPlay();
+  }
+
+  // drive the kinematic head
+  claw.body.setNextKinematicTranslation({ x: t.x, y: t.y, z: t.z });
+}
+
+// --- did anything fall in the chute? -------------------------------------
+function checkChute() {
+  // reverse: removePrize() splices, and a forward loop skips the next element
+  for (let i = prizes.length - 1; i >= 0; i--) {
+    const p = prizes[i];
+    if (p.won) continue;
+    const tr = p.body.translation();
+    if (tr.y < -0.055 && tr.x > BIN.x0 - 0.02 && tr.x < BIN.x1 + 0.02 &&
+        tr.z > BIN.z0 - 0.02 && tr.z < BIN.z1 + 0.02) {
+      p.won = true;
+      onWin(p);
+    }
+    // rescue anything that squeezes out of the world
+    if (tr.y < -1.2) removePrize(p);
+  }
+}
+
+let pendingWin = null;
+function onWin(p) {
+  save.wins++;
+  save.pot = 0;
+  save.target = 8 + ((Math.random() * 7) | 0);   // fresh hidden schedule
+  save.owned[p.spec.id] = (save.owned[p.spec.id] || 0) + 1;
+  persist();
+  audio.thud();
+  setTimeout(() => audio.jingle(), 180);
+  buzz(4);
+  cam.shake = 1;
+  VIEW.chute();
+  setStatus('WINNER', '#ffd94a');
+  pendingWin = p;
+  setTimeout(() => { if (pendingWin === p) showWin(p); }, 1400);
+}
+
+function showWin(p) {
+  pendingWin = null;
+  const isNew = save.owned[p.spec.id] === 1;
+  $('winArt').src = thumbFor(p.spec.id);
+  $('winName').textContent = p.spec.nm;
+  $('winRar').textContent = RARITY[p.spec.rar];
+  $('winRar').style.color = RAR_COLOR[p.spec.rar];
+  $('winNew').classList.toggle('on', isNew);
+  show('win');
+  removePrize(p);
+  restock();
+  updateHud();
+}
+
+// ===================================================================
+//  thumbnails for the shelf — rendered from the same plush builder
+// ===================================================================
+const thumbs = {};
+function buildThumbs() {
+  if (thumbs.__done) return;
+  const size = 192;
+  const r = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+  r.setSize(size, size);
+  r.setPixelRatio(1);
+  r.toneMapping = THREE.ACESFilmicToneMapping;
+  const sc = new THREE.Scene();
+  const c = new THREE.PerspectiveCamera(30, 1, 0.01, 5);
+  c.position.set(0.20, 0.14, 0.34);
+  c.lookAt(0, 0.01, 0);
+  sc.add(new THREE.HemisphereLight(0xffffff, 0x404060, 1.4));
+  const dl = new THREE.DirectionalLight(0xffffff, 2.4);
+  dl.position.set(0.4, 0.8, 0.6); sc.add(dl);
+  for (const s of SPECIES) {
+    const b = buildPlush(s);
+    b.group.rotation.y = 0.35;
+    sc.add(b.group);
+    r.render(sc, c);
+    thumbs[s.id] = r.domElement.toDataURL('image/png');
+    sc.remove(b.group);
+  }
+  r.dispose();
+  thumbs.__done = true;
+}
+const thumbFor = id => { buildThumbs(); return thumbs[id]; };
+
+// ===================================================================
+//  UI
+// ===================================================================
+const SCREENS = ['title', 'collection', 'settings', 'pause', 'win'];
+function show(name) {
+  for (const s of SCREENS) $(s).classList.toggle('show', s === name);
+  $('hud').classList.toggle('on', !name && mode === 'play');
+}
+
+function updateHud() {
+  $('prizeChip').textContent = '🧸 ' + ownedCount();
+  const tc = $('timeChip');
+  if (phase === 'aim') {
+    tc.textContent = Math.max(0, aimLeft).toFixed(1);
+    tc.classList.toggle('low', aimLeft < 6);
+  } else {
+    tc.textContent = '--.-';
+    tc.classList.remove('low');
+  }
+}
+
+function renderShelf() {
+  buildThumbs();
+  const shelf = $('shelf');
+  shelf.innerHTML = '';
+  let have = 0;
+  for (const s of SPECIES) {
+    const n = save.owned[s.id] || 0;
+    if (n) have++;
+    const d = document.createElement('div');
+    d.className = 'card' + (n ? '' : ' locked') + (n && s.rar === 3 ? ' r3n' : '');
+    d.innerHTML = `<img src="${thumbs[s.id]}" alt="">` +
+      `<div class="nm">${n ? s.nm : '???'}</div>` +
+      (n > 1 ? `<div class="ct">×${n}</div>` : '') +
+      `<div class="rar r${s.rar}"></div>`;
+    shelf.appendChild(d);
+  }
+  $('collStats').textContent =
+    `${have}/${SPECIES.length} species · ${ownedCount()} plush · ` +
+    `${save.wins}/${save.plays} plays won`;
+}
+
+function updateTitleStats() {
+  $('titleStats').innerHTML = save.plays
+    ? `${ownedCount()} plush on the shelf<br>${save.wins} wins from ${save.plays} plays`
+    : `A real claw machine.<br>Real grip strength. Real disappointment.`;
+}
+
+// --- buttons --------------------------------------------------------------
+$('playBtn').onclick = () => {
+  audio.unlock(); audio.coin(); buzz(2);
+  mode = 'play';
+  show(null);
+  startPlay();
+};
+$('collBtn').onclick = () => { audio.unlock(); renderShelf(); show('collection'); };
+$('collBack').onclick = () => show(mode === 'play' ? 'pause' : 'title');
+$('setBtn').onclick = () => { syncToggles(); show('settings'); };
+$('setBack').onclick = () => show(mode === 'play' ? 'pause' : 'title');
+$('menuBtn').onclick = () => { show('pause'); };
+$('viewBtn').onclick = () => {
+  cam.manual = false; cam.mAz = 0; cam.mEl = 0.16; cam.mDist = 3.05;
+  (mode === 'play' && phase === 'aim' ? VIEW.play : VIEW.wide)();
+  buzz(1);
+};
+$('resumeBtn').onclick = () => show(null);
+$('pauseColl').onclick = () => { renderShelf(); show('collection'); };
+$('quitBtn').onclick = () => {
+  mode = 'title'; phase = 'idle';
+  $('dropBtn').disabled = true;
+  VIEW.wide(); updateTitleStats(); show('title');
+};
+$('winOk').onclick = () => { show(null); updateHud(); };
+
+function syncToggles() {
+  $('tSound').textContent = save.sound ? 'ON' : 'OFF';
+  $('tSound').classList.toggle('on', save.sound);
+  $('tHaptics').textContent = save.haptics ? 'ON' : 'OFF';
+  $('tHaptics').classList.toggle('on', save.haptics);
+  $('tShadow').textContent = save.shadows ? 'ON' : 'OFF';
+  $('tShadow').classList.toggle('on', save.shadows);
+}
+$('tSound').onclick = () => { save.sound = !save.sound; store('sound', save.sound); audio.setSound(save.sound); syncToggles(); };
+$('tHaptics').onclick = () => { save.haptics = !save.haptics; store('haptics', save.haptics); buzz(1); syncToggles(); };
+$('tShadow').onclick = () => {
+  save.shadows = !save.shadows; store('shadows', save.shadows);
+  renderer.shadowMap.enabled = save.shadows;
+  machine.userData.key.castShadow = save.shadows;
+  scene.traverse(o => { if (o.isMesh) o.material.needsUpdate = true; });
+  syncToggles();
+};
+
+// --- joystick -------------------------------------------------------------
+{
+  const el = $('stick'), nub = $('nub');
+  let id = null, cx = 0, cy = 0, R = 46;
+  const set = (dx, dy) => {
+    const d = Math.hypot(dx, dy) || 1;
+    const k = Math.min(1, d / R);
+    const ux = dx / d * k, uy = dy / d * k;
+    nub.style.transform = `translate(calc(-50% + ${ux * R}px), calc(-50% + ${uy * R}px))`;
+    // dead zone, then a soft ramp: the real stick is digital-ish near centre
+    const mag = k < 0.18 ? 0 : (k - 0.18) / 0.82;
+    joy.x = ux / (k || 1) * mag;
+    joy.z = uy / (k || 1) * mag;
+    stickPivot.rotation.z = -joy.x * 0.38;
+    stickPivot.rotation.x = joy.z * 0.38;
+  };
+  const rel = () => {
+    id = null; joy.x = joy.z = 0;
+    nub.style.transform = 'translate(-50%,-50%)';
+    stickPivot.rotation.set(0, 0, 0);
+    audio.motor(0, 0);
+  };
+  el.addEventListener('pointerdown', e => {
+    if (id !== null) return;
+    id = e.pointerId;
+    const r = el.getBoundingClientRect();
+    cx = r.left + r.width / 2; cy = r.top + r.height / 2; R = r.width * 0.35;
+    try { el.setPointerCapture(id); } catch (e) {}
+    audio.unlock();
+    set(e.clientX - cx, e.clientY - cy);
+    e.preventDefault();
+  });
+  el.addEventListener('pointermove', e => {
+    if (e.pointerId !== id) return;
+    set(e.clientX - cx, e.clientY - cy);
+    e.preventDefault();
+  });
+  for (const ev of ['pointerup', 'pointercancel'])
+    el.addEventListener(ev, e => { if (e.pointerId === id) rel(); });
+}
+
+// --- drop button ----------------------------------------------------------
+{
+  const b = $('dropBtn');
+  b.addEventListener('pointerdown', e => {
+    if (b.disabled) return;
+    b.classList.add('down');
+    btnCap.position.y = BTN_Y - 0.010;
+    audio.unlock();
+    commitDrop();
+    e.preventDefault();
+  });
+  const up = () => { b.classList.remove('down'); btnCap.position.y = BTN_Y; };
+  for (const ev of ['pointerup', 'pointercancel', 'pointerleave']) b.addEventListener(ev, up);
+}
+
+// --- free look: drag anywhere on the glass to orbit, pinch to zoom --------
+{
+  const el = $('gl');
+  const pts = new Map();            // pointerId -> {x, y}
+  let lastPinch = 0;
+  const AZ = 1.55, EL0 = -0.35, EL1 = 1.05, D0 = 1.1, D1 = 5.6;
+
+  const applyManual = () => {
+    cam.manual = true;
+    cam.wantAz = cam.mAz; cam.wantEl = cam.mEl; cam.wantDist = cam.mDist;
+    cam.az = cam.mAz; cam.el = cam.mEl;         // rotation should feel direct
+  };
+  const centre = () => {
+    let x = 0, y = 0;
+    for (const p of pts.values()) { x += p.x; y += p.y; }
+    return { x: x / pts.size, y: y / pts.size };
+  };
+  const spread = () => {
+    const v = [...pts.values()];
+    return v.length < 2 ? 0 : Math.hypot(v[0].x - v[1].x, v[0].y - v[1].y);
+  };
+
+  el.addEventListener('pointerdown', e => {
+    pts.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    if (pts.size === 2) lastPinch = spread();
+    try { el.setPointerCapture(e.pointerId); } catch (err) {}
+    audio.unlock();
+    e.preventDefault();
+  });
+
+  el.addEventListener('pointermove', e => {
+    if (!pts.has(e.pointerId)) return;
+    const before = centre();
+    pts.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    const after = centre();
+    const dx = after.x - before.x, dy = after.y - before.y;
+    if (Math.abs(dx) + Math.abs(dy) > 3) $('hint').style.display = 'none';
+    cam.mAz = clamp(cam.mAz - dx * 0.007, -AZ, AZ);
+    cam.mEl = clamp(cam.mEl + dy * 0.005, EL0, EL1);
+    if (pts.size >= 2) {
+      const sp = spread();
+      if (lastPinch > 0 && sp > 0) cam.mDist = clamp(cam.mDist * (lastPinch / sp), D0, D1);
+      lastPinch = sp;
+    }
+    applyManual();
+    e.preventDefault();
+  });
+
+  const drop = e => {
+    pts.delete(e.pointerId);
+    lastPinch = pts.size === 2 ? spread() : 0;
+  };
+  for (const ev of ['pointerup', 'pointercancel', 'pointerleave']) el.addEventListener(ev, drop);
+
+  addEventListener('wheel', e => {
+    cam.mDist = clamp((cam.manual ? cam.mDist : cam.wantDist) + e.deltaY * 0.002, D0, D1);
+    applyManual();
+  }, { passive: true });
+}
+
+// --- keyboard (desktop convenience) --------------------------------------
+{
+  const keys = {};
+  addEventListener('keydown', e => {
+    keys[e.code] = true;
+    if (e.code === 'Space') { audio.unlock(); if (mode === 'play') commitDrop(); e.preventDefault(); }
+  });
+  addEventListener('keyup', e => { keys[e.code] = false; });
+  setInterval(() => {
+    if (document.querySelector('.screen.show')) return;
+    const kx = (keys.ArrowRight || keys.KeyD ? 1 : 0) - (keys.ArrowLeft || keys.KeyA ? 1 : 0);
+    const kz = (keys.ArrowDown || keys.KeyS ? 1 : 0) - (keys.ArrowUp || keys.KeyW ? 1 : 0);
+    if (kx || kz) { joy.x = kx; joy.z = kz; }
+    else if (Math.abs(joy.x) === 1 || Math.abs(joy.z) === 1) { joy.x = 0; joy.z = 0; }
+  }, 30);
+}
+
+// ===================================================================
+//  main loop
+// ===================================================================
+function syncMesh(body, mesh) {
+  const t = body.translation(), r = body.rotation();
+  mesh.position.set(t.x, t.y, t.z);
+  mesh.quaternion.set(r.x, r.y, r.z, r.w);
+}
+
+let acc = 0, last = performance.now(), bulbT = 0;
+// Substep cap. 5 is right for a real device; the headless harness raises it,
+// because SwiftShader renders at ~10 fps and the cap would otherwise run the
+// simulation at 0.4x real time and blow every test timeout.
+let maxSteps = 5;
+function frame(now) {
+  requestAnimationFrame(frame);
+  const dt = Math.min(0.05, (now - last) / 1000);
+  last = now;
+
+  const paused = !!document.querySelector('.screen.show') && mode === 'play';
+  const simulate = mode === 'play' && !paused;
+
+  acc += dt;
+  let steps = 0;
+  while (acc >= FIXED && steps < maxSteps) {
+    if (paused) break;
+    if (simulate) stepMachine(FIXED);
+    world.step();
+    acc -= FIXED; steps++;
+  }
+  if (acc > 0.4) acc = 0;
+
+  if (simulate) { checkChute(); updateHud(); }
+
+  // visuals follow physics
+  for (const p of prizes) syncMesh(p.body, p.mesh);
+  for (let i = 0; i < 3; i++) syncMesh(claw.fingers[i], claw.fingerVis[i]);
+  headVis.position.set(claw.x, claw.y, claw.z);
+  bridge.position.x = claw.x;
+  trolley.position.set(claw.x, railY - 0.02, claw.z);
+  const cTop = railY - 0.03, cBot = claw.y + 0.112;   // terminates at the swivel eye
+  const cl = Math.max(0.01, cTop - cBot);
+  cable.position.set(claw.x, cBot + cl / 2, claw.z);
+  cable.scale.y = cl;
+
+  // marquee chase lights
+  bulbT += dt * 6;
+  const bulbs = machine.userData.bulbs;
+  for (let i = 0; i < bulbs.length; i++) {
+    const on = ((i + (bulbT | 0)) % 3) === 0;
+    bulbs[i].material.color.setHex(on ? 0xfff0c0 : 0x6a4a2a);
+  }
+
+  updateCam(dt);
+  renderer.render(scene, camera);
+}
+
+setTimeout(() => { $('hint').style.transition = 'opacity .8s'; $('hint').style.opacity = '0'; }, 12000);
+
+resize();
+VIEW.wide();
+updateTitleStats();
+updateHud();
+requestAnimationFrame(frame);
+
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden) { audio.motor(0, 0); if (mode === 'play') show('pause'); persist(); }
+});
+addEventListener('pagehide', persist);
+
+// service worker
+if ('serviceWorker' in navigator && location.protocol !== 'file:')
+  navigator.serviceWorker.register('sw.js').catch(() => {});
+
+// --- headless test hook (?dbg=1): drives a play without touch input -------
+if (new URLSearchParams(location.search).has('dbg')) {
+  window.__claw = {
+    get phase() { return phase; },
+    get mode() { return mode; },
+    get prizes() { return prizes.length; },
+    get save() { return save; },
+    get claw() { return { x: claw.x, y: claw.y, z: claw.z, k: claw.gripK }; },
+    strong: v => { strongPlay = v; },
+    start: () => $('playBtn').click(),
+    aimAt: (x, z) => { claw.x = clamp(x, GANTRY.x0, GANTRY.x1); claw.z = clamp(z, GANTRY.z0, GANTRY.z1); },
+    drop: () => commitDrop(),
+    // nearest plush to the claw, so a test can aim at something real
+    nearest: () => {
+      let best = null, bd = 1e9;
+      for (const p of prizes) {
+        const t = p.body.translation();
+        const d = Math.hypot(t.x - claw.x, t.z - claw.z);
+        if (d < bd) { bd = d; best = { x: t.x, y: t.y, z: t.z, id: p.spec.id }; }
+      }
+      return best;
+    },
+    heights: () => prizes.map(p => +p.body.translation().y.toFixed(3)),
+    held: () => !!heldPrize(),
+    // machine-space tip positions, so they are directly comparable with
+    // __claw.claw and the prize translations
+    tips: () => claw.fingerVis.map(o => {
+      const v = new THREE.Vector3(0.054, -0.190, 0);
+      o.updateMatrixWorld(true);
+      o.children[0].localToWorld(v);
+      machine.worldToLocal(v);
+      return [+v.x.toFixed(3), +v.y.toFixed(3), +v.z.toFixed(3)];
+    }),
+    tune: o => { Object.assign(GRIP, o.grip || {}); if (o.yBot != null) GANTRY.yBot = o.yBot; },
+    speed: n => { maxSteps = n; },
+  };
+}
+
+} catch (e) {
+  const el = document.getElementById('err');
+  el.style.display = 'block';
+  el.textContent = 'BOOT FAILED\n\n' + (e && e.stack || e);
+}
+</script>
+</body>
+</html>

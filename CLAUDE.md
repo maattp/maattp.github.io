@@ -103,6 +103,18 @@ data by the scripts in `/tools/`, into `/apps/auto/data/`. **OSM is ODbL, so the
 attribution on the launch screen and in the pause menu is a licence condition —
 don't remove it.** See `apps/auto/CLAUDE.md` for how to re-run the import.
 
+## Claw App
+
+### Version Management
+
+**IMPORTANT:** Increment `const VERSION` in `/apps/claw/index.html` once per PR,
+and bump `CACHE` in `/apps/claw/sw.js` (`claw-vN`) when a change must reach
+installed players promptly.
+
+The version renders bottom-right. **Portrait** claw machine, Three.js + Rapier.
+See `apps/claw/CLAUDE.md` — the weak grip is the design, not a bug, and the grip
+constants must be re-derived with `tools/clawgrip.mjs` after any physics change.
+
 ## Zombies App
 
 ### Version Management
