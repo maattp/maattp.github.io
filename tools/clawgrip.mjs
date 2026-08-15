@@ -91,7 +91,7 @@ async function main() {
     const grab = async strong => {
       await waitPhase(s, ['aim']);
       await s.eval(`__claw.strong(${strong})`);
-      const n = await s.eval('__claw.nearest()');
+      const n = await s.eval('__claw.pick()');
       await s.eval(`__claw.aimAt(${n.x}, ${n.z})`);
       await sleep(200);
       const before = await s.eval('__claw.save.wins');

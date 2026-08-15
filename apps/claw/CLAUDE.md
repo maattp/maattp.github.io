@@ -39,7 +39,8 @@ that physically cannot hold a plush.
 - On a weak play the grip additionally **fades** toward `GRIP.FADE_K` over the
   first 0.9 s of the lift — the classic "it had it, and then it just let go".
 - The arrival jolt at the home corner (`travelPhase === 2`) is also real. It is
-  the last chance for a marginal grab to fail, and it takes plenty of them.
+  the last chance for a *marginal* grab to fail — keep its amplitude low enough
+  that it isn't a coin flip on every carry, or the paying play stops paying.
 
 Never "fix" this by making the claw reliably strong. If a change makes the win
 rate feel generous, it has broken the design.
@@ -89,6 +90,12 @@ Other load-bearing details:
 - The cabinet body is built AROUND the prize-bin cavity (`DOOR`), not as a
   solid box with a hole in its front skin — a solid core walls the bin in, and
   the entire payoff happens behind opaque panelling.
+- `GRIP.REL_A` (the release gape) is deliberately WIDER than `GRIP.OPEN_A` (the
+  descent gape), and the joint limits are set from `REL_A`. A plush wedged in
+  the basket does not fall out of a 0.40 rad opening — it rides the gantry into
+  the next play. The `open` phase also jiggles the head and, if something is
+  still held when the phase should end, shakes harder and retries up to three
+  times before moving on.
 - Plush colliders are a handful of balls derived from the same `buildPlush()`
   call that makes the mesh, so what you see is what the claw touches. Add a
   visual flourish with `phys: false` if it should not be grabbable.
@@ -105,7 +112,14 @@ node tools/clawicon.mjs              # re-render the Home Screen PNGs
 `clawtest.mjs` measures **carried** (a prize in the claw at the top of the
 lift) as well as **won**, because a win alone also counts a plush bulldozed
 into the hole and tells you nothing about the grip. Healthy numbers: strong
-carries ~8/8 and wins ~5/8 (the arrival jolt takes the rest); weak wins ≤1/8.
+carries ~6-8/8 and wins ~5/8 (the arrival jolt takes the rest); weak wins ≤1/8.
+It also asserts nothing is still in the claw once the release is over.
+
+`__claw.pick()` — not `nearest()` — is what the harnesses aim with: the highest
+plush inside the gantry's reach and clear of the chute kerb, i.e. what a player
+would go for. Aiming at the *nearest* plush fixated on whatever was parked in
+the chute corner, an unreachable trap, and reported sixteen straight failures
+on the same bunny as though the grip had regressed.
 
 `clawgrip.mjs` interleaves its candidates — one round of each before the second
 round of any. Running them as sequential blocks was order-confounded: the pile

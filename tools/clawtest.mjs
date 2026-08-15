@@ -149,20 +149,22 @@ async function main() {
     const trial = async (strong, i) => {
       await waitPhase(session, ['aim']);
       await session.eval(`__claw.strong(${strong})`);
-      const n = await session.eval('__claw.nearest()');
+      const n = await session.eval('__claw.pick()');
       // aim so the claw axis lands on the plush
       await session.eval(`__claw.aimAt(${n.x}, ${n.z})`);
       await sleep(250);
       const winsBefore = await session.eval('__claw.save.wins');
       await session.eval('__claw.drop()');
-      let carried = false;
+      let carried = false, stuck = false;
       const t0 = Date.now();
       while (Date.now() - t0 < 40000) {
         const st2 = await session.eval(
           '({p: __claw.phase, h: __claw.held(), w: document.getElementById("win").classList.contains("show")})');
         if (st2.w) { await session.eval('document.getElementById("winOk").click()'); continue; }
         if (st2.p === 'travel' && st2.h) carried = true;
-        if (st2.p === 'judge' || st2.p === 'idle') break;
+        // a plush still in the claw once the release is over is a plush that
+        // will ride the gantry into the next play
+        if (st2.p === 'judge' || st2.p === 'idle') { stuck = st2.h; break; }
         await sleep(110);
       }
       if (strong && i === 0) await session.shot('02-strong-release');
@@ -173,16 +175,17 @@ async function main() {
           await session.eval('document.getElementById("winOk").click()');
       }
       const winsAfter = await session.eval('__claw.save.wins');
-      return { won: winsAfter > winsBefore, carried, target: n.id };
+      return { won: winsAfter > winsBefore, carried, stuck, target: n.id };
     };
 
     console.log(`\nweak grabs (the machine is not paying) — ${ROUNDS} rounds:`);
-    let weakWins = 0, weakCarried = 0;
+    let weakWins = 0, weakCarried = 0, stuckCount = 0;
     for (let i = 0; i < ROUNDS; i++) {
       const r = await trial(false, i);
       console.log(`   round ${i + 1}: ${r.target.padEnd(8)} carried=${r.carried ? 'yes' : 'no '} ${r.won ? 'WON (!)' : 'dropped'}`);
       if (r.carried) weakCarried++;
       if (r.won) weakWins++;
+      if (r.stuck) stuckCount++;
     }
     // What matters is the payout, not the carry: a weak grab that survives the
     // lift still has the arrival jolt to get through, and usually doesn't.
@@ -196,6 +199,7 @@ async function main() {
       console.log(`   round ${i + 1}: ${r.target.padEnd(8)} carried=${r.carried ? 'yes' : 'no '} ${r.won ? 'WON' : 'dropped'}`);
       if (r.carried) strongCarried++;
       if (r.won) strongWins++;
+      if (r.stuck) stuckCount++;
     }
     ok(strongCarried >= Math.ceil(ROUNDS * 0.7),
       `strong grip carries the plush to the top (${strongCarried}/${ROUNDS} carried, ${strongWins} won)`);
@@ -203,6 +207,7 @@ async function main() {
       `the payout schedule changes the grip (strong ${strongCarried} vs weak ${weakCarried} carried)`);
 
     console.log('\nintegrity:');
+    ok(stuckCount === 0, `no plush rides the claw past the release (${stuckCount} stuck)`);
     ok(await session.eval('__claw.prizes') >= 25, 'machine restocks after wins');
     const esc = await session.eval('__claw.heights().filter(h => h < -0.40).length');
     ok(esc === 0, `no plush escaped the cabinet (${esc} below the bin floor)`);

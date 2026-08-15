@@ -278,7 +278,11 @@ const GRIP = {
   WEAK_K:   0.11,   // the default. Closes fully, holds almost nothing.
   FADE_K:   0.03,   // weak grabs bleed down to this during the lift
   DAMP:     0.06,
-  OPEN_A:   0.40,   // radians: fingers splayed (a 38 cm gape scoops nothing)
+  OPEN_A:   0.40,   // radians: fingers splayed for the descent (a 38 cm gape
+                    // scoops nothing, so this is deliberately narrow)
+  REL_A:    0.90,   // radians: the release gape. Must be WIDER than OPEN_A —
+                    // a plush wedged into the basket does not fall out of a
+                    // 0.40 rad opening, it just rides back up with the claw.
   SHUT_A:  -0.80,   // radians: fully curled (contact stops them long before this)
 };
 const TIMINGS = { aim: 25, descend: 2.2, settle: 0.25, close: 0.75, lift: 1.9, travel: 2.2, open: 0.45 };
@@ -465,7 +469,11 @@ scene.fog = new THREE.FogExp2(0x0a0714, 0.055);
   pmrem.dispose();
 }
 
-const camera = new THREE.PerspectiveCamera(42, 1, 0.05, 60);
+// 55°, not 42°. A narrow FOV compresses depth, and pointed square-on at a
+// backlit poster it made the whole cabinet read as a flat picture. The wider
+// lens needs the camera ~0.74x closer for the same framing, hence every
+// distance below coming down with it.
+const camera = new THREE.PerspectiveCamera(55, 1, 0.05, 60);
 function resize() {
   const w = innerWidth, h = innerHeight;
   renderer.setSize(w, h, false);
@@ -525,6 +533,14 @@ const backTex = canvasTex(512, 512, (g, w, h) => {
   g.font = '700 22px "Avenir Next", sans-serif';
   g.fillStyle = 'rgba(255,255,255,.75)';
   g.fillText('skill claw · no refunds', w / 2, h * 0.70);
+  // Darken the lower half. The pile sits against the bottom of this poster,
+  // and a uniformly bright backdrop right behind it flattens the whole box.
+  const vg = g.createLinearGradient(0, h * 0.45, 0, h);
+  vg.addColorStop(0, 'rgba(20,4,26,0)'); vg.addColorStop(1, 'rgba(20,4,26,.85)');
+  g.fillStyle = vg; g.fillRect(0, h * 0.45, w, h * 0.55);
+  const eg = g.createRadialGradient(w / 2, h * 0.42, w * 0.30, w / 2, h * 0.42, w * 0.78);
+  eg.addColorStop(0, 'rgba(20,4,26,0)'); eg.addColorStop(1, 'rgba(20,4,26,.6)');
+  g.fillStyle = eg; g.fillRect(0, 0, w, h);
 });
 
 // ===================================================================
@@ -588,7 +604,7 @@ scene.add(room);
     room.add(g);
   }
 
-  const amb = new THREE.HemisphereLight(0x3a2a55, 0x0a0714, 0.55);
+  const amb = new THREE.HemisphereLight(0x3a2a55, 0x0a0714, 0.32);
   scene.add(amb);
 }
 
@@ -661,7 +677,7 @@ box(1.19, 0.016, 0.02, MAT.chrome, 0, -0.60, 0.545, machine);
   // floor is split into four slabs around the chute hole
   const fm = new THREE.MeshStandardMaterial({ color: 0x1b1630, roughness: 0.75, metalness: 0.15 });
   const slab = (x0, x1, z0, z1) => {
-    const m = box(x1 - x0, 0.03, z1 - z0, fm, (x0 + x1) / 2, -0.015, (z0 + z1) / 2);
+    const m = box(x1 - x0, 0.03, z1 - z0, fm, (x0 + x1) / 2, -0.010, (z0 + z1) / 2);
     m.receiveShadow = true;
   };
   slab(IN.x0, CHUTE.x1, IN.z0, CHUTE.z0);
@@ -854,8 +870,11 @@ const MAT_ANOD = new THREE.MeshStandardMaterial({
 
 // interior lighting
 {
-  const key = new THREE.SpotLight(0xfff3dc, 11, 3.4, 0.72, 0.45, 1.6);
-  key.position.set(0.1, IN.top + 0.9, 0.55);
+  // A single strong raking key does the depth work: three even fill lights
+  // lit every surface equally and erased the shadows that tell you where the
+  // pile is in the box.
+  const key = new THREE.SpotLight(0xfff3dc, 20, 3.4, 0.66, 0.42, 1.6);
+  key.position.set(0.42, IN.top + 0.85, 0.62);
   key.target.position.set(0, 0.1, 0);
   key.castShadow = save.shadows;
   key.shadow.mapSize.set(1024, 1024);
@@ -864,11 +883,13 @@ const MAT_ANOD = new THREE.MeshStandardMaterial({
   machine.add(key); machine.add(key.target);
   machine.userData.key = key;
 
-  for (const [x, z, c] of [[-0.34, -0.3, 0xff8fd0], [0.34, -0.3, 0x8fd8ff], [0, 0.34, 0xfff0c8]]) {
-    const pl = new THREE.PointLight(c, 0.8, 1.5, 2);
-    pl.position.set(x, IN.top - 0.06, z);
-    machine.add(pl);
-  }
+  // one cool rim from the back-left, to peel the pile off the poster
+  const rim = new THREE.PointLight(0x8fd8ff, 1.3, 1.5, 2);
+  rim.position.set(-0.40, IN.top - 0.10, -0.34);
+  machine.add(rim);
+  const warm = new THREE.PointLight(0xff8fd0, 0.5, 1.3, 2);
+  warm.position.set(0.30, IN.top - 0.08, 0.30);
+  machine.add(warm);
 }
 
 // ===================================================================
@@ -1119,7 +1140,7 @@ const claw = {
       { x: sn, y: 0, z: cs });        // tangential hinge, same in both frames
     const j = world.createImpulseJoint(jd, claw.body, fb, true);
     try { j.setContactsEnabled(false); } catch (e) {}
-    try { j.setLimits(GRIP.SHUT_A - 0.05, GRIP.OPEN_A + 0.05); } catch (e) {}
+    try { j.setLimits(GRIP.SHUT_A - 0.05, GRIP.REL_A + 0.05); } catch (e) {}
     try { j.configureMotorModel(RAPIER.MotorModel.ForceBased); } catch (e) {}
     j.configureMotorPosition(GRIP.OPEN_A, GRIP.OPEN_K, GRIP.DAMP);
     claw.fingers.push(fb);
@@ -1251,11 +1272,14 @@ fillMachine();
 // ===================================================================
 //  camera rig
 // ===================================================================
+// Default to a three-quarter view. Dead-on (az 0) hides the box's depth
+// entirely — you see one face and the machine looks painted on.
+const AZ0 = 0.30, EL0 = 0.20, DIST0 = 2.55;
 const cam = {
-  az: 0, el: 0.16, dist: 3.5, target: new THREE.Vector3(0, MO + 0.52, 0),
-  wantAz: 0, wantEl: 0.16, wantDist: 3.5, wantTarget: new THREE.Vector3(0, MO + 0.52, 0),
+  az: AZ0, el: EL0, dist: 2.6, target: new THREE.Vector3(0, MO + 0.52, 0),
+  wantAz: AZ0, wantEl: EL0, wantDist: 2.6, wantTarget: new THREE.Vector3(0, MO + 0.52, 0),
   shake: 0,
-  manual: false, mAz: 0, mEl: 0.16, mDist: 3.05,
+  manual: false, mAz: AZ0, mEl: EL0, mDist: DIST0,
 };
 // Once the player has dragged, the angle belongs to them: presets may still
 // move the target and the distance, but they stop yanking the view back to
@@ -1272,10 +1296,10 @@ function camGoto(az, el, dist, tx, ty, tz, force) {
 // ~0.6 m nearer than the orbit target and looms accordingly. These distances
 // were picked from screenshots, not from the distance to the box centre.
 const VIEW = {
-  play:  () => camGoto(cam.az, cam.el, 3.05, 0, MO + 0.50, 0),
-  wide:  () => camGoto(0, 0.15, 3.70, 0, MO + 0.52, 0),
-  grab:  () => camGoto(cam.az * 0.5, 0.13, 2.35, claw.x * 0.4, MO + 0.20, 0.02),
-  chute: () => camGoto(-0.30, 0.24, 1.35, -0.32, MO - 0.26, 0.30, true),
+  play:  () => camGoto(AZ0, EL0, 2.55, 0, MO + 0.46, 0),
+  wide:  () => camGoto(AZ0 + 0.06, 0.18, 3.05, 0, MO + 0.48, 0),
+  grab:  () => camGoto(AZ0 * 0.7, 0.16, 1.95, claw.x * 0.4, MO + 0.20, 0.02),
+  chute: () => camGoto(-0.32, 0.26, 1.00, -0.32, MO - 0.26, 0.30, true),
 };
 function updateCam(dt) {
   const k = 1 - Math.pow(0.0015, dt);
@@ -1305,6 +1329,7 @@ let aimLeft = TIMINGS.aim;
 let strongPlay = false;      // the payout schedule's verdict for this grab
 let joy = { x: 0, z: 0 };
 let travelPhase = 0;
+let releaseTries = 0;
 let lastTick = -1;
 
 const statusEl = $('status');
@@ -1453,11 +1478,14 @@ function stepMachine(dt) {
         VIEW.chute();
       }
     } else {                          // the arrival jolt: the last thief
-      const j = Math.sin(phaseT * 46) * Math.exp(-phaseT * 5) * 0.014;
+      // Keep this amplitude low. The jolt is the last chance for a *marginal*
+      // grab to fail; at 0.014 it was a coin flip on every carry and the
+      // paying play stopped paying.
+      const j = Math.sin(phaseT * 46) * Math.exp(-phaseT * 5) * 0.009;
       t.x = HOME.x + j; t.z = HOME.z + j * 0.6;
       if (phaseT > 0.55) {
-        phase = 'open'; phaseT = 0;
-        setGrip(GRIP.OPEN_K, GRIP.OPEN_A);
+        phase = 'open'; phaseT = 0; releaseTries = 0;
+        setGrip(GRIP.OPEN_K, GRIP.REL_A);
         audio.servo();
         setStatus('release');
       }
@@ -1466,7 +1494,27 @@ function stepMachine(dt) {
   }
 
   else if (phase === 'open') {
-    if (phaseT >= TIMINGS.open + 0.9) { phase = 'judge'; phaseT = 0; }
+    // A plush can wedge in the basket and ride the claw back to the next play.
+    // The cabinet's answer is to shake the head, so that is the answer here:
+    // jiggle through the release, and if something is still stuck when the
+    // phase should end, shake harder and try again rather than moving on.
+    const sh = Math.sin(phaseT * 38) * Math.exp(-(phaseT % 0.9) * 3) * 0.010;
+    t.x = HOME.x + sh; t.z = HOME.z + sh * 0.7;
+    if (phaseT >= TIMINGS.open + 0.9) {
+      const stuck = heldPrize();
+      if (stuck && releaseTries < 3) {
+        releaseTries++;
+        phaseT = 0;
+        stuck.body.wakeUp();
+        // a small downward nudge, plus spin, to break the friction lock
+        stuck.body.applyImpulse({ x: rnd(-0.02, 0.02), y: -0.05, z: rnd(-0.02, 0.02) }, true);
+        stuck.body.applyTorqueImpulse({ x: rnd(-0.004, 0.004), y: rnd(-0.004, 0.004), z: rnd(-0.004, 0.004) }, true);
+        setGrip(GRIP.OPEN_K, GRIP.REL_A);
+        audio.clunk(); cam.shake = 0.6;
+      } else {
+        phase = 'judge'; phaseT = 0;
+      }
+    }
   }
 
   else if (phase === 'judge') {
@@ -1617,7 +1665,7 @@ $('setBtn').onclick = () => { syncToggles(); show('settings'); };
 $('setBack').onclick = () => show(mode === 'play' ? 'pause' : 'title');
 $('menuBtn').onclick = () => { show('pause'); };
 $('viewBtn').onclick = () => {
-  cam.manual = false; cam.mAz = 0; cam.mEl = 0.16; cam.mDist = 3.05;
+  cam.manual = false; cam.mAz = AZ0; cam.mEl = EL0; cam.mDist = DIST0;
   (mode === 'play' && phase === 'aim' ? VIEW.play : VIEW.wide)();
   buzz(1);
 };
@@ -1709,7 +1757,7 @@ $('tShadow').onclick = () => {
   const el = $('gl');
   const pts = new Map();            // pointerId -> {x, y}
   let lastPinch = 0;
-  const AZ = 1.55, EL0 = -0.35, EL1 = 1.05, D0 = 1.1, D1 = 5.6;
+  const AZ = 1.55, ELMIN = -0.32, ELMAX = 1.00, D0 = 0.85, D1 = 4.2;
 
   const applyManual = () => {
     cam.manual = true;
@@ -1742,7 +1790,7 @@ $('tShadow').onclick = () => {
     const dx = after.x - before.x, dy = after.y - before.y;
     if (Math.abs(dx) + Math.abs(dy) > 3) $('hint').style.display = 'none';
     cam.mAz = clamp(cam.mAz - dx * 0.007, -AZ, AZ);
-    cam.mEl = clamp(cam.mEl + dy * 0.005, EL0, EL1);
+    cam.mEl = clamp(cam.mEl + dy * 0.005, ELMIN, ELMAX);
     if (pts.size >= 2) {
       const sp = spread();
       if (lastPinch > 0 && sp > 0) cam.mDist = clamp(cam.mDist * (lastPinch / sp), D0, D1);
@@ -1867,6 +1915,21 @@ if (new URLSearchParams(location.search).has('dbg')) {
     start: () => $('playBtn').click(),
     aimAt: (x, z) => { claw.x = clamp(x, GANTRY.x0, GANTRY.x1); claw.z = clamp(z, GANTRY.z0, GANTRY.z1); },
     drop: () => commitDrop(),
+    // What a player would actually aim at: the plush sitting highest on the
+    // pile, inside the gantry's reach and clear of the chute kerb. `nearest`
+    // fixated on whatever was parked by the chute — an unreachable corner
+    // trap — and reported sixteen straight failures on the same bunny.
+    pick: () => {
+      let best = null, bs = -1e9;
+      for (const p of prizes) {
+        if (p.won) continue;
+        const t = p.body.translation();
+        if (t.x < GANTRY.x0 || t.x > GANTRY.x1 || t.z < GANTRY.z0 || t.z > GANTRY.z1) continue;
+        if (t.x < CHUTE.x1 + 0.10 && t.z > CHUTE.z0 - 0.10) continue;
+        if (t.y > bs) { bs = t.y; best = { x: t.x, y: t.y, z: t.z, id: p.spec.id }; }
+      }
+      return best;
+    },
     // nearest plush to the claw, so a test can aim at something real
     nearest: () => {
       let best = null, bd = 1e9;
