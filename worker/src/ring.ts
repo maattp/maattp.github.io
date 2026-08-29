@@ -165,7 +165,7 @@ ringApp.post("/mcp", async (c) => {
   switch (method) {
     case "initialize": {
       const asked = (params?.protocolVersion as string) || FALLBACK_PROTOCOL;
-      return c.json(
+      return respond(c,
         result(id, {
           protocolVersion: asked,
           capabilities: { tools: { listChanged: false }, prompts: { listChanged: false } },
@@ -180,16 +180,16 @@ ringApp.post("/mcp", async (c) => {
       return c.body(null, 202);
 
     case "ping":
-      return c.json(result(id, {}));
+      return respond(c, result(id, {}));
 
     case "tools/list":
-      return c.json(result(id, { tools: [TOOL] }));
+      return respond(c, result(id, { tools: [TOOL] }));
 
     case "prompts/list":
-      return c.json(result(id, { prompts: [PROMPT] }));
+      return respond(c, result(id, { prompts: [PROMPT] }));
 
     case "prompts/get":
-      return c.json(
+      return respond(c,
         result(id, {
           description: PROMPT.description,
           messages: [
@@ -201,12 +201,12 @@ ringApp.post("/mcp", async (c) => {
     case "tools/call": {
       const name = params?.name as string;
       if (name !== TOOL.name) {
-        return c.json(failure(id, -32602, `unknown tool: ${name}`));
+        return respond(c, failure(id, -32602, `unknown tool: ${name}`));
       }
       const args = (params?.arguments ?? {}) as { text?: unknown };
       const text = typeof args.text === "string" ? args.text.trim() : "";
       if (!text) {
-        return c.json(
+        return respond(c,
           result(id, {
             content: [{ type: "text", text: "Nothing sent — the message was empty." }],
             isError: true,
@@ -226,7 +226,7 @@ ringApp.post("/mcp", async (c) => {
         delivered = false;
       }
 
-      return c.json(
+      return respond(c,
         result(id, {
           content: [
             {
@@ -242,7 +242,7 @@ ringApp.post("/mcp", async (c) => {
 
     default:
       if (isNotification) return c.body(null, 202);
-      return c.json(failure(id, -32601, `method not found: ${method}`));
+      return respond(c, failure(id, -32601, `method not found: ${method}`));
   }
 });
 
