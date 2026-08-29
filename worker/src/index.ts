@@ -3,11 +3,13 @@ import { cors } from "hono/cors";
 import { Kart3Room } from "./kart3room";
 import { MahjongRoom } from "./mahjongroom";
 import { HardRoom } from "./hardroom";
+import { RingRoom } from "./ringroom";
+import { ringApp, authorized } from "./ring";
 import { hardApp, WS_TICKET_PREFIX } from "./hard";
 import { scheduled } from "./hardcron";
 import type { HardEnv } from "./hardlogic";
 
-export { Kart3Room, MahjongRoom, HardRoom };
+export { Kart3Room, MahjongRoom, HardRoom, RingRoom };
 
 const SESSION_TTL = 365 * 24 * 60 * 60; // 1 year in seconds
 const SESSION_PREFIX = "__session:";
@@ -15,7 +17,10 @@ const SESSION_PREFIX = "__session:";
 type Bindings = HardEnv & {
   KART3_ROOM: DurableObjectNamespace;
   MAHJONG_ROOM: DurableObjectNamespace;
+  RING_ROOM: DurableObjectNamespace;
   GOOGLE_CLIENT_ID: string;
+  RING_MCP_TOKEN: string;
+  RING_WS_TOKEN: string;
 };
 
 type Variables = {
@@ -164,6 +169,24 @@ app.get("/hard/ws", async (c) => {
   const url = new URL("https://do/ws");
   url.searchParams.set("email", email);
   return stub.fetch(url.toString(), c.req.raw);
+});
+
+// --- Ring relay: the Mac mini's outbound WebSocket (registered before cors,
+// same immutable-101-headers reason as kart3/mahjong/hard).
+//
+// Unlike the browser-facing sockets above, the client here is a Node process
+// on Matt's mini, so it CAN send an Authorization header — no ticket dance
+// needed. It sends no Origin, so the origin gate would reject it; the bearer
+// token is the credential instead. Deliberately a different secret from the
+// Pebble-facing RING_MCP_TOKEN: leaking the send token must not let anyone
+// attach as the coordinator and receive Matt's ring messages.
+app.get("/ring/ws", async (c) => {
+  if (c.req.header("Upgrade") !== "websocket") return c.json({ error: "expected websocket" }, 426);
+  if (!authorized(c.req.header("Authorization"), c.env.RING_WS_TOKEN)) {
+    return c.json({ error: "unauthorized" }, 401);
+  }
+  const stub = c.env.RING_ROOM.get(c.env.RING_ROOM.idFromName("ring"));
+  return stub.fetch("https://do/ws", c.req.raw);
 });
 
 app.use("*", cors({
@@ -735,6 +758,7 @@ app.delete("/photos/:id", async (c) => {
 
 // --- 75 Hard couples tracker: REST routes (session-gated inside hardApp) ---
 app.route("/hard", hardApp);
+app.route("/ring", ringApp);
 
 export default {
   fetch: app.fetch,

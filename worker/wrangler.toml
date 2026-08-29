@@ -22,12 +22,15 @@ ALLOWED_EMAILS = "m.polkiewicz@gmail.com,ting520143@gmail.com"
 # (and worker/.dev.vars for local dev — gitignored).
 VAPID_PUBLIC_KEY = "BEh-HVZvaC3p5R3vm9vaddvI-SvWAJ2N6kcocMcyOcaWhLDEgVc5bQjzKT8knGN509v8GOGDujwu2OoQfwdKiLs"
 VAPID_SUBJECT = "mailto:m.polkiewicz@gmail.com"
+# RING_MCP_TOKEN (Pebble -> relay) and RING_WS_TOKEN (mini's socket) are
+# secrets: `wrangler secret put RING_MCP_TOKEN` / `... RING_WS_TOKEN`.
 
 [durable_objects]
 bindings = [
   { name = "KART3_ROOM", class_name = "Kart3Room" },
   { name = "MAHJONG_ROOM", class_name = "MahjongRoom" },
   { name = "HARD_ROOM", class_name = "HardRoom" },
+  { name = "RING_ROOM", class_name = "RingRoom" },
 ]
 
 [[migrations]]
@@ -41,6 +44,10 @@ new_sqlite_classes = ["MahjongRoom"]
 [[migrations]]
 tag = "hard-room-v1"
 new_sqlite_classes = ["HardRoom"]
+
+[[migrations]]
+tag = "ring-room-v1"
+new_sqlite_classes = ["RingRoom"]
 
 [triggers]
 crons = ["*/15 * * * *"]
