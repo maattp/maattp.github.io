@@ -91,17 +91,19 @@ function failure(id: unknown, code: number, message: string) {
 
 export const ringApp = new Hono<{ Bindings: RingBindings }>();
 
-// Streamable HTTP clients probe GET (and sometimes DELETE) on the endpoint
-// before POSTing: GET asks to open an SSE stream, DELETE ends a session. This
-// server does neither — every response is a plain JSON body on the POST. The
-// spec's answer for that is 405, and it matters: Hono's default for an
-// unmatched method is 404, which clients read as "no such endpoint" and give
-// up rather than falling back to POST.
-const methodNotAllowed = (c: any) =>
-  c.json({ error: "method not allowed; POST JSON-RPC to this endpoint" }, 405, { Allow: "POST" });
-
-ringApp.get("/mcp", methodNotAllowed);
-ringApp.delete("/mcp", methodNotAllowed);
+// Clients probe this endpoint with GET before POSTing. The Streamable HTTP
+// spec says a server with no SSE stream should answer 405, but Pebble's client
+// treats anything other than 200 as the endpoint being down ("Expected status
+// code 200 but was 405"), so GET returns a small 200 health body instead. No
+// SSE stream is opened — every real response is a JSON body on the POST.
+// DELETE (session teardown) has no meaning here; 405 is fine for it, since no
+// client health-checks with DELETE.
+ringApp.get("/mcp", (c) =>
+  c.json({ ok: true, server: SERVER_INFO.name, transport: "streamable-http", method: "POST" })
+);
+ringApp.delete("/mcp", (c) =>
+  c.json({ error: "method not allowed; POST JSON-RPC to this endpoint" }, 405, { Allow: "POST" })
+);
 
 ringApp.post("/mcp", async (c) => {
   if (!authorized(c.req.header("Authorization"), c.env.RING_MCP_TOKEN)) {
