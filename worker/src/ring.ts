@@ -87,10 +87,7 @@ const PROMPT = {
 function respond(c: any, payload: unknown) {
   const accept = c.req.header("Accept") ?? "";
   if (accept.includes("text/event-stream")) {
-    return new Response(`event: message
-data: ${JSON.stringify(payload)}
-
-`, {
+    return new Response(`event: message\ndata: ${JSON.stringify(payload)}\n\n`, {
       headers: SSE_HEADERS,
     });
   }
@@ -116,6 +113,9 @@ export const ringApp = new Hono<{ Bindings: RingBindings }>();
 const STREAM_TTL_MS = 30 * 60 * 1000;
 const KEEPALIVE_MS = 20 * 1000;
 
+const SSE_COMMENT_CONNECTED = ": connected\n\n";
+const SSE_COMMENT_KEEPALIVE = ": keepalive\n\n";
+
 const SSE_HEADERS = {
   "content-type": "text/event-stream; charset=utf-8",
   "cache-control": "no-cache, no-transform",
@@ -127,16 +127,12 @@ ringApp.get("/mcp", (c) => {
   const enc = new TextEncoder();
   const stream = new ReadableStream({
     async start(controller) {
-      controller.enqueue(enc.encode(": connected
-
-"));
+      controller.enqueue(enc.encode(SSE_COMMENT_CONNECTED));
       const until = Date.now() + STREAM_TTL_MS;
       try {
         while (Date.now() < until) {
           await new Promise((r) => setTimeout(r, KEEPALIVE_MS));
-          controller.enqueue(enc.encode(": keepalive
-
-"));
+          controller.enqueue(enc.encode(SSE_COMMENT_KEEPALIVE));
         }
         controller.close();
       } catch {
