@@ -81,6 +81,22 @@ const PROMPT = {
   description: "When to route a ring request to Matt's coordinator, and when not to.",
 };
 
+// A Streamable HTTP client may ask for its POST reply as SSE instead of JSON.
+// Same JSON-RPC payload either way; only the framing differs. Single event,
+// then the stream closes — there is nothing further to send.
+function respond(c: any, payload: unknown) {
+  const accept = c.req.header("Accept") ?? "";
+  if (accept.includes("text/event-stream")) {
+    return new Response(`event: message
+data: ${JSON.stringify(payload)}
+
+`, {
+      headers: SSE_HEADERS,
+    });
+  }
+  return c.json(payload);
+}
+
 function result(id: unknown, value: unknown) {
   return { jsonrpc: "2.0", id, result: value };
 }
@@ -91,16 +107,45 @@ function failure(id: unknown, code: number, message: string) {
 
 export const ringApp = new Hono<{ Bindings: RingBindings }>();
 
-// Clients probe this endpoint with GET before POSTing. The Streamable HTTP
-// spec says a server with no SSE stream should answer 405, but Pebble's client
-// treats anything other than 200 as the endpoint being down ("Expected status
-// code 200 but was 405"), so GET returns a small 200 health body instead. No
-// SSE stream is opened — every real response is a JSON body on the POST.
-// DELETE (session teardown) has no meaning here; 405 is fine for it, since no
-// client health-checks with DELETE.
-ringApp.get("/mcp", (c) =>
-  c.json({ ok: true, server: SERVER_INFO.name, transport: "streamable-http", method: "POST" })
-);
+// GET opens the Streamable HTTP server->client SSE stream. This server never
+// initiates anything (the one tool is fire-and-forget, and there is no read
+// path), so the stream carries nothing but keepalive comments — but Pebble's
+// client requires it to be a real text/event-stream and refuses anything else.
+// It closes itself after STREAM_TTL_MS so a forgotten client can't hold a
+// request open indefinitely; clients reconnect on their own.
+const STREAM_TTL_MS = 30 * 60 * 1000;
+const KEEPALIVE_MS = 20 * 1000;
+
+const SSE_HEADERS = {
+  "content-type": "text/event-stream; charset=utf-8",
+  "cache-control": "no-cache, no-transform",
+  connection: "keep-alive",
+  "x-accel-buffering": "no",
+};
+
+ringApp.get("/mcp", (c) => {
+  const enc = new TextEncoder();
+  const stream = new ReadableStream({
+    async start(controller) {
+      controller.enqueue(enc.encode(": connected
+
+"));
+      const until = Date.now() + STREAM_TTL_MS;
+      try {
+        while (Date.now() < until) {
+          await new Promise((r) => setTimeout(r, KEEPALIVE_MS));
+          controller.enqueue(enc.encode(": keepalive
+
+"));
+        }
+        controller.close();
+      } catch {
+        // client hung up mid-write; nothing to clean up
+      }
+    },
+  });
+  return new Response(stream, { headers: SSE_HEADERS });
+});
 ringApp.delete("/mcp", (c) =>
   c.json({ error: "method not allowed; POST JSON-RPC to this endpoint" }, 405, { Allow: "POST" })
 );
