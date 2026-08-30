@@ -60,6 +60,19 @@ export class RingRoom {
       return Response.json({ delivered });
     }
 
+    // Pre-built payload from the ChatRoom DO (chat messages for Claude).
+    // Passed through verbatim so this object stays a dumb pipe; /send remains
+    // the Pebble path with its own envelope.
+    if (url.pathname === "/forward" && request.method === "POST") {
+      const payload = await request.text();
+      const live = this.sockets();
+      let delivered = false;
+      for (const ws of live) {
+        try { ws.send(payload); delivered = true; } catch { /* closing */ }
+      }
+      return Response.json({ delivered });
+    }
+
     if (url.pathname === "/status") {
       const attached = this.sockets().length;
       return Response.json({ attached, online: attached > 0 });

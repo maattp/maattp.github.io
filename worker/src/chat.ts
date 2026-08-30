@@ -22,7 +22,7 @@ export type ChatBindings = {
   CHAT_CLAUDE_TOKEN: string; // secret
 };
 
-type Variables = { sender: string };
+type Variables = { sender: string; email: string | null };
 
 const SESSION_PREFIX = "__session:";
 export const CHAT_WS_TICKET_PREFIX = "__chatws:";
@@ -52,8 +52,8 @@ function room(env: ChatBindings, thread: string): DurableObjectStub {
 // Resolve the caller to a sender name, or null. Claude's token is checked
 // first with the same constant-time compare the ring uses; anything else is
 // treated as a session UUID.
-async function resolveSender(env: ChatBindings, authHeader: string | undefined): Promise<string | null> {
-  if (authorized(authHeader, env.CHAT_CLAUDE_TOKEN)) return "claude";
+async function resolveSender(env: ChatBindings, authHeader: string | undefined): Promise<{ sender: string; email: string | null } | null> {
+  if (authorized(authHeader, env.CHAT_CLAUDE_TOKEN)) return { sender: "claude", email: null };
   if (!authHeader?.startsWith("Bearer ")) return null;
   const email = await env.KV.get(`${SESSION_PREFIX}${authHeader.slice(7)}`);
   if (!email) return null;
@@ -61,16 +61,48 @@ async function resolveSender(env: ChatBindings, authHeader: string | undefined):
   // Allowlist re-checked on every request, matching /kv and /hard behaviour.
   const allowed = env.ALLOWED_EMAILS.split(",").map((e) => e.trim().toLowerCase());
   if (!allowed.includes(lower)) return null;
-  return parseSenderMap(env.CHAT_SENDERS).get(lower) ?? null;
+  const sender = parseSenderMap(env.CHAT_SENDERS).get(lower);
+  return sender ? { sender, email: lower } : null;
 }
 
 export const chatApp = new Hono<{ Bindings: ChatBindings; Variables: Variables }>();
 
 chatApp.use("*", async (c, next) => {
-  const sender = await resolveSender(c.env, c.req.header("Authorization"));
-  if (!sender) return c.json({ error: "unauthorized" }, 401);
-  c.set("sender", sender);
+  const who = await resolveSender(c.env, c.req.header("Authorization"));
+  if (!who) return c.json({ error: "unauthorized" }, 401);
+  c.set("sender", who.sender);
+  c.set("email", who.email);
   await next();
+});
+
+// Who am I, and which threads can I see? The client builds its thread list
+// from this rather than hardcoding membership — Tingting's app never learns
+// that dm exists.
+chatApp.get("/me", (c) => {
+  const sender = c.get("sender");
+  const threads = Object.keys(THREADS).filter((t) => memberOf(t, sender));
+  return c.json({ sender, threads });
+});
+
+// Web Push subscriptions, keyed by endpoint, owned by email. Claude has no
+// email and no lock screen; its token gets 400 here.
+chatApp.post("/push/subscribe", async (c) => {
+  const email = c.get("email");
+  if (!email) return c.json({ error: "humans only" }, 400);
+  const b = (await c.req.json().catch(() => null)) as { endpoint?: string; keys?: { p256dh?: string; auth?: string } } | null;
+  if (!b?.endpoint || !b.keys?.p256dh || !b.keys?.auth) return c.json({ error: "bad subscription" }, 400);
+  await c.env.DB.prepare(
+    `INSERT INTO chat_push_subs (endpoint, email, p256dh, auth, created_at) VALUES (?, ?, ?, ?, ?)
+     ON CONFLICT (endpoint) DO UPDATE SET email = excluded.email, p256dh = excluded.p256dh, auth = excluded.auth`
+  ).bind(b.endpoint, email, b.keys.p256dh, b.keys.auth, Date.now()).run();
+  return c.json({ ok: true });
+});
+
+chatApp.post("/push/unsubscribe", async (c) => {
+  const b = (await c.req.json().catch(() => null)) as { endpoint?: string } | null;
+  if (!b?.endpoint) return c.json({ error: "bad request" }, 400);
+  await c.env.DB.prepare("DELETE FROM chat_push_subs WHERE endpoint = ?").bind(b.endpoint).run();
+  return c.json({ ok: true });
 });
 
 // Membership gate for thread-addressed routes. Non-members get 404, not 403:

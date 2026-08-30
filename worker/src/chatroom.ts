@@ -11,8 +11,16 @@
 // before anything reaches this object; requests here carry an already-resolved
 // sender. Reads never come here — the worker queries D1 directly.
 
+import { buildPushRequest } from "./hardpush.ts";
+import { parseSenderMap, THREADS } from "./chat.ts";
+
 export type ChatEnv = {
   DB: D1Database;
+  RING_ROOM: DurableObjectNamespace;
+  CHAT_SENDERS: string;
+  VAPID_PUBLIC_KEY: string;
+  VAPID_PRIVATE_KEY: string;
+  VAPID_SUBJECT: string;
 };
 
 const BODY_MAX = 8 * 1024;        // one paste must not wedge a thread
@@ -108,6 +116,9 @@ export class ChatRoom {
 
       const message = { id: b.msgId, thread: b.thread, seq, sender: b.sender, body, created_at: createdAt, client_at: b.clientAt ?? null, reply_to: b.replyTo ?? null };
       this.broadcast({ type: "message", message }); // after commit, never before
+      // Push + Claude-forward are best-effort and must not delay the sender's
+      // 200 — waitUntil keeps them running after the response is returned.
+      this.state.waitUntil(this.afterMessage(message));
       return Response.json({ message });
     }
 
@@ -164,6 +175,64 @@ export class ChatRoom {
     }
 
     return new Response("not found", { status: 404 });
+  }
+
+  // Who has a live socket right now — used to avoid buzzing a phone for a
+  // message already on screen.
+  private connectedSenders(): Set<string> {
+    const set = new Set<string>();
+    for (const ws of this.state.getWebSockets()) {
+      const a = ws.deserializeAttachment() as Attachment | null;
+      if (a) set.add(a.sender);
+    }
+    return set;
+  }
+
+  private async afterMessage(message: { thread: string; sender: string; body: string; id: string }): Promise<void> {
+    const members = THREADS[message.thread] ?? [];
+    const connected = this.connectedSenders();
+
+    // --- Web Push to offline humans (assumption 11: body included) ---
+    const emailOf = new Map<string, string>();
+    for (const [email, name] of parseSenderMap(this.env.CHAT_SENDERS)) emailOf.set(name, email);
+    const vapid = { subject: this.env.VAPID_SUBJECT, publicKey: this.env.VAPID_PUBLIC_KEY, privateKey: this.env.VAPID_PRIVATE_KEY };
+    for (const member of members) {
+      if (member === message.sender || member === "claude" || connected.has(member)) continue;
+      const email = emailOf.get(member);
+      if (!email) continue;
+      const subs = await this.env.DB.prepare(
+        "SELECT endpoint, p256dh, auth FROM chat_push_subs WHERE email = ?"
+      ).bind(email).all<{ endpoint: string; p256dh: string; auth: string }>();
+      for (const sub of subs.results) {
+        try {
+          const req = await buildPushRequest(
+            { title: message.sender === "claude" ? "Claude" : message.sender.charAt(0).toUpperCase() + message.sender.slice(1),
+              body: message.body.slice(0, 500), thread: message.thread, seq: (message as { seq?: number }).seq },
+            sub, vapid, 24 * 3600
+          );
+          const res = await fetch(sub.endpoint, { method: req.method, headers: req.headers, body: req.body as unknown as BodyInit });
+          if (res.status === 404 || res.status === 410) {
+            await this.env.DB.prepare("DELETE FROM chat_push_subs WHERE endpoint = ?").bind(sub.endpoint).run();
+          }
+        } catch { /* push is best-effort by design */ }
+      }
+    }
+
+    // --- Forward to Claude's channel (the ring agent's socket) ---
+    // dm: everything that isn't Claude's own message. group: only @claude
+    // mentions — the agent should not read the couple's chatter.
+    if (message.sender !== "claude" && members.includes("claude")) {
+      const mentioned = message.thread === "dm" || /@claude\b/i.test(message.body);
+      if (mentioned) {
+        try {
+          const stub = this.env.RING_ROOM.get(this.env.RING_ROOM.idFromName("ring"));
+          await stub.fetch("https://do/forward", {
+            method: "POST",
+            body: JSON.stringify({ type: "chat", thread: message.thread, sender: message.sender, message_id: message.id, text: message.body, at: Date.now() }),
+          });
+        } catch { /* agent offline; the message is in the thread regardless */ }
+      }
+    }
   }
 
   async webSocketMessage(ws: WebSocket, message: string | ArrayBuffer): Promise<void> {
