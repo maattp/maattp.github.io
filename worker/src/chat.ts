@@ -118,7 +118,9 @@ chatApp.post("/push/subscribe", async (c) => {
   const email = c.get("email");
   if (!email) return c.json({ error: "humans only" }, 400);
   const b = (await c.req.json().catch(() => null)) as { endpoint?: string; keys?: { p256dh?: string; auth?: string } } | null;
-  if (!b?.endpoint || !b.keys?.p256dh || !b.keys?.auth) return c.json({ error: "bad subscription" }, 400);
+  // https:// shape check matches hard.ts: afterMessage() will server-side
+  // fetch() whatever lands here, so don't store a URL we wouldn't call.
+  if (!b?.endpoint?.startsWith("https://") || !b.keys?.p256dh || !b.keys?.auth) return c.json({ error: "bad subscription" }, 400);
   await c.env.DB.prepare(
     `INSERT INTO chat_push_subs (endpoint, email, p256dh, auth, created_at) VALUES (?, ?, ?, ?, ?)
      ON CONFLICT (endpoint) DO UPDATE SET email = excluded.email, p256dh = excluded.p256dh, auth = excluded.auth`
@@ -127,9 +129,13 @@ chatApp.post("/push/subscribe", async (c) => {
 });
 
 chatApp.post("/push/unsubscribe", async (c) => {
+  const email = c.get("email");
+  if (!email) return c.json({ error: "humans only" }, 400);
   const b = (await c.req.json().catch(() => null)) as { endpoint?: string } | null;
   if (!b?.endpoint) return c.json({ error: "bad request" }, 400);
-  await c.env.DB.prepare("DELETE FROM chat_push_subs WHERE endpoint = ?").bind(b.endpoint).run();
+  // Scoped to the caller's own subscription, matching hard.ts — knowing
+  // someone else's endpoint must not be enough to silence their pushes.
+  await c.env.DB.prepare("DELETE FROM chat_push_subs WHERE endpoint = ? AND email = ?").bind(b.endpoint, email).run();
   return c.json({ ok: true });
 });
 

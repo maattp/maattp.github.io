@@ -140,8 +140,10 @@ export class ChatRoom {
         const distinct = await this.env.DB.prepare(
           "SELECT COUNT(DISTINCT emoji) AS n FROM chat_reactions WHERE message_id = ? AND removed_at IS NULL"
         ).bind(b.messageId).first<{ n: number }>();
+        // Active rows only: a tombstoned reaction is not "already on the
+        // message", and counting it let a revived emoji slip past the cap.
         const mine = await this.env.DB.prepare(
-          "SELECT emoji FROM chat_reactions WHERE message_id = ? AND sender = ? AND emoji = ?"
+          "SELECT emoji FROM chat_reactions WHERE message_id = ? AND sender = ? AND emoji = ? AND removed_at IS NULL"
         ).bind(b.messageId, b.sender, b.emoji).first();
         if ((distinct?.n ?? 0) >= EMOJI_MAX_PER_MESSAGE && !mine) {
           return Response.json({ error: "emoji cap" }, { status: 409 });
