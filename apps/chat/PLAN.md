@@ -68,6 +68,16 @@ chat_messages (
 )
 CREATE INDEX chat_messages_thread_seq ON chat_messages (thread, seq DESC);
 
+chat_reactions (
+  message_id   TEXT NOT NULL,
+  sender       TEXT NOT NULL,        -- server-assigned, same rule as messages
+  emoji        TEXT NOT NULL,
+  seq          INTEGER NOT NULL,     -- own slot in the thread stream, so it syncs
+  created_at   INTEGER NOT NULL,
+  PRIMARY KEY (message_id, sender, emoji)
+)
+CREATE INDEX chat_reactions_message ON chat_reactions (message_id);
+
 chat_reads (thread, sender, last_seq, updated_at)   -- read receipts / unread badges
 chat_push_subs (endpoint PRIMARY KEY, email, p256dh, auth, created_at)
 chat_attachments (id, message_id, r2_key, mime, bytes, width, height)
@@ -95,6 +105,49 @@ the DO stores nothing authoritative.**
   75 Hard ticket pattern: `POST /chat/ws-ticket` (session-gated) mints a
   single-use 60s ticket in KV, `GET /chat/ws?ticket=` redeems it.
 
+## Reactions
+
+Everyone reacts: Matt, Tingting, and Claude. Same identity rule as messages —
+the server stamps `sender` from the credential, so a reaction from Claude is
+provably from Claude.
+
+For the humans this is ordinary chat furniture. For Claude it is the **status
+channel**, and it earns its place: Claude works in bursts over seconds to
+minutes, so a typing indicator would be a fiction. A reaction is a durable mark
+on the specific message being worked on, it survives a reload, and it needs no
+new UI surface.
+
+**Claude's working vocabulary** — a small reserved set, documented in the ring
+agent's `CLAUDE.md` so it is used consistently:
+
+| Emoji | Means |
+|-------|-------|
+| 👀 | Seen it, starting |
+| ⏳ | Working — expect a real reply |
+| ✅ | Done; the answer is in the thread |
+| ⚠️ | Blocked or refused; read the reply |
+
+The progression replaces one reaction with the next (`⏳` is removed when `✅`
+lands) so a message carries one Claude state at a time. Humans are not
+restricted to this set.
+
+**Operations are explicit `add` and `remove`, never `toggle`.** A toggle is not
+idempotent: an ambiguous failure followed by a retry flips it back and the user
+sees their reaction vanish. Explicit ops make the offline outbox safe, the same
+reason message sends carry a client-generated UUID.
+
+**Reactions occupy the thread's `seq` stream**, so an offline client catching up
+with `?after=<last_seq>` receives reaction changes alongside messages rather
+than needing a second sync path. They broadcast over the same socket, after
+commit, like everything else.
+
+Caps: a bounded set of distinct emoji per message, and a per-sender rate limit —
+a runaway agent must not be able to write thousands of rows onto one message.
+
+Reactions never generate a push notification. A phone buzzing because something
+was marked ⏳ is exactly the kind of notification that trains people to ignore
+notifications.
+
 ## Sync protocol
 
 Every client keeps `last_seq` per thread.
@@ -111,7 +164,9 @@ Every client keeps `last_seq` per thread.
   offline outbox safe to retry.
 
 Tombstones sync like messages: a delete bumps `seq` so offline clients learn
-about it.
+about it. Reaction add/remove does the same — one ordered stream per thread
+carrying messages, deletions, and reactions means one cursor and one catch-up
+path.
 
 ## Offline and PWA
 
@@ -204,6 +259,10 @@ Claude is the ring agent (`~/dev/ring-agent`), not the coordinator.
   pushed down the same WebSocket the ring already uses, arriving as a channel
   event with `source="chat"`. `via` distinguishes it from a ring press so the
   agent knows whether to answer in the thread or by push notification.
+- **Status**: on receiving a chat message the agent reacts 👀, switches to ⏳
+  while working, and lands ✅ (or ⚠️) when done. Reacting is cheap and immediate,
+  so Matt gets "it heard me" long before the reply exists — which is the whole
+  problem with a one-way channel whose answers take a minute.
 - **Ring → chat flow**: ring press starts the task, the agent replies in `dm`,
   Matt iterates there, and promotion to `group` is Matt's explicit act.
 
@@ -231,8 +290,9 @@ sending an iMessage *as Matt*. It is attributed, bounded, and visible.
 
 1. **Edit and delete** — worth the tombstone sync complexity, or is v1
    append-only?
-2. **Typing indicators / presence** — cheap over the existing socket, but is a
-   "Claude is typing" indicator honest, given it thinks in bursts?
+2. **Presence** — worth showing who is connected? Claude's working state is
+   handled by reactions, which is more honest than a typing indicator, so this
+   is only a question for the two humans.
 3. **History limit** — does the local store keep everything forever, or a
    rolling window with older messages fetched on demand?
 4. **Should Tingting see that `dm` exists?** Hiding it entirely is simplest and
@@ -256,11 +316,14 @@ web-only push without installing, Android.
    that a human cannot post as Claude.
 2. **M2 — realtime.** WebSocket with the ticket handshake, broadcast after
    commit, live append in the UI.
-3. **M3 — the app.** Service worker, IndexedDB, virtualised list, offline read,
+3. **M2.5 — reactions.** Table, add/remove routes, broadcast, and the picker.
+   Small once realtime exists, and it makes M5 much better because Claude can
+   signal before it can usefully speak.
+4. **M3 — the app.** Service worker, IndexedDB, virtualised list, offline read,
    outbox. This is the biggest step by some distance.
-4. **M4 — push.** `chat_push_subs`, `sendChatPush`, install-to-home-screen flow.
+5. **M4 — push.** `chat_push_subs`, `sendChatPush`, install-to-home-screen flow.
    Prove one real notification first.
-5. **M5 — Claude.** `post_to_chat` reply tool, inbound chat → channel event,
+6. **M5 — Claude.** `post_to_chat` reply tool, inbound chat → channel event,
    the `dm` thread, promotion to `group`.
 
 M1 through M3 are useful on their own as a two-person chat. Claude can arrive
