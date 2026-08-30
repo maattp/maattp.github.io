@@ -12,7 +12,7 @@
 // sender. Reads never come here — the worker queries D1 directly.
 
 import { buildPushRequest } from "./hardpush.ts";
-import { parseSenderMap, THREADS } from "./chat.ts";
+import { parseSenderMap, THREADS, DEVICE_OWNERS } from "./chat.ts";
 
 export type ChatEnv = {
   DB: D1Database;
@@ -25,6 +25,7 @@ export type ChatEnv = {
 
 const BODY_MAX = 8 * 1024;        // one paste must not wedge a thread
 const EMOJI_MAX_PER_MESSAGE = 8;  // distinct emoji per message
+const PING_MS = 4 * 60 * 1000; // keep hibernating sockets honest, like RingRoom
 const RATE_MSG_PER_MIN = 30;
 const RATE_REACT_PER_MIN = 60;
 const WINDOW_MS = 60_000;
@@ -171,6 +172,11 @@ export class ChatRoom {
       const pair = new WebSocketPair();
       this.state.acceptWebSocket(pair[1]);
       pair[1].serializeAttachment({ sender } satisfies Attachment);
+      // A silently-dead socket (mobile NAT drop, backgrounded iOS PWA) never
+      // fires close on its own, and connectedSenders() would then suppress
+      // that member's push forever. The alarm ping forces the failure: the
+      // send errors, the runtime closes the socket, and push resumes.
+      await this.state.storage.setAlarm(Date.now() + PING_MS);
       return new Response(null, { status: 101, webSocket: pair[0] });
     }
 
@@ -188,40 +194,43 @@ export class ChatRoom {
     return set;
   }
 
-  private async afterMessage(message: { thread: string; sender: string; body: string; id: string }): Promise<void> {
+  private async afterMessage(message: { thread: string; sender: string; body: string; id: string; seq: number }): Promise<void> {
     const members = THREADS[message.thread] ?? [];
     const connected = this.connectedSenders();
+    const owner = DEVICE_OWNERS[message.sender]; // set => this is Matt's own voice
 
     // --- Web Push to offline humans (assumption 11: body included) ---
     const emailOf = new Map<string, string>();
     for (const [email, name] of parseSenderMap(this.env.CHAT_SENDERS)) emailOf.set(name, email);
     const vapid = { subject: this.env.VAPID_SUBJECT, publicKey: this.env.VAPID_PUBLIC_KEY, privateKey: this.env.VAPID_PRIVATE_KEY };
     for (const member of members) {
-      if (member === message.sender || member === "claude" || connected.has(member)) continue;
+      if (member === message.sender || member === owner || member === "claude" || connected.has(member)) continue;
       const email = emailOf.get(member);
       if (!email) continue;
       const subs = await this.env.DB.prepare(
         "SELECT endpoint, p256dh, auth FROM chat_push_subs WHERE email = ?"
       ).bind(email).all<{ endpoint: string; p256dh: string; auth: string }>();
-      for (const sub of subs.results) {
-        try {
-          const req = await buildPushRequest(
-            { title: message.sender === "claude" ? "Claude" : message.sender.charAt(0).toUpperCase() + message.sender.slice(1),
-              body: message.body.slice(0, 500), thread: message.thread, seq: (message as { seq?: number }).seq },
-            sub, vapid, 24 * 3600
-          );
-          const res = await fetch(sub.endpoint, { method: req.method, headers: req.headers, body: req.body as unknown as BodyInit });
-          if (res.status === 404 || res.status === 410) {
-            await this.env.DB.prepare("DELETE FROM chat_push_subs WHERE endpoint = ?").bind(sub.endpoint).run();
-          }
-        } catch { /* push is best-effort by design */ }
-      }
+      await Promise.allSettled(subs.results.map(async (sub) => {
+        const req = await buildPushRequest(
+          { title: message.sender === "claude" ? "Claude" : message.sender.charAt(0).toUpperCase() + message.sender.slice(1),
+            body: message.body.slice(0, 500), thread: message.thread, seq: message.seq },
+          sub, vapid, 24 * 3600
+        );
+        const res = await fetch(sub.endpoint, { method: req.method, headers: req.headers, body: req.body as unknown as BodyInit });
+        if (res.status === 404 || res.status === 410) {
+          await this.env.DB.prepare("DELETE FROM chat_push_subs WHERE endpoint = ?").bind(sub.endpoint).run();
+        }
+      }));
     }
 
     // --- Forward to Claude's channel (the ring agent's socket) ---
     // dm: everything that isn't Claude's own message. group: only @claude
     // mentions — the agent should not read the couple's chatter.
-    if (message.sender !== "claude" && members.includes("claude")) {
+    // In dm, device senders already reached Claude through their own channel
+    // (via=pebble) — forwarding again would deliver every ring press twice.
+    // In group they have no other path, so the ordinary @claude rule applies.
+    const alreadyDelivered = owner && message.thread === "dm";
+    if (message.sender !== "claude" && !alreadyDelivered && members.includes("claude")) {
       const mentioned = message.thread === "dm" || /@claude\b/i.test(message.body);
       if (mentioned) {
         try {
@@ -247,5 +256,14 @@ export class ChatRoom {
 
   async webSocketError(ws: WebSocket): Promise<void> {
     try { ws.close(); } catch { /* already closed */ }
+  }
+
+  async alarm(): Promise<void> {
+    for (const ws of this.state.getWebSockets()) {
+      try { ws.send(JSON.stringify({ type: "ping", at: Date.now() })); } catch { /* closing */ }
+    }
+    if (this.state.getWebSockets().length > 0) {
+      await this.state.storage.setAlarm(Date.now() + PING_MS);
+    }
   }
 }

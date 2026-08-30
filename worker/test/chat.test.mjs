@@ -1,6 +1,6 @@
 /* Node test suite for the chat identity + membership logic.
  * Run: node --experimental-strip-types worker/test/chat.test.mjs             */
-import { parseSenderMap, memberOf, THREADS } from '../src/chat.ts';
+import { parseSenderMap, memberOf, THREADS, DEVICE_OWNERS, mergeStreams } from '../src/chat.ts';
 import { authorized } from '../src/ring.ts';
 
 let pass = 0, fail = 0; const failures = [];
@@ -31,6 +31,41 @@ ok(!authorized(`Bearer ${'b'.repeat(64)}`, tok), 'wrong token rejected');
 ok(!authorized(tok, tok), 'missing Bearer prefix rejected');
 ok(!authorized(`Bearer ${tok}`, ''), 'unset secret fails closed');
 ok(!authorized(undefined, tok), 'no header rejected');
+
+// --- device senders ---
+ok(DEVICE_OWNERS.ring === 'matt', 'ring is owned by matt');
+ok(!memberOf('dm', 'ring'), 'ring is not an API member — it posts via the trusted relay path only');
+
+// --- merged sync stream (review issue #2) ---
+const M = (seqs) => seqs.map(seq => ({ seq, kind: 'msg' + seq }));
+const R = (seqs) => seqs.map(seq => ({ seq, kind: 'react' + seq }));
+
+// The reviewer's scenario: a burst of reactions on old messages fills the
+// reaction page (cap 3 here) while the message page reaches further ahead.
+// A max-of-both cursor would skip reactions 4,5; the merged cut must not.
+{
+  const out = mergeStreams(M([10, 11, 12]), R([1, 2, 3]), 3, 0);
+  ok(out.reactions.length === 3 && out.messages.length === 0, 'imbalanced: reactions win the early seqs');
+  ok(out.next === 3, `cursor stops at the cut, not at max (got ${out.next})`);
+  ok(out.more === true, 'more=true: message page was full');
+}
+{ // interleaved cut mid-stream
+  const out = mergeStreams(M([1, 4, 6]), R([2, 3, 5]), 4, 0);
+  ok(out.messages.map(m => m.seq).join() === '1,4' && out.reactions.map(r => r.seq).join() === '2,3', 'interleaved cut keeps seq order');
+  ok(out.next === 4 && out.more === true, 'cursor + more correct mid-stream');
+}
+{ // everything fits
+  const out = mergeStreams(M([1, 3]), R([2]), 10, 0);
+  ok(out.next === 3 && out.more === false, 'short page: next=last, more=false');
+}
+{ // source page at its own cap counts as more even when merged page is short
+  const out = mergeStreams(M([1, 2]), R([]), 2, 0);
+  ok(out.more === true, 'full source page forces another round trip');
+}
+{ // empty
+  const out = mergeStreams(M([]), R([]), 5, 42);
+  ok(out.next === 42 && out.more === false, 'empty page keeps the cursor');
+}
 
 console.log(`chat.test: ${pass} passed, ${fail} failed`);
 if (fail) { failures.forEach(f => console.log('  FAIL:', f)); process.exit(1); }

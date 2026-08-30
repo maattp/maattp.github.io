@@ -97,6 +97,10 @@ const VAPID_PUBLIC = 'BEh-HVZvaC3p5R3vm9vaddvI-SvWAJ2N6kcocMcyOcaWhLDEgVc5bQjzKT
 const SKEY = 'chat_session';
 const PICK = ['❤️','👍','😂','😮','😢','🔥'];
 const THREAD_LABELS = { dm: 'Claude', group: 'Us' };
+// Device senders: Matt's own words arriving through a device credential.
+// Rendered on his side of the chat, labelled with the device.
+const DEVICE_OWNERS = { ring: 'matt', alexa: 'matt' };
+const SENDER_LABELS = { claude: 'Claude', ring: '💍 via ring', alexa: '🔊 via Alexa' };
 
 /* ---------- tiny IndexedDB layer ---------- */
 let db;
@@ -137,7 +141,7 @@ const S = {
   me: null, threads: [], thread: null,
   msgs: {},          // thread -> array sorted by seq
   reacts: {},        // thread -> Map(message_id -> Map(emoji -> Set(sender)))
-  lastSeq: {}, unread: {}, ws: null, wsBackoff: 1000, online: false,
+  lastSeq: {}, unread: {}, hasMore: {}, ws: null, wsBackoff: 1000, online: false,
 };
 
 /* ---------- api ---------- */
@@ -188,29 +192,76 @@ async function loadLocal(thread) {
   for (const r of rs) applyReaction(thread, r);
   const meta = await tx('meta', 'readonly', s => s.get('seq:' + thread));
   S.lastSeq[thread] = meta ? meta.v : (S.msgs[thread].at(-1)?.seq ?? 0);
+  S.hasMore[thread] = S.msgs[thread].length > 0; // until a short page proves otherwise
+  // Fresh install: don't replay a 20k-message thread forward from seq 0 —
+  // take the newest page and set the cursor to the thread's true top
+  // (review issue #3; PLAN "Cold start").
+  if (!S.msgs[thread].length && !S.lastSeq[thread]) {
+    try {
+      const got = await api('GET', `/${thread}/messages?limit=100`);
+      const rows = got.messages.sort((a, b) => a.seq - b.seq);
+      S.msgs[thread] = rows;
+      putAll('messages', rows);
+      for (const r of got.reactions) applyReaction(thread, { ...r, thread });
+      putAll('reactions', got.reactions.map(r => ({ ...r, thread, removed_at: null })));
+      S.lastSeq[thread] = got.top || (rows.at(-1)?.seq ?? 0);
+      tx('meta', 'readwrite', s => s.put({ k: 'seq:' + thread, v: S.lastSeq[thread] }));
+      S.hasMore[thread] = got.messages.length === 100;
+    } catch { /* offline fresh install: nothing to show yet */ }
+  }
+}
+let loadingOlder = false;
+async function loadOlder() {
+  const t = S.thread;
+  if (loadingOlder || !S.hasMore[t] || !S.msgs[t]?.length) return;
+  loadingOlder = true;
+  try {
+    const got = await api('GET', `/${t}/messages?before=${S.msgs[t][0].seq}&limit=100`);
+    S.hasMore[t] = got.messages.length === 100;
+    const known = new Set(S.msgs[t].map(m => m.id));
+    const fresh = got.messages.filter(m => !known.has(m.id)).sort((a, b) => a.seq - b.seq);
+    if (fresh.length) {
+      S.msgs[t] = fresh.concat(S.msgs[t]);
+      putAll('messages', fresh);
+      for (const r of got.reactions) applyReaction(t, { ...r, thread: t });
+      putAll('reactions', got.reactions.map(r => ({ ...r, thread: t, removed_at: null })));
+      const scroll = document.getElementById('scroll');
+      prefixDirty = true; rebuildPrefix();
+      const added = fresh.reduce((a, m) => a + (heights.get(m.id) || EST), 0);
+      const keep = scroll.scrollTop + added;   // anchor: don't yank the viewport
+      render(false);
+      scroll.scrollTop = keep;
+    }
+  } catch { /* offline; retry on next scroll */ }
+  finally { loadingOlder = false; }
 }
 async function catchUp(thread) {
   let got;
   do {
     got = await api('GET', `/${thread}/messages?after=${S.lastSeq[thread]}&limit=200`);
-    ingest(thread, got.messages, got.reactions);
-  } while (got.messages.length === 200 || got.reactions.length === 200);
+    ingest(thread, got.messages, got.reactions, got.next);
+  } while (got.more);
 }
-function ingest(thread, messages, reactions) {
+function ingest(thread, messages, reactions, next) {
   let top = S.lastSeq[thread];
   if (messages.length) {
+    // Remove pending placeholders FIRST, then dedupe — otherwise the
+    // placeholder's id shadows the confirmed row and the message vanishes.
+    for (const m of messages) removePending(thread, m.id);
     const known = new Set(S.msgs[thread].map(m => m.id));
     for (const m of messages) if (!known.has(m.id)) S.msgs[thread].push(m);
     S.msgs[thread].sort((a, b) => a.seq - b.seq);
     putAll('messages', messages);
     top = Math.max(top, messages.at(-1).seq);
-    for (const m of messages) removePending(thread, m.id);
   }
   if (reactions && reactions.length) {
     for (const r of reactions) applyReaction(thread, { ...r, thread });
     putAll('reactions', reactions.map(r => ({ ...r, thread })));
     top = Math.max(top, reactions.at(-1).seq);
   }
+  // The server's merged-stream cursor is authoritative when present: it
+  // guarantees everything <= next was delivered (review issue #2).
+  if (typeof next === 'number') top = Math.max(S.lastSeq[thread], next);
   if (top > S.lastSeq[thread]) {
     S.lastSeq[thread] = top;
     tx('meta', 'readwrite', s => s.put({ k: 'seq:' + thread, v: top }));
@@ -229,6 +280,7 @@ async function connectWS() {
     ws.onopen = () => { S.wsBackoff = 1000; setOnline(true); catchUp(thread).catch(() => {}); };
     ws.onmessage = (e) => {
       const d = JSON.parse(e.data);
+      if (d.type === 'ping') return;
       if (d.type === 'message') ingest(thread, [d.message], []);
       if (d.type === 'reaction') ingest(thread, [], [d.reaction]);
     };
@@ -257,9 +309,10 @@ async function send() {
   render(true);
   flushOutbox();
 }
-let flushing = false;
+let flushing = false, flushAgain = false;
 async function flushOutbox() {
-  if (flushing) return; flushing = true;
+  if (flushing) { flushAgain = true; return; }
+  flushing = true;
   try {
     const items = await tx('outbox', 'readonly', s => s.getAll());
     for (const it of (items || [])) {
@@ -268,7 +321,7 @@ async function flushOutbox() {
         await tx('outbox', 'readwrite', s => s.delete(it.id));
       } catch { break; } // offline again; keep the rest queued
     }
-  } finally { flushing = false; }
+  } finally { flushing = false; if (flushAgain) { flushAgain = false; flushOutbox(); } }
 }
 function removePending(thread, id) {
   const arr = S.msgs[thread]; const i = arr.findIndex(m => m.pending && m.id === id);
@@ -319,10 +372,11 @@ function render(stickBottom) {
 function renderMsg(m, prev) {
   const div = document.createElement('div');
   div.dataset.id = m.id;
-  div.className = 'msg ' + (m.sender === S.me ? 'mine' : m.sender === 'claude' ? 'claude theirs' : 'theirs') + (m.pending ? ' pending' : '');
+  const ownMsg = m.sender === S.me || DEVICE_OWNERS[m.sender] === S.me;
+  div.className = 'msg ' + (ownMsg ? 'mine' : m.sender === 'claude' ? 'claude theirs' : 'theirs') + (m.pending ? ' pending' : '');
   if (!prev || prev.sender !== m.sender) {
     const who = document.createElement('div'); who.className = 'who';
-    who.textContent = m.sender === 'claude' ? 'Claude' : m.sender.charAt(0).toUpperCase() + m.sender.slice(1);
+    who.textContent = SENDER_LABELS[m.sender] || m.sender.charAt(0).toUpperCase() + m.sender.slice(1);
     div.appendChild(who);
   }
   const b = document.createElement('div'); b.className = 'bubble';
@@ -436,7 +490,10 @@ document.getElementById('sendbtn').onclick = send;
 document.getElementById('input').addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); } });
 document.getElementById('input').addEventListener('input', function () { this.style.height = 'auto'; this.style.height = Math.min(this.scrollHeight, 120) + 'px'; });
 document.getElementById('bell').onclick = enablePush;
-document.getElementById('scroll').addEventListener('scroll', () => render(false), { passive: true });
+document.getElementById('scroll').addEventListener('scroll', () => {
+  render(false);
+  if (document.getElementById('scroll').scrollTop < 600) loadOlder();
+}, { passive: true });
 window.addEventListener('online', () => { flushOutbox(); connectWS(); });
 document.addEventListener('visibilitychange', () => { if (!document.hidden && S.thread) { flushOutbox(); catchUp(S.thread).catch(() => {}); markRead(); } });
 if (window.visualViewport) visualViewport.addEventListener('resize', () => {
