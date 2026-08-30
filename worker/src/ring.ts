@@ -2,7 +2,7 @@
 //
 // Pebble's cloud agent is the client. When Matt double-clicks the ring, the
 // agent routes his words to one of three tools — a private ask_claude, an
-// ask_claude_in_group_chat, or a plain post_to_group_chat; each records the
+// ask_claude_in_our_group_chat, or a plain post_to_group_chat; each records the
 // text into the chat feed, from which asks are forwarded down the Mac mini's
 // outbound WebSocket. The ack we return is read back into Matt's Answers feed,
 // so it has to be short and say what actually happened.
@@ -48,8 +48,8 @@ const ROUTING_RULE = [
   "Three actions, chosen by what Matt says.",
   'ask_claude when he addresses Claude without naming the group ("ask Claude',
   '...", "Claude, what\'s ..."): a private question in his 1:1 chat.',
-  "ask_claude_in_group_chat when he addresses Claude AND names the shared",
-  'chat ("ask Claude in our chat ...", "in the group chat, ask Claude ..."):',
+  "ask_claude_in_our_group_chat when he addresses Claude AND names the shared",
+  'chat ("ask Claude in our group chat ...", "in our group chat, ask Claude ..."):',
   "the question and answer are visible to his partner Tingting.",
   "post_to_group_chat when the message is for the group, not for Claude",
   '("post to our chat ...", "tell the group ...", "tell Tingting ...").',
@@ -87,7 +87,7 @@ const ASK_TOOL = {
 } as const;
 
 const GROUP_ASK_TOOL = {
-  name: "ask_claude_in_group_chat",
+  name: "ask_claude_in_our_group_chat",
   description:
     "Ask Claude something in the shared chat that Matt, Tingting, and Claude " +
     "all read — question and answer are visible to Tingting. Call ONLY when " +

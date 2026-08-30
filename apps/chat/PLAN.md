@@ -35,7 +35,7 @@ sender is `ring`.
 
 From the ring, three actions are chosen verbally — the word "coordinator" is
 retired: **ask_claude** ("ask Claude …") is a private 1:1 question;
-**ask_claude_in_group_chat** ("ask Claude in our chat …") posts the question
+**ask_claude_in_our_group_chat** ("ask Claude in our group chat …") posts the question
 to the group `@claude`-prefixed, so the mention machinery forwards it and
 Tingting can see who it was addressed to; **post_to_group_chat** ("tell the
 group …") publishes without involving Claude. Unsure between private and
