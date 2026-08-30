@@ -40,6 +40,9 @@ jobs:
       - name: Mahjong engine tests
         run: node test/core.test.mjs && node test/edge.test.mjs
 
+      - name: Chat identity + membership tests
+        run: node --experimental-strip-types test/chat.test.mjs
+
       - run: npx wrangler deploy
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
