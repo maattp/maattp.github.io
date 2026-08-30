@@ -350,6 +350,41 @@ sending an iMessage *as Matt*. It is attributed, bounded, and visible.
     exists in exactly one place. For a thread that accumulates years of a
     relationship, an export path is worth having before it matters.
 
+## Decisions (2026-08-30)
+
+Open questions resolved by assumption so implementation can start. Each is
+cheap to revisit; none is load-bearing enough to block on.
+
+1. **Append-only v1.** No edit or delete UI. The schema keeps `edited_at` /
+   `deleted_at` so adding them later is a route, not a migration.
+2. **No presence for humans.** Claude's state is reactions; whether Claude is
+   *reachable* comes later from the relay's attachment status.
+3. **Keep everything.** No history cap; paging handles size.
+4. **`dm` is invisible to Tingting.** Membership is enforced server-side per
+   thread; her session simply cannot address it.
+5. **Chat grants no extra authority.** A chat message to Claude carries the same
+   permissions as a ring request — the ring agent's CLAUDE.md governs both.
+6. **Reuse `photos-db`** (Matt's call). All tables `chat_`-prefixed.
+7. **Claude context: last 50 messages** of the thread on each wake, plus
+   whatever its session already holds. Summaries/retrieval deferred until the
+   thread outgrows this.
+8. **Claude-down indicator deferred** to M5 alongside the rest of the Claude
+   integration.
+9. **Reads are per-sender, not per-device.** Read on one device = read
+   everywhere.
+10. **Late offline sends order by server `seq`** — they land at the bottom,
+    with `client_at` shown as a "composed at" label.
+11. **Push carries the message body.** Lock-screen visibility accepted for a
+    two-person household.
+12. **Backup deferred**, but v1 ships `GET /chat/:thread/export` (session-gated,
+    full JSON) so the data is never hostage.
+
+Sender identity mapping lives in a `CHAT_SENDERS` var
+(`email:name,email:name`), not hardcoded in source. Claude's credential is a
+`CHAT_CLAUDE_TOKEN` wrangler secret, constant-time compared like the ring
+tokens. Rate limits are enforced in the DO (its input gate serialises anyway):
+30 messages and 60 reaction ops per sender per minute.
+
 ## Non-goals (v1)
 
 Group creation, more members, voice or video, message search across threads,
