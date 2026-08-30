@@ -48,6 +48,22 @@ is answered by the database column rather than by a UI convention that a
 rendering bug could undermine. Claude's messages render with a distinct bubble,
 an explicit "Claude" label, and no avatar that could be mistaken for a person.
 
+## Storage — what lives where
+
+Five stores, four of them already bound to the worker.
+
+| Store | Role here | Status |
+|-------|-----------|--------|
+| **D1** (`photos-db`) | Source of truth: messages, reactions, read state, push subs, attachment metadata | Already bound as `DB`; also holds the `hard_` tables |
+| **Durable Object storage** | Nothing authoritative — only `seq` allocation state and socket bookkeeping | New `ChatRoom` DO |
+| **KV** | Session UUIDs (existing) and single-use WebSocket tickets | Already bound as `KV` |
+| **R2** | Attachment blobs under `chat/` | Already bound as `PHOTOS` |
+| **IndexedDB** (client) | Local cache of messages/reactions + the send outbox. Evictable; never the only copy | New |
+
+D1 is a real SQLite database and comfortably handles tens of thousands of rows;
+the constraint is query shape, not size — every read bounded by `LIMIT` and
+served by the `(thread, seq DESC)` index.
+
 ## Data model (D1)
 
 All tables `chat_`-prefixed, following the `hard_` convention.
@@ -302,6 +318,37 @@ sending an iMessage *as Matt*. It is attributed, bounded, and visible.
    than the ring (real Google session), so the permission set could reasonably
    be wider — but the ring agent is the one executing, and it is deliberately
    the narrow agent.
+
+6. **Which D1 database?** The existing binding is `photos-db`, which already
+   hosts the `hard_` tables — so it is already a general-purpose database with a
+   misleading name. Reusing it means one binding and one migration path; a
+   separate `chat-db` is cleaner but adds a binding and rules out any future
+   join. Leaning reuse.
+7. **What context does Claude get?** The biggest unanswered question. At 20k
+   messages the thread does not fit in a context window, so something must
+   choose: last N messages, the current session only, a rolling summary, or
+   retrieval over the thread. Getting this wrong makes Claude feel amnesiac in a
+   thread that visibly contains the answer. It affects the schema — a summary
+   table would live in D1 — so it should be settled before M5, not after.
+8. **How does anyone know Claude is down?** If the ring agent is not attached,
+   a message to Claude sits there looking ignored. Presence for Claude is not
+   cosmetic: it is the difference between "thinking" and "nobody is home". The
+   relay already exposes attachment state, so the app can show it.
+9. **Multi-device.** Matt on phone and desktop simultaneously: read state has to
+   converge, and a notification should not fire on a device that already has the
+   message on screen. `chat_reads` is per-sender, not per-device, which is
+   probably right but means "read on one device" marks it read everywhere.
+10. **Offline sends that surface late.** A message composed offline at 9am and
+    uploaded at 5pm gets a 5pm `seq`. Does it appear at the bottom (accurate to
+    the server, confusing to the sender) or slotted by `client_at` (intuitive,
+    but then ordering is not the same for everyone)? Bottom is simpler and
+    defensible; worth a visible "sent 9am" label.
+11. **Lock-screen privacy.** Does the push carry the message body, or just
+    "Tingting sent a message"? Body is far more useful and is visible to anyone
+    holding the phone.
+12. **Backup.** If IndexedDB is a disposable cache and D1 is truth, the thread
+    exists in exactly one place. For a thread that accumulates years of a
+    relationship, an export path is worth having before it matters.
 
 ## Non-goals (v1)
 
