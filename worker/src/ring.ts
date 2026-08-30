@@ -18,6 +18,7 @@ import { Hono } from "hono";
 
 type RingBindings = {
   RING_ROOM: DurableObjectNamespace;
+  CHAT_ROOM: DurableObjectNamespace;
   RING_MCP_TOKEN: string;
 };
 
@@ -43,14 +44,41 @@ export function authorized(header: string | undefined, expected: string): boolea
 }
 
 const ROUTING_RULE = [
-  "Call send_to_coordinator ONLY when Matt explicitly names the coordinator",
-  '(for example: "tell the coordinator ...", "ask the coordinator to ...",',
-  '"send this to the coordinator"). If he does not name it, do not call this',
-  "tool — answer him yourself. Never call it to check whether the coordinator",
-  "is reachable, to say hello, or to forward a request he did not address to",
-  "it. There is no read path: this tool cannot fetch anything back, so calling",
-  "it speculatively accomplishes nothing.",
+  "Two destinations, chosen by what Matt says. send_to_coordinator when he",
+  'names the coordinator ("tell the coordinator ...", "ask the coordinator',
+  'to ..."): a task for his assistant, delivered privately.',
+  "post_to_group_chat when he names the shared chat or Tingting as the",
+  'audience ("post to our chat ...", "tell the group ...", "send to the',
+  'family chat ..."): his words, published to a feed his partner reads —',
+  "when unsure between the two, prefer send_to_coordinator, the private one.",
+  "If he names neither, call nothing and answer him yourself. Never call",
+  "either tool to test reachability or to say hello. There is no read path:",
+  "these tools cannot fetch anything back, so calling them speculatively",
+  "accomplishes nothing.",
 ].join(" ");
+
+const GROUP_TOOL = {
+  name: "post_to_group_chat",
+  description:
+    "Post Matt's words into the shared chat feed that he, Tingting, and " +
+    "Claude all read. Call ONLY when Matt explicitly addresses the shared " +
+    'chat or the group ("post to our chat", "tell the group", "send to the ' +
+    'family chat", "message Tingting and Claude"). This publishes to his ' +
+    "partner — never route something here that he addressed to the " +
+    "coordinator, and when unsure, use send_to_coordinator instead. The " +
+    "message appears in the feed attributed to his ring.",
+  inputSchema: {
+    type: "object",
+    properties: {
+      text: {
+        type: "string",
+        description: "What to post, in Matt's words, as he said it.",
+      },
+    },
+    required: ["text"],
+    additionalProperties: false,
+  },
+} as const;
 
 const TOOL = {
   name: "send_to_coordinator",
@@ -183,7 +211,7 @@ ringApp.post("/mcp", async (c) => {
       return respond(c, result(id, {}));
 
     case "tools/list":
-      return respond(c, result(id, { tools: [TOOL] }));
+      return respond(c, result(id, { tools: [TOOL, GROUP_TOOL] }));
 
     case "prompts/list":
       return respond(c, result(id, { prompts: [PROMPT] }));
@@ -200,7 +228,7 @@ ringApp.post("/mcp", async (c) => {
 
     case "tools/call": {
       const name = params?.name as string;
-      if (name !== TOOL.name) {
+      if (name !== TOOL.name && name !== GROUP_TOOL.name) {
         return respond(c, failure(id, -32602, `unknown tool: ${name}`));
       }
       const args = (params?.arguments ?? {}) as { text?: unknown };
@@ -213,6 +241,47 @@ ringApp.post("/mcp", async (c) => {
           })
         );
       }
+
+      // post_to_group_chat: publish to the shared feed and stop — no
+      // coordinator delivery. If the text mentions @claude, the ChatRoom's
+      // ordinary group rules forward it, same as a typed group message.
+      if (name === GROUP_TOOL.name) {
+        let posted = false;
+        try {
+          const chatStub = c.env.CHAT_ROOM.get(c.env.CHAT_ROOM.idFromName("group"));
+          const r = await chatStub.fetch("https://do/send", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ thread: "group", sender: "ring", msgId: crypto.randomUUID(), body: text.slice(0, TEXT_MAX) }),
+          });
+          posted = r.ok;
+        } catch { posted = false; }
+        return respond(c,
+          result(id, {
+            content: [{
+              type: "text",
+              text: posted
+                ? "Posted to the group chat."
+                : "Could not post to the group chat — nothing was published.",
+            }],
+          })
+        );
+      }
+
+      // Record the press in the chat feed as sender "ring" — the Pebble
+      // credential IS the identity here, same stamping rule as everywhere
+      // else. Recorded even when the coordinator is offline: the feed is the
+      // durable log of what Matt said; the ack below reports delivery.
+      // (The ChatRoom skips push-to-owner and Claude-forward for device
+      // senders, so this cannot double-deliver.)
+      try {
+        const chatStub = c.env.CHAT_ROOM.get(c.env.CHAT_ROOM.idFromName("dm"));
+        await chatStub.fetch("https://do/send", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ thread: "dm", sender: "ring", msgId: crypto.randomUUID(), body: text.slice(0, TEXT_MAX) }),
+        });
+      } catch { /* feed record is best-effort; the ack reports the delivery leg */ }
 
       const stub = c.env.RING_ROOM.get(c.env.RING_ROOM.idFromName("ring"));
       let delivered = false;

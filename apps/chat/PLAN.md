@@ -17,6 +17,18 @@ The shape of a real use case: ring the ring, say "research date ideas", iterate
 with Claude privately, and when one is good, put it in the thread Tingting can
 see — posted as Claude, clearly not as Matt.
 
+## Device senders
+
+Matt's input devices are participants of their own: a ring press is recorded
+in `dm` as sender `ring` (an Alexa would be `alexa`). The relay's credential is
+the identity — same stamping rule as everything else. `DEVICE_OWNERS` maps a
+device to its human so the owner is never push-notified about their own voice.
+In `dm`, device messages don't re-forward to Claude (the pebble envelope
+already delivered them); in `group` the ordinary @claude rule applies, since
+there is no other path. From the ring, destination is chosen verbally: naming
+the coordinator → `send_to_coordinator` (dm, private); naming the group/our
+chat → `post_to_group_chat` (shared feed, Tingting sees it).
+
 ## Threads
 
 Two, fixed. No thread creation UI, no thread list to manage.
