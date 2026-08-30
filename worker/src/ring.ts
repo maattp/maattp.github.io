@@ -1,13 +1,14 @@
 // Ring relay — an MCP server (Streamable HTTP) exposing exactly one tool.
 //
-// Pebble's cloud agent is the client. When Matt double-clicks the ring and
-// explicitly names the coordinator, the agent calls send_to_coordinator; the
-// text is handed to the RingRoom DO, which pushes it down the Mac mini's
+// Pebble's cloud agent is the client. When Matt double-clicks the ring, the
+// agent routes his words to one of three tools — a private ask_claude, an
+// ask_claude_in_our_group_chat, or a plain post_to_group_chat; each records the
+// text into the chat feed, from which asks are forwarded down the Mac mini's
 // outbound WebSocket. The ack we return is read back into Matt's Answers feed,
 // so it has to be short and say what actually happened.
 //
-// Nothing else from the ring reaches the mini: one tool, no resources, no
-// history, no read path.
+// Nothing else from the ring reaches the mini: three write-only tools, no
+// resources, no history, no read path.
 //
 // Auth is a single bearer token (RING_MCP_TOKEN, a wrangler secret). This
 // endpoint is public, so the token is the only thing between the internet and
@@ -18,6 +19,7 @@ import { Hono } from "hono";
 
 type RingBindings = {
   RING_ROOM: DurableObjectNamespace;
+  CHAT_ROOM: DurableObjectNamespace;
   RING_MCP_TOKEN: string;
 };
 
@@ -43,42 +45,71 @@ export function authorized(header: string | undefined, expected: string): boolea
 }
 
 const ROUTING_RULE = [
-  "Call send_to_coordinator ONLY when Matt explicitly names the coordinator",
-  '(for example: "tell the coordinator ...", "ask the coordinator to ...",',
-  '"send this to the coordinator"). If he does not name it, do not call this',
-  "tool — answer him yourself. Never call it to check whether the coordinator",
-  "is reachable, to say hello, or to forward a request he did not address to",
-  "it. There is no read path: this tool cannot fetch anything back, so calling",
-  "it speculatively accomplishes nothing.",
+  "Three actions, chosen by what Matt says.",
+  'ask_claude when he addresses Claude without naming the group ("ask Claude',
+  '...", "Claude, what\'s ..."): a private question in his 1:1 chat.',
+  "ask_claude_in_our_group_chat when he addresses Claude AND names the shared",
+  'chat ("ask Claude in our group chat ...", "in our group chat, ask Claude ..."):',
+  "the question and answer are visible to his partner Tingting.",
+  "post_to_group_chat when the message is for the group, not for Claude",
+  '("post to our chat ...", "tell the group ...", "tell Tingting ...").',
+  "When unsure between private and group, choose the private ask_claude.",
+  "If he addresses neither Claude nor the group, call nothing and answer him",
+  "yourself. Never call any tool to test reachability or to say hello. There",
+  "is no read path: these tools cannot fetch anything back, so calling them",
+  "speculatively accomplishes nothing.",
 ].join(" ");
 
-const TOOL = {
-  name: "send_to_coordinator",
-  description:
-    "Send one message to Matt's coordinator Claude Code session on his Mac mini. " +
-    ROUTING_RULE +
-    " The message is delivered one-way; this call returns only a delivery ack, " +
-    "never the coordinator's answer. The coordinator replies separately by " +
-    "pushing a notification to Matt's phone, so tell him to expect that rather " +
-    "than waiting for a result here.",
-  inputSchema: {
-    type: "object",
-    properties: {
-      text: {
-        type: "string",
-        description:
-          "What to send, in Matt's words. Include the whole request — the " +
-          "coordinator has no other context about what he just said.",
-      },
+const TEXT_ARG = {
+  type: "object",
+  properties: {
+    text: {
+      type: "string",
+      description:
+        "Matt's words, as he said it. Include the whole request — the " +
+        "recipient has no other context about what he just said.",
     },
-    required: ["text"],
-    additionalProperties: false,
   },
+  required: ["text"],
+  additionalProperties: false,
+} as const;
+
+const ASK_TOOL = {
+  name: "ask_claude",
+  description:
+    "Ask Claude something privately, in Matt's 1:1 chat with it. Call when " +
+    'Matt addresses Claude without naming the group ("ask Claude ...", ' +
+    '"Claude, ..."). ' + ROUTING_RULE +
+    " This returns only a delivery ack — Claude answers in the chat feed and " +
+    "notifies Matt's phone, so tell him to expect that rather than waiting " +
+    "for a result here.",
+  inputSchema: TEXT_ARG,
+} as const;
+
+const GROUP_ASK_TOOL = {
+  name: "ask_claude_in_our_group_chat",
+  description:
+    "Ask Claude something in the shared chat that Matt, Tingting, and Claude " +
+    "all read — question and answer are visible to Tingting. Call ONLY when " +
+    "Matt addresses Claude AND names the shared chat. When he addresses " +
+    "Claude without naming the group, use ask_claude (private) instead.",
+  inputSchema: TEXT_ARG,
+} as const;
+
+const GROUP_TOOL = {
+  name: "post_to_group_chat",
+  description:
+    "Post Matt's words into the shared chat feed that he, Tingting, and " +
+    "Claude all read — a message for the group, not a question for Claude. " +
+    'Call ONLY when Matt addresses the shared chat or the group ("post to ' +
+    'our chat", "tell the group", "tell Tingting"). The message appears in ' +
+    "the feed attributed to his ring.",
+  inputSchema: TEXT_ARG,
 } as const;
 
 const PROMPT = {
-  name: "coordinator_routing",
-  description: "When to route a ring request to Matt's coordinator, and when not to.",
+  name: "ring_routing",
+  description: "How to route a ring request: private ask, group ask, or group post.",
 };
 
 // A Streamable HTTP client may ask for its POST reply as SSE instead of JSON.
@@ -183,7 +214,7 @@ ringApp.post("/mcp", async (c) => {
       return respond(c, result(id, {}));
 
     case "tools/list":
-      return respond(c, result(id, { tools: [TOOL] }));
+      return respond(c, result(id, { tools: [ASK_TOOL, GROUP_ASK_TOOL, GROUP_TOOL] }));
 
     case "prompts/list":
       return respond(c, result(id, { prompts: [PROMPT] }));
@@ -200,7 +231,8 @@ ringApp.post("/mcp", async (c) => {
 
     case "tools/call": {
       const name = params?.name as string;
-      if (name !== TOOL.name) {
+      const KNOWN = [ASK_TOOL.name, GROUP_ASK_TOOL.name, GROUP_TOOL.name] as string[];
+      if (!KNOWN.includes(name)) {
         return respond(c, failure(id, -32602, `unknown tool: ${name}`));
       }
       const args = (params?.arguments ?? {}) as { text?: unknown };
@@ -214,26 +246,76 @@ ringApp.post("/mcp", async (c) => {
         );
       }
 
-      const stub = c.env.RING_ROOM.get(c.env.RING_ROOM.idFromName("ring"));
-      let delivered = false;
-      try {
-        const res = await stub.fetch("https://do/send", {
-          method: "POST",
-          body: text.slice(0, TEXT_MAX),
-        });
-        delivered = ((await res.json()) as { delivered: boolean }).delivered;
-      } catch {
-        delivered = false;
+      // Group destinations: post_to_group_chat publishes as-is; the group ASK
+      // prefixes @claude so the ordinary mention machinery — live forwarding
+      // AND the agent's offline catch-up filter — treats it as addressed to
+      // Claude, and the feed shows Tingting who it was for. No hidden flags.
+      if (name === GROUP_TOOL.name || name === GROUP_ASK_TOOL.name) {
+        const isAsk = name === GROUP_ASK_TOOL.name;
+        const body = isAsk && !/@claude\b/i.test(text) ? `@claude ${text}` : text;
+        let posted = false;
+        try {
+          const chatStub = c.env.CHAT_ROOM.get(c.env.CHAT_ROOM.idFromName("group"));
+          const r = await chatStub.fetch("https://do/send", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ thread: "group", sender: "ring", msgId: crypto.randomUUID(), body: body.slice(0, TEXT_MAX) }),
+          });
+          posted = r.ok;
+        } catch { posted = false; }
+        return respond(c,
+          result(id, {
+            content: [{
+              type: "text",
+              text: posted
+                ? (isAsk
+                    ? "Asked Claude in the group chat — the answer will appear there."
+                    : "Posted to the group chat.")
+                : "Could not post to the group chat — nothing was published.",
+            }],
+          })
+        );
       }
+
+      // One path: the press is recorded in the dm thread as sender "ring"
+      // (the Pebble credential IS the identity), and the ChatRoom forwards it
+      // to the agent like any other message. The feed is the durable log, so
+      // an offline agent no longer loses the press — it catches up from the
+      // thread when it reconnects. The ack phrasing reflects liveness only.
+      let recorded = false;
+      try {
+        const chatStub = c.env.CHAT_ROOM.get(c.env.CHAT_ROOM.idFromName("dm"));
+        const r = await chatStub.fetch("https://do/send", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ thread: "dm", sender: "ring", msgId: crypto.randomUUID(), body: text.slice(0, TEXT_MAX) }),
+        });
+        recorded = r.ok;
+      } catch { recorded = false; }
+
+      if (!recorded) {
+        return respond(c,
+          result(id, {
+            content: [{ type: "text", text: "Failed — the message could not be recorded. Nothing was sent." }],
+            isError: true,
+          })
+        );
+      }
+
+      let online = false;
+      try {
+        const stub = c.env.RING_ROOM.get(c.env.RING_ROOM.idFromName("ring"));
+        online = ((await (await stub.fetch("https://do/status")).json()) as { online: boolean }).online;
+      } catch { online = false; }
 
       return respond(c,
         result(id, {
           content: [
             {
               type: "text",
-              text: delivered
-                ? "Sent to coordinator. It will push a notification to your phone when it's done."
-                : "Coordinator offline — nothing was sent. It isn't connected right now.",
+              text: online
+                ? "Sent to Claude. It will reply in your chat and notify your phone."
+                : "Recorded in your chat. Claude is offline right now and will pick it up when it reconnects.",
             },
           ],
         })

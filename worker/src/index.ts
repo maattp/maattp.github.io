@@ -4,12 +4,14 @@ import { Kart3Room } from "./kart3room";
 import { MahjongRoom } from "./mahjongroom";
 import { HardRoom } from "./hardroom";
 import { RingRoom } from "./ringroom";
+import { ChatRoom } from "./chatroom";
+import { chatApp, CHAT_WS_TICKET_PREFIX, memberOf } from "./chat";
 import { ringApp, authorized } from "./ring";
 import { hardApp, WS_TICKET_PREFIX } from "./hard";
 import { scheduled } from "./hardcron";
 import type { HardEnv } from "./hardlogic";
 
-export { Kart3Room, MahjongRoom, HardRoom, RingRoom };
+export { Kart3Room, MahjongRoom, HardRoom, RingRoom, ChatRoom };
 
 const SESSION_TTL = 365 * 24 * 60 * 60; // 1 year in seconds
 const SESSION_PREFIX = "__session:";
@@ -18,9 +20,12 @@ type Bindings = HardEnv & {
   KART3_ROOM: DurableObjectNamespace;
   MAHJONG_ROOM: DurableObjectNamespace;
   RING_ROOM: DurableObjectNamespace;
+  CHAT_ROOM: DurableObjectNamespace;
   GOOGLE_CLIENT_ID: string;
   RING_MCP_TOKEN: string;
   RING_WS_TOKEN: string;
+  CHAT_SENDERS: string;
+  CHAT_CLAUDE_TOKEN: string;
 };
 
 type Variables = {
@@ -187,6 +192,26 @@ app.get("/ring/ws", async (c) => {
   }
   const stub = c.env.RING_ROOM.get(c.env.RING_ROOM.idFromName("ring"));
   return stub.fetch("https://do/ws", c.req.raw);
+});
+
+// --- Chat: WebSocket upgrade (registered before cors — immutable 101 headers,
+// same as kart3/mahjong/hard). Auth is a single-use ticket minted by the
+// session-gated POST /chat/:thread/ws-ticket; the ticket pins sender AND
+// thread, and membership was checked when it was minted. Re-checked here
+// anyway: a ticket must never be a way around the membership gate.
+app.get("/chat/ws", async (c) => {
+  if (c.req.header("Upgrade") !== "websocket") return c.json({ error: "expected websocket" }, 426);
+  const ticket = c.req.query("ticket") ?? "";
+  if (!/^[\w-]{16,64}$/.test(ticket)) return c.json({ error: "forbidden" }, 403);
+  const raw = await c.env.KV.get(`${CHAT_WS_TICKET_PREFIX}${ticket}`);
+  if (!raw) return c.json({ error: "forbidden" }, 403);
+  await c.env.KV.delete(`${CHAT_WS_TICKET_PREFIX}${ticket}`); // single use
+  const { sender, thread } = JSON.parse(raw) as { sender: string; thread: string };
+  if (!memberOf(thread, sender)) return c.json({ error: "forbidden" }, 403);
+  const stub = c.env.CHAT_ROOM.get(c.env.CHAT_ROOM.idFromName(thread));
+  const url = new URL("https://do/ws");
+  url.searchParams.set("sender", sender);
+  return stub.fetch(url.toString(), c.req.raw);
 });
 
 app.use("*", cors({
@@ -759,6 +784,7 @@ app.delete("/photos/:id", async (c) => {
 // --- 75 Hard couples tracker: REST routes (session-gated inside hardApp) ---
 app.route("/hard", hardApp);
 app.route("/ring", ringApp);
+app.route("/chat", chatApp);
 
 export default {
   fetch: app.fetch,

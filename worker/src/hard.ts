@@ -4,6 +4,7 @@
 // /photos/*, re-checking the allowlist on each request.
 
 import { Hono } from "hono";
+import { sessionEmail } from "./session.ts";
 import { type HardEnv, type HardAction, coupleEmails, partnerOf } from "./hardlogic";
 import { sendPushToUser } from "./hardpush";
 
@@ -37,13 +38,9 @@ async function ensureUser(env: HardEnv, email: string): Promise<void> {
 export const hardApp = new Hono<{ Bindings: HardEnv; Variables: Variables }>();
 
 hardApp.use("*", async (c, next) => {
-  const auth = c.req.header("Authorization");
-  if (!auth?.startsWith("Bearer ")) return c.json({ error: "unauthorized" }, 401);
-  const email = await c.env.KV.get(`${SESSION_PREFIX}${auth.slice(7)}`);
-  if (!email || !coupleEmails(c.env.ALLOWED_EMAILS).includes(email.toLowerCase())) {
-    return c.json({ error: "unauthorized" }, 401);
-  }
-  c.set("email", email.toLowerCase());
+  const email = await sessionEmail(c.env.KV, c.req.header("Authorization"), c.env.ALLOWED_EMAILS);
+  if (!email) return c.json({ error: "unauthorized" }, 401);
+  c.set("email", email);
   await next();
 });
 

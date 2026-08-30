@@ -127,6 +127,18 @@ The version renders bottom-right on the title screen. **Landscape-only** — see
 `apps/zombies/CLAUDE.md` for the rendering, navigation and character-model laws,
 each of which cost a real debugging session.
 
+## Chat App
+
+### Version Management
+
+**IMPORTANT:** Increment `VERSION` in `/apps/chat/index.html` once per PR, and
+bump `CACHE` in `/apps/chat/sw.js` (`chat-vN`) to match.
+
+Three-participant chat (Matt, Tingting, Claude) backed by `/chat/*` on the
+worker. Design and invariants live in `/apps/chat/PLAN.md` — the one that must
+not bend: **`sender` is assigned server-side from the credential, never from
+the request body.** Message bodies render as text nodes only, never innerHTML.
+
 ## Photos App
 
 ### Known Limitations

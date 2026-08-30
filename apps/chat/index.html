@@ -1,0 +1,505 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="theme-color" content="#0b0b12">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="../icon.png">
+<title>Chat</title>
+<script src="https://accounts.google.com/gsi/client" async></script>
+<style>
+  :root {
+    --bg:#0b0b12; --panel:#15151f; --line:#26263a; --text:#e8e8f0; --dim:#8a8aa0;
+    --me:#2f6fed; --them:#232334; --claude-border:#8b5cf6; --claude-bg:#1b1530;
+    --sat:env(safe-area-inset-top); --sab:env(safe-area-inset-bottom);
+  }
+  * { margin:0; padding:0; box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
+  html,body { height:100%; }
+  body { background:var(--bg); color:var(--text); font:16px/1.4 -apple-system,system-ui,sans-serif; overflow:hidden; }
+
+  #app { display:flex; flex-direction:column; height:100dvh; }
+  header { padding:calc(var(--sat) + 8px) 12px 8px; background:var(--panel); border-bottom:1px solid var(--line);
+           display:flex; align-items:center; gap:8px; }
+  header h1 { font-size:17px; flex:1; }
+  .tabs { display:flex; gap:6px; }
+  .tab { padding:6px 14px; border-radius:16px; background:var(--them); color:var(--dim); font-size:14px; border:none; }
+  .tab.active { background:var(--me); color:#fff; }
+  .tab .badge { margin-left:6px; background:#e33; color:#fff; border-radius:8px; padding:0 6px; font-size:11px; }
+  #bell { background:none; border:1px solid var(--line); color:var(--dim); border-radius:8px; padding:5px 9px; font-size:14px; }
+  #bell.on { color:#7dd87d; border-color:#2c4; }
+  #status { font-size:11px; color:var(--dim); }
+  #status.off { color:#e6a23c; }
+
+  #scroll { flex:1; overflow-y:auto; -webkit-overflow-scrolling:touch; overscroll-behavior:contain; }
+  #topspacer,#botspacer { width:1px; }
+  .msg { padding:2px 12px; display:flex; flex-direction:column; }
+  .msg .bubble { max-width:78%; padding:8px 12px; border-radius:18px; white-space:pre-wrap; word-break:break-word; }
+  .msg.mine { align-items:flex-end; } .msg.mine .bubble { background:var(--me); border-bottom-right-radius:4px; }
+  .msg.theirs { align-items:flex-start; } .msg.theirs .bubble { background:var(--them); border-bottom-left-radius:4px; }
+  .msg.claude .bubble { background:var(--claude-bg); border:1px solid var(--claude-border); border-bottom-left-radius:4px; }
+  .msg .who { font-size:11px; color:var(--dim); margin:6px 12px 2px; }
+  .msg.claude .who { color:var(--claude-border); font-weight:600; }
+  .msg .meta { font-size:10px; color:var(--dim); margin:2px 4px; }
+  .msg .reacts { display:flex; gap:4px; margin:2px 4px; flex-wrap:wrap; }
+  .msg .reacts span { background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:1px 7px; font-size:12px; }
+  .msg .reacts span.mine { border-color:var(--me); }
+  .msg.pending .bubble { opacity:.55; }
+
+  #picker { position:fixed; display:none; background:var(--panel); border:1px solid var(--line); border-radius:22px;
+            padding:6px 10px; gap:6px; z-index:10; box-shadow:0 4px 20px #0008; }
+  #picker button { background:none; border:none; font-size:22px; padding:4px; }
+
+  #composer { display:flex; gap:8px; padding:8px 12px calc(var(--sab) + 8px); background:var(--panel); border-top:1px solid var(--line); }
+  #input { flex:1; background:var(--bg); border:1px solid var(--line); border-radius:18px; padding:9px 14px;
+           color:var(--text); font-size:16px; resize:none; max-height:120px; }
+  #sendbtn { background:var(--me); color:#fff; border:none; border-radius:50%; width:38px; height:38px; font-size:17px; align-self:flex-end; }
+  #sendbtn:disabled { opacity:.4; }
+
+  #login { position:fixed; inset:0; background:var(--bg); display:flex; flex-direction:column; align-items:center;
+           justify-content:center; gap:20px; z-index:20; }
+  #login h2 { font-size:22px; } #login p { color:var(--dim); font-size:14px; max-width:260px; text-align:center; }
+  .hidden { display:none !important; }
+  #ver { position:fixed; bottom:calc(var(--sab) + 2px); right:6px; font-size:9px; color:#333; z-index:1; pointer-events:none; }
+</style>
+</head>
+<body>
+<div id="login">
+  <h2>Chat</h2>
+  <p>Matt, Tingting &amp; Claude. Sign in with the account you always use.</p>
+  <div id="gbtn"></div>
+</div>
+<div id="app" class="hidden">
+  <header>
+    <h1 id="title">Chat</h1>
+    <div class="tabs" id="tabs"></div>
+    <button id="bell" title="Enable notifications">🔔</button>
+    <span id="status">…</span>
+  </header>
+  <div id="scroll"><div id="topspacer"></div><div id="list"></div><div id="botspacer"></div></div>
+  <div id="composer">
+    <textarea id="input" rows="1" placeholder="Message"></textarea>
+    <button id="sendbtn">↑</button>
+  </div>
+</div>
+<div id="picker"></div>
+<div id="ver">v1</div>
+
+<script>
+'use strict';
+/* Chat v1 — see PLAN.md. Bump VERSION here and CACHE in sw.js together. */
+const VERSION = 1;
+const API = 'https://cloudflare-backend.maattp.workers.dev';
+const CLIENT_ID = '611505411727-94u34em16j7sd0rdigejmvfdgnjj67ma.apps.googleusercontent.com';
+const VAPID_PUBLIC = 'BEh-HVZvaC3p5R3vm9vaddvI-SvWAJ2N6kcocMcyOcaWhLDEgVc5bQjzKT8knGN509v8GOGDujwu2OoQfwdKiLs';
+const SKEY = 'chat_session';
+const PICK = ['❤️','👍','😂','😮','😢','🔥'];
+const THREAD_LABELS = { dm: 'Claude', group: 'Us' };
+// Device senders: Matt's own words arriving through a device credential.
+// Rendered on his side of the chat, labelled with the device.
+const DEVICE_OWNERS = { ring: 'matt', alexa: 'matt' };
+const SENDER_LABELS = { claude: 'Claude', ring: '💍 via ring', alexa: '🔊 via Alexa' };
+
+/* ---------- tiny IndexedDB layer ---------- */
+let db;
+function idb() {
+  return db ? Promise.resolve(db) : new Promise((res, rej) => {
+    const r = indexedDB.open('chat', 1);
+    r.onupgradeneeded = () => {
+      const d = r.result;
+      d.createObjectStore('messages', { keyPath: 'id' }).createIndex('bySeq', ['thread','seq']);
+      d.createObjectStore('reactions', { keyPath: ['message_id','sender','emoji'] }).createIndex('bySeq', ['thread','seq']);
+      d.createObjectStore('outbox', { keyPath: 'id' });
+      d.createObjectStore('meta', { keyPath: 'k' });
+    };
+    r.onsuccess = () => { db = r.result; res(db); };
+    r.onerror = () => rej(r.error);
+  });
+}
+function tx(store, mode, fn) {
+  return idb().then(d => new Promise((res, rej) => {
+    const t = d.transaction(store, mode); const s = t.objectStore(store);
+    const out = fn(s);
+    t.oncomplete = () => res(out && out.result !== undefined ? out.result : out);
+    t.onerror = () => rej(t.error);
+  }));
+}
+const putAll = (store, rows) => rows.length ? tx(store, 'readwrite', s => rows.forEach(r => s.put(r))) : Promise.resolve();
+function readIndexRange(store, thread) {
+  return idb().then(d => new Promise((res, rej) => {
+    const s = d.transaction(store).objectStore(store).index('bySeq');
+    const q = s.getAll(IDBKeyRange.bound([thread, 0], [thread, Infinity]));
+    q.onsuccess = () => res(q.result); q.onerror = () => rej(q.error);
+  }));
+}
+
+/* ---------- state ---------- */
+const S = {
+  session: localStorage.getItem(SKEY) || null,
+  me: null, threads: [], thread: null,
+  msgs: {},          // thread -> array sorted by seq
+  reacts: {},        // thread -> Map(message_id -> Map(emoji -> Set(sender)))
+  lastSeq: {}, unread: {}, hasMore: {}, ws: null, wsBackoff: 1000, online: false,
+};
+
+/* ---------- api ---------- */
+async function api(method, path, body) {
+  const res = await fetch(API + '/chat' + path, {
+    method,
+    headers: { Authorization: 'Bearer ' + S.session, ...(body ? { 'Content-Type': 'application/json' } : {}) },
+    body: body ? JSON.stringify(body) : undefined,
+  });
+  if (res.status === 401) { localStorage.removeItem(SKEY); location.reload(); throw new Error('unauthorized'); }
+  if (!res.ok) throw new Error('api ' + res.status);
+  return res.json();
+}
+
+/* ---------- auth ---------- */
+window.onGoogleLibraryLoad = () => {
+  if (S.session) return;
+  google.accounts.id.initialize({ client_id: CLIENT_ID, callback: onCredential });
+  google.accounts.id.renderButton(document.getElementById('gbtn'), { theme: 'filled_black', size: 'large' });
+};
+async function onCredential(response) {
+  const res = await fetch(API + '/auth', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ token: response.credential }),
+  });
+  if (!res.ok) { alert('Sign-in rejected'); return; }
+  const data = await res.json();
+  S.session = data.sessionId; localStorage.setItem(SKEY, S.session);
+  init();
+}
+
+/* ---------- reactions bookkeeping ---------- */
+function reactMap(thread) { return S.reacts[thread] || (S.reacts[thread] = new Map()); }
+function applyReaction(thread, r) {
+  const m = reactMap(thread);
+  if (!m.has(r.message_id)) m.set(r.message_id, new Map());
+  const per = m.get(r.message_id);
+  if (!per.has(r.emoji)) per.set(r.emoji, new Set());
+  const removed = r.removed ?? (r.removed_at != null);
+  if (removed) { per.get(r.emoji).delete(r.sender); if (!per.get(r.emoji).size) per.delete(r.emoji); }
+  else per.get(r.emoji).add(r.sender);
+}
+
+/* ---------- sync ---------- */
+async function loadLocal(thread) {
+  S.msgs[thread] = (await readIndexRange('messages', thread)).sort((a, b) => a.seq - b.seq);
+  const rs = await readIndexRange('reactions', thread);
+  for (const r of rs) applyReaction(thread, r);
+  const meta = await tx('meta', 'readonly', s => s.get('seq:' + thread));
+  S.lastSeq[thread] = meta ? meta.v : (S.msgs[thread].at(-1)?.seq ?? 0);
+  S.hasMore[thread] = S.msgs[thread].length > 0; // until a short page proves otherwise
+  // Fresh install: don't replay a 20k-message thread forward from seq 0 —
+  // take the newest page and set the cursor to the thread's true top
+  // (review issue #3; PLAN "Cold start").
+  if (!S.msgs[thread].length && !S.lastSeq[thread]) {
+    try {
+      const got = await api('GET', `/${thread}/messages?limit=100`);
+      const rows = got.messages.sort((a, b) => a.seq - b.seq);
+      S.msgs[thread] = rows;
+      putAll('messages', rows);
+      for (const r of got.reactions) applyReaction(thread, { ...r, thread });
+      putAll('reactions', got.reactions.map(r => ({ ...r, thread, removed_at: null })));
+      S.lastSeq[thread] = got.top || (rows.at(-1)?.seq ?? 0);
+      tx('meta', 'readwrite', s => s.put({ k: 'seq:' + thread, v: S.lastSeq[thread] }));
+      S.hasMore[thread] = got.messages.length === 100;
+    } catch { /* offline fresh install: nothing to show yet */ }
+  }
+}
+let loadingOlder = false;
+async function loadOlder() {
+  const t = S.thread;
+  if (loadingOlder || !S.hasMore[t] || !S.msgs[t]?.length) return;
+  loadingOlder = true;
+  try {
+    const got = await api('GET', `/${t}/messages?before=${S.msgs[t][0].seq}&limit=100`);
+    S.hasMore[t] = got.messages.length === 100;
+    const known = new Set(S.msgs[t].map(m => m.id));
+    const fresh = got.messages.filter(m => !known.has(m.id)).sort((a, b) => a.seq - b.seq);
+    if (fresh.length) {
+      S.msgs[t] = fresh.concat(S.msgs[t]);
+      putAll('messages', fresh);
+      for (const r of got.reactions) applyReaction(t, { ...r, thread: t });
+      putAll('reactions', got.reactions.map(r => ({ ...r, thread: t, removed_at: null })));
+      const scroll = document.getElementById('scroll');
+      prefixDirty = true; rebuildPrefix();
+      const added = fresh.reduce((a, m) => a + (heights.get(m.id) || EST), 0);
+      const keep = scroll.scrollTop + added;   // anchor: don't yank the viewport
+      render(false);
+      scroll.scrollTop = keep;
+    }
+  } catch { /* offline; retry on next scroll */ }
+  finally { loadingOlder = false; }
+}
+async function catchUp(thread) {
+  let got;
+  do {
+    got = await api('GET', `/${thread}/messages?after=${S.lastSeq[thread]}&limit=200`);
+    ingest(thread, got.messages, got.reactions, got.next);
+  } while (got.more);
+}
+function ingest(thread, messages, reactions, next) {
+  let top = S.lastSeq[thread];
+  if (messages.length) {
+    // Remove pending placeholders FIRST, then dedupe — otherwise the
+    // placeholder's id shadows the confirmed row and the message vanishes.
+    for (const m of messages) removePending(thread, m.id);
+    const known = new Set(S.msgs[thread].map(m => m.id));
+    for (const m of messages) if (!known.has(m.id)) S.msgs[thread].push(m);
+    S.msgs[thread].sort((a, b) => a.seq - b.seq);
+    putAll('messages', messages);
+    top = Math.max(top, messages.at(-1).seq);
+  }
+  if (reactions && reactions.length) {
+    for (const r of reactions) applyReaction(thread, { ...r, thread });
+    putAll('reactions', reactions.map(r => ({ ...r, thread })));
+    top = Math.max(top, reactions.at(-1).seq);
+  }
+  // The server's merged-stream cursor is authoritative when present: it
+  // guarantees everything <= next was delivered (review issue #2).
+  if (typeof next === 'number') top = Math.max(S.lastSeq[thread], next);
+  if (top > S.lastSeq[thread]) {
+    S.lastSeq[thread] = top;
+    tx('meta', 'readwrite', s => s.put({ k: 'seq:' + thread, v: top }));
+  }
+  if (thread === S.thread) render(true); else { S.unread[thread] = (S.unread[thread] || 0) + messages.length; renderTabs(); }
+}
+
+/* ---------- websocket ---------- */
+async function connectWS() {
+  if (!S.thread) return;
+  const thread = S.thread;
+  try {
+    const { ticket } = await api('POST', `/${thread}/ws-ticket`);
+    const ws = new WebSocket(API.replace('https', 'wss') + '/chat/ws?ticket=' + ticket);
+    S.ws = ws;
+    ws.onopen = () => { S.wsBackoff = 1000; setOnline(true); catchUp(thread).catch(() => {}); };
+    ws.onmessage = (e) => {
+      const d = JSON.parse(e.data);
+      if (d.type === 'ping') return;
+      if (d.type === 'message') ingest(thread, [d.message], []);
+      if (d.type === 'reaction') ingest(thread, [], [d.reaction]);
+    };
+    ws.onclose = () => {
+      setOnline(false);
+      if (S.ws === ws && S.thread === thread) { setTimeout(connectWS, S.wsBackoff); S.wsBackoff = Math.min(S.wsBackoff * 2, 30000); }
+    };
+  } catch { setOnline(false); setTimeout(connectWS, S.wsBackoff); S.wsBackoff = Math.min(S.wsBackoff * 2, 30000); }
+}
+function setOnline(v) {
+  S.online = v;
+  const el = document.getElementById('status');
+  el.textContent = v ? '●' : 'offline'; el.className = v ? '' : 'off';
+  if (v) flushOutbox();
+}
+
+/* ---------- outbox / send ---------- */
+async function send() {
+  const input = document.getElementById('input');
+  const body = input.value.trim();
+  if (!body || !S.thread) return;
+  input.value = ''; input.style.height = 'auto';
+  const item = { id: crypto.randomUUID(), thread: S.thread, body, clientAt: Date.now() };
+  await tx('outbox', 'readwrite', s => s.put(item));
+  S.msgs[S.thread].push({ ...item, seq: Infinity, sender: S.me, created_at: item.clientAt, pending: true });
+  render(true);
+  flushOutbox();
+}
+let flushing = false, flushAgain = false;
+async function flushOutbox() {
+  if (flushing) { flushAgain = true; return; }
+  flushing = true;
+  try {
+    const items = await tx('outbox', 'readonly', s => s.getAll());
+    for (const it of (items || [])) {
+      try {
+        await api('POST', `/${it.thread}/send`, { id: it.id, body: it.body, clientAt: it.clientAt });
+        await tx('outbox', 'readwrite', s => s.delete(it.id));
+      } catch { break; } // offline again; keep the rest queued
+    }
+  } finally { flushing = false; if (flushAgain) { flushAgain = false; flushOutbox(); } }
+}
+function removePending(thread, id) {
+  const arr = S.msgs[thread]; const i = arr.findIndex(m => m.pending && m.id === id);
+  if (i >= 0) arr.splice(i, 1);
+}
+
+/* ---------- virtualised list ---------- */
+const EST = 72, OVERSCAN = 800;
+const heights = new Map(); let prefix = [], prefixDirty = true;
+function rebuildPrefix() {
+  const arr = S.msgs[S.thread] || []; prefix = new Array(arr.length + 1); prefix[0] = 0;
+  for (let i = 0; i < arr.length; i++) prefix[i + 1] = prefix[i] + (heights.get(arr[i].id) || EST);
+  prefixDirty = false;
+}
+function findIdx(y) { // greatest i with prefix[i] <= y
+  let lo = 0, hi = prefix.length - 1;
+  while (lo < hi) { const mid = (lo + hi + 1) >> 1; if (prefix[mid] <= y) lo = mid; else hi = mid - 1; }
+  return lo;
+}
+function render(stickBottom) {
+  const scroll = document.getElementById('scroll'), list = document.getElementById('list');
+  const arr = S.msgs[S.thread] || [];
+  if (prefixDirty) rebuildPrefix();
+  const wasBottom = scroll.scrollTop + scroll.clientHeight >= scroll.scrollHeight - 60;
+  const y = scroll.scrollTop;
+  let start = Math.max(0, findIdx(Math.max(0, y - OVERSCAN)));
+  let end = Math.min(arr.length, findIdx(y + scroll.clientHeight + OVERSCAN) + 1);
+  if (stickBottom && (wasBottom || arr.at(-1)?.pending)) { end = arr.length; start = Math.max(0, end - 60); }
+  document.getElementById('topspacer').style.height = prefix[start] + 'px';
+  document.getElementById('botspacer').style.height = (prefix[arr.length] - prefix[end]) + 'px';
+
+  list.textContent = '';
+  const frag = document.createDocumentFragment();
+  for (let i = start; i < end; i++) frag.appendChild(renderMsg(arr[i], arr[i - 1]));
+  list.appendChild(frag);
+
+  let changed = false;
+  for (const el of list.children) {
+    const h = el.offsetHeight, id = el.dataset.id;
+    if (id && heights.get(id) !== h) { heights.set(id, h); changed = true; }
+  }
+  if (changed) { prefixDirty = true; rebuildPrefix();
+    document.getElementById('topspacer').style.height = prefix[start] + 'px';
+    document.getElementById('botspacer').style.height = (prefix[arr.length] - prefix[end]) + 'px'; }
+  if (stickBottom && (wasBottom || arr.at(-1)?.pending)) scroll.scrollTop = scroll.scrollHeight;
+  markRead();
+}
+function renderMsg(m, prev) {
+  const div = document.createElement('div');
+  div.dataset.id = m.id;
+  const ownMsg = m.sender === S.me || DEVICE_OWNERS[m.sender] === S.me;
+  div.className = 'msg ' + (ownMsg ? 'mine' : m.sender === 'claude' ? 'claude theirs' : 'theirs') + (m.pending ? ' pending' : '');
+  if (!prev || prev.sender !== m.sender) {
+    const who = document.createElement('div'); who.className = 'who';
+    who.textContent = SENDER_LABELS[m.sender] || m.sender.charAt(0).toUpperCase() + m.sender.slice(1);
+    div.appendChild(who);
+  }
+  const b = document.createElement('div'); b.className = 'bubble';
+  b.textContent = m.body;   // text nodes only — never innerHTML (PLAN: security)
+  div.appendChild(b);
+  if (m.client_at && m.created_at - m.client_at > 5 * 60 * 1000) {
+    const meta = document.createElement('div'); meta.className = 'meta';
+    meta.textContent = 'composed ' + new Date(m.client_at).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+    div.appendChild(meta);
+  }
+  const per = reactMap(S.thread).get(m.id);
+  if (per && per.size) {
+    const row = document.createElement('div'); row.className = 'reacts';
+    for (const [emoji, senders] of per) {
+      const s = document.createElement('span');
+      s.textContent = emoji + (senders.size > 1 ? ' ' + senders.size : '');
+      if (senders.has(S.me)) s.className = 'mine';
+      s.onclick = (e) => { e.stopPropagation(); toggleReact(m.id, emoji, senders.has(S.me)); };
+      row.appendChild(s);
+    }
+    div.appendChild(row);
+  }
+  b.onclick = (e) => showPicker(m, e);
+  return div;
+}
+async function toggleReact(messageId, emoji, mine) {
+  // explicit add/remove per PLAN — the UI decides which, the wire op is never "toggle"
+  applyReaction(S.thread, { message_id: messageId, sender: S.me, emoji, removed: mine }); render(false);
+  try { await api('POST', `/${S.thread}/react`, { messageId, emoji, op: mine ? 'remove' : 'add' }); }
+  catch { applyReaction(S.thread, { message_id: messageId, sender: S.me, emoji, removed: !mine }); render(false); }
+}
+function showPicker(m, e) {
+  const p = document.getElementById('picker');
+  p.textContent = ''; p.style.display = 'flex';
+  for (const emoji of PICK) {
+    const btn = document.createElement('button'); btn.textContent = emoji;
+    btn.onclick = () => { p.style.display = 'none'; const mine = reactMap(S.thread).get(m.id)?.get(emoji)?.has(S.me); toggleReact(m.id, emoji, !!mine); };
+    p.appendChild(btn);
+  }
+  const r = e.target.getBoundingClientRect();
+  p.style.top = Math.max(8, r.top - 54) + 'px';
+  p.style.left = Math.min(window.innerWidth - 260, Math.max(8, r.left)) + 'px';
+  setTimeout(() => document.addEventListener('click', function h(ev) { if (!p.contains(ev.target)) { p.style.display = 'none'; document.removeEventListener('click', h); } }), 0);
+}
+
+/* ---------- read cursor ---------- */
+let readTimer;
+function markRead() {
+  clearTimeout(readTimer);
+  readTimer = setTimeout(() => {
+    const t = S.thread; if (!t || document.hidden) return;
+    S.unread[t] = 0; renderTabs();
+    api('POST', `/${t}/read`, { lastSeq: S.lastSeq[t] }).catch(() => {});
+  }, 800);
+}
+
+/* ---------- push ---------- */
+async function enablePush() {
+  if (!('serviceWorker' in navigator) || !('PushManager' in window)) { alert('Push needs the app installed to your home screen.'); return; }
+  const perm = await Notification.requestPermission();
+  if (perm !== 'granted') return;
+  const reg = await navigator.serviceWorker.ready;
+  const sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: b64uToBytes(VAPID_PUBLIC) });
+  const j = sub.toJSON();
+  await api('POST', '/push/subscribe', { endpoint: j.endpoint, keys: j.keys });
+  document.getElementById('bell').classList.add('on');
+}
+function b64uToBytes(s) {
+  const b = atob(s.replace(/-/g, '+').replace(/_/g, '/') + '='.repeat((4 - s.length % 4) % 4));
+  return Uint8Array.from(b, c => c.charCodeAt(0));
+}
+
+/* ---------- tabs / boot ---------- */
+function renderTabs() {
+  const tabs = document.getElementById('tabs'); tabs.textContent = '';
+  for (const t of S.threads) {
+    const b = document.createElement('button');
+    b.className = 'tab' + (t === S.thread ? ' active' : '');
+    b.textContent = THREAD_LABELS[t] || t;
+    if (S.unread[t]) { const badge = document.createElement('span'); badge.className = 'badge'; badge.textContent = S.unread[t]; b.appendChild(badge); }
+    b.onclick = () => switchThread(t);
+    tabs.appendChild(b);
+  }
+}
+async function switchThread(t) {
+  if (S.thread === t) return;
+  S.thread = t; localStorage.setItem('chat_thread', t);
+  heights.clear(); prefixDirty = true;
+  try { S.ws?.close(); } catch {}
+  renderTabs();
+  if (!S.msgs[t]) await loadLocal(t);
+  render(true);
+  connectWS();
+}
+async function init() {
+  document.getElementById('login').classList.add('hidden');
+  document.getElementById('app').classList.remove('hidden');
+  let me;
+  try { me = await api('GET', '/me'); }
+  catch (e) { if (!navigator.onLine) { me = JSON.parse(localStorage.getItem('chat_me') || 'null'); } if (!me) throw e; }
+  localStorage.setItem('chat_me', JSON.stringify(me));
+  S.me = me.sender; S.threads = me.threads;
+  const saved = localStorage.getItem('chat_thread');
+  await switchThread(S.threads.includes(saved) ? saved : S.threads[0]);
+  if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js');
+  if (Notification.permission === 'granted') document.getElementById('bell').classList.add('on');
+}
+
+/* ---------- wiring ---------- */
+document.getElementById('sendbtn').onclick = send;
+document.getElementById('input').addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); } });
+document.getElementById('input').addEventListener('input', function () { this.style.height = 'auto'; this.style.height = Math.min(this.scrollHeight, 120) + 'px'; });
+document.getElementById('bell').onclick = enablePush;
+document.getElementById('scroll').addEventListener('scroll', () => {
+  render(false);
+  if (document.getElementById('scroll').scrollTop < 600) loadOlder();
+}, { passive: true });
+window.addEventListener('online', () => { flushOutbox(); connectWS(); });
+document.addEventListener('visibilitychange', () => { if (!document.hidden && S.thread) { flushOutbox(); catchUp(S.thread).catch(() => {}); markRead(); } });
+if (window.visualViewport) visualViewport.addEventListener('resize', () => {
+  document.getElementById('app').style.height = visualViewport.height + 'px'; render(false);
+});
+if (S.session) init();
+</script>
+</body>
+</html>
