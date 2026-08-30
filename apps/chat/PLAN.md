@@ -33,9 +33,13 @@ which happened ("will reply" vs "offline, will pick it up"). Reply rules key
 off the sender, not the transport: in-thread always, plus a phone push when
 sender is `ring`.
 
-From the ring, destination is chosen verbally: naming the coordinator →
-`send_to_coordinator` (dm, private); naming the group/our chat →
-`post_to_group_chat` (shared feed, Tingting sees it).
+From the ring, three actions are chosen verbally — the word "coordinator" is
+retired: **ask_claude** ("ask Claude …") is a private 1:1 question;
+**ask_claude_in_group_chat** ("ask Claude in our chat …") posts the question
+to the group `@claude`-prefixed, so the mention machinery forwards it and
+Tingting can see who it was addressed to; **post_to_group_chat** ("tell the
+group …") publishes without involving Claude. Unsure between private and
+group defaults to private.
 
 ## Threads
 
