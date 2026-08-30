@@ -46,23 +46,11 @@ export class RingRoom {
       return new Response(null, { status: 101, webSocket: pair[0] });
     }
 
-    if (url.pathname === "/send" && request.method === "POST") {
-      const text = await request.text();
-      const live = this.sockets();
-      if (live.length === 0) {
-        return Response.json({ delivered: false });
-      }
-      const payload = JSON.stringify({ type: "ring", text, at: Date.now() });
-      let delivered = false;
-      for (const ws of live) {
-        try { ws.send(payload); delivered = true; } catch { /* closing */ }
-      }
-      return Response.json({ delivered });
-    }
-
-    // Pre-built payload from the ChatRoom DO (chat messages for Claude).
-    // Passed through verbatim so this object stays a dumb pipe; /send remains
-    // the Pebble path with its own envelope.
+    // Pre-built payload from the ChatRoom DO — the ONLY inbound producer.
+    // Ring presses reach the agent the same way as any chat message: recorded
+    // in the dm thread first, then forwarded from there. One path, and a
+    // press that arrives while the agent is down survives in the feed for
+    // catch-up instead of being dropped.
     if (url.pathname === "/forward" && request.method === "POST") {
       const payload = await request.text();
       const live = this.sockets();

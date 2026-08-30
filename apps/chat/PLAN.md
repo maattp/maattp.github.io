@@ -23,11 +23,19 @@ Matt's input devices are participants of their own: a ring press is recorded
 in `dm` as sender `ring` (an Alexa would be `alexa`). The relay's credential is
 the identity — same stamping rule as everything else. `DEVICE_OWNERS` maps a
 device to its human so the owner is never push-notified about their own voice.
-In `dm`, device messages don't re-forward to Claude (the pebble envelope
-already delivered them); in `group` the ordinary @claude rule applies, since
-there is no other path. From the ring, destination is chosen verbally: naming
-the coordinator → `send_to_coordinator` (dm, private); naming the group/our
-chat → `post_to_group_chat` (shared feed, Tingting sees it).
+
+**There is exactly one delivery path to Claude: the chat feed.** The old
+direct pebble envelope is gone — a press is written to `dm` and forwarded from
+there like any typed message, and the channel server keeps a per-thread cursor
+so it catches up from the feed after downtime. A press that lands while the
+agent is down is delivered late instead of dropped; the relay's ack tells Matt
+which happened ("will reply" vs "offline, will pick it up"). Reply rules key
+off the sender, not the transport: in-thread always, plus a phone push when
+sender is `ring`.
+
+From the ring, destination is chosen verbally: naming the coordinator →
+`send_to_coordinator` (dm, private); naming the group/our chat →
+`post_to_group_chat` (shared feed, Tingting sees it).
 
 ## Threads
 

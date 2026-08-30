@@ -268,41 +268,45 @@ ringApp.post("/mcp", async (c) => {
         );
       }
 
-      // Record the press in the chat feed as sender "ring" — the Pebble
-      // credential IS the identity here, same stamping rule as everywhere
-      // else. Recorded even when the coordinator is offline: the feed is the
-      // durable log of what Matt said; the ack below reports delivery.
-      // (The ChatRoom skips push-to-owner and Claude-forward for device
-      // senders, so this cannot double-deliver.)
+      // One path: the press is recorded in the dm thread as sender "ring"
+      // (the Pebble credential IS the identity), and the ChatRoom forwards it
+      // to the agent like any other message. The feed is the durable log, so
+      // an offline agent no longer loses the press — it catches up from the
+      // thread when it reconnects. The ack phrasing reflects liveness only.
+      let recorded = false;
       try {
         const chatStub = c.env.CHAT_ROOM.get(c.env.CHAT_ROOM.idFromName("dm"));
-        await chatStub.fetch("https://do/send", {
+        const r = await chatStub.fetch("https://do/send", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ thread: "dm", sender: "ring", msgId: crypto.randomUUID(), body: text.slice(0, TEXT_MAX) }),
         });
-      } catch { /* feed record is best-effort; the ack reports the delivery leg */ }
+        recorded = r.ok;
+      } catch { recorded = false; }
 
-      const stub = c.env.RING_ROOM.get(c.env.RING_ROOM.idFromName("ring"));
-      let delivered = false;
-      try {
-        const res = await stub.fetch("https://do/send", {
-          method: "POST",
-          body: text.slice(0, TEXT_MAX),
-        });
-        delivered = ((await res.json()) as { delivered: boolean }).delivered;
-      } catch {
-        delivered = false;
+      if (!recorded) {
+        return respond(c,
+          result(id, {
+            content: [{ type: "text", text: "Failed — the message could not be recorded. Nothing was sent." }],
+            isError: true,
+          })
+        );
       }
+
+      let online = false;
+      try {
+        const stub = c.env.RING_ROOM.get(c.env.RING_ROOM.idFromName("ring"));
+        online = ((await (await stub.fetch("https://do/status")).json()) as { online: boolean }).online;
+      } catch { online = false; }
 
       return respond(c,
         result(id, {
           content: [
             {
               type: "text",
-              text: delivered
-                ? "Sent to coordinator. It will push a notification to your phone when it's done."
-                : "Coordinator offline — nothing was sent. It isn't connected right now.",
+              text: online
+                ? "Sent to the coordinator. It will reply in the chat feed and notify your phone."
+                : "Recorded in the chat feed. The coordinator is offline right now and will pick it up when it reconnects.",
             },
           ],
         })

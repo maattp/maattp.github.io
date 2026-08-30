@@ -226,18 +226,14 @@ export class ChatRoom {
     // --- Forward to Claude's channel (the ring agent's socket) ---
     // dm: everything that isn't Claude's own message. group: only @claude
     // mentions — the agent should not read the couple's chatter.
-    // In dm, device senders already reached Claude through their own channel
-    // (via=pebble) — forwarding again would deliver every ring press twice.
-    // In group they have no other path, so the ordinary @claude rule applies.
-    const alreadyDelivered = owner && message.thread === "dm";
-    if (message.sender !== "claude" && !alreadyDelivered && members.includes("claude")) {
+    if (message.sender !== "claude" && members.includes("claude")) {
       const mentioned = message.thread === "dm" || /@claude\b/i.test(message.body);
       if (mentioned) {
         try {
           const stub = this.env.RING_ROOM.get(this.env.RING_ROOM.idFromName("ring"));
           await stub.fetch("https://do/forward", {
             method: "POST",
-            body: JSON.stringify({ type: "chat", thread: message.thread, sender: message.sender, message_id: message.id, text: message.body, at: Date.now() }),
+            body: JSON.stringify({ type: "chat", thread: message.thread, sender: message.sender, message_id: message.id, seq: message.seq, text: message.body, at: Date.now() }),
           });
         } catch { /* agent offline; the message is in the thread regardless */ }
       }
