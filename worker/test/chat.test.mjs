@@ -1,7 +1,7 @@
 /* Node test suite for the chat identity + membership logic.
  * Run: node --experimental-strip-types worker/test/chat.test.mjs             */
 import { parseSenderMap, memberOf, THREADS, DEVICE_OWNERS, mergeStreams } from '../src/chat.ts';
-import { authorized } from '../src/ring.ts';
+import { authorized } from '../src/session.ts';
 
 let pass = 0, fail = 0; const failures = [];
 const ok = (cond, msg) => { if (cond) pass++; else { fail++; failures.push(msg); } };

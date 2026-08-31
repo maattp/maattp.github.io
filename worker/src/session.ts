@@ -16,3 +16,21 @@ export async function sessionEmail(
   const allowed = allowedEmails.split(",").map((e) => e.trim().toLowerCase());
   return allowed.includes(lower) ? lower : null;
 }
+
+// Fixed-time bearer compare, shared by the ring relay and Claude's chat
+// credential. Folds length into the accumulator rather than returning early,
+// so neither the token's length nor the first differing byte is timeable.
+function tokenMatches(presented: string, expected: string): boolean {
+  const a = new TextEncoder().encode(presented);
+  const b = new TextEncoder().encode(expected);
+  let diff = a.length ^ b.length;
+  const n = Math.max(a.length, b.length);
+  for (let i = 0; i < n; i++) diff |= (a[i] ?? 0) ^ (b[i] ?? 0);
+  return diff === 0;
+}
+
+export function authorized(header: string | undefined, expected: string): boolean {
+  if (!expected) return false; // secret unset — fail closed, never open
+  const m = /^Bearer (.+)$/.exec(header ?? "");
+  return m ? tokenMatches(m[1], expected) : false;
+}

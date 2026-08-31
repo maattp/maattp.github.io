@@ -2,10 +2,11 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no, viewport-fit=cover">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no, viewport-fit=cover, interactive-widget=resizes-content">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="theme-color" content="#0b0b12">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline' https://accounts.google.com; style-src 'unsafe-inline' https://accounts.google.com; img-src 'self' data:; connect-src https://cloudflare-backend.maattp.workers.dev wss://cloudflare-backend.maattp.workers.dev https://accounts.google.com; frame-src https://accounts.google.com; manifest-src 'self'; worker-src 'self'; base-uri 'none'; form-action 'none'">
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="apple-touch-icon" href="../icon.png">
 <title>Chat</title>
@@ -20,7 +21,8 @@
   html,body { height:100%; }
   body { background:var(--bg); color:var(--text); font:16px/1.4 -apple-system,system-ui,sans-serif; overflow:hidden; }
 
-  #app { display:flex; flex-direction:column; height:100dvh; }
+  #app { display:flex; flex-direction:column; height:100dvh; position:fixed; top:0; left:0; right:0; }
+  #app.kb #composer { padding-bottom:8px; }
   header { padding:calc(var(--sat) + 8px) 12px 8px; background:var(--panel); border-bottom:1px solid var(--line);
            display:flex; align-items:center; gap:8px; }
   header h1 { font-size:17px; flex:1; }
@@ -33,7 +35,11 @@
   #status { font-size:11px; color:var(--dim); }
   #status.off { color:#e6a23c; }
 
-  #scroll { flex:1; overflow-y:auto; -webkit-overflow-scrolling:touch; overscroll-behavior:contain; }
+  #scroll { flex:1; overflow-y:auto; -webkit-overflow-scrolling:touch; overscroll-behavior:contain;
+            display:flex; flex-direction:column; }
+  #topspacer { margin-top:auto; flex-shrink:0; }
+  #botspacer { padding-bottom:8px; } /* keep the last row's reactions off the composer edge */
+  #botspacer,#list { flex-shrink:0; }
   #topspacer,#botspacer { width:1px; }
   .msg { padding:2px 12px; display:flex; flex-direction:column; }
   .msg .bubble { max-width:78%; padding:8px 12px; border-radius:18px; white-space:pre-wrap; word-break:break-word; }
@@ -80,17 +86,17 @@
   </header>
   <div id="scroll"><div id="topspacer"></div><div id="list"></div><div id="botspacer"></div></div>
   <div id="composer">
-    <textarea id="input" rows="1" placeholder="Message"></textarea>
+    <textarea id="input" rows="1" placeholder="Message" maxlength="8000"></textarea>
     <button id="sendbtn">↑</button>
   </div>
 </div>
 <div id="picker"></div>
-<div id="ver">v1</div>
+<div id="ver">v2</div>
 
 <script>
 'use strict';
 /* Chat v1 — see PLAN.md. Bump VERSION here and CACHE in sw.js together. */
-const VERSION = 1;
+const VERSION = 2;
 const API = 'https://cloudflare-backend.maattp.workers.dev';
 const CLIENT_ID = '611505411727-94u34em16j7sd0rdigejmvfdgnjj67ma.apps.googleusercontent.com';
 const VAPID_PUBLIC = 'BEh-HVZvaC3p5R3vm9vaddvI-SvWAJ2N6kcocMcyOcaWhLDEgVc5bQjzKT8knGN509v8GOGDujwu2OoQfwdKiLs';
@@ -152,7 +158,7 @@ async function api(method, path, body) {
     body: body ? JSON.stringify(body) : undefined,
   });
   if (res.status === 401) { localStorage.removeItem(SKEY); location.reload(); throw new Error('unauthorized'); }
-  if (!res.ok) throw new Error('api ' + res.status);
+  if (!res.ok) { const e = new Error('api ' + res.status); e.status = res.status; throw e; }
   return res.json();
 }
 
@@ -319,7 +325,16 @@ async function flushOutbox() {
       try {
         await api('POST', `/${it.thread}/send`, { id: it.id, body: it.body, clientAt: it.clientAt });
         await tx('outbox', 'readwrite', s => s.delete(it.id));
-      } catch { break; } // offline again; keep the rest queued
+      } catch (e) {
+        // Permanent rejection (too long, bad request): drop it — retrying
+        // forever would wedge every send queued behind it.
+        if (e.status && e.status >= 400 && e.status < 500 && e.status !== 401 && e.status !== 429) {
+          await tx('outbox', 'readwrite', s => s.delete(it.id));
+          removePending(it.thread, it.id); if (it.thread === S.thread) render(false);
+          continue;
+        }
+        break; // offline / transient; keep the rest queued
+      }
     }
   } finally { flushing = false; if (flushAgain) { flushAgain = false; flushOutbox(); } }
 }
@@ -496,9 +511,33 @@ document.getElementById('scroll').addEventListener('scroll', () => {
 }, { passive: true });
 window.addEventListener('online', () => { flushOutbox(); connectWS(); });
 document.addEventListener('visibilitychange', () => { if (!document.hidden && S.thread) { flushOutbox(); catchUp(S.thread).catch(() => {}); markRead(); } });
-if (window.visualViewport) visualViewport.addEventListener('resize', () => {
-  document.getElementById('app').style.height = visualViewport.height + 'px'; render(false);
-});
+/* iOS keyboard handling. When the keyboard opens in a standalone PWA, iOS
+   scrolls the PAGE to reveal the focused input instead of resizing the
+   layout — the app's top half disappears off-screen while the keyboard sits
+   at the bottom. Pin the app to the visual viewport: size it to vv.height,
+   translate it by vv.offsetTop, and undo iOS's page scroll. */
+function layoutViewport() {
+  const vv = window.visualViewport; if (!vv) return;
+  const app = document.getElementById('app');
+  const kb = vv.height < window.innerHeight - 60; // keyboard (or similar) is up
+  app.style.height = vv.height + 'px';
+  app.style.transform = `translateY(${vv.offsetTop}px)`;
+  app.classList.toggle('kb', kb);
+  window.scrollTo(0, 0);
+  render(false);
+  // Keyboard opening halves the list's height; keep the newest messages and
+  // the composer together instead of leaving the view mid-history.
+  if (kb && document.activeElement === document.getElementById('input')) {
+    const scroll = document.getElementById('scroll');
+    scroll.scrollTop = scroll.scrollHeight;
+  }
+}
+if (window.visualViewport) {
+  visualViewport.addEventListener('resize', layoutViewport);
+  visualViewport.addEventListener('scroll', layoutViewport);
+}
+document.getElementById('input').addEventListener('focus', () => setTimeout(layoutViewport, 250));
+document.getElementById('input').addEventListener('blur', () => setTimeout(layoutViewport, 250));
 if (S.session) init();
 </script>
 </body>
