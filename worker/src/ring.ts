@@ -195,8 +195,6 @@ ringApp.post("/mcp", async (c) => {
   }
 
   const { id, method, params } = msg;
-  // Diagnostic: method + tool name only — never message content.
-  console.log(`ring rpc method=${method}${method === "tools/call" ? ` tool=${(params?.name as string) ?? "?"} textlen=${String((params?.arguments as { text?: string })?.text ?? "").length}` : ""}`);
   // A JSON-RPC notification (no id) gets no body — the client isn't waiting.
   const isNotification = id === undefined || id === null;
 
@@ -240,12 +238,7 @@ ringApp.post("/mcp", async (c) => {
     }
 
     case "tools/call": {
-      let name = params?.name as string;
-      // Compat alias: Pebble may cache a stale tool list, and its calls to
-      // the retired name would fail as "unknown tool" — which from the ring
-      // looks like silence. Old name behaves exactly like ask_claude; not
-      // advertised in tools/list.
-      if (name === "send_to_coordinator") name = ASK_TOOL.name;
+      const name = params?.name as string;
       const KNOWN = [ASK_TOOL.name, GROUP_ASK_TOOL.name, GROUP_TOOL.name] as string[];
       if (!KNOWN.includes(name)) {
         return respond(c, failure(id, -32602, `unknown tool: ${name}`));
