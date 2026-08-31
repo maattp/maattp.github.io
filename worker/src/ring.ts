@@ -30,19 +30,15 @@ const TEXT_MAX = 2000;
 import { authorized } from "./session.ts";
 
 const ROUTING_RULE = [
-  "Three actions, chosen by what Matt says.",
-  'ask_claude when he addresses Claude without naming the group ("ask Claude',
-  '...", "Claude, what\'s ..."): a private question in his 1:1 chat.',
-  "ask_claude_in_our_group_chat when he addresses Claude AND names the shared",
-  'chat ("ask Claude in our group chat ...", "in our group chat, ask Claude ..."):',
-  "the question and answer are visible to his partner Tingting.",
-  "post_to_group_chat when the message is for the group, not for Claude",
-  '("post to our chat ...", "tell the group ...", "tell Tingting ...").',
-  "When unsure between private and group, choose the private ask_claude.",
-  "If he addresses neither Claude nor the group, call nothing and answer him",
-  "yourself. Never call any tool to test reachability or to say hello. There",
-  "is no read path: these tools cannot fetch anything back, so calling them",
-  "speculatively accomplishes nothing.",
+  "Route what Matt says to one of three actions. Default: ask_claude — any",
+  "question or task goes to his private 1:1 with Claude.",
+  'If he names the group chat AND addresses Claude ("ask Claude in our group',
+  'chat ..."), use ask_claude_in_our_group_chat: visible to his partner',
+  "Tingting. If the message is FOR the group rather than a question for",
+  'Claude ("tell the group ...", "tell Tingting ..."), use',
+  "post_to_group_chat. When unsure between private and group, choose",
+  "private. These tools return only a delivery ack; Claude replies in the",
+  "chat feed and to Matt's phone.",
 ].join(" ");
 
 const TEXT_ARG = {
@@ -62,33 +58,31 @@ const TEXT_ARG = {
 const ASK_TOOL = {
   name: "ask_claude",
   description:
-    "Ask Claude something privately, in Matt's 1:1 chat with it. Call when " +
-    'Matt addresses Claude without naming the group ("ask Claude ...", ' +
-    '"Claude, ..."). ' + ROUTING_RULE +
-    " This returns only a delivery ack — Claude answers in the chat feed and " +
-    "notifies Matt's phone, so tell him to expect that rather than waiting " +
-    "for a result here.",
+    "Send Matt's question or task to Claude, his personal AI assistant, in " +
+    "their private 1:1 chat. This is the default destination for anything " +
+    "Matt asks or requests, unless he names the group chat. Returns only a " +
+    "delivery ack — Claude answers in the chat feed and notifies Matt's " +
+    "phone, so tell him to expect that.",
   inputSchema: TEXT_ARG,
 } as const;
 
 const GROUP_ASK_TOOL = {
   name: "ask_claude_in_our_group_chat",
   description:
-    "Ask Claude something in the shared chat that Matt, Tingting, and Claude " +
-    "all read — question and answer are visible to Tingting. Call ONLY when " +
-    "Matt addresses Claude AND names the shared chat. When he addresses " +
-    "Claude without naming the group, use ask_claude (private) instead.",
+    "Ask Claude in the shared group chat that Matt, Tingting, and Claude all " +
+    "read — question and answer are visible to Tingting. Use when Matt says " +
+    "to ask Claude in the group chat; without the group named, use " +
+    "ask_claude (private) instead.",
   inputSchema: TEXT_ARG,
 } as const;
 
 const GROUP_TOOL = {
   name: "post_to_group_chat",
   description:
-    "Post Matt's words into the shared chat feed that he, Tingting, and " +
-    "Claude all read — a message for the group, not a question for Claude. " +
-    'Call ONLY when Matt addresses the shared chat or the group ("post to ' +
-    'our chat", "tell the group", "tell Tingting"). The message appears in ' +
-    "the feed attributed to his ring.",
+    "Post Matt's words into the shared group chat that he, Tingting, and " +
+    "Claude all read — a message for the group, not a question for Claude " +
+    '("tell the group ...", "tell Tingting ..."). It appears in the feed ' +
+    "attributed to his ring.",
   inputSchema: TEXT_ARG,
 } as const;
 
@@ -201,6 +195,8 @@ ringApp.post("/mcp", async (c) => {
   }
 
   const { id, method, params } = msg;
+  // Diagnostic: method + tool name only — never message content.
+  console.log(`ring rpc method=${method}${method === "tools/call" ? ` tool=${(params?.name as string) ?? "?"} textlen=${String((params?.arguments as { text?: string })?.text ?? "").length}` : ""}`);
   // A JSON-RPC notification (no id) gets no body — the client isn't waiting.
   const isNotification = id === undefined || id === null;
 
@@ -244,7 +240,12 @@ ringApp.post("/mcp", async (c) => {
     }
 
     case "tools/call": {
-      const name = params?.name as string;
+      let name = params?.name as string;
+      // Compat alias: Pebble may cache a stale tool list, and its calls to
+      // the retired name would fail as "unknown tool" — which from the ring
+      // looks like silence. Old name behaves exactly like ask_claude; not
+      // advertised in tools/list.
+      if (name === "send_to_coordinator") name = ASK_TOOL.name;
       const KNOWN = [ASK_TOOL.name, GROUP_ASK_TOOL.name, GROUP_TOOL.name] as string[];
       if (!KNOWN.includes(name)) {
         return respond(c, failure(id, -32602, `unknown tool: ${name}`));
