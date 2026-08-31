@@ -96,8 +96,11 @@ export class ChatRoom {
 
     if (url.pathname === "/send" && request.method === "POST") {
       const b = (await request.json()) as SendBody;
-      const body = (b.body ?? "").slice(0, BODY_MAX);
+      const body = b.body ?? "";
       if (!body.trim()) return Response.json({ error: "empty" }, { status: 400 });
+      // Reject rather than silently truncate — a user who pastes 8KB+ should
+      // know it didn't send, not discover a cut-off message later.
+      if (body.length > BODY_MAX) return Response.json({ error: "too long" }, { status: 413 });
       if (!/^[0-9a-f-]{16,64}$/i.test(b.msgId ?? "")) return Response.json({ error: "bad msgId" }, { status: 400 });
 
       // Idempotency: same msgId returns the original row, so the offline

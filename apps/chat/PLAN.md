@@ -318,8 +318,10 @@ sending an iMessage *as Matt*. It is attributed, bounded, and visible.
 - Claude's token is separate from both ring tokens. Three tokens, three jobs:
   Pebble→relay, mini↔relay socket, Claude→chat. Compromise of one must not
   grant the others.
-- Rate-limit `/chat/*/send` per credential. Claude's token especially: if it
-  leaked, the blast radius is "writes into a thread Tingting reads".
+- Rate limits are enforced in the DO, per sender **per thread** (dm and group
+  are separate DO instances, so the global ceiling is the sum). Claude's token
+  especially: if it leaked, the blast radius is "writes into a thread Tingting
+  reads".
 - Render message bodies as **text nodes**, never `innerHTML`. Strict CSP on the
   page. The threat is not a stranger — it is Claude posting fetched content that
   happens to contain markup.
@@ -408,6 +410,11 @@ Sender identity mapping lives in a `CHAT_SENDERS` var
 `CHAT_CLAUDE_TOKEN` wrangler secret, constant-time compared like the ring
 tokens. Rate limits are enforced in the DO (its input gate serialises anyway):
 30 messages and 60 reaction ops per sender per minute.
+
+**Known limitation:** the ring ack's online/offline phrasing is decided by a
+status probe after the feed write, not atomically with the forward — a socket
+drop in that window can make the tense wrong. The message itself is never
+lost either way; catch-up delivers it.
 
 ## Non-goals (v1)
 

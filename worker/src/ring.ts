@@ -27,22 +27,7 @@ const SERVER_INFO = { name: "ring-relay", version: "1.0.0" };
 const FALLBACK_PROTOCOL = "2025-06-18";
 const TEXT_MAX = 2000;
 
-// Fixed-time comparison: fold length into the result rather than returning
-// early, so neither the length nor the first differing byte is timeable.
-function tokenMatches(presented: string, expected: string): boolean {
-  const a = new TextEncoder().encode(presented);
-  const b = new TextEncoder().encode(expected);
-  let diff = a.length ^ b.length;
-  const n = Math.max(a.length, b.length);
-  for (let i = 0; i < n; i++) diff |= (a[i] ?? 0) ^ (b[i] ?? 0);
-  return diff === 0;
-}
-
-export function authorized(header: string | undefined, expected: string): boolean {
-  if (!expected) return false; // secret unset — fail closed, never open
-  const m = /^Bearer (.+)$/.exec(header ?? "");
-  return m ? tokenMatches(m[1], expected) : false;
-}
+import { authorized } from "./session.ts";
 
 const ROUTING_RULE = [
   "Three actions, chosen by what Matt says.",

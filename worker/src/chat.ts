@@ -11,8 +11,7 @@
 //     Claude's token cannot produce a human sender.
 
 import { Hono } from "hono";
-import { authorized } from "./ring.ts";
-import { sessionEmail } from "./session.ts";
+import { authorized, sessionEmail } from "./session.ts";
 
 export type ChatBindings = {
   DB: D1Database;
@@ -156,18 +155,23 @@ chatApp.use("/:thread/*", async (c, next) => {
 //                    CURRENT reactions for those messages attached.
 chatApp.get("/:thread/messages", async (c) => {
   const thread = c.req.param("thread");
-  const limit = Math.min(parseInt(c.req.query("limit") ?? "50", 10) || 50, 200);
+  // Clamp BOTH ends: parseInt("-1") is truthy so || 50 never fires for
+  // negative input, and SQLite treats a negative LIMIT as "no limit" — one
+  // request could pull a whole 20k-message thread.
+  const limit = Math.min(Math.max(parseInt(c.req.query("limit") ?? "50", 10) || 50, 1), 200);
   const after = c.req.query("after");
   const before = c.req.query("before");
 
   if (after !== undefined) {
     const cursor = parseInt(after, 10) || 0;
-    const messages = await c.env.DB.prepare(
-      "SELECT id, thread, seq, sender, body, created_at, client_at, reply_to FROM chat_messages WHERE thread = ? AND seq > ? ORDER BY seq ASC LIMIT ?"
-    ).bind(thread, cursor, limit).all<{ seq: number }>();
-    const reactions = await c.env.DB.prepare(
-      "SELECT message_id, sender, emoji, seq, removed_at FROM chat_reactions WHERE thread = ? AND seq > ? ORDER BY seq ASC LIMIT ?"
-    ).bind(thread, cursor, limit).all<{ seq: number }>();
+    const [messages, reactions] = await Promise.all([
+      c.env.DB.prepare(
+        "SELECT id, thread, seq, sender, body, created_at, client_at, reply_to FROM chat_messages WHERE thread = ? AND seq > ? ORDER BY seq ASC LIMIT ?"
+      ).bind(thread, cursor, limit).all<{ seq: number }>(),
+      c.env.DB.prepare(
+        "SELECT message_id, sender, emoji, seq, removed_at FROM chat_reactions WHERE thread = ? AND seq > ? ORDER BY seq ASC LIMIT ?"
+      ).bind(thread, cursor, limit).all<{ seq: number }>(),
+    ]);
     return c.json(mergeStreams(messages.results, reactions.results, limit, cursor));
   }
 

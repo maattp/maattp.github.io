@@ -5,10 +5,9 @@
 
 import { Hono } from "hono";
 import { sessionEmail } from "./session.ts";
-import { type HardEnv, type HardAction, coupleEmails, partnerOf } from "./hardlogic";
+import { type HardEnv, type HardAction, partnerOf } from "./hardlogic";
 import { sendPushToUser } from "./hardpush";
 
-const SESSION_PREFIX = "__session:";
 export const WS_TICKET_PREFIX = "__hardws:";
 
 type Variables = { email: string };

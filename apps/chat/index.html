@@ -6,6 +6,7 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="theme-color" content="#0b0b12">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline' https://accounts.google.com; style-src 'unsafe-inline' https://accounts.google.com; img-src 'self' data:; connect-src https://cloudflare-backend.maattp.workers.dev wss://cloudflare-backend.maattp.workers.dev https://accounts.google.com; frame-src https://accounts.google.com; manifest-src 'self'; worker-src 'self'; base-uri 'none'; form-action 'none'">
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="apple-touch-icon" href="../icon.png">
 <title>Chat</title>
@@ -80,7 +81,7 @@
   </header>
   <div id="scroll"><div id="topspacer"></div><div id="list"></div><div id="botspacer"></div></div>
   <div id="composer">
-    <textarea id="input" rows="1" placeholder="Message"></textarea>
+    <textarea id="input" rows="1" placeholder="Message" maxlength="8000"></textarea>
     <button id="sendbtn">↑</button>
   </div>
 </div>
@@ -152,7 +153,7 @@ async function api(method, path, body) {
     body: body ? JSON.stringify(body) : undefined,
   });
   if (res.status === 401) { localStorage.removeItem(SKEY); location.reload(); throw new Error('unauthorized'); }
-  if (!res.ok) throw new Error('api ' + res.status);
+  if (!res.ok) { const e = new Error('api ' + res.status); e.status = res.status; throw e; }
   return res.json();
 }
 
@@ -319,7 +320,16 @@ async function flushOutbox() {
       try {
         await api('POST', `/${it.thread}/send`, { id: it.id, body: it.body, clientAt: it.clientAt });
         await tx('outbox', 'readwrite', s => s.delete(it.id));
-      } catch { break; } // offline again; keep the rest queued
+      } catch (e) {
+        // Permanent rejection (too long, bad request): drop it — retrying
+        // forever would wedge every send queued behind it.
+        if (e.status && e.status >= 400 && e.status < 500 && e.status !== 401 && e.status !== 429) {
+          await tx('outbox', 'readwrite', s => s.delete(it.id));
+          removePending(it.thread, it.id); if (it.thread === S.thread) render(false);
+          continue;
+        }
+        break; // offline / transient; keep the rest queued
+      }
     }
   } finally { flushing = false; if (flushAgain) { flushAgain = false; flushOutbox(); } }
 }
