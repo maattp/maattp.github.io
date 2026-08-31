@@ -92,10 +92,36 @@ const GROUP_TOOL = {
   inputSchema: TEXT_ARG,
 } as const;
 
-const PROMPT = {
-  name: "ring_routing",
-  description: "How to route a ring request: private ask, group ask, or group post.",
-};
+// One prompt per action, each a single crisp behavior — Pebble surfaces
+// these as a selectable list, so three simple entries beat one combined
+// routing essay.
+const PROMPTS = [
+  {
+    name: "ask_claude",
+    description: "Ask Claude privately (1:1 chat).",
+    text:
+      "When Matt asks a question or gives a task, call the ask_claude tool " +
+      "with his words. This is his private 1:1 with Claude — the default " +
+      "destination for anything he says, unless he names the group chat.",
+  },
+  {
+    name: "ask_claude_in_our_group_chat",
+    description: "Ask Claude in the shared group chat.",
+    text:
+      "When Matt says to ask Claude in the group chat (\"ask Claude in our " +
+      "group chat ...\"), call the ask_claude_in_our_group_chat tool with " +
+      "his words. The question and Claude's answer are visible to Tingting.",
+  },
+  {
+    name: "post_to_group_chat",
+    description: "Post Matt's message to the group chat.",
+    text:
+      "When Matt wants to send a message to the group chat or to Tingting " +
+      "(\"tell the group ...\", \"tell Tingting ...\"), call the " +
+      "post_to_group_chat tool with his words. Claude is not involved; the " +
+      "message just appears in the shared feed from Matt's ring.",
+  },
+];
 
 // A Streamable HTTP client may ask for its POST reply as SSE instead of JSON.
 // Same JSON-RPC payload either way; only the framing differs. Single event,
@@ -202,17 +228,20 @@ ringApp.post("/mcp", async (c) => {
       return respond(c, result(id, { tools: [ASK_TOOL, GROUP_ASK_TOOL, GROUP_TOOL] }));
 
     case "prompts/list":
-      return respond(c, result(id, { prompts: [PROMPT] }));
+      return respond(c, result(id, {
+        prompts: PROMPTS.map(({ name, description }) => ({ name, description })),
+      }));
 
-    case "prompts/get":
+    case "prompts/get": {
+      const p = PROMPTS.find((x) => x.name === (params?.name as string));
+      if (!p) return respond(c, failure(id, -32602, `unknown prompt: ${params?.name}`));
       return respond(c,
         result(id, {
-          description: PROMPT.description,
-          messages: [
-            { role: "user", content: { type: "text", text: ROUTING_RULE } },
-          ],
+          description: p.description,
+          messages: [{ role: "user", content: { type: "text", text: p.text } }],
         })
       );
+    }
 
     case "tools/call": {
       const name = params?.name as string;
