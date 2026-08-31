@@ -18,10 +18,10 @@
     --sat:env(safe-area-inset-top); --sab:env(safe-area-inset-bottom);
   }
   * { margin:0; padding:0; box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
-  html,body { height:100%; }
+  html,body { height:100%; background:var(--bg); }
   body { background:var(--bg); color:var(--text); font:16px/1.4 -apple-system,system-ui,sans-serif; overflow:hidden; }
 
-  #app { display:flex; flex-direction:column; height:100dvh; position:fixed; top:0; left:0; right:0; }
+  #app { display:flex; flex-direction:column; position:fixed; inset:0; }
   #app.kb #composer { padding-bottom:8px; }
   header { padding:calc(var(--sat) + 8px) 12px 8px; background:var(--panel); border-bottom:1px solid var(--line);
            display:flex; align-items:center; gap:8px; }
@@ -91,12 +91,12 @@
   </div>
 </div>
 <div id="picker"></div>
-<div id="ver">v2</div>
+<div id="ver">v3</div>
 
 <script>
 'use strict';
 /* Chat v1 — see PLAN.md. Bump VERSION here and CACHE in sw.js together. */
-const VERSION = 2;
+const VERSION = 3;
 const API = 'https://cloudflare-backend.maattp.workers.dev';
 const CLIENT_ID = '611505411727-94u34em16j7sd0rdigejmvfdgnjj67ma.apps.googleusercontent.com';
 const VAPID_PUBLIC = 'BEh-HVZvaC3p5R3vm9vaddvI-SvWAJ2N6kcocMcyOcaWhLDEgVc5bQjzKT8knGN509v8GOGDujwu2OoQfwdKiLs';
@@ -520,8 +520,16 @@ function layoutViewport() {
   const vv = window.visualViewport; if (!vv) return;
   const app = document.getElementById('app');
   const kb = vv.height < window.innerHeight - 60; // keyboard (or similar) is up
-  app.style.height = vv.height + 'px';
-  app.style.transform = `translateY(${vv.offsetTop}px)`;
+  if (kb) {
+    // pin to the visual viewport while the keyboard shrinks it
+    app.style.height = vv.height + 'px';
+    app.style.transform = `translateY(${vv.offsetTop}px)`;
+  } else {
+    // hand geometry back to CSS (inset:0) — a stale pixel height here is
+    // exactly the "dead band under the composer" bug
+    app.style.height = '';
+    app.style.transform = '';
+  }
   app.classList.toggle('kb', kb);
   window.scrollTo(0, 0);
   render(false);
