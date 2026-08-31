@@ -295,10 +295,12 @@ Claude is the ring agent (`~/dev/ring-agent`), not the coordinator.
   `post_to_chat(thread, text)`, which POSTs to `/chat/:thread/send` with
   `CHAT_CLAUDE_TOKEN`. This makes the ring channel two-way, which the channels
   contract explicitly supports.
-- **Receiving**: a message in `dm` (or one in `group` that @-mentions Claude) is
-  pushed down the same WebSocket the ring already uses, arriving as a channel
-  event with `source="chat"`. `via` distinguishes it from a ring press so the
-  agent knows whether to answer in the thread or by push notification.
+- **Receiving**: every non-Claude message in both threads is pushed down the
+  same WebSocket the ring already uses, arriving as a channel event with
+  `source="chat"`. Claude hears the whole group room and decides for itself
+  whether to speak: `@claude` mentions oblige a reply; anything else is a
+  judgment call governed by the chime-in policy in the ring agent's CLAUDE.md
+  (add value or stay silent).
 - **Status**: on receiving a chat message the agent reacts 👀, switches to ⏳
   while working, and lands ✅ (or ⚠️) when done. Reacting is cheap and immediate,
   so Matt gets "it heard me" long before the reply exists — which is the whole

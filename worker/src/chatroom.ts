@@ -231,17 +231,18 @@ export class ChatRoom {
     // --- Forward to Claude's channel (the ring agent's socket) ---
     // dm: everything that isn't Claude's own message. group: only @claude
     // mentions — the agent should not read the couple's chatter.
+    // Every non-Claude message in a Claude thread is forwarded — group
+    // included. The agent hears the whole room and decides for itself
+    // whether to speak; @claude mentions oblige a reply, the rest are its
+    // judgment (policy lives in the ring agent's CLAUDE.md).
     if (message.sender !== "claude" && members.includes("claude")) {
-      const mentioned = message.thread === "dm" || /@claude\b/i.test(message.body);
-      if (mentioned) {
-        try {
-          const stub = this.env.RING_ROOM.get(this.env.RING_ROOM.idFromName("ring"));
-          await stub.fetch("https://do/forward", {
-            method: "POST",
-            body: JSON.stringify({ type: "chat", thread: message.thread, sender: message.sender, message_id: message.id, seq: message.seq, text: message.body, at: Date.now() }),
-          });
-        } catch { /* agent offline; the message is in the thread regardless */ }
-      }
+      try {
+        const stub = this.env.RING_ROOM.get(this.env.RING_ROOM.idFromName("ring"));
+        await stub.fetch("https://do/forward", {
+          method: "POST",
+          body: JSON.stringify({ type: "chat", thread: message.thread, sender: message.sender, message_id: message.id, seq: message.seq, text: message.body, at: Date.now() }),
+        });
+      } catch { /* agent offline; the message is in the thread regardless */ }
     }
   }
 
