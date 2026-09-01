@@ -19,16 +19,18 @@
   }
   * { margin:0; padding:0; box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
   html,body { height:100%; background:var(--bg); }
-  body { background:var(--bg); color:var(--text); font:16px/1.4 -apple-system,system-ui,sans-serif; overflow:hidden; }
+  body { color:var(--text); font:16px/1.4 -apple-system,system-ui,sans-serif; overflow:hidden; }
 
-  #app { display:flex; flex-direction:column; position:fixed; top:0; left:0; right:0; height:100vh; height:100dvh; }
-  @media (display-mode: standalone) {
-    /* installed: the layout viewport ends short of the home indicator, so
-       extend past it — the app background then fills that strip instead of
-       the body showing through as a bar. */
-    #app { height:calc(100vh + env(safe-area-inset-top)); }
-  }
-  #app.kb #composer { padding-bottom:8px; }
+  /* The box is owned by layoutViewport() in JS, which sizes it from
+     window.visualViewport — the only measurement of what is actually on
+     screen. 100dvh here is the first-paint fallback (and the whole story on
+     browsers with no visualViewport); it is never tuned or offset. */
+  #app { display:flex; flex-direction:column; position:fixed; top:0; left:0; right:0;
+         height:100dvh; transform:translateY(0); }
+  /* .covered = the bottom of the visual viewport is not the bottom of the
+     screen (the keyboard is there), so the home-indicator inset is not ours
+     to reserve. */
+  #app.covered #composer { padding-bottom:8px; }
   header { padding:calc(var(--sat) + 8px) 12px 8px; background:var(--panel); border-bottom:1px solid var(--line);
            display:flex; align-items:center; gap:8px; }
   header h1 { font-size:17px; flex:1; }
@@ -38,11 +40,6 @@
   .tab .badge { margin-left:6px; background:#e33; color:#fff; border-radius:8px; padding:0 6px; font-size:11px; }
   #bell { background:none; border:1px solid var(--line); color:var(--dim); border-radius:8px; padding:5px 9px; font-size:14px; }
   #bell.on { color:#7dd87d; border-color:#2c4; }
-  /* nothing when connected — a persistent status glyph is just noise.
-     Only surfaces, as a small pill, while reconnecting. */
-  #status { display:none; }
-  #status.show { display:inline-block; font-size:11px; color:#e6a23c;
-    border:1px solid #e6a23c55; border-radius:10px; padding:1px 8px; white-space:nowrap; }
 
   #scroll { flex:1; overflow-y:auto; -webkit-overflow-scrolling:touch; overscroll-behavior:contain;
             display:flex; flex-direction:column; }
@@ -91,7 +88,6 @@
     <h1 id="title">Chat</h1>
     <div class="tabs" id="tabs"></div>
     <button id="bell" title="Enable notifications">🔔</button>
-    <span id="status"></span>
   </header>
   <div id="scroll"><div id="topspacer"></div><div id="list"></div><div id="botspacer"></div></div>
   <div id="composer">
@@ -100,12 +96,12 @@
   </div>
 </div>
 <div id="picker"></div>
-<div id="ver">v4</div>
+<div id="ver">v5</div>
 
 <script>
 'use strict';
 /* Chat v1 — see PLAN.md. Bump VERSION here and CACHE in sw.js together. */
-const VERSION = 4;
+const VERSION = 5;
 const API = 'https://cloudflare-backend.maattp.workers.dev';
 const CLIENT_ID = '611505411727-94u34em16j7sd0rdigejmvfdgnjj67ma.apps.googleusercontent.com';
 const VAPID_PUBLIC = 'BEh-HVZvaC3p5R3vm9vaddvI-SvWAJ2N6kcocMcyOcaWhLDEgVc5bQjzKT8knGN509v8GOGDujwu2OoQfwdKiLs';
@@ -115,7 +111,7 @@ const THREAD_LABELS = { dm: 'Claude', group: 'Us' };
 // Device senders: Matt's own words arriving through a device credential.
 // Rendered on his side of the chat, labelled with the device.
 const DEVICE_OWNERS = { ring: 'matt', alexa: 'matt' };
-const SENDER_LABELS = { claude: 'Claude', ring: '💍 via ring', alexa: '🔊 via Alexa' };
+const SENDER_LABELS = { claude: 'Claude', ring: '💍', alexa: '🔊' };
 
 /* ---------- tiny IndexedDB layer ---------- */
 let db;
@@ -305,11 +301,10 @@ async function connectWS() {
     };
   } catch { setOnline(false); setTimeout(connectWS, S.wsBackoff); S.wsBackoff = Math.min(S.wsBackoff * 2, 30000); }
 }
+/* Connection state is internal — a chat app doesn't narrate its socket.
+   Messages sent while down queue in the outbox and flush on reconnect. */
 function setOnline(v) {
   S.online = v;
-  const el = document.getElementById('status');
-  el.textContent = v ? '' : 'Reconnecting…';
-  el.className = v ? '' : 'show';
   if (v) flushOutbox();
 }
 
@@ -521,31 +516,36 @@ document.getElementById('scroll').addEventListener('scroll', () => {
 }, { passive: true });
 window.addEventListener('online', () => { flushOutbox(); connectWS(); });
 document.addEventListener('visibilitychange', () => { if (!document.hidden && S.thread) { flushOutbox(); catchUp(S.thread).catch(() => {}); markRead(); } });
-/* iOS keyboard handling. When the keyboard opens in a standalone PWA, iOS
-   scrolls the PAGE to reveal the focused input instead of resizing the
-   layout — the app's top half disappears off-screen while the keyboard sits
-   at the bottom. Pin the app to the visual viewport: size it to vv.height,
-   translate it by vv.offsetTop, and undo iOS's page scroll. */
+/* ---------- geometry ----------
+   One authority for the app's box: window.visualViewport. It is the measured
+   region actually on screen, so it is correct in every state without a
+   per-state branch — standalone or browser tab, keyboard up or down, page
+   scrolled by iOS or not. Nothing here consults 100vh/100dvh, display-mode,
+   or a pixel threshold; those are guesses about the layout viewport, and
+   every version of the bottom-bar bug has been someone tuning one.
+
+     height    = vv.height        the visible box
+     translateY= vv.offsetTop     where that box currently sits in the page
+     scrollTo(0,0)                undo iOS scrolling the page under us
+
+   The safe-area insets are a separate concern and touch padding only, never
+   the box: the header pads its content below the status bar, and the composer
+   pads its content above the home indicator. That bottom padding is dropped
+   when the strip isn't ours to reserve — i.e. when the visual viewport ends
+   above the layout viewport's bottom because the keyboard is down there. */
 function layoutViewport() {
-  const vv = window.visualViewport; if (!vv) return;
+  const vv = window.visualViewport; if (!vv) return; // no vv: CSS 100dvh stands
   const app = document.getElementById('app');
-  const kb = vv.height < window.innerHeight - 60; // keyboard (or similar) is up
-  if (kb) {
-    // pin to the visual viewport while the keyboard shrinks it
-    app.style.height = vv.height + 'px';
-    app.style.transform = `translateY(${vv.offsetTop}px)`;
-  } else {
-    // hand geometry back to CSS (inset:0) — a stale pixel height here is
-    // exactly the "dead band under the composer" bug
-    app.style.height = '';
-    app.style.transform = '';
-  }
-  app.classList.toggle('kb', kb);
+  app.style.height = vv.height + 'px';
+  app.style.transform = `translateY(${vv.offsetTop}px)`;
+  // >1px of layout viewport below us = something (the keyboard) is covering it
+  const covered = document.documentElement.clientHeight - (vv.offsetTop + vv.height) > 1;
+  app.classList.toggle('covered', covered);
   window.scrollTo(0, 0);
-  render(false);
-  // Keyboard opening halves the list's height; keep the newest messages and
-  // the composer together instead of leaving the view mid-history.
-  if (kb && document.activeElement === document.getElementById('input')) {
+  if (S.thread) render(false); // may run before a thread is open (first paint)
+  // The keyboard halves the list's height; keep the newest messages next to
+  // the composer instead of leaving the view mid-history.
+  if (covered && document.activeElement === document.getElementById('input')) {
     const scroll = document.getElementById('scroll');
     scroll.scrollTop = scroll.scrollHeight;
   }
@@ -553,6 +553,12 @@ function layoutViewport() {
 if (window.visualViewport) {
   visualViewport.addEventListener('resize', layoutViewport);
   visualViewport.addEventListener('scroll', layoutViewport);
+  // Also on orientation change and on return from the background, where iOS
+  // resizes without always firing a visualViewport event.
+  window.addEventListener('orientationchange', () => setTimeout(layoutViewport, 100));
+  window.addEventListener('pageshow', layoutViewport);
+  document.addEventListener('visibilitychange', () => { if (!document.hidden) layoutViewport(); });
+  layoutViewport(); // take ownership of the box on first paint
 }
 document.getElementById('input').addEventListener('focus', () => setTimeout(layoutViewport, 250));
 document.getElementById('input').addEventListener('blur', () => setTimeout(layoutViewport, 250));
