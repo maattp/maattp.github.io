@@ -19,15 +19,15 @@
   }
   * { margin:0; padding:0; box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
   html,body { height:100%; background:var(--bg); }
-  body { background:var(--bg); color:var(--text); font:16px/1.4 -apple-system,system-ui,sans-serif; overflow:hidden; }
+  body { color:var(--text); font:16px/1.4 -apple-system,system-ui,sans-serif; overflow:hidden; }
 
-  #app { display:flex; flex-direction:column; position:fixed; top:0; left:0; right:0; height:100vh; height:100dvh; }
-  @media (display-mode: standalone) {
-    /* installed: the layout viewport ends short of the home indicator, so
-       extend past it — the app background then fills that strip instead of
-       the body showing through as a bar. */
-    #app { height:calc(100vh + env(safe-area-inset-top)); }
-  }
+  /* At rest the app IS the layout viewport: inset:0, nothing else. In a
+     standalone app that is the whole screen, status bar to home indicator,
+     and no JS touches it. layoutViewport() sets an inline height/transform
+     only while the keyboard is up, and clears them the moment it is not. */
+  #app { display:flex; flex-direction:column; position:fixed; inset:0; }
+  /* keyboard up: it covers the home-indicator strip, so that inset is not
+     ours to reserve */
   #app.kb #composer { padding-bottom:8px; }
   header { padding:calc(var(--sat) + 8px) 12px 8px; background:var(--panel); border-bottom:1px solid var(--line);
            display:flex; align-items:center; gap:8px; }
@@ -38,11 +38,6 @@
   .tab .badge { margin-left:6px; background:#e33; color:#fff; border-radius:8px; padding:0 6px; font-size:11px; }
   #bell { background:none; border:1px solid var(--line); color:var(--dim); border-radius:8px; padding:5px 9px; font-size:14px; }
   #bell.on { color:#7dd87d; border-color:#2c4; }
-  /* nothing when connected — a persistent status glyph is just noise.
-     Only surfaces, as a small pill, while reconnecting. */
-  #status { display:none; }
-  #status.show { display:inline-block; font-size:11px; color:#e6a23c;
-    border:1px solid #e6a23c55; border-radius:10px; padding:1px 8px; white-space:nowrap; }
 
   #scroll { flex:1; overflow-y:auto; -webkit-overflow-scrolling:touch; overscroll-behavior:contain;
             display:flex; flex-direction:column; }
@@ -91,7 +86,6 @@
     <h1 id="title">Chat</h1>
     <div class="tabs" id="tabs"></div>
     <button id="bell" title="Enable notifications">🔔</button>
-    <span id="status"></span>
   </header>
   <div id="scroll"><div id="topspacer"></div><div id="list"></div><div id="botspacer"></div></div>
   <div id="composer">
@@ -100,12 +94,12 @@
   </div>
 </div>
 <div id="picker"></div>
-<div id="ver">v4</div>
+<div id="ver">v5</div>
 
 <script>
 'use strict';
 /* Chat v1 — see PLAN.md. Bump VERSION here and CACHE in sw.js together. */
-const VERSION = 4;
+const VERSION = 5;
 const API = 'https://cloudflare-backend.maattp.workers.dev';
 const CLIENT_ID = '611505411727-94u34em16j7sd0rdigejmvfdgnjj67ma.apps.googleusercontent.com';
 const VAPID_PUBLIC = 'BEh-HVZvaC3p5R3vm9vaddvI-SvWAJ2N6kcocMcyOcaWhLDEgVc5bQjzKT8knGN509v8GOGDujwu2OoQfwdKiLs';
@@ -115,7 +109,7 @@ const THREAD_LABELS = { dm: 'Claude', group: 'Us' };
 // Device senders: Matt's own words arriving through a device credential.
 // Rendered on his side of the chat, labelled with the device.
 const DEVICE_OWNERS = { ring: 'matt', alexa: 'matt' };
-const SENDER_LABELS = { claude: 'Claude', ring: '💍 via ring', alexa: '🔊 via Alexa' };
+const SENDER_LABELS = { claude: 'Claude', ring: '💍', alexa: '🔊' };
 
 /* ---------- tiny IndexedDB layer ---------- */
 let db;
@@ -305,11 +299,10 @@ async function connectWS() {
     };
   } catch { setOnline(false); setTimeout(connectWS, S.wsBackoff); S.wsBackoff = Math.min(S.wsBackoff * 2, 30000); }
 }
+/* Connection state is internal — a chat app doesn't narrate its socket.
+   Messages sent while down queue in the outbox and flush on reconnect. */
 function setOnline(v) {
   S.online = v;
-  const el = document.getElementById('status');
-  el.textContent = v ? '' : 'Reconnecting…';
-  el.className = v ? '' : 'show';
   if (v) flushOutbox();
 }
 
@@ -521,30 +514,49 @@ document.getElementById('scroll').addEventListener('scroll', () => {
 }, { passive: true });
 window.addEventListener('online', () => { flushOutbox(); connectWS(); });
 document.addEventListener('visibilitychange', () => { if (!document.hidden && S.thread) { flushOutbox(); catchUp(S.thread).catch(() => {}); markRead(); } });
-/* iOS keyboard handling. When the keyboard opens in a standalone PWA, iOS
-   scrolls the PAGE to reveal the focused input instead of resizing the
-   layout — the app's top half disappears off-screen while the keyboard sits
-   at the bottom. Pin the app to the visual viewport: size it to vv.height,
-   translate it by vv.offsetTop, and undo iOS's page scroll. */
+/* ---------- geometry ----------
+   Two viewports matter. The LAYOUT viewport is what inset:0 fills; in a
+   standalone app it is the full screen, so at rest CSS alone is correct and
+   JS must leave the box alone — every inline height we have ever set at rest
+   has ended up as a band of body background under the composer.
+
+   The VISUAL viewport (window.visualViewport) is what iOS actually shows.
+   When the keyboard opens in a standalone app iOS does not resize the layout
+   viewport; it shrinks the visual one and pans the page so the focused input
+   is visible, which drags a fixed element's top off-screen. Only then do we
+   intervene: size the app to the visible region and translate it back by the
+   pan, then undo the pan.
+
+   iOS does not promise that the visual viewport equals the layout viewport
+   at rest — on notched phones it can report it short by the status-bar
+   inset, with a matching offsetTop. So nothing here compares vv to
+   innerHeight with a magic threshold (v3 used 60px; a 62px inset trips it
+   at rest, and that is the black bar). Instead the rest geometry is
+   MEASURED whenever the keyboard is down and used as the reference frame:
+   keyboard up  <=>  vv.height is at least KB_MIN shorter than it was at rest
+   (no iOS keyboard is shorter than ~216pt). Everything the keyboard changed
+   is then the difference from that frame. */
+const KB_MIN = 150;
+let rest = null; // { h, top } of the visual viewport with no keyboard
 function layoutViewport() {
   const vv = window.visualViewport; if (!vv) return;
   const app = document.getElementById('app');
-  const kb = vv.height < window.innerHeight - 60; // keyboard (or similar) is up
+  if (!rest) rest = { h: vv.height, top: vv.offsetTop };
+  const kb = vv.height < rest.h - KB_MIN;
   if (kb) {
-    // pin to the visual viewport while the keyboard shrinks it
-    app.style.height = vv.height + 'px';
-    app.style.transform = `translateY(${vv.offsetTop}px)`;
+    // visible region, expressed relative to the rest frame
+    app.style.height = (vv.height + (window.innerHeight - rest.h)) + 'px';
+    app.style.transform = `translateY(${vv.offsetTop - rest.top}px)`;
   } else {
-    // hand geometry back to CSS (inset:0) — a stale pixel height here is
-    // exactly the "dead band under the composer" bug
+    rest = { h: vv.height, top: vv.offsetTop }; // track rotation etc.
     app.style.height = '';
     app.style.transform = '';
   }
   app.classList.toggle('kb', kb);
   window.scrollTo(0, 0);
-  render(false);
-  // Keyboard opening halves the list's height; keep the newest messages and
-  // the composer together instead of leaving the view mid-history.
+  if (S.thread) render(false);
+  // The keyboard halves the list's height; keep the newest messages next to
+  // the composer instead of leaving the view mid-history.
   if (kb && document.activeElement === document.getElementById('input')) {
     const scroll = document.getElementById('scroll');
     scroll.scrollTop = scroll.scrollHeight;
@@ -553,6 +565,8 @@ function layoutViewport() {
 if (window.visualViewport) {
   visualViewport.addEventListener('resize', layoutViewport);
   visualViewport.addEventListener('scroll', layoutViewport);
+  window.addEventListener('orientationchange', () => { rest = null; setTimeout(layoutViewport, 100); });
+  layoutViewport(); // measure the rest frame before any keyboard can appear
 }
 document.getElementById('input').addEventListener('focus', () => setTimeout(layoutViewport, 250));
 document.getElementById('input').addEventListener('blur', () => setTimeout(layoutViewport, 250));

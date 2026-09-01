@@ -1,6 +1,6 @@
 /* Chat service worker. CACHE moves in lockstep with VERSION in index.html —
  * the repo-wide convention that makes a stale worker diagnosable. */
-const CACHE = 'chat-v4';
+const CACHE = 'chat-v5';
 const SHELL = ['./', './index.html', './manifest.webmanifest'];
 
 self.addEventListener('install', (e) => {
