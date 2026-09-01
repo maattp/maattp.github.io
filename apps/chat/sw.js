@@ -1,10 +1,16 @@
 /* Chat service worker. CACHE moves in lockstep with VERSION in index.html —
  * the repo-wide convention that makes a stale worker diagnosable. */
-const CACHE = 'chat-v6';
+const CACHE = 'chat-v7';
 const SHELL = ['./', './index.html', './manifest.webmanifest'];
 
+// cache:'reload' — fill the shell from the network, never the HTTP cache.
+// GitHub Pages serves these with max-age=600; a worker that installs inside
+// that window would otherwise store the PREVIOUS shell under the new cache
+// name, and cache-first then pins it there for good (v6 did exactly this).
 self.addEventListener('install', (e) => {
-  e.waitUntil(caches.open(CACHE).then((c) => c.addAll(SHELL)).then(() => self.skipWaiting()));
+  e.waitUntil(caches.open(CACHE)
+    .then((c) => c.addAll(SHELL.map((u) => new Request(u, { cache: 'reload' }))))
+    .then(() => self.skipWaiting()));
 });
 self.addEventListener('activate', (e) => {
   e.waitUntil(caches.keys().then((keys) =>

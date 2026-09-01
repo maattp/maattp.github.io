@@ -105,12 +105,12 @@
   </div>
 </div>
 <div id="picker"></div>
-<div id="ver">v6</div>
+<div id="ver">v7</div>
 
 <script>
 'use strict';
 /* Chat v1 — see PLAN.md. Bump VERSION here and CACHE in sw.js together. */
-const VERSION = 6;
+const VERSION = 7;
 const API = 'https://cloudflare-backend.maattp.workers.dev';
 const CLIENT_ID = '611505411727-94u34em16j7sd0rdigejmvfdgnjj67ma.apps.googleusercontent.com';
 const VAPID_PUBLIC = 'BEh-HVZvaC3p5R3vm9vaddvI-SvWAJ2N6kcocMcyOcaWhLDEgVc5bQjzKT8knGN509v8GOGDujwu2OoQfwdKiLs';
@@ -510,8 +510,29 @@ async function init() {
   S.me = me.sender; S.threads = me.threads;
   const saved = localStorage.getItem('chat_thread');
   await switchThread(S.threads.includes(saved) ? saved : S.threads[0]);
-  if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js');
+  registerSW();
   if (Notification.permission === 'granted') document.getElementById('bell').classList.add('on');
+}
+
+/* ---------- service worker ----------
+   A new worker taking over means a new shell is in the cache, but the page on
+   screen is still the old one. Reload into it: at once if the app has only
+   just launched or is in the background, otherwise the next time it is
+   backgrounded — never under the user's thumbs. Not on the very first
+   install: there is no old shell, and it would interrupt sign-in. */
+async function registerSW() {
+  if (!('serviceWorker' in navigator)) return;
+  const hadController = !!navigator.serviceWorker.controller;
+  navigator.serviceWorker.addEventListener('controllerchange', () => {
+    if (!hadController) return;
+    const go = () => location.reload();
+    if (document.hidden || performance.now() < 5000) go();
+    else document.addEventListener('visibilitychange', () => { if (document.hidden) go(); }, { once: true });
+  });
+  const reg = await navigator.serviceWorker.register('sw.js');
+  // iOS only checks for a new worker on navigation, and a standalone app
+  // rarely navigates — so also check each time it comes to the foreground.
+  document.addEventListener('visibilitychange', () => { if (!document.hidden) reg.update().catch(() => {}); });
 }
 
 /* ---------- wiring ---------- */
