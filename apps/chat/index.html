@@ -21,16 +21,14 @@
   html,body { height:100%; background:var(--bg); }
   body { color:var(--text); font:16px/1.4 -apple-system,system-ui,sans-serif; overflow:hidden; }
 
-  /* The box is owned by layoutViewport() in JS, which sizes it from
-     window.visualViewport — the only measurement of what is actually on
-     screen. 100dvh here is the first-paint fallback (and the whole story on
-     browsers with no visualViewport); it is never tuned or offset. */
-  #app { display:flex; flex-direction:column; position:fixed; top:0; left:0; right:0;
-         height:100dvh; transform:translateY(0); }
-  /* .covered = the bottom of the visual viewport is not the bottom of the
-     screen (the keyboard is there), so the home-indicator inset is not ours
-     to reserve. */
-  #app.covered #composer { padding-bottom:8px; }
+  /* At rest the app IS the layout viewport: inset:0, nothing else. In a
+     standalone app that is the whole screen, status bar to home indicator,
+     and no JS touches it. layoutViewport() sets an inline height/transform
+     only while the keyboard is up, and clears them the moment it is not. */
+  #app { display:flex; flex-direction:column; position:fixed; inset:0; }
+  /* keyboard up: it covers the home-indicator strip, so that inset is not
+     ours to reserve */
+  #app.kb #composer { padding-bottom:8px; }
   header { padding:calc(var(--sat) + 8px) 12px 8px; background:var(--panel); border-bottom:1px solid var(--line);
            display:flex; align-items:center; gap:8px; }
   header h1 { font-size:17px; flex:1; }
@@ -517,35 +515,49 @@ document.getElementById('scroll').addEventListener('scroll', () => {
 window.addEventListener('online', () => { flushOutbox(); connectWS(); });
 document.addEventListener('visibilitychange', () => { if (!document.hidden && S.thread) { flushOutbox(); catchUp(S.thread).catch(() => {}); markRead(); } });
 /* ---------- geometry ----------
-   One authority for the app's box: window.visualViewport. It is the measured
-   region actually on screen, so it is correct in every state without a
-   per-state branch — standalone or browser tab, keyboard up or down, page
-   scrolled by iOS or not. Nothing here consults 100vh/100dvh, display-mode,
-   or a pixel threshold; those are guesses about the layout viewport, and
-   every version of the bottom-bar bug has been someone tuning one.
+   Two viewports matter. The LAYOUT viewport is what inset:0 fills; in a
+   standalone app it is the full screen, so at rest CSS alone is correct and
+   JS must leave the box alone — every inline height we have ever set at rest
+   has ended up as a band of body background under the composer.
 
-     height    = vv.height        the visible box
-     translateY= vv.offsetTop     where that box currently sits in the page
-     scrollTo(0,0)                undo iOS scrolling the page under us
+   The VISUAL viewport (window.visualViewport) is what iOS actually shows.
+   When the keyboard opens in a standalone app iOS does not resize the layout
+   viewport; it shrinks the visual one and pans the page so the focused input
+   is visible, which drags a fixed element's top off-screen. Only then do we
+   intervene: size the app to the visible region and translate it back by the
+   pan, then undo the pan.
 
-   The safe-area insets are a separate concern and touch padding only, never
-   the box: the header pads its content below the status bar, and the composer
-   pads its content above the home indicator. That bottom padding is dropped
-   when the strip isn't ours to reserve — i.e. when the visual viewport ends
-   above the layout viewport's bottom because the keyboard is down there. */
+   iOS does not promise that the visual viewport equals the layout viewport
+   at rest — on notched phones it can report it short by the status-bar
+   inset, with a matching offsetTop. So nothing here compares vv to
+   innerHeight with a magic threshold (v3 used 60px; a 62px inset trips it
+   at rest, and that is the black bar). Instead the rest geometry is
+   MEASURED whenever the keyboard is down and used as the reference frame:
+   keyboard up  <=>  vv.height is at least KB_MIN shorter than it was at rest
+   (no iOS keyboard is shorter than ~216pt). Everything the keyboard changed
+   is then the difference from that frame. */
+const KB_MIN = 150;
+let rest = null; // { h, top } of the visual viewport with no keyboard
 function layoutViewport() {
-  const vv = window.visualViewport; if (!vv) return; // no vv: CSS 100dvh stands
+  const vv = window.visualViewport; if (!vv) return;
   const app = document.getElementById('app');
-  app.style.height = vv.height + 'px';
-  app.style.transform = `translateY(${vv.offsetTop}px)`;
-  // >1px of layout viewport below us = something (the keyboard) is covering it
-  const covered = document.documentElement.clientHeight - (vv.offsetTop + vv.height) > 1;
-  app.classList.toggle('covered', covered);
+  if (!rest) rest = { h: vv.height, top: vv.offsetTop };
+  const kb = vv.height < rest.h - KB_MIN;
+  if (kb) {
+    // visible region, expressed relative to the rest frame
+    app.style.height = (vv.height + (window.innerHeight - rest.h)) + 'px';
+    app.style.transform = `translateY(${vv.offsetTop - rest.top}px)`;
+  } else {
+    rest = { h: vv.height, top: vv.offsetTop }; // track rotation etc.
+    app.style.height = '';
+    app.style.transform = '';
+  }
+  app.classList.toggle('kb', kb);
   window.scrollTo(0, 0);
-  if (S.thread) render(false); // may run before a thread is open (first paint)
+  if (S.thread) render(false);
   // The keyboard halves the list's height; keep the newest messages next to
   // the composer instead of leaving the view mid-history.
-  if (covered && document.activeElement === document.getElementById('input')) {
+  if (kb && document.activeElement === document.getElementById('input')) {
     const scroll = document.getElementById('scroll');
     scroll.scrollTop = scroll.scrollHeight;
   }
@@ -553,12 +565,8 @@ function layoutViewport() {
 if (window.visualViewport) {
   visualViewport.addEventListener('resize', layoutViewport);
   visualViewport.addEventListener('scroll', layoutViewport);
-  // Also on orientation change and on return from the background, where iOS
-  // resizes without always firing a visualViewport event.
-  window.addEventListener('orientationchange', () => setTimeout(layoutViewport, 100));
-  window.addEventListener('pageshow', layoutViewport);
-  document.addEventListener('visibilitychange', () => { if (!document.hidden) layoutViewport(); });
-  layoutViewport(); // take ownership of the box on first paint
+  window.addEventListener('orientationchange', () => { rest = null; setTimeout(layoutViewport, 100); });
+  layoutViewport(); // measure the rest frame before any keyboard can appear
 }
 document.getElementById('input').addEventListener('focus', () => setTimeout(layoutViewport, 250));
 document.getElementById('input').addEventListener('blur', () => setTimeout(layoutViewport, 250));
