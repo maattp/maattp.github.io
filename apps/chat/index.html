@@ -21,7 +21,13 @@
   html,body { height:100%; background:var(--bg); }
   body { background:var(--bg); color:var(--text); font:16px/1.4 -apple-system,system-ui,sans-serif; overflow:hidden; }
 
-  #app { display:flex; flex-direction:column; position:fixed; inset:0; }
+  #app { display:flex; flex-direction:column; position:fixed; top:0; left:0; right:0; height:100vh; height:100dvh; }
+  @media (display-mode: standalone) {
+    /* installed: the layout viewport ends short of the home indicator, so
+       extend past it — the app background then fills that strip instead of
+       the body showing through as a bar. */
+    #app { height:calc(100vh + env(safe-area-inset-top)); }
+  }
   #app.kb #composer { padding-bottom:8px; }
   header { padding:calc(var(--sat) + 8px) 12px 8px; background:var(--panel); border-bottom:1px solid var(--line);
            display:flex; align-items:center; gap:8px; }
@@ -32,8 +38,11 @@
   .tab .badge { margin-left:6px; background:#e33; color:#fff; border-radius:8px; padding:0 6px; font-size:11px; }
   #bell { background:none; border:1px solid var(--line); color:var(--dim); border-radius:8px; padding:5px 9px; font-size:14px; }
   #bell.on { color:#7dd87d; border-color:#2c4; }
-  #status { font-size:11px; color:var(--dim); }
-  #status.off { color:#e6a23c; }
+  /* nothing when connected — a persistent status glyph is just noise.
+     Only surfaces, as a small pill, while reconnecting. */
+  #status { display:none; }
+  #status.show { display:inline-block; font-size:11px; color:#e6a23c;
+    border:1px solid #e6a23c55; border-radius:10px; padding:1px 8px; white-space:nowrap; }
 
   #scroll { flex:1; overflow-y:auto; -webkit-overflow-scrolling:touch; overscroll-behavior:contain;
             display:flex; flex-direction:column; }
@@ -82,7 +91,7 @@
     <h1 id="title">Chat</h1>
     <div class="tabs" id="tabs"></div>
     <button id="bell" title="Enable notifications">🔔</button>
-    <span id="status">…</span>
+    <span id="status"></span>
   </header>
   <div id="scroll"><div id="topspacer"></div><div id="list"></div><div id="botspacer"></div></div>
   <div id="composer">
@@ -91,12 +100,12 @@
   </div>
 </div>
 <div id="picker"></div>
-<div id="ver">v3</div>
+<div id="ver">v4</div>
 
 <script>
 'use strict';
 /* Chat v1 — see PLAN.md. Bump VERSION here and CACHE in sw.js together. */
-const VERSION = 3;
+const VERSION = 4;
 const API = 'https://cloudflare-backend.maattp.workers.dev';
 const CLIENT_ID = '611505411727-94u34em16j7sd0rdigejmvfdgnjj67ma.apps.googleusercontent.com';
 const VAPID_PUBLIC = 'BEh-HVZvaC3p5R3vm9vaddvI-SvWAJ2N6kcocMcyOcaWhLDEgVc5bQjzKT8knGN509v8GOGDujwu2OoQfwdKiLs';
@@ -299,7 +308,8 @@ async function connectWS() {
 function setOnline(v) {
   S.online = v;
   const el = document.getElementById('status');
-  el.textContent = v ? '●' : 'offline'; el.className = v ? '' : 'off';
+  el.textContent = v ? '' : 'Reconnecting…';
+  el.className = v ? '' : 'show';
   if (v) flushOutbox();
 }
 
