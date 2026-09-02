@@ -1,5 +1,5 @@
 /* Visualizer service worker. CACHE moves in lockstep with VERSION in index.html. */
-const CACHE = 'visualizer-v1';
+const CACHE = 'visualizer-v2';
 const SHELL = ['./', './index.html', './manifest.webmanifest'];
 
 // cache:'reload' — fill the shell from the network, never the HTTP cache, so a
