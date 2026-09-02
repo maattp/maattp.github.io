@@ -168,10 +168,11 @@ async function startMic() {
   timeData = new Uint8Array(analyser.fftSize);
 }
 
-const smooth = (cur, target, up, down) => cur + (target - cur) * (target > cur ? up : down);
+let smoothDt = 1 / 60;
+const smooth = (cur, target, up, down) => cur + (target - cur) * (1 - Math.pow(1 - (target > cur ? up : down), smoothDt * 60));
 
 function analyse(dt) {
-  A.t += dt;
+  A.t += dt; smoothDt = dt;
   let bass, mid, treb;
   if (analyser) {
     analyser.getByteFrequencyData(freqData);
@@ -678,7 +679,7 @@ const SHIP_Z = 0.16, focal = () => R * 0.6;
 const proj = (x, y, z) => [W / 2 + x / z * focal(), H / 2 + y / z * focal()];
 const rand = (a, b) => a + Math.random() * (b - a);
 function gameStart() {
-  Object.assign(G, { on: true, over: false, score: 0, shields: 3, t: 0, ents: [], shots: [], parts: [], fire: false, fireCd: 0, spawnCd: 1.2, hurt: 0, msg: 'ARWING MODE', msgT: 2.5 });
+  Object.assign(G, { on: true, over: false, score: 0, shields: 3, t: 0, ents: [], shots: [], parts: [], fire: false, fireCd: 0, spawnCd: 1.2, hurt: 0, keys: {}, msg: 'ARWING MODE', msgT: 2.5 });
   G.ship.sx = G.ship.tx = W / 2; G.ship.sy = G.ship.ty = H * 0.72; G.ship.vx = 0;
   clearTimeout(uiTimer); ui.classList.add('hidden');
 }
@@ -825,7 +826,7 @@ document.addEventListener('visibilitychange', () => {
   if (shown) keepAwake();
 });
 
-let last = 0, running = false;
+let last = 0, running = false, starting = false;
 function frame(now) {
   requestAnimationFrame(frame);
   const dt = Math.min(0.05, (now - last) / 1000 || 0.016); last = now;
@@ -839,7 +840,8 @@ function frame(now) {
 
 const start = document.getElementById('start'), err = document.getElementById('err');
 document.getElementById('go').addEventListener('click', async () => {
-  if (running) return;
+  if (running || starting) return;   // the mic prompt can be slow; don't open a second context
+  starting = true;
   createContext();                       // inside the gesture, for iOS
   try {
     await startMic();
