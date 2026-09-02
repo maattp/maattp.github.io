@@ -143,7 +143,6 @@ const A = {
   bass: 0, mid: 0, treb: 0, level: 0, beat: 0, hue: 0, t: 0,
   wave: new Float32Array(1024),   // -1..1
   spec: new Float32Array(256),    // 0..1, log-spaced 40 Hz .. 12 kHz
-  demo: false,
 };
 let actx = null, analyser = null, stream = null, freqData, timeData;
 let gainPeak = 0.08, wavePeak = 0.1, bassAvg = 0, lastBeat = 0;
@@ -197,7 +196,7 @@ function analyse(dt) {
     const wg = Math.min(1 / wavePeak, 8) * 0.8;
     for (let i = 0; i < 1024; i++) A.wave[i] = Math.max(-1, Math.min(1, A.wave[i] * wg));
   } else {
-    // Demo signal so the show still runs when the mic is refused.
+    // No analyser: a demo signal so the show still runs when the mic is refused.
     const t = A.t, kick = Math.pow(Math.max(0, Math.sin(t * Math.PI * 2 * 2.0)), 12);
     bass = 0.25 + 0.6 * kick; mid = 0.3 + 0.2 * Math.sin(t * 3.1) + 0.1 * kick; treb = 0.2 + 0.15 * Math.sin(t * 7.3);
     for (let i = 0; i < 256; i++) A.spec[i] = Math.max(0, (0.5 + 0.5 * Math.sin(i * 0.12 - t * 4)) * (1 - i / 300) * (0.4 + 0.6 * kick) + 0.05 * Math.sin(i + t * 20));
@@ -444,7 +443,7 @@ PRESETS.push({ name: 'Kaleido', draw() {
 // 10. Alchemy — WMP's ink-in-water: the trail buffer is redrawn as a grid of
 // tiles, each nudged along a slow flow field, so the smoke smears and curls.
 (() => {
-  const TX = 36, TY = 24;
+  const TX = coarse ? 28 : 36, TY = coarse ? 18 : 24;   // 504 blits/frame on phones, 864 on desktop
   PRESETS.push({ name: 'Alchemy', draw() {
     const tw = W / TX, th = H / TY, t = A.t, amp = (3 + A.mid * 7 + A.beat * 5) * DPR;
     // the light source, wandering; ink is emitted around it and flows away from it
@@ -515,11 +514,17 @@ PRESETS.push({ name: 'Kaleido', draw() {
     ctx.globalCompositeOperation = 'lighter';
     for (let i = 0; i < N; i++) {
       const p = P[i], a = att[i % 3];
-      const dx = a[0] - p.x, dy = a[1] - p.y, d = Math.hypot(dx, dy) + 0.02;
-      const pull = (0.25 + A.mid * 0.6) * dt / d, swirl = (0.5 + A.treb * 1.5) * dt / d;
-      p.vx += dx * pull - dy * swirl * 0.35; p.vy += dy * pull + dx * swirl * 0.35;
-      if (A.beat > 0.97) { p.vx -= dx / d * 0.25 * p.s; p.vy -= dy / d * 0.25 * p.s; }
-      p.vx *= 0.96; p.vy *= 0.96; p.x += p.vx * dt; p.y += p.vy * dt;
+      const dx = a[0] - p.x, dy = a[1] - p.y, d = Math.hypot(dx, dy) + 0.01;
+      // spring toward an orbit ring around the attractor (not the attractor
+      // itself, or everything collapses into three dots), swirl around it,
+      // and keep a little jitter so the swarm never settles
+      const ring = 0.06 + p.s * 0.2 + A.bass * 0.08, k = (d - ring) * (16 + A.mid * 16) * dt;
+      p.vx += dx / d * k - dy / d * (0.6 + A.treb * 0.6) * dt; p.vy += dy / d * k + dx / d * (0.6 + A.treb * 0.6) * dt;
+      p.vx += (Math.random() - 0.5) * 0.3 * dt; p.vy += (Math.random() - 0.5) * 0.3 * dt;
+      if (A.beat > 0.97) { p.vx -= dx / d * 0.1 * p.s; p.vy -= dy / d * 0.1 * p.s; }
+      const damp = Math.pow(0.2, dt); p.vx *= damp; p.vy *= damp;
+      p.x += p.vx * dt; p.y += p.vy * dt;
+      if (p.x < -0.05 || p.x > 1.05 || p.y < -0.05 || p.y > 1.05) { p.x = a[0] + (Math.random() - 0.5) * 0.3; p.y = a[1] + (Math.random() - 0.5) * 0.3; p.vx = p.vy = 0; }
       const sx = p.x * W, sy = p.y * H, r = (1.2 + p.s * 1.5 + A.bass * 3) * DPR;
       ctx.fillStyle = hsl(A.hue + p.h * 0.3 + (i % 3) * 60, 100, 70, 0.9);
       ctx.beginPath(); ctx.arc(sx, sy, r, 0, TAU); ctx.fill();
@@ -610,7 +615,8 @@ const cpx = (e) => [e.clientX * DPR, e.clientY * DPR];
 canvas.addEventListener('pointerdown', (e) => {
   const [x, y] = cpx(e);
   if (G.on) {
-    if (corner(x, y)) return;
+    G.pressCorner = corner(x, y);
+    if (G.pressCorner) return;
     G.fire = true; G.ship.tx = x; G.ship.ty = e.pointerType === 'mouse' ? y : y - 90 * DPR;
     return;
   }
@@ -628,7 +634,8 @@ canvas.addEventListener('pointerup', (e) => {
   clearTimeout(holdTimer);
   if (G.on) {
     G.fire = false;
-    const c = corner(...cpx(e));
+    const c = corner(...cpx(e)) === G.pressCorner ? G.pressCorner : '';
+    G.pressCorner = '';
     if (c === 'exit') gameEnd(); else if (c === 'bg') { cur = (cur + 1) % PRESETS.length; try { localStorage.setItem('vis.preset', cur); } catch {} }
     else if (G.over) gameStart();
     return;
@@ -663,7 +670,7 @@ addEventListener('keyup', (e) => { const m = KEYMAP[e.key] || KEYMAP[e.key.toLow
 // Hold the screen (or press G) and the current visualization becomes the sky
 // of a rail shooter. Enemies spawn on the beat; bass is the throttle.
 const G = { on: false, over: false, score: 0, best: 0, shields: 3, t: 0, ents: [], shots: [], parts: [],
-  ship: { sx: 0, sy: 0, tx: 0, ty: 0, vx: 0 }, fire: false, fireCd: 0, spawnCd: 0, keys: {}, msg: '', msgT: 0, hurt: 0, lastBeatT: -1 };
+  ship: { sx: 0, sy: 0, tx: 0, ty: 0, vx: 0 }, fire: false, fireCd: 0, spawnCd: 0, keys: {}, msg: '', msgT: 0, hurt: 0, lastBeatT: -1, pressCorner: '' };
 try { G.best = +localStorage.getItem('vis.best') || 0; } catch {}
 const satProbe = document.getElementById('sat');
 const SHIP_Z = 0.16, focal = () => R * 0.6;
@@ -837,7 +844,6 @@ document.getElementById('go').addEventListener('click', async () => {
     await startMic();
     micTxt.textContent = 'MIC';
   } catch (e) {
-    A.demo = true;
     micTxt.textContent = 'DEMO';
     err.textContent = 'Mic unavailable (' + (e && e.name ? e.name : 'error') + ') — running a demo signal instead.';
     await new Promise((r) => setTimeout(r, 1200));
