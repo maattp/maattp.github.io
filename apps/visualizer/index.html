@@ -145,7 +145,7 @@ const A = {
   spec: new Float32Array(256),    // 0..1, log-spaced 40 Hz .. 12 kHz
   demo: false,
 };
-let actx = null, analyser = null, freqData, timeData;
+let actx = null, analyser = null, stream = null, freqData, timeData;
 let gainPeak = 0.08, wavePeak = 0.1, bassAvg = 0, lastBeat = 0;
 
 function createContext() {
@@ -154,7 +154,7 @@ function createContext() {
   if (actx.state === 'suspended') actx.resume().catch(() => {});
 }
 async function startMic() {
-  const stream = await navigator.mediaDevices.getUserMedia({
+  stream = await navigator.mediaDevices.getUserMedia({
     audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false },
   });
   const src = actx.createMediaStreamSource(stream);
@@ -544,7 +544,7 @@ function gameStart() {
   G.ship.sx = G.ship.tx = W / 2; G.ship.sy = G.ship.ty = H * 0.72; G.ship.vx = 0;
   clearTimeout(uiTimer); ui.classList.add('hidden');
 }
-function gameEnd() { G.on = false; showUI(); }
+function gameEnd() { saveBest(); G.on = false; showUI(); }
 function say(m, t = 1.2) { G.msg = m; G.msgT = t; }
 function boom(px, py, hue, n = 16) {
   for (let i = 0; i < n; i++) { const a = Math.random() * TAU, sp = rand(60, 320) * DPR; G.parts.push({ x: px, y: py, vx: Math.cos(a) * sp, vy: Math.sin(a) * sp, life: rand(0.35, 0.8), hue }); }
@@ -601,10 +601,8 @@ function gameUpdate(dt) {
   for (const p of G.parts) { p.x += p.vx * dt; p.y += p.vy * dt; p.life -= dt; }
   G.parts = G.parts.filter((p) => p.life > 0);
 }
-function gameOver() {
-  G.over = true;
-  if (G.score > G.best) { G.best = G.score; try { localStorage.setItem('vis.best', G.best); } catch {} }
-}
+function saveBest() { if (G.score > G.best) { G.best = G.score; try { localStorage.setItem('vis.best', G.best); } catch {} } }
+function gameOver() { G.over = true; saveBest(); }
 function gameDraw() {
   ctx.fillStyle = `rgba(0,0,0,${0.22 + G.hurt * 0.3})`; ctx.fillRect(0, 0, W, H);
   if (G.hurt > 0) { ctx.fillStyle = `rgba(255,40,40,${G.hurt * 0.35})`; ctx.fillRect(0, 0, W, H); }
@@ -680,10 +678,13 @@ const corner = (x, y) => y < 70 * DPR + 40 * DPR ? (x < 90 * DPR ? 'bg' : x > W 
 const micTxt = document.getElementById('micTxt'), lvlBar = document.getElementById('lvlBar');
 let wakeLock = null;
 async function keepAwake() { try { wakeLock = await navigator.wakeLock?.request('screen'); } catch {} }
+// Mute the mic and park the audio graph while the tab is hidden; a stopped
+// track would need a fresh permission prompt, a disabled one just goes quiet.
 document.addEventListener('visibilitychange', () => {
-  if (document.hidden) return;
-  keepAwake();
-  if (actx && actx.state === 'suspended') actx.resume().catch(() => {});
+  const shown = !document.hidden;
+  if (stream) for (const t of stream.getAudioTracks()) t.enabled = shown;
+  if (actx) (shown ? actx.resume() : actx.suspend()).catch(() => {});
+  if (shown) keepAwake();
 });
 
 let last = 0, running = false;
