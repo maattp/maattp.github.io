@@ -147,7 +147,7 @@ the request body.** Message bodies render as text nodes only, never innerHTML.
 and bump `CACHE` in `/apps/visualizer/sw.js` (`visualizer-vN`) to match.
 
 Mic-driven, early-2000s-style music visualizer (Canvas 2D; the feedback presets
-draw the previous frame back through a zoom/rotate). Nine presets, tap/swipe or
+draw the previous frame back through a zoom/rotate). Thirteen presets, tap/swipe or
 arrow keys to switch. Easter egg: hold the screen (or press G) and the current
 preset becomes the sky of a rail shooter that spawns enemies on the beat.
 Verify headlessly with `node tools/visverify.mjs` (fake mic, screenshots every

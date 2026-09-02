@@ -441,6 +441,136 @@ PRESETS.push({ name: 'Kaleido', draw() {
   } });
 })();
 
+// 10. Alchemy — WMP's ink-in-water: the trail buffer is redrawn as a grid of
+// tiles, each nudged along a slow flow field, so the smoke smears and curls.
+(() => {
+  const TX = 36, TY = 24;
+  PRESETS.push({ name: 'Alchemy', draw() {
+    const tw = W / TX, th = H / TY, t = A.t, amp = (3 + A.mid * 7 + A.beat * 5) * DPR;
+    // the light source, wandering; ink is emitted around it and flows away from it
+    const lx = W / 2 + Math.sin(t * 0.37) * W * 0.28, ly = H / 2 + Math.cos(t * 0.29) * H * 0.28;
+    for (let j = 0; j < TY; j++) for (let i = 0; i < TX; i++) {
+      const sx = i * tw, sy = j * th, ox = sx + tw / 2 - lx, oy = sy + th / 2 - ly, od = Math.hypot(ox, oy) + 1;
+      const away = amp * 0.9 * Math.min(1, R * 0.25 / od);
+      const dx = Math.sin(j * 0.55 + t * 0.9) * amp + Math.cos((i + j) * 0.3 - t * 0.6) * amp * 0.6 + ox / od * away;
+      const dy = Math.cos(i * 0.5 - t * 0.7) * amp + Math.sin((i - j) * 0.35 + t * 0.5) * amp * 0.6 + oy / od * away - amp * 0.3;
+      ctx.drawImage(fb, sx - 1, sy - 1, tw + 2, th + 2, sx + dx - 1, sy + dy - 1, tw + 2, th + 2);
+    }
+    ctx.fillStyle = 'rgba(0,0,0,0.03)'; ctx.fillRect(0, 0, W, H);
+    ctx.globalCompositeOperation = 'lighter';
+    for (let k = 0; k < 4; k++) {
+      const a = t * (0.8 + k * 0.3) + k * 1.9, d = R * (0.12 + 0.18 * (k % 2 ? A.bass : A.treb));
+      const x = lx + Math.cos(a) * d, y = ly + Math.sin(a) * d, r = R * (0.09 + 0.16 * A.level);
+      const g = ctx.createRadialGradient(x, y, 0, x, y, r);
+      g.addColorStop(0, hsl(A.hue + 30 + k * 70, 90, 50, 0.14 + A.beat * 0.15)); g.addColorStop(0.5, hsl(A.hue + 30 + k * 70, 90, 45, 0.05)); g.addColorStop(1, hsl(A.hue + 30 + k * 70, 90, 40, 0));
+      ctx.fillStyle = g; ctx.beginPath(); ctx.arc(x, y, r, 0, TAU); ctx.fill();
+    }
+    const gl = ctx.createRadialGradient(lx, ly, 0, lx, ly, R * (0.06 + A.bass * 0.05));
+    gl.addColorStop(0, 'rgba(255,250,230,0.9)'); gl.addColorStop(0.3, hsl(A.hue + 40, 100, 80, 0.5)); gl.addColorStop(1, 'rgba(255,255,255,0)');
+    ctx.fillStyle = gl; ctx.beginPath(); ctx.arc(lx, ly, R * 0.12, 0, TAU); ctx.fill();
+    ctx.globalCompositeOperation = 'source-over';
+  } });
+})();
+
+// 11. Spikes — a spinning 3D ball of spectrum spikes.
+(() => {
+  const N = 220, pts = [];
+  for (let i = 0; i < N; i++) { const y = 1 - (i / (N - 1)) * 2, r = Math.sqrt(1 - y * y), a = i * 2.399963; pts.push([Math.cos(a) * r, y, Math.sin(a) * r]); }
+  let ry = 0, rx = 0;
+  PRESETS.push({ name: 'Spikes', draw(dt) {
+    feedback(1.0, 0, 0.35);
+    ry += dt * (0.4 + A.mid * 1.2); rx += dt * 0.25;
+    const cy = Math.cos(ry), sy = Math.sin(ry), cx = Math.cos(rx), sx = Math.sin(rx);
+    const base = R * 0.16 * (1 + A.bass * 0.25), f = R * 1.6, cam = 3.2;
+    ctx.lineCap = 'round'; ctx.globalCompositeOperation = 'lighter';
+    for (let i = 0; i < N; i++) {
+      const [px, py, pz] = pts[i];
+      let x = px * cy - pz * sy, z = px * sy + pz * cy, y = py;
+      const y2 = y * cx - z * sx; z = y * sx + z * cx; y = y2;
+      const v = A.spec[(i * 256 / N) | 0], len = 0.15 + v * 1.1;
+      const p0 = cam + z, p1 = cam + z * (1 + len);
+      const X0 = W / 2 + x * base / p0 * cam, Y0 = H / 2 + y * base / p0 * cam;
+      const X1 = W / 2 + x * (1 + len) * base / p1 * cam, Y1 = H / 2 + y * (1 + len) * base / p1 * cam;
+      const depth = (z + 1) / 2;
+      ctx.strokeStyle = hsl(A.hue + i * 1.6 + v * 60, 100, 45 + depth * 30, 0.35 + depth * 0.6);
+      ctx.lineWidth = (1.2 + depth * 2.2 + v * 2) * DPR;
+      ctx.beginPath(); ctx.moveTo(X0, Y0); ctx.lineTo(X1, Y1); ctx.stroke();
+    }
+    ctx.fillStyle = hsl(A.hue + 180, 60, 10 + A.beat * 40, 0.9); ctx.beginPath(); ctx.arc(W / 2, H / 2, base * 0.98, 0, TAU); ctx.fill();
+    ctx.globalCompositeOperation = 'source-over';
+  } });
+})();
+
+// 12. Particle — fireflies orbiting wandering attractors, scattered by the beat.
+(() => {
+  const N = 260, P = [];
+  for (let i = 0; i < N; i++) P.push({ x: Math.random(), y: Math.random(), vx: 0, vy: 0, h: Math.random() * 360, s: 0.6 + Math.random() * 0.8 });
+  PRESETS.push({ name: 'Particle', draw(dt) {
+    feedback(1.0, 0.0, 0.12);
+    const t = A.t, att = [
+      [0.5 + Math.sin(t * 0.5) * 0.28, 0.5 + Math.cos(t * 0.37) * 0.28],
+      [0.5 + Math.cos(t * 0.31 + 2) * 0.3, 0.5 + Math.sin(t * 0.43 + 1) * 0.3],
+      [0.5 + Math.sin(t * 0.23 + 4) * 0.2, 0.5 + Math.cos(t * 0.61 + 3) * 0.25],
+    ];
+    ctx.globalCompositeOperation = 'lighter';
+    for (let i = 0; i < N; i++) {
+      const p = P[i], a = att[i % 3];
+      const dx = a[0] - p.x, dy = a[1] - p.y, d = Math.hypot(dx, dy) + 0.02;
+      const pull = (0.25 + A.mid * 0.6) * dt / d, swirl = (0.5 + A.treb * 1.5) * dt / d;
+      p.vx += dx * pull - dy * swirl * 0.35; p.vy += dy * pull + dx * swirl * 0.35;
+      if (A.beat > 0.97) { p.vx -= dx / d * 0.25 * p.s; p.vy -= dy / d * 0.25 * p.s; }
+      p.vx *= 0.96; p.vy *= 0.96; p.x += p.vx * dt; p.y += p.vy * dt;
+      const sx = p.x * W, sy = p.y * H, r = (1.2 + p.s * 1.5 + A.bass * 3) * DPR;
+      ctx.fillStyle = hsl(A.hue + p.h * 0.3 + (i % 3) * 60, 100, 70, 0.9);
+      ctx.beginPath(); ctx.arc(sx, sy, r, 0, TAU); ctx.fill();
+      ctx.fillStyle = hsl(A.hue + p.h * 0.3 + (i % 3) * 60, 100, 60, 0.18);
+      ctx.beginPath(); ctx.arc(sx, sy, r * 3.5, 0, TAU); ctx.fill();
+    }
+    ctx.globalCompositeOperation = 'source-over';
+  } });
+})();
+
+// 13. Musical Colors — the whole screen washes with a colour picked by which
+// band is loudest, and the beat drops ripples that ride the zoom outward.
+(() => {
+  let lastRipple = -1;
+  PRESETS.push({ name: 'Musical Colors', draw() {
+    feedback(1.025 + A.bass * 0.02, 0.002, 0.05);
+    // mix a colour from the bands: bass warm, mids green, treble blue
+    const b = A.bass, m = A.mid, tr = A.treb, sum = b + m + tr + 0.001;
+    const hue = (A.hue * 0.3 + (0 * b + 120 * m + 220 * tr) / sum) % 360;
+    ctx.fillStyle = hsl(hue, 80, 12 + A.level * 22, 0.06 + A.beat * 0.2); ctx.fillRect(0, 0, W, H);
+    // three big soft blobs, one per band, drifting
+    ctx.globalCompositeOperation = 'lighter';
+    [[b, 0, 0.3], [m, 120, 0.41], [tr, 230, 0.53]].forEach(([v, h, sp], i) => {
+      const x = W / 2 + Math.sin(A.t * sp + i * 2.1) * W * 0.3, y = H / 2 + Math.cos(A.t * sp * 0.8 + i) * H * 0.3, r = R * (0.12 + v * 0.3);
+      const g = ctx.createRadialGradient(x, y, 0, x, y, r);
+      g.addColorStop(0, hsl(hue + h, 90, 55, 0.35 * v + 0.05)); g.addColorStop(1, hsl(hue + h, 90, 50, 0));
+      ctx.fillStyle = g; ctx.beginPath(); ctx.arc(x, y, r, 0, TAU); ctx.fill();
+    });
+    ctx.globalCompositeOperation = 'source-over';
+    // soft spectrum bands, wide and translucent
+    const NB = 16, bw = W / NB;
+    for (let i = 0; i < NB; i++) {
+      const v = A.spec[i * 12 + 4], g = ctx.createLinearGradient(0, H, 0, H - v * H);
+      g.addColorStop(0, hsl(hue + i * 12, 90, 60, 0.18)); g.addColorStop(1, hsl(hue + i * 12, 90, 60, 0));
+      ctx.fillStyle = g; ctx.fillRect(i * bw, H - v * H, bw, v * H);
+    }
+    if (A.beat === 1 && lastBeat !== lastRipple) {
+      lastRipple = lastBeat;
+      const x = W * (0.2 + Math.random() * 0.6), y = H * (0.2 + Math.random() * 0.6);
+      ctx.globalCompositeOperation = 'lighter';
+      ctx.strokeStyle = hsl(hue + 180, 100, 80, 0.9); ctx.lineWidth = (8 + b * 16) * DPR;
+      ctx.beginPath(); ctx.arc(x, y, R * 0.08, 0, TAU); ctx.stroke();
+      ctx.strokeStyle = hsl(hue + 180, 100, 90, 0.35); ctx.lineWidth = (18 + b * 20) * DPR; ctx.stroke();
+      ctx.globalCompositeOperation = 'source-over';
+    }
+  } });
+})();
+
+// Battery leads: it's the one people (and Matt) remember.
+PRESETS.unshift(...PRESETS.splice(PRESETS.findIndex((p) => p.name === 'Battery'), 1));
+
 // ---------------------------------------------------------------- presets: switching + UI
 let cur = 0;
 try { cur = Math.min(PRESETS.length - 1, Math.max(0, parseInt(localStorage.getItem('vis.preset')) || 0)); } catch {}
@@ -525,7 +655,7 @@ addEventListener('keydown', (e) => {
   else if (kl === 'f') toggleFS();
   else if (kl === 'h') { clearTimeout(uiTimer); ui.classList.toggle('hidden'); }
   else if (kl === 'g' && running) gameStart();
-  else if (k >= '1' && k <= '9') { if (k - 1 < PRESETS.length) setPreset(k - 1); }
+  else if (k >= '0' && k <= '9') { const i = k === '0' ? 9 : k - 1; if (i < PRESETS.length) setPreset(i); }
 });
 addEventListener('keyup', (e) => { const m = KEYMAP[e.key] || KEYMAP[e.key.toLowerCase()]; if (m) G.keys[m] = false; });
 

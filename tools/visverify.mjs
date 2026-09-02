@@ -61,7 +61,7 @@ try {
     const n = await ev('PRESETS.length');
     for (let i = 0; i < n; i++) {
       await ev(`setPreset(${i})`);
-      await sleep(900);
+      await sleep(1800);
       const name = await ev(`PRESETS[${i}].name`);
       const lvl = await ev('A.level');
       check(lvl > 0.01, `${label}: preset ${i + 1} ${name} (level ${lvl.toFixed(2)})`);
