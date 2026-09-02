@@ -651,6 +651,7 @@ const KEYMAP = { ArrowLeft: 'left', a: 'left', ArrowRight: 'right', d: 'right', 
 addEventListener('keydown', (e) => {
   if (e.metaKey || e.ctrlKey || e.altKey) return;
   const k = e.key, kl = k.toLowerCase();
+  if (!running) { if (k === 'Enter' || k === ' ') { e.preventDefault(); document.getElementById('go').click(); } return; }
   if (G.on) {
     if (KEYMAP[k] || KEYMAP[kl]) { e.preventDefault(); G.keys[KEYMAP[k] || KEYMAP[kl]] = true; if (G.over && KEYMAP[k] === 'fire') gameStart(); }
     else if (k === 'Escape') gameEnd();
