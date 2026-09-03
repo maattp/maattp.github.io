@@ -153,6 +153,23 @@ preset becomes the sky of a rail shooter that spawns enemies on the beat.
 Verify headlessly with `node tools/visverify.mjs` (fake mic, screenshots every
 preset on desktop and phone viewports plus the game).
 
+## Solar App
+
+### Version Management
+
+**IMPORTANT:** Increment `VERSION` in `/apps/solar/index.html` once per PR,
+and bump `CACHE` in `/apps/solar/sw.js` (`solar-vN`) to match.
+
+Solar-system flight sim (Three.js r160 modules). Planets ride real JPL J2000
+elements with real periods, so the date shown is the real date and the planets
+are where they really are; the ship flies patched-conic two-body physics
+(universal-variable propagator, RK4 only while thrusting). The world is
+compressed: 1 AU = 1000 units, Earth radius = 2, moon orbits pulled in by a
+power law, and each planet's GM is *derived* (escape-velocity ratio vs. local
+heliocentric speed, bumped so every moon fits inside the SOI) — don't hand-edit
+GMs. Verify headlessly with `node tools/solarverify.mjs` (needs
+`python3 -m http.server 8000`), then look at the shots in `tools/data/solarshots/`.
+
 ## Photos App
 
 ### Known Limitations
