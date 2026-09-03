@@ -1,6 +1,6 @@
 /* Chat service worker. CACHE moves in lockstep with VERSION in index.html —
  * the repo-wide convention that makes a stale worker diagnosable. */
-const CACHE = 'chat-v8';
+const CACHE = 'chat-v9';
 const SHELL = ['./', './index.html', './manifest.webmanifest'];
 
 // cache:'reload' — fill the shell from the network, never the HTTP cache.

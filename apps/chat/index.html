@@ -4,22 +4,49 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no, viewport-fit=cover, interactive-widget=resizes-content">
 <meta name="apple-mobile-web-app-capable" content="yes">
-<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-<meta name="theme-color" content="#0b0b12">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="theme-color" content="#f6f5f2" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#111110" media="(prefers-color-scheme: dark)">
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline' https://accounts.google.com; style-src 'unsafe-inline' https://accounts.google.com; img-src 'self' data:; connect-src https://cloudflare-backend.maattp.workers.dev wss://cloudflare-backend.maattp.workers.dev https://accounts.google.com; frame-src https://accounts.google.com; manifest-src 'self'; worker-src 'self'; base-uri 'none'; form-action 'none'">
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="apple-touch-icon" href="../icon.png">
 <title>Chat</title>
 <script src="https://accounts.google.com/gsi/client" async></script>
 <style>
+  /* ---------- palette ----------
+     Warm neutrals rather than the old blue-black: a paper ground in light,
+     a soft charcoal in dark, so the app reads as a room rather than a
+     terminal. Three voices need to be told apart at a glance — me (teal),
+     the other person (plain surface), Claude (amber, tinted + ruled). Every
+     colour is defined here on :root; the dark block only redefines them. */
   :root {
-    --bg:#0b0b12; --panel:#15151f; --line:#26263a; --text:#e8e8f0; --dim:#8a8aa0;
-    --me:#2f6fed; --them:#232334; --claude-border:#8b5cf6; --claude-bg:#1b1530;
+    --ground:#f6f5f2; --surface:#fff; --raised:#eceae4; --line:#e2dfd8;
+    --ink:#1b1a17; --dim:#77736b; --faint:#a8a49b;
+    --me:#0f7a6b; --me-ink:#fff;
+    --claude:#a5651c; --claude-bg:#fbf3e5; --claude-line:#ecd9b8;
+    --segtrack:#eceae4; --segon:#fff;
+    --shadow:0 1px 2px rgba(28,26,20,.06);
+    --lift:0 6px 24px rgba(28,26,20,.14), 0 1px 3px rgba(28,26,20,.1);
     --sat:env(safe-area-inset-top); --sab:env(safe-area-inset-bottom);
   }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --ground:#111110; --surface:#1b1a18; --raised:#26251f; --line:#312f2a;
+      --ink:#eceae4; --dim:#948f85; --faint:#6b675f;
+      --me:#16806f; --me-ink:#fff;
+      --claude:#dda45c; --claude-bg:#241d13; --claude-line:#44351f;
+      --segtrack:#131210; --segon:#34322b;
+      --shadow:none;
+      --lift:0 8px 28px rgba(0,0,0,.55), 0 0 0 1px var(--line);
+    }
+  }
+
   * { margin:0; padding:0; box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
-  html,body { height:100%; background:var(--bg); }
-  body { color:var(--text); font:16px/1.4 -apple-system,system-ui,sans-serif; overflow:hidden; }
+  html,body { height:100%; background:var(--ground); }
+  body { color:var(--ink); overflow:hidden;
+         font:16px/1.45 -apple-system,system-ui,"SF Pro Text",sans-serif;
+         -webkit-font-smoothing:antialiased; }
+  button { font:inherit; color:inherit; }
 
   /* At rest the app IS the layout viewport: inset:0, nothing else. In a
      standalone app that is the whole screen, status bar to home indicator,
@@ -29,77 +56,156 @@
   /* keyboard up: it covers the home-indicator strip, so that inset is not
      ours to reserve */
   #app.kb #composer { padding-bottom:8px; }
-  header { padding:calc(var(--sat) + 8px) 12px 8px; background:var(--panel); border-bottom:1px solid var(--line);
-           display:flex; align-items:center; gap:8px; }
-  header h1 { font-size:17px; flex:1; }
-  .tabs { display:flex; gap:6px; }
-  .tab { padding:6px 14px; border-radius:16px; background:var(--them); color:var(--dim); font-size:14px; border:none; }
-  .tab.active { background:var(--me); color:#fff; }
-  .tab .badge { margin-left:6px; background:#e33; color:#fff; border-radius:8px; padding:0 6px; font-size:11px; }
-  #bell { background:none; border:1px solid var(--line); color:var(--dim); border-radius:8px; padding:5px 9px; font-size:14px; }
-  #bell.on { color:#7dd87d; border-color:#2c4; }
 
+  /* ---------- header ----------
+     Two threads, so the switcher is a segmented control rather than a row of
+     buttons that look like actions. It carries the thread name, which is why
+     there is no separate title competing with it. */
+  header { padding:calc(var(--sat) + 10px) 12px 10px; background:var(--surface);
+           border-bottom:1px solid var(--line); display:flex; align-items:center; gap:10px; }
+  .tabs { flex:1; display:flex; gap:2px; padding:2px; background:var(--segtrack);
+          border-radius:11px; }
+  .tab { flex:1; position:relative; padding:7px 12px; border:none; border-radius:9px;
+         background:none; color:var(--dim); font-size:14px; font-weight:590;
+         letter-spacing:-.01em; transition:background .18s, color .18s; }
+  .tab.active { background:var(--segon); color:var(--ink); box-shadow:var(--shadow); }
+  .tab .badge { display:inline-block; min-width:17px; margin-left:5px; padding:0 5px;
+                background:var(--me); color:var(--me-ink); border-radius:9px;
+                font-size:11px; font-weight:700; line-height:17px; vertical-align:1px; }
+  .tab.active .badge { background:var(--me); }
+  #bell { flex:none; width:34px; height:34px; display:grid; place-items:center;
+          background:var(--raised); border:none; border-radius:17px; font-size:15px;
+          filter:grayscale(1) opacity(.55); transition:filter .2s; }
+  #bell.on { filter:none; }
+
+  /* ---------- message list ---------- */
   #scroll { flex:1; overflow-y:auto; -webkit-overflow-scrolling:touch; overscroll-behavior:contain;
             display:flex; flex-direction:column; }
   #topspacer { margin-top:auto; flex-shrink:0; }
-  #botspacer { padding-bottom:8px; } /* keep the last row's reactions off the composer edge */
+  #botspacer { padding-bottom:10px; } /* keep the last row's reactions off the composer edge */
   #botspacer,#list { flex-shrink:0; }
   #topspacer,#botspacer { width:1px; }
-  .msg { padding:2px 12px; display:flex; flex-direction:column; }
-  .msg .bubble { max-width:78%; padding:8px 12px; border-radius:18px; white-space:pre-wrap; word-break:break-word; }
-  .msg.mine { align-items:flex-end; } .msg.mine .bubble { background:var(--me); border-bottom-right-radius:4px; }
-  .msg.theirs { align-items:flex-start; } .msg.theirs .bubble { background:var(--them); border-bottom-left-radius:4px; }
-  .msg.claude .bubble { background:var(--claude-bg); border:1px solid var(--claude-border); border-bottom-left-radius:4px; }
-  .msg .who { font-size:11px; color:var(--dim); margin:6px 12px 2px; }
-  .msg.claude .who { color:var(--claude-border); font-weight:600; }
-  .msg .meta { font-size:10px; color:var(--dim); margin:2px 4px; }
-  .msg .reacts { display:flex; gap:4px; margin:2px 4px; flex-wrap:wrap; }
-  .msg .reacts span { background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:1px 7px; font-size:12px; }
-  .msg .reacts span.mine { border-color:var(--me); }
-  .msg.pending .bubble { opacity:.55; }
 
-  #picker { position:fixed; display:none; background:var(--panel); border:1px solid var(--line); border-radius:22px;
-            padding:6px 10px; gap:6px; z-index:10; box-shadow:0 4px 20px #0008; }
-  #picker button { background:none; border:none; font-size:22px; padding:4px; }
+  /* One .msg is one virtualised row: whatever it contains — a day divider, a
+     name, the bubble, reactions — is measured as this element's height, so
+     nothing here may sit outside it. */
+  .msg { padding:1px 14px; display:flex; flex-direction:column; }
+  .msg.start { margin-top:12px; }        /* air between speakers */
+  .msg.mine { align-items:flex-end; }
+  .msg.theirs { align-items:flex-start; }
 
-  #composer { display:flex; gap:8px; padding:8px 12px calc(var(--sab) + 8px); background:var(--panel); border-top:1px solid var(--line); }
-  #input { flex:1; background:var(--bg); border:1px solid var(--line); border-radius:18px; padding:9px 14px;
-           color:var(--text); font-size:16px; resize:none; max-height:120px; }
-  #sendbtn { background:var(--me); color:#fff; border:none; border-radius:50%; width:38px; height:38px; font-size:17px; align-self:flex-end; }
-  #sendbtn:disabled { opacity:.4; }
+  .day { align-self:center; margin:14px 0 10px; padding:3px 12px; border-radius:11px;
+         background:var(--raised); color:var(--dim); font-size:11px; font-weight:650;
+         letter-spacing:.04em; text-transform:uppercase; }
 
-  #login { position:fixed; inset:0; background:var(--bg); display:flex; flex-direction:column; align-items:center;
-           justify-content:center; gap:20px; z-index:20; }
-  #login h2 { font-size:22px; } #login p { color:var(--dim); font-size:14px; max-width:260px; text-align:center; }
+  .who { margin:0 6px 3px; font-size:11.5px; font-weight:650; color:var(--dim);
+         letter-spacing:.01em; }
+  .msg.claude .who { color:var(--claude); }
+
+  .bubble { max-width:80%; padding:9px 14px 10px; border-radius:20px;
+            white-space:pre-wrap; word-break:break-word; font-size:16px; line-height:1.42;
+            box-shadow:var(--shadow); }
+  .msg.mine .bubble { background:var(--me); color:var(--me-ink); }
+  .msg.theirs .bubble { background:var(--surface); }
+  .msg.claude .bubble { background:var(--claude-bg); border:1px solid var(--claude-line); }
+  /* Square off the inner corner only on the last bubble of a run, so a group
+     reads as one block with a single tail. */
+  .msg.mine.end .bubble { border-bottom-right-radius:7px; }
+  .msg.theirs.end .bubble { border-bottom-left-radius:7px; }
+  .msg.pending .bubble { opacity:.5; }
+
+
+  /* ---------- reactions ----------
+     The + is always drawn, one per message, so adding a reaction is a visible
+     affordance rather than something you have to know. It stays quiet: faint
+     until it is tapped. */
+  .foot { display:flex; align-items:center; gap:6px; flex-wrap:wrap; margin:4px 5px 0; }
+  .msg.mine .foot { flex-direction:row-reverse; }
+  .foot .time { font-size:10.5px; color:var(--faint); letter-spacing:.01em; }
+  .chip { display:inline-flex; align-items:center; gap:4px; height:24px; padding:0 8px;
+          background:var(--surface); border:1px solid var(--line); border-radius:12px;
+          font-size:13px; line-height:1; box-shadow:var(--shadow); }
+  .chip .n { font-size:11.5px; font-weight:650; color:var(--dim); }
+  .chip.mine { border-color:var(--me); background:color-mix(in srgb, var(--me) 12%, var(--surface)); }
+  .chip.mine .n { color:var(--me); }
+  .addreact { width:24px; height:24px; display:grid; place-items:center; padding:0;
+              background:var(--raised); border:none; border-radius:12px;
+              color:var(--faint); font-size:15px; font-weight:600; line-height:1;
+              transition:transform .12s, color .18s, background .18s; }
+  .addreact:active { transform:scale(.86); }
+  .addreact.open { background:var(--me); color:var(--me-ink); }
+
+  /* ---------- emoji picker ---------- */
+  #picker { position:fixed; display:none; z-index:10; gap:2px; padding:6px;
+            background:var(--surface); border:1px solid var(--line); border-radius:25px;
+            box-shadow:var(--lift);
+            transform-origin:var(--ox,50%) bottom; animation:pop .16s cubic-bezier(.2,1.2,.5,1); }
+  @keyframes pop { from { opacity:0; transform:scale(.8) translateY(6px); } }
+  #picker button { width:42px; height:42px; display:grid; place-items:center; padding:0;
+                   background:none; border:none; border-radius:21px; font-size:25px;
+                   transition:transform .12s, background .15s; }
+  #picker button:active { transform:scale(1.25); }
+  #picker button.on { background:color-mix(in srgb, var(--me) 16%, transparent); }
+
+  /* ---------- composer ---------- */
+  #composer { display:flex; align-items:flex-end; gap:8px;
+              padding:9px 12px calc(var(--sab) + 9px);
+              background:var(--surface); border-top:1px solid var(--line); }
+  #input { flex:1; min-height:38px; max-height:120px; padding:8px 15px; resize:none;
+           background:var(--ground); border:1px solid var(--line); border-radius:19px;
+           color:var(--ink); font:16px/1.4 inherit; }
+  #input::placeholder { color:var(--faint); }
+  #input:focus { outline:none; border-color:color-mix(in srgb, var(--me) 45%, var(--line)); }
+  #sendbtn { flex:none; width:38px; height:38px; display:grid; place-items:center; padding:0;
+             background:var(--me); color:var(--me-ink); border:none; border-radius:19px;
+             font-size:17px; font-weight:700;
+             transition:transform .14s, opacity .14s; }
+  #sendbtn:disabled { background:var(--raised); color:var(--faint); }
+
+  /* ---------- login ---------- */
+  #login { position:fixed; inset:0; z-index:20; padding:32px;
+           background:var(--ground); display:flex; flex-direction:column;
+           align-items:center; justify-content:center; gap:14px; }
+  #login .mark { width:62px; height:62px; margin-bottom:6px; display:grid; place-items:center;
+                 background:var(--me); color:var(--me-ink); border-radius:20px;
+                 font-size:30px; box-shadow:var(--lift); }
+  #login h2 { font-size:25px; font-weight:700; letter-spacing:-.02em; }
+  #login p { max-width:270px; color:var(--dim); font-size:14px; line-height:1.5; text-align:center; }
+  #gbtn { margin-top:12px; min-height:44px; }
+
+  #empty { padding:28px 32px; color:var(--faint); font-size:14px; text-align:center;
+           line-height:1.6; white-space:pre-line; }
+
   .hidden { display:none !important; }
-  #ver { position:fixed; bottom:calc(var(--sab) + 2px); right:6px; font-size:9px; color:#333; z-index:1; pointer-events:none; }
+  #ver { position:fixed; bottom:calc(var(--sab) + 2px); right:7px; z-index:1;
+         font-size:9px; color:var(--faint); opacity:.4; pointer-events:none; }
 </style>
 </head>
 <body>
 <div id="login">
+  <div class="mark">✉︎</div>
   <h2>Chat</h2>
   <p>Matt, Tingting &amp; Claude. Sign in with the account you always use.</p>
   <div id="gbtn"></div>
 </div>
 <div id="app" class="hidden">
   <header>
-    <h1 id="title">Chat</h1>
     <div class="tabs" id="tabs"></div>
     <button id="bell" title="Enable notifications">🔔</button>
   </header>
   <div id="scroll"><div id="topspacer"></div><div id="list"></div><div id="botspacer"></div></div>
   <div id="composer">
     <textarea id="input" rows="1" placeholder="Message" maxlength="8000"></textarea>
-    <button id="sendbtn">↑</button>
+    <button id="sendbtn" disabled aria-label="Send">↑</button>
   </div>
 </div>
 <div id="picker"></div>
-<div id="ver">v8</div>
+<div id="ver">v9</div>
 
 <script>
 'use strict';
 /* Chat v1 — see PLAN.md. Bump VERSION here and CACHE in sw.js together. */
-const VERSION = 8;
+const VERSION = 9;
 const API = 'https://cloudflare-backend.maattp.workers.dev';
 const CLIENT_ID = '611505411727-94u34em16j7sd0rdigejmvfdgnjj67ma.apps.googleusercontent.com';
 const VAPID_PUBLIC = 'BEh-HVZvaC3p5R3vm9vaddvI-SvWAJ2N6kcocMcyOcaWhLDEgVc5bQjzKT8knGN509v8GOGDujwu2OoQfwdKiLs';
@@ -109,7 +215,7 @@ const THREAD_LABELS = { dm: 'Claude', group: 'Us' };
 // Device senders: Matt's own words arriving through a device credential.
 // Rendered on his side of the chat, labelled with the device.
 const DEVICE_OWNERS = { ring: 'matt', alexa: 'matt' };
-const SENDER_LABELS = { claude: 'Claude', ring: '💍', alexa: '🔊' };
+const SENDER_LABELS = { claude: 'Claude', ring: '💍 Ring', alexa: '🔊 Alexa' };
 
 /* ---------- tiny IndexedDB layer ---------- */
 let db;
@@ -169,7 +275,10 @@ async function api(method, path, body) {
 window.onGoogleLibraryLoad = () => {
   if (S.session) return;
   google.accounts.id.initialize({ client_id: CLIENT_ID, callback: onCredential });
-  google.accounts.id.renderButton(document.getElementById('gbtn'), { theme: 'filled_black', size: 'large' });
+  google.accounts.id.renderButton(document.getElementById('gbtn'), {
+    theme: matchMedia('(prefers-color-scheme: dark)').matches ? 'filled_black' : 'outline',
+    size: 'large', shape: 'pill',
+  });
 };
 async function onCredential(response) {
   const res = await fetch(API + '/auth', {
@@ -311,7 +420,7 @@ async function send() {
   const input = document.getElementById('input');
   const body = input.value.trim();
   if (!body || !S.thread) return;
-  input.value = ''; input.style.height = 'auto';
+  input.value = ''; input.style.height = 'auto'; syncSend();
   const item = { id: crypto.randomUUID(), thread: S.thread, body, clientAt: Date.now() };
   await tx('outbox', 'readwrite', s => s.put(item));
   S.msgs[S.thread].push({ ...item, seq: Infinity, sender: S.me, created_at: item.clientAt, pending: true });
@@ -360,6 +469,7 @@ function findIdx(y) { // greatest i with prefix[i] <= y
   return lo;
 }
 function render(stickBottom) {
+  if (pickerClose) pickerClose();   // its anchor is about to be replaced
   const scroll = document.getElementById('scroll'), list = document.getElementById('list');
   const arr = S.msgs[S.thread] || [];
   if (prefixDirty) rebuildPrefix();
@@ -372,8 +482,13 @@ function render(stickBottom) {
   document.getElementById('botspacer').style.height = (prefix[arr.length] - prefix[end]) + 'px';
 
   list.textContent = '';
+  if (!arr.length) {
+    const e = document.createElement('div'); e.id = 'empty';
+    e.textContent = S.thread === 'dm' ? 'Just you and Claude.\nSay something.' : 'Nothing here yet.';
+    list.appendChild(e);
+  }
   const frag = document.createDocumentFragment();
-  for (let i = start; i < end; i++) frag.appendChild(renderMsg(arr[i], arr[i - 1]));
+  for (let i = start; i < end; i++) frag.appendChild(renderMsg(arr[i], arr[i - 1], arr[i + 1]));
   list.appendChild(frag);
 
   let changed = false;
@@ -387,12 +502,47 @@ function render(stickBottom) {
   if (stickBottom && (wasBottom || arr.at(-1)?.pending)) scroll.scrollTop = scroll.scrollHeight;
   markRead();
 }
-function renderMsg(m, prev) {
+/* Runs are the unit of layout: consecutive messages from one sender, close in
+   time, on one day. The name is drawn once at the top of a run and the clock
+   once at the bottom, so a burst of three messages costs three bubbles rather
+   than three headers. */
+const RUN_GAP = 15 * 60 * 1000;
+const dayKey = (t) => new Date(t).toDateString();
+function sameRun(a, b) {
+  return a && b && a.sender === b.sender
+      && Math.abs(b.created_at - a.created_at) < RUN_GAP
+      && dayKey(a.created_at) === dayKey(b.created_at);
+}
+function dayLabel(t) {
+  const d = new Date(t), now = new Date();
+  const days = Math.round((new Date(now.toDateString()) - new Date(d.toDateString())) / 86400000);
+  if (days === 0) return 'Today';
+  if (days === 1) return 'Yesterday';
+  return d.toLocaleDateString([], days < 7
+    ? { weekday: 'long' }
+    : { weekday: 'short', month: 'short', day: 'numeric' });
+}
+const clock = (t) => new Date(t).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+
+function renderMsg(m, prev, next) {
   const div = document.createElement('div');
   div.dataset.id = m.id;
   const ownMsg = m.sender === S.me || DEVICE_OWNERS[m.sender] === S.me;
-  div.className = 'msg ' + (ownMsg ? 'mine' : m.sender === 'claude' ? 'claude theirs' : 'theirs') + (m.pending ? ' pending' : '');
-  if (!prev || prev.sender !== m.sender) {
+  const runStart = !sameRun(prev, m), runEnd = !sameRun(m, next);
+  const newDay = !prev || dayKey(prev.created_at) !== dayKey(m.created_at);
+  div.className = 'msg ' + (ownMsg ? 'mine' : m.sender === 'claude' ? 'claude theirs' : 'theirs')
+    + (runStart ? ' start' : '') + (runEnd ? ' end' : '') + (m.pending ? ' pending' : '');
+
+  // The divider lives INSIDE the row so the virtualiser measures it as part of
+  // this row's height — anything outside .msg would not be accounted for.
+  if (newDay) {
+    const d = document.createElement('div'); d.className = 'day';
+    d.textContent = dayLabel(m.created_at);
+    div.appendChild(d);
+  }
+  // A device sender (ring, alexa) is Matt's own words arriving through a
+  // gadget: it sits on his side, but the gadget is still worth naming.
+  if (runStart && (!ownMsg || m.sender !== S.me)) {
     const who = document.createElement('div'); who.className = 'who';
     who.textContent = SENDER_LABELS[m.sender] || m.sender.charAt(0).toUpperCase() + m.sender.slice(1);
     div.appendChild(who);
@@ -400,24 +550,42 @@ function renderMsg(m, prev) {
   const b = document.createElement('div'); b.className = 'bubble';
   b.textContent = m.body;   // text nodes only — never innerHTML (PLAN: security)
   div.appendChild(b);
-  if (m.client_at && m.created_at - m.client_at > 5 * 60 * 1000) {
-    const meta = document.createElement('div'); meta.className = 'meta';
-    meta.textContent = 'composed ' + new Date(m.client_at).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
-    div.appendChild(meta);
-  }
-  const per = reactMap(S.thread).get(m.id);
-  if (per && per.size) {
-    const row = document.createElement('div'); row.className = 'reacts';
-    for (const [emoji, senders] of per) {
-      const s = document.createElement('span');
-      s.textContent = emoji + (senders.size > 1 ? ' ' + senders.size : '');
-      if (senders.has(S.me)) s.className = 'mine';
-      s.onclick = (e) => { e.stopPropagation(); toggleReact(m.id, emoji, senders.has(S.me)); };
-      row.appendChild(s);
+
+  // Footer: chips, the +, the clock — one row, not three stacked ones. Order
+  // in the DOM is chips → + → time; .msg.mine reverses it so the clock always
+  // ends up on the outside edge of the bubble it belongs to.
+  const foot = document.createElement('div'); foot.className = 'foot';
+  const per = m.pending ? null : reactMap(S.thread).get(m.id);
+  if (per) for (const [emoji, senders] of per) {
+    if (!senders.size) continue;
+    const chip = document.createElement('button'); chip.type = 'button';
+    chip.className = 'chip' + (senders.has(S.me) ? ' mine' : '');
+    chip.appendChild(document.createTextNode(emoji));
+    if (senders.size > 1) {
+      const n = document.createElement('span'); n.className = 'n';
+      n.textContent = senders.size; chip.appendChild(n);
     }
-    div.appendChild(row);
+    chip.onclick = (e) => { e.stopPropagation(); toggleReact(m.id, emoji, senders.has(S.me)); };
+    foot.appendChild(chip);
   }
-  b.onclick = (e) => showPicker(m, e);
+  // A pending message has no server row yet, so there is nothing to react to.
+  if (!m.pending) {
+    const add = document.createElement('button');
+    add.className = 'addreact'; add.type = 'button';
+    add.setAttribute('aria-label', 'Add reaction');
+    add.textContent = '+';
+    add.onclick = (e) => { e.stopPropagation(); showPicker(m, add); };
+    foot.appendChild(add);
+  }
+  let when = '';
+  if (m.client_at && m.created_at - m.client_at > 5 * 60 * 1000) when = 'sent ' + clock(m.created_at) + ' · composed ' + clock(m.client_at);
+  else if (runEnd && !m.pending) when = clock(m.created_at);
+  if (when) {
+    const time = document.createElement('span'); time.className = 'time';
+    time.textContent = when; foot.appendChild(time);
+  }
+  div.appendChild(foot);
+
   return div;
 }
 async function toggleReact(messageId, emoji, mine) {
@@ -426,18 +594,48 @@ async function toggleReact(messageId, emoji, mine) {
   try { await api('POST', `/${S.thread}/react`, { messageId, emoji, op: mine ? 'remove' : 'add' }); }
   catch { applyReaction(S.thread, { message_id: messageId, sender: S.me, emoji, removed: !mine }); render(false); }
 }
-function showPicker(m, e) {
+/* Anchored to the + that opened it, flipped below when there is no room
+   above, and clamped to the viewport by MEASURED width — the old version
+   subtracted a hardcoded 260px, which was wrong the moment the row changed. */
+let pickerClose = null;
+function showPicker(m, anchor) {
+  if (pickerClose) pickerClose();
   const p = document.getElementById('picker');
-  p.textContent = ''; p.style.display = 'flex';
+  p.textContent = '';
+  const per = reactMap(S.thread).get(m.id);
   for (const emoji of PICK) {
-    const btn = document.createElement('button'); btn.textContent = emoji;
-    btn.onclick = () => { p.style.display = 'none'; const mine = reactMap(S.thread).get(m.id)?.get(emoji)?.has(S.me); toggleReact(m.id, emoji, !!mine); };
+    const btn = document.createElement('button'); btn.type = 'button'; btn.textContent = emoji;
+    const mine = !!per?.get(emoji)?.has(S.me);
+    if (mine) btn.className = 'on';
+    btn.onclick = (ev) => { ev.stopPropagation(); close(); toggleReact(m.id, emoji, mine); };
     p.appendChild(btn);
   }
-  const r = e.target.getBoundingClientRect();
-  p.style.top = Math.max(8, r.top - 54) + 'px';
-  p.style.left = Math.min(window.innerWidth - 260, Math.max(8, r.left)) + 'px';
-  setTimeout(() => document.addEventListener('click', function h(ev) { if (!p.contains(ev.target)) { p.style.display = 'none'; document.removeEventListener('click', h); } }), 0);
+  p.style.display = 'flex';
+  anchor.classList.add('open');
+
+  const a = anchor.getBoundingClientRect();
+  const w = p.offsetWidth, h = p.offsetHeight;   // layout size: the pop animation's scale() is not in it
+  const pad = 8;
+  const left = Math.min(window.innerWidth - w - pad, Math.max(pad, a.left + a.width / 2 - w / 2));
+  const above = a.top - h - 8;
+  p.style.left = left + 'px';
+  p.style.top = (above >= pad ? above : Math.min(window.innerHeight - h - pad, a.bottom + 8)) + 'px';
+  // grow from the + rather than from the middle of the sheet
+  p.style.setProperty('--ox', (a.left + a.width / 2 - left) + 'px');
+
+  function close() {
+    p.style.display = 'none';
+    anchor.classList.remove('open');
+    document.removeEventListener('click', onDoc, true);
+    document.getElementById('scroll').removeEventListener('scroll', close);
+    pickerClose = null;
+  }
+  function onDoc(ev) { if (!p.contains(ev.target)) close(); }
+  pickerClose = close;
+  setTimeout(() => {
+    document.addEventListener('click', onDoc, true);
+    document.getElementById('scroll').addEventListener('scroll', close, { once: true });
+  }, 0);
 }
 
 /* ---------- read cursor ---------- */
@@ -527,7 +725,14 @@ async function registerSW() {
 /* ---------- wiring ---------- */
 document.getElementById('sendbtn').onclick = send;
 document.getElementById('input').addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); } });
-document.getElementById('input').addEventListener('input', function () { this.style.height = 'auto'; this.style.height = Math.min(this.scrollHeight, 120) + 'px'; });
+document.getElementById('input').addEventListener('input', function () {
+  this.style.height = 'auto'; this.style.height = Math.min(this.scrollHeight, 120) + 'px';
+  syncSend();
+});
+function syncSend() {
+  const input = document.getElementById('input');
+  document.getElementById('sendbtn').disabled = !input.value.trim();
+}
 document.getElementById('bell').onclick = enablePush;
 document.getElementById('scroll').addEventListener('scroll', () => {
   render(false);
