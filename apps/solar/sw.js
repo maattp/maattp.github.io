@@ -38,7 +38,7 @@ self.addEventListener('fetch', e => {
     e.respondWith(caches.match(url).then(hit => hit || fetch(e.request).then(res => {
       if (res && res.ok) { const copy = res.clone(); return caches.open(CACHE).then(c => c.put(url, copy)).then(() => res); }
       return res;
-    })));
+    }).catch(() => Response.error())));
     return;
   }
   if (new URL(url).origin !== self.location.origin) return;

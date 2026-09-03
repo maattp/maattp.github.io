@@ -102,6 +102,20 @@ try {
     await ev("document.getElementById('respawn').click()"); await sleep(300);
     check(await ev(`${D}.ship.alive && ${D}.ship.soi.name === 'Mars'`), `${label}: respawned in Mars orbit`);
   }
+  // edge cases from review: corrupt save must not leave a half-restored ship; a crashed save respawns
+  await send('Page.navigate', { url: URL + '?v=' + Date.now() }); await sleep(2500);
+  await ev("localStorage.setItem('solar.v1', JSON.stringify({soi:'Mars', r:[1,2,3]}))");   // after load: autosave can't overwrite it
+  await ev("document.getElementById('go').click()"); await sleep(500);
+  const l1 = await ev(`(()=>({soi:${D}.ship.soi.name, e:${D}.ship.el.e, alive:${D}.ship.alive, ok:isFinite(${D}.ship.v.x)}))()`);
+  check(l1.soi === 'Mars' && l1.e < 0.01 && l1.alive && l1.ok, `corrupt save (no velocity) → fresh circular orbit at ${l1.soi}`);
+  await send('Page.navigate', { url: URL + '?v=' + Date.now() }); await sleep(2500);
+  await ev("localStorage.setItem('solar.v1', JSON.stringify({soi:'Venus', alive:false, r:[0.1,0,0], v:[0,0,0]}))");   // after load: autosave can't overwrite it
+  await ev("document.getElementById('go').click()"); await sleep(500);
+  const l2 = await ev(`(()=>({soi:${D}.ship.soi.name, alive:${D}.ship.alive, r:${D}.ship.r.length(), R:${D}.ship.soi.R}))()`);
+  check(l2.soi === 'Venus' && l2.alive && l2.r > l2.R, `crashed save → respawned in orbit at ${l2.soi}`);
+  // radial burn to zero angular momentum must not poison the heading quaternion
+  await ev(`${D}.ship.v.multiplyScalar(0); ${D}.setMode('rout'); ${D}.startBurn()`); await sleep(600); await ev(`${D}.stopBurn()`); await sleep(100);
+  check(await ev(`isFinite(${D}.ship.q.x) && isFinite(${D}.ship.fwd.x) && isFinite(${D}.ship.r.x)`), 'radial burn from rest keeps heading finite');
   check(logs.length === 0, 'no exceptions / console errors');
   for (const l of logs) console.log('   ' + l);
 } catch (e) { console.error('HARNESS ERROR', e); fail++; }

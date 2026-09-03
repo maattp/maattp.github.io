@@ -227,7 +227,6 @@
 
 <div id="ver"></div>
 <div id="err"></div>
-<label id="hap" aria-hidden="true" style="position:absolute;left:-9999px;opacity:0;pointer-events:none"><input type="checkbox" switch tabindex="-1"></label>
 
 <script async src="https://cdn.jsdelivr.net/npm/es-module-shims@1.10.0/dist/es-module-shims.js"></script>
 <script type="importmap">
@@ -323,6 +322,7 @@ function planeNormal(i, Om) { // scene-space normal of a plane with inclination 
   return new THREE.Vector3(n[0], n[2], -n[1]);
 }
 
+const hillSOI = (a, gm, gmParent) => a * Math.pow(gm / gmParent, 0.4);
 const bodies = [], byName = {};
 const sun = new Body({ name: 'Sun', R: 80, GM: GM_SUN, color: '#fff3b0', kind: 'sun', parent: null, soi: Infinity, depth: 0 });
 bodies.push(sun); byName.Sun = sun;
@@ -342,7 +342,7 @@ for (const p of sun.children) {
   let amax = 0;
   for (const m of moons) { const ratio = m[2] / (p.R / RSCALE); amax = Math.max(amax, p.R * 1.4 * Math.pow(ratio, pw)); }
   if (amax) GM = Math.max(GM, GM_SUN * Math.pow(2.2 * amax / p.el.a, 2.5));
-  p.GM = GM; p.soi = p.el.a * Math.pow(GM / GM_SUN, 0.4);
+  p.GM = GM; p.soi = hillSOI(p.el.a, GM, GM_SUN);
   const tiltI = p.tilt, tiltOm = p.el.Om + Math.PI / 2;   // equatorial plane
   p.axis = planeNormal(tiltI, tiltOm);
   moons.forEach((m, k) => {
@@ -354,7 +354,7 @@ for (const p of sun.children) {
     mb.el.T = 2 * Math.PI / mb.el.n;
     mb.GM = GM * Math.pow(Rkm * RSCALE / p.R, 3) * 0.9;   // same density as parent-ish
     mb.GM = Math.max(mb.GM, GM * 2e-5);
-    mb.soi = a * Math.pow(mb.GM / GM, 0.4);
+    mb.soi = hillSOI(a, mb.GM, GM);
     mb.soi = Math.max(mb.soi, mb.R * 3.5);
     mb.axis = planeNormal(i, Om);
     bodies.push(mb); byName[name] = mb; p.children.push(mb);
@@ -468,12 +468,14 @@ function resolveSOI(state, t) {
   for (let k = 0; k < 4; k++) {
     const b = state.soi;
     if (b.parent && state.r.length() > b.soi) {
-      b.relAt(t, _p, _pv); state.r.add(_p); state.v.add(_pv); state.soi = b.parent; changed = b.parent; continue;
+      b.relAt(t, _p, _pv); state.r.add(_p); state.v.add(_pv); state.soi = b.parent; changed = b.parent;
+      if (state === ship) onSOIChange(b, b.parent);
+      continue;
     }
     let sw = false;
     for (const c of b.children) {
       c.relAt(t, _p, _pv);
-      if (state.r.distanceTo(_p) < c.soi) { state.r.sub(_p); state.v.sub(_pv); state.soi = c; changed = c; sw = true; break; }
+      if (state.r.distanceTo(_p) < c.soi) { state.r.sub(_p); state.v.sub(_pv); state.soi = c; changed = c; sw = true; if (state === ship) onSOIChange(b, c); break; }
     }
     if (!sw) break;
   }
@@ -504,7 +506,6 @@ const _sel = { evec: new THREE.Vector3(), nvec: new THREE.Vector3() };
 const thrustVec = new THREE.Vector3();
 function stepSim(realDt) {
   if (!ship.alive) return;
-  const b0 = ship.soi;
   const mult = WARPS[ship.warpIdx];
   let dt = realDt * BASE_RATE * mult;
   ship.thr = (ship.burning && ship.dv > 0) ? (ship.fine ? 0.1 : 1) : 0;
@@ -517,8 +518,8 @@ function stepSim(realDt) {
       ship.dv = Math.max(0, ship.dv - THRUST * ship.thr * h);
       simT += h;
       if (ship.r.length() < ship.soi.R) { impact(ship.soi); return; }
+      resolveSOI(ship, simT);
     }
-    resolveSOI(ship, simT);
   } else {
     let left = dt, steps = 0;
     while (left > 1e-6 && steps < 60) {
@@ -528,6 +529,8 @@ function stepSim(realDt) {
       if (ship.r.length() < ship.soi.R) { impact(ship.soi); return; }
       resolveSOI(ship, simT);
     }
+      // hitting the substep cap means too many SOI boundaries are within reach
+    // for this warp: drop the remainder of this frame and lower the warp
     const lim = left > 1e-6;
     if (lim && ship.warpIdx > 0) { ship.warpIdx--; }
     if (lim !== warpLimited) { warpLimited = lim; if (lim) toast('Warp limited near ' + nearestSOIName(), 'warn'); }
@@ -535,7 +538,6 @@ function stepSim(realDt) {
   updateBodiesNow();
   ship.abs.copy(ship.soi.absNow).add(ship.r);
   elements(ship.r, ship.v, ship.soi.GM, ship.el);
-  if (ship.soi !== b0) onSOIChange(b0, ship.soi);
 }
 function nearestSOIName() {
   const b = ship.soi; let best = b.parent ? b.parent.name : b.name, bd = b.parent ? b.soi - ship.r.length() : Infinity;
@@ -544,8 +546,7 @@ function nearestSOIName() {
 }
 function onSOIChange(from, to) {
   if (to.depth > from.depth) toast(`Entered ${to.name}'s sphere of influence`, 'good');
-  else toast(`Left ${from.name}'s sphere of influence`);
-  haptic(2); ping(to.depth > from.depth ? 660 : 440);
+  else toast(`Left ${from.name}'s sphere of influence`); ping(to.depth > from.depth ? 660 : 440);
   refuelToasted = false;
 }
 function impact(b) {
@@ -553,13 +554,13 @@ function impact(b) {
   const h = $('impacth'), p = $('impactp');
   if (b === sun) { h.textContent = 'VAPORIZED'; p.textContent = 'You flew into the Sun. Even a fast ship is no match for 5,500 °C.'; }
   else { h.textContent = 'IMPACT'; p.textContent = `You hit ${b.name}. The ship is lost, but the orbital depot will send another.`; }
-  $('impact').classList.add('show'); haptic(6); boom();
+  $('impact').classList.add('show'); boom();
   respawnBody = b === sun ? byName.Earth : b;
 }
 let respawnBody = byName.Earth;
 
 // ---------- heading control ----------
-const _m4 = new THREE.Matrix4(), _tq = new THREE.Quaternion(), _fwdT = new THREE.Vector3(), _upT = new THREE.Vector3();
+const _zero = new THREE.Vector3(), _m4 = new THREE.Matrix4(), _tq = new THREE.Quaternion(), _fwdT = new THREE.Vector3(), _upT = new THREE.Vector3();
 function updateHeading(realDt) {
   const el = ship.el, m = ship.mode;
   if (m === 'pro') _fwdT.copy(ship.v).normalize();
@@ -570,8 +571,8 @@ function updateHeading(realDt) {
   else if (m === 'rout') _fwdT.copy(ship.r).normalize();
   else if (m === 'cam') camera.getWorldDirection(_fwdT);
   if (_fwdT.lengthSq() < 1e-12) _fwdT.set(0, 0, -1);
-  _upT.copy(el.nvec); if (Math.abs(_upT.dot(_fwdT)) > 0.98) _upT.set(0, 1, 0);
-  _m4.lookAt(new THREE.Vector3(), _fwdT, _upT);   // nose along -z
+  _upT.copy(el.nvec); if (_upT.lengthSq() < 0.5 || Math.abs(_upT.dot(_fwdT)) > 0.98) _upT.set(0, 1, 0);
+  _m4.lookAt(_zero, _fwdT, _upT);   // nose along -z
   _tq.setFromRotationMatrix(_m4);
   ship.q.rotateTowards(_tq, realDt * 2.2);
   ship.fwd.set(0, 0, -1).applyQuaternion(ship.q);
@@ -584,6 +585,7 @@ function updateHeading(realDt) {
 const MAXPTS = 900, MAXSEG = 6;
 const pred = { segs: [], ca: null, encounter: null, impact: null, ap: null, pe: null, dirty: true, age: 0 };
 const _pr = new THREE.Vector3(), _pvv = new THREE.Vector3(), _sa = new THREE.Vector3(), _ta = new THREE.Vector3();
+const _ps = { soi: null, r: _pr, v: _pvv };
 function predict() {
   pred.segs.length = 0; pred.ca = null; pred.encounter = null; pred.impact = null; pred.ap = null; pred.pe = null;
   if (!ship.alive) return;
@@ -605,17 +607,15 @@ function predict() {
     const rm = _pr.length();
     let h = 0.011 * 2 * Math.PI * Math.sqrt(rm * rm * rm / soi.GM);
     if (el.e < 1 && el.T < 1e12) h = Math.min(h, el.T / 90);
-    h = Math.min(h, safeStep({ soi, r: _pr, v: _pvv }, t) * 2);
+    _ps.soi = soi; h = Math.min(h, safeStep(_ps, t) * 2);
     h = Math.max(h, 1);
     if (!propagate(_pr, _pvv, h, soi.GM)) break;
     t += h;
     if (_pr.length() < soi.R) { seg.pts.push(_pr.x, _pr.y, _pr.z); seg.ts.push(t); pred.impact = { seg, idx: seg.pts.length / 3 - 1, body: soi, t }; break; }
-    // frame changes
-    let changed = null;
-    if (soi.parent && _pr.length() > soi.soi) { soi.relAt(t, _p, _pv); _pr.add(_p); _pvv.add(_pv); changed = soi.parent; }
-    else for (const c of soi.children) { c.relAt(t, _p, _pv); if (_pr.distanceTo(_p) < c.soi) { _pr.sub(_p); _pvv.sub(_pv); changed = c; break; } }
+    // frame changes (same rule the flown ship uses)
+    _ps.soi = soi; const changed = resolveSOI(_ps, t);
     if (changed) {
-      soi = changed; seg = newSeg(soi, t, soi.absAt(t, new THREE.Vector3())); pred.segs.push(seg);
+      soi = _ps.soi; seg = newSeg(soi, t, soi.absAt(t, new THREE.Vector3())); pred.segs.push(seg);
       el = elements(_pr, _pvv, soi.GM); segT0 = t;
       if (tgt && (soi === tgt) && !pred.encounter) pred.encounter = { seg, body: soi, t };
       if (!soi.parent && el.e >= 1) { /* escaping the solar system: run a bit then stop */ }
@@ -828,7 +828,7 @@ let target = null;
 const labelHits = [];   // for tap hit-testing
 function updateLabels() {
   labelHits.length = 0;
-  const f = (innerHeight / 2) / Math.tan(camera.fov / 2 * D2R);
+  const f = (innerHeight / 2) / Math.tan(camera.fov / 2 * D2R);   // px per unit at distance 1
   const camPos = camera.position;
   for (const b of bodies) {
     const rel = _t1.copy(b.absNow).sub(ship.abs);
@@ -848,7 +848,7 @@ function updateLabels() {
     const l = getLabel('b:' + b.name, b.depth === 2 ? 'moon' : 'body');
     l.classList.toggle('target', b === target); l.classList.toggle('soi', b === ship.soi && b !== target);
     let txt = b.name;
-    if (b === target) txt += ' <span class="sub">' + fmtDist(rel.length(), ship.soi === sun || b.depth === 1 && ship.soi !== b && ship.soi.parent !== b) + '</span>';
+    if (b === target) txt += ' <span class="sub">' + fmtDist(rel.length(), farAU(b)) + '</span>';
     if (l._txt !== txt) { l.tx.innerHTML = txt; l._txt = txt; }
     l.style.transform = `translate(${x.toFixed(0)}px, ${y.toFixed(0)}px) translate(-4px, -50%)`;
     labelHits.push({ x, y, body: b });
@@ -858,7 +858,7 @@ function updateLabels() {
   const segRel = (seg, i) => _t2.set(seg.pts[i * 3], seg.pts[i * 3 + 1], seg.pts[i * 3 + 2]).add(seg.anchor).sub(ship.abs);
   if (pred.pe) marks.push(['pe', 'Pe ' + fmtDist(pred.pe.alt, ship.soi === sun), _t2.copy(pred.pe.pos).add(pred.pe.seg.anchor).sub(ship.abs), 'mark']);
   if (pred.ap) marks.push(['ap', 'Ap ' + fmtDist(pred.ap.alt, ship.soi === sun), _t2.copy(pred.ap.pos).add(pred.ap.seg.anchor).sub(ship.abs), 'mark']);
-  if (pred.ca && target) marks.push(['ca', 'closest ' + fmtDist(Math.max(0, pred.ca.d - target.R), target.depth === 1 && pred.ca.seg.body === sun), segRel(pred.ca.seg, pred.ca.idx), 'mark ca']);
+  if (pred.ca && target) marks.push(['ca', 'closest ' + fmtDist(Math.max(0, pred.ca.d - target.R), farAU(target) && pred.ca.seg.body === sun), segRel(pred.ca.seg, pred.ca.idx), 'mark ca']);
   if (pred.encounter && target) marks.push(['enc', target.name + ' encounter', _t2.copy(pred.encounter.seg.anchor).sub(ship.abs), 'mark enc']);
   if (pred.impact) marks.push(['imp', 'IMPACT ' + pred.impact.body.name + ' in ' + fmtTime(pred.impact.t - simT), segRel(pred.impact.seg, pred.impact.idx), 'mark impact']);
   for (const [k, txt, rel, cls] of marks) {
@@ -874,6 +874,8 @@ const _t2 = new THREE.Vector3();
 //  Readout formatting
 // =====================================================================
 const nf0 = new Intl.NumberFormat('en-US', { maximumFractionDigits: 0 });
+// a body is 'far' (AU readouts) when it is a planet the ship isn't orbiting or inside
+const farAU = (b) => b === sun || (b.depth === 1 && ship.soi !== b && ship.soi.parent !== b);
 function fmtDist(u, au) {
   if (au || Math.abs(u) > 4e4) { const a = u / AU; return (Math.abs(a) < 0.01 ? (a * 1000).toFixed(1) + ' mAU' : a.toFixed(a < 1 ? 3 : 2) + ' AU'); }
   const km = u * KM_PER_UNIT;
@@ -921,9 +923,9 @@ function updateHUD() {
     hud.tgt.classList.remove('none');
     setText(hud.tgth, '◎ ' + target.name);
     const rel = _t1.copy(target.absNow).sub(ship.abs);
-    const farAU = target.depth === 1 && ship.soi !== target && ship.soi.parent !== target;
-    setText(hud.tdist, fmtDist(rel.length() - target.R, farAU));
-    if (pred.ca) { setText(hud.tca, fmtDist(Math.max(0, pred.ca.d - target.R), farAU && pred.ca.seg.body === sun)); setText(hud.tcat, fmtTime(pred.ca.t - simT)); }
+    const far = farAU(target);
+    setText(hud.tdist, fmtDist(rel.length() - target.R, far));
+    if (pred.ca) { setText(hud.tca, fmtDist(Math.max(0, pred.ca.d - target.R), far && pred.ca.seg.body === sun)); setText(hud.tcat, fmtTime(pred.ca.t - simT)); }
     else if (ship.soi === target) { setText(hud.tca, 'in SOI'); setText(hud.tcat, '–'); }
     else { setText(hud.tca, '–'); setText(hud.tcat, '–'); }
     // relative speed: ship velocity vs target velocity in the common frame
@@ -953,26 +955,27 @@ function absVel(b, out) { out.set(0, 0, 0); for (let x = b; x && x.parent; x = x
 // =====================================================================
 const stableOrbit = (b) => ship.alive && ship.soi === b && ship.thr === 0 && ship.el.e < 0.98 && ship.el.ra < b.soi * 0.9 && ship.el.rp > b.R * 1.02;
 const orbitOf = (n) => () => stableOrbit(byName[n]);
+const GALILEAN = ['Io', 'Europa', 'Ganymede', 'Callisto'], TOUR = ['mercury', 'venus', 'earth', 'mars', 'jupiter', 'saturn', 'uranus', 'neptune'];
 const MISSIONS = [
   { id: 'moon-soi', name: 'Cislunar', desc: "Reach the Moon's sphere of influence", icon: '🌘', check: () => ship.soi === byName.Moon },
   { id: 'moon', name: 'Moonshot', desc: 'Enter a stable orbit around the Moon', icon: '🌕', check: orbitOf('Moon') },
   { id: 'mars', name: 'Red Planet', desc: 'Orbit Mars', icon: '🔴', check: orbitOf('Mars') },
   { id: 'venus', name: 'Morning Star', desc: 'Orbit Venus', icon: '🌟', check: orbitOf('Venus') },
   { id: 'jupiter', name: 'King of Planets', desc: 'Orbit Jupiter', icon: '🪐', check: orbitOf('Jupiter') },
-  { id: 'galilean', name: 'Galilean', desc: 'Orbit Io, Europa, Ganymede or Callisto', icon: '🧊', check: () => ['Io', 'Europa', 'Ganymede', 'Callisto'].some(n => stableOrbit(byName[n])) },
+  { id: 'galilean', name: 'Galilean', desc: 'Orbit Io, Europa, Ganymede or Callisto', icon: '🧊', check: () => GALILEAN.some(n => stableOrbit(byName[n])) },
   { id: 'saturn', name: 'Ringworld', desc: 'Orbit Saturn', icon: '💍', check: orbitOf('Saturn') },
   { id: 'titan', name: 'Titan', desc: 'Orbit Titan, the moon with weather', icon: '🟠', check: orbitOf('Titan') },
   { id: 'mercury', name: 'Sunskimmer', desc: 'Orbit Mercury', icon: '☀️', check: orbitOf('Mercury') },
   { id: 'uranus', name: 'Sideways', desc: 'Orbit Uranus', icon: '🩵', check: orbitOf('Uranus') },
   { id: 'neptune', name: 'Deep Blue', desc: 'Orbit Neptune', icon: '🔵', check: orbitOf('Neptune') },
   { id: 'pluto', name: 'Edge of the Map', desc: 'Orbit Pluto', icon: '🥶', check: orbitOf('Pluto') },
-  { id: 'tour', name: 'Grand Tour', desc: 'Orbit all eight planets', icon: '🏆', check: () => ['mercury', 'venus', 'earth', 'mars', 'jupiter', 'saturn', 'uranus', 'neptune'].every(i => done.has(i)) },
+  { id: 'tour', name: 'Grand Tour', desc: 'Orbit all eight planets', icon: '🏆', check: () => TOUR.every(i => done.has(i)) },
   { id: 'earth', name: 'Homecoming', desc: 'Return to Earth orbit', icon: '🌍', hidden: true, check: () => stableOrbit(byName.Earth) && done.size > 2 },
 ];
 let done = new Set();
 const activeMission = () => MISSIONS.find(m => !m.hidden && !done.has(m.id));
 function checkMissions() {
-  for (const m of MISSIONS) if (!done.has(m.id) && m.check()) { done.add(m.id); toast(`${m.icon} Mission complete: ${m.name}`, 'good'); haptic(4); chime(); save(); }
+  for (const m of MISSIONS) if (!done.has(m.id) && m.check()) { done.add(m.id); toast(`${m.icon} Mission complete: ${m.name}`, 'good'); chime(); save(); }
 }
 let refuelToasted = false;
 function refuel(realDt) {
@@ -987,38 +990,34 @@ function refuel(realDt) {
 const SAVE_KEY = 'solar.v1';
 function save() {
   try {
-    localStorage.setItem(SAVE_KEY, JSON.stringify({ soi: ship.soi.name, r: ship.r.toArray(), v: ship.v.toArray(), dv: ship.dv, t: simT, done: [...done], target: target && target.name, mode: ship.mode, cam: [cam.dist, cam.yaw, cam.pitch] }));
+    localStorage.setItem(SAVE_KEY, JSON.stringify({ soi: ship.soi.name, alive: ship.alive, r: ship.r.toArray(), v: ship.v.toArray(), dv: ship.dv, t: simT, done: [...done], target: target && target.name, mode: ship.mode, cam: [cam.dist, cam.yaw, cam.pitch] }));
   } catch {}
 }
 function load() {
   try {
     const s = JSON.parse(localStorage.getItem(SAVE_KEY)); if (!s) return false;
-    done = new Set(s.done || []);
-    if (s.soi && byName[s.soi] && s.r) {
-      ship.soi = byName[s.soi]; ship.r.fromArray(s.r); ship.v.fromArray(s.v); ship.dv = s.dv ?? DV_MAX; simT = s.t ?? simT;
-      if (s.target && byName[s.target]) target = byName[s.target];
-      if (s.mode) setMode(s.mode);
-      if (s.cam) { cam.dist = s.cam[0]; cam.yaw = s.cam[1]; cam.pitch = s.cam[2]; }
-      ship.alive = true;
-    }
+    done = new Set(Array.isArray(s.done) ? s.done : []);
+    const vec3 = (a) => Array.isArray(a) && a.length === 3 && a.every(Number.isFinite);
+    const body = byName[s.soi];
+    if (s.target && byName[s.target]) target = byName[s.target];
+    if (s.mode) setMode(s.mode);
+    if (vec3(s.cam)) { cam.dist = s.cam[0]; cam.yaw = s.cam[1]; cam.pitch = s.cam[2]; }
+    if (Number.isFinite(s.t)) simT = s.t;
+    if (body && s.alive !== false && vec3(s.r) && vec3(s.v) && Math.hypot(...s.r) > body.R) {
+      ship.soi = body; ship.r.fromArray(s.r); ship.v.fromArray(s.v); ship.dv = Number.isFinite(s.dv) ? s.dv : DV_MAX; ship.alive = true;
+    } else placeInOrbit(body && body !== sun ? body : byName.Earth, 0.25);   // crashed or corrupt: fresh orbit
     return true;
-  } catch { return false; }
+  } catch { placeInOrbit(byName.Earth, 0.18); return false; }
 }
 
 // =====================================================================
-//  Toasts, haptics, audio
+//  Toasts, audio
 // =====================================================================
 function toast(msg, cls = '') {
   const el = document.createElement('div'); el.className = 'toast ' + cls; el.textContent = msg; $('toasts').appendChild(el);
   requestAnimationFrame(() => el.classList.add('show'));
   setTimeout(() => { el.classList.remove('show'); setTimeout(() => el.remove(), 300); }, 2600);
   while ($('toasts').children.length > 3) $('toasts').firstChild.remove();
-}
-let lastHap = 0;
-function haptic(n = 1) {
-  if (navigator.vibrate && !isMobile) { navigator.vibrate(n * 12); return; }
-  const now = performance.now(); if (now - lastHap < 22) return; lastHap = now;
-  for (let i = 0; i < n; i++) setTimeout(() => { try { $('hap').click(); } catch {} }, i * 24);
 }
 let AC = null, engineGain = null, engineFilter = null;
 function audioInit() {
@@ -1054,7 +1053,7 @@ game.addEventListener('pointermove', (e) => {
   const p = ptrs.get(e.pointerId); if (!p) return;
   const dx = e.clientX - p.x, dy = e.clientY - p.y; p.x = e.clientX; p.y = e.clientY;
   if (ptrs.size === 1) {
-    if (Math.abs(dx) + Math.abs(dy) > 0) { cam.yaw -= dx * 0.006; cam.pitch = Math.max(-1.45, Math.min(1.45, cam.pitch + dy * 0.006)); }
+    if (Math.abs(dx) + Math.abs(dy) > 0) { cam.yaw -= dx * 0.006; cam.pitch = clampPitch(cam.pitch + dy * 0.006); }
     if (tapStart && Math.hypot(e.clientX - tapStart.x, e.clientY - tapStart.y) > 10) dragged = true;
   } else if (ptrs.size === 2) {
     const [a, b] = [...ptrs.values()]; const d = Math.hypot(a.x - b.x, a.y - b.y);
@@ -1068,29 +1067,30 @@ const endPtr = (e) => {
 };
 game.addEventListener('pointerup', endPtr); game.addEventListener('pointercancel', endPtr);
 game.addEventListener('wheel', (e) => { zoomBy(Math.exp(e.deltaY * 0.0015)); e.preventDefault(); }, { passive: false });
+const PITCH_MAX = 1.45, clampPitch = (p) => Math.max(-PITCH_MAX, Math.min(PITCH_MAX, p));
 function zoomBy(k) { cam.dist = Math.max(0.12, Math.min(150000, cam.dist * k)); }
 function tapAt(x, y) {
   let best = null, bd = 28;
   for (const h of labelHits) { const d = Math.hypot(h.x - x, h.y - y); if (d < bd) { bd = d; best = h.body; } }
   if (best) setTarget(best === target ? null : best);
 }
-function setTarget(b) { target = b; pred.dirty = true; if (b) { toast('Target: ' + b.name); haptic(1); } }
+function setTarget(b) { target = b; pred.dirty = true; if (b) { toast('Target: ' + b.name); } }
 function cycleTarget() { const list = [...planets, byName.Moon]; const i = list.indexOf(target); setTarget(list[(i + 1) % list.length]); }
 
 // buttons
 const modeBtns = [...document.querySelectorAll('#modes .btn[data-mode]')];
 function setMode(m) { ship.mode = m; for (const b of modeBtns) b.classList.toggle('sel', b.dataset.mode === m); }
-for (const b of modeBtns) b.addEventListener('pointerdown', (e) => { e.stopPropagation(); setMode(b.dataset.mode); haptic(1); });
+for (const b of modeBtns) b.addEventListener('pointerdown', (e) => { e.stopPropagation(); setMode(b.dataset.mode); });
 $('fine').addEventListener('pointerdown', (e) => { e.stopPropagation(); ship.fine = !ship.fine; $('fine').classList.toggle('sel', ship.fine); });
 function setWarp(i) { ship.warpIdx = Math.max(0, Math.min(WARPS.length - 1, i)); }
-$('wup').addEventListener('pointerdown', (e) => { e.stopPropagation(); setWarp(ship.warpIdx + 1); haptic(1); });
-$('wdn').addEventListener('pointerdown', (e) => { e.stopPropagation(); setWarp(ship.warpIdx - 1); haptic(1); });
+$('wup').addEventListener('pointerdown', (e) => { e.stopPropagation(); setWarp(ship.warpIdx + 1); });
+$('wdn').addEventListener('pointerdown', (e) => { e.stopPropagation(); setWarp(ship.warpIdx - 1); });
 function toggleMap() {
   const b = ship.soi, far = b === sun ? Math.max(ship.r.length() * 2.6, 2600) : b.soi * 2.4;
   if (cam.dist < far * 0.5) { cam.saved = cam.dist; cam.dist = far; } else cam.dist = cam.saved || 7;
 }
 $('map').addEventListener('pointerdown', (e) => { e.stopPropagation(); toggleMap(); });
-const startBurn = () => { if (!ship.alive) return; ship.burning = true; hud.burn.classList.add('down'); if (ship.warpIdx > 1) setWarp(1); audioInit(); haptic(1); };
+const startBurn = () => { if (!ship.alive) return; ship.burning = true; hud.burn.classList.add('down'); if (ship.warpIdx > 1) setWarp(1); audioInit(); };
 const stopBurn = () => { ship.burning = false; hud.burn.classList.remove('down'); };
 hud.burn.addEventListener('pointerdown', (e) => { e.stopPropagation(); hud.burn.setPointerCapture(e.pointerId); startBurn(); });
 hud.burn.addEventListener('pointerup', stopBurn); hud.burn.addEventListener('pointercancel', stopBurn); hud.burn.addEventListener('lostpointercapture', stopBurn);
@@ -1158,14 +1158,14 @@ function frame(now) {
   let realDt = Math.min(0.05, (now - lastT) / 1000); lastT = now; frameNo++;
   if (running) {
     if (keys.ArrowLeft) cam.yaw += realDt * 1.6; if (keys.ArrowRight) cam.yaw -= realDt * 1.6;
-    if (keys.ArrowUp) cam.pitch = Math.min(1.45, cam.pitch + realDt * 1.2); if (keys.ArrowDown) cam.pitch = Math.max(-1.45, cam.pitch - realDt * 1.2);
+    if (keys.ArrowUp) cam.pitch = clampPitch(cam.pitch + realDt * 1.2); if (keys.ArrowDown) cam.pitch = clampPitch(cam.pitch - realDt * 1.2);
     if (keys.Equal) zoomBy(Math.exp(-realDt * 2)); if (keys.Minus) zoomBy(Math.exp(realDt * 2));
     const wasThr = ship.thr;
     stepSim(realDt);
     if (ship.alive) { updateHeading(realDt); refuel(realDt); checkMissions(); }
-    if (ship.thr > 0 || wasThr > 0) pred.dirty = true;
     pred.age += realDt;
-    if (pred.dirty || pred.age > 0.7) predict();
+    if (wasThr > 0 && ship.thr === 0) pred.dirty = true;          // burn ended: final path now
+    if (pred.dirty || pred.age > (ship.thr > 0 ? 0.1 : 0.7)) predict();
     if (frameNo % 300 === 0) save();
   } else { updateBodiesNow(); ship.abs.copy(ship.soi.absNow).add(ship.r); }
 
@@ -1173,6 +1173,7 @@ function frame(now) {
   _camPos.set(Math.cos(cam.pitch) * Math.sin(cam.yaw), Math.sin(cam.pitch), Math.cos(cam.pitch) * Math.cos(cam.yaw)).multiplyScalar(cam.dist);
   camera.position.copy(_camPos); camera.lookAt(0, 0, 0);
   camera.near = Math.max(0.01, cam.dist * 0.01); camera.updateProjectionMatrix();
+  const projF = (innerHeight / 2) / Math.tan(camera.fov / 2 * D2R);
   _sunDir.copy(sun.absNow).sub(ship.abs);
   sunLight.position.copy(_sunDir);
   sunMesh.position.copy(_sunDir); sunGlow.position.copy(_sunDir);
@@ -1185,8 +1186,8 @@ function frame(now) {
     if (b.atmo) { b.atmo.material.uniforms.uSun.value.copy(_sunDir).negate(); }
     // fade far bodies' orbit lines by apparent size
     const line = b.orbitLine; line.position.copy(b.parent.absNow).sub(ship.abs);
-    const pd = line.position.distanceTo(_camPos), f = (innerHeight / 2) / Math.tan(camera.fov / 2 * D2R);
-    const px = b.el.a / pd * f;
+    const pd = line.position.distanceTo(_camPos);
+    const px = b.el.a / pd * projF;
     let op = px < 6 ? 0 : Math.min(1, (px - 6) / 30) * 0.3;
     if (b === target) op *= 2.4; else if (b === ship.soi) op *= 1.6;
     if (b.depth === 2 && b.parent !== ship.soi && b.parent !== (target && target.parent) && b.parent !== target && b !== target) op *= 0.35;
