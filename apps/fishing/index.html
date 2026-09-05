@@ -385,7 +385,7 @@ const NAMES = { minnow: 'Minnow', sunny: 'Sunny', bass: 'Bass', bluefin: 'Bluefi
 
 const G = {
   state: 'title',            // title | play | clear | over
-  round: 1, score: 0, roundScore: 0, quota: 250, time: 60, best: +(localStorage.getItem('fishing.best') || 0),
+  round: 1, score: 0, roundScore: 0, quota: 250, time: 60, best: Number(localStorage.getItem('fishing.best')) || 0,
   caught: {}, boat: { x: 400, tx: 400, vx: 0, tilt: 0, hop: 0 },
   hook: { x: 400, y: 100, state: 'idle', vy: 0, holding: null, boost: 0, stun: 0, tapHint: 0 },
   things: [], bubbles: [], parts: [], pops: [], clouds: [], weeds: [], rays: [],
