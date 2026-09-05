@@ -153,6 +153,21 @@ preset becomes the sky of a rail shooter that spawns enemies on the beat.
 Verify headlessly with `node tools/visverify.mjs` (fake mic, screenshots every
 preset on desktop and phone viewports plus the game).
 
+## Fishing App
+
+### Version Management
+
+**IMPORTANT:** Increment `VERSION` in `/apps/fishing/index.html` once per PR,
+and bump `CACHE` in `/apps/fishing/sw.js` (`fishing-vN`) to match.
+
+Cute, **landscape-only** Canvas 2D fishing arcade. Hold to lower the hook and
+slide to steer the boat; release to reel, tap to reel faster. Each round has a
+60 s clock and a points quota; meeting the quota ends the round with a time
+bonus, missing it ends the game. All audio is WebAudio synthesis (no assets);
+there is deliberately **no vibration**. Verify headlessly with
+`node tools/fishverify.mjs` (needs `python3 -m http.server 8000`), then look at
+the shots in `tools/data/fishshots/`.
+
 ## Solar App
 
 ### Version Management
