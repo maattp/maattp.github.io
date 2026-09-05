@@ -71,7 +71,7 @@ try {
     await waitGame(1.5);
     check(await ev("G.hook.state === 'idle'"), `${label}: empty hook back at the rod`);
     // plant a fish under the hook and reel it home
-    await ev("(() => { const f = spawn('bass'); f.x = G.hook.x; f.y = SURF + 170; f.speed = 0; G.things.push(f); })()");
+    await ev("G.things = []; (() => { const f = spawn('bass'); f.x = G.hook.x; f.y = SURF + 170; f.speed = 0; G.things.push(f); })()");
     await pointer('pointerdown', w / 2, h / 2); await waitGame(0.85);
     check(await ev("!!G.hook.holding"), `${label}: fish hooked`);
     await shot(`${label}-hooked`);
@@ -82,19 +82,41 @@ try {
     await shot(`${label}-caught`);
     // jelly zap costs time and snaps the line
     const before = await ev('G.time');
-    await ev("(() => { const j = spawn('jelly'); j.x = G.hook.x; j.y = SURF + 70; j.speed = 0; G.things.push(j); })()");
+    await ev("G.things = []; (() => { const j = spawn('jelly'); j.x = G.hook.x; j.y = SURF + 70; j.speed = 0; G.things.push(j); })()");
     await pointer('pointerdown', w / 2, h / 2); await waitGame(0.8); await pointer('pointerup', w / 2, h / 2);
     check((await ev('G.time')) < before - 4, `${label}: jelly zap took 5s`);
     check(await ev("G.things.some((t) => t.kind === 'jelly' && !t.dead)"), `${label}: jelly survives the zap`);
     await waitGame(1.5);
     // quota → round clear
-    await ev("G.things = G.things.filter((t) => t.kind !== 'jelly'); G.roundScore = G.quota - 1; G.score = G.roundScore; (() => { const f = spawn('minnow'); f.x = G.hook.x; f.y = SURF + 70; f.speed = 0; G.things.push(f); })()");
+    await ev("G.things = []; G.roundScore = G.quota - 1; G.score = G.roundScore; (() => { const f = spawn('minnow'); f.x = G.hook.x; f.y = SURF + 70; f.speed = 0; G.things.push(f); })()");
     await pointer('pointerdown', w / 2, h / 2); await waitGame(0.8); await pointer('pointerup', w / 2, h / 2); await waitGame(2);
     check(await ev("G.state === 'clear'"), `${label}: quota met → round clear`);
     await sleep(1200);
     await shot(`${label}-clear`);
     await ev("document.getElementById('next').click()"); await waitGame(0.2);
     check(await ev("G.round === 2 && G.state === 'play'"), `${label}: round 2 started`);
+    // the treasure chest pays once and does not come back this round
+    await ev("G.things = []; G.chest = null; G.chestTimer = 0; G.score = 0; G.roundScore = 0;"); await waitGame(0.2);
+    check(await ev('!!G.chest'), `${label}: chest surfaced on the seabed`);
+    await ev("G.chest.x = G.hook.x; G.chest.y = SURF + 170;");
+    await pointer('pointerdown', w / 2, h / 2); await waitGame(0.85);
+    check(await ev("G.hook.holding === G.chest && G.chest !== null"), `${label}: chest hooked`);
+    await pointer('pointerup', w / 2, h / 2); await waitGame(3);
+    check(await ev('G.score > 100 && G.chest === null'), `${label}: chest landed for its bonus (score=${await ev('G.score')})`);
+    check(await ev('G.chest === null && G.chestTimer > 100'), `${label}: no second chest this round`);
+    // a stinker costs points
+    await ev("G.things = []; G.score = 100; G.roundScore = 100; (() => { const f = spawn('stinker'); f.x = G.hook.x; f.y = SURF + 170; f.speed = 0; G.things.push(f); })()");
+    await pointer('pointerdown', w / 2, h / 2); await waitGame(0.85); await pointer('pointerup', w / 2, h / 2); await waitGame(2.5);
+    check(await ev('G.score === 60 && G.roundScore === 60'), `${label}: stinker landed for -40 (score=${await ev('G.score')})`);
+    // a shark eats whatever is on the line
+    await ev("G.round = 3; G.things = []; (() => { const f = spawn('bass'); f.x = G.hook.x; f.y = SURF + 170; f.speed = 0; G.things.push(f); const k = spawn('shark'); k.x = G.hook.x + 120; k.dir = -1; k.y = SURF + 150; G.things.push(k); })()");
+    await pointer('pointerdown', w / 2, h / 2); await waitGame(0.85);
+    check(await ev("!!G.hook.holding || G.things.some((t) => t.kind === 'shark' && t.fed > 0)"), `${label}: bass hooked with a shark nearby`);
+    await pointer('pointerup', w / 2, h / 2); await waitGame(1.2);
+    check(await ev("G.hook.holding === null && G.things.some((t) => t.kind === 'shark' && t.fed > 0)"), `${label}: shark chomped the catch`);
+    await shot(`${label}-shark`);
+    await waitGame(2);
+    check(await ev('G.score === 60'), `${label}: no points for the eaten fish`);
     // run the clock out → game over
     await ev('G.time = 0.3'); await waitGame(0.5); await sleep(1500);
     check(await ev("G.state === 'over'"), `${label}: time out → game over`);

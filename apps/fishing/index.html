@@ -99,6 +99,8 @@
   .legend { display: flex; gap: 10px; flex-wrap: wrap; justify-content: center; font-size: 12px; color: #3d6b91; }
   .legend span { background: #e9f4fb; border-radius: 999px; padding: 4px 10px; }
   .legend canvas { vertical-align: middle; margin-right: 4px; }
+  .screen p.avoid { font-size: 12px; color: #8a5aa8; margin-top: -4px; }
+  @media (max-height: 470px) { .screen p.avoid { display: none; } }
   #catches { display: flex; gap: 8px; flex-wrap: wrap; justify-content: center; font-size: 13px; color: #3d6b91; max-width: 460px; }
   #catches span { background: #e9f4fb; border-radius: 999px; padding: 4px 10px; }
 
@@ -146,6 +148,7 @@
     <p><b>Hold</b> to lower the hook and <b>slide</b> to steer the boat. <b>Let go</b> to reel, and <b>tap</b> to reel faster.
       Hit the quota before the clock runs out!</p>
     <div class="legend" id="legend"></div>
+    <p class="avoid">Steer clear of boots, jellies, puffers and sharks!</p>
     <button class="go" id="start">Cast Off!</button>
     <div class="stats"><div class="stat"><small>Best</small><b id="best">0</b></div></div>
     <div class="ver" id="ver"></div>
@@ -321,6 +324,7 @@ const Audio = (() => {
     gull() { if (!ctx) return; const t = now(); const g = 1 + Math.random() * 0.3;
       tone('sine', 1500 * g, t, 0.35, 0.07, { f1: 900 * g, attack: 0.05 }); tone('sine', 1650 * g, t + 0.4, 0.3, 0.06, { f1: 950 * g, attack: 0.05 }); },
     chestOpen() { if (!ctx) return; const t = now(); for (let i = 0; i < 6; i++) tone('triangle', m2f(84 + [0, 4, 7, 12, 16, 19][i]), t + i * 0.06, 0.3, 0.22); },
+    chomp() { if (!ctx) return; const t = now(); noise(t, 0.18, 0.7, { f0: 900, f1: 200, type: 'lowpass', attack: 0.003 }); tone('sawtooth', 160, t, 0.3, 0.25, { f1: 60, lp: 700 }); tone('square', 80, t + 0.05, 0.25, 0.15, { lp: 400 }); },
     ui() { if (!ctx) return; const t = now(); tone('sine', 660, t, 0.08, 0.2, { f1: 990 }); },
   };
   return { init, music, setMuted, isMuted: () => muted, sfx, get ready() { return !!ctx; } };
@@ -370,11 +374,13 @@ const TYPES = {
   bass:    { kind: 'fish', pts: 50,  size: 44, spd: [70, 100],  band: [0.35, 0.8],  weight: 1.45, tier: 2, body: '#5ec46a', tail: '#3a9e4b', belly: '#d2f5c4', fin: '#7ad684', stripes: '#3c8f48', freq: 3 },
   bluefin: { kind: 'fish', pts: 100, size: 62, spd: [55, 80],   band: [0.6, 0.95],  weight: 1.9, tier: 3, body: '#4d8dff', tail: '#2f5fd6', belly: '#d6e6ff', fin: '#6fa4ff', freq: 2 },
   goldie:  { kind: 'fish', pts: 250, size: 30, spd: [210, 270], band: [0.2, 0.9],   weight: 1.2, tier: 4, body: '#ffcf3a', tail: '#ffb300', belly: '#fff6c8', fin: '#ffe27a', shine: true, freq: 0.5 },
+  stinker: { kind: 'fish', pts: -40, size: 34, spd: [80, 120],  band: [0.1, 0.6],   weight: 1.3, tier: 0, body: '#9b7fb8', tail: '#7a5f99', belly: '#cbbede', fin: '#b39ad1', stripes: '#6c4f8a', grump: true, freq: 2 },
+  shark:   { kind: 'shark', pts: 0,  size: 96, spd: [90, 130],  band: [0.45, 0.85], weight: 1, tier: 0, freq: 1 },
   boot:    { kind: 'boot', pts: 0,   size: 40, spd: [25, 40],   band: [0.55, 0.9],  weight: 2.3, tier: 0, freq: 1 },
   jelly:   { kind: 'jelly', pts: 0,  size: 36, spd: [18, 30],   band: [0.25, 0.75], weight: 1, tier: 0, freq: 1 },
   puffer:  { kind: 'puffer', pts: 0, size: 38, spd: [45, 70],   band: [0.3, 0.8],   weight: 1.6, tier: 0, freq: 1 },
 };
-const NAMES = { minnow: 'Minnow', sunny: 'Sunny', bass: 'Bass', bluefin: 'Bluefin', goldie: 'Goldie', boot: 'Old boot', jelly: 'Jelly', puffer: 'Puffer', chest: 'Treasure' };
+const NAMES = { minnow: 'Minnow', sunny: 'Sunny', bass: 'Bass', bluefin: 'Bluefin', goldie: 'Goldie', stinker: 'Stinker', shark: 'Shark', boot: 'Old boot', jelly: 'Jelly', puffer: 'Puffer', chest: 'Treasure' };
 
 const G = {
   state: 'title',            // title | play | clear | over
@@ -410,7 +416,7 @@ function spawn(kind) {
 }
 function fishWeights() {
   const r = G.round;
-  return [['minnow', 5], ['sunny', 4], ['bass', 3 + r * 0.3], ['bluefin', 1.6 + r * 0.4], ['goldie', 0.35 + r * 0.12]];
+  return [['minnow', 5], ['sunny', 4], ['bass', 3 + r * 0.3], ['bluefin', 1.6 + r * 0.4], ['goldie', 0.35 + r * 0.12], ['stinker', 1.6 + r * 0.35]];
 }
 function pickWeighted(list) { let s = 0; for (const [, w] of list) s += w; let v = Math.random() * s; for (const [k, w] of list) { v -= w; if (v <= 0) return k; } return list[0][0]; }
 function populate(dt) {
@@ -421,6 +427,7 @@ function populate(dt) {
   const cnt = (k) => G.things.filter((t) => t.kind === k && !t.hooked).length;
   if (cnt('boot') < 1 && Math.random() < dt * 0.15) G.things.push(spawn('boot'));
   if (cnt('jelly') < 1 + Math.floor(G.round / 2) && Math.random() < dt * 0.2) G.things.push(spawn('jelly'));
+  if (G.round >= 3 && cnt('shark') < 1 && Math.random() < dt * 0.12) G.things.push(spawn('shark'));
   if (G.round >= 2 && cnt('puffer') < 1 + Math.floor(G.round / 4) && Math.random() < dt * 0.15) G.things.push(spawn('puffer'));
   // a treasure chest surfaces on the seabed once a round
   if (!G.chest) { G.chestTimer -= dt; if (G.chestTimer <= 0) G.chest = { x: rand(W * 0.15, W * 0.85), y: SAND - 14, life: 14, open: 0, hooked: false, kind: 'chest', size: 40, T: { kind: 'chest', pts: 150 + G.round * 25, weight: 2.4, tier: 4 }, ph: 0, dir: 1 }; }
@@ -607,6 +614,18 @@ function update(dt) {
   for (const f of G.things) {
     if (f.dead) continue;
     if (f.hooked) { f.x = h.x; f.y = h.y + f.size * 0.45; continue; }
+    if (f.kind === 'shark') {
+      f.fed = Math.max(0, (f.fed || 0) - dt);
+      const prey = h.holding && h.holding.kind !== 'shark' && !f.fed && isIn;
+      if (prey && Math.abs(h.x - f.x) < 320) {
+        const want = h.x > f.x ? 1 : -1; if (want !== f.dir && Math.abs(h.x - f.x) > 30) f.dir = want;
+        f.y += clamp(h.y + 8 - f.y, -1, 1) * 120 * dt; f.x += f.dir * f.speed * 2.2 * dt;
+        if (Math.abs(h.x - f.x) < f.size * 0.45 && Math.abs(h.y - f.y) < f.size * 0.3) chomp(f);
+      } else { f.x += f.dir * f.speed * (f.fed ? 2.2 : 1) * dt; f.y += Math.sin(t * 1.1 + f.ph) * 10 * dt; }
+      f.y = clamp(f.y, SURF + 40, SAND - 24);
+      if ((f.dir > 0 && f.x > W + f.size + 220) || (f.dir < 0 && f.x < -f.size - 220)) f.dead = true;
+      continue;
+    }
     if (f.kind === 'jelly') { f.y += Math.sin(t * 1.3 + f.ph) * 22 * dt; f.x += f.dir * f.speed * dt; }
     else if (f.kind === 'boot') { f.x += f.dir * f.speed * dt; f.y += Math.sin(t * 0.8 + f.ph) * 6 * dt; }
     else {
@@ -664,6 +683,12 @@ function hookThing(f) {
   if (f.kind === 'puffer') Audio.sfx.puff(); else Audio.sfx.bite();
   burst(h.x, h.y, 6, ['#ffffff', '#cdefff'], 80, 0.4, -60);
 }
+function chomp(shark) {
+  const h = G.hook, f = h.holding; if (!f) return;
+  Audio.sfx.chomp(); G.shake = 0.8; shark.fed = 3; shark.dir = shark.x < W / 2 ? -1 : 1;
+  popup(h.x, h.y, 'CHOMP!', '#ffb3b3', 26); burst(h.x, h.y, 18, ['#fff', '#9fdcff', f.T.body || '#ffd23f'], 200, 0.6, 300);
+  f.dead = true; if (f === G.chest) { G.chest = null; G.chestTimer = 999; } h.holding = null; h.state = 'snap';
+}
 function popLine(p) {
   const h = G.hook;
   Audio.sfx.pop(); G.shake = 0.6; G.time = Math.max(0.01, G.time - 3);
@@ -675,18 +700,22 @@ function land() {
   h.state = 'idle'; h.holding = null;
   if (!f) return;
   f.dead = true;
-  if (f === G.chest) G.chest = null;
+  if (f === G.chest) { G.chest = null; G.chestTimer = 999; } // one chest per round, landed or not
   const x = h.x, y = h.y - 20;
   if (f.kind === 'boot') { Audio.sfx.yuck(); popup(x, y, 'Yuck!', '#d9c6b0', 22); G.boat.hop = 0.6; toast('An old boot…', 1.2); return; }
   if (f.kind === 'puffer') { Audio.sfx.yuck(); popup(x, y, 'Phew!', '#ffd1e6', 22); return; }
   const pts = f.T.pts;
-  G.score += pts; G.roundScore += pts; G.caught[f.kind] = (G.caught[f.kind] || 0) + 1;
+  G.caught[f.kind] = (G.caught[f.kind] || 0) + 1;
+  if (pts < 0) {
+    G.score = Math.max(0, G.score + pts); G.roundScore = Math.max(0, G.roundScore + pts);
+    Audio.sfx.yuck(); popup(x, y, pts + ' Bleh!', '#d9b8ff', 24); burst(x, y, 8, ['#9b7fb8', '#cbbede'], 100, 0.5, 200); G.boat.hop = 0.6; return;
+  }
+  G.score += pts; G.roundScore += pts;
   G.boat.hop = 1;
   if (f.kind === 'chest') { Audio.sfx.chestOpen(); burst(x, y, 30, ['#ffd23f', '#fff6c8', '#ffb100'], 240, 0.9, 400); }
   else Audio.sfx.catchFish(f.T.tier);
   popup(x, y, '+' + pts, f.kind === 'goldie' || f.kind === 'chest' ? '#ffe27a' : '#fff', f.T.tier >= 3 ? 30 : 22);
   burst(x, y, 10 + f.T.tier * 4, ['#ffffff', '#ffe27a', '#9fdcff'], 140 + f.T.tier * 30, 0.6, 400);
-  updateHud();
   if (G.roundScore >= G.quota) { Audio.sfx.coin(); toast('Quota met!', 1.4, '#ffe27a'); roundClear(); }
 }
 
@@ -840,6 +869,7 @@ function drawThing(f, t) {
   if (f.kind === 'jelly') drawJelly(f, t);
   else if (f.kind === 'boot') drawBoot(f, t);
   else if (f.kind === 'puffer') drawPuffer(f, t);
+  else if (f.kind === 'shark') drawShark(f, t);
   else drawFish(f, t);
   ctx.restore();
 }
@@ -859,8 +889,30 @@ function drawFish(f, t) {
   ctx.fillStyle = '#fff'; ctx.beginPath(); ctx.arc(s * 0.3, -s * 0.09, s * 0.022, 0, TAU); ctx.fill();
   ctx.fillStyle = 'rgba(255,120,150,.45)'; ctx.beginPath(); ctx.arc(s * 0.32, s * 0.08, s * 0.05, 0, TAU); ctx.fill(); // cheek
   ctx.strokeStyle = 'rgba(60,30,30,.6)'; ctx.lineWidth = Math.max(1, s * 0.03); ctx.lineCap = 'round'; ctx.beginPath();
-  if (f.hooked) ctx.arc(s * 0.42, s * 0.06, s * 0.05, 0, TAU); else ctx.arc(s * 0.4, s * 0.02, s * 0.06, 0.1 * Math.PI, 0.7 * Math.PI);
+  if (f.hooked) ctx.arc(s * 0.42, s * 0.06, s * 0.05, 0, TAU);
+  else if (T.grump) ctx.arc(s * 0.4, s * 0.1, s * 0.06, 1.15 * Math.PI, 1.85 * Math.PI);
+  else ctx.arc(s * 0.4, s * 0.02, s * 0.06, 0.1 * Math.PI, 0.7 * Math.PI);
   ctx.stroke();
+  if (T.grump) {
+    ctx.strokeStyle = '#4a3560'; ctx.lineWidth = Math.max(1.2, s * 0.04); ctx.beginPath(); ctx.moveTo(s * 0.14, -s * 0.2); ctx.lineTo(s * 0.32, -s * 0.13); ctx.stroke(); // brow
+    ctx.strokeStyle = 'rgba(150,220,120,.7)'; ctx.lineWidth = 1.5; // stink lines
+    for (let i = 0; i < 2; i++) { const yy = -s * 0.42 - ((t * 20 + i * 9) % 18), xx = -s * 0.1 + i * s * 0.2; ctx.beginPath(); ctx.moveTo(xx, yy); ctx.quadraticCurveTo(xx + 4, yy - 4, xx, yy - 8); ctx.quadraticCurveTo(xx - 4, yy - 12, xx, yy - 16); ctx.stroke(); }
+  }
+}
+function drawShark(f, t) {
+  const s = f.size; ctx.scale(f.dir, 1);
+  const wag = Math.sin(t * 7 + f.ph) * 0.3;
+  ctx.fillStyle = '#7f93a8'; ctx.beginPath(); ctx.moveTo(-s * 0.38, 0); ctx.lineTo(-s * 0.6, -s * 0.3 + wag * s * 0.1); ctx.lineTo(-s * 0.5, wag * s * 0.1); ctx.lineTo(-s * 0.58, s * 0.2 + wag * s * 0.1); ctx.closePath(); ctx.fill(); // tail
+  ctx.beginPath(); ctx.moveTo(-s * 0.08, -s * 0.18); ctx.lineTo(s * 0.02, -s * 0.44); ctx.lineTo(s * 0.18, -s * 0.18); ctx.fill(); // dorsal
+  ctx.fillStyle = '#93a7bc'; ctx.beginPath(); ctx.ellipse(0, 0, s * 0.5, s * 0.22, 0, 0, TAU); ctx.fill();
+  ctx.fillStyle = '#e6eef5'; ctx.beginPath(); ctx.ellipse(s * 0.06, s * 0.08, s * 0.4, s * 0.12, 0, 0, TAU); ctx.fill();
+  ctx.fillStyle = '#7f93a8'; ctx.beginPath(); ctx.moveTo(-s * 0.02, s * 0.1); ctx.lineTo(-s * 0.1, s * 0.3); ctx.lineTo(s * 0.12, s * 0.14); ctx.fill(); // pectoral
+  ctx.strokeStyle = '#6d8197'; ctx.lineWidth = 1.5; for (let i = 0; i < 3; i++) { ctx.beginPath(); ctx.moveTo(s * 0.14 - i * s * 0.05, -s * 0.08); ctx.lineTo(s * 0.12 - i * s * 0.05, s * 0.06); ctx.stroke(); } // gills
+  ctx.fillStyle = '#fff'; ctx.beginPath(); ctx.arc(s * 0.3, -s * 0.06, s * 0.06, 0, TAU); ctx.fill();
+  ctx.fillStyle = '#222'; ctx.beginPath(); ctx.arc(s * 0.31, -s * 0.06, s * 0.03, 0, TAU); ctx.fill();
+  ctx.strokeStyle = '#4a5a6a'; ctx.lineWidth = 1.5; ctx.beginPath(); ctx.moveTo(s * 0.24, -s * 0.13); ctx.lineTo(s * 0.34, -s * 0.1); ctx.stroke(); // brow
+  ctx.strokeStyle = '#3a4a5a'; ctx.lineWidth = 2; ctx.beginPath(); ctx.moveTo(s * 0.26, s * 0.06); ctx.quadraticCurveTo(s * 0.4, s * 0.14, s * 0.48, s * 0.02); ctx.stroke(); // grin
+  ctx.fillStyle = '#fff'; for (let i = 0; i < 4; i++) { const x = s * 0.29 + i * s * 0.05; ctx.beginPath(); ctx.moveTo(x, s * 0.07 + i * 0.008 * s); ctx.lineTo(x + s * 0.02, s * 0.12 + i * 0.006 * s); ctx.lineTo(x + s * 0.04, s * 0.07 + i * 0.006 * s); ctx.fill(); } // teeth
 }
 function drawJelly(f, t) {
   const s = f.size, pulse = 1 + Math.sin(t * 3 + f.ph) * 0.08;
@@ -912,7 +964,7 @@ function drawChest(c, t) {
 // title-screen legend: tiny canvases of each fish and what they pay
 (() => {
   const leg = $('legend'), main = ctx;
-  for (const k of ['minnow', 'sunny', 'bass', 'bluefin', 'goldie']) {
+  for (const k of ['minnow', 'sunny', 'bass', 'bluefin', 'goldie', 'stinker']) {
     const span = document.createElement('span'); const cv = document.createElement('canvas'); cv.width = 52; cv.height = 32; cv.style.width = '26px'; cv.style.height = '16px';
     ctx = cv.getContext('2d'); ctx.setTransform(2, 0, 0, 2, 0, 0); ctx.save(); ctx.translate(13, 8); drawFish({ size: 22, dir: 1, ph: 0, hooked: false, kind: k, T: TYPES[k] }, 0); ctx.restore();
     span.appendChild(cv); span.appendChild(document.createTextNode(`${NAMES[k]} ${TYPES[k].pts}`)); leg.appendChild(span);
