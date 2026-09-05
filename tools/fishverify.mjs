@@ -117,6 +117,12 @@ try {
     await shot(`${label}-shark`);
     await waitGame(2);
     check(await ev('G.score === 60'), `${label}: no points for the eaten fish`);
+    // a puffer inflates on the hook and pops the line
+    { const before = await ev('G.time');
+      await ev("G.things = []; (() => { const f = spawn('puffer'); f.x = G.hook.x; f.y = SURF + 170; f.speed = 0; G.things.push(f); })()");
+      await pointer('pointerdown', w / 2, h / 2); await waitGame(0.85); await pointer('pointerup', w / 2, h / 2); await waitGame(1.5);
+      check(await ev("G.hook.holding === null && !G.things.some((t) => t.kind === 'puffer')"), `${label}: puffer popped the line`);
+      check((await ev('G.time')) < before - 2.5, `${label}: puffer pop cost 3s`); }
     // run the clock out → game over
     await ev('G.time = 0.3'); await waitGame(0.5); await sleep(1500);
     check(await ev("G.state === 'over'"), `${label}: time out → game over`);
