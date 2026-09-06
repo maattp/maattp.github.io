@@ -1,0 +1,12 @@
+{
+  "name": "Fishing",
+  "short_name": "Fishing",
+  "start_url": ".",
+  "scope": ".",
+  "display": "fullscreen",
+  "display_override": ["fullscreen", "standalone"],
+  "orientation": "landscape",
+  "background_color": "#7fd6ff",
+  "theme_color": "#7fd6ff",
+  "icons": [{ "src": "../icon.png", "sizes": "512x512", "type": "image/png" }]
+}
