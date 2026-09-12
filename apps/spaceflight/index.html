@@ -171,7 +171,7 @@
         // =====================================================================
         //  SPACE FLIGHT — anti-grav racing prototype (single track, CPUs)
         // =====================================================================
-        const SF_VER = 12;
+        const SF_VER = 13;
         const clamp = (v, a, b) => v < a ? a : v > b ? b : v;
         const lerp = (a, b, t) => a + (b - a) * t;
         const smoothstep = (a, b, x) => { const t = clamp((x - a) / (b - a), 0, 1); return t * t * (3 - 2 * t); };
@@ -189,7 +189,8 @@
         const DASH_SPEED = 210;
         const ACCEL = 46;               // u/s²  toward MAX_SPEED
         const BRAKE_DECEL = 150;
-        const TURN_RATE = 2.6;          // rad/s the nose turns at full steer (low speed)
+        const TURN_RATE = 3.0;          // rad/s the nose turns at full steer (low speed)
+        const GRIP = 3.2;               // 1/s the nose realigns with the road when you let go
         const MAX_YAW = 0.38;           // rad, max relative heading at full steer
         const SLIDE_K = 0.6;            // share of v²·curv that becomes lateral slide (1 = physics, <1 = hover grip)
         const SLIDE_DAMP = 2.4;
@@ -772,6 +773,8 @@
             const rate = TURN_RATE * (0.7 + 0.3 * st.grip) * (0.75 + 0.25 * clamp(1 - k.speed / BOOST_SPEED, 0, 1));
             if (canSteer) k.yaw += k.ctrl.steer * rate * dt;
             else k.yaw += clamp(-k.yaw, -rate * dt, rate * dt);
+            // hover grip: the nose realigns with the road on its own (~0.3 s) — steer to hold a bend, let go to straighten
+            k.yaw -= k.yaw * GRIP * st.grip * dt;
             // banking turns the nose with the bend a little (the wall of the bowl carries you round)
             k.yaw += Math.sign(f.curv) * Math.abs(Math.sin(f.bank)) * 0.9 * dt;
             k.yaw = clamp(k.yaw, -1.15, 1.15);
@@ -927,7 +930,7 @@
             // feed-forward the road's own turn rate (κ·v) — the unskilled feed less of it forward and run wide
             const vdes = clamp(err * 1.6, -0.45 * k.speed, 0.45 * k.speed);
             const yawDes = k.speed > 1 ? Math.asin(clamp(vdes / k.speed, -0.9, 0.9)) : 0;
-            const ffRoad = (f0.curv * k.speed) / rate * (0.6 + 0.4 * ai.skill);
+            const ffRoad = ((f0.curv * k.speed) + k.yaw * GRIP * k.def.stat.grip) / rate * (0.6 + 0.4 * ai.skill);
             const want = clamp((yawDes - k.yaw) * 3.5 + ffRoad, -1, 1);
             ai.jitter = lerp(ai.jitter, (Math.random() - 0.5) * (1 - ai.skill) * 0.8, 0.05);
             // lapses: every few seconds a drift of attention pulls the steering off for a moment
@@ -939,7 +942,7 @@
             const vlat = k.speed * Math.sin(k.yaw) + k.slide;
             const margin = f0.w - 3 - Math.abs(k.lat + vlat * 0.35);
             const bendAhead = Math.abs(frameAt(k.s + 60 + k.speed * 0.5, _frA).curv);
-            const vmax = rate * 0.8 / Math.max(1e-4, bendAhead);   // speed at which the nose can still follow the bend
+            const vmax = rate * 0.6 / Math.max(1e-4, bendAhead);   // speed at which the nose can still follow the bend
             k.ctrl.brake = (margin < 0 && k.speed > 110 && ai.skill > 0.6) || !!k.ctrl.brakeTap || k.speed > vmax * (0.9 + 0.3 * ai.skill); k.ctrl.brakeTap = false;   // the unskilled brake late or not at all
             // boost on straights when energy allows (keep a reserve, F-Zero style)
             const straight = Math.abs(curvAhead) < 0.0012;
