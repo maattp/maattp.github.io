@@ -76,10 +76,17 @@ background, fog, lights). A theme names every colour the world builder uses
 Red Canyon's points are generated: a lemniscate figure-8 whose two crossings
 sit 40u apart in height, so the halves cross on a flyover. Glacier Loop is
 hand-drawn (ice kit: crystals, ridges, moon, aurora ribbon). Nova Spire is
-generated: two clockwise corkscrew turns (R 300, +154u) around a station
-tower, then a plunge, a bowl, a chicane and a return; `gates` (lap
-fractions) place lit half-torus arches over the road; the space kit has no
-ground, so pylons are skipped when they would be taller than 600u. The verify tool
+generated: a full vertical LOOP (R 150, drifting 110u sideways so the exit
+clears the entry), a chicane, a 360° BARREL ROLL, a climbing bowl, a plunge,
+an east sweep and a hairpin home. It sets `rmf: true`: track frames are
+rotation-minimising (parallel transport of the side vector, closure twist
+spread along the lap) instead of horizontal, so the road may go vertical
+and upside down; a 5th control-point value is a designed roll (radians)
+added on top of the curvature bank — the barrel roll is 0 → 2π along a
+straight, and every later point stays at 2π. Curvature is measured about
+each frame's own up. On rmf tracks the chase camera does not blend toward
+world up. `gates` (lap fractions) place lit half-torus arches; the space kit
+has no ground, so pylons are skipped when taller than 600u. The verify tool
 races and screenshots every track (`t<i>-race*.png`, `t<i>-overview.png`).
 
 ## Online (8 pilots)
@@ -109,8 +116,6 @@ boost, Down/S brake, P pause.
 
 ## Backlog (user-requested, not started)
 
-- **Nova Spire revamp.** The user finds the long corkscrew boring; wants a
-  "crazy and exciting" final layout.
 - **Audio pass.** The current WebAudio sound effects read as whiny and
   annoying; replace them with punchier, lower-pitched effects. Write an epic
   chiptune per map (Mute Orbit, Red Canyon, Glacier Loop, Nova Spire) — a
