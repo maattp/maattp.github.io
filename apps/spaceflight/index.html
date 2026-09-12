@@ -173,7 +173,7 @@
         // =====================================================================
         //  SPACE FLIGHT — anti-grav racing prototype (single track, CPUs)
         // =====================================================================
-        const SF_VER = 23;
+        const SF_VER = 24;
         const clamp = (v, a, b) => v < a ? a : v > b ? b : v;
         const lerp = (a, b, t) => a + (b - a) * t;
         const smoothstep = (a, b, x) => { const t = clamp((x - a) / (b - a), 0, 1); return t * t * (3 - 2 * t); };
@@ -252,6 +252,25 @@
             roadBase: 0xc8dcf0, roadEdge: 0x7fb8ff, laneLine: 0xffffff, railL: 0x9fe8ff, railR: 0xffffff, wall: 0x3a5a80, skirt: 0x22405e, pylon: 0x2c4a6c,
             groundY: -50, scenery: 'ice',
         };
+        const THEME_SPACE = {
+            bg: 0x03020a, fog: 0x100a2a, fogNear: 900, fogFar: 3200, hemiSky: 0x9aa8ff, hemiGround: 0x2a1040, sun: 0xfff0d0, sunPos: [800, 900, -400],
+            roadBase: 0x8088b8, roadEdge: 0x5a6ad8, laneLine: 0xfff0a0, railL: 0xffe14a, railR: 0x8a5cff, wall: 0x2a2450, skirt: 0x161232, pylon: 0x1c1f3a,
+            groundY: -9999, scenery: 'space',
+        };
+        // Nova Spire: two corkscrew turns up a station tower, a long plunge off the top, a banked bowl,
+        // a chicane and a sweeping return. Generated so the helix is exact.
+        const SPIRE_PTS = (() => {
+            const pts = [[900, 0, -520, 36], [520, 0, -560, 36], [190, 3, -530, 34]];
+            const R = 300, cx = 0, cz = -220, turns = 2, n = 16;
+            for (let k = 0; k <= n; k++) {
+                const t = k / n, ang = -Math.PI / 2 - t * turns * Math.PI * 2;   // clockwise from the south point
+                pts.push([Math.round(cx + Math.cos(ang) * R), +(6 + t * 154).toFixed(1), Math.round(cz + Math.sin(ang) * R), 30]);
+            }
+            pts.push([-330, 162, -580, 34], [-760, 130, -440, 34], [-1000, 80, -120, 34], [-1010, 34, 240, 34],
+                     [-820, 22, 560, 32], [-460, 24, 700, 32], [-110, 30, 640, 30], [140, 38, 520, 28], [60, 44, 360, 28],
+                     [340, 46, 300, 30], [700, 40, 420, 32], [1060, 26, 300, 34], [1160, 10, -20, 36], [1060, 2, -330, 36]);
+            return pts;
+        })();
         const TRACKS = [null, {
             name: 'Red Canyon', theme: THEME_CANYON, w: 33, pts: CANYON_PTS,
             dash: [], recharge: [{ f0: 0.30, f1: 0.37, lat: 14, hw: 12 }], lineF: 0.0,
@@ -267,6 +286,10 @@
                 [-420, 2, -540, 34], [-200, 0, -560, 36],
             ],
             dash: [], recharge: [{ f0: 0.44, f1: 0.51, lat: -14, hw: 12 }], lineF: 0.0,
+        }, {
+            name: 'Nova Spire', theme: THEME_SPACE, w: 33, pts: SPIRE_PTS,
+            dash: [], recharge: [{ f0: 0.53, f1: 0.60, lat: 14, hw: 12 }], lineF: 0.0,
+            gates: [0.05, 0.12, 0.62, 0.72, 0.86],
         }];
         const TRACK_DEF = {
             name: 'Mute Orbit', theme: THEME_CITY,
@@ -512,7 +535,7 @@
             buildRoad();
             buildRails();
             buildFeatures();
-            if (THEME.scenery === 'canyon') { buildCanyon(); buildSunset(); } else if (THEME.scenery === 'ice') { buildIce(); buildAurora(); } else { buildCity(); buildSky(); }
+            if (THEME.scenery === 'canyon') { buildCanyon(); buildSunset(); } else if (THEME.scenery === 'ice') { buildIce(); buildAurora(); } else if (THEME.scenery === 'space') { buildSpace(); } else { buildCity(); buildSky(); }
         }
         function buildRoad() {
             const S = TRACK.samples, m = S.length;
@@ -629,7 +652,7 @@
             let n = 0; const mtx = new THREE.Matrix4(), q4 = new THREE.Quaternion(), sc = new THREE.Vector3(), p3 = new THREE.Vector3();
             for (let s = 0; s < TRACK.len; s += 60) {
                 const f = frameAt(s); const h = f.y - THEME.groundY;
-                if (h < 8) continue;
+                if (h < 8 || h > 600) continue;
                 // never plant a pylon through a road passing underneath (the flyover crossings)
                 let over = false;
                 for (let i = 0; i < TRACK.samples.length && !over; i += 2) { const q = TRACK.samples[i]; let d = Math.abs(q.s - s); d = Math.min(d, TRACK.len - d); if (d > 80 && (q.x - f.x) ** 2 + (q.z - f.z) ** 2 < (q.w + 6) ** 2) over = true; }
@@ -775,6 +798,76 @@
             const aurora = new THREE.Mesh(ag, am); world.add(aurora);
             const pa = ag.attributes.position, baseY = base.y;
             WORLD.anims.push((dt, t) => { for (let i = 0; i <= segs; i++) { const w = Math.sin(t * 0.7 + i * 0.35) * 120 + Math.sin(t * 1.3 + i * 0.9) * 60; pa.setY(i * 2, baseY + w * 0.3); pa.setY(i * 2 + 1, baseY + 700 + w); } pa.needsUpdate = true; am.opacity = 0.45 + 0.12 * Math.sin(t * 0.9); });
+        }
+        function buildSpace() {
+            const rnd = mulberry(777);
+            // the spire: stacked drums with lit bands, standing inside the corkscrew
+            const cx = 0, cz = -220;
+            let y = -700;
+            for (let i = 0; i < 14; i++) {
+                const r = 150 + (i % 3) * 22 + (i > 10 ? -40 * (i - 10) : 0), h = 90 + (i % 2) * 30;
+                const drum = new THREE.Mesh(new THREE.CylinderGeometry(r * 0.94, r, h, 14), new THREE.MeshLambertMaterial({ color: i % 2 ? 0x2a2a52 : 0x3a3a6e }));
+                drum.position.set(cx, y + h / 2, cz); world.add(drum);
+                const band = new THREE.Mesh(new THREE.CylinderGeometry(r + 3, r + 3, 6, 14, 1, true), new THREE.MeshBasicMaterial({ color: i % 3 ? 0x5ad6ff : 0xffe14a, side: THREE.DoubleSide }));
+                band.position.set(cx, y + h - 8, cz); world.add(band);
+                y += h;
+            }
+            const tip = new THREE.Mesh(new THREE.ConeGeometry(60, 260, 10), new THREE.MeshLambertMaterial({ color: 0x4a4a8e, emissive: 0x1a1a44 }));
+            tip.position.set(cx, y + 130, cz); world.add(tip);
+            const beacon = new THREE.Sprite(new THREE.SpriteMaterial({ map: TEX.glow, color: 0xffe14a, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false }));
+            beacon.scale.setScalar(120); beacon.position.set(cx, y + 270, cz); world.add(beacon);
+            WORLD.anims.push((dt, t) => { beacon.material.opacity = 0.6 + 0.4 * Math.sin(t * 2.5); });
+            // the platform the start straight and the bowl sit on: a dark deck far below, edge-lit
+            const deck = new THREE.Mesh(new THREE.CylinderGeometry(1500, 1500, 30, 40), new THREE.MeshLambertMaterial({ color: 0x0e0c22 }));
+            deck.position.set(0, -125, 0); world.add(deck);
+            const deckRim = new THREE.Mesh(new THREE.TorusGeometry(1500, 4, 6, 60), new THREE.MeshBasicMaterial({ color: 0x5ad6ff }));
+            deckRim.rotation.x = Math.PI / 2; deckRim.position.set(0, -110, 0); world.add(deckRim);
+            // gas giant filling a quarter of the sky, with bands
+            const pg = new THREE.SphereGeometry(1500, 48, 32);
+            const pcol = [], pa = pg.attributes.position, c = new THREE.Color(), bandsC = [0xd88a5a, 0xf0c090, 0xb86a48, 0xe8a878, 0x9a5a48];
+            for (let i = 0; i < pa.count; i++) { const t = (pa.getY(i) / 1500 + 1) * 0.5; c.setHex(bandsC[Math.floor(t * 9 + Math.sin(t * 40) * 0.6) % bandsC.length]); pcol.push(c.r, c.g, c.b); }
+            pg.setAttribute('color', new THREE.Float32BufferAttribute(pcol, 3));
+            const planet = new THREE.Mesh(pg, new THREE.MeshLambertMaterial({ vertexColors: true, fog: false })); planet.position.set(2600, 600, 2600); planet.rotation.z = 0.3; world.add(planet);
+            const pring = new THREE.Mesh(new THREE.RingGeometry(1900, 2500, 80), new THREE.MeshBasicMaterial({ color: 0xe8d0b0, transparent: true, opacity: 0.4, side: THREE.DoubleSide, fog: false }));
+            pring.position.copy(planet.position); pring.rotation.x = 1.35; pring.rotation.y = 0.5; world.add(pring);
+            // nebulae and stars
+            for (const [x, yy, z, col, sc] of [[-2600, 1100, -2200, 0x6a2aa0, 3000], [1800, 1500, -3200, 0x1a5a9a, 2600], [-3000, 300, 1800, 0xa02a6a, 2200]]) {
+                const neb = new THREE.Sprite(new THREE.SpriteMaterial({ map: TEX.glow, color: col, transparent: true, opacity: 0.55, blending: THREE.AdditiveBlending, depthWrite: false, fog: false }));
+                neb.scale.set(sc, sc * 0.6, 1); neb.position.set(x, yy, z); world.add(neb);
+            }
+            const sp = [];
+            for (let i = 0; i < 1600; i++) { const th = rnd() * Math.PI * 2, ph = Math.acos(rnd() * 2 - 1); const r = 4400; sp.push(r * Math.sin(ph) * Math.cos(th), r * Math.cos(ph), r * Math.sin(ph) * Math.sin(th)); }
+            const sg = new THREE.BufferGeometry(); sg.setAttribute('position', new THREE.Float32BufferAttribute(sp, 3));
+            world.add(new THREE.Points(sg, new THREE.PointsMaterial({ color: 0xffffff, size: 8, transparent: true, opacity: 0.9, fog: false })));
+            // asteroids drifting around the outside, never near the road
+            const ag = new THREE.DodecahedronGeometry(1, 0), am = new THREE.MeshLambertMaterial({ color: 0x6a6070 });
+            const rocks = new THREE.InstancedMesh(ag, am, 140);
+            const mtx = new THREE.Matrix4(), q4 = new THREE.Quaternion(), sc3 = new THREE.Vector3(), p3 = new THREE.Vector3(); let n = 0;
+            for (let i = 0; i < 300 && n < 140; i++) {
+                const x = (rnd() - 0.5) * 5000, z = (rnd() - 0.5) * 5000, yy = -300 + rnd() * 900;
+                if (Math.hypot(x, z) < 1700 && yy < 400) continue;
+                const r = 20 + rnd() * rnd() * 120;
+                p3.set(x, yy, z); sc3.set(r, r * (0.6 + rnd() * 0.6), r); q4.setFromEuler(new THREE.Euler(rnd() * 6, rnd() * 6, rnd() * 6)); mtx.compose(p3, q4, sc3);
+                rocks.setMatrixAt(n++, mtx);
+            }
+            rocks.count = n; rocks.instanceMatrix.needsUpdate = true; world.add(rocks);
+            WORLD.anims.push((dt, t) => { rocks.rotation.y = t * 0.004; });
+            // gate arches over the road: half-tori standing on the rails, lit
+            for (const f of TRACK.def.gates || []) {
+                const fr = frameAt(f * TRACK.len, _frA);
+                const arch = new THREE.Mesh(new THREE.TorusGeometry(fr.w + 4, 2.2, 8, 24, Math.PI), new THREE.MeshBasicMaterial({ color: 0xffe14a }));
+                _m4.makeBasis(new THREE.Vector3(fr.nx, fr.ny, fr.nz), new THREE.Vector3(fr.ux, fr.uy, fr.uz), new THREE.Vector3(-fr.tx, -fr.ty, -fr.tz));
+                arch.quaternion.setFromRotationMatrix(_m4);
+                arch.position.set(fr.x + fr.ux * 1.5, fr.y + fr.uy * 1.5, fr.z + fr.uz * 1.5);
+                world.add(arch);
+                for (const side of [-1, 1]) {
+                    const post = new THREE.Mesh(new THREE.BoxGeometry(3, 10, 3), new THREE.MeshLambertMaterial({ color: 0x3a3a6e, emissive: 0x151533 }));
+                    const lat = side * (fr.w + 4);
+                    post.position.set(fr.x + fr.nx * lat + fr.ux * 4, fr.y + fr.ny * lat + fr.uy * 4, fr.z + fr.nz * lat + fr.uz * 4); post.quaternion.copy(arch.quaternion); world.add(post);
+                }
+                const glow = new THREE.Sprite(new THREE.SpriteMaterial({ map: TEX.glow, color: 0xffe14a, transparent: true, opacity: 0.5, blending: THREE.AdditiveBlending, depthWrite: false }));
+                glow.scale.set(fr.w * 2.6, fr.w * 1.4, 1); glow.position.set(fr.x + fr.ux * (fr.w + 4), fr.y + fr.uy * (fr.w + 4), fr.z + fr.uz * (fr.w + 4)); world.add(glow);
+            }
         }
         function nearTrack(x, z, d) {
             const S = TRACK.samples;
