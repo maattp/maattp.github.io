@@ -171,7 +171,7 @@
         // =====================================================================
         //  SPACE FLIGHT — anti-grav racing prototype (single track, CPUs)
         // =====================================================================
-        const SF_VER = 14;
+        const SF_VER = 15;
         const clamp = (v, a, b) => v < a ? a : v > b ? b : v;
         const lerp = (a, b, t) => a + (b - a) * t;
         const smoothstep = (a, b, x) => { const t = clamp((x - a) / (b - a), 0, 1); return t * t * (3 - 2 * t); };
@@ -723,7 +723,7 @@
                 k.s = wrapS(TRACK.lineS + 14 + rowS * 16); k.lat = col * 7;   // grid sits past the line: the first crossing is a real lap
                 k.yaw = 0; k.speed = 0; k.slide = 0; k.air = 0; k.vair = 0; k.jumpT = 0;
                 k.energy = ENERGY_MAX; k.boostT = 0; k.boostCool = 0; k.dashT = 0; k.laps = 0; k.progress = 0; k.finished = false; k.finishTime = 0; k.dead = 0; k.out = false;
-                k.lapTimes = []; k.bestLap = Infinity; k.lastLapStart = 0; k.prevS = k.s; k.wallT = 0; k.hitT = 0; k.rechargeT = 0;
+                k.lapTimes = []; k.bestLap = Infinity; k.lastLapStart = 0; k.prevS = k.s; k.prevLat = k.lat; k.prevAir = 0; k.wallT = 0; k.hitT = 0; k.rechargeT = 0;
                 k.mesh.visible = true;
                 syncMachineMesh(k, true);
             }
@@ -1010,7 +1010,7 @@
         // frames showed 0 ticks of motion and others 2 — that stutter read as bouncing on iPhone
         let renderAlpha = 1;
         function renderPose(k) {
-            if (k.prevS == null || instantRender) { k.rs = k.s; k.rlat = k.lat; k.rair = k.air; return; }
+            if (k.prevS == null || k.prevLat == null || instantRender) { k.rs = k.s; k.rlat = k.lat; k.rair = k.air; return; }
             let ds = k.s - k.prevS; if (ds > TRACK.len / 2) ds -= TRACK.len; if (ds < -TRACK.len / 2) ds += TRACK.len;
             k.rs = wrapS(k.prevS + ds * renderAlpha); k.rlat = lerp(k.prevLat, k.lat, renderAlpha); k.rair = lerp(k.prevAir, k.air, renderAlpha);
         }
@@ -1062,7 +1062,7 @@
             camPos.addScaledVector(_vz.set(f.tx, f.ty, f.tz), -(back - 15));
             camLook.set(fl.x + fl.nx * rlat * 0.5 + fl.ux * 1.5, fl.y + fl.ny * rlat * 0.5 + fl.uy * 1.5, fl.z + fl.nz * rlat * 0.5 + fl.uz * 1.5);
             if (k.dead > 0) { camPos.addScaledVector(_vy.set(f.ux, f.uy, f.uz), 10); }
-            const t = instant || !camInit ? 1 : frameLerp(0.35, dt);
+            const t = instant || !camInit || !Number.isFinite(camera.position.x) ? 1 : frameLerp(0.35, dt);   // a NaN camera never lerps back
             camera.position.lerp(camPos, t);
             camera.up.set(f.ux, f.uy, f.uz).lerp(new THREE.Vector3(0, 1, 0), 0.25).normalize();
             if (camShake > 0) { camera.position.x += (Math.random() - 0.5) * camShake * 1.2; camera.position.y += (Math.random() - 0.5) * camShake * 1.2; camShake = Math.max(0, camShake - dt * 3.5); }
