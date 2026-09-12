@@ -25,12 +25,14 @@ VAPID_SUBJECT = "mailto:m.polkiewicz@gmail.com"
 # RING_MCP_TOKEN (Pebble -> relay) and RING_WS_TOKEN (mini's socket) are
 # secrets: `wrangler secret put RING_MCP_TOKEN` / `... RING_WS_TOKEN`.
 # CHAT_CLAUDE_TOKEN (Claude -> chat) is a secret: `wrangler secret put CHAT_CLAUDE_TOKEN`.
+# CF_TURN_KEY_ID / CF_TURN_API_TOKEN (Space Flight TURN, optional): `wrangler secret put …`.
 CHAT_SENDERS = "m.polkiewicz@gmail.com:matt,ting520143@gmail.com:tingting"
 
 [durable_objects]
 bindings = [
   { name = "KART3_ROOM", class_name = "Kart3Room" },
   { name = "F51_ROOM", class_name = "Fable51Room" },
+  { name = "SF_ROOM", class_name = "SpaceRoom" },
   { name = "MAHJONG_ROOM", class_name = "MahjongRoom" },
   { name = "HARD_ROOM", class_name = "HardRoom" },
   { name = "RING_ROOM", class_name = "RingRoom" },
@@ -60,6 +62,10 @@ new_sqlite_classes = ["ChatRoom"]
 [[migrations]]
 tag = "f51-room-v1"
 new_sqlite_classes = ["Fable51Room"]
+
+[[migrations]]
+tag = "sf-room-v1"
+new_sqlite_classes = ["SpaceRoom"]
 
 [triggers]
 crons = ["*/15 * * * *"]
