@@ -1399,7 +1399,8 @@
             POST.blur.uniforms.tex.value = POST.rtB.texture; POST.blur.uniforms.dir.value.set(0, 1.6 / POST.rtA.height);
             renderer.setRenderTarget(POST.rtA); renderer.render(POST.scene, POST.cam);
             q.material = POST.comp; POST.comp.uniforms.tex.value = POST.rtScene.texture; POST.comp.uniforms.bloom.value = POST.rtA.texture;
-            POST.comp.uniforms.strength.value = THEME.night ? 0.8 : 0.45;
+            POST.comp.uniforms.strength.value = THEME.night ? 0.55 : 0.32;
+            POST.bright.uniforms.thr.value = THEME.night ? 0.66 : 0.86;
             renderer.setRenderTarget(null); renderer.render(POST.scene, POST.cam);
         }
         function initThree() {
@@ -3257,7 +3258,7 @@
             const headlights = [];
             const coneGeo = new THREE.ConeGeometry(2.4, 13, 12, 1, true); coneGeo.translate(0, -6.5, 0);
             for (const s of [1, -1]) {
-                const cone = new THREE.Mesh(coneGeo, new THREE.MeshBasicMaterial({ color: 0xfff2c0, transparent: true, opacity: 0.16, depthWrite: false, blending: THREE.AdditiveBlending, side: THREE.DoubleSide }));
+                const cone = new THREE.Mesh(coneGeo, new THREE.MeshBasicMaterial({ color: 0xfff2c0, transparent: true, opacity: 0.09, depthWrite: false, blending: THREE.AdditiveBlending, side: THREE.DoubleSide }));
                 cone.rotation.x = -Math.PI / 2 + 0.12; cone.position.set(0.7 * s, 1.5, 3.6); cone.visible = false; g.add(cone); headlights.push(cone);
             }
             const aura = new THREE.Mesh(new THREE.SphereGeometry(4.6, 14, 10), new THREE.MeshBasicMaterial({ color: 0xffa040, transparent: true, opacity: 0.22, depthWrite: false, blending: THREE.AdditiveBlending }));
@@ -4885,7 +4886,7 @@
             }
             const hl = !!THEME.headlights;
             if (m.headlights[0].visible !== hl) for (const c of m.headlights) c.visible = hl;
-            if (hl) for (const c of m.headlights) c.material.opacity = 0.14 + vrand(0, 0.03);
+            if (hl) for (const c of m.headlights) c.material.opacity = 0.08 + vrand(0, 0.02);
             const sh = m.shield;
             if (k.shieldTimer > 0) {
                 sh.visible = true; m.shieldRim.visible = true; sh.rotation.y += dt * 2; m.shieldRim.rotation.z += dt * 1.5;
