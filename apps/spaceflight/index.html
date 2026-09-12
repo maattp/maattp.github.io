@@ -170,7 +170,7 @@
         // =====================================================================
         //  SPACE FLIGHT — anti-grav racing prototype (single track, CPUs)
         // =====================================================================
-        const SF_VER = 3;
+        const SF_VER = 4;
         const clamp = (v, a, b) => v < a ? a : v > b ? b : v;
         const lerp = (a, b, t) => a + (b - a) * t;
         const smoothstep = (a, b, x) => { const t = clamp((x - a) / (b - a), 0, 1); return t * t * (3 - 2 * t); };
@@ -1073,7 +1073,7 @@
         //  INPUT
         // =====================================================================
         let touchSteer = 0, keySteer = 0, steerTouchId = null, steerX0 = 0, boostHeld = false, brakeHeld = false;
-        const steerRangePx = 110, steerSign = 1;
+        const steerRangePx = 110, steerSign = -1;   // +lat is the left side of the road in this frame; a right slide must go right
         function setupInput() {
             const surface = renderer.domElement;
             const steerZone = (x) => x < window.innerWidth * 0.55;
