@@ -1,10 +1,10 @@
-// Quick CDP runner for apps/fable51kart: boots the game headless and evaluates
+// Quick CDP runner for apps/spaceflight: boots the game headless and evaluates
 // each argv expression in order (awaiting promises), printing the results.
-//   node tools/f51repl.mjs "expr1" "expr2" ...   (use `await sleep(ms)` inside)
+//   node tools/sfrepl.mjs "expr1" "expr2" ...   (use `await sleep(ms)` inside)
 import { spawn } from 'node:child_process';
 import { writeFileSync } from 'node:fs';
 import { setTimeout as sleep } from 'node:timers/promises';
-const PORT = 9241, URL = process.env.F51_URL || 'http://localhost:8000/apps/spaceflight/?dbg=1';
+const PORT = 9241, URL = process.env.SF_URL || 'http://localhost:8000/apps/spaceflight/?dbg=1';
 const CHROME = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
 const chrome = spawn(CHROME, [`--remote-debugging-port=${PORT}`, '--headless=new', '--use-gl=angle', '--use-angle=swiftshader', '--enable-unsafe-swiftshader',
   '--autoplay-policy=no-user-gesture-required', '--disable-background-timer-throttling', '--window-size=1280,720', '--no-first-run', '--user-data-dir=/tmp/sf-repl-profile', 'about:blank'], { stdio: 'ignore' });
