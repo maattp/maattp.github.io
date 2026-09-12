@@ -171,7 +171,7 @@
         // =====================================================================
         //  SPACE FLIGHT — anti-grav racing prototype (single track, CPUs)
         // =====================================================================
-        const SF_VER = 20;
+        const SF_VER = 21;
         const clamp = (v, a, b) => v < a ? a : v > b ? b : v;
         const lerp = (a, b, t) => a + (b - a) * t;
         const smoothstep = (a, b, x) => { const t = clamp((x - a) / (b - a), 0, 1); return t * t * (3 - 2 * t); };
@@ -223,24 +223,24 @@
         // =====================================================================
         const TRACK_DEF = {
             name: 'Mute Orbit',
-            w: 28,
+            w: 33,
             pts: [
                 // start straight (heading +x)
-                [-520, 0, -400, 32], [-200, 0, -400, 32], [160, 0, -400, 32], [420, 0, -390, 30],
+                [-520, 0, -400, 39], [-200, 0, -400, 39], [160, 0, -400, 39], [420, 0, -390, 36],
                 // sweeping right into the big banked bowl
-                [640, 6, -300, 28], [740, 14, -120, 28], [720, 24, 80, 28], [600, 30, 220, 28],
+                [640, 6, -300, 33], [740, 14, -120, 33], [720, 24, 80, 33], [600, 30, 220, 33],
                 // esses across the plateau
-                [420, 26, 300, 26], [280, 22, 380, 24], [180, 20, 500, 24], [260, 18, 640, 24],
+                [420, 26, 300, 30], [280, 22, 380, 27], [180, 20, 500, 27], [260, 18, 640, 27],
                 // rise over the plateau's far edge
-                [420, 26, 720, 26], [560, 30, 760, 26], [660, 28, 820, 26],
+                [420, 26, 720, 30], [560, 30, 760, 30], [660, 28, 820, 30],
                 // hairpin back
-                [700, 30, 960, 28], [600, 14, 1060, 28], [400, 6, 1040, 28],
+                [700, 30, 960, 33], [600, 14, 1060, 33], [400, 6, 1040, 33],
                 // long return straight with the recharge strip (heading -x)
-                [140, 2, 960, 32], [-160, 0, 900, 32], [-460, 0, 860, 32],
+                [140, 2, 960, 39], [-160, 0, 900, 39], [-460, 0, 860, 39],
                 // wide left back toward the start
-                [-720, 4, 760, 30], [-860, 14, 560, 28], [-840, 20, 300, 28],
+                [-720, 4, 760, 36], [-860, 14, 560, 33], [-840, 20, 300, 33],
                 // chicane then down onto the grid
-                [-700, 18, 140, 24], [-760, 12, -40, 24], [-700, 6, -220, 28], [-660, 1, -400, 32],   // the last point sits on the start straight's line so the grid is dead straight
+                [-700, 18, 140, 27], [-760, 12, -40, 27], [-700, 6, -220, 33], [-660, 1, -400, 39],   // the last point sits on the start straight's line so the grid is dead straight
             ],
             // features by fraction of lap length
             dash: [],
@@ -703,7 +703,7 @@
         }
         function makeAI(idx) {
             const r = mulberry(100 + idx * 17);
-            return { lane: ((idx % 7) - 3) * 5.8, skill: 0.45 + r() * 0.5, aggr: 0.3 + r() * 0.6, phase: r() * 10, jitter: 0, pace: 0.88 + r() * 0.12, surgeT: 9 + r() * 8, surgeP: r() * 6.28, lapseT: 3 + r() * 6, lapse: 0, lapseBias: 0 };
+            return { lane: ((idx % 7) - 3) * 7.0, skill: 0.45 + r() * 0.5, aggr: 0.3 + r() * 0.6, phase: r() * 10, jitter: 0, pace: 0.88 + r() * 0.12, surgeT: 9 + r() * 8, surgeP: r() * 6.28, lapseT: 3 + r() * 6, lapse: 0, lapseBias: 0 };
         }
         let selectedDef = 0;
         function buildMachines() {
@@ -721,7 +721,7 @@
                 // the player (idx 0) starts dead centre at the back; rivals stagger ahead in two columns
                 // rows 30u apart, columns 11u apart, alternating so nobody sits directly behind anyone
                 const rowS = i === 0 ? 0 : 1 + Math.floor((i - 1) / 2), col = i === 0 ? 0 : ((i % 2) ? -1 : 1);
-                k.s = wrapS(TRACK.lineS + 14 + rowS * 30); k.lat = col * 11; k.gridLat = k.lat;   // grid sits past the line: the first crossing is a real lap
+                k.s = wrapS(TRACK.lineS + 14 + rowS * 30); k.lat = col * 14; k.gridLat = k.lat;   // grid sits past the line: the first crossing is a real lap
                 k.yaw = 0; k.speed = 0; k.slide = 0; k.air = 0; k.vair = 0; k.jumpT = 0;
                 k.energy = ENERGY_MAX; k.boostT = 0; k.boostCool = 0; k.dashT = 0; k.laps = 0; k.progress = 0; k.finished = false; k.finishTime = 0; k.dead = 0; k.out = false;
                 k.lapTimes = []; k.bestLap = Infinity; k.lastLapStart = 0; k.prevS = k.s; k.prevLat = k.lat; k.prevAir = 0; k.wallT = 0; k.hitT = 0; k.rechargeT = 0;
