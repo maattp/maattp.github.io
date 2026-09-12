@@ -171,7 +171,7 @@
         // =====================================================================
         //  SPACE FLIGHT — anti-grav racing prototype (single track, CPUs)
         // =====================================================================
-        const SF_VER = 19;
+        const SF_VER = 20;
         const clamp = (v, a, b) => v < a ? a : v > b ? b : v;
         const lerp = (a, b, t) => a + (b - a) * t;
         const smoothstep = (a, b, x) => { const t = clamp((x - a) / (b - a), 0, 1); return t * t * (3 - 2 * t); };
@@ -223,24 +223,24 @@
         // =====================================================================
         const TRACK_DEF = {
             name: 'Mute Orbit',
-            w: 22,
+            w: 28,
             pts: [
                 // start straight (heading +x)
-                [-520, 0, -400, 26], [-200, 0, -400, 26], [160, 0, -400, 26], [420, 0, -390, 24],
+                [-520, 0, -400, 32], [-200, 0, -400, 32], [160, 0, -400, 32], [420, 0, -390, 30],
                 // sweeping right into the big banked bowl
-                [640, 6, -300, 22], [740, 14, -120, 22], [720, 24, 80, 22], [600, 30, 220, 22],
+                [640, 6, -300, 28], [740, 14, -120, 28], [720, 24, 80, 28], [600, 30, 220, 28],
                 // esses across the plateau
-                [420, 26, 300, 20], [280, 22, 380, 18], [180, 20, 500, 18], [260, 18, 640, 18],
+                [420, 26, 300, 26], [280, 22, 380, 24], [180, 20, 500, 24], [260, 18, 640, 24],
                 // rise over the plateau's far edge
-                [420, 26, 720, 20], [560, 30, 760, 20], [660, 28, 820, 20],
+                [420, 26, 720, 26], [560, 30, 760, 26], [660, 28, 820, 26],
                 // hairpin back
-                [700, 30, 960, 22], [600, 14, 1060, 22], [400, 6, 1040, 22],
+                [700, 30, 960, 28], [600, 14, 1060, 28], [400, 6, 1040, 28],
                 // long return straight with the recharge strip (heading -x)
-                [140, 2, 960, 26], [-160, 0, 900, 26], [-460, 0, 860, 26],
+                [140, 2, 960, 32], [-160, 0, 900, 32], [-460, 0, 860, 32],
                 // wide left back toward the start
-                [-720, 4, 760, 24], [-860, 14, 560, 22], [-840, 20, 300, 22],
+                [-720, 4, 760, 30], [-860, 14, 560, 28], [-840, 20, 300, 28],
                 // chicane then down onto the grid
-                [-700, 18, 140, 18], [-760, 12, -40, 18], [-700, 6, -220, 22], [-660, 1, -400, 26],   // the last point sits on the start straight's line so the grid is dead straight
+                [-700, 18, 140, 24], [-760, 12, -40, 24], [-700, 6, -220, 28], [-660, 1, -400, 32],   // the last point sits on the start straight's line so the grid is dead straight
             ],
             // features by fraction of lap length
             dash: [],
@@ -703,7 +703,7 @@
         }
         function makeAI(idx) {
             const r = mulberry(100 + idx * 17);
-            return { lane: ((idx % 7) - 3) * 4.6, skill: 0.45 + r() * 0.5, aggr: 0.3 + r() * 0.6, phase: r() * 10, jitter: 0, pace: 0.88 + r() * 0.12, surgeT: 9 + r() * 8, surgeP: r() * 6.28, lapseT: 3 + r() * 6, lapse: 0, lapseBias: 0 };
+            return { lane: ((idx % 7) - 3) * 5.8, skill: 0.45 + r() * 0.5, aggr: 0.3 + r() * 0.6, phase: r() * 10, jitter: 0, pace: 0.88 + r() * 0.12, surgeT: 9 + r() * 8, surgeP: r() * 6.28, lapseT: 3 + r() * 6, lapse: 0, lapseBias: 0 };
         }
         let selectedDef = 0;
         function buildMachines() {
