@@ -46,9 +46,10 @@
         .btn:active { transform: scale(0.97); }
         .btn.ghost { background: transparent; color: #9fe8ff; border: 2px solid rgba(159, 232, 255, 0.5); box-shadow: none; font-size: 15px; padding: 10px 28px; }
         .picker { display: flex; gap: 10px; margin-top: 18px; flex-wrap: wrap; justify-content: center; max-width: 720px; }
-        .pick { width: 72px; height: 62px; border-radius: 12px; border: 2px solid rgba(255,255,255,0.14); background: rgba(255,255,255,0.05);
+        .pick { width: 92px; height: 96px; border-radius: 12px; border: 2px solid rgba(255,255,255,0.14); background: rgba(255,255,255,0.05);
             display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; font-size: 11px; font-weight: 800; letter-spacing: 1px; cursor: pointer; }
         .pick .sw { width: 34px; height: 12px; border-radius: 6px; }
+        .pick .st { font-size: 7px; letter-spacing: 0; opacity: 0.75; line-height: 1.35; font-weight: 700; }
         .pick.sel { border-color: #fff; background: rgba(255,255,255,0.14); box-shadow: 0 0 14px rgba(255,255,255,0.25); }
         .hint { margin-top: 16px; font-size: 12px; opacity: 0.6; letter-spacing: 1px; text-align: center; line-height: 1.6; }
         #ver { position: fixed; right: calc(env(safe-area-inset-right) + 10px); bottom: calc(env(safe-area-inset-bottom) + 8px); font-size: 11px; opacity: 0.45; z-index: 51; }
@@ -170,7 +171,7 @@
         // =====================================================================
         //  SPACE FLIGHT — anti-grav racing prototype (single track, CPUs)
         // =====================================================================
-        const SF_VER = 6;
+        const SF_VER = 7;
         const clamp = (v, a, b) => v < a ? a : v > b ? b : v;
         const lerp = (a, b, t) => a + (b - a) * t;
         const smoothstep = (a, b, x) => { const t = clamp((x - a) / (b - a), 0, 1); return t * t * (3 - 2 * t); };
@@ -190,8 +191,8 @@
         const BRAKE_DECEL = 150;
         const TURN_RATE = 3.2;          // rad/s of relative heading
         const MAX_YAW = 0.38;           // rad, max relative heading at full steer
-        const SLIDE_K = 0.9;            // centrifugal push (curv·v²·K)
-        const SLIDE_DAMP = 3.4;
+        const SLIDE_K = 0.55;           // share of v²·curv that becomes lateral slide (1 = physics, <1 = hover grip)
+        const SLIDE_DAMP = 2.6;
         const ENERGY_MAX = 100;
         const BOOST_COST = 15;
         const BOOST_TIME = 2.2;
@@ -201,14 +202,15 @@
 
         // ---- racers ------------------------------------------------------------
         const MACHINES = [
-            { name: 'Blue Falcon', col: 0x2f7dff, acc: 0xffd54a, stat: { top: 1.0, acc: 1.0, grip: 1.0 } },
-            { name: 'Golden Fox',  col: 0xffb52a, acc: 0xffffff, stat: { top: 0.96, acc: 1.12, grip: 0.92 } },
-            { name: 'Wild Goose',  col: 0x35d66b, acc: 0x0a3d1f, stat: { top: 0.98, acc: 0.95, grip: 1.1 } },
-            { name: 'Fire Stingray', col: 0xff3fb0, acc: 0xffffff, stat: { top: 1.05, acc: 0.9, grip: 0.95 } },
-            { name: 'White Cat',   col: 0xf2f2f2, acc: 0xff4a4a, stat: { top: 0.97, acc: 1.04, grip: 1.04 } },
-            { name: 'Iron Tiger',  col: 0x8f5a2a, acc: 0xffa53a, stat: { top: 0.99, acc: 0.98, grip: 1.02 } },
-            { name: 'Night Thunder', col: 0x7a3dff, acc: 0x5af0ff, stat: { top: 1.02, acc: 0.96, grip: 0.98 } },
-            { name: 'Red Gazelle', col: 0xff3b3b, acc: 0xffe28a, stat: { top: 0.98, acc: 1.06, grip: 1.0 } },
+            // top = top speed, acc = acceleration, grip = slide damping / steering authority (each ~0.85–1.15)
+            { name: 'Blue Falcon',   col: 0x2f7dff, acc: 0xffd54a, stat: { top: 1.00, acc: 1.00, grip: 1.00 } },
+            { name: 'Golden Fox',    col: 0xffb52a, acc: 0xffffff, stat: { top: 0.93, acc: 1.22, grip: 0.86 } },
+            { name: 'Wild Goose',    col: 0x35d66b, acc: 0x0a3d1f, stat: { top: 0.96, acc: 0.92, grip: 1.16 } },
+            { name: 'Fire Stingray', col: 0xff3fb0, acc: 0xffffff, stat: { top: 1.10, acc: 0.82, grip: 0.92 } },
+            { name: 'White Cat',     col: 0xf2f2f2, acc: 0xff4a4a, stat: { top: 0.95, acc: 1.08, grip: 1.08 } },
+            { name: 'Iron Tiger',    col: 0x8f5a2a, acc: 0xffa53a, stat: { top: 1.03, acc: 0.88, grip: 1.05 } },
+            { name: 'Night Thunder', col: 0x7a3dff, acc: 0x5af0ff, stat: { top: 1.06, acc: 0.95, grip: 0.90 } },
+            { name: 'Red Gazelle',   col: 0xff3b3b, acc: 0xffe28a, stat: { top: 0.98, acc: 1.12, grip: 0.97 } },
         ];
         const hx = (c) => '#' + c.toString(16).padStart(6, '0');
 
@@ -238,7 +240,7 @@
                 [-700, 18, 140, 18], [-760, 12, -40, 18], [-680, 6, -220, 22], [-600, 2, -340, 26],
             ],
             // features by fraction of lap length
-            dash: [{ f: 0.075, lat: 0 }, { f: 0.36, lat: -6 }, { f: 0.62, lat: 0 }, { f: 0.63, lat: 0 }, { f: 0.87, lat: 6 }],
+            dash: [],
             recharge: [{ f0: 0.58, f1: 0.66, lat: 12, hw: 9 }],   // strip on the return straight, right half
             lineF: 0.0,
         };
@@ -506,10 +508,23 @@
             for (let r = 0; r < lrows - 1; r++) { if ((r >> 2) & 1) continue; const a = r * 2, c = a + 2; li.push(a, c, a + 1, a + 1, c, c + 1); }
             const lg = new THREE.BufferGeometry(); lg.setAttribute('position', new THREE.Float32BufferAttribute(lp, 3)); lg.setIndex(li);
             world.add(new THREE.Mesh(lg, new THREE.MeshBasicMaterial({ color: 0x9fe8ff, side: THREE.DoubleSide })));
-            // start line
-            const q0 = sampleAtS(TRACK.lineS);
-            const line = new THREE.Mesh(new THREE.PlaneGeometry(q0.w * 2, 4), new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.85 }));
-            placeOnTrack(line, TRACK.lineS, 0, 0.1); world.add(line);
+            // start line: a checkered strip laid in track coordinates
+            {
+                const lp2 = [], lc2 = [], li2 = [];
+                const cols = 10; let row = 0;
+                for (const ds of [-3, 3]) {
+                    const f = frameAt(TRACK.lineS + ds, _frA);
+                    for (let c = 0; c <= cols; c++) {
+                        const lat = -f.w + (2 * f.w) * c / cols;
+                        lp2.push(f.x + f.nx * lat + f.ux * 0.12, f.y + f.ny * lat + f.uy * 0.12, f.z + f.nz * lat + f.uz * 0.12);
+                        const dark = ((c + row) & 1) ? 0.15 : 1; lc2.push(dark, dark, dark);
+                    }
+                    row++;
+                }
+                for (let c = 0; c < cols; c++) { const a = c, b = c + cols + 1; li2.push(a, b, a + 1, a + 1, b, b + 1); }
+                const lg2 = new THREE.BufferGeometry(); lg2.setAttribute('position', new THREE.Float32BufferAttribute(lp2, 3)); lg2.setAttribute('color', new THREE.Float32BufferAttribute(lc2, 3)); lg2.setIndex(li2);
+                world.add(new THREE.Mesh(lg2, new THREE.MeshBasicMaterial({ vertexColors: true, side: THREE.DoubleSide })));
+            }
         }
         function placeOnTrack(mesh, s, lat, up) {
             const f = frameAt(s);
@@ -685,7 +700,7 @@
         }
         function makeAI(idx) {
             const r = mulberry(100 + idx * 17);
-            return { lane: ((idx % 7) - 3) * 4.6, skill: 0.72 + r() * 0.28, aggr: 0.3 + r() * 0.6, phase: r() * 10, jitter: 0, pace: 0.9 + r() * 0.1 };
+            return { lane: ((idx % 7) - 3) * 4.6, skill: 0.72 + r() * 0.28, aggr: 0.3 + r() * 0.6, phase: r() * 10, jitter: 0, pace: 0.9 + r() * 0.1, surgeT: 9 + r() * 8, surgeP: r() * 6.28 };
         }
         let selectedDef = 0;
         function buildMachines() {
@@ -700,8 +715,9 @@
             for (let i = 0; i < machines.length; i++) {
                 const k = machines[i];
                 // grid: 2 wide, staggered back from the line
-                const slot = machines.length - 1 - i, row = Math.floor(slot / 2), col = (slot % 2) ? 1 : -1;   // the player (idx 0) starts at the back
-                k.s = wrapS(TRACK.lineS + 14 + (3 - row) * 16); k.lat = col * 7;   // grid sits past the line: the first crossing is a real lap
+                // the player (idx 0) starts dead centre at the back; rivals stagger ahead in two columns
+                const rowS = i === 0 ? 0 : 1 + Math.floor((i - 1) / 2), col = i === 0 ? 0 : ((i % 2) ? -1 : 1);
+                k.s = wrapS(TRACK.lineS + 14 + rowS * 16); k.lat = col * 7;   // grid sits past the line: the first crossing is a real lap
                 k.yaw = 0; k.speed = 0; k.slide = 0; k.air = 0; k.vair = 0; k.jumpT = 0;
                 k.energy = ENERGY_MAX; k.boostT = 0; k.boostCool = 0; k.dashT = 0; k.laps = 0; k.progress = 0; k.finished = false; k.finishTime = 0; k.dead = 0; k.out = false;
                 k.lapTimes = []; k.bestLap = Infinity; k.lastLapStart = 0; k.prevS = k.s; k.wallT = 0; k.hitT = 0; k.rechargeT = 0;
@@ -754,7 +770,7 @@
             k.yaw += clamp(targetYaw - k.yaw, -rate * dt, rate * dt);
             // --- speed ---
             const boosting = k.boostT > 0 || k.dashT > 0;
-            const top = (k.boostT > 0 ? BOOST_SPEED : k.dashT > 0 ? DASH_SPEED : MAX_SPEED) * (0.94 + 0.06 * st.top);
+            const top = (k.boostT > 0 ? BOOST_SPEED : k.dashT > 0 ? DASH_SPEED : MAX_SPEED) * st.top;
             if (canSteer || (state === 'finished' && !k.isPlayer)) {
                 if (k.ctrl.brake && !boosting) k.speed = Math.max(0, k.speed - BRAKE_DECEL * dt);
                 else if (k.speed < top) k.speed = Math.min(top, k.speed + (boosting ? ACCEL * 2.6 : ACCEL * st.acc) * dt);
@@ -771,7 +787,8 @@
             k.ctrl.boost = false;
             // --- lateral: heading + centrifugal slide ---
             const grip = (k.ctrl.brake ? 1.8 : 1) * st.grip;
-            const centrif = f.curv * k.speed * k.speed * SLIDE_K * 0.001 * (1 - Math.abs(Math.sin(f.bank)) * 1.3);
+            // real centripetal demand v²κ, less what the banking supplies: with no steering you run wide
+            const centrif = f.curv * k.speed * k.speed * SLIDE_K * (1 - Math.abs(Math.sin(f.bank)) * 1.2);
             k.slide += (centrif - k.slide * SLIDE_DAMP * grip) * dt;
             const vlat = k.speed * Math.sin(k.yaw) + k.slide;
             k.lat += vlat * dt;
@@ -792,13 +809,12 @@
                     k.slide = -k.slide * 0.4;
                     if (k.isPlayer) { vibrate(20); camShake = Math.max(camShake, Math.min(1, into * 0.02)); sfxScrape(into); }
                     spawnSparks(k, Math.sign(k.lat), Math.min(14, 4 + into * 0.15));
-                } else { k.speed -= k.speed * 0.5 * dt; if (k.isPlayer && simTickNo % 4 === 0) spawnSparks(k, Math.sign(k.lat), 2); }
+                } else { k.speed -= k.speed * 0.18 * dt; if (k.isPlayer && simTickNo % 4 === 0) spawnSparks(k, Math.sign(k.lat), 2); }   // grinding the wall bleeds speed, but you can steer off it
             }
             if (k.wallT > 0) k.wallT -= dt;
             if (k.hitT > 0) k.hitT -= dt;
             const q = sampleAtS(k.s);
             // --- track features ---
-            if (q.dash && Math.abs(k.lat - q.dash.lat) < 7 && k.dashT <= 0.2 && k.air === 0) { k.dashT = 1.4; if (k.isPlayer) { sfxBoost(); flashText('DASH!', '#ffd54a'); } }
             if (q.recharge && Math.abs(k.lat - q.recharge.lat) <= q.recharge.hw && k.energy < ENERGY_MAX) {
                 k.energy = Math.min(ENERGY_MAX, k.energy + RECHARGE_RATE * dt); k.rechargeT = 0.2;
             }
@@ -886,7 +902,6 @@
             let targetLat = ai.lane + inside + Math.sin(ai.phase * 0.6) * 1.0;
             // seek dash plates / recharge when needed
             const qa = sampleAtS(k.s + look * 0.6);
-            if (qa.dash && Math.abs(qa.dash.lat - k.lat) < 14) targetLat = qa.dash.lat;
             if (k.energy < 45) { for (let d = 0; d < 300; d += 30) { const qr = sampleAtS(k.s + d); if (qr.recharge) { targetLat = qr.recharge.lat; break; } } }
             targetLat = clamp(targetLat, -(f0.w - 5), f0.w - 5);
             // avoid rivals directly ahead
@@ -899,12 +914,15 @@
             // predictive lateral controller: cancel slide, close the gap
             const vlat = k.speed * Math.sin(k.yaw) + k.slide;
             const err = targetLat - k.lat;
-            const want = clamp(err * 0.12 - vlat * 0.05, -1, 1);
+            const ff = k.speed > 1 ? clamp(Math.asin(clamp(-k.slide / k.speed, -0.9, 0.9)) / MAX_YAW, -1, 1) : 0;   // heading that cancels the slide
+            const want = clamp(ff + err * 0.09 - vlat * 0.035, -1, 1);
             ai.jitter = lerp(ai.jitter, (Math.random() - 0.5) * (1 - ai.skill) * 0.6, 0.05);
             k.ctrl.steer = clamp(want + ai.jitter, -1, 1);
             // brake only when the slide is about to carry it into the wall at speed
             const margin = f0.w - 3 - Math.abs(k.lat + vlat * 0.35);
-            k.ctrl.brake = (margin < 0 && k.speed > 110) || !!k.ctrl.brakeTap; k.ctrl.brakeTap = false;
+            const bendAhead = Math.abs(frameAt(k.s + 60 + k.speed * 0.5, _frA).curv);
+            const vmax = Math.sqrt(52 / Math.max(1e-4, bendAhead * SLIDE_K * 0.35));   // speed the slide stays steerable at
+            k.ctrl.brake = (margin < 0 && k.speed > 110) || !!k.ctrl.brakeTap || k.speed > vmax * (0.95 + 0.1 * ai.skill); k.ctrl.brakeTap = false;
             // boost on straights when energy allows (keep a reserve, F-Zero style)
             const straight = Math.abs(curvAhead) < 0.0012;
             k.ctrl.boost = k.laps >= BOOST_MIN_LAP && straight && k.energy > 45 + (1 - ai.aggr) * 30 && k.boostT <= 0 && Math.random() < 0.02;
@@ -912,7 +930,8 @@
             const gap = player ? k.progress - player.progress : 0;
             k.def.stat.top = k.def.statBase ? k.def.statBase.top : (k.def.statBase = { ...k.def.stat }).top;
             const rb = clamp(-gap / 1400, -0.04, 0.04) * (player && player.finished ? 0 : 1);
-            k.def.stat.top = k.def.statBase.top * (ai.pace || 1) + rb;
+            const surge = ai.surgeT ? Math.sin(ai.phase * 6.28 / ai.surgeT + ai.surgeP) * 0.035 : 0;   // form comes and goes
+            k.def.stat.top = k.def.statBase.top * ((ai.pace || 1) + surge) + rb;
         }
 
         // =====================================================================
@@ -1246,7 +1265,8 @@
         function quitToMenu() { state = 'menu'; dom.pauseScreen.classList.remove('on'); dom.resultScreen.classList.remove('on'); dom.hud.classList.remove('on'); dom.pauseBtn.classList.remove('on'); dom.startScreen.classList.add('on'); resetRace(); }
 
         function buildPicker() {
-            dom.picker.innerHTML = MACHINES.map((m, i) => `<div class="pick${i === selectedDef ? ' sel' : ''}" data-i="${i}"><div class="sw" style="background:${hx(m.col)}"></div>${m.name.split(' ')[0]}</div>`).join('');
+            const bar = (v) => { const n = clamp(Math.round((v - 0.8) / 0.4 * 5), 1, 5); return '●'.repeat(n) + '○'.repeat(5 - n); };
+            dom.picker.innerHTML = MACHINES.map((m, i) => `<div class="pick${i === selectedDef ? ' sel' : ''}" data-i="${i}"><div class="sw" style="background:${hx(m.col)}"></div>${m.name.split(' ')[0]}<div class="st">SPD ${bar(m.stat.top)}<br>ACC ${bar(m.stat.acc)}<br>GRP ${bar(m.stat.grip)}</div></div>`).join('');
             dom.picker.querySelectorAll('.pick').forEach((el) => el.addEventListener('click', () => { selectedDef = +el.dataset.i; try { localStorage.setItem('sf_machine', selectedDef); } catch (e) {} buildPicker(); buildMachines(); resetRace(); }));
         }
 

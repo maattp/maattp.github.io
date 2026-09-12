@@ -55,7 +55,7 @@ try {
   console.log('   ', JSON.stringify(res.ranks));
   ok(res.finished === 8, `all 8 machines finished (${res.finished}, ${res.out} out) in ${res.secs.toFixed(0)}s of sim`);
   ok(res.lapT.length === 3 && res.lapT[0] > 25 && res.lapT[0] < 90, `player lap times ${res.lapT.map((t) => t.toFixed(1)).join(' / ')} (first lap 25–90s)`);
-  ok(res.maxSpd > 200, `top speed ${res.maxSpd.toFixed(0)} u/s`);
+  ok(res.maxSpd > 140, `top speed ${res.maxSpd.toFixed(0)} u/s`);
   ok(res.wallTicks < res.ticks * 0.06, `wall contact ${(100 * res.wallTicks / res.ticks).toFixed(1)}% of ticks (<6%)`);
   console.log(`    min energy ${res.minE.toFixed(0)}, boosts ${res.boosts}, deaths ${res.deaths}`);
   // screenshots: replay a fresh race for a few seconds in real time-ish for the camera
