@@ -216,7 +216,7 @@
         // =====================================================================
         //  SPACE FLIGHT — anti-grav racing prototype (single track, CPUs)
         // =====================================================================
-        const SF_VER = 27;
+        const SF_VER = 28;
         const clamp = (v, a, b) => v < a ? a : v > b ? b : v;
         const lerp = (a, b, t) => a + (b - a) * t;
         const smoothstep = (a, b, x) => { const t = clamp((x - a) / (b - a), 0, 1); return t * t * (3 - 2 * t); };
@@ -340,7 +340,8 @@
             dash: [], recharge: [{ f0: 0.44, f1: 0.51, lat: -14, hw: 12 }], lineF: 0.0,
         }, {
             name: 'Nova Spire', theme: THEME_SPACE, w: 33, pts: SPIRE_PTS, rmf: true,
-            dash: [], recharge: [{ f0: 0.72, f1: 0.78, lat: 14, hw: 12 }], lineF: 0.0,
+            // four short pit strips (~120u each, ~35 energy at full speed) on alternating sides instead of one long one
+            dash: [], recharge: [{ f0: 0.19, f1: 0.203, lat: -14, hw: 11 }, { f0: 0.50, f1: 0.513, lat: 14, hw: 11 }, { f0: 0.66, f1: 0.673, lat: -14, hw: 11 }, { f0: 0.84, f1: 0.853, lat: 14, hw: 11 }], lineF: 0.0,
             gates: [0.05, 0.36, 0.40, 0.44, 0.62, 0.90],
         }];
         const TRACK_DEF = {
