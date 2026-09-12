@@ -37,10 +37,10 @@
             background: radial-gradient(ellipse at 50% 30%, #1a1040 0%, #0a0620 45%, #04030c 100%);
             padding: calc(env(safe-area-inset-top) + 16px) calc(env(safe-area-inset-right) + 20px) calc(env(safe-area-inset-bottom) + 16px) calc(env(safe-area-inset-left) + 20px); }
         .screen.on { display: flex; }
-        .logo { font-size: 54px; font-weight: 900; font-style: italic; letter-spacing: -2px; line-height: 1;
+        .logo { text-align: center; font-size: 54px; font-weight: 900; font-style: italic; letter-spacing: -2px; line-height: 1;
             background: linear-gradient(180deg, #fff 0%, #9fe8ff 45%, #2e7cff 100%); -webkit-background-clip: text; background-clip: text; color: transparent;
             filter: drop-shadow(0 0 18px rgba(80, 160, 255, 0.55)); text-transform: uppercase; }
-        .logo small { display: block; font-size: 13px; letter-spacing: 6px; font-style: normal; font-weight: 800; color: #ff5fd2; -webkit-text-fill-color: #ff5fd2; filter: none; margin-top: 8px; }
+        .logo small { display: block; font-size: 13px; letter-spacing: 6px; text-indent: 6px; text-align: center; font-style: normal; font-weight: 800; color: #ff5fd2; -webkit-text-fill-color: #ff5fd2; filter: none; margin-top: 8px; }   /* text-indent balances the trailing letter-spacing so it centres visually */
         .btn { margin-top: 22px; padding: 14px 44px; font-size: 20px; font-weight: 900; letter-spacing: 2px; border: 0; border-radius: 40px; color: #04030c;
             background: linear-gradient(180deg, #a6f3ff, #35b6ff); box-shadow: 0 0 24px rgba(53, 182, 255, 0.55), inset 0 -3px 0 rgba(0, 0, 0, 0.2); cursor: pointer; }
         .btn:active { transform: scale(0.97); }
@@ -215,7 +215,7 @@
         // =====================================================================
         //  SPACE FLIGHT — anti-grav racing prototype (single track, CPUs)
         // =====================================================================
-        const SF_VER = 32;
+        const SF_VER = 33;
         const clamp = (v, a, b) => v < a ? a : v > b ? b : v;
         const lerp = (a, b, t) => a + (b - a) * t;
         const smoothstep = (a, b, x) => { const t = clamp((x - a) / (b - a), 0, 1); return t * t * (3 - 2 * t); };
