@@ -44,10 +44,23 @@ SwiftShader renders Lambert washed-out; lighting values are tuned for phones.
   you) then terrain — stacked roads coexist. `groundInfo` prefers a found
   bridge/tunnel deck outright.
 - **Elevated = bridge**: auto-detected road-over-road (>9u within 16u XZ) or
-  forced. Decks get skirts, pillars, guardrails and **side walls** — but the
-  wall applies only to the deck you are tracked on and never in the first/last
-  36u of an edge (fork throats overlap other roads; this was the "stuck at the
-  three-way fork" bug).
+  forced. Decks get skirts, pillars and continuous ribbon guardrails. **Walls
+  are physical wherever a guardrail would be drawn** (`markWalls`: bridge, or
+  the ground drops >6u beside the road) but apply only to the deck you are
+  tracked on and never in the first/last 44u of an edge (fork throats overlap
+  other roads; this was the "stuck at the three-way fork" bug).
+- **Interchanges are synthesized, never hand-slapped.** In `buildTrack`, a
+  non-main branch leaving a fork gets a parallel lane beside the trunk
+  (38u, its outer edge on the trunk's edge) and peels away by 98u; merges
+  mirror it; sibling branches stack outward by their widths; designer mids
+  within 110u of the node are dropped. `snapThroats` makes a branch ride its
+  sibling's surface height while they overlap, the width funnels (`sm.w`)
+  open a narrow road out to the trunk's width, a **22% grade limiter** eases
+  every climb (kicker lips excepted) and `buildRoads` fills the gore wedge
+  with asphalt. `sm.shared` (another non-collinear road within 22u, or a
+  wider road under a merged lane) turns off rails/curbs/lamps/posts so nothing
+  cuts across a throat. `rawMerge`/`rawFork` on an edge opts out (the Sky
+  cable run merges onto the corkscrew straight by hand).
 - **Physics**: Fable Kart constants verbatim (SIM_DT 1/60, MAX_SPEED 92,
   ACCEL 48/0.55, BOOST_CAP 138, TURN_BASE 2.4/FADE 0.28, MKDS drift +
   one-shot `grantBoost`, no spinouts) on a surface-plane vehicle with slope
@@ -87,9 +100,15 @@ SwiftShader renders Lambert washed-out; lighting values are tuned for phones.
    run with a void gap), full-turn corkscrew around a spire, chasm bridge with
    a second gap, airship, windmill, waterfalls.
 
-Nothing is ever placed on the racing surface: `offRoad()` measures XZ
-distance to every road at any height (a 3D check once let trees land on
-mountain roads).
+Nothing is ever placed on the racing surface: `offRoad()` / `postClear()`
+measure XZ distance to every road at any height (a 3D check once let trees
+land on mountain roads). **Enforcement:** `__f51.roadAudit()` samples every
+world vertex *and triangle edge* against the drivable corridor (|lat| < w,
+road y − 0.5 … + 4.5, kicker lips excepted) and must return `[]` on all four
+maps; `node tools/f51sweep.mjs` autopilots each map on every route and tiles
+contact sheets in `tools/data/f51shots/sweep/` for an eyeball pass. Rooftop
+buildings, cranes, suspension cables, castle corners, island cones and lamp
+posts have all been caught by these — run them after any scenery change.
 
 ## Online (8 players)
 

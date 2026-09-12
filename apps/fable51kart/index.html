@@ -704,7 +704,7 @@
                     { id: 'desc', from: 'SUM', to: 'P0', w: HALF_W, gate: 2, kickers: [{ f: 0.012, len: 24, h: 4.6 }],
                       mid: [[-133, 58, -210], [-90, 52, -247], [-48, 47, -281],
                             [-22, 47, -306], [18, 46.8, -309], [42, 46.4, -284], [44, 46, -252],
-                            ...arcPts(104, -252, 60, 180, 540, 46, 26, 16), [44, 26, -252],
+                            ...arcPts(104, -252, 60, 180, -180, 46, 26, 16), [44, 26, -252],
                             [22, 25, -212], [-30, 22, -198], [-70, 19, -228], [-82, 17, -285], [-65, 14, -350],
                             [-49, 11, -398], [-51, 9.5, -430], [-80, 8, -449], [-115, 7, -452], [-185, 5, -455], [-250, 4, -448],
                             [-295, 3.5, -415], [-297, 3, -375], [-265, 3, -352], [-215, 3, -348]] },
@@ -754,9 +754,9 @@
                     { id: 'approach', from: 'A', to: 'F', w: HALF_W, gate: -1,
                       mid: [[372, 5, -160], [392, 8, -80]] },
                     { id: 'roof', from: 'F', to: 'M', w: HALF_W_SHORT, gate: 0, elev: true, short: true,
-                      fromDir: [-0.2, 0.1, 0.98],
+                      fromDir: [-0.7, 0.08, 0.7],
                       kickers: [{ f: 0.40, len: 22, h: 4.2 }], gaps: [{ f0: 0.455, f1: 0.55 }],
-                      mid: [[366, 14, 60], [372, 24, 130], [376, 32, 200], [356, 34, 258], [300, 30, 305]] },
+                      mid: [[344, 14, 46], [352, 24, 124], [364, 32, 200], [346, 34, 258], [312, 26, 300], [276, 16, 328]] },
                     { id: 'street', from: 'F', to: 'M', w: HALF_W, gate: 0,
                       mid: [[440, 10, 90], [452, 12, 200], [412, 14, 296], [335, 16, 350]] },
                     { id: 'plaza', from: 'M', to: 'G', w: HALF_W, gate: -1, tunnels: [{ f0: 0.36, f1: 0.66 }],
@@ -856,6 +856,7 @@
                     F:  { p: [300, 70, 20],    dir: [0, 0, 1] },
                     M:  { p: [150, 74, 262],   dir: [-1, 0, -0.28] },
                     S:  { p: [-80, 30, 258],   dir: [-1, 0, -0.1] },
+                    S2: { p: [60, 73.6, 258],   dir: [-1, 0, -0.04] },
                 },
                 edges: [
                     { id: 'start', from: 'P0', to: 'A', w: HALF_W, gate: -1,
@@ -864,26 +865,28 @@
                       mid: [[300, 64, -120], [306, 67, -50]] },
                     { id: 'court', from: 'F', to: 'M', w: HALF_W, gate: 0,
                       mid: [[362, 70, 90], [384, 72, 190], [332, 74, 272], [240, 74, 302]] },
-                    { id: 'gallery', from: 'F', to: 'M', w: HALF_W_MID, gate: 0, tunnels: [{ f0: 0.28, f1: 0.66 }],
-                      mid: [[296, 72, 80], [286, 74, 150], [252, 74, 222]] },
-                    { id: 'cable', from: 'F', to: 'M', w: 8, gate: 0, elev: true, short: true,
-                      fromDir: [-0.55, 0.1, 0.83], kickers: [{ f: 0.36, len: 22, h: 5 }], gaps: [{ f0: 0.42, f1: 0.55 }],
-                      mid: [[250, 80, 70], [210, 88, 120], [185, 84, 215], [175, 78, 250]] },
-                    { id: 'spiral', from: 'M', to: 'S', w: HALF_W_MID, gate: 1, elev: true,
-                      mid: arcPts(20, 190, 70, 90, 450, 74, 32, 18) },
+                    { id: 'gallery', from: 'F', to: 'M', w: HALF_W_MID, gate: 0, tunnels: [{ f0: 0.40, f1: 0.66 }],
+                      mid: [[296, 72, 80], [286, 73, 120], [263, 74, 220], [245, 74, 240]] },
+                    // the cable run swings west of the castle and merges onto the corkscrew's straight
+                    { id: 'cable', from: 'F', to: 'S2', w: 8, gate: 0, elev: true, short: true,
+                      kickers: [{ f: 0.443, len: 22, h: 5 }], gaps: [{ f0: 0.505, f1: 0.59 }],
+                      mid: [[212, 84, 150], [204, 88, 192], [202, 84, 232]] },
+                    { id: 'spiralA', from: 'M', to: 'S2', w: HALF_W_MID, gate: -1, elev: true, mid: [[105, 73.8, 260]] },
+                    { id: 'spiralB', from: 'S2', to: 'S', w: HALF_W_MID, gate: 1, elev: true,
+                      mid: arcPts(20, 190, 70, 90, 450, 73.4, 32, 18) },
                     { id: 'chasm', from: 'S', to: 'P0', w: HALF_W, gate: 2, elev: true,
-                      kickers: [{ f: 0.30, len: 22, h: 4.6 }], gaps: [{ f0: 0.345, f1: 0.42 }],
+                      kickers: [{ f: 0.30, len: 22, h: 4.6 }], gaps: [{ f0: 0.345, f1: 0.405 }],
                       mid: [[-160, 28, 200], [-200, 30, 90], [-212, 28, -40], [-190, 32, -120], [-150, 44, -200], [-100, 54, -262], [-50, 58, -292]] },
                 ],
-                lineS: 30, mainRoute: ['start', 'bridge1', 'court', 'spiral', 'chasm'],
+                lineS: 30, mainRoute: ['start', 'bridge1', 'court', 'spiralA', 'spiralB', 'chasm'],
                 terrain: {
                     base: -60, noise: [0.6, 0.3], seed: 0x5C1E5, ext: 760,
                     feats: [],
                     plats: [[70, -270, 120, 150, 60], [320, 160, 132, 150, 60], [20, 190, 92, 40, 30], [-190, -80, 86, 70, 40], [-100, 240, 88, 44, 30], [-560, 300, 100, 60, 60], [560, -420, 110, 70, 60], [-460, -460, 90, 50, 50], [520, 500, 96, 60, 50]],
                 },
                 water: [], ocean: null, voidY: -8, cloudSea: -14, ambience: 'feathers',
-                boxes: [{ e: 'start', f: 0.4 }, { e: 'bridge1', f: 0.5 }, { e: 'court', f: 0.35 }, { e: 'gallery', f: 0.15 }, { e: 'spiral', f: 0.4 }, { e: 'chasm', f: 0.2 }, { e: 'chasm', f: 0.8 }],
-                pads: [{ e: 'start', f: 0.7, lat: -4 }, { e: 'cable', f: 0.22, lat: 0 }, { e: 'court', f: 0.6, lat: 4 }, { e: 'gallery', f: 0.8, lat: 0 }, { e: 'spiral', f: 0.6, lat: -3 }, { e: 'chasm', f: 0.42, lat: 0 }],
+                boxes: [{ e: 'start', f: 0.4 }, { e: 'bridge1', f: 0.5 }, { e: 'court', f: 0.35 }, { e: 'gallery', f: 0.15 }, { e: 'spiralB', f: 0.4 }, { e: 'chasm', f: 0.2 }, { e: 'chasm', f: 0.8 }],
+                pads: [{ e: 'start', f: 0.7, lat: -4 }, { e: 'cable', f: 0.34, lat: 0 }, { e: 'court', f: 0.6, lat: 4 }, { e: 'gallery', f: 0.8, lat: 0 }, { e: 'spiralB', f: 0.6, lat: -3 }, { e: 'chasm', f: 0.22, lat: 0 }, { e: 'chasm', f: 0.6, lat: 3 }],
                 theme: {
                     skyTop: 0x3a78d8, skyMid: 0x9cc8ff, skyBot: 0xffd7a8, fog: 0xd8e4f8, fogNear: 380, fogFar: 1500, clear: 0xb8d0f4,
                     sun: 0xfff0c8, sunPos: [-300, 240, -420], sunInt: 1.1, hemiSky: 0xd8e8ff, hemiGround: 0x7a8a9a, hemiInt: 0.95,
@@ -982,11 +985,52 @@
             const ND = def.nodes;
             const resolveY = (p, off) => p[1] == null ? terrainSmooth(p[0], p[2]) + (off || 0) : p[1];
             for (const nd of Object.values(ND)) nd.p[1] = resolveY(nd.p, nd.yOff);
+            const mainSetB = new Set(def.mainRoute);
+            const mainOf = (list) => list.find((o) => mainSetB.has(o.id)) || list.reduce((x, y) => (y.w > x.w ? y : x));
+            const unit = (v) => { const l = Math.hypot(v[0], v[2]) || 1; return [v[0] / l, 0, v[2] / l]; };
+            // lane index of a branch among its siblings on the same side (outer branches get bigger offsets)
+            const laneIndex = (sibs, d, nodeP, dir, useLast, tw) => {
+                const n = [dir[2], 0, -dir[0]];
+                const keptMid = (o) => { const ms = useLast ? o.mid.slice().reverse() : o.mid; return ms.find((m) => Math.hypot(m[0] - nodeP[0], m[2] - nodeP[2]) > 110) || ms[ms.length - 1]; };
+                const latOf = (o) => { const m = keptMid(o); return (m[0] - nodeP[0]) * n[0] + (m[2] - nodeP[2]) * n[2]; };
+                const mine = latOf(d), side = mine < 0 ? -1 : 1;
+                const inner = sibs.filter((o) => o !== d && Math.sign(latOf(o)) === side && Math.abs(latOf(o)) < Math.abs(mine));
+                let l1 = tw - d.w, l2 = tw + 5 + d.w;
+                for (const o of inner) { l1 += 2 * o.w + 3; l2 += 2 * o.w + 4; }
+                return { side, n, l1: side * l1, l2: side * l2 };
+            };
             for (const d of def.edges) {
                 const a = ND[d.from], b = ND[d.to];
                 const lead = 34;
-                const ad = d.fromDir || a.dir, bd = d.toDir || b.dir;
-                const mids = d.mid.map((p) => [p[0], resolveY(p, d.yOff), p[2]]);
+                let ad = d.fromDir || a.dir, bd = d.toDir || b.dir;
+                let mids = d.mid.map((p) => [p[0], resolveY(p, d.yOff), p[2]]);
+                const dist2 = (m, q) => Math.hypot(m[0] - q[0], m[2] - q[2]);
+                // FORK: a non-main branch first runs a parallel lane beside the trunk, then peels away
+                const outs = def.edges.filter((o) => o.from === d.from);
+                if (outs.length > 1 && mainOf(outs) !== d && !d.rawFork) {
+                    const trunk = mainOf(outs), tw = trunk.w;
+                    const { n, l1, l2 } = laneIndex(outs.filter((o) => o !== trunk), d, a.p, unit(a.dir), false, tw);
+                    const dir = unit(a.dir);
+                    mids = mids.filter((m) => dist2(m, a.p) > 110);
+                    const y0 = a.p[1], y1 = mids.length ? mids[0][1] : b.p[1];
+                    mids.unshift(
+                        [a.p[0] + dir[0] * 38 + n[0] * l1, y0 + (y1 - y0) * 0.1, a.p[2] + dir[2] * 38 + n[2] * l1],
+                        [a.p[0] + dir[0] * 98 + n[0] * l2, y0 + (y1 - y0) * 0.38, a.p[2] + dir[2] * 98 + n[2] * l2]);
+                    ad = a.dir;
+                }
+                // MERGE: mirror — approach parallel beside the trunk, then join
+                const ins = def.edges.filter((o) => o.to === d.to);
+                if (ins.length > 1 && mainOf(ins) !== d && !d.rawMerge) {
+                    const trunk = mainOf(ins), tw = trunk.w;
+                    const { n, l1, l2 } = laneIndex(ins.filter((o) => o !== trunk), d, b.p, unit(b.dir), true, tw);
+                    const dir = unit(b.dir);
+                    mids = mids.filter((m) => dist2(m, b.p) > 110);
+                    const y0 = b.p[1], y1 = mids.length ? mids[mids.length - 1][1] : a.p[1];
+                    mids.push(
+                        [b.p[0] - dir[0] * 98 + n[0] * l2, y0 + (y1 - y0) * 0.38, b.p[2] - dir[2] * 98 + n[2] * l2],
+                        [b.p[0] - dir[0] * 38 + n[0] * l1, y0 + (y1 - y0) * 0.1, b.p[2] - dir[2] * 38 + n[2] * l1]);
+                    bd = b.dir;
+                }
                 const pts = [
                     [a.p[0] - ad[0] * lead, a.p[1] - ad[1] * lead, a.p[2] - ad[2] * lead],
                     a.p, ...mids, b.p,
@@ -1010,12 +1054,14 @@
                     const s0 = k.f * len, s1 = s0 + k.len;
                     for (let i = 0; i < n; i++) {
                         if (sArr[i] >= s0 && sArr[i] <= s1) {
-                            raw[i][1] += k.h * (sArr[i] - s0) / k.len;
+                            raw[i][1] += k.h * Math.pow((sArr[i] - s0) / k.len, 1.4);
                             kickF[i] = true; forceElev[i] = true;
                         }
                     }
                 }
                 for (const g of d.gaps || []) for (let i = 0; i < n; i++) if (sArr[i] > g.f0 * len && sArr[i] < g.f1 * len) gapF[i] = true;
+                const lipF = new Array(n).fill(false);
+                for (const k of d.kickers || []) { const s1 = k.f * len + k.len; for (let i = 0; i < n; i++) if (sArr[i] > s1 && sArr[i] < s1 + 14) lipF[i] = true; }
                 for (const t of d.tunnels || []) for (let i = 0; i < n; i++) if (sArr[i] > t.f0 * len && sArr[i] < t.f1 * len) tunF[i] = true;
                 const samples = new Array(n);
                 for (let i = 0; i < n; i++) {
@@ -1025,10 +1071,10 @@
                     let nx = tz, nz = -tx;
                     const nl = Math.hypot(nx, nz) || 1; nx /= nl; nz /= nl;
                     // bridges only where the road actually leaves the ground
-                    const throat = sArr[i] < 36 || len - sArr[i] < 36;
+                    const throat = sArr[i] < 44 || len - sArr[i] < 44;
                     const fe = forceElev[i] || (d.elev && !throat && raw[i][1] - terrainSmooth(raw[i][0], raw[i][2]) > 2.5);
-                    samples[i] = { x: raw[i][0], y: raw[i][1], z: raw[i][2], tx, ty, tz, nx, nz, s: sArr[i], bank: 0, curv: 0,
-                        elevated: false, forceElev: fe, gap: gapF[i], tunnel: tunF[i], kicker: kickF[i], cap: 1000, ei: 0, si: i };
+                    samples[i] = { x: raw[i][0], y: raw[i][1], z: raw[i][2], tx, ty, tz, nx, nz, s: sArr[i], bank: 0, curv: 0, w: d.w,
+                        elevated: false, forceElev: fe, gap: gapF[i], tunnel: tunF[i], kicker: kickF[i], lip: lipF[i], cap: 1000, ei: 0, si: i };
                 }
                 for (let i = 1; i < n - 1; i++) {
                     const a2 = samples[i - 1], b2 = samples[i + 1];
@@ -1068,6 +1114,16 @@
             }
             TRACK.edges.forEach((e, i) => { TRACK.byId[e.id] = i; e.samples.forEach((sm) => sm.ei = i); });
             const E = TRACK.edges;
+            // width funnels: a narrow shortcut opens out to the width of the road it leaves / joins
+            for (const e of E) {
+                const inW = Math.max(...E.filter((o) => o.to === e.from).map((o) => o.w), 0), outW = Math.max(...E.filter((o) => o.from === e.to).map((o) => o.w), 0);
+                for (const sm of e.samples) {
+                    let w = e.w;
+                    if (inW > e.w && sm.s < 60) w = lerp(inW, e.w, smoothstep(0, 60, sm.s));
+                    if (outW > e.w && e.len - sm.s < 60) w = Math.max(w, lerp(outW, e.w, smoothstep(0, 60, e.len - sm.s)));
+                    sm.w = w;
+                }
+            }
             const mainSet = new Set(def.mainRoute);
             for (const e of E) {
                 e.next = E.filter((o) => o.from === e.to).map((o) => E.indexOf(o));
@@ -1086,8 +1142,11 @@
             }
             TRACK.lapRef = def.mainRoute.reduce((a, id) => a + E[TRACK.byId[id]].len, 0);
             TRACK.numGates = E.reduce((m, e) => Math.max(m, e.gate + 1), 0);
+            snapThroats();
             buildSpatialHash();
             markElevated();
+            markShared();
+            markWalls();
         }
         function buildSpatialHash() {
             TRACK.hash.clear();
@@ -1129,6 +1188,85 @@
                     for (let j = -12; j <= 12; j++) {
                         const k2 = si + j;
                         if (k2 >= 0 && k2 < flags.length && flags[k2]) { sm.elevated = true; return; }
+                    }
+                });
+            });
+        }
+        // a sample is `shared` where a different, non-collinear road runs within
+        // 22u at a similar height (fork throats, merges, side-by-side lanes):
+        // rails, curbs, lamps and posts stop there instead of cutting across
+        // where roads share a node, the narrower/branching road takes the trunk's
+        // surface height while it still overlaps it, then ramps to its own grade —
+        // no step between overlapping decks at forks and merges
+        function snapThroats() {
+            const E = TRACK.edges;
+            const mainSet = new Set(TRACK.def.mainRoute);
+            // nearest sample of `ref` within its own throat, returning the surface height there
+            const surfaceOf = (ref, x, z, side) => {
+                let best = null, bd = Infinity;
+                const n = ref.samples.length;
+                const lo = side === 'start' ? 0 : Math.max(0, n - 44), hi = side === 'start' ? Math.min(n, 44) : n;
+                for (let i = lo; i < hi; i++) { const o = ref.samples[i]; const d = (o.x - x) ** 2 + (o.z - z) ** 2; if (d < bd) { bd = d; best = o; } }
+                if (!best) return null;
+                const lat = (x - best.x) * best.nx + (z - best.z) * best.nz, along = (x - best.x) * best.tx + (z - best.z) * best.tz;
+                if (Math.abs(lat) > best.w + 1.5 || Math.abs(along) > 4) return null;
+                return best.y + best.bank * lat + best.ty * along;
+            };
+            // siblings leaving the same node (or arriving at the same node) share a
+            // surface while they still overlap: the narrower / non-main one follows
+            const pickRef = (list, e) => list.filter((o) => o !== e && (o.w > e.w || (o.w === e.w && mainSet.has(o.id) && !mainSet.has(e.id)))).sort((a, b) => b.w - a.w)[0];
+            for (const e of E) {
+                const refIn = pickRef(E.filter((o) => o.from === e.from), e), refOut = pickRef(E.filter((o) => o.to === e.to), e);
+                for (const sm of e.samples) {
+                    if (sm.kicker) continue;
+                    if (refIn && sm.s < 95) { const sy = surfaceOf(refIn, sm.x, sm.z, 'start'); if (sy != null) sm.y = lerp(sy, sm.y, smoothstep(14, 95, sm.s)); }
+                    if (refOut && e.len - sm.s < 95) { const sy = surfaceOf(refOut, sm.x, sm.z, 'end'); if (sy != null) sm.y = lerp(sy, sm.y, smoothstep(14, 95, e.len - sm.s)); }
+                }
+            }
+            // grade limiter: no road steeper than 22% (kicker lips excepted) —
+            // forward then backward so climbs and descents both ease in
+            const MAXG = 0.22;
+            for (const e of E) {
+                const S = e.samples, n = S.length;
+                const ok = (i) => !S[i].kicker && !S[i].gap;
+                for (let i = 1; i < n; i++) { if (!ok(i) || !ok(i - 1)) continue; const ds = S[i].s - S[i - 1].s; S[i].y = clamp(S[i].y, S[i - 1].y - MAXG * ds, S[i - 1].y + MAXG * ds); }
+                for (let i = n - 2; i >= 0; i--) { if (!ok(i) || !ok(i + 1)) continue; const ds = S[i + 1].s - S[i].s; S[i].y = clamp(S[i].y, S[i + 1].y - MAXG * ds, S[i + 1].y + MAXG * ds); }
+                for (let i = 0; i < n; i++) {
+                    const a = S[Math.max(0, i - 1)], b = S[Math.min(n - 1, i + 1)], sm = S[i];
+                    let tx = b.x - a.x, ty = b.y - a.y, tz = b.z - a.z; const tl = Math.hypot(tx, ty, tz) || 1;
+                    sm.tx = tx / tl; sm.ty = ty / tl; sm.tz = tz / tl;
+                }
+            }
+        }
+        function markWalls() {
+            for (const e of TRACK.edges) for (const sm of e.samples) {
+                sm.wall = [false, false];
+                if (sm.gap) continue;
+                for (const sd of [-1, 1]) {
+                    const ex = sm.x + sm.nx * sd * (sm.w + 9), ez = sm.z + sm.nz * sd * (sm.w + 9);
+                    const drop = sm.y + sm.bank * sd * sm.w - terrainY(ex, ez);
+                    sm.wall[sd < 0 ? 0 : 1] = drop > 6;
+                }
+            }
+        }
+        function markShared() {
+            TRACK.edges.forEach((e, ei) => {
+                e.samples.forEach((sm) => {
+                    sm.shared = false;
+                    const cx = Math.floor(sm.x / TRACK.cell), cz = Math.floor(sm.z / TRACK.cell);
+                    for (let ix = -2; ix <= 2 && !sm.shared; ix++) for (let iz = -2; iz <= 2 && !sm.shared; iz++) {
+                        const arr = TRACK.hash.get((cx + ix + 200) * 4096 + (cz + iz + 200));
+                        if (!arr) continue;
+                        for (let q = 0; q < arr.length; q++) {
+                            const ej = (arr[q] / 100000) | 0, sj = arr[q] % 100000;
+                            if (ej === ei) continue;
+                            const o = TRACK.edges[ej].samples[sj];
+                            const dx = sm.x - o.x, dz = sm.z - o.z;
+                            if (dx * dx + dz * dz > 22 * 22 || Math.abs(sm.y - o.y) > 7) continue;
+                            const dot = sm.tx * o.tx + sm.tz * o.tz;
+                            const lat = dx * o.nx + dz * o.nz;
+                            if (dot < 0.94 || Math.abs(lat) > 2.5 || TRACK.edges[ej].w > e.w + 0.5) { sm.shared = true; break; }   // a narrower lane merged into a wider road keeps no rails of its own
+                        }
                     }
                 });
             });
@@ -1184,7 +1322,7 @@
                     const along = dx * sm.tx + dz * sm.tz;
                     if (Math.abs(along) > SAMPLE_STEP * 1.4) continue;
                     const lat = dx * sm.nx + dz * sm.nz;
-                    if (Math.abs(lat) > e.w + 2.2) continue;
+                    if (Math.abs(lat) > sm.w + 2.2) continue;
                     const sy = sm.y + sm.ty * along + sm.bank * lat;
                     if (sy > y + stepUp) continue;
                     if (y - sy > (sm.tunnel ? 4 : 14)) continue;
@@ -1222,6 +1360,48 @@
         //  RENDERER / SCENE
         // ===================================================================
         const isTouch = window.matchMedia && window.matchMedia('(pointer: coarse)').matches;
+        // ---- post: a small bloom (bright-pass → ¼-res blur → additive) on the high tier ----
+        const POST = { on: false };
+        function initPost() {
+            POST.on = gfxHigh;
+            if (!POST.on) return;
+            const w = window.innerWidth, h = window.innerHeight;
+            const opts = { minFilter: THREE.LinearFilter, magFilter: THREE.LinearFilter, format: THREE.RGBAFormat, type: THREE.UnsignedByteType, depthBuffer: true };
+            POST.rtScene = new THREE.WebGLRenderTarget(w * curDPR, h * curDPR, opts);
+            POST.rtA = new THREE.WebGLRenderTarget(Math.floor(w / 4), Math.floor(h / 4), { minFilter: THREE.LinearFilter, magFilter: THREE.LinearFilter, depthBuffer: false });
+            POST.rtB = new THREE.WebGLRenderTarget(Math.floor(w / 4), Math.floor(h / 4), { minFilter: THREE.LinearFilter, magFilter: THREE.LinearFilter, depthBuffer: false });
+            POST.cam = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
+            POST.scene = new THREE.Scene();
+            const vs = 'varying vec2 vUv; void main(){ vUv = uv; gl_Position = vec4(position.xy, 0.0, 1.0); }';
+            POST.bright = new THREE.ShaderMaterial({ uniforms: { tex: { value: null }, thr: { value: 0.72 } }, vertexShader: vs, depthTest: false, depthWrite: false,
+                fragmentShader: 'uniform sampler2D tex; uniform float thr; varying vec2 vUv; void main(){ vec4 c = texture2D(tex, vUv); float l = dot(c.rgb, vec3(0.3,0.59,0.11)); float k = smoothstep(thr, 1.0, l); gl_FragColor = vec4(c.rgb * k, 1.0); }' });
+            POST.blur = new THREE.ShaderMaterial({ uniforms: { tex: { value: null }, dir: { value: new THREE.Vector2(1, 0) } }, vertexShader: vs, depthTest: false, depthWrite: false,
+                fragmentShader: 'uniform sampler2D tex; uniform vec2 dir; varying vec2 vUv; void main(){ vec4 s = vec4(0.0); float w[5]; w[0]=0.227; w[1]=0.194; w[2]=0.121; w[3]=0.054; w[4]=0.016; s += texture2D(tex, vUv) * w[0]; for (int i = 1; i < 5; i++) { s += texture2D(tex, vUv + dir * float(i)) * w[i]; s += texture2D(tex, vUv - dir * float(i)) * w[i]; } gl_FragColor = s; }' });
+            POST.comp = new THREE.ShaderMaterial({ uniforms: { tex: { value: null }, bloom: { value: null }, strength: { value: 0.6 } }, vertexShader: vs, depthTest: false, depthWrite: false,
+                fragmentShader: 'uniform sampler2D tex; uniform sampler2D bloom; uniform float strength; varying vec2 vUv; void main(){ vec4 c = texture2D(tex, vUv); vec4 b = texture2D(bloom, vUv); gl_FragColor = vec4(c.rgb + b.rgb * strength, 1.0); }' });
+            POST.quad = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), POST.bright);
+            POST.scene.add(POST.quad);
+        }
+        function resizePost() {
+            if (!POST.on) return;
+            const w = window.innerWidth, h = window.innerHeight;
+            POST.rtScene.setSize(w * curDPR, h * curDPR);
+            POST.rtA.setSize(Math.floor(w / 4), Math.floor(h / 4)); POST.rtB.setSize(Math.floor(w / 4), Math.floor(h / 4));
+        }
+        function renderFrame() {
+            if (!POST.on) { renderer.render(scene, camera); return; }
+            renderer.setRenderTarget(POST.rtScene); renderer.render(scene, camera);
+            const q = POST.quad;
+            q.material = POST.bright; POST.bright.uniforms.tex.value = POST.rtScene.texture;
+            renderer.setRenderTarget(POST.rtA); renderer.render(POST.scene, POST.cam);
+            q.material = POST.blur; POST.blur.uniforms.tex.value = POST.rtA.texture; POST.blur.uniforms.dir.value.set(1.6 / POST.rtA.width, 0);
+            renderer.setRenderTarget(POST.rtB); renderer.render(POST.scene, POST.cam);
+            POST.blur.uniforms.tex.value = POST.rtB.texture; POST.blur.uniforms.dir.value.set(0, 1.6 / POST.rtA.height);
+            renderer.setRenderTarget(POST.rtA); renderer.render(POST.scene, POST.cam);
+            q.material = POST.comp; POST.comp.uniforms.tex.value = POST.rtScene.texture; POST.comp.uniforms.bloom.value = POST.rtA.texture;
+            POST.comp.uniforms.strength.value = THEME.night ? 0.8 : 0.45;
+            renderer.setRenderTarget(null); renderer.render(POST.scene, POST.cam);
+        }
         function initThree() {
             renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
             renderer.setPixelRatio(curDPR);
@@ -1246,6 +1426,7 @@
             scene.add(sun); scene.add(sun.target);
             window.addEventListener('resize', onResize);
             buildParticles();
+            initPost();
         }
         function applyTheme() {
             const T = THEME;
@@ -1520,12 +1701,13 @@
             buildStartGantry();
             buildItemBoxes();
             buildBoostPads();
+            buildForkSigns();
             SCENERY[TRACK.def.scenery]();
             buildAmbience();
             buildMapBg();
         }
         function buildTerrainMesh() {
-            const T = THEME, EXT = TRACK.def.terrain.ext, R = 180;
+            const T = THEME, EXT = TRACK.def.terrain.ext, R = 236;
             const g = new THREE.BufferGeometry();
             const pos = new Float32Array((R + 1) * (R + 1) * 3), col = new Float32Array((R + 1) * (R + 1) * 3), uv = new Float32Array((R + 1) * (R + 1) * 2);
             const idx = [];
@@ -1558,7 +1740,7 @@
             g.setIndex(idx);
             g.computeVertexNormals();
             const m = new THREE.Mesh(g, new THREE.MeshLambertMaterial({ vertexColors: true, map: TEX.ground }));
-            m.receiveShadow = true;
+            m.receiveShadow = true; m.userData.road = true;
             world.add(m);
         }
         function buildRoads() {
@@ -1573,12 +1755,12 @@
                 const isDirt = e.dirt;
                 const P = isDirt ? dirtPos : asphaltPos, U = isDirt ? dirtUv : asphaltUv, C = isDirt ? dirtCol : asphaltCol, I = isDirt ? dirtIdx : asphaltIdx;
                 const n = e.samples.length;
-                const lift = 0.15;
+                const lift = 0.15 + (TRACK.edges.indexOf(e) % 6) * 0.02;
                 const rowBase = [];
                 for (let i = 0; i < n; i++) {
                     const sm = e.samples[i];
                     rowBase.push(P.length / 3);
-                    const bands = [-e.w, -e.w * 0.5, 0, e.w * 0.5, e.w];
+                    const bands = [-sm.w, -sm.w * 0.5, 0, sm.w * 0.5, sm.w];
                     for (let b = 0; b < bands.length; b++) {
                         roadPoint(sm, bands[b], vA);
                         P.push(vA.x, vA.y + lift, vA.z);
@@ -1593,14 +1775,14 @@
                     // curbs + skirts
                     const cb = P === asphaltPos ? curbPos : curbPos;
                     const cbase = curbPos.length / 3;
-                    const cbands = [[-e.w - 2.0, -1.0, cSk], [-e.w - 0.2, 0.22, null], [-e.w, 0.22, null], [e.w, 0.22, null], [e.w + 0.2, 0.22, null], [e.w + 2.0, -1.0, cSk]];
+                    const cbands = [[-sm.w - 2.0, -1.0, cSk], [-sm.w - 0.2, 0.22, null], [-sm.w, 0.22, null], [sm.w, 0.22, null], [sm.w + 0.2, 0.22, null], [sm.w + 2.0, -1.0, cSk]];
                     for (let b = 0; b < cbands.length; b++) {
                         roadPoint(sm, cbands[b][0], vA);
                         curbPos.push(vA.x, vA.y + cbands[b][1], vA.z);
                         const cc = cbands[b][2] || (((i >> 2) & 1) ? cA : cB);
                         curbCol.push(cc.r, cc.g, cc.b);
                     }
-                    if (i > 0 && !sm.gap && !e.samples[i - 1].gap) {
+                    if (i > 0 && !sm.gap && !e.samples[i - 1].gap && !sm.shared && !e.samples[i - 1].shared) {
                         const pb = cbase - 6;
                         for (let b = 0; b < 5; b++) {
                             if (b === 2) continue;   // the road surface itself covers -w..w
@@ -1627,9 +1809,35 @@
                 const mat = THEME.night ? new THREE.MeshPhongMaterial({ map: tex, vertexColors: true, side: THREE.DoubleSide, shininess: 70, specular: 0x556688, envMap: _kartEnv || null, reflectivity: 0.12, combine: THREE.MixOperation })
                     : new THREE.MeshLambertMaterial({ map: tex, vertexColors: true, side: THREE.DoubleSide });
                 const m = new THREE.Mesh(g, mat);
-                m.receiveShadow = true;
+                m.receiveShadow = true; m.userData.road = true;
                 world.add(m);
             };
+            // gore fill: asphalt wedge between a trunk's edge and each branch's inner edge
+            {
+                const mainSetG = new Set(TRACK.def.mainRoute);
+                const gp = [], gu = [], gc = [], gi2 = [];
+                const wedge = (trunk, branch, atStart) => {
+                    const base = gp.length / 3;
+                    let rows = 0;
+                    for (let s = 0; s <= 112; s += 4) {
+                        const ts = atStart ? s : trunk.len - s, bs = atStart ? s : branch.len - s;
+                        if (ts < 0 || ts > trunk.len || bs < 0 || bs > branch.len) break;
+                        const tsm = sampleAtS(trunk, ts), bsm = sampleAtS(branch, bs);
+                        const side = Math.sign((bsm.x - tsm.x) * tsm.nx + (bsm.z - tsm.z) * tsm.nz) || 1;
+                        roadPoint(tsm, side * tsm.w, vA); gp.push(vA.x, vA.y + 0.19, vA.z); gu.push(0.22, ts / 40); gc.push(1, 1, 1);
+                        roadPoint(bsm, -side * bsm.w, vA); gp.push(vA.x, vA.y + 0.19, vA.z); gu.push(0.36, bs / 40); gc.push(1, 1, 1);
+                        rows++;
+                    }
+                    for (let r = 0; r < rows - 1; r++) { const a = base + r * 2, c = a + 2; gi2.push(a, c, a + 1, a + 1, c, c + 1); }
+                };
+                for (const e of TRACK.edges) {
+                    const outs = TRACK.edges.filter((o) => o.from === e.from);
+                    if (outs.length > 1 && !mainSetG.has(e.id)) { const trunk = outs.find((o) => mainSetG.has(o.id)) || outs.reduce((x, y) => (y.w > x.w ? y : x)); if (trunk !== e) wedge(trunk, e, true); }
+                    const ins = TRACK.edges.filter((o) => o.to === e.to);
+                    if (ins.length > 1 && !mainSetG.has(e.id)) { const trunk = ins.find((o) => mainSetG.has(o.id)) || ins.reduce((x, y) => (y.w > x.w ? y : x)); if (trunk !== e) wedge(trunk, e, false); }
+                }
+                if (gi2.length) { const g = new THREE.BufferGeometry(); g.setAttribute('position', new THREE.Float32BufferAttribute(gp, 3)); g.setAttribute('uv', new THREE.Float32BufferAttribute(gu, 2)); g.setAttribute('color', new THREE.Float32BufferAttribute(gc, 3)); g.setIndex(gi2); g.computeVertexNormals(); const m = new THREE.Mesh(g, new THREE.MeshLambertMaterial({ map: TEX.road, vertexColors: true, side: THREE.DoubleSide })); m.name = 'gore'; m.userData.road = true; m.receiveShadow = true; world.add(m); }
+            }
             mk(asphaltPos, asphaltUv, asphaltCol, asphaltIdx, TEX.road);
             mk(dirtPos, dirtUv, dirtCol, dirtIdx, TEX.dirt);
             const cg = new THREE.BufferGeometry();
@@ -1637,7 +1845,7 @@
             cg.setAttribute('color', new THREE.Float32BufferAttribute(curbCol, 3));
             cg.setIndex(curbIdx); cg.computeVertexNormals();
             const cm = new THREE.Mesh(cg, new THREE.MeshLambertMaterial({ vertexColors: true, side: THREE.DoubleSide }));
-            cm.receiveShadow = true;
+            cm.receiveShadow = true; cm.userData.road = true;
             world.add(cm);
         }
         // decks (skirt + underside) for bridge runs, pillars, guardrails, gap end-caps
@@ -1645,20 +1853,21 @@
             const vA = new THREE.Vector3();
             const pos = [], col = [], idx = [];
             const side = new THREE.Color(THEME.night ? 0x3a3f52 : 0x7b8494), bot = new THREE.Color(THEME.night ? 0x2a2d3a : 0x555b68);
-            const bake = makeBaker();
+            const bake = makeBaker(), capBake = makeBaker(), pillarBake = makeBaker();
+            const rpos = [], rcol = [], ridx = [];
             for (const e of TRACK.edges) {
                 const runs = [];
                 let run = null;
                 e.samples.forEach((sm, i) => {
-                    const on = sm.elevated && !sm.gap;
+                    const on = sm.elevated && !sm.gap && !sm.shared;
                     if (on && !run) run = [i, i];
                     if (on && run) run[1] = i;
                     if (!on && run) { runs.push(run); run = null; }
                 });
                 if (run) runs.push(run);
                 const bands = [
-                    { lat: -e.w - 2.0, dy: -0.9, c: side }, { lat: -e.w - 1.6, dy: -2.4, c: side },
-                    { lat: e.w + 1.6, dy: -2.4, c: bot }, { lat: e.w + 2.0, dy: -0.9, c: side },
+                    { lat: -2.0, dy: -0.9, c: side }, { lat: -1.6, dy: -2.4, c: side },
+                    { lat: 1.6, dy: -2.4, c: bot }, { lat: 2.0, dy: -0.9, c: side },
                 ];
                 for (const [a, b] of runs) {
                     const base = pos.length / 3;
@@ -1666,7 +1875,7 @@
                     for (let i = a; i <= b; i++) {
                         const sm = e.samples[i];
                         for (const bd of bands) {
-                            roadPoint(sm, bd.lat, vA);
+                            roadPoint(sm, bd.lat + Math.sign(bd.lat) * sm.w, vA);
                             pos.push(vA.x, vA.y + bd.dy, vA.z);
                             col.push(bd.c.r, bd.c.g, bd.c.b);
                         }
@@ -1681,42 +1890,81 @@
                         const sm = e.samples[i];
                         const isGapEdge = (i === b && b + 1 < e.samples.length && e.samples[b + 1].gap) || (i === a && a > 0 && e.samples[a - 1].gap);
                         if (!isGapEdge) continue;
-                        bake.add(GEO.box, mat4(sm.x, sm.y - 1.0, sm.z, Math.atan2(sm.tx, sm.tz), e.w * 2 + 4, 2.6, 1.2), 0x6a7080);
+                        capBake.add(GEO.box, mat4(sm.x, sm.y - 2.6, sm.z, Math.atan2(sm.tx, sm.tz), sm.w * 2 + 4, 2.2, 1.2, 0, Math.atan(sm.bank)), 0x6a7080);
                     }
                 }
                 // pillars under decks (planted on true ground, never on a road below)
                 for (let i = 0; i < e.samples.length; i += 9) {
                     const sm = e.samples[i];
-                    if (!sm.elevated || sm.gap) continue;
-                    const under = nearestSample(sm.x, 0, sm.z, 24, true);
-                    if (under) {
-                        const ulat = (sm.x - under.sm.x) * under.sm.nx + (sm.z - under.sm.z) * under.sm.nz;
-                        if (Math.abs(ulat) < under.edge.w + 3) continue;
-                    }
-                    const gy = terrainY(sm.x, sm.z);
-                    if (gy < TRACK.def.voidY + 4) continue;   // over the void: sky bridges float
-                    const h = Math.max(1, sm.y - 1.4 - gy);
-                    const pc = THEME.night ? 0x4a4f62 : 0x9aa0ad;
-                    bake.add(GEO.cyl8, mat4(sm.x, gy + h / 2, sm.z, 0, 3.2, h, 3.2), pc);
-                    bake.add(GEO.box, mat4(sm.x, sm.y - 1.9, sm.z, Math.atan2(sm.tx, sm.tz), e.w * 2 + 3, 1.0, 3.6), THEME.night ? 0x3a3f52 : 0x848a98);
-                }
-                // guardrails: bridges, cliff drops and the outside of banked bends
-                for (let i = 0; i < e.samples.length; i += 3) {
-                    const sm = e.samples[i];
-                    if (sm.gap || sm.tunnel) continue;
-                    for (const sd of [-1, 1]) {
-                        const ex = sm.x + sm.nx * sd * (e.w + 9), ez = sm.z + sm.nz * sd * (e.w + 9);
-                        const ey = sm.y + sm.bank * sd * e.w;
-                        const drop = ey - terrainY(ex, ez);
-                        const banked = sm.bank * sd < -0.16;
-                        if (drop > 6 || sm.elevated || banked) {
-                            const px = sm.x + sm.nx * sd * (e.w + 0.9), pz = sm.z + sm.nz * sd * (e.w + 0.9);
-                            const py = sm.y + sm.bank * sd * (e.w + 0.9);
-                            bake.add(GEO.box, mat4(px, py + 0.6, pz, 0, 0.42, 1.5, 0.42), 0xdde3ee);
-                            bake.add(GEO.box, mat4(px, py + 1.2, pz, Math.atan2(sm.tx, sm.tz), 0.3, 0.34, SAMPLE_STEP * 3 + 0.6, -Math.atan2(sm.ty, 1)), sd > 0 ? 0xd23c3c : 0xd23c3c);
+                    if (!sm.elevated || sm.gap || sm.shared) continue;
+                    // never plant a pillar through ANY road below this deck (stacked decks included)
+                    let blocked = false;
+                    {
+                        const cx = Math.floor(sm.x / TRACK.cell), cz = Math.floor(sm.z / TRACK.cell);
+                        for (let ix = -2; ix <= 2 && !blocked; ix++) for (let iz = -2; iz <= 2 && !blocked; iz++) {
+                            const arr = TRACK.hash.get((cx + ix + 200) * 4096 + (cz + iz + 200));
+                            if (!arr) continue;
+                            for (let q = 0; q < arr.length; q++) {
+                                const o = TRACK.edges[(arr[q] / 100000) | 0].samples[arr[q] % 100000];
+                                if (o === sm || o.y > sm.y - 1.5) continue;
+                                const ulat = (sm.x - o.x) * o.nx + (sm.z - o.z) * o.nz, ual = (sm.x - o.x) * o.tx + (sm.z - o.z) * o.tz;
+                                if (Math.abs(ulat) < o.w + 3.5 && Math.abs(ual) < 4) { blocked = true; break; }
+                            }
                         }
                     }
+                    if (blocked) continue;
+                    const gy = terrainY(sm.x, sm.z);
+                    if (gy < TRACK.def.voidY + 4 || gy > sm.y - 3) continue;   // over the void (sky bridges float) or buried in a slope
+                    const h = sm.y - 1.4 - gy;
+                    if (h < 6) continue;
+                    const pc = THEME.night ? 0x4a4f62 : 0x9aa0ad;
+                    pillarBake.add(GEO.cyl8, mat4(sm.x, gy + h / 2, sm.z, 0, 3.2, h, 3.2), pc);
+                    pillarBake.add(GEO.box, mat4(sm.x, sm.y - 2.8, sm.z, Math.atan2(sm.tx, sm.tz), sm.w * 2 - 2, 1.0, 3.6, 0, Math.atan(sm.bank)), THEME.night ? 0x3a3f52 : 0x848a98);
                 }
+                // guardrails: continuous ribbons along bridges, cliff drops and the
+                // outside of banked bends — they follow every curve and slope, and
+                // stop where another road shares the surface
+                for (const sd of [-1, 1]) {
+                    let run = null;
+                    const flush = () => {
+                        if (!run || run.length < 3) { run = null; return; }
+                        const base = rpos.length / 3;
+                        for (const sm of run) {
+                            const lat = sd * (sm.w + 0.9);
+                            const px = sm.x + sm.nx * lat, pz = sm.z + sm.nz * lat, py = sm.y + sm.bank * lat;
+                            rpos.push(px, py + 1.05, pz, px, py + 1.45, pz, px, py + 0.45, pz, px, py + 0.72, pz);
+                            rcol.push(0.83, 0.24, 0.24, 0.83, 0.24, 0.24, 0.93, 0.95, 0.98, 0.93, 0.95, 0.98);
+                        }
+                        for (let i = 0; i < run.length - 1; i++) {
+                            const a = base + i * 4, b = a + 4;
+                            ridx.push(a, b, a + 1, a + 1, b, b + 1, a + 2, b + 2, a + 3, a + 3, b + 2, b + 3);
+                        }
+                        for (let i = 0; i < run.length; i += 4) {
+                            const sm = run[i], lat = sd * (sm.w + 0.9);
+                            bake.add(GEO.box, mat4(sm.x + sm.nx * lat, sm.y + sm.bank * lat + 0.72, sm.z + sm.nz * lat, Math.atan2(sm.tx, sm.tz), 0.36, 1.45, 0.36), 0xdde3ee);
+                        }
+                        run = null;
+                    };
+                    for (let i = 0; i < e.samples.length; i++) {
+                        const sm = e.samples[i];
+                        let on = !sm.gap && !sm.tunnel && !sm.shared;
+                        if (on) {
+                            const ex = sm.x + sm.nx * sd * (e.w + 9), ez = sm.z + sm.nz * sd * (e.w + 9);
+                            const drop = sm.y + sm.bank * sd * e.w - terrainY(ex, ez);
+                            on = drop > 6 || sm.elevated || sm.bank * sd < -0.16;
+                        }
+                        if (on) { if (!run) run = []; run.push(sm); } else flush();
+                    }
+                    flush();
+                }
+            }
+            if (ridx.length) {
+                const g = new THREE.BufferGeometry();
+                g.setAttribute('position', new THREE.Float32BufferAttribute(rpos, 3));
+                g.setAttribute('color', new THREE.Float32BufferAttribute(rcol, 3));
+                g.setIndex(ridx); g.computeVertexNormals();
+                const m = new THREE.Mesh(g, new THREE.MeshLambertMaterial({ vertexColors: true, side: THREE.DoubleSide }));
+                m.name = 'rails'; m.castShadow = gfxHigh; world.add(m);
             }
             if (idx.length) {
                 const g = new THREE.BufferGeometry();
@@ -1724,10 +1972,12 @@
                 g.setAttribute('color', new THREE.Float32BufferAttribute(col, 3));
                 g.setIndex(idx); g.computeVertexNormals();
                 const m = new THREE.Mesh(g, new THREE.MeshLambertMaterial({ vertexColors: true, side: THREE.DoubleSide }));
-                m.castShadow = gfxHigh; m.receiveShadow = true;
+                m.name = 'decks'; m.castShadow = gfxHigh; m.receiveShadow = true;
                 world.add(m);
             }
-            if (bake.count()) { const m = bake.mesh(); m.castShadow = gfxHigh; m.receiveShadow = true; world.add(m); }
+            if (bake.count()) { const m = bake.mesh(); m.name = 'railPosts'; m.castShadow = gfxHigh; m.receiveShadow = true; world.add(m); }
+            if (capBake.count()) { const m = capBake.mesh(); m.name = 'gapCaps'; world.add(m); }
+            if (pillarBake.count()) { const m = pillarBake.mesh(); m.name = 'pillars'; m.castShadow = gfxHigh; world.add(m); }
         }
         // tunnel tubes: arch segments around tunnel samples, portal rings,
         // emissive ceiling strips (animated in the city)
@@ -1753,7 +2003,7 @@
                         for (let q = 0; q <= SEGS; q++) {
                             const a = Math.PI * q / SEGS;
                             const lx = Math.cos(a) * R, ly = Math.sin(a) * H;
-                            pos.push(sm.x + sm.nx * lx, sm.y + ly - 0.6, sm.z + sm.nz * lx);
+                            pos.push(sm.x + sm.nx * lx, sm.y + sm.bank * clamp(lx, -e.w, e.w) + ly - 0.6, sm.z + sm.nz * lx);
                             const sh = 0.75 + 0.25 * Math.sin(a);
                             col.push(wallC.r * sh, wallC.g * sh, wallC.b * sh);
                             uv.push(a / Math.PI * 3, sm.s / 10);
@@ -1767,6 +2017,7 @@
                     }
                     for (const k of [i, Math.max(i, j - 1)]) {
                         const sm = e.samples[k];
+                        if (sm.shared) continue;
                         const yaw = Math.atan2(sm.tx, sm.tz);
                         bake.add(GEO.box, mat4(sm.x + sm.nx * (e.w + 4.6), sm.y + 5.2, sm.z + sm.nz * (e.w + 4.6), yaw, 3.6, 11, 3.2), ringC);
                         bake.add(GEO.box, mat4(sm.x - sm.nx * (e.w + 4.6), sm.y + 5.2, sm.z - sm.nz * (e.w + 4.6), yaw, 3.6, 11, 3.2), ringC);
@@ -1782,10 +2033,10 @@
                 g.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
                 g.setIndex(idx); g.computeVertexNormals();
                 const m = new THREE.Mesh(g, new THREE.MeshLambertMaterial({ vertexColors: true, map: TEX.stone, side: THREE.DoubleSide }));
-                world.add(m);
+                m.name = 'tunnelTube'; world.add(m);
             }
-            if (bake.count()) { const m = bake.mesh(); m.castShadow = gfxHigh; world.add(m); }
-            if (glow.count()) { const gm = glow.mesh(new THREE.MeshBasicMaterial({ vertexColors: true })); world.add(gm); WORLD.tunnelLights.push(gm); }
+            if (bake.count()) { const m = bake.mesh(); m.name = 'portals'; m.castShadow = gfxHigh; world.add(m); }
+            if (glow.count()) { const gm = glow.mesh(new THREE.MeshBasicMaterial({ vertexColors: true })); gm.name = 'tunnelGlow'; world.add(gm); WORLD.tunnelLights.push(gm); }
         }
         function buildWaterAndLava() {
             const def = TRACK.def;
@@ -1885,7 +2136,7 @@
             const bake = makeBaker();
             for (const sd of [-1, 1]) bake.add(GEO.box, mat4(ls.x + ls.nx * sd * (st.w + 2.6), ls.y + 6, ls.z + ls.nz * sd * (st.w + 2.6), yaw, 1.6, 12, 1.6), 0xf2f4f8);
             bake.add(GEO.box, mat4(ls.x, ls.y + 12.6, ls.z, yaw, (st.w + 2.6) * 2 + 1.6, 2.6, 2.0), 0x1a2238);
-            const gm = bake.mesh(); gm.castShadow = gfxHigh; world.add(gm);
+            const gm = bake.mesh(); gm.name = 'gantry'; gm.castShadow = gfxHigh; world.add(gm);
             const ban = new THREE.Mesh(new THREE.PlaneGeometry((st.w + 2.6) * 2, 4.2), new THREE.MeshBasicMaterial({ map: TEX.banner, side: THREE.DoubleSide }));
             ban.position.set(ls.x, ls.y + 12.6, ls.z); ban.rotation.y = yaw; world.add(ban);
             // lap counter lights on the gantry
@@ -1915,7 +2166,7 @@
                     gs.add(GEO.box, mat4(bx, gy + 9.2, bz, yaw, 10.5, 0.5, 14.5, 0, -sd * 0.12), 0xffd54a);
                 }
             }
-            if (gs.count()) { const g = gs.mesh(); g.castShadow = gfxHigh; world.add(g); }
+            if (gs.count()) { const g = gs.mesh(); g.name = 'stands'; g.castShadow = gfxHigh; world.add(g); }
             if (crowd.length) {
                 const p = new Float32Array(crowd.length * 3), cc = new Float32Array(crowd.length * 3), ph = new Float32Array(crowd.length);
                 const cols = [0xff3b5c, 0x3ad6ff, 0xffd54a, 0x57e36a, 0xb06bff, 0xffffff, 0xff8a2a];
@@ -1936,12 +2187,12 @@
         function buildAmbience() {
             const kind = TRACK.def.ambience;
             if (!kind) return;
-            const N = kind === 'snow' ? 520 : kind === 'ash' ? 360 : 180;
+            const N = kind === 'snow' ? 520 : kind === 'ash' ? 360 : kind === 'fireflies' ? 110 : 180;
             const p = new Float32Array(N * 3), ph = new Float32Array(N);
             for (let i = 0; i < N; i++) { p[i * 3] = vrand(-110, 110); p[i * 3 + 1] = vrand(-30, 90); p[i * 3 + 2] = vrand(-110, 110); ph[i] = Math.random() * 7; }
             const g = new THREE.BufferGeometry(); g.setAttribute('position', new THREE.BufferAttribute(p, 3));
             const col = kind === 'snow' ? 0xffffff : kind === 'fireflies' ? 0xa0ffd8 : kind === 'ash' ? 0x9a8e88 : 0xfff4e8;
-            const pts = new THREE.Points(g, new THREE.PointsMaterial({ color: col, size: kind === 'fireflies' ? 3.2 : kind === 'ash' ? 1.8 : 2.4, map: TEX.spark, transparent: true, depthWrite: false, opacity: kind === 'ash' ? 0.7 : 0.9, blending: kind === 'fireflies' ? THREE.AdditiveBlending : THREE.NormalBlending }));
+            const pts = new THREE.Points(g, new THREE.PointsMaterial({ color: col, size: kind === 'fireflies' ? 1.5 : kind === 'ash' ? 1.8 : 2.4, map: TEX.spark, transparent: true, depthWrite: false, opacity: kind === 'ash' ? 0.7 : 0.9, blending: kind === 'fireflies' ? THREE.AdditiveBlending : THREE.NormalBlending }));
             world.add(pts); WORLD.ambience = pts;
             WORLD.anims.push((dt) => {
                 pts.position.copy(camera.position);
@@ -1984,6 +2235,47 @@
             m.rotation.x = -Math.PI / 2; m.renderOrder = 5;
             return m;
         }
+        function signTex(text, color) {
+            return canvasTex(256, 96, (g, w, h) => {
+                g.fillStyle = hx(color); g.beginPath(); g.roundRect(0, 0, w, h, 18); g.fill();
+                g.fillStyle = 'rgba(0,0,0,0.25)'; g.fillRect(0, h - 10, w, 10);
+                g.fillStyle = '#fff'; g.font = '900 44px -apple-system, Segoe UI, sans-serif'; g.textAlign = 'center'; g.textBaseline = 'middle';
+                g.fillText(text, w / 2, h / 2 - 2);
+            });
+        }
+        // gantry before every fork: one arrow board per route, plus painted
+        // chevrons on the first metres of each branch so the choice reads at speed
+        function buildForkSigns() {
+            const bake = makeBaker();
+            for (const e of TRACK.edges) {
+                if (e.next.length < 2) continue;
+                const sm = sampleAtS(e, Math.max(10, e.len - 46));
+                const yaw = Math.atan2(sm.tx, sm.tz);
+                for (const sd of [-1, 1]) bake.add(GEO.cyl8, mat4(sm.x + sm.nx * sd * (e.w + 2.4), sm.y + 4.5, sm.z + sm.nz * sd * (e.w + 2.4), 0, 0.5, 9, 0.5), 0xe8ecf4);
+                bake.add(GEO.box, mat4(sm.x, sm.y + 9.2, sm.z, yaw, e.w * 2 + 5.6, 0.5, 0.5), 0xe8ecf4);
+                const n = e.next.length;
+                e.next.forEach((ni, i) => {
+                    const ne = TRACK.edges[ni];
+                    // which side does this branch peel to? sign it there
+                    const s0 = ne.samples[Math.min(ne.samples.length - 1, 12)];
+                    const side = (s0.x - sm.x) * sm.nx + (s0.z - sm.z) * sm.nz;
+                    const isMain = TRACK.def.mainRoute.includes(ne.id);
+                    const label = ne.short ? 'SHORTCUT' : isMain ? 'MAIN' : ne.id.toUpperCase();
+                    const col = ne.short ? 0xff8a2a : isMain ? 0x2fc860 : 0x3a8bff;
+                    const lat = clamp(side, -e.w + 4, e.w - 4) * 0.7 + (n === 2 ? 0 : (i - 1) * 2);
+                    const bx = sm.x + sm.nx * lat, bz = sm.z + sm.nz * lat;
+                    const board = new THREE.Mesh(new THREE.PlaneGeometry(10, 3.75), new THREE.MeshBasicMaterial({ map: signTex((side < -2 ? '◀ ' : '') + label + (side > 2 ? ' ▶' : ''), col), side: THREE.DoubleSide }));
+                    board.position.set(bx, sm.y + sm.bank * lat + 8.2, bz); board.rotation.y = yaw + Math.PI; world.add(board);
+                    // painted chevrons on the branch
+                    for (const f of [46, 76]) {
+                        const ps = sampleAtS(ne, f);
+                        const m = new THREE.Mesh(new THREE.PlaneGeometry(ne.w * 1.2, 6), new THREE.MeshBasicMaterial({ map: TEX.chevron, color: col, transparent: true, opacity: 0.85, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2 }));
+                        m.position.set(ps.x, ps.y + 0.24, ps.z); m.rotation.set(-Math.PI / 2, 0, 0); m.rotateZ(-Math.atan2(ps.tx, ps.tz)); m.renderOrder = 4; m.userData.road = true; world.add(m);
+                    }
+                });
+            }
+            if (bake.count()) { const m = bake.mesh(); m.name = 'forkSigns'; m.castShadow = gfxHigh; world.add(m); }
+        }
         function buildItemBoxes() {
             itemBoxes = [];
             const lanes = [-0.6, -0.2, 0.2, 0.6];
@@ -2001,10 +2293,10 @@
                     q.position.z = 1.85; box.add(q);
                     const q2 = q.clone(); q2.position.z = -1.85; q2.rotation.y = Math.PI; box.add(q2);
                     const by = v.y + 2.9;
-                    box.position.set(v.x, by, v.z);
+                    box.position.set(v.x, by, v.z); box.userData.road = true;
                     world.add(box);
                     const shadow = blobShadowMesh(4.8, 4.8);
-                    shadow.position.set(v.x, v.y + 0.2, v.z);
+                    shadow.position.set(v.x, v.y + 0.2, v.z); shadow.userData.road = true;
                     world.add(shadow);
                     itemBoxes.push({ group: box, shadow, ei: TRACK.byId[row.e], s: sm.s, lat: lane, x: v.x, y: v.y, z: v.z, active: true, respawn: 0, baseY: by, phase: itemBoxes.length * 0.7 });
                 }
@@ -2021,10 +2313,10 @@
                 m.position.set(v.x, v.y + 0.22, v.z);
                 m.rotation.set(-Math.PI / 2, 0, 0);
                 m.rotateZ(-Math.atan2(sm.tx, sm.tz));
-                m.renderOrder = 4;
+                m.renderOrder = 4; m.userData.road = true;
                 world.add(m);
                 const glow = new THREE.Mesh(new THREE.PlaneGeometry(PAD_HALF * 2 + 1.2, 10.2), new THREE.MeshBasicMaterial({ color: 0xffa040, transparent: true, opacity: 0.25, depthWrite: false, blending: THREE.AdditiveBlending }));
-                glow.position.copy(m.position); glow.position.y -= 0.02; glow.rotation.copy(m.rotation); glow.renderOrder = 3;
+                glow.position.copy(m.position); glow.position.y -= 0.02; glow.rotation.copy(m.rotation); glow.renderOrder = 3; glow.userData.road = true;
                 world.add(glow);
                 boostPads.push({ mesh: m, glow, ei: TRACK.byId[p.e], s: sm.s, lat: p.lat, x: v.x, y: v.y, z: v.z, tx: sm.tx, tz: sm.tz, nx: sm.nx, nz: sm.nz });
             }
@@ -2035,6 +2327,7 @@
         // ===================================================================
         // true when (x,z) is at least `margin` from every road centreline, at any height —
         // nothing may ever be placed on the racing surface
+        function postClear(x, z) { const n = nearestSample(x, 0, z, 30, false, true); return !n || n.d > n.sm.w + 3; }
         function offRoad(x, z, margin) { const n = nearestSample(x, 0, z, margin + 4, false, true); return !n || n.d > margin; }
         function edgeById(id) { return TRACK.edges[TRACK.byId[id]]; }
         // scatter trees below the snow line, off road
@@ -2071,7 +2364,7 @@
                 tries++;
                 const x = rand(region[0], region[1]), z = rand(region[2], region[3]);
                 const h = terrainY(x, z);
-                if (h < minH || !offRoad(x, z, 18)) continue;
+                if (h < minH || !offRoad(x, z, 27)) continue;
                 if (inKillZone(x, h, z, true)) continue;
                 bake.add(placed % 2 ? GEO.dodec : GEO.box, mat4(x, h + rand(0.4, 1.2), z, rand(0, 3), rand(1.6, 4.6), rand(1.4, 3.6), rand(1.6, 4.6)), cols[placed % cols.length]);
                 placed++;
@@ -2083,9 +2376,10 @@
             let n = 0;
             for (let i = 6; i < e.samples.length - 6; i += every) {
                 const sm = e.samples[i];
-                if (sm.gap) continue;
+                if (sm.gap || sm.shared) continue;
                 const sd = (n % 2) ? 1 : -1;
                 const px = sm.x + sm.nx * sd * (e.w + 2.4), pz = sm.z + sm.nz * sd * (e.w + 2.4), py = sm.y + sm.bank * sd * e.w;
+                if (!postClear(px, pz)) continue;
                 bake.add(GEO.cyl8, mat4(px, py + height / 2, pz, 0, 0.3, height, 0.3), 0xe8ecf4);
                 bake.add(GEO.box, mat4(px + sm.tx * 1.4, py + height - 1.2, pz + sm.tz * 1.4, Math.atan2(sm.tx, sm.tz), 0.1, 1.8, 2.8), cols[n % cols.length]);
                 n++;
@@ -2147,7 +2441,7 @@
                     bake.add(GEO.sphLo, mat4(sx + Math.cos(a) * 11, sh + 30 + Math.sin(i * 2.1) * 3, sz + Math.sin(a) * 11, 0, 10, 8, 10), i % 2 ? 0x57a34f : 0x8ad06a);
                 }
                 bake.add(GEO.sphLo, mat4(sx, sh + 36, sz, 0, 12, 9, 12), 0x9ae07a);
-                const m = bake.mesh(); m.castShadow = gfxHigh; m.receiveShadow = true; world.add(m);
+                const m = bake.mesh(); m.name = 'alpine'; m.castShadow = gfxHigh; m.receiveShadow = true; world.add(m);
                 // glowing blossoms on the Elder Tree
                 const glow = makeBaker();
                 for (let i = 0; i < 26; i++) { const a = rand(0, 6.3), r = rand(6, 14); glow.add(GEO.sphLo, mat4(sx + Math.cos(a) * r, sh + rand(28, 40), sz + Math.sin(a) * r, 0, 0.7), i % 2 ? 0xfff0a0 : 0xffb0ff); }
@@ -2162,7 +2456,7 @@
                     if (drop > 10) { addWaterfall(wx, wsm.y + 1, wz, Math.atan2(wsm.tx, wsm.tz), 12, drop + 4); break; }
                 }
                 // gondola: two pylons, a sagging cable, cabins gliding over the valley
-                const A = [60, 34, -302], B = [-196, 96, -170];
+                const A = [200, 62, -222], B = [-250, 104, -190];
                 const gb = makeBaker();
                 for (const p of [A, B]) { const gy = terrainY(p[0], p[2]); gb.add(GEO.box, mat4(p[0], (gy + p[1]) / 2, p[2], 0, 2.2, p[1] - gy, 2.2), 0x6a7080); gb.add(GEO.box, mat4(p[0], p[1], p[2], Math.atan2(B[0] - A[0], B[2] - A[2]), 8, 1, 1.4), 0x6a7080); }
                 const segs = 16;
@@ -2178,7 +2472,7 @@
                     m4.compose(mid, q, new THREE.Vector3(0.35, len, 0.35));
                     gb.add(GEO.cyl8, m4, 0x2a2e38);
                 }
-                world.add(gb.mesh());
+                { const gm2 = gb.mesh(); gm2.name = 'gondola'; world.add(gm2); }
                 const cabins2 = [];
                 for (let i = 0; i < 3; i++) {
                     const cab = new THREE.Mesh(new THREE.BoxGeometry(3.2, 3.4, 2.6), new THREE.MeshLambertMaterial({ color: i % 2 ? 0xff3b5c : 0x3a8bff }));
@@ -2239,7 +2533,10 @@
                 for (let i = 0; i < roof.samples.length; i += 7) {
                     const sm = roof.samples[i];
                     if (sm.gap || sm.s < 90 || roof.len - sm.s < 40) continue;   // never in the fork throats
-                    const gy = terrainY(sm.x, sm.z), h = sm.y - 1.6 - gy;
+                    const gy = terrainY(sm.x, sm.z);
+                    let lowest = sm.y;
+                    for (let k = -5; k <= 5; k++) { const o = roof.samples[clamp(i + k, 0, roof.samples.length - 1)]; lowest = Math.min(lowest, o.y - Math.abs(o.bank) * o.w); }
+                    const h = lowest - 1.8 - gy;
                     if (h < 8) continue;
                     const nb = nearestSample(sm.x, 0, sm.z, 34, false, true);
                     if (nb && nb.edge.id !== 'roof') continue;                      // another road runs alongside here
@@ -2251,7 +2548,7 @@
                 for (let i = 0; i < 3; i++) addTower(-240, 250, 100, 100, 14 + i * 14, 0x4a5068);
                 const tg = bakeMerge(parts);
                 const towers = new THREE.Mesh(tg, new THREE.MeshLambertMaterial({ vertexColors: true, map: TEX.facade }));
-                towers.castShadow = gfxHigh; towers.receiveShadow = true;
+                towers.name = 'towers'; towers.castShadow = gfxHigh; towers.receiveShadow = true;
                 world.add(towers);
                 // neon signs facing the road
                 const signs = ['NEON', 'HARBOR', 'FABLE 51', 'DRIFT', 'TAXI', 'BOOST', 'ARCADE', 'SUSHI', 'HOTEL', 'CLUB 8', 'RAMEN', 'GO!', 'KART', 'NIGHT'];
@@ -2260,18 +2557,17 @@
                     const e = edgeById(eid);
                     for (let f = 0.15; f < 0.95; f += 0.2) {
                         const sm = sampleAtF(e, f);
-                        if (sm.tunnel || sm.gap || sm.elevated) continue;
+                        if (sm.tunnel || sm.gap || sm.elevated || sm.shared) continue;
                         const sd = (si % 2) ? 1 : -1;
-                        const x = sm.x + sm.nx * sd * (e.w + 9), z = sm.z + sm.nz * sd * (e.w + 9);
-                        if (terrainY(x, z) < 1) continue;
+                        const x = sm.x + sm.nx * sd * (e.w + 13), z = sm.z + sm.nz * sd * (e.w + 13);
+                        if (terrainY(x, z) < 1 || !postClear(x, z)) continue;
                         const col = T.neon[si % T.neon.length];
                         const m = new THREE.Mesh(new THREE.PlaneGeometry(14, 3.5), new THREE.MeshBasicMaterial({ map: neonTex(signs[si % signs.length], col), transparent: true, side: THREE.DoubleSide }));
-                        m.position.set(x, sm.y + 9 + (si % 3) * 3, z);
-                        m.rotation.y = Math.atan2(sm.tx, sm.tz) + (sd > 0 ? -Math.PI / 2 : Math.PI / 2);
-                        m.rotation.y = Math.atan2(sm.tx, sm.tz);
+                        m.position.set(x, sm.y + 12 + (si % 3) * 3, z);
+                        m.rotation.y = Math.atan2(sm.tx, sm.tz) + Math.PI;   // face oncoming karts (text reads correctly)
                         world.add(m);
                         const post = new THREE.Mesh(new THREE.BoxGeometry(0.6, 12, 0.6), new THREE.MeshLambertMaterial({ color: 0x2a2e3a }));
-                        post.position.set(x, sm.y + 4, z); world.add(post);
+                        post.position.set(x, sm.y + 5.5, z); post.scale.y = 1.25; world.add(post);
                         const sign = m;
                         WORLD.anims.push(() => { sign.material.opacity = 0.75 + 0.25 * (Math.sin(animT * 3 + si) > -0.7 ? 1 : 0); });
                         si++;
@@ -2282,17 +2578,17 @@
                 for (const e of TRACK.edges) {
                     for (let i = 8; i < e.samples.length - 8; i += 14) {
                         const sm = e.samples[i];
-                        if (sm.tunnel || sm.gap) continue;
+                        if (sm.tunnel || sm.gap || sm.shared) continue;
                         for (const sd of [-1, 1]) {
                             const px = sm.x + sm.nx * sd * (e.w + 4.2), pz = sm.z + sm.nz * sd * (e.w + 4.2), py = sm.y + sm.bank * sd * e.w;
+                            if (!postClear(px, pz)) continue;
                             posts.add(GEO.cyl8, mat4(px, py + 4.5, pz, 0, 0.36, 9, 0.36), 0x3a3f52);
                             posts.add(GEO.box, mat4(px - sm.nx * sd * 1.4, py + 9, pz - sm.nz * sd * 1.4, 0, 0.3, 0.3, 0.3), 0x3a3f52);
                             glows.add(GEO.sph, mat4(px - sm.nx * sd * 2.2, py + 8.8, pz - sm.nz * sd * 2.2, 0, 0.7), 0xffe0a0);
                         }
                     }
                 }
-                world.add(posts.mesh());
-                world.add(glows.mesh(new THREE.MeshBasicMaterial({ vertexColors: true })));
+                { const pm = posts.mesh(); pm.name = 'lampPosts'; world.add(pm); const gl = glows.mesh(new THREE.MeshBasicMaterial({ vertexColors: true })); gl.name = 'lampGlow'; world.add(gl); }
                 // suspension bridge towers + cables
                 const br = edgeById('bridge');
                 const cb = makeBaker();
@@ -2304,11 +2600,13 @@
                         const gy = Math.min(terrainY(px, pz), -0.4);
                         cb.add(GEO.box, mat4(px, (gy + sm.y + 46) / 2, pz, yaw, 3.2, sm.y + 46 - gy, 3.2), 0xc83a4a);
                         // cables fan down to the deck
-                        for (let k = -8; k <= 8; k++) {
+                        for (let k = -6; k <= 6; k++) {
                             const s2 = sm.s + k * 14;
                             if (s2 < 4 || s2 > br.len - 4) continue;
                             const ds = sampleAtS(br, s2);
                             if (ds.gap) continue;
+                            const offLat = (ds.x - sm.x) * sm.nx + (ds.z - sm.z) * sm.nz;   // deck curving away from the tower line
+                            if (Math.abs(offLat) > 5) continue;
                             const dx2 = ds.x + ds.nx * sd * (br.w + 1) - px, dz2 = ds.z + ds.nz * sd * (br.w + 1) - pz, dy2 = ds.y + 1 - (sm.y + 44);
                             const len = Math.hypot(dx2, dy2, dz2);
                             const q = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 1, 0), new THREE.Vector3(dx2, dy2, dz2).normalize());
@@ -2321,7 +2619,7 @@
                 world.add(cb.mesh());
                 // harbor: cranes, ships, lighthouse
                 const hb = makeBaker();
-                for (const [cx, cz] of [[-300, -250], [-330, -190]]) {
+                for (const [cx, cz] of [[-140, -430], [-90, -450]]) {
                     const gy = terrainY(cx, cz);
                     hb.add(GEO.box, mat4(cx, gy + 14, cz, 0, 4, 28, 4), 0xff8a2a);
                     hb.add(GEO.box, mat4(cx - 14, gy + 28, cz, 0, 34, 2, 2.4), 0xff8a2a);
@@ -2367,6 +2665,7 @@
                     const x = 230 + Math.cos(a) * r, z = 100 + Math.sin(a) * r;
                     if (!offRoad(x, z, 22)) continue;
                     const h = terrainY(x, z);
+                    if (!offRoad(x, z, 30)) continue;
                     bake.add(GEO.cone5, mat4(x, h + rand(6, 12), z, rand(0, 3), rand(4, 8), rand(14, 26), rand(4, 8)), i % 2 ? 0x1e1a22 : 0x2e2630);
                 }
                 // rock arches over the road
@@ -2383,7 +2682,7 @@
                     const h = terrainY(x, z);
                     bake.add(GEO.cyl8, mat4(x, h + rand(2, 5), z, 0, 2.2, rand(4, 10), 2.2), 0x6a5a52);
                 }
-                const m = bake.mesh(); m.castShadow = gfxHigh; m.receiveShadow = true; world.add(m);
+                const m = bake.mesh(); m.name = 'volcano'; m.castShadow = gfxHigh; m.receiveShadow = true; world.add(m);
                 // lava falls pouring from the rim into the lake
                 for (const [a, r] of [[2.62, 100], [3.5, 100], [4.36, 100], [5.24, 100]]) {
                     const x = 230 + Math.cos(a) * r, z = 100 + Math.sin(a) * r;
@@ -2428,14 +2727,14 @@
                     const top = TRACK.def.terrain.base + p[2];
                     const depth = top + 34;   // reaches below the cloud sea
                     const R = p[3] + p[4] * 0.55;
-                    bake.add(GEO.cone, mat4(p[0], top - 12 - depth / 2, p[1], rand(0, 3), R * 2, depth, R * 2, Math.PI), 0x5e544e);
+                    bake.add(GEO.cone, mat4(p[0], top - 12 - depth / 2, p[1], rand(0, 3), R, depth, R, Math.PI), 0x5e544e);
                     for (let i = 0; i < 7; i++) { const a = rand(0, 6.3), r = R * rand(0.3, 0.8); bake.add(GEO.dodec, mat4(p[0] + Math.cos(a) * r, top - 14 - rand(4, 26), p[1] + Math.sin(a) * r, rand(0, 3), rand(5, 11), rand(5, 11), rand(5, 11)), 0x6e645c); }
                 }
                 scatterTrees(bake, 140, 460, 20, 200, 'round');
                 scatterRocks(bake, 60, [-260, 420, -360, 320], 20, [0x9a8f88, 0xb8ada6]);
                 scatterFlowers(90, 460, 20, 200);
                 // the citadel: built around the gallery tunnel's midpoint, walls aligned to the road
-                { const ge = edgeById('gallery'), gm = sampleAtF(ge, 0.47); buildCastle(gm.x, gm.z, Math.atan2(gm.tx, gm.tz), T); }
+                { const ge = edgeById('gallery'), gm = sampleAtF(ge, 0.515); buildCastle(gm.x, gm.z, Math.atan2(gm.tx, gm.tz), T, (lz) => sampleAtS(ge, gm.s + lz).y); }
                 // gate arch over the courtyard road
                 const court = edgeById('court'), gs = sampleAtF(court, 0.5), gyaw = Math.atan2(gs.tx, gs.tz);
                 for (const sd of [-1, 1]) bake.add(GEO.cyl8, mat4(gs.x + gs.nx * sd * (court.w + 4), gs.y + 8, gs.z + gs.nz * sd * (court.w + 4), 0, 6, 18, 6), 0xe8e0d8);
@@ -2448,8 +2747,8 @@
                 // balustrade posts + banners along the sky bridges
                 addFlags(bake, 'bridge1', 12, T.banner, 5);
                 addFlags(bake, 'chasm', 12, T.banner, 5);
-                addFlags(bake, 'spiral', 10, T.banner, 5);
-                const m = bake.mesh(); m.castShadow = gfxHigh; m.receiveShadow = true; world.add(m);
+                addFlags(bake, 'spiralB', 10, T.banner, 5);
+                const m = bake.mesh(); m.name = 'skyScenery'; m.castShadow = gfxHigh; m.receiveShadow = true; world.add(m);
                 // windmill blades (animated)
                 const blades = new THREE.Group();
                 for (let i = 0; i < 4; i++) { const b = new THREE.Mesh(new THREE.BoxGeometry(1.2, 14, 0.3), new THREE.MeshLambertMaterial({ color: 0xf2f0ea })); b.position.y = 7; const piv = new THREE.Group(); piv.rotation.z = i * Math.PI / 2; piv.add(b); blades.add(piv); }
@@ -2476,9 +2775,10 @@
             },
         };
         // ---- the citadel: a real castle around the gallery tunnel ----
-        function buildCastle(cx, cz, yaw, T) {
+        function buildCastle(cx, cz, yaw, T, roadY) {
             const parts = [], flagBake = makeBaker();
-            const gy = terrainY(cx, cz);
+            // castle floor never above the road that runs through it
+            const gy = Math.min(terrainY(cx, cz), roadY(0) - 1.5, roadY(-36) - 1.5, roadY(36) - 1.5);
             const stone = 0xd8ccb4, dark = 0xb8ac94, slate = 0x4a5f8a, wood = 0x6a4a2a;
             const cy = Math.cos(yaw), sy = Math.sin(yaw);
             const L = (lx, lz) => [cx + lx * cy + lz * sy, cz - lx * sy + lz * cy];   // local → world (local +z = road dir)
@@ -2497,7 +2797,7 @@
                 for (let i = 0; i < 4; i++) { const a = i * Math.PI / 2 + 0.4; box(lx + Math.cos(a) * (r - 0.3), h * 0.55, lz + Math.sin(a) * (r - 0.3), 0.9, 2.4, 0.9, 0x2a2430, a); }   // window slits
                 if (flag) { const [wx, wz] = L(lx, lz); flagBake.add(GEO.cyl8, mat4(wx, gy + h + 1.3 + r * 1.4 + 2.5, wz, 0, 0.25, 5, 0.25), 0xe8ecf4); flagBake.add(GEO.box, mat4(wx + 1.5, gy + h + 1.3 + r * 1.4 + 4.4, wz, yaw, 3, 1.8, 0.12), flag); }
             };
-            const W = 44, D = 46;   // half extents of the curtain wall (local x across the road, z along it)
+            const W = 38, D = 36;   // half extents of the curtain wall (local x across the road, z along it)
             // curtain walls (the road passes through gates in the front/back walls)
             box(-W, 6, 0, 3.4, 12, D * 2, stone); box(W, 6, 0, 3.4, 12, D * 2, stone);
             for (const sz2 of [-1, 1]) { box(-W / 2 - 12, 6, sz2 * D, W - 20, 12, 3.4, stone); box(W / 2 + 12, 6, sz2 * D, W - 20, 12, 3.4, stone); }
@@ -2507,25 +2807,26 @@
             tower(-W, -D, 7, 22, slate, T.banner[0]); tower(W, -D, 7, 22, slate, T.banner[1]); tower(-W, D, 7, 22, slate, T.banner[2]); tower(W, D, 7, 22, slate, T.banner[0]);
             // gatehouses: twin towers flanking each portal, a crenellated bridge above
             for (const sz2 of [-1, 1]) {
-                tower(-21, sz2 * D, 5.5, 20, 0x8a2a2a, null); tower(21, sz2 * D, 5.5, 20, 0x8a2a2a, null);
-                box(0, 17, sz2 * D, 34, 4, 5, stone); merlons(-14, sz2 * D, 14, sz2 * D, 19.8);
-                box(0, 13, sz2 * (D + 3), 26, 4.5, 1.2, wood);   // raised drawbridge slab
+                const rel = roadY(sz2 * D) - gy;   // the gallery climbs through the castle: gates ride the road height
+                tower(-21, sz2 * D, 5.5, 20 + Math.max(0, rel), 0x8a2a2a, null); tower(21, sz2 * D, 5.5, 20 + Math.max(0, rel), 0x8a2a2a, null);
+                box(0, rel + 15, sz2 * D, 34, 4, 5, stone); merlons(-14, sz2 * D, 14, sz2 * D, rel + 17.8);
+                box(0, rel + 12.5, sz2 * (D + 3), 26, 3.5, 1.2, wood);   // raised drawbridge slab
             }
             // the keep, offset beside the road so the tunnel runs along its flank
-            box(-24, 10, 0, 26, 20, 30, stone); merlons(-37, -15, -37, 15, 20.8); merlons(-11, -15, -11, 15, 20.8); merlons(-37, -15, -11, -15, 20.8); merlons(-37, 15, -11, 15, 20.8);
-            for (const [tx2, tz2] of [[-37, -15], [-11, -15], [-37, 15], [-11, 15]]) tower(tx2, tz2, 3.6, 26, slate, null);
-            tower(-24, 0, 8, 38, T.banner[2], T.banner[1]);   // great tower with the royal banner
+            box(-28, 10, 0, 22, 20, 30, stone); merlons(-39, -15, -39, 15, 20.8); merlons(-17, -15, -17, 15, 20.8); merlons(-39, -15, -17, -15, 20.8); merlons(-39, 15, -17, 15, 20.8);
+            for (const [tx2, tz2] of [[-39, -15], [-17.5, -15], [-39, 15], [-17.5, 15]]) tower(tx2, tz2, 3.4, 26, slate, null);
+            tower(-28, 0, 7.5, 38, T.banner[2], T.banner[1]);   // great tower with the royal banner
             // great hall on the other flank, pitched roof
-            box(24, 7, -6, 26, 14, 30, stone);
-            { const [wx, wz] = L(24, -6); parts.push({ geo: uvBox(26, 14, 30), color: 0x8a2a2a, matrix: mat4(wx, gy + 14 + 5, wz, yaw, 19, 8, 32, 0, Math.PI / 4) }); }
-            for (let i = -2; i <= 2; i++) box(11.2, 8, -6 + i * 6, 0.6, 3.4, 1.4, 0x2a2430);   // hall windows
+            box(28, 7, -6, 22, 14, 30, stone);
+            { const [wx, wz] = L(28, -6); parts.push({ geo: uvBox(22, 14, 30), color: 0x8a2a2a, matrix: mat4(wx, gy + 14 + 5, wz, yaw, 16, 8, 32, 0, Math.PI / 4) }); }
+            for (let i = -2; i <= 2; i++) box(17.2, 8, -6 + i * 6, 0.6, 3.4, 1.4, 0x2a2430);   // hall windows
             // chapel + well in the courtyard
-            box(24, 5, 24, 14, 10, 12, stone); cone(24, 13, 24, 9, 8, slate); tower(30, 30, 2.4, 16, 0x8a2a2a, T.banner[0]);
-            cyl(-2, 1, 28, 2.6, 2, dark);
+            box(24, 5, 26, 12, 10, 12, stone); cone(24, 13, 26, 8, 8, slate); tower(30, 32, 2.4, 16, 0x8a2a2a, T.banner[0]);
+            cyl(16, 1, 30, 2.6, 2, dark);   // courtyard well
             const mesh = new THREE.Mesh(bakeMerge(parts), new THREE.MeshLambertMaterial({ vertexColors: true, map: TEX.stone }));
-            mesh.castShadow = gfxHigh; mesh.receiveShadow = true;
+            mesh.name = 'castle'; mesh.castShadow = gfxHigh; mesh.receiveShadow = true;
             world.add(mesh);
-            if (flagBake.count()) world.add(flagBake.mesh());
+            if (flagBake.count()) { const fm = flagBake.mesh(); fm.name = 'castleFlags'; world.add(fm); }
         }
         function addBirds(cx, cy, cz, r, color) {
             const birds = [];
@@ -3265,12 +3566,13 @@
                 const groundVr = (gy - k.prevGroundY) / dt;
                 if (drop > 2.0) {
                     k.grounded = false; k.airT = 0;
-                    k.vy = clamp(Math.max(...k._gvyHist), -12, 32);
+                    k.vy = clamp(Math.max(...k._gvyHist), -12, 24);
                     k.lastVR = k.vy;
                     if (k.isPlayer && k.vy > 6) { vibrate(15); sfxBeep(540); }
                     void groundVr;
                 } else {
                     k.pos.y = gy;
+                    if (window.__f51) k._lastGround = TRACK.edges[k.edge].id + '/' + Math.round(k.s) + ' lat' + Math.round(k.lat) + ' v' + Math.round(k.speed) + (g2.road ? ' on ' + g2.road.edge.id + (g2.road.sm.elevated ? '(el)' : '') : ' TERRAIN') + (k.respawnT > 0 ? ' resp' : '');
                     k._gvyHist.shift(); k._gvyHist.push(k.fwd.y * k.speed);
                     k.prevGroundY = gy;
                     k.offroad = g2.terrain;
@@ -3393,6 +3695,7 @@
         }
         function respawnKart(k) {
             k.respawns++;
+            (k.respawnLog = k.respawnLog || []).push(TRACK.edges[k.edge].id + '/' + Math.round(k.s) + (k.grounded ? '' : ' air') + (k._lastGround ? ' from ' + k._lastGround : ''));
             if (k.ai) { const eid = TRACK.edges[k.edge].id; k.ai.fails = k.ai.fails || {}; k.ai.fails[eid] = (k.ai.fails[eid] || 0) + 1; }
             k._progReset = true;
             const lg = k.lastGood;
@@ -3479,11 +3782,11 @@
         // decks have walls: nobody falls off the helix or a sky bridge sideways
         function clampToTrack(k, dt) {
             const gi = roadSurface(k.pos.x, k.pos.y + 1.0, k.pos.z, 3);
-            if (!gi || !gi.sm.elevated || gi.ei !== k.edge) return;
-            const e = gi.edge, lim = e.w - 1.0;
-            const sm = gi.sm;
+            if (!gi || gi.ei !== k.edge) return;
+            const sm = gi.sm, lim = sm.w - 1.0;
             const off = gi.lat;
-            if (Math.abs(off) > lim) {
+            const walled = sm.elevated || (sm.wall && sm.wall[off < 0 ? 0 : 1]);
+            if (walled && Math.abs(off) > lim) {
                 const d = Math.abs(off) - lim, sg = Math.sign(off);
                 k.pos.x -= sm.nx * d * sg; k.pos.z -= sm.nz * d * sg;
                 k.speed *= 0.97;
@@ -4657,8 +4960,15 @@
             camPos.set(k.pos.x - fx * dist, camYS, k.pos.z - fz * dist);
             if (instant || !camInit) { camera.position.copy(camPos); camInit = true; } else camera.position.lerp(camPos, frameLerp(0.2, dt));
             // never clip into the ground/road below the camera
-            const cg = groundInfo(camera.position.x, camera.position.y + 4, camera.position.z);
-            if (camera.position.y < cg.y + 2.4) camera.position.y = cg.y + 2.4;
+            const inTunnel = sampleAtS(TRACK.edges[k.edge], k.s).tunnel;
+            if (inTunnel) {
+                const rs = roadSurface(camera.position.x, camera.position.y + 12, camera.position.z, 14);
+                const floor = rs ? rs.y : k.y - 2;
+                camera.position.y = clamp(camera.position.y, floor + 2.4, floor + 7.5);
+            } else {
+                const cg = groundInfo(camera.position.x, camera.position.y + 4, camera.position.z);
+                if (camera.position.y < cg.y + 2.4) camera.position.y = cg.y + 2.4;
+            }
             if (camShake > 0.001) { camera.position.x += vrand(-1, 1) * camShake; camera.position.y += vrand(-1, 1) * camShake; camera.position.z += vrand(-1, 1) * camShake; }
             camLook.set(k.pos.x + fx * 8.5, lerp(k.y + 1.9, aheadY + 1.9, 0.3), k.pos.z + fz * 8.5);
             camera.lookAt(camLook);
@@ -5557,7 +5867,7 @@
                 dt = Math.min(dt, 0.05);
                 animT += dt;
                 padPoll();
-                if (state === 'paused') { renderer.render(scene, camera); return; }
+                if (state === 'paused') { renderFrame(); return; }
                 for (const a of WORLD.anims) a(dt);
                 for (const w of WORLD.water) w.material.map.offset.x += dt * 0.012;
                 for (const l of WORLD.lava) { l.material.map.offset.y += dt * 0.02; l.material.color.setHSL(0.07, 1, 0.62 + Math.sin(animT * 2.1) * 0.06); }
@@ -5599,12 +5909,12 @@
                 updateSunTarget();
                 updateParticles(dt);
                 if (window.__freeCam) { const f = window.__freeCam; camera.position.set(f.x, f.y, f.z); camera.lookAt(f.tx, f.ty, f.tz); camera.fov = f.fov || 60; camera.far = 4000; camera.updateProjectionMatrix(); }
-                renderer.render(scene, camera);
+                renderFrame();
                 if (!dprAdjusted) {
                     fpsAccum += dt; fpsFrames++;
                     if (fpsFrames >= 120) {
                         const avg = fpsAccum / fpsFrames;
-                        if (avg > 0.026 && curDPR > 1) { curDPR = Math.max(1, curDPR - 0.5); renderer.setPixelRatio(curDPR); }
+                        if (avg > 0.026 && curDPR > 1) { curDPR = Math.max(1, curDPR - 0.5); renderer.setPixelRatio(curDPR); resizePost(); }
                         dprAdjusted = true;
                     }
                 }
@@ -5619,12 +5929,56 @@
             if (w < 2 || h < 2) { setTimeout(onResize, 120); return; }   // iOS standalone can report 0×0 at launch
             camera.aspect = w / h; camera.updateProjectionMatrix();
             renderer.setSize(w, h);
+            resizePost();
             updateUIScale();
         }
 
         // ===================================================================
         //  BOOT
         // ===================================================================
+        // audit: any world vertex inside the drivable corridor (|lat| < w-0.2, road y-0.5 … +4.5)
+        // that isn't part of the road itself is slop. Returns offenders per mesh.
+        function roadAudit() {
+            const out = [], v = new THREE.Vector3();
+            world.updateMatrixWorld(true);
+            world.traverse((o) => {
+                if (!o.isMesh || !o.geometry || !o.geometry.attributes.position) return;
+                if (o.userData.road) return;
+                let parent = o; let tagged = false;
+                while (parent && parent !== world) { if (parent.userData.road) tagged = true; parent = parent.parent; }
+                if (tagged) return;
+                const pa = o.geometry.attributes.position;
+                let hits = 0, sample = {};
+                const pts = [];
+                for (let i = 0; i < pa.count; i++) pts.push(new THREE.Vector3(pa.getX(i), pa.getY(i), pa.getZ(i)).applyMatrix4(o.matrixWorld));
+                const test = [];
+                for (const q of pts) test.push(q);
+                const ix = o.geometry.index;
+                const nTri = ix ? ix.count / 3 : pa.count / 3;
+                for (let t = 0; t < nTri; t++) {
+                    const a = pts[ix ? ix.getX(t * 3) : t * 3], b = pts[ix ? ix.getX(t * 3 + 1) : t * 3 + 1], c = pts[ix ? ix.getX(t * 3 + 2) : t * 3 + 2];
+                    for (const [p0, p1] of [[a, b], [b, c], [c, a]]) {
+                        const len = p0.distanceTo(p1); if (len < 3) continue;
+                        const n = Math.min(40, Math.floor(len / 3));
+                        for (let k = 1; k < n; k++) test.push(p0.clone().lerp(p1, k / n));
+                    }
+                }
+                for (let i = 0; i < test.length; i++) {
+                    v.copy(test[i]);
+                    const n = nearestSample(v.x, v.y, v.z, 22, false, false);
+                    if (!n) continue;
+                    const sm = n.sm, e = n.edge;
+                    if (sm.gap || sm.lip || sm.kicker) continue;
+                    const lat = (v.x - sm.x) * sm.nx + (v.z - sm.z) * sm.nz;
+                    if (Math.abs(lat) > sm.w - 0.2) continue;
+                    const along = (v.x - sm.x) * sm.tx + (v.z - sm.z) * sm.tz;
+                    const ry = sm.y + sm.bank * lat + sm.ty * along;
+                    if (v.y > ry - 0.5 && v.y < ry + 4.5) { hits++; const key = e.id + ':' + Math.round(sm.s / 40); if (!sample[key]) sample[key] = { x: +v.x.toFixed(0), y: +v.y.toFixed(1), ry: +ry.toFixed(1), z: +v.z.toFixed(0), edge: e.id, s: +sm.s.toFixed(0), lat: +lat.toFixed(1) }; }
+                }
+                if (hits) out.push({ mesh: o.name || (o.material && o.material.type) + '/' + pa.count, hits, samples: Object.values(sample).slice(0, 4) });
+            });
+            return out;
+        }
         function boot() {
             loadPrefs();
             initThree();
@@ -5658,7 +6012,7 @@
                     loadTrack, buildKarts, resetRace, startGame, aiController, simTick, groundInfo, terrainY, roadSurface, nearestSample, remAt, sampleAtS,
                     routeAhead, get camera() { return camera; }, get scene() { return scene; }, get renderer() { return renderer; },
                     setLaps(n) { TOTAL_LAPS = n; }, get itemBoxes() { return itemBoxes; }, get projectiles() { return projectiles; }, useItem, fireRocket, fireSpike, fireZap, fireComet, dropGoo,
-                    netSnapshot, netRestore, updateCamera, get boostPads() { return boostPads; }, quitToMenu, finishRace, get world() { return world; }, WORLD,
+                    netSnapshot, netRestore, updateCamera, get boostPads() { return boostPads; }, quitToMenu, finishRace, get world() { return world; }, WORLD, roadAudit,
                 };
             }
             animate();
