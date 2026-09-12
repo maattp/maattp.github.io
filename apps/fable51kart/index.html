@@ -1186,6 +1186,8 @@
             }
             TRACK.lapRef = def.mainRoute.reduce((a, id) => a + E[TRACK.byId[id]].len, 0);
             TRACK.numGates = E.reduce((m, e) => Math.max(m, e.gate + 1), 0);
+            // order matters: snapThroats moves sample heights the hash/shared tests read;
+            // markWalls reads sm.shared / sm.sharedSide, so markShared must run first
             snapThroats();
             buildSpatialHash();
             markElevated();
@@ -3582,7 +3584,7 @@
                 k.item = null; k.itemCharges = 0; k.itemRolling = 0; k.itemUseTimer = 0; k._rollPick = null;
                 k.draftT = 0; k.drafting = false; k.stuckTimer = 0; k.wrongT = 0; k.offroadT = 0; k.offroad = false; k.respawnT = 0; k.respawns = 0;
                 k.ctrl.steer = 0; k.ctrl.brake = false; k.ctrl.drift = false; k.ctrl.fire = false;
-                k.finished = false; k.finishTime = 0; k.bestLap = Infinity; k.lastLapStart = 0; k.rescue = null;
+                k.finished = false; k.finishTime = 0; k.bestLap = Infinity; k.lastLapStart = 0; k.rescue = null; k.rescueVis = -1;
                 k._rubber = 1; k._progReset = false;
                 k._bonkAnim = 0; k._pickAnim = 0; k._throwAnim = 0;
                 k.mesh.shield.visible = false; k.mesh.shieldRim.visible = false; k.mesh.aura.visible = false;
@@ -3943,23 +3945,6 @@
                 k.speed = 30; k.invuln = 1.2; k.rescue = null; k.respawnT = 0;
                 k._progReset = true; updateProgress(k);
             }
-        }
-        function respawnKartLegacy(k) {
-            k.respawns++;
-            (k.respawnLog = k.respawnLog || []).push(TRACK.edges[k.edge].id + '/' + Math.round(k.s) + (k.grounded ? '' : ' air') + (k._lastGround ? ' from ' + k._lastGround : ''));
-            if (k.ai) { const eid = TRACK.edges[k.edge].id; k.ai.fails = k.ai.fails || {}; k.ai.fails[eid] = (k.ai.fails[eid] || 0) + 1; }
-            k._progReset = true;
-            const lg = k.lastGood;
-            let rs = lg.s - 10;
-            const le = TRACK.edges[lg.edge];
-            for (const sm of le.samples) { if (sm.kicker && sm.s <= lg.s + 1 && lg.s - sm.s < 90) { rs = Math.min(rs, sm.s - 75); break; } }
-            // stagger simultaneous respawners across the road
-            placeOnEdge(k, lg.edge, Math.max(4, rs), ((k.idx % 3) - 1) * 4);
-            k.speed = 40; k.invuln = 1.3; k.respawnT = 0.7;
-            k.boostTimer = 0; k.gooT = 0; k.spinTimer = 0; k.cometT = 0;
-            k.drifting = false; k.driftCharge = 0; k.offroadT = 0;
-            updateProgress(k);
-            if (k.isPlayer) { flash('RESCUED', '#ffd54a'); vibrate(40); }
         }
         function recoverKart(k, lost) {
             const e = TRACK.edges[k.edge];
@@ -4891,6 +4876,7 @@
                     k.driftDir = rc.p[6] || 0; k.drifting = k.driftDir !== 0; k.driftRamp = 1;
                     k.boostTimer = Math.max(k.boostTimer, rc.p[7] || 0);
                     if (rc.p[8] != null) k.up.set(rc.p[8], rc.p[9], rc.p[10]).normalize();
+                    k.rescueVis = rc.p[12] != null ? rc.p[12] : -1;   // the owl escort plays for everyone watching
                 }
             }
             updateProgress(k);
@@ -4920,6 +4906,7 @@
                     k.drifting ? k.driftDir : 0, k.grounded ? 1 : 0,
                     k.finished ? 1 : 0, r2(k.finishTime), k.bestLap === Infinity ? -1 : r2(k.bestLap),
                     k.edge, r2(k.cometT), k.respawnT > 0 ? 1 : 0,
+                    k.rescue ? r2(k.rescue.t / k.rescue.dur) : (k.rescueVis >= 0 ? r2(k.rescueVis) : -1),   // rescue progress, -1 = none
                 ]),
                 boxes: itemBoxes.map((b) => (b.active ? 1 : 0)),
                 haz: hazards.map((h) => [r2(h.x), r2(h.y), r2(h.z)]),
@@ -4930,7 +4917,7 @@
         function snapKart(a) {
             return { x: a[0], y: a[1], z: a[2], theta: a[3], speed: a[4], rank: a[5], laps: a[6], progress: a[7],
                 item: a[8] || null, itemCharges: a[9], itemRolling: a[10], spinTimer: a[11], gooT: a[12], shieldTimer: a[13], shrinkT: a[14], boostTimer: a[15],
-                driftDir: a[16], grounded: !!a[17], finished: !!a[18], finishTime: a[19], bestLap: a[20] < 0 ? Infinity : a[20], edge: a[21], cometT: a[22] || 0, resp: !!a[23] };
+                driftDir: a[16], grounded: !!a[17], finished: !!a[18], finishTime: a[19], bestLap: a[20] < 0 ? Infinity : a[20], edge: a[21], cometT: a[22] || 0, resp: !!a[23], rescueU: a[24] != null ? a[24] : -1 };
         }
         const _rn = new THREE.Vector3();
         function clientApplySnaps(dt) {
@@ -4976,7 +4963,7 @@
                     if (sb.spinTimer > k.spinTimer + 0.05) k._bonkAnim = 0.9;
                     k.spinTimer = sb.spinTimer; k.gooT = sb.gooT; k.shieldTimer = sb.shieldTimer; k.shrinkT = sb.shrinkT; k.boostTimer = sb.boostTimer; k.cometT = sb.cometT;
                     k.drifting = sb.driftDir !== 0; k.driftDir = sb.driftDir || 0; k.driftRamp = 1;
-                    k.grounded = sb.grounded; k.edge = sb.edge; k.respawnT = sb.resp ? 0.5 : 0;
+                    k.grounded = sb.grounded; k.edge = sb.edge; k.respawnT = sb.resp ? 0.5 : 0; k.rescueVis = sb.rescueU;
                     if (sb.finished && !k.finished && k.kind === 'remote') showToast((k.dispName || 'Racer') + ' finished!', '#9affc0');
                     k.finished = sb.finished; k.finishTime = sb.finishTime;
                     // surface-up for rendering from the local world
@@ -5032,7 +5019,8 @@
                 sendToHostFast({
                     t: 'input', s: r2(player.ctrl.steer), d: player.ctrl.drift, f: net.fireCount,
                     p: [r2(player.pos.x), r2(player.pos.y), r2(player.pos.z), r2(player.theta), Math.round(player.speed), player.grounded ? 1 : 0,
-                        player.drifting ? player.driftDir : 0, r2(player.boostTimer), r2(player.up.x), r2(player.up.y), r2(player.up.z), player.edge],
+                        player.drifting ? player.driftDir : 0, r2(player.boostTimer), r2(player.up.x), r2(player.up.y), r2(player.up.z), player.edge,
+                        player.rescue ? r2(player.rescue.t / player.rescue.dur) : -1],
                 });
             }
         }
@@ -5067,10 +5055,10 @@
             return { group: g, wings, line };
         }
         function syncRescuer(k, dt) {
-            if (!k.rescue) { if (k.rescuer) k.rescuer.group.visible = false; return; }
+            const u = k.rescue ? clamp(k.rescue.t / k.rescue.dur, 0, 1) : (k.rescueVis >= 0 ? clamp(k.rescueVis, 0, 1) : -1);
+            if (u < 0) { if (k.rescuer) k.rescuer.group.visible = false; return; }
             if (!k.rescuer) k.rescuer = makeRescuer();
-            const R = k.rescuer, r = k.rescue;
-            const u = clamp(r.t / r.dur, 0, 1);
+            const R = k.rescuer;
             const hang = 7.5;
             R.group.visible = true;
             R.group.position.set(k.pos.x + Math.sin(animT * 2) * 0.3, k.y + hang + Math.sin(animT * 3) * 0.3, k.pos.z);
