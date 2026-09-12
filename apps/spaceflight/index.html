@@ -171,7 +171,7 @@
         // =====================================================================
         //  SPACE FLIGHT — anti-grav racing prototype (single track, CPUs)
         // =====================================================================
-        const SF_VER = 16;
+        const SF_VER = 17;
         const clamp = (v, a, b) => v < a ? a : v > b ? b : v;
         const lerp = (a, b, t) => a + (b - a) * t;
         const smoothstep = (a, b, x) => { const t = clamp((x - a) / (b - a), 0, 1); return t * t * (3 - 2 * t); };
@@ -719,8 +719,9 @@
                 const k = machines[i];
                 // grid: 2 wide, staggered back from the line
                 // the player (idx 0) starts dead centre at the back; rivals stagger ahead in two columns
+                // rows 30u apart, columns 11u apart, alternating so nobody sits directly behind anyone
                 const rowS = i === 0 ? 0 : 1 + Math.floor((i - 1) / 2), col = i === 0 ? 0 : ((i % 2) ? -1 : 1);
-                k.s = wrapS(TRACK.lineS + 14 + rowS * 16); k.lat = col * 7;   // grid sits past the line: the first crossing is a real lap
+                k.s = wrapS(TRACK.lineS + 14 + rowS * 30); k.lat = col * 11; k.gridLat = k.lat;   // grid sits past the line: the first crossing is a real lap
                 k.yaw = 0; k.speed = 0; k.slide = 0; k.air = 0; k.vair = 0; k.jumpT = 0;
                 k.energy = ENERGY_MAX; k.boostT = 0; k.boostCool = 0; k.dashT = 0; k.laps = 0; k.progress = 0; k.finished = false; k.finishTime = 0; k.dead = 0; k.out = false;
                 k.lapTimes = []; k.bestLap = Infinity; k.lastLapStart = 0; k.prevS = k.s; k.prevLat = k.lat; k.prevAir = 0; k.wallT = 0; k.hitT = 0; k.rechargeT = 0;
@@ -866,6 +867,7 @@
             k.deaths = (k.deaths || 0) + 1;
         }
         function resolveCollisions(dt) {
+            const launch = raceClock < 4;   // off the grid nobody trades paint: spread first, fight later
             for (let i = 0; i < machines.length; i++) for (let j = i + 1; j < machines.length; j++) {
                 const a = machines[i], b = machines[j];
                 if (a.dead > 0 || b.dead > 0 || a.out || b.out) continue;
@@ -877,7 +879,7 @@
                     const dir = dl >= 0 ? 1 : -1;
                     if (a.slide * dir < 8) a.slide += 24 * dt * dir; if (b.slide * dir > -8) b.slide -= 24 * dt * dir;
                     const rel = Math.abs((a.speed * Math.sin(a.yaw) + a.slide) - (b.speed * Math.sin(b.yaw) + b.slide)) + Math.abs(a.speed - b.speed) * 0.3;
-                    if (rel < 6) continue;
+                    if (rel < 6 || launch) continue;
                     const dmg = clamp(0.8 + rel * 0.05, 0.8, 7);
                     const boostA = a.boostT > 0 || a.dashT > 0, boostB = b.boostT > 0 || b.dashT > 0;
                     if (a.hitT <= 0.15) damage(a, dmg * (boostB ? 1.8 : 1) * (boostA ? 0.5 : 1), 'ram');
@@ -912,7 +914,8 @@
             const f0 = frameAt(k.s, _frB);
             const curvAhead = fa.curv;
             const inside = -Math.sign(curvAhead) * Math.min(Math.abs(curvAhead) * 1200, f0.w * 0.3);
-            let targetLat = ai.lane + inside + Math.sin(ai.phase * 0.6) * 1.0;
+            const opening = clamp(raceClock / 6, 0, 1);   // hold the grid column at first, blend into racing lines over 6 s
+            let targetLat = lerp(k.gridLat || 0, ai.lane + inside + Math.sin(ai.phase * 0.6) * 1.0, opening);
             // seek dash plates / recharge when needed
             const qa = sampleAtS(k.s + look * 0.6);
             if (k.energy < 45) { for (let d = 0; d < 300; d += 30) { const qr = sampleAtS(k.s + d); if (qr.recharge) { targetLat = qr.recharge.lat; break; } } }
