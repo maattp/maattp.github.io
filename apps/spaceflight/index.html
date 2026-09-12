@@ -170,7 +170,7 @@
         // =====================================================================
         //  SPACE FLIGHT — anti-grav racing prototype (single track, CPUs)
         // =====================================================================
-        const SF_VER = 2;
+        const SF_VER = 3;
         const clamp = (v, a, b) => v < a ? a : v > b ? b : v;
         const lerp = (a, b, t) => a + (b - a) * t;
         const smoothstep = (a, b, x) => { const t = clamp((x - a) / (b - a), 0, 1); return t * t * (3 - 2 * t); };
@@ -183,21 +183,21 @@
         // ---- tuning ---------------------------------------------------------
         const SIM_DT = 1 / 60;
         const TOTAL_LAPS = 3;
-        const MAX_SPEED = 210;          // u/s  (×4.6 → km/h on the HUD)
-        const BOOST_SPEED = 320;
-        const DASH_SPEED = 300;
-        const ACCEL = 62;               // u/s²  toward MAX_SPEED
+        const MAX_SPEED = 150;          // u/s  (×KMH → km/h on the HUD)
+        const BOOST_SPEED = 225;
+        const DASH_SPEED = 210;
+        const ACCEL = 46;               // u/s²  toward MAX_SPEED
         const BRAKE_DECEL = 150;
         const TURN_RATE = 3.2;          // rad/s of relative heading
-        const MAX_YAW = 0.42;           // rad, max relative heading at full steer
+        const MAX_YAW = 0.38;           // rad, max relative heading at full steer
         const SLIDE_K = 0.9;            // centrifugal push (curv·v²·K)
         const SLIDE_DAMP = 3.4;
         const ENERGY_MAX = 100;
-        const BOOST_COST = 18;
-        const BOOST_TIME = 1.6;
+        const BOOST_COST = 15;
+        const BOOST_TIME = 2.2;
         const BOOST_MIN_LAP = 1;        // boost unlocks after this many laps (F-Zero X rule)
         const RECHARGE_RATE = 42;       // energy/s on a recharge strip
-        const KMH = 4.6;
+        const KMH = 6.2;
 
         // ---- racers ------------------------------------------------------------
         const MACHINES = [
@@ -372,7 +372,7 @@
         const TEX = {};
         function initThree() {
             renderer = new THREE.WebGLRenderer({ antialias: !isMobileUA, powerPreference: 'high-performance' });
-            renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, isMobileUA ? 2 : 1.5));
+            renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, isMobileUA ? 1.5 : 1.5));
             renderer.outputEncoding = THREE.sRGBEncoding;
             document.getElementById('game').appendChild(renderer.domElement);
             scene = new THREE.Scene();
@@ -578,10 +578,10 @@
             const rnd = mulberry(1337);
             const bg = new THREE.BoxGeometry(1, 1, 1);
             const mats = [new THREE.MeshLambertMaterial({ map: TEX.building, color: 0x8888aa }), new THREE.MeshLambertMaterial({ color: 0x0b0a18 })];
-            const towers = new THREE.InstancedMesh(bg, mats[0], 320);
+            const towers = new THREE.InstancedMesh(bg, mats[0], 110);
             const mtx = new THREE.Matrix4(), q4 = new THREE.Quaternion(), sc = new THREE.Vector3(), p3 = new THREE.Vector3();
             let n = 0;
-            for (let i = 0; i < 320 && n < 320; i++) {
+            for (let i = 0; i < 220 && n < 110; i++) {
                 const x = (rnd() - 0.5) * 3400, z = 300 + (rnd() - 0.5) * 3400;
                 if (nearTrack(x, z, 90)) continue;
                 const w = 22 + rnd() * 50, d = 22 + rnd() * 50, h = 60 + rnd() * rnd() * 380;
@@ -592,9 +592,8 @@
             // ground plane far below, dark with a grid glow
             const ground = new THREE.Mesh(new THREE.PlaneGeometry(9000, 9000), new THREE.MeshBasicMaterial({ color: 0x07061a }));
             ground.rotation.x = -Math.PI / 2; ground.position.y = -61; world.add(ground);
-            const grid = new THREE.GridHelper(9000, 90, 0x2a2f7a, 0x1a1c4a); grid.position.y = -60.5; world.add(grid);
             // beacons: a few tall neon spires
-            for (let i = 0; i < 14; i++) {
+            for (let i = 0; i < 6; i++) {
                 const x = (rnd() - 0.5) * 3000, z = 300 + (rnd() - 0.5) * 3000; if (nearTrack(x, z, 120)) continue;
                 const h = 300 + rnd() * 400;
                 const spire = new THREE.Mesh(new THREE.CylinderGeometry(1.5, 6, h, 6), new THREE.MeshLambertMaterial({ color: 0x1a1c40, emissive: 0x201a55 }));
@@ -611,7 +610,7 @@
         function buildSky() {
             // stars
             const sp = []; const rnd = mulberry(7);
-            for (let i = 0; i < 1400; i++) { const th = rnd() * Math.PI * 2, ph = Math.acos(rnd() * 0.9 + 0.1); const r = 4500; sp.push(r * Math.sin(ph) * Math.cos(th), r * Math.cos(ph), r * Math.sin(ph) * Math.sin(th)); }
+            for (let i = 0; i < 700; i++) { const th = rnd() * Math.PI * 2, ph = Math.acos(rnd() * 0.9 + 0.1); const r = 4500; sp.push(r * Math.sin(ph) * Math.cos(th), r * Math.cos(ph), r * Math.sin(ph) * Math.sin(th)); }
             const sg = new THREE.BufferGeometry(); sg.setAttribute('position', new THREE.Float32BufferAttribute(sp, 3));
             const stars = new THREE.Points(sg, new THREE.PointsMaterial({ color: 0xcfe6ff, size: 9, sizeAttenuation: true, transparent: true, opacity: 0.9, fog: false }));
             world.add(stars);
@@ -629,34 +628,33 @@
         //  MACHINES
         // =====================================================================
         function createMachineMesh(def) {
+            // SNES F-Zero silhouette: one flat wedge body, a bubble canopy, two stubby side thrusters,
+            // a low tail fin. Flat-shaded Lambert, no chrome, nothing that flaps or rocks.
             const g = new THREE.Group();
-            const body = new THREE.MeshPhongMaterial({ color: def.col, shininess: 120, specular: 0xaaccff });
-            const dark = new THREE.MeshPhongMaterial({ color: 0x151a2e, shininess: 60 });
-            const acc = new THREE.MeshPhongMaterial({ color: def.acc, shininess: 100 });
-            const glass = new THREE.MeshPhongMaterial({ color: 0x8fd8ff, shininess: 200, specular: 0xffffff, transparent: true, opacity: 0.85 });
-            // hull: tapered box (long in -z … +z forward)
-            const hull = new THREE.Mesh(new THREE.BoxGeometry(3.4, 1.1, 8.2), body); hull.position.set(0, 0.55, 0); g.add(hull);
-            const nose = new THREE.Mesh(new THREE.ConeGeometry(1.6, 3.4, 4), body); nose.rotation.x = Math.PI / 2; nose.rotation.y = Math.PI / 4; nose.scale.set(1.05, 1, 0.55); nose.position.set(0, 0.55, 5.6); g.add(nose);
-            const canopy = new THREE.Mesh(new THREE.SphereGeometry(1.0, 12, 8), glass); canopy.scale.set(0.9, 0.7, 1.6); canopy.position.set(0, 1.25, 1.2); g.add(canopy);
-            const spine = new THREE.Mesh(new THREE.BoxGeometry(1.2, 0.5, 5), acc); spine.position.set(0, 1.15, -1.6); g.add(spine);
+            const body = new THREE.MeshLambertMaterial({ color: def.col });
+            const dark = new THREE.MeshLambertMaterial({ color: 0x1b1f33 });
+            const acc = new THREE.MeshLambertMaterial({ color: def.acc });
+            const glass = new THREE.MeshLambertMaterial({ color: 0x9fdcff });
+            // wedge body: a box scaled thin, nose tapered with a squashed cone
+            const hull = new THREE.Mesh(new THREE.BoxGeometry(4.2, 0.9, 6.5), body); hull.position.set(0, 0.45, -0.6); g.add(hull);
+            const nose = new THREE.Mesh(new THREE.ConeGeometry(2.1, 3.6, 4), body); nose.rotation.x = Math.PI / 2; nose.rotation.y = Math.PI / 4; nose.scale.set(1, 1, 0.42); nose.position.set(0, 0.45, 4.4); g.add(nose);
+            const stripe = new THREE.Mesh(new THREE.BoxGeometry(1.0, 0.1, 6.8), acc); stripe.position.set(0, 0.92, 0.2); g.add(stripe);
+            const canopy = new THREE.Mesh(new THREE.SphereGeometry(0.85, 10, 8), glass); canopy.scale.set(1, 0.6, 1.5); canopy.position.set(0, 1.0, 1.4); g.add(canopy);
             for (const side of [-1, 1]) {
-                const pod = new THREE.Mesh(new THREE.CylinderGeometry(0.75, 0.9, 5.4, 10), dark); pod.rotation.x = Math.PI / 2; pod.position.set(side * 2.3, 0.35, -1.4); g.add(pod);
-                const fin = new THREE.Mesh(new THREE.BoxGeometry(2.4, 0.18, 2.6), acc); fin.position.set(side * 3.2, 0.7, -2.8); fin.rotation.z = side * 0.25; g.add(fin);
-                const wingTip = new THREE.Mesh(new THREE.BoxGeometry(0.25, 0.9, 2.2), body); wingTip.position.set(side * 4.3, 0.95, -2.9); g.add(wingTip);
+                const pod = new THREE.Mesh(new THREE.BoxGeometry(1.3, 0.9, 4.2), dark); pod.position.set(side * 2.6, 0.45, -1.4); g.add(pod);
+                const podTip = new THREE.Mesh(new THREE.BoxGeometry(1.3, 0.5, 1.2), acc); podTip.position.set(side * 2.6, 0.45, 1.3); g.add(podTip);
             }
-            // engine glow
-            const eng = new THREE.Mesh(new THREE.CylinderGeometry(0.9, 1.15, 0.6, 12), new THREE.MeshBasicMaterial({ color: 0x5ad6ff }));
-            eng.rotation.x = Math.PI / 2; eng.position.set(0, 0.55, -4.3); g.add(eng);
+            const fin = new THREE.Mesh(new THREE.BoxGeometry(0.2, 1.1, 1.8), acc); fin.position.set(0, 1.4, -3.0); g.add(fin);
+            // engine glow (small) + boost flame
+            const eng = new THREE.Mesh(new THREE.BoxGeometry(2.6, 0.5, 0.3), new THREE.MeshBasicMaterial({ color: 0x5ad6ff })); eng.position.set(0, 0.45, -3.95); g.add(eng);
             const flame = new THREE.Sprite(new THREE.SpriteMaterial({ map: TEX.glow, color: 0x7fe0ff, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false }));
-            flame.scale.set(2.2, 2.2, 1); flame.position.set(0, 0.55, -5.0); g.add(flame);
+            flame.scale.set(1.6, 1.2, 1); flame.position.set(0, 0.45, -4.6); g.add(flame);
             const flame2 = new THREE.Sprite(new THREE.SpriteMaterial({ map: TEX.glow, color: 0xffb35a, transparent: true, opacity: 0, blending: THREE.AdditiveBlending, depthWrite: false }));
-            flame2.scale.set(5, 3.2, 1); flame2.position.set(0, 0.55, -7); g.add(flame2);
-            // shield shell for hits
-            const shield = new THREE.Mesh(new THREE.SphereGeometry(5.0, 16, 10), new THREE.MeshBasicMaterial({ color: 0x9fe8ff, transparent: true, opacity: 0, side: THREE.DoubleSide, depthWrite: false }));
-            shield.scale.set(1, 0.5, 1); shield.position.y = 0.7; g.add(shield);
-            // hover glow under the machine
-            const under = new THREE.Sprite(new THREE.SpriteMaterial({ map: TEX.glow, color: def.col, transparent: true, opacity: 0.55, blending: THREE.AdditiveBlending, depthWrite: false }));
-            under.scale.set(7, 3.5, 1); under.position.set(0, -0.3, 0); g.add(under);
+            flame2.scale.set(4, 2.4, 1); flame2.position.set(0, 0.45, -6); g.add(flame2);
+            // hit flash: the hull itself flashes (no bubble shield)
+            const shield = new THREE.Mesh(new THREE.BoxGeometry(0.01, 0.01, 0.01), new THREE.MeshBasicMaterial({ transparent: true, opacity: 0, depthWrite: false })); g.add(shield);
+            const under = new THREE.Sprite(new THREE.SpriteMaterial({ map: TEX.glow, color: def.col, transparent: true, opacity: 0.3, blending: THREE.AdditiveBlending, depthWrite: false }));
+            under.scale.set(6, 2.5, 1); under.position.set(0, -0.3, 0); g.add(under);
             g.userData = { flame, flame2, shield, under, eng, hullMat: body };
             return g;
         }
@@ -680,7 +678,7 @@
         }
         function makeAI(idx) {
             const r = mulberry(100 + idx * 17);
-            return { lane: ((idx % 4) - 1.5) * 6.5, skill: 0.78 + r() * 0.22, aggr: 0.4 + r() * 0.6, phase: r() * 10, jitter: 0 };
+            return { lane: ((idx % 7) - 3) * 4.6, skill: 0.72 + r() * 0.28, aggr: 0.3 + r() * 0.6, phase: r() * 10, jitter: 0, pace: 0.9 + r() * 0.1 };
         }
         let selectedDef = 0;
         function buildMachines() {
@@ -752,8 +750,8 @@
             const top = (k.boostT > 0 ? BOOST_SPEED : k.dashT > 0 ? DASH_SPEED : MAX_SPEED) * (0.94 + 0.06 * st.top);
             if (canSteer || (state === 'finished' && !k.isPlayer)) {
                 if (k.ctrl.brake && !boosting) k.speed = Math.max(0, k.speed - BRAKE_DECEL * dt);
-                else if (k.speed < top) k.speed = Math.min(top, k.speed + (boosting ? ACCEL * 3.2 : ACCEL * st.acc) * dt);
-                else k.speed = Math.max(top, k.speed - 90 * dt);
+                else if (k.speed < top) k.speed = Math.min(top, k.speed + (boosting ? ACCEL * 2.6 : ACCEL * st.acc) * dt);
+                else k.speed = Math.max(top, k.speed - 34 * dt);   // boost fades out over ~2 s instead of dropping off a cliff
             } else k.speed = Math.max(0, k.speed - 60 * dt);
             if (k.finished) k.speed = Math.min(k.speed, MAX_SPEED * 0.7);
             // steering scrubs speed
@@ -793,7 +791,7 @@
             if (k.hitT > 0) k.hitT -= dt;
             // --- jump crest: ballistic lift while over the jump zone ---
             const q = sampleAtS(k.s);
-            if (q.jump && k.air === 0 && k.jumpT <= 0 && k.speed > 120) { k.vair = 12 + (k.speed - 120) * 0.1; k.air = 0.01; k.jumpT = 2.5; if (k.isPlayer) sfxWhoosh(); }
+            if (q.jump && k.air === 0 && k.jumpT <= 0 && k.speed > 100) { k.vair = 7 + (k.speed - 100) * 0.06; k.air = 0.01; k.jumpT = 2.5; if (k.isPlayer) sfxWhoosh(); }
             if (k.jumpT > 0) k.jumpT -= dt;
             if (k.air > 0) { k.vair -= 40 * dt; k.air += k.vair * dt; if (k.air <= 0) { k.air = 0; k.vair = 0; if (k.isPlayer) { camShake = Math.max(camShake, 0.35); vibrate(12); } } }
             // --- track features ---
@@ -811,14 +809,15 @@
                 else if (k.isPlayer) { flashText(k.laps === TOTAL_LAPS - 1 ? 'FINAL LAP!' : 'LAP ' + (k.laps + 1), '#9fe8ff'); sfxLap(); }
             }
             k.progress = k.laps * TRACK.len + k.s;
-            k.pos.copy(worldPos(k.s, k.lat, 0.9 + k.air, k.pos));
+            k.pos.copy(worldPos(k.s, k.lat, 0.5 + k.air, k.pos));
         }
         function tryBoost(k) {
             if (k.laps < BOOST_MIN_LAP && !DBG_FREEBOOST) { if (k.isPlayer) { toast('BOOST UNLOCKS AFTER LAP 1'); sfxDeny(); } return false; }
             if (k.boostCool > 0 || k.boostT > 0.3) return false;
             if (k.energy <= BOOST_COST) { if (k.isPlayer) { toast('NOT ENOUGH ENERGY'); sfxDeny(); } return false; }
             k.energy -= BOOST_COST; k.boostT = BOOST_TIME; k.boostCool = 0.45;
-            if (k.isPlayer) { sfxBoost(); camFovKick = 14; vibrate(25); }
+            k.speed = Math.min(BOOST_SPEED, k.speed + 28);   // the kick you feel the instant you press it
+            if (k.isPlayer) { sfxBoost(); camFovKick = 8; vibrate(25); }
             return true;
         }
         let DBG_FREEBOOST = false;
@@ -841,18 +840,19 @@
                 if (a.dead > 0 || b.dead > 0 || a.out || b.out) continue;
                 let ds = a.s - b.s; if (ds > TRACK.len / 2) ds -= TRACK.len; if (ds < -TRACK.len / 2) ds += TRACK.len;
                 const dl = a.lat - b.lat, dh = a.air - b.air;
-                if (Math.abs(ds) < 8.5 && Math.abs(dl) < 5.2 && Math.abs(dh) < 3) {
-                    // separate laterally, trade speed, both lose energy
-                    const push = (5.2 - Math.abs(dl)) * 0.5 * (dl >= 0 ? 1 : -1);
+                if (Math.abs(ds) < 7.5 && Math.abs(dl) < 4.4 && Math.abs(dh) < 3) {
+                    // separate laterally, trade speed; energy only goes for a real hit, not a brush
+                    const push = (4.4 - Math.abs(dl)) * 0.35 * (dl >= 0 ? 1 : -1);
                     a.lat += push; b.lat -= push;
                     const rel = Math.abs((a.speed * Math.sin(a.yaw) + a.slide) - (b.speed * Math.sin(b.yaw) + b.slide)) + Math.abs(a.speed - b.speed) * 0.3;
-                    const dmg = clamp(1.2 + rel * 0.06, 1.2, 9);
+                    if (rel < 6) { a.slide += (dl >= 0 ? 1 : -1) * 3; b.slide -= (dl >= 0 ? 1 : -1) * 3; continue; }
+                    const dmg = clamp(0.8 + rel * 0.05, 0.8, 7);
                     const boostA = a.boostT > 0 || a.dashT > 0, boostB = b.boostT > 0 || b.dashT > 0;
                     if (a.hitT <= 0.15) damage(a, dmg * (boostB ? 1.8 : 1) * (boostA ? 0.5 : 1), 'ram');
                     if (b.hitT <= 0.15) damage(b, dmg * (boostA ? 1.8 : 1) * (boostB ? 0.5 : 1), 'ram');
                     // rear-ender shoves the one in front, gets slowed itself
                     if (ds > 0) { a.speed = Math.min(a.speed, b.speed + 12); b.speed += 6; } else { b.speed = Math.min(b.speed, a.speed + 12); a.speed += 6; }
-                    a.slide += (dl >= 0 ? 1 : -1) * 9; b.slide -= (dl >= 0 ? 1 : -1) * 9;
+                    a.slide += (dl >= 0 ? 1 : -1) * 6; b.slide -= (dl >= 0 ? 1 : -1) * 6;
                     a.hitT = Math.max(a.hitT, 0.25); b.hitT = Math.max(b.hitT, 0.25);
                     const mid = a.pos.clone().lerp(b.pos, 0.5); spawnSparksAt(mid, 8, 0xffffff);
                     if (a.isPlayer || b.isPlayer) { vibrate(18); camShake = Math.max(camShake, 0.45); sfxBump(); }
@@ -879,8 +879,8 @@
             const fa = frameAt(k.s + look, _frA);
             const f0 = frameAt(k.s, _frB);
             const curvAhead = fa.curv;
-            const inside = -Math.sign(curvAhead) * Math.min(Math.abs(curvAhead) * 2400, f0.w * 0.55);
-            let targetLat = ai.lane * 0.6 + inside + Math.sin(ai.phase * 0.6) * 1.5;
+            const inside = -Math.sign(curvAhead) * Math.min(Math.abs(curvAhead) * 1200, f0.w * 0.3);
+            let targetLat = ai.lane + inside + Math.sin(ai.phase * 0.6) * 1.0;
             // seek dash plates / recharge when needed
             const qa = sampleAtS(k.s + look * 0.6);
             if (qa.dash && Math.abs(qa.dash.lat - k.lat) < 14) targetLat = qa.dash.lat;
@@ -890,7 +890,8 @@
             for (const o of machines) {
                 if (o === k || o.dead > 0) continue;
                 let ds = o.s - k.s; if (ds > TRACK.len / 2) ds -= TRACK.len; if (ds < -TRACK.len / 2) ds += TRACK.len;
-                if (ds > 0 && ds < 30 && Math.abs(o.lat - k.lat) < 6) targetLat += (k.lat >= o.lat ? 1 : -1) * 7 * ai.aggr;
+                if (ds > -6 && ds < 36 && Math.abs(o.lat - k.lat) < 7) targetLat += (k.lat >= o.lat ? 1 : -1) * (9 - Math.abs(o.lat - k.lat)) * 1.2;   // give rivals room: no pack clumping
+                if (ds > 0 && ds < 14 && Math.abs(o.lat - k.lat) < 4 && !o.isPlayer) k.ctrl.brakeTap = true;   // don't climb a rival's tail
             }
             // predictive lateral controller: cancel slide, close the gap
             const vlat = k.speed * Math.sin(k.yaw) + k.slide;
@@ -900,15 +901,15 @@
             k.ctrl.steer = clamp(want + ai.jitter, -1, 1);
             // brake only when the slide is about to carry it into the wall at speed
             const margin = f0.w - 3 - Math.abs(k.lat + vlat * 0.35);
-            k.ctrl.brake = margin < 0 && k.speed > 150;
+            k.ctrl.brake = (margin < 0 && k.speed > 110) || !!k.ctrl.brakeTap; k.ctrl.brakeTap = false;
             // boost on straights when energy allows (keep a reserve, F-Zero style)
             const straight = Math.abs(curvAhead) < 0.0012;
             k.ctrl.boost = k.laps >= BOOST_MIN_LAP && straight && k.energy > 45 + (1 - ai.aggr) * 30 && k.boostT <= 0 && Math.random() < 0.02;
             // rubber band: trailing CPUs get a nudge, leaders ease off when far ahead of the player
             const gap = player ? k.progress - player.progress : 0;
             k.def.stat.top = k.def.statBase ? k.def.statBase.top : (k.def.statBase = { ...k.def.stat }).top;
-            const rb = clamp(-gap / 900, -0.05, 0.06) * (player && player.finished ? 0 : 1);
-            k.def.stat.top = k.def.statBase.top + rb;
+            const rb = clamp(-gap / 1400, -0.04, 0.04) * (player && player.finished ? 0 : 1);
+            k.def.stat.top = k.def.statBase.top * (ai.pace || 1) + rb;
         }
 
         // =====================================================================
@@ -965,19 +966,16 @@
             dt = dt || SIM_DT;
             const f = frameAt(k.s);
             const g = k.mesh, ud = g.userData;
-            k.bob += dt * 7;
-            const hover = Math.sin(k.bob) * 0.12;
-            g.position.copy(k.pos); g.position.addScaledVector(_vy.set(f.ux, f.uy, f.uz), hover);
+            g.position.copy(k.pos);   // flat hover: no bob (it read as bouncing)
             // orientation: track up, heading = tangent rotated by yaw about up, roll into the turn + slide
             _vy.set(f.ux, f.uy, f.uz);
             _vz.set(f.tx, f.ty, f.tz).applyAxisAngle(_vy, -k.yaw).normalize();
             _vx.crossVectors(_vy, _vz);
             _km.makeBasis(_vx, _vy, _vz);
             _kq.setFromRotationMatrix(_km);
-            if (instant) g.quaternion.copy(_kq); else g.quaternion.slerp(_kq, frameLerp(0.45, dt));
-            const roll = -k.yaw * 0.9 - k.slide * 0.012;
-            const pitch = k.air > 0 ? clamp(-k.vair * 0.02, -0.3, 0.3) : (k.boostT > 0 ? -0.05 : 0);
-            g.rotateZ(roll); g.rotateX(pitch);
+            if (instant) g.quaternion.copy(_kq); else g.quaternion.slerp(_kq, frameLerp(0.6, dt));
+            const roll = -k.yaw * 0.45;   // a lean into the turn only; slide no longer rocks the hull
+            g.rotateZ(roll);
             // engine flames
             const boosting = k.boostT > 0 || k.dashT > 0;
             const thr = clamp(k.speed / MAX_SPEED, 0.15, 1.4);
@@ -989,10 +987,9 @@
             ud.flame.material.opacity = nearCam ? 0 : 1; if (nearCam) ud.flame2.material.opacity = 0;
             ud.flame2.scale.set(5 + Math.random() * 2, 3, 1);
             ud.eng.material.color.setHex(boosting ? 0xffb35a : 0x5ad6ff);
-            ud.shield.material.opacity = Math.max(0, k.hitT) * 0.9;
-            ud.under.material.opacity = 0.2 + thr * 0.15;
-            if (k.rechargeT > 0) ud.shield.material.opacity = Math.max(ud.shield.material.opacity, 0.14 + 0.06 * Math.sin(animT * 20)), ud.shield.material.color.setHex(0xff6fd0); else ud.shield.material.color.setHex(0x9fe8ff);
-            ud.hullMat.emissive.setHex(k.energy < 15 && ((animT * 6) | 0) % 2 ? 0x661010 : 0x000000);
+            ud.under.material.opacity = 0.15 + thr * 0.12;
+            const low = k.energy < 15 && ((animT * 6) | 0) % 2;
+            ud.hullMat.emissive.setHex(k.hitT > 0 ? 0x666666 : k.rechargeT > 0 ? 0x4a1a3a : low ? 0x661010 : 0x000000);
         }
 
         // ---- camera ---------------------------------------------------------------
@@ -1003,7 +1000,7 @@
             const f = frameAt(k.s - 15, _frA);
             const fl = frameAt(k.s + 30, _frB);
             const sp = clamp(k.speed / MAX_SPEED, 0, 1.6);
-            const back = 15 + sp * 3, up = 5.2 + sp * 0.6;
+            const back = 16 + sp * 2, up = 5.4;
             // behind the machine along the track, slightly toward the lateral position, riding the track up-vector (banks tilt the camera)
             camPos.set(f.x + f.nx * k.lat * 0.75 + f.ux * up, f.y + f.ny * k.lat * 0.75 + f.uy * up, f.z + f.nz * k.lat * 0.75 + f.uz * up);
             camPos.addScaledVector(_vz.set(f.tx, f.ty, f.tz), -(back - 15));
@@ -1016,7 +1013,7 @@
             camera.lookAt(camLook);
             camFovKick += (0 - camFovKick) * frameLerp(0.1, dt || SIM_DT);
             const boosting = k.boostT > 0 || k.dashT > 0;
-            const fovTarget = 68 + sp * 12 + (boosting ? 8 : 0) + camFovKick;
+            const fovTarget = 66 + sp * 6 + (boosting ? 5 : 0) + camFovKick;
             camera.fov = instant ? fovTarget : lerp(camera.fov, fovTarget, frameLerp(0.15, dt || SIM_DT));
             camera.updateProjectionMatrix();
             camInit = true;
