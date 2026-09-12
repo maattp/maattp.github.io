@@ -216,7 +216,7 @@
         // =====================================================================
         //  SPACE FLIGHT — anti-grav racing prototype (single track, CPUs)
         // =====================================================================
-        const SF_VER = 29;
+        const SF_VER = 30;
         const clamp = (v, a, b) => v < a ? a : v > b ? b : v;
         const lerp = (a, b, t) => a + (b - a) * t;
         const smoothstep = (a, b, x) => { const t = clamp((x - a) / (b - a), 0, 1); return t * t * (3 - 2 * t); };
@@ -686,7 +686,7 @@
         function placeOnTrack(mesh, s, lat, up) {
             const f = frameAt(s);
             mesh.position.set(f.x + f.nx * lat + f.ux * up, f.y + f.ny * lat + f.uy * up, f.z + f.nz * lat + f.uz * up);
-            _m4.makeBasis(new THREE.Vector3(f.nx, f.ny, f.nz), new THREE.Vector3(f.ux, f.uy, f.uz), new THREE.Vector3(-f.tx, -f.ty, -f.tz));
+            _m4.makeBasis(new THREE.Vector3(f.nx, f.ny, f.nz), new THREE.Vector3(f.ux, f.uy, f.uz), new THREE.Vector3(f.tx, f.ty, f.tz));
             mesh.quaternion.setFromRotationMatrix(_m4);
             mesh.rotateX(-Math.PI / 2);
         }
@@ -923,7 +923,9 @@
             for (const f of TRACK.def.gates || []) {
                 const fr = frameAt(f * TRACK.len, _frA);
                 const arch = new THREE.Mesh(new THREE.TorusGeometry(fr.w + 4, 2.2, 8, 24, Math.PI), new THREE.MeshBasicMaterial({ color: 0xffe14a }));
-                _m4.makeBasis(new THREE.Vector3(fr.nx, fr.ny, fr.nz), new THREE.Vector3(fr.ux, fr.uy, fr.uz), new THREE.Vector3(-fr.tx, -fr.ty, -fr.tz));
+                // right-handed basis (side, up, tangent): side × up = tangent — the earlier (side, up, −tangent)
+                // was left-handed and setFromRotationMatrix turned it into an arbitrary tilt
+                _m4.makeBasis(new THREE.Vector3(fr.nx, fr.ny, fr.nz), new THREE.Vector3(fr.ux, fr.uy, fr.uz), new THREE.Vector3(fr.tx, fr.ty, fr.tz));
                 arch.quaternion.setFromRotationMatrix(_m4);
                 arch.position.set(fr.x + fr.ux * 1.5, fr.y + fr.uy * 1.5, fr.z + fr.uz * 1.5);
                 world.add(arch);
