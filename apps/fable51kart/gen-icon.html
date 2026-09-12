@@ -1,0 +1,42 @@
+<!DOCTYPE html><meta charset="utf-8"><title>Fable51 Kart icon</title>
+<canvas id="c" width="512" height="512"></canvas>
+<script>
+// Home Screen icon: night-to-dawn sky, a mountain road looping over itself,
+// a chunky red kart, and the "51" badge. Rendered by tools/f51icon.mjs.
+const c = document.getElementById('c'), g = c.getContext('2d');
+function draw(S) {
+  c.width = c.height = S; const k = S / 512;
+  g.setTransform(k, 0, 0, k, 0, 0);
+  const sky = g.createLinearGradient(0, 0, 0, 512);
+  sky.addColorStop(0, '#12224e'); sky.addColorStop(0.55, '#2f6fd8'); sky.addColorStop(1, '#ffb070');
+  g.fillStyle = sky; g.fillRect(0, 0, 512, 512);
+  // sun
+  g.fillStyle = '#fff2c0'; g.beginPath(); g.arc(400, 150, 46, 0, 7); g.fill();
+  // mountains
+  g.fillStyle = '#4a6aa8'; g.beginPath(); g.moveTo(0, 330); g.lineTo(120, 170); g.lineTo(230, 300); g.lineTo(330, 200); g.lineTo(512, 340); g.lineTo(512, 512); g.lineTo(0, 512); g.fill();
+  g.fillStyle = '#f4f7ff'; g.beginPath(); g.moveTo(96, 202); g.lineTo(120, 170); g.lineTo(146, 204); g.lineTo(130, 196); g.lineTo(118, 208); g.lineTo(106, 196); g.fill();
+  g.fillStyle = '#5c9a4a'; g.beginPath(); g.moveTo(0, 380); g.quadraticCurveTo(200, 300, 512, 400); g.lineTo(512, 512); g.lineTo(0, 512); g.fill();
+  // looping road (over itself)
+  g.lineCap = 'round';
+  const road = (w, col) => { g.strokeStyle = col; g.lineWidth = w; g.beginPath(); g.moveTo(-20, 470); g.bezierCurveTo(160, 470, 300, 250, 250, 220); g.bezierCurveTo(200, 200, 180, 300, 300, 330); g.bezierCurveTo(420, 360, 470, 300, 540, 300); g.stroke(); };
+  road(58, '#2a2f3c'); road(44, '#4a5064');
+  g.setLineDash([16, 18]); g.strokeStyle = '#ffd54a'; g.lineWidth = 5; g.beginPath(); g.moveTo(-20, 470); g.bezierCurveTo(160, 470, 300, 250, 250, 220); g.bezierCurveTo(200, 200, 180, 300, 300, 330); g.bezierCurveTo(420, 360, 470, 300, 540, 300); g.stroke(); g.setLineDash([]);
+  // kart
+  g.save(); g.translate(180, 400); g.rotate(-0.18);
+  g.fillStyle = 'rgba(0,0,0,0.3)'; g.beginPath(); g.ellipse(6, 44, 80, 16, 0, 0, 7); g.fill();
+  g.fillStyle = '#ff3b5c'; g.beginPath(); g.roundRect(-70, -10, 140, 50, 18); g.fill();
+  g.fillStyle = '#ffd54a'; g.beginPath(); g.roundRect(-90, 8, 34, 14, 6); g.fill(); g.beginPath(); g.roundRect(56, -30, 34, 12, 6); g.fill();
+  g.fillStyle = '#ffd9a8'; g.beginPath(); g.arc(-8, -28, 22, 0, 7); g.fill();
+  g.fillStyle = '#ff3b5c'; g.beginPath(); g.arc(-8, -32, 24, Math.PI, 0); g.fill();
+  g.fillStyle = '#1a1d26'; g.beginPath(); g.roundRect(-28, -22, 40, 8, 4); g.fill();
+  for (const x of [-48, 48]) { g.fillStyle = '#14171f'; g.beginPath(); g.arc(x, 40, 24, 0, 7); g.fill(); g.fillStyle = '#ffd54a'; g.beginPath(); g.arc(x, 40, 11, 0, 7); g.fill(); }
+  g.restore();
+  // badge
+  g.fillStyle = '#ffd54a'; g.beginPath(); g.roundRect(330, 372, 150, 110, 26); g.fill();
+  g.fillStyle = '#12224e'; g.font = '900 78px -apple-system, Segoe UI, sans-serif'; g.textAlign = 'center'; g.textBaseline = 'middle'; g.fillText('51', 405, 428);
+  g.fillStyle = '#12224e'; g.font = '900 20px -apple-system, Segoe UI, sans-serif'; g.fillText('FABLE', 405, 392);
+}
+window.icons = {};
+for (const S of [512, 192, 180]) { draw(S); window.icons[S] = c.toDataURL('image/png'); }
+draw(512); window.iconsReady = true;
+</script>
