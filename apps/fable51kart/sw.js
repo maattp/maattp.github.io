@@ -5,7 +5,7 @@
 // URL with cache:'no-cache' (WebKit rejects refetching a navigation Request).
 // The multiplayer worker API / WebSockets are never intercepted.
 // Bump CACHE alongside APP_VER when a deploy must reach installed players now.
-const CACHE = 'fable51kart-v1';
+const CACHE = 'fable51kart-v2';
 const PINNED = ['https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js'];
 const SHELL = ['./', './index.html', './manifest.webmanifest', './icon-180.png', './icon-192.png', './icon-512.png'];
 
