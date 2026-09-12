@@ -70,7 +70,7 @@
         #speed .num { font-size: 46px; font-weight: 900; font-style: italic; letter-spacing: -2px; line-height: 1; color: #fff; text-shadow: 0 0 18px rgba(80, 200, 255, 0.7); }
         #speed .num.boost { color: #ffb35a; text-shadow: 0 0 22px rgba(255, 150, 60, 0.9); }
         #speed .unit { font-size: 11px; letter-spacing: 3px; opacity: 0.7; font-weight: 800; }
-        #energyWrap { position: absolute; left: calc(env(safe-area-inset-left) + 14px); bottom: calc(env(safe-area-inset-bottom) + 26px); width: 260px; }
+        #energyWrap { position: absolute; left: calc(env(safe-area-inset-left) + 14px); top: calc(env(safe-area-inset-top) + 74px); width: 240px; }   /* top-left: the steering thumb lives bottom-left */
         #energyWrap .label { font-size: 10px; letter-spacing: 3px; font-weight: 900; color: #9fe8ff; display: flex; justify-content: space-between; }
         #energyBar { margin-top: 5px; height: 16px; border-radius: 8px; background: rgba(255,255,255,0.09); border: 1px solid rgba(159,232,255,0.3); overflow: hidden; position: relative; }
         #energyFill { height: 100%; width: 100%; background: linear-gradient(90deg, #ff4fa0, #ffcf5a 40%, #7dffb0 75%, #5ad6ff); transition: width 0.08s linear; box-shadow: 0 0 12px rgba(120, 230, 255, 0.6); }
@@ -90,9 +90,9 @@
         #stick { position: absolute; width: 120px; height: 46px; border-radius: 23px; background: rgba(255,255,255,0.09); border: 1px solid rgba(255,255,255,0.18); opacity: 0; transition: opacity 0.15s; }
         #stick.on { opacity: 1; }
         #stickDot { position: absolute; left: 50%; top: 50%; width: 34px; height: 34px; border-radius: 50%; background: rgba(159,232,255,0.85); transform: translate(-50%, -50%); box-shadow: 0 0 12px rgba(159,232,255,0.8); }
-        #steerHint { position: absolute; left: calc(env(safe-area-inset-left) + 14px); bottom: calc(env(safe-area-inset-bottom) + 90px); font-size: 11px; font-weight: 700; letter-spacing: 1px; opacity: 0.45; }
+        #steerHint { position: absolute; left: calc(env(safe-area-inset-left) + 14px); bottom: calc(env(safe-area-inset-bottom) + 30px); font-size: 11px; font-weight: 700; letter-spacing: 1px; opacity: 0.45; }
         #minimap { position: absolute; left: 50%; bottom: calc(env(safe-area-inset-bottom) + 12px); transform: translateX(-50%); width: 150px; height: 110px; opacity: 0.85; }
-        #standings { position: absolute; left: calc(env(safe-area-inset-left) + 14px); top: calc(env(safe-area-inset-top) + 76px); display: flex; flex-direction: column; gap: 3px; }
+        #standings { position: absolute; left: calc(env(safe-area-inset-left) + 14px); top: calc(env(safe-area-inset-top) + 124px); display: flex; flex-direction: column; gap: 3px; }
         #standings .row { font-size: 11px; font-weight: 800; background: rgba(6,4,20,0.5); border-radius: 6px; padding: 2px 8px; display: flex; gap: 6px; align-items: center; width: 132px; white-space: nowrap; }
         #standings .row .dot { width: 8px; height: 8px; border-radius: 50%; }
         #standings .row.me { outline: 1px solid rgba(255, 213, 74, 0.8); color: #ffd54a; }
@@ -216,7 +216,7 @@
         // =====================================================================
         //  SPACE FLIGHT — anti-grav racing prototype (single track, CPUs)
         // =====================================================================
-        const SF_VER = 30;
+        const SF_VER = 31;
         const clamp = (v, a, b) => v < a ? a : v > b ? b : v;
         const lerp = (a, b, t) => a + (b - a) * t;
         const smoothstep = (a, b, x) => { const t = clamp((x - a) / (b - a), 0, 1); return t * t * (3 - 2 * t); };
