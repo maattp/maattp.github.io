@@ -47,6 +47,14 @@ can rejoin by name and reclaim their kart. Protocol lives in
 `apps/fablekart/index.html` (`netHandle`) and `apps/fablekart/VISION.md`.
 Rooms self-destruct via alarm after 45 min or when the last socket leaves.
 
+### Fable51 Kart rooms (`/f51/*` — same model as kart3, EIGHT seats)
+
+`Fable51Room` (`src/f51room.ts`) subclasses `Kart3Room` and only raises the
+seat cap (`maxPlayers()` = 8). Own DO namespace + migration so codes never
+collide with Fable Kart rooms and the two version gates stay independent.
+Routes mirror kart3: `POST /f51/rooms`, `GET /f51/rooms/:code`,
+`GET /f51/rooms/:code/ws` (registered before cors).
+
 ### Sichuan Mahjong rooms (`/mahjong/*` — NO Google auth, origin-gated like kart3)
 
 Unlike `Kart3Room` (an opaque relay), `MahjongRoom` (`src/mahjongroom.ts`) is

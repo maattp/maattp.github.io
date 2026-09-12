@@ -30,6 +30,7 @@ CHAT_SENDERS = "m.polkiewicz@gmail.com:matt,ting520143@gmail.com:tingting"
 [durable_objects]
 bindings = [
   { name = "KART3_ROOM", class_name = "Kart3Room" },
+  { name = "F51_ROOM", class_name = "Fable51Room" },
   { name = "MAHJONG_ROOM", class_name = "MahjongRoom" },
   { name = "HARD_ROOM", class_name = "HardRoom" },
   { name = "RING_ROOM", class_name = "RingRoom" },
@@ -55,6 +56,10 @@ new_sqlite_classes = ["RingRoom"]
 [[migrations]]
 tag = "chat-room-v1"
 new_sqlite_classes = ["ChatRoom"]
+
+[[migrations]]
+tag = "f51-room-v1"
+new_sqlite_classes = ["Fable51Room"]
 
 [triggers]
 crons = ["*/15 * * * *"]

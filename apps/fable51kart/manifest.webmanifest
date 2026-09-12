@@ -1,0 +1,16 @@
+{
+  "name": "Fable51 Kart",
+  "short_name": "Fable51 Kart",
+  "description": "True-3D kart racing — four maps with forks, jumps and helixes, items, drifting, and online play for up to 8 friends.",
+  "start_url": "/apps/fable51kart/",
+  "scope": "/apps/fable51kart/",
+  "display": "fullscreen",
+  "orientation": "landscape",
+  "background_color": "#050a16",
+  "theme_color": "#050a16",
+  "icons": [
+    { "src": "icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}

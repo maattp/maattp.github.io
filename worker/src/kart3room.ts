@@ -24,7 +24,7 @@ type Attachment = {
 
 type Phase = "lobby" | "racing";
 
-const MAX_PLAYERS = 4;
+const MAX_PLAYERS = 4;   // Fable Kart; Fable51Room overrides via maxPlayers()
 const ROOM_TTL_MS = 45 * 60 * 1000; // hard kill switch for abandoned rooms
 const NAME_MAX = 12;
 
@@ -39,7 +39,10 @@ function sanitizeName(raw: unknown): string {
 }
 
 export class Kart3Room {
-  private state: DurableObjectState;
+  protected state: DurableObjectState;
+
+  // seats per room — subclasses (Fable51Room) raise this
+  protected maxPlayers(): number { return MAX_PLAYERS; }
 
   constructor(state: DurableObjectState) {
     this.state = state;
@@ -163,7 +166,7 @@ export class Kart3Room {
         await this.broadcastRoster();
         return;
       }
-      if (players.length >= MAX_PLAYERS) {
+      if (players.length >= this.maxPlayers()) {
         ws.send(JSON.stringify({ t: "error", msg: "room full" }));
         ws.close(1008, "room full");
         return;

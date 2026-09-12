@@ -1,6 +1,7 @@
 import { Hono } from "hono";
 import { cors } from "hono/cors";
 import { Kart3Room } from "./kart3room";
+import { Fable51Room } from "./f51room";
 import { MahjongRoom } from "./mahjongroom";
 import { HardRoom } from "./hardroom";
 import { RingRoom } from "./ringroom";
@@ -12,13 +13,14 @@ import { hardApp, WS_TICKET_PREFIX } from "./hard";
 import { scheduled } from "./hardcron";
 import type { HardEnv } from "./hardlogic";
 
-export { Kart3Room, MahjongRoom, HardRoom, RingRoom, ChatRoom };
+export { Kart3Room, Fable51Room, MahjongRoom, HardRoom, RingRoom, ChatRoom };
 
 const SESSION_TTL = 365 * 24 * 60 * 60; // 1 year in seconds
 const SESSION_PREFIX = "__session:";
 
 type Bindings = HardEnv & {
   KART3_ROOM: DurableObjectNamespace;
+  F51_ROOM: DurableObjectNamespace;
   MAHJONG_ROOM: DurableObjectNamespace;
   RING_ROOM: DurableObjectNamespace;
   CHAT_ROOM: DurableObjectNamespace;
@@ -145,6 +147,17 @@ app.get("/kart3/rooms/:code/ws", async (c) => {
   return stub.fetch("https://do/ws", c.req.raw);
 });
 
+// --- Fable51Kart rooms (8 seats): WebSocket upgrade. Same origin gate and
+// code-as-credential model as kart3; own DO namespace (F51_ROOM).
+app.get("/f51/rooms/:code/ws", async (c) => {
+  if (c.req.header("Upgrade") !== "websocket") return c.json({ error: "expected websocket" }, 426);
+  if (!kart3OriginOk(c.req.header("Origin"))) return c.json({ error: "forbidden" }, 403);
+  const code = c.req.param("code").toUpperCase();
+  if (!ROOM_CODE_RE.test(code)) return c.json({ error: "bad room code" }, 400);
+  const stub = c.env.F51_ROOM.get(c.env.F51_ROOM.idFromName(code));
+  return stub.fetch("https://do/ws", c.req.raw);
+});
+
 // --- Sichuan Mahjong online rooms: WebSocket upgrade (server-authoritative) ---
 // Same origin-gated, code-as-credential model as kart3. Registered before cors
 // for the same reason (immutable 101 headers).
@@ -254,6 +267,26 @@ app.get("/kart3/rooms/:code", async (c) => {
     return c.json({ error: "bad room code" }, 400);
   }
   const stub = c.env.KART3_ROOM.get(c.env.KART3_ROOM.idFromName(code));
+  const res = await stub.fetch("https://do/status");
+  return c.json(await res.json());
+});
+
+// --- Fable51Kart rooms: create + status (CORS applies) ---
+app.post("/f51/rooms", async (c) => {
+  if (!kart3OriginOk(c.req.header("Origin"))) return c.json({ error: "forbidden" }, 403);
+  const bytes = new Uint8Array(5);
+  crypto.getRandomValues(bytes);
+  let code = "";
+  for (const b of bytes) code += ROOM_ALPHABET[b % ROOM_ALPHABET.length];
+  const stub = c.env.F51_ROOM.get(c.env.F51_ROOM.idFromName(code));
+  await stub.fetch("https://do/init", { method: "POST", body: code });
+  return c.json({ code });
+});
+
+app.get("/f51/rooms/:code", async (c) => {
+  const code = c.req.param("code").toUpperCase();
+  if (!ROOM_CODE_RE.test(code)) return c.json({ error: "bad room code" }, 400);
+  const stub = c.env.F51_ROOM.get(c.env.F51_ROOM.idFromName(code));
   const res = await stub.fetch("https://do/status");
   return c.json(await res.json());
 });
