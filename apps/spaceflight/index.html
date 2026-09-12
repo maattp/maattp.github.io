@@ -118,6 +118,29 @@
         table.results tr.me td { color: #ffd54a; font-weight: 900; }
         table.results .dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 8px; vertical-align: middle; }
         #a2hs { display: none; }
+        .online { display: flex; gap: 8px; margin-top: 14px; align-items: center; flex-wrap: wrap; justify-content: center; }
+        .online input { background: rgba(255,255,255,0.08); border: 1px solid rgba(159,232,255,0.35); border-radius: 20px; color: #fff; font-size: 14px; font-weight: 700; padding: 9px 14px; outline: none; width: 130px; text-align: center; letter-spacing: 1px; }
+        .online input#codeInput { width: 92px; text-transform: uppercase; letter-spacing: 4px; }
+        .online .btn { margin-top: 0; }
+        #netStatus { margin-top: 8px; font-size: 12px; font-weight: 700; color: #ffd54a; min-height: 16px; }
+        #roomCode { font-size: 38px; font-weight: 900; font-style: italic; letter-spacing: 8px; line-height: 1; margin: 6px 0 0; cursor: pointer; color: #fff; text-shadow: 0 0 20px rgba(80,200,255,0.7); }
+        #lobbyScreen { justify-content: flex-start; overflow-y: auto; padding-top: calc(env(safe-area-inset-top) + 8px); }
+        #lobbyList { display: grid; grid-template-columns: repeat(4, 150px); gap: 4px; margin-top: 6px; }
+        #lobbyMachines .pick, #lobbyTracks .pick { height: 44px; width: 78px; font-size: 10px; }
+        #lobbyMachines .pick .st { display: none; }
+        #lobbyTracks .pick.track { width: 128px; height: 40px; font-size: 10px; }
+        .lob-row { display: flex; align-items: center; gap: 6px; background: rgba(255,255,255,0.07); border-radius: 8px; padding: 5px 8px; font-size: 12px; font-weight: 800; }
+        .lob-row.me { outline: 1px solid rgba(255,213,74,0.8); }
+        .lob-row .sw { width: 12px; height: 12px; border-radius: 50%; flex: none; }
+        .lob-row .nm { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .lob-row .rdy { opacity: 0.25; } .lob-row .rdy.on { opacity: 1; color: #7dffb0; }
+        .lob-row .tag { font-size: 9px; letter-spacing: 1px; color: #ffd54a; }
+        .lob-empty { background: rgba(255,255,255,0.03); border-radius: 8px; padding: 5px 8px; font-size: 11px; opacity: 0.45; }
+        #readyBtn.on { background: linear-gradient(180deg, #8fffb0, #2fc860); }
+        #lobbyStartBtn:disabled { opacity: 0.4; }
+        .picker.dim { opacity: 0.45; pointer-events: none; }
+        #netInd { position: absolute; left: 50%; top: calc(env(safe-area-inset-top) + 58px); transform: translateX(-50%); font-size: 10px; font-weight: 800; letter-spacing: 2px; color: #9fe8ff; opacity: 0.8; display: none; }
+        #netInd.on { display: block; }
     </style>
 </head>
 <body>
@@ -129,8 +152,27 @@
         <div class="picker" id="trackPicker" style="margin-top:14px"></div>
         <div class="picker" id="picker"></div>
         <button class="btn" id="startBtn">RACE</button>
+        <div class="online">
+            <input id="nameInput" maxlength="12" placeholder="Your name" autocomplete="off">
+            <button class="btn ghost" id="createRoomBtn">CREATE ROOM</button>
+            <input id="codeInput" maxlength="5" placeholder="CODE" autocomplete="off" autocapitalize="characters">
+            <button class="btn ghost" id="joinRoomBtn">JOIN</button>
+        </div>
+        <div id="netStatus"></div>
         <div class="hint">SLIDE your thumb on the left to steer · BOOST burns ENERGY · hitting walls and rivals burns it too<br>drive the pink strip to recharge · run dry and you're out</div>
         <div id="loadMsg" class="hint" style="margin-top:6px">loading…</div>
+    </div>
+    <div id="lobbyScreen" class="screen">
+        <div style="display:flex;align-items:baseline;gap:18px"><div class="logo" style="font-size:22px">Lobby</div><div id="roomCode">·····</div><div class="hint" style="margin:0">tap code to copy</div></div>
+        <div id="lobbyList"></div>
+        <div class="picker" id="lobbyTracks" style="margin-top:8px"></div>
+        <div class="picker" id="lobbyMachines" style="margin-top:6px"></div>
+        <div style="display:flex;gap:10px;margin-top:6px">
+            <button class="btn" id="readyBtn">READY!</button>
+            <button class="btn" id="lobbyStartBtn">START RACE</button>
+            <button class="btn ghost" id="leaveBtn">LEAVE</button>
+        </div>
+        <div id="lobbyMsg" class="hint"></div>
     </div>
     <div id="resultScreen" class="screen">
         <div class="logo" style="font-size:36px">Results</div>
@@ -154,6 +196,7 @@
         <div id="speed"><div class="num" id="speedNum">0</div><div class="unit">KM/H</div></div>
         <div id="energyWrap"><div class="label"><span>ENERGY</span><span id="energyPct">100</span></div><div id="energyBar"><div id="energyFill"></div><div id="energyMark" style="left:15%"></div></div></div>
         <div id="steerHint">◀ SLIDE THUMB TO STEER ▶</div>
+        <div id="netInd"></div>
         <div id="stick"><div id="stickDot"></div></div>
         <canvas id="minimap" width="300" height="220"></canvas>
         <div id="brakeBtn">BRAKE</div>
@@ -173,7 +216,7 @@
         // =====================================================================
         //  SPACE FLIGHT — anti-grav racing prototype (single track, CPUs)
         // =====================================================================
-        const SF_VER = 24;
+        const SF_VER = 25;
         const clamp = (v, a, b) => v < a ? a : v > b ? b : v;
         const lerp = (a, b, t) => a + (b - a) * t;
         const smoothstep = (a, b, x) => { const t = clamp((x - a) / (b - a), 0, 1); return t * t * (3 - 2 * t); };
@@ -185,7 +228,7 @@
 
         // ---- tuning ---------------------------------------------------------
         const SIM_DT = 1 / 60;
-        const TOTAL_LAPS = 3;
+        let TOTAL_LAPS = 3, TOTAL_LAPS_NET = 3;
         const MAX_SPEED = 150;          // u/s  (×KMH → km/h on the HUD)
         const BOOST_SPEED = 225;
         const DASH_SPEED = 210;
@@ -947,10 +990,10 @@
 
         const machines = [];
         let player = null;
-        function makeMachine(idx, defIdx, isPlayer) {
+        function makeMachine(idx, defIdx, isPlayer, kind, pid, dispName) {
             const def = MACHINES[defIdx];
             const k = {
-                idx, def, name: def.name, isPlayer, ai: isPlayer ? null : makeAI(idx),
+                idx, def, name: dispName || def.name, isPlayer, kind: kind || (isPlayer ? 'local' : 'ai'), pid: pid == null ? -1 : pid, ai: (kind === 'remote' || isPlayer) ? null : makeAI(idx),
                 s: 0, lat: 0, yaw: 0, speed: 0, slide: 0, air: 0, vair: 0, jumpT: 0,
                 energy: ENERGY_MAX, boostT: 0, boostCool: 0, dashT: 0, brake: false,
                 laps: 0, progress: 0, rank: idx + 1, finished: false, finishTime: 0, dead: 0, out: false /* reserved: retire-on-destruction mode after the playtest */, wallT: 0, hitT: 0,
@@ -974,6 +1017,13 @@
             for (let i = 0; i < 8; i++) machines.push(makeMachine(i, order[i], i === 0));
             player = machines[0];
         }
+        // online: the roster from the room (local, remotes) padded with CPUs to eight seats; idx 0 is me
+        function buildMachinesRoster(roster) {
+            for (const k of machines) scene.remove(k.mesh);
+            machines.length = 0;
+            roster.forEach((r, i) => machines.push(makeMachine(i, r.charIdx, r.kind === 'local', r.kind, r.pid, r.name)));
+            player = machines.find((k) => k.isPlayer) || machines[0];
+        }
         function resetRace() {
             raceClock = 0; state = 'menu'; countdownT = 0;
             for (let i = 0; i < machines.length; i++) {
@@ -981,7 +1031,8 @@
                 // grid: 2 wide, staggered back from the line
                 // the player (idx 0) starts dead centre at the back; rivals stagger ahead in two columns
                 // rows 30u apart, columns 11u apart, alternating so nobody sits directly behind anyone
-                const rowS = i === 0 ? 0 : 1 + Math.floor((i - 1) / 2), col = i === 0 ? 0 : ((i % 2) ? -1 : 1);
+                const slot = netActive() ? (machines.length - 1 - i) : i;   // online: humans (listed first) start at the back
+                const rowS = slot === 0 ? 0 : 1 + Math.floor((slot - 1) / 2), col = slot === 0 ? 0 : ((slot % 2) ? -1 : 1);
                 k.s = wrapS(TRACK.lineS + 14 + rowS * 30); k.lat = col * 14; k.gridLat = k.lat;   // grid sits past the line: the first crossing is a real lap
                 k.yaw = 0; k.speed = 0; k.slide = 0; k.air = 0; k.vair = 0; k.jumpT = 0;
                 k.energy = ENERGY_MAX; k.boostT = 0; k.boostCool = 0; k.dashT = 0; k.laps = 0; k.progress = 0; k.finished = false; k.finishTime = 0; k.dead = 0; k.out = false;
@@ -1003,17 +1054,20 @@
         function simTick(dt) {
             simTickNo++; animT += dt;
             if (state === 'racing' || state === 'finished') raceClock += dt;
+            if (net.mode === 'client') { netClientTick(dt); return; }
             for (const k of machines) {
-                if (k.isPlayer) readPlayerControls(k); else aiDrive(k, dt);
+                if (k.isPlayer) readPlayerControls(k, dt); else if (k.kind === 'remote') applyRemoteInput(k); else aiDrive(k, dt);
                 updateMachine(k, dt);
             }
             resolveCollisions(dt);
             updateRankings();
             updateParticles(dt);
+            if (net.mode === 'host' && net.racing && simTickNo % SNAP_EVERY === 0) hostSendSnap();
             if (state === 'racing' && player.finished) finishRace();
             if (state === 'racing' && player.out) { finishRace(); }
         }
-        function readPlayerControls(k) {
+        function readPlayerControls(k, dt) {
+            if (k._auto) { aiDrive(k, dt || SIM_DT); return; }   // test harness autopilot (tools/sfverify, sfonline)
             const steer = clamp((keySteer || touchSteer) * steerSign, -1, 1);
             k.ctrl.steer = steer; k.ctrl.boost = boostHeld; k.ctrl.brake = brakeHeld;
             if (boostHeld) boostHeld = false;   // one press = one boost
@@ -1027,6 +1081,7 @@
                 if (k.dead <= 0) { k.dead = 0; k.lat = 0; k.yaw = 0; k.speed = 0; k.slide = 0; k.energy = 55; k.mesh.visible = true; k.air = 0; k.vair = 0; }
                 return;
             }
+            if (k.kind === 'remote') { updateRemoteMachine(k, dt, racing); return; }
             const f = frameAt(k.s);
             // --- steering: a TRUE heading. `yaw` is the nose angle relative to the road; steering turns
             // the nose, and as the road bends under you the nose stays put in the world, so `yaw`
@@ -1093,7 +1148,7 @@
             if (k.rechargeT > 0) k.rechargeT -= dt;
             // --- progress / laps ---
             const dS = k.s - k.prevS;
-            if (dS < -TRACK.len * 0.5 && !k.finished && racing) {   // crossed the wrap (line at s=0)
+            if (dS < -TRACK.len * 0.5 && !k.finished && racing && net.mode !== 'client') {   // crossed the wrap (line at s=0); online the host counts
                 k.laps++;
                 const lapT = raceClock - k.lastLapStart; k.lastLapStart = raceClock; k.lapTimes.push(lapT); if (k.laps > 1 || true) k.bestLap = Math.min(k.bestLap, lapT);
                 if (k.laps >= TOTAL_LAPS) { k.finished = true; k.finishTime = raceClock; if (k.isPlayer) { flashText('FINISH!', '#7dffb0'); sfxFinish(); } }
@@ -1107,7 +1162,9 @@
             if (k.laps < BOOST_MIN_LAP && !DBG_FREEBOOST) { if (k.isPlayer) { toast('BOOST UNLOCKS AFTER LAP 1'); sfxDeny(); } return false; }
             if (k.boostCool > 0 || k.boostT > 0.3) return false;
             if (k.energy <= BOOST_COST) { if (k.isPlayer) { toast('NOT ENOUGH ENERGY'); sfxDeny(); } return false; }
-            k.energy -= BOOST_COST; k.boostT = BOOST_TIME; k.boostCool = 0.45;
+            if (k.isPlayer && net.mode === 'client') net.boostCount++;   // the host deducts the energy; we predict the speed
+            else k.energy -= BOOST_COST;
+            k.boostT = BOOST_TIME; k.boostCool = 0.45;
             k.speed = Math.min(BOOST_SPEED, k.speed + 28);   // the kick you feel the instant you press it
             if (k.isPlayer) { sfxBoost(); camFovKick = 8; vibrate(25); }
             return true;
@@ -1115,6 +1172,7 @@
         let DBG_FREEBOOST = false;
         function damage(k, amount, kind) {
             if (k.finished || k.dead > 0) return;   // the race is over for this machine; nothing can blow it up now
+            if (net.mode === 'client') { if (k.isPlayer && kind === 'wall') net.wallDmg += amount; k.hitT = 0.25; if (k.isPlayer) hitFlash(amount); return; }   // energy is the host's call
             k.energy -= amount;
             k.hitT = 0.25;
             if (k.isPlayer) { hitFlash(amount); }
@@ -1280,7 +1338,7 @@
         // frames showed 0 ticks of motion and others 2 — that stutter read as bouncing on iPhone
         let renderAlpha = 1;
         function renderPose(k) {
-            if (k.prevS == null || k.prevLat == null || instantRender) { k.rs = k.s; k.rlat = k.lat; k.rair = k.air; return; }
+            if (k.prevS == null || k.prevLat == null || instantRender || (net.mode === 'client' && !k.isPlayer)) { k.rs = k.s; k.rlat = k.lat; k.rair = k.air; return; }
             let ds = k.s - k.prevS; if (ds > TRACK.len / 2) ds -= TRACK.len; if (ds < -TRACK.len / 2) ds += TRACK.len;
             k.rs = wrapS(k.prevS + ds * renderAlpha); k.rlat = lerp(k.prevLat, k.lat, renderAlpha); k.rair = lerp(k.prevAir, k.air, renderAlpha);
         }
@@ -1348,7 +1406,7 @@
 
         // ---- HUD -------------------------------------------------------------------
         const dom = {};
-        function cacheDom() { for (const id of ['hud', 'lapNum', 'rankNum', 'rankSuf', 'timeVal', 'speedNum', 'energyFill', 'energyPct', 'boostBtn', 'brakeBtn', 'stick', 'stickDot', 'countdown', 'countText', 'flash', 'hit', 'boostGlow', 'toast', 'startScreen', 'resultScreen', 'pauseScreen', 'startBtn', 'againBtn', 'menuBtn', 'resumeBtn', 'restartBtn', 'quitBtn', 'loadMsg', 'muteBtn', 'pauseBtn', 'standings', 'resultsTable', 'minimap', 'ver', 'picker', 'trackPicker', 'steerHint']) dom[id] = document.getElementById(id); }
+        function cacheDom() { for (const id of ['hud', 'lapNum', 'rankNum', 'rankSuf', 'timeVal', 'speedNum', 'energyFill', 'energyPct', 'boostBtn', 'brakeBtn', 'stick', 'stickDot', 'countdown', 'countText', 'flash', 'hit', 'boostGlow', 'toast', 'startScreen', 'resultScreen', 'pauseScreen', 'startBtn', 'againBtn', 'menuBtn', 'resumeBtn', 'restartBtn', 'quitBtn', 'loadMsg', 'muteBtn', 'pauseBtn', 'standings', 'resultsTable', 'minimap', 'ver', 'picker', 'trackPicker', 'steerHint', 'nameInput', 'codeInput', 'createRoomBtn', 'joinRoomBtn', 'netStatus', 'lobbyScreen', 'roomCode', 'lobbyList', 'lobbyTracks', 'lobbyMachines', 'readyBtn', 'lobbyStartBtn', 'leaveBtn', 'lobbyMsg', 'netInd']) dom[id] = document.getElementById(id); }
         const ORD = (n) => n === 1 ? 'st' : n === 2 ? 'nd' : n === 3 ? 'rd' : 'th';
         function fmtTime(t) { const m = Math.floor(t / 60), s = t - m * 60; return m + ':' + (s < 10 ? '0' : '') + s.toFixed(1); }
         let lastHud = 0;
@@ -1365,6 +1423,7 @@
             dom.lapNum.textContent = Math.min(TOTAL_LAPS, k.laps + 1);
             dom.rankNum.textContent = k.rank; dom.rankSuf.textContent = ORD(k.rank);
             dom.timeVal.textContent = fmtTime(raceClock);
+            if (netActive()) { dom.netInd.classList.add('on'); dom.netInd.textContent = net.mode === 'host' ? 'HOST · ' + Object.values(net.rtc).filter((r) => r.open).length + '/' + Object.keys(net.rtc).length + ' P2P' : (rtcToHostOpen() ? 'P2P' : 'RELAY') + ' · ' + net.pingMs + 'ms'; } else dom.netInd.classList.remove('on');
             dom.boostBtn.classList.toggle('cold', k.laps < BOOST_MIN_LAP || k.energy <= BOOST_COST);
             // standings
             const sorted = machines.slice().sort((a, b) => a.rank - b.rank);
@@ -1436,12 +1495,12 @@
             const on = (el, fn) => { el.addEventListener('touchstart', (e) => { e.preventDefault(); fn(true); }, { passive: false }); el.addEventListener('touchend', (e) => { e.preventDefault(); fn(false); }, { passive: false }); el.addEventListener('touchcancel', (e) => { e.preventDefault(); fn(false); }, { passive: false }); el.addEventListener('mousedown', () => fn(true)); el.addEventListener('mouseup', () => fn(false)); };
             on(dom.boostBtn, (d) => { if (d) boostHeld = true; dom.boostBtn.classList.toggle('held', d); });
             on(dom.brakeBtn, (d) => { brakeHeld = d; dom.brakeBtn.classList.toggle('held', d); });
-            dom.pauseBtn.addEventListener('click', () => { if (state === 'racing') pauseGame(); });
+            dom.pauseBtn.addEventListener('click', () => { if (state === 'racing' && !netActive()) pauseGame(); });
             dom.muteBtn.addEventListener('click', () => { muted = !muted; dom.muteBtn.textContent = muted ? '🔇' : '🔊'; try { localStorage.setItem('sf_mute', muted ? '1' : '0'); } catch (e) {} if (master) master.gain.value = muted ? 0 : 1; });
             dom.resumeBtn.addEventListener('click', resumeGame);
             dom.restartBtn.addEventListener('click', () => { dom.pauseScreen.classList.remove('on'); startGame(); });
             dom.quitBtn.addEventListener('click', quitToMenu);
-            document.addEventListener('visibilitychange', () => { if (document.hidden && state === 'racing') pauseGame(); });
+            document.addEventListener('visibilitychange', () => { if (document.hidden && state === 'racing' && !netActive()) pauseGame(); });
         }
         function vibrate(ms) { try { if (navigator.vibrate) navigator.vibrate(ms); } catch (e) {} }
 
@@ -1529,6 +1588,313 @@
         }
 
         // =====================================================================
+        //  ONLINE — Fable Kart's star topology, ported. The room DO relays; a
+        //  WebRTC data channel per client is the fast path (TURN when the worker
+        //  has credentials, STUN otherwise). Clients own their machine's pose;
+        //  the host owns energy, collisions, laps, ranks and the finish order.
+        //  Empty seats are CPUs driven by the host. No host migration: if the
+        //  host leaves, the race ends.
+        // =====================================================================
+        const NET_HTTP = (location.hostname === 'localhost' || location.hostname === '127.0.0.1') ? 'http://localhost:8787' : 'https://cloudflare-backend.maattp.workers.dev';
+        const NET_WS = NET_HTTP.replace(/^http/, 'ws');
+        const NET_MAX = 8;
+        const SNAP_EVERY = 3, INPUT_MS = 33, INTERP_MS = 100;   // 20 Hz snapshots, 30 Hz inputs, 100 ms interpolation buffer
+        function hash32(str) { let h = 2166136261 >>> 0; for (let i = 0; i < str.length; i++) { h ^= str.charCodeAt(i); h = Math.imul(h, 16777619); } return (h >>> 0).toString(36); }
+        const NET_VER = 'v' + SF_VER + '.' + hash32(JSON.stringify([MAX_SPEED, BOOST_SPEED, ACCEL, TURN_RATE, GRIP, ENERGY_MAX, BOOST_COST, TRACKS.map((t) => [t.name, t.pts, t.recharge])]));
+        const net = {
+            mode: 'solo', ws: null, connected: false, myId: -1, isHost: false, code: '', hostId: 0,
+            players: [], racePlayers: [], phase: 'lobby', myCharIdx: 0, myReady: false, track: 0,
+            remoteCtrl: {}, snaps: [], lastSnapTick: 0, lastInputSent: 0, pingTimer: 0, pingMs: 0, racing: false,
+            rtc: {}, ice: null, boostCount: 0, wallDmg: 0, lastErrorAt: 0, _lastDead: 0, _lastLaps: 0, _lastBoost: 0,
+        };
+        function netActive() { return net.mode !== 'solo'; }
+        function wsSend(obj) { if (net.ws && net.connected) { try { net.ws.send(JSON.stringify(obj)); } catch (e) {} } }
+        // ---- WebRTC fast path ----
+        const RTC_FALLBACK = { iceServers: [{ urls: ['stun:stun.cloudflare.com:3478', 'stun:stun.l.google.com:19302'] }] };
+        function rtcCfg() { return net.ice ? { iceServers: net.ice } : RTC_FALLBACK; }
+        async function fetchIce() { try { const j = await (await fetch(NET_HTTP + '/sf/turn')).json(); if (j && j.iceServers) { net.ice = j.iceServers; net.turn = !!j.turn; } } catch (e) {} }
+        function rtcAvailable() { return !window.__noRtc && typeof RTCPeerConnection !== 'undefined'; }
+        function rtcDrop(pid) { const r = net.rtc[pid]; if (!r) return; try { if (r.ch) r.ch.close(); } catch (e) {} try { if (r.pc) r.pc.close(); } catch (e) {} delete net.rtc[pid]; }
+        function rtcTeardown() { for (const pid of Object.keys(net.rtc)) rtcDrop(pid); }
+        function rtcWireChannel(pid, ch) {
+            ch.onopen = () => { if (net.rtc[pid]) net.rtc[pid].open = true; };
+            ch.onclose = () => { if (net.rtc[pid]) net.rtc[pid].open = false; };
+            ch.onmessage = (ev) => { let m; try { m = JSON.parse(ev.data); } catch (e) { return; } if (m.t === 'input') m.from = pid; netHandle(m); };
+        }
+        function rtcInitiate(pid) {
+            if (!rtcAvailable() || net.rtc[pid]) return;
+            const pc = new RTCPeerConnection(rtcCfg());
+            const entry = net.rtc[pid] = { pc, ch: null, open: false };
+            const ch = pc.createDataChannel('fast', { ordered: false, maxRetransmits: 0 });
+            entry.ch = ch; rtcWireChannel(pid, ch);
+            pc.onicecandidate = (e) => { if (e.candidate) wsSend({ t: 'rtc', to: pid, ice: e.candidate }); };
+            pc.createOffer().then((o) => pc.setLocalDescription(o)).then(() => wsSend({ t: 'rtc', to: pid, sdp: pc.localDescription })).catch(() => {});
+        }
+        function rtcHandleSignal(msg) {
+            if (!rtcAvailable()) return;
+            const pid = msg.from;
+            let entry = net.rtc[pid];
+            if (msg.sdp && msg.sdp.type === 'offer') {
+                rtcDrop(pid);
+                const pc = new RTCPeerConnection(rtcCfg());
+                entry = net.rtc[pid] = { pc, ch: null, open: false };
+                pc.ondatachannel = (e) => { entry.ch = e.channel; rtcWireChannel(pid, e.channel); };
+                pc.onicecandidate = (e) => { if (e.candidate) wsSend({ t: 'rtc', to: pid, ice: e.candidate }); };
+                pc.setRemoteDescription(msg.sdp).then(() => pc.createAnswer()).then((a) => pc.setLocalDescription(a)).then(() => wsSend({ t: 'rtc', to: pid, sdp: pc.localDescription })).catch(() => {});
+            } else if (msg.sdp && msg.sdp.type === 'answer') { if (entry) entry.pc.setRemoteDescription(msg.sdp).catch(() => {}); }
+            else if (msg.ice) { if (entry) entry.pc.addIceCandidate(msg.ice).catch(() => {}); }
+        }
+        function rtcToHostOpen() { const r = net.rtc[net.hostId]; return !!(r && r.open); }
+        function sendToHostFast(obj) { const r = net.rtc[net.hostId]; if (r && r.open) { try { r.ch.send(JSON.stringify(obj)); return; } catch (e) {} } wsSend(obj); }
+        // ---- lobby ----
+        function myName() { const v = (dom.nameInput.value || '').trim().slice(0, 12); return v || 'Pilot'; }
+        function netStatusMsg(t, err) { dom.netStatus.textContent = t; dom.netStatus.style.color = err ? '#ff9a9a' : '#ffd54a'; }
+        async function createRoom() {
+            try {
+                netStatusMsg('Creating room…');
+                const res = await fetch(NET_HTTP + '/sf/rooms', { method: 'POST' });
+                const j = await res.json();
+                if (!j.code) throw new Error('no code');
+                joinRoom(j.code);
+            } catch (e) { netStatusMsg('Could not create room — check connection', true); }
+        }
+        function joinRoom(code) {
+            code = String(code || '').toUpperCase().trim();
+            if (!/^[A-Z2-9]{5}$/.test(code)) { netStatusMsg('Room codes are 5 letters/digits', true); return; }
+            netStatusMsg('Joining ' + code + '…');
+            try { localStorage.setItem('sf_name', myName()); } catch (e) {}
+            fetchIce();
+            const ws = new WebSocket(NET_WS + '/sf/rooms/' + code + '/ws');
+            net.ws = ws;
+            ws.onopen = () => {
+                net.connected = true; net.myCharIdx = selectedDef;
+                ws.send(JSON.stringify({ t: 'hello', name: myName(), charIdx: net.myCharIdx, ver: NET_VER }));
+                net.pingTimer = setInterval(() => wsSend({ t: 'pp', ts: performance.now() }), 2500);
+            };
+            ws.onmessage = (ev) => { if (ev.data === 'pong') return; let msg; try { msg = JSON.parse(ev.data); } catch (e) { return; } netHandle(msg); };
+            ws.onclose = () => netClosed();
+            ws.onerror = () => {};
+        }
+        function netReset() {
+            if (net.pingTimer) { clearInterval(net.pingTimer); net.pingTimer = 0; }
+            if (net.ws) { try { net.ws.onclose = null; net.ws.close(); } catch (e) {} }
+            rtcTeardown();
+            net.ws = null; net.connected = false; net.mode = 'solo'; net.myId = -1; net.isHost = false; net.code = ''; net.hostId = 0;
+            net.players = []; net.racePlayers = []; net.myReady = false; net.racing = false; net.remoteCtrl = {}; net.snaps = []; net.lastSnapTick = 0; net.pingMs = 0;
+            net.boostCount = 0; net.wallDmg = 0;
+            dom.netInd.classList.remove('on');
+        }
+        function netClosed() {
+            const wasRacing = net.racing && state !== 'menu';
+            const recentError = net.lastErrorAt && performance.now() - net.lastErrorAt < 2000;
+            netReset();
+            if (wasRacing) { flashText('CONNECTION LOST', '#ff9a9a'); setTimeout(quitToMenu, 1300); }
+            else { dom.lobbyScreen.classList.remove('on'); dom.startScreen.classList.add('on'); if (!recentError) netStatusMsg('Disconnected from room', true); }
+        }
+        function netHandle(msg) {
+            switch (msg.t) {
+                case 'welcome':
+                    net.myId = msg.id; net.isHost = msg.host; net.code = msg.code; net.mode = msg.host ? 'host' : 'client';
+                    netStatusMsg(''); showLobby();
+                    break;
+                case 'roster': {
+                    net.players = msg.players; net.phase = msg.phase;
+                    const me = net.players.find((p) => p.id === net.myId);
+                    if (me) { net.isHost = me.host; net.mode = me.host ? 'host' : 'client'; net.myReady = me.ready; net.myCharIdx = me.charIdx; }
+                    const hostP = net.players.find((p) => p.host); if (hostP) net.hostId = hostP.id;
+                    // two pilots can't share a machine: the later arrival is moved to a free one
+                    if (me && net.players.some((p) => p.id !== net.myId && p.charIdx === me.charIdx && p.id < net.myId) && !net.racing) {
+                        const taken = new Set(net.players.filter((p) => p.id !== net.myId).map((p) => p.charIdx));
+                        const free = MACHINES.findIndex((m, i) => !taken.has(i));
+                        if (free >= 0) { net.myCharIdx = free; selectedDef = free; wsSend({ t: 'char', charIdx: free }); }
+                    }
+                    if (typeof msg.track === 'number' && TRACKS[msg.track]) { net.track = msg.track; if (!net.racing && state === 'menu' && msg.track !== currentTrack) { loadTrack(msg.track); buildTrackPicker(); resetRace(); } }
+                    if (net.isHost && !net.racing) for (const p of net.players) if (p.id !== net.myId) rtcInitiate(p.id);
+                    if (net.racing && msg.phase === 'lobby') endOnlineRaceToLobby();
+                    else if (state === 'menu') renderLobby();
+                    break;
+                }
+                case 'you-are-host':   // the DO promotes on host loss; we don't migrate — treat it as the race ending
+                    if (net.racing) { flashText('HOST LEFT', '#ff9a9a'); net.racing = false; setTimeout(() => { netReset(); quitToMenu(); }, 1400); }
+                    else { net.isHost = true; net.mode = 'host'; if (state === 'menu') renderLobby(); }
+                    break;
+                case 'start': startOnlineRace(msg.seed, msg.players, msg.track, msg.laps); break;
+                case 'input': net.remoteCtrl[msg.from] = msg; break;
+                case 'snap':
+                    if (msg.tick <= net.lastSnapTick) return;
+                    net.lastSnapTick = msg.tick;
+                    net.snaps.push({ rt: performance.now(), d: msg });
+                    if (net.snaps.length > 8) net.snaps.shift();
+                    break;
+                case 'rtc': rtcHandleSignal(msg); break;
+                case 'pp': net.pingMs = Math.max(1, Math.round(performance.now() - msg.ts)); break;
+                case 'peer-left':
+                    toast((msg.name || 'A pilot') + ' left');
+                    rtcDrop(msg.id);
+                    if (net.mode === 'host' && net.racing) hostConvertToAI(msg.id);
+                    break;
+                case 'host-left':
+                    if (net.racing) { flashText('HOST LEFT', '#ff9a9a'); net.racing = false; setTimeout(() => { netReset(); quitToMenu(); }, 1400); }
+                    break;
+                case 'error':
+                    net.lastErrorAt = performance.now();
+                    if (state === 'menu') { if (!dom.lobbyScreen.classList.contains('on')) netStatusMsg(msg.msg, true); else dom.lobbyMsg.textContent = msg.msg; }
+                    break;
+            }
+        }
+        function showLobby() {
+            dom.startScreen.classList.remove('on'); dom.resultScreen.classList.remove('on'); dom.lobbyScreen.classList.add('on');
+            dom.roomCode.textContent = net.code; dom.lobbyMsg.textContent = '';
+            renderLobby();
+        }
+        function renderLobby() {
+            dom.lobbyList.innerHTML = '';
+            net.players.forEach((p) => {
+                const row = document.createElement('div');
+                row.className = 'lob-row' + (p.id === net.myId ? ' me' : '');
+                const nm = document.createElement('span'); nm.className = 'nm'; nm.textContent = p.name + (p.id === net.myId ? ' (you)' : '');
+                row.innerHTML = '<span class="sw" style="background:' + hx(MACHINES[p.charIdx].col) + '"></span>';
+                row.appendChild(nm);
+                row.insertAdjacentHTML('beforeend', (p.host ? '<span class="tag">HOST</span>' : '') + '<span class="rdy' + ((p.ready || p.host) ? ' on' : '') + '">✓</span>');
+                dom.lobbyList.appendChild(row);
+            });
+            for (let i = net.players.length; i < NET_MAX; i++) { const row = document.createElement('div'); row.className = 'lob-empty'; row.textContent = 'CPU pilot'; dom.lobbyList.appendChild(row); }
+            buildLobbyPickers();
+            dom.readyBtn.style.display = net.isHost ? 'none' : '';
+            dom.readyBtn.textContent = net.myReady ? '✓ READY' : 'READY!'; dom.readyBtn.classList.toggle('on', net.myReady);
+            dom.lobbyStartBtn.style.display = net.isHost ? '' : 'none';
+            const allReady = net.players.length >= 2 && net.players.every((p) => p.ready || p.host);
+            dom.lobbyStartBtn.disabled = !allReady;
+            dom.lobbyStartBtn.textContent = net.players.length < 2 ? 'WAITING FOR PILOTS…' : (allReady ? 'START RACE' : 'WAITING FOR READY…');
+        }
+        // ---- race wiring ----
+        function startOnlineRace(seed, players, track, laps) {
+            if (typeof track === 'number' && TRACKS[track] && track !== currentTrack) loadTrack(track);
+            TOTAL_LAPS = (Number.isInteger(laps) && laps >= 1 && laps <= 9) ? laps : 3;
+            net.players = players; net.racePlayers = players; net.racing = true;
+            net.remoteCtrl = {}; net.snaps = []; net.lastSnapTick = 0; net.boostCount = 0; net.wallDmg = 0; net._lastDead = 0; net._lastLaps = 0; net._lastBoost = 0;
+            const roster = players.map((p) => ({ kind: p.id === net.myId ? 'local' : 'remote', charIdx: p.charIdx, name: p.name, pid: p.id }));
+            const used = new Set(roster.map((r) => r.charIdx));
+            for (let c = 0; roster.length < 8 && c < MACHINES.length * 2; c++) { const ci = c % MACHINES.length; if (used.has(ci) && c < MACHINES.length) continue; used.add(ci); roster.push({ kind: 'ai', charIdx: ci, name: MACHINES[ci].name, pid: -1 }); }
+            buildMachinesRoster(roster);
+            for (const k of machines) if (k.kind === 'remote') k._lastPoseTick = 0;
+            clearTimeout(resultsTimer);
+            dom.startScreen.classList.remove('on'); dom.lobbyScreen.classList.remove('on'); dom.resultScreen.classList.remove('on');
+            resetRace();
+            dom.hud.classList.add('on'); dom.muteBtn.classList.add('on'); dom.pauseBtn.classList.remove('on');
+            state = 'countdown'; countdownT = 3.6; dom.countdown.classList.add('on');
+        }
+        function endOnlineRaceToLobby() {
+            net.racing = false; net.snaps = []; net.remoteCtrl = {}; net.lastSnapTick = 0;
+            clearTimeout(resultsTimer);
+            state = 'menu';
+            dom.hud.classList.remove('on'); dom.countdown.classList.remove('on'); dom.resultScreen.classList.remove('on');
+            buildMachines(); resetRace();
+            showLobby();
+        }
+        function hostConvertToAI(pid) {
+            const k = machines.find((m) => m.pid === pid);
+            if (!k || k.finished) return;
+            k.kind = 'ai'; k.ai = makeAI(k.idx); k.name += ' (CPU)';
+            delete net.remoteCtrl[pid]; rtcDrop(pid);
+        }
+        // host: a remote pilot's machine takes the pose they sent; the host still runs energy, boosts they asked for, walls they reported
+        function applyRemoteInput(k) {
+            const rc = net.remoteCtrl[k.pid];
+            if (!rc) return;
+            k.ctrl.steer = rc.s || 0; k.ctrl.brake = !!rc.d;
+            if (rc.p) { k._rp = rc.p; }
+            if ((rc.b | 0) > (k._boostCount | 0)) { k._boostCount = rc.b | 0; k.ctrl.boost = true; }
+            if (typeof rc.w === 'number' && rc.w > (k._wallDmg || 0)) { const d = Math.min(rc.w - (k._wallDmg || 0), 20); k._wallDmg = rc.w; damage(k, d, 'wall'); }
+        }
+        function updateRemoteMachine(k, dt, racing) {
+            const p = k._rp;
+            if (p) {
+                // ease onto the reported pose (they own it); keep motion continuous between reports
+                let ds = p[0] - k.s; if (ds > TRACK.len / 2) ds -= TRACK.len; if (ds < -TRACK.len / 2) ds += TRACK.len;
+                const t = clamp(dt * 25, 0, 1);
+                k.prevS = k.s; k.prevLat = k.lat; k.prevAir = k.air;
+                k.s = wrapS(k.s + ds * t + (p[3] || 0) * dt * (1 - t)); k.lat = lerp(k.lat, p[1], t); k.yaw += wrapAngle(p[2] - k.yaw) * t; k.speed = p[3] || 0;
+                if (p[4] > k.boostT + 0.3 && k.energy > 0) k.boostT = Math.min(BOOST_TIME, p[4]);   // their predicted boost, if we granted it below
+            } else { k.prevS = k.s; k.prevLat = k.lat; k.prevAir = k.air; }
+            if (k.dead > 0) { k.dead -= dt; if (k.dead <= 0) { k.dead = 0; k.energy = 55; k.mesh.visible = true; } return; }
+            if (k.boostT > 0) k.boostT -= dt; if (k.boostCool > 0) k.boostCool -= dt; if (k.wallT > 0) k.wallT -= dt; if (k.hitT > 0) k.hitT -= dt; if (k.rechargeT > 0) k.rechargeT -= dt;
+            if (k.ctrl.boost && racing && !k.finished) tryBoost(k);
+            k.ctrl.boost = false;
+            const q = sampleAtS(k.s);
+            if (q.recharge && Math.abs(k.lat - q.recharge.lat) <= q.recharge.hw && k.energy < ENERGY_MAX) { k.energy = Math.min(ENERGY_MAX, k.energy + RECHARGE_RATE * dt); k.rechargeT = 0.2; }
+            const dS = k.s - k.prevS;
+            if (dS < -TRACK.len * 0.5 && !k.finished && racing) {
+                k.laps++; const lapT = raceClock - k.lastLapStart; k.lastLapStart = raceClock; k.lapTimes.push(lapT); k.bestLap = Math.min(k.bestLap, lapT);
+                if (k.laps >= TOTAL_LAPS) { k.finished = true; k.finishTime = raceClock; }
+            }
+            k.progress = k.laps * TRACK.len + k.s;
+            k.pos.copy(worldPos(k.s, k.lat, 2.6, k.pos)); k.rs = k.s; k.rlat = k.lat; k.rair = 0;
+        }
+        function hostSendSnap() {
+            if (!net.ws || !net.connected) return;
+            const r2 = (v) => Math.round(v * 100) / 100;
+            const payload = JSON.stringify({ t: 'snap', tick: simTickNo, clock: r2(raceClock),
+                m: machines.map((k) => [r2(k.s), r2(k.lat), r2(k.yaw), Math.round(k.speed), r2(k.energy), r2(k.boostT), k.laps, k.rank, k.finished ? 1 : 0, r2(k.finishTime), k.bestLap === Infinity ? -1 : r2(k.bestLap), r2(k.dead), k.hitT > 0 ? 1 : 0, k.rechargeT > 0 ? 1 : 0, k.ctrl.brake ? 1 : 0]) });
+            try { net.ws.send(payload); } catch (e) {}
+            for (const pid of Object.keys(net.rtc)) { const r = net.rtc[pid]; if (r.open) { try { r.ch.send(payload); } catch (e) {} } }
+        }
+        // client: my machine runs the real sim locally; everyone else is interpolated from the host's snapshots
+        function netClientTick(dt) {
+            readPlayerControls(player, dt);
+            updateMachine(player, dt);
+            // local separation against the others so we never visibly sit inside a rival (the host judges the hit)
+            resolveCollisions(dt);
+            updateParticles(dt);
+        }
+        function netClientFrame(dt) {
+            clientApplySnaps(dt);
+            const now = performance.now();
+            if (net.connected && now - net.lastInputSent > INPUT_MS) {
+                net.lastInputSent = now;
+                const r2 = (v) => Math.round(v * 100) / 100;
+                sendToHostFast({ t: 'input', s: r2(player.ctrl.steer), d: player.ctrl.brake ? 1 : 0, b: net.boostCount, w: r2(net.wallDmg), p: [r2(player.s), r2(player.lat), r2(player.yaw), Math.round(player.speed), r2(player.boostT)] });
+            }
+        }
+        function clientApplySnaps(dt) {
+            if (!net.snaps.length) return;
+            const B0 = net.snaps[net.snaps.length - 1], latest = B0.d;
+            const rt = performance.now() - INTERP_MS;
+            let A = net.snaps[0], B = B0;
+            for (let i = net.snaps.length - 1; i > 0; i--) { if (net.snaps[i - 1].rt <= rt) { A = net.snaps[i - 1]; B = net.snaps[i]; break; } }
+            const span = Math.max(B.rt - A.rt, 1), f = clamp((rt - A.rt) / span, 0, 1.25);
+            for (let i = 0; i < machines.length && i < latest.m.length; i++) {
+                const k = machines[i], b = B.d.m[i], a = A.d.m[i];
+                if (k.isPlayer) {
+                    // host-owned state for me: energy, laps, rank, finish, destruction
+                    k.energy = b[4]; k.rank = b[7];
+                    if (b[6] > k.laps) { k.laps = b[6]; if (k.laps >= TOTAL_LAPS) { } else { flashText(k.laps === TOTAL_LAPS - 1 ? 'FINAL LAP!' : 'LAP ' + (k.laps + 1), '#9fe8ff'); sfxLap(); } }
+                    k.laps = b[6]; k.progress = k.laps * TRACK.len + k.s;
+                    if (b[8] && !k.finished) { k.finished = true; k.finishTime = b[9]; k.bestLap = b[10] < 0 ? Infinity : b[10]; flashText('FINISH!', '#7dffb0'); sfxFinish(); finishRace(); }
+                    if (b[11] > 0 && k.dead <= 0 && net._lastDead <= 0) { explode(k); k.dead = b[11]; }
+                    net._lastDead = b[11];
+                    if (b[5] > net._lastBoost + 0.3 && b[5] > k.boostT) { k.boostT = b[5]; }   // host granted a boost we didn't predict
+                    net._lastBoost = b[5];
+                    const err = Math.abs(wrapAngle((b[0] - k.s) / TRACK.len * Math.PI * 2)) * TRACK.len / (Math.PI * 2);
+                    if (err > 60) { k.s = b[0]; k.lat = b[1]; k.prevS = k.s; k.prevLat = k.lat; }   // way off: snap to the host's view of me
+                } else {
+                    let ds = b[0] - a[0]; if (ds > TRACK.len / 2) ds -= TRACK.len; if (ds < -TRACK.len / 2) ds += TRACK.len;
+                    k.prevS = k.s; k.prevLat = k.lat; k.prevAir = 0;
+                    k.s = wrapS(a[0] + ds * f); k.lat = lerp(a[1], b[1], f); k.yaw = a[2] + wrapAngle(b[2] - a[2]) * f; k.speed = b[3];
+                    k.energy = b[4]; k.boostT = b[5]; k.laps = b[6]; k.rank = b[7];
+                    if (b[8] && !k.finished && k.kind === 'remote') toast(k.name + ' finished!');
+                    k.finished = !!b[8]; k.finishTime = b[9]; k.bestLap = b[10] < 0 ? Infinity : b[10];
+                    if (b[11] > 0 && k.dead <= 0) { spawnExplosion(k.pos, k.def.col); k.mesh.visible = false; }
+                    k.dead = b[11]; if (k.dead <= 0) k.mesh.visible = true;
+                    k.hitT = b[12] ? 0.25 : 0; k.rechargeT = b[13] ? 0.2 : 0; k.ctrl.brake = !!b[14];
+                    k.progress = k.laps * TRACK.len + k.s;
+                    k.pos.copy(worldPos(k.s, k.lat, 2.6, k.pos)); k.rs = k.s; k.rlat = k.lat; k.rair = 0;
+                }
+            }
+            raceClock = latest.clock;
+        }
+
+        // =====================================================================
         //  FLOW
         // =====================================================================
         function startGame() {
@@ -1560,13 +1926,18 @@
             clearTimeout(resultsTimer); resultsTimer = setTimeout(showResults, 2200);
         }
         function showResults() {
+            if (netActive() && !net.racing) return;
             const sorted = machines.slice().sort((a, b) => a.rank - b.rank);
             dom.resultsTable.innerHTML = sorted.map((m) => `<tr class="${m.isPlayer ? 'me' : ''}"><td>${m.rank}${ORD(m.rank)}</td><td><span class="dot" style="background:${hx(m.def.col)}"></span>${m.name}</td><td>${m.out ? 'OUT' : m.finished ? fmtTime(m.finishTime) : '+' + Math.max(0, TOTAL_LAPS - m.laps) + ' lap'}</td><td>${m.bestLap < Infinity ? 'best ' + fmtTime(m.bestLap) : ''}</td></tr>`).join('');
             dom.resultScreen.classList.add('on'); dom.hud.classList.remove('on'); dom.pauseBtn.classList.remove('on');
         }
         function pauseGame() { if (state !== 'racing') return; state = 'paused'; dom.pauseScreen.classList.add('on'); }
         function resumeGame() { if (state !== 'paused') return; state = 'racing'; dom.pauseScreen.classList.remove('on'); lastT = performance.now(); }
-        function quitToMenu() { state = 'menu'; dom.pauseScreen.classList.remove('on'); dom.resultScreen.classList.remove('on'); dom.hud.classList.remove('on'); dom.pauseBtn.classList.remove('on'); dom.startScreen.classList.add('on'); resetRace(); }
+        function quitToMenu() {
+            if (netActive()) netReset();
+            state = 'menu'; dom.pauseScreen.classList.remove('on'); dom.resultScreen.classList.remove('on'); dom.lobbyScreen.classList.remove('on'); dom.hud.classList.remove('on'); dom.pauseBtn.classList.remove('on'); dom.startScreen.classList.add('on');
+            buildMachines(); resetRace();
+        }
 
         function buildTrackPicker() {
             dom.trackPicker.innerHTML = TRACKS.map((t, i) => `<div class="pick track${i === currentTrack ? ' sel' : ''}" data-i="${i}"><div class="sw" style="background:${hx(t.theme.railL)}"></div>${t.name.toUpperCase()}</div>`).join('');
@@ -1576,6 +1947,16 @@
             const bar = (v) => { const n = clamp(Math.round(1 + (v - 0.8) / 0.4 * 4), 1, 5); return '●'.repeat(n) + '○'.repeat(5 - n); };   // 0.8 → 1 dot, 1.0 → 3, 1.2 → 5
             dom.picker.innerHTML = MACHINES.map((m, i) => `<div class="pick${i === selectedDef ? ' sel' : ''}" data-i="${i}"><div class="sw" style="background:${hx(m.col)}"></div>${m.name.split(' ')[0]}<div class="st">SPD ${bar(m.stat.top)}<br>ACC ${bar(m.stat.acc)}<br>GRP ${bar(m.stat.grip)}</div></div>`).join('');
             dom.picker.querySelectorAll('.pick').forEach((el) => el.addEventListener('click', () => { selectedDef = +el.dataset.i; try { localStorage.setItem('sf_machine', selectedDef); } catch (e) {} buildPicker(); buildMachines(); resetRace(); }));
+        }
+        // the lobby shows the same pickers: machine (everyone, sent to the room), track (host only)
+        function buildLobbyPickers() {
+            const bar = (v) => { const n = clamp(Math.round(1 + (v - 0.8) / 0.4 * 4), 1, 5); return '●'.repeat(n) + '○'.repeat(5 - n); };
+            const taken = {}; net.players.forEach((p) => { if (p.id !== net.myId) taken[p.charIdx] = p.name; });
+            dom.lobbyMachines.innerHTML = MACHINES.map((m, i) => `<div class="pick${i === net.myCharIdx ? ' sel' : ''}" data-i="${i}" style="${taken[i] ? 'opacity:0.45' : ''}"><div class="sw" style="background:${hx(m.col)}"></div>${m.name.split(' ')[0]}<div class="st">SPD ${bar(m.stat.top)}<br>ACC ${bar(m.stat.acc)}<br>GRP ${bar(m.stat.grip)}</div></div>`).join('');
+            dom.lobbyMachines.querySelectorAll('.pick').forEach((el) => el.addEventListener('click', () => { const i = +el.dataset.i; net.myCharIdx = i; selectedDef = i; try { localStorage.setItem('sf_machine', i); } catch (e) {} wsSend({ t: 'char', charIdx: i }); buildLobbyPickers(); }));
+            dom.lobbyTracks.innerHTML = TRACKS.map((t, i) => `<div class="pick track${i === net.track ? ' sel' : ''}" data-i="${i}"><div class="sw" style="background:${hx(t.theme.railL)}"></div>${t.name.toUpperCase()}</div>`).join('');
+            dom.lobbyTracks.classList.toggle('dim', !net.isHost);
+            dom.lobbyTracks.querySelectorAll('.pick').forEach((el) => el.addEventListener('click', () => { if (net.isHost) wsSend({ t: 'track', track: +el.dataset.i }); }));
         }
 
         // ---- main loop ----------------------------------------------------------------
@@ -1593,6 +1974,7 @@
                 simTick(SIM_DT); acc -= SIM_DT; steps++;
             }
             renderAlpha = window.__hold ? 1 : clamp(acc / SIM_DT, 0, 1);
+            if (net.mode === 'client' && net.racing) netClientFrame(dt);
             for (const k of machines) syncMachineMesh(k, false, dt);
             syncParticles();
             for (const a of WORLD.anims) a(dt, animT);
@@ -1619,7 +2001,15 @@
             dom.ver.textContent = 'v' + SF_VER; document.getElementById('rotVer').textContent = 'v' + SF_VER;
             dom.muteBtn.textContent = muted ? '🔇' : '🔊';
             dom.startBtn.addEventListener('click', () => { initAudio(); startGame(); });
-            dom.againBtn.addEventListener('click', () => { initAudio(); startGame(); });
+            dom.againBtn.addEventListener('click', () => { initAudio(); if (netActive()) { if (net.isHost) wsSend({ t: 'end' }); else endOnlineRaceToLobby(); } else startGame(); });
+            dom.createRoomBtn.addEventListener('click', () => { initAudio(); createRoom(); });
+            dom.joinRoomBtn.addEventListener('click', () => { initAudio(); joinRoom(dom.codeInput.value); });
+            dom.codeInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') joinRoom(dom.codeInput.value); });
+            dom.readyBtn.addEventListener('click', () => { net.myReady = !net.myReady; wsSend({ t: 'ready', ready: net.myReady }); renderLobby(); });
+            dom.lobbyStartBtn.addEventListener('click', () => { if (net.isHost) wsSend({ t: 'start', seed: (Math.random() * 0x7fffffff) | 0, laps: TOTAL_LAPS_NET }); });
+            dom.leaveBtn.addEventListener('click', () => { netReset(); dom.lobbyScreen.classList.remove('on'); dom.startScreen.classList.add('on'); });
+            dom.roomCode.addEventListener('click', () => { try { navigator.clipboard.writeText(net.code); toast('CODE COPIED'); } catch (e) {} });
+            try { dom.nameInput.value = localStorage.getItem('sf_name') || ''; } catch (e) {}
             dom.menuBtn.addEventListener('click', quitToMenu);
             const kick = () => { initAudio(); if (audioCtx && audioCtx.state === 'suspended') audioCtx.resume(); };
             window.addEventListener('pointerdown', kick, { once: true });
@@ -1629,6 +2019,7 @@
                     get machines() { return machines; }, get player() { return player; }, get state() { return state; }, set state(v) { state = v; },
                     get raceClock() { return raceClock; }, TRACK, TRACKS, loadTrack, get currentTrack() { return currentTrack; }, frameAt, sampleAtS, simTick, startGame, resetRace, updateCamera, finishRace, get scene() { return scene; }, get world() { return world; },
                     aiDrive, set freeBoost(v) { DBG_FREEBOOST = v; }, get camera() { return camera; },
+                    get net() { return net; }, setLapsNet(n) { TOTAL_LAPS_NET = n; }, get TOTAL_LAPS() { return TOTAL_LAPS; },
                 };
             }
             requestAnimationFrame(frame);

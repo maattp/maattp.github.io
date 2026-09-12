@@ -82,6 +82,25 @@ fractions) place lit half-torus arches over the road; the space kit has no
 ground, so pylons are skipped when they would be taller than 600u. The verify tool
 races and screenshots every track (`t<i>-race*.png`, `t<i>-overview.png`).
 
+## Online (8 pilots)
+
+`SpaceRoom` DO on `/sf/rooms` (worker), an 8-seat copy of the Fable Kart relay;
+`/sf/turn` hands out ICE servers (Cloudflare TURN when the worker has the
+`CF_TURN_KEY_ID`/`CF_TURN_API_TOKEN` secrets, STUN otherwise). Star topology:
+the host runs the full sim — its own machine, CPUs for every empty seat, and
+each remote pilot's machine on the pose that pilot reports (`input.p` =
+s, lat, yaw, speed, boostT at 30 Hz over the WebRTC channel, WebSocket
+fallback). The host owns energy, collisions, laps, ranks and the finish; it
+grants boosts a client asks for (`input.b` counter) and applies wall damage a
+client reports (`input.w` cumulative, capped per report). Clients run their
+own machine's real sim locally (prediction), interpolate everyone else from
+20 Hz snapshots with a 100 ms buffer, and adopt host-owned state from the
+snapshot (energy, laps, rank, finish, destruction, boosts on a rising edge).
+`NET_VER` folds `SF_VER` and a hash of the physics constants and track
+points, so mismatched builds cannot share a room. No host migration: when the
+host leaves the room ends. Verify with `node tools/sfonline.mjs` (needs
+`(cd worker && npx wrangler dev --port 8787)` and the http server).
+
 ## Controls
 
 Left half: slide to steer (relative to the touch start). Right side: BOOST
@@ -90,6 +109,8 @@ boost, Down/S brake, P pause.
 
 ## Backlog (user-requested, not started)
 
+- **Nova Spire revamp.** The user finds the long corkscrew boring; wants a
+  "crazy and exciting" final layout.
 - **Audio pass.** The current WebAudio sound effects read as whiny and
   annoying; replace them with punchier, lower-pitched effects. Write an epic
   chiptune per map (Mute Orbit, Red Canyon, Glacier Loop, Nova Spire) — a

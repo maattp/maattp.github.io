@@ -2,6 +2,7 @@ import { Hono } from "hono";
 import { cors } from "hono/cors";
 import { Kart3Room } from "./kart3room";
 import { Fable51Room } from "./f51room";
+import { SpaceRoom } from "./sfroom";
 import { MahjongRoom } from "./mahjongroom";
 import { HardRoom } from "./hardroom";
 import { RingRoom } from "./ringroom";
@@ -13,7 +14,7 @@ import { hardApp, WS_TICKET_PREFIX } from "./hard";
 import { scheduled } from "./hardcron";
 import type { HardEnv } from "./hardlogic";
 
-export { Kart3Room, Fable51Room, MahjongRoom, HardRoom, RingRoom, ChatRoom };
+export { Kart3Room, Fable51Room, SpaceRoom, MahjongRoom, HardRoom, RingRoom, ChatRoom };
 
 const SESSION_TTL = 365 * 24 * 60 * 60; // 1 year in seconds
 const SESSION_PREFIX = "__session:";
@@ -21,6 +22,10 @@ const SESSION_PREFIX = "__session:";
 type Bindings = HardEnv & {
   KART3_ROOM: DurableObjectNamespace;
   F51_ROOM: DurableObjectNamespace;
+  SF_ROOM: DurableObjectNamespace;
+  // Cloudflare TURN (optional): `wrangler secret put CF_TURN_KEY_ID` / `CF_TURN_API_TOKEN`
+  CF_TURN_KEY_ID?: string;
+  CF_TURN_API_TOKEN?: string;
   MAHJONG_ROOM: DurableObjectNamespace;
   RING_ROOM: DurableObjectNamespace;
   CHAT_ROOM: DurableObjectNamespace;
@@ -158,6 +163,16 @@ app.get("/f51/rooms/:code/ws", async (c) => {
   return stub.fetch("https://do/ws", c.req.raw);
 });
 
+// --- Space Flight rooms (8 seats): WebSocket upgrade. Same gate as f51; own DO namespace (SF_ROOM).
+app.get("/sf/rooms/:code/ws", async (c) => {
+  if (c.req.header("Upgrade") !== "websocket") return c.json({ error: "expected websocket" }, 426);
+  if (!kart3OriginOk(c.req.header("Origin"))) return c.json({ error: "forbidden" }, 403);
+  const code = c.req.param("code").toUpperCase();
+  if (!ROOM_CODE_RE.test(code)) return c.json({ error: "bad room code" }, 400);
+  const stub = c.env.SF_ROOM.get(c.env.SF_ROOM.idFromName(code));
+  return stub.fetch("https://do/ws", c.req.raw);
+});
+
 // --- Sichuan Mahjong online rooms: WebSocket upgrade (server-authoritative) ---
 // Same origin-gated, code-as-credential model as kart3. Registered before cors
 // for the same reason (immutable 101 headers).
@@ -289,6 +304,49 @@ app.get("/f51/rooms/:code", async (c) => {
   const stub = c.env.F51_ROOM.get(c.env.F51_ROOM.idFromName(code));
   const res = await stub.fetch("https://do/status");
   return c.json(await res.json());
+});
+
+// --- Space Flight rooms: create + status + ICE servers (CORS applies) ---
+app.post("/sf/rooms", async (c) => {
+  if (!kart3OriginOk(c.req.header("Origin"))) return c.json({ error: "forbidden" }, 403);
+  const bytes = new Uint8Array(5);
+  crypto.getRandomValues(bytes);
+  let code = "";
+  for (const b of bytes) code += ROOM_ALPHABET[b % ROOM_ALPHABET.length];
+  const stub = c.env.SF_ROOM.get(c.env.SF_ROOM.idFromName(code));
+  await stub.fetch("https://do/init", { method: "POST", body: code });
+  return c.json({ code });
+});
+
+app.get("/sf/rooms/:code", async (c) => {
+  const code = c.req.param("code").toUpperCase();
+  if (!ROOM_CODE_RE.test(code)) return c.json({ error: "bad room code" }, 400);
+  const stub = c.env.SF_ROOM.get(c.env.SF_ROOM.idFromName(code));
+  const res = await stub.fetch("https://do/status");
+  return c.json(await res.json());
+});
+
+// ICE servers for the WebRTC fast path. With Cloudflare TURN configured
+// (CF_TURN_KEY_ID + CF_TURN_API_TOKEN secrets) this mints short-lived TURN
+// credentials so phones behind carrier NAT still get a direct-ish channel;
+// without them it returns STUN only and the game falls back to the relay.
+const STUN_ONLY = [{ urls: ["stun:stun.cloudflare.com:3478", "stun:stun.l.google.com:19302"] }];
+app.get("/sf/turn", async (c) => {
+  if (!kart3OriginOk(c.req.header("Origin"))) return c.json({ error: "forbidden" }, 403);
+  const keyId = c.env.CF_TURN_KEY_ID, token = c.env.CF_TURN_API_TOKEN;
+  if (!keyId || !token) return c.json({ iceServers: STUN_ONLY, turn: false });
+  try {
+    const res = await fetch(`https://rtc.live.cloudflare.com/v1/turn/keys/${keyId}/credentials/generate-ice-servers`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ ttl: 4 * 3600 }),
+    });
+    if (!res.ok) throw new Error("turn " + res.status);
+    const j = (await res.json()) as { iceServers: unknown[] };
+    return c.json({ iceServers: [...STUN_ONLY, ...(j.iceServers || [])], turn: true });
+  } catch {
+    return c.json({ iceServers: STUN_ONLY, turn: false });
+  }
 });
 
 // --- Sichuan Mahjong online rooms: create + status (CORS applies) ---

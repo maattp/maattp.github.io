@@ -47,6 +47,17 @@ can rejoin by name and reclaim their kart. Protocol lives in
 `apps/fablekart/index.html` (`netHandle`) and `apps/fablekart/VISION.md`.
 Rooms self-destruct via alarm after 45 min or when the last socket leaves.
 
+### Space Flight rooms (`/sf/*` — same model as f51, EIGHT seats, no migration)
+
+`SpaceRoom` (`src/sfroom.ts`) is another `Kart3Room` subclass in its own
+namespace (`SF_ROOM`, migration `sf-room-v1`). Routes mirror f51:
+`POST /sf/rooms`, `GET /sf/rooms/:code`, `GET /sf/rooms/:code/ws`. Plus
+`GET /sf/turn`: ICE servers for the WebRTC fast path — STUN only unless the
+`CF_TURN_KEY_ID` + `CF_TURN_API_TOKEN` secrets are set, in which case it mints
+4-hour Cloudflare TURN credentials (Cloudflare dashboard → Calls → TURN key).
+When the host disconnects the room simply ends (`host-left`); there is no
+host migration by design.
+
 ### Fable51 Kart rooms (`/f51/*` — same model as kart3, EIGHT seats)
 
 `Fable51Room` (`src/f51room.ts`) subclasses `Kart3Room` and only raises the

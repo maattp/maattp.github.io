@@ -139,7 +139,8 @@ F-Zero-style anti-grav racer, **landscape-only**, Three.js r128. One shared
 ENERGY meter is both health and boost fuel; walls and rivals drain it, the pink
 strip recharges it, boost unlocks after lap 1. Physics run in track ribbon
 coordinates (along/lateral), so machines can never leave the road. See
-`apps/spaceflight/CLAUDE.md`; verify with `node tools/sfverify.mjs`.
+`apps/spaceflight/CLAUDE.md`; verify with `node tools/sfverify.mjs` and
+`node tools/sfonline.mjs`. Online: 8 pilots via the `SpaceRoom` DO on `/sf/*`.
 
 ## Zombies App
 
