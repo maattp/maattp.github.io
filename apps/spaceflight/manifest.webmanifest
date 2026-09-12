@@ -1,0 +1,16 @@
+{
+  "name": "Space Flight",
+  "short_name": "Space Flight",
+  "description": "Anti-grav racing: boost, shield energy, recharge strips and seven rivals on a neon orbital track.",
+  "start_url": "/apps/spaceflight/",
+  "scope": "/apps/spaceflight/",
+  "display": "fullscreen",
+  "orientation": "landscape",
+  "background_color": "#04030c",
+  "theme_color": "#04030c",
+  "icons": [
+    { "src": "icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}
