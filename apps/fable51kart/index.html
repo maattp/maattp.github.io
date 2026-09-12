@@ -4918,6 +4918,15 @@
         }
 
         // ---------- camera ----------
+        // keep the camera out of the ground. Only surfaces BELOW the camera count as
+        // floor (a deck passing overhead at an underpass is above it, so it is ignored;
+        // a ramp the kart just launched from is below it, so it still holds the camera up)
+        function clampCameraFloor() {
+            const cx = camera.position.x, cy = camera.position.y, cz = camera.position.z;
+            const rs = roadSurface(cx, cy, cz, 1.0);
+            const floorY = rs ? rs.y : terrainY(cx, cz);
+            if (cy < floorY + 2.4) camera.position.y = floorY + 2.4;
+        }
         const camPos = new THREE.Vector3(), camLook = new THREE.Vector3();
         let camYS = 0, camShake = 0, camFovKick = 0, camRoll = 0;
         let _camPrevBoost = 0, _camPrevAir = false, _camPrevSpin = 0;
@@ -4947,8 +4956,7 @@
                 const ft = raceClock - k.finishTime, ang = ft * 0.55 + Math.PI;
                 camPos.set(k.pos.x + Math.sin(ang) * 14, k.y + 5 + Math.sin(ft * 0.8) * 1.5, k.pos.z + Math.cos(ang) * 14);
                 camera.position.lerp(camPos, frameLerp(0.08, dt));
-                const cg2 = groundInfo(camera.position.x, camera.position.y + 4, camera.position.z);
-                if (camera.position.y < cg2.y + 2.4) camera.position.y = cg2.y + 2.4;
+                clampCameraFloor();
                 camera.lookAt(k.pos.x, k.y + 2, k.pos.z);
                 camera.fov = lerp(camera.fov, 50, frameLerp(0.05, dt)); camera.updateProjectionMatrix();
                 return;
@@ -4966,13 +4974,7 @@
                 const rs = roadSurface(camera.position.x, camera.position.y + 12, camera.position.z, 14);
                 const floor = rs ? rs.y : k.y - 2;
                 camera.position.y = clamp(camera.position.y, floor + 2.4, floor + 7.5);
-            } else {
-                // keep the camera out of the ground — but only ground at or below the kart's
-                // level: a deck passing overhead (underpass, viaduct) must never count as floor
-                const rs = roadSurface(camera.position.x, k.y + 1.5, camera.position.z, 2.5);
-                const floorY = rs ? rs.y : terrainY(camera.position.x, camera.position.z);
-                if (floorY <= k.y + 4 && camera.position.y < floorY + 2.4) camera.position.y = floorY + 2.4;
-            }
+            } else clampCameraFloor();
             if (camShake > 0.001) { camera.position.x += vrand(-1, 1) * camShake; camera.position.y += vrand(-1, 1) * camShake; camera.position.z += vrand(-1, 1) * camShake; }
             camLook.set(k.pos.x + fx * 8.5, lerp(k.y + 1.9, aheadY + 1.9, 0.3), k.pos.z + fz * 8.5);
             camera.lookAt(camLook);
@@ -5656,8 +5658,7 @@
             const segs = P.length - 1, f = u * segs, i = Math.min(segs - 1, Math.floor(f)), t = f - i;
             const a = P[i], b = P[i + 1], e = t * t * (3 - 2 * t);
             camera.position.set(lerp(a.x, b.x, e), lerp(a.y, b.y, e), lerp(a.z, b.z, e));
-            const cg = groundInfo(camera.position.x, camera.position.y + 4, camera.position.z);
-            if (camera.position.y < cg.y + 6) camera.position.y = cg.y + 6;
+            clampCameraFloor();
             camera.lookAt(lerp(a.tx, b.tx, e), lerp(a.ty, b.ty, e), lerp(a.tz, b.tz, e));
             camera.fov = 58; camera.updateProjectionMatrix();
             for (const k of karts) syncKartMesh(k, false, dt);
@@ -5903,8 +5904,7 @@
                     const focus = player.pos;
                     const t = menuCamT * 0.16, r = 40;
                     camera.position.set(focus.x + Math.cos(t) * r, player.y + 13 + Math.sin(t * 0.6) * 3, focus.z + Math.sin(t) * r);
-                    const cg = groundInfo(camera.position.x, camera.position.y + 4, camera.position.z);
-                    if (camera.position.y < cg.y + 3) camera.position.y = cg.y + 3;
+                    clampCameraFloor();
                     camera.lookAt(focus.x, player.y + 3, focus.z);
                     if (camera.fov !== 62) { camera.fov = 62; camera.updateProjectionMatrix(); }
                     updateItemBoxesVisual(dt);
