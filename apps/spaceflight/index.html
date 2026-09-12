@@ -171,7 +171,7 @@
         // =====================================================================
         //  SPACE FLIGHT — anti-grav racing prototype (single track, CPUs)
         // =====================================================================
-        const SF_VER = 8;
+        const SF_VER = 9;
         const clamp = (v, a, b) => v < a ? a : v > b ? b : v;
         const lerp = (a, b, t) => a + (b - a) * t;
         const smoothstep = (a, b, x) => { const t = clamp((x - a) / (b - a), 0, 1); return t * t * (3 - 2 * t); };
@@ -191,8 +191,8 @@
         const BRAKE_DECEL = 150;
         const TURN_RATE = 3.2;          // rad/s of relative heading
         const MAX_YAW = 0.38;           // rad, max relative heading at full steer
-        const SLIDE_K = 0.55;           // share of v²·curv that becomes lateral slide (1 = physics, <1 = hover grip)
-        const SLIDE_DAMP = 2.6;
+        const SLIDE_K = 0.85;           // share of v²·curv that becomes lateral slide (1 = physics, <1 = hover grip)
+        const SLIDE_DAMP = 1.7;
         const ENERGY_MAX = 100;
         const BOOST_COST = 15;
         const BOOST_TIME = 2.2;
@@ -676,7 +676,7 @@
             flame2.scale.set(4.5, 2.4, 1); flame2.position.set(0, 0.85, -6); g.add(flame2);
             const shield = new THREE.Mesh(new THREE.BoxGeometry(0.01, 0.01, 0.01), new THREE.MeshBasicMaterial({ transparent: true, opacity: 0, depthWrite: false })); g.add(shield);
             const under = new THREE.Sprite(new THREE.SpriteMaterial({ map: TEX.glow, color: def.col, transparent: true, opacity: 0.3, blending: THREE.AdditiveBlending, depthWrite: false }));
-            under.scale.set(7, 2.8, 1); under.position.set(0, -0.3, 0); g.add(under);
+            under.scale.set(8, 3.2, 1); under.position.set(0, -1.4, 0); g.add(under);
             const eng = g.children.filter((c) => c.name === 'ring');
             g.userData = { flame, flame2, shield, under, eng, hullMat: body };
             return g;
@@ -701,7 +701,7 @@
         }
         function makeAI(idx) {
             const r = mulberry(100 + idx * 17);
-            return { lane: ((idx % 7) - 3) * 4.6, skill: 0.72 + r() * 0.28, aggr: 0.3 + r() * 0.6, phase: r() * 10, jitter: 0, pace: 0.9 + r() * 0.1, surgeT: 9 + r() * 8, surgeP: r() * 6.28 };
+            return { lane: ((idx % 7) - 3) * 4.6, skill: 0.45 + r() * 0.5, aggr: 0.3 + r() * 0.6, phase: r() * 10, jitter: 0, pace: 0.88 + r() * 0.12, surgeT: 9 + r() * 8, surgeP: r() * 6.28, lapseT: 3 + r() * 6, lapse: 0, lapseBias: 0 };
         }
         let selectedDef = 0;
         function buildMachines() {
@@ -789,7 +789,7 @@
             // --- lateral: heading + centrifugal slide ---
             const grip = (k.ctrl.brake ? 1.8 : 1) * st.grip;
             // real centripetal demand v²κ, less what the banking supplies: with no steering you run wide
-            const centrif = f.curv * k.speed * k.speed * SLIDE_K * (1 - Math.abs(Math.sin(f.bank)) * 1.2);
+            const centrif = f.curv * k.speed * k.speed * SLIDE_K * (1 - Math.abs(Math.sin(f.bank)) * 0.8);
             k.slide += (centrif - k.slide * SLIDE_DAMP * grip) * dt;
             const vlat = k.speed * Math.sin(k.yaw) + k.slide;
             k.lat += vlat * dt;
@@ -806,8 +806,8 @@
                     damage(k, dmg, 'wall');
                     k.speed *= clamp(1 - into * 0.004, 0.72, 0.97);
                     k.wallT = 0.18;
-                    k.yaw = -k.yaw * 0.35;
-                    k.slide = -k.slide * 0.4;
+                    k.yaw *= 0.5;            // scrub the heading into the wall, never flip it (that read as a bounce)
+                    k.slide = -k.slide * 0.25;
                     if (k.isPlayer) { vibrate(20); camShake = Math.max(camShake, Math.min(1, into * 0.02)); sfxScrape(into); }
                     spawnSparks(k, Math.sign(k.lat), Math.min(14, 4 + into * 0.15));
                 } else { k.speed -= k.speed * 0.18 * dt; if (k.isPlayer && simTickNo % 4 === 0) spawnSparks(k, Math.sign(k.lat), 2); }   // grinding the wall bleeds speed, but you can steer off it
@@ -829,7 +829,7 @@
                 else if (k.isPlayer) { flashText(k.laps === TOTAL_LAPS - 1 ? 'FINAL LAP!' : 'LAP ' + (k.laps + 1), '#9fe8ff'); sfxLap(); }
             }
             k.progress = k.laps * TRACK.len + k.s;
-            k.pos.copy(worldPos(k.s, k.lat, 0.5 + k.air, k.pos));
+            k.pos.copy(worldPos(k.s, k.lat, 1.7 + k.air, k.pos));
         }
         function tryBoost(k) {
             if (k.laps < BOOST_MIN_LAP && !DBG_FREEBOOST) { if (k.isPlayer) { toast('BOOST UNLOCKS AFTER LAP 1'); sfxDeny(); } return false; }
@@ -862,17 +862,17 @@
                 const dl = a.lat - b.lat, dh = a.air - b.air;
                 if (Math.abs(ds) < 7.5 && Math.abs(dl) < 4.4 && Math.abs(dh) < 3) {
                     // separate laterally, trade speed; energy only goes for a real hit, not a brush
-                    const push = (4.4 - Math.abs(dl)) * 0.35 * (dl >= 0 ? 1 : -1);
-                    a.lat += push; b.lat -= push;
+                    const push = (4.4 - Math.abs(dl)) * 2.2 * (dl >= 0 ? 1 : -1);   // as a velocity, so the separation is smooth
+                    a.slide += push * dt * 30; b.slide -= push * dt * 30;
                     const rel = Math.abs((a.speed * Math.sin(a.yaw) + a.slide) - (b.speed * Math.sin(b.yaw) + b.slide)) + Math.abs(a.speed - b.speed) * 0.3;
-                    if (rel < 6) { a.slide += (dl >= 0 ? 1 : -1) * 3; b.slide -= (dl >= 0 ? 1 : -1) * 3; continue; }
+                    if (rel < 6) continue;
                     const dmg = clamp(0.8 + rel * 0.05, 0.8, 7);
                     const boostA = a.boostT > 0 || a.dashT > 0, boostB = b.boostT > 0 || b.dashT > 0;
                     if (a.hitT <= 0.15) damage(a, dmg * (boostB ? 1.8 : 1) * (boostA ? 0.5 : 1), 'ram');
                     if (b.hitT <= 0.15) damage(b, dmg * (boostA ? 1.8 : 1) * (boostB ? 0.5 : 1), 'ram');
                     // rear-ender shoves the one in front, gets slowed itself
                     if (ds > 0) { a.speed = Math.min(a.speed, b.speed + 12); b.speed += 6; } else { b.speed = Math.min(b.speed, a.speed + 12); a.speed += 6; }
-                    a.slide += (dl >= 0 ? 1 : -1) * 6; b.slide -= (dl >= 0 ? 1 : -1) * 6;
+                    a.slide += (dl >= 0 ? 1 : -1) * 4; b.slide -= (dl >= 0 ? 1 : -1) * 4;
                     a.hitT = Math.max(a.hitT, 0.25); b.hitT = Math.max(b.hitT, 0.25);
                     const mid = a.pos.clone().lerp(b.pos, 0.5); spawnSparksAt(mid, 8, 0xffffff);
                     if (a.isPlayer || b.isPlayer) { vibrate(18); camShake = Math.max(camShake, 0.45); sfxBump(); }
@@ -915,22 +915,27 @@
             // predictive lateral controller: cancel slide, close the gap
             const vlat = k.speed * Math.sin(k.yaw) + k.slide;
             const err = targetLat - k.lat;
-            const ff = k.speed > 1 ? clamp(Math.asin(clamp(-k.slide / k.speed, -0.9, 0.9)) / MAX_YAW, -1, 1) : 0;   // heading that cancels the slide
-            const want = clamp(ff + err * 0.09 - vlat * 0.035, -1, 1);
-            ai.jitter = lerp(ai.jitter, (Math.random() - 0.5) * (1 - ai.skill) * 0.6, 0.05);
-            k.ctrl.steer = clamp(want + ai.jitter, -1, 1);
+            // lower skill = less of the slide cancelled (they run wide and kiss the wall) and slower reactions
+            const ff = k.speed > 1 ? clamp(Math.asin(clamp(-k.slide / k.speed, -0.9, 0.9)) / MAX_YAW, -1, 1) * (0.5 + 0.5 * ai.skill) : 0;
+            const want = clamp(ff + err * (0.05 + 0.05 * ai.skill) - vlat * 0.035, -1, 1);
+            ai.jitter = lerp(ai.jitter, (Math.random() - 0.5) * (1 - ai.skill) * 0.8, 0.05);
+            // lapses: every few seconds a drift of attention pulls the steering off for a moment
+            ai.lapseT -= dt;
+            if (ai.lapseT <= 0) { ai.lapse = 0.4 + (1 - ai.skill) * 0.8; ai.lapseBias = (Math.random() - 0.5) * 1.2; ai.lapseT = 3 + Math.random() * 7 + ai.skill * 6; }
+            if (ai.lapse > 0) ai.lapse -= dt;
+            k.ctrl.steer = clamp(want + ai.jitter + (ai.lapse > 0 ? ai.lapseBias : 0), -1, 1);
             // brake only when the slide is about to carry it into the wall at speed
             const margin = f0.w - 3 - Math.abs(k.lat + vlat * 0.35);
             const bendAhead = Math.abs(frameAt(k.s + 60 + k.speed * 0.5, _frA).curv);
             const vmax = Math.sqrt(52 / Math.max(1e-4, bendAhead * SLIDE_K * 0.35));   // speed the slide stays steerable at
-            k.ctrl.brake = (margin < 0 && k.speed > 110) || !!k.ctrl.brakeTap || k.speed > vmax * (0.95 + 0.1 * ai.skill); k.ctrl.brakeTap = false;
+            k.ctrl.brake = (margin < 0 && k.speed > 110 && ai.skill > 0.6) || !!k.ctrl.brakeTap || k.speed > vmax * (0.9 + 0.3 * ai.skill); k.ctrl.brakeTap = false;   // the unskilled brake late or not at all
             // boost on straights when energy allows (keep a reserve, F-Zero style)
             const straight = Math.abs(curvAhead) < 0.0012;
             k.ctrl.boost = k.laps >= BOOST_MIN_LAP && straight && k.energy > 45 + (1 - ai.aggr) * 30 && k.boostT <= 0 && Math.random() < 0.02;
             // rubber band: trailing CPUs get a nudge, leaders ease off when far ahead of the player
             const gap = player ? k.progress - player.progress : 0;
             k.def.stat.top = k.def.statBase ? k.def.statBase.top : (k.def.statBase = { ...k.def.stat }).top;
-            const rb = clamp(-gap / 1400, -0.04, 0.04) * (player && player.finished ? 0 : 1);
+            const rb = clamp(-gap / 800, -0.08, 0.05) * (player && player.finished ? 0 : 1);   // leaders far ahead of you ease off harder than stragglers speed up
             const surge = ai.surgeT ? Math.sin(ai.phase * 6.28 / ai.surgeT + ai.surgeP) * 0.035 : 0;   // form comes and goes
             k.def.stat.top = k.def.statBase.top * ((ai.pace || 1) + surge) + rb;
         }
@@ -1023,7 +1028,7 @@
             const f = frameAt(k.s - 15, _frA);
             const fl = frameAt(k.s + 30, _frB);
             const sp = clamp(k.speed / MAX_SPEED, 0, 1.6);
-            const back = 16 + sp * 2, up = 5.4;
+            const back = 16 + sp * 2, up = 6.4;
             // behind the machine along the track, slightly toward the lateral position, riding the track up-vector (banks tilt the camera)
             camPos.set(f.x + f.nx * k.lat * 0.75 + f.ux * up, f.y + f.ny * k.lat * 0.75 + f.uy * up, f.z + f.nz * k.lat * 0.75 + f.uz * up);
             camPos.addScaledVector(_vz.set(f.tx, f.ty, f.tz), -(back - 15));
