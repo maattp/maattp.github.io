@@ -40,15 +40,35 @@ SwiftShader renders Lambert washed-out; lighting values are tuned for phones.
   flat-topped islands) and is *carved* to every ground-road sample (34u
   aprons). Bridges/tunnels/gaps never carve. The same function drives the mesh
   and the physics.
-- **Surface query**: `roadSurface` (XZ hash + Y window, highest deck not above
-  you) then terrain — stacked roads coexist. `groundInfo` prefers a found
-  bridge/tunnel deck outright.
+- **Surface query**: `roadSurface` (XZ hash ±2 cells + Y window) then
+  terrain — stacked roads coexist. Height only separates *levels* (planes
+  >4u apart, stacked decks); on one level the **nearest sample wins** and the
+  point is blended between that sample and the neighbour it lies towards.
+  The kart stands on that blended ribbon — never on the max of extrapolated
+  sample planes (that ridged every banked / wall-side stretch into a per-tick
+  jolt). Sample tangents are one-sided across kicker lips and gap edges (a
+  central difference across the 4u cliff bent the ramp itself). The kart's
+  own edge gets +3u of step-up so it never clips through a bump on its road.
+  `groundInfo` prefers a found bridge/tunnel deck outright.
+- **Smoothness probe** (run after any track/physics change): drive the
+  autopilot player with `__f51.simTick` and log the second difference of
+  `pos.y` while grounded; anything above ~2000 u/s² is a felt jolt. Summit
+  went from 315 jolts (peak 14 000) to ~15 (peak ~2000) on this branch — the
+  fixes are listed above and in `clampToTrack` (wall slide re-grounds with
+  the same `roadSurface` call as the ground pass).
 - **Elevated = bridge**: auto-detected road-over-road (>9u within 16u XZ) or
   forced. Decks get skirts, pillars and continuous ribbon guardrails. **Walls
   are physical wherever a guardrail would be drawn** (`markWalls`: bridge, or
   the ground drops >6u beside the road) but apply only to the deck you are
   tracked on and never in the first/last 44u of an edge (fork throats overlap
   other roads; this was the "stuck at the three-way fork" bug).
+  **Since the Summit quality pass every non-shared road edge is a barrier**
+  (Mario Kart style): `markWalls` puts a physical wall on every side that no
+  other road joins, drawn as a low themed wall on the ground and a rail on
+  decks/cliffs; `clampToTrack` slides you along it (heading bleeds into the
+  wall, sparks). Falling off (water/lava/void) calls the rescue flyer, which
+  lifts you and sets you back on your last good sample. Lakes are real basins
+  (`terrainBase` sinks the bed 4u under the surface).
 - **Interchanges are synthesized, never hand-slapped.** In `buildTrack`, a
   non-main branch leaving a fork gets a parallel lane beside the trunk
   (38u, its outer edge on the trunk's edge) and peels away by 98u; merges
@@ -57,10 +77,24 @@ SwiftShader renders Lambert washed-out; lighting values are tuned for phones.
   sibling's surface height while they overlap, the width funnels (`sm.w`)
   open a narrow road out to the trunk's width, a **22% grade limiter** eases
   every climb (kicker lips excepted) and `buildRoads` fills the gore wedge
-  with asphalt. `sm.shared` (another non-collinear road within 22u, or a
-  wider road under a merged lane) turns off rails/curbs/lamps/posts so nothing
-  cuts across a throat. `rawMerge`/`rawFork` on an edge opts out (the Sky
-  cable run merges onto the corkscrew straight by hand).
+  with asphalt. `sm.shared` (another non-collinear road within 22u *at the
+  same surface height* — 3.5u against the other road's banked edge; a ledge
+  4–7u above another road keeps its barrier) turns off rails/curbs/lamps/
+  posts so nothing cuts across a throat. `rawMerge`/`rawFork` on an edge opts
+  out (the Sky cable run merges onto the corkscrew straight by hand).
+  Lane synthesis rules learned the hard way: the lane points sit at the
+  **trunk's** height (`trunkY`, from the trunk's own mids — node `dir` y
+  components are stylistic); the branch follows the trunk's height *and bank*
+  while their footprints overlap (`snapThroats`, weight by lateral overlap,
+  bank evaluated no further out than the trunk's edge); bank tapers to zero
+  over 110u at interchange nodes (44u at plain corners); the first/last
+  sample of every edge takes the node's frame so the two edges' end rows
+  coincide (no grass sliver at nodes). **Rendering:** where a branch overlaps
+  its trunk the trunk owns the surface — `buildRoads` clips the branch mesh
+  to the strip outside the trunk (`clipOf`), curbs are per side, the gore
+  wedge pairs each trunk sample with the branch sample *beside* it and is
+  wound to face up. Painted fork chevrons start where the branch has its own
+  surface.
 - **Physics**: Fable Kart constants verbatim (SIM_DT 1/60, MAX_SPEED 92,
   ACCEL 48/0.55, BOOST_CAP 138, TURN_BASE 2.4/FADE 0.28, MKDS drift +
   one-shot `grantBoost`, no spinouts) on a surface-plane vehicle with slope
@@ -105,7 +139,9 @@ measure XZ distance to every road at any height (a 3D check once let trees
 land on mountain roads). **Enforcement:** `__f51.roadAudit()` samples every
 world vertex *and triangle edge* against the drivable corridor (|lat| < w,
 road y − 0.5 … + 4.5, kicker lips excepted) and must return `[]` on all four
-maps; `node tools/f51sweep.mjs` autopilots each map on every route and tiles
+maps (walls/rails get a 2.6u margin — they *are* the edge — and vertices
+matched within 3 samples of a kicker/lip/gap are ignored); `node
+tools/f51sweep.mjs` autopilots each map on every route and tiles
 contact sheets in `tools/data/f51shots/sweep/` for an eyeball pass. Rooftop
 buildings, cranes, suspension cables, castle corners, island cones and lamp
 posts have all been caught by these — run them after any scenery change.

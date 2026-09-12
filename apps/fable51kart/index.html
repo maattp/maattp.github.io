@@ -557,8 +557,8 @@
         // 3D terms: hills are real
         const SLOPE_ACC = 85, UPHILL_MUL = 1.4, DOWNHILL_BONUS = 160, DOWNHILL_CAP = 130;
         const OFFROAD_CAP = 0.55, OFFROAD_DRAG = 24;
-        const HALF_W = 16, HALF_W_MID = 12, HALF_W_SHORT = 9;
-        const PAD_HALF = 4.6;
+        const HALF_W = 22, HALF_W_MID = 17, HALF_W_SHORT = 13;
+        const PAD_HALF = 6;
         const SAMPLE_STEP = 3;
 
         // AI difficulty: skill band, rubber-band bounds (normal / final lap),
@@ -702,11 +702,11 @@
                     { id: 'climb', from: 'M', to: 'SUM', w: HALF_W, gate: 1, tunnels: [{ f0: 0.6, f1: 0.78 }],
                       mid: [[-196, 26, 213], [-315, 32, 151], [-406, 40, 28], [-385, 50, -77], [-329, 60, -119]] },
                     { id: 'desc', from: 'SUM', to: 'P0', w: HALF_W, gate: 2, kickers: [{ f: 0.012, len: 24, h: 4.6 }],
-                      mid: [[-133, 58, -210], [-90, 52, -247], [-48, 47, -281],
-                            [-22, 47, -306], [18, 46.8, -309], [42, 46.4, -284], [44, 46, -252],
-                            ...arcPts(104, -252, 60, 180, -180, 46, 26, 16), [44, 26, -252],
-                            [22, 25, -212], [-30, 22, -198], [-70, 19, -228], [-82, 17, -285], [-65, 14, -350],
-                            [-49, 11, -398], [-51, 9.5, -430], [-80, 8, -449], [-115, 7, -452], [-185, 5, -455], [-250, 4, -448],
+                      mid: [[-133, 61, -210], [-90, 56, -247], [-48, 52, -281],
+                            [-22, 51.5, -306], [18, 51, -309], [42, 50.5, -284], [44, 50, -252],
+                            ...arcPts(104, -252, 60, 180, -180, 50, 26, 16), [44, 26, -252],
+                            [22, 25, -212], [-30, 22.5, -198], [-70, 20.5, -228], [-82, 19.5, -285], [-65, 18, -350],
+                            [-49, 15, -398], [-51, 12, -430], [-80, 9.5, -449], [-115, 8, -452], [-185, 5, -455], [-250, 4, -448],
                             [-295, 3.5, -415], [-297, 3, -375], [-265, 3, -352], [-215, 3, -348]] },
                 ],
                 lineS: 30, mainRoute: ['start', 'long', 'climb', 'desc'],
@@ -726,7 +726,7 @@
                     grass1: 0x6fae55, grass2: 0x9aa668, rock: 0x8d8577, snow: 0xf2f5fa, sand: 0xc9b98a, snowLine: 48, rockLine: 26,
                     road: '#474c5a', roadDirt: '#8a6a42', edge: '#e6e8ee', lane: '#f2d24a', curbA: 0xe8e8e8, curbB: 0xd23c3c,
                     water: 0x3d7fc9, cloud: 0xffffff, clouds: 22, headlights: false, stars: false, dust: 0xd8cfa8, tunnelGlow: 0xfff2c0,
-                    tree: [0x3f7d3a, 0x4f9448, 0x57a34f], trunk: 0x6b4a26,
+                    tree: [0x3f7d3a, 0x4f9448, 0x57a34f], trunk: 0x6b4a26, wallColor: 0x8f8778, wallTop: 0xb4ad9e,
                 },
             },
             // ---------------------------------------------------------------
@@ -783,7 +783,7 @@
                     grass1: 0x2c3a4a, grass2: 0x3b4658, rock: 0x3a3f4e, snow: 0x3a3f4e, sand: 0x2e2c3a, snowLine: 999, rockLine: 24,
                     road: '#262a36', roadDirt: '#3a3a44', edge: '#c8d0e0', lane: '#ffcf4a', curbA: 0xdedede, curbB: 0xd23c3c,
                     water: 0x0f2a5a, cloud: 0x2a2a48, clouds: 0, headlights: true, stars: true, night: true, dust: 0x3a3a48, tunnelGlow: 0xff4fb0,
-                    tree: [0x1f4a3a, 0x255a44, 0x1a3f33], trunk: 0x2a2018, neon: [0xff4fb0, 0x4fd8ff, 0xffe24a, 0x9c5cff, 0x5cff9c],
+                    tree: [0x1f4a3a, 0x255a44, 0x1a3f33], trunk: 0x2a2018, wallColor: 0x3c4152, wallTop: 0x5a6074, neon: [0xff4fb0, 0x4fd8ff, 0xffe24a, 0x9c5cff, 0x5cff9c],
                 },
             },
             // ---------------------------------------------------------------
@@ -811,7 +811,7 @@
                       mid: [[352, 14, -220], [378, 27, -130]] },
                     { id: 'rim', from: 'F', to: 'M', w: HALF_W_SHORT, gate: 0, short: true, dirt: true,
                       fromDir: [-0.4, 0.15, 0.9], kickers: [{ f: 0.42, len: 22, h: 4.4 }], gaps: [{ f0: 0.475, f1: 0.56 }],
-                      mid: [[322, 50, 40], [304, 62, 110], [286, 68, 170], [262, 66, 232], [220, 60, 280]] },
+                      mid: [[322, 46, 40], [304, 62, 110], [286, 63, 170], [262, 57, 232]] },
                     { id: 'flank', from: 'F', to: 'M', w: HALF_W, gate: 0,
                       mid: [[384, 42, 60], [392, 45, 160], [356, 48, 250], [272, 54, 312]] },
                     { id: 'tube', from: 'M', to: 'T', w: HALF_W_MID, gate: 1, tunnels: [{ f0: 0.3, f1: 0.72 }],
@@ -836,7 +836,7 @@
                     grass1: 0x4f5a44, grass2: 0x6a6a52, rock: 0x5a4a44, snow: 0x3a2a26, sand: 0x4a423c, snowLine: 62, rockLine: 30,
                     road: '#2f333d', roadDirt: '#5a4a3c', edge: '#d8dde6', lane: '#ff9a4a', curbA: 0xdedede, curbB: 0xd23c3c,
                     water: 0x1a5a6a, cloud: 0xd8a0b0, clouds: 14, headlights: true, stars: true, dust: 0x6a5a52, tunnelGlow: 0xff6a22,
-                    tree: [0x5a4a44, 0x6a564e, 0x4a3a36], trunk: 0x3a2a26, lavaColor: 0xff6a22,
+                    tree: [0x5a4a44, 0x6a564e, 0x4a3a36], trunk: 0x3a2a26, lavaColor: 0xff6a22, wallColor: 0x3a2e30, wallTop: 0x56484a,
                 },
             },
             // ---------------------------------------------------------------
@@ -870,7 +870,7 @@
                     // the cable run swings west of the castle and merges onto the corkscrew's straight
                     { id: 'cable', from: 'F', to: 'S2', w: 8, gate: 0, elev: true, short: true,
                       kickers: [{ f: 0.443, len: 22, h: 5 }], gaps: [{ f0: 0.505, f1: 0.59 }],
-                      mid: [[212, 84, 150], [204, 88, 192], [202, 84, 232]] },
+                      mid: [[190, 84, 150], [182, 88, 192], [170, 82, 222]] },
                     { id: 'spiralA', from: 'M', to: 'S2', w: HALF_W_MID, gate: -1, elev: true, mid: [[105, 73.8, 260]] },
                     { id: 'spiralB', from: 'S2', to: 'S', w: HALF_W_MID, gate: 1, elev: true,
                       mid: arcPts(20, 190, 70, 90, 450, 73.4, 32, 18) },
@@ -893,7 +893,7 @@
                     grass1: 0x74b85c, grass2: 0x9ccc6a, rock: 0x9a8f88, snow: 0xffffff, sand: 0xd8cfa8, snowLine: 999, rockLine: 999,
                     road: '#5a5e70', roadDirt: '#8a7a5a', edge: '#f4f6ff', lane: '#ffe27a', curbA: 0xf2f2f2, curbB: 0x3a8bff,
                     water: 0x7fb8ff, cloud: 0xffffff, clouds: 30, headlights: false, stars: false, dust: 0xe8e0c8, tunnelGlow: 0xffe27a, tunnelWall: 0xb8ac94, tunnelRing: 0xd8ccb4,
-                    tree: [0x4f9448, 0x6ab85a, 0x3f7d3a], trunk: 0x7a5a36, banner: [0x3a8bff, 0xffd54a, 0xff3b5c],
+                    tree: [0x4f9448, 0x6ab85a, 0x3f7d3a], trunk: 0x7a5a36, wallColor: 0xd8ccb4, wallTop: 0xece4d4, banner: [0x3a8bff, 0xffd54a, 0xff3b5c],
                 },
             },
         ];
@@ -950,6 +950,13 @@
             let h = terrainSmooth(x, z);
             h += (noise2(x / 90 * 7, z / 90 * 7) - 0.5) * 2 * T.noise[0];
             h += (noise2(x / 33 * 7 + 19, z / 33 * 7 + 7) - 0.5) * 2 * T.noise[1];
+            // lakes are real basins: the bed sits 4u under the surface, shelving up over the last 28u
+            for (const w of TRACK.def.water) {
+                const d = Math.hypot(x - w.cx, z - w.cz);
+                if (d >= w.r) continue;
+                const t = clamp((d - (w.r - 28)) / 28, 0, 1);
+                h = Math.min(h, lerp(w.y - 4, h, t * t * (3 - 2 * t)));
+            }
             return h;
         }
         // carved: ground-road samples pull the terrain up/down to the road bed
@@ -965,7 +972,9 @@
             const edgeY = sm.y + sm.bank * clamp(lat, -e.w, e.w) - 0.75;
             if (d <= e.w + 1.5) return edgeY;
             const t = clamp((d - e.w - 1.5) / 34, 0, 1);
-            return lerp(edgeY, base, t * t * (3 - 2 * t));
+            const h = lerp(edgeY, base, t * t * (3 - 2 * t));
+            // past the embankment a lake bed stays a lake bed (the apron would otherwise fill shore-side water)
+            return d > e.w + 12 && base < h ? Math.max(base, lerp(h, base, clamp((d - e.w - 12) / 20, 0, 1))) : h;
         }
         function terrainNormal(x, z, out) {
             const e = 1.6;
@@ -999,6 +1008,16 @@
                 for (const o of inner) { l1 += 2 * o.w + 3; l2 += 2 * o.w + 4; }
                 return { side, n, l1: side * l1, l2: side * l2 };
             };
+            // height of `trunk` `dist` units from the node `np` (leaving it when `out`): interpolate
+            // between the node and the trunk's nearest designer mid — node `dir` y-components are
+            // stylistic and do not reliably match the road's real grade
+            const trunkY = (trunk, np, dist, out) => {
+                const ms = out ? trunk.mid : trunk.mid.slice().reverse();
+                const m = ms.find((q) => Math.hypot(q[0] - np[0], q[2] - np[2]) > 40) || ms[ms.length - 1];
+                if (!m) return np[1];
+                const my = resolveY(m, trunk.yOff), dm = Math.hypot(m[0] - np[0], m[2] - np[2]) || 1;
+                return np[1] + (my - np[1]) * clamp(dist / dm, 0, 1);
+            };
             for (const d of def.edges) {
                 const a = ND[d.from], b = ND[d.to];
                 const lead = 34;
@@ -1012,10 +1031,10 @@
                     const { n, l1, l2 } = laneIndex(outs.filter((o) => o !== trunk), d, a.p, unit(a.dir), false, tw);
                     const dir = unit(a.dir);
                     mids = mids.filter((m) => dist2(m, a.p) > 110);
-                    const y0 = a.p[1], y1 = mids.length ? mids[0][1] : b.p[1];
+                    // lane at the trunk's height (its grade out of the node) — see MERGE
                     mids.unshift(
-                        [a.p[0] + dir[0] * 38 + n[0] * l1, y0 + (y1 - y0) * 0.1, a.p[2] + dir[2] * 38 + n[2] * l1],
-                        [a.p[0] + dir[0] * 98 + n[0] * l2, y0 + (y1 - y0) * 0.38, a.p[2] + dir[2] * 98 + n[2] * l2]);
+                        [a.p[0] + dir[0] * 38 + n[0] * l1, trunkY(trunk, a.p, 38, true), a.p[2] + dir[2] * 38 + n[2] * l1],
+                        [a.p[0] + dir[0] * 98 + n[0] * l2, trunkY(trunk, a.p, 98, true), a.p[2] + dir[2] * 98 + n[2] * l2]);
                     ad = a.dir;
                 }
                 // MERGE: mirror — approach parallel beside the trunk, then join
@@ -1025,10 +1044,11 @@
                     const { n, l1, l2 } = laneIndex(ins.filter((o) => o !== trunk), d, b.p, unit(b.dir), true, tw);
                     const dir = unit(b.dir);
                     mids = mids.filter((m) => dist2(m, b.p) > 110);
-                    const y0 = b.p[1], y1 = mids.length ? mids[mids.length - 1][1] : a.p[1];
+                    // the lane runs BESIDE the trunk, so it sits at the trunk's height (its grade into the
+                    // node), not part-way up to the branch's last mid — that left a ledge over the trunk
                     mids.push(
-                        [b.p[0] - dir[0] * 98 + n[0] * l2, y0 + (y1 - y0) * 0.38, b.p[2] - dir[2] * 98 + n[2] * l2],
-                        [b.p[0] - dir[0] * 38 + n[0] * l1, y0 + (y1 - y0) * 0.1, b.p[2] - dir[2] * 38 + n[2] * l1]);
+                        [b.p[0] - dir[0] * 98 + n[0] * l2, trunkY(trunk, b.p, 98, false), b.p[2] - dir[2] * 98 + n[2] * l2],
+                        [b.p[0] - dir[0] * 38 + n[0] * l1, trunkY(trunk, b.p, 38, false), b.p[2] - dir[2] * 38 + n[2] * l1]);
                     bd = b.dir;
                 }
                 const pts = [
@@ -1067,6 +1087,19 @@
                 for (let i = 0; i < n; i++) {
                     const prev = raw[Math.max(0, i - 1)], next = raw[Math.min(n - 1, i + 1)];
                     let tx = next[0] - prev[0], ty = next[1] - prev[1], tz = next[2] - prev[2];
+                    // never let the vertical tangent straddle a kicker lip or a gap edge: the surface
+                    // is interpolated from these tangents, and a central difference across the 4u cliff
+                    // conjures a phantom bump on the ramp (karts popped up, then launched late and weak)
+                    const cliffN = i + 1 < n && (!!kickF[i] !== !!kickF[i + 1] || !!gapF[i] !== !!gapF[i + 1]);
+                    const cliffP = i > 0 && (!!kickF[i] !== !!kickF[i - 1] || !!gapF[i] !== !!gapF[i - 1]);
+                    if (cliffN && !cliffP) { const p0 = raw[Math.max(0, i - 1)]; const hl = Math.hypot(raw[i][0] - p0[0], raw[i][2] - p0[2]) || 1; ty = (raw[i][1] - p0[1]) / hl * Math.hypot(tx, tz); }
+                    else if (cliffP && !cliffN) { const p1 = raw[Math.min(n - 1, i + 1)]; const hl = Math.hypot(p1[0] - raw[i][0], p1[2] - raw[i][2]) || 1; ty = (p1[1] - raw[i][1]) / hl * Math.hypot(tx, tz); }
+                    if (i === 0 || i === n - 1) {
+                        // end rows sit in the NODE's frame: the edges meeting there then share one row
+                        // through the node point instead of leaving a grass sliver / overlap wedge
+                        const nd = i === 0 ? unit(ad) : unit(bd), hl = Math.hypot(tx, tz) || 1;
+                        tx = nd[0] * hl; tz = nd[2] * hl;
+                    }
                     const tl = Math.hypot(tx, ty, tz) || 1; tx /= tl; ty /= tl; tz /= tl;
                     let nx = tz, nz = -tx;
                     const nl = Math.hypot(nx, nz) || 1; nx /= nl; nz /= nl;
@@ -1086,8 +1119,19 @@
                     let acc = 0, cnt = 0;
                     for (let j = -6; j <= 6; j++) { const k2 = clamp(i + j, 0, n - 1); acc += samples[k2].curv; cnt++; }
                     samples[i].bank = clamp(-(acc / cnt) * 26, -0.34, 0.34);
-                    const fromEnd = Math.min(samples[i].s, len - samples[i].s);
-                    samples[i].bank *= clamp(fromEnd / 36, 0, 1);
+                }
+                // then ease it: at the road edge the surface sits bank*w off the centreline, so a bank
+                // step of 0.05 between samples is a 1u kerb at 22u out — three box blurs (±7 samples)
+                for (let pass = 0; pass < 3; pass++) {
+                    const src = samples.map((sm) => sm.bank);
+                    for (let i = 0; i < n; i++) { let acc = 0, cnt = 0; for (let j = -7; j <= 7; j++) { acc += src[clamp(i + j, 0, n - 1)]; cnt++; } samples[i].bank = acc / cnt; }
+                }
+                // interchanges stay flat: a branch joining from the high side of a banked trunk would
+                // otherwise have to climb the trunk's edge and drop down its bank
+                const fanIn = def.edges.filter((o) => o.to === d.from || o.from === d.from).length > 2 ? 110 : 44;
+                const fanOut = def.edges.filter((o) => o.to === d.to || o.from === d.to).length > 2 ? 110 : 44;
+                for (let i = 0; i < n; i++) {
+                    samples[i].bank *= smoothstep(0, fanIn, samples[i].s) * smoothstep(0, fanOut, len - samples[i].s);   // eased taper: no kink in the surface at node exits
                     if (samples[i].kicker || samples[i].gap) samples[i].bank = 0;
                 }
                 // AI corner cap, closed-form from the steering model (no bank-grip assist)
@@ -1202,15 +1246,18 @@
             const E = TRACK.edges;
             const mainSet = new Set(TRACK.def.mainRoute);
             // nearest sample of `ref` within its own throat, returning the surface height there
-            const surfaceOf = (ref, x, z, side) => {
+            const surfaceOf = (ref, x, z, side, ew) => {
                 let best = null, bd = Infinity;
                 const n = ref.samples.length;
-                const lo = side === 'start' ? 0 : Math.max(0, n - 44), hi = side === 'start' ? Math.min(n, 44) : n;
+                const lo = side === 'start' ? 0 : Math.max(0, n - 62), hi = side === 'start' ? Math.min(n, 62) : n;
                 for (let i = lo; i < hi; i++) { const o = ref.samples[i]; const d = (o.x - x) ** 2 + (o.z - z) ** 2; if (d < bd) { bd = d; best = o; } }
                 if (!best) return null;
                 const lat = (x - best.x) * best.nx + (z - best.z) * best.nz, along = (x - best.x) * best.tx + (z - best.z) * best.tz;
-                if (Math.abs(lat) > best.w + 1.5 || Math.abs(along) > 4) return null;
-                return best.y + best.bank * lat + best.ty * along;
+                if (Math.abs(lat) > best.w + ew + 14 || Math.abs(along) > 4) return null;
+                // weight: fully the trunk's surface while the two roads still overlap (the branch's
+                // near edge inside the trunk), fading out as the branch's edge clears the trunk's edge
+                // (bank evaluated no further out than the trunk's edge: a branch centred beyond it meets the trunk edge-to-edge)
+                return { y: best.y + best.bank * clamp(lat, -best.w, best.w) + best.ty * along, bank: best.bank, w: 1 - smoothstep(best.w - 4, best.w + 12, Math.abs(lat) - ew) };
             };
             // siblings leaving the same node (or arriving at the same node) share a
             // surface while they still overlap: the narrower / non-main one follows
@@ -1219,8 +1266,10 @@
                 const refIn = pickRef(E.filter((o) => o.from === e.from), e), refOut = pickRef(E.filter((o) => o.to === e.to), e);
                 for (const sm of e.samples) {
                     if (sm.kicker) continue;
-                    if (refIn && sm.s < 95) { const sy = surfaceOf(refIn, sm.x, sm.z, 'start'); if (sy != null) sm.y = lerp(sy, sm.y, smoothstep(14, 95, sm.s)); }
-                    if (refOut && e.len - sm.s < 95) { const sy = surfaceOf(refOut, sm.x, sm.z, 'end'); if (sy != null) sm.y = lerp(sy, sm.y, smoothstep(14, 95, e.len - sm.s)); }
+                    // height AND bank follow the trunk while overlapping: with only the height snapped,
+                    // a flat lane beside a banked trunk left a ridge across the throat at every lateral offset
+                    if (refIn && sm.s < 186) { const r = surfaceOf(refIn, sm.x, sm.z, 'start', e.w); if (r) { const t = 1 - r.w; sm.y = lerp(r.y, sm.y, t); sm.bank = lerp(r.bank, sm.bank, t); } }
+                    if (refOut && e.len - sm.s < 186) { const r = surfaceOf(refOut, sm.x, sm.z, 'end', e.w); if (r) { const t = 1 - r.w; sm.y = lerp(r.y, sm.y, t); sm.bank = lerp(r.bank, sm.bank, t); } }
                 }
             }
             // grade limiter: no road steeper than 22% (kicker lips excepted) —
@@ -1232,29 +1281,42 @@
                 for (let i = 1; i < n; i++) { if (!ok(i) || !ok(i - 1)) continue; const ds = S[i].s - S[i - 1].s; S[i].y = clamp(S[i].y, S[i - 1].y - MAXG * ds, S[i - 1].y + MAXG * ds); }
                 for (let i = n - 2; i >= 0; i--) { if (!ok(i) || !ok(i + 1)) continue; const ds = S[i + 1].s - S[i].s; S[i].y = clamp(S[i].y, S[i + 1].y - MAXG * ds, S[i + 1].y + MAXG * ds); }
                 for (let i = 0; i < n; i++) {
-                    const a = S[Math.max(0, i - 1)], b = S[Math.min(n - 1, i + 1)], sm = S[i];
-                    let tx = b.x - a.x, ty = b.y - a.y, tz = b.z - a.z; const tl = Math.hypot(tx, ty, tz) || 1;
+                    const sm = S[i];
+                    // one-sided across kicker lips / gap edges (see the raw-tangent pass): the surface
+                    // interpolates along these, and a tangent spanning the cliff bends the ramp itself
+                    const same = (o) => !!o.kicker === !!sm.kicker && !!o.gap === !!sm.gap;
+                    let a = S[Math.max(0, i - 1)], b = S[Math.min(n - 1, i + 1)];
+                    if (!same(a) && same(b)) a = sm; else if (!same(b) && same(a)) b = sm;
+                    let tx = b.x - a.x, ty = b.y - a.y, tz = b.z - a.z;
+                    if (i === 0 || i === n - 1) { const hl = Math.hypot(tx, tz) || 1; tx = sm.tx * hl; tz = sm.tz * hl; }   // keep the node frame (see buildTrack)
+                    const tl = Math.hypot(tx, ty, tz) || 1;
                     sm.tx = tx / tl; sm.ty = ty / tl; sm.tz = tz / tl;
                 }
             }
         }
+        // Mario-Kart-style: every edge of the road is a barrier unless another road
+        // joins there. `wallKind` picks the look: guardrail on decks/cliffs, a low
+        // themed wall on ground roads.
         function markWalls() {
             for (const e of TRACK.edges) for (const sm of e.samples) {
-                sm.wall = [false, false];
-                if (sm.gap) continue;
+                sm.wall = [false, false]; sm.wallKind = ['wall', 'wall'];
+                if (sm.gap || sm.tunnel) continue;
                 for (const sd of [-1, 1]) {
+                    const i = sd < 0 ? 0 : 1;
+                    if (sm.sharedSide[i]) continue;
                     const ex = sm.x + sm.nx * sd * (sm.w + 9), ez = sm.z + sm.nz * sd * (sm.w + 9);
                     const drop = sm.y + sm.bank * sd * sm.w - terrainY(ex, ez);
-                    sm.wall[sd < 0 ? 0 : 1] = drop > 6;
+                    sm.wall[i] = true;
+                    sm.wallKind[i] = (drop > 6 || sm.elevated) ? 'rail' : 'wall';
                 }
             }
         }
         function markShared() {
             TRACK.edges.forEach((e, ei) => {
                 e.samples.forEach((sm) => {
-                    sm.shared = false;
+                    sm.shared = false; sm.sharedSide = [false, false];
                     const cx = Math.floor(sm.x / TRACK.cell), cz = Math.floor(sm.z / TRACK.cell);
-                    for (let ix = -2; ix <= 2 && !sm.shared; ix++) for (let iz = -2; iz <= 2 && !sm.shared; iz++) {
+                    for (let ix = -5; ix <= 5; ix++) for (let iz = -5; iz <= 5; iz++) {
                         const arr = TRACK.hash.get((cx + ix + 200) * 4096 + (cz + iz + 200));
                         if (!arr) continue;
                         for (let q = 0; q < arr.length; q++) {
@@ -1262,10 +1324,15 @@
                             if (ej === ei) continue;
                             const o = TRACK.edges[ej].samples[sj];
                             const dx = sm.x - o.x, dz = sm.z - o.z;
-                            if (dx * dx + dz * dz > 22 * 22 || Math.abs(sm.y - o.y) > 7) continue;
+                            // same surface only: a road running 4–7u above another is a ledge, and a ledge
+                            // keeps its barrier (7u here made the ember rim's rail flicker on and off)
                             const dot = sm.tx * o.tx + sm.tz * o.tz;
-                            const lat = dx * o.nx + dz * o.nz;
-                            if (dot < 0.94 || Math.abs(lat) > 2.5 || TRACK.edges[ej].w > e.w + 0.5) { sm.shared = true; break; }   // a narrower lane merged into a wider road keeps no rails of its own
+                            const lat = dx * o.nx + dz * o.nz, along = dx * o.tx + dz * o.tz;
+                            // compared against the other road's SURFACE here (its banked edge), not its centreline
+                            if (Math.abs(sm.y - (o.y + o.bank * clamp(lat, -o.w, o.w))) > 3.5) continue;
+                            if (Math.abs(along) > 4 || Math.abs(lat) > sm.w + o.w + 2.5) continue;   // roads actually overlap here
+                            const myLat = (o.x - sm.x) * sm.nx + (o.z - sm.z) * sm.nz;   // where the other road sits, in my frame
+                            if (dot < 0.94 || Math.abs(lat) > 2.5 || TRACK.edges[ej].w > e.w + 0.5) { sm.shared = true; sm.sharedSide[myLat < 0 ? 0 : 1] = true; if (Math.abs(myLat) < 3 || TRACK.edges[ej].w > e.w + 0.5) sm.sharedSide[0] = sm.sharedSide[1] = true; }   // a narrower lane merged into a wider road keeps no rails of its own
                         }
                     }
                 });
@@ -1307,11 +1374,14 @@
         }
         // highest road surface at (x,z) not above y+stepUp and not too far below
         const _sn = new THREE.Vector3();
-        function roadSurface(x, y, z, stepUp) {
+        function roadSurface(x, y, z, stepUp, ownEi) {
             stepUp = stepUp === undefined ? 2.6 : stepUp;
             let best = null;
             const cx = Math.floor(x / TRACK.cell), cz = Math.floor(z / TRACK.cell);
-            for (let ix = -1; ix <= 1; ix++) for (let iz = -1; iz <= 1; iz++) {
+            // ±2 cells: a point at the edge of a 22u-wide road is up to ~24u from its sample,
+            // and a ±1 search skipped the nearest sample there (wall-side karts stood on the
+            // next-but-one sample's plane, then snapped back — the wall-hugging jolt)
+            for (let ix = -2; ix <= 2; ix++) for (let iz = -2; iz <= 2; iz++) {
                 const arr = TRACK.hash.get((cx + ix + 200) * 4096 + (cz + iz + 200));
                 if (!arr) continue;
                 for (let q = 0; q < arr.length; q++) {
@@ -1324,13 +1394,41 @@
                     const lat = dx * sm.nx + dz * sm.nz;
                     if (Math.abs(lat) > sm.w + 2.2) continue;
                     const sy = sm.y + sm.ty * along + sm.bank * lat;
-                    if (sy > y + stepUp) continue;
+                    if (sy > y + stepUp + (ei === ownEi ? 3.0 : 0)) continue;
                     if (y - sy > (sm.tunnel ? 4 : 14)) continue;
-                    if (!best || sy > best.y) best = { y: sy, edge: e, ei, si, lat, bank: sm.bank, sm };
+                    const aal = Math.abs(along);
+                    // a different LEVEL (stacked decks are never closer than ~8u) is decided by height;
+                    // on the same level the nearest sample wins (a plane extrapolated 4u along a banked
+                    // edge sits >1.5u off, so a tighter threshold picked far samples at the walls)
+                    if (!best || sy > best.y + 4.0 || (sy > best.y - 4.0 && aal < best.aal)) best = { y: sy, edge: e, ei, si, lat, bank: sm.bank, sm, aal };
                 }
             }
             if (best) {
-                const sm = best.sm;
+                // the winning edge was ranked by its highest sample plane (that separates stacked
+                // decks); *within* the edge, stand on the nearest sample and blend towards the
+                // neighbour the point lies towards — the surface is a smooth ribbon, not the max of
+                // extrapolated planes (that ridged every banked and wall-side stretch)
+                const e = best.edge;
+                let sm = best.sm, si = best.si, along = (x - sm.x) * sm.tx + (z - sm.z) * sm.tz;
+                for (let d = -3; d <= 3; d++) {
+                    const o = e.samples[best.si + d];
+                    if (!o || o.gap || d === 0) continue;
+                    const al = (x - o.x) * o.tx + (z - o.z) * o.tz;
+                    if (Math.abs(al) < Math.abs(along)) { along = al; sm = o; si = best.si + d; }
+                }
+                let lat = (x - sm.x) * sm.nx + (z - sm.z) * sm.nz, bank = sm.bank;
+                let sy = sm.y + sm.ty * along + bank * lat;
+                const dir = along < 0 ? -1 : 1, sm2 = e.samples[si + dir];
+                if (sm2 && !sm2.gap && !!sm2.kicker === !!sm.kicker) {
+                    const al2 = (x - sm2.x) * sm2.tx + (z - sm2.z) * sm2.tz, a1 = Math.abs(along), a2 = Math.abs(al2);
+                    if (Math.sign(al2) === -dir || a2 < 0.01) {
+                        const t = a1 / (a1 + a2 + 1e-6);
+                        const lat2 = (x - sm2.x) * sm2.nx + (z - sm2.z) * sm2.nz;
+                        sy = sy * (1 - t) + (sm2.y + sm2.ty * al2 + sm2.bank * lat2) * t;
+                        bank = bank * (1 - t) + sm2.bank * t;
+                    }
+                }
+                best.y = sy; best.sm = sm; best.si = si; best.lat = lat; best.bank = bank; best.aal = Math.abs(along);
                 _sn.set(sm.nx, best.bank, sm.nz).normalize();
                 const tx = sm.tx, ty = sm.ty, tz = sm.tz, nx2 = _sn.x, ny2 = _sn.y, nz2 = _sn.z;
                 let ux = ty * nz2 - tz * ny2, uy = tz * nx2 - tx * nz2, uz = tx * ny2 - ty * nx2;
@@ -1340,8 +1438,8 @@
             }
             return best;
         }
-        function groundInfo(x, y, z) {
-            const road = roadSurface(x, y, z);
+        function groundInfo(x, y, z, ownEi) {
+            const road = roadSurface(x, y, z, undefined, ownEi);
             if (road && (road.sm.elevated || road.sm.tunnel)) return { y: road.y, road, terrain: false };
             const ty2 = terrainY(x, z);
             if (road && road.y >= ty2 - 0.5) return { y: road.y, road, terrain: false };
@@ -1752,20 +1850,58 @@
             const curbPos = [], curbCol = [], curbIdx = [];
             const cA = new THREE.Color(T.curbA), cB = new THREE.Color(T.curbB), cSk = new THREE.Color(0x3a3d48), tmp = new THREE.Color();
             const white = new THREE.Color(0xffffff), tunnelTint = new THREE.Color(0x8890a8), kickTint = new THREE.Color(0xffd070);
+            // where a branch lane overlaps its trunk (fork/merge throats) the trunk owns the surface:
+            // the branch is drawn only for the strip that sticks out beyond the trunk's edge, so the
+            // asphalt runs unbroken and the dirt lane grows out of it (no two surfaces fighting)
+            const mainSetR = new Set(TRACK.def.mainRoute);
+            const ownerOf = (e, sm) => {
+                if (!sm.shared) return null;
+                let best = null;
+                const cx = Math.floor(sm.x / TRACK.cell), cz = Math.floor(sm.z / TRACK.cell);
+                for (let ix = -5; ix <= 5; ix++) for (let iz = -5; iz <= 5; iz++) {
+                    const arr = TRACK.hash.get((cx + ix + 200) * 4096 + (cz + iz + 200));
+                    if (!arr) continue;
+                    for (let q = 0; q < arr.length; q++) {
+                        const ej = (arr[q] / 100000) | 0, o = TRACK.edges[ej].samples[arr[q] % 100000];
+                        const oe = TRACK.edges[ej];
+                        if (oe === e || o.gap) continue;
+                        const yields = oe.w > e.w + 0.5 || (Math.abs(oe.w - e.w) <= 0.5 && mainSetR.has(oe.id) && !mainSetR.has(e.id));
+                        if (!yields) continue;
+                        const dx = sm.x - o.x, dz = sm.z - o.z;
+                        const lat = dx * o.nx + dz * o.nz, along = dx * o.tx + dz * o.tz;
+                        if (Math.abs(along) > 4 || Math.abs(lat) > sm.w + o.w + 2.5) continue;
+                        if (Math.abs(sm.y - (o.y + o.bank * clamp(lat, -o.w, o.w))) > 3.5) continue;
+                        const myLat = (o.x - sm.x) * sm.nx + (o.z - sm.z) * sm.nz;
+                        const overlap = Math.min(sm.w, myLat + o.w) - Math.max(-sm.w, myLat - o.w);
+                        if (overlap > 0.5 && (!best || overlap > best.overlap)) best = { myLat, w: o.w, overlap };
+                    }
+                }
+                return best;
+            };
+            const clipOf = (e, sm) => {
+                const own = ownerOf(e, sm);
+                if (!own) return { lo: -sm.w, hi: sm.w, covered: false, cutLo: false, cutHi: false };
+                const a = own.myLat - own.w, b = own.myLat + own.w;
+                const minus = [-sm.w, clamp(a, -sm.w, sm.w)], plus = [clamp(b, -sm.w, sm.w), sm.w];
+                const lm = minus[1] - minus[0], lp = plus[1] - plus[0];
+                if (lm < 0.6 && lp < 0.6) return { lo: 0, hi: 0, covered: true, cutLo: true, cutHi: true };
+                return lm >= lp ? { lo: minus[0], hi: minus[1], covered: false, cutLo: false, cutHi: true } : { lo: plus[0], hi: plus[1], covered: false, cutLo: true, cutHi: false };
+            };
             for (const e of TRACK.edges) {
                 const isDirt = e.dirt;
                 const P = isDirt ? dirtPos : asphaltPos, U = isDirt ? dirtUv : asphaltUv, C = isDirt ? dirtCol : asphaltCol, I = isDirt ? dirtIdx : asphaltIdx;
                 const n = e.samples.length;
                 const lift = 0.15 + (TRACK.edges.indexOf(e) % 6) * 0.02;
                 const rowBase = [];
+                const clips = e.samples.map((sm) => clipOf(e, sm));
                 for (let i = 0; i < n; i++) {
-                    const sm = e.samples[i];
+                    const sm = e.samples[i], cl = clips[i];
                     rowBase.push(P.length / 3);
-                    const bands = [-sm.w, -sm.w * 0.5, 0, sm.w * 0.5, sm.w];
+                    const bands = [0, 0.25, 0.5, 0.75, 1].map((f) => cl.lo + (cl.hi - cl.lo) * f);
                     for (let b = 0; b < bands.length; b++) {
                         roadPoint(sm, bands[b], vA);
                         P.push(vA.x, vA.y + lift, vA.z);
-                        U.push(b / (bands.length - 1), sm.s / (e.w * 2.6));
+                        U.push((bands[b] + sm.w) / (2 * sm.w), sm.s / (e.w * 2.6));
                         let tint = white;
                         if (sm.tunnel) tint = tunnelTint;
                         if (sm.kicker) tint = kickTint;
@@ -1776,24 +1912,29 @@
                     // curbs + skirts
                     const cb = P === asphaltPos ? curbPos : curbPos;
                     const cbase = curbPos.length / 3;
-                    const cbands = [[-sm.w - 2.0, -1.0, cSk], [-sm.w - 0.2, 0.22, null], [-sm.w, 0.22, null], [sm.w, 0.22, null], [sm.w + 0.2, 0.22, null], [sm.w + 2.0, -1.0, cSk]];
+                    const cbands = [[cl.lo - 2.0, -1.0, cSk], [cl.lo - 0.2, 0.22, null], [cl.lo, 0.22, null], [cl.hi, 0.22, null], [cl.hi + 0.2, 0.22, null], [cl.hi + 2.0, -1.0, cSk]];
                     for (let b = 0; b < cbands.length; b++) {
                         roadPoint(sm, cbands[b][0], vA);
                         curbPos.push(vA.x, vA.y + cbands[b][1], vA.z);
                         const cc = cbands[b][2] || (((i >> 2) & 1) ? cA : cB);
                         curbCol.push(cc.r, cc.g, cc.b);
                     }
-                    if (i > 0 && !sm.gap && !e.samples[i - 1].gap && !sm.shared && !e.samples[i - 1].shared) {
+                    if (i > 0 && !sm.gap && !e.samples[i - 1].gap && !cl.covered && !clips[i - 1].covered) {
+                        // curbs per side: none where this side meets another road (or was clipped to it)
+                        const pv = e.samples[i - 1], pc = clips[i - 1];
+                        const openLo = !cl.cutLo && !pc.cutLo && !(sm.sharedSide && sm.sharedSide[0]) && !(pv.sharedSide && pv.sharedSide[0]);
+                        const openHi = !cl.cutHi && !pc.cutHi && !(sm.sharedSide && sm.sharedSide[1]) && !(pv.sharedSide && pv.sharedSide[1]);
                         const pb = cbase - 6;
                         for (let b = 0; b < 5; b++) {
-                            if (b === 2) continue;   // the road surface itself covers -w..w
+                            if (b === 2) continue;   // the road surface itself covers lo..hi
+                            if ((b < 2 && !openLo) || (b > 2 && !openHi)) continue;
                             const a = pb + b, c = cbase + b;
                             curbIdx.push(a, c, a + 1, a + 1, c, c + 1);
                         }
                     }
                 }
                 for (let i = 0; i < n - 1; i++) {
-                    if (e.samples[i].gap || e.samples[i + 1].gap) continue;
+                    if (e.samples[i].gap || e.samples[i + 1].gap || clips[i].covered || clips[i + 1].covered) continue;
                     for (let b = 0; b < 4; b++) {
                         const a = rowBase[i] + b, c = rowBase[i + 1] + b;
                         I.push(a, c, a + 1, a + 1, c, c + 1);
@@ -1820,16 +1961,43 @@
                 const wedge = (trunk, branch, atStart) => {
                     const base = gp.length / 3;
                     let rows = 0;
-                    for (let s = 0; s <= 112; s += 4) {
-                        const ts = atStart ? s : trunk.len - s, bs = atStart ? s : branch.len - s;
-                        if (ts < 0 || ts > trunk.len || bs < 0 || bs > branch.len) break;
-                        const tsm = sampleAtS(trunk, ts), bsm = sampleAtS(branch, bs);
-                        const side = Math.sign((bsm.x - tsm.x) * tsm.nx + (bsm.z - tsm.z) * tsm.nz) || 1;
+                    // walk the trunk away from the node; for each trunk sample take the branch sample that
+                    // lies BESIDE it (smallest along-offset in the trunk's frame — equal arc-length pairing
+                    // twisted the strip across the trunk once the lane curved away)
+                    const bn = branch.samples.length, bLo = atStart ? 0 : Math.max(0, bn - 80), bHi = atStart ? Math.min(bn, 80) : bn;
+                    let side = 0;
+                    for (let s = 0; s <= 150; s += 4) {
+                        const ts = atStart ? s : trunk.len - s;
+                        if (ts < 0 || ts > trunk.len) break;
+                        const tsm = sampleAtS(trunk, ts);
+                        let bsm = null, bAl = 5;
+                        for (let i = bLo; i < bHi; i++) {
+                            const o = branch.samples[i];
+                            const al = Math.abs((o.x - tsm.x) * tsm.tx + (o.z - tsm.z) * tsm.tz);
+                            if (al < bAl) { bAl = al; bsm = o; }
+                        }
+                        if (!bsm) break;
+                        const cLat = (bsm.x - tsm.x) * tsm.nx + (bsm.z - tsm.z) * tsm.nz;
+                        if (!side && Math.abs(cLat) > 3) side = Math.sign(cLat);
+                        if (!side) continue;
+                        roadPoint(bsm, -side * bsm.w, vA);
+                        const innerLat = (vA.x - tsm.x) * tsm.nx + (vA.z - tsm.z) * tsm.nz;
+                        if (side * innerLat > tsm.w + 40) break;   // the lanes have parted: the wedge is over
+                        const bx = vA.x, by = vA.y, bz = vA.z;
                         roadPoint(tsm, side * tsm.w, vA); gp.push(vA.x, vA.y + 0.19, vA.z); gu.push(0.22, ts / 40); gc.push(1, 1, 1);
-                        roadPoint(bsm, -side * bsm.w, vA); gp.push(vA.x, vA.y + 0.19, vA.z); gu.push(0.36, bs / 40); gc.push(1, 1, 1);
+                        // the branch's inner edge, unless it is still inside the trunk (then the wedge has no width here)
+                        if (side * innerLat < tsm.w) gp.push(vA.x, vA.y + 0.19, vA.z); else gp.push(bx, by + 0.19, bz);
+                        gu.push(0.36, ts / 40); gc.push(1, 1, 1);
                         rows++;
                     }
-                    for (let r = 0; r < rows - 1; r++) { const a = base + r * 2, c = a + 2; gi2.push(a, c, a + 1, a + 1, c, c + 1); }
+                    // wind every triangle so it faces UP (three.js: normal = (C-B)x(A-B)); the strip can
+                    // twist where the lanes cross, and a down-facing piece rendered as an unlit black wedge
+                    const tri = (A, B, C) => {
+                        const ax = gp[A * 3], az = gp[A * 3 + 2], bx = gp[B * 3], bz = gp[B * 3 + 2], cx = gp[C * 3], cz = gp[C * 3 + 2];
+                        const ny = (cz - bz) * (ax - bx) - (cx - bx) * (az - bz);
+                        if (ny >= 0) gi2.push(A, B, C); else gi2.push(A, C, B);
+                    };
+                    for (let r = 0; r < rows - 1; r++) { const a = base + r * 2, c = a + 2; tri(a, c, a + 1); tri(a + 1, c, c + 1); }
                 };
                 for (const e of TRACK.edges) {
                     const outs = TRACK.edges.filter((o) => o.from === e.from);
@@ -1867,8 +2035,8 @@
                 });
                 if (run) runs.push(run);
                 const bands = [
-                    { lat: -2.0, dy: -0.9, c: side }, { lat: -1.6, dy: -2.4, c: side },
-                    { lat: 1.6, dy: -2.4, c: bot }, { lat: 2.0, dy: -0.9, c: side },
+                    { lat: -2.0, dy: -1.3, c: side }, { lat: -1.6, dy: -2.6, c: side },
+                    { lat: 1.6, dy: -2.6, c: bot }, { lat: 2.0, dy: -1.3, c: side },
                 ];
                 for (const [a, b] of runs) {
                     const base = pos.length / 3;
@@ -1891,7 +2059,7 @@
                         const sm = e.samples[i];
                         const isGapEdge = (i === b && b + 1 < e.samples.length && e.samples[b + 1].gap) || (i === a && a > 0 && e.samples[a - 1].gap);
                         if (!isGapEdge) continue;
-                        capBake.add(GEO.box, mat4(sm.x, sm.y - 2.6, sm.z, Math.atan2(sm.tx, sm.tz), sm.w * 2 + 4, 2.2, 1.2, 0, Math.atan(sm.bank)), 0x6a7080);
+                        capBake.add(GEO.box, mat4(sm.x, sm.y - 3.6, sm.z, Math.atan2(sm.tx, sm.tz), sm.w * 2 + 4, 2.0, 1.2, 0, Math.atan(sm.bank)), 0x6a7080);
                     }
                 }
                 // pillars under decks (planted on true ground, never on a road below)
@@ -1920,7 +2088,7 @@
                     if (h < 6) continue;
                     const pc = THEME.night ? 0x4a4f62 : 0x9aa0ad;
                     pillarBake.add(GEO.cyl8, mat4(sm.x, gy + h / 2, sm.z, 0, 3.2, h, 3.2), pc);
-                    pillarBake.add(GEO.box, mat4(sm.x, sm.y - 2.8, sm.z, Math.atan2(sm.tx, sm.tz), sm.w * 2 - 2, 1.0, 3.6, 0, Math.atan(sm.bank)), THEME.night ? 0x3a3f52 : 0x848a98);
+                    pillarBake.add(GEO.cyl8, mat4(sm.x, sm.y - 2.6, sm.z, 0, 4.4, 1.2, 4.4), THEME.night ? 0x3a3f52 : 0x848a98);   // capital
                 }
                 // guardrails: continuous ribbons along bridges, cliff drops and the
                 // outside of banked bends — they follow every curve and slope, and
@@ -1942,21 +2110,56 @@
                         }
                         for (let i = 0; i < run.length; i += 4) {
                             const sm = run[i], lat = sd * (sm.w + 0.9);
-                            bake.add(GEO.box, mat4(sm.x + sm.nx * lat, sm.y + sm.bank * lat + 0.72, sm.z + sm.nz * lat, Math.atan2(sm.tx, sm.tz), 0.36, 1.45, 0.36), 0xdde3ee);
+                            bake.add(GEO.box, mat4(sm.x + sm.nx * lat * 1.0 + sm.nx * sd * 0.25, sm.y + sm.bank * lat + 0.72, sm.z + sm.nz * lat + sm.nz * sd * 0.25, Math.atan2(sm.tx, sm.tz), 0.3, 1.45, 0.3), 0xdde3ee);
                         }
                         run = null;
                     };
                     for (let i = 0; i < e.samples.length; i++) {
                         const sm = e.samples[i];
-                        let on = !sm.gap && !sm.tunnel && !sm.shared;
-                        if (on) {
-                            const ex = sm.x + sm.nx * sd * (e.w + 9), ez = sm.z + sm.nz * sd * (e.w + 9);
-                            const drop = sm.y + sm.bank * sd * e.w - terrainY(ex, ez);
-                            on = drop > 6 || sm.elevated || sm.bank * sd < -0.16;
-                        }
+                        const i2 = sd < 0 ? 0 : 1;
+                        const on = sm.wall && sm.wall[i2] && sm.wallKind[i2] === 'rail';
                         if (on) { if (!run) run = []; run.push(sm); } else flush();
                     }
                     flush();
+                }
+            }
+            // low walls along ground roads (stone / concrete / rock / white stone per map)
+            {
+                const wc = new THREE.Color(THEME.wallColor || 0x9a948a), wt = new THREE.Color(THEME.wallTop || 0xb8b2a6);
+                const wpos = [], wcol = [], widx = [];
+                for (const e of TRACK.edges) for (const sd of [-1, 1]) {
+                    let run = null;
+                    const flush = () => {
+                        if (!run || run.length < 3) { run = null; return; }
+                        const base = wpos.length / 3;
+                        for (const sm of run) {
+                            const lat0 = sd * (sm.w + 0.9), lat1 = sd * (sm.w + 2.1);
+                            const p0x = sm.x + sm.nx * lat0, p0z = sm.z + sm.nz * lat0, p1x = sm.x + sm.nx * lat1, p1z = sm.z + sm.nz * lat1;
+                            const py = sm.y + sm.bank * lat0;
+                            wpos.push(p0x, py - 0.2, p0z, p0x, py + 1.15, p0z, p1x, py + 1.15, p1z, p1x, py - 0.2, p1z);
+                            const sh = 0.92 + 0.08 * Math.sin(sm.s * 0.7);
+                            wcol.push(wc.r * sh, wc.g * sh, wc.b * sh, wt.r, wt.g, wt.b, wt.r, wt.g, wt.b, wc.r * sh, wc.g * sh, wc.b * sh);
+                        }
+                        for (let i = 0; i < run.length - 1; i++) {
+                            const a = base + i * 4, b = a + 4;
+                            widx.push(a, b, a + 1, a + 1, b, b + 1, a + 1, b + 1, a + 2, a + 2, b + 1, b + 2, a + 2, b + 2, a + 3, a + 3, b + 2, b + 3);
+                        }
+                        run = null;
+                    };
+                    for (const sm of e.samples) {
+                        const i2 = sd < 0 ? 0 : 1;
+                        const on = sm.wall && sm.wall[i2] && sm.wallKind[i2] === 'wall';
+                        if (on) { if (!run) run = []; run.push(sm); } else flush();
+                    }
+                    flush();
+                }
+                if (widx.length) {
+                    const g = new THREE.BufferGeometry();
+                    g.setAttribute('position', new THREE.Float32BufferAttribute(wpos, 3));
+                    g.setAttribute('color', new THREE.Float32BufferAttribute(wcol, 3));
+                    g.setIndex(widx); g.computeVertexNormals();
+                    const m = new THREE.Mesh(g, new THREE.MeshLambertMaterial({ vertexColors: true, side: THREE.DoubleSide }));
+                    m.name = 'walls'; m.castShadow = gfxHigh; m.receiveShadow = true; world.add(m);
                 }
             }
             if (ridx.length) {
@@ -1996,7 +2199,7 @@
                 while (i < n) {
                     if (!e.samples[i].tunnel) { i++; continue; }
                     let j = i; while (j < n && e.samples[j].tunnel) j++;
-                    const R = e.w + 3.4, H = 10;
+                    const R = e.w + 3.4, H = 12;
                     const base = pos.length / 3;
                     let rings = 0;
                     for (let k = i; k < j; k++) {
@@ -2020,9 +2223,16 @@
                         const sm = e.samples[k];
                         if (sm.shared) continue;
                         const yaw = Math.atan2(sm.tx, sm.tz);
-                        bake.add(GEO.box, mat4(sm.x + sm.nx * (e.w + 4.6), sm.y + 5.2, sm.z + sm.nz * (e.w + 4.6), yaw, 3.6, 11, 3.2), ringC);
-                        bake.add(GEO.box, mat4(sm.x - sm.nx * (e.w + 4.6), sm.y + 5.2, sm.z - sm.nz * (e.w + 4.6), yaw, 3.6, 11, 3.2), ringC);
-                        bake.add(GEO.box, mat4(sm.x, sm.y + 11.6, sm.z, yaw, e.w * 2 + 12.8, 3.0, 3.2), ringC);
+                        // masonry arch: voussoir blocks following the tube's ellipse, a keystone, and buttresses
+                        const nb = 13;
+                        for (let q = 0; q <= nb; q++) {
+                            const a = Math.PI * q / nb;
+                            const lx = Math.cos(a) * (R + 2.6), ly = Math.sin(a) * (H + 2.2);
+                            const wx = sm.x + sm.nx * lx, wz = sm.z + sm.nz * lx;
+                            const by = sm.bank * clamp(lx, -e.w, e.w);
+                            bake.add(GEO.box, mat4(wx, sm.y + by + ly - 0.6, wz, yaw, 3.0, 2.6, 3.6, 0, a), q === Math.floor(nb / 2) ? 0xe8e0d0 : ringC);
+                        }
+                        for (const sd of [-1, 1]) bake.add(GEO.box, mat4(sm.x + sm.nx * sd * (R + 4.6), sm.y + sm.bank * sd * e.w + 3.2, sm.z + sm.nz * sd * (R + 4.6), yaw, 4.2, 8, 4.6), ringC);
                     }
                     i = j;
                 }
@@ -2219,7 +2429,7 @@
             while (placed < count && tries < count * 6) {
                 tries++;
                 const x = rand(-ext, ext), z = rand(-ext, ext);
-                if (!offRoad(x, z, 22)) continue;
+                if (!offRoad(x, z, 30)) continue;
                 const h = terrainY(x, z);
                 if (h < minH || h > maxH) continue;
                 if (inKillZone(x, h, z, true)) continue;
@@ -2268,7 +2478,9 @@
                     const board = new THREE.Mesh(new THREE.PlaneGeometry(10, 3.75), new THREE.MeshBasicMaterial({ map: signTex((side < -2 ? '◀ ' : '') + label + (side > 2 ? ' ▶' : ''), col), side: THREE.DoubleSide }));
                     board.position.set(bx, sm.y + sm.bank * lat + 8.2, bz); board.rotation.y = yaw + Math.PI; world.add(board);
                     // painted chevrons on the branch
-                    for (const f of [46, 76]) {
+                    const own = ne.samples.find((q) => q.s > 30 && !q.shared);
+                    const f0 = own ? own.s + 8 : 46;
+                    for (const f of [f0, f0 + 30]) {
                         const ps = sampleAtS(ne, f);
                         const m = new THREE.Mesh(new THREE.PlaneGeometry(ne.w * 1.2, 6), new THREE.MeshBasicMaterial({ map: TEX.chevron, color: col, transparent: true, opacity: 0.85, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2 }));
                         m.position.set(ps.x, ps.y + 0.24, ps.z); m.rotation.set(-Math.PI / 2, 0, 0); m.rotateZ(-Math.atan2(ps.tx, ps.tz)); m.renderOrder = 4; m.userData.road = true; world.add(m);
@@ -2337,7 +2549,7 @@
             while (placed < count && tries < count * 14) {
                 tries++;
                 const x = rand(-ext, ext), z = rand(-ext, ext);
-                if (!offRoad(x, z, 26)) continue;
+                if (!offRoad(x, z, 36)) continue;
                 const h = terrainY(x, z);
                 if (h < minH || h > maxH) continue;
                 if (inKillZone(x, h, z, true)) continue;
@@ -2365,7 +2577,7 @@
                 tries++;
                 const x = rand(region[0], region[1]), z = rand(region[2], region[3]);
                 const h = terrainY(x, z);
-                if (h < minH || !offRoad(x, z, 27)) continue;
+                if (h < minH || !offRoad(x, z, 34)) continue;
                 if (inKillZone(x, h, z, true)) continue;
                 bake.add(placed % 2 ? GEO.dodec : GEO.box, mat4(x, h + rand(0.4, 1.2), z, rand(0, 3), rand(1.6, 4.6), rand(1.4, 3.6), rand(1.6, 4.6)), cols[placed % cols.length]);
                 placed++;
@@ -2798,32 +3010,32 @@
                 for (let i = 0; i < 4; i++) { const a = i * Math.PI / 2 + 0.4; box(lx + Math.cos(a) * (r - 0.3), h * 0.55, lz + Math.sin(a) * (r - 0.3), 0.9, 2.4, 0.9, 0x2a2430, a); }   // window slits
                 if (flag) { const [wx, wz] = L(lx, lz); flagBake.add(GEO.cyl8, mat4(wx, gy + h + 1.3 + r * 1.4 + 2.5, wz, 0, 0.25, 5, 0.25), 0xe8ecf4); flagBake.add(GEO.box, mat4(wx + 1.5, gy + h + 1.3 + r * 1.4 + 4.4, wz, yaw, 3, 1.8, 0.12), flag); }
             };
-            const W = 38, D = 36;   // half extents of the curtain wall (local x across the road, z along it)
+            const W = 52, D = 36;   // half extents of the curtain wall (local x across the road, z along it)
             // curtain walls (the road passes through gates in the front/back walls)
             box(-W, 6, 0, 3.4, 12, D * 2, stone); box(W, 6, 0, 3.4, 12, D * 2, stone);
-            for (const sz2 of [-1, 1]) { box(-W / 2 - 12, 6, sz2 * D, W - 20, 12, 3.4, stone); box(W / 2 + 12, 6, sz2 * D, W - 20, 12, 3.4, stone); }
+            for (const sz2 of [-1, 1]) { box(-(W + 30) / 2, 6, sz2 * D, W - 30, 12, 3.4, stone); box((W + 30) / 2, 6, sz2 * D, W - 30, 12, 3.4, stone); }
             merlons(-W, -D, -W, D, 12.8); merlons(W, -D, W, D, 12.8);
-            for (const sz2 of [-1, 1]) { merlons(-W, sz2 * D, -22, sz2 * D, 12.8); merlons(22, sz2 * D, W, sz2 * D, 12.8); }
+            for (const sz2 of [-1, 1]) { merlons(-W, sz2 * D, -32, sz2 * D, 12.8); merlons(32, sz2 * D, W, sz2 * D, 12.8); }
             // corner towers
             tower(-W, -D, 7, 22, slate, T.banner[0]); tower(W, -D, 7, 22, slate, T.banner[1]); tower(-W, D, 7, 22, slate, T.banner[2]); tower(W, D, 7, 22, slate, T.banner[0]);
             // gatehouses: twin towers flanking each portal, a crenellated bridge above
             for (const sz2 of [-1, 1]) {
                 const rel = roadY(sz2 * D) - gy;   // the gallery climbs through the castle: gates ride the road height
-                tower(-21, sz2 * D, 5.5, 20 + Math.max(0, rel), 0x8a2a2a, null); tower(21, sz2 * D, 5.5, 20 + Math.max(0, rel), 0x8a2a2a, null);
-                box(0, rel + 15, sz2 * D, 34, 4, 5, stone); merlons(-14, sz2 * D, 14, sz2 * D, rel + 17.8);
-                box(0, rel + 12.5, sz2 * (D + 3), 26, 3.5, 1.2, wood);   // raised drawbridge slab
+                tower(-30, sz2 * D, 5.5, 22 + Math.max(0, rel), 0x8a2a2a, null); tower(30, sz2 * D, 5.5, 22 + Math.max(0, rel), 0x8a2a2a, null);
+                box(0, rel + 17, sz2 * D, 52, 4, 5, stone); merlons(-22, sz2 * D, 22, sz2 * D, rel + 19.8);
+                box(0, rel + 14.5, sz2 * (D + 3), 42, 3.5, 1.2, wood);   // raised drawbridge slab
             }
             // the keep, offset beside the road so the tunnel runs along its flank
-            box(-28, 10, 0, 22, 20, 30, stone); merlons(-39, -15, -39, 15, 20.8); merlons(-17, -15, -17, 15, 20.8); merlons(-39, -15, -17, -15, 20.8); merlons(-39, 15, -17, 15, 20.8);
-            for (const [tx2, tz2] of [[-39, -15], [-17.5, -15], [-39, 15], [-17.5, 15]]) tower(tx2, tz2, 3.4, 26, slate, null);
-            tower(-28, 0, 7.5, 38, T.banner[2], T.banner[1]);   // great tower with the royal banner
+            box(-38, 10, 0, 22, 20, 30, stone); merlons(-49, -15, -49, 15, 20.8); merlons(-27, -15, -27, 15, 20.8); merlons(-49, -15, -27, -15, 20.8); merlons(-49, 15, -27, 15, 20.8);
+            for (const [tx2, tz2] of [[-49, -15], [-27.5, -15], [-49, 15], [-27.5, 15]]) tower(tx2, tz2, 3.4, 26, slate, null);
+            tower(-38, 0, 7.5, 38, T.banner[2], T.banner[1]);   // great tower with the royal banner
             // great hall on the other flank, pitched roof
-            box(28, 7, -6, 22, 14, 30, stone);
-            { const [wx, wz] = L(28, -6); parts.push({ geo: uvBox(22, 14, 30), color: 0x8a2a2a, matrix: mat4(wx, gy + 14 + 5, wz, yaw, 16, 8, 32, 0, Math.PI / 4) }); }
-            for (let i = -2; i <= 2; i++) box(17.2, 8, -6 + i * 6, 0.6, 3.4, 1.4, 0x2a2430);   // hall windows
+            box(38, 7, -6, 22, 14, 30, stone);
+            { const [wx, wz] = L(38, -6); parts.push({ geo: uvBox(22, 14, 30), color: 0x8a2a2a, matrix: mat4(wx, gy + 14 + 5, wz, yaw, 16, 8, 32, 0, Math.PI / 4) }); }
+            for (let i = -2; i <= 2; i++) box(27.2, 8, -6 + i * 6, 0.6, 3.4, 1.4, 0x2a2430);   // hall windows
             // chapel + well in the courtyard
-            box(24, 5, 26, 12, 10, 12, stone); cone(24, 13, 26, 8, 8, slate); tower(30, 32, 2.4, 16, 0x8a2a2a, T.banner[0]);
-            cyl(16, 1, 30, 2.6, 2, dark);   // courtyard well
+            box(36, 5, 26, 12, 10, 12, stone); cone(36, 13, 26, 8, 8, slate); tower(44, 32, 2.4, 16, 0x8a2a2a, T.banner[0]);
+            cyl(28, 1, 30, 2.6, 2, dark);   // courtyard well
             const mesh = new THREE.Mesh(bakeMerge(parts), new THREE.MeshLambertMaterial({ vertexColors: true, map: TEX.stone }));
             mesh.name = 'castle'; mesh.castShadow = gfxHigh; mesh.receiveShadow = true;
             world.add(mesh);
@@ -3276,7 +3488,7 @@
             return order.slice(0, NUM_KARTS);
         }
         function disposeKarts() {
-            for (const k of karts) { scene.remove(k.mesh.group); disposeObject(k.mesh.group); if (k.mesh.numTex) k.mesh.numTex.dispose(); if (k.mesh.decalTex) k.mesh.decalTex.dispose(); }
+            for (const k of karts) { scene.remove(k.mesh.group); disposeObject(k.mesh.group); if (k.mesh.numTex) k.mesh.numTex.dispose(); if (k.mesh.decalTex) k.mesh.decalTex.dispose(); if (k.rescuer) { scene.remove(k.rescuer.group); disposeObject(k.rescuer.group); } }
             karts = [];
         }
         function buildKarts() {
@@ -3370,7 +3582,7 @@
                 k.item = null; k.itemCharges = 0; k.itemRolling = 0; k.itemUseTimer = 0; k._rollPick = null;
                 k.draftT = 0; k.drafting = false; k.stuckTimer = 0; k.wrongT = 0; k.offroadT = 0; k.offroad = false; k.respawnT = 0; k.respawns = 0;
                 k.ctrl.steer = 0; k.ctrl.brake = false; k.ctrl.drift = false; k.ctrl.fire = false;
-                k.finished = false; k.finishTime = 0; k.bestLap = Infinity; k.lastLapStart = 0;
+                k.finished = false; k.finishTime = 0; k.bestLap = Infinity; k.lastLapStart = 0; k.rescue = null;
                 k._rubber = 1; k._progReset = false;
                 k._bonkAnim = 0; k._pickAnim = 0; k._throwAnim = 0;
                 k.mesh.shield.visible = false; k.mesh.shieldRim.visible = false; k.mesh.aura.visible = false;
@@ -3470,6 +3682,7 @@
         const _fwd3 = new THREE.Vector3(), _gn = new THREE.Vector3();
         function updateKart(k, dt) {
             if (net.mode === 'host' && k.kind === 'remote') { updateRemoteKart(k, dt); return; }
+            if (k.rescue) { updateRescue(k, dt); return; }
             if (k.respawnT > 0) { k.respawnT -= dt; k.speed = 0; return; }
             if (k.finished) k.speed = lerp(k.speed, 0, 1 - Math.exp(-2 * dt));
 
@@ -3561,7 +3774,7 @@
             if (k.hopT > 0) k.hopT -= dt;
             if (k.grounded) {
                 k.pos.y += k.fwd.y * k.speed * dt;
-                const g2 = groundInfo(k.pos.x, k.pos.y + 1.2, k.pos.z);
+                const g2 = groundInfo(k.pos.x, k.pos.y + 1.2, k.pos.z, k.edge);
                 const gy = g2.y;
                 const drop = k.pos.y - gy;
                 const groundVr = (gy - k.prevGroundY) / dt;
@@ -3694,7 +3907,44 @@
             if (k.isPlayer) { flash(kind === 'lava' ? 'LAVA!' : kind === 'water' ? 'SPLASH!' : 'INTO THE CLOUDS!', kind === 'lava' ? '#ff6a22' : '#8fd6ff'); sfxSplash(kind); vibrate(70); }
             respawnKart(k);
         }
+        // a little rescue flyer swoops in, hooks the kart, carries it back over the
+        // road and sets it down — the kart is out of the sim while it hangs
         function respawnKart(k) {
+            const lg = k.lastGood;
+            let rs = lg.s - 10;
+            const le = TRACK.edges[lg.edge];
+            for (const sm of le.samples) { if (sm.kicker && sm.s <= lg.s + 1 && lg.s - sm.s < 90) { rs = Math.min(rs, sm.s - 75); break; } }
+            const sm = sampleAtS(le, Math.max(4, rs));
+            const lat = ((k.idx % 3) - 1) * 4;
+            k.rescue = { t: 0, dur: 2.6, fx: k.pos.x, fy: k.pos.y, fz: k.pos.z, tx: sm.x + sm.nx * lat, ty: sm.y + sm.bank * lat + 0.1, tz: sm.z + sm.nz * lat, th: Math.atan2(sm.tx, sm.tz), edge: lg.edge, s: sm.s, lat };
+            k.speed = 0; k.vy = 0; k.grounded = true; k.boostTimer = 0; k.gooT = 0; k.spinTimer = 0; k.cometT = 0; k.drifting = false; k.driftCharge = 0; k.offroadT = 0;
+            k.invuln = 4; k.respawnT = k.rescue.dur + 0.4;
+            k.respawns++;
+            (k.respawnLog = k.respawnLog || []).push(TRACK.edges[k.edge].id + '/' + Math.round(k.s) + (k._lastGround ? ' from ' + k._lastGround : ''));
+            if (k.ai) { const eid = TRACK.edges[k.edge].id; k.ai.fails = k.ai.fails || {}; k.ai.fails[eid] = (k.ai.fails[eid] || 0) + 1; }
+            k._progReset = true;
+            if (k.isPlayer) { flash('RESCUE!', '#ffd54a'); vibrate(40); sfxRescue(); }
+        }
+        function updateRescue(k, dt) {
+            const r = k.rescue;
+            r.t += dt;
+            const u = clamp(r.t / r.dur, 0, 1);
+            // lift, glide, lower: ease the horizontal, arc the vertical
+            const e = u * u * (3 - 2 * u);
+            const lift = Math.sin(Math.PI * u) * 12 + (1 - u) * 0;
+            k.pos.x = lerp(r.fx, r.tx, e); k.pos.z = lerp(r.fz, r.tz, e);
+            k.pos.y = lerp(r.fy, r.ty, e) + lift + 3 * (1 - Math.pow(1 - u, 3));
+            k.y = k.pos.y;
+            k.theta += wrapAngle(r.th - k.theta) * clamp(dt * 3, 0, 1);
+            k.up.lerp(new THREE.Vector3(0, 1, 0), clamp(dt * 4, 0, 1)).normalize();
+            k.edge = r.edge; k.s = r.s; k.lat = r.lat;
+            if (u >= 1) {
+                placeOnEdge(k, r.edge, r.s, r.lat);
+                k.speed = 30; k.invuln = 1.2; k.rescue = null; k.respawnT = 0;
+                k._progReset = true; updateProgress(k);
+            }
+        }
+        function respawnKartLegacy(k) {
             k.respawns++;
             (k.respawnLog = k.respawnLog || []).push(TRACK.edges[k.edge].id + '/' + Math.round(k.s) + (k.grounded ? '' : ' air') + (k._lastGround ? ' from ' + k._lastGround : ''));
             if (k.ai) { const eid = TRACK.edges[k.edge].id; k.ai.fails = k.ai.fails || {}; k.ai.fails[eid] = (k.ai.fails[eid] || 0) + 1; }
@@ -3782,16 +4032,26 @@
         }
         // decks have walls: nobody falls off the helix or a sky bridge sideways
         function clampToTrack(k, dt) {
-            const gi = roadSurface(k.pos.x, k.pos.y + 1.0, k.pos.z, 3);
-            if (!gi || gi.ei !== k.edge) return;
+            // any road the kart is standing on: walls only exist where no other road joins,
+            // so the surface under the kart is the one whose barrier applies (throats included)
+            const gi = roadSurface(k.pos.x, k.pos.y + 1.0, k.pos.z, 3, k.edge);
+            if (!gi) return;
             const sm = gi.sm, lim = sm.w - 1.0;
             const off = gi.lat;
-            const walled = sm.elevated || (sm.wall && sm.wall[off < 0 ? 0 : 1]);
+            const walled = sm.wall && sm.wall[off < 0 ? 0 : 1];
             if (walled && Math.abs(off) > lim) {
                 const d = Math.abs(off) - lim, sg = Math.sign(off);
                 k.pos.x -= sm.nx * d * sg; k.pos.z -= sm.nz * d * sg;
-                k.speed *= 0.97;
-                if (k.speed > 60 && k.isPlayer) vibrate(20);
+                // slide along the wall: bleed the heading component that points into it
+                const roadYaw = Math.atan2(sm.tx, sm.tz);
+                const into = wrapAngle(k.theta - roadYaw) * sg;   // >0 = steering into the wall
+                if (into > 0) { k.theta = wrapAngle(k.theta - into * sg * clamp(dt * 9, 0, 0.6)); k.speed *= 1 - clamp(into, 0, 1) * 0.035; }
+                else k.speed *= 0.995;
+                // re-ground with the same interpolation the ground pass uses (a different sample's
+                // plane here fought the ground pass tick by tick: the wall-hugging jolt)
+                const rg = roadSurface(k.pos.x, k.pos.y + 1.2, k.pos.z, 2.6, k.edge);
+                k.pos.y = rg ? rg.y : sm.y + sm.bank * sg * lim + sm.ty * ((k.pos.x - sm.x) * sm.tx + (k.pos.z - sm.z) * sm.tz);
+                if (k.isPlayer && d > 0.4) { if (k.speed > 60) vibrate(20); if (simTickNo % 6 === 0) emitSpark(new THREE.Vector3(k.pos.x + sm.nx * sg * 1.5, k.pos.y + 0.6, k.pos.z + sm.nz * sg * 1.5), 0xffd070, 3, 3, { life: 0.3 }); }
             }
         }
         function updateRankings() {
@@ -3807,7 +4067,7 @@
             for (let i = 0; i < karts.length; i++) for (let j = i + 1; j < karts.length; j++) {
                 const a = karts[i], b = karts[j];
                 if (Math.abs(a.y - b.y) > 4) continue;
-                if (a.respawnT > 0 || b.respawnT > 0) continue;
+                if (a.respawnT > 0 || b.respawnT > 0 || a.rescue || b.rescue) continue;
                 const dx = b.pos.x - a.pos.x, dz = b.pos.z - a.pos.z;
                 const d = Math.hypot(dx, dz);
                 const min = KART_RADIUS * 2;
@@ -4297,7 +4557,7 @@
         const SNAP_EVERY = 5, INPUT_MS = 33, INTERP_MS = 130;
         // ⚠ APP_VER: increment ONCE PER PR. Folded into NET_VER so two
         // different builds refuse to share a room.
-        const APP_VER = 2;
+        const APP_VER = 3;
         function hash32(str) {
             let h = 2166136261 >>> 0;
             for (let i = 0; i < str.length; i++) { h ^= str.charCodeAt(i); h = Math.imul(h, 16777619); }
@@ -4782,8 +5042,48 @@
         // ===================================================================
         const _kq = new THREE.Quaternion(), _km = new THREE.Matrix4();
         const _vx = new THREE.Vector3(), _vy = new THREE.Vector3(), _vz = new THREE.Vector3();
+        function makeRescuer() {
+            const g = new THREE.Group();
+            const cloud = makeBaker();
+            for (const [x, y, z, r] of [[0, 0, 0, 1.6], [1.4, -0.2, 0.3, 1.2], [-1.4, -0.1, -0.2, 1.25], [0.5, 0.3, -1.1, 1.0], [-0.4, 0.2, 1.0, 1.0]]) cloud.add(GEO.sph, mat4(x, y, z, 0, r), 0xffffff);
+            g.add(cloud.mesh(new THREE.MeshLambertMaterial({ vertexColors: true })));
+            // a little owl pilot
+            const owl = makeBaker();
+            owl.add(GEO.sph, mat4(0, 1.5, 0, 0, 0.9, 1.0, 0.85), 0xc98a5a);
+            owl.add(GEO.sph, mat4(0, 2.35, 0, 0, 0.75), 0xd9a06a);
+            owl.add(GEO.sph, mat4(0.3, 2.45, 0.55, 0, 0.26), 0xffffff); owl.add(GEO.sph, mat4(-0.3, 2.45, 0.55, 0, 0.26), 0xffffff);
+            owl.add(GEO.sph, mat4(0.3, 2.45, 0.74, 0, 0.12), 0x1a1410); owl.add(GEO.sph, mat4(-0.3, 2.45, 0.74, 0, 0.12), 0x1a1410);
+            owl.add(GEO.cone, mat4(0, 2.2, 0.72, 0, 0.16, 0.36, 0.16, Math.PI / 2, 0), 0xffb040);
+            owl.add(GEO.box, mat4(0.3, 2.95, 0.1, 0, 0.14, 0.4, 0.14, 0, 0.5), 0xc98a5a); owl.add(GEO.box, mat4(-0.3, 2.95, 0.1, 0, 0.14, 0.4, 0.14, 0, -0.5), 0xc98a5a);
+            owl.add(GEO.box, mat4(0, 1.2, 0.5, 0, 0.5, 0.7, 0.3), 0xf2e6d0);
+            const owlM = owl.mesh(new THREE.MeshLambertMaterial({ vertexColors: true })); g.add(owlM);
+            const wings = [];
+            for (const sd of [1, -1]) { const w = new THREE.Mesh(new THREE.BoxGeometry(1.5, 0.15, 0.7), new THREE.MeshLambertMaterial({ color: 0xb8784a })); w.position.set(sd * 1.3, 1.6, 0); w.geometry.translate(sd * 0.6, 0, 0); g.add(w); wings.push(w); }
+            const rod = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.06, 4.2, 6), new THREE.MeshLambertMaterial({ color: 0x8a5a34 }));
+            rod.position.set(0.9, 1.8, 1.6); rod.rotation.x = 0.9; g.add(rod);
+            const line = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.05, 1, 5), new THREE.MeshBasicMaterial({ color: 0xeeeeee }));
+            g.add(line);
+            g.visible = false; scene.add(g);
+            return { group: g, wings, line };
+        }
+        function syncRescuer(k, dt) {
+            if (!k.rescue) { if (k.rescuer) k.rescuer.group.visible = false; return; }
+            if (!k.rescuer) k.rescuer = makeRescuer();
+            const R = k.rescuer, r = k.rescue;
+            const u = clamp(r.t / r.dur, 0, 1);
+            const hang = 7.5;
+            R.group.visible = true;
+            R.group.position.set(k.pos.x + Math.sin(animT * 2) * 0.3, k.y + hang + Math.sin(animT * 3) * 0.3, k.pos.z);
+            R.group.rotation.y = k.theta + Math.PI * 0.15;
+            for (const [i, w] of R.wings.entries()) w.rotation.z = (i ? -1 : 1) * Math.sin(animT * 14) * 0.6;
+            R.line.position.set(0, -hang / 2 + 2.2, 1.2); R.line.scale.y = hang - 1.2;
+            const fade = u < 0.15 ? u / 0.15 : u > 0.9 ? (1 - u) / 0.1 : 1;
+            R.group.scale.setScalar(0.6 + 0.4 * fade);
+            void dt;
+        }
         function syncKartMesh(k, instant, dt) {
             const m = k.mesh, g = m.group;
+            syncRescuer(k, dt);
             const hop = k.hopT > 0 ? Math.sin((1 - k.hopT / 0.3) * Math.PI) * 0.6 : 0;
             g.position.set(k.pos.x, k.y + hop, k.pos.z);
             // orientation: heading around the surface up + drift pose + air pitch
@@ -4794,7 +5094,7 @@
             _km.makeBasis(_vx, _vy, _vz);
             _kq.setFromRotationMatrix(_km);
             if (instant) g.quaternion.copy(_kq); else g.quaternion.slerp(_kq, frameLerp(0.5, dt));
-            const airPitch = k.grounded ? 0 : clamp(-k.vy * 0.016, -0.35, 0.45);
+            const airPitch = k.rescue ? Math.sin(k.animT * 2.6) * 0.12 : (k.grounded ? 0 : clamp(-k.vy * 0.016, -0.35, 0.45));
             k.visualPitch = instant ? airPitch : lerp(k.visualPitch, airPitch, frameLerp(0.15, dt));
             const steerLean = k.drifting ? k.driftDir * 0.13 * k.driftRamp : (k.isPlayer ? steerInput : k.ctrl.steer) * 0.05;
             k.visualRoll = instant ? 0 : lerp(k.visualRoll, steerLean, frameLerp(0.15, dt));
@@ -4924,8 +5224,10 @@
         function clampCameraFloor() {
             const cx = camera.position.x, cy = camera.position.y, cz = camera.position.z;
             const rs = roadSurface(cx, cy, cz, 1.0);
-            const floorY = rs ? rs.y : terrainY(cx, cz);
-            if (cy < floorY + 2.4) camera.position.y = floorY + 2.4;
+            // the terrain mesh is coarser than the analytic field on steep slopes: take the neighbourhood max
+            let floorY = rs ? rs.y : Math.max(terrainY(cx, cz), terrainY(cx + 3, cz), terrainY(cx - 3, cz), terrainY(cx, cz + 3), terrainY(cx, cz - 3));
+            if (!rs) for (const w of TRACK.def.water) if ((cx - w.cx) ** 2 + (cz - w.cz) ** 2 < w.r * w.r) floorY = Math.max(floorY, w.y);
+            if (cy < floorY + 2.6) camera.position.y = floorY + 2.6;
         }
         const camPos = new THREE.Vector3(), camLook = new THREE.Vector3();
         let camYS = 0, camShake = 0, camFovKick = 0, camRoll = 0;
@@ -4964,10 +5266,11 @@
             // pitch-aware: ride above the kart's surface, look-at dips with the road ahead
             const ahead = routeAhead(k, 26);
             const aheadY = ahead ? ahead.sm.y : k.y;
-            const ty = k.y + 6.2 + clamp((k.y - aheadY) * 0.22, -1.5, 3.2) + k._airPull * 0.6;
-            camYS = instant ? ty : lerp(camYS, ty, frameLerp(0.2, dt));
+            const ty = k.y + 6.2 + clamp((k.y - aheadY) * 0.22, -1.5, 3.2) + k._airPull * 0.6 + (k.rescue ? 4 : 0);
+            const follow = k.rescue ? 0.45 : 0.2;
+            camYS = instant ? ty : lerp(camYS, ty, frameLerp(follow, dt));
             camPos.set(k.pos.x - fx * dist, camYS, k.pos.z - fz * dist);
-            if (instant || !camInit) { camera.position.copy(camPos); camInit = true; } else camera.position.lerp(camPos, frameLerp(0.2, dt));
+            if (instant || !camInit) { camera.position.copy(camPos); camInit = true; } else camera.position.lerp(camPos, frameLerp(follow, dt));
             // never clip into the ground/road below the camera
             const inTunnel = sampleAtS(TRACK.edges[k.edge], k.s).tunnel;
             if (inTunnel) {
@@ -5199,6 +5502,7 @@
         }
         function sfxBonk() { if (!audioCtx || muted) return; aKick(masterGain); aNoise(0.22, 0.16, false); aTone(180, 'square', 0.18, 0.1, masterGain); }
         function sfxLand() { if (!audioCtx || muted) return; aKick(masterGain); aNoise(0.1, 0.08, false); }
+        function sfxRescue() { if (!audioCtx || muted) return; [880, 1175, 1320].forEach((f, i) => setTimeout(() => aTone(f, 'sine', 0.25, 0.09, masterGain), i * 110)); }
         function sfxSplash(kind) {
             if (!audioCtx || muted) return;
             if (kind === 'lava') { aKick(masterGain); aNoise(0.5, 0.2, false); aTone(120, 'sawtooth', 0.5, 0.1, masterGain); }
@@ -5952,6 +6256,7 @@
                 while (parent && parent !== world) { if (parent.userData.road) tagged = true; parent = parent.parent; }
                 if (tagged) return;
                 const pa = o.geometry.attributes.position;
+                const edgeMesh = o.name === 'walls' || o.name === 'rails';
                 let hits = 0, sample = {};
                 const pts = [];
                 for (let i = 0; i < pa.count; i++) pts.push(new THREE.Vector3(pa.getX(i), pa.getY(i), pa.getZ(i)).applyMatrix4(o.matrixWorld));
@@ -5973,8 +6278,11 @@
                     if (!n) continue;
                     const sm = n.sm, e = n.edge;
                     if (sm.gap || sm.lip || sm.kicker) continue;
+                    let nearRamp = false;
+                    for (let d = -3; d <= 3 && !nearRamp; d++) { const o = e.samples[sm.si + d]; if (o && (o.gap || o.lip || o.kicker)) nearRamp = true; }
+                    if (nearRamp) continue;
                     const lat = (v.x - sm.x) * sm.nx + (v.z - sm.z) * sm.nz;
-                    if (Math.abs(lat) > sm.w - 0.2) continue;
+                    if (Math.abs(lat) > sm.w - (edgeMesh ? 2.6 : 0.2)) continue;
                     const along = (v.x - sm.x) * sm.tx + (v.z - sm.z) * sm.tz;
                     const ry = sm.y + sm.bank * lat + sm.ty * along;
                     if (v.y > ry - 0.5 && v.y < ry + 4.5) { hits++; const key = e.id + ':' + Math.round(sm.s / 40); if (!sample[key]) sample[key] = { x: +v.x.toFixed(0), y: +v.y.toFixed(1), ry: +ry.toFixed(1), z: +v.z.toFixed(0), edge: e.id, s: +sm.s.toFixed(0), lat: +lat.toFixed(1) }; }
@@ -6016,7 +6324,7 @@
                     loadTrack, buildKarts, resetRace, startGame, aiController, simTick, groundInfo, terrainY, roadSurface, nearestSample, remAt, sampleAtS,
                     routeAhead, get camera() { return camera; }, get scene() { return scene; }, get renderer() { return renderer; },
                     setLaps(n) { TOTAL_LAPS = n; }, get itemBoxes() { return itemBoxes; }, get projectiles() { return projectiles; }, useItem, fireRocket, fireSpike, fireZap, fireComet, dropGoo,
-                    netSnapshot, netRestore, updateCamera, get boostPads() { return boostPads; }, quitToMenu, finishRace, get world() { return world; }, WORLD, roadAudit,
+                    netSnapshot, netRestore, updateCamera, get boostPads() { return boostPads; }, quitToMenu, finishRace, get world() { return world; }, WORLD, roadAudit, rescueKart: respawnKart,
                 };
             }
             animate();
