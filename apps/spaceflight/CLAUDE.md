@@ -76,16 +76,18 @@ background, fog, lights). A theme names every colour the world builder uses
 Red Canyon's points are generated: a lemniscate figure-8 whose two crossings
 sit 40u apart in height, so the halves cross on a flyover. Glacier Loop is
 hand-drawn (ice kit: crystals, ridges, moon, aurora ribbon). Nova Spire is
-generated: a full vertical LOOP (R 150, drifting 110u sideways so the exit
-clears the entry), a chicane, a 360° BARREL ROLL, a climbing bowl, a plunge,
-an east sweep and a hairpin home. It sets `rmf: true`: track frames are
-rotation-minimising (parallel transport of the side vector, closure twist
+hand-drawn and upright: a banked climbing sweep onto a flyover across the
+middle, a descending western bowl, a run along the north, then a hook that
+dives under the flyover and swings home (the loop + barrel-roll version was
+playtested and rejected as glitchy). The engine still supports `rmf: true`
+(unused today): track frames become rotation-minimising (parallel transport of the side vector, closure twist
 spread along the lap) instead of horizontal, so the road may go vertical
 and upside down; a 5th control-point value is a designed roll (radians)
 added on top of the curvature bank — the barrel roll is 0 → 2π along a
 straight, and every later point stays at 2π. Curvature is measured about
 each frame's own up. On rmf tracks the chase camera does not blend toward
-world up. `gates` (lap fractions) place lit half-torus arches; the space kit
+world up. Recharge overlays are built one strip per contiguous run — a single
+strip across separate pits stitched floating slabs between them. `gates` (lap fractions) place lit half-torus arches; the space kit
 has no ground, so pylons are skipped when taller than 600u. The verify tool
 races and screenshots every track (`t<i>-race*.png`, `t<i>-overview.png`).
 

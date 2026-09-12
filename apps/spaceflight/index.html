@@ -216,7 +216,7 @@
         // =====================================================================
         //  SPACE FLIGHT — anti-grav racing prototype (single track, CPUs)
         // =====================================================================
-        const SF_VER = 28;
+        const SF_VER = 29;
         const clamp = (v, a, b) => v < a ? a : v > b ? b : v;
         const lerp = (a, b, t) => a + (b - a) * t;
         const smoothstep = (a, b, x) => { const t = clamp((x - a) / (b - a), 0, 1); return t * t * (3 - 2 * t); };
@@ -302,27 +302,19 @@
         };
         // Nova Spire: two corkscrew turns up a station tower, a long plunge off the top, a banked bowl,
         // a chicane and a sweeping return. Generated so the helix is exact.
-        const SPIRE_PTS = (() => {
-            const P = [];
-            const add = (x, y, z, w, roll) => P.push([x, y, z, w, roll || 0]);
-            // start straight, heading +x
-            add(-1000, 0, -620, 36); add(-600, 0, -620, 36); add(-250, 0, -620, 34);
-            // full vertical LOOP (R 150), drifting 110u sideways so the exit clears the entry
-            const R = 150, cx = 0, cy = R, z0 = -620;
-            for (let k = 0; k <= 8; k++) { const ph = k / 8 * Math.PI * 2; add(Math.round(cx + R * Math.sin(ph)), +(cy - R * Math.cos(ph)).toFixed(1), Math.round(z0 + 110 * k / 8), 30); }
-            // chicane
-            add(280, 0, -510, 34); add(480, 6, -420, 30); add(420, 14, -300, 30); add(560, 24, -200, 30);
-            // BARREL ROLL: a straight where the road rolls 360° around its own axis
-            add(300, 40, -90, 32, 0); add(100, 40, -90, 32, Math.PI); add(-100, 40, -90, 32, Math.PI * 2); add(-500, 40, -90, 32, Math.PI * 2);
-            // climbing bowl round the west
-            add(-800, 60, -20, 32, Math.PI * 2); add(-950, 95, 240, 32, Math.PI * 2); add(-780, 125, 480, 32, Math.PI * 2);
-            // plunge east across the north
-            add(-400, 135, 600, 34, Math.PI * 2); add(100, 85, 620, 34, Math.PI * 2); add(500, 40, 580, 34, Math.PI * 2);
-            // east sweep south, then the southern return and a hairpin into the start
-            add(800, 18, 340, 34, Math.PI * 2); add(900, 6, 20, 36, Math.PI * 2); add(820, 0, -300, 36, Math.PI * 2);
-            add(600, 0, -800, 36, Math.PI * 2); add(200, 0, -880, 36, Math.PI * 2); add(-400, 0, -880, 36, Math.PI * 2); add(-900, 0, -820, 36, Math.PI * 2); add(-1150, 0, -740, 36, Math.PI * 2);
-            return P;
-        })();
+        // Nova Spire: fast and flowing — a banked climbing sweep onto a flyover across the middle, a
+        // descending western bowl, a run along the north, then a hook that dives UNDER the flyover and
+        // swings west and home. Upright road throughout (no loops or rolls: they read as glitches).
+        const SPIRE_PTS = [
+            [-700, 0, -700, 36], [-300, 0, -700, 36], [100, 0, -700, 34],
+            [500, 10, -620, 32], [760, 30, -380, 32], [760, 55, -60, 32],
+            [500, 70, 120, 30], [100, 75, 140, 30], [-300, 70, 110, 30],
+            [-650, 55, 180, 32], [-820, 35, 420, 32], [-620, 20, 640, 32],
+            [-200, 15, 720, 34], [300, 20, 700, 34],
+            [640, 12, 520, 32], [520, 6, 300, 30], [300, 8, 140, 30],
+            [80, 10, -40, 30], [-250, 20, -150, 30], [-600, 30, -250, 32],
+            [-820, 18, -480, 32], [-960, 6, -640, 36], [-880, 0, -720, 36],
+        ];
         const TRACKS = [null, {
             name: 'Red Canyon', theme: THEME_CANYON, w: 33, pts: CANYON_PTS,
             dash: [], recharge: [{ f0: 0.30, f1: 0.37, lat: 14, hw: 12 }], lineF: 0.0,
@@ -339,10 +331,10 @@
             ],
             dash: [], recharge: [{ f0: 0.44, f1: 0.51, lat: -14, hw: 12 }], lineF: 0.0,
         }, {
-            name: 'Nova Spire', theme: THEME_SPACE, w: 33, pts: SPIRE_PTS, rmf: true,
-            // four short pit strips (~120u each, ~35 energy at full speed) on alternating sides instead of one long one
-            dash: [], recharge: [{ f0: 0.19, f1: 0.203, lat: -14, hw: 11 }, { f0: 0.50, f1: 0.513, lat: 14, hw: 11 }, { f0: 0.66, f1: 0.673, lat: -14, hw: 11 }, { f0: 0.84, f1: 0.853, lat: 14, hw: 11 }], lineF: 0.0,
-            gates: [0.05, 0.36, 0.40, 0.44, 0.62, 0.90],
+            name: 'Nova Spire', theme: THEME_SPACE, w: 33, pts: SPIRE_PTS,
+            // four short pit strips (~120u each, ~35 energy at full speed) on alternating sides
+            dash: [], recharge: [{ f0: 0.12, f1: 0.135, lat: -14, hw: 11 }, { f0: 0.42, f1: 0.435, lat: 14, hw: 11 }, { f0: 0.62, f1: 0.635, lat: -14, hw: 11 }, { f0: 0.88, f1: 0.895, lat: 14, hw: 11 }], lineF: 0.0,
+            gates: [0.04, 0.30, 0.55, 0.80],
         }];
         const TRACK_DEF = {
             name: 'Mute Orbit', theme: THEME_CITY,
@@ -647,14 +639,16 @@
             const sg = new THREE.BufferGeometry(); sg.setAttribute('position', new THREE.Float32BufferAttribute(sp, 3)); sg.setIndex(si); sg.computeVertexNormals();
             const skirt = new THREE.Mesh(sg, new THREE.MeshLambertMaterial({ color: THEME.skirt, side: THREE.DoubleSide })); world.add(skirt);
             // recharge strip overlay (emissive pink, pulsing)
-            const rp = [], ri = []; let rows = 0;
+            // one strip per contiguous run of recharge samples (a single strip across separate pits
+            // stitched their ends together with slabs floating through space)
+            const rp = [], ri = []; let rows = 0, prevI = -2;
             for (let i = 0; i <= m; i++) {
                 const q = S[i % m]; if (!q.recharge) continue;
                 const r = q.recharge;
                 for (const lat of [r.lat - r.hw, r.lat + r.hw]) rp.push(q.x + q.nx * lat + q.ux * 0.12, q.y + q.ny * lat + q.uy * 0.12, q.z + q.nz * lat + q.uz * 0.12);
-                rows++;
+                if (i === prevI + 1) { const a = (rows - 1) * 2, c = a + 2; ri.push(a, c, a + 1, a + 1, c, c + 1); }
+                prevI = i; rows++;
             }
-            for (let r = 0; r < rows - 1; r++) { const a = r * 2, c = a + 2; ri.push(a, c, a + 1, a + 1, c, c + 1); }
             if (ri.length) {
                 const rg = new THREE.BufferGeometry(); rg.setAttribute('position', new THREE.Float32BufferAttribute(rp, 3)); rg.setIndex(ri); rg.computeVertexNormals();
                 const rm = new THREE.MeshBasicMaterial({ color: 0xff5fd2, transparent: true, opacity: 0.55, side: THREE.DoubleSide });
@@ -875,7 +869,7 @@
         function buildSpace() {
             const rnd = mulberry(777);
             // the spire: stacked drums with lit bands, standing inside the corkscrew
-            const cx = 0, cz = -220;
+            const cx = -100, cz = -330;
             let y = -700;
             for (let i = 0; i < 14; i++) {
                 const r = 150 + (i % 3) * 22 + (i > 10 ? -40 * (i - 10) : 0), h = 90 + (i % 2) * 30;
