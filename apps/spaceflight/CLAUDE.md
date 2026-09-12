@@ -74,7 +74,12 @@ background, fog, lights). A theme names every colour the world builder uses
 (road, rails, walls, skirt, pylons, lane lines), `groundY`, and `scenery`
 (`'city'` → towers + planet sky, `'canyon'` → banded mesas + sunset dome).
 Red Canyon's points are generated: a lemniscate figure-8 whose two crossings
-sit 40u apart in height, so the halves cross on a flyover. The verify tool
+sit 40u apart in height, so the halves cross on a flyover. Glacier Loop is
+hand-drawn (ice kit: crystals, ridges, moon, aurora ribbon). Nova Spire is
+generated: two clockwise corkscrew turns (R 300, +154u) around a station
+tower, then a plunge, a bowl, a chicane and a return; `gates` (lap
+fractions) place lit half-torus arches over the road; the space kit has no
+ground, so pylons are skipped when they would be taller than 600u. The verify tool
 races and screenshots every track (`t<i>-race*.png`, `t<i>-overview.png`).
 
 ## Controls
