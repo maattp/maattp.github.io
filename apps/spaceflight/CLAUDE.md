@@ -66,6 +66,17 @@ phone: judge colour on a device, judge geometry in the shots.
   view), FOV grows with speed and boost. Rival engine sprites hide within 10u
   of the camera (a machine passing through the camera filled the screen).
 
+## Tracks and themes
+
+`TRACKS[i]` = `{ name, theme, w, pts, dash, recharge, lineF }`; `loadTrack(i)`
+rebuilds the ribbon and the world and re-applies the theme (`applyTheme`:
+background, fog, lights). A theme names every colour the world builder uses
+(road, rails, walls, skirt, pylons, lane lines), `groundY`, and `scenery`
+(`'city'` → towers + planet sky, `'canyon'` → banded mesas + sunset dome).
+Red Canyon's points are generated: a lemniscate figure-8 whose two crossings
+sit 40u apart in height, so the halves cross on a flyover. The verify tool
+races and screenshots every track (`t<i>-race*.png`, `t<i>-overview.png`).
+
 ## Controls
 
 Left half: slide to steer (relative to the touch start). Right side: BOOST

@@ -45,10 +45,11 @@
             background: linear-gradient(180deg, #a6f3ff, #35b6ff); box-shadow: 0 0 24px rgba(53, 182, 255, 0.55), inset 0 -3px 0 rgba(0, 0, 0, 0.2); cursor: pointer; }
         .btn:active { transform: scale(0.97); }
         .btn.ghost { background: transparent; color: #9fe8ff; border: 2px solid rgba(159, 232, 255, 0.5); box-shadow: none; font-size: 15px; padding: 10px 28px; }
-        .picker { display: flex; gap: 10px; margin-top: 18px; flex-wrap: wrap; justify-content: center; max-width: 720px; }
+        .picker { display: flex; gap: 10px; margin-top: 18px; flex-wrap: wrap; justify-content: center; max-width: 960px; }
         .pick { width: 92px; height: 96px; border-radius: 12px; border: 2px solid rgba(255,255,255,0.14); background: rgba(255,255,255,0.05);
             display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; font-size: 11px; font-weight: 800; letter-spacing: 1px; cursor: pointer; }
         .pick .sw { width: 34px; height: 12px; border-radius: 6px; }
+        .pick.track { width: 150px; height: 52px; font-size: 12px; letter-spacing: 2px; }
         .pick .st { font-size: 7px; letter-spacing: 0; opacity: 0.75; line-height: 1.35; font-weight: 700; }
         .pick.sel { border-color: #fff; background: rgba(255,255,255,0.14); box-shadow: 0 0 14px rgba(255,255,255,0.25); }
         .hint { margin-top: 16px; font-size: 12px; opacity: 0.6; letter-spacing: 1px; text-align: center; line-height: 1.6; }
@@ -125,6 +126,7 @@
 
     <div id="startScreen" class="screen on">
         <div class="logo">Space Flight<small>ANTI-GRAV GRAND PRIX</small></div>
+        <div class="picker" id="trackPicker" style="margin-top:14px"></div>
         <div class="picker" id="picker"></div>
         <button class="btn" id="startBtn">RACE</button>
         <div class="hint">SLIDE your thumb on the left to steer · BOOST burns ENERGY · hitting walls and rivals burns it too<br>drive the pink strip to recharge · run dry and you're out</div>
@@ -171,7 +173,7 @@
         // =====================================================================
         //  SPACE FLIGHT — anti-grav racing prototype (single track, CPUs)
         // =====================================================================
-        const SF_VER = 21;
+        const SF_VER = 22;
         const clamp = (v, a, b) => v < a ? a : v > b ? b : v;
         const lerp = (a, b, t) => a + (b - a) * t;
         const smoothstep = (a, b, x) => { const t = clamp((x - a) / (b - a), 0, 1); return t * t * (3 - 2 * t); };
@@ -221,8 +223,36 @@
         //  TRACK — a closed banked ribbon.  Control points (x, y, z), sampled
         //  by centripetal Catmull-Rom every 4u.  Half-width per point.
         // =====================================================================
+        const THEME_CITY = {
+            bg: 0x04030c, fog: 0x0a0620, fogNear: 500, fogFar: 1900, hemiSky: 0x8fb4ff, hemiGround: 0x1a0a30, sun: 0xffe0c0, sunPos: [300, 500, -200],
+            roadBase: 0x9aa2c8, roadEdge: 0x5a8ad8, laneLine: 0x9fe8ff, railL: 0x5ad6ff, railR: 0xff6fd0, wall: 0x2a2f55, skirt: 0x121428, pylon: 0x1c1f3a,
+            groundY: -60, scenery: 'city',
+        };
+        const THEME_CANYON = {
+            bg: 0x2a0f2e, fog: 0x8a3a3c, fogNear: 700, fogFar: 2600, hemiSky: 0xffb787, hemiGround: 0x5a2a1a, sun: 0xffc48a, sunPos: [-600, 220, 900],
+            roadBase: 0xb8a48e, roadEdge: 0x8a6a4a, laneLine: 0xfff0c0, railL: 0xffb347, railR: 0x4ad6ff, wall: 0x4a2a26, skirt: 0x3a1e1a, pylon: 0x4a2c22,
+            groundY: -40, scenery: 'canyon',
+        };
+        // Red Canyon: a figure-8 across a desert — the two halves cross on a 40u flyover
+        const CANYON_PTS = (() => {
+            const pts = [], n = 22, a = 880;
+            for (let i = 0; i < n; i++) {
+                const t = (i / n) * Math.PI * 2;
+                const d = 1 + Math.sin(t) * Math.sin(t);
+                const wig = 1 + 0.10 * Math.sin(3 * t + 0.7);
+                const x = a * Math.cos(t) / d * wig, z = a * Math.sin(t) * Math.cos(t) / d * wig;
+                const y = 20 + 20 * Math.sin(t) + 6 * Math.sin(2 * t + 1);   // 40 at one crossing, 0 at the other
+                const w = 30 + 6 * (0.5 + 0.5 * Math.cos(2 * t));               // wide in the lobes, tighter through the crossings
+                pts.push([Math.round(x), +y.toFixed(1), Math.round(z), Math.round(w)]);
+            }
+            return pts;
+        })();
+        const TRACKS = [null, {
+            name: 'Red Canyon', theme: THEME_CANYON, w: 33, pts: CANYON_PTS,
+            dash: [], recharge: [{ f0: 0.30, f1: 0.37, lat: 14, hw: 12 }], lineF: 0.0,
+        }];
         const TRACK_DEF = {
-            name: 'Mute Orbit',
+            name: 'Mute Orbit', theme: THEME_CITY,
             w: 33,
             pts: [
                 // start straight (heading +x)
@@ -247,8 +277,10 @@
             recharge: [{ f0: 0.58, f1: 0.66, lat: 12, hw: 9 }],   // strip on the return straight, right half
             lineF: 0.0,
         };
+        TRACKS[0] = TRACK_DEF;
         const SAMPLE_STEP = 4;
         const TRACK = { samples: [], len: 0, step: SAMPLE_STEP, def: TRACK_DEF };
+        let THEME = THEME_CITY, currentTrack = 0;
 
         function buildTrack(def) {
             const P = def.pts, n = P.length;
@@ -372,6 +404,21 @@
         //  RENDERER / SCENE
         // =====================================================================
         let renderer, scene, camera, world;
+        const LIGHTS = {};
+        function applyTheme() {
+            scene.background.setHex(THEME.bg); scene.fog.color.setHex(THEME.fog); scene.fog.near = THEME.fogNear; scene.fog.far = THEME.fogFar;
+            LIGHTS.hemi.color.setHex(THEME.hemiSky); LIGHTS.hemi.groundColor.setHex(THEME.hemiGround);
+            LIGHTS.sun.color.setHex(THEME.sun); LIGHTS.sun.position.set(...THEME.sunPos);
+        }
+        function loadTrack(i) {
+            currentTrack = clamp(i, 0, TRACKS.length - 1);
+            THEME = TRACKS[currentTrack].theme;
+            TRACK.def = TRACKS[currentTrack];
+            buildTrack(TRACKS[currentTrack]);
+            applyTheme();
+            buildWorld();
+            mmBounds = null;
+        }
         const TEX = {};
         function initThree() {
             renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
@@ -379,12 +426,13 @@
             renderer.outputEncoding = THREE.sRGBEncoding;
             document.getElementById('game').appendChild(renderer.domElement);
             scene = new THREE.Scene();
-            scene.background = new THREE.Color(0x04030c);
-            scene.fog = new THREE.Fog(0x0a0620, 500, 1900);
+            scene.background = new THREE.Color(THEME.bg);
+            scene.fog = new THREE.Fog(THEME.fog, THEME.fogNear, THEME.fogFar);
             camera = new THREE.PerspectiveCamera(70, 16 / 9, 0.5, 6000);
             world = new THREE.Group(); scene.add(world);
-            const hemi = new THREE.HemisphereLight(0x8fb4ff, 0x1a0a30, 0.55); scene.add(hemi);
-            const sun = new THREE.DirectionalLight(0xffe0c0, 0.7); sun.position.set(300, 500, -200); scene.add(sun);
+            const hemi = new THREE.HemisphereLight(THEME.hemiSky, THEME.hemiGround, 0.55); scene.add(hemi);
+            const sun = new THREE.DirectionalLight(THEME.sun, 0.7); sun.position.set(300, 500, -200); scene.add(sun);
+            LIGHTS.hemi = hemi; LIGHTS.sun = sun;
             window.addEventListener('resize', onResize); onResize();
             makeTextures();
         }
@@ -447,14 +495,13 @@
             buildRoad();
             buildRails();
             buildFeatures();
-            buildCity();
-            buildSky();
+            if (THEME.scenery === 'canyon') { buildCanyon(); buildSunset(); } else { buildCity(); buildSky(); }
         }
         function buildRoad() {
             const S = TRACK.samples, m = S.length;
             const pos = [], uv = [], col = [], idx = [];
             const bands = [-1, -0.5, 0, 0.5, 1];
-            const cBase = new THREE.Color(0x9aa2c8), cEdge = new THREE.Color(0x5a8ad8), cRecharge = new THREE.Color(0xff6fd0);
+            const cBase = new THREE.Color(THEME.roadBase), cEdge = new THREE.Color(THEME.roadEdge), cRecharge = new THREE.Color(0xff6fd0);
             const v = new THREE.Vector3();
             for (let i = 0; i <= m; i++) {
                 const q = S[i % m], sv = i === m ? TRACK.len : q.s;
@@ -485,7 +532,7 @@
             }
             for (let i = 0; i < m; i++) for (let b = 0; b < 3; b++) { const a = i * 4 + b, c = (i + 1) * 4 + b; si.push(a, a + 1, c, a + 1, c + 1, c); }
             const sg = new THREE.BufferGeometry(); sg.setAttribute('position', new THREE.Float32BufferAttribute(sp, 3)); sg.setIndex(si); sg.computeVertexNormals();
-            const skirt = new THREE.Mesh(sg, new THREE.MeshLambertMaterial({ color: 0x121428, side: THREE.DoubleSide })); world.add(skirt);
+            const skirt = new THREE.Mesh(sg, new THREE.MeshLambertMaterial({ color: THEME.skirt, side: THREE.DoubleSide })); world.add(skirt);
             // recharge strip overlay (emissive pink, pulsing)
             const rp = [], ri = []; let rows = 0;
             for (let i = 0; i <= m; i++) {
@@ -510,7 +557,7 @@
             }
             for (let r = 0; r < lrows - 1; r++) { if ((r >> 2) & 1) continue; const a = r * 2, c = a + 2; li.push(a, c, a + 1, a + 1, c, c + 1); }
             const lg = new THREE.BufferGeometry(); lg.setAttribute('position', new THREE.Float32BufferAttribute(lp, 3)); lg.setIndex(li);
-            world.add(new THREE.Mesh(lg, new THREE.MeshBasicMaterial({ color: 0x9fe8ff, side: THREE.DoubleSide })));
+            world.add(new THREE.Mesh(lg, new THREE.MeshBasicMaterial({ color: THEME.laneLine, side: THREE.DoubleSide })));
             // start line: a checkered strip laid in track coordinates
             {
                 const lp2 = [], lc2 = [], li2 = [];
@@ -554,17 +601,18 @@
                 }
                 for (let r = 0; r < m; r++) { const a = r * 2, c = a + 2; gi.push(a, c, a + 1, a + 1, c, c + 1); wi.push(a, c, a + 1, a + 1, c, c + 1); }
                 const gg = new THREE.BufferGeometry(); gg.setAttribute('position', new THREE.Float32BufferAttribute(gp, 3)); gg.setIndex(gi);
-                const rm = new THREE.MeshBasicMaterial({ color: side < 0 ? 0x5ad6ff : 0xff6fd0, side: THREE.DoubleSide });
+                const rm = new THREE.MeshBasicMaterial({ color: side < 0 ? THEME.railL : THEME.railR, side: THREE.DoubleSide });
                 const rail = new THREE.Mesh(gg, rm); rail.name = 'rail'; world.add(rail);
                 const wg = new THREE.BufferGeometry(); wg.setAttribute('position', new THREE.Float32BufferAttribute(wp, 3)); wg.setIndex(wi); wg.computeVertexNormals();
-                world.add(new THREE.Mesh(wg, new THREE.MeshLambertMaterial({ color: 0x2a2f55, side: THREE.DoubleSide })));
+                world.add(new THREE.Mesh(wg, new THREE.MeshLambertMaterial({ color: THEME.wall, side: THREE.DoubleSide })));
             }
             // pylons under the track every 60u where it is high
-            const pg = new THREE.CylinderGeometry(2.2, 3.2, 1, 8), pm = new THREE.MeshLambertMaterial({ color: 0x1c1f3a });
+            const pg = new THREE.CylinderGeometry(2.2, 3.2, 1, 8), pm = new THREE.MeshLambertMaterial({ color: THEME.pylon });
             const base = new THREE.InstancedMesh(pg, pm, Math.ceil(TRACK.len / 60) + 2);
             let n = 0; const mtx = new THREE.Matrix4(), q4 = new THREE.Quaternion(), sc = new THREE.Vector3(), p3 = new THREE.Vector3();
             for (let s = 0; s < TRACK.len; s += 60) {
-                const f = frameAt(s); const h = f.y + 60;   // ground is at -60
+                const f = frameAt(s); const h = f.y - THEME.groundY;
+                if (h < 8) continue;
                 p3.set(f.x, f.y - h / 2 - 5, f.z); sc.set(1, h, 1); mtx.compose(p3, q4, sc); base.setMatrixAt(n++, mtx);
             }
             base.count = n; base.instanceMatrix.needsUpdate = true; world.add(base);
@@ -597,7 +645,7 @@
             towers.count = n; towers.instanceMatrix.needsUpdate = true; world.add(towers);
             // ground plane far below, dark with a grid glow
             const ground = new THREE.Mesh(new THREE.PlaneGeometry(9000, 9000), new THREE.MeshBasicMaterial({ color: 0x07061a }));
-            ground.rotation.x = -Math.PI / 2; ground.position.y = -61; world.add(ground);
+            ground.rotation.x = -Math.PI / 2; ground.position.y = THEME.groundY - 1; world.add(ground);
             // beacons: a few tall neon spires
             for (let i = 0; i < 6; i++) {
                 const x = (rnd() - 0.5) * 3000, z = 300 + (rnd() - 0.5) * 3000; if (nearTrack(x, z, 120)) continue;
@@ -607,6 +655,52 @@
                 const lamp = new THREE.Sprite(new THREE.SpriteMaterial({ map: TEX.glow, color: i % 2 ? 0xff5fd2 : 0x5ad6ff, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false }));
                 lamp.scale.setScalar(40); lamp.position.set(x, -60 + h + 6, z); world.add(lamp); WORLD.cityLights.push(lamp);
             }
+        }
+        function buildCanyon() {
+            const rnd = mulberry(4242), G = THEME.groundY;
+            const floor = new THREE.Mesh(new THREE.PlaneGeometry(9000, 9000), new THREE.MeshLambertMaterial({ color: 0xa8623a }));
+            floor.rotation.x = -Math.PI / 2; floor.position.y = G - 0.5; world.add(floor);
+            // mesas: stacked flat-topped drums in banded sandstone, never on the track
+            const bands = [0xc9764a, 0xb35c3a, 0xd98a58, 0x8f4a30, 0xe0a070];
+            for (let i = 0; i < 90; i++) {
+                const x = (rnd() - 0.5) * 3600, z = (rnd() - 0.5) * 3600;
+                if (nearTrack(x, z, 110)) continue;
+                let r = 30 + rnd() * 110, y = G, layers = 2 + Math.floor(rnd() * 4);
+                for (let L = 0; L < layers; L++) {
+                    const h = 18 + rnd() * 40;
+                    const m = new THREE.Mesh(new THREE.CylinderGeometry(r * (0.82 + rnd() * 0.1), r, h, 7 + Math.floor(rnd() * 4)), new THREE.MeshLambertMaterial({ color: bands[(i + L) % bands.length] }));
+                    m.position.set(x, y + h / 2, z); m.rotation.y = rnd() * 6.28; world.add(m);
+                    y += h; r *= 0.72 + rnd() * 0.12;
+                }
+            }
+            // a few tall needles on the horizon
+            for (let i = 0; i < 12; i++) {
+                const x = (rnd() - 0.5) * 4200, z = (rnd() - 0.5) * 4200; if (nearTrack(x, z, 160)) continue;
+                const h = 200 + rnd() * 320;
+                const m = new THREE.Mesh(new THREE.CylinderGeometry(8 + rnd() * 10, 40 + rnd() * 30, h, 6), new THREE.MeshLambertMaterial({ color: 0x7a3a28 }));
+                m.position.set(x, G + h / 2, z); world.add(m);
+            }
+        }
+        function buildSunset() {
+            // sky dome: an inverted sphere with a vertex-colour gradient (violet zenith → orange horizon)
+            const g = new THREE.SphereGeometry(4400, 24, 12);
+            const pos = g.attributes.position, col = [];
+            const top = new THREE.Color(0x2a0f3e), mid = new THREE.Color(0xc24a55), hor = new THREE.Color(0xffb060), c = new THREE.Color();
+            for (let i = 0; i < pos.count; i++) {
+                const t = pos.getY(i) / 4400;
+                if (t > 0.35) c.copy(top); else if (t > 0.04) c.copy(mid).lerp(top, (t - 0.04) / 0.31); else c.copy(hor).lerp(mid, clamp(t / 0.04, 0, 1));
+                col.push(c.r, c.g, c.b);
+            }
+            g.setAttribute('color', new THREE.Float32BufferAttribute(col, 3));
+            world.add(new THREE.Mesh(g, new THREE.MeshBasicMaterial({ vertexColors: true, side: THREE.BackSide, fog: false })));
+            const sun = new THREE.Sprite(new THREE.SpriteMaterial({ map: TEX.glow, color: 0xffd9a0, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false, fog: false }));
+            sun.scale.set(1400, 1400, 1); sun.position.set(-2600, 320, 3200); world.add(sun);
+            const disc = new THREE.Mesh(new THREE.CircleGeometry(230, 40), new THREE.MeshBasicMaterial({ color: 0xfff1cc, fog: false }));
+            disc.position.copy(sun.position); disc.lookAt(0, 0, 0); world.add(disc);
+            const sp = []; const rnd = mulberry(11);
+            for (let i = 0; i < 250; i++) { const th = rnd() * Math.PI * 2, ph = Math.acos(rnd() * 0.5 + 0.5); const r = 4300; sp.push(r * Math.sin(ph) * Math.cos(th), r * Math.cos(ph), r * Math.sin(ph) * Math.sin(th)); }
+            const sg = new THREE.BufferGeometry(); sg.setAttribute('position', new THREE.Float32BufferAttribute(sp, 3));
+            world.add(new THREE.Points(sg, new THREE.PointsMaterial({ color: 0xffe0d0, size: 7, transparent: true, opacity: 0.6, fog: false })));
         }
         function nearTrack(x, z, d) {
             const S = TRACK.samples;
@@ -890,7 +984,8 @@
                     if (a.hitT <= 0.15) damage(a, dmg * (boostB ? 1.8 : 1) * (boostA ? 0.5 : 1), 'ram');
                     if (b.hitT <= 0.15) damage(b, dmg * (boostA ? 1.8 : 1) * (boostB ? 0.5 : 1), 'ram');
                     // rear-ender shoves the one in front, gets slowed itself
-                    if (ds > 0) { a.speed = Math.min(a.speed, b.speed + 12); b.speed += 6; } else { b.speed = Math.min(b.speed, a.speed + 12); a.speed += 6; }
+                    const capA = MAX_SPEED * a.def.stat.top * 1.05, capB = MAX_SPEED * b.def.stat.top * 1.05;   // a shove never launches anyone past their own top speed
+                    if (ds > 0) { a.speed = Math.min(a.speed, b.speed + 12); if (b.speed < capB) b.speed = Math.min(capB, b.speed + 6); } else { b.speed = Math.min(b.speed, a.speed + 12); if (a.speed < capA) a.speed = Math.min(capA, a.speed + 6); }
                     a.slide += (dl >= 0 ? 1 : -1) * 4; b.slide -= (dl >= 0 ? 1 : -1) * 4;
                     a.hitT = Math.max(a.hitT, 0.25); b.hitT = Math.max(b.hitT, 0.25);
                     const mid = a.pos.clone().lerp(b.pos, 0.5); spawnSparksAt(mid, 8, 0xffffff);
@@ -1086,7 +1181,7 @@
 
         // ---- HUD -------------------------------------------------------------------
         const dom = {};
-        function cacheDom() { for (const id of ['hud', 'lapNum', 'rankNum', 'rankSuf', 'timeVal', 'speedNum', 'energyFill', 'energyPct', 'boostBtn', 'brakeBtn', 'stick', 'stickDot', 'countdown', 'countText', 'flash', 'hit', 'boostGlow', 'toast', 'startScreen', 'resultScreen', 'pauseScreen', 'startBtn', 'againBtn', 'menuBtn', 'resumeBtn', 'restartBtn', 'quitBtn', 'loadMsg', 'muteBtn', 'pauseBtn', 'standings', 'resultsTable', 'minimap', 'ver', 'picker', 'steerHint']) dom[id] = document.getElementById(id); }
+        function cacheDom() { for (const id of ['hud', 'lapNum', 'rankNum', 'rankSuf', 'timeVal', 'speedNum', 'energyFill', 'energyPct', 'boostBtn', 'brakeBtn', 'stick', 'stickDot', 'countdown', 'countText', 'flash', 'hit', 'boostGlow', 'toast', 'startScreen', 'resultScreen', 'pauseScreen', 'startBtn', 'againBtn', 'menuBtn', 'resumeBtn', 'restartBtn', 'quitBtn', 'loadMsg', 'muteBtn', 'pauseBtn', 'standings', 'resultsTable', 'minimap', 'ver', 'picker', 'trackPicker', 'steerHint']) dom[id] = document.getElementById(id); }
         const ORD = (n) => n === 1 ? 'st' : n === 2 ? 'nd' : n === 3 ? 'rd' : 'th';
         function fmtTime(t) { const m = Math.floor(t / 60), s = t - m * 60; return m + ':' + (s < 10 ? '0' : '') + s.toFixed(1); }
         let lastHud = 0;
@@ -1306,6 +1401,10 @@
         function resumeGame() { if (state !== 'paused') return; state = 'racing'; dom.pauseScreen.classList.remove('on'); lastT = performance.now(); }
         function quitToMenu() { state = 'menu'; dom.pauseScreen.classList.remove('on'); dom.resultScreen.classList.remove('on'); dom.hud.classList.remove('on'); dom.pauseBtn.classList.remove('on'); dom.startScreen.classList.add('on'); resetRace(); }
 
+        function buildTrackPicker() {
+            dom.trackPicker.innerHTML = TRACKS.map((t, i) => `<div class="pick track${i === currentTrack ? ' sel' : ''}" data-i="${i}"><div class="sw" style="background:${hx(t.theme.railL)}"></div>${t.name.toUpperCase()}</div>`).join('');
+            dom.trackPicker.querySelectorAll('.pick').forEach((el) => el.addEventListener('click', () => { const i = +el.dataset.i; if (i === currentTrack) return; try { localStorage.setItem('sf_track', i); } catch (e) {} loadTrack(i); buildTrackPicker(); resetRace(); }));
+        }
         function buildPicker() {
             const bar = (v) => { const n = clamp(Math.round(1 + (v - 0.8) / 0.4 * 4), 1, 5); return '●'.repeat(n) + '○'.repeat(5 - n); };   // 0.8 → 1 dot, 1.0 → 3, 1.2 → 5
             dom.picker.innerHTML = MACHINES.map((m, i) => `<div class="pick${i === selectedDef ? ' sel' : ''}" data-i="${i}"><div class="sw" style="background:${hx(m.col)}"></div>${m.name.split(' ')[0]}<div class="st">SPD ${bar(m.stat.top)}<br>ACC ${bar(m.stat.acc)}<br>GRP ${bar(m.stat.grip)}</div></div>`).join('');
@@ -1341,10 +1440,11 @@
             cacheDom();
             try { selectedDef = clamp(+localStorage.getItem('sf_machine') || 0, 0, MACHINES.length - 1); muted = localStorage.getItem('sf_mute') === '1'; } catch (e) {}
             initThree();
-            buildTrack(TRACK_DEF);
-            buildWorld();
+            try { currentTrack = clamp(+localStorage.getItem('sf_track') || 0, 0, TRACKS.length - 1); } catch (e) {}
+            loadTrack(currentTrack);
             initParticles();
             buildMachines();
+            buildTrackPicker();
             buildPicker();
             setupInput();
             resetRace();
@@ -1360,7 +1460,7 @@
             if (DBG) {
                 window.__sf = {
                     get machines() { return machines; }, get player() { return player; }, get state() { return state; }, set state(v) { state = v; },
-                    get raceClock() { return raceClock; }, TRACK, frameAt, sampleAtS, simTick, startGame, resetRace, updateCamera, finishRace, get scene() { return scene; }, get world() { return world; },
+                    get raceClock() { return raceClock; }, TRACK, TRACKS, loadTrack, get currentTrack() { return currentTrack; }, frameAt, sampleAtS, simTick, startGame, resetRace, updateCamera, finishRace, get scene() { return scene; }, get world() { return world; },
                     aiDrive, set freeBoost(v) { DBG_FREEBOOST = v; }, get camera() { return camera; },
                 };
             }

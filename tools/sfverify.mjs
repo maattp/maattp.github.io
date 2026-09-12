@@ -32,9 +32,11 @@ try {
   for (let i = 0; i < 80; i++) { await sleep(250); if (await ev('return !!window.__sf')) break; }
   ok(await ev('return !!window.__sf'), 'game booted');
   await sleep(600); await shot('menu');
+  for (const ti of [0, 1]) {
+  console.log('--- track', ti);
   // start, skip countdown, give the player an AI brain, race 3 laps in a stepped loop
   const res = await ev(`
-    window.__hold = true; __sf.startGame(); __sf.state = 'racing'; document.getElementById('countdown').classList.remove('on');
+    __sf.loadTrack(${ti}); window.__hold = true; __sf.startGame(); __sf.state = 'racing'; document.getElementById('countdown').classList.remove('on');
     const p = __sf.player; p.ai = { lane: 0, skill: 0.95, aggr: 0.6, phase: 0, jitter: 0 };
     const orig = p.isPlayer; p.isPlayer = false; __sf.freeBoost = false;
     let ticks = 0, shots = 0, wallTicks = 0, minE = 100, maxSpd = 0, boosts = 0, lastBoostT = 0;
@@ -58,17 +60,20 @@ try {
   ok(res.maxSpd > 140, `top speed ${res.maxSpd.toFixed(0)} u/s`);
   ok(res.wallTicks < res.ticks * 0.06, `wall contact ${(100 * res.wallTicks / res.ticks).toFixed(1)}% of ticks (<6%)`);
   console.log(`    min energy ${res.minE.toFixed(0)}, boosts ${res.boosts}, deaths ${res.deaths}`);
+  }
   // screenshots: replay a fresh race for a few seconds in real time-ish for the camera
-  await ev(`window.__hold = true; __sf.startGame(); __sf.state = 'racing'; document.getElementById('countdown').classList.remove('on'); const p = __sf.player; p.ai = { lane: 0, skill: 0.95, aggr: 0.6, phase: 0, jitter: 0 }; p.isPlayer = false; for (let i = 0; i < 60 * 6; i++) __sf.simTick(1/60); p.isPlayer = true; __sf.updateCamera(true, 1/60); return 1;`);
-  await sleep(500); await shot('race1');
+  for (const ti of [0, 1]) {
+  await ev(`__sf.loadTrack(${ti}); window.__hold = true; __sf.startGame(); __sf.state = 'racing'; document.getElementById('countdown').classList.remove('on'); const p = __sf.player; p.ai = { lane: 0, skill: 0.95, aggr: 0.6, phase: 0, jitter: 0 }; p.isPlayer = false; for (let i = 0; i < 60 * 6; i++) __sf.simTick(1/60); p.isPlayer = true; __sf.updateCamera(true, 1/60); return 1;`);
+  await sleep(500); await shot(`t${ti}-race1`);
   await ev(`const p = __sf.player; p.isPlayer = false; for (let i = 0; i < 60 * 9; i++) __sf.simTick(1/60); p.isPlayer = true; p.boostT = 1.2; __sf.updateCamera(true, 1/60); return 1;`);
-  await sleep(500); await shot('race2');
+  await sleep(500); await shot(`t${ti}-race2`);
   await ev(`const p = __sf.player; p.isPlayer = false; for (let i = 0; i < 60 * 10; i++) __sf.simTick(1/60); p.isPlayer = true; __sf.updateCamera(true, 1/60); return 1;`);
-  await sleep(500); await shot('race3');
+  await sleep(500); await shot(`t${ti}-race3`);
   await ev(`const p = __sf.player; p.isPlayer = false; for (let i = 0; i < 60 * 8; i++) __sf.simTick(1/60); p.isPlayer = true; __sf.updateCamera(true, 1/60); return 1;`);
-  await sleep(500); await shot('race4');
+  await sleep(500); await shot(`t${ti}-race4`);
   await ev(`window.__freeCam = { x: 0, y: 1400, z: 300, tx: 0, ty: 0, tz: 301, fov: 60 }; __sf.updateCamera(true, 1/60); return 1;`);
-  await sleep(500); await shot('overview');
+  await sleep(500); await shot(`t${ti}-overview`); await ev('window.__freeCam = null; return 1;');
+  }
   ok(logs.length === 0, 'no exceptions / console errors');
   for (const l of logs.slice(0, 10)) console.log('   ' + l);
   console.log(fails ? `\n${fails} FAILED` : '\nALL OK');
