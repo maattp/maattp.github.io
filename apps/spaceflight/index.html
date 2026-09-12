@@ -159,7 +159,6 @@
             <button class="btn ghost" id="joinRoomBtn">JOIN</button>
         </div>
         <div id="netStatus"></div>
-        <div class="hint">SLIDE your thumb on the left to steer · BOOST burns ENERGY · hitting walls and rivals burns it too<br>drive the pink strip to recharge · run dry and you're out</div>
         <div id="loadMsg" class="hint" style="margin-top:6px">loading…</div>
     </div>
     <div id="lobbyScreen" class="screen">
@@ -216,7 +215,7 @@
         // =====================================================================
         //  SPACE FLIGHT — anti-grav racing prototype (single track, CPUs)
         // =====================================================================
-        const SF_VER = 31;
+        const SF_VER = 32;
         const clamp = (v, a, b) => v < a ? a : v > b ? b : v;
         const lerp = (a, b, t) => a + (b - a) * t;
         const smoothstep = (a, b, x) => { const t = clamp((x - a) / (b - a), 0, 1); return t * t * (3 - 2 * t); };
