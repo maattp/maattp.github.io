@@ -32,7 +32,7 @@ try {
   for (let i = 0; i < 80; i++) { await sleep(250); if (await ev('return !!window.__sf')) break; }
   ok(await ev('return !!window.__sf'), 'game booted');
   await sleep(600); await shot('menu');
-  for (const ti of [0, 1]) {
+  for (const ti of [0, 1, 2]) {
   console.log('--- track', ti);
   // start, skip countdown, give the player an AI brain, race 3 laps in a stepped loop
   const res = await ev(`
@@ -62,7 +62,7 @@ try {
   console.log(`    min energy ${res.minE.toFixed(0)}, boosts ${res.boosts}, deaths ${res.deaths}`);
   }
   // screenshots: replay a fresh race for a few seconds in real time-ish for the camera
-  for (const ti of [0, 1]) {
+  for (const ti of [0, 1, 2]) {
   await ev(`__sf.loadTrack(${ti}); window.__hold = true; __sf.startGame(); __sf.state = 'racing'; document.getElementById('countdown').classList.remove('on'); const p = __sf.player; p.ai = { lane: 0, skill: 0.95, aggr: 0.6, phase: 0, jitter: 0 }; p.isPlayer = false; for (let i = 0; i < 60 * 6; i++) __sf.simTick(1/60); p.isPlayer = true; __sf.updateCamera(true, 1/60); return 1;`);
   await sleep(500); await shot(`t${ti}-race1`);
   await ev(`const p = __sf.player; p.isPlayer = false; for (let i = 0; i < 60 * 9; i++) __sf.simTick(1/60); p.isPlayer = true; p.boostT = 1.2; __sf.updateCamera(true, 1/60); return 1;`);

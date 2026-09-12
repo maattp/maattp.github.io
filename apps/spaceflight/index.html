@@ -45,11 +45,11 @@
             background: linear-gradient(180deg, #a6f3ff, #35b6ff); box-shadow: 0 0 24px rgba(53, 182, 255, 0.55), inset 0 -3px 0 rgba(0, 0, 0, 0.2); cursor: pointer; }
         .btn:active { transform: scale(0.97); }
         .btn.ghost { background: transparent; color: #9fe8ff; border: 2px solid rgba(159, 232, 255, 0.5); box-shadow: none; font-size: 15px; padding: 10px 28px; }
-        .picker { display: flex; gap: 10px; margin-top: 18px; flex-wrap: wrap; justify-content: center; max-width: 960px; }
-        .pick { width: 92px; height: 96px; border-radius: 12px; border: 2px solid rgba(255,255,255,0.14); background: rgba(255,255,255,0.05);
+        .picker { display: flex; gap: 6px; margin-top: 14px; flex-wrap: wrap; justify-content: center; max-width: 960px; }
+        .pick { width: 78px; height: 92px; border-radius: 12px; border: 2px solid rgba(255,255,255,0.14); background: rgba(255,255,255,0.05);
             display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; font-size: 11px; font-weight: 800; letter-spacing: 1px; cursor: pointer; }
         .pick .sw { width: 34px; height: 12px; border-radius: 6px; }
-        .pick.track { width: 150px; height: 52px; font-size: 12px; letter-spacing: 2px; }
+        .pick.track { width: 140px; height: 48px; font-size: 11px; letter-spacing: 2px; }
         .pick .st { font-size: 7px; letter-spacing: 0; opacity: 0.75; line-height: 1.35; font-weight: 700; }
         .pick.sel { border-color: #fff; background: rgba(255,255,255,0.14); box-shadow: 0 0 14px rgba(255,255,255,0.25); }
         .hint { margin-top: 16px; font-size: 12px; opacity: 0.6; letter-spacing: 1px; text-align: center; line-height: 1.6; }
@@ -173,7 +173,7 @@
         // =====================================================================
         //  SPACE FLIGHT — anti-grav racing prototype (single track, CPUs)
         // =====================================================================
-        const SF_VER = 22;
+        const SF_VER = 23;
         const clamp = (v, a, b) => v < a ? a : v > b ? b : v;
         const lerp = (a, b, t) => a + (b - a) * t;
         const smoothstep = (a, b, x) => { const t = clamp((x - a) / (b - a), 0, 1); return t * t * (3 - 2 * t); };
@@ -247,9 +247,26 @@
             }
             return pts;
         })();
+        const THEME_ICE = {
+            bg: 0x061a2e, fog: 0x1b3a5c, fogNear: 600, fogFar: 2400, hemiSky: 0xbfe6ff, hemiGround: 0x2a4a6a, sun: 0xe0f0ff, sunPos: [-300, 600, 400],
+            roadBase: 0xc8dcf0, roadEdge: 0x7fb8ff, laneLine: 0xffffff, railL: 0x9fe8ff, railR: 0xffffff, wall: 0x3a5a80, skirt: 0x22405e, pylon: 0x2c4a6c,
+            groundY: -50, scenery: 'ice',
+        };
         const TRACKS = [null, {
             name: 'Red Canyon', theme: THEME_CANYON, w: 33, pts: CANYON_PTS,
             dash: [], recharge: [{ f0: 0.30, f1: 0.37, lat: 14, hw: 12 }], lineF: 0.0,
+        }, {
+            // Glacier Loop: a fast bottom straight, a climbing right-hander onto a plateau, an S back across
+            // the middle, a dive down the eastern side, then a long swooping return through the west
+            name: 'Glacier Loop', theme: THEME_ICE, w: 33,
+            pts: [
+                [0, 0, -500, 36], [300, 0, -520, 36], [600, 10, -440, 32], [760, 24, -240, 30], [700, 40, -40, 30],
+                [480, 52, 60, 28], [300, 58, 220, 28], [420, 50, 420, 30], [640, 44, 520, 30], [640, 30, 720, 30],
+                [420, 18, 820, 34], [120, 10, 780, 34], [-160, 8, 640, 30], [-420, 14, 700, 28], [-640, 20, 560, 28],
+                [-700, 26, 340, 30], [-560, 30, 160, 28], [-380, 26, 20, 26], [-460, 16, -200, 28], [-620, 8, -380, 30],
+                [-420, 2, -540, 34], [-200, 0, -560, 36],
+            ],
+            dash: [], recharge: [{ f0: 0.44, f1: 0.51, lat: -14, hw: 12 }], lineF: 0.0,
         }];
         const TRACK_DEF = {
             name: 'Mute Orbit', theme: THEME_CITY,
@@ -495,7 +512,7 @@
             buildRoad();
             buildRails();
             buildFeatures();
-            if (THEME.scenery === 'canyon') { buildCanyon(); buildSunset(); } else { buildCity(); buildSky(); }
+            if (THEME.scenery === 'canyon') { buildCanyon(); buildSunset(); } else if (THEME.scenery === 'ice') { buildIce(); buildAurora(); } else { buildCity(); buildSky(); }
         }
         function buildRoad() {
             const S = TRACK.samples, m = S.length;
@@ -613,6 +630,10 @@
             for (let s = 0; s < TRACK.len; s += 60) {
                 const f = frameAt(s); const h = f.y - THEME.groundY;
                 if (h < 8) continue;
+                // never plant a pylon through a road passing underneath (the flyover crossings)
+                let over = false;
+                for (let i = 0; i < TRACK.samples.length && !over; i += 2) { const q = TRACK.samples[i]; let d = Math.abs(q.s - s); d = Math.min(d, TRACK.len - d); if (d > 80 && (q.x - f.x) ** 2 + (q.z - f.z) ** 2 < (q.w + 6) ** 2) over = true; }
+                if (over) continue;
                 p3.set(f.x, f.y - h / 2 - 5, f.z); sc.set(1, h, 1); mtx.compose(p3, q4, sc); base.setMatrixAt(n++, mtx);
             }
             base.count = n; base.instanceMatrix.needsUpdate = true; world.add(base);
@@ -701,6 +722,59 @@
             for (let i = 0; i < 250; i++) { const th = rnd() * Math.PI * 2, ph = Math.acos(rnd() * 0.5 + 0.5); const r = 4300; sp.push(r * Math.sin(ph) * Math.cos(th), r * Math.cos(ph), r * Math.sin(ph) * Math.sin(th)); }
             const sg = new THREE.BufferGeometry(); sg.setAttribute('position', new THREE.Float32BufferAttribute(sp, 3));
             world.add(new THREE.Points(sg, new THREE.PointsMaterial({ color: 0xffe0d0, size: 7, transparent: true, opacity: 0.6, fog: false })));
+        }
+        function buildIce() {
+            const rnd = mulberry(9090), G = THEME.groundY;
+            const snow = new THREE.Mesh(new THREE.PlaneGeometry(9000, 9000), new THREE.MeshLambertMaterial({ color: 0xdce9f7 }));
+            snow.rotation.x = -Math.PI / 2; snow.position.y = G - 0.5; world.add(snow);
+            // ice crystals: leaning octahedra in clusters, faintly lit from inside
+            const cg = new THREE.OctahedronGeometry(1, 0);
+            const mats = [0x9fd8ff, 0xc8ecff, 0x7fc0f0].map((c) => new THREE.MeshLambertMaterial({ color: c, emissive: 0x143a5a }));
+            for (let i = 0; i < 70; i++) {
+                const cx = (rnd() - 0.5) * 3600, cz = (rnd() - 0.5) * 3600;
+                if (nearTrack(cx, cz, 120)) continue;
+                const nC = 2 + Math.floor(rnd() * 4);
+                for (let k = 0; k < nC; k++) {
+                    const h = 40 + rnd() * rnd() * 220, r = 8 + rnd() * 18;
+                    const m = new THREE.Mesh(cg, mats[(i + k) % 3]);
+                    m.position.set(cx + (rnd() - 0.5) * 60, G + h * 0.35, cz + (rnd() - 0.5) * 60);
+                    m.scale.set(r, h, r); m.rotation.set((rnd() - 0.5) * 0.5, rnd() * 6.28, (rnd() - 0.5) * 0.5);
+                    world.add(m);
+                }
+            }
+            // frozen ridges on the horizon
+            for (let i = 0; i < 14; i++) {
+                const x = (rnd() - 0.5) * 4400, z = (rnd() - 0.5) * 4400; if (nearTrack(x, z, 200)) continue;
+                const m = new THREE.Mesh(new THREE.ConeGeometry(120 + rnd() * 160, 260 + rnd() * 300, 5), new THREE.MeshLambertMaterial({ color: 0xa9c7e6 }));
+                m.position.set(x, G + 130, z); m.rotation.y = rnd() * 6.28; world.add(m);
+            }
+        }
+        function buildAurora() {
+            // night sky with a moon and a rippling aurora ribbon
+            const sp = []; const rnd = mulberry(23);
+            for (let i = 0; i < 900; i++) { const th = rnd() * Math.PI * 2, ph = Math.acos(rnd() * 0.9 + 0.1); const r = 4400; sp.push(r * Math.sin(ph) * Math.cos(th), r * Math.cos(ph), r * Math.sin(ph) * Math.sin(th)); }
+            const sg = new THREE.BufferGeometry(); sg.setAttribute('position', new THREE.Float32BufferAttribute(sp, 3));
+            world.add(new THREE.Points(sg, new THREE.PointsMaterial({ color: 0xe8f4ff, size: 8, transparent: true, opacity: 0.9, fog: false })));
+            const moon = new THREE.Mesh(new THREE.SphereGeometry(260, 32, 24), new THREE.MeshLambertMaterial({ color: 0xf4f8ff, emissive: 0x556677, fog: false }));
+            moon.position.set(2200, 1300, -2600); world.add(moon);
+            const halo = new THREE.Sprite(new THREE.SpriteMaterial({ map: TEX.glow, color: 0x9fc8ff, transparent: true, opacity: 0.5, blending: THREE.AdditiveBlending, depthWrite: false, fog: false }));
+            halo.scale.set(1400, 1400, 1); halo.position.copy(moon.position); world.add(halo);
+            // aurora: a long vertical ribbon of quads, vertex-coloured green→violet, fading at the top, waving
+            const segs = 60, pos = [], col = [], idx = [];
+            const base = new THREE.Vector3(-3000, 900, 1800), dir = new THREE.Vector3(1, 0, -0.35).normalize();
+            const cA = new THREE.Color(0x3cff9a), cB = new THREE.Color(0x7a5cff);
+            for (let i = 0; i <= segs; i++) {
+                const t = i / segs, x = base.x + dir.x * 5600 * t, z = base.z + dir.z * 5600 * t;
+                const c = cA.clone().lerp(cB, t);
+                pos.push(x, base.y, z); col.push(c.r, c.g, c.b);
+                pos.push(x, base.y + 700, z); col.push(0, 0, 0);
+            }
+            for (let i = 0; i < segs; i++) { const a = i * 2, b = a + 2; idx.push(a, b, a + 1, a + 1, b, b + 1); }
+            const ag = new THREE.BufferGeometry(); ag.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3)); ag.setAttribute('color', new THREE.Float32BufferAttribute(col, 3)); ag.setIndex(idx);
+            const am = new THREE.MeshBasicMaterial({ vertexColors: true, transparent: true, opacity: 0.55, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide, fog: false });
+            const aurora = new THREE.Mesh(ag, am); world.add(aurora);
+            const pa = ag.attributes.position, baseY = base.y;
+            WORLD.anims.push((dt, t) => { for (let i = 0; i <= segs; i++) { const w = Math.sin(t * 0.7 + i * 0.35) * 120 + Math.sin(t * 1.3 + i * 0.9) * 60; pa.setY(i * 2, baseY + w * 0.3); pa.setY(i * 2 + 1, baseY + 700 + w); } pa.needsUpdate = true; am.opacity = 0.45 + 0.12 * Math.sin(t * 0.9); });
         }
         function nearTrack(x, z, d) {
             const S = TRACK.samples;
