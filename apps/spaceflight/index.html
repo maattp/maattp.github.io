@@ -171,7 +171,7 @@
         // =====================================================================
         //  SPACE FLIGHT — anti-grav racing prototype (single track, CPUs)
         // =====================================================================
-        const SF_VER = 13;
+        const SF_VER = 14;
         const clamp = (v, a, b) => v < a ? a : v > b ? b : v;
         const lerp = (a, b, t) => a + (b - a) * t;
         const smoothstep = (a, b, x) => { const t = clamp((x - a) / (b - a), 0, 1); return t * t * (3 - 2 * t); };
@@ -374,8 +374,8 @@
         let renderer, scene, camera, world;
         const TEX = {};
         function initThree() {
-            renderer = new THREE.WebGLRenderer({ antialias: !isMobileUA, powerPreference: 'high-performance' });
-            renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, isMobileUA ? 1.5 : 1.5));
+            renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
+            renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2.5));
             renderer.outputEncoding = THREE.sRGBEncoding;
             document.getElementById('game').appendChild(renderer.domElement);
             scene = new THREE.Scene();
@@ -800,7 +800,7 @@
             const vlat = k.speed * Math.sin(k.yaw) + k.slide;
             k.lat += vlat * dt;
             const along = k.speed * Math.cos(k.yaw);
-            k.prevS = k.s;
+            k.prevS = k.s; k.prevLat = k.lat; k.prevAir = k.air;
             k.s = wrapS(k.s + along * dt);
             // the road turned under us: keep the nose fixed in the world (finished machines cruise on autopilot)
             if (!k.finished) { const f2 = frameAt(k.s, _frA); k.yaw -= wrapAngle(Math.atan2(f2.tx, f2.tz) - Math.atan2(f.tx, f.tz)); }
@@ -839,6 +839,7 @@
             }
             k.progress = k.laps * TRACK.len + k.s;
             k.pos.copy(worldPos(k.s, k.lat, 1.7 + k.air, k.pos));
+            k.rs = k.s; k.rlat = k.lat; k.rair = k.air;
         }
         function tryBoost(k) {
             if (k.laps < BOOST_MIN_LAP && !DBG_FREEBOOST) { if (k.isPlayer) { toast('BOOST UNLOCKS AFTER LAP 1'); sfxDeny(); } return false; }
@@ -1005,11 +1006,22 @@
         //  RENDER SYNC
         // =====================================================================
         const _vx = new THREE.Vector3(), _vy = new THREE.Vector3(), _vz = new THREE.Vector3(), _km = new THREE.Matrix4(), _kq = new THREE.Quaternion();
+        // the sim steps at a fixed 60 Hz while the screen runs at 60/90/120: without blending, some
+        // frames showed 0 ticks of motion and others 2 — that stutter read as bouncing on iPhone
+        let renderAlpha = 1;
+        function renderPose(k) {
+            if (k.prevS == null || instantRender) { k.rs = k.s; k.rlat = k.lat; k.rair = k.air; return; }
+            let ds = k.s - k.prevS; if (ds > TRACK.len / 2) ds -= TRACK.len; if (ds < -TRACK.len / 2) ds += TRACK.len;
+            k.rs = wrapS(k.prevS + ds * renderAlpha); k.rlat = lerp(k.prevLat, k.lat, renderAlpha); k.rair = lerp(k.prevAir, k.air, renderAlpha);
+        }
+        let instantRender = false;
+        const _rp = new THREE.Vector3();
         function syncMachineMesh(k, instant, dt) {
             dt = dt || SIM_DT;
-            const f = frameAt(k.s);
+            renderPose(k);
+            const f = frameAt(k.rs);
             const g = k.mesh, ud = g.userData;
-            g.position.copy(k.pos);   // flat hover: no bob (it read as bouncing)
+            g.position.copy(worldPos(k.rs, k.rlat, 1.7 + k.rair, _rp));   // flat hover: no bob (it read as bouncing)
             // orientation: track up, heading = tangent rotated by yaw about up, roll into the turn + slide
             _vy.set(f.ux, f.uy, f.uz);
             _vz.set(f.tx, f.ty, f.tz).applyAxisAngle(_vy, -k.yaw).normalize();
@@ -1040,14 +1052,15 @@
         let camShake = 0, camFovKick = 0, camInit = false;
         function updateCamera(instant, dt) {
             const k = player; if (!k) return;
-            const f = frameAt(k.s - 15, _frA);
-            const fl = frameAt(k.s + 30, _frB);
+            const rs = k.rs != null ? k.rs : k.s, rlat = k.rlat != null ? k.rlat : k.lat;
+            const f = frameAt(rs - 15, _frA);
+            const fl = frameAt(rs + 30, _frB);
             const sp = clamp(k.speed / MAX_SPEED, 0, 1.6);
             const back = 16 + sp * 2, up = 6.4;
             // behind the machine along the track, slightly toward the lateral position, riding the track up-vector (banks tilt the camera)
-            camPos.set(f.x + f.nx * k.lat * 0.75 + f.ux * up, f.y + f.ny * k.lat * 0.75 + f.uy * up, f.z + f.nz * k.lat * 0.75 + f.uz * up);
+            camPos.set(f.x + f.nx * rlat * 0.75 + f.ux * up, f.y + f.ny * rlat * 0.75 + f.uy * up, f.z + f.nz * rlat * 0.75 + f.uz * up);
             camPos.addScaledVector(_vz.set(f.tx, f.ty, f.tz), -(back - 15));
-            camLook.set(fl.x + fl.nx * k.lat * 0.5 + fl.ux * 1.5, fl.y + fl.ny * k.lat * 0.5 + fl.uy * 1.5, fl.z + fl.nz * k.lat * 0.5 + fl.uz * 1.5);
+            camLook.set(fl.x + fl.nx * rlat * 0.5 + fl.ux * 1.5, fl.y + fl.ny * rlat * 0.5 + fl.uy * 1.5, fl.z + fl.nz * rlat * 0.5 + fl.uz * 1.5);
             if (k.dead > 0) { camPos.addScaledVector(_vy.set(f.ux, f.uy, f.uz), 10); }
             const t = instant || !camInit ? 1 : frameLerp(0.35, dt);
             camera.position.lerp(camPos, t);
@@ -1305,6 +1318,7 @@
                 if (state === 'countdown') runCountdown(SIM_DT);
                 simTick(SIM_DT); acc -= SIM_DT; steps++;
             }
+            renderAlpha = window.__hold ? 1 : clamp(acc / SIM_DT, 0, 1);
             for (const k of machines) syncMachineMesh(k, false, dt);
             syncParticles();
             for (const a of WORLD.anims) a(dt, animT);
