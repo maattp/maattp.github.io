@@ -116,6 +116,16 @@ boost, Down/S brake, P pause.
 
 ## Backlog (user-requested, not started)
 
+- **TURN key (user will do it at home).** Cloudflare dashboard → Calls →
+  create a TURN key, then in `worker/`: `npx wrangler secret put
+  CF_TURN_KEY_ID` and `npx wrangler secret put CF_TURN_API_TOKEN`. Until
+  then `/sf/turn` returns STUN only and NAT-blocked phones use the relay.
+  Cost model: Cloudflare TURN bills per GB relayed (only traffic that could
+  not go direct); the input/snapshot stream is ~2 KB/s per client, so a
+  full 8-pilot race relayed end to end is a few MB. The worker endpoint is
+  origin-gated and mints 4-hour credentials only; nothing is exposed that
+  lets outsiders relay arbitrary traffic on the account beyond those
+  short-lived credentials.
 - **Audio pass.** The current WebAudio sound effects read as whiny and
   annoying; replace them with punchier, lower-pitched effects. Write an epic
   chiptune per map (Mute Orbit, Red Canyon, Glacier Loop, Nova Spire) — a
