@@ -158,12 +158,12 @@
         .menu-row { display: flex; flex-direction: row; align-items: center; justify-content: center; gap: 30px; width: 100%; max-width: 860px; margin: auto; }
         .menu-left { display: flex; flex-direction: column; align-items: center; flex: 0 0 auto; }
         .menu-right { display: flex; flex-direction: column; align-items: center; flex: 1 1 auto; min-width: 0; }
-        .logo { font-size: 50px; line-height: 0.9; font-weight: 900; letter-spacing: -2px; white-space: nowrap;
-            background: linear-gradient(180deg, #fff 0%, #8fe6ff 45%, #2a8fff 100%); -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent;
+        .logo { font-size: 50px; line-height: 0.9; font-weight: 900; letter-spacing: -2px; white-space: nowrap; padding: 6px 10px 4px;
             filter: drop-shadow(0 5px 0 rgba(0,0,0,0.3)) drop-shadow(0 10px 24px rgba(40,160,255,0.35)); transform: rotate(-3deg); }
-        .logo .n51 { display: inline-block; transform: rotate(5deg) translateY(-3px); margin: 0 4px 0 2px;
-            background: linear-gradient(180deg, #ffe27a 0%, #ff6a3c 100%); -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent; }
-        .logo .kart { display: inline-block; font-size: 0.72em; letter-spacing: 2px; transform: translateY(-4px); }
+        .logo span { display: inline-block; -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent; }
+        .logo .w1 { background-image: linear-gradient(180deg, #fff 0%, #8fe6ff 45%, #2a8fff 100%); }
+        .logo .n51 { transform: rotate(5deg) translateY(-3px); margin: 0 4px 0 2px; background-image: linear-gradient(180deg, #ffe27a 0%, #ff6a3c 100%); }
+        .logo .kart { font-size: 0.72em; letter-spacing: 2px; transform: translateY(-4px); background-image: linear-gradient(180deg, #fff 0%, #8fe6ff 45%, #2a8fff 100%); }
         .tag { margin-top: 6px; font-size: 12px; letter-spacing: 4px; text-transform: uppercase; opacity: 0.75; font-weight: 700; }
         .trackname { margin-top: 10px; font-size: 13px; font-weight: 800; color: #ffd54a; letter-spacing: 1px; }
         .bestline { margin-top: 3px; font-size: 11px; opacity: 0.6; font-variant-numeric: tabular-nums; }
@@ -342,7 +342,7 @@
         <div id="appVer"></div>
         <div class="menu-row">
             <div class="menu-left">
-                <div class="logo">FABLE<span class="n51">51</span><span class="kart">KART</span></div>
+                <div class="logo"><span class="w1">FABLE</span><span class="n51">51</span><span class="kart">KART</span></div>
                 <div class="tag">Grand Prix · True 3D</div>
                 <div class="trackname" id="trackLine">Summit Run · 3 Laps · 8 Racers</div>
                 <div class="bestline" id="bestLine">No record yet</div>
@@ -888,7 +888,7 @@
                     sun: 0xfff0c8, sunPos: [-300, 240, -420], sunInt: 1.1, hemiSky: 0xd8e8ff, hemiGround: 0x7a8a9a, hemiInt: 0.95,
                     grass1: 0x74b85c, grass2: 0x9ccc6a, rock: 0x9a8f88, snow: 0xffffff, sand: 0xd8cfa8, snowLine: 999, rockLine: 999,
                     road: '#5a5e70', roadDirt: '#8a7a5a', edge: '#f4f6ff', lane: '#ffe27a', curbA: 0xf2f2f2, curbB: 0x3a8bff,
-                    water: 0x7fb8ff, cloud: 0xffffff, clouds: 30, headlights: false, stars: false, dust: 0xe8e0c8, tunnelGlow: 0xffe27a,
+                    water: 0x7fb8ff, cloud: 0xffffff, clouds: 30, headlights: false, stars: false, dust: 0xe8e0c8, tunnelGlow: 0xffe27a, tunnelWall: 0xb8ac94, tunnelRing: 0xd8ccb4,
                     tree: [0x4f9448, 0x6ab85a, 0x3f7d3a], trunk: 0x7a5a36, banner: [0x3a8bff, 0xffd54a, 0xff3b5c],
                 },
             },
@@ -1146,7 +1146,7 @@
 
         // ---------- surface queries ----------
         // nearestSample: 3D-aware (the Y term keeps stacked roads separate)
-        function nearestSample(x, y, z, maxD, groundOnly) {
+        function nearestSample(x, y, z, maxD, groundOnly, xzOnly) {
             let best = null, bestD = maxD * maxD;
             const r = Math.ceil(maxD / TRACK.cell);
             const cx = Math.floor(x / TRACK.cell), cz = Math.floor(z / TRACK.cell);
@@ -1159,7 +1159,7 @@
                     if (sm.gap) continue;
                     if (groundOnly && (sm.elevated || sm.tunnel)) continue;
                     const dx = x - sm.x, dz = z - sm.z;
-                    const dy = groundOnly ? 0 : (y - sm.y) * 1.5;
+                    const dy = (groundOnly || xzOnly) ? 0 : (y - sm.y) * 1.5;
                     const d = dx * dx + dz * dz + dy * dy;
                     if (d < bestD) { bestD = d; best = { edge: e, ei, sm, si, d: Math.sqrt(d) }; }
                 }
@@ -1307,6 +1307,21 @@
             geo.setIndex(idx);
             return geo;
         }
+        function mergeGeos(geos) {
+            const pos = [], uv = [], idx = [];
+            let off = 0;
+            for (const g of geos) {
+                const pa = g.attributes.position, ua = g.attributes.uv;
+                for (let i = 0; i < pa.count; i++) { pos.push(pa.getX(i), pa.getY(i), pa.getZ(i)); uv.push(ua ? ua.getX(i) : 0, ua ? ua.getY(i) : 0); }
+                if (g.index) for (let i = 0; i < g.index.count; i++) idx.push(g.index.getX(i) + off); else for (let i = 0; i < pa.count; i++) idx.push(i + off);
+                off += pa.count;
+            }
+            const geo = new THREE.BufferGeometry();
+            geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+            geo.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
+            geo.setIndex(idx); geo.computeVertexNormals();
+            return geo;
+        }
         function mat4(x, y, z, ry, sx, sy, sz, rx, rz) {
             const m = new THREE.Matrix4();
             const q = new THREE.Quaternion().setFromEuler(new THREE.Euler(rx || 0, ry || 0, rz || 0, 'YXZ'));
@@ -1413,6 +1428,21 @@
                 }
             });
             TEX.facade.repeat.set(1, 1);
+            TEX.stone = canvasTex(256, 256, (g, w, h) => {
+                g.fillStyle = '#cfc3ab'; g.fillRect(0, 0, w, h);
+                for (let row = 0; row < 8; row++) {
+                    const off = (row % 2) * 24;
+                    for (let x = -24; x < w; x += 48) {
+                        const t = 0.9 + Math.random() * 0.2;
+                        g.fillStyle = 'rgb(' + Math.round(206 * t) + ',' + Math.round(194 * t) + ',' + Math.round(170 * t) + ')';
+                        g.fillRect(x + off + 1.5, row * 32 + 1.5, 45, 29);
+                        g.fillStyle = 'rgba(255,255,255,0.12)'; g.fillRect(x + off + 1.5, row * 32 + 1.5, 45, 3);
+                    }
+                }
+                g.fillStyle = 'rgba(60,45,30,0.35)';
+                for (let row = 0; row <= 8; row++) g.fillRect(0, row * 32 - 1, w, 2.5);
+            });
+            TEX.stone.repeat.set(1, 1);
             TEX.cloud = canvasTex(256, 256, (g, w, h) => {
                 g.clearRect(0, 0, w, h);
                 for (let i = 0; i < 70; i++) {
@@ -1692,48 +1722,60 @@
         // tunnel tubes: arch segments around tunnel samples, portal rings,
         // emissive ceiling strips (animated in the city)
         function buildTunnels() {
+            // smooth extruded arches: one ring of vertices per tunnel sample,
+            // stitched into a tube (inside faces visible), plus portal frames
+            // and emissive ceiling strips
+            const wallC = new THREE.Color(THEME.tunnelWall || (THEME.night ? 0x2a2e44 : 0x5a5650)), ringC = THEME.tunnelRing || (THEME.night ? 0x2a2e48 : 0x5a5650);
+            const pos = [], col = [], uv = [], idx = [];
             const bake = makeBaker(), glow = makeBaker();
-            const wallC = THEME.night ? 0x1e2236 : 0x4a4640, ringC = THEME.night ? 0x2a2e48 : 0x5a5650;
+            const SEGS = 10;
             for (const e of TRACK.edges) {
                 const n = e.samples.length;
                 let i = 0;
                 while (i < n) {
                     if (!e.samples[i].tunnel) { i++; continue; }
                     let j = i; while (j < n && e.samples[j].tunnel) j++;
-                    // arch ring every 2 samples
-                    for (let k = i; k < j; k += 2) {
+                    const R = e.w + 3.4, H = 10;
+                    const base = pos.length / 3;
+                    let rings = 0;
+                    for (let k = i; k < j; k++) {
                         const sm = e.samples[k];
-                        const yaw = Math.atan2(sm.tx, sm.tz);
-                        const R = e.w + 3.2, H = 9.5;
-                        const segs = 7;
-                        for (let s = 0; s <= segs; s++) {
-                            const a = Math.PI * s / segs;   // 0..π across the arch
+                        for (let q = 0; q <= SEGS; q++) {
+                            const a = Math.PI * q / SEGS;
                             const lx = Math.cos(a) * R, ly = Math.sin(a) * H;
-                            const wx = sm.x + sm.nx * lx, wz = sm.z + sm.nz * lx, wy = sm.y + (s === 0 || s === segs ? 0 : ly) + (s === 0 || s === segs ? 0 : 0);
-                            if (s === 0 || s === segs) {
-                                bake.add(GEO.box, mat4(wx, sm.y + H * 0.28, wz, yaw, 2.2, H * 0.56, SAMPLE_STEP * 2.05), wallC);
-                            } else {
-                                bake.add(GEO.box, mat4(wx, wy, wz, yaw, 2.2, (R + H) / 2 * Math.PI / segs * 1.25, SAMPLE_STEP * 2.05, 0, a), wallC);
-                            }
+                            pos.push(sm.x + sm.nx * lx, sm.y + ly - 0.6, sm.z + sm.nz * lx);
+                            const sh = 0.75 + 0.25 * Math.sin(a);
+                            col.push(wallC.r * sh, wallC.g * sh, wallC.b * sh);
+                            uv.push(a / Math.PI * 3, sm.s / 10);
                         }
-                        if ((k - i) % 6 === 0) glow.add(GEO.box, mat4(sm.x, sm.y + H - 0.4, sm.z, yaw, 1.2, 0.3, 3.4), THEME.tunnelGlow || 0xfff2c0);
+                        rings++;
+                        if ((k - i) % 6 === 3) glow.add(GEO.box, mat4(sm.x, sm.y + H - 1.0, sm.z, Math.atan2(sm.tx, sm.tz), 1.2, 0.3, 3.4), THEME.tunnelGlow || 0xfff2c0);
                     }
-                    // portals
+                    for (let r = 0; r < rings - 1; r++) for (let q = 0; q < SEGS; q++) {
+                        const a = base + r * (SEGS + 1) + q, b = a + SEGS + 1;
+                        idx.push(a, a + 1, b, a + 1, b + 1, b);
+                    }
                     for (const k of [i, Math.max(i, j - 1)]) {
                         const sm = e.samples[k];
                         const yaw = Math.atan2(sm.tx, sm.tz);
-                        bake.add(GEO.box, mat4(sm.x + sm.nx * (e.w + 4.2), sm.y + 5, sm.z + sm.nz * (e.w + 4.2), yaw, 3.6, 10.5, 3.2), ringC);
-                        bake.add(GEO.box, mat4(sm.x - sm.nx * (e.w + 4.2), sm.y + 5, sm.z - sm.nz * (e.w + 4.2), yaw, 3.6, 10.5, 3.2), ringC);
-                        bake.add(GEO.box, mat4(sm.x, sm.y + 11.2, sm.z, yaw, e.w * 2 + 12, 3.2, 3.2), ringC);
+                        bake.add(GEO.box, mat4(sm.x + sm.nx * (e.w + 4.6), sm.y + 5.2, sm.z + sm.nz * (e.w + 4.6), yaw, 3.6, 11, 3.2), ringC);
+                        bake.add(GEO.box, mat4(sm.x - sm.nx * (e.w + 4.6), sm.y + 5.2, sm.z - sm.nz * (e.w + 4.6), yaw, 3.6, 11, 3.2), ringC);
+                        bake.add(GEO.box, mat4(sm.x, sm.y + 11.6, sm.z, yaw, e.w * 2 + 12.8, 3.0, 3.2), ringC);
                     }
                     i = j;
                 }
             }
-            if (bake.count()) { const m = bake.mesh(new THREE.MeshLambertMaterial({ vertexColors: true, side: THREE.DoubleSide })); m.receiveShadow = true; world.add(m); }
-            if (glow.count()) {
-                const gm = glow.mesh(new THREE.MeshBasicMaterial({ vertexColors: true }));
-                world.add(gm); WORLD.tunnelLights.push(gm);
+            if (idx.length) {
+                const g = new THREE.BufferGeometry();
+                g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+                g.setAttribute('color', new THREE.Float32BufferAttribute(col, 3));
+                g.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
+                g.setIndex(idx); g.computeVertexNormals();
+                const m = new THREE.Mesh(g, new THREE.MeshLambertMaterial({ vertexColors: true, map: TEX.stone, side: THREE.DoubleSide }));
+                world.add(m);
             }
+            if (bake.count()) { const m = bake.mesh(); m.castShadow = gfxHigh; world.add(m); }
+            if (glow.count()) { const gm = glow.mesh(new THREE.MeshBasicMaterial({ vertexColors: true })); world.add(gm); WORLD.tunnelLights.push(gm); }
         }
         function buildWaterAndLava() {
             const def = TRACK.def;
@@ -1846,9 +1888,15 @@
                     const bx = sm.x + sm.nx * sd * (st.w + 13), bz = sm.z + sm.nz * sd * (st.w + 13);
                     const gy = terrainY(bx, bz);
                     if (Math.abs(gy - sm.y) > 6) continue;
-                    gs.add(GEO.box, mat4(bx, gy + 2.2, bz, Math.atan2(sm.tx, sm.tz), 9, 4.4, 13, 0, -sd * 0.42), 0x33405a);
-                    gs.add(GEO.box, mat4(bx + sm.nx * sd * 5.5, gy + 7.4, bz + sm.nz * sd * 5.5, Math.atan2(sm.tx, sm.tz), 8, 0.5, 14), 0xffd54a);
-                    for (let c = 0; c < 10; c++) crowd.push([bx + sm.nx * sd * rand(-3.5, 3.5) + sm.tx * rand(-6, 6), gy + 3.6 + rand(0, 2.2), bz + sm.nz * sd * rand(-3.5, 3.5) + sm.tz * rand(-6, 6)]);
+                    const yaw = Math.atan2(sm.tx, sm.tz);
+                    for (let step = 0; step < 4; step++) {
+                        const off = step * 2.2 - 3.3, h = 1.2 + step * 1.1;
+                        gs.add(GEO.box, mat4(bx + sm.nx * sd * off, gy + h / 2, bz + sm.nz * sd * off, yaw, 2.3, h, 13.6), step % 2 ? 0x33405a : 0x3d4b68);
+                        gs.add(GEO.box, mat4(bx + sm.nx * sd * off, gy + h + 0.15, bz + sm.nz * sd * off, yaw, 2.3, 0.3, 13.6), 0xd23c3c);
+                        for (let c = 0; c < 4; c++) crowd.push([bx + sm.nx * sd * off + sm.tx * (c * 3.6 - 5.4) + rand(-0.6, 0.6), gy + h + 1.1, bz + sm.nz * sd * off + sm.tz * (c * 3.6 - 5.4)]);
+                    }
+                    for (const [px, pz] of [[-6, -6], [6, -6], [-6, 6], [6, 6]]) gs.add(GEO.cyl8, mat4(bx + sm.nx * sd * px * 0.75 + sm.tx * pz, gy + 4.5, bz + sm.nz * sd * px * 0.75 + sm.tz * pz, 0, 0.4, 9, 0.4), 0xe8ecf4);
+                    gs.add(GEO.box, mat4(bx, gy + 9.2, bz, yaw, 10.5, 0.5, 14.5, 0, -sd * 0.12), 0xffd54a);
                 }
             }
             if (gs.count()) { const g = gs.mesh(); g.castShadow = gfxHigh; world.add(g); }
@@ -1923,7 +1971,9 @@
         //  SCENERY KITS — one per map. Static parts bake into as few meshes
         //  as possible; animated set pieces register in WORLD.anims.
         // ===================================================================
-        function offRoad(x, z, margin) { const n = nearestSample(x, 0, z, margin + 4, false); return !n || n.d > margin; }
+        // true when (x,z) is at least `margin` from every road centreline, at any height —
+        // nothing may ever be placed on the racing surface
+        function offRoad(x, z, margin) { const n = nearestSample(x, 0, z, margin + 4, false, true); return !n || n.d > margin; }
         function edgeById(id) { return TRACK.edges[TRACK.byId[id]]; }
         // scatter trees below the snow line, off road
         function scatterTrees(bake, count, ext, minH, maxH, style) {
@@ -2311,22 +2361,15 @@
                 // island undersides: inverted rock cones so the plateaus float
                 for (const p of TRACK.def.terrain.plats) {
                     const top = TRACK.def.terrain.base + p[2];
-                    const depth = p[3] * 0.9 + 30;
-                    bake.add(GEO.cone, mat4(p[0], top - depth / 2 - 4, p[1], rand(0, 3), (p[3] + p[4] * 0.6) * 2, depth, (p[3] + p[4] * 0.6) * 2, Math.PI), 0x6a5e58);
-                    for (let i = 0; i < 6; i++) { const a = rand(0, 6.3), r = p[3] * rand(0.4, 0.9); bake.add(GEO.dodec, mat4(p[0] + Math.cos(a) * r, top - rand(6, 20), p[1] + Math.sin(a) * r, rand(0, 3), rand(4, 9), rand(4, 9), rand(4, 9)), 0x7a6e66); }
+                    const depth = top + 34;   // reaches below the cloud sea
+                    const R = p[3] + p[4] * 0.55;
+                    bake.add(GEO.cone, mat4(p[0], top - 12 - depth / 2, p[1], rand(0, 3), R * 2, depth, R * 2, Math.PI), 0x5e544e);
+                    for (let i = 0; i < 7; i++) { const a = rand(0, 6.3), r = R * rand(0.3, 0.8); bake.add(GEO.dodec, mat4(p[0] + Math.cos(a) * r, top - 14 - rand(4, 26), p[1] + Math.sin(a) * r, rand(0, 3), rand(5, 11), rand(5, 11), rand(5, 11)), 0x6e645c); }
                 }
                 scatterTrees(bake, 140, 460, 20, 200, 'round');
                 scatterRocks(bake, 60, [-260, 420, -360, 320], 20, [0x9a8f88, 0xb8ada6]);
-                // the citadel keep (gallery tunnel runs through it) + corner towers
-                const kx = 292, kz = 170, kh = terrainY(kx, kz);
-                bake.add(GEO.box, mat4(kx, kh + 12, kz, 0, 62, 24, 56), 0xd8d0c8);
-                bake.add(GEO.box, mat4(kx, kh + 26, kz, 0, 40, 6, 36), 0xc8c0b8);
-                for (const [tx2, tz2] of [[-31, -28], [31, -28], [-31, 28], [31, 28]]) {
-                    bake.add(GEO.cyl8, mat4(kx + tx2, kh + 18, kz + tz2, 0, 9, 36, 9), 0xe8e0d8);
-                    bake.add(GEO.cone, mat4(kx + tx2, kh + 41, kz + tz2, 0, 6.5, 10, 6.5), T.banner[0]);
-                }
-                bake.add(GEO.cyl8, mat4(kx, kh + 34, kz, 0, 12, 20, 12), 0xe8e0d8);
-                bake.add(GEO.cone, mat4(kx, kh + 50, kz, 0, 8.5, 14, 8.5), T.banner[2]);
+                // the citadel: built around the gallery tunnel's midpoint, walls aligned to the road
+                { const ge = edgeById('gallery'), gm = sampleAtF(ge, 0.47); buildCastle(gm.x, gm.z, Math.atan2(gm.tx, gm.tz), T); }
                 // gate arch over the courtyard road
                 const court = edgeById('court'), gs = sampleAtF(court, 0.5), gyaw = Math.atan2(gs.tx, gs.tz);
                 for (const sd of [-1, 1]) bake.add(GEO.cyl8, mat4(gs.x + gs.nx * sd * (court.w + 4), gs.y + 8, gs.z + gs.nz * sd * (court.w + 4), 0, 6, 18, 6), 0xe8e0d8);
@@ -2366,7 +2409,58 @@
                 addBirds(300, 100, 150, 120, 0xffffff);
             },
         };
-        // circling flock
+        // ---- the citadel: a real castle around the gallery tunnel ----
+        function buildCastle(cx, cz, yaw, T) {
+            const parts = [], flagBake = makeBaker();
+            const gy = terrainY(cx, cz);
+            const stone = 0xd8ccb4, dark = 0xb8ac94, slate = 0x4a5f8a, wood = 0x6a4a2a;
+            const cy = Math.cos(yaw), sy = Math.sin(yaw);
+            const L = (lx, lz) => [cx + lx * cy + lz * sy, cz - lx * sy + lz * cy];   // local → world (local +z = road dir)
+            const uvBox = (w, h, d) => { const g = GEO.box.clone(); const uv = g.attributes.uv; for (let i = 0; i < uv.count; i++) uv.setXY(i, uv.getX(i) * Math.max(w, d) / 12, uv.getY(i) * h / 8); return g; };
+            const box = (lx, y, lz, w, h, d, col, ry) => { const [wx, wz] = L(lx, lz); parts.push({ geo: uvBox(w, h, d), color: col, matrix: mat4(wx, gy + y, wz, yaw + (ry || 0), w, h, d) }); };
+            const cyl = (lx, y, lz, r, h, col) => { const [wx, wz] = L(lx, lz); const g = new THREE.CylinderGeometry(r, r * 1.04, h, 12); const uv = g.attributes.uv; for (let i = 0; i < uv.count; i++) uv.setXY(i, uv.getX(i) * r / 3, uv.getY(i) * h / 8); parts.push({ geo: g, color: col, matrix: mat4(wx, gy + y, wz, yaw) }); };
+            const cone = (lx, y, lz, r, h, col) => { const [wx, wz] = L(lx, lz); parts.push({ geo: new THREE.ConeGeometry(r, h, 12), color: col, matrix: mat4(wx, gy + y, wz, yaw) }); };
+            const merlons = (lx0, lz0, lx1, lz1, y) => {
+                const n = Math.round(Math.hypot(lx1 - lx0, lz1 - lz0) / 4);
+                for (let i = 0; i <= n; i++) { const t = i / n; if (i % 2) continue; box(lerp(lx0, lx1, t), y, lerp(lz0, lz1, t), 2.2, 1.6, 2.2, dark); }
+            };
+            const tower = (lx, lz, r, h, roofCol, flag) => {
+                cyl(lx, h / 2, lz, r, h, stone);
+                cyl(lx, h + 0.6, lz, r + 1.2, 1.4, dark);           // corbel ring
+                cone(lx, h + 1.3 + r * 1.4 / 2, lz, r + 0.6, r * 1.4, roofCol);
+                for (let i = 0; i < 4; i++) { const a = i * Math.PI / 2 + 0.4; box(lx + Math.cos(a) * (r - 0.3), h * 0.55, lz + Math.sin(a) * (r - 0.3), 0.9, 2.4, 0.9, 0x2a2430, a); }   // window slits
+                if (flag) { const [wx, wz] = L(lx, lz); flagBake.add(GEO.cyl8, mat4(wx, gy + h + 1.3 + r * 1.4 + 2.5, wz, 0, 0.25, 5, 0.25), 0xe8ecf4); flagBake.add(GEO.box, mat4(wx + 1.5, gy + h + 1.3 + r * 1.4 + 4.4, wz, yaw, 3, 1.8, 0.12), flag); }
+            };
+            const W = 44, D = 46;   // half extents of the curtain wall (local x across the road, z along it)
+            // curtain walls (the road passes through gates in the front/back walls)
+            box(-W, 6, 0, 3.4, 12, D * 2, stone); box(W, 6, 0, 3.4, 12, D * 2, stone);
+            for (const sz2 of [-1, 1]) { box(-W / 2 - 12, 6, sz2 * D, W - 20, 12, 3.4, stone); box(W / 2 + 12, 6, sz2 * D, W - 20, 12, 3.4, stone); }
+            merlons(-W, -D, -W, D, 12.8); merlons(W, -D, W, D, 12.8);
+            for (const sz2 of [-1, 1]) { merlons(-W, sz2 * D, -22, sz2 * D, 12.8); merlons(22, sz2 * D, W, sz2 * D, 12.8); }
+            // corner towers
+            tower(-W, -D, 7, 22, slate, T.banner[0]); tower(W, -D, 7, 22, slate, T.banner[1]); tower(-W, D, 7, 22, slate, T.banner[2]); tower(W, D, 7, 22, slate, T.banner[0]);
+            // gatehouses: twin towers flanking each portal, a crenellated bridge above
+            for (const sz2 of [-1, 1]) {
+                tower(-21, sz2 * D, 5.5, 20, 0x8a2a2a, null); tower(21, sz2 * D, 5.5, 20, 0x8a2a2a, null);
+                box(0, 17, sz2 * D, 34, 4, 5, stone); merlons(-14, sz2 * D, 14, sz2 * D, 19.8);
+                box(0, 13, sz2 * (D + 3), 26, 4.5, 1.2, wood);   // raised drawbridge slab
+            }
+            // the keep, offset beside the road so the tunnel runs along its flank
+            box(-24, 10, 0, 26, 20, 30, stone); merlons(-37, -15, -37, 15, 20.8); merlons(-11, -15, -11, 15, 20.8); merlons(-37, -15, -11, -15, 20.8); merlons(-37, 15, -11, 15, 20.8);
+            for (const [tx2, tz2] of [[-37, -15], [-11, -15], [-37, 15], [-11, 15]]) tower(tx2, tz2, 3.6, 26, slate, null);
+            tower(-24, 0, 8, 38, T.banner[2], T.banner[1]);   // great tower with the royal banner
+            // great hall on the other flank, pitched roof
+            box(24, 7, -6, 26, 14, 30, stone);
+            { const [wx, wz] = L(24, -6); parts.push({ geo: uvBox(26, 14, 30), color: 0x8a2a2a, matrix: mat4(wx, gy + 14 + 5, wz, yaw, 19, 8, 32, 0, Math.PI / 4) }); }
+            for (let i = -2; i <= 2; i++) box(11.2, 8, -6 + i * 6, 0.6, 3.4, 1.4, 0x2a2430);   // hall windows
+            // chapel + well in the courtyard
+            box(24, 5, 24, 14, 10, 12, stone); cone(24, 13, 24, 9, 8, slate); tower(30, 30, 2.4, 16, 0x8a2a2a, T.banner[0]);
+            cyl(-2, 1, 28, 2.6, 2, dark);
+            const mesh = new THREE.Mesh(bakeMerge(parts), new THREE.MeshLambertMaterial({ vertexColors: true, map: TEX.stone }));
+            mesh.castShadow = gfxHigh; mesh.receiveShadow = true;
+            world.add(mesh);
+            if (flagBake.count()) world.add(flagBake.mesh());
+        }
         function addBirds(cx, cy, cz, r, color) {
             const birds = [];
             for (let i = 0; i < 6; i++) {
@@ -2481,11 +2575,12 @@
         //  torso → head / arms) so the figure can lean, tuck, glance, wave,
         //  blink and celebrate. Render-side only; the sim never looks here.
         // ===================================================================
-        let WHEEL_MAT = null, BODY_MAT = null, _kartEnv = null;
+        let WHEEL_MAT = null, BODY_MAT = null, EYE_MAT = null, _kartEnv = null;
         const WHEEL_GEO_CACHE = {};
         function initKartMats() {
             WHEEL_MAT = new THREE.MeshLambertMaterial({ vertexColors: true, combine: THREE.AddOperation, reflectivity: 0.32 });
             BODY_MAT = new THREE.MeshLambertMaterial({ vertexColors: true, combine: THREE.AddOperation, reflectivity: 0.14 });
+            EYE_MAT = new THREE.MeshBasicMaterial({ vertexColors: true });
         }
         function applyKartEnv() {
             if (_kartEnv) _kartEnv.dispose();
@@ -2587,8 +2682,10 @@
             // number roundels on the nose + sides
             const nt = numberTex(ch.num, B);
             const numM = new THREE.MeshBasicMaterial({ map: nt, transparent: true });
-            const n1 = new THREE.Mesh(new THREE.CircleGeometry(0.62, 16), numM); n1.position.set(0, 1.55, 2.6); n1.rotation.x = -0.9; g.add(n1);
-            for (const s of [1, -1]) { const n2 = new THREE.Mesh(new THREE.CircleGeometry(0.5, 16), numM); n2.position.set(1.9 * s, 1.25, -0.2); n2.rotation.y = s * Math.PI / 2; g.add(n2); }
+            { const c1 = new THREE.CircleGeometry(0.62, 16); c1.rotateX(-0.9); c1.translate(0, 1.55, 2.6);
+              const c2 = new THREE.CircleGeometry(0.5, 16); c2.rotateY(Math.PI / 2); c2.translate(1.9, 1.25, -0.2);
+              const c3 = new THREE.CircleGeometry(0.5, 16); c3.rotateY(-Math.PI / 2); c3.translate(-1.9, 1.25, -0.2);
+              const merged = mergeGeos([c1, c2, c3]); g.add(new THREE.Mesh(merged, numM)); }
 
             // ---- driver rig ----
             const sz = ch.size;
@@ -2631,9 +2728,11 @@
             const headMesh = new THREE.Mesh(bakeMerge(hp), BODY_MAT); headMesh.castShadow = gfxHigh; head.add(headMesh);
             const eyes = [];
             for (const s of [1, -1]) {
-                const e = new THREE.Group(); e.position.set(0.19 * s * sz, 0.4 * sz, 0.43 * sz);
-                const white = new THREE.Mesh(new THREE.SphereGeometry(0.11 * sz, 8, 6), new THREE.MeshBasicMaterial({ color: 0xffffff })); e.add(white);
-                const pupil = new THREE.Mesh(new THREE.SphereGeometry(0.055 * sz, 6, 5), new THREE.MeshBasicMaterial({ color: 0x1a1410 })); pupil.position.z = 0.07 * sz; e.add(pupil);
+                const e = new THREE.Mesh(bakeMerge([
+                    { geo: new THREE.SphereGeometry(0.11 * sz, 8, 6), color: 0xffffff, matrix: new THREE.Matrix4() },
+                    { geo: new THREE.SphereGeometry(0.055 * sz, 6, 5), color: 0x1a1410, matrix: mat4(0, 0, 0.07 * sz) },
+                ]), EYE_MAT);
+                e.position.set(0.19 * s * sz, 0.4 * sz, 0.43 * sz);
                 head.add(e); eyes.push(e);
             }
             const smile = new THREE.Mesh(new THREE.TorusGeometry(0.16 * sz, 0.035 * sz, 5, 10, Math.PI), new THREE.MeshBasicMaterial({ color: 0x5a2a20 }));
@@ -2643,7 +2742,8 @@
             rig.add(head);
             g.add(rig);
             // steering wheel (rotates with steer)
-            const wheel = new THREE.Mesh(new THREE.TorusGeometry(0.36, 0.09, 6, 14), new THREE.MeshLambertMaterial({ color: D }));
+            const wheel = new THREE.Mesh(new THREE.TorusGeometry(0.36, 0.09, 6, 14), BODY_MAT);
+            wheel.geometry = bakeMerge([{ geo: wheel.geometry, color: D, matrix: new THREE.Matrix4() }]);
             wheel.position.set(0, 1.78, 0.5); wheel.rotation.x = -0.6; g.add(wheel);
 
             // wheels
@@ -3856,6 +3956,12 @@
                     if (me) { net.isHost = me.host; net.mode = me.host ? 'host' : 'client'; net.myReady = me.ready; net.myCharIdx = me.charIdx; }
                     const hostP = net.players.find((p) => p.host);
                     if (hostP) net.hostId = hostP.id;
+                    // two racers can't share a driver: the later arrival auto-switches to a free one
+                    if (me && net.players.some((p) => p.id !== net.myId && p.charIdx === me.charIdx && p.id < net.myId) && !net.racing) {
+                        const taken = new Set(net.players.filter((p) => p.id !== net.myId).map((p) => p.charIdx));
+                        const free = CHARS.findIndex((c, i) => !taken.has(i));
+                        if (free >= 0) { net.myCharIdx = free; selectedCharIdx = free; savePrefs(); wsSend({ t: 'char', charIdx: free }); }
+                    }
                     if (typeof msg.track === 'number' && TRACKS[msg.track]) {
                         net.track = msg.track;
                         if (!net.racing && state === 'menu' && msg.track !== currentTrackIdx) { loadTrack(msg.track); buildKarts(); resetRace(); }
@@ -3866,7 +3972,7 @@
                     break;
                 }
                 case 'you-are-host': net.isHost = true; net.mode = 'host'; if (state === 'menu') renderLobby(); break;
-                case 'start': startOnlineRace(msg.seed, msg.players, false, msg.track); break;
+                case 'start': startOnlineRace(msg.seed, msg.players, false, msg.track, msg.laps); break;
                 case 'input': net.remoteCtrl[msg.from] = msg; break;
                 case 'snap':
                     if (msg.tick <= net.lastSnapTick) return;
@@ -3879,7 +3985,7 @@
                 case 'rejoined':
                     if (net.mode === 'host' && net.racing) {
                         hostConvertToRemote(msg.id);
-                        wsSend({ t: 'event', to: msg.id, e: 'rejoin-state', seed: raceSeed, players: net.racePlayers, track: currentTrackIdx, snap: netSnapshot() });
+                        wsSend({ t: 'event', to: msg.id, e: 'rejoin-state', seed: raceSeed, players: net.racePlayers, track: currentTrackIdx, laps: TOTAL_LAPS, snap: netSnapshot() });
                         showToast('They’re back!', '#9affc0');
                     }
                     break;
@@ -3949,8 +4055,9 @@
         }
 
         // ---------- race wiring ----------
-        function startOnlineRace(seed, players, skipCountdown, track) {
+        function startOnlineRace(seed, players, skipCountdown, track, laps) {
             if (typeof track === 'number' && TRACKS[track] && track !== currentTrackIdx) loadTrack(track);
+            if (Number.isInteger(laps) && laps >= 1 && laps <= 9) TOTAL_LAPS = laps;
             raceSeed = (seed >>> 0) || 1;
             net.players = players; net.racePlayers = players; net.racing = true; net.rejoinTries = 0;
             net.fireCount = 0; net.remoteCtrl = {}; net.snaps = []; net.lastSnapTick = 0;
@@ -3976,7 +4083,7 @@
             if (skipCountdown) state = 'racing'; else runCountdown();
         }
         function applyRejoinState(msg) {
-            if (!net.racing) startOnlineRace(msg.seed, msg.players, true, msg.track);
+            if (!net.racing) startOnlineRace(msg.seed, msg.players, true, msg.track, msg.laps);
             netRestore(msg.snap);
             state = 'racing';
             dom.countdown.classList.remove('on');
@@ -5227,7 +5334,7 @@
                     computeSteer();
                     if (state !== 'countdown') {
                         if (net.mode === 'client' && net.racing) netClientFrame(dt);
-                        else {
+                        else if (!window.__hold) {
                             simAcc += dt;
                             let steps = 0;
                             while (simAcc >= SIM_DT && steps < 5) { simTick(SIM_DT); simAcc -= SIM_DT; steps++; }

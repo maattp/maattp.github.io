@@ -59,7 +59,7 @@ try {
     const name = await ev(`__f51.TRACKS[${ti}].id`);
     await ev(`__f51.loadTrack(${ti}); __f51.buildKarts(); __f51.resetRace(); window.__freeCam = null;`);
     await sleep(700); await shot(`${name}-menu`);
-    await ev("document.getElementById('startScreen').classList.add('hidden')");
+    await ev("for (const id of ['startScreen','resultScreen','lobbyScreen']) document.getElementById(id).classList.add('hidden')");
     // overhead
     const b = await ev(`(() => { let mn=[1e9,1e9], mx=[-1e9,-1e9]; for (const e of __f51.TRACK.edges) for (const s of e.samples) { mn[0]=Math.min(mn[0],s.x); mn[1]=Math.min(mn[1],s.z); mx[0]=Math.max(mx[0],s.x); mx[1]=Math.max(mx[1],s.z);} return {mn,mx}; })()`);
     const cx = (b.mn[0] + b.mx[0]) / 2, cz = (b.mn[1] + b.mx[1]) / 2, span = Math.max(b.mx[0] - b.mn[0], b.mx[1] - b.mn[1]);
@@ -91,7 +91,8 @@ try {
     check(winner && winner.t > 24 && winner.t < 110, `${name}: winner lap time ${winner && winner.t}s in 30–110s`);
     await sleep(300); await shot(`${name}-finish`);
     await ev('__f51.quitToMenu()');
-    await sleep(300);
+    await sleep(2800);   // finishRace reveals the results overlay 2.4s later — let it pass
+    await ev("document.getElementById('resultScreen').classList.add('hidden')");
   }
   // phone viewport: menu + HUD framing
   await send('Emulation.setDeviceMetricsOverride', { width: 874, height: 402, deviceScaleFactor: 3, mobile: true });

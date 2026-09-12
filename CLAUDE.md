@@ -115,6 +115,19 @@ The version renders bottom-right. **Portrait** claw machine, Three.js + Rapier.
 See `apps/claw/CLAUDE.md` — the weak grip is the design, not a bug, and the grip
 constants must be re-derived with `tools/clawgrip.mjs` after any physics change.
 
+## Fable51 Kart App
+
+### Version Management
+
+**IMPORTANT:** Increment `APP_VER` in `/apps/fable51kart/index.html` once per
+PR (it gates online rooms), and bump `CACHE` in `/apps/fable51kart/sw.js`
+(`fable51kart-vN`) when a change must reach installed players promptly.
+
+True-3D successor to Fable Kart: graph-of-splines tracks (forks, gaps,
+helixes, tunnels), four maps, 8 humans online via the `Fable51Room` DO.
+`apps/fable51kart/CLAUDE.md` has the engine laws and the verify recipe
+(`node tools/f51verify.mjs`, `node tools/f51online.mjs`).
+
 ## Zombies App
 
 ### Version Management
