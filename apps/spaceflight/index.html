@@ -171,7 +171,7 @@
         // =====================================================================
         //  SPACE FLIGHT — anti-grav racing prototype (single track, CPUs)
         // =====================================================================
-        const SF_VER = 15;
+        const SF_VER = 16;
         const clamp = (v, a, b) => v < a ? a : v > b ? b : v;
         const lerp = (a, b, t) => a + (b - a) * t;
         const smoothstep = (a, b, x) => { const t = clamp((x - a) / (b - a), 0, 1); return t * t * (3 - 2 * t); };
@@ -189,8 +189,8 @@
         const DASH_SPEED = 210;
         const ACCEL = 46;               // u/s²  toward MAX_SPEED
         const BRAKE_DECEL = 150;
-        const TURN_RATE = 3.0;          // rad/s the nose turns at full steer (low speed)
-        const GRIP = 3.2;               // 1/s the nose realigns with the road when you let go
+        const TURN_RATE = 4.2;          // rad/s the nose turns at full steer (low speed)
+        const GRIP = 4.6;               // 1/s the nose realigns with the road when you let go
         const MAX_YAW = 0.38;           // rad, max relative heading at full steer
         const SLIDE_K = 0.6;            // share of v²·curv that becomes lateral slide (1 = physics, <1 = hover grip)
         const SLIDE_DAMP = 2.4;
@@ -644,8 +644,8 @@
             const glass = new THREE.MeshPhongMaterial({ color: 0x6fc4ff, shininess: 160, specular: 0xffffff });
             const add = (geo, mat, x, y, z, rx, ry, rz, sx, sy, sz) => { const m = new THREE.Mesh(geo, mat); m.position.set(x, y, z); if (rx || ry || rz) m.rotation.set(rx || 0, ry || 0, rz || 0); if (sx != null) m.scale.set(sx, sy == null ? sx : sy, sz == null ? sx : sz); g.add(m); return m; };
             // chassis plate (wide, thin) with a light underside lip
-            add(new THREE.BoxGeometry(5.6, 0.45, 7.4), dark, 0, 0.25, -0.4);
-            add(new THREE.BoxGeometry(5.0, 0.2, 6.8), light, 0, 0.5, -0.2);
+            add(new THREE.BoxGeometry(5.6, 0.45, 6.4), dark, 0, 0.25, 0.1);
+            add(new THREE.BoxGeometry(5.0, 0.2, 5.8), light, 0, 0.5, 0.3);
             // fuselage: box + squashed cone nose + tapered tail
             add(new THREE.BoxGeometry(2.4, 1.0, 5.2), body, 0, 1.0, -0.2);
             add(new THREE.ConeGeometry(1.35, 4.2, 4), body, 0, 0.95, 4.4, Math.PI / 2, Math.PI / 4, 0, 1.1, 1, 0.62);
@@ -663,8 +663,8 @@
                 add(new THREE.CylinderGeometry(0.62, 0.62, 0.3, 10), dark, side * 2.55, 0.85, 2.4, Math.PI / 2, 0, 0);   // intake mouth
                 add(new THREE.BoxGeometry(0.5, 0.12, 3.6), acc, side * 2.55, 1.86, -0.6);                              // pod stripe
                 // engine nozzles + glow rings
-                add(new THREE.CylinderGeometry(0.8, 0.95, 0.9, 10), dark, side * 2.55, 0.85, -3.5, Math.PI / 2, 0, 0);
-                const ring = add(new THREE.TorusGeometry(0.62, 0.12, 6, 12), new THREE.MeshBasicMaterial({ color: 0x5ad6ff }), side * 2.55, 0.85, -3.98);
+                add(new THREE.CylinderGeometry(0.85, 0.95, 1.0, 12), dark, side * 2.55, 0.85, -3.55, Math.PI / 2, 0, 0);
+                const ring = add(new THREE.TorusGeometry(0.62, 0.14, 8, 16), new THREE.MeshBasicMaterial({ color: 0x5ad6ff }), side * 2.55, 0.85, -4.12);
                 ring.name = 'ring';
             }
             // rear wing on two struts
@@ -678,7 +678,7 @@
             flame2.scale.set(4.5, 2.4, 1); flame2.position.set(0, 0.85, -6); g.add(flame2);
             const shield = new THREE.Mesh(new THREE.BoxGeometry(0.01, 0.01, 0.01), new THREE.MeshBasicMaterial({ transparent: true, opacity: 0, depthWrite: false })); g.add(shield);
             const under = new THREE.Sprite(new THREE.SpriteMaterial({ map: TEX.glow, color: def.col, transparent: true, opacity: 0.3, blending: THREE.AdditiveBlending, depthWrite: false }));
-            under.scale.set(8, 3.2, 1); under.position.set(0, -1.4, 0); g.add(under);
+            under.scale.set(9, 3.6, 1); under.position.set(0, -2.3, 0); g.add(under);
             const eng = g.children.filter((c) => c.name === 'ring');
             g.userData = { flame, flame2, shield, under, eng, hullMat: body };
             return g;
@@ -770,7 +770,7 @@
             // the nose, and as the road bends under you the nose stays put in the world, so `yaw`
             // drifts by minus the road's turn — let go in a bend and you run straight into the outer wall.
             const canSteer = racing && !k.finished;
-            const rate = TURN_RATE * (0.7 + 0.3 * st.grip) * (0.75 + 0.25 * clamp(1 - k.speed / BOOST_SPEED, 0, 1));
+            const rate = TURN_RATE * (0.7 + 0.3 * st.grip) * (0.85 + 0.15 * clamp(1 - k.speed / BOOST_SPEED, 0, 1));
             if (canSteer) k.yaw += k.ctrl.steer * rate * dt;
             else k.yaw += clamp(-k.yaw, -rate * dt, rate * dt);
             // hover grip: the nose realigns with the road on its own (~0.3 s) — steer to hold a bend, let go to straighten
@@ -838,7 +838,7 @@
                 else if (k.isPlayer) { flashText(k.laps === TOTAL_LAPS - 1 ? 'FINAL LAP!' : 'LAP ' + (k.laps + 1), '#9fe8ff'); sfxLap(); }
             }
             k.progress = k.laps * TRACK.len + k.s;
-            k.pos.copy(worldPos(k.s, k.lat, 1.7 + k.air, k.pos));
+            k.pos.copy(worldPos(k.s, k.lat, 2.6 + k.air, k.pos));
             k.rs = k.s; k.rlat = k.lat; k.rair = k.air;
         }
         function tryBoost(k) {
@@ -1021,14 +1021,14 @@
             renderPose(k);
             const f = frameAt(k.rs);
             const g = k.mesh, ud = g.userData;
-            g.position.copy(worldPos(k.rs, k.rlat, 1.7 + k.rair, _rp));   // flat hover: no bob (it read as bouncing)
+            g.position.copy(worldPos(k.rs, k.rlat, 2.6 + k.rair, _rp));   // flat hover: no bob (it read as bouncing)
             // orientation: track up, heading = tangent rotated by yaw about up, roll into the turn + slide
             _vy.set(f.ux, f.uy, f.uz);
             _vz.set(f.tx, f.ty, f.tz).applyAxisAngle(_vy, -k.yaw).normalize();
             _vx.crossVectors(_vy, _vz);
             _km.makeBasis(_vx, _vy, _vz);
             _kq.setFromRotationMatrix(_km);
-            if (instant) g.quaternion.copy(_kq); else g.quaternion.slerp(_kq, frameLerp(0.6, dt));
+            if (instant) g.quaternion.copy(_kq); else g.quaternion.slerp(_kq, frameLerp(0.85, dt));
             const roll = -k.yaw * 0.3;   // a lean into the turn only
             g.rotateZ(roll);
             // engine flames
@@ -1056,7 +1056,7 @@
             const f = frameAt(rs - 15, _frA);
             const fl = frameAt(rs + 30, _frB);
             const sp = clamp(k.speed / MAX_SPEED, 0, 1.6);
-            const back = 16 + sp * 2, up = 6.4;
+            const back = 16 + sp * 2, up = 7.2;
             // behind the machine along the track, slightly toward the lateral position, riding the track up-vector (banks tilt the camera)
             camPos.set(f.x + f.nx * rlat * 0.75 + f.ux * up, f.y + f.ny * rlat * 0.75 + f.uy * up, f.z + f.nz * rlat * 0.75 + f.uz * up);
             camPos.addScaledVector(_vz.set(f.tx, f.ty, f.tz), -(back - 15));
