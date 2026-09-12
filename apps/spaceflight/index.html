@@ -40,6 +40,7 @@
         .logo { text-align: center; font-size: 54px; font-weight: 900; font-style: italic; letter-spacing: -2px; line-height: 1;
             background: linear-gradient(180deg, #fff 0%, #9fe8ff 45%, #2e7cff 100%); -webkit-background-clip: text; background-clip: text; color: transparent;
             filter: drop-shadow(0 0 18px rgba(80, 160, 255, 0.55)); text-transform: uppercase; }
+        .logo .t { display: inline-block; margin-left: -7px; }   /* italic ink leans right of its box; nudge so the visible word centres */
         .logo small { display: block; font-size: 13px; letter-spacing: 6px; text-indent: 6px; text-align: center; font-style: normal; font-weight: 800; color: #ff5fd2; -webkit-text-fill-color: #ff5fd2; filter: none; margin-top: 8px; }   /* text-indent balances the trailing letter-spacing so it centres visually */
         .btn { margin-top: 22px; padding: 14px 44px; font-size: 20px; font-weight: 900; letter-spacing: 2px; border: 0; border-radius: 40px; color: #04030c;
             background: linear-gradient(180deg, #a6f3ff, #35b6ff); box-shadow: 0 0 24px rgba(53, 182, 255, 0.55), inset 0 -3px 0 rgba(0, 0, 0, 0.2); cursor: pointer; }
@@ -148,7 +149,7 @@
     <div id="rotate"><div class="ph">📱</div><div class="msg">ROTATE TO LANDSCAPE</div><div class="sub">Space Flight races sideways</div><div class="sub" id="rotVer">v6</div></div>
 
     <div id="startScreen" class="screen on">
-        <div class="logo">Space Flight<small>ANTI-GRAV GRAND PRIX</small></div>
+        <div class="logo"><span class="t">Space Flight</span><small>ANTI-GRAV GRAND PRIX</small></div>
         <div class="picker" id="trackPicker" style="margin-top:14px"></div>
         <div class="picker" id="picker"></div>
         <button class="btn" id="startBtn">RACE</button>
@@ -215,7 +216,7 @@
         // =====================================================================
         //  SPACE FLIGHT — anti-grav racing prototype (single track, CPUs)
         // =====================================================================
-        const SF_VER = 33;
+        const SF_VER = 34;
         const clamp = (v, a, b) => v < a ? a : v > b ? b : v;
         const lerp = (a, b, t) => a + (b - a) * t;
         const smoothstep = (a, b, x) => { const t = clamp((x - a) / (b - a), 0, 1); return t * t * (3 - 2 * t); };
