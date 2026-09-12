@@ -4297,7 +4297,7 @@
         const SNAP_EVERY = 5, INPUT_MS = 33, INTERP_MS = 130;
         // ⚠ APP_VER: increment ONCE PER PR. Folded into NET_VER so two
         // different builds refuse to share a room.
-        const APP_VER = 1;
+        const APP_VER = 2;
         function hash32(str) {
             let h = 2166136261 >>> 0;
             for (let i = 0; i < str.length; i++) { h ^= str.charCodeAt(i); h = Math.imul(h, 16777619); }
@@ -4967,8 +4967,11 @@
                 const floor = rs ? rs.y : k.y - 2;
                 camera.position.y = clamp(camera.position.y, floor + 2.4, floor + 7.5);
             } else {
-                const cg = groundInfo(camera.position.x, camera.position.y + 4, camera.position.z);
-                if (camera.position.y < cg.y + 2.4) camera.position.y = cg.y + 2.4;
+                // keep the camera out of the ground — but only ground at or below the kart's
+                // level: a deck passing overhead (underpass, viaduct) must never count as floor
+                const rs = roadSurface(camera.position.x, k.y + 1.5, camera.position.z, 2.5);
+                const floorY = rs ? rs.y : terrainY(camera.position.x, camera.position.z);
+                if (floorY <= k.y + 4 && camera.position.y < floorY + 2.4) camera.position.y = floorY + 2.4;
             }
             if (camShake > 0.001) { camera.position.x += vrand(-1, 1) * camShake; camera.position.y += vrand(-1, 1) * camShake; camera.position.z += vrand(-1, 1) * camShake; }
             camLook.set(k.pos.x + fx * 8.5, lerp(k.y + 1.9, aheadY + 1.9, 0.3), k.pos.z + fz * 8.5);
