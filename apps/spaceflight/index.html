@@ -171,7 +171,7 @@
         // =====================================================================
         //  SPACE FLIGHT — anti-grav racing prototype (single track, CPUs)
         // =====================================================================
-        const SF_VER = 18;
+        const SF_VER = 19;
         const clamp = (v, a, b) => v < a ? a : v > b ? b : v;
         const lerp = (a, b, t) => a + (b - a) * t;
         const smoothstep = (a, b, x) => { const t = clamp((x - a) / (b - a), 0, 1); return t * t * (3 - 2 * t); };
@@ -1032,12 +1032,12 @@
             g.position.copy(worldPos(k.rs, k.rlat, 2.6 + k.rair, _rp));   // flat hover: no bob (it read as bouncing)
             // orientation: track up, heading = tangent rotated by yaw about up, roll into the turn + slide
             _vy.set(f.ux, f.uy, f.uz);
-            _vz.set(f.tx, f.ty, f.tz).applyAxisAngle(_vy, -k.yaw).normalize();
+            _vz.set(f.tx, f.ty, f.tz).applyAxisAngle(_vy, k.yaw).normalize();   // +yaw moves toward +lat (the road's left), so the nose turns that way too
             _vx.crossVectors(_vy, _vz);
             _km.makeBasis(_vx, _vy, _vz);
             _kq.setFromRotationMatrix(_km);
             if (instant) g.quaternion.copy(_kq); else g.quaternion.slerp(_kq, frameLerp(0.85, dt));
-            const roll = -k.yaw * 0.3;   // a lean into the turn only
+            const roll = k.yaw * 0.3;   // a lean into the turn only
             g.rotateZ(roll);
             // engine flames
             const boosting = k.boostT > 0 || k.dashT > 0;
