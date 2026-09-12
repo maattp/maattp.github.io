@@ -88,6 +88,14 @@ Left half: slide to steer (relative to the touch start). Right side: BOOST
 button (or any right-half tap), BRAKE button. Keyboard: arrows/WASD, Space/Shift
 boost, Down/S brake, P pause.
 
+## Backlog (user-requested, not started)
+
+- **Audio pass.** The current WebAudio sound effects read as whiny and
+  annoying; replace them with punchier, lower-pitched effects. Write an epic
+  chiptune per map (Mute Orbit, Red Canyon, Glacier Loop, Nova Spire) — a
+  real composed track each, not the shared 4-chord loop — in the style of
+  Fable51 Kart's `composeSong` per-map songs.
+
 ## Next (after the playtest)
 
 Online (Fable Kart netcode port, 8 seats), more tracks (loops need parallel-
