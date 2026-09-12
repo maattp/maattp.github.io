@@ -20,6 +20,7 @@ try {
   await send('Emulation.setDeviceMetricsOverride', { width: 1280, height: 720, deviceScaleFactor: 1, mobile: false });
   await send('Page.navigate', { url: URL + '&v=' + Date.now() });
   for (let i = 0; i < 80; i++) { await sleep(250); const r = await send('Runtime.evaluate', { expression: '!!window.__f51', returnByValue: true }); if (r.result.value) break; }
+  await send('Runtime.evaluate', { expression: 'window.__skipIntro = true' });
   let n = 0;
   for (const expr of process.argv.slice(2)) {
     if (expr.startsWith('shot:')) { const r = await send('Page.captureScreenshot', { format: 'png' }); writeFileSync(expr.slice(5), Buffer.from(r.data, 'base64')); console.log('wrote', expr.slice(5)); continue; }

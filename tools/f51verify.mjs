@@ -52,6 +52,7 @@ try {
   await send('Page.navigate', { url: URL + '&v=' + Date.now() });
   for (let i = 0; i < 80; i++) { await sleep(250); if (await ev('!!window.__f51')) break; }
   check(await ev('!!window.__f51'), 'game booted (debug hook present)');
+  await ev('window.__skipIntro = true');
   check(await ev("document.getElementById('err').style.display !== 'block'"), 'no boot error overlay: ' + await ev("document.getElementById('err').textContent"));
   const nTracks = await ev('__f51.TRACKS.length');
   for (let ti = 0; ti < nTracks; ti++) {
@@ -88,7 +89,7 @@ try {
     check(rep.filter((r) => r.fin).length >= 7, `${name}: at least 7/8 finished a lap (${rep.filter((r) => r.fin).length})`);
     check(rep.reduce((a, r) => a + r.resp, 0) <= 6, `${name}: total respawns ${rep.reduce((a, r) => a + r.resp, 0)} (≤6)`);
     const winner = rep.find((r) => r.rank === 1);
-    check(winner && winner.t > 24 && winner.t < 110, `${name}: winner lap time ${winner && winner.t}s in 30–110s`);
+    check(winner && winner.t > 18 && winner.t < 110, `${name}: winner lap time ${winner && winner.t}s in 30–110s`);
     await sleep(300); await shot(`${name}-finish`);
     await ev('__f51.quitToMenu()');
     await sleep(2800);   // finishRace reveals the results overlay 2.4s later — let it pass

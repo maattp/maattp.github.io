@@ -11,7 +11,7 @@ const OUT = 'tools/data/f51shots/online'; mkdirSync(OUT, { recursive: true });
 let fail = 0; const check = (ok, msg) => { console.log((ok ? 'ok   ' : 'FAIL ') + msg); if (!ok) fail++; };
 async function browser(port, tag) {
   const proc = spawn(CHROME, [`--remote-debugging-port=${port}`, '--headless=new', '--use-gl=angle', '--use-angle=swiftshader', '--enable-unsafe-swiftshader',
-    '--autoplay-policy=no-user-gesture-required', '--disable-background-timer-throttling', '--window-size=700,400', '--no-first-run', `--user-data-dir=/tmp/f51-online-${tag}`, 'about:blank'], { stdio: 'ignore' });
+    '--autoplay-policy=no-user-gesture-required', '--disable-background-timer-throttling', '--window-size=480,270', '--no-first-run', `--user-data-dir=/tmp/f51-online-${tag}`, 'about:blank'], { stdio: 'ignore' });
   let page; for (let i = 0; i < 60 && !page; i++) { try { page = (await (await fetch(`http://127.0.0.1:${port}/json/list`)).json()).find((t) => t.type === 'page'); } catch {} if (!page) await sleep(300); }
   const ws = new WebSocket(page.webSocketDebuggerUrl);
   await new Promise((r, j) => { ws.addEventListener('open', r); ws.addEventListener('error', j); });
@@ -23,6 +23,7 @@ async function browser(port, tag) {
   await send('Runtime.enable'); await send('Page.enable'); await send('Network.enable'); await send('Network.setBypassServiceWorker', { bypass: true });
   await send('Page.navigate', { url: URL + '&v=' + Date.now() });
   for (let i = 0; i < 80; i++) { await sleep(250); if (await ev('return !!window.__f51')) break; }
+  await ev('window.__skipIntro = true; return 1;');
   return { proc, ev, shot, logs, tag };
 }
 const A = await browser(9231, 'host'), B = await browser(9232, 'client');
@@ -66,7 +67,11 @@ try {
   await A.shot('race'); await B.shot('race');
   // let the race play out (real time) up to 120 s
   let done = false;
-  for (let i = 0; i < 150 && !done; i++) { await sleep(2500); done = await B.ev("return __f51.player.finished") && await A.ev("return __f51.player.finished"); }
+  for (let i = 0; i < 150 && !done; i++) {
+    await sleep(2500);
+    done = await B.ev("return __f51.player.finished") && await A.ev("return __f51.player.finished");
+    if (i % 12 === 11) console.log('   t+' + ((i + 1) * 2.5) + 's host clock', await A.ev('return [__f51.raceClock.toFixed(0), __f51.player.laps, (__f51.player.progress/__f51.TRACK.lapRef).toFixed(2), __f51.player.finished, __f51.karts.filter(k=>k.finished).length]'), 'client', await B.ev('return [__f51.raceClock.toFixed(0), __f51.player.laps, (__f51.player.progress/__f51.TRACK.lapRef).toFixed(2), __f51.player.finished, __f51.state]'));
+  }
   check(done, 'both players finished the lap (host-confirmed on the client)');
   await sleep(3000);
   await A.shot('results'); await B.shot('results');
