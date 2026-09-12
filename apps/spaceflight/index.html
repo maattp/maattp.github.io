@@ -171,7 +171,7 @@
         // =====================================================================
         //  SPACE FLIGHT — anti-grav racing prototype (single track, CPUs)
         // =====================================================================
-        const SF_VER = 10;
+        const SF_VER = 12;
         const clamp = (v, a, b) => v < a ? a : v > b ? b : v;
         const lerp = (a, b, t) => a + (b - a) * t;
         const smoothstep = (a, b, x) => { const t = clamp((x - a) / (b - a), 0, 1); return t * t * (3 - 2 * t); };
@@ -189,10 +189,11 @@
         const DASH_SPEED = 210;
         const ACCEL = 46;               // u/s²  toward MAX_SPEED
         const BRAKE_DECEL = 150;
-        const TURN_RATE = 3.2;          // rad/s of relative heading
+        const TURN_RATE = 2.6;          // rad/s the nose turns at full steer (low speed)
         const MAX_YAW = 0.38;           // rad, max relative heading at full steer
-        const SLIDE_K = 0.85;           // share of v²·curv that becomes lateral slide (1 = physics, <1 = hover grip)
-        const SLIDE_DAMP = 1.7;
+        const SLIDE_K = 0.6;            // share of v²·curv that becomes lateral slide (1 = physics, <1 = hover grip)
+        const SLIDE_DAMP = 2.4;
+        const SLIDE_MAX = 45;           // never more slide than full steering can answer
         const ENERGY_MAX = 100;
         const BOOST_COST = 15;
         const BOOST_TIME = 2.2;
@@ -764,11 +765,16 @@
                 return;
             }
             const f = frameAt(k.s);
-            // --- steering: relative heading eases toward steer × MAX_YAW ---
+            // --- steering: a TRUE heading. `yaw` is the nose angle relative to the road; steering turns
+            // the nose, and as the road bends under you the nose stays put in the world, so `yaw`
+            // drifts by minus the road's turn — let go in a bend and you run straight into the outer wall.
             const canSteer = racing && !k.finished;
-            const targetYaw = canSteer ? k.ctrl.steer * MAX_YAW : 0;
-            const rate = TURN_RATE * (0.6 + 0.4 * st.grip);
-            k.yaw += clamp(targetYaw - k.yaw, -rate * dt, rate * dt);
+            const rate = TURN_RATE * (0.7 + 0.3 * st.grip) * (0.75 + 0.25 * clamp(1 - k.speed / BOOST_SPEED, 0, 1));
+            if (canSteer) k.yaw += k.ctrl.steer * rate * dt;
+            else k.yaw += clamp(-k.yaw, -rate * dt, rate * dt);
+            // banking turns the nose with the bend a little (the wall of the bowl carries you round)
+            k.yaw += Math.sign(f.curv) * Math.abs(Math.sin(f.bank)) * 0.9 * dt;
+            k.yaw = clamp(k.yaw, -1.15, 1.15);
             // --- speed ---
             const boosting = k.boostT > 0 || k.dashT > 0;
             const top = (k.boostT > 0 ? BOOST_SPEED : k.dashT > 0 ? DASH_SPEED : MAX_SPEED) * st.top;
@@ -779,23 +785,23 @@
             } else k.speed = Math.max(0, k.speed - 60 * dt);
             if (k.finished) k.speed = Math.min(k.speed, MAX_SPEED * 0.7);
             // steering scrubs speed
-            k.speed -= Math.abs(k.yaw) * k.speed * 0.09 * dt;
+            k.speed -= Math.abs(k.yaw) * k.speed * 0.05 * dt;
             // --- boost ---
             if (k.boostT > 0) k.boostT -= dt;
             if (k.dashT > 0) k.dashT -= dt;
             if (k.boostCool > 0) k.boostCool -= dt;
             if (k.ctrl.boost && canSteer) tryBoost(k);
             k.ctrl.boost = false;
-            // --- lateral: heading + centrifugal slide ---
-            const grip = (k.ctrl.brake ? 1.8 : 1) * st.grip;
-            // real centripetal demand v²κ, less what the banking supplies: with no steering you run wide
-            const centrif = f.curv * k.speed * k.speed * SLIDE_K * (1 - Math.abs(Math.sin(f.bank)) * 0.8);
-            k.slide += (centrif - k.slide * SLIDE_DAMP * grip) * dt;
+            // --- move along the nose; `slide` is only the shove from contacts and dies quickly ---
+            k.slide -= k.slide * 4 * dt;
             const vlat = k.speed * Math.sin(k.yaw) + k.slide;
             k.lat += vlat * dt;
             const along = k.speed * Math.cos(k.yaw);
             k.prevS = k.s;
             k.s = wrapS(k.s + along * dt);
+            // the road turned under us: keep the nose fixed in the world (finished machines cruise on autopilot)
+            if (!k.finished) { const f2 = frameAt(k.s, _frA); k.yaw -= wrapAngle(Math.atan2(f2.tx, f2.tz) - Math.atan2(f.tx, f.tz)); }
+            else k.yaw += clamp(-k.lat * 0.01 - k.yaw, -1.5 * dt, 1.5 * dt);
             // --- walls ---
             const lim = f.w - 2.4;
             if (Math.abs(k.lat) > lim) {
@@ -806,11 +812,11 @@
                     damage(k, dmg, 'wall');
                     k.speed *= clamp(1 - into * 0.004, 0.72, 0.97);
                     k.wallT = 0.18;
-                    k.yaw *= 0.5;            // scrub the heading into the wall, never flip it (that read as a bounce)
-                    k.slide = -k.slide * 0.25;
+                    k.yaw *= 0.35;           // the wall straightens the nose (no flip, no bounce)
+                    k.slide = 0;
                     if (k.isPlayer) { vibrate(20); camShake = Math.max(camShake, Math.min(1, into * 0.02)); sfxScrape(into); }
                     spawnSparks(k, Math.sign(k.lat), Math.min(14, 4 + into * 0.15));
-                } else { k.speed -= k.speed * 0.18 * dt; if (k.isPlayer && simTickNo % 4 === 0) spawnSparks(k, Math.sign(k.lat), 2); }   // grinding the wall bleeds speed, but you can steer off it
+                } else { k.speed -= k.speed * 0.18 * dt; if (Math.sign(k.yaw) === Math.sign(k.lat)) k.yaw *= 1 - 6 * dt; k.slide = 0; if (k.isPlayer && simTickNo % 4 === 0) spawnSparks(k, Math.sign(k.lat), 2); }   // grinding: bleed speed, nose eased along the wall
             }
             if (k.wallT > 0) k.wallT -= dt;
             if (k.hitT > 0) k.hitT -= dt;
@@ -842,6 +848,7 @@
         }
         let DBG_FREEBOOST = false;
         function damage(k, amount, kind) {
+            if (k.finished || k.dead > 0) return;   // the race is over for this machine; nothing can blow it up now
             k.energy -= amount;
             k.hitT = 0.25;
             if (k.isPlayer) { hitFlash(amount); }
@@ -862,8 +869,9 @@
                 const dl = a.lat - b.lat, dh = a.air - b.air;
                 if (Math.abs(ds) < 7.5 && Math.abs(dl) < 4.4 && Math.abs(dh) < 3) {
                     // separate laterally, trade speed; energy only goes for a real hit, not a brush
-                    const push = (4.4 - Math.abs(dl)) * 2.2 * (dl >= 0 ? 1 : -1);   // as a velocity, so the separation is smooth
-                    a.slide += push * dt * 30; b.slide -= push * dt * 30;
+                    // separate as a bounded velocity: nudge apart at up to 8 u/s, never accumulate past that
+                    const dir = dl >= 0 ? 1 : -1;
+                    if (a.slide * dir < 8) a.slide += 24 * dt * dir; if (b.slide * dir > -8) b.slide -= 24 * dt * dir;
                     const rel = Math.abs((a.speed * Math.sin(a.yaw) + a.slide) - (b.speed * Math.sin(b.yaw) + b.slide)) + Math.abs(a.speed - b.speed) * 0.3;
                     if (rel < 6) continue;
                     const dmg = clamp(0.8 + rel * 0.05, 0.8, 7);
@@ -913,11 +921,14 @@
                 if (ds > 0 && ds < 14 && Math.abs(o.lat - k.lat) < 4 && !o.isPlayer) k.ctrl.brakeTap = true;   // don't climb a rival's tail
             }
             // predictive lateral controller: cancel slide, close the gap
-            const vlat = k.speed * Math.sin(k.yaw) + k.slide;
             const err = targetLat - k.lat;
-            // lower skill = less of the slide cancelled (they run wide and kiss the wall) and slower reactions
-            const ff = k.speed > 1 ? clamp(Math.asin(clamp(-k.slide / k.speed, -0.9, 0.9)) / MAX_YAW, -1, 1) * (0.5 + 0.5 * ai.skill) : 0;
-            const want = clamp(ff + err * (0.05 + 0.05 * ai.skill) - vlat * 0.035, -1, 1);
+            const rate = TURN_RATE * (0.7 + 0.3 * k.def.stat.grip);
+            // desired nose angle: close the lateral gap over ~0.6 s, then steer the nose toward it;
+            // feed-forward the road's own turn rate (κ·v) — the unskilled feed less of it forward and run wide
+            const vdes = clamp(err * 1.6, -0.45 * k.speed, 0.45 * k.speed);
+            const yawDes = k.speed > 1 ? Math.asin(clamp(vdes / k.speed, -0.9, 0.9)) : 0;
+            const ffRoad = (f0.curv * k.speed) / rate * (0.6 + 0.4 * ai.skill);
+            const want = clamp((yawDes - k.yaw) * 3.5 + ffRoad, -1, 1);
             ai.jitter = lerp(ai.jitter, (Math.random() - 0.5) * (1 - ai.skill) * 0.8, 0.05);
             // lapses: every few seconds a drift of attention pulls the steering off for a moment
             ai.lapseT -= dt;
@@ -925,9 +936,10 @@
             if (ai.lapse > 0) ai.lapse -= dt;
             k.ctrl.steer = clamp(want + ai.jitter + (ai.lapse > 0 ? ai.lapseBias : 0), -1, 1);
             // brake only when the slide is about to carry it into the wall at speed
+            const vlat = k.speed * Math.sin(k.yaw) + k.slide;
             const margin = f0.w - 3 - Math.abs(k.lat + vlat * 0.35);
             const bendAhead = Math.abs(frameAt(k.s + 60 + k.speed * 0.5, _frA).curv);
-            const vmax = Math.sqrt(52 / Math.max(1e-4, bendAhead * SLIDE_K * 0.35));   // speed the slide stays steerable at
+            const vmax = rate * 0.8 / Math.max(1e-4, bendAhead);   // speed at which the nose can still follow the bend
             k.ctrl.brake = (margin < 0 && k.speed > 110 && ai.skill > 0.6) || !!k.ctrl.brakeTap || k.speed > vmax * (0.9 + 0.3 * ai.skill); k.ctrl.brakeTap = false;   // the unskilled brake late or not at all
             // boost on straights when energy allows (keep a reserve, F-Zero style)
             const straight = Math.abs(curvAhead) < 0.0012;
@@ -1002,7 +1014,7 @@
             _km.makeBasis(_vx, _vy, _vz);
             _kq.setFromRotationMatrix(_km);
             if (instant) g.quaternion.copy(_kq); else g.quaternion.slerp(_kq, frameLerp(0.6, dt));
-            const roll = -k.yaw * 0.45;   // a lean into the turn only; slide no longer rocks the hull
+            const roll = -k.yaw * 0.3;   // a lean into the turn only
             g.rotateZ(roll);
             // engine flames
             const boosting = k.boostT > 0 || k.dashT > 0;
