@@ -216,7 +216,7 @@
         // =====================================================================
         //  SPACE FLIGHT — anti-grav racing prototype (single track, CPUs)
         // =====================================================================
-        const SF_VER = 25;
+        const SF_VER = 27;
         const clamp = (v, a, b) => v < a ? a : v > b ? b : v;
         const lerp = (a, b, t) => a + (b - a) * t;
         const smoothstep = (a, b, x) => { const t = clamp((x - a) / (b - a), 0, 1); return t * t * (3 - 2 * t); };
@@ -303,16 +303,25 @@
         // Nova Spire: two corkscrew turns up a station tower, a long plunge off the top, a banked bowl,
         // a chicane and a sweeping return. Generated so the helix is exact.
         const SPIRE_PTS = (() => {
-            const pts = [[900, 0, -520, 36], [520, 0, -560, 36], [190, 3, -530, 34]];
-            const R = 300, cx = 0, cz = -220, turns = 2, n = 16;
-            for (let k = 0; k <= n; k++) {
-                const t = k / n, ang = -Math.PI / 2 - t * turns * Math.PI * 2;   // clockwise from the south point
-                pts.push([Math.round(cx + Math.cos(ang) * R), +(6 + t * 154).toFixed(1), Math.round(cz + Math.sin(ang) * R), 30]);
-            }
-            pts.push([-330, 162, -580, 34], [-760, 130, -440, 34], [-1000, 80, -120, 34], [-1010, 34, 240, 34],
-                     [-820, 22, 560, 32], [-460, 24, 700, 32], [-110, 30, 640, 30], [140, 38, 520, 28], [60, 44, 360, 28],
-                     [340, 46, 300, 30], [700, 40, 420, 32], [1060, 26, 300, 34], [1160, 10, -20, 36], [1060, 2, -330, 36]);
-            return pts;
+            const P = [];
+            const add = (x, y, z, w, roll) => P.push([x, y, z, w, roll || 0]);
+            // start straight, heading +x
+            add(-1000, 0, -620, 36); add(-600, 0, -620, 36); add(-250, 0, -620, 34);
+            // full vertical LOOP (R 150), drifting 110u sideways so the exit clears the entry
+            const R = 150, cx = 0, cy = R, z0 = -620;
+            for (let k = 0; k <= 8; k++) { const ph = k / 8 * Math.PI * 2; add(Math.round(cx + R * Math.sin(ph)), +(cy - R * Math.cos(ph)).toFixed(1), Math.round(z0 + 110 * k / 8), 30); }
+            // chicane
+            add(280, 0, -510, 34); add(480, 6, -420, 30); add(420, 14, -300, 30); add(560, 24, -200, 30);
+            // BARREL ROLL: a straight where the road rolls 360° around its own axis
+            add(300, 40, -90, 32, 0); add(100, 40, -90, 32, Math.PI); add(-100, 40, -90, 32, Math.PI * 2); add(-500, 40, -90, 32, Math.PI * 2);
+            // climbing bowl round the west
+            add(-800, 60, -20, 32, Math.PI * 2); add(-950, 95, 240, 32, Math.PI * 2); add(-780, 125, 480, 32, Math.PI * 2);
+            // plunge east across the north
+            add(-400, 135, 600, 34, Math.PI * 2); add(100, 85, 620, 34, Math.PI * 2); add(500, 40, 580, 34, Math.PI * 2);
+            // east sweep south, then the southern return and a hairpin into the start
+            add(800, 18, 340, 34, Math.PI * 2); add(900, 6, 20, 36, Math.PI * 2); add(820, 0, -300, 36, Math.PI * 2);
+            add(600, 0, -800, 36, Math.PI * 2); add(200, 0, -880, 36, Math.PI * 2); add(-400, 0, -880, 36, Math.PI * 2); add(-900, 0, -820, 36, Math.PI * 2); add(-1150, 0, -740, 36, Math.PI * 2);
+            return P;
         })();
         const TRACKS = [null, {
             name: 'Red Canyon', theme: THEME_CANYON, w: 33, pts: CANYON_PTS,
@@ -330,9 +339,9 @@
             ],
             dash: [], recharge: [{ f0: 0.44, f1: 0.51, lat: -14, hw: 12 }], lineF: 0.0,
         }, {
-            name: 'Nova Spire', theme: THEME_SPACE, w: 33, pts: SPIRE_PTS,
-            dash: [], recharge: [{ f0: 0.53, f1: 0.60, lat: 14, hw: 12 }], lineF: 0.0,
-            gates: [0.05, 0.12, 0.62, 0.72, 0.86],
+            name: 'Nova Spire', theme: THEME_SPACE, w: 33, pts: SPIRE_PTS, rmf: true,
+            dash: [], recharge: [{ f0: 0.72, f1: 0.78, lat: 14, hw: 12 }], lineF: 0.0,
+            gates: [0.05, 0.36, 0.40, 0.44, 0.62, 0.90],
         }];
         const TRACK_DEF = {
             name: 'Mute Orbit', theme: THEME_CITY,
@@ -388,7 +397,8 @@
                         out[c] = (t2 - t) / (t2 - t1) * B1 + (t - t1) / (t2 - t1) * B2;
                     }
                     const w = lerp(p1[3] || def.w, p2[3] || def.w, k / steps);
-                    raw.push({ x: out[0], y: out[1], z: out[2], w });
+                    const roll = lerp(p1[4] || 0, p2[4] || 0, k / steps);
+                    raw.push({ x: out[0], y: out[1], z: out[2], w, roll });
                 }
             }
             // resample the closed polyline at exactly SAMPLE_STEP so sample i sits at s = i·STEP
@@ -402,7 +412,7 @@
                     while (true) {
                         const a = raw[i % raw.length], b = raw[(i + 1) % raw.length];
                         const seg = Math.hypot(b.x - a.x, b.y - a.y, b.z - a.z);
-                        if (acc + seg >= target || i > raw.length * 2) { const t = seg > 0 ? clamp((target - acc) / seg, 0, 1) : 0; res.push({ x: lerp(a.x, b.x, t), y: lerp(a.y, b.y, t), z: lerp(a.z, b.z, t), w: lerp(a.w, b.w, t) }); break; }
+                        if (acc + seg >= target || i > raw.length * 2) { const t = seg > 0 ? clamp((target - acc) / seg, 0, 1) : 0; res.push({ x: lerp(a.x, b.x, t), y: lerp(a.y, b.y, t), z: lerp(a.z, b.z, t), w: lerp(a.w, b.w, t), roll: lerp(a.roll || 0, b.roll || 0, t) }); break; }
                         acc += seg; i++;
                     }
                 }
@@ -418,39 +428,58 @@
                 let tx = b.x - a.x, ty = b.y - a.y, tz = b.z - a.z;
                 const tl = Math.hypot(tx, ty, tz) || 1; tx /= tl; ty /= tl; tz /= tl;
                 if (i > 0) { const p = raw[i - 1]; s += Math.hypot(c.x - p.x, c.y - p.y, c.z - p.z); }
-                S.push({ x: c.x, y: c.y, z: c.z, w: c.w, tx, ty, tz, s, curv: 0, bank: 0, ux: 0, uy: 1, uz: 0, nx: 0, ny: 0, nz: 0, dash: null, recharge: null, jump: false });
+                S.push({ x: c.x, y: c.y, z: c.z, w: c.w, roll: c.roll || 0, tx, ty, tz, s, curv: 0, bank: 0, ux: 0, uy: 1, uz: 0, nx: 0, ny: 0, nz: 0, dash: null, recharge: null, jump: false });
             }
             const last = raw[m - 1], first = raw[0];
             TRACK.len = s + Math.hypot(first.x - last.x, first.y - last.y, first.z - last.z);
-            // signed horizontal curvature (rad per u), smoothed
+            // frames. Default: side is horizontal (tangent × world up), so the road stays upright.
+            // rmf: rotation-minimising frames carried along the curve — the road can loop and roll.
+            const sideOf = (q) => { let sx = q.tz, sy = 0, sz = -q.tx; const l = Math.hypot(sx, sz) || 1; return [sx / l, sy, sz / l]; };
+            const sides = [];
+            if (!def.rmf) for (const q of S) sides.push(sideOf(q));
+            else {
+                let sd = sideOf(S[0]);
+                for (let i = 0; i < m; i++) {
+                    const q = S[i];
+                    // project the previous side off this tangent (parallel transport)
+                    const d = sd[0] * q.tx + sd[1] * q.ty + sd[2] * q.tz;
+                    let nx = sd[0] - q.tx * d, ny = sd[1] - q.ty * d, nz = sd[2] - q.tz * d;
+                    const l = Math.hypot(nx, ny, nz) || 1; nx /= l; ny /= l; nz /= l;
+                    sd = [nx, ny, nz]; sides.push(sd);
+                }
+                // closure: the transported side must come back to the first one — spread the twist along the lap
+                const q0 = S[0], first = sides[0];
+                const d = sd[0] * q0.tx + sd[1] * q0.ty + sd[2] * q0.tz;
+                let ex = sd[0] - q0.tx * d, ey = sd[1] - q0.ty * d, ez = sd[2] - q0.tz * d; const el = Math.hypot(ex, ey, ez) || 1; ex /= el; ey /= el; ez /= el;
+                const cx = first[1] * ez - first[2] * ey, cy = first[2] * ex - first[0] * ez, cz = first[0] * ey - first[1] * ex;
+                const twist = Math.atan2(cx * q0.tx + cy * q0.ty + cz * q0.tz, first[0] * ex + first[1] * ey + first[2] * ez);
+                for (let i = 0; i < m; i++) { const q = S[i], a = -twist * (i / m), c = Math.cos(a), sn = Math.sin(a), v = sides[i]; const u = [q.ty * v[2] - q.tz * v[1], q.tz * v[0] - q.tx * v[2], q.tx * v[1] - q.ty * v[0]]; sides[i] = [v[0] * c + u[0] * sn, v[1] * c + u[1] * sn, v[2] * c + u[2] * sn]; }
+            }
+            // signed curvature about each frame's up (turn rate the pilot must match), smoothed, → bank
             for (let i = 0; i < m; i++) {
-                const a = S[(i - 1 + m) % m], b = S[(i + 1) % m];
-                const cross = a.tx * b.tz - a.tz * b.tx;
+                const a = S[(i - 1 + m) % m], b = S[(i + 1) % m], v = sides[i], q = S[i];
+                const ux = q.ty * v[2] - q.tz * v[1], uy = q.tz * v[0] - q.tx * v[2], uz = q.tx * v[1] - q.ty * v[0];
+                const cx2 = a.ty * b.tz - a.tz * b.ty, cy2 = a.tz * b.tx - a.tx * b.tz, cz2 = a.tx * b.ty - a.ty * b.tx;
                 const ds = Math.max(0.01, (b.s - a.s + TRACK.len) % TRACK.len);
-                S[i].curv = Math.asin(clamp(cross, -1, 1)) / ds;
+                S[i].curv = Math.asin(clamp(-(cx2 * ux + cy2 * uy + cz2 * uz), -1, 1)) / ds;
             }
             for (let pass = 0; pass < 3; pass++) {
                 const src = S.map((q) => q.curv);
                 for (let i = 0; i < m; i++) { let acc = 0; for (let j = -6; j <= 6; j++) acc += src[(i + j + m) % m]; S[i].curv = acc / 13; }
             }
-            // bank from curvature (outer edge rises), eased
             for (let i = 0; i < m; i++) S[i].bank = clamp(S[i].curv * 34, -0.55, 0.55);
             for (let pass = 0; pass < 3; pass++) {
                 const src = S.map((q) => q.bank);
                 for (let i = 0; i < m; i++) { let acc = 0; for (let j = -8; j <= 8; j++) acc += src[(i + j + m) % m]; S[i].bank = acc / 17; }
             }
-            // frames: side = tangent × worldUp rotated about tangent by bank; up = side × tangent
-            for (const q of S) {
-                let sx = q.tz, sy = 0, sz = -q.tx;   // right-hand side, horizontal
-                const sl = Math.hypot(sx, sz) || 1; sx /= sl; sz /= sl;
-                // up before bank = tangent × side (points to +y on a flat road)
-                let ux = q.ty * sz - q.tz * sy, uy = q.tz * sx - q.tx * sz, uz = q.tx * sy - q.ty * sx;
-                const ul = Math.hypot(ux, uy, uz) || 1; ux /= ul; uy /= ul; uz /= ul;
-                // rotate side & up about the tangent by the bank angle
-                const cb = Math.cos(q.bank), sb = Math.sin(q.bank);
-                const nsx = sx * cb + ux * sb, nsy = sy * cb + uy * sb, nsz = sz * cb + uz * sb;
-                const nux = ux * cb - sx * sb, nuy = uy * cb - sy * sb, nuz = uz * cb - sz * sb;
-                q.nx = nsx; q.ny = nsy; q.nz = nsz; q.ux = nux; q.uy = nuy; q.uz = nuz;
+            // rotate side & up about the tangent by bank + designed roll
+            for (let i = 0; i < m; i++) {
+                const q = S[i], v = sides[i];
+                const sx = v[0], sy = v[1], sz = v[2];
+                const ux = q.ty * sz - q.tz * sy, uy = q.tz * sx - q.tx * sz, uz = q.tx * sy - q.ty * sx;
+                const ang = q.bank + q.roll, cb = Math.cos(ang), sb = Math.sin(ang);
+                q.nx = sx * cb + ux * sb; q.ny = sy * cb + uy * sb; q.nz = sz * cb + uz * sb;
+                q.ux = ux * cb - sx * sb; q.uy = uy * cb - sy * sb; q.uz = uz * cb - sz * sb;
             }
             // features
             for (const d of def.dash) { const q = sampleAt(d.f * TRACK.len); q.dash = { lat: d.lat }; }
@@ -1203,8 +1232,13 @@
                     const dir = dl >= 0 ? 1 : -1;
                     if (a.slide * dir < 6) a.slide += 18 * dt * dir; if (b.slide * dir > -6) b.slide -= 18 * dt * dir;
                     const rel = Math.abs((a.speed * Math.sin(a.yaw) + a.slide) - (b.speed * Math.sin(b.yaw) + b.slide)) + Math.abs(a.speed - b.speed) * 0.3;
-                    if (rel < 6 || launch) continue;
-                    const dmg = clamp(0.8 + rel * 0.05, 0.8, 7);
+                    if (launch) continue;
+                    // every contact costs: a base hit plus the impact, and the rammer scrubs speed — slamming
+                    // into rivals is a real trade, not a free shove
+                    const dmg = clamp(2.5 + rel * 0.12, 2.5, 14);
+                    const rammerA = ds < 0, rammerB = ds > 0;   // the one behind did the ramming
+                    if (a.hitT <= 0.15) a.speed *= rammerA ? 0.88 : 0.96;
+                    if (b.hitT <= 0.15) b.speed *= rammerB ? 0.88 : 0.96;
                     const boostA = a.boostT > 0 || a.dashT > 0, boostB = b.boostT > 0 || b.dashT > 0;
                     if (a.hitT <= 0.15) damage(a, dmg * (boostB ? 1.8 : 1) * (boostA ? 0.5 : 1), 'ram');
                     if (b.hitT <= 0.15) damage(b, dmg * (boostA ? 1.8 : 1) * (boostB ? 0.5 : 1), 'ram');
@@ -1392,7 +1426,7 @@
             if (k.dead > 0) { camPos.addScaledVector(_vy.set(f.ux, f.uy, f.uz), 10); }
             const t = instant || !camInit || !Number.isFinite(camera.position.x) ? 1 : frameLerp(0.35, dt);   // a NaN camera never lerps back
             camera.position.lerp(camPos, t);
-            camera.up.set(f.ux, f.uy, f.uz).lerp(new THREE.Vector3(0, 1, 0), 0.25).normalize();
+            camera.up.set(f.ux, f.uy, f.uz).lerp(new THREE.Vector3(0, 1, 0), TRACK.def.rmf ? 0 : 0.25).normalize();
             if (camShake > 0) { camera.position.x += (Math.random() - 0.5) * camShake * 1.2; camera.position.y += (Math.random() - 0.5) * camShake * 1.2; camShake = Math.max(0, camShake - dt * 3.5); }
             camera.lookAt(camLook);
             camFovKick += (0 - camFovKick) * frameLerp(0.1, dt || SIM_DT);
