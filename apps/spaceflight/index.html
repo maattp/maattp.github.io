@@ -171,7 +171,7 @@
         // =====================================================================
         //  SPACE FLIGHT — anti-grav racing prototype (single track, CPUs)
         // =====================================================================
-        const SF_VER = 7;
+        const SF_VER = 8;
         const clamp = (v, a, b) => v < a ? a : v > b ? b : v;
         const lerp = (a, b, t) => a + (b - a) * t;
         const smoothstep = (a, b, x) => { const t = clamp((x - a) / (b - a), 0, 1); return t * t * (3 - 2 * t); };
@@ -203,14 +203,15 @@
         // ---- racers ------------------------------------------------------------
         const MACHINES = [
             // top = top speed, acc = acceleration, grip = slide damping / steering authority (each ~0.85–1.15)
+            // every machine spends the same budget: top + acc + grip = 3.00
             { name: 'Blue Falcon',   col: 0x2f7dff, acc: 0xffd54a, stat: { top: 1.00, acc: 1.00, grip: 1.00 } },
-            { name: 'Golden Fox',    col: 0xffb52a, acc: 0xffffff, stat: { top: 0.93, acc: 1.22, grip: 0.86 } },
-            { name: 'Wild Goose',    col: 0x35d66b, acc: 0x0a3d1f, stat: { top: 0.96, acc: 0.92, grip: 1.16 } },
-            { name: 'Fire Stingray', col: 0xff3fb0, acc: 0xffffff, stat: { top: 1.10, acc: 0.82, grip: 0.92 } },
-            { name: 'White Cat',     col: 0xf2f2f2, acc: 0xff4a4a, stat: { top: 0.95, acc: 1.08, grip: 1.08 } },
-            { name: 'Iron Tiger',    col: 0x8f5a2a, acc: 0xffa53a, stat: { top: 1.03, acc: 0.88, grip: 1.05 } },
-            { name: 'Night Thunder', col: 0x7a3dff, acc: 0x5af0ff, stat: { top: 1.06, acc: 0.95, grip: 0.90 } },
-            { name: 'Red Gazelle',   col: 0xff3b3b, acc: 0xffe28a, stat: { top: 0.98, acc: 1.12, grip: 0.97 } },
+            { name: 'Golden Fox',    col: 0xffb52a, acc: 0xffffff, stat: { top: 0.92, acc: 1.20, grip: 0.88 } },
+            { name: 'Wild Goose',    col: 0x35d66b, acc: 0x0a3d1f, stat: { top: 0.95, acc: 0.90, grip: 1.15 } },
+            { name: 'Fire Stingray', col: 0xff3fb0, acc: 0xffffff, stat: { top: 1.12, acc: 0.80, grip: 1.08 } },
+            { name: 'White Cat',     col: 0xf2f2f2, acc: 0xff4a4a, stat: { top: 0.94, acc: 1.06, grip: 1.00 } },
+            { name: 'Iron Tiger',    col: 0x8f5a2a, acc: 0xffa53a, stat: { top: 1.04, acc: 0.86, grip: 1.10 } },
+            { name: 'Night Thunder', col: 0x7a3dff, acc: 0x5af0ff, stat: { top: 1.08, acc: 0.98, grip: 0.94 } },
+            { name: 'Red Gazelle',   col: 0xff3b3b, acc: 0xffe28a, stat: { top: 0.98, acc: 1.12, grip: 0.90 } },
         ];
         const hx = (c) => '#' + c.toString(16).padStart(6, '0');
 
@@ -1265,7 +1266,7 @@
         function quitToMenu() { state = 'menu'; dom.pauseScreen.classList.remove('on'); dom.resultScreen.classList.remove('on'); dom.hud.classList.remove('on'); dom.pauseBtn.classList.remove('on'); dom.startScreen.classList.add('on'); resetRace(); }
 
         function buildPicker() {
-            const bar = (v) => { const n = clamp(Math.round((v - 0.8) / 0.4 * 5), 1, 5); return '●'.repeat(n) + '○'.repeat(5 - n); };
+            const bar = (v) => { const n = clamp(Math.round(1 + (v - 0.8) / 0.4 * 4), 1, 5); return '●'.repeat(n) + '○'.repeat(5 - n); };   // 0.8 → 1 dot, 1.0 → 3, 1.2 → 5
             dom.picker.innerHTML = MACHINES.map((m, i) => `<div class="pick${i === selectedDef ? ' sel' : ''}" data-i="${i}"><div class="sw" style="background:${hx(m.col)}"></div>${m.name.split(' ')[0]}<div class="st">SPD ${bar(m.stat.top)}<br>ACC ${bar(m.stat.acc)}<br>GRP ${bar(m.stat.grip)}</div></div>`).join('');
             dom.picker.querySelectorAll('.pick').forEach((el) => el.addEventListener('click', () => { selectedDef = +el.dataset.i; try { localStorage.setItem('sf_machine', selectedDef); } catch (e) {} buildPicker(); buildMachines(); resetRace(); }));
         }
