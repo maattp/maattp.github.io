@@ -170,7 +170,7 @@
         // =====================================================================
         //  SPACE FLIGHT — anti-grav racing prototype (single track, CPUs)
         // =====================================================================
-        const SF_VER = 1;
+        const SF_VER = 2;
         const clamp = (v, a, b) => v < a ? a : v > b ? b : v;
         const lerp = (a, b, t) => a + (b - a) * t;
         const smoothstep = (a, b, x) => { const t = clamp((x - a) / (b - a), 0, 1); return t * t * (3 - 2 * t); };
@@ -669,7 +669,7 @@
                 idx, def, name: def.name, isPlayer, ai: isPlayer ? null : makeAI(idx),
                 s: 0, lat: 0, yaw: 0, speed: 0, slide: 0, air: 0, vair: 0, jumpT: 0,
                 energy: ENERGY_MAX, boostT: 0, boostCool: 0, dashT: 0, brake: false,
-                laps: 0, progress: 0, rank: idx + 1, finished: false, finishTime: 0, dead: 0, out: false, wallT: 0, hitT: 0,
+                laps: 0, progress: 0, rank: idx + 1, finished: false, finishTime: 0, dead: 0, out: false /* reserved: retire-on-destruction mode after the playtest */, wallT: 0, hitT: 0,
                 ctrl: { steer: 0, boost: false, brake: false },
                 pos: new THREE.Vector3(), prevS: 0, lastLapStart: 0, bestLap: Infinity, lapTimes: [],
                 mesh: createMachineMesh(def), bob: Math.random() * 6.28, spark: 0, rechargeT: 0,
@@ -696,7 +696,8 @@
                 const k = machines[i];
                 // grid: 2 wide, staggered back from the line
                 const slot = machines.length - 1 - i, row = Math.floor(slot / 2), col = (slot % 2) ? 1 : -1;   // the player (idx 0) starts at the back
-                k.s = wrapS(TRACK.lineS + 14 + (3 - row) * 16); k.lat = col * 7;   // grid sits past the line: the first crossing is a real lap k.yaw = 0; k.speed = 0; k.slide = 0; k.air = 0; k.vair = 0; k.jumpT = 0;
+                k.s = wrapS(TRACK.lineS + 14 + (3 - row) * 16); k.lat = col * 7;   // grid sits past the line: the first crossing is a real lap
+                k.yaw = 0; k.speed = 0; k.slide = 0; k.air = 0; k.vair = 0; k.jumpT = 0;
                 k.energy = ENERGY_MAX; k.boostT = 0; k.boostCool = 0; k.dashT = 0; k.laps = 0; k.progress = 0; k.finished = false; k.finishTime = 0; k.dead = 0; k.out = false;
                 k.lapTimes = []; k.bestLap = Infinity; k.lastLapStart = 0; k.prevS = k.s; k.wallT = 0; k.hitT = 0; k.rechargeT = 0;
                 k.mesh.visible = true;

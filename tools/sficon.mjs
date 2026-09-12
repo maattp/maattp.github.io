@@ -1,5 +1,5 @@
 // Renders apps/spaceflight/gen-icon.html headless and writes the Home Screen PNGs.
-//   python3 -m http.server 8000 &  node tools/f51icon.mjs
+//   python3 -m http.server 8000 &  node tools/sficon.mjs
 import { spawn } from 'node:child_process';
 import { writeFileSync } from 'node:fs';
 import { setTimeout as sleep } from 'node:timers/promises';
