@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html><head><meta charset="UTF-8"><title>Space Flight icon</title></head>
+<body style="background:#222;margin:0">
+<canvas id="c" width="512" height="512"></canvas>
+<script>
+// Renders the Home Screen icon: a hover machine streaking over a neon track under a ringed planet.
+const c = document.getElementById('c'), g = c.getContext('2d'), S = 512;
+function draw() {
+    // sky
+    const sky = g.createLinearGradient(0, 0, 0, S); sky.addColorStop(0, '#1a1040'); sky.addColorStop(0.55, '#0a0620'); sky.addColorStop(1, '#04030c');
+    g.fillStyle = sky; g.fillRect(0, 0, S, S);
+    // stars
+    for (let i = 0; i < 90; i++) { g.fillStyle = `rgba(255,255,255,${0.3 + Math.random() * 0.7})`; g.fillRect(Math.random() * S, Math.random() * S * 0.7, 2 + Math.random() * 2, 2 + Math.random() * 2); }
+    // planet
+    const px = 380, py = 130, pr = 78;
+    const pg = g.createRadialGradient(px - 25, py - 25, 10, px, py, pr); pg.addColorStop(0, '#c9a6ff'); pg.addColorStop(1, '#4a2a9a');
+    g.fillStyle = pg; g.beginPath(); g.arc(px, py, pr, 0, 6.28); g.fill();
+    g.strokeStyle = 'rgba(255,176,232,0.7)'; g.lineWidth = 10; g.beginPath(); g.ellipse(px, py, pr * 1.7, pr * 0.42, -0.35, 0, 6.28); g.stroke();
+    // track: a swooping banked ribbon
+    g.save();
+    const road = new Path2D('M -60 520 C 120 380, 200 420, 300 300 C 380 210, 460 250, 560 160');
+    g.lineCap = 'round';
+    g.strokeStyle = '#1c2140'; g.lineWidth = 150; g.stroke(road);
+    g.strokeStyle = '#2a3058'; g.lineWidth = 122; g.stroke(road);
+    g.strokeStyle = 'rgba(90,214,255,0.9)'; g.lineWidth = 8; g.setLineDash([]); g.translate(-64, 0); g.stroke(road); g.translate(128, 0); g.strokeStyle = 'rgba(255,111,210,0.9)'; g.stroke(road); g.translate(-64, 0);
+    g.strokeStyle = 'rgba(159,232,255,0.6)'; g.lineWidth = 3; g.setLineDash([26, 26]); g.stroke(road);
+    g.restore();
+    // machine (blue falcon-ish) with glow trail
+    g.save(); g.translate(232, 330); g.rotate(-0.62);
+    const tr = g.createLinearGradient(-260, 0, 0, 0); tr.addColorStop(0, 'rgba(255,179,90,0)'); tr.addColorStop(1, 'rgba(255,179,90,0.85)');
+    g.fillStyle = tr; g.beginPath(); g.moveTo(-260, -8); g.lineTo(0, -22); g.lineTo(0, 22); g.lineTo(-260, 8); g.closePath(); g.fill();
+    g.shadowColor = 'rgba(80,160,255,0.9)'; g.shadowBlur = 24;
+    g.fillStyle = '#2f7dff'; g.beginPath(); g.moveTo(96, 0); g.lineTo(20, -30); g.lineTo(-60, -34); g.lineTo(-70, 0); g.lineTo(-60, 34); g.lineTo(20, 30); g.closePath(); g.fill();
+    g.shadowBlur = 0;
+    g.fillStyle = '#ffd54a'; g.fillRect(-50, -14, 60, 8); g.fillRect(-50, 6, 60, 8);
+    g.fillStyle = '#9fe8ff'; g.beginPath(); g.ellipse(22, 0, 26, 12, 0, 0, 6.28); g.fill();
+    g.fillStyle = '#2f7dff'; g.beginPath(); g.moveTo(-40, -34); g.lineTo(-90, -60); g.lineTo(-70, -30); g.closePath(); g.fill(); g.beginPath(); g.moveTo(-40, 34); g.lineTo(-90, 60); g.lineTo(-70, 30); g.closePath(); g.fill();
+    g.fillStyle = '#ffb35a'; g.beginPath(); g.arc(-72, 0, 12, 0, 6.28); g.fill();
+    g.restore();
+}
+draw();
+const out = {};
+for (const size of [512, 192, 180]) {
+    const cc = document.createElement('canvas'); cc.width = cc.height = size;
+    const gg = cc.getContext('2d');
+    if (size !== 512) { gg.drawImage(c, 0, 0, size, size); }
+    else gg.drawImage(c, 0, 0);
+    out[size] = cc.toDataURL('image/png');
+}
+window.icons = out; window.iconsReady = true;
+</script>
+</body></html>
