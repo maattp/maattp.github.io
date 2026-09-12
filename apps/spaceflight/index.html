@@ -52,7 +52,7 @@
         .pick .st { font-size: 7px; letter-spacing: 0; opacity: 0.75; line-height: 1.35; font-weight: 700; }
         .pick.sel { border-color: #fff; background: rgba(255,255,255,0.14); box-shadow: 0 0 14px rgba(255,255,255,0.25); }
         .hint { margin-top: 16px; font-size: 12px; opacity: 0.6; letter-spacing: 1px; text-align: center; line-height: 1.6; }
-        #ver { position: fixed; right: calc(env(safe-area-inset-right) + 10px); bottom: calc(env(safe-area-inset-bottom) + 8px); font-size: 11px; opacity: 0.45; z-index: 51; }
+        #ver { position: fixed; right: calc(env(safe-area-inset-right) + 24px); bottom: calc(env(safe-area-inset-bottom) + 18px); font-size: 12px; opacity: 0.6; z-index: 51; }
 
         #hud { position: fixed; inset: 0; z-index: 10; pointer-events: none; display: none; }
         #hud.on { display: block; }
@@ -171,7 +171,7 @@
         // =====================================================================
         //  SPACE FLIGHT — anti-grav racing prototype (single track, CPUs)
         // =====================================================================
-        const SF_VER = 17;
+        const SF_VER = 18;
         const clamp = (v, a, b) => v < a ? a : v > b ? b : v;
         const lerp = (a, b, t) => a + (b - a) * t;
         const smoothstep = (a, b, x) => { const t = clamp((x - a) / (b - a), 0, 1); return t * t * (3 - 2 * t); };
@@ -873,11 +873,16 @@
                 if (a.dead > 0 || b.dead > 0 || a.out || b.out) continue;
                 let ds = a.s - b.s; if (ds > TRACK.len / 2) ds -= TRACK.len; if (ds < -TRACK.len / 2) ds += TRACK.len;
                 const dl = a.lat - b.lat, dh = a.air - b.air;
-                if (Math.abs(ds) < 7.5 && Math.abs(dl) < 4.4 && Math.abs(dh) < 3) {
-                    // separate laterally, trade speed; energy only goes for a real hit, not a brush
-                    // separate as a bounded velocity: nudge apart at up to 8 u/s, never accumulate past that
+                // hitbox matches the model: ~7.2u wide (wing to wing), ~10.5u long
+                const HW = 7.2, HL = 10.5;
+                if (Math.abs(ds) < HL && Math.abs(dl) < HW && Math.abs(dh) < 3) {
+                    // never let two hulls interpenetrate: resolve the overlap along whichever axis is shallower
+                    const ovL = HW - Math.abs(dl), ovS = HL - Math.abs(ds);
+                    if (ovL <= ovS) { const c = ovL * 0.5 * (dl >= 0 ? 1 : -1); a.lat += c; b.lat -= c; }
+                    else { const c = ovS * 0.5 * (ds >= 0 ? 1 : -1); a.s = wrapS(a.s + c); b.s = wrapS(b.s - c); }
+                    // and a gentle sideways shove so they drift apart rather than ride together
                     const dir = dl >= 0 ? 1 : -1;
-                    if (a.slide * dir < 8) a.slide += 24 * dt * dir; if (b.slide * dir > -8) b.slide -= 24 * dt * dir;
+                    if (a.slide * dir < 6) a.slide += 18 * dt * dir; if (b.slide * dir > -6) b.slide -= 18 * dt * dir;
                     const rel = Math.abs((a.speed * Math.sin(a.yaw) + a.slide) - (b.speed * Math.sin(b.yaw) + b.slide)) + Math.abs(a.speed - b.speed) * 0.3;
                     if (rel < 6 || launch) continue;
                     const dmg = clamp(0.8 + rel * 0.05, 0.8, 7);
