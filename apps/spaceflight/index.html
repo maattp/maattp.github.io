@@ -120,7 +120,7 @@
 </head>
 <body>
     <div id="game"></div>
-    <div id="rotate"><div class="ph">📱</div><div class="msg">ROTATE TO LANDSCAPE</div><div class="sub">Space Flight races sideways</div></div>
+    <div id="rotate"><div class="ph">📱</div><div class="msg">ROTATE TO LANDSCAPE</div><div class="sub">Space Flight races sideways</div><div class="sub" id="rotVer">v6</div></div>
 
     <div id="startScreen" class="screen on">
         <div class="logo">Space Flight<small>ANTI-GRAV GRAND PRIX</small></div>
@@ -170,7 +170,7 @@
         // =====================================================================
         //  SPACE FLIGHT — anti-grav racing prototype (single track, CPUs)
         // =====================================================================
-        const SF_VER = 5;
+        const SF_VER = 6;
         const clamp = (v, a, b) => v < a ? a : v > b ? b : v;
         const lerp = (a, b, t) => a + (b - a) * t;
         const smoothstep = (a, b, x) => { const t = clamp((x - a) / (b - a), 0, 1); return t * t * (3 - 2 * t); };
@@ -1286,7 +1286,7 @@
             setupInput();
             resetRace();
             dom.loadMsg.style.display = 'none';
-            dom.ver.textContent = 'v' + SF_VER;
+            dom.ver.textContent = 'v' + SF_VER; document.getElementById('rotVer').textContent = 'v' + SF_VER;
             dom.muteBtn.textContent = muted ? '🔇' : '🔊';
             dom.startBtn.addEventListener('click', () => { initAudio(); startGame(); });
             dom.againBtn.addEventListener('click', () => { initAudio(); startGame(); });
