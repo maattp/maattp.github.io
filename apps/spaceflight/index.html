@@ -171,7 +171,7 @@
         // =====================================================================
         //  SPACE FLIGHT — anti-grav racing prototype (single track, CPUs)
         // =====================================================================
-        const SF_VER = 9;
+        const SF_VER = 10;
         const clamp = (v, a, b) => v < a ? a : v > b ? b : v;
         const lerp = (a, b, t) => a + (b - a) * t;
         const smoothstep = (a, b, x) => { const t = clamp((x - a) / (b - a), 0, 1); return t * t * (3 - 2 * t); };
@@ -238,7 +238,7 @@
                 // wide left back toward the start
                 [-720, 4, 760, 24], [-860, 14, 560, 22], [-840, 20, 300, 22],
                 // chicane then down onto the grid
-                [-700, 18, 140, 18], [-760, 12, -40, 18], [-680, 6, -220, 22], [-600, 2, -340, 26],
+                [-700, 18, 140, 18], [-760, 12, -40, 18], [-700, 6, -220, 22], [-660, 1, -400, 26],   // the last point sits on the start straight's line so the grid is dead straight
             ],
             // features by fraction of lap length
             dash: [],
