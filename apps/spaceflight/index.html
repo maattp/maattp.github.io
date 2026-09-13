@@ -223,7 +223,7 @@
         // =====================================================================
         //  SPACE FLIGHT — anti-grav racing prototype (single track, CPUs)
         // =====================================================================
-        const SF_VER = 46;
+        const SF_VER = 47;
         const clamp = (v, a, b) => v < a ? a : v > b ? b : v;
         const lerp = (a, b, t) => a + (b - a) * t;
         const smoothstep = (a, b, x) => { const t = clamp((x - a) / (b - a), 0, 1); return t * t * (3 - 2 * t); };
@@ -1332,7 +1332,13 @@
         //  ITEMS & OBSTACLES — boxes hand out a homing missile, a 3-shot laser or
         //  nitro (bigger, cheaper boosts for 12 s); spike strips halve your speed.
         // =====================================================================
-        const ITEM_ICON = { missile: '🚀', laser: '⚡', nitro: '💜' };
+        // the laser icon is drawn, not an emoji: a beam with a hot core firing from a small emitter
+        const LASER_SVG = '<svg viewBox="0 0 40 40" width="34" height="34" style="display:block"><defs><linearGradient id="lz" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#ff3b5c"/><stop offset="1" stop-color="#ffd0d8"/></linearGradient></defs>'
+            + '<line x1="9" y1="31" x2="35" y2="7" stroke="#ff3b5c" stroke-width="7" stroke-linecap="round" opacity="0.35"/>'
+            + '<line x1="9" y1="31" x2="35" y2="7" stroke="url(#lz)" stroke-width="3" stroke-linecap="round"/>'
+            + '<line x1="9" y1="31" x2="35" y2="7" stroke="#fff" stroke-width="1.2" stroke-linecap="round" opacity="0.9"/>'
+            + '<circle cx="9" cy="31" r="4.2" fill="#2a2a3a" stroke="#ff9aa8" stroke-width="1.5"/><circle cx="35" cy="7" r="2.2" fill="#fff"/></svg>';
+        const ITEM_ICON = { missile: '🚀', laser: LASER_SVG, nitro: '💜' };
         const missiles = [];
         function resetItems() {
             for (const m of missiles) { scene.remove(m.mesh); m.mesh.traverse((o) => { if (o.geometry) o.geometry.dispose(); if (o.material) o.material.dispose(); }); } missiles.length = 0;
