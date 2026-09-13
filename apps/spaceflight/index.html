@@ -78,16 +78,22 @@
         #energyFill.low { animation: blink 0.5s steps(2) infinite; }
         @keyframes blink { to { opacity: 0.45; } }
         #energyMark { position: absolute; top: 0; bottom: 0; width: 2px; background: rgba(255,255,255,0.7); }
-        #boostBtn, #brakeBtn { position: absolute; bottom: calc(env(safe-area-inset-bottom) + 18px); border-radius: 50%; pointer-events: auto;
+        #boostBtn, #itemBtn { position: absolute; bottom: calc(env(safe-area-inset-bottom) + 18px); border-radius: 50%; pointer-events: auto;
             display: flex; align-items: center; justify-content: center; font-weight: 900; letter-spacing: 1px; font-style: italic;
             border: 2px solid rgba(255,255,255,0.3); box-shadow: 0 6px 20px rgba(0,0,0,0.5), inset 0 2px 0 rgba(255,255,255,0.25); }
         #boostBtn { right: calc(env(safe-area-inset-right) + 18px); width: 108px; height: 108px; font-size: 20px;
             background: radial-gradient(circle at 40% 35%, #ffb35a, #d84a1c 70%, #6a1c0c); color: #fff; }
         #boostBtn.held { transform: scale(0.94); filter: brightness(1.25); }
         #boostBtn.cold { filter: grayscale(0.7) brightness(0.55); }
-        #brakeBtn { right: calc(env(safe-area-inset-right) + 18px); bottom: calc(env(safe-area-inset-bottom) + 140px); width: 70px; height: 70px; font-size: 12px;
+        #itemBtn { right: calc(env(safe-area-inset-right) + 18px); bottom: calc(env(safe-area-inset-bottom) + 140px); width: 74px; height: 74px; font-size: 26px; flex-direction: column; gap: 0;
             background: radial-gradient(circle at 40% 35%, #6fa4ff, #2a4fd6 70%, #101d55); color: #fff; }
-        #brakeBtn.held { transform: scale(0.94); filter: brightness(1.25); }
+        #itemBtn.held { transform: scale(0.94); filter: brightness(1.25); }
+        #itemBtn.empty { opacity: 0.35; font-size: 11px; letter-spacing: 1px; }
+        #itemBtn .ch { font-size: 11px; font-weight: 900; letter-spacing: 1px; margin-top: -2px; }
+        #itemBtn.rolling { animation: roll 0.12s steps(1) infinite; }
+        @keyframes roll { 0% { filter: hue-rotate(0deg); } 50% { filter: hue-rotate(180deg); } }
+        #nitroTag { position: absolute; right: calc(env(safe-area-inset-right) + 24px); bottom: calc(env(safe-area-inset-bottom) + 224px); font-size: 11px; font-weight: 900; letter-spacing: 2px; color: #d98cff; text-shadow: 0 0 10px #a04cff; display: none; }
+        #nitroTag.on { display: block; }
         #stick { position: absolute; width: 120px; height: 46px; border-radius: 23px; background: rgba(255,255,255,0.09); border: 1px solid rgba(255,255,255,0.18); opacity: 0; transition: opacity 0.15s; }
         #stick.on { opacity: 1; }
         #stickDot { position: absolute; left: 50%; top: 50%; width: 34px; height: 34px; border-radius: 50%; background: rgba(159,232,255,0.85); transform: translate(-50%, -50%); box-shadow: 0 0 12px rgba(159,232,255,0.8); }
@@ -199,7 +205,8 @@
         <div id="netInd"></div>
         <div id="stick"><div id="stickDot"></div></div>
         <canvas id="minimap" width="300" height="220"></canvas>
-        <div id="brakeBtn">BRAKE</div>
+        <div id="itemBtn" class="empty">ITEM</div>
+        <div id="nitroTag">NITRO ×</div>
         <div id="boostBtn">BOOST</div>
     </div>
     <div id="countdown"><span id="countText">3</span></div>
@@ -216,7 +223,7 @@
         // =====================================================================
         //  SPACE FLIGHT — anti-grav racing prototype (single track, CPUs)
         // =====================================================================
-        const SF_VER = 38;
+        const SF_VER = 39;
         const clamp = (v, a, b) => v < a ? a : v > b ? b : v;
         const lerp = (a, b, t) => a + (b - a) * t;
         const smoothstep = (a, b, x) => { const t = clamp((x - a) / (b - a), 0, 1); return t * t * (3 - 2 * t); };
@@ -364,7 +371,7 @@
         };
         TRACKS[0] = TRACK_DEF;
         const SAMPLE_STEP = 4;
-        const TRACK = { samples: [], len: 0, step: SAMPLE_STEP, def: TRACK_DEF };
+        const TRACK = { samples: [], len: 0, step: SAMPLE_STEP, def: TRACK_DEF, spikes: [] };
         let THEME = THEME_CITY, currentTrack = 0;
 
         function buildTrack(def) {
@@ -589,11 +596,11 @@
             });
         }
 
-        const WORLD = { anims: [], dashMeshes: [], rails: null, cityLights: [] };
+        const WORLD = { anims: [], dashMeshes: [], rails: null, cityLights: [], boxes: [] };
         function disposeWorld() {
             world.traverse((o) => { if (o.geometry) o.geometry.dispose(); if (o.material && o.material.map && o.material.map._own) o.material.map.dispose(); if (o.material && !Array.isArray(o.material)) o.material.dispose(); });
             while (world.children.length) world.remove(world.children[0]);
-            WORLD.anims = []; WORLD.dashMeshes = []; WORLD.cityLights = [];
+            WORLD.anims = []; WORLD.dashMeshes = []; WORLD.cityLights = []; WORLD.boxes = [];
         }
         function buildWorld() {
             disposeWorld();
@@ -627,7 +634,7 @@
             g.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
             g.setAttribute('color', new THREE.Float32BufferAttribute(col, 3));
             g.setIndex(idx); g.computeVertexNormals();
-            const mat = new THREE.MeshPhongMaterial({ map: TEX.road, vertexColors: true, shininess: 90, specular: 0x88aaff, side: THREE.DoubleSide });
+            const mat = new THREE.MeshPhongMaterial({ map: TEX.road, vertexColors: true, shininess: 10, specular: 0x1a2030, side: THREE.DoubleSide });   // matte: the glossy road read as a mirror
             const road = new THREE.Mesh(g, mat); road.name = 'road'; world.add(road);
             // underside / skirt: a dark slab under the track so it reads as a floating structure
             const sp = [], si = [];
@@ -729,6 +736,33 @@
             base.count = n; base.instanceMatrix.needsUpdate = true; world.add(base);
         }
         function buildFeatures() {
+            // item boxes: three rows of three, and spike strips covering half the road, on stretches clear of the pits
+            const def = TRACK.def, L = TRACK.len;
+            const nearPit = (f) => (def.recharge || []).some((r) => f > r.f0 - 0.03 && f < r.f1 + 0.03);
+            const pick = (cands) => cands.filter((f) => !nearPit(f));
+            const boxRows = def.boxes || pick([0.2, 0.24, 0.5, 0.54, 0.8, 0.84]).slice(0, 3);
+            for (const f of boxRows) for (const lat of [-14, 0, 14]) {
+                const g = new THREE.Group();
+                g.add(new THREE.Mesh(new THREE.OctahedronGeometry(2.4, 0), new THREE.MeshLambertMaterial({ color: 0xfff2a0, emissive: 0x806a20 })));
+                const glow = new THREE.Sprite(new THREE.SpriteMaterial({ map: TEX.glow, color: 0xffe14a, transparent: true, opacity: 0.6, blending: THREE.AdditiveBlending, depthWrite: false })); glow.scale.set(9, 9, 1); g.add(glow);
+                g.position.copy(worldPos(f * L, lat, 4.2, new THREE.Vector3())); world.add(g);
+                WORLD.boxes.push({ s: f * L, lat, active: true, t: 0, mesh: g });
+            }
+            TRACK.spikes = [];
+            const spikeF = def.spikes || pick([0.33, 0.37, 0.63, 0.67, 0.92, 0.95]).slice(0, 3);
+            spikeF.forEach((f, i) => {
+                const fr = frameAt(f * L), side = i % 2 ? -1 : 1, hw = fr.w * 0.5, lat = side * (fr.w - hw);
+                TRACK.spikes.push({ s: f * L, lat, hw });
+                const plate = new THREE.Mesh(new THREE.BoxGeometry(hw * 2, 0.5, 9), new THREE.MeshLambertMaterial({ color: 0x3a2a2a }));
+                plate.position.copy(worldPos(f * L, lat, 0.25, new THREE.Vector3()));
+                _m4.makeBasis(new THREE.Vector3(fr.nx, fr.ny, fr.nz), new THREE.Vector3(fr.ux, fr.uy, fr.uz), new THREE.Vector3(fr.tx, fr.ty, fr.tz)); plate.quaternion.setFromRotationMatrix(_m4); world.add(plate);
+                for (let k = -hw + 2; k <= hw - 2; k += 3) for (const dz of [-2.5, 0, 2.5]) {
+                    const spike = new THREE.Mesh(new THREE.ConeGeometry(0.7, 2.6, 5), new THREE.MeshLambertMaterial({ color: 0xd8d8e0, emissive: 0x402020 }));
+                    spike.position.copy(worldPos(f * L + dz, lat + k, 1.6, new THREE.Vector3())); spike.quaternion.copy(plate.quaternion); world.add(spike);
+                }
+                const warn = new THREE.Mesh(new THREE.PlaneGeometry(hw * 2, 3), new THREE.MeshBasicMaterial({ color: 0xff5a3c, transparent: true, opacity: 0.7, side: THREE.DoubleSide }));
+                warn.position.copy(worldPos(f * L - 30, lat, 0.15, new THREE.Vector3())); warn.quaternion.copy(plate.quaternion); warn.rotateX(-Math.PI / 2); world.add(warn);
+            });
             for (const d of TRACK.def.dash) {
                 const s = d.f * TRACK.len;
                 const plate = new THREE.Mesh(new THREE.PlaneGeometry(12, 14), new THREE.MeshBasicMaterial({ map: TEX.dash, transparent: true, depthWrite: false, color: 0xffd54a }));
@@ -1023,7 +1057,8 @@
                 s: 0, lat: 0, yaw: 0, speed: 0, slide: 0, air: 0, vair: 0, jumpT: 0,
                 energy: ENERGY_MAX, boostT: 0, boostCool: 0, dashT: 0, brake: false,
                 laps: 0, progress: 0, rank: idx + 1, finished: false, finishTime: 0, dead: 0, out: false /* reserved: retire-on-destruction mode after the playtest */, wallT: 0, hitT: 0,
-                ctrl: { steer: 0, boost: false, brake: false },
+                ctrl: { steer: 0, boost: false, brake: false, use: false },
+                item: null, charges: 0, nitroT: 0, stunT: 0, hits: 0, spikeCd: 0,
                 pos: new THREE.Vector3(), prevS: 0, lastLapStart: 0, bestLap: Infinity, lapTimes: [],
                 mesh: createMachineMesh(def), bob: Math.random() * 6.28, spark: 0, rechargeT: 0,
             };
@@ -1063,10 +1098,11 @@
                 k.yaw = 0; k.speed = 0; k.slide = 0; k.air = 0; k.vair = 0; k.jumpT = 0;
                 k.energy = ENERGY_MAX; k.boostT = 0; k.boostCool = 0; k.dashT = 0; k.laps = 0; k.progress = 0; k.finished = false; k.finishTime = 0; k.dead = 0; k.out = false;
                 k.lapTimes = []; k.bestLap = Infinity; k.lastLapStart = 0; k.prevS = k.s; k.prevLat = k.lat; k.prevAir = 0; k.wallT = 0; k.hitT = 0; k.rechargeT = 0;
+                k.item = null; k.charges = 0; k.nitroT = 0; k.stunT = 0; k.hits = 0; k.spikeCd = 0; k._hitsSeen = 0;
                 k.mesh.visible = true;
                 syncMachineMesh(k, true);
             }
-            // reverse grid order so the player starts last (F-Zero style: fight forward)
+            resetItems();
             updateRankings();
             updateCamera(true, 0);
             updateHUD(true);
@@ -1086,6 +1122,7 @@
                 updateMachine(k, dt);
             }
             resolveCollisions(dt);
+            updateMissiles(dt); updateBoxes(dt); updateBeams(dt);
             updateRankings();
             updateParticles(dt);
             if (net.mode === 'host' && net.racing && simTickNo % SNAP_EVERY === 0) hostSendSnap();
@@ -1095,8 +1132,9 @@
         function readPlayerControls(k, dt) {
             if (k._auto) { if (!k.ai) k.ai = makeAI(k.idx); aiDrive(k, dt || SIM_DT); return; }   // test harness autopilot (tools/sfverify, sfonline)
             const steer = clamp((keySteer || touchSteer) * steerSign, -1, 1);
-            k.ctrl.steer = steer; k.ctrl.boost = boostHeld; k.ctrl.brake = brakeHeld;
+            k.ctrl.steer = steer; k.ctrl.boost = boostHeld; k.ctrl.brake = false; k.ctrl.use = itemPressed;
             if (boostHeld) boostHeld = false;   // one press = one boost
+            itemPressed = false;
         }
         function updateMachine(k, dt) {
             const st = k.def.stat;
@@ -1113,8 +1151,9 @@
             // the nose, and as the road bends under you the nose stays put in the world, so `yaw`
             // drifts by minus the road's turn — let go in a bend and you run straight into the outer wall.
             const canSteer = racing && !k.finished;
-            const rate = TURN_RATE * (0.7 + 0.3 * st.grip) * (0.85 + 0.15 * clamp(1 - k.speed / BOOST_SPEED, 0, 1));
+            const rate = TURN_RATE * (0.7 + 0.3 * st.grip) * (0.85 + 0.15 * clamp(1 - k.speed / BOOST_SPEED, 0, 1)) * (k.stunT > 0 ? 0.3 : 1);
             if (canSteer) k.yaw += k.ctrl.steer * rate * dt;
+            if (k.stunT > 0) { k.stunT -= dt; k.yaw += Math.sin(animT * 30) * 1.2 * dt; }   // a missile hit shakes the nose
             else k.yaw += clamp(-k.yaw, -rate * dt, rate * dt);
             // hover grip: the nose realigns with the road on its own (~0.3 s) — steer to hold a bend, let go to straighten
             k.yaw -= k.yaw * GRIP * st.grip * dt;
@@ -1123,7 +1162,7 @@
             k.yaw = clamp(k.yaw, -1.15, 1.15);
             // --- speed ---
             const boosting = k.boostT > 0 || k.dashT > 0;
-            const top = (k.boostT > 0 ? BOOST_SPEED : k.dashT > 0 ? DASH_SPEED : MAX_SPEED) * st.top;
+            const top = (k.boostT > 0 ? BOOST_SPEED * (k.nitroT > 0 ? 1.18 : 1) : k.dashT > 0 ? DASH_SPEED : MAX_SPEED) * st.top;
             if (canSteer || (state === 'finished' && !k.isPlayer)) {
                 if (k.ctrl.brake && !boosting) k.speed = Math.max(0, k.speed - BRAKE_DECEL * dt);
                 else if (k.speed < top) k.speed = Math.min(top, k.speed + (boosting ? ACCEL * 2.6 : ACCEL * st.acc) * dt);
@@ -1135,6 +1174,8 @@
             // --- boost ---
             if (k.boostT > 0) k.boostT -= dt;
             if (k.dashT > 0) k.dashT -= dt;
+            if (k.nitroT > 0) k.nitroT -= dt;
+            if (k.spikeCd > 0) k.spikeCd -= dt;
             if (k.boostCool > 0) k.boostCool -= dt;
             if (k.ctrl.boost && canSteer) tryBoost(k);
             k.ctrl.boost = false;
@@ -1172,6 +1213,21 @@
                 k.energy = Math.min(ENERGY_MAX, k.energy + RECHARGE_RATE * dt); k.rechargeT = 0.2;
             }
             if (k.rechargeT > 0) k.rechargeT -= dt;
+            // --- spike strips: ride over one and you lose half your speed ---
+            if (k.spikeCd <= 0 && k.dead <= 0) for (const sp of TRACK.spikes) {
+                let ds = k.s - sp.s; if (ds > TRACK.len / 2) ds -= TRACK.len; if (ds < -TRACK.len / 2) ds += TRACK.len;
+                if (Math.abs(ds) < 5 && Math.abs(k.lat - sp.lat) < sp.hw) { k.speed *= 0.5; k.spikeCd = 1.2; damage(k, 3, 'wall'); spawnSparks(k, 1, 10); spawnSparks(k, -1, 10); if (k.isPlayer) { sfxBump(); camShake = Math.max(camShake, 0.6); vibrate(30); flashText('SPIKES!', '#ff9a3c'); } break; }
+            }
+            // --- item boxes and item use (host / solo authority) ---
+            if (net.mode !== 'client') {
+                if (!k.item && k.dead <= 0) for (const b of WORLD.boxes) {
+                    if (!b.active) continue;
+                    let ds = k.s - b.s; if (ds > TRACK.len / 2) ds -= TRACK.len; if (ds < -TRACK.len / 2) ds += TRACK.len;
+                    if (Math.abs(ds) < 6 && Math.abs(k.lat - b.lat) < 6) { b.active = false; b.t = 6; giveItem(k); break; }
+                }
+                if (k.ctrl.use && k.item && racing && !k.finished && k.dead <= 0) useItem(k);
+            }
+            k.ctrl.use = false;
             // --- progress / laps ---
             const dS = k.s - k.prevS;
             if (dS < -TRACK.len * 0.5 && !k.finished && racing && net.mode !== 'client') {   // crossed the wrap (line at s=0); online the host counts
@@ -1188,10 +1244,11 @@
             if (k.laps < BOOST_MIN_LAP && !DBG_FREEBOOST) { if (k.isPlayer) { toast('BOOST UNLOCKS AFTER LAP 1'); sfxDeny(); } return false; }
             if (k.boostCool > 0 || k.boostT > 0.3) return false;
             if (k.energy <= BOOST_COST) { if (k.isPlayer) { toast('NOT ENOUGH ENERGY'); sfxDeny(); } return false; }
+            const nitro = k.nitroT > 0;   // nitro: bigger, longer, cheaper boosts
             if (k.isPlayer && net.mode === 'client') { net.boostCount++; net._predictedAt = performance.now(); }   // the host deducts the energy; we predict the speed
-            else k.energy -= BOOST_COST;
-            k.boostT = BOOST_TIME; k.boostCool = 0.45;
-            k.speed = Math.min(BOOST_SPEED, k.speed + 28);   // the kick you feel the instant you press it
+            else k.energy -= nitro ? BOOST_COST * 0.6 : BOOST_COST;
+            k.boostT = BOOST_TIME + (nitro ? 1.2 : 0); k.boostCool = 0.45;
+            k.speed = Math.min(BOOST_SPEED * (nitro ? 1.18 : 1), k.speed + (nitro ? 40 : 28));   // the kick you feel the instant you press it
             if (k.isPlayer) { sfxBoost(); camFovKick = 8; vibrate(25); }
             return true;
         }
@@ -1249,6 +1306,103 @@
                 }
             }
         }
+        // =====================================================================
+        //  ITEMS & OBSTACLES — boxes hand out a homing missile, a 3-shot laser or
+        //  nitro (bigger, cheaper boosts for 12 s); spike strips halve your speed.
+        // =====================================================================
+        const ITEM_ICON = { missile: '🚀', laser: '⚡', nitro: '💜' };
+        const missiles = [];
+        function resetItems() {
+            for (const m of missiles) scene.remove(m.mesh); missiles.length = 0;
+            for (const b of WORLD.boxes) { b.active = true; b.t = 0; }
+            if (dom.itemBtn) { dom.itemBtn.textContent = 'ITEM'; dom.itemBtn.className = 'empty'; }
+        }
+        function giveItem(k) {
+            // the back of the field gets the missile more often; nitro favours the front
+            const r = Math.random(), back = k.rank / Math.max(1, machines.length);
+            k.item = r < 0.35 + back * 0.25 ? 'missile' : r < 0.72 ? 'laser' : 'nitro';
+            k.charges = k.item === 'laser' ? 3 : 1;
+            if (k.isPlayer) { sfxLap(); vibrate(15); dom.itemBtn.classList.add('rolling'); setTimeout(() => dom.itemBtn.classList.remove('rolling'), 500); }
+        }
+        function machineAhead(k, maxDs, maxLat) {
+            let best = null, bd = Infinity;
+            for (const o of machines) {
+                if (o === k || o.dead > 0 || o.finished) continue;
+                let ds = o.s - k.s; if (ds > TRACK.len / 2) ds -= TRACK.len; if (ds < -TRACK.len / 2) ds += TRACK.len;
+                if (ds > 4 && ds < maxDs && Math.abs(o.lat - k.lat) < (maxLat || 99) && ds < bd) { bd = ds; best = o; }
+            }
+            return best;
+        }
+        function useItem(k) {
+            if (!k.item) return;
+            if (k.item === 'nitro') { k.nitroT = 12; k.item = null; k.charges = 0; if (k.isPlayer) { flashText('NITRO!', '#d98cff'); sfxBoost(); } }
+            else if (k.item === 'missile') { fireMissile(k); k.item = null; k.charges = 0; }
+            else if (k.item === 'laser') { fireLaser(k); k.charges--; if (k.charges <= 0) k.item = null; }
+        }
+        function fireMissile(k) {
+            const target = machineAhead(k, 1400);
+            missiles.push({ s: wrapS(k.s + 9), lat: k.lat, speed: Math.max(k.speed, 60) + 170, owner: k, target, life: 5, mesh: makeMissileMesh() });
+            if (k.isPlayer) { sfxBoost(); vibrate(20); }
+        }
+        function fireLaser(k) {
+            const target = machineAhead(k, 260, 9);
+            const from = worldPos(k.s, k.lat, 3.2, new THREE.Vector3());
+            const to = target ? worldPos(target.s, target.lat, 3.2, new THREE.Vector3()) : worldPos(k.s + 260, k.lat, 3.2, new THREE.Vector3());
+            laserBeam(from, to, k.def.acc);
+            if (target) hitMachine(target, 8, 0.85, 0.25, k);
+            if (k.isPlayer) { tone('square', 1800, 600, 0.18, 0.2); burst(0.15, 0.2, { type: 'highpass', f0: 3000 }); vibrate(12); }
+        }
+        function hitMachine(t, dmg, speedMul, stun, by) {
+            t.hits++;
+            if (net.mode !== 'client') damage(t, dmg, 'hit');
+            if (t.kind !== 'remote') { t.speed *= speedMul; t.stunT = Math.max(t.stunT, stun); }   // a remote pilot applies the knock from the snapshot's hit counter
+            spawnSparksAt(t.pos, 14, 0xff6a3c);
+            if (t.isPlayer) { sfxBump(); camShake = Math.max(camShake, 0.9); vibrate(40); flashText(by && by.name ? 'HIT BY ' + by.name.toUpperCase() : 'HIT!', '#ff5a5a'); }
+        }
+        function updateMissiles(dt) {
+            for (let i = missiles.length - 1; i >= 0; i--) {
+                const m = missiles[i];
+                m.life -= dt;
+                if (m.target && (m.target.dead > 0 || m.target.finished)) m.target = null;
+                if (m.target) { let ds = m.target.s - m.s; if (ds > TRACK.len / 2) ds -= TRACK.len; if (ds < -TRACK.len / 2) ds += TRACK.len; if (ds < 0) m.target = null; else m.lat += clamp(m.target.lat - m.lat, -1, 1) * Math.min(Math.abs(m.target.lat - m.lat), 45 * dt); }
+                m.s = wrapS(m.s + m.speed * dt);
+                const f = frameAt(m.s);
+                if (Math.abs(m.lat) > f.w - 2) m.lat = Math.sign(m.lat) * (f.w - 2);
+                m.mesh.position.copy(worldPos(m.s, m.lat, 3.0, m.mesh.position));
+                _vy.set(f.ux, f.uy, f.uz); _vz.set(f.tx, f.ty, f.tz); _vx.crossVectors(_vy, _vz); _km.makeBasis(_vx, _vy, _vz); m.mesh.quaternion.setFromRotationMatrix(_km);
+                if (simTickNo % 2 === 0) spawnParticle(m.mesh.position, new THREE.Vector3((Math.random() - 0.5) * 6, 2 + Math.random() * 4, (Math.random() - 0.5) * 6), 0xff8a40, 0.35, 2);
+                let hit = null;
+                for (const o of machines) {
+                    if (o === m.owner || o.dead > 0) continue;
+                    let ds = o.s - m.s; if (ds > TRACK.len / 2) ds -= TRACK.len; if (ds < -TRACK.len / 2) ds += TRACK.len;
+                    if (Math.abs(ds) < 8 && Math.abs(o.lat - m.lat) < 6.5) { hit = o; break; }
+                }
+                if (hit) { hitMachine(hit, 15, 0.55, 0.9, m.owner); spawnExplosion(m.mesh.position, 0xff8a40); }
+                if (hit || m.life <= 0) { scene.remove(m.mesh); missiles.splice(i, 1); }
+            }
+        }
+        function makeMissileMesh() {
+            const g = new THREE.Group();
+            const body = new THREE.Mesh(new THREE.CylinderGeometry(0.7, 0.9, 4.2, 8), new THREE.MeshLambertMaterial({ color: 0xff4a3c })); body.rotation.x = Math.PI / 2; g.add(body);
+            const nose = new THREE.Mesh(new THREE.ConeGeometry(0.7, 1.6, 8), new THREE.MeshLambertMaterial({ color: 0xffd0a0 })); nose.rotation.x = Math.PI / 2; nose.position.z = 2.9; g.add(nose);
+            const glow = new THREE.Sprite(new THREE.SpriteMaterial({ map: TEX.glow, color: 0xff9a40, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false })); glow.scale.set(5, 5, 1); glow.position.z = -2.6; g.add(glow);
+            scene.add(g); return g;
+        }
+        const beams = [];
+        function laserBeam(a, b, col) {
+            const len = a.distanceTo(b);
+            const m = new THREE.Mesh(new THREE.CylinderGeometry(0.35, 0.35, len, 6), new THREE.MeshBasicMaterial({ color: col || 0x9fe8ff, transparent: true, opacity: 0.95 }));
+            m.position.copy(a).lerp(b, 0.5); m.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), b.clone().sub(a).normalize());
+            scene.add(m); beams.push({ m, t: 0.14 });
+            spawnSparksAt(b, 10, 0x9fe8ff);
+        }
+        function updateBeams(dt) { for (let i = beams.length - 1; i >= 0; i--) { const b = beams[i]; b.t -= dt; b.m.material.opacity = Math.max(0, b.t / 0.14); if (b.t <= 0) { scene.remove(b.m); beams.splice(i, 1); } } }
+        function updateBoxes(dt) { for (const b of WORLD.boxes) { if (!b.active) { b.t -= dt; if (b.t <= 0) b.active = true; } b.mesh.visible = b.active; b.mesh.rotation.y += dt * 1.6; b.mesh.rotation.x += dt * 0.9; } }
+        const ghostMissiles = [];
+        function syncGhostMissiles(list) {
+            while (ghostMissiles.length < list.length) ghostMissiles.push(makeMissileMesh());
+            ghostMissiles.forEach((g, i) => { const p = list[i]; g.visible = !!p; if (p) { g.position.copy(worldPos(p[0], p[1], 3.0, g.position)); const f = frameAt(p[0]); _vy.set(f.ux, f.uy, f.uz); _vz.set(f.tx, f.ty, f.tz); _vx.crossVectors(_vy, _vz); _km.makeBasis(_vx, _vy, _vz); g.quaternion.setFromRotationMatrix(_km); } });
+        }
         function updateRankings() {
             const sorted = machines.slice().sort((x, y) => {
                 if (x.finished !== y.finished) return x.finished ? -1 : 1;
@@ -1275,7 +1429,16 @@
             // seek dash plates / recharge when needed
             const qa = sampleAtS(k.s + look * 0.6);
             if (k.energy < 45) { for (let d = 0; d < 300; d += 30) { const qr = sampleAtS(k.s + d); if (qr.recharge) { targetLat = qr.recharge.lat; break; } } }
+            for (const sp of TRACK.spikes) {   // spike strips ahead: steer for the open side
+                let ds = sp.s - k.s; if (ds > TRACK.len / 2) ds -= TRACK.len; if (ds < -TRACK.len / 2) ds += TRACK.len;
+                if (ds > 0 && ds < 90 + k.speed * 0.8 && Math.abs(targetLat - sp.lat) < sp.hw + 5) targetLat = sp.lat + (sp.lat >= 0 ? -1 : 1) * (sp.hw + 7);
+            }
+            if (!k.item) for (const b of WORLD.boxes) { if (!b.active) continue; let ds = b.s - k.s; if (ds > TRACK.len / 2) ds -= TRACK.len; if (ds < -TRACK.len / 2) ds += TRACK.len; if (ds > 0 && ds < 160 && Math.abs(b.lat - k.lat) < 16) { targetLat = b.lat; break; } }
             targetLat = clamp(targetLat, -(f0.w - 5), f0.w - 5);
+            k.ctrl.use = false;   // items: nitro at once, missile when someone is in range, laser when lined up
+            if (k.item === 'nitro') k.ctrl.use = true;
+            else if (k.item === 'missile' && machineAhead(k, 900) && Math.random() < 0.05) k.ctrl.use = true;
+            else if (k.item === 'laser' && machineAhead(k, 240, 8) && Math.random() < 0.08) k.ctrl.use = true;
             // avoid rivals directly ahead
             for (const o of machines) {
                 if (o === k || o.dead > 0) continue;
@@ -1394,7 +1557,7 @@
             const boosting = k.boostT > 0 || k.dashT > 0;
             const thr = clamp(k.speed / MAX_SPEED, 0.15, 1.4);
             ud.flame.scale.set(1.6 + thr * 1.2 + (boosting ? 1.5 : 0), 1.6 + thr * 1.2, 1);
-            ud.flame.material.color.setHex(boosting ? 0xffe0a0 : 0x7fe0ff);
+            ud.flame.material.color.setHex(boosting ? (k.nitroT > 0 ? 0xd98cff : 0xffe0a0) : (k.nitroT > 0 ? 0xb06cff : 0x7fe0ff));
             ud.flame2.material.opacity = boosting ? 0.9 : 0;
             // a rival passing right through the camera would fill the screen with its engine sprite
             const nearCam = !k.isPlayer && camera.position.distanceToSquared(g.position) < 100;
@@ -1437,7 +1600,7 @@
 
         // ---- HUD -------------------------------------------------------------------
         const dom = {};
-        function cacheDom() { for (const id of ['hud', 'lapNum', 'rankNum', 'rankSuf', 'timeVal', 'speedNum', 'energyFill', 'energyPct', 'boostBtn', 'brakeBtn', 'stick', 'stickDot', 'countdown', 'countText', 'flash', 'hit', 'boostGlow', 'toast', 'startScreen', 'resultScreen', 'pauseScreen', 'startBtn', 'againBtn', 'menuBtn', 'resumeBtn', 'restartBtn', 'quitBtn', 'loadMsg', 'muteBtn', 'pauseBtn', 'standings', 'resultsTable', 'minimap', 'ver', 'picker', 'trackPicker', 'steerHint', 'nameInput', 'codeInput', 'createRoomBtn', 'joinRoomBtn', 'netStatus', 'lobbyScreen', 'roomCode', 'lobbyList', 'lobbyTracks', 'lobbyMachines', 'readyBtn', 'lobbyStartBtn', 'leaveBtn', 'lobbyMsg', 'netInd']) dom[id] = document.getElementById(id); }
+        function cacheDom() { for (const id of ['hud', 'lapNum', 'rankNum', 'rankSuf', 'timeVal', 'speedNum', 'energyFill', 'energyPct', 'boostBtn', 'itemBtn', 'nitroTag', 'stick', 'stickDot', 'countdown', 'countText', 'flash', 'hit', 'boostGlow', 'toast', 'startScreen', 'resultScreen', 'pauseScreen', 'startBtn', 'againBtn', 'menuBtn', 'resumeBtn', 'restartBtn', 'quitBtn', 'loadMsg', 'muteBtn', 'pauseBtn', 'standings', 'resultsTable', 'minimap', 'ver', 'picker', 'trackPicker', 'steerHint', 'nameInput', 'codeInput', 'createRoomBtn', 'joinRoomBtn', 'netStatus', 'lobbyScreen', 'roomCode', 'lobbyList', 'lobbyTracks', 'lobbyMachines', 'readyBtn', 'lobbyStartBtn', 'leaveBtn', 'lobbyMsg', 'netInd']) dom[id] = document.getElementById(id); }
         const ORD = (n) => n === 1 ? 'st' : n === 2 ? 'nd' : n === 3 ? 'rd' : 'th';
         function fmtTime(t) { const m = Math.floor(t / 60), s = t - m * 60; return m + ':' + (s < 10 ? '0' : '') + s.toFixed(1); }
         let lastHud = 0;
@@ -1456,6 +1619,8 @@
             dom.timeVal.textContent = fmtTime(raceClock);
             if (netActive()) { dom.netInd.classList.add('on'); dom.netInd.textContent = net.mode === 'host' ? 'HOST · ' + Object.values(net.rtc).filter((r) => r.open).length + '/' + Object.keys(net.rtc).length + ' P2P' : (rtcToHostOpen() ? 'P2P' : 'RELAY') + ' · ' + net.pingMs + 'ms'; } else dom.netInd.classList.remove('on');
             dom.boostBtn.classList.toggle('cold', k.energy <= BOOST_COST);
+            if (k.item) { dom.itemBtn.className = ''; dom.itemBtn.innerHTML = ITEM_ICON[k.item] + (k.item === 'laser' ? '<div class="ch">×' + k.charges + '</div>' : ''); } else { dom.itemBtn.className = 'empty'; dom.itemBtn.textContent = 'ITEM'; }
+            dom.nitroTag.classList.toggle('on', k.nitroT > 0); if (k.nitroT > 0) dom.nitroTag.textContent = 'NITRO ' + Math.ceil(k.nitroT) + 's';
             // standings
             const sorted = machines.slice().sort((a, b) => a.rank - b.rank);
             dom.standings.innerHTML = sorted.map((m) => `<div class="row${m.isPlayer ? ' me' : ''}${m.out ? ' out' : ''}"><span class="dot" style="background:${hx(m.def.col)}"></span>${m.rank} ${m.name}</div>`).join('');
@@ -1488,7 +1653,7 @@
         // =====================================================================
         //  INPUT
         // =====================================================================
-        let touchSteer = 0, keySteer = 0, steerTouchId = null, steerX0 = 0, boostHeld = false, brakeHeld = false;
+        let touchSteer = 0, keySteer = 0, steerTouchId = null, steerX0 = 0, boostHeld = false, itemPressed = false;
         const steerRangePx = 110, steerSign = -1;   // +lat is the left side of the road in this frame; a right slide must go right
         function setupInput() {
             const surface = renderer.domElement;
@@ -1516,16 +1681,15 @@
                 if (e.key === 'ArrowLeft' || e.key === 'a') keySteer = -1;
                 if (e.key === 'ArrowRight' || e.key === 'd') keySteer = 1;
                 if (e.code === 'Space' || e.key === 'Shift') { if (!e.repeat) boostHeld = true; e.preventDefault(); }
-                if (e.key === 'ArrowDown' || e.key === 's') brakeHeld = true;
+                if ((e.key === 'ArrowDown' || e.key === 's' || e.key === 'Enter') && !e.repeat) itemPressed = true;
                 if (e.key === 'p' || e.key === 'Escape') { if (state === 'racing') pauseGame(); else if (state === 'paused') resumeGame(); }
             });
             window.addEventListener('keyup', (e) => {
                 if (e.key === 'ArrowLeft' || e.key === 'a' || e.key === 'ArrowRight' || e.key === 'd') keySteer = 0;
-                if (e.key === 'ArrowDown' || e.key === 's') brakeHeld = false;
             });
             const on = (el, fn) => { el.addEventListener('touchstart', (e) => { e.preventDefault(); fn(true); }, { passive: false }); el.addEventListener('touchend', (e) => { e.preventDefault(); fn(false); }, { passive: false }); el.addEventListener('touchcancel', (e) => { e.preventDefault(); fn(false); }, { passive: false }); el.addEventListener('mousedown', () => fn(true)); el.addEventListener('mouseup', () => fn(false)); };
             on(dom.boostBtn, (d) => { if (d) boostHeld = true; dom.boostBtn.classList.toggle('held', d); });
-            on(dom.brakeBtn, (d) => { brakeHeld = d; dom.brakeBtn.classList.toggle('held', d); });
+            on(dom.itemBtn, (d) => { if (d) itemPressed = true; dom.itemBtn.classList.toggle('held', d); });
             dom.pauseBtn.addEventListener('click', () => { if (state === 'racing' && !netActive()) pauseGame(); });
             dom.muteBtn.addEventListener('click', () => { muted = !muted; dom.muteBtn.textContent = muted ? '🔇' : '🔊'; try { localStorage.setItem('sf_mute', muted ? '1' : '0'); } catch (e) {} if (master) master.gain.value = muted ? 0 : 1; });
             dom.resumeBtn.addEventListener('click', resumeGame);
@@ -1782,7 +1946,7 @@
             mode: 'solo', ws: null, connected: false, myId: -1, isHost: false, code: '', hostId: 0,
             players: [], racePlayers: [], phase: 'lobby', myCharIdx: 0, myReady: false, track: 0,
             remoteCtrl: {}, snaps: [], lastSnapTick: 0, lastInputSent: 0, pingTimer: 0, pingMs: 0, racing: false,
-            rtc: {}, ice: null, boostCount: 0, wallDmg: 0, lastErrorAt: 0, _lastDead: 0, _lastLaps: 0, _lastBoost: 0,
+            rtc: {}, ice: null, boostCount: 0, useCount: 0, wallDmg: 0, lastErrorAt: 0, _lastDead: 0, _lastLaps: 0, _lastBoost: 0,
         };
         function netActive() { return net.mode !== 'solo'; }
         function wsSend(obj) { if (net.ws && net.connected) { try { net.ws.send(JSON.stringify(obj)); } catch (e) {} } }
@@ -1949,7 +2113,7 @@
             if (typeof track === 'number' && TRACKS[track] && track !== currentTrack) loadTrack(track);
             TOTAL_LAPS = (Number.isInteger(laps) && laps >= 1 && laps <= 9) ? laps : 3;
             net.players = players; net.racePlayers = players; net.racing = true;
-            net.remoteCtrl = {}; net.snaps = []; net.lastSnapTick = 0; net.boostCount = 0; net.wallDmg = 0; net._lastDead = 0; net._lastLaps = 0; net._lastBoost = 0;
+            net.remoteCtrl = {}; net.snaps = []; net.lastSnapTick = 0; net.boostCount = 0; net.useCount = 0; net.wallDmg = 0; net._lastDead = 0; net._lastLaps = 0; net._lastBoost = 0;
             const roster = players.map((p) => ({ kind: p.id === net.myId ? 'local' : 'remote', charIdx: p.charIdx, name: p.name, pid: p.id }));
             const used = new Set(roster.map((r) => r.charIdx));
             for (let c = 0; roster.length < 8 && c < MACHINES.length * 2; c++) { const ci = c % MACHINES.length; if (used.has(ci) && c < MACHINES.length) continue; used.add(ci); roster.push({ kind: 'ai', charIdx: ci, name: MACHINES[ci].name, pid: -1 }); }
@@ -1964,6 +2128,7 @@
         }
         function endOnlineRaceToLobby() {
             net.racing = false; net.snaps = []; net.remoteCtrl = {}; net.lastSnapTick = 0;
+            for (const g of ghostMissiles) scene.remove(g); ghostMissiles.length = 0;
             clearTimeout(resultsTimer);
             state = 'menu';
             dom.hud.classList.remove('on'); dom.countdown.classList.remove('on'); dom.resultScreen.classList.remove('on');
@@ -1980,7 +2145,8 @@
         function applyRemoteInput(k) {
             const rc = net.remoteCtrl[k.pid];
             if (!rc) return;
-            k.ctrl.steer = rc.s || 0; k.ctrl.brake = !!rc.d;
+            k.ctrl.steer = rc.s || 0; k.ctrl.brake = false;
+            if ((rc.u | 0) > (k._useCount | 0)) { k._useCount = rc.u | 0; k.ctrl.use = true; }
             if (rc.p) { k._rp = rc.p; }
             if ((rc.b | 0) > (k._boostCount | 0)) { k._boostCount = rc.b | 0; k.ctrl.boost = true; }
             if (typeof rc.w === 'number' && rc.w > (k._wallDmg || 0)) { const d = Math.min(rc.w - (k._wallDmg || 0), 20); k._wallDmg = rc.w; damage(k, d, 'wall'); }
@@ -2000,6 +2166,10 @@
             if (k.boostT > 0) k.boostT -= dt; if (k.boostCool > 0) k.boostCool -= dt; if (k.wallT > 0) k.wallT -= dt; if (k.hitT > 0) k.hitT -= dt; if (k.rechargeT > 0) k.rechargeT -= dt;
             if (k.ctrl.boost && racing && !k.finished) tryBoost(k);
             k.ctrl.boost = false;
+            if (k.nitroT > 0) k.nitroT -= dt; if (k.stunT > 0) k.stunT -= dt; if (k.spikeCd > 0) k.spikeCd -= dt;
+            if (!k.item) for (const b of WORLD.boxes) { if (!b.active) continue; let ds = k.s - b.s; if (ds > TRACK.len / 2) ds -= TRACK.len; if (ds < -TRACK.len / 2) ds += TRACK.len; if (Math.abs(ds) < 6 && Math.abs(k.lat - b.lat) < 6) { b.active = false; b.t = 6; giveItem(k); break; } }
+            if (k.ctrl.use && k.item && racing && !k.finished) useItem(k);
+            k.ctrl.use = false;
             const q = sampleAtS(k.s);
             if (q.recharge && Math.abs(k.lat - q.recharge.lat) <= q.recharge.hw && k.energy < ENERGY_MAX) { k.energy = Math.min(ENERGY_MAX, k.energy + RECHARGE_RATE * dt); k.rechargeT = 0.2; }
             const dS = k.s - k.prevS;
@@ -2014,13 +2184,17 @@
             if (!net.ws || !net.connected) return;
             const r2 = (v) => Math.round(v * 100) / 100;
             const payload = JSON.stringify({ t: 'snap', tick: simTickNo, clock: r2(raceClock),
-                m: machines.map((k) => [r2(k.s), r2(k.lat), r2(k.yaw), Math.round(k.speed), r2(k.energy), r2(k.boostT), k.laps, k.rank, k.finished ? 1 : 0, r2(k.finishTime), k.bestLap === Infinity ? -1 : r2(k.bestLap), r2(k.dead), k.hitT > 0 ? 1 : 0, k.rechargeT > 0 ? 1 : 0, k.ctrl.brake ? 1 : 0]) });
+                m: machines.map((k) => [r2(k.s), r2(k.lat), r2(k.yaw), Math.round(k.speed), r2(k.energy), r2(k.boostT), k.laps, k.rank, k.finished ? 1 : 0, r2(k.finishTime), k.bestLap === Infinity ? -1 : r2(k.bestLap), r2(k.dead), k.hitT > 0 ? 1 : 0, k.rechargeT > 0 ? 1 : 0, 0,
+                    k.item === 'missile' ? 1 : k.item === 'laser' ? 2 : k.item === 'nitro' ? 3 : 0, k.charges, r2(k.nitroT), k.hits, r2(k.stunT)]),
+                pr: missiles.map((m) => [r2(m.s), r2(m.lat)]), bx: WORLD.boxes.map((b) => (b.active ? 1 : 0)).join('') });
             try { net.ws.send(payload); } catch (e) {}
             for (const pid of Object.keys(net.rtc)) { const r = net.rtc[pid]; if (r.open) { try { r.ch.send(payload); } catch (e) {} } }
         }
         // client: my machine runs the real sim locally; everyone else is interpolated from the host's snapshots
         function netClientTick(dt) {
             readPlayerControls(player, dt);
+            if (player.ctrl.use && player.item) { net.useCount++; if (player.item === 'laser') tone('square', 1800, 600, 0.18, 0.2); }   // the host fires it; we just ask
+            player.ctrl.use = false;
             updateMachine(player, dt);
             // local separation against the others so we never visibly sit inside a rival (the host judges the hit)
             resolveCollisions(dt);
@@ -2032,7 +2206,7 @@
             if (net.connected && now - net.lastInputSent > INPUT_MS) {
                 net.lastInputSent = now;
                 const r2 = (v) => Math.round(v * 100) / 100;
-                sendToHostFast({ t: 'input', s: r2(player.ctrl.steer), d: player.ctrl.brake ? 1 : 0, b: net.boostCount, w: r2(net.wallDmg), p: [r2(player.s), r2(player.lat), r2(player.yaw), Math.round(player.speed), r2(player.boostT)] });
+                sendToHostFast({ t: 'input', s: r2(player.ctrl.steer), d: 0, b: net.boostCount, u: net.useCount, w: r2(net.wallDmg), p: [r2(player.s), r2(player.lat), r2(player.yaw), Math.round(player.speed), r2(player.boostT)] });
             }
         }
         function clientApplySnaps(dt) {
@@ -2056,6 +2230,8 @@
                     if (k.boostT > BOOST_TIME - 0.4 && b[5] <= 0.01 && net._predictedAt && performance.now() - net._predictedAt > 350) { k.boostT = 0; k.speed = Math.min(k.speed, MAX_SPEED * k.def.stat.top); toast('BOOST DENIED'); net._predictedAt = 0; }   // host refused (energy / cooldown): undo the prediction
                     if (b[5] > 0.01) net._predictedAt = 0;
                     net._lastBoost = b[5];
+                    k.item = [null, 'missile', 'laser', 'nitro'][b[15] || 0]; k.charges = b[16] || 0; k.nitroT = b[17] || 0;   // items are host-owned
+                    if ((b[18] || 0) > (k._hitsSeen || 0)) { k._hitsSeen = b[18]; k.speed *= 0.55; k.stunT = Math.max(k.stunT, b[19] || 0.6); spawnSparksAt(k.pos, 14, 0xff6a3c); sfxBump(); camShake = Math.max(camShake, 0.9); vibrate(40); flashText('HIT!', '#ff5a5a'); }
                     const err = Math.abs(wrapAngle((b[0] - k.s) / TRACK.len * Math.PI * 2)) * TRACK.len / (Math.PI * 2);
                     if (err > 60) { k.s = b[0]; k.lat = b[1]; k.prevS = k.s; k.prevLat = k.lat; }   // way off: snap to the host's view of me
                 } else {
@@ -2067,12 +2243,14 @@
                     k.finished = !!b[8]; k.finishTime = b[9]; k.bestLap = b[10] < 0 ? Infinity : b[10];
                     if (b[11] > 0 && k.dead <= 0) { spawnExplosion(k.pos, k.def.col); k.mesh.visible = false; }
                     k.dead = b[11]; if (k.dead <= 0) k.mesh.visible = true;
-                    k.hitT = b[12] ? 0.25 : 0; k.rechargeT = b[13] ? 0.2 : 0; k.ctrl.brake = !!b[14];
+                    k.hitT = b[12] ? 0.25 : 0; k.rechargeT = b[13] ? 0.2 : 0; k.ctrl.brake = false; k.nitroT = b[17] || 0; k.stunT = b[19] || 0;
                     k.progress = k.laps * TRACK.len + k.s;
                     k.pos.copy(worldPos(k.s, k.lat, 2.6, k.pos)); k.rs = k.s; k.rlat = k.lat; k.rair = 0;
                 }
             }
             raceClock = latest.clock;
+            if (latest.pr) syncGhostMissiles(latest.pr);
+            if (latest.bx) WORLD.boxes.forEach((b, i) => { b.active = latest.bx[i] === '1'; b.mesh.visible = b.active; });
         }
 
         // =====================================================================
@@ -2156,7 +2334,7 @@
                 simTick(SIM_DT); acc -= SIM_DT; steps++;
             }
             renderAlpha = window.__hold ? 1 : clamp(acc / SIM_DT, 0, 1);
-            if (net.mode === 'client' && net.racing) netClientFrame(dt);
+            if (net.mode === 'client' && net.racing) { netClientFrame(dt); updateBeams(dt); for (const b of WORLD.boxes) { b.mesh.rotation.y += dt * 1.6; b.mesh.rotation.x += dt * 0.9; } }
             for (const k of machines) syncMachineMesh(k, false, dt);
             syncParticles();
             for (const a of WORLD.anims) a(dt, animT);
