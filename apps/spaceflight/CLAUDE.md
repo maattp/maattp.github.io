@@ -99,9 +99,10 @@ clear of the pits, 6 s respawn) and three **laser bars** — floating red beams
 between emitter posts covering half the road on alternating sides
 (`def.spikes` fractions, else auto; the sim still calls them `spikes`).
 Crossing one halves your speed and costs 3 energy (1.2 s cooldown). Items, one slot:
-**missile** (homes on the machine ahead within 1400u, 20 energy, speed ×0.55,
-0.9 s stun), **laser** (3 shots, hit-scan on the machine within 260u and 9u
-lateral, 10 energy, speed ×0.85), **nitro** (12 s of boosts that are 18%
+**missile** (homes on the machine ahead within 1400u, 20 energy, speed ×0.45,
+1 s stun), **laser** (3 shots, hit-scan on the machine in a cone ahead —
+8u wide at the nose, 30u at 300u — 10 energy, speed ×0.7, 0.5 s stun). A
+stunned machine cannot throttle, so the knock lasts long enough to see, **nitro** (12 s of boosts that are 18%
 faster, 1.2 s longer and 40% cheaper). The back of the field draws missiles
 more often. ITEM button replaces the brake (there is no player brake; CPUs
 still brake internally). CPUs steer around bars, detour for boxes when

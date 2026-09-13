@@ -223,7 +223,7 @@
         // =====================================================================
         //  SPACE FLIGHT — anti-grav racing prototype (single track, CPUs)
         // =====================================================================
-        const SF_VER = 43;
+        const SF_VER = 44;
         const clamp = (v, a, b) => v < a ? a : v > b ? b : v;
         const lerp = (a, b, t) => a + (b - a) * t;
         const smoothstep = (a, b, x) => { const t = clamp((x - a) / (b - a), 0, 1); return t * t * (3 - 2 * t); };
@@ -1170,7 +1170,7 @@
             const top = (k.boostT > 0 ? BOOST_SPEED * (k.nitroT > 0 ? 1.18 : 1) : k.dashT > 0 ? DASH_SPEED : MAX_SPEED) * st.top;
             if (canSteer || (state === 'finished' && !k.isPlayer)) {
                 if (k.ctrl.brake && !boosting) k.speed = Math.max(0, k.speed - BRAKE_DECEL * dt);
-                else if (k.speed < top) k.speed = Math.min(top, k.speed + (boosting ? ACCEL * 2.6 : ACCEL * st.acc) * dt);
+                else if (k.speed < top) { if (k.stunT <= 0) k.speed = Math.min(top, k.speed + (boosting ? ACCEL * 2.6 : ACCEL * st.acc) * dt); }   // no throttle while stunned
                 else k.speed = Math.max(top, k.speed - 34 * dt);   // boost fades out over ~2 s instead of dropping off a cliff
             } else k.speed = Math.max(0, k.speed - 60 * dt);
             if (k.finished) k.speed = Math.min(k.speed, MAX_SPEED * 0.7);
@@ -1329,12 +1329,13 @@
             k.charges = k.item === 'laser' ? 3 : 1;
             if (k.isPlayer) { sfxLap(); vibrate(15); dom.itemBtn.classList.add('rolling'); setTimeout(() => dom.itemBtn.classList.remove('rolling'), 500); }
         }
-        function machineAhead(k, maxDs, maxLat) {
+        function machineAhead(k, maxDs, maxLat, cone) {
             let best = null, bd = Infinity;
             for (const o of machines) {
                 if (o === k || o.dead > 0 || o.finished) continue;
                 let ds = o.s - k.s; if (ds > TRACK.len / 2) ds -= TRACK.len; if (ds < -TRACK.len / 2) ds += TRACK.len;
-                if (ds > 4 && ds < maxDs && Math.abs(o.lat - k.lat) < (maxLat || 99) && ds < bd) { bd = ds; best = o; }
+                const lim = cone ? Math.min(maxLat || 99, 8 + ds * cone) : (maxLat || 99);   // cone: the lock widens with distance
+                if (ds > 4 && ds < maxDs && Math.abs(o.lat - k.lat) < lim && ds < bd) { bd = ds; best = o; }
             }
             return best;
         }
@@ -1350,11 +1351,12 @@
             if (k.isPlayer) { sfxBoost(); vibrate(20); }
         }
         function fireLaser(k) {
-            const target = machineAhead(k, 260, 9);
+            const target = machineAhead(k, 300, 30, 0.1);   // anyone roughly ahead within 300u: 8u dead ahead, 30u wide at range
             const from = worldPos(k.s, k.lat, 3.2, new THREE.Vector3());
-            const to = target ? worldPos(target.s, target.lat, 3.2, new THREE.Vector3()) : worldPos(k.s + 260, k.lat, 3.2, new THREE.Vector3());
+            const to = target ? worldPos(target.s, target.lat, 3.2, new THREE.Vector3()) : worldPos(k.s + 300, k.lat, 3.2, new THREE.Vector3());
             laserBeam(from, to, k.def.acc);
-            if (target) hitMachine(target, 10, 0.85, 0.25, k);
+            if (target) { hitMachine(target, 10, 0.7, 0.5, k); if (k.isPlayer) flashText('HIT ' + target.name.toUpperCase(), '#9fe8ff'); }
+            else if (k.isPlayer) toast('NO TARGET');
             if (k.isPlayer) { tone('square', 1800, 600, 0.18, 0.2); burst(0.15, 0.2, { type: 'highpass', f0: 3000 }); vibrate(12); }
         }
         function hitMachine(t, dmg, speedMul, stun, by) {
@@ -1382,7 +1384,7 @@
                     let ds = o.s - m.s; if (ds > TRACK.len / 2) ds -= TRACK.len; if (ds < -TRACK.len / 2) ds += TRACK.len;
                     if (Math.abs(ds) < 8 && Math.abs(o.lat - m.lat) < 6.5) { hit = o; break; }
                 }
-                if (hit) { hitMachine(hit, 20, 0.55, 0.9, m.owner); spawnExplosion(m.mesh.position, 0xff8a40); }
+                if (hit) { hitMachine(hit, 20, 0.45, 1.0, m.owner); spawnExplosion(m.mesh.position, 0xff8a40); }
                 if (hit || m.life <= 0) { scene.remove(m.mesh); m.mesh.traverse((o) => { if (o.geometry) o.geometry.dispose(); if (o.material) o.material.dispose(); }); missiles.splice(i, 1); }
             }
         }
@@ -1443,7 +1445,7 @@
             k.ctrl.use = false;   // items: nitro at once, missile when someone is in range, laser when lined up
             if (k.item === 'nitro') k.ctrl.use = true;
             else if (k.item === 'missile' && machineAhead(k, 900) && Math.random() < 0.05) k.ctrl.use = true;
-            else if (k.item === 'laser' && machineAhead(k, 240, 8) && Math.random() < 0.08) k.ctrl.use = true;
+            else if (k.item === 'laser' && machineAhead(k, 300, 30, 0.1) && Math.random() < 0.08) k.ctrl.use = true;
             // avoid rivals directly ahead
             for (const o of machines) {
                 if (o === k || o.dead > 0) continue;
@@ -2240,7 +2242,7 @@
                     if (b[5] > 0.01) net._predictedAt = 0;
                     net._lastBoost = b[5];
                     k.item = [null, 'missile', 'laser', 'nitro'][b[15] || 0]; k.charges = b[16] || 0; k.nitroT = b[17] || 0;   // items are host-owned
-                    if ((b[18] || 0) > (k._hitsSeen || 0)) { k._hitsSeen = b[18]; k.speed *= 0.55; k.stunT = Math.max(k.stunT, b[19] || 0.6); spawnSparksAt(k.pos, 14, 0xff6a3c); sfxBump(); camShake = Math.max(camShake, 0.9); vibrate(40); flashText('HIT!', '#ff5a5a'); }
+                    if ((b[18] || 0) > (k._hitsSeen || 0)) { k._hitsSeen = b[18]; k.speed *= (b[19] || 0) > 0.7 ? 0.45 : 0.7; k.stunT = Math.max(k.stunT, b[19] || 0.6); spawnSparksAt(k.pos, 14, 0xff6a3c); sfxBump(); camShake = Math.max(camShake, 0.9); vibrate(40); flashText('HIT!', '#ff5a5a'); }
                     const err = Math.abs(wrapAngle((b[0] - k.s) / TRACK.len * Math.PI * 2)) * TRACK.len / (Math.PI * 2);
                     if (err > 60) { k.s = b[0]; k.lat = b[1]; k.prevS = k.s; k.prevLat = k.lat; }   // way off: snap to the host's view of me
                 } else {
