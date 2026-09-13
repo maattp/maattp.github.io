@@ -120,8 +120,9 @@
         #toast { position: fixed; left: 50%; top: calc(env(safe-area-inset-top) + 64px); transform: translateX(-50%); z-index: 22; font-size: 13px; font-weight: 800; letter-spacing: 1px;
             background: rgba(6,4,20,0.75); border: 1px solid rgba(159,232,255,0.25); border-radius: 20px; padding: 6px 14px; opacity: 0; transition: opacity 0.25s; pointer-events: none; }
         #toast.on { opacity: 1; }
-        table.results { border-collapse: collapse; margin-top: 14px; font-size: 15px; }
-        table.results td { padding: 4px 14px; }
+        #resultScreen { justify-content: flex-start; overflow-y: auto; padding-top: calc(env(safe-area-inset-top) + 10px); }
+        table.results { border-collapse: collapse; margin-top: 6px; font-size: 13px; }
+        table.results td { padding: 2px 12px; }
         table.results tr.me td { color: #ffd54a; font-weight: 900; }
         table.results .dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 8px; vertical-align: middle; }
         #a2hs { display: none; }
@@ -181,10 +182,12 @@
         <div id="lobbyMsg" class="hint"></div>
     </div>
     <div id="resultScreen" class="screen">
-        <div class="logo" style="font-size:36px">Results</div>
+        <div class="logo" style="font-size:26px">Results</div>
         <table class="results" id="resultsTable"></table>
-        <button class="btn" id="againBtn">RACE AGAIN</button>
-        <button class="btn ghost" id="menuBtn">MENU</button>
+        <div style="display:flex;gap:12px;align-items:center;margin-top:6px">
+            <button class="btn" id="againBtn" style="margin-top:0">RACE AGAIN</button>
+            <button class="btn ghost" id="menuBtn" style="margin-top:0">MENU</button>
+        </div>
     </div>
     <div id="pauseScreen" class="screen">
         <div class="logo" style="font-size:36px">Paused</div>
@@ -223,7 +226,7 @@
         // =====================================================================
         //  SPACE FLIGHT — anti-grav racing prototype (single track, CPUs)
         // =====================================================================
-        const SF_VER = 48;
+        const SF_VER = 49;
         const clamp = (v, a, b) => v < a ? a : v > b ? b : v;
         const lerp = (a, b, t) => a + (b - a) * t;
         const smoothstep = (a, b, x) => { const t = clamp((x - a) / (b - a), 0, 1); return t * t * (3 - 2 * t); };
