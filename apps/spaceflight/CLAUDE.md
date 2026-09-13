@@ -98,9 +98,9 @@ Every track gets three rows of three **item boxes** (glowing octahedra;
 and three **spike strips** covering half the road on alternating sides
 (`def.spikes` fractions, else auto; red warning plate 30u before). Riding a
 strip halves your speed and costs 3 energy (1.2 s cooldown). Items, one slot:
-**missile** (homes on the machine ahead within 1400u, 15 energy, speed ×0.55,
+**missile** (homes on the machine ahead within 1400u, 20 energy, speed ×0.55,
 0.9 s stun), **laser** (3 shots, hit-scan on the machine within 260u and 9u
-lateral, 8 energy, speed ×0.85), **nitro** (12 s of boosts that are 18%
+lateral, 10 energy, speed ×0.85), **nitro** (12 s of boosts that are 18%
 faster, 1.2 s longer and 40% cheaper). The back of the field draws missiles
 more often. ITEM button replaces the brake (there is no player brake; CPUs
 still brake internally). CPUs steer around strips, detour for boxes when
