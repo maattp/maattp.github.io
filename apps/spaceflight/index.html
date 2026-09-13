@@ -223,7 +223,7 @@
         // =====================================================================
         //  SPACE FLIGHT — anti-grav racing prototype (single track, CPUs)
         // =====================================================================
-        const SF_VER = 45;
+        const SF_VER = 46;
         const clamp = (v, a, b) => v < a ? a : v > b ? b : v;
         const lerp = (a, b, t) => a + (b - a) * t;
         const smoothstep = (a, b, x) => { const t = clamp((x - a) / (b - a), 0, 1); return t * t * (3 - 2 * t); };
@@ -795,6 +795,20 @@
                 towers.setMatrixAt(n++, mtx);
             }
             towers.count = n; towers.instanceMatrix.needsUpdate = true; world.add(towers);
+            // sky traffic: streams of hover-car lights sliding between the towers on fixed lanes
+            const lanes = [];
+            for (let i = 0; i < 6; i++) {
+                const y = 120 + rnd() * 220, a = rnd() * Math.PI * 2, r = 900 + rnd() * 700;
+                const ax = Math.cos(a) * r, az = 300 + Math.sin(a) * r, bx = Math.cos(a + Math.PI) * r, bz = 300 + Math.sin(a + Math.PI) * r;
+                const col = [0xffd27a, 0xff6a5a, 0x7fe0ff][i % 3], n = 8 + Math.floor(rnd() * 6), speed = 0.02 + rnd() * 0.03, dir = i % 2 ? 1 : -1;
+                const cars = [];
+                for (let k = 0; k < n; k++) {
+                    const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: TEX.glow, color: col, transparent: true, opacity: 0.85, blending: THREE.AdditiveBlending, depthWrite: false }));
+                    sp.scale.set(10, 4, 1); world.add(sp); cars.push({ sp, t: rnd() });
+                }
+                lanes.push({ ax, az, bx, bz, y, cars, speed, dir });
+            }
+            WORLD.anims.push((dt) => { for (const L of lanes) for (const c of L.cars) { c.t = (c.t + L.speed * L.dir * dt + 1) % 1; c.sp.position.set(lerp(L.ax, L.bx, c.t), L.y + Math.sin(c.t * 12) * 6, lerp(L.az, L.bz, c.t)); } });
             // ground plane far below, dark with a grid glow
             const ground = new THREE.Mesh(new THREE.PlaneGeometry(9000, 9000), new THREE.MeshBasicMaterial({ color: 0x07061a }));
             ground.rotation.x = -Math.PI / 2; ground.position.y = THEME.groundY - 1; world.add(ground);
