@@ -223,7 +223,7 @@
         // =====================================================================
         //  SPACE FLIGHT — anti-grav racing prototype (single track, CPUs)
         // =====================================================================
-        const SF_VER = 42;
+        const SF_VER = 43;
         const clamp = (v, a, b) => v < a ? a : v > b ? b : v;
         const lerp = (a, b, t) => a + (b - a) * t;
         const smoothstep = (a, b, x) => { const t = clamp((x - a) / (b - a), 0, 1); return t * t * (3 - 2 * t); };
@@ -740,28 +740,33 @@
             const def = TRACK.def, L = TRACK.len;
             const nearPit = (f) => (def.recharge || []).some((r) => f > r.f0 - 0.03 && f < r.f1 + 0.03);
             const pick = (cands) => cands.filter((f) => !nearPit(f));
-            const boxRows = def.boxes || pick([0.2, 0.24, 0.5, 0.54, 0.8, 0.84]).slice(0, 3);
-            for (const f of boxRows) for (const lat of [-14, 0, 14]) {
+            const boxRows = def.boxes || pick([0.1, 0.14, 0.3, 0.34, 0.5, 0.54, 0.7, 0.74, 0.9, 0.94]).filter((f, i, arr) => i === 0 || f - arr[i - 1] > 0.1).slice(0, 5);
+            boxRows.forEach((f, row) => { for (const lat of (row % 2 ? [-20, -7, 7, 20] : [-14, 0, 14])) {
                 const g = new THREE.Group();
                 g.add(new THREE.Mesh(new THREE.OctahedronGeometry(2.4, 0), new THREE.MeshLambertMaterial({ color: 0xfff2a0, emissive: 0x806a20 })));
                 const glow = new THREE.Sprite(new THREE.SpriteMaterial({ map: TEX.glow, color: 0xffe14a, transparent: true, opacity: 0.6, blending: THREE.AdditiveBlending, depthWrite: false })); glow.scale.set(9, 9, 1); g.add(glow);
                 g.position.copy(worldPos(f * L, lat, 4.2, new THREE.Vector3())); world.add(g);
                 WORLD.boxes.push({ s: f * L, lat, active: true, t: 0, mesh: g });
-            }
+            } });
             TRACK.spikes = [];
             const spikeF = def.spikes || pick([0.33, 0.37, 0.63, 0.67, 0.92, 0.95]).slice(0, 3);
             spikeF.forEach((f, i) => {
                 const fr = frameAt(f * L), side = i % 2 ? -1 : 1, hw = fr.w * 0.5, lat = side * (fr.w - hw);
                 TRACK.spikes.push({ s: f * L, lat, hw });
-                const plate = new THREE.Mesh(new THREE.BoxGeometry(hw * 2, 0.5, 9), new THREE.MeshLambertMaterial({ color: 0x3a2a2a }));
-                plate.position.copy(worldPos(f * L, lat, 0.25, new THREE.Vector3()));
-                _m4.makeBasis(new THREE.Vector3(fr.nx, fr.ny, fr.nz), new THREE.Vector3(fr.ux, fr.uy, fr.uz), new THREE.Vector3(fr.tx, fr.ty, fr.tz)); plate.quaternion.setFromRotationMatrix(_m4); world.add(plate);
-                for (let k = -hw + 2; k <= hw - 2; k += 3) for (const dz of [-2.5, 0, 2.5]) {
-                    const spike = new THREE.Mesh(new THREE.ConeGeometry(0.7, 2.6, 5), new THREE.MeshLambertMaterial({ color: 0xd8d8e0, emissive: 0x402020 }));
-                    spike.position.copy(worldPos(f * L + dz, lat + k, 1.6, new THREE.Vector3())); spike.quaternion.copy(plate.quaternion); world.add(spike);
+                // a red laser bar floating across half the road between two emitter posts — cross it and it bites
+                const fr2 = frameAt(f * L, _frB);
+                _m4.makeBasis(new THREE.Vector3(fr2.nx, fr2.ny, fr2.nz), new THREE.Vector3(fr2.ux, fr2.uy, fr2.uz), new THREE.Vector3(fr2.tx, fr2.ty, fr2.tz));
+                const q = new THREE.Quaternion().setFromRotationMatrix(_m4);
+                const bar = new THREE.Mesh(new THREE.CylinderGeometry(0.45, 0.45, hw * 2, 8), new THREE.MeshBasicMaterial({ color: 0xff2a3c }));
+                bar.position.copy(worldPos(f * L, lat, 2.2, new THREE.Vector3())); bar.quaternion.copy(q); bar.rotateZ(Math.PI / 2); world.add(bar);
+                const glowBar = new THREE.Mesh(new THREE.CylinderGeometry(1.6, 1.6, hw * 2, 8), new THREE.MeshBasicMaterial({ color: 0xff2a3c, transparent: true, opacity: 0.22, blending: THREE.AdditiveBlending, depthWrite: false }));
+                glowBar.position.copy(bar.position); glowBar.quaternion.copy(bar.quaternion); world.add(glowBar);
+                for (const e of [-1, 1]) {
+                    const post = new THREE.Mesh(new THREE.BoxGeometry(1.6, 4.4, 1.6), new THREE.MeshLambertMaterial({ color: 0x2a2a3a, emissive: 0x3a0a10 }));
+                    post.position.copy(worldPos(f * L, lat + e * hw, 2.2, new THREE.Vector3())); post.quaternion.copy(q); world.add(post);
+                    const lamp = new THREE.Sprite(new THREE.SpriteMaterial({ map: TEX.glow, color: 0xff3a4c, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false })); lamp.scale.setScalar(6); lamp.position.copy(post.position); world.add(lamp);
                 }
-                const warn = new THREE.Mesh(new THREE.PlaneGeometry(hw * 2, 3), new THREE.MeshBasicMaterial({ color: 0xff5a3c, transparent: true, opacity: 0.7, side: THREE.DoubleSide }));
-                warn.position.copy(worldPos(f * L - 30, lat, 0.15, new THREE.Vector3())); warn.quaternion.copy(plate.quaternion); warn.rotateX(-Math.PI / 2); world.add(warn);
+                WORLD.anims.push((dt, t) => { const pulse = 0.75 + 0.25 * Math.sin(t * 9 + f * 40); bar.material.color.setRGB(1, 0.16 * pulse, 0.24 * pulse); glowBar.material.opacity = 0.14 + 0.14 * pulse; });
             });
             for (const d of TRACK.def.dash) {
                 const s = d.f * TRACK.len;
@@ -1216,7 +1221,7 @@
             // --- spike strips: ride over one and you lose half your speed ---
             if (k.spikeCd <= 0 && k.dead <= 0) for (const sp of TRACK.spikes) {
                 let ds = k.s - sp.s; if (ds > TRACK.len / 2) ds -= TRACK.len; if (ds < -TRACK.len / 2) ds += TRACK.len;
-                if (Math.abs(ds) < 5 && Math.abs(k.lat - sp.lat) < sp.hw) { k.speed *= 0.5; k.spikeCd = 1.2; damage(k, 3, 'wall'); spawnSparks(k, 1, 10); spawnSparks(k, -1, 10); if (k.isPlayer) { sfxBump(); camShake = Math.max(camShake, 0.6); vibrate(30); flashText('SPIKES!', '#ff9a3c'); } break; }
+                if (Math.abs(ds) < 5 && Math.abs(k.lat - sp.lat) < sp.hw) { k.speed *= 0.5; k.spikeCd = 1.2; damage(k, 3, 'wall'); spawnSparks(k, 1, 10); spawnSparks(k, -1, 10); if (k.isPlayer) { sfxBump(); tone('sawtooth', 900, 200, 0.25, 0.2); camShake = Math.max(camShake, 0.6); vibrate(30); flashText('LASER BAR!', '#ff3a4c'); } break; }
             }
             // --- item boxes and item use (host / solo authority) ---
             if (net.mode !== 'client') {
@@ -1313,7 +1318,7 @@
         const ITEM_ICON = { missile: '🚀', laser: '⚡', nitro: '💜' };
         const missiles = [];
         function resetItems() {
-            for (const m of missiles) scene.remove(m.mesh); missiles.length = 0;
+            for (const m of missiles) { scene.remove(m.mesh); m.mesh.traverse((o) => { if (o.geometry) o.geometry.dispose(); if (o.material) o.material.dispose(); }); } missiles.length = 0;
             for (const b of WORLD.boxes) { b.active = true; b.t = 0; }
             if (dom.itemBtn) { dom.itemBtn.textContent = 'ITEM'; dom.itemBtn.className = 'empty'; }
         }
@@ -1378,7 +1383,7 @@
                     if (Math.abs(ds) < 8 && Math.abs(o.lat - m.lat) < 6.5) { hit = o; break; }
                 }
                 if (hit) { hitMachine(hit, 20, 0.55, 0.9, m.owner); spawnExplosion(m.mesh.position, 0xff8a40); }
-                if (hit || m.life <= 0) { scene.remove(m.mesh); missiles.splice(i, 1); }
+                if (hit || m.life <= 0) { scene.remove(m.mesh); m.mesh.traverse((o) => { if (o.geometry) o.geometry.dispose(); if (o.material) o.material.dispose(); }); missiles.splice(i, 1); }
             }
         }
         function makeMissileMesh() {
@@ -1698,7 +1703,7 @@
             dom.resumeBtn.addEventListener('click', resumeGame);
             dom.restartBtn.addEventListener('click', () => { dom.pauseScreen.classList.remove('on'); startGame(); });
             dom.quitBtn.addEventListener('click', quitToMenu);
-            document.addEventListener('visibilitychange', () => { if (document.hidden && state === 'racing' && !netActive()) pauseGame(); });
+            document.addEventListener('visibilitychange', () => { if (document.hidden && state === 'racing' && !netActive()) pauseGame(); if (!document.hidden && audioCtx && audioCtx.state === 'suspended') audioCtx.resume().catch(() => {}); });
         }
         function vibrate(ms) { try { if (navigator.vibrate) navigator.vibrate(ms); } catch (e) {} }
 
@@ -2026,6 +2031,7 @@
             net.ws = null; net.connected = false; net.mode = 'solo'; net.myId = -1; net.isHost = false; net.code = ''; net.hostId = 0;
             net.players = []; net.racePlayers = []; net.myReady = false; net.racing = false; net.remoteCtrl = {}; net.snaps = []; net.lastSnapTick = 0; net.pingMs = 0;
             net.boostCount = 0; net.wallDmg = 0;
+            for (const g of ghostMissiles) scene.remove(g); ghostMissiles.length = 0;
             dom.netInd.classList.remove('on');
         }
         function netClosed() {
