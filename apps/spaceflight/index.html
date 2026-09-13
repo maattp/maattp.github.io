@@ -216,7 +216,7 @@
         // =====================================================================
         //  SPACE FLIGHT — anti-grav racing prototype (single track, CPUs)
         // =====================================================================
-        const SF_VER = 36;
+        const SF_VER = 37;
         const clamp = (v, a, b) => v < a ? a : v > b ? b : v;
         const lerp = (a, b, t) => a + (b - a) * t;
         const smoothstep = (a, b, x) => { const t = clamp((x - a) / (b - a), 0, 1); return t * t * (3 - 2 * t); };
@@ -243,7 +243,7 @@
         const ENERGY_MAX = 100;
         const BOOST_COST = 15;
         const BOOST_TIME = 2.2;
-        const BOOST_MIN_LAP = 1;        // boost unlocks after this many laps (F-Zero X rule)
+        const BOOST_MIN_LAP = 0;        // boost is available from the green light
         const RECHARGE_RATE = 42;       // energy/s on a recharge strip
         const KMH = 6.2;
 
@@ -1455,7 +1455,7 @@
             dom.rankNum.textContent = k.rank; dom.rankSuf.textContent = ORD(k.rank);
             dom.timeVal.textContent = fmtTime(raceClock);
             if (netActive()) { dom.netInd.classList.add('on'); dom.netInd.textContent = net.mode === 'host' ? 'HOST · ' + Object.values(net.rtc).filter((r) => r.open).length + '/' + Object.keys(net.rtc).length + ' P2P' : (rtcToHostOpen() ? 'P2P' : 'RELAY') + ' · ' + net.pingMs + 'ms'; } else dom.netInd.classList.remove('on');
-            dom.boostBtn.classList.toggle('cold', k.laps < BOOST_MIN_LAP || k.energy <= BOOST_COST);
+            dom.boostBtn.classList.toggle('cold', k.energy <= BOOST_COST);
             // standings
             const sorted = machines.slice().sort((a, b) => a.rank - b.rank);
             dom.standings.innerHTML = sorted.map((m) => `<div class="row${m.isPlayer ? ' me' : ''}${m.out ? ' out' : ''}"><span class="dot" style="background:${hx(m.def.col)}"></span>${m.rank} ${m.name}</div>`).join('');
@@ -1545,9 +1545,9 @@
             if (audioCtx) return;
             try { audioCtx = new (window.AudioContext || window.webkitAudioContext)(); } catch (e) { return; }
             master = audioCtx.createGain(); master.gain.value = muted ? 0 : 1;
-            const comp = audioCtx.createDynamicsCompressor(); comp.threshold.value = -14; comp.knee.value = 12; comp.ratio.value = 5; comp.attack.value = 0.004; comp.release.value = 0.18;
+            const comp = audioCtx.createDynamicsCompressor(); comp.threshold.value = -12; comp.knee.value = 8; comp.ratio.value = 10; comp.attack.value = 0.004; comp.release.value = 0.18;
             master.connect(comp); comp.connect(audioCtx.destination);
-            musicBus = audioCtx.createGain(); musicBus.gain.value = 0.55; musicBus.connect(master);
+            musicBus = audioCtx.createGain(); musicBus.gain.value = 0.3; musicBus.connect(master);
             sfxBus = audioCtx.createGain(); sfxBus.gain.value = 1; sfxBus.connect(master);
             buildEngine();
             startMusic(state === 'menu' ? 'menu' : (TRACKS[currentTrack].song || 'orbit'));
@@ -1634,94 +1634,130 @@
         const sfxCount = (go) => { if (go) { tone('square', 660, 880, 0.5, 0.14); tone('sine', 220, 220, 0.5, 0.2); } else { tone('triangle', 440, 440, 0.12, 0.16); } };
 
         // ---- music: pattern sequencer ----
-        // A song = tempo, root MIDI note, chord progression (semitones over root, one per bar), a 16-step
-        // bass pattern (semitones over the bar's chord root, null = rest), a lead melody (one array of 16
-        // per bar, semitones over root, null = rest), an arp style, and 16-step drum strings.
+        // A song = tempo, root MIDI note, chord progression (semitones over root, one per bar), a bass
+        // pattern (semitones over the bar's chord root per 16th, null = rest, 'x' = slide from previous),
+        // power-chord stab hits (16-step string), a lead melody (16 steps per bar, semitones over root,
+        // null = rest, '-' = hold), and drum strings. Timbres: distorted saw stabs, supersaw lead with
+        // portamento, plucked saw bass with a sub, kick with click, snare with tail, open/closed hats.
         const midiHz = (m) => 440 * Math.pow(2, (m - 69) / 12);
+        const H = '-';   // hold the previous lead note
         const SONGS = {
-            menu: { bpm: 112, root: 45, pad: true, arp: 'up', hat: 'x.x.x.x.x.x.x.x.', kick: 'x.......x.......', snare: '....x.......x...',
-                chords: [[0, 3, 7, 10], [-4, 0, 3, 7], [-2, 2, 5, 9], [-5, -1, 2, 5]],
-                bass: [0, null, null, null, 0, null, 7, null, 0, null, null, null, 12, null, 7, null],
-                lead: [[12, null, null, 15, null, null, 12, null, null, 10, null, 12, null, null, null, null], [8, null, null, 12, null, null, 8, null, null, 7, null, 8, null, null, null, null], [10, null, null, 14, null, null, 10, null, null, 9, null, 10, null, null, null, null], [7, null, null, 10, null, null, 12, null, null, null, null, null, null, null, null, null]] },
-            // Mute Orbit — driving A minor synth-chip, four-on-the-floor
-            orbit: { bpm: 142, root: 45, pad: true, arp: 'updown', hat: 'x.xxx.xxx.xxx.xx', kick: 'x...x...x...x...', snare: '....x.......x..x',
-                chords: [[0, 3, 7], [-4, 0, 3], [3, 7, 10], [-2, 2, 5], [0, 3, 7], [-4, 0, 3], [-2, 2, 5], [-5, -1, 2]],
-                bass: [0, 0, null, 0, null, 0, 12, null, 0, 0, null, 0, null, 7, null, 12],
-                lead: [[12, null, 15, null, 19, null, 15, 12, null, null, 10, null, 12, null, null, null], [8, null, 12, null, 15, null, 12, 8, null, null, 7, null, 8, null, null, null],
-                       [15, null, 19, null, 22, null, 19, 15, null, null, 14, null, 15, null, null, null], [14, null, 12, null, 10, null, 9, null, 10, null, 12, null, 14, null, null, null],
-                       [12, 12, null, 15, null, 17, null, 19, null, null, 17, 15, null, 12, null, null], [8, 8, null, 12, null, 15, null, 17, null, null, 15, 12, null, 8, null, null],
-                       [10, null, 14, null, 17, null, 14, null, 12, null, 10, null, 9, null, 10, null], [7, null, null, null, 10, null, 12, null, 14, null, null, null, null, null, null, null]] },
-            // Red Canyon — sun-bleached D mixolydian, bouncy swing on the hats
-            canyon: { bpm: 132, root: 50, pad: true, arp: 'up', hat: 'x..xx..xx..xx..x', kick: 'x.....x.x.....x.', snare: '....x.......x...',
-                chords: [[0, 4, 7], [-2, 2, 5], [5, 9, 12], [0, 4, 7], [-4, 0, 3], [-2, 2, 5], [0, 4, 7], [-5, -1, 2]],
-                bass: [0, null, 0, null, null, 7, null, null, 0, null, 0, null, 5, null, 7, null],
-                lead: [[7, null, 9, null, 12, null, null, 9, null, 7, null, 4, null, null, 7, null], [5, null, 7, null, 9, null, null, 7, null, 5, null, 2, null, null, 5, null],
-                       [12, null, 12, null, 14, null, 16, null, 14, null, 12, null, 9, null, null, null], [7, null, null, 9, null, 12, null, 14, null, null, 12, null, 9, null, 7, null],
-                       [3, null, 7, null, 10, null, null, 7, null, 3, null, 0, null, null, 3, null], [5, null, 9, null, 12, null, null, 9, null, 5, null, 2, null, null, 5, null],
-                       [16, null, 14, null, 12, null, 9, null, 7, null, 4, null, 7, null, null, null], [2, null, null, 5, null, 7, null, 9, null, null, 7, null, null, null, null, null]] },
-            // Glacier Loop — E minor, airy sixteenth arps, sparse lead
-            glacier: { bpm: 128, root: 52, pad: true, arp: 'up16', hat: 'x.x.x.x.x.x.x.x.', kick: 'x.......x.......', snare: '....x.......x...',
-                chords: [[0, 3, 7, 10], [-4, 0, 3, 7], [-2, 2, 5, 9], [-5, -1, 2, 5], [0, 3, 7, 10], [-7, -4, 0, 3], [-4, 0, 3, 7], [-2, 2, 5, 9]],
-                bass: [0, null, null, null, null, null, 0, null, null, null, 7, null, null, null, null, null],
-                lead: [[null, null, null, null, 15, null, 14, null, 12, null, null, null, null, null, null, null], [null, null, null, null, 12, null, 10, null, 8, null, null, null, null, null, null, null],
-                       [null, null, null, null, 14, null, 12, null, 10, null, 12, null, null, null, null, null], [null, null, 7, null, 10, null, 12, null, null, null, null, null, null, null, null, null],
-                       [19, null, null, null, 17, null, 15, null, 14, null, null, null, 12, null, null, null], [15, null, null, null, 12, null, 10, null, 8, null, null, null, 7, null, null, null],
-                       [null, null, null, null, 12, null, 15, null, 19, null, null, null, null, null, null, null], [17, null, null, null, 14, null, null, null, 12, null, null, null, null, null, null, null]] },
-            // Nova Spire — C minor at 152, relentless, octave-bouncing bass
-            spire: { bpm: 152, root: 48, pad: true, arp: 'updown', hat: 'xxxxxxxxxxxxxxxx', kick: 'x..x..x...x.x...', snare: '....x.......x...',
-                chords: [[0, 3, 7], [0, 3, 7], [-4, 0, 3], [-2, 2, 5], [0, 3, 7], [-5, -1, 2], [-4, 0, 3], [-2, 2, 5]],
-                bass: [0, 12, 0, 12, 0, 12, 0, 12, 0, 12, 0, 12, 0, 12, 7, 12],
-                lead: [[12, null, 12, null, 15, null, 19, null, 18, null, 19, null, 15, null, 12, null], [null, null, 10, null, 12, null, 15, null, 14, null, 15, null, 12, null, 10, null],
-                       [8, null, 8, null, 12, null, 15, null, 14, null, 15, null, 12, null, 8, null], [10, null, null, null, 14, null, 17, null, 19, null, null, null, 17, null, 14, null],
-                       [19, null, 19, null, 22, null, 24, null, 22, null, 19, null, 15, null, 12, null], [14, null, null, null, 17, null, 19, null, 20, null, 19, null, 17, null, 14, null],
-                       [15, null, 12, null, 8, null, 12, null, 15, null, 19, null, 15, null, 12, null], [10, null, null, null, 12, null, null, null, 14, null, null, null, 15, null, 19, null]] },
+            // paddock: slow, dark, patient
+            menu: { bpm: 96, root: 40, hat: '..x...x...x...x.', kick: 'x.......x.......', snare: '....x.......x...', stab: '................', crash: false,
+                chords: [[0, 3, 7], [-4, 0, 3], [-2, 2, 5], [-5, -1, 2]],
+                bass: [0, null, null, null, null, null, 0, null, null, null, null, null, 7, null, null, null],
+                lead: [[null, null, null, null, 12, H, H, H, 10, H, H, H, null, null, null, null], [null, null, null, null, 8, H, H, H, 7, H, H, 8, H, H, null, null], [null, null, null, null, 10, H, H, H, 9, H, H, H, null, null, null, null], [7, H, H, H, H, H, H, H, null, null, null, null, null, null, null, null]] },
+            // Mute Orbit — E minor funk-rock, Mute City energy: syncopated octave bass, stabs on the &s
+            orbit: { bpm: 140, root: 40, hat: 'x.xox.xxx.xox.xx', kick: 'x..x..x.x..x..x.', snare: '....x.......x..x', stab: '..x...x....x..x.', crash: true,
+                chords: [[0, 3, 7], [0, 3, 7], [-4, 0, 3], [-2, 2, 5], [0, 3, 7], [3, 7, 10], [-2, 2, 5], [-1, 3, 6]],
+                bass: [0, null, 0, 12, null, 0, null, 10, null, 0, 0, null, 12, null, 7, 10],
+                lead: [[12, H, H, 15, H, 17, H, H, 15, H, 12, H, H, H, 10, H], [12, H, H, H, H, H, null, null, 7, H, 10, H, 12, H, H, H],
+                       [8, H, H, 12, H, 15, H, H, 17, H, 15, H, H, H, 12, H], [10, H, H, H, H, H, null, null, 14, H, 12, H, 10, H, 9, H],
+                       [19, H, H, 17, H, 15, H, H, 12, H, H, H, 15, H, 17, H], [15, H, H, H, H, H, null, null, 19, H, 22, H, 19, H, 17, H],
+                       [14, H, H, 12, H, 10, H, H, 9, H, 10, H, 12, H, H, H], [11, H, H, H, 15, H, H, H, 18, H, H, H, 23, H, H, H]] },
+            // Red Canyon — D minor hard rock: i bVII bVI V, driving 8ths, anthem lead in long notes
+            canyon: { bpm: 148, root: 38, hat: 'x.x.x.x.x.x.x.xo', kick: 'x...x...x...x.x.', snare: '....x.......x...', stab: 'x...x.x.x...x.x.', crash: true,
+                chords: [[0, 3, 7], [0, 3, 7], [-2, 2, 5], [-2, 2, 5], [-4, 0, 3], [-4, 0, 3], [-5, -1, 2], [-5, -1, 2]],
+                bass: [0, null, 0, null, 0, null, 0, 12, 0, null, 0, null, 0, 7, 0, null],
+                lead: [[12, H, H, H, H, H, 10, H, 12, H, H, H, 15, H, H, H], [17, H, H, H, H, H, H, H, 15, H, 12, H, H, H, H, H],
+                       [10, H, H, H, H, H, 9, H, 10, H, H, H, 14, H, H, H], [12, H, H, H, H, H, H, H, 10, H, 9, H, H, H, H, H],
+                       [8, H, H, H, H, H, 7, H, 8, H, H, H, 12, H, H, H], [15, H, H, H, H, H, H, H, 12, H, 10, H, H, H, H, H],
+                       [7, H, H, H, 10, H, H, H, 14, H, H, H, 17, H, H, H], [19, H, H, H, H, H, H, H, 22, H, H, H, 23, H, H, H]] },
+            // Glacier Loop — B minor cinematic: i VI III VII, wide arps, soaring lead
+            glacier: { bpm: 134, root: 35, hat: 'x.x.x.x.x.x.x.x.', kick: 'x.......x...x...', snare: '....x.......x...', stab: '....x.......x...', crash: true, arp: true,
+                chords: [[0, 3, 7], [-4, 0, 3], [3, 7, 10], [-2, 2, 5], [0, 3, 7], [-4, 0, 3], [-5, -1, 2], [-2, 2, 5]],
+                bass: [0, null, null, null, 0, null, null, null, 0, null, null, 7, null, null, 12, null],
+                lead: [[null, null, null, null, null, null, null, null, 12, H, H, H, 15, H, H, H], [19, H, H, H, H, H, H, H, 17, H, H, H, 15, H, H, H],
+                       [14, H, H, H, H, H, H, H, 12, H, H, H, 10, H, H, H], [12, H, H, H, H, H, H, H, H, H, H, H, null, null, null, null],
+                       [null, null, null, null, null, null, null, null, 15, H, H, H, 19, H, H, H], [22, H, H, H, H, H, H, H, 19, H, H, H, 17, H, H, H],
+                       [14, H, H, H, H, H, H, H, 17, H, H, H, 19, H, H, H], [15, H, H, H, H, H, H, H, H, H, H, H, null, null, null, null]] },
+            // Nova Spire — C minor / phrygian techno-metal at 160: relentless 16th bass, riff lead
+            spire: { bpm: 160, root: 36, hat: 'xxxxxxxxxxxxxxxx', kick: 'x.x.x.x.x.x.x.x.', snare: '....x.......x...', stab: 'x.x.x.x.x.x.x.x.', crash: true,
+                chords: [[0, 3, 7], [0, 3, 7], [1, 5, 8], [0, 3, 7], [-4, 0, 3], [-2, 2, 5], [1, 5, 8], [0, 3, 7]],
+                bass: [0, 0, 12, 0, 0, 12, 0, 0, 12, 0, 0, 12, 0, 1, 0, 12],
+                lead: [[12, H, 12, H, 15, H, 13, H, 12, H, H, H, 19, H, 18, H], [12, H, 12, H, 15, H, 13, H, 12, H, 10, H, 12, H, H, H],
+                       [13, H, 13, H, 17, H, 15, H, 13, H, H, H, 20, H, 19, H], [12, H, H, H, 15, H, H, H, 19, H, H, H, 22, H, 23, H],
+                       [20, H, H, H, 19, H, 15, H, 12, H, H, H, 15, H, 17, H], [17, H, H, H, 15, H, 12, H, 10, H, H, H, 12, H, 14, H],
+                       [13, H, 13, H, 17, H, 15, H, 13, H, H, H, 20, H, 19, H], [24, H, H, H, 22, H, H, H, 19, H, H, H, 15, H, 12, H]] },
         };
         let music = null;
         function stopMusic() { if (music) { clearTimeout(music.timer); music = null; } }
+        function makeDrive(amount) {
+            const ws = audioCtx.createWaveShaper(), n = 512, c = new Float32Array(n);
+            for (let i = 0; i < n; i++) { const x = (i / (n - 1)) * 2 - 1; c[i] = Math.tanh(x * amount) / Math.tanh(amount); }
+            ws.curve = c; ws.oversample = '2x'; return ws;
+        }
         function startMusic(name) {
             if (!audioCtx) return;
             if (music && music.name === name) return;
             stopMusic();
             const S = SONGS[name] || SONGS.menu;
             const step = 60 / S.bpm / 4, bars = S.chords.length;
-            // lead echo: a short feedback delay gives the chip lead room
-            const echo = audioCtx.createDelay(1); echo.delayTime.value = step * 3; const echoG = audioCtx.createGain(); echoG.gain.value = 0.28; const echoLp = audioCtx.createBiquadFilter(); echoLp.type = 'lowpass'; echoLp.frequency.value = 2400;
+            // buses: stabs through distortion, lead through a feedback delay
+            const drive = makeDrive(3.5); const driveLp = audioCtx.createBiquadFilter(); driveLp.type = 'lowpass'; driveLp.frequency.value = 2600; const driveG = audioCtx.createGain(); driveG.gain.value = 0.22;
+            drive.connect(driveLp); driveLp.connect(driveG); driveG.connect(musicBus);
+            const echo = audioCtx.createDelay(1); echo.delayTime.value = step * 3; const echoG = audioCtx.createGain(); echoG.gain.value = 0.3; const echoLp = audioCtx.createBiquadFilter(); echoLp.type = 'lowpass'; echoLp.frequency.value = 2200;
             echo.connect(echoLp); echoLp.connect(echoG); echoG.connect(echo); echoG.connect(musicBus);
-            const note = (type, hz, at, dur, vol, dest, opts) => {
-                const o = audioCtx.createOscillator(), g = audioCtx.createGain(); o.type = type; o.frequency.value = hz;
-                if (opts && opts.vib) { const l = audioCtx.createOscillator(); l.frequency.value = 5.5; const lg = audioCtx.createGain(); lg.gain.value = 6; l.connect(lg); lg.connect(o.detune); l.start(at); l.stop(at + dur + 0.02); }
-                g.gain.setValueAtTime(0.0001, at); g.gain.linearRampToValueAtTime(vol, at + 0.008); g.gain.setValueAtTime(vol, at + dur * 0.55); g.gain.exponentialRampToValueAtTime(0.0001, at + dur);
-                let n = o; if (opts && opts.lp) { const f = audioCtx.createBiquadFilter(); f.type = 'lowpass'; f.frequency.value = opts.lp; n.connect(f); n = f; }
-                n.connect(g); g.connect(dest || musicBus); o.start(at); o.stop(at + dur + 0.02);
+            const env = (g, at, vol, dur, hold) => { g.gain.setValueAtTime(0.0001, at); g.gain.linearRampToValueAtTime(vol, at + 0.006); g.gain.setValueAtTime(vol, at + dur * (hold || 0.5)); g.gain.exponentialRampToValueAtTime(0.0001, at + dur); };
+            // plucked saw bass + square sub, filter envelope
+            const bass = (m, at, dur, slide) => {
+                const o = audioCtx.createOscillator(), sub = audioCtx.createOscillator(), f = audioCtx.createBiquadFilter(), g = audioCtx.createGain();
+                o.type = 'sawtooth'; sub.type = 'square'; o.frequency.setValueAtTime(slide ? midiHz(m - 2) : midiHz(m), at); if (slide) o.frequency.exponentialRampToValueAtTime(midiHz(m), at + 0.06);
+                sub.frequency.value = midiHz(m - 12);
+                f.type = 'lowpass'; f.Q.value = 3; f.frequency.setValueAtTime(1200, at); f.frequency.exponentialRampToValueAtTime(220, at + dur);
+                const sg = audioCtx.createGain(); sg.gain.value = 0.55; sub.connect(sg); sg.connect(f); o.connect(f); f.connect(g); g.connect(musicBus);
+                env(g, at, 0.3, dur, 0.4); o.start(at); sub.start(at); o.stop(at + dur + 0.02); sub.stop(at + dur + 0.02);
             };
+            // power-chord stab: root, fifth, octave, three detuned saws each, into the distortion bus
+            const stab = (rootM, at, dur) => {
+                const g = audioCtx.createGain(); g.connect(drive); env(g, at, 0.3, dur, 0.3);
+                for (const semi of [0, 7, 12]) for (const det of [-9, 0, 9]) { const o = audioCtx.createOscillator(); o.type = 'sawtooth'; o.frequency.value = midiHz(rootM + semi); o.detune.value = det; o.connect(g); o.start(at); o.stop(at + dur + 0.02); }
+            };
+            // supersaw lead with portamento, vibrato and a sub-octave square, into the echo
+            let leadState = null;
+            const leadOn = (m, at) => {
+                if (leadState) leadOff(at);
+                const oscs = [], g = audioCtx.createGain(), f = audioCtx.createBiquadFilter(); f.type = 'lowpass'; f.frequency.value = 3200; f.Q.value = 0.8;
+                for (const det of [-8, 0, 8]) { const o = audioCtx.createOscillator(); o.type = 'sawtooth'; o.detune.value = det; o.frequency.setValueAtTime(leadState ? leadState.hz : midiHz(m), at); o.frequency.setTargetAtTime(midiHz(m), at, 0.035); o.connect(f); o.start(at); oscs.push(o); }
+                const sq = audioCtx.createOscillator(); sq.type = 'square'; sq.frequency.setValueAtTime(midiHz(m - 12), at); const sqg = audioCtx.createGain(); sqg.gain.value = 0.35; sq.connect(sqg); sqg.connect(f); sq.start(at); oscs.push(sq);
+                const vib = audioCtx.createOscillator(); vib.frequency.value = 5.2; const vg = audioCtx.createGain(); vg.gain.value = 0; vg.gain.setTargetAtTime(9, at + 0.15, 0.1); vib.connect(vg); for (const o of oscs) vg.connect(o.detune); vib.start(at); oscs.push(vib);
+                f.connect(g); g.connect(echo); g.connect(musicBus);
+                g.gain.setValueAtTime(0.0001, at); g.gain.linearRampToValueAtTime(0.11, at + 0.02);
+                leadState = { oscs, g, hz: midiHz(m) };
+            };
+            const leadOff = (at) => { if (!leadState) return; const L = leadState; leadState = null; L.g.gain.setValueAtTime(L.g.gain.value, at); L.g.gain.exponentialRampToValueAtTime(0.0001, at + 0.09); for (const o of L.oscs) o.stop(at + 0.12); };
             const drum = (kind, at) => {
-                if (kind === 'kick') { const o = audioCtx.createOscillator(), g = audioCtx.createGain(); o.type = 'sine'; o.frequency.setValueAtTime(150, at); o.frequency.exponentialRampToValueAtTime(42, at + 0.12); g.gain.setValueAtTime(0.7, at); g.gain.exponentialRampToValueAtTime(0.001, at + 0.2); o.connect(g); g.connect(musicBus); o.start(at); o.stop(at + 0.22); }
-                else {
-                    const src = audioCtx.createBufferSource(); src.buffer = music.noise; const f = audioCtx.createBiquadFilter(); f.type = 'highpass'; f.frequency.value = kind === 'hat' ? 7000 : 1600;
-                    const g = audioCtx.createGain(); const d = kind === 'hat' ? 0.035 : 0.13; g.gain.setValueAtTime(kind === 'hat' ? 0.16 : 0.3, at); g.gain.exponentialRampToValueAtTime(0.001, at + d);
-                    src.connect(f); f.connect(g); g.connect(musicBus); src.start(at); src.stop(at + d + 0.01);
-                    if (kind === 'snare') { const o = audioCtx.createOscillator(), og = audioCtx.createGain(); o.type = 'triangle'; o.frequency.setValueAtTime(190, at); o.frequency.exponentialRampToValueAtTime(120, at + 0.08); og.gain.setValueAtTime(0.25, at); og.gain.exponentialRampToValueAtTime(0.001, at + 0.1); o.connect(og); og.connect(musicBus); o.start(at); o.stop(at + 0.12); }
+                if (kind === 'kick') {
+                    const o = audioCtx.createOscillator(), g = audioCtx.createGain(); o.type = 'sine'; o.frequency.setValueAtTime(170, at); o.frequency.exponentialRampToValueAtTime(40, at + 0.14); g.gain.setValueAtTime(0.7, at); g.gain.exponentialRampToValueAtTime(0.001, at + 0.26); o.connect(g); g.connect(musicBus); o.start(at); o.stop(at + 0.28);
+                    const c = audioCtx.createBufferSource(); c.buffer = music.noise; const cf = audioCtx.createBiquadFilter(); cf.type = 'highpass'; cf.frequency.value = 2500; const cg = audioCtx.createGain(); cg.gain.setValueAtTime(0.25, at); cg.gain.exponentialRampToValueAtTime(0.001, at + 0.02); c.connect(cf); cf.connect(cg); cg.connect(musicBus); c.start(at); c.stop(at + 0.03);
+                } else if (kind === 'snare') {
+                    const src = audioCtx.createBufferSource(); src.buffer = music.noise; const f = audioCtx.createBiquadFilter(); f.type = 'highpass'; f.frequency.value = 1300; const g = audioCtx.createGain(); g.gain.setValueAtTime(0.45, at); g.gain.exponentialRampToValueAtTime(0.001, at + 0.22); src.connect(f); f.connect(g); g.connect(musicBus); src.start(at); src.stop(at + 0.24);
+                    const o = audioCtx.createOscillator(), og = audioCtx.createGain(); o.type = 'triangle'; o.frequency.setValueAtTime(210, at); o.frequency.exponentialRampToValueAtTime(140, at + 0.07); og.gain.setValueAtTime(0.35, at); og.gain.exponentialRampToValueAtTime(0.001, at + 0.09); o.connect(og); og.connect(musicBus); o.start(at); o.stop(at + 0.1);
+                } else {
+                    const open = kind === 'ohat';
+                    const src = audioCtx.createBufferSource(); src.buffer = music.noise; const f = audioCtx.createBiquadFilter(); f.type = 'highpass'; f.frequency.value = 8000; const g = audioCtx.createGain(); const d = open ? 0.18 : 0.035; g.gain.setValueAtTime(open ? 0.2 : 0.14, at); g.gain.exponentialRampToValueAtTime(0.001, at + d); src.connect(f); f.connect(g); g.connect(musicBus); src.start(at); src.stop(at + d + 0.01);
+                    if (kind === 'crash') { const c = audioCtx.createBufferSource(); c.buffer = music.noise; const cf = audioCtx.createBiquadFilter(); cf.type = 'highpass'; cf.frequency.value = 3500; const cg = audioCtx.createGain(); cg.gain.setValueAtTime(0.35, at); cg.gain.exponentialRampToValueAtTime(0.001, at + 1.2); c.connect(cf); cf.connect(cg); cg.connect(musicBus); c.start(at); c.stop(at + 1.25); }
                 }
             };
             let i = 0, next = audioCtx.currentTime + 0.08;
-            music = { name, timer: 0, noise: noiseBuffer(0.3) };
+            music = { name, timer: 0, noise: noiseBuffer(1.5) };
             const tick = () => {
                 if (!audioCtx || !music || music.name !== name) return;
                 const racing = state === 'racing' || state === 'countdown' || state === 'finished';
                 while (next < audioCtx.currentTime + 0.22) {
-                    const bar = Math.floor(i / 16) % bars, st = i % 16, chord = S.chords[bar];
-                    const rootHz = midiHz(S.root);
+                    const bar = Math.floor(i / 16) % bars, st = i % 16, chord = S.chords[bar], rootM = S.root + chord[0];
                     if (S.kick[st] === 'x') drum('kick', next);
                     if (S.snare[st] === 'x') drum('snare', next);
-                    if (S.hat[st] === 'x') drum('hat', next);
-                    const b = S.bass[st]; if (b != null) note('triangle', midiHz(S.root + chord[0] + b - 12), next, step * 0.9, 0.34); if (b != null) note('square', midiHz(S.root + chord[0] + b - 24), next, step * 0.6, 0.10, null, { lp: 300 });
-                    if (S.pad && st === 0) for (const c of chord) note('sawtooth', midiHz(S.root + c), next, step * 16, 0.05, null, { lp: 900 });
-                    // arp on chord tones: up, up/down, or fast 16ths an octave up
-                    const arpTones = chord.map((c) => S.root + c + 12);
-                    if (S.arp === 'up16' || st % 2 === 0) { const k = S.arp === 'updown' ? [0, 1, 2, 1][(st >> 1) % 4] : ((S.arp === 'up16' ? st : st >> 1) % arpTones.length); note('square', midiHz(arpTones[k] + (S.arp === 'up16' ? 12 : 0)), next, step * 0.7, S.arp === 'up16' ? 0.05 : 0.06); }
+                    if (S.hat[st] === 'x') drum('hat', next); else if (S.hat[st] === 'o') drum('ohat', next);
+                    if (S.crash && bar === 0 && st === 0) drum('crash', next);
+                    // fill: last bar, last beat — snare 16ths
+                    if (bar === bars - 1 && st >= 12) drum('snare', next);
+                    const b = S.bass[st]; if (b != null) bass(rootM + b - 12, next, step * (S.bass[(st + 1) % 16] == null ? 1.6 : 0.85), st === 15);
+                    if (S.stab[st] === 'x' && (racing || name === 'menu')) stab(rootM, next, step * 1.4);
+                    if (S.arp && st % 2 === 0) { const tones = chord.map((c) => S.root + c + 24); const o = audioCtx.createOscillator(), g = audioCtx.createGain(); o.type = 'square'; o.frequency.value = midiHz(tones[[0, 1, 2, 1][(st >> 1) % 4]]); env(g, next, 0.05, step * 0.8); o.connect(g); g.connect(musicBus); o.start(next); o.stop(next + step); }
                     const L = S.lead[bar % S.lead.length][st];
-                    if (L != null && racing) note('square', midiHz(S.root + L + 12), next, step * 1.6, 0.12, echo, { vib: true });
-                    if (L != null && racing) note('square', midiHz(S.root + L + 12), next, step * 1.6, 0.11, null, { vib: true });
+                    if (racing) { if (L === null) leadOff(next); else if (L !== H) leadOn(S.root + L + 12, next); }
+                    else if (leadState) leadOff(next);
                     next += step; i++;
                 }
                 music.timer = setTimeout(tick, 60);
