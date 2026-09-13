@@ -223,7 +223,7 @@
         // =====================================================================
         //  SPACE FLIGHT — anti-grav racing prototype (single track, CPUs)
         // =====================================================================
-        const SF_VER = 44;
+        const SF_VER = 45;
         const clamp = (v, a, b) => v < a ? a : v > b ? b : v;
         const lerp = (a, b, t) => a + (b - a) * t;
         const smoothstep = (a, b, x) => { const t = clamp((x - a) / (b - a), 0, 1); return t * t * (3 - 2 * t); };
@@ -242,7 +242,9 @@
         const ACCEL = 46;               // u/s²  toward MAX_SPEED
         const BRAKE_DECEL = 150;
         const TURN_RATE = 4.2;          // rad/s the nose turns at full steer (low speed)
-        const GRIP = 4.6;               // 1/s the nose realigns with the road when you let go
+        const GRIP = 4.6;               // 1/s the nose realigns with the road when you let go (at rest)
+        const GRIP_FADE = 0.5;          // share of GRIP lost by top speed
+        const effGrip = (k) => GRIP * k.def.stat.grip * (1 - GRIP_FADE * clamp(k.speed / MAX_SPEED, 0, 1));
         const MAX_YAW = 0.38;           // rad, max relative heading at full steer
         const SLIDE_K = 0.6;            // share of v²·curv that becomes lateral slide (1 = physics, <1 = hover grip)
         const SLIDE_DAMP = 2.4;
@@ -1160,10 +1162,11 @@
             if (canSteer) k.yaw += k.ctrl.steer * rate * dt;
             else k.yaw += clamp(-k.yaw, -rate * dt, rate * dt);   // not racing: nose eases straight
             if (k.stunT > 0) { k.stunT -= dt; k.yaw += Math.sin(animT * 30) * 1.2 * dt; }   // a missile hit shakes the nose
-            // hover grip: the nose realigns with the road on its own (~0.3 s) — steer to hold a bend, let go to straighten
-            k.yaw -= k.yaw * GRIP * st.grip * dt;
-            // banking turns the nose with the bend a little (the wall of the bowl carries you round)
-            k.yaw += Math.sign(f.curv) * Math.abs(Math.sin(f.bank)) * 0.9 * dt;
+            // hover grip: the nose realigns with the road on its own — strong at low speed (easy to straighten),
+            // fading toward top speed so a fast bend genuinely slides out from under you unless you steer
+            k.yaw -= k.yaw * effGrip(k) * dt;
+            // banking nudges the nose with the bend, a little (was 0.9: most of the corner steered itself)
+            k.yaw += Math.sign(f.curv) * Math.abs(Math.sin(f.bank)) * 0.25 * dt;
             k.yaw = clamp(k.yaw, -1.15, 1.15);
             // --- speed ---
             const boosting = k.boostT > 0 || k.dashT > 0;
@@ -1460,7 +1463,7 @@
             // feed-forward the road's own turn rate (κ·v) — the unskilled feed less of it forward and run wide
             const vdes = clamp(err * 1.6, -0.45 * k.speed, 0.45 * k.speed);
             const yawDes = k.speed > 1 ? Math.asin(clamp(vdes / k.speed, -0.9, 0.9)) : 0;
-            const ffRoad = ((f0.curv * k.speed) + k.yaw * GRIP * k.def.stat.grip) / rate * (0.6 + 0.4 * ai.skill);
+            const ffRoad = ((f0.curv * k.speed) + k.yaw * effGrip(k)) / rate * (0.6 + 0.4 * ai.skill);
             const want = clamp((yawDes - k.yaw) * 3.5 + ffRoad, -1, 1);
             ai.jitter = lerp(ai.jitter, (Math.random() - 0.5) * (1 - ai.skill) * 0.8, 0.05);
             // lapses: every few seconds a drift of attention pulls the steering off for a moment
