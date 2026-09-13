@@ -223,7 +223,7 @@
         // =====================================================================
         //  SPACE FLIGHT — anti-grav racing prototype (single track, CPUs)
         // =====================================================================
-        const SF_VER = 41;
+        const SF_VER = 42;
         const clamp = (v, a, b) => v < a ? a : v > b ? b : v;
         const lerp = (a, b, t) => a + (b - a) * t;
         const smoothstep = (a, b, x) => { const t = clamp((x - a) / (b - a), 0, 1); return t * t * (3 - 2 * t); };
@@ -1153,8 +1153,8 @@
             const canSteer = racing && !k.finished;
             const rate = TURN_RATE * (0.7 + 0.3 * st.grip) * (0.85 + 0.15 * clamp(1 - k.speed / BOOST_SPEED, 0, 1)) * (k.stunT > 0 ? 0.3 : 1);
             if (canSteer) k.yaw += k.ctrl.steer * rate * dt;
+            else k.yaw += clamp(-k.yaw, -rate * dt, rate * dt);   // not racing: nose eases straight
             if (k.stunT > 0) { k.stunT -= dt; k.yaw += Math.sin(animT * 30) * 1.2 * dt; }   // a missile hit shakes the nose
-            else k.yaw += clamp(-k.yaw, -rate * dt, rate * dt);
             // hover grip: the nose realigns with the road on its own (~0.3 s) — steer to hold a bend, let go to straighten
             k.yaw -= k.yaw * GRIP * st.grip * dt;
             // banking turns the nose with the bend a little (the wall of the bowl carries you round)
