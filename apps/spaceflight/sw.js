@@ -3,7 +3,7 @@
 // cached lazily and copied forward across CACHE bumps. Same-origin shell is
 // stale-while-revalidate, revalidated by URL with cache:'no-cache' (WebKit
 // rejects refetching a navigation Request). Bump CACHE alongside SF_VER.
-const CACHE = 'spaceflight-v47';
+const CACHE = 'spaceflight-v48';
 const PINNED = ['https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js'];
 const SHELL = ['./', './index.html', './manifest.webmanifest', './icon-180.png', './icon-192.png', './icon-512.png'];
 
