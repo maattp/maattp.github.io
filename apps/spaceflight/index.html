@@ -223,7 +223,7 @@
         // =====================================================================
         //  SPACE FLIGHT — anti-grav racing prototype (single track, CPUs)
         // =====================================================================
-        const SF_VER = 39;
+        const SF_VER = 40;
         const clamp = (v, a, b) => v < a ? a : v > b ? b : v;
         const lerp = (a, b, t) => a + (b - a) * t;
         const smoothstep = (a, b, x) => { const t = clamp((x - a) / (b - a), 0, 1); return t * t * (3 - 2 * t); };
@@ -1575,14 +1575,17 @@
         function updateCamera(instant, dt) {
             const k = player; if (!k) return;
             const rs = k.rs != null ? k.rs : k.s, rlat = k.rlat != null ? k.rlat : k.lat;
-            const f = frameAt(rs - 15, _frA);
-            const fl = frameAt(rs + 30, _frB);
+            // the frame AT the craft: camera sits straight behind it along the local tangent and looks
+            // straight ahead of it, so the craft is centred whatever the road does 15u back or 30u on
+            // (sampling the road at s−15 / s+30 put the craft off-centre wherever the start bent)
+            const f = frameAt(rs, _frA);
             const sp = clamp(k.speed / MAX_SPEED, 0, 1.6);
             const back = 16 + sp * 2, up = 7.2;
-            // behind the machine along the track, slightly toward the lateral position, riding the track up-vector (banks tilt the camera)
-            camPos.set(f.x + f.nx * rlat * 0.75 + f.ux * up, f.y + f.ny * rlat * 0.75 + f.uy * up, f.z + f.nz * rlat * 0.75 + f.uz * up);
-            camPos.addScaledVector(_vz.set(f.tx, f.ty, f.tz), -(back - 15));
-            camLook.set(fl.x + fl.nx * rlat * 0.5 + fl.ux * 1.5, fl.y + fl.ny * rlat * 0.5 + fl.uy * 1.5, fl.z + fl.nz * rlat * 0.5 + fl.uz * 1.5);
+            camPos.set(f.x + f.nx * rlat + f.ux * up, f.y + f.ny * rlat + f.uy * up, f.z + f.nz * rlat + f.uz * up);
+            camPos.addScaledVector(_vz.set(f.tx, f.ty, f.tz), -back);
+            // look point: ahead along the road (so bends still swing the view) but from the craft's lateral line
+            const fl = frameAt(rs + 30, _frB);
+            camLook.set(fl.x + fl.nx * rlat + fl.ux * 1.5, fl.y + fl.ny * rlat + fl.uy * 1.5, fl.z + fl.nz * rlat + fl.uz * 1.5);
             if (k.dead > 0) { camPos.addScaledVector(_vy.set(f.ux, f.uy, f.uz), 10); }
             const t = instant || !camInit || !Number.isFinite(camera.position.x) ? 1 : frameLerp(0.35, dt);   // a NaN camera never lerps back
             camera.position.lerp(camPos, t);
