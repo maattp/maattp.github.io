@@ -91,6 +91,24 @@ strip across separate pits stitched floating slabs between them. `gates` (lap fr
 has no ground, so pylons are skipped when taller than 600u. The verify tool
 races and screenshots every track (`t<i>-race*.png`, `t<i>-overview.png`).
 
+## Items and obstacles
+
+Every track gets three rows of three **item boxes** (glowing octahedra;
+`def.boxes` = lap fractions, else auto-picked clear of the pits, 6 s respawn)
+and three **spike strips** covering half the road on alternating sides
+(`def.spikes` fractions, else auto; red warning plate 30u before). Riding a
+strip halves your speed and costs 3 energy (1.2 s cooldown). Items, one slot:
+**missile** (homes on the machine ahead within 1400u, 15 energy, speed ×0.55,
+0.9 s stun), **laser** (3 shots, hit-scan on the machine within 260u and 9u
+lateral, 8 energy, speed ×0.85), **nitro** (12 s of boosts that are 18%
+faster, 1.2 s longer and 40% cheaper). The back of the field draws missiles
+more often. ITEM button replaces the brake (there is no player brake; CPUs
+still brake internally). CPUs steer around strips, detour for boxes when
+empty-handed, fire nitro at once and missiles/lasers when lined up. Online:
+pickups, uses, hits and stuns are host-owned; a client sends `input.u` (use
+counter) and applies knocks from the snapshot's per-machine hit counter;
+missiles render on clients from `snap.pr`, box state from `snap.bx`.
+
 ## Online (8 pilots)
 
 `SpaceRoom` DO on `/sf/rooms` (worker), an 8-seat copy of the Fable Kart relay;

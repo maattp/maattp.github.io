@@ -136,8 +136,9 @@ helixes, tunnels), four maps, 8 humans online via the `Fable51Room` DO.
 and bump `CACHE` in `/apps/spaceflight/sw.js` (`spaceflight-vN`) to match.
 
 F-Zero-style anti-grav racer, **landscape-only**, Three.js r128. One shared
-ENERGY meter is both health and boost fuel; walls and rivals drain it, the pink
-strip recharges it, boost unlocks after lap 1. Physics run in track ribbon
+ENERGY meter is both health and boost fuel; walls, rivals, spike strips and
+item hits drain it, the pink strips recharge it. Items: homing missile, 3-shot
+laser, nitro. Physics run in track ribbon
 coordinates (along/lateral), so machines can never leave the road. See
 `apps/spaceflight/CLAUDE.md`; verify with `node tools/sfverify.mjs` and
 `node tools/sfonline.mjs`. Online: 8 pilots via the `SpaceRoom` DO on `/sf/*`.
