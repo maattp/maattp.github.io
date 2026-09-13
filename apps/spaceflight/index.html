@@ -216,7 +216,7 @@
         // =====================================================================
         //  SPACE FLIGHT — anti-grav racing prototype (single track, CPUs)
         // =====================================================================
-        const SF_VER = 37;
+        const SF_VER = 38;
         const clamp = (v, a, b) => v < a ? a : v > b ? b : v;
         const lerp = (a, b, t) => a + (b - a) * t;
         const smoothstep = (a, b, x) => { const t = clamp((x - a) / (b - a), 0, 1); return t * t * (3 - 2 * t); };
@@ -1590,11 +1590,11 @@
             engine.harm.frequency.setTargetAtTime(f * 2 + (boosting ? 12 : 0), t, 0.08);
             engine.harmLp.frequency.setTargetAtTime(300 + sp * 900, t, 0.1);
             engine.thrustBp.frequency.setTargetAtTime(280 + sp * 1300, t, 0.1);
-            engine.thrustG.gain.setTargetAtTime(0.16 + sp * 0.22, t, 0.1);
+            engine.thrustG.gain.setTargetAtTime(0, t, 0.1);   // no hum in normal flight (user request): the machine is silent until it boosts
             engine.boostG.gain.setTargetAtTime(boosting ? 0.5 : 0, t, boosting ? 0.06 : 0.25);
             engine.bo1.frequency.setTargetAtTime(f * 4, t, 0.05); engine.bo2.frequency.setTargetAtTime(f * 4, t, 0.05);
-            const on = (state === 'racing' || state === 'countdown' || state === 'finished') && player.dead <= 0;
-            engine.g.gain.setTargetAtTime(on ? 0.22 + sp * 0.08 : 0, t, 0.12);
+            const on = (state === 'racing' || state === 'countdown' || state === 'finished') && player.dead <= 0 && boosting;
+            engine.g.gain.setTargetAtTime(on ? 0.26 : 0, t, on ? 0.05 : 0.2);
         }
         // ---- one-shots ----
         function tone(type, f0, f1, dur, vol, opts) {

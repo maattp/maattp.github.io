@@ -113,11 +113,10 @@ host leaves the room ends. Verify with `node tools/sfonline.mjs` (needs
 ## Audio
 
 All WebAudio synthesis, no assets. Master → compressor → destination; a
-`musicBus` (0.55) and an `sfxBus`. **Engine**: sub sine + triangle (40–74 Hz
-by speed) through a lowpass, a filtered-saw harmonic, a looping noise
-"thrust" through a bandpass that opens with speed and breathes with a slow
-LFO, plus a boost layer (hot bandpass hiss + detuned saw pair) that fades in
-under boost. **One-shots** are `tone()` (oscillator with pitch sweep, ADSR-ish
+`musicBus` (0.55) and an `sfxBus`. **Engine**: silent in normal flight by user request (the constant hum read
+as static); the layered engine graph (sub, harmonic, thrust noise) still
+exists but its gain is only opened while boosting, together with the boost
+layer (hot bandpass hiss + detuned saw pair). **One-shots** are `tone()` (oscillator with pitch sweep, ADSR-ish
 envelope, optional lowpass) and `burst()` (filtered noise with a frequency
 sweep); the boost is a sub thump + rising saw sweep + highpass whoosh + a
 chip power-up run. **Music** is a pattern sequencer (`startMusic(name)`):
