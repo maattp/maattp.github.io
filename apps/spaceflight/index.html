@@ -216,7 +216,7 @@
         // =====================================================================
         //  SPACE FLIGHT — anti-grav racing prototype (single track, CPUs)
         // =====================================================================
-        const SF_VER = 35;
+        const SF_VER = 36;
         const clamp = (v, a, b) => v < a ? a : v > b ? b : v;
         const lerp = (a, b, t) => a + (b - a) * t;
         const smoothstep = (a, b, x) => { const t = clamp((x - a) / (b - a), 0, 1); return t * t * (3 - 2 * t); };
@@ -316,12 +316,12 @@
             [-820, 18, -480, 32], [-960, 6, -640, 36], [-880, 0, -720, 36],
         ];
         const TRACKS = [null, {
-            name: 'Red Canyon', theme: THEME_CANYON, w: 33, pts: CANYON_PTS,
+            name: 'Red Canyon', theme: THEME_CANYON, song: 'canyon', w: 33, pts: CANYON_PTS,
             dash: [], recharge: [{ f0: 0.30, f1: 0.37, lat: 14, hw: 12 }], lineF: 0.0,
         }, {
             // Glacier Loop: a fast bottom straight, a climbing right-hander onto a plateau, an S back across
             // the middle, a dive down the eastern side, then a long swooping return through the west
-            name: 'Glacier Loop', theme: THEME_ICE, w: 33,
+            name: 'Glacier Loop', theme: THEME_ICE, song: 'glacier', w: 33,
             pts: [
                 [0, 0, -500, 36], [300, 0, -520, 36], [600, 10, -440, 32], [760, 24, -240, 30], [700, 40, -40, 30],
                 [480, 52, 60, 28], [300, 58, 220, 28], [420, 50, 420, 30], [640, 44, 520, 30], [640, 30, 720, 30],
@@ -331,13 +331,13 @@
             ],
             dash: [], recharge: [{ f0: 0.44, f1: 0.51, lat: -14, hw: 12 }], lineF: 0.0,
         }, {
-            name: 'Nova Spire', theme: THEME_SPACE, w: 33, pts: SPIRE_PTS,
+            name: 'Nova Spire', theme: THEME_SPACE, song: 'spire', w: 33, pts: SPIRE_PTS,
             // four short pit strips (~120u each, ~35 energy at full speed) on alternating sides
             dash: [], recharge: [{ f0: 0.12, f1: 0.135, lat: -14, hw: 11 }, { f0: 0.42, f1: 0.435, lat: 14, hw: 11 }, { f0: 0.62, f1: 0.635, lat: -14, hw: 11 }, { f0: 0.88, f1: 0.895, lat: 14, hw: 11 }], lineF: 0.0,
             gates: [0.04, 0.30, 0.55, 0.80],
         }];
         const TRACK_DEF = {
-            name: 'Mute Orbit', theme: THEME_CITY,
+            name: 'Mute Orbit', theme: THEME_CITY, song: 'orbit',
             w: 33,
             pts: [
                 // start straight (heading +x)
@@ -1093,7 +1093,7 @@
             if (state === 'racing' && player.out) { finishRace(); }
         }
         function readPlayerControls(k, dt) {
-            if (k._auto) { aiDrive(k, dt || SIM_DT); return; }   // test harness autopilot (tools/sfverify, sfonline)
+            if (k._auto) { if (!k.ai) k.ai = makeAI(k.idx); aiDrive(k, dt || SIM_DT); return; }   // test harness autopilot (tools/sfverify, sfonline)
             const steer = clamp((keySteer || touchSteer) * steerSign, -1, 1);
             k.ctrl.steer = steer; k.ctrl.boost = boostHeld; k.ctrl.brake = brakeHeld;
             if (boostHeld) boostHeld = false;   // one press = one boost
@@ -1536,88 +1536,198 @@
         function vibrate(ms) { try { if (navigator.vibrate) navigator.vibrate(ms); } catch (e) {} }
 
         // =====================================================================
-        //  AUDIO (WebAudio synthesis)
+        //  AUDIO — all WebAudio synthesis. A layered hover engine (sub + thrust
+        //  noise + harmonic, boost layer), punchy one-shot effects, and a pattern
+        //  sequencer playing a composed chiptune per map (SONGS).
         // =====================================================================
-        let audioCtx = null, master = null, muted = false, engine = null;
+        let audioCtx = null, master = null, muted = false, engine = null, musicBus = null, sfxBus = null;
         function initAudio() {
             if (audioCtx) return;
             try { audioCtx = new (window.AudioContext || window.webkitAudioContext)(); } catch (e) { return; }
-            master = audioCtx.createGain(); master.gain.value = muted ? 0 : 1; master.connect(audioCtx.destination);
-            // engine: two detuned saws through a lowpass, pitched by speed
-            const o1 = audioCtx.createOscillator(), o2 = audioCtx.createOscillator(), o3 = audioCtx.createOscillator();
-            o1.type = 'sawtooth'; o2.type = 'sawtooth'; o3.type = 'sine';
-            const lp = audioCtx.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = 600; lp.Q.value = 2;
-            const g = audioCtx.createGain(); g.gain.value = 0;
-            o1.connect(lp); o2.connect(lp); o3.connect(g); lp.connect(g); g.connect(master);
-            o1.start(); o2.start(); o3.start();
-            engine = { o1, o2, o3, lp, g };
-            startMusic();
+            master = audioCtx.createGain(); master.gain.value = muted ? 0 : 1;
+            const comp = audioCtx.createDynamicsCompressor(); comp.threshold.value = -14; comp.knee.value = 12; comp.ratio.value = 5; comp.attack.value = 0.004; comp.release.value = 0.18;
+            master.connect(comp); comp.connect(audioCtx.destination);
+            musicBus = audioCtx.createGain(); musicBus.gain.value = 0.55; musicBus.connect(master);
+            sfxBus = audioCtx.createGain(); sfxBus.gain.value = 1; sfxBus.connect(master);
+            buildEngine();
+            startMusic(state === 'menu' ? 'menu' : (TRACKS[currentTrack].song || 'orbit'));
+        }
+        function noiseBuffer(sec) {
+            const n = Math.floor(audioCtx.sampleRate * sec), b = audioCtx.createBuffer(1, n, audioCtx.sampleRate), d = b.getChannelData(0);
+            for (let i = 0; i < n; i++) d[i] = Math.random() * 2 - 1;
+            return b;
+        }
+        // ---- engine: deep and breathy, pitched by speed; a separate hot layer opens up under boost ----
+        function buildEngine() {
+            const g = audioCtx.createGain(); g.gain.value = 0; g.connect(sfxBus);
+            const sub = audioCtx.createOscillator(); sub.type = 'sine'; sub.frequency.value = 48;
+            const sub2 = audioCtx.createOscillator(); sub2.type = 'triangle'; sub2.frequency.value = 72;
+            const subG = audioCtx.createGain(); subG.gain.value = 0.5; sub.connect(subG); sub2.connect(subG);
+            const subLp = audioCtx.createBiquadFilter(); subLp.type = 'lowpass'; subLp.frequency.value = 220; subG.connect(subLp); subLp.connect(g);
+            const harm = audioCtx.createOscillator(); harm.type = 'sawtooth'; harm.frequency.value = 96;
+            const harmLp = audioCtx.createBiquadFilter(); harmLp.type = 'lowpass'; harmLp.frequency.value = 500; harmLp.Q.value = 1.2;
+            const harmG = audioCtx.createGain(); harmG.gain.value = 0.10; harm.connect(harmLp); harmLp.connect(harmG); harmG.connect(g);
+            const thrust = audioCtx.createBufferSource(); thrust.buffer = noiseBuffer(2); thrust.loop = true;
+            const thrustBp = audioCtx.createBiquadFilter(); thrustBp.type = 'bandpass'; thrustBp.frequency.value = 400; thrustBp.Q.value = 0.7;
+            const thrustG = audioCtx.createGain(); thrustG.gain.value = 0.25; thrust.connect(thrustBp); thrustBp.connect(thrustG); thrustG.connect(g);
+            // boost layer: a hot resonant hiss plus a detuned pair an octave up
+            const boostN = audioCtx.createBufferSource(); boostN.buffer = noiseBuffer(2); boostN.loop = true;
+            const boostBp = audioCtx.createBiquadFilter(); boostBp.type = 'bandpass'; boostBp.frequency.value = 1800; boostBp.Q.value = 1.4;
+            const boostG = audioCtx.createGain(); boostG.gain.value = 0; boostN.connect(boostBp); boostBp.connect(boostG); boostG.connect(g);
+            const bo1 = audioCtx.createOscillator(); bo1.type = 'sawtooth'; const bo2 = audioCtx.createOscillator(); bo2.type = 'sawtooth'; bo2.detune.value = 9;
+            const boLp = audioCtx.createBiquadFilter(); boLp.type = 'lowpass'; boLp.frequency.value = 1400; bo1.connect(boLp); bo2.connect(boLp); boLp.connect(boostG);
+            // slow wobble on the thrust filter so the idle breathes
+            const lfo = audioCtx.createOscillator(); lfo.frequency.value = 0.9; const lfoG = audioCtx.createGain(); lfoG.gain.value = 60; lfo.connect(lfoG); lfoG.connect(thrustBp.frequency);
+            for (const o of [sub, sub2, harm, thrust, boostN, bo1, bo2, lfo]) o.start();
+            engine = { g, sub, sub2, harm, harmLp, thrustBp, thrustG, boostG, boostBp, bo1, bo2, boLp };
         }
         function updateEngine(dt) {
             if (!engine || !player) return;
-            const sp = clamp(player.speed / MAX_SPEED, 0, 1.6);
+            const t = audioCtx.currentTime, sp = clamp(player.speed / MAX_SPEED, 0, 1.5);
             const boosting = player.boostT > 0 || player.dashT > 0;
-            const f = 55 + sp * 140 + (boosting ? 40 : 0);
-            engine.o1.frequency.setTargetAtTime(f, audioCtx.currentTime, 0.05);
-            engine.o2.frequency.setTargetAtTime(f * 1.007 + 2, audioCtx.currentTime, 0.05);
-            engine.o3.frequency.setTargetAtTime(f * 2, audioCtx.currentTime, 0.05);
-            engine.lp.frequency.setTargetAtTime(400 + sp * 1800 + (boosting ? 1500 : 0), audioCtx.currentTime, 0.05);
-            const on = state === 'racing' || state === 'countdown' || state === 'finished';
-            engine.g.gain.setTargetAtTime(on && player.dead <= 0 ? 0.05 + sp * 0.06 : 0, audioCtx.currentTime, 0.1);
+            const f = 40 + sp * 34;
+            engine.sub.frequency.setTargetAtTime(f, t, 0.08); engine.sub2.frequency.setTargetAtTime(f * 1.5, t, 0.08);
+            engine.harm.frequency.setTargetAtTime(f * 2 + (boosting ? 12 : 0), t, 0.08);
+            engine.harmLp.frequency.setTargetAtTime(300 + sp * 900, t, 0.1);
+            engine.thrustBp.frequency.setTargetAtTime(280 + sp * 1300, t, 0.1);
+            engine.thrustG.gain.setTargetAtTime(0.16 + sp * 0.22, t, 0.1);
+            engine.boostG.gain.setTargetAtTime(boosting ? 0.5 : 0, t, boosting ? 0.06 : 0.25);
+            engine.bo1.frequency.setTargetAtTime(f * 4, t, 0.05); engine.bo2.frequency.setTargetAtTime(f * 4, t, 0.05);
+            const on = (state === 'racing' || state === 'countdown' || state === 'finished') && player.dead <= 0;
+            engine.g.gain.setTargetAtTime(on ? 0.22 + sp * 0.08 : 0, t, 0.12);
         }
-        function blip(freq, dur, type, vol, slide) {
+        // ---- one-shots ----
+        function tone(type, f0, f1, dur, vol, opts) {
             if (!audioCtx || muted) return;
+            opts = opts || {};
+            const t = audioCtx.currentTime + (opts.at || 0);
             const o = audioCtx.createOscillator(), g = audioCtx.createGain();
-            o.type = type || 'square'; o.frequency.value = freq; if (slide) o.frequency.exponentialRampToValueAtTime(slide, audioCtx.currentTime + dur);
-            g.gain.value = vol || 0.15; g.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + dur);
-            o.connect(g); g.connect(master); o.start(); o.stop(audioCtx.currentTime + dur);
+            o.type = type; o.frequency.setValueAtTime(f0, t); if (f1 && f1 !== f0) o.frequency.exponentialRampToValueAtTime(Math.max(1, f1), t + dur);
+            g.gain.setValueAtTime(0.0001, t); g.gain.linearRampToValueAtTime(vol, t + (opts.attack || 0.006)); g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+            let node = o;
+            if (opts.lp) { const f = audioCtx.createBiquadFilter(); f.type = 'lowpass'; f.frequency.value = opts.lp; node.connect(f); node = f; }
+            node.connect(g); g.connect(sfxBus); o.start(t); o.stop(t + dur + 0.02);
         }
-        function noise(dur, vol, hp) {
+        function burst(dur, vol, opts) {
             if (!audioCtx || muted) return;
-            const n = audioCtx.sampleRate * dur | 0, b = audioCtx.createBuffer(1, n, audioCtx.sampleRate), d = b.getChannelData(0);
-            for (let i = 0; i < n; i++) d[i] = (Math.random() * 2 - 1) * (1 - i / n);
-            const s = audioCtx.createBufferSource(); s.buffer = b;
-            const f = audioCtx.createBiquadFilter(); f.type = hp ? 'highpass' : 'lowpass'; f.frequency.value = hp || 900;
-            const g = audioCtx.createGain(); g.gain.value = vol;
-            s.connect(f); f.connect(g); g.connect(master); s.start();
+            opts = opts || {};
+            const t = audioCtx.currentTime + (opts.at || 0);
+            const src = audioCtx.createBufferSource(); src.buffer = noiseBuffer(Math.min(dur + 0.05, 2));
+            const f = audioCtx.createBiquadFilter(); f.type = opts.type || 'bandpass'; f.frequency.setValueAtTime(opts.f0 || 900, t); if (opts.f1) f.frequency.exponentialRampToValueAtTime(opts.f1, t + dur); f.Q.value = opts.q || 0.9;
+            const g = audioCtx.createGain(); g.gain.setValueAtTime(0.0001, t); g.gain.linearRampToValueAtTime(vol, t + (opts.attack || 0.01)); g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+            src.connect(f); f.connect(g); g.connect(sfxBus); src.start(t); src.stop(t + dur + 0.05);
         }
-        const sfxBoost = () => { blip(180, 0.5, 'sawtooth', 0.18, 900); noise(0.5, 0.12, 1500); };
-        const sfxWhoosh = () => noise(0.4, 0.1, 400);
-        const sfxDeny = () => blip(220, 0.12, 'square', 0.1, 160);
-        const sfxLap = () => { blip(660, 0.12, 'square', 0.12); setTimeout(() => blip(880, 0.18, 'square', 0.12), 120); };
-        const sfxFinish = () => { [523, 659, 784, 1046].forEach((f, i) => setTimeout(() => blip(f, 0.3, 'square', 0.14), i * 130)); };
-        const sfxBump = () => { noise(0.15, 0.25, 300); blip(120, 0.15, 'sawtooth', 0.15, 60); };
-        const sfxExplode = () => { noise(1.2, 0.5, 200); blip(90, 1.0, 'sawtooth', 0.25, 30); };
+        const sfxBoost = () => {   // thump, rising sweep, whoosh, and a chip power-up run
+            tone('sine', 95, 32, 0.4, 0.55);
+            tone('sawtooth', 140, 1100, 0.7, 0.16, { lp: 2200, attack: 0.05 });
+            burst(0.8, 0.35, { type: 'highpass', f0: 500, f1: 4200, attack: 0.05 });
+            [523, 659, 784, 1046, 1318].forEach((f, i) => tone('square', f, f, 0.09, 0.07, { at: i * 0.055 }));
+        };
+        const sfxWhoosh = () => burst(0.4, 0.12, { type: 'lowpass', f0: 500, f1: 1500 });
+        const sfxDeny = () => tone('triangle', 220, 150, 0.16, 0.12);
+        const sfxLap = () => { tone('square', 659, 659, 0.12, 0.10); tone('square', 988, 988, 0.22, 0.10, { at: 0.11 }); tone('triangle', 330, 330, 0.3, 0.14); };
+        const sfxFinish = () => { [523, 659, 784, 1046].forEach((f, i) => tone('square', f, f, 0.22, 0.11, { at: i * 0.12 })); [523, 659, 784].forEach((f) => tone('sawtooth', f, f, 1.2, 0.05, { at: 0.5, lp: 1800 })); tone('sine', 131, 131, 1.2, 0.2, { at: 0.5 }); };
+        const sfxBump = () => { tone('sine', 120, 45, 0.22, 0.5); burst(0.14, 0.3, { type: 'lowpass', f0: 700 }); };
+        const sfxExplode = () => { burst(1.4, 0.7, { type: 'lowpass', f0: 1400, f1: 70 }); tone('sine', 75, 18, 1.3, 0.5); for (let i = 0; i < 6; i++) burst(0.08, 0.25, { type: 'bandpass', f0: 800 + Math.random() * 1600, at: 0.05 + Math.random() * 0.5 }); };
         let scrapeT = 0;
-        const sfxScrape = (into) => { if (performance.now() - scrapeT < 120) return; scrapeT = performance.now(); noise(0.2, clamp(into * 0.004, 0.06, 0.25), 2500); };
-        const sfxCount = (go) => blip(go ? 880 : 440, go ? 0.5 : 0.15, 'square', 0.14);
-        // music: driving synth loop (bass + arp + kick), scheduled per 16th
+        const sfxScrape = (into) => { if (performance.now() - scrapeT < 110) return; scrapeT = performance.now(); burst(0.2, clamp(into * 0.004, 0.06, 0.24), { type: 'bandpass', f0: 700 + Math.random() * 300, q: 2 }); tone('sine', 140, 90, 0.12, 0.12); };
+        const sfxCount = (go) => { if (go) { tone('square', 660, 880, 0.5, 0.14); tone('sine', 220, 220, 0.5, 0.2); } else { tone('triangle', 440, 440, 0.12, 0.16); } };
+
+        // ---- music: pattern sequencer ----
+        // A song = tempo, root MIDI note, chord progression (semitones over root, one per bar), a 16-step
+        // bass pattern (semitones over the bar's chord root, null = rest), a lead melody (one array of 16
+        // per bar, semitones over root, null = rest), an arp style, and 16-step drum strings.
+        const midiHz = (m) => 440 * Math.pow(2, (m - 69) / 12);
+        const SONGS = {
+            menu: { bpm: 112, root: 45, pad: true, arp: 'up', hat: 'x.x.x.x.x.x.x.x.', kick: 'x.......x.......', snare: '....x.......x...',
+                chords: [[0, 3, 7, 10], [-4, 0, 3, 7], [-2, 2, 5, 9], [-5, -1, 2, 5]],
+                bass: [0, null, null, null, 0, null, 7, null, 0, null, null, null, 12, null, 7, null],
+                lead: [[12, null, null, 15, null, null, 12, null, null, 10, null, 12, null, null, null, null], [8, null, null, 12, null, null, 8, null, null, 7, null, 8, null, null, null, null], [10, null, null, 14, null, null, 10, null, null, 9, null, 10, null, null, null, null], [7, null, null, 10, null, null, 12, null, null, null, null, null, null, null, null, null]] },
+            // Mute Orbit — driving A minor synth-chip, four-on-the-floor
+            orbit: { bpm: 142, root: 45, pad: true, arp: 'updown', hat: 'x.xxx.xxx.xxx.xx', kick: 'x...x...x...x...', snare: '....x.......x..x',
+                chords: [[0, 3, 7], [-4, 0, 3], [3, 7, 10], [-2, 2, 5], [0, 3, 7], [-4, 0, 3], [-2, 2, 5], [-5, -1, 2]],
+                bass: [0, 0, null, 0, null, 0, 12, null, 0, 0, null, 0, null, 7, null, 12],
+                lead: [[12, null, 15, null, 19, null, 15, 12, null, null, 10, null, 12, null, null, null], [8, null, 12, null, 15, null, 12, 8, null, null, 7, null, 8, null, null, null],
+                       [15, null, 19, null, 22, null, 19, 15, null, null, 14, null, 15, null, null, null], [14, null, 12, null, 10, null, 9, null, 10, null, 12, null, 14, null, null, null],
+                       [12, 12, null, 15, null, 17, null, 19, null, null, 17, 15, null, 12, null, null], [8, 8, null, 12, null, 15, null, 17, null, null, 15, 12, null, 8, null, null],
+                       [10, null, 14, null, 17, null, 14, null, 12, null, 10, null, 9, null, 10, null], [7, null, null, null, 10, null, 12, null, 14, null, null, null, null, null, null, null]] },
+            // Red Canyon — sun-bleached D mixolydian, bouncy swing on the hats
+            canyon: { bpm: 132, root: 50, pad: true, arp: 'up', hat: 'x..xx..xx..xx..x', kick: 'x.....x.x.....x.', snare: '....x.......x...',
+                chords: [[0, 4, 7], [-2, 2, 5], [5, 9, 12], [0, 4, 7], [-4, 0, 3], [-2, 2, 5], [0, 4, 7], [-5, -1, 2]],
+                bass: [0, null, 0, null, null, 7, null, null, 0, null, 0, null, 5, null, 7, null],
+                lead: [[7, null, 9, null, 12, null, null, 9, null, 7, null, 4, null, null, 7, null], [5, null, 7, null, 9, null, null, 7, null, 5, null, 2, null, null, 5, null],
+                       [12, null, 12, null, 14, null, 16, null, 14, null, 12, null, 9, null, null, null], [7, null, null, 9, null, 12, null, 14, null, null, 12, null, 9, null, 7, null],
+                       [3, null, 7, null, 10, null, null, 7, null, 3, null, 0, null, null, 3, null], [5, null, 9, null, 12, null, null, 9, null, 5, null, 2, null, null, 5, null],
+                       [16, null, 14, null, 12, null, 9, null, 7, null, 4, null, 7, null, null, null], [2, null, null, 5, null, 7, null, 9, null, null, 7, null, null, null, null, null]] },
+            // Glacier Loop — E minor, airy sixteenth arps, sparse lead
+            glacier: { bpm: 128, root: 52, pad: true, arp: 'up16', hat: 'x.x.x.x.x.x.x.x.', kick: 'x.......x.......', snare: '....x.......x...',
+                chords: [[0, 3, 7, 10], [-4, 0, 3, 7], [-2, 2, 5, 9], [-5, -1, 2, 5], [0, 3, 7, 10], [-7, -4, 0, 3], [-4, 0, 3, 7], [-2, 2, 5, 9]],
+                bass: [0, null, null, null, null, null, 0, null, null, null, 7, null, null, null, null, null],
+                lead: [[null, null, null, null, 15, null, 14, null, 12, null, null, null, null, null, null, null], [null, null, null, null, 12, null, 10, null, 8, null, null, null, null, null, null, null],
+                       [null, null, null, null, 14, null, 12, null, 10, null, 12, null, null, null, null, null], [null, null, 7, null, 10, null, 12, null, null, null, null, null, null, null, null, null],
+                       [19, null, null, null, 17, null, 15, null, 14, null, null, null, 12, null, null, null], [15, null, null, null, 12, null, 10, null, 8, null, null, null, 7, null, null, null],
+                       [null, null, null, null, 12, null, 15, null, 19, null, null, null, null, null, null, null], [17, null, null, null, 14, null, null, null, 12, null, null, null, null, null, null, null]] },
+            // Nova Spire — C minor at 152, relentless, octave-bouncing bass
+            spire: { bpm: 152, root: 48, pad: true, arp: 'updown', hat: 'xxxxxxxxxxxxxxxx', kick: 'x..x..x...x.x...', snare: '....x.......x...',
+                chords: [[0, 3, 7], [0, 3, 7], [-4, 0, 3], [-2, 2, 5], [0, 3, 7], [-5, -1, 2], [-4, 0, 3], [-2, 2, 5]],
+                bass: [0, 12, 0, 12, 0, 12, 0, 12, 0, 12, 0, 12, 0, 12, 7, 12],
+                lead: [[12, null, 12, null, 15, null, 19, null, 18, null, 19, null, 15, null, 12, null], [null, null, 10, null, 12, null, 15, null, 14, null, 15, null, 12, null, 10, null],
+                       [8, null, 8, null, 12, null, 15, null, 14, null, 15, null, 12, null, 8, null], [10, null, null, null, 14, null, 17, null, 19, null, null, null, 17, null, 14, null],
+                       [19, null, 19, null, 22, null, 24, null, 22, null, 19, null, 15, null, 12, null], [14, null, null, null, 17, null, 19, null, 20, null, 19, null, 17, null, 14, null],
+                       [15, null, 12, null, 8, null, 12, null, 15, null, 19, null, 15, null, 12, null], [10, null, null, null, 12, null, null, null, 14, null, null, null, 15, null, 19, null]] },
+        };
         let music = null;
-        function startMusic() {
-            if (!audioCtx || music) return;
-            const bpm = 138, step = 60 / bpm / 4;
-            const bass = [0, 0, 7, 0, 5, 0, 7, 3];   // semitones over root
-            const chords = [[0, 3, 7, 10], [-2, 2, 5, 9], [-4, 0, 3, 7], [-2, 2, 5, 9]];
-            let i = 0, next = audioCtx.currentTime + 0.1;
-            const root = 55;
-            const nf = (semi) => root * Math.pow(2, semi / 12);
+        function stopMusic() { if (music) { clearTimeout(music.timer); music = null; } }
+        function startMusic(name) {
+            if (!audioCtx) return;
+            if (music && music.name === name) return;
+            stopMusic();
+            const S = SONGS[name] || SONGS.menu;
+            const step = 60 / S.bpm / 4, bars = S.chords.length;
+            // lead echo: a short feedback delay gives the chip lead room
+            const echo = audioCtx.createDelay(1); echo.delayTime.value = step * 3; const echoG = audioCtx.createGain(); echoG.gain.value = 0.28; const echoLp = audioCtx.createBiquadFilter(); echoLp.type = 'lowpass'; echoLp.frequency.value = 2400;
+            echo.connect(echoLp); echoLp.connect(echoG); echoG.connect(echo); echoG.connect(musicBus);
+            const note = (type, hz, at, dur, vol, dest, opts) => {
+                const o = audioCtx.createOscillator(), g = audioCtx.createGain(); o.type = type; o.frequency.value = hz;
+                if (opts && opts.vib) { const l = audioCtx.createOscillator(); l.frequency.value = 5.5; const lg = audioCtx.createGain(); lg.gain.value = 6; l.connect(lg); lg.connect(o.detune); l.start(at); l.stop(at + dur + 0.02); }
+                g.gain.setValueAtTime(0.0001, at); g.gain.linearRampToValueAtTime(vol, at + 0.008); g.gain.setValueAtTime(vol, at + dur * 0.55); g.gain.exponentialRampToValueAtTime(0.0001, at + dur);
+                let n = o; if (opts && opts.lp) { const f = audioCtx.createBiquadFilter(); f.type = 'lowpass'; f.frequency.value = opts.lp; n.connect(f); n = f; }
+                n.connect(g); g.connect(dest || musicBus); o.start(at); o.stop(at + dur + 0.02);
+            };
+            const drum = (kind, at) => {
+                if (kind === 'kick') { const o = audioCtx.createOscillator(), g = audioCtx.createGain(); o.type = 'sine'; o.frequency.setValueAtTime(150, at); o.frequency.exponentialRampToValueAtTime(42, at + 0.12); g.gain.setValueAtTime(0.7, at); g.gain.exponentialRampToValueAtTime(0.001, at + 0.2); o.connect(g); g.connect(musicBus); o.start(at); o.stop(at + 0.22); }
+                else {
+                    const src = audioCtx.createBufferSource(); src.buffer = music.noise; const f = audioCtx.createBiquadFilter(); f.type = 'highpass'; f.frequency.value = kind === 'hat' ? 7000 : 1600;
+                    const g = audioCtx.createGain(); const d = kind === 'hat' ? 0.035 : 0.13; g.gain.setValueAtTime(kind === 'hat' ? 0.16 : 0.3, at); g.gain.exponentialRampToValueAtTime(0.001, at + d);
+                    src.connect(f); f.connect(g); g.connect(musicBus); src.start(at); src.stop(at + d + 0.01);
+                    if (kind === 'snare') { const o = audioCtx.createOscillator(), og = audioCtx.createGain(); o.type = 'triangle'; o.frequency.setValueAtTime(190, at); o.frequency.exponentialRampToValueAtTime(120, at + 0.08); og.gain.setValueAtTime(0.25, at); og.gain.exponentialRampToValueAtTime(0.001, at + 0.1); o.connect(og); og.connect(musicBus); o.start(at); o.stop(at + 0.12); }
+                }
+            };
+            let i = 0, next = audioCtx.currentTime + 0.08;
+            music = { name, timer: 0, noise: noiseBuffer(0.3) };
             const tick = () => {
-                if (!audioCtx) return;
-                while (next < audioCtx.currentTime + 0.25) {
-                    const bar = (i >> 4) % 4, st = i % 16;
-                    const play = state === 'racing' || state === 'countdown' || state === 'finished';
-                    const vol = play ? 1 : 0.5;
-                    if (st % 4 === 0) { const o = audioCtx.createOscillator(), g = audioCtx.createGain(); o.type = 'sine'; o.frequency.setValueAtTime(140, next); o.frequency.exponentialRampToValueAtTime(40, next + 0.12); g.gain.setValueAtTime(0.35 * vol, next); g.gain.exponentialRampToValueAtTime(0.001, next + 0.16); o.connect(g); g.connect(master); o.start(next); o.stop(next + 0.18); }
-                    if (st % 2 === 0) { const o = audioCtx.createOscillator(), g = audioCtx.createGain(); o.type = 'sawtooth'; o.frequency.value = nf(chords[bar][0] + bass[(st >> 1) % 8] - 12); const f = audioCtx.createBiquadFilter(); f.type = 'lowpass'; f.frequency.value = 500; g.gain.setValueAtTime(0.13 * vol, next); g.gain.exponentialRampToValueAtTime(0.001, next + step * 1.8); o.connect(f); f.connect(g); g.connect(master); o.start(next); o.stop(next + step * 2); }
-                    if (play) { const o = audioCtx.createOscillator(), g = audioCtx.createGain(); o.type = 'square'; o.frequency.value = nf(chords[bar][(st * 5) % 4] + 12 + (st % 8 === 7 ? 12 : 0)); g.gain.setValueAtTime(0.05, next); g.gain.exponentialRampToValueAtTime(0.001, next + step * 0.9); o.connect(g); g.connect(master); o.start(next); o.stop(next + step); }
-                    if (st % 8 === 4) noise(0.08, 0.08 * vol, 4000);
+                if (!audioCtx || !music || music.name !== name) return;
+                const racing = state === 'racing' || state === 'countdown' || state === 'finished';
+                while (next < audioCtx.currentTime + 0.22) {
+                    const bar = Math.floor(i / 16) % bars, st = i % 16, chord = S.chords[bar];
+                    const rootHz = midiHz(S.root);
+                    if (S.kick[st] === 'x') drum('kick', next);
+                    if (S.snare[st] === 'x') drum('snare', next);
+                    if (S.hat[st] === 'x') drum('hat', next);
+                    const b = S.bass[st]; if (b != null) note('triangle', midiHz(S.root + chord[0] + b - 12), next, step * 0.9, 0.34); if (b != null) note('square', midiHz(S.root + chord[0] + b - 24), next, step * 0.6, 0.10, null, { lp: 300 });
+                    if (S.pad && st === 0) for (const c of chord) note('sawtooth', midiHz(S.root + c), next, step * 16, 0.05, null, { lp: 900 });
+                    // arp on chord tones: up, up/down, or fast 16ths an octave up
+                    const arpTones = chord.map((c) => S.root + c + 12);
+                    if (S.arp === 'up16' || st % 2 === 0) { const k = S.arp === 'updown' ? [0, 1, 2, 1][(st >> 1) % 4] : ((S.arp === 'up16' ? st : st >> 1) % arpTones.length); note('square', midiHz(arpTones[k] + (S.arp === 'up16' ? 12 : 0)), next, step * 0.7, S.arp === 'up16' ? 0.05 : 0.06); }
+                    const L = S.lead[bar % S.lead.length][st];
+                    if (L != null && racing) note('square', midiHz(S.root + L + 12), next, step * 1.6, 0.12, echo, { vib: true });
+                    if (L != null && racing) note('square', midiHz(S.root + L + 12), next, step * 1.6, 0.11, null, { vib: true });
                     next += step; i++;
                 }
-                music.timer = setTimeout(tick, 90);
+                music.timer = setTimeout(tick, 60);
             };
-            music = { timer: 0 }; tick();
+            tick();
         }
-
         // =====================================================================
         //  ONLINE — Fable Kart's star topology, ported. The room DO relays; a
         //  WebRTC data channel per client is the fast path (TURN when the worker
@@ -1814,6 +1924,7 @@
             resetRace();
             dom.hud.classList.add('on'); dom.muteBtn.classList.add('on'); dom.pauseBtn.classList.remove('on');
             state = 'countdown'; countdownT = 3.6; dom.countdown.classList.add('on');
+            startMusic(TRACKS[currentTrack].song || 'orbit');
         }
         function endOnlineRaceToLobby() {
             net.racing = false; net.snaps = []; net.remoteCtrl = {}; net.lastSnapTick = 0;
@@ -1821,7 +1932,7 @@
             state = 'menu';
             dom.hud.classList.remove('on'); dom.countdown.classList.remove('on'); dom.resultScreen.classList.remove('on');
             buildMachines(); resetRace();
-            showLobby();
+            showLobby(); startMusic('menu');
         }
         function hostConvertToAI(pid) {
             const k = machines.find((m) => m.pid === pid);
@@ -1938,6 +2049,7 @@
             dom.hud.classList.add('on'); dom.muteBtn.classList.add('on'); dom.pauseBtn.classList.add('on');
             state = 'countdown'; countdownT = 3.6;
             dom.countdown.classList.add('on');
+            startMusic(TRACKS[currentTrack].song || 'orbit');
         }
         function runCountdown(dt) {
             const before = Math.ceil(countdownT);
@@ -1970,7 +2082,7 @@
         function quitToMenu() {
             if (netActive()) netReset();
             state = 'menu'; dom.pauseScreen.classList.remove('on'); dom.resultScreen.classList.remove('on'); dom.lobbyScreen.classList.remove('on'); dom.hud.classList.remove('on'); dom.pauseBtn.classList.remove('on'); dom.startScreen.classList.add('on');
-            buildMachines(); resetRace();
+            buildMachines(); resetRace(); startMusic('menu');
         }
 
         function buildTrackPicker() {
@@ -2053,7 +2165,7 @@
                     get machines() { return machines; }, get player() { return player; }, get state() { return state; }, set state(v) { state = v; },
                     get raceClock() { return raceClock; }, TRACK, TRACKS, loadTrack, get currentTrack() { return currentTrack; }, frameAt, sampleAtS, simTick, startGame, resetRace, updateCamera, finishRace, get scene() { return scene; }, get world() { return world; },
                     aiDrive, set freeBoost(v) { DBG_FREEBOOST = v; }, get camera() { return camera; },
-                    get net() { return net; }, setLapsNet(n) { TOTAL_LAPS_NET = n; }, get TOTAL_LAPS() { return TOTAL_LAPS; },
+                    get net() { return net; }, setLapsNet(n) { TOTAL_LAPS_NET = n; }, get TOTAL_LAPS() { return TOTAL_LAPS; }, initAudio, startMusic, get audioCtx() { return audioCtx; }, get music() { return music; }, get master() { return master; }, sfx: { boost: () => sfxBoost(), bump: () => sfxBump(), explode: () => sfxExplode(), lap: () => sfxLap() },
                 };
             }
             requestAnimationFrame(frame);

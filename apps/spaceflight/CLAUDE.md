@@ -110,6 +110,24 @@ points, so mismatched builds cannot share a room. No host migration: when the
 host leaves the room ends. Verify with `node tools/sfonline.mjs` (needs
 `(cd worker && npx wrangler dev --port 8787)` and the http server).
 
+## Audio
+
+All WebAudio synthesis, no assets. Master → compressor → destination; a
+`musicBus` (0.55) and an `sfxBus`. **Engine**: sub sine + triangle (40–74 Hz
+by speed) through a lowpass, a filtered-saw harmonic, a looping noise
+"thrust" through a bandpass that opens with speed and breathes with a slow
+LFO, plus a boost layer (hot bandpass hiss + detuned saw pair) that fades in
+under boost. **One-shots** are `tone()` (oscillator with pitch sweep, ADSR-ish
+envelope, optional lowpass) and `burst()` (filtered noise with a frequency
+sweep); the boost is a sub thump + rising saw sweep + highpass whoosh + a
+chip power-up run. **Music** is a pattern sequencer (`startMusic(name)`):
+`SONGS[name]` = bpm, root MIDI note, chord progression (semitones over root,
+one per bar), a 16-step bass pattern, a lead melody (16 steps per bar), an arp
+style (`up` / `updown` / `up16`), drum strings for kick/snare/hat, an
+optional saw pad. Lead through a short feedback delay. Songs: `menu` (paddock),
+`orbit`, `canyon`, `glacier`, `spire` — each track def names its `song`; the
+lead only plays during the race states, the rest keeps going in the lobby.
+
 ## Controls
 
 Left half: slide to steer (relative to the touch start). Right side: BOOST
@@ -128,11 +146,7 @@ boost, Down/S brake, P pause.
   origin-gated and mints 4-hour credentials only; nothing is exposed that
   lets outsiders relay arbitrary traffic on the account beyond those
   short-lived credentials.
-- **Audio pass.** The current WebAudio sound effects read as whiny and
-  annoying; replace them with punchier, lower-pitched effects. Write an epic
-  chiptune per map (Mute Orbit, Red Canyon, Glacier Loop, Nova Spire) — a
-  real composed track each, not the shared 4-chord loop — in the style of
-  Fable51 Kart's `composeSong` per-map songs.
+
 
 ## Next (after the playtest)
 
