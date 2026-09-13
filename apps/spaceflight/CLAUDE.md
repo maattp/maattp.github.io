@@ -93,17 +93,18 @@ races and screenshots every track (`t<i>-race*.png`, `t<i>-overview.png`).
 
 ## Items and obstacles
 
-Every track gets three rows of three **item boxes** (glowing octahedra;
-`def.boxes` = lap fractions, else auto-picked clear of the pits, 6 s respawn)
-and three **spike strips** covering half the road on alternating sides
-(`def.spikes` fractions, else auto; red warning plate 30u before). Riding a
-strip halves your speed and costs 3 energy (1.2 s cooldown). Items, one slot:
+Every track gets five rows of **item boxes** (glowing octahedra, rows
+alternate 3-wide and 4-wide; `def.boxes` = lap fractions, else auto-picked
+clear of the pits, 6 s respawn) and three **laser bars** — floating red beams
+between emitter posts covering half the road on alternating sides
+(`def.spikes` fractions, else auto; the sim still calls them `spikes`).
+Crossing one halves your speed and costs 3 energy (1.2 s cooldown). Items, one slot:
 **missile** (homes on the machine ahead within 1400u, 20 energy, speed ×0.55,
 0.9 s stun), **laser** (3 shots, hit-scan on the machine within 260u and 9u
 lateral, 10 energy, speed ×0.85), **nitro** (12 s of boosts that are 18%
 faster, 1.2 s longer and 40% cheaper). The back of the field draws missiles
 more often. ITEM button replaces the brake (there is no player brake; CPUs
-still brake internally). CPUs steer around strips, detour for boxes when
+still brake internally). CPUs steer around bars, detour for boxes when
 empty-handed, fire nitro at once and missiles/lasers when lined up. Online:
 pickups, uses, hits and stuns are host-owned; a client sends `input.u` (use
 counter) and applies knocks from the snapshot's per-machine hit counter;
@@ -125,7 +126,10 @@ own machine's real sim locally (prediction), interpolate everyone else from
 snapshot (energy, laps, rank, finish, destruction, boosts on a rising edge).
 `NET_VER` folds `SF_VER` and a hash of the physics constants and track
 points, so mismatched builds cannot share a room. No host migration: when the
-host leaves the room ends. Verify with `node tools/sfonline.mjs` (needs
+host leaves the room ends. The verify also checks that direct player input turns the nose (v39 shipped
+with steering cancelled every tick and the CPU-driven race never noticed) and
+runs a flow test: quit mid-race, restart, pause/resume, laser bar, death and
+respawn, results, rematch. Verify online with `node tools/sfonline.mjs` (needs
 `(cd worker && npx wrangler dev --port 8787)` and the http server).
 
 ## Audio
