@@ -102,11 +102,11 @@ Crossing one halves your speed and costs 3 energy (1.2 s cooldown). Items, one s
 **missile** (homes on the machine ahead within 1400u, 20 energy, speed ×0.45,
 1 s stun), **laser** (3 shots, hit-scan on the machine in a cone ahead —
 8u wide at the nose, 30u at 300u — 10 energy, speed ×0.7, 0.5 s stun). A
-stunned machine cannot throttle, so the knock lasts long enough to see, **nitro** (12 s of boosts that are 18%
-faster, 1.2 s longer and 40% cheaper). The back of the field draws missiles
-more often. ITEM button replaces the brake (there is no player brake; CPUs
+stunned machine cannot throttle, so the knock lasts long enough to see, **shield** (8 s bubble: no energy loss from anything, no knocks, laser
+bars don't bite; replaced nitro on request). The back of the field draws
+missiles more often. ITEM button replaces the brake (there is no player brake; CPUs
 still brake internally). CPUs steer around bars, detour for boxes when
-empty-handed, fire nitro at once and missiles/lasers when lined up. Online:
+empty-handed, pop the shield when hurt and fire missiles/lasers when lined up. Online:
 pickups, uses, hits and stuns are host-owned; a client sends `input.u` (use
 counter) and applies knocks from the snapshot's per-machine hit counter;
 missiles render on clients from `snap.pr`, box state from `snap.bx`.
