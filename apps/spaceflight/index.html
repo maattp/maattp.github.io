@@ -128,7 +128,7 @@
         #lobbyScreen { justify-content: flex-start; overflow-y: auto; padding-top: calc(env(safe-area-inset-top) + 8px); }
         #lobbyList { display: grid; grid-template-columns: repeat(4, 150px); gap: 4px; margin-top: 6px; }
         #lobbyMachines .pick, #lobbyTracks .pick { height: 44px; width: 78px; font-size: 10px; }
-        #lobbyMachines .pick .st { display: none; }
+        #lobbyMachines .pick { height: 78px; }
         #lobbyTracks .pick.track { width: 128px; height: 40px; font-size: 10px; }
         .lob-row { display: flex; align-items: center; gap: 6px; background: rgba(255,255,255,0.07); border-radius: 8px; padding: 5px 8px; font-size: 12px; font-weight: 800; }
         .lob-row.me { outline: 1px solid rgba(255,213,74,0.8); }
@@ -216,7 +216,7 @@
         // =====================================================================
         //  SPACE FLIGHT — anti-grav racing prototype (single track, CPUs)
         // =====================================================================
-        const SF_VER = 34;
+        const SF_VER = 35;
         const clamp = (v, a, b) => v < a ? a : v > b ? b : v;
         const lerp = (a, b, t) => a + (b - a) * t;
         const smoothstep = (a, b, x) => { const t = clamp((x - a) / (b - a), 0, 1); return t * t * (3 - 2 * t); };
@@ -1188,7 +1188,7 @@
             if (k.laps < BOOST_MIN_LAP && !DBG_FREEBOOST) { if (k.isPlayer) { toast('BOOST UNLOCKS AFTER LAP 1'); sfxDeny(); } return false; }
             if (k.boostCool > 0 || k.boostT > 0.3) return false;
             if (k.energy <= BOOST_COST) { if (k.isPlayer) { toast('NOT ENOUGH ENERGY'); sfxDeny(); } return false; }
-            if (k.isPlayer && net.mode === 'client') net.boostCount++;   // the host deducts the energy; we predict the speed
+            if (k.isPlayer && net.mode === 'client') { net.boostCount++; net._predictedAt = performance.now(); }   // the host deducts the energy; we predict the speed
             else k.energy -= BOOST_COST;
             k.boostT = BOOST_TIME; k.boostCool = 0.45;
             k.speed = Math.min(BOOST_SPEED, k.speed + 28);   // the kick you feel the instant you press it
@@ -1846,7 +1846,8 @@
                 const t = clamp(dt * 25, 0, 1);
                 k.prevS = k.s; k.prevLat = k.lat; k.prevAir = k.air;
                 k.s = wrapS(k.s + ds * t + (p[3] || 0) * dt * (1 - t)); k.lat = lerp(k.lat, p[1], t); k.yaw += wrapAngle(p[2] - k.yaw) * t; k.speed = p[3] || 0;
-                if (p[4] > k.boostT + 0.3 && k.energy > 0) k.boostT = Math.min(BOOST_TIME, p[4]);   // their predicted boost, if we granted it below
+                // NOTE: the client's predicted boostT (p[4]) is deliberately ignored — a boost exists on the host only
+                // when tryBoost grants it and charges the energy; adopting the prediction first made the grant a no-op
             } else { k.prevS = k.s; k.prevLat = k.lat; k.prevAir = k.air; }
             if (k.dead > 0) { k.dead -= dt; if (k.dead <= 0) { k.dead = 0; k.energy = 55; k.mesh.visible = true; } return; }
             if (k.boostT > 0) k.boostT -= dt; if (k.boostCool > 0) k.boostCool -= dt; if (k.wallT > 0) k.wallT -= dt; if (k.hitT > 0) k.hitT -= dt; if (k.rechargeT > 0) k.rechargeT -= dt;
@@ -1905,6 +1906,8 @@
                     if (b[11] > 0 && k.dead <= 0 && net._lastDead <= 0) { explode(k); k.dead = b[11]; }
                     net._lastDead = b[11];
                     if (b[5] > net._lastBoost + 0.3 && b[5] > k.boostT) { k.boostT = b[5]; }   // host granted a boost we didn't predict
+                    if (k.boostT > BOOST_TIME - 0.4 && b[5] <= 0.01 && net._predictedAt && performance.now() - net._predictedAt > 350) { k.boostT = 0; k.speed = Math.min(k.speed, MAX_SPEED * k.def.stat.top); toast('BOOST DENIED'); net._predictedAt = 0; }   // host refused (energy / cooldown): undo the prediction
+                    if (b[5] > 0.01) net._predictedAt = 0;
                     net._lastBoost = b[5];
                     const err = Math.abs(wrapAngle((b[0] - k.s) / TRACK.len * Math.PI * 2)) * TRACK.len / (Math.PI * 2);
                     if (err > 60) { k.s = b[0]; k.lat = b[1]; k.prevS = k.s; k.prevLat = k.lat; }   // way off: snap to the host's view of me
