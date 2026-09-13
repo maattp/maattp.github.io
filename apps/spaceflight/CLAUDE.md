@@ -122,9 +122,15 @@ envelope, optional lowpass) and `burst()` (filtered noise with a frequency
 sweep); the boost is a sub thump + rising saw sweep + highpass whoosh + a
 chip power-up run. **Music** is a pattern sequencer (`startMusic(name)`):
 `SONGS[name]` = bpm, root MIDI note, chord progression (semitones over root,
-one per bar), a 16-step bass pattern, a lead melody (16 steps per bar), an arp
-style (`up` / `updown` / `up16`), drum strings for kick/snare/hat, an
-optional saw pad. Lead through a short feedback delay. Songs: `menu` (paddock),
+one per bar), a 16-step bass pattern, power-chord `stab` hits (16-step
+string), a lead melody (16 steps per bar, `H` holds the previous note),
+drum strings for kick/snare/hat (`o` = open hat), optional `arp` and
+`crash`. Timbres are deliberately F-Zero, not cartoon-chip: plucked saw bass
+with a square sub and filter envelope, root-fifth-octave saw stabs through a
+tanh waveshaper, a detuned three-saw lead with portamento and vibrato into a
+feedback delay, kick with a click, snare with a tail, a fill on the last
+beat of the loop. The user rejected the first (square-wave, upbeat) pass as
+"too upbeat and cartoony" — keep it dark, minor and driving. Songs: `menu` (paddock),
 `orbit`, `canyon`, `glacier`, `spire` — each track def names its `song`; the
 lead only plays during the race states, the rest keeps going in the lobby.
 
