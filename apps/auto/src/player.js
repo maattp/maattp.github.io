@@ -199,9 +199,10 @@ export class Player {
     const wl = this.world.waterLevelAt(this.x, this.z);
     if (wl !== null && G.isWater(this.x, this.z) && this.y < wl - 0.6) this.game.onDrown();
 
-    animateWalk(this.h, clamp(this.speed * 0.16, 0, 0.85), dt, this.speed);
+    // Root first: animateWalk locks planted feet in world space (see peds.js).
     this.h.group.position.set(this.x, this.y, this.z);
     this.h.group.rotation.y = this.heading;
+    animateWalk(this.h, clamp(this.speed * 0.16, 0, 0.85), dt, this.speed);
 
     // run over by a car
     for (const v of traffic.cars) {

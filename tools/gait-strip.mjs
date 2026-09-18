@@ -85,6 +85,12 @@ async function main() {
       d.world.group.visible = false;                 // buildings, roads, props
       const p = d.player.position;
       const h = d.player.h;
+      // A boot that spawns the player in a car hides the humanoid, and every
+      // frame of one run came back as empty ground. Force it on and stand it
+      // on the staging point instead of trusting where the game left it.
+      if (d.player.onFoot === false && d.player.exitVehicle) d.player.exitVehicle();
+      h.group.visible = true;
+      h.group.position.set(p.x, p.y, p.z);
       h.gait = 1; h.swing = 1; h.lean = 0;
       // heading whose forward is +X, so the character walks to screen right
       h.group.rotation.y = Math.PI / 2;
