@@ -14,14 +14,15 @@ const SKINS = [[0.95, 0.79, 0.65], [0.82, 0.62, 0.46], [0.55, 0.38, 0.27], [0.36
 const SHIRTS = [
   [0.55, 0.22, 0.20], [0.22, 0.30, 0.47], [0.20, 0.38, 0.30], [0.72, 0.68, 0.62],
   [0.24, 0.24, 0.27], [0.62, 0.47, 0.20], [0.42, 0.27, 0.42], [0.24, 0.42, 0.45],
-  [0.78, 0.77, 0.74], [0.38, 0.40, 0.42],
+  [0.78, 0.77, 0.74], [0.38, 0.40, 0.42], [0.12, 0.13, 0.15], [0.50, 0.12, 0.14],
 ];
 const PANTS = [[0.18, 0.22, 0.34], [0.2, 0.2, 0.22], [0.35, 0.3, 0.25], [0.45, 0.45, 0.48], [0.12, 0.14, 0.18]];
-const HAIR = [[0.12, 0.09, 0.07], [0.30, 0.20, 0.10], [0.48, 0.39, 0.25], [0.62, 0.61, 0.60], [0.34, 0.14, 0.09]];
-// A whole city in identical black shoes is a uniform. Upper and sole in pairs:
-// black leather, white trainers, brown boots, navy canvas.
-const SHOES = [[0.11, 0.11, 0.12], [0.70, 0.69, 0.66], [0.26, 0.17, 0.11], [0.15, 0.17, 0.24]];
-const SOLES = [[0.17, 0.165, 0.16], [0.80, 0.79, 0.76], [0.12, 0.09, 0.07], [0.78, 0.77, 0.74]];
+const HAIR = [[0.12, 0.09, 0.07], [0.30, 0.20, 0.10], [0.48, 0.39, 0.25], [0.62, 0.61, 0.60], [0.34, 0.14, 0.09], [0.05, 0.045, 0.04]];
+// A whole city in identical black shoes is a uniform -- but the first white
+// pair was the brightest thing on the pavement, a pair of lamps at the bottom
+// of every figure. Colourways skew dark and mid-tone; off-white is one in six.
+const SHOES = [[0.10, 0.10, 0.11], [0.24, 0.15, 0.09], [0.14, 0.16, 0.22], [0.26, 0.26, 0.25], [0.42, 0.32, 0.20], [0.52, 0.51, 0.48]];
+const SOLES = [[0.16, 0.155, 0.15], [0.10, 0.08, 0.06], [0.50, 0.49, 0.46], [0.14, 0.14, 0.14], [0.20, 0.15, 0.10], [0.62, 0.61, 0.58]];
 
 // Skeleton layout. Characters are skinned meshes: one draw call each, but with
 // real elbows, knees and a spine, which is the difference between a walk cycle
@@ -109,11 +110,8 @@ const smoothT = (v) => v * v * (3 - 2 * v);
 // Characters used to be vertex colour only, and a paintless mesh cannot do a
 // face: eyes, brows and lips were 3-6 mm boxes standing proud of the skull,
 // which read as stuck-on plates up close and, being thinner than a depth
-// texel at street distance, shimmered as you walked past. Fabric was a flat
-// colour, so a shirt and a pair of jeans were two tints of the same plastic.
-// The judge loop that got the old model from 3.7 to 6.2/10 stalled the face at
-// 4-5 for exactly this reason, and the agreed way past it was a painted atlas
-// in the manner of textures.js's facadeAtlas. This is that.
+// texel at street distance, shimmered as you walked past. The agreed way past
+// that was a painted atlas in the manner of textures.js's facadeAtlas.
 //
 // One 1024 x 1024 canvas, drawn once at boot and shared by every character
 // through the one material, so a character is still ONE draw call:
@@ -121,10 +119,19 @@ const smoothT = (v) => v * v * (3 - 2 * v);
 //    what shows is the painted skin, with real eye whites, iris and lash line;
 //  - the rest: greyscale detail that MULTIPLIES the vertex colour, so one
 //    denim cell serves every trouser colour and one knit cell every shirt.
-// Parts are mapped cylindrically around their own axis (front = centre of the
-// cell); see SkinAcc.add for the back seam.
+//
+// ROUND TWO, and the lesson of round one: at street distance a figure is ~150
+// px tall and a face is twenty, so fine fabric grain simply is not there. What
+// carries is CONTRAST AT GARMENT BOUNDARIES -- collars, cuffs, hems, belts,
+// pockets -- and silhouette. Those are geometry where they have to read
+// (collars, cuffs, belts, hood, hi-vis bands) and high-contrast paint where
+// they can be flat (pocket outlines, ribbed hems, seams at 45-60% value, not
+// the 66-78% the first pass used).
 const ATLAS = 1024, CELL = 256, PAD = 6, CW = CELL - 2 * PAD;
-const CELLS = { shirt: 5, jacket: 6, pants: 7, shoe: 8, hair: 9, hand: 10, skin: 11 };
+const CELLS = {
+  shirt: 5, jacket: 6, pants: 7, shoe: 8, hair: 9, hand: 10, skin: 11,
+  hoodie: 12, skirt: 13, curly: 14, uniform: 15,
+};
 // The face cell wraps +-112 deg of the head, not the whole circumference:
 // what is behind the ears is hair or plain skin, and spending the cell on the
 // front puts ~140 px across the face instead of ~80.
@@ -179,8 +186,7 @@ function drawAtlas() {
       g.fillRect(R.n() * CELL, R.n() * CELL, size, size);
     }
   };
-  // Fine and low-contrast. Broad strokes at 50-85% grey read as wood grain,
-  // and with the helmet-like shell under them the hair was a carved cap.
+  // Fine and low-contrast. Broad strokes at 50-85% grey read as wood grain.
   const strands = (n, top, bottom) => {
     for (let k = 0; k < n; k++) {
       const x = R.n() * CELL, y = top + R.n() * (bottom - top), len = 10 + R.n() * 30;
@@ -189,33 +195,89 @@ function drawAtlas() {
       g.beginPath(); g.moveTo(x, y); g.lineTo(x + (R.n() - 0.5) * 6, y + len); g.stroke();
     }
   };
+  // A ribbed band across the cell -- hems, cuffs, necklines. Dark enough to
+  // survive the trip to twenty pixels.
+  const rib = (s0, s1, v = 0.55) => {
+    g.fillStyle = grey(v, 0.9); g.fillRect(0, Q(s1), CELL, Q(s0) - Q(s1));
+    g.fillStyle = grey(v * 0.8, 0.5);
+    for (let x = 0; x < CELL; x += 4) g.fillRect(x, Q(s1), 1.5, Q(s0) - Q(s1));
+  };
+  const seams = (v = 0.50) => {
+    g.fillStyle = grey(v, 0.85);
+    for (const t of [0.25, 0.75]) g.fillRect(P(t) - 1.5, 0, 3, CELL);
+  };
 
   // --- detail cells: multiplied into the vertex colour --------------------
+  // Torso cells are mapped J.hip - 0.06 .. J.shoulder + 0.07, so s 0.04 is the
+  // hem and s 0.97 the neckline; arms sharing the cell are mapped wrist ..
+  // shoulder, so the same s 0.00-0.06 band lands on the cuff.
   inCell(CELLS.shirt, () => {
-    g.fillStyle = grey(0.97); g.fillRect(0, 0, CELL, CELL);
-    speckle(2600, 0.80, 1.0);
-    g.fillStyle = grey(0.78, 0.07);
-    for (let y = 0; y < CELL; y += 3) g.fillRect(0, y, CELL, 1);                 // knit rib
-    g.fillStyle = grey(0.66, 0.55);
-    for (const t of [0.25, 0.75]) g.fillRect(P(t) - 1, 0, 2, CELL);              // side seams
-    for (let x = 0; x < CELL; x += 5) g.fillRect(x, Q(0.055), 3, 1);             // hem stitch
-    // soft drape: the cloth gathers above the waistband at the sides
-    for (const t of [0.22, 0.78]) blob(P(t), Q(0.16), 40, [0.72, 0.72, 0.72], 0.35);
+    g.fillStyle = grey(0.96); g.fillRect(0, 0, CELL, CELL);
+    speckle(2200, 0.78, 1.0);
+    g.fillStyle = grey(0.80, 0.08);
+    for (let y = 0; y < CELL; y += 3) g.fillRect(0, y, CELL, 1);
+    seams();
+    rib(0.0, 0.06, 0.58);
+    // drape: the cloth gathers above the waist at the sides and under the chest
+    for (const t of [0.20, 0.80]) blob(P(t), Q(0.20), 46, [0.62, 0.62, 0.62], 0.5);
+    blob(P(0.5), Q(0.52), 60, [0.80, 0.80, 0.80], 0.35);
   });
   inCell(CELLS.jacket, () => {
     g.fillStyle = grey(0.95); g.fillRect(0, 0, CELL, CELL);
-    speckle(2200, 0.78, 1.0);
-    g.strokeStyle = grey(0.74, 0.10); g.lineWidth = 1;
+    speckle(2000, 0.76, 1.0);
+    g.strokeStyle = grey(0.74, 0.12); g.lineWidth = 1;
     for (let k = -CELL; k < 2 * CELL; k += 4) { g.beginPath(); g.moveTo(k, 0); g.lineTo(k + CELL, CELL); g.stroke(); }
-    g.fillStyle = grey(0.62, 0.6);
-    for (const t of [0.25, 0.75]) g.fillRect(P(t) - 1, 0, 2, CELL);
-    for (let x = 0; x < CELL; x += 5) g.fillRect(x, Q(0.06), 3, 1);
-    for (const t of [0.22, 0.78]) blob(P(t), Q(0.18), 42, [0.70, 0.70, 0.70], 0.35);
-    // front placket and zip, up the centre line
-    g.fillStyle = grey(0.66, 0.9); g.fillRect(P(0.475), Q(0.95), P(0.525) - P(0.475), Q(0.03) - Q(0.95));
-    g.fillStyle = grey(0.45, 0.9); g.fillRect(P(0.5) - 1, Q(0.95), 2, Q(0.03) - Q(0.95));
-    g.fillStyle = grey(0.55, 0.8);
-    for (const t of [0.472, 0.528]) for (let y = Q(0.95); y < Q(0.03); y += 5) g.fillRect(P(t), y, 1, 3);
+    seams(0.48);
+    rib(0.0, 0.07, 0.50);
+    for (const t of [0.20, 0.80]) blob(P(t), Q(0.22), 46, [0.62, 0.62, 0.62], 0.5);
+    // zip placket up the centre line
+    g.fillStyle = grey(0.52, 0.95); g.fillRect(P(0.478), Q(0.97), P(0.522) - P(0.478), Q(0.05) - Q(0.97));
+    g.fillStyle = grey(0.32, 0.95); g.fillRect(P(0.5) - 1, Q(0.97), 2, Q(0.05) - Q(0.97));
+    // two lower pockets with flaps
+    g.strokeStyle = grey(0.38, 0.9); g.lineWidth = 2.5;
+    for (const t of [0.36, 0.64]) {
+      g.strokeRect(P(t) - 12, Q(0.34), 24, Q(0.16) - Q(0.34));
+      g.fillStyle = grey(0.55, 0.9); g.fillRect(P(t) - 13, Q(0.34), 26, 6);
+    }
+  });
+  inCell(CELLS.hoodie, () => {
+    g.fillStyle = grey(0.95); g.fillRect(0, 0, CELL, CELL);
+    speckle(2400, 0.80, 1.0);
+    seams(0.55);
+    rib(0.0, 0.08, 0.55);
+    for (const t of [0.20, 0.80]) blob(P(t), Q(0.24), 50, [0.62, 0.62, 0.62], 0.5);
+    // kangaroo pocket: the thing that says "hoodie" from across the street
+    g.fillStyle = grey(0.70, 0.9);
+    g.beginPath();
+    g.moveTo(P(0.36), Q(0.10)); g.lineTo(P(0.64), Q(0.10));
+    g.lineTo(P(0.60), Q(0.36)); g.lineTo(P(0.40), Q(0.36)); g.closePath(); g.fill();
+    g.strokeStyle = grey(0.35, 0.95); g.lineWidth = 2.5; g.stroke();
+    // drawstrings, pale against the neckline
+    g.fillStyle = grey(1.0, 0.95);
+    for (const t of [0.475, 0.525]) g.fillRect(P(t) - 1.5, Q(0.99), 3, Q(0.80) - Q(0.99));
+    rib(0.93, 1.0, 0.52);
+  });
+  inCell(CELLS.uniform, () => {
+    g.fillStyle = grey(0.95); g.fillRect(0, 0, CELL, CELL);
+    speckle(1600, 0.80, 1.0);
+    seams(0.50);
+    g.fillStyle = grey(0.42, 0.9); g.fillRect(P(0.5) - 1.5, Q(0.96), 3, Q(0.05) - Q(0.96));   // button line
+    g.strokeStyle = grey(0.40, 0.9); g.lineWidth = 2.5;
+    for (const t of [0.40, 0.60]) g.strokeRect(P(t) - 11, Q(0.78), 22, Q(0.64) - Q(0.78));  // breast pockets
+    g.fillStyle = grey(1.0); g.fillRect(P(0.40) - 5, Q(0.83), 10, 9);                           // badge
+    rib(0.0, 0.05, 0.55);
+  });
+  inCell(CELLS.skirt, () => {
+    g.fillStyle = grey(0.94); g.fillRect(0, 0, CELL, CELL);
+    speckle(1400, 0.80, 1.0, 0.3);
+    // soft folds falling from the waist
+    for (let t = 0.02; t < 1; t += 0.083) {
+      const gr = g.createLinearGradient(P(t - 0.04), 0, P(t + 0.04), 0);
+      gr.addColorStop(0, grey(1.0, 0)); gr.addColorStop(0.5, grey(0.60, 0.45)); gr.addColorStop(1, grey(1.0, 0));
+      g.fillStyle = gr; g.fillRect(P(t - 0.04), Q(0.85), P(t + 0.04) - P(t - 0.04), Q(0) - Q(0.85) + PAD);
+    }
+    rib(0.0, 0.05, 0.55);
+    rib(0.94, 1.0, 0.50);
   });
   inCell(CELLS.pants, () => {
     g.fillStyle = grey(0.90); g.fillRect(0, 0, CELL, CELL);
@@ -225,52 +287,57 @@ function drawAtlas() {
     // worn at the knee and the top of the thigh, the way denim fades
     blob(P(0.5), Q(0.43), 34, [1, 1, 1], 0.45);
     blob(P(0.5), Q(0.80), 46, [1, 1, 1], 0.30);
-    // inseam and outseam, double-stitched
-    g.fillStyle = grey(0.62, 0.7);
-    for (const t of [0.25, 0.75]) g.fillRect(P(t) - 1.5, 0, 3, CELL);
+    // behind the knee, where trousers crease
+    blob(P(0.02), Q(0.40), 30, [0.55, 0.55, 0.55], 0.6);
+    blob(P(0.98), Q(0.40), 30, [0.55, 0.55, 0.55], 0.6);
+    seams(0.52);
     g.fillStyle = grey(1.0, 0.8);
-    for (const t of [0.25, 0.75]) for (let y = 0; y < CELL; y += 6) { g.fillRect(P(t) - 4, y, 1, 3); g.fillRect(P(t) + 3, y, 1, 3); }
-    // front pocket curves at the top of the leg
-    g.strokeStyle = grey(0.55, 0.7); g.lineWidth = 1.5;
+    for (const t of [0.25, 0.75]) for (let y = 0; y < CELL; y += 6) { g.fillRect(P(t) - 5, y, 1, 3); g.fillRect(P(t) + 4, y, 1, 3); }
+    // front pockets, waistband and turn-up at the hem
+    g.strokeStyle = grey(0.38, 0.9); g.lineWidth = 2.5;
     for (const t of [0.36, 0.64]) {
-      g.beginPath(); g.moveTo(P(t), Q(1.0)); g.quadraticCurveTo(P(t), Q(0.90), P(t + (t < 0.5 ? 0.10 : -0.10)), Q(0.88)); g.stroke();
+      g.beginPath(); g.moveTo(P(t), Q(1.0)); g.quadraticCurveTo(P(t), Q(0.89), P(t + (t < 0.5 ? 0.11 : -0.11)), Q(0.87)); g.stroke();
     }
+    rib(0.95, 1.0, 0.50);
+    rib(0.0, 0.035, 0.62);
   });
   inCell(CELLS.shoe, () => {
     g.fillStyle = grey(0.92); g.fillRect(0, 0, CELL, CELL);
     speckle(1800, 0.70, 1.0);
-    // heel counter and toe cap: a second panel of the same material
-    g.fillStyle = grey(0.80, 0.6);
+    g.fillStyle = grey(0.72, 0.7);
     g.fillRect(0, Q(0.62), P(0.08), Q(0.12) - Q(0.62));
     g.fillRect(P(0.92), Q(0.62), CELL - P(0.92), Q(0.12) - Q(0.62));
     g.beginPath(); g.ellipse(P(0.5), Q(0.16), P(0.14) - PAD, 18, 0, Math.PI, 0); g.fill();
-    // welt stitch just above the sole
-    g.fillStyle = grey(0.55, 0.8);
+    g.fillStyle = grey(0.50, 0.8);
     for (let x = 0; x < CELL; x += 5) g.fillRect(x, Q(0.20), 3, 1);
-    // tongue and laces over the instep
-    g.fillStyle = grey(0.62, 0.9);
+    g.fillStyle = grey(0.55, 0.9);
     g.fillRect(P(0.44), Q(0.80), P(0.56) - P(0.44), Q(0.38) - Q(0.80));
     g.fillStyle = grey(1.0, 0.95);
-    for (let k = 0; k < 5; k++) {
-      const y = Q(0.42 + k * 0.08);
-      g.fillRect(P(0.43), y, P(0.57) - P(0.43), 2.5);
-    }
+    for (let k = 0; k < 5; k++) g.fillRect(P(0.43), Q(0.42 + k * 0.08), P(0.57) - P(0.43), 2.5);
   });
   inCell(CELLS.hair, () => {
     g.fillStyle = grey(1.0); g.fillRect(0, 0, CELL, CELL);
     strands(1100, -40, CELL);
+    // parting and crown shading, so the top of the head is not one flat value
+    blob(P(0.5), Q(0.95), 60, [0.75, 0.75, 0.75], 0.4);
+  });
+  inCell(CELLS.curly, () => {
+    g.fillStyle = grey(0.95); g.fillRect(0, 0, CELL, CELL);
+    for (let k = 0; k < 900; k++) {
+      g.strokeStyle = grey(0.45 + R.n() * 0.4, 0.40);
+      g.lineWidth = 1 + R.n();
+      g.beginPath(); g.arc(R.n() * CELL, R.n() * CELL, 2 + R.n() * 4, R.n() * 6, R.n() * 6 + 3.5); g.stroke();
+    }
   });
   inCell(CELLS.hand, () => {
     g.fillStyle = grey(0.96); g.fillRect(0, 0, CELL, CELL);
     speckle(600, 0.88, 1.0, 0.25);
-    // Finger separations over the curl and a knuckle crease: a relaxed hand
-    // is four fingers, not a mitten.
-    g.strokeStyle = grey(0.60, 0.75); g.lineWidth = 1.2;
-    for (const t of [0.30, 0.40, 0.50, 0.60, 0.70]) { g.beginPath(); g.moveTo(P(t), Q(0.0)); g.lineTo(P(t), Q(0.34)); g.stroke(); }
-    g.strokeStyle = grey(0.72, 0.6);
+    g.strokeStyle = grey(0.55, 0.8); g.lineWidth = 1.4;
+    for (const t of [0.34, 0.44, 0.54, 0.64]) { g.beginPath(); g.moveTo(P(t), Q(0.0)); g.lineTo(P(t), Q(0.34)); g.stroke(); }
+    g.strokeStyle = grey(0.70, 0.6);
     g.beginPath(); g.moveTo(P(0.28), Q(0.40)); g.quadraticCurveTo(P(0.5), Q(0.43), P(0.72), Q(0.40)); g.stroke();
     g.fillStyle = grey(1.0, 0.9);
-    for (const t of [0.35, 0.45, 0.55, 0.65]) g.fillRect(P(t) - 4, Q(0.10), 8, 9);   // nails
+    for (const t of [0.39, 0.49, 0.59]) g.fillRect(P(t) - 4, Q(0.10), 8, 9);
   });
   inCell(CELLS.skin, () => {
     g.fillStyle = grey(1.0); g.fillRect(0, 0, CELL, CELL);
@@ -289,9 +356,13 @@ function drawAtlas() {
   SKINS.forEach((skin, fi) => {
     inCell(fi, () => {
       g.fillStyle = rgba(skin); g.fillRect(0, 0, CELL, CELL);
-      // Above the hairline the vertex colour is hair and this must be neutral.
+      // Above the hairline: SKIN, with strands. It used to be white, which is
+      // neutral under the hair-coloured skull rings -- but the hair shell grows
+      // out a few millimetres above the line, and the band of skull between
+      // the two came out as a thin white stripe across every forehead. Under a
+      // shell nothing here shows; on a buzz cut, skin under short hair is right.
       const hy = Q((HAIRLINE - HY0) / (HY1 - HY0));
-      g.fillStyle = grey(1.0); g.fillRect(0, 0, CELL, hy);
+      g.fillStyle = rgba(skin); g.fillRect(0, 0, CELL, hy);
       // Clipped: a strand stroke starting above the line runs up to 60 px, and
       // unclipped they painted pale streaks down the forehead.
       g.save(); g.beginPath(); g.rect(0, 0, CELL, hy); g.clip();
@@ -439,8 +510,7 @@ class SkinAcc {
     // Baked vertex ambient occlusion, computed ONCE from the BIND POSE --
     // it does not respond to the current pose (an armpit stays dark with the
     // arm raised). That is the standard trade for a vertex-baked single-
-    // material character, and at street distances it is invisible; it is a
-    // choice, not an oversight.
+    // material character, and at street distances it is invisible.
     //  - sky term: down-facing surfaces see less sky (underside of chin, arms,
     //    hem) -- from the normal's y.
     //  - crevice term: the armpit/inner-arm and inner-thigh bands, from
@@ -450,11 +520,11 @@ class SkinAcc {
     for (let i = 0; i < this.pos.length; i += 3) {
       const x = this.pos[i], y = this.pos[i + 1];
       const ny = this.nor[i + 1];
-      let ao = 0.86 + 0.14 * clamp(ny * 0.5 + 0.5, 0, 1);         // sky
+      let ao = 0.84 + 0.16 * clamp(ny * 0.5 + 0.5, 0, 1);         // sky
       const ax = Math.abs(x);
-      if (y > 1.10 && y < 1.45 && ax > 0.10 && ax < 0.19) ao *= 0.90;  // armpit band
-      if (y > 0.45 && y < 0.95 && ax < 0.075) ao *= 0.92;             // inner thigh
-      ao *= 0.92 + 0.08 * clamp(y, 0, 1);                             // grounding
+      if (y > 1.10 && y < 1.45 && ax > 0.10 && ax < 0.19) ao *= 0.88;  // armpit band
+      if (y > 0.45 && y < 0.95 && ax < 0.075) ao *= 0.90;             // inner thigh
+      ao *= 0.90 + 0.10 * clamp(y, 0, 1);                             // grounding
       this.col[i] *= ao; this.col[i + 1] *= ao; this.col[i + 2] *= ao;
     }
     const g = new THREE.BufferGeometry();
@@ -488,163 +558,411 @@ function faceCell(skin) {
   return best;
 }
 
+// The skull, as rings. Shared by the head loft and by the hair, which is
+// grown FROM this surface rather than modelled beside it.
+const SKULL = [
+  // Two rings under the jaw: from the chin straight to the jawline was one
+  // cone, and the lower face read as a trapezoid with a pointed chin.
+  { y: J.chin - 0.012, rx: 0.036, rz: 0.046, oz: 0.022 },   // under the chin
+  { y: J.chin - 0.002, rx: 0.050, rz: 0.062, oz: 0.016 },   // chin
+  { y: J.chin + 0.010, rx: 0.060, rz: 0.076, oz: 0.011 },   // jaw angle
+  { y: J.chin + 0.024, rx: 0.066, rz: 0.085, oz: 0.008 },   // jawline
+  { y: J.chin + 0.060, rx: 0.073, rz: 0.093, oz: 0.004 },   // cheeks
+  { y: J.eye - 0.020, rx: 0.075, rz: 0.095, oz: 0.001 },    // cheekbone
+  { y: J.eye, rx: 0.075, rz: 0.096, oz: 0 },                // brow line
+  { y: J.eye + 0.036, rx: 0.072, rz: 0.092, oz: -0.002 },   // forehead, skin
+  { y: HAIRLINE + 0.002, rx: 0.073, rz: 0.093, oz: -0.003 }, // hairline
+  { y: J.crown - 0.028, rx: 0.058, rz: 0.074, oz: -0.009 },
+  { y: J.crown, rx: 0.024, rz: 0.030, oz: -0.013 },
+];
+function skullAt(y) {
+  if (y <= SKULL[0].y) return SKULL[0];
+  for (let i = 1; i < SKULL.length; i++) {
+    if (y <= SKULL[i].y) {
+      const a = SKULL[i - 1], b = SKULL[i], t = (y - a.y) / (b.y - a.y);
+      return { y, rx: lerp(a.rx, b.rx, t), rz: lerp(a.rz, b.rz, t), oz: lerp(a.oz, b.oz, t) };
+    }
+  }
+  return SKULL[SKULL.length - 1];
+}
+
+// Hair styles, drawn across the pool by weight.
+const STYLES = ['crop', 'side', 'long', 'bun', 'curly', 'buzz'];
+const STYLE_W = [0.22, 0.20, 0.18, 0.14, 0.14, 0.12];
+function pickStyle(u) {
+  let acc = 0;
+  for (let i = 0; i < STYLES.length; i++) { acc += STYLE_W[i]; if (u < acc) return STYLES[i]; }
+  return STYLES[0];
+}
+
+/**
+ * The hair. A shell GROWN FROM THE SKULL SURFACE, not a cap placed over it.
+ *
+ * Round one lofted two shells with open bottom rings, and whatever was done to
+ * those rings the result was a bowl: a straight rim above the ears, a gap
+ * between rim and skull, and from the side and back a cap. Here every column
+ * of the shell starts ON the skull at its own edge height -- a hairline with a
+ * slight corner at the temples, sideburns down in front of the ear, over the
+ * top of the ear, and down to a nape that follows the back of the head -- and
+ * grows outward over its first 2 cm. There is no rim because there is nothing
+ * standing off the head at the edge.
+ */
+function buildHair(style, seed, hair) {
+  const hb = new Builder(false);
+  if (style === 'buzz') return null;   // the skull's own hair rings and paint do it
+  // Columns round the head. 24, not 36: the notched fringe that 36 was tried
+  // against came from the shell starting inside the skull, not from the
+  // column count, and 36 x 8 rows was a sixth of the character.
+  const K = 24;
+  const V = [0, 0.08, 0.24, 0.48, 0.74, 1.0];
+  const vol = { crop: 0.006, side: 0.011, long: 0.010, bun: 0.005, curly: 0.024 }[style];
+  const covers = style === 'long' || style === 'curly' || style === 'side';
+  const napeY = style === 'crop' || style === 'bun' ? J.chin + 0.050 : J.chin + 0.020;
+  // Edge height against the angle round the head: phi = +pi/2 at the front,
+  // 0 at the ear, -pi/2 at the back.
+  const edgeTable = [
+    // The front edge sits just below the painted hairline, so no band of skull
+    // shows between the paint and the shell.
+    [Math.PI / 2, HAIRLINE - 0.005],
+    [0.95, HAIRLINE - 0.003],
+    [0.62, HAIRLINE - 0.010],                        // temple corner
+    [0.34, J.eye - 0.030],                           // sideburn, in front of the ear
+    [0.14, covers ? J.eye - 0.030 : J.eye - 0.004],  // over the ear top
+    [-0.18, covers ? J.eye - 0.034 : J.eye - 0.010],
+    [-0.60, J.eye - 0.052],
+    [-Math.PI / 2, napeY],
+  ];
+  const edge = (phi) => {
+    for (let i = 1; i < edgeTable.length; i++) {
+      if (phi >= edgeTable[i][0]) {
+        const [p0, y0] = edgeTable[i - 1], [p1, y1] = edgeTable[i];
+        return lerp(y1, y0, smoothT((phi - p1) / (p0 - p1)));
+      }
+    }
+    return napeY;
+  };
+  const top = J.crown + 0.001;
+  const rows = [];
+  for (let i = 0; i < V.length; i++) {
+    const row = [];
+    for (let j = 0; j <= K; j++) {
+      // column 0 is behind the head, so the patch's seam is under the hair
+      const aa = (j / K) * Math.PI * 2 + 1.5 * Math.PI;
+      const ca = Math.cos(aa), sa = Math.sin(aa);
+      const phi = Math.atan2(sa, Math.abs(ca));
+      const jj = j % K;
+      // Irregular at the sides and nape only: a jittered FRONT edge surfaced
+      // through the forehead in square notches, a fringe cut with pinking shears.
+      const yE = edge(phi) + (phi < 0.3 ? (hash2(jj * 17 + 3, seed) - 0.5) * 0.0024 : 0);
+      const v = V[i];
+      const y = yE + (top - yE) * Math.pow(v, 0.85);
+      const s = skullAt(y);
+      // The front keeps little volume (it is a hairline, not a brim); the back
+      // and crown carry the most.
+      const face = sa > 0 ? 1 - 0.65 * sa : 1 + 0.25 * (-sa);
+      // Starts 1 mm OUTSIDE the skull. The skull is an 18-sided loft whose flat
+      // faces sit up to 1.1 mm inside the true ellipse this shell is sampled
+      // from, so a shell starting inside it crossed those faces in a zigzag --
+      // a notched fringe, however the edge heights were jittered or not.
+      let th = lerp(0.001, vol * face, smoothT(clamp(v / 0.24, 0, 1)));
+      if (style === 'side') th += 0.006 * smoothT(clamp(v / 0.4, 0, 1)) * Math.max(0, ca) * (1 - Math.abs(sa) * 0.5);
+      if (style === 'curly' && i >= 2) th *= 0.82 + 0.36 * hash2(jj * 31 + i * 7, seed + 11);
+      // outward along the ellipse normal, tipping up toward the crown
+      let nx = ca / s.rx, nz = sa / s.rz;
+      const nl = Math.hypot(nx, nz) || 1; nx /= nl; nz /= nl;
+      const up = v * 0.9;
+      const n3 = Math.hypot(nx * (1 - up), up, nz * (1 - up)) || 1;
+      row.push([
+        ca * s.rx + (nx * (1 - up) / n3) * th,
+        y + (up / n3) * th,
+        s.oz + sa * s.rz + (nz * (1 - up) / n3) * th,
+      ]);
+    }
+    rows.push(row);
+  }
+  hb.patch(rows, hair, [0, 1, 0]);
+
+  if (style === 'long') {
+    // Long hair continues the SHELL down the back of the head and past the
+    // nape, following the skull and flaring as it falls, longest at the centre
+    // with an uneven end. The first attempt was a separate half-tube with a
+    // straight bottom: from the side a board stood off the back of the head,
+    // from behind a plate with a ruler edge, and its two side edges showed
+    // from the front as ribbons. It is TWO-SIDED, because from the front its
+    // inside is what frames the neck and a single-sided sheet is culled there.
+    const CK = 14, CM = 5;
+    const cr = [];
+    for (let i = 0; i < CM; i++) {
+      const t = i / (CM - 1);
+      const row = [];
+      for (let j = 0; j <= CK; j++) {
+        // behind the ears, round the back; 1.10-1.90 not 1.06-1.94, or its
+        // edge showed from the front as a ribbon beside the jaw
+        const aa = Math.PI * (1.10 + 0.80 * (j / CK));
+        const ca = Math.cos(aa), sa = Math.sin(aa);
+        const back = -sa;                                   // 1 at the centre of the back
+        const yTop = J.eye - 0.005;
+        const yBot = J.shoulder - 0.010 - 0.050 * back + (hash2(j * 13 + 5, seed + 3) - 0.5) * 0.012;
+        const y = lerp(yTop, yBot, smoothT(t) * 0.6 + t * 0.4);
+        const s = skullAt(Math.max(y, SKULL[3].y));
+        const flare = vol + 0.004 + 0.030 * t * t;
+        row.push([ca * (s.rx + flare), y, s.oz - 0.012 * t + sa * (s.rz + flare)]);
+      }
+      cr.push(row);
+    }
+    hb.patch(cr, hair, [0, 0, -1]);
+    const inner = cr.map((r, i) => r.map((p) => [p[0] * (0.97 - 0.02 * (i / (CM - 1))), p[1], p[2] * 0.97 - 0.002]));
+    hb.patch(inner, [hair[0] * 0.55, hair[1] * 0.55, hair[2] * 0.55], [0, 0, 1]);
+  }
+  if (style === 'bun') {
+    hb.spheroid(0, J.eye + 0.036, -0.108, 0.036, 12, 7, hair, 0.85);
+    hb.loftY([
+      { y: J.eye + 0.030, pts: oval(0.020, 0.010, 10, 0, -0.098) },
+      { y: J.eye + 0.040, pts: oval(0.022, 0.012, 10, 0, -0.100) },
+    ], [hair[0] * 0.5, hair[1] * 0.5, hair[2] * 0.5], {});   // the band
+  }
+  return hb;
+}
+
 /**
  * Builds one character variant: a skinned geometry in the rest pose. Callers
  * pair it with a fresh skeleton per instance.
  */
+// The pedestrian POOL is designed, not rolled. With only twelve looks, hashing
+// garments and hair left whole categories out -- measured on the first pass,
+// no buzz cut and no dress anywhere in the crowd, but five skirts and four
+// side-parts. So pooled look i takes its outfit and style from this table
+// (every style twice; two dresses, two skirts, two shorts), and colours, skin,
+// build and shoes still come from the seed. Unique builds keep the hash path.
+const LOOKS = [
+  ['hoodie', 'jeans', 'crop'], ['tee', 'skirt', 'long'], ['jacket', 'trousers', 'buzz'],
+  ['tee', 'dress', 'bun'], ['tee', 'shorts', 'curly'], ['jacket', 'jeans', 'side'],
+  ['hoodie', 'skirt', 'long'], ['longsleeve', 'trousers', 'crop'], ['tee', 'dress', 'curly'],
+  ['jacket', 'jeans', 'bun'], ['longsleeve', 'jeans', 'side'], ['longsleeve', 'shorts', 'buzz'],
+];
+
 export function buildCharacter(opts = {}) {
   const seed = opts.seed != null ? opts.seed : 0;
   const skin = opts.skin || SKINS[Math.floor(hash2(seed, 1) * SKINS.length)];
-  const shirt = opts.shirt || SHIRTS[Math.floor(hash2(seed, 2) * SHIRTS.length)];
-  const pants = opts.pants || PANTS[Math.floor(hash2(seed, 3) * PANTS.length)];
   const hair = opts.hair || HAIR[Math.floor(hash2(seed, 4) * HAIR.length)];
   const build = 0.92 + hash2(seed, 6) * 0.16;
-  const jacket = opts.vest ? true : hash2(seed, 7) > 0.5;
-  const shortSleeve = !jacket && hash2(seed, 8) > 0.55;
-  // Uniformed characters keep black shoes; everyone else picks a pair.
-  const shoeI = opts.vest ? 0 : Math.floor(hash2(seed, 17) * SHOES.length);
-  const shoeCol = SHOES[shoeI], soleCol = SOLES[shoeI];
-  const coat = jacket ? [shirt[0] * 0.66, shirt[1] * 0.66, shirt[2] * 0.7] : shirt;
   const WHITE = [1, 1, 1];
   const face = faceCell(skin);
+  const dk = (c, k) => [c[0] * k, c[1] * k, c[2] * k];
+
+  // --- what they are wearing ----------------------------------------------
+  // A pool of twelve identical outfits in twelve colours reads as a uniform
+  // at any distance. Tops: t-shirt, long sleeve, jacket, hoodie; bottoms:
+  // jeans, trousers, shorts, skirt, or a dress. Uniformed characters (opts.vest:
+  // cops, riders) and anyone with explicit trousers (the player) keep trousers.
+  const uniformed = !!opts.vest;
+  let bottom;
+  {
+    const u = hash2(seed, 8);
+    bottom = u < 0.42 ? 'jeans' : u < 0.62 ? 'trousers' : u < 0.76 ? 'shorts' : u < 0.89 ? 'skirt' : 'dress';
+    if (uniformed || opts.pants) bottom = uniformed ? 'trousers' : 'jeans';
+  }
+  let top;
+  {
+    const u = hash2(seed, 7);
+    top = u < 0.30 ? 'tee' : u < 0.50 ? 'longsleeve' : u < 0.72 ? 'jacket' : 'hoodie';
+    if (uniformed) top = 'uniform';
+    if (bottom === 'dress') top = 'tee';
+  }
+  const look = opts.variant != null && !uniformed ? LOOKS[opts.variant % LOOKS.length] : null;
+  if (look) { top = look[0]; bottom = look[1]; }
+  const shirt = opts.shirt || SHIRTS[Math.floor(hash2(seed, 2) * SHIRTS.length)];
+  const pantsBase = opts.pants || PANTS[Math.floor(hash2(seed, 3) * PANTS.length)];
+  // trousers are chinos and slacks, not a second pair of jeans
+  const pants = bottom === 'trousers' && !opts.pants && !uniformed
+    ? [[0.36, 0.31, 0.24], [0.16, 0.16, 0.17], [0.28, 0.30, 0.26], [0.30, 0.24, 0.20]][Math.floor(hash2(seed, 13) * 4)]
+    : pantsBase;
+  const skirtCol = bottom === 'dress' ? shirt : bottom === 'skirt' ? SHIRTS[Math.floor(hash2(seed, 14) * SHIRTS.length)] : null;
+  const coat = top === 'jacket' ? dk(shirt, 0.62) : shirt;
+  const topCell = top === 'jacket' ? CELLS.jacket : top === 'hoodie' ? CELLS.hoodie : top === 'uniform' ? CELLS.uniform : CELLS.shirt;
+  const legsBare = bottom === 'skirt' || bottom === 'dress';
+  const tucked = (top === 'tee' || top === 'longsleeve') && !legsBare && hash2(seed, 18) > 0.45;
+  const shortSleeve = top === 'tee' || bottom === 'dress';
+  const shoeI = uniformed ? 0 : Math.floor(hash2(seed, 17) * SHOES.length);
+  const shoeCol = SHOES[shoeI], soleCol = SOLES[shoeI];
+  const style = opts.hat ? 'crop' : look ? look[2] : pickStyle(hash2(seed, 16));
 
   const acc = new SkinAcc();
-  // half-breadths: hip 0.167, waist 0.131, chest 0.152, shoulder 0.140
-  const bw = 0.167 * build, bd = 0.115 * build;
-  const ww = 0.131 * build, wd = 0.100 * build;
-  const cw = 0.152 * build, cd = 0.118 * build;
-  const sw = 0.140 * build, sd = 0.104 * build;
-  const outer = jacket ? 1.05 : 1.0;
+  // half-breadths. Shoulders 0.152 (was 0.140) and a narrower waist: at the
+  // old values the torso was one straight tube from hem to armpit and the
+  // shoulders sloped off it, which is most of what read as a toy.
+  const bw = 0.160 * build, bd = 0.112 * build;
+  const ww = 0.124 * build, wd = 0.098 * build;
+  const cw = 0.156 * build, cd = 0.120 * build;
+  const sw = 0.152 * build, sd = 0.104 * build;
+  const outer = top === 'jacket' || top === 'hoodie' ? 1.05 : 1.0;
   const legUV = (X) => cylUV(CELLS.pants, X, 0, J.ankle + 0.08, J.hip + 0.04);
+  const torsoW = (x, y) => {
+    if (y < J.spine) return across(J.spine - 0.05, 0.1, B.spine, B.hips)(x, y);
+    return across(J.chest - 0.06, 0.12, B.chest, B.spine)(x, y);
+  };
 
-  // --- pelvis + torso ------------------------------------------------------
-  const pelvis = new Builder(false);
-  // Seat ONLY. Every attempt to draw the front of the pelvis -- full depth,
-  // reduced depth, darker tone -- read as a pale panel or an apron, because a
-  // flat lit face between two curved thighs always will. So there is no front:
-  // the thighs meet at the midline, the shirt hem covers the join from above,
-  // and the pelvis block is the SEAT, swept around the back only.
-  const seat = [pants[0] * 0.94, pants[1] * 0.94, pants[2] * 0.96];
-  // Narrower than the shirt at every azimuth. At full hip width the flat-wide
-  // seat ellipse crossed outside the hem at |x| > 0.13 and rode up beside it
-  // as two blue horns -- the thighs, not the seat, own the silhouette at the
-  // sides. Verified by the from-behind raycast: 0 seat-first hits above the
-  // hem line.
-  pelvis.loftY([
-    { y: J.hip - 0.115, pts: oval(bw * 0.80, bd * 0.50, ST, 0, -0.042) },
-    { y: J.hip - 0.06, pts: oval(bw * 0.87, bd * 0.56, ST, 0, -0.040) },
-    { y: J.hip + 0.02, pts: oval(bw * 0.84, bd * 0.58, ST, 0, -0.036) },
-  ], seat, { capStart: true });
-  // seat pockets: nearly flush, waistband-adjacent
-  // On the SEAT surface (back face at -(0.036 + bd*0.58)), not at the body's
-  // full depth -- placed there they stood proud of the shirt hem above them
-  // and bit through it as a row of blue teeth. z is the box CENTRE and depth
-  // extends half behind it, so 6 mm inside.
-  for (const px of [-0.052, 0.052]) {
-    pelvis.box(px, J.hip - 0.062, -(0.036 + bd * 0.58 - 0.010), 0.056, 0.060, 0.004, 0,
-      [pants[0] * 0.82, pants[1] * 0.82, pants[2] * 0.84]);
+  // --- pelvis seat ---------------------------------------------------------
+  if (!legsBare) {
+    const pelvis = new Builder(false);
+    // Seat ONLY: every attempt to draw the front of the pelvis read as a pale
+    // panel or an apron. The thighs meet at the midline and the shirt hem
+    // covers the join; this is the SEAT, narrower than the shirt everywhere
+    // so it cannot ride up beside the hem as two horns.
+    const seat = dk(pants, 0.94);
+    pelvis.loftY([
+      { y: J.hip - 0.115, pts: oval(bw * 0.80, bd * 0.50, ST, 0, -0.042) },
+      { y: J.hip - 0.06, pts: oval(bw * 0.87, bd * 0.56, ST, 0, -0.040) },
+      { y: J.hip + 0.02, pts: oval(bw * 0.84, bd * 0.58, ST, 0, -0.036) },
+    ], seat, { capStart: true });
+    for (const px of [-0.052, 0.052]) {
+      pelvis.box(px, J.hip - 0.062, -(0.036 + bd * 0.58 - 0.010), 0.056, 0.060, 0.004, 0, dk(pants, 0.62));
+    }
+    acc.add(pelvis, across(J.spine - 0.06, 0.09, B.spine, B.hips), legUV(0));
   }
-  acc.add(pelvis, across(J.spine - 0.06, 0.09, B.spine, B.hips), legUV(0));
 
+  // --- torso ---------------------------------------------------------------
   const torso = new Builder(false);
-  // The hem drops BELOW the waistband, because that is how a shirt is worn:
-  // ending the torso at the hip and butting a pants-coloured pelvis against it
-  // is what produced the apron/diaper read the judge failed it for. Shoulder
-  // sections widened so the arm's top cap sits INSIDE the torso silhouette --
-  // the deltoid used to poke out of the trapezius slope as a puffed sleeve.
+  // Chest mass forward of the spine, a waist, and shoulders that are a mass
+  // rather than a slope; the trapezius ring sits higher and steeper so less
+  // neck shows above the collar.
+  const tRings = [
+    { y: J.hip - 0.035, pts: oval(bw * 1.04 * outer, bd * 1.02 * outer, ST) },       // hem
+    { y: J.hip + 0.06, pts: oval(bw * 0.95 * outer, bd * 0.98 * outer, ST) },
+    { y: 1.075, pts: oval(ww * 1.0 * outer, wd * 1.02 * outer, ST, 0, 0.002) },        // waist
+    { y: J.chest - 0.06, pts: oval((ww + cw) * 0.52 * outer, (wd + cd) * 0.52 * outer, ST, 0, 0.006) },
+    { y: J.chest, pts: oval(cw * 1.02 * outer, cd * 1.04 * outer, ST, 0, 0.012) },     // chest
+    { y: 1.34, pts: oval(cw * 1.05 * outer, cd * 1.00 * outer, ST, 0, 0.006) },
+    { y: J.shoulder - 0.03, pts: oval(sw * 1.18 * outer, sd * 1.02 * outer, ST) },
+    { y: J.shoulder + 0.012, pts: oval(sw * 1.06 * outer, sd * 0.96 * outer, ST, 0, -0.004) },
+    { y: J.shoulder + 0.038, pts: oval(sw * 0.62 * outer, sd * 0.70 * outer, ST, 0, -0.012) },  // trapezius
+    { y: J.shoulder + 0.054, pts: oval(sw * 0.43 * outer, sd * 0.54 * outer, ST, 0, -0.012) },  // neck base
+  ];
+  // Tucked in: below the belt the "torso" is the trousers' waistband.
+  const tCols = tRings.map((r, i) => (tucked && i < 2 ? pants : coat));
+  torso.loftY(tRings, tCols, {});
+  // hem lip: an inward slope, darker, which blocks the see-through rim
   torso.loftY([
-    { y: J.hip - 0.035, pts: oval(bw * 1.035 * outer, bd * 1.00 * outer, ST) },  // hem
-    { y: J.hip + 0.09, pts: oval(bw * 0.97 * outer, bd * 1.00 * outer, ST) },
-    { y: 1.085, pts: oval(ww * 1.05 * outer, wd * 1.03 * outer, ST) },
-    { y: J.chest, pts: oval(cw * outer, cd * outer, ST, 0, 0.006) },
-    { y: 1.34, pts: oval(cw * 1.03 * outer, cd * 0.98 * outer, ST) },
-    { y: J.shoulder - 0.03, pts: oval(sw * 1.22 * outer, sd * 1.02 * outer, ST) },
-    { y: J.shoulder + 0.008, pts: oval(sw * 1.10 * outer, sd * 0.94 * outer, ST) },
-    // trapezius sloping in to the neck, set back so the throat stays visible
-    { y: J.shoulder + 0.048, pts: oval(sw * 0.52 * outer, sd * 0.58 * outer, ST, 0, -0.014) },
-  ], coat, {});
-  // Close the hem with an inward LIP, not a cap: a full cap disc z-fights the
-  // seat it crosses, but an open single-sided tube is see-through along its
-  // rim from below and behind. ...and the lip must stay OUTSIDE the seat all
-  // the way round: sloping it steeply inward crossed the seat surface, and
-  // the intersection line is a zigzag of teeth around the hem.
-  torso.loftY([
-    { y: J.hip - 0.035, pts: oval(bw * 1.035 * outer, bd * 1.00 * outer, ST) },
-    { y: J.hip - 0.054, pts: oval(bw * 0.995 * outer, bd * 0.97 * outer, ST) },
-  ], [coat[0] * 0.72, coat[1] * 0.72, coat[2] * 0.74], {});
-  // collar: a slightly raised, slightly darker band around the neckline
-  torso.loftY([
-    { y: J.shoulder + 0.040, pts: oval(sw * 0.56 * outer, sd * 0.62 * outer, ST, 0, -0.013) },
-    { y: J.shoulder + 0.062, pts: oval(sw * 0.50 * outer, sd * 0.56 * outer, ST, 0, -0.012) },
-  ], [coat[0] * 0.82, coat[1] * 0.82, coat[2] * 0.84], { capEnd: true });
-  // The jacket's front placket is PAINTED (the jacket cell's zip band). It was
-  // three segments of thin boxes following the chest; each tried to sit flush
-  // and none quite did, and once the atlas put texture on their end faces the
-  // gaps between segments read as broken "H" shapes floating off the chest.
-  if (opts.vest) {
+    { y: J.hip - 0.035, pts: oval(bw * 1.04 * outer, bd * 1.02 * outer, ST) },
+    { y: J.hip - 0.054, pts: oval(bw * 1.0 * outer, bd * 0.99 * outer, ST) },
+  ], dk(tucked ? pants : coat, 0.55), {});
+  if (tucked || top === 'uniform') {
+    // A belt: the one horizontal accent that splits a figure into top and
+    // bottom from across the street.
+    const beltCol = [0.07, 0.055, 0.045];
+    // Over the join, not below it: the torso shades from trousers to top
+    // between J.hip + 0.06 and the waist ring, and a belt at +0.04 left a band
+    // of trouser colour above it -- high waistband, belt round the hips.
+    torso.loftY([
+      { y: J.hip + 0.072, pts: oval(bw * 0.935 * outer, bd * 0.975 * outer, ST) },
+      { y: J.hip + 0.104, pts: oval(bw * 0.900 * outer, bd * 0.955 * outer, ST, 0, 0.001) },
+    ], beltCol, {});
+    torso.box(0, J.hip + 0.074, bd * 0.975 + 0.002, 0.034, 0.028, 0.006, 0, [0.55, 0.52, 0.45]);   // buckle
+  }
+  // Neckline, per garment: a crew rib on shirts, a standing collar on jackets
+  // and uniforms, the hood bunched behind the neck on a hoodie.
+  if (top === 'jacket' || top === 'uniform') {
+    torso.loftY([
+      { y: J.shoulder + 0.040, pts: oval(sw * 0.60 * outer, sd * 0.70 * outer, ST, 0, -0.010) },
+      { y: J.shoulder + 0.085, pts: oval(0.074, 0.074, ST, 0, -0.012) },
+    ], dk(coat, 0.72), {});
+  } else {
+    torso.loftY([
+      { y: J.shoulder + 0.046, pts: oval(sw * 0.52 * outer, sd * 0.63 * outer, ST, 0, -0.012) },
+      { y: J.shoulder + 0.064, pts: oval(sw * 0.45 * outer, sd * 0.56 * outer, ST, 0, -0.011) },
+    ], dk(coat, 0.60), { capEnd: true });
+  }
+  // No hood under long hair: the two fought for the same space behind the
+  // neck and the hood poked out through the curtain from the side.
+  if (top === 'hoodie' && style !== 'long') {
+    torso.loftY([
+      { y: J.shoulder + 0.030, pts: oval(0.090, 0.040, ST, 0, -0.080) },
+      { y: J.shoulder + 0.075, pts: oval(0.105, 0.055, ST, 0, -0.095) },
+      { y: J.shoulder + 0.115, pts: oval(0.082, 0.040, ST, 0, -0.092) },
+    ], dk(coat, 0.85), { capEnd: true });
+  }
+  if (opts.hivis) {
+    // Hi-vis over the uniform: fluorescent body with two reflective bands --
+    // geometry, because multiplied paint can only darken and a reflective band
+    // is the brightest thing on the vest.
+    const vest = [0.78, 0.88, 0.10];
+    const band = [0.66, 0.66, 0.64];
+    torso.loftY([
+      { y: J.hip + 0.10, pts: oval(bw * 1.00 * outer * 1.04, bd * 1.03 * outer * 1.05, ST) },
+      { y: 1.075, pts: oval(ww * 1.06 * outer, wd * 1.10 * outer, ST, 0, 0.002) },
+      { y: J.chest, pts: oval(cw * 1.07 * outer, cd * 1.10 * outer, ST, 0, 0.012) },
+      { y: J.shoulder - 0.03, pts: oval(sw * 1.20 * outer, sd * 1.08 * outer, ST) },
+      { y: J.shoulder + 0.02, pts: oval(sw * 0.90 * outer, sd * 0.95 * outer, ST, 0, -0.006) },
+    ], vest, {});
+    for (const by of [1.13, 1.23]) {
+      const k = (by - 1.075) / (J.chest - 1.075);
+      const rx = lerp(ww * 1.06, cw * 1.07, k) * outer * 1.012, rz = lerp(wd * 1.10, cd * 1.10, k) * outer * 1.012;
+      torso.loftY([
+        { y: by, pts: oval(rx, rz, ST, 0, 0.002 + 0.010 * k) },
+        { y: by + 0.035, pts: oval(rx, rz, ST, 0, 0.002 + 0.010 * k) },
+      ], band, {});
+    }
+  } else if (opts.vest && top !== 'uniform') {
     torso.loftY([
       { y: J.hip + 0.12, pts: oval(bw * 1.03 * outer, bd * 1.05 * outer, ST) },
       { y: J.chest + 0.06, pts: oval(cw * 1.03 * outer, cd * 1.05 * outer, ST) },
       { y: J.shoulder - 0.04, pts: oval(sw * 0.98 * outer, sd * 1.02 * outer, ST) },
     ], opts.vest, {});
   }
-  acc.add(torso, (x, y) => {
-    if (y < J.spine) return across(J.spine - 0.05, 0.1, B.spine, B.hips)(x, y);
-    return across(J.chest - 0.06, 0.12, B.chest, B.spine)(x, y);
-  }, cylUV(jacket ? CELLS.jacket : CELLS.shirt, 0, 0, J.hip - 0.06, J.shoulder + 0.07));
+  acc.add(torso, torsoW, cylUV(topCell, 0, 0, J.hip - 0.06, J.shoulder + 0.07));
+
+  // --- skirt / dress -------------------------------------------------------
+  if (legsBare) {
+    const sk = new Builder(false);
+    // The waistband is under the top, not level with it: at J.hip + 0.07 and
+    // full width it pushed through a hoodie's front beside the pocket.
+    sk.loftY([
+      { y: J.hip + 0.020, pts: oval(bw * 0.92, bd * 0.94, ST) },
+      { y: J.hip - 0.050, pts: oval(bw * 1.06, bd * 1.10, ST, 0, 0.002) },
+      { y: J.knee + 0.10, pts: oval(bw * 1.26, bd * 1.34, ST, 0, 0.006) },
+      { y: J.knee + 0.07, pts: oval(bw * 1.30, bd * 1.38, ST, 0, 0.006) },
+    ], skirtCol, {});
+    sk.loftY([
+      { y: J.knee + 0.07, pts: oval(bw * 1.30, bd * 1.38, ST, 0, 0.006) },
+      { y: J.knee + 0.085, pts: oval(bw * 1.22, bd * 1.30, ST, 0, 0.006) },
+    ], dk(skirtCol, 0.55), {});
+    // A skirt follows the thigh on its own side and the hips in the middle,
+    // more so toward the hem -- enough to swing with a step without tearing.
+    acc.add(sk, (x, y) => {
+      const w = smoothT(clamp((J.hip - y) / 0.36, 0, 1)) * smoothT(clamp(Math.abs(x) / 0.12, 0, 1)) * 0.85;
+      return [x < 0 ? B.thighL : B.thighR, w, B.hips, 1 - w];
+    }, cylUV(CELLS.skirt, 0, 0, J.knee + 0.07, J.hip + 0.07));
+  }
 
   // --- neck + head ---------------------------------------------------------
   // Head width is 0.086H (half 0.075) and depth 0.115H (half 0.101), eyes on
-  // the half-height line, the face five eye-widths across. The features are
-  // PAINTED now (see the atlas): the skull, nose and ears are white vertex
-  // colour and take their skin, eyes, brows and lips from the face cell.
+  // the half-height line; 0.228 m chin to crown against a 1.75 m stature is
+  // 1:7.7, inside the 1:7.5-8 adult band. The features are PAINTED (see the
+  // atlas): skull, nose and ears are white vertex colour.
   const neck = new Builder(false);
-  // 0.052 m at the chin, not 0.056: with the head no longer carrying boxes for
-  // features it read as a column; an adult neck is ~0.11 m across.
   neck.loftY([
     { y: J.chest + 0.09, pts: oval(0.066, 0.064, SL) },
     { y: J.shoulder + 0.01, pts: oval(0.059, 0.057, SL, 0, -0.004) },
-    // Tucked UP INSIDE the jaw: ending level with the skull's base at a wider
-    // radius than the jaw left the neck's top rim visible under the chin.
+    // Tucked UP INSIDE the jaw, or the neck's top rim shows under the chin.
     { y: J.chin + 0.012, pts: oval(0.044, 0.046, SL, 0, -0.006) },
   ], skin, {});
   acc.add(neck, (x, y) => across(J.neck - 0.06, 0.09, B.neck, B.chest)(x, y),
     cylUV(CELLS.skin, 0, 0, J.chest + 0.09, J.chin));
 
   const head = new Builder(false);
-  // Skull: fuller jaw, cheeks widest at the ear line, rounder cranium -- and
-  // the HAIRLINE IS A VERTEX-COLOUR BOUNDARY in the loft. Every attempt to hang
-  // separate fringe geometry off the forehead either wrapped the cheeks (a
-  // bowl helmet), floated as an awning with a lit underside, or read as a
-  // brick. A colour boundary cannot float or detach.
-  const skullPts = [
-    // Two more rings under the jaw: from the chin straight to the jawline was
-    // one cone, and the lower face read as a trapezoid with a pointed chin.
-    { y: J.chin - 0.012, pts: oval(0.036, 0.046, ST, 0, 0.022) },   // under the chin
-    { y: J.chin - 0.002, pts: oval(0.050, 0.062, ST, 0, 0.016) },   // chin
-    { y: J.chin + 0.010, pts: oval(0.060, 0.076, ST, 0, 0.011) },   // jaw angle
-    { y: J.chin + 0.024, pts: oval(0.066, 0.085, ST, 0, 0.008) },   // jawline
-    { y: J.chin + 0.060, pts: oval(0.073, 0.093, ST, 0, 0.004) },   // cheeks
-    { y: J.eye - 0.020, pts: oval(0.075, 0.095, ST, 0, 0.001) },    // cheekbone
-    { y: J.eye, pts: oval(0.075, 0.096, ST, 0, 0) },                // brow line
-    { y: J.eye + 0.036, pts: oval(0.072, 0.092, ST, 0, -0.002) },   // forehead, skin
-    { y: HAIRLINE + 0.002, pts: oval(0.073, 0.093, ST, 0, -0.003) }, // hairline
-    { y: J.crown - 0.028, pts: oval(0.058, 0.074, ST, 0, -0.009) },
-    { y: J.crown, pts: oval(0.024, 0.030, ST, 0, -0.013) },
-  ];
-  head.loftY(skullPts, [WHITE, WHITE, WHITE, WHITE, WHITE, WHITE, WHITE, WHITE, hair, hair, hair],
+  // The hairline is a vertex-colour boundary in the skull loft; the hair shell
+  // below grows from the same surface.
+  head.loftY(SKULL.map((r) => ({ y: r.y, pts: oval(r.rx, r.rz, ST, 0, r.oz) })),
+    SKULL.map((r, i) => (i < SKULL.length - 3 ? WHITE : hair)),
     { capStart: true, capEnd: true });
-  // Nose: a wedge widening toward nostril wings, set INTO the face rather than
-  // standing off it. The old 8-sided loft 1 cm proud of the skull read as a
-  // plank fixed to the front of the head in the close-up.
+  // Nose: a wedge widening toward nostril wings, set into the face.
   head.loftY([
-    { y: J.eye - 0.050, pts: oval(0.012, 0.008, 10, 0, 0.090) },
-    { y: J.eye - 0.042, pts: oval(0.018, 0.013, 10, 0, 0.093) },
-    { y: J.eye - 0.024, pts: oval(0.011, 0.012, 10, 0, 0.094) },
-    { y: J.eye - 0.004, pts: oval(0.008, 0.008, 10, 0, 0.089) },
+    { y: J.eye - 0.050, pts: oval(0.012, 0.008, 8, 0, 0.090) },
+    { y: J.eye - 0.042, pts: oval(0.018, 0.013, 8, 0, 0.093) },
+    { y: J.eye - 0.024, pts: oval(0.011, 0.012, 8, 0, 0.094) },
+    { y: J.eye - 0.004, pts: oval(0.008, 0.008, 8, 0, 0.089) },
   ], WHITE, { capStart: true, capEnd: true });
-  // Ears: thin lofted ovals on the ear line; rim and bowl are painted. They
-  // were boxes, and a box seen from the front is a rectangle bolted on.
+  // Ears: thin lofted ovals on the ear line; rim and bowl are painted.
   for (const sx of [-1, 1]) {
     head.loftY([
       { y: J.eye - 0.048, pts: oval(0.005, 0.010, 8, sx * 0.0735, -0.004) },
@@ -658,40 +976,15 @@ export function buildCharacter(opts = {}) {
   };
   acc.add(head, headW, cylUV(face, 0, HEAD_Z, HY0, HY1, HEAD_SPAN));
 
-  // Hair shells: their own part, so they take the strand cell, not the face.
-  const hairB = new Builder(false);
-  const style = Math.floor(hash2(seed, 16) * 3);
-  const napeY = style === 2 ? J.chin + 0.015 : J.chin + 0.06;
-  const vol = style === 0 ? 0.004 : style === 1 ? 0.007 : 0.010;
-  // Volume shell: strictly ABOVE the hairline, following the skull a few
-  // millimetres out, so it cannot overhang the face from any angle.
-  // It GROWS OUT of the skull: the first ring sits a millimetre inside it
-  // and 6 mm lower, and the volume arrives over the next 2 cm. Starting at full
-  // volume left the open bottom edge standing proud all round -- a bowl-cut
-  // brim with a lit underside, which is most of what read as a helmet.
-  hairB.loftY([
-    { y: HAIRLINE - 0.004, pts: oval(0.0725, 0.0925, ST, 0, -0.002) },
-    // Volume at the sides and back only: the ring is shifted back by half the
-    // volume so its FRONT stays on the skull. Full volume all round still left
-    // a dark ledge across the forehead from the front.
-    { y: HAIRLINE + 0.014, pts: oval(0.0715 + vol, 0.0905 + vol * 0.5, ST, 0, -0.004 - vol * 0.5) },
-    { y: J.crown - 0.026, pts: oval(0.060 + vol, 0.076 + vol, ST, 0, -0.009) },
-    { y: J.crown + 0.002 + vol, pts: oval(0.025, 0.031, ST, 0, -0.013) },
-  ], hair, { capEnd: true });
-  // Back of head below the hairline: wide, shallow, hugging the skull down to
-  // the nape. This has to WRAP the skull's back, not hover inside it -- the
-  // skull loft is skin below the hairline all the way round, so any gap here
-  // is a bald patch seen from behind.
-  // ...and TAPERS IN at the nape. Cut off square at full width it was a flat
-  // disc with a lit edge, and from behind the whole back of the head read as
-  // a block of wood.
-  hairB.loftY([
-    { y: napeY - 0.012, pts: oval(0.050, 0.020, ST, 0, -0.062) },
-    { y: napeY, pts: oval(0.062 + vol, 0.032, ST, 0, -0.070) },
-    { y: J.eye + 0.006, pts: oval(0.072 + vol, 0.044, ST, 0, -0.062) },
-    { y: HAIRLINE + 0.001, pts: oval(0.0735 + vol, 0.0935 + vol, ST, 0, -0.003) },
-  ], hair, { capStart: true });
-  acc.add(hairB, headW, cylUV(CELLS.hair, 0, -0.01, J.chin, J.crown + 0.02));
+  const hairB = buildHair(style, seed, hair);
+  if (hairB) {
+    // Long hair below the jaw rides the chest, not the head, or it swings
+    // through the back when the head turns.
+    const hw = style === 'long'
+      ? (x, y) => (y < J.chin ? across(J.chin - 0.10, 0.08, B.head, B.chest)(x, y) : headW(x, y))
+      : headW;
+    acc.add(hairB, hw, cylUV(style === 'curly' ? CELLS.curly : CELLS.hair, 0, -0.01, J.eye - 0.08, J.crown + 0.03));
+  }
 
   if (opts.hat) {
     const hat = new Builder(false);
@@ -708,48 +1001,61 @@ export function buildCharacter(opts = {}) {
   for (const side of [-1, 1]) {
     const X = side * SHOULDER_X;
     const arm = new Builder(false);
-    arm.loftY([
-      // top cap INSIDE the widened torso shoulder, so no seam shows
-      { y: J.shoulder + 0.006, pts: oval(0.036, 0.034, SL, X * 0.80, 0) },
-      { y: J.shoulder - 0.042, pts: oval(0.058, 0.055, SL, X, 0) },
-      { y: J.shoulder - 0.085, pts: oval(0.059, 0.056, SL, X, 0) },
-      { y: J.shoulder - 0.14, pts: oval(0.051, 0.050, SL, X, 0) },
-      { y: J.elbow + 0.03, pts: oval(0.045, 0.044, SL, X, 0) },
-      { y: J.elbow - 0.02, pts: oval(0.043, 0.042, SL, X, 0) },
-      { y: J.wrist + 0.05, pts: oval(0.032, 0.031, SL, X, 0) },
-      { y: J.wrist + 0.012, pts: oval(0.027, 0.025, SL, X, 0) },
-    ], shortSleeve
-      ? [coat, coat, coat, coat, skin, skin, skin, skin]
+    // Deltoid, biceps and a forearm that is thicker below the elbow than at
+    // the wrist: round one's arm was one taper, a stick.
+    const aRings = [
+      { y: J.shoulder + 0.006, pts: oval(0.038, 0.036, SL, X * 0.80, 0) },
+      { y: J.shoulder - 0.040, pts: oval(0.064, 0.058, SL, X * 1.03, 0) },     // deltoid
+      { y: J.shoulder - 0.090, pts: oval(0.061, 0.058, SL, X * 1.02, 0) },
+      { y: J.shoulder - 0.150, pts: oval(0.053, 0.056, SL, X, 0.004) },        // biceps
+      { y: J.elbow + 0.030, pts: oval(0.046, 0.045, SL, X, 0) },
+      { y: J.elbow - 0.020, pts: oval(0.045, 0.044, SL, X, 0) },
+      { y: J.elbow - 0.070, pts: oval(0.047, 0.043, SL, X, 0.002) },           // forearm
+      { y: J.wrist + 0.050, pts: oval(0.035, 0.031, SL, X, 0) },
+      { y: J.wrist + 0.012, pts: oval(0.028, 0.025, SL, X, 0) },
+    ];
+    arm.loftY(aRings, shortSleeve
+      ? aRings.map((r, i) => (i < 3 ? coat : skin))
       : coat, { capStart: true, capEnd: true });
+    // cuff: a proud, contrasting band where the fabric ends
     if (shortSleeve) {
-      // sleeve cuff: a slightly wider, slightly darker ring where the fabric ends
       arm.loftY([
-        { y: J.shoulder - 0.13, pts: oval(0.054, 0.053, SL, X, 0) },
-        { y: J.shoulder - 0.155, pts: oval(0.052, 0.051, SL, X, 0) },
-      ], [coat[0] * 0.85, coat[1] * 0.85, coat[2] * 0.87], {});
+        { y: J.shoulder - 0.122, pts: oval(0.060, 0.059, SL, X * 1.01, 0.002) },
+        { y: J.shoulder - 0.150, pts: oval(0.058, 0.060, SL, X, 0.004) },
+      ], dk(coat, 0.62), {});
+      arm.loftY([
+        { y: J.shoulder - 0.090, pts: oval(0.062, 0.059, SL, X * 1.02, 0) },
+        { y: J.shoulder - 0.122, pts: oval(0.060, 0.059, SL, X * 1.01, 0.002) },
+      ], coat, {});
     } else {
       arm.loftY([
-        { y: J.wrist + 0.055, pts: oval(0.034, 0.033, SL, X, 0) },
-        { y: J.wrist + 0.030, pts: oval(0.033, 0.032, SL, X, 0) },
-      ], [coat[0] * 0.85, coat[1] * 0.85, coat[2] * 0.87], {});
+        { y: J.wrist + 0.058, pts: oval(0.037, 0.034, SL, X, 0) },
+        { y: J.wrist + 0.026, pts: oval(0.034, 0.031, SL, X, 0) },
+      ], dk(coat, top === 'hoodie' ? 0.62 : 0.72), {});
     }
     acc.add(arm, (x, y) => {
       if (y > J.elbow) return across(J.elbow + 0.05, 0.09, side < 0 ? B.shoulderL : B.shoulderR, side < 0 ? B.elbowL : B.elbowR)(x, y);
       return [side < 0 ? B.elbowL : B.elbowR, 1, 0, 0];
-    }, cylUV(jacket ? CELLS.jacket : CELLS.shirt, X, 0, J.wrist, J.shoulder + 0.01));
-    // Hand: palm, a curled finger mass and a thumb, not a flat paddle. The
-    // fingers curl toward the thigh (a relaxed hand is a loose C, not a blade)
-    // and shorten the reach; the separations and nails are painted.
+    // Sleeves take the plain cell, not the garment's: a torso cell carries
+    // pockets, zips and a kangaroo pocket, and mapped round an arm they landed
+    // on the sleeves as stray rectangles.
+    }, cylUV(CELLS.skin, X, 0, J.wrist, J.shoulder + 0.01));
+    // Hand: palm and a curled finger mass, and a THUMB split from it -- a tube
+    // angled forward and across the palm. The mitten had the thumb as a box
+    // flush against the side, which from any distance was the same blob.
     const hand = new Builder(false);
+    // 8-sided: a hand is ~40 px at the closest a camera gets, and 12 sides
+    // spent more triangles on it than on the whole head's hair.
+    const SH = 8;
     hand.loftY([
-      { y: J.wrist + 0.014, pts: oval(0.027, 0.025, SL, X, 0) },       // = forearm end
-      { y: J.wrist - 0.040, pts: oval(0.035, 0.029, SL, X, 0.006) },     // palm
-      { y: J.wrist - 0.095, pts: oval(0.034, 0.030, SL, X, 0.016) },     // knuckles
-      { y: J.wrist - 0.135, pts: oval(0.029, 0.025, SL, X, 0.028) },     // fingers curling
-      { y: J.wrist - 0.158, pts: oval(0.020, 0.017, SL, X, 0.038) },     // tips tucked
+      { y: J.wrist + 0.014, pts: oval(0.027, 0.025, SH, X, 0) },
+      { y: J.wrist - 0.040, pts: oval(0.031, 0.026, SH, X + side * 0.003, 0.004) },  // palm
+      { y: J.wrist - 0.092, pts: oval(0.030, 0.027, SH, X + side * 0.003, 0.014) },  // knuckles
+      { y: J.wrist - 0.132, pts: oval(0.026, 0.022, SH, X + side * 0.002, 0.026) },  // curl
+      { y: J.wrist - 0.152, pts: oval(0.018, 0.015, SH, X + side * 0.001, 0.034) },  // tips
     ], skin, { capStart: true, capEnd: true });
-    // thumb: on the inner edge, angled slightly across the palm
-    hand.box(X - side * 0.031, J.wrist - 0.052, 0.016, 0.019, 0.056, 0.021, side * 0.38, skin);
+    hand.tube([X - side * 0.022, J.wrist - 0.020, 0.010], [X - side * 0.034, J.wrist - 0.058, 0.026], 0.0105, 6, skin, true);
+    hand.tube([X - side * 0.034, J.wrist - 0.058, 0.026], [X - side * 0.032, J.wrist - 0.084, 0.036], 0.0090, 6, skin, true);
     acc.add(hand, solid(side < 0 ? B.handL : B.handR),
       cylUV(CELLS.hand, X, 0.016, J.wrist - 0.16, J.wrist + 0.015));
   }
@@ -758,25 +1064,51 @@ export function buildCharacter(opts = {}) {
   for (const side of [-1, 1]) {
     const X = side * HIP_X;
     const leg = new Builder(false);
-    leg.loftY([
+    // Thigh taper, a knee, a calf that sits BEHIND the shin and swells below
+    // the knee, and a slim ankle. Trousers keep a straighter fall over the
+    // calf; bare legs get the whole shape.
+    const bare = legsBare;
+    const loose = bottom === 'trousers' || bottom === 'jeans';
+    const lRings = [
       { y: J.hip + 0.035, pts: oval(0.084, 0.088, SL, X * 0.88, 0) },
-      { y: J.hip - 0.09, pts: oval(0.092, 0.088, SL, X * 0.97, 0) },
-      { y: J.knee + 0.10, pts: oval(0.064, 0.064, SL, X, 0) },
-      { y: J.knee + 0.02, pts: oval(0.059, 0.060, SL, X, 0) },
-      { y: J.knee - 0.04, pts: oval(0.059, 0.062, SL, X, 0.005) },
-      { y: J.knee - 0.15, pts: oval(0.057, 0.060, SL, X, 0.002) },
-      { y: J.ankle + 0.10, pts: oval(0.040, 0.043, SL, X, 0) },
-    ], pants, { capStart: true, capEnd: true });
+      { y: J.hip - 0.090, pts: oval(0.090, 0.088, SL, X * 0.97, 0) },
+      { y: J.hip - 0.200, pts: oval(0.078, 0.080, SL, X, 0) },
+      { y: J.knee + 0.120, pts: oval(0.064, 0.066, SL, X, 0) },
+      { y: J.knee + 0.080, pts: oval(0.060, 0.063, SL, X, 0) },
+      { y: J.knee + 0.010, pts: oval(0.055, 0.056, SL, X, 0.006) },                 // knee
+      { y: J.knee - 0.050, pts: oval(0.054, loose ? 0.060 : 0.058, SL, X, loose ? -0.002 : -0.004) },
+      { y: J.knee - 0.120, pts: oval(loose ? 0.056 : 0.055, loose ? 0.062 : 0.066, SL, X, loose ? -0.004 : -0.012) },  // calf
+      { y: J.knee - 0.250, pts: oval(loose ? 0.048 : 0.042, loose ? 0.052 : 0.048, SL, X, -0.004) },
+      { y: J.ankle + 0.100, pts: oval(loose ? 0.042 : 0.036, loose ? 0.045 : 0.039, SL, X, 0) },
+    ];
+    const lCols = lRings.map((r, i) => {
+      if (bare) return skin;
+      if (bottom === 'shorts') return i <= 3 ? pants : skin;
+      return pants;
+    });
+    leg.loftY(lRings, lCols, { capStart: true, capEnd: true });
+    if (bottom === 'shorts') {
+      leg.loftY([
+        { y: J.knee + 0.140, pts: oval(0.068, 0.070, SL, X, 0) },
+        { y: J.knee + 0.105, pts: oval(0.066, 0.068, SL, X, 0) },
+      ], dk(pants, 0.60), {});
+    }
+    if (loose) {
+      // turn-up at the hem
+      leg.loftY([
+        { y: J.ankle + 0.100, pts: oval(0.044, 0.047, SL, X, 0) },
+        { y: J.ankle + 0.075, pts: oval(0.044, 0.047, SL, X, 0) },
+      ], dk(pants, 0.62), {});
+    }
     acc.add(leg, (x, y) => across(J.knee + 0.04, 0.1,
-      side < 0 ? B.thighL : B.thighR, side < 0 ? B.kneeL : B.kneeR)(x, y), legUV(X));
+      side < 0 ? B.thighL : B.thighR, side < 0 ? B.kneeL : B.kneeR)(x, y),
+    bare ? cylUV(CELLS.skin, X, 0, J.ankle + 0.08, J.hip + 0.04) : legUV(X));
 
     // THE SHOE IS ONE LOFT, and its sole is where animateWalk thinks it is.
-    // It used to be a swelling upper sitting on a separate sole BOX, which
-    // from any angle read as a slab stuck on underneath -- and a box's corners
-    // cannot be a heel. The bottom ring spans exactly the sole the gait's roll
-    // model pivots on: 6.75 cm under the ankle, from 5.6 cm behind it to 15.6
-    // cm ahead (SOLE / HEEL_Z / TOE_Z in animateWalk; tools/gait.mjs reads the
-    // same numbers). Change one, change all three.
+    // The bottom ring spans exactly the sole the gait's roll model pivots on:
+    // 6.75 cm under the ankle, from 5.6 cm behind it to 15.6 cm ahead
+    // (SOLE / HEEL_Z / TOE_Z in animateWalk; tools/gait.mjs reads the same
+    // numbers). Change one, change all three.
     const foot = new Builder(false);
     foot.loftY([
       { y: J.ankle - 0.0675, pts: oval(0.046, 0.106, SL, X, 0.050) },   // sole underside
@@ -799,7 +1131,7 @@ let VARIANTS = null;
 function variants() {
   if (!VARIANTS) {
     VARIANTS = [];
-    for (let i = 0; i < 12; i++) VARIANTS.push(buildCharacter({ seed: i * 7919 + 13 }));
+    for (let i = 0; i < 12; i++) VARIANTS.push(buildCharacter({ seed: i * 7919 + 13, variant: i }));
   }
   return VARIANTS;
 }
@@ -816,6 +1148,7 @@ function copVariants() {
       COP_VARIANTS.push(buildCharacter({
         seed: i * 6007 + 71,
         shirt: [0.12, 0.16, 0.3], pants: [0.1, 0.12, 0.2], hat: [0.08, 0.1, 0.18], vest: [0.16, 0.2, 0.36],
+        hivis: true,
       }));
     }
   }
@@ -1456,8 +1789,10 @@ export function animateWalk(h, amp, dt, speed) {
     mix(b[B.shoulderR], 'y', handed * 0.05);
     mix(b[B.shoulderL], 'z', -0.12);
     mix(b[B.shoulderR], 'z', 0.16);
-    mix(b[B.elbowL], 'x', -0.44 + br * 0.02);
-    mix(b[B.elbowR], 'x', -0.22 - br * 0.02);
+    // A relaxed arm is never straight: the elbows rest at ~20-30 deg. At -0.22
+    // on one side the arm hung like a stick in every portrait.
+    mix(b[B.elbowL], 'x', -0.50 + br * 0.02);
+    mix(b[B.elbowR], 'x', -0.36 - br * 0.02);
   }
   h.bob = 0;
 }

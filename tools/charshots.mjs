@@ -24,6 +24,10 @@ const HTTP_PORT = process.env.AUTO_HTTP_PORT || 8000;
 const TAG = process.argv[2] || 'now';
 const SEED = parseInt(process.argv[3] || '0', 10);
 const OUT = `tools/data/char/${TAG}`;
+// `lineup`: every pooled look (one seed per look, found the way makeHumanoid
+// picks them) plus a cop, side by side at street distance -- a single seed
+// says nothing about whether the POOL reads as a crowd of different people.
+const LINEUP = process.argv.includes('lineup');
 
 // name, azimuth (0 = facing camera), target height, distance, fov
 const VIEWS = [
@@ -37,7 +41,7 @@ const VIEWS = [
 function launch() {
   return spawn(CHROME, [
     `--remote-debugging-port=${PORT}`, '--headless=new', '--use-gl=swiftshader',
-    '--enable-unsafe-swiftshader', '--window-size=700,900', '--no-first-run',
+    '--enable-unsafe-swiftshader', LINEUP ? '--window-size=1600,640' : '--window-size=700,900', '--no-first-run',
     `--user-data-dir=/tmp/auto-charshot-profile-${PORT}`, 'about:blank',
   ], { stdio: 'ignore' });
 }
@@ -113,6 +117,45 @@ async function main() {
 
     rmSync(OUT, { recursive: true, force: true });
     mkdirSync(OUT, { recursive: true });
+    if (LINEUP) {
+      await evaluate(`(async () => {
+        const d = window.__dbg, m = await import('./src/peds.js');
+        window.__subject.group.visible = false;
+        const hash = (k, j) => { let h = (k * 374761393 + j * 668265263) | 0; h = (h ^ (h >>> 13)) * 1274126177; return ((h ^ (h >>> 16)) >>> 0) / 4294967296; };
+        const seeds = [];
+        for (let s = 1; seeds.length < 12 && s < 100000; s++) {
+          if (Math.floor(hash(s, 9) * 12) % 12 === seeds.length) { seeds.push(s); s = 0; }
+        }
+        const all = seeds.map((s) => m.makeHumanoid({ seed: s, scale: 1 }));
+        all.push(m.makeHumanoid({ seed: 5, scale: 1, cop: true }));
+        all.forEach((h, i) => {
+          h.mesh.castShadow = true;
+          d.scene.add(h.group);
+          h.group.position.set((i - 6) * 0.64, 0, 0);
+          h.group.rotation.y = 0.30;
+          m.animateWalk(h, 0, 0, 0);
+        });
+        d.camera.fov = 30; d.camera.updateProjectionMatrix();
+        // 9 m at 30 deg vertical: in a 1600x640 frame that is ~12 m across,
+        // room for thirteen people at 0.64 m and ~230 px each. At 16.5 m they
+        // were matchsticks and neither hair nor collars could be judged.
+        d.camera.position.set(0, 1.20, 9.0);
+        d.camera.lookAt(0, 0.95, 0);
+        d.camera.updateMatrixWorld(true);
+        d.sun.position.set(-6, 9, 8);
+        d.sun.target.position.set(0, 1, 0);
+        d.sun.target.updateMatrixWorld();
+        d.scene.updateMatrixWorld(true);
+        window.__lineup = true;
+      })()`);
+      for (let i = 0; i < 30; i++) { await sleep(300); if (await evaluate('!!window.__lineup')) break; }
+      await sleep(6000);
+      await evaluate(`(() => { const pm = document.getElementById('pauseMenu'); if (pm) pm.style.display = 'none'; })()`);
+      const { result } = await send('Page.captureScreenshot', { format: 'png' });
+      writeFileSync(`${OUT}/lineup.png`, Buffer.from(result.data, 'base64'));
+      console.log(`lineup -> ${OUT}/lineup.png`);
+      return;
+    }
     for (const [name, az, th, dist, fov] of VIEWS) {
       await evaluate(`(() => {
         const d = window.__dbg, h = window.__subject;
