@@ -1142,6 +1142,10 @@ export class World {
     const flat = new Builder(false);
     const glow = new Builder(false);
     const bl = { glass: new Builder(true), facade: new Builder(true) };
+    // Road structure -- walls, parapets, fascia -- is textured concrete from the
+    // facade atlas, so it draws into this chunk's facade mesh: no new material
+    // and no new draw where the chunk has buildings anyway.
+    this._facade = bl.facade;
 
     const own = (x, z) => Math.floor(x / CHUNK) === cx && Math.floor(z / CHUNK) === cz;
     const nodesDone = new Set();
@@ -1332,7 +1336,16 @@ export class World {
    */
   meshGradedDeck(road, flat, e, a, b, ei) {
     const GIRDER = 1.35, PARAPET = 0.55, RAIL = 0.95;
-    const conc = [0.68, 0.68, 0.66], concLo = [0.5, 0.5, 0.49];
+    // One concrete family with the retaining walls and the tunnel: mid-grey,
+    // near the tarmac rather than the sky. The rails were [0.68, 0.68, 0.66]
+    // -- near-white under the tone curve, and the brightest thing in frame.
+    const conc = [0.5, 0.5, 0.49], concLo = [0.4, 0.4, 0.39];
+    // Fascia and the rail's traffic face are the big vertical areas, so they
+    // take the facade atlas's cast-concrete cell (joints, ties, staining).
+    const face = this._facade || flat;
+    const ccell = this._facade ? this.cells.concrete : null;
+    const CU = (fr) => (ccell ? ccell[0] + fr * ccell[1] : fr);
+    const faceCol = [0.8, 0.8, 0.79];
     const hw = e.hw, k = e.pk;
     const along = Math.atan2(e.dx, e.dz);
     const run = {}, deck = {};
@@ -1399,17 +1412,20 @@ export class World {
           }
         }
         const top = open ? 0 : median ? 0.8 : RAIL;
-        flat.quad([D0[0], y0 - GIRDER, D0[1]], [D1[0], y1 - GIRDER, D1[1]],
+        // Fascia: girder and rail in one cast-concrete face.
+        face.quad([D0[0], y0 - GIRDER, D0[1]], [D1[0], y1 - GIRDER, D1[1]],
           [D1[0], y1 + top, D1[1]], [D0[0], y0 + top, D0[1]],
-          [ox, 0, oz], [0, 0, 1, 0, 1, 1, 0, 1], conc);
+          [ox, 0, oz], [CU(0), 0, CU(1), 0, CU(1), 1, CU(0), 1], faceCol);
         // Capping over the wall, or over the bare deck edge where it is open.
         flat.quad([D0[0], y0 + top, D0[1]], [D1[0], y1 + top, D1[1]],
           [R1[0], y1 + top, R1[1]], [R0[0], y0 + top, R0[1]],
           [0, 1, 0], [0, 0, 1, 0, 1, 1, 0, 1], open ? concLo : conc);
         if (!open) {
-          flat.quad([R0[0], y0, R0[1]], [R1[0], y1, R1[1]],
+          // the rail's traffic face: the lower 40 % of the tile, so its base
+          // carries the texture's grime band where spray collects
+          face.quad([R0[0], y0, R0[1]], [R1[0], y1, R1[1]],
             [R1[0], y1 + RAIL, R1[1]], [R0[0], y0 + RAIL, R0[1]],
-            [-ox, 0, -oz], [0, 0, 1, 0, 1, 1, 0, 1], conc);
+            [-ox, 0, -oz], [CU(0), 0, CU(1), 0, CU(1), 0.4, CU(0), 0.4], faceCol);
         }
         // A rail that stops needs an end, or you see into a hollow wall.
         if (wasOpen[sg] !== null && wasOpen[sg] !== open) {
@@ -2219,31 +2235,55 @@ export class World {
    * [x, z, top, bottom] along the wall; `out` is its outward normal.
    */
   meshWall(flat, pts, ox, oz, seed) {
-    const COPE = 0.22, FOOT = 0.45;
-    const base = [0.6, 0.6, 0.58], cope = [0.74, 0.74, 0.71], foot = [0.44, 0.44, 0.42];
+    // Mid-grey weathered concrete, the same family as the tunnel's walls and
+    // the deck fascia, textured from the facade atlas's `concrete` cell. The
+    // first pass was a near-white vertex colour: at Mercer and beside I-5's
+    // express lanes the walls were the brightest, flattest thing in frame and
+    // read as the same "weird guardrails" they replaced.
+    const face = this._facade || flat;
+    const cell = this._facade ? this.cells.concrete : null;
+    const U = (fr) => (cell ? cell[0] + fr * cell[1] : fr);
+    const COPE = 0.18;
+    const tone = [0.8, 0.8, 0.79], cope = [0.47, 0.47, 0.46];
+    // Under ~1.2 m of drop a full wall is wrong: a lane edge that high is
+    // guarded by a Jersey barrier, and the drop below it is just a kerb face.
+    let maxDrop = 0;
+    for (const p of pts) maxDrop = Math.max(maxDrop, p[2] - p[3]);
+    const jersey = maxDrop < 1.2;
     for (let i = 0; i < pts.length - 1; i++) {
       const [x0, z0, t0, b0] = pts[i], [x1, z1, t1, b1] = pts[i + 1];
-      if (t0 - b0 < 0.15 && t1 - b1 < 0.15) continue;
-      // one cast panel per piece: a tonal step and a dark joint line between
-      const k = 0.93 + hash2((seed | 0) + i * 7, 31) * 0.12;
-      const col = [base[0] * k, base[1] * k, base[2] * k];
-      const f0 = Math.min(t0, b0 + FOOT), f1 = Math.min(t1, b1 + FOOT);
-      flat.quad([x0, b0, z0], [x1, b1, z1], [x1, f1, z1], [x0, f0, z0],
-        [ox, 0, oz], [0, 0, 1, 0, 1, 1, 0, 1], foot);
-      flat.quad([x0, f0, z0], [x1, f1, z1], [x1, t1, z1], [x0, t0, z0],
-        [ox, 0, oz], [0, 0, 1, 0, 1, 1, 0, 1], [col, col, col, col]);
-      // joint: a thin darker strip at the start of each panel
-      const jx = x0 + (x1 - x0) * 0.04, jz = z0 + (z1 - z0) * 0.04;
-      const jt = t0 + (t1 - t0) * 0.04, jb = b0 + (b1 - b0) * 0.04;
-      flat.quad([x0 + ox * 0.01, b0, z0 + oz * 0.01], [jx + ox * 0.01, jb, jz + oz * 0.01],
-        [jx + ox * 0.01, jt, jz + oz * 0.01], [x0 + ox * 0.01, t0, z0 + oz * 0.01],
-        [ox, 0, oz], [0, 0, 1, 0, 1, 1, 0, 1], foot);
-      // coping over the top, a lip proud of both faces
-      flat.quad([x0 + ox * COPE, t0 + 0.12, z0 + oz * COPE], [x1 + ox * COPE, t1 + 0.12, z1 + oz * COPE],
-        [x1 - ox * 0.05, t1 + 0.12, z1 - oz * 0.05], [x0 - ox * 0.05, t0 + 0.12, z0 - oz * 0.05],
+      if (t0 - b0 < 0.15 && t1 - b1 < 0.15 && !jersey) continue;
+      // one cast panel per piece, a tonal step each
+      const k = 0.92 + hash2((seed | 0) + i * 7, 31) * 0.14;
+      const col = [tone[0] * k, tone[1] * k, tone[2] * k];
+      face.quad([x0, b0, z0], [x1, b1, z1], [x1, t1, z1], [x0, t0, z0],
+        [ox, 0, oz], [U(0), 0, U(1), 0, U(1), 1, U(0), 1], [col, col, col, col]);
+      if (jersey) {
+        // The profile, inward from the edge (-o), up from the deck: a 0.81 m
+        // safety shape -- vertical back on the edge, 0.15 m top, the two
+        // sloped faces toward the traffic.
+        const prof = [[0, 0.81], [0.15, 0.81], [0.22, 0.33], [0.6, 0.08], [0.6, 0]];
+        const P = (x, z, t, o, h) => [x - ox * o, t + h, z - oz * o];
+        face.quad(P(x0, z0, t0, 0, 0), P(x1, z1, t1, 0, 0), P(x1, z1, t1, 0, 0.81), P(x0, z0, t0, 0, 0.81),
+          [ox, 0, oz], [U(0), 0, U(1), 0, U(1), 0.3, U(0), 0.3], [col, col, col, col]);
+        for (let q = 0; q < prof.length - 1; q++) {
+          const [oa, ha] = prof[q], [ob, hb] = prof[q + 1];
+          const nx = -(hb - ha), ny = (ob - oa);   // outward normal in (inward, up) plane
+          const nl = Math.hypot(nx, ny) || 1;
+          const n = [-ox * (nx / nl), ny / nl, -oz * (nx / nl)];
+          const flatTop = q === 0;
+          (flatTop ? flat : face).quad(P(x0, z0, t0, oa, ha), P(x1, z1, t1, oa, ha), P(x1, z1, t1, ob, hb), P(x0, z0, t0, ob, hb),
+            n, [U(0), 0.3 + 0.1 * q, U(1), 0.3 + 0.1 * q, U(1), 0.4 + 0.1 * q, U(0), 0.4 + 0.1 * q],
+            flatTop ? cope : [col, col, col, col]);
+        }
+        continue;
+      }
+      // coping over the top, a lip proud of the face
+      flat.quad([x0 + ox * COPE, t0 + 0.1, z0 + oz * COPE], [x1 + ox * COPE, t1 + 0.1, z1 + oz * COPE],
+        [x1 - ox * 0.05, t1 + 0.1, z1 - oz * 0.05], [x0 - ox * 0.05, t0 + 0.1, z0 - oz * 0.05],
         [0, 1, 0], [0, 0, 1, 0, 1, 1, 0, 1], cope);
       flat.quad([x0 + ox * COPE, t0 - 0.02, z0 + oz * COPE], [x1 + ox * COPE, t1 - 0.02, z1 + oz * COPE],
-        [x1 + ox * COPE, t1 + 0.12, z1 + oz * COPE], [x0 + ox * COPE, t0 + 0.12, z0 + oz * COPE],
+        [x1 + ox * COPE, t1 + 0.1, z1 + oz * COPE], [x0 + ox * COPE, t0 + 0.1, z0 + oz * COPE],
         [ox, 0, oz], [0, 0, 1, 0, 1, 1, 0, 1], cope);
     }
   }

@@ -496,8 +496,15 @@ function gradeRoads(nodes, edges) {
       D[i] = m;
     }
     C.set(D);
+    // Seeded from the DILATED plateau, not just the raised samples. The cone
+    // only pushes a neighbour whose value it raises, and inside the dilation
+    // window every neighbour already holds the plateau height -- so seeded
+    // from the raised samples alone it never got past the window's edge, and
+    // the profile fell off a clearance plateau instead of easing down it: on
+    // I-5 north of the ship canal a 56.09 m plateau dropped to 52.6 in one
+    // sample and the ride went -2 % -> -11 % for 35 m.
     const st = [];
-    for (let i = 0; i < N; i++) if (f[i] > F0[i] + 0.01) st.push(i);
+    for (let i = 0; i < N; i++) if (D[i] > F0[i] + 0.01) st.push(i);
     while (st.length) {
       const u = st.pop(), l = adj[u];
       for (let q = 0; q < l.length; q += 3) {
@@ -544,6 +551,52 @@ function gradeRoads(nodes, edges) {
       // squeezed whatever the envelope added into its first ~20 m: 2-3 m of
       // rise within 9 m at deck ends, and verify's riders fell off them.
       H[i] = Math.max(Fg[i], Math.min(h, capFix[i]));
+    }
+  }
+
+  // --- blend coupled carriageways ---
+  // Coupling raises each overlapping pair to the other's base floor, but the
+  // two are still solved as separate chains, and they came out up to ~0.2 m
+  // apart where they overlap -- under the split-level band, so groundAt took
+  // the higher one for a single step (+4.7 % on the I-5 ride at a three-way
+  // merge). Coupled samples go to the mean of the pair (never below their own
+  // ramped floor), eased out over half a window around them so the blend does
+  // not end in a step of its own.
+  if (couple.length) {
+    const acc = new Float64Array(N), cnt = new Uint16Array(N);
+    for (let q = 0; q < couple.length; q += 2) { acc[couple[q]] += H[couple[q + 1]]; cnt[couple[q]]++; }
+    const Hb = new Float64Array(H);
+    const near = new Uint8Array(N);
+    // Bounded like the solve itself: never over the climb out of the nearest
+    // anchor. Clamped only to the floor, the blend lifted deck starts back into
+    // cliffs next to their junctions (verify's riders: 0 -> 13 falls).
+    for (let i = 0; i < N; i++) {
+      if (!cnt[i] || fixed[i]) continue;
+      Hb[i] = Math.max(Fg[i], Math.min((H[i] + acc[i]) / (1 + cnt[i]), capFix[i]));
+      for (const j of around(i, PROF_R)) near[j] = 1;
+    }
+    for (let i = 0; i < N; i++) {
+      if (!near[i] || fixed[i]) continue;
+      let s = 0, sw = 0;
+      for (const j of around(i, PROF_R / 2)) { s += Hb[j] * W[j]; sw += W[j]; }
+      H[i] = Math.max(Fg[i], Math.min(sw > 0 ? s / sw : Hb[i], capFix[i]));
+    }
+  }
+
+  // Dev-only: the solver's intermediates per sample, for diagnosing a profile
+  // (set globalThis.__profDebug before boot). Shipping builds carry nothing.
+  if (globalThis.__profDebug) {
+    for (const e of edges) {
+      if (!e.prof) continue;
+      const k = e.pk, dbg = { F0: [], f: [], Fg: [], C: [], H: [], cap: [], fixed: [], dFix: [] };
+      for (let i = 0; i <= k; i++) {
+        const v = e.ps[i];
+        dbg.F0.push(+F0[v].toFixed(2)); dbg.f.push(+f[v].toFixed(2)); dbg.Fg.push(+Fg[v].toFixed(2));
+        dbg.C.push(+C[v].toFixed(2)); dbg.H.push(+H[v].toFixed(2));
+        dbg.cap.push(Number.isFinite(capFix[v]) ? +capFix[v].toFixed(2) : null);
+        dbg.fixed.push(fixed[v]); dbg.dFix.push(Number.isFinite(dFix[v]) ? Math.round(dFix[v]) : null);
+      }
+      e.pdbg = dbg;
     }
   }
 
@@ -1680,6 +1733,13 @@ export function* cityGenerator(md) {
           const margin = s.tun ? 4.0 : 0;
           if (r.d > s.hw + margin) continue;
           let y;
+          // A graded piece answering from PAST its own ends is only
+          // extrapolating over its neighbour's ground; where the two are within
+          // a hand's breadth the neighbour, whose own span covers the point,
+          // should win. Nearest-to-curY otherwise took the extrapolation
+          // whenever it sat a few cm higher: a 7 cm step at a lane-count change
+          // on the I-5 ride.
+          let pen = 0;
           if (s.px !== undefined) {
             // A GRADED ROAD IS MANY SHORT PIECES, and distToSeg clamps. Past
             // a piece's end the clamped answer is that end's height held
@@ -1703,6 +1763,11 @@ export function* cityGenerator(md) {
             const wr = tu < 0 ? s.wr0 : tu > 1 ? s.wr1 : s.wr;
             if (lat > wl || -lat > wr) continue;
             const tt = tu < -over ? -over : tu > 1 + over ? 1 + over : tu;
+            // Only where a neighbour actually covers that ground. Past a free
+            // end -- an anchor, a dead end, a locked deck by a portal -- the
+            // extrapolation IS the only deck there, and penalising it cost the
+            // SR-99 north approach its capture onto the deck (4 cm short).
+            if ((tu < 0 && s.in0) || (tu > 1 && s.in1)) pen = 0.12;
             y = s.ay + (s.by - s.ay) * tt + ROAD_LIFT * 0.3;
             // Cambered with its hillside (see gradeRoads), across the piece's
             // own perpendicular so it holds past the ends too.
@@ -1718,7 +1783,7 @@ export function* cityGenerator(md) {
             // deck is the only sane answer, and is what this always did.
             if (y > best) best = y;
           } else if (y <= curY + DECK_REACH) {
-            const dd = Math.abs(y - curY);
+            const dd = Math.abs(y - curY) + pen;
             // A bore is entered at its MOUTH, and no distance heuristic can
             // say so: the portal bank rises in frame-legal steps, so terrain
             // recaptures the tracker every frame and a 3 km ride through

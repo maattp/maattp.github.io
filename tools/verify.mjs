@@ -408,7 +408,13 @@ async function main() {
           const tg = g.a === nid ? 1 - t0 : t0;
           let cur = (g.ph ? city.profAt(g, tg).h - 0.09 : G.terrainHeight(far.x, far.z)) + 0.6, y = cur;
           for (const [x, z] of pts) { y = city.groundAt(x, z, cur, city.roadLift(x, z)); cur = y + 0.6; }
-          if (y < nd.y + (o.y - nd.y) * Math.min(1, 20 / e.len) - 1.0) failed++;
+          // Judged against the DRAWN deck 20 m in, as the riding check is: a
+          // graded span bows below the chord between its node heights, and a
+          // car riding it exactly was reported as failing to climb to a line
+          // nobody draws. Draped decks read exactly as before.
+          const tIn = Math.min(1, 20 / e.len), tE = e.a === nid ? tIn : 1 - tIn;
+          const want = e.ph ? city.profAt(e, tE).h - 0.09 : nd.y + (o.y - nd.y) * tIn;
+          if (y < want - 1.0) failed++;
         }
       }
       return { rode, fell, cases, failed };
