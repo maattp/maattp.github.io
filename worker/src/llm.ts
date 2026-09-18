@@ -48,6 +48,11 @@ type CatalogueModel = {
   supported_parameters?: string[];
 };
 
+// Only a literal zero counts. Number("") and Number("  ") are 0 as well, so a
+// blank price from a malformed catalogue entry must not read as free.
+export const isZeroPrice = (p: unknown): boolean =>
+  typeof p === "number" ? p === 0 : typeof p === "string" && /^0(\.0+)?$/.test(p.trim());
+
 // Free means every price OpenRouter quotes is zero — not just the token prices.
 // Usable means it answers in text only: music and image generators can carry
 // zero token prices while billing per output, so text-only output is part of
@@ -57,7 +62,7 @@ export function freeModels(data: CatalogueModel[]): FreeModel[] {
   for (const m of data) {
     if (typeof m.id !== "string" || !m.pricing) continue;
     if (m.pricing.prompt === undefined || m.pricing.completion === undefined) continue;
-    if (!Object.values(m.pricing).every((p) => (typeof p === "string" || typeof p === "number") && Number(p) === 0)) continue;
+    if (!Object.values(m.pricing).every(isZeroPrice)) continue;
     const outputs = m.architecture?.output_modalities ?? ["text"];
     if (!outputs.length || !outputs.every((x) => x === "text")) continue;
     const params = m.supported_parameters ?? [];
@@ -167,13 +172,21 @@ llmApp.get("/models", async (c) => {
 });
 
 // Free-model quota for the current UTC day (50/day, or 1000/day once the
-// account has bought $10 of credits).
+// account has bought $10 of credits). The app asks on launch, on every
+// foreground and after every reply; OpenRouter's own counter lags anyway, so a
+// short per-isolate memo costs nothing. One entry: the quota belongs to the key,
+// which every account shares.
+let usageCache: { at: number; free: unknown } | null = null;
+const USAGE_TTL_MS = 30 * 1000;
+
 llmApp.get("/usage", async (c) => {
   if (!c.env.OPENROUTER_API_KEY) return c.json({ error: "OPENROUTER_API_KEY is not set" }, 503);
+  if (usageCache && Date.now() - usageCache.at < USAGE_TTL_MS) return c.json({ free: usageCache.free });
   const res = await fetch(`${OPENROUTER}/key`, { headers: { Authorization: `Bearer ${c.env.OPENROUTER_API_KEY}` } });
   if (!res.ok) return c.json({ error: "usage unavailable" }, 502);
   const { data } = (await res.json()) as { data?: Record<string, unknown> };
-  return c.json({ free: data?.free_model_daily_requests ?? null });
+  usageCache = { at: Date.now(), free: data?.free_model_daily_requests ?? null };
+  return c.json({ free: usageCache.free });
 });
 
 llmApp.post("/chat", async (c) => {

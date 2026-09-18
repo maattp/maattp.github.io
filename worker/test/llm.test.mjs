@@ -1,6 +1,6 @@
 /* Node test suite for the LLM route's free-model gate and request rebuilding.
  * Run: node --experimental-strip-types worker/test/llm.test.mjs               */
-import { freeModels, parseChat, parseConv, CONV_ID_RE } from '../src/llm.ts';
+import { freeModels, isZeroPrice, parseChat, parseConv, CONV_ID_RE } from '../src/llm.ts';
 
 let pass = 0, fail = 0; const failures = [];
 const ok = (cond, msg) => { if (cond) pass++; else { fail++; failures.push(msg); } };
@@ -22,6 +22,9 @@ const free = freeModels([
   model({ id: 'no/pricing', pricing: undefined }),
   model({ id: 'half/pricing', pricing: { prompt: '0' } }),
   model({ id: 'weird/pricing', pricing: { prompt: '0', completion: '0', tiers: {} } }),
+  model({ id: 'blank/pricing', pricing: { prompt: '', completion: '0' } }),
+  model({ id: 'spaces/pricing', pricing: { prompt: '0', completion: '   ' } }),
+  model({ id: 'null/pricing', pricing: { prompt: '0', completion: '0', image: null } }),
   model({ id: 'newer/text:free', name: 'Newer', created: 200, architecture: { input_modalities: ['text'], output_modalities: ['text'] }, supported_parameters: [] }),
   { name: 'no id', pricing: { prompt: '0', completion: '0' } },
 ]);
@@ -31,6 +34,11 @@ ok(free[1].vision && !free[0].vision, 'vision from input modalities');
 ok(free[1].reasoning && !free[0].reasoning, 'reasoning from supported parameters');
 ok(free[1].context === 262144, 'context length carried');
 ok(freeModels([]).length === 0, 'empty catalogue -> no models');
+
+// --- only a literal zero is free (Number('') === 0 must not leak through) ---
+for (const p of ['0', '0.0', '0.000000', ' 0 ', 0]) ok(isZeroPrice(p), `zero price accepted: ${JSON.stringify(p)}`);
+for (const p of ['', '   ', '0.000001', '-0', '0x0', '0e5', 'free', null, undefined, false, {}, [], NaN, 1e-9])
+  ok(!isZeroPrice(p), `non-zero or malformed price rejected: ${String(JSON.stringify(p))}`);
 
 // --- chat request rebuilding ---
 const img = 'data:image/jpeg;base64,/9j/4AAQ';
