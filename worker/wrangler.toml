@@ -26,6 +26,7 @@ VAPID_SUBJECT = "mailto:m.polkiewicz@gmail.com"
 # secrets: `wrangler secret put RING_MCP_TOKEN` / `... RING_WS_TOKEN`.
 # CHAT_CLAUDE_TOKEN (Claude -> chat) is a secret: `wrangler secret put CHAT_CLAUDE_TOKEN`.
 # OPENROUTER_API_KEY (LLM app, free models only) is a secret: `wrangler secret put OPENROUTER_API_KEY`.
+# GEMINI_API_KEY (LLM app, free-tier Gemini models, optional) is a secret: `wrangler secret put GEMINI_API_KEY`.
 # CF_TURN_KEY_ID / CF_TURN_API_TOKEN (Space Flight TURN, optional): `wrangler secret put …`.
 CHAT_SENDERS = "m.polkiewicz@gmail.com:matt,ting520143@gmail.com:tingting"
 

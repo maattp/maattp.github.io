@@ -1,6 +1,9 @@
 /* Node test suite for the LLM route's free-model gate and request rebuilding.
  * Run: node --experimental-strip-types worker/test/llm.test.mjs               */
-import { freeModels, isZeroPrice, parseChat, parseConv, CONV_ID_RE } from '../src/llm.ts';
+import {
+  freeModels, isZeroPrice, parseChat, parseConv, CONV_ID_RE,
+  GEMINI_FREE_MODELS, geminiFreeModels, toGemini, geminiEventToSse, geminiError,
+} from '../src/llm.ts';
 
 let pass = 0, fail = 0; const failures = [];
 const ok = (cond, msg) => { if (cond) pass++; else { fail++; failures.push(msg); } };
@@ -34,6 +37,70 @@ ok(free[1].vision && !free[0].vision, 'vision from input modalities');
 ok(free[1].reasoning && !free[0].reasoning, 'reasoning from supported parameters');
 ok(free[1].context === 262144, 'context length carried');
 ok(freeModels([]).length === 0, 'empty catalogue -> no models');
+ok(free.every((m) => m.provider === 'openrouter'), 'openrouter models tagged with their provider');
+
+// --- Gemini: free is the allowlist, narrowed to what the key can list ---
+const gm = (name, over) => ({
+  name: 'models/' + name, displayName: 'D ' + name, description: 'D ' + name, inputTokenLimit: 1048576, thinking: true,
+  supportedGenerationMethods: ['generateContent', 'countTokens'], ...over,
+});
+const gfree = geminiFreeModels([
+  gm('gemma-4-26b-a4b-it', { thinking: undefined }),
+  gm('gemini-3.8-flash', { description: 'Fast and smart.' }),
+  gm('gemini-3.5-flash-lite', { inputTokenLimit: 32768 }),
+  gm('gemini-2.5-flash'), gm('gemini-pro-latest'), gm('gemini-flash-latest'), gm('gemini-3.1-flash-lite-preview'),
+  gm('gemini-omni-1.1-flash'), gm('gemini-3.1-flash-image'), gm('gemini-3.1-flash-tts-preview'), gm('gemini-3.1-pro-preview'),
+  gm('gemini-3.7-flash', { supportedGenerationMethods: ['countTokens'] }),
+  { displayName: 'no name' },
+]);
+ok(gfree.map((m) => m.id).join() === 'gemini:gemini-3.8-flash,gemini:gemini-3.5-flash-lite,gemini:gemma-4-26b-a4b-it',
+  'gemini: only allowlisted models the key can generate with, in allowlist order: ' + gfree.map((m) => m.id).join());
+ok(gfree.every((m) => m.provider === 'gemini' && m.vision), 'gemini models tagged, all take images');
+ok(gfree[0].description === 'Fast and smart.' && gfree[1].description === '', 'description kept only when it says more than the name');
+ok(gfree[0].reasoning && !gfree[2].reasoning, 'reasoning from the thinking flag');
+ok(gfree[1].context === 32768 && gfree[0].name === 'D gemini-3.8-flash', 'context and display name carried');
+ok(geminiFreeModels([]).length === 0, 'no Gemini catalogue -> no Gemini models');
+ok(GEMINI_FREE_MODELS.every((id) => !/pro|omni|image|tts|live|transcribe|robotics|computer|embedding|latest|2\.5/.test(id)),
+  'allowlist holds no Pro/Omni/aliases/2.5 or non-chat models (all confirmed not free, retired, or not chat)');
+ok(new Set(GEMINI_FREE_MODELS).size === GEMINI_FREE_MODELS.length, 'allowlist has no duplicates');
+
+// --- OpenAI-style messages -> Gemini request ---
+const gr = toGemini([
+  { role: 'system', content: 'A' }, { role: 'system', content: 'B' },
+  { role: 'user', content: [{ type: 'text', text: 'what?' }, { type: 'image_url', image_url: { url: 'data:image/jpeg;base64,/9j/4AAQ' } }] },
+  { role: 'assistant', content: 'a cat' },
+  { role: 'user', content: 'thanks' },
+]);
+ok(gr.systemInstruction.parts[0].text === 'A\n\nB', 'system messages joined into systemInstruction');
+ok(gr.contents.map((c) => c.role).join() === 'user,model,user', 'assistant becomes model, system removed from contents');
+ok(JSON.stringify(gr.contents[0].parts) === JSON.stringify([{ text: 'what?' }, { inlineData: { mimeType: 'image/jpeg', data: '/9j/4AAQ' } }]), 'image data URL becomes inlineData');
+ok(!('systemInstruction' in toGemini([{ role: 'user', content: 'hi' }])), 'no system message -> no systemInstruction');
+
+// --- Gemini SSE event -> OpenRouter-shaped events ---
+const events = (ev) => geminiEventToSse(ev).split('\n\n').filter(Boolean).map((s) => JSON.parse(s.slice(6)));
+const e1 = events({ candidates: [{ content: { parts: [{ text: 'hmm', thought: true }, { text: 'Hi' }, { text: ' there' }] } }] });
+ok(e1.length === 1 && e1[0].choices[0].delta.content === 'Hi there' && e1[0].choices[0].delta.reasoning === 'hmm' && e1[0].choices[0].finish_reason === null, 'thought parts -> reasoning, text parts -> content');
+const e2 = events({ candidates: [{ content: { parts: [{ text: '', thoughtSignature: 'sig' }] }, finishReason: 'STOP' }], usageMetadata: {} });
+ok(e2.length === 1 && JSON.stringify(e2[0].choices[0].delta) === '{}' && e2[0].choices[0].finish_reason === 'stop', 'closing signature-only event -> finish stop, no text');
+ok(events({ candidates: [{ content: { parts: [{ text: 'cut' }] }, finishReason: 'MAX_TOKENS' }] })[0].choices[0].finish_reason === 'length', 'MAX_TOKENS -> length');
+const e3 = events({ candidates: [{ content: { parts: [] }, finishReason: 'SAFETY' }] });
+ok(e3.length === 1 && e3[0].error.message.includes('SAFETY'), 'safety stop -> error event, not a silent empty reply');
+const e4 = events({ promptFeedback: { blockReason: 'PROHIBITED_CONTENT' } });
+ok(e4.length === 1 && e4[0].error.message.includes('PROHIBITED_CONTENT'), 'blocked prompt -> error event');
+ok(geminiEventToSse({ usageMetadata: { totalTokenCount: 5 } }) === '', 'usage-only event emits nothing');
+ok(geminiEventToSse({ candidates: [{ content: { parts: [{ text: '' }] }, finishReason: 'FINISH_REASON_UNSPECIFIED' }] }) === '', 'unspecified finish with no text emits nothing');
+ok(events({ error: { message: 'boom', code: 500 } })[0].error.code === 500, 'in-stream error passed through');
+
+// --- Gemini HTTP errors ---
+const q = geminiError(429, { error: { message: 'You exceeded your current quota... * Quota exceeded for ...', details: [{ '@type': 'type.googleapis.com/google.rpc.QuotaFailure' }, { '@type': 'type.googleapis.com/google.rpc.RetryInfo', retryDelay: '37.2s' }] } });
+ok(q.status === 429 && q.error.includes('Try again in 38s') && !q.error.includes('Quota exceeded for'), '429 -> short message with retry delay');
+ok(geminiError(429, { error: { message: 'x' } }).error.includes('midnight Pacific'), '429 without retry delay -> daily reset hint');
+ok(geminiError(400, { error: { code: 400, message: 'API key not valid. Please pass a valid API key.', details: [{ reason: 'API_KEY_INVALID' }] } }).status === 502, 'invalid key (400 API_KEY_INVALID) -> 502, never a 401 that signs the user out');
+ok(geminiError(403, null).status === 502, '403 -> 502');
+ok(geminiError(401, null).status === 502, '401 -> 502');
+const busy = geminiError(503, { error: { message: 'This model is currently experiencing high demand.' } });
+ok(busy.status === 503 && busy.error === 'This model is currently experiencing high demand.', '503 message passed through');
+ok(geminiError(200, null).status === 502, 'ok status without a body -> 502');
 
 // --- only a literal zero is free (Number('') === 0 must not leak through) ---
 for (const p of ['0', '0.0', '0.000000', ' 0 ', 0]) ok(isZeroPrice(p), `zero price accepted: ${JSON.stringify(p)}`);

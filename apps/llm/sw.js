@@ -1,6 +1,6 @@
 /* LLM service worker. CACHE moves in lockstep with VERSION in index.html —
  * the repo-wide convention that makes a stale worker diagnosable. */
-const CACHE = 'llm-v1';
+const CACHE = 'llm-v2';
 const SHELL = ['./', './index.html', './manifest.webmanifest'];
 
 // cache:'reload' — fill the shell from the network, never the HTTP cache.
