@@ -39,7 +39,7 @@ import { writeFileSync, mkdirSync } from 'node:fs';
 import { setTimeout as sleep } from 'node:timers/promises';
 
 const args = process.argv.slice(2);
-const RIDE = args.find((a) => /^(sb|nb)(-wrong)?$/.test(a)) || 'sb';
+const RIDE = args.find((a) => /^((sb|nb)(-wrong)?|sbx(-rev)?)$/.test(a)) || 'sb';
 function argVal(k) { const i = args.indexOf(k); return i >= 0 ? args[i + 1] : undefined; }
 const REAL = args.includes('--real');
 const HOP = args.includes('--hop');
@@ -75,9 +75,13 @@ function pageInit(cfg) {
   const want = {
     sb: (q) => q.north && q.entry, nb: (q) => !q.north && q.entry,
     'sb-wrong': (q) => q.north && !q.entry, 'nb-wrong': (q) => !q.north && !q.entry,
+    // SURFACE rides: out of the southbound exit and on south along the SR-99
+    // surface past the northbound entry cutting, and the same road back.
+    sbx: (q) => !q.north && !q.entry, 'sbx-rev': (q) => !q.north && !q.entry,
   }[cfg.ride];
   const P0 = ports.find(want);
   const wrong = /wrong/.test(cfg.ride);
+  const surface = /^sbx/.test(cfg.ride);
   // Tunnel leg: Dijkstra over tunnel edges from the entry portal to the far
   // hwy portal of the same bore, respecting oneway unless riding wrong way.
   const dist = new Map([[P0.ni, 0]]), prevE = new Map();
@@ -101,8 +105,10 @@ function pageInit(cfg) {
     }
   }
   const tunNodes = [];
-  for (let ni = goal; ni !== P0.ni;) { tunNodes.push(ni); const k = prevE.get(ni); const e = c.edges[k]; ni = e.a === ni ? e.b : e.a; }
-  tunNodes.push(P0.ni); tunNodes.reverse();
+  if (!surface) {
+    for (let ni = goal; ni !== P0.ni;) { tunNodes.push(ni); const k = prevE.get(ni); const e = c.edges[k]; ni = e.a === ni ? e.b : e.a; }
+    tunNodes.push(P0.ni); tunNodes.reverse();
+  }
   // Surface legs: walk hwy/widest surface edges away from a portal node.
   const walkSurf = (start, len) => {
     const out = []; let cur = start, prevK = -1, dd = 0;
@@ -120,18 +126,31 @@ function pageInit(cfg) {
     }
     return out;
   };
-  const approach = walkSurf(P0.ni, 320).reverse();
-  const exitN = walkSurf(goal, 220);
-  const nodes = [...approach, ...tunNodes, ...exitN];
+  let nodes, nApp, nTun;
+  if (surface) {
+    // [portal, ...surface south]; reversed for the northbound ride. Only the
+    // stretch clear of the exit's own cutting (100 m) is judged for drops.
+    nodes = [P0.ni, ...walkSurf(P0.ni, 560)];
+    if (cfg.ride === 'sbx-rev') nodes.reverse();
+    nApp = 0; nTun = 0;
+  } else {
+    const approach = walkSurf(P0.ni, 320).reverse();
+    const exitN = walkSurf(goal, 220);
+    nodes = [...approach, ...tunNodes, ...exitN];
+    nApp = approach.length; nTun = tunNodes.length;
+  }
   const route = [];
   let s = 0;
   for (let i = 0; i < nodes.length; i++) {
     const n = c.nodes[nodes[i]];
     if (i) s += Math.hypot(n.x - route[i - 1].x, n.z - route[i - 1].z);
-    route.push({ ni: nodes[i], x: n.x, z: n.z, y: n.y, s, tun: !!n.tunnel || tunNodes.includes(nodes[i]) });
+    route.push({ ni: nodes[i], x: n.x, z: n.z, y: n.y, s,
+      tun: !surface && (!!n.tunnel || tunNodes.includes(nodes[i])) });
   }
-  const sEntry = route[approach.length].s, sExit = route[approach.length + tunNodes.length - 1].s;
   const total = route[route.length - 1].s;
+  // For a surface ride, sEntry/sExit bound the judged stretch instead.
+  const sEntry = surface ? (cfg.ride === 'sbx' ? 100 : 0) : route[nApp].s;
+  const sExit = surface ? (cfg.ride === 'sbx' ? total : total - 100) : route[nApp + nTun - 1].s;
 
   const R = window.__ride = {
     cfg, route, sEntry, sExit, total, events: [], tele: [], seg: 0, sNow: 0, lat: 0,
@@ -281,6 +300,11 @@ function pageInit(cfg) {
     if (R.offT > 0.75 && off > 0) fail = R.event('eject', { deck: +pr.y.toFixed(1), cover: +cover.toFixed(1) });
     else if (R.offT > 0.75) fail = R.event('fall', { deck: +pr.y.toFixed(1), cover: +cover.toFixed(1) });
     else if (Math.abs(pr.lat) > 16) fail = R.event('off-route', { lat: +pr.lat.toFixed(1) });
+    // A DROP on a surface ride: 2 m+ below the road's own grade (raw ground +
+    // lift) is a hole in the street, wherever it comes from.
+    else if (surface && pr.s >= sEntry && pr.s <= sExit && v.y < raw + 0.3 - 2.0) {
+      fail = R.event('drop', { below: +(raw + 0.3 - v.y).toFixed(1), terr: +G.terrainHeight(v.x, v.z).toFixed(1) });
+    }
     R.hist.push([R.t, pr.s]);
     while (R.hist.length > 1 && R.hist[1][0] <= R.t - 5) R.hist.shift();
     if (!fail && R.hist[0][0] <= R.t - 4.9 && pr.s - R.hist[0][1] < 4) {
@@ -289,6 +313,9 @@ function pageInit(cfg) {
         terr: +G.terrainHeight(v.x, v.z).toFixed(1) });
     }
     if (fail) {
+      // --nofail: log it and keep driving from wherever the car ended up, so a
+      // shot further on can show where the failure left it (a car in a pit).
+      if (cfg.nofail) { R.hist.length = 0; R.offT = 0; return; }
       if (!cfg.hop || R.hops >= 25) { R.done = fail.kind; return; }
       R.hops++;
       R.offT = 0; R.lastSpd = undefined;
@@ -299,8 +326,39 @@ function pageInit(cfg) {
       R.hist.length = 0;
       return;
     }
-    if (pr.s > total - 25) { R.done = 'end'; }
+    if (pr.s > Math.min(total - 25, surface ? sExit : 1e9)) { R.done = 'end'; }
   };
+  // WHAT THE CAMERA SEES OF THE CEILING. The scene pass (no post) rendered
+  // into a small target at the chase camera, and the top half of it
+  // classified: near-white (every channel > 200 of 255) and sky-blue pixels.
+  // A light slot or a hole to the sky shows up as a large bright fraction.
+  R.scanCeil = () => {
+    const THREE = d.THREE, W = 176, H = 104;
+    if (!R._rt) R._rt = new THREE.WebGLRenderTarget(W, H);
+    p.applyCamera(d.camera);
+    const cam = d.camera, oldAspect = cam.aspect;
+    cam.aspect = W / H; cam.updateProjectionMatrix();
+    // The sedan is blue and its roof reaches the top half of the frame: hide
+    // it, or it counts as sky.
+    const vg = p.vehicle && p.vehicle.group;
+    if (vg) vg.visible = false;
+    d.renderer.setRenderTarget(R._rt);
+    d.renderer.render(d.scene, cam);
+    if (vg) vg.visible = true;
+    const px = new Uint8Array(W * H * 4);
+    d.renderer.readRenderTargetPixels(R._rt, 0, 0, W, H, px);
+    d.renderer.setRenderTarget(null);
+    cam.aspect = oldAspect; cam.updateProjectionMatrix();
+    let bright = 0, sky = 0, n = 0;
+    for (let y = H / 2; y < H; y++) for (let x = 0; x < W; x++) {   // GL rows: top half
+      const i = (y * W + x) * 4, r = px[i], g = px[i + 1], b = px[i + 2];
+      n++;
+      if (r > 200 && g > 200 && b > 200) bright++;
+      else if (b > r + 25 && b > 140) sky++;
+    }
+    return { bright: bright / n, sky: sky / n };
+  };
+  R.scans = [];
   R.pending = () => { let n = 0; for (const ch of d.world.chunks.values()) if (ch.lod !== ch.wantLod) n++; return n; };
   R.settle = (maxCalls) => {
     const v = p.vehicle || p;
@@ -346,7 +404,7 @@ function pageInit(cfg) {
   };
   if (cfg.notraffic) d.traffic.update = () => {};
   return JSON.stringify({ ride: cfg.ride, entry: [Math.round(P0.x), Math.round(P0.z)],
-    exit: [Math.round(c.nodes[goal].x), Math.round(c.nodes[goal].z)],
+    exit: goal >= 0 && !surface ? [Math.round(c.nodes[goal].x), Math.round(c.nodes[goal].z)] : null,
     sEntry: Math.round(sEntry), sExit: Math.round(sExit), total: Math.round(total),
     nodes: route.length, tunNodes: tunNodes.length });
 }
@@ -379,24 +437,35 @@ try {
   await send('Page.navigate', { url: `http://localhost:${HTTP_PORT}/apps/auto/` });
   for (let i = 0; i < 600; i++) { await sleep(500); try { if (await ev('!!window.__dbg')) break; } catch {} }
   await ev(`window.__dbg.applyQuality('low', true)`);
-  const cfg = { ride: RIDE, hop: HOP, notraffic: NOTRAFFIC, speed: SPEED,
+  const cfg = { ride: RIDE, hop: HOP, notraffic: NOTRAFFIC, speed: SPEED, nofail: args.includes('--nofail'),
     from: argVal('--from') !== undefined ? +argVal('--from') : null };
   if (!REAL) await ev('window.__dbg.game.paused = true');
   console.log('setup', await ev(`(${pageInit.toString()})(${JSON.stringify(cfg)})`));
   await ev('window.__ride.settle(3000)');
 
-  const stations = SHOTS ? await ev(`JSON.stringify((() => { const R = window.__ride;
+  // --stations name:rel,...  shot stations in metres from the entry portal
+  // (overrides the default set). --shotdone NAME  also shoot where the ride
+  // ends, which for a master build is where the car got stuck.
+  const ST = argVal('--stations');
+  const stations = !SHOTS ? '[]' : ST
+    ? await ev(`JSON.stringify(${JSON.stringify(ST.split(',').map((q) => q.split(':')))}.map(([n, r]) => [n, window.__ride.sEntry + +r]))`)
+    : await ev(`JSON.stringify((() => { const R = window.__ride;
     return [['approach', R.sEntry - 110], ['cutting', R.sEntry - 35], ['mouth', R.sEntry + 25],
-      ['inside', R.sEntry + 200], ['midbore', (R.sEntry + R.sExit) / 2], ['exit', R.sExit + 40]]; })())`) : '[]';
-  const todo = JSON.parse(stations);
+      ['inside', R.sEntry + 200], ['midbore', (R.sEntry + R.sExit) / 2], ['exit', R.sExit + 40]]; })())`);
+  const todo = JSON.parse(stations).sort((p, q) => p[1] - q[1]);
   const shoot = async (name) => {
     await ev('window.__ride.settle(3000)');
     if (!REAL) await ev('window.__ride.stepN(1)');
+    // The scene, not the controls: hide the HUD the way beauty.mjs does.
+    await ev(`(() => { for (const id of ['hud', 'pad', 'stickZone', 'lookZone', 'objective', 'toast', 'rotate', 'topBtns'])
+      { const e = document.getElementById(id); if (e) e.style.display = 'none'; } return 1; })()`);
     await sleep(2500);
     const s = await send('Page.captureScreenshot', { format: 'png' });
     writeFileSync(`${SHOTS}/${RIDE}-${name}.png`, Buffer.from(s.result.data, 'base64'));
     console.log('shot', name, await ev('window.__ride.status()'));
   };
+  const SCAN = args.includes('--scan');
+  let nextScan = null;
   let seen = 0;
   const flush = async () => {
     const evs = JSON.parse(await ev(`JSON.stringify(window.__ride.events.slice(${seen}))`));
@@ -423,6 +492,16 @@ try {
       st = JSON.parse(await ev(`window.__ride.stepN(${near ? 8 : 120})`));
       await flush();
       while (todo.length && st.s >= todo[0][1]) await shoot(todo.shift()[0]);
+      // --scan: every 50 m inside the bore, classify the camera's upper view
+      if (SCAN) {
+        if (nextScan === null) nextScan = st.sEntry + 60;
+        if (st.s >= nextScan && st.s <= st.sExit - 60) {
+          await ev('window.__ride.settle(1500)');
+          const q = JSON.parse(await ev(`JSON.stringify(window.__ride.scanCeil())`));
+          await ev(`window.__ride.scans.push([${st.s}, ${q.bright}, ${q.sky}])`);
+          nextScan = st.s + 50;
+        }
+      }
       if (b % 10 === 0) {
         await ev('window.__ride.settle(400)');
         console.log('status', JSON.stringify(st), Math.round((Date.now() - t0) / 1000) + 's');
@@ -431,6 +510,18 @@ try {
     }
   }
   await flush();
+  const DONE_SHOT = argVal('--shotdone');
+  if (SHOTS && DONE_SHOT) await shoot(DONE_SHOT);
+  if (SCAN) {
+    const sc = JSON.parse(await ev('JSON.stringify(window.__ride.scans)'));
+    const worst = sc.reduce((m, q) => (q[1] > m[1] ? q : m), [0, 0, 0]);
+    const mean = sc.reduce((a2, q) => a2 + q[1], 0) / (sc.length || 1);
+    console.log('SCAN', JSON.stringify({ stations: sc.length, meanBright: +mean.toFixed(4),
+      worstBright: +worst[1].toFixed(4), worstAt: worst[0],
+      skyStations: sc.filter((q) => q[2] > 0.005).length,
+      skyAt: sc.filter((q) => q[2] > 0.005).map((q) => [q[0], +q[2].toFixed(3)]),
+      over2pct: sc.filter((q) => q[1] > 0.02).length }));
+  }
   const sum = JSON.parse(await ev(`(() => { const R = window.__ride, T = R.tele;
     let worstUp = 0, worstDown = 0, deepest = 0;
     for (let i = 1; i < T.length; i++) {
