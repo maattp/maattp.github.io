@@ -18,10 +18,10 @@ const SHIRTS = [
 ];
 const PANTS = [[0.18, 0.22, 0.34], [0.2, 0.2, 0.22], [0.35, 0.3, 0.25], [0.45, 0.45, 0.48], [0.12, 0.14, 0.18]];
 const HAIR = [[0.12, 0.09, 0.07], [0.30, 0.20, 0.10], [0.48, 0.39, 0.25], [0.62, 0.61, 0.60], [0.34, 0.14, 0.09]];
-
-const pedMat = new THREE.MeshStandardMaterial({
-  vertexColors: true, roughness: 0.78, metalness: 0.0, envMapIntensity: 0.7,
-});
+// A whole city in identical black shoes is a uniform. Upper and sole in pairs:
+// black leather, white trainers, brown boots, navy canvas.
+const SHOES = [[0.11, 0.11, 0.12], [0.70, 0.69, 0.66], [0.26, 0.17, 0.11], [0.15, 0.17, 0.24]];
+const SOLES = [[0.17, 0.165, 0.16], [0.80, 0.79, 0.76], [0.12, 0.09, 0.07], [0.78, 0.77, 0.74]];
 
 // Skeleton layout. Characters are skinned meshes: one draw call each, but with
 // real elbows, knees and a spine, which is the difference between a walk cycle
@@ -50,6 +50,11 @@ const J = {
 };
 const SHOULDER_X = 0.150;   // glenohumeral centre; the deltoid takes it to 0.21
 const HIP_X = 0.085;
+// Around-the-body segment counts. At 14 (torso, head) and 10 (limbs) every
+// silhouette edge showed its facets from across the street and the skull read
+// as a cut gem; 18 and 12 cost ~1.7k triangles a character, which a crowd of
+// 24 one-draw-call figures does not notice.
+const ST = 18, SL = 12;
 
 function makeSkeletonBones() {
   const bones = [];
@@ -98,18 +103,308 @@ function oval(rx, rz, n = 10, ox = 0, oz = 0) {
 
 const smoothT = (v) => v * v * (3 - 2 * v);
 
+// ---------------------------------------------------------------------------
+// THE CHARACTER ATLAS.
+//
+// Characters used to be vertex colour only, and a paintless mesh cannot do a
+// face: eyes, brows and lips were 3-6 mm boxes standing proud of the skull,
+// which read as stuck-on plates up close and, being thinner than a depth
+// texel at street distance, shimmered as you walked past. Fabric was a flat
+// colour, so a shirt and a pair of jeans were two tints of the same plastic.
+// The judge loop that got the old model from 3.7 to 6.2/10 stalled the face at
+// 4-5 for exactly this reason, and the agreed way past it was a painted atlas
+// in the manner of textures.js's facadeAtlas. This is that.
+//
+// One 1024 x 1024 canvas, drawn once at boot and shared by every character
+// through the one material, so a character is still ONE draw call:
+//  - cells 0-4: a painted face per skin tone -- head vertices are white, so
+//    what shows is the painted skin, with real eye whites, iris and lash line;
+//  - the rest: greyscale detail that MULTIPLIES the vertex colour, so one
+//    denim cell serves every trouser colour and one knit cell every shirt.
+// Parts are mapped cylindrically around their own axis (front = centre of the
+// cell); see SkinAcc.add for the back seam.
+const ATLAS = 1024, CELL = 256, PAD = 6, CW = CELL - 2 * PAD;
+const CELLS = { shirt: 5, jacket: 6, pants: 7, shoe: 8, hair: 9, hand: 10, skin: 11 };
+// The face cell wraps +-112 deg of the head, not the whole circumference:
+// what is behind the ears is hair or plain skin, and spending the cell on the
+// front puts ~140 px across the face instead of ~80.
+const HEAD_SPAN = 0.62 * Math.PI;
+const HEAD_Z = -0.004;
+const HY0 = J.chin - 0.020, HY1 = J.crown + 0.010;
+const HAIRLINE = J.eye + 0.040;
+
+function atlasUV(cell, t, s) {
+  const cx = (cell % 4) * CELL, cy = Math.floor(cell / 4) * CELL;
+  return [(cx + PAD + t * CW) / ATLAS, 1 - (cy + PAD + (1 - s) * CW) / ATLAS];
+}
+/** Cylindrical projection of a part around a vertical axis through (cx, cz). */
+const cylUV = (cell, cx, cz, y0, y1, span = Math.PI) => (x, y, z) => [
+  clamp(0.5 + Math.atan2(x - cx, z - cz) / (2 * span), 0, 1),
+  clamp((y - y0) / (y1 - y0), 0, 1),
+  cell,
+];
+
+function drawAtlas() {
+  const c = document.createElement('canvas');
+  c.width = c.height = ATLAS;
+  const g = c.getContext('2d');
+  const R = rng(9173);
+  // Vertex colours are linear and the map is sRGB-decoded, so a painted skin
+  // has to be ENCODED to land on the same value as the neck it joins.
+  const enc = (v) => {
+    v = clamp(v, 0, 1);
+    return Math.round((v <= 0.0031308 ? 12.92 * v : 1.055 * Math.pow(v, 1 / 2.4) - 0.055) * 255);
+  };
+  const rgba = (rgb, a = 1) => `rgba(${enc(rgb[0])},${enc(rgb[1])},${enc(rgb[2])},${a})`;
+  const grey = (v, a = 1) => rgba([v, v, v], a);
+  const mul = (rgb, k) => (Array.isArray(k) ? [rgb[0] * k[0], rgb[1] * k[1], rgb[2] * k[2]] : [rgb[0] * k, rgb[1] * k, rgb[2] * k]);
+  const P = (t) => PAD + t * CW;
+  const Q = (s) => PAD + (1 - s) * CW;
+  const inCell = (i, fn) => {
+    g.save();
+    g.translate((i % 4) * CELL, Math.floor(i / 4) * CELL);
+    g.beginPath(); g.rect(0, 0, CELL, CELL); g.clip();
+    fn();
+    g.restore();
+  };
+  const disc = (x, y, r) => { g.beginPath(); g.arc(x, y, r, 0, Math.PI * 2); g.fill(); };
+  const blob = (x, y, r, rgb, a) => {
+    const gr = g.createRadialGradient(x, y, 0, x, y, r);
+    gr.addColorStop(0, rgba(rgb, a)); gr.addColorStop(1, rgba(rgb, 0));
+    g.fillStyle = gr; g.fillRect(x - r, y - r, 2 * r, 2 * r);
+  };
+  const speckle = (n, lo, hi, a = 0.35, size = 1.5) => {
+    for (let k = 0; k < n; k++) {
+      g.fillStyle = grey(lo + (hi - lo) * R.n(), a);
+      g.fillRect(R.n() * CELL, R.n() * CELL, size, size);
+    }
+  };
+  // Fine and low-contrast. Broad strokes at 50-85% grey read as wood grain,
+  // and with the helmet-like shell under them the hair was a carved cap.
+  const strands = (n, top, bottom) => {
+    for (let k = 0; k < n; k++) {
+      const x = R.n() * CELL, y = top + R.n() * (bottom - top), len = 10 + R.n() * 30;
+      g.strokeStyle = grey(0.68 + R.n() * 0.24, 0.22);
+      g.lineWidth = 0.6 + R.n() * 0.5;
+      g.beginPath(); g.moveTo(x, y); g.lineTo(x + (R.n() - 0.5) * 6, y + len); g.stroke();
+    }
+  };
+
+  // --- detail cells: multiplied into the vertex colour --------------------
+  inCell(CELLS.shirt, () => {
+    g.fillStyle = grey(0.97); g.fillRect(0, 0, CELL, CELL);
+    speckle(2600, 0.80, 1.0);
+    g.fillStyle = grey(0.78, 0.07);
+    for (let y = 0; y < CELL; y += 3) g.fillRect(0, y, CELL, 1);                 // knit rib
+    g.fillStyle = grey(0.66, 0.55);
+    for (const t of [0.25, 0.75]) g.fillRect(P(t) - 1, 0, 2, CELL);              // side seams
+    for (let x = 0; x < CELL; x += 5) g.fillRect(x, Q(0.055), 3, 1);             // hem stitch
+    // soft drape: the cloth gathers above the waistband at the sides
+    for (const t of [0.22, 0.78]) blob(P(t), Q(0.16), 40, [0.72, 0.72, 0.72], 0.35);
+  });
+  inCell(CELLS.jacket, () => {
+    g.fillStyle = grey(0.95); g.fillRect(0, 0, CELL, CELL);
+    speckle(2200, 0.78, 1.0);
+    g.strokeStyle = grey(0.74, 0.10); g.lineWidth = 1;
+    for (let k = -CELL; k < 2 * CELL; k += 4) { g.beginPath(); g.moveTo(k, 0); g.lineTo(k + CELL, CELL); g.stroke(); }
+    g.fillStyle = grey(0.62, 0.6);
+    for (const t of [0.25, 0.75]) g.fillRect(P(t) - 1, 0, 2, CELL);
+    for (let x = 0; x < CELL; x += 5) g.fillRect(x, Q(0.06), 3, 1);
+    for (const t of [0.22, 0.78]) blob(P(t), Q(0.18), 42, [0.70, 0.70, 0.70], 0.35);
+    // front placket and zip, up the centre line
+    g.fillStyle = grey(0.66, 0.9); g.fillRect(P(0.475), Q(0.95), P(0.525) - P(0.475), Q(0.03) - Q(0.95));
+    g.fillStyle = grey(0.45, 0.9); g.fillRect(P(0.5) - 1, Q(0.95), 2, Q(0.03) - Q(0.95));
+    g.fillStyle = grey(0.55, 0.8);
+    for (const t of [0.472, 0.528]) for (let y = Q(0.95); y < Q(0.03); y += 5) g.fillRect(P(t), y, 1, 3);
+  });
+  inCell(CELLS.pants, () => {
+    g.fillStyle = grey(0.90); g.fillRect(0, 0, CELL, CELL);
+    g.strokeStyle = grey(0.60, 0.12); g.lineWidth = 1;
+    for (let k = -CELL; k < 2 * CELL; k += 3) { g.beginPath(); g.moveTo(k, CELL); g.lineTo(k + CELL, 0); g.stroke(); }
+    speckle(2400, 0.75, 1.0);
+    // worn at the knee and the top of the thigh, the way denim fades
+    blob(P(0.5), Q(0.43), 34, [1, 1, 1], 0.45);
+    blob(P(0.5), Q(0.80), 46, [1, 1, 1], 0.30);
+    // inseam and outseam, double-stitched
+    g.fillStyle = grey(0.62, 0.7);
+    for (const t of [0.25, 0.75]) g.fillRect(P(t) - 1.5, 0, 3, CELL);
+    g.fillStyle = grey(1.0, 0.8);
+    for (const t of [0.25, 0.75]) for (let y = 0; y < CELL; y += 6) { g.fillRect(P(t) - 4, y, 1, 3); g.fillRect(P(t) + 3, y, 1, 3); }
+    // front pocket curves at the top of the leg
+    g.strokeStyle = grey(0.55, 0.7); g.lineWidth = 1.5;
+    for (const t of [0.36, 0.64]) {
+      g.beginPath(); g.moveTo(P(t), Q(1.0)); g.quadraticCurveTo(P(t), Q(0.90), P(t + (t < 0.5 ? 0.10 : -0.10)), Q(0.88)); g.stroke();
+    }
+  });
+  inCell(CELLS.shoe, () => {
+    g.fillStyle = grey(0.92); g.fillRect(0, 0, CELL, CELL);
+    speckle(1800, 0.70, 1.0);
+    // heel counter and toe cap: a second panel of the same material
+    g.fillStyle = grey(0.80, 0.6);
+    g.fillRect(0, Q(0.62), P(0.08), Q(0.12) - Q(0.62));
+    g.fillRect(P(0.92), Q(0.62), CELL - P(0.92), Q(0.12) - Q(0.62));
+    g.beginPath(); g.ellipse(P(0.5), Q(0.16), P(0.14) - PAD, 18, 0, Math.PI, 0); g.fill();
+    // welt stitch just above the sole
+    g.fillStyle = grey(0.55, 0.8);
+    for (let x = 0; x < CELL; x += 5) g.fillRect(x, Q(0.20), 3, 1);
+    // tongue and laces over the instep
+    g.fillStyle = grey(0.62, 0.9);
+    g.fillRect(P(0.44), Q(0.80), P(0.56) - P(0.44), Q(0.38) - Q(0.80));
+    g.fillStyle = grey(1.0, 0.95);
+    for (let k = 0; k < 5; k++) {
+      const y = Q(0.42 + k * 0.08);
+      g.fillRect(P(0.43), y, P(0.57) - P(0.43), 2.5);
+    }
+  });
+  inCell(CELLS.hair, () => {
+    g.fillStyle = grey(1.0); g.fillRect(0, 0, CELL, CELL);
+    strands(1100, -40, CELL);
+  });
+  inCell(CELLS.hand, () => {
+    g.fillStyle = grey(0.96); g.fillRect(0, 0, CELL, CELL);
+    speckle(600, 0.88, 1.0, 0.25);
+    // Finger separations over the curl and a knuckle crease: a relaxed hand
+    // is four fingers, not a mitten.
+    g.strokeStyle = grey(0.60, 0.75); g.lineWidth = 1.2;
+    for (const t of [0.30, 0.40, 0.50, 0.60, 0.70]) { g.beginPath(); g.moveTo(P(t), Q(0.0)); g.lineTo(P(t), Q(0.34)); g.stroke(); }
+    g.strokeStyle = grey(0.72, 0.6);
+    g.beginPath(); g.moveTo(P(0.28), Q(0.40)); g.quadraticCurveTo(P(0.5), Q(0.43), P(0.72), Q(0.40)); g.stroke();
+    g.fillStyle = grey(1.0, 0.9);
+    for (const t of [0.35, 0.45, 0.55, 0.65]) g.fillRect(P(t) - 4, Q(0.10), 8, 9);   // nails
+  });
+  inCell(CELLS.skin, () => {
+    g.fillStyle = grey(1.0); g.fillRect(0, 0, CELL, CELL);
+    speckle(500, 0.92, 1.0, 0.25);
+  });
+
+  // --- faces, one per skin tone -------------------------------------------
+  const IRIS = [[0.14, 0.09, 0.05], [0.10, 0.07, 0.04], [0.07, 0.045, 0.03], [0.05, 0.035, 0.025], [0.12, 0.13, 0.12]];
+  // same projection as the head's cylUV, in cell pixels
+  const hp = (x, y, z) => [
+    P(clamp(0.5 + Math.atan2(x, z - HEAD_Z) / (2 * HEAD_SPAN), 0, 1)),
+    Q(clamp((y - HY0) / (HY1 - HY0), 0, 1)),
+  ];
+  const sxm = CW / (2 * HEAD_SPAN * 0.090);     // px per metre across the face
+  const sym = CW / (HY1 - HY0);                  // px per metre up it
+  SKINS.forEach((skin, fi) => {
+    inCell(fi, () => {
+      g.fillStyle = rgba(skin); g.fillRect(0, 0, CELL, CELL);
+      // Above the hairline the vertex colour is hair and this must be neutral.
+      const hy = Q((HAIRLINE - HY0) / (HY1 - HY0));
+      g.fillStyle = grey(1.0); g.fillRect(0, 0, CELL, hy);
+      // Clipped: a strand stroke starting above the line runs up to 60 px, and
+      // unclipped they painted pale streaks down the forehead.
+      g.save(); g.beginPath(); g.rect(0, 0, CELL, hy); g.clip();
+      strands(500, -40, hy - 4);
+      g.restore();
+      // a soft shadow under the hairline, and under the jaw
+      let gr = g.createLinearGradient(0, hy, 0, hy + 7);
+      gr.addColorStop(0, rgba(mul(skin, 0.78), 0.55)); gr.addColorStop(1, rgba(mul(skin, 0.78), 0));
+      g.fillStyle = gr; g.fillRect(0, hy, CELL, 8);
+      gr = g.createLinearGradient(0, Q(0), 0, Q(0.12));
+      gr.addColorStop(0, rgba(mul(skin, 0.74), 0.6)); gr.addColorStop(1, rgba(mul(skin, 0.74), 0));
+      g.fillStyle = gr; g.fillRect(0, Q(0.12), CELL, Q(0) - Q(0.12) + PAD);
+
+      const brow = [0.10, 0.075, 0.06];
+      for (const sx of [-1, 1]) {
+        // cheeks: a little warmth, which is most of what makes skin not clay
+        const [cx, cy] = hp(sx * 0.047, J.eye - 0.034, 0.080);
+        blob(cx, cy, 0.022 * sxm, mul(skin, [1.0, 0.80, 0.78]), 0.30);
+        // eye socket shading
+        const [ex, ey] = hp(sx * 0.034, J.eye + 0.001, 0.085);
+        blob(ex, ey - 3, 0.022 * sxm, mul(skin, 0.74), 0.50);
+        const w = 0.027 * sxm, hh = 0.0105 * sym;
+        const inner = ex - sx * w / 2, outer = ex + sx * w / 2;
+        const almond = () => {
+          g.beginPath();
+          g.moveTo(inner, ey);
+          g.quadraticCurveTo(ex, ey - hh * 1.10, outer, ey - hh * 0.18);
+          g.quadraticCurveTo(ex, ey + hh * 0.80, inner, ey);
+          g.closePath();
+        };
+        g.fillStyle = rgba([0.78, 0.76, 0.72]); almond(); g.fill();
+        g.save(); almond(); g.clip();
+        g.fillStyle = rgba(IRIS[fi]); disc(ex, ey - hh * 0.12, hh * 0.62);
+        g.fillStyle = rgba([0.01, 0.01, 0.01]); disc(ex, ey - hh * 0.12, hh * 0.27);
+        g.fillStyle = rgba(mul(skin, 0.35), 0.40); g.fillRect(ex - w, ey - hh * 1.3, 2 * w, hh * 0.6);  // lid shadow
+        g.restore();
+        g.fillStyle = 'rgba(255,255,255,0.85)'; disc(ex - hh * 0.20, ey - hh * 0.40, 1.1);
+        // lash line, heavier toward the outer corner
+        g.strokeStyle = rgba([0.035, 0.03, 0.025], 0.95); g.lineWidth = 2.2;
+        g.beginPath(); g.moveTo(inner, ey); g.quadraticCurveTo(ex, ey - hh * 1.12, outer + sx * 1.5, ey - hh * 0.30); g.stroke();
+        g.strokeStyle = rgba(mul(skin, 0.55), 0.45); g.lineWidth = 1;
+        g.beginPath(); g.moveTo(inner + sx, ey - hh * 0.6); g.quadraticCurveTo(ex, ey - hh * 1.9, outer, ey - hh * 0.95); g.stroke();
+        g.strokeStyle = rgba(mul(skin, 0.60), 0.45); g.lineWidth = 0.8;
+        g.beginPath(); g.moveTo(inner, ey + 0.5); g.quadraticCurveTo(ex, ey + hh * 0.9, outer, ey - hh * 0.1); g.stroke();
+        // brow: thick at the inner end, tapering to a tail, slightly arched
+        const [bx, by] = hp(sx * 0.035, J.eye + 0.021, 0.089);
+        const bw = 0.042 * sxm;
+        g.fillStyle = rgba(brow, 0.85);
+        g.beginPath();
+        g.moveTo(bx - sx * bw * 0.50, by + 2.5);
+        g.quadraticCurveTo(bx + sx * bw * 0.02, by - 4.0, bx + sx * bw * 0.55, by + 1.5);
+        g.quadraticCurveTo(bx + sx * bw * 0.02, by - 0.2, bx - sx * bw * 0.50, by + 6.0);
+        g.closePath(); g.fill();
+        // nose sides and nostrils
+        const [nx, ny] = hp(sx * 0.013, J.eye - 0.024, 0.094);
+        blob(nx, ny, 7, mul(skin, 0.70), 0.30);
+        const [qx, qy] = hp(sx * 0.0075, J.eye - 0.046, 0.101);
+        g.fillStyle = rgba(mul(skin, 0.32), 0.85);
+        g.beginPath(); g.ellipse(qx, qy, 2.4, 1.4, 0, 0, Math.PI * 2); g.fill();
+        // ear: rim and bowl
+        const [ax, ay] = hp(sx * 0.078, J.eye - 0.010, -0.006);
+        g.strokeStyle = rgba(mul(skin, 0.62), 0.6); g.lineWidth = 2;
+        g.beginPath(); g.ellipse(ax, ay, 4.5, 13, 0, 0, Math.PI * 2); g.stroke();
+        blob(ax, ay + 2, 6, mul(skin, 0.55), 0.45);
+      }
+      // mouth: two lips in the skin family and a seam, no lipstick red
+      const [mx, my] = hp(0, J.chin + 0.045, 0.094);
+      const mw = 0.036 * sxm;
+      g.fillStyle = rgba(mul(skin, [0.80, 0.60, 0.58]));
+      g.beginPath(); g.moveTo(mx - mw / 2, my);
+      g.quadraticCurveTo(mx - mw * 0.25, my - 5.5, mx, my - 3.5);
+      g.quadraticCurveTo(mx + mw * 0.25, my - 5.5, mx + mw / 2, my);
+      g.closePath(); g.fill();
+      g.fillStyle = rgba(mul(skin, [0.86, 0.66, 0.63]));
+      g.beginPath(); g.moveTo(mx - mw / 2, my); g.quadraticCurveTo(mx, my + 8, mx + mw / 2, my); g.closePath(); g.fill();
+      g.strokeStyle = rgba(mul(skin, 0.40), 0.9); g.lineWidth = 1.4;
+      g.beginPath(); g.moveTo(mx - mw / 2 - 1, my); g.quadraticCurveTo(mx, my + 1.3, mx + mw / 2 + 1, my); g.stroke();
+      blob(mx, my + 11, 9, mul(skin, 0.78), 0.35);
+      blob(mx, my - 9, 5, mul(skin, 0.82), 0.25);     // philtrum
+    });
+  });
+  return c;
+}
+
+let ATLAS_TEX = null;
+function atlasTexture() {
+  if (!ATLAS_TEX) {
+    ATLAS_TEX = new THREE.CanvasTexture(drawAtlas());
+    ATLAS_TEX.colorSpace = THREE.SRGBColorSpace;
+    ATLAS_TEX.anisotropy = 4;
+  }
+  return ATLAS_TEX;
+}
+
+const pedMat = new THREE.MeshStandardMaterial({
+  vertexColors: true, roughness: 0.78, metalness: 0.0, envMapIntensity: 0.7,
+  map: atlasTexture(),
+});
+
 /**
  * Accumulates parts into one skinned geometry. Each part supplies a weight
  * function so vertices near a joint blend between two bones instead of
- * creasing.
+ * creasing, and a UV function that places it in the atlas.
  */
 class SkinAcc {
   constructor() {
-    this.pos = []; this.nor = []; this.col = []; this.idx = [];
+    this.pos = []; this.nor = []; this.col = []; this.idx = []; this.uv = [];
     this.si = []; this.sw = [];
   }
-  add(builder, weightFn) {
+  add(builder, weightFn, uvFn) {
     const base = this.pos.length / 3;
+    const ts = [];
+    let cell = CELLS.skin;
     for (let i = 0; i < builder.pos.length; i += 3) {
       const x = builder.pos[i], y = builder.pos[i + 1], z = builder.pos[i + 2];
       this.pos.push(x, y, z);
@@ -118,8 +413,27 @@ class SkinAcc {
       const w = weightFn(x, y, z);
       this.si.push(w[0], w[2] != null ? w[2] : 0, 0, 0);
       this.sw.push(w[1], w[3] != null ? w[3] : 0, 0, 0);
+      const m = uvFn(x, y, z);
+      ts.push(m[0], m[1]);
+      cell = m[2];
     }
-    for (const ix of builder.idx) this.idx.push(base + ix);
+    // The back seam. A cylindrical projection wraps from t = 1 back to 0
+    // behind the part, and a triangle spanning it interpolates across the
+    // WHOLE cell -- a smeared strip of every feature down the back. Builder
+    // quads carry their own vertices, so each spanning triangle can simply
+    // pin its low side to the cell edge.
+    const idx = builder.idx;
+    for (let k = 0; k < idx.length; k += 3) {
+      const a = idx[k] * 2, b = idx[k + 1] * 2, c = idx[k + 2] * 2;
+      if (Math.max(ts[a], ts[b], ts[c]) - Math.min(ts[a], ts[b], ts[c]) > 0.5) {
+        for (const q of [a, b, c]) if (ts[q] < 0.5) ts[q] = 1;
+      }
+    }
+    for (let q = 0; q < ts.length; q += 2) {
+      const uv = atlasUV(cell, ts[q], ts[q + 1]);
+      this.uv.push(uv[0], uv[1]);
+    }
+    for (const ix of idx) this.idx.push(base + ix);
   }
   build() {
     // Baked vertex ambient occlusion, computed ONCE from the BIND POSE --
@@ -127,10 +441,6 @@ class SkinAcc {
     // arm raised). That is the standard trade for a vertex-baked single-
     // material character, and at street distances it is invisible; it is a
     // choice, not an oversight.
-    // One matte material over flat colour is
-    // what makes a figure read as injection-moulded plastic: real characters
-    // carry occlusion in their maps, and with no maps the vertex colour is
-    // where it has to live. Three cheap terms that stand in for the real thing:
     //  - sky term: down-facing surfaces see less sky (underside of chin, arms,
     //    hem) -- from the normal's y.
     //  - crevice term: the armpit/inner-arm and inner-thigh bands, from
@@ -151,6 +461,7 @@ class SkinAcc {
     g.setAttribute('position', new THREE.Float32BufferAttribute(this.pos, 3));
     g.setAttribute('normal', new THREE.Float32BufferAttribute(this.nor, 3));
     g.setAttribute('color', new THREE.Float32BufferAttribute(this.col, 3));
+    g.setAttribute('uv', new THREE.Float32BufferAttribute(this.uv, 2));
     g.setAttribute('skinIndex', new THREE.Uint16BufferAttribute(this.si, 4));
     g.setAttribute('skinWeight', new THREE.Float32BufferAttribute(this.sw, 4));
     g.setIndex(this.idx);
@@ -167,6 +478,16 @@ const across = (jy, span, above, below) => (x, y) => {
 };
 const solid = (b) => () => [b, 1, 0, 0];
 
+/** Which painted face cell a skin tone uses: the nearest of SKINS. */
+function faceCell(skin) {
+  let best = 0, bd = 1e9;
+  SKINS.forEach((s, i) => {
+    const d = (s[0] - skin[0]) ** 2 + (s[1] - skin[1]) ** 2 + (s[2] - skin[2]) ** 2;
+    if (d < bd) { bd = d; best = i; }
+  });
+  return best;
+}
+
 /**
  * Builds one character variant: a skinned geometry in the rest pose. Callers
  * pair it with a fresh skeleton per instance.
@@ -180,8 +501,12 @@ export function buildCharacter(opts = {}) {
   const build = 0.92 + hash2(seed, 6) * 0.16;
   const jacket = opts.vest ? true : hash2(seed, 7) > 0.5;
   const shortSleeve = !jacket && hash2(seed, 8) > 0.55;
-  const shoeCol = [0.11, 0.11, 0.12];
+  // Uniformed characters keep black shoes; everyone else picks a pair.
+  const shoeI = opts.vest ? 0 : Math.floor(hash2(seed, 17) * SHOES.length);
+  const shoeCol = SHOES[shoeI], soleCol = SOLES[shoeI];
   const coat = jacket ? [shirt[0] * 0.66, shirt[1] * 0.66, shirt[2] * 0.7] : shirt;
+  const WHITE = [1, 1, 1];
+  const face = faceCell(skin);
 
   const acc = new SkinAcc();
   // half-breadths: hip 0.167, waist 0.131, chest 0.152, shoulder 0.140
@@ -190,12 +515,10 @@ export function buildCharacter(opts = {}) {
   const cw = 0.152 * build, cd = 0.118 * build;
   const sw = 0.140 * build, sd = 0.104 * build;
   const outer = jacket ? 1.05 : 1.0;
+  const legUV = (X) => cylUV(CELLS.pants, X, 0, J.ankle + 0.08, J.hip + 0.04);
 
   // --- pelvis + torso ------------------------------------------------------
   const pelvis = new Builder(false);
-  // Depth capped at the LEGS' front line. The block used to run the full body
-  // depth, which put the crotch 1.7 cm proud of the thighs -- a flat, brightly
-  // lit panel hanging in front of the trousers. That is the apron.
   // Seat ONLY. Every attempt to draw the front of the pelvis -- full depth,
   // reduced depth, darker tone -- read as a pale panel or an apron, because a
   // flat lit face between two curved thighs always will. So there is no front:
@@ -208,22 +531,20 @@ export function buildCharacter(opts = {}) {
   // sides. Verified by the from-behind raycast: 0 seat-first hits above the
   // hem line.
   pelvis.loftY([
-    { y: J.hip - 0.115, pts: oval(bw * 0.80, bd * 0.50, 14, 0, -0.042) },
-    { y: J.hip - 0.06, pts: oval(bw * 0.87, bd * 0.56, 14, 0, -0.040) },
-    { y: J.hip + 0.02, pts: oval(bw * 0.84, bd * 0.58, 14, 0, -0.036) },
+    { y: J.hip - 0.115, pts: oval(bw * 0.80, bd * 0.50, ST, 0, -0.042) },
+    { y: J.hip - 0.06, pts: oval(bw * 0.87, bd * 0.56, ST, 0, -0.040) },
+    { y: J.hip + 0.02, pts: oval(bw * 0.84, bd * 0.58, ST, 0, -0.036) },
   ], seat, { capStart: true });
   // seat pockets: nearly flush, waistband-adjacent
   // On the SEAT surface (back face at -(0.036 + bd*0.58)), not at the body's
   // full depth -- placed there they stood proud of the shirt hem above them
-  // and bit through it as a row of blue teeth.
+  // and bit through it as a row of blue teeth. z is the box CENTRE and depth
+  // extends half behind it, so 6 mm inside.
   for (const px of [-0.052, 0.052]) {
-    // z is the box CENTRE and depth extends half behind it -- placed on the
-    // seat surface the back face still sat 1 mm proud of the shirt, and a
-    // raycast from behind found pocket colour as the first hit. 6 mm inside.
     pelvis.box(px, J.hip - 0.062, -(0.036 + bd * 0.58 - 0.010), 0.056, 0.060, 0.004, 0,
       [pants[0] * 0.82, pants[1] * 0.82, pants[2] * 0.84]);
   }
-  acc.add(pelvis, across(J.spine - 0.06, 0.09, B.spine, B.hips));
+  acc.add(pelvis, across(J.spine - 0.06, 0.09, B.spine, B.hips), legUV(0));
 
   const torso = new Builder(false);
   // The hem drops BELOW the waistband, because that is how a shirt is worn:
@@ -232,237 +553,205 @@ export function buildCharacter(opts = {}) {
   // sections widened so the arm's top cap sits INSIDE the torso silhouette --
   // the deltoid used to poke out of the trapezius slope as a puffed sleeve.
   torso.loftY([
-    { y: J.hip - 0.035, pts: oval(bw * 1.035 * outer, bd * 1.00 * outer, 14) },  // hem
-    { y: J.hip + 0.09, pts: oval(bw * 0.97 * outer, bd * 1.00 * outer, 14) },
-    { y: 1.085, pts: oval(ww * 1.05 * outer, wd * 1.03 * outer, 14) },
-    { y: J.chest, pts: oval(cw * outer, cd * outer, 14, 0, 0.006) },
-    { y: 1.34, pts: oval(cw * 1.03 * outer, cd * 0.98 * outer, 14) },
-    { y: J.shoulder - 0.03, pts: oval(sw * 1.22 * outer, sd * 1.02 * outer, 14) },
-    { y: J.shoulder + 0.008, pts: oval(sw * 1.10 * outer, sd * 0.94 * outer, 14) },
+    { y: J.hip - 0.035, pts: oval(bw * 1.035 * outer, bd * 1.00 * outer, ST) },  // hem
+    { y: J.hip + 0.09, pts: oval(bw * 0.97 * outer, bd * 1.00 * outer, ST) },
+    { y: 1.085, pts: oval(ww * 1.05 * outer, wd * 1.03 * outer, ST) },
+    { y: J.chest, pts: oval(cw * outer, cd * outer, ST, 0, 0.006) },
+    { y: 1.34, pts: oval(cw * 1.03 * outer, cd * 0.98 * outer, ST) },
+    { y: J.shoulder - 0.03, pts: oval(sw * 1.22 * outer, sd * 1.02 * outer, ST) },
+    { y: J.shoulder + 0.008, pts: oval(sw * 1.10 * outer, sd * 0.94 * outer, ST) },
     // trapezius sloping in to the neck, set back so the throat stays visible
-    { y: J.shoulder + 0.048, pts: oval(sw * 0.52 * outer, sd * 0.58 * outer, 14, 0, -0.014) },
+    { y: J.shoulder + 0.048, pts: oval(sw * 0.52 * outer, sd * 0.58 * outer, ST, 0, -0.014) },
   ], coat, {});
   // Close the hem with an inward LIP, not a cap: a full cap disc z-fights the
   // seat it crosses, but an open single-sided tube is see-through along its
-  // rim from below and behind -- the interlocking teeth in the back view were
-  // backface culling, not geometry. A short inward slope reads as the hem's
-  // thickness and blocks the sight line, and its inner ring is high enough to
-  // clear the seat.
-  // ...and the lip must stay OUTSIDE the seat all the way round. Sloping it
-  // steeply inward crossed the seat surface, and the intersection line is a
-  // zigzag of teeth around the hem -- the very artifact it was meant to fix.
-  // Seat back is at z 0.103; this stops at 0.105.
+  // rim from below and behind. ...and the lip must stay OUTSIDE the seat all
+  // the way round: sloping it steeply inward crossed the seat surface, and
+  // the intersection line is a zigzag of teeth around the hem.
   torso.loftY([
-    { y: J.hip - 0.035, pts: oval(bw * 1.035 * outer, bd * 1.00 * outer, 14) },
-    { y: J.hip - 0.054, pts: oval(bw * 0.995 * outer, bd * 0.97 * outer, 14) },
+    { y: J.hip - 0.035, pts: oval(bw * 1.035 * outer, bd * 1.00 * outer, ST) },
+    { y: J.hip - 0.054, pts: oval(bw * 0.995 * outer, bd * 0.97 * outer, ST) },
   ], [coat[0] * 0.72, coat[1] * 0.72, coat[2] * 0.74], {});
   // collar: a slightly raised, slightly darker band around the neckline
   torso.loftY([
-    { y: J.shoulder + 0.040, pts: oval(sw * 0.56 * outer, sd * 0.62 * outer, 14, 0, -0.013) },
-    { y: J.shoulder + 0.062, pts: oval(sw * 0.50 * outer, sd * 0.56 * outer, 14, 0, -0.012) },
+    { y: J.shoulder + 0.040, pts: oval(sw * 0.56 * outer, sd * 0.62 * outer, ST, 0, -0.013) },
+    { y: J.shoulder + 0.062, pts: oval(sw * 0.50 * outer, sd * 0.56 * outer, ST, 0, -0.012) },
   ], [coat[0] * 0.82, coat[1] * 0.82, coat[2] * 0.84], { capEnd: true });
-  if (jacket) {
-    // Open-front placket, in SEGMENTS that follow the chest's curve. One tall
-    // box was flush at the waist and 23 mm proud at the top, where the torso
-    // narrows toward the neck -- seen side-on it was a dark blade floating off
-    // the chest, the "rod down the back" the judge kept reporting (it sits
-    // forward of the chin, which from the side reads as behind the head).
-    const plk = [coat[0] * 0.72, coat[1] * 0.72, coat[2] * 0.76];
-    const segs = [
-      [0.96, 1.10, wd * 0.99 * outer],
-      [1.10, 1.24, (wd + (cd - wd) * 0.7) * 0.99 * outer],
-      [1.24, 1.34, cd * 0.97 * outer],
-    ];
-    for (const [y0, y1, z] of segs) {
-      torso.box(-0.019, (y0 + y1) / 2, z + 0.004, 0.015, y1 - y0, 0.008, 0, plk);
-      torso.box(0.019, (y0 + y1) / 2, z + 0.004, 0.015, y1 - y0, 0.008, 0, plk);
-      torso.box(0, (y0 + y1) / 2, z + 0.001, 0.023, y1 - y0, 0.006, 0, shirt);
-    }
-  }
+  // The jacket's front placket is PAINTED (the jacket cell's zip band). It was
+  // three segments of thin boxes following the chest; each tried to sit flush
+  // and none quite did, and once the atlas put texture on their end faces the
+  // gaps between segments read as broken "H" shapes floating off the chest.
   if (opts.vest) {
     torso.loftY([
-      { y: J.hip + 0.12, pts: oval(bw * 1.03 * outer, bd * 1.05 * outer, 14) },
-      { y: J.chest + 0.06, pts: oval(cw * 1.03 * outer, cd * 1.05 * outer, 14) },
-      { y: J.shoulder - 0.04, pts: oval(sw * 0.98 * outer, sd * 1.02 * outer, 14) },
+      { y: J.hip + 0.12, pts: oval(bw * 1.03 * outer, bd * 1.05 * outer, ST) },
+      { y: J.chest + 0.06, pts: oval(cw * 1.03 * outer, cd * 1.05 * outer, ST) },
+      { y: J.shoulder - 0.04, pts: oval(sw * 0.98 * outer, sd * 1.02 * outer, ST) },
     ], opts.vest, {});
   }
   acc.add(torso, (x, y) => {
     if (y < J.spine) return across(J.spine - 0.05, 0.1, B.spine, B.hips)(x, y);
     return across(J.chest - 0.06, 0.12, B.chest, B.spine)(x, y);
-  });
+  }, cylUV(jacket ? CELLS.jacket : CELLS.shirt, 0, 0, J.hip - 0.06, J.shoulder + 0.07));
 
   // --- neck + head ---------------------------------------------------------
   // Head width is 0.086H (half 0.075) and depth 0.115H (half 0.101), eyes on
-  // the half-height line, the face five eye-widths across. Those were already
-  // right, and the head still read as a creep -- because the STYLING was
-  // wrong, not the anthropometry. What fixed it, each grounded in the
-  // stylised-character literature rather than taste:
-  //
-  // - Eyes are large, dark and simple. Small realistic eyes -- bright whites
-  //   with a pinprick pupil -- are the classic dead stare: at this poly count
-  //   the whites cannot move or blink, so they read as a fixed glare. A
-  //   stylised face avoids the uncanny valley by NOT attempting realism: one
-  //   dark almond per eye, no whites, under a proper lid line.
-  // - The brow sits ON the face, not floating in front of it, and is wide
-  //   enough to shade the eyes. Most of a neutral expression is the brow.
-  // - The hair is a deliberate SHAPE with the hairline forward. The old cap
-  //   started behind the crown of the forehead, which is a receding hairline,
-  //   which is most of what made him a creep rather than a guy.
-  // - The mouth is lips, not a letterbox: two skin-toned bands with a darker
-  //   seam, no saturated red.
+  // the half-height line, the face five eye-widths across. The features are
+  // PAINTED now (see the atlas): the skull, nose and ears are white vertex
+  // colour and take their skin, eyes, brows and lips from the face cell.
   const neck = new Builder(false);
+  // 0.052 m at the chin, not 0.056: with the head no longer carrying boxes for
+  // features it read as a column; an adult neck is ~0.11 m across.
   neck.loftY([
-    { y: J.chest + 0.09, pts: oval(0.066, 0.064, 10) },
-    { y: J.shoulder + 0.01, pts: oval(0.060, 0.058, 10, 0, -0.004) },
-    { y: J.chin - 0.008, pts: oval(0.056, 0.054, 10, 0, -0.006) },
+    { y: J.chest + 0.09, pts: oval(0.066, 0.064, SL) },
+    { y: J.shoulder + 0.01, pts: oval(0.059, 0.057, SL, 0, -0.004) },
+    // Tucked UP INSIDE the jaw: ending level with the skull's base at a wider
+    // radius than the jaw left the neck's top rim visible under the chin.
+    { y: J.chin + 0.012, pts: oval(0.044, 0.046, SL, 0, -0.006) },
   ], skin, {});
+  acc.add(neck, (x, y) => across(J.neck - 0.06, 0.09, B.neck, B.chest)(x, y),
+    cylUV(CELLS.skin, 0, 0, J.chest + 0.09, J.chin));
+
   const head = new Builder(false);
   // Skull: fuller jaw, cheeks widest at the ear line, rounder cranium -- and
-  // the HAIRLINE IS PAINTED INTO THE LOFT, as per-section colours. Every
-  // attempt to hang separate fringe geometry off the forehead either wrapped
-  // the cheeks (a bowl helmet), floated as an awning with a lit underside, or
-  // read as a brick. A colour boundary cannot float, cannot cast a shelf
-  // shadow, and cannot detach: the loft interpolates skin to hair across a
-  // 6 mm band at the forehead, which at this scale is a crisp hairline.
+  // the HAIRLINE IS A VERTEX-COLOUR BOUNDARY in the loft. Every attempt to hang
+  // separate fringe geometry off the forehead either wrapped the cheeks (a
+  // bowl helmet), floated as an awning with a lit underside, or read as a
+  // brick. A colour boundary cannot float or detach.
   const skullPts = [
-    { y: J.chin - 0.010, pts: oval(0.048, 0.058, 14, 0, 0.014) },   // jaw base
-    { y: J.chin + 0.020, pts: oval(0.066, 0.084, 14, 0, 0.008) },   // jawline
-    { y: J.chin + 0.060, pts: oval(0.074, 0.094, 14, 0, 0.004) },   // cheeks
-    { y: J.eye, pts: oval(0.075, 0.096, 14, 0, 0) },                // brow line
-    { y: J.eye + 0.036, pts: oval(0.072, 0.092, 14, 0, -0.002) },   // forehead, skin
-    { y: J.eye + 0.042, pts: oval(0.073, 0.093, 14, 0, -0.003) },   // hairline
-    { y: J.crown - 0.028, pts: oval(0.058, 0.074, 14, 0, -0.009) },
-    { y: J.crown, pts: oval(0.024, 0.030, 14, 0, -0.013) },
+    // Two more rings under the jaw: from the chin straight to the jawline was
+    // one cone, and the lower face read as a trapezoid with a pointed chin.
+    { y: J.chin - 0.012, pts: oval(0.036, 0.046, ST, 0, 0.022) },   // under the chin
+    { y: J.chin - 0.002, pts: oval(0.050, 0.062, ST, 0, 0.016) },   // chin
+    { y: J.chin + 0.010, pts: oval(0.060, 0.076, ST, 0, 0.011) },   // jaw angle
+    { y: J.chin + 0.024, pts: oval(0.066, 0.085, ST, 0, 0.008) },   // jawline
+    { y: J.chin + 0.060, pts: oval(0.073, 0.093, ST, 0, 0.004) },   // cheeks
+    { y: J.eye - 0.020, pts: oval(0.075, 0.095, ST, 0, 0.001) },    // cheekbone
+    { y: J.eye, pts: oval(0.075, 0.096, ST, 0, 0) },                // brow line
+    { y: J.eye + 0.036, pts: oval(0.072, 0.092, ST, 0, -0.002) },   // forehead, skin
+    { y: HAIRLINE + 0.002, pts: oval(0.073, 0.093, ST, 0, -0.003) }, // hairline
+    { y: J.crown - 0.028, pts: oval(0.058, 0.074, ST, 0, -0.009) },
+    { y: J.crown, pts: oval(0.024, 0.030, ST, 0, -0.013) },
   ];
-  head.loftY(skullPts, [skin, skin, skin, skin, skin, hair, hair, hair],
+  head.loftY(skullPts, [WHITE, WHITE, WHITE, WHITE, WHITE, WHITE, WHITE, WHITE, hair, hair, hair],
     { capStart: true, capEnd: true });
+  // Nose: a wedge widening toward nostril wings, set INTO the face rather than
+  // standing off it. The old 8-sided loft 1 cm proud of the skull read as a
+  // plank fixed to the front of the head in the close-up.
+  head.loftY([
+    { y: J.eye - 0.050, pts: oval(0.012, 0.008, 10, 0, 0.090) },
+    { y: J.eye - 0.042, pts: oval(0.018, 0.013, 10, 0, 0.093) },
+    { y: J.eye - 0.024, pts: oval(0.011, 0.012, 10, 0, 0.094) },
+    { y: J.eye - 0.004, pts: oval(0.008, 0.008, 10, 0, 0.089) },
+  ], WHITE, { capStart: true, capEnd: true });
+  // Ears: thin lofted ovals on the ear line; rim and bowl are painted. They
+  // were boxes, and a box seen from the front is a rectangle bolted on.
+  for (const sx of [-1, 1]) {
+    head.loftY([
+      { y: J.eye - 0.048, pts: oval(0.005, 0.010, 8, sx * 0.0735, -0.004) },
+      { y: J.eye - 0.030, pts: oval(0.010, 0.019, 8, sx * 0.0745, -0.006) },
+      { y: J.eye - 0.008, pts: oval(0.007, 0.014, 8, sx * 0.0735, -0.008) },
+    ], WHITE, { capStart: true, capEnd: true });
+  }
+  const headW = (x, y) => {
+    if (y < J.neck) return across(J.neck - 0.06, 0.09, B.neck, B.chest)(x, y);
+    return across(J.head - 0.03, 0.04, B.head, B.neck)(x, y);
+  };
+  acc.add(head, headW, cylUV(face, 0, HEAD_Z, HY0, HY1, HEAD_SPAN));
 
+  // Hair shells: their own part, so they take the strand cell, not the face.
+  const hairB = new Builder(false);
   const style = Math.floor(hash2(seed, 16) * 3);
   const napeY = style === 2 ? J.chin + 0.015 : J.chin + 0.06;
   const vol = style === 0 ? 0.004 : style === 1 ? 0.007 : 0.010;
   // Volume shell: strictly ABOVE the hairline, following the skull a few
   // millimetres out, so it cannot overhang the face from any angle.
-  head.loftY([
-    { y: J.eye + 0.041, pts: oval(0.0735 + vol, 0.0935 + vol, 14, 0, -0.003) },
-    { y: J.crown - 0.026, pts: oval(0.060 + vol, 0.076 + vol, 14, 0, -0.009) },
-    { y: J.crown + 0.002 + vol, pts: oval(0.025, 0.031, 14, 0, -0.013) },
+  // It GROWS OUT of the skull: the first ring sits a millimetre inside it
+  // and 6 mm lower, and the volume arrives over the next 2 cm. Starting at full
+  // volume left the open bottom edge standing proud all round -- a bowl-cut
+  // brim with a lit underside, which is most of what read as a helmet.
+  hairB.loftY([
+    { y: HAIRLINE - 0.004, pts: oval(0.0725, 0.0925, ST, 0, -0.002) },
+    // Volume at the sides and back only: the ring is shifted back by half the
+    // volume so its FRONT stays on the skull. Full volume all round still left
+    // a dark ledge across the forehead from the front.
+    { y: HAIRLINE + 0.014, pts: oval(0.0715 + vol, 0.0905 + vol * 0.5, ST, 0, -0.004 - vol * 0.5) },
+    { y: J.crown - 0.026, pts: oval(0.060 + vol, 0.076 + vol, ST, 0, -0.009) },
+    { y: J.crown + 0.002 + vol, pts: oval(0.025, 0.031, ST, 0, -0.013) },
   ], hair, { capEnd: true });
   // Back of head below the hairline: wide, shallow, hugging the skull down to
-  // the nape. Deep-and-narrow here was the "rod down the back".
-  // This has to WRAP the skull's back, not hover inside it: the skull loft's
-  // section colours make everything below the hairline skin -- including the
-  // back of the head -- so any gap here is a bald patch seen from behind.
-  // Skull back sits near z -0.096; the old ring spanned -0.076..-0.028,
-  // entirely inside the head.
-  head.loftY([
-    { y: napeY, pts: oval(0.066 + vol, 0.034, 14, 0, -0.072) },
-    { y: J.eye + 0.006, pts: oval(0.072 + vol, 0.044, 14, 0, -0.062) },
-    { y: J.eye + 0.041, pts: oval(0.0735 + vol, 0.0935 + vol, 14, 0, -0.003) },
+  // the nape. This has to WRAP the skull's back, not hover inside it -- the
+  // skull loft is skin below the hairline all the way round, so any gap here
+  // is a bald patch seen from behind.
+  // ...and TAPERS IN at the nape. Cut off square at full width it was a flat
+  // disc with a lit edge, and from behind the whole back of the head read as
+  // a block of wood.
+  hairB.loftY([
+    { y: napeY - 0.012, pts: oval(0.050, 0.020, ST, 0, -0.062) },
+    { y: napeY, pts: oval(0.062 + vol, 0.032, ST, 0, -0.070) },
+    { y: J.eye + 0.006, pts: oval(0.072 + vol, 0.044, ST, 0, -0.062) },
+    { y: HAIRLINE + 0.001, pts: oval(0.0735 + vol, 0.0935 + vol, ST, 0, -0.003) },
   ], hair, { capStart: true });
-
-  // Face. Features sit ON the skull surface -- the first pass placed them at
-  // the head's midline depth, which at the eye line is 5 mm inside the surface,
-  // so the eyes were slits at the bottom of a recess and the whole face
-  // glowered. And per the judge, all-dark eyes still stare: a stylised face
-  // wants LARGE whites with a big, centred iris -- centred, because whites
-  // with a displaced pupil are the thousand-yard stare.
-  const brow = [hair[0] * 0.7 + skin[0] * 0.25, hair[1] * 0.7 + skin[1] * 0.25, hair[2] * 0.7 + skin[2] * 0.25];
-  const white = [0.90, 0.89, 0.86];
-  const iris = [0.13, 0.10, 0.09];
-  // Each eye's plates are ROTATED TANGENT to the skull. A flat, axis-aligned
-  // box on a curved head is buried at its inner edge and proud at its outer
-  // (the surface falls from z 0.094 to 0.087 across one eye), which left the
-  // whites peeking out as dots wherever the curve happened to cross the plate.
-  // Turning the plate to the local surface angle keeps a constant 3 mm of
-  // relief across its whole width. asin(0.033/0.075) is ~0.46 rad.
-  const eyeYaw = 0.44;
-  for (const sx of [-1, 1]) {
-    const ex = sx * 0.034, ez = 0.0845;      // on the surface at that x
-    head.box(ex, J.eye + 0.020, ez + 0.004, 0.040, 0.010, 0.006, -sx * eyeYaw, brow);
-    head.box(ex, J.eye + 0.001, ez + 0.003, 0.026, 0.011, 0.005, -sx * eyeYaw, white);
-    head.box(ex, J.eye + 0.0005, ez + 0.0055, 0.018, 0.009, 0.004, -sx * eyeYaw, iris);
-    head.box(sx * 0.0750, J.eye - 0.010, -0.006, 0.010, 0.032, 0.020, 0, skin);
-  }
-  // Nose: a wedge widening toward the base.
-  head.loftY([
-    { y: J.eye - 0.044, pts: oval(0.015, 0.010, 6, 0, 0.102) },
-    { y: J.eye - 0.018, pts: oval(0.011, 0.008, 6, 0, 0.098) },
-    { y: J.eye + 0.002, pts: oval(0.008, 0.006, 6, 0, 0.093) },
-  ], skin, { capStart: true, capEnd: true });
-  // Mouth: one lip band with a darker seam tight beneath it, both in the skin
-  // family, corners inside the cheek line.
-  const lipTone = [skin[0] * 0.84, skin[1] * 0.68, skin[2] * 0.64];
-  head.box(0, J.chin + 0.0495, 0.0935, 0.034, 0.006, 0.005, 0, lipTone);
-  head.box(0, J.chin + 0.0455, 0.0945, 0.036, 0.0028, 0.004, 0,
-    [skin[0] * 0.58, skin[1] * 0.46, skin[2] * 0.44]);
-  head.box(0, J.chin + 0.0415, 0.0935, 0.030, 0.006, 0.005, 0, lipTone);
+  acc.add(hairB, headW, cylUV(CELLS.hair, 0, -0.01, J.chin, J.crown + 0.02));
 
   if (opts.hat) {
-    head.loftY([
-      { y: J.eye + 0.016, pts: oval(0.086, 0.111, 14, 0, -0.006) },
-      { y: J.eye + 0.070, pts: oval(0.082, 0.105, 14, 0, -0.008) },
-      { y: J.crown - 0.004, pts: oval(0.057, 0.073, 14, 0, -0.010) },
+    const hat = new Builder(false);
+    hat.loftY([
+      { y: J.eye + 0.016, pts: oval(0.086, 0.111, ST, 0, -0.006) },
+      { y: J.eye + 0.070, pts: oval(0.082, 0.105, ST, 0, -0.008) },
+      { y: J.crown - 0.004, pts: oval(0.057, 0.073, ST, 0, -0.010) },
     ], opts.hat, { capEnd: true });
-    head.box(0, J.eye + 0.014, 0.086, 0.166, 0.018, 0.11, 0, opts.hat);
+    hat.box(0, J.eye + 0.014, 0.086, 0.166, 0.018, 0.11, 0, opts.hat);
+    acc.add(hat, headW, cylUV(CELLS.jacket, 0, 0, J.eye, J.crown));
   }
-  acc.add(neck, (x, y) => across(J.neck - 0.06, 0.09, B.neck, B.chest)(x, y));
-  acc.add(head, (x, y) => {
-    if (y < J.neck) return across(J.neck - 0.06, 0.09, B.neck, B.chest)(x, y);
-    return across(J.head - 0.03, 0.04, B.head, B.neck)(x, y);
-  });
 
   // --- arms ----------------------------------------------------------------
   for (const side of [-1, 1]) {
     const X = side * SHOULDER_X;
     const arm = new Builder(false);
     arm.loftY([
-      // top cap INSIDE the widened torso shoulder, so no seam shows: the cap
-      // is at 0.048 against a torso half-width of ~0.163 there
-      { y: J.shoulder + 0.006, pts: oval(0.036, 0.034, 10, X * 0.80, 0) },
-      { y: J.shoulder - 0.042, pts: oval(0.058, 0.055, 10, X, 0) },
-      { y: J.shoulder - 0.085, pts: oval(0.059, 0.056, 10, X, 0) },
-      { y: J.shoulder - 0.14, pts: oval(0.051, 0.050, 10, X, 0) },
-      { y: J.elbow + 0.03, pts: oval(0.045, 0.044, 10, X, 0) },
-      { y: J.elbow - 0.02, pts: oval(0.043, 0.042, 10, X, 0) },
-      { y: J.wrist + 0.05, pts: oval(0.032, 0.031, 10, X, 0) },
-      { y: J.wrist + 0.012, pts: oval(0.027, 0.025, 10, X, 0) },
+      // top cap INSIDE the widened torso shoulder, so no seam shows
+      { y: J.shoulder + 0.006, pts: oval(0.036, 0.034, SL, X * 0.80, 0) },
+      { y: J.shoulder - 0.042, pts: oval(0.058, 0.055, SL, X, 0) },
+      { y: J.shoulder - 0.085, pts: oval(0.059, 0.056, SL, X, 0) },
+      { y: J.shoulder - 0.14, pts: oval(0.051, 0.050, SL, X, 0) },
+      { y: J.elbow + 0.03, pts: oval(0.045, 0.044, SL, X, 0) },
+      { y: J.elbow - 0.02, pts: oval(0.043, 0.042, SL, X, 0) },
+      { y: J.wrist + 0.05, pts: oval(0.032, 0.031, SL, X, 0) },
+      { y: J.wrist + 0.012, pts: oval(0.027, 0.025, SL, X, 0) },
     ], shortSleeve
       ? [coat, coat, coat, coat, skin, skin, skin, skin]
       : coat, { capStart: true, capEnd: true });
     if (shortSleeve) {
       // sleeve cuff: a slightly wider, slightly darker ring where the fabric ends
       arm.loftY([
-        { y: J.shoulder - 0.13, pts: oval(0.054, 0.053, 10, X, 0) },
-        { y: J.shoulder - 0.155, pts: oval(0.052, 0.051, 10, X, 0) },
+        { y: J.shoulder - 0.13, pts: oval(0.054, 0.053, SL, X, 0) },
+        { y: J.shoulder - 0.155, pts: oval(0.052, 0.051, SL, X, 0) },
       ], [coat[0] * 0.85, coat[1] * 0.85, coat[2] * 0.87], {});
     } else {
       arm.loftY([
-        { y: J.wrist + 0.055, pts: oval(0.034, 0.033, 10, X, 0) },
-        { y: J.wrist + 0.030, pts: oval(0.033, 0.032, 10, X, 0) },
+        { y: J.wrist + 0.055, pts: oval(0.034, 0.033, SL, X, 0) },
+        { y: J.wrist + 0.030, pts: oval(0.033, 0.032, SL, X, 0) },
       ], [coat[0] * 0.85, coat[1] * 0.85, coat[2] * 0.87], {});
     }
     acc.add(arm, (x, y) => {
       if (y > J.elbow) return across(J.elbow + 0.05, 0.09, side < 0 ? B.shoulderL : B.shoulderR, side < 0 ? B.elbowL : B.elbowR)(x, y);
       return [side < 0 ? B.elbowL : B.elbowR, 1, 0, 0];
-    });
+    }, cylUV(jacket ? CELLS.jacket : CELLS.shirt, X, 0, J.wrist, J.shoulder + 0.01));
     // Hand: palm, a curled finger mass and a thumb, not a flat paddle. The
     // fingers curl toward the thigh (a relaxed hand is a loose C, not a blade)
-    // and shorten the reach: a straight open hand at the end of a swinging arm
-    // is a mannequin's.
+    // and shorten the reach; the separations and nails are painted.
     const hand = new Builder(false);
     hand.loftY([
-      { y: J.wrist + 0.014, pts: oval(0.027, 0.025, 10, X, 0) },       // = forearm end
-      { y: J.wrist - 0.040, pts: oval(0.035, 0.030, 10, X, 0.006) },     // palm
-      { y: J.wrist - 0.095, pts: oval(0.034, 0.031, 10, X, 0.016) },     // knuckles
-      { y: J.wrist - 0.135, pts: oval(0.029, 0.026, 10, X, 0.028) },     // fingers curling
-      { y: J.wrist - 0.158, pts: oval(0.021, 0.018, 10, X, 0.038) },     // tips tucked
+      { y: J.wrist + 0.014, pts: oval(0.027, 0.025, SL, X, 0) },       // = forearm end
+      { y: J.wrist - 0.040, pts: oval(0.035, 0.029, SL, X, 0.006) },     // palm
+      { y: J.wrist - 0.095, pts: oval(0.034, 0.030, SL, X, 0.016) },     // knuckles
+      { y: J.wrist - 0.135, pts: oval(0.029, 0.025, SL, X, 0.028) },     // fingers curling
+      { y: J.wrist - 0.158, pts: oval(0.020, 0.017, SL, X, 0.038) },     // tips tucked
     ], skin, { capStart: true, capEnd: true });
     // thumb: on the inner edge, angled slightly across the palm
     hand.box(X - side * 0.031, J.wrist - 0.052, 0.016, 0.019, 0.056, 0.021, side * 0.38, skin);
-    // knuckle line: one shade darker, reads as the finger separation
-    hand.box(X, J.wrist - 0.097, 0.030, 0.052, 0.014, 0.006, 0,
-      [skin[0] * 0.88, skin[1] * 0.85, skin[2] * 0.85]);
-    acc.add(hand, solid(side < 0 ? B.handL : B.handR));
+    acc.add(hand, solid(side < 0 ? B.handL : B.handR),
+      cylUV(CELLS.hand, X, 0.016, J.wrist - 0.16, J.wrist + 0.015));
   }
 
   // --- legs ----------------------------------------------------------------
@@ -470,32 +759,35 @@ export function buildCharacter(opts = {}) {
     const X = side * HIP_X;
     const leg = new Builder(false);
     leg.loftY([
-      { y: J.hip + 0.035, pts: oval(0.084, 0.088, 10, X * 0.88, 0) },
-      { y: J.hip - 0.09, pts: oval(0.092, 0.088, 10, X * 0.97, 0) },
-      { y: J.knee + 0.10, pts: oval(0.064, 0.064, 10, X, 0) },
-      { y: J.knee + 0.02, pts: oval(0.059, 0.060, 10, X, 0) },
-      { y: J.knee - 0.04, pts: oval(0.059, 0.062, 10, X, 0.005) },
-      { y: J.knee - 0.15, pts: oval(0.057, 0.060, 10, X, 0.002) },
-      { y: J.ankle + 0.10, pts: oval(0.037, 0.040, 10, X, 0) },
+      { y: J.hip + 0.035, pts: oval(0.084, 0.088, SL, X * 0.88, 0) },
+      { y: J.hip - 0.09, pts: oval(0.092, 0.088, SL, X * 0.97, 0) },
+      { y: J.knee + 0.10, pts: oval(0.064, 0.064, SL, X, 0) },
+      { y: J.knee + 0.02, pts: oval(0.059, 0.060, SL, X, 0) },
+      { y: J.knee - 0.04, pts: oval(0.059, 0.062, SL, X, 0.005) },
+      { y: J.knee - 0.15, pts: oval(0.057, 0.060, SL, X, 0.002) },
+      { y: J.ankle + 0.10, pts: oval(0.040, 0.043, SL, X, 0) },
     ], pants, { capStart: true, capEnd: true });
     acc.add(leg, (x, y) => across(J.knee + 0.04, 0.1,
-      side < 0 ? B.thighL : B.thighR, side < 0 ? B.kneeL : B.kneeR)(x, y));
+      side < 0 ? B.thighL : B.thighR, side < 0 ? B.kneeL : B.kneeR)(x, y), legUV(X));
 
+    // THE SHOE IS ONE LOFT, and its sole is where animateWalk thinks it is.
+    // It used to be a swelling upper sitting on a separate sole BOX, which
+    // from any angle read as a slab stuck on underneath -- and a box's corners
+    // cannot be a heel. The bottom ring spans exactly the sole the gait's roll
+    // model pivots on: 6.75 cm under the ankle, from 5.6 cm behind it to 15.6
+    // cm ahead (SOLE / HEEL_Z / TOE_Z in animateWalk; tools/gait.mjs reads the
+    // same numbers). Change one, change all three.
     const foot = new Builder(false);
-    // foot length is 0.152H = 0.266 m. A single swelling loft read as a grey
-    // blob; a shoe needs its landmarks -- ankle collar, a heel that steps out
-    // BACKWARD, a waisted arch, a toe box, and a sole rim below it all.
-    const soleCol = [0.17, 0.165, 0.16];
     foot.loftY([
-      { y: J.ankle + 0.10, pts: oval(0.036, 0.039, 10, X, 0) },
-      { y: J.ankle + 0.030, pts: oval(0.042, 0.050, 10, X, 0.008) },
-      { y: J.ankle - 0.008, pts: oval(0.046, 0.088, 10, X, 0.028) },   // heel back at -0.060
-      { y: J.ankle - 0.036, pts: oval(0.044, 0.100, 10, X, 0.042) },   // arch
-      { y: J.ankle - 0.052, pts: oval(0.047, 0.108, 10, X, 0.052) },   // toe box
-    ], shoeCol, { capStart: true, capEnd: true });
-    // sole: a lighter rim proud of the upper, flat to the ground
-    foot.box(X, J.ankle - 0.062, 0.050, 0.092, 0.011, 0.212, 0, soleCol);
-    acc.add(foot, solid(side < 0 ? B.footL : B.footR));
+      { y: J.ankle - 0.0675, pts: oval(0.046, 0.106, SL, X, 0.050) },   // sole underside
+      { y: J.ankle - 0.052, pts: oval(0.050, 0.108, SL, X, 0.050) },    // sole top
+      { y: J.ankle - 0.032, pts: oval(0.048, 0.104, SL, X, 0.048) },    // toe box
+      { y: J.ankle + 0.004, pts: oval(0.046, 0.088, SL, X, 0.036) },    // instep
+      { y: J.ankle + 0.045, pts: oval(0.041, 0.051, SL, X, 0.010) },    // collar
+      { y: J.ankle + 0.10, pts: oval(0.036, 0.039, SL, X, 0) },         // inside the trouser
+    ], [soleCol, shoeCol, shoeCol, shoeCol, shoeCol, shoeCol], { capStart: true, capEnd: true });
+    acc.add(foot, solid(side < 0 ? B.footL : B.footR),
+      cylUV(CELLS.shoe, X, 0.050, J.ankle - 0.0675, J.ankle + 0.10));
   }
 
   return acc.build();
@@ -512,11 +804,31 @@ function variants() {
   return VARIANTS;
 }
 
+// Cops need their OWN pool. They used to be spawned with a uniform in `opts`
+// -- shirt, trousers, hat, vest -- but a pooled character ignores opts and
+// takes a civilian variant, so every cop on foot was a civilian in a
+// random shirt, and only the shooting gave them away.
+let COP_VARIANTS = null;
+function copVariants() {
+  if (!COP_VARIANTS) {
+    COP_VARIANTS = [];
+    for (let i = 0; i < 4; i++) {
+      COP_VARIANTS.push(buildCharacter({
+        seed: i * 6007 + 71,
+        shirt: [0.12, 0.16, 0.3], pants: [0.1, 0.12, 0.2], hat: [0.08, 0.1, 0.18], vest: [0.16, 0.2, 0.36],
+      }));
+    }
+  }
+  return COP_VARIANTS;
+}
+
 export function makeHumanoid(opts = {}) {
   const seed = opts.seed != null ? opts.seed : 0;
   const pooled = !opts.geometry && !opts.unique;
   const geo = opts.geometry
-    || (opts.unique ? buildCharacter(opts) : variants()[Math.floor(hash2(seed, 9) * 12) % 12]);
+    || (opts.unique ? buildCharacter(opts)
+      : opts.cop ? copVariants()[Math.floor(hash2(seed, 9) * 4) % 4]
+        : variants()[Math.floor(hash2(seed, 9) * 12) % 12]);
   const bones = makeSkeletonBones();
   const mesh = new THREE.SkinnedMesh(geo, pedMat);
   mesh.add(bones[B.root]);
@@ -599,8 +911,13 @@ function stepLength(h, speed) {
  * exactly 0.5, so there was always precisely one foot on the ground. A walk
  * without double support reads as a march.
  */
-function dutyFactor(speed) {
-  return clamp(0.684 - 0.2055 * Math.log(Math.max(0.35, speed)), 0.22, 0.68);
+function dutyFactor(speed, runBlend = 0) {
+  // Minus 0.03 once running. With a real rolling foot, contact travel is
+  // 2 * step * duty of flat-foot origin, and at the mid-band duty that was
+  // 1.22 m at 5.5 m/s against a person's ~1.05: the leg could only span it by
+  // squatting (hips at 83%) and lunging the trailing leg out behind. The
+  // lower edge of each band is still inside it: jog 0.40, run 0.30, sprint 0.24.
+  return clamp(0.684 - 0.2055 * Math.log(Math.max(0.35, speed)) - 0.03 * runBlend, 0.22, 0.68);
 }
 
 /**
@@ -625,7 +942,17 @@ export function animateWalk(h, amp, dt, speed) {
   const b = h.bones;
   h.t += dt || 0;
   const A = amp * h.gait;
-  const spd = speed != null ? speed : amp * 4;
+  const spdIn = speed != null ? speed : amp * 4;
+  // The CYCLE runs on a smoothed speed. The player's own speed damps at rate 9
+  // -- a standstill to a run in about 0.3 s -- and step length, duty and
+  // runBlend all follow it, so the stride used to be re-shaped by half a metre
+  // a second every frame and the swing foot popped (14 cm of ankle
+  // acceleration in one frame, measured on the rig's speed ramp). A person
+  // changes stride over a step, not a frame. The feet stay planted regardless:
+  // they are locked to the world below, not to the cycle.
+  if (!dt || h.gspd == null) h.gspd = spdIn;
+  else h.gspd += (spdIn - h.gspd) * (1 - Math.exp(-6 * dt));
+  const spd = h.gspd;
   const run = clamp(spd / 6, 0, 1);
   // How much of a RUN this is, as opposed to how fast a walk. People switch
   // gait around 2.5-3 m/s, and everything that distinguishes the two -- hip
@@ -656,8 +983,8 @@ export function animateWalk(h, amp, dt, speed) {
   // covers while it is down, or it skates: cycle distance is 2 * step and the
   // foot is down for `duty` of it. That is the no-skate identity, and it is
   // what the old CONTACT_MAX broke -- it clamped the sweep to hold the bob
-  // down, which is the wrong lever (see `compress` and the foot roll below).
-  const duty = dutyFactor(spd);
+  // down, which is the wrong lever (see the hip model and the foot roll below).
+  const duty = dutyFactor(spd, runBlend);
   const swept = Math.min(2 * step * duty, REACH_PLANT * 1.94) / sc * settle;
   // Swing clearance, and the main thing that sets how much the knee folds. A
   // sprinter's heel comes most of the way to the backside, which is where the
@@ -672,42 +999,232 @@ export function animateWalk(h, amp, dt, speed) {
   // not someone crossing a street. 0.24 was tried and swung too far the other
   // way (sprint knee 117 deg, under its 120 band). Measured at 0.265:
   // jog/run/sprint 111/118/121, all in band.
-  const lift = ((0.105 + 0.265 * runBlend) / sc) * settle;
+  // Peak ankle height ABOVE the straight line from toe-off to heel strike. The
+  // toe-off end is already raised by the heel lift, so this sits well under
+  // the old 0.105 + 0.265: kept at those values the knee folded 149-162 deg at
+  // jog/run/sprint, past every band.
+  // It also climbs with pace past the gait switch: keyed on runBlend alone it
+  // saturated at 3.4 m/s, so a jog folded its knee as far as a sprint (126 deg
+  // against a 90-120 band). And 0.085 at a walk, not 0.07: the toe cleared the
+  // pavement by 3 mm, against a real ~1.5 cm.
+  // 0.03 per m/s, not 0.02: at 0.02 a sprint folded its knee 117 deg, under the
+  // 120-155 band.
+  const lift = ((0.085 + runBlend * (0.10 + 0.03 * clamp(spd - 3.5, 0, 4))) / sc) * settle;
   const stanceSpan = TAU * duty;
-  // THE FOOT HAS LENGTH, and that is what keeps a person standing up.
+  const swingSpan = TAU - stanceSpan;
+  // THE FOOT HAS LENGTH, AND IT ROLLS -- and the ankle has to follow from the
+  // roll, not be dialled in beside it.
   //
   // The hips are limited by a straight line from hip to ANKLE, but the ground
-  // contact is not the ankle: through stance it rolls from heel to toe while
-  // the ankle lifts. That roll is worth ~0.22 m of sweep the leg never has to
-  // span. Without it a 0.86 m leg was asked to cover a 0.98 m stance sweep and
-  // the only way to do that is to squat -- measured, the hips sat at 85% of
-  // standing height walking and 69% sprinting, against a real ~97%. That is
-  // exactly the "creeping around low to the ground" look, and no amount of
-  // tuning the bob fixes it, because it is the mean height that is wrong.
+  // contact is not the ankle: a stance foot lands on its heel, rolls flat and
+  // pushes off from its toe. Without modelling that, a 0.86 m leg is asked to
+  // span the whole 0.98 m stance sweep and the only way to do it is to squat
+  // (measured once: hips at 85% of standing walking, 69% sprinting).
   //
-  // The CONTACT still travels at body speed -- that is the no-skate identity
-  // and it is unchanged. It is the ANKLE that travels less, with the foot
-  // rotating to take up the difference.
-  const roll = (0.22 + 0.08 * runBlend) / sc;
-  const ankleExc = Math.max(0.25, swept - roll);
-  const riseMax = (0.05 + 0.06 * runBlend) / sc;
-  const target = (ph) => {
-    const w = ((ph % TAU) + TAU) % TAU;
-    const stance = w < stanceSpan;
-    const u = stance ? w / stanceSpan : (w - stanceSpan) / (TAU - stanceSpan);
-    if (!stance) {
-      return { z: (u - 0.5) * ankleExc, y: J.ankle + lift * Math.sin(Math.PI * u), stance: false };
-    }
-    // Ankle rides up at both ends of stance: a little at heel strike, more at
-    // toe-off, which is where the heel is high and the foot is up on its toes.
-    const u2 = Math.abs(2 * u - 1);
-    // Pitch that keeps the sole planted while the contact rolls: toes up at
-    // heel strike, heel up at toe-off, flat through the middle.
-    const rollPitch = (0.5 - u) * 2 * (0.10 + 0.30 * runBlend);
-    return { z: (0.5 - u) * ankleExc, y: J.ankle + riseMax * u2 * u2,
-             roll: rollPitch, stance: true };
+  // The previous version modelled the roll as two separate numbers -- an ankle
+  // excursion shortened by a fixed 0.22 m, and an ankle rise on a curve -- and
+  // pitched the foot on a third, whose sign was backwards: +x on the foot bone
+  // lowers the toe, and it was positive at heel strike, so every foot landed
+  // toe-first and pushed off rolling on its heel. Nothing tied the three
+  // together, so the sole could not stay on the ground: measured with the rig's
+  // sole probe, planted soles hovered or sank up to 8.6 cm, and the pitch sat on
+  // its clamp for 38-74% of every cycle.
+  //
+  // Now there is ONE flat-foot origin, which travels backwards at exactly body
+  // speed while down (the no-skate identity), ONE sole pitch, and the ankle is
+  // wherever a rigid foot pivoting on its heel or toe at that pitch puts it.
+  // The sole cannot float or sink by construction.
+  const SOLE = J.ankle - 0.0675;            // underside of the sole box in buildCharacter
+  const ANK_Y = J.ankle - SOLE;
+  const HEEL_Z = -0.056, TOE_Z = 0.156;     // sole ends, relative to the ankle
+  // Heel strike lands toes-up about 11 deg at a walk; a runner lands flatter.
+  // Toe-off peaks near 50 deg of heel lift -- it is what lets the trailing leg
+  // reach without dropping the hips.
+  const q0 = (0.20 - 0.12 * runBlend) * settle;
+  const pOff = (0.90 + 0.20 * runBlend) * settle;
+  const uLand = 0.15 - 0.07 * runBlend;     // rolled flat by here
+  const uHeel = 0.55 - 0.15 * runBlend;     // heel comes up from here
+  // A runner lands closer under the hips and pushes off further behind; the
+  // symmetric window had the leading leg out straight at touchdown, which is
+  // the lunging over-stride a player sees on every step.
+  // How far the stance window sits BEHIND the hips. It is not a tuning dial:
+  // it is chosen below so heel strike and toe-off limit the hips equally,
+  // which is the highest the hips can ride over that stride. A symmetric
+  // window had the leading leg out straight at touchdown -- the lunging
+  // over-stride in every run strip -- and a hand-set shift only balanced one
+  // speed. Toe-off carries the ankle up on a 50-60 deg heel lift, so the
+  // balanced window lands closer under the hips and pushes off further behind,
+  // which is what a runner does.
+  let back = 0;
+  const rawHip = (t) => t.y + Math.sqrt(Math.max(0.04, REACH_PLANT * REACH_PLANT - t.z * t.z));
+  const pivot = (zf, p) => {
+    // rotation.x by p: y' = y cos p - z sin p, z' = y sin p + z cos p
+    const rz = p >= 0 ? -TOE_Z : -HEEL_Z;
+    const oz = zf + (p >= 0 ? TOE_Z : HEEL_Z);
+    return [oz + ANK_Y * Math.sin(p) + rz * Math.cos(p), SOLE + ANK_Y * Math.cos(p) - rz * Math.sin(p)];
   };
-  const tl = target(phase), tr = target(phase + Math.PI);
+  const stanceAt = (u) => {
+    let p = 0;
+    if (u < uLand) { const k = 1 - u / uLand; p = -q0 * k * k; }
+    else if (u > uHeel) { const k = (u - uHeel) / (1 - uHeel); p = pOff * k * k; }
+    const zf = (0.5 - u) * swept - back;
+    const a = pivot(zf, p);
+    return { z: a[0], y: a[1], pitch: p, stance: true, zf, u };
+  };
+  // Bisect `back`: more back lifts the strike limit and lowers the toe-off
+  // one. Six steps put it inside a centimetre; it is a dozen trig calls.
+  // The bounds scale with the stride: fixed bounds let `back` snap to one of
+  // them as a character stopped -- with swept at 0 strike and toe-off are the
+  // same pose, the comparison ties, and every foot target jumped by up to
+  // 45 cm in one frame (the rig's speed ramp, at the stop).
+  {
+    let lo = -0.2 * swept, hi = 0.45 * swept;
+    for (let i = 0; i < 6; i++) {
+      back = (lo + hi) / 2;
+      if (rawHip(stanceAt(0)) < rawHip(stanceAt(1))) lo = back; else hi = back;
+    }
+    back = (lo + hi) / 2;
+  }
+  const toeOff = stanceAt(1), strike = stanceAt(0);
+  // Swing is a Hermite curve whose ends move the way stance does, backwards.
+  // A linear swing reversed the foot's velocity in a single frame at touchdown
+  // and toe-off -- a visible snap twice per step -- and the small backward
+  // slope at the far end is the late-swing retraction every real foot makes
+  // before it lands.
+  // Less of it at a run: the same slope left a runner's foot drifting on
+  // backwards after toe-off, the trailing leg lingering out behind.
+  const vz = (-swept / Math.max(0.3, stanceSpan)) * swingSpan * (0.35 - 0.20 * runBlend);
+  const swingAt = (u) => {
+    const u2 = u * u, u3 = u2 * u;
+    const z = (2 * u3 - 3 * u2 + 1) * toeOff.z + (u3 - 2 * u2 + u) * vz
+      + (-2 * u3 + 3 * u2) * strike.z + (u3 - u2) * vz;
+    // Clearance peaks early in swing (the heel kicks up behind), not halfway,
+    // and at a run it holds a flat top: a runner's foot stays up under a raised
+    // thigh until late swing and then drops to land. With a plain sine the
+    // leading foot hung a few centimetres off the pavement out in front for
+    // most of the flight phase, which read as reaching for the ground.
+    // Built from two smoothsteps so it leaves and meets the ground with ZERO
+    // vertical speed: a sine over u^p has infinite slope at toe-off, and the
+    // flat-topped version of it lifted a sprinting ankle 21 cm in one frame.
+    const rise = 0.40 - 0.15 * runBlend, fall = 0.50 - 0.15 * runBlend;
+    let y = toeOff.y + (strike.y - toeOff.y) * smoothT(u)
+      + lift * smoothT(clamp(u / rise, 0, 1)) * smoothT(clamp((1 - u) / fall, 0, 1));
+    const pitch = toeOff.pitch + (strike.pitch - toeOff.pitch) * smoothT(clamp(u * 1.6, 0, 1));
+    // Toe clearance is a floor, not a by-product. The ankle arc clears the
+    // ground, but the foot is still pitched toe-down from push-off through
+    // early swing, and the rig measured the lower of heel and toe skimming the
+    // pavement by 1-7 mm at every speed. Keep it ~2 cm up mid-swing; the ends
+    // are left alone so touchdown and toe-off still meet the ground.
+    const cpp = Math.cos(pitch), spp = Math.sin(pitch);
+    const low = y - ANK_Y * cpp - Math.max(TOE_Z * spp, HEEL_Z * spp);
+    const floor = SOLE + (0.02 / sc) * settle * Math.sin(Math.PI * u);
+    if (low < floor) y += floor - low;
+    return { z, y, pitch, stance: false, u };
+  };
+  // EACH FOOT FINISHES WHAT IT STARTED. Stance and swing are slices of one
+  // phase circle cut at `stanceSpan`, and that cut moves with speed: slowing
+  // raises duty, so a foot a fifth of the way into its swing could find itself
+  // re-classified as the END of stance and teleport back to the toe-off pose
+  // (the rig's speed ramp measured 24 cm of ankle acceleration in one frame at
+  // a steady 1.4 m/s, left over from a slow-down). A foot now keeps its own
+  // progress through the half-cycle it is in, only changes state once that is
+  // done, and catches up with the shared cycle a little each frame.
+  const dph = (dt || 0) * Math.PI * spd / step;
+  if (!dt) h.gst = null;
+  else if (!h.gst) h.gst = [null, null];
+  const footState = (k, ph) => {
+    const w = ((ph % TAU) + TAU) % TAU;
+    let st = w < stanceSpan;
+    let u = st ? w / stanceSpan : (w - stanceSpan) / swingSpan;
+    const G = h.gst && h.gst[k];
+    if (G) {
+      const adv = G.u + dph / (G.st ? stanceSpan : swingSpan);
+      if (st !== G.st && G.u < 0.97) { st = G.st; u = Math.min(1, adv); }
+      // A legitimate change of state begins the new half-cycle at its START,
+      // not wherever the shared cycle has got to. Taking the cycle's u there
+      // put a foot that had just finished a held swing at mid-stance: the rig
+      // trace caught the ankle jumping 57 cm (z +0.37 to -0.195) in one frame.
+      // From here the catch-up below closes the gap a little each frame, and
+      // the world lock keeps the planted foot still while it does.
+      else if (st !== G.st) u = clamp(adv - 1, 0, 0.04);
+      else u = clamp(u, adv - 0.04, adv + 0.04);
+      u = clamp(u, 0, 1);
+      G.st = st; G.u = u;
+    } else if (h.gst) h.gst[k] = { st, u };
+    return st ? stanceAt(u) : swingAt(u);
+  };
+  const tl = footState(0, phase), tr = footState(1, phase + Math.PI);
+  tl.x = -HIP_X; tr.x = HIP_X;
+
+  // FEET ARE LOCKED TO THE WORLD WHILE THEY ARE DOWN.
+  //
+  // The analytic stance target only travels at body speed while the speed is
+  // constant and the heading is fixed, and a player is almost never either.
+  // Step length, duty and settle all move with speed, so the same phase maps to
+  // a different spot next frame: the rig's speed ramp measured a planted sole
+  // slipping 15.6 cm in one frame while slowing to a stop. And turning at the
+  // player's 10 rad/s swings a foot planted 0.4 m ahead sideways by ~7 cm a
+  // frame -- skating on every corner. So a foot that touches down remembers
+  // WHERE, in world space, and the leg is solved to that spot until it lifts;
+  // whatever it ended up away from the analytic target fades out over the
+  // swing. Callers must place the group BEFORE calling this, or the lock is a
+  // frame behind the body.
+  // The furthest out from the hips this stride ever puts an ankle, plus a
+  // margin. A lock may not hold a foot beyond it: the hips ride the more
+  // extended planted foot, and a foot planted during a run and still locked
+  // after slowing to a walk sat 86 cm behind -- the rig trace had the hips
+  // squatting to 0.36 m and springing back 53 cm when it lifted. The 0.30
+  // floor keeps a stroll from dragging its feet.
+  const zLimit = Math.max(Math.abs(strike.z), Math.abs(toeOff.z), 0.22 / sc) + 0.08 / sc;
+  if (!dt) {
+    // Posing at an exact phase (the strip and portrait harnesses): no history.
+    h.locks = null;
+  } else {
+    const g = h.group;
+    g.updateMatrix();
+    const m = g.matrix.elements, s2 = m[0] * m[0] + m[2] * m[2] || 1;
+    if (!h.locks) h.locks = [{ on: false, wx: 0, wz: 0, ex: 0, ez: 0 }, { on: false, wx: 0, wz: 0, ex: 0, ez: 0 }];
+    for (let k = 0; k < 2; k++) {
+      const t = k === 0 ? tl : tr, L = h.locks[k];
+      if (t.stance) {
+        if (!L.on) {
+          L.on = true;
+          L.wx = m[0] * t.x + m[8] * t.zf + m[12];
+          L.wz = m[2] * t.x + m[10] * t.zf + m[14];
+        }
+        const dx = L.wx - m[12], dz = L.wz - m[14];
+        let ex = (dx * m[0] + dz * m[2]) / s2 - t.x;
+        let ez = (dx * m[8] + dz * m[10]) / s2 - t.zf;
+        // A warp, a car exit or walking into a wall: re-plant rather than
+        // stretch the leg after a body that has gone somewhere else.
+        // Past 0.5 -- a warp, a car exit, walking into a wall, stopping dead
+        // from a sprint -- the lock is DRAGGED after the body rather than
+        // re-planted: re-planting snapped the foot up to 62 cm in one frame on
+        // the rig's speed ramp, and a foot sliding the last few centimetres of
+        // a hard stop reads as a scuff, not a glitch. It cannot be much
+        // tighter: duty falls from 0.52 to 0.43 across 2.2-3.4 m/s, which moves
+        // a planted foot's analytic spot ~26 cm from where it really is.
+        const el = Math.hypot(ex, ez), EMAX = 0.5;
+        if (el > EMAX) {
+          ex *= EMAX / el; ez *= EMAX / el;
+          L.wx = m[0] * (t.x + ex) + m[8] * (t.zf + ez) + m[12];
+          L.wz = m[2] * (t.x + ex) + m[10] * (t.zf + ez) + m[14];
+        }
+        const zc = t.z + ez;
+        if (Math.abs(zc) > zLimit) {
+          ez += Math.sign(zc) * zLimit - zc;
+          L.wx = m[0] * (t.x + ex) + m[8] * (t.zf + ez) + m[12];
+          L.wz = m[2] * (t.x + ex) + m[10] * (t.zf + ez) + m[14];
+        }
+        L.ex = ex; L.ez = ez;
+        t.x += ex; t.z += ez;
+      } else {
+        L.on = false;
+        const fade = 1 - smoothT(t.u);
+        t.x += L.ex * fade; t.z += L.ez * fade;
+      }
+    }
+  }
 
   // The hips can only ride as high as the planted leg can reach, so the classic
   // two-bob-per-cycle rise and fall falls out of the geometry instead of being
@@ -718,7 +1235,7 @@ export function animateWalk(h, amp, dt, speed) {
   // constrain the hips -- take the lower of the two, or the trailing leg is
   // asked for a reach it hasn't got and its foot lifts.
   const planted = tl.stance && tr.stance
-    ? (Math.abs(tl.z) > Math.abs(tr.z) ? tl : tr)
+    ? (rawHip(tl) < rawHip(tr) ? tl : tr)
     : (tl.stance ? tl : (tr.stance ? tr : null));
   // Which foot is bearing weight: 0 left, 1 right, -1 airborne. Only the gait
   // regression test reads it -- measuring skate needs the model's own idea of
@@ -727,35 +1244,48 @@ export function animateWalk(h, amp, dt, speed) {
   // Per-foot, because with double support the single index cannot say that
   // both are down. The gait rig reads these to measure duty and skate.
   h.contactL = tl.stance; h.contactR = tr.stance;
-  // What fraction of the body's travel the ANKLE covers during stance. The
-  // contact point still moves at body speed -- the foot rotates through the
-  // difference -- so a skate check that watches the ankle has to expect this.
-  h.ankleTrack = swept > 1e-6 ? ankleExc / swept : 1;
-  const lowHip = J.ankle + riseMax + Math.sqrt(Math.max(0.04, REACH_PLANT * REACH_PLANT - (ankleExc * 0.5) * (ankleExc * 0.5)));
-  // ONE number turns a walk into a run.
+  const lowHip = Math.min(rawHip(toeOff), rawHip(strike));
+  // A WALK AND A RUN BOB IN OPPOSITE PHASE.
   //
   // A straight planted leg puts the hips on a circle: highest at mid-stance,
   // lowest as the legs scissor. Taken literally that is the "compass gait", and
   // it bobs about 16 cm at walking speed against a real 4-5 cm -- people flatten
-  // it with stance-phase knee flexion. `compress` is how much of that circle the
-  // knee absorbs. Below 1 the hips still peak at mid-stance, which is walking:
-  // an inverted pendulum vaulting over a stiff leg. Above 1 the knee absorbs
-  // MORE than the circle rises, so the hips are at their LOWEST at mid-stance --
-  // which is running: a spring compressing under the body. Those two are
-  // opposite in phase, and having one curve for both is why every speed here
-  // used to bob an identical 13-14 cm and a run looked like a hurried walk.
-  const compress = 0.05 + 1.75 * runBlend;
+  // it with stance-phase knee flexion. A walk keeps a little of that circle, so
+  // the hips still peak at mid-stance: an inverted pendulum vaulting over a
+  // stiff leg. A run's knee absorbs MORE than the circle rises, so the hips are
+  // at their LOWEST at mid-stance: a spring compressing under the body. Having
+  // one curve for both is why every speed here once bobbed an identical
+  // 13-14 cm and a run looked like a hurried walk.
+  //
+  // The phase inversion still holds; the AMOUNT is now explicit. A fixed
+  // `compress` factor on the circle was tolerable while the foot model cheated
+  // the stride short, but with a rigid rolling foot the circle between
+  // mid-stance and the scissored pose spans 7-25 cm, and the same factor bobbed
+  // a walk 9 cm and sank a run to 71% of standing height with the legs unable
+  // to reach the ground. A walk takes a fixed 4.5 cm of the circle; a run sinks
+  // a fixed 4.5 cm under the scissored height at mid-stance. Neither may ride
+  // above what the planted leg can reach.
+  const range = Math.max(1e-3, rawHip(stanceAt(0.5)) - lowHip);
+  const walkK = Math.min(1, (0.045 / sc) / range);
+  const sink = (0.035 / sc) * settle;
   let hipY;
-  if (planted) {
-    const raw = planted.y + Math.sqrt(Math.max(0.04, REACH_PLANT * REACH_PLANT - planted.z * planted.z));
-    hipY = lowHip + (raw - lowHip) * (1 - compress);
+  // With per-foot state a WALKING character can briefly have neither foot
+  // classed as down -- one finishing its swing while the cycle already says
+  // stance. A walk has no flight gap to arc over, and falling through to the
+  // airborne branch snapped the hips to lowHip in one frame (a 56 cm ankle pop
+  // on the rig's speed ramp at the stop). Ride the lower foot instead.
+  const pin = planted || (stanceSpan >= Math.PI - 1e-6 ? (tl.y < tr.y ? tl : tr) : null);
+  if (pin) {
+    const raw = rawHip(pin);
+    const e = clamp((raw - lowHip) / range, 0, 1);
+    hipY = Math.min(raw, lowHip + (raw - lowHip) * walkK * (1 - runBlend) - sink * e * runBlend);
   } else {
     // Airborne: nothing pins the hips, so arc over the gap. Both ends of a
     // flight phase are the fully-scissored pose, so this stays continuous.
     const gap = Math.PI - stanceSpan;
     const w = ((phase % Math.PI) + Math.PI) % Math.PI;
     const f = gap > 1e-6 ? clamp((w - stanceSpan) / gap, 0, 1) : 0;
-    hipY = lowHip + (0.02 + 0.055 * runBlend) * Math.sin(Math.PI * f);
+    hipY = lowHip + ((0.02 + 0.03 * runBlend) / sc) * Math.sin(Math.PI * f);
   }
 
   // The pelvis has to be posed BEFORE the legs are solved. It sways, rolls and
@@ -779,22 +1309,33 @@ export function animateWalk(h, amp, dt, speed) {
   const solveLeg = (thigh, knee, foot, t) => {
     // where this hip socket actually ended up, and the target seen from it
     _v.copy(b[thigh].position).applyMatrix4(b[B.hips].matrix);
-    _w.set(0, t.y - _v.y, t.z - _v.z).applyQuaternion(_inv);
-    const dz = _w.z, dy = -_w.y;
-    const D = clamp(Math.hypot(dz, dy), Math.abs(L_THIGH - L_SHIN) + 1e-3, L_THIGH + L_SHIN - 1e-3);
+    // Lateral too, now that a locked foot can sit off its own line (a turn,
+    // the pelvis swaying over it): the sagittal-only solve dragged the foot
+    // sideways with the hips, which is the same skate one axis over.
+    _w.set(t.x - _v.x, t.y - _v.y, t.z - _v.z).applyQuaternion(_inv);
+    const dz = _w.z, dy = -_w.y, dx = _w.x;
+    const D = clamp(Math.hypot(dz, dy, dx), Math.abs(L_THIGH - L_SHIN) + 1e-3, L_THIGH + L_SHIN - 1e-3);
     const aim = Math.atan2(dz, dy); // target angle off straight-down, +z forward
     // knee sits FORWARD of the hip-to-ankle line, so the thigh leads it by `off`
     const off = Math.acos(clamp((L_THIGH * L_THIGH + D * D - L_SHIN * L_SHIN) / (2 * L_THIGH * D), -1, 1));
     const inner = Math.acos(clamp((L_THIGH * L_THIGH + L_SHIN * L_SHIN - D * D) / (2 * L_THIGH * L_SHIN), -1, 1));
     b[thigh].rotation.x = -(aim + off); // negative x rotation swings a limb to +z
+    b[thigh].rotation.z = Math.atan2(dx, Math.hypot(dz, dy)); // +z swings toward +X
     b[knee].rotation.x = Math.PI - inner;
+    b[foot].rotation.z = -b[thigh].rotation.z;              // sole stays level across
     // keep the sole level through stance, toe up a little as it swings through
     // Level the sole, but only as far as an ankle actually goes. Cancelling
     // thigh+knee outright gave a 77-108 deg range against a real 25-30, which
     // is a foot flapping on the end of the leg rather than pushing off one.
     const level = -(b[thigh].rotation.x + b[knee].rotation.x);
-    const wanted = level + (t.stance ? t.roll : 0.16 * Math.sin(Math.PI * ((t.z / (ankleExc || 1)) + 0.5)));
-    b[foot].rotation.x = clamp(wanted, -0.42, 0.38);
+    // The sole pitch comes from the roll model above, so the ankle target was
+    // computed FOR this pitch -- clamping it tight re-opens the gap between
+    // sole and ground. The limits are a real ankle's, about 45 deg of plantar
+    // flexion and 35 of dorsiflexion, and the rig reports how often they bind.
+    // -0.80 / +1.00, not -0.62 / +0.80: a runner's shin tips well forward over
+    // a flexed knee at mid-stance, and at the tighter limits the ankle bound on
+    // 46% of running frames, lifting the sole 3 cm off the pavement.
+    b[foot].rotation.x = clamp(level + t.pitch, -0.80, 1.00);
   };
   solveLeg(B.thighL, B.kneeL, B.footL, tl);
   solveLeg(B.thighR, B.kneeR, B.footR, tr);
@@ -804,8 +1345,14 @@ export function animateWalk(h, amp, dt, speed) {
   // to move with the gait -- carrying one elbow angle across the whole range is
   // what made a sprint read as a hurried walk with the arms along for the ride.
   const armA = (0.11 * settle + A * 0.66) * h.swing;
-  b[B.shoulderL].rotation.x = armA * 0.95 * s;
-  b[B.shoulderR].rotation.x = -armA * 0.95 * s;
+  // A runner drives the arm BACK and lets it come forward only to about the
+  // ribs; swinging it forward as far as back put the hand out in front of the
+  // chest on every stride. +x swings backward, so the forward half is the
+  // negative one and is cut back as the pace rises.
+  const fwd = 1 - 0.5 * runBlend;
+  const shL = armA * 0.95 * s, shR = -armA * 0.95 * s;
+  b[B.shoulderL].rotation.x = shL < 0 ? shL * fwd : shL;
+  b[B.shoulderR].rotation.x = shR < 0 ? shR * fwd : shR;
   // Abduction keeps the hands clear of the thighs. Positive Z swings a limb
   // toward +X, so the LEFT arm (at -X) needs a negative angle to move outward.
   // Abduction keeps the hands off the thighs at a stroll, but it has to come
@@ -825,20 +1372,32 @@ export function animateWalk(h, amp, dt, speed) {
   // touch as the pace rises.
   b[B.handL].rotation.y = 0.45 * runBlend;
   b[B.handR].rotation.y = -0.45 * runBlend;
-  b[B.handL].rotation.x = -0.28 * runBlend;
-  b[B.handR].rotation.x = -0.28 * runBlend;
+  // +x, not -x: on a forearm carried forward, -x tipped the fingers UP and
+  // out, the flat "karate chop" hand in the run strips. +x lets them hang.
+  b[B.handL].rotation.x = 0.22 * runBlend;
+  b[B.handR].rotation.x = 0.22 * runBlend;
   const elbowCarry = 0.25 + 0.80 * runBlend;
   // The elbow folds as the arm swings FORWARD and opens as it drives back --
   // watch anyone run. +x on a limb bone swings it backward, so the left arm is
   // forward while s < 0; this flexed on s > 0, pumping the elbow on the
   // backswing, which is what read as T-rex arms carried stiff in front.
-  b[B.elbowL].rotation.x = -elbowCarry - Math.max(0, -armA * 1.1 * s);
-  b[B.elbowR].rotation.x = -elbowCarry - Math.max(0, armA * 1.1 * s);
+  // 0.55, not 1.1: at a run the extra fold took the leading elbow past 100 deg
+  // and lifted the forearm above level with the hand out in front, the
+  // "karate chop" in every run strip.
+  // Paired with the shortened forward shoulder swing above: the hand comes UP
+  // to the chest rather than OUT in front of it. 0.8 with the full forward
+  // swing lifted the hand toward the face; 0.55 with it left the forearm level
+  // and reaching.
+  b[B.elbowL].rotation.x = -elbowCarry - Math.max(0, -armA * 0.8 * s);
+  b[B.elbowR].rotation.x = -elbowCarry - Math.max(0, armA * 0.8 * s);
 
   // Trunk lean. Kept on the spine and chest rather than the pelvis: the legs
   // are solved against the pelvis, and pitching it would move the hip sockets
   // out from under a solve that has already been given its ground targets.
-  const lean = h.lean + 0.02 + 0.19 * runBlend;
+  // 0.24 at a run, not 0.19: with the stance window balanced behind the hips
+  // the legs work further back, and an upright trunk over them read as leaning
+  // away from the direction of travel.
+  const lean = h.lean + 0.02 + 0.24 * runBlend;
   // Pelvis was posed above, before the legs were solved against it.
   b[B.spine].rotation.y = s * A * 0.16;
   b[B.spine].rotation.x = lean * 0.45;
@@ -861,29 +1420,44 @@ export function animateWalk(h, amp, dt, speed) {
   // hip, one elbow more bent than the other. Perfect symmetry is the shop
   // dummy, and it was scored as one. h.phase seeds the handedness so each
   // pedestrian settles differently but the same one is consistent.
-  if (A < 0.05) {
+  //
+  // BLENDED in, not switched. This used to be `if (A < 0.05)`, which swapped the
+  // whole body into the idle pose in one frame as a character slowed through
+  // ~0.3 m/s: the gait rig's speed ramp measured a planted sole jumping 14 cm in
+  // a single frame on every stop. The weight eases over the last half metre a
+  // second instead, and the handedness is fixed per character -- deriving it
+  // from h.phase flipped it whenever the cycle crept past an integer.
+  const idleW = 1 - smoothT(clamp((spd - 0.04) / 0.5, 0, 1));
+  if (h.handed == null) h.handed = (h.phase % 2) > 1 ? 1 : -1;
+  b[B.head].rotation.z = h.handed * 0.02 * idleW;
+  if (idleW > 0) {
     const br = Math.sin(h.t * 1.5);
-    const handed = (h.phase % 2) > 1 ? 1 : -1;
-    b[B.chest].rotation.x = h.lean + br * 0.02;
-    b[B.hips].position.x = handed * 0.016 + Math.sin(h.t * 0.5) * 0.010;
-    b[B.hips].rotation.z = handed * 0.035 + Math.sin(h.t * 0.5) * 0.02;
-    b[B.hips].rotation.y = handed * 0.08;
+    const handed = h.handed;
+    const mix = (bone, axis, v) => { bone.rotation[axis] += (v - bone.rotation[axis]) * idleW; };
+    mix(b[B.chest], 'x', h.lean + br * 0.02);
+    b[B.hips].position.x += (handed * 0.016 + Math.sin(h.t * 0.5) * 0.010 - b[B.hips].position.x) * idleW;
+    mix(b[B.hips], 'z', handed * 0.035 + Math.sin(h.t * 0.5) * 0.02);
+    mix(b[B.hips], 'y', handed * 0.08);
     // one foot slightly ahead of the other, knees soft rather than locked
-    b[B.thighL].rotation.x = handed * 0.055 - 0.02;
-    b[B.thighR].rotation.x = -handed * 0.055 - 0.02;
-    b[B.kneeL].rotation.x = 0.06 - handed * 0.02;
-    b[B.kneeR].rotation.x = 0.06 + handed * 0.02;
-    b[B.footL].rotation.x = -(b[B.thighL].rotation.x + b[B.kneeL].rotation.x);
-    b[B.footR].rotation.x = -(b[B.thighR].rotation.x + b[B.kneeR].rotation.x);
-    b[B.shoulderL].rotation.x = br * 0.03 + handed * 0.07;
-    b[B.shoulderR].rotation.x = -br * 0.03 - handed * 0.07;
-    b[B.shoulderL].rotation.y = handed * 0.05;
-    b[B.shoulderR].rotation.y = handed * 0.05;
-    b[B.shoulderL].rotation.z = -0.12;
-    b[B.shoulderR].rotation.z = 0.16;
-    b[B.elbowL].rotation.x = -0.44 + br * 0.02;
-    b[B.elbowR].rotation.x = -0.22 - br * 0.02;
-    b[B.head].rotation.z = handed * 0.02;
+    // The legs come in LATER than the upper body (idleW squared). Any leg pose
+    // blended in while a foot is still locked to the ground drags that foot
+    // across it; blended on idleW the rig measured a 9.3 cm slip on every stop.
+    const legW = idleW * idleW;
+    const mixL = (bone, axis, v) => { bone.rotation[axis] += (v - bone.rotation[axis]) * legW; };
+    mixL(b[B.thighL], 'x', handed * 0.055 - 0.02);
+    mixL(b[B.thighR], 'x', -handed * 0.055 - 0.02);
+    mixL(b[B.kneeL], 'x', 0.06 - handed * 0.02);
+    mixL(b[B.kneeR], 'x', 0.06 + handed * 0.02);
+    mixL(b[B.footL], 'x', -(b[B.thighL].rotation.x + b[B.kneeL].rotation.x));
+    mixL(b[B.footR], 'x', -(b[B.thighR].rotation.x + b[B.kneeR].rotation.x));
+    mix(b[B.shoulderL], 'x', br * 0.03 + handed * 0.07);
+    mix(b[B.shoulderR], 'x', -br * 0.03 - handed * 0.07);
+    mix(b[B.shoulderL], 'y', handed * 0.05);
+    mix(b[B.shoulderR], 'y', handed * 0.05);
+    mix(b[B.shoulderL], 'z', -0.12);
+    mix(b[B.shoulderR], 'z', 0.16);
+    mix(b[B.elbowL], 'x', -0.44 + br * 0.02);
+    mix(b[B.elbowR], 'x', -0.22 - br * 0.02);
   }
   h.bob = 0;
 }
@@ -928,9 +1502,7 @@ export class PedSystem {
       if (d < (cop ? 20 : 15) || d > PED_RADIUS) continue;
       if (!G.isBuildable(x, z)) continue;
       const seed = (this.R.n() * 1e6) | 0;
-      const h = cop
-        ? makeHumanoid({ seed, shirt: [0.12, 0.16, 0.3], pants: [0.1, 0.12, 0.2], hat: [0.08, 0.1, 0.18], vest: [0.16, 0.2, 0.36] })
-        : makeHumanoid({ seed });
+      const h = makeHumanoid({ seed, cop: !!cop });
       const p = {
         h, x, z, y: city.groundAt(x, z, null), lift: 0, heading: this.R.n() * Math.PI * 2,
         edge: ei, side, t, dirSign: this.R.n() < 0.5 ? 1 : -1,
@@ -1051,10 +1623,13 @@ export class PedSystem {
       p.lift = city.roadLift(p.x, p.z);
       p.y = city.groundAt(p.x, p.z, p.y + 1, p.lift);
 
-      animateWalk(p.h, clamp(p.speed * 0.20, 0, 0.8), dt, p.speed);
+      // Place the body BEFORE animating it: animateWalk locks planted feet to
+      // world positions, and solving against last frame's root puts every
+      // planted foot a frame (~2 cm at a stroll) behind.
       p.h.group.position.set(p.x, p.y, p.z);
       p.h.group.rotation.y = p.heading;
       p.h.group.rotation.z = 0;
+      animateWalk(p.h, clamp(p.speed * 0.20, 0, 0.8), dt, p.speed);
 
       // knocked over by traffic
       for (const v of traffic.cars) {

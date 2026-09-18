@@ -84,13 +84,27 @@ async function main() {
     }
     console.log('booted\n');
 
-    const rows = await evaluate(`(() => {
+    const { rows, ramp } = await evaluate(`(() => {
       const d = window.__dbg, peds = d.peds, THREE = d.THREE;
       const h = d.player.h;                       // the player's own humanoid
       // Measure the LAW, not one individual: per-person gait/swing variation
       // is legitimate but would push a single character out of a population band.
       h.gait = 1; h.swing = 1; h.lean = 0;
       const DT = 1 / 60, CYCLES = 14;
+      // Heel and toe of the sole in world space, from the foot bone. The sole
+      // box in buildCharacter bottoms out 6.75 cm under the ankle and runs from
+      // 5.6 cm behind it to 15.6 cm ahead.
+      const soleOf = (fb) => ({
+        heel: new THREE.Vector3(0, -0.0675, -0.056).applyMatrix4(fb.matrixWorld),
+        toe: new THREE.Vector3(0, -0.0675, 0.156).applyMatrix4(fb.matrixWorld),
+      });
+      // The root MOVES. animateWalk locks planted feet to world positions, so a
+      // rig that holds the body still and expects the feet to slide backwards
+      // at body speed measures a treadmill the game no longer runs.
+      const stepRoot = (sp) => {
+        const g = h.group, ry = g.rotation.y;
+        g.position.x += Math.sin(ry) * sp * DT; g.position.z += Math.cos(ry) * sp * DT;
+      };
       const out = [];
       const specs = ${JSON.stringify(REF)};
       for (const spec of specs) {
@@ -98,7 +112,7 @@ async function main() {
         h.phase = 0;
         // Warm up a cycle so the measurement doesn't include the start pose.
         const amp = Math.max(0, Math.min(0.85, sp * 0.16));
-        for (let i = 0; i < 240; i++) d.animateWalk(h, amp, DT, sp);
+        for (let i = 0; i < 240; i++) { stepRoot(sp); d.animateWalk(h, amp, DT, sp); }
         const B = h.bones, b = h.bones;
         let t = 0, frames = 0;
         const bodyPerFrame = sp * DT;
@@ -112,6 +126,7 @@ async function main() {
         const startPhase = h.phase;
         // Run until the phase has advanced CYCLES * PI (one step per PI).
         while (h.phase - startPhase < Math.PI * CYCLES && frames < 20000) {
+          stepRoot(sp);
           d.animateWalk(h, amp, DT, sp);
           h.group.updateMatrixWorld(true);
           frames++; t += DT;
@@ -135,19 +150,51 @@ async function main() {
           if (h.contact !== prevContact) { prevFootWorld = null; prevContact = h.contact; }
           if (h.contact >= 0) {
             const fb = h.contact === 0 ? h.bones[14] : h.bones[17];
-            const wp = new THREE.Vector3(); fb.getWorldPosition(wp);
-            if (prevFootWorld) {
-              // The ankle covers ankleTrack of the body's travel; the foot rotates
-              // through the rest, so the SOLE is still planted. Expect that, not 1.
-              // The root does not translate in this rig, so a CORRECTLY planted
-              // foot must travel backwards at exactly the body speed. Skate is
-              // the departure from that, not the raw movement -- measuring the
-              // raw movement reports a perfect gait as 100%.
+            // Watch the PIVOT -- heel before the foot rolls flat, toe after the
+            // heel lifts -- not the ankle, which legitimately moves as the foot
+            // rotates about it. Only a point compared with itself counts.
+            const so = soleOf(fb), which = so.heel.y < so.toe.y ? 'heel' : 'toe', wp = so[which];
+            if (prevFootWorld && prevFootWorld.which === which) {
+              // The root translates in this rig, so a correctly planted pivot
+              // does not move in world space at all: any movement is skate.
               const moved = Math.hypot(wp.x - prevFootWorld.x, wp.z - prevFootWorld.z);
-              skate += Math.abs(moved - bodyPerFrame * (h.ankleTrack || 1)); skateN++;
+              skate += moved; skateN++;
             }
-            prevFootWorld = wp.clone();
+            prevFootWorld = Object.assign(wp.clone(), { which });
           } else prevFootWorld = null;
+        }
+        // SOLE contact, which the ankle-based skate figure cannot see. A foot
+        // whose ankle is on target but whose pitch has hit its clamp stands on
+        // its toe or its heel, and that is visible even when every band passes.
+        // Re-run one cycle and read the heel and toe of the sole in world space.
+        const g0 = h.group.position.y;
+        let soleErr = 0, soleN = 0, soleMax = 0, clearMin = 1e9, clamped = 0, pitchN = 0;
+        // Per-foot swing buffers; null until the foot has been seen down, so a
+        // swing the loop started in the middle of is not judged.
+        const swingBuf = [null, null];
+        const ph0 = h.phase;
+        while (h.phase - ph0 < Math.PI * 4) {
+          stepRoot(sp);
+          d.animateWalk(h, amp, DT, sp);
+          h.group.updateMatrixWorld(true);
+          for (const [k, fb, down] of [[0, b[14], h.contactL], [1, b[17], h.contactR]]) {
+            const s = soleOf(fb);
+            const lo = Math.min(s.heel.y, s.toe.y) - g0;
+            if (down) {
+              soleErr += Math.abs(lo); soleN++; soleMax = Math.max(soleMax, Math.abs(lo));
+              // MID-swing clearance only: both ends of a swing meet the ground
+              // by design, so a minimum over the whole swing always reads ~0
+              // and could not see a foot dragging through the middle.
+              const sb = swingBuf[k];
+              if (sb && sb.length > 4) {
+                for (let i = Math.floor(sb.length * 0.3); i < Math.ceil(sb.length * 0.7); i++) clearMin = Math.min(clearMin, sb[i]);
+              }
+              swingBuf[k] = [];
+            } else if (swingBuf[k]) swingBuf[k].push(lo);
+            pitchN++;
+            // the ankle limits in animateWalk's solveLeg
+            if (Math.abs(fb.rotation.x - 1.00) < 1e-4 || Math.abs(fb.rotation.x + 0.80) < 1e-4) clamped++;
+          }
         }
         const cadence = (steps / t) * 60;
         const stepLen = sp / (steps / t || 1);
@@ -173,9 +220,90 @@ async function main() {
           armRangeDeg: +((armMax - armMin) * 57.2958).toFixed(0),
           skateMmPerFrame: +((skate / Math.max(1, skateN)) * 1000).toFixed(1),
           skatePctOfBody: +((skate / Math.max(1, skateN)) / bodyPerFrame * 100).toFixed(1),
+          soleMeanCm: +((soleErr / Math.max(1, soleN)) * 100).toFixed(1),
+          soleMaxCm: +(soleMax * 100).toFixed(1),
+          clearCm: +(clearMin * 100).toFixed(1),
+          clampPct: +((clamped / Math.max(1, pitchN)) * 100).toFixed(0),
         });
       }
-      return out;
+      // SPEED CHANGES. Every figure above is taken at a constant speed, and a
+      // player is almost never at one: the stick eases in, sprint toggles, a
+      // wall stops you. Duty factor and step length both move with speed, so a
+      // foot target at the same phase can land somewhere else the next frame.
+      // Drive the root forward for real through the game's own ramps and
+      // report the worst frame-to-frame jump of a PLANTED sole (should be ~0,
+      // it is holding the ground) and of any foot at all (a pop).
+      {
+        h.phase = 0;
+        // Start from rest for real. The smoothed gait speed, the foot locks
+        // and the per-foot state all carry history, and without this the ramp
+        // "started" at 0 m/s with the gait still running at 2 m/s from the
+        // sprint row -- a speed cut no player can produce.
+        h.gspd = null; h.locks = null; h.gst = null;
+        const b = h.bones;
+        const g = h.group, z0 = g.position.z, x0 = g.position.x, ry = g.rotation.y;
+        g.rotation.y = 0;
+        const plan = [[0, 0.5], [1.4, 1.5], [5.0, 1.5], [7.2, 1.5], [5.0, 1.0], [1.4, 1.0], [0, 1.0]];
+        let v = 0, pz = z0;
+        let plantJump = 0, anyJump = 0, plantAt = '', anyAt = '';
+        let hist = [], detail = null, lastMax = 0;
+        const prev = [null, null], prevDown = [false, false];
+        for (const [tgt, dur] of plan) {
+          for (let i = 0; i < dur / DT; i++) {
+            // player.updateFoot's damp(speed, target, 9, dt)
+            v += (tgt - v) * (1 - Math.exp(-9 * DT));
+            pz += v * DT;
+            g.position.z = pz;
+            d.animateWalk(h, Math.max(0, Math.min(0.85, v * 0.16)), DT, v);
+            g.updateMatrixWorld(true);
+            [b[14], b[17]].forEach((fb, k) => {
+              const down = k === 0 ? h.contactL : h.contactR;
+              const s = soleOf(fb);
+              // The lower of heel and toe swaps as the foot rolls past level;
+              // comparing a heel to last frame's toe reads as a 21 cm jump that
+              // is not there, so only compare a point with itself.
+              const which = s.heel.y < s.toe.y ? 'heel' : 'toe';
+              const p = s[which];
+              const ank = new THREE.Vector3(); fb.getWorldPosition(ank);
+              if (prev[k]) {
+                // A POP is a change of velocity, not a speed: a sprinting swing
+                // foot legitimately covers ~20 cm a frame. The second difference
+                // is what a snap at touchdown or a phase jump shows up in.
+                if (prev[k].pank) {
+                  const j = Math.hypot(ank.x - 2 * prev[k].ank.x + prev[k].pank.x,
+                    ank.y - 2 * prev[k].ank.y + prev[k].pank.y, ank.z - 2 * prev[k].ank.z + prev[k].pank.z);
+                  if (j > anyJump) { anyJump = j; anyAt = tgt + ' m/s @' + v.toFixed(2); }
+                }
+                if (down && prevDown[k] && v > 0.3 && which === prev[k].which) {
+                  const pj = Math.hypot(p.x - prev[k].p.x, p.z - prev[k].p.z);
+                  if (pj > plantJump) { plantJump = pj; plantAt = tgt + ' m/s @' + v.toFixed(2); }
+                }
+              }
+              prev[k] = { p: p.clone(), ank: ank.clone(), pank: prev[k] ? prev[k].ank : null, which };
+              prevDown[k] = down;
+              // Frame context, so a pop can be read instead of guessed at:
+              // two guesses at the stop pop were wrong before this existed.
+              if (k === 1) {
+                const snap = {
+                  v: +v.toFixed(3), gspd: h.gspd != null ? +h.gspd.toFixed(3) : null,
+                  phase: +h.phase.toFixed(3), cL: h.contactL, cR: h.contactR,
+                  gst: h.gst ? h.gst.map((q) => q && { st: q.st, u: +q.u.toFixed(3) }) : null,
+                  locks: h.locks ? h.locks.map((q) => ({ on: q.on, ex: +q.ex.toFixed(3), ez: +q.ez.toFixed(3) })) : null,
+                  hipY: +b[1].position.y.toFixed(3),
+                  ankL: prev[0] ? [+(prev[0].ank.y - g.position.y).toFixed(3), +(prev[0].ank.z - g.position.z).toFixed(3)] : null,
+                  ankR: [+(ank.y - g.position.y).toFixed(3), +(ank.z - g.position.z).toFixed(3)],
+                };
+                hist.push(snap); if (hist.length > 4) hist.shift();
+                if (anyJump > lastMax) { lastMax = anyJump; detail = hist.slice(); }
+              }
+            });
+          }
+        }
+        g.position.z = z0; g.position.x = x0; g.rotation.y = ry;
+        out.ramp = { plantJumpCm: +(plantJump * 100).toFixed(1), plantAt,
+          anyJumpCm: +(anyJump * 100).toFixed(1), anyAt, detail };
+      }
+      return { rows: out, ramp: out.ramp };
     })()`);
 
     const w = (s, n) => String(s).padStart(n);
@@ -196,6 +324,21 @@ async function main() {
     for (const r of rows) {
       console.log(`  ${r.label.padEnd(8)} hip ${w(r.hipRangeDeg, 3)}   ankle ${w(r.ankleRangeDeg, 3)}`
         + `   arm ${w(r.armRangeDeg, 3)}   skate ${w(r.skateMmPerFrame, 5)} mm/frame`);
+    }
+    // Sole: mean / worst gap between the planted sole's lowest point and the
+    // ground, lowest swing clearance (negative = the toe goes through the
+    // floor), and how often the ankle pitch sits on its limit.
+    console.log('\n  sole contact:');
+    for (const r of rows) {
+      console.log(`  ${r.label.padEnd(8)} stance gap mean ${w(r.soleMeanCm, 4)} cm  worst ${w(r.soleMaxCm, 4)} cm`
+        + `   mid-swing clearance ${w(r.clearCm, 5)} cm   ankle on limit ${w(r.clampPct, 3)}%`);
+    }
+    console.log(`\n  speed ramp 0 -> 1.4 -> 5 -> 7.2 -> 5 -> 1.4 -> 0:`
+      + `  planted sole slip worst ${ramp.plantJumpCm} cm/frame (${ramp.plantAt})`
+      + `   any ankle jump worst ${ramp.anyJumpCm} cm/frame (${ramp.anyAt})`);
+    if (process.argv.includes('--trace') && ramp.detail) {
+      console.log('  frames up to the worst jump:');
+      for (const f of ramp.detail) console.log('   ', JSON.stringify(f));
     }
     console.log('\n  reference bands are typical adult values from gait-analysis literature');
 
