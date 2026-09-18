@@ -9,6 +9,7 @@ import { RingRoom } from "./ringroom";
 import { ChatRoom } from "./chatroom";
 import { chatApp, CHAT_WS_TICKET_PREFIX, memberOf } from "./chat";
 import { ringApp } from "./ring";
+import { llmApp } from "./llm";
 import { authorized } from "./session";
 import { hardApp, WS_TICKET_PREFIX } from "./hard";
 import { scheduled } from "./hardcron";
@@ -34,6 +35,7 @@ type Bindings = HardEnv & {
   RING_WS_TOKEN: string;
   CHAT_SENDERS: string;
   CHAT_CLAUDE_TOKEN: string;
+  OPENROUTER_API_KEY: string;
 };
 
 type Variables = {
@@ -877,6 +879,7 @@ app.delete("/photos/:id", async (c) => {
 app.route("/hard", hardApp);
 app.route("/ring", ringApp);
 app.route("/chat", chatApp);
+app.route("/llm", llmApp);
 
 export default {
   fetch: app.fetch,
