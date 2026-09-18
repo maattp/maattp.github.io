@@ -11,7 +11,7 @@ import { spawn } from 'node:child_process';
 import { writeFileSync, mkdirSync } from 'node:fs';
 import { setTimeout as sleep } from 'node:timers/promises';
 
-const PORT = 9228;
+const PORT = +process.env.AUTO_CDP_PORT || 9228;
 // The page port is overridable so a second checkout -- a worktree at master,
 // say -- can be captured with THIS harness for an honest before/after. Framing
 // has to come from the same code or the two sets are not comparable.
@@ -113,7 +113,7 @@ function launch() {
     `--remote-debugging-port=${PORT}`, '--headless=new', '--use-gl=swiftshader',
     '--enable-unsafe-swiftshader', '--autoplay-policy=no-user-gesture-required',
     '--window-size=1280,720', '--no-first-run',
-    '--user-data-dir=/tmp/auto-beauty-profile', 'about:blank',
+    `--user-data-dir=/tmp/auto-beauty-profile-${PORT}`, 'about:blank',
   ], { stdio: 'ignore' });
 }
 
