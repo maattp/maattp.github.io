@@ -1859,7 +1859,124 @@ The lesson is not about water. **When a law is added, grep for every caller of
 the thing it replaces** -- this one sat one function away from the code that
 documented it, for as long as the game has had lakes.
 
-<!-- TUNNEL-NOTES: SR-99 section pending -->
+## SR-99: ride it the way a player does
+
+**Test tunnels with the player's car, entering from the street.**
+`tools/tunneldrive.mjs` starts a traffic car at the mouth and steers it by writing
+`v.heading`, so it can see nothing about getting IN.
+
+`tools/tunnelride.mjs` works differently. It takes the player's own car ~300 m up
+the SURFACE approach and drives it through `player.update` with the input a stick
+produces (`input.x`, `input.gasAmt`). Every collision and ground guard a player
+meets is therefore one it meets too.
+
+- **Rides:** `sb` (in at Aurora), `nb` (in at SODO), `sb-wrong` and `nb-wrong`, plus
+  `sbx` and `sbx-rev`, the SR-99 surface south of the southbound exit, which are
+  judged for drops.
+- **Stepping:** the default is fixed-dt stepping (1/60 in 120-frame batches), which
+  runs a 3.6 km ride in about 3 minutes instead of an hour. `--real` drives the
+  page's own loop instead; the two agree.
+- **Options:**
+  - `--hop` keeps going 40 m past a failure, so one run lists them all.
+  - `--scan` classifies the camera's upper view every 50 m.
+  - `--stations` / `--shotdone` take the shots, with the HUD hidden.
+- **Hit logging:** each sudden speed loss logs what it hit.
+
+On master a player could not get through either tube: the southbound stopped 78 m
+in and the northbound surfaced through the roof 98 m in. Six causes, found in this
+order, because each one hid the next:
+
+1. **Street trees and lamp posts were solid inside the bore.** The obstacle store
+   is 2D. Posts on the streets 20-40 m overhead are skipped when the ground at
+   their base is 2.5 m or more above the car, the same rule buildings already
+   used.
+2. **Anything under the tunnel roof is inside.** groundAt's in-bore test used the
+   midpoint between deck and ground. A car slightly airborne off a grade change
+   landed above it and climbed out through the roof, a little each frame.
+3. **The twin tubes overlap and walled each other's lanes.** OSM draws the
+   double-deck bore as two 14 m roads with centrelines 7.5-11 m apart, which
+   overlap for ~2.8 km. `world.inOtherBore()` drops any 3 m wall piece, collision
+   and drawn alike, that stands inside another tunnel's carriageway with a deck
+   within 1.6 m.
+4. **Dive relative to the chord between the END portals, not the nearest one.**
+   SR-99's portals sit at 21 m and 0.1 m, so where "nearest" switched, the deck
+   jumped +9 -> -11.9 inside 50 m: a 21 m cliff mid-bore.
+5. **A second portal must be 150 m+ from the first.** The northbound tube has a
+   main-line and a ramp portal ~30 m apart at each end, so its "two portals"
+   were one mouth twice.
+6. **Twin decks are blended where they overlap**: to their average, fully within
+   3 m and fading to nothing at 5 m. With staggered portals they disagreed by
+   1.3-2.4 m and the other tube's deck captured the car.
+
+### Cut-and-cover lids: a heightfield cannot hold a road over a trench
+
+**The portal carve digs everything within hw + 7.6 m of a corridor.** That dug
+423 surface carriageways that are not a cutting's own approach more than 1 m.
+The SR-99 surface south of the SB exit dropped 11-12 m into the NB entry cutting.
+
+A lid is drawn geometry with its own height query, like a deck
+(`world.buildLids`, `city.lidAt`, checked at the top of groundAt):
+
+- **Beside a cutting:** a near-parallel road splits at the dividing line, with a
+  retaining wall, parapet and barrier on it. Where the trench has 4.6 m of
+  headroom, the road runs over it on a bridge slab instead.
+- **Crossing a cutting:** the road bridges the trench where there is headroom;
+  otherwise it keeps its dip.
+- **Slabs come in networks.** A slab that meets an unslabbed dug road at a node is
+  withdrawn (iterated), or the other road runs into its side.
+- **No slab may stop inside its own lane** over a step of 2 m or more.
+- **Slab ends get no barrier,** so a car runs off into the dip rather than into
+  a wall across the road.
+- **Judge a side's drop by the dig outside it** (raw - carved), not by the
+  hillside's natural fall. Otherwise cross-sloping streets wall themselves in.
+
+Every rule exists because the version before it measured worse than master.
+Rule sets hit barriers 184, 26, 24, 7, then 5 times.
+
+In the citywide sweep, driving both directions along every dug foreign road (494
+runs):
+
+| | master | now |
+|---|---|---|
+| drops | 393 | **152** |
+| barrier hits | 7 | **5** |
+
+It also fixed verify's three stranded viaduct approaches: the 80th Ave SE ramp on
+Mercer Island, and an I-405 ramp chain 9-11 m down in lid cuttings. verify starts
+each approach from the road (groundAt at raw grade), not terrainHeight, which
+under a lid is the trench floor.
+
+### One deck, a lit roof, and no water underground
+
+- **Draw each shared patch once.** Where the twins share a hole, deck and ceiling
+  cells are clipped (Sutherland-Hodgman) against the lower-numbered tube's
+  rectangle. Edge ends are sheared onto the bisector with the most collinear
+  neighbour; square ends overlapped in a wedge inside every bend and gapped
+  outside it.
+  - Measured with downward rays every 20 m: rays hitting two decks < 10 cm apart
+    went **5.7 % -> 1.3 %**.
+  - Two cruder ownership rules measured WORSE than master (17 %, 13.6 %), because
+    skipping whole cells leaves slivers.
+- **The pale wedge in the ceiling was the lamp strip.** A 1 m glow strip ran the
+  whole bore, 0.8 m over the clamped chase camera. It is now 1.4 x 0.35 m
+  fixtures every 6 m. Near-white share of the upper view went 4.1 % -> 0.0 %.
+- **Water does not draw for a camera with 1.5 m+ of ground over it** (each water
+  mesh's `onBeforeRender`). Once the deck ran smoothly through sea level, the sea
+  plane cut the tube in half. No depth-mask height fixed it: every height from
+  0.02 m to 1.2 m failed for a camera 0.5-1 m above the sea. The mask stays at
+  0.02 m for views from the street into sub-sea cuttings, and skips quads over
+  real water.
+
+| ride from the street (`tools/tunnelride.mjs`) | master | now |
+|---|---|---|
+| SB, in at Aurora | stops 78 m in, 25 failures (cap) | **0**, 3,634 / 3,659 m |
+| NB, in at SODO | surfaces 98 m in, 25 failures | **0**, 3,904 / 3,928 m |
+| NB wrong way | 25 | **0** |
+| SB wrong way | 25 | 1 (captured by the twin's deck, still 8.5 m under) |
+| SR-99 surface past the SB exit | drops at z 1912 | **0 drops, 0 hits**, both ways |
+
+**Order matters.** Each fix exposed the next one. A failed intermediate is not a
+failed idea: measure what it exposed first.
 
 ## Known gaps
 
@@ -1874,17 +1991,21 @@ documented it, for as long as the game has had lakes.
 - **`survey.mjs` poses its eye-level camera from the node-height chord + 1.9 m**,
   which on a graded deck is not where the road is, so eye-level deck shots
   float. Kept so before and after share framing.
-- **Tunnels are no longer drawn at all.** 102 OSM ways in the box are tunnels
-  (SR-99, the Battery St and Mount Baker ridge bores). They used to be drawn at
-  ground level as ordinary carriageway, which collided with a deliberate
-  decision in `roadFit()`: it does *not* clear buildings off a tunnel, because
-  "a building above a tunnel is where buildings normally are". The two together
-  painted a freeway through the houses on top of it -- **46 of the 63 buildings
-  standing in a carriageway were over a bore**, which is what the obstacles on
-  I-90 at Mercer Island and on SR-99 were. `meshRoad` and `roadLift` both skip
-  tunnel edges now; routing is unaffected, because routing is the graph. What is
-  still missing is any rendered bore, so a tunnel is a gap in the road you drive
-  over rather than through.
+- **SR-99's twin tubes sit side by side, not stacked.** The real bore is double
+  deck, and OSM draws it as two overlapping roads. The walls, decks and lids
+  above work around that, but three symptoms remain:
+  - At the south crossing, the SB tube climbs to its exit through the NB
+    interior. On a rendered 60 ms frame the NB car rides the SB deck up to
+    2.9 m for 21 m. Stepped rides stay on their own deck.
+  - The NB tube runs through the SB exit's open cutting at bore +200..+300, so
+    real daylight shows there.
+  - portalcheck reports 4 "sliced bore" samples, which is informational.
+
+  The fix is corridor geometry (stacking the twins), not the ground guard.
+- **Lids are geometry, not terrain.** Lid tops carry no lane markings (the draped
+  markings sit under them), trees and posts beside a lidded road still stand in
+  the dug pit, and a car can drive under a bridge slab from its own trench into
+  the overcut beside it.
 - **Traffic ignores `oneway`.** The flag is imported and sits on every edge
   (`F_ONEWAY`, `F_ONEWAY_REV`), and nothing reads it yet.
 - **Buildings are oriented boxes**, not polygons — see "How accurate it actually
