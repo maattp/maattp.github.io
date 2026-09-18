@@ -506,7 +506,9 @@ const CHECKS = `(() => {
   // car was captured by, or dropped off, a different surface.
   if (want('fwy-bump')) {
     const worst = [];
-    let n = 0, of = 0, jolts = 0, sumAbs = 0;
+    // n8 counts the steps over 8 %, the ones felt as a jolt at freeway speed
+    // rather than as a slightly rough road.
+    let n = 0, of = 0, jolts = 0, sumAbs = 0, n8 = 0;
     for (const e of city.edges) {
       if (e.cls !== 'hwy' || e.tunnel || e.len < 9) continue;
       const a = city.nodes[e.a], b = city.nodes[e.b];
@@ -532,6 +534,7 @@ const CHECKS = `(() => {
               const dg = Math.abs(g - g0);
               sumAbs += dg;
               if (dg > 0.05) n++;
+              if (dg > 0.08) n8++;
             }
             g0 = g;
           }
@@ -540,7 +543,8 @@ const CHECKS = `(() => {
       }
     }
     add('fwy-bump', n, of, worst, 'freeway 3 m steps whose grade changes by more than 5 % (mean |dgrade| '
-      + (100 * sumAbs / Math.max(1, of)).toFixed(2) + ' %; ' + jolts + ' steps jumped over 0.5 m)');
+      + (100 * sumAbs / Math.max(1, of)).toFixed(2) + ' %; ' + n8 + ' over 8 %; '
+      + jolts + ' steps jumped over 0.5 m)');
   }
 
   // Freeway sites: one per cluster of freeway nodes, deterministic. Shared by

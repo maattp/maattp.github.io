@@ -477,6 +477,74 @@ function industrialSurface() {
   return { albedo: a.c, height: hgt.c, rough: rgh.c, emissive: null, nrm: 2.0 };
 }
 
+/**
+ * Cast-in-place concrete for retaining walls, parapets and fascia: one tile is
+ * one ~5 m panel, bottom (v = 0) to top (v = 1) of the wall.
+ *
+ * The first walls were a flat vertex colour and read as the brightest,
+ * most uniform thing in frame -- pale slabs with barely visible joints. What
+ * makes concrete read as concrete at street distance is tonal structure, not
+ * value: a dark joint at each panel edge, form-tie holes on a grid, a lift line,
+ * streaks of water staining running down from the coping, and a grimy base.
+ */
+function concreteSurface() {
+  const S = 512;
+  const a = canvas(S, S), hgt = canvas(S, S), rgh = canvas(S, S);
+  a.g.fillStyle = '#8b8c89'; a.g.fillRect(0, 0, S, S);
+  hgt.g.fillStyle = grey(0.55); hgt.g.fillRect(0, 0, S, S);
+  rgh.g.fillStyle = grey(0.82); rgh.g.fillRect(0, 0, S, S);
+  const r = mulberry32(83);
+  // mottling from the pour: soft blotches a shade either side of the base
+  for (let i = 0; i < 70; i++) {
+    const x = r() * S, y = r() * S, rad = 20 + r() * 70;
+    const gr = a.g.createRadialGradient(x, y, 0, x, y, rad);
+    const dark = r() > 0.5;
+    gr.addColorStop(0, dark ? 'rgba(40,42,40,0.10)' : 'rgba(255,255,250,0.07)');
+    gr.addColorStop(1, 'rgba(0,0,0,0)');
+    a.g.fillStyle = gr;
+    a.g.fillRect(x - rad, y - rad, rad * 2, rad * 2);
+  }
+  // water staining: dark streaks running down from the coping (top of tile)
+  for (let i = 0; i < 34; i++) {
+    const x = r() * S, w = 3 + r() * 14, len = 60 + r() * 260;
+    const gr = a.g.createLinearGradient(0, 0, 0, len);
+    gr.addColorStop(0, `rgba(38,40,36,${0.16 + r() * 0.16})`);
+    gr.addColorStop(1, 'rgba(38,40,36,0)');
+    a.g.fillStyle = gr;
+    a.g.fillRect(x, 0, w, len);
+  }
+  // grimy base where spray and dirt collect (bottom of tile)
+  const base = a.g.createLinearGradient(0, S * 0.82, 0, S);
+  base.addColorStop(0, 'rgba(34,33,30,0)');
+  base.addColorStop(1, 'rgba(34,33,30,0.42)');
+  a.g.fillStyle = base;
+  a.g.fillRect(0, S * 0.82, S, S * 0.18);
+  // horizontal lift line between pours
+  a.g.fillStyle = 'rgba(30,30,28,0.28)';
+  a.g.fillRect(0, S * 0.5 - 2, S, 3);
+  hgt.g.fillStyle = grey(0.35);
+  hgt.g.fillRect(0, S * 0.5 - 2, S, 3);
+  // form-tie holes, 3 x 3 grid per panel
+  for (let iy = 0; iy < 3; iy++) {
+    for (let ix = 0; ix < 3; ix++) {
+      const x = S * (ix + 0.5) / 3, y = S * (iy + 0.5) / 3;
+      a.g.fillStyle = 'rgba(28,28,26,0.55)';
+      a.g.beginPath(); a.g.arc(x, y, 5, 0, Math.PI * 2); a.g.fill();
+      hgt.g.fillStyle = grey(0.18);
+      hgt.g.beginPath(); hgt.g.arc(x, y, 5, 0, Math.PI * 2); hgt.g.fill();
+    }
+  }
+  // panel joint at the tile edge: a dark recessed groove
+  a.g.fillStyle = 'rgba(20,20,19,0.75)';
+  a.g.fillRect(0, 0, 5, S);
+  hgt.g.fillStyle = grey(0.05);
+  hgt.g.fillRect(0, 0, 5, S);
+  rgh.g.fillStyle = grey(0.95);
+  rgh.g.fillRect(0, 0, 5, S);
+  noise(a.g, S, S, 22, 17);
+  return { albedo: a.c, height: hgt.c, rough: rgh.c, emissive: null, nrm: 2.0 };
+}
+
 function houseSurface() {
   const S = 512;
   const a = canvas(S, S), hgt = canvas(S, S), rgh = canvas(S, S), emi = canvas(S, S);
@@ -1044,6 +1112,8 @@ export function buildTextures() {
       { name: 'house', s: houseSurface(), env: 0.45, ns: 1.8, rough: 1, metal: 0, emissive: 0.015 },
       { name: 'signs', s: signSurface(), env: 0.5, ns: 0, rough: 0.62, metal: 0, emissive: 1.5 },
       { name: 'roof', s: roofSurface(), env: 0.5, ns: 1.2, rough: 1, metal: 0, emissive: 0 },
+      // retaining walls, parapets and fascia (world.meshWall)
+      { name: 'concrete', s: concreteSurface(), env: 0.5, ns: 1.4, rough: 1, metal: 0, emissive: 0 },
     ]),
     road: roadSurface(),
     sidewalk: sidewalkSurface(),
