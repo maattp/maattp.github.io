@@ -19,7 +19,7 @@ import { spawn } from 'node:child_process';
 import { writeFileSync, readFileSync, existsSync, mkdirSync } from 'node:fs';
 import { setTimeout as sleep } from 'node:timers/promises';
 
-const PORT = 9237;
+const PORT = +process.env.AUTO_CDP_PORT || 9237;
 const CHROME = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
 const HTTP_PORT = process.env.AUTO_HTTP_PORT || 8000;
 const REC = 'tools/data/perfguard.json';
@@ -46,7 +46,7 @@ function launch() {
   return spawn(CHROME, [
     `--remote-debugging-port=${PORT}`, '--headless=new', '--use-gl=swiftshader',
     '--enable-unsafe-swiftshader', '--window-size=1280,720', '--no-first-run',
-    '--user-data-dir=/tmp/auto-perfguard', 'about:blank',
+    `--user-data-dir=/tmp/auto-perfguard-${PORT}`, 'about:blank',
   ], { stdio: 'ignore' });
 }
 

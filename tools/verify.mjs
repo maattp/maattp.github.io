@@ -50,8 +50,9 @@ if (markers.length) {
   process.exit(1);
 }
 
-const PORT = 9222;
-const URL_BASE = process.env.AUTO_URL || 'http://localhost:8000/apps/auto/';
+const HTTP_PORT = process.env.AUTO_HTTP_PORT || 8000;
+const PORT = +process.env.AUTO_CDP_PORT || 9222;
+const URL_BASE = process.env.AUTO_URL || `http://localhost:${HTTP_PORT}/apps/auto/`;
 const SHOTS = process.argv.includes('--shots');
 const OUT = 'tools/data/shots';
 
@@ -70,7 +71,7 @@ function launch() {
     '--autoplay-policy=no-user-gesture-required',
     '--window-size=1280,720',
     '--no-first-run',
-    '--user-data-dir=/tmp/auto-verify-profile',
+    `--user-data-dir=/tmp/auto-verify-profile-${PORT}`,
     'about:blank',
   ], { stdio: 'ignore', detached: false });
 }
