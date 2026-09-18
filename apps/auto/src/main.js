@@ -214,6 +214,54 @@ let renderer, scene, camera, sun, world, cityRef, traffic, peds, player, control
 let pickups = [];
 // Scratch vector for the shadow-camera aim, so the frame loop allocates none.
 const LOOK_AHEAD = new THREE.Vector3();
+
+// The sun's offset from the point it lights: ~38 deg elevation, fixed azimuth.
+const SUN_OFFSET = new THREE.Vector3(-215, 200, -150);
+// The shadow camera's own axes. It looks along -SUN_OFFSET with world up, so
+// these are exactly the basis three's lookAt builds for it every frame.
+const SUN_R = new THREE.Vector3(), SUN_U = new THREE.Vector3(), SUN_F = new THREE.Vector3();
+{
+  const m = new THREE.Matrix4().lookAt(SUN_OFFSET, new THREE.Vector3(), new THREE.Vector3(0, 1, 0));
+  SUN_R.setFromMatrixColumn(m, 0);
+  SUN_U.setFromMatrixColumn(m, 1);
+  SUN_F.setFromMatrixColumn(m, 2);
+}
+let shadowTexelM = 0.25;
+
+/**
+ * Follow the player with the shadow box, in whole shadow texels.
+ *
+ * The box used to be re-centred on the player every frame by whatever
+ * fraction of a texel they had moved, so the shadow map was rasterised at a
+ * different sub-texel phase each frame and every shadow edge in the city
+ * crawled and shimmered as you walked or drove -- the classic moving-shadow
+ * flicker, and it reads as "the whole picture is janky" rather than as a
+ * shadow problem. Snapping the centre to the texel grid in the LIGHT's own
+ * frame means a move re-draws the same map shifted by whole texels, and the
+ * shaded result is identical. Measured with the camera still and the centre
+ * stepped 5 cm at a time: 2.18 % of pixels changed per step on a commercial
+ * street before, 0.68 % on a residential one.
+ *
+ * Aiming the box down the view is unchanged: centred on the player, half of it
+ * covers ground behind the camera, so the centre is pushed 90 m ahead.
+ */
+function placeSun(px, py, pz) {
+  const fwd = LOOK_AHEAD.set(0, 0, -1).applyQuaternion(camera.quaternion);
+  const cx = px + fwd.x * 90, cy = py, cz = pz + fwd.z * 90;
+  const T = shadowTexelM;
+  const a = Math.round((cx * SUN_R.x + cy * SUN_R.y + cz * SUN_R.z) / T) * T;
+  const b = Math.round((cx * SUN_U.x + cy * SUN_U.y + cz * SUN_U.z) / T) * T;
+  // Depth along the light too: it does not move texels, but it moves every
+  // stored depth by a fraction and the PCF compare can flip on a grazing roof.
+  const d = Math.round((cx * SUN_F.x + cy * SUN_F.y + cz * SUN_F.z) / T) * T;
+  const sx = SUN_R.x * a + SUN_U.x * b + SUN_F.x * d;
+  const sy = SUN_R.y * a + SUN_U.y * b + SUN_F.y * d;
+  const sz = SUN_R.z * a + SUN_U.z * b + SUN_F.z * d;
+  sun.target.position.set(sx, sy, sz);
+  sun.position.set(sx + SUN_OFFSET.x, sy + SUN_OFFSET.y, sz + SUN_OFFSET.z);
+  sun.target.updateMatrixWorld();
+  sun.updateMatrixWorld();
+}
 let last = 0;
 let accumFps = 0, frames = 0, fps = 60;
 let baseFogDensity = 0.00026;
@@ -322,6 +370,33 @@ function installHeightFog() {
   );
 }
 
+/**
+ * Fade shadowing out across the last few percent of the shadow box.
+ *
+ * Where the ortho box ends, three simply stops testing and returns "lit", so
+ * the boundary is a hard line: a block's shadow a couple of hundred metres
+ * ahead is cut square, and because the box follows the view that line slides
+ * across the street as you turn -- a whole band of the frame flicking from
+ * shaded to lit. Fading the last 7 % of the box (~36 m at 260 m half-width)
+ * turns the cut into a gradient nobody tracks. One smoothstep per shadowed
+ * fragment, inside the existing branch.
+ */
+function installShadowFade() {
+  const C = THREE.ShaderChunk;
+  if (C.__shadowFade) return;
+  C.__shadowFade = true;
+  const from = '#endif\n\t\t}\n\t\treturn shadow;\n\t}\n\tvec2 cubeToUV';
+  if (!C.shadowmap_pars_fragment.includes(from)) {
+    console.warn('shadow fade: three chunk changed, not patched');
+    return;
+  }
+  C.shadowmap_pars_fragment = C.shadowmap_pars_fragment.replace(from,
+    '#endif\n'
+    + '\t\t\tvec2 shadowEdge = min( shadowCoord.xy, 1.0 - shadowCoord.xy );\n'
+    + '\t\t\tshadow = mix( 1.0, shadow, smoothstep( 0.0, 0.07, min( shadowEdge.x, shadowEdge.y ) ) );\n'
+    + '\t\t}\n\t\treturn shadow;\n\t}\n\tvec2 cubeToUV');
+}
+
   scene = new THREE.Scene();
   // Aerial perspective. At 0.00032 a tower 3 km away reads at nearly the same
   // contrast and saturation as one across the street, which is what made the
@@ -410,6 +485,8 @@ function installHeightFog() {
   const shadowTexel = (S * 2) / sun.shadow.mapSize.x;
   sun.shadow.bias = -0.0006;
   sun.shadow.normalBias = shadowTexel * 0.48;
+  shadowTexelM = shadowTexel;
+  installShadowFade();
   scene.add(sun);
   scene.add(sun.target);
 
@@ -417,7 +494,7 @@ function installHeightFog() {
   postfx.setSize(viewW(), viewH(), renderer.getPixelRatio());
 
   world = new World(scene, city, tx, { shadows: true, renderer, lakes: md.lakes });
-  world.buildSky();
+  world.buildSky(SUN_OFFSET);
   const terrGen = world.buildTerrain();
   let tr = terrGen.next();
   while (!tr.done) {
@@ -530,7 +607,7 @@ function installHeightFog() {
 
   await step(1, 'Welcome to Seattle');
   window.__refreshJobs = refreshJobs;
-  window.__dbg = { game, city, player, world, traffic, peds, acts, scene, camera, renderer, G, fx, hud, controls, audio, pickups, THREE, postfx, applyQuality, sun, sceneStats, cityStats, WET_FLOOR, animateWalk, collideWithBuildings, TYPES: VEHICLE_TYPES };
+  window.__dbg = { game, city, player, world, traffic, peds, acts, scene, camera, renderer, G, fx, hud, controls, audio, pickups, THREE, postfx, applyQuality, sun, placeSun, sceneStats, cityStats, WET_FLOOR, animateWalk, collideWithBuildings, TYPES: VEHICLE_TYPES };
   wireUi();
   game.newTarget();
   // Start on `high` everywhere.
@@ -1119,15 +1196,7 @@ function frame(now) {
   }
 
   player.applyCamera(camera);
-  // Aim the shadow box down the view, not at the player's feet. Centred on the
-  // player, half of its area covers ground that is behind the camera and can
-  // never be seen, so the useful reach forward is only half what is paid for.
-  // Pushing the centre ahead roughly doubles the forward coverage for nothing.
-  const fwd = LOOK_AHEAD.set(0, 0, -1).applyQuaternion(camera.quaternion);
-  const sx = p.x + fwd.x * 90, sz = p.z + fwd.z * 90;
-  sun.position.set(sx - 215, p.y + 200, sz - 150);
-  sun.target.position.set(sx, p.y, sz);
-  sun.target.updateMatrixWorld();
+  placeSun(p.x, p.y, p.z);
 
   // audio state
   let siren = 0;

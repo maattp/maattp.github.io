@@ -122,7 +122,11 @@ const GRASS = [0.42, 0.62, 0.28];
 // Chinatown looked like a lawn. Developed ground is lawn AND roof AND tarmac
 // mixed together, so it has to be visibly more muted than grass or the blend
 // has nothing to say.
-const SUBURB = [0.52, 0.53, 0.41];
+// ...and [0.52, 0.53, 0.41] then overshot into khaki: after ACES and the
+// grade's saturation payback it rendered as a dirt lot under every street-level
+// shot. Developed ground is worn lawn more than bare earth, so it keeps GRASS's
+// hue at a much lower chroma -- still clearly not a meadow.
+const SUBURB = [0.47, 0.53, 0.38];
 const URBAN = [0.56, 0.56, 0.55];
 const BLEND_TAPS = [[0, 0], [-85, 55], [70, -75]];
 
@@ -250,6 +254,65 @@ function facadeMat(f) {
   m.emissive = new THREE.Color(0xffffff);
   m.emissiveIntensity = f.emiMax;
   m.normalScale = new THREE.Vector2(f.nsMax, f.nsMax);
+  // Per-window variety, in the shader, for the stone and brick cells.
+  //
+  // The atlas cell carries sixteen windows, so every masonry facade in the
+  // city repeated the same sixteen: the same blind half-down in the same spot
+  // every four storeys on every building, which is what made a block read as
+  // wallpaper from across the street. Each window now picks its own state
+  // from a hash of its column, its row (V spans the whole wall, so every
+  // storey is different) and the building's tint: a dark room, drawn blinds,
+  // or a colder reflective pane.
+  //
+  // The window mask is the packed map's roughness channel -- glazing is the
+  // only thing in those cells under ~0.3 -- so no second map is needed. One
+  // extra tap per facade fragment; plain uniforms, no new render targets.
+  const [u0, du] = f.cells.masonry;
+  m.onBeforeCompile = (sh) => {
+    sh.uniforms.facU0 = { value: u0 };
+    sh.uniforms.facDu = { value: du };
+    sh.fragmentShader = sh.fragmentShader
+      .replace('#include <common>', '#include <common>\nuniform float facU0;\nuniform float facDu;')
+      .replace('#include <color_fragment>', `#include <color_fragment>
+        {
+          // Cell index: 0 = masonry, 1 = brick. CELL_W / FS = 528 / 512.
+          float facU = vMapUv.x - facU0;
+          float facCell = floor(facU / (facDu * 1.03125) + 0.02);
+          float facGlass = 1.0 - smoothstep(0.16, 0.36, texture2D(roughnessMap, vRoughnessMapUv).g);
+          if (facCell < 1.5 && facGlass > 0.01) {
+            vec2 wid = vec2(floor(facU / (facDu * 0.25)), floor(vMapUv.y * 4.0));
+            // Per-building seed from the tint's channel RATIOS, not its value.
+            // Box's baked AO scales the tint toward the ground, so the value
+            // changes continuously up the wall -- hashing it through sin()
+            // re-rolled every window per pixel into blue static. A uniform
+            // scale leaves the ratios constant under interpolation.
+            float bseed = floor(vColor.r / max(vColor.g, 0.01) * 64.0)
+              + floor(vColor.b / max(vColor.g, 0.01) * 64.0) * 7.0;
+            float hsh = fract(sin(dot(wid, vec2(12.9898, 78.233)) + bseed * 3.17) * 43758.5453);
+            vec3 winMul = hsh < 0.24 ? vec3(0.38, 0.41, 0.46)
+              : hsh < 0.36 ? vec3(1.22, 1.16, 1.02)
+              : hsh < 0.54 ? vec3(0.78, 0.9, 1.1)
+              : vec3(1.0);
+            // A NEUTRAL pane. A metal's F0 is its albedo, so the building tint
+            // mirrored the sky in red on brick, and the pane's own baked blue
+            // doubled the sky's blue into saturated static. Grey glass
+            // reflecting a blue sky is what reads as glass.
+            float paneL = dot(diffuseColor.rgb / max(vColor.rgb, vec3(0.2)), vec3(0.299, 0.587, 0.114));
+            vec3 pane = mix(vec3(paneL), vec3(0.46, 0.49, 0.53), 0.55);
+            diffuseColor.rgb = mix(diffuseColor.rgb, pane * winMul, facGlass);
+          }
+        }`)
+      // ...and a FLAT one. The cell's height noise is fine for masonry grain,
+      // but reflected through a mirror it scattered the sky into glitter.
+      // roughnessFactor is the packed G channel by now, so no extra tap.
+      .replace('#include <normal_fragment_maps>', `#include <normal_fragment_maps>
+        {
+          float facCellN = floor((vMapUv.x - facU0) / (facDu * 1.03125) + 0.02);
+          float facGlassN = facCellN < 1.5 ? 1.0 - smoothstep(0.16, 0.36, roughnessFactor) : 0.0;
+          normal = normalize(mix(normal, normalize(vNormal), facGlassN));
+        }`);
+  };
+  m.customProgramCacheKey = () => 'facadeWindows';
   return m;
 }
 
@@ -308,7 +371,10 @@ export class World {
       // through ACES once the scene moves up the curve -- hard-edged white
       // polygon faces that read as a missing texture, not as sunlight. Pulling
       // it down is what makes the exposure headroom available.
-      glass: surf(tx.glass, { env: 0.9, metalness: 0.34, roughness: 0.22, ns: 1.1, emissive: 0.02 }),
+      // Curtain wall reads by what it REFLECTS. With the IBL now drawn from
+      // the same sky as the dome, glass takes more of its look from the
+      // environment and less from its own blue albedo: metalness up and env up.
+      glass: surf(tx.glass, { env: 1.15, metalness: 0.58, roughness: 0.22, ns: 1.1, emissive: 0.02 }),
       // Stone, brick, corrugated industrial, lap-sided house and shop signage,
       // in one material. They were five, and five merged meshes per chunk was
       // 115 draw calls downtown for 25k triangles. Everything that used to
@@ -326,6 +392,44 @@ export class World {
       // not like distance.
       far: new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.9, metalness: 0.02, envMapIntensity: 0.85 }),
     };
+    // Curtain wall is not one mirror. Each pane sits a fraction of a degree off
+    // its neighbours, which is why a real glass tower reflects the sky as a
+    // patchwork rather than as one smooth gradient. A per-pane hash tilts the
+    // normal by up to ~2 deg; the glass tile is eight panes each way, so
+    // floor(uv * 8) is the pane. Arithmetic only, no extra taps.
+    //
+    // And a curtain wall reflects the SKY. A vertical mirror seen from above
+    // or level reflects downward, into the IBL's ground half, so every glass
+    // tower in the aerial read as dark blue paint. Folding the reflected ray
+    // into the upper hemisphere is the standard open-world cheat for towers:
+    // they show sky and cloud, which is most of what reads as "glass" at any
+    // distance. Glass material only; three's own chunk, one line added.
+    const IBL_FROM = 'reflectVec = inverseTransformDirection( reflectVec, viewMatrix );';
+    this.mats.glass.onBeforeCompile = (sh) => {
+      if (THREE.ShaderChunk.envmap_physical_pars_fragment.includes(IBL_FROM)) {
+        sh.fragmentShader = sh.fragmentShader.replace('#include <envmap_physical_pars_fragment>',
+          THREE.ShaderChunk.envmap_physical_pars_fragment.replace(IBL_FROM,
+            `${IBL_FROM}\n\t\t\treflectVec = normalize( vec3( reflectVec.x, abs( reflectVec.y ) * 0.85 + 0.12, reflectVec.z ) );`));
+      }
+      // Neutral panes, for the same reason as the masonry windows: metal F0 is
+      // the albedo, and a blue pane reflecting a blue sky is saturated paint.
+      sh.fragmentShader = sh.fragmentShader.replace('#include <color_fragment>', `#include <color_fragment>
+        {
+          float paneA = 1.0 - smoothstep(0.1, 0.3, texture2D(roughnessMap, vRoughnessMapUv).g);
+          float lumA = dot(diffuseColor.rgb, vec3(0.299, 0.587, 0.114));
+          diffuseColor.rgb = mix(diffuseColor.rgb, vec3(lumA) * vec3(0.94, 1.0, 1.07), paneA * 0.7);
+        }`);
+      sh.fragmentShader = sh.fragmentShader.replace('#include <normal_fragment_maps>', `#include <normal_fragment_maps>
+        {
+          // flat pane (roughnessFactor = 0.22 x map: panes ~0.015, mullions ~0.16)
+          normal = normalize(mix(normal, normalize(vNormal), 1.0 - smoothstep(0.03, 0.08, roughnessFactor)));
+          vec2 paneId = floor(vMapUv * 8.0);
+          float pr1 = fract(sin(dot(paneId, vec2(12.9898, 78.233))) * 43758.5453);
+          float pr2 = fract(sin(dot(paneId, vec2(39.3468, 11.135))) * 24634.6345);
+          normal = normalize(normal + vec3(pr1 - 0.5, pr2 - 0.5, 0.0) * 0.07);
+        }`);
+    };
+    this.mats.glass.customProgramCacheKey = () => 'glassPanes';
     // [u0, du] per wall family in the facade atlas, passed to Builder.box.
     this.cells = tx.facade.cells;
     this.group = new THREE.Group();
@@ -335,8 +439,168 @@ export class World {
   // --- static scenery -------------------------------------------------------
 
   /** Sky doubles as the background and as the diffuse+specular IBL source. */
-  buildSky() {
-    this.scene.background = this.tx.sky;
+  buildSky(sunDir) {
+    // The equirect stays as the IBL source below; what you LOOK at is a dome.
+    //
+    // As a background the equirect is 2048 px for 360 deg, so a 62 deg view
+    // magnifies it 3.6x: painted cloud ellipses smeared into brush strokes and
+    // the sky never looked sharper than a thumbnail. The dome computes the
+    // gradient and sun per pixel and projects a tiling cloud field onto a flat
+    // layer, so clouds foreshorten toward the horizon and stay crisp overhead.
+    // It replaces the background's own draw -- one call either way -- and
+    // costs three texture taps per sky pixel.
+    //
+    // NOT tone-mapped, to match what it replaces: three leaves an sRGB
+    // background texture out of the ACES pass, so the old sky's authored
+    // colours ARE the screen colours, and the fog colour was tuned against
+    // them. The stops below are those same colours.
+    this.scene.background = null;
+    const lin = (hex) => new THREE.Color(hex);
+    const sd = (sunDir || new THREE.Vector3(-215, 200, -150)).clone().normalize();
+    const uniforms = {
+      tCloud: { value: this.tx.clouds },
+      sunDir: { value: sd },
+      zenith: { value: lin(0x2d5e97) },
+      mid: { value: lin(0x6793c0) },
+      horizon: { value: lin(0xb9cbd9) },
+      haze: { value: lin(0xb9c3cf) },
+      sunCol: { value: lin(0xfff2dc) },
+      cloudLit: { value: lin(0xf7f5ee) },
+      cloudDark: { value: lin(0x8e9aa8) },
+      // Below the horizon the IBL sees the city, not haze: the old equirect's
+      // lower half ran #8b979f to #5a6469, and every material's shaded side
+      // was tuned against that bounce. The dome itself never draws it.
+      groundHi: { value: lin(0x8b979f) },
+      groundLo: { value: lin(0x5a6469) },
+      // The painted equirect carried an ~80 % white cloud wash over its whole
+      // upper half, and every shaded value in the city was tuned against that
+      // brighter dome. Rendering the IBL from the clear blue sky dropped the
+      // beauty set's shadowed quartile by ~25 % (values.py: street 0.035 ->
+      // 0.023). The IBL pass alone is lifted to put that ambient back; what you
+      // see in the sky is untouched.
+      iblGain: { value: 1.35 },
+      time: { value: 0 },
+    };
+    // ONE sky function for what you see and for what things reflect.
+    //
+    // The IBL used to be the painted equirect while the background became this
+    // dome, so glass and water reflected smeared ellipse clouds and a sun in a
+    // different place from the sky above them. The same code now renders both.
+    const SKY_FN = `
+        uniform sampler2D tCloud;
+        uniform vec3 sunDir, zenith, mid, horizon, haze, sunCol, cloudLit, cloudDark, groundHi, groundLo;
+        uniform float time, iblGain;
+        vec3 skyColor(vec3 d, float forIbl) {
+          float h = d.y;
+          float e = max(h, 0.0);
+          vec3 col = mix(horizon, mid, smoothstep(0.0, 0.28, e));
+          col = mix(col, zenith, smoothstep(0.25, 1.0, e));
+          float mu = max(dot(d, sunDir), 0.0);
+          // Forward-scattering glow around the sun, then the disc.
+          col += sunCol * (pow(mu, 6.0) * 0.16 + pow(mu, 60.0) * 0.35);
+          col = mix(col, vec3(1.0, 0.99, 0.95) * 1.4, smoothstep(0.9993, 0.9997, mu));
+
+          // Cloud layer: a flat plane overhead, so the tile foreshortens
+          // toward the horizon. +0.08 keeps the projection finite at h = 0.
+          if (h > 0.0) {
+            vec2 uv = d.xz / (h + 0.08) * 0.19 + vec2(time * 0.0009, time * 0.0004);
+            float big = texture2D(tCloud, uv).r;
+            float fine = texture2D(tCloud, uv * 3.1 + 0.37).r;
+            float dens = big * 0.78 + fine * 0.22;
+            float cover = smoothstep(0.50, 0.74, dens);
+            // Denser toward the sun means more cloud in front of the light:
+            // the far side of a bank is the lit one.
+            float toward = texture2D(tCloud, uv + sunDir.xz * 0.012).r * 0.78 + fine * 0.22;
+            float lit = clamp(0.62 + (dens - toward) * 7.0 - (dens - 0.62) * 0.9, 0.0, 1.0);
+            vec3 cc = mix(cloudDark, cloudLit, lit);
+            cc += sunCol * pow(mu, 12.0) * 0.25 * (1.0 - cover);
+            // Thin toward the horizon, where the layer is seen through haze.
+            cover *= smoothstep(0.015, 0.22, h);
+            col = mix(col, cc, cover * 0.92);
+          }
+          // Horizon haze band, matched to scene.fog so distance resolves into
+          // the sky instead of meeting it at a seam; below the horizon it is
+          // the fog colour outright.
+          col = mix(col, haze, (1.0 - smoothstep(0.0, 0.07, abs(h))) * 0.55);
+          if (h < 0.0) {
+            col = mix(col, haze, smoothstep(0.0, 0.05, -h));
+            vec3 ground = mix(groundHi, groundLo, smoothstep(0.0, 0.6, -h));
+            col = mix(col, ground, forIbl * smoothstep(0.0, 0.08, -h));
+          }
+          return col;
+        }`;
+    const skyMat = new THREE.ShaderMaterial({
+      uniforms,
+      vertexShader: `
+        varying vec3 vDir;
+        void main() {
+          vDir = position;
+          // Rotation only: the dome is infinitely far, wherever the camera is.
+          vec4 p = projectionMatrix * vec4(mat3(viewMatrix) * position, 1.0);
+          gl_Position = vec4(p.xy, p.w, p.w);
+        }`,
+      fragmentShader: `${SKY_FN}
+        varying vec3 vDir;
+        void main() {
+          gl_FragColor = vec4(skyColor(normalize(vDir), 0.0), 1.0);
+          #include <colorspace_fragment>
+        }`,
+      side: THREE.BackSide,
+      depthWrite: false,
+      depthTest: false,
+      fog: false,
+      toneMapped: false,
+    });
+    const dome = new THREE.Mesh(new THREE.SphereGeometry(100, 32, 16), skyMat);
+    dome.frustumCulled = false;
+    dome.renderOrder = -1000;
+    this.scene.add(dome);
+    this.skyDome = dome;
+
+    // Render the same sky into an 8-bit equirect for the IBL.
+    //
+    // 8-bit sRGB target, like every target here: the half-float rule holds,
+    // and the sRGB encoding keeps the dark ground half from banding. Inverse of
+    // three's equirectUv(): u = atan(z, x) / 2pi + 0.5, v = asin(y) / pi + 0.5.
+    // The disc (1.4) clips at 1.0 here, as the painted one did.
+    const envTarget = new THREE.WebGLRenderTarget(2048, 1024, {
+      type: THREE.UnsignedByteType, depthBuffer: false, stencilBuffer: false,
+      minFilter: THREE.LinearFilter, magFilter: THREE.LinearFilter,
+    });
+    envTarget.texture.colorSpace = THREE.SRGBColorSpace;
+    envTarget.texture.generateMipmaps = false;
+    envTarget.texture.mapping = THREE.EquirectangularReflectionMapping;
+    if (this.renderer) {
+      const eqMat = new THREE.ShaderMaterial({
+        uniforms,
+        vertexShader: `
+          varying vec2 vUv;
+          void main() { vUv = uv; gl_Position = vec4(position.xy, 0.0, 1.0); }`,
+        fragmentShader: `${SKY_FN}
+          varying vec2 vUv;
+          void main() {
+            float lon = (vUv.x - 0.5) * 6.28318531;
+            float lat = (vUv.y - 0.5) * 3.14159265;
+            vec3 d = vec3(cos(lat) * cos(lon), sin(lat), cos(lat) * sin(lon));
+            vec3 c = skyColor(d, 1.0);
+            // Lift the sky half only; the ground ramp is the old bounce as-is.
+            gl_FragColor = vec4(c * (d.y > 0.0 ? iblGain : 1.0), 1.0);
+          }`,
+        depthTest: false, depthWrite: false, toneMapped: false,
+      });
+      const quad = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), eqMat);
+      quad.frustumCulled = false;
+      const eqScene = new THREE.Scene();
+      eqScene.add(quad);
+      const prev = this.renderer.getRenderTarget();
+      this.renderer.setRenderTarget(envTarget);
+      this.renderer.render(eqScene, new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1));
+      this.renderer.setRenderTarget(prev);
+      quad.geometry.dispose();
+      eqMat.dispose();
+    }
+    this.envEquirect = envTarget;
+
     // PMREMGenerator allocates HalfFloatType targets internally, hard-coded,
     // with no capability check -- and half-float is the one thing this renderer
     // can't take on trust (silent black on iOS, which is why postfx.js is 8-bit
@@ -345,14 +609,14 @@ export class World {
     if (halfFloatRenders(this.renderer)) {
       const pmrem = new THREE.PMREMGenerator(this.renderer);
       pmrem.compileEquirectangularShader();
-      this.envRT = pmrem.fromEquirectangular(this.tx.sky);
+      this.envRT = pmrem.fromEquirectangular(envTarget.texture);
       this.scene.environment = this.envRT.texture;
       this.envPrefiltered = true;
       pmrem.dispose();
     } else {
       // Raw equirect as the env map: no prefiltered roughness mips, so rough
       // surfaces reflect too sharply, but the city stays lit.
-      this.scene.environment = this.tx.sky;
+      this.scene.environment = envTarget.texture;
       this.envPrefiltered = false;
     }
   }
@@ -378,6 +642,27 @@ export class World {
       vertexColors: true, roughness: 0.94, metalness: 0, envMapIntensity: 1.0,
       normalScale: new THREE.Vector2(0.3, 0.3),
     });
+    // The ground map at THREE scales, not one.
+    //
+    // One 13 m tile is both the detail you stand on and the only variation you
+    // see from a car, so the whole city floor was the same soft blotch pattern
+    // printed on a grid -- underfoot it was blurry, and from above the repeat
+    // showed as a regular weave. A 75 m copy multiplied over it breaks the
+    // grid into patches, and a 3 m copy puts crisp grain under the camera.
+    // Both are normalised by the map's own mean (~0.44 linear) so the average
+    // value, which values.py and the terrain tints were tuned against, does
+    // not move. Two extra taps on terrain pixels only.
+    mat.onBeforeCompile = (sh) => {
+      sh.fragmentShader = sh.fragmentShader.replace('#include <map_fragment>', `
+        #ifdef USE_MAP
+          vec4 sampledDiffuseColor = texture2D( map, vMapUv );
+          vec3 macroT = texture2D( map, vMapUv * 0.173 + vec2( 0.31, 0.57 ) ).rgb / 0.44;
+          vec3 detailT = texture2D( map, vMapUv * 4.3 + vec2( 0.13, 0.71 ) ).rgb / 0.44;
+          sampledDiffuseColor.rgb *= mix( vec3( 1.0 ), macroT, 0.55 ) * mix( vec3( 1.0 ), detailT, 0.4 );
+          diffuseColor *= sampledDiffuseColor;
+        #endif`);
+    };
+    mat.customProgramCacheKey = () => 'terrain3scale';
     this.terrainGroup = new THREE.Group();
     this.scene.add(this.terrainGroup);
     for (let tz = 0; tz < TILES; tz++) {
@@ -889,6 +1174,22 @@ export class World {
       color: 0x33556e, normalMap: n, roughness: 0.10, metalness: 0.02,
       envMapIntensity: 1.4, normalScale: new THREE.Vector2(0.36, 0.36),
     });
+    // Two scales of swell from the one normal map.
+    //
+    // At a 520x repeat the tile is ~16 m, and from any height the same wavelet
+    // pattern printed edge to edge across Elliott Bay reads as a woven carpet,
+    // the scrolling offset only slides the weave. A second tap at -0.29x scale
+    // (so it drifts the OTHER way, at a different speed, from the same offset)
+    // adds long swell and breaks the grid. Blending in tangent space before
+    // three perturbs the normal, so everything downstream is untouched.
+    mat.onBeforeCompile = (sh) => {
+      sh.fragmentShader = sh.fragmentShader.replace(
+        'vec3 mapN = texture2D( normalMap, vNormalMapUv ).xyz * 2.0 - 1.0;',
+        'vec3 mapN = texture2D( normalMap, vNormalMapUv ).xyz * 2.0 - 1.0;\n'
+        + '\tvec3 mapN2 = texture2D( normalMap, vNormalMapUv * -0.29 + vec2( 0.37, 0.11 ) ).xyz * 2.0 - 1.0;\n'
+        + '\tmapN = normalize( vec3( mapN.xy * 0.62 + mapN2.xy * 0.9, mapN.z ) );');
+    };
+    mat.customProgramCacheKey = () => 'water2scale';
     const m = new THREE.Mesh(geo, mat);
     m.position.y = 0;
     // AFTER the opaque scene, not before it (was -5). A bore below sea level
@@ -1309,6 +1610,7 @@ varying vec3 vFarTint;`)
   }
 
   animate(dt, t) {
+    if (this.skyDome) this.skyDome.material.uniforms.time.value = t % 100000;
     if (this.waterNormal) {
       // Scroll BOTH axes at incommensurate rates. Scrolling x alone slides the
       // tile along one screen direction and the repeat reads as a fixed diagonal
@@ -2914,7 +3216,9 @@ varying vec3 vFarTint;`)
     // from any elevated view, and a bare extrusion cap is the loudest tell that
     // this is untextured programmer geometry. A handful of boxes per roof is
     // within budget because they merge into the chunk's existing flat mesh.
+    let lidded = false;
     if (bd.h < 70 && bd.w > 9 && bd.d > 9) {
+      lidded = true;
       const rt = base + bd.h + 2;
       // Roofs vary per building. One flat grey across a whole downtown reads
       // as untextured cap geometry from every elevated view, which is the
@@ -2973,11 +3277,15 @@ varying vec3 vFarTint;`)
       flat.box(bd.x, rt, bd.z, bd.w + 0.5, 0.85, bd.d + 0.5, bd.rot,
         [rv * 1.2, rv * 1.2, rv * 1.17], { top: false });
       // The lid, capping the parapet flush. `box` draws no bottom face, so
-      // there is nothing to see through where the two meet. 4 m a tile rather
-      // than 7 so the industrial cell's corrugation reads as roof seams instead
-      // of grain.
+      // there is nothing to see through where the two meet.
+      //
+      // Its own ROOF cell now, not the industrial one. Corrugated siding at a
+      // 4 m tile read as a ribbed grey lid from every elevated view, the same
+      // on every building. A membrane with seams, ponding stains, patches and
+      // drains reads as a roof at 10 m a tile. The tint is lifted by 1.5x to
+      // land at a tar-and-gravel ~0.2 albedo over the roof cell's lighter base.
       bl.facade.box(bd.x, rt + 0.71, bd.z, bd.w + 0.5, 0.14, bd.d + 0.5, bd.rot,
-        [rv * 0.92, rv * 0.93, rv * 0.96], { uScale: 4, vScale: 4, cell: C.industrial });
+        [rv * 1.38, rv * 1.40, rv * 1.44], { uScale: 10, vScale: 10, cell: C.roof });
     }
 
     const dense = bd.style !== 'industrial';
@@ -3024,9 +3332,25 @@ varying vec3 vFarTint;`)
     }
 
     // cornice, roof deck, then a parapet wall standing above it
+    //
+    // A bed moulding under the cornice, so the roofline is a stepped profile
+    // that catches a shadow line, not one slab laid on the wall.
+    flat.box(bd.x, y - 0.42, bd.z, w + 0.5, 0.42, d + 0.5, bd.rot,
+      [TRIM[0] * 0.8, TRIM[1] * 0.8, TRIM[2] * 0.82], { top: false });
     flat.box(bd.x, y, bd.z, w + 1.1, 0.55, d + 1.1, bd.rot, TRIM);
-    flat.box(bd.x, y + 0.55, bd.z, w + 0.5, 0.28, d + 0.5, bd.rot, [0.33, 0.34, 0.35]);
-    flat.box(bd.x, y + 0.55, bd.z, w + 0.55, 1.15, d + 0.55, bd.rot, DARK, { top: false });
+    // The deck only where the roof kit above has not already put a lid on.
+    //
+    // It used to be drawn under every lid as well: deck top at rt + 0.83, lid
+    // top at rt + 0.85 -- two centimetres apart, which at a few hundred metres
+    // is inside one step of the depth buffer, so every low roof in an aerial
+    // view z-fought between flat grey and the textured lid as the camera moved.
+    if (!lidded) {
+      bl.facade.box(bd.x, y + 0.55, bd.z, w + 0.5, 0.28, d + 0.5, bd.rot, [0.62, 0.62, 0.64],
+        { uScale: 10, vScale: 10, cell: C.roof });
+    }
+    // 12 cm outside the kit's own parapet (w + 0.5), not 2.5 cm: the two walls
+    // overlap vertically and at 2.5 cm they fought at distance the same way.
+    flat.box(bd.x, y + 0.55, bd.z, w + 0.75, 1.15, d + 0.75, bd.rot, DARK, { top: false });
     y += 0.83;
 
     const rc = [0.4, 0.41, 0.42];
@@ -3519,21 +3843,57 @@ varying vec3 vFarTint;`)
    * closed spheroids now.
    */
   meshCanopy(flat, x, gy, z, th, kind, h, g, gd) {
+    // Sunlit foliage is a different COLOUR from shaded foliage, not just a
+    // darker shade: the lit outer leaves go yellow-green. Baking that into the
+    // lobes on the sun's side, and the dark into the lobes underneath, is what
+    // makes a crown read as a volume of leaves rather than one tinted ball --
+    // the key light alone cannot do it, because every lobe faces every way.
+    const lit = [g[0] * 1.3, g[1] * 1.2, g[2] * 1.02];
+    // Toward the sun: main.js SUN_OFFSET (-215, 200, -150), normalised in xz.
+    const SX = -0.82, SZ = -0.57;
+    const wob = (k) => hash2(Math.round(x * 5) + k * 17, Math.round(z * 5) + k * 29);
     if (kind === 0) {
-      // Conifer: a stack of narrowing cones, widest and darkest at the bottom.
-      flat.cone(x, gy + th * 0.26, z, 1.9 + h * 1.6, th * 0.40, 7, gd);
-      flat.cone(x, gy + th * 0.48, z, 1.55 + h * 1.3, th * 0.40, 7, g);
-      flat.cone(x, gy + th * 0.70, z, 1.05 + h * 0.95, th * 0.40, 6, g);
+      // Conifer: five narrowing skirts instead of three cones. The pitch
+      // between tiers is under a skirt's own height, so each one overlaps the
+      // next and the silhouette steps in like a fir, and the tiers brighten
+      // toward the leader, where the light actually lands. 8 triangles a tier.
+      const TIERS = 5;
+      const r0 = 2.0 + h * 1.7;
+      const y0 = gy + th * 0.2, span = th * 0.62;
+      for (let i = 0; i < TIERS; i++) {
+        const t = i / (TIERS - 1);
+        const col = t < 0.5
+          ? [gd[0] + (g[0] - gd[0]) * t * 2, gd[1] + (g[1] - gd[1]) * t * 2, gd[2] + (g[2] - gd[2]) * t * 2]
+          : [g[0] + (lit[0] - g[0]) * (t - 0.5), g[1] + (lit[1] - g[1]) * (t - 0.5), g[2] + (lit[2] - g[2]) * (t - 0.5)];
+        const r = r0 * (1 - t * 0.8) * (0.92 + wob(i) * 0.16);
+        flat.cone(x, y0 + span * t, z, r, th * (0.30 - t * 0.06), 8, col);
+      }
     } else if (kind === 1) {
-      // Broadleaf: three overlapping lobes, the lower one wider and in shade,
-      // so the crown has a lumpy silhouette rather than one clean ball.
-      const cr = 2.1 + h * 1.8;
-      flat.spheroid(x, gy + th * 0.62, z, cr, 7, 3, gd, 0.74, 0.26);
-      flat.spheroid(x + cr * 0.3, gy + th * 0.8, z - cr * 0.2, cr * 0.66, 6, 3, g, 0.88, 0.3);
+      // Broadleaf: a dark core with four lobes clustered around and over it.
+      // The lobes on the sun side and on top take the lit colour, the ones
+      // away from the sun keep the mid, so the crown has a bright shoulder and
+      // a shaded underside at any heading. Per-tree rotation and size jitter
+      // keep a street of them from being stamped.
+      const cr = 2.0 + h * 1.7;
+      const cy = gy + th * 0.64;
+      flat.spheroid(x, cy, z, cr * 0.9, 7, 3, gd, 0.78, 0.3);
+      const rot0 = wob(1) * Math.PI * 2;
+      for (let k = 0; k < 4; k++) {
+        const a = rot0 + (k * Math.PI) / 2 + (wob(k + 2) - 0.5) * 0.7;
+        const ox = Math.cos(a), oz = Math.sin(a);
+        const sunward = ox * SX + oz * SZ;
+        const lr = cr * (0.56 + wob(k + 6) * 0.16);
+        const col = sunward > 0.2 ? lit : g;
+        flat.spheroid(x + ox * cr * 0.55, cy + cr * (0.08 + wob(k + 10) * 0.25), z + oz * cr * 0.55,
+          lr, 6, 3, col, 0.82, 0.32);
+      }
+      // crown, nudged toward the light
+      flat.spheroid(x + SX * cr * 0.18, cy + cr * 0.52, z + SZ * cr * 0.18, cr * 0.58, 6, 3, lit, 0.85, 0.3);
     } else {
-      // Scrub: low, wide and squat.
+      // Scrub: low and wide, two lobes, the sunward one lit.
       const cr = 1.5 + h * 1.1;
-      flat.spheroid(x, gy + th * 0.36, z, cr, 6, 3, gd, 0.7, 0.34);
+      flat.spheroid(x, gy + th * 0.34, z, cr, 6, 3, gd, 0.7, 0.34);
+      flat.spheroid(x + SX * cr * 0.35, gy + th * 0.34 + cr * 0.3, z + SZ * cr * 0.35, cr * 0.62, 6, 3, lit, 0.8, 0.3);
     }
   }
 }

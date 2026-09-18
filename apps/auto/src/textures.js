@@ -328,9 +328,103 @@ function masonrySurface(opts = {}) {
       hgt.g.fillRect(px - 8, py + h + 4, w + 16, 6);
     }
   }
+  // Weathering: rain streaks run down from the corners of each sill, and the
+  // spandrel under a ledge carries dirt the ledge above it throws off. A wall
+  // that has stood in Seattle rain has vertical grime tracks; a clean one looks
+  // like a render. Faint, and albedo only, so nothing new shows in the relief.
+  for (let y = 0; y < rows; y++) {
+    for (let x = 0; x < cols; x++) {
+      const px = x * cw + cw * 0.2, py = y * ch + ch * 0.16;
+      const w = cw * 0.6, h = ch * 0.52;
+      for (const sx of [px - 4, px + w - 2]) {
+        const len = ch * (0.25 + r() * 0.35);
+        const sg = a.g.createLinearGradient(0, py + h + 10, 0, py + h + 10 + len);
+        sg.addColorStop(0, `rgba(40,36,32,${0.10 + r() * 0.08})`);
+        sg.addColorStop(1, 'rgba(40,36,32,0)');
+        a.g.fillStyle = sg;
+        a.g.fillRect(sx, py + h + 10, 4 + r() * 5, len);
+      }
+    }
+  }
+  for (let y = 0; y < S; y += storey) {
+    const sg = a.g.createLinearGradient(0, y + storey - 2, 0, y + storey + 16);
+    sg.addColorStop(0, 'rgba(30,28,26,0.10)');
+    sg.addColorStop(1, 'rgba(30,28,26,0)');
+    a.g.fillStyle = sg;
+    a.g.fillRect(0, (y + storey - 2) % S, S, 18);
+  }
   noise(a.g, S, S, 16, 9);
   noise(hgt.g, S, S, 3, 12);
   return { albedo: a.c, height: hgt.c, rough: rgh.c, emissive: emi.c, nrm: 2.2 };
+}
+
+/**
+ * Flat-roof membrane: the lid on every low commercial roof.
+ *
+ * Roofs are a third or more of the pixels in any elevated view, and they were
+ * the corrugated-siding cell at a 4 m tile, so every roof downtown read as the
+ * same ribbed grey sheet. What a real flat roof shows from above is panel
+ * seams, ponding stains where it sags, a patched square here and there, and
+ * drains, and none of that is fine detail -- it is metre-scale, so it survives
+ * the mips from the air. 10 m a tile in world.js.
+ */
+function roofSurface() {
+  const S = 512;
+  const a = canvas(S, S), hgt = canvas(S, S), rgh = canvas(S, S);
+  a.g.fillStyle = '#a9a8a3'; a.g.fillRect(0, 0, S, S);
+  hgt.g.fillStyle = grey(0.5); hgt.g.fillRect(0, 0, S, S);
+  rgh.g.fillStyle = grey(0.86); rgh.g.fillRect(0, 0, S, S);
+  const r = mulberry32(131);
+  // gravel speckle
+  for (let i = 0; i < 7000; i++) {
+    const l = 0.7 + r() * 0.5;
+    a.g.fillStyle = `rgba(${(150 * l) | 0},${(148 * l) | 0},${(142 * l) | 0},0.35)`;
+    a.g.fillRect(r() * S, r() * S, 1 + r() * 2, 1 + r() * 2);
+  }
+  // ponding stains: broad soft dark blooms with a lighter tide ring
+  for (let i = 0; i < 9; i++) {
+    const bx = r() * S, by = r() * S, br = 30 + r() * 80;
+    const sg = a.g.createRadialGradient(bx, by, br * 0.2, bx, by, br);
+    sg.addColorStop(0, 'rgba(70,70,68,0.20)');
+    sg.addColorStop(0.8, 'rgba(70,70,68,0.10)');
+    sg.addColorStop(0.92, 'rgba(210,208,200,0.10)');
+    sg.addColorStop(1, 'rgba(0,0,0,0)');
+    a.g.fillStyle = sg;
+    a.g.fillRect(bx - br, by - br, br * 2, br * 2);
+  }
+  // patched squares of newer, lighter membrane
+  for (let i = 0; i < 4; i++) {
+    const w = 40 + r() * 90, h = 30 + r() * 70, x = r() * (S - w), y = r() * (S - h);
+    a.g.fillStyle = `rgba(200,198,190,${0.18 + r() * 0.12})`;
+    a.g.fillRect(x, y, w, h);
+    hgt.g.fillStyle = grey(0.58);
+    hgt.g.fillRect(x, y, w, h);
+  }
+  // panel seams, every 128 px: a raised welt with a shadow line beside it
+  for (let k = 0; k <= S; k += 128) {
+    a.g.fillStyle = 'rgba(40,40,40,0.22)';
+    a.g.fillRect(k - 2, 0, 3, S);
+    a.g.fillRect(0, k - 2, S, 3);
+    a.g.fillStyle = 'rgba(230,228,220,0.25)';
+    a.g.fillRect(k + 1, 0, 2, S);
+    hgt.g.fillStyle = grey(0.85);
+    hgt.g.fillRect(k - 2, 0, 5, S);
+    hgt.g.fillRect(0, k - 2, S, 5);
+  }
+  // drains, with the dark streaking that collects toward them
+  for (const [dx, dy] of [[190, 310], [420, 90]]) {
+    const sg = a.g.createRadialGradient(dx, dy, 2, dx, dy, 42);
+    sg.addColorStop(0, 'rgba(30,30,30,0.5)');
+    sg.addColorStop(1, 'rgba(30,30,30,0)');
+    a.g.fillStyle = sg;
+    a.g.fillRect(dx - 42, dy - 42, 84, 84);
+    a.g.fillStyle = '#3c3d3e';
+    a.g.fillRect(dx - 6, dy - 6, 12, 12);
+    hgt.g.fillStyle = grey(0.2);
+    hgt.g.fillRect(dx - 6, dy - 6, 12, 12);
+  }
+  noise(a.g, S, S, 12, 17);
+  return { albedo: a.c, height: hgt.c, rough: rgh.c, emissive: null, nrm: 1.6 };
 }
 
 function industrialSurface() {
@@ -607,112 +701,69 @@ function waterSurface() {
 }
 
 // ---------------------------------------------------------------------------
-// Sky (equirectangular: doubles as the background and the IBL source)
+// Sky: the dome and the IBL are both drawn by world.buildSky from this field
 // ---------------------------------------------------------------------------
 
-function skyEquirect() {
-  const W = 2048, H = 1024;
-  const { c, g } = canvas(W, H);
-  const grad = g.createLinearGradient(0, 0, 0, H);
-  // Chroma, at the luminance the sky already had.
-  //
-  // The stops were never the problem -- #88a8c2 is saturation 0.227. Measured
-  // off the rendered frames, the sky arrives on screen at **0.010 to 0.020**:
-  // achromatic grey across a third to a half of most frames, and it is also
-  // 100 % of the image-based light, so every shaded facade and the whole surface
-  // of Puget Sound were being lit by grey. The bleaching happens below, in the
-  // cloud pass and the haze band. These stops keep their luminance and take
-  // their hue back.
-  grad.addColorStop(0.00, '#1f4f8c');
-  grad.addColorStop(0.22, '#3f74ab');
-  grad.addColorStop(0.42, '#7ba7cd');
-  grad.addColorStop(0.50, '#b6cbdb');
-  grad.addColorStop(0.54, '#c6d4dd');
-  grad.addColorStop(0.70, '#8b979f');
-  grad.addColorStop(1.00, '#5a6469');
-  g.fillStyle = grad;
-  g.fillRect(0, 0, W, H);
-  // Sun: placed to match the key light direction so speculars line up.
-  const sx = 207, sy = 221;
-  const halo = g.createRadialGradient(sx, sy, 0, sx, sy, 460);
-  halo.addColorStop(0, 'rgba(255,247,228,0.95)');
-  halo.addColorStop(0.06, 'rgba(255,240,206,0.55)');
-  halo.addColorStop(0.3, 'rgba(226,232,236,0.22)');
-  halo.addColorStop(1, 'rgba(226,232,236,0)');
-  g.fillStyle = halo;
-  g.fillRect(0, 0, W, H);
-  const disc = g.createRadialGradient(sx, sy, 0, sx, sy, 42);
-  disc.addColorStop(0, 'rgba(255,255,250,1)');
-  disc.addColorStop(0.6, 'rgba(255,250,232,0.9)');
-  disc.addColorStop(1, 'rgba(255,246,220,0)');
-  g.fillStyle = disc;
-  g.fillRect(0, 0, W, H);
-
-  // Broken overcast: soft banks, flattened and denser toward the horizon.
-  //
-  // These used to be 390 ellipses squashed to about a fifteenth of their width
-  // at 3-11 % alpha. Individually invisible, they stacked into continuous
-  // horizontal streaks right across the equirect -- which reads in-game as a
-  // banded, combed sky and was twice diagnosed as a dither or precision bug in
-  // the post chain. It was never post. Fewer, larger, rounder banks with real
-  // gaps between them, and enough alpha each to be a cloud rather than a wash.
-  const r = mulberry32(83);
-  for (let layer = 0; layer < 3; layer++) {
-    const count = 14 + layer * 9;
-    for (let i = 0; i < count; i++) {
-      // Keep out of the zenith. Equirect x spans a full 360 deg at every
-      // latitude, so a bank drawn near y=0 is stretched across an enormous arc
-      // and renders as a grey swirl rather than a cloud. From about 25 deg
-      // down to the horizon is the band a player actually looks at anyway.
-      const y = H * 0.26 + Math.pow(r(), 0.8) * (H * 0.21);
-      const x = r() * W;
-      // Perspective still flattens a bank toward the horizon, but the floor is
-      // high enough that the shape stays a cloud and not a line.
-      const squash = 0.46 + (y / H) * 0.5;
-      // Clamp the width. At 630 px this reached 110 degrees of azimuth, and a
-      // bank that wide sitting 59 degrees up wraps the zenith region and reads
-      // as one grey smear across the top of the frame -- visible in five of the
-      // seven beauty shots. The comment below always said to keep out of the
-      // zenith; nothing enforced it.
-      const w = Math.min(W * 0.11, (110 + r() * 200) * (1 + layer * 0.3));
-      const h = w * squash * (0.34 + r() * 0.3);
-      const near = 1 - Math.abs(y - sy) / 900;
-      const bright = 0.88 + Math.max(0, near) * 0.12;
-      // Higher per-cloud, far fewer clouds. 228 banks over a 2048x307 band was
-      // roughly thirty times overdraw at 0.12 alpha -- about an 80 % white wash
-      // over the entire sky, which is what took the chroma out.
-      const alpha = 0.16 + r() * 0.16;
-      const cg = g.createRadialGradient(x, y, 0, x, y, w);
-      const t = Math.round(255 * bright);
-      cg.addColorStop(0, `rgba(${t},${t},${Math.round(t * 0.99)},${alpha})`);
-      cg.addColorStop(0.55, `rgba(${t},${t},${t},${alpha * 0.5})`);
-      cg.addColorStop(1, 'rgba(255,255,255,0)');
-      g.fillStyle = cg;
-      g.beginPath();
-      g.ellipse(x, y, w, h, 0, 0, Math.PI * 2);
-      g.fill();
-      // undersides
-      g.fillStyle = `rgba(138,150,162,${alpha * 0.42})`;
-      g.beginPath();
-      g.ellipse(x, y + h * 0.55, w * 0.8, h * 0.4, 0, 0, Math.PI * 2);
-      g.fill();
+/**
+ * Tiling cloud density for the sky dome, as periodic value-noise fBm.
+ *
+ * The equirect's clouds were ellipses painted into a 2048 px panorama: 360 deg
+ * across 2048 texels puts about 350 of them across a 62 deg view, magnified
+ * 3.6x on a 1280 px screen, so every cloud was a soft brush smear and the sky
+ * read as a low-res photo. The dome projects this onto a flat cloud layer
+ * instead, so near the zenith the texture is close to 1:1 and toward the
+ * horizon it foreshortens the way real cloud does.
+ *
+ * Every octave's lattice period divides the tile, so it wraps seamlessly and
+ * GL repeat does the rest. R = density, G = the same field shifted a few
+ * texels toward the sun (the dome's cheap self-shadowing sample).
+ */
+function cloudNoise() {
+  const S = 512;
+  const r = mulberry32(97);
+  const octaves = [4, 8, 16, 32, 64, 128];
+  const lat = octaves.map((p) => {
+    const a = new Float32Array(p * p);
+    for (let i = 0; i < a.length; i++) a[i] = r();
+    return a;
+  });
+  const field = new Float32Array(S * S);
+  for (let o = 0; o < octaves.length; o++) {
+    const P = octaves[o], L = lat[o], amp = Math.pow(0.52, o), k = P / S;
+    for (let y = 0; y < S; y++) {
+      const fy = y * k, j0 = Math.floor(fy), ty = fy - j0;
+      const sy = ty * ty * (3 - 2 * ty);
+      const ja = (j0 % P) * P, jb = ((j0 + 1) % P) * P;
+      for (let x = 0; x < S; x++) {
+        const fx = x * k, i0 = Math.floor(fx), tx = fx - i0;
+        const sx = tx * tx * (3 - 2 * tx);
+        const ia = i0 % P, ib = (i0 + 1) % P;
+        const top = L[ja + ia] + (L[ja + ib] - L[ja + ia]) * sx;
+        const bot = L[jb + ia] + (L[jb + ib] - L[jb + ia]) * sx;
+        field[y * S + x] += (top + (bot - top) * sy) * amp;
+      }
     }
   }
-  // horizon haze band
-  // Narrower and much weaker, and tinted to scene.fog's own colour so the
-  // horizon and the fog agree instead of meeting at a seam. At 0.85 alpha across
-  // v 0.44-0.56 this was a near-opaque grey wash over the horizon plus or minus
-  // 22 degrees -- which is exactly where every street-level shot points.
-  const haze = g.createLinearGradient(0, H * 0.47, 0, H * 0.53);
-  haze.addColorStop(0, 'rgba(185,195,207,0)');
-  haze.addColorStop(0.5, 'rgba(185,195,207,0.35)');
-  haze.addColorStop(1, 'rgba(185,195,207,0)');
-  g.fillStyle = haze;
-  g.fillRect(0, 0, W, H);
-
-  const t = tex(c, { repeat: false, aniso: 4, mips: true });
-  t.mapping = THREE.EquirectangularReflectionMapping;
-  t.wrapS = THREE.RepeatWrapping;
+  let lo = Infinity, hi = -Infinity;
+  for (const v of field) { lo = Math.min(lo, v); hi = Math.max(hi, v); }
+  const data = new Uint8Array(S * S * 4);
+  for (let y = 0; y < S; y++) {
+    for (let x = 0; x < S; x++) {
+      const v = (field[y * S + x] - lo) / (hi - lo);
+      const i = (y * S + x) * 4;
+      data[i] = Math.round(v * 255);
+      data[i + 1] = data[i];
+      data[i + 2] = data[i];
+      data[i + 3] = 255;
+    }
+  }
+  const t = new THREE.DataTexture(data, S, S, THREE.RGBAFormat, THREE.UnsignedByteType);
+  t.wrapS = t.wrapT = THREE.RepeatWrapping;
+  t.magFilter = THREE.LinearFilter;
+  t.minFilter = THREE.LinearMipmapLinearFilter;
+  t.generateMipmaps = true;
+  t.anisotropy = 4;
+  t.needsUpdate = true;
   return t;
 }
 
@@ -887,16 +938,21 @@ function scaledNormal(heightCanvas, strength, k) {
  * the diffuse IBL back exactly and the indirect specular to within the
  * occlusion curve.
  */
-function packedCell(roughCanvas, env, rough, metal) {
+function packedCell(roughCanvas, env, rough, metal, winMetal = 0) {
   const src = roughCanvas ? px(roughCanvas) : null;
   const { c, g } = canvas(FS, FS);
   const img = g.createImageData(FS, FS);
   const d = img.data;
-  const r = Math.round(env * 255), b = Math.round(metal * 255);
+  const r = Math.round(env * 255);
   for (let i = 0; i < d.length; i += 4) {
-    d[i] = r;
-    d[i + 1] = Math.round((src ? src[i] : 255) * rough);
-    d[i + 2] = b;
+    const rs = src ? src[i] : 255;
+    // Glazing is the only thing in a wall cell under ~0.3 roughness. It gets
+    // its own metalness (and full env) so a window REFLECTS -- sky above eye
+    // level, the street below it -- instead of being flat blue paint.
+    const win = winMetal > 0 ? Math.min(1, Math.max(0, (92 - rs) / 51)) : 0;
+    d[i] = Math.round(r + (255 - r) * win);
+    d[i + 1] = Math.round(rs * rough);
+    d[i + 2] = Math.round((metal + (Math.max(metal, winMetal) - metal) * win) * 255);
     d[i + 3] = 255;
   }
   g.putImageData(img, 0, 0);
@@ -945,7 +1001,7 @@ function scaledEmissive(src, k) {
 function facadeAtlas(fams) {
   const nsMax = Math.max(...fams.map((f) => f.ns));
   const envMax = Math.max(...fams.map((f) => f.env));
-  const metalMax = Math.max(...fams.map((f) => f.metal));
+  const metalMax = Math.max(...fams.map((f) => Math.max(f.metal, f.winMetal || 0)));
   const emiMax = Math.max(...fams.map((f) => f.emissive));
   const W = CELL_W * fams.length;
   const cells = {};
@@ -956,7 +1012,7 @@ function facadeAtlas(fams) {
     map: tex(stripAtlas(fams.map((f) => f.s.albedo)), { clampS: true }),
     normalMap: tex(stripAtlas(fams.map((f) => scaledNormal(f.s.height, f.s.nrm, f.ns / nsMax))),
       { srgb: false, clampS: true }),
-    packed: tex(stripAtlas(fams.map((f) => packedCell(f.s.rough, f.env / envMax, f.rough, f.metal / metalMax))),
+    packed: tex(stripAtlas(fams.map((f) => packedCell(f.s.rough, f.env / envMax, f.rough, f.metal / metalMax, (f.winMetal || 0) / metalMax))),
       { srgb: false, clampS: true }),
     emissiveMap: tex(stripAtlas(fams.map((f) => scaledEmissive(f.s.emissive, f.emissive / emiMax))),
       { clampS: true }),
@@ -970,7 +1026,7 @@ export function buildTextures() {
     // Every family's old material parameters travel with it here; `facadeAtlas`
     // is what folds them into the one material's maps.
     facade: facadeAtlas([
-      { name: 'masonry', s: masonrySurface(), env: 0.66, ns: 1.5, rough: 1, metal: 0, emissive: 0.015 },
+      { name: 'masonry', s: masonrySurface(), env: 0.66, ns: 1.5, rough: 1, metal: 0, winMetal: 0.5, emissive: 0.015 },
       // Brick is its own cell, not a tint of the stone one. 11 px courses over
       // a 12 m tile is a ~26 cm brick -- coarser than life, because at 512 px a
       // true 7 cm course is sub-texel and mips straight to flat grey. What
@@ -982,17 +1038,18 @@ export function buildTextures() {
           base: '#a89a90', mortar: '#c9c2b4', course: 11, seedN: 47,
           surround: '#cfc9bc', sill: '#d6d1c6',
         }),
-        env: 0.60, ns: 1.5, rough: 1, metal: 0, emissive: 0.015,
+        env: 0.60, ns: 1.5, rough: 1, metal: 0, winMetal: 0.5, emissive: 0.015,
       },
       { name: 'industrial', s: industrialSurface(), env: 0.5, ns: 1.7, rough: 1, metal: 0.25, emissive: 0 },
       { name: 'house', s: houseSurface(), env: 0.45, ns: 1.8, rough: 1, metal: 0, emissive: 0.015 },
       { name: 'signs', s: signSurface(), env: 0.5, ns: 0, rough: 0.62, metal: 0, emissive: 1.5 },
+      { name: 'roof', s: roofSurface(), env: 0.5, ns: 1.2, rough: 1, metal: 0, emissive: 0 },
     ]),
     road: roadSurface(),
     sidewalk: sidewalkSurface(),
     ground: groundSurface(),
     water: waterSurface(),
-    sky: skyEquirect(),
+    clouds: cloudNoise(),
     particle: particleTexture(),
   };
 }

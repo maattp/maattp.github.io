@@ -155,8 +155,16 @@ void main() {
   // for the same reason; this is not a look choice, it is paying the curve
   // back what it took.
   c = mix(vec3(dot(c, vec3(0.2126, 0.7152, 0.0722))), c, 1.45);
-  c += vec3(-0.008, 0.0, 0.014) * (1.0 - c);
-  c *= vec3(1.015, 1.0, 0.985);
+  // Split toning: warm the lit side, cool the shade.
+  //
+  // The old grade lifted blue across the WHOLE range and then warmed the whole
+  // range back, which nets out to a flat cast. A sunlit city separates by
+  // TEMPERATURE as much as by value -- the key is warm and the shade is lit by
+  // blue sky -- so the push is keyed to luminance: highlights toward amber,
+  // shadows toward the sky's blue, midtones untouched. Arithmetic only.
+  float gl = dot(c, vec3(0.2126, 0.7152, 0.0722));
+  c += vec3(0.022, 0.008, -0.018) * smoothstep(0.42, 0.92, gl);
+  c += vec3(-0.014, 0.002, 0.020) * (1.0 - smoothstep(0.04, 0.38, gl));
   }
 
   float d = distance(vUv, vec2(0.5));
