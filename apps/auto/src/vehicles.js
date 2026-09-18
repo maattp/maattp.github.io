@@ -384,9 +384,10 @@ function endFace(b, z, dir, prof, holes, col) {
   const n = [0, 0, dir];
   const clip = (x, y) => Math.max(-hwAt(y), Math.min(hwAt(y), x));
   for (let i = 0; i < edges.length - 1; i++) {
-    // Each band is subdivided so the outer edge follows the section's curve
-    // instead of chording across it.
-    const SUB = 3;
+    // No subdivision: every station of the outline is already a band edge
+    // (above), so the outer edge is exactly linear across each band. Splitting
+    // each one in three as well was ~250 triangles a car that drew nothing new.
+    const SUB = 1;
     for (let k = 0; k < SUB; k++) {
       const ya = edges[i] + ((edges[i + 1] - edges[i]) * k) / SUB;
       const yb = edges[i] + ((edges[i + 1] - edges[i]) * (k + 1)) / SUB;
@@ -2675,10 +2676,13 @@ function buildPlane(spec, paint, trim, matte) {
     const wheel = (x, z, r, legFrom) => {
       matte.tube(legFrom, [x, r + 0.05, z], 0.035, 6, [0.72, 0.73, 0.75], true);
       matte.tube([x - 0.07, r, z], [x + 0.07, r, z], r, 12, TYRE, true);
+      // `ring` is centred on the fuselage axis, so the spat has to be moved
+      // out to its wheel -- without it all three hang under the belly.
       paint.loft([
         ring(z + r * 1.45, 0.02, 0.05, r + 0.05), ring(z + r * 0.6, 0.11, r * 0.75, r + 0.04),
         ring(z - r * 0.7, 0.11, r * 0.72, r + 0.06), ring(z - r * 1.55, 0.02, 0.06, r + 0.12),
-      ].reverse(), WHITE, { capStart: true, capEnd: true });
+      ].reverse().map((rg) => ({ z: rg.z, pts: rg.pts.map(([px, py]) => [px + x, py]) })),
+      WHITE, { capStart: true, capEnd: true });
     };
     for (const sd of [-1, 1]) wheel(sd * 1.15, half - 3.30, 0.28, [sd * 0.40, 0.78, half - 3.10]);
     wheel(0, half - 0.75, 0.24, [0, 0.82, half - 0.95]);
