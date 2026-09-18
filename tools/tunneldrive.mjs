@@ -8,11 +8,12 @@ import { spawn } from 'node:child_process';
 import { writeFileSync } from 'node:fs';
 import { setTimeout as sleep } from 'node:timers/promises';
 const TAG = process.argv[2] || 'now';
-const PORT = 9240;
+const HTTP_PORT = process.env.AUTO_HTTP_PORT || 8000;
+const PORT = +process.env.AUTO_CDP_PORT || 9240;
 const CHROME = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
 const chrome = spawn(CHROME, [`--remote-debugging-port=${PORT}`, '--headless=new',
   '--use-gl=swiftshader', '--enable-unsafe-swiftshader', '--window-size=1100,650',
-  '--no-first-run', `--user-data-dir=/tmp/auto-pcmp-${TAG}`, 'about:blank'], { stdio: 'ignore' });
+  '--no-first-run', `--user-data-dir=/tmp/auto-pcmp-${TAG}-${PORT}`, 'about:blank'], { stdio: 'ignore' });
 try {
   let page;
   for (let i = 0; i < 90 && !page; i++) {
@@ -33,7 +34,7 @@ try {
   await send('Network.setBypassServiceWorker', { bypass: true });
   await send('Network.setCacheDisabled', { cacheDisabled: true });
   await send('Page.addScriptToEvaluateOnNewDocument', { source: 'window.__noAutoQuality = true;' });
-  await send('Page.navigate', { url: 'http://localhost:8000/apps/auto/' });
+  await send('Page.navigate', { url: `http://localhost:${HTTP_PORT}/apps/auto/` });
   for (let i = 0; i < 400; i++) { await sleep(500); if (await ev('!!window.__dbg')) break; }
 
   // ---- Test A: traverse the SR-99 bore under the real sim -----------------
