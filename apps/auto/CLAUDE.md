@@ -1651,9 +1651,23 @@ joint itself (centrelines under 1 m apart) is excluded from these tests.
 `gradeRoads`: berm, wall or nothing (`e.pe`, `e.pwall`). roadLift and
 `world.meshGraded` both read it. world.js deciding with its own `carriagewayAt`
 query is how a batter lift came to be reported where no batter was drawn.
-**A wall is cast panels, not a quad** (`meshWall`): a tonal step per ~5 m panel
-with a dark joint, a darker 0.45 m footing, a pale coping, and only as tall as
-the drop. One untextured quad read as a blank slab beside the lane.
+**A wall is weathered cast concrete, at the tarmac's value** (`meshWall`). It is
+the `concrete` facade-atlas family: one tile is one ~5 m panel, with a recessed
+joint at the tile edge, 3 x 3 form-tie holes dimpled into the height map, a lift
+line, water staining down from the coping and a grimy base. Walls, deck fascia and
+the rail's traffic face all draw into the chunk's facade builder with that cell,
+tinted mid-grey, so they cost no draw. Copings take the tunnel concrete's value,
+so the whole family matches. Under 1.2 m of drop a wall becomes a Jersey barrier
+(0.81 m) with a kerb face below. Walls are only as tall as the drop.
+
+**Value matters as much as detail.** One untextured quad read as a blank slab.
+The first panelled version still sat at 1.6x and 3.2x the tarmac's linear
+luminance (0.242 and 0.366, against 0.152 and 0.114), which made it the brightest
+thing in frame after the sky. That is the same visual complaint as "weird
+guardrails". It now measures 0.072 on a shaded face and 0.114 in sun, at or under
+the tarmac. Relative variation inside the wall rose (sd/mean 0.34 -> 0.62) so the
+joints and stains read. Measure a new roadside surface with `tools/values.py` on
+a wall crop before judging it by eye.
 
 **Refused overpasses dip the STREET underneath, and only a street.** Where the
 road under a refused crossing is a draped street, `city.underpassDepth` cuts a
@@ -1687,23 +1701,50 @@ its edge. Narrowing the fringe to `hw + 0.6` everywhere was tried and reverted:
 it bought little (182 -> 166 of 1656 samples off the drawn deck at I-5
 downtown) and cost a verify approach by SR-99's north portal.
 
-**Measure the ride and the profile separately.** `profAt` against `groundAt`
-along the same 3 m steps found the staircase in one step; the combined number
-only said "worse". Measured, `tools/jank.mjs`, before grading -> now:
+**Three solver traps, each found as one spike on a single I-5 ride.** Diagnose
+them from the solver's own per-sample values. They are published only when
+`globalThis.__profDebug` is set, so shipping builds carry nothing.
+
+- **A clearance floor must ease off, not drop.** The grade cone that eases a
+  profile down off an overpass plateau was seeded from raised samples only, and
+  it pushes a neighbour only when that raises it. Inside the 20 m dilation every
+  neighbour already held the plateau height, so the cone never left the window:
+  56.09 m fell to 52.62 m in one 5 m sample, a 35 m trough at -11 %. Seed the
+  cone from the DILATED plateau.
+- **Coupled carriageways must be blended after the solve.** Coupling their
+  floors is not enough: the solved profiles still differed by ~0.2 m where they
+  overlap, and groundAt took the higher one for a step. Bound the blend by the
+  ramped floor below AND the anchor cap above. Bounded by the floor alone, the
+  blend re-made cliffs at deck starts and verify's riders went from 0 to 13 falls.
+- **A piece past a CONTINUED end loses close ties.** Where half-width changes,
+  the previous piece extrapolated 7 cm above the next piece's real profile and
+  won. It now loses near-ties to the neighbour whose span actually covers the
+  point. Past a FREE end (an anchor, a locked deck) it is the only deck there;
+  penalising it there cost SR-99's north approach its capture.
+
+**Measure the ride and the profile separately.** Comparing `profAt` with
+`groundAt` along the same 3 m steps found the staircase in one step; the
+combined number only said "worse". Measured with `tools/jank.mjs`, before
+grading -> now:
 
 | check | before | now |
 |---|---|---|
-| fwy-bump (3 m grade break > 5 %) | 3490 / 69643 (5.01 %), 1475 jolts | 1528 / 70690 (2.16 %) |
+| fwy-bump (3 m grade break > 5 %) | 3502 / 69668 (5.03 %) | 1044 / 70624 (1.48 %) |
+| fwy-bump over 8 % (felt as a jolt) | 1739 | 631 |
+| steps jumping > 0.5 m | 1475 | 512 |
+| I-5 ride north of the ship canal, breaks > 5 % | 52 of 518 | 0 of 518 |
 | crossing-clash (deck gap < 4.5 m) | 427 / 725 (58.9 %) | 158 / 725 (21.8 %) |
 | barrier-on-road | 1958 / 57270 (3.42 %) | 888 / 56841 (1.56 %) |
 | bridge (deck buried) | 17 / 6678 | 5 / 6678 |
 | sink | 308 / 6925 (4.45 %) | 295 / 6923 (4.26 %) |
 
-By category: graded ground 1.60 %, graded decks 2.17 %, ungraded freeway near
-portals ~7 % (untouched by design). verify: 0 of 33213 viaduct samples fall,
-3 of 851 approaches fail to climb — the same 3 as before grading, draped ramps
-beside portal cuts where world.js carves terrain after citygen fixed the node
-heights. Cost: +3 draws (terrain tiles carrying underpass cells), ~+1-2 %
+Most of what is left over 8 % is ungraded freeway beside portals (about 7 % of
+its steps), which grading deliberately leaves draped. verify: 0 of 33213 viaduct
+samples fall. **verify's approach walk judges a graded deck against its DRAWN
+profile**, the same way the riding check does: three "failures" were cars
+correctly riding a deck that bows below the straight chord between its end nodes.
+The approaches that remain are draped ramps beside portal cuts, where world.js
+carves the terrain after citygen fixed the node heights. Cost: +3 draws (terrain tiles carrying underpass cells), ~+1-2 %
 triangles; grading runs once at load over ~88k samples.
 
 **A deck may only pick you up if it is at your wheels.** `DECK_REACH` is 0.9 m:
