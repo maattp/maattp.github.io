@@ -847,7 +847,20 @@ export function* cityGenerator(md) {
 
     /** Ground height accounting for paved lift and for bridge decks under Y. */
     groundAt(x, z, curY, lift) {
-      const terr = G.terrainHeight(x, z) + (lift != null ? lift : this.roadLift(x, z));
+      const lf = lift != null ? lift : this.roadLift(x, z);
+      let terr = G.terrainHeight(x, z) + lf;
+      // A LID OVER A PORTAL CUTTING (world.buildLids) is the ground for anyone
+      // at its level, by the same nearest-surface rule as a deck: a car on the
+      // road over the cutting rides the slab at the road's own grade, and a
+      // car in the trench under it never reaches it.
+      if (this.lidQuads) {
+        const lr = this.lidAt(x, z);
+        if (lr !== null) {
+          const ly = lr + lf;
+          if (curY == null ? ly > terr
+            : ly <= curY + DECK_REACH && Math.abs(ly - curY) < Math.abs(terr - curY)) terr = ly;
+        }
+      }
       let best = terr;
       // NEAREST deck to where you already are, not the highest one within
       // reach. Taking the highest meant any deck up to 2.6 m above the car
@@ -954,6 +967,48 @@ export function* cityGenerator(md) {
     // store and the lookup cannot disagree and no chunk lifecycle touches them.
     barrierSegs: null,
     barrierGrid: new Map(),
+
+    // --- Cut-and-cover lids ------------------------------------------------
+    //
+    // Plan-view quads (four [x, z] corners, convex) of the slabs world.js
+    // builds where a surface road passes over a portal cutting. The slab's top
+    // is the RAW ground there -- the road's own grade before the cut dug it --
+    // so lidAt answers terrainRaw and groundAt adds the road's lift.
+    lidQuads: null,
+    lidGrid: new Map(),
+    setLids(quads) {
+      this.lidQuads = quads.length ? quads : null;
+      this.lidGrid = new Map();
+      for (let i = 0; i < quads.length; i++) {
+        const q = quads[i];
+        let x0 = 1e9, x1 = -1e9, z0 = 1e9, z1 = -1e9;
+        for (const [x, z] of q) { x0 = Math.min(x0, x); x1 = Math.max(x1, x); z0 = Math.min(z0, z); z1 = Math.max(z1, z); }
+        for (let cx = Math.floor(x0 / 40); cx <= Math.floor(x1 / 40); cx++) {
+          for (let cz = Math.floor(z0 / 40); cz <= Math.floor(z1 / 40); cz++) {
+            const k = skey(cx, cz);
+            let l = this.lidGrid.get(k);
+            if (!l) this.lidGrid.set(k, (l = []));
+            l.push(i);
+          }
+        }
+      }
+    },
+    lidAt(x, z) {
+      if (!this.lidQuads) return null;
+      const l = this.lidGrid.get(skey(Math.floor(x / 40), Math.floor(z / 40)));
+      if (!l) return null;
+      for (const i of l) {
+        const q = this.lidQuads[i];
+        let pos = false, neg = false;
+        for (let k = 0; k < 4; k++) {
+          const [ax, az] = q[k], [bx, bz] = q[(k + 1) & 3];
+          const cr = (bx - ax) * (z - az) - (bz - az) * (x - ax);
+          if (cr > 1e-9) pos = true; else if (cr < -1e-9) neg = true;
+        }
+        if (!(pos && neg)) return G.terrainRaw(x, z);
+      }
+      return null;
+    },
 
     // Stride 6: ax, az, bx, bz, y0, y1. The band is what lets a barrier be a
     // TUNNEL wall: a 2D fence along 3 km of bore under downtown would wall

@@ -389,7 +389,12 @@ async function main() {
             const t = k / 10 * Math.min(1, 20 / e.len);
             pts.push([nd.x + (o.x - nd.x) * t, nd.z + (o.z - nd.z) * t]);
           }
-          let cur = G.terrainHeight(far.x, far.z) + 0.6, y = cur;
+          // Start on the ROAD, not on terrainHeight: where a portal cutting
+          // digs under an approach, the road rides a lid (world.buildLids) at
+          // its own grade and terrainHeight is the trench floor below it.
+          // Asked from the raw grade, groundAt answers whichever is the road.
+          let cur = city.groundAt(far.x, far.z, G.terrainRaw(far.x, far.z) + 0.6,
+            city.roadLift(far.x, far.z)) + 0.6, y = cur;
           for (const [x, z] of pts) { y = city.groundAt(x, z, cur, city.roadLift(x, z)); cur = y + 0.6; }
           if (y < nd.y + (o.y - nd.y) * Math.min(1, 20 / e.len) - 1.0) failed++;
         }
