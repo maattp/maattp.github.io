@@ -51,7 +51,7 @@ check((await w('/convs/bad:id:here', MATT, { method: 'PUT', body: '{"messages":[
 
 /* ---------- page mock for /llm/chat and /llm/usage ---------- */
 const chunk = (delta, finish) => `data: ${JSON.stringify({ choices: [{ delta, finish_reason: finish ?? null }] })}\n\n`;
-const CONTENT = '# Hello\n\nHere is code:\n\n```js\nconsole.log(1)\n```\n\n| a | b |\n|---|---|\n| 1 | 2 |\n\n<img src=x onerror="window.__xss=1"><script>window.__xss=2</script>\n\n[a link](https://example.com)';
+const CONTENT = '# Hello\n\nHere is code:\n\n```js\nconsole.log(1)\n```\n\n| a | b |\n|---|---|\n| 1 | 2 |\n\n<img src=x onerror="window.__xss=1"><script>window.__xss=2</script><span style="position:fixed;inset:0;background:red">overlay</span>\n\n[a link](https://example.com)';
 const okStream = [': OPENROUTER PROCESSING\n\n', chunk({ reasoning: 'Let me think' }), chunk({ reasoning: ' about it.' })];
 const body = chunk({ content: CONTENT });
 okStream.push(body.slice(0, 40), body.slice(40)); // a data line split across reads
@@ -166,6 +166,14 @@ try {
   await ev(`(async () => { const c = document.createElement('canvas'); c.width = c.height = 40; c.getContext('2d').fillRect(0, 0, 20, 20);
     const blob = await new Promise((r) => c.toBlob(r, 'image/png')); await addImages([new File([blob], 'x.png', { type: 'image/png' })]); })()`, true);
   check(await ev(`document.querySelectorAll('#attachments .chip').length`) === 1, 'image attached');
+  // Switching to a text-only model with images attached must not send the words alone
+  const textOnly = models.find((m) => !m.vision);
+  await ev(`setModel(${JSON.stringify(textOnly.id)})`);
+  await type('#input', 'Explain this');
+  await click('#sendbtn');
+  await sleep(200);
+  check(await ev(`S.conv.messages.length === 0 && __chatBodies.length === 0 && S.attachments.length === 1 && document.querySelector('#toast').textContent.includes('can’t read images')`), `text-only model (${textOnly.id}): send with images blocked with an explanation, images kept`);
+  await ev(`setModel(${JSON.stringify(vision.id)})`);
   await type('#input', 'Explain this');
   await click('#sendbtn');
   await waitFor(`!!document.querySelector('#sendbtn.stop')`, 'stop button while streaming');
@@ -177,7 +185,7 @@ try {
   check(await ev(`${md}.querySelector('.codeblock .codebar span')?.textContent`) === 'js', 'code block with language bar');
   check(await ev(`!!${md}.querySelector('.tablewrap table')`), 'table rendered and wrapped');
   check(await ev(`${md}.querySelector('a')?.target`) === '_blank', 'links open in a new tab');
-  check(await ev(`window.__xss === undefined && !${md}.querySelector('img, script, [onerror]')`), 'model HTML sanitized (no img/script/onerror)');
+  check(await ev(`window.__xss === undefined && !${md}.querySelector('img, script, [onerror], [style]')`), 'model HTML sanitized (no img/script/onerror/style)');
   check(await ev(`!document.querySelector('.think').open && document.querySelector('.think summary').textContent === 'Thoughts'`), 'reasoning collapses when done');
   check((await ev(`document.querySelector('.msg.ai').textContent`)).includes('Done.'), 'content split across reads reassembled');
   check(await ev(`document.querySelector('.msg.ai .mlabel').textContent`) === vision.name, 'reply labelled with model name');

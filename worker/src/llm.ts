@@ -26,6 +26,7 @@ const MODELS_TTL_MS = 10 * 60 * 1000;
 export const MAX_REQUEST_CHARS = 8 * 1024 * 1024;
 export const MAX_CONV_CHARS = 4 * 1024 * 1024;
 export const CONV_ID_RE = /^[\w-]{8,64}$/;
+const MODEL_ID_RE = /^[\w.:/@~+-]{1,150}$/;
 
 export type FreeModel = {
   id: string;
@@ -140,9 +141,12 @@ export function parseConv(raw: string): { title: string; model: string; createdA
     return "bad json";
   }
   if (!c || typeof c !== "object" || !Array.isArray(c.messages)) return "bad conversation";
-  // KV metadata is capped at 1024 bytes, hence the truncation.
-  const title = (typeof c.title === "string" ? c.title.trim() : "").slice(0, 100) || "New chat";
-  const model = typeof c.model === "string" ? c.model.slice(0, 150) : "";
+  // Both land in KV metadata, capped at 1024 bytes. The title is cut by code
+  // point, never mid-surrogate; a lone surrogate serializes as a 6-byte \uXXXX,
+  // so the worst case is 100 × 6. The model is client-supplied too, so it must
+  // look like a model id rather than being truncated into a wrong one.
+  const title = Array.from(typeof c.title === "string" ? c.title.trim() : "").slice(0, 100).join("") || "New chat";
+  const model = typeof c.model === "string" && MODEL_ID_RE.test(c.model) ? c.model : "";
   const createdAt = typeof c.createdAt === "number" ? c.createdAt : Date.now();
   return { title, model, createdAt, messages: c.messages };
 }

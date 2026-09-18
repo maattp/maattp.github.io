@@ -67,9 +67,19 @@ ok(parseChat(null) === 'model required', 'null body rejected');
 ok(parseChat({ model: 'm', messages: [{ role: 'user', content: [] }] }) === 'bad content', 'empty parts rejected');
 
 // --- conversation parsing (feeds KV metadata, capped at 1024 bytes) ---
-const conv = parseConv(JSON.stringify({ title: '  ' + '漢'.repeat(300), model: 'm'.repeat(400), createdAt: 5, messages: [{ any: 'thing' }] }));
-ok(conv.title.length === 100 && conv.model.length === 150 && conv.createdAt === 5, 'title/model truncated, createdAt kept');
-ok(new TextEncoder().encode(JSON.stringify({ title: conv.title, updatedAt: Date.now(), model: conv.model })).length < 1024, 'worst-case metadata fits KV 1024-byte cap');
+const metaBytes = (c) => new TextEncoder().encode(JSON.stringify({ title: c.title, updatedAt: Date.now(), model: c.model })).length;
+const conv = parseConv(JSON.stringify({ title: '  ' + '漢'.repeat(300), model: 'x/free-one:free', createdAt: 5, messages: [{ any: 'thing' }] }));
+ok(conv.title === '漢'.repeat(100) && conv.model === 'x/free-one:free' && conv.createdAt === 5, 'title truncated to 100 chars, model id and createdAt kept');
+ok(parseConv(JSON.stringify({ title: '😀'.repeat(150), messages: [] })).title === '😀'.repeat(100), 'emoji title cut by code point, never mid-surrogate');
+ok(parseConv(JSON.stringify({ model: 'm'.repeat(150), messages: [] })).model.length === 150, '150-char model id kept');
+ok(parseConv(JSON.stringify({ model: 'm'.repeat(151), messages: [] })).model === '', 'over-long model id dropped, not truncated into a wrong id');
+ok(parseConv(JSON.stringify({ model: '~anthropic/claude-sonnet-latest', messages: [] })).model === '~anthropic/claude-sonnet-latest', 'tilde-prefixed model id kept');
+ok(parseConv(JSON.stringify({ model: 'a b"c', messages: [] })).model === '', 'model with spaces/quotes dropped');
+// Worst cases for the KV metadata cap: escaped lone surrogates (6 bytes each) in the title, a max-length model id.
+const worst = parseConv(JSON.stringify({ title: '\ud800'.repeat(400), model: '~'.repeat(150), messages: [] }));
+ok(worst.title.length === 100 && metaBytes(worst) < 1024, `lone-surrogate title + max model fits KV 1024-byte cap (${metaBytes(worst)} bytes)`);
+ok(metaBytes(parseConv(JSON.stringify({ title: '\ud800'.repeat(400), model: '\udfff'.repeat(400), messages: [] }))) < 1024, 'lone-surrogate model dropped, metadata still fits');
+ok(metaBytes(parseConv(JSON.stringify({ title: '😀'.repeat(400), model: 'm'.repeat(150), messages: [] }))) < 1024, 'astral title + max model fits');
 ok(parseConv(JSON.stringify({ title: '   ', messages: [] })).title === 'New chat', 'blank title defaults');
 ok(parseConv(JSON.stringify({ title: 'x' })) === 'bad conversation', 'messages required');
 ok(parseConv('{nope') === 'bad json', 'bad json rejected');

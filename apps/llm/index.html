@@ -371,7 +371,7 @@ const S = {
   attachments: [],       // downscaled data URLs
   editing: null,         // id of the user message being edited
   thinkOpen: new Set(),  // assistant ids whose reasoning the user expanded
-  usage: null, stick: true, saving: Promise.resolve(), opening: null,
+  modelsLoaded: false, usage: null, stick: true, saving: Promise.resolve(), opening: null,
 };
 const modelInfo = (id) => S.models.find((m) => m.id === id);
 
@@ -431,7 +431,7 @@ async function init() {
 /* ---------- models ---------- */
 async function loadModels() {
   const { models } = await getJSON('/models');
-  S.models = models;
+  S.models = models; S.modelsLoaded = true;
   if (!modelInfo(S.model)) S.model = (modelInfo('openrouter/free') || models[0] || {}).id || null;
   renderModelName(); renderModels(); syncComposer();
 }
@@ -440,7 +440,7 @@ function setModel(id) {
   renderModelName(); renderModels(); syncComposer();
 }
 function renderModelName() {
-  const name = modelInfo(S.model)?.name || (S.models.length ? 'Choose a model' : 'Loading…');
+  const name = modelInfo(S.model)?.name || (!S.modelsLoaded ? 'Loading…' : S.models.length ? 'Choose a model' : 'No free models right now');
   $('#modelname').textContent = name;
   $('#emptymodel').textContent = name;
 }
@@ -455,7 +455,9 @@ function renderModels() {
       h('div', { class: 'mmeta' }, [m.id, fmtCtx(m.context), m.vision && 'images', m.reasoning && 'reasoning'].filter(Boolean).join(' · ')),
       m.description ? h('div', { class: 'mdesc' }, m.description) : null));
   }
-  if (!list.children.length) list.append(h('div', { class: 'none' }, S.models.length ? 'No matches' : 'Loading models…'));
+  if (!list.children.length) {
+    list.append(h('div', { class: 'none' }, S.models.length ? 'No matches' : S.modelsLoaded ? 'OpenRouter lists no free models right now.' : 'Loading models…'));
+  }
 }
 function openModels() { $('#modelq').value = ''; renderModels(); openSheet('#sheet-models'); if (!coarse) $('#modelq').focus(); }
 
@@ -647,8 +649,10 @@ function markdown(text) {
   if (!window.marked || !window.DOMPurify) { box.classList.add('plain'); box.textContent = text; return box; }
   // No images or form controls: the CSP blocks remote images anyway (a model
   // can't make the app beacon out), so they'd only ever render as broken icons.
+  // No style attributes: a reply must not be able to overlay the app's own UI.
   box.innerHTML = DOMPurify.sanitize(marked.parse(text, { gfm: true }), {
     FORBID_TAGS: ['img', 'picture', 'video', 'audio', 'iframe', 'form', 'input', 'button', 'textarea', 'select', 'style'],
+    FORBID_ATTR: ['style'],
   });
   for (const a of box.querySelectorAll('a')) { a.target = '_blank'; a.rel = 'noopener noreferrer'; }
   for (const pre of box.querySelectorAll('pre')) {
@@ -678,7 +682,10 @@ function send() {
   if (S.streaming) return;
   const input = $('#input'), text = input.value.trim();
   if (!text && !S.attachments.length) return;
-  if (!modelInfo(S.model)) { toast('Pick a model first.'); openModels(); return; }
+  const info = modelInfo(S.model);
+  if (!info) { toast('Pick a model first.'); openModels(); return; }
+  // Images attached, then a switch to a text-only model: say so rather than send words alone.
+  if (S.attachments.length && !info.vision) { toast(`${info.name} can’t read images — remove them or pick a model marked “images”.`); return; }
   const conv = S.conv;
   if (!conv.messages.length) conv.title = titleFrom(text);
   conv.messages.push({ id: uid(), role: 'user', content: text, ...(S.attachments.length ? { images: S.attachments } : {}) });
