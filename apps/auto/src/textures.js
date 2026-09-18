@@ -716,6 +716,69 @@ function skyEquirect() {
   return t;
 }
 
+/**
+ * Tiling cloud density for the sky dome, as periodic value-noise fBm.
+ *
+ * The equirect's clouds were ellipses painted into a 2048 px panorama: 360 deg
+ * across 2048 texels puts about 350 of them across a 62 deg view, magnified
+ * 3.6x on a 1280 px screen, so every cloud was a soft brush smear and the sky
+ * read as a low-res photo. The dome projects this onto a flat cloud layer
+ * instead, so near the zenith the texture is close to 1:1 and toward the
+ * horizon it foreshortens the way real cloud does.
+ *
+ * Every octave's lattice period divides the tile, so it wraps seamlessly and
+ * GL repeat does the rest. R = density, G = the same field shifted a few
+ * texels toward the sun (the dome's cheap self-shadowing sample).
+ */
+function cloudNoise() {
+  const S = 512;
+  const r = mulberry32(97);
+  const octaves = [4, 8, 16, 32, 64, 128];
+  const lat = octaves.map((p) => {
+    const a = new Float32Array(p * p);
+    for (let i = 0; i < a.length; i++) a[i] = r();
+    return a;
+  });
+  const field = new Float32Array(S * S);
+  for (let o = 0; o < octaves.length; o++) {
+    const P = octaves[o], L = lat[o], amp = Math.pow(0.52, o), k = P / S;
+    for (let y = 0; y < S; y++) {
+      const fy = y * k, j0 = Math.floor(fy), ty = fy - j0;
+      const sy = ty * ty * (3 - 2 * ty);
+      const ja = (j0 % P) * P, jb = ((j0 + 1) % P) * P;
+      for (let x = 0; x < S; x++) {
+        const fx = x * k, i0 = Math.floor(fx), tx = fx - i0;
+        const sx = tx * tx * (3 - 2 * tx);
+        const ia = i0 % P, ib = (i0 + 1) % P;
+        const top = L[ja + ia] + (L[ja + ib] - L[ja + ia]) * sx;
+        const bot = L[jb + ia] + (L[jb + ib] - L[jb + ia]) * sx;
+        field[y * S + x] += (top + (bot - top) * sy) * amp;
+      }
+    }
+  }
+  let lo = Infinity, hi = -Infinity;
+  for (const v of field) { lo = Math.min(lo, v); hi = Math.max(hi, v); }
+  const data = new Uint8Array(S * S * 4);
+  for (let y = 0; y < S; y++) {
+    for (let x = 0; x < S; x++) {
+      const v = (field[y * S + x] - lo) / (hi - lo);
+      const i = (y * S + x) * 4;
+      data[i] = Math.round(v * 255);
+      data[i + 1] = data[i];
+      data[i + 2] = data[i];
+      data[i + 3] = 255;
+    }
+  }
+  const t = new THREE.DataTexture(data, S, S, THREE.RGBAFormat, THREE.UnsignedByteType);
+  t.wrapS = t.wrapT = THREE.RepeatWrapping;
+  t.magFilter = THREE.LinearFilter;
+  t.minFilter = THREE.LinearMipmapLinearFilter;
+  t.generateMipmaps = true;
+  t.anisotropy = 4;
+  t.needsUpdate = true;
+  return t;
+}
+
 function particleTexture() {
   const S = 64, { c, g } = canvas(S, S);
   const grad = g.createRadialGradient(S / 2, S / 2, 0, S / 2, S / 2, S / 2);
@@ -993,6 +1056,7 @@ export function buildTextures() {
     ground: groundSurface(),
     water: waterSurface(),
     sky: skyEquirect(),
+    clouds: cloudNoise(),
     particle: particleTexture(),
   };
 }

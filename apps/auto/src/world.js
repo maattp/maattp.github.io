@@ -117,7 +117,11 @@ const GRASS = [0.42, 0.62, 0.28];
 // Chinatown looked like a lawn. Developed ground is lawn AND roof AND tarmac
 // mixed together, so it has to be visibly more muted than grass or the blend
 // has nothing to say.
-const SUBURB = [0.52, 0.53, 0.41];
+// ...and [0.52, 0.53, 0.41] then overshot into khaki: after ACES and the
+// grade's saturation payback it rendered as a dirt lot under every street-level
+// shot. Developed ground is worn lawn more than bare earth, so it keeps GRASS's
+// hue at a much lower chroma -- still clearly not a meadow.
+const SUBURB = [0.47, 0.53, 0.38];
 const URBAN = [0.56, 0.56, 0.55];
 const BLEND_TAPS = [[0, 0], [-85, 55], [70, -75]];
 
@@ -330,8 +334,99 @@ export class World {
   // --- static scenery -------------------------------------------------------
 
   /** Sky doubles as the background and as the diffuse+specular IBL source. */
-  buildSky() {
-    this.scene.background = this.tx.sky;
+  buildSky(sunDir) {
+    // The equirect stays as the IBL source below; what you LOOK at is a dome.
+    //
+    // As a background the equirect is 2048 px for 360 deg, so a 62 deg view
+    // magnifies it 3.6x: painted cloud ellipses smeared into brush strokes and
+    // the sky never looked sharper than a thumbnail. The dome computes the
+    // gradient and sun per pixel and projects a tiling cloud field onto a flat
+    // layer, so clouds foreshorten toward the horizon and stay crisp overhead.
+    // It replaces the background's own draw -- one call either way -- and
+    // costs three texture taps per sky pixel.
+    //
+    // NOT tone-mapped, to match what it replaces: three leaves an sRGB
+    // background texture out of the ACES pass, so the old sky's authored
+    // colours ARE the screen colours, and the fog colour was tuned against
+    // them. The stops below are those same colours.
+    this.scene.background = null;
+    const lin = (hex) => new THREE.Color(hex);
+    const sd = (sunDir || new THREE.Vector3(-215, 200, -150)).clone().normalize();
+    const skyMat = new THREE.ShaderMaterial({
+      uniforms: {
+        tCloud: { value: this.tx.clouds },
+        sunDir: { value: sd },
+        zenith: { value: lin(0x2d5e97) },
+        mid: { value: lin(0x6793c0) },
+        horizon: { value: lin(0xb9cbd9) },
+        haze: { value: lin(0xb9c3cf) },
+        sunCol: { value: lin(0xfff2dc) },
+        cloudLit: { value: lin(0xf7f5ee) },
+        cloudDark: { value: lin(0x8e9aa8) },
+        time: { value: 0 },
+      },
+      vertexShader: `
+        varying vec3 vDir;
+        void main() {
+          vDir = position;
+          // Rotation only: the dome is infinitely far, wherever the camera is.
+          vec4 p = projectionMatrix * vec4(mat3(viewMatrix) * position, 1.0);
+          gl_Position = vec4(p.xy, p.w, p.w);
+        }`,
+      fragmentShader: `
+        uniform sampler2D tCloud;
+        uniform vec3 sunDir, zenith, mid, horizon, haze, sunCol, cloudLit, cloudDark;
+        uniform float time;
+        varying vec3 vDir;
+        void main() {
+          vec3 d = normalize(vDir);
+          float h = d.y;
+          float e = max(h, 0.0);
+          vec3 col = mix(horizon, mid, smoothstep(0.0, 0.28, e));
+          col = mix(col, zenith, smoothstep(0.25, 1.0, e));
+          float mu = max(dot(d, sunDir), 0.0);
+          // Forward-scattering glow around the sun, then the disc.
+          col += sunCol * (pow(mu, 6.0) * 0.16 + pow(mu, 60.0) * 0.35);
+          col = mix(col, vec3(1.0, 0.99, 0.95) * 1.4, smoothstep(0.9993, 0.9997, mu));
+
+          // Cloud layer: a flat plane overhead, so the tile foreshortens
+          // toward the horizon. +0.08 keeps the projection finite at h = 0.
+          if (h > 0.0) {
+            vec2 uv = d.xz / (h + 0.08) * 0.19 + vec2(time * 0.0009, time * 0.0004);
+            float big = texture2D(tCloud, uv).r;
+            float fine = texture2D(tCloud, uv * 3.1 + 0.37).r;
+            float dens = big * 0.78 + fine * 0.22;
+            float cover = smoothstep(0.50, 0.74, dens);
+            // Denser toward the sun means more cloud in front of the light:
+            // the far side of a bank is the lit one.
+            float toward = texture2D(tCloud, uv + sunDir.xz * 0.012).r * 0.78 + fine * 0.22;
+            float lit = clamp(0.62 + (dens - toward) * 7.0 - (dens - 0.62) * 0.9, 0.0, 1.0);
+            vec3 cc = mix(cloudDark, cloudLit, lit);
+            cc += sunCol * pow(mu, 12.0) * 0.25 * (1.0 - cover);
+            // Thin toward the horizon, where the layer is seen through haze.
+            cover *= smoothstep(0.015, 0.22, h);
+            col = mix(col, cc, cover * 0.92);
+          }
+          // Horizon haze band, matched to scene.fog so distance resolves into
+          // the sky instead of meeting it at a seam; below the horizon it is
+          // the fog colour outright.
+          col = mix(col, haze, (1.0 - smoothstep(0.0, 0.07, abs(h))) * 0.55);
+          if (h < 0.0) col = mix(col, haze, smoothstep(0.0, 0.05, -h));
+          gl_FragColor = vec4(col, 1.0);
+          #include <colorspace_fragment>
+        }`,
+      side: THREE.BackSide,
+      depthWrite: false,
+      depthTest: false,
+      fog: false,
+      toneMapped: false,
+    });
+    const dome = new THREE.Mesh(new THREE.SphereGeometry(100, 32, 16), skyMat);
+    dome.frustumCulled = false;
+    dome.renderOrder = -1000;
+    this.scene.add(dome);
+    this.skyDome = dome;
+
     // PMREMGenerator allocates HalfFloatType targets internally, hard-coded,
     // with no capability check -- and half-float is the one thing this renderer
     // can't take on trust (silent black on iOS, which is why postfx.js is 8-bit
@@ -373,6 +468,27 @@ export class World {
       vertexColors: true, roughness: 0.94, metalness: 0, envMapIntensity: 1.0,
       normalScale: new THREE.Vector2(0.3, 0.3),
     });
+    // The ground map at THREE scales, not one.
+    //
+    // One 13 m tile is both the detail you stand on and the only variation you
+    // see from a car, so the whole city floor was the same soft blotch pattern
+    // printed on a grid -- underfoot it was blurry, and from above the repeat
+    // showed as a regular weave. A 75 m copy multiplied over it breaks the
+    // grid into patches, and a 3 m copy puts crisp grain under the camera.
+    // Both are normalised by the map's own mean (~0.44 linear) so the average
+    // value, which values.py and the terrain tints were tuned against, does
+    // not move. Two extra taps on terrain pixels only.
+    mat.onBeforeCompile = (sh) => {
+      sh.fragmentShader = sh.fragmentShader.replace('#include <map_fragment>', `
+        #ifdef USE_MAP
+          vec4 sampledDiffuseColor = texture2D( map, vMapUv );
+          vec3 macroT = texture2D( map, vMapUv * 0.173 + vec2( 0.31, 0.57 ) ).rgb / 0.44;
+          vec3 detailT = texture2D( map, vMapUv * 4.3 + vec2( 0.13, 0.71 ) ).rgb / 0.44;
+          sampledDiffuseColor.rgb *= mix( vec3( 1.0 ), macroT, 0.55 ) * mix( vec3( 1.0 ), detailT, 0.4 );
+          diffuseColor *= sampledDiffuseColor;
+        #endif`);
+    };
+    mat.customProgramCacheKey = () => 'terrain3scale';
     this.terrainGroup = new THREE.Group();
     this.scene.add(this.terrainGroup);
     for (let tz = 0; tz < TILES; tz++) {
@@ -884,6 +1000,22 @@ export class World {
       color: 0x33556e, normalMap: n, roughness: 0.10, metalness: 0.02,
       envMapIntensity: 1.4, normalScale: new THREE.Vector2(0.36, 0.36),
     });
+    // Two scales of swell from the one normal map.
+    //
+    // At a 520x repeat the tile is ~16 m, and from any height the same wavelet
+    // pattern printed edge to edge across Elliott Bay reads as a woven carpet,
+    // the scrolling offset only slides the weave. A second tap at -0.29x scale
+    // (so it drifts the OTHER way, at a different speed, from the same offset)
+    // adds long swell and breaks the grid. Blending in tangent space before
+    // three perturbs the normal, so everything downstream is untouched.
+    mat.onBeforeCompile = (sh) => {
+      sh.fragmentShader = sh.fragmentShader.replace(
+        'vec3 mapN = texture2D( normalMap, vNormalMapUv ).xyz * 2.0 - 1.0;',
+        'vec3 mapN = texture2D( normalMap, vNormalMapUv ).xyz * 2.0 - 1.0;\n'
+        + '\tvec3 mapN2 = texture2D( normalMap, vNormalMapUv * -0.29 + vec2( 0.37, 0.11 ) ).xyz * 2.0 - 1.0;\n'
+        + '\tmapN = normalize( vec3( mapN.xy * 0.62 + mapN2.xy * 0.9, mapN.z ) );');
+    };
+    mat.customProgramCacheKey = () => 'water2scale';
     const m = new THREE.Mesh(geo, mat);
     m.position.y = 0;
     // AFTER the opaque scene, not before it (was -5). A bore below sea level
@@ -971,6 +1103,7 @@ export class World {
   }
 
   animate(dt, t) {
+    if (this.skyDome) this.skyDome.material.uniforms.time.value = t % 100000;
     if (this.waterNormal) {
       // Scroll BOTH axes at incommensurate rates. Scrolling x alone slides the
       // tile along one screen direction and the repeat reads as a fixed diagonal
