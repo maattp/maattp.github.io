@@ -336,6 +336,15 @@ export class Player {
   updateCamera(dt, input) {
     const target = new THREE.Vector3();
     let dist, height, lookH;
+    // A plane's rig is RIGID IN TRANSLATION: the boom and look offsets are
+    // damped, the plane's own motion is followed exactly. Damping the world
+    // position instead leaves the camera trailing the plane, and how far
+    // depends on dt: at 116 m/s and a rate of 9 the lag is 12.0 m on a 16 ms
+    // frame and 9.7 m on a 60 ms hitch. A phone streaming chunks does not hold
+    // an even clock, so the boom surged in and out by metres with every hitch,
+    // which from the seat reads as the camera jumping about.
+    const plane = !this.onFoot && this.vehicle.spec.plane;
+    this.camClamp = null;
     if (this.onFoot) {
       target.set(this.x, this.y, this.z);
       dist = 4.6;
@@ -367,7 +376,14 @@ export class Player {
     const cp = Math.cos(this.camPitch);
     // Pull the camera in if a building sits between it and the player -- without
     // this you spend half of downtown looking at the inside of a wall.
-    dist = this.clearCamDist(target, dist * cp, height) / Math.max(cp, 0.15);
+    //
+    // Not for a plane in the air. Measured on a low pass over First Hill the
+    // boom snapped from 17 m to 1.5 m and back as each tower went by, 24 frames
+    // at a time -- a plane at 110 m/s passes a tower in a fraction of a second,
+    // so clipping one briefly is far less violent than slamming the camera into
+    // the tailplane. On the ground a plane taxis like a car and keeps the pull.
+    const airPlane = plane && this.vehicle.airborne;
+    if (!airPlane) dist = this.clearCamDist(target, dist * cp, height) / Math.max(cp, 0.15);
     const wanted = new THREE.Vector3(
       target.x + Math.sin(this.camYaw) * dist * cp,
       target.y + height + Math.sin(this.camPitch) * dist,
@@ -380,9 +396,19 @@ export class Player {
     // those as a jolt. Horizontal has to stay tight or the camera feels loose,
     // so the two rates are deliberately different.
     const rateY = this.onFoot ? 4.5 : 7;
-    this.camPos.x = damp(this.camPos.x, wanted.x, rate, dt);
-    this.camPos.y = damp(this.camPos.y, wanted.y, rateY, dt);
-    this.camPos.z = damp(this.camPos.z, wanted.z, rate, dt);
+    if (plane) {
+      // Damp the OFFSET, follow the plane. See the note at the top.
+      if (!this.camRel) this.camRel = new THREE.Vector3().subVectors(this.camPos, target);
+      this.camRel.x = damp(this.camRel.x, wanted.x - target.x, rate, dt);
+      this.camRel.y = damp(this.camRel.y, wanted.y - target.y, rateY, dt);
+      this.camRel.z = damp(this.camRel.z, wanted.z - target.z, rate, dt);
+      this.camPos.addVectors(target, this.camRel);
+    } else {
+      this.camRel = null;
+      this.camPos.x = damp(this.camPos.x, wanted.x, rate, dt);
+      this.camPos.y = damp(this.camPos.y, wanted.y, rateY, dt);
+      this.camPos.z = damp(this.camPos.z, wanted.z, rate, dt);
+    }
     // Keep the camera out of the ground, but clamp against a SMOOTHED floor.
     // The raw surface is discontinuous, so clamping straight to it turns every
     // kerb the camera passes over into a snap of its own. It doesn't need 22 cm
@@ -398,7 +424,7 @@ export class Player {
     // is actually driving on.
     const rawFloor = this.city.groundAt(this.camPos.x, this.camPos.z, target.y, 0) + 1.1;
     this.camFloor = this.camFloor == null ? rawFloor : damp(this.camFloor, rawFloor, 8, dt);
-    if (this.camPos.y < this.camFloor) this.camPos.y = this.camFloor;
+    if (this.camPos.y < this.camFloor) { this.camPos.y = this.camFloor; this.camClamp = 'floor'; }
     // AND UNDER THE CEILING. Nothing else stops it: clearCamDist only tests
     // buildings, so a bore's walls and roof are invisible to the boom, and the
     // rig rides 3.2 + roof*0.42 above the car plus sin(pitch)*dist -- looking
@@ -409,11 +435,39 @@ export class Player {
     // lags by design -- that is what stops kerbs snapping the camera -- so a
     // ceiling derived from it lags too, and the camera was still coming
     // through the roof on 2 of 24 stations while the lag caught up.
+    //
+    // ONLY WHERE THE TARGET IS REALLY IN A BORE. "Ground above the camera is
+    // higher than a bore roof over the target's deck" is also true of any
+    // hillside behind a plane: for a plane 150 m up, `deckAt` is the terrain
+    // under it, so wherever the ground 17 m back stood 4.8 m higher the camera
+    // was put back on the hillside -- measured on the Boeing Field route, 246
+    // clamped frames in 12 bursts, the camera up to 187 m below the plane and
+    // 159 m of jump in a single frame, then springing back at 9 m a frame.
+    // A bore has ground over the TARGET and the target on its
+    // deck; both are asked. The hold carries the clamp ~1 s past the mouth on
+    // the way out, while the boom is still inside with the car already clear.
     const deckAt = this.city.groundAt(target.x, target.z, target.y, 0);
     const ceil = deckAt + TUNNEL_H - 0.6;
-    if (G.terrainHeight(this.camPos.x, this.camPos.z) > ceil && this.camPos.y > ceil) {
+    const inBore = target.y - deckAt < 2.5 && G.terrainHeight(target.x, target.z) > deckAt + TUNNEL_H * 0.5;
+    this.camBoreHold = inBore ? 1 : Math.max(0, (this.camBoreHold || 0) - dt);
+    if (this.camBoreHold > 0 && target.y - deckAt < 2.5
+      && G.terrainHeight(this.camPos.x, this.camPos.z) > ceil && this.camPos.y > ceil) {
       this.camPos.y = ceil;
+      this.camClamp = 'ceil';
     }
+    if (plane) {
+      // Clamps are real positions, so the next frame damps from where the
+      // camera actually ended up rather than from where it wanted to be.
+      this.camRel.subVectors(this.camPos, target);
+      // The look point rides the plane too; only its height offset is damped.
+      if (!this.camLookRel) this.camLookRel = new THREE.Vector3().subVectors(this.camLook, target);
+      this.camLookRel.x = damp(this.camLookRel.x, 0, 16, dt);
+      this.camLookRel.y = damp(this.camLookRel.y, lookH, 12, dt);
+      this.camLookRel.z = damp(this.camLookRel.z, 0, 16, dt);
+      this.camLook.addVectors(target, this.camLookRel);
+      return;
+    }
+    this.camLookRel = null;
     this.camLook.set(
       damp(this.camLook.x, target.x, 16, dt),
       damp(this.camLook.y, target.y + lookH, this.onFoot ? 6 : 12, dt),

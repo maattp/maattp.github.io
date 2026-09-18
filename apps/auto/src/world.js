@@ -108,6 +108,11 @@ const WALK_Y = WALK_LIFT;
 
 const NEAR_R = 2; // chunks of full detail around the player
 const MID_R = 4; // chunks that keep roads only
+// Far massing supertiles are built and drawn inside this radius of the player.
+// Past ~5 km the haze has taken them (83 % fog at 4 km, 94 % at 5 km from
+// 200 m up); the extra is half a supertile's diagonal, since it tests centres.
+// A 6 km cap cost ~300k more triangles a flying frame, drawn nearly in fog colour.
+const FAR_R = 5000 + 1150;
 
 // Ground tints, and the taps used to soften a district's edge into them.
 const GRASS = [0.42, 0.62, 0.28];
@@ -970,6 +975,339 @@ export class World {
     this.skyline = m;
   }
 
+  /**
+   * Every building the skyline skips, as massing for the whole city -- built
+   * lazily, the first time the player is off the ground.
+   *
+   * From a plane the streaming rings were a visible edge: houses, shops and
+   * low offices only existed inside the 9x9 mid ring, so everything past
+   * ~1.6 km was bare hillside with the tall skyline standing in it, and the
+   * housing stock materialised a row of chunks at a time as you flew -- the
+   * trace on the Boeing Field route counted 50k buildings popping into view.
+   * This is the "static supertile impostor layer" rather than wider rings:
+   * one draw per 4x4-chunk supertile.
+   *
+   * INSIDE THE RING IT HIDES ITSELF, per chunk, in the vertex shader. Every
+   * box knows its chunk, and `farBuilt` is a 9x9 mask of ring chunks that have
+   * geometry; those boxes collapse to a point. So the layer keeps drawing a
+   * chunk until the streamer has actually delivered it -- no hole while it
+   * builds, and no double-drawn box once it has.
+   *
+   * MEMORY IS THE CONSTRAINT, not triangles. The first version stored every
+   * box as its own 8 vertices plus 30 indices for all 255,041 small buildings:
+   * 47.7 MB of buffers, twice that resident with three's JS copies, built at
+   * boot for players who never fly. Three changes took that to a few MB:
+   *
+   *   - INSTANCED. One shared unit box; each box is a 17-byte instance record
+   *     (centre and base in Int16 decimetres off the supertile origin, size in
+   *     Uint16 dm, rotation + in-tile chunk index in 2 Uint8, tint in 3). The
+   *     supertile's chunk origin comes from the model matrix, so there is no
+   *     per-mesh uniform to keep in step.
+   *   - HOUSES MERGED per 50 m cell (50 divides a chunk, so a cell never
+   *     straddles one): 231k houses and small sheds become 81k boxes, each
+   *     covering the cell's real footprint area at its mean roof line. From
+   *     1.6 km a house is 3-4 px, so a block reads the same either way. The
+   *     23.6k larger low buildings keep their own box.
+   *   - JS ARRAYS DROPPED ON UPLOAD. Nothing CPU-side reads them (raycast is
+   *     off, the bounding sphere is computed first), and a lost context
+   *     rebuilds the layer rather than re-uploading -- see resetFarMass.
+   *
+   * Flat shading takes each face's normal from screen derivatives, so the
+   * unit box needs no normal attribute.
+   */
+  *farMassSteps() {
+    const city = this.city;
+    const TILE = CHUNK * 4, CELL = 50;
+    // Bin once, in slices: the city's building list is 259k long.
+    if (!this._farBins) {
+      const bins = new Map();
+      const B = city.buildings;
+      for (let i = 0; i < B.length; i++) {
+        const bd = B[i];
+        if (bd.h < 16 && bd.w * bd.d < 1400) {   // the skyline draws the rest
+          const tx = Math.floor(bd.x / TILE), tz = Math.floor(bd.z / TILE);
+          const k = tx * 1000 + tz;
+          let t = bins.get(k);
+          if (!t) bins.set(k, (t = { tx, tz, list: [], built: false }));
+          t.list.push(bd);
+        }
+        if (i % 8000 === 7999) yield 'work';
+      }
+      this._farBins = bins;
+    }
+    for (;;) {
+      // Nearest unbuilt supertile inside the haze radius, biased toward the
+      // nose -- chosen fresh each time, because the plane has moved on.
+      const px = this._farPx, pz = this._farPz, fx = this.playerFwdX || 0, fz = this.playerFwdZ || 0;
+      let best = null, bestS = Infinity;
+      for (const t of this._farBins.values()) {
+        if (t.built) continue;
+        const dx = (t.tx + 0.5) * TILE - px, dz = (t.tz + 0.5) * TILE - pz;
+        const d2 = dx * dx + dz * dz;
+        if (d2 > FAR_R * FAR_R) continue;
+        const s = Math.sqrt(d2) - 0.6 * (dx * fx + dz * fz);
+        if (s < bestS) { bestS = s; best = t; }
+      }
+      if (!best) { yield 'idle'; continue; }
+      const t0 = performance.now();
+      this.buildFarTile(best, TILE, CELL);
+      this.farMassMs = (this.farMassMs || 0) + performance.now() - t0;
+      yield 'work';
+    }
+  }
+
+  /** One supertile's instance records, merged and quantised. */
+  buildFarTile(t, TILE, CELL) {
+    t.built = true;
+    const ox = t.tx * TILE, oz = t.tz * TILE;
+    const boxes = [];   // [x, y, z, w, h, d, rot, r, g, b, chunk]
+    const cells = new Map();
+    for (const bd of t.list) {
+      if (bd.style === 'house' || (bd.h < 10 && bd.w * bd.d < 400)) {
+        const k = Math.floor(bd.x / CELL) * 100000 + Math.floor(bd.z / CELL);
+        let l = cells.get(k);
+        if (!l) cells.set(k, (l = []));
+        l.push(bd);
+      } else boxes.push(this.farBox([bd], ox, oz));
+    }
+    for (const l of cells.values()) boxes.push(this.farBox(l, ox, oz));
+    const n = boxes.length;
+    const C = new Int16Array(n * 3), S = new Uint16Array(n * 3), R = new Uint8Array(n * 2), T = new Uint8Array(n * 3);
+    let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity, minZ = Infinity, maxZ = -Infinity;
+    for (let i = 0; i < n; i++) {
+      const b = boxes[i];
+      C[i * 3] = Math.round((b[0] - ox) * 10);
+      C[i * 3 + 1] = Math.round(b[1] * 10);
+      C[i * 3 + 2] = Math.round((b[2] - oz) * 10);
+      S[i * 3] = Math.min(65535, Math.round(b[3] * 10));
+      S[i * 3 + 1] = Math.min(65535, Math.round(b[4] * 10));
+      S[i * 3 + 2] = Math.min(65535, Math.round(b[5] * 10));
+      // A box is symmetric under a half turn, so [0, PI) covers every
+      // orientation in a byte -- 0.7 deg steps.
+      const r = ((b[6] % Math.PI) + Math.PI) % Math.PI;
+      R[i * 2] = Math.round(r / Math.PI * 256) % 256;
+      R[i * 2 + 1] = b[10];
+      T[i * 3] = b[7]; T[i * 3 + 1] = b[8]; T[i * 3 + 2] = b[9];
+      const e = Math.hypot(b[3], b[5]) / 2;
+      minX = Math.min(minX, b[0] - e); maxX = Math.max(maxX, b[0] + e);
+      minZ = Math.min(minZ, b[2] - e); maxZ = Math.max(maxZ, b[2] + e);
+      minY = Math.min(minY, b[1]); maxY = Math.max(maxY, b[1] + b[4]);
+    }
+    const geo = new THREE.InstancedBufferGeometry();
+    geo.setAttribute('position', this._farUnit.pos);
+    geo.setIndex(this._farUnit.idx);
+    const attr = (arr, size, norm) => {
+      const a = new THREE.InstancedBufferAttribute(arr, size, norm);
+      // Nothing CPU-side reads these again; see the note on farMassSteps.
+      a.onUpload(function drop() { this.array = null; });
+      return a;
+    };
+    geo.setAttribute('farC', attr(C, 3, false));
+    geo.setAttribute('farS', attr(S, 3, false));
+    geo.setAttribute('farRI', attr(R, 2, false));
+    geo.setAttribute('farTint', attr(T, 3, true));
+    geo.instanceCount = n;
+    // The unit box's own sphere would be a metre wide; frustum culling needs
+    // the tile's, in the mesh's local frame.
+    geo.boundingSphere = new THREE.Sphere(
+      new THREE.Vector3((minX + maxX) / 2 - ox, (minY + maxY) / 2, (minZ + maxZ) / 2 - oz),
+      Math.hypot(maxX - minX, maxY - minY, maxZ - minZ) / 2);
+    const fm = new THREE.Mesh(geo, this._farMat);
+    fm.position.set(ox, 0, oz);
+    // Inside the ring these boxes are collapsed on the GPU only, so a CPU
+    // raycast would hit buildings nobody can see -- and every "raycast the
+    // pixel" diagnostic in this repo would start blaming them.
+    fm.raycast = () => {};
+    fm.visible = false;
+    fm.userData.cx = ox + TILE / 2;
+    fm.userData.cz = oz + TILE / 2;
+    this.scene.add(fm);
+    this.farMass.push(fm);
+    this.farMassCount = (this.farMassCount || 0) + n;
+    this.farMassBytes = (this.farMassBytes || 0) + C.byteLength + S.byteLength + R.byteLength + T.byteLength;
+  }
+
+  /**
+   * One box standing for a list of buildings in the same cell: the rotation
+   * of the largest, the extent of all of them in that frame shrunk to their
+   * real footprint area, and the area-weighted roof line. A list of one is
+   * that building's own box.
+   */
+  farBox(l, ox, oz) {
+    let big = l[0], A = 0, top = 0, tr = 0, tg = 0, tb = 0, base = Infinity;
+    for (const bd of l) {
+      const a = bd.w * bd.d;
+      if (a > big.w * big.d) big = bd;
+      A += a;
+      top += (bd.y + bd.h) * a;
+      base = Math.min(base, bd.y);
+      const c = MASS_TINT[bd.style] || MASS_TINT.lowrise;
+      const t = (0.86 + hash2(bd.seed, 3) * 0.28) * a;
+      tr += c[0] * t; tg += c[1] * t; tb += c[2] * t;
+    }
+    const cr = Math.cos(big.rot), sr = Math.sin(big.rot);
+    let x0 = Infinity, x1 = -Infinity, z0 = Infinity, z1 = -Infinity;
+    for (const bd of l) {
+      const bc = Math.cos(bd.rot - big.rot), bs = Math.sin(bd.rot - big.rot);
+      // Centre in the big one's frame: the inverse of Builder.box's rotation.
+      const dx = bd.x - big.x, dz = bd.z - big.z;
+      const lx = dx * cr + dz * sr, lz = -dx * sr + dz * cr;
+      const ex = Math.abs(bd.w / 2 * bc) + Math.abs(bd.d / 2 * bs);
+      const ez = Math.abs(bd.w / 2 * bs) + Math.abs(bd.d / 2 * bc);
+      x0 = Math.min(x0, lx - ex); x1 = Math.max(x1, lx + ex);
+      z0 = Math.min(z0, lz - ez); z1 = Math.max(z1, lz + ez);
+    }
+    const s = Math.min(1, Math.sqrt(A / Math.max(1, (x1 - x0) * (z1 - z0))));
+    const mx = (x0 + x1) / 2, mz = (z0 + z1) / 2;
+    const cx = big.x + mx * cr - mz * sr, cz = big.z + mx * sr + mz * cr;
+    // The chunk the streamer files this under is the one its centroid's chunk
+    // is -- for a merged cell every member shares it, because 50 divides 400.
+    const lcx = clamp(Math.floor(big.x / CHUNK) - ox / CHUNK, 0, 3);
+    const lcz = clamp(Math.floor(big.z / CHUNK) - oz / CHUNK, 0, 3);
+    const k = 255 / A;
+    return [cx, base - 0.5, cz, (x1 - x0) * s, top / A - base + 0.5, (z1 - z0) * s, big.rot,
+      Math.min(255, Math.round(tr * k)), Math.min(255, Math.round(tg * k)), Math.min(255, Math.round(tb * k)),
+      lcx + lcz * 4];
+  }
+
+  /** Shared state for the far massing, created on first use. */
+  initFarMass() {
+    const SPAN = 2 * MID_R + 1;
+    const U = this.farU = {
+      farRing: { value: new THREE.Vector2(-9999, -9999) },
+      farBuilt: { value: new Float32Array(SPAN * SPAN) },
+      farFade: { value: 0 },
+    };
+    // Unit box: bottom ring then top ring, the corner order Builder.box uses,
+    // walls and roof, no floor. Shared by every supertile.
+    const pos = new Float32Array([-0.5, 0, -0.5, 0.5, 0, -0.5, 0.5, 0, 0.5, -0.5, 0, 0.5,
+      -0.5, 1, -0.5, 0.5, 1, -0.5, 0.5, 1, 0.5, -0.5, 1, 0.5]);
+    const idx = [];
+    for (let j = 0; j < 4; j++) {
+      const b0 = j, b1 = (j + 1) % 4, t0 = b0 + 4, t1 = b1 + 4;
+      idx.push(b0, t0, t1, b0, t1, b1);
+    }
+    idx.push(4, 7, 6, 4, 6, 5);
+    this._farUnit = { pos: new THREE.BufferAttribute(pos, 3), idx: new THREE.BufferAttribute(new Uint16Array(idx), 1) };
+    // Same response as `flat`, which is what the mid-ring massing is drawn in.
+    const mat = new THREE.MeshStandardMaterial({ flatShading: true, roughness: 0.82, metalness: 0.04, envMapIntensity: 0.45 });
+    mat.onBeforeCompile = (sh) => {
+      Object.assign(sh.uniforms, U);
+      sh.vertexShader = sh.vertexShader
+        .replace('#include <common>', `#include <common>
+attribute vec3 farC;
+attribute vec3 farS;
+attribute vec2 farRI;
+attribute vec3 farTint;
+uniform vec2 farRing;
+uniform float farBuilt[${SPAN * SPAN}];
+varying vec3 vFarTint;`)
+        .replace('#include <begin_vertex>', `#include <begin_vertex>
+{
+  float a = farRI.x * (PI / 256.0);
+  float cr = cos(a), sr = sin(a);
+  vec3 s = position * farS * 0.1;
+  transformed = vec3(farC.x * 0.1 + s.x * cr - s.z * sr, farC.y * 0.1 + s.y, farC.z * 0.1 + s.x * sr + s.z * cr);
+  // Builder.box's ao 0.35 on the bottom edge
+  vFarTint = farTint * mix(0.65, 1.0, position.y);
+  vec2 tile = floor(modelMatrix[3].xz / ${CHUNK}.0 + 0.5);
+  vec2 rc = tile + vec2(mod(farRI.y, 4.0), floor(farRI.y / 4.0)) - farRing;
+  if (rc.x > -0.5 && rc.y > -0.5 && rc.x < ${SPAN}.0 - 0.5 && rc.y < ${SPAN}.0 - 0.5
+      && farBuilt[int(rc.x + 0.5) + int(rc.y + 0.5) * ${SPAN}] > 0.5) transformed = vec3(0.0);
+}`);
+      sh.fragmentShader = sh.fragmentShader
+        .replace('#include <common>', '#include <common>\nuniform float farFade;\nvarying vec3 vFarTint;')
+        .replace('#include <color_fragment>', '#include <color_fragment>\n  diffuseColor.rgb *= vFarTint;')
+        // The massing's roof slab is 0.45x the wall; with a shared unit box the
+        // roof has to be told apart by its facing instead.
+        .replace('#include <normal_fragment_begin>', `#include <normal_fragment_begin>
+  if (dot(normal, (viewMatrix * vec4(0.0, 1.0, 0.0, 0.0)).xyz) > 0.7) diffuseColor.rgb *= 0.45;`)
+        // Fade in THROUGH the haze rather than switching on: climbing past the
+        // gate, the distant city emerges from the fog colour over ~1.5 s.
+        .replace('#include <fog_fragment>', `#include <fog_fragment>
+#ifdef USE_FOG
+  gl_FragColor.rgb = mix(fogColor, gl_FragColor.rgb, farFade);
+#endif`);
+    };
+    this._farMat = mat;
+    this.farMass = [];
+    // The upload callbacks free the JS arrays, so a restored context has
+    // nothing to re-upload from: throw the meshes away and let the lazy
+    // builder make them again.
+    if (this.renderer && this.renderer.domElement) {
+      this.renderer.domElement.addEventListener('webglcontextlost', () => this.resetFarMass());
+    }
+  }
+
+  resetFarMass() {
+    if (!this.farMass) return;
+    for (const m of this.farMass) { m.geometry.dispose(); this.scene.remove(m); }
+    this.farMass = [];
+    this.farMassCount = 0;
+    this.farMassBytes = 0;
+    if (this._farBins) for (const t of this._farBins.values()) t.built = false;
+    this._farGen = null;
+    this._farReady = false;
+    this.farU.farFade.value = 0;
+  }
+
+  /** Mask the far massing under the ring's delivered chunks; build and fade it with altitude. */
+  updateFarMass(ccx, ccz, px, pz, budget) {
+    // Off the ground only. 45 up / 25 down so a hilltop road does not flicker
+    // it; an airborne plane keeps it however low it skims. Until the first
+    // time this is true nothing is allocated at all -- on foot and driving
+    // the layer costs 0 bytes.
+    const alt = this.playerAlt || 0;
+    if (!this.farOn && alt > 45) this.farOn = true;
+    else if (this.farOn && alt < 25 && !this.playerFlying) this.farOn = false;
+    if (!this.farMass) {
+      if (!this.farOn) return;
+      this.initFarMass();
+    }
+    this._farPx = px; this._farPz = pz;
+    // Build in slices, like the chunks. The slice is only checked between
+    // supertiles, so the real spike is the slice plus one tile.
+    if (this.farOn) {
+      if (!this._farGen) this._farGen = this.farMassSteps();
+      const t0 = performance.now(), ms = budget < 2 ? 1.5 : 3;
+      let idle = false;
+      while (performance.now() - t0 < ms) {
+        if (this._farGen.next().value === 'idle') { idle = true; break; }
+      }
+      if (!this._farReady) this.farMassFrames = (this.farMassFrames || 0) + 1;
+      if (idle) this._farReady = true;
+    }
+    const U = this.farU, SPAN = 2 * MID_R + 1;
+    U.farRing.value.set(ccx - MID_R, ccz - MID_R);
+    const built = U.farBuilt.value;
+    for (let dz = 0; dz < SPAN; dz++) {
+      for (let dx = 0; dx < SPAN; dx++) {
+        const c = this.chunks.get(this.city.chunkKey(ccx - MID_R + dx, ccz - MID_R + dz));
+        built[dx + dz * SPAN] = c && c.lod >= 0 ? 1 : 0;
+      }
+    }
+    const now = performance.now();
+    const fdt = this._farT === undefined ? 0 : Math.min(0.1, (now - this._farT) / 1000);
+    this._farT = now;
+    // Hold the first fade-in until every supertile in range has been built, so
+    // the first appearance is the city emerging, not tiles arriving one by one.
+    const rising = this.farOn && this._farReady;
+    const f = clamp(U.farFade.value + (rising ? fdt : -fdt) / 1.5, 0, 1);
+    U.farFade.value = f;
+    for (const m of this.farMass) {
+      const dx = m.userData.cx - px, dz = m.userData.cz - pz;
+      m.visible = f > 0 && dx * dx + dz * dz < FAR_R * FAR_R;
+    }
+  }
+
+  /** For harnesses: is the far massing currently drawing what this chunk holds? */
+  farMassCovers(ch) {
+    if (!this.farU || this.farU.farFade.value <= 0.5 || !this._farBins) return false;
+    const T = CHUNK * 4;
+    const t = this._farBins.get(Math.floor(ch.cx * CHUNK / T) * 1000 + Math.floor(ch.cz * CHUNK / T));
+    return !!(t && t.built);
+  }
+
   animate(dt, t) {
     if (this.waterNormal) {
       // Scroll BOTH axes at incommensurate rates. Scrolling x alone slides the
@@ -996,8 +1334,15 @@ export class World {
     // so skimming rooftops does not flap the whole ring between LODs.
     if (this.flyLod === undefined) this.flyLod = false;
     const alt = this.playerAlt || 0;
+    // Altitude is measured over the terrain directly underneath, and a level
+    // plane crossing Beacon Hill or Queen Anne sees that fall from 140 m to
+    // 40 m and back in seconds -- the 100/60 band flipped the whole near ring
+    // between LODs 5 times on one route, each flip a 5x5 detail rebuild the
+    // streamer cannot hold at flying speed anyway. While AIRBORNE the ring
+    // only drops back to detail on a real approach (under 25 m).
+    const floor = this.playerFlying ? 25 : 60;
     if (!this.flyLod && alt > 100) this.flyLod = true;
-    else if (this.flyLod && alt < 60) this.flyLod = false;
+    else if (this.flyLod && alt < floor) this.flyLod = false;
     for (let dz = -MID_R; dz <= MID_R; dz++) {
       for (let dx = -MID_R; dx <= MID_R; dx++) {
         const cx = ccx + dx, cz = ccz + dz;
@@ -1089,6 +1434,7 @@ export class World {
       this._build = null;
       this._buildFor = null;
     }
+    this.updateFarMass(ccx, ccz, px, pz, budget);
     return todo.length;
   }
 
