@@ -139,6 +139,16 @@ async function main() {
       await sleep(500);
       if (await evaluate('!!window.__dbg')) break;
     }
+    // Wait for the game loop to have actually drawn. __dbg appears before the
+    // first frame, and a measurement taken then reads the steady figures as 0
+    // and sees no traffic or pedestrians yet -- so a record saved in that state
+    // and a check run a frame later disagree by whatever the crowd costs, and
+    // the guard reports a regression that is only the harness's timing.
+    for (let i = 0; i < 120; i++) {
+      if (await evaluate('window.__dbg.sceneStats.calls > 0 && window.__dbg.peds.peds.length > 0')) break;
+      await sleep(500);
+    }
+    await sleep(3000);
     const now = JSON.parse(await evaluate(MEASURE));
 
     const row = (k, v) => console.log(`  ${k.padEnd(14)}${String(v).padStart(10)}`);
