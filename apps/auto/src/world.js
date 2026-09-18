@@ -625,7 +625,10 @@ export class World {
     // Before a single terrain vertex is generated: the portal trenches become
     // part of the height surface, so this mesh and every road drawn on it
     // describe the same ground.
-    G.setCarve((x, z) => this.cutDepth(x, z));
+    // Underpass cuts (citygen's refused overpasses) share the one carve, so the
+    // dipped street, its pavement and everything standing on it all see them.
+    G.setCarve((x, z) => Math.max(this.cutDepth(x, z),
+      this.city.underpassDepth ? this.city.underpassDepth(x, z) : 0));
     const hf = G.heightfield();
     const N = G.HF_N, S = G.HF_STEP, H = G.MAP_HALF;
     // Tile size trades draw calls against wasted triangles, and on a phone the
@@ -770,6 +773,9 @@ export class World {
 
   /** Does this 40 m terrain cell touch a portal trench? */
   cellCut(cx, cz, S) {
+    // An underpass cut (citygen) is 10-20 m wide too, so its cells need the
+    // same re-tessellation as a portal trench or the 40 m grid hides the dip.
+    if (this.city.underpassCell && this.city.underpassCell(cx, cz, S)) return true;
     if (!this.portalCuts().length) return false;
     for (let j = 0; j <= 2; j++) {
       for (let i = 0; i <= 2; i++) {
@@ -2050,12 +2056,19 @@ varying vec3 vFarTint;`)
     for (const sg of [-1, 1]) {
       const [rsx, rsz] = this.deckEdgePoint(e.a, e, sg, hw);
       const [rex, rez] = this.deckEdgePoint(e.b, e, sg, hw);
-      run[sg] = { sx: rsx, sz: rsz, ex: rex, ez: rez };
+      run[sg] = { sx: rsx, sz: rsz, ex: rex, ez: rez, sg };
       const [dsx, dsz] = this.deckEdgePoint(e.a, e, sg, hw + PARAPET);
       const [dex, dez] = this.deckEdgePoint(e.b, e, sg, hw + PARAPET);
-      deck[sg] = { sx: dsx, sz: dsz, ex: dex, ez: dez };
+      deck[sg] = { sx: dsx, sz: dsz, ex: dex, ez: dez, sg };
     }
-    const at = (c, t) => [c.sx + (c.ex - c.sx) * t, c.sz + (c.ez - c.sz) * t];
+    // A point on an edge line at t, pulled in where that side was trimmed off
+    // a lower neighbour (citygen's split levels), so deck, soffit, fascia and
+    // rail all follow the trimmed edge together.
+    const at = (c, t) => {
+      const i = Math.min(k, Math.max(0, Math.round(t * k)));
+      const cut = hw - e.tw[i * 2 + (c.sg > 0 ? 0 : 1)];
+      return [c.sx + (c.ex - c.sx) * t + e.dz * c.sg * cut, c.sz + (c.ez - c.sz) * t - e.dx * c.sg * cut];
+    };
     // Drawn 3 cm under the standing height, as the old deck was (y + 0.06
     // drawn against y + 0.09 stood on).
     const Y = (i) => e.ph[i] - 0.03;
@@ -2124,6 +2137,26 @@ varying vec3 vFarTint;`)
         wasOpen[sg] = open;
       }
     }
+    // A trimmed side stands over a lower road. Where that road is below the
+    // girder, finish the drop with a wall rather than leave the lower lanes
+    // looking up into a hollow slot under the deck edge.
+    for (const sg of [1, -1]) {
+      const s = sg > 0 ? 0 : 1;
+      let runPts = [];
+      const flush = () => {
+        if (runPts.length > 1) this.meshWall(flat, runPts, -e.dz * sg, e.dx * sg, ei * 2 + s + 13);
+        runPts = [];
+      };
+      for (let i = 0; i <= k; i++) {
+        const lo = e.tlo[i * 2 + s];
+        const bottom = e.ph[i] - 0.03 - GIRDER;
+        if (Number.isNaN(lo) || lo - 0.3 >= bottom - 0.15) { flush(); continue; }
+        const [x, z] = at(deck[sg], i / k);
+        runPts.push([x, z, bottom, lo - 0.3]);
+      }
+      flush();
+    }
+
     // Piers on a realistic bay, standing on the profile.
     const bays = Math.max(1, Math.round(e.len / 52));
     for (let p = 0; p < bays; p++) {
@@ -2304,13 +2337,20 @@ varying vec3 vFarTint;`)
     const till = e.len - trim(e.b);
     if (till <= from) return;
 
-    // Edge lines, set in from the kerb by about a shoulder's width.
-    const edge = hw - Math.min(0.7, hw * 0.06);
+    // Edge lines, set in from the kerb by about a shoulder's width -- the
+    // TRIMMED kerb on a graded road stood off a lower neighbour, or the line
+    // runs out over the wall.
+    const inset = Math.min(0.7, hw * 0.06);
+    const sideW = (m, s) => {
+      if (!e.tw) return hw;
+      const i = Math.min(e.pk, Math.max(0, Math.round((m / e.len) * e.pk)));
+      return e.tw[i * 2 + s];
+    };
     const step = 8; // subdivide so a line follows the terrain rather than spanning it
     for (let s = from; s < till; s += step) {
       const to = Math.min(till, s + step);
-      stripe(edge, s, to, WHITE);
-      stripe(-edge, s, to, WHITE);
+      stripe(sideW((s + to) / 2, 0) - inset, s, to, WHITE);
+      stripe(-(sideW((s + to) / 2, 1) - inset), s, to, WHITE);
     }
 
     // Centre line. A motorway carriageway is one-way and has no centre line;
@@ -2898,20 +2938,111 @@ varying vec3 vFarTint;`)
    * each being square-ended with a junction square laid over the joint -- 8913
    * of those squares sat on ground freeway, one every ~40 m of I-5.
    */
+  /**
+   * A finished retaining or median wall along one side of a graded road, from
+   * its edge down to the road or ground below.
+   *
+   * The first retaining wall was one flat untextured quad, and beside I-5's
+   * express lanes it read as a giant blank slab -- worse than the batter it
+   * replaced. Concrete walls read as walls from their joints and their edges:
+   * cast panels every ~4 m with a slightly different tone each, a darker
+   * footing where grime collects, a pale coping on top. `pts` is a list of
+   * [x, z, top, bottom] along the wall; `out` is its outward normal.
+   */
+  meshWall(flat, pts, ox, oz, seed) {
+    const COPE = 0.22, FOOT = 0.45;
+    const base = [0.6, 0.6, 0.58], cope = [0.74, 0.74, 0.71], foot = [0.44, 0.44, 0.42];
+    for (let i = 0; i < pts.length - 1; i++) {
+      const [x0, z0, t0, b0] = pts[i], [x1, z1, t1, b1] = pts[i + 1];
+      if (t0 - b0 < 0.15 && t1 - b1 < 0.15) continue;
+      // one cast panel per piece: a tonal step and a dark joint line between
+      const k = 0.93 + hash2((seed | 0) + i * 7, 31) * 0.12;
+      const col = [base[0] * k, base[1] * k, base[2] * k];
+      const f0 = Math.min(t0, b0 + FOOT), f1 = Math.min(t1, b1 + FOOT);
+      flat.quad([x0, b0, z0], [x1, b1, z1], [x1, f1, z1], [x0, f0, z0],
+        [ox, 0, oz], [0, 0, 1, 0, 1, 1, 0, 1], foot);
+      flat.quad([x0, f0, z0], [x1, f1, z1], [x1, t1, z1], [x0, t0, z0],
+        [ox, 0, oz], [0, 0, 1, 0, 1, 1, 0, 1], [col, col, col, col]);
+      // joint: a thin darker strip at the start of each panel
+      const jx = x0 + (x1 - x0) * 0.04, jz = z0 + (z1 - z0) * 0.04;
+      const jt = t0 + (t1 - t0) * 0.04, jb = b0 + (b1 - b0) * 0.04;
+      flat.quad([x0 + ox * 0.01, b0, z0 + oz * 0.01], [jx + ox * 0.01, jb, jz + oz * 0.01],
+        [jx + ox * 0.01, jt, jz + oz * 0.01], [x0 + ox * 0.01, t0, z0 + oz * 0.01],
+        [ox, 0, oz], [0, 0, 1, 0, 1, 1, 0, 1], foot);
+      // coping over the top, a lip proud of both faces
+      flat.quad([x0 + ox * COPE, t0 + 0.12, z0 + oz * COPE], [x1 + ox * COPE, t1 + 0.12, z1 + oz * COPE],
+        [x1 - ox * 0.05, t1 + 0.12, z1 - oz * 0.05], [x0 - ox * 0.05, t0 + 0.12, z0 - oz * 0.05],
+        [0, 1, 0], [0, 0, 1, 0, 1, 1, 0, 1], cope);
+      flat.quad([x0 + ox * COPE, t0 - 0.02, z0 + oz * COPE], [x1 + ox * COPE, t1 - 0.02, z1 + oz * COPE],
+        [x1 + ox * COPE, t1 + 0.12, z1 + oz * COPE], [x0 + ox * COPE, t0 + 0.12, z0 + oz * COPE],
+        [ox, 0, oz], [0, 0, 1, 0, 1, 1, 0, 1], cope);
+    }
+  }
+
+  /**
+   * Walls down both sides of an underpass cut, where this road runs through one.
+   *
+   * The cut's corridor is the carriageway plus its pavement plus 0.3 m
+   * (citygen's underpass hw), so the wall stands just outside the footway. It
+   * runs from the uncarved ground beyond the 1.5 m bank down to the carved road
+   * edge, and only where the dip there is over 0.4 m -- the ramps out of the cut
+   * shrink it to nothing rather than leaving a kerb-high wall along the street.
+   */
+  meshTrenchWalls(flat, e, a, b, ei) {
+    if (!this.city.underpassDepth) return;
+    const sw = e.cls === 'art' ? 3.2 : e.cls === 'st' || e.cls === 'res' ? 2.6 : 0;
+    const w = e.hw + sw + 0.3;
+    const px = -e.dz, pz = e.dx;
+    const n = Math.max(2, Math.round(e.len / 4));
+    // quick reject: no dip anywhere along the centre
+    let any = false;
+    for (let i = 0; i <= n && !any; i++) {
+      const t = i / n;
+      if (this.city.underpassDepth(lerp(a.x, b.x, t), lerp(a.z, b.z, t)) > 0.4) any = true;
+    }
+    if (!any) return;
+    for (const sg of [1, -1]) {
+      let run = [];
+      const flush = () => {
+        if (run.length > 1) this.meshWall(flat, run, -px * sg, -pz * sg, ei * 2 + (sg > 0 ? 0 : 1) + 29);
+        run = [];
+      };
+      for (let i = 0; i <= n; i++) {
+        const t = i / n, cx = lerp(a.x, b.x, t), cz = lerp(a.z, b.z, t);
+        const x = cx + px * sg * w, z = cz + pz * sg * w;
+        const dip = this.city.underpassDepth(x, z);
+        if (dip <= 0.4) { flush(); continue; }
+        const top = G.terrainHeight(x + px * sg * 1.7, z + pz * sg * 1.7);
+        run.push([x, z, top, G.terrainHeight(x, z) - 0.3]);
+      }
+      flush();
+    }
+  }
+
   meshGraded(road, flat, e, a, b, ei) {
     const hw = e.hw, k = e.pk;
     const px = -e.dz, pz = e.dx;
     const bias = hash2(ei | 0, 7) * 0.03;
     const col = e.cls === 'hwy' ? [0.92, 0.92, 0.92] : [1, 1, 1];
-    const across = Math.max(hw > 4.5 ? 3 : 1, Math.round((hw * 2) / 8));
     const Ls = this.deckEdgePoint(e.a, e, 1, hw), Le = this.deckEdgePoint(e.b, e, 1, hw);
     const Rs = this.deckEdgePoint(e.a, e, -1, hw), Re = this.deckEdgePoint(e.b, e, -1, hw);
-    // fr = 0 is the right-hand edge line (-hw), 1 the left (+hw).
-    const P = (t, fr) => {
-      const sx = Rs[0] + (Ls[0] - Rs[0]) * fr, sz = Rs[1] + (Ls[1] - Rs[1]) * fr;
-      const ex = Re[0] + (Le[0] - Re[0]) * fr, ez = Re[1] + (Le[1] - Re[1]) * fr;
-      return [sx + (ex - sx) * t, sz + (ez - sz) * t];
+    // The edge lines at sample i: the mitred full-width lines, pulled in where
+    // citygen trimmed that side off a lower neighbour (`e.tw`).
+    const Wl = (i) => e.tw[i * 2], Wr = (i) => e.tw[i * 2 + 1];
+    const edgeL = (i) => {
+      const t = i / k, x = Ls[0] + (Le[0] - Ls[0]) * t, z = Ls[1] + (Le[1] - Ls[1]) * t;
+      return [x - px * (hw - Wl(i)), z - pz * (hw - Wl(i))];
     };
+    const edgeR = (i) => {
+      const t = i / k, x = Rs[0] + (Re[0] - Rs[0]) * t, z = Rs[1] + (Re[1] - Rs[1]) * t;
+      return [x + px * (hw - Wr(i)), z + pz * (hw - Wr(i))];
+    };
+    // fr = 0 is the right-hand edge line, 1 the left, at sample i.
+    const P = (i, fr) => {
+      const [rx, rz] = edgeR(i), [lx, lz] = edgeL(i);
+      return [rx + (lx - rx) * fr, rz + (lz - rz) * fr];
+    };
+    const O = (i, fr) => -Wr(i) + (Wl(i) + Wr(i)) * fr;
     const Y = (i, o) => e.ph[i] + e.pg[i] * o + bias;
     const wear = (o) => {
       const f = Math.min(1, Math.abs(o) / Math.max(hw, 0.01));
@@ -2924,62 +3055,85 @@ varying vec3 vFarTint;`)
       const v0 = (i * seg) / ROAD_TILE, v1 = ((i + 1) * seg) / ROAD_TILE;
       const mx = lerp(a.x, b.x, (t0 + t1) / 2), mz = lerp(a.z, b.z, (t0 + t1) / 2);
       if (this.city.roadCoveredAt(mx, mz, ei)) continue;
+      const wide = Math.max(Wl(i) + Wr(i), Wl(i + 1) + Wr(i + 1));
+      const across = Math.max(wide > 9 ? 3 : 1, Math.round(wide / 8));
       for (let c = 0; c < across; c++) {
         const f0 = c / across, f1 = (c + 1) / across;
-        const o0 = -hw + 2 * hw * f0, o1 = -hw + 2 * hw * f1;
-        const [ax, az] = P(t0, f0), [bx, bz] = P(t0, f1);
-        const [cx, cz] = P(t1, f1), [dx, dz] = P(t1, f0);
+        const [ax, az] = P(i, f0), [bx, bz] = P(i, f1);
+        const [cx, cz] = P(i + 1, f1), [dx, dz] = P(i + 1, f0);
+        const oa0 = O(i, f0), oa1 = O(i, f1), ob0 = O(i + 1, f0), ob1 = O(i + 1, f1);
         road.quad(
-          [ax, Y(i, o0), az], [bx, Y(i, o1), bz], [cx, Y(i + 1, o1), cz], [dx, Y(i + 1, o0), dz],
-          [0, 1, 0], [f0 * 2 * hw / ROAD_TILE, v0, f1 * 2 * hw / ROAD_TILE, v0,
-            f1 * 2 * hw / ROAD_TILE, v1, f0 * 2 * hw / ROAD_TILE, v1],
-          [wear(o0), wear(o1), wear(o1), wear(o0)]
+          [ax, Y(i, oa0), az], [bx, Y(i, oa1), bz], [cx, Y(i + 1, ob1), cz], [dx, Y(i + 1, ob0), dz],
+          [0, 1, 0], [(oa0 + hw) / ROAD_TILE, v0, (oa1 + hw) / ROAD_TILE, v0,
+            (ob1 + hw) / ROAD_TILE, v1, (ob0 + hw) / ROAD_TILE, v1],
+          [wear(oa0), wear(oa1), wear(ob1), wear(ob0)]
         );
       }
+    }
+    // A trimmed side stands over a lower road: finish it with a wall down to it.
+    for (let s = 0; s < 2; s++) {
+      const sg = s === 0 ? 1 : -1;
+      let run = [];
+      const flush = () => {
+        if (run.length > 1) this.meshWall(flat, run, px * sg, pz * sg, ei * 2 + s);
+        run = [];
+      };
+      for (let i = 0; i <= k; i++) {
+        const lo = e.tlo[i * 2 + s];
+        if (Number.isNaN(lo)) { flush(); continue; }
+        const [x, z] = s === 0 ? edgeL(i) : edgeR(i);
+        const w = s === 0 ? Wl(i) : Wr(i);
+        run.push([x, z, Y(i, sg * w) - 0.02, lo - 0.3]);
+      }
+      flush();
     }
     // Embankment. A draped road needed none -- it was the ground -- but a
     // graded one stands proud of it wherever the envelope filled a dip or the
     // camber lifted the low edge, and with nothing under that edge you see
     // straight through to the terrain below. A batter at BERM, in verge
     // colours, is what a real fill looks like from a car.
-    // Verge colours. The first pick read as sand under the tone curve: every
-    // median on graded I-5 turned beige where the draped road had lawn.
-    const grass = [0.3, 0.44, 0.21], dirt = [0.34, 0.35, 0.26];
-    const concrete = [0.62, 0.62, 0.6];
+    // Verge colours. The first pick read as sand under the tone curve, the
+    // second as a painted lime stripe down every median: developed ground here
+    // is the terrain's SUBURB/URBAN tint, not park lawn. Toned toward that,
+    // with only a lean to green.
+    const grass = [0.43, 0.46, 0.34], dirt = [0.4, 0.39, 0.32];
     for (let s = 0; s < 2; s++) {
-      const sg = s === 0 ? 1 : -1, fr = s === 0 ? 1 : 0;
+      const sg = s === 0 ? 1 : -1;
+      const edgeAt = s === 0 ? edgeL : edgeR;
+      let wallRun = [];
+      const flushWall = () => {
+        if (wallRun.length > 1) this.meshWall(flat, wallRun, px * sg, pz * sg, ei * 2 + s + 7);
+        wallRun = [];
+      };
       for (let i = 0; i < k; i++) {
         const o0 = i * 6 + s * 3, o1 = o0 + 6;
         const w0 = e.pe[o0 + 1], w1 = e.pe[o1 + 1];
-        if (w0 <= 0 && w1 <= 0) continue;
-        const [e0x, e0z] = P(i / k, fr), [e1x, e1z] = P((i + 1) / k, fr);
+        const walled = e.pwall && (e.pwall[i * 2 + s] || e.pwall[(i + 1) * 2 + s]);
+        if (!walled && w0 <= 0 && w1 <= 0) { flushWall(); continue; }
+        const [e0x, e0z] = edgeAt(i), [e1x, e1z] = edgeAt(i + 1);
         const ox = px * sg, oz = pz * sg;
-        // No batter under a neighbouring carriageway at this level: that strip
-        // is tarmac, and a grass slope drawn there shows through every gap
-        // between parallel lanes as a pale patch.
-        const wm = Math.min(1.5, (w0 + w1) / 4);
-        const bmx = (e0x + e1x) / 2 + ox * wm, bmz = (e0z + e1z) / 2 + oz * wm;
-        const ey = (e.pe[o0] + e.pe[o1]) / 2, ty = (e.pe[o0 + 2] + e.pe[o1 + 2]) / 2;
-        if (this.city.carriagewayAt(bmx, bmz, ey, ei)) continue;
-        // ...and no batter sweeping down OVER a lower carriageway. Beside I-5's
-        // express lanes a raised carriageway's slope came down across the lane
-        // next to it -- a wall of verge at windscreen height. A fill standing
-        // beside another road is held by a retaining wall, so that is drawn.
-        if (this.city.carriagewayAt(bmx, bmz, (ey + ty) / 2, ei, (ey - ty) / 2 + 0.3)) {
-          flat.quad(
-            [e0x, e.pe[o0] + bias - 0.02, e0z], [e1x, e.pe[o1] + bias - 0.02, e1z],
-            [e1x, G.terrainHeight(e1x, e1z) - 0.3, e1z], [e0x, G.terrainHeight(e0x, e0z) - 0.3, e0z],
-            [ox, 0, oz], [0, 0, 1, 0, 1, 1, 0, 1], concrete
-          );
+        // citygen decided what stands on this side (see gradeRoads' berms), and
+        // roadLift reports exactly that, so the mesher asks nothing of its own:
+        // a berm where the batter has room, a finished retaining wall where it
+        // would sweep over a lower carriageway, nothing where a neighbour's
+        // tarmac is already there. Deciding it here with a separate query was
+        // how a batter came to be reported where none was drawn.
+        const wall0 = e.pwall && e.pwall[i * 2 + s], wall1 = e.pwall && e.pwall[(i + 1) * 2 + s];
+        if (wall0 || wall1) {
+          if (!wallRun.length) wallRun.push([e0x, e0z, e.pe[o0] + bias - 0.02, G.terrainHeight(e0x, e0z) - 0.3]);
+          wallRun.push([e1x, e1z, e.pe[o1] + bias - 0.02, G.terrainHeight(e1x, e1z) - 0.3]);
           continue;
         }
+        flushWall();
         flat.quad(
           [e0x, e.pe[o0] + bias - 0.02, e0z], [e1x, e.pe[o1] + bias - 0.02, e1z],
           [e1x + ox * w1, e.pe[o1 + 2], e1z + oz * w1], [e0x + ox * w0, e.pe[o0 + 2], e0z + oz * w0],
           [ox * 0.55, 0.83, oz * 0.55], [0, 0, 1, 0, 1, 1, 0, 1], [dirt, dirt, grass, grass]
         );
       }
+      flushWall();
     }
+    this.meshTrenchWalls(flat, e, a, b, ei);
     this.meshRoadMarks(flat, e, a, b, ei);
   }
 
@@ -3104,6 +3258,7 @@ varying vec3 vFarTint;`)
       }
     }
     this.meshRoadMarks(flat, e, a, b, ei);
+    this.meshTrenchWalls(flat, e, a, b, ei);
     if (lod === 1 && (e.cls === 'st' || e.cls === 'art' || e.cls === 'res')) {
       const sw = e.cls === 'art' ? 3.2 : 2.6;
       // Stop short of each intersection: a strip run end to end would march
