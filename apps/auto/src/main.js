@@ -1104,6 +1104,7 @@ function frame(now) {
     const fast = pv && Math.abs(pv.vLong) > 8;
     world.playerFwdX = fast ? pv.forward.x * Math.sign(pv.vLong) : 0;
     world.playerFwdZ = fast ? pv.forward.z * Math.sign(pv.vLong) : 0;
+    world.playerFlying = !!(pv && pv.spec.plane && pv.airborne);
   }
   world.update(p.x, p.z, fps < 45 ? 1 : 2);
   // Atmospheric haze thickens with altitude. From 300 m up the streaming

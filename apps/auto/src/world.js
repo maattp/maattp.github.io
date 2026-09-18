@@ -968,6 +968,177 @@ export class World {
     m.frustumCulled = false;
     this.scene.add(m);
     this.skyline = m;
+    this.buildFarMass();
+  }
+
+  /**
+   * Every building the skyline skips, as static massing for the whole city.
+   *
+   * From a plane the streaming rings were a visible edge: houses, shops and
+   * low offices only existed inside the 9x9 mid ring, so everything past
+   * ~1.6 km was bare hillside with the tall skyline standing in it, and the
+   * housing stock materialised a row of chunks at a time as you flew -- the
+   * trace on the Boeing Field route counted 42k buildings popping into view.
+   * This is the "static supertile impostor layer" rather than wider rings:
+   * one mesh per 4x4-chunk supertile, the same box and tint the mid ring's
+   * massing draws, so when a chunk arrives the swap is invisible.
+   *
+   * INSIDE THE RING IT HIDES ITSELF, per chunk, in the vertex shader. Every
+   * vertex carries its building's chunk, and `farBuilt` is a 9x9 mask of ring
+   * chunks that have geometry; those buildings collapse to a point. So the
+   * layer keeps drawing a chunk until the streamer has actually delivered it
+   * -- no hole while it builds, and no double-drawn box once it has. Hiding
+   * whole supertiles could not do that: the ring never lines up with them.
+   *
+   * Shading needs no normal attribute: `flatShading` takes each face's normal
+   * from screen derivatives, so a box is 8 shared vertices, 10 triangles. At
+   * 17 bytes a vertex plus a 16-bit index that is ~200 bytes a building.
+   * Only drawn off the ground (see updateFarMass) -- at street level the city
+   * in front hides it, and it would cost triangles every frame for nothing.
+   */
+  buildFarMass() {
+    const city = this.city;
+    const ST = 4, SPAN = 2 * MID_R + 1;
+    const t0 = performance.now();
+    let bytes = 0;
+    const tiles = new Map();
+    for (const bd of city.buildings) {
+      if (bd.h >= 16 || bd.w * bd.d >= 1400) continue;   // the skyline draws these
+      const k = `${Math.floor(bd.x / CHUNK / ST)},${Math.floor(bd.z / CHUNK / ST)}`;
+      let l = tiles.get(k);
+      if (!l) tiles.set(k, (l = []));
+      l.push(bd);
+    }
+    const U = this.farU = {
+      farRing: { value: new THREE.Vector2(-9999, -9999) },
+      farBuilt: { value: new Float32Array(SPAN * SPAN) },
+      farFade: { value: 0 },
+    };
+    // Same response as `flat`, which is what the mid-ring massing is drawn in.
+    const mat = new THREE.MeshStandardMaterial({ vertexColors: true, flatShading: true, roughness: 0.82, metalness: 0.04, envMapIntensity: 0.45 });
+    mat.onBeforeCompile = (sh) => {
+      Object.assign(sh.uniforms, U);
+      sh.vertexShader = sh.vertexShader
+        .replace('#include <common>', `#include <common>
+attribute vec2 farChunk;
+uniform vec2 farRing;
+uniform float farBuilt[${SPAN * SPAN}];`)
+        .replace('#include <begin_vertex>', `#include <begin_vertex>
+{
+  vec2 rc = farChunk - farRing;
+  if (rc.x > -0.5 && rc.y > -0.5 && rc.x < ${SPAN}.0 - 0.5 && rc.y < ${SPAN}.0 - 0.5
+      && farBuilt[int(rc.x + 0.5) + int(rc.y + 0.5) * ${SPAN}] > 0.5) transformed = vec3(0.0);
+}`);
+      sh.fragmentShader = sh.fragmentShader
+        .replace('#include <common>', '#include <common>\nuniform float farFade;')
+        // The massing's roof slab is 0.45x the wall; with shared vertices the
+        // roof has to be told apart by its facing instead.
+        .replace('#include <normal_fragment_begin>', `#include <normal_fragment_begin>
+  if (dot(normal, (viewMatrix * vec4(0.0, 1.0, 0.0, 0.0)).xyz) > 0.7) diffuseColor.rgb *= 0.45;`)
+        // Fade in THROUGH the haze rather than switching on: climbing past the
+        // gate, the distant city emerges from the fog colour over ~1.5 s.
+        .replace('#include <fog_fragment>', `#include <fog_fragment>
+#ifdef USE_FOG
+  gl_FragColor.rgb = mix(fogColor, gl_FragColor.rgb, farFade);
+#endif`);
+    };
+    this.farMass = [];
+    let total = 0;
+    for (const l of tiles.values()) {
+      const n = l.length, nv = n * 8;
+      const pos = new Float32Array(nv * 3), col = new Uint8Array(nv * 3), chk = new Int8Array(nv * 2);
+      const idx = nv > 65535 ? new Uint32Array(n * 30) : new Uint16Array(n * 30);
+      let sx = 0, sz = 0;
+      for (let i = 0; i < n; i++) {
+        const bd = l[i], v = i * 8, cr = Math.cos(bd.rot), sr = Math.sin(bd.rot);
+        const hw = bd.w / 2, hd = bd.d / 2;
+        const base = MASS_TINT[bd.style] || MASS_TINT.lowrise;
+        const t = 0.86 + hash2(bd.seed, 3) * 0.28;
+        const cx = Math.floor(bd.x / CHUNK), cz = Math.floor(bd.z / CHUNK);
+        sx += bd.x; sz += bd.z;
+        // Corners clockwise seen from above, bottom ring then top ring --
+        // the same local frame Builder.box uses, walls starting 0.5 m down.
+        const L = [[-hw, -hd], [hw, -hd], [hw, hd], [-hw, hd]];
+        for (let j = 0; j < 8; j++) {
+          const [lx, lz] = L[j % 4], top = j >= 4;
+          pos[(v + j) * 3] = bd.x + lx * cr - lz * sr;
+          pos[(v + j) * 3 + 1] = top ? bd.y + bd.h : bd.y - 0.5;
+          pos[(v + j) * 3 + 2] = bd.z + lx * sr + lz * cr;
+          const ao = top ? 1 : 0.65;   // Builder.box's ao 0.35 on the bottom edge
+          for (let k = 0; k < 3; k++) col[(v + j) * 3 + k] = Math.min(255, Math.round(base[k] * t * ao * 255));
+          chk[(v + j) * 2] = cx;
+          chk[(v + j) * 2 + 1] = cz;
+        }
+        let o = i * 30;
+        for (let j = 0; j < 4; j++) {
+          const b0 = v + j, b1 = v + (j + 1) % 4, t0 = b0 + 4, t1 = b1 + 4;
+          idx[o++] = b0; idx[o++] = t0; idx[o++] = t1;
+          idx[o++] = b0; idx[o++] = t1; idx[o++] = b1;
+        }
+        idx[o++] = v + 4; idx[o++] = v + 7; idx[o++] = v + 6;
+        idx[o++] = v + 4; idx[o++] = v + 6; idx[o++] = v + 5;
+      }
+      const geo = new THREE.BufferGeometry();
+      geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+      geo.setAttribute('color', new THREE.BufferAttribute(col, 3, true));
+      geo.setAttribute('farChunk', new THREE.BufferAttribute(chk, 2));
+      geo.setIndex(new THREE.BufferAttribute(idx, 1));
+      geo.computeBoundingSphere();
+      const fm = new THREE.Mesh(geo, mat);
+      // Inside the ring these boxes are collapsed on the GPU only, so a CPU
+      // raycast would hit buildings nobody can see -- and every "raycast the
+      // pixel" diagnostic in this repo would start blaming them.
+      fm.raycast = () => {};
+      fm.visible = false;
+      fm.userData.cx = sx / n;
+      fm.userData.cz = sz / n;
+      this.scene.add(fm);
+      this.farMass.push(fm);
+      total += n;
+      bytes += pos.byteLength + col.byteLength + chk.byteLength + idx.byteLength;
+    }
+    // Reported so boot cost and GPU memory are numbers, not impressions.
+    this.farMassCount = total;
+    this.farMassBytes = bytes;
+    this.farMassMs = performance.now() - t0;
+  }
+
+  /** Mask the far massing under the ring's delivered chunks; fade it with altitude. */
+  updateFarMass(ccx, ccz, px, pz) {
+    if (!this.farMass) return;
+    const U = this.farU, SPAN = 2 * MID_R + 1;
+    U.farRing.value.set(ccx - MID_R, ccz - MID_R);
+    const built = U.farBuilt.value;
+    for (let dz = 0; dz < SPAN; dz++) {
+      for (let dx = 0; dx < SPAN; dx++) {
+        const c = this.chunks.get(this.city.chunkKey(ccx - MID_R + dx, ccz - MID_R + dz));
+        built[dx + dz * SPAN] = c && c.lod >= 0 ? 1 : 0;
+      }
+    }
+    // Off the ground only. 45 up / 25 down so a hilltop road does not flicker
+    // it; an airborne plane keeps it however low it skims.
+    const alt = this.playerAlt || 0;
+    if (!this.farOn && alt > 45) this.farOn = true;
+    else if (this.farOn && alt < 25 && !this.playerFlying) this.farOn = false;
+    const now = performance.now();
+    const fdt = this._farT === undefined ? 0 : Math.min(0.1, (now - this._farT) / 1000);
+    this._farT = now;
+    const f = clamp(U.farFade.value + (this.farOn ? fdt : -fdt) / 1.5, 0, 1);
+    U.farFade.value = f;
+    // Past ~5 km the haze has taken it: at 200 m up the fog is 83 % at 4 km
+    // and 94 % at 5 km. Tested on the supertile's building centroid plus half
+    // a supertile's diagonal. A 6 km cap cost ~300k extra triangles a flying
+    // frame on the Boeing Field route for buildings drawn almost in fog colour.
+    const R2 = (5000 + 1150) * (5000 + 1150);
+    for (const m of this.farMass) {
+      const dx = m.userData.cx - px, dz = m.userData.cz - pz;
+      m.visible = f > 0 && dx * dx + dz * dz < R2;
+    }
+  }
+
+  /** For harnesses: is the far massing currently drawing what a chunk holds? */
+  farMassCovers() {
+    return !!(this.farU && this.farU.farFade.value > 0.5);
   }
 
   animate(dt, t) {
@@ -996,8 +1167,15 @@ export class World {
     // so skimming rooftops does not flap the whole ring between LODs.
     if (this.flyLod === undefined) this.flyLod = false;
     const alt = this.playerAlt || 0;
+    // Altitude is measured over the terrain directly underneath, and a level
+    // plane crossing Beacon Hill or Queen Anne sees that fall from 140 m to
+    // 40 m and back in seconds -- the 100/60 band flipped the whole near ring
+    // between LODs 5 times on one route, each flip a 5x5 detail rebuild the
+    // streamer cannot hold at flying speed anyway. While AIRBORNE the ring
+    // only drops back to detail on a real approach (under 25 m).
+    const floor = this.playerFlying ? 25 : 60;
     if (!this.flyLod && alt > 100) this.flyLod = true;
-    else if (this.flyLod && alt < 60) this.flyLod = false;
+    else if (this.flyLod && alt < floor) this.flyLod = false;
     for (let dz = -MID_R; dz <= MID_R; dz++) {
       for (let dx = -MID_R; dx <= MID_R; dx++) {
         const cx = ccx + dx, cz = ccz + dz;
@@ -1089,6 +1267,7 @@ export class World {
       this._build = null;
       this._buildFor = null;
     }
+    this.updateFarMass(ccx, ccz, px, pz);
     return todo.length;
   }
 
