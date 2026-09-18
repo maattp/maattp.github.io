@@ -14,7 +14,7 @@ import { setTimeout as sleep } from 'node:timers/promises';
 const HTTP_PORT = process.env.AUTO_HTTP_PORT || 8000;
 const PORT = +process.env.AUTO_CDP_PORT || 9225;
 const CHROME = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
-const OUT = 'tools/data/survey';
+const OUT = 'tools/data/survey' + (process.env.SURVEY_TAG ? '/' + process.env.SURVEY_TAG : '');
 const N = parseInt(process.argv[2] || '14', 10);
 
 // Places worth looking at, chosen to hit every road class and the awkward
@@ -129,7 +129,11 @@ async function main() {
         if (best < 0) return null;
         const e = c.edges[best], a = c.nodes[e.a], b = c.nodes[e.b];
         const px = (a.x + b.x) / 2, pz = (a.z + b.z) / 2;
+        // Settle the streamer: chunk builds are time-sliced, so one update
+        // photographs a half-built city.
+        const pending = () => [...d.world.chunks.values()].filter((c) => c.lod !== c.wantLod).length;
         d.world.update(px, pz, 60);
+        for (let i = 0; i < 2000 && pending() > 0; i++) d.world.update(px, pz, 60);
         const y = (e.elev ? (a.y + b.y) / 2 : c.groundAt(px, pz, null)) + 1.9;
         d.camera.position.set(px - e.dx * 22, y, pz - e.dz * 22);
         d.camera.lookAt(px + e.dx * 60, y - 1.1, pz + e.dz * 60);
