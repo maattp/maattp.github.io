@@ -222,10 +222,12 @@ GMs. Verify headlessly with `node tools/solarverify.mjs` (needs
 **IMPORTANT:** Increment `VERSION` in `/apps/llm/index.html` once per PR, and
 bump `CACHE` in `/apps/llm/sw.js` (`llm-vN`) to match.
 
-ChatGPT-style chat with OpenRouter's free models, behind Google sign-in (both
-`ALLOWED_EMAILS` accounts; each sees only their own chats). Backend is `/llm/*`
-on the worker — see the LLM section of `worker/CLAUDE.md`. **Free models only:
-the worker enforces it, never the app.** Model output is rendered as markdown
+ChatGPT-style chat with the free models of OpenRouter and the Gemini API, behind
+Google sign-in (both `ALLOWED_EMAILS` accounts; each sees only their own chats).
+Backend is `/llm/*` on the worker — see the LLM section of `worker/CLAUDE.md`.
+**Free models only: the worker enforces it, never the app.** Gemini reports no
+prices, so its free list is the hand-kept `GEMINI_FREE_MODELS` in
+`worker/src/llm.ts` — confirm a model answers on the free tier before adding it. Model output is rendered as markdown
 through DOMPurify; user text renders as text nodes. Local testing:
 `?api=http://localhost:8787` (honoured only on localhost) against `wrangler dev`.
 

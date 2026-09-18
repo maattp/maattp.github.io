@@ -36,7 +36,13 @@ check((await (await w('/me', MATT)).json()).email === 'm.polkiewicz@gmail.com', 
 check((await (await w('/me', TING)).json()).email === 'ting520143@gmail.com', 'worker: tingting session resolves (both allowlisted accounts)');
 const { models } = await (await w('/models', MATT)).json();
 check(models.length > 3, `worker: live free-model list (${models.length} models)`);
-const freeId = models[0].id;
+const freeId = models.find((m) => m.provider === 'openrouter').id;
+const gemini = models.filter((m) => m.provider === 'gemini');
+if (gemini.length) {
+  check(models[0].provider === 'gemini' && gemini.every((m) => m.id.startsWith('gemini:')), `worker: ${gemini.length} Gemini free models, listed first`);
+  const notFree = await w('/chat', MATT, { method: 'POST', body: JSON.stringify({ model: 'gemini:gemini-pro-latest', messages: [{ role: 'user', content: 'hi' }] }) });
+  check(notFree.status === 400 && (await notFree.json()).error === 'not a free model', 'worker: non-free Gemini model refused before reaching Google');
+} else console.log('skip Gemini checks: the local worker has no GEMINI_API_KEY in worker/.dev.vars');
 const paid = await w('/chat', MATT, { method: 'POST', body: JSON.stringify({ model: 'openai/gpt-4o', messages: [{ role: 'user', content: 'hi' }] }) });
 check(paid.status === 400 && (await paid.json()).error === 'not a free model', 'worker: paid model refused before reaching OpenRouter');
 const badKey = await w('/chat', MATT, { method: 'POST', body: JSON.stringify({ model: freeId, messages: [{ role: 'user', content: 'hi' }] }) });
@@ -59,7 +65,7 @@ okStream.push(chunk({ content: '\n\nDone.' }, 'stop'), 'data: [DONE]\n\n');
 const SCENARIOS = {
   ok: { chunks: okStream, delay: 150 },
   midstream: { chunks: [chunk({ content: 'Partial answer' }), `data: ${JSON.stringify({ error: { message: 'Provider returned error', code: 502 } })}\n\n`], delay: 30 },
-  slow: { chunks: Array.from({ length: 80 }, (_, i) => chunk({ content: `word${i} ` })), delay: 120 },
+  slow: { chunks: [chunk({ reasoning: 'Planning a long answer. ' }), chunk({ reasoning: 'Step two. ' }), chunk({ reasoning: 'Step three. ' }), ...Array.from({ length: 80 }, (_, i) => chunk({ content: `word${i} ` }))], delay: 120 },
 };
 const MOCK = `(() => {
   const SCENARIOS = ${JSON.stringify(SCENARIOS)};
@@ -142,15 +148,26 @@ try {
   await ready();
   check(await ev(`document.querySelector('#who').textContent`) === 'm.polkiewicz@gmail.com', 'drawer shows the signed-in email');
   check(await ev(`S.models.length`) === models.length, 'app loaded the same free-model list');
-  check((await ev(`document.querySelector('#usage').textContent`)).includes('47 of 50'), 'empty state shows free quota');
+  await ev(`setModel(${JSON.stringify(freeId)})`);
+  check((await ev(`document.querySelector('#usage').textContent`)).includes('47 of 50'), 'OpenRouter model: empty state shows the free quota');
+  if (gemini.length) {
+    await ev(`setModel(${JSON.stringify(gemini[0].id)})`);
+    check((await ev(`document.querySelector('#usage').textContent`)).includes('midnight Pacific'), 'Gemini model: empty state shows its free-tier note instead');
+  }
   await shot('desktop-empty');
 
   // Model picker
   const vision = models.find((m) => m.vision);
   await click('#modelbtn');
   check(await ev(`document.querySelector('#sheet-models').classList.contains('open')`), 'model sheet opens');
+  check(await ev(`[...document.querySelectorAll('#modellist .mgtitle')].map((e) => e.textContent).join()`) === (gemini.length ? 'Google Gemini,OpenRouter' : 'OpenRouter'), 'model sheet grouped by provider, Gemini first');
+  check((await ev(`[...document.querySelectorAll('#modellist .mnote')].map((e) => e.textContent).join('|')`)).includes('47 of 50'), 'OpenRouter group shows the quota');
+  if (gemini.length) check((await ev(`document.querySelector('#modellist .mnote').textContent`)).includes('improve its products'), 'Gemini group states free-tier data use');
+  check(await ev(`document.querySelectorAll('#modellist .model').length`) === models.length, 'every model appears in the sheet');
+  await shot('desktop-models-grouped');
   await type('#modelq', vision.id);
-  check(await ev(`[...document.querySelectorAll('#modellist .model')].every((b) => (b.textContent).toLowerCase().includes(${JSON.stringify(vision.id.toLowerCase())}))`), 'model search filters');
+  // The sheet shows Gemini ids without their "gemini:" routing prefix.
+  check(await ev(`[...document.querySelectorAll('#modellist .model')].every((b) => (b.textContent).toLowerCase().includes(${JSON.stringify(vision.id.replace(/^gemini:/, '').toLowerCase())}))`), 'model search filters');
   await shot('desktop-models');
   await click('#modellist .model');
   check(await ev(`S.model`) === vision.id && await ev(`localStorage.getItem('llm_model')`) === vision.id, `picked vision model ${vision.id} (persisted)`);
@@ -178,6 +195,7 @@ try {
   await click('#sendbtn');
   await waitFor(`!!document.querySelector('#sendbtn.stop')`, 'stop button while streaming');
   await waitFor(`!!document.querySelector('.think')`, 'reasoning shown while streaming');
+  check(await ev(`(() => { const d = document.querySelector('.think'); return !d.open && (S.streaming?.msg.content ? true : d.classList.contains('live') && d.querySelector('summary').textContent === 'Thinking…'); })()`), 'thinking starts collapsed and live');
   await shot('desktop-streaming');
   await waitFor('!S.streaming', 'first reply done');
   const md = `document.querySelector('.msg.ai .md')`;
@@ -186,7 +204,7 @@ try {
   check(await ev(`!!${md}.querySelector('.tablewrap table')`), 'table rendered and wrapped');
   check(await ev(`${md}.querySelector('a')?.target`) === '_blank', 'links open in a new tab');
   check(await ev(`window.__xss === undefined && !${md}.querySelector('img, script, [onerror], [style]')`), 'model HTML sanitized (no img/script/onerror/style)');
-  check(await ev(`!document.querySelector('.think').open && document.querySelector('.think summary').textContent === 'Thoughts'`), 'reasoning collapses when done');
+  check(await ev(`!document.querySelector('.think').open && !document.querySelector('.think').classList.contains('live') && /^(Thoughts|Thought for \\d+s)$/.test(document.querySelector('.think summary').textContent)`), 'reasoning stays collapsed and is labelled when done');
   check((await ev(`document.querySelector('.msg.ai').textContent`)).includes('Done.'), 'content split across reads reassembled');
   check(await ev(`document.querySelector('.msg.ai .mlabel').textContent`) === vision.name, 'reply labelled with model name');
   const b0 = await ev(`__chatBodies[0]`);
@@ -220,7 +238,7 @@ try {
   // 429 -> error card -> retry
   await ev(`window.__chatMode = '429'`);
   await sendMsg('Again');
-  check((await ev(`document.querySelector('.msg.ai:last-child .error')?.textContent || ''`)).includes('20 requests a minute'), '429 shows a rate-limit explanation');
+  check((await ev(`document.querySelector('.msg.ai:last-child .error')?.textContent || ''`)).includes('another model'), '429 shows an explanation and suggests another model');
   check(await ev(`!!document.querySelector('.msg.ai:last-child [aria-label="Retry"]')`), 'error reply offers Retry');
   await shot('desktop-error');
   await ev(`window.__chatMode = 'ok'`);
@@ -238,7 +256,11 @@ try {
   await ev(`window.__chatMode = 'slow'`);
   await type('#input', 'Long one');
   await click('#sendbtn');
+  await waitFor(`!!document.querySelector('.msg.ai:last-child .think')`, 'slow stream thinking');
+  await ev(`window.__thinkNode = document.querySelector('.msg.ai:last-child .think'); window.__thinkNode.querySelector('summary').click()`);
   await waitFor(`S.streaming && S.streaming.msg.content.length > 10`, 'slow stream producing');
+  check(await ev(`document.querySelector('.msg.ai:last-child .think') === window.__thinkNode && window.__thinkNode.open && !window.__thinkNode.classList.contains('live')`),
+    'streaming patches the thinking block in place: same node, user-opened state kept, live ends when the answer starts');
   await click('#sendbtn');
   await waitFor('!S.streaming', 'stopped');
   check(await ev(`S.conv.messages.at(-1).stopped === true && document.querySelector('.msg.ai:last-child .note')?.textContent === 'Stopped.' && S.conv.messages.at(-1).content.length > 10`), 'stop keeps partial text, marks Stopped');
@@ -280,6 +302,29 @@ try {
   check(await ev(`document.documentElement.scrollWidth <= innerWidth && document.querySelector('#thread').scrollWidth <= innerWidth`), 'phone: no horizontal overflow');
   check(await ev(`document.querySelector('#composer').getBoundingClientRect().bottom <= innerHeight + 1`), 'phone: composer on screen');
   check(await ev(`document.querySelector('#drawer').getBoundingClientRect().right <= 0`), 'phone: drawer hidden by default');
+
+  // Keyboard geometry. Headless Chrome has no iOS keyboard, so fake its signature:
+  // the visual viewport shrinks while the layout viewport (innerHeight) does not.
+  const app = `document.querySelector('#app')`;
+  await ev('applyViewport()');
+  check(await ev(`${app}.style.height === '' && ${app}.style.transform === '' && !${app}.classList.contains('kb')`), 'phone at rest: CSS owns the app box');
+  await ev(`window.__vvh = innerHeight - 340; Object.defineProperty(visualViewport, 'height', { configurable: true, get: () => window.__vvh }); applyViewport()`);
+  check(await ev(`${app}.classList.contains('kb') && ${app}.style.height === (innerHeight - 340) + 'px' && document.querySelector('#composer').getBoundingClientRect().bottom <= innerHeight - 339`),
+    'iOS-style keyboard: app sized to the visible region, composer above the keyboard');
+  await ev(`delete visualViewport.height; applyViewport()`);
+  check(await ev(`${app}.style.height === '' && !${app}.classList.contains('kb')`), 'keyboard closed: inline box cleared');
+  await send('Emulation.setDeviceMetricsOverride', { width: 390, height: 480, deviceScaleFactor: 3, mobile: true });
+  await sleep(250); await ev('applyViewport()');
+  check(await ev(`${app}.style.height === '' && !${app}.classList.contains('kb')`), 'Android-style resize (layout viewport shrinks too): no double shrink');
+  await send('Emulation.setDeviceMetricsOverride', { width: 390, height: 844, deviceScaleFactor: 3, mobile: true });
+  await sleep(250); await ev('applyViewport()');
+
+  // First tap focuses without scrolling; a tap once focused is left to the browser.
+  await ev(`document.activeElement.blur()`);
+  const tap = `(() => { const e = new TouchEvent('touchend', { bubbles: true, cancelable: true }); document.querySelector('#input').dispatchEvent(e); return e.defaultPrevented; })()`;
+  check(await ev(tap) === true && await ev(`document.activeElement === document.querySelector('#input')`), 'first tap on the composer focuses it without the default scroll');
+  check(await ev(tap) === false, 'tap on the focused composer is left alone (caret placement)');
+  await ev(`document.activeElement.blur()`);
   await shot('phone-chat');
   await click('#menubtn');
   await sleep(350);

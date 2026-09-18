@@ -134,7 +134,9 @@
   .pill.danger { color: var(--danger); }
 
   .think { margin: 0 0 10px; border-left: 2px solid var(--line); padding-left: 12px; }
-  .think summary { color: var(--dim); font-size: 14px; cursor: pointer; list-style: none; user-select: none; }
+  .think summary { color: var(--dim); font-size: 14px; cursor: pointer; list-style: none; user-select: none; -webkit-user-select: none; padding: 4px 0; }
+  .think.live summary { animation: pulse 1.6s ease-in-out infinite; }
+  @keyframes pulse { 50% { opacity: .4; } }
   .think summary::-webkit-details-marker { display: none; }
   .think summary::after { content: ' ›'; }
   .think[open] summary::after { content: ' ‹'; }
@@ -215,7 +217,9 @@
   .mname { font-weight: 600; }
   .mmeta { font-size: 12px; color: var(--dim); overflow-wrap: anywhere; }
   .mdesc { font-size: 13px; color: var(--faint); display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; margin-top: 2px; }
-  #modelusage { font-size: 13px; color: var(--dim); padding: 8px 18px 0; }
+  .mgroup { padding: 14px 10px 4px; }
+  .mgtitle { font-size: 12px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; color: var(--faint); }
+  .mnote { font-size: 13px; color: var(--dim); margin-top: 2px; }
   #ver { font-size: 12px; color: var(--faint); }
 
   #toast {
@@ -230,7 +234,7 @@
 <div id="signin" hidden>
   <div>
     <h1>LLM</h1>
-    <p>Free models, via OpenRouter</p>
+    <p>Free models from Gemini and OpenRouter</p>
     <div id="gbtn"></div>
     <div id="signerr"></div>
   </div>
@@ -281,7 +285,6 @@
   <div class="panel">
     <div class="panelhead"><strong>Free models</strong><button class="icon close" aria-label="Close"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg></button></div>
     <div class="panelbody"><input id="modelq" class="field" type="search" placeholder="Search models" autocomplete="off"></div>
-    <div id="modelusage"></div>
     <div id="modellist"></div>
   </div>
 </div>
@@ -319,10 +322,10 @@
 
 <script>
 'use strict';
-/* LLM — chat with OpenRouter's free models. Backend: /llm/* (worker/src/llm.ts),
+/* LLM — chat with the free models of Gemini and OpenRouter. Backend: /llm/* (worker/src/llm.ts),
    which is where "free models only" is enforced. Bump VERSION here and CACHE in
    sw.js together. */
-const VERSION = 1;
+const VERSION = 2;
 const API = (() => {
   const o = new URLSearchParams(location.search).get('api');
   return o && location.hostname === 'localhost' ? o : 'https://cloudflare-backend.maattp.workers.dev';
@@ -432,12 +435,13 @@ async function init() {
 async function loadModels() {
   const { models } = await getJSON('/models');
   S.models = models; S.modelsLoaded = true;
-  if (!modelInfo(S.model)) S.model = (modelInfo('openrouter/free') || models[0] || {}).id || null;
-  renderModelName(); renderModels(); syncComposer();
+  // Default: the newest Gemini model (the list comes newest first), else OpenRouter's free router.
+  if (!modelInfo(S.model)) S.model = (models.find((m) => m.provider === 'gemini') || modelInfo('openrouter/free') || models[0] || {}).id || null;
+  renderModelName(); renderModels(); renderUsage(); syncComposer();
 }
 function setModel(id) {
   S.model = id; localStorage.setItem('llm_model', id);
-  renderModelName(); renderModels(); syncComposer();
+  renderModelName(); renderModels(); renderUsage(); syncComposer();
 }
 function renderModelName() {
   const name = modelInfo(S.model)?.name || (!S.modelsLoaded ? 'Loading…' : S.models.length ? 'Choose a model' : 'No free models right now');
@@ -445,27 +449,43 @@ function renderModelName() {
   $('#emptymodel').textContent = name;
 }
 const fmtCtx = (n) => n >= 1e6 ? +(n / 1e6).toFixed(1) + 'M context' : n ? Math.round(n / 1000) + 'K context' : '';
+// Grouped by provider, in the worker's order (Gemini first). Each group says
+// what "free" means there, because the two differ.
+const PROVIDERS = [
+  { key: 'gemini', title: 'Google Gemini', note: () => 'Free tier: limits are per model and reset at midnight Pacific. Google may use these chats to improve its products.' },
+  { key: 'openrouter', title: 'OpenRouter', note: () => usageText() || 'Free models: 20 requests a minute and a daily cap.' },
+];
 function renderModels() {
   const q = $('#modelq').value.trim().toLowerCase();
   const list = $('#modellist'); list.textContent = '';
-  for (const m of S.models) {
-    if (q && !(m.name + ' ' + m.id).toLowerCase().includes(q)) continue;
-    list.append(h('button', { class: 'model' + (m.id === S.model ? ' on' : ''), onclick: () => { setModel(m.id); closeSheets(); } },
-      h('div', { class: 'mname' }, m.name),
-      h('div', { class: 'mmeta' }, [m.id, fmtCtx(m.context), m.vision && 'images', m.reasoning && 'reasoning'].filter(Boolean).join(' · ')),
-      m.description ? h('div', { class: 'mdesc' }, m.description) : null));
+  for (const p of PROVIDERS) {
+    const models = S.models.filter((m) => m.provider === p.key && (!q || (m.name + ' ' + m.id).toLowerCase().includes(q)));
+    if (!models.length) continue;
+    list.append(h('div', { class: 'mgroup' }, h('div', { class: 'mgtitle' }, p.title), h('div', { class: 'mnote' }, p.note())));
+    for (const m of models) {
+      list.append(h('button', { class: 'model' + (m.id === S.model ? ' on' : ''), onclick: () => { setModel(m.id); closeSheets(); } },
+        h('div', { class: 'mname' }, m.name),
+        h('div', { class: 'mmeta' }, [m.id.replace(/^gemini:/, ''), fmtCtx(m.context), m.vision && 'images', m.reasoning && 'reasoning'].filter(Boolean).join(' · ')),
+        m.description ? h('div', { class: 'mdesc' }, m.description) : null));
+    }
   }
   if (!list.children.length) {
-    list.append(h('div', { class: 'none' }, S.models.length ? 'No matches' : S.modelsLoaded ? 'OpenRouter lists no free models right now.' : 'Loading models…'));
+    list.append(h('div', { class: 'none' }, S.models.length ? 'No matches' : S.modelsLoaded ? 'No free models are available right now.' : 'Loading models…'));
   }
 }
 function openModels() { $('#modelq').value = ''; renderModels(); openSheet('#sheet-models'); if (!coarse) $('#modelq').focus(); }
 
 async function refreshUsage() {
   try { S.usage = (await getJSON('/usage')).free; } catch { S.usage = null; }
+  renderUsage(); renderModels();
+}
+function usageText() {
   const u = S.usage;
-  const t = u && typeof u.remaining === 'number' && typeof u.limit === 'number' ? `${u.remaining} of ${u.limit} free requests left today` : '';
-  $('#usage').textContent = t; $('#modelusage').textContent = t;
+  return u && typeof u.remaining === 'number' && typeof u.limit === 'number' ? `${u.remaining} of ${u.limit} free requests left today` : '';
+}
+// OpenRouter reports one shared daily count; Gemini reports nothing, its limits are per model.
+function renderUsage() {
+  $('#usage').textContent = modelInfo(S.model)?.provider === 'gemini' ? 'Gemini free tier · limits reset at midnight Pacific' : usageText();
 }
 
 /* ---------- conversation list ---------- */
@@ -611,13 +631,7 @@ function messageEl(m, i) {
         S.streaming ? null : iconBtn(I.edit, 'Edit', () => { S.editing = m.id; rerender(m); })));
   }
   const node = h('div', { class: 'msg ai', id: 'm-' + m.id });
-  if (m.reasoning) {
-    const thinking = busy && !m.content;
-    const d = h('details', { class: 'think', open: thinking || S.thinkOpen.has(m.id) },
-      h('summary', { onclick: () => { if (d.open) S.thinkOpen.delete(m.id); else S.thinkOpen.add(m.id); } }, thinking ? 'Thinking…' : 'Thoughts'),
-      h('div', { class: 'thinktext' }, m.reasoning));
-    node.append(d);
-  }
+  if (m.reasoning) node.append(thinkEl(m, busy));
   if (m.content) node.append(markdown(m.content));
   else if (busy && !m.reasoning) node.append(h('div', { class: 'typing' }, h('span'), h('span'), h('span')));
   if (m.truncated) node.append(h('div', { class: 'note' }, 'The model hit its output limit.'));
@@ -630,6 +644,44 @@ function messageEl(m, i) {
       h('span', { class: 'mlabel' }, modelLabel(m.model))));
   }
   return node;
+}
+
+// Collapsed unless the user opens it, so nothing jumps when thinking gives way
+// to the answer.
+const thinkingNow = (m, busy) => busy && !m.content;
+function thinkLabel(m, busy) {
+  if (thinkingNow(m, busy)) return 'Thinking…';
+  return m.thinkMs >= 1000 ? `Thought for ${Math.round(m.thinkMs / 1000)}s` : 'Thoughts';
+}
+function thinkEl(m, busy) {
+  const d = h('details', { class: 'think' + (thinkingNow(m, busy) ? ' live' : ''), open: S.thinkOpen.has(m.id) },
+    h('summary', { onclick: () => { if (d.open) S.thinkOpen.delete(m.id); else S.thinkOpen.add(m.id); } }, thinkLabel(m, busy)),
+    h('div', { class: 'thinktext' }, m.reasoning));
+  return d;
+}
+
+// While a reply streams, patch its node in place rather than rebuilding it: a
+// rebuilt <details> loses its open state and its scroll position every frame.
+function patchStreaming(m) {
+  const node = document.getElementById('m-' + m.id);
+  if (!node) return;
+  const busy = S.streaming?.msg === m;
+  if (m.reasoning) {
+    let d = node.querySelector('.think');
+    if (!d) { d = thinkEl(m, busy); node.prepend(d); }
+    d.classList.toggle('live', thinkingNow(m, busy));
+    const summary = d.querySelector('summary'), label = thinkLabel(m, busy);
+    if (summary.textContent !== label) summary.textContent = label;
+    const text = d.querySelector('.thinktext');
+    const following = text.scrollHeight - text.scrollTop - text.clientHeight < 24;
+    text.textContent = m.reasoning;
+    if (following) text.scrollTop = text.scrollHeight;
+  }
+  if (m.content) {
+    const fresh = markdown(m.content), old = node.querySelector('.md');
+    if (old) old.replaceWith(fresh); else node.append(fresh);
+  }
+  if (m.content || m.reasoning) node.querySelector('.typing')?.remove();
 }
 
 function editEl(m, i) {
@@ -672,7 +724,7 @@ function scheduleRender(m) {
   renderQueued = true;
   setTimeout(() => requestAnimationFrame(() => {
     renderQueued = false; lastRender = performance.now();
-    if (S.conv.messages.includes(m)) { rerender(m); if (S.stick) scrollToBottom(); }
+    if (S.conv.messages.includes(m)) { patchStreaming(m); if (S.stick) scrollToBottom(); }
   }), Math.max(0, 60 - (performance.now() - lastRender)));
 }
 function scrollToBottom() { const s = $('#scroll'); s.scrollTop = s.scrollHeight; }
@@ -743,11 +795,15 @@ async function complete(conv) {
   renderThread(); scrollToBottom();
   try {
     const res = await api('POST', '/chat', { model: info.id, messages }, ctrl.signal);
-    await readStream(res, msg, () => { if (S.conv === conv) scheduleRender(msg); });
+    const t0 = performance.now();
+    await readStream(res, msg, () => {
+      if (msg.reasoning && !msg.content) msg.thinkMs = Math.round(performance.now() - t0);
+      if (S.conv === conv) scheduleRender(msg);
+    });
     if (!msg.content && !msg.reasoning) msg.error = 'The model returned an empty response. Retry, or pick another model.';
   } catch (e) {
     if (e.name === 'AbortError') msg.stopped = true;
-    else if (e.message !== 'unauthorized') msg.error = errorText(e);
+    else if (e.message !== 'unauthorized') msg.error = errorText(e, info);
   } finally {
     S.streaming = null;
     if (S.conv === conv) { renderThread(); if (S.stick) scrollToBottom(); }
@@ -787,8 +843,10 @@ async function readStream(res, msg, onDelta) {
     }
   }
 }
-function errorText(e) {
-  if (e.status === 429) return `${e.message} — free models allow 20 requests a minute and a daily cap. Wait a moment, or try another model.`;
+function errorText(e, model) {
+  if (e.status === 429 && model?.provider === 'openrouter') return `${e.message} — free models allow 20 requests a minute and a daily cap. Wait a moment, or try another model.`;
+  // Gemini's limits are per model, and its 503 "high demand" is per model too: another model usually works.
+  if (e.status === 429 || e.status === 503) return `${e.message} Try another model.`;
   if (e instanceof TypeError) return 'Network error. Check your connection and retry.';
   return e.message || 'Something went wrong.';
 }
@@ -928,35 +986,58 @@ document.addEventListener('visibilitychange', () => {
 });
 
 /* ---------- geometry ----------
-   Copied from apps/chat, which learned it the hard way. In an iOS standalone
-   app the keyboard shrinks the VISUAL viewport and pans the page, dragging a
-   fixed layout's header off-screen. When (and only when) the keyboard is up,
-   size the app to the visible region and translate it back by the pan. The
-   rest geometry is measured while the keyboard is down, never assumed. */
+   From apps/chat, which learned the base model the hard way: at rest the app is
+   CSS `inset:0` and JS clears its inline box; while the keyboard is up the app
+   is sized to the visible region, judged against rest geometry MEASURED with
+   the keyboard down (a standalone iPhone can report the visual viewport short
+   by the status-bar inset at rest). Three changes for the jump reported on the
+   phone, where tapping the composer threw the page to the top:
+   1. The first tap focuses with preventScroll, so iOS doesn't pan the page up
+      to reveal the composer only for the correction to drag it back.
+   2. Corrections coalesce into one frame, and undo any pan BEFORE measuring,
+      so no frame draws a translate for a pan that has just been undone.
+   3. "Keyboard up" also requires that the layout viewport did NOT shrink with
+      the visual one: where the browser resizes the page itself (Android,
+      resizes-content) inset:0 already fits, and sizing again double-shrinks. */
 const KB_MIN = 150;
-let rest = null;
+let rest = null, viewportQueued = false;
 function layoutViewport() {
+  if (viewportQueued) return;
+  viewportQueued = true;
+  requestAnimationFrame(() => { viewportQueued = false; applyViewport(); });
+}
+function applyViewport() {
   const vv = window.visualViewport; if (!vv) return;
   const app = $('#app');
-  if (!rest) rest = { h: vv.height, top: vv.offsetTop };
-  const kb = vv.height < rest.h - KB_MIN;
+  if (window.scrollY) window.scrollTo(0, 0);
+  if (!rest) rest = { h: vv.height, top: vv.offsetTop, ih: innerHeight };
+  const kb = vv.height < rest.h - KB_MIN && innerHeight > rest.ih - KB_MIN;
   if (kb) {
-    app.style.height = (vv.height + (window.innerHeight - rest.h)) + 'px';
+    app.style.height = (vv.height + (innerHeight - rest.h)) + 'px';
     app.style.transform = `translateY(${vv.offsetTop - rest.top}px)`;
   } else {
-    rest = { h: vv.height, top: vv.offsetTop };
+    rest = { h: vv.height, top: vv.offsetTop, ih: innerHeight };
     app.style.height = ''; app.style.transform = '';
   }
+  const opened = kb && !app.classList.contains('kb');
   app.classList.toggle('kb', kb);
-  window.scrollTo(0, 0);
-  if (kb && S.stick && document.activeElement === $('#input')) scrollToBottom();
+  // Keep the newest messages next to the composer as the keyboard halves the view.
+  if (opened && S.stick) scrollToBottom();
 }
 if (window.visualViewport) {
   visualViewport.addEventListener('resize', layoutViewport);
   visualViewport.addEventListener('scroll', layoutViewport);
+  window.addEventListener('scroll', layoutViewport, { passive: true });
   window.addEventListener('orientationchange', () => { rest = null; setTimeout(layoutViewport, 100); });
-  layoutViewport();
+  applyViewport(); // measure the rest frame before any keyboard can appear
 }
+// First tap: focus without letting iOS scroll the page to the composer. Once
+// focused, taps are left alone so the caret can be placed normally.
+$('#input').addEventListener('touchend', (e) => {
+  if (document.activeElement === e.currentTarget) return;
+  e.preventDefault();
+  e.currentTarget.focus({ preventScroll: true });
+});
 $('#input').addEventListener('focus', () => setTimeout(layoutViewport, 250));
 $('#input').addEventListener('blur', () => setTimeout(layoutViewport, 250));
 

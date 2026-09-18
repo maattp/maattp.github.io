@@ -36,6 +36,7 @@ type Bindings = HardEnv & {
   CHAT_SENDERS: string;
   CHAT_CLAUDE_TOKEN: string;
   OPENROUTER_API_KEY: string;
+  GEMINI_API_KEY?: string;
 };
 
 type Variables = {

@@ -147,7 +147,8 @@ Two-person couples tracker. All routes session-gated except the WS upgrade.
 
 ## LLM (`/llm/*` — see `apps/llm/`)
 
-Chat with OpenRouter's free models. All routes session-gated (`ALLOWED_EMAILS`).
+Chat with the free models of OpenRouter and the Gemini API. All routes
+session-gated (`ALLOWED_EMAILS`).
 Code in `src/llm.ts`; tests `node --experimental-strip-types worker/test/llm.test.mjs` (CI).
 
 - **Free models only — the rule that must not bend.** `OPENROUTER_API_KEY` is a
@@ -156,6 +157,17 @@ Code in `src/llm.ts`; tests `node --experimental-strip-types worker/test/llm.tes
   AND text-only output) derived from OpenRouter's catalogue, and fails closed
   if the catalogue can't be fetched. `parseChat()` rebuilds the request from
   known fields only, so client-supplied `tools`/`provider`/etc. never reach OpenRouter.
+- **Gemini** (`GEMINI_API_KEY`, optional; ids `gemini:<model>`). The API reports
+  no prices, so free is the hand-kept `GEMINI_FREE_MODELS` (text models the
+  pricing page marks free, each confirmed with a real free-tier request),
+  narrowed to what the key can list. **It only stays free while the Google Cloud
+  project has no billing account** — there is no price to check at runtime.
+  `toGemini()` converts the OpenAI-style messages; `geminiEventToSse()` turns
+  Gemini's SSE into OpenRouter-shaped chunks so the app has one stream parser;
+  `geminiError()` maps rejected keys to 502 and shortens quota errors. On the
+  free tier Google may use prompts to improve its products (the picker says so).
+- `GET /llm/models` lists Gemini first, then OpenRouter. A provider whose list
+  can't be fetched contributes no models, so `/chat` refuses its ids.
 - `GET /llm/models` (free list, memoized 10 min per isolate), `GET /llm/usage`
   (free-request quota for the UTC day), `POST /llm/chat` (SSE passthrough).
   OpenRouter 401/403 are remapped to 502 so a bad key doesn't sign the user out.
@@ -177,6 +189,8 @@ Secrets (NOT in wrangler.toml):
   setup; the public half is baked into `wrangler.toml` and `apps/75hard/index.html`.
 - `OPENROUTER_API_KEY` — the LLM app's OpenRouter key (`wrangler secret put
   OPENROUTER_API_KEY`). Unset → `/llm/chat` and `/llm/usage` return 503.
+- `GEMINI_API_KEY` — the LLM app's Gemini API key (`wrangler secret put
+  GEMINI_API_KEY`). Unset → no Gemini models are offered.
 
 ## Development
 
