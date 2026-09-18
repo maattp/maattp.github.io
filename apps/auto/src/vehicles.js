@@ -2831,7 +2831,7 @@ function headlampWrap(core, trim, sx, nose, len) {
   onShell(core, trim, sx, nose - len * 0.75, nose - 0.03, 7, 8, LAMP, 0.010, 1);
 }
 
-/** Four shut lines' worth of hairline patch, following the section at `zc`. */
+/** One door shut line: a hairline patch that follows the section at `zc`. */
 function shutLine(core, matte, sx, zc, i0 = 2, i1 = 8) {
   const rows = [-0.008, 0.008].map((dz) =>
     core.half(zc + dz, sx).slice(i0, i1 + 1).map(([x, y]) => [x + sx * 0.005, y, zc + dz]));
@@ -3146,7 +3146,7 @@ function scaledBuild(build, refLen, refWid) {
  */
 function buildServiceSedan(spec, paint, trim, matte) {
   const wheels = scaledBuild(buildSedan, 5.06, 1.90)(spec, paint, trim, matte);
-  const kx = spec.wid / 1.90, kz = spec.len / 1.90 * (1.90 / 5.06);
+  const kx = spec.wid / 1.90, kz = spec.len / 5.06;
   const roofY = spec.roof;
   // Door band, between the arches: the sedan's flank is vertical from y 0.69
   // to 0.77 along the doors, which is where a livery stripe sits flat.
