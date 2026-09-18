@@ -360,7 +360,11 @@ async function main() {
         for (let k = 0; k <= n; k++) {
           const t = k / n;
           const x = a.x + (b.x - a.x) * t, z = a.z + (b.z - a.z) * t;
-          const deck = a.y + (b.y - a.y) * t;
+          // The DRAWN deck. A graded span is not a straight line between its
+          // node heights -- it bends over what it crosses and eases into its
+          // neighbours -- so a car riding it exactly was reported as falling
+          // off a chord nobody draws (85 of 131 "falls", all on the profile).
+          const deck = e.ph ? city.profAt(e, t).h - 0.09 : a.y + (b.y - a.y) * t;
           const y = city.groundAt(x, z, cur, city.roadLift(x, z));
           rode++;
           if (y < deck - 1.0) fell++;
@@ -389,7 +393,20 @@ async function main() {
             const t = k / 10 * Math.min(1, 20 / e.len);
             pts.push([nd.x + (o.x - nd.x) * t, nd.z + (o.z - nd.z) * t]);
           }
-          let cur = G.terrainHeight(far.x, far.z) + 0.6, y = cur;
+          // Start where a car on that road stands: a node's y. For a draped
+          // road that is the terrain, exactly as this used to read; a graded
+          // approach can be on a fill, and seeded at terrain under it the
+          // walker began inside the embankment and "could not climb".
+          // A GRADED approach starts on its own profile where the walk
+          // starts, 20 m in from the far node: seeded at the terrain, one on a fill
+          // had already climbed past groundAt's reach before a single step.
+          // A draped one is seeded exactly as it always was. Node y is not
+          // the answer for those: world.js carves portal cuts into the
+          // terrain after the city is built, so by a bore a draped node's y
+          // is metres above the road you drive.
+          const t0 = 1 - Math.min(1, 20 / g.len);
+          const tg = g.a === nid ? 1 - t0 : t0;
+          let cur = (g.ph ? city.profAt(g, tg).h - 0.09 : G.terrainHeight(far.x, far.z)) + 0.6, y = cur;
           for (const [x, z] of pts) { y = city.groundAt(x, z, cur, city.roadLift(x, z)); cur = y + 0.6; }
           if (y < nd.y + (o.y - nd.y) * Math.min(1, 20 / e.len) - 1.0) failed++;
         }
