@@ -242,6 +242,8 @@ async function street(evaluate, send) {
     // the street, where no kerbside bin or house can stand in the way.
     // eye height, three-quarter on the last few cars of the near lane
     { name: 'low', s: setup.span + 4, lat: setup.hw * 0.05, eye: 1.5, ls: setup.span - 16, llat: setup.hw * 0.48, look: 0.9 },
+    // from the crown of the road, three-quarter on the middle of the near lane
+    { name: 'mid', s: setup.span * 0.62, lat: -setup.hw * 0.10, eye: 2.4, ls: setup.span * 0.36, llat: setup.hw * 0.48, look: 0.8 },
     // raised, looking back down the whole lineup
     { name: 'high', s: setup.span + 14, lat: -setup.hw * 0.25, eye: 8.0, ls: setup.span * 0.45, llat: setup.hw * 0.15, look: 0.5 },
   ];
