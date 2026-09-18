@@ -14,7 +14,8 @@ import { spawn } from 'node:child_process';
 import { writeFileSync, mkdirSync, rmSync } from 'node:fs';
 import { setTimeout as sleep } from 'node:timers/promises';
 
-const PORT = 9227;
+const HTTP_PORT = process.env.AUTO_HTTP_PORT || 8000;
+const PORT = +process.env.AUTO_CDP_PORT || 9227;
 const CHROME = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
 const SPEED = parseFloat(process.argv[2] || '1.4');
 const FRAMES = parseInt(process.argv[3] || '12', 10);
@@ -28,7 +29,7 @@ function launch() {
     // Landscape: a portrait window trips the app's own rotate-your-device
     // overlay and every frame comes back as that message.
     '--window-size=900,640', '--no-first-run',
-    '--user-data-dir=/tmp/auto-strip-profile', 'about:blank',
+    `--user-data-dir=/tmp/auto-strip-profile-${PORT}`, 'about:blank',
   ], { stdio: 'ignore' });
 }
 
@@ -64,7 +65,7 @@ async function main() {
     await send('Network.setBypassServiceWorker', { bypass: true });
     await send('Network.setCacheDisabled', { cacheDisabled: true });
     await send('Page.addScriptToEvaluateOnNewDocument', { source: 'window.__noAutoQuality = true;' });
-    await send('Page.navigate', { url: 'http://localhost:8000/apps/auto/' });
+    await send('Page.navigate', { url: `http://localhost:${HTTP_PORT}/apps/auto/` });
     for (let i = 0; i < 400; i++) {
       await sleep(500);
       if (await evaluate('!!window.__dbg')) break;
