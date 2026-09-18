@@ -145,6 +145,25 @@ Two-person couples tracker. All routes session-gated except the WS upgrade.
   --test-scheduled`; see file header for KV session seeding); headless
   browser drills in `apps/75hard/test/` (manual, see its README).
 
+## LLM (`/llm/*` — see `apps/llm/`)
+
+Chat with OpenRouter's free models. All routes session-gated (`ALLOWED_EMAILS`).
+Code in `src/llm.ts`; tests `node --experimental-strip-types worker/test/llm.test.mjs` (CI).
+
+- **Free models only — the rule that must not bend.** `OPENROUTER_API_KEY` is a
+  real key; if it ever holds credits a paid model would spend them. `POST
+  /llm/chat` checks the model against `freeModels()` (every quoted price zero
+  AND text-only output) derived from OpenRouter's catalogue, and fails closed
+  if the catalogue can't be fetched. `parseChat()` rebuilds the request from
+  known fields only, so client-supplied `tools`/`provider`/etc. never reach OpenRouter.
+- `GET /llm/models` (free list, memoized 10 min per isolate), `GET /llm/usage`
+  (free-request quota for the UTC day), `POST /llm/chat` (SSE passthrough).
+  OpenRouter 401/403 are remapped to 502 so a bad key doesn't sign the user out.
+- **Conversations** in KV at `__llm:conv:<session email>:<id>`, title/model/
+  updatedAt in KV metadata (list without reading bodies). `GET/PUT/DELETE
+  /llm/convs/:id`, `GET /llm/convs`. The email comes from the session, never
+  the request. KV list is eventually consistent; the app merges its own writes.
+
 ## Environment Variables
 
 Set in `wrangler.toml`:
@@ -156,6 +175,8 @@ Secrets (NOT in wrangler.toml):
 - `VAPID_PRIVATE_KEY` — `wrangler secret put VAPID_PRIVATE_KEY` in production;
   `worker/.dev.vars` (gitignored) for local dev. The keypair was generated at
   setup; the public half is baked into `wrangler.toml` and `apps/75hard/index.html`.
+- `OPENROUTER_API_KEY` — the LLM app's OpenRouter key (`wrangler secret put
+  OPENROUTER_API_KEY`). Unset → `/llm/chat` and `/llm/usage` return 503.
 
 ## Development
 

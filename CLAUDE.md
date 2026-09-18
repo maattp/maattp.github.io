@@ -215,6 +215,20 @@ heliocentric speed, bumped so every moon fits inside the SOI) — don't hand-edi
 GMs. Verify headlessly with `node tools/solarverify.mjs` (needs
 `python3 -m http.server 8000`), then look at the shots in `tools/data/solarshots/`.
 
+## LLM App
+
+### Version Management
+
+**IMPORTANT:** Increment `VERSION` in `/apps/llm/index.html` once per PR, and
+bump `CACHE` in `/apps/llm/sw.js` (`llm-vN`) to match.
+
+ChatGPT-style chat with OpenRouter's free models, behind Google sign-in (both
+`ALLOWED_EMAILS` accounts; each sees only their own chats). Backend is `/llm/*`
+on the worker — see the LLM section of `worker/CLAUDE.md`. **Free models only:
+the worker enforces it, never the app.** Model output is rendered as markdown
+through DOMPurify; user text renders as text nodes. Local testing:
+`?api=http://localhost:8787` (honoured only on localhost) against `wrangler dev`.
+
 ## Photos App
 
 ### Known Limitations
