@@ -930,7 +930,20 @@ export function* cityGenerator(md) {
       seen.add(key);
       let b2 = best.get(ni);
       if (!b2) best.set(ni, (b2 = []));
-      if (!b2.some((x) => x.p === src)) {
+      // DISTINCT ENDS, NOT DISTINCT NODES. The northbound SR-99 tube surfaces
+      // through TWO portals at each end -- the main line and a ramp ~30 m
+      // beside it -- so its "two nearest portals" were the same mouth twice,
+      // and the chord between them was flat: -11.9 for the whole southern half
+      // and +9 for the northern half, joined by a 21 m cliff mid-bore at the
+      // node where the nearest pair flipped. The southbound tube, with one
+      // portal per end, profiled correctly, so the twins disagreed by up to
+      // 5 m and each walled the other's lane. A second portal only counts if
+      // it is a different mouth.
+      const sameMouth = (q) => {
+        const pa = g.nodes[q], pb = g.nodes[src];
+        return Math.hypot(pa.x - pb.x, pa.z - pb.z) < 150;
+      };
+      if (!b2.some((x) => sameMouth(x.p))) {
         if (b2.length < 2) b2.push({ p: src, d });
         else continue;
       }
@@ -942,6 +955,7 @@ export function* cityGenerator(md) {
       }
     }
     let profiled = 0, worstDrop = 0;
+    const groundY = new Map(), portalDist = new Map();
     for (const ni of tunNodes) {
       if (portals.has(ni)) continue;         // portals stay at grade
       const n = g.nodes[ni];
@@ -1007,7 +1021,20 @@ export function* cityGenerator(md) {
       // is -16, found by probing a mid-ride stall that sat 2 m from one.
       const dive = Math.min(12, Math.max(0.09 * dPortal,
         0.13 * Math.max(0, dPortal - APRON)));
-      let yFinal = Math.min(y, portalY - dive);
+      // DIVE BELOW THE CHORD, NOT BELOW THE NEAREST PORTAL. `portalY - dive`
+      // is only continuous while both portals sit at the same height, and
+      // SR-99's do not: the north mouth is at 21 m, the south at 0.1. At the
+      // node where the nearest portal flips, the clamp jumped from 21 - 12 =
+      // 9 to 0.1 - 12 = -11.9 -- a 21 m cliff inside the bore, 50 m long,
+      // measured riding the southbound tube at (-206, 207) -> (-178, 253),
+      // and at a different station in each tube because their portals are
+      // staggered, so the twin decks disagreed by metres over hundreds of
+      // metres and each tube's walls stood in the other's lane. The chord
+      // between the two portals is continuous by construction, and once the
+      // dive is capped (past ~100 m) the flip between nearest portals is too.
+      // Near a mouth the chord is within ~0.4 m of the portal itself, so the
+      // approach profile is unchanged. A stub with one portal has no chord.
+      let yFinal = b2.length >= 2 ? y - dive : Math.min(y, portalY - dive);
       // Past the approach, never break the surface mid-hill. Inside it, the
       // GEOMETRY decides: world.js draws an open cut until the ground closes
       // over the bore, so there is nothing to clamp here.
@@ -1020,9 +1047,80 @@ export function* cityGenerator(md) {
       // counts as a sliced bore.
       if (dPortal > 50) yFinal = Math.min(yFinal, n.y - CLEAR);
       if (n.y - yFinal > worstDrop) worstDrop = n.y - yFinal;
+      groundY.set(ni, n.y);
+      portalDist.set(ni, dPortal);
       n.y = yFinal;
       n.tunnel = true;
       profiled++;
+    }
+
+    // THE TWIN TUBES SHARE ONE FLOOR. OSM maps SR-99's double-deck bore as two
+    // ways whose carriageways overlap for ~2.8 km (world.inOtherBore has the
+    // numbers), and each is profiled from its OWN portals -- staggered 290 m at
+    // the south end -- so side by side their decks disagreed by 1.3-2.4 m over
+    // most of downtown. That is a kerb-sized step across the middle of one
+    // shared hole, the drawn walls cannot open onto it, and riding either tube
+    // the player's car was captured by the twin's deck and pinned against the
+    // twin's wall: 15 and 12 failures end to end. Where a node stands on
+    // another tube's carriageway, the two are pulled to their mean -- fully
+    // while they are within 3 m, tapering to untouched by 5 m, so a tube diving
+    // to its own mouth beside a twin that is still deep keeps its profile.
+    // Blended from the pre-pass heights so the result is order-independent.
+    {
+      const comp = new Map();
+      let nc = 0;
+      for (const s of tunNodes) {
+        if (comp.has(s)) continue;
+        const st = [s];
+        comp.set(s, nc);
+        while (st.length) {
+          const ni = st.pop();
+          for (const k of g.nodes[ni].e) {
+            const e = g.edges[k];
+            if (!e.tunnel || e.elev) continue;
+            const o = e.a === ni ? e.b : e.a;
+            if (!comp.has(o)) { comp.set(o, nc); st.push(o); }
+          }
+        }
+        nc++;
+      }
+      const y0 = new Map();
+      for (const ni of tunNodes) y0.set(ni, g.nodes[ni].y);
+      const tEdges = [];
+      for (let k = 0; k < g.edges.length; k++) {
+        const e = g.edges[k];
+        if (e.tunnel && !e.elev) tEdges.push(k);
+      }
+      let blended = 0;
+      for (const ni of tunNodes) {
+        if (portals.has(ni) || !groundY.has(ni)) continue;
+        const n = g.nodes[ni];
+        let hwN = 0;
+        for (const k of n.e) if (g.edges[k].tunnel) hwN = Math.max(hwN, g.edges[k].hw);
+        let near = null;
+        for (const k of tEdges) {
+          const e = g.edges[k];
+          if (comp.get(e.a) === comp.get(ni)) continue;
+          const a = g.nodes[e.a], b = g.nodes[e.b];
+          const reach = hwN + e.hw;
+          if (n.x < Math.min(a.x, b.x) - reach || n.x > Math.max(a.x, b.x) + reach
+            || n.z < Math.min(a.z, b.z) - reach || n.z > Math.max(a.z, b.z) + reach) continue;
+          const r = distToSeg(n.x, n.z, a.x, a.z, b.x, b.z);
+          if (r.d > reach) continue;
+          if (!near || r.d < near.d) {
+            near = { d: r.d, y: y0.get(e.a) + (y0.get(e.b) - y0.get(e.a)) * r.t };
+          }
+        }
+        if (!near) continue;
+        const dy = near.y - y0.get(ni);
+        const w = 0.5 * clamp((5 - Math.abs(dy)) / 2, 0, 1);
+        if (w <= 0) continue;
+        let yb = y0.get(ni) + dy * w;
+        if (portalDist.get(ni) > 50) yb = Math.min(yb, groundY.get(ni) - CLEAR);
+        n.y = yb;
+        blended++;
+      }
+      cityStats.tunnelTwinBlended = blended;
     }
     cityStats.tunnelNodes = profiled;
     cityStats.tunnelWorstDepth = +worstDrop.toFixed(1);
@@ -1388,9 +1486,22 @@ export function* cityGenerator(md) {
             // is below the midpoint between deck and ground above is in the
             // tunnel and keeps it; whoever is above is on the street and
             // never sees the bore.
+            // ...AND ANYONE UNDER THIS SPAN'S ROOF IS IN IT. The midpoint alone
+            // fails at the end of a cutting, where the carved ground climbs back
+            // over the bore and sits only a few metres above the deck: measured
+            // at the SR-99 south mouth, 79 m in, deck -8.5 and carved ground
+            // -3.6 put the midpoint 2.5 m over the deck. A car coming off the
+            // 9 % -> 13 % grade break rides 1-1.7 m high, its wheel query
+            // (y + 1.5) lands above that midpoint, the ground wins as the nearer
+            // surface, and frame by frame the car climbed out through the roof
+            // onto Alaskan Way -- the player's drive in from SODO surfaced 98 m
+            // in on every run. Nothing on the street above can be below the
+            // roof: past the cutting the ground is over the roof by construction
+            // (portalcheck asserts it), and inside the cutting it is below the
+            // deck.
             const inBore = s.tun && (s.mouth
               ? curY < Math.max(s.ay, s.by) + 1.6
-              : curY < (terr + y) / 2);
+              : curY < Math.max((terr + y) / 2, y + TUNNEL_H - 0.4));
             if (inBore) {
               if (best === terr || dd < bestD) { bestD = dd; best = y; }
             } else if (dd < bestD) { bestD = dd; best = y; }
@@ -1514,6 +1625,14 @@ export function* cityGenerator(md) {
             const rr = rad + l[i + 2];
             const d2 = dx * dx + dz * dz;
             if (d2 >= rr * rr) continue;
+            // A TRUNK STANDS ON THE STREET, NOT IN THE BORE UNDER IT. The store
+            // is 2D, so every street tree and lamp post above SR-99 was a solid
+            // post in the tunnel carriageway 20-40 m below it: measured riding
+            // the player's car, 24 -> 4.8 m/s dead stops at five stations under
+            // downtown with 17-41 m of ground overhead. Same underground rule
+            // as collideWithBuildings (2.5 m of ground above you), judged at the
+            // post's own footing -- world.js plants it on terrainHeight.
+            if (y !== undefined && G.terrainHeight(l[i], l[i + 1]) - y > 2.5) continue;
             const d = Math.sqrt(d2) || 1e-4;
             const pen = rr - d;
             if (!best || pen > best.pen) best = { pen, nx: dx / d, nz: dz / d };

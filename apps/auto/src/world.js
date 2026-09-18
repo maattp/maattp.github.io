@@ -980,7 +980,8 @@ export class World {
     // banded from a little under its deck to its roof, so the same wall that
     // is drawn is the wall that is hit -- and a car on the street above, or a
     // plane over the cutting, is outside the band and never feels it.
-    for (const e of this.city.edges) {
+    for (let ei = 0; ei < this.city.edges.length; ei++) {
+      const e = this.city.edges[ei];
       if (!e.tunnel || e.elev) continue;
       const a = this.city.nodes[e.a], b = this.city.nodes[e.b];
       const qx = -e.dz, qz = e.dx;
@@ -1012,11 +1013,22 @@ export class World {
           Math.min(G.terrainHeight(mx, mz),
             G.terrainHeight(g0x, g0z), G.terrainHeight(g1x, g1z)) - 0.4);
         if (y1 - y0 < 1.0) continue;
+        // In ~3 m sub-pieces, each dropped where it stands in another bore's
+        // lane (see inOtherBore): the twin tubes and ramp forks converge and
+        // part gradually, so a whole 12 m piece is too coarse either to open
+        // the shared stretch or to close the wall again where they separate.
+        const subN = Math.max(1, Math.ceil(e.len / segN / 3));
         for (const sd of [1, -1]) {
-          bsegs.push(
-            a.x + (b.x - a.x) * t0 + qx * w * sd, a.z + (b.z - a.z) * t0 + qz * w * sd,
-            a.x + (b.x - a.x) * t1 + qx * w * sd, a.z + (b.z - a.z) * t1 + qz * w * sd,
-            y0, y1);
+          for (let j = 0; j < subN; j++) {
+            const s0 = t0 + ((t1 - t0) * j) / subN, s1 = t0 + ((t1 - t0) * (j + 1)) / subN;
+            const sm = (s0 + s1) / 2;
+            if (this.inOtherBore(a.x + (b.x - a.x) * sm + qx * w * sd,
+              a.z + (b.z - a.z) * sm + qz * w * sd, a.y + (b.y - a.y) * sm, ei)) continue;
+            bsegs.push(
+              a.x + (b.x - a.x) * s0 + qx * w * sd, a.z + (b.z - a.z) * s0 + qz * w * sd,
+              a.x + (b.x - a.x) * s1 + qx * w * sd, a.z + (b.z - a.z) * s1 + qz * w * sd,
+              y0, y1);
+          }
         }
       }
     }
@@ -1036,20 +1048,38 @@ export class World {
       // where the bore runs; the profile on its nodes is the authority on how
       // deep.
       const wb = new Builder(false);
+      // 1.2 m UP, NOT 2 cm. A depth-only quad 2 cm over the sea plane does not
+      // hide it from a camera just above: measured at the SR-99 midbore, deck
+      // -0.77 and chase camera at 2.23 with 24-bit depth (near 0.5, far 9000),
+      // the tube was still flooded with the mask raised to +0.3 m and dry at
+      // +1.0 m. Not buffer precision at those numbers -- the sea is one
+      // two-triangle quad ~20.8 km across seen at a grazing angle, which is the
+      // likely source, but the threshold is what was measured. Only edges whose
+      // deck is at or below this height get a mask, the deck and cars draw
+      // before it and keep their pixels, and underground it sits inside the
+      // ground, so the extra height hides nothing that should show.
+      const MASK_Y = 1.2;
       for (const e of this.city.edges) {
         if (!e.tunnel || e.elev) continue;
         const a = this.city.nodes[e.a], b = this.city.nodes[e.b];
-        if (Math.min(a.y, b.y) > 1.2) continue;
+        if (Math.min(a.y, b.y) > MASK_Y) continue;
         const w = e.hw + 2;
         const qx = -e.dz, qz = e.dx;
         wb.quad(
-          [a.x + qx * w, 0.02, a.z + qz * w], [a.x - qx * w, 0.02, a.z - qz * w],
-          [b.x - qx * w, 0.02, b.z - qz * w], [b.x + qx * w, 0.02, b.z + qz * w],
+          [a.x + qx * w, MASK_Y, a.z + qz * w], [a.x - qx * w, MASK_Y, a.z - qz * w],
+          [b.x - qx * w, MASK_Y, b.z - qz * w], [b.x + qx * w, MASK_Y, b.z + qz * w],
           [0, 1, 0], ZERO_UV, [1, 1, 1]);
       }
       if (!wb.empty) {
+        // DOUBLE-SIDED. These quads wind (A+q, A-q, B-q, B+q), which faces
+        // DOWN, so under three's default front-side culling the mask existed
+        // only for a camera below it. That went unseen while every sub-sea
+        // deck sat on the old -11.9 m plateau with the camera under the sea
+        // plane too; once the profile ran smoothly through sea level under
+        // downtown, a chase camera above 0 looked down on a flooded tube -- as
+        // it always had at the south cutting, where the deck is -0.5.
         const mm = new THREE.Mesh(wb.build(),
-          new THREE.MeshBasicMaterial({ colorWrite: false }));
+          new THREE.MeshBasicMaterial({ colorWrite: false, side: THREE.DoubleSide }));
         mm.renderOrder = 3;
         this.scene.add(mm);
       }
@@ -1127,6 +1157,45 @@ export class World {
       }
     }
     return best;
+  }
+
+  /**
+   * Is (x,z) on the carriageway of some tunnel edge OTHER than `ei`, whose
+   * deck there is within `dy` of y?
+   *
+   * THE TWO SR-99 TUBES ARE ONE HOLE. OSM maps the real double-deck bore as
+   * two ways, and drawn side by side at hw 7 each their centrelines are only
+   * 7.5-11 m apart with decks within 0.3 m: measured, the carriageways overlap
+   * over 2,830 of the northbound tube's 3,617 m and 2,796 of the southbound's
+   * 3,059 m, and each tube's wall line stands inside the other's lane for
+   * ~920 m. Every edge walled itself independently, so a player driving in on
+   * the centre of either tube met the OTHER tube's wall 78 m (from Aurora) and
+   * 101 m (from SODO) past the mouth and stopped dead. A wall only belongs
+   * where it bounds the UNION of the bores -- the same rule a fork between a
+   * ramp and the main line needs -- so both the barrier and the drawn wall ask
+   * this before they stand.
+   */
+  inOtherBore(x, z, y, ei, pad = 0.2, dy = 1.6) {
+    if (!this._tunIdx) {
+      const idx = [];
+      for (let k = 0; k < this.city.edges.length; k++) {
+        const e = this.city.edges[k];
+        if (!e.tunnel || e.elev) continue;
+        const a = this.city.nodes[e.a], b = this.city.nodes[e.b];
+        const r = e.hw + 1;
+        idx.push({ k, a, b, hw: e.hw,
+          x0: Math.min(a.x, b.x) - r, x1: Math.max(a.x, b.x) + r,
+          z0: Math.min(a.z, b.z) - r, z1: Math.max(a.z, b.z) + r });
+      }
+      this._tunIdx = idx;
+    }
+    for (const q of this._tunIdx) {
+      if (q.k === ei || x < q.x0 || x > q.x1 || z < q.z0 || z > q.z1) continue;
+      const r = distToSeg(x, z, q.a.x, q.a.z, q.b.x, q.b.z);
+      if (r.d > q.hw + pad) continue;
+      if (Math.abs(q.a.y + (q.b.y - q.a.y) * r.t - y) < dy) return true;
+    }
+    return false;
   }
 
   /** Is (x,z) over the floor of a portal trench (not its banks)? */
@@ -2353,10 +2422,24 @@ varying vec3 vFarTint;`)
       for (const sd of [1, -1]) {
         const [w0x, w0z] = P(t0, hw * sd), [w1x, w1z] = P(t1, hw * sd);
         if (bur) {
-          const c0 = [0.42 * l0, 0.43 * l0, 0.45 * l0], c1 = [0.42 * l1, 0.43 * l1, 0.45 * l1];
-          glow.quad([w0x, Y(t0), w0z], [w1x, Y(t1), w1z],
-            [w1x, Y(t1) + WALL, w1z], [w0x, Y(t0) + WALL, w0z],
-            [-px * sd, 0, -pz * sd], ZERO_UV, [c0, c1, c1, c0]);
+          // NO WALL IN A TWIN'S LANE. The barrier drops the pieces that stand
+          // inside another bore's carriageway (inOtherBore), and the drawing
+          // has to agree -- a wall you can see is a wall you believe in, and
+          // driving through one is the same bug from the other side. Tested on
+          // the barrier's own line (hw + 0.4) in the same ~3 m pieces, so the
+          // drawn opening and the collision opening coincide.
+          const subN = Math.max(1, Math.ceil(((t1 - t0) * e.len) / 3));
+          for (let j = 0; j < subN; j++) {
+            const s0 = t0 + ((t1 - t0) * j) / subN, s1 = t0 + ((t1 - t0) * (j + 1)) / subN;
+            const [mwx, mwz] = P((s0 + s1) / 2, (hw + 0.4) * sd);
+            if (this.inOtherBore(mwx, mwz, lerp(a.y, b.y, (s0 + s1) / 2), ei)) continue;
+            const [v0x, v0z] = P(s0, hw * sd), [v1x, v1z] = P(s1, hw * sd);
+            const m0 = pool(s0) * dark(s0), m1 = pool(s1) * dark(s1);
+            const c0 = [0.42 * m0, 0.43 * m0, 0.45 * m0], c1 = [0.42 * m1, 0.43 * m1, 0.45 * m1];
+            glow.quad([v0x, Y(s0), v0z], [v1x, Y(s1), v1z],
+              [v1x, Y(s1) + WALL, v1z], [v0x, Y(s0) + WALL, v0z],
+              [-px * sd, 0, -pz * sd], ZERO_UV, [c0, c1, c1, c0]);
+          }
         } else if (false) {
           // Superseded: the cutting is faced in one pass off portalCuts, so
           // that the walls cannot stop where this function's idea of "open"
