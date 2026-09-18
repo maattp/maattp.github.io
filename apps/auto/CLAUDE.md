@@ -41,6 +41,8 @@ tools/build_places.py       landmarks, neighbourhood names, spawn points
 tools/fetch_dem.py          downloads the USGS terrain tiles
 tools/render_map.py         draws the whole graph top-down, for eyeballing
 tools/verify.mjs            headless CDP boot + assertions + screenshots
+tools/jank.mjs, perfguard.mjs, beauty.mjs, survey.mjs, gait.mjs, flycam.mjs,
+  crowdshots.mjs, charshots.mjs, vehshots.mjs ...   see "Verifying"
 ```
 
 ## Where the map comes from
@@ -384,8 +386,10 @@ Costs about 6 % more triangles and no extra draw calls.
 **Paint stops short of a junction, like the pavement does.** Markings that run
 end to end lay each road's edge lines straight across every cross street it
 meets: white lines cutting the carriageway diagonally, centre dashes doubling
-back. `meshRoadMarks` trims to `nodeRadius` at both ends. A crossing is mostly
-bare tarmac in life too.
+back. `meshRoadMarks` trims to `nodeRadius` at both ends of an **at-grade
+junction** only. A crossing is mostly bare tarmac in life too. Along a graded
+chain (see "Freeway grading") a node is not a crossing, so paint runs through
+it and stops instead where it would cross another carriageway.
 
 **`rotation.z` raises local +X, so the far side is the one you subtract.** The
 body attitude used `atan2(rh - lh, ...)` with `lh` sampled along local +X, which
@@ -540,15 +544,36 @@ new THREE.Vector3(p.x + 30, p.y + 1, p.z + 40).project(__dbg.camera).x
 
 Physically-shaded, image-based-lit, tone-mapped, with a hand-rolled post chain.
 
-- **IBL is the ambient.** `textures.js` draws an equirectangular sky; `world.buildSky()`
-  sets it as `scene.background` and runs it through `PMREMGenerator` into
-  `scene.environment`. The analytic lights are only a key plus a fill, so
-  `envMapIntensity` on a material is the main dial for how a surface reads in shade.
+- **The sky is a shader dome, and the same shader is the IBL.** As
+  `scene.background` the old painted equirect was 2048 px across 360 deg, so a
+  62 deg view magnified it 3.6x and its cloud ellipses smeared into brush
+  strokes. `world.buildSky(sunDir)` draws a `ShaderMaterial` dome that computes
+  gradient, sun glow and disc per pixel and projects a tiling fBm cloud field
+  (`textures.cloudNoise()`, 512 px periodic value noise) onto a flat layer, so
+  clouds foreshorten toward the horizon. It replaces the background's own draw
+  (`scene.background = null`), so the draw count is unchanged.
+  - **Not tone-mapped, on purpose.** three leaves an sRGB background out of ACES,
+    so the old sky's authored colours were the screen colours and the fog was
+    tuned against them. The dome keeps `toneMapped: false`.
+  - The vertex shader drops translation and writes `z = w`; with depth test and
+    write off and `renderOrder -1000` the dome is infinitely far at any
+    altitude, and depth stays 1.0 under it, so SSAO's sky test still works.
+  - **One GLSL `skyColor(dir, forIbl)` feeds both** the dome and a 2048x1024
+    8-bit equirect target, and that target goes through `PMREMGenerator` into
+    `scene.environment`. The canvas equirect is deleted. Below the horizon
+    `forIbl` swaps the haze for the old IBL ground ramp (#8b979f -> #5a6469), so
+    the diffuse bounce every material was tuned against is unchanged and only
+    what reflects changes. The upper hemisphere is multiplied by `iblGain` 1.35:
+    without it street shadowQ fell 0.035 -> 0.023 and downtown's median to 0.051;
+    with it every median is within ~10 % of the painted sky's.
+  - **IBL is the ambient.** The analytic lights are only a key plus a fill, so
+    `envMapIntensity` on a material is the main dial for how a surface reads in
+    shade.
 - **`PMREMGenerator` is the one half-float exception, and it's guarded.** It
   hard-codes `HalfFloatType` targets internally with no capability check, which
   is exactly what the rest of the pipeline avoids. `halfFloatRenders()` draws a
   white pixel into a half-float target and reads it back before `buildSky` trusts
-  it; a definite black falls back to the raw equirect as `scene.environment`
+  it; a definite black falls back to the 8-bit dome render as `scene.environment`
   (`world.envPrefiltered === false`) — no prefiltered roughness mips, so rough
   surfaces reflect too sharply, but the city stays lit instead of going dark.
   Anything that makes the probe inconclusive counts as a pass, so hardware that
@@ -585,15 +610,30 @@ Physically-shaded, image-based-lit, tone-mapped, with a hand-rolled post chain.
   roughly halved on every material, exposure 1.25). **Change this ratio before
   reaching for any other visual fix**, because everything else is measured
   against it.
-- **SSAO reads the scene pass's own depth attachment.** `postfx.sceneRT` carries
-  a `DepthTexture` (integer, so it obeys the no-half-float rule), which the scene
-  pass fills for free -- a separate depth prepass would have doubled the scene's
-  draw calls. Half res, blurred, multiplied BEFORE bloom so bloom cannot bleed
-  back into the crevices AO just darkened.
-- **Dither belongs in the output pass, not in the sky texture.** Baked into the
-  equirect it magnifies across the screen as clumped grain, shows up on the water
-  as well as the sky, and pollutes the IBL that the same texture feeds. It is now
-  screen-space, +/-1/255, after tonemap.
+- **SSAO is built and switched OFF** (`fx.ssao: false`), because measured it
+  still dirties the street. It reads the scene pass's own depth attachment
+  (`postfx.sceneRT` carries an integer `DepthTexture`, filled for free), runs
+  half res, and multiplies BEFORE bloom. But beauty shots with it on
+  (`AUTO_SSAO=1`), lower-half median linear luminance:
+
+  | shot | AO off | AO on |
+  |---|---|---|
+  | street | 0.156 | **0.076** |
+  | shopfront | 0.172 | **0.090** |
+  | facade | 0.109 | **0.061** |
+  | park / skyline | 0.193 / 0.159 | 0.187 / 0.159 |
+
+  It halves street-level values and lays dark clouds over open tarmac at a
+  grazing angle, for 3 fullscreen passes. **Before turning it on, the occlusion
+  test has to reject by surface orientation first.**
+- **Dither belongs in the output pass, not in the sky.** Baked into a sky
+  texture it magnifies across the screen as clumped grain, shows up on the water
+  as well, and pollutes the IBL the same texture feeds. It is screen-space,
+  +/-1/255, after tonemap.
+- **The grade split-tones by luminance.** Lifting blue across the whole range and
+  then warming the whole range back cancelled itself. Highlights push toward
+  amber (+0.022, +0.008, -0.018 above ~0.42) and shadows toward sky blue
+  (-0.014, +0.002, +0.020 below ~0.38). Arithmetic in the grade, no extra pass.
 - **Per-building colour varies TONALLY, in families.** Jittering R, G and B
   independently manufactures a candy palette; jittering one base colour per style
   instead produces a whole downtown of the same beige. `tint()` shares its
@@ -647,8 +687,95 @@ Physically-shaded, image-based-lit, tone-mapped, with a hand-rolled post chain.
 - **Haze thickens with altitude** (fog density up to 3.2x by ~480 m). The
   streaming rings -- massing at 1.6 km, detail at 800 m -- are a crawling
   boundary from a plane, and no draw budget pushes them past a 6 km
-  sightline; atmosphere hides them honestly. If more is ever needed, the
-  answer is a static supertile impostor layer, not wider rings.
+  sightline; atmosphere hides them honestly. Past that, the far massing layer
+  (see "Flying") stands in for every building the rings have not delivered —
+  a supertile layer, not wider rings.
+
+## Shadows: snap the box, fade its edge
+
+**Shadow crawl was the shadow box moving by sub-texel amounts.** The sun and its
+target were re-centred on the player every frame by whatever fraction of a
+texel they had moved, so the map was rasterised at a new sub-texel phase every
+frame and every shadow edge in the city crawled as you walked or drove.
+`placeSun()` in main.js projects the box centre onto the shadow camera's right,
+up and forward axes (built once with `Matrix4.lookAt` from `SUN_OFFSET`, the
+same basis three builds per frame), rounds each to `shadowTexelM` (2S/mapSize)
+and rebuilds the position. A move then redraws the same map shifted by whole
+texels. **Depth is snapped too**: it moves no texels, but it shifts every stored
+depth by a fraction and the PCF compare flips on a grazing roof.
+
+Measured with the camera held still and only the shadow centre moving, reading
+the scene pass from `postfx.sceneRT` (before post, so dither is excluded), a
+pixel counted when any channel moves > 3/255:
+
+| churn per step | 5 cm before | after | 2.3 m before | after |
+|---|---|---|---|---|
+| downtown street | 0.125 % | **0.000 %** | 0.164 % | **0.000 %** |
+| commercial street | 2.180 % | **0.000 %** | 4.560 % | **0.001 %** |
+| houses | 0.682 % | **0.000 %** | 1.612 % | **0.000 %** |
+
+**Rotation must not enter the box.** `SUN_OFFSET` is fixed, so only translation
+needs snapping. If time of day is ever added, the basis has to be rebuilt and
+the map re-rasterises while it turns: rotate in discrete steps, or accept the
+swim while the sun moves.
+
+**The box edge fades.** Past the ortho box three returns "lit", a hard line that
+slid across the street as you turned, because the box follows the view.
+`installShadowFade()` patches `shadowmap_pars_fragment` to fade shadowing over
+the last 7 % of the box (~36 m at desktop's 260 m half-width, ~27 m at the
+phone's 190 m). It is a string replace pinned to r160: it warns and leaves the
+chunk alone if the text changes, so **re-check it on a three bump**.
+
+## Surfaces: glass, windows, roofs, trees, ground
+
+**Glass reflects the sky, pane by pane.** A vertical mirror seen level or from
+above reflects the IBL's ground half, so every tower read as dark blue paint.
+The glass material alone re-includes `envmap_physical_pars_fragment` with the
+reflected ray folded into the upper hemisphere (`y = abs(y) * 0.85 + 0.12`),
+and a per-pane hash tilts the normal up to ~2 deg for a curtain wall's
+patchwork. Glass is metalness 0.58, env 1.15.
+
+**Masonry windows carry per-window state and real reflection.**
+`packedCell(..., winMetal)` bakes metalness 0.6 and full env into the glazing
+texels of the stone and brick cells — glazing is the only content under ~0.3
+roughness there, so no second map. `metalMax` is 0.6 (industrial's 0.25 rides
+as 0.25 / 0.6). The facade shader hashes window column, storey row and building
+into a dark room, blinds or a cold pane, and **divides the building tint back
+out of the glazing**: a metallic pane takes F0 from albedo, so on brick every
+window mirrored the sky in red.
+
+**A per-building hash must not read vertex colour VALUE.** `Builder.box`'s baked
+AO scales the tint toward the ground, so vColor changes continuously up every
+wall, and hashing it through `fract(sin(...))` re-rolled every window per
+PIXEL: blue-white static on every masonry facade. Seed from the tint's channel
+RATIOS (quantised r/g and b/g), which a uniform scale leaves constant under
+interpolation. Anything hashing per-building state out of vertex colour has the
+same trap.
+
+**Every lidded roof drew a flat deck 2 cm under its lid, and 93.8 % of
+non-house buildings carried it** (62,576 of 66,743). One 24-bit depth step at
+near 0.5 is `z^2 / (0.5 * 2^24)`: 0.48 cm at 200 m, 1.91 cm at 400 m, so from
+~400 m out the two tops share a step and every low roof in an aerial z-fought.
+The deck is skipped where a lid exists, and the dark parapet sits at w+0.75 so
+it clears the kit's parapet (w+0.5) by 12 cm, not 2.5. Roofs take their own
+`roof` atlas cell (seams, ponding, patches, drains) at 10 m a tile. **Any two
+coplanar-ish tops need more separation than one depth step at the farthest
+distance they are seen from**, not at street level.
+
+**Trees are lit volumes** (`meshCanopy`): conifers are five 8-sided skirts
+brightening toward the leader; broadleaf crowns are a dark core, four jittered
+lobes and a crown lobe, with the lobes on the sun's side (`SUN_OFFSET` xz) in a
+yellower lit foliage colour, so the crown reads as a volume at any heading.
+
+**The ground map is sampled at three scales.** One 13 m tile was the whole city
+floor: blurry underfoot and a visible grid from the air. `buildTerrain`'s
+`onBeforeCompile` adds 75 m macro patches and 3 m grain, each normalised by the
+map's mean (0.44 linear) so the average value does not move. `SUBURB` is
+`[0.47, 0.53, 0.38]` — GRASS's hue at low chroma; `[0.52, 0.53, 0.41]` came out
+khaki dirt after ACES and the grade. It must stay distinct from GRASS (see the
+I-5 trench fix). Water takes a second normal tap at -0.29x the scale drifting
+the other way, blended in tangent space, which breaks the 16 m tile weave into
+longer swell.
 
 ## Judging how it looks
 
@@ -745,7 +872,8 @@ cluster of buildings over 60 m, the fully-green patch nearest downtown.
 - **Banding in the sky was the cloud generator.** 390 ellipses squashed to about
   a fifteenth of their width at 3-11% alpha are individually invisible and stack
   into continuous horizontal streaks across the equirect. It was twice blamed on
-  dither and precision in the post chain.
+  dither and precision in the post chain. (The painted equirect is gone now —
+  the dome's clouds are fBm — but the diagnosis generalises.)
 - **A canopy built from `prism` has no top or bottom.** `Builder.prism` is an
   open drum, so a squashed one seen from eye level is a single band of vertical
   wall -- the "green slab on a stick" that trees rendered as. `spheroid` is
@@ -781,80 +909,180 @@ built rather than blocked out:
   without the cut, tyres just intersect a straight sill and the whole thing
   reads as a toy. Three geometries per type share materials across all
   instances: `paint` (tinted per car), `trim` (glass/chrome/lenses/rims,
-  metallic) and `matte` (tyres/plastic/arches). Cars keep a glass greenhouse
-  with a painted roof skin over it; vans, trucks and buses are **painted** bodies
-  with glazing cut in — lofting those in glass turns the upper body into one
-  dark slab.
+  metallic) and `matte` (tyres/plastic/arches). See "Every vehicle type has an
+  authored builder" below.
 - **Characters** (`peds.js`) are `SkinnedMesh`es: one draw call each, but with an
   18-bone skeleton, so elbows and knees actually bend. Geometry comes from a
-  pool of 12 pre-built looks (per-instance variety is skeleton, scale and gait),
-  and `animateWalk` is a procedural cycle — counter-rotating chest, level head,
-  breathing idle, and the legs described below.
+  pool of 12 designed looks plus 4 cop looks (per-instance variety is skeleton,
+  scale, colours and gait), textured from one atlas, and `animateWalk` is a
+  procedural cycle — counter-rotating chest, level head, breathing idle, and the
+  legs described below.
+
+### Every vehicle type has an authored builder
+
+The generic loft (one `section` tube, triangle-fan end caps, boxes for lamps,
+slab boxes for glass) used to build ten types. On a short car the flat caps are
+most of what you see, so they read as bread loaves with lamp "ears", and the van
+and bus wore their glazing as boxes standing off the sides. **`HAND_BUILT[spec.hand]`
+is mandatory; `buildType` throws on a type without one.** A new type is a table
+of stations over shared pieces, not 90 copied lines:
+
+| helper | what it builds |
+|---|---|
+| `greenhouse(paint, trim, matte, g)` | the four-panel greenhouse (screens, roof, side glass, pillars from the panels' own edges). `pillarInto` / `roofInto` move pillars or roof to another builder (black pillars, glass roof on the EV); `rearY` above the deck adds a painted tailgate, because a hatch's rear glass run to the beltline is one black slab |
+| `bodyCore(...).surf(z, s, i, d)` | a point on the DRAWN shell (end roll-in applied), `d` out along the section; `onShell` lays a lens or strip on it |
+| `boxShell(into, cfg)` | a tall painted volume, flat sides, radiused roof edge — van and bus upper bodies, truck cabs, cargo boxes. Glazing goes ON it (`sideGlass`, `slopeGlass`) a few mm proud — lofting those bodies in glass turns the upper half into one dark slab |
+| `truckCab`, `archCut`, `shellArch` | cab-over or bonneted cab with a squared front arch cut into the shell's bottom edge |
+| `scaledBuild(build, refLen, refWid)` | runs an authored builder at its own size and scales vertices (normals by the inverse). Taxi and police are the sedan; wheels scale in position only, since `addWheel` builds them round afterwards |
+| `aerofoil(b, col, stations, o)` | NACA 00xx skins through span stations for wings, tailplanes, fins (they were 18 cm boxes) |
+
+Traps:
+
+- **`endFace` must band at every outline station**, not only at hole edges. A
+  face with no holes became three quads whose top one ran from full width down
+  to the crown's zero: every cargo box front was a triangle standing over the cab.
+- **A bright lens straight on the paint reads as a chrome shard.** `trim` is
+  metalness 0.88, so a lamp patch on the wing mirrors the sky with nothing dark
+  round it. Headlamps sit in a gloss-black housing (`headlampWrap`); red tail
+  lamps on red paint have no sky to mirror and survive.
+- **Valances tuck under the fascia.** A matte box 10 cm inside the end with
+  22 cm depth pokes 1 cm past the face and reads as a black tray.
+- **Liveries are spec, not spawner.** `spec.livery` overrides the colour in the
+  `Vehicle` constructor; a taxi in a random colour is just a car with a sign.
+- **Kerb side is -x**: `laneOffset` puts a vehicle heading +z at -x of the
+  centreline, so bus doors are on -x.
+
+### Characters: atlas, hair, looks
+
+- **One 1024x1024 atlas** (`drawAtlas`, drawn at boot), one material, still one
+  draw a character. Cells 0-4 are a painted face per skin tone, on WHITE head
+  vertices so the paint shows (skin encoded to match the neck, because vertex
+  colours are linear and the map is sRGB). Cells 5-11 are greyscale detail that
+  MULTIPLIES the vertex colour: knit, twill jacket, denim, leather shoe, hair,
+  hand, skin. Multiplied paint can only darken, so anything that must be the
+  brightest thing on a garment (hi-vis bands) is geometry.
+- Parts map cylindrically round their own axis; `SkinAcc.add` repairs the back
+  seam per triangle or every feature smears down the back. The face cell wraps
+  +-112 deg of the head only (~140 px across the face).
+- **Features are paint, not geometry.** 3-6 mm eye/brow/mouth boxes read as
+  stuck-on plates up close and, thinner than a depth texel, shimmered from
+  across the street. Same for thin torso boxes (a placket): paint them.
+- **Hair GROWS from the skull** (`buildHair`, with `SKULL` / `skullAt` shared
+  with the head loft). Lofted shells with open bottom rings came out a bowl
+  however the rings were treated. Each column starts on the skull at its own
+  edge height (hairline, temple corner, sideburn, over the ear, nape) and
+  thickens over its first 2 cm. **Start the shell 1 mm OUTSIDE the skull**: the
+  18-sided loft's flat faces sit up to 1.1 mm inside the ellipse the shell is
+  sampled from, and a shell starting inside zigzags across them (a notched
+  fringe). Jitter the edge only at the sides and nape, clip strand strokes at
+  the hairline, and paint the band above the hairline as skin, or a white line
+  shows across every forehead.
+- **Garments read at twenty pixels by their boundaries, not their grain.**
+  Collars, hoods, cuffs, turn-ups, hems, belts are geometry; pockets, zips and
+  ribbing are paint at 40-60 % value. Sleeves take the plain cell — a torso cell
+  mapped round an arm puts pockets on the sleeves.
+- **The pool is designed, not rolled** (`LOOKS`, via `buildCharacter({ variant })`).
+  Twelve hashed looks came out with no buzz cut and no dress but five skirts and
+  four side parts. Colours, skin, build and shoes still come from the seed.
+  Shoes skew dark; off-white is one in six, because a white pair was the
+  brightest thing on the pavement.
+- **Cops have their own pool** (`copVariants`, `makeHumanoid({ cop: true })`):
+  pooled characters ignore opts, so cops used to be civilians in random shirts.
+- **Feet stay 12-sided.** At 10 the ring has no vertex at +-z, the heel and toe
+  move ~5 mm in, and that breaks `SOLE / HEEL_Z / TOE_Z` (see the gait).
+
+Cost: a pooled look is 2,971 triangles mean (was 2,051), a cop 3,264, the player
+2,770; building the 12 looks takes 22.6 ms on first spawn. Like for like
+downtown (13 peds, 22 vehicles) the frame is 387 draws either way and +0.18 %
+triangles. An untrimmed 3,361 mean was ~+64k triangles a crowded frame with
+shadows, about perfguard's tolerance; the trims (hair columns 36 -> 24, 8-sided
+hands, 8-sided nose) cost nothing visible. Phones cast no ped shadows, so there
+it is one pass.
 
 ### The gait plants feet, it doesn't swing legs
 
-`animateWalk` places each **foot target** and solves the knee to reach it. A leg
-alternates a stance half-cycle, where the foot holds a spot on the ground and
-travels back under the character, and a swing half-cycle, where it arcs forward.
-Rotating the hip on a sine cannot plant a foot -- sized to cover the step on
-average, it still sweeps ~57 % faster than the body through mid-stance -- and
-legs paddling under a gliding body is what reads as flailing.
+`animateWalk` places each **foot** and solves the knee to reach it. A leg
+alternates a stance half-cycle, where the foot holds a spot on the ground, and a
+swing half-cycle, where it arcs forward. Rotating the hip on a sine cannot plant
+a foot, and legs paddling under a gliding body is what reads as flailing.
 
 **Everything here is judged by `tools/gait.mjs`, not by looking at it.** The rig
-drives one character at a fixed 60 Hz across five speeds and reports cadence,
-step length, per-limb duty, double support, flight fraction, hip height, joint
-ranges and foot skate against published adult bands. Three separate attempts at
-this were tuned against screenshots and none of them held up; the rig found
-eight defects in its first run. If you change the gait, run it.
+drives one character at a fixed 60 Hz across five speeds, with the root
+TRANSLATING, and reports cadence, step, duty, double support, flight, hip
+height, joint ranges, world-space skate of the heel/toe pivot, sole contact
+(stance gap, mid-swing clearance, ankle on its limit) and a speed ramp
+0 -> 1.4 -> 5 -> 7.2 -> 5 -> 1.4 -> 0 m/s through `player.updateFoot`'s damp
+(worst planted-sole slip, worst ankle second difference — a pop is a change of
+velocity, not a speed). `--trace` prints the frames around the worst pop.
+**Every published band passed while the stride still looked wrong**, because
+the rig did not yet watch the sole or a speed change: the foot landed toe-first
+(stance pitch had the wrong sign — +x on the foot bone lowers the toe), planted
+soles hovered or sank 3-9 cm, planted feet slid 26-33 % of body travel, and
+every stop popped a sole 11.5 cm in one frame. If you change the gait, run it.
 
-**A foot has length, and that is what keeps a person standing up.** The hips are
-limited by a straight line from hip to ANKLE -- but the ground contact is not the
-ankle. Through stance it rolls from heel to toe while the ankle lifts, which is
-worth about 0.22 m of sweep the leg never has to span. Without modelling that, a
-0.86 m leg is asked to cover a 0.98 m stance sweep and the only way to do it is
-to squat: measured, the hips sat at **85 % of standing height walking and 69 %
-sprinting** against a real ~97 %. That is the "creeping around low to the ground"
-look, and no amount of tuning the bob touches it, because it is the MEAN height
-that is wrong, not the oscillation. The contact still travels at body speed --
-the no-skate identity is unchanged -- it is the ankle that travels less, with the
-foot rotating through the difference. `h.ankleTrack` reports the ratio, because a
-skate check that watches the ankle bone has to expect it.
+The laws:
 
-**One number turns a walk into a run.** A straight planted leg puts the hips on a
-circle, highest at mid-stance. `compress` is how much of that circle the knee
-absorbs. Below 1 the hips still peak at mid-stance: an inverted pendulum vaulting
-over a stiff leg, which is walking. Above 1 the knee absorbs more than the circle
-rises, so the hips are LOWEST at mid-stance: a spring compressing, which is
-running. The two are opposite in phase, and having one curve for both is why
-every speed used to bob an identical 13-14 cm and a run looked like a hurried
-walk.
-
-**Double support exists.** Stance used to be capped at exactly 0.5 of the cycle,
-so there was always precisely one foot down. A real walk has both feet down for
-about a fifth of the cycle; without it a walk reads as a march. `dutyFactor()`
-goes above 0.5 below about 2.5 m/s and the two stances overlap. `h.contactL` and
-`h.contactR` are per-foot for that reason -- the single `h.contact` index cannot
-express it.
-
-**Gait keys off `runBlend`, not raw speed.** People change gait around 2.5-3 m/s.
-Hip oscillation phase, foot clearance, trunk lean, elbow carry and arm swing all
-key off that blend, or a brisk walk gets treated as a slow run.
+- **The foot is rigid and rolls.** One flat-foot origin travels back at body
+  speed while down; one sole pitch (toes up at heel strike, flat, heel up to
+  ~50-60 deg at toe-off); the ankle is wherever a rigid foot pivoting on its
+  heel or toe at that pitch puts it. **`SOLE / HEEL_Z / TOE_Z` in animateWalk,
+  the shoe loft's bottom ring in buildCharacter and `soleOf` in gait.mjs are the
+  same numbers — change one, change all three.** Ankle height, excursion and
+  pitch as three separate dials is what made soles hover.
+- **Planted feet are locked to the world.** `h.locks` remembers where a foot
+  touched down; the leg is solved to that spot (sagittal and lateral) until it
+  lifts, and the offset fades over the swing. Analytic stance targets only hold
+  at constant speed and heading. **Callers must place the group BEFORE calling
+  animateWalk** (`player.updateFoot` and `PedSystem.update` do), or the lock is
+  a frame behind. `dt = 0` means "pose at this phase" and bypasses all history —
+  the strip and portrait harnesses rely on it.
+- A lock is dragged, never re-planted: past 0.5 m from the analytic spot (warp,
+  wall, hard stop), or further out than the stride ever puts a foot (`zLimit`),
+  or the hips ride a foot left 86 cm behind and squat.
+- **Each foot finishes its own half-cycle** (`h.gst`). Stance and swing are cut
+  from one phase circle at `stanceSpan`, which moves with speed; a foot keeps
+  its own progress, changes state only at the end, and catches up 0.04 of u a
+  frame. **The cycle runs on a smoothed speed** (`h.gspd`, ~0.17 s), because
+  the player's speed damps at rate 9 and re-shaped the stride every frame.
+- **The stance window is balanced, not hand-set**: `back` is bisected so heel
+  strike and toe-off limit the hips equally. A symmetric window lunged the
+  front leg out straight.
+- **Hip bob is explicit**: a walk takes a fixed 4.5 cm of the reach circle; a
+  run sinks 3.5 cm under the scissored height plus a 5 cm flight arc; never
+  above what the planted leg reaches.
+- **Swing has zero vertical speed at both ends**: Hermite along z with backward
+  end slopes (late-swing retraction), lift a smoothstep rise times a smoothstep
+  fall. A sine over `u^p` has infinite slope at toe-off and lifted a sprinting
+  ankle 21 cm in one frame. Toe clearance is a floor (~2 cm), not a by-product.
+- **Double support exists.** `dutyFactor()` goes above 0.5 below about 2.5 m/s
+  and the stances overlap; `h.contactL` / `h.contactR` are per-foot because the
+  single `h.contact` cannot express it. Duty is 0.03 lower once running.
+- **Gait keys off `runBlend`, not raw speed.** People change gait around
+  2.5-3 m/s; clearance, lean, elbow carry and arm swing key off that blend.
+- **Idle is blended in, not switched** (legs on idleW², after the upper body);
+  switching at `A < 0.05` was the pop on every stop. A runner's arms drive back
+  and come forward only to the ribs.
 
 Current figures, all inside their bands:
 
-| | cadence | step | duty | bob | knee swing | hip height | skate |
-|---|---|---|---|---|---|---|---|
-| walk 1.4 | 106 | 0.79 m | 0.62 | 3.4 cm | 58 deg | 96 % | 0.4 % |
-| jog 3.5 | 161 | 1.31 m | 0.43 | 7.5 cm | 113 deg | 100 % | 1.8 % |
-| sprint 7.5 | 196 | 2.29 m | 0.27 | 11.0 cm | 125 deg | 96 % | 1.9 % |
+| | cadence | step | duty | bob | knee swing | hip height | skate (world) | stance gap worst | mid-swing clearance |
+|---|---|---|---|---|---|---|---|---|---|
+| walk 1.4 | 106 | 0.79 m | 0.61 | 5.6 cm | 74 deg | 94 % | 2.5 % | 0.1 cm | 7.7 cm |
+| brisk 2.2 | 133 | 0.99 m | 0.52 | 5.0 cm | 78 deg | 92 % | 3.0 % | 0.1 cm | 7.1 cm |
+| jog 3.5 | 161 | 1.31 m | 0.40 | 8.3 cm | 109 deg | 89 % | 5.2 % | 0.1 cm | 18.2 cm |
+| run 5.5 | 183 | 1.80 m | 0.32 | 8.3 cm | 121 deg | 87 % | 6.1 % | 0.2 cm | 22.9 cm |
+| sprint 7.5 | 196 | 2.29 m | 0.26 | 8.8 cm | 130 deg | 88 % | 5.0 % | 0.2 cm | 27.5 cm |
 
-**Swing clearance is what folds the knee, and it was short at every pace above
-a walk.** `tools/gait.mjs` measured knee swing at 59 deg brisk (band 65-85),
-105 at run (110-140) and 108 at sprint (120-155) -- too little fold is a leg
-swinging through nearly straight, which is the stiff, skating look. The heel has
-to come much closer to the backside as the pace rises. Raising the clearance
-curve puts jog/run/sprint at 116/123/126, all in band. Tune it against the rig:
-the first value tried overshot jog to 121 (HIGH) while fixing run and sprint.
+Ankle on its limit 6-33 % of a cycle (was 38-74 %). Speed ramp: worst planted
+slip 4.2 cm/frame (only while a lock is dragged in a hard deceleration), worst
+ankle pop 9.6 cm/frame (touchdown at a 7.2 m/s sprint).
+
+**Hip height at a run is 87 %, and that is honest, not a crouch.** An earlier
+96-100 % came from shortening the ankle excursion by a fixed 0.22-0.30 m of
+"roll" the sole never actually rolled through, which is why its soles hovered
+8 cm. With a rigid foot, a 0.84 m leg spanning a 1.06 m contact travel cannot
+keep the hips higher; runners do sit lower through a flexed stance knee. Don't
+"fix" it by lengthening the roll again.
 
 On-foot pace is **5.0 m/s running and 7.2 sprinting**. It was 3.6/5.4, lowered
 at some point to stop the gait reading as track athletics -- which was the wrong
@@ -1032,9 +1260,16 @@ would cost 1.28 M triangles across a 16 km map, which is the whole frame budget.
 Bridges and freeway decks are separate: `city.groundAt(x, z, currentY)` returns
 the deck NEAREST `currentY` within `DECK_REACH` (0.9 m above it), else the
 terrain. It used to take the *highest* deck within 2.6 m, which is taller than a
-car -- see "Bumpy freeways" for the 3.76 m drop that caused. With no `currentY`
+car -- see "Freeway grading" for the 3.76 m drop that caused. With no `currentY`
 (a spawn or a placement query) it still takes the highest, which is the only
 sane answer without a reference height.
+
+**Ground-level freeway is a deck to `groundAt` too.** Every graded edge — deck
+or ground freeway/ramp — registers one deck surface per ~5 m sample of its
+profile, and `roadLift` answers only the embankment (batter) off it. So the
+re-reheight above applies to draped roads only: **a graded node's `y` is the
+road surface** (surface - 0.09, as decks always were), set by `gradeRoads`,
+not the terrain under it.
 
 **Paved surfaces sit above the terrain and everything standing on them has to be
 lifted by the same amount.** `ROAD_LIFT` / `NODE_LIFT` / `WALK_LIFT` in
@@ -1075,9 +1310,11 @@ landmarks would otherwise cost hundreds of draw calls.
 
 ## Draw-call budget
 
-Roughly 290-320 draw calls / 400k triangles at `high`, measured across downtown,
-Ballard and the spawn. Triangles are up on the pre-import city (~300k) because the
-building density is real; draw calls are not.
+At `high`, perfguard's downtown reads roughly 230 steady draws and 315-330 a
+frame, ~1.05-1.16 M triangles a frame (the spread is how much traffic spawned
+that boot, not the build). Triangles are up on the pre-import city because the
+building density is real; draw calls are not. Flying adds 10-20 draws for the
+far massing layer (see "Flying").
 `__dbg.sceneStats` reports the scene pass specifically — read `renderer.info`
 yourself and you'll get the post chain's fullscreen quad instead, because the
 counters reset on every `render()`.
@@ -1094,10 +1331,14 @@ Where the budget goes, and the rules that keep it there:
   and the two non-paint materials across every instance. Traffic uses the
   `…GeoW` variants with the wheels baked in; only the player's car calls
   `setDetailed(true)`, which swaps to the wheel-less geometry and adds four
-  articulated wheel groups.
+  articulated wheel groups. Traffic averages ~6,400 triangles a vehicle
+  (weighted by `CIVILIAN_TYPES`; the authored van is 6.9k, bus 8.1k, planes
+  ~1.5k). `import('./apps/auto/src/vehicles.js')` in Node and read
+  `vehicleAssets().types[k]` index counts — no browser needed.
 - **characters are 1 draw each.** They're `SkinnedMesh`es over a pool of 12
-  shared geometries (`variants()`), so per-instance cost is a skeleton, not a
-  buffer. **Never dispose a pooled geometry** — `makeHumanoid` returns a
+  shared geometries (`variants()`) plus 4 for cops (`copVariants()`), ~3k
+  triangles each, so per-instance cost is a skeleton, not a buffer. **Never
+  dispose a pooled geometry** — `makeHumanoid` returns a
   `dispose()` that no-ops unless the character was built `unique`, and
   `PedSystem.remove` must go through it. Disposing it directly yanks the GPU
   buffers out from under every other pedestrian wearing that look.
@@ -1147,6 +1388,44 @@ Ten wall-clock seconds of walking is only a few metres; don't read that as stuck
 `if (this._stickId === null && ...) this.releaseStick()`, the anti-latch guard
 from the stuck-stick fix, so a stick set without a live pointer is zeroed on the
 very next frame. This silently reads as "the player can't move."
+
+**Every harness takes `AUTO_HTTP_PORT` and `AUTO_CDP_PORT`.** Serve master from a
+second checkout on another port (`:8001`) and run the same harness against both
+for a real before/after; several agents' Chromes can then share one machine.
+Streaming timings (`updateP99`/`updateMax`) on a shared machine are contention —
+run master as a control at the same time before believing either.
+
+**`tools/perfguard.mjs` waits for the game loop to draw** (`sceneStats.calls > 0`
+and pedestrians present) before measuring. It used to measure the moment
+`__dbg` existed and compared an unrendered scene with no pedestrians against a
+full one. A fresh worktree has no `tools/data/perfguard.json`, so save a record
+from master before `--check`.
+
+The purpose-built harnesses, each a fixed-dt, paused-game driver:
+
+| tool | what it judges |
+|---|---|
+| `tools/gait.mjs [--trace]` | the stride against published bands, sole contact, the speed ramp (see "The gait") |
+| `tools/gait-strip.mjs` | a frame strip of the cycle; forces the player's humanoid visible on the staging point (one boot spawned in a car and shot 12 frames of empty ground) |
+| `tools/charshots.mjs [tag] [seed] lineup` | every pooled look plus a cop side by side at 9 m — a single seed says nothing about the pool |
+| `tools/crowdshots.mjs [tag]` | 12 pedestrians, one seed per POOLED LOOK, posed at dt = 0 on a real pavement; seeds `1000 + k*7919` landed on one look and photographed the harness |
+| `tools/vehshots.mjs <tag> [types] [--street]` | `--street` parks a fixed lineup on the densest commercial street, shot at eye height and raised — a before/after random traffic can't give |
+| `tools/flycam.mjs [--jitter]` | a scripted flight: camera measured RELATIVE TO THE PLANE and the plane's on-screen motion, since absolute camera movement at 116 m/s is ~2 m a frame regardless. The autopilot holds 45 m over the terrain under AND 400 m ahead, or the bay dive flies into Queen Anne |
+| `tools/camtunnel.mjs` | camera height at stations through bores — nothing through the roof |
+| `tools/jank.mjs` | `fwy-bump`, `crossing-clash`, `barrier-on-road` added for the grading (see "Freeway grading") |
+
+**A walker needs a seed, and the seed is the edge's own surface.** Seeded with
+no reference height, `groundAt` takes the highest deck, so every freeway edge
+starting under an overpass began on it and "jolted" off; seeded at terrain under
+a 3 m fill it climbed the batter a step at a time (786 of 1356 jolts).
+`fwy-bump` seeds from `e.ph[0]`, deck y or terrain; `barrier-on-road` seeds each
+sample on its lane's own cambered surface and samples only inside a trimmed
+lane's drawn extent — a terrain + 0.3 seed first read 24.3 %, counting the
+road's own raised tarmac. verify's deck walks learned the same: compare against
+the DRAWN deck, not the chord between node heights, and seed where the walk
+starts. `beauty.mjs` hides `#topBtns`, and a view picker that finds nothing must
+still return a posed camera (an un-posed fallback gave a NaN camera and a black
+frame).
 
 ## Offline
 
@@ -1274,8 +1553,10 @@ a kerbed ring sitting on bare ground — the "road to nowhere". `nodeSurface()`
 skips the same nodes, because the drawn surface and the lift query have to agree.
 
 **An elevated span is built from two mitred edge lines, not from boxes.**
-`meshViaduct` offsets each side of the deck at the *node*, and where two spans
-meet head to head it mitres them onto one shared point (`deckEdgePoint`). Deck,
+`meshViaduct` offsets each side of the deck at the *node*, and mitres each span
+into its `continuation(ni)` — the best-aligned graded pair at that node,
+whatever else meets there — onto one shared point (`deckEdgePoint`). It used to
+mitre only where exactly one other deck of the same width met. Deck,
 soffit, fascia and parapet are all lofted between those same four corners, so
 they stay registered with each other and with the neighbouring span by
 construction.
@@ -1292,13 +1573,12 @@ can only yaw. Two consequences, both of which were reported as bugs:
   are slightly angled so they don't touch back to front". Subdividing does not
   fix this — the splay is at the joint, not along the span.
 
-**A junction square at an elevated node fights the deck.** The square is
-horizontal at `n.y + 0.07`; a sloping deck passes through it. `meshNode` skips
-the node where two same-width elevated spans meet at under 60°, because the
-mitre has already closed that joint. A ramp merge keeps its square: there the
-spans are square-ended and the square is what fills the gap. `nodeSurface()`
-already skips `n.elev` entirely, so this costs nothing on the lift side —
-elevated ground comes from `groundAt`'s per-segment deck query.
+**Only an at-grade junction draws a square.** The square is horizontal at
+`n.y + 0.07`, so a sloping deck passes through it — squares at elevated merges
+were slabs stabbing through the deck. A graded node that is not an at-grade
+junction (ground freeway included) gets no square; its joint is closed by the
+mitre. `nodeSurface()` skips those nodes too, so the lift side agrees —
+graded ground comes from `groundAt`'s per-sample deck query.
 
 Note the "long thin triangle" probe is *not* diagnostic here: a pier is
 legitimately 30 m tall and 2.4 m wide, so it trips any aspect-ratio filter. Judge
@@ -1313,45 +1593,214 @@ needs `atan(0.2)` ≈ 0.2 rad of pitch, and it was getting none. Seattle's real
 grades are steeper than the hand-drawn hills were, so this matters more now, not
 less.
 
-## Bumpy freeways: one fix, and one failure worth not repeating
+## Freeway grading: decks and freeway chains are one profile
 
-**A deck may only pick you up if it is at your wheels.** `groundAt` took the
-highest deck within `curY + 2.6` -- taller than a car -- so driving along
-ground-level I-5 *under* an overpass, the deck was in reach, the car was lifted
-onto it, and it fell off when the deck ended. Measured on I-5: held at 47.3 m
-over ground descending 45.3 -> 43.6, then a **3.76 m drop**. `DECK_REACH` is
-0.9 m, which is far more than a ramp climbs between frames (a 10 % grade at
-30 m/s rises 5 cm a frame) and far less than an overpass clears a roof.
+**An overpass was a slab lying on the street it crosses, and the freeways
+draped the DEM.** build_roads.py gives a deck the Laplacian of its neighbours
+with a floor of ground + 0.6 m, and the 40 m DEM cannot see an underpass: of
+841 deck crossings, 541 cleared less than 5 m and 266 less than 2 m. 107
+freeway "bridges" (7.7 km) never rose 3 m above anything — parapets and fascia
+lining ground-level I-5 with cross streets running into them. And every
+triangle crossing of the draped DEM was a kink in the grade: 5 % of freeway 3 m
+steps broke grade by more than 5 %, about 1.5 g through the seat at 30 m/s.
 
-**The rest of the bumpiness is the heightfield, and smoothing it is NOT a small
-change.** Roads follow the 40 m triangulated DEM exactly, so every triangle
-crossing is a kink in the grade. Measured along the freeways, 5.6 % of 3 m steps
-change grade by more than 5 % -- about 1.5 g through the seat at 30 m/s -- and
-**raw terrain on its own already accounts for 4.2 %**. A real freeway is cut and
-filled; this one drapes.
+**The unit is the sample graph, not the edge.** Profiling each ~35 m edge on its
+own was tried and measured worse (grade breaks 5.62 % -> 9.48 %, 12.21 % with
+shared node heights), because smooth within a piece is not smooth across one.
+`gradeRoads` in citygen cuts every deck and every ground freeway/ramp edge
+(outside `PORTAL_KEEP` 200 m of a tunnel portal) into ~5 m samples that share
+one variable per node, and solves them together:
 
-Two attempts, both **measured worse**, both reverted:
+- **Floor** = terrain across the whole width (camber included), the imported
+  deck height (water clearance), and `OVER_CLEAR` 6 m over anything a deck
+  crosses.
+- **Profile** = average_R(cone(dilate_R(floor))), `PROF_R` 20 m. average(dilate(f))
+  >= f by construction, so smoothing can never put ground through tarmac or a
+  deck into the road below. Plain smoothing put 1.01 m of ground through the
+  tarmac.
+- **Anchors cap the climb.** The profile is capped by a cone out of the nearest
+  at-grade anchor (`GRADE_CAP` 8 %), never below the floor; clearance plateaus
+  are clamped at `MAX_CLIMB` 15 %, and the ramp smoothing their edges has to
+  obey the same bound or it lands on the pinned node as a cliff (2.8 m in 5 m).
+  A smoothstep taper instead squeezed the added height into 2-3 m in 9 m.
+- An overpass that would need more than 15 % is refused and left as imported
+  (`cityStats.overpassesRefused`).
+- **Couple overlapping carriageways to the neighbour's BASE floor, once.**
+  Profiled independently they cross along the length (a sawtooth, and a car hops
+  to whichever is higher). Coupling to the neighbour's SOLVED height each pass
+  ratcheted a cluster up to its highest point: fill 0.68 -> 1.38 m, jolts
+  156 -> 668.
+- **Camber is capped at `CAMBER_MAX` 6 %**; following the smoothed hillside
+  leaned the freeway 15-20 %, so past 6 % the floor takes the rest as fill.
+- **Graded node `y` is the road surface** (surface - 0.09, the convention decks
+  always had). A node on a fill left at terrain height started every walk
+  "at the node" inside the embankment.
 
-| | over 5 % grade change |
-|---|---|
-| as-is | 5.62 % |
-| per-edge upper envelope (10 m) | **9.48 %** |
-| ...plus shared node heights | **12.21 %** |
+**Side-by-side carriageways out of level are split, not stacked.** Lane-count
+widths make shoulder-to-shoulder carriageways overlap by metres (~19 km at
+0.4-2 m apart, ~15 km at 2-6 m). Under 0.4 m coupling makes them one surface;
+6 m and over is a real viaduct. In between, `gradeRoads` trims the upper
+carriageway back to the lower one's edge on that side (never under 3 m of
+half-width; 14.7 km of sides). `e.tw` / `e.tlo` carry per-sample side widths and
+the road below, and groundAt, roadLift's batter, paint, parapets and
+`carriagewayAt` all read them. **Node-sharing is not the same road**: a ramp
+shares the diverge node and then runs alongside for tens of metres, so only the
+joint itself (centrelines under 1 m apart) is excluded from these tests.
 
-The envelope itself is sound in isolation -- a rolling max then a smooth, which
-fills dips instead of cutting crests, so terrain poke-through is zero by
-construction (plain smoothing put 1.01 m of ground through the tarmac at a 15 m
-window). In isolation it gave 5.09 % -> 3.19 % with a median 7 cm of float.
+**What stands beside a graded road is decided once**, per sample and side, in
+`gradeRoads`: berm, wall or nothing (`e.pe`, `e.pwall`). roadLift and
+`world.meshGraded` both read it. world.js deciding with its own `carriagewayAt`
+query is how a batter lift came to be reported where no batter was drawn.
+**A wall is cast panels, not a quad** (`meshWall`): a tonal step per ~5 m panel
+with a dark joint, a darker 0.45 m footing, a pale coping, and only as tall as
+the drop. One untextured quad read as a blank slab beside the lane.
 
-It failed because **a freeway is chopped into ~35 m edges and each profile was
-built independently**, so the two disagreed at every junction: smooth within a
-piece is not smooth. Forcing agreement by taking each node's highest envelope
-then shifting each edge onto it was worse again, because a ramp meeting a
-freeway at a different height tilts the whole edge.
+**Refused overpasses dip the STREET underneath, and only a street.** Where the
+road under a refused crossing is a draped street, `city.underpassDepth` cuts a
+trench as deep as the missing clearance, eased out on a cosine at 10 %
+(6 % / 8 % under a freeway / ramp class). It goes through the portal carve hook
+(`buildTerrain` composes it with `cutDepth`; `cellCut` re-tessellates the
+cells), and `meshTrenchWalls` stands walls outside the footway past 0.4 m. **A
+cut is a footprint, not a road**: it is refused if any bridge landing lies
+within footprint + 4 m (by the West Seattle bridge a cut dropped a street 5 m
+under another deck's landing), if a junction falls inside the dip, if the walk
+leaves the street before it eases out, or past 7 m.
 
-Doing this properly means profiling a whole connected freeway *chain* rather
-than an edge, and deciding what happens where a ramp joins. **Don't attempt it
-as a tuning change.**
+**Don't dip a graded freeway under a ramp.** 110 refusals are freeway over
+freeway at interchanges, and lowering the lower freeway was tried three ways,
+each worse: clamping to floor - dip brought back the bumpy floor (grade breaks
+1.66 % -> 3.07 %); lowering every graded edge in the footprint stepped other
+roads' deck approaches (verify approach failures 4 -> 10); and chain-only, the
+interchange cuts overlap, so each chain picked up its neighbours' dips (~400 of
+522 half-metre jolts). They stay as imported (`cityStats.underpassGraded`).
+
+**groundAt over many short pieces: extrapolate, don't clamp.** A graded road is
+one deck surface per sample. `distToSeg` clamps, so past a piece's end its
+answer is the end height held flat, and nearest-to-`curY` prefers whichever
+flat extension is higher — on a climb, always the piece ahead: the car rode a
+smooth profile as a staircase (17.9 % grade breaks against 0.2 % on the profile
+itself). Pieces extrapolate along their own grade for 3 m past either end, using
+the neighbours' extents (`wl0/wr0/wl1/wr1`) so an untrimmed extrapolation cannot
+reach over a trimmed side and catch cars on the road beside it. A side with a
+near-parallel neighbour in its 1.5 m catch fringe (`e.tnb`) catches nothing past
+its edge. Narrowing the fringe to `hw + 0.6` everywhere was tried and reverted:
+it bought little (182 -> 166 of 1656 samples off the drawn deck at I-5
+downtown) and cost a verify approach by SR-99's north portal.
+
+**Measure the ride and the profile separately.** `profAt` against `groundAt`
+along the same 3 m steps found the staircase in one step; the combined number
+only said "worse". Measured, `tools/jank.mjs`, before grading -> now:
+
+| check | before | now |
+|---|---|---|
+| fwy-bump (3 m grade break > 5 %) | 3490 / 69643 (5.01 %), 1475 jolts | 1528 / 70690 (2.16 %) |
+| crossing-clash (deck gap < 4.5 m) | 427 / 725 (58.9 %) | 158 / 725 (21.8 %) |
+| barrier-on-road | 1958 / 57270 (3.42 %) | 888 / 56841 (1.56 %) |
+| bridge (deck buried) | 17 / 6678 | 5 / 6678 |
+| sink | 308 / 6925 (4.45 %) | 295 / 6923 (4.26 %) |
+
+By category: graded ground 1.60 %, graded decks 2.17 %, ungraded freeway near
+portals ~7 % (untouched by design). verify: 0 of 33213 viaduct samples fall,
+3 of 851 approaches fail to climb — the same 3 as before grading, draped ramps
+beside portal cuts where world.js carves terrain after citygen fixed the node
+heights. Cost: +3 draws (terrain tiles carrying underpass cells), ~+1-2 %
+triangles; grading runs once at load over ~88k samples.
+
+**A deck may only pick you up if it is at your wheels.** `DECK_REACH` is 0.9 m:
+`groundAt` used to take the highest deck within `curY + 2.6`, taller than a car,
+so driving along ground-level I-5 under an overpass lifted the car onto the
+deck and dropped it 3.76 m where the deck ended. 0.9 m is far more than a ramp
+climbs between frames (a 10 % grade at 30 m/s rises 5 cm a frame) and far less
+than an overpass clears a roof.
+
+## Flying
+
+**The camera jumps were a TUNNEL clamp firing on hillsides.** `updateCamera`'s
+bore-ceiling clamp tested "ground over the CAMERA is higher than a bore roof over
+the target's deck". For a plane, `groundAt(target, y)` is the terrain under the
+plane, so any hillside 17 m behind standing more than 4.8 m higher yanked the
+camera down onto the slope, and it sprang back at the damping rate, over every
+hill. **The clamp now needs the TARGET in a bore**: on its deck
+(`y - deck < 2.5`) with ground over it (`terrain > deck + TUNNEL_H/2`), held for
+1 s after the mouth so a boom still inside on the way out stays under the roof.
+`tools/camtunnel.mjs` confirms no camera goes through a bore roof (0 of 24
+stations, unchanged heights).
+
+Two smaller contributors:
+
+- **Boom pull-in on towers.** `clearCamDist` snapped the boom 17 m -> 1.5 m and
+  back as towers went by on a low pass. An airborne plane skips it; a plane on
+  the ground taxis like a car and keeps it.
+- **Damping a world position is dt-dependent lag.** `damp(camPos, wanted, 9)`
+  trails a 116 m/s plane by 12.0 m at a 16 ms frame and 9.7 m at a 60 ms hitch,
+  so an uneven phone clock surges the boom. A plane's rig damps the OFFSET and
+  follows the plane's translation exactly. Cars keep the old follow: their lag
+  is part of how speed feels.
+
+Measured with `tools/flycam.mjs` (Boeing Field take-off, the hills, downtown
+below the tower tops, Elliott Bay, climb-out; ~13k airborne frames at fixed
+1/60, and `--jitter` for a deterministic hitchy clock):
+
+| | before | now | now, `--jitter` |
+|---|---|---|---|
+| ceiling-clamped frames | 382 | **0** | 0 |
+| worst per-frame camera move relative to the plane | 310 m | **0.18 m** | 0.72 m |
+| frames moving > 1 m relative to the plane | 370 | **0** | 0 |
+| worst on-screen plane movement per frame | 92 px | **4.8 px** | 13.4 px |
+| worst look-direction change per frame | 90.4 deg | **0.68 deg** | |
+| boom length range | 14.7-33.9 m | 16.8-18.4 m | |
+
+**`flyLod` keys off altitude over the terrain directly underneath**, which swings
+140 -> 40 m crossing Beacon Hill or Queen Anne, so its 100 m up / 60 m down
+hysteresis flipped 7 times on the route. While `world.playerFlying` (fed from
+main.js) it only drops back below 25 m: one flip, the take-off.
+
+### Far massing: lazy, instanced, masked per chunk
+
+Past the 9x9 mid ring (~1.6 km) only the tall skyline existed, so from a plane
+the housing stock assembled a row of chunks at a time. The far layer
+(`world.updateFarMass` -> `initFarMass` / `farMassSteps`) builds every building
+the skyline skips as massing boxes, one mesh per 4x4-chunk supertile. Each box
+carries its building's chunk, and a 9x9 uniform mask collapses boxes whose ring
+chunk has been DELIVERED (`lod >= 0`): the layer keeps drawing a chunk until its
+real geometry is there, with no hole while it builds and no double drawing
+after. Buildings materialising in view on the flight route: 50,497 -> ~3,200,
+all during take-off before the layer's gate.
+
+- **Only off the ground.** On above 45 m, off below 25 m but never while
+  airborne, fading in through the fog colour over 1.5 s; supertiles past 5 km
+  hidden. **At street level `farMass` is undefined and costs 0 bytes**, so
+  perfguard's ground views are identical with or without it.
+- **Instanced, 17 bytes a box**: one shared unit box; per instance centre and
+  base as Int16 dm off the supertile origin, size Uint16 dm, rotation (0.7 deg
+  steps) and in-tile chunk index Uint8, tint Uint8 x3. The supertile origin
+  comes from `modelMatrix[3].xz`, because a shared material would not re-upload
+  a per-mesh uniform.
+- **Houses merge per 50 m cell** (50 divides the chunk, so the mask stays
+  exact): `style === 'house'` or under 10 m and 400 m², one box per cell in the
+  largest footprint's frame, shrunk to the members' total area at their
+  area-weighted roof line. 104k boxes for the city, 1.69 MB of buffers if every
+  tile is built.
+- **The first version built at boot and was too heavy**: 255k boxes as
+  8 vertices + 30 indices each, 47.7 MB of buffers and ~95 MB resident because
+  three keeps JS copies, paid by every on-foot player. Now the build is 3 ms
+  slices on the first climb past 45 m, nearest supertile inside `FAR_R` first,
+  and the first fade waits until every tile in range exists.
+- **Nothing CPU-side may read the freed arrays.** `onUpload` nulls them; the
+  bounding sphere is computed before upload, `count` comes from
+  `attribute.count`, and `raycast` is a no-op — CPU rays would hit boxes the GPU
+  has collapsed, and "raycast the pixel" is this repo's standard diagnostic.
+- **Context loss has nothing to re-upload from**, so `webglcontextlost` calls
+  `resetFarMass()` and the lazy builder makes them again. main.js has no
+  context-loss handling of its own.
+- Flat shading with no normal attribute (8 shared vertices, 10 triangles a box);
+  roof darkening is done in the fragment shader by facing.
+
+Flying cost: +10-20 draws (the visible supertiles) and 0-100k triangles a frame;
+some views come out cheaper, because merged cells are fewer boxes than per-house
+massing and the layer covers chunks while they build. "Missing chunk in view"
+still counts ROADS (1.9 mean) — the far layer covers buildings only. **Watch
+flying fps on a real phone.**
 
 ## Water, and the law that keeps being learned one caller at a time
 
@@ -1369,8 +1818,21 @@ The lesson is not about water. **When a law is added, grep for every caller of
 the thing it replaces** -- this one sat one function away from the code that
 documented it, for as long as the game has had lakes.
 
+<!-- TUNNEL-NOTES: SR-99 section pending -->
+
 ## Known gaps
 
+- **Freeway over freeway at interchanges stays as imported.** 110 of the 154
+  refused overpasses; see "Don't dip a graded freeway under a ramp". They are
+  most of what `barrier-on-road` still finds (another carriageway's tarmac
+  over a lane), with 15-26 deg overlaps the split-level pass does not treat.
+- **Graded samples off the drawn deck at the densest interchanges**: a raycast
+  probe finds 1.5-9 % of samples more than 10 cm off (139 of 1656 at I-5
+  downtown, 45 of 480 at Mercer), mostly riding a surface above their own
+  profile with nothing drawn there. Not diagnosed further.
+- **`survey.mjs` poses its eye-level camera from the node-height chord + 1.9 m**,
+  which on a graded deck is not where the road is, so eye-level deck shots
+  float. Kept so before and after share framing.
 - **Tunnels are no longer drawn at all.** 102 OSM ways in the box are tunnels
   (SR-99, the Battery St and Mount Baker ridge bores). They used to be drawn at
   ground level as ordinary carriageway, which collided with a deliberate
