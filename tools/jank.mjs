@@ -581,8 +581,12 @@ const CHECKS = `(() => {
           const t = sI / 6;
           for (const o of [-0.7, 0, 0.7]) {
             const x = a.x + (b.x - a.x) * t + px * o * e.hw, z = a.z + (b.z - a.z) * t + pz * o * e.hw;
-            // The edge's own surface: its deck, or the ground it drives on.
-            const est = e.elev ? a.y + (b.y - a.y) * t : G.terrainHeight(x, z) + 0.3;
+            // The edge's own surface: its graded profile, its deck, or the
+            // ground it drives on. Seeded at terrain under a graded fill,
+            // groundAt answered the terrain and the ray counted the road's
+            // own tarmac as something standing on it.
+            const est = e.ph ? city.profAt(e, t).h - 0.3
+              : e.elev ? a.y + (b.y - a.y) * t : G.terrainHeight(x, z) + 0.3;
             const surf = city.groundAt(x, z, est + 0.3, city.roadLift(x, z));
             rc.set(new THREE.Vector3(x, surf + 4.2, z), down);
             rc.far = 3.8;
