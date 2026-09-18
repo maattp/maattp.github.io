@@ -137,6 +137,9 @@ const MAX_CLIMB = 0.15;
 // float the approach over its own trench.
 const PORTAL_KEEP = 200;
 const CLASS_GRADE = { hwy: 0.06, ramp: 0.08 };
+// Steepest camber a graded road takes from its hillside -- about a real
+// freeway's superelevation. Past it the floor fills the downhill side instead.
+const CAMBER_MAX = 0.06;
 /** Embankment batter: horizontal metres per metre of fill. */
 export const BERM = 1.5;
 
@@ -342,7 +345,11 @@ function gradeRoads(nodes, edges) {
         // so a long span's chord could pass under a crest.
         v = Math.max(a.y + (b.y - a.y) * t + ROAD_LIFT * 0.3, T(x, z) + ROAD_LIFT + 0.1);
       } else {
-        const px = -e.dz, pz = e.dx, s = gx[i] * px + gz[i] * pz, hw = e.hw;
+        // Camber is capped at CAMBER_MAX: following the smoothed hillside, a
+        // freeway leaned 15-20 % across -- twice a real superelevation -- and
+        // the floor below takes up the rest as fill on the downhill side.
+        const px = -e.dz, pz = e.dx, hw = e.hw;
+        const s = clamp(gx[i] * px + gz[i] * pz, -CAMBER_MAX, CAMBER_MAX);
         v = -Infinity;
         for (const o of [-hw, -hw / 2, 0, hw / 2, hw]) v = Math.max(v, T(x + px * o, z + pz * o) - s * o);
         v += ROAD_LIFT;
@@ -435,6 +442,8 @@ function gradeRoads(nodes, edges) {
     return H[e.ps[i]] * (1 - fr) + H[e.ps[i + 1]] * fr;
   };
   let raised = 0, refused = 0;
+  const refusedList = [];
+  cityStats.refusedCrossings = refusedList;
   for (let pass = 0; pass < 3; pass++) {
     f.set(F0);
     raised = 0; refused = 0;
@@ -445,7 +454,16 @@ function gradeRoads(nodes, edges) {
       const sc = A.ps[Math.round(c.t * A.pk)];
       const rise = target - F0[sc];
       if (rise <= 0) continue;
-      if (dFix[sc] - c.ext < rise / MAX_CLIMB) { refused++; continue; }
+      if (dFix[sc] - c.ext < rise / MAX_CLIMB) {
+        refused++;
+        // Kept for the underpass pass and for the harness: where, how short
+        // of clearance, and what runs underneath.
+        if (pass === 2) {
+          refusedList.push({ x: c.x, z: c.z, ai: c.ai, bi: c.bi, u: c.u, rise: +rise.toFixed(2),
+            under: B.cls + (B.prof ? (B.elev ? '/deck' : '/graded') : '/draped') });
+        }
+        continue;
+      }
       raised++;
       // Per sample, not just at the crossing: the plateau spreads by graph
       // distance and can run through a node onto a branch right beside a
@@ -529,8 +547,153 @@ function gradeRoads(nodes, edges) {
     }
   }
 
+  // --- underpasses ---
+  // An overpass the deck cannot climb to without a ski-jump (refused above)
+  // is how real Seattle does it the other way round: the road underneath dips
+  // into a cut. Along the lower road, a trench as deep as the missing
+  // clearance runs under the deck and ramps out at UP_GRADE; world.js carves
+  // it into the terrain (the same carve hook the portal cuts use) and stands
+  // walls along it. A graded lower road has its profile lowered by the same
+  // amount; a draped one follows the carved ground by itself. Skipped where
+  // the dip would exceed UP_MAX or a junction falls inside it -- a street does
+  // not meet another at the bottom of an underpass.
+  const UP_MAX = 7;
+  // Run-out grade by the lower road's class, eased in and out on a cosine: a
+  // freeway dipping under a street on straight 10 % ramps kinked its profile at
+  // both ends of every ramp (graded-ground grade breaks 1.66 % -> 2.65 %).
+  const UP_GRADE = { hwy: 0.06, ramp: 0.08 };
+  const underpasses = [];
+  let upNoRoom = 0, upGraded = 0;
+  for (const c of refusedList) {
+    const A = edges[c.ai], B = edges[c.bi];
+    const pa = nodes[A.a];
+    const tA = clamp(((c.x - pa.x) * A.dx + (c.z - pa.z) * A.dz) / A.len, 0, 1);
+    const deckH = hAt(A, tA);
+    // Streets only. Dipping a graded freeway under a refused ramp was tried:
+    // in the interchanges the cuts overlap, each chain's samples picked up its
+    // neighbours' dips, and the lowered profiles stepped -- 0.5-2.8 m in 3 m,
+    // ~400 of 522 half-metre jolts on graded freeway. Those crossings stay as
+    // imported (counted in underpassGraded).
+    if (B.prof) { upGraded++; continue; }
+    const lower = T(c.x, c.z) + ROAD_LIFT;
+    const dip = lower - (deckH - OVER_CLEAR);
+    if (dip <= 0.2) continue;
+    if (dip > UP_MAX) { upNoRoom++; continue; }
+    const sin = Math.abs(A.dx * B.dz - A.dz * B.dx) || 1;
+    const grade = UP_GRADE[B.cls] || 0.1;
+    const plat = A.hw / sin + 3, reach = plat + (Math.PI * dip) / (2 * grade);
+    // walk the lower road both ways from the crossing, straightest onward
+    const pts = [{ x: c.x, z: c.z, s: 0 }];
+    const chain = new Set([c.bi]);
+    let blocked = false;
+    for (const dir of [1, -1]) {
+      let ei = c.bi, ni = dir > 0 ? B.b : B.a, s = (dir > 0 ? 1 - c.u : c.u) * B.len;
+      let px0 = c.x, pz0 = c.z;
+      const seenE = chain;
+      while (true) {
+        const n = nodes[ni];
+        if (s <= plat + (reach - plat) * 0.5 && n.e.length > 2) { blocked = true; break; }
+        const leg = { x: n.x, z: n.z, s: dir * Math.min(s, reach) };
+        if (s >= reach) {
+          const f = (reach - (s - Math.hypot(n.x - px0, n.z - pz0))) / Math.hypot(n.x - px0, n.z - pz0);
+          leg.x = px0 + (n.x - px0) * f; leg.z = pz0 + (n.z - pz0) * f; leg.s = dir * reach;
+          if (dir > 0) pts.push(leg); else pts.unshift(leg);
+          break;
+        }
+        if (dir > 0) pts.push(leg); else pts.unshift(leg);
+        const e = edges[ei];
+        const ix = ni === e.b ? e.dx : -e.dx, iz = ni === e.b ? e.dz : -e.dz;
+        let next = -1, best = 0.7;
+        for (const oi of n.e) {
+          if (seenE.has(oi)) continue;
+          const o = edges[oi];
+          // a street's cut stays on streets: graded roads are never lowered
+          if (o.tunnel || o.elev || o.prof) continue;
+          const ox = ni === o.a ? o.dx : -o.dx, oz = ni === o.a ? o.dz : -o.dz;
+          const cc = ix * ox + iz * oz;
+          if (cc > best) { best = cc; next = oi; }
+        }
+        // Running out of road before the dip has eased out -- onto a deck,
+        // into a bore, a dead end -- would leave the cut ending in a cliff.
+        if (next < 0) { blocked = true; break; }
+        seenE.add(next);
+        px0 = n.x; pz0 = n.z;
+        ei = next;
+        const o = edges[next];
+        ni = o.a === ni ? o.b : o.a;
+        s += o.len;
+      }
+      if (blocked) break;
+    }
+    if (blocked || pts.length < 2) { upNoRoom++; continue; }
+    const hw = B.hw + walkWidth(B.cls) + 0.3;
+    // A cut must not reach under a bridge's landing. The carve is a footprint,
+    // not a road: by the West Seattle bridge it caught the street climbing to
+    // another deck's anchor and dropped it 5 m under that deck.
+    {
+      const near = (x, z) => {
+        for (let i = 0; i < pts.length - 1; i++) {
+          const r = distToSeg(x, z, pts[i].x, pts[i].z, pts[i + 1].x, pts[i + 1].z);
+          if (r.d < hw + 4) return true;
+        }
+        return false;
+      };
+      const x0 = Math.min(...pts.map((p) => p.x)), x1 = Math.max(...pts.map((p) => p.x));
+      const z0 = Math.min(...pts.map((p) => p.z)), z1 = Math.max(...pts.map((p) => p.z));
+      let landing = false;
+      for (let gx0 = Math.floor((x0 - 30) / CELL); gx0 <= Math.floor((x1 + 30) / CELL) && !landing; gx0++) {
+        for (let gz0 = Math.floor((z0 - 30) / CELL); gz0 <= Math.floor((z1 + 30) / CELL) && !landing; gz0++) {
+          const l = grid.get(skey(gx0, gz0));
+          if (!l) continue;
+          for (const oi of l) {
+            const o = edges[oi];
+            if (!o.elev || oi === c.ai) continue;
+            for (const ni of [o.a, o.b]) {
+              const n = nodes[ni];
+              if (!n.elev && near(n.x, n.z)) { landing = true; break; }
+            }
+            if (landing) break;
+          }
+        }
+      }
+      if (landing) { upNoRoom++; continue; }
+    }
+    const up = { pts, dip, plat, reach, hw, bi: c.bi, chain,
+      x0: Math.min(...pts.map((p) => p.x)) - hw - 2, x1: Math.max(...pts.map((p) => p.x)) + hw + 2,
+      z0: Math.min(...pts.map((p) => p.z)) - hw - 2, z1: Math.max(...pts.map((p) => p.z)) + hw + 2 };
+    underpasses.push(up);
+  }
+  const depthAlong = (up, s) => {
+    const a2 = Math.abs(s);
+    if (a2 <= up.plat) return up.dip;
+    if (a2 >= up.reach) return 0;
+    // cosine run-out: no grade break where the dip starts or where it ends
+    const u = (a2 - up.plat) / (up.reach - up.plat);
+    return up.dip * (1 + Math.cos(Math.PI * u)) / 2;
+  };
+  /** Carve depth at (x,z) from every underpass: full over the road, a 1.5 m bank. */
+  const underpassDepth = (x, z) => {
+    let best = 0;
+    for (const up of underpasses) {
+      if (x < up.x0 || x > up.x1 || z < up.z0 || z > up.z1) continue;
+      for (let i = 0; i < up.pts.length - 1; i++) {
+        const p = up.pts[i], q = up.pts[i + 1];
+        const r = distToSeg(x, z, p.x, p.z, q.x, q.z);
+        if (r.d > up.hw + 1.5) continue;
+        const dd = depthAlong(up, p.s + (q.s - p.s) * r.t);
+        const v = r.d <= up.hw ? dd : dd * (1 - (r.d - up.hw) / 1.5);
+        if (v > best) best = v;
+      }
+    }
+    return best;
+  };
+  // Every cut is under a draped street, which follows the carved ground by
+  // itself -- nothing graded is lowered.
+  cityStats.underpasses = underpasses.length;
+  cityStats.underpassNoRoom = upNoRoom;
+  cityStats.underpassGraded = upGraded;
+
   // --- publish ---
-  let fillSum = 0, fillN = 0, worstFill = 0;
   for (const e of edges) {
     if (!e.prof) continue;
     const k = e.pk;
@@ -540,12 +703,109 @@ function gradeRoads(nodes, edges) {
     for (let i = 0; i <= k; i++) {
       const v = e.ps[i];
       e.ph[i] = H[v];
-      if (!e.elev) e.pg[i] = gx[v] * px + gz[v] * pz;
+      if (!e.elev) e.pg[i] = clamp(gx[v] * px + gz[v] * pz, -CAMBER_MAX, CAMBER_MAX);
     }
+  }
+
+  // --- split levels ---
+  // Carriageways run shoulder to shoulder and widths from lane counts make
+  // them overlap by metres. Where two are the same level they are one surface
+  // (coupling, above); where one really stands over the other by a street's
+  // headroom it is a viaduct and stays. Between those -- 0.4 to 6 m apart --
+  // the upper surface was drawn straight over the lower lanes: one road
+  // poking through another, 90 % of what barrier-on-road counted, and the
+  // sawtooth at I-5 downtown. Measured on the graded network before this pass:
+  // ~19 km of carriageway overlapped a neighbour 0.4-2 m out of level and ~15
+  // km overlapped one 2-6 m out.
+  //
+  // The upper one is trimmed back to the lower one's edge on that side (never
+  // under TRIM_MIN of half-width) and world.js stands a retaining wall on the
+  // cut. `e.tw` holds [left, right] half-widths per sample and `e.tlo` the
+  // height of the road below a trimmed side (NaN where untrimmed).
+  const TRIM_MIN = 3.0, SPLIT_LO = 0.4, SPLIT_HI = 6.0;
+  let trimmedM = 0;
+  const surfAt = (o, t, x, z) => {
+    if (!o.prof) return T(x, z) + ROAD_LIFT;
+    const P = profAt(o, t), oa = nodes[o.a];
+    const cx = oa.x + o.dx * o.len * t, cz = oa.z + o.dz * o.len * t;
+    return P.h + P.s * ((x - cx) * -o.dz + (z - cz) * o.dx);
+  };
+  for (const e of edges) {
+    if (!e.prof) continue;
+    const k = e.pk, a = nodes[e.a];
+    e.tw = new Float32Array((k + 1) * 2).fill(e.hw);
+    e.tlo = new Float32Array((k + 1) * 2).fill(NaN);
+    // Sides with a near-parallel carriageway inside groundAt's catch fringe.
+    // Such a side catches nothing past its drawn edge: along I-5's ramp decks a
+    // neighbour 0.1-1 m higher -- too close in level to trim -- caught cars on
+    // this deck with its 1.5 m fringe, the biggest class of samples standing off
+    // their own drawn deck (136 of 181 at I-5 downtown).
+    e.tnb = new Uint8Array((k + 1) * 2);
+    const px = -e.dz, pz = e.dx;
+    for (let i = 0; i <= k; i++) {
+      const cx = a.x + e.dx * (e.len * i) / k, cz = a.z + e.dz * (e.len * i) / k;
+      const seen = new Set();
+      for (let gx0 = Math.floor((cx - 30) / CELL); gx0 <= Math.floor((cx + 30) / CELL); gx0++) {
+        for (let gz0 = Math.floor((cz - 30) / CELL); gz0 <= Math.floor((cz + 30) / CELL); gz0++) {
+          const l = grid.get(skey(gx0, gz0));
+          if (!l) continue;
+          for (const oi of l) {
+            const o = edges[oi];
+            if (o === e || seen.has(oi)) continue;
+            seen.add(oi);
+            // Sharing a node is not the same road: a ramp diverging from the
+            // main line shares the diverge node and then runs alongside it for
+            // tens of metres -- skipping every node-sharing pair left those
+            // untrimmed, with the main line's fringe catching cars off the ramp
+            // (the largest class of samples off their own drawn deck). Only the
+            // joint itself, where the two centrelines are still under 1 m
+            // apart, is the same road carrying on.
+            const shares = o.a === e.a || o.a === e.b || o.b === e.a || o.b === e.b;
+            if (Math.abs(e.dx * o.dx + e.dz * o.dz) < 0.966) continue;
+            const oa = nodes[o.a];
+            // Inclusive of the ends, with a little slack: where a sample sits
+            // opposite a node of the neighbour, the foot lands on the endpoint
+            // of BOTH edges meeting there, and a strict interior test skipped
+            // it on both -- the neighbour's piece at that joint kept its full
+            // 1.5 m fringe over this road's lanes.
+            let u = ((cx - oa.x) * o.dx + (cz - oa.z) * o.dz) / o.len;
+            if (u < -0.02 || u > 1.02) continue;
+            u = Math.min(1, Math.max(0, u));
+            const fx = oa.x + o.dx * o.len * u, fz = oa.z + o.dz * o.len * u;
+            const dd = Math.hypot(cx - fx, cz - fz);
+            if (shares && dd < 1.0) continue;
+            const side = (fx - cx) * px + (fz - cz) * pz >= 0 ? 0 : 1;
+            // Neighbour's edge inside this side's 1.5 m catch fringe, any level.
+            if (dd - o.hw < e.hw + 1.5) e.tnb[i * 2 + side] = 1;
+            if (e.hw + o.hw - dd < 0.5) continue;
+            const sg = side === 0 ? 1 : -1;
+            const mine = e.ph[i] + e.pg[i] * sg * Math.min(e.hw, dd);
+            const lower = surfAt(o, u, cx + px * sg * Math.min(e.hw, dd), cz + pz * sg * Math.min(e.hw, dd));
+            const gap = mine - lower;
+            if (gap < SPLIT_LO || gap >= SPLIT_HI) continue;
+            const w = Math.max(TRIM_MIN, dd - o.hw);
+            if (w < e.tw[i * 2 + side]) {
+              e.tw[i * 2 + side] = w;
+              e.tlo[i * 2 + side] = Number.isNaN(e.tlo[i * 2 + side]) ? lower : Math.max(e.tlo[i * 2 + side], lower);
+            }
+          }
+        }
+      }
+      for (let s = 0; s < 2; s++) if (e.tw[i * 2 + s] < e.hw) trimmedM += e.len / k / 2;
+    }
+  }
+  cityStats.splitLevelTrimmedM = Math.round(trimmedM);
+
+  let fillSum = 0, fillN = 0, worstFill = 0;
+  for (const e of edges) {
+    if (!e.prof) continue;
+    const k = e.pk;
+    const px = -e.dz, pz = e.dx;
     if (e.elev) continue;
     // Embankment either side: from the carriageway edge down at BERM to where
     // it meets the ground. [edgeY, width, toeY] per sample, left then right.
     e.pe = new Float32Array((k + 1) * 6);
+    e.pwall = new Uint8Array((k + 1) * 2);
     let widest = 0;
     const a = nodes[e.a];
     for (let i = 0; i <= k; i++) {
@@ -555,11 +815,48 @@ function gradeRoads(nodes, edges) {
       if (e.ph[i] - ROAD_LIFT - tc > worstFill) worstFill = e.ph[i] - ROAD_LIFT - tc;
       for (let s = 0; s < 2; s++) {
         const sg = s === 0 ? 1 : -1;
-        const ex = cx + px * sg * e.hw, ez = cz + pz * sg * e.hw;
-        const ey = e.ph[i] + e.pg[i] * sg * e.hw;
+        // From the TRIMMED edge; a trimmed side has a wall to the road below
+        // instead of a batter, so it carries no berm at all.
+        const tw = e.tw[i * 2 + s], trimmed = !Number.isNaN(e.tlo[i * 2 + s]);
+        const ex = cx + px * sg * tw, ez = cz + pz * sg * tw;
+        const ey = e.ph[i] + e.pg[i] * sg * tw;
         const drop = ey - T(ex, ez);
-        const w = drop > 0.05 ? drop * BERM : 0;
-        const ty = T(ex + px * sg * w, ez + pz * sg * w) - 0.05;
+        let w = !trimmed && drop > 0.05 ? drop * BERM : 0;
+        let ty = T(ex + px * sg * w, ez + pz * sg * w) - 0.05;
+        // What stands on this side is decided HERE, once, and roadLift and
+        // world.meshGraded both read it. Under the batter's first metre or so:
+        // another road at this level means tarmac is already there (no berm);
+        // a lower one means the batter would sweep over its lanes, so a
+        // retaining wall holds the fill instead (no berm either -- a wall has
+        // no slope to stand on).
+        if (w > 0) {
+          const wm = Math.min(1.5, w / 2);
+          const bx = ex + px * sg * wm, bz = ez + pz * sg * wm;
+          let atLevel = false, below = false;
+          for (let gx0 = Math.floor((bx - 25) / CELL); gx0 <= Math.floor((bx + 25) / CELL); gx0++) {
+            for (let gz0 = Math.floor((bz - 25) / CELL); gz0 <= Math.floor((bz + 25) / CELL); gz0++) {
+              const l = grid.get(skey(gx0, gz0));
+              if (!l) continue;
+              for (const oi of l) {
+                const o = edges[oi];
+                if (o === e) continue;
+                const oa = nodes[o.a];
+                const u = ((bx - oa.x) * o.dx + (bz - oa.z) * o.dz) / o.len;
+                if (u <= 0 || u >= 1) continue;
+                const dd = Math.hypot(bx - (oa.x + o.dx * o.len * u), bz - (oa.z + o.dz * o.len * u));
+                if (dd > o.hw - 0.3) continue;
+                const sy = surfAt(o, u, bx, bz);
+                if (Math.abs(sy - ey) < 1.6) atLevel = true;
+                else if (sy < ey && sy > ty - 0.3) below = true;
+              }
+            }
+          }
+          if (atLevel || below) {
+            if (below && !atLevel) e.pwall[i * 2 + s] = 1;
+            w = 0;
+            ty = T(ex, ez) - 0.05;
+          }
+        }
         e.pe[i * 6 + s * 3] = ey; e.pe[i * 6 + s * 3 + 1] = w; e.pe[i * 6 + s * 3 + 2] = ty;
         if (w > widest) widest = w;
       }
@@ -582,6 +879,7 @@ function gradeRoads(nodes, edges) {
   cityStats.overpassesRefused = refused;
   cityStats.fillMean = +(fillSum / Math.max(1, fillN)).toFixed(2);
   cityStats.fillWorst = +worstFill.toFixed(2);
+  return { underpasses, underpassDepth };
 }
 
 /** Profile height and cross-slope along a graded edge, at parameter t. */
@@ -1034,7 +1332,7 @@ export function* cityGenerator(md) {
   // surface at the edge's own heights that groundAt's nearest-deck rule picks
   // when you are down there and ignores when you are on the street above.
   yield { p: 0.92, msg: 'Grading the freeways' };
-  gradeRoads(g.nodes, g.edges);
+  const grading = gradeRoads(g.nodes, g.edges);
 
   const surfaces = [];
   const isPortal = (ni) => g.nodes[ni].e.some((ei) => !g.edges[ei].tunnel);
@@ -1048,9 +1346,27 @@ export function* cityGenerator(md) {
       const px = -e.dz, pz = e.dx;
       const continued = (ni) => g.nodes[ni].e.some((oi) => g.edges[oi] !== e && g.edges[oi].prof);
       const ca = continued(e.a), cb = continued(e.b);
+      const margin = e.elev ? 1.5 : 0.4;
       for (let i = 0; i < e.pk; i++) {
         const s0 = (e.len * i) / e.pk, s1 = (e.len * (i + 1)) / e.pk;
+        // Per-side extents. A side trimmed off a lower neighbour catches
+        // nothing past its drawn edge: its old fringe stood over the lower
+        // lanes, where it picked cars up onto a surface a metre or more above
+        // them with nothing drawn there.
+        const sideOf = (j, s) => {
+          const trimmed = !Number.isNaN(e.tlo[j * 2 + s]) || !Number.isNaN(e.tlo[(j + 1) * 2 + s]);
+          const crowded = e.tnb[j * 2 + s] || e.tnb[(j + 1) * 2 + s];
+          return Math.max(e.tw[j * 2 + s], e.tw[(j + 1) * 2 + s]) + (trimmed || crowded ? 0 : margin);
+        };
+        // The pieces either side, for the 3 m this one extrapolates past its
+        // ends: that ground belongs to them. With its own untrimmed extent the
+        // extrapolation reached over a neighbour's trimmed piece and caught
+        // cars on the road beside it (ramp decks at I-5 downtown).
+        const prev = i > 0 ? i - 1 : i, next = i < e.pk - 1 ? i + 1 : i;
         surfaces.push({
+          wl: sideOf(i, 0), wr: sideOf(i, 1),
+          wl0: Math.min(sideOf(i, 0), sideOf(prev, 0)), wr0: Math.min(sideOf(i, 1), sideOf(prev, 1)),
+          wl1: Math.min(sideOf(i, 0), sideOf(next, 0)), wr1: Math.min(sideOf(i, 1), sideOf(next, 1)),
           ax: a.x + e.dx * s0, az: a.z + e.dz * s0, ay: e.ph[i] - ROAD_LIFT * 0.3,
           bx: a.x + e.dx * s1, bz: a.z + e.dz * s1, by: e.ph[i + 1] - ROAD_LIFT * 0.3,
           // A deck catches 1.5 m past its edge, as it always has. Pulling
@@ -1134,6 +1450,21 @@ export function* cityGenerator(md) {
     chunkKey: ck,
     drivable,
     surfaces,
+
+    /** Underpass cuts dug under refused overpasses (see gradeRoads). */
+    underpasses: grading.underpasses,
+    /** Carve depth of every underpass at (x,z); world.js adds it to the carve. */
+    underpassDepth: grading.underpassDepth,
+    /** Does this 40 m terrain cell touch an underpass? (re-tessellated like a portal cell) */
+    underpassCell(cx, cz, S) {
+      if (!grading.underpasses.length) return false;
+      for (let j = 0; j <= 2; j++) {
+        for (let i = 0; i <= 2; i++) {
+          if (grading.underpassDepth(cx + (i * S) / 2, cz + (j * S) / 2) > 0.05) return true;
+        }
+      }
+      return false;
+    },
 
     /**
      * How built-up the ground is at (x,z), 0..1, from the footprint area packed
@@ -1226,14 +1557,17 @@ export function* cityGenerator(md) {
               // deck query, per sample and with its camber. Off it, the
               // embankment world.meshGraded draws: a straight batter from
               // the carriageway edge to the toe, mirrored exactly here.
-              if (r.d <= e.hw || r.d > e.hw + e.pbw || r.t <= 0 || r.t >= 1) continue;
+              if (r.d > e.hw + e.pbw || r.t <= 0 || r.t >= 1) continue;
               const side = ((x - r.x) * -e.dz + (z - r.z) * e.dx) >= 0 ? 0 : 3;
               const P = profAt(e, r.t), o6 = P.i * 6 + side, o7 = o6 + 6;
+              // From the trimmed edge on this side (split levels).
+              const sw = e.tw[P.i * 2 + side / 3] * (1 - P.fr) + e.tw[(P.i + 1) * 2 + side / 3] * P.fr;
+              if (r.d <= sw) continue;
               const ey = e.pe[o6] * (1 - P.fr) + e.pe[o7] * P.fr;
               const w = e.pe[o6 + 1] * (1 - P.fr) + e.pe[o7 + 1] * P.fr;
               const ty = e.pe[o6 + 2] * (1 - P.fr) + e.pe[o7 + 2] * P.fr;
-              if (w <= 0 || r.d - e.hw >= w) continue;
-              const l = ey + (ty - ey) * ((r.d - e.hw) / w) - G.terrainHeight(x, z);
+              if (w <= 0 || r.d - sw >= w) continue;
+              const l = ey + (ty - ey) * ((r.d - sw) / w) - G.terrainHeight(x, z);
               if (l > lift) lift = l;
               continue;
             }
@@ -1361,6 +1695,13 @@ export function* cityGenerator(md) {
             const lx = s.bx - s.ax, lz = s.bz - s.az, L = Math.sqrt(lx * lx + lz * lz);
             const tu = ((x - s.ax) * lx + (z - s.az) * lz) / (L * L), over = 3 / L;
             if ((s.in0 && tu < -over) || (s.in1 && tu > 1 + over)) continue;
+            // Per-side extent (split levels, see gradeRoads): left along +p.
+            // Past either end the piece is extrapolating over its neighbour's
+            // ground, so that neighbour's (narrower) extent applies there.
+            const lat = (x - s.ax) * s.px + (z - s.az) * s.pz;
+            const wl = tu < 0 ? s.wl0 : tu > 1 ? s.wl1 : s.wl;
+            const wr = tu < 0 ? s.wr0 : tu > 1 ? s.wr1 : s.wr;
+            if (lat > wl || -lat > wr) continue;
             const tt = tu < -over ? -over : tu > 1 + over ? 1 + over : tu;
             y = s.ay + (s.by - s.ay) * tt + ROAD_LIFT * 0.3;
             // Cambered with its hillside (see gradeRoads), across the piece's
@@ -1615,7 +1956,12 @@ export function* cityGenerator(md) {
             let sy;
             if (e.prof) {
               const P = profAt(e, r.t);
-              sy = P.h + P.s * ((x - r.x) * -e.dz + (z - r.z) * e.dx);
+              const lat = (x - r.x) * -e.dz + (z - r.z) * e.dx;
+              // A graded road's carriageway ends at its trimmed edge on that side.
+              const s = lat >= 0 ? 0 : 1;
+              const sw = e.tw[P.i * 2 + s] * (1 - P.fr) + e.tw[(P.i + 1) * 2 + s] * P.fr;
+              if (r.d > sw - 0.3) continue;
+              sy = P.h + P.s * lat;
             } else {
               sy = G.terrainHeight(x, z) + ROAD_LIFT;
             }

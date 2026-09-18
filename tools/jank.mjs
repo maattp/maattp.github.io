@@ -580,12 +580,24 @@ const CHECKS = `(() => {
         for (let sI = 1; sI < 6; sI++) {
           const t = sI / 6;
           for (const o of [-0.7, 0, 0.7]) {
+            // A graded carriageway trimmed off a lower neighbour ends at its
+            // trimmed edge: a point past it is the other road's space, not this
+            // lane, and sampling it counted the other road as standing on this
+            // one (294 of 461 hits at three sites could not be attributed).
+            if (e.tw && o !== 0) {
+              const i = Math.round(t * e.pk);
+              if (Math.abs(o) * e.hw > e.tw[i * 2 + (o > 0 ? 0 : 1)] - 0.3) continue;
+            }
             const x = a.x + (b.x - a.x) * t + px * o * e.hw, z = a.z + (b.z - a.z) * t + pz * o * e.hw;
             // The edge's own surface: its graded profile, its deck, or the
             // ground it drives on. Seeded at terrain under a graded fill,
             // groundAt answered the terrain and the ray counted the road's
             // own tarmac as something standing on it.
-            const est = e.ph ? city.profAt(e, t).h - 0.3
+            // On the cambered surface at THIS point, not the centreline: 0.7 of
+            // a half-width across a steep camber the lane sits a metre off its
+            // centre, and the terrain beside the uphill edge answered instead.
+            const P = e.ph ? city.profAt(e, t) : null;
+            const est = P ? P.h + (e.elev ? 0 : P.s * o * e.hw) - 0.3
               : e.elev ? a.y + (b.y - a.y) * t : G.terrainHeight(x, z) + 0.3;
             const surf = city.groundAt(x, z, est + 0.3, city.roadLift(x, z));
             rc.set(new THREE.Vector3(x, surf + 4.2, z), down);
