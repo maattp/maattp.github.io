@@ -90,6 +90,511 @@ export const cityStats = {
 
 const skey = (cx, cz) => cx * 100003 + cz;
 
+// ---------------------------------------------------------------------------
+// Grading: the vertical profile of every road that is not simply draped.
+//
+// Two defects with one cause. The importer gave a deck the Laplacian of its
+// neighbours with a floor of ground + 0.6 m, and the 40 m DEM cannot see an
+// underpass, so an overpass came out as a slab lying on the street it crosses:
+// measured on the shipped graph, 211 of 367 freeway decks over a ground street
+// sat under 5 m above it and 108 under 2 m, and 105 freeway "bridges" never
+// rose 3 m above anything -- concrete parapets lining ground-level I-5 with
+// the cross streets running into their fascia. And ground-level freeway draped
+// the triangulated DEM, so every triangle it crossed was a kink in the grade.
+//
+// The fix CLAUDE.md asked for is profiling whole connected chains, not edges:
+// a per-edge envelope measured WORSE (5.62 % -> 9.48 %) because a freeway is
+// ~35 m pieces that each disagreed with the next at every node. Here the unit
+// is the SAMPLE GRAPH: every deck and every ground freeway/ramp edge is cut
+// into ~5 m samples that share one variable at each node, so merges, diverges
+// and bridge touchdowns are one profile by construction.
+//
+//   floor f   the lowest the surface may be: terrain across the whole width
+//             (no grass through tarmac), the imported deck height (water
+//             clearance), and OVER_CLEAR above anything a deck crosses.
+//   dilate    max of f within PROF_R -- crests become plateaus
+//   cone      from each overpass, fall no faster than the class's grade
+//   average   box average within PROF_R
+//
+// average(dilate(f)) >= f at every sample, because every sample in the window
+// already holds the max over a window containing this one -- so the smoothing
+// can never push tarmac below the ground or a deck into the road under it,
+// which is what "plain smoothing put 1.01 m of ground through the tarmac" was.
+// Where a graded road meets an ungraded one (an at-grade junction, a ramp
+// terminal) the node is pinned to the ground and the profile may climb out of
+// it no faster than GRADE_CAP unless a floor demands more, so the street it
+// meets is untouched.
+const PROF_STEP = 5;       // metres between profile samples
+const PROF_R = 20;         // envelope half-window: dilation and average
+// Running surface over running surface at an overpass. meshViaduct's girder is
+// 1.35 m deep, so this leaves ~4.6 m under the soffit -- a truck's clearance.
+const OVER_CLEAR = 6.0;
+// An overpass the neighbourhood cannot climb to at this grade is refused and
+// left as imported, rather than turned into a ski jump.
+const MAX_CLIMB = 0.15;
+// Freeway near a bore stays draped: the portal cut is carved into the terrain
+// after the city is built, and a profile graded off the uncarved ground would
+// float the approach over its own trench.
+const PORTAL_KEEP = 200;
+const CLASS_GRADE = { hwy: 0.06, ramp: 0.08 };
+/** Embankment batter: horizontal metres per metre of fill. */
+export const BERM = 1.5;
+
+function gradeRoads(nodes, edges) {
+  const T = G.terrainHeight;
+  const portals = [];
+  for (const n of nodes) {
+    let tun = false, surf = false;
+    for (const ei of n.e) { if (edges[ei].tunnel) tun = true; else surf = true; }
+    if (tun && surf) portals.push(n);
+  }
+  const nearPortal = (n) => {
+    for (const p of portals) {
+      if (Math.abs(p.x - n.x) < PORTAL_KEEP && Math.abs(p.z - n.z) < PORTAL_KEEP
+        && Math.hypot(p.x - n.x, p.z - n.z) < PORTAL_KEEP) return true;
+    }
+    return false;
+  };
+  for (const e of edges) {
+    e.prof = false;
+    if (e.tunnel) continue;
+    const fwy = e.cls === 'hwy' || e.cls === 'ramp';
+    if (!e.elev && !fwy) continue;
+    const near = nearPortal(nodes[e.a]) || nearPortal(nodes[e.b]);
+    if (!e.elev && near) continue;
+    e.prof = true;
+    // A deck beside a portal keeps its imported heights exactly.
+    e.lock = near;
+  }
+
+  // --- the sample graph ---
+  const SX = [], SZ = [], ED = [], ST = [], NV = [];
+  const nodeVar = new Map();
+  const varOf = (ni) => {
+    let v = nodeVar.get(ni);
+    if (v === undefined) {
+      v = SX.length; nodeVar.set(ni, v);
+      SX.push(nodes[ni].x); SZ.push(nodes[ni].z); ED.push(-1); ST.push(0); NV.push(ni);
+    }
+    return v;
+  };
+  const adj = [];
+  const link = (i, j, d, gr) => {
+    (adj[i] || (adj[i] = [])).push(j, d, gr);
+    (adj[j] || (adj[j] = [])).push(i, d, gr);
+  };
+  for (let ei = 0; ei < edges.length; ei++) {
+    const e = edges[ei];
+    if (!e.prof) continue;
+    const a = nodes[e.a], b = nodes[e.b];
+    const k = Math.max(1, Math.ceil(e.len / PROF_STEP));
+    const ps = new Int32Array(k + 1);
+    ps[0] = varOf(e.a);
+    for (let i = 1; i < k; i++) {
+      ps[i] = SX.length;
+      SX.push(a.x + ((b.x - a.x) * i) / k); SZ.push(a.z + ((b.z - a.z) * i) / k);
+      ED.push(ei); ST.push(i / k); NV.push(-1);
+    }
+    ps[k] = varOf(e.b);
+    const gr = CLASS_GRADE[e.cls] || 0.12;
+    for (let i = 0; i < k; i++) link(ps[i], ps[i + 1], e.len / k, gr);
+    e.pk = k;
+    e.ps = ps;
+  }
+  const N = SX.length;
+  for (let i = 0; i < N; i++) if (!adj[i]) adj[i] = [];
+  // The edges a sample belongs to, with its parameter along each.
+  const edgesOf = (i, fn) => {
+    if (ED[i] >= 0) { fn(edges[ED[i]], ST[i]); return; }
+    const ni = NV[i];
+    for (const ei of nodes[ni].e) {
+      const e = edges[ei];
+      if (e.prof) fn(e, e.a === ni ? 0 : 1);
+    }
+  };
+
+  // --- anchors: graded meets ungraded, and decks locked to a portal ---
+  const fixed = new Uint8Array(N), fixVal = new Float64Array(N);
+  for (const [ni, v] of nodeVar) {
+    const n = nodes[ni];
+    n.prof = true;
+    n.anchor = n.e.some((ei) => !edges[ei].prof);
+    if (n.anchor) { fixed[v] = 1; fixVal[v] = T(n.x, n.z) + ROAD_LIFT; }
+  }
+  for (const e of edges) {
+    if (!e.prof || !e.lock) continue;
+    const a = nodes[e.a], b = nodes[e.b];
+    for (let i = 0; i <= e.pk; i++) {
+      fixed[e.ps[i]] = 1;
+      fixVal[e.ps[i]] = a.y + ((b.y - a.y) * i) / e.pk + ROAD_LIFT * 0.3;
+    }
+  }
+
+  // --- neighbourhood walk within a graph radius ---
+  const bd = new Float64Array(N), stamp = new Int32Array(N);
+  let tick = 0;
+  const touched = [], stack = [];
+  const around = (i, rad) => {
+    tick++;
+    touched.length = 0; stack.length = 0;
+    stamp[i] = tick; bd[i] = 0; touched.push(i); stack.push(i);
+    while (stack.length) {
+      const u = stack.pop();
+      const l = adj[u];
+      for (let q = 0; q < l.length; q += 3) {
+        const j = l[q], nd = bd[u] + l[q + 1];
+        if (nd > rad) continue;
+        if (stamp[j] !== tick) { stamp[j] = tick; bd[j] = nd; touched.push(j); stack.push(j); }
+        else if (nd < bd[j]) { bd[j] = nd; stack.push(j); }
+      }
+    }
+    return touched;
+  };
+  const W = new Float64Array(N);
+  for (let i = 0; i < N; i++) { const l = adj[i]; for (let q = 1; q < l.length; q += 3) W[i] += l[q] / 2; }
+
+  // --- carriageways that overlap at the same level ---
+  // Real carriageways run shoulder to shoulder, and widths from lane counts
+  // make them overlap by a metre or three -- I-5's express lanes, a ramp
+  // running alongside before it diverges. Profiled independently, two
+  // overlapping surfaces cross each other along the length and the depth
+  // buffer shows whichever is higher piece by piece: the sawtooth. Worse, a
+  // car rides whichever sits slightly above -- groundAt prefers it -- and hops
+  // between them. Coupled samples take each other's base floor and no camber,
+  // so they solve to one surface (see the solve loop for why only once).
+  const hwOf = new Float64Array(N), levelOf = new Float64Array(N);
+  for (let i = 0; i < N; i++) {
+    edgesOf(i, (e, t) => {
+      if (e.hw > hwOf[i]) hwOf[i] = e.hw;
+      const a = nodes[e.a], b = nodes[e.b];
+      levelOf[i] = e.elev ? a.y + (b.y - a.y) * t : T(SX[i], SZ[i]);
+    });
+  }
+  const couple = [];
+  const coupled = new Uint8Array(N);
+  {
+    const SC = 16, sgrid = new Map();
+    for (let i = 0; i < N; i++) {
+      const k = skey(Math.floor(SX[i] / SC), Math.floor(SZ[i] / SC));
+      let l = sgrid.get(k);
+      if (!l) sgrid.set(k, (l = []));
+      l.push(i);
+    }
+    for (let i = 0; i < N; i++) {
+      if (fixed[i]) continue;
+      const cx = Math.floor(SX[i] / SC), cz = Math.floor(SZ[i] / SC);
+      let near = null;
+      for (let ox = -2; ox <= 2; ox++) for (let oz = -2; oz <= 2; oz++) {
+        const l = sgrid.get(skey(cx + ox, cz + oz));
+        if (!l) continue;
+        for (const j of l) {
+          if (j === i || fixed[j]) continue;
+          const d = Math.hypot(SX[i] - SX[j], SZ[i] - SZ[j]);
+          if (d >= hwOf[i] + hwOf[j] - 0.5 || Math.abs(levelOf[i] - levelOf[j]) > 2) continue;
+          // Not its own carriageway: anything within 30 m along the graph is
+          // the same road carrying on, and coupling to it would ratchet the
+          // whole chain up to its highest sample.
+          if (!near) near = new Set(around(i, 30));
+          if (near.has(j)) continue;
+          couple.push(i, j);
+          coupled[i] = 1;
+        }
+      }
+    }
+  }
+
+  // --- cross-slope ---
+  // A freeway on a hillside is cambered with the hill, not levelled across it:
+  // levelling a 14 m carriageway on a 10 % side slope floats one edge 1.4 m.
+  // The TERRAIN gradient is smoothed along the chain, and each edge takes its
+  // component across itself. Decks are flat, so a graded road touching one
+  // flattens out to meet it -- and so does one coupled to a neighbour.
+  const isDeck = new Uint8Array(N);
+  for (let i = 0; i < N; i++) edgesOf(i, (e) => { if (e.elev) isDeck[i] = 1; });
+  const rgx = new Float64Array(N), rgz = new Float64Array(N);
+  for (let i = 0; i < N; i++) {
+    if (isDeck[i] || coupled[i]) continue;
+    const x = SX[i], z = SZ[i];
+    rgx[i] = (T(x + 4, z) - T(x - 4, z)) / 8;
+    rgz[i] = (T(x, z + 4) - T(x, z - 4)) / 8;
+  }
+  const gx = new Float64Array(N), gz = new Float64Array(N);
+  for (let i = 0; i < N; i++) {
+    if (isDeck[i] || coupled[i]) continue;
+    if (fixed[i]) { gx[i] = rgx[i]; gz[i] = rgz[i]; continue; }
+    let sx = 0, sz = 0, sw = 0;
+    for (const j of around(i, PROF_R)) { sx += rgx[j] * W[j]; sz += rgz[j] * W[j]; sw += W[j]; }
+    if (sw > 0) { gx[i] = sx / sw; gz[i] = sz / sw; }
+  }
+
+  // --- base floors ---
+  const F0 = new Float64Array(N);
+  for (let i = 0; i < N; i++) {
+    if (fixed[i]) { F0[i] = fixVal[i]; continue; }
+    const x = SX[i], z = SZ[i];
+    let f = -Infinity;
+    edgesOf(i, (e, t) => {
+      let v;
+      if (e.elev) {
+        const a = nodes[e.a], b = nodes[e.b];
+        // Never below the imported deck (that is the water clearance), and
+        // never INTO the ground mid-span: the importer only floored the nodes,
+        // so a long span's chord could pass under a crest.
+        v = Math.max(a.y + (b.y - a.y) * t + ROAD_LIFT * 0.3, T(x, z) + ROAD_LIFT + 0.1);
+      } else {
+        const px = -e.dz, pz = e.dx, s = gx[i] * px + gz[i] * pz, hw = e.hw;
+        v = -Infinity;
+        for (const o of [-hw, -hw / 2, 0, hw / 2, hw]) v = Math.max(v, T(x + px * o, z + pz * o) - s * o);
+        v += ROAD_LIFT;
+      }
+      if (v > f) f = v;
+    });
+    F0[i] = f;
+  }
+
+  // --- distance to the nearest anchor ---
+  // ...and the cone every graded road may climb out of an anchor within: the
+  // lowest of (anchor height + GRADE_CAP x distance) over all anchors.
+  const dFix = new Float64Array(N).fill(Infinity);
+  const capFix = new Float64Array(N).fill(Infinity);
+  const GRADE_CAP = 0.08;
+  {
+    const st = [];
+    for (let i = 0; i < N; i++) if (fixed[i]) { dFix[i] = 0; capFix[i] = fixVal[i]; st.push(i); }
+    while (st.length) {
+      const u = st.pop(), l = adj[u];
+      for (let q = 0; q < l.length; q += 3) {
+        const j = l[q], nd = dFix[u] + l[q + 1], nc = capFix[u] + l[q + 1] * GRADE_CAP;
+        let moved = false;
+        if (nd < dFix[j] && nd < 400) { dFix[j] = nd; moved = true; }
+        if (nc < capFix[j]) { capFix[j] = nc; moved = true; }
+        if (moved) st.push(j);
+      }
+    }
+  }
+
+  // --- overpasses ---
+  // A deck is over whatever it crosses without sharing a node. Two decks: the
+  // higher imported one is on top. Near-parallel pairs are a merge, not a
+  // crossing.
+  const CELL = 100, grid = new Map();
+  for (let ei = 0; ei < edges.length; ei++) {
+    const e = edges[ei];
+    if (e.tunnel) continue;
+    const a = nodes[e.a], b = nodes[e.b];
+    for (let cx = Math.floor(Math.min(a.x, b.x) / CELL); cx <= Math.floor(Math.max(a.x, b.x) / CELL); cx++)
+      for (let cz = Math.floor(Math.min(a.z, b.z) / CELL); cz <= Math.floor(Math.max(a.z, b.z) / CELL); cz++) {
+        const k = skey(cx, cz);
+        let l = grid.get(k);
+        if (!l) grid.set(k, (l = []));
+        l.push(ei);
+      }
+  }
+  const crossings = [];
+  for (let ai = 0; ai < edges.length; ai++) {
+    const A = edges[ai];
+    if (!A.elev || !A.prof || A.lock) continue;
+    const p0 = nodes[A.a], p1 = nodes[A.b];
+    const seen = new Set();
+    for (let cx = Math.floor(Math.min(p0.x, p1.x) / CELL); cx <= Math.floor(Math.max(p0.x, p1.x) / CELL); cx++)
+      for (let cz = Math.floor(Math.min(p0.z, p1.z) / CELL); cz <= Math.floor(Math.max(p0.z, p1.z) / CELL); cz++) {
+        const l = grid.get(skey(cx, cz));
+        if (!l) continue;
+        for (const bi of l) {
+          if (bi === ai || seen.has(bi)) continue;
+          seen.add(bi);
+          const B = edges[bi];
+          if (A.a === B.a || A.a === B.b || A.b === B.a || A.b === B.b) continue;
+          const sin = Math.abs(A.dx * B.dz - A.dz * B.dx);
+          if (sin < 0.26) continue;
+          const r0 = nodes[B.a], r1 = nodes[B.b];
+          const dd = (p1.x - p0.x) * (r1.z - r0.z) - (p1.z - p0.z) * (r1.x - r0.x);
+          const t = ((r0.x - p0.x) * (r1.z - r0.z) - (r0.z - p0.z) * (r1.x - r0.x)) / dd;
+          const u = ((r0.x - p0.x) * (p1.z - p0.z) - (r0.z - p0.z) * (p1.x - p0.x)) / dd;
+          if (!(t > 0 && t < 1 && u > 0 && u < 1)) continue;
+          if (B.elev) {
+            const ya = p0.y + (p1.y - p0.y) * t, yb = r0.y + (r1.y - r0.y) * u;
+            if (yb > ya || (yb === ya && bi < ai)) continue;
+          }
+          const cos = Math.abs(A.dx * B.dx + A.dz * B.dz);
+          crossings.push({
+            ai, bi, t, u,
+            x: p0.x + (p1.x - p0.x) * t, z: p0.z + (p1.z - p0.z) * t,
+            ext: Math.min(45, B.hw / sin + (A.hw * cos) / sin + 3),
+          });
+        }
+      }
+  }
+
+  // --- solve ---
+  const H = new Float64Array(F0);
+  const f = new Float64Array(N), D = new Float64Array(N), C = new Float64Array(N);
+  const Fg = new Float64Array(N);
+  const hAt = (e, t) => {
+    const x = t * e.pk, i = Math.min(e.pk - 1, Math.floor(x)), fr = x - i;
+    return H[e.ps[i]] * (1 - fr) + H[e.ps[i + 1]] * fr;
+  };
+  let raised = 0, refused = 0;
+  for (let pass = 0; pass < 3; pass++) {
+    f.set(F0);
+    raised = 0; refused = 0;
+    for (const c of crossings) {
+      const A = edges[c.ai], B = edges[c.bi];
+      const under = B.prof ? hAt(B, c.u) : T(c.x, c.z) + ROAD_LIFT;
+      const target = under + OVER_CLEAR;
+      const sc = A.ps[Math.round(c.t * A.pk)];
+      const rise = target - F0[sc];
+      if (rise <= 0) continue;
+      if (dFix[sc] - c.ext < rise / MAX_CLIMB) { refused++; continue; }
+      raised++;
+      // Per sample, not just at the crossing: the plateau spreads by graph
+      // distance and can run through a node onto a branch right beside a
+      // different anchor, where the same clearance is a 2 m step in 2.5 m.
+      for (const j of around(sc, c.ext)) {
+        if (fixed[j]) continue;
+        const v = Math.min(target, F0[j] + MAX_CLIMB * dFix[j]);
+        if (f[j] < v) f[j] = v;
+      }
+    }
+    // Overlapping carriageways rise to each other's BASE floor, once. Taking
+    // the neighbour's solved height from the previous pass instead ratcheted:
+    // each pass raised a sample to a neighbour already raised by ITS
+    // neighbour, so a cluster of parallel carriageways climbed to the highest
+    // height anywhere in it. Measured: mean fill 0.68 -> 1.38 m, worst 15 m,
+    // freeway 3 m grade breaks 1.53 % -> 2.01 % and 0.5 m jolts 156 -> 668.
+    // ...and no higher than a climb out of the nearest anchor allows. A
+    // coupled neighbour up to 2 m higher, beside a pinned at-grade node, is a
+    // step with nowhere to ramp: 2.3 m inside 2.5 m at the first sample of a
+    // deck, and verify's riders fell off it.
+    for (let q = 0; q < couple.length; q += 2) {
+      const i = couple[q], j = couple[q + 1];
+      const v = Math.min(F0[j], capFix[i]);
+      if (v > f[i]) f[i] = v;
+    }
+    for (let i = 0; i < N; i++) {
+      if (fixed[i]) { D[i] = f[i]; continue; }
+      let m = f[i];
+      for (const j of around(i, PROF_R)) if (f[j] > m) m = f[j];
+      D[i] = m;
+    }
+    C.set(D);
+    const st = [];
+    for (let i = 0; i < N; i++) if (f[i] > F0[i] + 0.01) st.push(i);
+    while (st.length) {
+      const u = st.pop(), l = adj[u];
+      for (let q = 0; q < l.length; q += 3) {
+        const j = l[q], cand = C[u] - l[q + 2] * l[q + 1];
+        if (cand > C[j] + 1e-4 && !fixed[j]) { C[j] = cand; st.push(j); }
+      }
+    }
+    // The floor with its steps ramped: an overpass clearance is a plateau in
+    // f with vertical edges, and wherever the cap below pulls the profile
+    // down onto the floor, those edges become cliffs in the road. Measured
+    // with max(f, cap) the real falls off a deck in verify's ride went 46 ->
+    // 86. No floor step is steeper than FLOOR_RAMP once ramped, and the ramp
+    // only ever raises.
+    const FLOOR_RAMP = 0.15;
+    Fg.set(f);
+    {
+      // Ramped from RAISED samples only -- clearance and coupling floors, the
+      // ones with vertical edges. Ramping every sample lifted a steep imported
+      // floor onto a 15 % line hung from its top and pushed the whole climb
+      // against the pinned anchor: an 84 % first piece on the west-rim pier
+      // decks. A continuous floor is left exactly as imported.
+      const st = [];
+      for (let i = 0; i < N; i++) if (f[i] > F0[i] + 0.01) st.push(i);
+      while (st.length) {
+        const u = st.pop(), l = adj[u];
+        for (let q = 0; q < l.length; q += 3) {
+          // Bounded by the same climb out of the nearest anchor that the
+          // clearance floors obey, or the ramp itself lands on the pinned
+          // node as the cliff: a street deck at (1913, 7020) stood 2.8 m
+          // above its anchor 5 m in.
+          const j = l[q];
+          const cand = Math.min(Fg[u] - FLOOR_RAMP * l[q + 1], F0[j] + MAX_CLIMB * dFix[j]);
+          if (cand > Fg[j] + 1e-4 && !fixed[j]) { Fg[j] = cand; st.push(j); }
+        }
+      }
+    }
+    for (let i = 0; i < N; i++) {
+      if (fixed[i]) { H[i] = fixVal[i]; continue; }
+      let s = 0, sw = 0;
+      for (const j of around(i, PROF_R)) { s += C[j] * W[j]; sw += W[j]; }
+      const h = sw > 0 ? s / sw : C[i];
+      // Out of an anchor the profile may climb no faster than GRADE_CAP
+      // unless a floor demands it. A smoothstep taper used to do this job and
+      // squeezed whatever the envelope added into its first ~20 m: 2-3 m of
+      // rise within 9 m at deck ends, and verify's riders fell off them.
+      H[i] = Math.max(Fg[i], Math.min(h, capFix[i]));
+    }
+  }
+
+  // --- publish ---
+  let fillSum = 0, fillN = 0, worstFill = 0;
+  for (const e of edges) {
+    if (!e.prof) continue;
+    const k = e.pk;
+    e.ph = new Float32Array(k + 1);
+    e.pg = new Float32Array(k + 1);
+    const px = -e.dz, pz = e.dx;
+    for (let i = 0; i <= k; i++) {
+      const v = e.ps[i];
+      e.ph[i] = H[v];
+      if (!e.elev) e.pg[i] = gx[v] * px + gz[v] * pz;
+    }
+    if (e.elev) continue;
+    // Embankment either side: from the carriageway edge down at BERM to where
+    // it meets the ground. [edgeY, width, toeY] per sample, left then right.
+    e.pe = new Float32Array((k + 1) * 6);
+    let widest = 0;
+    const a = nodes[e.a];
+    for (let i = 0; i <= k; i++) {
+      const cx = a.x + e.dx * (e.len * i) / k, cz = a.z + e.dz * (e.len * i) / k;
+      const tc = T(cx, cz);
+      fillSum += e.ph[i] - ROAD_LIFT - tc; fillN++;
+      if (e.ph[i] - ROAD_LIFT - tc > worstFill) worstFill = e.ph[i] - ROAD_LIFT - tc;
+      for (let s = 0; s < 2; s++) {
+        const sg = s === 0 ? 1 : -1;
+        const ex = cx + px * sg * e.hw, ez = cz + pz * sg * e.hw;
+        const ey = e.ph[i] + e.pg[i] * sg * e.hw;
+        const drop = ey - T(ex, ez);
+        const w = drop > 0.05 ? drop * BERM : 0;
+        const ty = T(ex + px * sg * w, ez + pz * sg * w) - 0.05;
+        e.pe[i * 6 + s * 3] = ey; e.pe[i * 6 + s * 3 + 1] = w; e.pe[i * 6 + s * 3 + 2] = ty;
+        if (w > widest) widest = w;
+      }
+    }
+    e.pbw = widest;
+  }
+  for (const [ni, v] of nodeVar) {
+    const n = nodes[ni];
+    n.ph = H[v];
+    // A graded node's y is its road, as an elevated node's always was: the
+    // surface is y + 0.09. A ground node on a 3 m fill left at terrain height
+    // is a node three metres under its own carriageway, and anything starting
+    // "at the node" -- a race marker, verify's deck rides -- starts inside the
+    // embankment. At an anchor the profile IS the ground plus lift, so this
+    // moves it 21 cm and nothing drawn from it (the square reads terrain).
+    n.y = H[v] - ROAD_LIFT * 0.3;
+  }
+  cityStats.gradedSamples = N;
+  cityStats.overpassesRaised = raised;
+  cityStats.overpassesRefused = refused;
+  cityStats.fillMean = +(fillSum / Math.max(1, fillN)).toFixed(2);
+  cityStats.fillWorst = +worstFill.toFixed(2);
+}
+
+/** Profile height and cross-slope along a graded edge, at parameter t. */
+function profAt(e, t) {
+  const x = clamp(t, 0, 1) * e.pk;
+  const i = Math.min(e.pk - 1, Math.floor(x)), fr = x - i;
+  return {
+    h: e.ph[i] * (1 - fr) + e.ph[i + 1] * fr,
+    s: e.pg[i] * (1 - fr) + e.pg[i + 1] * fr,
+    i, fr,
+  };
+}
+
 export function* cityGenerator(md) {
   yield { p: 0.02, msg: 'Unpacking the street graph' };
 
@@ -528,9 +1033,44 @@ export function* cityGenerator(md) {
   // ...and tunnel decks, which are the same contract from below: a drivable
   // surface at the edge's own heights that groundAt's nearest-deck rule picks
   // when you are down there and ignores when you are on the street above.
+  yield { p: 0.92, msg: 'Grading the freeways' };
+  gradeRoads(g.nodes, g.edges);
+
   const surfaces = [];
   const isPortal = (ni) => g.nodes[ni].e.some((ei) => !g.edges[ei].tunnel);
   for (const e of g.edges) {
+    // A graded road is a deck to groundAt, one piece per profile sample, so a
+    // car rides the profile that is drawn rather than the terrain under it --
+    // every wheel sample, not just the centre whose lift was scanned. Ground
+    // freeways carry their cross-slope as `sa`/`sb` across (px, pz).
+    if (e.prof) {
+      const a = g.nodes[e.a];
+      const px = -e.dz, pz = e.dx;
+      const continued = (ni) => g.nodes[ni].e.some((oi) => g.edges[oi] !== e && g.edges[oi].prof);
+      const ca = continued(e.a), cb = continued(e.b);
+      for (let i = 0; i < e.pk; i++) {
+        const s0 = (e.len * i) / e.pk, s1 = (e.len * (i + 1)) / e.pk;
+        surfaces.push({
+          ax: a.x + e.dx * s0, az: a.z + e.dz * s0, ay: e.ph[i] - ROAD_LIFT * 0.3,
+          bx: a.x + e.dx * s1, bz: a.z + e.dz * s1, by: e.ph[i + 1] - ROAD_LIFT * 0.3,
+          // A deck catches 1.5 m past its edge, as it always has. Pulling
+          // that in to the drawn parapet (hw + 0.6) was tried to stop parallel
+          // decks' fringes picking cars up, and bought little -- samples more
+          // than 10 cm off the drawn deck at I-5 downtown went 182 -> 166 of
+          // 1656 -- while by SR-99's north portal the carved ramp falls away
+          // under a locked deck and the later capture left verify's approach
+          // walk 2.5 m under it, where master catches it.
+          hw: e.elev ? e.hw + 1.5 : e.hw + 0.4,
+          sa: e.pg[i], sb: e.pg[i + 1], px, pz,
+          // Continued ends: another piece -- of this edge, or the graded
+          // edge carrying on through the node -- answers past them (see
+          // groundAt). An at-grade end may extend; the square takes over.
+          in0: i > 0 || ca, in1: i < e.pk - 1 || cb,
+          tun: false, mouth: false,
+        });
+      }
+      continue;
+    }
     if (!e.elev && !e.tunnel) continue;
     const a = g.nodes[e.a], b = g.nodes[e.b];
     surfaces.push({ ax: a.x, az: a.z, ay: a.y, bx: b.x, bz: b.z, by: b.y, hw: e.hw + 1.5,
@@ -681,6 +1221,22 @@ export function* cityGenerator(md) {
             if (e.elev || e.tunnel) continue;
             const a = g.nodes[e.a], b = g.nodes[e.b];
             const r = distToSeg(x, z, a.x, a.z, b.x, b.z);
+            if (e.prof) {
+              // On the carriageway a graded road answers through groundAt's
+              // deck query, per sample and with its camber. Off it, the
+              // embankment world.meshGraded draws: a straight batter from
+              // the carriageway edge to the toe, mirrored exactly here.
+              if (r.d <= e.hw || r.d > e.hw + e.pbw || r.t <= 0 || r.t >= 1) continue;
+              const side = ((x - r.x) * -e.dz + (z - r.z) * e.dx) >= 0 ? 0 : 3;
+              const P = profAt(e, r.t), o6 = P.i * 6 + side, o7 = o6 + 6;
+              const ey = e.pe[o6] * (1 - P.fr) + e.pe[o7] * P.fr;
+              const w = e.pe[o6 + 1] * (1 - P.fr) + e.pe[o7 + 1] * P.fr;
+              const ty = e.pe[o6 + 2] * (1 - P.fr) + e.pe[o7 + 2] * P.fr;
+              if (w <= 0 || r.d - e.hw >= w) continue;
+              const l = ey + (ty - ey) * ((r.d - e.hw) / w) - G.terrainHeight(x, z);
+              if (l > lift) lift = l;
+              continue;
+            }
             const outer = e.hw + walkWidth(e.cls);
             if (r.d > outer) continue;
             let l = r.d <= e.hw ? ROAD_LIFT : WALK_LIFT;
@@ -724,7 +1280,9 @@ export function* cityGenerator(md) {
           if (!l) continue;
           for (const ni of l) {
             const n = g.nodes[ni];
-            if (n.elev) continue;
+            // world.meshNode draws no square at a graded node that is not an
+            // at-grade junction: the strips are mitred into one another there.
+            if (n.elev || (n.prof && !n.anchor)) continue;
             if (n.e.length < 2) continue;
             let hw = 0, rot = 0, sw = 0;
             for (const ei of n.e) {
@@ -787,7 +1345,33 @@ export function* cityGenerator(md) {
           // position a car can physically reach, bend corners included.
           const margin = s.tun ? 4.0 : 0;
           if (r.d > s.hw + margin) continue;
-          const y = s.ay + (s.by - s.ay) * r.t + ROAD_LIFT * 0.3;
+          let y;
+          if (s.px !== undefined) {
+            // A GRADED ROAD IS MANY SHORT PIECES, and distToSeg clamps. Past
+            // a piece's end the clamped answer is that end's height held
+            // flat, and the nearest-to-curY rule prefers whichever flat
+            // extension sits higher -- on a climb, always the piece ahead. A
+            // car rode the profile as a staircase: 17.9 % of 3 m steps broke
+            // grade by 5 % against 0.2 % on the profile itself.
+            //
+            // So a piece extrapolates along its own grade for up to 3 m past
+            // either end -- enough to cover the outside of a mitred bend,
+            // and within a centimetre of its neighbour's answer -- and past
+            // that yields to the neighbour wherever one continues.
+            const lx = s.bx - s.ax, lz = s.bz - s.az, L = Math.sqrt(lx * lx + lz * lz);
+            const tu = ((x - s.ax) * lx + (z - s.az) * lz) / (L * L), over = 3 / L;
+            if ((s.in0 && tu < -over) || (s.in1 && tu > 1 + over)) continue;
+            const tt = tu < -over ? -over : tu > 1 + over ? 1 + over : tu;
+            y = s.ay + (s.by - s.ay) * tt + ROAD_LIFT * 0.3;
+            // Cambered with its hillside (see gradeRoads), across the piece's
+            // own perpendicular so it holds past the ends too.
+            if (s.sa || s.sb) {
+              const tc = tu < 0 ? 0 : tu > 1 ? 1 : tu;
+              y += (s.sa + (s.sb - s.sa) * tc) * ((x - s.ax) * s.px + (z - s.az) * s.pz);
+            }
+          } else {
+            y = s.ay + (s.by - s.ay) * r.t + ROAD_LIFT * 0.3;
+          }
           if (curY == null) {
             // No reference height -- a spawn or a placement query. The highest
             // deck is the only sane answer, and is what this always did.
@@ -988,11 +1572,61 @@ export function* cityGenerator(md) {
             // reason to leave a hole in the footpath under it.
             if (e.elev && !includeElev) continue;
             const a = g.nodes[e.a], b = g.nodes[e.b];
-            if (distToSeg(x, z, a.x, a.z, b.x, b.z).d <= e.hw + pad) return true;
+            // A graded road's embankment is part of it: a tree on the batter
+            // is buried to its canopy, a pavement piece on it floats.
+            if (distToSeg(x, z, a.x, a.z, b.x, b.z).d <= e.hw + pad + (e.pbw || 0)) return true;
           }
         }
       }
       return false;
+    },
+
+    /** Profile height and cross-slope of graded edge `e` at parameter t. */
+    profAt,
+
+    /**
+     * Is (x,z) inside some OTHER road's carriageway, at a surface within 1.6 m
+     * of height y?
+     *
+     * For anything that must not stand on, or be painted across, a carriageway
+     * it does not belong to: a deck's parapet where a ramp's deck overlaps it,
+     * a lane line where a ramp runs into the main line. Height matters, because
+     * a street six metres under a deck is not in the way of its parapet.
+     *
+     * Only the INTERIOR of a segment counts. At a straight-through joint the
+     * next piece's end is right beside this piece's parapet and paint, and
+     * clamping to that endpoint would open every rail and trim every line at
+     * every node.
+     */
+    carriagewayAt(x, z, y, skip, tol = 1.6) {
+      const c0 = Math.floor((x - MAX_HW) / CHUNK), c1 = Math.floor((x + MAX_HW) / CHUNK);
+      const d0 = Math.floor((z - MAX_HW) / CHUNK), d1 = Math.floor((z + MAX_HW) / CHUNK);
+      for (let cx = c0; cx <= c1; cx++) {
+        for (let cz = d0; cz <= d1; cz++) {
+          const c = chunks.get(ck(cx, cz));
+          if (!c) continue;
+          for (const ei of c.edges) {
+            if (ei === skip) continue;
+            const e = g.edges[ei];
+            if (e.tunnel) continue;
+            const a = g.nodes[e.a], b = g.nodes[e.b];
+            const r = distToSeg(x, z, a.x, a.z, b.x, b.z);
+            if (r.t <= 0.001 || r.t >= 0.999 || r.d > e.hw - 0.3) continue;
+            let sy;
+            if (e.prof) {
+              const P = profAt(e, r.t);
+              sy = P.h + P.s * ((x - r.x) * -e.dz + (z - r.z) * e.dx);
+            } else {
+              sy = G.terrainHeight(x, z) + ROAD_LIFT;
+            }
+            // The edge index + 1, so a caller that needs to know WHICH road
+            // (a median barrier drawn once for a pair) can have it and
+            // everyone else can treat it as a boolean.
+            if (Math.abs(sy - y) < tol) return ei + 1;
+          }
+        }
+      }
+      return 0;
     },
 
     /**

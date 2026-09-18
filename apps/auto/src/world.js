@@ -1889,20 +1889,51 @@ varying vec3 vFarTint;`)
    * splayed and never touch. Mitreing runs both spans' edges through one shared
    * point, which is what makes the rail continuous around a curve.
    */
+  /**
+   * The two graded edges at a node that carry straight on through it, or null.
+   *
+   * Chosen once per node and MUTUALLY: the pair whose directions line up best.
+   * If each edge picked its own best partner, a main line could pick the ramp
+   * while the ramp picked the main line's other half, and the three would
+   * mitre onto three different points -- the splayed joint all over again.
+   * Same class is preferred, so a diverge keeps the freeway continuous and the
+   * ramp square-ended inside it.
+   */
+  continuation(ni) {
+    const city = this.city, n = city.nodes[ni];
+    let pa = -1, pb = -1, best = 0.5;
+    for (let p = 0; p < n.e.length; p++) {
+      const ea = city.edges[n.e[p]];
+      if (!ea.prof) continue;
+      const ax = ni === ea.b ? ea.dx : -ea.dx, az = ni === ea.b ? ea.dz : -ea.dz;
+      for (let q = p + 1; q < n.e.length; q++) {
+        const eb = city.edges[n.e[q]];
+        if (!eb.prof) continue;
+        const bx = ni === eb.a ? eb.dx : -eb.dx, bz = ni === eb.a ? eb.dz : -eb.dz;
+        const c = ax * bx + az * bz - (ea.cls === eb.cls ? 0 : 0.1);
+        if (c > best) { best = c; pa = n.e[p]; pb = n.e[q]; }
+      }
+    }
+    return pa < 0 ? null : [pa, pb];
+  }
+
   deckEdgePoint(ni, e, sg, w) {
     const city = this.city;
     const n = city.nodes[ni];
     let ox = -e.dz * sg, oz = e.dx * sg;
     let dist = w;
-    let other = null, count = 0;
-    for (const oi of n.e) {
-      const o = city.edges[oi];
-      if (!o.elev || o === e) continue;
-      other = o; count++;
+    // Mitre into the continuation, whatever else meets here. This used to
+    // mitre only a node with exactly one other deck of the same width, so
+    // every merge, every lane-count change and every bridge touchdown onto
+    // ground freeway was square-ended -- and a square end at a bend is a
+    // wedge of missing tarmac outside it and an overlap inside.
+    const pair = this.continuation(ni);
+    let other = null;
+    if (pair) {
+      const e0 = city.edges[pair[0]], e1 = city.edges[pair[1]];
+      if (e0 === e) other = e1; else if (e1 === e) other = e0;
     }
-    // Only a simple two-span joint can be mitred; a ramp merge has no single
-    // continuation to aim at, so it keeps the square end.
-    if (count === 1 && Math.abs(other.hw - e.hw) < 0.01) {
+    if (other) {
       let qx = -other.dz * sg, qz = other.dx * sg;
       if (qx * ox + qz * oz < 0) { qx = -qx; qz = -qz; }
       let mx = ox + qx, mz = oz + qz;
@@ -1925,7 +1956,129 @@ varying vec3 vFarTint;`)
    * neighbouring span. Barriers used to be independent boxes centred on segment
    * midpoints, which is why they didn't line up end to end.
    */
-  meshViaduct(road, flat, e, a, b) {
+  /**
+   * An elevated span on its graded profile: deck, girder, parapets, piers.
+   *
+   * The old span was ONE quad from node height to node height, so it could
+   * only ever be a straight ramp, and an overpass that has to clear the road
+   * under it in the middle could not be drawn at all. Lofting along the
+   * profile samples draws whatever gradeRoads decided, and the mitred edge
+   * lines still keep deck, girder and rail registered with the next span.
+   *
+   * A parapet is not built where it would stand on another carriageway. Each
+   * span offsets its rails by its own perpendicular, so at a merge the main
+   * line's rail walled the ramp off and the ramp's inner rail ran straight
+   * across the main line's lanes -- the white walls standing in the middle of
+   * I-5 downtown. Where a rail piece is inside another road's carriageway at
+   * the same level it is left out and the girder face stops at deck level.
+   */
+  meshGradedDeck(road, flat, e, a, b, ei) {
+    const GIRDER = 1.35, PARAPET = 0.55, RAIL = 0.95;
+    const conc = [0.68, 0.68, 0.66], concLo = [0.5, 0.5, 0.49];
+    const hw = e.hw, k = e.pk;
+    const along = Math.atan2(e.dx, e.dz);
+    const run = {}, deck = {};
+    for (const sg of [-1, 1]) {
+      const [rsx, rsz] = this.deckEdgePoint(e.a, e, sg, hw);
+      const [rex, rez] = this.deckEdgePoint(e.b, e, sg, hw);
+      run[sg] = { sx: rsx, sz: rsz, ex: rex, ez: rez };
+      const [dsx, dsz] = this.deckEdgePoint(e.a, e, sg, hw + PARAPET);
+      const [dex, dez] = this.deckEdgePoint(e.b, e, sg, hw + PARAPET);
+      deck[sg] = { sx: dsx, sz: dsz, ex: dex, ez: dez };
+    }
+    const at = (c, t) => [c.sx + (c.ex - c.sx) * t, c.sz + (c.ez - c.sz) * t];
+    // Drawn 3 cm under the standing height, as the old deck was (y + 0.06
+    // drawn against y + 0.09 stood on).
+    const Y = (i) => e.ph[i] - 0.03;
+    const col = e.cls === 'hwy' ? [0.92, 0.92, 0.92] : [1, 1, 1];
+    const seg = e.len / k, U = (2 * hw) / ROAD_TILE;
+    const wasOpen = { 1: null, '-1': null };
+    for (let i = 0; i < k; i++) {
+      const t0 = i / k, t1 = (i + 1) / k, y0 = Y(i), y1 = Y(i + 1);
+      const [l0x, l0z] = at(run[1], t0), [l1x, l1z] = at(run[1], t1);
+      const [r0x, r0z] = at(run[-1], t0), [r1x, r1z] = at(run[-1], t1);
+      const v0 = (i * seg) / ROAD_TILE, v1 = ((i + 1) * seg) / ROAD_TILE;
+      road.quad([l0x, y0, l0z], [r0x, y0, r0z], [r1x, y1, r1z], [l1x, y1, l1z],
+        [0, 1, 0], [0, v0, U, v0, U, v1, 0, v1], col);
+      const [p0x, p0z] = at(deck[1], t0), [p1x, p1z] = at(deck[1], t1);
+      const [q0x, q0z] = at(deck[-1], t0), [q1x, q1z] = at(deck[-1], t1);
+      flat.quad([q0x, y0 - GIRDER, q0z], [p0x, y0 - GIRDER, p0z],
+        [p1x, y1 - GIRDER, p1z], [q1x, y1 - GIRDER, q1z],
+        [0, -1, 0], [0, 0, 1, 0, 1, 1, 0, 1], conc);
+      for (const sg of [-1, 1]) {
+        const R0 = at(run[sg], t0), R1 = at(run[sg], t1);
+        const D0 = at(deck[sg], t0), D1 = at(deck[sg], t1);
+        const ox = -e.dz * sg, oz = e.dx * sg;
+        const mx = (R0[0] + R1[0] + D0[0] + D1[0]) / 4, mz = (R0[1] + R1[1] + D0[1] + D1[1]) / 4;
+        const my = (y0 + y1) / 2 + 0.03;
+        let open = !!this.city.carriagewayAt(mx, mz, my, ei);
+        // Two decks side by side each built a parapet on the shared side --
+        // two walls back to back down the middle of the freeway, with a slot
+        // of daylight between them. Where another carriageway at this level
+        // starts within 3 m outboard, the pair gets ONE low median barrier,
+        // drawn by whichever edge has the lower index.
+        let median = false;
+        if (!open) {
+          const px3 = mx + ox * 3.0, pz3 = mz + oz * 3.0;
+          const nb = this.city.carriagewayAt(px3, pz3, my, ei, 0.9);
+          if (nb) {
+            if (nb - 1 > ei) median = true; else open = true;
+          } else if (this.city.carriagewayAt(px3, pz3, my + 2.2, ei, 1.3)) {
+            // The neighbour is up to 3.5 m HIGHER. Its own girder face is the
+            // wall on this side; a rail here was the second, lower wall of the
+            // staggered pair between I-5's express lanes and the main line --
+            // the decks there sit 0.6-3 m apart and 1.6-2.8 m out of level,
+            // just past the same-level test. A LOWER neighbour keeps this
+            // rail: that is a drop, and a drop wants a parapet.
+            open = true;
+          }
+        }
+        const top = open ? 0 : median ? 0.8 : RAIL;
+        flat.quad([D0[0], y0 - GIRDER, D0[1]], [D1[0], y1 - GIRDER, D1[1]],
+          [D1[0], y1 + top, D1[1]], [D0[0], y0 + top, D0[1]],
+          [ox, 0, oz], [0, 0, 1, 0, 1, 1, 0, 1], conc);
+        // Capping over the wall, or over the bare deck edge where it is open.
+        flat.quad([D0[0], y0 + top, D0[1]], [D1[0], y1 + top, D1[1]],
+          [R1[0], y1 + top, R1[1]], [R0[0], y0 + top, R0[1]],
+          [0, 1, 0], [0, 0, 1, 0, 1, 1, 0, 1], open ? concLo : conc);
+        if (!open) {
+          flat.quad([R0[0], y0, R0[1]], [R1[0], y1, R1[1]],
+            [R1[0], y1 + RAIL, R1[1]], [R0[0], y0 + RAIL, R0[1]],
+            [-ox, 0, -oz], [0, 0, 1, 0, 1, 1, 0, 1], conc);
+        }
+        // A rail that stops needs an end, or you see into a hollow wall.
+        if (wasOpen[sg] !== null && wasOpen[sg] !== open) {
+          flat.quad([R0[0], y0, R0[1]], [D0[0], y0, D0[1]],
+            [D0[0], y0 + RAIL, D0[1]], [R0[0], y0 + RAIL, R0[1]],
+            [e.dx * (open ? 1 : -1), 0, e.dz * (open ? 1 : -1)], [0, 0, 1, 0, 1, 1, 0, 1], conc);
+        }
+        wasOpen[sg] = open;
+      }
+    }
+    // Piers on a realistic bay, standing on the profile.
+    const bays = Math.max(1, Math.round(e.len / 52));
+    for (let p = 0; p < bays; p++) {
+      const t = (p + 0.5) / bays;
+      const cx = lerp(a.x, b.x, t), cz = lerp(a.z, b.z, t);
+      const capTop = this.city.profAt(e, t).h - 0.03 - GIRDER;
+      let base = G.terrainHeight(cx, cz);
+      if (capTop - base <= 4) continue;
+      if (G.isWater(cx, cz)) {
+        flat.prism(cx, base, cz, 4.2, 1.4 - base, 8, concLo);
+        flat.box(cx, 1.4, cz, 9.4, 0.55, 9.4, along, conc);
+        base = 1.95;
+      } else {
+        flat.prism(cx, base - 1.2, cz, 3.2, 1.7, 8, concLo);
+        base += 0.3;
+      }
+      flat.prism(cx, base, cz, 2.4, capTop - 1.8 - base, 8, conc);
+      flat.box(cx, capTop - 1.8, cz, (hw + PARAPET) * 1.9, 1.8, 3.6, along, concLo);
+    }
+    this.meshRoadMarks(flat, e, a, b, ei);
+  }
+
+  meshViaduct(road, flat, e, a, b, ei) {
+    if (e.prof) { this.meshGradedDeck(road, flat, e, a, b, ei); return; }
     const GIRDER = 1.35;  // structural depth below the running surface
     const PARAPET = 0.55; // parapet wall thickness, inboard of the deck edge
     const RAIL = 0.95;    // parapet height above the running surface
@@ -2028,7 +2181,14 @@ varying vec3 vFarTint;`)
     const bias = hash2(ei | 0, 7) * 0.03;
     if (hw < 4.0) return;                       // alleys and lanes are unmarked
     const px = -e.dz, pz = e.dx;
-    const yAt = (x, z) => G.terrainHeight(x, z) + MARK_Y + bias;
+    // A graded road paints on its profile. Decks draw 3 cm under the standing
+    // height and carry no bias; ground graded strips draw at it plus bias.
+    const yAt = e.prof
+      ? (x, z, t, o) => {
+        const P = this.city.profAt(e, t);
+        return e.elev ? P.h - 0.03 + 0.012 : P.h + P.s * o + bias + 0.012;
+      }
+      : (x, z) => G.terrainHeight(x, z) + MARK_Y + bias;
     const W = 0.06;                             // half-width of a painted line
     const WHITE = [0.94, 0.93, 0.88];
     const YELLOW = [0.88, 0.72, 0.2];
@@ -2038,14 +2198,19 @@ varying vec3 vFarTint;`)
       const t0 = from / e.len, t1 = to / e.len;
       const cx0 = lerp(a.x, b.x, t0) + px * off, cz0 = lerp(a.z, b.z, t0) + pz * off;
       const cx1 = lerp(a.x, b.x, t1) + px * off, cz1 = lerp(a.z, b.z, t1) + pz * off;
-      if (ei != null && this.city.roadCoveredAt((cx0 + cx1) / 2, (cz0 + cz1) / 2, ei)) return;
+      const mx = (cx0 + cx1) / 2, mz = (cz0 + cz1) / 2;
+      if (ei != null && this.city.roadCoveredAt(mx, mz, ei)) return;
+      // Paint does not cross another carriageway. A ramp's edge line used to
+      // run on across the main line's lanes at a merge, and the main line's
+      // across the ramp: lines crossing at a shallow angle in the gore.
+      if (e.prof && this.city.carriagewayAt(mx, mz, yAt(mx, mz, (t0 + t1) / 2, off), ei)) return;
       const l0x = cx0 + px * W, l0z = cz0 + pz * W, r0x = cx0 - px * W, r0z = cz0 - pz * W;
       const l1x = cx1 + px * W, l1z = cz1 + pz * W, r1x = cx1 - px * W, r1z = cz1 - pz * W;
       flat.quad(
-        [l0x, yAt(l0x, l0z), l0z],
-        [r0x, yAt(r0x, r0z), r0z],
-        [r1x, yAt(r1x, r1z), r1z],
-        [l1x, yAt(l1x, l1z), l1z],
+        [l0x, yAt(l0x, l0z, t0, off + W), l0z],
+        [r0x, yAt(r0x, r0z, t0, off - W), r0z],
+        [r1x, yAt(r1x, r1z, t1, off - W), r1z],
+        [l1x, yAt(l1x, l1z, t1, off + W), l1z],
         [0, 1, 0], ZERO_UV, col
       );
     };
@@ -2055,8 +2220,19 @@ varying vec3 vFarTint;`)
     // cross street it meets -- white lines cutting the carriageway diagonally
     // and centre dashes doubling back on themselves. The crossing itself is
     // bare tarmac, which is what a real junction mostly is.
-    const from = this.nodeRadius(e.a);
-    const till = e.len - this.nodeRadius(e.b);
+    //
+    // A graded node that is not an at-grade junction is not a crossing at all:
+    // it is where one ~40 m piece of freeway hands over to the next. Trimming
+    // there took nodeRadius -- the freeway's whole half-width -- off both ends
+    // of every piece, so only 60 % of 225 km of freeway carried any lines and
+    // I-5's edge lines were dashes with 14 m gaps. Crossing paint on those is
+    // stopped by the carriageway test above instead.
+    const trim = (ni) => {
+      const n = this.city.nodes[ni];
+      return n.prof && !n.anchor ? 0 : this.nodeRadius(ni);
+    };
+    const from = trim(e.a);
+    const till = e.len - trim(e.b);
     if (till <= from) return;
 
     // Edge lines, set in from the kerb by about a shoulder's width.
@@ -2628,8 +2804,111 @@ varying vec3 vFarTint;`)
       [px, 0, pz], ZERO_UV, conc);
   }
 
+  /**
+   * A graded ground freeway or ramp: tarmac on its profile rather than on the
+   * terrain, cambered with the hill, with an embankment down to the ground.
+   *
+   * Everything reads `e.ph` / `e.pg` / `e.pe`, the same arrays groundAt's
+   * per-sample decks and roadLift's batter are built from, so the drawn surface
+   * and the one you stand on agree by construction. The edge lines are the
+   * mitred ones decks use, so consecutive pieces meet edge to edge instead of
+   * each being square-ended with a junction square laid over the joint -- 8913
+   * of those squares sat on ground freeway, one every ~40 m of I-5.
+   */
+  meshGraded(road, flat, e, a, b, ei) {
+    const hw = e.hw, k = e.pk;
+    const px = -e.dz, pz = e.dx;
+    const bias = hash2(ei | 0, 7) * 0.03;
+    const col = e.cls === 'hwy' ? [0.92, 0.92, 0.92] : [1, 1, 1];
+    const across = Math.max(hw > 4.5 ? 3 : 1, Math.round((hw * 2) / 8));
+    const Ls = this.deckEdgePoint(e.a, e, 1, hw), Le = this.deckEdgePoint(e.b, e, 1, hw);
+    const Rs = this.deckEdgePoint(e.a, e, -1, hw), Re = this.deckEdgePoint(e.b, e, -1, hw);
+    // fr = 0 is the right-hand edge line (-hw), 1 the left (+hw).
+    const P = (t, fr) => {
+      const sx = Rs[0] + (Ls[0] - Rs[0]) * fr, sz = Rs[1] + (Ls[1] - Rs[1]) * fr;
+      const ex = Re[0] + (Le[0] - Re[0]) * fr, ez = Re[1] + (Le[1] - Re[1]) * fr;
+      return [sx + (ex - sx) * t, sz + (ez - sz) * t];
+    };
+    const Y = (i, o) => e.ph[i] + e.pg[i] * o + bias;
+    const wear = (o) => {
+      const f = Math.min(1, Math.abs(o) / Math.max(hw, 0.01));
+      const kk = (1 + 0.12 * (1 - f * f)) * (1 - 0.30 * Math.max(0, f - 0.55) / 0.45);
+      return [col[0] * kk, col[1] * kk, col[2] * kk];
+    };
+    const seg = e.len / k;
+    for (let i = 0; i < k; i++) {
+      const t0 = i / k, t1 = (i + 1) / k;
+      const v0 = (i * seg) / ROAD_TILE, v1 = ((i + 1) * seg) / ROAD_TILE;
+      const mx = lerp(a.x, b.x, (t0 + t1) / 2), mz = lerp(a.z, b.z, (t0 + t1) / 2);
+      if (this.city.roadCoveredAt(mx, mz, ei)) continue;
+      for (let c = 0; c < across; c++) {
+        const f0 = c / across, f1 = (c + 1) / across;
+        const o0 = -hw + 2 * hw * f0, o1 = -hw + 2 * hw * f1;
+        const [ax, az] = P(t0, f0), [bx, bz] = P(t0, f1);
+        const [cx, cz] = P(t1, f1), [dx, dz] = P(t1, f0);
+        road.quad(
+          [ax, Y(i, o0), az], [bx, Y(i, o1), bz], [cx, Y(i + 1, o1), cz], [dx, Y(i + 1, o0), dz],
+          [0, 1, 0], [f0 * 2 * hw / ROAD_TILE, v0, f1 * 2 * hw / ROAD_TILE, v0,
+            f1 * 2 * hw / ROAD_TILE, v1, f0 * 2 * hw / ROAD_TILE, v1],
+          [wear(o0), wear(o1), wear(o1), wear(o0)]
+        );
+      }
+    }
+    // Embankment. A draped road needed none -- it was the ground -- but a
+    // graded one stands proud of it wherever the envelope filled a dip or the
+    // camber lifted the low edge, and with nothing under that edge you see
+    // straight through to the terrain below. A batter at BERM, in verge
+    // colours, is what a real fill looks like from a car.
+    // Verge colours. The first pick read as sand under the tone curve: every
+    // median on graded I-5 turned beige where the draped road had lawn.
+    const grass = [0.3, 0.44, 0.21], dirt = [0.34, 0.35, 0.26];
+    const concrete = [0.62, 0.62, 0.6];
+    for (let s = 0; s < 2; s++) {
+      const sg = s === 0 ? 1 : -1, fr = s === 0 ? 1 : 0;
+      for (let i = 0; i < k; i++) {
+        const o0 = i * 6 + s * 3, o1 = o0 + 6;
+        const w0 = e.pe[o0 + 1], w1 = e.pe[o1 + 1];
+        if (w0 <= 0 && w1 <= 0) continue;
+        const [e0x, e0z] = P(i / k, fr), [e1x, e1z] = P((i + 1) / k, fr);
+        const ox = px * sg, oz = pz * sg;
+        // No batter under a neighbouring carriageway at this level: that strip
+        // is tarmac, and a grass slope drawn there shows through every gap
+        // between parallel lanes as a pale patch.
+        const wm = Math.min(1.5, (w0 + w1) / 4);
+        const bmx = (e0x + e1x) / 2 + ox * wm, bmz = (e0z + e1z) / 2 + oz * wm;
+        const ey = (e.pe[o0] + e.pe[o1]) / 2, ty = (e.pe[o0 + 2] + e.pe[o1 + 2]) / 2;
+        if (this.city.carriagewayAt(bmx, bmz, ey, ei)) continue;
+        // ...and no batter sweeping down OVER a lower carriageway. Beside I-5's
+        // express lanes a raised carriageway's slope came down across the lane
+        // next to it -- a wall of verge at windscreen height. A fill standing
+        // beside another road is held by a retaining wall, so that is drawn.
+        if (this.city.carriagewayAt(bmx, bmz, (ey + ty) / 2, ei, (ey - ty) / 2 + 0.3)) {
+          flat.quad(
+            [e0x, e.pe[o0] + bias - 0.02, e0z], [e1x, e.pe[o1] + bias - 0.02, e1z],
+            [e1x, G.terrainHeight(e1x, e1z) - 0.3, e1z], [e0x, G.terrainHeight(e0x, e0z) - 0.3, e0z],
+            [ox, 0, oz], [0, 0, 1, 0, 1, 1, 0, 1], concrete
+          );
+          continue;
+        }
+        flat.quad(
+          [e0x, e.pe[o0] + bias - 0.02, e0z], [e1x, e.pe[o1] + bias - 0.02, e1z],
+          [e1x + ox * w1, e.pe[o1 + 2], e1z + oz * w1], [e0x + ox * w0, e.pe[o0 + 2], e0z + oz * w0],
+          [ox * 0.55, 0.83, oz * 0.55], [0, 0, 1, 0, 1, 1, 0, 1], [dirt, dirt, grass, grass]
+        );
+      }
+    }
+    this.meshRoadMarks(flat, e, a, b, ei);
+  }
+
   meshRoad(road, walk, flat, glow, e, a, b, lod, ei) {
-    if (e.elev) { this.meshViaduct(road, flat, e, a, b); return; }
+    // Every deck and every freeway outside a portal is graded (citygen's
+    // gradeRoads). Decks keep their own mesher for the structure under them.
+    if (e.prof) {
+      if (e.elev) this.meshViaduct(road, flat, e, a, b, ei);
+      else this.meshGraded(road, flat, e, a, b, ei);
+      return;
+    }
+    if (e.elev) { this.meshViaduct(road, flat, e, a, b, ei); return; }
     // A bore is not a carriageway on the surface -- it is a carriageway in a
     // BOX. citygen gives tunnel nodes a real underground profile and registers
     // the deck with groundAt; this draws what you see driving it: deck, walls,
@@ -2951,16 +3230,15 @@ varying vec3 vFarTint;`)
         if (this.cutFloor(n.x + ox, n.z + oz)) return;
       }
     }
-    // Two elevated spans meeting head to head are already mitred into one
-    // another by meshViaduct, so a crossing square here is a horizontal patch
-    // laid across a sloping deck -- it pokes through on the uphill side and
-    // hangs in the air on the downhill one. A ramp merge keeps its square:
-    // there the spans are square-ended and the square is what closes the gap.
-    if (n.elev && n.e.length === 2) {
-      const e0 = city.edges[n.e[0]], e1 = city.edges[n.e[1]];
-      if (e0.elev && e1.elev && Math.abs(e0.hw - e1.hw) < 0.01
-        && Math.abs(e0.dx * e1.dx + e0.dz * e1.dz) > 0.5) return;
-    }
+    // A graded node that is not an at-grade junction gets no square. Its
+    // strips are mitred into their continuation (deckEdgePoint), and a
+    // horizontal square laid over a sloping, cambered profile pokes through on
+    // the uphill side and hangs in the air on the downhill one. That used to
+    // be decks only; ground freeway carried one every node -- 8913 squares,
+    // each 3 cm proud of the lanes and cutting the paint at both ends. A ramp
+    // at a merge ends inside the main line's carriageway, so nothing needs
+    // closing. citygen.nodeSurface() skips the same nodes.
+    if (n.prof && !n.anchor) return;
     let hw = 0;
     let rot = 0;
     let sw = 0;
@@ -3593,7 +3871,10 @@ varying vec3 vFarTint;`)
 
     for (const ei of ch.edges) {
       const e = city.edges[ei];
-      if (e.elev || e.cls === 'hwy') continue;
+      // A graded ramp's kerbside is its embankment, and furniture planted at
+      // terrain height there is buried to the lamp head or floats off the
+      // batter. Freeway ramps carry no street furniture anyway.
+      if (e.elev || e.prof || e.cls === 'hwy') continue;
       const a = city.nodes[e.a], b = city.nodes[e.b];
       const mx = (a.x + b.x) / 2, mz = (a.z + b.z) / 2;
       if (!own(mx, mz)) continue;

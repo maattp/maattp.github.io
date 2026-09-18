@@ -50,6 +50,16 @@ const SITES = [
   ['queen-anne-mcgraw', -1118, -3181],
   ['ud-45th', 1900, -4400],
   ['rainier-ave', 3200, 4200],
+  // Road-structure sites, each looked at twice: along the carriageway, and
+  // from the air (`[yaw, distance, height]` about the site itself), because a
+  // parapet standing in the wrong lane or an overpass lying on its street is
+  // obvious from above and nearly invisible from a driver's seat.
+  ['roads-i5-downtown-deck', 824, 782, 'elev', [160, 150, 60]],
+  ['roads-i5-express-walls', 760, 700, 'hwy', [150, 45, 22]],
+  ['roads-i5-south-deck', -31, 2500, 'hwy', [20, 160, 70]],
+  ['roads-mercer-overpass', -430, -1470, 'elev', [60, 120, 50]],
+  ['roads-i5-i90', 1400, 4260, 'hwy', [0, 220, 110]],
+  ['roads-ship-canal-deck', 1165, -3433, 'elev', [200, 140, 55]],
 ];
 
 function launch() {
@@ -108,9 +118,28 @@ async function main() {
 
     if (process.env.SURVEY_MUTATE) await evaluate(process.env.SURVEY_MUTATE);
     const sites = process.env.SURVEY_SITE
-      ? SITES.filter((s) => s[0] === process.env.SURVEY_SITE)
+      ? SITES.filter((s) => s[0].startsWith(process.env.SURVEY_SITE))
       : SITES.slice(0, N);
-    for (const [name, x, z, want] of sites) {
+    for (const [name, x, z, want, aerial] of sites) {
+      if (aerial) {
+        const [yaw, dist, height] = aerial;
+        await evaluate(`(() => {
+          const d = window.__dbg;
+          const pending = () => [...d.world.chunks.values()].filter((c) => c.lod !== c.wantLod).length;
+          for (let i = 0; i < 3000 && (i === 0 || pending() > 0); i++) d.world.update(${x}, ${z}, 60);
+          const gy = d.city.groundAt(${x}, ${z}, null);
+          const yaw = ${yaw} * Math.PI / 180;
+          d.camera.position.set(${x} - Math.sin(yaw) * ${dist}, gy + ${height}, ${z} - Math.cos(yaw) * ${dist});
+          d.camera.lookAt(${x}, gy, ${z});
+          d.sun.position.set(${x} - 150, gy + 230, ${z} - 110);
+          d.sun.target.position.set(${x}, gy, ${z}); d.sun.target.updateMatrixWorld();
+          d.camera.updateMatrixWorld(true);
+        })()`);
+        await sleep(6500);
+        const { result } = await send('Page.captureScreenshot', { format: 'png' });
+        writeFileSync(`${OUT}/${name}-aerial.png`, Buffer.from(result.data, 'base64'));
+        console.log(`  ${(name + '-aerial').padEnd(20)}`);
+      }
       const info = await evaluate(`(() => {
         const d = window.__dbg, c = d.city;
         // Nearest ground-level edge, and a camera posed just above its surface

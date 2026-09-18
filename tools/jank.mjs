@@ -497,6 +497,187 @@ const CHECKS = `(() => {
     add('walk-on-road', n, of, worst, 'pavement drawn as the top surface of a carriageway');
   }
 
+  // --- freeways as a car drives them --------------------------------------
+  //
+  // No render needed: walk every freeway chain at 3 m steps the way a vehicle
+  // tracks the ground -- groundAt with the previous height as the reference --
+  // and count where the grade breaks. 5 % between consecutive 3 m steps is
+  // about 1.5 g through the seat at 30 m/s. A step over 0.5 m is a jolt: the
+  // car was captured by, or dropped off, a different surface.
+  if (want('fwy-bump')) {
+    const worst = [];
+    let n = 0, of = 0, jolts = 0, sumAbs = 0;
+    for (const e of city.edges) {
+      if (e.cls !== 'hwy' || e.tunnel || e.len < 9) continue;
+      const a = city.nodes[e.a], b = city.nodes[e.b];
+      const steps = Math.floor(e.len / 3);
+      // Seed from the edge's own surface, not with no reference: with none,
+      // groundAt takes the HIGHEST deck, so every edge that starts under an
+      // overpass began on the overpass and "jolted" off it.
+      // A graded edge is seeded on its own profile: seeded at terrain under a
+      // 3 m fill, the walker "jolted" up the batter a step at a time.
+      let cur = (e.ph ? e.ph[0] : e.elev ? a.y + 0.09 : G.terrainHeight(a.x, a.z) + 0.3) + 0.5, y0 = null, g0 = null;
+      for (let k = 0; k <= steps; k++) {
+        const t = (k * 3) / e.len;
+        const x = a.x + (b.x - a.x) * t, z = a.z + (b.z - a.z) * t;
+        const y = city.groundAt(x, z, cur, city.roadLift(x, z));
+        if (y0 !== null) {
+          if (Math.abs(y - y0) > 0.5) {
+            jolts++;
+            if (worst.length < 6) worst.push({ x: Math.round(x), z: Math.round(z), jolt: +(y - y0).toFixed(2) });
+          } else {
+            const g = (y - y0) / 3;
+            if (g0 !== null) {
+              of++;
+              const dg = Math.abs(g - g0);
+              sumAbs += dg;
+              if (dg > 0.05) n++;
+            }
+            g0 = g;
+          }
+        }
+        y0 = y; cur = y + 0.5;
+      }
+    }
+    add('fwy-bump', n, of, worst, 'freeway 3 m steps whose grade changes by more than 5 % (mean |dgrade| '
+      + (100 * sumAbs / Math.max(1, of)).toFixed(2) + ' %; ' + jolts + ' steps jumped over 0.5 m)');
+  }
+
+  // Freeway sites: one per cluster of freeway nodes, deterministic. Shared by
+  // the two drawn-geometry freeway checks below.
+  const fwySites = (cap, seed) => {
+    const r = R(seed), out2 = [];
+    const es = city.edges.filter((e) => (e.cls === 'hwy' || e.cls === 'ramp') && !e.tunnel);
+    for (let i = 0; i < es.length * 4 && out2.length < cap; i++) {
+      const e = es[Math.floor(r() * es.length)];
+      const nd = city.nodes[e.a];
+      if (out2.some(([x, z]) => Math.abs(x - nd.x) < SITE_R && Math.abs(z - nd.z) < SITE_R)) continue;
+      out2.push([nd.x, nd.z]);
+    }
+    return out2;
+  };
+
+  // --- things standing on a freeway carriageway --------------------------
+  //
+  // Parapets from one deck standing in another deck's lanes, a low overpass
+  // soffit at windscreen height, a wall lying across a merge: anything DRAWN
+  // between 0.4 m and 4.2 m above a carriageway's own surface is something a
+  // driver hits or looks straight into. Raycast down through that band and
+  // count what is there, whatever put it there.
+  if (want('barrier-on-road')) {
+    d.scene.updateMatrixWorld(true);
+    const rc = new THREE.Raycaster();
+    const down = new THREE.Vector3(0, -1, 0);
+    const worst = [];
+    let n = 0, of = 0;
+    for (const [sx, sz] of fwySites(24, 97)) {
+      settle(sx, sz);
+      for (const e of city.edges) {
+        if ((e.cls !== 'hwy' && e.cls !== 'ramp') || e.tunnel || e.len < 12) continue;
+        const a = city.nodes[e.a], b = city.nodes[e.b];
+        if (!nearSite(a.x, a.z, sx, sz) || !nearSite(b.x, b.z, sx, sz)) continue;
+        const px = -e.dz, pz = e.dx;
+        for (let sI = 1; sI < 6; sI++) {
+          const t = sI / 6;
+          for (const o of [-0.7, 0, 0.7]) {
+            const x = a.x + (b.x - a.x) * t + px * o * e.hw, z = a.z + (b.z - a.z) * t + pz * o * e.hw;
+            // The edge's own surface: its graded profile, its deck, or the
+            // ground it drives on. Seeded at terrain under a graded fill,
+            // groundAt answered the terrain and the ray counted the road's
+            // own tarmac as something standing on it.
+            const est = e.ph ? city.profAt(e, t).h - 0.3
+              : e.elev ? a.y + (b.y - a.y) * t : G.terrainHeight(x, z) + 0.3;
+            const surf = city.groundAt(x, z, est + 0.3, city.roadLift(x, z));
+            rc.set(new THREE.Vector3(x, surf + 4.2, z), down);
+            rc.far = 3.8;
+            const hits = rc.intersectObject(world.group, true).filter((h) => h.object.isMesh);
+            of++;
+            if (hits.length) {
+              n++;
+              if (worst.length < 40) worst.push({ x: Math.round(x), z: Math.round(z), h: +(hits[0].point.y - surf).toFixed(2) });
+            }
+          }
+        }
+      }
+    }
+    add('barrier-on-road', n, of, worst, 'freeway carriageway samples with geometry 0.4-4.2 m above the surface');
+  }
+
+  // --- roads passing through each other ----------------------------------
+  //
+  // Where a deck crosses another road, raycast the crossing and measure the
+  // drawn gap between the top running surface and the next one under it. An
+  // overpass needs about 5 m; under 4.5 m the lower road drives into the
+  // girder, and under 1 m the two carriageways are simply stacked in one slab.
+  if (want('crossing-clash')) {
+    d.scene.updateMatrixWorld(true);
+    const rc = new THREE.Raycaster();
+    const down = new THREE.Vector3(0, -1, 0);
+    const X = [];
+    const cell = new Map();
+    const segs = city.edges.map((e, i) => i).filter((i) => !city.edges[i].tunnel);
+    for (const i of segs) {
+      const e = city.edges[i], a = city.nodes[e.a], b = city.nodes[e.b];
+      for (let cx = Math.floor(Math.min(a.x, b.x) / 100); cx <= Math.floor(Math.max(a.x, b.x) / 100); cx++)
+        for (let cz = Math.floor(Math.min(a.z, b.z) / 100); cz <= Math.floor(Math.max(a.z, b.z) / 100); cz++) {
+          const k = cx * 100003 + cz; let l = cell.get(k); if (!l) cell.set(k, (l = [])); l.push(i);
+        }
+    }
+    const seen = new Set();
+    for (const l of cell.values()) {
+      for (let p = 0; p < l.length; p++) for (let q = p + 1; q < l.length; q++) {
+        const i = l[p], j = l[q];
+        const key = i < j ? i + ':' + j : j + ':' + i;
+        if (seen.has(key)) continue; seen.add(key);
+        const A = city.edges[i], B = city.edges[j];
+        if (!A.elev && !B.elev) continue;
+        if (A.a === B.a || A.a === B.b || A.b === B.a || A.b === B.b) continue;
+        const p0 = city.nodes[A.a], p1 = city.nodes[A.b], r0 = city.nodes[B.a], r1 = city.nodes[B.b];
+        const dd = (p1.x - p0.x) * (r1.z - r0.z) - (p1.z - p0.z) * (r1.x - r0.x);
+        if (Math.abs(dd) < 1e-9) continue;
+        const t = ((r0.x - p0.x) * (r1.z - r0.z) - (r0.z - p0.z) * (r1.x - r0.x)) / dd;
+        const u = ((r0.x - p0.x) * (p1.z - p0.z) - (r0.z - p0.z) * (p1.x - p0.x)) / dd;
+        if (t <= 0 || t >= 1 || u <= 0 || u >= 1) continue;
+        // Near-parallel carriageways sharing a merge are not an overpass.
+        if (Math.abs(A.dx * B.dx + A.dz * B.dz) > 0.966) continue;
+        X.push([p0.x + (p1.x - p0.x) * t, p0.z + (p1.z - p0.z) * t]);
+      }
+    }
+    const sites = [];
+    for (const [x, z] of X) {
+      if (sites.some(([sx, sz]) => Math.abs(x - sx) < SITE_R && Math.abs(z - sz) < SITE_R)) continue;
+      sites.push([x, z]);
+    }
+    const worst = [];
+    let n = 0, of = 0;
+    const SITE_CAP = 30;
+    for (const [sx, sz] of sites.slice(0, SITE_CAP)) {
+      settle(sx, sz);
+      for (const [x, z] of X) {
+        if (!nearSite(x, z, sx, sz)) continue;
+        rc.set(new THREE.Vector3(x, G.terrainHeight(x, z) + 60, z), down);
+        rc.far = 120;
+        const ys = rc.intersectObject(world.group, true)
+          .filter((h) => h.object.isMesh && h.object.material === world.mats.road)
+          .map((h) => h.point.y);
+        if (!ys.length) continue;
+        of++;
+        // Next distinct surface below the top one, or the terrain.
+        let below = null;
+        for (const y of ys) if (y < ys[0] - 0.15) { below = y; break; }
+        if (below === null) below = G.terrainHeight(x, z);
+        const gap = ys[0] - below;
+        if (gap < 4.5) {
+          n++;
+          if (worst.length < 40) worst.push({ x: Math.round(x), z: Math.round(z), gap: +gap.toFixed(2) });
+        }
+      }
+    }
+    worst.sort((p, q) => p.gap - q.gap);
+    add('crossing-clash', n, of, worst, 'deck crossings with under 4.5 m between the top surface and the one below ('
+      + Math.min(SITE_CAP, sites.length) + ' of ' + sites.length + ' sites, ' + X.length + ' crossings)');
+  }
+
   return JSON.stringify(out);
 })()`;
 
