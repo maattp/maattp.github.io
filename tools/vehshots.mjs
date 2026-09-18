@@ -15,7 +15,7 @@ import { spawn } from 'node:child_process';
 import { writeFileSync, mkdirSync, rmSync } from 'node:fs';
 import { setTimeout as sleep } from 'node:timers/promises';
 
-const PORT = 9232;
+const PORT = +process.env.AUTO_CDP_PORT || 9232;
 const CHROME = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
 const HTTP_PORT = process.env.AUTO_HTTP_PORT || 8000;
 const TAG = process.argv[2] || 'now';
@@ -31,7 +31,7 @@ function launch() {
   return spawn(CHROME, [
     `--remote-debugging-port=${PORT}`, '--headless=new', '--use-gl=swiftshader',
     '--enable-unsafe-swiftshader', '--window-size=900,600', '--no-first-run',
-    '--user-data-dir=/tmp/auto-vshot-profile', 'about:blank',
+    `--user-data-dir=/tmp/auto-vshot-profile-${PORT}`, 'about:blank',
   ], { stdio: 'ignore' });
 }
 

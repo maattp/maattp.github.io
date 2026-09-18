@@ -17,7 +17,8 @@ import { spawn } from 'node:child_process';
 import { writeFileSync, mkdirSync } from 'node:fs';
 import { setTimeout as sleep } from 'node:timers/promises';
 
-const PORT = 9226;
+const HTTP_PORT = process.env.AUTO_HTTP_PORT || 8000;
+const PORT = +process.env.AUTO_CDP_PORT || 9226;
 const CHROME = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
 const OUT = 'tools/data/gait';
 const SHOTS = process.argv.includes('--shots');
@@ -38,7 +39,7 @@ function launch() {
     `--remote-debugging-port=${PORT}`, '--headless=new', '--use-gl=swiftshader',
     '--enable-unsafe-swiftshader', '--autoplay-policy=no-user-gesture-required',
     '--window-size=900,900', '--no-first-run',
-    '--user-data-dir=/tmp/auto-gait-profile', 'about:blank',
+    `--user-data-dir=/tmp/auto-gait-profile-${PORT}`, 'about:blank',
   ], { stdio: 'ignore' });
 }
 
@@ -76,7 +77,7 @@ async function main() {
     await send('Network.setBypassServiceWorker', { bypass: true });
     await send('Network.setCacheDisabled', { cacheDisabled: true });
     await send('Page.addScriptToEvaluateOnNewDocument', { source: 'window.__noAutoQuality = true;' });
-    await send('Page.navigate', { url: 'http://localhost:8000/apps/auto/' });
+    await send('Page.navigate', { url: `http://localhost:${HTTP_PORT}/apps/auto/` });
     for (let i = 0; i < 400; i++) {
       await sleep(500);
       if (await evaluate('!!window.__dbg')) break;
