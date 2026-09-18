@@ -33,7 +33,13 @@ const OUT = `tools/data/beauty/${TAG}`;
 // 50 m, so the shot came back as the underside of the water plane -- which
 // reads exactly like a broken renderer and is entirely the harness's fault.
 const VIEWS = [
-  { name: 'street', pick: 'commercial', eye: 1.7, look: 1.7, back: 26, ahead: 70 },
+  // `street` used to stand back from the commercial cluster on a fixed bearing,
+  // which put the camera on a lawn looking across open ground at the buildings
+  // -- the one thing a player in a car never sees. It is posed ON a street now,
+  // on the pavement, looking along the carriageway (see the `street` picker).
+  { name: 'street', pick: 'street', eye: 1.7, look: 2.2 },
+  // A close facade from the pavement opposite: windows, cornice, shopfront.
+  { name: 'facade', pick: 'facade', eye: 1.7, look: 11 },
   { name: 'shopfront', pick: 'commercial', eye: 1.7, look: 3.0, back: 15, ahead: 0 },
   { name: 'residential', pick: 'houses', eye: 4, look: 1.5, back: 55, ahead: 0 },
   { name: 'park', pick: 'park', eye: 5, look: 2, back: 70, ahead: 0 },
@@ -105,6 +111,56 @@ const PICKERS = `(() => {
     }
     out.waterfront = { x: wx, z: wz };
   }
+
+  // A real street: a long arterial or street edge near the commercial cluster,
+  // camera on its pavement a quarter of the way along, looking down the road.
+  // Explicit camera and look-at (cx/cz, lx/lz), so no bearing is applied.
+  {
+    const c0 = out.commercial;
+    let best = null;
+    for (const e of city.edges) {
+      if (e.elev || e.tunnel || e.cls === 'hwy' || e.cls === 'ramp' || e.len < 45 || e.hw < 3.5) continue;
+      const a = city.nodes[e.a], b = city.nodes[e.b];
+      const mx = (a.x + b.x) / 2, mz = (a.z + b.z) / 2;
+      const dd = Math.hypot(mx - c0.x, mz - c0.z);
+      if (dd > 700) continue;
+      const cxp = a.x + (b.x - a.x) * 0.2 - e.dz * (e.hw + 2.0);
+      const czp = a.z + (b.z - a.z) * 0.2 + e.dx * (e.hw + 2.0);
+      if (d.world.inBuilding(cxp, czp, 1.0)) continue;
+      const score = dd - e.len * 1.5;
+      if (!best || score < best.score) {
+        best = { score, x: mx, z: mz, cx: cxp, cz: czp,
+          lx: a.x + (b.x - a.x) * 0.95 + e.dz * 1.5, lz: a.z + (b.z - a.z) * 0.95 - e.dx * 1.5 };
+      }
+    }
+    // Never fall back to an un-posed target: that has no bearing distance and
+    // renders a NaN camera -- a black frame, which is what the first run got.
+    out.street = best || { x: c0.x, z: c0.z, cx: c0.x - 30, cz: c0.z - 30, lx: c0.x, lz: c0.z };
+    out.street.found = !!best;
+  }
+
+  // A building facade seen from across the road: a 3-10 storey commercial
+  // block near the cluster whose front has carriageway in front of it.
+  {
+    const c0 = out.commercial;
+    let best = null;
+    for (const b of city.buildings) {
+      if (!(b.style === 'brick' || b.style === 'lowrise' || b.style === 'midrise')) continue;
+      if (b.h < 16 || b.h > 40 || b.w < 20 || b.kind) continue;
+      const dd = Math.hypot(b.x - c0.x, b.z - c0.z);
+      if (dd > 500 || (best && dd > best.dd)) continue;
+      const cr = Math.cos(b.rot), sr = Math.sin(b.rot);
+      // +local z face, normal (-sin, cos)
+      const nx = -sr, nz = cr;
+      const dist = b.d / 2 + 24;
+      const cx2 = b.x + nx * dist, cz2 = b.z + nz * dist;
+      if (!city.onRoad(b.x + nx * (b.d / 2 + 12), b.z + nz * (b.d / 2 + 12), 0, false)) continue;
+      if (d.world.inBuilding(cx2, cz2, 1.0)) continue;
+      best = { dd, x: b.x, z: b.z, cx: cx2 + cr * 6, cz: cz2 + sr * 6, lx: b.x, lz: b.z };
+    }
+    out.facade = best || { x: c0.x, z: c0.z, cx: c0.x - 30, cz: c0.z - 30, lx: c0.x, lz: c0.z };
+    out.facade.found = !!best;
+  }
   return JSON.stringify(out);
 })()`;
 
@@ -161,7 +217,7 @@ async function main() {
       // reason it stayed broken for so long is that nothing ever framed a road
       // with it enabled.
       if (${JSON.stringify(!!process.env.AUTO_SSAO)}) d.postfx.setFx('ssao', true);
-      for (const id of ['hud','pad','stickZone','lookZone','objective','toast','rotate'])
+      for (const id of ['hud','pad','stickZone','lookZone','objective','toast','rotate','topBtns'])
         { const e = document.getElementById(id); if (e) e.style.display = 'none'; }
       d.game.paused = true;
     })()`);
@@ -177,10 +233,11 @@ async function main() {
       // push the look-at past the subject for the street shot so the frame has
       // a receding street in it rather than a wall.
       const bear = 0.9;
-      const cx = t.x - Math.sin(bear) * V.back;
-      const cz = t.z - Math.cos(bear) * V.back;
-      const lx = t.x + Math.sin(bear) * V.ahead;
-      const lz = t.z + Math.cos(bear) * V.ahead;
+      const posed = t.cx !== undefined;
+      const cx = posed ? t.cx : t.x - Math.sin(bear) * V.back;
+      const cz = posed ? t.cz : t.z - Math.cos(bear) * V.back;
+      const lx = posed ? t.lx : t.x + Math.sin(bear) * V.ahead;
+      const lz = posed ? t.lz : t.z + Math.cos(bear) * V.ahead;
       const counts = await evaluate(`(() => {
         const d = window.__dbg;
         // Settle the streamer. Chunk geometry is time-sliced across frames now,
