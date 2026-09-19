@@ -629,10 +629,10 @@ function skullAt(y) {
 // Columns are dense across the face (3-13 deg at the nose and mouth) and
 // sparse behind the ears, where the hair is.
 const HEAD_COLS = (() => {
-  const d = [0, 3, 7, 13, 21, 30, 41, 54, 68, 84, 100, 125, 152, 180].map((v) => (v * Math.PI) / 180);
+  const d = [0, 3, 7, 13, 21, 30, 41, 54, 68, 84, 100, 132, 180].map((v) => (v * Math.PI) / 180);
   return [...d, ...d.slice(1, -1).reverse().map((v) => -v)];
 })();
-const HEAD_BACK = 13;          // index of the 180 deg column: seams go here
+const HEAD_BACK = 12;          // index of the 180 deg column: seams go here
 const HEAD_ROWS = [
   J.chin - 0.010, J.chin - 0.001, J.chin + 0.010, J.chin + 0.024,   // under the chin, chin, boss, sulcus
   J.chin + 0.036, J.chin + 0.044, J.chin + 0.052, J.chin + 0.058,   // lower lip, mouth, upper lip, philtrum
@@ -704,13 +704,13 @@ function faceRelief(th, y, F) {
   // nose forward in the middle: with the whole underside running back to the
   // lip in one row it was a broad down-facing band, and its shadow, smoothed
   // onto the upper lip, read as a moustache.
-  const nw = byY(y, [[E + 0.012, 0.0070], [E - 0.012, 0.0068], [E - 0.030, 0.0085], [E - 0.042, 0.0105], [E - 0.052, 0.0070]]);
+  const nw = byY(y, [[E + 0.012, 0.0070], [E - 0.012, 0.0070], [E - 0.030, 0.0090], [E - 0.042, 0.0115], [E - 0.052, 0.0072]]);
   // A plateau, not a bell: the dorsum is a flat strip with steep sides, which
   // is what gives a nose a side plane that turns from the light.
   const nq = (a / nw) * (a / nw);
   d += np / (1 + nq * nq);
   // the wings of the nose, either side of the tip
-  d += 0.0055 * gss(a - 0.0195, 0.0062) * gss(y - (E - 0.044), 0.0065);
+  d += 0.0062 * gss(a - 0.0205, 0.0066) * gss(y - (E - 0.044), 0.0065);
   // Eye sockets, deepest at the painted eye, and the brow ridge over them.
   d -= 0.0068 * gss(a - 0.0345, 0.0175) * gss(y - (E + 0.002), 0.0115);
   d += 0.0046 * F.brow * gss(y - (E + 0.019), 0.0078) * gss(Math.max(0, a - 0.028), 0.030);
@@ -718,7 +718,7 @@ function faceRelief(th, y, F) {
   d += 0.0015 * F.brow * gss(a, 0.012) * gss(y - (E + 0.012), 0.008);
   // Cheekbones, and the soft hollow under them.
   d += 0.0042 * F.cheek * gss(a - 0.064, 0.019) * gss(y - (E - 0.024), 0.013);
-  d -= 0.0032 * gss(a - 0.072, 0.022) * gss(y - (C + 0.050), 0.013);
+  d -= 0.0016 * gss(a - 0.078, 0.018) * gss(y - (C + 0.054), 0.011);
   // temples, under the hair edge
   d -= 0.0014 * gss(a - 0.090, 0.018) * gss(y - (E + 0.022), 0.012);
   // Mouth: upper lip, the seam, lower lip, the corners tucked in, the dip
@@ -736,7 +736,11 @@ function faceRelief(th, y, F) {
   // an ellipse all the way round has no jaw, only a jowl.
   d += 0.0048 * F.jaw * gss(Math.abs(th) - 1.22, 0.30) * gss(y - (C + 0.020), 0.012);
   // and the lower face narrower between chin and jaw angle than an egg is
-  d -= 0.0022 * gss(Math.abs(th) - 0.72, 0.25) * gss(y - (C + 0.012), 0.014);
+  d -= 0.0016 * gss(Math.abs(th) - 0.80, 0.22) * gss(y - (C + 0.010), 0.012);
+  // The muzzle: teeth and jaw carry the whole mouth forward of the cheeks.
+  // Without it the lips sat in a dish between cheek and chin, which went
+  // dark in any top light and read as a moustache on every face.
+  d += 0.0042 * gss(a, 0.030) * gss(y - (C + 0.046), 0.018);
   return d;
 }
 
@@ -800,7 +804,7 @@ function buildEar(b, side, xs, col) {
   const O = [[0.031, -0.002], [0.027, -0.011], [0.017, -0.017], [0.002, -0.018], [-0.014, -0.013],
     [-0.029, -0.004], [-0.024, 0.004], [-0.008, 0.008], [0.010, 0.007], [0.024, 0.005]];
   // lateral stand-off per outline point: the back of the ear stands out more
-  const out = O.map(([, dz]) => 0.003 + 0.0075 * clamp((0.006 - dz) / 0.024, 0, 1));
+  const out = O.map(([, dz]) => 0.0025 + 0.0060 * clamp((0.006 - dz) / 0.024, 0, 1));
   const ring = (k, dx, sc, dzs = 0) => O.map(([dy, dz], i) => [
     side * (xs + dx(i)), yc + dy * sc, zc + dzs + dz * sc]);
   const R = [
@@ -864,10 +868,10 @@ function buildHair(style, seed, hair, grid, body) {
   // A buzz cut is a shell too, a couple of millimetres thick: painted on the
   // skull its edge was one straight line round the head at the ring height,
   // with a pale band under it.
-  // Rows: three from the edge up to the hairline ring, then ON the head's own
+  // Rows: two from the edge up to the hairline ring, then ON the head's own
   // top rows. Straight chords between rows placed anywhere else cut inside
   // the dome of the skull, and a thin shell (the buzz cut) vanished into it.
-  const NR = 6;
+  const NR = 5;
   const vol = { crop: 0.006, side: 0.011, long: 0.010, bun: 0.005, curly: 0.024, buzz: 0.0035 }[style];
   const covers = style === 'long' || style === 'curly' || style === 'side';
   const napeY = style === 'crop' || style === 'bun' || style === 'buzz' ? J.chin + 0.050 : J.chin + 0.020;
@@ -910,7 +914,7 @@ function buildHair(style, seed, hair, grid, body) {
       // through the forehead in square notches, a fringe cut with pinking shears.
       const yE = edge(phi) + (phi < 0.3 ? (hash2(jj * 17 + 3, seed) - 0.5) * 0.0024 : 0);
       const yH = Math.max(HEAD_ROWS[HEAD_HAIR_ROW], yE + 0.003);
-      const y = [yE, lerp(yE, yH, 0.30), lerp(yE, yH, 0.70), yH, HEAD_ROWS[HEAD_HAIR_ROW + 1], top][i];
+      const y = [yE, lerp(yE, yH, 0.40), yH, HEAD_ROWS[HEAD_HAIR_ROW + 1], top][i];
       const v = (y - yE) / (top - yE);
       // The front keeps little volume (it is a hairline, not a brim); the back
       // and crown carry the most.
@@ -973,11 +977,15 @@ function buildHair(style, seed, hair, grid, body) {
         const ca = Math.cos(aa), sa = Math.sin(aa);
         const back = -sa;                                   // 1 at the centre of the back
         const e = smoothT(clamp(Math.min(j, CK - j) / 3, 0, 1));   // 0 at the side edges
-        const yTop = J.eye - 0.005;
-        const yBot = J.shoulder + 0.034 - 0.046 * back + (hash2(j * 13 + 5, seed + 3) - 0.5) * 0.012;
+        // It starts UNDER the shell and comes out from beneath its edge: begun
+        // on top of the shell, its top edge stood out as a shelf at the side.
+        const yTop = J.eye + 0.015;
+        // ends higher at the sides: out over the shoulder the deltoid swings
+        // with the arm and came up through it on a runner
+        const yBot = J.shoulder + 0.034 - 0.046 * back + 0.028 * (1 - back) + (hash2(j * 13 + 5, seed + 3) - 0.5) * 0.012;
         const y = lerp(yTop, yBot, smoothT(t) * 0.6 + t * 0.4);
         const k = skullAt(Math.max(y, SKULL[3].y));
-        const flare = vol + 0.004 + 0.028 * t * t * (0.35 + 0.65 * e);
+        const flare = lerp(vol * 0.4, vol + 0.004, smoothT(clamp(t / 0.25, 0, 1))) + 0.028 * t * t * (0.15 + 0.85 * e);
         let p = [ca * (k.rx + flare), y, k.oz - 0.012 * t + sa * (k.rz + flare)];
         // clear of the neck and shoulders under it
         const bd2 = body(y);
@@ -987,14 +995,14 @@ function buildHair(style, seed, hair, grid, body) {
         }
         row.push(p);
         // the inner face: a few millimetres in, meeting the outer at the edges
-        const th = 0.0025 + 0.0045 * e;
+        const th = 0.0012 + 0.0055 * e;
         const l = Math.hypot(p[0] - cx, p[2] - cz) || 1;
         irow.push([p[0] - ((p[0] - cx) / l) * th, y + 0.001, p[2] - ((p[2] - cz) / l) * th]);
       }
       cr.push(row); inner.push(irow);
     }
     hb.patch(cr, hair, [0, 0, -1]);
-    hb.patch(inner, [hair[0] * 0.68, hair[1] * 0.68, hair[2] * 0.68], [0, 0, 1]);
+    hb.patch(inner, [hair[0] * 0.82, hair[1] * 0.82, hair[2] * 0.82], [0, 0, 1]);
     // close the two side edges between the faces
     for (const j of [0, CK]) {
       hb.patch(cr.map((r, i) => [r[j], inner[i][j]]), [hair[0] * 0.8, hair[1] * 0.8, hair[2] * 0.8], [j === 0 ? -1 : 1, 0, 0.6]);
@@ -1379,7 +1387,7 @@ export function buildCharacter(opts = {}) {
       return [Math.cos(a) * q.rx + nx * t, y, q.oz + Math.sin(a) * q.rz + nz * t];
     };
     const hood = new Builder(false);
-    const hoodCol = dk(coat, 0.93);   // same cloth: the form is the shading, and a darker patch showed where it dives in
+    const hoodCol = dk(coat, 0.88);   // the same cloth, a shade down: darker still, the ragged line where it dives in showed
     hood.patch(HR.map((row) => cols.map((a) => pt(row, a))), hoodCol, [0, 0, -1]);
     // the opening's lining, turning in and down from the rim toward the neck
     const lining = [HR[HR.length - 1], [S + 0.074, NP, 0.006, 1.75]];
@@ -1435,7 +1443,12 @@ export function buildCharacter(opts = {}) {
   // Rows from HEAD_HAIR_ROW up are hair-coloured under the painted skin.
   const soft = bottom === 'skirt' || bottom === 'dress' || style === 'long' || style === 'bun';
   const grid = headGrid(faceParams(seed, soft));
-  head.loftY(grid.rings, grid.rings.map((r, i) => (i < HEAD_HAIR_ROW ? WHITE : hair)),
+  // Drawn only up to the hairline ring: above it every style's shell (the
+  // buzz cut's too) and every hat covers the skull, so its two top bands were
+  // ~100 triangles nobody could see. The grid still carries them, for the
+  // hair to grow over.
+  const shown = grid.rings.slice(0, HEAD_HAIR_ROW + 1);
+  head.loftY(shown, shown.map((r, i) => (i < HEAD_HAIR_ROW ? WHITE : hair)),
     { capStart: true, capEnd: true });
   // Ears, unless the hair falls over them: a long or curly shell over the
   // side of the head would have them standing out through it.
