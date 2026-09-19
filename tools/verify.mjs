@@ -165,6 +165,15 @@ async function main() {
       console.log(session.logs.slice(-25).join('\n'));
       throw new Error('game never reached __dbg');
     }
+    // __dbg appears before the game loop has drawn a frame, and traffic only
+    // spawns from its own update. With load-time freeway grading the boot got
+    // slower and the drive test began landing in that window -- "no enterable
+    // vehicle within 600 m" with an empty city, which reads like a traffic bug
+    // and is the harness's timing. Same wait perfguard does.
+    for (let i = 0; i < 120; i++) {
+      if (await session.eval('window.__dbg.sceneStats.calls > 0 && window.__dbg.traffic.cars.length > 0')) break;
+      await sleep(500);
+    }
     console.log('booted.\n');
 
     const report = await session.eval(`(() => {
