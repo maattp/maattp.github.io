@@ -212,6 +212,10 @@ export class TrafficSystem {
     this.game = game;
     this.cars = [];
     this.farMeshes = new Map();
+    // Every type's far LOD up front, on the loading screen: built on first use
+    // it was a one-off 2-4 ms stall (40+ ms on a phone) the first time each
+    // type drove past 60 m.
+    if (FAR_LOD !== Infinity) for (const k of Object.keys(vehicleAssets().types)) farLod(k);
     this._farM = new THREE.Matrix4();
     this._farFr = new THREE.Frustum();
     this._farS = new THREE.Sphere();

@@ -1762,6 +1762,45 @@ the other way) rendered fine. Don't "optimise" that check away.
 `mergeByMaterial()` flattens a group of static meshes into one mesh per material;
 landmarks would otherwise cost hundreds of draw calls.
 
+## Phone performance: the Mac stand-in
+
+**The iPhone 17 Pro is CPU-bound, at roughly 12x an M2 Pro in this game.**
+Its Debug readout (`cpu ms:` and `render ms:` lines) put traffic, peds and
+render at ~12x what the same scene costs in headless Chrome on the Mac. The
+GPU is not the limit: the Mac's whole frame is ~1.6 ms of GPU, the scene pass
+costs the same scissored to one pixel, and quality tiers barely moved the
+phone's fps. WebKit forwards every WebGL call to its GPU process, so draw
+calls and GL calls are expensive there in a way Chrome hides.
+
+- **Measure with `--throttle=8`** (perfcpu.mjs, rendercpu.mjs): CDP CPU
+  throttling after boot. perfcpu waits for streaming to settle first, and has
+  `drive-qa` (Queen Anne) and `foot-yt` (standing at Yesler Terrace) runs.
+  **Trust the means, not the spikes**: the throttle suspends the thread in
+  slices and charges the pause to whatever is running, so a 7 ms
+  world.update on a frame that built nothing is an artifact. Judge stalls
+  unthrottled, by the longest build step (`rendercpu --builds`).
+- **Count draws and GL calls, which are device-independent**: the
+  `cats.js`-style frustum breakdown and a wrapped-GL call counter found most
+  of what mattered. v76 -> v80 took Yesler Terrace from 338 to 171 draws and
+  ~1070 to ~700 GL calls a frame.
+- **Watch for per-frame program lookups**: a transparent DoubleSide material
+  renders in two passes and sets needsUpdate twice a frame; use
+  `forceSinglePass`. Wrap `customProgramCacheKey` to catch any other.
+- **Keep one hidden class** for anything iterated every frame (vehicles,
+  pedestrians): declare every field in the constructor. `forward` is cached
+  per heading; don't hold it across a heading change.
+- Phone-only paths (all keyed on `ON_PHONE`): far traffic instanced
+  (`FAR_LOD`), off-screen traffic past 80 m at half rate, pedestrian animation
+  LOD and CPU culling, chunk JS arrays dropped after upload (a lost context
+  rebuilds the chunks), 2 ms streaming slice while driving.
+
+| 8x-throttled, mean frame CPU | v76 | v80 |
+|---|---|---|
+| Queen Anne drive | 10.5 ms, 207 draws | 4.7 ms, 107 draws |
+| downtown drive | 12.0 ms | 5.5 ms |
+| I-5 drive | 11.5 ms | 6.5 ms |
+| standing at Yesler Terrace | 13.1 ms, 338 draws | 6.2 ms, 171 draws |
+
 ## Draw-call budget
 
 At `high`, perfguard's downtown reads roughly 165 steady draws and ~285 a
