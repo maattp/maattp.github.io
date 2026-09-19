@@ -69,11 +69,18 @@ try {
         const gen = w.buildChunkStep(cx0 + dx, cz0 + dz, 1);
         let st, steps = 0; do { st = gen.next(); steps++; } while (!st.done);
         const ms = performance.now() - t0;
-        if (st.value) st.value.traverse((o) => { if (o.geometry) o.geometry.dispose(); });
-        t.push({ ms, steps });
+        let verts = 0, sum = 0;
+        if (st.value) st.value.traverse((o) => {
+          if (!o.geometry) return;
+          const pa = o.geometry.attributes.position;
+          if (pa) { verts += pa.count; const A = pa.array; for (let q = 0; q < A.length; q += 7) sum += A[q] * ((q % 13) + 1); }
+          o.geometry.dispose();
+        });
+        t.push({ ms, steps, verts, sum });
       }
       const ms = t.map((k) => k.ms).sort((a, b) => a - b);
-      return JSON.stringify({ n: ms.length, median: ms[ms.length >> 1], mean: ms.reduce((a, b) => a + b, 0) / ms.length, max: ms[ms.length - 1], total: ms.reduce((a, b) => a + b, 0) });
+      const verts = t.reduce((a, k) => a + k.verts, 0), sum = t.reduce((a, k) => a + k.sum, 0);
+      return JSON.stringify({ verts, sum: sum.toFixed(1), n: ms.length, median: ms[ms.length >> 1], mean: ms.reduce((a, b) => a + b, 0) / ms.length, max: ms[ms.length - 1], total: ms.reduce((a, b) => a + b, 0) });
     })()`));
     if (PROF) {
       const prof = (await send('Profiler.stop')).result.profile;
@@ -93,7 +100,7 @@ try {
       const show = (m, lbl) => { console.log(`  ${lbl}:`); for (const [k, us] of [...m.entries()].sort((a, b) => b[1] - a[1]).slice(0, 28)) console.log(`    ${(us / 1000).toFixed(0).padStart(6)} ms ${(us / total * 100).toFixed(1).padStart(5)}%  ${k}`); };
       show(self, 'self time'); show(incl, 'inclusive');
     }
-    console.log(`chunk builds :${HTTP_PORT} build ${build} near (${X}, ${Z}): ${b.n} chunks  median ${b.median.toFixed(1)} ms  mean ${b.mean.toFixed(1)}  max ${b.max.toFixed(1)}  total ${b.total.toFixed(0)} ms`);
+    console.log(`chunk builds :${HTTP_PORT} build ${build} near (${X}, ${Z}): ${b.n} chunks  median ${b.median.toFixed(1)} ms  mean ${b.mean.toFixed(1)}  max ${b.max.toFixed(1)}  total ${b.total.toFixed(0)} ms   geometry ${b.verts} verts, checksum ${b.sum}`);
     process.exitCode = 0;
     throw { done: true };
   }

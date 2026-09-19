@@ -2201,12 +2201,16 @@ export function* cityGenerator(md) {
     roadCoveredAt(x, z, ei) {
       const me = g.edges[ei];
       if (!me || me.elev) return false;
-      const c0 = Math.floor(x / CHUNK), d0 = Math.floor(z / CHUNK);
-      for (let cx = c0 - 1; cx <= c0 + 1; cx++) {
-        for (let cz = d0 - 1; cz <= d0 + 1; cz++) {
-          const c = chunks.get(ck(cx, cz));
-          if (!c) continue;
-          for (const oi of c.edges) {
+      // Candidates from the fine grid (see roadCell): an edge can only cover
+      // (x,z) where the point is within its own hw + 0.5 of it, far inside the
+      // grid's reach, so the answer is the old 3x3-chunk scan's -- which was
+      // 30 % of a downtown chunk build after onRoad moved to the grid.
+      const cand = roadCell(x, z);
+      if (!cand) return false;
+      {
+        {
+          for (let q = 0; q < cand.length; q++) {
+            const oi = cand[q];
             if (oi === ei) continue;
             const o = g.edges[oi];
             if (o.elev) continue;

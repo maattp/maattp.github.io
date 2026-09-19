@@ -13,6 +13,7 @@ import { hash2, clamp, lerp, distToSeg } from './util.js';
 
 // The bore's cross-section, shared by the mesher and by the trench that has to
 // be cut out of the ground to make room for it.
+const EMPTY_LIST = Object.freeze([]);
 const TUN_WALL = TUNNEL_H, TUN_DECK = 0.3;
 // How far past the carriageway the trench is cut. The retaining wall stands on
 // this line, so it is also the width of the hole in the terrain.
@@ -1380,7 +1381,7 @@ export class World {
     // ABOVE the road it was supposed to expose, so the trench was dug and the
     // carriageway still buried in it.
     let best = null;
-    for (const c of this.portalCuts()) {
+    for (const c of this._cutsNear(x, z)) {
       if (x < c.x0 || x > c.x1 || z < c.z0 || z > c.z1) continue;
       for (let i = 0; i < c.pts.length - 1; i++) {
         const a = c.pts[i], b = c.pts[i + 1];
@@ -1425,6 +1426,35 @@ export class World {
    * ramp and the main line needs -- so both the barrier and the drawn wall ask
    * this before they stand.
    */
+  // A BBOX GRID over the portal cuttings. cutFloor sits under the carved
+  // terrain query, so it ran once per ground sample of every chunk build,
+  // city-wide, and walked EVERY cutting to reject it by bbox; twinOwner and
+  // _tunDeckUnder did the same over every tunnel edge per deck cell (they use
+  // _tunNear's existing grid now). Each loop keeps its own exact bbox test and
+  // a cell keeps list order, so every answer -- first-match ones included --
+  // is what the full walk returned.
+  _bboxGrid(list) {
+    const C = 48, grid = new Map();
+    for (const it of list) {
+      const x0 = Math.floor((it.x0 - 1) / C), x1 = Math.floor((it.x1 + 1) / C);
+      const z0 = Math.floor((it.z0 - 1) / C), z1 = Math.floor((it.z1 + 1) / C);
+      for (let cx = x0; cx <= x1; cx++) {
+        for (let cz = z0; cz <= z1; cz++) {
+          const k = cx * 100003 + cz;
+          let l = grid.get(k);
+          if (!l) grid.set(k, (l = []));
+          l.push(it);
+        }
+      }
+    }
+    return grid;
+  }
+  _cutsNear(x, z) {
+    const cuts = this.portalCuts();
+    if (this._cutGridOf !== cuts) { this._cutGrid = this._bboxGrid(cuts); this._cutGridOf = cuts; }
+    return this._cutGrid.get(Math.floor(x / 48) * 100003 + Math.floor(z / 48)) || EMPTY_LIST;
+  }
+
   _tunIndex() {
     if (!this._tunIdx) {
       const idx = [];
@@ -1506,7 +1536,7 @@ export class World {
    */
   twinOwner(x, z, y, ei, only, skip) {
     let best = -1;
-    for (const q of this._tunIndex()) {
+    for (const q of this._tunNear(x, z)) {
       if (q.k >= ei || (only >= 0 && q.k !== only)) continue;
       if (skip && skip.includes(q.k)) continue;
       if (x < q.x0 || x > q.x1 || z < q.z0 || z > q.z1) continue;
@@ -1531,7 +1561,7 @@ export class World {
    */
   _tunDeckUnder(x, z, pad) {
     let best = null;
-    for (const q of this._tunIndex()) {
+    for (const q of this._tunNear(x, z)) {
       if (x < q.x0 - pad || x > q.x1 + pad || z < q.z0 - pad || z > q.z1 + pad) continue;
       const rx = x - q.a.x, rz = z - q.a.z;
       const al = rx * q.ux + rz * q.uz;
@@ -1573,7 +1603,7 @@ export class World {
   }
 
   inOtherBore(x, z, y, ei, pad = 0.2, dy = 1.6) {
-    for (const q of this._tunIndex()) {
+    for (const q of this._tunNear(x, z)) {
       if (q.k === ei || x < q.x0 || x > q.x1 || z < q.z0 || z > q.z1) continue;
       const r = distToSeg(x, z, q.a.x, q.a.z, q.b.x, q.b.z);
       if (r.d > q.hw + pad) continue;
@@ -2162,7 +2192,7 @@ export class World {
    * daylight down the NB bore for 100 m.
    */
   inCut(x, z, y) {
-    for (const c of this.portalCuts()) {
+    for (const c of this._cutsNear(x, z)) {
       if (x < c.x0 || x > c.x1 || z < c.z0 || z > c.z1) continue;
       for (let i = 0; i < c.pts.length - 1; i++) {
         const a = c.pts[i], b = c.pts[i + 1];
