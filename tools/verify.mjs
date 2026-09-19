@@ -305,7 +305,8 @@ async function main() {
           let t = ((x - a.x) * dx + (z - a.z) * dz) / L2;
           t = t < 0 ? 0 : t > 1 ? 1 : t;
           const px = a.x + dx * t - x, pz = a.z + dz * t - z;
-          if (Math.hypot(px, pz) <= e.hw + 3.4) return true;
+          // pavement (up to 3.2 m) plus the 1 m verge it comes down across
+          if (Math.hypot(px, pz) <= e.hw + 4.4) return true;
         }
         // A junction ring reaches past the strips, and its DIAGONAL corner is
         // sqrt(2) x (hw + sw) from the node -- further than any straight-line
@@ -320,7 +321,7 @@ async function main() {
             if (e.hw > hw) hw = e.hw;
           }
           if (!any || hw <= 0) continue;
-          if (Math.hypot(n.x - x, n.z - z) <= (hw + 3.2) * 1.45) return true;
+          if (Math.hypot(n.x - x, n.z - z) <= (hw + 4.2) * 1.45) return true;
         }
         return false;
       };
