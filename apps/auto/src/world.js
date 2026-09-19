@@ -1285,6 +1285,30 @@ export class World {
           [b.x - qx * w, MASK_Y, b.z - qz * w], [b.x + qx * w, MASK_Y, b.z + qz * w],
           [0, 1, 0], ZERO_UV, [1, 1, 1]);
       }
+      // ...AND OVER THE OPEN CUTTINGS. The mask followed the tunnel edges, so
+      // a cutting whose floor dips under the sea on its SURFACE approach --
+      // the NB entry cutting at SODO, beside the SR-99 surface on its lids --
+      // showed the sea plane lying in the trench as a canal, from the road
+      // beside it. Each non-cap corridor segment whose floor is under 0.3 m
+      // gets the same depth-only quad across the whole dug floor.
+      for (const c of cuts) {
+        for (let i = 0; i < c.pts.length - 1; i++) {
+          const a = c.pts[i], b = c.pts[i + 1];
+          if (a.cap || b.cap || Math.min(a.y, b.y) - 0.7 > 0.3) continue;
+          const L = Math.hypot(b.x - a.x, b.z - a.z) || 1;
+          const qx = -(b.z - a.z) / L, qz = (b.x - a.x) / L;
+          const w = a.hw + CUT_SH + CUT_OVER;
+          let wet = false;
+          for (const t of [0, 0.5, 1]) for (const o of [-w, 0, w]) {
+            if (G.isWater(a.x + (b.x - a.x) * t + qx * o, a.z + (b.z - a.z) * t + qz * o)) wet = true;
+          }
+          if (wet) continue;
+          wb.quad(
+            [a.x + qx * w, MASK_Y, a.z + qz * w], [a.x - qx * w, MASK_Y, a.z - qz * w],
+            [b.x - qx * w, MASK_Y, b.z - qz * w], [b.x + qx * w, MASK_Y, b.z + qz * w],
+            [0, 1, 0], ZERO_UV, [1, 1, 1]);
+        }
+      }
       if (!wb.empty) {
         // DOUBLE-SIDED. These quads wind (A+q, A-q, B-q, B+q), which faces
         // DOWN, so under three's default front-side culling the mask existed
@@ -1363,6 +1387,17 @@ export class World {
         const r = distToSeg(x, z, a.x, a.z, b.x, b.z);
         const w = a.hw + CUT_SH + CUT_OVER;
         if (r.d > w + CUT_BANK) continue;
+        // The closing (cap) segment starts at the cutting's deepest point and
+        // runs on over the bore; behind its start, the segment before it owns
+        // the ground. Clamped there, it dug a bowl at the last point's depth
+        // ~12 m back along a deck that is still climbing -- at SR-99's SB exit
+        // a metre deeper than the trench, straight through the roof of the
+        // lower deck running underneath (portalcheck's sliced bore). Only
+        // there: elsewhere the bowl is what the cutting's end has always had
+        // (without it the I-5 Express bore under a ramp's cut at (513, 77)
+        // came out sliced instead).
+        // (raw ground here: terrainHeight is what this is computing)
+        if (b.cap && r.t <= 0 && this._roofUnder(x, z, a.y, false) > a.y - 1.2) continue;
         const deck = a.y + (b.y - a.y) * r.t;
         const t = clamp((r.d - w) / CUT_BANK, 0, 1);
         const cand = { y: deck - 0.7, t: t * t * (3 - 2 * t), c };
@@ -1467,7 +1502,13 @@ export class World {
     return best;
   }
 
-  /** Lowest tunnel deck (node height) whose carriageway, padded, holds (x,z); or null. */
+  /**
+   * Highest tunnel deck (node height) whose carriageway, padded, holds (x,z);
+   * or null. HIGHEST: a slab's headroom is over the deck nearest under it,
+   * and under SR-99's stack that is the upper deck, DECK_SEP over the lower.
+   * (It was the lowest, which only ever mattered while the twins were side by
+   * side at one level.)
+   */
   _tunDeckUnder(x, z, pad) {
     let best = null;
     for (const q of this._tunIndex()) {
@@ -1477,7 +1518,34 @@ export class World {
       if (al < -pad || al > q.L + pad) continue;
       if (Math.abs(rx * -q.uz + rz * q.ux) > q.hw + pad) continue;
       const y = q.a.y + (q.b.y - q.a.y) * clamp(al / q.L, 0, 1);
-      if (best === null || y < best) best = y;
+      if (best === null || y > best) best = y;
+    }
+    return best;
+  }
+
+  /**
+   * The highest ROOF of a bore running under (x,z) whose deck is more than
+   * 2 m below y, or -Infinity. A structure standing on the upper SR-99 deck --
+   * the SB exit's headwall piers and mouth card, dug 1.5 m below its own deck
+   * to swallow the terrain face -- must stop above it, or it hangs through the
+   * lower deck's ceiling.
+   */
+  _roofUnder(x, z, y, buried = true, pad = 1.5) {
+    let best = -Infinity;
+    for (const q of this._tunIndex()) {
+      if (x < q.x0 - pad || x > q.x1 + pad || z < q.z0 - pad || z > q.z1 + pad) continue;
+      const rx = x - q.a.x, rz = z - q.a.z;
+      const al = rx * q.ux + rz * q.uz;
+      if (al < -pad || al > q.L + pad) continue;
+      if (Math.abs(rx * -q.uz + rz * q.ux) > q.hw + pad) continue;
+      const dk = q.a.y + (q.b.y - q.a.y) * clamp(al / q.L, 0, 1);
+      if (dk > y - 2) continue;
+      // only a BURIED roof: over a lower bore's own open cutting the ground is
+      // below its roof, and a pier there has always stood on that ground
+      // (raising it floated the piers at the I-90 and I-405 interchanges)
+      const roof = dk + TUN_DECK + TUN_WALL;
+      if (buried && G.terrainHeight(x, z) < roof - 0.1) continue;
+      best = Math.max(best, roof);
     }
     return best;
   }
@@ -1817,6 +1885,78 @@ export class World {
     for (const q of pending) quads.push(...q.c4s);
     this.city.setLids(quads);
 
+    // THE TRENCH IS WALLED WHERE A SLAB ROOFS ITS LEDGE. The cutting's
+    // retaining wall is drawn at hw + CUT_SH but was never solid -- the rim is
+    // deliberately unfenced (see portalCuts) -- so under a bridge slab a car
+    // in the trench drove straight through the wall into the CUT_OVER ledge
+    // behind it: a dark slot under the other road's slab with no way on.
+    // Under a slab nothing can fall into the ledge from above, so the reason
+    // for leaving it open does not apply there: wherever the ground just
+    // behind the wall line is roofed by a lid, the wall line is a barrier,
+    // banded from under the trench floor to the slab's soffit, so the road on
+    // the slab and anyone on the street never meet it. Not where the ledge is
+    // another cutting's carriageway (a divided mouth descends side by side).
+    {
+      const n0 = bsegs.length;
+      this._ledgeBarrier0 = n0;           // for tools: ledge walls start here
+      const onOtherRoad = (c, x, z) => cuts.some((c2) => {
+        if (c2 === c || x < c2.x0 || x > c2.x1 || z < c2.z0 || z > c2.z1) return false;
+        for (let k = 0; k < c2.pts.length - 1; k++) {
+          const p0 = c2.pts[k], p1 = c2.pts[k + 1];
+          if (p1.cap) continue;
+          if (distToSeg(x, z, p0.x, p0.z, p1.x, p1.z).d < p0.hw + 0.5) return true;
+        }
+        return false;
+      });
+      const lidEdges = new Set(pending.map((q) => q.ei));
+      const inLaneAt = (x, z) => {
+        for (const k of city.edgesNear(x, z, 25)) {
+          const e = city.edges[k];
+          if (e.tunnel || e.elev || lidEdges.has(k)) continue;
+          const a = city.nodes[e.a], b = city.nodes[e.b];
+          if (distToSeg(x, z, a.x, a.z, b.x, b.z).d <= e.hw + 0.3) return true;
+        }
+        return false;
+      };
+      for (const c of cuts) {
+        for (let i = 0; i < c.pts.length - 1; i++) {
+          const a = c.pts[i], b = c.pts[i + 1];
+          if (a.cap || b.cap) continue;
+          const L = Math.hypot(b.x - a.x, b.z - a.z) || 1;
+          const qx = -(b.z - a.z) / L, qz = (b.x - a.x) / L;
+          const n = Math.max(1, Math.ceil(L / 1.5));
+          for (const sd of [1, -1]) {
+            for (let k = 0; k < n; k++) {
+              const t0 = k / n, t1 = (k + 1) / n, tm = (t0 + t1) / 2;
+              const w = a.hw + CUT_SH;
+              const mx = a.x + (b.x - a.x) * tm, mz = a.z + (b.z - a.z) * tm;
+              // the ledge behind the wall, and the wall line itself
+              const lx = mx + qx * sd * (w + 1.5), lz = mz + qz * sd * (w + 1.5);
+              const top = this.city.lidAt(lx, lz);
+              if (top === null) continue;
+              if (onOtherRoad(c, lx, lz) || onOtherRoad(c, mx + qx * sd * w, mz + qz * sd * w)) continue;
+              // ...nor where the wall line itself is some road's carriageway: a
+              // surface street dug by the cut can run along the ledge (Bellevue,
+              // (8281, -2736)), and a wall there is one in its lane
+              // (unslabbed surface roads only: the slab road bridging the
+              // trench passes over the wall line, and is the reason it is here)
+              if (inLaneAt(mx + qx * sd * w, mz + qz * sd * w)) continue;
+              const floor = a.y + (b.y - a.y) * tm - 0.7;
+              const y1 = top + LID_TOP - 0.8;
+              if (y1 - floor < 2.0) continue;
+              bsegs.push(
+                a.x + (b.x - a.x) * t0 + qx * sd * w, a.z + (b.z - a.z) * t0 + qz * sd * w,
+                a.x + (b.x - a.x) * t1 + qx * sd * w, a.z + (b.z - a.z) * t1 + qz * sd * w,
+                floor - 1.5, y1);
+            }
+          }
+        }
+      }
+      this._ledgeBarrier1 = bsegs.length;
+      stats.ledgeWalls = (bsegs.length - n0) / 6;
+      cityStats.lidLedgeWalls = stats.ledgeWalls;
+    }
+
     // PASS 2: the exposed sides, now that every lid in the city is known. A
     // side is exposed only if the ground just outside it is NOT another slab
     // -- the next edge's lid, a neighbouring ramp's -- and is more than a
@@ -1903,8 +2043,15 @@ export class World {
     }
   }
 
-  /** Is (x,z) over the floor of a portal trench (not its banks)? */
-  inCut(x, z) {
+  /**
+   * Is (x,z) over the floor of a portal trench (not its banks)? With `y`, a
+   * deck height, a trench whose own road runs above this deck's roof does
+   * not count: that deck is buried under the other's cut. SR-99's lower deck runs under
+   * the upper deck's south cutting, DECK_SEP below the road in it, and asked
+   * without a height it came back "open" -- no roof, no walls, no lamps, and
+   * daylight down the NB bore for 100 m.
+   */
+  inCut(x, z, y) {
     for (const c of this.portalCuts()) {
       if (x < c.x0 || x > c.x1 || z < c.z0 || z > c.z1) continue;
       for (let i = 0; i < c.pts.length - 1; i++) {
@@ -1919,7 +2066,14 @@ export class World {
         // underneath ground that had just been raised over them -- an earth
         // mound sitting on the carriageway.
         if (b.cap) continue;
-        if (distToSeg(x, z, a.x, a.z, b.x, b.z).d < a.hw + CUT_SH) return true;
+        const r = distToSeg(x, z, a.x, a.z, b.x, b.z);
+        if (r.d >= a.hw + CUT_SH) continue;
+        // only a trench whose FLOOR clears this deck's roof and slab (a
+        // stacked deck, DECK_SEP up) leaves it buried; anything lower is this
+        // deck's open cut too, as it always was -- the I-5 Express bore under
+        // a ramp cutting 6.0 m above it keeps its old treatment
+        if (y != null && a.y + (b.y - a.y) * r.t - y > TUNNEL_H + 1.0) continue;
+        return true;
       }
     }
     return false;
@@ -3504,12 +3658,25 @@ float frLine(float o, float fw, float c, float w) {
     const px = -e.dz, pz = e.dx;
     // A graded road paints on its profile. Decks draw 3 cm under the standing
     // height and carry no bias; ground graded strips draw at it plus bias.
+    // PAINT RIDES THE LID. A road carried over a portal cutting on a slab
+    // (buildLids) is drawn at raw ground + LID_TOP, and its draped markings
+    // were left on the carved ground under it -- a slab with no lines on it.
+    // Where this road has a slab, paint sits MARK_Y - ROAD_LIFT over the slab
+    // top instead, and the stripes are cut short enough to follow the slab's
+    // edge down into the dip where it ends.
+    const lidded = ei != null && this._lidByEdge && this._lidByEdge.has(ei);
+    const LID_TOP = ROAD_LIFT + 0.04;
     const yAt = e.prof
       ? (x, z, t, o) => {
         const P = this.city.profAt(e, t);
         return e.elev ? P.h - 0.03 + 0.012 : P.h + P.s * o + bias + 0.012;
       }
-      : (x, z) => G.terrainHeight(x, z) + MARK_Y + bias;
+      : lidded
+        ? (x, z) => {
+          const l = this.city.lidAt(x, z);
+          return l !== null ? l + LID_TOP + (MARK_Y - ROAD_LIFT) + bias : G.terrainHeight(x, z) + MARK_Y + bias;
+        }
+        : (x, z) => G.terrainHeight(x, z) + MARK_Y + bias;
     const W = 0.06;                             // half-width of a painted line
     const WHITE = [0.94, 0.93, 0.88];
     const YELLOW = [0.88, 0.72, 0.2];
@@ -3565,7 +3732,9 @@ float frLine(float o, float fw, float c, float w) {
       const i = Math.min(e.pk, Math.max(0, Math.round((m / e.len) * e.pk)));
       return e.tw[i * 2 + s];
     };
-    const step = 8; // subdivide so a line follows the terrain rather than spanning it
+    // subdivide so a line follows the terrain rather than spanning it (and a
+    // slab's end, 0.5 m stations, rather than bridging off it)
+    const step = lidded ? 1 : 8;
     for (let s = from; s < till; s += step) {
       const to = Math.min(till, s + step);
       stripe(sideW((s + to) / 2, 0) - inset, s, to, WHITE);
@@ -3678,7 +3847,7 @@ float frLine(float o, float fw, float c, float w) {
       // hundreds of metres either side of the mouth. inCut is the same test
       // that decided whether to dig, so the two cannot disagree.
       const [mx, mz] = P(tm, 0);
-      const bur = !this.inCut(mx, mz);
+      const bur = !this.inCut(mx, mz, Y(tm) - DECK);
       // A MOUTH IS A BLACK HOLE. The lamp pools start at full strength right
       // behind the headwall, so the bore was a pale grey box and the opening
       // read as a recess in a wall rather than as somewhere the road goes.
@@ -4224,7 +4393,8 @@ float frLine(float o, float fw, float c, float w) {
       // the bottom with the carriageway and its centreline running visibly
       // underneath -- the mouth read as a panel hung above the road rather
       // than a hole in the end of it.
-      const sill = Math.min(deckY, G.terrainHeight(m0x, m0z), G.terrainHeight(m1x, m1z)) - 0.6;
+      const sill = Math.max(Math.min(deckY, G.terrainHeight(m0x, m0z), G.terrainHeight(m1x, m1z)) - 0.6,
+        this._roofUnder((m0x + m1x) / 2 + bx, (m0z + m1z) / 2 + bz, deckY) + 0.05);
       flat.quad(
         [m0x + bx, sill, m0z + bz], [m1x + bx, sill, m1z + bz],
         [m1x + bx, roofY, m1z + bz], [m0x + bx, roofY, m0z + bz],
@@ -4244,7 +4414,14 @@ float frLine(float o, float fw, float c, float w) {
     for (const [p0, p1] of piers) {
       if (p1 - p0 < 0.4) continue;
       const [cx, cz] = at((p0 + p1) / 2);
-      const foot = Math.min(deckY, G.terrainHeight(cx, cz)) - 1.5;
+      // ...but never down through the roof of a deck running underneath
+      let foot = Math.min(deckY, G.terrainHeight(cx, cz)) - 1.5;
+      for (const f of [-0.5, 0, 0.5]) {
+        for (const u of [p0 + 0.05, (p0 + p1) / 2, p1 - 0.05]) {
+          const [ux, uz] = at(u);
+          foot = Math.max(foot, this._roofUnder(ux + O.dx * DEPTH * f, uz + O.dz * DEPTH * f, deckY) + 0.05);
+        }
+      }
       flat.box(cx, foot, cz, p1 - p0, roofY - foot, DEPTH, rot, conc);
       parts.push({ kind: 'pier', x: cx, z: cz, base: foot, top: roofY, w: p1 - p0 });
     }
@@ -5487,6 +5664,21 @@ float frLine(float o, float fw, float c, float w) {
     const poleCol = [0.28, 0.3, 0.32];
     const lampCol = [1.0, 0.94, 0.76];
     const trunk = [0.32, 0.25, 0.18];
+    // NOTHING IS PLANTED IN A PORTAL PIT. The carve digs hw + 7.6 m either
+    // side of a cutting, and a road carried over it on a lid keeps its grade
+    // while its kerbside does not: street trees, lamp posts and clutter set at
+    // terrainHeight beside a lidded road stood at the bottom of the trench,
+    // their crowns level with the slab. Anything whose ground is dug 0.3 m or
+    // more by a portal cut is not planted (it would also be a solid post down
+    // in the cutting). cityStats.propsInPit counts them.
+    if (cityStats.propsInPit === undefined) cityStats.propsInPit = 0;
+    const inPit = (x, z) => {
+      if (this.cutDepth(x, z) <= 0.3) return false;
+      // where, for tools (bounded)
+      const pp = this._pitProps || (this._pitProps = []);
+      if (pp.length < 400) pp.push([Math.round(x), Math.round(z)]);
+      return true;
+    };
 
     for (const ei of ch.edges) {
       const e = city.edges[ei];
@@ -5513,6 +5705,7 @@ float frLine(float o, float fw, float c, float w) {
         // ramp beside a freeway puts its lamp posts and trees on the freeway,
         // and beneath a viaduct they grow through the deck.
         if (city.onRoad(ox, oz, 0.8)) { cityStats.propsSkipped++; continue; }
+        if (inPit(ox, oz)) { cityStats.propsInPit++; continue; }
         const gy = G.terrainHeight(ox, oz) + WALK_Y;
         const armRot = Math.atan2(-px * sg, -pz * sg);
         if (h < 0.42) {
@@ -5584,6 +5777,7 @@ float frLine(float o, float fw, float c, float w) {
           const oz = z + pz * sg * (e.hw + 0.85);
           if (!G.isBuildable(ox, oz)) continue;
           if (city.onRoad(ox, oz, 0.4)) { cityStats.propsSkipped++; continue; }
+          if (inPit(ox, oz)) { cityStats.propsInPit++; continue; }
           const gy = G.terrainHeight(ox, oz) + WALK_Y;
           const rot = Math.atan2(-px * sg, -pz * sg);
           const k = hash2(Math.round(x * 13) + 5, Math.round(z * 13) + 29);
@@ -5629,7 +5823,7 @@ float frLine(float o, float fw, float c, float w) {
           if (!own(n.x, n.z) || n.e.length < 3) continue;
           const ox = n.x + px * (e.hw + 1.6) - e.dx * (e.hw + 1.4);
           const oz = n.z + pz * (e.hw + 1.6) - e.dz * (e.hw + 1.4);
-          if (!G.isBuildable(ox, oz)) continue;
+          if (!G.isBuildable(ox, oz) || inPit(ox, oz)) continue;
           const gy = G.terrainHeight(ox, oz) + WALK_Y;
           flat.box(ox, gy, oz, 0.5, 0.25, 0.5, along, [0.24, 0.25, 0.27]);
           flat.prism(ox, gy + 0.22, oz, 0.13, 5.9, 8, poleCol);
@@ -5694,6 +5888,7 @@ float frLine(float o, float fw, float c, float w) {
       // 105 of Green Lake's 717 trees and 251 around Lake Union. Measured, both
       // times, which is the only reason it did not ship.
       if (G.isWater(x, z) || G.terrainHeight(x, z) < WET_FLOOR) { treeSkip++; continue; }
+      if (inPit(x, z)) { cityStats.propsInPit++; continue; }
       const h = hash2(Math.round(x), Math.round(z));
       const gy = G.terrainHeight(x, z);
       // Foliage that isn't one emerald cone.

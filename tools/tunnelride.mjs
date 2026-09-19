@@ -222,6 +222,33 @@ function pageInit(cfg) {
     const sp = Math.abs(v.vLong);
     const look = Math.max(10, Math.min(30, 8 + sp * 0.7));
     const tgt = R.pointAt((pr ? pr.s : 0) + look);
+    // WRONG WAY, A DRIVER DODGES. Against the flow the centreline meets every
+    // oncoming car head-on (cars collide as 4 m circles, lanes sit 3.1 m off
+    // centre), and an AI car that has braked to a stop in front of a car
+    // pushing it never yields: a stall that says nothing about the geometry.
+    // So on a wrong-way ride the autopilot moves to the far side of the
+    // nearest oncoming car on its deck within 45 m, 4.8 m off the line, and
+    // back to the centre once the road ahead is clear. It still drives the
+    // whole deck, walls included.
+    if (wrong && pr) {
+      let near = null;
+      for (const o of d.traffic.cars) {
+        if (o === v || o.mode !== 'traffic' || Math.abs(o.y - v.y) > 3) continue;
+        const po = R.project(o.x, o.z);
+        if (!po || po.d > 12) continue;
+        const ahead = po.s - pr.s;
+        if (ahead < -2 || ahead > 45) continue;
+        if (!near || ahead < near.ahead) near = { ahead, lat: po.lat };
+      }
+      const want = near ? (near.lat > 0 ? -4.8 : 4.8) : 0;
+      R.dodge = (R.dodge || 0) + Math.max(-0.08, Math.min(0.08, want - (R.dodge || 0)));
+      if (R.dodge) {
+        const q2 = R.pointAt(pr.s + look + 1);
+        const ux = q2.x - tgt.x, uz = q2.z - tgt.z, ul = Math.hypot(ux, uz) || 1;
+        // lat is measured to the LEFT of travel ((x,z) . (-uz, ux)), as project() does
+        tgt.x += (-uz / ul) * R.dodge; tgt.z += (ux / ul) * R.dodge;
+      }
+    }
     const want = Math.atan2(tgt.x - v.x, tgt.z - v.z);
     const dh = wrap(want - v.heading);
     // +steer raises heading (left), and steer = -input.x
@@ -249,6 +276,14 @@ function pageInit(cfg) {
     R.t += dt;
     const v = p.vehicle;
     if (!v) { R.event('lost-car'); R.done = 'lost-car'; return; }
+    // A WRONG-WAY RIDE MEETS EVERY ONCOMING CAR. The autopilot holds the
+    // centreline and cannot dodge, and cars collide as circles (0.42 x length,
+    // 4 m between two sedans' centres) on a two-lane deck whose lanes sit
+    // 3.1 m either side of it -- so every car it meets is a shunt, and the
+    // ride ends in 'car-destroyed' on traffic luck alone (it did on the base
+    // build too). These rides judge the GEOMETRY, so the car is kept alive and
+    // the shunts are counted instead.
+    if (wrong && v.health < 100) { R.damaged = (R.damaged || 0) + 1; v.health = 100; }
     if (v.dead) { R.event('car-destroyed'); R.done = 'dead'; return; }
     const pr = R.project(v.x, v.z);
     R.sNow = pr.s; R.lat = pr.lat;
@@ -314,6 +349,25 @@ function pageInit(cfg) {
     // route is a buried bore (the cutting's floor is the carved ground). Held
     // for 0.75 s, so a car briefly airborne off a grade break is not an eject.
     const off = inBore ? v.y - pr.y : 0;
+    // TWIN-DECK CAPTURE: anywhere on the bore (portal to portal), riding more
+    // than 1.5 m off this route's own deck for 3 m of travel or more is the
+    // car standing on some other deck -- the twin's, before the decks were
+    // stacked. Not a failure (the car still gets through), but counted.
+    {
+      const onBore = pr.tun && pr.s > sEntry && pr.s < sExit;
+      const offC = onBore ? v.y - pr.y : 0;
+      if (Math.abs(offC) > 1.5) {
+        if (!R.cap) R.cap = { s0: pr.s, worst: 0 };
+        if (Math.abs(offC) > Math.abs(R.cap.worst)) R.cap.worst = offC;
+        R.cap.len = pr.s - R.cap.s0;
+      } else if (R.cap) {
+        if (R.cap.len >= 3) {
+          R.captures = (R.captures || 0) + 1;
+          R.event('capture', { at: Math.round(R.cap.s0 - sEntry), len: Math.round(R.cap.len), worst: +R.cap.worst.toFixed(2) });
+        }
+        R.cap = null;
+      }
+    }
     R.offT = Math.abs(off) > 3 ? (R.offT || 0) + dt : 0;
     if (R.offT > 0.75 && off > 0) fail = R.event('eject', { deck: +pr.y.toFixed(1), cover: +cover.toFixed(1) });
     else if (R.offT > 0.75) fail = R.event('fall', { deck: +pr.y.toFixed(1), cover: +cover.toFixed(1) });
@@ -326,7 +380,14 @@ function pageInit(cfg) {
     R.hist.push([R.t, pr.s]);
     while (R.hist.length > 1 && R.hist[1][0] <= R.t - 5) R.hist.shift();
     if (!fail && R.hist[0][0] <= R.t - 4.9 && pr.s - R.hist[0][1] < 4) {
-      fail = R.event('stall', { lat: +pr.lat.toFixed(1), deck: +pr.y.toFixed(1),
+      // who is in the way: every AI car within 25 m, with its deck and speed
+      const near = d.traffic.cars.filter((o) => o !== v && Math.hypot(o.x - v.x, o.z - v.z) < 80)
+        .map((o) => [+(o.x - v.x).toFixed(1), +(o.z - v.z).toFixed(1), +(o.y - v.y).toFixed(1), +o.vLong.toFixed(1), o.mode, o.edge, o.dirSign, +(o.stuckT || 0).toFixed(1), +o.y.toFixed(2),
+          (() => { const h = c.obstacleHit(o.x, o.z, o.radius * 0.7, o.y); return h ? [+h.pen.toFixed(2), +h.nx.toFixed(2), +h.nz.toFixed(2), h.kind || null] : null; })(),
+          +c.groundAt(o.x, o.z, o.y + 0.6, c.roadLift(o.x, o.z)).toFixed(2),
+          o.mode === 'traffic' ? (() => { const r = d.traffic.driveTraffic(o, 0, v.x, v.z, p); return [+r.throttle.toFixed(2), +r.brake.toFixed(2), +r.steer.toFixed(2)]; })() : null,
+          +o.heading.toFixed(2), +(o.vLat || 0).toFixed(2)]);
+      fail = R.event('stall', { near, lat: +pr.lat.toFixed(1), deck: +pr.y.toFixed(1),
         ground: +c.groundAt(v.x, v.z, v.y + 0.6, 0).toFixed(2), raw: +raw.toFixed(1),
         terr: +G.terrainHeight(v.x, v.z).toFixed(1) });
     }
@@ -553,7 +614,7 @@ try {
     const first = R.events[0] || null;
     return JSON.stringify({ ride: R.cfg.ride, done: R.done, t: +R.t.toFixed(1),
       advanced: Math.round(R.maxS), of: Math.round(R.total), sEntry: Math.round(R.sEntry), sExit: Math.round(R.sExit),
-      entered: R.maxS > R.sEntry + 100, through: R.maxS > R.sExit + 20, hops: R.hops, kinds, maxAiSpeed: +(R.maxAi || 0).toFixed(1),
+      entered: R.maxS > R.sEntry + 100, captures: R.captures || 0, damaged: R.damaged || 0, through: R.maxS > R.sExit + 20, hops: R.hops, kinds, maxAiSpeed: +(R.maxAi || 0).toFixed(1),
       first, deepestUnder: +deepest.toFixed(1), worstFrameRise: +worstUp.toFixed(2), worstFrameDrop: +worstDown.toFixed(2) });
   })()`));
   console.log('RIDE', JSON.stringify(sum));

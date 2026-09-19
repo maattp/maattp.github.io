@@ -43,7 +43,16 @@ export function collideWithBuildings(v, city, onHit) {
     const f = v.forward;
     const along = f.x * ob.nx + f.z * ob.nz;
     const impact = Math.abs(v.vLong) * Math.abs(along) * 0.7 + Math.abs(v.vLat) * 0.3;
-    v.vLong *= along > 0 ? -0.1 : 0.2;
+    // A SCRAPE IS NOT A CRASH. The push-out took 80 % of the speed whatever
+    // the angle, so a vehicle grazing a wall side-on -- along ~ 0 -- lost it
+    // every frame it stayed in contact and wedged at full throttle. Measured:
+    // a bus in the right lane of SR-99's upper deck, its collision circle
+    // (0.7 x radius + the barrier's 0.8 m, 4.3 m) touching the bore wall, stopped
+    // dead and a column queued behind it. Head-on (along <= -0.3, ~17 deg or
+    // more into the obstacle) keeps the full loss; shallower keeps
+    // proportionally more, and a pure side contact keeps all of it.
+    const glance = clamp(-along / 0.3, 0, 1);
+    v.vLong *= along > 0.05 ? -0.1 : 1 - 0.8 * glance;
     v.vLat *= 0.3;
     if (onHit && impact > 3) onHit(impact);
     return impact;
@@ -772,7 +781,18 @@ export class TrafficSystem {
     const ndx = nb.x - na.x, ndz = nb.z - na.z;
     const nlen = Math.hypot(ndx, ndz) || 1;
     const fx = ndx / nlen, fz = ndz / nlen;
-    const off = this.laneLat(v.edge, v.dirSign, v);
+    let off = this.laneLat(v.edge, v.dirSign, v);
+    // A BORE'S WALLS ARE SOLID (hw + 0.4), and a vehicle collides as a
+    // circle: 0.7 x radius plus the barrier's 0.8 m, 4.3 m for a bus. In a
+    // tube's right lane (+3.1 m) a bus was permanently in contact with the
+    // wall, pushed off it every frame and steered back into it, and crawled
+    // along the stacked SR-99 decks at 6 m/s with the traffic behind it (the
+    // side-by-side twins had no shared walls there, so it never showed).
+    // Long vehicles hold their lane a hand's breadth clear of the wall.
+    if (ee.tunnel && !ee.elev) {
+      const lim = Math.max(0, ee.hw + 0.4 - (v.radius * 0.7 + 1.1));
+      off = clamp(off, -lim, lim);
+    }
     const aimAhead = clamp(6 + Math.abs(v.vLong) * 0.75, 6, 24);
     const p = ((v.x - na.x) * fx + (v.z - na.z) * fz);
     const ap = clamp(p + aimAhead, 0, nlen);
@@ -789,6 +809,12 @@ export class TrafficSystem {
     const scanLen = 5 + Math.abs(v.vLong) * 1.1;
     for (const o of this.cars) {
       if (o === v) continue;
+      // A car on another deck is not ahead of you. In SR-99's stacked bore the
+      // other direction runs DECK_SEP overhead or underneath on the same
+      // line, and the plan-only scan braked every car for oncoming traffic on
+      // the other deck: stopped queues mid-bore. Same 3 m band the car-car
+      // collision uses.
+      if (Math.abs(o.y - v.y) > 3) continue;
       const rx = o.x - v.x, rz = o.z - v.z;
       const fwd = rx * f.x + rz * f.z;
       if (fwd < 0.5 || fwd > scanLen) continue;
@@ -796,7 +822,7 @@ export class TrafficSystem {
       if (lat > 2.2) continue;
       brake = Math.max(brake, clamp(1.4 - fwd / scanLen, 0.35, 1));
     }
-    if (player.onFoot) {
+    if (player.onFoot && Math.abs(player.y - v.y) < 3) {
       const rx = player.x - v.x, rz = player.z - v.z;
       const fwd = rx * f.x + rz * f.z;
       const lat = Math.abs(rx * f.z - rz * f.x);
@@ -887,7 +913,7 @@ export class TrafficSystem {
 
     let brake = 0;
     for (const o of this.cars) {
-      if (o === v || o.mode === 'police') continue;
+      if (o === v || o.mode === 'police' || Math.abs(o.y - v.y) > 3) continue;
       const rx = o.x - v.x, rz = o.z - v.z;
       const fwd = rx * f.x + rz * f.z;
       if (fwd < 0.5 || fwd > 10) continue;

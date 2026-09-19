@@ -178,7 +178,7 @@ try {
           // land by design.
           return along >= -2 && along <= 34 && lat >= w.uMin - 2 && lat <= w.uMax + 2;
         });
-        if (g > deck + 0.4 && g < deck + 5.4 - 0.4 && !d.world.inCut(x, z) && !nearWall) {
+        if (g > deck + 0.4 && g < deck + 5.4 - 0.4 && !d.world.inCut(x, z, deck - 0.3) && !nearWall) {
           let wd = 9999;
           for (const w of (d.world.portalParts || [])) {
             wd = Math.min(wd, Math.hypot(w.x - x, w.z - z));
