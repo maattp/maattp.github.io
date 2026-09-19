@@ -2139,6 +2139,11 @@ export function* cityGenerator(md) {
     return q;
   };
 
+  // Build the query grids now, during loading, rather than on the first
+  // query: the first road meshed after boot used to pay ~15 ms for them.
+  liftCell(0, 0);
+  roadCell(0, 0);
+
   /** A graded road's drawn surface (profile + camber) at (x, z), bias aside. */
   const gradedY = (e, x, z) => {
     const a = g.nodes[e.a];

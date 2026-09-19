@@ -14,6 +14,14 @@ import { hash2, clamp, lerp, distToSeg } from './util.js';
 // The bore's cross-section, shared by the mesher and by the trench that has to
 // be cut out of the ground to make room for it.
 const EMPTY_LIST = Object.freeze([]);
+// A chunk build yields by TIME, not by item count. The counts (every 3 roads,
+// every 10 buildings, props and buffer assembly in one go) were tuned on a
+// desktop, where the longest step was a few ms; on an iPhone the same JS runs
+// 6-10x slower, so single steps ran 25-160 ms -- and the streamer can only
+// check its slice between steps, so each one was a dropped frame: the dips
+// to 30 fps driving downtown at any quality tier. Measured on the Mac, the
+// longest step per chunk was a median 3.7 ms and worst 16.3 ms before.
+const YIELD_MS = 1.0;
 const TUN_WALL = TUNNEL_H, TUN_DECK = 0.3;
 // How far past the carriageway the trench is cut. The retaining wall stands on
 // this line, so it is also the width of the hole in the terrain.
@@ -3271,7 +3279,14 @@ float frLine(float o, float fw, float c, float w) {
     // there can be dozens outstanding, and creeping through those at 4 ms a
     // frame means watching the city assemble around you.
     const behind = todo.length;
-    const sliceMs = budget < 2 ? 2 : behind > 30 ? 14 : behind > 12 ? 9 : 4;
+    // A phone runs this JS 6-10x slower than a desktop, so a slice there is
+    // most of the frame: measured on an iPhone 17 Pro driving downtown, world
+    // was 6.0 ms a frame on top of 14 ms of everything else. Chunk builds are
+    // ~10x cheaper than when these slices were set, so a phone keeps up at
+    // 100 km/h on 3 ms; the big slices are for catching up after a warp.
+    const sliceMs = ON_PHONE
+      ? (behind > 30 ? 8 : behind > 12 ? 4 : 2.5)
+      : (budget < 2 ? 2 : behind > 30 ? 14 : behind > 12 ? 9 : 4);
     const t0 = performance.now();
     while (performance.now() - t0 < sliceMs) {
       if (!this._build) {
@@ -3371,7 +3386,9 @@ float frLine(float o, float fw, float c, float w) {
     // Yield every so many items rather than every one: the check itself costs
     // something, and a handful of roads or buildings is well under a frame.
     let since = 0;
+    this._yt = performance.now();
     for (const ei of ch.edges) {
+      if (performance.now() - this._yt > YIELD_MS) { yield; this._yt = performance.now(); }
       const e = city.edges[ei];
       const a = city.nodes[e.a], b = city.nodes[e.b];
       const mx = (a.x + b.x) / 2, mz = (a.z + b.z) / 2;
@@ -3385,18 +3402,17 @@ float frLine(float o, float fw, float c, float w) {
         nodesDone.add(ni);
         this.meshNode(road, flat, ni, n, lod, walk);
       }
-      if (++since >= 3) { since = 0; yield; }
     }
 
     if (lod === 1) {
       since = 0;
       for (const bi of ch.buildings) {
+        if (performance.now() - this._yt > YIELD_MS) { yield; this._yt = performance.now(); }
         this.meshBuilding(bl, flat, glow, city.buildings[bi]);
-        if (++since >= 10) { since = 0; yield; }
       }
-      yield;
-      this.meshProps(flat, glow, ch, cx, cz);
-      yield;
+      yield; this._yt = performance.now();
+      yield* this.meshProps(flat, glow, ch, cx, cz);
+      yield; this._yt = performance.now();
     } else {
       // Mid-ring massing: every building the far skyline skips, as one merged
       // box mesh per chunk. From the air the old mid ring was bare ground, so
@@ -3425,9 +3441,9 @@ float frLine(float o, float fw, float c, float w) {
         flat.box(bd.x, bd.y - 0.5, bd.z, bd.w, bd.h + 0.5, bd.d, bd.rot, wall, { ao: 0.35, top: false });
         flat.box(bd.x, bd.y + bd.h, bd.z, bd.w * 0.96, 0.24, bd.d * 0.96, bd.rot,
           [wall[0] * 0.45, wall[1] * 0.45, wall[2] * 0.47]);
-        if (++since >= 40) { since = 0; yield; }
+        if (performance.now() - this._yt > YIELD_MS) { yield; this._yt = performance.now(); }
       }
-      yield;
+      yield; this._yt = performance.now();
     }
 
     const grp = new THREE.Group();
@@ -3446,11 +3462,13 @@ float frLine(float o, float fw, float c, float w) {
       m.receiveShadow = recv && this.shadows;
       grp.add(m);
     };
-    add(road, this.mats.road, false, true);
-    add(walk, this.mats.walk, false, true);
-    add(flat, this.mats.flat, true, true);
-    add(glow, this.mats.glow, false, false);
-    add(bl.glass, this.mats.glass, true, true);
+    // One builder per step: turning ~100k vertices of JS arrays into typed
+    // buffers is itself several ms per builder on a phone.
+    add(road, this.mats.road, false, true); yield;
+    add(walk, this.mats.walk, false, true); yield;
+    add(flat, this.mats.flat, true, true); yield;
+    add(glow, this.mats.glow, false, false); yield;
+    add(bl.glass, this.mats.glass, true, true); yield;
     add(bl.facade, this.mats.facade, true, true);
     return grp.children.length ? grp : null;
   }
@@ -5857,7 +5875,7 @@ float frLine(float o, float fw, float c, float w) {
 
   // --- street furniture -----------------------------------------------------
 
-  meshProps(flat, glow, ch, cx, cz) {
+  *meshProps(flat, glow, ch, cx, cz) {
     const city = this.city;
     const own = (x, z) => Math.floor(x / CHUNK) === cx && Math.floor(z / CHUNK) === cz;
     const poleCol = [0.28, 0.3, 0.32];
@@ -5880,6 +5898,7 @@ float frLine(float o, float fw, float c, float w) {
     };
 
     for (const ei of ch.edges) {
+      if (performance.now() - this._yt > YIELD_MS) { yield; this._yt = performance.now(); }
       const e = city.edges[ei];
       // A graded ramp's kerbside is its embankment, and furniture planted at
       // terrain height there is buried to the lamp head or floats off the
@@ -6047,6 +6066,7 @@ float frLine(float o, float fw, float c, float w) {
     const x0 = cx * CHUNK, z0 = cz * CHUNK;
     let treeSkip = 0;
     for (let i = 0; i < 230; i++) {
+      if (performance.now() - this._yt > YIELD_MS) { yield; this._yt = performance.now(); }
       const hx = hash2(cx * 71 + i, cz * 131 + 7);
       const hz = hash2(cx * 37 + i, cz * 53 + 13);
       const x = x0 + hx * CHUNK, z = z0 + hz * CHUNK;

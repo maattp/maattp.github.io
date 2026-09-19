@@ -11,6 +11,14 @@ const TRAFFIC_TARGET = 26;
 const PARKED_RADIUS = 105;
 const LOT_TYPES = new Set(['sedan', 'suv', 'pickup', 'compact', 'hatch', 'ev', 'muscle', 'sports', 'convertible']);
 const DESPAWN = 520;
+// A phone is draw-call bound, and the fleet was over half of it: an iPhone 17
+// Pro driving downtown showed 58 vehicles (3 draws each, plus shadows) and 9.6
+// ms of render submission. Parked cars are only drawn this close on a phone,
+// and traffic only casts a shadow this close -- past it a car's shadow is a
+// few pixels and three more draws in the shadow pass.
+const ON_PHONE = typeof navigator !== 'undefined' && /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
+const PARKED_SHOW = ON_PHONE ? 80 : 140;
+const SHADOW_NEAR = ON_PHONE ? 45 : Infinity;
 
 /**
  * Free everything under a node.
@@ -711,10 +719,16 @@ export class TrafficSystem {
       if (v.mode === 'police' && game.wanted === 0 && d2 > 140 * 140) { this.remove(v); continue; }
 
       if (v.mode === 'parked') {
-        v.group.visible = d2 < 140 * 140;
+        v.group.visible = d2 < PARKED_SHOW * PARKED_SHOW;
         continue;
       }
       v.group.visible = true;
+      // Distant AI cars take one ground sample instead of four (Vehicle.update).
+      v.lowDetail = ON_PHONE && d2 > 60 * 60;
+      if (SHADOW_NEAR !== Infinity) {
+        const cast = d2 < SHADOW_NEAR * SHADOW_NEAR;
+        if (v._cast !== cast) { v._cast = cast; v.group.traverse((o) => { if (o.isMesh) o.castShadow = cast; }); }
+      }
 
       let input = { throttle: 0, brake: 0, steer: 0, handbrake: 0 };
       if (v.mode === 'traffic') {
@@ -942,6 +956,8 @@ export class TrafficSystem {
         // by the traffic it overflies -- the "invisible collision in the air".
         // Also stops a viaduct car trading paint with the street below it.
         if (Math.abs((a.y || 0) - (b.y || 0)) > 3) continue;
+        // Two parked cars never move, so they cannot start overlapping.
+        if (a.mode === 'parked' && b.mode === 'parked') continue;
         const dx = b.x - a.x, dz = b.z - a.z;
         const rr = a.radius + b.radius;
         const d2 = dx * dx + dz * dz;

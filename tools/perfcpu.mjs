@@ -48,6 +48,8 @@ const JSON_OUT = arg('json', '');
 const LABEL = arg('label', `:${HTTP_PORT}`);
 const QUALITY = arg('quality', 'high');
 const DESKTOP = process.argv.includes('--desktop');
+const VSYNC = process.argv.includes('--vsync');
+const WRAP = arg('wrap', '');
 const IPHONE_UA = 'Mozilla/5.0 (iPhone; CPU iPhone OS 19_0 like Mac OS X) AppleWebKit/605.1.15 '
   + '(KHTML, like Gecko) Version/19.0 Mobile/15E148 Safari/604.1';
 const VIEW = DESKTOP
@@ -66,6 +68,20 @@ function pageInstall() {
       try { return f.apply(this, a); } finally { S.sys[name] = (S.sys[name] || 0) + performance.now() - t0; }
     };
   };
+  // Extra methods to time, e.g. --wrap=traffic.updateParked,world.buildChunkStep
+  // (reported per frame as w:<name>, with their worst frame).
+  S.wmax = {};
+  for (const spec of (window.__pcWrap || '').split(',').filter(Boolean)) {
+    const [o, m] = spec.split('.');
+    const obj = d[o]; const f = obj && obj[m];
+    if (typeof f !== 'function') continue;
+    const name = 'w:' + spec;
+    obj[m] = function (...a) {
+      if (!S.on) return f.apply(this, a);
+      const t0 = performance.now();
+      try { return f.apply(this, a); } finally { const dt = performance.now() - t0; S.sys[name] = (S.sys[name] || 0) + dt; }
+    };
+  }
   // Systems. player.update is wrapped INSIDE the autopilot hook (see drive).
   wrap(d.traffic, 'update', 'traffic');
   wrap(d.peds, 'update', 'peds');
@@ -91,10 +107,16 @@ function pageInstall() {
   // Whole rAF callbacks.
   const RAF0 = window.requestAnimationFrame.bind(window);
   let lastTs = 0;
+  let lastSys = {};
   window.requestAnimationFrame = (cb) => RAF0((ts) => {
     const t0 = performance.now();
     cb(ts);
-    if (S.on || S.countOn) S.frames.push([performance.now() - t0, lastTs ? ts - lastTs : 0]);
+    if (S.on || S.countOn) {
+      const snap = {};
+      for (const [k, v] of Object.entries(S.sys)) { snap[k] = v - (lastSys[k] || 0); }
+      lastSys = { ...S.sys };
+      S.frames.push([performance.now() - t0, lastTs ? ts - lastTs : 0, snap]);
+    }
     lastTs = ts;
   });
   S.nextFrames = (n) => new Promise((res) => { let k = 0; const f = () => { if (++k >= n) res(); else RAF0(f); }; RAF0(f); });
@@ -257,10 +279,14 @@ function pageInstall() {
     }
     S.on = false;
     const F = S.frames.map((f) => f[0]), I = S.frames.map((f) => f[1]).filter((v) => v > 0);
+    // Frame pacing: intervals past one vsync (16.7 ms), and what the worst frames spent their time on.
+    const miss = I.filter((v) => v > 20).length, miss2 = I.filter((v) => v > 36).length;
+    const worst = S.frames.map((f, i) => ({ i, raf: f[1], cpu: f[0], sys: f[2] })).sort((a, b) => b.raf - a.raf).slice(0, 12)
+      .map((w) => `f${w.i} raf ${w.raf.toFixed(1)} cpu ${w.cpu.toFixed(1)} [` + Object.entries(w.sys).filter(([, v]) => v > 0.5).sort((a, b) => b[1] - a[1]).map(([k, v]) => `${k} ${v.toFixed(1)}`).join(' ') + ']');
     const out = { n: F.length, cpu: +q(F, 0.5).toFixed(3), cpuMean: +(F.reduce((a, b) => a + b, 0) / F.length).toFixed(3),
       cpu90: +q(F, 0.9).toFixed(3), cpu99: +q(F, 0.99).toFixed(3), cpuMax: +Math.max(...F).toFixed(2),
       raf: +q(I, 0.5).toFixed(3), sys: {}, cars: d.traffic.cars.length, peds: d.peds.peds.length,
-      moved: Math.round(dist), resets: R ? R.resets : 0, draws: d.sceneStats.calls };
+      moved: Math.round(dist), resets: R ? R.resets : 0, draws: d.sceneStats.calls, miss, miss2, worst };
     let sum = 0;
     for (const [k, v] of Object.entries(S.sys)) { out.sys[k] = +(v / F.length).toFixed(3); sum += v / F.length; }
     out.sys.other = +(out.cpuMean - sum).toFixed(3);
@@ -280,7 +306,7 @@ function pageInstall() {
 
 // ---- node side ------------------------------------------------------------
 const chrome = launchChrome({ port: PORT, profile: `/tmp/auto-perfcpu-${PORT}`, gpu: true, headed: false,
-  width: VIEW.width, height: VIEW.height, vsyncOff: true });
+  width: VIEW.width, height: VIEW.height, vsyncOff: !VSYNC });
 let code = 0;
 try {
   let page;
@@ -324,7 +350,7 @@ try {
   await ev(`(() => { const d = window.__dbg; d.applyQuality(${JSON.stringify(QUALITY)}, true);
     for (const k of ['pad','stickZone','lookZone','rotate'])
       { const e = document.getElementById(k); if (e) e.style.display = 'none'; } })()`);
-  await ev(`(${pageInstall.toString()})()`);
+  await ev(`window.__pcWrap = ${JSON.stringify(WRAP)}; (${pageInstall.toString()})()`);
   const build = (/id="build">([^<]*)</.exec(await (await fetch(`http://localhost:${HTTP_PORT}/apps/auto/index.html`)).text()) || [])[1];
   console.log(`perfcpu ${LABEL} build ${build}  ${DESKTOP ? 'desktop' : 'iPhone 17 Pro landscape'}  quality ${QUALITY}  frames ${FRAMES}`);
   const out = { label: LABEL, build, renderer: rend, runs: {} };
@@ -340,6 +366,8 @@ try {
     console.log(`\n[${run}] route ${st.route} m  moved ${T.moved} m  resets ${T.resets}  ${T.cars} cars ${T.peds} peds  ${T.draws} draws`);
     console.log(`  cpu/frame  median ${T.cpu.toFixed(2)}  mean ${T.cpuMean.toFixed(2)}  p90 ${T.cpu90.toFixed(2)}  p99 ${T.cpu99.toFixed(2)}  max ${T.cpuMax}  (raf ${T.raf.toFixed(2)})`);
     console.log(`  by system (mean ms/frame): ${sys}`);
+    console.log(`  frames over 20 ms: ${T.miss} of ${T.n} (over 36 ms: ${T.miss2})`);
+    for (const w of T.worst) console.log(`    ${w}`);
     console.log('  queries/frame: ' + Object.entries(C).sort((a, b) => b[1].msFrame - a[1].msFrame)
       .map(([k, v]) => `${k} ${v.perFrame}x ${v.us}us = ${v.msFrame}ms`).join('  '));
     if (PROFILE) {

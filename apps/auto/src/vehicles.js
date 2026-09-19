@@ -4703,16 +4703,22 @@ export class Vehicle {
     const f2 = this.forward;
     const rx2 = f2.z, rz2 = -f2.x;
     const gAt = (ox, oz) => this.city.groundAt(this.x + ox, this.z + oz, this.y + 1.5, this.lift);
-    const fh = gAt(f2.x * this.halfLen, f2.z * this.halfLen);
-    const bh = gAt(-f2.x * this.halfLen, -f2.z * this.halfLen);
+    // A DISTANT AI car rides its centre sample. traffic.js sets lowDetail on a
+    // phone for cars past 60 m, where a level body on a slope is centimetres
+    // off at each end -- invisible -- and the four wheel queries were most of
+    // what traffic cost there (3.3 ms a frame on an iPhone 17 Pro, 58 cars).
+    const low = this.lowDetail;
+    const cg = low ? this.city.groundAt(this.x, this.z, this.y + 1.5, this.lift) : 0;
+    const fh = low ? cg : gAt(f2.x * this.halfLen, f2.z * this.halfLen);
+    const bh = low ? cg : gAt(-f2.x * this.halfLen, -f2.z * this.halfLen);
     // A bike has TWO contact patches, both on the centreline. Sampling out to
     // the half-width and averaging four is right for a car straddling a road's
     // camber; on a bike those two samples are the gutter and the crown of a
     // road it is nowhere near, and the average buries it or floats it by half
     // the camber. Two samples also cost two `groundAt` calls instead of four.
     const two = !!spec.moto;
-    const lh = two ? 0 : gAt(rx2 * this.halfWid, rz2 * this.halfWid);
-    const rh = two ? 0 : gAt(-rx2 * this.halfWid, -rz2 * this.halfWid);
+    const lh = two ? 0 : low ? cg : gAt(rx2 * this.halfWid, rz2 * this.halfWid);
+    const rh = two ? 0 : low ? cg : gAt(-rx2 * this.halfWid, -rz2 * this.halfWid);
 
     // vertical: follow ground, with a little air time over crests
     let target = two ? (fh + bh) / 2 : (fh + bh + lh + rh) / 4;

@@ -31,7 +31,7 @@ try {
   const ws = new WebSocket(page.webSocketDebuggerUrl);
   await new Promise((r, j) => { ws.addEventListener('open', r); ws.addEventListener('error', j); });
   let id = 0; const pend = new Map();
-  ws.addEventListener('message', (e) => { const m = JSON.parse(e.data); if (m.id && pend.has(m.id)) { pend.get(m.id)(m); pend.delete(m.id); } });
+  ws.addEventListener('message', (e) => { const m = JSON.parse(e.data); if (m.id && pend.has(m.id)) { pend.get(m.id)(m); pend.delete(m.id); } else if (m.method === 'Runtime.consoleAPICalled' && process.env.RCPU_LOG) console.log('PAGE', m.params.args.map((a) => a.value).join(' ')); });
   ws.addEventListener('close', () => process.exit(3));
   const send = (m, p = {}) => new Promise((res) => { ws.send(JSON.stringify({ id: ++id, method: m, params: p })); pend.set(id, res); });
   const ev = async (e) => {
@@ -100,7 +100,9 @@ try {
       for (let dz = -2; dz <= 2; dz++) for (let dx = -2; dx <= 2; dx++) {
         const t0 = performance.now();
         const gen = w.buildChunkStep(cx0 + dx, cz0 + dz, 1);
-        let st, steps = 0; do { st = gen.next(); steps++; } while (!st.done);
+        let st, steps = 0, smax = 0;
+        do { const s0 = performance.now(); st = gen.next(); const sd = performance.now() - s0; if (sd > smax) smax = sd; steps++; } while (!st.done);
+        window.__smax = Math.max(window.__smax || 0, smax); (window.__steps = window.__steps || []).push(smax);
         const ms = performance.now() - t0;
         let verts = 0, sum = 0;
         if (st.value) st.value.traverse((o) => {
@@ -113,7 +115,8 @@ try {
       }
       const ms = t.map((k) => k.ms).sort((a, b) => a - b);
       const verts = t.reduce((a, k) => a + k.verts, 0), sum = t.reduce((a, k) => a + k.sum, 0);
-      return JSON.stringify({ verts, sum: sum.toFixed(1), n: ms.length, median: ms[ms.length >> 1], mean: ms.reduce((a, b) => a + b, 0) / ms.length, max: ms[ms.length - 1], total: ms.reduce((a, b) => a + b, 0) });
+      const sm = window.__steps.sort((a, b) => a - b); console.log(JSON.stringify(window.__sd));
+      return JSON.stringify({ stepMax: window.__smax, stepMed: sm[sm.length >> 1], steps: t.reduce((a, k) => a + k.steps, 0) / t.length, verts, sum: sum.toFixed(1), n: ms.length, median: ms[ms.length >> 1], mean: ms.reduce((a, b) => a + b, 0) / ms.length, max: ms[ms.length - 1], total: ms.reduce((a, b) => a + b, 0) });
     })()`));
     if (PROF) {
       const prof = (await send('Profiler.stop')).result.profile;
@@ -133,7 +136,7 @@ try {
       const show = (m, lbl) => { console.log(`  ${lbl}:`); for (const [k, us] of [...m.entries()].sort((a, b) => b[1] - a[1]).slice(0, 28)) console.log(`    ${(us / 1000).toFixed(0).padStart(6)} ms ${(us / total * 100).toFixed(1).padStart(5)}%  ${k}`); };
       show(self, 'self time'); show(incl, 'inclusive');
     }
-    console.log(`chunk builds :${HTTP_PORT} build ${build} near (${X}, ${Z}): ${b.n} chunks  median ${b.median.toFixed(1)} ms  mean ${b.mean.toFixed(1)}  max ${b.max.toFixed(1)}  total ${b.total.toFixed(0)} ms   geometry ${b.verts} verts, checksum ${b.sum}`);
+    console.log(`chunk builds :${HTTP_PORT} build ${build} near (${X}, ${Z}): ${b.n} chunks  median ${b.median.toFixed(1)} ms  mean ${b.mean.toFixed(1)}  max ${b.max.toFixed(1)}  total ${b.total.toFixed(0)} ms   geometry ${b.verts} verts, checksum ${b.sum}   steps/chunk ${b.steps.toFixed(0)}, longest step per chunk: median ${b.stepMed.toFixed(1)} ms, worst ${b.stepMax.toFixed(1)} ms`);
     process.exitCode = 0;
     throw { done: true };
   }
@@ -153,7 +156,10 @@ try {
     const under = (set) => (o) => { for (let p = o; p; p = p.parent) if (set.has(p)) return true; return false; };
     const chunkSet = new Set([...d.world.chunks.values()].map((c) => c.group).filter(Boolean));
     const rows = [];
-    const base = time(); rows.push(['base', base, 0]);
+    const base = time();
+    r.info.autoReset = false; r.info.reset(); r.setRenderTarget(d.postfx.target); r.render(sc, cam); r.setRenderTarget(null);
+    const baseCalls = r.info.render.calls; r.info.autoReset = true;
+    rows.push(['base (' + baseCalls + ' calls incl. shadow pass)', base, 0]);
     const cfg = [
       ['traffic+parked cars', under(cars)],
       ['pedestrians', under(peds)],
@@ -162,12 +168,18 @@ try {
       ['skinned meshes', (o) => o.isSkinnedMesh],
       ['transparent materials', (o) => o.isMesh && o.material && (Array.isArray(o.material) ? o.material.some((m) => m.transparent) : o.material.transparent)],
       ['shadow casting off', null],
+      ['parked cars', (o) => { for (const v of d.traffic.cars) if (v.mode === 'parked' && v.group === o) return true; return false; }],
+      ['moving traffic', (o) => { for (const v of d.traffic.cars) if (v.mode !== 'parked' && v.group === o) return true; return false; }],
+      ['far massing/roads/skyline', (o) => /far|skyline/i.test(o.name || '')],
     ];
     for (const [name, pred] of cfg) {
       let undo;
       if (!pred) { const was = r.shadowMap.enabled; r.shadowMap.enabled = false; undo = () => { r.shadowMap.enabled = was; }; }
       else undo = vis(pred);
-      const t = time(); undo(); rows.push([name, t, base - t]);
+      const t = time();
+      r.info.autoReset = false; r.info.reset(); r.setRenderTarget(d.postfx.target); r.render(sc, cam); r.setRenderTarget(null);
+      const calls = r.info.render.calls; r.info.autoReset = true;
+      undo(); rows.push([name + ' (' + calls + ' calls)', t, base - t]);
     }
     rows.push(['base again', time(), 0]);
     let objs = 0, meshes = 0, skinned = 0, transp = 0, cb = 0;
