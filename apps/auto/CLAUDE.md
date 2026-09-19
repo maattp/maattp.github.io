@@ -1107,6 +1107,31 @@ values -- cadence and step-length curves, duty factor against speed, joint-angle
 ranges -- so the rig judges against an outside standard rather than against a
 screenshot.
 
+### The Space Needle
+
+The Needle is `src/needle.js`, built to published dimensions. The reference
+table at the top of that file gives each number and its source: 605 ft to the
+beacon, the 500/510/520 ft top-house levels, SkyLine at 100 ft, a 102 ft base
+circle, the 373 ft waist, the 42 m halo, 48 barriers leaning out 14 degrees,
+and Astronaut White, roof included, since May 2023. The profile the sources
+leave out was measured off Commons photographs. The legs are three pairs of
+columns swept through a monotone-cubic radius profile. They are welded into
+one blade from 79 to 128 m and fork into Y arms above that. **Leg thickness is
+tuned to the distant read, not only to the drawings.** With legs of about
+1 m, which is what the drawings imply, the dark core was the only thing
+visible from 500 m and the tower read as a black pole. Legs sized to look
+4-5 m wide from Kerry Park, as they do in photographs taken there, restore the
+white hourglass. The Needle has its own materials (`NEEDLE_MATS`), so
+`mergeByMaterial` returns meshes that belong to the Needle alone.
+`buildLandmarks` names them `spaceNeedle`, culls them on their own bounds and
+lets them cast and receive shadows. That is 6 draws and about 14k triangles.
+The two glass materials fold the reflection into the sky hemisphere, the same
+way the curtain wall in world.js does. `node tools/needleshots.mjs <dir>`
+frames nine views from the landmark's own position: plaza, base, under,
+street at 590 m, tophouse, Kerry Park at the game's FOV and at telephoto,
+aerial, and 4 km toward Beacon Hill. It also prints the Needle's draw and
+triangle cost.
+
 ## Parks
 
 Parks come from the green channel of `surface.png` (OSM `leisure=park`,
