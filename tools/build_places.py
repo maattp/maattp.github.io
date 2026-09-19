@@ -45,6 +45,11 @@ LANDMARKS = [
     # in real metres from here, so the POI-vs-centroid caveat does not apply.
     ("airport", "King County International Airport", 47.5299, -122.3019),
     ("bellevueDT", "Bellevue Downtown Park", 47.6144, -122.2030),
+    # Built by landmarks.js rather than as an OSM box: the footprint is the
+    # whole lot, and a box the size of the lot is not a 1914 tower. Last, so
+    # the landmark-keyed collectibles (activities.js takes the first 20) are
+    # the same set as before it was added.
+    ("smith", "Smith Tower", 47.6019, -122.3318),
 ]
 
 # Where the player starts, and where the hospital puts them back. Both are real
