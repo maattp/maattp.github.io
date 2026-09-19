@@ -295,7 +295,14 @@ LONGER side, and `cone()` takes no rotation, so it stayed axis-aligned in world
 space while the house was turned by `bd.rot`. On a 6 x 14 m house that is a 10 m
 square roof at the wrong angle, missing the walls entirely on the narrow axis.
 `meshGable()` builds a gable in the building's own frame with the ridge along
-the longer side. Smith Tower's cap had the same defect: a 4-sided `cone` puts
+the longer side. **Its normals have to turn with it.** They were written in the
+house's frame but passed in unrotated, and `Builder.quad`/`tri` wind each face
+to agree with the normal they are given. On a house turned past about 90 deg,
+the "-z" slope's normal pointed into the roof, so that slope and a gable end were
+wound inward and backface-culled. From the street, most houses showed one bare
+slope over an open end, a lean-to slab, on master and on every build since the
+gable was added. `meshPyramid` had the same bug. Any builder that places
+vertices through a rotation has to rotate its normals through the same one. Smith Tower's cap had the same defect: a 4-sided `cone` puts
 its vertices on the axes, so it is a diamond in plan, 45 deg out from the square
 tower under it.
 

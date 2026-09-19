@@ -4087,6 +4087,14 @@ varying vec3 vFarTint;`)
     const rise = clamp(span * 0.62, 1.0, 3.6);
     const y1 = y0 + rise;
     const P = (lx, lz, y) => [bd.x + lx * cs - lz * sn, y, bd.z + lx * sn + lz * cs];
+    // Normals are written in the HOUSE's frame, so they turn with it, exactly as
+    // P turns the corners. They used to go in unrotated, and Builder.quad/tri
+    // wind every face to agree with the normal it is given: on a house turned
+    // past ~90 deg the local "-z" normal pointed into the roof, so that slope was
+    // wound inward and backface-culled, and the gable ends went the same way.
+    // What was left from the street was one bare slope per house, a lean-to
+    // slab over an open end, on most of the houses in the city.
+    const N = (lx, y, lz) => [lx * cs - lz * sn, y, lx * sn + lz * cs];
     // Ridge endpoints, pulled in a little so the gable ends are not knife-edged.
     const rl = alongX ? hw : hd;
     const A = alongX ? P(-rl, 0, y1) : P(0, -rl, y1);
@@ -4096,15 +4104,15 @@ varying vec3 vFarTint;`)
     const c11 = P(hw, hd, y0), c01 = P(-hw, hd, y0);
     const dark = [col[0] * 0.62, col[1] * 0.62, col[2] * 0.66];
     if (alongX) {
-      flat.quad(c00, c10, Bp, A, [0, 0.72, -0.7], ZERO_UV, col);      // slope -z
-      flat.quad(c11, c01, A, Bp, [0, 0.72, 0.7], ZERO_UV, dark);      // slope +z
-      flat.tri(c00, A, c01, [-1, 0.25, 0], col);                      // gable -x
-      flat.tri(c10, c11, Bp, [1, 0.25, 0], col);                      // gable +x
+      flat.quad(c00, c10, Bp, A, N(0, 0.72, -0.7), ZERO_UV, col);      // slope -z
+      flat.quad(c11, c01, A, Bp, N(0, 0.72, 0.7), ZERO_UV, dark);      // slope +z
+      flat.tri(c00, A, c01, N(-1, 0.25, 0), col);                      // gable -x
+      flat.tri(c10, c11, Bp, N(1, 0.25, 0), col);                      // gable +x
     } else {
-      flat.quad(c00, A, Bp, c01, [-0.7, 0.72, 0], ZERO_UV, col);      // slope -x
-      flat.quad(c10, c11, Bp, A, [0.7, 0.72, 0], ZERO_UV, dark);      // slope +x
-      flat.tri(c00, c10, A, [0, 0.25, -1], col);                      // gable -z
-      flat.tri(c01, Bp, c11, [0, 0.25, 1], col);                      // gable +z
+      flat.quad(c00, A, Bp, c01, N(-0.7, 0.72, 0), ZERO_UV, col);      // slope -x
+      flat.quad(c10, c11, Bp, A, N(0.7, 0.72, 0), ZERO_UV, dark);      // slope +x
+      flat.tri(c00, c10, A, N(0, 0.25, -1), col);                      // gable -z
+      flat.tri(c01, Bp, c11, N(0, 0.25, 1), col);                      // gable +z
     }
     // Chimney, on the roof rather than beside it.
     if (hash2(seed, 21) > 0.62) {
@@ -4121,7 +4129,9 @@ varying vec3 vFarTint;`)
     const P = (lx, lz, yy) => [x + lx * cs - lz * sn, yy, z + lx * sn + lz * cs];
     const apex = [x, y0 + h, z];
     const c = [P(-hw, -hd, y0), P(hw, -hd, y0), P(hw, hd, y0), P(-hw, hd, y0)];
-    const nrm = [[0, 0.4, -1], [1, 0.4, 0], [0, 0.4, 1], [-1, 0.4, 0]];
+    // Rotated with the corners, for the reason meshGable's normals are.
+    const N = (lx, y, lz) => [lx * cs - lz * sn, y, lx * sn + lz * cs];
+    const nrm = [N(0, 0.4, -1), N(1, 0.4, 0), N(0, 0.4, 1), N(-1, 0.4, 0)];
     for (let i = 0; i < 4; i++) {
       flat.tri(c[i], c[(i + 1) % 4], apex, nrm[i], col);
     }
