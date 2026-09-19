@@ -227,7 +227,9 @@ async function street(evaluate, send) {
         s += len / 2;
         const off = e.hw * 0.48 * sign;
         const x = a.x + e.dx * s - e.dz * off, z = a.z + e.dz * s + e.dx * off;
-        const v = d.traffic.spawnAt(x, z, Math.atan2(e.dx * sign, e.dz * sign), name, COLS[(c0 + i) % COLS.length], 'free');
+        // 'traffic', so the cars are occupied as driven ones are (the game is
+        // paused, so none of them moves).
+        const v = d.traffic.spawnAt(x, z, Math.atan2(e.dx * sign, e.dz * sign), name, COLS[(c0 + i) % COLS.length], 'traffic');
         for (let k = 0; k < 3; k++) v.update(1 / 60, { throttle: 0, brake: 0, steer: 0, handbrake: 0 });
         s += len / 2 + 2.6;
       });
@@ -246,6 +248,9 @@ async function street(evaluate, send) {
     { name: 'mid', s: setup.span * 0.62, lat: -setup.hw * 0.10, eye: 2.4, ls: setup.span * 0.36, llat: setup.hw * 0.48, look: 0.8 },
     // raised, looking back down the whole lineup
     { name: 'high', s: setup.span + 14, lat: -setup.hw * 0.25, eye: 8.0, ls: setup.span * 0.45, llat: setup.hw * 0.15, look: 0.5 },
+    // the chase camera's view of the first car in the near lane: its rear
+    // screen is what a player looks at most
+    { name: 'chase', s: 9.2, lat: setup.hw * 0.48, eye: 2.3, ls: 22, llat: setup.hw * 0.48, look: 1.1 },
   ];
   for (const V of views) {
     await evaluate(`(() => {

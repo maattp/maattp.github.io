@@ -123,7 +123,9 @@ export class Builder {
    * of faceting, which is the whole difference between a car and a box.
    */
   loft(rings, col, opts = {}) {
-    const { capStart = false, capEnd = false, colTop = null, topFrom = 1e9 } = opts;
+    // `skip(i, k)` leaves out the quad between rings i..i+1 on segment k..k+1
+    // -- an opening the caller fills (or glazes) itself.
+    const { capStart = false, capEnd = false, colTop = null, topFrom = 1e9, skip = null } = opts;
     const R = rings.length, K = rings[0].pts.length;
     const P = [];
     for (let i = 0; i < R; i++) {
@@ -155,6 +157,7 @@ export class Builder {
     }
     for (let i = 0; i < R - 1; i++) {
       for (let k = 0; k < K; k++) {
+        if (skip && skip(i, k)) continue;
         const k2 = (k + 1) % K;
         const c0 = colTop && P[i][k][1] > topFrom ? colTop : col;
         this.quad(P[i][k], P[i][k2], P[i + 1][k2], P[i + 1][k],
