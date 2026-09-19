@@ -2715,6 +2715,7 @@ export function* cityGenerator(md) {
     // entities inside its height range.
     setBarriers(segs) {
       this.barrierSegs = segs;
+      this.barrierFine = null;
       this.barrierGrid = new Map();
       for (let i = 0; i < segs.length; i += 6) {
         const c0 = Math.floor((Math.min(segs[i], segs[i + 2]) - 2) / CHUNK);
@@ -2736,30 +2737,57 @@ export function* cityGenerator(md) {
     barrierHit(x, z, rad, y) {
       if (!this.barrierSegs) return null;
       const HALF = 0.8; // wall half-thickness
+      const S = this.barrierSegs;
+      // An 8 m grid, not the 400 m chunk one: downtown a chunk holds thousands
+      // of 3 m wall pieces, and this runs for every vehicle and pedestrian every
+      // frame (6 us a call there, on a Mac). A piece is filed under every cell
+      // its bbox + HALF touches, so any piece within rad + HALF of the point
+      // shares a cell with the query box. A stamp per piece replaces the Set.
+      if (!this.barrierFine) {
+        const F = new Map();
+        for (let i = 0; i < S.length; i += 6) {
+          const x0 = Math.floor((Math.min(S[i], S[i + 2]) - HALF - 0.01) / 8), x1 = Math.floor((Math.max(S[i], S[i + 2]) + HALF + 0.01) / 8);
+          const z0 = Math.floor((Math.min(S[i + 1], S[i + 3]) - HALF - 0.01) / 8), z1 = Math.floor((Math.max(S[i + 1], S[i + 3]) + HALF + 0.01) / 8);
+          for (let cx = x0; cx <= x1; cx++) {
+            for (let cz = z0; cz <= z1; cz++) {
+              const k = skey(cx, cz);
+              let l = F.get(k);
+              if (!l) F.set(k, (l = []));
+              l.push(i);
+            }
+          }
+        }
+        this.barrierFine = F;
+        this.barrierStamp = new Uint32Array(S.length / 6 + 1);
+        this.barrierQ = 0;
+      }
+      const q = ++this.barrierQ;
+      const stamp = this.barrierStamp;
       let best = null;
-      const c0 = Math.floor((x - rad) / CHUNK), c1 = Math.floor((x + rad) / CHUNK);
-      const d0 = Math.floor((z - rad) / CHUNK), d1 = Math.floor((z + rad) / CHUNK);
-      // Allocated lazily: this runs inside obstacleHit for every vehicle and
-      // pedestrian every frame, and almost everywhere on the map every queried
-      // cell is empty.
-      let seen = null;
+      const c0 = Math.floor((x - rad) / 8), c1 = Math.floor((x + rad) / 8);
+      const d0 = Math.floor((z - rad) / 8), d1 = Math.floor((z + rad) / 8);
+      const rr = rad + HALF;
       for (let cx = c0; cx <= c1; cx++) {
         for (let cz = d0; cz <= d1; cz++) {
-          const l = this.barrierGrid.get(skey(cx, cz));
+          const l = this.barrierFine.get(skey(cx, cz));
           if (!l) continue;
-          for (const i of l) {
-            if (!seen) seen = new Set();
-            if (seen.has(i)) continue;
-            seen.add(i);
-            const S = this.barrierSegs;
+          for (let n = 0; n < l.length; n++) {
+            const i = l[n];
+            if (stamp[i / 6] === q) continue;
+            stamp[i / 6] = q;
             if (y !== undefined && (y < S[i + 4] || y > S[i + 5])) continue;
-            const r = distToSeg(x, z, S[i], S[i + 1], S[i + 2], S[i + 3]);
-            const rr = rad + HALF;
-            if (r.d >= rr) continue;
-            const d = r.d || 1e-4;
+            // distToSeg, inline
+            const ax = S[i], az = S[i + 1], sx = S[i + 2] - ax, sz = S[i + 3] - az;
+            const l2 = sx * sx + sz * sz;
+            let t = l2 > 0 ? ((x - ax) * sx + (z - az) * sz) / l2 : 0;
+            t = t < 0 ? 0 : t > 1 ? 1 : t;
+            const px = ax + sx * t, pz = az + sz * t;
+            const rd = Math.hypot(x - px, z - pz);
+            if (rd >= rr) continue;
+            const d = rd || 1e-4;
             const pen = rr - d;
             if (!best || pen > best.pen) {
-              best = { pen, nx: (x - r.x) / d, nz: (z - r.z) / d };
+              best = { pen, nx: (x - px) / d, nz: (z - pz) / d };
             }
           }
         }
@@ -2876,7 +2904,36 @@ export function* cityGenerator(md) {
         for (let cz = d0; cz <= d1; cz++) {
           const l = this.obstacles.get(skey(cx, cz));
           if (!l) continue;
-          for (let i = 0; i < l.length; i += 3) {
+          // An 8 m grid over the chunk's list, rebuilt when the list grows (it
+          // only does while that chunk builds): downtown a chunk is hundreds of
+          // trunks and posts, and every vehicle and pedestrian asks every frame.
+          // Each is filed under the cells its circle touches, so anything
+          // overlapping the query circle shares a cell with the query box.
+          if (l.__n !== l.length) {
+            const F = new Map();
+            for (let i = 0; i < l.length; i += 3) {
+              const r = l[i + 2] + 0.01;
+              for (let gx = Math.floor((l[i] - r) / 8); gx <= Math.floor((l[i] + r) / 8); gx++) {
+                for (let gz = Math.floor((l[i + 1] - r) / 8); gz <= Math.floor((l[i + 1] + r) / 8); gz++) {
+                  const k = skey(gx, gz);
+                  let fl = F.get(k);
+                  if (!fl) F.set(k, (fl = []));
+                  fl.push(i);
+                }
+              }
+            }
+            l.__fine = F; l.__n = l.length; l.__stamp = new Uint32Array(l.length / 3 + 1); l.__q = 0;
+          }
+          const q = ++l.__q, stamp = l.__stamp;
+          const g0 = Math.floor((x - rad) / 8), g1 = Math.floor((x + rad) / 8);
+          const h0 = Math.floor((z - rad) / 8), h1 = Math.floor((z + rad) / 8);
+          for (let gx = g0; gx <= g1; gx++) for (let gz = h0; gz <= h1; gz++) {
+          const fl = l.__fine.get(skey(gx, gz));
+          if (!fl) continue;
+          for (let n = 0; n < fl.length; n++) {
+            const i = fl[n];
+            if (stamp[i / 3] === q) continue;
+            stamp[i / 3] = q;
             const dx = x - l[i], dz = z - l[i + 1];
             const rr = rad + l[i + 2];
             const d2 = dx * dx + dz * dz;
@@ -2892,6 +2949,7 @@ export function* cityGenerator(md) {
             const d = Math.sqrt(d2) || 1e-4;
             const pen = rr - d;
             if (!best || pen > best.pen) best = { pen, nx: dx / d, nz: dz / d };
+          }
           }
         }
       }

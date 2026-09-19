@@ -1,7 +1,7 @@
 // Traffic, parked cars and the police response.
 
 import * as THREE from './three.js';
-import { Vehicle, CIVILIAN_TYPES, randomCarColor, vehicleAssets } from './vehicles.js';
+import { Vehicle, CIVILIAN_TYPES, randomCarColor, vehicleAssets, farLod } from './vehicles.js';
 import { clamp, lerp, angleWrap, hash2, rng, dist2 } from './util.js';
 import * as G from './geo.js';
 
@@ -19,6 +19,10 @@ const DESPAWN = 520;
 const ON_PHONE = typeof navigator !== 'undefined' && /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
 const PARKED_SHOW = ON_PHONE ? 80 : 140;
 const SHADOW_NEAR = ON_PHONE ? 45 : Infinity;
+// Past this, a phone draws a vehicle through its type's InstancedMesh over the
+// far LOD (vehicles.js farLod): one draw per type on screen instead of three
+// per car. Beyond SHADOW_NEAR, so nothing that casts is ever instanced.
+const FAR_LOD = ON_PHONE ? 60 : Infinity;
 
 /**
  * Free everything under a node.
@@ -207,6 +211,10 @@ export class TrafficSystem {
     this.city = city;
     this.game = game;
     this.cars = [];
+    this.farMeshes = new Map();
+    this._farM = new THREE.Matrix4();
+    this._farFr = new THREE.Frustum();
+    this._farS = new THREE.Sphere();
     this.parkedSlots = new Set();
     this.R = rng(99);
     this.heli = null;
@@ -682,6 +690,76 @@ export class TrafficSystem {
     return null;
   }
 
+  /**
+   * Hand every vehicle past FAR_LOD to its type's InstancedMesh, and take back
+   * the ones that came closer. The car keeps its own group, transform and
+   * collision; only its `tilt` (every mesh it draws) is hidden while a slot in
+   * the instanced mesh stands in for it.
+   */
+  updateFarLod(px, pz, player) {
+    if (FAR_LOD === Infinity) return;
+    const lim = FAR_LOD * FAR_LOD;
+    for (const e of this.farMeshes.values()) e.n = 0;
+    // An InstancedMesh culls as ONE object, so every slot in it would be drawn
+    // whenever any is on screen. Cull per car here instead, against last
+    // frame's camera (the camera moves after traffic), with a margin for it.
+    const cam = this.camera, fr = this._farFr, sph = this._farS;
+    if (cam) {
+      cam.updateMatrixWorld();
+      this._farM.multiplyMatrices(cam.projectionMatrix, cam.matrixWorldInverse);
+      fr.setFromProjectionMatrix(this._farM);
+    }
+    for (const v of this.cars) {
+      const far = v !== player.vehicle && v.group.visible && !v.rider && !v.extra && !v.detailedWheels
+        && dist2(v.x, v.z, px, pz) > lim;
+      if (v.tilt.visible === far) v.tilt.visible = !far;
+      if (!far) continue;
+      if (cam) {
+        sph.center.set(v.x, v.y + 1, v.z);
+        sph.radius = v.halfLen + 6;
+        if (!fr.intersectsSphere(sph)) continue;
+      }
+      let e = this.farMeshes.get(v.typeName);
+      if (!e) this.farMeshes.set(v.typeName, (e = { mesh: null, cap: 0, n: 0 }));
+      if (e.n === e.cap) this.growFar(e, v.typeName);
+      v.group.updateMatrix();
+      v.tilt.updateMatrix();
+      this._farM.multiplyMatrices(v.group.matrix, v.tilt.matrix);
+      e.mesh.setMatrixAt(e.n, this._farM);
+      if (!v._farCol) v._farCol = new THREE.Color(v.color);
+      e.mesh.setColorAt(e.n, v._farCol);
+      e.n++;
+    }
+    for (const e of this.farMeshes.values()) {
+      if (!e.mesh) continue;
+      e.mesh.count = e.n;
+      e.mesh.visible = e.n > 0;
+      if (!e.n) continue;
+      e.mesh.instanceMatrix.needsUpdate = true;
+      e.mesh.instanceColor.needsUpdate = true;
+      e.mesh.computeBoundingSphere();
+    }
+  }
+
+  growFar(e, typeName) {
+    const { geo, mat } = farLod(typeName);
+    const cap = Math.max(8, e.cap * 2);
+    const m = new THREE.InstancedMesh(geo, mat, cap);
+    m.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+    m.setColorAt(0, new THREE.Color(1, 1, 1));
+    m.instanceColor.setUsage(THREE.DynamicDrawUsage);
+    if (e.mesh) {
+      m.instanceMatrix.array.set(e.mesh.instanceMatrix.array.subarray(0, e.n * 16));
+      m.instanceColor.array.set(e.mesh.instanceColor.array.subarray(0, e.n * 3));
+      this.scene.remove(e.mesh);
+      e.mesh.dispose();
+    }
+    m.name = 'farTraffic';
+    this.scene.add(m);
+    e.mesh = m;
+    e.cap = cap;
+  }
+
   // --- per-frame -----------------------------------------------------------
 
   update(dt, px, pz, camDir, player) {
@@ -723,6 +801,9 @@ export class TrafficSystem {
         continue;
       }
       v.group.visible = true;
+      // The airport's planes sit where place() put them, as parked cars do, and
+      // from downtown all eight used to run the driving model every frame.
+      if (v.mode === 'apron' && d2 > 300 * 300) continue;
       // Distant AI cars take one ground sample instead of four (Vehicle.update).
       v.lowDetail = ON_PHONE && d2 > 60 * 60;
       if (SHADOW_NEAR !== Infinity) {
@@ -745,6 +826,7 @@ export class TrafficSystem {
     this.resolveCarCollisions(dt, player);
     // collision resolution edits transforms directly, so re-sync every body.
     for (const v of this.cars) if (v !== player.vehicle) v.sync();
+    this.updateFarLod(px, pz, player);
 
     if (this.heli) {
       const h = this.heli;

@@ -4290,6 +4290,130 @@ export function paintMaterial(color) {
 }
 
 // ---------------------------------------------------------------------------
+// FAR LOD: one geometry, one material, one draw per TYPE.
+//
+// A traffic car is 3 draws and ~6-12k triangles, and on a phone most of the
+// ones on screen are 60 m+ away, 20-40 px long: at Yesler Terrace 25 of 41
+// cars were, which was 75 draws and ~250k triangles of detail nobody could
+// see. Past that distance traffic.js draws them through one InstancedMesh per
+// type over this geometry instead.
+//
+// It is the three part geometries merged and VERTEX-CLUSTERED: vertices snap
+// to a FAR_CELL grid and merge only within the same part and normal bin, so
+// creases and part boundaries survive and a panel's curvature collapses. What
+// the three materials did differently rides per vertex (`lodA`: paint mask,
+// metalness, roughness, env intensity); the paint colour is the instance
+// colour, applied to the paint mask only. Glass is opaque here, sky-folded
+// like the near glass, since nobody sees into a cabin at 60 m.
+const FAR_CELL = 0.2;
+const FAR_PARTS = {
+  paint: [1, 0.5, 0.26, 1.5],
+  trim: [0, 0.88, 0.16, 1.7],
+  matte: [0, 0.05, 0.86, 0.55],
+  glass: [0, 0.0, 0.08, 1.4],
+};
+
+function clusterFar(parts) {
+  const clusters = new Map();
+  const P = [], N = [], C = [], A = [], Gl = [], cnt = [];
+  const out = [];
+  for (const { geo, part } of parts) {
+    const pos = geo.attributes.position.array, nor = geo.attributes.normal.array;
+    const col = geo.attributes.color ? geo.attributes.color.array : null;
+    const gls = geo.attributes.glass ? geo.attributes.glass.array : null;
+    const idx = geo.index.array;
+    const map = new Int32Array(pos.length / 3);
+    for (let v = 0; v < map.length; v++) {
+      const k3 = v * 3;
+      const glass = gls && gls[v] > 0.5;
+      const pt = glass ? 'glass' : part;
+      const nx = nor[k3], ny = nor[k3 + 1], nz = nor[k3 + 2];
+      const key = `${pt}|${Math.round(pos[k3] / FAR_CELL)}|${Math.round(pos[k3 + 1] / FAR_CELL)}|${Math.round(pos[k3 + 2] / FAR_CELL)}`
+        + `|${Math.round(nx * 1.2)}|${Math.round(ny * 1.2)}|${Math.round(nz * 1.2)}`;
+      let c = clusters.get(key);
+      if (c === undefined) {
+        c = cnt.length;
+        clusters.set(key, c);
+        P.push(0, 0, 0); N.push(0, 0, 0); C.push(0, 0, 0); cnt.push(0);
+        A.push(...FAR_PARTS[pt]); Gl.push(glass ? 1 : 0);
+      }
+      P[c * 3] += pos[k3]; P[c * 3 + 1] += pos[k3 + 1]; P[c * 3 + 2] += pos[k3 + 2];
+      N[c * 3] += nx; N[c * 3 + 1] += ny; N[c * 3 + 2] += nz;
+      if (glass) { C[c * 3] += 0.05; C[c * 3 + 1] += 0.06; C[c * 3 + 2] += 0.075; }
+      else if (col && part !== 'paint') { C[c * 3] += col[k3]; C[c * 3 + 1] += col[k3 + 1]; C[c * 3 + 2] += col[k3 + 2]; }
+      else { C[c * 3] += 1; C[c * 3 + 1] += 1; C[c * 3 + 2] += 1; }
+      cnt[c]++;
+      map[v] = c;
+    }
+    for (let i = 0; i < idx.length; i += 3) {
+      const a = map[idx[i]], b = map[idx[i + 1]], c = map[idx[i + 2]];
+      if (a === b || b === c || a === c) continue;
+      out.push(a, b, c);
+    }
+  }
+  const n = cnt.length;
+  const pos = new Float32Array(n * 3), nor = new Float32Array(n * 3), col = new Float32Array(n * 3);
+  for (let c = 0; c < n; c++) {
+    const k = cnt[c];
+    for (let j = 0; j < 3; j++) { pos[c * 3 + j] = P[c * 3 + j] / k; col[c * 3 + j] = C[c * 3 + j] / k; }
+    const l = Math.hypot(N[c * 3], N[c * 3 + 1], N[c * 3 + 2]) || 1;
+    for (let j = 0; j < 3; j++) nor[c * 3 + j] = N[c * 3 + j] / l;
+  }
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+  geo.setAttribute('normal', new THREE.BufferAttribute(nor, 3));
+  geo.setAttribute('color', new THREE.BufferAttribute(col, 3));
+  geo.setAttribute('lodA', new THREE.BufferAttribute(new Float32Array(A), 4));
+  geo.setAttribute('lodG', new THREE.BufferAttribute(new Float32Array(Gl), 1));
+  geo.setIndex(out);
+  geo.computeBoundingSphere();
+  return geo;
+}
+
+function farShader(sh) {
+  sh.vertexShader = 'attribute vec4 lodA;\nattribute float lodG;\nvarying vec4 vLodA;\nvarying float vLodG;\n' + sh.vertexShader
+    .replace('#include <color_vertex>', `#include <color_vertex>
+	vLodA = lodA; vLodG = lodG;
+	#ifdef USE_INSTANCING_COLOR
+		// paint only: undo the instance tint on trim, matte and glass
+		vColor.xyz /= mix( max( instanceColor.xyz, vec3( 1e-3 ) ), vec3( 1.0 ), lodA.x );
+	#endif`);
+  let fs = 'varying vec4 vLodA;\nvarying float vLodG;\n' + sh.fragmentShader;
+  let env = THREE.ShaderChunk.envmap_physical_pars_fragment.split('envMapColor.rgb * envMapIntensity;').join('envMapColor.rgb * envMapIntensity * vLodA.w;');
+  if (env.includes(GLASS_IBL_FROM)) {
+    env = env.replace(GLASS_IBL_FROM, `${GLASS_IBL_FROM}
+			reflectVec = normalize( mix( reflectVec, vec3( reflectVec.x, abs( reflectVec.y ) * 0.85 + 0.12, reflectVec.z ), vLodG ) );`);
+  }
+  fs = fs.replace('#include <envmap_physical_pars_fragment>', env)
+    .replace('#include <metalnessmap_fragment>', `#include <metalnessmap_fragment>
+	metalnessFactor = vLodA.y;
+	roughnessFactor = vLodA.z;`);
+  sh.fragmentShader = fs;
+}
+
+let FAR = null;
+/** The far LOD for a type: { geo, mat }, built on first use. */
+export function farLod(typeName) {
+  if (!FAR) {
+    const mat = new THREE.MeshStandardMaterial({ vertexColors: true, metalness: 0.5, roughness: 0.5, envMapIntensity: 1 });
+    mat.onBeforeCompile = farShader;
+    mat.customProgramCacheKey = () => 'vehicleFar';
+    FAR = { mat, geos: new Map() };
+  }
+  let geo = FAR.geos.get(typeName);
+  if (!geo) {
+    const t = vehicleAssets().types[typeName];
+    geo = clusterFar([
+      { geo: t.paintGeo, part: 'paint' },
+      { geo: t.trimGeoW, part: 'trim' },
+      { geo: t.matteGeoWE, part: 'matte' },
+    ]);
+    FAR.geos.set(typeName, geo);
+  }
+  return { geo, mat: FAR.mat };
+}
+
+// ---------------------------------------------------------------------------
 
 export class Vehicle {
   constructor(city, typeName, color, opts = {}) {

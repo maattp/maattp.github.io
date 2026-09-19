@@ -147,7 +147,24 @@ try {
       const tot = (l) => t.filter((k) => k.lod === l).reduce((a, k) => a + k.ms, 0);
       return JSON.stringify({ nearMs: tot(1), midMs: tot(0), midN: t.filter((k) => !k.lod).length, stepMax: window.__smax, stepMed: sm[sm.length >> 1], steps: t.reduce((a, k) => a + k.steps, 0) / t.length, verts, sum: sum.toFixed(1), n: ms.length, median: ms[ms.length >> 1], mean: ms.reduce((a, b) => a + b, 0) / ms.length, max: ms[ms.length - 1], total: ms.reduce((a, b) => a + b, 0) });
     })()`));
-    if (process.env.RCPU_POST) console.log('post:', await ev(`(() => { const d = window.__dbg, w = d.world, city = d.city; return String(${process.env.RCPU_POST}); })()`));
+    if (process.env.RCPU_POST) {
+      // A post that returns 'shots:' + JSON [dataURL, ...] (window.__shot() makes
+      // one) writes them to RCPU_SHOT-0.png, -1.png ... instead of printing.
+      await ev(`window.__shot = () => { const d = window.__dbg; d.renderer.setRenderTarget(d.postfx.target); d.renderer.render(d.scene, d.camera); d.postfx.render(performance.now() / 1000, d.camera); d.renderer.setRenderTarget(null); return d.renderer.domElement.toDataURL('image/png'); }`);
+      const out = await ev(`(() => { const d = window.__dbg, w = d.world, city = d.city; return (async () => String(await (${process.env.RCPU_POST})))(); })()`);
+      if (out && out.startsWith('shots:')) {
+        const fs = await import('node:fs');
+        JSON.parse(out.slice(6)).forEach((u, i) => fs.writeFileSync(`${process.env.RCPU_SHOT || '/tmp/rcpu'}-${i}.png`, Buffer.from(u.split(',')[1], 'base64')));
+        console.log('post: wrote', JSON.parse(out.slice(6)).length, 'shots');
+      } else console.log('post:', out);
+    }
+    // RCPU_SHOT=file.png: after RCPU_POST, draw one frame and save the canvas.
+    if (process.env.RCPU_SHOT) {
+      const url = await ev(`(async () => { const d = window.__dbg; await new Promise((r) => requestAnimationFrame(r));
+        d.renderer.setRenderTarget(d.postfx.target); d.renderer.render(d.scene, d.camera); d.postfx.render(performance.now() / 1000, d.camera); d.renderer.setRenderTarget(null);
+        return d.renderer.domElement.toDataURL('image/png'); })()`);
+      (await import('node:fs')).writeFileSync(process.env.RCPU_SHOT, Buffer.from(url.split(',')[1], 'base64'));
+    }
     if (PROF) {
       const prof = (await send('Profiler.stop')).result.profile;
       const byId = new Map(prof.nodes.map((n) => [n.id, n]));

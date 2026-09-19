@@ -115,7 +115,7 @@ function pageInstall() {
       const snap = {};
       for (const [k, v] of Object.entries(S.sys)) { snap[k] = v - (lastSys[k] || 0); }
       lastSys = { ...S.sys };
-      S.frames.push([performance.now() - t0, lastTs ? ts - lastTs : 0, snap]);
+      S.frames.push([performance.now() - t0, lastTs ? ts - lastTs : 0, snap, d.sceneStats.calls, d.sceneStats.tris]);
     }
     lastTs = ts;
   });
@@ -286,7 +286,8 @@ function pageInstall() {
     const out = { n: F.length, cpu: +q(F, 0.5).toFixed(3), cpuMean: +(F.reduce((a, b) => a + b, 0) / F.length).toFixed(3),
       cpu90: +q(F, 0.9).toFixed(3), cpu99: +q(F, 0.99).toFixed(3), cpuMax: +Math.max(...F).toFixed(2),
       raf: +q(I, 0.5).toFixed(3), sys: {}, cars: d.traffic.cars.length, peds: d.peds.peds.length,
-      moved: Math.round(dist), resets: R ? R.resets : 0, draws: d.sceneStats.calls, miss, miss2, worst };
+      moved: Math.round(dist), resets: R ? R.resets : 0, draws: Math.round(S.frames.reduce((a, f) => a + (f[3] || 0), 0) / S.frames.length),
+      trisK: Math.round(S.frames.reduce((a, f) => a + (f[4] || 0), 0) / S.frames.length / 1000), miss, miss2, worst };
     let sum = 0;
     for (const [k, v] of Object.entries(S.sys)) { out.sys[k] = +(v / F.length).toFixed(3); sum += v / F.length; }
     out.sys.other = +(out.cpuMean - sum).toFixed(3);
@@ -363,7 +364,7 @@ try {
     const O = { setup: st, time: T, counts: C };
     out.runs[run] = O;
     const sys = Object.entries(T.sys).sort((a, b) => b[1] - a[1]).map(([k, v]) => `${k} ${v.toFixed(2)}`).join('  ');
-    console.log(`\n[${run}] route ${st.route} m  moved ${T.moved} m  resets ${T.resets}  ${T.cars} cars ${T.peds} peds  ${T.draws} draws`);
+    console.log(`\n[${run}] route ${st.route} m  moved ${T.moved} m  resets ${T.resets}  ${T.cars} cars ${T.peds} peds  ${T.draws} draws (mean)  ${T.trisK}k tris`);
     console.log(`  cpu/frame  median ${T.cpu.toFixed(2)}  mean ${T.cpuMean.toFixed(2)}  p90 ${T.cpu90.toFixed(2)}  p99 ${T.cpu99.toFixed(2)}  max ${T.cpuMax}  (raf ${T.raf.toFixed(2)})`);
     console.log(`  by system (mean ms/frame): ${sys}`);
     console.log(`  frames over 20 ms: ${T.miss} of ${T.n} (over 36 ms: ${T.miss2})`);

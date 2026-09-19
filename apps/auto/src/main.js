@@ -518,6 +518,7 @@ function installShadowFade() {
   controls = new Controls(document.getElementById('app'));
   player = new Player(scene, city, game, world);
   traffic = new TrafficSystem(scene, city, game);
+  traffic.camera = camera;   // far-LOD instances are culled against it
   setWaterQuery((x, z) => world.waterLevelAt(x, z));
   // Boeing Field's apron: three trainers, parked nose-out along the taxiway
   // side, matching the landmark's own layout constants (bearing -0.52, apron
@@ -1250,15 +1251,38 @@ function frame(now) {
 }
 
 function draw(now) {
+  const prof = perfSys.on;
+  // The render lap split three ways for the phone readout: the shadow pass
+  // (timed inside renderer.render by wrapping shadowMap.render), the rest of
+  // the scene pass, and the post chain. Which one dominates decides whether
+  // the next cut is casters, draws or fill.
+  if (prof && !renderer.shadowMap.__timed) {
+    const sm = renderer.shadowMap, orig = sm.render;
+    sm.render = function (...a) {
+      const t0 = performance.now(), c0 = renderer.info.render.calls;
+      orig.apply(this, a);
+      perfRender.shadowMs += performance.now() - t0;
+      perfRender.shadowCalls += renderer.info.render.calls - c0;
+    };
+    sm.__timed = true;
+  }
+  const t0 = prof ? performance.now() : 0;
   renderer.setRenderTarget(postfx.target);
   renderer.render(scene, camera);
   // capture before the post passes reset the counters
   sceneStats.calls = renderer.info.render.calls;
   sceneStats.tris = renderer.info.render.triangles;
+  const t1 = prof ? performance.now() : 0;
   postfx.render(now / 1000, camera);
   renderer.setRenderTarget(null);
+  if (prof) {
+    perfRender.sceneMs += t1 - t0;
+    perfRender.postMs += performance.now() - t1;
+    perfRender.frames++;
+  }
 }
 const sceneStats = { calls: 0, tris: 0 };
+const perfRender = { shadowMs: 0, shadowCalls: 0, sceneMs: 0, postMs: 0, frames: 0 };
 const debugEl = document.getElementById('debugStats');
 let debugAcc = 0;
 let fpsMin = 999;
@@ -1283,7 +1307,12 @@ function perfLine() {
     .map(([k, v]) => `${k} ${(v / n).toFixed(1)}`).join('  ');
   perfSys.ms = {};
   perfSys.frames = 0;
-  return `\ncpu ms: ${top}`;
+  const r = perfRender, rn = r.frames || 1;
+  // sceneMs includes the shadow pass, which runs inside renderer.render.
+  const rl = `\nrender ms: shadow ${(r.shadowMs / rn).toFixed(1)} (${Math.round(r.shadowCalls / rn)} draws)`
+    + `  scene ${((r.sceneMs - r.shadowMs) / rn).toFixed(1)}  post ${(r.postMs / rn).toFixed(1)}`;
+  r.shadowMs = r.shadowCalls = r.sceneMs = r.postMs = r.frames = 0;
+  return `\ncpu ms: ${top}${rl}`;
 }
 
 function updateDebug(dt) {
