@@ -2085,6 +2085,33 @@ export function* cityGenerator(md) {
     }
     return liftGrid.get(skey(Math.floor(x / LIFT_CELL), Math.floor(z / LIFT_CELL)));
   };
+  // onRoad's grid: EVERY edge (tunnels and decks too, as the chunk scan had),
+  // under its bbox grown by the farthest onRoad can answer true for it.
+  const ROAD_PAD_MAX = 2.5;
+  let roadGrid = null;
+  const roadCell = (x, z) => {
+    if (!roadGrid) {
+      roadGrid = new Map();
+      for (let ei = 0; ei < g.edges.length; ei++) {
+        const e = g.edges[ei];
+        const reach = e.hw + (e.pbw || 0) + ROAD_PAD_MAX + 0.01;
+        const a = g.nodes[e.a], b = g.nodes[e.b];
+        const x0 = Math.floor((Math.min(a.x, b.x) - reach) / LIFT_CELL);
+        const x1 = Math.floor((Math.max(a.x, b.x) + reach) / LIFT_CELL);
+        const z0 = Math.floor((Math.min(a.z, b.z) - reach) / LIFT_CELL);
+        const z1 = Math.floor((Math.max(a.z, b.z) + reach) / LIFT_CELL);
+        for (let cx = x0; cx <= x1; cx++) {
+          for (let cz = z0; cz <= z1; cz++) {
+            const k = skey(cx, cz);
+            let l = roadGrid.get(k);
+            if (!l) roadGrid.set(k, (l = []));
+            l.push(ei);
+          }
+        }
+      }
+    }
+    return roadGrid.get(skey(Math.floor(x / LIFT_CELL), Math.floor(z / LIFT_CELL)));
+  };
   // Per node: null where world.meshNode draws no square, else its half-size,
   // orientation and ring width -- the same rules meshNode applies.
   let nodeSqCache = null;
@@ -2831,6 +2858,29 @@ export function* cityGenerator(md) {
      * Boulevard down the length of its own) reads as plantable ground.
      */
     onRoad(x, z, pad = 0, includeElev = true) {
+      // FROM THE FINE GRID for every pad a caller uses (<= ROAD_PAD_MAX). The
+      // chunk scan below walked every edge of up to four 400 m chunks through
+      // an allocating distToSeg, and chunk meshing calls this per pavement
+      // piece, ring piece and verge sample: measured, it was over half of a
+      // downtown chunk build (3.7 s of 6.7 s for 25 chunks). The grid files each
+      // edge under its bbox grown by hw + batter + ROAD_PAD_MAX, so every edge
+      // that can answer true is a candidate and the answer is identical.
+      if (pad <= ROAD_PAD_MAX) {
+        const cand = roadCell(x, z);
+        if (!cand) return false;
+        for (let q = 0; q < cand.length; q++) {
+          const e = g.edges[cand[q]];
+          if (e.elev && !includeElev) continue;
+          const a = g.nodes[e.a], b = g.nodes[e.b];
+          const sx = b.x - a.x, sz = b.z - a.z, l2 = sx * sx + sz * sz;
+          let t = l2 > 0 ? ((x - a.x) * sx + (z - a.z) * sz) / l2 : 0;
+          t = t < 0 ? 0 : t > 1 ? 1 : t;
+          const rx = a.x + sx * t - x, rz = a.z + sz * t - z;
+          const r = e.hw + pad + (e.pbw || 0);
+          if (rx * rx + rz * rz <= r * r) return true;
+        }
+        return false;
+      }
       const c0 = Math.floor((x - MAX_HW - pad) / CHUNK);
       const c1 = Math.floor((x + MAX_HW + pad) / CHUNK);
       const d0 = Math.floor((z - MAX_HW - pad) / CHUNK);
