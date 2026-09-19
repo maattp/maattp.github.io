@@ -2052,6 +2052,66 @@ export function* cityGenerator(md) {
 
   yield { p: 0.96, msg: 'Waking the city' };
 
+  // --- Lift-query indices (roadLift / nodeSurface) -------------------------
+  //
+  // Built lazily on the first query, after gradeRoads, stackBores and every
+  // other load-time pass have fixed widths, batters and node positions. Both
+  // are exact: see roadLift.
+  const LIFT_CELL = 32;
+  let liftGrid = null;
+  const liftCell = (x, z) => {
+    if (!liftGrid) {
+      liftGrid = new Map();
+      for (let ei = 0; ei < g.edges.length; ei++) {
+        const e = g.edges[ei];
+        // A tunnel draws no surface and a deck lifts nothing here (both answer
+        // through groundAt), so neither is a candidate -- as in the old scan.
+        if (e.elev || e.tunnel) continue;
+        const reach = (e.prof ? e.hw + (e.pbw || 0) : e.hw + walkWidth(e.cls) + VERGE) + 0.01;
+        const a = g.nodes[e.a], b = g.nodes[e.b];
+        const x0 = Math.floor((Math.min(a.x, b.x) - reach) / LIFT_CELL);
+        const x1 = Math.floor((Math.max(a.x, b.x) + reach) / LIFT_CELL);
+        const z0 = Math.floor((Math.min(a.z, b.z) - reach) / LIFT_CELL);
+        const z1 = Math.floor((Math.max(a.z, b.z) + reach) / LIFT_CELL);
+        for (let cx = x0; cx <= x1; cx++) {
+          for (let cz = z0; cz <= z1; cz++) {
+            const k = skey(cx, cz);
+            let l = liftGrid.get(k);
+            if (!l) liftGrid.set(k, (l = []));
+            l.push(ei);
+          }
+        }
+      }
+    }
+    return liftGrid.get(skey(Math.floor(x / LIFT_CELL), Math.floor(z / LIFT_CELL)));
+  };
+  // Per node: null where world.meshNode draws no square, else its half-size,
+  // orientation and ring width -- the same rules meshNode applies.
+  let nodeSqCache = null;
+  const nodeSq = (ni) => {
+    if (!nodeSqCache) nodeSqCache = new Array(g.nodes.length);
+    let q = nodeSqCache[ni];
+    if (q !== undefined) return q;
+    q = null;
+    const n = g.nodes[ni];
+    // world.meshNode draws no square at a graded node that is not an at-grade
+    // junction (the strips are mitred into one another there), nor at a dead end.
+    if (!(n.elev || (n.prof && !n.anchor)) && n.e.length >= 2) {
+      let hw = 0, rot = 0, sw = 0;
+      for (const ei of n.e) {
+        const e = g.edges[ei];
+        // Mirrors world.meshNode: a tunnel draws no surface, so it must not
+        // size the crossing square nor lift anything standing on it.
+        if (e.tunnel) continue;
+        if (e.hw > hw) { hw = e.hw; rot = Math.atan2(e.dx, -e.dz); }
+        sw = Math.max(sw, walkWidth(e.cls));
+      }
+      if (hw > 0) q = { hw, sw, c: Math.cos(rot), s: Math.sin(rot) };
+    }
+    nodeSqCache[ni] = q;
+    return q;
+  };
+
   /** A graded road's drawn surface (profile + camber) at (x, z), bias aside. */
   const gradedY = (e, x, z) => {
     const a = g.nodes[e.a];
@@ -2167,61 +2227,70 @@ export function* cityGenerator(md) {
       if (ns && ns.inSquare) return ns.lift;
 
       let lift = 0, wlift = 0, vlift = 0, onCw = false;
-      const c0 = Math.floor(x / CHUNK), d0 = Math.floor(z / CHUNK);
-      for (let cx = c0 - 1; cx <= c0 + 1; cx++) {
-        for (let cz = d0 - 1; cz <= d0 + 1; cz++) {
-          const c = chunks.get(ck(cx, cz));
-          if (!c) continue;
-          for (const ei of c.edges) {
-            const e = g.edges[ei];
-            // A tunnel draws no surface (world.meshRoad skips it), so it must
-            // not lift anything either -- that would stand you on a road that
-            // is not there.
-            if (e.elev || e.tunnel) continue;
+      // THE CANDIDATES COME FROM A FINE GRID, not a 3x3-chunk scan. That scan
+      // is a 1.2 km square: downtown it walked several hundred edges per call,
+      // each through an allocating distToSeg, at ~50 calls a frame (one per car
+      // and pedestrian). Measured on the phone profile driving I-5 it was
+      // 31.7 us a call, 1.57 ms a frame -- the largest single query in the
+      // loop. liftCell lists every edge whose bbox, grown by the farthest this
+      // function can reach from it (carriageway + pavement + verge, or
+      // carriageway + batter), touches the cell, so every edge that can lift
+      // (x,z) is a candidate and the answer is identical. Tunnels (no surface
+      // drawn) and decks (groundAt's job) are never in it, as before.
+      const cand = liftCell(x, z);
+      if (cand) {
+        {
+          for (let q = 0; q < cand.length; q++) {
+            const e = g.edges[cand[q]];
             const a = g.nodes[e.a], b = g.nodes[e.b];
-            const r = distToSeg(x, z, a.x, a.z, b.x, b.z);
+            // distToSeg inline: no object per edge in the hottest loop.
+            const sx = b.x - a.x, sz = b.z - a.z, l2 = sx * sx + sz * sz;
+            let rt = l2 > 0 ? ((x - a.x) * sx + (z - a.z) * sz) / l2 : 0;
+            rt = rt < 0 ? 0 : rt > 1 ? 1 : rt;
+            const rx = a.x + sx * rt, rz = a.z + sz * rt;
+            const rd = Math.hypot(x - rx, z - rz);
             if (e.prof) {
               // On the carriageway a graded road answers through groundAt's
               // deck query, per sample and with its camber. Off it, the
               // embankment world.meshGraded draws: a straight batter from
               // the carriageway edge to the toe, mirrored exactly here.
-              if (r.d > e.hw + e.pbw || r.t <= 0 || r.t >= 1) continue;
-              const side = ((x - r.x) * -e.dz + (z - r.z) * e.dx) >= 0 ? 0 : 3;
-              const P = profAt(e, r.t), o6 = P.i * 6 + side, o7 = o6 + 6;
+              if (rd > e.hw + e.pbw || rt <= 0 || rt >= 1) continue;
+              const side = ((x - rx) * -e.dz + (z - rz) * e.dx) >= 0 ? 0 : 3;
+              const P = profAt(e, rt), o6 = P.i * 6 + side, o7 = o6 + 6;
               // From the trimmed edge on this side (split levels).
               const sw = e.tw[P.i * 2 + side / 3] * (1 - P.fr) + e.tw[(P.i + 1) * 2 + side / 3] * P.fr;
-              if (r.d <= sw) { onCw = true; continue; }
+              if (rd <= sw) { onCw = true; continue; }
               const ey = e.pe[o6] * (1 - P.fr) + e.pe[o7] * P.fr;
               const w = e.pe[o6 + 1] * (1 - P.fr) + e.pe[o7 + 1] * P.fr;
               const ty = e.pe[o6 + 2] * (1 - P.fr) + e.pe[o7 + 2] * P.fr;
-              if (w <= 0 || r.d - sw >= w) continue;
-              const l = ey + (ty - ey) * ((r.d - sw) / w) - G.terrainHeight(x, z);
+              if (w <= 0 || rd - sw >= w) continue;
+              const l = ey + (ty - ey) * ((rd - sw) / w) - G.terrainHeight(x, z);
               if (l > lift) lift = l;
               continue;
             }
             const ww = walkWidth(e.cls), outer = e.hw + ww;
             // (interior only: past an end the clamped distance is a round cap,
             // which the junction square and ring already answer for)
-            if (r.d <= e.hw && r.t > 0 && r.t < 1) onCw = true;
+            if (rd <= e.hw && rt > 0 && rt < 1) onCw = true;
             if (ww > 0) {
               // A pavement is flat to its outer edge and then comes down to
               // the ground on the verge world.meshRoad draws: WALK_LIFT to 0
               // across VERGE. It used to taper to nothing inside the slab's
               // last RAMP metres while the slab was drawn flat to its edge,
               // then stop -- an open 52 cm step to the grass.
-              if (r.d > outer + VERGE) continue;
-              if (r.d > outer) {
-                const vl = WALK_LIFT * (1 - (r.d - outer) / VERGE);
+              if (rd > outer + VERGE) continue;
+              if (rd > outer) {
+                const vl = WALK_LIFT * (1 - (rd - outer) / VERGE);
                 if (vl > vlift) vlift = vl;
                 continue;
               }
-              if (r.d <= e.hw) { if (ROAD_LIFT > lift) lift = ROAD_LIFT; }
+              if (rd <= e.hw) { if (ROAD_LIFT > lift) lift = ROAD_LIFT; }
               else if (WALK_LIFT > wlift) wlift = WALK_LIFT;
               continue;
             }
-            if (r.d > outer) continue;
+            if (rd > outer) continue;
             let l = ROAD_LIFT;
-            if (r.d > outer - RAMP) l *= (outer - r.d) / RAMP;
+            if (rd > outer - RAMP) l *= (outer - rd) / RAMP;
             if (l > lift) lift = l;
           }
         }
@@ -2268,21 +2337,13 @@ export function* cityGenerator(md) {
           if (!l) continue;
           for (const ni of l) {
             const n = g.nodes[ni];
-            // world.meshNode draws no square at a graded node that is not an
-            // at-grade junction: the strips are mitred into one another there.
-            if (n.elev || (n.prof && !n.anchor)) continue;
-            if (n.e.length < 2) continue;
-            let hw = 0, rot = 0, sw = 0;
-            for (const ei of n.e) {
-              const e = g.edges[ei];
-              // Mirrors world.meshNode: a tunnel draws no surface, so it must
-              // not size the crossing square nor lift anything standing on it.
-              if (e.tunnel) continue;
-              if (e.hw > hw) { hw = e.hw; rot = Math.atan2(e.dx, -e.dz); }
-              sw = Math.max(sw, walkWidth(e.cls));
-            }
-            if (hw <= 0) continue;
-            const c = Math.cos(rot), s = Math.sin(rot);
+            // The square's size, orientation and ring width are per-node
+            // constants, so they are worked out once (nodeSq) rather than per
+            // call -- this ran an atan2, a cos and a sin for every node near
+            // every roadLift query.
+            const q = nodeSq(ni);
+            if (!q) continue;
+            const hw = q.hw, sw = q.sw, c = q.c, s = q.s;
             const ux = x - n.x, uz = z - n.z;
             const lx = Math.abs(ux * c + uz * s), lz = Math.abs(-ux * s + uz * c);
             if (lx <= hw && lz <= hw) return { lift: NODE_LIFT, inSquare: true };
