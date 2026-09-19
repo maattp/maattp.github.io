@@ -8,7 +8,7 @@ import * as G from './geo.js';
 // difference is worth roughly 40 draw calls a frame.
 const ON_PHONE = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
 import { CHUNK, ROAD_LIFT, NODE_LIFT, WALK_LIFT, TUNNEL_H, VERGE, cityStats } from './citygen.js';
-import { Builder } from './build.js';
+import { Builder, ChunkBuilder } from './build.js';
 import { hash2, clamp, lerp, distToSeg } from './util.js';
 
 // The bore's cross-section, shared by the mesher and by the trench that has to
@@ -1388,14 +1388,21 @@ export class World {
     // carriageway's shallower profile answered first and left the floor 1.9 m
     // ABOVE the road it was supposed to expose, so the trench was dug and the
     // carriageway still buried in it.
-    let best = null;
-    for (const c of this._cutsNear(x, z)) {
+    // No allocation per candidate: this sits under terrainHeight().
+    let best = null, bY = 0, bT = 0, bC = null, bH = 0;
+    const near = this._cutsNear(x, z);
+    for (let ci = 0; ci < near.length; ci++) {
+      const c = near[ci];
       if (x < c.x0 || x > c.x1 || z < c.z0 || z > c.z1) continue;
       for (let i = 0; i < c.pts.length - 1; i++) {
         const a = c.pts[i], b = c.pts[i + 1];
-        const r = distToSeg(x, z, a.x, a.z, b.x, b.z);
+        // distToSeg, inline
+        const sx = b.x - a.x, sz = b.z - a.z, l2 = sx * sx + sz * sz;
+        let rt = l2 > 0 ? ((x - a.x) * sx + (z - a.z) * sz) / l2 : 0;
+        rt = rt < 0 ? 0 : rt > 1 ? 1 : rt;
+        const rd = Math.hypot(x - (a.x + sx * rt), z - (a.z + sz * rt));
         const w = a.hw + CUT_SH + CUT_OVER;
-        if (r.d > w + CUT_BANK) continue;
+        if (rd > w + CUT_BANK) continue;
         // The closing (cap) segment starts at the cutting's deepest point and
         // runs on over the bore; behind its start, the segment before it owns
         // the ground. Clamped there, it dug a bowl at the last point's depth
@@ -1406,16 +1413,16 @@ export class World {
         // (without it the I-5 Express bore under a ramp's cut at (513, 77)
         // came out sliced instead).
         // (raw ground here: terrainHeight is what this is computing)
-        if (b.cap && r.t <= 0 && this._roofUnder(x, z, a.y, false) > a.y - 1.2) continue;
-        const deck = a.y + (b.y - a.y) * r.t;
-        const t = clamp((r.d - w) / CUT_BANK, 0, 1);
-        const cand = { y: deck - 0.7, t: t * t * (3 - 2 * t), c };
+        if (b.cap && rt <= 0 && this._roofUnder(x, z, a.y, false) > a.y - 1.2) continue;
+        const deck = a.y + (b.y - a.y) * rt;
+        const t = clamp((rd - w) / CUT_BANK, 0, 1);
+        const cy = deck - 0.7, ct = t * t * (3 - 2 * t);
         // compare at the point itself, banks included
-        const yHere = (q) => q.y + (1e4 - q.y) * q.t;
-        if (!best || yHere(cand) < yHere(best)) best = cand;
+        const h = cy + (1e4 - cy) * ct;
+        if (!best || h < bH) { best = true; bY = cy; bT = ct; bC = c; bH = h; }
       }
     }
-    return best;
+    return best ? { y: bY, t: bT, c: bC } : null;
   }
 
   /**
@@ -3365,11 +3372,11 @@ float frLine(float o, float fw, float c, float w) {
     const ch = city.chunks.get(ck);
     if (!ch) return null;
     this._ck = ck;
-    const road = new Builder(true);
-    const walk = new Builder(true);
-    const flat = new Builder(false);
-    const glow = new Builder(false);
-    const bl = { glass: new Builder(true), facade: new Builder(true) };
+    const road = new ChunkBuilder(true);
+    const walk = new ChunkBuilder(true);
+    const flat = new ChunkBuilder(false);
+    const glow = new ChunkBuilder(false);
+    const bl = { glass: new ChunkBuilder(true), facade: new ChunkBuilder(true) };
     // Road structure -- walls, parapets, fascia -- is textured concrete from the
     // facade atlas, so it draws into this chunk's facade mesh: no new material
     // and no new draw where the chunk has buildings anyway.
@@ -5338,7 +5345,10 @@ float frLine(float o, float fw, float c, float w) {
     // Every nearby carriageway, not just the ones meeting THIS node. Junctions
     // are close together in real data and a ring can easily reach into a
     // neighbouring one's approach, which the old node-local test could not see.
-    const onRoad = (x, z) => city.onRoad(x, z, 0, false);
+    // One candidate list for the whole ring (it asks ~300 times), answered
+    // with onRoad's own arithmetic: see citygen.roadsNear.
+    const near = city.roadsNear(n.x, n.z, (hw + sw) * 1.415 + 0.5, false);
+    const onRoad = (x, z) => city.onRoadAmong(near, x, z);
     const SEG = 16;
     const side = (ax, az, bx, bz, nx, nz) => {
       const wn = [-(nx * c - nz * s), 0, -(nx * s + nz * c)];

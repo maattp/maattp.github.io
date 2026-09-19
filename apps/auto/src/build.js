@@ -93,28 +93,35 @@ export class Builder {
   quad(a, b, c, d, n, uvs, col) {
     // `col` is one rgb triple, or four of them (per corner) for baked AO.
     // `n` is one normal, or four of them (per corner) for smooth shading.
-    let cols = Array.isArray(col[0]) ? col : [col, col, col, col];
-    let nrm = Array.isArray(n[0]) ? n : [n, n, n, n];
+    // No per-call arrays: this is the hottest function in a chunk build.
+    const pc = Array.isArray(col[0]), pn = Array.isArray(n[0]);
+    const c0 = pc ? col[0] : col, c1 = pc ? col[1] : col, c2 = pc ? col[2] : col, c3 = pc ? col[3] : col;
+    const n0 = pn ? n[0] : n, n1 = pn ? n[1] : n, n2 = pn ? n[2] : n, n3 = pn ? n[3] : n;
     const ux = b[0] - a[0], uy = b[1] - a[1], uz = b[2] - a[2];
     const vx = c[0] - a[0], vy = c[1] - a[1], vz = c[2] - a[2];
     const cx = uy * vz - uz * vy, cy = uz * vx - ux * vz, cz = ux * vy - uy * vx;
     // average the corner normals: with per-corner normals from loft(), a single
     // unrepresentative corner could flip the whole quad at a high-curvature spot
-    const ax = (nrm[0][0] + nrm[1][0] + nrm[2][0] + nrm[3][0]) / 4;
-    const ay = (nrm[0][1] + nrm[1][1] + nrm[2][1] + nrm[3][1]) / 4;
-    const az = (nrm[0][2] + nrm[1][2] + nrm[2][2] + nrm[3][2]) / 4;
+    const ax = (n0[0] + n1[0] + n2[0] + n3[0]) / 4;
+    const ay = (n0[1] + n1[1] + n2[1] + n3[1]) / 4;
+    const az = (n0[2] + n1[2] + n2[2] + n3[2]) / 4;
+    const i0 = this.vert(a[0], a[1], a[2], n0[0], n0[1], n0[2], uvs[0], uvs[1], c0[0], c0[1], c0[2]);
+    let i1, i3;
     if (cx * ax + cy * ay + cz * az < 0) {
-      const t = b; b = d; d = t;
-      uvs = [uvs[0], uvs[1], uvs[6], uvs[7], uvs[4], uvs[5], uvs[2], uvs[3]];
-      cols = [cols[0], cols[3], cols[2], cols[1]];
-      nrm = [nrm[0], nrm[3], nrm[2], nrm[1]];
+      // wound the other way: a, d, c, b, each corner keeping its own attributes
+      i1 = this.vert(d[0], d[1], d[2], n3[0], n3[1], n3[2], uvs[6], uvs[7], c3[0], c3[1], c3[2]);
+      i3 = -1;
+    } else {
+      i1 = this.vert(b[0], b[1], b[2], n1[0], n1[1], n1[2], uvs[2], uvs[3], c1[0], c1[1], c1[2]);
     }
-    const i0 = this.vert(a[0], a[1], a[2], nrm[0][0], nrm[0][1], nrm[0][2], uvs[0], uvs[1], cols[0][0], cols[0][1], cols[0][2]);
-    const i1 = this.vert(b[0], b[1], b[2], nrm[1][0], nrm[1][1], nrm[1][2], uvs[2], uvs[3], cols[1][0], cols[1][1], cols[1][2]);
-    const i2 = this.vert(c[0], c[1], c[2], nrm[2][0], nrm[2][1], nrm[2][2], uvs[4], uvs[5], cols[2][0], cols[2][1], cols[2][2]);
-    const i3 = this.vert(d[0], d[1], d[2], nrm[3][0], nrm[3][1], nrm[3][2], uvs[6], uvs[7], cols[3][0], cols[3][1], cols[3][2]);
-    this.idx.push(i0, i1, i2, i0, i2, i3);
+    const i2 = this.vert(c[0], c[1], c[2], n2[0], n2[1], n2[2], uvs[4], uvs[5], c2[0], c2[1], c2[2]);
+    if (i3 === -1) i3 = this.vert(b[0], b[1], b[2], n1[0], n1[1], n1[2], uvs[2], uvs[3], c1[0], c1[1], c1[2]);
+    else i3 = this.vert(d[0], d[1], d[2], n3[0], n3[1], n3[2], uvs[6], uvs[7], c3[0], c3[1], c3[2]);
+    this.face6(i0, i1, i2, i3);
   }
+
+  face6(i0, i1, i2, i3) { this.idx.push(i0, i1, i2, i0, i2, i3); }
+  face3(i0, i1, i2) { this.idx.push(i0, i1, i2); }
 
   /**
    * Loft a smooth shell through a list of cross-sections. `rings` is
@@ -277,7 +284,7 @@ export class Builder {
     const i0 = this.vert(a[0], a[1], a[2], n[0], n[1], n[2], 0, 0, col[0], col[1], col[2]);
     const i1 = this.vert(b[0], b[1], b[2], n[0], n[1], n[2], 1, 0, col[0], col[1], col[2]);
     const i2 = this.vert(c[0], c[1], c[2], n[0], n[1], n[2], 0.5, 1, col[0], col[1], col[2]);
-    this.idx.push(i0, i1, i2);
+    this.face3(i0, i1, i2);
   }
 
   /**
@@ -486,6 +493,86 @@ export class Builder {
     if (this.useUV) geo.setAttribute('uv', new THREE.Float32BufferAttribute(this.uv, 2));
     geo.setAttribute('color', new THREE.Float32BufferAttribute(this.col, 3));
     geo.setIndex(this.idx);
+    geo.computeBoundingSphere();
+    return geo;
+  }
+}
+
+/**
+ * Builder over growable typed arrays, for the streamed city chunks.
+ *
+ * A chunk is tens of thousands of vertices, and pushing them one number at a
+ * time onto plain arrays -- then converting those to Float32Arrays in build()
+ * -- was over a quarter of a chunk build's CPU. Same geometry to the bit (the
+ * plain path lands in float32 as well). Only for code that goes through the
+ * methods: vehicles and characters read and splice `pos`/`idx` directly, so
+ * they keep the plain Builder.
+ */
+export class ChunkBuilder extends Builder {
+  constructor(useUV = true) {
+    super(useUV);
+    this.cap = 1024;
+    this.nv = 0;
+    this.ni = 0;
+    this.P = new Float32Array(this.cap * 3);
+    this.N = new Float32Array(this.cap * 3);
+    this.U = useUV ? new Float32Array(this.cap * 2) : null;
+    this.C = new Float32Array(this.cap * 3);
+    this.I = new Uint32Array(this.cap * 2);
+  }
+
+  get empty() {
+    return this.ni === 0;
+  }
+
+  _grow() {
+    const cap = this.cap * 2;
+    const g = (a, k) => { const b = new Float32Array(cap * k); b.set(a); return b; };
+    this.P = g(this.P, 3); this.N = g(this.N, 3); this.C = g(this.C, 3);
+    if (this.U) this.U = g(this.U, 2);
+    this.cap = cap;
+  }
+
+  _growI() {
+    const b = new Uint32Array(this.I.length * 2); b.set(this.I); this.I = b;
+  }
+
+  vert(x, y, z, nx, ny, nz, u, v, r, g, b) {
+    const i = this.nv;
+    if (i === this.cap) this._grow();
+    const k = i * 3;
+    const P = this.P, N = this.N, C = this.C;
+    P[k] = x; P[k + 1] = y; P[k + 2] = z;
+    N[k] = nx; N[k + 1] = ny; N[k + 2] = nz;
+    C[k] = r; C[k + 1] = g; C[k + 2] = b;
+    if (this.U) { this.U[i * 2] = u; this.U[i * 2 + 1] = v; }
+    this.nv = i + 1;
+    return i;
+  }
+
+  face6(i0, i1, i2, i3) {
+    if (this.ni + 6 > this.I.length) this._growI();
+    const I = this.I, k = this.ni;
+    I[k] = i0; I[k + 1] = i1; I[k + 2] = i2; I[k + 3] = i0; I[k + 4] = i2; I[k + 5] = i3;
+    this.ni = k + 6;
+  }
+
+  face3(i0, i1, i2) {
+    if (this.ni + 3 > this.I.length) this._growI();
+    const I = this.I, k = this.ni;
+    I[k] = i0; I[k + 1] = i1; I[k + 2] = i2;
+    this.ni = k + 3;
+  }
+
+  build() {
+    const n = this.nv, geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.BufferAttribute(this.P.slice(0, n * 3), 3));
+    geo.setAttribute('normal', new THREE.BufferAttribute(this.N.slice(0, n * 3), 3));
+    if (this.U) geo.setAttribute('uv', new THREE.BufferAttribute(this.U.slice(0, n * 2), 2));
+    geo.setAttribute('color', new THREE.BufferAttribute(this.C.slice(0, n * 3), 3));
+    // setIndex(array) picks 16-bit indices under 65536 vertices; so does this.
+    const idx = n > 65535 ? this.I.slice(0, this.ni) : Uint16Array.from(this.I.subarray(0, this.ni));
+    geo.setIndex(new THREE.BufferAttribute(idx, 1));
     geo.computeBoundingSphere();
     return geo;
   }

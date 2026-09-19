@@ -18,6 +18,8 @@ const X = +arg('x', 305), Z = +arg('z', -278), FRAMES = +arg('frames', 120);
 const BUILDS = process.argv.includes('--builds');
 const PROF = process.argv.includes('--prof');
 const SPIKES = process.argv.includes('--spikes');
+const STREAM = process.argv.includes('--stream');
+const RING = +arg('ring', 2);   // --builds: 4 = the whole 9x9 streaming ring (mid chunks at lod 0)
 const UA = 'Mozilla/5.0 (iPhone; CPU iPhone OS 19_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/19.0 Mobile/15E148 Safari/604.1';
 const chrome = launchChrome({ port: PORT, profile: `/tmp/auto-rendercpu-${PORT}`, gpu: true, width: 874, height: 402, vsyncOff: true });
 let code = 0;
@@ -50,6 +52,27 @@ try {
   await assertRenderer(ev, console.log, true);
   for (let i = 0; i < 240; i++) { if (await ev('window.__dbg.sceneStats.calls > 0 && window.__dbg.traffic.cars.length > 0')) break; await sleep(500); }
   const build = (/id="build">([^<]*)</.exec(await (await fetch(`http://localhost:${HTTP_PORT}/apps/auto/index.html`)).text()) || [])[1];
+  if (STREAM) {
+    // Arrive the way a player does (respawn / fast travel) and time the streamer
+    // in the live loop until the ring settles: the frames it takes and the CPU.
+    const r = JSON.parse(await ev(`(async () => {
+      const d = window.__dbg, w = d.world;
+      const orig = w.update.bind(w); let ms = 0, n = 0, maxMs = 0;
+      w.update = function (...a) { const t0 = performance.now(); const res = orig(...a); const dt = performance.now() - t0; ms += dt; n++; maxMs = Math.max(maxMs, dt); return res; };
+      const bcs = w.buildChunkStep.bind(w); let chunks = 0, near = 0;
+      w.buildChunkStep = function (cx, cz, lod) { chunks++; if (lod === 1) near++; return bcs(cx, cz, lod); };
+      d.player.respawn(${X}, ${Z});
+      const pend = () => [...w.chunks.values()].filter((c) => c.lod !== c.wantLod).length;
+      const t0 = performance.now(); let f = 0;
+      for (; f < 20000; f++) { await new Promise((res) => requestAnimationFrame(res)); if (f > 5 && pend() === 0) break; }
+      const wall = performance.now() - t0;
+      w.update = orig; w.buildChunkStep = bcs;
+      return JSON.stringify({ frames: f, n, ms, maxMs, wall, chunks, near });
+    })()`));
+    console.log(`stream :${HTTP_PORT} build ${build} respawn at (${X}, ${Z}): settled in ${r.frames} frames (${(r.wall / 1000).toFixed(1)} s wall)`);
+    console.log(`  world.update total ${r.ms.toFixed(0)} ms over ${r.n} calls (mean ${(r.ms / r.n).toFixed(2)}, max ${r.maxMs.toFixed(1)});  builds started ${r.chunks} (${r.near} near)`);
+    throw { done: true };
+  }
   // Put the player at the spot, let traffic and crowds fill in for real, then freeze.
   await ev(`(async () => { const d = window.__dbg; d.player.respawn(${X}, ${Z});
     const t0 = performance.now(); while (performance.now() - t0 < 8000) await new Promise((r) => requestAnimationFrame(r));
@@ -93,13 +116,16 @@ try {
     // Time a full rebuild of each chunk in the 5x5 near ring, driving the same
     // generator world.update slices (buildChunkStep) to completion in one go.
     if (PROF) { await send('Profiler.enable'); await send('Profiler.setSamplingInterval', { interval: 200 }); await send('Profiler.start'); }
+    // RCPU_PRE='<js>': an experiment run first (stub a function, time the rest).
+    if (process.env.RCPU_PRE) await ev(`(() => { const d = window.__dbg, w = d.world, city = d.city, G = d.G; ${process.env.RCPU_PRE} })()`);
     const b = JSON.parse(await ev(`(() => {
       const d = window.__dbg, w = d.world;
       const cx0 = Math.floor(${X} / 400), cz0 = Math.floor(${Z} / 400);
       const t = [];
-      for (let dz = -2; dz <= 2; dz++) for (let dx = -2; dx <= 2; dx++) {
+      for (let dz = -${RING}; dz <= ${RING}; dz++) for (let dx = -${RING}; dx <= ${RING}; dx++) {
+        const lod = Math.max(Math.abs(dx), Math.abs(dz)) <= 2 ? 1 : 0;
         const t0 = performance.now();
-        const gen = w.buildChunkStep(cx0 + dx, cz0 + dz, 1);
+        const gen = w.buildChunkStep(cx0 + dx, cz0 + dz, lod);
         let st, steps = 0, smax = 0;
         do { const s0 = performance.now(); st = gen.next(); const sd = performance.now() - s0; if (sd > smax) smax = sd; steps++; } while (!st.done);
         window.__smax = Math.max(window.__smax || 0, smax); (window.__steps = window.__steps || []).push(smax);
@@ -109,15 +135,19 @@ try {
           if (!o.geometry) return;
           const pa = o.geometry.attributes.position;
           if (pa) { verts += pa.count; const A = pa.array; for (let q = 0; q < A.length; q += 7) sum += A[q] * ((q % 13) + 1); }
+          for (const nm of ['normal', 'color', 'uv']) { const at = o.geometry.attributes[nm]; if (at) { const A = at.array; for (let q = 0; q < A.length; q += 5) sum += A[q] * ((q % 11) + 1) * 0.01; } }
+          if (o.geometry.index) { const A = o.geometry.index.array; for (let q = 0; q < A.length; q += 3) sum += (A[q] % 997) * 1e-4 * (A.BYTES_PER_ELEMENT); }
           o.geometry.dispose();
         });
-        t.push({ ms, steps, verts, sum });
+        t.push({ ms, steps, verts, sum, lod });
       }
       const ms = t.map((k) => k.ms).sort((a, b) => a - b);
       const verts = t.reduce((a, k) => a + k.verts, 0), sum = t.reduce((a, k) => a + k.sum, 0);
       const sm = window.__steps.sort((a, b) => a - b); console.log(JSON.stringify(window.__sd));
-      return JSON.stringify({ stepMax: window.__smax, stepMed: sm[sm.length >> 1], steps: t.reduce((a, k) => a + k.steps, 0) / t.length, verts, sum: sum.toFixed(1), n: ms.length, median: ms[ms.length >> 1], mean: ms.reduce((a, b) => a + b, 0) / ms.length, max: ms[ms.length - 1], total: ms.reduce((a, b) => a + b, 0) });
+      const tot = (l) => t.filter((k) => k.lod === l).reduce((a, k) => a + k.ms, 0);
+      return JSON.stringify({ nearMs: tot(1), midMs: tot(0), midN: t.filter((k) => !k.lod).length, stepMax: window.__smax, stepMed: sm[sm.length >> 1], steps: t.reduce((a, k) => a + k.steps, 0) / t.length, verts, sum: sum.toFixed(1), n: ms.length, median: ms[ms.length >> 1], mean: ms.reduce((a, b) => a + b, 0) / ms.length, max: ms[ms.length - 1], total: ms.reduce((a, b) => a + b, 0) });
     })()`));
+    if (process.env.RCPU_POST) console.log('post:', await ev(`(() => { const d = window.__dbg, w = d.world, city = d.city; return String(${process.env.RCPU_POST}); })()`));
     if (PROF) {
       const prof = (await send('Profiler.stop')).result.profile;
       const byId = new Map(prof.nodes.map((n) => [n.id, n]));
@@ -135,8 +165,18 @@ try {
       }
       const show = (m, lbl) => { console.log(`  ${lbl}:`); for (const [k, us] of [...m.entries()].sort((a, b) => b[1] - a[1]).slice(0, 28)) console.log(`    ${(us / 1000).toFixed(0).padStart(6)} ms ${(us / total * 100).toFixed(1).padStart(5)}%  ${k}`); };
       show(self, 'self time'); show(incl, 'inclusive');
+      // RCPU_FN=meshNode: that function's hottest source lines (positionTicks).
+      if (process.env.RCPU_FN) {
+        const lines = new Map(); let n = 0;
+        for (const nd of prof.nodes) {
+          if (nd.callFrame.functionName !== process.env.RCPU_FN || !nd.positionTicks) continue;
+          for (const pt of nd.positionTicks) { lines.set(pt.line, (lines.get(pt.line) || 0) + pt.ticks); n += pt.ticks; }
+        }
+        console.log(`  ${process.env.RCPU_FN} by line (${n} ticks):`);
+        for (const [ln, t] of [...lines.entries()].sort((a, b) => b[1] - a[1]).slice(0, 20)) console.log(`    line ${ln}: ${t} (${(t / n * 100).toFixed(1)}%)`);
+      }
     }
-    console.log(`chunk builds :${HTTP_PORT} build ${build} near (${X}, ${Z}): ${b.n} chunks  median ${b.median.toFixed(1)} ms  mean ${b.mean.toFixed(1)}  max ${b.max.toFixed(1)}  total ${b.total.toFixed(0)} ms   geometry ${b.verts} verts, checksum ${b.sum}   steps/chunk ${b.steps.toFixed(0)}, longest step per chunk: median ${b.stepMed.toFixed(1)} ms, worst ${b.stepMax.toFixed(1)} ms`);
+    console.log(`chunk builds :${HTTP_PORT} build ${build} near (${X}, ${Z}): ${b.n} chunks  median ${b.median.toFixed(1)} ms  mean ${b.mean.toFixed(1)}  max ${b.max.toFixed(1)}  total ${b.total.toFixed(0)} ms   geometry ${b.verts} verts, checksum ${b.sum}   steps/chunk ${b.steps.toFixed(0)}, near ${b.nearMs.toFixed(0)} ms / mid ${b.midMs.toFixed(0)} ms over ${b.midN}, longest step per chunk: median ${b.stepMed.toFixed(1)} ms, worst ${b.stepMax.toFixed(1)} ms`);
     process.exitCode = 0;
     throw { done: true };
   }

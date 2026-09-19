@@ -813,9 +813,24 @@ function gradeRoads(nodes, edges) {
     return up.dip * (1 + Math.cos(Math.PI * u)) / 2;
   };
   /** Carve depth at (x,z) from every underpass: full over the road, a 1.5 m bank. */
+  // A 64 m bbox grid over them: this is inside the terrain carve, so every
+  // terrainHeight() call -- chunk meshing, and every ground query a frame --
+  // used to walk the whole list. `best` is a max, so order does not matter.
+  const UP_CELL = 64, upGrid = new Map(), UP_NONE = [];
+  for (const up of underpasses) {
+    for (let cx = Math.floor(up.x0 / UP_CELL); cx <= Math.floor(up.x1 / UP_CELL); cx++) {
+      for (let cz = Math.floor(up.z0 / UP_CELL); cz <= Math.floor(up.z1 / UP_CELL); cz++) {
+        const k = skey(cx, cz);
+        let l = upGrid.get(k);
+        if (!l) upGrid.set(k, (l = []));
+        l.push(up);
+      }
+    }
+  }
   const underpassDepth = (x, z) => {
     let best = 0;
-    for (const up of underpasses) {
+    const list = upGrid.get(skey(Math.floor(x / UP_CELL), Math.floor(z / UP_CELL))) || UP_NONE;
+    for (const up of list) {
       if (x < up.x0 || x > up.x1 || z < up.z0 || z > up.z1) continue;
       for (let i = 0; i < up.pts.length - 1; i++) {
         const p = up.pts[i], q = up.pts[i + 1];
@@ -2073,8 +2088,10 @@ export function* cityGenerator(md) {
         const x1 = Math.floor((Math.max(a.x, b.x) + reach) / LIFT_CELL);
         const z0 = Math.floor((Math.min(a.z, b.z) - reach) / LIFT_CELL);
         const z1 = Math.floor((Math.max(a.z, b.z) + reach) / LIFT_CELL);
+        const lim = reach + LIFT_CELL * 0.7072;   // cells the segment reaches; see roadCell
         for (let cx = x0; cx <= x1; cx++) {
           for (let cz = z0; cz <= z1; cz++) {
+            if (distToSeg((cx + 0.5) * LIFT_CELL, (cz + 0.5) * LIFT_CELL, a.x, a.z, b.x, b.z).d > lim) continue;
             const k = skey(cx, cz);
             let l = liftGrid.get(k);
             if (!l) liftGrid.set(k, (l = []));
@@ -2088,20 +2105,28 @@ export function* cityGenerator(md) {
   // onRoad's grid: EVERY edge (tunnels and decks too, as the chunk scan had),
   // under its bbox grown by the farthest onRoad can answer true for it.
   const ROAD_PAD_MAX = 2.5;
-  let roadGrid = null;
+  let roadGrid = null, roadReachMax = 0;
   const roadCell = (x, z) => {
     if (!roadGrid) {
       roadGrid = new Map();
       for (let ei = 0; ei < g.edges.length; ei++) {
         const e = g.edges[ei];
         const reach = e.hw + (e.pbw || 0) + ROAD_PAD_MAX + 0.01;
+        if (reach > roadReachMax) roadReachMax = reach;
         const a = g.nodes[e.a], b = g.nodes[e.b];
         const x0 = Math.floor((Math.min(a.x, b.x) - reach) / LIFT_CELL);
         const x1 = Math.floor((Math.max(a.x, b.x) + reach) / LIFT_CELL);
         const z0 = Math.floor((Math.min(a.z, b.z) - reach) / LIFT_CELL);
         const z1 = Math.floor((Math.max(a.z, b.z) + reach) / LIFT_CELL);
+        // Only cells the padded SEGMENT reaches, not its whole bbox: downtown's
+        // grid runs 32 deg off the axes, and a diagonal edge's bbox filed it
+        // under cells it passes nowhere near -- every one a candidate every
+        // query there had to test. Centre distance within reach plus the cell's
+        // half-diagonal is a superset of every cell the reach touches.
+        const lim = reach + LIFT_CELL * 0.7072;
         for (let cx = x0; cx <= x1; cx++) {
           for (let cz = z0; cz <= z1; cz++) {
+            if (distToSeg((cx + 0.5) * LIFT_CELL, (cz + 0.5) * LIFT_CELL, a.x, a.z, b.x, b.z).d > lim) continue;
             const k = skey(cx, cz);
             let l = roadGrid.get(k);
             if (!l) roadGrid.set(k, (l = []));
@@ -2143,6 +2168,46 @@ export function* cityGenerator(md) {
   // query: the first road meshed after boot used to pay ~15 ms for them.
   liftCell(0, 0);
   roadCell(0, 0);
+
+  // carriagewayAt's test for one edge, and the chunk scan whose order decides
+  // which road it returns. Only the INTERIOR of a segment counts; see there.
+  const cwHit = (ei, x, z, y, tol) => {
+    const e = g.edges[ei];
+    if (e.tunnel) return false;
+    const a = g.nodes[e.a], b = g.nodes[e.b];
+    const r = distToSeg(x, z, a.x, a.z, b.x, b.z);
+    if (r.t <= 0.001 || r.t >= 0.999 || r.d > e.hw - 0.3) return false;
+    let sy;
+    if (e.prof) {
+      const P = profAt(e, r.t);
+      const lat = (x - r.x) * -e.dz + (z - r.z) * e.dx;
+      // A graded road's carriageway ends at its trimmed edge on that side.
+      const s = lat >= 0 ? 0 : 1;
+      const sw = e.tw[P.i * 2 + s] * (1 - P.fr) + e.tw[(P.i + 1) * 2 + s] * P.fr;
+      if (r.d > sw - 0.3) return false;
+      sy = P.h + P.s * lat;
+    } else {
+      sy = G.terrainHeight(x, z) + ROAD_LIFT;
+    }
+    return Math.abs(sy - y) < tol;
+  };
+  const cwScan = (x, z, y, skip, tol) => {
+    const c0 = Math.floor((x - MAX_HW) / CHUNK), c1 = Math.floor((x + MAX_HW) / CHUNK);
+    const d0 = Math.floor((z - MAX_HW) / CHUNK), d1 = Math.floor((z + MAX_HW) / CHUNK);
+    for (let cx = c0; cx <= c1; cx++) {
+      for (let cz = d0; cz <= d1; cz++) {
+        const c = chunks.get(ck(cx, cz));
+        if (!c) continue;
+        for (const ei of c.edges) {
+          // The edge index + 1, so a caller that needs to know WHICH road
+          // (a median barrier drawn once for a pair) can have it and
+          // everyone else can treat it as a boolean.
+          if (ei !== skip && cwHit(ei, x, z, y, tol)) return ei + 1;
+        }
+      }
+    }
+    return 0;
+  };
 
   /** A graded road's drawn surface (profile + camber) at (x, z), bias aside. */
   const gradedY = (e, x, z) => {
@@ -2916,6 +2981,53 @@ export function* cityGenerator(md) {
       return false;
     },
 
+    /**
+     * Every edge that could make onRoad(x, z, 0, includeElev) true for some
+     * point within `R` of (x, z), for a caller about to test many such points
+     * (a junction's pavement ring asks ~300 times). onRoadAmong answers against
+     * it with onRoad's own arithmetic, so the result is onRoad's.
+     */
+    roadsNear(x, z, R, includeElev = true) {
+      const out = [];
+      roadCell(0, 0);
+      // An edge within R + its reach of (x, z) is filed under the cell holding
+      // its nearest point, which lies within R + the widest reach.
+      const M = R + roadReachMax;
+      const c0 = Math.floor((x - M) / LIFT_CELL), c1 = Math.floor((x + M) / LIFT_CELL);
+      const d0 = Math.floor((z - M) / LIFT_CELL), d1 = Math.floor((z + M) / LIFT_CELL);
+      const seen = new Set();
+      for (let cx = c0; cx <= c1; cx++) {
+        for (let cz = d0; cz <= d1; cz++) {
+          const l = roadGrid.get(skey(cx, cz));
+          if (!l) continue;
+          for (let q = 0; q < l.length; q++) {
+            const ei = l[q];
+            if (seen.has(ei)) continue;
+            seen.add(ei);
+            const e = g.edges[ei];
+            if (e.elev && !includeElev) continue;
+            const a = g.nodes[e.a], b = g.nodes[e.b];
+            if (distToSeg(x, z, a.x, a.z, b.x, b.z).d <= R + e.hw + (e.pbw || 0) + 0.01) out.push(ei);
+          }
+        }
+      }
+      return out;
+    },
+
+    onRoadAmong(list, x, z) {
+      for (let q = 0; q < list.length; q++) {
+        const e = g.edges[list[q]];
+        const a = g.nodes[e.a], b = g.nodes[e.b];
+        const sx = b.x - a.x, sz = b.z - a.z, l2 = sx * sx + sz * sz;
+        let t = l2 > 0 ? ((x - a.x) * sx + (z - a.z) * sz) / l2 : 0;
+        t = t < 0 ? 0 : t > 1 ? 1 : t;
+        const rx = a.x + sx * t - x, rz = a.z + sz * t - z;
+        const r = e.hw + 0 + (e.pbw || 0);
+        if (rx * rx + rz * rz <= r * r) return true;
+      }
+      return false;
+    },
+
     /** Profile height and cross-slope of graded edge `e` at parameter t. */
     profAt,
 
@@ -2934,39 +3046,19 @@ export function* cityGenerator(md) {
      * every node.
      */
     carriagewayAt(x, z, y, skip, tol = 1.6) {
-      const c0 = Math.floor((x - MAX_HW) / CHUNK), c1 = Math.floor((x + MAX_HW) / CHUNK);
-      const d0 = Math.floor((z - MAX_HW) / CHUNK), d1 = Math.floor((z + MAX_HW) / CHUNK);
-      for (let cx = c0; cx <= c1; cx++) {
-        for (let cz = d0; cz <= d1; cz++) {
-          const c = chunks.get(ck(cx, cz));
-          if (!c) continue;
-          for (const ei of c.edges) {
-            if (ei === skip) continue;
-            const e = g.edges[ei];
-            if (e.tunnel) continue;
-            const a = g.nodes[e.a], b = g.nodes[e.b];
-            const r = distToSeg(x, z, a.x, a.z, b.x, b.z);
-            if (r.t <= 0.001 || r.t >= 0.999 || r.d > e.hw - 0.3) continue;
-            let sy;
-            if (e.prof) {
-              const P = profAt(e, r.t);
-              const lat = (x - r.x) * -e.dz + (z - r.z) * e.dx;
-              // A graded road's carriageway ends at its trimmed edge on that side.
-              const s = lat >= 0 ? 0 : 1;
-              const sw = e.tw[P.i * 2 + s] * (1 - P.fr) + e.tw[(P.i + 1) * 2 + s] * P.fr;
-              if (r.d > sw - 0.3) continue;
-              sy = P.h + P.s * lat;
-            } else {
-              sy = G.terrainHeight(x, z) + ROAD_LIFT;
-            }
-            // The edge index + 1, so a caller that needs to know WHICH road
-            // (a median barrier drawn once for a pair) can have it and
-            // everyone else can treat it as a boolean.
-            if (Math.abs(sy - y) < tol) return ei + 1;
-          }
-        }
+      // Candidates from onRoad's grid, which holds every edge under a bbox far
+      // wider than hw. The chunk scan below decides which road is returned when
+      // more than one qualifies, so ties still go the way they always went.
+      const l = roadCell(x, z);
+      if (!l) return 0;
+      let hit = 0;
+      for (let k = 0; k < l.length; k++) {
+        const ei = l[k];
+        if (ei === skip || !cwHit(ei, x, z, y, tol)) continue;
+        if (hit) return cwScan(x, z, y, skip, tol);
+        hit = ei + 1;
       }
-      return 0;
+      return hit;
     },
 
     /**
