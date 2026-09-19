@@ -730,8 +730,8 @@ Physically-shaded, image-based-lit, tone-mapped, with a hand-rolled post chain.
   streaming rings -- massing at 1.6 km, detail at 800 m -- are a crawling
   boundary from a plane, and no draw budget pushes them past a 6 km
   sightline; atmosphere hides them honestly. Past that, the far massing layer
-  (see "Flying") stands in for every building the rings have not delivered —
-  a supertile layer, not wider rings.
+  (see "Flying") stands in for every building the rings have not delivered,
+  and the far roads for every road — supertile layers, not wider rings.
 
 ## Shadows: snap the box, fade its edge
 
@@ -1471,6 +1471,15 @@ side — holding the throttle into a wall killed the player in about a sixth of 
 second — and `player.crashCd` does the same job there. **Anything driven by
 sustained contact needs this**; per-frame is never the right cadence for it.
 
+**A scrape is not a crash.** `collideWithBuildings`' obstacle/barrier branch
+(every vehicle, player and traffic) took 80 % of the speed on every contact
+frame whatever the angle, so a vehicle grazing a wall side-on lost it each
+frame it stayed in touch and wedged at full throttle — a bus on SR-99's upper
+deck, its 4.3 m collision circle touching the bore wall, stopped dead with a
+column queued behind it. The loss now scales with the angle: `glance =
+clamp(-along / 0.3, 0, 1)`, `vLong *= 1 - 0.8 * glance`. Head-on (~17 deg or
+more into it) keeps the full loss, a pure side contact keeps all its speed.
+
 **The electric car is a spec flag, not a special case.** `ev: true` in `TYPES`
 switches four things: a sealed nose with one full-width light bar at each end
 instead of a grille and paired lamps, a square-root torque falloff instead of a
@@ -1602,10 +1611,11 @@ two-way dead end still U-turns.
 `resolveCarCollisions` tests circles of radius 0.42 x length — 2 m for a
 sedan — so two cars abreast at 3.6 m shove each other the whole way. Lanes stay
 out of parking (2.2 m) and the shoulder (0.8 m) and inside the narrowest graded
-`e.tw`. **An overlapping opposing carriageway owns its half**: SR-99's tubes are
-14 m roads 7.5-11 m apart, and laid across full width each tube's left lane ran
-1.3 m from the other's oncoming one, so a side is capped at the midline to any
-near-parallel opposing edge within 3 m of height. Two-way streets are
+`e.tw`. **An overlapping opposing carriageway owns its half**: SR-99's tubes were
+14 m roads 7.5-11 m apart at one level, and laid across full width each tube's
+left lane ran 1.3 m from the other's oncoming one, so a side is capped at the
+midline to any near-parallel opposing edge within 3 m of height. Stacked 6.6 m
+apart, SR-99 no longer trips it past the north mouths. Two-way streets are
 unchanged, at 0.48 hw right of centre.
 
 **Police route legally, except in a pursuit on surface streets.** `findPath`
@@ -1621,8 +1631,10 @@ cars). `spawnTraffic` re-seeds a tunnel spawn at its node height (a bore's node
 
 **Wedged cars are recycled out of sight.** Full throttle, nothing ahead, under
 0.5 m/s for 8 s and more than 120 m from the player: removed. Lamp posts beside
-lidded ramps and in the I-5 express portal hold cars forever, because the
-obstacle response takes most of their speed every frame. Stuck cars 22 -> 3.
+lidded ramps and in the I-5 express portal held cars forever, because the
+obstacle response took most of their speed every frame. Stuck cars 22 -> 3.
+(Posts in portal pits are no longer planted, and a glancing contact keeps its
+speed now; see "Vehicles".)
 
 **Measure it with `node tools/trafficcheck.mjs`**, a fixed-dt sampler over 7
 sites that judges a car physically: it is against the flow only when no
@@ -1721,7 +1733,8 @@ frame, ~1.18-1.19 M triangles a frame (the spread is how much traffic spawned
 that boot, not the build). Steady draws fell from ~220 when the landmarks were
 split into culled clusters (see "Landmarks"). Triangles are up on the
 pre-import city because the building density is real; draw calls are not.
-Flying adds 10-20 draws for the far massing layer (see "Flying").
+Flying adds 10-20 draws for the far massing layer and 6-9 for the far roads
+(see "Flying").
 `__dbg.sceneStats` reports the scene pass specifically — read `renderer.info`
 yourself and you'll get the post chain's fullscreen quad instead, because the
 counters reset on every `render()`.
@@ -1828,7 +1841,7 @@ The purpose-built harnesses, each a fixed-dt, paused-game driver:
 | `tools/landmarkshots.mjs <dir> [views] [--collide]` | world-framed landmark views, per-landmark cost built alone, and the collision drive/walk (see "Landmarks"); `LM_PROBE` |
 | `tools/lotshots.mjs <dir> [--probe]` | lot views; `--probe` prints the grass share per region (see "Lots, plazas and yards") |
 | `tools/trafficcheck.mjs [--dump FILE] [--shot DIR] [--sites a,b]` | share of cars against the flow, oncoming contacts, stuck cars and jams over 7 sites at fixed dt, the last a police pursuit (see "One-way traffic") |
-| `tools/flycam.mjs [--jitter]` | a scripted flight: camera measured RELATIVE TO THE PLANE and the plane's on-screen motion, since absolute camera movement at 116 m/s is ~2 m a frame regardless. The autopilot holds 45 m over the terrain under AND 400 m ahead, or the bay dive flies into Queen Anne |
+| `tools/flycam.mjs [--jitter]` | a scripted flight: camera measured RELATIVE TO THE PLANE and the plane's on-screen motion, since absolute camera movement at 116 m/s is ~2 m a frame regardless. The autopilot holds 45 m over the terrain under AND 400 m ahead, or the bay dive flies into Queen Anne. Also counts building and road pop-ins, and flies `i5high` (see "flycam: road pop-ins") |
 | `tools/camtunnel.mjs` | camera height at stations through bores — nothing through the roof |
 | `tools/jank.mjs` | `fwy-bump`, `crossing-clash`, `barrier-on-road` added for the grading (see "Freeway grading") |
 
@@ -2257,9 +2270,99 @@ all during take-off before the layer's gate.
 
 Flying cost: +10-20 draws (the visible supertiles) and 0-100k triangles a frame;
 some views come out cheaper, because merged cells are fewer boxes than per-house
-massing and the layer covers chunks while they build. "Missing chunk in view"
-still counts ROADS (1.9 mean) — the far layer covers buildings only. **Watch
-flying fps on a real phone.**
+massing and the layer covers chunks while they build. **Watch flying fps on a
+real phone.**
+
+### Far roads: the massing layer's road counterpart
+
+Roads stream with the chunks, so from a plane the grid and the freeways
+assembled a chunk at a time at the ring edge while the far massing stood ready
+around them: **478 road pop-ins in view (1,367 km of carriageway)** on the
+flycam route. The far road layer (`world.updateFarRoads` -> `farRoadSteps` /
+`buildFarRoadTile` / `farRoadPieces`) brings it to **34 (48 km)**, all during
+the take-off before the gate opens.
+
+- **It rides the massing's gate and mask.** Built when the massing is, on the
+  first climb past 45 m, and masked by the massing's 9x9 `farBuilt` array
+  through its own `frBuilt` uniform (so a harness can unmask the roads alone).
+  A piece is filed under the chunk of its EDGE's midpoint — buildChunkStep's
+  ownership rule — so a chunk's real roads replace the far ones on the frame
+  they are delivered. **At street level `farRoads` is undefined and costs
+  0 bytes.**
+- **Instanced, 16 bytes a piece**, in 3.2 km supertiles (`FR_TILE`, 8x8 chunks,
+  so the in-tile chunk fits a byte and the layer is a handful of draws). One
+  shared unit quad; per instance both ends (x, z Int16 dm off the tile centre,
+  y Int16 cm), half-width in dm, class and paint flags, chunk, cross-slope.
+  Arrays are freed on upload and `resetFarMass()` resets both layers on context
+  loss.
+- **Heights follow what is drawn, not the node chord.** A graded road or deck
+  uses its solved profile (`e.ph`; decks 3 cm under, graded ground roads plus
+  the per-edge bias, `e.pg` as the cross-slope byte); an ungraded deck the chord
+  between its nodes + 0.06; a draped street the terrain. **The terrain is a
+  triangle mesh**, so along a straight edge its height is piecewise linear with
+  breaks where the edge crosses a grid line or a cell diagonal (`tx + tz = 1`,
+  the split `sampleHF` knows). Sampling exactly there and simplifying to 0.2 m
+  (Douglas-Peucker in along/height) gives the drawn ground in one or two pieces
+  an edge; only edges the carve touches (portal cuts, underpass dips) add a
+  10 m lattice. A draped street's cross-slope comes from the ground at both
+  kerbs, or its uphill edge buries.
+- **Depth bias along the view ray.** A ribbon on terrain 2-6 km out is inside
+  the depth buffer's resolution (~0.5 m at 2 km, ~4 m at 6 km with a 0.5 m near
+  plane). The vertex shader pulls `mvPosition` toward the camera by
+  `0.6 + d² · 3e-7` m plus 0.25 m per class rank: invisible on screen, and a
+  freeway wins over the street it crosses.
+- **Detail by distance is a prefix.** Each tile's instances are sorted freeway/
+  ramp, arterial, street, residential, and the tile's nearest distance sets
+  `instanceCount`. The shader narrows each class to nothing over the last 600 m
+  before its limit (`FR_FAR`):
+
+  | class | drawn to |
+  |---|---|
+  | residential | 3.5 km |
+  | street | 4.3 km |
+  | arterial | 5.6 km |
+  | freeway / ramp | `FAR_R`, capped at the haze |
+
+  **Residential must stay full width past ~2.8 km**, the ring's farthest corner,
+  or a chunk arriving at the ring edge brings streets the layer was not drawing.
+- **Capped at the haze**: `frCap = min(FAR_R, 1.98 / fog.density)`, where
+  FogExp2 reaches 98 %. The first fade waits until every tile inside the cap is
+  built; tiles further out keep building behind the fog.
+- **Colour is the real road's**: `mats.road`'s asphalt maps and settings (uv in
+  metres), its wear profile and the 0.92 freeway tint. Paint is in the fragment
+  shader: white edge lines at `hw - min(0.7, hw * 0.06)`, and a yellow centre
+  dash (3 m on, 6 m off) at a third of its coverage on two-way roads,
+  coverage-filtered by `fwidth` so sub-pixel paint averages to its true tone
+  instead of flickering. No paint within one half-width of an edge's end, which
+  leaves the junction bare as `meshRoadMarks` does.
+
+Cost: 165k pieces and **2.64 MB of GPU buffers** once every tile in reach is
+built (the city's roads are ~5,000 km, two-thirds residential). About
+0.5-0.75 s of JS, sliced at 2.5 ms a frame (1.5 ms under the low budget); step
+peak ~2-4 ms idle. GC'd heap in flight is unchanged (389.6 vs 388.5 MB), because
+the JS copies are gone. Flying: +6-9 draws and +35-70k triangles at the flycam
+shot frames, mostly collapsed instances inside the ring.
+
+### flycam: road pop-ins, `i5high`, and why it "hung"
+
+`tools/flycam.mjs` counts ROAD pop-ins as well as buildings: a chunk gaining
+geometry in view, less what `world.farRoadsCover(ch, camX, camZ)` says the far
+layer was already drawing there, in metres by class (`roadPopEvents`,
+`roadPopKm`). An `i5high` shot moves the plane to 450 m over I-5 at z = -9000,
+nose south; those frames are left out of every statistic. It also records GC'd
+heap at boot and after the flight.
+
+**The reported hang was the harness, twice.** It did not reproduce (4 full runs,
+120-270 s, no 300-frame batch over ~5 s), but two ways to wait forever did
+exist and both are closed:
+
+- `Runtime.evaluate` had no timeout. Each evaluation now has a wall-clock
+  limit (`FLYCAM_EVAL_S`, default 240 s) and reports the frame it reached.
+- **A borrowed CDP port drives someone else's browser.** With the default 9341
+  already held by another agent's Chrome, ours could not bind it and the
+  harness drove the OTHER page; when that browser died, the pending evaluate
+  never answered. flycam now refuses a port whose page is not its own
+  `about:blank` and exits when the socket closes.
 
 ## Water, and the law that keeps being learned one caller at a time
 
@@ -2299,6 +2402,13 @@ meets is therefore one it meets too.
   - `--scan` classifies the camera's upper view every 50 m.
   - `--stations` / `--shotdone` take the shots, with the HUD hidden.
 - **Hit logging:** each sudden speed loss logs what it hit.
+- **`captures`:** a twin-deck capture is riding 1.5 m+ off the route's own deck
+  for 3 m+ of travel, anywhere portal to portal. Not a failure (the car still
+  gets through), but counted: it is the car standing on some other deck.
+- **`damaged`:** a wrong-way ride meets every oncoming car, and cars collide as
+  circles on a two-lane deck, so it used to end on `car-destroyed` from traffic
+  luck alone. Wrong-way rides dodge, keep the car alive and count shunts
+  instead, because they judge the geometry.
 
 On master a player could not get through either tube: the southbound stopped 78 m
 in and the northbound surfaced through the roof 98 m in. Six causes, found in this
@@ -2311,11 +2421,12 @@ order, because each one hid the next:
 2. **Anything under the tunnel roof is inside.** groundAt's in-bore test used the
    midpoint between deck and ground. A car slightly airborne off a grade change
    landed above it and climbed out through the roof, a little each frame.
-3. **The twin tubes overlap and walled each other's lanes.** OSM draws the
+3. **The twin tubes overlapped and walled each other's lanes.** OSM draws the
    double-deck bore as two 14 m roads with centrelines 7.5-11 m apart, which
    overlap for ~2.8 km. `world.inOtherBore()` drops any 3 m wall piece, collision
    and drawn alike, that stands inside another tunnel's carriageway with a deck
-   within 1.6 m.
+   within 1.6 m. **It no longer fires on SR-99**, whose decks are now 6.6 m apart
+   (see "One bore, two decks"); it stays, and is still right, for ramp forks.
 4. **Dive relative to the chord between the END portals, not the nearest one.**
    SR-99's portals sit at 21 m and 0.1 m, so where "nearest" switched, the deck
    jumped +9 -> -11.9 inside 50 m: a 21 m cliff mid-bore.
@@ -2324,7 +2435,66 @@ order, because each one hid the next:
    were one mouth twice.
 6. **Twin decks are blended where they overlap**: to their average, fully within
    3 m and fading to nothing at 5 m. With staggered portals they disagreed by
-   1.3-2.4 m and the other tube's deck captured the car.
+   1.3-2.4 m and the other tube's deck captured the car. **The blend now skips
+   SR-99's stacked nodes** (`stackNodes`, in citygen) and any edge carrying
+   `e.deck` as a neighbour: blending two decks 6.6 m apart would put both in
+   the slab. It still runs for other overlapping tubes.
+
+### One bore, two decks
+
+**The real bore is one tube, southbound on top.** WSDOT's SR-99 tunnel is a
+single 17.5 m bored tube, ~15.8 m inside, carrying two 9.8 m roadways (two
+3.4 m lanes, 2.4 m west and 0.6 m east shoulders, 4.8 m clearance). The upper
+(SB) slab hangs off the lining, the lower (NB) sits on corbels. North portal
+west of Aurora north of Harrison; south portal by S Dearborn / Royal Brougham.
+
+The game keeps its 5.4 m box section (`TUNNEL_H`), so road-to-road is
+**`DECK_SEP = TUNNEL_H + 1.2 = 6.6 m`** (interior plus slab). **That separation
+is the whole point**: at 6.6 m neither deck's walls (banded to deck + 4.9),
+roof, groundAt catch (`DECK_REACH` 0.9) nor trench floor (deck - 0.7) reaches
+the other, so none of the twin workarounds above are needed.
+
+- **`stackBores` (citygen, at load, before anything reads edge vectors)**
+  finds SR-99's two one-way chains, builds a midline where they are within
+  22 m, and moves every interior node onto it. At the NORTH mouths the tubes
+  are held side by side (`SIDE` = hwU + hwL + 2.5 = 16.5 m; OSM has them
+  16.7-18 m apart) for `STACK_SPLIT` 200 m while the lower deck dives, then
+  merge over `STACK_MERGE` 120 m. At the SOUTH end the upper deck surfaces at
+  its own portal straight off the stack; the lower runs on beneath the upper's
+  cutting to its own portal 290 m further south, fading back onto its OSM
+  line. Ramps forking off a moved node carry the junction's shift. 159 nodes
+  move, worst 5.9 m. Nodes get `n.deck`, edges `e.deck` (`'upper'` | `'lower'`).
+- **The upper deck keeps its old profile** (the one the SB rides were proven
+  on). The lower is capped at `upper - DECK_SEP` wherever the carriageways
+  overlap in plan, from 180 m off its north mouth (so it is already down when
+  the merge starts) and 90 m under the upper's approach cutting past its south
+  portal. A 10 % cone out of the CAPPED points only carries it back to its own
+  profile toward the mouths — a cone over every point also flattened the
+  mouth's own 13 % dive and lowered the north exit — and a 25 m smoothing
+  touches only the lowered stretch. Lowered up to 8.2 m; NB bottoms at -17.6
+  under SODO.
+- **The cap is enforced between nodes too.** Both decks are straight between
+  their own nodes, and where the upper kinks between two lower nodes (the foot
+  of the SB exit ramp, z 1612) the lower chord passed 0.6 m closer.
+
+**Anything that asked "is there a bore here" in plan has to ask per deck:**
+
+| | rule | what broke without it |
+|---|---|---|
+| `world.inCut(x, z, y)` | a trench whose road runs more than `TUNNEL_H + 1` above this deck is not this deck's cut | the NB bore under the SB exit cutting drew "open" — no roof, walls, lamps: the daylight at NB +200..+300 |
+| `cutFloor` | the closing (cap) segment does not dig behind its own start where a bore runs under it | it dug a bowl ~12 m back along a still-climbing deck, 1 m under the SB trench floor and through the NB roof (portalcheck's two SR-99 "sliced bore" samples) |
+| groundAt | a tunnel surface caught only through its 4 m bend margin loses 0.6 m to a deck whose own width holds the point | side by side at the north mouths, a car in one tube's right lane rode the other's steeper grade (1.9 m for 7 m) |
+| `_tunDeckUnder` | returns the HIGHEST deck under a point | slab headroom measured against the lower deck |
+| `world._roofUnder` | headwall piers and mouth cards stop above a **buried** lower roof, only a buried one | over a lower bore's own open cutting the ground is below its roof; raising piers there floated 76 portal walls at I-90/I-405 |
+| traffic forward scan | ignores cars more than 3 m above/below, the same band as car-car collision | every car braked for oncoming traffic on the other deck: stopped queues mid-bore |
+
+The `inCut` threshold sits deliberately above 6.0 m: the I-5 Express bore under
+a ramp cutting 6.0 m above it keeps the old treatment.
+
+**Long vehicles hold their lane clear of a bore wall** (`hw + 0.4 - (0.7 r +
+1.1)` in traffic.js), and **a glancing contact keeps speed in proportion to
+the angle** (see "Vehicles"). A bus grazing SR-99's wall side-on used to lose
+80 % of its speed per frame and wedge with a column behind it.
 
 ### Cut-and-cover lids: a heightfield cannot hold a road over a trench
 
@@ -2364,17 +2534,36 @@ Mercer Island, and an I-405 ramp chain 9-11 m down in lid cuttings. verify start
 each approach from the road (groundAt at raw grade), not terrainHeight, which
 under a lid is the trench floor.
 
+**A lid is a road, so it gets everything a road gets:**
+
+- **Lane markings on lid tops.** `meshRoadMarks` paints a lidded road at
+  `lidAt + LID_TOP + (MARK_Y - ROAD_LIFT)` in 1 m pieces, so a line follows a
+  slab's end down into the dip. The draped markings used to sit under the slab.
+- **Nothing planted in a portal pit.** Lamps, trees, clutter, signals and park
+  trees skip ground a portal cut digs 0.3 m+ (`cityStats.propsInPit`, 20 at
+  boot around the start).
+- **The trench wall line is solid under slabs.** Wherever the ledge behind a
+  cutting's wall line (hw + CUT_SH + 1.5) is roofed by a lid, the wall line is a
+  barrier from under the trench floor to the slab soffit
+  (`cityStats.lidLedgeWalls`, `world._ledgeBarrier0/1`). Skipped where the
+  ledge is another cutting's carriageway, or an unslabbed surface road's (a dug
+  Bellevue street along a ledge ran into one). Driven at the wall under a slab
+  for 3 s at full throttle, a car went 42-48 m through into the ledge; now it
+  holds 2.3 m inside the wall. The citywide sweep's drops are unchanged by it.
+- **Water mask over open cuttings**: every non-cap corridor segment whose floor
+  is under 0.3 m gets the depth-only quad. The NB entry cutting at SODO showed
+  the sea as a canal beside the SR-99 surface.
+
+Citywide dug-road sweep after these and the stacking (588 runs): drops 215 ->
+215, wall hits 5 -> 2.
+
 ### One deck, a lit roof, and no water underground
 
-- **Draw each shared patch once.** Where the twins share a hole, deck and ceiling
-  cells are clipped (Sutherland-Hodgman) against the lower-numbered tube's
-  rectangle. Edge ends are sheared onto the bisector with the most collinear
-  neighbour; square ends overlapped in a wedge inside every bend and gapped
-  outside it.
-  - Measured with downward rays every 20 m: rays hitting two decks < 10 cm apart
-    went **5.7 % -> 1.3 %**.
-  - Two cruder ownership rules measured WORSE than master (17 %, 13.6 %), because
-    skipping whole cells leaves slivers.
+- **Twin-patch clipping no longer applies to SR-99.** Where overlapping tubes
+  share a hole, deck and ceiling cells are clipped (Sutherland-Hodgman) against
+  the lower-numbered tube's rectangle (`twinOwner`, decks within 0.25 m). SR-99's
+  decks are 6.6 m apart, so each deck draws its own floor, ceiling and lamp
+  fixtures the full length of the bore.
 - **The pale wedge in the ceiling was the lamp strip.** A 1 m glow strip ran the
   whole bore, 0.8 m over the clamped chase camera. It is now 1.4 x 0.35 m
   fixtures every 6 m. Near-white share of the upper view went 4.1 % -> 0.0 %.
@@ -2383,15 +2572,29 @@ under a lid is the trench floor.
   plane cut the tube in half. No depth-mask height fixed it: every height from
   0.02 m to 1.2 m failed for a camera 0.5-1 m above the sea. The mask stays at
   0.02 m for views from the street into sub-sea cuttings, and skips quads over
-  real water.
+  real water. This holds per deck unchanged: both decks have 1.5 m+ of raw
+  ground over the camera everywhere past the mouths.
 
-| ride from the street (`tools/tunnelride.mjs`) | master | now |
+| ride (`tunnelride.mjs --hop`, traffic) | side by side (81e14ab) | stacked |
 |---|---|---|
-| SB, in at Aurora | stops 78 m in, 25 failures (cap) | **0**, 3,634 / 3,659 m |
-| NB, in at SODO | surfaces 98 m in, 25 failures | **0**, 3,904 / 3,928 m |
-| NB wrong way | 25 | **0** |
-| SB wrong way | 25 | 1 (captured by the twin's deck, still 8.5 m under) |
-| SR-99 surface past the SB exit | drops at z 1912 | **0 drops, 0 hits**, both ways |
+| `sb` | 0 failures, 0 captures | 0, 0 |
+| `nb` | 0, **1 capture** (bore +351, 2.2 m for 11 m) | 0, 0 |
+| `sb-wrong` | **1 eject** (bore +3012) + **1 capture** (6.1 m for 29 m) | 0, 0 |
+| `nb-wrong` | 0, 0 (car-destroyed at 2961 on the old harness) | 0, 0 |
+| `sbx` / `sbx-rev` | 0 drops / 0 | 0 / 0 |
+| `nb --real` | **1 capture** (bore +368, 2.43 m for 16 m) | 0, 0 |
+| `sb --real` | 0, 0 | 0, 0 |
+
+Wrong-way rows use the dodging, car-kept-alive harness on both builds; shunts
+are logged, not failed. Before any of the six causes were fixed, SB stopped 78 m
+in and NB surfaced 98 m in. portalcheck: 0/1023 wall faults; sliced-bore samples
+went from 2 SR-99 + 2 I-5 Express to **0 SR-99** + 4 Express (see Known gaps).
+verify, camtunnel: unchanged (0 falls, 0 through the roof).
+
+**A stall on `sb` is the lid, not the bore.** In 2 of 5 final runs `sb` logged
+one stall at exit +197 (z 1892, the SR-99 surface on the lid beside the NB entry
+cutting): an AI car in the right lane hit a lid side barrier standing 0.7 m
+inside the 7 m carriageway and wedged, and the car behind stopped.
 
 **Order matters.** Each fix exposed the next one. A failed intermediate is not a
 failed idea: measure what it exposed first.
@@ -2409,21 +2612,29 @@ failed idea: measure what it exposed first.
 - **`survey.mjs` poses its eye-level camera from the node-height chord + 1.9 m**,
   which on a graded deck is not where the road is, so eye-level deck shots
   float. Kept so before and after share framing.
-- **SR-99's twin tubes sit side by side, not stacked.** The real bore is double
-  deck, and OSM draws it as two overlapping roads. The walls, decks and lids
-  above work around that, but three symptoms remain:
-  - At the south crossing, the SB tube climbs to its exit through the NB
-    interior. On a rendered 60 ms frame the NB car rides the SB deck up to
-    2.9 m for 21 m. Stepped rides stay on their own deck.
-  - The NB tube runs through the SB exit's open cutting at bore +200..+300, so
-    real daylight shows there.
-  - portalcheck reports 4 "sliced bore" samples, which is informational.
-
-  The fix is corridor geometry (stacking the twins), not the ground guard.
-- **Lids are geometry, not terrain.** Lid tops carry no lane markings (the draped
-  markings sit under them), trees and posts beside a lidded road still stand in
-  the dug pit, and a car can drive under a bridge slab from its own trench into
-  the overcut beside it.
+- **A lid side barrier can stand in a lane.** `inLane` only withdraws slabs whose
+  walls are within 2.6 m of the road's centreline, so a side between 2.6 m and
+  hw is in the outer lane: past SR-99's SB exit one stands 0.7 m inside the 7 m
+  carriageway and wedges AI cars (the `sb` stall above). Withdrawing such slabs
+  brings the dip back; making those sides fascia-only lets a car drop off the
+  slab edge. Being fixed now.
+- **SR-99 is not to scale.** The NB deck runs 6.6 m under the SB one and bottoms
+  at -17.6 m under SODO; the real bore is far deeper (64 m under Virginia St).
+  The game box is 14 m wide (OSM hw 7) against a real 9.8 m roadway, and it is a
+  box section, not the circular bore.
+- **A thin light seam shows at some bore wall/ceiling joints** between tunnel
+  edges (seen on the NB deck at z 1634). Not diagnosed, not checked against the
+  side-by-side build.
+- **Retaining-wall slabs float over the SB exit cutting** (the "fins" in
+  `sb-climb` shots, before and after stacking). Corridor wall code, untouched by
+  the stacking.
+- **I-5 Express ramp cuttings slice its bore**: portalcheck's 4 sliced-bore
+  samples are all the Express, at (569,-184)/(577,-212) and (513,77) twice. The
+  last, a ramp cutting's floor 0.4 m inside the Express roof, is pre-existing;
+  the old plan-only `inCut` hid it.
+- **Wrong-way SR-99 rides pass only because the harness dodges** and keeps the
+  car alive; cars collide as 4 m circles, so any head-on in a 2-lane bore is a
+  hit.
 - **The pavement's outer edge is an open 52 cm step.** Pavement is drawn at
   terrain + `WALK_LIFT` 0.52 m with a kerb face on the road side only, so a
   pedestrian standing on the verge beyond it is correctly on the ground and,
@@ -2441,6 +2652,11 @@ failed idea: measure what it exposed first.
 - **Obstacles in dug pits wedge traffic** (posts beside lidded ramps, the I-5
   express portal near (520, 0)). Out of sight the car is recycled; in view it
   stays stuck.
+- **Far roads still pop in during take-off, and double up on bends.** All 34
+  of flycam's remaining road pop-ins (48 km) happen before the far layer's gate
+  opens at 45 m. And an edge's end pieces reach over their node to cover a
+  junction's square and a bend's outside corner, so at a bend two edges'
+  pieces overlap on the inside.
 - `tunnelride.mjs`'s `flow()` checks `oneway` before `onewayRev`, so it treats
   the 2 `oneway=-1` edges as a -> b. None is on SR-99.
 - **Pier decks are drawn, not walkable** (Great Wheel, Pier 66, Aquarium):
