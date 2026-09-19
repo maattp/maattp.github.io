@@ -1292,7 +1292,7 @@ function applyQuality(q, manual) {
   // automatic step down re-apply medium and waste a rung.
   tierIdx = Math.max(0, TIERS.indexOf(q));
   game.settings.quality = q;
-  postfx.setQuality(q);
+  postfx.setQuality(q, ON_PHONE);
   renderer.shadowMap.enabled = q !== 'low' && game.settings.shadows;
   // Pixel ratio is the single biggest fill-rate dial there is: 2.0 against
   // 1.45 is 1.9x the pixels through every one of the post chain's fullscreen
