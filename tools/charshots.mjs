@@ -134,6 +134,9 @@ async function main() {
       window.__subject = h;
       window.__animate = m.animateWalk;
       window.__grip = m.gripHands;
+      // CHAR_EVAL: an experiment run on the posed subject before the views
+      // (e.g. turn off shadows or the map) -- isolate a cause by removing it.
+      ${process.env.CHAR_EVAL || ''}
     })()`);
     for (let i = 0; i < 20; i++) { await sleep(300); if (await evaluate('!!window.__subject')) break; }
 
@@ -164,7 +167,10 @@ async function main() {
         d.camera.position.set(0, 1.20, 9.0);
         d.camera.lookAt(0, 0.95, 0);
         d.camera.updateMatrixWorld(true);
-        d.sun.position.set(-6, 9, 8);
+        // Same direction as ever, but 300 m out: at 12.8 m the subject sat in
+        // front of the shadow camera's 20 m near plane, so it was never in the
+        // shadow map at all and the portraits could not show self-shadowing.
+        d.sun.position.set(-6, 9, 8).normalize().multiplyScalar(300).add(new d.THREE.Vector3(0, 1, 0));
         d.sun.target.position.set(0, 1, 0);
         d.sun.target.updateMatrixWorld();
         d.scene.updateMatrixWorld(true);
@@ -206,7 +212,10 @@ async function main() {
           d.camera.lookAt(0, cy, 0);
         }
         d.camera.updateMatrixWorld(true);
-        d.sun.position.set(-6, 9, 8);
+        // Same direction as ever, but 300 m out: at 12.8 m the subject sat in
+        // front of the shadow camera's 20 m near plane, so it was never in the
+        // shadow map at all and the portraits could not show self-shadowing.
+        d.sun.position.set(-6, 9, 8).normalize().multiplyScalar(300).add(new d.THREE.Vector3(0, 1, 0));
         d.sun.target.position.set(0, 1, 0);
         d.sun.target.updateMatrixWorld();
         d.scene.updateMatrixWorld(true);
