@@ -1379,8 +1379,12 @@ export class World {
         // the ground. Clamped there, it dug a bowl at the last point's depth
         // ~12 m back along a deck that is still climbing -- at SR-99's SB exit
         // a metre deeper than the trench, straight through the roof of the
-        // lower deck running underneath (portalcheck's sliced bore).
-        if (b.cap && r.t <= 0) continue;
+        // lower deck running underneath (portalcheck's sliced bore). Only
+        // there: elsewhere the bowl is what the cutting's end has always had
+        // (without it the I-5 Express bore under a ramp's cut at (513, 77)
+        // came out sliced instead).
+        // (raw ground here: terrainHeight is what this is computing)
+        if (b.cap && r.t <= 0 && this._roofUnder(x, z, a.y, false) > a.y - 1.2) continue;
         const deck = a.y + (b.y - a.y) * r.t;
         const t = clamp((r.d - w) / CUT_BANK, 0, 1);
         const cand = { y: deck - 0.7, t: t * t * (3 - 2 * t), c };
@@ -1513,7 +1517,7 @@ export class World {
    * to swallow the terrain face -- must stop above it, or it hangs through the
    * lower deck's ceiling.
    */
-  _roofUnder(x, z, y, pad = 1.5) {
+  _roofUnder(x, z, y, buried = true, pad = 1.5) {
     let best = -Infinity;
     for (const q of this._tunIndex()) {
       if (x < q.x0 - pad || x > q.x1 + pad || z < q.z0 - pad || z > q.z1 + pad) continue;
@@ -1523,7 +1527,12 @@ export class World {
       if (Math.abs(rx * -q.uz + rz * q.ux) > q.hw + pad) continue;
       const dk = q.a.y + (q.b.y - q.a.y) * clamp(al / q.L, 0, 1);
       if (dk > y - 2) continue;
-      best = Math.max(best, dk + TUN_DECK + TUN_WALL);
+      // only a BURIED roof: over a lower bore's own open cutting the ground is
+      // below its roof, and a pier there has always stood on that ground
+      // (raising it floated the piers at the I-90 and I-405 interchanges)
+      const roof = dk + TUN_DECK + TUN_WALL;
+      if (buried && G.terrainHeight(x, z) < roof - 0.1) continue;
+      best = Math.max(best, roof);
     }
     return best;
   }
