@@ -4,6 +4,7 @@
 import * as THREE from './three.js';
 import * as G from './geo.js';
 import { mergeByMaterial } from './build.js';
+import { spaceNeedle, NEEDLE_MATS } from './needle.js';
 
 const M = (c, o = {}) => new THREE.MeshLambertMaterial({ color: c, ...o });
 
@@ -68,41 +69,6 @@ function cyl(rt, rb, h, m, x = 0, y = 0, z = 0, seg = 16) {
 }
 
 // ---------------------------------------------------------------------------
-
-function spaceNeedle() {
-  const g = new THREE.Group();
-  g.add(cyl(14, 22, 2.5, mat.concrete, 0, 0, 0, 24));
-  // three tapering legs sweeping inward
-  for (let i = 0; i < 3; i++) {
-    const a = (i / 3) * Math.PI * 2 + 0.5;
-    for (let s = 0; s < 5; s++) {
-      const t0 = s / 5, t1 = (s + 1) / 5;
-      const r0 = 19 - 15 * Math.pow(t0, 0.75), r1 = 19 - 15 * Math.pow(t1, 0.75);
-      const y0 = 2 + 96 * t0, y1 = 2 + 96 * t1;
-      const x0 = Math.cos(a) * r0, z0 = Math.sin(a) * r0;
-      const x1 = Math.cos(a) * r1, z1 = Math.sin(a) * r1;
-      const len = Math.hypot(x1 - x0, y1 - y0, z1 - z0);
-      const leg = new THREE.Mesh(new THREE.BoxGeometry(3.2 - t0 * 1.2, len, 2.2), mat.white);
-      leg.position.set((x0 + x1) / 2, (y0 + y1) / 2, (z0 + z1) / 2);
-      leg.lookAt(new THREE.Vector3(x1, y1, z1));
-      leg.rotateX(Math.PI / 2);
-      g.add(leg);
-    }
-  }
-  g.add(cyl(2.6, 3.4, 152, mat.white, 0, 2, 0, 12));
-  // halo
-  g.add(cyl(23, 15, 4.2, mat.white, 0, 118, 0, 28));
-  g.add(cyl(23.5, 23.5, 3.2, mat.gold, 0, 122, 0, 28));
-  const glassRing = cyl(19, 19, 4.5, mat.glass, 0, 125, 0, 28);
-  g.add(glassRing);
-  g.add(cyl(13, 21, 3.4, mat.white, 0, 129.5, 0, 28));
-  g.add(cyl(9, 13, 5, mat.white, 0, 133, 0, 24));
-  g.add(cyl(0.8, 1.6, 46, mat.white, 0, 138, 0, 8));
-  const beacon = new THREE.Mesh(new THREE.SphereGeometry(1.4, 10, 8), new THREE.MeshBasicMaterial({ color: 0xff6b3d }));
-  beacon.position.y = 185;
-  g.add(beacon);
-  return g;
-}
 
 function mopop() {
   const g = new THREE.Group();
@@ -547,7 +513,18 @@ export function buildLandmarks(scene) {
   }
   const merged = mergeByMaterial(root);
   merged.name = 'landmarks';
-  merged.traverse((o) => { if (o.isMesh) o.frustumCulled = false; });
+  // The Needle's materials are its own, so its merged meshes are the Needle
+  // alone: those cull on their own bounds and take part in shadowing -- a
+  // 184 m tower that neither casts nor receives a shadow reads as pasted on.
+  const needleMats = new Set(Object.values(NEEDLE_MATS));
+  merged.traverse((o) => {
+    if (!o.isMesh) return;
+    if (!needleMats.has(o.material)) { o.frustumCulled = false; return; }
+    o.name = 'spaceNeedle';
+    const solid = o.material !== NEEDLE_MATS.barrier && o.material !== NEEDLE_MATS.beacon;
+    o.castShadow = solid;
+    o.receiveShadow = solid;
+  });
   scene.add(merged);
   return merged;
 }
