@@ -222,6 +222,33 @@ function pageInit(cfg) {
     const sp = Math.abs(v.vLong);
     const look = Math.max(10, Math.min(30, 8 + sp * 0.7));
     const tgt = R.pointAt((pr ? pr.s : 0) + look);
+    // WRONG WAY, A DRIVER DODGES. Against the flow the centreline meets every
+    // oncoming car head-on (cars collide as 4 m circles, lanes sit 3.1 m off
+    // centre), and an AI car that has braked to a stop in front of a car
+    // pushing it never yields: a stall that says nothing about the geometry.
+    // So on a wrong-way ride the autopilot moves to the far side of the
+    // nearest oncoming car on its deck within 45 m, 4.8 m off the line, and
+    // back to the centre once the road ahead is clear. It still drives the
+    // whole deck, walls included.
+    if (wrong && pr) {
+      let near = null;
+      for (const o of d.traffic.cars) {
+        if (o === v || o.mode !== 'traffic' || Math.abs(o.y - v.y) > 3) continue;
+        const po = R.project(o.x, o.z);
+        if (!po || po.d > 12) continue;
+        const ahead = po.s - pr.s;
+        if (ahead < -2 || ahead > 45) continue;
+        if (!near || ahead < near.ahead) near = { ahead, lat: po.lat };
+      }
+      const want = near ? (near.lat > 0 ? -4.8 : 4.8) : 0;
+      R.dodge = (R.dodge || 0) + Math.max(-0.08, Math.min(0.08, want - (R.dodge || 0)));
+      if (R.dodge) {
+        const q2 = R.pointAt(pr.s + look + 1);
+        const ux = q2.x - tgt.x, uz = q2.z - tgt.z, ul = Math.hypot(ux, uz) || 1;
+        // lat is measured to the LEFT of travel ((x,z) . (-uz, ux)), as project() does
+        tgt.x += (-uz / ul) * R.dodge; tgt.z += (ux / ul) * R.dodge;
+      }
+    }
     const want = Math.atan2(tgt.x - v.x, tgt.z - v.z);
     const dh = wrap(want - v.heading);
     // +steer raises heading (left), and steer = -input.x

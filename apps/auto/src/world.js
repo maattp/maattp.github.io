@@ -1895,6 +1895,16 @@ export class World {
         }
         return false;
       });
+      const lidEdges = new Set(pending.map((q) => q.ei));
+      const inLaneAt = (x, z) => {
+        for (const k of city.edgesNear(x, z, 25)) {
+          const e = city.edges[k];
+          if (e.tunnel || e.elev || lidEdges.has(k)) continue;
+          const a = city.nodes[e.a], b = city.nodes[e.b];
+          if (distToSeg(x, z, a.x, a.z, b.x, b.z).d <= e.hw + 0.3) return true;
+        }
+        return false;
+      };
       for (const c of cuts) {
         for (let i = 0; i < c.pts.length - 1; i++) {
           const a = c.pts[i], b = c.pts[i + 1];
@@ -1912,6 +1922,12 @@ export class World {
               const top = this.city.lidAt(lx, lz);
               if (top === null) continue;
               if (onOtherRoad(c, lx, lz) || onOtherRoad(c, mx + qx * sd * w, mz + qz * sd * w)) continue;
+              // ...nor where the wall line itself is some road's carriageway: a
+              // surface street dug by the cut can run along the ledge (Bellevue,
+              // (8281, -2736)), and a wall there is one in its lane
+              // (unslabbed surface roads only: the slab road bridging the
+              // trench passes over the wall line, and is the reason it is here)
+              if (inLaneAt(mx + qx * sd * w, mz + qz * sd * w)) continue;
               const floor = a.y + (b.y - a.y) * tm - 0.7;
               const y1 = top + LID_TOP - 0.8;
               if (y1 - floor < 2.0) continue;
