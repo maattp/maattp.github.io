@@ -143,22 +143,35 @@ const smoothT = (v) => v * v * (3 - 2 * v);
 // (collars, cuffs, belts, hood, hi-vis bands) and high-contrast paint where
 // they can be flat (pocket outlines, ribbed hems, seams at 45-60% value, not
 // the 66-78% the first pass used).
-const ATLAS = 1024, CELL = 256, PAD = 6, CW = CELL - 2 * PAD;
+// 2048 x 1024. The left 1024 square is the 4 x 4 grid of 256 px cells it has
+// always been (cells 5-15: garment, hair, hand and skin detail). The right
+// square holds the five FACES at 512 x 341 each (2 across, 3 down). At 256 px
+// a face cell was stretched ~3x at the portrait distance and every painted
+// feature came out as a soft grey-brown haze; see faceRect.
+const ATLAS_W = 2048, ATLAS_H = 1024, CELL = 256, PAD = 6, CW = CELL - 2 * PAD;
+const FACE_W = 512, FACE_H = 341, FPAD = 8, FCW = FACE_W - 2 * FPAD, FCH = FACE_H - 2 * FPAD;
+const faceRect = (i) => [1024 + (i % 2) * FACE_W, Math.floor(i / 2) * FACE_H];
 const CELLS = {
   shirt: 5, jacket: 6, pants: 7, shoe: 8, hair: 9, hand: 10, skin: 11,
   hoodie: 12, skirt: 13, curly: 14, uniform: 15,
 };
-// The face cell wraps +-112 deg of the head, not the whole circumference:
-// what is behind the ears is hair or plain skin, and spending the cell on the
-// front puts ~140 px across the face instead of ~80.
-const HEAD_SPAN = 0.62 * Math.PI;
+// The face cell wraps +-100 deg of the head (it was +-112), and runs from just
+// under the chin to just over the hairline (it ran to the crown). Everything
+// outside is hair, the ear's back or plain skin at the cell edge; the skull
+// above the hairline is not even drawn. With the 512 px cell that puts ~500 px
+// across the face where there were ~140.
+const HEAD_SPAN = (100 / 180) * Math.PI;
 const HEAD_Z = -0.004;
-const HY0 = J.chin - 0.020, HY1 = J.crown + 0.010;
+const HY0 = J.chin - 0.014, HY1 = J.eye + 0.052;
 const HAIRLINE = J.eye + 0.040;
 
 function atlasUV(cell, t, s) {
+  if (cell < SKINS.length) {
+    const [fx, fy] = faceRect(cell);
+    return [(fx + FPAD + t * FCW) / ATLAS_W, 1 - (fy + FPAD + (1 - s) * FCH) / ATLAS_H];
+  }
   const cx = (cell % 4) * CELL, cy = Math.floor(cell / 4) * CELL;
-  return [(cx + PAD + t * CW) / ATLAS, 1 - (cy + PAD + (1 - s) * CW) / ATLAS];
+  return [(cx + PAD + t * CW) / ATLAS_W, 1 - (cy + PAD + (1 - s) * CW) / ATLAS_H];
 }
 /** Cylindrical projection of a part around a vertical axis through (cx, cz). */
 const cylUV = (cell, cx, cz, y0, y1, span = Math.PI) => (x, y, z) => [
@@ -169,7 +182,7 @@ const cylUV = (cell, cx, cz, y0, y1, span = Math.PI) => (x, y, z) => [
 
 function drawAtlas() {
   const c = document.createElement('canvas');
-  c.width = c.height = ATLAS;
+  c.width = ATLAS_W; c.height = ATLAS_H;
   const g = c.getContext('2d');
   const R = rng(9173);
   // Vertex colours are linear and the map is sRGB-decoded, so a painted skin
@@ -362,46 +375,61 @@ function drawAtlas() {
   });
 
   // --- faces, one per skin tone -------------------------------------------
+  // ROUND THREE: 512 x 341 cells, and CRISP. The round-two face was painted
+  // for a 256 px cell with soft radial blobs doing the shading -- a jaw
+  // gradient, a chin shadow, a philtrum blob, nose-side blobs -- and the
+  // modelled head now shades all of that itself; stretched 3x, the blobs were
+  // a grey-brown haze at the nose base and the mouth corners. What paint does
+  // now is only what geometry cannot: the eyes, the brows, the colour of the
+  // lips with a clean edge, the nostrils, a warmth in the cheeks, and a sheen
+  // on the nose. No painted value falls below the skin except at the eye, the
+  // lips' seam, the nostrils and a small shadow right under the nose tip.
   const IRIS = [[0.14, 0.09, 0.05], [0.10, 0.07, 0.04], [0.07, 0.045, 0.03], [0.05, 0.035, 0.025], [0.12, 0.13, 0.12]];
-  // same projection as the head's cylUV, in cell pixels
+  const PF = (t) => FPAD + t * FCW;
+  const QF = (s) => FPAD + (1 - s) * FCH;
+  // same projection as the head's cylUV, in face-cell pixels
   const hp = (x, y, z) => [
-    P(clamp(0.5 + Math.atan2(x, z - HEAD_Z) / (2 * HEAD_SPAN), 0, 1)),
-    Q(clamp((y - HY0) / (HY1 - HY0), 0, 1)),
+    PF(clamp(0.5 + Math.atan2(x, z - HEAD_Z) / (2 * HEAD_SPAN), 0, 1)),
+    QF(clamp((y - HY0) / (HY1 - HY0), 0, 1)),
   ];
-  const sxm = CW / (2 * HEAD_SPAN * 0.090);     // px per metre across the face
-  const sym = CW / (HY1 - HY0);                  // px per metre up it
+  const sxm = FCW / (2 * HEAD_SPAN * 0.090);    // px per metre across the face
+  const sym = FCH / (HY1 - HY0);                 // px per metre up it
+  const mx_ = sxm / 1000, my_ = sym / 1000;      // px per millimetre
+  const inFace = (i, fn) => {
+    const [fx, fy] = faceRect(i);
+    g.save(); g.translate(fx, fy);
+    g.beginPath(); g.rect(0, 0, FACE_W, FACE_H); g.clip();
+    fn();
+    g.restore();
+  };
   SKINS.forEach((skin, fi) => {
-    inCell(fi, () => {
-      g.fillStyle = rgba(skin); g.fillRect(0, 0, CELL, CELL);
-      // Above the hairline: SKIN, with strands. It used to be white, which is
-      // neutral under the hair-coloured skull rings -- but the hair shell grows
-      // out a few millimetres above the line, and the band of skull between
-      // the two came out as a thin white stripe across every forehead. Under a
-      // shell nothing here shows; on a buzz cut, skin under short hair is right.
-      const hy = Q((HAIRLINE - HY0) / (HY1 - HY0));
-      g.fillStyle = rgba(skin); g.fillRect(0, 0, CELL, hy);
-      // Clipped: a strand stroke starting above the line runs up to 60 px, and
-      // unclipped they painted pale streaks down the forehead.
-      g.save(); g.beginPath(); g.rect(0, 0, CELL, hy); g.clip();
-      strands(500, -40, hy - 4);
+    inFace(fi, () => {
+      g.fillStyle = rgba(skin); g.fillRect(0, 0, FACE_W, FACE_H);
+      // Above the hairline: SKIN with fine strands (see round two: white here
+      // was a stripe across every forehead). Clipped at the line.
+      const hy = QF((HAIRLINE - HY0) / (HY1 - HY0));
+      g.save(); g.beginPath(); g.rect(0, 0, FACE_W, hy); g.clip();
+      for (let k = 0; k < 900; k++) {
+        const x = R.n() * FACE_W, y = -20 + R.n() * (hy + 16), len = 8 + R.n() * 22;
+        g.strokeStyle = rgba(mul(skin, 0.80 + R.n() * 0.15), 0.25);
+        g.lineWidth = 0.8 + R.n() * 0.6;
+        g.beginPath(); g.moveTo(x, y); g.lineTo(x + (R.n() - 0.5) * 6, y + len); g.stroke();
+      }
       g.restore();
-      // a soft shadow under the hairline, and under the jaw
-      let gr = g.createLinearGradient(0, hy, 0, hy + 7);
-      gr.addColorStop(0, rgba(mul(skin, 0.78), 0.55)); gr.addColorStop(1, rgba(mul(skin, 0.78), 0));
-      g.fillStyle = gr; g.fillRect(0, hy, CELL, 8);
-      gr = g.createLinearGradient(0, Q(0), 0, Q(0.12));
-      gr.addColorStop(0, rgba(mul(skin, 0.74), 0.6)); gr.addColorStop(1, rgba(mul(skin, 0.74), 0));
-      g.fillStyle = gr; g.fillRect(0, Q(0.12), CELL, Q(0) - Q(0.12) + PAD);
+      // a faint line of shade right at the hairline, 2 mm, for the buzz cut
+      const gr = g.createLinearGradient(0, hy, 0, hy + 2.5 * my_);
+      gr.addColorStop(0, rgba(mul(skin, 0.85), 0.35)); gr.addColorStop(1, rgba(mul(skin, 0.85), 0));
+      g.fillStyle = gr; g.fillRect(0, hy, FACE_W, 3 * my_);
 
       const brow = [0.10, 0.075, 0.06];
       for (const sx of [-1, 1]) {
-        // cheeks: a little warmth, which is most of what makes skin not clay
+        // cheeks: warmth, not shade -- a colour shift at the skin's own value
         const [cx, cy] = hp(sx * 0.047, J.eye - 0.034, 0.080);
-        blob(cx, cy, 0.022 * sxm, mul(skin, [1.0, 0.80, 0.78]), 0.30);
-        // eye socket shading
+        blob(cx, cy, 20 * mx_, mul(skin, [1.03, 0.86, 0.84]), 0.22);
+        // the lid crease and a little depth over the eye, tight to it
         const [ex, ey] = hp(sx * 0.034, J.eye + 0.001, 0.085);
-        blob(ex, ey - 3, 0.022 * sxm, mul(skin, 0.74), 0.50);
-        const w = 0.027 * sxm, hh = 0.0105 * sym;
+        blob(ex, ey - 3.0 * my_, 14 * mx_, mul(skin, 0.82), 0.30);
+        const w = 27 * mx_, hh = 10.5 * my_;
         const inner = ex - sx * w / 2, outer = ex + sx * w / 2;
         const almond = () => {
           g.beginPath();
@@ -410,69 +438,90 @@ function drawAtlas() {
           g.quadraticCurveTo(ex, ey + hh * 0.80, inner, ey);
           g.closePath();
         };
-        g.fillStyle = rgba([0.78, 0.76, 0.72]); almond(); g.fill();
+        g.fillStyle = rgba([0.80, 0.78, 0.74]); almond(); g.fill();
         g.save(); almond(); g.clip();
         g.fillStyle = rgba(IRIS[fi]); disc(ex, ey - hh * 0.12, hh * 0.62);
+        g.strokeStyle = rgba(mul(IRIS[fi], 0.45)); g.lineWidth = 1.2;
+        g.beginPath(); g.arc(ex, ey - hh * 0.12, hh * 0.62, 0, Math.PI * 2); g.stroke();
         g.fillStyle = rgba([0.01, 0.01, 0.01]); disc(ex, ey - hh * 0.12, hh * 0.27);
         g.fillStyle = rgba(mul(skin, 0.35), 0.40); g.fillRect(ex - w, ey - hh * 1.3, 2 * w, hh * 0.6);  // lid shadow
         g.restore();
-        g.fillStyle = 'rgba(255,255,255,0.85)'; disc(ex - hh * 0.20, ey - hh * 0.40, 1.1);
+        g.fillStyle = 'rgba(255,255,255,0.85)'; disc(ex - hh * 0.20, ey - hh * 0.40, 1.5 * mx_);
         // lash line, heavier toward the outer corner
-        g.strokeStyle = rgba([0.035, 0.03, 0.025], 0.95); g.lineWidth = 2.2;
-        g.beginPath(); g.moveTo(inner, ey); g.quadraticCurveTo(ex, ey - hh * 1.12, outer + sx * 1.5, ey - hh * 0.30); g.stroke();
-        g.strokeStyle = rgba(mul(skin, 0.55), 0.45); g.lineWidth = 1;
-        g.beginPath(); g.moveTo(inner + sx, ey - hh * 0.6); g.quadraticCurveTo(ex, ey - hh * 1.9, outer, ey - hh * 0.95); g.stroke();
-        g.strokeStyle = rgba(mul(skin, 0.60), 0.45); g.lineWidth = 0.8;
-        g.beginPath(); g.moveTo(inner, ey + 0.5); g.quadraticCurveTo(ex, ey + hh * 0.9, outer, ey - hh * 0.1); g.stroke();
+        g.strokeStyle = rgba([0.035, 0.03, 0.025], 0.95); g.lineWidth = 2.2 * my_;
+        g.beginPath(); g.moveTo(inner, ey); g.quadraticCurveTo(ex, ey - hh * 1.12, outer + sx * 1.5 * mx_, ey - hh * 0.30); g.stroke();
+        g.strokeStyle = rgba(mul(skin, 0.60), 0.45); g.lineWidth = 1.1 * my_;
+        g.beginPath(); g.moveTo(inner + sx * mx_, ey - hh * 0.6); g.quadraticCurveTo(ex, ey - hh * 1.9, outer, ey - hh * 0.95); g.stroke();
+        g.strokeStyle = rgba(mul(skin, 0.66), 0.40); g.lineWidth = 0.8 * my_;
+        g.beginPath(); g.moveTo(inner, ey + 0.5 * my_); g.quadraticCurveTo(ex, ey + hh * 0.9, outer, ey - hh * 0.1); g.stroke();
         // brow: thick at the inner end, tapering to a tail, slightly arched
         const [bx, by] = hp(sx * 0.035, J.eye + 0.021, 0.089);
-        const bw = 0.042 * sxm;
+        const bw = 42 * mx_;
         g.fillStyle = rgba(brow, 0.85);
         g.beginPath();
-        g.moveTo(bx - sx * bw * 0.50, by + 2.5);
-        g.quadraticCurveTo(bx + sx * bw * 0.02, by - 4.0, bx + sx * bw * 0.55, by + 1.5);
-        g.quadraticCurveTo(bx + sx * bw * 0.02, by - 0.2, bx - sx * bw * 0.50, by + 6.0);
+        g.moveTo(bx - sx * bw * 0.50, by + 2.6 * my_);
+        g.quadraticCurveTo(bx + sx * bw * 0.02, by - 4.2 * my_, bx + sx * bw * 0.55, by + 1.6 * my_);
+        g.quadraticCurveTo(bx + sx * bw * 0.02, by - 0.2 * my_, bx - sx * bw * 0.50, by + 6.3 * my_);
         g.closePath(); g.fill();
-        // nose sides and nostrils
-        // (the nose is modelled now: its sides shade themselves, and the
-        // nostrils sit on its underside, so both are only a touch of paint)
-        const [nx, ny] = hp(sx * 0.013, J.eye - 0.024, 0.094);
-        blob(nx, ny, 7, mul(skin, 0.70), 0.12);
-        const [qx, qy] = hp(sx * 0.0075, J.eye - 0.047, 0.101);
-        g.fillStyle = rgba(mul(skin, 0.40), 0.45);
-        g.beginPath(); g.ellipse(qx, qy, 2.0, 1.1, 0, 0, Math.PI * 2); g.fill();
-        // ear: rim and bowl
-        const [ax, ay] = hp(sx * 0.078, J.eye - 0.010, -0.006);
-        g.strokeStyle = rgba(mul(skin, 0.62), 0.6); g.lineWidth = 2;
-        g.beginPath(); g.ellipse(ax, ay, 4.5, 13, 0, 0, Math.PI * 2); g.stroke();
-        blob(ax, ay + 2, 6, mul(skin, 0.55), 0.45);
+        // nostrils: two small darks on the underside, crisp-edged
+        const [qx, qy] = hp(sx * 0.0078, J.eye - 0.047, 0.101);
+        g.fillStyle = rgba(mul(skin, 0.38), 0.75);
+        g.beginPath(); g.ellipse(qx, qy, 2.3 * mx_, 1.2 * my_, sx * 0.35, 0, Math.PI * 2); g.fill();
+        // the ear's bowl, a little deeper than the skin
+        const [ax, ay] = hp(sx * 0.080, J.eye - 0.020, -0.012);
+        blob(ax, ay, 6 * mx_, mul(skin, 0.72), 0.40);
       }
-      // A lit top to the nose: a soft sheen down the bridge and on the tip.
-      // The modelled nose turns its side from the light, but seen straight
-      // on its front plane is the same value as the cheeks either side and the
-      // tip dissolved into them.
+      // A lit top to the nose: a sheen down the bridge and on the tip.
       {
         const [tx, ty] = hp(0, J.eye - 0.041, 0.115);
-        blob(tx, ty, 0.010 * sxm, mul(skin, 1.12), 0.55);
+        blob(tx, ty, 7 * mx_, mul(skin, 1.12), 0.50);
         const [bx0, by0] = hp(0, J.eye - 0.004, 0.100), [, by1] = hp(0, J.eye - 0.034, 0.110);
-        const gr2 = g.createLinearGradient(bx0 - 4, 0, bx0 + 4, 0);
-        gr2.addColorStop(0, rgba(mul(skin, 1.06), 0)); gr2.addColorStop(0.5, rgba(mul(skin, 1.06), 0.5)); gr2.addColorStop(1, rgba(mul(skin, 1.06), 0));
-        g.fillStyle = gr2; g.fillRect(bx0 - 4, by0, 8, by1 - by0);
+        const bw2 = 3.5 * mx_;
+        const gr2 = g.createLinearGradient(bx0 - bw2, 0, bx0 + bw2, 0);
+        gr2.addColorStop(0, rgba(mul(skin, 1.06), 0)); gr2.addColorStop(0.5, rgba(mul(skin, 1.06), 0.45)); gr2.addColorStop(1, rgba(mul(skin, 1.06), 0));
+        g.fillStyle = gr2; g.fillRect(bx0 - bw2, by0, 2 * bw2, by1 - by0);
+        // the one shadow painted under the nose: small, right under the tip
+        const [ux, uy] = hp(0, J.eye - 0.054, 0.097);
+        g.fillStyle = rgba(mul(skin, 0.72), 0.30);
+        g.beginPath(); g.ellipse(ux, uy, 5 * mx_, 1.6 * my_, 0, 0, Math.PI * 2); g.fill();
       }
-      // mouth: two lips in the skin family and a seam, no lipstick red
+      // Mouth. The lips are colour with a CLEAN edge: an upper lip with a
+      // cupid's bow and a crisp border, a fuller lower lip with a soft
+      // highlight, and a seam that thins to nothing at the corners instead of
+      // ending in a dark dot.
       const [mx, my] = hp(0, J.chin + 0.045, 0.094);
-      const mw = 0.036 * sxm;
-      g.fillStyle = rgba(mul(skin, [0.80, 0.60, 0.58]));
+      const mw = 36 * mx_;
+      const up = 5.6 * my_, lo = 7.5 * my_;
+      g.fillStyle = rgba(mul(skin, [0.84, 0.62, 0.60]));
       g.beginPath(); g.moveTo(mx - mw / 2, my);
-      g.quadraticCurveTo(mx - mw * 0.25, my - 5.5, mx, my - 3.5);
-      g.quadraticCurveTo(mx + mw * 0.25, my - 5.5, mx + mw / 2, my);
+      g.bezierCurveTo(mx - mw * 0.30, my - up * 0.55, mx - mw * 0.14, my - up * 1.05, mx - mw * 0.06, my - up * 0.92);
+      g.quadraticCurveTo(mx, my - up * 0.70, mx + mw * 0.06, my - up * 0.92);
+      g.bezierCurveTo(mx + mw * 0.14, my - up * 1.05, mx + mw * 0.30, my - up * 0.55, mx + mw / 2, my);
+      g.quadraticCurveTo(mx, my + 0.6 * my_, mx - mw / 2, my);
       g.closePath(); g.fill();
-      g.fillStyle = rgba(mul(skin, [0.86, 0.66, 0.63]));
-      g.beginPath(); g.moveTo(mx - mw / 2, my); g.quadraticCurveTo(mx, my + 8, mx + mw / 2, my); g.closePath(); g.fill();
-      g.strokeStyle = rgba(mul(skin, 0.40), 0.9); g.lineWidth = 1.4;
-      g.beginPath(); g.moveTo(mx - mw / 2 - 1, my); g.quadraticCurveTo(mx, my + 1.3, mx + mw / 2 + 1, my); g.stroke();
-      blob(mx, my + 11, 9, mul(skin, 0.78), 0.35);
-      blob(mx, my - 9, 5, mul(skin, 0.82), 0.25);     // philtrum
+      // the border of the upper lip: a thin lighter line just above it
+      g.strokeStyle = rgba(mul(skin, 1.07), 0.55); g.lineWidth = 0.9 * my_;
+      g.beginPath(); g.moveTo(mx - mw * 0.46, my - up * 0.12);
+      g.bezierCurveTo(mx - mw * 0.30, my - up * 0.70, mx - mw * 0.14, my - up * 1.20, mx - mw * 0.06, my - up * 1.06);
+      g.quadraticCurveTo(mx, my - up * 0.84, mx + mw * 0.06, my - up * 1.06);
+      g.bezierCurveTo(mx + mw * 0.14, my - up * 1.20, mx + mw * 0.30, my - up * 0.70, mx + mw * 0.46, my - up * 0.12);
+      g.stroke();
+      g.fillStyle = rgba(mul(skin, [0.90, 0.70, 0.67]));
+      g.beginPath(); g.moveTo(mx - mw * 0.46, my + 0.4 * my_);
+      g.bezierCurveTo(mx - mw * 0.30, my + lo * 1.05, mx + mw * 0.30, my + lo * 1.05, mx + mw * 0.46, my + 0.4 * my_);
+      g.quadraticCurveTo(mx, my + 1.2 * my_, mx - mw * 0.46, my + 0.4 * my_);
+      g.closePath(); g.fill();
+      blob(mx, my + lo * 0.45, 7 * mx_, mul(skin, [1.02, 0.86, 0.83]), 0.35);   // lower-lip sheen
+      // the seam: a gradient stroke, full in the middle, gone at the corners
+      const gs = g.createLinearGradient(mx - mw / 2, 0, mx + mw / 2, 0);
+      const seam = mul(skin, 0.42);
+      gs.addColorStop(0, rgba(seam, 0)); gs.addColorStop(0.18, rgba(seam, 0.75));
+      gs.addColorStop(0.82, rgba(seam, 0.75)); gs.addColorStop(1, rgba(seam, 0));
+      g.strokeStyle = gs; g.lineWidth = 1.3 * my_;
+      g.beginPath(); g.moveTo(mx - mw / 2, my); g.quadraticCurveTo(mx, my + 1.4 * my_, mx + mw / 2, my); g.stroke();
+      // chin: a gentle lit boss, light rather than shade
+      const [kx, ky] = hp(0, J.chin + 0.009, 0.090);
+      blob(kx, ky, 11 * mx_, mul(skin, 1.05), 0.30);
     });
   });
   return c;

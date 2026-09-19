@@ -126,7 +126,10 @@ async function main() {
       g.receiveShadow = true;
       d.scene.add(g);
       const m = await import('./src/peds.js');
-      const h = m.makeHumanoid({ seed: ${SEED}, scale: 1 });
+      // CHAR_OPTS='{"cop":true}' or '{"unique":true,"skin":[0.99,0.86,0.74]}'
+      // photographs a look the civilian pool never deals (the lightest skin
+      // tone is only on a cop and the bike rider).
+      const h = m.makeHumanoid({ seed: ${SEED}, scale: 1, ...${process.env.CHAR_OPTS || '{}'} });
       h.mesh.castShadow = true;
       d.scene.add(h.group);
       h.group.position.set(0, 0, 0);
