@@ -1245,6 +1245,23 @@ const SMITH = { block: 76.5, tw: 16.6, td: 13.4, shaft: 121.7, pyr: 21.3, storey
 // Way (the straight south edge) and 2nd Avenue, which meets it at 58 deg.
 const SMITH_PLAN = [[-25.6, -1.0], [-11.0, 23.3], [12.1, 23.3], [25.6, 13.6], [18.1, 1.4], [16.3, 2.5], [13.2, -2.5], [15.1, -3.7], [5.2, -19.8], [-8.7, -11.4], [-7.6, -9.6], [-12.7, -6.5], [-13.8, -8.3]];
 const SMITH_AXIS = 1.02;                 // 2nd Avenue's bearing, atan2(dz, dx)
+// The unnamed street along the lot's east side (OSM), metres from the POI.
+const SMITH_EAST = [[2.3, -27.5], [40.3, 33.5]];
+
+/** Clip a polygon to the side of line ab holding the origin, `off` metres clear. */
+function clipHalf(poly, [a, b], off) {
+  const ex = b[0] - a[0], ez = b[1] - a[1], L = Math.hypot(ex, ez);
+  let nx = -ez / L, nz = ex / L;
+  if ((0 - a[0]) * nx + (0 - a[1]) * nz < 0) { nx = -nx; nz = -nz; }
+  const sd = ([x, z]) => (x - a[0]) * nx + (z - a[1]) * nz - off;
+  const out = [];
+  for (let i = 0; i < poly.length; i++) {
+    const p = poly[i], q = poly[(i + 1) % poly.length], dp = sd(p), dq = sd(q);
+    if (dp >= 0) out.push(p);
+    if ((dp >= 0) !== (dq >= 0)) { const t = dp / (dp - dq); out.push([p[0] + (q[0] - p[0]) * t, p[1] + (q[1] - p[1]) * t]); }
+  }
+  return out;
+}
 
 function smith() {
   const g = new THREE.Group();
@@ -1260,14 +1277,17 @@ function smith() {
   };
   // The block fills the lot: granite for two storeys, terra cotta above,
   // with a belt course and the cornice.
-  const inset = SMITH_PLAN.map(([x, z]) => [x * 0.985, z * 0.985]);
-  g.add(prism(SMITH_PLAN, -2, 6.5, granite));
+  // Clipped clear of the street along the east side: OSM's lot runs to its
+  // centreline, so the east wall stood 1.8 m into the carriageway.
+  const plan = clipHalf(SMITH_PLAN, SMITH_EAST, 4.8);
+  const inset = plan.map(([x, z]) => [x * 0.985, z * 0.985]);
+  g.add(prism(plan, -2, 6.5, granite));
   g.add(metres(prism(inset, 6.5, block, tc), [3.0, SMITH.storey]));
-  g.add(prism(SMITH_PLAN.map(([x, z]) => [x * 1.02, z * 1.02]), block, block + 1.1, trim));
-  g.add(prism(SMITH_PLAN.map(([x, z]) => [x * 1.005, z * 1.005]), 19, 19.6, trim));
+  g.add(prism(plan.map(([x, z]) => [x * 1.02, z * 1.02]), block, block + 1.1, trim));
+  g.add(prism(plan.map(([x, z]) => [x * 1.005, z * 1.005]), 19, 19.6, trim));
   // The tower, square to 2nd Avenue, over the block's Yesler end.
   const tRot = Math.atan2(-Math.sin(SMITH_AXIS), Math.cos(SMITH_AXIS));   // box: local x along 2nd Ave
-  const tx = -3.5, tz = 8.5;
+  const tx = -2.5, tz = 8.0;
   g.add(tbox(tw, shaft - block, td, tc, tx, block + 1.1, tz, tRot));
   g.add(box(tw + 1.2, 1.2, td + 1.2, trim, tx, shaft - 4, tz, tRot));
   g.add(box(tw + 1.6, 1.4, td + 1.6, trim, tx, shaft, tz, tRot));
@@ -1347,17 +1367,17 @@ function troll() {
   const g = new THREE.Group();
   const stone = P(0x8e8f89, 0.95, 0, 0.5);
   const dark = P(0x5d5e5a, 0.95, 0, 0.45);
-  const ell = (r, sx, sy, sz, m, x, y, z, seg = 16) => {
-    const o = new THREE.Mesh(new THREE.SphereGeometry(r, seg, Math.max(8, seg * 0.7 | 0)), m);
+  const ell = (r, sx, sy, sz, m, x, y, z, seg = 10) => {
+    const o = new THREE.Mesh(new THREE.SphereGeometry(r, seg, Math.max(6, seg * 0.7 | 0)), m);
     o.scale.set(sx, sy, sz); o.position.set(x, y, z);
     return o;
   };
   // Head, buried to the jaw; the shaggy mane over the crown and back.
-  g.add(ell(3.3, 1.15, 0.95, 1.0, stone, 0, 2.2, 0, 22));
+  g.add(ell(3.3, 1.15, 0.95, 1.0, stone, 0, 2.2, 0, 18));
   for (let k = 0; k < 16; k++) {
     const a = -0.4 + (k / 15) * (Math.PI + 0.8);
     const r = 1.0 + ((k * 37) % 5) * 0.12;
-    g.add(ell(r, 1.1, 0.8, 1.0, dark, Math.cos(a) * 3.2, 3.6 + Math.sin(k * 1.3) * 0.5, -Math.sin(a) * 2.2 - 0.4, 10));
+    g.add(ell(r, 1.1, 0.8, 1.0, dark, Math.cos(a) * 3.2, 3.6 + Math.sin(k * 1.3) * 0.5, -Math.sin(a) * 2.2 - 0.4, 7));
   }
   for (let k = 0; k < 6; k++) g.add(ell(0.8, 1.2, 0.7, 0.9, dark, -2.0 + k * 0.8, 4.7 - Math.abs(k - 2.5) * 0.15, 2.1, 10));
   // Brow, nose, mouth; the hubcap eye (left, as he looks) and the one hidden

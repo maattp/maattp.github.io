@@ -16,7 +16,7 @@
 // the real scene holds every landmark merged into shared meshes.
 
 import { spawn } from 'node:child_process';
-import { writeFileSync, mkdirSync } from 'node:fs';
+import { writeFileSync, mkdirSync, readFileSync } from 'node:fs';
 import { setTimeout as sleep } from 'node:timers/promises';
 
 const PORT = +process.env.AUTO_CDP_PORT || 9401;
@@ -51,7 +51,8 @@ const VIEWS = [
   { name: 'husky-mid', t: [2705, -4349, 10], c: [3050, -4600, 0], cy: 180 },
   { name: 'needle-base', t: [-857.5, -1019, 20], c: [-900, -1075, 1.7] },
   { name: 'gasworks-mid', t: [237, -3817, 8], c: [330, -3700, 0], cy: 40 },
-  { name: 'troll-close', t: [-702, -4415, 4], c: [-690, -4396, 1.7] },
+  // Terrain, not the highest deck: the Troll is under the Aurora Bridge.
+  { name: 'troll-close', t: [-700, -4414, 3], c: [-694, -4396, 1.7], terrain: true },
 ];
 
 function launch() {
@@ -111,8 +112,9 @@ async function main() {
     })()`);
 
     // --- one-off diagnostic: LM_PROBE='<expr>' prints its value and exits --
-    if (process.env.LM_PROBE) {
-      const v = await evaluate(process.env.LM_PROBE, true);
+    const PROBE = process.env.LM_PROBE || (process.env.LM_PROBE_FILE && readFileSync(process.env.LM_PROBE_FILE, 'utf8'));
+    if (PROBE) {
+      const v = await evaluate(PROBE, true);
       console.log(typeof v === 'string' ? v : JSON.stringify(v, null, 1));
       console.log(`  exceptions: ${errs.length}${errs.length ? '\n    ' + errs.slice(0, 5).join('\n    ') : ''}`);
       return;
@@ -250,7 +252,7 @@ async function main() {
         const pending = () => [...d.world.chunks.values()].filter((c) => c.lod !== c.wantLod).length;
         d.world.update(cx, cz, 60);
         for (let i = 0; i < 2000 && pending() > 0; i++) d.world.update(cx, cz, 60);
-        const gy = (x, z) => Math.max(0, d.city.groundAt(x, z, null));
+        const gy = ${V.terrain ? '(x, z) => d.G.terrainHeight(x, z)' : '(x, z) => Math.max(0, d.city.groundAt(x, z, null))'};
         const ty = gy(tx, tz);
         const cy = ${V.cy !== undefined ? `ty + ${V.cy}` : 'gy(cx, cz) + ch'};
         const ly = ty + th;
