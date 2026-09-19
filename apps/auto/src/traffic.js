@@ -9,6 +9,7 @@ const TRAFFIC_TARGET = 26;
 // Parked cars only exist within this radius, and each is 3 draw calls, so this
 // is a draw-call dial as much as a distance one.
 const PARKED_RADIUS = 105;
+const LOT_TYPES = new Set(['sedan', 'suv', 'pickup', 'compact', 'hatch', 'ev', 'muscle', 'sports', 'convertible']);
 const DESPAWN = 520;
 
 /**
@@ -181,12 +182,85 @@ export class TrafficSystem {
         this.parkedSlots.add(key);
       }
     }
+    this.updateLotParked(px, pz);
     // despawn parked cars that drifted out of range
     for (let i = this.cars.length - 1; i >= 0; i--) {
       const v = this.cars[i];
       if (v.mode !== 'parked') continue;
       if (dist2(v.x, v.z, px, pz) > (PARKED_RADIUS + 60) * (PARKED_RADIUS + 60)) this.remove(v);
     }
+  }
+
+  /**
+   * A few cars in the bays of the car parks around the player.
+   *
+   * The bays are the ones the terrain shader paints (world.js, the lot layer):
+   * 2.6 m wide along the lot's long side, rows 5.4 m deep either side of a
+   * 7.2 m aisle, an 18 m module anchored in world space in the lot's own frame.
+   * Snapping to that same grid is what puts a car between the lines.
+   *
+   * Sparse and capped, because every car is 3 draws: LOT_CAP of them at most,
+   * and the scan only reruns when the player has moved a cell.
+   */
+  updateLotParked(px, pz) {
+    const LOT_R = 90, LOT_CAP = 6, OCC = 0.16;
+    const kx = Math.round(px / 10), kz = Math.round(pz / 10);
+    if (this._lotKey === kx * 100000 + kz) return;
+    this._lotKey = kx * 100000 + kz;
+    let alive = 0;
+    for (const v of this.cars) if (v.mode === 'parked' && typeof v.slot === 'string') alive++;
+    if (alive >= LOT_CAP) return;
+    const city = this.city;
+    const cand = [];
+    const tried = new Set();
+    for (let x = px - LOT_R; x <= px + LOT_R; x += 10) {
+      for (let z = pz - LOT_R; z <= pz + LOT_R; z += 10) {
+        const code = G.lotCodeAt(x, z);
+        if (!code || ((code - 1) / G.LOT_ANG | 0) !== 0) continue;   // parking only
+        const ang = ((code - 1) % G.LOT_ANG) / G.LOT_ANG * Math.PI;
+        const ux = Math.cos(ang), uz = Math.sin(ang);
+        const pu = x * ux + z * uz, pv = -x * uz + z * ux;
+        const bu = Math.floor(pu / 2.6), m = Math.floor(pv / 18);
+        const row = ((pv % 18) + 18) % 18 < 9 ? 0 : 1;
+        const key = `L${bu},${m},${row},${code}`;
+        if (tried.has(key)) continue;
+        tried.add(key);
+        if (hash2(bu * 7 + row, m * 13 + code) > OCC) continue;
+        const cu = (bu + 0.5) * 2.6, cv = m * 18 + (row ? 15.3 : 2.7);
+        const wx = cu * ux - cv * uz, wz = cu * uz + cv * ux;
+        if (dist2(wx, wz, px, pz) > LOT_R * LOT_R || G.lotCodeAt(wx, wz) !== code) continue;
+        if (this.parkedSlots.has(key) || city.onRoad(wx, wz, 2.5)) continue;
+        if (this.inFootprint(wx, wz, 1.5)) continue;
+        cand.push({ key, wx, wz, d: dist2(wx, wz, px, pz),
+          // Nose into the bay: the car's length runs across the row, along
+          // the lot's short axis (-uz, ux); the two rows face each other.
+          heading: Math.atan2(-uz, ux) + (row ? 0 : Math.PI) });
+      }
+    }
+    cand.sort((a, b) => a.d - b.d);
+    for (const c of cand) {
+      if (alive >= LOT_CAP) break;
+      const h = hash2(c.wx | 0, c.wz | 0);
+      const tn = CIVILIAN_TYPES[Math.floor(h * CIVILIAN_TYPES.length)];
+      // A bay holds a car; a taxi or a cop-looking cruiser waiting in a
+      // retail lot reads as staged.
+      if (!LOT_TYPES.has(tn)) continue;
+      const v = this.spawnAt(c.wx, c.wz, c.heading, tn, randomCarColor((c.wx * 7 + c.wz) | 0), 'parked');
+      v.group.traverse((o) => { if (o.isMesh) o.castShadow = false; });
+      v.slot = c.key;
+      this.parkedSlots.add(c.key);
+      alive++;
+    }
+  }
+
+  inFootprint(x, z, pad) {
+    for (const b of this.city.buildingsNear(x, z, 30)) {
+      const c = Math.cos(-b.rot), s = Math.sin(-b.rot);
+      const dx = x - b.x, dz = z - b.z;
+      const lx = dx * c - dz * s, lz = dx * s + dz * c;
+      if (Math.abs(lx) < b.w / 2 + pad && Math.abs(lz) < b.d / 2 + pad) return true;
+    }
+    return false;
   }
 
   // --- traffic -------------------------------------------------------------
