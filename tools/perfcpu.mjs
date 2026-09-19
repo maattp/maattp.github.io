@@ -50,6 +50,9 @@ const QUALITY = arg('quality', 'high');
 const DESKTOP = process.argv.includes('--desktop');
 const VSYNC = process.argv.includes('--vsync');
 const WRAP = arg('wrap', '');
+// --throttle=N slows the page's CPU N-fold (CDP) AFTER boot: the Mac stand-in
+// for the phone. 8 matches the per-system ms an iPhone 17 Pro reports in Debug.
+const THROTTLE = +arg('throttle', 1);
 const IPHONE_UA = 'Mozilla/5.0 (iPhone; CPU iPhone OS 19_0 like Mac OS X) AppleWebKit/605.1.15 '
   + '(KHTML, like Gecko) Version/19.0 Mobile/15E148 Safari/604.1';
 const VIEW = DESKTOP
@@ -172,6 +175,8 @@ function pageInstall() {
     'drive-i5': { speed: 27, route: () => buildRoute(1050, 1500, (e) => e.cls === 'hwy' && I5.test(e.name || ''), 6000) },
     'drive-dt': { speed: 14, route: () => buildRoute(0, 0, (e) => e.cls !== 'hwy' && e.cls !== 'ramp' && e.cls !== 'res' && !e.elev, 3000) },
     'foot-dt': { foot: [305, -278] },
+    'drive-qa': { speed: 13, route: () => buildRoute(-1717, -3128, (e) => e.cls !== 'hwy' && e.cls !== 'ramp' && !e.elev, 3000) },
+    'foot-yt': { foot: [1409, 1120] },
   };
 
   let R = null;
@@ -265,8 +270,13 @@ function pageInstall() {
     // Warm up: streaming bursts after a teleport, traffic and crowds fill in.
     const t0 = performance.now();
     while (performance.now() - t0 < 5000) await S.nextFrames(10);
+    // ...and until the streamer has caught up (it can take far longer than 5 s
+    // under --throttle), so the run measures steady driving, not the arrival.
+    const pend = () => [...d.world.chunks.values()].filter((c) => c.lod !== c.wantLod).length;
+    while (pend() > 2 && performance.now() - t0 < 90000) await S.nextFrames(10);
+    S.settleMs = Math.round(performance.now() - t0);
     if (R) R.resets = 0;
-    return { route: R ? Math.round(R.route[R.route.length - 1].s) : 0 };
+    return { route: R ? Math.round(R.route[R.route.length - 1].s) : 0, settle: S.settleMs };
   };
   const q = (a, f) => { if (!a.length) return NaN; const s = [...a].sort((x, y) => x - y); return s[Math.min(s.length - 1, Math.floor(s.length * f))]; };
   S.time = async (n) => {
@@ -285,7 +295,7 @@ function pageInstall() {
       .map((w) => `f${w.i} raf ${w.raf.toFixed(1)} cpu ${w.cpu.toFixed(1)} [` + Object.entries(w.sys).filter(([, v]) => v > 0.5).sort((a, b) => b[1] - a[1]).map(([k, v]) => `${k} ${v.toFixed(1)}`).join(' ') + ']');
     const out = { n: F.length, cpu: +q(F, 0.5).toFixed(3), cpuMean: +(F.reduce((a, b) => a + b, 0) / F.length).toFixed(3),
       cpu90: +q(F, 0.9).toFixed(3), cpu99: +q(F, 0.99).toFixed(3), cpuMax: +Math.max(...F).toFixed(2),
-      raf: +q(I, 0.5).toFixed(3), sys: {}, cars: d.traffic.cars.length, peds: d.peds.peds.length,
+      raf: +q(I, 0.5).toFixed(3), fps: +(1000 * I.length / I.reduce((a, b) => a + b, 0)).toFixed(1), raf90: +q(I, 0.9).toFixed(1), raf99: +q(I, 0.99).toFixed(1), sys: {}, cars: d.traffic.cars.length, peds: d.peds.peds.length,
       moved: Math.round(dist), resets: R ? R.resets : 0, draws: Math.round(S.frames.reduce((a, f) => a + (f[3] || 0), 0) / S.frames.length),
       trisK: Math.round(S.frames.reduce((a, f) => a + (f[4] || 0), 0) / S.frames.length / 1000), miss, miss2, worst };
     let sum = 0;
@@ -355,6 +365,7 @@ try {
   const build = (/id="build">([^<]*)</.exec(await (await fetch(`http://localhost:${HTTP_PORT}/apps/auto/index.html`)).text()) || [])[1];
   console.log(`perfcpu ${LABEL} build ${build}  ${DESKTOP ? 'desktop' : 'iPhone 17 Pro landscape'}  quality ${QUALITY}  frames ${FRAMES}`);
   const out = { label: LABEL, build, renderer: rend, runs: {} };
+  if (THROTTLE > 1) { await send('Emulation.setCPUThrottlingRate', { rate: THROTTLE }); console.log(`  CPU throttled ${THROTTLE}x`); }
   if (PROFILE) { await send('Profiler.enable'); await send('Profiler.setSamplingInterval', { interval: +arg('sample', 500) }); }
   for (const run of RUNS) {
     const st = await ev(`window.__pc.setup(${JSON.stringify(run)})`);
@@ -364,8 +375,9 @@ try {
     const O = { setup: st, time: T, counts: C };
     out.runs[run] = O;
     const sys = Object.entries(T.sys).sort((a, b) => b[1] - a[1]).map(([k, v]) => `${k} ${v.toFixed(2)}`).join('  ');
-    console.log(`\n[${run}] route ${st.route} m  moved ${T.moved} m  resets ${T.resets}  ${T.cars} cars ${T.peds} peds  ${T.draws} draws (mean)  ${T.trisK}k tris`);
+    console.log(`\n[${run}] settled in ${(st.settle / 1000).toFixed(0)} s  route ${st.route} m  moved ${T.moved} m  resets ${T.resets}  ${T.cars} cars ${T.peds} peds  ${T.draws} draws (mean)  ${T.trisK}k tris`);
     console.log(`  cpu/frame  median ${T.cpu.toFixed(2)}  mean ${T.cpuMean.toFixed(2)}  p90 ${T.cpu90.toFixed(2)}  p99 ${T.cpu99.toFixed(2)}  max ${T.cpuMax}  (raf ${T.raf.toFixed(2)})`);
+    console.log(`  fps ${T.fps}  frame interval median ${T.raf.toFixed(1)}  p90 ${T.raf90}  p99 ${T.raf99}`);
     console.log(`  by system (mean ms/frame): ${sys}`);
     console.log(`  frames over 20 ms: ${T.miss} of ${T.n} (over 36 ms: ${T.miss2})`);
     for (const w of T.worst) console.log(`    ${w}`);

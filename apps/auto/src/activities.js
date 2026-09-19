@@ -152,7 +152,7 @@ export class Activities {
       coin: new THREE.OctahedronGeometry(1.7, 0),
     };
     const bm = (c, o) => new THREE.MeshBasicMaterial({
-      color: c, transparent: true, opacity: o, side: THREE.DoubleSide, depthWrite: false,
+      color: c, transparent: true, opacity: o, side: THREE.DoubleSide, forceSinglePass: true, depthWrite: false,
     });
     this.mat = {
       start: bm(0x4fd0ff, 0.30), cp: bm(0xffd24a, 0.26), cpNext: bm(0x7ee0a4, 0.42),

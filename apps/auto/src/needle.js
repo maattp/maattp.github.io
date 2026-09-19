@@ -67,7 +67,7 @@ export const NEEDLE_MATS = {
   // The 2018 open-air barriers: clear, so the deck shows through.
   barrier: skyGlass(new THREE.MeshStandardMaterial({
     color: 0xd6e6ea, roughness: 0.05, metalness: 0.25, envMapIntensity: 1.0,
-    transparent: true, opacity: 0.22, depthWrite: false, side: THREE.DoubleSide,
+    transparent: true, opacity: 0.22, depthWrite: false, side: THREE.DoubleSide, forceSinglePass: true,
   }), 'needleBarrier'),
   concrete: new THREE.MeshStandardMaterial({ color: 0xb3b0a8, roughness: 0.9, metalness: 0.0, envMapIntensity: 0.5 }),
   beacon: new THREE.MeshBasicMaterial({ color: 0xff4a2a, toneMapped: false }),

@@ -4481,6 +4481,21 @@ export class Vehicle {
     this.halfLen = t.spec.len / 2;
     this.halfWid = t.spec.wid / 2;
     this.mass = t.spec.mass;
+    // EVERY FIELD ANYONE SETS, DECLARED HERE. traffic.js, player.js and main.js
+    // used to add these as they went, so vehicles ended up with a dozen
+    // different hidden classes and every loop over `traffic.cars` -- the
+    // forward scan, car-car collisions, the physics -- ran megamorphic: slower
+    // in V8 and JavaScriptCore alike, and allocating as it went. Each default
+    // tests the same as the `undefined` it replaces.
+    this._mode = null;
+    this.edge = -1; this.dirSign = 0; this.laneU = null;
+    this.panic = 0; this.stuckT = 0; this.recycle = false;
+    this.path = null; this.pathT = 0; this.repath = 0; this.rammed = 0; this.siren = 0;
+    this.lightL = null; this.lightR = null; this.extra = null;
+    this.slot = null; this.wasParked = false; this.exploded = false;
+    this.airborne = false; this.lowDetail = false;
+    this._cast = null; this._farCol = null;
+    this._fwd = { x: 0, z: 1 }; this._fwdH = NaN;
   }
 
   // `mode` decides whether anyone is at the wheel. Traffic and police are
@@ -4553,8 +4568,14 @@ export class Vehicle {
     return Math.hypot(this.vLong, this.vLat);
   }
 
+  // One object per vehicle, refreshed when the heading moves: this is read in
+  // every hot loop over the cars, and a fresh object per read was a large
+  // share of the frame's garbage. Every caller uses it at once and none holds
+  // it across a heading change; keep it that way (copy x/z if you must).
   get forward() {
-    return { x: Math.sin(this.heading), z: Math.cos(this.heading) };
+    const f = this._fwd;
+    if (this._fwdH !== this.heading) { this._fwdH = this.heading; f.x = Math.sin(this.heading); f.z = Math.cos(this.heading); }
+    return f;
   }
 
   /**
@@ -4761,10 +4782,16 @@ export class Vehicle {
       if (this.vLong > 0.4) acc -= spec.brakeA * brake;
       else acc -= spec.acc * 0.55 * brake * (1 - clamp(-this.vLong / (top * 0.42), 0, 1));
     }
-    // slope
-    const gy = this.city.groundAt(this.x, this.z, this.y + 0.6, this.lift);
-    const ahead = this.city.groundAt(this.x + this.forward.x * 3, this.z + this.forward.z * 3, this.y + 2.5, this.lift);
-    acc -= clamp((ahead - gy) / 3, -0.7, 0.7) * 9.0;
+    // slope. Not for a distant AI car (lowDetail, a phone past 60 m): its
+    // driver holds a target speed whatever the grade, so gravity along the
+    // road changes nothing anyone can see, and these were two of its ground
+    // queries a frame.
+    if (!this.lowDetail) {
+      const fw = this.forward;
+      const gy = this.city.groundAt(this.x, this.z, this.y + 0.6, this.lift);
+      const ahead = this.city.groundAt(this.x + fw.x * 3, this.z + fw.z * 3, this.y + 2.5, this.lift);
+      acc -= clamp((ahead - gy) / 3, -0.7, 0.7) * 9.0;
+    }
 
     acc -= this.vLong * Math.abs(this.vLong) * DRAG; // aero
     acc -= this.vLong * ROLL; // rolling resistance

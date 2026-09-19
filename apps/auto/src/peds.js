@@ -1769,6 +1769,10 @@ export function makeHumanoid(opts = {}) {
   // standing.
   mesh.castShadow = !ON_PHONE || !!opts.unique;
   mesh.frustumCulled = false;
+  // PedSystem freezes a pedestrian it is not animating this frame; the bone
+  // texture then keeps last frame's pose instead of being rebuilt and uploaded.
+  const sk = mesh.skeleton, skUpdate = sk.update;
+  sk.update = function () { if (!this.frozen) skUpdate.call(this); };
 
   const g = new THREE.Group();
   g.add(mesh);
@@ -2417,6 +2421,10 @@ export class PedSystem {
     this.peds = [];
     this.R = rng(4242);
     this.timer = 0;
+    this.camera = null;   // set by main.js; drives the animation LOD
+    this._m = new THREE.Matrix4();
+    this._fr = new THREE.Frustum();
+    this._s = new THREE.Sphere();
   }
 
   spawn(px, pz, cop) {
@@ -2446,6 +2454,8 @@ export class PedSystem {
         edge: ei, side, t, dirSign: this.R.n() < 0.5 ? 1 : -1,
         speed: 0, state: 'walk', timer: 0,
         cop: !!cop, shootCd: 1 + this.R.n(), down: 0, hp: cop ? 60 : 30,
+        // set later; declared so every pedestrian keeps one hidden class
+        fleeX: 0, fleeZ: 0, fallDir: 0, animDt: 0,
       };
       this.scene.add(h.group);
       this.peds.push(p);
@@ -2487,6 +2497,16 @@ export class PedSystem {
       if (copCount < wantCops) this.spawn(px, pz, true);
     }
 
+    // Frustum for the animation LOD below: last frame's camera, which moves
+    // after this update, hence the margin on the test sphere.
+    const cam = this.camera;
+    if (cam) {
+      cam.updateMatrixWorld();
+      this._m.multiplyMatrices(cam.projectionMatrix, cam.matrixWorldInverse);
+      this._fr.setFromProjectionMatrix(this._m);
+    }
+    this._frame = (this._frame || 0) + 1;
+
     for (let i = this.peds.length - 1; i >= 0; i--) {
       const p = this.peds[i];
       const d2p = dist2(p.x, p.z, px, pz);
@@ -2494,6 +2514,9 @@ export class PedSystem {
       if (p.cop && game.wanted === 0) { this.remove(p); continue; }
 
       if (p.state === 'down') {
+        p.h.mesh.visible = true;
+        p.h.group.matrixWorldAutoUpdate = true;
+        p.h.mesh.skeleton.frozen = false;
         p.down += dt;
         p.h.group.rotation.z = lerp(p.h.group.rotation.z, Math.PI / 2 * p.fallDir, 1 - Math.exp(-8 * dt));
         p.h.group.position.set(p.x, p.y, p.z);
@@ -2567,13 +2590,40 @@ export class PedSystem {
       p.h.group.position.set(p.x, p.y, p.z);
       p.h.group.rotation.y = p.heading;
       p.h.group.rotation.z = 0;
-      animateWalk(p.h, clamp(p.speed * 0.20, 0, 0.8), dt, p.speed);
+      // ANIMATION LOD. A pedestrian is 24 scene objects and a bone texture
+      // upload a frame, and skinned meshes are never frustum-culled (their
+      // bounds are the bind pose), so all of them were posed, multiplied out,
+      // uploaded and drawn every frame, on screen or behind the camera.
+      //   off screen (and casting no shadow -- every phone ped): hidden, not
+      //     posed, matrices frozen;
+      //   on screen past 40 m: posed every other frame, frozen in between
+      //     (one frame of lag at 40 m is under a pixel).
+      // Frozen means the group's matrices and the bone texture keep last
+      // frame's values, so it costs nothing but its draw.
+      let pose = true, show = true;
+      if (cam && !p.h.mesh.castShadow) {
+        this._s.center.set(p.x, p.y + 0.9, p.z);
+        this._s.radius = 2.5;
+        show = this._fr.intersectsSphere(this._s);
+      }
+      if (!show) pose = false;
+      else if (d2p > 40 * 40 && ((this._frame + i) & 1)) pose = false;
+      p.h.mesh.visible = show;
+      p.animDt = (p.animDt || 0) + dt;
+      p.h.group.matrixWorldAutoUpdate = pose;
+      p.h.mesh.skeleton.frozen = !pose;
+      if (pose) {
+        animateWalk(p.h, clamp(p.speed * 0.20, 0, 0.8), Math.min(p.animDt, 0.1), p.speed);
+        p.animDt = 0;
+      }
 
       // knocked over by traffic
       for (const v of traffic.cars) {
         if (v.mode === 'parked') continue;
         const sp = Math.abs(v.vLong);
         if (sp < 2.2) continue;
+        const rr = v.halfLen + 1.2;
+        if (dist2(v.x, v.z, p.x, p.z) > rr * rr) continue;
         const n = v.nearest(p.x, p.z);
         if (dist2(n.x, n.z, p.x, p.z) < 0.65) {
           this.knockDown(p, v.forward, sp);

@@ -8,7 +8,7 @@ import * as G from './geo.js';
 // difference is worth roughly 40 draw calls a frame.
 const ON_PHONE = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
 import { CHUNK, ROAD_LIFT, NODE_LIFT, WALK_LIFT, TUNNEL_H, VERGE, cityStats } from './citygen.js';
-import { Builder, ChunkBuilder } from './build.js';
+import { Builder, ChunkBuilder, freezeStatic } from './build.js';
 import { hash2, clamp, lerp, distToSeg } from './util.js';
 
 // The bore's cross-section, shared by the mesher and by the trench that has to
@@ -367,6 +367,45 @@ const AWNING = [
 // what keeps the check from being a tautology.
 export const WET_FLOOR = 0.35;
 
+/** Mean LINEAR albedo of a canvas-backed sRGB texture, sampled on a grid. */
+function meanLinear(tex) {
+  const img = tex && tex.image;
+  const lin = (c) => { c /= 255; return c <= 0.04045 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4); };
+  try {
+    const w = img.width, h = img.height;
+    const ctx = img.getContext ? img.getContext('2d') : null;
+    const data = ctx.getImageData(0, 0, w, h).data;
+    let r = 0, g = 0, b = 0, n = 0;
+    for (let y = 0; y < h; y += 4) {
+      for (let x = 0; x < w; x += 4) {
+        const k = (y * w + x) * 4;
+        r += lin(data[k]); g += lin(data[k + 1]); b += lin(data[k + 2]); n++;
+      }
+    }
+    return [r / n, g / n, b / n];
+  } catch (e) {
+    return [0.1, 0.1, 0.1];
+  }
+}
+
+/** One geometry holding `a` then `b`: position, normal, uv and color, indexed. */
+function appendGeometry(a, b) {
+  const na = a.attributes.position.count, nb = b.attributes.position.count;
+  const out = new THREE.BufferGeometry();
+  for (const [k, n] of [['position', 3], ['normal', 3], ['uv', 2], ['color', 3]]) {
+    const A = a.attributes[k].array, B = b.attributes[k].array;
+    const C = new Float32Array((na + nb) * n);
+    C.set(A.subarray(0, na * n)); C.set(B.subarray(0, nb * n), na * n);
+    out.setAttribute(k, new THREE.BufferAttribute(C, n));
+  }
+  const ia = a.index.array, ib = b.index.array;
+  const I = (na + nb) > 65535 ? new Uint32Array(ia.length + ib.length) : new Uint16Array(ia.length + ib.length);
+  I.set(ia);
+  for (let i = 0; i < ib.length; i++) I[ia.length + i] = ib[i] + na;
+  out.setIndex(new THREE.BufferAttribute(I, 1));
+  return out;
+}
+
 export class World {
   constructor(scene, city, tx, opts = {}) {
     this.scene = scene;
@@ -467,6 +506,8 @@ export class World {
     this.cells = tx.facade.cells;
     this.group = new THREE.Group();
     scene.add(this.group);
+    // Holds only frozen chunk groups (see freezeStatic).
+    this.group.matrixAutoUpdate = false;
   }
 
   // --- static scenery -------------------------------------------------------
@@ -671,7 +712,12 @@ export class World {
     // a third of the entire draw budget, for ground that is mostly behind
     // buildings anyway. 12 x 12 is a ~1.3 km tile, which is about what the
     // 10.4 km map used to have.
-    const TILES = 12;
+    // 6 x 6 now (4.3 km tiles). Measured on the phone profile, the 12 x 12 grid
+    // put 40-46 terrain draws in a street-level view -- a fifth of the frame's
+    // draw calls -- and draw calls, each a round trip into WebKit's GPU process,
+    // are what binds an iPhone here. Bigger tiles cull worse (~500k triangles
+    // on screen against ~280k), which the GPU has room for; the CPU did not.
+    const TILES = 6;
     const per = Math.ceil((N - 1) / TILES);
     const mat = new THREE.MeshStandardMaterial({
       map: this.tx.ground.map, normalMap: this.tx.ground.normalMap,
@@ -941,25 +987,25 @@ export class World {
             idx.push(a, c2, b, b, c2, e);
           }
         }
-        const geo = new THREE.BufferGeometry();
+        let geo = new THREE.BufferGeometry();
         geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
         geo.setAttribute('color', new THREE.BufferAttribute(col, 3));
         geo.setAttribute('uv', new THREE.BufferAttribute(uv, 2));
         geo.setIndex(idx);
         geo.computeVertexNormals();
-        geo.computeBoundingSphere();
-        const m = new THREE.Mesh(geo, mat);
-        m.receiveShadow = this.shadows;
-        this.terrainGroup.add(m);
         if (patch.length) {
+          // The re-tessellated cells go INTO the tile's own geometry: same
+          // material, so a separate mesh was only an extra draw call.
           const pb = new Builder();
           for (const [cx, cz, a] of patch) {
             this.patchCell(pb, cx, cz, S, [col[a * 3], col[a * 3 + 1], col[a * 3 + 2]]);
           }
-          const pm = new THREE.Mesh(pb.build(), mat);
-          pm.receiveShadow = this.shadows;
-          this.terrainGroup.add(pm);
+          geo = appendGeometry(geo, pb.build());
         }
+        geo.computeBoundingSphere();
+        const m = new THREE.Mesh(geo, mat);
+        m.receiveShadow = this.shadows;
+        this.terrainGroup.add(m);
       }
       yield (tz + 1) / TILES;
     }
@@ -3286,13 +3332,16 @@ float frLine(float o, float fw, float c, float w) {
     // there can be dozens outstanding, and creeping through those at 4 ms a
     // frame means watching the city assemble around you.
     const behind = todo.length;
-    // A phone runs this JS 6-10x slower than a desktop, so a slice there is
+    // A phone runs this JS ~12x slower than an M2 Mac, so a slice there is
     // most of the frame: measured on an iPhone 17 Pro driving downtown, world
-    // was 6.0 ms a frame on top of 14 ms of everything else. Chunk builds are
-    // ~10x cheaper than when these slices were set, so a phone keeps up at
-    // 100 km/h on 3 ms; the big slices are for catching up after a warp.
+    // was 6.0 ms a frame on top of 14 ms of everything else.
+    // Crossing a chunk line leaves ~14 pending (5 near, 9 mid), which used to
+    // take the phone's slice to 4 ms right when it was driving: measured at the
+    // phone's speed that is 7-10 ms frames on every crossing. The work per
+    // crossing needs well under 2 ms a frame to keep up at freeway speed, so
+    // only a warp's backlog gets the big slice.
     const sliceMs = ON_PHONE
-      ? (behind > 30 ? 8 : behind > 12 ? 4 : 2.5)
+      ? (behind > 30 ? 6 : 2)
       : (budget < 2 ? 2 : behind > 30 ? 14 : behind > 12 ? 9 : 4);
     const t0 = performance.now();
     while (performance.now() - t0 < sliceMs) {
@@ -3321,7 +3370,7 @@ float frLine(float o, float fw, float c, float w) {
       const old = c.group;
       c.group = step.value || null;
       c.lod = this._buildLod;
-      if (c.group) this.group.add(c.group);
+      if (c.group) { this.group.add(c.group); freezeStatic(c.group); }
       if (old) {
         old.traverse((o) => { if (o.geometry) o.geometry.dispose(); });
         this.group.remove(old);
@@ -3453,6 +3502,17 @@ float frLine(float o, float fw, float c, float w) {
       yield; this._yt = performance.now();
     }
 
+    // MID-RING ROADS DRAW IN THE FLAT MATERIAL. At 800 m+ a 13 m asphalt tile
+    // is a few pixels and its mip is one colour, so the road and pavement go
+    // into the chunk's vertex-coloured mesh at their textures' own mean
+    // albedo: a mid chunk is one draw instead of three, and draw calls are
+    // what an iPhone runs out of first.
+    if (lod === 0) {
+      if (!this._midTint) this._midTint = { road: meanLinear(this.tx.road.map), walk: meanLinear(this.tx.sidewalk.map) };
+      flat.appendTinted(road, this._midTint.road);
+      flat.appendTinted(walk, this._midTint.walk);
+      road.nv = road.ni = walk.nv = walk.ni = 0;
+    }
     const grp = new THREE.Group();
     const add = (bld, mat, cast, recv) => {
       if (bld.empty) return;

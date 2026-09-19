@@ -2497,7 +2497,11 @@ export function* cityGenerator(md) {
       if (l) {
         for (const si of l) {
           const s = surfaces[si];
-          const r = distToSeg(x, z, s.ax, s.az, s.bx, s.bz);
+          // distToSeg, inline (no result object: ~110 calls a frame)
+          const sdx = s.bx - s.ax, sdz = s.bz - s.az, sl2 = sdx * sdx + sdz * sdz;
+          let rt = sl2 > 0 ? ((x - s.ax) * sdx + (z - s.az) * sdz) / sl2 : 0;
+          rt = rt < 0 ? 0 : rt > 1 ? 1 : rt;
+          const rd = Math.hypot(x - (s.ax + sdx * rt), z - (s.az + sdz * rt));
           // A BORE HOLDS ITS CAR WITH A MARGIN. At exact half-width, a car
           // weaving at a bend where two tunnel edges of different widths join
           // can sit outside BOTH segments for a frame; the deck query then
@@ -2515,7 +2519,7 @@ export function* cityGenerator(md) {
           // the car's centre inside about hw - 0.8, so hw + 4 covers every
           // position a car can physically reach, bend corners included.
           const margin = s.tun ? 4.0 : 0;
-          if (r.d > s.hw + margin) continue;
+          if (rd > s.hw + margin) continue;
           let y;
           // A graded piece answering from PAST its own ends is only
           // extrapolating over its neighbour's ground; where the two are within
@@ -2531,7 +2535,7 @@ export function* cityGenerator(md) {
           // rode it up the far tube's grade: measured 1.9 m high for 7 m by
           // the NB exit. A catch through the margin alone loses to any deck
           // whose own width holds the point.
-          let pen = s.tun && r.d > s.hw ? 0.6 : 0;
+          let pen = s.tun && rd > s.hw ? 0.6 : 0;
           let extrap = false;
           if (s.px !== undefined) {
             // A GRADED ROAD IS MANY SHORT PIECES, and distToSeg clamps. Past
@@ -2570,7 +2574,7 @@ export function* cityGenerator(md) {
               y += (s.sa + (s.sb - s.sa) * tc) * ((x - s.ax) * s.px + (z - s.az) * s.pz);
             }
           } else {
-            y = s.ay + (s.by - s.ay) * r.t + ROAD_LIFT * 0.3;
+            y = s.ay + (s.by - s.ay) * rt + ROAD_LIFT * 0.3;
           }
           // AN EXTRAPOLATION NEVER BEATS A PIECE THAT COVERS THE POINT at its
           // own level. The 0.12 penalty below only settled near-ties, and a

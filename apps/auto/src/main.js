@@ -7,6 +7,7 @@ import { loadMapData } from './mapdata.js';
 import { buildTextures } from './textures.js';
 import { World, WET_FLOOR } from './world.js';
 import { buildLandmarks } from './landmarks.js';
+import { freezeStatic } from './build.js';
 import { TrafficSystem, collideWithBuildings } from './traffic.js';
 import { TYPES as VEHICLE_TYPES, setWaterQuery } from './vehicles.js';
 import { PedSystem, animateWalk } from './peds.js';
@@ -508,7 +509,13 @@ function installShadowFade() {
   world.buildSkyline();
 
   await step(0.86, 'Placing the landmarks');
-  buildLandmarks(scene, city);
+  const lmRoot = buildLandmarks(scene, city);
+  // The scene root never moves, and its own matrixAutoUpdate re-flagged EVERY
+  // object in the world for a world-matrix multiply each frame. Static
+  // subtrees are frozen; see freezeStatic.
+  scene.matrixAutoUpdate = false;
+  if (lmRoot) freezeStatic(lmRoot);
+  if (world.terrainGroup) freezeStatic(world.terrainGroup);
 
   await step(0.9, 'Waking the city');
   game = new Game();
@@ -557,6 +564,7 @@ function installShadowFade() {
     }
   }
   peds = new PedSystem(scene, city, game);
+  peds.camera = camera;   // animation LOD culls against it
   fx = new Effects(scene, tx);
   const mapCanvas = buildMapCanvas(city);
   hud = new Hud(document.getElementById('app'), city, mapCanvas);
@@ -589,7 +597,7 @@ function installShadowFade() {
   // delivery marker
   const mg = new THREE.CylinderGeometry(6, 6, 26, 18, 1, true);
   marker = new THREE.Mesh(mg, new THREE.MeshBasicMaterial({
-    color: 0xffd24a, transparent: true, opacity: 0.32, side: THREE.DoubleSide, depthWrite: false,
+    color: 0xffd24a, transparent: true, opacity: 0.32, side: THREE.DoubleSide, forceSinglePass: true, depthWrite: false,
   }));
   marker.visible = false;
   scene.add(marker);
@@ -690,7 +698,7 @@ function buildPickups(scene, city) {
     }
     const halo = new THREE.Mesh(
       new THREE.CylinderGeometry(1.1, 1.1, 3, 14, 1, true),
-      new THREE.MeshBasicMaterial({ color: s.kind === 'gun' ? 0x8fd1ff : 0x7ef0a4, transparent: true, opacity: 0.2, side: THREE.DoubleSide, depthWrite: false })
+      new THREE.MeshBasicMaterial({ color: s.kind === 'gun' ? 0x8fd1ff : 0x7ef0a4, transparent: true, opacity: 0.2, side: THREE.DoubleSide, forceSinglePass: true, depthWrite: false })
     );
     halo.position.y = 0.6;
     g.add(halo);
@@ -705,9 +713,13 @@ function updatePickups(dt) {
   for (const pk of pickups) {
     if (pk.taken > 0) {
       pk.taken -= dt;
-      if (pk.taken <= 0) pk.g.visible = true;
       continue;
     }
+    // 3-4 draws each, and a metre-wide box past 300 m is a few pixels: they
+    // were drawing from anywhere on the map.
+    const near = dist2(p.x, p.z, pk.x, pk.z) < 300 * 300;
+    if (pk.g.visible !== near) pk.g.visible = near;
+    if (!near) continue;
     pk.g.rotation.y += dt * 1.6;
     pk.g.position.y = pk.y + Math.sin(performance.now() * 0.003) * 0.14;
     if (player.onFoot && dist2(p.x, p.z, pk.x, pk.z) < 4) {

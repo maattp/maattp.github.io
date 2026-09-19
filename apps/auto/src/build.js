@@ -63,6 +63,19 @@ export function mergeByMaterial(root) {
   return out;
 }
 
+/**
+ * Stop three recomputing a static subtree's matrices every frame. With
+ * matrixAutoUpdate on (the default) every Object3D composes its matrix and
+ * re-multiplies its world matrix each frame whether it moved or not: the city,
+ * terrain and landmarks were ~20 % of the renderer's CPU. The subtree's world
+ * matrices are computed once, here; call again after moving anything in it.
+ */
+export function freezeStatic(root) {
+  root.traverse((o) => { o.matrixAutoUpdate = false; o.updateMatrix(); });
+  root.updateMatrixWorld(true);
+  root.matrixWorldAutoUpdate = false;
+}
+
 export class Builder {
   constructor(useUV = true) {
     this.useUV = useUV;
@@ -519,6 +532,9 @@ export class ChunkBuilder extends Builder {
     this.U = useUV ? new Float32Array(this.cap * 2) : null;
     this.C = new Float32Array(this.cap * 3);
     this.I = new Uint32Array(this.cap * 2);
+    // bbox kept as vertices are written, so build() needs no pass over them
+    this.x0 = this.y0 = this.z0 = Infinity;
+    this.x1 = this.y1 = this.z1 = -Infinity;
   }
 
   get empty() {
@@ -543,6 +559,9 @@ export class ChunkBuilder extends Builder {
     const k = i * 3;
     const P = this.P, N = this.N, C = this.C;
     P[k] = x; P[k + 1] = y; P[k + 2] = z;
+    if (x < this.x0) this.x0 = x; if (x > this.x1) this.x1 = x;
+    if (y < this.y0) this.y0 = y; if (y > this.y1) this.y1 = y;
+    if (z < this.z0) this.z0 = z; if (z > this.z1) this.z1 = z;
     N[k] = nx; N[k + 1] = ny; N[k + 2] = nz;
     C[k] = r; C[k + 1] = g; C[k + 2] = b;
     if (this.U) { this.U[i * 2] = u; this.U[i * 2 + 1] = v; }
@@ -564,6 +583,21 @@ export class ChunkBuilder extends Builder {
     this.ni = k + 3;
   }
 
+  /**
+   * Append another ChunkBuilder's triangles, vertex colours multiplied by
+   * `tint` (linear rgb), dropping its UVs: for drawing a textured surface in
+   * an untextured material at a range where the texture is one colour anyway.
+   */
+  appendTinted(src, tint) {
+    const base = this.nv;
+    for (let i = 0; i < src.nv; i++) {
+      const k = i * 3;
+      this.vert(src.P[k], src.P[k + 1], src.P[k + 2], src.N[k], src.N[k + 1], src.N[k + 2], 0, 0,
+        src.C[k] * tint[0], src.C[k + 1] * tint[1], src.C[k + 2] * tint[2]);
+    }
+    for (let i = 0; i < src.ni; i += 3) this.face3(src.I[i] + base, src.I[i + 1] + base, src.I[i + 2] + base);
+  }
+
   build() {
     const n = this.nv, geo = new THREE.BufferGeometry();
     geo.setAttribute('position', new THREE.BufferAttribute(this.P.slice(0, n * 3), 3));
@@ -571,9 +605,17 @@ export class ChunkBuilder extends Builder {
     if (this.U) geo.setAttribute('uv', new THREE.BufferAttribute(this.U.slice(0, n * 2), 2));
     geo.setAttribute('color', new THREE.BufferAttribute(this.C.slice(0, n * 3), 3));
     // setIndex(array) picks 16-bit indices under 65536 vertices; so does this.
-    const idx = n > 65535 ? this.I.slice(0, this.ni) : Uint16Array.from(this.I.subarray(0, this.ni));
+    // (the typed-array constructor converts natively; Uint16Array.from walks
+    // an iterator, and was a 3 ms unsliced step on a big chunk)
+    const idx = n > 65535 ? this.I.slice(0, this.ni) : new Uint16Array(this.I.subarray(0, this.ni));
     geo.setIndex(new THREE.BufferAttribute(idx, 1));
-    geo.computeBoundingSphere();
+    // The sphere round the bbox, not three's two passes over every vertex:
+    // those were most of a big builder's unsliced ~1 ms (8 ms on a phone). A
+    // chunk's contents fill its box, so culling loses next to nothing.
+    const cx = (this.x0 + this.x1) / 2, cy = (this.y0 + this.y1) / 2, cz = (this.z0 + this.z1) / 2;
+    geo.boundingSphere = new THREE.Sphere(new THREE.Vector3(cx, cy, cz),
+      Math.hypot(this.x1 - cx, this.y1 - cy, this.z1 - cz));
+    geo.boundingBox = new THREE.Box3(new THREE.Vector3(this.x0, this.y0, this.z0), new THREE.Vector3(this.x1, this.y1, this.z1));
     return geo;
   }
 }

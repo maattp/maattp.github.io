@@ -136,7 +136,7 @@ class SignAtlas {
     this.tex = new THREE.CanvasTexture(this.c);
     this.tex.colorSpace = THREE.SRGBColorSpace;
     this.tex.anisotropy = 8;
-    this.mat = new THREE.MeshBasicMaterial({ map: this.tex, transparent: true, alphaTest: 0.04, side: THREE.DoubleSide, toneMapped: false });
+    this.mat = new THREE.MeshBasicMaterial({ map: this.tex, transparent: true, alphaTest: 0.04, side: THREE.DoubleSide, forceSinglePass: true, toneMapped: false });
     this.mat.userData.noShadow = true;
   }
   /** Reserve a w x h pixel cell; returns [x, y] in canvas pixels. */

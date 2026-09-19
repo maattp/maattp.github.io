@@ -116,9 +116,22 @@ try {
     // Time a full rebuild of each chunk in the 5x5 near ring, driving the same
     // generator world.update slices (buildChunkStep) to completion in one go.
     if (PROF) { await send('Profiler.enable'); await send('Profiler.setSamplingInterval', { interval: 200 }); await send('Profiler.start'); }
+    // --throttle=N: CPU N-fold slower for the measured part (the phone stand-in;
+    // it also takes the Mac's GPU out of the timing, which it otherwise sets).
+    const THR = +arg('throttle', 1);
+    if (THR > 1) await send('Emulation.setCPUThrottlingRate', { rate: THR });
     // RCPU_PRE='<js>': an experiment run first (stub a function, time the rest).
     if (process.env.RCPU_PRE) await ev(`(() => { const d = window.__dbg, w = d.world, city = d.city, G = d.G; ${process.env.RCPU_PRE} })()`);
-    const b = JSON.parse(await ev(`(() => {
+    // RCPU_LOOP='<js>' (with --builds [--prof]): run that body RCPU_N times
+    // instead of the chunk builds -- profile the renderer, traffic.update, ...
+    const LOOP = process.env.RCPU_LOOP;
+    // RCPU_HEAP=1: sampling heap profile of the loop -- who allocates per frame.
+    const HEAP = !!process.env.RCPU_HEAP;
+    if (HEAP) { await send('HeapProfiler.enable'); await send('HeapProfiler.collectGarbage'); await send('HeapProfiler.startSampling', { samplingInterval: 4096, includeObjectsCollectedByMajorGC: true, includeObjectsCollectedByMinorGC: true }); }
+    const b = LOOP ? JSON.parse(await ev(`(() => { const d = window.__dbg, w = d.world, city = d.city, G = d.G;
+      const t0 = performance.now(); for (let it = 0; it < ${+process.env.RCPU_N || 200}; it++) { ${LOOP} }
+      const ms = performance.now() - t0; return JSON.stringify({ loop: true, ms, per: ms / ${+process.env.RCPU_N || 200} }); })()`))
+    : JSON.parse(await ev(`(() => {
       const d = window.__dbg, w = d.world;
       const cx0 = Math.floor(${X} / 400), cz0 = Math.floor(${Z} / 400);
       const t = [];
@@ -193,6 +206,19 @@ try {
         for (const [ln, t] of [...lines.entries()].sort((a, b) => b[1] - a[1]).slice(0, 20)) console.log(`    line ${ln}: ${t} (${(t / n * 100).toFixed(1)}%)`);
       }
     }
+    if (b.loop && HEAP) {
+      const hp = (await send('HeapProfiler.stopSampling')).result.profile;
+      const self = new Map(); let tot = 0;
+      const walk = (n, stack) => {
+        const cf = n.callFrame; const k = `${cf.functionName || '(anon)'} ${cf.url.replace(/^.*\/apps\/auto\//, '')}:${cf.lineNumber + 1}`;
+        if (n.selfSize) { self.set(k, (self.get(k) || 0) + n.selfSize); tot += n.selfSize; }
+        for (const c of n.children || []) walk(c);
+      };
+      walk(hp.head);
+      console.log(`  allocated (sampled) ${(tot / 1e6).toFixed(1)} MB over the loop; top by self:`);
+      for (const [k, v] of [...self.entries()].sort((a, b) => b[1] - a[1]).slice(0, 25)) console.log(`    ${(v / 1e3).toFixed(0).padStart(7)} kB ${(v / tot * 100).toFixed(1).padStart(5)}%  ${k}`);
+    }
+    if (b.loop) { console.log(`loop: ${b.ms.toFixed(0)} ms total, ${b.per.toFixed(3)} ms per iteration`); throw { done: true }; }
     console.log(`chunk builds :${HTTP_PORT} build ${build} near (${X}, ${Z}): ${b.n} chunks  median ${b.median.toFixed(1)} ms  mean ${b.mean.toFixed(1)}  max ${b.max.toFixed(1)}  total ${b.total.toFixed(0)} ms   geometry ${b.verts} verts, checksum ${b.sum}   steps/chunk ${b.steps.toFixed(0)}, near ${b.nearMs.toFixed(0)} ms / mid ${b.midMs.toFixed(0)} ms over ${b.midN}, longest step per chunk: median ${b.stepMed.toFixed(1)} ms, worst ${b.stepMax.toFixed(1)} ms`);
     process.exitCode = 0;
     throw { done: true };
