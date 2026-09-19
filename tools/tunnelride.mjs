@@ -314,6 +314,25 @@ function pageInit(cfg) {
     // route is a buried bore (the cutting's floor is the carved ground). Held
     // for 0.75 s, so a car briefly airborne off a grade break is not an eject.
     const off = inBore ? v.y - pr.y : 0;
+    // TWIN-DECK CAPTURE: anywhere on the bore (portal to portal), riding more
+    // than 1.5 m off this route's own deck for 3 m of travel or more is the
+    // car standing on some other deck -- the twin's, before the decks were
+    // stacked. Not a failure (the car still gets through), but counted.
+    {
+      const onBore = pr.tun && pr.s > sEntry && pr.s < sExit;
+      const offC = onBore ? v.y - pr.y : 0;
+      if (Math.abs(offC) > 1.5) {
+        if (!R.cap) R.cap = { s0: pr.s, worst: 0 };
+        if (Math.abs(offC) > Math.abs(R.cap.worst)) R.cap.worst = offC;
+        R.cap.len = pr.s - R.cap.s0;
+      } else if (R.cap) {
+        if (R.cap.len >= 3) {
+          R.captures = (R.captures || 0) + 1;
+          R.event('capture', { at: Math.round(R.cap.s0 - sEntry), len: Math.round(R.cap.len), worst: +R.cap.worst.toFixed(2) });
+        }
+        R.cap = null;
+      }
+    }
     R.offT = Math.abs(off) > 3 ? (R.offT || 0) + dt : 0;
     if (R.offT > 0.75 && off > 0) fail = R.event('eject', { deck: +pr.y.toFixed(1), cover: +cover.toFixed(1) });
     else if (R.offT > 0.75) fail = R.event('fall', { deck: +pr.y.toFixed(1), cover: +cover.toFixed(1) });
@@ -326,7 +345,14 @@ function pageInit(cfg) {
     R.hist.push([R.t, pr.s]);
     while (R.hist.length > 1 && R.hist[1][0] <= R.t - 5) R.hist.shift();
     if (!fail && R.hist[0][0] <= R.t - 4.9 && pr.s - R.hist[0][1] < 4) {
-      fail = R.event('stall', { lat: +pr.lat.toFixed(1), deck: +pr.y.toFixed(1),
+      // who is in the way: every AI car within 25 m, with its deck and speed
+      const near = d.traffic.cars.filter((o) => o !== v && Math.hypot(o.x - v.x, o.z - v.z) < 80)
+        .map((o) => [+(o.x - v.x).toFixed(1), +(o.z - v.z).toFixed(1), +(o.y - v.y).toFixed(1), +o.vLong.toFixed(1), o.mode, o.edge, o.dirSign, +(o.stuckT || 0).toFixed(1), +o.y.toFixed(2),
+          (() => { const h = c.obstacleHit(o.x, o.z, o.radius * 0.7, o.y); return h ? [+h.pen.toFixed(2), +h.nx.toFixed(2), +h.nz.toFixed(2), h.kind || null] : null; })(),
+          +c.groundAt(o.x, o.z, o.y + 0.6, c.roadLift(o.x, o.z)).toFixed(2),
+          o.mode === 'traffic' ? (() => { const r = d.traffic.driveTraffic(o, 0, v.x, v.z, p); return [+r.throttle.toFixed(2), +r.brake.toFixed(2), +r.steer.toFixed(2)]; })() : null,
+          +o.heading.toFixed(2), +(o.vLat || 0).toFixed(2)]);
+      fail = R.event('stall', { near, lat: +pr.lat.toFixed(1), deck: +pr.y.toFixed(1),
         ground: +c.groundAt(v.x, v.z, v.y + 0.6, 0).toFixed(2), raw: +raw.toFixed(1),
         terr: +G.terrainHeight(v.x, v.z).toFixed(1) });
     }
@@ -553,7 +579,7 @@ try {
     const first = R.events[0] || null;
     return JSON.stringify({ ride: R.cfg.ride, done: R.done, t: +R.t.toFixed(1),
       advanced: Math.round(R.maxS), of: Math.round(R.total), sEntry: Math.round(R.sEntry), sExit: Math.round(R.sExit),
-      entered: R.maxS > R.sEntry + 100, through: R.maxS > R.sExit + 20, hops: R.hops, kinds, maxAiSpeed: +(R.maxAi || 0).toFixed(1),
+      entered: R.maxS > R.sEntry + 100, captures: R.captures || 0, through: R.maxS > R.sExit + 20, hops: R.hops, kinds, maxAiSpeed: +(R.maxAi || 0).toFixed(1),
       first, deepestUnder: +deepest.toFixed(1), worstFrameRise: +worstUp.toFixed(2), worstFrameDrop: +worstDown.toFixed(2) });
   })()`));
   console.log('RIDE', JSON.stringify(sum));

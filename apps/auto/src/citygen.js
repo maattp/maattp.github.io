@@ -59,6 +59,15 @@ const DECK_REACH = 0.9;
 // that thinks the ceiling is somewhere else than where it is drawn is exactly
 // the kind of disagreement "The one height surface" exists to prevent.
 export const TUNNEL_H = 5.4;
+// SR-99 IS ONE BORE WITH TWO DECKS, southbound on top. WSDOT's bore is a
+// single 17.5 m (57.5 ft) tube, ~15.8 m inside, carrying two 9.8 m (32 ft)
+// roadways -- two 3.4 m lanes, a 2.4 m west and a 0.6 m east shoulder -- each
+// with 4.8 m (15 ft 9 in) of vertical clearance, the upper slab hung off the
+// lining walls and the lower one on continuous corbels. Road surface to road
+// surface: one TUNNEL_H interior plus a 1.2 m slab, the separation the game's
+// box section needs so neither deck's walls, roof or catch zone reach the
+// other's. OSM draws it as two roads side by side (see stackBores).
+export const DECK_SEP = TUNNEL_H + 1.2;
 const CLASS_SPEED = { hwy: 30, art: 17, st: 12, res: 9, ramp: 14 };
 
 const walkWidth = (cls) => (cls === 'st' || cls === 'res' ? 2.6 : cls === 'art' ? 3.2 : 0);
@@ -946,6 +955,200 @@ function profAt(e, t) {
   };
 }
 
+// ---------------------------------------------------------------------------
+// SR-99's stacked bore, in plan.
+//
+// OSM draws the double-deck tube as two one-way roads with centrelines 7.5-11 m
+// apart and hw 7 each, so their carriageways overlap for ~2.8 km. Drawn that
+// way they were two overlapping tubes at one level, and every workaround for
+// that (walls dropped where they stand in the twin's lane, decks blended to a
+// common floor, cells clipped against the twin's rectangle) left a symptom:
+// the SB exit climbing through the NB interior, NB running open through the SB
+// exit cutting, the twin's deck capturing a car. The real bore is one corridor
+// with the decks DECK_SEP apart, so that is what gets built:
+//
+//   - a MIDLINE through the overlap, and every node of both tubes moved onto it
+//     where they are stacked (citygen's profile then puts them DECK_SEP apart);
+//   - at the NORTH portal (Aurora / Harrison) the two mouths sit side by side at
+//     street level, as they do in life, so the tubes are held SIDE apart --
+//     clear of each other -- for the first STACK_SPLIT m while the lower deck
+//     dives under the upper, and only then merge onto the midline;
+//   - at the SOUTH end the upper deck surfaces at its own portal (Royal
+//     Brougham) straight off the stack, while the lower one carries on under
+//     the upper's cutting and its approach to its own portal ~290 m further
+//     south (the SODO portal), back on its own alignment.
+//
+// Done here, at load, before anything reads the edge vectors, so the graph is
+// the single authority on where each deck runs -- traffic, groundAt, walls and
+// the profile all see the stacked alignment. Portal nodes never move.
+const STACK_SPLIT = 200;   // side by side this far from the north mouths
+const STACK_MERGE = 120;   // ...then onto the midline over this far
+function stackBores(g) {
+  const { nodes, edges } = g;
+  const inSet = (e) => e.tunnel && !e.elev && e.cls === 'hwy' && /State Route 99/.test(e.name || '');
+  const isPortal = (ni) => nodes[ni].e.some((k) => !edges[k].tunnel);
+  // chains: in at an entry portal, follow the one-way direction to the exit
+  const chains = [];
+  for (let ni = 0; ni < nodes.length; ni++) {
+    if (!isPortal(ni)) continue;
+    const out = nodes[ni].e.find((k) => inSet(edges[k]) && edges[k].a === ni && edges[k].oneway);
+    if (out === undefined) continue;
+    const ch = [ni];
+    let cur = ni, seen = new Set([ni]);
+    for (;;) {
+      const k = nodes[cur].e.find((q) => inSet(edges[q]) && edges[q].a === cur && edges[q].oneway);
+      if (k === undefined) break;
+      cur = edges[k].b;
+      if (seen.has(cur)) break;
+      seen.add(cur); ch.push(cur);
+      if (isPortal(cur)) break;
+    }
+    if (ch.length > 20 && isPortal(ch[ch.length - 1])) chains.push(ch);
+  }
+  if (chains.length !== 2) return null;
+  // southbound on top: the chain whose exit is south (+z) of its entry
+  const sb = (c) => nodes[c[c.length - 1]].z > nodes[c[0]].z;
+  const up = chains.find(sb), lo = chains.find((c) => !sb(c));
+  if (!up || !lo) return null;
+  const hwU = edges[nodes[up[1]].e.find((k) => inSet(edges[k]))].hw;
+  const hwL = edges[nodes[lo[1]].e.find((k) => inSet(edges[k]))].hw;
+  const SIDE = hwU + hwL + 2.5;
+  const orig = new Map();
+  for (const ni of [...up, ...lo]) orig.set(ni, { x: nodes[ni].x, z: nodes[ni].z });
+  const arc = (c) => {
+    const s = [0];
+    for (let i = 1; i < c.length; i++) {
+      s.push(s[i - 1] + Math.hypot(nodes[c[i]].x - nodes[c[i - 1]].x, nodes[c[i]].z - nodes[c[i - 1]].z));
+    }
+    return s;
+  };
+  // nearest point on a polyline of {x, z}
+  const project = (P, x, z) => {
+    let best = null;
+    for (let i = 0; i + 1 < P.length; i++) {
+      const r = distToSeg(x, z, P[i].x, P[i].z, P[i + 1].x, P[i + 1].z);
+      if (!best || r.d < best.d) best = { d: r.d, i, t: r.t, x: r.x, z: r.z };
+    }
+    return best;
+  };
+  // THE MIDLINE: halfway between the lower tube (sampled every 4 m) and the
+  // nearest point of the upper, wherever the two are within 22 m.
+  const upP = up.map((ni) => orig.get(ni)), loP = lo.map((ni) => orig.get(ni));
+  const M = [];
+  for (let i = 0; i + 1 < loP.length; i++) {
+    const a = loP[i], b = loP[i + 1];
+    const L = Math.hypot(b.x - a.x, b.z - a.z), n = Math.max(1, Math.ceil(L / 4));
+    for (let k = 0; k < n; k++) {
+      const x = a.x + ((b.x - a.x) * k) / n, z = a.z + ((b.z - a.z) * k) / n;
+      const q = project(upP, x, z);
+      if (q.d < 22) M.push({ x: (x + q.x) / 2, z: (z + q.z) / 2 });
+    }
+  }
+  if (M.length < 50) return null;
+  for (let pass = 0; pass < 4; pass++) {
+    for (let i = 1; i + 1 < M.length; i++) {
+      M[i] = { x: (M[i - 1].x + 2 * M[i].x + M[i + 1].x) / 4, z: (M[i - 1].z + 2 * M[i].z + M[i + 1].z) / 4 };
+    }
+  }
+  const sm = (t) => { t = clamp(t, 0, 1); return t * t * (3 - 2 * t); };
+  const moved = new Set();
+  const place = (c, isUp) => {
+    const s = arc(c), tot = s[s.length - 1];
+    for (let i = 1; i + 1 < c.length; i++) {
+      const ni = c[i], o = orig.get(ni);
+      // distance from this tube's own north / south portal
+      const dN = isUp ? s[i] : tot - s[i], dS = isUp ? tot - s[i] : s[i];
+      const q = project(M, o.x, o.z);
+      if (!q || q.d > 25) continue;
+      const A = M[q.i], B = M[q.i + 1];
+      const L = Math.hypot(B.x - A.x, B.z - A.z) || 1;
+      const nx = -(B.z - A.z) / L, nz = (B.x - A.x) / L;
+      const lat = (o.x - q.x) * nx + (o.z - q.z) * nz;
+      const sg = lat >= 0 ? 1 : -1;
+      // past the midline's end (the lower tube south of the upper's exit):
+      // fade back onto its own alignment
+      const atEnd = (q.i === M.length - 2 && q.t >= 1) || (q.i === 0 && q.t <= 0);
+      const beyond = atEnd ? Math.hypot(o.x - q.x, o.z - q.z) : 0;
+      // the mouths are 16.7-18 m apart already; held apart from the first node
+      const a = sm((dN - 2) / 20);
+      const b = sm((dN - STACK_SPLIT) / STACK_MERGE);
+      const wS = isUp ? sm((dS - 5) / 40) : 1 - sm(beyond / 50);
+      const sbx = q.x + nx * sg * (SIDE / 2), sbz = q.z + nz * sg * (SIDE / 2);
+      let x = o.x + (sbx - o.x) * a, z = o.z + (sbz - o.z) * a;
+      x += (q.x - x) * b; z += (q.z - z) * b;
+      x = o.x + (x - o.x) * wS; z = o.z + (z - o.z) * wS;
+      if (Math.hypot(x - o.x, z - o.z) < 0.01) continue;
+      nodes[ni].x = x; nodes[ni].z = z;
+      moved.add(ni);
+    }
+  };
+  place(up, true);
+  place(lo, false);
+  // Ramps forking off a moved node (the lower deck's Republican St off-ramp,
+  // its Royal Brougham on-ramp) carry the junction's shift, fading to nothing
+  // along the ramp, so the fork keeps its shape.
+  const chainSet = new Set([...up, ...lo]);
+  const ramps = [];
+  for (const J of [...moved]) {
+    for (const k0 of nodes[J].e) {
+      const e0 = edges[k0];
+      if (!e0.tunnel || e0.elev || inSet(e0)) continue;
+      const path = [J];
+      let cur = J, k = k0, d = 0;
+      const dists = [0];
+      while (k !== undefined) {
+        const e = edges[k];
+        const nx = e.a === cur ? e.b : e.a;
+        if (chainSet.has(nx) || path.includes(nx)) break;
+        d += e.len; path.push(nx); dists.push(d); cur = nx;
+        if (isPortal(nx)) break;
+        k = nodes[nx].e.find((q) => q !== k && edges[q].tunnel && !edges[q].elev);
+      }
+      ramps.push({ path, dists });
+      const oj = orig.get(J), dx = nodes[J].x - oj.x, dz = nodes[J].z - oj.z;
+      const len = dists[dists.length - 1] || 1;
+      for (let i = 1; i < path.length; i++) {
+        if (isPortal(path[i])) continue;
+        const f = Math.max(0, 1 - dists[i] / Math.min(80, len));
+        nodes[path[i]].x += dx * f; nodes[path[i]].z += dz * f;
+        if (f > 0) moved.add(path[i]);
+      }
+    }
+  }
+  const touched = new Set();
+  for (const ni of moved) {
+    // the ground over the new position: the profile's cover clamp reads it
+    if (!nodes[ni].elev) nodes[ni].y = G.terrainHeight(nodes[ni].x, nodes[ni].z);
+    for (const k of nodes[ni].e) touched.add(k);
+  }
+  for (const k of touched) {
+    const e = edges[k], a = nodes[e.a], b = nodes[e.b];
+    const dx = b.x - a.x, dz = b.z - a.z, len = Math.hypot(dx, dz) || 1;
+    e.len = len; e.dx = dx / len; e.dz = dz / len;
+  }
+  for (const ni of up) nodes[ni].deck = 'upper';
+  for (const ni of lo) nodes[ni].deck = 'lower';
+  for (const k of edges.keys()) {
+    const e = edges[k];
+    if (!e.tunnel || e.elev) continue;
+    const da = nodes[e.a].deck, db = nodes[e.b].deck;
+    if (da && da === db) e.deck = da;
+  }
+  for (const r of ramps) {
+    for (let i = 1; i < r.path.length; i++) {
+      for (const k of nodes[r.path[i]].e) if (edges[k].tunnel && !edges[k].elev && !edges[k].deck) edges[k].deck = nodes[r.path[0]].deck;
+    }
+  }
+  let worst = 0;
+  for (const ni of moved) {
+    const o = orig.get(ni);
+    if (o) worst = Math.max(worst, Math.hypot(nodes[ni].x - o.x, nodes[ni].z - o.z));
+  }
+  cityStats.stackMoved = moved.size;
+  cityStats.stackWorstShift = +worst.toFixed(1);
+  return { up, lo, ramps, hwU, hwL };
+}
+
 export function* cityGenerator(md) {
   yield { p: 0.02, msg: 'Unpacking the street graph' };
 
@@ -1004,6 +1207,8 @@ export function* cityGenerator(md) {
     nb.e.push(i);
   }
   const g = { nodes, edges };
+  // One bore, two decks: SR-99's twin OSM ways onto a shared alignment.
+  const stack = stackBores(g);
   yield { p: 0.3, msg: 'Opening the streets' };
 
   // --- 2. Buildings -------------------------------------------------------
@@ -1414,6 +1619,129 @@ export function* cityGenerator(md) {
       profiled++;
     }
 
+    // THE LOWER DECK RUNS DECK_SEP UNDER THE UPPER ONE (see stackBores). The
+    // upper (southbound) deck keeps the profile it was given above -- dive from
+    // its portals, chord between them, cover clamp -- which is the one the SB
+    // rides were proven on. The lower deck is held DECK_SEP under it wherever
+    // the two tubes' carriageways overlap in plan, and under the upper's
+    // approach cutting past its south portal, where the lower carries on
+    // beneath the trench floor. That is a ceiling, so it only ever LOWERS the
+    // deck; a grade cone (LO_GRADE) carries it back up to its own profile
+    // towards its mouths, so the north mouths still meet side by side at
+    // street level and the lower deck is under the upper by the time the
+    // tubes merge onto the midline.
+    const stackNodes = new Set();
+    if (stack) {
+      const LO_GRADE = 0.10;
+      const { up, lo, ramps, hwU, hwL } = stack;
+      for (const ni of [...up, ...lo]) stackNodes.add(ni);
+      for (const r of ramps) for (const ni of r.path.slice(1)) stackNodes.add(ni);
+      const upY = up.map((ni) => g.nodes[ni].y);
+      // the upper's approach beyond its south portal: the cutting's floor there
+      // starts at the portal's height, so the lower deck stays DECK_SEP under
+      // that for the approach's length
+      const upEnd = g.nodes[up[up.length - 1]];
+      const upPre = g.nodes[up[up.length - 2]];
+      const ux = upEnd.x - upPre.x, uz = upEnd.z - upPre.z, uL = Math.hypot(ux, uz) || 1;
+      const reach = hwU + hwL + 1;
+      // The lower deck's distance from its north mouth: from STACK_SPLIT on
+      // the tubes merge in plan, so it must already be DECK_SEP down there
+      // rather than start diving once the carriageways overlap -- which put
+      // the NB wall 0.2 m into the SB shoulder at the start of the merge.
+      const loS = [0];
+      for (let i = 1; i < lo.length; i++) {
+        loS.push(loS[i - 1] + Math.hypot(g.nodes[lo[i]].x - g.nodes[lo[i - 1]].x, g.nodes[lo[i]].z - g.nodes[lo[i - 1]].z));
+      }
+      const loTot = loS[loS.length - 1];
+      const cap = lo.map((ni, li) => {
+        const n = g.nodes[ni];
+        let best = null;
+        for (let i = 0; i + 1 < up.length; i++) {
+          const a = g.nodes[up[i]], b = g.nodes[up[i + 1]];
+          const r = distToSeg(n.x, n.z, a.x, a.z, b.x, b.z);
+          if (!best || r.d < best.d) best = { d: r.d, y: upY[i] + (upY[i + 1] - upY[i]) * r.t };
+        }
+        const merging = loTot - loS[li] >= STACK_SPLIT - 20 && best && best.d < reach + 10;
+        let c = best && (best.d < reach || merging) ? best.y - DECK_SEP : Infinity;
+        const al = ((n.x - upEnd.x) * ux + (n.z - upEnd.z) * uz) / uL;
+        const lt = Math.abs(((n.x - upEnd.x) * -uz + (n.z - upEnd.z) * ux) / uL);
+        if (al >= 0 && al < 90 && lt < reach) c = Math.min(c, upEnd.y - DECK_SEP);
+        return c;
+      });
+      const s = [0];
+      for (let i = 1; i < lo.length; i++) {
+        const a = g.nodes[lo[i - 1]], b = g.nodes[lo[i]];
+        s.push(s[i - 1] + Math.hypot(b.x - a.x, b.z - a.z));
+      }
+      const own = lo.map((ni) => g.nodes[ni].y);
+      const y0 = own.map((y, i) => Math.min(y, cap[i]));
+      // cone: no steeper than LO_GRADE out of any capped point
+      // (out of the CAPPED points only: the deck's own mouth dive is steeper
+      // than LO_GRADE and is left exactly as it was)
+      const yc = y0.map((_, i) => {
+        let m = y0[i];
+        for (let j = 0; j < lo.length; j++) {
+          if (cap[j] < own[j]) m = Math.min(m, cap[j] + LO_GRADE * Math.abs(s[i] - s[j]));
+        }
+        return m;
+      });
+      // and a 25 m triangular smoothing of the cone's kinks, never above the
+      // cap or the deck's own (cover-clamped) profile
+      let deepest = 0;
+      const yl = yc.map((_, i) => {
+        if (i === 0 || i === lo.length - 1) return yc[i];
+        let sw = 0, sy = 0, lowered = false;
+        for (let j = 0; j < lo.length; j++) {
+          const w = 1 - Math.abs(s[i] - s[j]) / 25;
+          if (w > 0) { sw += w; sy += w * yc[j]; if (yc[j] < own[j] - 0.01) lowered = true; }
+        }
+        // untouched stretches (the mouths) keep their own profile exactly
+        if (!lowered) return own[i];
+        return Math.min(sy / sw, cap[i], own[i]);
+      });
+      // BETWEEN NODES TOO. Both decks are straight between their own nodes,
+      // so the lower one clearing the upper at every LOWER node is not enough:
+      // where the upper deck kinks between two of them -- the foot of the SB
+      // exit ramp at z 1612 -- the lower's chord passed 0.6 m closer, and the
+      // upper's trench floor sliced the lower bore (portalcheck). Each upper
+      // node is checked against the lower chord under it and both ends are
+      // lowered by any shortfall.
+      for (let pass = 0; pass < 3; pass++) {
+        for (let j = 1; j < up.length; j++) {
+          const u = g.nodes[up[j]];
+          let bi = -1, bt = 0, bd = 1e9;
+          for (let i = 0; i + 1 < lo.length; i++) {
+            const a = g.nodes[lo[i]], b = g.nodes[lo[i + 1]];
+            const r = distToSeg(u.x, u.z, a.x, a.z, b.x, b.z);
+            if (r.d < bd) { bd = r.d; bi = i; bt = r.t; }
+          }
+          if (bi < 0 || bd >= reach || bt <= 0 || bt >= 1) continue;
+          const short = (1 - bt) * yl[bi] + bt * yl[bi + 1] - (upY[j] - DECK_SEP);
+          if (short <= 0.005) continue;
+          if (bi > 0) yl[bi] -= short;
+          if (bi + 1 < lo.length - 1) yl[bi + 1] -= short;
+        }
+      }
+      for (let i = 1; i + 1 < lo.length; i++) {
+        deepest = Math.max(deepest, own[i] - yl[i]);
+        g.nodes[lo[i]].y = yl[i];
+      }
+      // ramps forking off the lower deck follow their junction, fading out
+      // along the ramp to its own portal
+      for (const r of ramps) {
+        const J = r.path[0], k = lo.indexOf(J);
+        if (k < 0) continue;
+        const dy = yl[k] - own[k];
+        const len = r.dists[r.dists.length - 1] || 1;
+        for (let i = 1; i < r.path.length; i++) {
+          if (portals.has(r.path[i])) continue;
+          g.nodes[r.path[i]].y += dy * Math.max(0, 1 - r.dists[i] / len);
+        }
+      }
+      cityStats.stackLowered = +deepest.toFixed(1);
+      if (globalThis.__profDebug) globalThis.__stackDbg = lo.map((ni, i) => [ni, Math.round(s[i]), +own[i].toFixed(2), +cap[i].toFixed(2), +yc[i].toFixed(2), +yl[i].toFixed(2)]);
+    }
+
     // THE TWIN TUBES SHARE ONE FLOOR. OSM maps SR-99's double-deck bore as two
     // ways whose carriageways overlap for ~2.8 km (world.inOtherBore has the
     // numbers), and each is profiled from its OWN portals -- staggered 290 m at
@@ -1453,14 +1781,14 @@ export function* cityGenerator(md) {
       }
       let blended = 0;
       for (const ni of tunNodes) {
-        if (portals.has(ni) || !groundY.has(ni)) continue;
+        if (portals.has(ni) || !groundY.has(ni) || stackNodes.has(ni)) continue;
         const n = g.nodes[ni];
         let hwN = 0;
         for (const k of n.e) if (g.edges[k].tunnel) hwN = Math.max(hwN, g.edges[k].hw);
         let near = null;
         for (const k of tEdges) {
           const e = g.edges[k];
-          if (comp.get(e.a) === comp.get(ni)) continue;
+          if (comp.get(e.a) === comp.get(ni) || e.deck) continue;
           const a = g.nodes[e.a], b = g.nodes[e.b];
           const reach = hwN + e.hw;
           if (n.x < Math.min(a.x, b.x) - reach || n.x > Math.max(a.x, b.x) + reach
@@ -1859,7 +2187,15 @@ export function* cityGenerator(md) {
           // should win. Nearest-to-curY otherwise took the extrapolation
           // whenever it sat a few cm higher: a 7 cm step at a lane-count change
           // on the I-5 ride.
-          let pen = 0;
+          // ...but the margin is for a car riding THIS bore round a bend, and
+          // it reaches 4 m past the wall. Where two tubes run side by side --
+          // SR-99's north mouths, held SIDE apart while the lower deck dives
+          // (stackBores) -- a car in the right lane of one is inside the
+          // other's margin, and when the other deck was the nearer surface it
+          // rode it up the far tube's grade: measured 1.9 m high for 7 m by
+          // the NB exit. A catch through the margin alone loses to any deck
+          // whose own width holds the point.
+          let pen = s.tun && r.d > s.hw ? 0.6 : 0;
           if (s.px !== undefined) {
             // A GRADED ROAD IS MANY SHORT PIECES, and distToSeg clamps. Past
             // a piece's end the clamped answer is that end's height held
