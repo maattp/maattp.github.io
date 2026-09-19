@@ -249,6 +249,14 @@ function pageInit(cfg) {
     R.t += dt;
     const v = p.vehicle;
     if (!v) { R.event('lost-car'); R.done = 'lost-car'; return; }
+    // A WRONG-WAY RIDE MEETS EVERY ONCOMING CAR. The autopilot holds the
+    // centreline and cannot dodge, and cars collide as circles (0.42 x length,
+    // 4 m between two sedans' centres) on a two-lane deck whose lanes sit
+    // 3.1 m either side of it -- so every car it meets is a shunt, and the
+    // ride ends in 'car-destroyed' on traffic luck alone (it did on the base
+    // build too). These rides judge the GEOMETRY, so the car is kept alive and
+    // the shunts are counted instead.
+    if (wrong && v.health < 100) { R.damaged = (R.damaged || 0) + 1; v.health = 100; }
     if (v.dead) { R.event('car-destroyed'); R.done = 'dead'; return; }
     const pr = R.project(v.x, v.z);
     R.sNow = pr.s; R.lat = pr.lat;
@@ -579,7 +587,7 @@ try {
     const first = R.events[0] || null;
     return JSON.stringify({ ride: R.cfg.ride, done: R.done, t: +R.t.toFixed(1),
       advanced: Math.round(R.maxS), of: Math.round(R.total), sEntry: Math.round(R.sEntry), sExit: Math.round(R.sExit),
-      entered: R.maxS > R.sEntry + 100, captures: R.captures || 0, through: R.maxS > R.sExit + 20, hops: R.hops, kinds, maxAiSpeed: +(R.maxAi || 0).toFixed(1),
+      entered: R.maxS > R.sEntry + 100, captures: R.captures || 0, damaged: R.damaged || 0, through: R.maxS > R.sExit + 20, hops: R.hops, kinds, maxAiSpeed: +(R.maxAi || 0).toFixed(1),
       first, deepestUnder: +deepest.toFixed(1), worstFrameRise: +worstUp.toFixed(2), worstFrameDrop: +worstDown.toFixed(2) });
   })()`));
   console.log('RIDE', JSON.stringify(sum));

@@ -1272,6 +1272,30 @@ export class World {
           [b.x - qx * w, MASK_Y, b.z - qz * w], [b.x + qx * w, MASK_Y, b.z + qz * w],
           [0, 1, 0], ZERO_UV, [1, 1, 1]);
       }
+      // ...AND OVER THE OPEN CUTTINGS. The mask followed the tunnel edges, so
+      // a cutting whose floor dips under the sea on its SURFACE approach --
+      // the NB entry cutting at SODO, beside the SR-99 surface on its lids --
+      // showed the sea plane lying in the trench as a canal, from the road
+      // beside it. Each non-cap corridor segment whose floor is under 0.3 m
+      // gets the same depth-only quad across the whole dug floor.
+      for (const c of cuts) {
+        for (let i = 0; i < c.pts.length - 1; i++) {
+          const a = c.pts[i], b = c.pts[i + 1];
+          if (a.cap || b.cap || Math.min(a.y, b.y) - 0.7 > 0.3) continue;
+          const L = Math.hypot(b.x - a.x, b.z - a.z) || 1;
+          const qx = -(b.z - a.z) / L, qz = (b.x - a.x) / L;
+          const w = a.hw + CUT_SH + CUT_OVER;
+          let wet = false;
+          for (const t of [0, 0.5, 1]) for (const o of [-w, 0, w]) {
+            if (G.isWater(a.x + (b.x - a.x) * t + qx * o, a.z + (b.z - a.z) * t + qz * o)) wet = true;
+          }
+          if (wet) continue;
+          wb.quad(
+            [a.x + qx * w, MASK_Y, a.z + qz * w], [a.x - qx * w, MASK_Y, a.z - qz * w],
+            [b.x - qx * w, MASK_Y, b.z - qz * w], [b.x + qx * w, MASK_Y, b.z + qz * w],
+            [0, 1, 0], ZERO_UV, [1, 1, 1]);
+        }
+      }
       if (!wb.empty) {
         // DOUBLE-SIDED. These quads wind (A+q, A-q, B-q, B+q), which faces
         // DOWN, so under three's default front-side culling the mask existed
@@ -1478,6 +1502,28 @@ export class World {
       if (Math.abs(rx * -q.uz + rz * q.ux) > q.hw + pad) continue;
       const y = q.a.y + (q.b.y - q.a.y) * clamp(al / q.L, 0, 1);
       if (best === null || y > best) best = y;
+    }
+    return best;
+  }
+
+  /**
+   * The highest ROOF of a bore running under (x,z) whose deck is more than
+   * 2 m below y, or -Infinity. A structure standing on the upper SR-99 deck --
+   * the SB exit's headwall piers and mouth card, dug 1.5 m below its own deck
+   * to swallow the terrain face -- must stop above it, or it hangs through the
+   * lower deck's ceiling.
+   */
+  _roofUnder(x, z, y, pad = 1.5) {
+    let best = -Infinity;
+    for (const q of this._tunIndex()) {
+      if (x < q.x0 - pad || x > q.x1 + pad || z < q.z0 - pad || z > q.z1 + pad) continue;
+      const rx = x - q.a.x, rz = z - q.a.z;
+      const al = rx * q.ux + rz * q.uz;
+      if (al < -pad || al > q.L + pad) continue;
+      if (Math.abs(rx * -q.uz + rz * q.ux) > q.hw + pad) continue;
+      const dk = q.a.y + (q.b.y - q.a.y) * clamp(al / q.L, 0, 1);
+      if (dk > y - 2) continue;
+      best = Math.max(best, dk + TUN_DECK + TUN_WALL);
     }
     return best;
   }
@@ -1829,7 +1875,8 @@ export class World {
     // the slab and anyone on the street never meet it. Not where the ledge is
     // another cutting's carriageway (a divided mouth descends side by side).
     {
-      let n0 = bsegs.length;
+      const n0 = bsegs.length;
+      this._ledgeBarrier0 = n0;           // for tools: ledge walls start here
       const onOtherRoad = (c, x, z) => cuts.some((c2) => {
         if (c2 === c || x < c2.x0 || x > c2.x1 || z < c2.z0 || z > c2.z1) return false;
         for (let k = 0; k < c2.pts.length - 1; k++) {
@@ -1867,6 +1914,7 @@ export class World {
           }
         }
       }
+      this._ledgeBarrier1 = bsegs.length;
       stats.ledgeWalls = (bsegs.length - n0) / 6;
       cityStats.lidLedgeWalls = stats.ledgeWalls;
     }
@@ -3816,7 +3864,8 @@ varying vec3 vFarTint;`)
       // the bottom with the carriageway and its centreline running visibly
       // underneath -- the mouth read as a panel hung above the road rather
       // than a hole in the end of it.
-      const sill = Math.min(deckY, G.terrainHeight(m0x, m0z), G.terrainHeight(m1x, m1z)) - 0.6;
+      const sill = Math.max(Math.min(deckY, G.terrainHeight(m0x, m0z), G.terrainHeight(m1x, m1z)) - 0.6,
+        this._roofUnder((m0x + m1x) / 2 + bx, (m0z + m1z) / 2 + bz, deckY) + 0.05);
       flat.quad(
         [m0x + bx, sill, m0z + bz], [m1x + bx, sill, m1z + bz],
         [m1x + bx, roofY, m1z + bz], [m0x + bx, roofY, m0z + bz],
@@ -3836,7 +3885,14 @@ varying vec3 vFarTint;`)
     for (const [p0, p1] of piers) {
       if (p1 - p0 < 0.4) continue;
       const [cx, cz] = at((p0 + p1) / 2);
-      const foot = Math.min(deckY, G.terrainHeight(cx, cz)) - 1.5;
+      // ...but never down through the roof of a deck running underneath
+      let foot = Math.min(deckY, G.terrainHeight(cx, cz)) - 1.5;
+      for (const f of [-0.5, 0, 0.5]) {
+        for (const u of [p0 + 0.05, (p0 + p1) / 2, p1 - 0.05]) {
+          const [ux, uz] = at(u);
+          foot = Math.max(foot, this._roofUnder(ux + O.dx * DEPTH * f, uz + O.dz * DEPTH * f, deckY) + 0.05);
+        }
+      }
       flat.box(cx, foot, cz, p1 - p0, roofY - foot, DEPTH, rot, conc);
       parts.push({ kind: 'pier', x: cx, z: cz, base: foot, top: roofY, w: p1 - p0 });
     }
