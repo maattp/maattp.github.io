@@ -35,7 +35,7 @@
 //
 // Targets any checkout via AUTO_HTTP_PORT, so a master tree can be traced with
 // this same harness for an honest before/after.
-import { spawn } from 'node:child_process';
+import { launchChrome, assertRenderer } from './chrome.mjs';
 import { writeFileSync, mkdirSync } from 'node:fs';
 import { setTimeout as sleep } from 'node:timers/promises';
 
@@ -46,16 +46,16 @@ const FRAMES = +((process.argv.find((a) => a.startsWith('--frames=')) || '').sli
 const HTTP_PORT = process.env.AUTO_HTTP_PORT || 8000;
 const PORT = +process.env.AUTO_CDP_PORT || 9341;
 const OUT = process.env.FLYCAM_OUT || 'tools/data/flycam';
-const CHROME = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
 // Frames to photograph, named. Same frame index on every build, so a pair is
 // the same moment of the same flight.
 const SHOT_AT = { beacon: 3500, firsthill: 5850, capitol: 7150, queenanne: 9000, bay: 10500, horizon: 12500 };
 const HIGH_FRAMES = 900;
 const EVAL_S = +(process.env.FLYCAM_EVAL_S || 240);
 
-const chrome = spawn(CHROME, [`--remote-debugging-port=${PORT}`, '--headless=new',
-  '--use-gl=swiftshader', '--enable-unsafe-swiftshader', '--window-size=1280,720',
-  '--no-first-run', '--enable-precise-memory-info', `--user-data-dir=/tmp/auto-flycam-${PORT}`, 'about:blank'], { stdio: 'ignore' });
+// Launch flags live in tools/chrome.mjs (AUTO_GPU=1 for the Mac's GPU; shots
+// compared across builds must come from the same renderer).
+const chrome = launchChrome({ port: PORT, profile: `/tmp/auto-flycam-${PORT}`,
+  extra: ['--enable-precise-memory-info'] });
 
 let closing = false;
 try {
@@ -97,6 +97,7 @@ try {
   await send('Page.addScriptToEvaluateOnNewDocument', { source: 'window.__noAutoQuality = true;' });
   await send('Page.navigate', { url: `http://localhost:${HTTP_PORT}/apps/auto/` });
   for (let i = 0; i < 400; i++) { await sleep(500); if (await ev('!!window.__dbg')) break; }
+  await assertRenderer(ev);
   await sleep(1500);
 
   await ev(`(() => {

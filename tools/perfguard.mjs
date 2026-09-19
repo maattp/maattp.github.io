@@ -15,12 +15,11 @@
 // streamer that stalled for a quarter of a second, and a rebuild that punched a
 // 400 m hole in the world. Each was obvious once counted.
 
-import { spawn } from 'node:child_process';
+import { launchChrome, assertRenderer } from './chrome.mjs';
 import { writeFileSync, readFileSync, existsSync, mkdirSync } from 'node:fs';
 import { setTimeout as sleep } from 'node:timers/promises';
 
 const PORT = +process.env.AUTO_CDP_PORT || 9237;
-const CHROME = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
 const HTTP_PORT = process.env.AUTO_HTTP_PORT || 8000;
 const REC = 'tools/data/perfguard.json';
 const SAVE = process.argv.includes('--save');
@@ -42,12 +41,11 @@ const TOLERANCE = {
   holes: 0,
 };
 
+// Launch flags live in tools/chrome.mjs. Draw and triangle counts do not
+// depend on the renderer; the streaming times are CPU and barely do -- but a
+// record saved under AUTO_GPU=1 should be checked under AUTO_GPU=1.
 function launch() {
-  return spawn(CHROME, [
-    `--remote-debugging-port=${PORT}`, '--headless=new', '--use-gl=swiftshader',
-    '--enable-unsafe-swiftshader', '--window-size=1280,720', '--no-first-run',
-    `--user-data-dir=/tmp/auto-perfguard-${PORT}`, 'about:blank',
-  ], { stdio: 'ignore' });
+  return launchChrome({ port: PORT, profile: `/tmp/auto-perfguard-${PORT}` });
 }
 
 const MEASURE = `(() => {
@@ -148,6 +146,7 @@ async function main() {
       if (await evaluate('window.__dbg.sceneStats.calls > 0 && window.__dbg.peds.peds.length > 0')) break;
       await sleep(500);
     }
+    await assertRenderer(evaluate);
     await sleep(3000);
     const now = JSON.parse(await evaluate(MEASURE));
 

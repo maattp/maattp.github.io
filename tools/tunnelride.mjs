@@ -34,7 +34,7 @@
 //
 // Usage:  python3 -m http.server 8000; node tools/tunnelride.mjs sb [--hop]
 // Prints one JSON line per event and a summary line starting "RIDE".
-import { spawn } from 'node:child_process';
+import { launchChrome, assertRenderer } from './chrome.mjs';
 import { writeFileSync, mkdirSync } from 'node:fs';
 import { setTimeout as sleep } from 'node:timers/promises';
 
@@ -48,7 +48,6 @@ const SHOTS = argVal('--shots');
 const SPEED = +(argVal('--speed') || 24);
 const HTTP_PORT = process.env.AUTO_HTTP_PORT || 8000;
 const PORT = +process.env.AUTO_CDP_PORT || 9244;
-const CHROME = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
 if (SHOTS) mkdirSync(SHOTS, { recursive: true });
 
 // ---- page side: everything below is serialised into the page ---------------
@@ -489,9 +488,8 @@ function pageInit(cfg) {
 }
 
 // ---- node side --------------------------------------------------------------
-const chrome = spawn(CHROME, [`--remote-debugging-port=${PORT}`, '--headless=new',
-  '--use-gl=swiftshader', '--enable-unsafe-swiftshader', '--window-size=1100,650',
-  '--no-first-run', `--user-data-dir=/tmp/auto-tride-${PORT}`, 'about:blank'], { stdio: 'ignore' });
+// Launch flags live in tools/chrome.mjs (AUTO_GPU=1 for the Mac's GPU).
+const chrome = launchChrome({ port: PORT, profile: `/tmp/auto-tride-${PORT}`, width: 1100, height: 650 });
 let exitCode = 0;
 try {
   let page;
@@ -515,6 +513,7 @@ try {
   await send('Page.addScriptToEvaluateOnNewDocument', { source: 'window.__noAutoQuality = true;' });
   await send('Page.navigate', { url: `http://localhost:${HTTP_PORT}/apps/auto/` });
   for (let i = 0; i < 600; i++) { await sleep(500); try { if (await ev('!!window.__dbg')) break; } catch {} }
+  await assertRenderer(ev);
   await ev(`window.__dbg.applyQuality('low', true)`);
   const cfg = { ride: RIDE, hop: HOP, notraffic: NOTRAFFIC, speed: SPEED, nofail: args.includes('--nofail'),
     from: argVal('--from') !== undefined ? +argVal('--from') : null };

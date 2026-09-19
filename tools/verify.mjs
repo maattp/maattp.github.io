@@ -10,7 +10,7 @@
 //   * set __noAutoQuality before boot, or SwiftShader's ~5 fps drops the tier
 //     immediately and every screenshot lies
 
-import { spawn } from 'node:child_process';
+import { launchChrome, assertRenderer } from './chrome.mjs';
 import { writeFileSync, mkdirSync, readFileSync, readdirSync, statSync } from 'node:fs';
 import { setTimeout as sleep } from 'node:timers/promises';
 
@@ -56,24 +56,15 @@ const URL_BASE = process.env.AUTO_URL || `http://localhost:${HTTP_PORT}/apps/aut
 const SHOTS = process.argv.includes('--shots');
 const OUT = 'tools/data/shots';
 
-const CHROME = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
-
+// Launch flags live in tools/chrome.mjs (AUTO_GPU=1 for the Mac's GPU).
 function launch() {
-  return spawn(CHROME, [
-    `--remote-debugging-port=${PORT}`,
-    '--headless=new',
-    '--disable-gpu-sandbox',
-    '--use-gl=swiftshader',
-    '--enable-unsafe-swiftshader',
+  return launchChrome({
+    port: PORT, profile: `/tmp/auto-verify-profile-${PORT}`, width: 1280, height: 720,
     // Headless has no user gestures at all, so without this every
     // media play() is rejected and the live radio can never be tested.
     // The gesture path itself is covered on device by audio.primeLive().
-    '--autoplay-policy=no-user-gesture-required',
-    '--window-size=1280,720',
-    '--no-first-run',
-    `--user-data-dir=/tmp/auto-verify-profile-${PORT}`,
-    'about:blank',
-  ], { stdio: 'ignore', detached: false });
+    extra: ['--autoplay-policy=no-user-gesture-required'],
+  });
 }
 
 async function cdpTarget() {
@@ -174,6 +165,7 @@ async function main() {
       if (await session.eval('window.__dbg.sceneStats.calls > 0 && window.__dbg.traffic.cars.length > 0')) break;
       await sleep(500);
     }
+    await assertRenderer((e) => session.eval(e));
     console.log('booted.\n');
 
     const report = await session.eval(`(() => {

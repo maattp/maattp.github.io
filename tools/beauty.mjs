@@ -7,7 +7,7 @@
 // `high` -- SwiftShader's ~4 fps otherwise trips the adaptive downgrade and
 // every shot silently comes back at the low-quality settings.
 
-import { spawn } from 'node:child_process';
+import { launchChrome, assertRenderer } from './chrome.mjs';
 import { writeFileSync, mkdirSync } from 'node:fs';
 import { setTimeout as sleep } from 'node:timers/promises';
 
@@ -16,7 +16,6 @@ const PORT = +process.env.AUTO_CDP_PORT || 9228;
 // say -- can be captured with THIS harness for an honest before/after. Framing
 // has to come from the same code or the two sets are not comparable.
 const HTTP_PORT = process.env.AUTO_HTTP_PORT || 8000;
-const CHROME = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
 const TAG = process.argv[2] || 'now';
 const OUT = `tools/data/beauty/${TAG}`;
 
@@ -164,13 +163,13 @@ const PICKERS = `(() => {
   return JSON.stringify(out);
 })()`;
 
+// Launch flags live in tools/chrome.mjs. AUTO_GPU=1 shoots on the Mac's GPU;
+// compare a before/after set only when both were shot on the same renderer.
 function launch() {
-  return spawn(CHROME, [
-    `--remote-debugging-port=${PORT}`, '--headless=new', '--use-gl=swiftshader',
-    '--enable-unsafe-swiftshader', '--autoplay-policy=no-user-gesture-required',
-    '--window-size=1280,720', '--no-first-run',
-    `--user-data-dir=/tmp/auto-beauty-profile-${PORT}`, 'about:blank',
-  ], { stdio: 'ignore' });
+  return launchChrome({
+    port: PORT, profile: `/tmp/auto-beauty-profile-${PORT}`,
+    extra: ['--autoplay-policy=no-user-gesture-required'],
+  });
 }
 
 async function main() {
@@ -210,6 +209,7 @@ async function main() {
       await sleep(500);
       if (await evaluate('!!window.__dbg')) break;
     }
+    await assertRenderer(evaluate);
     await evaluate(`(() => {
       const d = window.__dbg;
       d.applyQuality('high', true);
