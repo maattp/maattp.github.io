@@ -33,8 +33,13 @@ const B = {
   shoulderR: 9, elbowR: 10, handR: 11,
   thighL: 12, kneeL: 13, footL: 14,
   thighR: 15, kneeR: 16, footR: 17,
+  // Fingers: one bone at the knuckles (MCP) and one at the middle joints (PIP)
+  // per hand, appended so every index above keeps its meaning. The relaxed
+  // curl is modelled into the bind pose; these only add to it -- a loose fist
+  // at a run, and the grip a rider holds the bars with (gripHands).
+  fingL: 18, tipL: 19, fingR: 20, tipR: 21,
 };
-const BONE_COUNT = 18;
+const BONE_COUNT = 22;
 // Exported so vehicles.js can pose a rider on a motorcycle. A bike's rider is
 // this same humanoid held in a static pose rather than a model of its own --
 // one SkinnedMesh, one draw call, and it inherits every future fix to the body.
@@ -51,6 +56,10 @@ const J = {
 };
 const SHOULDER_X = 0.150;   // glenohumeral centre; the deltoid takes it to 0.21
 const HIP_X = 0.085;
+// The hand's knuckle line (MCP joints), and where the middle joints sit in the
+// relaxed bind pose, relative to it: in toward the palm and down.
+const KNUCKLE = J.wrist - 0.082;
+const PIP_IN = 0.008, PIP_DOWN = 0.040;
 // Around-the-body segment counts. At 14 (torso, head) and 10 (limbs) every
 // silhouette edge showed its facets from across the street and the skull read
 // as a cut gem; 18 and 12 cost ~1.7k triangles a character, which a crowd of
@@ -81,6 +90,11 @@ function makeSkeletonBones() {
   set(B.thighR, HIP_X, 0, 0);
   set(B.kneeR, 0, J.knee - J.hip, 0);
   set(B.footR, 0, J.ankle - J.knee, 0);
+  set(B.fingL, 0, KNUCKLE - J.wrist, 0);
+  set(B.fingR, 0, KNUCKLE - J.wrist, 0);
+  // the PIP line, where the relaxed MCP curl (FINGERS) puts it: toward the palm
+  set(B.tipL, PIP_IN, -PIP_DOWN, 0);
+  set(B.tipR, -PIP_IN, -PIP_DOWN, 0);
 
   link(B.root, B.hips);
   link(B.hips, B.spine); link(B.spine, B.chest);
@@ -89,6 +103,8 @@ function makeSkeletonBones() {
   link(B.chest, B.shoulderR); link(B.shoulderR, B.elbowR); link(B.elbowR, B.handR);
   link(B.hips, B.thighL); link(B.thighL, B.kneeL); link(B.kneeL, B.footL);
   link(B.hips, B.thighR); link(B.thighR, B.kneeR); link(B.kneeR, B.footR);
+  link(B.handL, B.fingL); link(B.fingL, B.tipL);
+  link(B.handR, B.fingR); link(B.fingR, B.tipR);
   return bones;
 }
 
@@ -329,15 +345,16 @@ function drawAtlas() {
       g.beginPath(); g.arc(R.n() * CELL, R.n() * CELL, 2 + R.n() * 4, R.n() * 6, R.n() * 6 + 3.5); g.stroke();
     }
   });
+  // The palm and back of the hand (fingers are geometry now, on the plain
+  // skin cell): mapped wrist + 15 mm .. wrist - 100 mm, so the knuckle line
+  // is s ~ 0.16. Only soft value: the finger lines and nails painted for the
+  // mitten landed on the back of the new palm as stray strokes.
   inCell(CELLS.hand, () => {
-    g.fillStyle = grey(0.96); g.fillRect(0, 0, CELL, CELL);
+    g.fillStyle = grey(0.97); g.fillRect(0, 0, CELL, CELL);
     speckle(600, 0.88, 1.0, 0.25);
-    g.strokeStyle = grey(0.55, 0.8); g.lineWidth = 1.4;
-    for (const t of [0.34, 0.44, 0.54, 0.64]) { g.beginPath(); g.moveTo(P(t), Q(0.0)); g.lineTo(P(t), Q(0.34)); g.stroke(); }
-    g.strokeStyle = grey(0.70, 0.6);
-    g.beginPath(); g.moveTo(P(0.28), Q(0.40)); g.quadraticCurveTo(P(0.5), Q(0.43), P(0.72), Q(0.40)); g.stroke();
-    g.fillStyle = grey(1.0, 0.9);
-    for (const t of [0.39, 0.49, 0.59]) g.fillRect(P(t) - 4, Q(0.10), 8, 9);
+    const gr = g.createLinearGradient(0, Q(0.26), 0, Q(0.10));
+    gr.addColorStop(0, grey(0.97, 0)); gr.addColorStop(0.6, grey(0.84, 0.5)); gr.addColorStop(1, grey(0.97, 0));
+    g.fillStyle = gr; g.fillRect(0, Q(0.26), CELL, Q(0.10) - Q(0.26));
   });
   inCell(CELLS.skin, () => {
     g.fillStyle = grey(1.0); g.fillRect(0, 0, CELL, CELL);
@@ -417,11 +434,13 @@ function drawAtlas() {
         g.quadraticCurveTo(bx + sx * bw * 0.02, by - 0.2, bx - sx * bw * 0.50, by + 6.0);
         g.closePath(); g.fill();
         // nose sides and nostrils
+        // (the nose is modelled now: its sides shade themselves, and the
+        // nostrils sit on its underside, so both are only a touch of paint)
         const [nx, ny] = hp(sx * 0.013, J.eye - 0.024, 0.094);
-        blob(nx, ny, 7, mul(skin, 0.70), 0.30);
-        const [qx, qy] = hp(sx * 0.0075, J.eye - 0.046, 0.101);
-        g.fillStyle = rgba(mul(skin, 0.32), 0.85);
-        g.beginPath(); g.ellipse(qx, qy, 2.4, 1.4, 0, 0, Math.PI * 2); g.fill();
+        blob(nx, ny, 7, mul(skin, 0.70), 0.12);
+        const [qx, qy] = hp(sx * 0.0075, J.eye - 0.047, 0.101);
+        g.fillStyle = rgba(mul(skin, 0.40), 0.45);
+        g.beginPath(); g.ellipse(qx, qy, 2.0, 1.1, 0, 0, Math.PI * 2); g.fill();
         // ear: rim and bowl
         const [ax, ay] = hp(sx * 0.078, J.eye - 0.010, -0.006);
         g.strokeStyle = rgba(mul(skin, 0.62), 0.6); g.lineWidth = 2;
@@ -470,10 +489,13 @@ const pedMat = new THREE.MeshStandardMaterial({
 class SkinAcc {
   constructor() {
     this.pos = []; this.nor = []; this.col = []; this.idx = []; this.uv = [];
-    this.si = []; this.sw = [];
+    this.si = []; this.sw = []; this.parts = [];
   }
-  add(builder, weightFn, uvFn) {
+  add(builder, weightFn, uvFn, name = '') {
     const base = this.pos.length / 3;
+    // Which triangles came from which part, for raycasting a pixel back to
+    // the geometry that drew it (tools/charshots.mjs --probe).
+    this.parts.push({ name, tri0: this.idx.length / 3, tris: builder.idx.length / 3 });
     const ts = [];
     let cell = CELLS.skin;
     for (let i = 0; i < builder.pos.length; i += 3) {
@@ -537,6 +559,7 @@ class SkinAcc {
     g.setIndex(this.idx);
     g.computeBoundingSphere();
     g.computeBoundingBox();
+    g.userData.parts = this.parts;
     return g;
   }
 }
@@ -564,10 +587,12 @@ const SKULL = [
   // Two rings under the jaw: from the chin straight to the jawline was one
   // cone, and the lower face read as a trapezoid with a pointed chin.
   { y: J.chin - 0.012, rx: 0.036, rz: 0.046, oz: 0.022 },   // under the chin
-  { y: J.chin - 0.002, rx: 0.050, rz: 0.062, oz: 0.016 },   // chin
-  { y: J.chin + 0.010, rx: 0.060, rz: 0.076, oz: 0.011 },   // jaw angle
-  { y: J.chin + 0.024, rx: 0.066, rz: 0.085, oz: 0.008 },   // jawline
-  { y: J.chin + 0.060, rx: 0.073, rz: 0.093, oz: 0.004 },   // cheeks
+  // The lower face narrower than round two's egg, which read as jowls once
+  // the rest of the face had form (faceRelief puts the jaw angle back).
+  { y: J.chin - 0.002, rx: 0.041, rz: 0.062, oz: 0.016 },   // chin
+  { y: J.chin + 0.010, rx: 0.051, rz: 0.076, oz: 0.011 },   // jaw angle
+  { y: J.chin + 0.024, rx: 0.057, rz: 0.085, oz: 0.008 },   // jawline
+  { y: J.chin + 0.060, rx: 0.067, rz: 0.093, oz: 0.004 },   // cheeks
   { y: J.eye - 0.020, rx: 0.075, rz: 0.095, oz: 0.001 },    // cheekbone
   { y: J.eye, rx: 0.075, rz: 0.096, oz: 0 },                // brow line
   { y: J.eye + 0.036, rx: 0.072, rz: 0.092, oz: -0.002 },   // forehead, skin
@@ -584,6 +609,227 @@ function skullAt(y) {
     }
   }
   return SKULL[SKULL.length - 1];
+}
+
+// ---------------------------------------------------------------------------
+// THE HEAD IS SCULPTED, NOT AN EGG.
+//
+// Round two painted every feature on a smooth ellipsoid, and up close that
+// is what it was: a mannequin with a face drawn on, a nose stuck on as a peg
+// and ears as two lozenges. The skull rings above are now only the BASE; the
+// head is a grid of columns by rows where each vertex sits on that base plus a
+// relief (faceRelief) -- a brow ridge, eye sockets, cheekbones, a nose with a
+// bridge, a tip, wings and an underside, a philtrum, two lips, the dip under
+// the lower lip, a chin boss and the angle of the jaw.
+//
+// Every vertex is moved ALONG THE RAY FROM THE UV AXIS, (0, HEAD_Z), at its
+// column's angle. The face cell is a cylindrical projection round that same
+// axis, so a vertex's texture coordinate is a function of its column and row
+// only: the relief cannot slide the painted eyes off the sockets it carved.
+// Columns are dense across the face (3-13 deg at the nose and mouth) and
+// sparse behind the ears, where the hair is.
+const HEAD_COLS = (() => {
+  const d = [0, 3, 7, 13, 21, 30, 41, 54, 68, 84, 100, 125, 152, 180].map((v) => (v * Math.PI) / 180);
+  return [...d, ...d.slice(1, -1).reverse().map((v) => -v)];
+})();
+const HEAD_BACK = 13;          // index of the 180 deg column: seams go here
+const HEAD_ROWS = [
+  J.chin - 0.010, J.chin - 0.001, J.chin + 0.010, J.chin + 0.024,   // under the chin, chin, boss, sulcus
+  J.chin + 0.036, J.chin + 0.044, J.chin + 0.052, J.chin + 0.058,   // lower lip, mouth, upper lip, philtrum
+  J.eye - 0.052, J.eye - 0.042, J.eye - 0.026, J.eye - 0.012,       // under the nose, tip, mid-nose, under the eye
+  J.eye, J.eye + 0.009, J.eye + 0.018,                              // eye, upper lid, brow
+  HAIRLINE + 0.002, J.crown - 0.028, J.crown,
+];
+// rows from here up are hair-coloured under the paint (see drawAtlas)
+const HEAD_HAIR_ROW = HEAD_ROWS.length - 3;
+
+/** Distance from the UV axis to the base skull ellipse at height y, along th. */
+function skullRay(th, y) {
+  const k = skullAt(y);
+  const sn = Math.sin(th), cs = Math.cos(th), dz = HEAD_Z - k.oz;
+  const A = (sn * sn) / (k.rx * k.rx) + (cs * cs) / (k.rz * k.rz);
+  const Bq = (2 * cs * dz) / (k.rz * k.rz);
+  const C = (dz * dz) / (k.rz * k.rz) - 1;
+  return (-Bq + Math.sqrt(Bq * Bq - 4 * A * C)) / (2 * A);
+}
+
+const gss = (v, w) => Math.exp(-(v / w) * (v / w));
+/** Piecewise-linear lookup of [y, value] pairs sorted by descending y. */
+function byY(y, tbl) {
+  if (y >= tbl[0][0]) return tbl[0][1];
+  for (let i = 1; i < tbl.length; i++) {
+    if (y >= tbl[i][0]) {
+      const [y0, v0] = tbl[i - 1], [y1, v1] = tbl[i];
+      return lerp(v1, v0, (y - y1) / (y0 - y1));
+    }
+  }
+  return tbl[tbl.length - 1][1];
+}
+
+/**
+ * Per-look proportions, so twelve pooled heads are not one head in twelve
+ * skin tones. Kept in bands where the painted features still land on the
+ * forms they belong to.
+ */
+function faceParams(seed, soft) {
+  const u = (k) => hash2(seed, 40 + k);
+  return {
+    nose: 0.85 + 0.35 * u(0),
+    bridge: 0.8 + 0.4 * u(1),
+    brow: (0.75 + 0.5 * u(2)) * (soft ? 0.65 : 1),
+    cheek: 0.75 + 0.5 * u(3),
+    jaw: (0.7 + 0.6 * u(4)) * (soft ? 0.55 : 1),
+    chin: 0.7 + 0.6 * u(5),
+    lips: (0.85 + 0.3 * u(6)) * (soft ? 1.2 : 1),
+  };
+}
+
+/**
+ * The relief, in metres along the ray, at column angle th and height y.
+ * `a` is arc length across the face from the midline. Every term is a feature
+ * the face cell already paints at that angle and height (see drawAtlas's hp):
+ * eyes at +-21 deg, brows at eye + 21 mm, nostrils at eye - 46 mm, the mouth
+ * at chin + 45 mm.
+ */
+function faceRelief(th, y, F) {
+  const a = Math.abs(th) * 0.095;
+  const E = J.eye, C = J.chin;
+  let d = 0;
+  // Nose. The bridge rises out of the brow, the tip is the most forward point
+  // of the face, and the underside runs back to the lip in one row -- a nose
+  // from below is a triangle, not a cylinder end.
+  const np = byY(y, [[E + 0.012, 0], [E + 0.002, 0.0045 * F.bridge], [E - 0.012, 0.0095 * F.bridge],
+    [E - 0.026, 0.0150], [E - 0.042, 0.0205 * F.nose], [E - 0.052, 0.0060], [C + 0.052, 0]]);
+  // The columella (the strip between the nostrils) keeps the base of the
+  // nose forward in the middle: with the whole underside running back to the
+  // lip in one row it was a broad down-facing band, and its shadow, smoothed
+  // onto the upper lip, read as a moustache.
+  const nw = byY(y, [[E + 0.012, 0.0070], [E - 0.012, 0.0068], [E - 0.030, 0.0085], [E - 0.042, 0.0105], [E - 0.052, 0.0070]]);
+  // A plateau, not a bell: the dorsum is a flat strip with steep sides, which
+  // is what gives a nose a side plane that turns from the light.
+  const nq = (a / nw) * (a / nw);
+  d += np / (1 + nq * nq);
+  // the wings of the nose, either side of the tip
+  d += 0.0055 * gss(a - 0.0195, 0.0062) * gss(y - (E - 0.044), 0.0065);
+  // Eye sockets, deepest at the painted eye, and the brow ridge over them.
+  d -= 0.0068 * gss(a - 0.0345, 0.0175) * gss(y - (E + 0.002), 0.0115);
+  d += 0.0046 * F.brow * gss(y - (E + 0.019), 0.0078) * gss(Math.max(0, a - 0.028), 0.030);
+  // glabella: the brows meet over the bridge
+  d += 0.0015 * F.brow * gss(a, 0.012) * gss(y - (E + 0.012), 0.008);
+  // Cheekbones, and the soft hollow under them.
+  d += 0.0042 * F.cheek * gss(a - 0.064, 0.019) * gss(y - (E - 0.024), 0.013);
+  d -= 0.0032 * gss(a - 0.072, 0.022) * gss(y - (C + 0.050), 0.013);
+  // temples, under the hair edge
+  d -= 0.0014 * gss(a - 0.090, 0.018) * gss(y - (E + 0.022), 0.012);
+  // Mouth: upper lip, the seam, lower lip, the corners tucked in, the dip
+  // under the lower lip, and a chin boss.
+  d += 0.0030 * F.lips * gss(a, 0.017) * gss(y - (C + 0.052), 0.0045);
+  d += 0.0036 * F.lips * gss(a, 0.0145) * gss(y - (C + 0.036), 0.0050);
+  d -= 0.0010 * gss(a, 0.017) * gss(y - (C + 0.044), 0.0030);
+  d -= 0.0012 * gss(a - 0.021, 0.0065) * gss(y - (C + 0.044), 0.0050);
+  d -= 0.0026 * gss(a, 0.022) * gss(y - (C + 0.024), 0.0050);
+  d += 0.0042 * F.chin * gss(a, 0.021) * gss(y - (C + 0.009), 0.0090);
+  // philtrum: a groove between two ridges from the nose to the lip
+  const ph = gss(y - (C + 0.058), 0.0040);
+  d += ph * (0.0007 * gss(a - 0.0050, 0.0030) - 0.0009 * gss(a, 0.0030));
+  // The angle of the jaw, under and in front of the ear. A chin ring that is
+  // an ellipse all the way round has no jaw, only a jowl.
+  d += 0.0048 * F.jaw * gss(Math.abs(th) - 1.22, 0.30) * gss(y - (C + 0.020), 0.012);
+  // and the lower face narrower between chin and jaw angle than an egg is
+  d -= 0.0022 * gss(Math.abs(th) - 0.72, 0.25) * gss(y - (C + 0.012), 0.014);
+  return d;
+}
+
+/**
+ * The head's rings (for loftY) and a lookup of its surface, so the hair can
+ * grow from the head that is actually drawn rather than from the ellipse under
+ * it. `at(j, y)` is the point on column j's vertical edge at height y -- the
+ * edge the loft draws, straight between rows.
+ */
+function headGrid(F) {
+  const rings = HEAD_ROWS.map((y) => ({
+    y,
+    pts: HEAD_COLS.map((th) => {
+      const r = skullRay(th, y) + faceRelief(th, y, F);
+      return [Math.sin(th) * r, HEAD_Z + Math.cos(th) * r];
+    }),
+  }));
+  // Surface normals at the grid points, the way loftY computes them, so the
+  // hair can stand off the head ALONG the normal: offset along the ray
+  // instead, a shell a millimetre out came out a fraction of that where the
+  // surface slopes, and sank through the head's triangulation in places.
+  const R = rings.length, K = HEAD_COLS.length;
+  const P3 = (i, j) => [rings[i].pts[j][0], rings[i].y, rings[i].pts[j][1]];
+  const N = rings.map((r, i) => r.pts.map((p, j) => {
+    const a = P3(i, (j + 1) % K), b = P3(i, (j - 1 + K) % K);
+    const c = P3(Math.min(R - 1, i + 1), j), e = P3(Math.max(0, i - 1), j);
+    const u = [a[0] - b[0], a[1] - b[1], a[2] - b[2]], v = [c[0] - e[0], c[1] - e[1], c[2] - e[2]];
+    let n = [u[1] * v[2] - u[2] * v[1], u[2] * v[0] - u[0] * v[2], u[0] * v[1] - u[1] * v[0]];
+    if (n[0] * p[0] + n[2] * (p[1] - HEAD_Z) < 0) n = [-n[0], -n[1], -n[2]];
+    const l = Math.hypot(n[0], n[1], n[2]) || 1;
+    return [n[0] / l, n[1] / l, n[2] / l];
+  }));
+  /** [x, z, nx, ny, nz] on column j's edge at height y. */
+  const at = (j, y) => {
+    const n = HEAD_ROWS.length;
+    let i = 1, t = 0;
+    if (y <= HEAD_ROWS[0]) { i = 1; t = 0; }
+    else if (y >= HEAD_ROWS[n - 1]) { i = n - 1; t = 1; }
+    else {
+      while (HEAD_ROWS[i] < y) i++;
+      t = (y - HEAD_ROWS[i - 1]) / (HEAD_ROWS[i] - HEAD_ROWS[i - 1]);
+    }
+    const p = rings[i - 1].pts[j], q = rings[i].pts[j];
+    const m = N[i - 1][j], o = N[i][j];
+    const nx = lerp(m[0], o[0], t), ny = lerp(m[1], o[1], t), nz = lerp(m[2], o[2], t);
+    const l = Math.hypot(nx, ny, nz) || 1;
+    return [lerp(p[0], q[0], t), lerp(p[1], q[1], t), nx / l, ny / l, nz / l];
+  };
+  return { rings, at };
+}
+
+/**
+ * An ear: a rim (helix) standing off the head round a sunken bowl, flaring
+ * backward the way ears do. Lofted outward along x from inside the head.
+ * `side` is -1 / +1; `xs` is the head surface at the ear.
+ */
+function buildEar(b, side, xs, col) {
+  const yc = J.eye - 0.017, zc = -0.013;
+  // Outline in (dy, dz): 62 mm tall, 30 wide, a C open to the front -- round
+  // the top and back, the lobe, the tragus, up the front.
+  const O = [[0.031, -0.002], [0.027, -0.011], [0.017, -0.017], [0.002, -0.018], [-0.014, -0.013],
+    [-0.029, -0.004], [-0.024, 0.004], [-0.008, 0.008], [0.010, 0.007], [0.024, 0.005]];
+  // lateral stand-off per outline point: the back of the ear stands out more
+  const out = O.map(([, dz]) => 0.003 + 0.0075 * clamp((0.006 - dz) / 0.024, 0, 1));
+  const ring = (k, dx, sc, dzs = 0) => O.map(([dy, dz], i) => [
+    side * (xs + dx(i)), yc + dy * sc, zc + dzs + dz * sc]);
+  const R = [
+    ring(0, () => -0.005, 0.70, 0.004),             // root, inside the head
+    ring(1, (i) => out[i] * 0.55, 0.96, 0.001),     // the rim's outer wall
+    ring(2, (i) => out[i], 1.0),                    // helix crest
+    ring(3, (i) => out[i] - 0.0035, 0.84),          // over the lip, into the bowl
+  ];
+  // Side walls: normals from the grid, pointing away from the ear's own axis.
+  const n = O.length;
+  for (let r = 0; r < R.length - 1; r++) {
+    for (let i = 0; i < n; i++) {
+      const i2 = (i + 1) % n;
+      const nr = (p) => {
+        const vy = p[1] - yc, vz = p[2] - zc, l = Math.hypot(vy, vz) || 1;
+        // the lip's inner face looks out and in, toward the bowl
+        const lat = r === 2 ? 0.8 : 0.35;
+        const v = [side * lat, (vy / l) * (r === 2 ? -0.6 : 1), (vz / l) * (r === 2 ? -0.6 : 1)];
+        const m = Math.hypot(v[0], v[1], v[2]);
+        return [v[0] / m, v[1] / m, v[2] / m];
+      };
+      b.quad(R[r][i], R[r][i2], R[r + 1][i2], R[r + 1][i],
+        [nr(R[r][i]), nr(R[r][i2]), nr(R[r + 1][i2]), nr(R[r + 1][i])], [0, 0, 1, 0, 1, 1, 0, 1], col);
+    }
+  }
+  // the bowl (concha), sunk toward the ear canal
+  const c = [side * (xs + 0.0035), yc - 0.004, zc + 0.002];
+  const bowl = [col[0] * 0.78, col[1] * 0.78, col[2] * 0.78];
+  for (let i = 0; i < n; i++) b.tri(c, R[3][i], R[3][(i + 1) % n], [side, 0, 0], bowl);
 }
 
 // Hair styles, drawn across the pool by weight.
@@ -607,17 +853,24 @@ function pickStyle(u) {
  * grows outward over its first 2 cm. There is no rim because there is nothing
  * standing off the head at the edge.
  */
-function buildHair(style, seed, hair) {
+function buildHair(style, seed, hair, grid, body) {
   const hb = new Builder(false);
-  if (style === 'buzz') return null;   // the skull's own hair rings and paint do it
-  // Columns round the head. 24, not 36: the notched fringe that 36 was tried
-  // against came from the shell starting inside the skull, not from the
-  // column count, and 36 x 8 rows was a sixth of the character.
-  const K = 24;
-  const V = [0, 0.08, 0.24, 0.48, 0.74, 1.0];
-  const vol = { crop: 0.006, side: 0.011, long: 0.010, bun: 0.005, curly: 0.024 }[style];
+  // Columns ARE the head's columns, so every column of the shell stands a
+  // fixed distance off one vertical edge of the drawn head and the two
+  // surfaces run parallel between them. Sampled from the ellipse instead, the
+  // head's flat faces between sparse columns sat millimetres inside the shell
+  // at one place and poked through it at another.
+  const K = HEAD_COLS.length;
+  // A buzz cut is a shell too, a couple of millimetres thick: painted on the
+  // skull its edge was one straight line round the head at the ring height,
+  // with a pale band under it.
+  // Rows: three from the edge up to the hairline ring, then ON the head's own
+  // top rows. Straight chords between rows placed anywhere else cut inside
+  // the dome of the skull, and a thin shell (the buzz cut) vanished into it.
+  const NR = 6;
+  const vol = { crop: 0.006, side: 0.011, long: 0.010, bun: 0.005, curly: 0.024, buzz: 0.0035 }[style];
   const covers = style === 'long' || style === 'curly' || style === 'side';
-  const napeY = style === 'crop' || style === 'bun' ? J.chin + 0.050 : J.chin + 0.020;
+  const napeY = style === 'crop' || style === 'bun' || style === 'buzz' ? J.chin + 0.050 : J.chin + 0.020;
   // Edge height against the angle round the head: phi = +pi/2 at the front,
   // 0 at the ear, -pi/2 at the back.
   const edgeTable = [
@@ -626,9 +879,11 @@ function buildHair(style, seed, hair) {
     [Math.PI / 2, HAIRLINE - 0.005],
     [0.95, HAIRLINE - 0.003],
     [0.62, HAIRLINE - 0.010],                        // temple corner
-    [0.34, J.eye - 0.030],                           // sideburn, in front of the ear
-    [0.14, covers ? J.eye - 0.030 : J.eye - 0.004],  // over the ear top
-    [-0.18, covers ? J.eye - 0.034 : J.eye - 0.010],
+    [0.24, J.eye - 0.030],                           // sideburn, in front of the ear
+    // Over the ear, and behind it: short hair clears the top of the ear
+    // (which reaches brow height now it is modelled), long hair covers it.
+    [0.07, covers ? J.eye - 0.030 : J.eye + 0.020],
+    [-0.18, covers ? J.eye - 0.034 : J.eye + 0.014],
     [-0.60, J.eye - 0.052],
     [-Math.PI / 2, napeY],
   ];
@@ -643,44 +898,47 @@ function buildHair(style, seed, hair) {
   };
   const top = J.crown + 0.001;
   const rows = [];
-  for (let i = 0; i < V.length; i++) {
+  for (let i = 0; i < NR; i++) {
     const row = [];
     for (let j = 0; j <= K; j++) {
-      // column 0 is behind the head, so the patch's seam is under the hair
-      const aa = (j / K) * Math.PI * 2 + 1.5 * Math.PI;
-      const ca = Math.cos(aa), sa = Math.sin(aa);
+      // start behind the head, so the patch's seam is under the hair
+      const jj = (HEAD_BACK + j) % K;
+      const th = HEAD_COLS[jj];
+      const ca = Math.sin(th), sa = Math.cos(th);   // x and forward components
       const phi = Math.atan2(sa, Math.abs(ca));
-      const jj = j % K;
       // Irregular at the sides and nape only: a jittered FRONT edge surfaced
       // through the forehead in square notches, a fringe cut with pinking shears.
       const yE = edge(phi) + (phi < 0.3 ? (hash2(jj * 17 + 3, seed) - 0.5) * 0.0024 : 0);
-      const v = V[i];
-      const y = yE + (top - yE) * Math.pow(v, 0.85);
-      const s = skullAt(y);
+      const yH = Math.max(HEAD_ROWS[HEAD_HAIR_ROW], yE + 0.003);
+      const y = [yE, lerp(yE, yH, 0.30), lerp(yE, yH, 0.70), yH, HEAD_ROWS[HEAD_HAIR_ROW + 1], top][i];
+      const v = (y - yE) / (top - yE);
       // The front keeps little volume (it is a hairline, not a brim); the back
       // and crown carry the most.
       const face = sa > 0 ? 1 - 0.65 * sa : 1 + 0.25 * (-sa);
-      // Starts 1 mm OUTSIDE the skull. The skull is an 18-sided loft whose flat
-      // faces sit up to 1.1 mm inside the true ellipse this shell is sampled
-      // from, so a shell starting inside it crossed those faces in a zigzag --
-      // a notched fringe, however the edge heights were jittered or not.
-      let th = lerp(0.001, vol * face, smoothT(clamp(v / 0.24, 0, 1)));
-      if (style === 'side') th += 0.006 * smoothT(clamp(v / 0.4, 0, 1)) * Math.max(0, ca) * (1 - Math.abs(sa) * 0.5);
-      if (style === 'curly' && i >= 2) th *= 0.82 + 0.36 * hash2(jj * 31 + i * 7, seed + 11);
-      // outward along the ellipse normal, tipping up toward the crown
-      let nx = ca / s.rx, nz = sa / s.rz;
-      const nl = Math.hypot(nx, nz) || 1; nx /= nl; nz /= nl;
-      const up = v * 0.9;
-      const n3 = Math.hypot(nx * (1 - up), up, nz * (1 - up)) || 1;
-      row.push([
-        ca * s.rx + (nx * (1 - up) / n3) * th,
-        y + (up / n3) * th,
-        s.oz + sa * s.rz + (nz * (1 - up) / n3) * th,
-      ]);
+      // Starts 1 mm OUTSIDE the drawn head, and grows over its first rows.
+      // 1.6 mm, along the head's own normal: at 1 mm the shell's edge rows,
+      // which cut diagonally across the head's quads, dipped under their
+      // triangulation and the two fought (raycast: 0.2 mm apart, then -0.6).
+      let th2 = lerp(0.0016, Math.max(0.0016, vol * face), smoothT(clamp(v / 0.24, 0, 1)));
+      if (style === 'side') th2 += 0.006 * smoothT(clamp(v / 0.4, 0, 1)) * Math.max(0, ca) * (1 - Math.abs(sa) * 0.5);
+      if (style === 'curly' && i >= 2) th2 *= 0.82 + 0.36 * hash2(jj * 31 + i * 7, seed + 11);
+      // out along the head's normal
+      const p = grid.at(jj, y);
+      row.push([p[0] + p[2] * th2, y + p[3] * th2, p[1] + p[4] * th2]);
     }
     rows.push(row);
   }
   hb.patch(rows, hair, [0, 1, 0]);
+  // Close the crown. The last row is a ring the width of the skull's top, and
+  // left open it showed the skull's cap through the hole -- hair-coloured
+  // skin paint, a pink smudge on top of every head.
+  {
+    const last = rows[rows.length - 1];
+    let cx = 0, cy = 0, cz = 0;
+    for (let j = 0; j < K; j++) { cx += last[j][0]; cy += last[j][1]; cz += last[j][2]; }
+    const c = [cx / K, cy / K + vol * 0.4, cz / K];
+    for (let j = 0; j < K; j++) hb.tri(c, last[j], last[j + 1], [0, 1, 0], hair);
+  }
 
   if (style === 'long') {
     // Long hair continues the SHELL down the back of the head and past the
@@ -690,29 +948,57 @@ function buildHair(style, seed, hair) {
     // from behind a plate with a ruler edge, and its two side edges showed
     // from the front as ribbons. It is TWO-SIDED, because from the front its
     // inside is what frames the neck and a single-sided sheet is culled there.
+    //
+    // ROUND THREE: it ends ON the shoulders, and its sides are a lock, not a
+    // sheet. Hung to below the shoulder line it went in through the
+    // trapezius and came out again as a separate patch on the upper back
+    // (worse on a runner, whose chest pitches forward); every row now stays
+    // 10 mm clear of the body under it (`body`). And the side edge -- a
+    // two-sided sheet seen edge-on beside the jaw, a strip -- stops flaring at
+    // the last columns, hugs the head, and is closed between its two faces.
     const CK = 14, CM = 5;
-    const cr = [];
+    const cr = [], inner = [];
+    const cx = 0, cz = -0.010;
     for (let i = 0; i < CM; i++) {
       const t = i / (CM - 1);
-      const row = [];
+      const row = [], irow = [];
       for (let j = 0; j <= CK; j++) {
-        // behind the ears, round the back; 1.10-1.90 not 1.06-1.94, or its
-        // edge showed from the front as a ribbon beside the jaw
-        const aa = Math.PI * (1.10 + 0.80 * (j / CK));
+        // From over the ears round the back. (Round two pulled it back to
+        // 1.10-1.90 to hide the ribbon its open edge made beside the jaw;
+        // with the edge closed and tucked it can come forward to frame the
+        // face, which is where long hair actually hangs.)
+        // The front edge slants back as it falls, behind the shoulder: a
+        // straight vertical edge read as a board from the side.
+        const aa = Math.PI * (1.04 + 0.08 * t + (0.92 - 0.16 * t) * (j / CK));
         const ca = Math.cos(aa), sa = Math.sin(aa);
         const back = -sa;                                   // 1 at the centre of the back
+        const e = smoothT(clamp(Math.min(j, CK - j) / 3, 0, 1));   // 0 at the side edges
         const yTop = J.eye - 0.005;
-        const yBot = J.shoulder - 0.010 - 0.050 * back + (hash2(j * 13 + 5, seed + 3) - 0.5) * 0.012;
+        const yBot = J.shoulder + 0.034 - 0.046 * back + (hash2(j * 13 + 5, seed + 3) - 0.5) * 0.012;
         const y = lerp(yTop, yBot, smoothT(t) * 0.6 + t * 0.4);
-        const s = skullAt(Math.max(y, SKULL[3].y));
-        const flare = vol + 0.004 + 0.030 * t * t;
-        row.push([ca * (s.rx + flare), y, s.oz - 0.012 * t + sa * (s.rz + flare)]);
+        const k = skullAt(Math.max(y, SKULL[3].y));
+        const flare = vol + 0.004 + 0.028 * t * t * (0.35 + 0.65 * e);
+        let p = [ca * (k.rx + flare), y, k.oz - 0.012 * t + sa * (k.rz + flare)];
+        // clear of the neck and shoulders under it
+        const bd2 = body(y);
+        if (bd2) {
+          const q = [ca * (bd2.rx + 0.010), y, bd2.oz + sa * (bd2.rz + 0.010)];
+          if (Math.hypot(q[0] - cx, q[2] - cz) > Math.hypot(p[0] - cx, p[2] - cz)) p = q;
+        }
+        row.push(p);
+        // the inner face: a few millimetres in, meeting the outer at the edges
+        const th = 0.0025 + 0.0045 * e;
+        const l = Math.hypot(p[0] - cx, p[2] - cz) || 1;
+        irow.push([p[0] - ((p[0] - cx) / l) * th, y + 0.001, p[2] - ((p[2] - cz) / l) * th]);
       }
-      cr.push(row);
+      cr.push(row); inner.push(irow);
     }
     hb.patch(cr, hair, [0, 0, -1]);
-    const inner = cr.map((r, i) => r.map((p) => [p[0] * (0.97 - 0.02 * (i / (CM - 1))), p[1], p[2] * 0.97 - 0.002]));
-    hb.patch(inner, [hair[0] * 0.55, hair[1] * 0.55, hair[2] * 0.55], [0, 0, 1]);
+    hb.patch(inner, [hair[0] * 0.68, hair[1] * 0.68, hair[2] * 0.68], [0, 0, 1]);
+    // close the two side edges between the faces
+    for (const j of [0, CK]) {
+      hb.patch(cr.map((r, i) => [r[j], inner[i][j]]), [hair[0] * 0.8, hair[1] * 0.8, hair[2] * 0.8], [j === 0 ? -1 : 1, 0, 0.6]);
+    }
   }
   if (style === 'bun') {
     hb.spheroid(0, J.eye + 0.036, -0.108, 0.036, 12, 7, hair, 0.85);
@@ -722,6 +1008,134 @@ function buildHair(style, seed, hair) {
     ], [hair[0] * 0.5, hair[1] * 0.5, hair[2] * 0.5], {});   // the band
   }
   return hb;
+}
+
+/** Rounded-rectangle ring, 8 points, for a flat section (the palm). */
+function rrect(rx, rz, ox, oz) {
+  return [[rx, -0.45 * rz], [rx, 0.45 * rz], [0.55 * rx, rz], [-0.55 * rx, rz],
+    [-rx, 0.45 * rz], [-rx, -0.45 * rz], [-0.55 * rx, -rz], [0.55 * rx, -rz]].map(([x, z]) => [ox + x, oz + z]);
+}
+
+/**
+ * A finger or thumb: a four-cornered tube through a polyline, smooth-shaded
+ * so four corners read as a rounded digit, with a blunt capped tip. `ws` is
+ * the half-width across the hand (along z), `ts` the half-thickness. Each
+ * ring's corner positions are recorded in `W` against that ring's skin weight.
+ */
+function digit(b, pts, ws, ts, wts, W, col) {
+  const n = pts.length;
+  const nrm = (v) => { const l = Math.hypot(v[0], v[1], v[2]) || 1; return [v[0] / l, v[1] / l, v[2] / l]; };
+  const rings = [], norms = [];
+  let dLast = null;
+  for (let i = 0; i < n; i++) {
+    const a = pts[Math.max(0, i - 1)], c = pts[Math.min(n - 1, i + 1)];
+    const d = nrm([c[0] - a[0], c[1] - a[1], c[2] - a[2]]);
+    dLast = d;
+    // across the hand: z made square to the digit
+    const k = d[2];
+    const sd = nrm([-k * d[0], -k * d[1], 1 - k * d[2]]);
+    const th = nrm([d[1] * sd[2] - d[2] * sd[1], d[2] * sd[0] - d[0] * sd[2], d[0] * sd[1] - d[1] * sd[0]]);
+    const ring = [], nr = [];
+    for (const [cs, ct] of [[1, 1], [-1, 1], [-1, -1], [1, -1]]) {
+      const q = [0, 1, 2].map((m) => pts[i][m] + sd[m] * cs * ws[i] + th[m] * ct * ts[i]);
+      ring.push(q);
+      nr.push(nrm([sd[0] * cs + th[0] * ct, sd[1] * cs + th[1] * ct, sd[2] * cs + th[2] * ct]));
+      W.set(q.join(','), wts[i]);
+    }
+    rings.push(ring); norms.push(nr);
+  }
+  for (let i = 0; i < n - 1; i++) {
+    for (let k = 0; k < 4; k++) {
+      const k2 = (k + 1) % 4;
+      b.quad(rings[i][k], rings[i][k2], rings[i + 1][k2], rings[i + 1][k],
+        [norms[i][k], norms[i][k2], norms[i + 1][k2], norms[i + 1][k]], [0, 0, 1, 0, 1, 1, 0, 1], col);
+    }
+  }
+  const e = pts[n - 1], r = Math.min(ws[n - 1], ts[n - 1]) * 0.5;
+  const tip = [e[0] + dLast[0] * r, e[1] + dLast[1] * r, e[2] + dLast[2] * r];
+  W.set(tip.join(','), wts[n - 1]);
+  for (let k = 0; k < 4; k++) {
+    const k2 = (k + 1) % 4;
+    const a = rings[n - 1][k], c = rings[n - 1][k2];
+    const nn = nrm([(norms[n - 1][k][0] + norms[n - 1][k2][0]) * 0.5 + dLast[0], (norms[n - 1][k][1] + norms[n - 1][k2][1]) * 0.5 + dLast[1],
+      (norms[n - 1][k][2] + norms[n - 1][k2][2]) * 0.5 + dLast[2]]);
+    b.tri(tip, a, c, nn, col);
+  }
+}
+
+// The four fingers, index to little: z across the knuckles, half-width,
+// segment lengths (proximal, middle, distal) and the RELAXED curl at each
+// joint, in degrees. A resting hand is never flat: the curl cascades, each
+// finger bent a little more than the one before it toward the little finger.
+const FINGERS = [
+  { z: 0.0268, w: 0.0092, L: [0.040, 0.024, 0.020], curl: [8, 24, 12] },
+  { z: 0.0090, w: 0.0094, L: [0.044, 0.027, 0.021], curl: [12, 30, 14] },
+  { z: -0.0088, w: 0.0090, L: [0.041, 0.026, 0.020], curl: [16, 34, 16] },
+  { z: -0.0248, w: 0.0078, L: [0.032, 0.020, 0.017], curl: [21, 38, 18] },
+];
+
+/**
+ * A hand: a flat palm, four fingers and a thumb, not a mitten. The palm faces
+ * the thigh; fingers hang in a relaxed cascade from the knuckle line and are
+ * skinned to two bones, fing (MCP) and tip (PIP), which add curl to that rest
+ * shape -- a loose fist at a run, a grip on a motorbike's bars (gripHands).
+ * Low segment counts throughout: at the closest the camera gets a hand is
+ * ~60 px, and four-cornered smooth-shaded digits read as fingers there.
+ */
+function buildHand(acc, side, X, skin) {
+  const hB = side < 0 ? B.handL : B.handR, fB = side < 0 ? B.fingL : B.fingR, tB = side < 0 ? B.tipL : B.tipR;
+  const palm = new Builder(false);
+  const cx = X + side * 0.001;
+  palm.loftY([
+    { y: J.wrist + 0.014, pts: rrect(0.018, 0.026, cx, 0) },
+    { y: J.wrist - 0.014, pts: rrect(0.0165, 0.032, cx, 0.001) },    // heel of the hand
+    { y: J.wrist - 0.050, pts: rrect(0.0160, 0.039, cx, 0.002) },    // mid palm
+    { y: KNUCKLE - 0.002, pts: rrect(0.0135, 0.036, cx, 0.001) },    // knuckles
+  ], skin, { capEnd: true });
+  // The thumb: a fleshy base at the front of the palm, pointing down and
+  // forward, lying along the index finger on the palm side.
+  const tin = -side;   // toward the palm
+  const T = [
+    [cx + tin * 0.009, J.wrist - 0.012, 0.012],
+    [cx + tin * 0.014, J.wrist - 0.042, 0.030],    // MCP, the ball of the thumb
+    [cx + tin * 0.013, J.wrist - 0.064, 0.042],    // IP
+    [cx + tin * 0.010, J.wrist - 0.080, 0.046],    // tip
+  ];
+  const Wp = new Map();
+  digit(palm, T, [0.0115, 0.0098, 0.0088, 0.0074], [0.0115, 0.0095, 0.0084, 0.0068], T.map(() => null), Wp, skin);
+  acc.add(palm, solid(hB), cylUV(CELLS.hand, X, 0.0, J.wrist - 0.10, J.wrist + 0.015), 'hand');
+
+  const fing = new Builder(false);
+  const W = new Map();
+  const toR = Math.PI / 180;
+  for (const f of FINGERS) {
+    // base ring 6 mm up inside the palm, then PIP, DIP and the tip
+    let x = cx, y = KNUCKLE, ang = f.curl[0] * toR;
+    const pts = [[cx, KNUCKLE + 0.006, f.z]];
+    const w = f.w, t = 0.0084 * (f.w / 0.009);
+    for (let s = 0; s < 3; s++) {
+      x += tin * Math.sin(ang) * f.L[s];
+      y -= Math.cos(ang) * f.L[s];
+      pts.push([x, y, f.z]);
+      if (s < 2) ang += f.curl[s + 1] * toR;
+    }
+    // weights: the base half on the hand, the PIP ring shared, the rest on tip
+    const wts = [[fB, 0.55, hB, 0.45], [tB, 0.5, fB, 0.5], [tB, 1, 0, 0], [tB, 1, 0, 0]];
+    digit(fing, pts, [w, w * 0.96, w * 0.88, w * 0.80], [t, t * 0.95, t * 0.84, t * 0.72], wts, W, skin);
+  }
+  acc.add(fing, (x, y, z) => W.get([x, y, z].join(',')) || [fB, 1, 0, 0],
+    cylUV(CELLS.skin, X, 0.0, J.wrist - 0.19, KNUCKLE + 0.01), 'fingers');
+}
+
+/**
+ * Close a humanoid's hands round a grip -- a motorbike's bars. Palms turn
+ * down (pronation about the forearm) and the fingers curl round.
+ */
+export function gripHands(h, k = 1) {
+  const b = h.bones;
+  b[B.handL].rotation.y = 1.35 * k; b[B.handR].rotation.y = -1.35 * k;
+  b[B.fingL].rotation.z = 1.05 * k; b[B.fingR].rotation.z = -1.05 * k;
+  b[B.tipL].rotation.z = 1.00 * k; b[B.tipR].rotation.z = -1.00 * k;
 }
 
 /**
@@ -818,7 +1232,7 @@ export function buildCharacter(opts = {}) {
     for (const px of [-0.052, 0.052]) {
       pelvis.box(px, J.hip - 0.062, -(0.036 + bd * 0.58 - 0.010), 0.056, 0.060, 0.004, 0, dk(pants, 0.62));
     }
-    acc.add(pelvis, across(J.spine - 0.06, 0.09, B.spine, B.hips), legUV(0));
+    acc.add(pelvis, across(J.spine - 0.06, 0.09, B.spine, B.hips), legUV(0), 'pelvis');
   }
 
   // --- torso ---------------------------------------------------------------
@@ -874,13 +1288,7 @@ export function buildCharacter(opts = {}) {
   }
   // No hood under long hair: the two fought for the same space behind the
   // neck and the hood poked out through the curtain from the side.
-  if (top === 'hoodie' && style !== 'long') {
-    torso.loftY([
-      { y: J.shoulder + 0.030, pts: oval(0.090, 0.040, ST, 0, -0.080) },
-      { y: J.shoulder + 0.075, pts: oval(0.105, 0.055, ST, 0, -0.095) },
-      { y: J.shoulder + 0.115, pts: oval(0.082, 0.040, ST, 0, -0.092) },
-    ], dk(coat, 0.85), { capEnd: true });
-  }
+  // (the hood is built after the torso: see "hood" below)
   if (opts.hivis) {
     // Hi-vis over the uniform: fluorescent body with two reflective bands --
     // geometry, because multiplied paint can only darken and a reflective band
@@ -909,7 +1317,79 @@ export function buildCharacter(opts = {}) {
       { y: J.shoulder - 0.04, pts: oval(sw * 0.98 * outer, sd * 1.02 * outer, ST) },
     ], opts.vest, {});
   }
-  acc.add(torso, torsoW, cylUV(topCell, 0, 0, J.hip - 0.06, J.shoulder + 0.07));
+  acc.add(torso, torsoW, cylUV(topCell, 0, 0, J.hip - 0.06, J.shoulder + 0.07), 'torso');
+
+  // --- hood ----------------------------------------------------------------
+  // A hood that is down LIES ON THE BACK: a soft fold round the back of the
+  // neck, and a flattened tongue of cloth hanging between the shoulder
+  // blades. Round two's was three ovals stacked behind the neck -- a neck
+  // pillow, and on a runner, whose chest pitches forward under a level head,
+  // a lump standing off the nape. This one is grown from the torso's own
+  // rings: each column stands off the torso along its normal, full thickness
+  // down the middle, and dives INTO the torso at its edges and bottom, so
+  // there is no ledge and nothing to see past.
+  // Torso ring parameters, read back off the rings themselves, and the neck
+  // above them: what the hood and long hair lie on.
+  const par = (r) => {
+    const oz = r.pts[0][1], rx = r.pts[0][0];
+    const rz = (r.pts[4][1] - oz) / Math.sin((4 / ST) * Math.PI * 2);
+    return { y: r.y, rx, rz, oz };
+  };
+  const TP = tRings.map(par);
+  // the neckline rib's top, above the torso's last ring
+  TP.push({ y: J.shoulder + 0.064, rx: sw * 0.45 * outer, rz: sd * 0.56 * outer, oz: -0.011 });
+  const NP = [{ y: J.shoulder + 0.01, rx: 0.059, rz: 0.057, oz: -0.004 }, { y: J.chin + 0.012, rx: 0.044, rz: 0.046, oz: -0.006 }];
+  const lerpPar = (T, y) => {
+    if (y <= T[0].y) return T[0];
+    for (let i = 1; i < T.length; i++) {
+      if (y <= T[i].y) {
+        const a = T[i - 1], b2 = T[i], t = (y - a.y) / (b2.y - a.y);
+        return { rx: lerp(a.rx, b2.rx, t), rz: lerp(a.rz, b2.rz, t), oz: lerp(a.oz, b2.oz, t) };
+      }
+    }
+    return T[T.length - 1];
+  };
+  // the body under a point at height y: the torso up to its neckline, else the neck
+  const bodyAt = (y) => (y <= TP[TP.length - 1].y ? lerpPar(TP, y) : y < NP[1].y ? lerpPar(NP, y) : null);
+  if (top === 'hoodie' && style !== 'long') {
+    // rows: y, the surface under it, thickness down the middle, half-width
+    // (radians either side of the spine) at which it has dived back in
+    const S = J.shoulder;
+    const HR = [
+      [S - 0.170, TP, -0.004, 1.0],
+      [S - 0.135, TP, 0.016, 0.34],    // the rounded point of the tongue
+      [S - 0.090, TP, 0.028, 0.56],
+      [S - 0.045, TP, 0.034, 0.70],
+      [S, TP, 0.036, 0.84],
+      [S + 0.032, TP, 0.034, 1.05],
+      [S + 0.058, TP, 0.032, 1.40],
+      [S + 0.084, NP, 0.028, 1.75],    // the rim of the opening, round the neck
+    ];
+    // Denser down the spine, where the tongue is; the sides only carry the
+    // rim round the neck.
+    const cols = [-90, -62, -44, -29, -14, 0, 14, 29, 44, 62, 90].map((d) => 1.5 * Math.PI + (d * Math.PI) / 180);
+    const pt = (row, a, extra = 0) => {
+      const [y, T, th, W] = row;
+      const q = lerpPar(T, y);
+      const ph = Math.abs(a - 1.5 * Math.PI);          // from the spine
+      const env = 1 - smoothT(clamp((ph - 0.55 * W) / (0.45 * W), 0, 1));
+      const t = (th > 0 ? th * env - 0.004 * (1 - env) : th) + extra;
+      let nx = Math.cos(a) / q.rx, nz = Math.sin(a) / q.rz;
+      const l = Math.hypot(nx, nz) || 1; nx /= l; nz /= l;
+      return [Math.cos(a) * q.rx + nx * t, y, q.oz + Math.sin(a) * q.rz + nz * t];
+    };
+    const hood = new Builder(false);
+    const hoodCol = dk(coat, 0.93);   // same cloth: the form is the shading, and a darker patch showed where it dives in
+    hood.patch(HR.map((row) => cols.map((a) => pt(row, a))), hoodCol, [0, 0, -1]);
+    // the opening's lining, turning in and down from the rim toward the neck
+    const lining = [HR[HR.length - 1], [S + 0.074, NP, 0.006, 1.75]];
+    hood.patch(lining.map((row) => cols.map((a) => pt(row, a))), dk(coat, 0.42), [0, 1, 0]);
+    // The rim and lining follow the NECK: on the chest they stood still while
+    // the neck bent back through them.
+    const neckW = across(J.neck - 0.06, 0.09, B.neck, B.chest);
+    acc.add(hood, (x, y) => (y > S + 0.066 ? neckW(x, y) : torsoW(x, y)),
+      cylUV(CELLS.skin, 0, 0, S - 0.17, S + 0.09), 'hood');
+  }
 
   // --- skirt / dress -------------------------------------------------------
   if (legsBare) {
@@ -931,7 +1411,7 @@ export function buildCharacter(opts = {}) {
     acc.add(sk, (x, y) => {
       const w = smoothT(clamp((J.hip - y) / 0.36, 0, 1)) * smoothT(clamp(Math.abs(x) / 0.12, 0, 1)) * 0.85;
       return [x < 0 ? B.thighL : B.thighR, w, B.hips, 1 - w];
-    }, cylUV(CELLS.skirt, 0, 0, J.knee + 0.07, J.hip + 0.07));
+    }, cylUV(CELLS.skirt, 0, 0, J.knee + 0.07, J.hip + 0.07), 'skirt');
   }
 
   // --- neck + head ---------------------------------------------------------
@@ -947,43 +1427,40 @@ export function buildCharacter(opts = {}) {
     { y: J.chin + 0.012, pts: oval(0.044, 0.046, SL, 0, -0.006) },
   ], skin, {});
   acc.add(neck, (x, y) => across(J.neck - 0.06, 0.09, B.neck, B.chest)(x, y),
-    cylUV(CELLS.skin, 0, 0, J.chest + 0.09, J.chin));
+    cylUV(CELLS.skin, 0, 0, J.chest + 0.09, J.chin), 'neck');
 
   const head = new Builder(false);
-  // The hairline is a vertex-colour boundary in the skull loft; the hair shell
-  // below grows from the same surface.
-  head.loftY(SKULL.map((r) => ({ y: r.y, pts: oval(r.rx, r.rz, ST, 0, r.oz) })),
-    SKULL.map((r, i) => (i < SKULL.length - 3 ? WHITE : hair)),
+  // The sculpted head (see faceRelief): nose, lips, brow, jaw and all are the
+  // one loft now, so there is no seam where a peg nose met a smooth face.
+  // Rows from HEAD_HAIR_ROW up are hair-coloured under the painted skin.
+  const soft = bottom === 'skirt' || bottom === 'dress' || style === 'long' || style === 'bun';
+  const grid = headGrid(faceParams(seed, soft));
+  head.loftY(grid.rings, grid.rings.map((r, i) => (i < HEAD_HAIR_ROW ? WHITE : hair)),
     { capStart: true, capEnd: true });
-  // Nose: a wedge widening toward nostril wings, set into the face.
-  head.loftY([
-    { y: J.eye - 0.050, pts: oval(0.012, 0.008, 8, 0, 0.090) },
-    { y: J.eye - 0.042, pts: oval(0.018, 0.013, 8, 0, 0.093) },
-    { y: J.eye - 0.024, pts: oval(0.011, 0.012, 8, 0, 0.094) },
-    { y: J.eye - 0.004, pts: oval(0.008, 0.008, 8, 0, 0.089) },
-  ], WHITE, { capStart: true, capEnd: true });
-  // Ears: thin lofted ovals on the ear line; rim and bowl are painted.
-  for (const sx of [-1, 1]) {
-    head.loftY([
-      { y: J.eye - 0.048, pts: oval(0.005, 0.010, 8, sx * 0.0735, -0.004) },
-      { y: J.eye - 0.030, pts: oval(0.010, 0.019, 8, sx * 0.0745, -0.006) },
-      { y: J.eye - 0.008, pts: oval(0.007, 0.014, 8, sx * 0.0735, -0.008) },
-    ], WHITE, { capStart: true, capEnd: true });
+  // Ears, unless the hair falls over them: a long or curly shell over the
+  // side of the head would have them standing out through it.
+  const covers = style === 'long' || style === 'curly' || style === 'side';
+  if (!covers) {
+    const xs = skullRay(Math.PI / 2 + 0.12, J.eye - 0.017) * Math.sin(Math.PI / 2 + 0.12);
+    for (const sx of [-1, 1]) buildEar(head, sx, xs, WHITE);
   }
   const headW = (x, y) => {
     if (y < J.neck) return across(J.neck - 0.06, 0.09, B.neck, B.chest)(x, y);
     return across(J.head - 0.03, 0.04, B.head, B.neck)(x, y);
   };
-  acc.add(head, headW, cylUV(face, 0, HEAD_Z, HY0, HY1, HEAD_SPAN));
+  acc.add(head, headW, cylUV(face, 0, HEAD_Z, HY0, HY1, HEAD_SPAN), 'head');
 
-  const hairB = buildHair(style, seed, hair);
+  const hairB = buildHair(style, seed, hair, grid, bodyAt);
   if (hairB) {
     // Long hair below the jaw rides the chest, not the head, or it swings
     // through the back when the head turns.
     const hw = style === 'long'
-      ? (x, y) => (y < J.chin ? across(J.chin - 0.10, 0.08, B.head, B.chest)(x, y) : headW(x, y))
+      // Below the jaw long hair lies on the shoulders, so it rides the CHEST
+      // there: 40% on the head at shoulder height, it swung back into the
+      // upper back whenever a runner's chest pitched forward under a level head.
+      ? (x, y) => (y < J.chin ? across(J.chin - 0.035, 0.035, B.head, B.chest)(x, y) : headW(x, y))
       : headW;
-    acc.add(hairB, hw, cylUV(style === 'curly' ? CELLS.curly : CELLS.hair, 0, -0.01, J.eye - 0.08, J.crown + 0.03));
+    acc.add(hairB, hw, cylUV(style === 'curly' ? CELLS.curly : CELLS.hair, 0, -0.01, J.eye - 0.08, J.crown + 0.03), 'hair');
   }
 
   if (opts.hat) {
@@ -994,7 +1471,7 @@ export function buildCharacter(opts = {}) {
       { y: J.crown - 0.004, pts: oval(0.057, 0.073, ST, 0, -0.010) },
     ], opts.hat, { capEnd: true });
     hat.box(0, J.eye + 0.014, 0.086, 0.166, 0.018, 0.11, 0, opts.hat);
-    acc.add(hat, headW, cylUV(CELLS.jacket, 0, 0, J.eye, J.crown));
+    acc.add(hat, headW, cylUV(CELLS.jacket, 0, 0, J.eye, J.crown), 'hat');
   }
 
   // --- arms ----------------------------------------------------------------
@@ -1011,12 +1488,14 @@ export function buildCharacter(opts = {}) {
       { y: J.elbow + 0.030, pts: oval(0.046, 0.045, SL, X, 0) },
       { y: J.elbow - 0.020, pts: oval(0.045, 0.044, SL, X, 0) },
       { y: J.elbow - 0.070, pts: oval(0.047, 0.043, SL, X, 0.002) },           // forearm
-      { y: J.wrist + 0.050, pts: oval(0.035, 0.031, SL, X, 0) },
-      { y: J.wrist + 0.012, pts: oval(0.028, 0.025, SL, X, 0) },
+      // The wrist is wider front to back than across: the palm faces the
+      // thigh, so its width runs along z.
+      { y: J.wrist + 0.050, pts: oval(0.031, 0.034, SL, X, 0) },
+      { y: J.wrist + 0.012, pts: oval(0.021, 0.028, SL, X, 0) },
     ];
     arm.loftY(aRings, shortSleeve
       ? aRings.map((r, i) => (i < 3 ? coat : skin))
-      : coat, { capStart: true, capEnd: true });
+      : coat, { capEnd: true });   // no cap at the shoulder: it is inside the torso
     // cuff: a proud, contrasting band where the fabric ends
     if (shortSleeve) {
       arm.loftY([
@@ -1039,25 +1518,8 @@ export function buildCharacter(opts = {}) {
     // Sleeves take the plain cell, not the garment's: a torso cell carries
     // pockets, zips and a kangaroo pocket, and mapped round an arm they landed
     // on the sleeves as stray rectangles.
-    }, cylUV(CELLS.skin, X, 0, J.wrist, J.shoulder + 0.01));
-    // Hand: palm and a curled finger mass, and a THUMB split from it -- a tube
-    // angled forward and across the palm. The mitten had the thumb as a box
-    // flush against the side, which from any distance was the same blob.
-    const hand = new Builder(false);
-    // 8-sided: a hand is ~40 px at the closest a camera gets, and 12 sides
-    // spent more triangles on it than on the whole head's hair.
-    const SH = 8;
-    hand.loftY([
-      { y: J.wrist + 0.014, pts: oval(0.027, 0.025, SH, X, 0) },
-      { y: J.wrist - 0.040, pts: oval(0.031, 0.026, SH, X + side * 0.003, 0.004) },  // palm
-      { y: J.wrist - 0.092, pts: oval(0.030, 0.027, SH, X + side * 0.003, 0.014) },  // knuckles
-      { y: J.wrist - 0.132, pts: oval(0.026, 0.022, SH, X + side * 0.002, 0.026) },  // curl
-      { y: J.wrist - 0.152, pts: oval(0.018, 0.015, SH, X + side * 0.001, 0.034) },  // tips
-    ], skin, { capStart: true, capEnd: true });
-    hand.tube([X - side * 0.022, J.wrist - 0.020, 0.010], [X - side * 0.034, J.wrist - 0.058, 0.026], 0.0105, 6, skin, true);
-    hand.tube([X - side * 0.034, J.wrist - 0.058, 0.026], [X - side * 0.032, J.wrist - 0.084, 0.036], 0.0090, 6, skin, true);
-    acc.add(hand, solid(side < 0 ? B.handL : B.handR),
-      cylUV(CELLS.hand, X, 0.016, J.wrist - 0.16, J.wrist + 0.015));
+    }, cylUV(CELLS.skin, X, 0, J.wrist, J.shoulder + 0.01), 'arm');
+    buildHand(acc, side, X, skin);
   }
 
   // --- legs ----------------------------------------------------------------
@@ -1102,7 +1564,7 @@ export function buildCharacter(opts = {}) {
     }
     acc.add(leg, (x, y) => across(J.knee + 0.04, 0.1,
       side < 0 ? B.thighL : B.thighR, side < 0 ? B.kneeL : B.kneeR)(x, y),
-    bare ? cylUV(CELLS.skin, X, 0, J.ankle + 0.08, J.hip + 0.04) : legUV(X));
+    bare ? cylUV(CELLS.skin, X, 0, J.ankle + 0.08, J.hip + 0.04) : legUV(X), 'leg');
 
     // THE SHOE IS ONE LOFT, and its sole is where animateWalk thinks it is.
     // The bottom ring spans exactly the sole the gait's roll model pivots on:
@@ -1119,7 +1581,7 @@ export function buildCharacter(opts = {}) {
       { y: J.ankle + 0.10, pts: oval(0.036, 0.039, SL, X, 0) },         // inside the trouser
     ], [soleCol, shoeCol, shoeCol, shoeCol, shoeCol, shoeCol], { capStart: true, capEnd: true });
     acc.add(foot, solid(side < 0 ? B.footL : B.footR),
-      cylUV(CELLS.shoe, X, 0.050, J.ankle - 0.0675, J.ankle + 0.10));
+      cylUV(CELLS.shoe, X, 0.050, J.ankle - 0.0675, J.ankle + 0.10), 'foot');
   }
 
   return acc.build();
@@ -1703,8 +2165,15 @@ export function animateWalk(h, amp, dt, speed) {
   // The hand bones were never posed, so at a run the forward hand sat flat on
   // the end of a horizontal forearm like a tray. Palms turn IN and curl a
   // touch as the pace rises.
-  b[B.handL].rotation.y = 0.45 * runBlend;
-  b[B.handR].rotation.y = -0.45 * runBlend;
+  // (0.15, not 0.45: the palm is modelled facing the thigh now, and turning
+  // it further in rolled it to face backward.)
+  b[B.handL].rotation.y = 0.15 * runBlend;
+  b[B.handR].rotation.y = -0.15 * runBlend;
+  // A runner's hands close into a loose fist; walking, they hang in the
+  // relaxed curl the geometry is built in.
+  const fist = 0.55 * runBlend;
+  b[B.fingL].rotation.z = fist; b[B.fingR].rotation.z = -fist;
+  b[B.tipL].rotation.z = fist * 0.9; b[B.tipR].rotation.z = -fist * 0.9;
   // +x, not -x: on a forearm carried forward, -x tipped the fingers UP and
   // out, the flat "karate chop" hand in the run strips. +x lets them hang.
   b[B.handL].rotation.x = 0.22 * runBlend;

@@ -10,7 +10,7 @@
 
 import * as THREE from './three.js';
 import { Builder } from './build.js';
-import { makeHumanoid, buildCharacter, BONES } from './peds.js';
+import { makeHumanoid, buildCharacter, BONES, gripHands } from './peds.js';
 import { clamp, lerp, hash2, damp } from './util.js';
 import * as G from './geo.js';
 
@@ -2243,6 +2243,7 @@ function makeRider(hand) {
     b[kn].rotation.x = p.knee;
     b[ft].rotation.x = p.foot;
   }
+  gripHands(h);   // palms down, fingers round the bars
   // 0.927 is the hip height of the unscaled character -- see peds.js `J`.
   h.group.position.set(0, p.hipY - 0.927 * h.scale, p.z);
   return h;
