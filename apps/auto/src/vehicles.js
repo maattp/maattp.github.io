@@ -756,7 +756,7 @@ function buildSports(spec, paint, trim, matte) {
 
   // Side glass and the sail panel behind it, per side.
   const sgFB = [0.66, 0.965], sgFT = [-0.02, 1.272], sgRT = [-0.78, 1.258], sgRB = [-1.16, 1.01];
-  carCabin(matte, { cowlZ, cowlY, scrZ, roofY, backZ, rearZ, rearY, wScrB, wRoof, wRear, wGlassT, wGlassB, sgFB, sgRB, rows: [-0.46], scrWrap: 0.1, rearWrap: 0.05 });
+  carCabin(matte, { cowlZ, cowlY, scrZ, roofY, backZ, rearZ, rearY, wScrB, wRoof, wRear, wGlassT, wGlassB, sgFB, sgRB, rows: [-0.46], scrWrap: 0.1, rearWrap: 0.05 }, paint);
   for (const sx of [-1, 1]) {
     const rows = [];
     for (let i = 0; i <= 2; i++) {
@@ -994,7 +994,7 @@ function buildMuscle(spec, paint, trim, matte) {
   trim.patch(rearRows, GLASS, [0, 0.7, -1]);
 
   const sgFB = [0.60, 1.035], sgFT = [-0.16, 1.360], sgRT = [-1.06, 1.352], sgRB = [-1.34, 1.058];
-  carCabin(matte, { cowlZ, cowlY, scrZ, roofY, backZ, rearZ, rearY, wScrB, wRoof, wRear, wGlassT, wGlassB, sgFB, sgRB, rows: [-0.30, -1.02], scrWrap: 0.09, rearWrap: 0.04 });
+  carCabin(matte, { cowlZ, cowlY, scrZ, roofY, backZ, rearZ, rearY, wScrB, wRoof, wRear, wGlassT, wGlassB, sgFB, sgRB, rows: [-0.30, -1.02], scrWrap: 0.09, rearWrap: 0.04 }, paint);
   for (const sx of [-1, 1]) {
     const rows = [];
     for (let i = 0; i <= 2; i++) {
@@ -1200,7 +1200,7 @@ function buildSedan(spec, paint, trim, matte) {
   trim.patch(rearRows, GLASS, [0, 0.7, -1]);
 
   const sgFB = [0.72, 1.055], sgFT = [0.16, 1.470], sgRT = [-1.24, 1.464], sgRB = [-1.44, 1.080];
-  carCabin(matte, { cowlZ, cowlY, scrZ, roofY, backZ, rearZ, rearY, wScrB, wRoof, wRear, wGlassT, wGlassB, sgFB, sgRB, rows: [-0.26, -1.14], scrWrap: 0.085, rearWrap: 0.035 });
+  carCabin(matte, { cowlZ, cowlY, scrZ, roofY, backZ, rearZ, rearY, wScrB, wRoof, wRear, wGlassT, wGlassB, sgFB, sgRB, rows: [-0.26, -1.14], scrWrap: 0.085, rearWrap: 0.035 }, paint);
   const sailOuter = [[wGlassT, 1.464, backZ], [0.745, 1.335, -1.4267],
     [0.788, 1.190, -1.6133], [0.800, 1.058, rearZ]];
   for (const sx of [-1, 1]) {
@@ -1428,7 +1428,7 @@ function buildSuv(spec, paint, trim, matte) {
   trim.patch(rearRows, GLASS, [0, 0.5, -1]);
 
   const sgFB = [0.78, 1.315], sgFT = [0.14, 1.848], sgRT = [-1.50, 1.842], sgRB = [-1.62, 1.322];
-  carCabin(matte, { cowlZ, cowlY, scrZ, roofY, backZ, rearZ, rearY, wScrB, wRoof, wRear, wGlassT, wGlassB, sgFB, sgRB, rows: [-0.30, -1.30], scrWrap: 0.095, rearWrap: 0.03 });
+  carCabin(matte, { cowlZ, cowlY, scrZ, roofY, backZ, rearZ, rearY, wScrB, wRoof, wRear, wGlassT, wGlassB, sgFB, sgRB, rows: [-0.30, -1.30], scrWrap: 0.095, rearWrap: 0.03 }, paint);
   // The D-pillar is the whole panel between the side glass and the rear screen,
   // and it is 30-50 cm of painted metal -- the widest pillar on any vehicle
   // here, and the reason an SUV's rear quarter reads solid.
@@ -1654,7 +1654,7 @@ function buildPickup(spec, paint, trim, matte) {
   ], WHITE, [0, 0.3, -1]);
 
   const sgFB = [1.24, 1.278], sgFT = [0.74, 1.944], sgRT = [-0.58, 1.938], sgRB = [-0.78, 1.282];
-  carCabin(matte, { cowlZ, cowlY, scrZ, roofY, backZ, rearZ, rearY, wScrB, wRoof, wRear, wGlassT, wGlassB, sgFB, sgRB, rows: [0.34, -0.48], scrWrap: 0.075, rearWrap: 0.02 });
+  carCabin(matte, { cowlZ, cowlY, scrZ, roofY, backZ, rearZ, rearY, wScrB, wRoof, wRear, wGlassT, wGlassB, sgFB, sgRB, rows: [0.34, -0.48], scrWrap: 0.075, rearWrap: 0.02 }, paint);
   const sailOuter = [[wGlassT, 1.938, backZ], [0.815, 1.660, -0.74], [0.830, 1.300, rearZ]];
   for (const sx of [-1, 1]) {
     const rows = [];
@@ -2823,7 +2823,7 @@ function greenhouse(paint, trim, matte, g) {
       [sx * (wGlassB + 0.006), sgRB[1] - 0.004, sgRB[0]], 0.012, 5, PLASTIC, true);
   }
   // A glass roof (the EV's) has nothing to line: you look down into the cabin.
-  if (g.rows) carCabin(matte, { ...g, scrWrap, rearWrap, headliner: roofInto !== trim });
+  if (g.rows) carCabin(matte, { ...g, scrWrap, rearWrap, headliner: roofInto !== trim }, paint);
   return { scrRows, rearRows, roofRows };
 }
 
@@ -2838,7 +2838,7 @@ function greenhouse(paint, trim, matte, g) {
 // goes in `matte.crew`, which buildType merges only into the geometries of
 // cars somebody is in -- a parked car is empty.
 //
-// Colours are dim but NOT black. Behind a 46 % pane and under its own roof's
+// Colours are dim but NOT black. Behind a pane passing 45 % and under its own roof's
 // shadow, a black cabin is the old dark slab over again; it is the lighter
 // headliner and the headrest-against-window silhouettes that read as a cabin.
 const CAB_FLOOR = [0.045, 0.045, 0.05];
@@ -2917,7 +2917,31 @@ function wheelRim(b, cx, cy, cz, R = 0.18) {
  * side glass. `rows` are seat-back stations, front first; `front` is 'pair'
  * (buckets) and later rows are benches unless `rowKind` says otherwise.
  */
-function carCabin(matte, g) {
+/**
+ * Highest point of `b`'s geometry straight under (x, z) within a band round
+ * `yRef` -- the top of a car's deck under its cabin. Brute force over the
+ * builder's triangles; it runs a few dozen times per type at boot.
+ */
+function deckAt(b, x, z, yRef) {
+  const p = b.pos, ix = b.idx;
+  let best = -Infinity;
+  for (let i = 0; i < ix.length; i += 3) {
+    const a = ix[i] * 3, c = ix[i + 1] * 3, e = ix[i + 2] * 3;
+    const ya = p[a + 1], yc = p[c + 1], ye = p[e + 1];
+    if (Math.max(ya, yc, ye) < yRef - 0.15 || Math.min(ya, yc, ye) > yRef + 0.15) continue;
+    const x0 = p[a], z0 = p[a + 2], x1 = p[c], z1 = p[c + 2], x2 = p[e], z2 = p[e + 2];
+    const d = (z1 - z2) * (x0 - x2) + (x2 - x1) * (z0 - z2);
+    if (Math.abs(d) < 1e-9) continue;
+    const l0 = ((z1 - z2) * (x - x2) + (x2 - x1) * (z - z2)) / d;
+    const l1 = ((z2 - z0) * (x - x2) + (x0 - x2) * (z - z2)) / d;
+    if (l0 < 0 || l1 < 0 || l0 + l1 > 1) continue;
+    const y = l0 * ya + l1 * yc + (1 - l0 - l1) * ye;
+    if (y < yRef + 0.12 && y > best) best = y;
+  }
+  return best;
+}
+
+function carCabin(matte, g, paint = null) {
   const {
     cowlZ, cowlY, scrZ, roofY, backZ, rearZ, rearY, wScrB, wRoof, wRear, wGlassT, wGlassB,
     sgFB, sgRB, rows, scrWrap = 0.085, rearWrap = 0.035, headliner = true, driverX = null,
@@ -2928,14 +2952,25 @@ function carCabin(matte, g) {
   const zF = cowlZ + Math.max(0, y - cowlY) * rakeF - 0.035;
   const zR = rearZ + Math.max(0, y - rearY) * rakeR + 0.035;
   const x = Math.min(wGlassB, wScrB, wRear) - 0.05;
-  // Floor over the deck, cut to the screens' wrap at both ends.
-  const fr = [], rr = [];
-  for (let j = 0; j <= 6; j++) {
-    const u = -1 + (2 * j) / 6;
-    fr.push([u * x, y, zF - scrWrap * u * u]);
-    rr.push([u * x, y, zR + rearWrap * u * u]);
+  // Floor over the deck, out to the glass on every side -- any deck left
+  // showing is a strip of body colour inside the car. Cut to the screens'
+  // wrap at both ends, and to the side glass's foot between them.
+  const xS = wGlassB - 0.015, zSR = Math.max(sgRB[0], zR + 0.06), zSF = Math.min(sgFB[0], zF - 0.06);
+  const row = (hw, z, wrap) => {
+    const out = [];
+    for (let j = 0; j <= 6; j++) { const u = -1 + (2 * j) / 6; out.push([u * hw, y, z + wrap * u * u]); }
+    return out;
+  };
+  const floor = [row(wRear - 0.03, zR, rearWrap)];
+  if (zSF - zSR > 0.1) {
+    for (let i = 0; i <= 4; i++) floor.push(row(xS, lerp(zSR, zSF, i / 4), 0));
   }
-  matte.patch([rr, fr], CAB_FLOOR, [0, 1, 0]);
+  floor.push(row(wScrB - 0.03, zF, -scrWrap));
+  // The deck is not flat -- it climbs toward a hatch's tailgate and an SUV's
+  // cargo sill -- so a flat floor at the glass line had the car's own colour
+  // showing through it behind the rear seats. Drape it on the paint instead.
+  if (paint) for (const r of floor) for (const pt of r) pt[1] = Math.max(y, deckAt(paint, pt[0], pt[2], y) + 0.012);
+  matte.patch(floor, CAB_FLOOR, [0, 1, 0]);
   // Dash: a step up under the screen, kept a margin under the glass.
   const dashD = Math.min(0.34, (zF - zR) * 0.2);
   const dashH = Math.min(0.07, Math.max(0.02, (dashD * 0.5) / Math.max(0.5, -rakeF) - 0.01));
@@ -4096,7 +4131,7 @@ function tagGlass(geo) {
 // Face-on, tinted automotive glass lets roughly half the light through; at a
 // grazing angle Fresnel takes it to a mirror. GLASS_ALPHA is the face-on
 // opacity of the tint layer, which is what decides how much of the cabin reads.
-const GLASS_ALPHA = 0.46;
+const GLASS_ALPHA = 0.55;
 const GLASS_IBL_FROM = 'reflectVec = inverseTransformDirection( reflectVec, viewMatrix );';
 
 /**
@@ -4136,7 +4171,10 @@ function glassShader(sh) {
     .replace('#include <opaque_fragment>', `if ( vGlass > 0.5 ) {
 		float gNV = saturate( dot( normal, normalize( vViewPosition ) ) );
 		float gA = mix( ${GLASS_ALPHA.toFixed(3)}, 1.0, pow( 1.0 - gNV, 5.0 ) );
-		outgoingLight = totalDiffuse * gA + totalSpecular;
+		// A laminated screen has two faces, so it reflects about twice what
+		// one dielectric surface does face-on; the boost fades out toward
+		// grazing, where Schlick has already taken it to a mirror.
+		outgoingLight = totalDiffuse * gA + totalSpecular * mix( 2.0, 1.0, pow( 1.0 - gNV, 2.0 ) );
 		diffuseColor.a = gA;
 	}
 	#include <opaque_fragment>`)
