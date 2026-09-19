@@ -17,6 +17,7 @@ const arg = (k, d) => { const a = process.argv.find((x) => x.startsWith(`--${k}=
 const X = +arg('x', 305), Z = +arg('z', -278), FRAMES = +arg('frames', 120);
 const BUILDS = process.argv.includes('--builds');
 const PROF = process.argv.includes('--prof');
+const SPIKES = process.argv.includes('--spikes');
 const UA = 'Mozilla/5.0 (iPhone; CPU iPhone OS 19_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/19.0 Mobile/15E148 Safari/604.1';
 const chrome = launchChrome({ port: PORT, profile: `/tmp/auto-rendercpu-${PORT}`, gpu: true, width: 874, height: 402, vsyncOff: true });
 let code = 0;
@@ -56,6 +57,38 @@ try {
     const pend = () => [...d.world.chunks.values()].filter((c) => c.lod !== c.wantLod).length;
     for (let i = 0; i < 3000 && pend() > 0; i++) d.world.update(${X}, ${Z}, 60);
     for (let i = 0; i < 30; i++) await new Promise((r) => requestAnimationFrame(r)); })()`);
+  if (SPIKES) {
+    // Live loop, standing still: which render call spikes, and what changed.
+    const r = JSON.parse(await ev(`(async () => {
+      const d = window.__dbg, R = d.renderer;
+      d.game.paused = false;
+      for (let i = 0; i < 60; i++) await new Promise((res) => requestAnimationFrame(res));
+      const orig = R.render.bind(R);
+      let calls = [];
+      R.render = (sc, cam) => { const t0 = performance.now(); orig(sc, cam); calls.push([sc === d.scene ? 'scene' : 'post', performance.now() - t0]); };
+      const rows = [];
+      let prev = { g: R.info.memory.geometries, t: R.info.memory.textures, p: R.info.programs.length };
+      for (let f = 0; f < 600; f++) {
+        calls = [];
+        await new Promise((res) => requestAnimationFrame(res));
+        const m = { g: R.info.memory.geometries, t: R.info.memory.textures, p: R.info.programs.length };
+        const tot = calls.reduce((a, c) => a + c[1], 0);
+        rows.push({ f, tot, calls: calls.map((c) => c[0][0] + c[1].toFixed(1)).join(' '), dg: m.g - prev.g, dt: m.t - prev.t, dp: m.p - prev.p,
+          cars: d.traffic.cars.length, peds: d.peds.peds.length });
+        prev = m;
+      }
+      R.render = orig;
+      const sorted = [...rows].sort((a, b) => b.tot - a.tot);
+      const med = [...rows].map((k) => k.tot).sort((a, b) => a - b)[300];
+      return JSON.stringify({ med, top: sorted.slice(0, 20), spikes: rows.filter((k) => k.tot > med * 3).length,
+        withGeo: rows.filter((k) => k.tot > med * 3 && k.dg !== 0).length, withProg: rows.filter((k) => k.tot > med * 3 && k.dp !== 0).length,
+        period: rows.filter((k) => k.tot > med * 3).map((k) => k.f).slice(0, 40).join(',') });
+    })()`));
+    console.log(`spikes :${HTTP_PORT} build ${build}: median render ${r.med.toFixed(2)} ms, ${r.spikes}/600 frames over 3x, ${r.withGeo} with geometry count change, ${r.withProg} with new programs`);
+    console.log(`  spike frames: ${r.period}`);
+    for (const k of r.top) console.log(`  f${k.f} ${k.tot.toFixed(1)} ms  [${k.calls}]  dgeo ${k.dg} dtex ${k.dt} dprog ${k.dp}  cars ${k.cars} peds ${k.peds}`);
+    throw { done: true };
+  }
   if (BUILDS) {
     // Time a full rebuild of each chunk in the 5x5 near ring, driving the same
     // generator world.update slices (buildChunkStep) to completion in one go.
