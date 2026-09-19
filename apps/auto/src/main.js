@@ -607,7 +607,7 @@ function installShadowFade() {
 
   await step(1, 'Welcome to Seattle');
   window.__refreshJobs = refreshJobs;
-  window.__dbg = { game, city, player, world, traffic, peds, acts, scene, camera, renderer, G, fx, hud, controls, audio, pickups, THREE, postfx, applyQuality, sun, placeSun, sceneStats, cityStats, WET_FLOOR, animateWalk, collideWithBuildings, TYPES: VEHICLE_TYPES };
+  window.__dbg = { game, city, player, world, traffic, peds, acts, scene, camera, renderer, G, fx, hud, controls, audio, pickups, THREE, postfx, applyQuality, sun, placeSun, sceneStats, perfSys, cityStats, WET_FLOOR, animateWalk, collideWithBuildings, TYPES: VEHICLE_TYPES };
   wireUi();
   game.newTarget();
   // Start on `high` everywhere.
@@ -1070,8 +1070,22 @@ function doRespawn() {
 
 // ---------------------------------------------------------------------------
 
+// Per-system CPU time in the frame loop, behind a debug flag: on while the
+// pause-menu debug readout is (it prints the top systems there, which is the
+// only profiler a phone has), or `__dbg.perfSys.on = true` from a harness
+// (tools/perfbisect.mjs). Off, it costs one branch per system.
+const perfSys = { on: false, ms: {}, frames: 0 };
+let perfT = 0;
+function lap(name) {
+  const t = performance.now();
+  perfSys.ms[name] = (perfSys.ms[name] || 0) + (t - perfT);
+  perfT = t;
+}
+
 function frame(now) {
   requestAnimationFrame(frame);
+  const prof = perfSys.on;
+  if (prof) { perfT = performance.now(); perfSys.frames++; }
   let dt = (now - last) / 1000;
   last = now;
   if (dt > 0.06) dt = 0.06;
@@ -1108,15 +1122,20 @@ function frame(now) {
   } else {
     player.update(dt, input, look, controls, traffic, peds);
   }
+  if (prof) lap('player');
 
   const p = player.position;
   const camDir = { x: p.x - player.camPos.x, z: p.z - player.camPos.z };
   const cl = Math.hypot(camDir.x, camDir.z) || 1;
   camDir.x /= cl; camDir.z /= cl;
 
+  if (prof) lap('misc');
   traffic.update(dt, p.x, p.z, camDir, player);
+  if (prof) lap('traffic');
   peds.update(dt, p.x, p.z, player, traffic);
+  if (prof) lap('peds');
   if (acts) acts.update(dt, player);
+  if (prof) lap('activities');
   // UNDERGROUND, THE HELICOPTER LOSES YOU. This is what makes a bore a
   // tactical option rather than scenery you drive through: the roof over your
   // head is the only place in the city the air unit cannot see.
@@ -1183,7 +1202,9 @@ function frame(now) {
     world.playerFwdZ = fast ? pv.forward.z * Math.sign(pv.vLong) : 0;
     world.playerFlying = !!(pv && pv.spec.plane && pv.airborne);
   }
+  if (prof) lap('misc');
   world.update(p.x, p.z, fps < 45 ? 1 : 2);
+  if (prof) lap('world');
   // Atmospheric haze thickens with altitude. From 300 m up the streaming
   // rings are visible as a crawling boundary -- massing at 1.6 km, detail at
   // 800 m -- and no draw budget pushes them past a 6 km sightline. Real air
@@ -1197,6 +1218,7 @@ function frame(now) {
 
   player.applyCamera(camera);
   placeSun(p.x, p.y, p.z);
+  if (prof) lap('camera');
 
   // audio state
   let siren = 0;
@@ -1214,9 +1236,15 @@ function frame(now) {
     siren,
   });
 
+  if (prof) lap('misc');
   hud.update(dt, game, player, traffic);
+  if (prof) lap('hud');
   world.animate(dt, now / 1000);
+  if (prof) lap('animate');
   draw(now);
+  // Render submission: three's scene walk, culling, sorting and the GL calls
+  // (the GPU's own time is not in here).
+  if (prof) lap('render');
 
   updateDebug(dt);
 }
@@ -1248,7 +1276,18 @@ let fpsMin = 999;
  * regular dip to 38 is what actually trips `autoQuality`, and an average hides
  * it. `fpsMin` holds the floor since the last redraw of this panel.
  */
+function perfLine() {
+  const n = perfSys.frames;
+  if (!n) return '';
+  const top = Object.entries(perfSys.ms).sort((a, b) => b[1] - a[1]).slice(0, 5)
+    .map(([k, v]) => `${k} ${(v / n).toFixed(1)}`).join('  ');
+  perfSys.ms = {};
+  perfSys.frames = 0;
+  return `\ncpu ms: ${top}`;
+}
+
 function updateDebug(dt) {
+  perfSys.on = game.settings.debug || perfSys.harness === true;
   if (!game.settings.debug) return;
   fpsMin = Math.min(fpsMin, fps);
   debugAcc += dt;
@@ -1264,7 +1303,8 @@ function updateDebug(dt) {
     `${fps.toFixed(0)} fps  (min ${fpsMin.toFixed(0)})\n`
     + `${sceneStats.calls} draws  ${(sceneStats.tris / 1000).toFixed(0)}k tris\n`
     + `${w}x${h} @ ${dpr}x  ${q}\n`
-    + `${cars} vehicles  ${people} peds`;
+    + `${cars} vehicles  ${people} peds`
+    + perfLine();
   fpsMin = fps;
 }
 
