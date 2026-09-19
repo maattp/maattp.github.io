@@ -235,7 +235,13 @@ be near-parallel (a crossing at a junction has each centre inside the other and
 neither is redundant), and test **containment** rather than centreline proximity
 -- a road is only redundant where its whole width is inside the other's. Ramps
 went 30% -> 8%, arterials/streets/residential 9-13% -> **0%**. A tunnel, which is
-still drawn at ground level, may never suppress the street above it.
+still drawn at ground level, may never suppress the street above it. **And two
+roads are only one surface where their drawn heights agree** (within 5 cm,
+`drawnY`: the graded profile or terrain + `ROAD_LIFT`). A ramp just past its
+diverge is still inside the main line's width -- coupling skips 30 m along the
+graph -- but has already climbed 0.1-1 m, and its tarmac was dropped as
+"covered" while groundAt kept carrying cars on it: ~20 of the contract probe's
+misses (see "What you drive on is what is drawn").
 
 | skipped as "already paved" | before | after |
 |---|---|---|
@@ -457,15 +463,17 @@ nearly every junction downtown (Seattle is hilly) and saved almost nothing:
 passes `tools/perfguard.mjs --check`.
 
 **The junction ring may not override the strip scan, however wrong the scan
-looks.** `roadLift` ramps a strip's lift to zero across the last `RAMP` metres,
-so a point under the ring can pick up a small tail — 0.06 m — and the ring's
-0.52 m used to be discarded, leaving you 0.46 m inside visible pavement. Taking
-the ring wherever it is higher is the obvious fix and it is **wrong**:
+looks.** `roadLift` used to taper a pavement's lift to zero across its last
+`RAMP` metres, so a point under the ring could pick up a small tail — 0.06 m —
+and the ring's 0.52 m was discarded, leaving you 0.46 m inside visible pavement.
+Taking the ring wherever it is higher is the obvious fix and it is **wrong**:
 `nodeSurface` reports the ring as a plain box, but `meshNode` cuts the ring up
 and drops the pieces covering each approach, so over an approach the ring is
 reported and not drawn. Measured, that override moved `sink` 11.8 % -> 12.44 %.
-Fixing it properly means teaching `nodeSurface` the approach-dropping that
-`meshNode` does.
+The pavement taper is gone now (see "Pavement verges"; `RAMP` only edges a road
+with no pavement), but the rule stands: the ring answers only where the scan
+found nothing. Fixing it properly means teaching `nodeSurface` the
+approach-dropping that `meshNode` does.
 
 ## What the map looks like from above
 
@@ -1715,6 +1723,34 @@ square, but the two are used differently: the square **overrides** the scan (it
 is the top surface there), while the ring only fills in where the scan came back
 empty, because along a road direction the strips overlap the ring and know better.
 
+### Pavement verges
+
+**A pavement is a flat slab and then a 1 m verge down to the ground.** It is
+drawn flat to its outer edge at terrain + `WALK_LIFT` and comes down across
+`VERGE` (1 m for 52 cm, ~27 deg; exported from citygen) in `world.meshVerge`,
+for strips and junction rings alike. `roadLift` reports the same slope off a
+strip, `nodeSurface` off a ring's band (by max(|lx|, |lz|)), so walking off the
+pavement is a slope and not a fall. The verge's lip follows the slab's own edge
+chord, so the two cannot part, and it is not drawn over a carriageway, into
+water or into a cutting.
+
+It used to be an open 52 cm step: a pedestrian on the grass beyond was correctly
+on the ground and, seen across the slab from eye height, sunk to the waist.
+**And the query disagreed with the drawing twice over.** `roadLift` tapered
+the pavement to zero across the slab's last `RAMP` metres while the slab was
+drawn flat to its edge -- a 26 cm sink over the outer half metre -- then stopped:
+the 52 cm step. The taper also HID a second disagreement: a pavement lying over
+ANOTHER road's carriageway reported `WALK_LIFT` there, 22 cm over the drawn
+tarmac, although `meshRoad` drops that pavement piece. Neither pavement nor
+verge lifts a point on another road's carriageway now (`onCw`, segment interior
+only -- past an end the clamped distance is a round cap, which the junction
+square answers for). **jank `sink` 295 -> 99.**
+
+verify's tunnel-lift check had to learn the verge: its "is anything but a
+tunnel covering this point" radius grew by `VERGE` (hw + 4.4 along an edge,
+(hw + 4.2) x 1.45 round a node), or it counts every verge as a bore lifting
+bare ground.
+
 ## Geometry building
 
 `Builder` (build.js) accumulates positions/normals/uvs/colors and emits one
@@ -2126,11 +2162,13 @@ flat extension is higher — on a climb, always the piece ahead: the car rode a
 smooth profile as a staircase (17.9 % grade breaks against 0.2 % on the profile
 itself). Pieces extrapolate along their own grade for 3 m past either end, using
 the neighbours' extents (`wl0/wr0/wl1/wr1`) so an untrimmed extrapolation cannot
-reach over a trimmed side and catch cars on the road beside it. A side with a
-near-parallel neighbour in its 1.5 m catch fringe (`e.tnb`) catches nothing past
-its edge. Narrowing the fringe to `hw + 0.6` everywhere was tried and reverted:
-it bought little (182 -> 166 of 1656 samples off the drawn deck at I-5
-downtown) and cost a verify approach by SR-99's north portal.
+reach over a trimmed side and catch cars on the road beside it. **An
+extrapolation defers to any graded piece that covers the point** -- see "What
+you drive on is what is drawn" for why a tie penalty was not enough. A side with
+a neighbour in its 1.5 m catch fringe (`e.tnb`, any converging within ~37 deg)
+catches nothing past its edge. Narrowing the fringe to `hw + 0.6` everywhere was
+tried and reverted: it bought little (182 -> 166 of 1656 samples off the drawn
+deck at I-5 downtown) and cost a verify approach by SR-99's north portal.
 
 **Three solver traps, each found as one spike on a single I-5 ride.** Diagnose
 them from the solver's own per-sample values. They are published only when
@@ -2147,27 +2185,32 @@ them from the solver's own per-sample values. They are published only when
   overlap, and groundAt took the higher one for a step. Bound the blend by the
   ramped floor below AND the anchor cap above. Bounded by the floor alone, the
   blend re-made cliffs at deck starts and verify's riders went from 0 to 13 falls.
-- **A piece past a CONTINUED end loses close ties.** Where half-width changes,
-  the previous piece extrapolated 7 cm above the next piece's real profile and
-  won. It now loses near-ties to the neighbour whose span actually covers the
-  point. Past a FREE end (an anchor, a locked deck) it is the only deck there;
-  penalising it there cost SR-99's north approach its capture.
+- **A piece past a CONTINUED end yields to the piece that covers the point.**
+  Where half-width changes, the previous piece extrapolated 7 cm above the next
+  piece's real profile and won. A 0.12 tie penalty settled that case and no
+  other (see below); extrapolations are now deferred and dropped within
+  `EX_TIE` of a covering piece. Past a FREE end (an anchor, a locked deck) it is
+  the only deck there; penalising it there cost SR-99's north approach its
+  capture, so uncovered extrapolations still compete.
 
 **Measure the ride and the profile separately.** Comparing `profAt` with
 `groundAt` along the same 3 m steps found the staircase in one step; the
-combined number only said "worse". Measured with `tools/jank.mjs`, before
-grading -> now:
+combined number only said "worse". Measured with `tools/jank.mjs`: before
+grading, as first graded, and after the interchange-contract, verge and lid
+fixes (the "graded" column had drifted a little by then -- fwy-bump 1049,
+crossing-clash 196, barrier-on-road 1089 -- so compare those against 827 / 194 /
+1038; a dash was not re-measured):
 
-| check | before | now |
-|---|---|---|
-| fwy-bump (3 m grade break > 5 %) | 3502 / 69668 (5.03 %) | 1044 / 70624 (1.48 %) |
-| fwy-bump over 8 % (felt as a jolt) | 1739 | 631 |
-| steps jumping > 0.5 m | 1475 | 512 |
-| I-5 ride north of the ship canal, breaks > 5 % | 52 of 518 | 0 of 518 |
-| crossing-clash (deck gap < 4.5 m) | 427 / 725 (58.9 %) | 158 / 725 (21.8 %) |
-| barrier-on-road | 1958 / 57270 (3.42 %) | 888 / 56841 (1.56 %) |
-| bridge (deck buried) | 17 / 6678 | 5 / 6678 |
-| sink | 308 / 6925 (4.45 %) | 295 / 6923 (4.26 %) |
+| check | before grading | graded | now |
+|---|---|---|---|
+| fwy-bump (3 m grade break > 5 %) | 3502 / 69668 (5.03 %) | 1044 / 70624 (1.48 %) | **827** (1.17 %) |
+| fwy-bump over 8 % (felt as a jolt) | 1739 | 631 | ~400 |
+| steps jumping > 0.5 m | 1475 | 512 | -- |
+| I-5 ride north of the ship canal, breaks > 5 % | 52 of 518 | 0 of 518 | -- |
+| crossing-clash (deck gap < 4.5 m) | 427 / 725 (58.9 %) | 158 / 725 (21.8 %) | 194 |
+| barrier-on-road | 1958 / 57270 (3.42 %) | 888 / 56841 (1.56 %) | 1038 |
+| bridge (deck buried) | 17 / 6678 | 5 / 6678 | **1** |
+| sink | 308 / 6925 (4.45 %) | 295 / 6923 (4.26 %) | **99** |
 
 Most of what is left over 8 % is ungraded freeway beside portals (about 7 % of
 its steps), which grading deliberately leaves draped. verify: 0 of 33213 viaduct
@@ -2184,6 +2227,64 @@ so driving along ground-level I-5 under an overpass lifted the car onto the
 deck and dropped it 3.76 m where the deck ended. 0.9 m is far more than a ramp
 climbs between frames (a 10 % grade at 30 m/s rises 5 cm a frame) and far less
 than an overpass clears a roof.
+
+### What you drive on is what is drawn
+
+**At a dense interchange groundAt and the drawn deck disagreed on 5-8 % of
+samples.** The contract probe -- every graded edge within 450 m of a site, 4
+stations x 3 lateral offsets, `groundAt` from its own height + 0.5 against a
+ray straight down at road material -- found 134 of 1650 samples more than
+10 cm off at I-5 downtown, worst 1.05 m under. A knockout classifier (drop each
+nearby surface in turn, see which one groundAt was answering from; the graded
+entries in `city.surfaces` carry `.ei` / `.pi` for exactly this) split them
+into five causes, largest first:
+
+1. **An extrapolation beat the piece that covers the point** (107 of 262). The
+   0.12 penalty settled near-ties only, and a car asks from y + 1.2, so an
+   extrapolated grade line a few cm ABOVE the covering piece was nearer and won:
+   past the foot of an 8 % piece its line runs 14 cm over the flatter piece it
+   hands on to. groundAt now collects extrapolations separately and drops any
+   within `EX_TIE` 0.6 m of a covering graded piece in reach; the rest (the
+   outside of a bend, a free end) compete as before.
+2. **Locked decks under the ground** (58). Decks within `PORTAL_KEEP` keep their
+   imported heights, and the importer's bilinear DEM plus a chord over a crest
+   left them up to 1 m under the terrain mesh across their width -- a deck is
+   flat, so it is the UPHILL edge that must clear. Grass drawn over the deck,
+   cars riding the grass. They are raised onto `deckFloor` (terrain across the
+   width + `ROAD_LIFT`), the raise dilated along the edge at `LOCK_RAISE_GRADE`
+   8 %, capped to 0 at the portal and at an at-grade end, and shared at nodes
+   between locked decks. **Each of those three limits was a verify failure
+   first**: raising per sample stepped the deck and riders fell (45); raising at
+   an anchor stranded 6 approaches; and a node taking the higher of two raises
+   was a 1.5 m step at the end of the lower deck.
+   **Don't floor NON-locked decks across the width.** It changed which
+   overpasses the clearance pass refuses, one came back as a 45 % piece off its
+   junction and 6 riders fell -- to buy 2 samples.
+3. **`roadCoveredAt` dropped a graded ramp over a road at another level** (~20):
+   the level check in "Keeping the roads clear".
+4. **A batter swept over the road beside it** (~15, worst 3.7 m). `gradeRoads`
+   tested only the first 1.5 m of a batter for another carriageway. The batter
+   now stops at the first carriageway it reaches, toe on that road's surface, so
+   `meshGraded` and `roadLift` agree by construction.
+5. **Catch widths ran wider than the drawn edge.** A graded piece caught to the
+   WIDER of its two ends' trims while the drawn edge runs straight between them;
+   the extent is interpolated along the piece now (`la/lb/ra/rb`). And `tnb` only
+   saw neighbours within 15 deg; it now marks any within ~37 deg (a ramp merging
+   at 15-26 deg still has lanes in the fringe), while the trim still needs 15.
+
+| contract probe, > 10 cm off | before | now |
+|---|---|---|
+| I-5 downtown | 134 / 1650 (mean 4.9 cm, worst -1.05 m) | **18** / 1655 (2.7 cm) |
+| Mercer | 37 / 480 (3.8 cm) | **7** / 480 (2.3 cm) |
+| I-5 / I-90 | 91 / 3417 (3.6 cm, worst -1.67 m) | **24** / 3417 (3.0 cm) |
+| ship canal | 8 / 657 | 2 / 660 |
+| I-5 south | 4 / 720 | 0 / 720 |
+
+What is left is mostly decks stacked ~1.1 m over another deck (freeway over
+freeway, left as imported), where the probe's ray from y + 1.2 hits the deck
+above the car, plus a few junction-square and anchor cases at locked decks.
+**Answer "which surface is groundAt standing on" with the knockout, not a
+render**: one run names the surface.
 
 ## Flying
 
@@ -2553,6 +2654,25 @@ under a lid is the trench floor.
 - **Water mask over open cuttings**: every non-cap corridor segment whose floor
   is under 0.3 m gets the depth-only quad. The NB entry cutting at SODO showed
   the sea as a canal beside the SR-99 surface.
+- **A slab reaches the kerb where it can** (`buildLids`): columns between a
+  slab's side and the kerb join it when they are dug -- but not the road's own
+  cutting, not over a cutting's lanes without 4.6 m of headroom, and not over a
+  low bore.
+- **Where a lid barrier still stands inside a carriageway, the carriageway ends
+  there.** Past the SB exit the SR-99 surface (hw 7) runs 2.2 m over the NB
+  entry cutting's LANES for ~60 m, 4.7 m down with 3.8 m of headroom, so no slab
+  can reach its kerb and the side barrier stands 1-2 m inside the road.
+  `e.barW` [+p, -p] is the narrowest clear half-width any lid barrier leaves a
+  surface road at its level (its own or another's), and `traffic.laneLat` and
+  `meshRoadMarks`' edge line use it the way they use a split-level trim. An AI
+  car in the outer lane used to run 1.9 m off the barrier line -- inside a
+  sedan's circle plus the wall's 0.8 m half-thickness -- and wedge.
+- **A bridge slab has an underside.** A kind-2 lid's top is one-sided road
+  material, so from the trench below only its fascias and parapets drew: the
+  "floating retaining-wall slabs" over the SB exit cutting were the lid
+  fascias of two ramps and a cross street that roof it in part, bars hanging
+  5-10 m over the trench floor. `meshLid` draws a soffit 0.7 m under each kind-2
+  top, where the fascia's foot already was.
 
 Citywide dug-road sweep after these and the stacking (588 runs): drops 215 ->
 215, wall hits 5 -> 2.
@@ -2574,6 +2694,17 @@ Citywide dug-road sweep after these and the stacking (588 runs): drops 215 ->
   0.02 m for views from the street into sub-sea cuttings, and skips quads over
   real water. This holds per deck unchanged: both decks have 1.5 m+ of raw
   ground over the camera everywhere past the mouths.
+- **Mitred bore joints meet at the node's height.** The thin light seam across
+  the bore (NB deck at z 1667, and at every grade break between two tunnel
+  edges) was the mitre: drawn heights came from PROJECTION onto each edge, so
+  each piece extrapolated its own grade out to the shared mitre corner, and
+  where the grade breaks (+1 % -> -10 % there) deck, wall tops and ceiling of
+  the two pieces stood centimetres apart along the joint, showing the clear
+  colour through. `meshTunnel` draws heights along the mitred lines (`Ym`: the
+  height at t, not at the projection), so both pieces meet at the node's own
+  height; groundAt still answers by projection, a few cm off at a joint only.
+  **Rays cannot see a crack this thin** -- an image diff of the same pose did
+  (51 px changed, all on the two seams).
 
 | ride (`tunnelride.mjs --hop`, traffic) | side by side (81e14ab) | stacked |
 |---|---|---|
@@ -2591,10 +2722,12 @@ in and NB surfaced 98 m in. portalcheck: 0/1023 wall faults; sliced-bore samples
 went from 2 SR-99 + 2 I-5 Express to **0 SR-99** + 4 Express (see Known gaps).
 verify, camtunnel: unchanged (0 falls, 0 through the roof).
 
-**A stall on `sb` is the lid, not the bore.** In 2 of 5 final runs `sb` logged
-one stall at exit +197 (z 1892, the SR-99 surface on the lid beside the NB entry
-cutting): an AI car in the right lane hit a lid side barrier standing 0.7 m
-inside the 7 m carriageway and wedged, and the car behind stopped.
+**A stall on `sb` was the lid, not the bore.** `sb` used to log one stall at exit
++197 (z 1892, the SR-99 surface on the lid beside the NB entry cutting),
+reproducibly: an AI car in the right lane hit a lid side barrier standing inside
+the 7 m carriageway and wedged, and the car behind stopped. With `e.barW`
+(above) `sb`, `nb`, `sbx` and `sbx-rev` all ride with 0 hops, and `sb --real`
+logs only a car-car shunt.
 
 **Order matters.** Each fix exposed the next one. A failed intermediate is not a
 failed idea: measure what it exposed first.
@@ -2605,45 +2738,39 @@ failed idea: measure what it exposed first.
   refused overpasses; see "Don't dip a graded freeway under a ramp". They are
   most of what `barrier-on-road` still finds (another carriageway's tarmac
   over a lane), with 15-26 deg overlaps the split-level pass does not treat.
-- **Graded samples off the drawn deck at the densest interchanges**: a raycast
-  probe finds 1.5-9 % of samples more than 10 cm off (139 of 1656 at I-5
-  downtown, 45 of 480 at Mercer), mostly riding a surface above their own
-  profile with nothing drawn there. Not diagnosed further.
+- **The contract probe still finds ~1 % of graded samples 10 cm+ off the drawn
+  deck** at the densest interchanges (18 of 1655 at I-5 downtown, 24 of 3417 at
+  I-5 / I-90). Mostly decks stacked ~1.1 m over another deck, left as imported
+  (the probe's ray from y + 1.2 hits the deck above the car), plus a few
+  junction-square and anchor cases at locked decks. See "What you drive on is
+  what is drawn".
 - **`survey.mjs` poses its eye-level camera from the node-height chord + 1.9 m**,
   which on a graded deck is not where the road is, so eye-level deck shots
   float. Kept so before and after share framing.
-- **A lid side barrier can stand in a lane.** `inLane` only withdraws slabs whose
-  walls are within 2.6 m of the road's centreline, so a side between 2.6 m and
-  hw is in the outer lane: past SR-99's SB exit one stands 0.7 m inside the 7 m
-  carriageway and wedges AI cars (the `sb` stall above). Withdrawing such slabs
-  brings the dip back; making those sides fascia-only lets a car drop off the
-  slab edge. Being fixed now.
 - **SR-99 is not to scale.** The NB deck runs 6.6 m under the SB one and bottoms
   at -17.6 m under SODO; the real bore is far deeper (64 m under Virginia St).
   The game box is 14 m wide (OSM hw 7) against a real 9.8 m roadway, and it is a
   box section, not the circular bore.
-- **A thin light seam shows at some bore wall/ceiling joints** between tunnel
-  edges (seen on the NB deck at z 1634). Not diagnosed, not checked against the
-  side-by-side build.
-- **Retaining-wall slabs float over the SB exit cutting** (the "fins" in
-  `sb-climb` shots, before and after stacking). Corridor wall code, untouched by
-  the stacking.
 - **I-5 Express ramp cuttings slice its bore**: portalcheck's 4 sliced-bore
-  samples are all the Express, at (569,-184)/(577,-212) and (513,77) twice. The
-  last, a ramp cutting's floor 0.4 m inside the Express roof, is pre-existing;
-  the old plan-only `inCut` hid it.
+  samples are all the Express, at (569,-184)/(577,-212) and (513,77)/(514,66).
+  Pre-existing; the old plan-only `inCut` hid them. **It stays because it is a
+  profile problem, not a trench-floor one**: at (513,77) the ramp cutting's OWN
+  ROAD runs 0.3-1.2 m inside the Express roof (ramp deck ~5.7 m over the
+  Express deck, bore box 5.7 m), so no floor clamp can clear it. Clamping the
+  trench floor onto the bore roof was tried and reverted: it fixed one sample,
+  moved the slice to (514,66), and put ground 0.5 m over four corridors'
+  carriageways (portalcheck). The fix is to drop the Express or lift the ramp
+  there; (569,-184)/(577,-212) are the same class. The bore-joint fix did remove
+  the dotted seams visible in the Express at that spot.
 - **Wrong-way SR-99 rides pass only because the harness dodges** and keeps the
   car alive; cars collide as 4 m circles, so any head-on in a 2-lane bore is a
   hit.
-- **The pavement's outer edge is an open 52 cm step.** Pavement is drawn at
-  terrain + `WALK_LIFT` 0.52 m with a kerb face on the road side only, so a
-  pedestrian standing on the verge beyond it is correctly on the ground and,
-  seen across the slab from eye height, looks sunk to the waist.
-  `PedSystem` spawns at hw + 1.4, on the slab, but fleeing pedestrians and the
-  player can walk off it. SSAO draws a soft contact band along the same step
-  on sloping verges, where it reaches ~0.9 m. The fix belongs in world.js — a
-  skirt or verge ramp on the outer edge, or terrain raised to meet it — and is
-  pending.
+- **meshPortalWall's "FACE THE APPROACH RAMP TOO" loop is dead code.** It reads
+  `this._pcutBy.get(m.ni).apron`, but `_pcutBy` maps a node to an ARRAY of cuts
+  since "one cut per branch", so `.apron` is always undefined and the loop has
+  drawn nothing since. Found during the lid work and not fixed: iterating the
+  array would bring back walls nobody has looked at since, so shoot the
+  approaches before and after rather than just reviving it.
 - **The express lanes only run northbound**, because the import drops
   `oneway=reversible` (see "One-way traffic").
 - **AI lanes are 4.2 m apart** because the car collision shape is a circle, so a
