@@ -1,6 +1,6 @@
 # Auto
 
-An open-world driving/on-foot game set in a ~16 km x 16 km Seattle, built from
+An open-world driving/on-foot game set in a 26 km x 26 km Seattle (`MAP_HALF` 13000), built from
 real map data. Landscape iPhone PWA: left thumb stick, right-side buttons, drag
 the right half to look.
 
@@ -21,7 +21,7 @@ src/citygen.js              decodes the road graph and footprints, indexes them,
 src/build.js                Builder (merged geometry) + mergeByMaterial
 src/textures.js             every texture, drawn into canvases at boot
 src/world.js                terrain, water, sky, streamed chunks, far skyline
-src/landmarks.js            hand-built landmark meshes
+src/landmarks.js            landmarks to published dimensions, + their solids
 src/vehicles.js             vehicle models + the arcade driving model
 src/traffic.js              traffic AI, parked cars, police, helicopter, A*
 src/peds.js                 humanoid builder + pedestrian/cop crowd
@@ -38,11 +38,13 @@ tools/build_raster.py       DEM tiles + water polygons -> height/surface/water
 tools/build_roads.py        OSM ways -> roads.bin, and the graph assertions
 tools/build_buildings.py    OSM footprints -> buildings.bin
 tools/build_places.py       landmarks, neighbourhood names, spawn points
+tools/build_lots.py         car parks, plazas, yards -> lots.png
 tools/fetch_dem.py          downloads the USGS terrain tiles
 tools/render_map.py         draws the whole graph top-down, for eyeballing
 tools/verify.mjs            headless CDP boot + assertions + screenshots
 tools/jank.mjs, perfguard.mjs, beauty.mjs, survey.mjs, gait.mjs, flycam.mjs,
-  crowdshots.mjs, charshots.mjs, vehshots.mjs ...   see "Verifying"
+  crowdshots.mjs, charshots.mjs, vehshots.mjs, landmarkshots.mjs,
+  lotshots.mjs, trafficcheck.mjs ...   see "Verifying"
 ```
 
 ## Where the map comes from
@@ -57,11 +59,12 @@ tools/data/dem/*.png                   132 terrarium tiles, z14 (~6.4 m/px)
         |  python tools/osm_extract.py            (~3 min, one full scan)
 tools/data/raw_*.json                  projected + clipped intermediates
         |  build_raster / build_roads / build_buildings / build_places
-apps/auto/data/height.png     401x401 @ 40 m   h = ((R<<8)|G)/10 - 100
-apps/auto/data/surface.png   1601x1601 @ 10 m  R = water, G = green
+apps/auto/data/height.png     651x651 @ 40 m   h = ((R<<8)|G)/10 - 100
+apps/auto/data/surface.png   2601x2601 @ 10 m  R = water, G = green
+apps/auto/data/lots.png      1801x1801 @ 14.4 m  G = lot code, R = coverage
 apps/auto/data/roads.bin      64k nodes, 70k edges          1.95 MB
 apps/auto/data/buildings.bin  125k oriented boxes, chunked  1.51 MB
-apps/auto/data/places.json    19 landmarks, 84 neighbourhoods
+apps/auto/data/places.json    22 landmarks (Smith Tower last), neighbourhoods
 apps/auto/data/water.json     lake surface levels
 ```
 
@@ -76,10 +79,14 @@ tools/.venv/bin/python tools/osm_extract.py     # only after a new .pbf
 tools/.venv/bin/python tools/build_raster.py    # must run before build_roads
 tools/.venv/bin/python tools/build_roads.py
 tools/.venv/bin/python tools/build_buildings.py && ... build_places.py
+tools/.venv/bin/python tools/build_lots.py      # after build_raster, 4 s
 ```
 
 `build_roads.py` reads `height.png`, so **the raster step has to run first** or
-every road node gets its height from the previous terrain.
+every road node gets its height from the previous terrain. `build_lots.py`
+reads `surface.png`'s water channel, so it runs after the raster step too.
+`osm_extract.py --lots` rescans the .pbf for the lot layer alone (~4 min) and
+leaves every other `raw_*.json` untouched.
 
 Each tool asserts on its own output and exits non-zero: the raster probe checks
 18 points against USGS NED elevations and known land/water, and the road build
@@ -241,7 +248,9 @@ greenspace and real roads run through them -- Aurora crosses Woodland Park, Lake
 Washington Boulevard runs the length of its own. 6.4% of sampled carriageway
 centres sit inside the green mask. `inPark()` knows about grass, not about
 tarmac, so the scatter asks `city.onRoad(x, z, pad)` as well. Anything else
-scattered on the ground needs the same call.
+scattered on the ground needs the same call. **Nor does it know about lots**:
+OSM draws a park's own car park inside the park, so trees also skip
+`G.lotAt()` (a plaza keeps a third of them; see "Lots, plazas and yards").
 
 **And they plant themselves in the sea.** The green mask and the water mask are
 separate rasters whose shorelines do not agree to the metre, so `inPark()` says
@@ -617,22 +626,48 @@ Physically-shaded, image-based-lit, tone-mapped, with a hand-rolled post chain.
   roughly halved on every material, exposure 1.25). **Change this ratio before
   reaching for any other visual fix**, because everything else is measured
   against it.
-- **SSAO is built and switched OFF** (`fx.ssao: false`), because measured it
-  still dirties the street. It reads the scene pass's own depth attachment
+- **SSAO is ON at `high` only** (`ssaoOn = q === 'high'`; 12 taps on desktop,
+  8 on a phone). It reads the scene pass's own depth attachment
   (`postfx.sceneRT` carries an integer `DepthTexture`, filled for free), runs
-  half res, and multiplies BEFORE bloom. But beauty shots with it on
-  (`AUTO_SSAO=1`), lower-half median linear luminance:
+  half res, and multiplies BEFORE bloom. It first shipped off because it halved
+  street value (street 0.156 -> 0.076). That was three bugs, not a strength
+  problem:
+  1. **Face the depth normal toward the camera, not toward +Z.** `n.z < 0 ? -n : n`
+     is only right for a level or down-pitched view. Pitch up a degree and open
+     ground's normal flips into the road, and every nearer ground sample is an
+     occluder: street, shopfront and facade (all looking slightly up) lost about
+     half their value, residential (looking down) 9 %. Face by `dot(n, P) > 0`.
+  2. **"Is this sample buried?" is decided by pixel rounding at grazing angles**
+     (one road pixel 20 m out spans ~0.35 m of depth). It is a horizon-style
+     estimate over the points actually drawn instead: sine of their elevation
+     above the tangent plane, squared (a 30 cm step barely counts, a wall does),
+     times a `1 - d²/R²` falloff. Depth reads snap to texel centres.
+  3. **The bilateral blur rejected nothing**: `exp(-|dz| * 0.02 / (1 - z))` is
+     `exp(-0.02 * dd/d)`. It weights by linear relative depth now (sharpness 12).
 
-  | shot | AO off | AO on |
-  |---|---|---|
-  | street | 0.156 | **0.076** |
-  | shopfront | 0.172 | **0.090** |
-  | facade | 0.109 | **0.061** |
-  | park / skyline | 0.193 / 0.159 | 0.187 / 0.159 |
+  **Occlusion is gated to 0.7-1.2 m above the tangent plane.** Pavements stand
+  0.45-0.9 m proud of the terrain beside them (lifts plus chord error), and
+  scored honestly they drew a dark band along every verge. Cars, walls and
+  building bases survive the gate; kerbs and paved lifts do not, so AO sees no
+  under-car clearance and no window reveals (those are normal-map only). The
+  composite takes a multi-bounce fit (Jimenez 2016, frame luminance as albedo),
+  because AO multiplies sunlight too here and bright pavement must not dim.
+  Radius 2 m growing with distance to 3x, fade 90-220 m, strength 14.
 
-  It halves street-level values and lays dark clouds over open tarmac at a
-  grazing angle, for 3 fullscreen passes. **Before turning it on, the occlusion
-  test has to reject by surface orientation first.**
+  | lower-half median (`values.py`) | AO off | AO on | shadowQ off | on |
+  |---|---|---|---|---|
+  | street | 0.1567 | 0.1555 | 0.0322 | 0.0295 |
+  | shopfront | 0.1731 | 0.1679 | 0.0475 | 0.0449 |
+  | facade | 0.1085 | 0.1081 | 0.0170 | 0.0168 |
+  | residential | 0.1339 | 0.1315 | 0.0540 | 0.0509 |
+  | downtown | 0.0639 | 0.0612 | 0.0280 | 0.0266 |
+
+  Open-road smudge (pixels darkened > 4 %) on the street carriageway crop went
+  53,360 -> 31 of 53,550. Cost: 3 half-res passes (AO + 2 blur), 17 depth taps
+  per AO pixel (13 on a phone), no draws. **Judge it off vs on in ONE boot**,
+  so traffic and frame are the same, and reset every uniform to its default
+  between configs: one config's setting leaking into the next made two
+  different settings measure identical for an afternoon.
 - **Dither belongs in the output pass, not in the sky.** Baked into a sky
   texture it magnifies across the screen as clumped grain, shows up on the water
   as well, and pollutes the IBL the same texture feeds. It is screen-space,
@@ -900,6 +935,30 @@ a kerb) with a softer response than a wall, and `Player.blocked` uses a circle s
 you slide around a trunk instead of sticking to it. The radius is the **trunk**,
 not the canopy -- blocking the full spread makes a park impassable.
 
+**Landmarks are solid too, through the same call.** `city.setLandmarkSolids(list)`
+installs them once at boot on a 40 m grid, and `obstacleHit` answers them after
+trunks and barriers, so the player's car, traffic and walking all collide with
+no call site changed. Each solid is a circle or an oriented box with a height
+band `[y0, y1]`: nothing above `y1` is blocked, nor anything more than 2.5 m
+below `y0` (the trunks' underground rule). Builders push colliders in their own
+frame (`solidCircle`, `solidBox`, `solidOutline` for a wall along every edge of
+a plan) and `worldSolid` turns them through the group's yaw. **A box's world rot
+is `rot - t`**, because three's `rotation.y = t` maps local (x, z) to
+(x cos t + z sin t, -x sin t + z cos t).
+
+- **The Needle is solid at its column feet and core only** (`needleSolids()`:
+  a 3.6 x 2.2 m box per foot, a 3.3 m circle for the core), so you can walk
+  under it. **The pavilion's glass ring (r 18.4 m) is not solid, on purpose**:
+  it encloses the base, and a solid ring makes the core unreachable.
+- **Every solid is tested against the roads before it is installed**
+  (`city.onRoad(x, z, 0.3, false)` over its footprint; decks ignored, so a
+  viaduct overhead drops nothing). Dropped ones are listed in
+  `landmarks.userData.solidsDropped` — today the convention centre (I-5 runs
+  under it) and the ferry terminal (Colman Dock's vehicle lanes). **A dropped
+  solid usually means the MODEL is on the road too**: Smith Tower's east wall was
+  dropped until its lot was clipped clear of the street (`clipHalf`), because
+  OSM's lot runs to that street's centreline.
+
 **Greenspace and footprints are separate OSM layers and they overlap.** Park
 polygons are mapped straight over the museum, pavilion or house standing in
 them, so `inPark()` happily says yes in the middle of a building: 9.3 % of
@@ -916,14 +975,16 @@ built rather than blocked out:
   without the cut, tyres just intersect a straight sill and the whole thing
   reads as a toy. Three geometries per type share materials across all
   instances: `paint` (tinted per car), `trim` (glass/chrome/lenses/rims,
-  metallic) and `matte` (tyres/plastic/arches). See "Every vehicle type has an
-  authored builder" below.
-- **Characters** (`peds.js`) are `SkinnedMesh`es: one draw call each, but with an
-  18-bone skeleton, so elbows and knees actually bend. Geometry comes from a
-  pool of 12 designed looks plus 4 cop looks (per-instance variety is skeleton,
-  scale, colours and gait), textured from one atlas, and `animateWalk` is a
-  procedural cycle — counter-rotating chest, level head, breathing idle, and the
-  legs described below.
+  metallic; the glass is see-through) and `matte` (tyres/plastic/arches, the
+  cabin and its occupants). See "Every vehicle type has an authored builder"
+  and "Vehicle glass is see-through" below.
+- **Characters** (`peds.js`) are `SkinnedMesh`es: one draw call each, but with a
+  22-bone skeleton (`BONE_COUNT`), so elbows, knees and fingers actually bend.
+  Geometry comes from a pool of 12 designed looks plus 4 cop looks
+  (per-instance variety is skeleton, scale, colours and gait), with a sculpted
+  head, textured from one atlas, and `animateWalk` is a procedural cycle —
+  counter-rotating chest, level head, breathing idle, and the legs described
+  below.
 
 ### Every vehicle type has an authored builder
 
@@ -959,30 +1020,89 @@ Traps:
 - **Kerb side is -x**: `laneOffset` puts a vehicle heading +z at -x of the
   centreline, so bus doors are on -x.
 
+### Vehicle glass is see-through, and still 3 draws a vehicle
+
+- **Glass lives in `trim`, flagged per vertex.** `tagGlass()` gives every trim
+  geometry a `glass` attribute (1 where the vertex colour is exactly `GLASS`)
+  and reorders the index buffer so glass triangles come LAST. `glassShader`
+  (trim's `onBeforeCompile`) turns those fragments into a dielectric pane:
+  metalness 0, roughness 0.05, the reflected ray folded into the upper
+  hemisphere like the curtain wall's, opacity
+  `mix(GLASS_ALPHA 0.55, 1, (1 - N.V)^5)`.
+- **The blend is premultiplied** (`CustomBlending`, ONE / ONE_MINUS_SRC_ALPHA):
+  the reflection adds at full strength and only the tint scales the cabin.
+  Straight alpha dims the reflection with the cabin and reads as grey film. Fog
+  is corrected for it after `fog_fragment`.
+- **The whole trim draw is in the transparent pass** (depth writes on). Opaque
+  trim has alpha 1 and draws as before; the glass-last index order is what
+  stops a pane depth-rejecting chrome behind it in the same draw.
+- **`GLASS` is a MARKER colour now.** Anything dark that must stay opaque takes
+  another one: door-mirror faces are `MIRROR`, because as glass they showed the
+  empty pod behind.
+- **A 4th glass material was measured and refused.** With 30 fixed civilians at
+  perfguard's downtown camera: glass in trim 3.07 draws a vehicle, 437 a frame;
+  a separate glass mesh 4.07 and 467 (+7 %), past perfguard's 4 % tolerance at
+  ~14 cars, for no visual gain. Opaque Fresnel glass costs nothing and cannot
+  show a cabin: it reads as a better-reflecting slab.
+
+**What is behind the glass has to exist.** `carCabin(matte, g, paint)` builds
+from the same greenhouse stations that drew the glass: floor, dash, seats (back
+plus headrest on two posts — the gap is what reads as a seat), headliner,
+wheel rim. **Drape the floor on the deck** (`deckAt()`): a flat floor at the
+glass line showed body colour behind a hatch's rear seats. `boxCabin` (van,
+truck, ambulance cabs) takes `sit`, the seated-shoulder level; `busCabin` has
+no liner walls, because a bus is seen through.
+
+- **Occupants are `matte.crew`, merged only into occupied geometry**: `matteGeo`
+  (player), `matteGeoW` (traffic), `matteGeoWE` (parked, empty). `Vehicle.mode`
+  is a setter that swaps the last two, so traffic.js and player.js make no
+  calls. `scaledBuild` scales the crew too.
+- **`boxShell` glass needs real openings.** Van, truck, ambulance and bus panes
+  sit a few mm proud of the painted shell, and see-through they showed the
+  livery. `boxShell({ windows, slope })` takes the `sideGlass` / `slopeGlass`
+  arguments, adds their stations as ring stations and skips those quads
+  (`Builder.loft`'s `skip(i, k)`). Flat end-face screens are `endFace` holes.
+  Glass over solid lower body or a skin (bus doors, plane windows) is backed in
+  dark matte instead.
+
+Cost: +6.5 % triangles a traffic vehicle (weighted, 6,378 -> 6,791), bus +22 %,
+box-shell trucks +13 %; perfguard's frame draws and triangles unchanged within
+noise. Overdraw is the glazed area only.
+
 ### Characters: atlas, hair, looks
 
-- **One 1024x1024 atlas** (`drawAtlas`, drawn at boot), one material, still one
-  draw a character. Cells 0-4 are a painted face per skin tone, on WHITE head
-  vertices so the paint shows (skin encoded to match the neck, because vertex
-  colours are linear and the map is sRGB). Cells 5-11 are greyscale detail that
-  MULTIPLIES the vertex colour: knit, twill jacket, denim, leather shoe, hair,
-  hand, skin. Multiplied paint can only darken, so anything that must be the
-  brightest thing on a garment (hi-vis bands) is geometry.
+- **One 2048x1024 atlas** (`drawAtlas`, drawn at boot), one material, still one
+  draw a character. The left square is the 4 x 4 grid of 256 px cells: cells
+  5-15 are greyscale detail that MULTIPLIES the vertex colour (knit, jacket,
+  denim, shoe, hair, hand, skin, hoodie, skirt, curly, uniform). Multiplied paint
+  can only darken, so anything that must be the brightest thing on a garment
+  (hi-vis bands) is geometry. The right square holds the five painted FACES,
+  one per skin tone, at 512 x 341 (`faceRect`), on WHITE head vertices so the
+  paint shows (skin encoded to match the neck, because vertex colours are
+  linear and the map is sRGB). At 256 px a face was stretched ~3x at portrait
+  distance and every feature came out a grey-brown haze. 10.7 MiB with mips.
 - Parts map cylindrically round their own axis; `SkinAcc.add` repairs the back
   seam per triangle or every feature smears down the back. The face cell wraps
-  +-112 deg of the head only (~140 px across the face).
+  +-100 deg of the head (`HEAD_SPAN`), chin to just over the hairline: ~500 px
+  across the face. Shading the modelled head now does itself (jaw, chin,
+  philtrum, nose sides) is NOT painted; lips, nostrils, a nose sheen and a lit
+  chin are.
 - **Features are paint, not geometry.** 3-6 mm eye/brow/mouth boxes read as
   stuck-on plates up close and, thinner than a depth texel, shimmered from
   across the street. Same for thin torso boxes (a placket): paint them.
-- **Hair GROWS from the skull** (`buildHair`, with `SKULL` / `skullAt` shared
-  with the head loft). Lofted shells with open bottom rings came out a bowl
-  however the rings were treated. Each column starts on the skull at its own
-  edge height (hairline, temple corner, sideburn, over the ear, nape) and
-  thickens over its first 2 cm. **Start the shell 1 mm OUTSIDE the skull**: the
-  18-sided loft's flat faces sit up to 1.1 mm inside the ellipse the shell is
-  sampled from, and a shell starting inside zigzags across them (a notched
-  fringe). Jitter the edge only at the sides and nape, clip strand strokes at
-  the hairline, and paint the band above the hairline as skin, or a white line
+- **Hair GROWS from the drawn head, not from the ellipse** (`buildHair`, over
+  the head's own `grid`). Lofted shells with open bottom rings came out a bowl
+  however the rings were treated. Hair columns ARE the head's columns: each
+  shell point is `grid.at(j, y)` plus the head's NORMAL times thickness, at
+  least **1.6 mm**. Offset along the ray at 1 mm it dipped under the head's
+  triangulation (raycast: 0.2 mm out, then -0.6 mm) and the two fought. Each
+  column starts at its own edge height (hairline, temple, sideburn, over the
+  ear, nape); rows run edge, one between, then ON the head's own top rows,
+  because a straight chord between rows anywhere else cuts inside the dome. Cap
+  the crown, or the skull shows through as a pink smudge. The buzz cut is a
+  3.5 mm shell: painted, its edge was one straight line with a pale band under
+  it. Jitter the edge only at the sides and nape, clip strand strokes at the
+  hairline, and paint the band above the hairline as skin, or a white line
   shows across every forehead.
 - **Garments read at twenty pixels by their boundaries, not their grain.**
   Collars, hoods, cuffs, turn-ups, hems, belts are geometry; pockets, zips and
@@ -998,13 +1118,69 @@ Traps:
 - **Feet stay 12-sided.** At 10 the ring has no vertex at +-z, the heel and toe
   move ~5 mm in, and that breaks `SOLE / HEEL_Z / TOE_Z` (see the gait).
 
-Cost: a pooled look is 2,971 triangles mean (was 2,051), a cop 3,264, the player
-2,770; building the 12 looks takes 22.6 ms on first spawn. Like for like
-downtown (13 peds, 22 vehicles) the frame is 387 draws either way and +0.18 %
-triangles. An untrimmed 3,361 mean was ~+64k triangles a crowded frame with
-shadows, about perfguard's tolerance; the trims (hair columns 36 -> 24, 8-sided
-hands, 8-sided nose) cost nothing visible. Phones cast no ped shadows, so there
-it is one pass.
+### Characters: head, hands, hood
+
+**The head is sculpted** (`headGrid`, `faceRelief`). `SKULL` is only the base:
+the head is `HEAD_COLS` 24 x `HEAD_ROWS` 16, columns dense across the face
+(0/3/7/13 deg at the nose and mouth) and sparse behind the ears, and each vertex
+is the base ellipse plus a relief (brow ridge, sockets, cheekbones, nose
+bridge/tip/wings/columella, philtrum, lips, chin, jaw angle, muzzle).
+`faceParams(seed, soft)` gives each pooled look its own features; `soft`
+(skirt, dress, long, bun) softens jaw and brow.
+
+- **Relief moves a vertex ALONG THE RAY FROM THE UV AXIS `(0, HEAD_Z)`** at its
+  column's angle. The face cell is a cylindrical projection round that axis, so
+  UV depends on column and row only and sculpting cannot slide the painted eyes
+  off the sockets. Put a new feature where `drawAtlas`'s `hp()` paints it: eyes
+  +-21 deg; brows eye + 21 mm; nostrils eye - 47 mm; mouth chin + 45 mm.
+- **The mouth needs a muzzle term, and the nose a columella.** Without the
+  dental arch's forward push the lips sat in a dish; with the nose's whole
+  underside running back to the lip in one row, its shadow smoothed onto the
+  upper lip. Under a top light both read as a moustache on every face.
+- **The lower face was still muddy, and neither cause was the sculpt.** Each
+  was isolated by removing shadows, AO and map in turn (`CHAR_EVAL`):
+  - **Self-shadow at building texel size.** The sun's texel is 0.25 m and its
+    normal bias 0.12 m; a head is 0.23 m. `pedMat.onBeforeCompile` lifts the
+    shadow lookup 0.60 m toward the sun, scaled by the length of the shadow
+    matrix's depth row so it holds for any box. A body can no longer occlude
+    itself; a building still shadows a pedestrian. **It is a string replace on
+    r160's `shadowmap_vertex` and a silent no-op if that text changes.**
+  - **Smoothed normals at the subnasale ring.** A white, unshadowed, unpainted
+    head still showed the band. `creaseNoseBase` splits the normals per vertex
+    across the nose and fades the split out by 16 deg; a per-quad weight or a
+    per-quad face normal made blocks.
+  - The painted face adds a soft sheen down the nose bridge and on the tip:
+    seen straight on, the nose's front plane was the cheeks' value and the tip
+    dissolved into them.
+- The head is drawn only up to the hairline ring; every style and hat covers
+  the rest. Ears (`buildEar`, a rim round a sunken bowl) are skipped under
+  covering styles (long, curly, side), where they would poke through.
+
+**Hands have fingers** (`buildHand`, `digit`, `FINGERS`). A flat palm facing the
+thigh, four smooth-shaded fingers in a relaxed cascade (curl increasing toward
+the little finger) and a thumb, ~196 triangles a hand. **Finger bones are
+APPENDED** (fingL/tipL/fingR/tipR, indices 18-21), so every older index keeps
+the meaning gait.mjs reads. The relaxed curl is in the bind pose and the bones
+only add to it: a loose fist with `runBlend` in `animateWalk`, and
+`gripHands(h)` (pronates and closes; `makeRider` calls it). Curl is
+`rotation.z` with sign `-side`. Digit skin weights are looked up by exact vertex
+position in a Map, which is exact because Builder copies corner arrays verbatim.
+
+**Hood and long hair lie on the body.** The hood grows from the torso's own
+rings (`tRings`) along their normals, full thickness down the spine and diving
+INTO the torso at its edges, so there is no ledge; rim and lining ride the neck.
+Three ovals behind the neck was a pillow. The long curtain starts UNDER the
+shell and comes out from beneath its edge (started on top it made a shelf),
+keeps 10 mm off the body (`bodyAt`), ends on the shoulders, and rides the chest
+below the jaw — at 40 % head it went into a runner's upper back.
+
+Cost: a pooled look is **3,389 triangles mean** (3,202-3,558), a cop 3,704, the
+player 3,520, a rider 3,488. By part: head 838, hair 283, hands 392. Still one
+draw a character and still pooled; 24 pedestrians with desktop shadows is ~20k
+triangles more a crowded frame, ~1.7 % of perfguard's 1.18 M, and perfguard is
+unchanged within noise. Building the 12 looks takes 41 ms in Node. Phones cast
+no ped shadows, so there it is one pass. `tools/gait.mjs` output was
+byte-identical across the head, hand and hood work.
 
 ### The gait plants feet, it doesn't swing legs
 
@@ -1094,7 +1270,7 @@ keep the hips higher; runners do sit lower through a flexed stance knee. Don't
 On-foot pace is **5.0 m/s running and 7.2 sprinting**. It was 3.6/5.4, lowered
 at some point to stop the gait reading as track athletics -- which was the wrong
 lever, because the gait keys off `runBlend` and the rig judges it at 1.4/3.5/7.5
-where it already passed. The pose was never the speed's problem, and a 16 km
+where it already passed. The pose was never the speed's problem, and a 26 km
 city at 3.6 m/s is a chore.
 
 Two standing traps. `animateWalk` owns `h.phase` -- advancing the cycle anywhere
@@ -1132,6 +1308,61 @@ street at 590 m, tophouse, Kerry Park at the game's FOV and at telephoto,
 aerial, and 4 km toward Beacon Hill. It also prints the Needle's draw and
 triangle cost.
 
+## Landmarks
+
+The rest are built to published dimensions where any exist, and to the OSM
+footprint where the plan matters. The table at the top of `landmarks.js` gives
+each number and its source; "est." marks one no source publishes, and says what
+it was set from. Collision is in "Solid street objects".
+
+- **Plans come from OSM, not from a box.** `tools/data/raw_buildings.json` holds
+  every footprint as a projected polygon; MoPOP, the arena's south atrium, the
+  Lumen and Husky bowls and T-Mobile's bowl use one directly, simplified to
+  ~1.2 m and stored relative to the landmark's point. The Spheres' centres and
+  radii were fitted to the lobes of their footprint.
+- **A footprint is not always a plan you can build.** The Main Arcade's OSM ways
+  run down the bluff and over Western Avenue; built as a prism they stood a
+  20 m wall across Western. It is a strip along Pike Place's west kerb now,
+  measured with `city.onRoad` stepping out from the centreline. Check any
+  footprint-driven model against the roads (`solidsDropped`) before believing it.
+- **A landmark's OSM point may not be where its model goes.** The "Pike Place
+  Market" node sits 220 m up the bluff from the sign, and a clearing radius
+  round it deleted ~75 m of real buildings on the wrong block. The model is
+  placed at `g.userData.at` (the Public Market Clock node), and a
+  `LANDMARK_CLEAR` entry may be a list of `[dx, dz, r]` circles instead of one
+  radius.
+- `userData.worldAligned` makes `buildLandmarks` ignore `l.rot`, for plans
+  already in world axes (every footprint-driven one). `userData.baseY`
+  overrides the terrain height for anything on a pier: the Great Wheel's point
+  is 2 m under the bay.
+- **Clusters, not one mesh.** Landmarks within ~1.2 km merge by material into a
+  cluster that culls on its own bounds, so a view of the stadiums does not pay
+  for Seattle Center. `P()` caches palette materials by
+  colour/roughness/metalness, and all lettering is one canvas (`SignAtlas`), so
+  a cluster is a handful of draws.
+- **Smith Tower is a landmark now**, not an ordinary OSM box the size of its
+  lot. It is appended LAST to `places.json` (and `build_places.py`), so
+  activities.js still gets the same collectibles.
+- **MoPOP read as inflatables** until it had near-vertical walls rolling into a
+  low crown (not a dome), folds in plan deepening toward the top, and a shingle
+  map. Its colour placement is est., from photographs.
+
+Built alone (draws after merge / triangles): Needle 6 / 14.0k, Spheres 5 / 15.0k,
+Wheel 6 / 7.3k, arena 8 / 5.6k, Troll 4 / 5.5k, MoPOP 7 / 4.7k, T-Mobile 8 / 4.7k,
+Lumen 9 / 4.3k, Husky 8 / 1.5k, Market 7 / 0.8k, Smith 7 / 0.5k. All of them:
+100 draws / 68k triangles (was 89 / 27k), but culled per cluster instead of
+always drawn, so perfguard's steady draws FELL 221 -> 165 (frame 329 -> 283)
+for +1 % triangles, mostly landmark shadow casting.
+
+`node tools/landmarkshots.mjs <dir> [views]` frames views from WORLD target and
+camera points, not from the model, so two checkouts photograph the same thing.
+It prints each landmark's cost by building it ALONE (a one-element
+`G.LANDMARKS` into a throwaway scene), which works on any build.
+`--collide` drives a sedan through `player.update` at a fixed 1/60 into a Needle
+leg, T-Mobile's and Lumen's walls and the arena, walks into a leg and walks
+under the Needle, and reports impact speed, what was hit and whether the car
+got through. `LM_PROBE='<expr>'` evaluates a one-off on the same boot.
+
 ## Parks
 
 Parks come from the green channel of `surface.png` (OSM `leisure=park`,
@@ -1141,7 +1372,92 @@ they go, which correctly includes Aurora cutting straight through Woodland Park.
 
 Tree scatter is *candidates per chunk*, filtered by `inPark`. At 46 a
 chunk-sized park got one tree per 60 m and read as bare ground; it is 230 now.
-If you add a large park, check it doesn't look empty.
+If you add a large park, check it doesn't look empty. A candidate on a lot is
+skipped (`G.lotAt`), except that a plaza keeps a third of its trees —
+Occidental Square is paving under plane trees. `jank.mjs`'s `tree-on-lot`
+counts built trunks on non-plaza lots: 0.
+
+## Lots, plazas and yards
+
+**The ground used to know two things: park, or not park.** The lot behind the
+supermarket, Occidental Square and every SoDo yard rendered as lawn. OSM has
+those surfaces; `osm_extract.py --lots` pulls them (11.8k polygons, 37k service
+ways, `raw_lots.json`) and `build_lots.py` bakes them into `data/lots.png`.
+
+**The code.** 0 = none, else `1 + kind * 50 + orientation`, orientation 0..49
+over 0..pi (the polygon's min-area-rectangle long side). Kinds: parking
+(striped), asphalt, plaza, hard (concrete), rail. **`geo.js` `LOT_ANG` /
+`LOT_KINDS` must match `build_lots.py` `ANG` / `KINDS`.**
+
+Sources, lowest priority first: commercial/retail landuse, rail landuse,
+industrial/port/garages, parking aisles, forecourts, paved courts, squares and
+pedestrian areas, car parks. Then two inferences:
+
+- **Aprons.** Most paved ground is mapped as NOTHING. A non-residential footprint
+  (industrial/warehouse -> asphalt; retail/office/school or an untyped
+  `building=yes` >= 1000 m2 -> concrete) gets a ring one cell wide, two for
+  >= 5000 m2, at the lowest priority of all. This is most of what took
+  downtown from 37 % grass to under 15 %.
+- **Pocket squares.** Occidental, Westlake Park and Pioneer Square are
+  `leisure=park` with no surface tag. A park under 5500 m2 whose 60 m ring is
+  >= 33 % MAPPED lot becomes plaza. The test runs before aprons, which would
+  talk residential parks into paving.
+
+Clipping: water always wins; the park mask wins over everything except car
+parks, squares and courts (a park's own car park is real tarmac, a loose
+`landuse=commercial` over a green is not). **A bare `service` way paves only
+where land is already developed**: painted 10 m wide everywhere it laid tarmac
+ribbons across the suburbs.
+
+**Coverage, not nearest code, and not a distance field.** A 10 m nearest-code
+raster (the first version, in surface.png's blue byte) drew its staircase
+along every big lot edge from the air. `build_lots.py` paints at 3.33 m, then
+samples a 1801² grid (14.4 m) with two bytes a sample: G = the code, R = the
+share of that sample's cell that has it. Per candidate code the shader sums
+`w * (tap has it ? a - 0.5 : 0.5 - a)` over the four taps and takes the best,
+and the zero contour of bilinear box-filtered coverage is straight where the
+polygon edge was straight. A signed distance field was tried first and came to
+694 KB against 406 KB: in a city where every point is within 20 m of some lot
+edge a distance never saturates, whereas coverage is 255 on 95 % of samples.
+**Codes cannot be filtered** (two averaged invent a third), so the texture is
+nearest with no mips and the shader does its own reconstruction.
+`geo.lotCodeAt` is the SAME reconstruction, and every CPU query (`inLot`,
+`lotAt`, lot parking) goes through it, so what is planted on and parked in is
+what is drawn. `mapdata.js` decodes with `colorSpaceConversion: 'none'`: these
+PNGs carry codes, not colours.
+
+**Drawn in the terrain shader, not as geometry.** `buildTerrain` samples lots
+as an RG8 DataTexture (6.5 MB GPU): 0 draws, 0 triangles, and — the real reason
+— the lot IS the terrain surface. Nothing needs a lift, `groundAt` is already
+right, there is no coplanar second surface to z-fight at range, and "The one
+height surface" is untouched by construction.
+
+- Asphalt kinds sample the ROAD's albedo, paving kinds the PAVEMENT's, in the
+  lot's own rotated frame, so a lot matches the street beside it.
+- Bays are 2.6 x 5.4 m, rows back to back across a 7.2 m aisle, an 18 m module
+  anchored in world space. **Every scale fades to its own area mean as the
+  pixel footprint passes it**, not only the lines: rail's 4.8 m bed banding at
+  full contrast to the horizon turned SoDo's yards to beige corduroy. Rail sits
+  on dark ballast (~0.15 linear).
+- **Asphalt needs low-frequency tone that survives the mips.** Grain averages
+  flat from the air, so hundreds of metres of lot were one grey. Lots sample
+  `tx.clouds` at 1400 m and 310 m for a +-22 % drift, pale resurfaced patches
+  and oil-dark runs. A pavement-map concrete checkerboarded from the air.
+- `traffic.updateLotParked` snaps parked cars to the SAME bay grid the shader
+  paints: ~16 % of bays within 90 m, at most 6 cars (+18 draws worst case,
+  only inside a lot), rescanned per 10 m cell. The minimap draws lots before
+  parks, from the nearest sample.
+
+| grass share (`lotshots.mjs --probe`) | before | now |
+|---|---|---|
+| downtown (r 1.2 km) | 37.2 % | 14.8 % |
+| Belltown / SLU | 45.9 % | 21.8 % |
+| SoDo | 67.4 % | 4.0 % |
+| U Village | 60.0 % | 34.4 % |
+
+Grass share is land samples (5 m grid) that render as lawn: not building, not
+road + 3 m pavement, not lot. Draws unchanged; triangles -0.6 % (fewer park
+trees).
 
 ## Vehicles
 
@@ -1256,6 +1572,64 @@ tilts off horizontal by `asin(sin(steer)·sin(spin))`, about 30° at half lock.
 That is the wheel wobble. `rotation.order = 'YXZ'` gives `Ry·Rx`: roll on the
 axle, then steer the lot.
 
+## One-way traffic
+
+**What the flags mean.** An edge's a -> b is the OSM way's own node order;
+build_roads.py never reverses a way. `F_ONEWAY` alone is a -> b only;
+`F_ONEWAY | F_ONEWAY_REV` (`oneway=-1`, 2 edges) is b -> a only; roundabouts get
+`F_ONEWAY`. **`edgeFlow(e)` (+1, -1 or 0) is the only reader in traffic.js, so
+use it.**
+
+**The flags miss I-5's express lanes.** `oneway=reversible` maps to no flag, so
+the express lanes (24 motorway + 23 link ways) arrive two-way, and traffic
+spawned on them head-on. `edgeFlow` runs all 47 northbound, the afternoon
+configuration: an untagged `hwy` named Express / Ship Canal Bridge, or any
+untagged `ramp`, which is exact for this extract. If the importer ever gets an
+`F_REVERSIBLE` bit, replace the name test with it.
+
+**Traffic keeps to strongly connected regions.** The imported one-way chains
+have dead ends: 650 stubs, 18 junctions with no legal way out, 471 at the map
+rim. `directedComponents` (an iterative Tarjan SCC at boot) labels each node;
+a spawn needs both ends of its edge in one component of 60+ nodes (131k nodes;
+the largest is 128k), and `pickNextEdge` only offers legal exits whose far node
+is in the car's own component. So a car is never led into a dead end and never
+has to U-turn into oncoming flow: 0 dead ends reached in 7 simulated minutes.
+The fallbacks are for safety: a car out of sight at a one-way dead end is
+recycled, a one-way's only exit sharper than 120 deg is taken anyway, and a
+two-way dead end still U-turns.
+
+**One-way lanes span the carriageway, 4.2 m apart** (`LANE_W`), not 3.6.
+`resolveCarCollisions` tests circles of radius 0.42 x length — 2 m for a
+sedan — so two cars abreast at 3.6 m shove each other the whole way. Lanes stay
+out of parking (2.2 m) and the shoulder (0.8 m) and inside the narrowest graded
+`e.tw`. **An overlapping opposing carriageway owns its half**: SR-99's tubes are
+14 m roads 7.5-11 m apart, and laid across full width each tube's left lane ran
+1.3 m from the other's oncoming one, so a side is capped at the midline to any
+near-parallel opposing edge within 3 m of height. Two-way streets are
+unchanged, at 0.48 hw right of centre.
+
+**Police route legally, except in a pursuit on surface streets.** `findPath`
+never takes a freeway or ramp against its flow, and may run a surface one-way
+the wrong way at 3x cost, which is what a unit cutting a block does. Inside
+55 m they still drive straight at the player.
+
+**A bore's cars spawn in the bore.** `place()` seeds `groundAt` with no height,
+so it takes the highest surface, and every car spawned on a tunnel edge drove
+the bore's line at street level into the first building (downtown's 4 stuck
+cars). `spawnTraffic` re-seeds a tunnel spawn at its node height (a bore's node
+`y` is its deck); `spawnPolice` skips tunnel edges.
+
+**Wedged cars are recycled out of sight.** Full throttle, nothing ahead, under
+0.5 m/s for 8 s and more than 120 m from the player: removed. Lamp posts beside
+lidded ramps and in the I-5 express portal hold cars forever, because the
+obstacle response takes most of their speed every frame. Stuck cars 22 -> 3.
+
+**Measure it with `node tools/trafficcheck.mjs`**, a fixed-dt sampler over 7
+sites that judges a car physically: it is against the flow only when no
+carriageway under it allows its heading. Deterministic, so two builds compare
+like for like. `--dump FILE` writes data for a top-down render, `--shot DIR`
+the in-game frames with every moving AI car ringed green or red.
+
 ## The one height surface
 
 The heightfield is now **imported** rather than baked from polygon distance
@@ -1284,10 +1658,10 @@ from `terrainHeight` directly and only uses node `y` for its bow/grade
 subdivision heuristics. It is a correctness fix for the invariant above, not a
 fix for anything visible, and shipping it as the latter would have been a lie.
 
-`height.png` is 401x401 at 40 m. **That spacing is not free to change**: it is
+`height.png` is 651x651 at 40 m (26 km / 40 m, +1). **That spacing is not free to change**: it is
 also the terrain mesh's vertex spacing, and the two have to agree. A finer query
 grid floats roads over bulges the mesh doesn't resolve; and at 20 m the mesh
-would cost 1.28 M triangles across a 16 km map, which is the whole frame budget.
+would cost ~3.4 M triangles across the 26 km map, several times the whole frame budget.
 
 Bridges and freeway decks are separate: `city.groundAt(x, z, currentY)` returns
 the deck NEAREST `currentY` within `DECK_REACH` (0.9 m above it), else the
@@ -1342,11 +1716,12 @@ landmarks would otherwise cost hundreds of draw calls.
 
 ## Draw-call budget
 
-At `high`, perfguard's downtown reads roughly 230 steady draws and 315-330 a
-frame, ~1.05-1.16 M triangles a frame (the spread is how much traffic spawned
-that boot, not the build). Triangles are up on the pre-import city because the
-building density is real; draw calls are not. Flying adds 10-20 draws for the
-far massing layer (see "Flying").
+At `high`, perfguard's downtown reads roughly 165 steady draws and ~285 a
+frame, ~1.18-1.19 M triangles a frame (the spread is how much traffic spawned
+that boot, not the build). Steady draws fell from ~220 when the landmarks were
+split into culled clusters (see "Landmarks"). Triangles are up on the
+pre-import city because the building density is real; draw calls are not.
+Flying adds 10-20 draws for the far massing layer (see "Flying").
 `__dbg.sceneStats` reports the scene pass specifically — read `renderer.info`
 yourself and you'll get the post chain's fullscreen quad instead, because the
 counters reset on every `render()`.
@@ -1363,12 +1738,16 @@ Where the budget goes, and the rules that keep it there:
   and the two non-paint materials across every instance. Traffic uses the
   `…GeoW` variants with the wheels baked in; only the player's car calls
   `setDetailed(true)`, which swaps to the wheel-less geometry and adds four
-  articulated wheel groups. Traffic averages ~6,400 triangles a vehicle
-  (weighted by `CIVILIAN_TYPES`; the authored van is 6.9k, bus 8.1k, planes
-  ~1.5k). `import('./apps/auto/src/vehicles.js')` in Node and read
-  `vehicleAssets().types[k]` index counts — no browser needed.
+  articulated wheel groups. Glass stays inside `trim`, so see-through cabins
+  added no draw (see "Vehicle glass is see-through"). Traffic averages ~6,800
+  triangles a vehicle (weighted by `CIVILIAN_TYPES`; the bus is +22 % on its
+  pre-cabin 8.1k, planes ~1.5k). `import('./apps/auto/src/vehicles.js')` in
+  Node and read `vehicleAssets().types[k]` index counts — no browser needed.
+- **landmarks are clusters**, merged by material within ~1.2 km and culled on
+  their own bounds: 100 draws and 68k triangles for all of them, but only the
+  clusters in view are paid for.
 - **characters are 1 draw each.** They're `SkinnedMesh`es over a pool of 12
-  shared geometries (`variants()`) plus 4 for cops (`copVariants()`), ~3k
+  shared geometries (`variants()`) plus 4 for cops (`copVariants()`), ~3.4k
   triangles each, so per-instance cost is a skeleton, not a buffer. **Never
   dispose a pooled geometry** — `makeHumanoid` returns a
   `dispose()` that no-ops unless the character was built `unique`, and
@@ -1378,9 +1757,11 @@ Where the budget goes, and the rules that keep it there:
 - **terrain is 12 x 12 tiles.** Tile size trades draw calls against wasted
   triangles, and on a phone the draw calls are what hurt. 20 x 20 put 132 terrain
   meshes on screen at once -- a third of the entire budget -- for ground that is
-  mostly behind buildings; 8 x 8 makes each tile 2 km wide on a 16 km map and the
+  mostly behind buildings; 8 x 8 makes each tile 3.3 km wide on the 26 km map and the
   frustum never culls one.
-- parked cars only exist within `PARKED_RADIUS` and hide past 140 m.
+- parked cars only exist within `PARKED_RADIUS` and hide past 140 m. Lot
+  parking adds at most 6 cars (+18 draws), only inside a lot.
+- lots are drawn by the terrain shader: 0 draws, 0 triangles.
 
 `roadLift()` is a 3×3-chunk edge scan, so **anything that samples the ground
 more than once a frame computes the lift once and passes it in**: vehicles take
@@ -1439,9 +1820,14 @@ The purpose-built harnesses, each a fixed-dt, paused-game driver:
 |---|---|
 | `tools/gait.mjs [--trace]` | the stride against published bands, sole contact, the speed ramp (see "The gait") |
 | `tools/gait-strip.mjs` | a frame strip of the cycle; forces the player's humanoid visible on the staging point (one boot spawned in a car and shot 12 frames of empty ground) |
-| `tools/charshots.mjs [tag] [seed] lineup` | every pooled look plus a cop side by side at 9 m — a single seed says nothing about the pool |
-| `tools/crowdshots.mjs [tag]` | 12 pedestrians, one seed per POOLED LOOK, posed at dt = 0 on a real pavement; seeds `1000 + k*7919` landed on one look and photographed the harness |
-| `tools/vehshots.mjs <tag> [types] [--street]` | `--street` parks a fixed lineup on the densest commercial street, shot at eye height and raised — a before/after random traffic can't give |
+| `tools/charshots.mjs [tag] [seed] lineup` | every pooled look plus a cop side by side at 9 m — a single seed says nothing about the pool. Close views `face`, `face34`, `profile` (0.5-0.62 m, near plane 0.05: the game's 0.5 m cut the face in half), `hands`, `handback`, `grip`, `run`. The sun sits 300 m out: at 12.8 m the subject was inside the shadow camera's near plane and portraits could not show self-shadowing at all |
+| `CHAR_VIEWS=a,b` / `CHAR_OPTS='{json}'` / `CHAR_EVAL='<js>'` | limit the views / merge into `makeHumanoid`'s options (a cop, the lightest skin, which no pooled look deals) / run an experiment on the posed subject first (switch off shadows, AO, map) |
+| `CHAR_PROBE='face:x,y;x,y\|profile:x,y'` | raycasts pixels back to the part (`geometry.userData.parts`, recorded by `SkinAcc.add(..., name)`) and the BIND-pose point that drew them. The posed idle stands lower than bind, so don't compare posed y |
+| `tools/crowdshots.mjs [tag]` | 12 pedestrians, one seed per POOLED LOOK, posed at dt = 0 on a real pavement; seeds `1000 + k*7919` landed on one look and photographed the harness. `CROWD_PROBE=1` prints each person's screen position, placed height, terrain, `roadLift` and what a ray straight down hits — a sunk figure is a disagreement between the ground query and the geometry |
+| `tools/vehshots.mjs <tag> [types] [--street]` | `--street` parks a fixed lineup on the densest commercial street, shot at eye height and raised — a before/after random traffic can't give. The lineup spawns occupied, with a `chase` view on the first near-lane car |
+| `tools/landmarkshots.mjs <dir> [views] [--collide]` | world-framed landmark views, per-landmark cost built alone, and the collision drive/walk (see "Landmarks"); `LM_PROBE` |
+| `tools/lotshots.mjs <dir> [--probe]` | lot views; `--probe` prints the grass share per region (see "Lots, plazas and yards") |
+| `tools/trafficcheck.mjs [--dump FILE] [--shot DIR] [--sites a,b]` | share of cars against the flow, oncoming contacts, stuck cars and jams over 7 sites at fixed dt, the last a police pursuit (see "One-way traffic") |
 | `tools/flycam.mjs [--jitter]` | a scripted flight: camera measured RELATIVE TO THE PLANE and the plane's on-screen motion, since absolute camera movement at 116 m/s is ~2 m a frame regardless. The autopilot holds 45 m over the terrain under AND 400 m ahead, or the bay dive flies into Queen Anne |
 | `tools/camtunnel.mjs` | camera height at stations through bores — nothing through the roof |
 | `tools/jank.mjs` | `fwy-bump`, `crossing-clash`, `barrier-on-road` added for the grading (see "Freeway grading") |
@@ -2038,8 +2424,39 @@ failed idea: measure what it exposed first.
   markings sit under them), trees and posts beside a lidded road still stand in
   the dug pit, and a car can drive under a bridge slab from its own trench into
   the overcut beside it.
-- **Traffic ignores `oneway`.** The flag is imported and sits on every edge
-  (`F_ONEWAY`, `F_ONEWAY_REV`), and nothing reads it yet.
+- **The pavement's outer edge is an open 52 cm step.** Pavement is drawn at
+  terrain + `WALK_LIFT` 0.52 m with a kerb face on the road side only, so a
+  pedestrian standing on the verge beyond it is correctly on the ground and,
+  seen across the slab from eye height, looks sunk to the waist.
+  `PedSystem` spawns at hw + 1.4, on the slab, but fleeing pedestrians and the
+  player can walk off it. SSAO draws a soft contact band along the same step
+  on sloping verges, where it reaches ~0.9 m. The fix belongs in world.js — a
+  skirt or verge ramp on the outer edge, or terrain raised to meet it — and is
+  pending.
+- **The express lanes only run northbound**, because the import drops
+  `oneway=reversible` (see "One-way traffic").
+- **AI lanes are 4.2 m apart** because the car collision shape is a circle, so a
+  3-lane carriageway runs 2 AI lanes. The real fix is an oriented box in
+  `resolveCarCollisions`.
+- **Obstacles in dug pits wedge traffic** (posts beside lidded ramps, the I-5
+  express portal near (520, 0)). Out of sight the car is recycled; in view it
+  stays stuck.
+- `tunnelride.mjs`'s `flow()` checks `oneway` before `onewayRev`, so it treats
+  the 2 `oneway=-1` edges as a -> b. None is on SR-99.
+- **Pier decks are drawn, not walkable** (Great Wheel, Pier 66, Aquarium):
+  `groundAt` over them is the seabed, so walking onto the Wheel's deck puts you
+  in the water. They need a surface the way lids have `city.lidAt`.
+- **Stadium interiors are unreachable** — walls run round the whole footprint,
+  with no gates. T-Mobile's roof is modelled open and does not move.
+- **The minor landmarks are the old models** (aquarium, ferry terminal, Pier 66,
+  library, convention centre, locks, Gas Works, Kerry Park, the Alki statue):
+  physically shaded and solid now, but not rebuilt.
+- **Lot edges come from a 14.4 m coverage field**: corners round off at ~7 m and
+  a lot under ~10 m wide (one aisle, a narrow forecourt) thins or vanishes.
+  Striping ignores the aisles OSM draws and is phase-anchored in world space, so
+  a first row can start mid-bay at its kerb. Untagged Belltown/SLU blocks
+  (no landuse, `building=yes` under 1000 m2) still read as lawn, and aprons are
+  an inference: a big church or apartment block gets a concrete ring.
 - **Buildings are oriented boxes**, not polygons — see "How accurate it actually
   is" for why that was the right trade, but it does mean a curved facade or an
   L-shaped block is squared off.

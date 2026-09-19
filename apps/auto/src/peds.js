@@ -548,10 +548,10 @@ const pedMat = new THREE.MeshStandardMaterial({
 // the result is not form but dirt: measured by switching shadows off in the
 // portrait harness, the whole lower face and the band under the nose went from
 // mud to lit skin. The shadow is still sampled -- a pedestrian in a building's
-// shadow must go dark -- but from a point lifted 0.30 m TOWARD the sun, so
+// shadow must go dark -- but from a point lifted 0.60 m TOWARD the sun, so
 // anything within a body's own depth (its own head, nose, hair, arms) cannot
 // occlude it while a wall metres away still does. The lift is taken off the
-// shadow matrix's depth row, so it stays 0.30 m whatever the box and range are.
+// shadow matrix's depth row, so it stays 0.60 m whatever the box and range are.
 pedMat.onBeforeCompile = (sh) => {
   sh.vertexShader = sh.vertexShader.replace('#include <shadowmap_vertex>',
     THREE.ShaderChunk.shadowmap_vertex.replace(
