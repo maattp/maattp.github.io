@@ -20,6 +20,18 @@
 //   flags  ceiling clamp / floor clamp / boom pulled in by a building
 //   pop-in chunks in the frustum with no geometry yet, and buildings that
 //          materialise in view (a chunk gaining geometry that nothing drew)
+//   roads  ROAD pop-in: a chunk gaining geometry in view whose streets the far
+//          road layer was not already drawing (world.farRoadsCover, when the
+//          build has one), in metres of carriageway and per class
+//
+// After the route (frame FRAMES) the plane is moved to 450 m over I-5 north of
+// the ship canal, nose south, and flown for HIGH_FRAMES more for the `i5high`
+// shot. Those frames are left out of every statistic: the move is a teleport.
+//
+// Every evaluation has a wall-clock limit (FLYCAM_EVAL_S, default 240 s) and a
+// batch that exceeds it is reported with the frame it reached and what the
+// streamer was doing -- a harness that waits forever cannot tell a stall in
+// the game from one in itself.
 //
 // Targets any checkout via AUTO_HTTP_PORT, so a master tree can be traced with
 // this same harness for an honest before/after.
@@ -38,19 +50,28 @@ const CHROME = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
 // Frames to photograph, named. Same frame index on every build, so a pair is
 // the same moment of the same flight.
 const SHOT_AT = { beacon: 3500, firsthill: 5850, capitol: 7150, queenanne: 9000, bay: 10500, horizon: 12500 };
+const HIGH_FRAMES = 900;
+const EVAL_S = +(process.env.FLYCAM_EVAL_S || 240);
 
 const chrome = spawn(CHROME, [`--remote-debugging-port=${PORT}`, '--headless=new',
   '--use-gl=swiftshader', '--enable-unsafe-swiftshader', '--window-size=1280,720',
-  '--no-first-run', `--user-data-dir=/tmp/auto-flycam-${PORT}`, 'about:blank'], { stdio: 'ignore' });
+  '--no-first-run', '--enable-precise-memory-info', `--user-data-dir=/tmp/auto-flycam-${PORT}`, 'about:blank'], { stdio: 'ignore' });
 
+let closing = false;
 try {
   let page;
   for (let i = 0; i < 90 && !page; i++) {
     try { page = (await (await fetch(`http://127.0.0.1:${PORT}/json/list`)).json()).find((t) => t.type === 'page'); } catch {}
     if (!page) await sleep(300);
   }
+  // A port another harness's Chrome already holds is served by THAT browser:
+  // ours cannot bind it and runs on without DevTools. Stepping someone else's
+  // game, and then hanging when its owner kills it, is what that looks like.
+  if (!page || page.url !== 'about:blank') throw new Error(`CDP port ${PORT} is not this run's Chrome (page ${page && page.url}) -- pick a free AUTO_CDP_PORT`);
   const ws = new WebSocket(page.webSocketDebuggerUrl);
   await new Promise((r, j) => { ws.addEventListener('open', r); ws.addEventListener('error', j); });
+  // A closed socket leaves every pending evaluate unanswered forever.
+  ws.addEventListener('close', () => { if (closing) return; console.error('flycam: DevTools socket closed (Chrome exited or was killed)'); process.exit(2); });
   let id = 0; const pend = new Map(); const logs = [];
   ws.addEventListener('message', (e) => {
     const m = JSON.parse(e.data);
@@ -59,8 +80,14 @@ try {
     else if (m.method === 'Runtime.exceptionThrown') logs.push('EXCEPTION ' + (m.params.exceptionDetails.exception?.description || m.params.exceptionDetails.text));
   });
   const send = (m, p = {}) => new Promise((res) => { ws.send(JSON.stringify({ id: ++id, method: m, params: p })); pend.set(id, res); });
-  const ev = async (e) => {
-    const r = await send('Runtime.evaluate', { expression: e, returnByValue: true, awaitPromise: true });
+  const ev = async (e, limitS = EVAL_S) => {
+    let timer;
+    const r = await Promise.race([
+      send('Runtime.evaluate', { expression: e, returnByValue: true, awaitPromise: true }),
+      new Promise((res) => { timer = setTimeout(() => res({ timedOut: true }), limitS * 1000); }),
+    ]);
+    clearTimeout(timer);
+    if (r.timedOut) throw new Error(`evaluate exceeded ${limitS} s -- ${e.slice(0, 120)}`);
     if (r.result?.exceptionDetails) throw new Error(JSON.stringify(r.result.exceptionDetails).slice(0, 600));
     return r.result?.result?.value;
   };
@@ -107,7 +134,26 @@ try {
     ];
     let wi = 0;
     const orig = p.clearCamDist.bind(p);
-    const S = window.__fly = { v, R, frame: 0, rows: [], pops: [], popBld: 0, hadGroup: new Set(), lastLod: W.flyLod, lodFlips: 0 };
+    const S = window.__fly = { v, R, frame: 0, rows: [], pops: [], popBld: 0, hadGroup: new Set(), lastLod: W.flyLod, lodFlips: 0,
+      roadPops: [], roadPopM: { hwy: 0, ramp: 0, art: 0, st: 0, res: 0 }, roadM: new Map(), counting: true };
+    S.resetRoute = () => { wi = 0; };
+    // Metres of drawn carriageway a chunk owns, by class (tunnels draw nothing
+    // from the air). Owned the way buildChunkStep owns an edge: by its midpoint.
+    const roadMetres = (cc) => {
+      const k = cc.cx * 100000 + cc.cz;
+      let r = S.roadM.get(k);
+      if (r) return r;
+      r = { hwy: 0, ramp: 0, art: 0, st: 0, res: 0 };
+      for (const ei of cc.edges) {
+        const e = c.edges[ei];
+        if (e.tunnel) continue;
+        const a = c.nodes[e.a], b = c.nodes[e.b];
+        if (Math.floor((a.x + b.x) / 2 / 400) !== cc.cx || Math.floor((a.z + b.z) / 2 / 400) !== cc.cz) continue;
+        r[e.cls] = (r[e.cls] || 0) + e.len;
+      }
+      S.roadM.set(k, r);
+      return r;
+    };
     p.clearCamDist = (t, want, h) => { const r = orig(t, want, h); S.pulled = want - r; return r; };
     const fr = new T.Frustum(), m4 = new T.Matrix4(), box = new T.Box3(), ndc = new T.Vector3();
     let prevRel = null, prevDir = null, prevNdc = null;
@@ -175,7 +221,24 @@ try {
         else if (ch.lod < ch.wantLod) stale++;
         if (ch.group && !S.hadGroup.has(ch.key)) {
           S.hadGroup.add(ch.key);
-          if (!covered && S.frame > 0) {
+          if (S.frame > 0 && S.counting) {
+            // Roads: what the chunk now draws, less what the far road layer
+            // was already drawing there (by class, at this distance).
+            const own = roadMetres({ cx: ch.cx, cz: ch.cz, edges: cc.edges });
+            const cov = W.farRoadsCover ? W.farRoadsCover(ch, p.camPos.x, p.camPos.z) : null;
+            let popped = 0;
+            for (const k in own) {
+              const m = Math.max(0, own[k] - (cov ? cov[k] || 0 : 0));
+              S.roadPopM[k] = (S.roadPopM[k] || 0) + m;
+              popped += m;
+            }
+            if (popped > 20) {
+              const dist = Math.hypot(x0 + 200 - p.camPos.x, z0 + 200 - p.camPos.z);
+              S.roadPops.push({ f: S.frame, dist: Math.round(dist), m: Math.round(popped),
+                fade: W.frU ? +W.frU.frFade.value.toFixed(2) : null });
+            }
+          }
+          if (!covered && S.frame > 0 && S.counting) {
             let nb = 0;
             for (const bi of cc.buildings) { const b = c.buildings[bi]; if (b.h < 16 && b.w * b.d < 1400) nb++; }
             const dist = Math.hypot(x0 + 200 - p.camPos.x, z0 + 200 - p.camPos.z);
@@ -186,12 +249,17 @@ try {
       }
       for (const k of S.hadGroup) if (!W.chunks.has(k)) S.hadGroup.delete(k);
       row.missing = missing; row.stale = stale; row.inView = inView;
-      S.rows.push(row);
+      if (S.counting) S.rows.push(row);
       S.frame++;
       return wi;
     };
     return true;
   })()`);
+
+  // Memory with the game booted and nothing flown yet, after a full GC.
+  await send('HeapProfiler.enable');
+  await send('HeapProfiler.collectGarbage');
+  const heapBoot = await ev('performance.memory ? +(performance.memory.usedJSHeapSize / 1e6).toFixed(1) : null');
 
   // Deterministic uneven clock: a hitch every 7th frame, a long one every 23rd.
   const dtAt = (f) => !JITTER ? 1 / 60 : (f % 23 === 11 ? 0.06 : f % 7 === 3 ? 0.05 : 1 / 60);
@@ -199,13 +267,39 @@ try {
   let f = 0;
   const shotStats = {};
   const t0 = Date.now();
-  for (const [name, at] of [...shotFrames, ['end', FRAMES]]) {
-    const until = Math.min(at, FRAMES);
+  const stage = [...shotFrames, ['end', FRAMES], ['i5high', FRAMES + HIGH_FRAMES]];
+  for (const [name, at] of stage) {
+    const until = name === 'i5high' ? at : Math.min(at, FRAMES);
+    if (name === 'i5high') {
+      // 450 m over I-5 north of the ship canal, nose south down the freeway.
+      await ev(`(() => {
+        const d = window.__dbg, S = window.__fly, v = S.v, G = d.G, p = d.player;
+        S.counting = false;
+        v.x = 1150; v.z = -9000; v.y = G.terrainHeight(v.x, v.z) + 450;
+        v.heading = Math.atan2(1077 - v.x, -2647 - v.z);
+        v.airborne = true;
+        S.R.length = 0; S.R.push({ x: 1077, z: -2647, y: v.y }, { x: 693, z: -676, y: v.y });
+        S.resetRoute();
+        p.camPos.set(v.x - Math.sin(v.heading) * 17, v.y + 4.6, v.z - Math.cos(v.heading) * 17);
+        return true;
+      })()`);
+    }
     while (f < until) {
-      const n = Math.min(600, until - f);
+      const n = Math.min(300, until - f);
       const dts = JSON.stringify(Array.from({ length: n }, (_, i) => dtAt(f + i)));
-      await ev(`(() => { const S = window.__fly; for (const dt of ${dts}) S.step(dt); return S.frame; })()`);
+      const tb = Date.now();
+      try {
+        await ev(`(() => { const S = window.__fly; for (const dt of ${dts}) S.step(dt); return S.frame; })()`);
+      } catch (err) {
+        // Where did it stop? A second evaluation cannot run while the first
+        // is still executing, so a timeout here that the probe also hits is a
+        // page that never yields -- a real stall, not the harness.
+        let where = 'page unresponsive';
+        try { where = await ev(`JSON.stringify({ frame: window.__fly.frame, x: Math.round(window.__fly.v.x), z: Math.round(window.__fly.v.z), todo: [...window.__dbg.world.chunks.values()].filter((c) => c.lod !== c.wantLod).length })`, 20); } catch {}
+        throw new Error(`${err.message}\n  batch from frame ${f}: ${where}`);
+      }
       f += n;
+      if (process.env.FLYCAM_PROGRESS) console.log(`frame ${f} (${((Date.now() - tb) / 1000).toFixed(1)} s)`);
     }
     if (name === 'end' || !SHOTS || f !== at) continue;
     // Light and fog the frame the way main.js would, then let two frames draw.
@@ -229,7 +323,12 @@ try {
     console.log(`shot ${name} at frame ${f}`, stats);
   }
 
-  const res = JSON.parse(await ev(`JSON.stringify({ rows: window.__fly.rows, pops: window.__fly.pops, popBld: window.__fly.popBld, lodFlips: window.__fly.lodFlips })`));
+  await send('HeapProfiler.collectGarbage');
+  const res = JSON.parse(await ev(`JSON.stringify({ rows: window.__fly.rows, pops: window.__fly.pops, popBld: window.__fly.popBld, lodFlips: window.__fly.lodFlips,
+    roadPops: window.__fly.roadPops, roadPopM: window.__fly.roadPopM,
+    far: (() => { const W = window.__dbg.world; return { massBytes: W.farMassBytes || 0, massMs: +(W.farMassMs || 0).toFixed(0), massFrames: W.farMassFrames || 0,
+      roadBytes: W.farRoadBytes || 0, roadCount: W.farRoadCount || 0, roadMs: +(W.farRoadMs || 0).toFixed(0), roadFrames: W.farRoadFrames || 0, roadMaxStep: +(W.farRoadMaxStep || 0).toFixed(1) }; })(),
+    heap: performance.memory ? +(performance.memory.usedJSHeapSize / 1e6).toFixed(1) : null })`));
   const air = res.rows.filter((r) => r.air && r.f > 30);
   const q = (arr, k, fr) => { const s = arr.map((r) => r[k]).sort((a, b) => a - b); return s.length ? +s[Math.min(s.length - 1, Math.floor(s.length * fr))].toFixed(3) : 0; };
   const sum = {
@@ -244,11 +343,15 @@ try {
     missingInView: { mean: +(air.reduce((a, r) => a + r.missing, 0) / Math.max(1, air.length)).toFixed(2), max: q(air, 'missing', 1), framesAny: air.filter((r) => r.missing > 0).length },
     popEvents: res.pops.length, popBuildings: res.popBld,
     popNear: res.pops.filter((k) => k.dist < 1200 && k.nb > 0).length,
-    lodFlips: res.lodFlips,
+    roadPopEvents: res.roadPops.length,
+    roadPopKm: +(Object.values(res.roadPopM).reduce((a, b) => a + b, 0) / 1000).toFixed(1),
+    roadPopKmByClass: Object.fromEntries(Object.entries(res.roadPopM).map(([k, m]) => [k, +(m / 1000).toFixed(1)])),
+    roadPopNear: res.roadPops.filter((k) => k.dist < 1200).length,
+    lodFlips: res.lodFlips, far: res.far, heapBootMB: heapBoot, heapFlyMB: res.heap,
     exceptions: logs.length, shotStats,
   };
   console.log(JSON.stringify(sum, null, 1));
   if (logs.length) console.log(logs.slice(0, 5).join('\n'));
   mkdirSync(OUT, { recursive: true });
-  writeFileSync(`${OUT}/${TAG}${JITTER ? '-jitter' : ''}.json`, JSON.stringify({ summary: sum, rows: res.rows, pops: res.pops }));
-} finally { chrome.kill('SIGKILL'); }
+  writeFileSync(`${OUT}/${TAG}${JITTER ? '-jitter' : ''}.json`, JSON.stringify({ summary: sum, rows: res.rows, pops: res.pops, roadPops: res.roadPops }));
+} finally { closing = true; chrome.kill('SIGKILL'); }
