@@ -44,6 +44,7 @@ export const MASK_N = (MAP_HALF * 2) / MASK_STEP + 1; // 1601
 let HF = null;
 let WET = null;
 let GRN = null;
+let LOT = null;
 
 export let LANDMARKS = [];
 export let PLACES = [];
@@ -59,6 +60,7 @@ export function initGeo(md) {
   HF = md.height;
   WET = md.water;
   GRN = md.green;
+  LOT = md.lot || null;
   const p = md.places;
   LANDMARKS = p.landmarks;
   PLACES = p.places;
@@ -154,6 +156,35 @@ export function isWater(x, z) {
 
 export function inPark(x, z) {
   return maskAt(GRN, x, z) !== 0;
+}
+
+// THE LOT LAYER: paved ground that is not a building -- car parks, plazas,
+// yards, commercial hardstanding. surface.png's blue byte, one per 10 m cell:
+// 0 = none, else 1 + kind * 50 + orientation (tools/build_lots.py writes it).
+// It can overlap the park mask (a park's own car park), so anything planting
+// on park ground asks `inLot` as well.
+export const LOT_ANG = 50;
+export const LOT_KINDS = ['parking', 'asphalt', 'plaza', 'hard', 'rail'];
+
+/** Lot kind index at (x,z) -- an index into LOT_KINDS -- or -1. */
+export function lotAt(x, z) {
+  const c = maskAt(LOT, x, z);
+  return c ? ((c - 1) / LOT_ANG) | 0 : -1;
+}
+
+/** The raw lot byte at (x,z): 0, or 1 + kind * LOT_ANG + orientation. */
+export function lotCodeAt(x, z) {
+  return maskAt(LOT, x, z);
+}
+
+/** Is (x,z) on a paved lot / plaza / yard? */
+export function inLot(x, z) {
+  return maskAt(LOT, x, z) !== 0;
+}
+
+/** The raw lot bytes, for the terrain shader's texture. */
+export function lotCodes() {
+  return LOT;
 }
 
 /**

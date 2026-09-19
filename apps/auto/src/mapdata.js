@@ -24,7 +24,8 @@ async function bytes(name, onProgress) {
 /** Decode a PNG into raw RGBA. Canvas is the only PNG decoder a browser hands us. */
 async function pixels(name) {
   const blob = new Blob([await bytes(name)], { type: 'image/png' });
-  const bmp = await createImageBitmap(blob);
+  // These PNGs carry codes, not colours: no colour-space conversion, ever.
+  const bmp = await createImageBitmap(blob, { colorSpaceConversion: 'none', premultiplyAlpha: 'none' });
   const cv = typeof OffscreenCanvas !== 'undefined'
     ? new OffscreenCanvas(bmp.width, bmp.height)
     : Object.assign(document.createElement('canvas'), { width: bmp.width, height: bmp.height });
@@ -118,9 +119,14 @@ export async function loadMapData(onStep) {
   const sp = await pixels('surface.png');
   const water = new Uint8Array(sp.w * sp.h);
   const green = new Uint8Array(sp.w * sp.h);
+  // Blue is the lot layer, a CODE and not a mask: kind + orientation, see
+  // tools/build_lots.py. Kept as the raw byte -- geo.js decodes it, and the
+  // terrain shader samples the same bytes as a texture.
+  const lot = new Uint8Array(sp.w * sp.h);
   for (let i = 0, p = 0; i < water.length; i++, p += 4) {
     water[i] = sp.data[p] > 127 ? 1 : 0;
     green[i] = sp.data[p + 1] > 127 ? 1 : 0;
+    lot[i] = sp.data[p + 2];
   }
 
   step('Reading the streets');
@@ -138,7 +144,7 @@ export async function loadMapData(onStep) {
 
   return {
     height, hfN: hp.w,
-    water, green, maskN: sp.w,
+    water, green, lot, maskN: sp.w,
     roads, buildings, places, lakes,
   };
 }

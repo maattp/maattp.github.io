@@ -48,6 +48,24 @@ GREEN_LEISURE = {"park", "garden", "nature_reserve", "golf_course", "pitch", "re
 GREEN_LANDUSE = {"forest", "grass", "meadow", "recreation_ground", "village_green", "cemetery"}
 GREEN_NATURAL = {"wood", "scrub", "grassland", "beach"}
 
+# Developed ground that is not a building: the lots, plazas and yards between
+# them. Without these a downtown block reads as a vacant lawn, because the only
+# thing the ground knew was "not a park". Each maps to a surface kind that
+# tools/build_lots.py rasterises into surface.png's blue channel.
+#   parking  asphalt with bay striping
+#   asphalt  plain tarmac: forecourts, loading yards, area:highway, aisles
+#   plaza    paving: squares, pedestrian areas
+#   hard     concrete / worn hardstanding: commercial, retail land
+#   rail     ballast and track: rail yards
+LOT_PARKING_SKIP = {"underground", "multi-storey", "rooftop"}
+LOT_LANDUSE = {"retail": "hard", "commercial": "hard", "industrial": "asphalt",
+               "railway": "rail", "port": "asphalt", "garages": "asphalt"}
+PAVED_SURFACE = {"asphalt", "concrete", "paving_stones", "paved", "sett", "bricks",
+                 "concrete:plates", "brick", "stone"}
+# Parking aisles and untagged service ways are the drive lanes of lots the
+# polygon layer often misses. Driveways are a car wide and would only speckle.
+AISLE_SERVICE = {None, "parking_aisle"}
+
 # Named places we want to be able to point a landmark mesh at.
 POI_KEYS = ("tourism", "amenity", "leisure", "historic", "man_made", "aeroway", "building")
 
@@ -83,13 +101,21 @@ class Collector:
         self.buildings = []
         self.pois = []
         self.places = []
+        self.lots = []
+        self.aisles = []
         self.seen_area = set()
+        self.seen_lot = set()
 
     # --- ways -------------------------------------------------------------
     def way(self, w):
         t = w.tags
         hw = t.get("highway")
         if hw == "service" and t.get("service") != "alley":
+            if t.get("service") in AISLE_SERVICE and t.get("area") != "yes" \
+                    and t.get("tunnel") is None and t.get("bridge") is None:
+                pts = self.line(w)
+                if pts:
+                    self.aisles.append({"p": pts, "s": t.get("service") or "service"})
             return
         if hw in ROAD_CLASSES:
             self.road(w, hw, t)
@@ -132,6 +158,7 @@ class Collector:
         if key in self.seen_area:
             return
         t = a.tags
+        self.maybe_lot(a, t)
         kind = None
         if t.get("natural") in ("water", "bay", "strait") or t.get("waterway") == "riverbank" \
                 or t.get("landuse") in WATER_LANDUSE or t.get("water"):
@@ -192,6 +219,54 @@ class Collector:
         if name:
             self.maybe_poi_area(a, t, centroid_of(outers[0]["o"]))
 
+    def maybe_lot(self, a, t):
+        """Paved ground that is not a building, as a lot polygon."""
+        key = (a.orig_id(), a.from_way())
+        if key in self.seen_lot or t.get("building"):
+            return
+        # An area:highway outline tagged as a planted island is a verge.
+        if t.get("landuse") in GREEN_LANDUSE | {"flowerbed", "traffic_island"} \
+                or t.get("area:highway") == "traffic_island":
+            return
+        am, lu, hw = t.get("amenity"), t.get("landuse"), t.get("highway")
+        lk = None
+        if am == "parking" and t.get("parking") not in LOT_PARKING_SKIP \
+                and t.get("surface") not in ("grass", "grass_paver"):
+            lk = "parking"
+        elif t.get("place") == "square" or hw == "pedestrian" \
+                or (hw == "footway" and t.get("area") == "yes") \
+                or t.get("area:highway") in ("pedestrian", "footway") \
+                or am == "marketplace":
+            lk = "plaza"
+        elif t.get("surface") in PAVED_SURFACE and (
+                t.get("leisure") or am or t.get("place") or t.get("man_made")):
+            # A paved square mapped as a park -- Occidental Square is
+            # `leisure=park` + `surface=paving_stones`. build_lots.py caps the
+            # size ("sf"), so a mis-tagged whole park cannot turn to stone.
+            lk = "asphalt" if t.get("surface") == "asphalt" else "plaza"
+        elif am == "fuel" or t.get("area:highway") is not None:
+            lk = "asphalt"
+        elif lu in LOT_LANDUSE:
+            lk = LOT_LANDUSE[lu]
+        if lk is None:
+            return
+        self.seen_lot.add(key)
+        for ring in a.outer_rings():
+            pts = ring_world(ring)
+            if not pts:
+                continue
+            holes = [h for h in (ring_world(ir) for ir in a.inner_rings(ring)) if h]
+            p = {"k": lk, "o": pts}
+            if holes:
+                p["h"] = holes
+            if lu:
+                p["lu"] = lu
+            if t.get("surface"):
+                p["sf"] = t.get("surface")
+            if t.get("leisure"):
+                p["le"] = t.get("leisure")
+            self.lots.append(p)
+
     def maybe_poi_area(self, a, t, c=None):
         name = t.get("name")
         if not name:
@@ -243,6 +318,9 @@ def centroid_of(pts):
 
 
 def main():
+    # `--lots` rescans for the lot layer alone and leaves every other raw_*.json
+    # untouched, so adding it did not force a re-import of the road graph.
+    only_lots = "--lots" in sys.argv
     if not os.path.exists(PBF):
         sys.exit(f"missing {PBF} -- download the Geofabrik Washington extract first")
     c = Collector()
@@ -271,7 +349,10 @@ def main():
         "raw_green.json": {"green": c.green},
         "raw_buildings.json": {"buildings": c.buildings},
         "raw_pois.json": {"pois": c.pois, "places": c.places},
+        "raw_lots.json": {"lots": c.lots, "aisles": c.aisles},
     }
+    if only_lots:
+        out = {"raw_lots.json": out["raw_lots.json"]}
     for fn, payload in out.items():
         p = os.path.join(DATA, fn)
         with open(p, "w") as f:
@@ -279,7 +360,7 @@ def main():
         print(f"{fn:22s} {os.path.getsize(p)/1e6:7.1f} MB")
     print(f"roads={len(c.roads)} coast={len(c.coast)} water={len(c.water)} "
           f"green={len(c.green)} buildings={len(c.buildings)} pois={len(c.pois)} "
-          f"places={len(c.places)}  in {time.time()-t0:.0f}s")
+          f"places={len(c.places)} lots={len(c.lots)} aisles={len(c.aisles)}  in {time.time()-t0:.0f}s")
 
 
 if __name__ == "__main__":

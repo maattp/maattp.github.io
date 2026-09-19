@@ -2,7 +2,8 @@
 
 Writes:
   apps/auto/data/height.png    401 x 401, 40 m grid. h = ((R<<8)|G)/10 - 100 m
-  apps/auto/data/surface.png  1601 x 1601, 10 m grid. R = water, G = green
+  apps/auto/data/surface.png  2601 x 2601, 10 m grid. R = water, G = green,
+                              B = lot kind + orientation (see build_lots.py)
 
 Rasters replace geo.js's hand-drawn HILLS and WATER polygons outright. A raster
 cannot double back on itself, which is the failure that swallowed Magnolia, and
@@ -177,6 +178,13 @@ def build_masks():
     img = np.zeros((MASK_N, MASK_N, 3), dtype=np.uint8)
     img[:, :, 0] = wet_c * 255
     img[:, :, 1] = grn_c * 255
+    # B = the lot layer (parking, plazas, yards). Baked here as well as by
+    # build_lots.py so that re-running the raster step does not zero it.
+    if os.path.exists(os.path.join(DATA, "raw_lots.json")):
+        from build_lots import bake
+        img[:, :, 2] = bake(wet_c, grn_c)
+    else:
+        print("  no raw_lots.json -- run osm_extract.py --lots; lot layer left empty")
     Image.fromarray(img, "RGB").save(os.path.join(OUT, "surface.png"), optimize=True)
     print(f"surface {MASK_N}x{MASK_N} @ {MASK_STEP} m: "
           f"water {wet_c.mean()*100:.1f}%, green {grn_c.mean()*100:.1f}%")
