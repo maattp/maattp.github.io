@@ -1792,6 +1792,14 @@ Where the budget goes, and the rules that keep it there:
   triangles a vehicle (weighted by `CIVILIAN_TYPES`; the bus is +22 % on its
   pre-cabin 8.1k, planes ~1.5k). `import('./apps/auto/src/vehicles.js')` in
   Node and read `vehicleAssets().types[k]` index counts — no browser needed.
+- **on a phone, vehicles past 60 m are instanced** (`traffic.updateFarLod`):
+  one InstancedMesh per type over `farLod(type)`, the three part geometries
+  merged and vertex-clustered at 20 cm (~35 % of the triangles), paint tinted
+  per instance and masked per vertex (`lodA`). Instances are frustum-culled
+  per car on the CPU, because an InstancedMesh culls as one object. Desktop
+  (`FAR_LOD` Infinity) is unchanged, and nothing that casts a shadow
+  (`SHADOW_NEAR` 45 m) is ever instanced. Judge it at telephoto against the
+  full meshes in one frame: from 60 m they are near-identical.
 - **landmarks are clusters**, merged by material within ~1.2 km and culled on
   their own bounds: 100 draws and 68k triangles for all of them, but only the
   clusters in view are paid for.
