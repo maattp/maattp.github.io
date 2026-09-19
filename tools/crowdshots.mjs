@@ -144,6 +144,7 @@ async function main() {
         h.phase = hash(k, 5) * Math.PI * 2;
         m.animateWalk(h, Math.min(0.8, speed * 0.2), 0, speed);
         window.__crowd.push(h);
+        h.__at = { k, x: p.x, z: p.z, y };
       }
       return JSON.stringify({ A: { x: A.x, z: A.z }, ux, uz, hw: e.hw, cls: e.cls });
     })()`, true));
@@ -186,6 +187,27 @@ async function main() {
       const { result } = await send('Page.captureScreenshot', { format: 'png' });
       writeFileSync(`${OUT}/${name}.png`, Buffer.from(result.data, 'base64'));
       console.log(`  ${OUT}/${name}.png`);
+      // CROWD_PROBE=1: for each person, where they are on screen, the height
+      // they were placed at, and what is DRAWN under them (a ray straight
+      // down through the settled chunk meshes) -- a sunk figure is a
+      // disagreement between the ground query and the geometry.
+      if (process.env.CROWD_PROBE) {
+        console.log(await evaluate(`(() => {
+          const d = window.__dbg, T = d.THREE, rc = new T.Raycaster();
+          const meshes = [];
+          d.scene.traverse((o) => { if (o.isMesh && !o.isSkinnedMesh && o.visible) meshes.push(o); });
+          return window.__crowd.map((h) => {
+            const a = h.__at, s = new T.Vector3(a.x, a.y + 1, a.z).project(d.camera);
+            const px = ((s.x + 1) / 2 * innerWidth) | 0, py = ((1 - s.y) / 2 * innerHeight) | 0;
+            rc.set(new T.Vector3(a.x, a.y + 30, a.z), new T.Vector3(0, -1, 0));
+            const hits = rc.intersectObjects(meshes, false).slice(0, 4)
+              .map((q) => (q.object.name || q.object.material?.name || q.object.type) + '@' + q.point.y.toFixed(2)).join(' ');
+            return 'k' + a.k + ' screen(' + px + ',' + py + ') at(' + a.x.toFixed(1) + ',' + a.z.toFixed(1) + ') placed y ' + a.y.toFixed(2)
+              + ' terrain ' + d.G.terrainHeight(a.x, a.z).toFixed(2) + ' lift ' + d.city.roadLift(a.x, a.z).toFixed(2)
+              + ' | drawn: ' + hits;
+          }).join('\\n');
+        })()`));
+      }
     }
     const stats = await evaluate('({calls: __dbg.sceneStats.calls, tris: __dbg.sceneStats.tris})');
     console.log(`  scene: ${stats.calls} draws, ${stats.tris} triangles`);

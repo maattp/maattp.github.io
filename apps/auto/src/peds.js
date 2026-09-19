@@ -447,6 +447,18 @@ function drawAtlas() {
         g.beginPath(); g.ellipse(ax, ay, 4.5, 13, 0, 0, Math.PI * 2); g.stroke();
         blob(ax, ay + 2, 6, mul(skin, 0.55), 0.45);
       }
+      // A lit top to the nose: a soft sheen down the bridge and on the tip.
+      // The modelled nose turns its side from the light, but seen straight
+      // on its front plane is the same value as the cheeks either side and the
+      // tip dissolved into them.
+      {
+        const [tx, ty] = hp(0, J.eye - 0.041, 0.115);
+        blob(tx, ty, 0.010 * sxm, mul(skin, 1.12), 0.55);
+        const [bx0, by0] = hp(0, J.eye - 0.004, 0.100), [, by1] = hp(0, J.eye - 0.034, 0.110);
+        const gr2 = g.createLinearGradient(bx0 - 4, 0, bx0 + 4, 0);
+        gr2.addColorStop(0, rgba(mul(skin, 1.06), 0)); gr2.addColorStop(0.5, rgba(mul(skin, 1.06), 0.5)); gr2.addColorStop(1, rgba(mul(skin, 1.06), 0));
+        g.fillStyle = gr2; g.fillRect(bx0 - 4, by0, 8, by1 - by0);
+      }
       // mouth: two lips in the skin family and a seam, no lipstick red
       const [mx, my] = hp(0, J.chin + 0.045, 0.094);
       const mw = 0.036 * sxm;
