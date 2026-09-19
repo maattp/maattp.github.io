@@ -593,12 +593,22 @@ export class TrafficSystem {
         a.z -= nz * pen * (mb / total);
         b.x += nx * pen * (ma / total);
         b.z += nz * pen * (ma / total);
-        const av = a.forward.x * a.vLong * nx + a.forward.z * a.vLong * nz;
-        const bv = b.forward.x * b.vLong * nx + b.forward.z * b.vLong * nz;
+        const fa = a.forward.x * nx + a.forward.z * nz;
+        const fb = b.forward.x * nx + b.forward.z * nz;
+        const av = a.vLong * fa;
+        const bv = b.vLong * fb;
         const rel = av - bv;
         if (rel > 0) {
-          a.vLong -= rel * 0.55 * (mb / total) * Math.sign(a.vLong || 1);
-          b.vLong += rel * 0.5 * (ma / total);
+          // EACH CAR TAKES ITS SHARE ALONG ITS OWN HEADING. `b.vLong += ...`
+          // unprojected is right only when b faces along the normal: a car
+          // coming HEAD-ON was pushed forward into the other one, re-overlapped
+          // next frame and was pushed again. Measured riding SR-99 south out of
+          // the SB exit into oncoming traffic, an AI car went 41 -> 110 m/s in
+          // four frames while the player's car bounced backwards (-3.4 m/s).
+          // Projected, the head-on car is pushed back along the normal, and a
+          // side-on one (heading across it) barely changes its speed.
+          a.vLong -= rel * 0.55 * (mb / total) * fa;
+          b.vLong += rel * 0.5 * (ma / total) * fb;
           const impact = Math.abs(rel);
           if (impact > 4) {
             a.damage(impact * 0.7);

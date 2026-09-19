@@ -287,11 +287,29 @@ function pageInit(cfg) {
           bld = { bx: +b.x.toFixed(1), bz: +b.z.toFixed(1), by: +b.y.toFixed(1), bh: +b.h.toFixed(1) };
         }
       }
-      R.event('hit', { from: +R.lastSpd.toFixed(1), barrier: bh ? +bh.pen.toFixed(2) : null,
+      // and the nearest AI car: a car-to-car shunt shows as a speed loss with
+      // nothing static in reach
+      let car = null;
+      for (const o of d.traffic.cars) {
+        if (o === v) continue;
+        const dd = Math.hypot(o.x - v.x, o.z - v.z);
+        if (dd < 12 && (!car || dd < car.d)) car = { d: +dd.toFixed(1), dy: +(o.y - v.y).toFixed(1), mode: o.mode, spd: +o.vLong.toFixed(1) };
+      }
+      // and what the ground under the wheels says just ahead: a step there
+      // is the other thing that stops a car with nothing in reach
+      const f = v.forward, gy0 = c.groundAt(v.x, v.z, v.y + 0.6, c.roadLift(v.x, v.z));
+      const ga = c.groundAt(v.x + f.x * 3, v.z + f.z * 3, v.y + 2.5, c.roadLift(v.x + f.x * 3, v.z + f.z * 3));
+      R.event('hit', { car, stepAhead: +(ga - gy0).toFixed(2), lidHere: c.lidAt ? c.lidAt(v.x, v.z) !== null : null,
+        from: +R.lastSpd.toFixed(1), barrier: bh ? +bh.pen.toFixed(2) : null,
         obstacle: oh ? +oh.pen.toFixed(2) : null, building: bld, segs: segs.slice(0, 4), cover: +cover.toFixed(1),
         lat: +pr.lat.toFixed(1), dy: +(v.y - pr.y).toFixed(2) });
     }
     R.lastSpd = spd;
+    // fastest AI car near the player: a collision injecting energy shows here
+    for (const o of d.traffic.cars) {
+      if (o === v || Math.abs(o.x - v.x) > 30 || Math.abs(o.z - v.z) > 30) continue;
+      if (Math.abs(o.vLong) > (R.maxAi || 0)) R.maxAi = Math.abs(o.vLong);
+    }
     // below the deck it should be on, or above it -- only meaningful where the
     // route is a buried bore (the cutting's floor is the carved ground). Held
     // for 0.75 s, so a car briefly airborne off a grade break is not an eject.
@@ -535,7 +553,7 @@ try {
     const first = R.events[0] || null;
     return JSON.stringify({ ride: R.cfg.ride, done: R.done, t: +R.t.toFixed(1),
       advanced: Math.round(R.maxS), of: Math.round(R.total), sEntry: Math.round(R.sEntry), sExit: Math.round(R.sExit),
-      entered: R.maxS > R.sEntry + 100, through: R.maxS > R.sExit + 20, hops: R.hops, kinds,
+      entered: R.maxS > R.sEntry + 100, through: R.maxS > R.sExit + 20, hops: R.hops, kinds, maxAiSpeed: +(R.maxAi || 0).toFixed(1),
       first, deepestUnder: +deepest.toFixed(1), worstFrameRise: +worstUp.toFixed(2), worstFrameDrop: +worstDown.toFixed(2) });
   })()`));
   console.log('RIDE', JSON.stringify(sum));
