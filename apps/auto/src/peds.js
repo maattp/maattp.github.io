@@ -447,6 +447,18 @@ function drawAtlas() {
         g.beginPath(); g.ellipse(ax, ay, 4.5, 13, 0, 0, Math.PI * 2); g.stroke();
         blob(ax, ay + 2, 6, mul(skin, 0.55), 0.45);
       }
+      // A lit top to the nose: a soft sheen down the bridge and on the tip.
+      // The modelled nose turns its side from the light, but seen straight
+      // on its front plane is the same value as the cheeks either side and the
+      // tip dissolved into them.
+      {
+        const [tx, ty] = hp(0, J.eye - 0.041, 0.115);
+        blob(tx, ty, 0.010 * sxm, mul(skin, 1.12), 0.55);
+        const [bx0, by0] = hp(0, J.eye - 0.004, 0.100), [, by1] = hp(0, J.eye - 0.034, 0.110);
+        const gr2 = g.createLinearGradient(bx0 - 4, 0, bx0 + 4, 0);
+        gr2.addColorStop(0, rgba(mul(skin, 1.06), 0)); gr2.addColorStop(0.5, rgba(mul(skin, 1.06), 0.5)); gr2.addColorStop(1, rgba(mul(skin, 1.06), 0));
+        g.fillStyle = gr2; g.fillRect(bx0 - 4, by0, 8, by1 - by0);
+      }
       // mouth: two lips in the skin family and a seam, no lipstick red
       const [mx, my] = hp(0, J.chin + 0.045, 0.094);
       const mw = 0.036 * sxm;
@@ -480,6 +492,24 @@ const pedMat = new THREE.MeshStandardMaterial({
   vertexColors: true, roughness: 0.78, metalness: 0.0, envMapIntensity: 0.7,
   map: atlasTexture(),
 });
+// A CHARACTER CANNOT SHADOW ITSELF AT THIS MAP'S RESOLUTION. The sun's shadow
+// texel is 0.25 m (main.js: a 520 m box on 2048) and its normal bias 0.12 m,
+// sized for buildings; a head is 0.23 m tall. So a face's shadow lookup lands
+// in one or two texels shared with the nose, the hair and the shoulders, and
+// the result is not form but dirt: measured by switching shadows off in the
+// portrait harness, the whole lower face and the band under the nose went from
+// mud to lit skin. The shadow is still sampled -- a pedestrian in a building's
+// shadow must go dark -- but from a point lifted 0.30 m TOWARD the sun, so
+// anything within a body's own depth (its own head, nose, hair, arms) cannot
+// occlude it while a wall metres away still does. The lift is taken off the
+// shadow matrix's depth row, so it stays 0.30 m whatever the box and range are.
+pedMat.onBeforeCompile = (sh) => {
+  sh.vertexShader = sh.vertexShader.replace('#include <shadowmap_vertex>',
+    THREE.ShaderChunk.shadowmap_vertex.replace(
+      'vDirectionalShadowCoord[ i ] = directionalShadowMatrix[ i ] * shadowWorldPosition;',
+      'vDirectionalShadowCoord[ i ] = directionalShadowMatrix[ i ] * shadowWorldPosition;\n'
+      + '\t\t\tvDirectionalShadowCoord[ i ].z -= 0.60 * length( vec3( directionalShadowMatrix[ i ][ 0 ].z, directionalShadowMatrix[ i ][ 1 ].z, directionalShadowMatrix[ i ][ 2 ].z ) );'));
+};
 
 /**
  * Accumulates parts into one skinned geometry. Each part supplies a weight
@@ -790,6 +820,47 @@ function headGrid(F) {
     return [lerp(p[0], q[0], t), lerp(p[1], q[1], t), nx / l, ny / l, nz / l];
   };
   return { rings, at };
+}
+
+/**
+ * SPLIT the normals where the nose meets the upper lip. loftY smooths every
+ * ring from its neighbours above and below, and at the subnasale ring those are
+ * the lip and the nose TIP two centimetres further forward: the ring's normal
+ * came out pointing down at the pavement, and the upper lip below it shaded as
+ * a dark band -- the "moustache", which a white, unshadowed, unpainted head
+ * still showed. Builder quads own their four vertices, so the crease is local:
+ * across the nose, each corner ON the subnasale ring takes the normal of the
+ * corner in its own column across the band -- the lip band's from the lip row
+ * below, the underside band's from the tip row above -- so the lip is lit as a
+ * lip and the underside shades as an underside, with no smoothing between.
+ * The weight is per VERTEX (from its own angle), fading out by ~16 deg; a
+ * per-quad weight, or a per-quad face normal, broke the shading into blocks.
+ */
+function creaseNoseBase(b, rows, K) {
+  const yC = HEAD_ROWS[8];                                  // J.eye - 0.052, under the nose
+  const quads = (rows - 1) * K;
+  const P = b.pos, N = b.nor;
+  for (let q = 0; q < quads; q++) {
+    const v0 = q * 4;
+    const ys = [0, 1, 2, 3].map((k) => P[(v0 + k) * 3 + 1]);
+    const at = [0, 1, 2, 3].filter((k) => Math.abs(ys[k] - yC) < 1e-6);
+    if (at.length !== 2) continue;
+    const other = [0, 1, 2, 3].filter((k) => !at.includes(k));
+    for (const k of at) {
+      const kx = P[(v0 + k) * 3], kz = P[(v0 + k) * 3 + 2];
+      const w = 1 - smoothT(clamp((Math.abs(Math.atan2(kx, kz - HEAD_Z)) - 0.10) / 0.18, 0, 1));
+      if (w <= 0) continue;
+      // its own column's corner across the band
+      let best = other[0], bd = 1e9;
+      for (const o of other) {
+        const d = Math.abs(Math.atan2(P[(v0 + o) * 3], P[(v0 + o) * 3 + 2] - HEAD_Z) - Math.atan2(kx, kz - HEAD_Z));
+        if (d < bd) { bd = d; best = o; }
+      }
+      const m = [0, 1, 2].map((c) => lerp(N[(v0 + k) * 3 + c], N[(v0 + best) * 3 + c], w));
+      const l = Math.hypot(m[0], m[1], m[2]) || 1;
+      for (let c = 0; c < 3; c++) N[(v0 + k) * 3 + c] = m[c] / l;
+    }
+  }
 }
 
 /**
@@ -1450,6 +1521,7 @@ export function buildCharacter(opts = {}) {
   const shown = grid.rings.slice(0, HEAD_HAIR_ROW + 1);
   head.loftY(shown, shown.map((r, i) => (i < HEAD_HAIR_ROW ? WHITE : hair)),
     { capStart: true, capEnd: true });
+  creaseNoseBase(head, shown.length, HEAD_COLS.length);
   // Ears, unless the hair falls over them: a long or curly shell over the
   // side of the head would have them standing out through it.
   const covers = style === 'long' || style === 'curly' || style === 'side';
