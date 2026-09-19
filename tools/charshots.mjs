@@ -28,14 +28,35 @@ const OUT = `tools/data/char/${TAG}`;
 // picks them) plus a cop, side by side at street distance -- a single seed
 // says nothing about whether the POOL reads as a crowd of different people.
 const LINEUP = process.argv.includes('lineup');
+// CHAR_VIEWS=face,profile limits the sheet while iterating. CHAR_PROBE=
+// 'face:350,120;360,140|profile:200,300' raycasts those pixels of those views
+// back to the character and prints every surface along the ray -- which part
+// drew it and where, in character space. Debug a pixel by what drew it, not by
+// what it looks like.
+const ONLY = process.env.CHAR_VIEWS ? process.env.CHAR_VIEWS.split(',') : null;
+const PROBE = Object.fromEntries((process.env.CHAR_PROBE || '').split('|').filter(Boolean)
+  .map((v) => { const [n, pts] = v.split(':'); return [n, pts.split(';').map((q) => q.split(',').map(Number))]; }));
 
-// name, azimuth (0 = facing camera), target height, distance, fov
+// name, azimuth (0 = facing camera), target height, distance, fov, [speed]
+// A speed poses the figure mid-stride at dt = 0 (a run for the hood and the
+// long hair in motion); none is the standing idle.
 const VIEWS = [
   ['front', 0, 0.90, 3.1, 35],
   ['three-quarter', 0.7, 0.90, 3.1, 35],
   ['side', Math.PI / 2, 0.90, 3.1, 35],
   ['back', Math.PI, 0.90, 3.1, 35],
   ['head', 0.35, 1.50, 0.85, 30],
+  // the mirror distance: the face, its profile and a three-quarter
+  ['face', 0, 1.61, 0.50, 30],
+  ['face34', 0.62, 1.61, 0.50, 30],
+  ['profile', Math.PI / 2, 1.61, 0.62, 30],
+  // framed on the right hand's own bone, wherever the pose put it
+  ['hands', 0.45, 'hand', 0.42, 30],
+  ['handback', -1.3, 'hand', 0.42, 30],
+  // the rider's grip (gripHands), right arm reaching forward as onto the bars
+  ['grip', -1.0, 'hand', 0.42, 30, 0, 'grip'],
+  // a runner from behind and to the side: hood, nape, long hair
+  ['run', 2.45, 1.30, 1.25, 35, 5.0],
 ];
 
 function launch() {
@@ -112,6 +133,7 @@ async function main() {
       m.animateWalk(h, 0, 0, 0);
       window.__subject = h;
       window.__animate = m.animateWalk;
+      window.__grip = m.gripHands;
     })()`);
     for (let i = 0; i < 20; i++) { await sleep(300); if (await evaluate('!!window.__subject')) break; }
 
@@ -156,16 +178,33 @@ async function main() {
       console.log(`lineup -> ${OUT}/lineup.png`);
       return;
     }
-    for (const [name, az, th, dist, fov] of VIEWS) {
+    for (const [name, az, th, dist, fov, spd = 0, pose = ''] of VIEWS) {
+      if (ONLY && !ONLY.includes(name)) continue;
       await evaluate(`(() => {
         const d = window.__dbg, h = window.__subject;
         h.group.position.set(0, 0, 0);
         h.group.rotation.y = ${az};   // turn the subject, keep the light fixed
-        if (window.__animate) window.__animate(h, 0, 0, 0);
-        const cy = ${th};
+        h.phase = ${spd ? 1.1 : 0};
+        if (window.__animate) window.__animate(h, ${spd ? 0.8 : 0}, 0, ${spd});
+        if (${JSON.stringify(pose)} === 'grip' && window.__grip) {
+          h.bones[9].rotation.set(-1.25, 0, 0.25); h.bones[10].rotation.set(-0.35, 0, 0);
+          window.__grip(h);
+        }
+        // The game's 0.5 m near plane cuts a face shot at 0.5 m in half.
+        d.camera.near = ${dist} < 1 ? 0.05 : 0.5;
         d.camera.fov = ${fov}; d.camera.updateProjectionMatrix();
-        d.camera.position.set(0, cy + ${dist} * 0.10, ${dist});
-        d.camera.lookAt(0, cy, 0);
+        let tx = 0, cy = ${typeof th === 'number' ? th : 0};
+        if (${JSON.stringify(th)} === 'hand') {
+          h.group.updateMatrixWorld(true);
+          const p = new d.THREE.Vector3(0, -0.07, 0.01);
+          h.bones[11].localToWorld(p);
+          tx = p.x; cy = p.y;
+          d.camera.position.set(tx, cy + ${dist} * 0.10, p.z + ${dist});
+          d.camera.lookAt(tx, cy, p.z);
+        } else {
+          d.camera.position.set(0, cy + ${dist} * 0.10, ${dist});
+          d.camera.lookAt(0, cy, 0);
+        }
         d.camera.updateMatrixWorld(true);
         d.sun.position.set(-6, 9, 8);
         d.sun.target.position.set(0, 1, 0);
@@ -173,9 +212,33 @@ async function main() {
         d.scene.updateMatrixWorld(true);
       })()`);
       await sleep(5000);
+      // headless pages can fire visibilitychange, which opens the pause card
+      await evaluate(`(() => { const pm = document.getElementById('pauseMenu'); if (pm) pm.style.display = 'none'; })()`);
       const { result } = await send('Page.captureScreenshot', { format: 'png' });
       writeFileSync(`${OUT}/${name}.png`, Buffer.from(result.data, 'base64'));
       console.log(`  ${name}`);
+      if (PROBE[name]) {
+        const out = await evaluate(`(() => {
+          const d = window.__dbg, h = window.__subject, T = d.THREE;
+          const parts = h.mesh.geometry.userData.parts || [];
+          const rc = new T.Raycaster();
+          return ${JSON.stringify(PROBE[name])}.map(([px, py]) => {
+            rc.setFromCamera(new T.Vector2(px / innerWidth * 2 - 1, 1 - py / innerHeight * 2), d.camera);
+            const hits = rc.intersectObject(h.mesh, false);
+            return px + ',' + py + ': ' + hits.slice(0, 4).map((q) => {
+              const pt = h.group.worldToLocal(q.point.clone());
+              const pa = parts.find((r) => q.faceIndex >= r.tri0 && q.faceIndex < r.tri0 + r.tris);
+              // and where that is on the BIND pose (the geometry as built), from
+              // the triangle's corners and the hit's barycentric coordinates
+              const P = h.mesh.geometry.attributes.position, f = q.face, bc = q.barycoord;
+              const bind = [0, 1, 2].map((k) => (bc ? P.getComponent(f.a, k) * bc.x + P.getComponent(f.b, k) * bc.y + P.getComponent(f.c, k) * bc.z : P.getComponent(f.a, k)));
+              return (pa ? pa.name : '?') + '#' + (pa ? q.faceIndex - pa.tri0 : q.faceIndex) + ' d=' + q.distance.toFixed(4)
+                + ' bind(' + bind.map((v) => v.toFixed(4)).join(',') + ')';
+            }).join('  |  ');
+          }).join('\\n');
+        })()`);
+        console.log(out);
+      }
     }
     console.log(`${VIEWS.length} views (seed ${SEED}) -> ${OUT}/`);
   } finally {
