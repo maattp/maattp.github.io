@@ -190,6 +190,54 @@ const CHECKS = `(() => {
       + clusters + ' clusters)');
   }
 
+  // --- trees planted on a car park or plaza --------------------------------
+  //
+  // The lot layer (surface.png blue) may pave over the park mask -- a park's
+  // own car park, a square mapped as a park -- and the terrain then draws it
+  // as tarmac or paving. A trunk there stands in the bays. Counted off the
+  // BUILT obstacles at the park-lot sites, like tree-in-water.
+  if (want('tree-on-lot') && G.inLot) {
+    const CHUNK = 400;
+    const h2 = (a, b) => { const t = Math.sin(a * 127.1 + b * 311.7) * 43758.5453; return t - Math.floor(t); };
+    const lotCand = [];
+    for (let cx = -18; cx <= 18; cx++) {
+      for (let cz = -18; cz <= 18; cz++) {
+        const x0 = cx * CHUNK, z0 = cz * CHUNK;
+        for (let i = 0; i < 230; i += 3) {
+          const x = x0 + h2(cx * 71 + i, cz * 131 + 7) * CHUNK;
+          const z = z0 + h2(cx * 37 + i, cz * 53 + 13) * CHUNK;
+          if (G.inPark(x, z) && G.inLot(x, z)) lotCand.push([x, z]);
+        }
+      }
+    }
+    const sites = [];
+    for (const [wx, wz] of lotCand) {
+      if (sites.some(([x, z]) => Math.abs(x - wx) < SITE_R && Math.abs(z - wz) < SITE_R)) continue;
+      if (sites.length < 12) sites.push([wx, wz]);
+    }
+    let on = 0, planted = 0;
+    const seen = new Set(), worst = [];
+    for (const [sx, sz] of sites) {
+      settle(sx, sz);
+      for (const list of city.obstacles.values()) {
+        for (let i = 0; i < list.length; i += 3) {
+          const ox = list[i], oz = list[i + 1];
+          if (!nearSite(ox, oz, sx, sz)) continue;
+          // street furniture stands beside its road; only park trees count
+          if (city.onRoad(ox, oz, 4.0) || !G.inPark(ox, oz)) continue;
+          const key = Math.round(ox) + ',' + Math.round(oz);
+          if (seen.has(key)) continue;
+          seen.add(key);
+          planted++;
+          // A paved square keeps some of its trees on purpose (world.js).
+          if (G.inLot(ox, oz) && G.lotAt(ox, oz) !== G.LOT_KINDS.indexOf('plaza')) { on++; if (worst.length < 6) worst.push({ x: Math.round(ox), z: Math.round(oz) }); }
+        }
+      }
+    }
+    add('tree-on-lot', on, planted, worst,
+      'park trunks standing on a lot (' + lotCand.length + ' park-lot candidates, ' + sites.length + ' sites)');
+  }
+
   // --- ground that stands above the water covering it --------------------
   //
   // The minimap comes from the water mask and the world from the DEM, so the

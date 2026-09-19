@@ -26,11 +26,15 @@ export function buildMapCanvas(city) {
   const img = sg.createImageData(n, n);
   const px = img.data;
   const WATER_C = [29, 59, 82], PARK_C = [57, 96, 58];
-  const GRASS_C = [43, 59, 48], BUILT_C = [74, 79, 70];
+  const GRASS_C = [43, 59, 48], BUILT_C = [74, 79, 70], LOT_C = [86, 88, 86];
+  const lot = G.lotCodes();
   for (let j = 0, i = 0, p = 0; j < n; j++) {
     for (let k = 0; k < n; k++, i++, p += 4) {
       let c;
       if (water[i]) c = WATER_C;
+      // Lots before parks: the lot layer only covers the park mask where it
+      // is a park's own car park or a paved square, and that is what it is.
+      else if (lot && lot[i]) c = LOT_C;
       else if (green[i]) c = PARK_C;
       else {
         const t = clamp(city.builtAt(-G.MAP_HALF + k * 10, -G.MAP_HALF + j * 10) / 0.2, 0, 1);

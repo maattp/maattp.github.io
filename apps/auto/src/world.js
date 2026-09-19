@@ -101,6 +101,7 @@ const MASS_TINT = {
 };
 // Paint sits just proud of the asphalt; any less and it z-fights at distance.
 const MARK_Y = ROAD_LIFT + 0.012;
+const LOT_PLAZA = G.LOT_KINDS.indexOf('plaza');
 // `flat` has no map, but Builder.quad indexes the uv array unconditionally.
 const ZERO_UV = [0, 0, 0, 0, 0, 0, 0, 0];
 const NODE_Y = NODE_LIFT;
@@ -665,7 +666,28 @@ export class World {
     // Both are normalised by the map's own mean (~0.44 linear) so the average
     // value, which values.py and the terrain tints were tuned against, does
     // not move. Two extra taps on terrain pixels only.
+    // THE LOT LAYER IS DRAWN BY THE TERRAIN, not on top of it.
+    //
+    // Car parks, plazas and yards (surface.png's blue byte, see
+    // tools/build_lots.py) are painted into this shader from a 10 m code
+    // texture, so they cost no draw call and no triangle, and -- the reason it
+    // is here rather than in the chunk build -- they ARE the terrain surface:
+    // nothing standing on a lot needs a lift, `groundAt` is already right, and
+    // there is no second coplanar surface to z-fight with the ground at range.
+    // Asphalt kinds sample the road's own albedo and paving kinds the
+    // pavement's, in the lot's own frame, so a lot matches the street beside it.
+    const lotTex = this.lotTexture();
+    const LN = G.MASK_N.toFixed(1), LH = G.MAP_HALF.toFixed(1), LS = G.MASK_STEP.toFixed(1);
+    const LA = G.LOT_ANG.toFixed(1);
     mat.onBeforeCompile = (sh) => {
+      if (lotTex) {
+        sh.uniforms.lotTex = { value: lotTex };
+        sh.uniforms.lotRoad = { value: this.tx.road.map };
+        sh.uniforms.lotWalk = { value: this.tx.sidewalk.map };
+        sh.vertexShader = sh.vertexShader
+          .replace('#include <common>', '#include <common>\nvarying vec2 vLotXZ;')
+          .replace('#include <begin_vertex>', '#include <begin_vertex>\nvLotXZ = position.xz;');
+      }
       sh.fragmentShader = sh.fragmentShader.replace('#include <map_fragment>', `
         #ifdef USE_MAP
           vec4 sampledDiffuseColor = texture2D( map, vMapUv );
@@ -674,8 +696,110 @@ export class World {
           sampledDiffuseColor.rgb *= mix( vec3( 1.0 ), macroT, 0.55 ) * mix( vec3( 1.0 ), detailT, 0.4 );
           diffuseColor *= sampledDiffuseColor;
         #endif`);
+      if (!lotTex) return;
+      sh.fragmentShader = sh.fragmentShader
+        .replace('#include <common>', `#include <common>
+          uniform sampler2D lotTex;
+          uniform sampler2D lotRoad;
+          uniform sampler2D lotWalk;
+          varying vec2 vLotXZ;
+          // NEAREST texel fetch by construction (texel centres, no mips): the
+          // bytes are codes, and filtering two codes together invents a third.
+          float lotCode( vec2 ij ) {
+            return floor( texture2D( lotTex, ( ij + 0.5 ) / ${LN} ).r * 255.0 + 0.5 );
+          }`)
+        .replace('#include <color_fragment>', `#include <color_fragment>
+          float lotCover = 0.0;
+          {
+            // Coverage is bilinear over "is this cell a lot", so the edge is
+            // the half-contour between cell centres, not a 10 m staircase;
+            // kind and orientation come from the strongest non-empty tap.
+            vec2 lf = ( vLotXZ + ${LH} ) / ${LS};
+            vec2 li = floor( lf ), lt = lf - li;
+            float c0 = lotCode( li ), c1 = lotCode( li + vec2( 1.0, 0.0 ) );
+            float c2 = lotCode( li + vec2( 0.0, 1.0 ) ), c3 = lotCode( li + vec2( 1.0, 1.0 ) );
+            float w0 = ( 1.0 - lt.x ) * ( 1.0 - lt.y ), w1 = lt.x * ( 1.0 - lt.y );
+            float w2 = ( 1.0 - lt.x ) * lt.y, w3 = lt.x * lt.y;
+            float bil = w0 * step( 0.5, c0 ) + w1 * step( 0.5, c1 ) + w2 * step( 0.5, c2 ) + w3 * step( 0.5, c3 );
+            float code = 0.0, bw = -1.0;
+            if ( c0 > 0.5 && w0 > bw ) { bw = w0; code = c0; }
+            if ( c1 > 0.5 && w1 > bw ) { bw = w1; code = c1; }
+            if ( c2 > 0.5 && w2 > bw ) { bw = w2; code = c2; }
+            if ( c3 > 0.5 && w3 > bw ) { bw = w3; code = c3; }
+            if ( code > 0.5 ) {
+              float kind = floor( ( code - 1.0 ) / ${LA} );
+              float ang = mod( code - 1.0, ${LA} ) / ${LA} * PI;
+              vec2 ax = vec2( cos( ang ), sin( ang ) );
+              // p.x along the lot's long side, p.y across it.
+              vec2 p = vec2( dot( vLotXZ, ax ), dot( vLotXZ, vec2( -ax.y, ax.x ) ) );
+              // A ragged edge, not a drawn one: real lot edges are kerbs,
+              // verges and broken tarmac, and a clean 10 m curve reads as CG.
+              float cov = smoothstep( 0.32, 0.68, bil + ( detailT.g - 1.0 ) * 0.22 + ( macroT.r - 1.0 ) * 0.12 );
+              vec3 pav;
+              if ( kind < 1.5 ) {
+                pav = texture2D( lotRoad, p / 9.0 ).rgb;
+                // Lots are older, patchier tarmac than a street.
+                pav *= mix( vec3( 1.0 ), macroT, 0.35 ) * ( kind < 0.5 ? 1.06 : 1.0 );
+                if ( kind < 0.5 ) {
+                  // Bays: 2.6 m wide, 5.4 m deep, rows back to back across
+                  // a 7.2 m aisle -- an 18 m module across the lot.
+                  float v = mod( p.y, 18.0 );
+                  float fu = max( fwidth( p.x ), 1e-4 ), fv = max( fwidth( p.y ), 1e-4 );
+                  float su = abs( fract( p.x / 2.6 + 0.5 ) - 0.5 ) * 2.6;
+                  float sep = 1.0 - smoothstep( 0.06 - fu, 0.06 + fu, su );
+                  float row = smoothstep( 5.4 + fv, 5.4 - fv, v ) + smoothstep( 12.6 - fv, 12.6 + fv, v );
+                  float bv = abs( fract( p.y / 18.0 + 0.5 ) - 0.5 ) * 18.0;
+                  float back = 1.0 - smoothstep( 0.06 - fv, 0.06 + fv, bv );
+                  // Under a pixel's footprint the lines average out rather
+                  // than alias: each set fades to its own mean coverage as
+                  // its own axis's footprint grows past the line width.
+                  float fa = clamp( 1.0 - ( fu - 0.05 ) / 0.2, 0.0, 1.0 );
+                  float fb = clamp( 1.0 - ( fv - 0.05 ) / 0.2, 0.0, 1.0 );
+                  sep = sep * fa + ( 1.0 - fa ) * 0.046;
+                  back = back * fb + ( 1.0 - fb ) * 0.007;
+                  float paint = max( sep * row, back );
+                  // Worn paint, and the oil-dark middle of each bay.
+                  paint *= 0.55 + 0.45 * detailT.r;
+                  float mid = row * smoothstep( 0.4, 1.25, su ) * 0.10;
+                  pav *= 1.0 - mid;
+                  pav = mix( pav, vec3( 0.66, 0.66, 0.62 ), paint * 0.8 );
+                }
+              } else if ( kind < 2.5 ) {
+                // Plaza paving: the pavement's slabs at 3 m a tile, warmer.
+                pav = texture2D( lotWalk, p / 3.0 ).rgb * vec3( 1.04, 0.99, 0.93 );
+                pav *= mix( vec3( 1.0 ), macroT, 0.25 );
+              } else if ( kind < 3.5 ) {
+                // Hardstanding: poured concrete, 5 m slabs, weathered. The
+                // pavement map at full contrast tiled into a checkerboard from
+                // the air, so it is mostly a flat mean with the slabs faint.
+                vec3 wt = texture2D( lotWalk, p / 20.0 ).rgb;
+                pav = mix( vec3( 0.32, 0.32, 0.31 ), wt * vec3( 0.86, 0.86, 0.84 ), 0.4 );
+                pav *= mix( vec3( 1.0 ), macroT, 0.65 );
+              } else {
+                // Rail yard: ballast, with tracks every 4.8 m along the yard's
+                // long side -- two steel rails on dark sleepers.
+                pav = vec3( 0.30, 0.285, 0.26 ) * mix( vec3( 1.0 ), detailT, 0.7 ) * mix( vec3( 1.0 ), macroT, 0.4 );
+                float fu = max( fwidth( p.x ), 1e-4 ), fv = max( fwidth( p.y ), 1e-4 );
+                float ty = abs( fract( p.y / 4.8 + 0.5 ) - 0.5 ) * 4.8;   // from track centre
+                float bed = 1.0 - smoothstep( 1.3 - fv, 1.3 + fv, ty );
+                float sx = abs( fract( p.x / 0.62 + 0.5 ) - 0.5 ) * 0.62;
+                float sleeper = bed * ( 1.0 - smoothstep( 0.12 - fu, 0.12 + fu, sx ) );
+                float rail = 1.0 - smoothstep( 0.05 - fv, 0.05 + fv, abs( ty - 0.72 ) );
+                float fade = clamp( 1.0 - ( max( fu, fv ) - 0.03 ) / 0.12, 0.0, 1.0 );
+                sleeper = sleeper * fade + ( 1.0 - fade ) * bed * 0.39;
+                rail = rail * fade + ( 1.0 - fade ) * 0.04;
+                pav *= 1.0 - bed * 0.12;
+                pav = mix( pav, vec3( 0.16, 0.13, 0.11 ), sleeper * 0.8 );
+                pav = mix( pav, vec3( 0.42, 0.42, 0.43 ), rail );
+              }
+              diffuseColor.rgb = mix( diffuseColor.rgb, pav, cov );
+              lotCover = cov;
+            }
+          }`)
+        .replace('#include <roughnessmap_fragment>', `#include <roughnessmap_fragment>
+          roughnessFactor = mix( roughnessFactor, 0.8, lotCover );`);
     };
-    mat.customProgramCacheKey = () => 'terrain3scale';
+    mat.customProgramCacheKey = () => (lotTex ? 'terrain3scale-lots' : 'terrain3scale');
     this.terrainGroup = new THREE.Group();
     this.scene.add(this.terrainGroup);
     for (let tz = 0; tz < TILES; tz++) {
@@ -779,6 +903,23 @@ export class World {
       }
       yield (tz + 1) / TILES;
     }
+  }
+
+  /**
+   * The lot codes as an R8 texture: 2601^2 bytes, 6.8 MB of GPU memory, no
+   * mips (a code can't be averaged). Null if the data carries no lot layer.
+   */
+  lotTexture() {
+    const codes = G.lotCodes();
+    if (!codes) return null;
+    const t = new THREE.DataTexture(codes, G.MASK_N, G.MASK_N, THREE.RedFormat, THREE.UnsignedByteType);
+    t.minFilter = THREE.NearestFilter;
+    t.magFilter = THREE.NearestFilter;
+    t.generateMipmaps = false;
+    t.unpackAlignment = 1;   // 2601 is not a multiple of 4
+    t.colorSpace = THREE.NoColorSpace;
+    t.needsUpdate = true;
+    return t;
   }
 
   /** Does this 40 m terrain cell touch a portal trench? */
@@ -4982,6 +5123,12 @@ varying vec3 vFarTint;`)
       // grass, not about tarmac.
       if (this.city.onRoad(x, z, 2.5)) { treeSkip++; continue; }
       if (this.inAirfield(x, z)) { treeSkip++; continue; }
+      // ...nor on a car park or court. The lot layer may pave over the park
+      // mask (a park's own car park is real tarmac), and the terrain draws it
+      // paved, so a tree there stands in the middle of the bays. A paved
+      // SQUARE keeps a third of its trees: Occidental is paving under planes.
+      const lk = G.lotAt(x, z);
+      if (lk >= 0 && (lk !== LOT_PLAZA || hash2(cx * 17 + i, cz * 29 + 3) > 0.33)) { treeSkip++; continue; }
       // ...nor inside a building. Parks and footprints come from two different
       // OSM layers and they overlap: greenspace is mapped right up to and over
       // the museum, pavilion or house standing in it, so `inPark` happily says
