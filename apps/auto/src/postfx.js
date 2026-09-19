@@ -47,22 +47,36 @@ void main() {
 // Depth-aware blur, for the AO buffer only.
 //
 // The Gaussian above is depth-blind, so smoothing the AO with it drags a
-// building's contact darkening several pixels out over the road behind it and
-// washes the crevice darkening back out of the crevice. The result is AO you
-// are paying for and cannot see -- which is why the strength had to stay low
-// to avoid haloing. Weighting each tap by how close its depth is to the
-// centre's keeps the occlusion on the surface that generated it, and lets the
-// strength go up.
+// building's contact darkening out over the road behind it. Each tap is
+// weighted by how close its LINEAR depth is to the centre's, relative to the
+// centre's distance.
+//
+// The old version weighted by exp(-|dz| * 0.02 / (1 - z)) on the device depth.
+// (z - zc) / (1 - zc) is already the relative distance difference, so that
+// weight was exp(-0.02 * dd/d): a tap twice as far away still counted 98 %.
+// The "depth-aware" blur was depth-blind, and it is what spread contact
+// darkening across the tarmac in front of every wall.
 const AOBLUR = `
 precision highp float;
 uniform sampler2D tSrc;
 uniform sampler2D tDepth;
 uniform vec2 dir;
-uniform float depthScale;
+uniform vec2 dTexel;
+uniform float cNear;
+uniform float cFar;
+uniform float sharp;
 varying vec2 vUv;
 
+float dist(vec2 uv) {
+  // Read the full-res depth texel under this AO texel's centre, the same one
+  // the AO pass used, so the two agree on which surface a pixel is.
+  vec2 d = (floor(uv / dTexel) + 0.5) * dTexel;
+  float z = texture2D(tDepth, d).x;
+  return cNear * cFar / (cFar - z * (cFar - cNear));
+}
+
 void main() {
-  float zc = texture2D(tDepth, vUv).x;
+  float dc = dist(vUv);
   float sum = texture2D(tSrc, vUv).r * 0.2270270270;
   float wsum = 0.2270270270;
   for (int i = 0; i < 2; i++) {
@@ -70,11 +84,7 @@ void main() {
     float base = i == 0 ? 0.3162162162 : 0.0702702703;
     for (int s = 0; s < 2; s++) {
       vec2 uv = vUv + dir * off * (s == 0 ? 1.0 : -1.0);
-      float z = texture2D(tDepth, uv).x;
-      // Depth here is the non-linear device value, so the same absolute
-      // difference means very different distances near and far. Scaling by the
-      // centre depth's own gradient keeps the falloff usable across the frame.
-      float w = base * exp(-abs(z - zc) * depthScale / max(1.0 - zc, 1e-4));
+      float w = base * exp(-abs(dist(uv) - dc) / dc * sharp);
       sum += texture2D(tSrc, uv).r * w;
       wsum += w;
     }
@@ -95,6 +105,7 @@ uniform float grade;
 uniform float dither;
 uniform sampler2D tAO;
 uniform float aoAmount;
+uniform float aoBounce;
 varying vec2 vUv;
 
 // FXAA 3.11 console variant -- cheap, and plenty at phone resolutions.
@@ -128,8 +139,15 @@ void main() {
   // AO before bloom: occlusion belongs to the surface, and applying it after
   // would let bloom bleed back into the crevices it just darkened.
   if (aoAmount > 0.0) {
-    float ao = texture2D(tAO, vUv).r;
-    c *= mix(1.0, ao, aoAmount);
+    float ao = mix(1.0, texture2D(tAO, vUv).r, aoAmount);
+    // Multi-bounce (Jimenez et al. 2016's fit), with the pixel's own value
+    // standing in for albedo: a bright surface gets light back from what
+    // occludes it, a dark one does not. This is also what keeps AO -- which
+    // here has to multiply sunlight as well as ambient -- from dimming sunlit
+    // pavement while it still deepens the shade.
+    float alb = clamp(dot(c, vec3(0.2126, 0.7152, 0.0722)), 0.0, 0.9) * aoBounce;
+    float A = 2.0404 * alb - 0.3324, B = -4.7951 * alb + 0.6417, C = 2.7552 * alb + 0.6903;
+    c *= max(ao, ((ao * A + B) * ao + C) * ao);
   }
   c += texture2D(tBloom, vUv).rgb * bloomStrength;
 
@@ -192,118 +210,112 @@ void main() {
 // Reads the DEPTH TEXTURE the scene pass already filled -- an integer depth
 // attachment, not a half-float colour target, so it stays inside the rule that
 // keeps this chain working on iOS. It also costs no extra draw calls: the depth
-// is a by-product of the pass that was happening anyway, where a separate depth
-// prepass would have doubled the scene's 215 draws.
+// is a by-product of the pass that was happening anyway.
+//
+// What it measures: for each pixel, the surface points ACTUALLY DRAWN within
+// `radius` of it (a 12-tap screen-space spiral, 8 on a phone), and how far
+// each rises above this pixel's tangent plane. The version this replaced asked
+// the opposite question -- "is a 3D sample point near the surface buried?" --
+// and at a grazing angle that is decided by which side of a pixel the sample
+// rounds to: one pixel of road 20 m out spans ~0.35 m of depth, far more than
+// any bias. Reconstructing the occluder's real position and projecting it onto
+// the normal makes a flat surface read exactly zero however it is viewed.
+//
+// Each tap contributes e^2 * falloff * heightGate:
+//   e          sine of the occluder's elevation above the tangent plane, minus
+//              `cosBias` (normal noise). SQUARED because cosine-weighted
+//              occlusion of a half-space blocked up to elevation t is
+//              sin^2(t)/2: a 30 cm step 1 m away blocks next to nothing, a wall
+//              blocks half the sky. Linear in e, a kerb scored half a wall.
+//   falloff    1 - d^2/R^2, the range check -- a pole 20 m in front of the road
+//              is not an occluder of the road.
+//   heightGate smoothstep(hMin, hMax, height above the plane). The paved lifts
+//              are not occluders: pavements stand 0.45-0.9 m proud of the
+//              terrain beside them (ROAD_LIFT, WALK_LIFT and the chord error on
+//              slopes), which is a rendering convenience, not a kerb, and scored
+//              honestly it drew a dark band along every verge. 0.7-1.2 m keeps
+//              car doors, walls and building bases and drops the steps.
+// The radius grows with distance (up to 3x) so building-to-street contact
+// still reads from an aerial, and the whole term fades out by `fadeFar`.
 const SSAO = `
 precision highp float;
 varying vec2 vUv;
 uniform sampler2D tDepth;
 uniform mat4 projInv;
-uniform mat4 proj;
-uniform vec2 texel;
+uniform vec2 dTexel;
+uniform vec2 aoTexel;
 uniform float radius;
+uniform float projScale;
+uniform float refDist;
+uniform float growMax;
+uniform float maxPx;
 uniform float strength;
-uniform float bias;
+uniform float cosBias;
+uniform float hMin;
+uniform float hMax;
+uniform float fadeNear;
+uniform float fadeFar;
 
-vec3 viewPos(vec2 uv) {
-  float z = texture2D(tDepth, uv).x;
-  vec4 clip = vec4(uv * 2.0 - 1.0, z * 2.0 - 1.0, 1.0);
-  vec4 v = projInv * clip;
+vec3 viewPosZ(vec2 uv, float z) {
+  vec4 v = projInv * vec4(uv * 2.0 - 1.0, z * 2.0 - 1.0, 1.0);
   return v.xyz / v.w;
 }
+vec3 viewPos(vec2 uv) { return viewPosZ(uv, texture2D(tDepth, uv).x); }
+// Every depth read is snapped to a texel CENTRE and unprojected there. The
+// depth texture is nearest-filtered, so an unsnapped uv reads the depth of one
+// point and unprojects it at another: at a grazing angle that puts the
+// "surface" up to half a pixel's depth span off its own plane.
+vec2 snapUv(vec2 uv) { return (floor(uv / dTexel) + 0.5) * dTexel; }
 
-/**
- * Normal from depth, rejecting silhouettes.
- *
- * The obvious cross(dFdx(P), dFdy(P)) is computed across a 2x2 quad, so at
- * any edge in the scene -- a roofline, a kerb, the side of a car -- one pixel of
- * that quad is on a near surface and one is on a far one, and the normal comes
- * out as nonsense. That was a band of garbage normals along every edge in the
- * frame, one quad wide at half resolution and then smeared wider by the blur.
- *
- * Taking four neighbours and keeping whichever of each pair is closer in depth
- * picks the one that is on the SAME surface, so an edge no longer contaminates
- * the normal on the side of it that is being shaded.
- */
 vec3 viewNormal(vec2 uv, vec3 P) {
-  vec3 l = viewPos(uv - vec2(texel.x, 0.0));
-  vec3 r = viewPos(uv + vec2(texel.x, 0.0));
-  vec3 d = viewPos(uv - vec2(0.0, texel.y));
-  vec3 u = viewPos(uv + vec2(0.0, texel.y));
+  vec3 l = viewPos(uv - vec2(dTexel.x, 0.0));
+  vec3 r = viewPos(uv + vec2(dTexel.x, 0.0));
+  vec3 d = viewPos(uv - vec2(0.0, dTexel.y));
+  vec3 u = viewPos(uv + vec2(0.0, dTexel.y));
   vec3 dx = abs(l.z - P.z) < abs(r.z - P.z) ? P - l : r - P;
   vec3 dy = abs(d.z - P.z) < abs(u.z - P.z) ? P - d : u - P;
   vec3 n = normalize(cross(dx, dy));
-  // View space looks down -Z, so a visible surface faces the camera.
-  return n.z < 0.0 ? -n : n;
+  // Face the normal toward the CAMERA (-P), not toward +Z. The old test was
+  // n.z > 0, which is only the same thing when the camera looks level or
+  // down: pitch the view up by a degree and open ground has n.z < 0, so it
+  // was flipped to point INTO the road, every nearer ground sample counted
+  // as buried, and the tarmac went dark -- the grazing-angle clouds.
+  return dot(n, P) > 0.0 ? -n : n;
 }
 
-// A hemisphere, weighted toward the centre so near-contact darkening reads
-// without the far samples banding. z is kept positive: these are oriented
-// along the surface normal below, not flipped into a half-space.
-const vec3 K[12] = vec3[12](
-  vec3( 0.5381, 0.1856, 0.4319), vec3( 0.1379, 0.2486, 0.4430),
-  vec3( 0.3371, 0.5679, 0.0057), vec3(-0.6999,-0.0451, 0.0019),
-  vec3( 0.0689,-0.1598, 0.8547), vec3( 0.0560, 0.0069, 0.1843),
-  vec3(-0.0146, 0.1402, 0.0762), vec3( 0.0100,-0.1924, 0.0344),
-  vec3(-0.3577,-0.5301, 0.4358), vec3(-0.3169, 0.1063, 0.0158),
-  vec3( 0.0103,-0.5869, 0.0046), vec3(-0.0897,-0.4940, 0.3287)
-);
-
 void main() {
-  float z = texture2D(tDepth, vUv).x;
-  // Sky: depth 1.0. Occluding it produces a dark halo along every roofline.
+  vec2 ip = floor(gl_FragCoord.xy);
+  vec2 uv = snapUv(vUv);
+  float z = texture2D(tDepth, uv).x;
   if (z >= 0.9999) { gl_FragColor = vec4(1.0); return; }
-  vec3 P = viewPos(vUv);
-  vec3 N = viewNormal(vUv, P);
+  vec3 P = viewPosZ(uv, z);
   float dist = -P.z;
+  float fade = 1.0 - smoothstep(fadeNear, fadeFar, dist);
+  if (fade <= 0.0) { gl_FragColor = vec4(1.0); return; }
+  vec3 N = viewNormal(uv, P);
 
-  /**
-   * Orient the kernel to the SURFACE, which is the whole ball game.
-   *
-   * The previous version rotated a fixed kernel about the view axis and then
-   * flipped each sample with dot(k, N) < 0. Flipping only guarantees a
-   * sample is on the correct side of the surface -- it does not build a
-   * hemisphere around the normal. On a road raking away from the camera most
-   * samples therefore ended up nearly TANGENT to the tarmac, skimming along it
-   * at essentially the surface's own depth, where whether they counted as
-   * occluders came down entirely to the bias. That is what laid soft dark
-   * clouds over open ground, worse with distance and worse at grazing angles.
-   */
-  float rnd = fract(sin(dot(vUv, vec2(12.9898, 78.233))) * 43758.5453);
-  vec3 rvec = vec3(cos(rnd * 6.2831), sin(rnd * 6.2831), 0.0);
-  vec3 T = normalize(rvec - N * dot(rvec, N));
-  mat3 TBN = mat3(T, cross(N, T), N);
+  float R = radius * clamp(dist / refDist, 1.0, growMax);
+  float rPx = min(R * projScale / dist, maxPx);
+  R = rPx * dist / projScale;
+  float R2 = R * R;
 
-  // Bias has to scale with distance. A constant 3.5 cm is fine at 2 m and
-  // meaningless at 40 m, where the depth difference across one sample step on a
-  // receding surface is far larger -- so open road self-occluded.
-  float bi = bias * (1.0 + dist * 0.35);
-
+  float noise = fract(52.9829189 * fract(dot(ip, vec2(0.06711056, 0.00583715))));
+  float ang0 = noise * 6.2831853;
   float occ = 0.0;
-  for (int i = 0; i < 12; i++) {
-    vec3 k = K[i];
-    k.z = abs(k.z);
-    vec3 sp = P + (TBN * k) * radius;
-    vec4 cp = proj * vec4(sp, 1.0);
-    vec2 suv = (cp.xy / cp.w) * 0.5 + 0.5;
+  for (int i = 0; i < SAMPLES; i++) {
+    float a = (float(i) + 0.5 + 0.5 * fract(noise * 7.13)) / float(SAMPLES);
+    float ang = ang0 + a * TURNS * 6.2831853;
+    vec2 suv = snapUv(uv + vec2(cos(ang), sin(ang)) * (rPx * a) * aoTexel);
     if (suv.x < 0.0 || suv.x > 1.0 || suv.y < 0.0 || suv.y > 1.0) continue;
-    float sz = viewPos(suv).z;
-    // Occluded when the surface actually drawn at that pixel sits nearer the
-    // camera than the sample point does -- i.e. the sample is buried.
-    if (sz >= sp.z + bi) {
-      // Reject occluders that are simply a long way in front: a foreground
-      // object must not darken the distant ground behind it, which is what
-      // draws black outlines around everything.
-      occ += smoothstep(0.0, 1.0, radius / max(abs(P.z - sz), 1e-4));
-    }
+    vec3 v = viewPos(suv) - P;
+    float vv = dot(v, v);
+    float vn = dot(v, N);
+    float c = vn * inversesqrt(vv + 1e-6);
+    float e = max(0.0, c - cosBias) / (1.0 - cosBias);
+    occ += e * e * max(0.0, 1.0 - vv / R2) * smoothstep(hMin, hMax, vn);
   }
-
-  // Fade out with distance. The kernel is a fixed size in metres, so past a few
-  // tens of metres it projects into a pixel or two and all twelve samples read
-  // the same texel -- correlated noise, which the blur turns into a blob rather
-  // than removing.
-  float fade = 1.0 - smoothstep(30.0, 65.0, dist);
-  float ao = clamp(1.0 - (occ / 12.0) * strength * fade, 0.0, 1.0);
+  occ /= float(SAMPLES);
+  float ao = clamp(1.0 - occ * strength * fade, 0.0, 1.0);
   gl_FragColor = vec4(vec3(ao), 1.0);
 }`;
 
@@ -342,8 +354,8 @@ export class PostFX {
     this.scenePass = new THREE.Scene();
     this.quadScene = new THREE.Scene();
 
-    this.fx = { bloom: true, ssao: false, grain: true, vignette: true, fxaa: true, grade: true, dither: true };
-    this.base = { bloom: 0.34, grain: 0.0025, vignette: 0.10, fxaa: 1, ao: 0.55 };
+    this.fx = { bloom: true, ssao: true, grain: true, vignette: true, fxaa: true, grade: true, dither: true };
+    this.base = { bloom: 0.34, grain: 0.0025, vignette: 0.10, fxaa: 1, ao: 1.0 };
     this.bloomPasses = 2;
     // Set by the pause-menu switch; kept apart from the tier so a debug session
     // survives an automatic quality change.
@@ -386,20 +398,27 @@ export class PostFX {
     this.blur = pass(BLUR, { tSrc: { value: null }, dir: { value: new THREE.Vector2() } });
     this.aoBlur = pass(AOBLUR, {
       tSrc: { value: null }, tDepth: { value: null },
-      dir: { value: new THREE.Vector2() }, depthScale: { value: 0.02 },
+      dir: { value: new THREE.Vector2() }, dTexel: { value: new THREE.Vector2() },
+      cNear: { value: 0.5 }, cFar: { value: 9000 }, sharp: { value: 12 },
     });
     this.ssao = pass(SSAO, {
       tDepth: { value: null },
       projInv: { value: new THREE.Matrix4() },
-      proj: { value: new THREE.Matrix4() },
-      texel: { value: new THREE.Vector2() },
-      radius: { value: 0.7 },
-      // Strength was 2.1 to make a broken effect visible. With the kernel
-      // oriented to the surface the occlusion it reports is real, so it needs
-      // far less pushing.
-      strength: { value: 1.1 },
-      bias: { value: 0.02 },
+      dTexel: { value: new THREE.Vector2() },
+      aoTexel: { value: new THREE.Vector2() },
+      radius: { value: 2.0 },
+      projScale: { value: 1 },
+      refDist: { value: 25 },
+      growMax: { value: 3 },
+      maxPx: { value: 70 },
+      strength: { value: 14 },
+      cosBias: { value: 0.1 },
+      hMin: { value: 0.7 },
+      hMax: { value: 1.2 },
+      fadeNear: { value: 90 },
+      fadeFar: { value: 220 },
     });
+    this.ssao.material.defines = { SAMPLES: 12, TURNS: '7.0' };
     this.composite = pass(COMPOSITE, {
       tScene: { value: null }, tBloom: { value: null },
       texel: { value: new THREE.Vector2() },
@@ -412,6 +431,7 @@ export class PostFX {
       dither: { value: 1 },
       tAO: { value: null },
       aoAmount: { value: 1.0 },
+      aoBounce: { value: 1.0 },
     });
   }
 
@@ -431,7 +451,9 @@ export class PostFX {
     const aw = Math.max(2, Math.floor(W / 2)), ah = Math.max(2, Math.floor(H / 2));
     this.aoA.setSize(aw, ah);
     this.aoB.setSize(aw, ah);
-    this.ssao.material.uniforms.texel.value.set(1 / aw, 1 / ah);
+    this.ssao.material.uniforms.aoTexel.value.set(1 / aw, 1 / ah);
+    this.ssao.material.uniforms.dTexel.value.set(1 / W, 1 / H);
+    this.aoBlur.material.uniforms.dTexel.value.set(1 / W, 1 / H);
     this._aw = aw; this._ah = ah;
     this.composite.material.uniforms.texel.value.set(1 / W, 1 / H);
     this._bw = bw; this._bh = bh;
@@ -453,13 +475,16 @@ export class PostFX {
     if (this.ssaoOn && this.fx.ssao && camera) {
       const su = this.ssao.material.uniforms;
       su.tDepth.value = this.sceneRT.depthTexture;
-      su.proj.value.copy(camera.projectionMatrix);
       su.projInv.value.copy(camera.projectionMatrixInverse);
+      // AO-res pixels spanned by one metre at one metre's distance.
+      su.projScale.value = camera.projectionMatrix.elements[5] * 0.5 * this._ah;
       draw(this.ssao, this.aoA);
       // Two cheap separable passes: the sample kernel is noisy by design and
       // unblurred AO reads as dirt on the lens.
       const bu2 = this.aoBlur.material.uniforms;
       bu2.tDepth.value = this.sceneRT.depthTexture;
+      bu2.cNear.value = camera.near;
+      bu2.cFar.value = camera.far;
       bu2.tSrc.value = this.aoA.texture;
       bu2.dir.value.set(1 / this._aw, 0);
       draw(this.aoBlur, this.aoB);
@@ -500,20 +525,18 @@ export class PostFX {
   }
 
   /**
-   * SSAO is OFF by default, and that is not a performance decision.
+   * SSAO is ON at `high`, and only there.
    *
-   * It reconstructs its normal from `dFdx/dFdy` of view-space position, which
-   * on a road running away from the camera means neighbouring samples differ
-   * mostly in depth -- so the range check reads occlusion across open tarmac
-   * and lays down large soft dark clouds. On a phone at half resolution,
-   * upscaled through the bilateral blur, they read as smears of dirt on the
-   * screen that follow the camera. It has looked like this since it was added
-   * and it went unnoticed because the beauty harness frames buildings.
-   *
-   * It is also the most expensive pass in the chain, so leaving it off costs
-   * nothing to reclaim. Bringing it back needs the occlusion test to reject by
-   * SURFACE ORIENTATION rather than by depth alone; the switch is there to
-   * check that work against what it does now.
+   * It shipped off for a long time because it roughly halved street-level
+   * brightness (street 0.156 -> 0.076 lower-half median) and laid dark clouds
+   * over open tarmac. Three bugs made that, each of which looked like "SSAO is
+   * just too strong": the depth-derived normal was flipped whenever the camera
+   * pitched up (so open ground occluded itself -- which is why the street,
+   * shopfront and facade shots, all looking slightly up, lost half their
+   * value while the residential shot, looking down, lost 9 %); the occlusion
+   * test was decided by pixel rounding at grazing angles; and the "bilateral"
+   * blur's depth weight was 50x too weak to reject anything. See the SSAO and
+   * AOBLUR comments above for each.
    */
 
   /**
@@ -549,7 +572,7 @@ export class PostFX {
     cu.aoAmount.value = this.ssaoOn && f.ssao ? this.base.ao : 0;
   }
 
-  setQuality(q) {
+  setQuality(q, phone = false) {
     this.enabled = q !== 'low' && !this.forceOff;
     this._tierEnabled = q !== 'low';
     // FXAA is a single fullscreen tap and the context has no MSAA, so keep it on
@@ -562,8 +585,17 @@ export class PostFX {
     // Film grain is separate from the dither and much larger; at 0.016 it was
     // reading as texture across the sky now that the dither is per-pixel.
     this.base.grain = q === 'high' ? 0.0025 : 0;
-    // SSAO is the most expensive pass here, so it is the first thing to go.
+    // SSAO is the most expensive pass here, so it is the first thing to go:
+    // `high` only. A phone at `high` takes 8 taps instead of 12 -- the AO is
+    // half res and blurred, and the spiral's coverage survives the cut; the
+    // taps are what cost, since each one is a dependent depth read.
     this.ssaoOn = q === 'high';
+    const taps = phone ? 8 : 12;
+    const m = this.ssao.material;
+    if (m.defines.SAMPLES !== taps) {
+      m.defines = { SAMPLES: taps, TURNS: phone ? '5.0' : '7.0' };
+      m.needsUpdate = true;
+    }
     this.applyFx();
   }
 }
