@@ -114,6 +114,19 @@ const MID_R = 4; // chunks that keep roads only
 // 200 m up); the extra is half a supertile's diagonal, since it tests centres.
 // A 6 km cap cost ~300k more triangles a flying frame, drawn nearly in fog colour.
 const FAR_R = 5000 + 1150;
+// Far ROADS: supertiles of 8x8 chunks (3.2 km, 64 chunks fit the Uint8 chunk
+// index), so the layer costs a handful of draws. Classes are ranked and each
+// tile's instances are sorted by rank, so a tile's distance picks a PREFIX of
+// its instances: freeways always, residential only near. The vertex shader
+// then narrows each rank to nothing over FR_FADE before its FR_FAR.
+const FR_TILE = CHUNK * 8;
+const FR_RANK = { hwy: 0, ramp: 0, art: 1, st: 2, res: 3 };
+const FR_CLS = ['hwy', 'ramp', 'art', 'st', 'res'];
+// The ring's farthest corner is ~2.8 km from the player (5 chunks each way),
+// so residential streets stay full width past it: a chunk arriving at the
+// ring edge never brings streets the layer was not already drawing.
+const FR_FAR = [FAR_R, 5600, 4300, 3500];
+const FR_FADE = 600;
 
 // Ground tints, and the taps used to soften a district's edge into them.
 const GRASS = [0.42, 0.62, 0.28];
@@ -2323,6 +2336,7 @@ varying vec3 vFarTint;`)
     this._farGen = null;
     this._farReady = false;
     this.farU.farFade.value = 0;
+    this.resetFarRoads();
   }
 
   /** Mask the far massing under the ring's delivered chunks; build and fade it with altitude. */
@@ -2372,6 +2386,7 @@ varying vec3 vFarTint;`)
       const dx = m.userData.cx - px, dz = m.userData.cz - pz;
       m.visible = f > 0 && dx * dx + dz * dz < FAR_R * FAR_R;
     }
+    this.updateFarRoads(px, pz, budget);
   }
 
   /** For harnesses: is the far massing currently drawing what this chunk holds? */
@@ -2380,6 +2395,493 @@ varying vec3 vFarTint;`)
     const T = CHUNK * 4;
     const t = this._farBins.get(Math.floor(ch.cx * CHUNK / T) * 1000 + Math.floor(ch.cz * CHUNK / T));
     return !!(t && t.built);
+  }
+
+  // --- far roads ------------------------------------------------------------
+
+  /**
+   * FAR ROADS: the street grid past the ring, for flying.
+   *
+   * Roads stream with the chunks, so from a plane the grid and the freeways
+   * assembled a chunk at a time at 1.6 km while the far massing stood ready
+   * around them. This is the massing layer's road counterpart and obeys the
+   * same four laws:
+   *
+   *   - LAZY. Nothing exists until the far massing's gate first opens; on foot
+   *     and driving `farRoads` is undefined and costs 0 bytes.
+   *   - INSTANCED, 16 bytes a piece: one shared unit quad; per instance both
+   *     ends of a straight piece of carriageway (x, z in Int16 dm off the
+   *     tile centre, y in Int16 cm), half-width in dm, class + paint flags,
+   *     the in-tile chunk (0..63), and cross-slope. JS arrays are dropped on
+   *     upload, exactly as the massing's are.
+   *   - MASKED PER CHUNK by the massing's own 9x9 `farBuilt` uniform: a
+   *     piece collapses once its chunk's real roads are delivered, so the
+   *     swap has no hole and no double draw. A piece is filed under the chunk
+   *     of its EDGE's midpoint, the ownership rule buildChunkStep uses.
+   *   - FADED through the fog colour, capped at the haze distance.
+   *
+   * HEIGHTS FOLLOW WHAT IS DRAWN, or the swap shows: a graded road or deck
+   * takes its solved profile (`e.ph`, decks 3 cm under), an ungraded deck the
+   * chord between its nodes, and a draped street the terrain itself. The
+   * terrain is a triangle mesh, so along a straight edge its height is
+   * piecewise linear with breaks where the edge crosses a grid line or a cell
+   * diagonal; sampling exactly there (plus every 10 m for the portal carve)
+   * and then simplifying to FR_TOL gives the drawn ground in a piece or two.
+   * Cross-slope rides along as the "camber" byte, so a street across a
+   * hillside does not bury its uphill kerb.
+   *
+   * A ribbon lying on the terrain at 2-6 km is inside the depth buffer's
+   * resolution (about 0.5 m at 2 km, 4 m at 6 km with a 0.5 m near plane), so
+   * the vertex shader pulls each vertex toward the camera along its own view
+   * ray -- a depth bias that moves nothing on screen -- by about that much,
+   * plus a little per class so a freeway wins over the street it crosses.
+   *
+   * COLOUR IS THE REAL ROAD'S: the same asphalt maps and material response as
+   * `mats.road`, the same wear across the width and 0.92 freeway tint, and
+   * the paint (white edge lines, dashed yellow centre) as a coverage-filtered
+   * line in the fragment shader, so it averages to the right tone at any
+   * distance instead of shimmering in and out.
+   */
+  *farRoadSteps() {
+    const city = this.city;
+    if (!this._frBins) {
+      const bins = new Map();
+      const E = city.edges;
+      for (let i = 0; i < E.length; i++) {
+        const e = E[i];
+        if (!e.tunnel) {
+          const a = city.nodes[e.a], b = city.nodes[e.b];
+          const tx = Math.floor((a.x + b.x) / 2 / FR_TILE), tz = Math.floor((a.z + b.z) / 2 / FR_TILE);
+          const k = tx * 1000 + tz;
+          let t = bins.get(k);
+          if (!t) bins.set(k, (t = { tx, tz, list: [], built: false, cm: null, mesh: null, cum: null }));
+          t.list.push(i);
+        }
+        if (i % 8000 === 7999) yield 'work';
+      }
+      this._frBins = bins;
+    }
+    for (;;) {
+      const px = this._farPx, pz = this._farPz, fx = this.playerFwdX || 0, fz = this.playerFwdZ || 0;
+      let best = null, bestS = Infinity;
+      for (const t of this._frBins.values()) {
+        if (t.built) continue;
+        const d = this.frTileDist(t, px, pz);
+        if (d > FAR_R) continue;
+        const dx = (t.tx + 0.5) * FR_TILE - px, dz = (t.tz + 0.5) * FR_TILE - pz;
+        const s = d - 0.6 * (dx * fx + dz * fz) / Math.max(1, Math.hypot(dx, dz)) * FR_TILE * 0.5;
+        if (s < bestS) { bestS = s; best = t; }
+      }
+      if (!best) { yield 'idle'; continue; }
+      yield* this.buildFarRoadTile(best);
+    }
+  }
+
+  /** Distance from (px, pz) to the nearest point of a far-road tile. */
+  frTileDist(t, px, pz) {
+    const x0 = t.tx * FR_TILE, z0 = t.tz * FR_TILE;
+    const dx = Math.max(x0 - px, 0, px - x0 - FR_TILE), dz = Math.max(z0 - pz, 0, pz - z0 - FR_TILE);
+    return Math.hypot(dx, dz);
+  }
+
+  /** One far-road supertile, a slice at a time; nothing is added until the end. */
+  *buildFarRoadTile(t) {
+    t.built = true;
+    const city = this.city;
+    const ox = (t.tx + 0.5) * FR_TILE, oz = (t.tz + 0.5) * FR_TILE;
+    const byRank = [[], [], [], []];   // flat [x0,y0,z0,x1,y1,z1,hw,flags,chunk,camber]
+    const cm = new Float32Array(64 * 5);   // metres drawn per in-tile chunk and class
+    let since = 0, t0 = performance.now();
+    for (const ei of t.list) {
+      const e = city.edges[ei];
+      const a = city.nodes[e.a], b = city.nodes[e.b];
+      const r = FR_RANK[e.cls] !== undefined ? FR_RANK[e.cls] : 3;
+      const lcx = clamp(Math.floor((a.x + b.x) / 2 / CHUNK) - t.tx * 8, 0, 7);
+      const lcz = clamp(Math.floor((a.z + b.z) / 2 / CHUNK) - t.tz * 8, 0, 7);
+      const ch = lcx + lcz * 8;
+      cm[ch * 5 + Math.max(0, FR_CLS.indexOf(e.cls))] += e.len;
+      this.farRoadPieces(e, a, b, ei, ch, r, byRank[r]);
+      // Yield on the clock, checked every few edges: a draped freeway edge
+      // samples dozens of grid crossings where a residential one samples four.
+      if (++since >= 16) {
+        since = 0;
+        const now = performance.now();
+        if (now - t0 > 0.8) {
+          this.farRoadMs = (this.farRoadMs || 0) + now - t0;
+          this.farRoadMaxStep = Math.max(this.farRoadMaxStep || 0, now - t0);
+          yield 'work';
+          t0 = performance.now();
+        }
+      }
+    }
+    t.list = null;   // the bins hold edge indices only until their tile is built
+    t.cm = cm;
+    let n = 0;
+    for (const l of byRank) n += l.length / 10;
+    const A = new Int16Array(n * 3), B = new Int16Array(n * 3), M = new Uint8Array(n * 4);
+    const cum = [0, 0, 0, 0];
+    let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity, minZ = Infinity, maxZ = -Infinity;
+    let i = 0;
+    for (let r = 0; r < 4; r++) {
+      const l = byRank[r];
+      for (let j = 0; j < l.length; j += 10, i++) {
+        if ((i & 2047) === 2047 && performance.now() - t0 > 0.8) {
+          this.farRoadMs = (this.farRoadMs || 0) + performance.now() - t0;
+          yield 'work';
+          t0 = performance.now();
+        }
+        A[i * 3] = Math.round((l[j] - ox) * 10);
+        A[i * 3 + 1] = Math.round(l[j + 1] * 100);
+        A[i * 3 + 2] = Math.round((l[j + 2] - oz) * 10);
+        B[i * 3] = Math.round((l[j + 3] - ox) * 10);
+        B[i * 3 + 1] = Math.round(l[j + 4] * 100);
+        B[i * 3 + 2] = Math.round((l[j + 5] - oz) * 10);
+        M[i * 4] = Math.min(255, Math.round(l[j + 6] * 10));
+        M[i * 4 + 1] = l[j + 7];
+        M[i * 4 + 2] = l[j + 8];
+        M[i * 4 + 3] = clamp(Math.round(l[j + 9] * 1000) + 128, 0, 255);
+        const hw = l[j + 6];
+        minX = Math.min(minX, l[j] - hw, l[j + 3] - hw); maxX = Math.max(maxX, l[j] + hw, l[j + 3] + hw);
+        minZ = Math.min(minZ, l[j + 2] - hw, l[j + 5] - hw); maxZ = Math.max(maxZ, l[j + 2] + hw, l[j + 5] + hw);
+        minY = Math.min(minY, l[j + 1], l[j + 4]); maxY = Math.max(maxY, l[j + 1], l[j + 4]);
+      }
+      cum[r] = i;
+    }
+    t.cum = cum;
+    const tEnd = performance.now();
+    this.farRoadMs = (this.farRoadMs || 0) + tEnd - t0;
+    this.farRoadMaxStep = Math.max(this.farRoadMaxStep || 0, tEnd - t0);
+    if (!n) return;
+    const geo = new THREE.InstancedBufferGeometry();
+    geo.setAttribute('position', this._frUnit.pos);
+    geo.setAttribute('normal', this._frUnit.nrm);
+    geo.setIndex(this._frUnit.idx);
+    const attr = (arr, size) => {
+      const at = new THREE.InstancedBufferAttribute(arr, size, false);
+      // Nothing CPU-side reads these again (see farMassSteps' note).
+      at.onUpload(function drop() { this.array = null; });
+      return at;
+    };
+    geo.setAttribute('frA', attr(A, 3));
+    geo.setAttribute('frB', attr(B, 3));
+    geo.setAttribute('frM', attr(M, 4));
+    geo.instanceCount = n;
+    geo.boundingSphere = new THREE.Sphere(
+      new THREE.Vector3((minX + maxX) / 2 - ox, (minY + maxY) / 2, (minZ + maxZ) / 2 - oz),
+      Math.hypot(maxX - minX, maxY - minY, maxZ - minZ) / 2 + 20);
+    const m = new THREE.Mesh(geo, this._frMat);
+    m.position.set(ox, 0, oz);
+    m.raycast = () => {};   // collapsed on the GPU only; see buildFarTile
+    m.visible = false;
+    m.frustumCulled = true;
+    this.scene.add(m);
+    this.farRoads.push(m);
+    t.mesh = m;
+    this.farRoadCount = (this.farRoadCount || 0) + n;
+    this.farRoadBytes = (this.farRoadBytes || 0) + A.byteLength + B.byteLength + M.byteLength;
+  }
+
+  /**
+   * Straight pieces for one edge, heights on its drawn surface, appended to
+   * `out` as flat records. Pieces are cut where the height stops being a
+   * straight line to within FR_TOL -- usually one or two per edge.
+   */
+  farRoadPieces(e, a, b, ei, ch, rank, out) {
+    const FR_TOL = 0.2;
+    const L = e.len;
+    const bias = hash2(ei | 0, 7) * 0.03;
+    const ts = [], ys = [];
+    const push = (t, y) => { ts.push(t); ys.push(y); };
+    let camber = null;   // per sample, graded ground roads only
+    if (e.prof) {
+      const k = e.pk;
+      for (let i = 0; i <= k; i++) push(i / k, e.elev ? e.ph[i] - 0.03 : e.ph[i] + bias);
+      if (!e.elev) camber = e.pg;
+    } else if (e.elev) {
+      push(0, a.y + 0.06); push(1, b.y + 0.06);
+    } else {
+      // Where the edge crosses the terrain mesh's grid lines and diagonals
+      // (world.js triangulates along tx + tz = 1), plus a 10 m lattice for
+      // anything analytic on top (the portal carve).
+      const S = G.HF_STEP, H = G.MAP_HALF;
+      const T = [0, 1];
+      // The carve (portal cuts, underpass dips) is the only thing between the
+      // grid lines; an edge it touches gets the lattice, the rest skip it.
+      const carved = (t) => {
+        const x = lerp(a.x, b.x, t), z = lerp(a.z, b.z, t);
+        return G.terrainRaw(x, z) - G.terrainHeight(x, z) > 0.01;
+      };
+      if (carved(0) || carved(0.5) || carved(1)) {
+        const n10 = Math.floor(L / 10);
+        for (let i = 1; i <= n10; i++) T.push((i * 10) / L);
+      }
+      const fa = [(a.x + H) / S, (a.z + H) / S], fb = [(b.x + H) / S, (b.z + H) / S];
+      for (let ax = 0; ax < 3; ax++) {
+        const u0 = ax < 2 ? fa[ax] : fa[0] + fa[1], u1 = ax < 2 ? fb[ax] : fb[0] + fb[1];
+        if (Math.abs(u1 - u0) < 1e-6) continue;
+        const lo = Math.min(u0, u1), hi = Math.max(u0, u1);
+        for (let g = Math.ceil(lo); g <= hi; g++) T.push((g - u0) / (u1 - u0));
+      }
+      T.sort((p, q) => p - q);
+      let last = -1;
+      for (const t of T) {
+        if (t - last < 1e-4) continue;
+        last = t;
+        push(t, G.terrainHeight(lerp(a.x, b.x, t), lerp(a.z, b.z, t)) + ROAD_Y + bias);
+      }
+    }
+    // Keep the points a straight piece cannot skip (Douglas-Peucker in
+    // along-distance / height).
+    const n = ts.length;
+    const keep = new Uint8Array(n);
+    keep[0] = keep[n - 1] = 1;
+    const stack = [0, n - 1];
+    while (stack.length) {
+      const j1 = stack.pop(), j0 = stack.pop();
+      let worst = -1, wd = FR_TOL;
+      for (let j = j0 + 1; j < j1; j++) {
+        const f = (ts[j] - ts[j0]) / (ts[j1] - ts[j0]);
+        const d = Math.abs(ys[j] - (ys[j0] + (ys[j1] - ys[j0]) * f));
+        if (d > wd) { wd = d; worst = j; }
+      }
+      if (worst >= 0) { keep[worst] = 1; stack.push(j0, worst, worst, j1); }
+    }
+    const hw = e.hw;
+    const px = -e.dz, pz = e.dx;
+    // Paint: alleys and lanes carry none; freeways and one-ways no centre line.
+    let flags = rank;
+    if (hw >= 4) flags |= 4;
+    if (hw >= 4 && e.cls !== 'hwy' && !e.oneway) flags |= 8;
+    if (e.cls === 'hwy') flags |= 16;
+    let j0 = 0;
+    for (let j = 1; j < n; j++) {
+      if (!keep[j]) continue;
+      const t0 = ts[j0], t1 = ts[j];
+      const x0 = lerp(a.x, b.x, t0), z0 = lerp(a.z, b.z, t0), x1 = lerp(a.x, b.x, t1), z1 = lerp(a.z, b.z, t1);
+      let cb;
+      if (camber) {
+        const k = e.pk, i0 = Math.round(t0 * k), i1 = Math.round(t1 * k);
+        cb = (camber[i0] + camber[i1]) / 2;
+      } else if (!e.prof && !e.elev) {
+        // The draped street's cross-slope, from the ground either side.
+        const mx = (x0 + x1) / 2, mz = (z0 + z1) / 2;
+        cb = (G.terrainHeight(mx + px * hw, mz + pz * hw) - G.terrainHeight(mx - px * hw, mz - pz * hw)) / (2 * hw);
+      } else cb = 0;
+      // The two ends of the EDGE reach over its node (a junction's paved
+      // square, a bend's outside corner); interior joints are collinear.
+      const fl = flags | (j0 === 0 ? 32 : 0) | (j === n - 1 ? 64 : 0);
+      out.push(x0, ys[j0], z0, x1, ys[j], z1, hw, fl, ch, cb);
+      j0 = j;
+    }
+  }
+
+  /** Shared state for the far roads, created with the far massing. */
+  initFarRoads() {
+    const U = this.frU = {
+      farRing: this.farU.farRing,
+      farBuilt: this.farU.farBuilt,
+      frFade: { value: 0 },
+      frCap: { value: FAR_R },
+    };
+    const SPAN = 2 * MID_R + 1;
+    // Unit quad: x along 0..1, y across -1..1; wound to face up once placed.
+    const pos = new Float32Array([0, -1, 0, 1, -1, 0, 1, 1, 0, 0, 1, 0]);
+    const nrm = new Float32Array([0, 1, 0, 0, 1, 0, 0, 1, 0, 0, 1, 0]);
+    this._frUnit = {
+      pos: new THREE.BufferAttribute(pos, 3),
+      nrm: new THREE.BufferAttribute(nrm, 3),
+      idx: new THREE.BufferAttribute(new Uint16Array([0, 2, 1, 0, 3, 2]), 1),
+    };
+    const R = this.mats.road;
+    const mat = new THREE.MeshStandardMaterial({
+      map: R.map, normalMap: R.normalMap, roughnessMap: R.roughnessMap,
+      roughness: R.roughness, metalness: R.metalness, envMapIntensity: R.envMapIntensity,
+    });
+    if (R.normalScale) mat.normalScale = R.normalScale.clone();
+    const H = FR_TILE / 2;
+    mat.onBeforeCompile = (sh) => {
+      Object.assign(sh.uniforms, U);
+      sh.vertexShader = sh.vertexShader
+        .replace('#include <common>', `#include <common>
+attribute vec3 frA;
+attribute vec3 frB;
+attribute vec4 frM;
+uniform vec2 farRing;
+uniform float farBuilt[${SPAN * SPAN}];
+uniform float frCap;
+varying vec4 vFr;     // across (m), half-width, along past the start trim, before the end trim
+varying float vFrFl;`)
+        .replace('#include <beginnormal_vertex>', `
+  vec3 frP0 = vec3(frA.x * 0.1, frA.y * 0.01, frA.z * 0.1);
+  vec3 frP1 = vec3(frB.x * 0.1, frB.y * 0.01, frB.z * 0.1);
+  int frFlags = int(frM.y + 0.5);
+  int frRank = frFlags & 3;
+  float frHw = frM.x * 0.1;
+  float frCb = (frM.w - 128.0) * 0.001;
+  vec2 frD = frP1.xz - frP0.xz;
+  float frLen = max(length(frD), 0.01);
+  frD /= frLen;
+  vec2 frN = vec2(-frD.y, frD.x);
+  // Distance fade by class, from the piece's midpoint, so all four corners
+  // agree and the quad stays a quad.
+  vec3 frMid = (modelMatrix * vec4((frP0 + frP1) * 0.5, 1.0)).xyz;
+  float frDist = distance(frMid, cameraPosition);
+  float frFar = frRank == 0 ? frCap : frRank == 1 ? ${FR_FAR[1]}.0 : frRank == 2 ? ${FR_FAR[2]}.0 : ${FR_FAR[3]}.0;
+  float frW = clamp((min(frFar, frCap) - frDist) / ${FR_FADE}.0, 0.0, 1.0);
+  // Masked under a delivered ring chunk.
+  vec2 frTile = floor((modelMatrix[3].xz - ${H}.0) / ${CHUNK}.0 + 0.5);
+  float frCh = frM.z;
+  vec2 frRc = frTile + vec2(mod(frCh, 8.0), floor(frCh / 8.0)) - farRing;
+  if (frRc.x > -0.5 && frRc.y > -0.5 && frRc.x < ${SPAN}.0 - 0.5 && frRc.y < ${SPAN}.0 - 0.5
+      && farBuilt[int(frRc.x + 0.5) + int(frRc.y + 0.5) * ${SPAN}] > 0.5) frW = 0.0;
+  float frExt0 = (frFlags & 32) != 0 ? min(frHw, 6.0) * 0.7 : 0.0;
+  float frExt1 = (frFlags & 64) != 0 ? min(frHw, 6.0) * 0.7 : 0.0;
+  float frAlong = mix(-frExt0, frLen + frExt1, position.x);
+  float frAcross = position.y * frHw;
+  vec3 frPos = vec3(frP0.x, mix(frP0.y, frP1.y, clamp(frAlong / frLen, 0.0, 1.0)), frP0.z);
+  frPos.xz += frD * frAlong + frN * frAcross * frW;
+  frPos.y += frCb * frAcross * frW;
+  vec3 frU = normalize(vec3(frD.x, (frP1.y - frP0.y) / frLen, frD.y));
+  vec3 frV = normalize(vec3(frN.x, frCb, frN.y));
+  vec3 objectNormal = normalize(cross(frU, frV));
+  if (objectNormal.y < 0.0) objectNormal = -objectNormal;
+  vFr = vec4(frAcross, frHw, frAlong - (frExt0 > 0.0 ? frHw : 0.0), frLen - frAlong - (frExt1 > 0.0 ? frHw : 0.0));
+  vFrFl = float(frFlags);
+#ifdef USE_TANGENT
+  vec3 objectTangent = vec3( tangent.xyz );
+#endif`)
+        .replace('#include <begin_vertex>', `vec3 transformed = frW > 0.0 ? frPos : vec3(0.0);
+#ifdef USE_MAP
+  vMapUv = vec2((frAcross + frHw) / ${ROAD_TILE}.0, frAlong / ${ROAD_TILE}.0);
+#endif
+#ifdef USE_NORMALMAP
+  vNormalMapUv = vec2((frAcross + frHw) / ${ROAD_TILE}.0, frAlong / ${ROAD_TILE}.0);
+#endif
+#ifdef USE_ROUGHNESSMAP
+  vRoughnessMapUv = vec2((frAcross + frHw) / ${ROAD_TILE}.0, frAlong / ${ROAD_TILE}.0);
+#endif`)
+        // Depth bias along the view ray: nothing moves on screen.
+        .replace('#include <project_vertex>', `#include <project_vertex>
+  {
+    float frL = length(mvPosition.xyz);
+    float frPull = 0.6 + frL * frL * 3.0e-7 + 0.25 * float(3 - frRank);
+    mvPosition.xyz *= max(0.05, 1.0 - frPull / max(frL, 1.0));
+    gl_Position = projectionMatrix * mvPosition;
+  }`);
+      sh.fragmentShader = sh.fragmentShader
+        .replace('#include <common>', `#include <common>
+uniform float frFade;
+varying vec4 vFr;
+varying float vFrFl;
+// Fraction of this pixel's footprint across the road that a painted line
+// [c - w, c + w] covers: the line averages to its true tone when it is
+// sub-pixel instead of flickering in and out.
+float frLine(float o, float fw, float c, float w) {
+  return clamp((min(o + fw * 0.5, c + w) - max(o - fw * 0.5, c - w)) / fw, 0.0, 1.0);
+}`)
+        .replace('#include <color_fragment>', `#include <color_fragment>
+  {
+    int fl = int(vFrFl + 0.5);
+    float o = vFr.x, hw = vFr.y;
+    // world.meshRoad's wear: polished down the middle, grime at the kerb.
+    float f = min(1.0, abs(o) / max(hw, 0.01));
+    float k = (1.0 + 0.12 * (1.0 - f * f)) * (1.0 - 0.30 * max(0.0, f - 0.55) / 0.45);
+    diffuseColor.rgb *= k * ((fl & 16) != 0 ? 0.92 : 1.0);
+    float fw = max(fwidth(o), 1e-3);
+    float paintOn = step(0.0, min(vFr.z, vFr.w));
+    if ((fl & 4) != 0) {
+      float inset = min(0.7, hw * 0.06);
+      float wl = (frLine(o, fw, hw - inset, 0.06) + frLine(o, fw, -(hw - inset), 0.06)) * paintOn;
+      diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.94, 0.93, 0.88), clamp(wl, 0.0, 1.0));
+    }
+    if ((fl & 8) != 0) {
+      // 3 m dash, 6 m gap: a third of the line, as a sub-pixel average
+      float yl = frLine(o, fw, 0.0, 0.06) * paintOn / 3.0;
+      diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.88, 0.72, 0.2), yl);
+    }
+  }`)
+        .replace('#include <fog_fragment>', `#include <fog_fragment>
+#ifdef USE_FOG
+  gl_FragColor.rgb = mix(fogColor, gl_FragColor.rgb, frFade);
+#endif`);
+    };
+    mat.customProgramCacheKey = () => 'farRoads';
+    this._frMat = mat;
+    this.farRoads = [];
+  }
+
+  resetFarRoads() {
+    if (!this.farRoads) return;
+    for (const m of this.farRoads) { m.geometry.dispose(); this.scene.remove(m); }
+    this.farRoads = [];
+    this.farRoadCount = 0;
+    this.farRoadBytes = 0;
+    // The bins gave their edge lists up as tiles were built; bin again.
+    this._frBins = null;
+    this._frGen = null;
+    this._frReady = false;
+    this.frU.frFade.value = 0;
+  }
+
+  /** Build, fade, cap and LOD the far roads; called from updateFarMass. */
+  updateFarRoads(px, pz, budget) {
+    if (!this.farRoads) this.initFarRoads();
+    if (this.farOn) {
+      if (!this._frGen) this._frGen = this.farRoadSteps();
+      const t0 = performance.now(), ms = budget < 2 ? 1.5 : 2.5;
+      while (performance.now() - t0 < ms) {
+        if (this._frGen.next().value === 'idle') break;
+      }
+    }
+    const U = this.frU;
+    const fog = this.scene.fog;
+    // Haze distance: FogExp2 has taken 98 % by sqrt(-ln 0.02) / density.
+    const cap = fog && fog.density > 0 ? Math.min(FAR_R, 1.98 / fog.density) : FAR_R;
+    U.frCap.value = cap;
+    // The first fade waits for every tile the haze lets you see, so the grid
+    // emerges whole; tiles past it keep building behind the fog.
+    if (this.farOn && !this._frReady && this._frBins) {
+      let ready = true;
+      for (const t of this._frBins.values()) if (!t.built && this.frTileDist(t, px, pz) < cap) { ready = false; break; }
+      this.farRoadFrames = (this.farRoadFrames || 0) + 1;
+      if (ready) this._frReady = true;
+    }
+    const now = performance.now();
+    const fdt = this._frT === undefined ? 0 : Math.min(0.1, (now - this._frT) / 1000);
+    this._frT = now;
+    const rising = this.farOn && this._frReady;
+    const f = clamp(U.frFade.value + (rising ? fdt : -fdt) / 1.5, 0, 1);
+    U.frFade.value = f;
+    if (!this._frBins) return;
+    for (const t of this._frBins.values()) {
+      const m = t.mesh;
+      if (!m) continue;
+      // Nearest point of the tile: which classes can still be wide enough to see.
+      const dn = this.frTileDist(t, px, pz);
+      let r = -1;
+      for (let k = 0; k < 4; k++) if (dn < Math.min(cap, FR_FAR[k])) r = k;
+      m.visible = f > 0 && r >= 0 && t.cum[r] > 0;
+      if (m.visible) m.geometry.instanceCount = t.cum[r];
+    }
+  }
+
+  /**
+   * For harnesses: metres of this chunk's carriageway, by class, that the far
+   * roads are drawing right now for a camera at (cx, cz), or null.
+   */
+  farRoadsCover(ch, cx, cz) {
+    if (!this.frU || this.frU.frFade.value <= 0.5 || !this._frBins) return null;
+    const tx = Math.floor(ch.cx * CHUNK / FR_TILE), tz = Math.floor(ch.cz * CHUNK / FR_TILE);
+    const t = this._frBins.get(tx * 1000 + tz);
+    if (!t || !t.cm) return null;
+    const lc = (ch.cx - tx * 8) + (ch.cz - tz * 8) * 8;
+    const d = Math.hypot((ch.cx + 0.5) * CHUNK - cx, (ch.cz + 0.5) * CHUNK - cz);
+    const cap = this.frU.frCap.value, out = {};
+    FR_CLS.forEach((k, i) => {
+      const r = FR_RANK[k];
+      out[k] = d < Math.min(cap, FR_FAR[r]) - FR_FADE / 2 ? t.cm[lc * 5 + i] : 0;
+    });
+    return out;
   }
 
   animate(dt, t) {
