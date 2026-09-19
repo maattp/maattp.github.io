@@ -535,6 +535,7 @@ export class ChunkBuilder extends Builder {
     // bbox kept as vertices are written, so build() needs no pass over them
     this.x0 = this.y0 = this.z0 = Infinity;
     this.x1 = this.y1 = this.z1 = -Infinity;
+    this.F = null; this.Fn = null; this._flag = null;
   }
 
   get empty() {
@@ -566,6 +567,7 @@ export class ChunkBuilder extends Builder {
     N[k] = nx; N[k + 1] = ny; N[k + 2] = nz;
     C[k] = r; C[k + 1] = g; C[k + 2] = b;
     if (this.U) { this.U[i * 2] = u; this.U[i * 2 + 1] = v; }
+    if (this._flag) { this.F[this._flag][i] = 1; this.Fn[this._flag]++; }
     this.nv = i + 1;
     return i;
   }
@@ -605,8 +607,31 @@ export class ChunkBuilder extends Builder {
       const n = this.vert(src.P[k], src.P[k + 1], src.P[k + 2], src.N[k], src.N[k + 1], src.N[k + 2], u, v,
         src.C[k], src.C[k + 1], src.C[k + 2]);
       this.F[name][n] = 1;
+      this.Fn = this.Fn || {}; this.Fn[name] = (this.Fn[name] || 0) + 1;
     }
     for (let i = 0; i < src.ni; i += 3) this.face3(src.I[i] + base, src.I[i + 1] + base, src.I[i + 2] + base);
+  }
+
+  /**
+   * A writer that draws into THIS builder with the per-vertex attribute `name`
+   * set to 1 -- the same result as building separately and appendFlagged, with
+   * no copy (the copy was a 1 ms unsliced step on a big near chunk, 12+ ms on
+   * a phone). Only the methods chunk meshing calls on pavement and glow.
+   */
+  flagged(name) {
+    const b = this;
+    if (!this.F) this.F = {};
+    if (!this.F[name]) this.F[name] = new Float32Array(this.cap);
+    if (!this.Fn) this.Fn = {};
+    this.Fn[name] = this.Fn[name] || 0;
+    const on = () => { b._flag = name; }, off = () => { b._flag = null; };
+    return {
+      quad(a1, a2, a3, a4, n, uvs, col) { on(); b.quad(a1, a2, a3, a4, n, uvs, col); off(); },
+      tri(a1, a2, a3, n, col) { on(); b.tri(a1, a2, a3, n, col); off(); },
+      box(cx, by, cz, w, h, d, rot, col, opts) { on(); b.box(cx, by, cz, w, h, d, rot, col, opts); off(); },
+      flat(pts, ys, col, uvs) { on(); b.flat(pts, ys, col, uvs); off(); },
+      get empty() { return !b.Fn[name]; },
+    };
   }
 
   appendTinted(src, tint) {
@@ -619,17 +644,24 @@ export class ChunkBuilder extends Builder {
     for (let i = 0; i < src.ni; i += 3) this.face3(src.I[i] + base, src.I[i + 1] + base, src.I[i + 2] + base);
   }
 
-  build() {
+  /**
+   * `views`: hand the geometry views of this builder's own buffers instead of
+   * exact-size copies. For a caller that drops the arrays once they are on the
+   * GPU (world.js on a phone): the copies were most of a big mesh's unsliced
+   * finish, and the spare capacity a view keeps only lives until the upload.
+   */
+  build(views = false) {
     const n = this.nv, geo = new THREE.BufferGeometry();
-    geo.setAttribute('position', new THREE.BufferAttribute(this.P.slice(0, n * 3), 3));
-    geo.setAttribute('normal', new THREE.BufferAttribute(this.N.slice(0, n * 3), 3));
-    if (this.U) geo.setAttribute('uv', new THREE.BufferAttribute(this.U.slice(0, n * 2), 2));
-    geo.setAttribute('color', new THREE.BufferAttribute(this.C.slice(0, n * 3), 3));
-    if (this.F) for (const k in this.F) geo.setAttribute(k, new THREE.BufferAttribute(this.F[k].slice(0, n), 1));
+    const cut = (a, k) => (views ? a.subarray(0, n * k) : a.slice(0, n * k));
+    geo.setAttribute('position', new THREE.BufferAttribute(cut(this.P, 3), 3));
+    geo.setAttribute('normal', new THREE.BufferAttribute(cut(this.N, 3), 3));
+    if (this.U) geo.setAttribute('uv', new THREE.BufferAttribute(cut(this.U, 2), 2));
+    geo.setAttribute('color', new THREE.BufferAttribute(cut(this.C, 3), 3));
+    if (this.F) for (const k in this.F) if (this.Fn && this.Fn[k]) geo.setAttribute(k, new THREE.BufferAttribute(cut(this.F[k], 1), 1));
     // setIndex(array) picks 16-bit indices under 65536 vertices; so does this.
     // (the typed-array constructor converts natively; Uint16Array.from walks
     // an iterator, and was a 3 ms unsliced step on a big chunk)
-    const idx = n > 65535 ? this.I.slice(0, this.ni) : new Uint16Array(this.I.subarray(0, this.ni));
+    const idx = n > 65535 ? (views ? this.I.subarray(0, this.ni) : this.I.slice(0, this.ni)) : new Uint16Array(this.I.subarray(0, this.ni));
     geo.setIndex(new THREE.BufferAttribute(idx, 1));
     // The sphere round the bbox, not three's two passes over every vertex:
     // those were most of a big builder's unsliced ~1 ms (8 ms on a phone). A

@@ -416,6 +416,9 @@ function roadWalkMat(m, walk) {
   return m;
 }
 
+function dropArray() { this.array = null; }
+function noRaycast() {}
+
 /** Mean LINEAR albedo of a canvas-backed sRGB texture, sampled on a grid. */
 function meanLinear(tex) {
   const img = tex && tex.image;
@@ -464,6 +467,15 @@ export class World {
     this.shadows = opts.shadows !== false;
     this.lakeSpecs = opts.lakes || [];
     this.chunks = new Map();
+    this._yb = YIELD_MS;   // a build step's time budget; see update()
+    // Chunk geometry on a phone keeps no JS copy after upload (see
+    // buildChunkStep's `add`), so a lost context cannot re-upload it: drop every
+    // chunk and let the streamer build them again.
+    if (ON_PHONE && this.renderer && this.renderer.domElement) {
+      this.renderer.domElement.addEventListener('webglcontextlost', () => {
+        for (const c of this.chunks.values()) this.disposeChunk(c);
+      });
+    }
 
     const surf = (s, o = {}) => {
       const m = new THREE.MeshStandardMaterial({
@@ -3407,6 +3419,11 @@ float frLine(float o, float fw, float c, float w) {
       // The chunk stopped being wanted, or wants a different detail level than
       // the one being built. Start again rather than finish work nobody needs.
       if (c.wantLod !== this._buildLod) { this._build = null; this._buildFor = null; continue; }
+      // A step yields when ITS budget runs out, so the budget is what is left
+      // of this frame's slice: with a flat 1 ms a step started late in the
+      // slice ran on past it, and the overrun (plus the item in hand) was what
+      // made chunk crossings 7-8 ms frames at the phone's speed.
+      this._yb = Math.max(0.2, Math.min(YIELD_MS, sliceMs - (performance.now() - t0)));
       const step = this._build.next();
       if (!step.done) continue;
       // **Swap, never dispose-then-build.**
@@ -3473,9 +3490,13 @@ float frLine(float o, float fw, float c, float w) {
     if (!ch) return null;
     this._ck = ck;
     const road = new ChunkBuilder(true);
-    const walk = new ChunkBuilder(true);
     const flat = new ChunkBuilder(false);
-    const glow = new ChunkBuilder(false);
+    // A near chunk's pavement is written straight into its road mesh, and
+    // every chunk's glow into its flat mesh, flagged per vertex (roadWalk,
+    // flatGlow). A mid chunk's pavement stays separate: it is tinted into the
+    // flat mesh below.
+    const walk = lod === 1 ? road.flagged('surf') : new ChunkBuilder(true);
+    const glow = flat.flagged('glow');
     const bl = { glass: new ChunkBuilder(true), facade: new ChunkBuilder(true) };
     // Road structure -- walls, parapets, fascia -- is textured concrete from the
     // facade atlas, so it draws into this chunk's facade mesh: no new material
@@ -3495,7 +3516,7 @@ float frLine(float o, float fw, float c, float w) {
     let since = 0;
     this._yt = performance.now();
     for (const ei of ch.edges) {
-      if (performance.now() - this._yt > YIELD_MS) { yield; this._yt = performance.now(); }
+      if (performance.now() - this._yt > this._yb) { yield; this._yt = performance.now(); }
       const e = city.edges[ei];
       const a = city.nodes[e.a], b = city.nodes[e.b];
       const mx = (a.x + b.x) / 2, mz = (a.z + b.z) / 2;
@@ -3514,7 +3535,7 @@ float frLine(float o, float fw, float c, float w) {
     if (lod === 1) {
       since = 0;
       for (const bi of ch.buildings) {
-        if (performance.now() - this._yt > YIELD_MS) { yield; this._yt = performance.now(); }
+        if (performance.now() - this._yt > this._yb) { yield; this._yt = performance.now(); }
         this.meshBuilding(bl, flat, glow, city.buildings[bi]);
       }
       yield; this._yt = performance.now();
@@ -3548,7 +3569,7 @@ float frLine(float o, float fw, float c, float w) {
         flat.box(bd.x, bd.y - 0.5, bd.z, bd.w, bd.h + 0.5, bd.d, bd.rot, wall, { ao: 0.35, top: false });
         flat.box(bd.x, bd.y + bd.h, bd.z, bd.w * 0.96, 0.24, bd.d * 0.96, bd.rot,
           [wall[0] * 0.45, wall[1] * 0.45, wall[2] * 0.47]);
-        if (performance.now() - this._yt > YIELD_MS) { yield; this._yt = performance.now(); }
+        if (performance.now() - this._yt > this._yb) { yield; this._yt = performance.now(); }
       }
       yield; this._yt = performance.now();
     }
@@ -3562,12 +3583,23 @@ float frLine(float o, float fw, float c, float w) {
       if (!this._midTint) this._midTint = { road: meanLinear(this.tx.road.map), walk: meanLinear(this.tx.sidewalk.map) };
       flat.appendTinted(road, this._midTint.road);
       flat.appendTinted(walk, this._midTint.walk);
-      road.nv = road.ni = walk.nv = walk.ni = 0;
+      road.nv = road.ni = 0;
     }
     const grp = new THREE.Group();
     const add = (bld, mat, cast, recv) => {
       if (bld.empty) return;
-      const m = new THREE.Mesh(bld.build(), mat);
+      const m = new THREE.Mesh(bld.build(ON_PHONE), mat);
+      // ON A PHONE THE JS COPY GOES ONCE IT IS ON THE GPU: the ring's chunk
+      // geometry is ~140 MB of typed arrays that nothing reads after upload
+      // (bounds are already computed; nothing in the game raycasts a chunk).
+      // A lost context rebuilds the chunks instead of re-uploading: see the
+      // constructor. Desktop keeps them for the harnesses' raycasts.
+      if (ON_PHONE) {
+        const g = m.geometry;
+        for (const k in g.attributes) g.attributes[k].onUpload(dropArray);
+        g.index.onUpload(dropArray);
+        m.raycast = noRaycast;
+      }
       // Not everything that can cast a shadow earns one.
       //
       // The shadow pass re-renders every caster, so each one costs a second
@@ -3584,23 +3616,10 @@ float frLine(float o, float fw, float c, float w) {
     // buffers is itself several ms per builder on a phone.
     // A near chunk's pavement draws in its road mesh (roadWalk picks the
     // texture set per vertex): one draw instead of two, per chunk on screen.
-    if (lod === 1 && !walk.empty) {
-      road.appendFlagged(walk, 'surf');
-      walk.nv = walk.ni = 0;
-      add(road, this.mats.roadWalk, false, true); yield;
-    } else {
-      add(road, this.mats.road, false, true); yield;
-      add(walk, this.mats.walk, false, true); yield;
-    }
+    add(road, lod === 1 && !walk.empty ? this.mats.roadWalk : this.mats.road, false, true); yield;
     // The glow draws in the flat mesh (flatGlow: unlit, untonemapped where
     // flagged) -- one draw instead of two a chunk.
-    if (!glow.empty) {
-      flat.appendFlagged(glow, 'glow');
-      glow.nv = glow.ni = 0;
-      add(flat, this.mats.flatGlow, true, true); yield;
-    } else {
-      add(flat, this.mats.flat, true, true); yield;
-    }
+    add(flat, glow.empty ? this.mats.flat : this.mats.flatGlow, true, true); yield;
     add(bl.glass, this.mats.glass, true, true); yield;
     add(bl.facade, this.mats.facade, true, true);
     return grp.children.length ? grp : null;
@@ -4088,6 +4107,32 @@ float frLine(float o, float fw, float c, float w) {
       return clamp(-(px * mz - pz * mx) / den, -1, 1);
     };
     const kA = mitreK(e.a, false), kB = mitreK(e.b, true);
+    // WHO COULD OWN A CELL OF THIS EDGE. twinOwner asks, per point, for a
+    // lower-numbered bore whose deck rectangle holds it within 0.25 m of this
+    // deck; the deck and ceiling cells ask it five times each, ~1100 calls on a
+    // 40 m edge, and that was a quarter of downtown's chunk building. Almost
+    // every edge has no such bore anywhere near it -- none close in plan, or
+    // (SR-99's stack) 6.6 m apart in height -- and there the answer is -1 at
+    // every point, so it is not asked. Bounds are padded past anything the
+    // cells can reach (the mitre shifts a corner by up to hw along the edge).
+    let twinCand = false;
+    {
+      this._tunIndex();
+      const pad = hw * 2 + 1, ext = (hw + 0.5) / e.len;
+      const minx = Math.min(a.x, b.x) - pad, maxx = Math.max(a.x, b.x) + pad;
+      const minz = Math.min(a.z, b.z) - pad, maxz = Math.max(a.z, b.z) + pad;
+      const ya = a.y + (b.y - a.y) * -ext, yb = a.y + (b.y - a.y) * (1 + ext);
+      const ylo = Math.min(ya, yb), yhi = Math.max(ya, yb);
+      for (const q of this._tunIdx) {
+        if (q.k >= ei || partners.includes(q.k)) continue;
+        if (q.x1 < minx || q.x0 > maxx || q.z1 < minz || q.z0 > maxz) continue;
+        const f = 0.05 / q.L, qa = q.a.y + (q.b.y - q.a.y) * -f, qb = q.a.y + (q.b.y - q.a.y) * (1 + f);
+        if (Math.min(qa, qb) - yhi >= 0.25 || ylo - Math.max(qa, qb) >= 0.25) continue;
+        twinCand = true;
+        break;
+      }
+    }
+    const own = twinCand ? (x, z, y) => this.twinOwner(x, z, y, ei, -1, partners) : () => -1;
     const E = (t, o) => t + (o * (kA * (1 - t) + kB * t)) / e.len;
     const P = (t, o) => { const te = E(t, o); return [lerp(a.x, b.x, te) + px * o, lerp(a.z, b.z, te) + pz * o]; };
     const Y = (t) => lerp(ay, by, t);
@@ -4185,17 +4230,23 @@ float frLine(float o, float fw, float c, float w) {
       // and no longer overlap it.
       const cells = (t0c, t1c, draw) => {
         const na = Math.max(1, Math.ceil(((t1c - t0c) * e.len) / 3));
-        const nb = Math.max(1, Math.ceil((hw * 2) / 1.75));
+        // The 1.75 m split across the width exists for the twin clipping. With
+        // no bore that could own any of this floor, one cell spans it: a cell's
+        // cross edges are lines of constant t, along which the deck is level,
+        // so the surface is the same, and the lamp light varies along only.
+        // That was ~8x the deck and ceiling quads, most of a bore's build.
+        const nb = twinCand ? Math.max(1, Math.ceil((hw * 2) / 1.75)) : 1;
         for (let ia = 0; ia < na; ia++) {
           const sa = t0c + ((t1c - t0c) * ia) / na, sb = t0c + ((t1c - t0c) * (ia + 1)) / na;
           for (let ib = 0; ib < nb; ib++) {
             const oa = hw - (hw * 2 * ib) / nb, ob = hw - (hw * 2 * (ib + 1)) / nb;
             const poly = [P(sa, oa), P(sa, ob), P(sb, ob), P(sb, oa)];
             const cx = (poly[0][0] + poly[2][0]) / 2, cz = (poly[0][1] + poly[2][1]) / 2;
+            if (!twinCand) { draw(poly); continue; }
             const ks = new Set();
             let all = true;
             for (const [x, z] of [...poly, [cx, cz]]) {
-              const k = this.twinOwner(x, z, Yl(x, z) - DECK, ei, -1, partners);
+              const k = own(x, z, Yl(x, z) - DECK);
               if (k < 0) all = false; else ks.add(k);
             }
             if (!ks.size) { draw(poly); continue; }
@@ -4245,7 +4296,7 @@ float frLine(float o, float fw, float c, float w) {
           }));
       }
       if (i % 2 === 0
-        && this.twinOwner(...P(tm, 0), Y(tm) - DECK, ei, -1, partners) < 0) {
+        && own(...P(tm, 0), Y(tm) - DECK) < 0) {
         const [c0x, c0z] = P(t0, 0.10), [c1x, c1z] = P(t0 + (t1 - t0) * 0.55, 0.10);
         const [q0x, q0z] = P(t0, -0.10), [q1x, q1z] = P(t0 + (t1 - t0) * 0.55, -0.10);
         glow.quad([c0x, Y(t0) + 0.02, c0z], [q0x, Y(t0) + 0.02, q0z],
@@ -4330,7 +4381,7 @@ float frLine(float o, float fw, float c, float w) {
         const s0 = t0 * e.len, s1 = t1 * e.len;
         for (let sl = Math.ceil(s0 / 6) * 6; sl + 1.4 <= s1 + 1e-6; sl += 6) {
           const ta = sl / e.len, tb = (sl + 1.4) / e.len;
-          if (this.twinOwner(...P((ta + tb) / 2, 0), Y((ta + tb) / 2) - DECK, ei, -1, partners) >= 0) continue;
+          if (own(...P((ta + tb) / 2, 0), Y((ta + tb) / 2) - DECK) >= 0) continue;
           const [f0x, f0z] = P(ta, 0), [f1x, f1z] = P(tb, 0);
           glow.quad(
             [f0x - px * 0.175, Y(ta) + WALL - 0.06, f0z - pz * 0.175],
@@ -6034,7 +6085,7 @@ float frLine(float o, float fw, float c, float w) {
     };
 
     for (const ei of ch.edges) {
-      if (performance.now() - this._yt > YIELD_MS) { yield; this._yt = performance.now(); }
+      if (performance.now() - this._yt > this._yb) { yield; this._yt = performance.now(); }
       const e = city.edges[ei];
       // A graded ramp's kerbside is its embankment, and furniture planted at
       // terrain height there is buried to the lamp head or floats off the
@@ -6202,7 +6253,7 @@ float frLine(float o, float fw, float c, float w) {
     const x0 = cx * CHUNK, z0 = cz * CHUNK;
     let treeSkip = 0;
     for (let i = 0; i < 230; i++) {
-      if (performance.now() - this._yt > YIELD_MS) { yield; this._yt = performance.now(); }
+      if (performance.now() - this._yt > this._yb) { yield; this._yt = performance.now(); }
       const hx = hash2(cx * 71 + i, cz * 131 + 7);
       const hz = hash2(cx * 37 + i, cz * 53 + 13);
       const x = x0 + hx * CHUNK, z = z0 + hz * CHUNK;

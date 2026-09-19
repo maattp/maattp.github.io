@@ -21,7 +21,7 @@ const SPIKES = process.argv.includes('--spikes');
 const STREAM = process.argv.includes('--stream');
 const RING = +arg('ring', 2);   // --builds: 4 = the whole 9x9 streaming ring (mid chunks at lod 0)
 const UA = 'Mozilla/5.0 (iPhone; CPU iPhone OS 19_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/19.0 Mobile/15E148 Safari/604.1';
-const chrome = launchChrome({ port: PORT, profile: `/tmp/auto-rendercpu-${PORT}`, gpu: true, width: 874, height: 402, vsyncOff: true });
+const chrome = launchChrome({ port: PORT, profile: `/tmp/auto-rendercpu-${PORT}`, gpu: true, width: 874, height: 402, vsyncOff: true, extra: ['--js-flags=--expose-gc'] });
 let code = 0;
 try {
   let page;
