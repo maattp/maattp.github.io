@@ -8,26 +8,34 @@
 // MEASURE seconds; the last site runs a police pursuit (wanted 3).
 //
 // It measures the car, not the car's bookkeeping, so the same numbers mean the
-// same thing on a build that has never heard of one-way streets: each moving
-// AI car is matched to the carriageway it is physically on (nearest centreline
-// inside the half-width, at the car's height, best aligned with its heading),
-// and counted AGAINST when that carriageway is one-way and the car's heading
-// points the other way.
+// same thing on a build that has never heard of one-way streets: see H.judge.
+// A car is AGAINST only when it is on a one-way carriageway and no carriageway
+// under it allows its heading. Results are deterministic (fixed dt, seeded
+// RNG), so a before/after on two builds is a like-for-like comparison.
 //
-//   against   share of moving AI-car time spent against an edge's allowed way.
-//             `flags` uses only F_ONEWAY / F_ONEWAY_REV; `+express` also counts
-//             I-5's reversible express lanes, which the importer leaves
-//             untagged (see edgeFlow in traffic.js), as their drawn direction.
-//   headOn    new contacts between two moving cars facing each other
-//             (heading dot < -0.7) inside the collision radius, per minute
-//   contacts  every new car-to-car contact, per minute
-//   stuck     cars that sat under 0.5 m/s for 20 s straight
-//   jam       most cars at once in one cluster (25 m) all slow for 10 s+
-//   near150   mean traffic cars within 150 m of the player; `all` = live total
+//   against*     share of moving driven-car samples (traffic + police judged
+//                separately) against an edge's allowed way. `Flags` reads only
+//                F_ONEWAY / F_ONEWAY_REV; `Exp` also counts I-5's reversible
+//                express lanes, which the importer leaves untagged (see
+//                edgeFlow in traffic.js), as their drawn direction. `Fwy` is
+//                the freeway/ramp share.
+//   opp*PerMin   driven cars facing each other touching: `Wrongway` when one
+//                is against a one-way, `Twoway` legal oncoming grazes, `Police`
+//                a unit involved. headOn: of those, same lane (< 2 m across).
+//   contacts     every new car-to-car contact event (one per pair until it has
+//                been clear for 1 s), per minute, and by kind
+//   parkedKnocked  parked cars shoved off the kerb, per minute
+//   stuck        traffic cars under 0.5 m/s for 20 s straight (stuckAt says
+//                where and what is ahead of them)
+//   jam          most cars at once in one 25 m cluster all slow for 10 s+
+//   near150      mean traffic cars within 150 m of the player; `all` = total
 //
 // Flags:  --dump FILE   edges and car samples at the downtown, I-5 and SR-99
 //                       sites, for the top-down diagnostic render
-//         --shot DIR    one in-game street shot on a downtown one-way street
+//         --shot DIR    two in-game shots (downtown 4th Ave, SR-99 south of
+//                       the tunnel), each also saved -tagged with every moving
+//                       AI car in view ringed green / red (with / against)
+//         --sites a,b   only these sites ('none' = shots only)
 //         --warm S / --measure S   seconds per site (default 20 / 60)
 //
 // Usage:  python3 -m http.server 8000; node tools/trafficcheck.mjs
@@ -56,7 +64,7 @@ function pageInit() {
   const flowFlags = (e) => (e.oneway ? (e.onewayRev ? -1 : 1) : 0);
   const flowExp = (e) => flowFlags(e) || ((e.cls === 'ramp'
     || (e.cls === 'hwy' && /Express|Ship Canal Bridge/.test(e.name || ''))) ? 1 : 0);
-  const H = window.__tc = { sites: [], dump: {} };
+  const H = window.__tc = { sites: [], dump: {}, flowExp };
 
   // Is car v driving against the flow of the carriageway it is physically on?
   // Every carriageway under the car (inside its half-width, at its height,
@@ -73,9 +81,10 @@ function pageInit() {
       const t = Math.max(0, Math.min(1, ((v.x - a.x) * e.dx + (v.z - a.z) * e.dz) / e.len));
       const qx = a.x + e.dx * e.len * t, qz = a.z + e.dz * e.len * t;
       if (Math.hypot(v.x - qx, v.z - qz) > e.hw + 0.5) continue;
-      // A bore's node heights are the ground over it, not its deck (world.js
-      // dives the deck), so a tunnel edge is matched in plan only; any other
-      // edge must be at the car's height.
+      // A tunnel edge is matched in plan only: where SR-99's twin decks are
+      // blended the car rides metres off its own edge's node heights, and the
+      // height test scored cars in the southbound tube against the northbound
+      // one. Any other edge must be at the car's height.
       const ey = a.y + (b.y - a.y) * t;
       if (!e.tunnel && Math.abs(v.y - ey) > 3) continue;
       const dot = e.dx * f.x + e.dz * f.z;
@@ -86,16 +95,6 @@ function pageInit() {
       else oneway = true;
     }
     return !any ? 0 : legal ? 1 : oneway ? -1 : 1;
-  };
-  H.onOneway = (v) => {
-    for (const ei of c.edgesNear(v.x, v.z, 30)) {
-      const e = c.edges[ei];
-      if (!flowExp(e)) continue;
-      const a = c.nodes[e.a];
-      const t = Math.max(0, Math.min(1, ((v.x - a.x) * e.dx + (v.z - a.z) * e.dz) / e.len));
-      if (Math.hypot(v.x - a.x - e.dx * e.len * t, v.z - a.z - e.dz * e.len * t) < e.hw + 0.5) return true;
-    }
-    return false;
   };
   H.onFwy = (v) => {
     for (const ei of c.edgesNear(v.x, v.z, 30)) {
@@ -161,7 +160,6 @@ function pageInit() {
     H.slow = new Map();
     H.stuckSeen = new Set();
     H.agAt = {};
-    H.cams = { x: 1, z: 0 };
     if (site.dump) {
       const edges = [];
       for (const ei of c.edgesNear(site.x, site.z, 260)) {
@@ -323,24 +321,42 @@ function pageInit() {
     H.sites.push(r);
     return JSON.stringify(r);
   };
-  // In-game street shot: a raised chase-height view down a downtown one-way
-  // street, looking the way it runs.
-  H.poseShot = () => {
-    const site = H.sites.length ? H.pickSites()[0] : H.pickSites()[0];
+  // In-game street shot: raised, looking down ~150 m of a downtown one-way
+  // arterial the way it runs. The street is walked forward from the nearest
+  // one-way arterial edge, taking the straightest one-way continuation.
+  H.poseShot = (si, cls, len, up) => {
+    const site = H.pickSites()[si];
     let best = null;
-    for (const ei of c.edgesNear(site.x, site.z, 200)) {
+    for (const ei of c.edgesNear(site.x, site.z, 250)) {
       const e = c.edges[ei];
-      if (!e.oneway || e.cls === 'res' || e.cls === 'hwy' || e.cls === 'ramp' || e.elev || e.tunnel || e.len < 20) continue;
+      if (!e.oneway || e.cls !== cls || e.elev || e.tunnel) continue;
       const a = c.nodes[e.a];
       const dd = Math.hypot(a.x - site.x, a.z - site.z);
       if (!best || dd < best.dd) best = { ei, dd };
     }
-    const e = c.edges[best.ei], s = e.onewayRev ? -1 : 1;
+    let e = c.edges[best.ei], s = e.onewayRev ? -1 : 1;
     const from = c.nodes[s > 0 ? e.a : e.b];
     const ux = e.dx * s, uz = e.dz * s;
-    const cx = from.x - ux * 14, cz = from.z - uz * 14;
-    const lx = from.x + ux * 80, lz = from.z + uz * 80;
-    return { cx, cz, lx, lz, ei: best.ei, name: e.name };
+    let cur = s > 0 ? e.b : e.a, run = e.len, prev = best.ei;
+    while (run < len) {
+      let nx = -1, nd = 0.9;
+      for (const oi of c.nodes[cur].e) {
+        if (oi === prev) continue;
+        const o = c.edges[oi];
+        if (!o.oneway || o.elev || o.tunnel) continue;
+        const os = (o.a === cur) !== !!o.onewayRev ? 1 : -1;
+        if ((o.a === cur ? 1 : -1) !== os) continue;
+        const dd = (o.dx * os) * ux + (o.dz * os) * uz;
+        if (dd > nd) { nd = dd; nx = oi; }
+      }
+      if (nx < 0) break;
+      const o = c.edges[nx];
+      run += o.len; prev = nx; cur = o.a === cur ? o.b : o.a;
+    }
+    const end = c.nodes[cur];
+    const cx = from.x - ux * 10, cz = from.z - uz * 10;
+    return { cx, cz, lx: end.x, lz: end.z, mx: (from.x + end.x) / 2, mz: (from.z + end.z) / 2,
+      ux, uz, up, run: Math.round(run), ei: best.ei, name: e.name };
   };
   return JSON.stringify(H.pickSites().map((s) => s.name));
 }
@@ -409,28 +425,73 @@ try {
     console.log('dump', DUMP);
   }
   if (SHOT) {
-    // Refill around the street and let it run, so the shot has traffic in it.
-    const pose = await ev(`(() => { const q = window.__tc.poseShot(); const H = window.__tc;
-      H.begin({ name: 'shot', x: q.cx, z: q.cz }); H.stepN(1800, false); return JSON.stringify(q); })()`);
-    const q = JSON.parse(pose);
-    await ev(`(() => { const d = window.__dbg;
-      for (const id of ['hud','pad','stickZone','lookZone','objective','toast','rotate','topBtns'])
-        { const e = document.getElementById(id); if (e) e.style.display = 'none'; }
-      const pending = () => [...d.world.chunks.values()].filter((c) => c.lod !== c.wantLod).length;
-      d.world.update(${q.cx}, ${q.cz}, 60);
-      for (let i = 0; i < 3000 && pending() > 0; i++) d.world.update(${q.cx}, ${q.cz}, 60);
-      const gy = (x, z) => d.city.groundAt(x, z, null);
-      d.camera.position.set(${q.cx}, gy(${q.cx}, ${q.cz}) + 7, ${q.cz});
-      d.camera.lookAt(${q.lx}, gy(${q.lx}, ${q.lz}) + 1, ${q.lz});
-      d.camera.updateMatrixWorld(true);
-      d.sun.position.set(${q.cx} - 215, gy(${q.cx}, ${q.cz}) + 200, ${q.cz} - 150);
-      d.sun.target.position.set(${q.cx}, gy(${q.cx}, ${q.cz}), ${q.cz});
-      d.sun.target.updateMatrixWorld();
-      return 1; })()`);
-    await sleep(8000);
-    const s = await send('Page.captureScreenshot', { format: 'png' });
-    writeFileSync(`${SHOT}/street.png`, Buffer.from(s.result.data, 'base64'));
-    console.log('shot', `${SHOT}/street.png`, q.name);
+    // Two in-game shots: down a downtown one-way arterial, and down SR-99's
+    // southbound carriageway south of the tunnel's exit (the divided freeway
+    // where the player met oncoming cars).
+    for (const [name, si, cls, len, up] of [['street-downtown', 0, 'art', 420, 55], ['street-sr99', 2, 'hwy', 260, 14]]) {
+      // Fill the streets round the shot and let them run for 25 s. Each build
+      // spawns and drives with its OWN code; the extra spawns only raise the
+      // density so one street shows several cars. Parked cars are left out,
+      // so every car in frame is moving traffic.
+      const pose = await ev(`(() => { const q = window.__tc.poseShot(${si}, '${cls}', ${len}, ${up}); const H = window.__tc, d = window.__dbg;
+        H.begin({ name: 'shot', x: q.mx, z: q.mz });
+        if (!H.noParked) { H.noParked = true; d.traffic.updateParked = () => {}; }
+        for (const v of [...d.traffic.cars]) if (v.mode === 'parked') d.traffic.remove(v);
+        for (let i = 0; i < 90; i++) d.traffic.spawnTraffic(q.mx, q.mz, null);
+        H.stepN(1500, false);
+        return JSON.stringify(q); })()`);
+      const q = JSON.parse(pose);
+      await ev(`(() => { const d = window.__dbg;
+        for (const id of ['hud','pad','stickZone','lookZone','objective','toast','rotate','topBtns'])
+          { const e = document.getElementById(id); if (e) e.style.display = 'none'; }
+        const pending = () => [...d.world.chunks.values()].filter((c) => c.lod !== c.wantLod).length;
+        d.world.update(${q.mx}, ${q.mz}, 60);
+        for (let i = 0; i < 3000 && pending() > 0; i++) d.world.update(${q.mx}, ${q.mz}, 60);
+        const gy = (x, z) => d.city.groundAt(x, z, null);
+        d.camera.position.set(${q.cx}, gy(${q.cx}, ${q.cz}) + ${q.up}, ${q.cz});
+        d.camera.lookAt(${q.lx}, gy(${q.lx}, ${q.lz}), ${q.lz});
+        d.camera.updateMatrixWorld(true);
+        d.sun.position.set(${q.mx} - 215, gy(${q.mx}, ${q.mz}) + 200, ${q.mz} - 150);
+        d.sun.target.position.set(${q.mx}, gy(${q.mx}, ${q.mz}), ${q.mz});
+        d.sun.target.updateMatrixWorld();
+        return 1; })()`);
+      await sleep(8000);
+      let s = await send('Page.captureScreenshot', { format: 'png' });
+      writeFileSync(`${SHOT}/${name}.png`, Buffer.from(s.result.data, 'base64'));
+      // The same frame with a diagnostic layer: every moving AI car in view
+      // ringed green (with the flow, or on a two-way street) or red (against
+      // a one-way carriageway), with a tick along its heading.
+      const tally = await ev(`(() => { const d = window.__dbg, H = window.__tc, THREE = d.THREE;
+        let cv = document.getElementById('__tcov');
+        if (!cv) { cv = document.createElement('canvas'); cv.id = '__tcov';
+          cv.style.cssText = 'position:fixed;left:0;top:0;width:100vw;height:100vh;pointer-events:none;z-index:99999';
+          document.body.appendChild(cv); }
+        cv.width = innerWidth; cv.height = innerHeight;
+        const g = cv.getContext('2d'); g.clearRect(0, 0, cv.width, cv.height);
+        const P = (x, y, z) => { const v = new THREE.Vector3(x, y, z).project(d.camera);
+          return v.z < 1 && Math.abs(v.x) < 1.05 && Math.abs(v.y) < 1.05 ? [(v.x + 1) / 2 * cv.width, (1 - v.y) / 2 * cv.height] : null; };
+        let w = 0, a = 0;
+        for (const v of d.traffic.cars) {
+          if ((v.mode !== 'traffic' && v.mode !== 'police') || Math.abs(v.vLong) < 1) continue;
+          const p0 = P(v.x, v.y + 1, v.z); if (!p0) continue;
+          const f = v.forward, p1 = P(v.x + f.x * 7, v.y + 1, v.z + f.z * 7);
+          const j = H.judge(v, H.flowExp); const col = j === -1 ? '#ff2020' : '#20d040';
+          if (j === -1) a++; else w++;
+          const r = Math.max(7, Math.min(26, 900 / Math.hypot(v.x - d.camera.position.x, v.z - d.camera.position.z)));
+          g.lineWidth = 3; g.strokeStyle = col;
+          g.beginPath(); g.arc(p0[0], p0[1], r, 0, Math.PI * 2); g.stroke();
+          if (p1) { g.beginPath(); g.moveTo(p0[0], p0[1]); g.lineTo(p1[0], p1[1]); g.stroke(); }
+        }
+        g.fillStyle = 'rgba(0,0,0,0.6)'; g.fillRect(0, cv.height - 30, cv.width, 30);
+        g.fillStyle = '#fff'; g.font = '16px sans-serif';
+        g.fillText('moving AI cars in view: ' + w + ' with the flow (green), ' + a + ' AGAINST a one-way carriageway (red)', 10, cv.height - 10);
+        return JSON.stringify({ w, a }); })()`);
+      await sleep(500);
+      s = await send('Page.captureScreenshot', { format: 'png' });
+      writeFileSync(`${SHOT}/${name}-tagged.png`, Buffer.from(s.result.data, 'base64'));
+      await ev(`document.getElementById('__tcov').remove()`);
+      console.log('shot', `${SHOT}/${name}.png`, q.name, q.run + ' m', tally);
+    }
   }
 } catch (err) {
   console.log('ERROR', err.message);

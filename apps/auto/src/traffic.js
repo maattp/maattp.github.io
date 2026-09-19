@@ -222,7 +222,8 @@ export class TrafficSystem {
    * travel. A two-way street keeps right of the centreline at 0.48 hw, as it
    * always has. A one-way street has no centreline: its lanes are laid across
    * the whole carriageway (less parking or shoulder), and each car keeps the
-   * lane fraction it was spawned with, so a three-lane freeway runs three lanes.
+   * lane fraction it was spawned with, so a car holds its lane down a freeway
+   * (lanes 4.2 m apart: see LANE_W, so a 3-lane carriageway runs 2 AI lanes).
    */
   laneLat(ei, sign, v) {
     const e = this.city.edges[ei];
@@ -283,7 +284,11 @@ export class TrafficSystem {
     return c * sign;
   }
 
-  /** Is `node` a spawnable, never-trapping place for traffic? */
+  /**
+   * Is edge ei a spawnable, never-trapping place for traffic? Both ends in
+   * one directed component of MIN_COMPONENT+ nodes: 131k of 139k nodes; the
+   * largest component alone is 128k.
+   */
   inComponent(ei) {
     const e = this.city.edges[ei];
     const c = this.comp[e.a];
