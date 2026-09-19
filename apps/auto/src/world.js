@@ -2679,7 +2679,9 @@ varying vec3 vFarTint;`)
   initFarRoads() {
     const U = this.frU = {
       farRing: this.farU.farRing,
-      farBuilt: this.farU.farBuilt,
+      // The massing's mask array itself, so both layers swap on the same
+      // frame; its own uniform only so a harness can unmask the roads alone.
+      frBuilt: { value: this.farU.farBuilt.value },
       frFade: { value: 0 },
       frCap: { value: FAR_R },
     };
@@ -2707,7 +2709,7 @@ attribute vec3 frA;
 attribute vec3 frB;
 attribute vec4 frM;
 uniform vec2 farRing;
-uniform float farBuilt[${SPAN * SPAN}];
+uniform float frBuilt[${SPAN * SPAN}];
 uniform float frCap;
 varying vec4 vFr;     // across (m), half-width, along past the start trim, before the end trim
 varying float vFrFl;`)
@@ -2733,7 +2735,7 @@ varying float vFrFl;`)
   float frCh = frM.z;
   vec2 frRc = frTile + vec2(mod(frCh, 8.0), floor(frCh / 8.0)) - farRing;
   if (frRc.x > -0.5 && frRc.y > -0.5 && frRc.x < ${SPAN}.0 - 0.5 && frRc.y < ${SPAN}.0 - 0.5
-      && farBuilt[int(frRc.x + 0.5) + int(frRc.y + 0.5) * ${SPAN}] > 0.5) frW = 0.0;
+      && frBuilt[int(frRc.x + 0.5) + int(frRc.y + 0.5) * ${SPAN}] > 0.5) frW = 0.0;
   float frExt0 = (frFlags & 32) != 0 ? min(frHw, 6.0) * 0.7 : 0.0;
   float frExt1 = (frFlags & 64) != 0 ? min(frHw, 6.0) * 0.7 : 0.0;
   float frAlong = mix(-frExt0, frLen + frExt1, position.x);

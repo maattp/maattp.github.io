@@ -57,14 +57,21 @@ const chrome = spawn(CHROME, [`--remote-debugging-port=${PORT}`, '--headless=new
   '--use-gl=swiftshader', '--enable-unsafe-swiftshader', '--window-size=1280,720',
   '--no-first-run', '--enable-precise-memory-info', `--user-data-dir=/tmp/auto-flycam-${PORT}`, 'about:blank'], { stdio: 'ignore' });
 
+let closing = false;
 try {
   let page;
   for (let i = 0; i < 90 && !page; i++) {
     try { page = (await (await fetch(`http://127.0.0.1:${PORT}/json/list`)).json()).find((t) => t.type === 'page'); } catch {}
     if (!page) await sleep(300);
   }
+  // A port another harness's Chrome already holds is served by THAT browser:
+  // ours cannot bind it and runs on without DevTools. Stepping someone else's
+  // game, and then hanging when its owner kills it, is what that looks like.
+  if (!page || page.url !== 'about:blank') throw new Error(`CDP port ${PORT} is not this run's Chrome (page ${page && page.url}) -- pick a free AUTO_CDP_PORT`);
   const ws = new WebSocket(page.webSocketDebuggerUrl);
   await new Promise((r, j) => { ws.addEventListener('open', r); ws.addEventListener('error', j); });
+  // A closed socket leaves every pending evaluate unanswered forever.
+  ws.addEventListener('close', () => { if (closing) return; console.error('flycam: DevTools socket closed (Chrome exited or was killed)'); process.exit(2); });
   let id = 0; const pend = new Map(); const logs = [];
   ws.addEventListener('message', (e) => {
     const m = JSON.parse(e.data);
@@ -347,4 +354,4 @@ try {
   if (logs.length) console.log(logs.slice(0, 5).join('\n'));
   mkdirSync(OUT, { recursive: true });
   writeFileSync(`${OUT}/${TAG}${JITTER ? '-jitter' : ''}.json`, JSON.stringify({ summary: sum, rows: res.rows, pops: res.pops, roadPops: res.roadPops }));
-} finally { chrome.kill('SIGKILL'); }
+} finally { closing = true; chrome.kill('SIGKILL'); }
