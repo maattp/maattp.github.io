@@ -17,7 +17,16 @@ import * as G from './geo.js';
 const TYRE = [0.05, 0.05, 0.055];
 const RIM = [0.80, 0.82, 0.85];
 const HUB = [0.42, 0.44, 0.47];
+// Glazing. This exact colour is what marks a trim vertex as GLASS: buildType
+// tags every trim vertex carrying it with the `glass` attribute, and the trim
+// shader turns those into see-through, sky-reflecting glass (see glassShader).
+// Anything that must stay opaque and merely looks dark -- a mirror face, a lamp
+// housing -- takes another colour.
 const GLASS = [0.06, 0.08, 0.10];
+// A door mirror's face: silvered, so it mirrors the sky rather than being a
+// dark tile, and deliberately NOT the glass colour, or it would go see-through
+// onto the empty inside of its pod.
+const MIRROR = [0.52, 0.55, 0.58];
 const CHROME = [0.84, 0.86, 0.89];
 const PLASTIC = [0.11, 0.12, 0.13];
 const LAMP = [1.0, 0.98, 0.9];
@@ -747,6 +756,7 @@ function buildSports(spec, paint, trim, matte) {
 
   // Side glass and the sail panel behind it, per side.
   const sgFB = [0.66, 0.965], sgFT = [-0.02, 1.272], sgRT = [-0.78, 1.258], sgRB = [-1.16, 1.01];
+  carCabin(matte, { cowlZ, cowlY, scrZ, roofY, backZ, rearZ, rearY, wScrB, wRoof, wRear, wGlassT, wGlassB, sgFB, sgRB, rows: [-0.46], scrWrap: 0.1, rearWrap: 0.05 });
   for (const sx of [-1, 1]) {
     const rows = [];
     for (let i = 0; i <= 2; i++) {
@@ -858,7 +868,7 @@ function buildSports(spec, paint, trim, matte) {
     };
     paint.loft([{ z: 0.505, pts: pod(0.86) }, { z: 0.575, pts: pod(1) }, { z: 0.645, pts: pod(0.78) }],
       WHITE, { capStart: true, capEnd: true });
-    trim.box(sx * 0.878, 0.962, 0.498, 0.094, 0.072, 0.02, 0, GLASS);
+    trim.box(sx * 0.878, 0.962, 0.498, 0.094, 0.072, 0.02, 0, MIRROR);
   }
 
   // --- rear wing -----------------------------------------------------------
@@ -984,6 +994,7 @@ function buildMuscle(spec, paint, trim, matte) {
   trim.patch(rearRows, GLASS, [0, 0.7, -1]);
 
   const sgFB = [0.60, 1.035], sgFT = [-0.16, 1.360], sgRT = [-1.06, 1.352], sgRB = [-1.34, 1.058];
+  carCabin(matte, { cowlZ, cowlY, scrZ, roofY, backZ, rearZ, rearY, wScrB, wRoof, wRear, wGlassT, wGlassB, sgFB, sgRB, rows: [-0.30, -1.02], scrWrap: 0.09, rearWrap: 0.04 });
   for (const sx of [-1, 1]) {
     const rows = [];
     for (let i = 0; i <= 2; i++) {
@@ -1075,7 +1086,7 @@ function buildMuscle(spec, paint, trim, matte) {
     // chrome bullet mirror on a short stalk
     trim.tube([sx * 0.760, 1.030, 0.50], [sx * 0.860, 1.070, 0.46], 0.018, 6, CHROME, true);
     trim.tube([sx * 0.860, 1.070, 0.52], [sx * 0.878, 1.074, 0.40], 0.052, 8, CHROME, true);
-    trim.box(sx * 0.868, 1.032, 0.398, 0.086, 0.078, 0.02, 0, GLASS);
+    trim.box(sx * 0.868, 1.032, 0.398, 0.086, 0.078, 0.02, 0, MIRROR);
     // side gill behind the front arch
     for (let i = 0; i < 3; i++) {
       matte.box(sx * (geom(0.72).w + 0.004), geom(0.72).yc - 0.10 + i * 0.05, 0.72,
@@ -1189,6 +1200,7 @@ function buildSedan(spec, paint, trim, matte) {
   trim.patch(rearRows, GLASS, [0, 0.7, -1]);
 
   const sgFB = [0.72, 1.055], sgFT = [0.16, 1.470], sgRT = [-1.24, 1.464], sgRB = [-1.44, 1.080];
+  carCabin(matte, { cowlZ, cowlY, scrZ, roofY, backZ, rearZ, rearY, wScrB, wRoof, wRear, wGlassT, wGlassB, sgFB, sgRB, rows: [-0.26, -1.14], scrWrap: 0.085, rearWrap: 0.035 });
   const sailOuter = [[wGlassT, 1.464, backZ], [0.745, 1.335, -1.4267],
     [0.788, 1.190, -1.6133], [0.800, 1.058, rearZ]];
   for (const sx of [-1, 1]) {
@@ -1297,7 +1309,7 @@ function buildSedan(spec, paint, trim, matte) {
     // exactly what the first pass rendered.
     paint.tube([sx * 0.790, 1.062, sgFB[0] - 0.02], [sx * 0.900, 1.088, sgFB[0] - 0.06], 0.020, 6, WHITE, true);
     paint.box(sx * 0.940, 1.048, sgFB[0] - 0.10, 0.105, 0.090, 0.055, 0, WHITE);
-    trim.box(sx * 0.940, 1.055, sgFB[0] - 0.128, 0.090, 0.070, 0.02, 0, GLASS);
+    trim.box(sx * 0.940, 1.055, sgFB[0] - 0.128, 0.090, 0.070, 0.02, 0, MIRROR);
   }
   // Roof aerial: a shark fin, which every American sedan built this century has.
   paint.patch([
@@ -1416,6 +1428,7 @@ function buildSuv(spec, paint, trim, matte) {
   trim.patch(rearRows, GLASS, [0, 0.5, -1]);
 
   const sgFB = [0.78, 1.315], sgFT = [0.14, 1.848], sgRT = [-1.50, 1.842], sgRB = [-1.62, 1.322];
+  carCabin(matte, { cowlZ, cowlY, scrZ, roofY, backZ, rearZ, rearY, wScrB, wRoof, wRear, wGlassT, wGlassB, sgFB, sgRB, rows: [-0.30, -1.30], scrWrap: 0.095, rearWrap: 0.03 });
   // The D-pillar is the whole panel between the side glass and the rear screen,
   // and it is 30-50 cm of painted metal -- the widest pillar on any vehicle
   // here, and the reason an SUV's rear quarter reads solid.
@@ -1533,7 +1546,7 @@ function buildSuv(spec, paint, trim, matte) {
     // sedan's for what placing it by eye produces.
     paint.tube([sx * 0.830, 1.318, sgFB[0] - 0.03], [sx * 0.955, 1.348, sgFB[0] - 0.08], 0.022, 6, WHITE, true);
     paint.box(sx * 1.000, 1.300, sgFB[0] - 0.13, 0.115, 0.100, 0.060, 0, WHITE);
-    trim.box(sx * 1.000, 1.308, sgFB[0] - 0.161, 0.098, 0.078, 0.02, 0, GLASS);
+    trim.box(sx * 1.000, 1.308, sgFB[0] - 0.161, 0.098, 0.078, 0.02, 0, MIRROR);
   }
 
   return wheels;
@@ -1641,6 +1654,7 @@ function buildPickup(spec, paint, trim, matte) {
   ], WHITE, [0, 0.3, -1]);
 
   const sgFB = [1.24, 1.278], sgFT = [0.74, 1.944], sgRT = [-0.58, 1.938], sgRB = [-0.78, 1.282];
+  carCabin(matte, { cowlZ, cowlY, scrZ, roofY, backZ, rearZ, rearY, wScrB, wRoof, wRear, wGlassT, wGlassB, sgFB, sgRB, rows: [0.34, -0.48], scrWrap: 0.075, rearWrap: 0.02 });
   const sailOuter = [[wGlassT, 1.938, backZ], [0.815, 1.660, -0.74], [0.830, 1.300, rearZ]];
   for (const sx of [-1, 1]) {
     const rows = [];
@@ -1790,7 +1804,7 @@ function buildPickup(spec, paint, trim, matte) {
     }
     matte.tube([sx * 1.190, 1.305, hz], [sx * 1.190, 1.535, hz], 0.024, 6, PLASTIC, true);
     paint.box(sx * 1.228, 1.272, hz - 0.030, 0.075, 0.300, 0.085, 0, WHITE);
-    trim.box(sx * 1.228, 1.286, hz - 0.074, 0.062, 0.266, 0.02, 0, GLASS);
+    trim.box(sx * 1.228, 1.286, hz - 0.074, 0.062, 0.266, 0.02, 0, MIRROR);
     // Bed rail cap and a tie-down, so the rail has a top edge that catches light.
     trim.box(sx * wallX, bedY + railH - 0.006, bedMid, 0.078, 0.014, bedLen - 0.02, 0, [0.22, 0.23, 0.25]);
     // Fuel filler on the bed side, ahead of the rear arch.
@@ -1854,7 +1868,7 @@ function fender(b, cy, cz, r, halfW, a0, a1, col) {
 function mirror(trim, x, y, z, r, stalkFrom, col) {
   trim.tube(stalkFrom, [x, y, z], 0.011, 6, col, true);
   trim.tube([x, y, z + 0.020], [x, y, z - 0.012], r, 10, col, true);
-  trim.box(x, y, z - 0.016, r * 1.7, r * 1.7, 0.014, 0, GLASS);
+  trim.box(x, y, z - 0.016, r * 1.7, r * 1.7, 0.014, 0, MIRROR);
 }
 
 /**
@@ -2509,7 +2523,7 @@ function buildConvertible(spec, paint, trim, matte) {
     // Mirror on the door shoulder, at the base of the A-pillar.
     paint.tube([sx * 0.760, 1.000, 0.760], [sx * 0.870, 1.020, 0.720], 0.020, 6, WHITE, true);
     paint.box(sx * 0.905, 0.985, 0.688, 0.100, 0.085, 0.055, 0, WHITE);
-    trim.box(sx * 0.905, 0.992, 0.660, 0.086, 0.066, 0.02, 0, GLASS);
+    trim.box(sx * 0.905, 0.992, 0.660, 0.086, 0.066, 0.02, 0, MIRROR);
     // Side gill behind the front arch, the one flank feature.
     for (let i = 0; i < 3; i++) {
       matte.box(sx * (geom(0.70).w + 0.004), geom(0.70).yc - 0.08 + i * 0.048, 0.70,
@@ -2599,6 +2613,9 @@ function buildPlane(spec, paint, trim, matte) {
       rows.push(row);
     }
     trim.patch(rows, GLASS, [sd, 0, 0]);
+    // The pane is laid on the skin, so the see-through glass would show the
+    // paint under it: back it with the cabin's dark, 4 mm in.
+    matte.patch(rows.map((r) => r.map(([x, y, z]) => [x - sd * 0.004, y, z])), CAB_FLOOR, [sd, 0, 0]);
     matte.patch([0, 1, 2, 3].map((i) => {
       const z = lerp(half - 2.25, half - 2.33, 0), y0 = 1.40 + i * 0.13;
       return [[sd * skinX(z, y0, 0.012), y0, z], [sd * skinX(z - 0.08, y0, 0.012), y0, z - 0.08]];
@@ -2616,6 +2633,10 @@ function buildPlane(spec, paint, trim, matte) {
   trim.loft([
     ring(half - 1.30, 0.56, 0.30, 1.70), ring(half - 1.70, 0.64, 0.40, 1.80), ring(half - 2.25, 0.63, 0.40, 1.80),
   ].reverse(), GLASS, { capStart: true, capEnd: true });
+  // And a dark cockpit a centimetre inside it, for the same reason.
+  matte.loft([
+    ring(half - 1.31, 0.55, 0.29, 1.70), ring(half - 1.70, 0.63, 0.39, 1.80), ring(half - 2.24, 0.62, 0.39, 1.80),
+  ].reverse(), CAB_FLOOR, { capStart: true, capEnd: true });
   // Spinner. No baked blades: the constructor hangs a LIVE prop group at the
   // nose for spec.plane, and baked ones underneath it would show as a frozen
   // ghost cross behind the spinning one.
@@ -2801,7 +2822,203 @@ function greenhouse(paint, trim, matte, g) {
     matte.tube([sx * (wGlassB + 0.006), sgFB[1] - 0.004, sgFB[0]],
       [sx * (wGlassB + 0.006), sgRB[1] - 0.004, sgRB[0]], 0.012, 5, PLASTIC, true);
   }
+  // A glass roof (the EV's) has nothing to line: you look down into the cabin.
+  if (g.rows) carCabin(matte, { ...g, scrWrap, rearWrap, headliner: roofInto !== trim });
   return { scrRows, rearRows, roofRows };
+}
+
+// --- cabins -----------------------------------------------------------------
+//
+// The glass is see-through (glassShader), so what is behind it has to exist.
+// Behind a car's glass was the top of the body's own deck in car colour and
+// nothing above it, so a cabin is the few things that actually show over a
+// beltline: a dark floor over that deck, a dash under the screen, seat backs
+// with their headrests standing clear on posts, a light headliner, and in an
+// occupied car a driver. Everything is in `matte` (no extra draw); the driver
+// goes in `matte.crew`, which buildType merges only into the geometries of
+// cars somebody is in -- a parked car is empty.
+//
+// Colours are dim but NOT black. Behind a 46 % pane and under its own roof's
+// shadow, a black cabin is the old dark slab over again; it is the lighter
+// headliner and the headrest-against-window silhouettes that read as a cabin.
+const CAB_FLOOR = [0.045, 0.045, 0.05];
+const CAB_SEAT = [0.10, 0.10, 0.108];
+const CAB_DASH = [0.055, 0.056, 0.06];
+const CAB_ROOF = [0.34, 0.33, 0.31];
+const SKIN = [0.52, 0.36, 0.26];
+const HAIR = [0.05, 0.04, 0.035];
+const SHIRT = [0.13, 0.16, 0.22];
+
+/**
+ * A box on its base whose top leans back by `rake` -- a seat back. Open
+ * underneath, like `box`; the bottom is always below the deck.
+ */
+function rakedBox(b, x, y, z, w, h, d, rake, col) {
+  const hw = w / 2, hd = d / 2;
+  const P = (sx, up, sz) => [x + sx * hw, y + (up ? h : 0), z + sz * hd - (up ? rake : 0)];
+  const nb = Math.hypot(rake, h);
+  b.quad(P(-1, 0, 1), P(1, 0, 1), P(1, 1, 1), P(-1, 1, 1), [0, rake / nb, h / nb], [0, 0, 1, 0, 1, 1, 0, 1], col);
+  b.quad(P(1, 0, -1), P(-1, 0, -1), P(-1, 1, -1), P(1, 1, -1), [0, -rake / nb, -h / nb], [0, 0, 1, 0, 1, 1, 0, 1], col);
+  for (const s of [-1, 1]) b.quad(P(s, 0, 1), P(s, 0, -1), P(s, 1, -1), P(s, 1, 1), [s, 0, 0], [0, 0, 1, 0, 1, 1, 0, 1], col);
+  b.quad(P(-1, 1, 1), P(1, 1, 1), P(1, 1, -1), P(-1, 1, -1), [0, 1, 0], [0, 0, 1, 0, 1, 1, 0, 1], col);
+}
+
+/**
+ * One seat seen over a beltline: the top of the back, and a headrest on two
+ * posts with daylight between -- that gap is most of what makes it read as a
+ * seat rather than a box. `y` is the floor, `H` the floor-to-headliner height.
+ */
+function seat(b, x, y, z, w, H, bench = false, down = 0.25) {
+  const back = 0.22 * H, hr0 = 0.30 * H, hr1 = 0.60 * H;
+  rakedBox(b, x, y - down, z, w, back + down, 0.13, 0.05, CAB_SEAT);
+  const heads = bench ? [-w * 0.3, w * 0.3] : [0];
+  for (const hx of heads) {
+    for (const px of [-0.07, 0.07]) b.box(x + hx + px, y + back - 0.01, z - 0.045, 0.014, hr0 - back + 0.02, 0.014, 0, [0.30, 0.31, 0.33]);
+    b.box(x + hx, y + hr0, z - 0.05, 0.26, hr1 - hr0, 0.09, 0, CAB_SEAT);
+  }
+}
+
+/**
+ * A seated occupant as seen through a side window: head, hair, neck, the top of
+ * the shoulders, and forearms out to the wheel. Built facing +z on the seat
+ * whose back is at `z`.
+ */
+function occupant(b, x, y, z, H, wheelAt = null) {
+  const r = Math.min(0.105, 0.26 * H);
+  const hy = y + 0.53 * H, hz = z + 0.17;
+  b.spheroid(x, hy, hz, r, 8, 5, SKIN, 1.18);
+  // Hair: a cap over the crown and the back, a hair's breadth outside the head.
+  b.spheroid(x, hy + r * 0.28, hz - r * 0.12, r * 1.06, 8, 4, HAIR, 1.0);
+  b.prism(x, hy - r * 1.75, hz - 0.02, r * 0.42, r * 0.9, 6, SKIN);
+  rakedBox(b, x, y - 0.30, z + 0.16, 0.44, 0.30 + 0.16 * H, 0.22, 0.04, SHIRT);
+  if (wheelAt) {
+    for (const s of [-1, 1]) {
+      b.tube([x + s * 0.19, y + 0.10 * H, z + 0.14], [wheelAt[0] + s * 0.15, wheelAt[1], wheelAt[2] - 0.02], 0.038, 5, SHIRT, true);
+    }
+  }
+}
+
+/**
+ * Steering wheel: the top half of the rim, tilted back, which is all a beltline
+ * lets you see of one.
+ */
+function wheelRim(b, cx, cy, cz, R = 0.18) {
+  const tilt = 0.45, seg = 6;
+  const at = (a) => [cx + Math.cos(a) * R, cy + Math.sin(a) * R * Math.cos(tilt), cz - Math.sin(a) * R * Math.sin(tilt)];
+  for (let i = 0; i < seg; i++) {
+    b.tube(at((Math.PI * i) / seg), at((Math.PI * (i + 1)) / seg), 0.016, 4, [0.03, 0.03, 0.035], false);
+  }
+}
+
+/**
+ * A car's cabin, derived from the same greenhouse stations that drew its glass
+ * so it can never poke through it: the floor is held inside the screens' feet
+ * (following their wrap), the headliner inside the roof, the seats between the
+ * side glass. `rows` are seat-back stations, front first; `front` is 'pair'
+ * (buckets) and later rows are benches unless `rowKind` says otherwise.
+ */
+function carCabin(matte, g) {
+  const {
+    cowlZ, cowlY, scrZ, roofY, backZ, rearZ, rearY, wScrB, wRoof, wRear, wGlassT, wGlassB,
+    sgFB, sgRB, rows, scrWrap = 0.085, rearWrap = 0.035, headliner = true, driverX = null,
+  } = g;
+  const y = Math.max(sgFB[1], sgRB[1]) + 0.010;
+  const H = roofY - 0.035 - y;
+  const rakeF = (scrZ - cowlZ) / (roofY - cowlY), rakeR = (backZ - rearZ) / (roofY - rearY);
+  const zF = cowlZ + Math.max(0, y - cowlY) * rakeF - 0.035;
+  const zR = rearZ + Math.max(0, y - rearY) * rakeR + 0.035;
+  const x = Math.min(wGlassB, wScrB, wRear) - 0.05;
+  // Floor over the deck, cut to the screens' wrap at both ends.
+  const fr = [], rr = [];
+  for (let j = 0; j <= 6; j++) {
+    const u = -1 + (2 * j) / 6;
+    fr.push([u * x, y, zF - scrWrap * u * u]);
+    rr.push([u * x, y, zR + rearWrap * u * u]);
+  }
+  matte.patch([rr, fr], CAB_FLOOR, [0, 1, 0]);
+  // Dash: a step up under the screen, kept a margin under the glass.
+  const dashD = Math.min(0.34, (zF - zR) * 0.2);
+  const dashH = Math.min(0.07, Math.max(0.02, (dashD * 0.5) / Math.max(0.5, -rakeF) - 0.01));
+  matte.box(0, y, zF - dashD / 2 - 0.02, x * 1.9, dashH, dashD, 0, CAB_DASH);
+  if (headliner) {
+    const hx = Math.min(wRoof * 0.92, wGlassT - 0.04);
+    matte.quad([-hx, roofY - 0.035, scrZ - 0.01], [hx, roofY - 0.035, scrZ - 0.01],
+      [hx, roofY - 0.035, backZ + 0.01], [-hx, roofY - 0.035, backZ + 0.01], [0, -1, 0], [0, 0, 1, 0, 1, 1, 0, 1], CAB_ROOF);
+  }
+  const sx = Math.min(0.37, x * 0.52);
+  const dx = driverX === null ? sx : driverX;
+  rows.forEach((z, i) => {
+    if (i === 0) for (const s of [-1, 1]) seat(matte, s * sx, y, z, Math.min(0.50, x * 0.68), H);
+    else seat(matte, 0, y, z, x * 1.75, H, true);
+  });
+  const wheel = [dx, y - 0.07, rows[0] + 0.55];
+  wheelRim(matte, wheel[0], wheel[1], wheel[2]);
+  if (matte.crew) occupant(matte.crew, dx, y, rows[0], H, wheel);
+  return { y, H, x, zF, zR };
+}
+
+/**
+ * The cabin inside a `boxShell` (van, truck and bus cabs), which unlike a car's
+ * greenhouse has no deck under it and no roof lining: a floor at `y` between
+ * `zR` and `zF`, a dash at the front, a bulkhead at `zR` facing forward, a
+ * headliner at `top` back from `hzF`, and seat rows. Every figure comes from
+ * the shell's own stations at the call site, inside the glass.
+ */
+function boxCabin(matte, c) {
+  // `sit` is the level a car's beltline would be at -- about the seated
+  // shoulder -- which in a van or truck is well above the cab floor.
+  const { y, x, zR, zF, top, hzF = zF, rows, wheelDz = 0.55, bulkhead = true, driverX = null, benches = 'pair' } = c;
+  const sit = c.sit === undefined ? y : c.sit;
+  matte.quad([-x, y, zR], [x, y, zR], [x, y, zF], [-x, y, zF], [0, 1, 0], [0, 0, 1, 0, 1, 1, 0, 1], CAB_FLOOR);
+  matte.box(0, y, zF - 0.20, x * 1.96, Math.max(0.10, sit - y - 0.12), 0.36, 0, CAB_DASH);
+  if (bulkhead) matte.quad([-x, y, zR], [x, y, zR], [x, top, zR], [-x, top, zR], [0, 0, 1], [0, 0, 1, 0, 1, 1, 0, 1], CAB_FLOOR);
+  matte.quad([-x, top, zR], [x, top, zR], [x, top, hzF], [-x, top, hzF], [0, -1, 0], [0, 0, 1, 0, 1, 1, 0, 1], CAB_ROOF);
+  const sx = Math.min(0.46, x * 0.52), dx = driverX === null ? sx : driverX;
+  const Hs = Math.min(top - sit, 0.72);   // a seat is a seat's height, however tall the box
+  const down = sit - y + 0.02;
+  rows.forEach((z) => {
+    if (benches === 'pair') for (const s of [-1, 1]) seat(matte, s * sx, sit, z, 0.50, Hs, false, down);
+    else seat(matte, 0, sit, z, x * 1.75, Hs, true, down);
+  });
+  const wheel = [dx, sit - 0.04, rows[0] + wheelDz];
+  wheelRim(matte, wheel[0], wheel[1], wheel[2], 0.22);
+  if (matte.crew) occupant(matte.crew, dx, sit, rows[0], Hs, wheel);
+}
+
+/**
+ * A city bus's saloon: a floor, a light ceiling, forward-facing double seats
+ * down both sides of an aisle, the driver's cab at the front on the left, and
+ * a few passengers. The windows run both sides, so this is seen THROUGH, the
+ * way a real bus is -- no liner walls.
+ */
+function busCabin(matte, shell, o) {
+  const { belt, nose, tail, roofY } = o;
+  const y = belt + 0.01, sit = belt + 0.05, top = roofY - 0.14, Hs = 0.72;
+  const x = shell.sec(0).w0 - 0.06;
+  const z0 = tail + 0.25, z1 = nose - 0.20;
+  matte.quad([-x, y, z0], [x, y, z0], [x, y, z1], [-x, y, z1], [0, 1, 0], [0, 0, 1, 0, 1, 1, 0, 1], CAB_FLOOR);
+  matte.quad([-x, top, z0], [x, top, z0], [x, top, z1], [-x, top, z1], [0, -1, 0], [0, 0, 1, 0, 1, 1, 0, 1], CAB_ROOF);
+  matte.box(0, y, nose - 0.45, x * 1.96, 0.22, 0.40, 0, CAB_DASH);
+  // Driver on the left (+x), behind a screen; the wheel is flat and big.
+  const dz = nose - 1.35;
+  rakedBox(matte, 0.62, y - 0.02, dz, 0.52, sit - y + 0.55 * Hs, 0.12, 0.05, CAB_SEAT);
+  const wheel = [0.62, sit + 0.02, dz + 0.62];
+  wheelRim(matte, wheel[0], wheel[1], wheel[2], 0.24);
+  matte.box(0.18, y, dz + 0.10, 0.03, 0.80 * Hs + sit - y, 0.60, 0, [0.30, 0.31, 0.33]);    // cab screen
+  if (matte.crew) occupant(matte.crew, 0.62, sit, dz, Hs, wheel);
+  // Double seats, one tall back each, every 0.85 m down both sides.
+  const seatX = x - 0.46, backH = sit - y + 0.58 * Hs;
+  const riders = new Set([1, 4, 6, 9, 13, 17, 20]);
+  let n = 0;
+  for (let z = nose - 2.35; z > tail + 1.0; z -= 0.85) {
+    for (const sx of [-1, 1]) {
+      // The kerb-side doors are standing room.
+      if (sx < 0 && ((z > 4.35 && z < 5.65) || (z > -0.70 && z < 0.70))) continue;
+      rakedBox(matte, sx * seatX, y - 0.02, z, 0.86, backH, 0.10, 0.06, CAB_SEAT);
+      if (matte.crew && riders.has(n)) occupant(matte.crew, sx * (seatX + (n % 2 ? 0.2 : -0.2)), sit, z, Hs);
+      n++;
+    }
+  }
 }
 
 /**
@@ -2857,7 +3074,7 @@ function doorMirror(paint, trim, sx, fb, wGlassB, reach = 0.15) {
   };
   paint.loft([{ z: z - 0.14, pts: pod(0.80) }, { z: z - 0.07, pts: pod(1) }, { z: z - 0.02, pts: pod(0.72) }],
     WHITE, { capStart: true, capEnd: true });
-  trim.box(mx, my - 0.040, z - 0.146, 0.118, 0.080, 0.012, 0, GLASS);
+  trim.box(mx, my - 0.040, z - 0.146, 0.118, 0.080, 0.012, 0, MIRROR);
 }
 
 /**
@@ -2893,7 +3110,7 @@ const SMALL_LOOKS = {
       cowlZ: 0.78, scrZ: -0.08, backZ: -1.34, rearZ: -1.80, rearY: 1.10,
       wScrB: 0.76, wScrT: 0.64, wRoof: 0.655, wRearT: 0.635, wRear: 0.735, wGlassT: 0.630, wGlassB: 0.740,
       sgFB: [0.70, 0.965], sgFT: [-0.06, 1.470], sgRT: [-1.05, 1.462], sgRB: [-1.30, 0.995],
-      bPillars: [0.46], rearWrap: 0.030,
+      bPillars: [0.46], rearWrap: 0.030, rows: [-0.24, -1.02],
     },
     doors: [0.70, -0.33, -1.22],
   },
@@ -2910,7 +3127,7 @@ const SMALL_LOOKS = {
       cowlZ: 0.74, scrZ: -0.02, backZ: -1.50, rearZ: -1.72, rearY: 1.07,
       wScrB: 0.72, wScrT: 0.63, wRoof: 0.648, wRearT: 0.628, wRear: 0.700, wGlassT: 0.622, wGlassB: 0.722,
       sgFB: [0.66, 0.955], sgFT: [-0.02, 1.450], sgRT: [-1.36, 1.446], sgRB: [-1.47, 0.978],
-      bPillars: [0.52], rearWrap: 0.024, rearBow: 0.006,
+      bPillars: [0.52], rearWrap: 0.024, rearBow: 0.006, rows: [-0.30, -1.16],
       pillarBlack: true,
     },
     doors: [0.62, -0.60],
@@ -3065,7 +3282,9 @@ function buildEv(spec, paint, trim, matte) {
     sgRT: [-1.00, spec.roof - 0.040], sgRB: [-1.50, beltY(-1.50) + 0.008],
     deck: [geom(-1.80).tw * 0.985, beltY(-1.80) - 0.006],
     bPillars: [0.47], scrWrap: 0.10, rearWrap: 0.045, rearBow: 0.020, crown: 0.014,
-    roofInto: trim, roofCol: [0.03, 0.035, 0.04],
+    // A real glass roof now that glass is see-through: from above, or looking
+    // up through a side window, you see the cabin and the sky.
+    roofInto: trim, roofCol: GLASS, rows: [-0.22, -1.14],
   };
   greenhouse(paint, trim, matte, G);
 
@@ -3125,7 +3344,7 @@ function buildEv(spec, paint, trim, matte) {
 function scaledBuild(build, refLen, refWid) {
   return (spec, paint, trim, matte) => {
     const kx = spec.wid / refWid, kz = spec.len / refLen;
-    const bs = [paint, trim, matte], from = bs.map((b) => b.pos.length);
+    const bs = [paint, trim, matte, matte.crew].filter(Boolean), from = bs.map((b) => b.pos.length);
     const wheels = build({ ...spec, len: refLen, wid: refWid }, paint, trim, matte);
     bs.forEach((b, j) => {
       for (let i = from[j]; i < b.pos.length; i += 3) {
@@ -3221,7 +3440,7 @@ function buildServiceSedan(spec, paint, trim, matte) {
 function boxShell(into, cfg) {
   const {
     z0, z1, stations = 30, wAt, y0At, y1At, rr = 0.12, tumble = 0.03, crown = 0.02,
-    capStart = false, capEnd = false, col = WHITE,
+    capStart = false, capEnd = false, col = WHITE, windows = [], slope = null,
   } = cfg;
   const sec = (z) => {
     const w0 = wAt(z), y0 = y0At(z), y1 = Math.max(y0 + 0.02, y1At(z)), h = y1 - y0;
@@ -3233,12 +3452,63 @@ function boxShell(into, cfg) {
     return [[s * g.w0, g.y0], [s * g.w0, g.side], [s * g.wT, g.y1 - g.r],
       [s * (g.wT - g.r * 0.3), g.y1 - g.r * 0.3], [s * (g.wT - g.r), g.y1], [s * g.wT * 0.35, g.y1 + crown]];
   };
-  const rings = [];
-  for (let i = 0; i <= stations; i++) {
-    const z = z0 + ((z1 - z0) * i) / stations;
-    rings.push({ z, pts: [...half(z, -1), ...half(z, 1).reverse()] });
+  // Openings. The glass on a shell used to be laid over unbroken paint, which
+  // was fine while glass was opaque; see-through, every van and bus window
+  // showed its own body colour. `windows` are the `sideGlass` calls that will
+  // glaze this shell ({ sx, zA, zB, yBot, yTopMax, cols }; yTopMax may be a
+  // function of `sec`), `slope` the `slopeGlass` one ({ zA, zB, rows }). Their
+  // stations become ring stations, so every hole edge is a ring edge and
+  // nothing is left half-covered behind the glass.
+  const zSet = [];
+  for (let i = 0; i <= stations; i++) zSet.push(z0 + ((z1 - z0) * i) / stations);
+  const wins = windows.map((w) => ({
+    ...w, cols: w.cols || 6, lo: Math.min(w.zA, w.zB), hi: Math.max(w.zA, w.zB),
+    top: typeof w.yTopMax === 'function' ? w.yTopMax(sec) : w.yTopMax,
+  }));
+  for (const w of wins) for (let j = 0; j <= w.cols; j++) zSet.push(w.zA + ((w.zB - w.zA) * j) / w.cols);
+  const sl = slope && { ...slope, rows: slope.rows || 4, lo: Math.min(slope.zA, slope.zB), hi: Math.max(slope.zA, slope.zB) };
+  if (sl) for (let i = 0; i <= sl.rows; i++) zSet.push(sl.zA + ((sl.zB - sl.zA) * i) / sl.rows);
+  zSet.sort((a, b) => (z1 > z0 ? a - b : b - a));
+  const zs = zSet.filter((z, i) => i === 0 || Math.abs(z - zSet[i - 1]) > 1e-4);
+  const rings = zs.map((z) => ({ z, pts: [...half(z, -1), ...half(z, 1).reverse()] }));
+  const within = (o, za, zb) => Math.min(za, zb) >= o.lo - 1e-4 && Math.max(za, zb) <= o.hi + 1e-4;
+  // Ring points run L0..L5 then R5..R0: segment 0 is the left flat side, 10
+  // the right, and 4..6 the top between the roof radii.
+  const sideWin = (i, sx) => wins.find((w) => w.sx === sx && within(w, rings[i].z, rings[i + 1].z));
+  const skip = (i, k) => (k === 0 && !!sideWin(i, -1)) || (k === 10 && !!sideWin(i, 1))
+    || (!!sl && k >= 4 && k <= 6 && within(sl, rings[i].z, rings[i + 1].z));
+  into.loft(rings, col, { capStart, capEnd, skip: wins.length || sl ? skip : null });
+  const UV = [0, 0, 1, 0, 1, 1, 0, 1];
+  for (let i = 0; i < rings.length - 1; i++) {
+    const za = rings[i].z, zb = rings[i + 1].z, ga = sec(za), gb = sec(zb);
+    for (const sx of [-1, 1]) {
+      const w = sideWin(i, sx);
+      if (!w) continue;
+      // The same top edge sideGlass draws, so pane and hole agree.
+      const yt = (g) => Math.max(w.yBot + 0.002, Math.min(w.top, g.side - 0.035));
+      const xa = sx * ga.w0, xb = sx * gb.w0;
+      if (w.yBot - Math.min(ga.y0, gb.y0) > 1e-3) into.quad([xa, ga.y0, za], [xb, gb.y0, zb], [xb, w.yBot, zb], [xa, w.yBot, za], [sx, 0, 0], UV, col);
+      if (ga.side - yt(ga) > 1e-3 || gb.side - yt(gb) > 1e-3) {
+        into.quad([xa, yt(ga), za], [xb, yt(gb), zb], [xb, gb.side, zb], [xa, ga.side, za], [sx, 0, 0], UV, col);
+      }
+    }
+    if (sl && within(sl, za, zb)) {
+      // slopeGlass spans 93 % of the flat top; paint the last 7 % to the radius.
+      for (const s of [-1, 1]) {
+        const edge = (g) => {
+          const ax = (g.wT - g.r) * 0.93, flat = g.wT * 0.35;
+          return [s * ax, g.y1 + crown * (1 - (ax - flat) / (g.wT - g.r - flat))];
+        };
+        const ea = edge(ga), eb = edge(gb);
+        const A = [s * (ga.wT - ga.r), ga.y1, za], B = [s * (gb.wT - gb.r), gb.y1, zb], C = [eb[0], eb[1], zb], D = [ea[0], ea[1], za];
+        const u = [B[0] - A[0], B[1] - A[1], B[2] - A[2]], v = [D[0] - A[0], D[1] - A[1], D[2] - A[2]];
+        let n = [u[1] * v[2] - u[2] * v[1], u[2] * v[0] - u[0] * v[2], u[0] * v[1] - u[1] * v[0]];
+        const l = Math.hypot(...n) || 1;
+        n = n.map((c) => (c / l) * (n[1] < 0 ? -1 : 1));
+        into.quad(A, B, C, D, n, UV, col);
+      }
+    }
   }
-  into.loft(rings, col, { capStart, capEnd });
   return {
     sec, half, crown,
     /** The section as [[y, halfWidth], ...] ascending, for `endFace`. */
@@ -3293,23 +3563,17 @@ function buildVan(spec, paint, trim, matte) {
     y0At: (z) => beltY(z) - 0.03,
     // Level roof, then a curve down the screen that meets the bonnet tangent.
     y1At: curve([[tail, roofY - 0.03], [tail + 0.18, roofY], [0.80, roofY], [1.00, roofY - 0.05], [cowlZ, beltY(cowlZ) + 0.03]]),
+    windows: [-1, 1].map((sx) => ({ sx, zA: 0.46, zB: 1.50, yBot: beltY(1.0) + 0.06, yTopMax: roofY - 0.30 })),
+    slope: { zA: 1.54, zB: 1.04 },
   });
 
   // Windscreen, laid on the shell's sloping top between the two corners.
-  const scr = [];
-  for (let i = 0; i <= 4; i++) {
-    const z = 1.54 + ((1.04 - 1.54) * i) / 4, g = shell.sec(z);
-    const slope = (shell.sec(z + 0.01).y1 - shell.sec(z - 0.01).y1) / 0.02;
-    const nl = Math.hypot(1, slope), ny = 1 / nl, nz = -slope / nl;
-    const row = [];
-    for (let j = 0; j <= 8; j++) {
-      const u = -1 + (2 * j) / 8, x = u * (g.wT - g.r) * 0.93, ax = Math.abs(x);
-      const flat = g.wT * 0.35, y = ax <= flat ? g.y1 + shell.crown : g.y1 + shell.crown * (1 - (ax - flat) / (g.wT - g.r - flat));
-      row.push([x, y + ny * 0.008, z + nz * 0.008]);
-    }
-    scr.push(row);
-  }
-  trim.patch(scr, GLASS, [0, 0.6, 1]);
+  slopeGlass(trim, shell, 1.54, 1.04);
+  // Cab: the floor at the belt, a bulkhead behind the seats closing off the
+  // cargo box (whose inside you would otherwise see straight through), and a
+  // headliner under the level roof.
+  boxCabin(matte, { y: beltY(1.0) + 0.01, sit: 1.50, x: shell.sec(1.0).w0 - 0.06, zR: 0.26, zF: 1.46, top: roofY - 0.07,
+    hzF: 0.96, rows: [0.52], wheelDz: 0.62 });
 
   for (const sx of [-1, 1]) {
     sideGlass(trim, shell, sx, 0.46, 1.50, beltY(1.0) + 0.06, roofY - 0.30);
@@ -3329,7 +3593,7 @@ function buildVan(spec, paint, trim, matte) {
     const mz = 1.46, bx = geom(mz).tw;
     matte.tube([sx * bx, 1.22, mz], [sx * (bx + 0.20), 1.34, mz + 0.03], 0.022, 6, PLASTIC, true);
     matte.box(sx * (bx + 0.25), 1.10, mz + 0.03, 0.080, 0.34, 0.12, 0, PLASTIC);
-    trim.box(sx * (bx + 0.25), 1.12, mz - 0.034, 0.060, 0.30, 0.012, 0, GLASS);
+    trim.box(sx * (bx + 0.25), 1.12, mz - 0.034, 0.060, 0.30, 0.012, 0, MIRROR);
     trim.box(sx * (geom(2.30).w + 0.004), 0.86, 2.30, 0.010, 0.030, 0.08, 0, AMBER);
   }
 
@@ -3425,7 +3689,7 @@ function shellArch(matte, shell, zc, wr, archR, archTop, floor) {
  * the hood). The plan corners at the nose roll in, so the face is not a slab.
  */
 function truckCab(paint, matte, o) {
-  const { z0, z1, W, roofY, zF, wr, archR, sill, bonnet = null } = o;
+  const { z0, z1, W, roofY, zF, wr, archR, sill, bonnet = null, windows = [], slope = null } = o;
   const archTop = wr * 2 + 0.07;
   const lift = archCut([zF], archR, archTop, 3.0);
   const k = (z) => 0.93 + 0.07 * Math.sqrt(clamp((z1 - z) / 0.22, 0, 1));
@@ -3434,7 +3698,7 @@ function truckCab(paint, matte, o) {
     : curve([[z0, roofY], [z1 - 0.40, roofY], [z1, roofY - 0.16]]);
   const shell = boxShell(paint, {
     z0, z1, stations: 34, rr: 0.16, tumble: 0.05, crown: 0.04, capStart: true,
-    wAt: (z) => W * k(z), y0At: (z) => Math.max(sill, lift(z)), y1At,
+    wAt: (z) => W * k(z), y0At: (z) => Math.max(sill, lift(z)), y1At, windows, slope,
   });
   shellArch(matte, shell, zF, wr, archR, archTop, sill);
   return { shell, archTop };
@@ -3445,7 +3709,7 @@ function truckMirror(trim, matte, sx, x, y, z) {
   matte.tube([sx * x, y, z - 0.10], [sx * (x + 0.22), y - 0.04, z + 0.12], 0.024, 6, PLASTIC, true);
   matte.tube([sx * (x + 0.22), y - 0.04, z + 0.12], [sx * (x + 0.22), y - 0.52, z + 0.12], 0.020, 6, PLASTIC, true);
   matte.box(sx * (x + 0.27), y - 0.58, z + 0.12, 0.085, 0.50, 0.14, 0, PLASTIC);
-  trim.box(sx * (x + 0.27), y - 0.56, z + 0.046, 0.065, 0.46, 0.012, 0, GLASS);
+  trim.box(sx * (x + 0.27), y - 0.56, z + 0.046, 0.065, 0.46, 0.012, 0, MIRROR);
 }
 
 /**
@@ -3468,12 +3732,18 @@ function buildTruck(spec, paint, trim, matte, S) {
   const nose = spec.len / 2, tail = -spec.len / 2;
   const zF = nose - S.ovF, zR = zF - spec.wheelbase;
   const cz0 = nose - S.cabLen, cabW = W * 0.95, archR = wr + 0.17;
-  const { shell: cab } = truckCab(paint, matte, { z0: cz0, z1: nose, W: cabW, roofY, zF, wr, archR, sill: 0.56 });
+  const { shell: cab } = truckCab(paint, matte, {
+    z0: cz0, z1: nose, W: cabW, roofY, zF, wr, archR, sill: 0.56,
+    windows: [-1, 1].map((sx) => ({ sx, zA: cz0 + 0.32, zB: nose - 0.30, yBot: 1.50, yTopMax: (sec) => sec(nose).side - 0.06 })),
+  });
   const cs = cab.sec(nose);
 
   // --- face ---------------------------------------------------------------------
   const LAMP_A = [cs.w0 * 0.78, 0.84, 0.14, 0.07], GRILLE = [0, 1.06, cs.w0 * 0.46, 0.17];
-  endFace(paint, nose, 1, cab.prof(nose), [GRILLE, LAMP_A], WHITE);
+  // The windscreen is a hole in the face now, not a pane on painted metal.
+  const fw = cs.w0 - 0.12, zs = nose + 0.008, scrTop = cs.side - 0.05;
+  const SCR = [0, (1.50 + scrTop) / 2, fw, (scrTop - 1.50) / 2];
+  endFace(paint, nose, 1, cab.prof(nose), [GRILLE, LAMP_A, SCR], WHITE);
   const gp = pocket(paint, matte, 0, GRILLE[1], nose, GRILLE[2], GRILLE[3], 0.14, 1, { rim: 0.030, rimCol: CHROME });
   for (let i = 0; i < 5; i++) trim.box(0, GRILLE[1] - GRILLE[3] + 0.04 + i * 0.056, gp.z + 0.02, gp.hw * 1.92, 0.018, 0.04, 0, [0.20, 0.21, 0.23]);
   for (const sx of [-1, 1]) {
@@ -3481,9 +3751,12 @@ function buildTruck(spec, paint, trim, matte, S) {
     trim.box(sx * LAMP_A[0], LAMP_A[1] - 0.052, nose - 0.026, hp.hw * 1.9, 0.104, 0.022, 0, LAMP);
     trim.box(sx * (LAMP_A[0] - 0.22), LAMP_A[1] - 0.03, nose - 0.01, 0.06, 0.06, 0.03, 0, AMBER);
   }
-  const fw = cs.w0 - 0.12, zs = nose + 0.008;
   trim.patch([[[-fw, 1.50, zs], [0, 1.50, zs], [fw, 1.50, zs]],
-    [[-fw, cs.side - 0.05, zs], [0, cs.side - 0.05, zs], [fw, cs.side - 0.05, zs]]], GLASS, [0, 0, 1]);
+    [[-fw, scrTop, zs], [0, scrTop, zs], [fw, scrTop, zs]]], GLASS, [0, 0, 1]);
+  // Cab-over: you sit over the front wheel, the floor is at the glass line
+  // and the back wall is the cab's own rear face.
+  boxCabin(matte, { y: 1.44, sit: 1.62, x: cs.w0 - 0.10, zR: cz0 + 0.06, zF: nose - 0.06, top: roofY - 0.10,
+    rows: [cz0 + 0.55], wheelDz: 0.72 });
   matte.box(0, 1.47, nose + 0.004, fw * 2 + 0.06, 0.035, 0.02, 0, PLASTIC);
   for (const x of [-0.55, 0.25]) matte.tube([x, 1.54, nose + 0.024], [x + 0.42, 1.64, nose + 0.024], 0.011, 4, PLASTIC, true);
   matte.box(0, 0.42, nose + 0.05, cabW * 1.98, 0.28, 0.16, 0, PLASTIC);                      // bumper
@@ -3584,8 +3857,12 @@ function buildAmbulance(spec, paint, trim, matte) {
   const { shell: cab } = truckCab(paint, matte, {
     z0: 0.62, z1: nose, W: cabW, roofY: spec.roof, zF, wr, archR: wr + 0.16, sill: 0.50,
     bonnet: { scrTopZ: 1.30, cowlZ: 2.00, cowlY: 1.28, noseY: 1.08 },
+    windows: [-1, 1].map((sx) => ({ sx, zA: 0.84, zB: 1.86, yBot: 1.38, yTopMax: spec.roof - 0.26 })),
+    slope: { zA: 1.92, zB: 1.36 },
   });
   slopeGlass(trim, cab, 1.92, 1.36);
+  boxCabin(matte, { y: 1.30, sit: 1.52, x: cab.sec(1.2).w0 - 0.07, zR: 0.70, zF: 1.86, top: spec.roof - 0.08,
+    hzF: 1.32, rows: [0.92], wheelDz: 0.60 });
   const cs = cab.sec(nose);
   const GRILLE = [0, 0.82, 0.36, 0.12], LAMP_A = [cs.w0 * 0.76, 0.90, 0.13, 0.055];
   endFace(paint, nose, 1, cab.prof(nose), [GRILLE, LAMP_A], WHITE);
@@ -3668,13 +3945,32 @@ function buildBus(spec, paint, trim, matte) {
   });
   const { geom, endProf } = core;
   const rk = (z) => 0.95 + 0.05 * Math.sqrt(clamp(Math.min(nose - z, z - tail) / 0.30, 0, 1));
+  // The window band and the kerb-side doors, worked out before the shell so
+  // it can be built with the openings in it (see boxShell).
+  const winY0 = belt + 0.10, winY1 = roofY - 0.52;
+  const DOORS = [[4.45, 5.55], [-0.60, 0.60]];
+  const spansOf = (sx) => {
+    const cuts = sx < 0 ? DOORS : [], spans = [];
+    let z = tail + 1.70;
+    for (const [a, b] of [...cuts].sort((p, q) => p[0] - q[0])) { spans.push([z, a - 0.05]); z = b + 0.05; }
+    spans.push([z, nose - 0.35]);
+    return { cuts, spans };
+  };
+  const windows = [];
+  for (const sx of [-1, 1]) {
+    const { cuts, spans } = spansOf(sx);
+    for (const [a, b] of spans) windows.push({ sx, zA: a, zB: b, yBot: winY0, yTopMax: winY1, cols: 2 });
+    for (const [a, b] of cuts) windows.push({ sx, zA: a, zB: b, yBot: belt - 0.03, yTopMax: winY1, cols: 1 });
+  }
   const shell = boxShell(paint, {
     z0: tail, z1: nose, stations: 48, rr: 0.22, tumble: 0.04, crown: 0.05,
     wAt: (z) => geom(z).tw * rk(z), y0At: () => belt - 0.03,
     y1At: curve([[tail, roofY - 0.10], [tail + 0.35, roofY], [nose - 0.45, roofY], [nose, roofY - 0.12]]),
+    windows,
   });
   const sN = shell.sec(nose);
-  endFace(paint, nose, 1, shell.prof(nose), [], WHITE);
+  const scrTop = sN.side - 0.03;
+  endFace(paint, nose, 1, shell.prof(nose), [[0, (sN.y0 + scrTop) / 2 + 0.001, sN.w0 - 0.10, (scrTop - sN.y0) / 2]], WHITE);
   const LAMP_A = [0.90, 0.68, 0.17, 0.075];
   endFace(paint, nose, 1, endProf(nose), [LAMP_A], WHITE);
   for (const sx of [-1, 1]) {
@@ -3685,6 +3981,11 @@ function buildBus(spec, paint, trim, matte) {
   const fw = sN.w0 - 0.10, zs = nose + 0.008;
   trim.patch([[[-fw, 0.98, zs], [0, 0.98, zs], [fw, 0.98, zs]],
     [[-fw, sN.side - 0.03, zs], [0, sN.side - 0.03, zs], [fw, sN.side - 0.03, zs]]], GLASS, [0, 0, 1]);
+  // Its foot runs down over the lower body's nose, which stays solid: back
+  // that strip in the dark of the dash rather than the livery.
+  matte.quad([-fw, 0.98, nose + 0.004], [fw, 0.98, nose + 0.004], [fw, sN.y0 + 0.002, nose + 0.004], [-fw, sN.y0 + 0.002, nose + 0.004],
+    [0, 0, 1], [0, 0, 1, 0, 1, 1, 0, 1], CAB_DASH);
+  busCabin(matte, shell, { belt, nose, tail, roofY });
   matte.box(0, sN.side - 0.02, nose + 0.004, fw * 2 + 0.08, 0.26, 0.03, 0, [0.04, 0.04, 0.045]);      // sign housing
   trim.box(0, sN.side + 0.07, nose + 0.018, 1.30, 0.08, 0.012, 0, [1.0, 0.62, 0.12]);                 // route display
   for (const x of [-0.70, 0.30]) matte.tube([x, 1.02, nose + 0.024], [x + 0.46, 1.36, nose + 0.024], 0.012, 4, PLASTIC, true);
@@ -3697,19 +3998,13 @@ function buildBus(spec, paint, trim, matte) {
   for (const sx of [-1, 1]) {
     matte.tube([sx * (sN.w0 - 0.05), sN.side - 0.10, nose - 0.20], [sx * (sN.w0 + 0.16), sN.side - 0.02, nose + 0.32], 0.024, 6, PLASTIC, true);
     matte.box(sx * (sN.w0 + 0.16), sN.side - 0.62, nose + 0.32, 0.10, 0.58, 0.16, 0, PLASTIC);
-    trim.box(sx * (sN.w0 + 0.16), sN.side - 0.60, nose + 0.235, 0.08, 0.54, 0.012, 0, GLASS);
+    trim.box(sx * (sN.w0 + 0.16), sN.side - 0.60, nose + 0.235, 0.08, 0.54, 0.012, 0, MIRROR);
   }
 
   // --- sides: window band, doors on the kerb side ---------------------------------
-  const winY0 = belt + 0.10, winY1 = roofY - 0.52;
-  const DOORS = [[4.45, 5.55], [-0.60, 0.60]];
   const BAND = [0.05, 0.30, 0.24];
   for (const sx of [-1, 1]) {
-    const cuts = sx < 0 ? DOORS : [];
-    const spans = [];
-    let z = tail + 1.70;
-    for (const [a, b] of [...cuts].sort((p, q) => p[0] - q[0])) { spans.push([z, a - 0.05]); z = b + 0.05; }
-    spans.push([z, nose - 0.35]);
+    const { cuts, spans } = spansOf(sx);
     for (const [a, b] of spans) {
       sideGlass(trim, shell, sx, a, b, winY0, winY1, 0.007, 2);
       const g = shell.sec((a + b) / 2);
@@ -3723,6 +4018,10 @@ function buildBus(spec, paint, trim, matte) {
       // Glass doors to the kerb, set in the body line with a centre split.
       const w = geom((a + b) / 2).w + 0.008;
       trim.patch([[[sx * w, 0.46, a], [sx * w, 0.46, b]], [[sx * w, winY1, a], [sx * w, winY1, b]]], GLASS, [sx, 0, 0]);
+      // Below the shell the door glass is over the lower body's paint: back it
+      // with the dark of the stairwell instead.
+      matte.quad([sx * (w - 0.004), 0.46, a], [sx * (w - 0.004), 0.46, b], [sx * (w - 0.004), belt, b], [sx * (w - 0.004), belt, a],
+        [sx, 0, 0], [0, 0, 1, 0, 1, 1, 0, 1], CAB_FLOOR);
       for (const zc of [a, (a + b) / 2, b]) matte.box(sx * (w + 0.004), 0.44, zc, 0.012, winY1 - 0.42, 0.05, 0, [0.07, 0.075, 0.08]);
       matte.box(sx * (w + 0.004), winY1, (a + b) / 2, 0.012, 0.05, b - a, 0, [0.07, 0.075, 0.08]);
     }
@@ -3769,10 +4068,93 @@ const HAND_BUILT = {
   convertible: buildConvertible, cruiser: buildCruiser, sportbike: buildSportbike,
 };
 
+/**
+ * Mark a trim geometry's glazing and draw it LAST.
+ *
+ * `glass` is 1 on every vertex whose colour is GLASS, 0 elsewhere; the trim
+ * shader reads it (see glassShader). The triangles are reordered so all the
+ * opaque trim -- chrome, lenses, rims -- comes first in the index buffer: the
+ * trim draw is in the transparent pass with depth writes on, and a pane drawn
+ * before the chrome behind it would depth-reject that chrome.
+ */
+function tagGlass(geo) {
+  const col = geo.attributes.color.array, n = col.length / 3;
+  const flag = new Float32Array(n);
+  for (let i = 0; i < n; i++) {
+    if (Math.abs(col[i * 3] - GLASS[0]) < 1e-4 && Math.abs(col[i * 3 + 1] - GLASS[1]) < 1e-4
+      && Math.abs(col[i * 3 + 2] - GLASS[2]) < 1e-4) flag[i] = 1;
+  }
+  geo.setAttribute('glass', new THREE.BufferAttribute(flag, 1));
+  const idx = geo.index.array, solid = [], glass = [];
+  for (let i = 0; i < idx.length; i += 3) {
+    (flag[idx[i]] && flag[idx[i + 1]] && flag[idx[i + 2]] ? glass : solid).push(idx[i], idx[i + 1], idx[i + 2]);
+  }
+  geo.setIndex(solid.concat(glass));
+  return geo;
+}
+
+// Face-on, tinted automotive glass lets roughly half the light through; at a
+// grazing angle Fresnel takes it to a mirror. GLASS_ALPHA is the face-on
+// opacity of the tint layer, which is what decides how much of the cabin reads.
+const GLASS_ALPHA = 0.46;
+const GLASS_IBL_FROM = 'reflectVec = inverseTransformDirection( reflectVec, viewMatrix );';
+
+/**
+ * The trim material's glass. One material still, so still one draw: `glass`
+ * switches a fragment from metallic trim to a dielectric pane that
+ *
+ *  - reflects the SKY, not the ground: the reflected ray is folded into the
+ *    upper hemisphere exactly as the towers' curtain wall does (world.js), or
+ *    a vertical side window seen level mirrors the IBL's ground half;
+ *  - is see-through face-on and a mirror at grazing angles (Schlick on N.V
+ *    drives the opacity from GLASS_ALPHA up to 1), so the cabin shows through
+ *    a windscreen you look into and a raked rear screen reads as sky;
+ *  - is PREMULTIPLIED: the blend is ONE, ONE_MINUS_SRC_ALPHA, so the
+ *    reflection is added at full strength while the tint only scales what is
+ *    behind it. Straight alpha would dim the reflection by the same factor as
+ *    the cabin, which is what makes game glass look like grey film.
+ *
+ * Opaque trim has alpha 1 and so draws exactly as it did; only its pass moves.
+ */
+function glassShader(sh) {
+  sh.vertexShader = 'attribute float glass;\nvarying float vGlass;\n' + sh.vertexShader
+    .replace('#include <begin_vertex>', '#include <begin_vertex>\n\tvGlass = glass;');
+  let fs = 'varying float vGlass;\n' + sh.fragmentShader;
+  if (THREE.ShaderChunk.envmap_physical_pars_fragment.includes(GLASS_IBL_FROM)) {
+    fs = fs.replace('#include <envmap_physical_pars_fragment>',
+      THREE.ShaderChunk.envmap_physical_pars_fragment.replace(GLASS_IBL_FROM, `${GLASS_IBL_FROM}
+			reflectVec = normalize( mix( reflectVec, vec3( reflectVec.x, abs( reflectVec.y ) * 0.85 + 0.12, reflectVec.z ), vGlass ) );`));
+  } else {
+    console.warn('vehicles: envmap chunk changed, car glass reflects the ground again');
+  }
+  fs = fs
+    .replace('#include <color_fragment>', `#include <color_fragment>
+	diffuseColor.rgb = mix( diffuseColor.rgb, vec3( 0.018, 0.022, 0.026 ), vGlass );`)
+    .replace('#include <metalnessmap_fragment>', `#include <metalnessmap_fragment>
+	metalnessFactor = mix( metalnessFactor, 0.0, vGlass );
+	roughnessFactor = mix( roughnessFactor, 0.05, vGlass );`)
+    .replace('#include <opaque_fragment>', `if ( vGlass > 0.5 ) {
+		float gNV = saturate( dot( normal, normalize( vViewPosition ) ) );
+		float gA = mix( ${GLASS_ALPHA.toFixed(3)}, 1.0, pow( 1.0 - gNV, 5.0 ) );
+		outgoingLight = totalDiffuse * gA + totalSpecular;
+		diffuseColor.a = gA;
+	}
+	#include <opaque_fragment>`)
+    // Fog mixes toward fogColor at full strength, but a premultiplied pane
+    // only covers `a` of what is behind it -- and that is fogged already.
+    .replace('#include <fog_fragment>', `#include <fog_fragment>
+	#ifdef USE_FOG
+		gl_FragColor.rgb -= fogColor * fogFactor * ( 1.0 - gl_FragColor.a );
+	#endif`);
+  sh.fragmentShader = fs;
+}
+
 function buildType(spec) {
   const paint = new Builder(false);
   const trim = new Builder(false);
   const matte = new Builder(false);
+  // Whoever sits in the car: merged only into the occupied geometries below.
+  matte.crew = new Builder(false);
   // Every type has an authored builder now. A missing one is a table error,
   // not something to paper over with a parameterised tube.
   const build = HAND_BUILT[spec.hand];
@@ -3811,12 +4193,25 @@ function buildType(spec) {
     return [ax, ay, az, gi];
   });
 
+  for (const wg of wheelGeos) tagGlass(wg.trim);
+  // Three matte buffers: the player's car (wheel-less, occupied), traffic
+  // (baked wheels, occupied) and parked or abandoned (baked wheels, empty).
+  // Vehicle swaps between the last two as its `mode` changes; same draw.
+  const crewed = (b) => {
+    if (matte.crew.empty) return b;
+    const c = clone(b), base = c.pos.length / 3, cr = matte.crew;
+    c.pos.push(...cr.pos); c.nor.push(...cr.nor); c.col.push(...cr.col);
+    for (const i of cr.idx) c.idx.push(i + base);
+    return c;
+  };
+  const matteGeoWE = matteW.build();
   return {
     paintGeo: paint.build(),
-    trimGeo: trim.build(),
-    matteGeo: matte.build(),
-    trimGeoW: trimW.build(),
-    matteGeoW: matteW.build(),
+    trimGeo: tagGlass(trim.build()),
+    matteGeo: crewed(matte).build(),
+    trimGeoW: tagGlass(trimW.build()),
+    matteGeoW: matte.crew.empty ? matteGeoWE : crewed(matteW).build(),
+    matteGeoWE,
     wheelGeos,
     wheels: placed,
     spec,
@@ -3829,11 +4224,19 @@ export function vehicleAssets() {
   if (CACHE) return CACHE;
   const types = {};
   for (const k of Object.keys(TYPES)) types[k] = buildType(TYPES[k]);
+  // The trim draw moves to the transparent pass for its glass (see
+  // glassShader); depth writes stay on, so its opaque parts behave as before.
+  const trimMat = new THREE.MeshStandardMaterial({
+    vertexColors: true, metalness: 0.88, roughness: 0.16, envMapIntensity: 1.7,
+    transparent: true, blending: THREE.CustomBlending,
+    blendSrc: THREE.OneFactor, blendDst: THREE.OneMinusSrcAlphaFactor,
+    blendSrcAlpha: THREE.ZeroFactor, blendDstAlpha: THREE.OneFactor,
+  });
+  trimMat.onBeforeCompile = glassShader;
+  trimMat.customProgramCacheKey = () => 'vehicleGlass';
   CACHE = {
     types,
-    trimMat: new THREE.MeshStandardMaterial({
-      vertexColors: true, metalness: 0.88, roughness: 0.16, envMapIntensity: 1.7,
-    }),
+    trimMat,
     matteMat: new THREE.MeshStandardMaterial({
       vertexColors: true, metalness: 0.05, roughness: 0.86, envMapIntensity: 0.55,
     }),
@@ -3917,6 +4320,18 @@ export class Vehicle {
     this.mass = t.spec.mass;
   }
 
+  // `mode` decides whether anyone is at the wheel. Traffic and police are
+  // driven; a parked car, or one the player got out of ('free'), is empty.
+  // Assigned from traffic.js and player.js, so it is a setter rather than a
+  // call they would each have to remember.
+  get mode() { return this._mode; }
+  set mode(m) {
+    this._mode = m;
+    if (this.matteMesh && !this.detailedWheels) {
+      this.matteMesh.geometry = m === 'parked' || m === 'free' ? this.assets.matteGeoWE : this.assets.matteGeoW;
+    }
+  }
+
   /** The player's own car gets steerable, spinning wheel meshes; traffic doesn't. */
   setDetailed(on) {
     if (this.detailedWheels === on) return;
@@ -3924,6 +4339,7 @@ export class Vehicle {
     const A = vehicleAssets();
     this.trimMesh.geometry = on ? this.assets.trimGeo : this.assets.trimGeoW;
     this.matteMesh.geometry = on ? this.assets.matteGeo : this.assets.matteGeoW;
+    if (!on) this.mode = this._mode;
     if (on) {
       for (const [wx, wy, wz, gi] of this.assets.wheels) {
         const g = new THREE.Group();
