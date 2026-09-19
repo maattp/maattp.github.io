@@ -367,6 +367,55 @@ const AWNING = [
 // what keeps the check from being a tautology.
 export const WET_FLOOR = 0.35;
 
+/**
+ * The flat material, also drawing a chunk's glow (lamp heads, lit signs):
+ * vertices flagged `glow` = 1 come out as their own vertex colour, unlit and
+ * NOT tone-mapped -- what the MeshBasicMaterial glow did -- with fog after, as
+ * that had. The glow no longer needs its own draw.
+ */
+function flatGlowMat(m) {
+  m.onBeforeCompile = (sh) => {
+    sh.vertexShader = 'attribute float glow;\nvarying float vGlowF;\n' + sh.vertexShader
+      .replace('#include <begin_vertex>', '#include <begin_vertex>\n\tvGlowF = glow;');
+    sh.fragmentShader = 'varying float vGlowF;\n' + sh.fragmentShader
+      .replace('#include <tonemapping_fragment>', `#include <tonemapping_fragment>
+	if ( vGlowF > 0.5 ) gl_FragColor = vec4( vColor.rgb, 1.0 );`);
+  };
+  m.customProgramCacheKey = () => 'flatGlow';
+  return m;
+}
+
+/**
+ * The road material, also drawing pavement: vertices flagged `surf` = 1
+ * sample the sidewalk's albedo, normal and roughness maps instead. Both sets
+ * are sampled and mixed rather than branched on, so mip selection stays right
+ * along the kerb line where the two meet inside one pixel quad. The pavement's
+ * normal scale (0.8 against the road's 0.9) rides the same flag; its env
+ * intensity (0.52 against 0.62) is split at 0.6.
+ */
+function roadWalkMat(m, walk) {
+  m.onBeforeCompile = (sh) => {
+    sh.uniforms.walkMap = { value: walk.map };
+    sh.uniforms.walkNormal = { value: walk.normalMap };
+    sh.uniforms.walkRough = { value: walk.roughnessMap };
+    sh.vertexShader = 'attribute float surf;\nvarying float vSurf;\n' + sh.vertexShader
+      .replace('#include <begin_vertex>', '#include <begin_vertex>\n\tvSurf = surf;');
+    const pick = (a, b) => `mix( ${a}, ${b}, step( 0.5, vSurf ) )`;
+    sh.fragmentShader = 'uniform sampler2D walkMap;\nuniform sampler2D walkNormal;\nuniform sampler2D walkRough;\nvarying float vSurf;\n'
+      + sh.fragmentShader
+        .replace('#include <map_fragment>', THREE.ShaderChunk.map_fragment.replace('texture2D( map, vMapUv )',
+          pick('texture2D( map, vMapUv )', 'texture2D( walkMap, vMapUv )')))
+        .replace('#include <roughnessmap_fragment>', THREE.ShaderChunk.roughnessmap_fragment.replace('texture2D( roughnessMap, vRoughnessMapUv )',
+          pick('texture2D( roughnessMap, vRoughnessMapUv )', 'texture2D( walkRough, vRoughnessMapUv )')))
+        .replace('#include <normal_fragment_maps>', THREE.ShaderChunk.normal_fragment_maps
+          .replace('vec3 mapN = texture2D( normalMap, vNormalMapUv ).xyz * 2.0 - 1.0;',
+            `vec3 mapN = ${pick('texture2D( normalMap, vNormalMapUv )', 'texture2D( walkNormal, vNormalMapUv )')}.xyz * 2.0 - 1.0;`)
+          .replace('mapN.xy *= normalScale;', 'mapN.xy *= normalScale * mix( 1.0, 0.8 / 0.9, step( 0.5, vSurf ) );'));
+  };
+  m.customProgramCacheKey = () => 'roadWalk';
+  return m;
+}
+
 /** Mean LINEAR albedo of a canvas-backed sRGB texture, sampled on a grid. */
 function meanLinear(tex) {
   const img = tex && tex.image;
@@ -438,6 +487,7 @@ export class World {
     this.mats = {
       road: surf(tx.road, { env: 0.62, ns: 0.9 }),
       walk: surf(tx.sidewalk, { env: 0.52, ns: 0.8 }),
+      roadWalk: roadWalkMat(surf(tx.road, { env: 0.6, ns: 0.9 }), tx.sidewalk),
       // Glass was the one material already sitting at clamp. env 1.9 on a
       // 0.9-albedo curtain wall survived the old ambient floor and saturates
       // through ACES once the scene moves up the curve -- hard-edged white
@@ -455,6 +505,7 @@ export class World {
       // has its own running bond, not a tint of the ashlar.
       facade: facadeMat(tx.facade),
       flat: new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.82, metalness: 0.04, envMapIntensity: 0.45 }),
+      flatGlow: flatGlowMat(new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.82, metalness: 0.04, envMapIntensity: 0.45 })),
       glow: new THREE.MeshBasicMaterial({ vertexColors: true, toneMapped: false }),
       // The far skyline is a silhouette mesh: what matters is that a mass two
       // kilometres out sits at a believable fraction of sky luminance, not
@@ -3525,16 +3576,31 @@ float frLine(float o, float fw, float c, float w) {
       // shadow -- 13 % of the frame's geometry -- for shadows that at street
       // level fall mostly on surfaces already in shade. On a phone that is not
       // where the budget goes; on a desktop it is worth having.
-      m.castShadow = cast && this.shadows && !(ON_PHONE && mat === this.mats.flat);
+      m.castShadow = cast && this.shadows && !(ON_PHONE && (mat === this.mats.flat || mat === this.mats.flatGlow));
       m.receiveShadow = recv && this.shadows;
       grp.add(m);
     };
     // One builder per step: turning ~100k vertices of JS arrays into typed
     // buffers is itself several ms per builder on a phone.
-    add(road, this.mats.road, false, true); yield;
-    add(walk, this.mats.walk, false, true); yield;
-    add(flat, this.mats.flat, true, true); yield;
-    add(glow, this.mats.glow, false, false); yield;
+    // A near chunk's pavement draws in its road mesh (roadWalk picks the
+    // texture set per vertex): one draw instead of two, per chunk on screen.
+    if (lod === 1 && !walk.empty) {
+      road.appendFlagged(walk, 'surf');
+      walk.nv = walk.ni = 0;
+      add(road, this.mats.roadWalk, false, true); yield;
+    } else {
+      add(road, this.mats.road, false, true); yield;
+      add(walk, this.mats.walk, false, true); yield;
+    }
+    // The glow draws in the flat mesh (flatGlow: unlit, untonemapped where
+    // flagged) -- one draw instead of two a chunk.
+    if (!glow.empty) {
+      flat.appendFlagged(glow, 'glow');
+      glow.nv = glow.ni = 0;
+      add(flat, this.mats.flatGlow, true, true); yield;
+    } else {
+      add(flat, this.mats.flat, true, true); yield;
+    }
     add(bl.glass, this.mats.glass, true, true); yield;
     add(bl.facade, this.mats.facade, true, true);
     return grp.children.length ? grp : null;

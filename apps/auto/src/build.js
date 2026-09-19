@@ -546,6 +546,7 @@ export class ChunkBuilder extends Builder {
     const g = (a, k) => { const b = new Float32Array(cap * k); b.set(a); return b; };
     this.P = g(this.P, 3); this.N = g(this.N, 3); this.C = g(this.C, 3);
     if (this.U) this.U = g(this.U, 2);
+    if (this.F) for (const k in this.F) this.F[k] = g(this.F[k], 1);
     this.cap = cap;
   }
 
@@ -588,6 +589,26 @@ export class ChunkBuilder extends Builder {
    * `tint` (linear rgb), dropping its UVs: for drawing a textured surface in
    * an untextured material at a range where the texture is one colour anyway.
    */
+  /**
+   * Append another ChunkBuilder's triangles as-is (UVs included), with the
+   * per-vertex attribute `name` = 1 on them (0 on this builder's own), so one
+   * material can tell the two apart: a near chunk's pavement rides in its road
+   * mesh (world.js `roadWalk`), a chunk's unlit glow in its flat mesh
+   * (`flatGlow`). One draw each instead of two.
+   */
+  appendFlagged(src, name) {
+    const base = this.nv;
+    if (!this.F) this.F = {};
+    if (!this.F[name]) this.F[name] = new Float32Array(this.cap);
+    for (let i = 0; i < src.nv; i++) {
+      const k = i * 3, u = src.U ? src.U[i * 2] : 0, v = src.U ? src.U[i * 2 + 1] : 0;
+      const n = this.vert(src.P[k], src.P[k + 1], src.P[k + 2], src.N[k], src.N[k + 1], src.N[k + 2], u, v,
+        src.C[k], src.C[k + 1], src.C[k + 2]);
+      this.F[name][n] = 1;
+    }
+    for (let i = 0; i < src.ni; i += 3) this.face3(src.I[i] + base, src.I[i + 1] + base, src.I[i + 2] + base);
+  }
+
   appendTinted(src, tint) {
     const base = this.nv;
     for (let i = 0; i < src.nv; i++) {
@@ -604,6 +625,7 @@ export class ChunkBuilder extends Builder {
     geo.setAttribute('normal', new THREE.BufferAttribute(this.N.slice(0, n * 3), 3));
     if (this.U) geo.setAttribute('uv', new THREE.BufferAttribute(this.U.slice(0, n * 2), 2));
     geo.setAttribute('color', new THREE.BufferAttribute(this.C.slice(0, n * 3), 3));
+    if (this.F) for (const k in this.F) geo.setAttribute(k, new THREE.BufferAttribute(this.F[k].slice(0, n), 1));
     // setIndex(array) picks 16-bit indices under 65536 vertices; so does this.
     // (the typed-array constructor converts natively; Uint16Array.from walks
     // an iterator, and was a 3 ms unsliced step on a big chunk)

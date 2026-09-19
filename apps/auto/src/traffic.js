@@ -215,6 +215,7 @@ export class TrafficSystem {
     this._farM = new THREE.Matrix4();
     this._farFr = new THREE.Frustum();
     this._farS = new THREE.Sphere();
+    this._tick = 0;
     this.parkedSlots = new Set();
     this.R = rng(99);
     this.heli = null;
@@ -703,16 +704,17 @@ export class TrafficSystem {
     // An InstancedMesh culls as ONE object, so every slot in it would be drawn
     // whenever any is on screen. Cull per car here instead, against last
     // frame's camera (the camera moves after traffic), with a margin for it.
+    // (frustum computed at the top of update)
     const cam = this.camera, fr = this._farFr, sph = this._farS;
-    if (cam) {
-      cam.updateMatrixWorld();
-      this._farM.multiplyMatrices(cam.projectionMatrix, cam.matrixWorldInverse);
-      fr.setFromProjectionMatrix(this._farM);
-    }
     for (const v of this.cars) {
       const far = v !== player.vehicle && v.group.visible && !v.rider && !v.extra && !v.detailedWheels
         && dist2(v.x, v.z, px, pz) > lim;
       if (v.tilt.visible === far) v.tilt.visible = !far;
+      // Nothing of a far car's own is drawn, and a settled parked car does not
+      // move: neither needs three to recompute its five matrices every frame.
+      // (A shunt makes a parked car 'free', which thaws it.)
+      const frozen = v !== player.vehicle && (far || (v.mode === 'parked' && v._still >= 3));
+      if (v.group.matrixWorldAutoUpdate === frozen) v.group.matrixWorldAutoUpdate = !frozen;
       if (!far) continue;
       if (cam) {
         sph.center.set(v.x, v.y + 1, v.z);
@@ -787,6 +789,16 @@ export class TrafficSystem {
     }
     this.ensureHeli(game.wanted >= 4, px, pz);
 
+    // Last frame's camera frustum, for the far LOD and the half-rate AI below
+    // (the camera moves after traffic; the tests carry a margin for it).
+    const cam = this.camera, fr = this._farFr, sph = this._farS;
+    if (cam) {
+      cam.updateMatrixWorld();
+      this._farM.multiplyMatrices(cam.projectionMatrix, cam.matrixWorldInverse);
+      fr.setFromProjectionMatrix(this._farM);
+    }
+    this._tick = (this._tick + 1) | 0;
+
     for (let i = this.cars.length - 1; i >= 0; i--) {
       const v = this.cars[i];
       if (v === player.vehicle) continue;
@@ -798,8 +810,10 @@ export class TrafficSystem {
 
       if (v.mode === 'parked') {
         v.group.visible = d2 < PARKED_SHOW * PARKED_SHOW;
+        if (v._still < 3) v._still++;   // settled: updateFarLod freezes its matrices
         continue;
       }
+      v._still = 0;
       v.group.visible = true;
       // The airport's planes sit where place() put them, as parked cars do, and
       // from downtown all eight used to run the driving model every frame.
@@ -811,15 +825,29 @@ export class TrafficSystem {
         if (v._cast !== cast) { v._cast = cast; v.group.traverse((o) => { if (o.isMesh) o.castShadow = cast; }); }
       }
 
+      // HALF-RATE AI where nobody can see it: on a phone, a car 80 m+ away and
+      // off screen drives and collides with the world every other frame, on
+      // the time it has accumulated. Car-car collisions and the far LOD still
+      // run every frame; the moment it is on screen it is back to every frame.
+      let vdt = dt;
+      v._acc += dt;
+      if (ON_PHONE && cam && v.mode === 'traffic' && d2 > 80 * 80) {
+        sph.center.set(v.x, v.y + 1, v.z);
+        sph.radius = v.halfLen + 8;
+        if (!fr.intersectsSphere(sph) && ((this._tick + i) & 1)) continue;
+      }
+      vdt = Math.min(v._acc, 0.1);
+      v._acc = 0;
+
       let input = { throttle: 0, brake: 0, steer: 0, handbrake: 0 };
       if (v.mode === 'traffic') {
-        input = this.driveTraffic(v, dt, px, pz, player);
+        input = this.driveTraffic(v, vdt, px, pz, player);
         if (v.recycle) { this.remove(v); continue; }
       }
-      else if (v.mode === 'police') input = this.drivePolice(v, dt, px, pz, player);
+      else if (v.mode === 'police') input = this.drivePolice(v, vdt, px, pz, player);
       else input = { throttle: 0, brake: 0.12, steer: 0 }; // shunted or abandoned: coast
 
-      v.update(dt, input);
+      v.update(vdt, input);
       collideWithBuildings(v, city);
     }
 

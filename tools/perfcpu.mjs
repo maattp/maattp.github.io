@@ -293,7 +293,14 @@ function pageInstall() {
     const miss = I.filter((v) => v > 20).length, miss2 = I.filter((v) => v > 36).length;
     const worst = S.frames.map((f, i) => ({ i, raf: f[1], cpu: f[0], sys: f[2] })).sort((a, b) => b.raf - a.raf).slice(0, 12)
       .map((w) => `f${w.i} raf ${w.raf.toFixed(1)} cpu ${w.cpu.toFixed(1)} [` + Object.entries(w.sys).filter(([, v]) => v > 0.5).sort((a, b) => b[1] - a[1]).map(([k, v]) => `${k} ${v.toFixed(1)}`).join(' ') + ']');
-    const out = { n: F.length, cpu: +q(F, 0.5).toFixed(3), cpuMean: +(F.reduce((a, b) => a + b, 0) / F.length).toFixed(3),
+    // What the slow quarter of frames spends that the rest don't.
+    const byCpu = S.frames.map((f) => f).sort((a, b) => b[0] - a[0]);
+    const q4 = byCpu.slice(0, Math.max(1, byCpu.length >> 2)), rest = byCpu.slice(byCpu.length >> 2);
+    const avgSys = (fs) => { const o = {}; for (const f of fs) for (const [k, v] of Object.entries(f[2])) o[k] = (o[k] || 0) + v / fs.length; return o; };
+    const sq = avgSys(q4), sr = avgSys(rest);
+    const slowQ = Object.keys(sq).map((k) => [k, sq[k] - (sr[k] || 0)]).filter(([, v]) => v > 0.05).sort((a, b) => b[1] - a[1])
+      .map(([k, v]) => `${k} +${v.toFixed(2)}`).join('  ') + `  (slow-quarter cpu ${(q4.reduce((a, f) => a + f[0], 0) / q4.length).toFixed(1)} vs ${(rest.reduce((a, f) => a + f[0], 0) / Math.max(1, rest.length)).toFixed(1)})`;
+    const out = { slowQ, n: F.length, cpu: +q(F, 0.5).toFixed(3), cpuMean: +(F.reduce((a, b) => a + b, 0) / F.length).toFixed(3),
       cpu90: +q(F, 0.9).toFixed(3), cpu99: +q(F, 0.99).toFixed(3), cpuMax: +Math.max(...F).toFixed(2),
       raf: +q(I, 0.5).toFixed(3), fps: +(1000 * I.length / I.reduce((a, b) => a + b, 0)).toFixed(1), raf90: +q(I, 0.9).toFixed(1), raf99: +q(I, 0.99).toFixed(1), sys: {}, cars: d.traffic.cars.length, peds: d.peds.peds.length,
       moved: Math.round(dist), resets: R ? R.resets : 0, draws: Math.round(S.frames.reduce((a, f) => a + (f[3] || 0), 0) / S.frames.length),
@@ -380,6 +387,7 @@ try {
     console.log(`  fps ${T.fps}  frame interval median ${T.raf.toFixed(1)}  p90 ${T.raf90}  p99 ${T.raf99}`);
     console.log(`  by system (mean ms/frame): ${sys}`);
     console.log(`  frames over 20 ms: ${T.miss} of ${T.n} (over 36 ms: ${T.miss2})`);
+    console.log(`  slow quarter spends extra: ${T.slowQ}`);
     for (const w of T.worst) console.log(`    ${w}`);
     console.log('  queries/frame: ' + Object.entries(C).sort((a, b) => b[1].msFrame - a[1].msFrame)
       .map(([k, v]) => `${k} ${v.perFrame}x ${v.us}us = ${v.msFrame}ms`).join('  '));

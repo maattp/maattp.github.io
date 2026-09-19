@@ -4496,6 +4496,7 @@ export class Vehicle {
     this.airborne = false; this.lowDetail = false;
     this._cast = null; this._farCol = null;
     this._fwd = { x: 0, z: 1 }; this._fwdH = NaN;
+    this._acc = 0; this._still = 0;   // traffic.js: half-rate AI time, parked-settle frames
   }
 
   // `mode` decides whether anyone is at the wheel. Traffic and police are

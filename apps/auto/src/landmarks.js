@@ -77,6 +77,72 @@ function P(color, rough = 0.85, metal = 0, env = 0.6, extra = null) {
 // Every legacy call site asked for a matte colour.
 const M = (c) => P(c, 0.85, 0, 0.55);
 
+// ONE DRAW FOR A CLUSTER'S PALETTE. After mergeByMaterial a cluster is still
+// one mesh per P() colour -- 13-19 draws on screen downtown for ~9k triangles,
+// on a target where the draw call is what costs. Every plain palette material
+// (untextured, opaque, no shader of its own, not emissive) folds into one mesh:
+// the colour becomes a vertex colour and roughness / metalness / env intensity
+// ride per vertex (`lmA`), so each surface shades exactly as before.
+const LM_PALETTE = (() => {
+  const m = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 1, metalness: 0, envMapIntensity: 1 });
+  m.onBeforeCompile = (sh) => {
+    sh.vertexShader = 'attribute vec3 lmA;\nvarying vec3 vLmA;\n' + sh.vertexShader
+      .replace('#include <begin_vertex>', '#include <begin_vertex>\n\tvLmA = lmA;');
+    sh.fragmentShader = 'varying vec3 vLmA;\n' + sh.fragmentShader
+      .replace('#include <envmap_physical_pars_fragment>', THREE.ShaderChunk.envmap_physical_pars_fragment
+        .split('envMapColor.rgb * envMapIntensity;').join('envMapColor.rgb * envMapIntensity * vLmA.z;'))
+      .replace('#include <metalnessmap_fragment>', '#include <metalnessmap_fragment>\n\tmetalnessFactor = vLmA.y;\n\troughnessFactor = vLmA.x;');
+  };
+  m.customProgramCacheKey = () => 'lmPalette';
+  return m;
+})();
+
+function plainPalette(m, needleMats) {
+  return m.isMeshStandardMaterial && m !== LM_PALETTE && !needleMats.has(m) && !m.map && !m.normalMap && !m.roughnessMap
+    && !m.metalnessMap && !m.emissiveMap && !m.alphaMap && !m.aoMap && !m.transparent && m.side === THREE.FrontSide
+    && m.onBeforeCompile === THREE.Material.prototype.onBeforeCompile && m.emissive.getHex() === 0 && !m.vertexColors
+    && m.opacity === 1 && !(m.userData && m.userData.noShadow);
+}
+
+function mergePalette(group, needleMats) {
+  // (only mergeByMaterial's own meshes, which are in world space: its large
+  // pass-through meshes keep a transform of their own)
+  const ident = (o) => o.position.lengthSq() === 0 && o.quaternion.w === 1 && o.scale.x === 1 && o.scale.y === 1 && o.scale.z === 1;
+  const plain = group.children.filter((o) => o.isMesh && ident(o) && plainPalette(o.material, needleMats));
+  if (plain.length < 2) return group;
+  let n = 0, ni = 0;
+  for (const o of plain) { n += o.geometry.attributes.position.count; ni += o.geometry.index.count; }
+  const pos = new Float32Array(n * 3), nor = new Float32Array(n * 3), col = new Float32Array(n * 3);
+  const uv = new Float32Array(n * 2), lmA = new Float32Array(n * 3);
+  const idx = n > 65535 ? new Uint32Array(ni) : new Uint16Array(ni);
+  let vb = 0, ib = 0;
+  for (const o of plain) {
+    const g = o.geometry, m = o.material, c = g.attributes.position.count;
+    pos.set(g.attributes.position.array, vb * 3);
+    nor.set(g.attributes.normal.array, vb * 3);
+    if (g.attributes.uv) uv.set(g.attributes.uv.array, vb * 2);
+    for (let i = 0; i < c; i++) {
+      const k = (vb + i) * 3;
+      col[k] = m.color.r; col[k + 1] = m.color.g; col[k + 2] = m.color.b;
+      lmA[k] = m.roughness; lmA[k + 1] = m.metalness; lmA[k + 2] = m.envMapIntensity;
+    }
+    const ix = g.index.array;
+    for (let i = 0; i < ix.length; i++) idx[ib + i] = ix[i] + vb;
+    vb += c; ib += ix.length;
+    group.remove(o);
+    g.dispose();
+  }
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+  geo.setAttribute('normal', new THREE.BufferAttribute(nor, 3));
+  geo.setAttribute('uv', new THREE.BufferAttribute(uv, 2));
+  geo.setAttribute('color', new THREE.BufferAttribute(col, 3));
+  geo.setAttribute('lmA', new THREE.BufferAttribute(lmA, 3));
+  geo.setIndex(new THREE.BufferAttribute(idx, 1));
+  group.add(new THREE.Mesh(geo, LM_PALETTE));
+  return group;
+}
+
 // A vertical mirror seen level or from above reflects the IBL's ground half and
 // reads as dark paint; fold the reflected ray into the sky (needle.js, world.js).
 const IBL_FROM = 'reflectVec = inverseTransformDirection( reflectVec, viewMatrix );';
@@ -1712,7 +1778,7 @@ export function buildLandmarks(scene, city) {
   const needleMats = new Set(Object.values(NEEDLE_MATS));
   let draws = 0;
   for (const [key, grp] of clusters) {
-    const merged = mergeByMaterial(grp);
+    const merged = mergePalette(mergeByMaterial(grp), needleMats);
     merged.traverse((o) => {
       if (!o.isMesh) return;
       draws++;
