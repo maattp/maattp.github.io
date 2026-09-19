@@ -34,7 +34,7 @@ export function buildMapCanvas(city) {
       if (water[i]) c = WATER_C;
       // Lots before parks: the lot layer only covers the park mask where it
       // is a park's own car park or a paved square, and that is what it is.
-      else if (lot && lot[i]) c = LOT_C;
+      else if (lot && G.lotNearest(-G.MAP_HALF + k * 10, -G.MAP_HALF + j * 10)) c = LOT_C;
       else if (green[i]) c = PARK_C;
       else {
         const t = clamp(city.builtAt(-G.MAP_HALF + k * 10, -G.MAP_HALF + j * 10) / 0.2, 0, 1);

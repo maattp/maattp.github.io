@@ -668,22 +668,23 @@ export class World {
     // not move. Two extra taps on terrain pixels only.
     // THE LOT LAYER IS DRAWN BY THE TERRAIN, not on top of it.
     //
-    // Car parks, plazas and yards (surface.png's blue byte, see
-    // tools/build_lots.py) are painted into this shader from a 10 m code
-    // texture, so they cost no draw call and no triangle, and -- the reason it
-    // is here rather than in the chunk build -- they ARE the terrain surface:
-    // nothing standing on a lot needs a lift, `groundAt` is already right, and
-    // there is no second coplanar surface to z-fight with the ground at range.
-    // Asphalt kinds sample the road's own albedo and paving kinds the
-    // pavement's, in the lot's own frame, so a lot matches the street beside it.
+    // Car parks, plazas and yards (data/lots.png, see tools/build_lots.py) are
+    // painted into this shader from a 14.4 m coverage + code texture, so they
+    // cost no draw call and no triangle, and -- the reason it is here rather
+    // than in the chunk build -- they ARE the terrain surface: nothing standing
+    // on a lot needs a lift, `groundAt` is already right, and there is no
+    // second coplanar surface to z-fight with the ground at range. Asphalt
+    // kinds sample the road's own albedo and paving kinds the pavement's, in
+    // the lot's own frame, so a lot matches the street beside it.
     const lotTex = this.lotTexture();
-    const LN = G.MASK_N.toFixed(1), LH = G.MAP_HALF.toFixed(1), LS = G.MASK_STEP.toFixed(1);
+    const LN = G.LOT_N.toFixed(1), LH = G.MAP_HALF.toFixed(1), LS = G.LOT_STEP.toFixed(4);
     const LA = G.LOT_ANG.toFixed(1);
     mat.onBeforeCompile = (sh) => {
       if (lotTex) {
         sh.uniforms.lotTex = { value: lotTex };
         sh.uniforms.lotRoad = { value: this.tx.road.map };
         sh.uniforms.lotWalk = { value: this.tx.sidewalk.map };
+        sh.uniforms.lotNoise = { value: this.tx.clouds };
         sh.vertexShader = sh.vertexShader
           .replace('#include <common>', '#include <common>\nvarying vec2 vLotXZ;')
           .replace('#include <begin_vertex>', '#include <begin_vertex>\nvLotXZ = position.xz;');
@@ -702,44 +703,68 @@ export class World {
           uniform sampler2D lotTex;
           uniform sampler2D lotRoad;
           uniform sampler2D lotWalk;
+          uniform sampler2D lotNoise;
           varying vec2 vLotXZ;
-          // NEAREST texel fetch by construction (texel centres, no mips): the
-          // bytes are codes, and filtering two codes together invents a third.
-          float lotCode( vec2 ij ) {
-            return floor( texture2D( lotTex, ( ij + 0.5 ) / ${LN} ).r * 255.0 + 0.5 );
+          // NEAREST texel fetch by construction (texel centres, no mips): G is
+          // a code, and filtering two codes together invents a third. R is the
+          // share of the sample's own cell that has its code, less a half.
+          vec2 lotTap( vec2 ij ) {
+            vec2 t = texture2D( lotTex, ( ij + 0.5 ) / ${LN} ).rg;
+            return vec2( t.r - 0.5, floor( t.g * 255.0 + 0.5 ) );
+          }
+          float lotSd( float c, vec2 t0, vec2 t1, vec2 t2, vec2 t3, vec4 w ) {
+            return w.x * ( abs( t0.y - c ) < 0.5 ? t0.x : -t0.x )
+                 + w.y * ( abs( t1.y - c ) < 0.5 ? t1.x : -t1.x )
+                 + w.z * ( abs( t2.y - c ) < 0.5 ? t2.x : -t2.x )
+                 + w.w * ( abs( t3.y - c ) < 0.5 ? t3.x : -t3.x );
           }`)
         .replace('#include <color_fragment>', `#include <color_fragment>
           float lotCover = 0.0;
           {
-            // Coverage is bilinear over "is this cell a lot", so the edge is
-            // the half-contour between cell centres, not a 10 m staircase;
-            // kind and orientation come from the strongest non-empty tap.
+            // THE EDGE IS RECONSTRUCTED, NOT SNAPPED. Each candidate code gets
+            // a signed field from its four neighbours -- +(a - 0.5) where a tap
+            // has that code, -(a - 0.5) where it doesn't -- and the bilinear
+            // half-contour of box-filtered coverage is a straight line where
+            // the polygon edge was straight. Nearest-code bilinear drew the
+            // 10 m raster's staircase along every lot boundary.
             vec2 lf = ( vLotXZ + ${LH} ) / ${LS};
             vec2 li = floor( lf ), lt = lf - li;
-            float c0 = lotCode( li ), c1 = lotCode( li + vec2( 1.0, 0.0 ) );
-            float c2 = lotCode( li + vec2( 0.0, 1.0 ) ), c3 = lotCode( li + vec2( 1.0, 1.0 ) );
-            float w0 = ( 1.0 - lt.x ) * ( 1.0 - lt.y ), w1 = lt.x * ( 1.0 - lt.y );
-            float w2 = ( 1.0 - lt.x ) * lt.y, w3 = lt.x * lt.y;
-            float bil = w0 * step( 0.5, c0 ) + w1 * step( 0.5, c1 ) + w2 * step( 0.5, c2 ) + w3 * step( 0.5, c3 );
-            float code = 0.0, bw = -1.0;
-            if ( c0 > 0.5 && w0 > bw ) { bw = w0; code = c0; }
-            if ( c1 > 0.5 && w1 > bw ) { bw = w1; code = c1; }
-            if ( c2 > 0.5 && w2 > bw ) { bw = w2; code = c2; }
-            if ( c3 > 0.5 && w3 > bw ) { bw = w3; code = c3; }
-            if ( code > 0.5 ) {
+            vec2 t0 = lotTap( li ), t1 = lotTap( li + vec2( 1.0, 0.0 ) );
+            vec2 t2 = lotTap( li + vec2( 0.0, 1.0 ) ), t3 = lotTap( li + vec2( 1.0, 1.0 ) );
+            vec4 w = vec4( ( 1.0 - lt.x ) * ( 1.0 - lt.y ), lt.x * ( 1.0 - lt.y ),
+                           ( 1.0 - lt.x ) * lt.y, lt.x * lt.y );
+            float code = 0.0, sd = -1.0;
+            if ( t0.y > 0.5 ) { float s = lotSd( t0.y, t0, t1, t2, t3, w ); if ( s > sd ) { sd = s; code = t0.y; } }
+            if ( t1.y > 0.5 ) { float s = lotSd( t1.y, t0, t1, t2, t3, w ); if ( s > sd ) { sd = s; code = t1.y; } }
+            if ( t2.y > 0.5 ) { float s = lotSd( t2.y, t0, t1, t2, t3, w ); if ( s > sd ) { sd = s; code = t2.y; } }
+            if ( t3.y > 0.5 ) { float s = lotSd( t3.y, t0, t1, t2, t3, w ); if ( s > sd ) { sd = s; code = t3.y; } }
+            // Coverage ramps 0 -> 1 across one cell, so sd * cell is ~metres.
+            // A ragged edge of about a metre, not a drawn one: real lot edges
+            // are kerbs, verges and broken tarmac. Antialiased over a pixel.
+            float sdm = sd * ${LS} + ( detailT.g - 1.0 ) * 1.4 + ( macroT.r - 1.0 ) * 1.6;
+            float aw = max( 0.35, length( fwidth( vLotXZ ) ) * 0.7 );
+            if ( code > 0.5 && sdm > -aw ) {
               float kind = floor( ( code - 1.0 ) / ${LA} );
               float ang = mod( code - 1.0, ${LA} ) / ${LA} * PI;
               vec2 ax = vec2( cos( ang ), sin( ang ) );
               // p.x along the lot's long side, p.y across it.
               vec2 p = vec2( dot( vLotXZ, ax ), dot( vLotXZ, vec2( -ax.y, ax.x ) ) );
-              // A ragged edge, not a drawn one: real lot edges are kerbs,
-              // verges and broken tarmac, and a clean 10 m curve reads as CG.
-              float cov = smoothstep( 0.32, 0.68, bil + ( detailT.g - 1.0 ) * 0.22 + ( macroT.r - 1.0 ) * 0.12 );
+              float cov = smoothstep( -aw, aw, sdm );
+              // 50-400 m tone: periodic fBm, which survives the mips from the air
+              // where the texture grain averages flat.
+              float nBig = texture2D( lotNoise, vLotXZ / 1400.0 + vec2( 0.37, 0.11 ) ).r;
+              float nMid = texture2D( lotNoise, vLotXZ / 310.0 + vec2( 0.81, 0.53 ) ).r;
               vec3 pav;
               if ( kind < 1.5 ) {
                 pav = texture2D( lotRoad, p / 9.0 ).rgb;
-                // Lots are older, patchier tarmac than a street.
+                // Lots are older, patchier tarmac than a street: hundreds of
+                // metres of one flat grey is what a lot looked like from the
+                // air. Broad tone drift, paler resurfaced patches, oil-dark runs.
                 pav *= mix( vec3( 1.0 ), macroT, 0.35 ) * ( kind < 0.5 ? 1.06 : 1.0 );
+                // (the fBm sits mostly in 0.35..0.65, so the thresholds are
+                // set to catch roughly a sixth of the lot each)
+                pav *= 0.78 + nBig * 0.44;
+                pav *= 1.0 + smoothstep( 0.57, 0.66, nMid ) * 0.17 - smoothstep( 0.43, 0.34, nMid ) * 0.22;
                 if ( kind < 0.5 ) {
                   // Bays: 2.6 m wide, 5.4 m deep, rows back to back across
                   // a 7.2 m aisle -- an 18 m module across the lot.
@@ -776,21 +801,34 @@ export class World {
                 pav = mix( vec3( 0.32, 0.32, 0.31 ), wt * vec3( 0.86, 0.86, 0.84 ), 0.4 );
                 pav *= mix( vec3( 1.0 ), macroT, 0.65 );
               } else {
-                // Rail yard: ballast, with tracks every 4.8 m along the yard's
+                // Rail yard: dark ballast, track every 4.8 m along the yard's
                 // long side -- two steel rails on dark sleepers.
-                pav = vec3( 0.30, 0.285, 0.26 ) * mix( vec3( 1.0 ), detailT, 0.7 ) * mix( vec3( 1.0 ), macroT, 0.4 );
+                //
+                // The WHOLE track pattern fades with distance, not just its
+                // lines. The 4.8 m bed banding stayed at full contrast to the
+                // horizon, moired, and a SoDo yard read as a beige corduroy
+                // sheet. Each scale fades to its own mean as a pixel's footprint
+                // passes it, like the parking bays.
+                vec3 ballast = vec3( 0.150, 0.145, 0.138 ) * mix( vec3( 1.0 ), detailT, 0.5 )
+                  * mix( vec3( 1.0 ), macroT, 0.4 ) * ( 0.85 + nBig * 0.3 );
                 float fu = max( fwidth( p.x ), 1e-4 ), fv = max( fwidth( p.y ), 1e-4 );
                 float ty = abs( fract( p.y / 4.8 + 0.5 ) - 0.5 ) * 4.8;   // from track centre
                 float bed = 1.0 - smoothstep( 1.3 - fv, 1.3 + fv, ty );
                 float sx = abs( fract( p.x / 0.62 + 0.5 ) - 0.5 ) * 0.62;
                 float sleeper = bed * ( 1.0 - smoothstep( 0.12 - fu, 0.12 + fu, sx ) );
                 float rail = 1.0 - smoothstep( 0.05 - fv, 0.05 + fv, abs( ty - 0.72 ) );
-                float fade = clamp( 1.0 - ( max( fu, fv ) - 0.03 ) / 0.12, 0.0, 1.0 );
-                sleeper = sleeper * fade + ( 1.0 - fade ) * bed * 0.39;
-                rail = rail * fade + ( 1.0 - fade ) * 0.04;
-                pav *= 1.0 - bed * 0.12;
-                pav = mix( pav, vec3( 0.16, 0.13, 0.11 ), sleeper * 0.8 );
-                pav = mix( pav, vec3( 0.42, 0.42, 0.43 ), rail );
+                float fs = clamp( 1.0 - ( fu - 0.04 ) / 0.12, 0.0, 1.0 );   // sleepers, 0.24 m
+                float fr = clamp( 1.0 - ( fv - 0.03 ) / 0.08, 0.0, 1.0 );   // rails, 0.1 m
+                float fb = clamp( 1.0 - ( fv - 0.25 ) / 0.6, 0.0, 1.0 );    // the 4.8 m beds
+                sleeper = sleeper * fs + ( 1.0 - fs ) * bed * 0.39;
+                rail = rail * fr + ( 1.0 - fr ) * 0.042;   // both rails: |ty| folds them
+                vec3 track = ballast * ( 1.0 - bed * 0.10 );
+                track = mix( track, vec3( 0.085, 0.072, 0.062 ), sleeper * 0.8 );
+                track = mix( track, vec3( 0.34, 0.34, 0.35 ), rail * 0.5 );
+                // mean of the above over a whole 4.8 m period
+                // (beds 54 % of the width, sleepers 39 % of a bed, mixed at 0.8)
+                vec3 far = ballast * 0.946 * 0.832 + vec3( 0.085, 0.072, 0.062 ) * 0.168;
+                pav = mix( far, track, fb );
               }
               diffuseColor.rgb = mix( diffuseColor.rgb, pav, cov );
               lotCover = cov;
@@ -906,17 +944,18 @@ export class World {
   }
 
   /**
-   * The lot codes as an R8 texture: 2601^2 bytes, 6.8 MB of GPU memory, no
+   * The lot layer as an RG8 texture: 1801^2 x (coverage, code), 6.5 MB of GPU
+   * memory -- under the 6.8 MB the 10 m R8 code texture it replaced took. No
    * mips (a code can't be averaged). Null if the data carries no lot layer.
    */
   lotTexture() {
-    const codes = G.lotCodes();
-    if (!codes) return null;
-    const t = new THREE.DataTexture(codes, G.MASK_N, G.MASK_N, THREE.RedFormat, THREE.UnsignedByteType);
+    const lot = G.lotCodes();
+    if (!lot) return null;
+    const t = new THREE.DataTexture(lot, G.LOT_N, G.LOT_N, THREE.RGFormat, THREE.UnsignedByteType);
     t.minFilter = THREE.NearestFilter;
     t.magFilter = THREE.NearestFilter;
     t.generateMipmaps = false;
-    t.unpackAlignment = 1;   // 2601 is not a multiple of 4
+    t.unpackAlignment = 1;   // a 1801 x 2-byte row is not a multiple of 4
     t.colorSpace = THREE.NoColorSpace;
     t.needsUpdate = true;
     return t;

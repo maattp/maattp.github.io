@@ -1,31 +1,33 @@
-"""Bake the lot layer -- parking, plazas, yards -- into surface.png's blue channel.
+"""Bake the lot layer -- parking, plazas, yards -- into apps/auto/data/lots.png.
 
     tools/.venv/bin/python tools/osm_extract.py --lots   # only after a new .pbf
-    tools/.venv/bin/python tools/build_lots.py
+    tools/.venv/bin/python tools/build_lots.py           # after build_raster.py
 
-Reads tools/data/raw_lots.json and rewrites ONLY the blue channel of
-apps/auto/data/surface.png; red (water) and green (parks) are kept as they are
-and are the masks the lots are clipped against. build_raster.py calls `bake()`
-too, so a raster re-run keeps the lots instead of zeroing them.
+Reads tools/data/raw_lots.json (plus raw_green.json, raw_buildings.json and
+surface.png's water channel, which the lots are clipped against).
 
 Why this exists: the ground only knew "park" or "not park", so every block's
 open ground -- the lot behind the supermarket, Occidental Square, a SoDo yard --
 rendered as lawn beside the buildings. OSM has those surfaces; they were never
 brought in.
 
-The blue byte, one per 10 m cell (same grid as water/green):
+Everything is painted at 3.33 m, then sampled onto a 1801^2 grid (14.4 m) as
+two bytes per sample, R and G of an RGB PNG (B unused):
 
-    0            nothing: the terrain's own ground tint
-    1 + k*50 + a surface kind k, orientation a (0..49 over 0..pi, 3.6 deg)
+    G  the sample's code: 0 nothing, else 1 + k*50 + a -- kind k, orientation a
+       (0..49 over 0..pi, 3.6 deg)
         k = 0 parking   asphalt, bay striping
             1 asphalt   plain tarmac: forecourts, loading yards, drive aisles
             2 plaza     paving
             3 hard      concrete hardstanding: commercial / retail land
             4 rail      ballast and track: rail yards
+    R  the share of the sample's own 14.4 m cell that has that code (box
+       filter, 32 levels) -- what lets the edge be reconstructed between
+       samples instead of snapped to them (see sample_coverage)
 
 The orientation is the lot's own (its minimum-area rectangle's long side), so
 striping and paving joints line up with the lot rather than with world axes.
-geo.js decodes it (`lotAt`), world.js's terrain shader draws it.
+geo.js reconstructs it (`lotCodeAt`) exactly as world.js's terrain shader does.
 """
 
 import json
@@ -42,8 +44,18 @@ from proj import MAP_HALF  # noqa: E402
 HERE = os.path.dirname(os.path.abspath(__file__))
 DATA = os.path.join(HERE, "data")
 OUT = os.path.join(HERE, "..", "apps", "auto", "data")
-STEP = 10
-N = (MAP_HALF * 2) // STEP + 1          # 2601, matches surface.png
+MASK_STEP = 10
+MASK_N = (MAP_HALF * 2) // MASK_STEP + 1   # 2601, surface.png
+# Everything is PAINTED at 3.33 m (a third of the mask cell), so the edge the
+# coverage is measured against is not the 10 m staircase that showed from the
+# air, then SAMPLED onto the shipped grid below.
+STEP = MASK_STEP / 3
+N = (MASK_N - 1) * 3 + 1                   # 7801
+# The shipped grid: 1801^2 samples, 14.4 m apart, two bytes each (coverage,
+# code) -- 6.5 MB on the GPU against the 6.8 MB the 10 m code texture was.
+LOT_N = 1801
+LOT_STEP = MAP_HALF * 2 / (LOT_N - 1)
+COVER_LEVELS = 32   # coverage is quantised: 0.45 m of edge position, and it compresses
 
 KINDS = {"parking": 0, "asphalt": 1, "plaza": 2, "hard": 3, "rail": 4}
 ANG = 50   # geo.js LOT_ANG
@@ -178,8 +190,8 @@ APRON_WIDE_M2 = 5000    # ...and this big gets a two-cell yard
 
 def aprons():
     raw = json.load(open(os.path.join(DATA, "raw_buildings.json")))["buildings"]
-    one = Image.new("L", (N, N), 0)
-    two = Image.new("L", (N, N), 0)
+    img = Image.new("L", (N, N), 0)
+    d = ImageDraw.Draw(img)
     n = 0
     for p in raw:
         bt = p.get("bt", "yes")
@@ -191,18 +203,13 @@ def aprons():
         else:
             continue
         c = code(kind, 0.0 if kind == "asphalt" else orientation(p["o"]))
-        paint(two if a >= APRON_WIDE_M2 else one, {"o": p["o"]}, c)
+        # The footprint plus a stroke round it: a ring of APRON_M metres.
+        ring = 20.0 if a >= APRON_WIDE_M2 else 10.0
+        px = to_px(p["o"])
+        d.polygon(px, fill=c)
+        d.line(px + [px[0]], fill=c, width=max(1, round(2 * ring / STEP)), joint="curve")
         n += 1
-
-    def grow(a, r):
-        # max filter over a (2r+1)^2 window: codes spread into the ring
-        out = a.copy()
-        for dz in range(-r, r + 1):
-            for dx in range(-r, r + 1):
-                if dx or dz:
-                    out = np.maximum(out, np.roll(np.roll(a, dz, 0), dx, 1))
-        return out
-    g = np.maximum(grow(np.asarray(one, dtype=np.uint8), 1), grow(np.asarray(two, dtype=np.uint8), 2))
+    g = np.asarray(img, dtype=np.uint8)
     print(f"aprons: {n} non-residential footprints, {(g > 0).sum() * STEP * STEP / 1e6:.1f} km2 incl. footprint")
     return g
 
@@ -213,7 +220,7 @@ def aprons():
 # commercial land. Those become plaza. A bigger park, or one in a residential
 # street, stays lawn.
 POCKET_MAX_M2 = 5500
-POCKET_RING = 6          # cells (60 m) of surroundings looked at
+POCKET_RING = int(round(60 / STEP))   # 60 m of surroundings looked at
 POCKET_DEVELOPED = 0.33  # share of that ring already commercial / lot (streets count as not)
 
 
@@ -247,7 +254,7 @@ def pocket_squares(base):
 
 
 def bake(wet, green):
-    """-> (N, N) uint8 blue channel, clipped against the water and park masks."""
+    """-> (N, N) uint8 fine code raster, clipped against the water and park masks."""
     raw = json.load(open(os.path.join(DATA, "raw_lots.json")))
     lots, aisles = raw["lots"], raw["aisles"]
     groups = {g: [] for g in ORDER}
@@ -326,16 +333,81 @@ def bake(wet, green):
     return out
 
 
+def fine_masks():
+    """Water and park masks on the fine grid.
+
+    Water comes from surface.png's red channel (the flood fill lives in
+    build_raster.py), upsampled BILINEAR and re-thresholded so a lot's shoreline
+    edge is a curve, not the 10 m staircase. Parks are re-rasterised from the
+    polygons, the way build_raster.py draws them, at this resolution.
+    """
+    im = Image.open(os.path.join(OUT, "surface.png")).convert("RGB")
+    if im.size[0] != MASK_N:
+        sys.exit(f"surface.png is {im.size[0]} wide, expected {MASK_N}")
+    r = im.getchannel(0)
+    # pixel centres: mask cell i sits at fine pixel 3i, so scale by 3 about them
+    # (PIL maps output pixel j's centre to box0 + (j + 0.5) * scale; mask cell
+    # i's centre is at i + 0.5, and fine pixel j is mask position j / 3.)
+    b0, b1 = 1 / 3, 1 / 3 + N / 3
+    wet = np.asarray(r.resize((N, N), Image.BILINEAR, box=(b0, b0, b1, b1))) > 127
+    gi = Image.new("L", (N, N), 0)
+    dg = ImageDraw.Draw(gi)
+    for poly in json.load(open(os.path.join(DATA, "raw_green.json")))["green"]:
+        dg.polygon(to_px(poly["o"]), fill=255)
+        for h in poly.get("h", []):
+            dg.polygon(to_px(h), fill=0)
+    green = (np.asarray(gi) > 0) & ~wet
+    return wet, green
+
+
+def sample_coverage(fine):
+    """Fine code raster -> the shipped grid: (own-code coverage byte, code).
+
+    Each sample carries its own code (the nearest fine pixel's) and the share of
+    its own 14.4 m cell -- a box filter, exact to the sub-pixel -- that has that
+    code. Away from an edge that is 255 everywhere, which is why this ships at
+    under two thirds of the size a distance field did (694 KB: a distance is
+    never saturated in a city where every point is within 20 m of some lot edge). The shader
+    rebuilds, per candidate code, `sum(w * (tap has it ? a - 0.5 : 0.5 - a))`
+    over its four neighbours: the half-contour of a bilinear box-filtered
+    coverage is the classic anti-aliased edge reconstruction, a straight line
+    where the polygon edge was straight, not a 10 m staircase.
+    """
+    g = np.arange(LOT_N) * (LOT_STEP / STEP)          # sample positions, fine px
+    xs = g.astype(np.float64)
+    xi = np.rint(xs).astype(np.int32)
+    fx = xs - xi
+    half = LOT_STEP / STEP / 2                        # box half-width, fine px
+    K = int(math.ceil(half + 0.5))
+    # per-axis overlap weights of pixel k with [f - half, f + half]
+    W = [np.clip(np.minimum(k + 0.5, fx + half) - np.maximum(k - 0.5, fx - half), 0, 1)
+         for k in range(-K, K + 1)]
+    XI = np.clip(xi, 0, N - 1)
+    c0 = fine[XI[:, None], XI[None, :]]
+    acc = np.zeros(c0.shape, dtype=np.float32)
+    for a, kz in enumerate(range(-K, K + 1)):
+        rows = np.clip(xi + kz, 0, N - 1)
+        wz = W[a].astype(np.float32)[:, None]
+        for b, kx in enumerate(range(-K, K + 1)):
+            cols = np.clip(xi + kx, 0, N - 1)
+            wx = W[b].astype(np.float32)[None, :]
+            acc += (fine[rows[:, None], cols[None, :]] == c0) * (wz * wx)
+    acc /= (2 * half) ** 2
+    q = np.rint(np.clip(acc, 0, 1) * (COVER_LEVELS - 1)) * (255 / (COVER_LEVELS - 1))
+    return np.rint(q).astype(np.uint8), c0
+
+
 def main():
-    p = os.path.join(OUT, "surface.png")
-    im = np.asarray(Image.open(p).convert("RGB")).copy()
-    if im.shape[0] != N:
-        sys.exit(f"surface.png is {im.shape[0]} wide, expected {N}")
-    wet, green = im[:, :, 0] > 127, im[:, :, 1] > 127
-    before = os.path.getsize(p)
-    im[:, :, 2] = bake(wet, green)
-    Image.fromarray(im, "RGB").save(p, optimize=True)
-    print(f"surface.png {before / 1e3:.0f} KB -> {os.path.getsize(p) / 1e3:.0f} KB")
+    wet, green = fine_masks()
+    fine = bake(wet, green)
+    del wet, green
+    cover, codes = sample_coverage(fine)
+    img = np.zeros((LOT_N, LOT_N, 3), dtype=np.uint8)
+    img[:, :, 0] = cover
+    img[:, :, 1] = codes
+    p = os.path.join(OUT, "lots.png")
+    Image.fromarray(img, "RGB").save(p, optimize=True)
+    print(f"lots.png {LOT_N}x{LOT_N} @ {LOT_STEP:.2f} m: {os.path.getsize(p) / 1e3:.0f} KB")
 
 
 if __name__ == "__main__":

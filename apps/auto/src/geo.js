@@ -61,6 +61,7 @@ export function initGeo(md) {
   WET = md.water;
   GRN = md.green;
   LOT = md.lot || null;
+  if (LOT) { LOT_N = md.lotN; LOT_STEP = (MAP_HALF * 2) / (LOT_N - 1); }
   const p = md.places;
   LANDMARKS = p.landmarks;
   PLACES = p.places;
@@ -159,30 +160,63 @@ export function inPark(x, z) {
 }
 
 // THE LOT LAYER: paved ground that is not a building -- car parks, plazas,
-// yards, commercial hardstanding. surface.png's blue byte, one per 10 m cell:
-// 0 = none, else 1 + kind * 50 + orientation (tools/build_lots.py writes it).
-// It can overlap the park mask (a park's own car park), so anything planting
-// on park ground asks `inLot` as well.
+// yards, commercial hardstanding. data/lots.png, LOT_N^2 samples LOT_STEP
+// apart, two bytes each: the share of the sample's own cell that has its code,
+// and the code, 0 = none, else 1 + kind * 50 + orientation (tools/build_lots.py
+// writes it). It can overlap the park mask (a park's own car park), so anything
+// planting on park ground asks `inLot` as well.
+//
+// `lotCodeAt` is the SAME reconstruction the terrain shader runs (world.js), so
+// what the scatter and the parked cars believe is a lot is what is drawn.
 export const LOT_ANG = 50;
 export const LOT_KINDS = ['parking', 'asphalt', 'plaza', 'hard', 'rail'];
+export let LOT_N = 1801;
+export let LOT_STEP = (MAP_HALF * 2) / (LOT_N - 1);
+
+/** The drawn lot code at (x,z): 0, or 1 + kind * LOT_ANG + orientation. */
+export function lotCodeAt(x, z) {
+  if (!LOT) return 0;
+  const fx = (x + MAP_HALF) / LOT_STEP, fz = (z + MAP_HALF) / LOT_STEP;
+  let i = Math.floor(fx), j = Math.floor(fz);
+  if (i < 0 || j < 0 || i >= LOT_N - 1 || j >= LOT_N - 1) return 0;
+  const tx = fx - i, tz = fz - j;
+  const k0 = (j * LOT_N + i) * 2, k1 = k0 + 2, k2 = k0 + LOT_N * 2, k3 = k2 + 2;
+  const c0 = LOT[k0 + 1], c1 = LOT[k1 + 1], c2 = LOT[k2 + 1], c3 = LOT[k3 + 1];
+  if (!(c0 | c1 | c2 | c3)) return 0;
+  const a0 = LOT[k0] / 255 - 0.5, a1 = LOT[k1] / 255 - 0.5;
+  const a2 = LOT[k2] / 255 - 0.5, a3 = LOT[k3] / 255 - 0.5;
+  const w0 = (1 - tx) * (1 - tz), w1 = tx * (1 - tz), w2 = (1 - tx) * tz, w3 = tx * tz;
+  const sd = (c) => w0 * (c0 === c ? a0 : -a0) + w1 * (c1 === c ? a1 : -a1)
+    + w2 * (c2 === c ? a2 : -a2) + w3 * (c3 === c ? a3 : -a3);
+  let best = 0, bs = -1;
+  for (const c of [c0, c1, c2, c3]) {
+    if (!c) continue;
+    const s = sd(c);
+    if (s > bs) { bs = s; best = c; }
+  }
+  return bs > 0 ? best : 0;
+}
 
 /** Lot kind index at (x,z) -- an index into LOT_KINDS -- or -1. */
 export function lotAt(x, z) {
-  const c = maskAt(LOT, x, z);
+  const c = lotCodeAt(x, z);
   return c ? ((c - 1) / LOT_ANG) | 0 : -1;
-}
-
-/** The raw lot byte at (x,z): 0, or 1 + kind * LOT_ANG + orientation. */
-export function lotCodeAt(x, z) {
-  return maskAt(LOT, x, z);
 }
 
 /** Is (x,z) on a paved lot / plaza / yard? */
 export function inLot(x, z) {
-  return maskAt(LOT, x, z) !== 0;
+  return lotCodeAt(x, z) !== 0;
 }
 
-/** The raw lot bytes, for the terrain shader's texture. */
+/** Nearest sample's code, unreconstructed: cheap, for the minimap. */
+export function lotNearest(x, z) {
+  if (!LOT) return 0;
+  const i = Math.round((x + MAP_HALF) / LOT_STEP), j = Math.round((z + MAP_HALF) / LOT_STEP);
+  if (i < 0 || j < 0 || i >= LOT_N || j >= LOT_N) return 0;
+  return LOT[(j * LOT_N + i) * 2 + 1];
+}
+
+/** The interleaved (coverage, code) bytes, for the terrain shader's texture. */
 export function lotCodes() {
   return LOT;
 }
