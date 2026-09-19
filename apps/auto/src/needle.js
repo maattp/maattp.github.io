@@ -236,6 +236,34 @@ function radialPlate(outline, t, a, mat) {
 
 const ringPt = (r, a, y) => new THREE.Vector3(Math.cos(a) * r, y, Math.sin(a) * r);
 
+// --- collision -----------------------------------------------------------------
+
+/**
+ * What you can hit at the foot of the Needle, in the model's own frame (the
+ * same frame spaceNeedle() builds in; buildLandmarks turns it with the
+ * landmark). One oriented box per column foot -- the pedestal and the column
+ * just above it, 3.6 m radially by 2.2 m across -- and a circle for the core
+ * with its elevator cabs. Nothing between the legs: the plaza under the
+ * Needle is walkable, as it is in life. Boxes follow citygen's
+ * setLandmarkSolids convention (u = (cos rot, sin rot)); the band stops under
+ * the SkyLine's soffit, which is as high as anything on wheels or feet gets.
+ */
+export function needleSolids() {
+  const out = [];
+  for (let i = 0; i < 3; i++) {
+    const a = (i / 3) * Math.PI * 2 + 0.5;
+    for (const side of [-1, 1]) {
+      const r = legR(0), s = side * pairS(0);
+      out.push({
+        x: Math.cos(a) * r - Math.sin(a) * s, z: Math.sin(a) * r + Math.cos(a) * s,
+        hw: 1.8, hd: 1.1, rot: a, y0: -2, y1: 26,
+      });
+    }
+  }
+  out.push({ x: 0, z: 0, r: 3.3, y0: -2, y1: 150 });
+  return out;
+}
+
 // --- the model ---------------------------------------------------------------
 
 export function spaceNeedle() {

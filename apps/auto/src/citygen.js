@@ -1154,9 +1154,18 @@ export function* cityGenerator(md) {
   // the reasoning that "towers are just buildings" -- true of towers, false of
   // anything we model ourselves.
   let landmarkCleared = 0;
+  // A LANDMARK_CLEAR entry is a radius round the landmark's position, or a
+  // list of [dx, dz, r] circles offset from it (world axes) for a landmark
+  // whose model is not centred on its OSM point -- the Market's sign and
+  // clock stand 220 m from the node that names it.
+  const clearAt = [];
   for (const l of G.LANDMARKS) {
-    const r = LANDMARK_CLEAR[l.kind] || 55;
-    const lx = l.p ? l.p[0] : l.x, lz = l.p ? l.p[1] : l.z;
+    const spec = LANDMARK_CLEAR[l.kind];
+    const x0 = l.p ? l.p[0] : l.x, z0 = l.p ? l.p[1] : l.z;
+    if (Array.isArray(spec)) for (const [dx, dz, r] of spec) clearAt.push([x0 + dx, z0 + dz, r]);
+    else clearAt.push([x0, z0, spec || 55]);
+  }
+  for (const [lx, lz, r] of clearAt) {
     for (let bi = buildings.length - 1; bi >= 0; bi--) {
       const bd = buildings[bi];
       const dx = lx - bd.x, dz = lz - bd.z;
@@ -2058,6 +2067,92 @@ export function* cityGenerator(md) {
       return best;
     },
 
+    // --- Landmark solids ---------------------------------------------------
+    //
+    // The hand-built landmarks (landmarks.js, needle.js) are one merged mesh
+    // with no collision of their own, so you drove through the Needle's legs
+    // and walked into a stadium wall. Their solids are installed ONCE at boot
+    // (setLandmarkSolids), indexed by position like the barriers above, and
+    // answer through obstacleHit, so the player's car, traffic and walking all
+    // collide with them without a call site changing.
+    //
+    // Each is a circle {x, z, r} or an oriented box {x, z, hw, hd, rot} --
+    // local u = (cos rot, sin rot), v = (-sin rot, cos rot) -- with a height
+    // band [y0, y1] in world metres: nothing above y1 is blocked (a plane over
+    // a roof, the space under a canopy is a separate question of the band), and
+    // nothing more than 2.5 m below y0 (a bore under it), the same underground
+    // rule as trunks.
+    landmarkSolids: null,
+    landmarkGrid: new Map(),
+    setLandmarkSolids(list) {
+      this.landmarkSolids = list.length ? list : null;
+      this.landmarkGrid = new Map();
+      for (let i = 0; i < list.length; i++) {
+        const s = list[i];
+        const e = s.r !== undefined ? s.r : Math.hypot(s.hw, s.hd);
+        for (let cx = Math.floor((s.x - e) / 40); cx <= Math.floor((s.x + e) / 40); cx++) {
+          for (let cz = Math.floor((s.z - e) / 40); cz <= Math.floor((s.z + e) / 40); cz++) {
+            const k = skey(cx, cz);
+            let l = this.landmarkGrid.get(k);
+            if (!l) this.landmarkGrid.set(k, (l = []));
+            l.push(i);
+          }
+        }
+      }
+    },
+
+    /** Deepest landmark-solid overlap for a circle, same shape obstacleHit returns. */
+    landmarkHit(x, z, rad, y) {
+      if (!this.landmarkSolids) return null;
+      let best = null, seen = null;
+      const c0 = Math.floor((x - rad) / 40), c1 = Math.floor((x + rad) / 40);
+      const d0 = Math.floor((z - rad) / 40), d1 = Math.floor((z + rad) / 40);
+      for (let cx = c0; cx <= c1; cx++) {
+        for (let cz = d0; cz <= d1; cz++) {
+          const l = this.landmarkGrid.get(skey(cx, cz));
+          if (!l) continue;
+          for (const i of l) {
+            if (c0 !== c1 || d0 !== d1) {
+              if (!seen) seen = new Set();
+              if (seen.has(i)) continue;
+              seen.add(i);
+            }
+            const s = this.landmarkSolids[i];
+            if (y !== undefined && (y > s.y1 || y < s.y0 - 2.5)) continue;
+            let pen, nx, nz;
+            if (s.r !== undefined) {
+              const dx = x - s.x, dz = z - s.z, rr = rad + s.r;
+              const d2 = dx * dx + dz * dz;
+              if (d2 >= rr * rr) continue;
+              const d = Math.sqrt(d2) || 1e-4;
+              pen = rr - d; nx = dx / d; nz = dz / d;
+            } else {
+              const c = Math.cos(s.rot), sn = Math.sin(s.rot);
+              const dx = x - s.x, dz = z - s.z;
+              const u = dx * c + dz * sn, v = -dx * sn + dz * c;
+              const qu = Math.max(-s.hw, Math.min(s.hw, u)), qv = Math.max(-s.hd, Math.min(s.hd, v));
+              const eu = u - qu, ev = v - qv, e2 = eu * eu + ev * ev;
+              let lu, lv;
+              if (e2 > 0) {
+                // Centre outside the box: circle against its nearest point.
+                if (e2 >= rad * rad) continue;
+                const e = Math.sqrt(e2);
+                pen = rad - e; lu = eu / e; lv = ev / e;
+              } else {
+                // Centre inside: out through the nearest face.
+                const pu = s.hw - Math.abs(u), pv = s.hd - Math.abs(v);
+                if (pu < pv) { pen = pu + rad; lu = Math.sign(u) || 1; lv = 0; }
+                else { pen = pv + rad; lu = 0; lv = Math.sign(v) || 1; }
+              }
+              nx = lu * c - lv * sn; nz = lu * sn + lv * c;
+            }
+            if (!best || pen > best.pen) best = { pen, nx, nz };
+          }
+        }
+      }
+      return best;
+    },
+
     addObstacle(ck, x, z, r) {
       let l = this.obstacles.get(ck);
       if (!l) this.obstacles.set(ck, (l = []));
@@ -2105,6 +2200,8 @@ export function* cityGenerator(md) {
       // single call site changing.
       const b = this.barrierHit(x, z, rad, y);
       if (b && (!best || b.pen > best.pen)) best = b;
+      const lm = this.landmarkHit(x, z, rad, y);
+      if (lm && (!best || lm.pen > best.pen)) best = lm;
       return best;
     },
 

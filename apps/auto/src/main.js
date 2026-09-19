@@ -508,7 +508,7 @@ function installShadowFade() {
   world.buildSkyline();
 
   await step(0.86, 'Placing the landmarks');
-  buildLandmarks(scene);
+  buildLandmarks(scene, city);
 
   await step(0.9, 'Waking the city');
   game = new Game();
