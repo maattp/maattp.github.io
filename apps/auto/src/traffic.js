@@ -249,6 +249,9 @@ export class TrafficSystem {
           if (e.tw[i + 1] < w1) w1 = e.tw[i + 1];
         }
       }
+      // ...and inside any lid barrier standing in the carriageway (world
+      // buildLids' e.barW, [+p, -p] like e.tw): that is where the road ends.
+      if (e.barW) { w0 = Math.min(w0, e.barW[0]); w1 = Math.min(w1, e.barW[1]); }
       // An OPPOSING carriageway overlapping this one owns its half of the
       // overlap. SR-99's twin tubes are two 14 m roads with centrelines
       // 7.5-11 m apart for ~2.8 km (see "SR-99" in CLAUDE.md); laid across

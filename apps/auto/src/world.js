@@ -7,7 +7,7 @@ import * as G from './geo.js';
 // Kept in step with main.js. Shadow-caster policy differs by platform, and the
 // difference is worth roughly 40 draw calls a frame.
 const ON_PHONE = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
-import { CHUNK, ROAD_LIFT, NODE_LIFT, WALK_LIFT, TUNNEL_H, cityStats } from './citygen.js';
+import { CHUNK, ROAD_LIFT, NODE_LIFT, WALK_LIFT, TUNNEL_H, VERGE, cityStats } from './citygen.js';
 import { Builder } from './build.js';
 import { hash2, clamp, lerp, distToSeg } from './util.js';
 
@@ -1440,8 +1440,28 @@ export class World {
       }
       this._tunIdx = idx;
       this._tunByK = new Map(idx.map((q) => [q.k, q]));
+      // 64 m cells (padded 4 m), for the queries cutFloor makes per carve
+      // sample -- a scan of every bore there is too slow.
+      const grid = new Map();
+      for (const q of idx) {
+        for (let cx = Math.floor((q.x0 - 4) / 64); cx <= Math.floor((q.x1 + 4) / 64); cx++) {
+          for (let cz = Math.floor((q.z0 - 4) / 64); cz <= Math.floor((q.z1 + 4) / 64); cz++) {
+            const key = cx * 100003 + cz;
+            let l = grid.get(key);
+            if (!l) grid.set(key, (l = []));
+            l.push(q);
+          }
+        }
+      }
+      this._tunGrid = grid;
     }
     return this._tunIdx;
+  }
+
+  /** Bores whose (4 m padded) bounds hold (x, z). */
+  _tunNear(x, z) {
+    this._tunIndex();
+    return this._tunGrid.get(Math.floor(x / 64) * 100003 + Math.floor(z / 64)) || [];
   }
 
   /**
@@ -1530,9 +1550,11 @@ export class World {
    * to swallow the terrain face -- must stop above it, or it hangs through the
    * lower deck's ceiling.
    */
-  _roofUnder(x, z, y, buried = true, pad = 1.5) {
+  _roofUnder(x, z, y, buried = true, pad = 1.5, skipKeys = null) {
     let best = -Infinity;
-    for (const q of this._tunIndex()) {
+    for (const q of this._tunNear(x, z)) {
+      if (skipKeys && (skipKeys.has(Math.round(q.a.x * 10) + ':' + Math.round(q.a.z * 10))
+        || skipKeys.has(Math.round(q.b.x * 10) + ':' + Math.round(q.b.z * 10)))) continue;
       if (x < q.x0 - pad || x > q.x1 + pad || z < q.z0 - pad || z > q.z1 + pad) continue;
       const rx = x - q.a.x, rz = z - q.a.z;
       const al = rx * q.ux + rz * q.uz;
@@ -1755,6 +1777,48 @@ export class World {
           lid[i][j] = kk;
         }
       }
+      // A SLAB REACHES THE KERB. The Voronoi split puts a slab's side wherever
+      // the cutting beside it is nearer than this road's centre, which for a
+      // wide road beside a cutting is inside its own outer lane: SR-99's SB
+      // surface past the exit had its side barrier 1-2 m inside its 7 m
+      // carriageway for 60 m, and an AI car in the outer lane wedged on it.
+      // Where the slab already covers the lane a car's reach from the centre
+      // (inLane withdraws it otherwise), the columns between its side and the
+      // kerb join it -- as long as that ground is not the cutting's own
+      // carriageway. Over the cutting's lanes the extension must bridge them
+      // (4.6 m of headroom, as everywhere); without that the side stays put.
+      if (!veto) {
+        for (let i = 0; i <= ns; i++) {
+          for (const [jE, dir] of [[0, 1], [nl, -1]]) {
+            let jj = jE;
+            while (jj >= 0 && jj <= nl && !lid[i][jj]) jj += dir;
+            if (jj < 0 || jj > nl || jj === jE || Math.abs(U(jj)) < 2.6) continue;
+            // outward from the slab's side, stopping at the first column
+            // that cannot join (a hole between slab and kerb is worse)
+            for (let c = jj - dir; c !== jE - dir; c -= dir) {
+              const [x, z] = pt(S(i), U(c));
+              const q = carveAt(x, z);
+              if (!q || q.d < 0.08) break;
+              if (ownCuts.some((c2) => inFoot(c2, x, z))) break;
+              let kind = lid[i][jj];
+              let dCut = 1e9, deck = 0;
+              for (let k = 0; k < q.c.pts.length - 1; k++) {
+                const p0 = q.c.pts[k], p1 = q.c.pts[k + 1];
+                if (p1.cap) continue;
+                const rr = distToSeg(x, z, p0.x, p0.z, p1.x, p1.z);
+                if (rr.d - p0.hw < dCut) { dCut = rr.d - p0.hw; deck = p0.y + (p1.y - p0.y) * rr.t; }
+              }
+              if (dCut < 0.3) {
+                if (q.raw + LID_TOP - 0.5 - deck < 4.6) break;
+                kind = 2;
+              }
+              const td = this._tunDeckUnder(x, z, 0.6);
+              if (td !== null && q.raw + LID_TOP - 0.5 - (td + 0.3) < 4.0) break;
+              lid[i][c] = kind;
+            }
+          }
+        }
+      }
       if (veto) { stats.crossingsSkipped++; this._lidVeto.set(ei, vetoWhy); continue; }
       if (!any) continue;
       const topY = (x, z) => G.terrainRaw(x, z) + LID_TOP;
@@ -1802,7 +1866,7 @@ export class World {
         const v = c4.map(([x, z]) => [x, topY(x, z), z]);
         const uvs = [];
         for (const [s, u] of [[q.s0, q.uA], [q.s0, q.uB], [q.s1, q.uB], [q.s1, q.uA]]) uvs.push((e.hw - u) / ROAD_TILE, (s * e.len) / ROAD_TILE);
-        tops.push({ v, uvs });
+        tops.push({ v, uvs, kind: q.kind });
         c4s.push(c4);
       }
       if (!tops.length) continue;
@@ -2013,6 +2077,39 @@ export class World {
       this._lidByEdge.set(ei, { tops, walls, col });
       stats.edges++; stats.quads += tops.length; stats.walls += walls.length;
     }
+    // WHERE A BARRIER STANDS INSIDE A CARRIAGEWAY, THAT IS WHERE THE
+    // CARRIAGEWAY ENDS. Real data overlaps: SR-99's SB surface past the exit
+    // runs 2.2 m over the NB entry cutting's lanes, 4.7 m down with 3.8 m of
+    // headroom, so no slab can reach its kerb and its side barrier stands 2 m
+    // inside the 7 m road. The slab is the road there, so the road's usable
+    // width stops at the barrier: `e.barW` [+p side, -p side] is the narrowest
+    // clear half-width any lid barrier leaves, and traffic lays its lanes
+    // (laneLat) and meshRoadMarks its edge line inside it, as they do inside a
+    // split-level trim. An AI car in the outer lane used to run 1.9 m off the
+    // barrier line, inside the 2.2 m a sedan's circle and the wall's 0.8 m
+    // reach, and wedge there.
+    {
+      let pinched = 0;
+      for (let i = this._lidBarrier0; i < bsegs.length; i += 6) {
+        const mx = (bsegs[i] + bsegs[i + 2]) / 2, mz = (bsegs[i + 1] + bsegs[i + 3]) / 2;
+        const y0 = bsegs[i + 4], y1 = bsegs[i + 5];
+        for (const k of city.edgesNear(mx, mz, 30)) {
+          const f = city.edges[k];
+          if (f.tunnel || f.elev) continue;
+          const fa = city.nodes[f.a], fb = city.nodes[f.b];
+          const r = distToSeg(mx, mz, fa.x, fa.z, fb.x, fb.z);
+          if (r.t <= 0 || r.t >= 1 || r.d >= f.hw - 0.05) continue;
+          // at this road's level: the slab it rides here, or its ground
+          const lt = city.lidAt(mx, mz);
+          const ry = (lt !== null && this._lidByEdge.has(k) ? lt + LID_TOP : G.terrainHeight(mx, mz) + ROAD_LIFT);
+          if (ry < y0 || ry > y1) continue;
+          const side = (mx - fa.x) * -f.dz + (mz - fa.z) * f.dx >= 0 ? 0 : 1;
+          if (!f.barW) f.barW = new Float32Array([f.hw, f.hw]);
+          if (r.d < f.barW[side]) { f.barW[side] = r.d; pinched++; }
+        }
+      }
+      cityStats.lidLanePinched = pinched;
+    }
     cityStats.lidEdges = stats.edges;
     cityStats.lidQuads = stats.quads;
     cityStats.lidWalls = stats.walls;
@@ -2027,6 +2124,19 @@ export class World {
     if (!L) return;
     for (const q of L.tops) road.quad(q.v[0], q.v[1], q.v[2], q.v[3], [0, 1, 0], q.uvs, L.col);
     const conc = [0.46, 0.47, 0.48];
+    // A BRIDGE SLAB HAS AN UNDERSIDE. The top is road material and one-sided,
+    // so from the trench it spans nothing but its fascias and parapets drawn
+    // as bars hanging in the sky -- the "floating retaining-wall slabs" over
+    // SR-99's SB exit cutting, where two ramps and a cross street roof it in
+    // part (raycast: every floating bar was a kind-2 lid fascia, 5-10 m over
+    // the trench floor, with nothing between). The soffit sits where the
+    // fascia's foot does, 0.7 m under the top.
+    const soff = [0.36, 0.37, 0.38];
+    for (const q of L.tops) {
+      if (q.kind !== 2) continue;
+      const d = q.v.map(([x, y, z]) => [x, y - 0.7, z]);
+      flat.quad(d[3], d[2], d[1], d[0], [0, -1, 0], ZERO_UV, soff);
+    }
     for (const w of L.walls) {
       const n = Math.hypot(w.nx, w.nz) || 1, nx = w.nx / n, nz = w.nz / n;
       // fascia down to the ground outside, facing the drop
@@ -3728,7 +3838,8 @@ float frLine(float o, float fw, float c, float w) {
     // runs out over the wall.
     const inset = Math.min(0.7, hw * 0.06);
     const sideW = (m, s) => {
-      if (!e.tw) return hw;
+      // a lid barrier inside the carriageway is its kerb (buildLids' e.barW)
+      if (!e.tw) return e.barW ? Math.min(hw, e.barW[s]) : hw;
       const i = Math.min(e.pk, Math.max(0, Math.round((m / e.len) * e.pk)));
       return e.tw[i * 2 + s];
     };
@@ -3803,6 +3914,21 @@ float frLine(float o, float fw, float c, float w) {
     // number groundAt's deck query gives there.
     const tl = (x, z) => ((x - a.x) * e.dx + (z - a.z) * e.dz) / e.len;
     const Yl = (x, z) => lerp(ay, by, tl(x, z));
+    // ...but DRAWN heights run along the mitred lines: a vertex at P(t, o)
+    // takes the height at t, not at its projection. By projection the two
+    // edges meeting at a joint each extrapolated their own grade out to the
+    // shared mitre corner, and where the grade breaks there (the NB deck
+    // diving under the SB cutting, +1 % -> -10 % at z 1667) deck, wall tops
+    // and ceiling of the two pieces stood centimetres apart along the joint:
+    // the thin light seam across the bore, where the clear colour showed
+    // through. By t, both pieces meet at the node's own height. groundAt still
+    // answers by projection; the two differ by a few cm at a joint only.
+    const Ym = (x, z) => {
+      const o = (x - a.x) * px + (z - a.z) * pz;
+      const den = 1 + (o * (kB - kA)) / e.len;
+      const t = (tl(x, z) - (o * kA) / e.len) / (Math.abs(den) > 1e-6 ? den : 1);
+      return lerp(ay, by, t);
+    };
     const conc = [0.42, 0.43, 0.45];
 
     // THE TERRAIN IS NEVER EXCAVATED, SO THERE IS NO SUCH THING AS AN OPEN CUT.
@@ -3915,7 +4041,7 @@ float frLine(float o, float fw, float c, float w) {
       };
       const lAt = (t) => pool(t) * dark(t);
       if (bur) {
-        cells(t0, t1, (poly) => fan(glow, poly, Yl, [0, 1, 0], null, ([x, z]) => {
+        cells(t0, t1, (poly) => fan(glow, poly, Ym, [0, 1, 0], null, ([x, z]) => {
           const l = lAt(tl(x, z)); return [0.34 * l, 0.34 * l, 0.36 * l];
         }));
       } else {
@@ -3930,7 +4056,7 @@ float frLine(float o, float fw, float c, float w) {
         // UVs from the plan point, so a clipped piece keeps the texture
         // registered with its neighbours; the same ae -> ac gradient along
         // the segment the single quad had.
-        cells(t0, t1, (poly) => fan(road, poly, Yl, [0, 1, 0],
+        cells(t0, t1, (poly) => fan(road, poly, Ym, [0, 1, 0],
           ([x, z]) => [(hw - ((x - a.x) * px + (z - a.z) * pz)) / ROAD_TILE, (tl(x, z) * e.len) / ROAD_TILE],
           ([x, z]) => {
             const f = clamp((tl(x, z) - t0) / (t1 - t0), 0, 1);
@@ -3963,7 +4089,7 @@ float frLine(float o, float fw, float c, float w) {
             const m0 = pool(s0) * dark(s0), m1 = pool(s1) * dark(s1);
             const c0 = [0.42 * m0, 0.43 * m0, 0.45 * m0], c1 = [0.42 * m1, 0.43 * m1, 0.45 * m1];
             // heights at the mitred points, so the wall foot meets the deck
-            const y0 = Yl(v0x, v0z), y1 = Yl(v1x, v1z);
+            const y0 = Ym(v0x, v0z), y1 = Ym(v1x, v1z);
             glow.quad([v0x, y0, v0z], [v1x, y1, v1z],
               [v1x, y1 + WALL, v1z], [v0x, y0 + WALL, v0z],
               [-px * sd, 0, -pz * sd], ZERO_UV, [c0, c1, c1, c0]);
@@ -4008,7 +4134,7 @@ float frLine(float o, float fw, float c, float w) {
       if (bur) {
         // The ceiling follows the deck's ownership rule: two roofs within a
         // few cm fight exactly as two floors do.
-        cells(t0, t1, (poly) => fan(glow, poly, (x, z) => Yl(x, z) + WALL, [0, -1, 0], null, ([x, z]) => {
+        cells(t0, t1, (poly) => fan(glow, poly, (x, z) => Ym(x, z) + WALL, [0, -1, 0], null, ([x, z]) => {
           const l = lAt(tl(x, z)); return [0.20 * l, 0.20 * l, 0.22 * l];
         }));
         // LAMPS, NOT A LIGHT SLOT. The strip used to run the full length of
@@ -4912,8 +5038,50 @@ float frLine(float o, float fw, float c, float w) {
               [i0x, cy0 + WALK_Y, i0z], [i1x, cy1 + WALK_Y, i1z], [-ox, 0, -oz],
               [0, 0, 1, 0, 1, 1, 0, 1], [ccLo, ccLo, cc, cc]);
           }
+          this.meshVerge(flat, o0x, o0z, o1x, o1z, ox, oz);
         }
       }
+    }
+  }
+
+  /**
+   * The verge outside a pavement's outer edge: a short slope from the slab's
+   * top (terrain + WALK_Y) down to the ground across VERGE, outward (ox, oz).
+   *
+   * The slab used to end in an open 52 cm step with a kerb face on the road
+   * side only, so anyone standing on the grass beyond it -- a fleeing
+   * pedestrian, the player -- was correctly on the ground and, seen across the
+   * slab, sunk to the waist. citygen.roadLift reports the same slope, so
+   * walking off the pavement is a slope and not a fall. Not drawn over a
+   * carriageway (roadLift gives a carriageway no verge lift either), into
+   * water, or into a cutting.
+   */
+  meshVerge(flat, o0x, o0z, o1x, o1z, ox, oz) {
+    const v0x = o0x + ox * VERGE, v0z = o0z + oz * VERGE;
+    const v1x = o1x + ox * VERGE, v1z = o1z + oz * VERGE;
+    const mx = (o0x + o1x + v0x + v1x) / 4, mz = (o0z + o1z + v0z + v1z) / 4;
+    const hx = (v0x + v1x) / 2, hz = (v0z + v1z) / 2;
+    if (this.city.onRoad(mx, mz, 0, false) || this.city.onRoad(hx, hz, 0, false)) return;
+    if (!G.isBuildable(hx, hz) || this.inCut(mx, mz)) return;
+    const T = G.terrainHeight;
+    // Pavement grey at the lip, the developed-ground verge tint at the toe --
+    // the batter family (meshGraded), toned toward the slab.
+    const lip = [0.38, 0.38, 0.36], toe = [0.3, 0.36, 0.22];
+    // Split along: the slab's pieces are up to 24 m, and a slope drawn as one
+    // chord over that is the grass-through-the-road problem again. The lip
+    // stays on the slab's own edge (its chord), so the two cannot part.
+    const y0 = T(o0x, o0z) + WALK_Y, y1 = T(o1x, o1z) + WALK_Y;
+    const L = Math.hypot(o1x - o0x, o1z - o0z);
+    const n = Math.max(1, Math.round(L / 8));
+    for (let k = 0; k < n; k++) {
+      const t0 = k / n, t1 = (k + 1) / n;
+      const ax = o0x + (o1x - o0x) * t0, az = o0z + (o1z - o0z) * t0;
+      const bx = o0x + (o1x - o0x) * t1, bz = o0z + (o1z - o0z) * t1;
+      const cx = v0x + (v1x - v0x) * t1, cz = v0z + (v1z - v0z) * t1;
+      const dx = v0x + (v1x - v0x) * t0, dz = v0z + (v1z - v0z) * t0;
+      flat.quad([ax, y0 + (y1 - y0) * t0, az], [bx, y0 + (y1 - y0) * t1, bz],
+        [cx, T(cx, cz) - 0.02, cz], [dx, T(dx, dz) - 0.02, dz],
+        [ox * 0.46, 0.89, oz * 0.46], [0, 0, 1, 0, 1, 1, 0, 1], [lip, lip, toe, toe]);
     }
   }
 
@@ -5160,6 +5328,7 @@ float frLine(float o, float fw, float c, float w) {
           [i0x, wy(i0x, i0z), i0z], [o0x, wy(o0x, o0z), o0z],
           [o1x, wy(o1x, o1z), o1z], [i1x, wy(i1x, i1z), i1z],
           [0, 1, 0], [0, 0, ru, 0, ru, rv, 0, rv], [1, 1, 1]);
+        this.meshVerge(flat, o0x, o0z, o1x, o1z, -wn[0], -wn[2]);
         flat.quad(
           [i0x, ry(i0x, i0z), i0z], [i1x, ry(i1x, i1z), i1z],
           [i1x, wy(i1x, i1z), i1z], [i0x, wy(i0x, i0z), i0z],
