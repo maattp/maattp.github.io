@@ -27,6 +27,7 @@ const PROBE = process.argv.includes('--probe');
 const VIEWS = [
   { name: 'lot-belltown', street: true, x: -795, z: -1261, eye: 1.7, look: 1.0 },
   { name: 'lot-pioneer', street: true, x: 730, z: 519, eye: 1.7, look: 1.0 },
+  { name: 'sodo-street', street: true, x: 260, z: 3300, eye: 1.7, look: 1.5 },
   { name: 'lot-low', x: 485, z: 1566, eye: 45, look: 0, back: 90, bear: 0.9 },
   { name: 'westlake', x: 52, z: 60, eye: 4, look: 1.5, back: 45, bear: 2.4 },
   { name: 'occidental', x: 338, z: 1227, eye: 4, look: 1.5, back: 50, bear: 0.9 },
