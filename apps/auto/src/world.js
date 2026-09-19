@@ -1401,20 +1401,6 @@ export class World {
         const deck = a.y + (b.y - a.y) * r.t;
         const t = clamp((r.d - w) / CUT_BANK, 0, 1);
         const cand = { y: deck - 0.7, t: t * t * (3 - 2 * t), c };
-        // A TRENCH FLOOR STOPS ON A BORE'S ROOF. A ramp cutting 5.7 m over
-        // the I-5 Express bore at (513, 77) dug its floor 0.4-0.5 m into the
-        // Express roof (portalcheck's sliced bore): the 0.7 m under its own
-        // deck is more than the gap. Where a bore runs under this corridor
-        // with its roof above that floor, the floor rests just on the roof --
-        // still under the cutting's own deck, which is all the 0.7 m was for.
-        // (Raw ground only, as above: terrainHeight is what this computes.)
-        // Another corridor's bore only: this cutting's own tube runs on under
-        // its own floor at the far end, and that transition is the headwall's.
-        if (!b.cap) {
-          if (!c.keys) c.keys = new Set(c.pts.map((p) => Math.round(p.x * 10) + ':' + Math.round(p.z * 10)));
-          const roof = this._roofUnder(x, z, cand.y, false, 0.5, c.keys);
-          if (roof > cand.y - 0.05) cand.y = Math.min(roof + 0.05, deck - 0.2);
-        }
         // compare at the point itself, banks included
         const yHere = (q) => q.y + (1e4 - q.y) * q.t;
         if (!best || yHere(cand) < yHere(best)) best = cand;
