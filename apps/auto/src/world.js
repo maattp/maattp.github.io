@@ -5066,7 +5066,7 @@ float frLine(float o, float fw, float c, float w) {
     const T = G.terrainHeight;
     // Pavement grey at the lip, the developed-ground verge tint at the toe --
     // the batter family (meshGraded), toned toward the slab.
-    const lip = [0.56, 0.56, 0.54], toe = [0.43, 0.46, 0.34];
+    const lip = [0.38, 0.38, 0.36], toe = [0.3, 0.36, 0.22];
     // Split along: the slab's pieces are up to 24 m, and a slope drawn as one
     // chord over that is the grass-through-the-road problem again. The lip
     // stays on the slab's own edge (its chord), so the two cannot part.
