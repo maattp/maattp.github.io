@@ -159,6 +159,54 @@ def paint(img, p, c):
     img.paste(c, (x0, z0, x1, z1), m)
 
 
+# Hardstanding round a non-residential building. Most of the city's paved
+# ground is mapped as NOTHING -- no landuse, no car park, just the space between
+# a warehouse and its street -- so where OSM has no polygon, the building's
+# own type is the best evidence there is: a warehouse stands in a yard, an
+# office block on a plaza, a house on a lawn. One ring of cells (~10 m) round
+# the footprint, two for a big shed; lowest priority, and clipped by the park
+# mask like everything else.
+APRON_YARD = {"industrial", "warehouse", "hangar", "service", "transportation",
+              "storage_tank", "manufacture", "depot"}
+APRON_HARD = {"retail", "commercial", "office", "hotel", "hospital", "civic",
+              "government", "public", "data_center", "parking", "fire_station",
+              "school", "college", "university", "stadium", "construction",
+              "supermarket", "train_station"}
+APRON_YES_M2 = 1000     # an untyped `building=yes` this big is not a house
+APRON_WIDE_M2 = 5000    # ...and this big gets a two-cell yard
+
+
+def aprons():
+    raw = json.load(open(os.path.join(DATA, "raw_buildings.json")))["buildings"]
+    one = Image.new("L", (N, N), 0)
+    two = Image.new("L", (N, N), 0)
+    n = 0
+    for p in raw:
+        bt = p.get("bt", "yes")
+        a = area(p["o"])
+        if bt in APRON_YARD:
+            kind = "asphalt"
+        elif bt in APRON_HARD or (bt == "yes" and a >= APRON_YES_M2):
+            kind = "hard"
+        else:
+            continue
+        c = code(kind, 0.0 if kind == "asphalt" else orientation(p["o"]))
+        paint(two if a >= APRON_WIDE_M2 else one, {"o": p["o"]}, c)
+        n += 1
+
+    def grow(a, r):
+        # max filter over a (2r+1)^2 window: codes spread into the ring
+        out = a.copy()
+        for dz in range(-r, r + 1):
+            for dx in range(-r, r + 1):
+                if dx or dz:
+                    out = np.maximum(out, np.roll(np.roll(a, dz, 0), dx, 1))
+        return out
+    g = np.maximum(grow(np.asarray(one, dtype=np.uint8), 1), grow(np.asarray(two, dtype=np.uint8), 2))
+    print(f"aprons: {n} non-residential footprints, {(g > 0).sum() * STEP * STEP / 1e6:.1f} km2 incl. footprint")
+    return g
+
+
 # A downtown "park" is usually a paved square. Occidental Square, Westlake Park
 # and Pioneer Square are all `leisure=park` with no surface tag, so the only
 # thing that says they are hardscape is where they are: small, and ringed by
@@ -261,7 +309,10 @@ def bake(wet, green):
         stats[g] = n
 
     base = np.asarray(img, dtype=np.uint8).copy()
+    # The pocket-square test is tuned against MAPPED lots only; aprons are an
+    # inference and would talk it into paving residential parks.
     squares = pocket_squares(base)
+    base = np.where(base > 0, base, aprons())
     base[green] = 0
     over = np.asarray(layer_over, dtype=np.uint8)
     out = np.where(over > 0, over, np.where(squares > 0, squares, base))
