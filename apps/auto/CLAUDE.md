@@ -1810,20 +1810,32 @@ message on the phone profile, with the CPU throttled from before navigation.
 a cached launch builds the same city as a computed one).
 
 **`src/bootcache.js` keeps deterministic boot results in IndexedDB, keyed by
-the build number** (`#build`): citygen's freeway grading (`gradeSnapshot` /
-`applyGrade`) and world's portal cuts, barriers and lids (`_computePortalCuts`
-/ `_applyPortalSnap`). Writing one build's entries deletes every other
-build's. **So the build bump is also the cache invalidation**: a change to
-anything those two produce, shipped without a bump, would boot a stale city
-on any device that launched the previous code under the same number. Every
-failure (private mode, quota, a hung open) falls back to computing. Harnesses
-use fresh browser profiles, so they always take the computed path; judge the
-cached path with `boottime.mjs --twice` and a `BOOT_PROBE` hash.
+the build number** (`#build`), and main.js loads them all in parallel at the
+start of the boot. What is kept, and where each is made and restored:
 
-| 8x-throttled, first frame | v82 | v84 |
+| key | made / restored by | ~size |
 |---|---|---|
-| first launch of a build | 31.3 s | ~22 s |
-| later launches (cached) | 31.3 s | ~12.8 s |
+| `textures` | `planTextures` (right after buildTextures) + `encodeTextures` / `restoreTextures` -- PNGs, decoded with no colour or alpha conversion | PNG |
+| `map` | the minimap canvas as a PNG (`canvasToBlob` / `blobToCanvas`) | PNG |
+| `buildings` | citygen `packBuildings` / `unpackBuildings` -- the fitted list as Float64 columns | 17 MB |
+| `grade` | citygen `gradeSnapshot` / `applyGrade` | |
+| `portal` | world `_computePortalCuts` / `_applyPortalSnap` (used only with a cached grade) | 6 MB |
+| `vehicles` | vehicles `vehicleSnapshot` / `setVehicleCache` (geometry; far LODs on a phone) | 19 MB |
+
+Whatever a launch computed is written on the loading screen ("Remembering the
+city"), and writing one build's entries deletes every other build's. **So the
+build bump is also the cache invalidation**: a change to anything these
+produce, shipped without a bump, would boot a stale city on any device that
+launched the previous code under the same number. Every failure (private
+mode, quota, a hung open, a bad PNG) falls back to computing, piece by piece.
+Harnesses use fresh browser profiles, so they always take the computed path;
+judge the cached path with `boottime.mjs --twice` and a `BOOT_PROBE` hash
+(city, texture pixels, map pixels, vehicle geometry all matched in v85).
+
+| 8x-throttled, first frame | v82 | v85 |
+|---|---|---|
+| first launch of a build | 31.3 s | ~22 s (incl. 1.6 s writing the cache) |
+| later launches (cached) | 31.3 s | ~8 s |
 
 ## Draw-call budget
 

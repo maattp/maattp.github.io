@@ -1127,3 +1127,79 @@ export function buildTextures() {
     particle: particleTexture(),
   };
 }
+
+// --- boot cache (bootcache.js via main.js) ----------------------------------
+//
+// Every texture here is procedural and deterministic, and painting them was
+// ~1.2 s of a phone's boot. A launch keeps them as PNGs (lossless) and a later
+// launch of the same build decodes those instead -- decoding runs off the main
+// thread. `planTextures` must run right after buildTextures, before anything
+// changes a texture's settings (world.js sets the water's repeat), so the plan
+// records the settings buildTextures made; the pixels are encoded later.
+const TEX_PROPS = ['wrapS', 'wrapT', 'colorSpace', 'generateMipmaps', 'minFilter', 'magFilter', 'anisotropy', 'flipY', 'format', 'type', 'premultiplyAlpha', 'unpackAlignment'];
+
+export function planTextures(tx) {
+  const texs = [];
+  const skel = (o) => {
+    if (o && o.isTexture) {
+      const props = {};
+      for (const k of TEX_PROPS) props[k] = o[k];
+      props.repeat = [o.repeat.x, o.repeat.y];
+      props.offset = [o.offset.x, o.offset.y];
+      texs.push({ tex: o, props, data: !!o.isDataTexture });
+      return { __t: texs.length - 1 };
+    }
+    if (Array.isArray(o)) return o.map(skel);
+    if (o && typeof o === 'object') { const r = {}; for (const k of Object.keys(o)) r[k] = skel(o[k]); return r; }
+    return o;
+  };
+  return { skel: skel(tx), texs };
+}
+
+export const canvasToBlob = (c) => new Promise((res) => {
+  try { c.toBlob((b) => res(b), 'image/png'); } catch (e) { res(null); }
+});
+
+export async function encodeTextures(plan) {
+  const texs = [];
+  for (const t of plan.texs) {
+    const im = t.tex.image;
+    if (t.data) texs.push({ props: t.props, data: im.data.slice(), w: im.width, h: im.height });
+    else {
+      const blob = await canvasToBlob(im);
+      if (!blob) return null;
+      texs.push({ props: t.props, blob });
+    }
+  }
+  return { skel: plan.skel, texs };
+}
+
+/** A canvas holding a cached PNG's exact bytes (no colour or alpha conversion). */
+export async function blobToCanvas(blob) {
+  const bmp = await createImageBitmap(blob, { colorSpaceConversion: 'none', premultiplyAlpha: 'none' });
+  const c = document.createElement('canvas');
+  c.width = bmp.width; c.height = bmp.height;
+  c.getContext('2d').drawImage(bmp, 0, 0);
+  if (bmp.close) bmp.close();
+  return c;
+}
+
+export async function restoreTextures(snap) {
+  const texs = await Promise.all(snap.texs.map(async (t) => {
+    let tex;
+    if (t.data) tex = new THREE.DataTexture(t.data, t.w, t.h);
+    else tex = new THREE.CanvasTexture(await blobToCanvas(t.blob));
+    for (const k of TEX_PROPS) tex[k] = t.props[k];
+    tex.repeat.set(t.props.repeat[0], t.props.repeat[1]);
+    tex.offset.set(t.props.offset[0], t.props.offset[1]);
+    tex.needsUpdate = true;
+    return tex;
+  }));
+  const build = (o) => {
+    if (o && typeof o === 'object' && '__t' in o) return texs[o.__t];
+    if (Array.isArray(o)) return o.map(build);
+    if (o && typeof o === 'object') { const r = {}; for (const k of Object.keys(o)) r[k] = build(o[k]); return r; }
+    return o;
+  };
+  return build(snap.skel);
+}

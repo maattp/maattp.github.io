@@ -1137,21 +1137,26 @@ export class World {
     // Heights come straight from terrainHeight, which already carries the cut.
     // The patch exists only to RESOLVE it: a 40 m cell cannot show a 14 m
     // trench however correct the height function is.
-    const y = (x, z) => G.terrainHeight(x, z);
+    // One height per lattice point, shared by the four quads that meet there
+    // (it was sampled four times over, through the carve, at boot). Shared
+    // points also mean neighbouring quads meet exactly.
+    const xs = new Float64Array(SUB + 1), zs = new Float64Array(SUB + 1), ys = new Float64Array((SUB + 1) * (SUB + 1));
+    for (let i = 0; i <= SUB; i++) { xs[i] = cx + i * q; zs[i] = cz + i * q; }
+    for (let j = 0; j <= SUB; j++) for (let i = 0; i <= SUB; i++) ys[j * (SUB + 1) + i] = G.terrainHeight(xs[i], zs[j]);
+    const Y = (i, j) => ys[j * (SUB + 1) + i];
     // No excavation tint. The cutting is faced in concrete by the retaining
     // walls; the ground above it is the same ground as everywhere else.
-    const tint = () => colour;
     for (let j = 0; j < SUB; j++) {
       for (let i = 0; i < SUB; i++) {
-        const x = cx + i * q, z = cz + j * q;
+        const x = xs[i], z = zs[j], x1 = xs[i + 1], z1 = zs[j + 1];
         b.quad(
-          [x, y(x, z), z],
-          [x, y(x, z + q), z + q],
-          [x + q, y(x + q, z + q), z + q],
-          [x + q, y(x + q, z), z],
-          [0, 1, 0], [x / 13, z / 13, x / 13, (z + q) / 13,
-            (x + q) / 13, (z + q) / 13, (x + q) / 13, z / 13],
-          tint());
+          [x, Y(i, j), z],
+          [x, Y(i, j + 1), z1],
+          [x1, Y(i + 1, j + 1), z1],
+          [x1, Y(i + 1, j), z],
+          [0, 1, 0], [x / 13, z / 13, x / 13, z1 / 13,
+            x1 / 13, z1 / 13, x1 / 13, z / 13],
+          colour);
       }
     }
   }

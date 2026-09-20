@@ -165,6 +165,35 @@ const CAMBER_MAX = 0.06;
 /** Embankment batter: horizontal metres per metre of fill. */
 export const BERM = 1.5;
 
+// --- the building cache -----------------------------------------------------
+// The fitted building list as columns (Float64, so shrunk boxes keep every
+// bit) plus the per-chunk cover it was read with. See cityGenerator.
+const STYLES = ['house', 'brick', 'lowrise', 'midrise', 'tower', 'industrial', 'campus'];
+function packBuildings(buildings, built, stats) {
+  const n = buildings.length;
+  const X = new Float64Array(n), Z = new Float64Array(n), W = new Float64Array(n), D = new Float64Array(n);
+  const R = new Float64Array(n), H = new Float64Array(n), Y = new Float64Array(n);
+  const seed = new Int32Array(n), style = new Uint8Array(n);
+  for (let i = 0; i < n; i++) {
+    const b = buildings[i];
+    if (b.kind !== null) return null;   // not a shape this cache knows
+    X[i] = b.x; Z[i] = b.z; W[i] = b.w; D[i] = b.d; R[i] = b.rot; H[i] = b.h; Y[i] = b.y;
+    seed[i] = b.seed;
+    const si = STYLES.indexOf(b.style);
+    if (si < 0) return null;
+    style[i] = si;
+  }
+  return { X, Z, W, D, R, H, Y, seed, style, built, stats };
+}
+function unpackBuildings(c) {
+  const n = c.X.length, buildings = new Array(n);
+  for (let i = 0; i < n; i++) {
+    buildings[i] = { x: c.X[i], z: c.Z[i], w: c.W[i], d: c.D[i], rot: c.R[i], h: c.H[i], y: c.Y[i],
+      style: STYLES[c.style[i]], seed: c.seed[i], kind: null };
+  }
+  return { buildings, built: c.built };
+}
+
 // --- the grading cache -----------------------------------------------------
 //
 // gradeRoads is deterministic in the map data and the code, and it was the
@@ -248,6 +277,14 @@ function makeUnderpassDepth(underpasses) {
       }
     }
     return best;
+  };
+  // Does any underpass lie filed under the grid cells a box touches? (lets the
+  // terrain skip its per-cell sampling almost everywhere)
+  underpassDepth.near = (x0, z0, x1, z1) => {
+    for (let cx = Math.floor(x0 / UP_CELL); cx <= Math.floor(x1 / UP_CELL); cx++) {
+      for (let cz = Math.floor(z0 / UP_CELL); cz <= Math.floor(z1 / UP_CELL); cz++) if (upGrid.has(skey(cx, cz))) return true;
+    }
+    return false;
   };
   return underpassDepth;
 }
@@ -1447,200 +1484,213 @@ export function* cityGenerator(md, cache = {}) {
   // packed file. There is no lot generation, no road-clearance test and no
   // tower placement search: a real footprint is already clear of a real road.
   const B = md.buildings;
-  const buildings = [];
-  const REC = 12;
-  const built = new Float32Array(B.nx * B.nz); // per-chunk cover, for the ground tint
-  for (let cj = 0; cj < B.nz; cj++) {
-    for (let ci = 0; ci < B.nx; ci++) {
-      const k = cj * B.nx + ci;
-      const from = B.dir[k], to = B.dir[k + 1];
-      const ox = -G.MAP_HALF + ci * CHUNK - 200;
-      const oz = -G.MAP_HALF + cj * CHUNK - 200;
-      let area = 0;
-      for (let o = from; o < to; o += REC) {
-        const x = ox + B.blob.getUint16(o, true) / 10;
-        const z = oz + B.blob.getUint16(o + 2, true) / 10;
-        const w = B.blob.getUint16(o + 4, true) / 20;
-        const d = B.blob.getUint16(o + 6, true) / 20;
-        const h = B.blob.getUint16(o + 8, true) / 20;
-        const rot = (B.blob.getUint8(o + 10) * Math.PI) / 256;
-        const cls = B.blob.getUint8(o + 11);
-        area += w * d;
-        buildings.push({
-          x, z, w, d, rot, h,
-          y: G.terrainHeight(x, z),
-          style: styleFor(cls, h, w, d),
-          seed: (hash2(Math.round(x), Math.round(z)) * 65536) | 0,
-          kind: null,
-        });
+  // The fitted, cleared building list of this build, if main.js has it
+  // (bootcache.js): reading 259k boxes and fitting them clear of the roads was
+  // over a second of a phone's boot. Columns in, the same objects out.
+  let buildings, built;
+  if (cache.buildings && cache.buildings.X) {
+    ({ buildings, built } = unpackBuildings(cache.buildings));
+    cityStats.buildingsShrunk = cache.buildings.stats.shrunk;
+    cityStats.buildingsDropped = cache.buildings.stats.dropped;
+    cityStats.landmarkCleared = cache.buildings.stats.cleared;
+  } else {
+    buildings = [];
+    const REC = 12;
+    built = new Float32Array(B.nx * B.nz); // per-chunk cover, for the ground tint
+    for (let cj = 0; cj < B.nz; cj++) {
+      for (let ci = 0; ci < B.nx; ci++) {
+        const k = cj * B.nx + ci;
+        const from = B.dir[k], to = B.dir[k + 1];
+        const ox = -G.MAP_HALF + ci * CHUNK - 200;
+        const oz = -G.MAP_HALF + cj * CHUNK - 200;
+        let area = 0;
+        for (let o = from; o < to; o += REC) {
+          const x = ox + B.blob.getUint16(o, true) / 10;
+          const z = oz + B.blob.getUint16(o + 2, true) / 10;
+          const w = B.blob.getUint16(o + 4, true) / 20;
+          const d = B.blob.getUint16(o + 6, true) / 20;
+          const h = B.blob.getUint16(o + 8, true) / 20;
+          const rot = (B.blob.getUint8(o + 10) * Math.PI) / 256;
+          const cls = B.blob.getUint8(o + 11);
+          area += w * d;
+          buildings.push({
+            x, z, w, d, rot, h,
+            y: G.terrainHeight(x, z),
+            style: styleFor(cls, h, w, d),
+            seed: (hash2(Math.round(x), Math.round(z)) * 65536) | 0,
+            kind: null,
+          });
+        }
+        built[k] = clamp(area / (CHUNK * CHUNK), 0, 1);
       }
-      built[k] = clamp(area / (CHUNK * CHUNK), 0, 1);
+      if (cj % 6 === 0) yield { p: 0.3 + 0.5 * (cj / B.nz), msg: 'Raising the skyline' };
     }
-    if (cj % 6 === 0) yield { p: 0.3 + 0.5 * (cj / B.nz), msg: 'Raising the skyline' };
-  }
 
-  // --- 2b. Keep buildings out of the carriageway ---------------------------
-  //
-  // This pass came back after being deleted. The reasoning for deleting it --
-  // "a real footprint is not standing in a real road, because the road is real
-  // too" -- is true of the FOOTPRINT and false of what actually ships, which is
-  // the footprint's minimum-area oriented rectangle. An L-shaped or U-shaped
-  // building's bounding box covers the notch, and if a street runs through that
-  // notch the box lands squarely on it. Measured on the built data: 11,131
-  // boxes (8.9%) overlapped a carriageway and 8,290 of them by more than 3 m,
-  // including a 274 x 68 m box sitting 38 m into I-5. That is what "so many
-  // roads are blocked" was, and it is what made the freeway impassable.
-  //
-  // Deliberately a runtime pass over the shipped boxes rather than a filter in
-  // the importer: the road graph is right there, so the fix travels with the
-  // geometry it is correcting and cannot go stale against a re-import.
-  const FIT_CELL = 60;
-  const fitGrid = new Map();
-  for (let ei = 0; ei < g.edges.length; ei++) {
-    const e = g.edges[ei];
-    // A bridge passes over, and a tunnel under, so neither blocks anything --
-    // and a building above a tunnel is where buildings normally are.
-    if (e.elev || e.tunnel) continue;
-    const a = g.nodes[e.a], b = g.nodes[e.b];
-    const x0 = Math.floor((Math.min(a.x, b.x) - e.hw) / FIT_CELL);
-    const x1 = Math.floor((Math.max(a.x, b.x) + e.hw) / FIT_CELL);
-    const z0 = Math.floor((Math.min(a.z, b.z) - e.hw) / FIT_CELL);
-    const z1 = Math.floor((Math.max(a.z, b.z) + e.hw) / FIT_CELL);
-    for (let cx = x0; cx <= x1; cx++) {
-      for (let cz = z0; cz <= z1; cz++) {
-        const k = skey(cx, cz);
-        let l = fitGrid.get(k);
-        if (!l) fitGrid.set(k, (l = []));
-        l.push(ei);
-      }
-    }
-  }
-
-  /**
-   * Scale in (0,1] that pulls a box clear of every carriageway near it, or 0
-   * if it cannot be saved.
-   *
-   * The box is measured as the rotated rectangle it is, via its support
-   * function `|hw*(u.n)| + |hd*(v.n)|` along the line to each road. A bounding
-   * circle cannot do this job: one large enough to contain the rectangle
-   * rejects half a block, and anything smaller lets the corners stand in the
-   * road, which is the bug the original version of this was written for.
-   *
-   * Only the carriageway is cleared, not the pavement. Real buildings front the
-   * pavement -- that is what a pavement is for -- and clearing it too would
-   * shrink most of downtown for no gain in drivability.
-   */
-  const CLEAR_MARGIN = 0.8;
-  const roadFit = (x, z, w, d, rot) => {
-    const hw = w / 2, hd = d / 2;
-    const rad = Math.hypot(hw, hd);
-    const ux = Math.cos(rot), uz = Math.sin(rot);
-    const vx = -Math.sin(rot), vz = Math.cos(rot);
-    let fit = 1;
-    const c0 = Math.floor((x - rad) / FIT_CELL), c1 = Math.floor((x + rad) / FIT_CELL);
-    const d0 = Math.floor((z - rad) / FIT_CELL), d1 = Math.floor((z + rad) / FIT_CELL);
-    for (let cx = c0; cx <= c1; cx++) {
-      for (let cz = d0; cz <= d1; cz++) {
-        const l = fitGrid.get(skey(cx, cz));
-        if (!l) continue;
-        for (const ei of l) {
-          const e = g.edges[ei];
-          const a = g.nodes[e.a], b = g.nodes[e.b];
-          const r = distToSeg(x, z, a.x, a.z, b.x, b.z);
-          const room = r.d - e.hw - CLEAR_MARGIN;
-          if (room <= 0) return 0; // the centre itself is in the road
-          if (r.d > rad + e.hw) continue;
-          const nx = (x - r.x) / r.d, nz = (z - r.z) / r.d;
-          const reach = Math.abs(hw * (ux * nx + uz * nz)) + Math.abs(hd * (vx * nx + vz * nz));
-          if (reach > room) fit = Math.min(fit, room / reach);
+    // --- 2b. Keep buildings out of the carriageway ---------------------------
+    //
+    // This pass came back after being deleted. The reasoning for deleting it --
+    // "a real footprint is not standing in a real road, because the road is real
+    // too" -- is true of the FOOTPRINT and false of what actually ships, which is
+    // the footprint's minimum-area oriented rectangle. An L-shaped or U-shaped
+    // building's bounding box covers the notch, and if a street runs through that
+    // notch the box lands squarely on it. Measured on the built data: 11,131
+    // boxes (8.9%) overlapped a carriageway and 8,290 of them by more than 3 m,
+    // including a 274 x 68 m box sitting 38 m into I-5. That is what "so many
+    // roads are blocked" was, and it is what made the freeway impassable.
+    //
+    // Deliberately a runtime pass over the shipped boxes rather than a filter in
+    // the importer: the road graph is right there, so the fix travels with the
+    // geometry it is correcting and cannot go stale against a re-import.
+    const FIT_CELL = 60;
+    const fitGrid = new Map();
+    for (let ei = 0; ei < g.edges.length; ei++) {
+      const e = g.edges[ei];
+      // A bridge passes over, and a tunnel under, so neither blocks anything --
+      // and a building above a tunnel is where buildings normally are.
+      if (e.elev || e.tunnel) continue;
+      const a = g.nodes[e.a], b = g.nodes[e.b];
+      const x0 = Math.floor((Math.min(a.x, b.x) - e.hw) / FIT_CELL);
+      const x1 = Math.floor((Math.max(a.x, b.x) + e.hw) / FIT_CELL);
+      const z0 = Math.floor((Math.min(a.z, b.z) - e.hw) / FIT_CELL);
+      const z1 = Math.floor((Math.max(a.z, b.z) + e.hw) / FIT_CELL);
+      for (let cx = x0; cx <= x1; cx++) {
+        for (let cz = z0; cz <= z1; cz++) {
+          const k = skey(cx, cz);
+          let l = fitGrid.get(k);
+          if (!l) fitGrid.set(k, (l = []));
+          l.push(ei);
         }
       }
     }
-    return fit;
-  };
 
-  const MIN_SIDE = 4.0; // below this it is a kiosk, not a building
-  let shrunk = 0, dropped = 0;
-  // Compacted in place in one pass: splicing each dropped box out of a 125k
-  // array moved the rest of it every time -- ~3000 drops, a second of the
-  // loading bar on a phone. Same survivors, same order.
-  let keep = 0;
-  for (let bi = 0; bi < buildings.length; bi++) {
-    const bd = buildings[bi];
-    const fit = roadFit(bd.x, bd.z, bd.w, bd.d, bd.rot);
-    if (fit < 1) {
-      // Shrink to fit rather than dropping where possible: a block that came
-      // out as one big box legitimately overlaps the road, and deleting it
-      // empties the whole block instead of putting a smaller building on it.
-      if (fit > 0 && bd.w * fit >= MIN_SIDE && bd.d * fit >= MIN_SIDE) {
-        bd.w *= fit;
-        bd.d *= fit;
-        shrunk++;
-      } else {
-        dropped++;
-        continue;
+    /**
+     * Scale in (0,1] that pulls a box clear of every carriageway near it, or 0
+     * if it cannot be saved.
+     *
+     * The box is measured as the rotated rectangle it is, via its support
+     * function `|hw*(u.n)| + |hd*(v.n)|` along the line to each road. A bounding
+     * circle cannot do this job: one large enough to contain the rectangle
+     * rejects half a block, and anything smaller lets the corners stand in the
+     * road, which is the bug the original version of this was written for.
+     *
+     * Only the carriageway is cleared, not the pavement. Real buildings front the
+     * pavement -- that is what a pavement is for -- and clearing it too would
+     * shrink most of downtown for no gain in drivability.
+     */
+    const CLEAR_MARGIN = 0.8;
+    const roadFit = (x, z, w, d, rot) => {
+      const hw = w / 2, hd = d / 2;
+      const rad = Math.hypot(hw, hd);
+      const ux = Math.cos(rot), uz = Math.sin(rot);
+      const vx = -Math.sin(rot), vz = Math.cos(rot);
+      let fit = 1;
+      const c0 = Math.floor((x - rad) / FIT_CELL), c1 = Math.floor((x + rad) / FIT_CELL);
+      const d0 = Math.floor((z - rad) / FIT_CELL), d1 = Math.floor((z + rad) / FIT_CELL);
+      for (let cx = c0; cx <= c1; cx++) {
+        for (let cz = d0; cz <= d1; cz++) {
+          const l = fitGrid.get(skey(cx, cz));
+          if (!l) continue;
+          for (const ei of l) {
+            const e = g.edges[ei];
+            const a = g.nodes[e.a], b = g.nodes[e.b];
+            const r = distToSeg(x, z, a.x, a.z, b.x, b.z);
+            const room = r.d - e.hw - CLEAR_MARGIN;
+            if (room <= 0) return 0; // the centre itself is in the road
+            if (r.d > rad + e.hw) continue;
+            const nx = (x - r.x) / r.d, nz = (z - r.z) / r.d;
+            const reach = Math.abs(hw * (ux * nx + uz * nz)) + Math.abs(hd * (vx * nx + vz * nz));
+            if (reach > room) fit = Math.min(fit, room / reach);
+          }
+        }
+      }
+      return fit;
+    };
+
+    const MIN_SIDE = 4.0; // below this it is a kiosk, not a building
+    let shrunk = 0, dropped = 0;
+    // Compacted in place in one pass: splicing each dropped box out of a 125k
+    // array moved the rest of it every time -- ~3000 drops, a second of the
+    // loading bar on a phone. Same survivors, same order.
+    let keep = 0;
+    for (let bi = 0; bi < buildings.length; bi++) {
+      const bd = buildings[bi];
+      const fit = roadFit(bd.x, bd.z, bd.w, bd.d, bd.rot);
+      if (fit < 1) {
+        // Shrink to fit rather than dropping where possible: a block that came
+        // out as one big box legitimately overlaps the road, and deleting it
+        // empties the whole block instead of putting a smaller building on it.
+        if (fit > 0 && bd.w * fit >= MIN_SIDE && bd.d * fit >= MIN_SIDE) {
+          bd.w *= fit;
+          bd.d *= fit;
+          shrunk++;
+        } else {
+          dropped++;
+          continue;
+        }
+      }
+      buildings[keep++] = bd;
+    }
+    buildings.length = keep;
+    cityStats.buildingsShrunk = shrunk;
+    cityStats.buildingsDropped = dropped;
+
+    // --- 2c. Landmarks get their site to themselves -------------------------
+    //
+    // We draw our own Space Needle, and OSM has a building footprint for it as
+    // well -- 38 x 38 m, tagged 184 m tall. Imported as an ordinary tower it
+    // lands on exactly the same spot and encloses the hand-built mesh, which is
+    // where the Space Needle went. Same for the stadiums, the Market and the
+    // locks. `reserved` did this job before the import rewrite and was dropped on
+    // the reasoning that "towers are just buildings" -- true of towers, false of
+    // anything we model ourselves.
+    let landmarkCleared = 0;
+    // A LANDMARK_CLEAR entry is a radius round the landmark's position, or a
+    // list of [dx, dz, r] circles offset from it (world axes) for a landmark
+    // whose model is not centred on its OSM point -- the Market's sign and
+    // clock stand 220 m from the node that names it.
+    const clearAt = [];
+    for (const l of G.LANDMARKS) {
+      const spec = LANDMARK_CLEAR[l.kind];
+      const x0 = l.p ? l.p[0] : l.x, z0 = l.p ? l.p[1] : l.z;
+      if (Array.isArray(spec)) for (const [dx, dz, r] of spec) clearAt.push([x0 + dx, z0 + dz, r]);
+      else clearAt.push([x0, z0, spec || 55]);
+    }
+    for (const [lx, lz, r] of clearAt) {
+      for (let bi = buildings.length - 1; bi >= 0; bi--) {
+        const bd = buildings[bi];
+        const dx = lx - bd.x, dz = lz - bd.z;
+        if (dx * dx + dz * dz > (r + 90) * (r + 90)) continue;
+        // Nearest point of the rotated box to the landmark centre.
+        const c = Math.cos(-bd.rot), s = Math.sin(-bd.rot);
+        const px = dx * c - dz * s, pz = dx * s + dz * c;
+        const qx = clamp(px, -bd.w / 2, bd.w / 2);
+        const qz = clamp(pz, -bd.d / 2, bd.d / 2);
+        if ((px - qx) ** 2 + (pz - qz) ** 2 < r * r) {
+          buildings.splice(bi, 1);
+          landmarkCleared++;
+        }
       }
     }
-    buildings[keep++] = bd;
-  }
-  buildings.length = keep;
-  cityStats.buildingsShrunk = shrunk;
-  cityStats.buildingsDropped = dropped;
+    cityStats.landmarkCleared = landmarkCleared;
 
-  // --- 2c. Landmarks get their site to themselves -------------------------
-  //
-  // We draw our own Space Needle, and OSM has a building footprint for it as
-  // well -- 38 x 38 m, tagged 184 m tall. Imported as an ordinary tower it
-  // lands on exactly the same spot and encloses the hand-built mesh, which is
-  // where the Space Needle went. Same for the stadiums, the Market and the
-  // locks. `reserved` did this job before the import rewrite and was dropped on
-  // the reasoning that "towers are just buildings" -- true of towers, false of
-  // anything we model ourselves.
-  let landmarkCleared = 0;
-  // A LANDMARK_CLEAR entry is a radius round the landmark's position, or a
-  // list of [dx, dz, r] circles offset from it (world axes) for a landmark
-  // whose model is not centred on its OSM point -- the Market's sign and
-  // clock stand 220 m from the node that names it.
-  const clearAt = [];
-  for (const l of G.LANDMARKS) {
-    const spec = LANDMARK_CLEAR[l.kind];
-    const x0 = l.p ? l.p[0] : l.x, z0 = l.p ? l.p[1] : l.z;
-    if (Array.isArray(spec)) for (const [dx, dz, r] of spec) clearAt.push([x0 + dx, z0 + dz, r]);
-    else clearAt.push([x0, z0, spec || 55]);
-  }
-  for (const [lx, lz, r] of clearAt) {
+    // Nothing may stand where the player gets put down. Inside a footprint,
+    // blocked() refuses every direction and the player is stuck for good, walking
+    // on the spot -- and 1.5 m inside a facade there is no visual clue why.
+    const CLEAR = 2.2; // player's collision half-width, plus room to turn around
     for (let bi = buildings.length - 1; bi >= 0; bi--) {
       const bd = buildings[bi];
-      const dx = lx - bd.x, dz = lz - bd.z;
-      if (dx * dx + dz * dz > (r + 90) * (r + 90)) continue;
-      // Nearest point of the rotated box to the landmark centre.
       const c = Math.cos(-bd.rot), s = Math.sin(-bd.rot);
-      const px = dx * c - dz * s, pz = dx * s + dz * c;
-      const qx = clamp(px, -bd.w / 2, bd.w / 2);
-      const qz = clamp(pz, -bd.d / 2, bd.d / 2);
-      if ((px - qx) ** 2 + (pz - qz) ** 2 < r * r) {
-        buildings.splice(bi, 1);
-        landmarkCleared++;
+      for (const p of G.KEEP_CLEAR) {
+        const dx = p.x - bd.x, dz = p.z - bd.z;
+        const lx = dx * c - dz * s, lz = dx * s + dz * c;
+        if (Math.abs(lx) < bd.w / 2 + CLEAR && Math.abs(lz) < bd.d / 2 + CLEAR) {
+          buildings.splice(bi, 1);
+          break;
+        }
       }
     }
-  }
-  cityStats.landmarkCleared = landmarkCleared;
-
-  // Nothing may stand where the player gets put down. Inside a footprint,
-  // blocked() refuses every direction and the player is stuck for good, walking
-  // on the spot -- and 1.5 m inside a facade there is no visual clue why.
-  const CLEAR = 2.2; // player's collision half-width, plus room to turn around
-  for (let bi = buildings.length - 1; bi >= 0; bi--) {
-    const bd = buildings[bi];
-    const c = Math.cos(-bd.rot), s = Math.sin(-bd.rot);
-    for (const p of G.KEEP_CLEAR) {
-      const dx = p.x - bd.x, dz = p.z - bd.z;
-      const lx = dx * c - dz * s, lz = dx * s + dz * c;
-      if (Math.abs(lx) < bd.w / 2 + CLEAR && Math.abs(lz) < bd.d / 2 + CLEAR) {
-        buildings.splice(bi, 1);
-        break;
-      }
-    }
+    cache.buildingsOut = packBuildings(buildings, built,
+      { shrunk: cityStats.buildingsShrunk, dropped: cityStats.buildingsDropped, cleared: cityStats.landmarkCleared });
   }
 
   yield { p: 0.88, msg: 'Indexing the city' };
@@ -2352,6 +2402,7 @@ export function* cityGenerator(md, cache = {}) {
     /** Does this 40 m terrain cell touch an underpass? (re-tessellated like a portal cell) */
     underpassCell(cx, cz, S) {
       if (!grading.underpasses.length) return false;
+      if (!grading.underpassDepth.near(cx, cz, cx + S, cz + S)) return false;
       for (let j = 0; j <= 2; j++) {
         for (let i = 0; i <= 2; i++) {
           if (grading.underpassDepth(cx + (i * S) / 2, cz + (j * S) / 2) > 0.05) return true;

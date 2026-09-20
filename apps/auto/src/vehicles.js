@@ -4305,11 +4305,48 @@ function buildType(spec) {
   };
 }
 
+// --- boot cache (bootcache.js via main.js) ----------------------------------
+// Building all 21 types is ~1 s of a phone's boot and entirely deterministic,
+// so main.js keeps the geometry of a build and hands it back on a later
+// launch of the same build. Geometry only: materials, specs and wheels' meshes
+// are made as usual. `matteGeoW` is the same object as `matteGeoWE` for a type
+// with no crew, and stays so.
+const GEO_KEYS = ['paintGeo', 'trimGeo', 'matteGeo', 'trimGeoW', 'matteGeoW', 'matteGeoWE'];
+const packGeo = (g) => ({ a: Object.entries(g.attributes).map(([k, at]) => [k, at.array, at.itemSize]), i: g.index.array });
+function unpackGeo(p) {
+  const g = new THREE.BufferGeometry();
+  for (const [k, arr, n] of p.a) g.setAttribute(k, new THREE.BufferAttribute(arr, n));
+  g.setIndex(new THREE.BufferAttribute(p.i, 1));
+  g.computeBoundingSphere();
+  return g;
+}
+let PRE = null;
+export function setVehicleCache(snap) { PRE = snap && snap.types ? snap : null; }
+export function vehicleSnapshot() {
+  const A = vehicleAssets(), types = {};
+  for (const [k, t] of Object.entries(A.types)) {
+    const r = { wheels: t.wheels, wheelR: t.wheelR, mwShared: t.matteGeoW === t.matteGeoWE,
+      wheelGeos: t.wheelGeos.map((w) => ({ trim: packGeo(w.trim), matte: packGeo(w.matte) })) };
+    for (const g of GEO_KEYS) if (!(g === 'matteGeoW' && r.mwShared)) r[g] = packGeo(t[g]);
+    types[k] = r;
+  }
+  const far = {};
+  if (FAR) for (const [k, g] of FAR.geos) far[k] = packGeo(g);
+  return { types, far };
+}
+function restoreType(r, spec) {
+  const t = { spec, wheels: r.wheels, wheelR: r.wheelR,
+    wheelGeos: r.wheelGeos.map((w) => ({ trim: unpackGeo(w.trim), matte: unpackGeo(w.matte) })) };
+  for (const g of GEO_KEYS) if (r[g]) t[g] = unpackGeo(r[g]);
+  if (r.mwShared) t.matteGeoW = t.matteGeoWE;
+  return t;
+}
+
 let CACHE = null;
 export function vehicleAssets() {
   if (CACHE) return CACHE;
   const types = {};
-  for (const k of Object.keys(TYPES)) types[k] = buildType(TYPES[k]);
+  for (const k of Object.keys(TYPES)) types[k] = PRE && PRE.types[k] ? restoreType(PRE.types[k], TYPES[k]) : buildType(TYPES[k]);
   // The trim draw moves to the transparent pass for its glass (see
   // glassShader); depth writes stay on, so its opaque parts behave as before.
   const trimMat = new THREE.MeshStandardMaterial({
@@ -4449,6 +4486,7 @@ export function farLod(typeName) {
     FAR = { mat, geos: new Map() };
   }
   let geo = FAR.geos.get(typeName);
+  if (!geo && PRE && PRE.far && PRE.far[typeName]) { geo = unpackGeo(PRE.far[typeName]); FAR.geos.set(typeName, geo); }
   if (!geo) {
     const t = vehicleAssets().types[typeName];
     geo = clusterFar([

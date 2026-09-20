@@ -4,13 +4,13 @@ import * as THREE from './three.js';
 import * as G from './geo.js';
 import { cityGenerator, cityStats } from './citygen.js';
 import { loadMapData } from './mapdata.js';
-import { buildTextures } from './textures.js';
+import { buildTextures, planTextures, encodeTextures, restoreTextures, canvasToBlob, blobToCanvas } from './textures.js';
 import { World, WET_FLOOR } from './world.js';
 import { buildLandmarks } from './landmarks.js';
 import { freezeStatic } from './build.js';
 import { cacheGet, cachePut } from './bootcache.js';
 import { TrafficSystem, collideWithBuildings } from './traffic.js';
-import { TYPES as VEHICLE_TYPES, setWaterQuery } from './vehicles.js';
+import { TYPES as VEHICLE_TYPES, setWaterQuery, setVehicleCache, vehicleSnapshot } from './vehicles.js';
 import { PedSystem, animateWalk } from './peds.js';
 import { Player } from './player.js';
 import { Controls } from './controls.js';
@@ -277,7 +277,18 @@ async function boot() {
   };
 
   await step(0.02, 'Painting the city');
-  const tx = buildTextures();
+  // WHAT AN EARLIER LAUNCH OF THIS BUILD LEFT (bootcache.js): everything below
+  // that is deterministic in the data and the code and slow on a phone.
+  // Each piece falls back to computing on its own, and whatever was computed
+  // is kept at the end of the boot for the next launch.
+  const BC_KEYS = ['textures', 'map', 'buildings', 'grade', 'portal', 'vehicles'];
+  const bc = {};
+  (await Promise.all(BC_KEYS.map((k) => cacheGet(k)))).forEach((v, i) => { bc[BC_KEYS[i]] = v; });
+  const bcOut = {};
+  let tx = null;
+  if (bc.textures) { try { tx = await restoreTextures(bc.textures); } catch (e) { tx = null; } }
+  if (!tx) { tx = buildTextures(); bcOut.texPlan = planTextures(tx); }
+  if (bc.vehicles) setVehicleCache(bc.vehicles);
 
   // The map is real data now -- USGS elevation and OpenStreetMap -- so the hills
   // and the street grid are downloaded rather than generated. About 3.8 MB, and
@@ -291,7 +302,7 @@ async function boot() {
   await step(0.18, 'Laying out the streets');
   // The freeway grading of this build, if an earlier launch kept it (see
   // bootcache.js): the biggest single step of a phone's boot.
-  const bootCache = { grade: await cacheGet('grade') };
+  const bootCache = { grade: bc.grade, buildings: bc.buildings };
   const gen = cityGenerator(md, bootCache);
   let r = gen.next();
   while (!r.done) {
@@ -501,7 +512,7 @@ function installShadowFade() {
   world = new World(scene, city, tx, { shadows: true, renderer, lakes: md.lakes });
   // ...and its portal cuts, barriers and lids (the terrain's carve needs them).
   // Only with a cached grading: the lids were computed on those profiles.
-  world.bootCache = { portal: bootCache.grade ? await cacheGet('portal') : null };
+  world.bootCache = { portal: bootCache.grade ? bc.portal : null };
   world.buildSky(SUN_OFFSET);
   const terrGen = world.buildTerrain();
   let tr = terrGen.next();
@@ -573,7 +584,9 @@ function installShadowFade() {
   peds = new PedSystem(scene, city, game);
   peds.camera = camera;   // animation LOD culls against it
   fx = new Effects(scene, tx);
-  const mapCanvas = buildMapCanvas(city);
+  let mapCanvas = null;
+  if (bc.map) { try { mapCanvas = await blobToCanvas(bc.map); } catch (e) { mapCanvas = null; } }
+  if (!mapCanvas) { mapCanvas = buildMapCanvas(city); bcOut.mapCanvas = mapCanvas; }
   hud = new Hud(document.getElementById('app'), city, mapCanvas);
   {
     // One tap, never behind a menu: a lost run on a phone ends the session.
@@ -613,12 +626,20 @@ function installShadowFade() {
 
   // Keep this launch's grading for the next one. Writing clones a few MB, so
   // it happens here on the loading screen rather than during play.
-  if (bootCache.gradeOut || world.bootCache.portalOut) {
+  const toKeep = [];
+  if (bootCache.gradeOut) toKeep.push(['grade', () => bootCache.gradeOut]);
+  if (world.bootCache.portalOut) toKeep.push(['portal', () => world.bootCache.portalOut]);
+  if (bootCache.buildingsOut) toKeep.push(['buildings', () => bootCache.buildingsOut]);
+  if (!bc.vehicles) toKeep.push(['vehicles', () => vehicleSnapshot()]);
+  if (bcOut.texPlan) toKeep.push(['textures', () => encodeTextures(bcOut.texPlan)]);
+  if (bcOut.mapCanvas) toKeep.push(['map', () => canvasToBlob(bcOut.mapCanvas)]);
+  if (toKeep.length) {
     await step(0.93, 'Remembering the city');
-    if (bootCache.gradeOut) await cachePut('grade', bootCache.gradeOut);
-    if (world.bootCache.portalOut) await cachePut('portal', world.bootCache.portalOut);
-    bootCache.gradeOut = null;
+    for (const [k, make] of toKeep) {
+      try { const v = await make(); if (v) await cachePut(k, v); } catch (e) { /* next launch computes it */ }
+    }
   }
+  bootCache.gradeOut = bootCache.buildingsOut = null;
   world.bootCache = null;
   await step(0.94, 'Opening the roads');
   for (let i = 0; i < 90; i++) {
