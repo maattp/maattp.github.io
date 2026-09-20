@@ -350,6 +350,9 @@ function facadeMat(f) {
 }
 
 const DARK = [0.26, 0.27, 0.29];
+// Poured-concrete foundation under house siding (see meshBuilding).
+const FOUNDATION = [0.50, 0.49, 0.47];
+const CORNERS = [[-1, -1], [1, -1], [1, 1], [-1, 1]];
 const TRIM = [0.55, 0.55, 0.56];
 // Accents stay the one place saturated colour is allowed, but pulled back:
 // these are awnings and shopfronts, not the whole facade.
@@ -5407,7 +5410,7 @@ float frLine(float o, float fw, float c, float w) {
    * side, which is what a house does -- run it the short way and a long terrace
    * ends up with an absurdly tall roof and gable ends the width of the street.
    */
-  meshGable(flat, bd, y0, col, seed) {
+  meshGable(flat, bd, y0, col, seed, pitch = 0.62, chimney = true) {
     const cs = Math.cos(bd.rot), sn = Math.sin(bd.rot);
     const OVER = 0.45;                       // eaves overhang, all four sides
     const alongX = bd.w >= bd.d;             // which way the ridge runs
@@ -5415,7 +5418,7 @@ float frLine(float o, float fw, float c, float w) {
     // Pitch from the span it has to cover, capped so a wide house doesn't get a
     // spire and a narrow one still reads as a roof.
     const span = alongX ? hd : hw;
-    const rise = clamp(span * 0.62, 1.0, 3.6);
+    const rise = clamp(span * pitch, pitch < 0.5 ? 0.6 : 1.0, 3.6);
     const y1 = y0 + rise;
     const P = (lx, lz, y) => [bd.x + lx * cs - lz * sn, y, bd.z + lx * sn + lz * cs];
     // Normals are written in the HOUSE's frame, so they turn with it, exactly as
@@ -5446,7 +5449,7 @@ float frLine(float o, float fw, float c, float w) {
       flat.tri(c01, Bp, c11, N(0, 0.25, 1), col);                      // gable +z
     }
     // Chimney, on the roof rather than beside it.
-    if (hash2(seed, 21) > 0.62) {
+    if (chimney && hash2(seed, 21) > 0.62) {
       const t = (hash2(seed, 22) - 0.5) * 0.5;
       const [px, , pz] = alongX ? P(rl * t, 0, 0) : P(0, rl * t, 0);
       flat.box(px, y0 + rise * 0.45, pz, 0.72, rise * 0.75 + 0.7, 0.72, bd.rot,
@@ -5681,9 +5684,19 @@ float frLine(float o, float fw, float c, float w) {
     ];
     const wOld = [0.20, 0.04, 0.26, 0.16, 0.16, 0.10, 0.05, 0.03];
     const wNew = [0.22, 0.30, 0.08, 0.06, 0.08, 0.04, 0.02, 0.20];
+    // Civic buildings are stone and brick: a school or a church in painted-
+    // over green or curtain wall reads as a mistake.
+    const CIVIC = [0.34, 0, 0.30, 0.20, 0.10, 0.06, 0, 0];
+    // Curtain wall needs height to read as curtain wall. On a one- or two-
+    // storey box it is a blue-tiled shed: the glass families' share goes to
+    // concrete below 12 m.
+    const low = bd.h < 12;
     let acc = 0;
     for (let i = 0; i < FAMS.length; i++) {
-      acc += wOld[i] + (wNew[i] - wOld[i]) * modern;
+      let wi = bd.style === 'campus' ? CIVIC[i] : wOld[i] + (wNew[i] - wOld[i]) * modern;
+      if (low && FAMS[i].m === 'glass') wi = 0;
+      if (low && i === 0) wi += wOld[1] + wOld[7];
+      acc += wi;
       if (pick <= acc) return FAMS[i];
     }
     return FAMS[0];
@@ -5693,9 +5706,16 @@ float frLine(float o, float fw, float c, float w) {
     const seed = bd.seed;
     const C = this.cells;
     let target, col, cell = null, uS = 14, vS = 13.6;
+    // Campus (schools, churches, hospitals, the university) takes a masonry
+    // family too. It used to fall through to the HOUSE cell with one tile per
+    // face: a single clapboard elevation stretched over a 60 m facade, with a
+    // front door ten metres tall -- all 808 civic buildings in the city.
     const fam = (bd.style === 'tower' || bd.style === 'midrise'
-      || bd.style === 'brick' || bd.style === 'lowrise')
+      || bd.style === 'brick' || bd.style === 'lowrise' || bd.style === 'campus')
       ? this.buildingFamily(bd) : null;
+    // Storeys per tile: masonry cells carry four window rows, curtain wall
+    // eight pane rows.
+    let rows = 4;
     if (fam) {
       // Glass keeps its own material: it is the one facade whose look is mostly
       // indirect SPECULAR, and that is the part of envMapIntensity the AO
@@ -5707,10 +5727,17 @@ float frLine(float o, float fw, float c, float w) {
       // rather than becoming a different material every other lot.
       col = tint(seed, fam.c, 0.26);
       uS = fam.u;
-      // Snap the vertical repeat so a whole number of tiles spans the wall.
-      // Each tile is four window rows; at an arbitrary vScale the top row is
-      // sliced through by the parapet on every building in the city.
-      vS = bd.h / Math.max(1, Math.round(bd.h / fam.v));
+      // Snap the vertical repeat so a whole number of STOREYS spans the wall.
+      //
+      // It used to snap whole TILES, four storeys each, with a floor of one:
+      // so every building under ~20 m wore all four rows whatever its height,
+      // and the 53,000 untagged 6.4 m blocks came out as four storeys of
+      // 1.6 m -- windows at knee height, a toy's proportions. Snapping the
+      // storey keeps the parapet on a storey line (the reason for the old
+      // snap) and gives a 6.4 m block its two floors.
+      if (glassy) rows = 8;
+      const storey = fam.v / rows;
+      vS = rows * bd.h / Math.max(1, Math.round(bd.h / storey));
     } else if (bd.style === 'industrial') {
       target = bl.facade; cell = C.industrial;
       col = tint(seed, [0.84, 0.86, 0.86], 0.3); uS = 16; vS = 16;
@@ -5724,11 +5751,54 @@ float frLine(float o, float fw, float c, float w) {
     const base = bd.y - 2;
     const cs = Math.cos(bd.rot), sn = Math.sin(bd.rot);
     const off = (lx, lz) => [bd.x + lx * cs - lz * sn, bd.z + lx * sn + lz * cs];
+    // The lowest ground under the footprint. `bd.y` is the terrain at the
+    // CENTRE and walls start 2 m under it, which covers a gentle slope and
+    // leaves a gap under the downhill corners of anything on a steep one:
+    // 13,754 boxes stood clear of their lowest corner by over 30 cm, 4,237 by
+    // over 1.5 m. Four samples, because the terrain is a linear triangle
+    // mesh at 40 m and a footprint is mostly inside one or two triangles.
+    let tLow = bd.y;
+    for (const [fx, fz] of CORNERS) {
+      const [qx, qz] = off(fx * bd.w / 2, fz * bd.d / 2);
+      const t = G.terrainHeight(qx, qz);
+      if (t < tLow) tLow = t;
+    }
+    // How far the lowest wall has to reach below `base` to meet that ground.
+    const drop = Math.max(0, base - (tLow - 0.4));
 
     if (bd.style === 'house') {
       const wallH = bd.h * 0.72;
-      target.box(bd.x, base, bd.z, bd.w, wallH + 2, bd.d, bd.rot, col,
-        { top: false, uScale: 0, vScale: 0, ao: 0.3, cell });
+      // Siding from the ground at the house's centre, a foundation under it.
+      //
+      // The siding box used to start at `base`, 2 m underground, with its one
+      // tile stretched over the whole height -- so a third of the elevation
+      // was buried: every front door in the city (the bottom 36 % of the tile)
+      // showed as a brown stub a metre tall sunk into the lawn, and the lower
+      // windows were cut in half. The tile now spans the wall you can see.
+      // Below it a plain concrete foundation reaches down to the lowest
+      // corner, which on a hillside is the exposed basement wall a Seattle
+      // house on a slope really has, instead of siding hanging in the air.
+      const sy = bd.y - 0.3;
+      const tileH = wallH + 2 - (sy - base);
+      // More than a storey of hillside under the downhill wall is a daylight
+      // basement: the siding carries on down (its pattern continued, so the
+      // basement has windows) and only the last 60 cm is bare foundation. A
+      // 4 m concrete cliff under a clapboard house read as a plinth block.
+      let fTop = sy;
+      const expo = sy - tLow;
+      if (expo > 2.0) {
+        const bh = expo - 0.6;
+        target.box(bd.x, sy - bh, bd.z, bd.w, bh + 0.02, bd.d, bd.rot,
+          [col[0] * 0.8, col[1] * 0.8, col[2] * 0.8],
+          { top: false, uScale: 11, uFit: true, vScale: tileH, vOff: -bh / tileH, cell });
+        fTop = sy - bh;
+      }
+      flat.box(bd.x, base - drop, bd.z, bd.w + 0.12, fTop - base + drop + 0.04, bd.d + 0.12, bd.rot,
+        FOUNDATION, { top: false, ao: 0.25 });
+      // A whole number of elevations per face, ~11 m each: stretched once
+      // round a 20 m house the door came out 4.4 m wide.
+      target.box(bd.x, sy, bd.z, bd.w, tileH, bd.d, bd.rot, col,
+        { top: false, uScale: 11, uFit: true, vScale: 0, ao: 0.2, cell });
       // Roofs were a flat near-black polygon that can fill a third of a frame
       // with no material at all. Route them through the industrial cell so
       // they take a texture, and lift them off black.
@@ -5756,7 +5826,22 @@ float frLine(float o, float fw, float c, float w) {
       // touches this one. The guard was suppressing three correct roofs.
       this.meshGable(flat, bd, base + wallH + 2.26, rc, seed);
       const [sx, sz] = off(0, bd.d / 2 + 0.5);
-      flat.box(sx, base + 1.6, sz, 2.0, 0.22, 1.2, bd.rot, [0.62, 0.6, 0.57]);
+      // The front step, on the ground rather than 40 cm under it.
+      flat.box(sx, bd.y - 0.1, sz, 2.0, 0.22, 1.2, bd.rot, [0.62, 0.6, 0.57]);
+      return;
+    }
+
+    // A garage or a shed: walls, a low-pitched roof, nothing on it.
+    //
+    // Run through the general path, a 3 m outbuilding got a cornice, a 1.15 m
+    // parapet and a scatter of 1-4 m plant boxes: a roofline half as tall as
+    // the walls, which read as a kiosk with a hat on.
+    if (bd.style === 'industrial' && bd.h < 3.5) {
+      const wh = bd.h + 2 + drop;
+      target.box(bd.x, base - drop, bd.z, bd.w, wh, bd.d, bd.rot, col,
+        { top: false, uScale: uS, vScale: vS, vOff: 64 - wh / vS, ao: 0.22, cell });
+      const rc = tint(seed, [0.42, 0.41, 0.40], 0.18);
+      this.meshGable(flat, bd, bd.y + bd.h, rc, seed, 0.34, false);
       return;
     }
 
@@ -5786,6 +5871,42 @@ float frLine(float o, float fw, float c, float w) {
         const bw2 = 1.4 + hash2(seed, 71 + i) * 2.2;
         const bh2 = 0.9 + hash2(seed, 81 + i) * 1.5;
         flat.box(gx, rt, gz, bw2, bh2, bw2 * 0.8, bd.rot, rc2);
+      }
+      // A big roof carries plant in proportion to its size. One to three
+      // units whatever the area left a supermarket or a 300 m warehouse as a
+      // blank grey field from every elevated view -- the largest single
+      // surface in any aerial over SoDo, Interbay or Georgetown. A jittered
+      // grid every ~22 m, most cells filled, capped at 30 units.
+      const A = bd.w * bd.d;
+      if (A > 1500) {
+        const gx0 = Math.max(1, Math.round((bd.w - 8) / 22)), gz0 = Math.max(1, Math.round((bd.d - 8) / 22));
+        const kx = Math.min(gx0, 6), kz = Math.min(gz0, 5);
+        for (let ix = 0; ix < kx; ix++) {
+          for (let iz = 0; iz < kz; iz++) {
+            const hk = hash2(seed, 300 + ix * 13 + iz * 71);
+            if (hk < 0.35) continue;
+            const ux = ((ix + 0.5) / kx - 0.5) * (bd.w - 8) + (hash2(seed, 400 + ix * 7 + iz) - 0.5) * 6;
+            const uz = ((iz + 0.5) / kz - 0.5) * (bd.d - 8) + (hash2(seed, 500 + ix + iz * 7) - 0.5) * 6;
+            const [gx, gz] = off(ux, uz);
+            // Galvanised units: lighter than the membrane, or from the air
+            // they vanish into it.
+            const bw2 = 2.6 + hk * 3.4;
+            const uv = 0.5 + hk * 0.14;
+            flat.box(gx, rt, gz, bw2, 1.6 + hk * 1.1, bw2 * (0.55 + hk * 0.4), bd.rot, [uv, uv * 1.01, uv * 1.03]);
+          }
+        }
+      }
+      // Skylight rows down a factory or warehouse roof, along its length.
+      if (bd.style === 'industrial' && A > 2000) {
+        const alongX = bd.w >= bd.d;
+        const L = alongX ? bd.w : bd.d, S = alongX ? bd.d : bd.w;
+        const rows = Math.min(6, Math.floor(S / 12));
+        for (let r = 0; r < rows; r++) {
+          const t = ((r + 0.5) / rows - 0.5) * (S - 8);
+          const [gx, gz] = alongX ? off(0, t) : off(t, 0);
+          flat.box(gx, rt + 0.6, gz, alongX ? L * 0.72 : 1.6, 0.42, alongX ? 1.6 : L * 0.72, bd.rot,
+            [0.64, 0.70, 0.74]);
+        }
       }
       // Roof kit. A correctly-exposed roof is still a blank lid, and roofs are
       // in shot from every elevated view in the game. A stair bulkhead, a vent
@@ -5836,7 +5957,8 @@ float frLine(float o, float fw, float c, float w) {
         [rv * 1.38, rv * 1.40, rv * 1.44], { uScale: 10, vScale: 10, cell: C.roof });
     }
 
-    const dense = bd.style !== 'industrial';
+    // No shopfront on a school, a church or a warehouse.
+    const dense = bd.style !== 'industrial' && bd.style !== 'campus';
     const plinthH = dense ? Math.min(5.2, bd.h * 0.3) : 0;
     let y = base;
     let remaining = bd.h + 2;
@@ -5856,8 +5978,10 @@ float frLine(float o, float fw, float c, float w) {
       // 8x the plinth height puts the plinth on row 0 -- full-height glazing
       // with the spandrel above it, which is what a shopfront is.
       const sc = [col[0] * 0.74, col[1] * 0.78, col[2] * 0.84];
-      bl.glass.box(bd.x, y, bd.z, bd.w + 0.3, plinthH, bd.d + 0.3, bd.rot, sc,
-        { uScale: 18, vScale: plinthH * 8, top: false, ao: 0.5 });
+      // Reaching down to the lowest corner on a slope; what shows below v = 0
+      // is the tile's next pane row, i.e. the shopfront steps down the hill.
+      bl.glass.box(bd.x, y - drop, bd.z, bd.w + 0.3, plinthH + drop, bd.d + 0.3, bd.rot, sc,
+        { uScale: 18, vScale: plinthH * 8, vOff: -drop / (plinthH * 8), top: false, ao: 0.5 });
       flat.box(bd.x, y + plinthH, bd.z, bd.w + 1.0, 0.5, bd.d + 1.0, bd.rot, TRIM);
       if (hash2(seed, 41) > 0.55) {
         const ac = AWNING[Math.floor(hash2(seed, 42) * AWNING.length)];
@@ -5871,12 +5995,58 @@ float frLine(float o, float fw, float c, float w) {
 
     let w = bd.w, d = bd.d;
     for (const tier of buildingTiers(bd, y, remaining)) {
+      // Each tier's pattern is hung from ITS TOP, so the cornice lands on a
+      // storey line (the tile's integer v) whatever the wall's height or how
+      // deep its base is buried; the bottom is under a trim band, a
+      // shopfront or the ground. Hung from the base, every roofline cut its
+      // top row wherever the 2 m embed put it.
+      const vo = vS ? 64 - tier.h / vS : 0;
       target.box(bd.x, tier.y, bd.z, tier.w, tier.h, tier.d, bd.rot, col,
-        { uScale: uS, vScale: vS, top: false, vOff: (tier.y - base) / (vS || 1),
+        { uScale: uS, vScale: vS, top: false, vOff: vo,
           ao: tier.t === 0 ? 0.22 : 0, cell });
+      // On a slope, the same wall carried on down to the lowest corner.
+      if (tier.t === 0 && drop > 0.05 && plinthH <= 2) {
+        // The tier's baked AO runs its whole height, darkest at tier.y, so the
+        // skirt takes that bottom colour flat and the two meet without a seam.
+        target.box(bd.x, tier.y - drop, bd.z, tier.w, drop + 0.02, tier.d, bd.rot,
+          [col[0] * 0.78, col[1] * 0.78, col[2] * 0.78],
+          { uScale: uS, vScale: vS, top: false, vOff: vS ? vo - drop / vS : 0, cell });
+      }
       y = tier.y + tier.h;
       w = tier.w; d = tier.d;
       if (!tier.last) flat.box(bd.x, y, bd.z, tier.w + 0.8, 0.55, tier.d + 0.8, bd.rot, TRIM);
+    }
+
+    // A long industrial wall gets structure: a steel pilaster every ~24 m and
+    // a roller door between every other pair. Unbroken, one corrugated tile
+    // repeated down a 140-300 m warehouse read as a striped ribbon with no
+    // scale at all; bays and doors are what say "this is a shed you could
+    // back a truck into" from the street. Flat boxes, into the chunk's flat.
+    if (bd.style === 'industrial' && bd.h <= 55 && Math.max(bd.w, bd.d) > 36) {
+      const wallTop = bd.y + bd.h;
+      const pc = [col[0] * 0.62, col[1] * 0.64, col[2] * 0.68];
+      const dc = [0.30, 0.32, 0.34];
+      const doorH = Math.min(4.6, bd.h - 1.2);
+      for (const [len, dep, alongX] of [[bd.w, bd.d, true], [bd.d, bd.w, false]]) {
+        if (len < 36) continue;
+        const nb = Math.max(2, Math.round(len / 24));
+        for (const sgn of [1, -1]) {
+          for (let k = 0; k <= nb; k++) {
+            const t = (k / nb - 0.5) * (len - 0.6);
+            const [px, pz] = alongX ? off(t, sgn * (dep / 2 + 0.12)) : off(sgn * (dep / 2 + 0.12), t);
+            flat.box(px, base - drop, pz, alongX ? 0.55 : 0.26, wallTop - base + drop, alongX ? 0.26 : 0.55,
+              bd.rot, pc, { top: false });
+            // doors on one long face only, the one the seed picks
+            if (k < nb && sgn === (hash2(seed, 131) > 0.5 ? 1 : -1) && doorH > 2.5
+              && hash2(seed, 140 + k) > 0.4) {
+              const tm = t + (len - 0.6) / nb / 2;
+              const [qx, qz] = alongX ? off(tm, sgn * (dep / 2 + 0.06)) : off(sgn * (dep / 2 + 0.06), tm);
+              flat.box(qx, bd.y - 0.3, qz, alongX ? 4.2 : 0.14, doorH + 0.3, alongX ? 0.14 : 4.2,
+                bd.rot, dc, { top: false });
+            }
+          }
+        }
+      }
     }
 
     // cornice, roof deck, then a parapet wall standing above it
@@ -5898,7 +6068,11 @@ float frLine(float o, float fw, float c, float w) {
     }
     // 12 cm outside the kit's own parapet (w + 0.5), not 2.5 cm: the two walls
     // overlap vertically and at 2.5 cm they fought at distance the same way.
-    flat.box(bd.x, y + 0.55, bd.z, w + 0.75, 1.15, d + 0.75, bd.rot, DARK, { top: false });
+    // A one- or two-storey block keeps a lower parapet and smaller plant: at
+    // full size the roofline was a quarter of a 6.4 m building's height.
+    const lowK = bd.h < 8 ? 0.55 : 1;
+    flat.box(bd.x, y + 0.55, bd.z, w + 0.75, lidded ? Math.max(0.45, 1.15 * lowK) : 1.15 * lowK,
+      d + 0.75, bd.rot, DARK, { top: false });
     y += 0.83;
 
     const rc = [0.4, 0.41, 0.42];
@@ -5907,8 +6081,8 @@ float frLine(float o, float fw, float c, float w) {
       const ox = (hash2(seed, 40 + i) - 0.5) * w * 0.55;
       const oz = (hash2(seed, 50 + i) - 0.5) * d * 0.55;
       const [rx, rz] = off(ox, oz);
-      flat.box(rx, y, rz, 1.6 + hash2(seed, 60 + i) * 3, 1.2 + hash2(seed, 70 + i) * 2.6,
-        1.6 + hash2(seed, 80 + i) * 3, bd.rot, rc);
+      flat.box(rx, y, rz, (1.6 + hash2(seed, 60 + i) * 3) * lowK, (1.2 + hash2(seed, 70 + i) * 2.6) * lowK,
+        (1.6 + hash2(seed, 80 + i) * 3) * lowK, bd.rot, rc);
     }
     if (bd.h > 26 && hash2(seed, 85) > 0.55) {
       const [bx, bz] = off(w * 0.22, -d * 0.2);

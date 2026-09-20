@@ -82,6 +82,24 @@ const CLASS_SPEED = { hwy: 30, art: 17, st: 12, res: 9, ramp: 14 };
 
 const walkWidth = (cls) => (cls === 'st' || cls === 'res' ? 2.6 : cls === 'art' ? 3.2 : 0);
 
+// The importer's default height for an untagged industrial footprint
+// (CLS_DEFAULT_H[3] in tools/build_buildings.py), exactly as the blob stores it.
+const IND_DEFAULT_H = 8.5;
+/**
+ * Height for a footprint the importer had to guess.
+ *
+ * Class 3 is industrial AND garage, carport, shed and service building, and
+ * every untagged one got the warehouse default of 8.5 m -- so 1,517 garages
+ * and sheds under 110 m2 stood in back gardens as 8.5 m corrugated-steel
+ * towers, taller than the house beside them. The box's area is the only size
+ * the blob carries, and it separates them well: a garage is under ~120 m2, a
+ * workshop or a big shed under ~400. A TAGGED height is never touched.
+ */
+function untaggedHeight(cls, h, area) {
+  if (cls !== 3 || h !== IND_DEFAULT_H) return h;
+  return area < 120 ? 3.2 : area < 400 ? 5.5 : h;
+}
+
 // Building class (tools/build_buildings.py) + height -> facade style.
 function styleFor(cls, h, w, d) {
   // An untagged, unnamed OSM building falls to cls 0, which used to mean
@@ -1509,9 +1527,9 @@ export function* cityGenerator(md, cache = {}) {
           const z = oz + B.blob.getUint16(o + 2, true) / 10;
           const w = B.blob.getUint16(o + 4, true) / 20;
           const d = B.blob.getUint16(o + 6, true) / 20;
-          const h = B.blob.getUint16(o + 8, true) / 20;
           const rot = (B.blob.getUint8(o + 10) * Math.PI) / 256;
           const cls = B.blob.getUint8(o + 11);
+          const h = untaggedHeight(cls, B.blob.getUint16(o + 8, true) / 20, w * d);
           area += w * d;
           buildings.push({
             x, z, w, d, rot, h,

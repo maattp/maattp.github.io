@@ -309,13 +309,18 @@ export class Builder {
    * only U needs confining, and `faceU` below for what it costs.
    */
   box(cx, by, cz, w, h, d, rot, col, opts = {}) {
-    const { uScale = 0, vScale = 0, top = true, vOff = 0, sides = true, ao = 0, cell = null } = opts;
+    const { uScale = 0, vScale = 0, top = true, vOff = 0, sides = true, ao = 0, cell = null,
+      uFit = false } = opts;
     const cr = Math.cos(rot), sr = Math.sin(rot);
     const hw = w / 2, hd = d / 2;
     const P = (lx, ly, lz) => [cx + lx * cr - lz * sr, by + ly, cz + lx * sr + lz * cr];
     const N = (lx, lz) => [lx * cr - lz * sr, 0, lx * sr + lz * cr];
-    const ru = uScale > 0 ? w / uScale : 1;
-    const rd = uScale > 0 ? d / uScale : 1;
+    // `uFit`: each face takes a WHOLE number of repeats, the nearest to
+    // uScale metres each (at least one). For a tile that is one composed
+    // elevation -- a house front with its door -- rather than a pattern that
+    // may be cut anywhere.
+    const ru = uScale > 0 ? (uFit ? Math.max(1, Math.round(w / uScale)) : w / uScale) : 1;
+    const rd = uScale > 0 ? (uFit ? Math.max(1, Math.round(d / uScale)) : d / uScale) : 1;
     const rv = vScale > 0 ? h / vScale : 1;
     const v0 = vOff;
     // Cheap baked ambient occlusion: darken the bottom edge of the side faces so
