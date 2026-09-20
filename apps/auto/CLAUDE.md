@@ -1801,6 +1801,30 @@ calls and GL calls are expensive there in a way Chrome hides.
 | I-5 drive | 11.5 ms | 6.5 ms |
 | standing at Yesler Terrace | 13.1 ms, 338 draws | 6.2 ms, 171 draws |
 
+## Boot time and the boot cache
+
+**`tools/boottime.mjs [--throttle=8] [--twice] [--prof]`** times every loading
+message on the phone profile, with the CPU throttled from before navigation.
+`--twice` reloads in the same browser profile and times the second launch;
+`BOOT_PROBE='<expr>'` evaluates after each launch (hash the city there to prove
+a cached launch builds the same city as a computed one).
+
+**`src/bootcache.js` keeps deterministic boot results in IndexedDB, keyed by
+the build number** (`#build`): citygen's freeway grading (`gradeSnapshot` /
+`applyGrade`) and world's portal cuts, barriers and lids (`_computePortalCuts`
+/ `_applyPortalSnap`). Writing one build's entries deletes every other
+build's. **So the build bump is also the cache invalidation**: a change to
+anything those two produce, shipped without a bump, would boot a stale city
+on any device that launched the previous code under the same number. Every
+failure (private mode, quota, a hung open) falls back to computing. Harnesses
+use fresh browser profiles, so they always take the computed path; judge the
+cached path with `boottime.mjs --twice` and a `BOOT_PROBE` hash.
+
+| 8x-throttled, first frame | v82 | v84 |
+|---|---|---|
+| first launch of a build | 31.3 s | ~22 s |
+| later launches (cached) | 31.3 s | ~12.8 s |
+
 ## Draw-call budget
 
 At `high`, perfguard's downtown reads roughly 165 steady draws and ~285 a

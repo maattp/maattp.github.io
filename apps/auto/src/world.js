@@ -1171,6 +1171,108 @@ export class World {
    */
   portalCuts() {
     if (this._pcuts) return this._pcuts;
+    // A cached result of this same build (bootcache.js via main.js): the
+    // cuts, every barrier, and the lids are deterministic in the map data and
+    // the code, and computing them was ~4 s of a phone's boot.
+    const snap = this.bootCache && this.bootCache.portal;
+    const cuts = snap && snap.cuts ? this._applyPortalSnap(snap) : this._computePortalCuts();
+
+    // DRY TUNNELS. A corridor that dips below sea level intersects the water
+    // plane, and the plane knows nothing about bores: the SR-99 tube rendered
+    // as a canal. Each low pair of corridor points gets an invisible quad just
+    // above sea level that writes DEPTH ONLY (renderOrder 3, before the water
+    // at 4): the deck below it is already drawn and keeps its pixels, and the
+    // sea behind it fails the depth test and never draws inside the tube.
+    if (!this.tunnelWaterMask) {
+      // Over the tunnel EDGES, not the carved corridors: a corridor ends
+      // ~140 m in where the ground closes, and the first mask followed it --
+      // so the first 140 m of SR-99 were dry and the remaining 3 km, all of it
+      // below sea level, still rendered flooded. The graph is the authority on
+      // where the bore runs; the profile on its nodes is the authority on how
+      // deep.
+      const wb = new Builder(false);
+      // The mask's job is the view FROM ABOVE -- a cutting whose floor is under
+      // sea level, seen from the street -- so it sits just over the sea. From
+      // INSIDE a bore no mask height works: measured at SB bore +1500 and
+      // +2033 with the camera posed, water filled half the frame for a camera
+      // 0.5-1 m over sea level whatever height the mask was at (0.02 to
+      // 1.2 m), and 1.2 m -- tried first -- flooded every camera below it. The
+      // interior is handled by not drawing water to an underground camera at
+      // all (buildWater). Quads over real water are skipped: from above, a
+      // depth-only quad there is a hole in the sea (2 of 117 masked edges, at
+      // the Pioneer Square shoreline).
+      const MASK_Y = 0.02;
+      for (const e of this.city.edges) {
+        if (!e.tunnel || e.elev) continue;
+        const a = this.city.nodes[e.a], b = this.city.nodes[e.b];
+        if (Math.min(a.y, b.y) > 1.2) continue;
+        const w = e.hw + 2;
+        const qx = -e.dz, qz = e.dx;
+        let wet = false;
+        for (const t of [0, 0.5, 1]) for (const o of [-w, 0, w]) {
+          if (G.isWater(a.x + (b.x - a.x) * t + qx * o, a.z + (b.z - a.z) * t + qz * o)) wet = true;
+        }
+        if (wet) continue;
+        wb.quad(
+          [a.x + qx * w, MASK_Y, a.z + qz * w], [a.x - qx * w, MASK_Y, a.z - qz * w],
+          [b.x - qx * w, MASK_Y, b.z - qz * w], [b.x + qx * w, MASK_Y, b.z + qz * w],
+          [0, 1, 0], ZERO_UV, [1, 1, 1]);
+      }
+      // ...AND OVER THE OPEN CUTTINGS. The mask followed the tunnel edges, so
+      // a cutting whose floor dips under the sea on its SURFACE approach --
+      // the NB entry cutting at SODO, beside the SR-99 surface on its lids --
+      // showed the sea plane lying in the trench as a canal, from the road
+      // beside it. Each non-cap corridor segment whose floor is under 0.3 m
+      // gets the same depth-only quad across the whole dug floor.
+      for (const c of cuts) {
+        for (let i = 0; i < c.pts.length - 1; i++) {
+          const a = c.pts[i], b = c.pts[i + 1];
+          if (a.cap || b.cap || Math.min(a.y, b.y) - 0.7 > 0.3) continue;
+          const L = Math.hypot(b.x - a.x, b.z - a.z) || 1;
+          const qx = -(b.z - a.z) / L, qz = (b.x - a.x) / L;
+          const w = a.hw + CUT_SH + CUT_OVER;
+          let wet = false;
+          for (const t of [0, 0.5, 1]) for (const o of [-w, 0, w]) {
+            if (G.isWater(a.x + (b.x - a.x) * t + qx * o, a.z + (b.z - a.z) * t + qz * o)) wet = true;
+          }
+          if (wet) continue;
+          wb.quad(
+            [a.x + qx * w, MASK_Y, a.z + qz * w], [a.x - qx * w, MASK_Y, a.z - qz * w],
+            [b.x - qx * w, MASK_Y, b.z - qz * w], [b.x + qx * w, MASK_Y, b.z + qz * w],
+            [0, 1, 0], ZERO_UV, [1, 1, 1]);
+        }
+      }
+      if (!wb.empty) {
+        // DOUBLE-SIDED. These quads wind (A+q, A-q, B-q, B+q), which faces
+        // DOWN, so under three's default front-side culling the mask existed
+        // only for a camera below it. That went unseen while every sub-sea
+        // deck sat on the old -11.9 m plateau with the camera under the sea
+        // plane too; once the profile ran smoothly through sea level under
+        // downtown, a chase camera above 0 looked down on a flooded tube -- as
+        // it always had at the south cutting, where the deck is -0.5.
+        const mm = new THREE.Mesh(wb.build(),
+          new THREE.MeshBasicMaterial({ colorWrite: false, side: THREE.DoubleSide }));
+        mm.renderOrder = 3;
+        this.scene.add(mm);
+      }
+      this.tunnelWaterMask = true;
+    }
+
+    // A node now yields ONE CUT PER BRANCH, so this cannot be a 1:1 map --
+    // keyed by node it kept only the last branch, and every other branch's
+    // corridor ended with no wall at its head. That is a bore mouth packed
+    // with terrain, which portalcheck counts as a sliced bore once the
+    // exclusion around real walls is tightened.
+    this._pcutBy = new Map();
+    for (const c of cuts) {
+      if (!this._pcutBy.has(c.ni)) this._pcutBy.set(c.ni, []);
+      this._pcutBy.get(c.ni).push(c);
+    }
+    return cuts;
+  }
+
+  /** portalCuts' own work: the cuts, their walls and the bores' walls, the lids. */
+  _computePortalCuts() {
     const city = this.city, cuts = [];
     const seen = new Set();
     for (const [, grp] of this.portalGroups()) {
@@ -1372,98 +1474,32 @@ export class World {
     }
     this.buildLids(cuts, bsegs);
     this.city.setBarriers(bsegs);
-
-    // DRY TUNNELS. A corridor that dips below sea level intersects the water
-    // plane, and the plane knows nothing about bores: the SR-99 tube rendered
-    // as a canal. Each low pair of corridor points gets an invisible quad just
-    // above sea level that writes DEPTH ONLY (renderOrder 3, before the water
-    // at 4): the deck below it is already drawn and keeps its pixels, and the
-    // sea behind it fails the depth test and never draws inside the tube.
-    if (!this.tunnelWaterMask) {
-      // Over the tunnel EDGES, not the carved corridors: a corridor ends
-      // ~140 m in where the ground closes, and the first mask followed it --
-      // so the first 140 m of SR-99 were dry and the remaining 3 km, all of it
-      // below sea level, still rendered flooded. The graph is the authority on
-      // where the bore runs; the profile on its nodes is the authority on how
-      // deep.
-      const wb = new Builder(false);
-      // The mask's job is the view FROM ABOVE -- a cutting whose floor is under
-      // sea level, seen from the street -- so it sits just over the sea. From
-      // INSIDE a bore no mask height works: measured at SB bore +1500 and
-      // +2033 with the camera posed, water filled half the frame for a camera
-      // 0.5-1 m over sea level whatever height the mask was at (0.02 to
-      // 1.2 m), and 1.2 m -- tried first -- flooded every camera below it. The
-      // interior is handled by not drawing water to an underground camera at
-      // all (buildWater). Quads over real water are skipped: from above, a
-      // depth-only quad there is a hole in the sea (2 of 117 masked edges, at
-      // the Pioneer Square shoreline).
-      const MASK_Y = 0.02;
-      for (const e of this.city.edges) {
-        if (!e.tunnel || e.elev) continue;
-        const a = this.city.nodes[e.a], b = this.city.nodes[e.b];
-        if (Math.min(a.y, b.y) > 1.2) continue;
-        const w = e.hw + 2;
-        const qx = -e.dz, qz = e.dx;
-        let wet = false;
-        for (const t of [0, 0.5, 1]) for (const o of [-w, 0, w]) {
-          if (G.isWater(a.x + (b.x - a.x) * t + qx * o, a.z + (b.z - a.z) * t + qz * o)) wet = true;
-        }
-        if (wet) continue;
-        wb.quad(
-          [a.x + qx * w, MASK_Y, a.z + qz * w], [a.x - qx * w, MASK_Y, a.z - qz * w],
-          [b.x - qx * w, MASK_Y, b.z - qz * w], [b.x + qx * w, MASK_Y, b.z + qz * w],
-          [0, 1, 0], ZERO_UV, [1, 1, 1]);
-      }
-      // ...AND OVER THE OPEN CUTTINGS. The mask followed the tunnel edges, so
-      // a cutting whose floor dips under the sea on its SURFACE approach --
-      // the NB entry cutting at SODO, beside the SR-99 surface on its lids --
-      // showed the sea plane lying in the trench as a canal, from the road
-      // beside it. Each non-cap corridor segment whose floor is under 0.3 m
-      // gets the same depth-only quad across the whole dug floor.
-      for (const c of cuts) {
-        for (let i = 0; i < c.pts.length - 1; i++) {
-          const a = c.pts[i], b = c.pts[i + 1];
-          if (a.cap || b.cap || Math.min(a.y, b.y) - 0.7 > 0.3) continue;
-          const L = Math.hypot(b.x - a.x, b.z - a.z) || 1;
-          const qx = -(b.z - a.z) / L, qz = (b.x - a.x) / L;
-          const w = a.hw + CUT_SH + CUT_OVER;
-          let wet = false;
-          for (const t of [0, 0.5, 1]) for (const o of [-w, 0, w]) {
-            if (G.isWater(a.x + (b.x - a.x) * t + qx * o, a.z + (b.z - a.z) * t + qz * o)) wet = true;
-          }
-          if (wet) continue;
-          wb.quad(
-            [a.x + qx * w, MASK_Y, a.z + qz * w], [a.x - qx * w, MASK_Y, a.z - qz * w],
-            [b.x - qx * w, MASK_Y, b.z - qz * w], [b.x + qx * w, MASK_Y, b.z + qz * w],
-            [0, 1, 0], ZERO_UV, [1, 1, 1]);
-        }
-      }
-      if (!wb.empty) {
-        // DOUBLE-SIDED. These quads wind (A+q, A-q, B-q, B+q), which faces
-        // DOWN, so under three's default front-side culling the mask existed
-        // only for a camera below it. That went unseen while every sub-sea
-        // deck sat on the old -11.9 m plateau with the camera under the sea
-        // plane too; once the profile ran smoothly through sea level under
-        // downtown, a chase camera above 0 looked down on a flooded tube -- as
-        // it always had at the south cutting, where the deck is -0.5.
-        const mm = new THREE.Mesh(wb.build(),
-          new THREE.MeshBasicMaterial({ colorWrite: false, side: THREE.DoubleSide }));
-        mm.renderOrder = 3;
-        this.scene.add(mm);
-      }
-      this.tunnelWaterMask = true;
+    if (this.bootCache) {
+      const lidStats = {};
+      for (const k of Object.keys(cityStats)) if (k.startsWith('lid')) lidStats[k] = cityStats[k];
+      const barW = [];
+      this.city.edges.forEach((e, ei) => { if (e.barW) barW.push(ei, e.barW); });
+      this.bootCache.portalOut = {
+        cuts, bsegs, lidQuads: this.city.lidQuads || [],
+        lbe: [...this._lidByEdge], veto: [...this._lidVeto],
+        ledge: [this._ledgeBarrier0, this._ledgeBarrier1, this._lidBarrier0], barW, lidStats,
+      };
     }
+    return cuts;
+  }
 
-    // A node now yields ONE CUT PER BRANCH, so this cannot be a 1:1 map --
-    // keyed by node it kept only the last branch, and every other branch's
-    // corridor ended with no wall at its head. That is a bore mouth packed
-    // with terrain, which portalcheck counts as a sliced bore once the
-    // exclusion around real walls is tightened.
-    this._pcutBy = new Map();
-    for (const c of cuts) {
-      if (!this._pcutBy.has(c.ni)) this._pcutBy.set(c.ni, []);
-      this._pcutBy.get(c.ni).push(c);
-    }
+  /** Install a cached portalCuts result: what _computePortalCuts leaves behind. */
+  _applyPortalSnap(snap) {
+    const cuts = snap.cuts;
+    this._pcuts = cuts;
+    this.city.setLids(snap.lidQuads);
+    this._lidByEdge = new Map(snap.lbe);
+    this._lidVeto = new Map(snap.veto);
+    this._lidMask = new Map();   // tools only; a cached boot has none
+    [this._ledgeBarrier0, this._ledgeBarrier1, this._lidBarrier0] = snap.ledge;
+    for (let q = 0; q < snap.barW.length; q += 2) this.city.edges[snap.barW[q]].barW = snap.barW[q + 1];
+    Object.assign(cityStats, snap.lidStats);
+    this.city.setBarriers(snap.bsegs);
     return cuts;
   }
 

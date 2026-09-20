@@ -8,6 +8,7 @@ import { buildTextures } from './textures.js';
 import { World, WET_FLOOR } from './world.js';
 import { buildLandmarks } from './landmarks.js';
 import { freezeStatic } from './build.js';
+import { cacheGet, cachePut } from './bootcache.js';
 import { TrafficSystem, collideWithBuildings } from './traffic.js';
 import { TYPES as VEHICLE_TYPES, setWaterQuery } from './vehicles.js';
 import { PedSystem, animateWalk } from './peds.js';
@@ -288,7 +289,10 @@ async function boot() {
   G.initGeo(md);
 
   await step(0.18, 'Laying out the streets');
-  const gen = cityGenerator(md);
+  // The freeway grading of this build, if an earlier launch kept it (see
+  // bootcache.js): the biggest single step of a phone's boot.
+  const bootCache = { grade: await cacheGet('grade') };
+  const gen = cityGenerator(md, bootCache);
   let r = gen.next();
   while (!r.done) {
     loadBar.style.width = `${Math.round((0.18 + r.value.p * 0.44) * 100)}%`;
@@ -495,6 +499,9 @@ function installShadowFade() {
   postfx.setSize(viewW(), viewH(), renderer.getPixelRatio());
 
   world = new World(scene, city, tx, { shadows: true, renderer, lakes: md.lakes });
+  // ...and its portal cuts, barriers and lids (the terrain's carve needs them).
+  // Only with a cached grading: the lids were computed on those profiles.
+  world.bootCache = { portal: bootCache.grade ? await cacheGet('portal') : null };
   world.buildSky(SUN_OFFSET);
   const terrGen = world.buildTerrain();
   let tr = terrGen.next();
@@ -604,6 +611,15 @@ function installShadowFade() {
 
   buildPickups(scene, city);
 
+  // Keep this launch's grading for the next one. Writing clones a few MB, so
+  // it happens here on the loading screen rather than during play.
+  if (bootCache.gradeOut || world.bootCache.portalOut) {
+    await step(0.93, 'Remembering the city');
+    if (bootCache.gradeOut) await cachePut('grade', bootCache.gradeOut);
+    if (world.bootCache.portalOut) await cachePut('portal', world.bootCache.portalOut);
+    bootCache.gradeOut = null;
+  }
+  world.bootCache = null;
   await step(0.94, 'Opening the roads');
   for (let i = 0; i < 90; i++) {
     const left = world.update(player.x, player.z, 6);

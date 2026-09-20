@@ -18,6 +18,9 @@ const arg = (k, d) => { const a = process.argv.find((x) => x.startsWith(`--${k}=
 const THROTTLE = +arg('throttle', 1);
 const DESKTOP = process.argv.includes('--desktop');
 const PROF = process.argv.includes('--prof');
+// --twice: boot, then reload in the same profile and time the SECOND launch
+// (what bootcache.js makes faster). The first boot's report is skipped.
+const TWICE = process.argv.includes('--twice');
 const UA = 'Mozilla/5.0 (iPhone; CPU iPhone OS 19_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/19.0 Mobile/15E148 Safari/604.1';
 
 const chrome = launchChrome({ port: PORT, profile: `/tmp/auto-boottime-${PORT}`, gpu: true, width: 874, height: 402, vsyncOff: true });
@@ -51,6 +54,12 @@ try {
     });` });
   if (THROTTLE > 1) await send('Emulation.setCPUThrottlingRate', { rate: THROTTLE });
   if (PROF) { await send('Profiler.enable'); await send('Profiler.setSamplingInterval', { interval: 500 }); await send('Profiler.start'); }
+  if (TWICE) {
+    await send('Page.navigate', { url: `http://localhost:${HTTP_PORT}/apps/auto/` });
+    for (let i = 0; i < 1200; i++) { await sleep(250); if (await ev('window.__dbg && window.__dbg.sceneStats && window.__dbg.sceneStats.calls > 0')) break; }
+    console.log('  first launch done (cached for the next): gradeCached=' + await ev('window.__dbg.cityStats.gradeCached'));
+    if (process.env.BOOT_PROBE) console.log('  probe 1: ' + await ev(`(() => { const d = window.__dbg; return String(${process.env.BOOT_PROBE}); })()`));
+  }
   await send('Page.navigate', { url: `http://localhost:${HTTP_PORT}/apps/auto/` });
   let done = 0;
   for (let i = 0; i < 1200; i++) {
@@ -76,6 +85,8 @@ try {
     const show = (m, lbl) => { console.log(`  ${lbl}:`); for (const [k, us] of [...m.entries()].sort((a, b) => b[1] - a[1]).slice(0, 30)) console.log(`    ${(us / 1000).toFixed(0).padStart(6)} ms ${(us / total * 100).toFixed(1).padStart(5)}%  ${k}`); };
     show(self, 'self time'); show(incl, 'inclusive');
   }
+  if (TWICE) console.log('  second launch gradeCached=' + await ev('window.__dbg.cityStats.gradeCached'));
+  if (process.env.BOOT_PROBE) console.log('  probe 2: ' + await ev(`(() => { const d = window.__dbg; return String(${process.env.BOOT_PROBE}); })()`));
   const log = await ev('JSON.stringify(window.__boot)');
   const rows = JSON.parse(log || '[]');
   const build = (/id="build">([^<]*)</.exec(await (await fetch(`http://localhost:${HTTP_PORT}/apps/auto/index.html`)).text()) || [])[1];

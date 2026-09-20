@@ -12,7 +12,7 @@
 import * as G from './geo.js';
 import { CLS_NAME, F_ELEV, F_TUNNEL, F_ONEWAY, F_ONEWAY_REV } from './mapdata.js';
 import { LANDMARK_CLEAR } from './landmarks.js';
-import { distToSeg, clamp, hash2 } from './util.js';
+import { distToSeg, segDist, clamp, hash2 } from './util.js';
 
 export const CHUNK = 400;
 
@@ -164,6 +164,93 @@ const CLASS_GRADE = { hwy: 0.06, ramp: 0.08 };
 const CAMBER_MAX = 0.06;
 /** Embankment batter: horizontal metres per metre of fill. */
 export const BERM = 1.5;
+
+// --- the grading cache -----------------------------------------------------
+//
+// gradeRoads is deterministic in the map data and the code, and it was the
+// largest single step of a phone's boot (~5 s at the phone's speed). main.js
+// keeps what it produced in IndexedDB keyed by the build number, and a later
+// launch of the same build applies that instead of solving again. Everything
+// it leaves behind is here: the edge and node fields it sets, the underpass
+// list the carve is built from, and its stats.
+const GRADE_EDGE_FIELDS = ['lock', 'pk', 'ps', 'ph', 'pg', 'tw', 'tlo', 'tnb', 'pe', 'pwall', 'pbw'];
+const GRADE_STATS = ['refusedCrossings', 'underpasses', 'underpassNoRoom', 'underpassGraded', 'splitLevelTrimmedM',
+  'gradedSamples', 'overpassesRaised', 'overpassesRefused', 'fillMean', 'fillWorst'];
+function gradeSnapshot(nodes, edges, grading) {
+  const E = [], N = [];
+  for (let ei = 0; ei < edges.length; ei++) {
+    const e = edges[ei];
+    if (!e.prof) continue;
+    const r = {};
+    for (const k of GRADE_EDGE_FIELDS) if (e[k] !== undefined) r[k] = e[k];
+    E.push(ei, r);
+  }
+  for (let ni = 0; ni < nodes.length; ni++) {
+    const n = nodes[ni];
+    if (n.prof) N.push(ni, n.y, n.ph, n.anchor ? 1 : 0);
+  }
+  const stats = {};
+  for (const k of GRADE_STATS) stats[k] = cityStats[k];
+  return { E, N, underpasses: grading.underpasses, stats };
+}
+function applyGrade(nodes, edges, snap) {
+  for (const e of edges) e.prof = false;
+  for (let q = 0; q < snap.E.length; q += 2) {
+    const e = edges[snap.E[q]], r = snap.E[q + 1];
+    e.prof = true;
+    for (const k in r) e[k] = r[k];
+  }
+  for (let q = 0; q < snap.N.length; q += 4) {
+    const n = nodes[snap.N[q]];
+    n.prof = true; n.y = snap.N[q + 1]; n.ph = snap.N[q + 2]; n.anchor = !!snap.N[q + 3];
+  }
+  for (const k of GRADE_STATS) cityStats[k] = snap.stats[k];
+  return { underpasses: snap.underpasses, underpassDepth: makeUnderpassDepth(snap.underpasses) };
+}
+
+/** The carve depth of a list of underpasses (gradeRoads' or a cached copy). */
+function makeUnderpassDepth(underpasses) {
+  const depthAlong = (up, s) => {
+    const a2 = Math.abs(s);
+    if (a2 <= up.plat) return up.dip;
+    if (a2 >= up.reach) return 0;
+    // cosine run-out: no grade break where the dip starts or where it ends
+    const u = (a2 - up.plat) / (up.reach - up.plat);
+    return up.dip * (1 + Math.cos(Math.PI * u)) / 2;
+  };
+  /** Carve depth at (x,z) from every underpass: full over the road, a 1.5 m bank. */
+  // A 64 m bbox grid over them: this is inside the terrain carve, so every
+  // terrainHeight() call -- chunk meshing, and every ground query a frame --
+  // used to walk the whole list. `best` is a max, so order does not matter.
+  const UP_CELL = 64, upGrid = new Map(), UP_NONE = [];
+  for (const up of underpasses) {
+    for (let cx = Math.floor(up.x0 / UP_CELL); cx <= Math.floor(up.x1 / UP_CELL); cx++) {
+      for (let cz = Math.floor(up.z0 / UP_CELL); cz <= Math.floor(up.z1 / UP_CELL); cz++) {
+        const k = skey(cx, cz);
+        let l = upGrid.get(k);
+        if (!l) upGrid.set(k, (l = []));
+        l.push(up);
+      }
+    }
+  }
+  const underpassDepth = (x, z) => {
+    let best = 0;
+    const list = upGrid.get(skey(Math.floor(x / UP_CELL), Math.floor(z / UP_CELL))) || UP_NONE;
+    for (const up of list) {
+      if (x < up.x0 || x > up.x1 || z < up.z0 || z > up.z1) continue;
+      for (let i = 0; i < up.pts.length - 1; i++) {
+        const p = up.pts[i], q = up.pts[i + 1];
+        const r = distToSeg(x, z, p.x, p.z, q.x, q.z);
+        if (r.d > up.hw + 1.5) continue;
+        const dd = depthAlong(up, p.s + (q.s - p.s) * r.t);
+        const v = r.d <= up.hw ? dd : dd * (1 - (r.d - up.hw) / 1.5);
+        if (v > best) best = v;
+      }
+    }
+    return best;
+  };
+  return underpassDepth;
+}
 
 function gradeRoads(nodes, edges) {
   const T = G.terrainHeight;
@@ -818,45 +905,7 @@ function gradeRoads(nodes, edges) {
       z0: Math.min(...pts.map((p) => p.z)) - hw - 2, z1: Math.max(...pts.map((p) => p.z)) + hw + 2 };
     underpasses.push(up);
   }
-  const depthAlong = (up, s) => {
-    const a2 = Math.abs(s);
-    if (a2 <= up.plat) return up.dip;
-    if (a2 >= up.reach) return 0;
-    // cosine run-out: no grade break where the dip starts or where it ends
-    const u = (a2 - up.plat) / (up.reach - up.plat);
-    return up.dip * (1 + Math.cos(Math.PI * u)) / 2;
-  };
-  /** Carve depth at (x,z) from every underpass: full over the road, a 1.5 m bank. */
-  // A 64 m bbox grid over them: this is inside the terrain carve, so every
-  // terrainHeight() call -- chunk meshing, and every ground query a frame --
-  // used to walk the whole list. `best` is a max, so order does not matter.
-  const UP_CELL = 64, upGrid = new Map(), UP_NONE = [];
-  for (const up of underpasses) {
-    for (let cx = Math.floor(up.x0 / UP_CELL); cx <= Math.floor(up.x1 / UP_CELL); cx++) {
-      for (let cz = Math.floor(up.z0 / UP_CELL); cz <= Math.floor(up.z1 / UP_CELL); cz++) {
-        const k = skey(cx, cz);
-        let l = upGrid.get(k);
-        if (!l) upGrid.set(k, (l = []));
-        l.push(up);
-      }
-    }
-  }
-  const underpassDepth = (x, z) => {
-    let best = 0;
-    const list = upGrid.get(skey(Math.floor(x / UP_CELL), Math.floor(z / UP_CELL))) || UP_NONE;
-    for (const up of list) {
-      if (x < up.x0 || x > up.x1 || z < up.z0 || z > up.z1) continue;
-      for (let i = 0; i < up.pts.length - 1; i++) {
-        const p = up.pts[i], q = up.pts[i + 1];
-        const r = distToSeg(x, z, p.x, p.z, q.x, q.z);
-        if (r.d > up.hw + 1.5) continue;
-        const dd = depthAlong(up, p.s + (q.s - p.s) * r.t);
-        const v = r.d <= up.hw ? dd : dd * (1 - (r.d - up.hw) / 1.5);
-        if (v > best) best = v;
-      }
-    }
-    return best;
-  };
+  const underpassDepth = makeUnderpassDepth(underpasses);
   // Every cut is under a draped street, which follows the carved ground by
   // itself -- nothing graded is lowered.
   cityStats.underpasses = underpasses.length;
@@ -1331,7 +1380,7 @@ function stackBores(g) {
   return { up, lo, ramps, hwU, hwL };
 }
 
-export function* cityGenerator(md) {
+export function* cityGenerator(md, cache = {}) {
   yield { p: 0.02, msg: 'Unpacking the street graph' };
 
   // --- 1. Road graph ------------------------------------------------------
@@ -2009,7 +2058,17 @@ export function* cityGenerator(md) {
   // surface at the edge's own heights that groundAt's nearest-deck rule picks
   // when you are down there and ignores when you are on the street above.
   yield { p: 0.92, msg: 'Grading the freeways' };
-  const grading = gradeRoads(g.nodes, g.edges);
+  // A cached grading of this same build, if main.js found one (see above);
+  // otherwise solve, and leave a snapshot for main.js to keep.
+  let grading;
+  if (cache.grade && cache.grade.E) {
+    grading = applyGrade(g.nodes, g.edges, cache.grade);
+    cityStats.gradeCached = true;
+  } else {
+    grading = gradeRoads(g.nodes, g.edges);
+    cityStats.gradeCached = false;
+    cache.gradeOut = gradeSnapshot(g.nodes, g.edges, grading);
+  }
 
   const surfaces = [];
   const isPortal = (ni) => g.nodes[ni].e.some((ei) => !g.edges[ei].tunnel);
@@ -2150,7 +2209,7 @@ export function* cityGenerator(md) {
         const lim = reach + LIFT_CELL * 0.7072;   // cells the segment reaches; see roadCell
         for (let cx = x0; cx <= x1; cx++) {
           for (let cz = z0; cz <= z1; cz++) {
-            if (distToSeg((cx + 0.5) * LIFT_CELL, (cz + 0.5) * LIFT_CELL, a.x, a.z, b.x, b.z).d > lim) continue;
+            if (segDist((cx + 0.5) * LIFT_CELL, (cz + 0.5) * LIFT_CELL, a.x, a.z, b.x, b.z) > lim) continue;
             const k = skey(cx, cz);
             let l = liftGrid.get(k);
             if (!l) liftGrid.set(k, (l = []));
@@ -2185,7 +2244,7 @@ export function* cityGenerator(md) {
         const lim = reach + LIFT_CELL * 0.7072;
         for (let cx = x0; cx <= x1; cx++) {
           for (let cz = z0; cz <= z1; cz++) {
-            if (distToSeg((cx + 0.5) * LIFT_CELL, (cz + 0.5) * LIFT_CELL, a.x, a.z, b.x, b.z).d > lim) continue;
+            if (segDist((cx + 0.5) * LIFT_CELL, (cz + 0.5) * LIFT_CELL, a.x, a.z, b.x, b.z) > lim) continue;
             const k = skey(cx, cz);
             let l = roadGrid.get(k);
             if (!l) roadGrid.set(k, (l = []));
