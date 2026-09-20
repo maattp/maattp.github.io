@@ -1986,6 +1986,14 @@ cache bumps, and URL-based `cache: 'no-cache'` revalidation (WebKit refuses to
 must invalidate immediately.** Never add `vendor/` or `src/` to `SHELL`: a slow
 install is what pins iOS players to a stale worker forever.
 
+**Look up only the current version's cache** (`fromCurrent` in sw.js), never
+`caches.match()`: that searches every cache, oldest first, and iOS can kill a
+worker before activate deletes the old ones -- v86 on an iPhone loaded a new
+`world.js` against an old `util.js` and died with *Importing binding name
+'segDist' is not found*. The boot log in index.html reloads once, by itself,
+when it sees that kind of error (files from two versions), after the new
+worker takes over.
+
 ## Pull requests
 
 **Every auto PR title carries the version it ships**, e.g. "Auto v57: ...".

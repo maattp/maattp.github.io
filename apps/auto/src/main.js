@@ -690,12 +690,14 @@ function installShadowFade() {
   applyQuality(['high', 'medium', 'low'].includes(savedQ) ? savedQ : 'high', !!savedQ);
   startedAt = performance.now();
   loading.classList.add('hide');
+  document.body.classList.add('booted');   // now the rotate prompt may show
   setTimeout(() => loading.remove(), 700);
   last = performance.now();
   requestAnimationFrame(frame);
   // The game is running: this launch did not die in the cache (see bootcache.js).
   requestAnimationFrame(() => requestAnimationFrame(() => cacheGuardSet(false)));
   blog('running');
+  if (window.__bootOk) window.__bootOk();
 }
 
 // ---------------------------------------------------------------------------

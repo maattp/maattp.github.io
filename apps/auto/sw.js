@@ -23,7 +23,7 @@
 // launch to prove it hadn't changed, and PINNED is wrong too: these URLs carry
 // no version, so a bump has to be able to replace them. The map only changes
 // when tools/ re-imports it, and that comes with a bump.
-const CACHE = 'auto-v86';
+const CACHE = 'auto-v87';
 const PINNED = ['vendor/three-0.160.0.module.js'];
 const isMapData = (url) => new URL(url).pathname.includes('/apps/auto/data/');
 const SHELL = ['./', './index.html', './manifest.webmanifest',
@@ -54,6 +54,14 @@ self.addEventListener('activate', e => {
   })());
 });
 
+// ONLY THIS VERSION'S CACHE. `caches.match()` searches every cache, oldest
+// first, and iOS can kill a worker before activate has deleted the old ones --
+// so an old version's copy of one module shadowed the current one, and v86 on
+// an iPhone loaded a new world.js against a util.js from before `segDist`
+// existed (SyntaxError: Importing binding name 'segDist' is not found). Every
+// src module has to come from the same version as the others.
+const fromCurrent = (req) => caches.open(CACHE).then(c => c.match(req, { ignoreSearch: true }));
+
 self.addEventListener('fetch', e => {
   if (e.request.method !== 'GET') return;
   const url = e.request.url;
@@ -75,7 +83,7 @@ self.addEventListener('fetch', e => {
 
   if (isMapData(url)) { // cache-first, no revalidation; a CACHE bump replaces it
     e.respondWith(
-      caches.match(e.request, { ignoreSearch: true }).then(hit => hit ||
+      fromCurrent(e.request).then(hit => hit ||
         fetch(e.request).then(res => {
           if (res && res.ok) {
             const copy = res.clone();
@@ -87,7 +95,7 @@ self.addEventListener('fetch', e => {
     return;
   }
 
-  const cached = caches.match(e.request, { ignoreSearch: true });
+  const cached = fromCurrent(e.request);
   const refresh = cached.then(hit =>
     fetch(url, { cache: 'no-cache' }).then(res => {
       if (res && res.ok) {

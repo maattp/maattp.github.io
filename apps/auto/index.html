@@ -317,6 +317,13 @@
   @media (orientation: portrait) and (max-width: 900px) {
     #rotate { display: flex; }
   }
+  /* The rotate prompt waits for the game. While it loads -- and if it fails --
+     the loading screen stays readable upright: the bar, the build number and
+     the boot log are what you look at with the phone in your hand, and it
+     should only need turning once there is something to play. */
+  body:not(.booted) #rotate { display: none !important; }
+  #loadRotate { display: none; font-size: 11px; opacity: .45; letter-spacing: .08em; }
+  @media (orientation: portrait) and (max-width: 900px) { #loadRotate { display: block; } }
 </style>
 <style>
   #debugStats {
@@ -467,8 +474,9 @@
     <div id="loadTrack"><div id="loadBar"></div></div>
     <div id="loadMsg">Starting up</div>
     <pre id="bootLog"></pre>
+    <div id="loadRotate">Turn sideways to play once it has loaded</div>
     <!-- Bumped once per change, in step with CACHE in sw.js. See CLAUDE.md. -->
-    <div id="build">v86</div>
+    <div id="build">v87</div>
     <div id="attrib">Map data © OpenStreetMap contributors (ODbL) · elevation USGS 3DEP</div>
   </div>
   <script>
@@ -486,16 +494,34 @@
       window.__bootLog = log;
       var msg = document.getElementById('loadMsg');
       if (msg && window.MutationObserver) {
-        new MutationObserver(function () { log(msg.textContent); })
+        var lastMsg = '';
+        new MutationObserver(function () { if (msg.textContent !== lastMsg) { lastMsg = msg.textContent; log(lastMsg); } })
           .observe(msg, { childList: true, characterData: true, subtree: true });
       }
+      // FILES FROM TWO VERSIONS. A module importing a name its neighbour does
+      // not export (or a module that failed to load) means the old service
+      // worker served a stale copy of one file. The new worker deletes the old
+      // caches when it takes over, so reload once -- when it does, or after a
+      // few seconds -- rather than leave the player on an error screen.
+      function staleReload() {
+        try { if (sessionStorage.getItem('auto-stale-reload')) return; sessionStorage.setItem('auto-stale-reload', '1'); } catch (x) { return; }
+        log('files from two versions -- reloading once');
+        var go = function () { location.reload(); };
+        if (navigator.serviceWorker) navigator.serviceWorker.addEventListener('controllerchange', go);
+        setTimeout(go, 4000);
+      }
       window.addEventListener('error', function (e) {
-        log('ERROR ' + (e.message || (e.target && e.target.src) || e) + (e.filename ? ' @' + e.filename.split('/').pop() + ':' + e.lineno : ''));
+        var m = e.message || '';
+        log('ERROR ' + (m || (e.target && e.target.src) || e) + (e.filename ? ' @' + e.filename.split('/').pop() + ':' + e.lineno : ''));
+        if (/Importing binding name|does not provide an export|not found in module/.test(m)
+          || (e.target && e.target.tagName === 'SCRIPT' && e.target.type === 'module')) staleReload();
       }, true);
       window.addEventListener('unhandledrejection', function (e) {
         var r = e.reason; log('REJECTED ' + (r && (r.stack || r.message) || r));
       });
       setTimeout(function () { if (!started) log('game code has not started after 8 s (a module failed to load?)'); }, 8000);
+      // A launch that got as far as the game clears the one-reload allowance.
+      window.__bootOk = function () { try { sessionStorage.removeItem('auto-stale-reload'); } catch (x) { /* none */ } };
     })();
   </script>
 
