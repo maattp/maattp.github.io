@@ -188,8 +188,15 @@ export class Player {
         if (drop > 4.5) this.game.damagePlayer(Math.min(100, (drop - 4.5) ** 1.6 * 1.6), 'fall');
       }
     } else {
-      this.y = lerp(this.y, ground, 1 - Math.exp(-16 * dt));
+      // ON the ground, not easing toward it. The ease (rate 16) trailed the
+      // surface on every rise: measured walking up a Queen Anne street the feet
+      // ran 21 cm INTO the road (p10), 30 cm at worst, and every kerb stepped
+      // up through 17 cm of pavement -- the "sinking" when walking. The camera
+      // keeps its own smoothed height (camFootY), so kerbs still don't jolt it.
+      this.y = ground;
     }
+    this.camFootY = this.camFootY == null || Math.abs(this.camFootY - this.y) > 3
+      ? this.y : damp(this.camFootY, this.y, 14, dt);
 
     // Drowning is against the LOCAL water surface, not sea level.
     //
@@ -347,7 +354,7 @@ export class Player {
     const plane = !this.onFoot && this.vehicle.spec.plane;
     this.camClamp = null;
     if (this.onFoot) {
-      target.set(this.x, this.y, this.z);
+      target.set(this.x, this.camFootY != null ? this.camFootY : this.y, this.z);
       dist = 4.6;
       height = 1.55;
       lookH = 1.45;

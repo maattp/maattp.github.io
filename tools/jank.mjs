@@ -108,6 +108,20 @@ const CHECKS = `(() => {
     return out;
   };
 
+  // Road and pavement share ONE mesh (mats.roadWalk) in a full-detail chunk:
+  // the per-vertex 'surf' flag says which a face is. Filtering on mats.road /
+  // mats.walk alone matched nothing there and these checks sampled 0.
+  const surfOf = (h) => {
+    const m = h.object.material, w = world.mats;
+    if (m === w.road) return 'road';
+    if (m === w.walk) return 'walk';
+    if (m !== w.roadWalk || !h.face) return null;
+    const a = h.object.geometry.getAttribute('surf');
+    return a && a.array && a.getX(h.face.a) > 0.5 ? 'walk' : 'road';
+  };
+  const isRoadHit = (h) => h.object.isMesh && surfOf(h) === 'road';
+  const isPavedHit = (h) => h.object.isMesh && surfOf(h) !== null;
+
   const add = (name, n, of, worst, note) =>
     out.push({ name, n, of, rate: of ? +(100 * n / of).toFixed(2) : 0, worst: worst.slice(0, 6), note });
 
@@ -328,7 +342,7 @@ const CHECKS = `(() => {
           // poke-through at exactly the points most likely to have clutter
           // overhead. Samples are on centrelines, so mats.walk is not expected.
           const hits = rc.intersectObject(world.group, true)
-            .filter((h) => h.object.isMesh && h.object.material === world.mats.road);
+            .filter(isRoadHit);
           const terr = rc.intersectObject(world.terrainGroup, true);
           if (!hits.length || !terr.length) continue;
           of++;
@@ -376,8 +390,7 @@ const CHECKS = `(() => {
         // Ground surfaces only. A ray that lands on a bollard, a bin or a kerb
         // face is not evidence that the pavement is at the wrong height, and
         // counting those inflated this check by about a twentieth.
-        const hits = rc.intersectObject(world.group, true).filter((h) => h.object.isMesh
-          && (h.object.material === world.mats.road || h.object.material === world.mats.walk));
+        const hits = rc.intersectObject(world.group, true).filter(isPavedHit);
         if (!hits.length) continue;
         of++;
         const surf = hits[0].point.y;
@@ -478,7 +491,7 @@ const CHECKS = `(() => {
           rc.set(new THREE.Vector3(x, top, z), down);
           rc.far = 80;
           const hits = rc.intersectObject(world.group, true)
-            .filter((h) => h.object.isMesh && h.object.material === world.mats.road);
+            .filter(isRoadHit);
           if (!hits.length) continue;
           const deck = hits[0].point.y;
           of++;
@@ -531,11 +544,10 @@ const CHECKS = `(() => {
           if (!city.onRoad(x, z, 0, false)) continue;
           rc.set(new THREE.Vector3(x, G.terrainHeight(x, z) + 8, z), down);
           rc.far = 20;
-          const hits = rc.intersectObject(world.group, true).filter((h) => h.object.isMesh
-            && (h.object.material === world.mats.road || h.object.material === world.mats.walk));
+          const hits = rc.intersectObject(world.group, true).filter(isPavedHit);
           if (!hits.length) continue;
           of++;
-          if (hits[0].object.material === world.mats.walk) {
+          if (surfOf(hits[0]) === 'walk') {
             n++;
             if (worst.length < 8) worst.push({ x: Math.round(x), z: Math.round(z), cls: e.cls });
           }
@@ -722,7 +734,7 @@ const CHECKS = `(() => {
         rc.set(new THREE.Vector3(x, G.terrainHeight(x, z) + 60, z), down);
         rc.far = 120;
         const ys = rc.intersectObject(world.group, true)
-          .filter((h) => h.object.isMesh && h.object.material === world.mats.road)
+          .filter(isRoadHit)
           .map((h) => h.point.y);
         if (!ys.length) continue;
         of++;

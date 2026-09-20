@@ -5245,10 +5245,24 @@ float frLine(float o, float fw, float c, float w) {
       const span = tb - ta;
       for (const sg of [-1, 1]) {
         const ox = px * sg, oz = pz * sg;
-        const wsteps = Math.max(1, Math.round((e.len * span) / 24));
-        let vv = 0;
-        for (let s = 0; s < wsteps; s++) {
-          const t0 = ta + (s / wsteps) * span, t1 = ta + ((s + 1) / wsteps) * span;
+        // Pavement pieces are chords too. At a fixed 24 m on a hill the slab
+        // was drawn up to 18 cm above the height roadLift gives (terrain +
+        // WALK_LIFT), and everyone walking on it sank into it -- the road
+        // beside it had long been cut to 2.5-8 m by the same two tests. Flat
+        // streets keep 24 m pieces; only a bowed or steep edge pays for more.
+        const wByGrade = grade > 0.08 ? 6 : grade > 0.03 ? 10 : 24;
+        const wByBow = bow < 0.01 ? 24 : clamp(e.len * Math.sqrt(0.03 / bow), 3, 24);
+        const wsteps = Math.max(1, Math.round((e.len * span) / Math.min(wByGrade, wByBow)));
+        // A queue of pieces, because a piece that touches another carriageway
+        // is not dropped whole any more: it goes back in as ~4 m sub-pieces
+        // and the clear ones are drawn. Dropping it whole left roadLift
+        // reporting pavement over the part that wasn't touching anything --
+        // measured, a player walked 52 cm up on nothing beside a short
+        // residential street next to a junction.
+        const work = [];
+        for (let s = 0; s < wsteps; s++) work.push([ta + (s / wsteps) * span, ta + ((s + 1) / wsteps) * span]);
+        for (let wi = 0; wi < work.length; wi++) {
+          const [t0, t1] = work[wi];
           const x0 = lerp(a.x, b.x, t0), z0 = lerp(a.z, b.z, t0);
           const x1 = lerp(a.x, b.x, t1), z1 = lerp(a.z, b.z, t1);
           const i0x = x0 + ox * hw, i0z = z0 + oz * hw;
@@ -5285,11 +5299,18 @@ float frLine(float o, float fw, float c, float w) {
             }
             if (hits) break;
           }
-          if (hits) continue;
+          if (hits) {
+            const L = (t1 - t0) * e.len;
+            if (L > 4.5) {
+              const n = Math.ceil(L / 4);
+              for (let k = 0; k < n; k++) work.push([t0 + ((t1 - t0) * k) / n, t0 + ((t1 - t0) * (k + 1)) / n]);
+            }
+            continue;
+          }
           const y = (x, z) => G.terrainHeight(x, z) + WALK_Y;
-          const seg = (e.len * span) / wsteps;
-          const v0 = vv, v1 = vv + seg / WALK_TILE;
-          vv = v1;
+          // V from the distance along the street, so skipped pieces and
+          // sub-pieces keep the slabs registered
+          const v0 = ((t0 - ta) * e.len) / WALK_TILE, v1 = ((t1 - ta) * e.len) / WALK_TILE;
           const q = sg > 0
             ? [[i0x, y(i0x, i0z), i0z], [o0x, y(o0x, o0z), o0z], [o1x, y(o1x, o1z), o1z], [i1x, y(i1x, i1z), i1z]]
             : [[o0x, y(o0x, o0z), o0z], [i0x, y(i0x, i0z), i0z], [i1x, y(i1x, i1z), i1z], [o1x, y(o1x, o1z), o1z]];
