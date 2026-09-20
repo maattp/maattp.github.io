@@ -34,6 +34,7 @@ export class Player {
     this.lift = 0;
     this.dead = false;
     this.crashCd = 0; // see updateDrive: one wall scrape is one crash
+    this.scrapeT = 0; // seconds of wall contact left, for the scrape sound
     this.fellFrom = 0; // height a fall started at, for landing damage
 
     this.camYaw = this.heading + Math.PI;
@@ -56,11 +57,12 @@ export class Player {
     // -- but mode is set to 'free' on the line below, and nothing in the repo
     // ever wrote `wasParked`, so taking a parked car has never added heat.
     v.wasParked = v.mode === 'parked';
+    const wasMode = v.mode;
     v.mode = 'free';
     v.setDetailed(true);
     this.onFoot = false;
     this.h.group.visible = false;
-    this.game.onEnterVehicle(v);
+    this.game.onEnterVehicle(v, wasMode);
     return true;
   }
 
@@ -186,6 +188,7 @@ export class Player {
         this.grounded = true;
         this.fellFrom = 0;
         if (drop > 4.5) this.game.damagePlayer(Math.min(100, (drop - 4.5) ** 1.6 * 1.6), 'fall');
+        if (drop > 1.2 && this.game.onLand) this.game.onLand(drop);
       }
     } else {
       this.y = lerp(this.y, ground, 1 - Math.exp(-16 * dt));
@@ -284,6 +287,7 @@ export class Player {
     // like vehicle-vehicle damage: unthrottled, holding the accelerator into a
     // building killed the player in about a sixth of a second.
     this.crashCd -= dt;
+    this.scrapeT -= dt;
     // An airborne plane is not scraping along building WALLS -- the box test
     // is 2D and would wreck it against towers it is far above. Overflight is
     // handled by altitude; only a grounded plane collides like a vehicle.
@@ -294,6 +298,8 @@ export class Player {
       this.game.onCrash(imp, false);
       if (imp > 8) this.game.damagePlayer(imp * 0.5, 'crash');
     });
+    // Contact, held briefly: the grinding loop follows it (see audio.js).
+    if (impact > 0) this.scrapeT = 0.15;
     // Deep enough to be over the roof rather than merely through a ford. One
     // test now, against the local surface, instead of a separate sea-only path.
     if (wading && v.y < wl - 1.6) this.game.onCarSank(v);

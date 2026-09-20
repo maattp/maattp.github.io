@@ -69,7 +69,7 @@ class Game {
     for (let i = 1; i < STAR_POINTS.length; i++) if (this.points >= STAR_POINTS[i]) stars = i;
     this.wanted = Math.min(5, stars);
     if (this.wanted > before) {
-      audio.wanted();
+      audio.wanted(this.wanted);
       hud.showToast(this.wanted === 1 ? 'WANTED' : `WANTED ${'★'.repeat(this.wanted)}`);
     }
   }
@@ -84,8 +84,13 @@ class Game {
     else if (impact > 12) this.addHeat(3);
   }
 
+  // A crash between two AI cars, heard where it happened.
+  onTrafficCrash(impact, x, z) {
+    audio.crash(impact, x, z);
+  }
+
   onPedHit(byPlayer, ped) {
-    audio.burst(0.2, 320, 0.8, 0.4);
+    audio.pedHit();
     fx.blood(ped.x, ped.y + 1, ped.z);
     peds.scare(ped.x, ped.z, 30);
     if (byPlayer) this.addHeat(22);
@@ -98,7 +103,7 @@ class Game {
   }
 
   onCopShot(cop) {
-    audio.gunshot();
+    audio.gunshot(cop.x, cop.z);
     const p = player.position;
     fx.tracer(cop.x, cop.y + 1.35, cop.z, p.x, p.y + 1.2, p.z);
     fx.sparks(cop.x + Math.sin(cop.heading), cop.y + 1.35, cop.z + Math.cos(cop.heading), 3);
@@ -127,9 +132,11 @@ class Game {
     peds.scare(player.position.x, player.position.z, 14);
   }
 
-  onEnterVehicle(v) {
+  onEnterVehicle(v, wasMode) {
     controls.setMode('drive');
-    audio.blip(300, 0.12, 'square', 0.2);
+    // A car taken from traffic already has its engine running; a parked one,
+    // an apron plane or one you left earlier has to be started.
+    audio.enterVehicle(v.spec, wasMode === 'traffic' || wasMode === 'police');
     if (v.mode === 'parked' || v.wasParked) this.addHeat(8);
     hud.showToast(v.typeName === 'police' ? 'Police cruiser commandeered' : 'Vehicle acquired');
     // The radio comes on with the ignition. audio.update() starts the stream on
@@ -141,8 +148,13 @@ class Game {
     }
   }
 
-  onExitVehicle() {
+  onExitVehicle(v) {
     controls.setMode('foot');
+    if (v) audio.exitVehicle(v.spec, v.dead);
+  }
+
+  onLand(drop) {
+    audio.land(drop);
   }
 
   onDrown() {
@@ -157,7 +169,7 @@ class Game {
     if (v.exploded) return;
     v.exploded = true;
     fx.explosion(v.x, v.y + 1, v.z);
-    audio.crash(30);
+    audio.explosion(v.x, v.z);
     peds.scare(v.x, v.z, 45);
     if (v === player.vehicle) {
       this.damagePlayer(70, 'explosion');
@@ -787,7 +799,7 @@ function updatePickups(dt) {
     if (player.onFoot && dist2(p.x, p.z, pk.x, pk.z) < 4) {
       pk.taken = 30;
       pk.g.visible = false;
-      audio.pickup();
+      audio.pickup(pk.kind);
       if (pk.kind === 'gun') {
         player.armed = true;
         player.ammo += 45;
@@ -1214,9 +1226,10 @@ function frame(now) {
   // UNDERGROUND, THE HELICOPTER LOSES YOU. This is what makes a bore a
   // tactical option rather than scenery you drive through: the roof over your
   // head is the only place in the city the air unit cannot see.
+  let buried = false;
   {
     const terr = G.terrainHeight(p.x, p.z);
-    const buried = terr - p.y > 3;
+    buried = terr - p.y > 3;
     traffic.heliBlind = buried;
     if (buried && game.wanted > 0 && !hud.__toldTunnel) {
       hud.__toldTunnel = true;
@@ -1296,20 +1309,7 @@ function frame(now) {
   if (prof) lap('camera');
 
   // audio state
-  let siren = 0;
-  for (const c of traffic.cars) {
-    if (c.mode !== 'police') continue;
-    const d = Math.sqrt(dist2(c.x, c.z, p.x, p.z));
-    siren = Math.max(siren, clamp(1 - d / 130, 0, 1));
-  }
-  audio.update(dt, {
-    inCar: !player.onFoot,
-    speed: player.vehicle ? Math.abs(player.vehicle.vLong) : 0,
-    throttle: input.gas ? 1 : 0,
-    skid: player.vehicle ? player.vehicle.skid : 0,
-    ev: !!(player.vehicle && player.vehicle.assets.spec.ev),
-    siren,
-  });
+  if (audio.ready) audio.update(dt, audioState(dt, input, p, camDir, buried));
 
   if (prof) lap('misc');
   hud.update(dt, game, player, traffic);
@@ -1322,6 +1322,70 @@ function frame(now) {
   if (prof) lap('render');
 
   updateDebug(dt);
+}
+
+// What the sound needs from the frame. The surface under the player is a road,
+// lot and park lookup, so it is refreshed five times a second, not per frame.
+let surfT = 0, surfNow = 'hard';
+const listener = { x: 0, y: 0, z: 0, fx: 0, fz: -1, vx: 0, vz: 0 };
+function surfaceAt(x, y, z) {
+  const terr = G.terrainHeight(x, z);
+  // on a deck, a bridge or in a bore it is concrete whatever is below
+  if (y - terr > 1.5 || terr - y > 2) return 'hard';
+  if (cityRef.onRoad(x, z, 2.5)) return 'hard';
+  const lot = G.lotAt(x, z);
+  if (lot >= 0) return G.LOT_KINDS[lot] === 'rail' ? 'gravel' : 'hard';
+  return 'grass';
+}
+function audioState(dt, input, p, camDir, buried) {
+  const v = player.vehicle;
+  if ((surfT -= dt) <= 0) {
+    surfT = 0.2;
+    surfNow = surfaceAt(p.x, p.y, p.z);
+  }
+  const wl = world.waterLevelAt(p.x, p.z);
+  const wetMask = wl !== null && G.isWater(p.x, p.z);
+  const depth = wetMask ? wl - p.y : 0;
+  const spec = v ? v.spec : null;
+  const floating = !!(spec && (spec.floats || spec.boat));
+  const water = v ? (!floating && depth > 0 ? depth : 0) : depth > 0.05 ? depth : 0;
+  listener.x = camera.position.x; listener.y = camera.position.y; listener.z = camera.position.z;
+  listener.fx = camDir.x; listener.fz = camDir.z;
+  if (v) {
+    const f = v.forward;
+    listener.vx = f.x * v.vLong; listener.vz = f.z * v.vLong;
+  } else {
+    listener.vx = Math.sin(player.heading) * player.speed;
+    listener.vz = Math.cos(player.heading) * player.speed;
+  }
+  const h = player.h;
+  const hp = traffic.heli ? traffic.heli.g.position : null;
+  return {
+    inCar: !player.onFoot,
+    onFoot: player.onFoot,
+    vehicle: v,
+    spec,
+    speed: v ? v.vLong : 0,
+    throttle: v ? (input.gasAmt != null ? input.gasAmt : input.gas ? 1 : 0) : 0,
+    brake: v ? (input.brakeAmt != null ? input.brakeAmt : input.brake ? 1 : 0) : 0,
+    skid: v ? v.skid : 0,
+    airborne: !!(v && v.airborne),
+    carAirborne: !!(v && !spec.plane && v.onGround === false),
+    wading: !!(v && !floating && depth > 0.35),
+    onWater: !!(v && floating && wetMask && depth > -0.8 && !v.airborne),
+    scrape: v && player.scrapeT > 0 ? clamp(Math.abs(v.vLong) / 10, 0.3, 1) : 0,
+    water,
+    impactSpeed: v ? Math.abs(v.vLong) + Math.abs(v.vy || 0) : Math.abs(player.vy || 0) + player.speed,
+    surface: water > 0.05 ? 'water' : surfNow,
+    footL: h.contactL, footR: h.contactR,
+    footSpeed: player.speed,
+    falling: player.onFoot && !player.grounded,
+    fallSpeed: player.onFoot ? player.vy : 0,
+    enclosed: buried,
+    listener,
+    cars: traffic.cars,
+    heli: hp,
+  };
 }
 
 function draw(now) {

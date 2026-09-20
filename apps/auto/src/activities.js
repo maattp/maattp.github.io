@@ -377,7 +377,7 @@ export class Activities {
     this.active = { a, phase: 'countdown', t: COUNTDOWN, elapsed: 0, idx: 0, trail: [] };
     if (a.kind === 'getaway') this.game.addHeat(a.stars * 130);
     this.hud.showToast(`${a.name} — get ready`);
-    if (this.audio) this.audio.blip(520, 0.12, 'square', 0.25);
+    if (this.audio) this.audio.ui('start');
   }
 
   /** One tap, never behind a menu: a lost run on a phone ends the session. */
@@ -411,7 +411,7 @@ export class Activities {
     this.finishSilently();
     if (!ok) {
       this.hud.showToast(`${a.name} — ${note || 'failed'}`);
-      if (this.audio) this.audio.blip(150, 0.3, 'sawtooth', 0.22);
+      if (this.audio) this.audio.ui('fail');
       return;
     }
     let medal = 'gold';
@@ -568,12 +568,12 @@ export class Activities {
       const now = Math.ceil(run.t);
       if (now !== was && now > 0) {
         this.hud.showToast(String(now), 700);
-        if (this.audio) this.audio.blip(440, 0.1, 'square', 0.22);
+        if (this.audio) this.audio.ui('tick');
       }
       if (run.t <= 0) {
         run.phase = 'run';
         this.hud.showToast('GO', 900);
-        if (this.audio) this.audio.blip(760, 0.18, 'square', 0.3);
+        if (this.audio) this.audio.ui('go');
       }
       return;
     }
@@ -639,7 +639,7 @@ export class Activities {
       // complete a checkpoint sitting inside it.
       if (dist2(cp.x, cp.z, p.x, p.z) < CP_R * CP_R && Math.abs(p.y - cp.y) < CP_BAND) {
         run.idx++;
-        if (this.audio) this.audio.blip(660, 0.09, 'square', 0.2);
+        if (this.audio) this.audio.ui('check');
         if (run.idx >= a.pts.length) { this.finish(true); return; }
       }
     }
@@ -662,7 +662,7 @@ export class Activities {
       run.targetPos = { x: r[0], z: r[2], y: r[1] };
       if (Math.hypot(r[0] - p.x, r[2] - p.z) < RING_R && Math.abs(r[1] - p.y) < RING_R) {
         run.idx++;
-        if (this.audio) this.audio.blip(720, 0.09, 'square', 0.22);
+        if (this.audio) this.audio.ui('ring');
         if (run.idx >= a.rings.length) { this.finish(true); return; }
       }
     }
