@@ -1327,7 +1327,9 @@ function frame(now) {
   audio.update(dt, {
     inCar: !player.onFoot,
     speed: player.vehicle ? Math.abs(player.vehicle.vLong) : 0,
-    throttle: input.gas ? 1 : 0,
+    // A helicopter's turbine runs at governed speed whatever the collective
+    // is doing: the note follows the rotor spool, not the UP button.
+    throttle: player.vehicle && player.vehicle.spec.heli ? 0.6 * player.vehicle.spool + (input.gas ? 0.4 : 0) : input.gas ? 1 : 0,
     skid: player.vehicle ? player.vehicle.skid : 0,
     ev: !!(player.vehicle && player.vehicle.assets.spec.ev),
     siren,

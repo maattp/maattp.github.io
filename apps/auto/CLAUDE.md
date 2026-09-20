@@ -1962,6 +1962,7 @@ The purpose-built harnesses, each a fixed-dt, paused-game driver:
 | `tools/trafficcheck.mjs [--dump FILE] [--shot DIR] [--sites a,b]` | share of cars against the flow, oncoming contacts, stuck cars and jams over 7 sites at fixed dt, the last a police pursuit (see "One-way traffic") |
 | `tools/flycam.mjs [--jitter]` | a scripted flight: camera measured RELATIVE TO THE PLANE and the plane's on-screen motion, since absolute camera movement at 116 m/s is ~2 m a frame regardless. The autopilot holds 45 m over the terrain under AND 400 m ahead, or the bay dive flies into Queen Anne. Also counts building and road pop-ins, and flies `i5high` (see "flycam: road pop-ins") |
 | `tools/camtunnel.mjs` | camera height at stations through bores — nothing through the roof |
+| `tools/aircraftshots.mjs [dir] [types] [--stage] [--field] [--flight] [--takeoff]` | aircraft on a plain stage (incl. a `close` cockpit view), on their Boeing Field spots, the helicopter flown through spool/lift/hover/yaw/forward/turn/stop/land under the game's chase camera, and fixed-wing take-off numbers (see "The hangar"). `AIR_PROBE='view:x,y'` raycasts stage pixels |
 | `tools/jank.mjs` | `fwy-bump`, `crossing-clash`, `barrier-on-road` added for the grading (see "Freeway grading") |
 
 **A walker needs a seed, and the seed is the edge's own surface.** Seeded with
@@ -2418,6 +2419,76 @@ below the tower tops, Elliott Bay, climb-out; ~13k airborne frames at fixed
 140 -> 40 m crossing Beacon Hill or Queen Anne, so its 100 m up / 60 m down
 hysteresis flipped 7 times on the route. While `world.playerFlying` (fed from
 main.js) it only drops back below 25 m: one flip, the take-off.
+
+### The hangar: seven fixed-wing types and a helicopter
+
+Trainer, sport single and floatplane (`buildPlane`), and on the aircraft kit
+in vehicles.js: the King Air-style `twin`, the Learjet-style `jet`, the
+Stearman `biplane` and the Bell 407-style `heli`. `tools/aircraftshots.mjs`
+photographs them (stage, apron, close cockpit), flies the helicopter
+(`--flight`) and times every fixed-wing type off the runway (`--takeoff`).
+
+| | ground roll | rotates | level, full throttle | full-bank turn |
+|---|---|---|---|---|
+| plane | 32 m | 102 km/h | 412 km/h | 32 deg/s |
+| sportplane | 25 m | 102 | 486 | 32 |
+| twin | 37 m | 116 | 447 | 23 |
+| jet | 51 m | 157 | ~560 | 28 |
+| biplane | 21 m | 76 | 234 | ~45 |
+
+- **Handling is `spec.fly`** (vr, stall, bank, turn, climb, vne); a type
+  without it flies as the trainer (`PLANE_FLY`). `vne` is a soft cap: drag
+  leaves every airframe ~30 % over its declared top in level flight, and the
+  streamer is proven to ~120-150 m/s, not beyond.
+- **A taildragger pivots about its main wheels.** `spec.taildragger` is the
+  three-point attitude and `zMain`; updatePlane draws the body `yVis` lower
+  as the nose comes up, and `place()` parks it on its tailwheel. The builder
+  hangs the tailwheel exactly `(zMain - zTail) tan(deg)` above the ground.
+- **updatePlane writes `pitch`/`roll` and calls `sync()`.** It used to set the
+  tilt group directly, and traffic.js's post-collision `sync()` levelled
+  every parked plane again; and the flown plane was drawn `wheelR + 0.25` up,
+  so it taxied 55 cm off the tarmac while the parked ones sat on it.
+- **Propellers and rotors are spin parts** (`spinPart`): baked still into the
+  parked/traffic/far geometry and hung live only by `setDetailed(true)`.
+  Parked aircraft are 3 draws; the flown one pays 1 per prop or rotor
+  (trainer 4, twin and helicopter 5). The live prop used to exist on every
+  plane and spin at idle beside the runway.
+- **Windows are cut into the skin** (`hullLoft`'s `pick(i, k)` sends each
+  quad to paint, glass or matte), so the heli's bubble and the flight decks
+  are really see-through onto a cabin with a pilot. Cabin windows over solid
+  skin are backed panes (`skinWindow`). Two traps: a livery band must be
+  sampled AT the hull's stations (the skin is straight between them, so a
+  band sampled between them cuts the corner and sinks under a convex nose,
+  showing as dashes), and anything inside must be sized off `skinX` -- the
+  hull narrows fast under the centre line and a fixed-width floor stood out
+  of both flanks.
+- **Boeing Field's slabs stand 35 cm proud of the graded field, and
+  `groundAt` answers the field.** Aircraft ask `airportSurface` (landmarks.js,
+  the same `AIRPORT_PAVE` table the landmark draws) through
+  `setPavementQuery`; until then every aircraft sat 35 cm into the apron. Cars
+  and pedestrians on the apron still do -- that table is the fix if it ever
+  matters. The table also fixed the taxiway stubs, which carried an extra
+  quarter turn and lay parallel to the runway joining nothing.
+- **The apron is not all clear.** A real street with pavements runs through
+  its west side (across -260..-230) and a hangar stands at across -215..-185,
+  along -50..-10 (the first trainer was parked half inside it). The spots in
+  main.js and `AIRPORT_HELIPADS` avoid both.
+
+**The helicopter** (`updateHeli`, `spec.rotor`) is built to fly with one thumb:
+UP / DOWN (GAS / BRAKE relabelled; triggers on a pad, Q / Z on a keyboard,
+whose W / S are the stick) command a climb rate, and **with neither held it
+holds its height**; the stick's y is speed along the nose and, released,
+decelerates to a hover over the spot; its x is a pedal turn at the hover that
+eases into a banked turn at speed. Translation is a world velocity chasing the
+stick's, with separate authority along the nose (7.5 m/s², 1.35x to stop) and
+across it (14 m/s²): one cap for both slid a 44 m/s turn 35 m/s sideways. The
+attitude is drawn from that acceleration (nose down to speed up, banked into
+turns) about `spec.pivotY`, the rotor's centre, not the skids. The rotor spools
+for 1.8 s before it will lift; abandoned in the air it settles down. It always
+collides with buildings (a hover beside a tower is its normal use; the test
+already frees anything over a roof). Its camera is the planes' rigid rig,
+closer (12.5 m, lengthening with speed), easing round behind a pedal turn even
+at the hover, and it keeps the building pull-in below 25 m/s.
 
 ### Far massing: lazy, instanced, masked per chunk
 

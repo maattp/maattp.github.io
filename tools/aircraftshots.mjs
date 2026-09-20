@@ -129,7 +129,9 @@ try {
       await ev(`(() => {
         const d = window.__dbg;
         if (window.__veh) d.traffic.remove(window.__veh);
-        const v = d.traffic.spawnAt(0, 0, 0, '${name}', ${'0x' + 'd8dde2'}, 'free');
+        // the colour it is parked in at Boeing Field
+        const ap = d.traffic.cars.find((k) => k.typeName === '${name}' && k.mode === 'apron');
+        const v = d.traffic.spawnAt(0, 0, 0, '${name}', ap ? ap.color : 0xd8dde2, 'free');
         v.y = 0; v.x = 0; v.z = 0;
         v.setDetailed(true);
         // settle: a taildragger rocks back onto its tailwheel over ~0.5 s
