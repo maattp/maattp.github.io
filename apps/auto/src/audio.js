@@ -151,11 +151,37 @@ export class Audio {
     // Streams have no duration to seek in, and iOS otherwise offers scrubbing.
     el.loop = false;
     el.volume = 0;
+    // THE RADIO PLAYS ONLY WHEN THE GAME WANTS IT. The element can be started
+    // by other things than startLive(): primeLive's unlock, iOS's lock-screen
+    // and headphone controls, the end of a phone call. It used to take any
+    // 'playing' as the radio being on and never heard about the pause, so
+    // `liveOn` stayed true on foot -- and resume(), run on every unpause and
+    // every return from the home screen, started the stream again while you
+    // were walking. Anything the game did not ask for is paused on the spot.
     el.addEventListener('playing', () => {
+      if (!this._liveWanted || this._priming) {
+        if (!this._priming) { try { el.pause(); } catch (e) { /* gone */ } }
+        return;
+      }
       this._liveState = 'playing';
       this._liveFailed = false;
+      el.muted = false;
       this._pollNowPlaying();
     });
+    el.addEventListener('play', () => {
+      if (!this._liveWanted && !this._priming) { try { el.pause(); } catch (e) { /* gone */ } }
+    });
+    el.addEventListener('pause', () => {
+      if (this._liveState === 'playing') this._liveState = 'idle';
+    });
+    // The lock screen's play button asks the page, not the element, when a
+    // handler is set: honour it only in a car.
+    try {
+      if (navigator.mediaSession) {
+        navigator.mediaSession.setActionHandler('play', () => { if (this._liveWanted) this.startLive(); });
+        navigator.mediaSession.setActionHandler('pause', () => this.stopLive());
+      }
+    } catch (e) { /* no media session */ }
     for (const ev of ['error', 'stalled', 'ended']) {
       el.addEventListener(ev, () => {
         // Don't thrash a dead network: give up on the live feed for this drive
@@ -181,13 +207,19 @@ export class Audio {
     const el = this._makeLive();
     if (!el || this._livePrimed) return;
     this._livePrimed = true;
+    // MUTED, not volume 0: iOS ignores `volume` on media elements (it is
+    // always 1 there), so the unlock played the stream out loud on the first
+    // tap -- on foot. `muted` it does honour.
+    this._priming = true;
+    const done = () => { this._priming = false; try { el.pause(); } catch (e) { /* gone */ } };
     try {
+      el.muted = true;
       el.src = KEXP.stream;
       el.volume = 0;
       const p = el.play();
-      if (p && p.then) p.then(() => el.pause()).catch(() => { /* stays locked; we cope */ });
-      else el.pause();
-    } catch (e) { /* no autoplay, no live radio -- the synth still plays */ }
+      if (p && p.then) p.then(done).catch(() => { this._priming = false; /* stays locked; we cope */ });
+      else done();
+    } catch (e) { this._priming = false; /* no autoplay, no live radio -- the synth still plays */ }
   }
 
   startLive() {
@@ -201,6 +233,7 @@ export class Audio {
       // A live stream that has been paused for a while resumes where it left
       // off, i.e. behind. Reloading puts us back at the live edge.
       el.load();
+      el.muted = false;
       el.volume = this.musicVolume;
       const p = el.play();
       if (p && p.catch) p.catch((err) => this._liveDown(err));
@@ -261,9 +294,11 @@ export class Audio {
 
   resume() {
     if (this.ctx && this.ctx.state === 'suspended') this.ctx.resume();
-    if (this.liveOn && this._live) {
-      // iOS pauses media on the way to the background and does not resume it.
-      this._live.play().catch(() => { /* fall back to the synth */ });
+    // iOS pauses media on the way to the background and does not resume it --
+    // but only a radio that is wanted (in a car) comes back.
+    if (this._liveWanted && this._live) {
+      this._liveState = 'idle';
+      this.startLive();
     }
   }
 
