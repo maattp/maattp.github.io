@@ -1614,7 +1614,7 @@ const AIRPORT_PAVE = [
   [0, -1500, 76, 60, 0.35], [0, 1500, 76, 60, 0.35],                     // threshold turnpads
 ];
 // Where main.js parks the helicopters, painted as pads.
-export const AIRPORT_HELIPADS = [[-165, -103], [-240, 238]];
+export const AIRPORT_HELIPADS = [[-165, -103], [-195, 232]];
 
 /**
  * Height of Boeing Field's pavement at (x, z), or null off it. `ax, az` is

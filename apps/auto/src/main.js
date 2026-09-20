@@ -589,14 +589,16 @@ function installShadowFade() {
       const off = (dx, dz) => [ap.x + dx * AC[0] + dz * AL[0], ap.z + dx * AC[1] + dz * AL[1]];
       // Three clusters, all on pavement, all reachable from the west-side
       // streets: the apron row, the north threshold turnpad, and the south.
-      // A second row on the west side of the apron for the bigger aircraft
-      // (the twin's 17.6 m span fits between the row and the apron edge),
-      // and two helicopters on the apron's north and south corners, clear of
-      // every wingtip by more than a rotor.
+      // The apron is not all clear: a real street with its pavements runs
+      // through its west side (across -260..-230) and a hangar stands at
+      // across -215..-185, along -50..-10 -- where the first trainer used to
+      // be parked, half inside it. The bigger aircraft take a second row
+      // toward the taxiway, and the two helicopters sit on their pads
+      // (landmarks.js AIRPORT_HELIPADS) at the apron's north and south ends.
       const spots = [
-        ['plane', -195, -50], ['sportplane', -195, 45], ['plane', -195, 140],
-        ['twin', -245, -40], ['jet', -245, 62], ['biplane', -243, 158],
-        ['heli', -165, -103], ['heli', -240, 238, 0xb8322a],
+        ['plane', -160, -58], ['sportplane', -195, 45], ['plane', -195, 140],
+        ['twin', -150, 0], ['jet', -150, 95], ['biplane', -152, 188],
+        ['heli', -165, -103], ['heli', -195, 232, 0xb8322a],
         ['sportplane', -150, -1380], ['plane', -150, -1290],
         ['floatplane', -150, 1290], ['sportplane', -150, 1380],
       ];

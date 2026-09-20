@@ -133,10 +133,11 @@ export const TYPES = {
   twin: deriveSpec({ wheelbase: 5.2, len: 14.2, wid: 1.7, wheelR: 0.34, sill: 0.85, belt: 1.75, roof: 2.65, cab: [0.6, 0.3], hand: 'twin', plane: true, mass: 1.6, acc: 6.8, topKph: 440, brakeM: 75, latG: 0.6,
     fly: { vr: 31, stall: 25, bank: 0.60, turn: 0.85, climb: 17, vne: 118 } }),
   // Light business jet, Learjet 45 proportions: 15 m, 15.5 m span, swept low
-  // wing, two fans on pylons at the tail, T-tail. Needs the runway: rotates at
-  // 42 m/s, stalls at 33, and is held to 135 m/s so the streamer keeps up.
+  // wing, two fans on pylons at the tail, T-tail. Rotates at 150 km/h, stalls
+  // at 120, and is held near 150 m/s (~560 km/h level, measured) -- the
+  // fastest thing in the game, and still inside what the streamer keeps up with.
   jet: deriveSpec({ wheelbase: 6.2, len: 15.0, wid: 1.7, wheelR: 0.30, sill: 0.7, belt: 1.55, roof: 2.45, cab: [0.6, 0.3], hand: 'jet', plane: true, jet: true, mass: 2.0, acc: 9.0, topKph: 540, brakeM: 90, latG: 0.6,
-    fly: { vr: 42, stall: 33, bank: 0.78, turn: 0.80, climb: 26, vne: 135 } }),
+    fly: { vr: 42, stall: 33, bank: 0.78, turn: 0.80, climb: 26, vne: 150 } }),
   // Boeing-Stearman Model 75: the biplane Boeing built, and the one hanging
   // in the Museum of Flight next door. A taildragger: it sits 11 degrees nose
   // up on its tailwheel until the tail lifts at ~15 m/s (`taildragger` is the
@@ -144,7 +145,7 @@ export const TYPES = {
   // pivots about). Slow, floaty, and the tightest turner in the hangar.
   biplane: deriveSpec({ wheelbase: 5.3, len: 7.5, wid: 1.0, wheelR: 0.40, sill: 1.0, belt: 1.5, roof: 2.6, cab: [0.6, 0.3], hand: 'biplane', plane: true, mass: 0.7, acc: 6.0, topKph: 215, brakeM: 55, latG: 0.8,
     taildragger: { deg: 11, zMain: 2.1, tailUp: 15 },
-    fly: { vr: 20, stall: 15, bank: 0.85, turn: 1.45, climb: 9, vne: 64 } }),
+    fly: { vr: 20, stall: 15, bank: 0.85, turn: 1.2, climb: 9, vne: 64 } }),
   // Helicopter: Bell 407 proportions (fuselage 9.5 m, 10.7 m rotor), skids.
   // `heli` sends update() to updateHeli instead of the fixed-wing model;
   // `plane` stays set so everything that treats an aircraft as an aircraft
@@ -152,7 +153,7 @@ export const TYPES = {
   // flying courses) does so. topKph is the cruise the stick asks for.
   // `pivotY` puts the attitude pivot at the rotor's centre of mass instead of
   // on the skids, or pitching forward swung the whole cabin out over the nose.
-  heli: deriveSpec({ wheelbase: 3.0, len: 9.6, wid: 1.9, wheelR: 0.3, sill: 0.5, belt: 1.2, roof: 2.9, cab: [0.6, 0.3], hand: 'heli', plane: true, heli: true, mass: 1.2, acc: 6.0, topKph: 230, brakeM: 60, latG: 0.8,
+  heli: deriveSpec({ wheelbase: 3.0, len: 9.9, wid: 1.9, wheelR: 0.3, sill: 0.5, belt: 1.2, roof: 3.1, cab: [0.6, 0.3], hand: 'heli', plane: true, heli: true, mass: 1.2, acc: 6.0, topKph: 230, brakeM: 60, latG: 0.8,
     pivotY: 1.5,
     rotor: { climb: 9, sink: 7, accel: 7.5, grip: 14, yaw: 1.35, yawFast: 0.5, back: 10 } }),
   sedan: deriveSpec({ wheelbase: 2.98,len: 5.06, wid: 1.90, wheelR: 0.34, sill: 0.30, belt: 1.06, roof: 1.50, cab: [-0.26, 0.10], hand: 'sedan', mass: 1.0, acc: 4.1, topKph: 205, brakeM: 40, latG: 0.88 }),
@@ -2996,7 +2997,7 @@ function hullTable(ST, sq = 2) {
     const u = clamp(Math.abs(y - yc) / (y > yc ? ht : hb), 0, 0.999);
     return w * (1 - u ** sq) ** (1 / sq);
   };
-  return { rings, sec, skinX };
+  return { rings, sec, skinX, zs: ST.map((r) => r[0]) };
 }
 
 /** skinX over a raw station table without building its rings. */
@@ -3019,8 +3020,15 @@ const hullSide = (k) => (k <= 9 ? k : 19 - k);
 function hullBand(b, hull, sd, z0, z1, f0, f1, col, n = 14) {
   const rows = [];
   const yAt = (z, f) => { const [, ht, hb, yc] = hull.sec(z); return yc + f * (f > 0 ? ht : hb); };
-  for (let i = 0; i <= n; i++) {
-    const z = lerp(z0, z1, i / n), ya = yAt(z, f0), yb = yAt(z, f1);
+  // Sampled AT the hull's own stations as well: the skin is straight
+  // between them and bends at them, so a band sampled only in between cuts
+  // the corner and sinks under a convex nose -- it showed as dashes.
+  const lo = Math.min(z0, z1), hi = Math.max(z0, z1);
+  const zs = new Set();
+  for (let i = 0; i <= n; i++) zs.add(lerp(z0, z1, i / n));
+  for (const z of hull.zs) if (z > lo && z < hi) zs.add(z);
+  for (const z of [...zs].sort((a, c) => (z1 > z0 ? a - c : c - a))) {
+    const ya = yAt(z, f0), yb = yAt(z, f1);
     rows.push([[sd * (hull.skinX(z, ya) + 0.005), ya, z], [sd * (hull.skinX(z, yb) + 0.005), yb, z]]);
   }
   b.patch(rows, col, [sd, 0, 0]);
@@ -3032,17 +3040,23 @@ function hullBand(b, hull, sd, z0, z1, f0, f1, col, n = 14) {
  * the screen with its glare shield, two seats, and a pilot in `crew`.
  * `pilotX` is the pilot's side (+x is port: the captain's seat).
  */
-function flightDeck(matte, trim, rings, zBack, zFront, { floorY, panelZ, seatZ, halfW, headY, pilotX }) {
+function flightDeck(matte, trim, hull, zBack, zFront, { floorY, panelZ, seatZ, halfW, headY, pilotX }) {
+  const { rings, skinX } = hull;
   const sub = rings.filter((r) => r.z <= zFront + 1e-6 && r.z >= zBack - 1e-6);
   hullLoft(sub, () => [matte, CAB_FLOOR], { inset: 0.035, inward: true, caps: false });
-  matte.box(0, floorY - 0.02, (zBack + panelZ) / 2, halfW * 1.8, 0.02, panelZ - zBack, 0, CAB_FLOOR);
+  // Everything sized off the skin, not a width: the hull narrows fast below
+  // the centre line and a fixed-width floor stood out of both flanks.
+  const inX = (z, y) => Math.max(0.05, skinX(z, y) - 0.04);
+  matte.patch([zBack + 0.02, (zBack + panelZ) / 2, panelZ].map((z) => [-1, 0, 1].map((u) => [u * inX(z, floorY), floorY, z])), CAB_FLOOR, [0, 1, 0]);
   // panel, with two dark screens, and the shield over it
-  matte.box(0, floorY, panelZ, halfW * 1.6, headY - 0.36 - floorY, 0.30, 0, CAB_DASH);
-  matte.box(0, headY - 0.38, panelZ + 0.05, halfW * 1.7, 0.035, 0.45, 0, [0.03, 0.03, 0.035]);
-  for (const sx of [-1, 1]) trim.box(sx * halfW * 0.42, headY - 0.64, panelZ - 0.152, halfW * 0.55, 0.20, 0.004, 0, [0.03, 0.05, 0.09]);
-  // bulkhead behind the seats
-  matte.quad([-halfW, floorY, zBack + 0.02], [halfW, floorY, zBack + 0.02], [halfW, headY + 0.35, zBack + 0.02], [-halfW, headY + 0.35, zBack + 0.02],
-    [0, 0, 1], [0, 0, 1, 0, 1, 1, 0, 1], [0.16, 0.16, 0.17]);
+  const pw = Math.min(inX(panelZ + 0.15, floorY + 0.06), inX(panelZ - 0.15, floorY + 0.06), halfW);
+  matte.box(0, floorY + 0.06, panelZ, pw * 2, headY - 0.42 - floorY, 0.30, 0, CAB_DASH);
+  const sw = Math.min(inX(panelZ + 0.25, headY - 0.38), halfW);
+  matte.box(0, headY - 0.38, panelZ + 0.05, sw * 2, 0.035, 0.45, 0, [0.03, 0.03, 0.035]);
+  for (const sx of [-1, 1]) trim.box(sx * pw * 0.48, headY - 0.64, panelZ - 0.152, pw * 0.62, 0.20, 0.004, 0, [0.03, 0.05, 0.09]);
+  // bulkhead behind the seats, cut to the skin
+  const bz = zBack + 0.02, ys = [0, 0.25, 0.5, 0.75, 1].map((t) => lerp(floorY, headY + 0.35, t));
+  matte.patch(ys.map((y) => [-1, 0, 1].map((u) => [u * inX(bz, y), y, bz])), [0.16, 0.16, 0.17], [0, 0, 1]);
   const H = (headY - floorY) / 0.53 * 0.5;
   for (const sx of [-1, 1]) seat(matte, sx * Math.abs(pilotX), floorY + 0.40, seatZ, 0.46, H, false, 0.40);
   if (matte.crew) occupant(matte.crew, pilotX, headY - 0.53 * 0.9, seatZ, 0.9, [pilotX, floorY + 0.40, seatZ + 0.55]);
@@ -3072,7 +3086,7 @@ function buildTwin(spec, paint, trim, matte) {
     if (zm < 3.75 && zm > 3.05 && s >= 5 && s <= 7) return [trim, GLASS];   // cockpit side windows
     return [paint, WHITE];
   });
-  flightDeck(matte, trim, rings, 2.95, 4.55, { floorY: 1.08, panelZ: 4.30, seatZ: 3.30, halfW: 0.70, headY: 2.20, pilotX: 0.36 });
+  flightDeck(matte, trim, hull, 2.95, 4.55, { floorY: 1.08, panelZ: 4.30, seatZ: 3.30, halfW: 0.70, headY: 2.20, pilotX: 0.36 });
   for (const sd of [-1, 1]) {
     // seven cabin windows a side, and the airstair door's outline to port
     for (let i = 0; i < 7; i++) skinWindow(trim, matte, skinX, sd, 2.30 - i * 0.72, 1.94, 0.40, 0.34);
@@ -3163,7 +3177,7 @@ function buildJet(spec, paint, trim, matte) {
     if (zm < 4.25 && zm > 3.60 && s >= 5 && s <= 7) return [trim, GLASS];
     return [paint, WHITE];
   });
-  flightDeck(matte, trim, rings, 3.50, 5.30, { floorY: 0.90, panelZ: 5.00, seatZ: 3.95, halfW: 0.72, headY: 2.02, pilotX: 0.37 });
+  flightDeck(matte, trim, hull, 3.50, 5.30, { floorY: 0.90, panelZ: 5.00, seatZ: 3.95, halfW: 0.72, headY: 2.02, pilotX: 0.37 });
   for (const sd of [-1, 1]) {
     for (let i = 0; i < 6; i++) skinWindow(trim, matte, skinX, sd, 2.55 - i * 0.84, 1.76, 0.44, 0.36);
     hullBand(matte, hull, sd, 6.9, -7.3, -0.22, -0.105, [0.13, 0.14, 0.17]);
@@ -3396,19 +3410,19 @@ function buildHeli(spec, paint, trim, matte) {
   // --- engine cowl, mast, exhaust ------------------------------------------------------
   // Transmission and turbine under one cowl, from over the front seats back:
   // on a 407 it stands half a metre proud of the cabin roof.
-  const CW = [[2.95, 0.30, 0.03, 0.05, 1.99], [2.62, 0.47, 0.30, 0.05, 2.00], [1.90, 0.53, 0.47, 0.05, 2.00],
-    [0.60, 0.51, 0.45, 0.06, 1.97], [-0.40, 0.34, 0.30, 0.06, 1.88], [-0.98, 0.12, 0.10, 0.05, 1.82]];
+  const CW = [[3.05, 0.30, 0.03, 0.05, 1.99], [2.70, 0.48, 0.40, 0.05, 2.00], [1.90, 0.54, 0.60, 0.05, 2.00],
+    [0.70, 0.52, 0.56, 0.06, 1.97], [-0.35, 0.36, 0.36, 0.06, 1.88], [-0.98, 0.12, 0.12, 0.05, 1.82]];
   hullLoft(CW.map(([z, w, ht, hb, yc]) => hullRing(z, w, ht, hb, yc, HULL_A, 3)), () => [paint, WHITE]);
   for (const sd of [-1, 1]) {
     // intake grilles either side, just behind the mast
-    matte.patch([0, 1, 2].map((i) => [[sd * (hullTableX(CW, 1.25, 2.12 + i * 0.07) + 0.004), 2.12 + i * 0.07, 1.25],
-      [sd * (hullTableX(CW, 0.85, 2.12 + i * 0.07) + 0.004), 2.12 + i * 0.07, 0.85]]), [0.06, 0.065, 0.07], [sd, 0, 0]);
-    matte.tube([sd * 0.16, 2.14, -0.30], [sd * 0.22, 2.34, -0.72], 0.09, 8, [0.24, 0.22, 0.20], false);   // exhaust stacks
-    trim.tube([sd * 0.22, 2.34, -0.72], [sd * 0.225, 2.35, -0.74], 0.075, 8, CAVITY, true);
+    matte.patch([0, 1, 2].map((i) => [[sd * (hullTableX(CW, 1.35, 2.20 + i * 0.08) + 0.004), 2.20 + i * 0.08, 1.35],
+      [sd * (hullTableX(CW, 0.90, 2.20 + i * 0.08) + 0.004), 2.20 + i * 0.08, 0.90]]), [0.06, 0.065, 0.07], [sd, 0, 0]);
+    matte.tube([sd * 0.17, 2.20, -0.20], [sd * 0.24, 2.44, -0.64], 0.095, 8, [0.24, 0.22, 0.20], false);   // exhaust stacks
+    trim.tube([sd * 0.24, 2.44, -0.64], [sd * 0.245, 2.45, -0.66], 0.08, 8, CAVITY, true);
   }
-  matte.tube([0, 2.40, 1.50], [0, 2.98, 1.50], 0.075, 8, [0.22, 0.23, 0.24], false);          // mast
-  matte.tube([0, 2.56, 1.50], [0, 2.64, 1.50], 0.20, 10, [0.30, 0.31, 0.33], true);           // swashplate
-  trim.box(0, 2.28, 0.05, 0.07, 0.06, 0.14, 0, TAILC);                                         // beacon
+  matte.tube([0, 2.55, 1.50], [0, 3.10, 1.50], 0.075, 8, [0.22, 0.23, 0.24], false);          // mast
+  matte.tube([0, 2.68, 1.50], [0, 2.76, 1.50], 0.20, 10, [0.30, 0.31, 0.33], true);           // swashplate
+  trim.box(0, 2.53, 0.20, 0.07, 0.06, 0.14, 0, TAILC);                                         // beacon
   // --- tail --------------------------------------------------------------------------
   for (const sd of [-1, 1]) {
     aerofoil(paint, WHITE, [{ x: 0, y: 1.73, zLE: -2.80, c: 0.50 }, { x: sd * 1.05, y: 1.73, zLE: -2.86, c: 0.42 }], { thick: 0.12, n: 6 });
@@ -3443,7 +3457,7 @@ function buildHeli(spec, paint, trim, matte) {
     const a = Math.PI / 4 + (k / 4) * Math.PI * 2;
     main.tube([Math.cos(a) * 0.1, 0, -Math.sin(a) * 0.1], [Math.cos(a) * 0.36, 0, -Math.sin(a) * 0.36], 0.06, 6, [0.20, 0.21, 0.22], true);
   }
-  spinPart(matte, [0, 3.00, 1.50], 'y', main);
+  spinPart(matte, [0, 3.12, 1.50], 'y', main);
   const tail = new Builder(false);
   blades(tail, 2, 0.07, 0.83, 0.13, DARK, [0.90, 0.20, 0.16], { twist: 0.25, thick: 0.10 });
   tail.prism(0, -0.05, 0, 0.07, 0.10, 8, [0.26, 0.27, 0.29]);
