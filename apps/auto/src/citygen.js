@@ -1514,6 +1514,24 @@ export function* cityGenerator(md, cache = {}) {
   } else {
     buildings = [];
     const REC = 12;
+    // What a building stands on. Terrain, except on water: 1,309 footprints
+    // are over it -- Lake Union's houseboats, Salmon Bay's and the
+    // waterfront's pier sheds -- and standing on the lake BED they were
+    // houses up to the windowsills in the lake, a flooded street from the
+    // air. On water a building floats (or sits on its pier) 0.6 m above the
+    // surface: the body's own level inside a labelled lake's box, the sea
+    // elsewhere. A pond too small to label keeps its DEM surface, which is
+    // why the level only ever RAISES y, and only by a plausible amount.
+    const lakes = md.lakes || [];
+    const standY = (x, z) => {
+      const t = G.terrainHeight(x, z);
+      if (!G.isWater(x, z)) return t;
+      let lv = 0;
+      for (const l of lakes) {
+        if (x >= l.x0 && x <= l.x1 && z >= l.z0 && z <= l.z1) { lv = l.level; break; }
+      }
+      return lv + 0.6 > t && lv + 0.6 - t < 12 ? lv + 0.6 : t;
+    };
     built = new Float32Array(B.nx * B.nz); // per-chunk cover, for the ground tint
     for (let cj = 0; cj < B.nz; cj++) {
       for (let ci = 0; ci < B.nx; ci++) {
@@ -1533,7 +1551,7 @@ export function* cityGenerator(md, cache = {}) {
           area += w * d;
           buildings.push({
             x, z, w, d, rot, h,
-            y: G.terrainHeight(x, z),
+            y: standY(x, z),
             style: styleFor(cls, h, w, d),
             seed: (hash2(Math.round(x), Math.round(z)) * 65536) | 0,
             kind: null,

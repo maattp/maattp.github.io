@@ -5760,6 +5760,8 @@ float frLine(float o, float fw, float c, float w) {
     let tLow = bd.y;
     for (const [fx, fz] of CORNERS) {
       const [qx, qz] = off(fx * bd.w / 2, fz * bd.d / 2);
+      // A corner over water has the lake bed under it, which nobody sees.
+      if (G.isWater(qx, qz)) continue;
       const t = G.terrainHeight(qx, qz);
       if (t < tLow) tLow = t;
     }
