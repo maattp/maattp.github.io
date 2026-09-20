@@ -131,6 +131,18 @@ export const TYPES = {
   // -- two contact patches the size of a credit card is what that costs.
   cruiser: deriveSpec({ wheelbase: 1.66,len: 2.56, wid: 0.95, wheelR: 0.40, sill: 0.30, belt: 0.80, roof: 1.24, cab: [-0.2, 0.1], hand: 'cruiser', moto: true, mass: 0.22, acc: 7.2, topKph: 190, brakeM: 48, latG: 0.80 }),
   sportbike: deriveSpec({ wheelbase: 1.36,len: 2.05, wid: 0.72, wheelR: 0.32, sill: 0.28, belt: 0.78, roof: 1.18, cab: [-0.2, 0.1], hand: 'sportbike', moto: true, mass: 0.16, acc: 10.2, topKph: 285, brakeM: 40, latG: 1.08 }),
+  // Quad bike. Four wheels, so the car's ground solve and camber roll -- but
+  // a rider (`atv` puts one on, as `moto` does) and handling of its own:
+  // `offroad` skips the grass drag road cars pay and halves the grade term
+  // (low gearing, four driven knobblies), and `minTurnR` tightens the
+  // low-speed lock below every car's 4.5 m. Top speed ~95 km/h, like a
+  // sport quad; 0-80 in about 5 s real, which the arcade punch halves.
+  atv: deriveSpec({ wheelbase: 1.26, len: 2.00, wid: 1.20, wheelR: 0.29, sill: 0.30, belt: 0.80, roof: 1.25, cab: [-0.2, 0.1], hand: 'atv', atv: true, offroad: true, minTurnR: 3.0, mass: 0.34, acc: 8.5, topKph: 95, brakeM: 42, latG: 0.92 }),
+  // A 5.7 m outboard runabout. `boat` sends update() to the hull model
+  // (updateBoat): it floats on the LOCAL water surface and treats anything
+  // shallower than its draft as a wall. `wheelR` is only there because
+  // deriveSpec's callers read it; there are no wheels.
+  boat: deriveSpec({ wheelbase: 3.2, len: 5.70, wid: 2.20, wheelR: 0.30, sill: 0.4, belt: 0.7, roof: 1.45, cab: [-0.2, 0.1], hand: 'boat', boat: true, mass: 1.1, acc: 3.0, topKph: 70, brakeM: 45, latG: 0.6 }),
   pickup: deriveSpec({ wheelbase: 3.68,len: 5.92, wid: 2.05, wheelR: 0.42, sill: 0.48, belt: 1.26, roof: 1.98, cab: [-0.15, 0.22], hand: 'pickup', mass: 1.4, acc: 4.4, topKph: 185, brakeM: 45, latG: 0.77 }),
   van: deriveSpec({ wheelbase: 3.5,len: 5.26, wid: 2.00, wheelR: 0.35, sill: 0.36, belt: 1.10, roof: 2.28, cab: [-0.44, 0.30], hand: 'van', boxy: 2, mass: 1.5, acc: 2.9, topKph: 155, brakeM: 47, latG: 0.73 }),
   taxi: deriveSpec({ wheelbase: 2.98,len: 4.76, wid: 1.85, wheelR: 0.33, sill: 0.30, belt: 1.06, roof: 1.50, cab: [-0.28, 0.19], hand: 'service', taxi: true, livery: 0xf0b40c, mass: 1.0, acc: 3.8, topKph: 195, brakeM: 41, latG: 0.85 }),
@@ -237,10 +249,14 @@ export const CAR_COLORS = [
  * player walks round the bike, and a dished blank facing the kerb would be the
  * most obvious thing on it.
  */
-function addWheel(trim, matte, cx, cy, cz, r, w, out = 1) {
+function addWheel(trim, matte, cx, cy, cz, r, w, out = 1, knobby = false) {
   const SEG = 18;
+  // Knob tops at the rolling radius, the carcass under them: the wheel
+  // still stands on `r`, as the ground solve assumes.
+  if (knobby) { knobs(matte, cx, cy, cz, r, w); r *= 0.9; }
   const hw = w / 2;
-  const bead = r * 0.70;              // where the tyre grips the rim
+  // where the tyre grips the rim; an off-road tyre is mostly sidewall
+  const bead = r * (knobby ? 0.60 : 0.70);
   const ang = (i) => (i / SEG) * Math.PI * 2;
 
   /**
@@ -321,6 +337,37 @@ function addWheel(trim, matte, cx, cy, cz, r, w, out = 1) {
     disc(trim, spokeX + o * 0.012, r * 0.09, 0.001, o, CHROME);
   };
   if (out === 0) { dress(1); dress(-1); } else dress(out);
+}
+
+/**
+ * Knobbly tread for an off-road tyre: blocks standing proud of the crown in
+ * two staggered rows, the shoulder rows wrapping over the edge of the
+ * sidewall. A plain crowned tyre on a quad reads as a lawnmower's. Each knob
+ * is five faces of a block laid in the wheel's own (axle, radial, tangent)
+ * frame, so it turns with the wheel group like the rest of the tyre.
+ */
+function knobs(matte, cx, cy, cz, r, w) {
+  const N = 14, hw = w / 2, h = r * 0.12;
+  const block = (x0, x1, a, da, r0) => {
+    const r1 = r0 + h;
+    const P = (x, rr, aa) => [cx + x, cy + Math.cos(aa) * rr, cz + Math.sin(aa) * rr];
+    const a0 = a - da, a1 = a + da;
+    const up = [0, Math.cos(a), Math.sin(a)], t0 = [0, -Math.sin(a0), Math.cos(a0)], t1 = [0, Math.sin(a1), -Math.cos(a1)];
+    const uv = [0, 0, 1, 0, 1, 1, 0, 1];
+    matte.quad(P(x0, r1, a0), P(x1, r1, a0), P(x1, r1, a1), P(x0, r1, a1), up, uv, TYRE);
+    matte.quad(P(x0, r0, a0), P(x1, r0, a0), P(x1, r1, a0), P(x0, r1, a0), [0, -t0[1], -t0[2]], uv, TYRE);
+    matte.quad(P(x0, r0, a1), P(x1, r0, a1), P(x1, r1, a1), P(x0, r1, a1), [0, -t1[1], -t1[2]], uv, TYRE);
+    matte.quad(P(x0, r0, a0), P(x0, r0, a1), P(x0, r1, a1), P(x0, r1, a0), [-1, 0, 0], uv, TYRE);
+    matte.quad(P(x1, r0, a0), P(x1, r0, a1), P(x1, r1, a1), P(x1, r1, a0), [1, 0, 0], uv, TYRE);
+  };
+  const da = Math.PI / N * 0.42;
+  for (let i = 0; i < N; i++) {
+    const a = (i / N) * Math.PI * 2;
+    // centre row alternates sides; the shoulder blocks sit on the other half-turn
+    const s = i % 2 ? 1 : -1;
+    block(s * hw * 0.04, s * hw * 0.66, a, da, r - h);
+    block(-s * hw * 0.60, -s * hw * 1.04, a + Math.PI / N, da * 0.9, r - h * 1.25);
+  }
 }
 
 /**
@@ -2194,6 +2241,386 @@ function buildSportbike(spec, paint, trim, matte) {
   return wheels;
 }
 
+/** `fender`, off the centreline: a quad's four guards sit out on the track. */
+function fenderAt(b, cx, cy, cz, r, halfW, a0, a1, col) {
+  const rows = [];
+  for (let i = 0; i <= 10; i++) {
+    const a = a0 + ((a1 - a0) * i) / 10;
+    const row = [];
+    for (let j = 0; j <= 4; j++) {
+      const u = -1 + j / 2;
+      const rr = r * (1 - 0.06 * u * u);
+      row.push([cx + u * halfW, cy + Math.cos(a) * rr, cz + Math.sin(a) * rr]);
+    }
+    rows.push(row);
+  }
+  b.patch(rows, col, [0, 1, 0]);
+  // the guard's outer lip turned down, so from the side it has a thickness
+  const lip = rows.map((row) => {
+    const p = row[cx > 0 ? 4 : 0];
+    return [p, [p[0], p[1] - 0.05, p[2]]];
+  });
+  b.patch(lip, col, [Math.sign(cx) || 1, 0, 0]);
+}
+
+const FRAME_C = [0.11, 0.115, 0.125];
+const SPRING = [0.72, 0.14, 0.10];
+
+/**
+ * The quad bike: a sport-utility ATV, which is a different animal from
+ * either motorcycle. Four fat knobbly tyres on a wide track, the plastics as
+ * four separate guards joined by a nose and a tail deck, steel racks front and
+ * rear, footboards between the wheels, and a straight bar with a lamp pod on
+ * it. The rider is the bikes' posed humanoid (see RIDERS.atv) sitting
+ * upright on a saddle, feet on the boards.
+ *
+ * `paint` is the plastics, `matte` the frame, seat, racks and tyres, `trim`
+ * the lamps, suspension springs and the chrome.
+ */
+function buildAtv(spec, paint, trim, matte) {
+  const r = spec.wheelR;
+  const zF = 0.63, zR = -0.63, xF = 0.46, xR = 0.47;
+  // [x, y, z, r, w, out, knobby]
+  const wheels = [
+    [xF, r, zF, r, 0.24, 1, 1], [-xF, r, zF, r, 0.24, -1, 1],
+    [xR, r, zR, r, 0.29, 1, 1], [-xR, r, zR, r, 0.29, -1, 1],
+  ];
+
+  // --- frame, engine, footboards -------------------------------------------
+  for (const sx of [-1, 1]) {
+    matte.tube([sx * 0.15, 0.28, 0.78], [sx * 0.16, 0.26, -0.62], 0.028, 6, FRAME_C, true);
+    matte.tube([sx * 0.13, 0.64, 0.50], [sx * 0.14, 0.68, -0.86], 0.026, 6, FRAME_C, true);
+    matte.tube([sx * 0.15, 0.28, 0.62], [sx * 0.13, 0.64, 0.50], 0.024, 6, FRAME_C, true);
+    matte.tube([sx * 0.16, 0.26, -0.52], [sx * 0.14, 0.67, -0.60], 0.024, 6, FRAME_C, true);
+    // footboard and its nerf bar
+    matte.box(sx * 0.33, 0.29, -0.03, 0.24, 0.035, 0.56, 0, PLASTIC);
+    for (let k = 0; k < 4; k++) matte.box(sx * 0.33, 0.325, -0.24 + k * 0.14, 0.22, 0.012, 0.03, 0, [0.2, 0.21, 0.22]);
+    matte.tube([sx * 0.45, 0.33, -0.33], [sx * 0.45, 0.33, 0.26], 0.018, 6, FRAME_C, true);
+    matte.tube([sx * 0.45, 0.33, 0.26], [sx * 0.20, 0.30, 0.34], 0.018, 6, FRAME_C, true);
+    matte.tube([sx * 0.45, 0.33, -0.33], [sx * 0.20, 0.30, -0.40], 0.018, 6, FRAME_C, true);
+  }
+  matte.box(0, 0.16, 0.02, 0.32, 0.30, 0.50, 0, ENGINE);                       // crankcase
+  matte.tube([0, 0.44, 0.10], [0, 0.66, 0.22], 0.085, 10, [0.09, 0.10, 0.11], true); // barrel
+  for (let i = 0; i < 5; i++) {
+    const t = 0.15 + i * 0.16;
+    trim.tube([0, 0.44 + 0.22 * t, 0.10 + 0.12 * t], [0, 0.44 + 0.22 * (t + 0.05), 0.10 + 0.12 * (t + 0.05)], 0.11, 10, ALLOY, true);
+  }
+  matte.box(0, 0.06, 0.05, 0.40, 0.05, 0.9, 0, [0.20, 0.21, 0.22]);             // skid plate
+
+  // --- suspension ------------------------------------------------------------
+  for (const sx of [-1, 1]) {
+    // front double wishbones to the knuckle, a coil-over standing up to the frame
+    matte.tube([sx * 0.14, 0.27, zF + 0.10], [sx * (xF - 0.10), r - 0.03, zF], 0.020, 6, FRAME_C, true);
+    matte.tube([sx * 0.14, 0.27, zF - 0.10], [sx * (xF - 0.10), r - 0.03, zF], 0.020, 6, FRAME_C, true);
+    matte.tube([sx * 0.14, 0.44, zF + 0.08], [sx * (xF - 0.11), r + 0.09, zF], 0.018, 6, FRAME_C, true);
+    matte.tube([sx * 0.14, 0.44, zF - 0.08], [sx * (xF - 0.11), r + 0.09, zF], 0.018, 6, FRAME_C, true);
+    trim.tube([sx * 0.17, 0.66, zF - 0.04], [sx * (xF - 0.13), r + 0.05, zF - 0.02], 0.040, 8, SPRING, true);
+    trim.tube([sx * 0.17, 0.67, zF - 0.04], [sx * (xF - 0.13), r + 0.04, zF - 0.02], 0.018, 6, CHROME, true);
+    // rear: swingarm to the axle, and a shock each side
+    matte.tube([sx * 0.12, 0.30, -0.18], [sx * 0.20, r, zR], 0.030, 6, FRAME_C, true);
+    trim.tube([sx * 0.13, 0.68, -0.40], [sx * 0.19, r + 0.06, zR + 0.10], 0.038, 8, SPRING, true);
+  }
+  matte.tube([-xR + 0.10, r, zR], [xR - 0.10, r, zR], 0.032, 8, FRAME_C, true);   // rear axle
+  matte.tube([-xF + 0.10, r, zF], [-xF + 0.13, r, zF], 0.05, 8, FRAME_C, true);
+
+  // --- plastics --------------------------------------------------------------
+  for (const sx of [-1, 1]) {
+    fenderAt(paint, sx * xF, r, zF, r + 0.075, 0.155, -0.75, 1.30, WHITE);
+    fenderAt(paint, sx * xR, r, zR, r + 0.075, 0.165, -1.30, 0.80, WHITE);
+  }
+  // nose: from between the front guards up to the bar
+  paint.loft([
+    { z: 1.00, pts: ring2(0.18, 0.60, 0.06, 12) },
+    { z: 0.88, pts: ring2(0.29, 0.64, 0.10, 12) },
+    { z: 0.60, pts: ring2(0.33, 0.69, 0.12, 12) },
+    { z: 0.34, pts: ring2(0.28, 0.72, 0.11, 12) },
+    { z: 0.14, pts: ring2(0.19, 0.76, 0.08, 12) },
+  ], WHITE, { capStart: true, capEnd: true });
+  // side covers under the saddle
+  paint.loft([
+    { z: 0.20, pts: ring2(0.17, 0.62, 0.13, 12) },
+    { z: -0.10, pts: ring2(0.21, 0.64, 0.15, 12) },
+    { z: -0.50, pts: ring2(0.21, 0.66, 0.14, 12) },
+    { z: -0.70, pts: ring2(0.16, 0.68, 0.10, 12) },
+  ], WHITE, { capStart: true, capEnd: true });
+  // tail deck joining the rear guards
+  paint.loft([
+    { z: -0.44, pts: ring2(0.30, 0.74, 0.05, 12) },
+    { z: -0.70, pts: ring2(0.34, 0.75, 0.06, 12) },
+    { z: -1.00, pts: ring2(0.30, 0.72, 0.05, 12) },
+  ], WHITE, { capStart: true, capEnd: true });
+  // saddle
+  matte.loft([
+    { z: 0.18, pts: ring2(0.11, 0.80, 0.045, 10) },
+    { z: 0.02, pts: ring2(0.17, 0.83, 0.065, 10) },
+    { z: -0.36, pts: ring2(0.18, 0.845, 0.07, 10) },
+    { z: -0.62, pts: ring2(0.15, 0.835, 0.06, 10) },
+  ], LEATHER, { capStart: true, capEnd: true });
+
+  // --- lamps -------------------------------------------------------------------
+  for (const sx of [-1, 1]) {
+    matte.box(sx * 0.14, 0.585, 0.985, 0.13, 0.075, 0.04, 0, [0.03, 0.03, 0.035]);
+    trim.box(sx * 0.14, 0.595, 1.004, 0.10, 0.052, 0.012, 0, LAMP);
+  }
+  trim.box(0, 0.70, -1.015, 0.16, 0.05, 0.02, 0, TAILC);
+
+  // --- racks and bumper --------------------------------------------------------
+  const rack = (z0, z1, y, hx) => {
+    for (const sx of [-1, 1]) matte.tube([sx * hx, y, z0], [sx * hx, y, z1], 0.015, 6, FRAME_C, true);
+    for (let k = 0; k <= 4; k++) {
+      const z = z0 + ((z1 - z0) * k) / 4;
+      matte.tube([-hx, y, z], [hx, y, z], 0.013, 6, FRAME_C, true);
+    }
+    for (const sx of [-1, 1]) for (const z of [z0, z1]) matte.tube([sx * hx, y, z], [sx * hx * 0.8, y - 0.14, z], 0.013, 6, FRAME_C, true);
+  };
+  rack(0.44, 0.93, 0.86, 0.36);
+  rack(-0.50, -0.99, 0.90, 0.40);
+  matte.tube([-0.26, 0.38, 1.06], [0.26, 0.38, 1.06], 0.022, 6, FRAME_C, true);
+  for (const sx of [-1, 1]) {
+    matte.tube([sx * 0.26, 0.38, 1.06], [sx * 0.24, 0.62, 1.03], 0.022, 6, FRAME_C, true);
+    matte.tube([sx * 0.24, 0.62, 1.03], [sx * 0.10, 0.66, 1.00], 0.020, 6, FRAME_C, true);
+    matte.tube([sx * 0.26, 0.38, 1.06], [sx * 0.14, 0.30, 0.82], 0.020, 6, FRAME_C, true);
+  }
+
+  // --- bars ------------------------------------------------------------------------
+  trim.tube([0, 0.74, 0.34], [0, 0.98, 0.29], 0.022, 8, ALLOY, true);
+  for (const sx of [-1, 1]) {
+    trim.tube([0, 1.00, 0.29], [sx * 0.16, 1.01, 0.28], 0.016, 8, ALLOY, true);
+    trim.tube([sx * 0.16, 1.01, 0.28], [sx * 0.41, 1.04, 0.24], 0.016, 8, ALLOY, true);
+    matte.tube([sx * 0.30, 1.03, 0.255], [sx * 0.415, 1.04, 0.24], 0.021, 8, LEATHER, true);
+    trim.tube([sx * 0.26, 1.02, 0.28], [sx * 0.36, 1.03, 0.31], 0.008, 6, ALLOY, true);   // lever
+  }
+  matte.box(0, 0.995, 0.29, 0.14, 0.04, 0.05, 0, [0.06, 0.06, 0.07]);                   // bar pad
+  paint.loft([
+    { z: 0.28, pts: ring2(0.12, 0.94, 0.05, 10) },
+    { z: 0.36, pts: ring2(0.13, 0.935, 0.055, 10) },
+    { z: 0.40, pts: ring2(0.11, 0.93, 0.045, 10) },
+  ], WHITE, { capStart: true, capEnd: true });
+  trim.box(0, 0.93, 0.405, 0.16, 0.05, 0.012, 0, LAMP);
+
+  // --- exhaust down the right --------------------------------------------------
+  trim.tube([-0.08, 0.60, 0.20], [-0.22, 0.52, 0.00], 0.030, 8, CHROME, true);
+  trim.tube([-0.22, 0.52, 0.00], [-0.25, 0.62, -0.52], 0.030, 8, CHROME, true);
+  matte.loft([
+    { z: -0.50, pts: ring2(0.05, 0.64, 0.05, 10, -0.26) },
+    { z: -0.62, pts: ring2(0.065, 0.645, 0.065, 10, -0.26) },
+    { z: -0.90, pts: ring2(0.06, 0.65, 0.06, 10, -0.26) },
+  ], [0.22, 0.23, 0.25], { capStart: true, capEnd: true });
+  hole(trim, matte, -0.26, 0.65, -0.905, 0.028, 0.05, -1);
+  return wheels;
+}
+
+// --- the boat --------------------------------------------------------------------
+const GEL = [0.86, 0.86, 0.83];        // deck and liner gelcoat
+const VINYL = [0.88, 0.85, 0.78];      // upholstery
+const NONSKID = [0.70, 0.70, 0.66];
+const HULL_BOTTOM = [0.80, 0.81, 0.79];   // a trailer boat's white bottom: the entry shows above water
+
+/**
+ * A 5.7 m outboard runabout. Its y = 0 is the WATERLINE (updateBoat sets the
+ * group on the local surface), so the V-bottom hangs below it.
+ *
+ * The hull is a patch per side through ten stations, keel -> chine -> spray
+ * rail lip -> flared topside -> sheer, with a real deadrise: 20-odd degrees
+ * aft, sharpening to a fine entry forward where the keel sweeps up into the
+ * stem. `paint` is the topsides only, so a navy boat still has a white deck
+ * (matte gelcoat) the way real ones do. The cockpit is OPEN -- the section
+ * is never closed across the top -- with a liner, a floor, two buckets, a
+ * bench, consoles, and a wrap-round screen in trim glass you look through at
+ * all of it. The driver is `matte.crew`, so a moored boat is empty.
+ */
+function buildBoat(spec, paint, trim, matte) {
+  //        z      hb    sheer  chineX chineY  keelY
+  const S = [
+    [-2.80, 1.00, 0.60, 0.90, -0.14, -0.30],
+    [-2.20, 1.05, 0.61, 0.95, -0.15, -0.32],
+    [-1.20, 1.09, 0.63, 0.98, -0.15, -0.34],
+    [0.00, 1.10, 0.67, 0.96, -0.13, -0.34],
+    [0.90, 1.05, 0.72, 0.88, -0.08, -0.31],
+    [1.60, 0.92, 0.77, 0.72, 0.00, -0.24],
+    [2.20, 0.68, 0.83, 0.48, 0.12, -0.12],
+    [2.62, 0.40, 0.88, 0.24, 0.30, 0.06],
+    [2.86, 0.12, 0.92, 0.06, 0.52, 0.32],
+    [2.93, 0.02, 0.93, 0.01, 0.72, 0.60],
+  ];
+  const at = (z) => {
+    for (let i = 1; i < S.length; i++) {
+      if (z <= S[i][0]) {
+        const a = S[i - 1], b = S[i], t = (z - a[0]) / (b[0] - a[0]);
+        return a.map((v, k) => v + (b[k] - v) * t);
+      }
+    }
+    return S[S.length - 1].slice();
+  };
+  const bottomPts = (s, sd) => {
+    const [, , , cx, cy, ky] = s;
+    return [[0, ky], [sd * cx * 0.5, ky + (cy - ky) * 0.52], [sd * cx, cy], [sd * (cx + 0.05), cy + 0.02]];
+  };
+  const topPts = (s, sd) => {
+    const [, hb, sy, cx, cy] = s;
+    return [[sd * (cx + 0.05), cy + 0.02], [sd * (cx + 0.05 + (hb - cx - 0.05) * 0.6), cy + (sy - cy) * 0.45], [sd * hb, sy]];
+  };
+  for (const sd of [-1, 1]) {
+    paint.patch(S.map((s) => topPts(s, sd).map(([x, y]) => [x, y, s[0]])), WHITE, [sd, 0.2, 0]);
+    matte.patch(S.map((s) => bottomPts(s, sd).map(([x, y]) => [x, y, s[0]])), HULL_BOTTOM, [sd * 0.5, -1, 0]);
+    // a boot stripe laid on the topside just above the water, and a sheer
+    // stripe under the rub rail -- the two lines that say "boat"
+    const stripe = (f0, f1, col) => {
+      matte.patch(S.slice(0, 9).map((s) => {
+        const p = topPts(s, sd);
+        const q = (f) => {
+          // along the topside profile, 0 = chine lip, 1 = sheer
+          const seg = f < 0.5 ? [p[0], p[1], f / 0.5] : [p[1], p[2], (f - 0.5) / 0.5];
+          const x = seg[0][0] + (seg[1][0] - seg[0][0]) * seg[2], y = seg[0][1] + (seg[1][1] - seg[0][1]) * seg[2];
+          return [x + sd * 0.004, y, s[0]];
+        };
+        return [q(f0), q(f1)];
+      }), col, [sd, 0, 0]);
+    };
+    stripe(0.12, 0.2, [0.07, 0.08, 0.09]);
+    stripe(0.80, 0.86, [0.62, 0.10, 0.08]);
+    // rub rail along the sheer
+    for (let i = 0; i < S.length - 2; i++) {
+      matte.tube([sd * (S[i][1] + 0.012), S[i][2] - 0.01, S[i][0]], [sd * (S[i + 1][1] + 0.012), S[i + 1][2] - 0.01, S[i + 1][0]], 0.028, 6, [0.08, 0.08, 0.09], false);
+    }
+  }
+  // transom, both halves, in the topside colour above the chine lip
+  for (const sd of [-1, 1]) {
+    const s = S[0];
+    const prof = [...bottomPts(s, sd), ...topPts(s, sd).slice(1)];
+    paint.patch([prof.map(([x, y]) => [x, y, s[0]]), prof.map(([, y]) => [0, y, s[0]])], WHITE, [0, 0, -1]);
+  }
+
+  // --- deck ----------------------------------------------------------------------
+  const COCK_R = -2.20, COCK_F = 0.90, FLOOR = 0.12, CAP = 0.15;
+  const deckStations = S.filter((s) => s[0] <= COCK_F + 1e-6).map((s) => s[0]);
+  // gunwale caps down the cockpit
+  for (const sd of [-1, 1]) {
+    matte.patch(deckStations.map((z) => {
+      const s = at(z);
+      return [[sd * s[1], s[2], z], [sd * (s[1] - CAP), s[2] + 0.01, z]];
+    }), GEL, [0, 1, 0]);
+    // inner liner from the cap down to the floor
+    matte.patch(deckStations.filter((z) => z >= COCK_R).map((z) => {
+      const s = at(z);
+      return [[sd * (s[1] - CAP), s[2] + 0.01, z], [sd * (s[1] - CAP - 0.04), FLOOR, z]];
+    }), GEL, [-sd, 0.3, 0]);
+  }
+  // foredeck, cambered, from the screen to the stem
+  {
+    const rows = [];
+    for (const s of S.filter((s) => s[0] >= COCK_F - 1e-6)) {
+      const row = [];
+      for (let j = 0; j <= 6; j++) {
+        const u = -1 + j / 3;
+        row.push([u * s[1], s[2] + 0.07 * (1 - u * u) * Math.min(1, s[1] / 0.5), s[0]]);
+      }
+      rows.push(row);
+    }
+    matte.patch(rows, GEL, [0, 1, 0]);
+  }
+  // cockpit floor and the bulkheads fore and aft
+  {
+    const fr = [];
+    for (const z of [COCK_R, -1.2, 0, COCK_F]) {
+      const w = at(z)[1] - CAP - 0.04;
+      fr.push([[-w, FLOOR, z], [0, FLOOR, z], [w, FLOOR, z]]);
+    }
+    matte.patch(fr, NONSKID, [0, 1, 0]);
+    const sF = at(COCK_F), sR = at(COCK_R);
+    matte.quad([-(sF[1] - CAP), FLOOR, COCK_F], [sF[1] - CAP, FLOOR, COCK_F], [sF[1] - CAP, sF[2] + 0.02, COCK_F], [-(sF[1] - CAP), sF[2] + 0.02, COCK_F], [0, 0, -1], [0, 0, 1, 0, 1, 1, 0, 1], GEL);
+    matte.quad([-(sR[1] - CAP), FLOOR, COCK_R], [sR[1] - CAP, FLOOR, COCK_R], [sR[1] - CAP, sR[2] + 0.01, COCK_R], [-(sR[1] - CAP), sR[2] + 0.01, COCK_R], [0, 0, 1], [0, 0, 1, 0, 1, 1, 0, 1], GEL);
+    // aft deck over the splash well, to the transom
+    matte.patch([S[0], S[1]].map((s) => [[-s[1], s[2], s[0]], [0, s[2] + 0.03, s[0]], [s[1], s[2], s[0]]]), GEL, [0, 1, 0]);
+  }
+  // rear bench: base, cushion, back against the bulkhead
+  {
+    const w = at(COCK_R + 0.3)[1] - CAP - 0.06;
+    matte.box(0, FLOOR, COCK_R + 0.24, w * 2, 0.30, 0.46, 0, GEL);
+    matte.box(0, FLOOR + 0.30, COCK_R + 0.25, w * 2 - 0.04, 0.10, 0.44, 0, VINYL);
+    rakedBox(matte, 0, FLOOR + 0.40, COCK_R + 0.06, w * 2 - 0.1, 0.34, 0.10, 0.08, VINYL);
+  }
+  // consoles: helm to starboard (-x), passenger to port
+  const HELM = -0.50;
+  for (const sx of [-1, 1]) {
+    const x = sx * 0.50, top = sx < 0 ? 0.80 : 0.70;
+    matte.box(x, FLOOR, 0.62, 0.52, top - FLOOR, 0.52, 0, GEL);
+    // raked dash face toward the seat
+    matte.quad([x - 0.26, top, 0.36], [x + 0.26, top, 0.36], [x + 0.26, top + 0.10, 0.62], [x - 0.26, top + 0.10, 0.62], [0, 0.93, -0.36], [0, 0, 1, 0, 1, 1, 0, 1], CAB_DASH);
+    matte.quad([x - 0.26, top + 0.10, 0.62], [x + 0.26, top + 0.10, 0.62], [x + 0.26, top + 0.10, 0.88], [x - 0.26, top + 0.10, 0.88], [0, 1, 0], [0, 0, 1, 0, 1, 1, 0, 1], GEL);
+    matte.quad([x - 0.26, top, 0.36], [x - 0.26, FLOOR, 0.36], [x + 0.26, FLOOR, 0.36], [x + 0.26, top, 0.36], [0, 0, -1], [0, 0, 1, 0, 1, 1, 0, 1], GEL);
+    // bucket seat on a pedestal
+    matte.tube([x, FLOOR, -0.30], [x, FLOOR + 0.30, -0.30], 0.05, 8, [0.5, 0.52, 0.55], true);
+    matte.box(x, FLOOR + 0.30, -0.28, 0.46, 0.12, 0.46, 0, VINYL);
+    rakedBox(matte, x, FLOOR + 0.40, -0.50, 0.44, 0.46, 0.10, 0.10, VINYL);
+  }
+  // gauges and wheel at the helm
+  for (const dx of [-0.10, 0.10]) trim.tube([HELM + dx, 0.86, 0.47], [HELM + dx, 0.875, 0.455], 0.045, 10, [0.9, 0.9, 0.86], true);
+  {
+    const R = 0.17, c = [HELM, 0.92, 0.36], tilt = 0.9;
+    const pt = (a) => [c[0] + Math.cos(a) * R, c[1] + Math.sin(a) * R * Math.cos(tilt), c[2] - Math.sin(a) * R * Math.sin(tilt)];
+    for (let i = 0; i < 10; i++) trim.tube(pt((i / 10) * Math.PI * 2), pt(((i + 1) / 10) * Math.PI * 2), 0.014, 4, CHROME, false);
+    trim.tube([HELM, 0.92, 0.36], [HELM, 0.86, 0.48], 0.02, 6, CHROME, true);
+  }
+  // throttle lever beside the helm
+  trim.tube([HELM + 0.30, 0.80, 0.42], [HELM + 0.30, 0.95, 0.36], 0.012, 6, CHROME, true);
+  trim.box(HELM + 0.30, 0.95, 0.36, 0.06, 0.04, 0.05, 0, [0.06, 0.06, 0.07]);
+
+  // --- windscreen: one wrap-round pane in trim glass, framed ----------------------
+  {
+    const rows = [];
+    const bot = (u) => { const s = at(COCK_F - 0.05); const w = s[1] - 0.10; return [u * w, s[2] + 0.06, COCK_F + 0.02 - 0.42 * u * u]; };
+    for (let i = 0; i <= 2; i++) {
+      const t = i / 2, row = [];
+      for (let j = 0; j <= 8; j++) {
+        const u = -1 + j / 4, b = bot(u);
+        // raked back 30 degrees and drawn in 8 % at the top
+        row.push([b[0] * (1 - 0.08 * t), b[1] + 0.40 * t, b[2] - 0.23 * t]);
+      }
+      rows.push(row);
+    }
+    trim.patch(rows, GLASS, [0, 0.5, 1]);
+    for (let j = 0; j < 8; j++) trim.tube(rows[2][j], rows[2][j + 1], 0.014, 5, CHROME, false);
+    for (const j of [0, 8]) trim.tube(rows[0][j], rows[2][j], 0.016, 5, CHROME, false);
+  }
+  // bow rail on stanchions, bow cleat and nav light, stern cleats and light pole
+  for (const sd of [-1, 1]) {
+    const pts = [1.05, 1.60, 2.20, 2.62].map((z) => { const s = at(z); return [sd * (s[1] - 0.07), s[2] + 0.30, z]; });
+    for (let i = 0; i < pts.length - 1; i++) trim.tube(pts[i], pts[i + 1], 0.013, 6, CHROME, false);
+    for (const p of pts) trim.tube([p[0], p[1] - 0.30, p[2]], p, 0.011, 6, CHROME, false);
+    trim.box(sd * 0.85, 0.61, -2.55, 0.06, 0.04, 0.18, 0, CHROME);
+  }
+  trim.tube([-0.08, 0.99, 2.62], [0.08, 0.99, 2.62], 0.015, 6, CHROME, true);        // bow rail tip
+  trim.box(0.05, 0.94, 2.72, 0.05, 0.04, 0.07, 0, [0.1, 0.85, 0.3]);
+  trim.box(-0.05, 0.94, 2.72, 0.05, 0.04, 0.07, 0, TAILC);
+  trim.box(0, 0.95, 2.45, 0.05, 0.03, 0.2, 0, CHROME);
+  trim.tube([0.62, 0.61, -2.62], [0.62, 1.55, -2.62], 0.014, 6, CHROME, true);
+  trim.tube([0.62, 1.55, -2.62], [0.62, 1.60, -2.62], 0.03, 8, LAMP, true);
+
+  // --- outboard ---------------------------------------------------------------------
+  const OZ = -3.08;
+  matte.box(0, 0.40, -2.86, 0.34, 0.24, 0.14, 0, [0.12, 0.12, 0.13]);            // transom bracket
+  matte.loft([
+    { z: -2.86, pts: ring2(0.15, 0.95, 0.24, 12) },
+    { z: -3.00, pts: ring2(0.21, 1.00, 0.30, 12) },
+    { z: -3.22, pts: ring2(0.20, 0.98, 0.28, 12) },
+    { z: -3.38, pts: ring2(0.12, 0.92, 0.20, 12) },
+  ], [0.07, 0.07, 0.08], { capStart: true, capEnd: true });
+  trim.box(0, 1.00, -3.39, 0.18, 0.05, 0.01, 0, [0.85, 0.86, 0.88]);               // decal band
+  matte.box(0, -0.25, OZ, 0.12, 0.95, 0.26, 0, [0.09, 0.09, 0.10]);                  // leg
+  matte.box(0, -0.25, OZ - 0.02, 0.30, 0.018, 0.40, 0, [0.09, 0.09, 0.10]);         // cavitation plate
+  matte.tube([0, -0.38, OZ + 0.20], [0, -0.38, OZ - 0.16], 0.07, 8, [0.09, 0.09, 0.10], true);
+  matte.box(0, -0.58, OZ - 0.04, 0.03, 0.20, 0.16, 0, [0.09, 0.09, 0.10]);          // skeg
+  for (let k = 0; k < 3; k++) {
+    const a = (k / 3) * Math.PI * 2 + 0.4;
+    trim.tube([0, -0.38, OZ - 0.20], [Math.cos(a) * 0.19, -0.38 + Math.sin(a) * 0.19, OZ - 0.23], 0.035, 4, ALLOY, true);
+  }
+
+  // --- the driver, at the helm (occupied geometry only) ---------------------------
+  if (matte.crew) occupant(matte.crew, HELM, 1.06, -0.46, 0.46, [HELM, 0.92, 0.36]);
+  return [];
+}
+
 /**
  * Where a rider sits, and how. One entry per bike, because the two riding
  * positions are as different as the bikes: a cruiser rider is upright with his
@@ -2221,6 +2648,14 @@ const RIDERS = {
     lean: 0.74, head: -0.82,
     shoulder: [-0.60, 0.22], elbow: [-0.22, 0.06],
     thigh: [-1.35, 0.26], knee: 1.55, foot: -0.25,
+  },
+  // Upright on the saddle, arms out to a wide straight bar, knees bent over
+  // the footboards and splayed round the tank: the quad's stance.
+  atv: {
+    z: -0.24, hipY: 0.96, seed: 77,
+    lean: 0.20, head: -0.22,
+    shoulder: [-0.92, 0.32], elbow: [-0.50, 0.10],
+    thigh: [-1.20, 0.34], knee: 1.40, foot: -0.15,
   },
 };
 
@@ -4102,6 +4537,7 @@ const HAND_BUILT = {
   boxtruck: (s, p, t, m) => buildTruck(s, p, t, m, TRUCK_LOOKS.boxtruck),
   garbage: (s, p, t, m) => buildTruck(s, p, t, m, TRUCK_LOOKS.garbage),
   convertible: buildConvertible, cruiser: buildCruiser, sportbike: buildSportbike,
+  atv: buildAtv, boat: buildBoat,
 };
 
 /**
@@ -4245,7 +4681,8 @@ function buildType(spec) {
   const build = HAND_BUILT[spec.hand];
   if (!build) throw new Error(`vehicle type has no builder: hand '${spec.hand}'`);
   const wheels = build(spec, paint, trim, matte);
-  if (!spec.plane) contactShadow(trim, spec);
+  // Not under a hull: a dark blob on the water reads as a hole in it.
+  if (!spec.plane && !spec.boat) contactShadow(trim, spec);
 
   const clone = (base) => {
     const b = new Builder(false);
@@ -4257,7 +4694,7 @@ function buildType(spec) {
   // A wheel may declare its own outboard side; a bike's are on the centreline,
   // where `Math.sign(ax)` says nothing.
   const outOf = ([ax, , , , , o]) => (o !== undefined ? o : (Math.sign(ax) || 1));
-  for (const wl of wheels) addWheel(trimW, matteW, wl[0], wl[1], wl[2], wl[3], wl[4], outOf(wl));
+  for (const wl of wheels) addWheel(trimW, matteW, wl[0], wl[1], wl[2], wl[3], wl[4], outOf(wl), !!wl[6]);
   // The detailed build needs a wheel geometry per distinct size AND per side:
   // the spokes and brake disc are only on the outboard face, so the left and
   // right wheels are mirror images and cannot share a buffer. Staggered tyres
@@ -4267,11 +4704,11 @@ function buildType(spec) {
   const placed = wheels.map((wl) => {
     const [ax, ay, az, r, w] = wl;
     const out = outOf(wl);
-    const k = `${r}|${w}|${out}`;
+    const k = `${r}|${w}|${out}|${!!wl[6]}`;
     let gi = geoKey.get(k);
     if (gi === undefined) {
       const wt = new Builder(false), wm = new Builder(false);
-      addWheel(wt, wm, 0, 0, 0, r, w, out);
+      addWheel(wt, wm, 0, 0, 0, r, w, out, !!wl[6]);
       gi = wheelGeos.length;
       wheelGeos.push({ trim: wt.build(), matte: wm.build() });
       geoKey.set(k, gi);
@@ -4543,7 +4980,7 @@ export class Vehicle {
     // A bike carries its rider. He goes in the tilt group, so he leans with it
     // -- parented to `group` instead he would stay bolt upright through every
     // corner while the bike went over underneath him.
-    this.rider = this.spec.moto ? makeRider(this.spec.hand) : null;
+    this.rider = this.spec.moto || this.spec.atv ? makeRider(this.spec.hand) : null;
     if (this.rider) this.tilt.add(this.rider.group);
     this.wheelMeshes = [];
 
@@ -4583,6 +5020,8 @@ export class Vehicle {
     this._cast = null; this._farCol = null;
     this._fwd = { x: 0, z: 1 }; this._fwdH = NaN;
     this._acc = 0; this._still = 0;   // traffic.js: half-rate AI time, parked-settle frames
+    this._t = 0; this.shoreHit = 0; this._surf = NaN;   // boats: wave clock, last grounding impact, eased surface
+    this._bob = (typeName.length * 1.37 + (color & 0xff) * 0.021) % 6.28;
   }
 
   // `mode` decides whether anyone is at the wheel. Traffic and police are
@@ -4592,9 +5031,15 @@ export class Vehicle {
   get mode() { return this._mode; }
   set mode(m) {
     this._mode = m;
+    // 'apron' is parked too (the airfield's planes, the moored boats and
+    // floatplanes, the parks' quads): nobody at the controls.
+    const empty = m === 'parked' || m === 'free' || m === 'apron';
     if (this.matteMesh && !this.detailedWheels) {
-      this.matteMesh.geometry = m === 'parked' || m === 'free' ? this.assets.matteGeoWE : this.assets.matteGeoW;
+      this.matteMesh.geometry = empty ? this.assets.matteGeoWE : this.assets.matteGeoW;
     }
+    // A quad's rider is there only when someone is riding it. (The bikes
+    // keep theirs as they always have: traffic is all they ever are.)
+    if (this.rider && this.spec.atv) this.rider.group.visible = this.detailedWheels || !empty;
   }
 
   /** The player's own car gets steerable, spinning wheel meshes; traffic doesn't. */
@@ -4605,6 +5050,7 @@ export class Vehicle {
     this.trimMesh.geometry = on ? this.assets.trimGeo : this.assets.trimGeoW;
     this.matteMesh.geometry = on ? this.assets.matteGeo : this.assets.matteGeoW;
     if (!on) this.mode = this._mode;
+    if (this.rider && this.spec.atv) this.rider.group.visible = on || this._mode === 'traffic';
     if (on) {
       for (const [wx, wy, wz, gi] of this.assets.wheels) {
         const g = new THREE.Group();
@@ -4626,6 +5072,17 @@ export class Vehicle {
   place(x, z, heading) {
     this.x = x; this.z = z;
     this.heading = heading;
+    if (this.spec.boat) {
+      // On the water's LOCAL surface, level. The lakebed under it is what
+      // groundAt would answer.
+      const wl = waterQuery ? waterQuery(x, z) : null;
+      this.lift = 0;
+      this.y = wl !== null ? wl : this.city.groundAt(x, z, null);
+      this._surf = this.y;
+      this.pitch = 0; this.roll = 0;
+      this.sync();
+      return;
+    }
     this.lift = this.city.roadLift(x, z);
     this.y = this.city.groundAt(x, z, null, this.lift);
     // Sit on the slope, the same way update() does. A parked car never runs
@@ -4776,10 +5233,116 @@ export class Vehicle {
     this.skid = 0;
   }
 
+  /**
+   * The hull model. Same controls as a car -- throttle, brake-as-reverse,
+   * steer -- but nothing touches the ground:
+   *
+   *  - it floats on the LOCAL surface (waterQuery: Lake Union 5.31, Green
+   *    Lake 50.3, the sea 0), eased toward it so a change of level between
+   *    two waters is a drop, not a teleport;
+   *  - water is where the bed lies at least MIN_DEPTH under that surface.
+   *    Anything shallower is shore and stops the bow like a kerb stops a
+   *    wheel: the move is refused, tried again along each axis so the boat
+   *    slides along a bank, and the impact is left in `shoreHit` for the
+   *    player's crash handling. The last metre of depth drags, so running
+   *    in slowly beaches softly;
+   *  - drag is quadratic, sized so thrust balances it at the declared top
+   *    speed, plus a linear term so an idle hull coasts to a stop;
+   *  - it turns by thrust, so the rate falls away at rest unless the
+   *    throttle is open (prop wash), and it slides: a hull holds its line
+   *    far less than a tyre, which is what makes it feel like water;
+   *  - it bobs, pitches up onto the plane with speed, squats under power and
+   *    banks into a turn.
+   *
+   * A moored boat ('apron') holds its mooring and only bobs.
+   */
+  updateBoat(dt, input) {
+    const spec = this.spec;
+    const MIN_DEPTH = 0.45;
+    const throttle = input.throttle || 0;
+    const brake = input.brake || 0;
+    const steerIn = clamp(input.steer || 0, -1, 1);
+    this._t += dt;
+    const depthAt = (x, z) => {
+      const wl = waterQuery ? waterQuery(x, z) : null;
+      return wl === null ? -1 : wl - G.terrainHeight(x, z);
+    };
+    const moored = this._mode === 'apron';
+    const V = spec.topKph / 3.6;
+    let acc = 0;
+    if (!moored) {
+      if (throttle > 0) acc += spec.acc * throttle * (this.vLong < -0.5 ? 1.6 : 1);
+      // A pad's resting trigger or a coasting AI's token brake is not a
+      // request for astern.
+      if (brake > 0.3) acc -= spec.acc * (this.vLong > 0.5 ? 1.0 : 0.45 * (1 - clamp(-this.vLong / 6, 0, 1))) * brake;
+    }
+    // sized so thrust and both terms balance exactly at V
+    acc -= (spec.acc - 0.18 * V) * (this.vLong * Math.abs(this.vLong)) / (V * V) + this.vLong * 0.18;
+    // shallows drag: the last metre before the bed is too shallow to run in
+    const dHere = depthAt(this.x, this.z);
+    const shallow = clamp((1.2 - dHere) / (1.2 - MIN_DEPTH), 0, 1);
+    acc -= this.vLong * 2.5 * shallow;
+    this.vLong += acc * dt;
+    if (moored) { this.vLong = 0; this.vLat = 0; }
+
+    const sp = Math.abs(this.vLong);
+    const bite = clamp(sp / 5, 0, 1) * (1 - 0.3 * clamp(sp / V, 0, 1)) + (1 - clamp(sp / 5, 0, 1)) * 0.35 * throttle;
+    const yawRate = steerIn * 0.95 * bite * (this.vLong < -0.3 ? -1 : 1);
+    this.heading += yawRate * dt;
+    this.steer = lerp(this.steer, steerIn * 0.5, 1 - Math.exp(-8 * dt));
+    this.vLat += -yawRate * this.vLong * dt * 0.8;
+    this.vLat *= Math.exp(-2.4 * dt);
+    this.latAcc = yawRate * this.vLong;
+
+    const f = this.forward;
+    const rx = f.z, rz = -f.x;
+    const dx = (f.x * this.vLong + rx * this.vLat) * dt;
+    const dz = (f.z * this.vLong + rz * this.vLat) * dt;
+    // The probe leads the hull by its half-length in the direction of travel.
+    const lead = this.vLong >= 0 ? this.halfLen * 0.92 : -this.halfLen * 0.92;
+    const ok = (x, z) => depthAt(x, z) >= MIN_DEPTH && depthAt(x + f.x * lead, z + f.z * lead) >= MIN_DEPTH;
+    this.shoreHit = 0;
+    if (ok(this.x + dx, this.z + dz)) { this.x += dx; this.z += dz; }
+    else {
+      const impact = sp;
+      if (ok(this.x + dx, this.z)) this.x += dx;
+      else if (ok(this.x, this.z + dz)) this.z += dz;
+      this.vLong *= impact > 4 ? -0.15 : 0.35;
+      this.vLat *= 0.3;
+      this.shoreHit = impact;
+    }
+    this.x = G.clampToMap(this.x);
+    this.z = G.clampToMap(this.z);
+
+    const wl = waterQuery ? waterQuery(this.x, this.z) : null;
+    const surf = wl !== null ? wl : this.y;
+    const ph = this._bob, t = this._t;
+    const heave = Math.sin(t * 1.7 + ph) * 0.035 + Math.sin(t * 2.9 + ph * 2.1) * 0.015;
+    const base = Number.isNaN(this._surf) ? surf : damp(this._surf, surf, 3, dt);
+    this._surf = base;
+    this.y = base + heave * (1 - 0.6 * clamp(sp / 10, 0, 1));
+    this.onGround = true;
+    this.vy = 0;
+    // Up onto the plane: the bow climbs through the hump near a third of top
+    // speed and settles lower once planing. Bow up is NEGATIVE pitch here.
+    const r = clamp(this.vLong / V, 0, 1);
+    const hump = Math.exp(-(((r - 0.33) / 0.2) ** 2));
+    const tgtPitch = -(0.085 * hump + 0.03 * r) - clamp(acc, -8, 8) * 0.004
+      + Math.sin(t * 1.3 + ph * 1.7) * 0.012 * (1 - 0.5 * r);
+    const tgtRoll = -clamp(yawRate * clamp(sp / 6, 0, 1), -1, 1) * 0.11
+      + Math.sin(t * 1.1 + ph * 0.7) * 0.018;
+    this.pitch = lerp(this.pitch, tgtPitch, 1 - Math.exp(-4 * dt));
+    this.roll = lerp(this.roll, tgtRoll, 1 - Math.exp(-4 * dt));
+    this.skid = 0;
+    this.sync();
+    return { dx, dz };
+  }
+
   update(dt, input) {
     const spec = this.spec;
     if (this.hitCd > 0) this.hitCd -= dt;
     if (spec.plane) { this.updatePlane(dt, input); return; }
+    if (spec.boat) { this.updateBoat(dt, input); return; }
     const throttle = input.throttle || 0;
     const brake = input.brake || 0;
     const hand = input.handbrake || 0;
@@ -4839,7 +5402,7 @@ export class Vehicle {
     // class differs by its own latG rather than by a fudge. The low-speed floor
     // is unchanged, so parking-lot lock is exactly as tight as before -- below
     // about 34 km/h the floor is what applies.
-    const turnR = Math.max(4.5 / agility, (sp * sp) / (spec.latA * ARCADE_GRIP * STEER_BITE));
+    const turnR = Math.max((spec.minTurnR || 4.5) / agility, (sp * sp) / (spec.latA * ARCADE_GRIP * STEER_BITE));
     const lock = Math.min(0.62, Math.atan(wheelbase / turnR))
       * (hand > 0.5 ? 1.25 : 1)
       * (brake > 0 && this.vLong > 0.4 ? 0.92 : 1);
@@ -4873,11 +5436,26 @@ export class Vehicle {
     // driver holds a target speed whatever the grade, so gravity along the
     // road changes nothing anyone can see, and these were two of its ground
     // queries a frame.
+    // Off pavement, a road car bogs down; the quad does not.
+    let rough = 0;
     if (!this.lowDetail) {
       const fw = this.forward;
       const gy = this.city.groundAt(this.x, this.z, this.y + 0.6, this.lift);
       const ahead = this.city.groundAt(this.x + fw.x * 3, this.z + fw.z * 3, this.y + 2.5, this.lift);
-      acc -= clamp((ahead - gy) / 3, -0.7, 0.7) * 9.0;
+      // Low gearing and four driven knobblies: a quad climbs what stalls a
+      // sedan, so it pays half the grade.
+      acc -= clamp((ahead - gy) / 3, -0.7, 0.7) * 9.0 * (spec.offroad ? 0.5 : 1);
+      // GRASS. Only for a vehicle nobody's AI is driving (the player's, or one
+      // coasting after being left): traffic keeps to the roads. "Paved" is a
+      // road's lift, a deck or lid (the ground there is not the terrain), or
+      // a lot, which the terrain shader paints as tarmac.
+      if (this._mode === 'free' && this.lift < 0.02 && Math.abs(gy - G.terrainHeight(this.x, this.z)) < 0.05
+        && !G.inLot(this.x, this.z)) {
+        rough = clamp(sp / 8, 0, 1);
+        // Rolling resistance on turf: a sedan tops out near 110 km/h on a
+        // lawn instead of 205, and a quad does not notice.
+        if (!spec.offroad) acc -= this.vLong * Math.abs(this.vLong) * 0.0055 + this.vLong * 0.25;
+      }
     }
 
     acc -= this.vLong * Math.abs(this.vLong) * DRAG; // aero
@@ -5000,7 +5578,15 @@ export class Vehicle {
     }
 
     // body attitude, from the samples taken above
-    const tgtPitch = Math.atan2(bh - fh, this.halfLen * 2) - clamp(acc, -12, 12) * 0.0045;
+    let tgtPitch = Math.atan2(bh - fh, this.halfLen * 2) - clamp(acc, -12, 12) * 0.0045;
+    // Ruts and tussocks. The heightfield is 40 m smooth, so without this a
+    // quad on a field glides like a car on a motorway. Deterministic in
+    // position, so standing still is still; a road car on grass jolts too.
+    let rut = 0;
+    if (rough > 0) {
+      rut = (Math.sin(this.x * 1.9 + this.z * 0.7) * Math.sin(this.z * 2.3 - this.x * 0.4)) * rough;
+      tgtPitch += rut * (spec.offroad ? 0.022 : 0.012);
+    }
     // `lh` is sampled along the body's local +X, and a positive rotation.z
     // raises local +X -- so the far side has to be SUBTRACTED, not the near one.
     // Reversed, the car leaned into the slope instead of along it: measured on
@@ -5024,7 +5610,8 @@ export class Vehicle {
       // gives a lean that is proportional to what the rider asked for, and it
       // still fades out below walking pace so a parked bike stands up.
       ? -0.70 * clamp(this.steer / Math.max(lock, 1e-3), -1, 1) * clamp((sp - 0.8) / 6, 0, 1)
-      : Math.atan2(lh - rh, this.halfWid * 2) + clamp(this.vLat, -9, 9) * 0.016;
+      : Math.atan2(lh - rh, this.halfWid * 2) + clamp(this.vLat, -9, 9) * 0.016
+        + (rough > 0 ? Math.sin(this.x * 2.7 - this.z * 1.3) * rough * (spec.offroad ? 0.03 : 0.015) : 0);
     this.pitch = lerp(this.pitch, tgtPitch, 1 - Math.exp(-10 * dt));
     // A bike's lean IS its steering, visually, so it has to arrive with the
     // turn rather than a tenth of a second behind it -- lagging the yaw is what

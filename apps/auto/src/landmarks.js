@@ -1660,26 +1660,216 @@ function airport() {
 }
 
 /**
- * A small floatplane dock on Lake Union's west shore. Not an OSM landmark --
- * it is the game's own fixture, so it is placed by hand from measured
- * shoreline coordinates (land ends at x -160 near z -2800; the lake sits at
- * 5.31 m) rather than through places.json.
+ * The seaplane dock at Lake Union's south-west corner, where Kenmore Air's
+ * real terminal is (47.6290 N, 122.3393 W; Westlake Ave N). Not an OSM
+ * landmark -- the game's own fixture, placed by hand from the measured shore:
+ * at z -1960 the terrain crosses the lake's 5.31 m surface at x -146 and the
+ * water mask starts at x -120.
+ *
+ * It used to be a pier 900 m up the wrong shore at (-140, -2800), with the
+ * floatplane parked alone at the real site, and its deck was drawn but not
+ * walkable: groundAt answered the lakebed under it. Everything here is laid
+ * out in WORLD axes (the group is never rotated), and the builder registers
+ * the exact tops it draws as city platforms, so what you walk on is what is
+ * drawn. The layout, west to east:
+ *
+ *   landing   x -158..-146, z -1968..-1952, top PIER_Y: runs into the bank,
+ *             so walking down the lawn from Westlake you step straight on
+ *   pier      x -146..-114, 4 m wide on z -1960, top PIER_Y, railed
+ *   gangway   x -114..-102.5, 1.6 m wide, PIER_Y down to FLOAT_Y
+ *   float     x -102.5..-99.5, z -1986..-1934, top FLOAT_Y, low curbs
+ *
+ * The rails and curbs are solids for walkers AND fenders for boats (a solid's
+ * band reaches 2.5 m under its y0); the moorings below sit clear of them.
  */
-function seadock() {
+const DOCK = { x: -130, z: -1960 };
+export const LAKE_UNION_Y = 5.31;
+const PIER_Y = 6.75, FLOAT_Y = LAKE_UNION_Y + 0.45;
+const FLOAT_X0 = -102.5, FLOAT_X1 = -99.5, FLOAT_Z0 = -1986, FLOAT_Z1 = -1934;
+export const SEAPLANE_DOCK = {
+  x: -128, z: -1960, name: 'Lake Union Seaplane Dock',
+  level: LAKE_UNION_Y,
+  // [type, x, z, heading, colour]. Heading PI faces north (-z). Each centre
+  // sits its collision circle (0.7 x radius) clear of the float's curb.
+  moorings: [
+    ['floatplane', FLOAT_X1 + 3.1, -1946, Math.PI, 0xe8c53a],
+    ['floatplane', FLOAT_X0 - 3.1, -1944, 0, 0xd8dde2],
+    ['boat', FLOAT_X1 + 2.2, -1968, Math.PI, 0xf2f2ee],
+    ['boat', FLOAT_X0 - 2.2, -1974, 0, 0x1f3f6a],
+  ],
+};
+
+function seaplaneDock() {
   const g = new THREE.Group();
-  const deckM = M(0x8a6f4d), postM = M(0x5b4632);
-  // pier: from the shore out over the water, planked
-  g.add(box(44, 0.5, 4.6, deckM, 2, 0.9, 0));
-  for (let k = -4; k <= 4; k++) {
-    g.add(cyl(0.18, 0.18, 2.6, postM, -18 + (k + 4) * 5, -0.4, 2.0, 6));
-    g.add(cyl(0.18, 0.18, 2.6, postM, -18 + (k + 4) * 5, -0.4, -2.0, 6));
+  const O = DOCK;
+  const L = (x, z) => [x - O.x, z - O.z];            // world -> group-local
+  const plat = [];
+  const deckA = M(0x8a6f4d), deckB = M(0x7c6245), joist = M(0x5a4631), pile = M(0x4a3a2b);
+  const rail = P(0x9aa1a6, 0.45, 0.6, 0.8), hullM = M(0xd9dcd6), rubM = M(0x2b2e31);
+  // Planked deck over [x0, x1] x [z0, z1] at top y (or sloping y0 -> y1 along
+  // +x for the gangway). Boards run ACROSS the walkway, two tones alternating,
+  // 1.2 m to a board pair, so the deck reads as timber from the street.
+  const deck = (x0, x1, z0, z1, y0, y1 = y0, th = 0.28) => {
+    const n = Math.max(1, Math.round((x1 - x0) / 0.6));
+    const slope = (y1 - y0) / (x1 - x0);
+    for (let i = 0; i < n; i++) {
+      const a = x0 + ((x1 - x0) * i) / n, b = x0 + ((x1 - x0) * (i + 1)) / n;
+      const mx = (a + b) / 2, yt = y0 + (mx - x0) * slope;
+      const [lx, lz] = L(mx, (z0 + z1) / 2);
+      const bd = box(b - a - 0.02, th, z1 - z0, i % 2 ? deckB : deckA, lx, yt - th, lz);
+      if (slope) bd.rotation.z = Math.atan(slope);
+      g.add(bd);
+    }
+    // One platform, exactly the top drawn. `v` runs along +x here: rot -PI/2
+    // turns citygen's local v = (-sin rot, cos rot) into world (+1, 0).
+    plat.push({ x: (x0 + x1) / 2, z: (z0 + z1) / 2, hw: (z1 - z0) / 2, hd: (x1 - x0) / 2, rot: -Math.PI / 2, y0, y1 });
+  };
+  // A solid wall segment in world coords with a height band.
+  const wall = (ax, az, bx, bz, y0, y1, t = 0.3) => {
+    const [la, lb] = L((ax + bx) / 2, (az + bz) / 2);
+    solidBox(g, la, lb, Math.hypot(bx - ax, bz - az) / 2 + t / 2, t / 2, Math.atan2(bz - az, bx - ax), y1, y0);
+  };
+  // Railing: posts every ~2 m, a top rail and a mid rail, and its solid.
+  const railing = (ax, az, bx, bz, ya, yb = ya) => {
+    const len = Math.hypot(bx - ax, bz - az), n = Math.max(1, Math.round(len / 2));
+    for (let i = 0; i <= n; i++) {
+      const t = i / n, [lx, lz] = L(ax + (bx - ax) * t, az + (bz - az) * t);
+      g.add(cyl(0.035, 0.035, 1.05, rail, lx, ya + (yb - ya) * t, lz, 6));
+    }
+    const ang = Math.atan2(bz - az, bx - ax), [mx, mz] = L((ax + bx) / 2, (az + bz) / 2);
+    for (const h of [1.02, 0.55]) {
+      const r = box(len, 0.05, 0.05, rail, mx, (ya + yb) / 2 + h, mz, -ang);
+      r.rotation.z = Math.atan2(yb - ya, len) * Math.cos(ang);
+      r.rotation.x = -Math.atan2(yb - ya, len) * Math.sin(ang);
+      g.add(r);
+    }
+    wall(ax, az, bx, bz, Math.min(ya, yb) - 0.3, Math.max(ya, yb) + 1.2);
+  };
+  // Piles from the lakebed (or bank) up through the deck, capped.
+  const pileAt = (x, z, top) => {
+    const bed = G.terrainHeight(x, z) - 0.4, [lx, lz] = L(x, z);
+    if (bed > top - 0.3) return;
+    g.add(cyl(0.16, 0.18, top + 0.18 - bed, pile, lx, bed, lz, 7));
+  };
+
+  // --- landing and pier ----------------------------------------------------
+  deck(-158, -146, -1968, -1952, PIER_Y);
+  deck(-146, -114, -1962, -1958, PIER_Y);
+  for (let x = -154; x <= -114; x += 4) for (const z of [-1962.1, -1957.9]) pileAt(x, z, PIER_Y);
+  for (const z of [-1967.8, -1952.2]) for (const x of [-154, -150, -146.2]) pileAt(x, z, PIER_Y);
+  // joists under the deck edge, so the pier has a fascia and not a floating plank sheet
+  for (const z of [-1962.05, -1957.95]) {
+    const [lx, lz] = L(-130, z);
+    g.add(box(32, 0.34, 0.12, joist, lx, PIER_Y - 0.62, lz));
   }
-  // L-head at the end, where the plane ties up
-  g.add(box(4.6, 0.5, 16, deckM, 22, 0.9, 6));
-  // a small shed and a fuel drum at the shore end
-  g.add(box(4.4, 3.0, 3.6, M(0x77593c), -16, 2.5, 0));
-  g.add(box(5.0, 0.4, 4.2, M(0x64492f), -16, 4.1, 0));
-  g.add(cyl(0.55, 0.55, 1.3, M(0xa33d2a), -12.5, 1.7, 1.2, 10));
+  // Rails where the deck stands over the water or the steep bank. The
+  // landing's west half runs into the ground and is left open, like its west
+  // edge, so the lawn is the way on.
+  railing(-152, -1968, -146, -1968, PIER_Y);
+  railing(-152, -1952, -146, -1952, PIER_Y);
+  railing(-146, -1968, -146, -1962.1, PIER_Y);
+  railing(-146, -1957.9, -146, -1952, PIER_Y);
+  railing(-146, -1962.1, -114, -1962.1, PIER_Y);
+  railing(-146, -1957.9, -114, -1957.9, PIER_Y);
+
+  // --- gangway down to the float ------------------------------------------
+  deck(-114, FLOAT_X0, -1960.8, -1959.2, PIER_Y, FLOAT_Y, 0.16);
+  railing(-114, -1960.9, FLOAT_X0, -1960.9, PIER_Y, FLOAT_Y);
+  railing(-114, -1959.1, FLOAT_X0, -1959.1, PIER_Y, FLOAT_Y);
+
+  // --- the float -----------------------------------------------------------
+  // Pontoon body: white HDPE flanks to below the waterline, a black rub
+  // strake along the top edge, the timber deck on top.
+  {
+    const [lx, lz] = L((FLOAT_X0 + FLOAT_X1) / 2, (FLOAT_Z0 + FLOAT_Z1) / 2);
+    g.add(box(FLOAT_X1 - FLOAT_X0 - 0.1, FLOAT_Y - 0.22 - (LAKE_UNION_Y - 0.4), FLOAT_Z1 - FLOAT_Z0 - 0.1, hullM, lx, LAKE_UNION_Y - 0.4, lz));
+    g.add(box(FLOAT_X1 - FLOAT_X0 + 0.12, 0.16, FLOAT_Z1 - FLOAT_Z0 + 0.12, rubM, lx, FLOAT_Y - 0.36, lz));
+  }
+  {
+    // boards run across the float: x is its short axis, so lay them in z
+    const n = Math.round((FLOAT_Z1 - FLOAT_Z0) / 0.6);
+    for (let i = 0; i < n; i++) {
+      const a = FLOAT_Z0 + ((FLOAT_Z1 - FLOAT_Z0) * i) / n, b = FLOAT_Z0 + ((FLOAT_Z1 - FLOAT_Z0) * (i + 1)) / n;
+      const [lx, lz] = L((FLOAT_X0 + FLOAT_X1) / 2, (a + b) / 2);
+      g.add(box(FLOAT_X1 - FLOAT_X0, 0.22, b - a - 0.02, i % 2 ? deckB : deckA, lx, FLOAT_Y - 0.22, lz));
+    }
+    plat.push({ x: (FLOAT_X0 + FLOAT_X1) / 2, z: (FLOAT_Z0 + FLOAT_Z1) / 2, hw: (FLOAT_X1 - FLOAT_X0) / 2,
+      hd: (FLOAT_Z1 - FLOAT_Z0) / 2, rot: 0, y0: FLOAT_Y, y1: FLOAT_Y });
+  }
+  // Curbs (a 12 cm timber kerb round the edge -- what stops a walker, and a
+  // boat, going over), cleats every 4 m, and the gap where the gangway lands.
+  const curb = (ax, az, bx, bz) => {
+    const len = Math.hypot(bx - ax, bz - az), [mx, mz] = L((ax + bx) / 2, (az + bz) / 2);
+    const ang = Math.atan2(bz - az, bx - ax);
+    g.add(box(len, 0.12, 0.14, joist, mx, FLOAT_Y, mz, -ang));
+    wall(ax, az, bx, bz, FLOAT_Y - 0.3, FLOAT_Y + 1.0, 0.24);
+  };
+  curb(FLOAT_X1 - 0.07, FLOAT_Z0, FLOAT_X1 - 0.07, FLOAT_Z1);
+  curb(FLOAT_X0 + 0.07, FLOAT_Z0, FLOAT_X0 + 0.07, -1961.0);
+  curb(FLOAT_X0 + 0.07, -1959.0, FLOAT_X0 + 0.07, FLOAT_Z1);
+  curb(FLOAT_X0, FLOAT_Z0 + 0.07, FLOAT_X1, FLOAT_Z0 + 0.07);
+  curb(FLOAT_X0, FLOAT_Z1 - 0.07, FLOAT_X1, FLOAT_Z1 - 0.07);
+  const cleatM = P(0x6d7378, 0.4, 0.7, 0.8);
+  for (let z = FLOAT_Z0 + 3; z < FLOAT_Z1 - 1; z += 4) {
+    for (const x of [FLOAT_X0 + 0.32, FLOAT_X1 - 0.32]) {
+      const [lx, lz] = L(x, z);
+      g.add(box(0.12, 0.1, 0.34, cleatM, lx, FLOAT_Y, lz));
+    }
+  }
+  // Guide piles the float rides on, one at each end and two mid-way.
+  for (const z of [FLOAT_Z0 - 0.35, -1960, FLOAT_Z1 + 0.35]) {
+    for (const x of [FLOAT_X0 - 0.3, FLOAT_X1 + 0.3]) {
+      if (z === -1960 && x < FLOAT_X0) continue;
+      const bed = G.terrainHeight(x, z) - 0.4, [lx, lz] = L(x, z);
+      g.add(cyl(0.2, 0.22, FLOAT_Y + 1.6 - bed, pile, lx, bed, lz, 8));
+      g.add(cyl(0.23, 0.2, 0.08, rail, lx, FLOAT_Y + 1.6, lz, 8));
+      solidCircle(g, lx, lz, 0.25, FLOAT_Y + 1.7, bed + 1.5);
+    }
+  }
+  // Life ring and a fuel point on the float, the things that say "dock".
+  {
+    const [lx, lz] = L(FLOAT_X1 - 0.45, -1956);
+    g.add(box(0.5, 1.2, 0.5, M(0xb8352a), lx, FLOAT_Y, lz));
+    g.add(box(0.36, 0.14, 0.52, P(0x2f3438, 0.5, 0.3), lx, FLOAT_Y + 1.2, lz));
+    solidBox(g, lx, lz, 0.28, 0.28, 0, FLOAT_Y + 1.4, FLOAT_Y - 0.3);
+    const ring = new THREE.Mesh(new THREE.TorusGeometry(0.32, 0.07, 6, 14), M(0xe86a1c));
+    const [rx, rz] = L(-114.4, -1962.15);
+    ring.position.set(rx, PIER_Y + 0.62, rz);
+    g.add(ring);
+  }
+
+  // --- terminal kiosk on the landing ---------------------------------------
+  {
+    const [kx, kz] = L(-152.5, -1965.2);
+    g.add(box(5.2, 2.7, 3.2, M(0xe4dfd2), kx, PIER_Y, kz));
+    g.add(box(6.0, 0.22, 4.0, M(0x35505f), kx, PIER_Y + 2.7, kz));
+    // windows and a door on the +z face, toward the walkway
+    g.add(box(3.2, 1.0, 0.06, P(0x1d2a33, 0.15, 0.2, 1.2), kx - 0.6, PIER_Y + 1.1, kz + 1.61));
+    g.add(box(0.9, 2.0, 0.06, M(0x35505f), kx + 1.7, PIER_Y, kz + 1.61));
+    solidBox(g, kx, kz, 2.7, 1.7, 0, PIER_Y + 3, PIER_Y - 0.3);
+    const s = sign('SEAPLANES · BOATS', 4.6, 0.62, '#1f3a4a', '#f4efe2', { px: 60 });
+    s.position.set(kx, PIER_Y + 3.2, kz + 1.2);
+    g.add(s);
+    // a second sign facing the street, up on two posts at the lawn's edge
+    const [sx, sz] = L(-161, -1960);
+    for (const dz of [-1.6, 1.6]) g.add(cyl(0.06, 0.06, 2.6, rail, sx, G.terrainHeight(-161, -1960 + dz) - 0.2, sz + dz, 6));
+    const s2 = sign('LAKE UNION\nSEAPLANE DOCK', 3.4, 1.3, '#1f3a4a', '#f4efe2', { px: 60 });
+    s2.position.set(sx - 0.07, G.terrainHeight(-161, -1960) + 1.9, sz);
+    s2.rotation.y = -Math.PI / 2;
+    g.add(s2);
+    solidCircle(g, sx, sz - 1.6, 0.12, G.terrainHeight(-161, -1960) + 3);
+    solidCircle(g, sx, sz + 1.6, 0.12, G.terrainHeight(-161, -1960) + 3);
+  }
+  // benches along the landing's north side
+  for (const x of [-156.2, -151]) {
+    const [bx, bz] = L(x, -1953.2);
+    g.add(box(1.8, 0.08, 0.5, deckA, bx, PIER_Y + 0.42, bz));
+    g.add(box(1.8, 0.4, 0.08, deckB, bx, PIER_Y + 0.5, bz + 0.24));
+    for (const d of [-0.75, 0.75]) g.add(box(0.08, 0.42, 0.44, rail, bx + d, PIER_Y, bz));
+  }
+
+  g.userData.platforms = plat;
+  g.userData.worldAligned = true;
   return g;
 }
 
@@ -1746,10 +1936,19 @@ export function buildLandmarks(scene, city) {
     if (!c) clusters.set(key, (c = new THREE.Group()));
     c.add(obj);
   };
-  // hand-placed fixtures first (see seadock's comment for why no places.json)
+  // hand-placed fixtures first (see seaplaneDock's comment for why no
+  // places.json). Its solids go through the same road test as a landmark's,
+  // and its decks become walkable platforms.
+  const platforms = [];
   {
-    const d = seadock();
-    d.position.set(-140, 5.31, -2800);
+    const d = seaplaneDock();
+    d.position.set(DOCK.x, 0, DOCK.z);
+    for (const s of d.userData.solids || []) {
+      const w = worldSolid(s, DOCK.x, 0, DOCK.z, 0);
+      if (city && onRoad(city, w)) { dropped.push(`seadock@${w.x.toFixed(0)},${w.z.toFixed(0)}`); continue; }
+      solids.push(w);
+    }
+    platforms.push(...d.userData.platforms);
     addTo('seadock', d);
   }
   for (const l of G.LANDMARKS) {
@@ -1803,6 +2002,8 @@ export function buildLandmarks(scene, city) {
   root.userData.solids = solids.length;
   root.userData.solidsDropped = dropped;
   if (city && city.setLandmarkSolids) city.setLandmarkSolids(solids);
+  if (city && city.setPlatforms) city.setPlatforms(platforms);
+  root.userData.platforms = platforms.length;
   scene.add(root);
   return root;
 }

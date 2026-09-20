@@ -6,7 +6,7 @@ import { cityGenerator, cityStats } from './citygen.js';
 import { loadMapData } from './mapdata.js';
 import { buildTextures, planTextures, encodeTextures, restoreTextures, canvasToBlob, blobToCanvas, within } from './textures.js';
 import { World, WET_FLOOR } from './world.js';
-import { buildLandmarks } from './landmarks.js';
+import { buildLandmarks, SEAPLANE_DOCK } from './landmarks.js';
 import { freezeStatic } from './build.js';
 import { cacheGet, cachePut, cacheGuardTripped, cacheGuardSet, cacheClear } from './bootcache.js';
 import { TrafficSystem, collideWithBuildings } from './traffic.js';
@@ -34,6 +34,15 @@ const blog = (m) => { try { if (window.__bootLog) window.__bootLog(m); } catch (
 const ON_PHONE = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
 
 const STAR_POINTS = [0, 30, 90, 190, 340, 560];
+// Where the quads are parked: [x, z, heading, colour]. On measured open
+// grass -- in a park, off every road, clear of footprints, lots and trunks --
+// at the foot of Gas Works' Kite Hill, facing up it, and on Seattle Center's
+// lawn a short walk from the spawn; and one in the seaplane dock's car park.
+const ATV_SPOTS = [
+  [185, -3772, -Math.PI / 2, 0x3d7a2e],
+  [-172, -1947, -1.9, 0xc8452e],
+  [-950, -900, 2.2, 0xe8b21c],
+];
 const HOSPITAL = G.RESPAWN; // kept clear of buildings by citygen, via G.KEEP_CLEAR
 
 class Game {
@@ -145,6 +154,11 @@ class Game {
     controls.setMode('foot');
   }
 
+  /** A boat refused to let you step off into the lake (player.exitVehicle). */
+  onNoLanding() {
+    hud.showToast('Nowhere to step off — bring it alongside a dock or the shore');
+  }
+
   onDrown() {
     this.damagePlayer(200, 'water');
   }
@@ -161,7 +175,7 @@ class Game {
     peds.scare(v.x, v.z, 45);
     if (v === player.vehicle) {
       this.damagePlayer(70, 'explosion');
-      player.exitVehicle();
+      player.exitVehicle(true);
     }
     this.addHeat(14);
     setTimeout(() => traffic.remove(v), 60);
@@ -585,19 +599,35 @@ function installShadowFade() {
         const v = traffic.spawnAt(px, pz, 0.52, ty, PLANE_PAINT[ty], 'apron');
         v.vLong = 0;
       }
-      // ...and the Kenmore-style floatplane at its Lake Union dock. The lake
-      // is at 5.31 m; place() would sink it to the lakebed, so the height is
-      // set by hand and the float physics holds it on the surface after.
-      {
-        // Southwest corner of the lake, where Kenmore Air's terminal really
-        // is -- it was parked 900 m north along the wrong shore.
-        const fp = traffic.spawnAt(-125, -1960, -1.5, 'floatplane', 0xe8c53a, 'apron');
-        fp.vLong = 0;
-        fp.y = 5.31 + 0.12;
-        fp.group.position.y = fp.y + (fp.spec.wheelR || 0.3) + 0.25;
-      }
     }
   }
+  // The seaplane dock on Lake Union (landmarks.js builds it and owns the
+  // mooring list): floatplanes and boats tied up alongside its float, 'apron'
+  // so they never despawn. place() puts a plane on the lakebed, so a
+  // floatplane's height is set from the LOCAL surface by hand and its float
+  // physics hold it there after; a boat's place() finds the surface itself.
+  for (const [ty, x, z, h, col] of SEAPLANE_DOCK.moorings) {
+    const v = traffic.spawnAt(x, z, h, ty, col, 'apron');
+    v.vLong = 0;
+    if (v.spec.floats) {
+      const wl = world.waterLevelAt(x, z);
+      v.y = (wl !== null ? wl : SEAPLANE_DOCK.level) + 0.12;
+      v.group.position.y = v.y + (v.spec.wheelR || 0.3) + 0.25;
+    }
+  }
+  // Quads, parked out on the grass where they are for: Gas Works' Kite Hill,
+  // the lawn by the seaplane dock, and Seattle Center's by the spawn.
+  for (const [x, z, h, col] of ATV_SPOTS) {
+    const v = traffic.spawnAt(x, z, h, 'atv', col, 'apron');
+    v.vLong = 0;
+  }
+  // What the map marks, and what says hello when you get near (the HUD is
+  // made below; it takes the list then).
+  const mapPlaces = [
+    { x: SEAPLANE_DOCK.x, z: SEAPLANE_DOCK.z, kind: 'dock', name: 'Seaplane Dock',
+      hello: `${SEAPLANE_DOCK.name} — floatplanes and boats. Walk out to the float and get in` },
+    ...ATV_SPOTS.map(([x, z]) => ({ x, z, kind: 'atv', name: 'Quad bike', hello: 'A quad bike — made for the grass' })),
+  ];
   peds = new PedSystem(scene, city, game);
   peds.camera = camera;   // animation LOD culls against it
   fx = new Effects(scene, tx);
@@ -605,6 +635,7 @@ function installShadowFade() {
   if (bc.map) { try { mapCanvas = await blobToCanvas(bc.map); } catch (e) { mapCanvas = null; blog('map: restore failed ' + e.message); } }
   if (!mapCanvas) { mapCanvas = buildMapCanvas(city); bcOut.mapCanvas = mapCanvas; }
   hud = new Hud(document.getElementById('app'), city, mapCanvas);
+  hud.places = mapPlaces;
   {
     // One tap, never behind a menu: a lost run on a phone ends the session.
     const rb = document.getElementById('raceRestart');
@@ -1210,6 +1241,13 @@ function frame(now) {
   peds.update(dt, p.x, p.z, player, traffic);
   if (prof) lap('peds');
   if (acts) acts.update(dt, player);
+  // Say hello once per approach to anything the map marks (the dock, the
+  // quads): the map is how you find them, this is how you know you have.
+  for (const pl of hud.places) {
+    const d2 = dist2(pl.x, pl.z, p.x, p.z);
+    if (!pl.near && d2 < 55 * 55) { pl.near = true; if (pl.hello) hud.showToast(pl.hello, 4200); }
+    else if (pl.near && d2 > 110 * 110) pl.near = false;
+  }
   if (prof) lap('activities');
   // UNDERGROUND, THE HELICOPTER LOSES YOU. This is what makes a bore a
   // tactical option rather than scenery you drive through: the roof over your
@@ -1225,6 +1263,7 @@ function frame(now) {
     if (!buried) hud.__toldTunnel = false;
   }
   updatePickups(dt);
+  if (!player.vehicle || !player.vehicle.spec.boat) fx.wake(dt, null);
   fx.update(dt);
 
   // engine smoke / skid marks
@@ -1235,6 +1274,18 @@ function frame(now) {
     }
     if (v.health < 45 && Math.random() < 0.35) {
       fx.smoke(v.x + v.forward.x * v.halfLen, v.y + 0.9, v.z + v.forward.z * v.halfLen, 1);
+    }
+    // A boat leaves a wake: a foam ribbon from the transom (one draw, only
+    // while you are driving one) and spray off the bow once it is moving.
+    if (v.spec.boat) {
+      fx.wake(dt, v);
+      const sp = Math.abs(v.vLong);
+      if (sp > 6 && Math.random() < 0.4) {
+        const f = v.forward, s = Math.random() < 0.5 ? 1 : -1;
+        fx.emit(v.x + f.x * v.halfLen * 0.55 + f.z * s * 1.1, v.y + 0.15, v.z + f.z * v.halfLen * 0.55 - f.x * s * 1.1, 2,
+          { r: 0.92, g: 0.95, b: 0.97, size: 0.55, life: 0.55, spread: 1.2, vy: 1.4, grav: -9, drag: 0.9,
+            vx: f.z * s * 2.2, vz: -f.x * s * 2.2 });
+      }
     }
   }
 
