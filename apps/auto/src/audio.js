@@ -30,6 +30,20 @@ import { clamp, lerp, mulberry32 } from './util.js';
 // file -- so previews keep everything linked and let the gains do the work.
 let keepLinked = false;
 
+/**
+ * setTargetAtTime, skipped when the value has not really moved. A frame steers
+ * ~50 params; most hold still (a voice at a steady speed, a siren's level), and
+ * every automation call is a trip into the audio engine with a lock, which on
+ * the phone is main-thread time. The last target rides on the param itself, so
+ * a param must be driven ONLY through here once it is.
+ */
+function setp(param, v, t, tc) {
+  const last = param._lv;
+  if (last !== undefined && Math.abs(v - last) <= Math.abs(last) * 0.005 + 1e-5) return;
+  param._lv = v;
+  param.setTargetAtTime(v, t, tc);
+}
+
 // ---------------------------------------------------------------------------
 // Small DSP helpers
 // ---------------------------------------------------------------------------
@@ -231,7 +245,8 @@ const SOUNDS = {
   // --- impacts -------------------------------------------------------------
   crunch: { dur: 1.4, variants: 3, build(k, out, t, R) {
     const bus = k.gain(1);
-    bus.connect(k.shaper(2.2)).connect(out);
+    // the shaper's grit, then the top taken off: a crash is weight, not hiss
+    bus.connect(k.shaper(2.2)).connect(k.filt('lowpass', 6500, 0.6)).connect(out);
     // the body of the car taking it
     k.thump(bus, t, 95 + R() * 25, 36, 0.35, 0.95, 0.09);
     k.burst(bus, 'brown', t, 'lowpass', 420, 0.7, 1.1, 0.06, R);
@@ -246,7 +261,7 @@ const SOUNDS = {
     // crackle of bending panels, higher and brighter
     const hg = k.gain(0);
     k.noise('white', t, 1, R).connect(k.filt('highpass', 2200, 0.8)).connect(hg).connect(bus);
-    k.grains(hg.gain, t, 0.4, 30, R, 0.7, 0.001, 0.006, 2.2);
+    k.grains(hg.gain, t, 0.4, 30, R, 0.4, 0.001, 0.006, 2.2);
     // the panel ringing
     const base = 180 + R() * 240;
     for (let i = 0; i < METAL.length; i++) {
@@ -857,7 +872,7 @@ export const ENGINES = {
     buzz: { ratio: 14, gain: 0.14 }, whine: { hz0: 1800, hz1: 6100, gain: 0.05, load: 0.2 }, drive: 2.2, level: 0.75, jitter: 0.04 },
   outboard: { kind: 'boat', stroke: 2, fire: [0, 0.5], amps: [1, 0.9], pw: 0.028,
     idle: 900, redline: 5800, gears: [1],
-    lp: [450, 3200, 2200], ex: [260, 2.5, 5], noise: { ratio: 18, q: 1.2, gain: 0.3, pulse: 0.5, order: 2 },
+    lp: [380, 2300, 1500], ex: [260, 2.5, 5], noise: { ratio: 18, q: 1.2, gain: 0.3, pulse: 0.5, order: 2 },
     whine: null, drive: 2.3, level: 0.72, jitter: 0.06, rough: 0.35 },
 };
 
@@ -1120,40 +1135,40 @@ export class EngineVoice {
     const rn = clamp(rpm / p.redline, 0, 1.1);
     const load = m.load;
     const tc = 0.025;
-    this.tone.frequency.setTargetAtTime(cyc, t, tc);
+    setp(this.tone.frequency, cyc, t, tc);
     const jit = p.jitter ? 1 + (Math.random() - 0.5) * p.jitter : 1;
-    this.toneG.gain.setTargetAtTime(jit, t, 0.012);
+    setp(this.toneG.gain, jit, t, 0.012);
     // roughness tracks the firing rate, and is worst lugging under load
-    this.roughLp.frequency.setTargetAtTime(clamp(cyc * 2, 20, 400), t, 0.05);
-    this.roughG.gain.setTargetAtTime((p.rough || 0) * 3 * (0.5 + 0.5 * load), t, 0.05);
+    setp(this.roughLp.frequency, clamp(cyc * 2, 20, 400), t, 0.05);
+    setp(this.roughG.gain, (p.rough || 0) * 3 * (0.5 + 0.5 * load), t, 0.05);
     if (p.buzz) {
-      this.buzz.frequency.setTargetAtTime(cyc * p.buzz.ratio, t, tc);
-      this.buzzG.gain.setTargetAtTime(p.buzz.gain * (0.5 + 0.5 * load), t, 0.05);
-    } else this.buzzG.gain.setTargetAtTime(0, t, 0.05);
+      setp(this.buzz.frequency, cyc * p.buzz.ratio, t, tc);
+      setp(this.buzzG.gain, p.buzz.gain * (0.5 + 0.5 * load), t, 0.05);
+    } else setp(this.buzzG.gain, 0, t, 0.05);
     const n = p.noise;
     if (n.gain > 0) {
-      this.nbp.frequency.setTargetAtTime(clamp(cyc * n.ratio, 60, 7000), t, tc);
+      setp(this.nbp.frequency, clamp(cyc * n.ratio, 60, 7000), t, tc);
       const amp = n.gain * (0.35 + 0.65 * load) * (0.45 + 0.55 * rn);
-      this.nG.gain.setTargetAtTime(amp, t, 0.04);
-      this.pulse.frequency.setTargetAtTime(cyc * n.order, t, tc);
-      this.pdepth.gain.setTargetAtTime(n.pulse, t, 0.05);
-      this.nam.gain.setTargetAtTime(1 - n.pulse * 0.85, t, 0.05);
-    } else this.nG.gain.setTargetAtTime(0, t, 0.05);
+      setp(this.nG.gain, amp, t, 0.04);
+      setp(this.pulse.frequency, cyc * n.order, t, tc);
+      setp(this.pdepth.gain, n.pulse, t, 0.05);
+      setp(this.nam.gain, 1 - n.pulse * 0.85, t, 0.05);
+    } else setp(this.nG.gain, 0, t, 0.05);
     if (p.whine) {
       const w = p.whine;
       const wr = p.kind === 'ev' ? rn : clamp(rn * (1 - w.load) + load * rn * w.load, 0, 1);
-      this.whine.frequency.setTargetAtTime(w.hz0 + (w.hz1 - w.hz0) * wr, t, tc);
-      this.whineG.gain.setTargetAtTime(w.gain * (p.kind === 'ev' ? (0.4 + 0.6 * load) * clamp(rn * 8, 0, 1) : (1 - w.load + w.load * load) * clamp(rn * 3, 0, 1)), t, 0.06);
-    } else this.whineG.gain.setTargetAtTime(0, t, 0.05);
-    this.pre.gain.setTargetAtTime(p.drive * (0.55 + 0.75 * load), t, 0.04);
-    this.lp.frequency.setTargetAtTime(clamp(p.lp[0] + p.lp[1] * rn + p.lp[2] * load, 80, 16000), t, 0.04);
+      setp(this.whine.frequency, w.hz0 + (w.hz1 - w.hz0) * wr, t, tc);
+      setp(this.whineG.gain, w.gain * (p.kind === 'ev' ? (0.4 + 0.6 * load) * clamp(rn * 8, 0, 1) : (1 - w.load + w.load * load) * clamp(rn * 3, 0, 1)), t, 0.06);
+    } else setp(this.whineG.gain, 0, t, 0.05);
+    setp(this.pre.gain, p.drive * (0.55 + 0.75 * load), t, 0.04);
+    setp(this.lp.frequency, clamp(p.lp[0] + p.lp[1] * rn + p.lp[2] * load, 80, 16000), t, 0.04);
     // Off-throttle the note drops and darkens but does not vanish: engine braking.
     const run = p.kind === 'ev' ? clamp(0.25 + rn * 3, 0, 1) : clamp(rpm / Math.max(200, (p.idle || p.redline * 0.3) * 0.6), 0, 1);
     const lvl = p.level * (0.42 + 0.58 * load) * (0.62 + 0.38 * rn) * run * gain;
-    this.out.gain.setTargetAtTime(lvl, t, 0.03);
+    setp(this.out.gain, lvl, t, 0.03);
   }
   silence(t) {
-    this.out.gain.setTargetAtTime(0, t, 0.05);
+    setp(this.out.gain, 0, t, 0.05);
   }
 }
 
@@ -1205,8 +1220,8 @@ class Tap {
       this.g.disconnect();
     }
     if (this.on) {
-      this.g.gain.setTargetAtTime(v, t, tc);
-      if (rate) this.src.playbackRate.setTargetAtTime(rate, t, 0.08);
+      setp(this.g.gain, v, t, tc);
+      if (rate) setp(this.src.playbackRate, rate, t, 0.08);
     }
   }
 }
@@ -1866,17 +1881,17 @@ export class Audio {
     const ctx = this.ctx;
     const t = this.now();
     if (!this.enabled) {
-      this.sfxBus.gain.setTargetAtTime(0, t, 0.05);
-      this.musicBus.gain.setTargetAtTime(0, t, 0.05);
+      setp(this.sfxBus.gain, 0, t, 0.05);
+      setp(this.musicBus.gain, 0, t, 0.05);
       if (this._liveWanted) { this._liveWanted = false; this.stopLive(); }
       return;
     }
-    this.sfxBus.gain.setTargetAtTime(1, t, 0.05);
+    setp(this.sfxBus.gain, 1, t, 0.05);
     const L = state.listener || { x: 0, y: 0, z: 0, fx: 0, fz: -1, vx: 0, vz: 0 };
     this.L = L;
     this._enclosed = !!state.enclosed;
-    this.verbOut.gain.setTargetAtTime(state.enclosed ? 1.1 : 0.55, t, 0.3);
-    this.engSend.gain.setTargetAtTime(state.enclosed ? 0.45 : 0.04, t, 0.3);
+    setp(this.verbOut.gain, state.enclosed ? 1.1 : 0.55, t, 0.3);
+    setp(this.engSend.gain, state.enclosed ? 0.45 : 0.04, t, 0.3);
 
     this._updateVehicle(dt, t, state);
     this._updateFoot(state);
@@ -1897,7 +1912,7 @@ export class Audio {
       this._live.volume = clamp(this.musicVolume * dk, 0, 1);
       this._pollNowPlaying();
       // The synth station and the real one must never play together.
-      this.musicBus.gain.setTargetAtTime(0, t, 0.3);
+      setp(this.musicBus.gain, 0, t, 0.3);
     } else if (this.musicOn && state.inCar) {
       // The SYNTH stations are the car radio too. Only the live stream was
       // gated on being in a car, so on foot the synthesised KEXP played on --
@@ -1905,7 +1920,7 @@ export class Audio {
       // it plays in a car and stops the moment you step out.
       this.scheduleMusic();
     } else {
-      this.musicBus.gain.setTargetAtTime(0, t, 0.3);
+      setp(this.musicBus.gain, 0, t, 0.3);
     }
   }
 
@@ -1920,6 +1935,13 @@ export class Audio {
       this.eng.setProfile(name);
       m.setProfile(ENGINES[name], spec);
       m.start(true);
+    }
+    // Out of the car by any route -- a respawn never calls exitVehicle -- and
+    // the engine is off.
+    if (!inCar && (m.on || this._engStartAt >= 0)) {
+      m.stop();
+      this._engStartAt = -1;
+      this._spec = null;
     }
     if (this._engStartAt >= 0 && (t >= this._engStartAt || (s.throttle > 0.2 && t > this._engStartAt - 0.6))) {
       this._engStartAt = -1;
@@ -1952,12 +1974,12 @@ export class Audio {
     const onGround = inCar && !s.airborne && !s.carAirborne && p.kind !== 'boat' && p.kind !== 'heli';
     const offroad = s.surface === 'grass' || s.surface === 'gravel';
     const roll = onGround ? clamp(sp / 30, 0, 1) : 0;
-    this.roadG.gain.setTargetAtTime(roll * (offroad ? 0.03 : 0.07), t, 0.1);
-    this.roadLp.frequency.setTargetAtTime(220 + sp * 14, t, 0.2);
+    setp(this.roadG.gain, roll * (offroad ? 0.03 : 0.07), t, 0.1);
+    setp(this.roadLp.frequency, 220 + sp * 14, t, 0.2);
     const air = inCar ? (p.kind === 'plane' || p.kind === 'heli' ? 1.6 : spec && spec.moto ? 1.5 : 1) : (s.falling ? 1.2 : 0);
     const wsp = inCar ? sp : Math.abs(s.fallSpeed || 0);
-    this.windG.gain.setTargetAtTime(clamp(wsp / 55, 0, 1.2) ** 2 * 0.09 * air, t, 0.25);
-    this.windBp.frequency.setTargetAtTime(350 + wsp * 18, t, 0.25);
+    setp(this.windG.gain, clamp(wsp / 55, 0, 1.2) ** 2 * 0.09 * air, t, 0.25);
+    setp(this.windBp.frequency, 350 + wsp * 18, t, 0.25);
     if (this.loops) {
       const skid = onGround ? clamp(s.skid || 0, 0, 1) : 0;
       const squeal = offroad ? 0 : skid * clamp(sp / 6, 0, 1);
@@ -1996,7 +2018,7 @@ export class Audio {
     if (hornWant && !this.hornOn) { this.hornOn = true; this.hornG.connect(this.sfxBus); }
     if (this.hornOn) {
       const h = HORNS[this.hornKind] || HORNS.car;
-      this.hornG.gain.setTargetAtTime(hornWant ? h.gain : 0, t, hornWant ? 0.008 : 0.03);
+      setp(this.hornG.gain, hornWant ? h.gain : 0, t, hornWant ? 0.008 : 0.03);
       if (!hornWant && this.hornT < -0.4 && !keepLinked) { this.hornOn = false; this.hornG.disconnect(); }
     }
   }
@@ -2097,7 +2119,7 @@ export class Audio {
       this._heliPrev = h ? { x: h.x, z: h.z } : null;
       m.step(dt, 0, 0.6, false);
       const sp = h ? spatial(L, h.x, h.y, h.z, vx, vz, 40, 700) : null;
-      if (sp && this.heliPan.pan) this.heliPan.pan.setTargetAtTime(sp.pan, t, 0.1);
+      if (sp && this.heliPan.pan) setp(this.heliPan.pan, sp.pan, t, 0.1);
       this.heliVoice.apply(m, t, sp ? sp.gain * 0.9 : 0, sp ? sp.dop : 1);
     }
   }
@@ -2106,8 +2128,8 @@ export class Audio {
     const v = tv.car;
     const quiet = () => {
       if (!tv.on) return;
-      tv.g.gain.setTargetAtTime(0, t, 0.08);
-      tv.ng.gain.setTargetAtTime(0, t, 0.08);
+      setp(tv.g.gain, 0, t, 0.08);
+      setp(tv.ng.gain, 0, t, 0.08);
       if (++tv.quiet > 30 && !keepLinked) { tv.on = false; tv.out.disconnect(); }
     };
     if (!v) { quiet(); return; }
@@ -2122,20 +2144,20 @@ export class Audio {
     const m = tv.model.step(dt, v.vLong, thr, false);
     const p = m.p;
     const cyc = Math.max(0.5, m.rpm / 60 / (p.stroke / 2)) * sp.dop;
-    tv.o.frequency.setTargetAtTime(cyc, t, 0.04);
+    setp(tv.o.frequency, cyc, t, 0.04);
     const rn = clamp(m.rpm / p.redline, 0, 1);
-    tv.lp.frequency.setTargetAtTime(p.lp[0] * 0.8 + p.lp[1] * 0.5 * rn + p.lp[2] * 0.4 * m.load, t, 0.05);
+    setp(tv.lp.frequency, p.lp[0] * 0.8 + p.lp[1] * 0.5 * rn + p.lp[2] * 0.4 * m.load, t, 0.05);
     const lvl = p.level * 1.1 * (0.45 + 0.55 * m.load) * (0.6 + 0.4 * rn) * sp.gain;
-    tv.g.gain.setTargetAtTime(lvl, t, 0.05);
-    tv.nb.frequency.setTargetAtTime(300 + Math.abs(v.vLong) * 18, t, 0.1);
-    tv.ng.gain.setTargetAtTime(clamp(Math.abs(v.vLong) / 25, 0, 1) * 0.2 * sp.gain, t, 0.08);
-    if (tv.pan) tv.pan.pan.setTargetAtTime(sp.pan, t, 0.05);
+    setp(tv.g.gain, lvl, t, 0.05);
+    setp(tv.nb.frequency, 300 + Math.abs(v.vLong) * 18, t, 0.1);
+    setp(tv.ng.gain, clamp(Math.abs(v.vLong) / 25, 0, 1) * 0.2 * sp.gain, t, 0.08);
+    if (tv.pan) setp(tv.pan.pan, sp.pan, t, 0.05);
   }
 
   _siren(sv, car, t, L) {
     if (!car) {
       if (sv.on) {
-        sv.g.gain.setTargetAtTime(0, t, 0.15);
+        setp(sv.g.gain, 0, t, 0.15);
         if (++sv.quiet > 40 && !keepLinked) { sv.on = false; sv.out.disconnect(); }
       }
       return;
@@ -2150,14 +2172,14 @@ export class Audio {
     if (yelp !== sv.yelp) {
       sv.yelp = yelp;
       sv.lfo.type = yelp ? 'triangle' : 'sine';
-      sv.lfo.frequency.setTargetAtTime(yelp ? 3.3 : 0.24, t, 0.05);
+      setp(sv.lfo.frequency, yelp ? 3.3 : 0.24, t, 0.05);
     }
     const centre = (yelp ? 1050 : 1000) * sp.dop;
-    sv.o.frequency.setTargetAtTime(centre, t, 0.05);
-    sv.depth.gain.setTargetAtTime((yelp ? 420 : 380) * sp.dop, t, 0.05);
+    setp(sv.o.frequency, centre, t, 0.05);
+    setp(sv.depth.gain, (yelp ? 420 : 380) * sp.dop, t, 0.05);
     const lvl = (car.legacy != null ? car.legacy : 1) * 0.11 * sp.gain;
-    sv.g.gain.setTargetAtTime(lvl, t, 0.1);
-    if (sv.pan) sv.pan.pan.setTargetAtTime(sp.pan, t, 0.06);
+    setp(sv.g.gain, lvl, t, 0.1);
+    if (sv.pan) setp(sv.pan.pan, sp.pan, t, 0.06);
   }
 
   scheduleMusic() {
@@ -2165,7 +2187,7 @@ export class Audio {
     const st = STATIONS[this.station];
     const spb = 60 / st.tempo;
     const now = this.now();
-    this.musicBus.gain.setTargetAtTime(0.2, now, 0.4);
+    setp(this.musicBus.gain, 0.2, now, 0.4);
     while (this.nextBeat < now + 0.4) {
       const t = Math.max(this.nextBeat, now + 0.02);
       const b = this.beat;

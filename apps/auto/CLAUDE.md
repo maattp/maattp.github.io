@@ -29,7 +29,8 @@ src/player.js               on-foot/driving state machine + chase camera
 src/controls.js             touch stick/buttons + keyboard fallback
 src/hud.js                  minimap, full map, readouts
 src/effects.js              particles + tracers
-src/audio.js                synthesised engine, siren, SFX, procedural radio
+src/audio.js                all sound, synthesised: engine models, one-shot bank,
+                            positional traffic/sirens, radio (see "Sound")
 src/main.js                 boot sequence, game rules, frame loop
 
 tools/proj.py               THE projection. Mirrored by geo.js -- change both.
@@ -1494,12 +1495,8 @@ instead of a grille and paired lamps, a square-root torque falloff instead of a
 linear one (an electric motor is at full torque from zero, so it leaps off the
 line and runs out of road rather than out of revs), regen at 4.6 m/s² off
 throttle against 2.4, and more grip, because the battery floor puts the mass
-under the axle line. `audio.js` reads `state.ev` and moves the engine to a
-triangle/sine whine an octave and a half up — reassigned only when the mode
-flips, since setting `OscillatorNode.type` every frame allocates on some
-engines. **This last part cannot be checked headlessly**: the AudioContext
-never leaves `suspended` without a real gesture, so `update()` early-returns
-before it gets there.
+under the axle line. In `audio.js` the same flag picks the `ev` engine profile
+(motor tone tracking road speed plus inverter whine, no gears); see "Sound".
 
 **An open car needs the deck OPENED, not an interior laid under it.** There is
 no boolean here, so `bodyCore`'s section closes across the top at the beltline
@@ -1900,6 +1897,60 @@ more than once a frame computes the lift once and passes it in**: vehicles take
 seven samples, the player two, pedestrians one. Calling `groundAt(x, z, y)`
 without the 4th argument silently re-runs the scan.
 
+## Sound
+
+**Everything is synthesised; the repo ships no audio files.** `audio.js` has
+three layers, each built for what it costs on the phone:
+
+- **One-shots are rendered once.** `SOUNDS` holds recipes (crunch, glass,
+  scrape loop, explosion, pistol, punch, footsteps on hard/grass/gravel/water,
+  doors, seat, starter, kickstand, air brake, backfire, splash, slosh loop,
+  squeal loop, gravel loop, pickup, cash, wanted sting, UI cues). `renderBank`
+  builds them in batches of OfflineAudioContexts when the context is unlocked,
+  seeded so every launch gets the same bank (57 buffers, ~45 s mono, ~0.5 s on
+  the Mac). Playing one is a BufferSource + gain (+ panner, + distance
+  low-pass, + reverb send), capped at `MAX_SHOTS` 18.
+- **Engines are a firing pattern, not an oscillator pitch.** The tone's
+  PeriodicWave is the spectrum of one exhaust pulse per cylinder at its point
+  in the cycle (`ENGINES[..].fire`), so the cross-plane V8's uneven banks and a
+  V-twin's 315/405 split give their burble by construction. `EngineModel` is the
+  machine (gears, clutch hold off the line, shift points by throttle, rev
+  limiter, spool-up, lift-off crackle) and `EngineVoice` the 19-node graph it
+  steers. **The profile is picked from spec flags by `selectEngine`** -- the
+  comment above `ENGINES` lists them: `engine` (explicit), `heli`, `boat`,
+  `plane` (+ `turboprop`/`jet`), `ev`, `moto` (+ `vtwin`), `atv`, `bus`/`cargo`/
+  `diesel`, `police`/`v8`, then `hand`. A new vehicle type needs only a flag.
+- **Positional voices are pooled**: 3 traffic engines (nearest cars in 70 m,
+  kept on the car they have), 2 sirens (LFO on the carrier, so the sweep is
+  smooth at any frame rate; wail far, yelp inside 45 m), the police helicopter
+  (built on first sight). Pan, distance and doppler come from `spatial()`
+  against the camera (`listener` in main.js).
+- **Mix**: every bus into one DynamicsCompressor limiter, then the volume
+  control. `duck()` pulls the synth radio down under crashes, gunshots and
+  stings (the live stream too, except on iOS, which ignores `volume`). A
+  convolver with a generated street IR takes sends from one-shots and, in a
+  bore (`enclosed`), from the engine.
+
+Rules that each cost a debugging round:
+
+- **Idle voices are DISCONNECTED, not muted** -- a graph that does not reach
+  the destination is not rendered. Only the voice objects (`Tap`, the
+  `_link`/`on` flags) may connect or disconnect.
+- **Drive a param through `setp()` only**, which skips unchanged targets
+  (51 -> 16 automation calls a frame, ~0.07 ms of `update()` on the Mac). It
+  caches the last target on the param, so a direct `.value` or
+  `setTargetAtTime` on the same param desyncs it.
+- **`tools/audiorender.mjs` is the only way to hear it headlessly.** It drives
+  the real `Audio` class with an OfflineAudioContext (`init(ctx)`, `_simT`)
+  and writes `docs/audio/` WAVs (every bank sound, an enter-drive-exit run for
+  every engine profile, pass-bys, crashes over the radio, footsteps, horns,
+  water, a tunnel), failing on clipping or silence. An offline render
+  schedules the whole script BEFORE rendering and graph changes are not
+  scheduled events, so previews keep every voice linked (`keepLinked`) and
+  must use `setValueAtTime`, not `.value`, for anything that changes mid-run.
+  The voice cap prunes by END TIME, not `onended`: offline, nothing has ended
+  when the next shot is queued, and cutting the "oldest" silenced a whole file.
+
 ## Verifying
 
 `node tools/verify.mjs [--shots]` with `python3 -m http.server 8000` running. It
@@ -1963,6 +2014,7 @@ The purpose-built harnesses, each a fixed-dt, paused-game driver:
 | `tools/flycam.mjs [--jitter]` | a scripted flight: camera measured RELATIVE TO THE PLANE and the plane's on-screen motion, since absolute camera movement at 116 m/s is ~2 m a frame regardless. The autopilot holds 45 m over the terrain under AND 400 m ahead, or the bay dive flies into Queen Anne. Also counts building and road pop-ins, and flies `i5high` (see "flycam: road pop-ins") |
 | `tools/camtunnel.mjs` | camera height at stations through bores — nothing through the roof |
 | `tools/jank.mjs` | `fwy-bump`, `crossing-clash`, `barrier-on-road` added for the grading (see "Freeway grading") |
+| `tools/audiorender.mjs [--only a,b]` | renders the sound offline to `docs/audio/*.wav`: peak/RMS/centroid/silence per file, fails on clipping (see "Sound") |
 
 **A walker needs a seed, and the seed is the edge's own surface.** Seeded with
 no reference height, `groundAt` takes the highest deck, so every freeway edge
