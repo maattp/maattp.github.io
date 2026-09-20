@@ -2651,11 +2651,13 @@ const RIDERS = {
   },
   // Upright on the saddle, arms out to a wide straight bar, knees bent over
   // the footboards and splayed round the tank: the quad's stance.
+  // Measured in the quad's frame: hands land within ~5 cm of the grips
+  // (+-0.36, 1.035, 0.25), soles on the boards (top 0.325).
   atv: {
-    z: -0.24, hipY: 0.96, seed: 77,
+    z: -0.19, hipY: 0.96, seed: 77,
     lean: 0.20, head: -0.22,
-    shoulder: [-0.92, 0.32], elbow: [-0.50, 0.10],
-    thigh: [-1.20, 0.34], knee: 1.40, foot: -0.15,
+    shoulder: [-0.70, 0.30], elbow: [-0.16, 0.06],
+    thigh: [-1.25, 0.36], knee: 1.45, foot: -0.15,
   },
 };
 

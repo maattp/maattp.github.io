@@ -624,9 +624,9 @@ function installShadowFade() {
   // What the map marks, and what says hello when you get near (the HUD is
   // made below; it takes the list then).
   const mapPlaces = [
-    { x: SEAPLANE_DOCK.x, z: SEAPLANE_DOCK.z, kind: 'dock', name: 'Seaplane Dock',
+    { x: SEAPLANE_DOCK.x, z: SEAPLANE_DOCK.z, kind: 'dock', name: 'Seaplane Dock', near: false,
       hello: `${SEAPLANE_DOCK.name} — floatplanes and boats. Walk out to the float and get in` },
-    ...ATV_SPOTS.map(([x, z]) => ({ x, z, kind: 'atv', name: 'Quad bike', hello: 'A quad bike — made for the grass' })),
+    ...ATV_SPOTS.map(([x, z]) => ({ x, z, kind: 'atv', name: 'Quad bike', near: false, hello: 'A quad bike — made for the grass' })),
   ];
   peds = new PedSystem(scene, city, game);
   peds.camera = camera;   // animation LOD culls against it
@@ -1182,6 +1182,7 @@ function doRespawn() {
 // (tools/perfbisect.mjs). Off, it costs one branch per system.
 const perfSys = { on: false, ms: {}, frames: 0 };
 let perfT = 0;
+let helloCd = 0;   // seconds until the next place may say hello
 function lap(name) {
   const t = performance.now();
   perfSys.ms[name] = (perfSys.ms[name] || 0) + (t - perfT);
@@ -1243,10 +1244,16 @@ function frame(now) {
   if (acts) acts.update(dt, player);
   // Say hello once per approach to anything the map marks (the dock, the
   // quads): the map is how you find them, this is how you know you have.
+  // One at a time, in list order, so the dock is never talked over by the
+  // quad parked beside it: the next waits for this one's toast to finish.
+  helloCd = Math.max(0, helloCd - dt);
   for (const pl of hud.places) {
     const d2 = dist2(pl.x, pl.z, p.x, p.z);
-    if (!pl.near && d2 < 55 * 55) { pl.near = true; if (pl.hello) hud.showToast(pl.hello, 4200); }
-    else if (pl.near && d2 > 110 * 110) pl.near = false;
+    if (pl.near) { if (d2 > 110 * 110) pl.near = false; continue; }
+    if (d2 < 55 * 55 && helloCd <= 0) {
+      pl.near = true;
+      if (pl.hello) { hud.showToast(pl.hello, 4200); helloCd = 4.6; }
+    }
   }
   if (prof) lap('activities');
   // UNDERGROUND, THE HELICOPTER LOSES YOU. This is what makes a bore a

@@ -66,9 +66,10 @@ export class Player {
 
   /**
    * Out of the vehicle. `force` (a wreck) always gets you out, wherever that
-   * is; otherwise a BOAT only lets you step off onto something you can stand
-   * on -- a dock or the shore -- because the kerb-side default puts you in
-   * the lake, and the lake drowns you. Returns false when it refused.
+   * is; otherwise a BOAT (or a floatplane on the water) only lets you step
+   * off onto something you can stand on -- a dock or the shore -- because
+   * the kerb-side default puts you in the lake, and the lake drowns you.
+   * Returns false when it refused.
    */
   exitVehicle(force = false) {
     const v = this.vehicle;
@@ -77,7 +78,7 @@ export class Player {
     const rx = f.z, rz = -f.x;
     let ox = v.x - rx * (v.halfWid + 1.1);
     let oz = v.z - rz * (v.halfWid + 1.1);
-    if (v.spec.boat) {
+    if (v.spec.boat || v.spec.floats) {
       // Either beam, then over the bow and the stern, a little further out
       // each ring: the first spot that is not water (a platform deck counts,
       // groundAt answers it) and not inside a rail.

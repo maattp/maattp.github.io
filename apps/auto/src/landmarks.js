@@ -1755,8 +1755,11 @@ function seaplaneDock() {
   // --- landing and pier ----------------------------------------------------
   deck(-158, -146, -1968, -1952, PIER_Y);
   deck(-146, -114, -1962, -1958, PIER_Y);
-  for (let x = -154; x <= -114; x += 4) for (const z of [-1962.1, -1957.9]) pileAt(x, z, PIER_Y);
-  for (const z of [-1967.8, -1952.2]) for (const x of [-154, -150, -146.2]) pileAt(x, z, PIER_Y);
+  // Piles under the pier's two edges, and round the landing's water side --
+  // never through the landing's floor, where their caps stood up as stumps.
+  for (let x = -142; x <= -114; x += 4) for (const z of [-1962.1, -1957.9]) pileAt(x, z, PIER_Y);
+  for (const z of [-1968.1, -1951.9]) for (const x of [-154, -150, -145.9]) pileAt(x, z, PIER_Y);
+  for (const z of [-1964.5, -1955.5]) pileAt(-145.9, z, PIER_Y);
   // joists under the deck edge, so the pier has a fascia and not a floating plank sheet
   for (const z of [-1962.05, -1957.95]) {
     const [lx, lz] = L(-130, z);
