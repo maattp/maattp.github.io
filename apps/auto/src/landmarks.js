@@ -1598,6 +1598,46 @@ function aquarium() {
  * apron -- plus the tower, a windsock, and threshold markings, so it reads as
  * an airfield from the air. The apron's parked planes are spawned by main.js.
  */
+// Boeing Field's pavement in the landmark's own frame, shared by airport()
+// and airportSurface(): [across, along, width, length, top, crosswise]. The
+// slabs stand `top` proud of the graded field, and `groundAt` knows nothing of
+// them -- every aircraft sat 35 cm into the apron and the runway until the
+// flight models were handed this table's surface.
+const AIRPORT_RY = 0.52;
+const AIRPORT_PAVE = [
+  [0, 0, 46, 3048, 0.35],                      // runway 14R/32L
+  [150, 0, 23, 2600, 0.35],                    // parallel taxiway, east
+  ...[-2, -1, 0, 1, 2].map((k) => [75, k * 520, 18, 150, 0.33, true]),     // stubs joining them
+  [-205, 70, 130, 380, 0.35],                  // GA apron, west
+  [-120, 0, 20, 2900, 0.35],                   // full-length west taxiway
+  ...[-1380, -900, -450, -40, 180, 620, 1100, 1380].map((kz) => [-60, kz, 16, 126, 0.33, true]),   // west stubs
+  [0, -1500, 76, 60, 0.35], [0, 1500, 76, 60, 0.35],                     // threshold turnpads
+];
+// Where main.js parks the helicopters, painted as pads.
+export const AIRPORT_HELIPADS = [[-165, -103], [-195, 232]];
+
+/**
+ * Height of Boeing Field's pavement at (x, z), or null off it. `ax, az` is
+ * the landmark's position and `ay` the field elevation its group sits at.
+ */
+export function airportSurface(ax, az, ay) {
+  const A = [Math.sin(AIRPORT_RY), Math.cos(AIRPORT_RY)], C = [Math.cos(AIRPORT_RY), -Math.sin(AIRPORT_RY)];
+  let r2 = 0;
+  for (const [dx, dz, w, len] of AIRPORT_PAVE) r2 = Math.max(r2, Math.hypot(Math.abs(dx) + w, Math.abs(dz) + len));
+  r2 *= r2;
+  return (x, z) => {
+    const px = x - ax, pz = z - az;
+    if (px * px + pz * pz > r2) return null;
+    const u = px * C[0] + pz * C[1], v = px * A[0] + pz * A[1];   // across, along
+    let top = null;
+    for (const [dx, dz, w, len, t, cross] of AIRPORT_PAVE) {
+      const hw = (cross ? len : w) / 2, hl = (cross ? w : len) / 2;
+      if (Math.abs(u - dx) <= hw && Math.abs(v - dz) <= hl && (top === null || t > top)) top = t;
+    }
+    return top === null ? null : ay + top;
+  };
+}
+
 function airport() {
   const g = new THREE.Group();
   const asphalt = P(0x53565b, 0.9, 0, 0.45, { noShadow: true });
@@ -1620,27 +1660,31 @@ function airport() {
   // once the ground stopped undulating. Local frame: group origin sits at the
   // field elevation, so a slab top at +0.35 is 35 cm proud everywhere.
   const P2 = (dx, dz) => off(dx, dz);
-  const pav = (dx, dz, w, len) => {
-    const [lx, lz] = P2(dx, dz);
-    g.add(box(w, 2.6, len, asphalt, lx, 0.35 - 2.6, lz, RY));
-  };
   const mark = (dx, dz, w, len) => {
     const [lx, lz] = P2(dx, dz);
     g.add(box(w, 0.04, len, paintW, lx, 0.36, lz, RY));
   };
-  pav(0, 0, 46, 3048);                       // runway 14R/32L
-  pav(150, 0, 23, 2600);                     // parallel taxiway, east
-  for (let k = -2; k <= 2; k++) {            // stubs joining them
-    const [sx, sz] = P2(75, k * 520);
-    g.add(box(150, 2.6, 18, asphalt, sx, 0.33 - 2.6, sz, RY + Math.PI / 2));
+  // Runway, taxiways, stubs, apron, turnpads: AIRPORT_PAVE, which is also
+  // the surface the aircraft stand on. A crosswise stub runs ACROSS, which
+  // is box()'s local x at RY -- the stubs used to add a quarter turn on top,
+  // the other convention's habit, and lay parallel to the runway in the
+  // grass between it and the taxiways, joining nothing.
+  for (const [dx, dz, w, len, top, cross] of AIRPORT_PAVE) {
+    const [lx, lz] = P2(dx, dz);
+    if (cross) g.add(box(len, 2.6, w, asphalt, lx, top - 2.6, lz, RY));
+    else g.add(box(w, 2.6, len, asphalt, lx, top - 2.6, lz, RY));
   }
-  pav(-205, 70, 130, 380);                   // GA apron, west
-  pav(-120, 0, 20, 2900);                    // full-length west taxiway
-  for (const kz of [-1380, -900, -450, -40, 180, 620, 1100, 1380]) {
-    const [sx, sz] = P2(-60, kz);            // stubs: west taxiway <-> runway
-    g.add(box(126, 2.6, 16, asphalt, sx, 0.33 - 2.6, sz, RY + Math.PI / 2));
+  // Helipads: a painted ring and an H. The ring's dashes are laid along
+  // ALONG, so each is rotated into the ring by its own offset only -- short
+  // enough (2.4 m on a 7.5 m radius) to read as a circle.
+  for (const [hx, hz] of AIRPORT_HELIPADS) {
+    for (let k = 0; k < 18; k++) {
+      const a = (k / 18) * Math.PI * 2;
+      const [lx, lz] = P2(hx + Math.cos(a) * 7.5, hz + Math.sin(a) * 7.5);
+      g.add(box(0.45, 0.04, 2.4, paintW, lx, 0.36, lz, RY - a));
+    }
+    mark(hx - 1.6, hz, 0.6, 4.4); mark(hx + 1.6, hz, 0.6, 4.4); mark(hx, hz, 3.2, 0.6);
   }
-  for (const e of [-1, 1]) pav(0, e * 1500, 76, 60);   // threshold turnpads
   for (let k = -22; k <= 22; k++) mark(0, k * 66, 0.9, 30);          // centreline
   for (const e of [-1, 1]) for (let j = -3; j <= 3; j++) mark(j * 5.4, e * 1470, 1.8, 40);
   for (const e of [-1, 1]) for (const sdx of [-21.5, 21.5])          // edge stripes
