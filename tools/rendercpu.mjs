@@ -44,8 +44,11 @@ try {
   await send('Runtime.enable'); await send('Page.enable'); await send('Network.enable');
   await send('Network.setBypassServiceWorker', { bypass: true });
   await send('Network.setCacheDisabled', { cacheDisabled: true });
-  await send('Emulation.setDeviceMetricsOverride', { width: 874, height: 402, deviceScaleFactor: 3, mobile: true, screenWidth: 874, screenHeight: 402, screenOrientation: { type: 'landscapePrimary', angle: 90 } });
-  await send('Emulation.setUserAgentOverride', { userAgent: UA, platform: 'iPhone' });
+  // RCPU_DESKTOP=1: desktop UA (no phone-only paths; chunk arrays kept, so raycasts work).
+  if (!process.env.RCPU_DESKTOP) {
+    await send('Emulation.setDeviceMetricsOverride', { width: 874, height: 402, deviceScaleFactor: 3, mobile: true, screenWidth: 874, screenHeight: 402, screenOrientation: { type: 'landscapePrimary', angle: 90 } });
+    await send('Emulation.setUserAgentOverride', { userAgent: UA, platform: 'iPhone' });
+  }
   await send('Page.addScriptToEvaluateOnNewDocument', { source: `window.__noAutoQuality = true; try { localStorage.setItem('auto-quality', 'high'); } catch (e) {}` });
   await send('Page.navigate', { url: `http://localhost:${HTTP_PORT}/apps/auto/` });
   for (let i = 0; i < 600; i++) { await sleep(500); try { if (await ev('!!window.__dbg')) break; } catch {} }

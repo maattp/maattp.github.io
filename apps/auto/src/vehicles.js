@@ -4119,14 +4119,52 @@ function tagGlass(geo) {
   for (let i = 0; i < n; i++) {
     if (Math.abs(col[i * 3] - GLASS[0]) < 1e-4 && Math.abs(col[i * 3 + 1] - GLASS[1]) < 1e-4
       && Math.abs(col[i * 3 + 2] - GLASS[2]) < 1e-4) flag[i] = 1;
+    else if (Math.abs(col[i * 3 + 1] - SHADOW_G) < 1e-4 && Math.abs(col[i * 3 + 2] - SHADOW_B) < 1e-4) flag[i] = 2;
   }
   geo.setAttribute('glass', new THREE.BufferAttribute(flag, 1));
-  const idx = geo.index.array, solid = [], glass = [];
+  // Solid first, then the contact shadow on the road, then the panes.
+  const idx = geo.index.array, solid = [], shade = [], glass = [];
   for (let i = 0; i < idx.length; i += 3) {
-    (flag[idx[i]] && flag[idx[i + 1]] && flag[idx[i + 2]] ? glass : solid).push(idx[i], idx[i + 1], idx[i + 2]);
+    const f = Math.min(flag[idx[i]], flag[idx[i + 1]], flag[idx[i + 2]]);
+    (f === 2 ? shade : f === 1 ? glass : solid).push(idx[i], idx[i + 1], idx[i + 2]);
   }
-  geo.setIndex(solid.concat(glass));
+  geo.setIndex(solid.concat(shade, glass));
   return geo;
+}
+
+// CONTACT SHADOW. Measured, tyres sit on the drawn road (median 2 cm under
+// it while driving), and still a truck read as hovering a few inches up: the
+// road between its wheels was lit exactly like open road, and the sun shadow
+// lands off to one side. What grounds a real vehicle is the dark ambient
+// patch under it, and nothing drew one -- SSAO is gated to occluders 0.7 m+
+// above the ground on purpose (see postfx). A soft blob in the trim geometry,
+// which is already in the premultiplied transparent pass (glassShader): black
+// at alpha = the vertex colour's red, so no extra draw. Its green and blue are
+// the marker tagGlass keys on.
+const SHADOW_G = 0.123, SHADOW_B = 0.456;
+function contactShadow(trim, spec) {
+  const hl = spec.len / 2, hw = spec.wid / 2;
+  const moto = !!spec.moto;
+  // inner patch under the body, feathering to nothing a little past it
+  const il = hl * (moto ? 0.7 : 0.82), iw = hw * (moto ? 0.5 : 0.78);
+  const ol = hl + (moto ? 0.25 : 0.45), ow = hw + (moto ? 0.2 : 0.4);
+  // 8 cm up: tyres ride up to ~9 cm into a cambered road (they average the
+  // four contact patches), and a lower blob vanished under it in patches.
+  const y = 0.08, A = moto ? 0.5 : 0.7;
+  const c = (a) => [a, SHADOW_G, SHADOW_B];
+  const P = (x, z) => [x, y, z];
+  const up = [0, 1, 0], uv = [0, 0, 1, 0, 1, 1, 0, 1];
+  trim.quad(P(-iw, -il), P(iw, -il), P(iw, il), P(-iw, il), up, uv, c(A));
+  // four feathered sides and four corners
+  const ring = [[-iw, -il, -ow, -ol], [iw, -il, ow, -ol], [iw, il, ow, ol], [-iw, il, -ow, ol]];
+  for (let k = 0; k < 4; k++) {
+    const [ax, az, oax, oaz] = ring[k], [bx, bz, obx, obz] = ring[(k + 1) % 4];
+    // side between corner k and k+1
+    const sa = k % 2 === 0 ? P(ax, oaz) : P(oax, az), sb = k % 2 === 0 ? P(bx, obz) : P(obx, bz);
+    trim.quad(P(ax, az), P(bx, bz), sb, sa, up, uv, [c(A), c(A), c(0), c(0)]);
+    // corner k
+    trim.quad(P(ax, az), k % 2 === 0 ? P(ax, oaz) : P(oax, az), P(oax, oaz), k % 2 === 0 ? P(oax, az) : P(ax, oaz), up, uv, [c(A), c(0), c(0), c(0)]);
+  }
 }
 
 // Face-on, tinted automotive glass lets roughly half the light through; at a
@@ -4153,9 +4191,9 @@ const GLASS_IBL_FROM = 'reflectVec = inverseTransformDirection( reflectVec, view
  * Opaque trim has alpha 1 and so draws exactly as it did; only its pass moves.
  */
 function glassShader(sh) {
-  sh.vertexShader = 'attribute float glass;\nvarying float vGlass;\n' + sh.vertexShader
-    .replace('#include <begin_vertex>', '#include <begin_vertex>\n\tvGlass = glass;');
-  let fs = 'varying float vGlass;\n' + sh.fragmentShader;
+  sh.vertexShader = 'attribute float glass;\nvarying float vGlass;\nvarying float vShade;\n' + sh.vertexShader
+    .replace('#include <begin_vertex>', '#include <begin_vertex>\n\tvGlass = glass > 0.5 && glass < 1.5 ? 1.0 : 0.0;\n\tvShade = glass > 1.5 ? 1.0 : 0.0;');
+  let fs = 'varying float vGlass;\nvarying float vShade;\n' + sh.fragmentShader;
   if (THREE.ShaderChunk.envmap_physical_pars_fragment.includes(GLASS_IBL_FROM)) {
     fs = fs.replace('#include <envmap_physical_pars_fragment>',
       THREE.ShaderChunk.envmap_physical_pars_fragment.replace(GLASS_IBL_FROM, `${GLASS_IBL_FROM}
@@ -4184,7 +4222,15 @@ function glassShader(sh) {
     .replace('#include <fog_fragment>', `#include <fog_fragment>
 	#ifdef USE_FOG
 		gl_FragColor.rgb -= fogColor * fogFactor * ( 1.0 - gl_FragColor.a );
-	#endif`);
+	#endif
+	// the contact shadow: darken what is under it, premultiplied, fading with the fog
+	if ( vShade > 0.5 ) {
+		float sa = vColor.r;
+		#ifdef USE_FOG
+			sa *= 1.0 - fogFactor;
+		#endif
+		gl_FragColor = vec4( 0.0, 0.0, 0.0, sa );
+	}`);
   sh.fragmentShader = fs;
 }
 
@@ -4199,6 +4245,7 @@ function buildType(spec) {
   const build = HAND_BUILT[spec.hand];
   if (!build) throw new Error(`vehicle type has no builder: hand '${spec.hand}'`);
   const wheels = build(spec, paint, trim, matte);
+  if (!spec.plane) contactShadow(trim, spec);
 
   const clone = (base) => {
     const b = new Builder(false);
@@ -4325,6 +4372,7 @@ function clusterFar(parts) {
     const map = new Int32Array(pos.length / 3);
     for (let v = 0; v < map.length; v++) {
       const k3 = v * 3;
+      if (gls && gls[v] > 1.5) { map[v] = -1; continue; }   // contact shadow: not in the far LOD
       const glass = gls && gls[v] > 0.5;
       const pt = glass ? 'glass' : part;
       const nx = nor[k3], ny = nor[k3 + 1], nz = nor[k3 + 2];
@@ -4347,7 +4395,7 @@ function clusterFar(parts) {
     }
     for (let i = 0; i < idx.length; i += 3) {
       const a = map[idx[i]], b = map[idx[i + 1]], c = map[idx[i + 2]];
-      if (a === b || b === c || a === c) continue;
+      if (a < 0 || b < 0 || c < 0 || a === b || b === c || a === c) continue;
       out.push(a, b, c);
     }
   }
