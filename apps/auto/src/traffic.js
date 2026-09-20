@@ -1120,6 +1120,8 @@ export class TrafficSystem {
             if (a.mode === 'traffic') a.panic = 4;
             if (a === player.vehicle || b === player.vehicle) {
               this.game.onCrash(impact, b.mode === 'police' || a.mode === 'police');
+            } else if (impact > 6 && this.game.onTrafficCrash) {
+              this.game.onTrafficCrash(impact, (a.x + b.x) / 2, (a.z + b.z) / 2);
             }
           }
         }
