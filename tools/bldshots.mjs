@@ -154,7 +154,13 @@ const POSE_JS = (bi, view) => `(() => {
   const halfDepth = faceAlongX ? bd.d / 2 : bd.w / 2;
   const fovH = 2 * Math.atan(Math.tan((d.camera.fov * Math.PI / 180) / 2) * d.camera.aspect);
   const fovV = d.camera.fov * Math.PI / 180;
-  const gy = (x, z) => Math.max(0, G.terrainHeight(x, z));
+  // Stand on the water where it is wet: Lake Union is at 5.3 m over a bed
+  // near 0, and a camera on the bed is under the lake (which is then not
+  // drawn), photographing the sea plane instead.
+  const gy = (x, z) => {
+    const t = G.terrainHeight(x, z);
+    return G.isWater(x, z) ? Math.max(t, d.world.waterLevelAt(x, z) || 0) : Math.max(0, t);
+  };
   const others = city.buildingsNear(bd.x, bd.z, 400).filter((b) => b !== bd);
   const inBox = (b, x, z, pad) => {
     const c = Math.cos(-b.rot), s = Math.sin(-b.rot), dx = x - b.x, dz = z - b.z;
