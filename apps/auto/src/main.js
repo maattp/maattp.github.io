@@ -6,11 +6,17 @@ import { cityGenerator, cityStats } from './citygen.js';
 import { loadMapData } from './mapdata.js';
 import { buildTextures, planTextures, encodeTextures, restoreTextures, canvasToBlob, blobToCanvas, within } from './textures.js';
 import { World, WET_FLOOR } from './world.js';
-import { buildLandmarks } from './landmarks.js';
+import { buildLandmarks, airportSurface } from './landmarks.js';
 import { freezeStatic } from './build.js';
 import { cacheGet, cachePut, cacheGuardTripped, cacheGuardSet, cacheClear } from './bootcache.js';
 import { TrafficSystem, collideWithBuildings } from './traffic.js';
-import { TYPES as VEHICLE_TYPES, setWaterQuery, setVehicleCache, vehicleSnapshot } from './vehicles.js';
+import { TYPES as VEHICLE_TYPES, setWaterQuery, setPavementQuery, setVehicleCache, vehicleSnapshot } from './vehicles.js';
+
+// Aircraft come in their own colours, parked at Boeing Field or delivered.
+const AIRCRAFT_PAINT = {
+  plane: 0xdfe3e6, sportplane: 0xc8452e, floatplane: 0xe8c53a,
+  twin: 0xeceef0, jet: 0xe6e8eb, biplane: 0x2a4f93, heli: 0x223f7c,
+};
 import { PedSystem, animateWalk } from './peds.js';
 import { Player } from './player.js';
 import { Controls } from './controls.js';
@@ -129,6 +135,13 @@ class Game {
 
   onEnterVehicle(v) {
     controls.setMode('drive');
+    // In a helicopter GAS and BRAKE are the collective.
+    const heli = !!v.spec.heli;
+    for (const [k, car, h] of [['gas', 'GAS', 'UP'], ['brake', 'BRAKE', 'DOWN']]) {
+      const el = document.querySelector(`[data-btn="${k}"]`);
+      if (el) el.textContent = heli ? h : car;
+    }
+    if (heli) setTimeout(() => hud.showToast('Hold UP to lift off — let go to hover'), 1400);
     audio.blip(300, 0.12, 'square', 0.2);
     if (v.mode === 'parked' || v.wasParked) this.addHeat(8);
     hud.showToast(v.typeName === 'police' ? 'Police cruiser commandeered' : 'Vehicle acquired');
@@ -569,20 +582,27 @@ function installShadowFade() {
   {
     const ap = (G.LANDMARKS || []).find((l) => l.kind === 'airport');
     if (ap) {
+      // Aircraft stand on the drawn apron and runway, not the field under them.
+      setPavementQuery(airportSurface(ap.x, ap.z, G.terrainHeight(ap.x, ap.z)));
       // Same explicit axes as the landmark: ALONG = runway bearing 150.
       const AL = [Math.sin(0.52), Math.cos(0.52)], AC = [Math.cos(0.52), -Math.sin(0.52)];
       const off = (dx, dz) => [ap.x + dx * AC[0] + dz * AL[0], ap.z + dx * AC[1] + dz * AL[1]];
       // Three clusters, all on pavement, all reachable from the west-side
       // streets: the apron row, the north threshold turnpad, and the south.
+      // A second row on the west side of the apron for the bigger aircraft
+      // (the twin's 17.6 m span fits between the row and the apron edge),
+      // and two helicopters on the apron's north and south corners, clear of
+      // every wingtip by more than a rotor.
       const spots = [
         ['plane', -195, -50], ['sportplane', -195, 45], ['plane', -195, 140],
+        ['twin', -245, -40], ['jet', -245, 62], ['biplane', -243, 158],
+        ['heli', -165, -103], ['heli', -240, 238, 0xb8322a],
         ['sportplane', -150, -1380], ['plane', -150, -1290],
         ['floatplane', -150, 1290], ['sportplane', -150, 1380],
       ];
-      const PLANE_PAINT = { plane: 0xdfe3e6, sportplane: 0xc8452e, floatplane: 0xe8c53a };
-      for (const [ty, dx, dz] of spots) {
+      for (const [ty, dx, dz, col] of spots) {
         const [px, pz] = off(dx, dz);
-        const v = traffic.spawnAt(px, pz, 0.52, ty, PLANE_PAINT[ty], 'apron');
+        const v = traffic.spawnAt(px, pz, 0.52, ty, col || AIRCRAFT_PAINT[ty], 'apron');
         v.vLong = 0;
       }
       // ...and the Kenmore-style floatplane at its Lake Union dock. The lake
@@ -594,7 +614,7 @@ function installShadowFade() {
         const fp = traffic.spawnAt(-125, -1960, -1.5, 'floatplane', 0xe8c53a, 'apron');
         fp.vLong = 0;
         fp.y = 5.31 + 0.12;
-        fp.group.position.y = fp.y + (fp.spec.wheelR || 0.3) + 0.25;
+        fp.sync();
       }
     }
   }
@@ -620,10 +640,10 @@ function installShadowFade() {
         const p = player.position;
         const f = { x: Math.sin(player.camYaw + Math.PI), z: Math.cos(player.camYaw + Math.PI) };
         const dx = p.x + f.x * 12, dz = p.z + f.z * 12;
-        const v = traffic.spawnAt(dx, dz, player.camYaw + Math.PI, type, 0xdfe3e6, 'free');
+        const v = traffic.spawnAt(dx, dz, player.camYaw + Math.PI, type, AIRCRAFT_PAINT[type] || 0xdfe3e6, 'free');
         v.y = city.groundAt(dx, dz, null);
-        v.group.position.y = v.y + (v.spec.wheelR || 0.3) + 0.25;
-        hud.showToast(`${type} delivered — $${cost}`);
+        v.sync();
+        hud.showToast(`${b.textContent.replace(/\s*\$\d+$/, '')} delivered — $${cost}`);
         if (setPausedRef) setPausedRef(false);
       });
     }

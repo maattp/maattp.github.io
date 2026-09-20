@@ -384,8 +384,14 @@ export class Controls {
       this._padBrake,
       (this.btn.brake || this.key('ArrowDown', 'KeyS')) ? 1 : 0,
     ), 0, 1);
+    // A helicopter's collective. Separate from gas/brake only because the
+    // keyboard puts those on W / S, which in a helicopter are the stick.
+    const liftAmt = clamp(Math.max(this._padGas, (this.btn.gas || this.key('KeyQ', 'PageUp')) ? 1 : 0), 0, 1);
+    const sinkAmt = clamp(Math.max(this._padBrake, (this.btn.brake || this.key('KeyZ', 'PageDown')) ? 1 : 0), 0, 1);
     return {
       x: clamp(sx, -1, 1),
+      liftAmt,
+      sinkAmt,
       y: clamp(sy, -1, 1),
       gas: gasAmt > TRIGGER_ON,
       brake: brakeAmt > TRIGGER_ON,

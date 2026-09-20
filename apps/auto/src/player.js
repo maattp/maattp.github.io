@@ -275,6 +275,12 @@ export class Player {
       // Planes read the stick's other axis: pull back (stick down, +y) to
       // climb, aviation-style. Cars ignore it.
       pitch: input.y || 0,
+      // A helicopter's collective: GAS / BRAKE on touch (relabelled UP /
+      // DOWN), the triggers on a pad, Q / Z on a keyboard -- whose W and S
+      // are already the stick. `pilot` spools the rotor.
+      lift: input.liftAmt != null ? input.liftAmt : throttle,
+      sink: input.sinkAmt != null ? input.sinkAmt : brake,
+      pilot: true,
     });
     if (wading) {
       v.vLong -= v.vLong * Math.min(1, 2.6 * dt);
@@ -287,7 +293,9 @@ export class Player {
     // An airborne plane is not scraping along building WALLS -- the box test
     // is 2D and would wreck it against towers it is far above. Overflight is
     // handled by altitude; only a grounded plane collides like a vehicle.
-    const airborne = v.spec.plane && v.airborne;
+    // A helicopter always collides: it hovers among the towers at walking
+    // pace, and the test already frees anything above a roof.
+    const airborne = v.spec.plane && v.airborne && !v.spec.heli;
     const impact = airborne ? 0 : collideWithBuildings(v, this.city, (imp) => {
       if (this.crashCd > 0) return;
       this.crashCd = 0.4;
@@ -358,7 +366,15 @@ export class Player {
       dist = 7.6 + v.spec.len * 0.42 + clamp(sp * 0.09, 0, 3.4);
       height = 3.2 + v.spec.roof * 0.42;
       lookH = 1.05;
-      if (v.spec.plane) {
+      if (v.spec.heli) {
+        // Closer than a plane's -- a helicopter is flown at a hover and at
+        // walking pace as often as flat out, and from 15 m back at a hover it
+        // is a speck -- lengthening with speed. The look point stays on the
+        // cabin, with a little of the climb in it like the planes'.
+        dist = 12.5 + clamp(sp * 0.07, 0, 4.5);
+        height = 3.4 - clamp((v.vy || 0) * 0.10, -1, 1);
+        lookH = 1.7 + clamp((v.vy || 0) * 0.12, -1, 1);
+      } else if (v.spec.plane) {
         // further back and higher, and the camera rides the CLIMB: keep some
         // of the vertical velocity in the look target so pulling up reads as
         // the horizon dropping, which is what flying looks like from a chase
@@ -367,8 +383,15 @@ export class Player {
         height = 4.6 - clamp((v.vy || 0) * 0.18, -1.6, 1.6);
         lookH = 2.2 + clamp((v.vy || 0) * 0.22, -2, 2);
       }
-      // ease the camera behind the car when driving forward
-      if (v.vLong > 3) {
+      if (v.spec.heli && v.airborne && v.vLong > -2) {
+        // A helicopter yaws on the spot, and the stick flies it along the
+        // nose, so the camera has to come round behind a pedal turn at the
+        // hover as well -- or "forward" stops meaning up the screen. Slower
+        // at the hover (a turn reads as a turn), tighter with speed.
+        const d = angleWrap(v.heading + Math.PI - this.camYaw);
+        this.camYaw += d * clamp(dt * (1.1 + 1.4 * clamp(sp / 20, 0, 1)), 0, 0.25);
+      } else if (v.vLong > 3) {
+        // ease the camera behind the car when driving forward
         const want = v.heading + Math.PI;
         const d = angleWrap(want - this.camYaw);
         this.camYaw += d * clamp(dt * 1.5 * clamp(sp / 12, 0, 1), 0, 0.25);
@@ -383,7 +406,10 @@ export class Player {
     // at a time -- a plane at 110 m/s passes a tower in a fraction of a second,
     // so clipping one briefly is far less violent than slamming the camera into
     // the tailplane. On the ground a plane taxis like a car and keeps the pull.
-    const airPlane = plane && this.vehicle.airborne;
+    // A helicopter keeps the pull-in below 25 m/s: at a hover beside a tower
+    // the boom otherwise sits inside it, and the rigid rig below damps the
+    // change in boom length anyway.
+    const airPlane = plane && this.vehicle.airborne && !(this.vehicle.spec.heli && this.vehicle.speed < 25);
     if (!airPlane) dist = this.clearCamDist(target, dist * cp, height) / Math.max(cp, 0.15);
     const wanted = new THREE.Vector3(
       target.x + Math.sin(this.camYaw) * dist * cp,
