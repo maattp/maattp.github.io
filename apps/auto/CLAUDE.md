@@ -28,6 +28,7 @@ src/peds.js                 humanoid builder + pedestrian/cop crowd
 src/player.js               on-foot/driving state machine + chase camera
 src/controls.js             touch stick/buttons + keyboard fallback
 src/hud.js                  minimap, full map, readouts
+src/stunts.js               stunt-jump ramps (geometry + height query) and their scoring
 src/effects.js              particles + tracers
 src/audio.js                synthesised engine, siren, SFX, procedural radio
 src/main.js                 boot sequence, game rules, frame loop
@@ -1959,6 +1960,7 @@ The purpose-built harnesses, each a fixed-dt, paused-game driver:
 | `tools/vehshots.mjs <tag> [types] [--street]` | `--street` parks a fixed lineup on the densest commercial street, shot at eye height and raised — a before/after random traffic can't give. The lineup spawns occupied, with a `chase` view on the first near-lane car |
 | `tools/landmarkshots.mjs <dir> [views] [--collide]` | world-framed landmark views, per-landmark cost built alone, and the collision drive/walk (see "Landmarks"); `LM_PROBE` |
 | `tools/lotshots.mjs <dir> [--probe]` | lot views; `--probe` prints the grass share per region (see "Lots, plazas and yards") |
+| `tools/stuntjumps.mjs [ids] [--caps] [--shots DIR]` | every stunt jump: corridor check, then the player's car driven off it at fixed dt per speed cap (see "Stunt jumps") |
 | `tools/trafficcheck.mjs [--dump FILE] [--shot DIR] [--sites a,b]` | share of cars against the flow, oncoming contacts, stuck cars and jams over 7 sites at fixed dt, the last a police pursuit (see "One-way traffic") |
 | `tools/flycam.mjs [--jitter]` | a scripted flight: camera measured RELATIVE TO THE PLANE and the plane's on-screen motion, since absolute camera movement at 116 m/s is ~2 m a frame regardless. The autopilot holds 45 m over the terrain under AND 400 m ahead, or the bay dive flies into Queen Anne. Also counts building and road pop-ins, and flies `i5high` (see "flycam: road pop-ins") |
 | `tools/camtunnel.mjs` | camera height at stations through bores — nothing through the roof |
@@ -2822,6 +2824,84 @@ logs only a car-car shunt.
 
 **Order matters.** Each fix exposed the next one. A failed intermediate is not a
 failed idea: measure what it exposed first.
+
+## Stunt jumps
+
+Twelve kicker ramps at real places (`src/stunts.js` `JUMPS`): over I-5 at NE
+56th St and the I-90 east portals, off Queen Anne (Boston St), Beacon Hill
+(Judkins), Admiral and the Pier 89 bluff, into Lake Union between the
+houseboats (E Lynn St) and Lake Washington (E Lee St), and on Seattle Center's
+lawn, Gas Works' Kite Hill, the Husky E1 lot and Boeing Field's runway. On the
+minimap and full map as a wedge pointing the way you jump, orange until landed
+clean, then green.
+
+**A ramp is drawn geometry with its own height query, like a lid.**
+`installRamps` turns each jump into a record (`city.setRamps`), `city.rampY`
+answers the deck and `buildRampMesh` draws it from the same formula, so the car
+drives on what is drawn. `groundAt` takes a ramp over the terrain wherever it
+is higher and within `DECK_REACH`; the lookup is a byte mask at 32 m, so
+groundAt's ~110 calls a frame pay one typed-array read each away from a ramp.
+All ramps are one merged mesh on `world.mats.flat`: **1 draw (+1 in the shadow
+pass), ~1.7k triangles in total.** The profile is `H (A s + (1-A) s^2)`,
+`RAMP_A` 0.3: a 5-6 deg toe and the authored angle at the lip.
+
+- **The deck continues the approach's grade, not the ground under the lip.** At
+  a cliff edge the ground falls away under the lip; a base line following it
+  tilted the kicker down and Boston St launched flat (0.1 m of rise).
+- **The base is the highest surface there** (`groundAt(x, z, null)`, ramps
+  masked out while it asks), so a ramp can stand on a pier deck, and the walls
+  reach down to it.
+- **Sides and lip are barrier walls**, banded at "the deck 3 m further back,
+  less 0.2": a car's collision reach is ~2.4 m, so that top is under every car
+  on the ramp near a wall and over every car on the ground beside it. They are
+  appended inside `setBarriers`, so the portal build or its boot-cache restore
+  cannot drop them.
+- **A ramp at a dead end closes that block to traffic.** Every non-freeway edge
+  under a ramp is flagged `noTraffic`: `directedComponents`, `inComponent`,
+  `pickNextEdge`, `findPath` and kerbside parking all skip it, so the dead-end
+  block is cut off and nothing spawns, routes or parks on it. The others stand
+  off-road. A freeway or tunnel edge under a ramp is a siting error, reported by
+  the tool (`ON:`), never closed.
+- **The run-up and landing are kept clear** (`city.jumpClear`: an oriented
+  rectangle per jump). Park trees, street furniture, kerb clutter and lot
+  parking skip it; the tool reports any trunk left.
+
+**The flight is `Vehicle.stuntAir`, and only off a ramp.** The ground model
+steers the velocity with the body, which in the air would let you turn a jump;
+off a ramp the flight path is held in world space, steering spins the body
+(`STUNT_SPIN` 2.6 rad/s) and whatever angle it lands at comes back as slide.
+Gravity is `STUNT_G` 15 for hang time; crest hops elsewhere keep the old 22, so
+nothing but a ramp changed. On the ramp the car rides its CENTRE sample,
+stiffly: the four-wheel plane read the ground past the lip with the front pair
+and sank the car for the last car-length, and the usual lerp lags ~0.4 m on a
+20 deg kicker. Leaving it, the car carries `along speed x deck slope` upward.
+**Landing damage is the speed into the ground along its normal**, so a cliff
+jump onto a hillside that falls the way you do is survivable; over 20 m/s it
+costs `2 x excess`, capped at 40. A splashdown ends the flight at the surface.
+In the air the car skips trunks and posts (the store is 2D) but not walls or
+landmarks.
+
+**Scoring** (`StuntJumps`, the player's vehicle only): a jump counts from 13
+m/s along the ramp at the lip. Distance is lip to touchdown, flat; airtime in
+game seconds; spin in 180 deg steps. Pay is `40 + 6/m + 60/s + 150/half-turn`,
+x1.5 if clean, +$500 the first time. Clean = not wrecked, out of the water,
+moving forward within 25 deg of the heading, under 20 damage; a `water` jump's
+clean landing IS the splash. Clean landings tick the unique tally
+(`localStorage 'auto-stunts'`, with best distances). Activities' ambient
+AIRTIME is suppressed during a stunt so it is not paid twice.
+
+**Slow motion** eases in only for flights predicted over 1.5 s, through the
+middle of the flight (off by 80 % of it, so touchdown is at full speed and in
+your hands), at 0.55x; `player.stuntCam` pulls the boom 4.5 m back and 1.8 m
+up with it. `main.js` scales the whole sim's dt.
+
+**Verify with `node tools/stuntjumps.mjs [ids] [--caps 24,32,99] [--shots
+docs/jumps]`**: per jump, a corridor check (buildings, water, roads, trunks on
+run-up, ramp and landing; which blocks are closed) and a fixed-dt drive of the
+player's car at each speed cap through `player.update`. It fails a jump that
+does not launch or land, or is wrecked at 32 m/s. `tools/stuntjumps-page.js`
+is the page half; load it into any booted page to re-install edited jumps
+(`__sj.install(defs)`) and re-drive them without a reboot.
 
 ## Known gaps
 

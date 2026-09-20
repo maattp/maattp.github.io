@@ -48,7 +48,14 @@ export function collideWithBuildings(v, city, onHit) {
   //
   // Softer than a wall: a mast shears and a trunk gives, so the car is pushed
   // out and loses most of its speed rather than stopping dead against it.
-  const ob = city.obstacleHit(v.x, v.z, v.radius * 0.7, v.y);
+  // A car in a stunt flight is over the lamp posts, not among them: the store
+  // is 2D, so without this a jump clipped every post it passed over.
+  // Walls and landmarks still answer (they carry their own height bands).
+  let ob;
+  if (v.stunt && v.y - G.terrainHeight(v.x, v.z) > 3.5) {
+    const b = city.barrierHit(v.x, v.z, v.radius * 0.7, v.y), lm = city.landmarkHit(v.x, v.z, v.radius * 0.7, v.y);
+    ob = b && lm ? (b.pen > lm.pen ? b : lm) : b || lm;
+  } else ob = city.obstacleHit(v.x, v.z, v.radius * 0.7, v.y);
   if (ob) {
     v.x += ob.nx * ob.pen;
     v.z += ob.nz * ob.pen;
@@ -162,6 +169,9 @@ function directedComponents(city, flow) {
   const out = (n, k) => {
     const ei = city.nodes[n].e[k];
     const e = city.edges[ei], f = flow[ei];
+    // A stunt ramp's block (stunts.js) is no road for traffic: leaving it out
+    // of the graph cuts a dead-end block off, so nothing spawns on it either.
+    if (e.noTraffic) return -1;
     if (f === 0 || (f === 1 ? e.a === n : e.b === n)) return e.a === n ? e.b : e.a;
     return -1;
   };
@@ -325,6 +335,7 @@ export class TrafficSystem {
    */
   inComponent(ei) {
     const e = this.city.edges[ei];
+    if (e.noTraffic) return false;
     const c = this.comp[e.a];
     return c === this.comp[e.b] && this.compSize[c] >= MIN_COMPONENT;
   }
@@ -359,7 +370,7 @@ export class TrafficSystem {
     const seen = new Set();
     for (const ei of eids) {
       const e = city.edges[ei];
-      if (e.elev || e.cls === 'hwy' || e.cls === 'ramp') continue;
+      if (e.elev || e.cls === 'hwy' || e.cls === 'ramp' || e.noTraffic) continue;
       const a = city.nodes[e.a], b = city.nodes[e.b];
       const mid = { x: (a.x + b.x) / 2, z: (a.z + b.z) / 2 };
       if (dist2(mid.x, mid.z, px, pz) > PARKED_RADIUS * PARKED_RADIUS) continue;
@@ -385,7 +396,7 @@ export class TrafficSystem {
         const x = lerp(a.x, b.x, t) - e.dz * off * side;
         const z = lerp(a.z, b.z, t) + e.dx * off * side;
         if (dist2(x, z, px, pz) > PARKED_RADIUS * PARKED_RADIUS) continue;
-        if (!G.isBuildable(x, z)) continue;
+        if (!G.isBuildable(x, z) || city.jumpClear(x, z)) continue;
         const heading = Math.atan2(e.dx, e.dz) + (side > 0 ? 0 : Math.PI);
         const tn = CIVILIAN_TYPES[Math.floor(hash2(ei + s * 7, 11) * CIVILIAN_TYPES.length)];
         if (tn === 'bus' || tn === 'garbage') continue;
@@ -446,7 +457,7 @@ export class TrafficSystem {
         const cu = (bu + 0.5) * 2.6, cv = m * 18 + (row ? 15.3 : 2.7);
         const wx = cu * ux - cv * uz, wz = cu * uz + cv * ux;
         if (dist2(wx, wz, px, pz) > LOT_R * LOT_R || G.lotCodeAt(wx, wz) !== code) continue;
-        if (this.parkedSlots.has(key) || city.onRoad(wx, wz, 2.5)) continue;
+        if (this.parkedSlots.has(key) || city.onRoad(wx, wz, 2.5) || city.jumpClear(wx, wz)) continue;
         if (this.inFootprint(wx, wz, 1.5)) continue;
         cand.push({ key, wx, wz, d: dist2(wx, wz, px, pz),
           // Nose into the bay: the car's length runs across the row, along
@@ -678,6 +689,7 @@ export class TrafficSystem {
       for (const ei of node.e) {
         const e = city.edges[ei];
         const nb = e.a === cur ? e.b : e.a;
+        if (e.noTraffic) continue;         // a stunt ramp stands on it
         let mul = e.cls === 'res' ? 1.4 : e.cls === 'hwy' ? 0.7 : 1;
         if (!this.allowed(ei, e.a === cur ? 1 : -1)) {
           if (e.cls === 'hwy' || e.cls === 'ramp') continue;
@@ -988,6 +1000,7 @@ export class TrafficSystem {
     for (const ei of node.e) {
       if (ei === v.edge) continue;
       const ne = city.edges[ei];
+      if (ne.noTraffic) continue;          // a stunt ramp's block
       const sign = ne.a === nodeId ? 1 : -1;
       if (!this.allowed(ei, sign)) continue;
       if (this.comp[sign > 0 ? ne.b : ne.a] !== comp) continue;

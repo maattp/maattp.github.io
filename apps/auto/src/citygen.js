@@ -59,6 +59,11 @@ export const VERGE = 1.0;
 // 30 m/s rises 5 cm a frame), so joining a viaduct still works, while an
 // overpass a metre or more overhead can no longer pick the car up.
 const DECK_REACH = 0.9;
+// Stunt ramps (stunts.js): lookup cell, and the kicker profile's linear share.
+// Height along a ramp is H * (A s + (1 - A) s^2), s = 0 at the toe and 1 at
+// the lip, so it starts at A * H / L (gentle) and leaves at (2 - A) * H / L.
+const RAMP_CELL = 32;
+export const RAMP_A = 0.3;
 // groundAt's scratch for extrapolating graded pieces (see there): an
 // extrapolation within EX_TIE of a piece that covers the point is the same
 // road handing over, and yields to it.
@@ -2647,6 +2652,16 @@ export function* cityGenerator(md, cache = {}) {
             : ly <= curY + DECK_REACH && Math.abs(ly - curY) < Math.abs(terr - curY)) terr = ly;
         }
       }
+      // A STUNT RAMP is the top surface wherever it stands (stunts.js keeps
+      // them clear of decks), so it only has to be above the ground and in
+      // reach of the wheels -- the same reach a deck gets.
+      if (this.rampMask) {
+        const r = this.rampHere(x, z);
+        if (r) {
+          const ry = this.rampY(r, x, z);
+          if (ry > terr && (curY == null || ry <= curY + DECK_REACH)) terr = ry;
+        }
+      }
       let best = terr;
       // NEAREST deck to where you already are, not the highest one within
       // reach. Taking the highest meant any deck up to 2.6 m above the car
@@ -2882,11 +2897,104 @@ export function* cityGenerator(md, cache = {}) {
       return null;
     },
 
+    // --- Stunt ramps (stunts.js) --------------------------------------------
+    //
+    // Drawn geometry with its own height query, like a lid: whatever stunts.js
+    // draws is what groundAt stands you on. A ramp is always the TOP surface
+    // where it exists (they are placed clear of every deck), so groundAt takes
+    // it over the terrain whenever it is higher and within reach.
+    //
+    // The lookup is a byte mask over the map at RAMP_CELL, so the ~110 groundAt
+    // calls a frame pay one typed-array read each away from a ramp and never
+    // walk a list: nothing here scans all ramps for anyone.
+    ramps: null,
+    rampMask: null,
+    rampCells: null,
+    setRamps(list, clearRects) {
+      const N = Math.ceil((G.MAP_HALF * 2) / RAMP_CELL);
+      this.ramps = list.length ? list : null;
+      this.rampMask = list.length ? new Uint8Array(N * N) : null;
+      this.rampCells = new Map();
+      const file = (x0, z0, x1, z1, fn) => {
+        const i0 = Math.max(0, Math.floor((x0 + G.MAP_HALF) / RAMP_CELL)), i1 = Math.min(N - 1, Math.floor((x1 + G.MAP_HALF) / RAMP_CELL));
+        const j0 = Math.max(0, Math.floor((z0 + G.MAP_HALF) / RAMP_CELL)), j1 = Math.min(N - 1, Math.floor((z1 + G.MAP_HALF) / RAMP_CELL));
+        for (let i = i0; i <= i1; i++) for (let j = j0; j <= j1; j++) fn(i * N + j);
+      };
+      for (const r of list) {
+        let x0 = 1e9, x1 = -1e9, z0 = 1e9, z1 = -1e9;
+        for (const [u, v] of [[0, -r.W / 2], [0, r.W / 2], [r.L, -r.W / 2], [r.L, r.W / 2]]) {
+          const x = r.x0 + r.dx * u + r.px * v, z = r.z0 + r.dz * u + r.pz * v;
+          x0 = Math.min(x0, x); x1 = Math.max(x1, x); z0 = Math.min(z0, z); z1 = Math.max(z1, z);
+        }
+        file(x0, z0, x1, z1, (k) => {
+          this.rampMask[k] = 1;
+          let l = this.rampCells.get(k);
+          if (!l) this.rampCells.set(k, (l = []));
+          l.push(r);
+        });
+      }
+      // Corridors kept free of trees and street furniture: run-up, ramp and
+      // landing zone. Oriented rectangles {x, z, dx, dz, px, pz, u0, u1, hw}.
+      this.jumpClearRects = clearRects && clearRects.length ? clearRects : null;
+      this._rampN = N;
+      // The side and lip walls go into the barrier store, so if the portal
+      // barriers are already installed, re-install them with these appended.
+      if (this.barrierSegs) this.setBarriers(this._portalSegs || this.barrierSegs);
+    },
+    /** The ramp whose footprint holds (x, z), or null. */
+    rampHere(x, z) {
+      const M = this.rampMask;
+      if (!M) return null;
+      const N = this._rampN;
+      const i = Math.floor((x + G.MAP_HALF) / RAMP_CELL), j = Math.floor((z + G.MAP_HALF) / RAMP_CELL);
+      if (i < 0 || j < 0 || i >= N || j >= N || !M[i * N + j]) return null;
+      const l = this.rampCells.get(i * N + j);
+      for (let q = 0; q < l.length; q++) {
+        const r = l[q];
+        const ox = x - r.x0, oz = z - r.z0;
+        const u = ox * r.dx + oz * r.dz;
+        if (u < 0 || u > r.L) continue;
+        const v = ox * r.px + oz * r.pz;
+        if (v < -r.W / 2 || v > r.W / 2) continue;
+        return r;
+      }
+      return null;
+    },
+    /** The drawn top of ramp r at (x, z) -- stunts.rampTop's formula. */
+    rampY(r, x, z) {
+      const s = Math.min(1, Math.max(0, ((x - r.x0) * r.dx + (z - r.z0) * r.dz) / r.L));
+      return r.y0 + (r.y1 - r.y0) * s + r.H * (RAMP_A * s + (1 - RAMP_A) * s * s);
+    },
+    /** Rise per metre along the ramp at (x, z): the launch angle's tangent at the lip. */
+    rampSlope(r, x, z) {
+      const s = Math.min(1, Math.max(0, ((x - r.x0) * r.dx + (z - r.z0) * r.dz) / r.L));
+      return (r.y1 - r.y0) / r.L + r.H * (RAMP_A + 2 * (1 - RAMP_A) * s) / r.L;
+    },
+    /** Inside a jump's kept-clear corridor (no trees, posts or parked cars)? */
+    jumpClear(x, z) {
+      const R = this.jumpClearRects;
+      if (!R) return false;
+      for (let q = 0; q < R.length; q++) {
+        const c = R[q];
+        const ox = x - c.x, oz = z - c.z;
+        if (Math.abs(ox) > c.reach || Math.abs(oz) > c.reach) continue;
+        const u = ox * c.dx + oz * c.dz;
+        if (u < c.u0 || u > c.u1) continue;
+        const v = ox * c.px + oz * c.pz;
+        if (v >= -c.hw && v <= c.hw) return true;
+      }
+      return false;
+    },
+
     // Stride 6: ax, az, bx, bz, y0, y1. The band is what lets a barrier be a
     // TUNNEL wall: a 2D fence along 3 km of bore under downtown would wall
     // off every surface street above it, so a segment only exists for
     // entities inside its height range.
     setBarriers(segs) {
+      // The ramps' walls ride along with whatever world.js installs, so the
+      // portal build (or its boot-cache restore) cannot drop them.
+      this._portalSegs = segs;
+      if (this.rampSegs && this.rampSegs.length) segs = segs.concat(this.rampSegs);
       this.barrierSegs = segs;
       this.barrierFine = null;
       this.barrierGrid = new Map();
