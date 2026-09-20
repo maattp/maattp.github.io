@@ -259,6 +259,13 @@
   #loadTrack { width: min(320px, 70%); height: 5px; border-radius: 3px; background: rgba(255,255,255,0.12); overflow: hidden; }
   #loadBar { height: 100%; width: 0%; background: linear-gradient(90deg, #6fd7a0, #7ec8f0); transition: width .25s; }
   #loadMsg { font-size: 12px; opacity: .6; height: 16px; }
+  /* Boot log: every loading step with its time, what the boot cache found and
+     any error -- so a launch that stalls on a phone can be photographed and
+     read. Loading screen only. */
+  #bootLog {
+    font: 10px/1.35 ui-monospace, Menlo, monospace; opacity: .55; margin: 0;
+    width: min(460px, 86%); max-height: 34vh; overflow: hidden; white-space: pre-wrap; text-align: left;
+  }
   /* Which build you're actually running — the first thing to check when a fix
      seems to be missing, since a stale service worker looks exactly like that. */
   #build {
@@ -459,10 +466,38 @@
     <h1>AUTO</h1>
     <div id="loadTrack"><div id="loadBar"></div></div>
     <div id="loadMsg">Starting up</div>
+    <pre id="bootLog"></pre>
     <!-- Bumped once per change, in step with CACHE in sw.js. See CLAUDE.md. -->
-    <div id="build">v85</div>
+    <div id="build">v86</div>
     <div id="attrib">Map data © OpenStreetMap contributors (ODbL) · elevation USGS 3DEP</div>
   </div>
+  <script>
+    // THE BOOT LOG. A classic script, so it runs even if a module never loads.
+    // window.__bootLog(msg) appends a line with the seconds since page start;
+    // every change of the loading message is logged too, and so is every error.
+    (function () {
+      var el = document.getElementById('bootLog'), lines = [], started = false;
+      function log(m) {
+        started = true;
+        lines.push((performance.now() / 1000).toFixed(1) + 's  ' + m);
+        if (lines.length > 22) lines.shift();
+        if (el) { el.textContent = lines.join('\n'); el.scrollTop = el.scrollHeight; }
+      }
+      window.__bootLog = log;
+      var msg = document.getElementById('loadMsg');
+      if (msg && window.MutationObserver) {
+        new MutationObserver(function () { log(msg.textContent); })
+          .observe(msg, { childList: true, characterData: true, subtree: true });
+      }
+      window.addEventListener('error', function (e) {
+        log('ERROR ' + (e.message || (e.target && e.target.src) || e) + (e.filename ? ' @' + e.filename.split('/').pop() + ':' + e.lineno : ''));
+      }, true);
+      window.addEventListener('unhandledrejection', function (e) {
+        var r = e.reason; log('REJECTED ' + (r && (r.stack || r.message) || r));
+      });
+      setTimeout(function () { if (!started) log('game code has not started after 8 s (a module failed to load?)'); }, 8000);
+    })();
+  </script>
 
   <!-- Race readout. TOP-CENTRE deliberately: thumbs occlude the bottom
        corners on a phone, and this is the one thing you read mid-corner. -->

@@ -64,3 +64,23 @@ export async function cachePut(key, value) {
     } catch (e) { res(false); }
   }));
 }
+
+// CRASH GUARD. A launch that starts from cached data and never reaches its
+// first frame (a decode that hangs, an entry WebKit stored badly) must not
+// leave the next launch doing the same: main.js marks the attempt here before
+// reading and clears it at the first frame. Finding the mark still set means
+// the last cached boot died, so the cache is ignored and wiped.
+const GUARD = 'auto-boot-cache-inflight';
+export function cacheGuardTripped() {
+  try { return localStorage.getItem(GUARD) === buildId(); } catch (e) { return false; }
+}
+export function cacheGuardSet(on) {
+  try { if (on) localStorage.setItem(GUARD, buildId()); else localStorage.removeItem(GUARD); } catch (e) { /* no storage */ }
+}
+export async function cacheClear() {
+  const db = await open();
+  if (!db) return;
+  await withTimeout(new Promise((res) => {
+    try { const tx = db.transaction(STORE, 'readwrite'); tx.objectStore(STORE).clear(); tx.oncomplete = () => res(); tx.onerror = () => res(); } catch (e) { res(); }
+  }));
+}

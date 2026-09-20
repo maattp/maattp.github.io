@@ -52,6 +52,9 @@ try {
       const rec = () => window.__boot.push([performance.now(), el.textContent]);
       rec(); new MutationObserver(rec).observe(el, { childList: true, characterData: true, subtree: true });
     });` });
+  // BOOT_INJECT='<js>': run before the page's own scripts on every load (to
+  // simulate a platform failure -- a decode that never resolves, a dead IDB).
+  if (process.env.BOOT_INJECT) await send('Page.addScriptToEvaluateOnNewDocument', { source: process.env.BOOT_INJECT });
   if (THROTTLE > 1) await send('Emulation.setCPUThrottlingRate', { rate: THROTTLE });
   if (PROF) { await send('Profiler.enable'); await send('Profiler.setSamplingInterval', { interval: 500 }); await send('Profiler.start'); }
   if (TWICE) {

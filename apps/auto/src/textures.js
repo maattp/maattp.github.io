@@ -1156,9 +1156,15 @@ export function planTextures(tx) {
   return { skel: skel(tx), texs };
 }
 
-export const canvasToBlob = (c) => new Promise((res) => {
-  try { c.toBlob((b) => res(b), 'image/png'); } catch (e) { res(null); }
-});
+// Settle within `ms` whatever happens: on iOS a toBlob callback or an image
+// decode can simply never arrive, and a boot awaiting one hung at 2 %.
+export const within = (p, ms) => Promise.race([p, new Promise((res) => setTimeout(() => res(null), ms))]);
+
+/** A canvas as PNG BYTES (an ArrayBuffer, not a Blob: WebKit's IndexedDB is
+ *  unreliable with Blobs, above all in a home-screen app), or null. */
+export const canvasToBlob = (c) => within(new Promise((res) => {
+  try { c.toBlob((b) => (b ? b.arrayBuffer().then(res, () => res(null)) : res(null)), 'image/png'); } catch (e) { res(null); }
+}), 8000);
 
 export async function encodeTextures(plan) {
   const texs = [];
@@ -1166,17 +1172,21 @@ export async function encodeTextures(plan) {
     const im = t.tex.image;
     if (t.data) texs.push({ props: t.props, data: im.data.slice(), w: im.width, h: im.height });
     else {
-      const blob = await canvasToBlob(im);
-      if (!blob) return null;
-      texs.push({ props: t.props, blob });
+      const png = await canvasToBlob(im);
+      if (!png) return null;
+      texs.push({ props: t.props, png });
     }
   }
   return { skel: plan.skel, texs };
 }
 
-/** A canvas holding a cached PNG's exact bytes (no colour or alpha conversion). */
-export async function blobToCanvas(blob) {
-  const bmp = await createImageBitmap(blob, { colorSpaceConversion: 'none', premultiplyAlpha: 'none' });
+/** A canvas holding cached PNG bytes exactly (no colour or alpha conversion).
+ *  Throws if it cannot, including if the decode never finishes. */
+export async function blobToCanvas(png) {
+  if (!(png instanceof ArrayBuffer)) throw new Error('not PNG bytes');
+  const bmp = await within(createImageBitmap(new Blob([png], { type: 'image/png' }),
+    { colorSpaceConversion: 'none', premultiplyAlpha: 'none' }), 6000);
+  if (!bmp) throw new Error('decode timed out');
   const c = document.createElement('canvas');
   c.width = bmp.width; c.height = bmp.height;
   c.getContext('2d').drawImage(bmp, 0, 0);
@@ -1188,7 +1198,7 @@ export async function restoreTextures(snap) {
   const texs = await Promise.all(snap.texs.map(async (t) => {
     let tex;
     if (t.data) tex = new THREE.DataTexture(t.data, t.w, t.h);
-    else tex = new THREE.CanvasTexture(await blobToCanvas(t.blob));
+    else tex = new THREE.CanvasTexture(await blobToCanvas(t.png));
     for (const k of TEX_PROPS) tex[k] = t.props[k];
     tex.repeat.set(t.props.repeat[0], t.props.repeat[1]);
     tex.offset.set(t.props.offset[0], t.props.offset[1]);

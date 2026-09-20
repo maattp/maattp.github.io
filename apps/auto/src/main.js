@@ -4,11 +4,11 @@ import * as THREE from './three.js';
 import * as G from './geo.js';
 import { cityGenerator, cityStats } from './citygen.js';
 import { loadMapData } from './mapdata.js';
-import { buildTextures, planTextures, encodeTextures, restoreTextures, canvasToBlob, blobToCanvas } from './textures.js';
+import { buildTextures, planTextures, encodeTextures, restoreTextures, canvasToBlob, blobToCanvas, within } from './textures.js';
 import { World, WET_FLOOR } from './world.js';
 import { buildLandmarks } from './landmarks.js';
 import { freezeStatic } from './build.js';
-import { cacheGet, cachePut } from './bootcache.js';
+import { cacheGet, cachePut, cacheGuardTripped, cacheGuardSet, cacheClear } from './bootcache.js';
 import { TrafficSystem, collideWithBuildings } from './traffic.js';
 import { TYPES as VEHICLE_TYPES, setWaterQuery, setVehicleCache, vehicleSnapshot } from './vehicles.js';
 import { PedSystem, animateWalk } from './peds.js';
@@ -25,6 +25,8 @@ const app = document.getElementById('app');
 const loadBar = document.getElementById('loadBar');
 const loadMsg = document.getElementById('loadMsg');
 const loading = document.getElementById('loading');
+// index.html's boot log (a no-op if it is missing)
+const blog = (m) => { try { if (window.__bootLog) window.__bootLog(m); } catch (e) { /* log only */ } };
 
 // One definition of "is this a phone", used by the light rig, the starting
 // quality tier and the pixel-ratio cap. Three separate copies of this test had
@@ -283,10 +285,24 @@ async function boot() {
   // is kept at the end of the boot for the next launch.
   const BC_KEYS = ['textures', 'map', 'buildings', 'grade', 'portal', 'vehicles'];
   const bc = {};
-  (await Promise.all(BC_KEYS.map((k) => cacheGet(k)))).forEach((v, i) => { bc[BC_KEYS[i]] = v; });
+  blog('main started, ' + (navigator.userAgent.match(/OS [\d_]+|Chrome\/\d+|Version\/[\d.]+/g) || []).join(' '));
+  if (cacheGuardTripped()) {
+    // the last launch from the cache never reached a frame: start clean
+    blog('cache: last cached launch never finished -- clearing it');
+    await cacheClear();
+  } else {
+    const t0 = performance.now();
+    (await Promise.all(BC_KEYS.map((k) => cacheGet(k)))).forEach((v, i) => { bc[BC_KEYS[i]] = v; });
+    blog(`cache read ${((performance.now() - t0) / 1000).toFixed(1)}s: ` + BC_KEYS.map((k) => k + (bc[k] ? '+' : '-')).join(' '));
+  }
+  if (Object.values(bc).some(Boolean)) cacheGuardSet(true);
   const bcOut = {};
   let tx = null;
-  if (bc.textures) { try { tx = await restoreTextures(bc.textures); } catch (e) { tx = null; } }
+  if (bc.textures) {
+    const t0 = performance.now();
+    try { tx = await within(restoreTextures(bc.textures), 12000); } catch (e) { tx = null; blog('textures: restore failed ' + e.message); }
+    blog(tx ? `textures restored ${((performance.now() - t0) / 1000).toFixed(1)}s` : 'textures: restore gave up, painting');
+  }
   if (!tx) { tx = buildTextures(); bcOut.texPlan = planTextures(tx); }
   if (bc.vehicles) setVehicleCache(bc.vehicles);
 
@@ -313,6 +329,7 @@ async function boot() {
   }
   const city = r.value;
   cityRef = city;
+  blog(`city: grading ${cityStats.gradeCached ? 'from cache' : 'computed'}, buildings ${bootCache.buildings ? 'from cache' : 'computed'}`);
 
   await step(0.64, 'Raising the terrain');
 
@@ -585,7 +602,7 @@ function installShadowFade() {
   peds.camera = camera;   // animation LOD culls against it
   fx = new Effects(scene, tx);
   let mapCanvas = null;
-  if (bc.map) { try { mapCanvas = await blobToCanvas(bc.map); } catch (e) { mapCanvas = null; } }
+  if (bc.map) { try { mapCanvas = await blobToCanvas(bc.map); } catch (e) { mapCanvas = null; blog('map: restore failed ' + e.message); } }
   if (!mapCanvas) { mapCanvas = buildMapCanvas(city); bcOut.mapCanvas = mapCanvas; }
   hud = new Hud(document.getElementById('app'), city, mapCanvas);
   {
@@ -636,7 +653,10 @@ function installShadowFade() {
   if (toKeep.length) {
     await step(0.93, 'Remembering the city');
     for (const [k, make] of toKeep) {
-      try { const v = await make(); if (v) await cachePut(k, v); } catch (e) { /* next launch computes it */ }
+      const t0 = performance.now();
+      let ok = false;
+      try { const v = await within(Promise.resolve(make()), 10000); if (v) ok = await cachePut(k, v); } catch (e) { blog(`keep ${k}: ${e.message}`); }
+      blog(`keep ${k}: ${ok ? 'saved' : 'not saved'} ${((performance.now() - t0) / 1000).toFixed(1)}s`);
     }
   }
   bootCache.gradeOut = bootCache.buildingsOut = null;
@@ -673,6 +693,9 @@ function installShadowFade() {
   setTimeout(() => loading.remove(), 700);
   last = performance.now();
   requestAnimationFrame(frame);
+  // The game is running: this launch did not die in the cache (see bootcache.js).
+  requestAnimationFrame(() => requestAnimationFrame(() => cacheGuardSet(false)));
+  blog('running');
 }
 
 // ---------------------------------------------------------------------------
@@ -1427,5 +1450,6 @@ function applyQuality(q, manual) {
 
 boot().catch((e) => {
   loadMsg.textContent = 'Failed to start: ' + e.message;
+  blog('FAILED ' + (e.stack || e.message));
   console.error(e);
 });
