@@ -9,7 +9,7 @@ import * as G from './geo.js';
 const ON_PHONE = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
 import { CHUNK, ROAD_LIFT, NODE_LIFT, WALK_LIFT, TUNNEL_H, VERGE, cityStats } from './citygen.js';
 import { Builder, ChunkBuilder, freezeStatic } from './build.js';
-import { hash2, clamp, lerp, distToSeg } from './util.js';
+import { hash2, clamp, lerp, distToSeg, segDist } from './util.js';
 
 // The bore's cross-section, shared by the mesher and by the trench that has to
 // be cut out of the ground to make room for it.
@@ -1098,6 +1098,17 @@ export class World {
     // same re-tessellation as a portal trench or the 40 m grid hides the dip.
     if (this.city.underpassCell && this.city.underpassCell(cx, cz, S)) return true;
     if (!this.portalCuts().length) return false;
+    // No cutting filed under any grid cell this terrain cell touches: every
+    // sample below would find an empty list and answer null. (422k cells x 9
+    // samples was ~0.3 s of the boot, nearly all of it here.)
+    {
+      this._cutsNear(cx, cz);   // builds the grid
+      const G0 = Math.floor(cx / 48), G1 = Math.floor((cx + S) / 48);
+      const H0 = Math.floor(cz / 48), H1 = Math.floor((cz + S) / 48);
+      let any = false;
+      for (let gx = G0; gx <= G1 && !any; gx++) for (let gz = H0; gz <= H1 && !any; gz++) if (this._cutGrid.has(gx * 100003 + gz)) any = true;
+      if (!any) return false;
+    }
     for (let j = 0; j <= 2; j++) {
       for (let i = 0; i <= 2; i++) {
         if (this.cutFloor(cx + (i * S) / 2, cz + (j * S) / 2)) return true;
@@ -1776,7 +1787,7 @@ export class World {
       if (x < c.x0 || x > c.x1 || z < c.z0 || z > c.z1) return false;
       for (let k = 0; k < c.pts.length - 1; k++) {
         const p0 = c.pts[k], p1 = c.pts[k + 1];
-        if (distToSeg(x, z, p0.x, p0.z, p1.x, p1.z).d <= p0.hw + CUT_SH + CUT_OVER + CUT_BANK) return true;
+        if (segDist(x, z, p0.x, p0.z, p1.x, p1.z) <= p0.hw + CUT_SH + CUT_OVER + CUT_BANK) return true;
       }
       return false;
     };
@@ -1793,6 +1804,7 @@ export class World {
     this._lidVeto = new Map();          // ei -> why a dug road got no slab
     this._lidBarrier0 = bsegs.length;   // barriers from here on are lid sides
     const stats = { edges: 0, quads: 0, walls: 0, crossingsSkipped: 0 };
+    const cutGrid = this._bboxGrid(cuts);
     for (let ei = 0; ei < city.edges.length; ei++) {
       const e = city.edges[ei];
       if (e.tunnel || e.elev) continue;
@@ -1802,12 +1814,25 @@ export class World {
       // Both-ends-only was not enough -- at a divided mouth the twin
       // carriageways descend side by side, each dug deepest by the OTHER's
       // cut, and lidding one put a wall 2 m from the other's centreline.
-      const kA = key(a.x, a.z), kB = key(b.x, b.z);
-      const ownCuts = cuts.filter((c, ci) => keysOf[ci].has(kA) || keysOf[ci].has(kB));
       const r = e.hw + 1;
       const ex0 = Math.min(a.x, b.x) - r, ex1 = Math.max(a.x, b.x) + r;
       const ez0 = Math.min(a.z, b.z) - r, ez1 = Math.max(a.z, b.z) + r;
-      if (!cuts.some((c) => !(ex1 < c.x0 || ex0 > c.x1 || ez1 < c.z0 || ez0 > c.z1))) continue;
+      // Cut bounds from a grid (every cut filed under every cell its bounds
+      // touch, padded), then the exact test: `cuts.some` over all 155 cuts for
+      // all 70k edges was a tenth of a second of the boot.
+      let nearCut = false;
+      for (let gx = Math.floor(ex0 / 48); gx <= Math.floor(ex1 / 48) && !nearCut; gx++) {
+        for (let gz = Math.floor(ez0 / 48); gz <= Math.floor(ez1 / 48) && !nearCut; gz++) {
+          const l = cutGrid.get(gx * 100003 + gz);
+          if (!l) continue;
+          for (const c of l) if (!(ex1 < c.x0 || ex0 > c.x1 || ez1 < c.z0 || ez0 > c.z1)) { nearCut = true; break; }
+        }
+      }
+      if (!nearCut) continue;
+      // (after the bbox test: for all 70k edges this filter was a third of a
+      // second of the loading bar, for the few hundred near a cutting)
+      const kA = key(a.x, a.z), kB = key(b.x, b.z);
+      const ownCuts = cuts.filter((c, ci) => keysOf[ci].has(kA) || keysOf[ci].has(kB));
       // Any road the cut digs at all (0.3 m+). A higher bar -- 1.5 m was the
       // first -- ends a slab at the node where the next edge's dig falls
       // under it, and that end is a drop the barrier then walls off across
@@ -1852,14 +1877,18 @@ export class World {
         let dOwn = 1e9, sa = null, sb = null, tt = 0, dAll = 1e9;
         for (let k = 0; k < q.c.pts.length - 1; k++) {
           const p0 = q.c.pts[k], p1 = q.c.pts[k + 1];
-          const rr = distToSeg(x, z, p0.x, p0.z, p1.x, p1.z);
+          // distToSeg, inline (hundreds of thousands of probes at boot)
+          const sdx = p1.x - p0.x, sdz = p1.z - p0.z, sl2 = sdx * sdx + sdz * sdz;
+          let rt = sl2 > 0 ? ((x - p0.x) * sdx + (z - p0.z) * sdz) / sl2 : 0;
+          rt = rt < 0 ? 0 : rt > 1 ? 1 : rt;
+          const rd = Math.hypot(x - (p0.x + sdx * rt), z - (p0.z + sdz * rt));
           // The Voronoi line counts the closing (cap) segment too -- it runs
           // on down the bore -- or near a cutting's end the median slid to 2 m
           // off the NB centreline (bore +65) because the nearest counted
           // segment had already ended.
-          if (rr.d < dAll) dAll = rr.d;
+          if (rd < dAll) dAll = rd;
           if (p1.cap) continue;
-          if (rr.d < dOwn) { dOwn = rr.d; sa = p0; sb = p1; tt = rr.t; }
+          if (rd < dOwn) { dOwn = rd; sa = p0; sb = p1; tt = rt; }
         }
         if (!sa) return 0;
         const kindOf = (kd) => {

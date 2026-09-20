@@ -71,6 +71,16 @@ export function dist2(ax, az, bx, bz) {
   return dx * dx + dz * dz;
 }
 
+/** distToSeg(...).d with no result object, for hot loops: same arithmetic. */
+export function segDist(px, pz, ax, az, bx, bz) {
+  const dx = bx - ax,
+    dz = bz - az;
+  const l2 = dx * dx + dz * dz;
+  let t = l2 > 0 ? ((px - ax) * dx + (pz - az) * dz) / l2 : 0;
+  t = t < 0 ? 0 : t > 1 ? 1 : t;
+  return Math.hypot(px - (ax + dx * t), pz - (az + dz * t));
+}
+
 export function distToSeg(px, pz, ax, az, bx, bz) {
   const dx = bx - ax,
     dz = bz - az;

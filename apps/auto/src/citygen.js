@@ -337,6 +337,16 @@ function gradeRoads(nodes, edges) {
     }
     return touched;
   };
+  // The solve passes walk every sample's PROF_R (and PROF_R / 2) neighbourhood
+  // ~8 times over, and the graph never changes: each list is walked once and
+  // kept, in the walk's own order, so every weighted sum is bit-identical.
+  // That walk was most of gradeRoads, and gradeRoads a second of a phone boot.
+  const nbCache = new Map();
+  const aroundC = (i, rad) => {
+    let c = nbCache.get(rad);
+    if (!c) nbCache.set(rad, (c = new Array(N)));
+    return c[i] || (c[i] = Int32Array.from(around(i, rad)));
+  };
   const W = new Float64Array(N);
   for (let i = 0; i < N; i++) { const l = adj[i]; for (let q = 1; q < l.length; q += 3) W[i] += l[q] / 2; }
 
@@ -367,22 +377,26 @@ function gradeRoads(nodes, edges) {
       if (!l) sgrid.set(k, (l = []));
       l.push(i);
     }
+    // "Within 30 m along the graph" as a stamp per sample instead of a Set
+    // per sample (88k of them): same membership, no allocation.
+    const nearMark = new Int32Array(N);
     for (let i = 0; i < N; i++) {
       if (fixed[i]) continue;
       const cx = Math.floor(SX[i] / SC), cz = Math.floor(SZ[i] / SC);
-      let near = null;
+      let near = false;
       for (let ox = -2; ox <= 2; ox++) for (let oz = -2; oz <= 2; oz++) {
         const l = sgrid.get(skey(cx + ox, cz + oz));
         if (!l) continue;
         for (const j of l) {
           if (j === i || fixed[j]) continue;
-          const d = Math.hypot(SX[i] - SX[j], SZ[i] - SZ[j]);
-          if (d >= hwOf[i] + hwOf[j] - 0.5 || Math.abs(levelOf[i] - levelOf[j]) > 2) continue;
+          // squared: millions of pairs, and hypot is slow
+          const ddx = SX[i] - SX[j], ddz = SZ[i] - SZ[j], rr = hwOf[i] + hwOf[j] - 0.5;
+          if (rr <= 0 || ddx * ddx + ddz * ddz >= rr * rr || Math.abs(levelOf[i] - levelOf[j]) > 2) continue;
           // Not its own carriageway: anything within 30 m along the graph is
           // the same road carrying on, and coupling to it would ratchet the
           // whole chain up to its highest sample.
-          if (!near) near = new Set(around(i, 30));
-          if (near.has(j)) continue;
+          if (!near) { near = true; for (const q of around(i, 30)) nearMark[q] = i + 1; }
+          if (nearMark[j] === i + 1) continue;
           couple.push(i, j);
           coupled[i] = 1;
         }
@@ -410,7 +424,7 @@ function gradeRoads(nodes, edges) {
     if (isDeck[i] || coupled[i]) continue;
     if (fixed[i]) { gx[i] = rgx[i]; gz[i] = rgz[i]; continue; }
     let sx = 0, sz = 0, sw = 0;
-    for (const j of around(i, PROF_R)) { sx += rgx[j] * W[j]; sz += rgz[j] * W[j]; sw += W[j]; }
+    for (const j of aroundC(i, PROF_R)) { sx += rgx[j] * W[j]; sz += rgz[j] * W[j]; sw += W[j]; }
     if (sw > 0) { gx[i] = sx / sw; gz[i] = sz / sw; }
   }
 
@@ -580,7 +594,7 @@ function gradeRoads(nodes, edges) {
     for (let i = 0; i < N; i++) {
       if (fixed[i]) { D[i] = f[i]; continue; }
       let m = f[i];
-      for (const j of around(i, PROF_R)) if (f[j] > m) m = f[j];
+      for (const j of aroundC(i, PROF_R)) if (f[j] > m) m = f[j];
       D[i] = m;
     }
     C.set(D);
@@ -632,7 +646,7 @@ function gradeRoads(nodes, edges) {
     for (let i = 0; i < N; i++) {
       if (fixed[i]) { H[i] = fixVal[i]; continue; }
       let s = 0, sw = 0;
-      for (const j of around(i, PROF_R)) { s += C[j] * W[j]; sw += W[j]; }
+      for (const j of aroundC(i, PROF_R)) { s += C[j] * W[j]; sw += W[j]; }
       const h = sw > 0 ? s / sw : C[i];
       // Out of an anchor the profile may climb no faster than GRADE_CAP
       // unless a floor demands it. A smoothstep taper used to do this job and
@@ -661,12 +675,12 @@ function gradeRoads(nodes, edges) {
     for (let i = 0; i < N; i++) {
       if (!cnt[i] || fixed[i]) continue;
       Hb[i] = Math.max(Fg[i], Math.min((H[i] + acc[i]) / (1 + cnt[i]), capFix[i]));
-      for (const j of around(i, PROF_R)) near[j] = 1;
+      for (const j of aroundC(i, PROF_R)) near[j] = 1;
     }
     for (let i = 0; i < N; i++) {
       if (!near[i] || fixed[i]) continue;
       let s = 0, sw = 0;
-      for (const j of around(i, PROF_R / 2)) { s += Hb[j] * W[j]; sw += W[j]; }
+      for (const j of aroundC(i, PROF_R / 2)) { s += Hb[j] * W[j]; sw += W[j]; }
       H[i] = Math.max(Fg[i], Math.min(sw > 0 ? s / sw : Hb[i], capFix[i]));
     }
   }
@@ -886,6 +900,8 @@ function gradeRoads(nodes, edges) {
     const cx = oa.x + o.dx * o.len * t, cz = oa.z + o.dz * o.len * t;
     return P.h + P.s * ((x - cx) * -o.dz + (z - cz) * o.dx);
   };
+  const spCand = new Int32Array(edges.length), spSeen = new Int32Array(edges.length);
+  let spStamp = 0, spSeenT = 0;
   for (const e of edges) {
     if (!e.prof) continue;
     const k = e.pk, a = nodes[e.a];
@@ -898,17 +914,38 @@ function gradeRoads(nodes, edges) {
     // their own drawn deck (136 of 181 at I-5 downtown).
     e.tnb = new Uint8Array((k + 1) * 2);
     const px = -e.dz, pz = e.dx;
+    // Near-parallel is a property of the PAIR, not the sample: mark this
+    // edge's candidates once, and let each sample skip the rest before doing
+    // anything else. Skipping early cannot reorder the survivors -- and the
+    // trim below is first-come, so the order is what keeps this identical.
+    // (Per sample, every edge within 30 m ran through a Set and this test; the
+    // pass was 0.4 s of a desktop boot.)
+    const eSt = ++spStamp;
+    {
+      const b = nodes[e.b];
+      for (let gx0 = Math.floor((Math.min(a.x, b.x) - 30) / CELL); gx0 <= Math.floor((Math.max(a.x, b.x) + 30) / CELL); gx0++) {
+        for (let gz0 = Math.floor((Math.min(a.z, b.z) - 30) / CELL); gz0 <= Math.floor((Math.max(a.z, b.z) + 30) / CELL); gz0++) {
+          const l = grid.get(skey(gx0, gz0));
+          if (!l) continue;
+          for (const oi of l) {
+            const o = edges[oi];
+            if (Math.abs(e.dx * o.dx + e.dz * o.dz) >= 0.8) spCand[oi] = eSt;
+          }
+        }
+      }
+    }
     for (let i = 0; i <= k; i++) {
       const cx = a.x + e.dx * (e.len * i) / k, cz = a.z + e.dz * (e.len * i) / k;
-      const seen = new Set();
+      const sSt = ++spSeenT;
       for (let gx0 = Math.floor((cx - 30) / CELL); gx0 <= Math.floor((cx + 30) / CELL); gx0++) {
         for (let gz0 = Math.floor((cz - 30) / CELL); gz0 <= Math.floor((cz + 30) / CELL); gz0++) {
           const l = grid.get(skey(gx0, gz0));
           if (!l) continue;
           for (const oi of l) {
+            if (spCand[oi] !== eSt) continue;   // not near-parallel: par < 0.8 below
             const o = edges[oi];
-            if (o === e || seen.has(oi)) continue;
-            seen.add(oi);
+            if (o === e || spSeen[oi] === sSt) continue;
+            spSeen[oi] = sSt;
             // Sharing a node is not the same road: a ramp diverging from the
             // main line shares the diverge node and then runs alongside it for
             // tens of metres -- skipping every node-sharing pair left those
@@ -957,13 +994,23 @@ function gradeRoads(nodes, edges) {
   cityStats.splitLevelTrimmedM = Math.round(trimmedM);
 
   let fillSum = 0, fillN = 0, worstFill = 0;
+  // Each edge's padded bounds, so the two per-sample scans below reject roads
+  // that cannot reach the point before touching them (they were 0.27 s of a
+  // desktop boot over every edge in four 100 m cells, per sample side). A
+  // road passing nowhere near a point can neither set a flag nor win the hit
+  // race, so the answers are unchanged.
+  const ebx0 = new Float64Array(edges.length), ebx1 = new Float64Array(edges.length);
+  const ebz0 = new Float64Array(edges.length), ebz1 = new Float64Array(edges.length);
+  for (let oi = 0; oi < edges.length; oi++) {
+    const o = edges[oi], oa = nodes[o.a], ob = nodes[o.b];
+    ebx0[oi] = Math.min(oa.x, ob.x) - o.hw; ebx1[oi] = Math.max(oa.x, ob.x) + o.hw;
+    ebz0[oi] = Math.min(oa.z, ob.z) - o.hw; ebz1[oi] = Math.max(oa.z, ob.z) + o.hw;
+  }
   for (const e of edges) {
     if (!e.prof) continue;
     const k = e.pk;
     const px = -e.dz, pz = e.dx;
     if (e.elev) continue;
-    // Embankment either side: from the carriageway edge down at BERM to where
-    // it meets the ground. [edgeY, width, toeY] per sample, left then right.
     e.pe = new Float32Array((k + 1) * 6);
     e.pwall = new Uint8Array((k + 1) * 2);
     let widest = 0;
@@ -998,6 +1045,8 @@ function gradeRoads(nodes, edges) {
               const l = grid.get(skey(gx0, gz0));
               if (!l) continue;
               for (const oi of l) {
+                // outside its padded bounds, dd > hw below
+                if (bx < ebx0[oi] || bx > ebx1[oi] || bz < ebz0[oi] || bz > ebz1[oi]) continue;
                 const o = edges[oi];
                 if (o === e) continue;
                 const oa = nodes[o.a];
@@ -1029,7 +1078,10 @@ function gradeRoads(nodes, edges) {
             for (let gz0 = Math.floor((ez - w - 25) / CELL); gz0 <= Math.floor((ez + w + 25) / CELL); gz0++) {
               const l = grid.get(skey(gx0, gz0));
               if (!l) continue;
+              const qx0 = Math.min(ex + px * sg * 1.5, ex + px * sg * w) - 0.01, qx1 = Math.max(ex + px * sg * 1.5, ex + px * sg * w) + 0.01;
+              const qz0 = Math.min(ez + pz * sg * 1.5, ez + pz * sg * w) - 0.01, qz1 = Math.max(ez + pz * sg * 1.5, ez + pz * sg * w) + 0.01;
               for (const oi of l) {
+                if (ebx1[oi] < qx0 || ebx0[oi] > qx1 || ebz1[oi] < qz0 || ebz0[oi] > qz1) continue;
                 const o = edges[oi];
                 if (o === e || o.elev) continue;
                 const oa = nodes[o.a], ob = nodes[o.b];
@@ -1460,22 +1512,29 @@ export function* cityGenerator(md) {
 
   const MIN_SIDE = 4.0; // below this it is a kiosk, not a building
   let shrunk = 0, dropped = 0;
-  for (let bi = buildings.length - 1; bi >= 0; bi--) {
+  // Compacted in place in one pass: splicing each dropped box out of a 125k
+  // array moved the rest of it every time -- ~3000 drops, a second of the
+  // loading bar on a phone. Same survivors, same order.
+  let keep = 0;
+  for (let bi = 0; bi < buildings.length; bi++) {
     const bd = buildings[bi];
     const fit = roadFit(bd.x, bd.z, bd.w, bd.d, bd.rot);
-    if (fit >= 1) continue;
-    // Shrink to fit rather than dropping where possible: a block that came out
-    // as one big box legitimately overlaps the road, and deleting it empties
-    // the whole block instead of putting a smaller building on it.
-    if (fit > 0 && bd.w * fit >= MIN_SIDE && bd.d * fit >= MIN_SIDE) {
-      bd.w *= fit;
-      bd.d *= fit;
-      shrunk++;
-    } else {
-      buildings.splice(bi, 1);
-      dropped++;
+    if (fit < 1) {
+      // Shrink to fit rather than dropping where possible: a block that came
+      // out as one big box legitimately overlaps the road, and deleting it
+      // empties the whole block instead of putting a smaller building on it.
+      if (fit > 0 && bd.w * fit >= MIN_SIDE && bd.d * fit >= MIN_SIDE) {
+        bd.w *= fit;
+        bd.d *= fit;
+        shrunk++;
+      } else {
+        dropped++;
+        continue;
+      }
     }
+    buildings[keep++] = bd;
   }
+  buildings.length = keep;
   cityStats.buildingsShrunk = shrunk;
   cityStats.buildingsDropped = dropped;
 

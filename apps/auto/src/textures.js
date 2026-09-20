@@ -57,14 +57,18 @@ function normalCanvas(heightCanvas, strength = 2.0) {
   const { c, g } = canvas(w, h);
   const img = g.createImageData(w, h);
   const d = img.data;
-  const at = (x, y) => lum[(((y % h) + h) % h) * w + (((x % w) + w) % w)];
+  // Wrapped neighbours precomputed, and sqrt rather than a three-argument
+  // hypot: this ran for every texel of every normal map at boot (a fifth of a
+  // second on a desktop, most of "Painting the city" on a phone).
   for (let y = 0; y < h; y++) {
+    const rU = ((y + h - 1) % h) * w, r0 = y * w, rD = ((y + 1) % h) * w;
     for (let x = 0; x < w; x++) {
-      const dx = (at(x + 1, y) - at(x - 1, y)) * strength;
+      const xl = x === 0 ? w - 1 : x - 1, xr = x === w - 1 ? 0 : x + 1;
+      const dx = (lum[r0 + xr] - lum[r0 + xl]) * strength;
       // canvas Y runs down, texture V runs up, so the sign flips back here
-      const dy = (at(x, y + 1) - at(x, y - 1)) * strength;
-      let nx = -dx, ny = dy, nz = 1;
-      const l = Math.hypot(nx, ny, nz);
+      const dy = (lum[rD + x] - lum[rU + x]) * strength;
+      const nx = -dx, ny = dy, nz = 1;
+      const l = Math.sqrt(nx * nx + ny * ny + 1);
       const i = (y * w + x) * 4;
       d[i] = ((nx / l) * 0.5 + 0.5) * 255;
       d[i + 1] = ((ny / l) * 0.5 + 0.5) * 255;
