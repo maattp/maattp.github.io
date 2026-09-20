@@ -2683,6 +2683,15 @@ export function* cityGenerator(md, cache = {}) {
             : ly <= curY + DECK_REACH && Math.abs(ly - curY) < Math.abs(terr - curY)) terr = ly;
         }
       }
+      // A PLATFORM -- a pier deck, a floating dock, the gangway between them
+      // (setPlatforms) -- is ground for anyone at its level, by the same
+      // nearest-surface rule as a lid. Its top is its own height, not the
+      // terrain's, and no road lift applies: nothing paved is drawn on it.
+      if (this.platGrid) {
+        const py = this.platformAt(x, z);
+        if (py !== null && (curY == null ? py > terr
+          : py <= curY + DECK_REACH && Math.abs(py - curY) < Math.abs(terr - curY))) terr = py;
+      }
       let best = terr;
       // NEAREST deck to where you already are, not the highest one within
       // reach. Taking the highest meant any deck up to 2.6 m above the car
@@ -2916,6 +2925,52 @@ export function* cityGenerator(md, cache = {}) {
         if (!(pos && neg)) return G.terrainRaw(x, z);
       }
       return null;
+    },
+
+    // --- Platforms: decks that are not roads ------------------------------
+    //
+    // "Pier decks are drawn, not walkable" was a known gap: a deck over water
+    // with groundAt answering the lakebed under it puts anyone who walks onto
+    // it in the lake. A platform is an oriented rectangle {x, z, hw, hd, rot}
+    // -- local u = (cos rot, sin rot) across hw, v = (-sin rot, cos rot)
+    // along hd, the landmark-solid convention -- whose top runs linearly from
+    // y0 at v = -hd to y1 at v = +hd, so a gangway is one entry. The builder
+    // that draws a deck registers exactly the top it drew (landmarks.js
+    // seaplaneDock), which is what keeps "the one height surface" true on it.
+    platforms: null,
+    platGrid: null,
+    setPlatforms(list) {
+      this.platforms = list.length ? list : null;
+      this.platGrid = list.length ? new Map() : null;
+      for (let i = 0; i < list.length; i++) {
+        const p = list[i];
+        p.c = Math.cos(p.rot || 0); p.s = Math.sin(p.rot || 0);
+        const e = Math.hypot(p.hw, p.hd);
+        for (let cx = Math.floor((p.x - e) / 20); cx <= Math.floor((p.x + e) / 20); cx++) {
+          for (let cz = Math.floor((p.z - e) / 20); cz <= Math.floor((p.z + e) / 20); cz++) {
+            const k = skey(cx, cz);
+            let l = this.platGrid.get(k);
+            if (!l) this.platGrid.set(k, (l = []));
+            l.push(i);
+          }
+        }
+      }
+    },
+    /** Top of the highest platform over (x, z), or null. */
+    platformAt(x, z) {
+      if (!this.platGrid) return null;
+      const l = this.platGrid.get(skey(Math.floor(x / 20), Math.floor(z / 20)));
+      if (!l) return null;
+      let best = null;
+      for (let n = 0; n < l.length; n++) {
+        const p = this.platforms[l[n]];
+        const dx = x - p.x, dz = z - p.z;
+        const u = dx * p.c + dz * p.s, v = -dx * p.s + dz * p.c;
+        if (u < -p.hw || u > p.hw || v < -p.hd || v > p.hd) continue;
+        const y = p.y0 + (p.y1 - p.y0) * (v + p.hd) / (2 * p.hd);
+        if (best === null || y > best) best = y;
+      }
+      return best;
     },
 
     // Stride 6: ax, az, bx, bz, y0, y1. The band is what lets a barrier be a

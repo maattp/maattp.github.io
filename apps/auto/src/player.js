@@ -64,13 +64,43 @@ export class Player {
     return true;
   }
 
-  exitVehicle() {
+  /**
+   * Out of the vehicle. `force` (a wreck) always gets you out, wherever that
+   * is; otherwise a BOAT (or a floatplane on the water) only lets you step
+   * off onto something you can stand on -- a dock or the shore -- because
+   * the kerb-side default puts you in the lake, and the lake drowns you.
+   * Returns false when it refused.
+   */
+  exitVehicle(force = false) {
     const v = this.vehicle;
-    if (!v) return;
+    if (!v) return false;
     const f = v.forward;
     const rx = f.z, rz = -f.x;
     let ox = v.x - rx * (v.halfWid + 1.1);
     let oz = v.z - rz * (v.halfWid + 1.1);
+    if (v.spec.boat || v.spec.floats) {
+      // Either beam, then over the bow and the stern, a little further out
+      // each ring: the first spot that is not water (a platform deck counts,
+      // groundAt answers it) and not inside a rail.
+      let spot = null;
+      for (const d of [1.1, 1.8, 2.6]) {
+        for (const [ux, uz, e] of [[-rx, -rz, v.halfWid], [rx, rz, v.halfWid], [f.x, f.z, v.halfLen], [-f.x, -f.z, v.halfLen]]) {
+          const x = v.x + ux * (e + d), z = v.z + uz * (e + d);
+          const gy = this.city.groundAt(x, z, v.y + 1.5);
+          const wl = this.world.waterLevelAt(x, z);
+          if (wl !== null && gy < wl - 0.2) continue;
+          if (this.city.obstacleHit(x, z, 0.3, gy)) continue;
+          spot = [x, z];
+          break;
+        }
+        if (spot) break;
+      }
+      if (!spot && !force) {
+        this.game.onNoLanding && this.game.onNoLanding(v);
+        return false;
+      }
+      if (spot) [ox, oz] = spot;
+    }
     this.x = G.clampToMap(ox);
     this.z = G.clampToMap(oz);
     this.y = this.city.groundAt(this.x, this.z, v.y + 1.5);
@@ -88,6 +118,7 @@ export class Player {
     v.setDetailed(false);
     this.vehicle = null;
     this.game.onExitVehicle(v);
+    return true;
   }
 
   update(dt, input, look, controls, traffic, peds) {
@@ -271,7 +302,7 @@ export class Player {
     // below the lake beside it. The level is a reference height, not a region.
     const wl = this.world.waterLevelAt(v.x, v.z);
     // A floatplane's pontoons make water a surface, not a hazard.
-    const wading = !v.spec.floats && wl !== null && G.isWater(v.x, v.z) && v.y < wl - 0.35;
+    const wading = !v.spec.floats && !v.spec.boat && wl !== null && G.isWater(v.x, v.z) && v.y < wl - 0.35;
 
     v.update(dt, {
       // A drowned engine makes no power and the wheels find nothing to push
@@ -301,6 +332,13 @@ export class Player {
       this.game.onCrash(imp, false);
       if (imp > 8) this.game.damagePlayer(imp * 0.5, 'crash');
     });
+    // A boat's shore is its wall: updateBoat refuses the move and leaves the
+    // impact, which is a crash like any other.
+    if (v.spec.boat && v.shoreHit > 3 && this.crashCd <= 0) {
+      this.crashCd = 0.4;
+      this.game.onCrash(v.shoreHit, false);
+      if (v.shoreHit > 9) this.game.damagePlayer(v.shoreHit * 0.4, 'crash');
+    }
     // Deep enough to be over the roof rather than merely through a ford. One
     // test now, against the local surface, instead of a separate sea-only path.
     if (wading && v.y < wl - 1.6) this.game.onCarSank(v);

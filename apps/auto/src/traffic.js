@@ -448,6 +448,9 @@ export class TrafficSystem {
         if (dist2(wx, wz, px, pz) > LOT_R * LOT_R || G.lotCodeAt(wx, wz) !== code) continue;
         if (this.parkedSlots.has(key) || city.onRoad(wx, wz, 2.5)) continue;
         if (this.inFootprint(wx, wz, 1.5)) continue;
+        // The seaplane dock's car park runs to the shore, and its landing deck
+        // is inside the lot's coverage: a bay there parked a car on the pier.
+        if (city.platformAt && city.platformAt(wx, wz) !== null) continue;
         cand.push({ key, wx, wz, d: dist2(wx, wz, px, pz),
           // Nose into the bay: the car's length runs across the row, along
           // the lot's short axis (-uz, ux); the two rows face each other.
@@ -817,7 +820,15 @@ export class TrafficSystem {
         if (v._still < 3) v._still++;   // settled: updateFarLod freezes its matrices
         continue;
       }
-      v._still = 0;
+      // A quad left on the grass ('apron', the parks' own) is a parked car
+      // once it has settled: no driving model, seven ground samples, every
+      // frame, for something standing still. A shunt gives it speed, which
+      // wakes it.
+      if (v.mode === 'apron' && v.spec.atv && d2 < 300 * 300 && Math.abs(v.vLong) < 0.05 && Math.abs(v.vLat) < 0.05) {
+        v.group.visible = true;
+        if (v._still < 3) v._still++;
+        else continue;
+      } else v._still = 0;
       v.group.visible = true;
       // The airport's planes sit where place() put them, as parked cars do, and
       // from downtown all eight used to run the driving model every frame.

@@ -2627,6 +2627,56 @@ The lesson is not about water. **When a law is added, grep for every caller of
 the thing it replaces** -- this one sat one function away from the code that
 documented it, for as long as the game has had lakes.
 
+## The seaplane dock, the boat and the quad
+
+**The dock is at Lake Union's real south-west corner** (Kenmore Air's terminal,
+47.6290 N 122.3393 W, world ~(-128, -1960)), built by `seaplaneDock()` in
+landmarks.js in WORLD axes: a landing running into the bank below the
+Westlake car park, a railed pier x -146..-114 on z -1960, a gangway down to a
+curbed float x -102.5..-99.5, z -1986..-1934. It used to be a pier 900 m up
+the wrong shore with the floatplane parked alone at the real site, which is
+why nobody ever found either. `SEAPLANE_DOCK.moorings` is the list main.js
+spawns ('apron': two floatplanes, two runabouts); the map marks it (hud
+`places`, an anchor icon) and it says hello within 55 m.
+
+- **Its decks are city platforms** (`city.setPlatforms` / `platformAt`):
+  oriented rectangles whose top runs linearly along their length, answered by
+  `groundAt` under the same nearest-surface rule as a lid. The builder
+  registers exactly the top it draws. Measured walking lot -> landing -> pier
+  -> gangway -> float against a ray down at the drawn boards: 0-3 cm (the
+  0.2 m readings are the ray falling through a board gap onto the pontoon).
+- **Rails and curbs are solids for walkers and fenders for boats**: a
+  solid's band reaches 2.5 m under its y0, so the float's curb stops a hull at
+  the surface too. Moorings sit their collision circle (0.7 x radius) clear of
+  the curbs and guide piles, or `updateBoat`'s first frame shunts them.
+- **A boat (or a floatplane on water) only lets you out onto land or a
+  deck** (`exitVehicle` searches both beams, bow and stern); otherwise it
+  toasts and stays. `exitVehicle(true)` (a wreck) always gets you out.
+
+**The boat** (`boat` in TYPES, `buildBoat`) has its y = 0 at the WATERLINE and
+`updateBoat` instead of the ground solve: it floats on `waterQuery` (the local
+surface), water is where the bed is >= 0.45 m under that surface and
+anything shallower refuses the move like a kerb (tried per axis so it slides
+along a bank; `shoreHit` feeds the player's crash handling), the last metre
+of depth drags, and drag is sized so thrust balances it exactly at the
+declared top speed (70 km/h). It turns by thrust (almost nothing at rest
+without throttle), slides, bobs, climbs onto the plane through a hump near a
+third of top speed, and banks in. Its wake is one ribbon mesh in effects.js
+(`fx.wake`), fed only while you drive one. Traffic never spawns one: it is
+not in `CIVILIAN_TYPES`. 1.8k triangles, 3 draws.
+
+**The quad** (`atv`, `buildAtv`) is a four-wheeled car to the ground solve
+with a posed rider (`RIDERS.atv`, visible only while ridden), knobbly tyres
+(`addWheel(..., knobby)`: knob tops at the rolling radius, the carcass 10 %
+under), `minTurnR` 3 m and `offroad`: half the grade term and none of the
+new grass drag. **Road cars now bog down on grass**: a vehicle nobody's AI
+drives, off pavement (no lift, not a deck, not a lot), pays extra rolling
+resistance (a sedan manages ~110 km/h on a lawn); traffic never leaves the
+road so pays nothing. Parked in three places (`ATV_SPOTS`: Kite Hill, the
+dock's car park, Seattle Center) and $700 from the delivery menu; parked
+ones freeze once settled. 6.9k triangles + the rider, like the bikes.
+Bench band in tools/vehicles.mjs (0-80 2.4 s arcade).
+
 ## SR-99: ride it the way a player does
 
 **Test tunnels with the player's car, entering from the street.**
@@ -2934,7 +2984,14 @@ failed idea: measure what it exposed first.
   the 2 `oneway=-1` edges as a -> b. None is on SR-99.
 - **Pier decks are drawn, not walkable** (Great Wheel, Pier 66, Aquarium):
   `groundAt` over them is the seabed, so walking onto the Wheel's deck puts you
-  in the water. They need a surface the way lids have `city.lidAt`.
+  in the water. The surface they need exists now -- `city.setPlatforms`, which
+  the seaplane dock uses -- but those builders do not register their decks
+  yet.
+- **A boat cannot leave Lake Union.** Water outside every lake's bounding box
+  reads as the sea (level 0), and where the Fremont cut and the Montlake cut
+  cross Lake Union's box (x -970, z ~-4100; x 2340, z ~-4010) the canal bed
+  sits above sea level, so `updateBoat` sees a bank. Real canals are at lake
+  level to the Locks; the importer would need to give them a level.
 - **Stadium interiors are unreachable** — walls run round the whole footprint,
   with no gates. T-Mobile's roof is modelled open and does not move.
 - **The minor landmarks are the old models** (aquarium, ferry terminal, Pier 66,

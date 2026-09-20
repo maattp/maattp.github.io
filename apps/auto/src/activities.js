@@ -354,6 +354,8 @@ export class Activities {
     const s = player.vehicle.spec;
     if (s.floats) return 'floatplane';
     if (s.plane) return 'plane';
+    // A boat is not a car: no road race or getaway starts in one.
+    if (s.boat) return 'boat';
     return 'car';
   }
   canStart(a, k) {

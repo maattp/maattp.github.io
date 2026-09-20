@@ -6,6 +6,45 @@ import { formatMoney, clamp } from './util.js';
 const MAP_PX = 2048;
 const SCALE = MAP_PX / (G.MAP_HALF * 2);
 
+/**
+ * A marked place's icon, centred on (x, y), `r` its radius in the canvas's
+ * current units: the seaplane dock is an anchor on blue, a quad bike four
+ * wheels on orange. Drawn, not typed -- an emoji's glyph depends on the font.
+ */
+function placeIcon(ctx, kind, x, y, r) {
+  ctx.fillStyle = kind === 'dock' ? '#2f86d6' : '#e0782e';
+  ctx.strokeStyle = '#ffffff';
+  ctx.lineWidth = r * 0.22;
+  ctx.beginPath();
+  ctx.arc(x, y, r, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.stroke();
+  ctx.lineWidth = r * 0.2;
+  ctx.lineCap = 'round';
+  ctx.beginPath();
+  if (kind === 'dock') {
+    ctx.moveTo(x, y - r * 0.42); ctx.lineTo(x, y + r * 0.55);
+    ctx.moveTo(x - r * 0.3, y - r * 0.2); ctx.lineTo(x + r * 0.3, y - r * 0.2);
+    ctx.moveTo(x - r * 0.52, y + r * 0.15);
+    ctx.quadraticCurveTo(x - r * 0.45, y + r * 0.62, x, y + r * 0.58);
+    ctx.quadraticCurveTo(x + r * 0.45, y + r * 0.62, x + r * 0.52, y + r * 0.15);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.arc(x, y - r * 0.55, r * 0.14, 0, Math.PI * 2);
+    ctx.stroke();
+  } else {
+    ctx.moveTo(x - r * 0.45, y); ctx.lineTo(x + r * 0.45, y);
+    ctx.stroke();
+    ctx.fillStyle = '#ffffff';
+    for (const [dx, dy] of [[-0.42, -0.36], [0.42, -0.36], [-0.42, 0.36], [0.42, 0.36]]) {
+      ctx.beginPath();
+      ctx.arc(x + dx * r, y + dy * r, r * 0.2, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  }
+  ctx.lineCap = 'butt';
+}
+
 /** Renders the whole city once into an offscreen canvas; both maps sample it. */
 export function buildMapCanvas(city) {
   const c = document.createElement('canvas');
@@ -82,6 +121,8 @@ export class Hud {
     this.root = root;
     this.city = city;
     this.mapCanvas = mapCanvas;
+    // Marked places, {x, z, kind, name, hello}; main.js fills it at boot.
+    this.places = [];
     this.mini = root.querySelector('#minimap');
     this.mctx = this.mini.getContext('2d');
     this.stars = root.querySelector('#stars');
@@ -193,6 +234,17 @@ export class Hud {
       ctx.beginPath();
       ctx.arc(bx, bz, 3.8 / zoom, 0, Math.PI * 2);
       ctx.fill();
+    }
+    // Marked places (the seaplane dock, the quads), upright whatever the
+    // dial's rotation, so the anchor reads as an anchor.
+    for (const pl of (this.places || [])) {
+      const [bx, bz] = toMap(pl.x, pl.z);
+      if (Math.abs(bx) > S || Math.abs(bz) > S) continue;
+      ctx.save();
+      ctx.translate(bx, bz);
+      ctx.rotate(-player.camYaw);
+      placeIcon(ctx, pl.kind, 0, 0, (pl.kind === 'dock' ? 6.5 : 5) / zoom);
+      ctx.restore();
     }
     for (const c of (this.finds || [])) {
       const [bx, bz] = toMap(c.x, c.z);
@@ -314,6 +366,14 @@ export class Hud {
       ctx.fill();
       ctx.fillStyle = 'rgba(255,255,255,0.55)';
       ctx.fillText(l.name, lx, lz - size * 0.008);
+    }
+    for (const pl of (this.places || [])) {
+      const [qx, qz] = toC(pl.x, pl.z);
+      placeIcon(ctx, pl.kind, qx, qz, size * (pl.kind === 'dock' ? 0.011 : 0.008));
+      if (pl.kind === 'dock') {
+        ctx.fillStyle = 'rgba(255,255,255,0.85)';
+        ctx.fillText(pl.name, qx, qz - size * 0.016);
+      }
     }
     if (game.target) {
       const [tx, tz] = toC(game.target.x, game.target.z);

@@ -34,6 +34,92 @@ export class Effects {
     this.lines.frustumCulled = false;
     scene.add(this.lines);
     this.tracers = [];
+
+    // The boat's wake: one foam ribbon laid on the water behind the transom,
+    // spreading and fading as it ages. Four vertices across each sample --
+    // bright at the two arms, faint between them -- so it reads as the V of
+    // a wake and not a white carpet. One mesh, one draw, drawn only while any
+    // of it is alive.
+    const WN = this.wakeN = 48, WV = 4;
+    const wg = new THREE.BufferGeometry();
+    this.wpos = new Float32Array(WN * WV * 3);
+    this.wcol = new Float32Array(WN * WV * 4);
+    wg.setAttribute('position', new THREE.BufferAttribute(this.wpos, 3).setUsage(THREE.DynamicDrawUsage));
+    wg.setAttribute('color', new THREE.BufferAttribute(this.wcol, 4).setUsage(THREE.DynamicDrawUsage));
+    const wi = [];
+    for (let i = 0; i < WN - 1; i++) {
+      for (let j = 0; j < WV - 1; j++) {
+        const a = i * WV + j, b = a + 1, c = a + WV, d = c + 1;
+        wi.push(a, c, b, b, c, d);
+      }
+    }
+    wg.setIndex(wi);
+    this.wakeMesh = new THREE.Mesh(wg, new THREE.MeshBasicMaterial({
+      vertexColors: true, transparent: true, depthWrite: false, side: THREE.DoubleSide, forceSinglePass: true,
+      polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2,
+    }));
+    this.wakeMesh.frustumCulled = false;
+    this.wakeMesh.visible = false;
+    this.wakeMesh.renderOrder = 6;
+    scene.add(this.wakeMesh);
+    // ring of samples, newest at wHead
+    this.wk = [];
+    for (let i = 0; i < WN; i++) this.wk.push({ x: 0, y: 0, z: 0, px: 0, pz: 0, age: 99, s: 0 });
+    this.wHead = 0;
+    this.wLast = null;
+  }
+
+  /**
+   * Feed the wake: `v` is the boat being driven, or null to let what is there
+   * fade. A sample is dropped every ~0.7 m of travel at the transom.
+   */
+  wake(dt, v) {
+    const W = this.wk, N = this.wakeN, LIFE = 3.2;
+    let alive = 0;
+    for (const s of W) { s.age += dt; if (s.age < LIFE) alive++; }
+    if (v) {
+      const f = v.forward, sp = Math.abs(v.vLong);
+      const tx = v.x - f.x * v.halfLen * 1.02, tz = v.z - f.z * v.halfLen * 1.02;
+      const L = this.wLast;
+      if (sp > 0.8 && (!L || Math.hypot(tx - L.x, tz - L.z) > 0.7)) {
+        this.wHead = (this.wHead + 1) % N;
+        const s = W[this.wHead];
+        s.x = tx; s.z = tz; s.y = (v._surf === v._surf ? v._surf : v.y) + 0.035;
+        s.px = f.z; s.pz = -f.x; s.age = 0; s.s = Math.min(1, sp / 9);
+        this.wLast = s;
+        alive++;
+      }
+    }
+    this.wakeMesh.visible = alive > 0;
+    if (!alive) return;
+    const pos = this.wpos, col = this.wcol, WV = 4;
+    // across the ribbon: offset as a fraction of the half-width, and alpha
+    const U = [-1, -0.4, 0.4, 1], A = [1, 0.28, 0.28, 1];
+    for (let k = 0; k < N; k++) {
+      // k = 0 is the newest sample
+      const s = W[(this.wHead - k + N) % N];
+      const i = k * WV;
+      if (s.age >= LIFE && k > 0) {
+        // A dead sample collapses onto the one before it, or the quad joining
+        // them would smear a fading streak to wherever it was laid.
+        for (let e = 0; e < WV * 3; e++) pos[i * 3 + e] = pos[(i - WV) * 3 + e];
+        for (let e = 0; e < WV * 4; e++) col[i * 4 + e] = 0;
+        continue;
+      }
+      const t = Math.min(1, s.age / LIFE);
+      const hw = 0.5 + s.age * 1.7;
+      // bright at the transom, thinning to nothing
+      const a = s.age >= LIFE ? 0 : s.s * (1 - t) * (1 - t) * 0.7 * Math.min(1, s.age * 8 + 0.35);
+      for (let e = 0; e < WV; e++) {
+        const o = (i + e) * 3, c = (i + e) * 4;
+        pos[o] = s.x + s.px * hw * U[e]; pos[o + 1] = s.y; pos[o + 2] = s.z + s.pz * hw * U[e];
+        col[c] = 0.93; col[c + 1] = 0.96; col[c + 2] = 0.98;
+        // the centre fills back in just behind the transom (prop wash)
+        col[c + 3] = a * (A[e] + (1 - A[e]) * Math.max(0, 1 - s.age * 1.4));
+      }
+    }
+    this.wakeMesh.geometry.attributes.position.needsUpdate = true;
+    this.wakeMesh.geometry.attributes.color.needsUpdate = true;
   }
 
   emit(x, y, z, n, opts = {}) {
