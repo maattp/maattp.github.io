@@ -43,7 +43,7 @@ tools/fetch_dem.py          downloads the USGS terrain tiles
 tools/render_map.py         draws the whole graph top-down, for eyeballing
 tools/verify.mjs            headless CDP boot + assertions + screenshots
 tools/jank.mjs, perfguard.mjs, beauty.mjs, survey.mjs, gait.mjs, flycam.mjs,
-  crowdshots.mjs, charshots.mjs, vehshots.mjs, landmarkshots.mjs,
+  crowdshots.mjs, charshots.mjs, vehshots.mjs, landmarkshots.mjs, bldshots.mjs,
   lotshots.mjs, trafficcheck.mjs ...   see "Verifying"
 ```
 
@@ -928,6 +928,60 @@ cluster of buildings over 60 m, the fully-green patch nearest downtown.
   open drum, so a squashed one seen from eye level is a single band of vertical
   wall -- the "green slab on a stick" that trees rendered as. `spheroid` is
   closed and costs about the same.
+
+## Buildings: the outlier scan
+
+`tools/bldshots.mjs --scan` counts every shipped box into categories (style x
+height x footprint, slope gap under the lowest corner, over water, overlaps,
+aspect, sheds, storey pitch...) and photographs samples of each, seed-sorted so
+two checkouts shoot the same buildings; `bldsheet.py --pair` lays before and
+after side by side; the before | after sheets of each fixed category are in
+`docs/buildings/`.
+Looking at them, not at the numbers, is what found most of this:
+
+| category (of 259,083 boxes) | count | what it looked like | now |
+|---|---|---|---|
+| masonry/glass under ~20 m | 54,729 | four window rows in any wall that short: the 53,075 untagged 6.4 m blocks were four 1.6 m storeys | whole STOREYS snapped (~3.4 m masonry, 3.0 brick, 1.7 m a pane row), each tier's pattern hung from its top |
+| every house | 192,330 | siding began at `base`, 2 m underground, one tile stretched over the height: every front door a 1 m brown stub in the lawn, lower windows halved | siding from the centre's ground, tile over the visible wall; concrete foundation below |
+| houses over 16 m long | 62,270 | the one elevation stretched round the face, 4-5 m doors | `box({ uFit })`: whole elevations per face, ~11 m each |
+| campus (civic) | 808 | the HOUSE cell, one tile a face: 60 m clapboard, 10 m front doors, plus a glass shopfront | civic stone/brick families, no shopfront |
+| untagged industrial < 120 m2 | 1,517 | garages and sheds at the 8.5 m warehouse default: corrugated towers in back gardens | 3.2 m (5.5 m under 400 m2), a low gable, no parapet or plant |
+| gap under the lowest corner > 1.5 m | 4,237 (13,754 > 30 cm) | walls stopping in mid-air on the downhill side | the lowest wall, shopfront or foundation reaches the lowest corner; a house on a steep slope gets a daylight basement |
+| over water | 1,309 | Lake Union's houseboats and pier sheds standing on the lake BED, flooded to the sills | stand 0.6 m over the body's surface (`standY` in citygen) |
+| roofs over 1,500 m2 | ~1,000 | one to three plant boxes whatever the area: a blank field | plant on a ~22 m grid (capped 30), skylight rows on industrial |
+| industrial walls over 36 m | ~370 | one corrugated tile down a 300 m shed | pilasters every ~24 m, roller doors on one long face |
+| glass family under 12 m | ~7 % of low blocks | curtain wall on a one-storey box | concrete instead |
+
+Left alone, on purpose: **overlaps** (79,474 pairs, 40,734 deeper than 3 m)
+are overwhelmingly terraces and L-shaped houses whose oriented boxes intersect,
+and read as joined roofs; slivers and needles are a few dozen real buildings.
+
+Laws that came out of it:
+
+- **A facade tile is snapped in storeys, not in tiles**, and hung from the top
+  of the wall (`vOff = 64 - h / vS`), so the parapet lands on a storey line
+  whatever the embed or a slope does to the base.
+- **The house tile is one composed elevation** (two floors, door bottom-right):
+  it must span the VISIBLE wall. Anything that moves a house's base (slopes,
+  water) moves the foundation, not the siding.
+- **The blob's heights are guesses for 97 % of footprints.** A guess can be
+  refined by size (`untaggedHeight`), a tagged height never is. Changing a
+  height changes the boot-cache's `buildings` entry, so it ships with the
+  build bump like any other change to the city.
+- **Nothing here may add a material.** Foundations, pilasters, doors, gables
+  and plant are `flat`; basement siding and skirts are the facade atlas.
+
+Cost, measured against the base served side by side, three runs each: the
+downtown 9x9 rebuild (`rendercpu --builds --ring=4`) near chunks 430-528 ms ->
+429-478 ms, longest step 12-27 -> 13-28 ms (noise either way); geometry
+2,815,966 -> 2,825,532 vertices (+0.34 %); `rendercpu --stream` respawn mean
+5.1-7.1 -> 4.9-6.1 ms. perfguard downtown: 131-132 steady draws both,
+triangles 1,136,976 -> 1,143,574 (+0.6 %).
+
+**`bldshots` stands on the water where it is wet.** Lake Union's surface is
+at 5.3 m over a bed near 0; a camera at terrain + 1.7 was under the lake,
+which then is not drawn, and the "before" houseboats looked merely wet
+instead of drowned to the eaves.
 
 ## Solid street objects
 
@@ -1959,6 +2013,7 @@ The purpose-built harnesses, each a fixed-dt, paused-game driver:
 | `tools/vehshots.mjs <tag> [types] [--street]` | `--street` parks a fixed lineup on the densest commercial street, shot at eye height and raised — a before/after random traffic can't give. The lineup spawns occupied, with a `chase` view on the first near-lane car |
 | `tools/landmarkshots.mjs <dir> [views] [--collide]` | world-framed landmark views, per-landmark cost built alone, and the collision drive/walk (see "Landmarks"); `LM_PROBE` |
 | `tools/lotshots.mjs <dir> [--probe]` | lot views; `--probe` prints the grass share per region (see "Lots, plazas and yards") |
+| `tools/bldshots.mjs <dir> [--scan] [--shots=a,b] [--n=6] [--from=index.json]` + `tools/bldsheet.py <dir> [out] [--pair=<dir>]` | the building outlier scan and per-category contact sheets, eye level off the long (downhill) face plus an aerial; `--from` re-shoots another run's buildings by position for a before/after (see "Buildings: the outlier scan"). GPU by default (`AUTO_GPU=0` for SwiftShader) |
 | `tools/trafficcheck.mjs [--dump FILE] [--shot DIR] [--sites a,b]` | share of cars against the flow, oncoming contacts, stuck cars and jams over 7 sites at fixed dt, the last a police pursuit (see "One-way traffic") |
 | `tools/flycam.mjs [--jitter]` | a scripted flight: camera measured RELATIVE TO THE PLANE and the plane's on-screen motion, since absolute camera movement at 116 m/s is ~2 m a frame regardless. The autopilot holds 45 m over the terrain under AND 400 m ahead, or the bay dive flies into Queen Anne. Also counts building and road pop-ins, and flies `i5high` (see "flycam: road pop-ins") |
 | `tools/camtunnel.mjs` | camera height at stations through bores — nothing through the roof |
