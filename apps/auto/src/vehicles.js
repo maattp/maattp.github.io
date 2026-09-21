@@ -83,16 +83,6 @@ const ARCADE_GRIP = 2.2;
 // live on world, which vehicles never see. main.js injects the query at boot.
 let waterQuery = null;
 export function setWaterQuery(fn) { waterQuery = fn; }
-// ...and the airfield's pavement, whose slabs stand proud of the graded field
-// that groundAt answers with (landmarks.js airportSurface). Aircraft only.
-let paveQuery = null;
-export function setPavementQuery(fn) { paveQuery = fn; }
-function airGround(v, g) {
-  if (!paveQuery) return g;
-  const p = paveQuery(v.x, v.z);
-  return p !== null && p > g ? p : g;
-}
-
 // How hard a corner may be asked for, as a fraction of the grip that exists.
 // Above 1 on purpose: this is a GTA-style car, not a simulator. It should feel
 // planted and willing -- lane changes and sweeping bends at speed take no
@@ -5959,7 +5949,7 @@ export class Vehicle {
     if (this.airborne === undefined) this.airborne = false;
 
     this.lift = this.city.roadLift(this.x, this.z);
-    let ground = airGround(this, this.city.groundAt(this.x, this.z, this.y + 1.2, this.lift));
+    let ground = this.city.groundAt(this.x, this.z, this.y + 1.2, this.lift);
     if (spec.floats && waterQuery) {
       // Pontoons make water a runway: the lake surface IS the ground. Lakes
       // are at their own levels (Lake Union 5.3, Green Lake 50.3), so this
@@ -6085,7 +6075,7 @@ export class Vehicle {
     const ready = this.spool > 0.92;
 
     this.lift = this.city.roadLift(this.x, this.z);
-    const ground = airGround(this, this.city.groundAt(this.x, this.z, this.y + 1.2, this.lift));
+    const ground = this.city.groundAt(this.x, this.z, this.y + 1.2, this.lift);
 
     // collective -> vertical speed
     let cIn = piloted ? clamp((input.lift || 0) - (input.sink || 0), -1, 1) : -0.5;

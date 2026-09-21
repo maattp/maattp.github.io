@@ -3060,6 +3060,14 @@ export function* cityGenerator(md, cache = {}) {
           if (ry > terr && (curY == null || ry <= curY + DECK_REACH)) terr = ry;
         }
       }
+      // AIRFIELD PAVEMENT (landmarks.js airportSurface): slabs standing proud
+      // of the graded field, and the top surface wherever they are -- the
+      // same rule as a ramp. It used to be an aircraft-only query, so every
+      // car, walker and parked car on the apron stood 35 cm inside it.
+      if (this.slabQuery) {
+        const sy = this.slabQuery(x, z);
+        if (sy !== null && sy > terr && (curY == null || sy <= curY + DECK_REACH)) terr = sy;
+      }
       let best = terr;
       // NEAREST deck to where you already are, not the highest one within
       // reach. Taking the highest meant any deck up to 2.6 m above the car
@@ -3305,6 +3313,8 @@ export function* cityGenerator(md, cache = {}) {
     // y0 at v = -hd to y1 at v = +hd, so a gangway is one entry. The builder
     // that draws a deck registers exactly the top it drew (landmarks.js
     // seaplaneDock), which is what keeps "the one height surface" true on it.
+    /** Top of any drawn slab at (x, z) or null (the airfield; main.js installs it). */
+    slabQuery: null,
     platforms: null,
     platGrid: null,
     setPlatforms(list) {

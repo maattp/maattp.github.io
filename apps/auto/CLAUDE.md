@@ -2641,13 +2641,15 @@ photographs them (stage, apron, close cockpit), flies the helicopter
   showing as dashes), and anything inside must be sized off `skinX` -- the
   hull narrows fast under the centre line and a fixed-width floor stood out
   of both flanks.
-- **Boeing Field's slabs stand 35 cm proud of the graded field, and
-  `groundAt` answers the field.** Aircraft ask `airportSurface` (landmarks.js,
-  the same `AIRPORT_PAVE` table the landmark draws) through
-  `setPavementQuery`; until then every aircraft sat 35 cm into the apron. Cars
-  and pedestrians on the apron still do -- that table is the fix if it ever
-  matters. The table also fixed the taxiway stubs, which carried an extra
-  quarter turn and lay parallel to the runway joining nothing.
+- **Boeing Field's slabs stand 35 cm proud of the graded field.**
+  `airportSurface` (landmarks.js, the same `AIRPORT_PAVE` table the landmark
+  draws) is installed as `city.slabQuery`, and groundAt takes it as the top
+  surface wherever it is higher and in reach -- the ramp rule. It started as an
+  aircraft-only query, which left every car and walker on the apron 35 cm
+  inside it; one query in groundAt serves them all. Kerbs of the real street
+  crossing the apron's west side still win where they are drawn higher. The
+  table also fixed the taxiway stubs, which carried an extra quarter turn and
+  lay parallel to the runway joining nothing.
 - **The apron is not all clear.** A real street with pavements runs through
   its west side (across -260..-230) and a hangar stands at across -215..-185,
   along -50..-10 (the first trainer was parked half inside it). The spots in

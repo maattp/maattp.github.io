@@ -10,7 +10,7 @@ import { buildLandmarks, SEAPLANE_DOCK, airportSurface } from './landmarks.js';
 import { freezeStatic } from './build.js';
 import { cacheGet, cachePut, cacheGuardTripped, cacheGuardSet, cacheClear } from './bootcache.js';
 import { TrafficSystem, collideWithBuildings } from './traffic.js';
-import { TYPES as VEHICLE_TYPES, setWaterQuery, setPavementQuery, setVehicleCache, vehicleSnapshot } from './vehicles.js';
+import { TYPES as VEHICLE_TYPES, setWaterQuery, setVehicleCache, vehicleSnapshot } from './vehicles.js';
 
 // Aircraft come in their own colours, parked at Boeing Field or delivered.
 const AIRCRAFT_PAINT = {
@@ -617,8 +617,8 @@ function installShadowFade() {
   {
     const ap = (G.LANDMARKS || []).find((l) => l.kind === 'airport');
     if (ap) {
-      // Aircraft stand on the drawn apron and runway, not the field under them.
-      setPavementQuery(airportSurface(ap.x, ap.z, G.terrainHeight(ap.x, ap.z)));
+      // Everything stands on the drawn apron and runway, not the field under them.
+      city.slabQuery = airportSurface(ap.x, ap.z, G.terrainHeight(ap.x, ap.z));
       // Same explicit axes as the landmark: ALONG = runway bearing 150.
       const AL = [Math.sin(0.52), Math.cos(0.52)], AC = [Math.cos(0.52), -Math.sin(0.52)];
       const off = (dx, dz) => [ap.x + dx * AC[0] + dz * AL[0], ap.z + dx * AC[1] + dz * AL[1]];

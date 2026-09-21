@@ -1600,9 +1600,9 @@ function aquarium() {
  */
 // Boeing Field's pavement in the landmark's own frame, shared by airport()
 // and airportSurface(): [across, along, width, length, top, crosswise]. The
-// slabs stand `top` proud of the graded field, and `groundAt` knows nothing of
-// them -- every aircraft sat 35 cm into the apron and the runway until the
-// flight models were handed this table's surface.
+// slabs stand `top` proud of the graded field; main.js installs this table's
+// surface as `city.slabQuery`, which groundAt takes as the top surface. Before
+// that every aircraft, then every car and walker, sat 35 cm into the apron.
 const AIRPORT_RY = 0.52;
 const AIRPORT_PAVE = [
   [0, 0, 46, 3048, 0.35],                      // runway 14R/32L
