@@ -1854,6 +1854,38 @@ calls and GL calls are expensive there in a way Chrome hides.
 | I-5 drive | 11.5 ms | 6.5 ms |
 | standing at Yesler Terrace | 13.1 ms, 338 draws | 6.2 ms, 171 draws |
 
+### The ground queries' grids
+
+`groundAt`'s deck-surface grid was 120 m cells. On I-5 a cell listed hundreds
+of ~5 m graded pieces, and every call walked them all: 27 us a call on the
+phone profile, 1.4 ms a frame driving the freeway. It is 20 m now, each piece
+filed only in the cells its reach touches (`hw`, **plus the 4 m a bore holds
+its car with**: the 120 m grid never padded for that, so a bore's catch
+margin silently did not apply near a cell edge). `nodeSurface` (which
+roadLift asks first) walked every node in up to four 150 m cells, because its
+reach is sized by the widest road anywhere; each 16 m cell now caches, on
+first use, the nodes whose junction bound can reach it, in the same order.
+
+Proven exact by a hash of `groundAt` / `roadLift` over 284k queries (random
+points, points along every graded, deck and tunnel edge and near every kind
+of node, from five reference heights): the node cache changes nothing, the
+20 m grid hashes the same as a 120 m grid with the same padding, and the only
+difference from v97 is the bore margin now applying everywhere. SR-99 rides
+unchanged (0 captures, 0 hops both ways), jank figures unchanged.
+
+| unthrottled, per call | v97 | v98 |
+|---|---|---|
+| `roadLift` downtown / freeway | 1.69 / 2.08 us | 0.61 / 0.60 us |
+| `groundAt` downtown / freeway | 2.13 / 6.46 us | 0.86 / 2.06 us |
+| 8x, I-5 drive: `groundAt` per frame | 1.09-1.15 ms | 0.35-0.54 ms |
+| 8x, I-5 drive: traffic system | 1.46-1.66 ms | 0.90-1.03 ms |
+
+**Idle vehicles are distance-culled.** 'apron' vehicles (airfield aircraft,
+dock boats, park quads) never despawn and were drawn at any range -- from
+downtown six were in the frustum 1-10 km away. They show to 80 lengths
+(about 10 px on a phone), never closer than a parked car: 8-10 fewer draws a
+frame downtown (166 -> 157 driving, 159-163 -> 151 on foot).
+
 ## Boot time and the boot cache
 
 **`tools/boottime.mjs [--throttle=8] [--twice] [--prof]`** times every loading

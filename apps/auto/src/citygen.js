@@ -2236,14 +2236,29 @@ export function* cityGenerator(md, cache = {}) {
       // a MOUTH is the first span of a bore -- one end is a portal node
       mouth: !!e.tunnel && (isPortal(e.a) || isPortal(e.b)) });
   }
-  const surfCell = 120;
+  // 20 m cells, and a piece is filed only in the cells its reach touches
+  // (hw from its segment, + the 4 m a bore holds its car with). At 120 m a
+  // cell on I-5 listed hundreds of ~5 m graded pieces -- every carriageway,
+  // ramp and express lane for a block -- and every groundAt walked them all:
+  // 27 us a call on the phone profile, 1.4 ms a frame driving the freeway.
+  // Lists keep ascending piece order, so the scan's answer is unchanged.
+  const surfCell = 20;
   const surfGrid = new Map();
   for (let si = 0; si < surfaces.length; si++) {
     const s = surfaces[si];
-    const x0 = Math.floor((Math.min(s.ax, s.bx) - s.hw) / surfCell), x1 = Math.floor((Math.max(s.ax, s.bx) + s.hw) / surfCell);
-    const z0 = Math.floor((Math.min(s.az, s.bz) - s.hw) / surfCell), z1 = Math.floor((Math.max(s.az, s.bz) + s.hw) / surfCell);
+    const reach = s.hw + (s.tun ? 4.0 : 0) + 0.01;
+    const x0 = Math.floor((Math.min(s.ax, s.bx) - reach) / surfCell), x1 = Math.floor((Math.max(s.ax, s.bx) + reach) / surfCell);
+    const z0 = Math.floor((Math.min(s.az, s.bz) - reach) / surfCell), z1 = Math.floor((Math.max(s.az, s.bz) + reach) / surfCell);
+    const sdx = s.bx - s.ax, sdz = s.bz - s.az, sl2 = sdx * sdx + sdz * sdz;
+    const rc = reach + surfCell * Math.SQRT1_2;   // cell centre to its corner
     for (let cx = x0; cx <= x1; cx++)
       for (let cz = z0; cz <= z1; cz++) {
+        // skip cells the segment's reach cannot touch (long decks' bboxes)
+        const mx = (cx + 0.5) * surfCell, mz = (cz + 0.5) * surfCell;
+        let t = sl2 > 0 ? ((mx - s.ax) * sdx + (mz - s.az) * sdz) / sl2 : 0;
+        t = t < 0 ? 0 : t > 1 ? 1 : t;
+        const ex = s.ax + sdx * t - mx, ez = s.az + sdz * t - mz;
+        if (ex * ex + ez * ez > rc * rc) continue;
         const k = skey(cx, cz);
         let l = surfGrid.get(k);
         if (!l) surfGrid.set(k, (l = []));
@@ -2270,6 +2285,7 @@ export function* cityGenerator(md, cache = {}) {
 
   // --- 6. Node spatial index for AI ---------------------------------------
   const nCell = 150;
+  const NS_CELL = 16, nsCache = new Map();   // nodeSurface's candidates
   const nGrid = new Map();
   for (let ni = 0; ni < g.nodes.length; ni++) {
     const n = g.nodes[ni];
@@ -3021,14 +3037,40 @@ export function* cityGenerator(md, cache = {}) {
      * strip scan outright; the ring only fills in where the strips find nothing.
      */
     nodeSurface(x, z) {
-      const reach = Math.hypot(Math.max(JT_MAX, 4 * MAX_HW), MAX_HW + MAX_WALK + 3.2) + VERGE + 0.5;
-      const c0 = Math.floor((x - reach) / nCell), c1 = Math.floor((x + reach) / nCell);
-      const d0 = Math.floor((z - reach) / nCell), d1 = Math.floor((z + reach) / nCell);
+      // CANDIDATES FROM A FINE CELL. The reach below is sized by the widest
+      // road anywhere (4 x MAX_HW = 80 m), so the scan walked every node in up
+      // to four 150 m cells -- hundreds downtown, ~40 times a frame, each
+      // through junctionBound. Each 16 m cell now keeps, on first use, the
+      // nodes whose bound can reach any point in it, in the same scan order,
+      // so what is found and in what order is unchanged.
+      const fk = skey(Math.floor(x / NS_CELL), Math.floor(z / NS_CELL));
+      let l = nsCache.get(fk);
+      if (!l) {
+        if (nsCache.size > 200000) nsCache.clear();
+        const fx0 = Math.floor(x / NS_CELL) * NS_CELL, fz0 = Math.floor(z / NS_CELL) * NS_CELL;
+        const reach = Math.hypot(Math.max(JT_MAX, 4 * MAX_HW), MAX_HW + MAX_WALK + 3.2) + VERGE + 0.5;
+        const c0 = Math.floor((fx0 - reach) / nCell), c1 = Math.floor((fx0 + NS_CELL + reach) / nCell);
+        const d0 = Math.floor((fz0 - reach) / nCell), d1 = Math.floor((fz0 + NS_CELL + reach) / nCell);
+        l = [];
+        for (let cx = c0; cx <= c1; cx++) {
+          for (let cz = d0; cz <= d1; cz++) {
+            const cl = nGrid.get(skey(cx, cz));
+            if (!cl) continue;
+            for (const ni of cl) {
+              const n = g.nodes[ni];
+              // nearest point of the cell to the node, against its bound
+              const qx = n.x < fx0 ? fx0 : n.x > fx0 + NS_CELL ? fx0 + NS_CELL : n.x;
+              const qz = n.z < fz0 ? fz0 : n.z > fz0 + NS_CELL ? fz0 + NS_CELL : n.z;
+              const bnd = junctionBound(ni) + 0.01;
+              if ((qx - n.x) * (qx - n.x) + (qz - n.z) * (qz - n.z) <= bnd * bnd) l.push(ni);
+            }
+          }
+        }
+        nsCache.set(fk, l);
+      }
       let ring = null;
-      for (let cx = c0; cx <= c1; cx++) {
-        for (let cz = d0; cz <= d1; cz++) {
-          const l = nGrid.get(skey(cx, cz));
-          if (!l) continue;
+      {
+        {
           for (const ni of l) {
             const n = g.nodes[ni];
             const ux = x - n.x, uz = z - n.z, d2 = ux * ux + uz * uz;
