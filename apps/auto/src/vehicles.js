@@ -6232,7 +6232,18 @@ export class Vehicle {
     const dz = (f.z * this.vLong + rz * this.vLat) * dt;
     // The probe leads the hull by its half-length in the direction of travel.
     const lead = this.vLong >= 0 ? this.halfLen * 0.92 : -this.halfLen * 0.92;
-    const ok = (x, z) => depthAt(x, z) >= MIN_DEPTH && depthAt(x + f.x * lead, z + f.z * lead) >= MIN_DEPTH;
+    // A jump in the water's own LEVEL is a wall too: the Ballard Locks' gate
+    // between the canal at lake level and the Sound 5 m below, which a boat
+    // would otherwise sail straight over and drop down. Lake Washington's
+    // 22 cm below the canal passes.
+    const wlHere = waterQuery ? waterQuery(this.x, this.z) : null;
+    const level = (x, z) => {
+      if (wlHere === null) return true;
+      const w = waterQuery(x, z);
+      return w === null || Math.abs(w - wlHere) < 0.5;
+    };
+    const ok = (x, z) => depthAt(x, z) >= MIN_DEPTH && depthAt(x + f.x * lead, z + f.z * lead) >= MIN_DEPTH
+      && level(x + f.x * lead, z + f.z * lead);
     this.shoreHit = 0;
     if (ok(this.x + dx, this.z + dz)) { this.x += dx; this.z += dz; }
     else {

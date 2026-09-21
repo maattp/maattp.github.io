@@ -1527,17 +1527,22 @@ export function* cityGenerator(md, cache = {}) {
     // waterfront's pier sheds -- and standing on the lake BED they were
     // houses up to the windowsills in the lake, a flooded street from the
     // air. On water a building floats (or sits on its pier) 0.6 m above the
-    // surface: the body's own level inside a labelled lake's box, the sea
-    // elsewhere. A pond too small to label keeps its DEM surface, which is
-    // why the level only ever RAISES y, and only by a plausible amount.
+    // surface: the body's own level inside a labelled lake's box or on the
+    // ship canal, the sea elsewhere. A pond too small to label keeps its DEM
+    // surface, which is why the level only ever RAISES y, and only by a
+    // plausible amount.
     const lakes = md.lakes || [];
     const standY = (x, z) => {
       const t = G.terrainHeight(x, z);
       if (!G.isWater(x, z)) return t;
       let lv = 0;
+      let boxed = false;
       for (const l of lakes) {
-        if (x >= l.x0 && x <= l.x1 && z >= l.z0 && z <= l.z1) { lv = l.level; break; }
+        if (x >= l.x0 && x <= l.x1 && z >= l.z0 && z <= l.z1) { lv = l.level; boxed = true; break; }
       }
+      // the ship canal is at Lake Union's level too (geo.js shipCanal):
+      // Salmon Bay's boathouses stood up to their roofs in it
+      if (!boxed) { const c = G.shipCanal(lakes), cl = c && c.at(x, z); if (cl !== null && cl !== undefined) lv = cl; }
       return lv + 0.6 > t && lv + 0.6 - t < 12 ? lv + 0.6 : t;
     };
     built = new Float32Array(B.nx * B.nz); // per-chunk cover, for the ground tint

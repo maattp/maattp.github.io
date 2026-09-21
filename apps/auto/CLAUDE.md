@@ -2874,6 +2874,42 @@ dock's car park, Seattle Center) and $700 from the delivery menu; parked
 ones freeze once settled. 6.9k triangles + the rider, like the bikes.
 Bench band in tools/vehicles.mjs (0-80 2.4 s arcade).
 
+### The ship canal is at lake level
+
+**Only the lakes are labelled**, each by its bounding box in `water.json`, so
+every canal cell used to answer the sea's 0: Salmon Bay, the Fremont Cut and
+the Montlake Cut were trenches of sea-level water, with a 5.3 m water cliff
+at each edge of Lake Union's box, and a boat could not leave the lake. In
+life the Ballard Locks hold the whole canal at lake level.
+
+- **`G.shipCanal(lakes)` (geo.js) finds the canal**, memoised: a flood fill
+  over the water mask from Lake Union's wet cells, through wet cells outside
+  the lake boxes, stopped at the `locks` landmark's centre gate. It is
+  windowed and capped at 40k cells; if it runs away it logs and returns null,
+  and the canal stays at sea level rather than Puget Sound rising 5 m.
+  11,745 cells today.
+- **It reaches one cell INTO each lake box.** A point just outside a box
+  rounds to a mask cell whose centre is inside it; a canal that stopped at
+  the box's own cells left a 5 m seam at sea level on every box edge, and a
+  boat jammed on it. The box answers first inside, so nothing inside changes.
+- **`world.waterLevelAt` asks it** after the boxes, and citygen's `standY`
+  too: Salmon Bay's boathouses stood up to their roofs once the water rose.
+- **It is drawn by one masked plane** (`world.canalMesh`): a lake-style
+  bounding-box plane would flood every low bank from the Locks to Montlake.
+  The mask is the canal dilated one cell, bilinearly sampled and discarded
+  under 0.5, so the edge is a smooth contour into the bank. Its UVs continue
+  Lake Union's, so the swell crosses the box edge unbroken. +1 draw where the
+  canal is in view.
+- **A boat treats a jump in water LEVEL as a wall** (`updateBoat`, 0.5 m),
+  which is what stops it at the Locks rather than dropping 5 m into the
+  Sound. Lake Washington sits 22 cm below the canal and passes.
+
+Driven with a fixed-dt boat over a BFS path (heading written each frame, as
+tunneldrive does -- a steering autopilot measured itself, not the water):
+dock to the Locks 8.3 km in 412 s, 0 shore contacts, held at the lock chamber
+at full throttle; dock to Lake Washington through the Montlake Cut, settling
+5.31 -> 5.09 m. Worst vertical move per frame 3.7 cm, the swell's bob.
+
 ## SR-99: ride it the way a player does
 
 **Test tunnels with the player's car, entering from the street.**
@@ -3262,11 +3298,6 @@ is the page half; load it into any booted page to re-install edited jumps
   in the water. The surface they need exists now -- `city.setPlatforms`, which
   the seaplane dock uses -- but those builders do not register their decks
   yet.
-- **A boat cannot leave Lake Union.** Water outside every lake's bounding box
-  reads as the sea (level 0), and where the Fremont cut and the Montlake cut
-  cross Lake Union's box (x -970, z ~-4100; x 2340, z ~-4010) the canal bed
-  sits above sea level, so `updateBoat` sees a bank. Real canals are at lake
-  level to the Locks; the importer would need to give them a level.
 - **Stadium interiors are unreachable** — walls run round the whole footprint,
   with no gates. T-Mobile's roof is modelled open and does not move.
 - **The minor landmarks are the old models** (aquarium, ferry terminal, Pier 66,

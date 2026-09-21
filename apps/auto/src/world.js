@@ -2447,13 +2447,14 @@ export class World {
     // (so it drifts the OTHER way, at a different speed, from the same offset)
     // adds long swell and breaks the grid. Blending in tangent space before
     // three perturbs the normal, so everything downstream is untouched.
-    mat.onBeforeCompile = (sh) => {
+    const twoScale = (sh) => {
       sh.fragmentShader = sh.fragmentShader.replace(
         'vec3 mapN = texture2D( normalMap, vNormalMapUv ).xyz * 2.0 - 1.0;',
         'vec3 mapN = texture2D( normalMap, vNormalMapUv ).xyz * 2.0 - 1.0;\n'
         + '\tvec3 mapN2 = texture2D( normalMap, vNormalMapUv * -0.29 + vec2( 0.37, 0.11 ) ).xyz * 2.0 - 1.0;\n'
         + '\tmapN = normalize( vec3( mapN.xy * 0.62 + mapN2.xy * 0.9, mapN.z ) );');
     };
+    mat.onBeforeCompile = twoScale;
     mat.customProgramCacheKey = () => 'water2scale';
     const m = new THREE.Mesh(geo, mat);
     m.position.y = 0;
@@ -2496,6 +2497,61 @@ export class World {
       lm.onBeforeRender = gate;
       this.scene.add(lm);
       this.lakes.push(lm);
+    }
+
+    // The ship canal at Lake Union's level (_findCanal). One plane over the
+    // canal's window, discarded outside its cells: a lake-style bounding-box
+    // plane would flood every low bank between the Locks and Montlake. The
+    // mask is dilated a cell and sampled bilinearly, so the edge is a smooth
+    // contour that runs into the bank rather than a 10 m staircase. Its UVs
+    // continue Lake Union's, so the swell crosses the box edge unbroken.
+    const c = this.canal !== undefined ? this.canal : this._findCanal();
+    if (c) {
+      const data = new Uint8Array(c.w * c.h);
+      let a0 = c.w, a1 = -1, b0 = c.h, b1 = -1;
+      for (let j = 0; j < c.h; j++) for (let i = 0; i < c.w; i++) {
+        let on = 0;
+        for (let dj = -1; dj <= 1 && !on; dj++) for (let di = -1; di <= 1; di++) {
+          const ii = i + di, jj = j + dj;
+          if (ii >= 0 && jj >= 0 && ii < c.w && jj < c.h && c.cells[jj * c.w + ii]) { on = 1; break; }
+        }
+        if (on && c.deepIn((c.i0 + i) * c.step - G.MAP_HALF, (c.j0 + j) * c.step - G.MAP_HALF)) on = 0;
+        if (on) { data[j * c.w + i] = 255; a0 = Math.min(a0, i); a1 = Math.max(a1, i); b0 = Math.min(b0, j); b1 = Math.max(b1, j); }
+      }
+      const tex = new THREE.DataTexture(data, c.w, c.h, THREE.RedFormat, THREE.UnsignedByteType);
+      tex.magFilter = THREE.LinearFilter; tex.minFilter = THREE.LinearFilter;
+      tex.unpackAlignment = 1;   // rows are w bytes, not a multiple of 4
+      tex.needsUpdate = true;
+      const S = c.step, H = G.MAP_HALF;
+      // texel centres sit on the mask's sample points
+      const box = new THREE.Vector4((c.i0 - 0.5) * S - H, (c.j0 - 0.5) * S - H, c.w * S, c.h * S);
+      const x0 = (c.i0 + a0 - 1) * S - H, x1 = (c.i0 + a1 + 1) * S - H;
+      const z0 = (c.j0 + b0 - 1) * S - H, z1 = (c.j0 + b1 + 1) * S - H;
+      const cg = new THREE.PlaneGeometry(x1 - x0, z1 - z0, 1, 1);
+      cg.rotateX(-Math.PI / 2);
+      cg.translate((x0 + x1) / 2, 0, (z0 + z1) / 2);
+      const U = c.union, pos = cg.attributes.position, uv = cg.attributes.uv;
+      for (let k = 0; k < pos.count; k++) {
+        uv.setXY(k, (pos.getX(k) - U.x0) / (U.x1 - U.x0), (U.z1 - pos.getZ(k)) / (U.z1 - U.z0));
+      }
+      const cm = mat.clone();
+      cm.onBeforeCompile = (sh) => {
+        twoScale(sh);
+        sh.uniforms.canalMask = { value: tex };
+        sh.uniforms.canalBox = { value: box };
+        sh.vertexShader = 'varying vec2 vCanalW;\n' + sh.vertexShader.replace('#include <begin_vertex>',
+          '#include <begin_vertex>\n\tvCanalW = ( modelMatrix * vec4( transformed, 1.0 ) ).xz;');
+        sh.fragmentShader = 'uniform sampler2D canalMask;\nuniform vec4 canalBox;\nvarying vec2 vCanalW;\n'
+          + sh.fragmentShader.replace('#include <clipping_planes_fragment>',
+            '#include <clipping_planes_fragment>\n\tif ( texture2D( canalMask, ( vCanalW - canalBox.xy ) / canalBox.zw ).r < 0.5 ) discard;');
+      };
+      cm.customProgramCacheKey = () => 'waterCanal';
+      const m2 = new THREE.Mesh(cg, cm);
+      m2.position.y = c.level;
+      m2.renderOrder = 5;
+      m2.onBeforeRender = gate;
+      this.scene.add(m2);
+      this.canalMesh = m2;
     }
   }
 
@@ -6522,7 +6578,15 @@ float frLine(float o, float fw, float c, float w) {
     for (const l of (this.lakeSpecs || [])) {
       if (x >= l.x0 && x <= l.x1 && z >= l.z0 && z <= l.z1) return l.level;
     }
+    const c = this.canal !== undefined ? this.canal : this._findCanal();
+    if (c) { const lv = c.at(x, z); if (lv !== null) return lv; }
     return G.isWater(x, z) ? 0 : null;
+  }
+
+  /** The ship canal at lake level (geo.js shipCanal), or null. */
+  _findCanal() {
+    this.canal = G.shipCanal(this.lakeSpecs || []);
+    return this.canal;
   }
 
   /**

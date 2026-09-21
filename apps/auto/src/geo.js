@@ -155,6 +155,85 @@ export function isWater(x, z) {
   return maskAt(WET, x, z) !== 0;
 }
 
+let CANAL;
+/**
+ * THE SHIP CANAL IS AT LAKE LEVEL, not the sea's. Salmon Bay, the Fremont Cut,
+ * Portage Bay and the Montlake Cut are held at Lake Union's level by the
+ * Ballard Locks, but the importer labels only the lakes (each by its
+ * bounding box, see water.json), so every canal cell answered the sea's 0:
+ * a 5.3 m water cliff at each end of Lake Union, and a boat could not leave.
+ *
+ * The canal is found, not drawn: a flood fill over the water mask from Lake
+ * Union's own wet cells, through wet cells outside every lake box, stopped
+ * at the Locks' centre gate (the `locks` landmark, whose chamber runs along
+ * x). The fill is windowed; if it ever runs away (a mask change joins the
+ * canal to the Sound some other way) it gives up and the old behaviour
+ * stands, rather than lifting Puget Sound 5 m. Memoised: citygen (what a
+ * building over the water stands on) and world (waterLevelAt, the canal's
+ * water plane) read the same fill.
+ */
+export function shipCanal(lakes) {
+  if (CANAL !== undefined) return CANAL;
+  CANAL = null;
+  const lk = (LANDMARKS || []).find((l) => l.kind === 'locks');
+  // Lake Union: the lake box holding its middle, by Gas Works' south shore
+  const union = lakes.find((l) => 600 >= l.x0 && 600 <= l.x1 && -3000 >= l.z0 && -3000 <= l.z1);
+  if (!lk || !union) return null;
+  const W = WET, N = MASK_N, S = MASK_STEP;
+  if (!W) return null;
+  const H = MAP_HALF;
+  const cell = (v) => Math.round((v + H) / S);
+  // window: the Locks to just past Lake Washington's west shore
+  const i0 = cell(lk.x), i1 = cell(3200), j0 = cell(-7600), j1 = cell(-1400);
+  const w = i1 - i0 + 1, h = j1 - j0 + 1;
+  const inBox = (x, z) => {
+    for (const l of lakes) if (x >= l.x0 && x <= l.x1 && z >= l.z0 && z <= l.z1) return l;
+    return null;
+  };
+  // A point just outside a box rounds to a cell whose centre is inside it,
+  // so a canal that stopped at the box's own cells left a 5 m seam at sea
+  // level on every box edge (a boat jammed at Lake Union's west edge). The
+  // canal reaches one cell INTO a lake's box; the box answers first inside.
+  const deepIn = (x, z) => {
+    for (const l of lakes) if (x >= l.x0 + S && x <= l.x1 - S && z >= l.z0 + S && z <= l.z1 - S) return l;
+    return null;
+  };
+  const seen = new Uint8Array(w * h), cells = new Uint8Array(w * h);
+  const queue = new Int32Array(w * h);
+  let qh = 0, qt = 0, count = 0, leak = false;
+  for (let j = 0; j < h; j++) for (let i = 0; i < w; i++) {
+    const x = (i0 + i) * S - H, z = (j0 + j) * S - H;
+    if (W[(j0 + j) * N + i0 + i] && inBox(x, z) === union) { seen[j * w + i] = 1; cells[j * w + i] = 1; queue[qt++] = j * w + i; }
+  }
+  while (qh < qt) {
+    const k = queue[qh++], i = k % w, j = (k - i) / w;
+    for (const [di, dj] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+      const ni = i + di, nj = j + dj;
+      if (ni < 0 || nj < 0 || ni >= w || nj >= h) { leak = true; continue; }
+      const nk = nj * w + ni;
+      if (seen[nk]) continue;
+      seen[nk] = 1;
+      if (!W[(j0 + nj) * N + i0 + ni]) continue;
+      const x = (i0 + ni) * S - H, z = (j0 + nj) * S - H;
+      if (x <= lk.x) continue;                    // the centre gate: sea beyond
+      if (deepIn(x, z)) continue;                 // another lake answers itself
+      cells[nk] = 1; queue[qt++] = nk;
+      if (++count > 40000) { leak = true; qh = qt; break; }
+    }
+  }
+  if (leak || !count) {
+    console.warn(`canal: flood fill ${leak ? 'ran out of its window' : 'found nothing'} (${count} cells); canal stays at sea level`);
+    return null;
+  }
+  const level = union.level;
+  const at = (x, z) => {
+    const i = Math.round((x + H) / S) - i0, j = Math.round((z + H) / S) - j0;
+    return i >= 0 && i < w && j >= 0 && j < h && cells[j * w + i] ? level : null;
+  };
+  CANAL = { cells, i0, j0, w, h, step: S, level, count, union, deepIn, at };
+  return CANAL;
+}
+
 export function inPark(x, z) {
   return maskAt(GRN, x, z) !== 0;
 }
