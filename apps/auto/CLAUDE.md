@@ -2266,9 +2266,23 @@ this:
 | nothing drawn beside an approach's kerb | 560 (4.8 %) | **55 (0.5 %)** |
 | paint on the crossing / across another approach | 44 | **10** |
 
-What is left: acute corners too sharp even for a nose (two wide couplets
-meeting at ~40 deg on short edges, Denny triangle) still overlap their strips
-past the chord, a darker wedge; `walkOnCw` 16 -> 39 is mostly the taper's
+**Acute corners clip the strips** (`arm.clip`, half-planes meshRoad applies
+per cell with Sutherland-Hodgman in the edge's own (t, o) frame). Past the
+mouths both strips used to run on under each other and the polygon: the
+darker wedge. A nose clips each strip to the far side of its neighbour's
+kerb out to the nose (0.4 m under it, as a mouth is). A corner too acute
+even for a nose (two couplets ~25-40 deg apart on short edges, the Denny
+triangle) is worse: joining the mouths' facing corners FOLDED the polygon --
+the nearer mouth's corner lies inside the other arm's band, behind that
+arm's own corner -- so the fill from the node overlapped itself. There the
+arm with the nearer mouth yields: its mouth is cut where it crosses the
+other's kerb, the polygon runs along that kerb to the other's mouth, and the
+yielding strip is clipped to outside the other's band. **Clipping without
+the polygon change made holes** (7 -> 124): the region clipped off lay
+outside the folded polygon. Stacked tarmac 615 -> **15**, holes 7 -> **3**,
+`sink`, `walkOnCw` and `kerbGap` unchanged.
+
+What is left: `walkOnCw` 16 -> 39 is mostly the taper's
 pavement over the wider arm's round end, which `onRoad` counts as carriageway
 and nothing draws as one. Chunk builds got faster, not slower (the old ring
 made ~300 `onRoad` calls a node, at every bend node on every curved street):

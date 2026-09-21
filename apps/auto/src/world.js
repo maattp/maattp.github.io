@@ -5279,6 +5279,24 @@ float frLine(float o, float fw, float c, float w) {
       const k = polish * edge;
       return [col[0] * k, col[1] * k, col[2] * k];
     };
+    // Acute corners clip this strip against a neighbour's kerb (citygen
+    // buildJunction's arm.clip): per end, the half-planes in this edge's own
+    // (t, o) frame, and how far along the edge each reaches.
+    const clips = [];
+    if (ei != null) {
+      for (const [ni, atA] of [[e.a, true], [e.b, false]]) {
+        const A = this.junctionArm(ni, ei);
+        if (!A || !A.clip) continue;
+        const n = this.city.nodes[ni];
+        for (const c of A.clip) {
+          // (x - n) . (nx, nz) >= d, with x = a + (b - a) t + p o
+          const k0 = (a.x - n.x) * c.nx + (a.z - n.z) * c.nz - c.d;
+          const kt = (b.x - a.x) * c.nx + (b.z - a.z) * c.nz, ko = px * c.nx + pz * c.nz;
+          const lim = c.tEnd / e.len;
+          clips.push({ k0, kt, ko, t0: atA ? 0 : 1 - lim, t1: atA ? lim : 1 });
+        }
+      }
+    }
     v = (cA * e.len) / ROAD_TILE;
     for (let s = 0; s < steps; s++) {
       const t0 = cA + ((cB - cA) * s) / steps, t1 = cA + ((cB - cA) * (s + 1)) / steps;
@@ -5298,6 +5316,43 @@ float frLine(float o, float fw, float c, float w) {
         const o1 = hw - (hw * 2 * (k + 1)) / across;
         const u0 = (hw - o0) / ROAD_TILE, u1 = (hw - o1) / ROAD_TILE;
         const P = (t, o) => [lerp(a.x, b.x, t) + px * o, lerp(a.z, b.z, t) + pz * o];
+        if (clips.length) {
+          let cell = [[t0, o0], [t0, o1], [t1, o1], [t1, o0]], cut = false;
+          for (const c of clips) {
+            if (t1 <= c.t0 || t0 >= c.t1 || cell.length < 3) continue;
+            const f = (q) => c.k0 + c.kt * q[0] + c.ko * q[1];
+            if (cell.every((q) => f(q) >= 0)) continue;
+            cut = true;
+            // Sutherland-Hodgman against one half-plane, in (t, o)
+            const out = [];
+            for (let i = 0; i < cell.length; i++) {
+              const p0 = cell[i], p1 = cell[(i + 1) % cell.length], f0 = f(p0), f1 = f(p1);
+              if (f0 >= 0) out.push(p0);
+              if ((f0 >= 0) !== (f1 >= 0)) {
+                const r = f0 / (f0 - f1);
+                out.push([p0[0] + (p1[0] - p0[0]) * r, p0[1] + (p1[1] - p0[1]) * r]);
+              }
+            }
+            cell = out;
+          }
+          if (cut) {
+            if (cell.length >= 3) {
+              const vi = cell.map(([t, o]) => {
+                const [x, z] = P(t, o), w = wear(o);
+                return road.vert(x, yAt(x, z), z, 0, 1, 0, (hw - o) / ROAD_TILE, v0 + ((t - t0) * e.len) / ROAD_TILE, w[0], w[1], w[2]);
+              });
+              for (let i = 1; i + 1 < vi.length; i++) {
+                const P3 = road.P, q0 = vi[0], q1 = vi[i], q2 = vi[i + 1];
+                const ux = P3[q1 * 3] - P3[q0 * 3], uz = P3[q1 * 3 + 2] - P3[q0 * 3 + 2];
+                const wx = P3[q2 * 3] - P3[q0 * 3], wz = P3[q2 * 3 + 2] - P3[q0 * 3 + 2];
+                const ny = uz * wx - ux * wz;
+                if (Math.abs(ny) < 1e-9) continue;
+                if (ny > 0) road.face3(q0, q1, q2); else road.face3(q0, q2, q1);
+              }
+            }
+            continue;
+          }
+        }
         const [ax, az] = P(t0, o0), [bx, bz] = P(t0, o1);
         const [cx, cz] = P(t1, o1), [dx, dz] = P(t1, o0);
         road.quad(

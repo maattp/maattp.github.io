@@ -2441,7 +2441,7 @@ export function* cityGenerator(md, cache = {}) {
       const atA = e.a === ni;
       const ux = atA ? e.dx : -e.dx, uz = atA ? e.dz : -e.dz;
       arms.push({ ei, atA, ux, uz, px: -uz, pz: ux, hw: e.hw, sw: w, ang: Math.atan2(uz, ux),
-        tmax: Math.min(e.len * 0.42, JT_MAX), hard: Math.min(e.len * 0.49, JT_MAX), m: 0, pm: 0, sP: 0, sN: 0 });
+        tmax: Math.min(e.len * 0.42, JT_MAX), hard: Math.min(e.len * 0.49, JT_MAX), m: 0, pm: 0, sP: 0, sN: 0, clip: null, qLo: null, qHi: null });
     }
     if (hw <= 0) return null;
     arms.sort((p, q) => p.ang - q.ang);
@@ -2465,6 +2465,9 @@ export function* cityGenerator(md, cache = {}) {
       if (Math.abs(det) < 1e-6) return null;
       return { a: (-Rx * B.uz + B.ux * Rz) / det, b: (A.ux * Rz - A.uz * Rx) / det };
     };
+    // A strip's clip: keep where (x - node) . (nx, nz) >= d, out to `tEnd` m
+    // along the arm (meshRoad applies it; beyond tEnd the arm is clear).
+    const clipArm = (A, nx, nz, d, tEnd) => { (A.clip || (A.clip = [])).push({ nx, nz, d, tEnd }); };
     const corners = [];
     for (let i = 0; i < N; i++) {
       const A = arms[i], B = arms[(i + 1) % N], gp = gapOf(i);
@@ -2481,6 +2484,13 @@ export function* cityGenerator(md, cache = {}) {
           // sharp point, as a flatiron block has.
           c.ti = Math.min(X.a, A.tmax); c.tj = Math.min(X.b, B.tmax);
           c.K = [P(A, A.hw, c.ti), P(A, A.hw, X.a), Q(B, B.hw, c.tj)];
+          // Past the mouths each strip still ran on under the other and under
+          // the polygon's nose: three tarmac surfaces 1-4 cm apart, the
+          // darker z-fighting wedge at every acute corner. Each strip is
+          // clipped to the far side of its neighbour's kerb (0.4 m under it,
+          // as a mouth is) out to the nose; the polygon draws the wedge.
+          clipArm(A, -B.px, -B.pz, B.hw - 0.4, X.a + 1);
+          clipArm(B, A.px, A.pz, A.hw - 0.4, X.b + 1);
           c.si = c.pa = X.a; c.sj = c.pb = X.b;
           const Xo = meet(A, A.hw + A.sw, B, B.hw + B.sw);
           const Xp = P(A, A.hw, X.a);
@@ -2493,6 +2503,7 @@ export function* cityGenerator(md, cache = {}) {
           // mouths, and no corner is built.
           c.ti = A.tmax; c.tj = B.tmax; c.pave = false;
           c.K = [P(A, A.hw, c.ti), Q(B, B.hw, c.tj)];
+          c.acute = true;   // resolved once the mouths are known, below
         } else {
           const tanH = Math.tan(gp / 2);
           const r0 = c.pave ? Math.max(A.sw, B.sw) + 1.5 : 2.5;
@@ -2556,6 +2567,46 @@ export function* cityGenerator(md, cache = {}) {
       // beyond the mouth.
       A.pm = Math.min(A.hard, Math.max(A.m, cl.pa || 0, cr.pb || 0));
     }
+    // TOO ACUTE FOR A CORNER (two roads ~25-40 deg apart on short edges):
+    // the arms overlap past both mouths. Joining the mouths' facing kerb
+    // corners folded the polygon -- the nearer mouth's corner lies inside the
+    // other arm's band, behind that arm's own corner -- so the fill from the
+    // node overlapped itself (three surfaces at the junction's middle), and
+    // both strips ran on over each other past the mouths. Instead the arm
+    // with the nearer mouth YIELDS: its mouth is cut where it crosses the
+    // other's kerb (Y), the polygon runs along that kerb from the other's
+    // mouth back to Y, and the yielding strip is clipped to outside the other
+    // arm's band. Everything it gives up is inside the polygon (before the
+    // other's mouth) or the other's own strip (past it).
+    for (let i = 0; i < N; i++) {
+      const c = corners[i];
+      if (!c.acute) continue;
+      const A = arms[i], B = arms[(i + 1) % N];
+      const yieldB = B.m < A.m || (B.m === A.m && B.hw <= A.hw);
+      if (yieldB) {
+        // B's mouth line against A's +p kerb: (x - n).A.p = A.hw
+        const bu = B.ux * A.px + B.uz * A.pz, bp = B.px * A.px + B.pz * A.pz;
+        if (Math.abs(bp) < 1e-3) continue;
+        const q = (A.hw - B.m * bu) / bp;
+        const Y = [n.x + B.ux * B.m + B.px * q, n.z + B.uz * B.m + B.pz * q];
+        const tY = (Y[0] - n.x) * A.ux + (Y[1] - n.z) * A.uz;
+        if (!(q > -B.hw && q < B.hw && tY >= 0 && tY <= A.m)) continue;
+        B.qLo = q;
+        c.K = [P(A, A.hw, A.m), Y];
+        clipArm(B, A.px, A.pz, A.hw - 0.4, Infinity);
+      } else {
+        // A's mouth line against B's -p kerb: (x - n).(-B.p) = B.hw
+        const au = -(A.ux * B.px + A.uz * B.pz), ap = -(A.px * B.px + A.pz * B.pz);
+        if (Math.abs(ap) < 1e-3) continue;
+        const q = (B.hw - A.m * au) / ap;
+        const Y = [n.x + A.ux * A.m + A.px * q, n.z + A.uz * A.m + A.pz * q];
+        const tY = (Y[0] - n.x) * B.ux + (Y[1] - n.z) * B.uz;
+        if (!(q > -A.hw && q < A.hw && tY >= 0 && tY <= B.m)) continue;
+        A.qHi = q;
+        c.K = [Y, Q(B, B.hw, B.m)];
+        clipArm(A, -B.px, -B.pz, B.hw - 0.4, Infinity);
+      }
+    }
     // The tarmac polygon, anticlockwise round the node: each mouth from its
     // -p kerb to its +p kerb (with the strip's own cross-section vertices, so
     // the wear shading carries across the seam), then the corner's kerb.
@@ -2572,8 +2623,14 @@ export function* cityGenerator(md, cache = {}) {
     for (let i = 0; i < N; i++) {
       const A = arms[i];
       const across = Math.max(A.hw > 4.5 ? 3 : 1, Math.round((A.hw * 2) / 8));
+      // (a yielding arm's mouth starts or stops at Y: see above)
+      const qLo = A.qLo != null ? A.qLo : -A.hw, qHi = A.qHi != null ? A.qHi : A.hw;
       for (let k = 0; k <= across; k++) {
-        const q = -A.hw + (2 * A.hw * k) / across;
+        let q = -A.hw + (2 * A.hw * k) / across;
+        if (q < qLo || q > qHi) {
+          if (k === 0 || k === across) q = Math.max(qLo, Math.min(qHi, q));
+          else continue;
+        }
         push([n.x + A.ux * A.m + A.px * q, n.z + A.uz * A.m + A.pz * q], wear(q / A.hw));
       }
       for (const p of corners[i].K) push(p, wear(1));
