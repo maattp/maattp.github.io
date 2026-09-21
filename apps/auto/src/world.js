@@ -2823,23 +2823,6 @@ export class World {
     }
     idx.push(4, 7, 6, 4, 6, 5);
     this._farUnit = { pos: new THREE.BufferAttribute(pos, 3), idx: new THREE.BufferAttribute(new Uint16Array(idx), 1) };
-    this._farMat = this._farMassMaterial(U);
-    this.farMass = [];
-    // The upload callbacks free the JS arrays, so a restored context has
-    // nothing to re-upload from: throw the meshes away and let the lazy
-    // builder make them again.
-    if (this.renderer && this.renderer.domElement) {
-      this.renderer.domElement.addEventListener('webglcontextlost', () => this.resetFarMass());
-    }
-  }
-
-  /**
-   * The far massing's material. A method, not inline, so boot can compile its
-   * program (warmMeshes) without building the layer: the program key is the
-   * onBeforeCompile source, so any material made here shares one program.
-   */
-  _farMassMaterial(U) {
-    const SPAN = 2 * MID_R + 1;
     // Same response as `flat`, which is what the mid-ring massing is drawn in.
     const mat = new THREE.MeshStandardMaterial({ flatShading: true, roughness: 0.82, metalness: 0.04, envMapIntensity: 0.45 });
     mat.onBeforeCompile = (sh) => {
@@ -2880,7 +2863,14 @@ varying vec3 vFarTint;`)
   gl_FragColor.rgb = mix(fogColor, gl_FragColor.rgb, farFade);
 #endif`);
     };
-    return mat;
+    this._farMat = mat;
+    this.farMass = [];
+    // The upload callbacks free the JS arrays, so a restored context has
+    // nothing to re-upload from: throw the meshes away and let the lazy
+    // builder make them again.
+    if (this.renderer && this.renderer.domElement) {
+      this.renderer.domElement.addEventListener('webglcontextlost', () => this.resetFarMass());
+    }
   }
 
   resetFarMass() {
@@ -3233,9 +3223,24 @@ varying vec3 vFarTint;`)
   }
 
   /** Shared state for the far roads, created with the far massing. */
-  /** The far roads' material (see _farMassMaterial for why it is a method). */
-  _farRoadMaterial(U) {
+  initFarRoads() {
+    const U = this.frU = {
+      farRing: this.farU.farRing,
+      // The massing's mask array itself, so both layers swap on the same
+      // frame; its own uniform only so a harness can unmask the roads alone.
+      frBuilt: { value: this.farU.farBuilt.value },
+      frFade: { value: 0 },
+      frCap: { value: FAR_R },
+    };
     const SPAN = 2 * MID_R + 1;
+    // Unit quad: x along 0..1, y across -1..1; wound to face up once placed.
+    const pos = new Float32Array([0, -1, 0, 1, -1, 0, 1, 1, 0, 0, 1, 0]);
+    const nrm = new Float32Array([0, 1, 0, 0, 1, 0, 0, 1, 0, 0, 1, 0]);
+    this._frUnit = {
+      pos: new THREE.BufferAttribute(pos, 3),
+      nrm: new THREE.BufferAttribute(nrm, 3),
+      idx: new THREE.BufferAttribute(new Uint16Array([0, 2, 1, 0, 3, 2]), 1),
+    };
     const R = this.mats.road;
     const mat = new THREE.MeshStandardMaterial({
       map: R.map, normalMap: R.normalMap, roughnessMap: R.roughnessMap,
@@ -3350,52 +3355,7 @@ float frLine(float o, float fw, float c, float w) {
 #endif`);
     };
     mat.customProgramCacheKey = () => 'farRoads';
-    return mat;
-  }
-
-  /**
-   * Stand-ins for the lazily-built layers' programs, for main.js to draw once
-   * behind the loading screen: the far massing and far roads compile on the
-   * first climb past 45 m otherwise (measured 355-482 ms and 12-175 ms frames
-   * on the take-off). Each draws nothing (empty draw range), shares nothing
-   * with the real layers but its program, and allocates no layer: at street
-   * level `farMass` / `farRoads` stay undefined, as they always were.
-   */
-  warmMeshes() {
-    const SPAN = 2 * MID_R + 1;
-    const ring = { value: new THREE.Vector2(-9999, -9999) };
-    const mats = [
-      this._farMassMaterial({ farRing: ring, farBuilt: { value: new Float32Array(SPAN * SPAN) }, farFade: { value: 0 } }),
-      this._farRoadMaterial({ farRing: ring, frBuilt: { value: new Float32Array(SPAN * SPAN) }, frFade: { value: 0 }, frCap: { value: FAR_R } }),
-    ];
-    const g = new THREE.BufferGeometry();
-    g.setAttribute('position', new THREE.BufferAttribute(new Float32Array(9), 3));
-    g.setDrawRange(0, 0);
-    const meshes = mats.map((m) => { const o = new THREE.Mesh(g, m); o.frustumCulled = false; return o; });
-    // Only the geometry is disposed: disposing a material releases its program
-    // once nothing else uses it -- and before the layer exists, nothing does.
-    return { meshes, dispose: () => g.dispose() };
-  }
-
-  initFarRoads() {
-    const U = this.frU = {
-      farRing: this.farU.farRing,
-      // The massing's mask array itself, so both layers swap on the same
-      // frame; its own uniform only so a harness can unmask the roads alone.
-      frBuilt: { value: this.farU.farBuilt.value },
-      frFade: { value: 0 },
-      frCap: { value: FAR_R },
-    };
-    const SPAN = 2 * MID_R + 1;
-    // Unit quad: x along 0..1, y across -1..1; wound to face up once placed.
-    const pos = new Float32Array([0, -1, 0, 1, -1, 0, 1, 1, 0, 0, 1, 0]);
-    const nrm = new Float32Array([0, 1, 0, 0, 1, 0, 0, 1, 0, 0, 1, 0]);
-    this._frUnit = {
-      pos: new THREE.BufferAttribute(pos, 3),
-      nrm: new THREE.BufferAttribute(nrm, 3),
-      idx: new THREE.BufferAttribute(new Uint16Array([0, 2, 1, 0, 3, 2]), 1),
-    };
-    this._frMat = this._farRoadMaterial(U);
+    this._frMat = mat;
     this.farRoads = [];
   }
 

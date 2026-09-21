@@ -52,6 +52,7 @@ try {
       const rec = () => window.__boot.push([performance.now(), el.textContent]);
       rec(); new MutationObserver(rec).observe(el, { childList: true, characterData: true, subtree: true });
     });` });
+  // BOOT_SHOT=<file.png>: a screenshot after each launch (-1 / -2 suffixes).
   // BOOT_WAIT=<ms>: wait that long after each launch before BOOT_PROBE runs
   // (to let a BOOT_INJECT recorder see the first frames of play).
   // BOOT_INJECT='<js>': run before the page's own scripts on every load (to
@@ -64,6 +65,7 @@ try {
     for (let i = 0; i < 1200; i++) { await sleep(250); if (await ev('window.__dbg && window.__dbg.sceneStats && window.__dbg.sceneStats.calls > 0')) break; }
     console.log('  first launch done (cached for the next): gradeCached=' + await ev('window.__dbg.cityStats.gradeCached'));
     if (process.env.BOOT_WAIT) await sleep(+process.env.BOOT_WAIT);
+    if (process.env.BOOT_SHOT) { const r = await send('Page.captureScreenshot', { format: 'png' }); (await import('node:fs')).writeFileSync(process.env.BOOT_SHOT.replace(/\.png$/, '-1.png'), Buffer.from(r.result.data, 'base64')); }
     if (process.env.BOOT_PROBE) console.log('  probe 1: ' + await ev(`(() => { const d = window.__dbg; return String(${process.env.BOOT_PROBE}); })()`));
   }
   await send('Page.navigate', { url: `http://localhost:${HTTP_PORT}/apps/auto/` });
@@ -93,6 +95,7 @@ try {
   }
   if (TWICE) console.log('  second launch gradeCached=' + await ev('window.__dbg.cityStats.gradeCached'));
   if (process.env.BOOT_WAIT) await sleep(+process.env.BOOT_WAIT);
+  if (process.env.BOOT_SHOT) { const r = await send('Page.captureScreenshot', { format: 'png' }); (await import('node:fs')).writeFileSync(process.env.BOOT_SHOT.replace(/\.png$/, '-2.png'), Buffer.from(r.result.data, 'base64')); }
   if (process.env.BOOT_PROBE) console.log('  probe 2: ' + await ev(`(() => { const d = window.__dbg; return String(${process.env.BOOT_PROBE}); })()`));
   const log = await ev('JSON.stringify(window.__boot)');
   const rows = JSON.parse(log || '[]');

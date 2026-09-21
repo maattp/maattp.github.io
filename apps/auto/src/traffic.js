@@ -836,19 +836,12 @@ export class TrafficSystem {
       // once it has settled: no driving model, seven ground samples, every
       // frame, for something standing still. A shunt gives it speed, which
       // wakes it.
-      // 'apron' vehicles (the airfield's aircraft, the dock's boats, the
-      // parks' quads) never despawn, and they were drawn at ANY range: from
-      // downtown six of the nineteen, 1-10 km away, were in the frustum, three
-      // draws each, and all nineteen were culled every frame. They show out
-      // to 80 lengths, about 10 px on a phone -- a jet to 1.2 km, a boat to
-      // 460 m, a quad to 160 m -- and never closer than a parked car does.
-      const show = v.mode !== 'apron' || d2 < Math.max(PARKED_SHOW, v.spec.len * 80) ** 2;
       if (v.mode === 'apron' && v.spec.atv && d2 < 300 * 300 && Math.abs(v.vLong) < 0.05 && Math.abs(v.vLat) < 0.05) {
-        v.group.visible = show;
+        v.group.visible = true;
         if (v._still < 3) v._still++;
         else continue;
       } else v._still = 0;
-      v.group.visible = show;
+      v.group.visible = true;
       // The airport's planes sit where place() put them, as parked cars do, and
       // from downtown all eight used to run the driving model every frame.
       if (v.mode === 'apron' && d2 > 300 * 300) continue;

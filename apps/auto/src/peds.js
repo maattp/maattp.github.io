@@ -1751,18 +1751,6 @@ function copVariants() {
   return COP_VARIANTS;
 }
 
-/**
- * Build both look pools now. They are built lazily on first use, and the
- * first use is the first frame of play (the crowd spawns at once): measured
- * 224-264 ms of peds.update in that frame on the phone profile, and the cop
- * pool again the first time a cop is on foot. main.js calls this while the
- * loading screen is up.
- */
-export function warmLooks() {
-  variants();
-  copVariants();
-}
-
 export function makeHumanoid(opts = {}) {
   const seed = opts.seed != null ? opts.seed : 0;
   const pooled = !opts.geometry && !opts.unique;
