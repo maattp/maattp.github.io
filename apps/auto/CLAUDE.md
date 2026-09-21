@@ -1854,6 +1854,77 @@ calls and GL calls are expensive there in a way Chrome hides.
 | I-5 drive | 11.5 ms | 6.5 ms |
 | standing at Yesler Terrace | 13.1 ms, 338 draws | 6.2 ms, 171 draws |
 
+### Hitches: everything first-used belongs behind the loading screen
+
+**Nothing was compiled until the first frame, and some things not until much
+later.** A scripted session (on foot, car, police, gunfire, an explosion, a
+boat, a climb past 45 m) logged four programs compiling mid-play, each a
+frozen frame on the Mac stand-in: the no-UV shadow-depth variant (every
+vehicle, the first car inside the shadow box) 468 ms, the far massing
+355-482 ms, the far roads up to 175 ms, the boat wake 60-130 ms. And the
+first frame after the reveal compiled the other ~36 while the overlay faded,
+then `peds.update` built the 12 + 4 pedestrian look pools inside the same
+frame (224-264 ms at 8x). main.js now, before hiding the loading screen:
+
+- calls `warmLooks()` (peds.js), which builds both pools;
+- draws **two** frames with stand-ins: every vehicle type's parts casting at
+  the player's feet, `world.warmMeshes()` (the far layers' materials on an
+  empty draw range -- the layers themselves stay unallocated at street
+  level), and the wake mesh shown for the two frames.
+
+**Two frames, because three r160 runs the shadow pass before it sets up the
+frame's lights**, and depth programs are keyed on the light counts: a
+renderer's very first frame compiles them for zero lights and the next for
+the real ones. One warm frame compiled the wrong copy.
+
+**Never dispose a stand-in's material**: dispose releases its program when
+nothing else uses it, and before the layer or the first car exists nothing
+does -- the warm-up would compile programs only to throw them away.
+
+| 8x, cached launch | v97 | v98 |
+|---|---|---|
+| worst frame in the first 120 after the reveal | 557-693 ms | **82-109 ms** |
+| first 120 frames | 2.21-2.48 s | **1.65-1.76 s** |
+| programs compiled after the reveal (scripted session) | 4 | **0** |
+| loading screen | 8.4-9.8 s | ~0.3-0.5 s longer |
+
+Re-run the catalogue after adding a material that is created lazily: a
+`renderBufferDirect` wrapper that records which object made
+`renderer.info.programs` grow. `boottime.mjs` takes `BOOT_WAIT=<ms>` so a
+`BOOT_INJECT` recorder can see the first frames of play before `BOOT_PROBE`.
+
+### The ground queries' grids
+
+`groundAt`'s deck-surface grid was 120 m cells. On I-5 a cell listed hundreds
+of ~5 m graded pieces, and every call walked them all: 27 us a call on the
+phone profile, 1.4 ms a frame driving the freeway. It is 20 m now, each piece
+filed only in the cells its reach touches (`hw`, **plus the 4 m a bore holds
+its car with**: the 120 m grid never padded for that, so a bore's catch
+margin silently did not apply near a cell edge). `nodeSurface` (which
+roadLift asks first) walked every node in up to four 150 m cells, because its
+reach is sized by the widest road anywhere; each 16 m cell now caches, on
+first use, the nodes whose junction bound can reach it, in the same order.
+
+Proven exact by a hash of `groundAt` / `roadLift` over 284k queries (random
+points, points along every graded, deck and tunnel edge and near every kind
+of node, from five reference heights): the node cache changes nothing, the
+20 m grid hashes the same as a 120 m grid with the same padding, and the only
+difference from v97 is the bore margin now applying everywhere. SR-99 rides
+unchanged (0 captures, 0 hops both ways), jank figures unchanged.
+
+| unthrottled, per call | v97 | v98 |
+|---|---|---|
+| `roadLift` downtown / freeway | 1.69 / 2.08 us | 0.61 / 0.60 us |
+| `groundAt` downtown / freeway | 2.13 / 6.46 us | 0.86 / 2.06 us |
+| 8x, I-5 drive: `groundAt` per frame | 1.09-1.15 ms | 0.35-0.54 ms |
+| 8x, I-5 drive: traffic system | 1.46-1.66 ms | 0.90-1.03 ms |
+
+**Idle vehicles are distance-culled.** 'apron' vehicles (airfield aircraft,
+dock boats, park quads) never despawn and were drawn at any range -- from
+downtown six were in the frustum 1-10 km away. They show to 80 lengths
+(about 10 px on a phone), never closer than a parked car: 8-10 fewer draws a
+frame downtown (166 -> 157 driving, 159-163 -> 151 on foot).
+
 ## Boot time and the boot cache
 
 **`tools/boottime.mjs [--throttle=8] [--twice] [--prof]`** times every loading

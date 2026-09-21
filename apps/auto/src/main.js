@@ -10,14 +10,14 @@ import { buildLandmarks, SEAPLANE_DOCK, airportSurface } from './landmarks.js';
 import { freezeStatic } from './build.js';
 import { cacheGet, cachePut, cacheGuardTripped, cacheGuardSet, cacheClear } from './bootcache.js';
 import { TrafficSystem, collideWithBuildings } from './traffic.js';
-import { TYPES as VEHICLE_TYPES, setWaterQuery, setVehicleCache, vehicleSnapshot } from './vehicles.js';
+import { TYPES as VEHICLE_TYPES, setWaterQuery, setVehicleCache, vehicleSnapshot, vehicleAssets, paintMaterial } from './vehicles.js';
 
 // Aircraft come in their own colours, parked at Boeing Field or delivered.
 const AIRCRAFT_PAINT = {
   plane: 0xdfe3e6, sportplane: 0xc8452e, floatplane: 0xe8c53a,
   twin: 0xeceef0, jet: 0xe6e8eb, biplane: 0x2a4f93, heli: 0x223f7c,
 };
-import { PedSystem, animateWalk } from './peds.js';
+import { PedSystem, animateWalk, warmLooks } from './peds.js';
 import { Player } from './player.js';
 import { Controls } from './controls.js';
 import { Hud, buildMapCanvas } from './hud.js';
@@ -764,6 +764,68 @@ function installShadowFade() {
   try { savedQ = localStorage.getItem('auto-quality'); } catch (e) { /* private mode */ }
   // literal, not TIERS: that const lives further down and this runs at boot
   applyQuality(['high', 'medium', 'low'].includes(savedQ) ? savedQ : 'high', !!savedQ);
+  warmLooks();   // the pedestrian look pools (see peds.js warmLooks)
+  // WARM EVERY SHADER BEHIND THE LOADING SCREEN. Nothing was compiled until
+  // the first frame, which ran AFTER the overlay started fading, so the fade
+  // itself froze on ~36 programs. And one variant was left for later: the
+  // shadow-depth program for geometry with no UVs -- every vehicle's -- so the
+  // first car inside the shadow box compiled it mid-game, measured as a
+  // 468 ms frame three frames into play. One frame here, with a stand-in of
+  // each vehicle material casting at the player's feet, pays both while the
+  // loading screen is still up. The stand-ins share the real geometry and
+  // materials and are gone before the first real frame.
+  {
+    const warm = new THREE.Group(), mats = new Set();
+    // Traffic has not spawned yet at this point, so the stand-ins come from
+    // the shared asset table: every type's three parts, with their materials.
+    // All types, not one: the programs are shared, but each type's buffers
+    // upload on first draw, and the first frames of play spawn most of them
+    // at once (a 150-280 ms frame after the reveal with only the sedan here).
+    const va = vehicleAssets(), paint = paintMaterial(0xffffff);
+    for (const t of Object.values(va.types)) {
+      for (const [geo, mat] of [[t.paintGeo, paint], [t.trimGeoW, va.trimMat], [t.matteGeoW, va.matteMat]]) {
+        if (!geo) continue;
+        mats.add(mat);
+        const m = new THREE.Mesh(geo, mat);
+        m.castShadow = true; m.receiveShadow = true; m.frustumCulled = false;
+        warm.add(m);
+      }
+    }
+    for (const c of traffic.cars) {
+      if (!c.group) continue;
+      c.group.traverse((o) => {
+        if (!o.isMesh || o.isInstancedMesh || o.isSkinnedMesh || !o.material || mats.has(o.material)) return;
+        mats.add(o.material);
+        const m = new THREE.Mesh(o.geometry, o.material);
+        m.castShadow = true; m.receiveShadow = true; m.frustumCulled = false;
+        warm.add(m);
+      });
+    }
+    warm.position.set(player.x, player.y, player.z);
+    // ...and the layers that are only built later: the far massing and far
+    // roads (first climb past 45 m) and the boat wake (first boat), hidden
+    // until then, and three compiles nothing it does not draw.
+    const lazy = world.warmMeshes();
+    for (const m of lazy.meshes) warm.add(m);
+    const wakeWas = fx.wakeMesh ? fx.wakeMesh.visible : false;
+    if (fx.wakeMesh) fx.wakeMesh.visible = true;
+    scene.add(warm);
+    placeSun(player.x, player.y, player.z);
+    player.updateCamera(1 / 60, null);   // look where the first frame will
+    const tw = performance.now();
+    // TWICE: three runs the shadow pass before it sets up the frame's lights,
+    // and depth programs are keyed on the light counts, so a renderer's very
+    // first frame compiles them for zero lights and the next frame compiles
+    // them again for the real ones. One warm frame compiled the wrong copy.
+    draw(tw);
+    draw(tw + 16);
+    scene.remove(warm);
+    if (fx.wakeMesh) fx.wakeMesh.visible = wakeWas;
+    // (paint is NOT disposed: that would release the program just compiled,
+    // which no car is using yet)
+    lazy.dispose();
+    blog(`shaders warm: ${renderer.info.programs.length} programs, ${mats.size} vehicle materials, ${Math.round(performance.now() - tw)} ms`);
+  }
   startedAt = performance.now();
   loading.classList.add('hide');
   document.body.classList.add('booted');   // now the rotate prompt may show
