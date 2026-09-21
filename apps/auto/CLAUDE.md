@@ -1854,6 +1854,55 @@ calls and GL calls are expensive there in a way Chrome hides.
 | I-5 drive | 11.5 ms | 6.5 ms |
 | standing at Yesler Terrace | 13.1 ms, 338 draws | 6.2 ms, 171 draws |
 
+### Hitches: everything first-used belongs behind the loading screen
+
+**Nothing was compiled until the first frame, and some things not until much
+later.** A scripted session (on foot, car, police, gunfire, an explosion, a
+boat, a climb past 45 m) logged four programs compiling mid-play, each a
+frozen frame on the Mac stand-in: the no-UV shadow-depth variant (every
+vehicle, the first car inside the shadow box) 468 ms, the far massing
+355-482 ms, the far roads up to 175 ms, the boat wake 60-130 ms. And the
+first frame after the reveal compiled the other ~36 while the overlay faded,
+then `peds.update` built the 12 + 4 pedestrian look pools inside the same
+frame (224-264 ms at 8x). main.js now, before hiding the loading screen:
+
+- calls `warmLooks()` (peds.js), which builds both pools;
+- draws **two** frames with stand-ins: ONE sedan's three parts casting at
+  the player's feet (the programs are shared by every type), `world.warmMeshes()` (the far layers' materials on an
+  empty draw range -- the layers themselves stay unallocated at street
+  level), and the wake mesh shown for the two frames.
+
+**Two frames, because three r160 runs the shadow pass before it sets up the
+frame's lights**, and depth programs are keyed on the light counts: a
+renderer's very first frame compiles them for zero lights and the next for
+the real ones. One warm frame compiled the wrong copy.
+
+**Never dispose a stand-in's material**: dispose releases its program when
+nothing else uses it, and before the layer or the first car exists nothing
+does -- the warm-up would compile programs only to throw them away.
+
+**v98 broke the game on the iPhone while every Chrome harness passed.**
+Unplayable, no movement; reverted in v99, and the pieces re-landed one build
+at a time (v100 the query grids, v101 this). v98's warm-up uploaded EVERY
+vehicle type's geometry (~20 types x 3 parts) for no measured gain; the
+likely failure is WebKit's GPU process giving up under it, which no Chrome
+run can show. So the warm-up stages one sedan only, runs in try/finally (the
+stand-ins always come out and the loop always starts), and logs a lost
+context. **Anything that front-loads GPU work ships in its own build, tested
+on the phone before the next change lands on top of it.**
+
+| 8x, cached launch | v97 | v101 |
+|---|---|---|
+| worst frame in the first 120 after the reveal | 557-693 ms | **81-141 ms** |
+| first 120 frames | 2.21-2.48 s | **1.66-1.82 s** |
+| programs compiled after the reveal (scripted session) | 4 | **0** |
+| loading screen | 8.4-9.8 s | ~0.3-0.5 s longer |
+
+Re-run the catalogue after adding a material that is created lazily: a
+`renderBufferDirect` wrapper that records which object made
+`renderer.info.programs` grow. `boottime.mjs` takes `BOOT_WAIT=<ms>` so a
+`BOOT_INJECT` recorder can see the first frames of play before `BOOT_PROBE`.
+
 ### The ground queries' grids
 
 `groundAt`'s deck-surface grid was 120 m cells. On I-5 a cell listed hundreds

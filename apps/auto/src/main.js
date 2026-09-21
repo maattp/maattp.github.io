@@ -10,14 +10,14 @@ import { buildLandmarks, SEAPLANE_DOCK, airportSurface } from './landmarks.js';
 import { freezeStatic } from './build.js';
 import { cacheGet, cachePut, cacheGuardTripped, cacheGuardSet, cacheClear } from './bootcache.js';
 import { TrafficSystem, collideWithBuildings } from './traffic.js';
-import { TYPES as VEHICLE_TYPES, setWaterQuery, setVehicleCache, vehicleSnapshot } from './vehicles.js';
+import { TYPES as VEHICLE_TYPES, setWaterQuery, setVehicleCache, vehicleSnapshot, vehicleAssets, paintMaterial } from './vehicles.js';
 
 // Aircraft come in their own colours, parked at Boeing Field or delivered.
 const AIRCRAFT_PAINT = {
   plane: 0xdfe3e6, sportplane: 0xc8452e, floatplane: 0xe8c53a,
   twin: 0xeceef0, jet: 0xe6e8eb, biplane: 0x2a4f93, heli: 0x223f7c,
 };
-import { PedSystem, animateWalk } from './peds.js';
+import { PedSystem, animateWalk, warmLooks } from './peds.js';
 import { Player } from './player.js';
 import { Controls } from './controls.js';
 import { Hud, buildMapCanvas } from './hud.js';
@@ -764,6 +764,63 @@ function installShadowFade() {
   try { savedQ = localStorage.getItem('auto-quality'); } catch (e) { /* private mode */ }
   // literal, not TIERS: that const lives further down and this runs at boot
   applyQuality(['high', 'medium', 'low'].includes(savedQ) ? savedQ : 'high', !!savedQ);
+  // WARM-UP BEHIND THE LOADING SCREEN (apps/auto/CLAUDE.md, "Hitches").
+  // Everything first-used used to happen in play: the pedestrian look pools
+  // inside the first frame (224-264 ms at 8x), ~36 programs compiling while
+  // the overlay faded, and later the vehicles' shadow-depth variant (a 468 ms
+  // frame when the first car entered the shadow box), the far layers (first
+  // climb past 45 m) and the boat wake.
+  //
+  // v98 did this and broke the game on the iPhone -- unplayable, no movement
+  // -- while every Chrome harness passed. That version uploaded EVERY vehicle
+  // type's geometry here (~20 types x 3 parts) for no measured gain; the likely
+  // failure is WebKit's GPU process giving up under it. So now: one sedan's
+  // parts only (the programs are shared by every type), and nothing in here
+  // may stop the boot -- any error is logged, the stand-ins always come out,
+  // and a lost context is reported instead of left for the first frame.
+  try { warmLooks(); } catch (e) { blog(`warm looks: ${e.message}`); }
+  {
+    const tw = performance.now();
+    const warm = new THREE.Group();
+    const wakeWas = fx.wakeMesh ? fx.wakeMesh.visible : false;
+    let lazy = null;
+    try {
+      // Traffic has not spawned yet, so the stand-ins come from the asset
+      // table. (paint is never disposed: that would release the program just
+      // compiled, which no car is using yet.)
+      const va = vehicleAssets(), sd = va.types.sedan, paint = paintMaterial(0xffffff);
+      for (const [geo, mat] of [[sd.paintGeo, paint], [sd.trimGeoW, va.trimMat], [sd.matteGeoW, va.matteMat]]) {
+        if (!geo) continue;
+        const m = new THREE.Mesh(geo, mat);
+        m.castShadow = true; m.receiveShadow = true; m.frustumCulled = false;
+        warm.add(m);
+      }
+      warm.position.set(player.x, player.y, player.z);
+      // The layers built only later: far massing and far roads (their
+      // materials on an empty draw range; the layers stay unallocated) and
+      // the boat wake, hidden until then -- three compiles nothing it skips.
+      lazy = world.warmMeshes();
+      for (const m of lazy.meshes) warm.add(m);
+      if (fx.wakeMesh) fx.wakeMesh.visible = true;
+      scene.add(warm);
+      placeSun(player.x, player.y, player.z);
+      player.updateCamera(1 / 60, null);   // look where the first frame will
+      // TWICE: three runs the shadow pass before it sets up the frame's
+      // lights, and depth programs are keyed on the light counts, so a
+      // renderer's first frame compiles them for zero lights and the next
+      // for the real ones. One warm frame compiled the wrong copy.
+      draw(tw);
+      draw(tw + 16);
+    } catch (e) {
+      blog(`warm shaders: ${e.message}`);
+    } finally {
+      scene.remove(warm);
+      if (fx.wakeMesh) fx.wakeMesh.visible = wakeWas;
+      try { if (lazy) lazy.dispose(); } catch (e) { /* nothing to free */ }
+    }
+    const gl = renderer.getContext();
+    blog(`warm: ${renderer.info.programs.length} programs, ${Math.round(performance.now() - tw)} ms${gl.isContextLost && gl.isContextLost() ? ' -- CONTEXT LOST' : ''}`);
+  }
   startedAt = performance.now();
   loading.classList.add('hide');
   document.body.classList.add('booted');   // now the rotate prompt may show
