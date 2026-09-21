@@ -22,6 +22,7 @@ import { Player } from './player.js';
 import { Controls } from './controls.js';
 import { Hud, buildMapCanvas } from './hud.js';
 import { Activities } from './activities.js';
+import { installRamps, buildRampMesh, StuntJumps } from './stunts.js';
 import { Effects } from './effects.js';
 import { Audio } from './audio.js';
 import { PostFX } from './postfx.js';
@@ -253,7 +254,7 @@ class Game {
 
 // ---------------------------------------------------------------------------
 
-let renderer, scene, camera, sun, world, cityRef, traffic, peds, player, controls, hud, fx, audio, game, marker, postfx, acts;
+let renderer, scene, camera, sun, world, cityRef, traffic, peds, player, controls, hud, fx, audio, game, marker, postfx, acts, stunts;
 let pickups = [];
 // Scratch vector for the shadow-camera aim, so the frame loop allocates none.
 const LOOK_AHEAD = new THREE.Vector3();
@@ -578,6 +579,14 @@ function installShadowFade() {
     tr = terrGen.next();
   }
   world.buildWater();
+  // Stunt ramps: after the terrain (their bases read the carved ground and the
+  // portal barriers they join are installed) and before any chunk streams, so
+  // the scatter keeps their run-ups and landings clear.
+  {
+    const ramps = installRamps(city);
+    const rampMesh = buildRampMesh(city, ramps, world.mats.flat);
+    if (rampMesh) scene.add(rampMesh);
+  }
 
   await step(0.8, 'Building the skyline');
   world.buildSkyline();
@@ -695,6 +704,8 @@ function installShadowFade() {
   }
   // after the HUD: Activities writes its readout and map icons through it
   acts = new Activities(scene, city, world, game, hud, audio, traffic);
+  stunts = new StuntJumps(city, game, hud, audio);
+  acts.stunts = stunts;
 
   // delivery marker
   const mg = new THREE.CylinderGeometry(6, 6, 26, 18, 1, true);
@@ -738,7 +749,7 @@ function installShadowFade() {
 
   await step(1, 'Welcome to Seattle');
   window.__refreshJobs = refreshJobs;
-  window.__dbg = { game, city, player, world, traffic, peds, acts, scene, camera, renderer, G, fx, hud, controls, audio, pickups, THREE, postfx, applyQuality, sun, placeSun, sceneStats, perfSys, cityStats, WET_FLOOR, animateWalk, collideWithBuildings, TYPES: VEHICLE_TYPES };
+  window.__dbg = { game, city, player, world, traffic, peds, acts, stunts, scene, camera, renderer, G, fx, hud, controls, audio, pickups, THREE, postfx, applyQuality, sun, placeSun, sceneStats, perfSys, cityStats, WET_FLOOR, animateWalk, collideWithBuildings, TYPES: VEHICLE_TYPES };
   wireUi();
   game.newTarget();
   // Start on `high` everywhere.
@@ -1255,6 +1266,9 @@ function frame(now) {
 
   const input = controls.read();
   const look = controls.takeLook();
+  // Slow motion through the middle of a big stunt jump (stunts.js eases it in
+  // and out, and it is off before touchdown). The whole sim slows together.
+  if (stunts && stunts.timeScale < 1) dt *= stunts.timeScale;
 
   if (game.dead) {
     game.deathT += dt;
@@ -1275,6 +1289,7 @@ function frame(now) {
   if (prof) lap('traffic');
   peds.update(dt, p.x, p.z, player, traffic);
   if (prof) lap('peds');
+  if (stunts) stunts.update(dt, player);
   if (acts) acts.update(dt, player);
   // Say hello once per approach to anything the map marks (the dock, the
   // quads): the map is how you find them, this is how you know you have.

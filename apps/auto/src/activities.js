@@ -480,8 +480,10 @@ export class Activities {
     if (v.spec.plane) { a.air = 0; a.drift = 0; return; }
 
     // AIRTIME
+    // A stunt jump is scored by stunts.js, once, not again as airtime.
     const g = this.city.groundAt(v.x, v.z, v.y + 1.2, v.lift || 0);
-    if (v.y - g > 1.1 && kph > 25) a.air += dt;
+    if (this.stunts && (this.stunts.busy || v.stunt)) a.air = 0;
+    else if (v.y - g > 1.1 && kph > 25) a.air += dt;
     else {
       if (a.air > 0.55) {
         this.award(Math.round(a.air * 220), `AIRTIME ${a.air.toFixed(1)}s`);

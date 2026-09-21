@@ -116,6 +116,22 @@ export function buildMapCanvas(city) {
   return c;
 }
 
+/** A stunt jump on either map: a wedge along the jump's direction (map space is world x/z). */
+function drawJumpIcon(ctx, x, y, j, r) {
+  const r0 = j.ramp;
+  const dx = r0 ? r0.dx : 1, dz = r0 ? r0.dz : 0;
+  ctx.fillStyle = j.done ? '#6fdc8c' : '#ff8a1f';
+  ctx.strokeStyle = 'rgba(16,20,24,0.9)';
+  ctx.lineWidth = Math.max(1, r * 0.28);
+  ctx.beginPath();
+  ctx.moveTo(x + dx * r * 1.3, y + dz * r * 1.3);
+  ctx.lineTo(x - dx * r * 0.8 - dz * r, y - dz * r * 0.8 + dx * r);
+  ctx.lineTo(x - dx * r * 0.8 + dz * r, y - dz * r * 0.8 - dx * r);
+  ctx.closePath();
+  ctx.fill();
+  ctx.stroke();
+}
+
 export class Hud {
   constructor(root, city, mapCanvas) {
     this.root = root;
@@ -252,6 +268,13 @@ export class Hud {
       ctx.fillStyle = '#f4c542';
       ctx.fillRect(bx - 1.6 / zoom, bz - 1.6 / zoom, 3.2 / zoom, 3.2 / zoom);
     }
+    // Stunt jumps: a ramp-shaped wedge pointing the way you jump, orange until
+    // it has been landed clean, then green.
+    for (const j of (this.jumps || [])) {
+      const [bx, bz] = toMap(j.x, j.z);
+      if (Math.abs(bx) > S || Math.abs(bz) > S) continue;
+      drawJumpIcon(ctx, bx, bz, j, 5 / zoom);
+    }
     ctx.restore();
 
     // player arrow, always upright at centre
@@ -374,6 +397,10 @@ export class Hud {
         ctx.fillStyle = 'rgba(255,255,255,0.85)';
         ctx.fillText(pl.name, qx, qz - size * 0.016);
       }
+    }
+    for (const j of (this.jumps || [])) {
+      const [jx, jz] = toC(j.x, j.z);
+      drawJumpIcon(ctx, jx, jz, j, size * 0.009);
     }
     if (game.target) {
       const [tx, tz] = toC(game.target.x, game.target.z);

@@ -23,6 +23,7 @@ export class Player {
     this.heading = G.SPAWN_HEADING;
     this.vy = 0;
     this.grounded = true;
+    this.stuntCam = 0;   // 0..1, stunts.js: the chase camera pulls wide on a big jump
     this.speed = 0;
     this.onFoot = true;
     this.vehicle = null;
@@ -434,6 +435,9 @@ export class Player {
         height = 4.6 - clamp((v.vy || 0) * 0.18, -1.6, 1.6);
         lookH = 2.2 + clamp((v.vy || 0) * 0.22, -2, 2);
       }
+      // A big stunt jump pulls the boom back and up a little, eased by
+      // stunts.js, so the landing zone comes into view before you reach it.
+      if (this.stuntCam > 0.001) { dist += 4.5 * this.stuntCam; height += 1.8 * this.stuntCam; }
       if (v.spec.heli && v.airborne && v.vLong > -2) {
         // A helicopter yaws on the spot, and the stick flies it along the
         // nose, so the camera has to come round behind a pedal turn at the

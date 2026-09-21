@@ -6598,6 +6598,8 @@ float frLine(float o, float fw, float c, float w) {
         // and beneath a viaduct they grow through the deck.
         if (city.onRoad(ox, oz, 0.8)) { cityStats.propsSkipped++; continue; }
         if (inPit(ox, oz)) { cityStats.propsInPit++; continue; }
+        // nor on a stunt jump's run-up or landing (stunts.js)
+        if (city.jumpClear(ox, oz)) continue;
         const gy = G.terrainHeight(ox, oz) + WALK_Y;
         const armRot = Math.atan2(-px * sg, -pz * sg);
         if (h < 0.42) {
@@ -6671,6 +6673,7 @@ float frLine(float o, float fw, float c, float w) {
           if (onCorner(ei, t, sg)) continue;
           if (city.onRoad(ox, oz, 0.4)) { cityStats.propsSkipped++; continue; }
           if (inPit(ox, oz)) { cityStats.propsInPit++; continue; }
+          if (city.jumpClear(ox, oz)) continue;
           const gy = G.terrainHeight(ox, oz) + WALK_Y;
           const rot = Math.atan2(-px * sg, -pz * sg);
           const k = hash2(Math.round(x * 13) + 5, Math.round(z * 13) + 29);
@@ -6757,6 +6760,8 @@ float frLine(float o, float fw, float c, float w) {
       // grass, not about tarmac.
       if (this.city.onRoad(x, z, 2.5)) { treeSkip++; continue; }
       if (this.inAirfield(x, z)) { treeSkip++; continue; }
+      // ...nor across a stunt jump's run-up or landing (stunts.js).
+      if (this.city.jumpClear(x, z)) { treeSkip++; continue; }
       // ...nor on a car park or court. The lot layer may pave over the park
       // mask (a park's own car park is real tarmac), and the terrain draws it
       // paved, so a tree there stands in the middle of the bays. A paved

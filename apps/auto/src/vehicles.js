@@ -51,6 +51,11 @@ const CAVITY = [0.035, 0.04, 0.045];
 // family sedan did 0-100 in 3.5 s and still could not reach 100 km/h.
 const DRAG = 0.00040;
 const ROLL = 0.020;
+// Off a stunt ramp (stunts.js) the flight is arcade, not the crest hop: lower
+// gravity for hang time, the flight path held while steering spins the body.
+const STUNT_G = 15;
+const STUNT_SPIN = 2.6;   // rad/s of yaw at full steer, in the air
+const STILL = { dx: 0, dz: 0 };
 const V0_100 = 100 / 3.6;
 
 // How much punchier than real the throttle is.
@@ -5788,6 +5793,10 @@ export class Vehicle {
     // about its main wheels, not its middle.
     this.rollA = 0; this.pitchA = 0; this.yVis = 0;
     this.spool = 0; this.yawRate = 0; this.accLong = 0; this.accLeft = 0;
+    // stunt ramps: the ramp under the centre (held briefly past the lip), the
+    // vertical speed it would launch at, and the flight state while airborne.
+    this.rampRef = null; this.rampT = 0; this.rampVy = 0; this.rampAlong = 0;
+    this.stunt = false; this.spinRate = 0; this.stuntLaunch = null; this.stuntLanded = false; this.landVy = 0;
     this._cast = null; this._farCol = null;
     this._fwd = { x: 0, z: 1 }; this._fwdH = NaN;
     this._acc = 0; this._still = 0;   // traffic.js: half-rate AI time, parked-settle frames
@@ -6281,6 +6290,7 @@ export class Vehicle {
     const brake = input.brake || 0;
     const hand = input.handbrake || 0;
     const steerIn = clamp(input.steer || 0, -1, 1);
+    if (this.stunt) { this.stuntAir(dt, steerIn); return STILL; }
 
     // One paved-surface query per body per frame, reused by all seven ground
     // samples below -- the scan is too expensive to repeat per wheel.
@@ -6499,7 +6509,36 @@ export class Vehicle {
     if (target - this.y > 3 && G.terrainRaw(this.x, this.z) - this.y > 2.5) {
       target = this.y;
     }
-    if (this.y > target + 0.25) {
+    // STUNT RAMPS ride on the CENTRE. The four-wheel plane is right for a
+    // road, but at a lip the front pair reads the ground beyond it and the
+    // average sinks the car into the ramp for the last car-length -- it would
+    // leave from half-way up. The centre sample keeps it on the ramp to the
+    // lip, followed stiffly (the usual lerp lags ~0.4 m on a 20 deg kicker).
+    // Leaving it, the car carries the ramp's vertical speed into the air.
+    const onRamp = this.city.rampMask && !low ? this.city.rampHere(this.x, this.z) : null;
+    if (onRamp) {
+      const ry = this.city.rampY(onRamp, this.x, this.z);
+      if (ry > target) target = ry;
+      const along = (f2.x * onRamp.dx + f2.z * onRamp.dz) * this.vLong + (rx2 * onRamp.dx + rz2 * onRamp.dz) * this.vLat;
+      this.rampRef = onRamp; this.rampT = 0.3;
+      this.rampAlong = along;
+      this.rampVy = along * this.city.rampSlope(onRamp, this.x, this.z);
+    } else if (this.rampRef && (this.rampT -= dt) <= 0) this.rampRef = null;
+    if (this.y > target + 0.25 && this.rampRef && !onRamp && this.onGround && this.rampVy > 1.5) {
+      // Off the lip: a stunt flight from here (stuntAir) until the wheels
+      // find the ground again.
+      this.stunt = true;
+      this.onGround = false;
+      this.vy = this.rampVy;
+      this.spinRate = 0;
+      this.stuntLaunch = this.rampRef;
+      this.rampRef = null;
+      this.sync();
+      return { dx, dz };
+    }
+    if (onRamp && this.y <= target + 0.25) {
+      this.y = target; this.vy = 0; this.onGround = true;
+    } else if (this.y > target + 0.25) {
       this.vy -= 22 * dt;
       this.y += this.vy * dt;
       this.onGround = false;
@@ -6555,6 +6594,74 @@ export class Vehicle {
     this.wheelSpin += (this.vLong / (this.assets.wheelR || 0.34)) * dt;
     this.sync();
     return { dx, dz };
+  }
+
+  /**
+   * Flight off a stunt ramp, until the wheels are back on something.
+   *
+   * The ground model steers the VELOCITY with the body (yaw from the front
+   * wheels, lateral slip scrubbed by grip), which in the air would let you
+   * turn a jump in mid-flight. Here the flight path is held in world space and
+   * steering only spins the body about it, so a spin is a real rotation you
+   * then have to land out of: whatever angle the body is at on touchdown comes
+   * back as slide (vLat), which is what a clean landing is judged on. No
+   * engine, no brakes, no grip -- only air drag and STUNT_G.
+   */
+  stuntAir(dt, steerIn) {
+    const f = this.forward;
+    let wx = f.x * this.vLong + f.z * this.vLat, wz = f.z * this.vLong - f.x * this.vLat;
+    const sp = Math.hypot(wx, wz);
+    const drag = 1 - Math.min(0.5, sp * DRAG * dt);
+    wx *= drag; wz *= drag;
+    this.spinRate = damp(this.spinRate, steerIn * STUNT_SPIN, 5, dt);
+    this.heading += this.spinRate * dt;
+    const g = this.forward;
+    this.vLong = wx * g.x + wz * g.z;
+    this.vLat = wx * g.z - wz * g.x;
+    this.x = G.clampToMap(this.x + wx * dt);
+    this.z = G.clampToMap(this.z + wz * dt);
+    this.vy -= STUNT_G * dt;
+    this.y += this.vy * dt;
+    this.lift = this.city.roadLift(this.x, this.z);
+    const rx = g.z, rz = -g.x;
+    const at = (ox, oz) => this.city.groundAt(this.x + ox, this.z + oz, this.y + 1.5, this.lift);
+    const two = !!this.spec.moto;
+    const fh = at(g.x * this.halfLen, g.z * this.halfLen);
+    const bh = at(-g.x * this.halfLen, -g.z * this.halfLen);
+    const lh = two ? 0 : at(rx * this.halfWid, rz * this.halfWid);
+    const rh = two ? 0 : at(-rx * this.halfWid, -rz * this.halfWid);
+    let target = two ? (fh + bh) / 2 : (fh + bh + lh + rh) / 4;
+    const cr = this.city.rampMask ? this.city.rampHere(this.x, this.z) : null;
+    if (cr) target = Math.max(target, this.city.rampY(cr, this.x, this.z));
+    // A splashdown ends the flight at the surface, not on the lake bed.
+    let splash = false;
+    if (waterQuery && this.vy < 0 && G.isWater(this.x, this.z)) {
+      const wl = waterQuery(this.x, this.z);
+      if (wl !== null && wl - 0.8 > target) { target = wl - 0.8; splash = true; }
+    }
+    // The nose follows the flight path, as a thrown car's does.
+    const tgtPitch = -Math.atan2(this.vy, Math.max(6, sp)) * 0.75;
+    this.pitch = lerp(this.pitch, tgtPitch, 1 - Math.exp(-2.5 * dt));
+    this.roll = lerp(this.roll, 0, 1 - Math.exp(-3 * dt));
+    this.latAcc = 0; this.skid = 0;
+    this.wheelSpin += (this.vLong / (this.assets.wheelR || 0.34)) * dt;
+    if (this.y <= target) {
+      // Impact is the speed INTO the ground, along its normal: a car coming
+      // down a slope the way it falls lands softly, so a cliff jump onto a
+      // hillside is survivable where the same drop onto a flat is not.
+      const sf = (fh - bh) / (2 * this.halfLen), sr = two ? 0 : (lh - rh) / (2 * this.halfWid);
+      this.landVy = (this.vy - sf * this.vLong - sr * this.vLat) / Math.sqrt(1 + sf * sf + sr * sr);
+      this.y = target;
+      this.vy = 0;
+      this.stunt = false;
+      this.onGround = true;
+      this.stuntLanded = true;
+      this.spinRate = 0;
+      // Suspension takes a normal landing; a drop from a big one costs.
+      if (splash) this.vLong *= 0.35;
+      else if (this.landVy < -20) this.damage(Math.min(40, (-this.landVy - 20) * 2), true);
+    }
+    this.sync();
   }
 
   sync() {
