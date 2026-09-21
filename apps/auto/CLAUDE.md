@@ -2842,7 +2842,7 @@ drives on what is drawn. `groundAt` takes a ramp over the terrain wherever it
 is higher and within `DECK_REACH`; the lookup is a byte mask at 32 m, so
 groundAt's ~110 calls a frame pay one typed-array read each away from a ramp.
 All ramps are one merged mesh on `world.mats.flat`: **1 draw (+1 in the shadow
-pass), ~1.7k triangles in total.** The profile is `H (A s + (1-A) s^2)`,
+pass), 2.2k triangles for all twelve.** groundAt measured within noise of master (200k calls, ~52 ms either way; `rampHere` ~16 ns). The profile is `H (A s + (1-A) s^2)`,
 `RAMP_A` 0.3: a 5-6 deg toe and the authored angle at the lip.
 
 - **The deck continues the approach's grade, not the ground under the lip.** At

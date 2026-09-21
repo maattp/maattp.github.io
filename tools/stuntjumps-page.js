@@ -72,7 +72,10 @@
     const j = find(id), r = j.ramp;
     const back = o.from != null ? o.from : Math.min(Math.hypot(j.x - j.sx, j.z - j.sz) - r.L, o.maxRun || 1e9);
     const sx = r.x0 - r.dx * back, sz = r.z0 - r.dz * back;
-    if (p.vehicle && p.vehicle !== S.car) { /* leave it */ }
+    // A splashdown sinks the car and can drown the player: bring them back
+    // without the paused loop's respawn (it never runs while paused).
+    if (d.game.dead) { d.game.dead = false; d.game.deathT = 0; document.getElementById('wasted').classList.remove('show'); }
+    d.game.wanted = 0; p.health = 100; p.dead = false;
     if (!S.car || S.car.dead || !d.traffic.cars.includes(S.car)) {
       S.car = d.traffic.spawnAt(sx, sz, 0, o.type || 'sedan', 0x2f6fd0, 'free');
     }
