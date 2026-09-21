@@ -4098,9 +4098,15 @@ float frLine(float o, float fw, float c, float w) {
     // of every piece, so only 60 % of 225 km of freeway carried any lines and
     // I-5's edge lines were dashes with 14 m gaps. Crossing paint on those is
     // stopped by the carriageway test above instead.
+    // At a mouth-and-fillet junction the paint stops at the arm's mouth, where
+    // the junction polygon starts -- nodeRadius (the widest road's half-width)
+    // left a skewed approach's lines running on into the crossing, or
+    // stopping metres short of it.
     const trim = (ni) => {
       const n = this.city.nodes[ni];
-      return n.prof && !n.anchor ? 0 : this.nodeRadius(ni);
+      if (n.prof && !n.anchor) return 0;
+      const A = ei != null ? this.junctionArm(ni, ei) : null;
+      return A ? A.pm : this.nodeRadius(ni);
     };
     const from = trim(e.a);
     const till = e.len - trim(e.b);
@@ -5160,7 +5166,18 @@ float frLine(float o, float fw, float c, float w) {
     const byGrade = grade > 0.08 ? 3 : grade > 0.03 ? 5 : 8;
     const byBow = bow < 0.01 ? 8 : clamp(e.len * Math.sqrt(0.02 / bow), 2.5, 8);
     const segLen = Math.min(byGrade, byBow);
-    const steps = Math.max(1, Math.round(e.len / segLen));
+    // The carriageway stops at each junction's MOUTH (citygen buildJunction):
+    // the junction polygon paves the rest. Run on to the node centre, every
+    // approach lay under the crossing and under each other -- up to five
+    // surfaces 0-3 cm apart z-fighting in the middle of a junction -- and a
+    // skewed approach's square end poked out past the crossing as a wedge.
+    // It runs on 0.4 m under the polygon, which is drawn 1-4 cm higher: ending
+    // exactly at the mouth left that step open, a slit a pixel wide showing
+    // the ground under the road as a dotted line across every mouth.
+    const mA = ei != null ? this.mouthAt(e.a, ei) : 0, mB = ei != null ? this.mouthAt(e.b, ei) : 0;
+    const tA = mA / e.len, tB = 1 - mB / e.len;
+    const cA = Math.max(0, mA - 0.4) / e.len, cB = 1 - Math.max(0, mB - 0.4) / e.len;
+    const steps = Math.max(1, Math.round((e.len * (cB - cA)) / segLen));
     const col = e.cls === 'hwy' ? [0.92, 0.92, 0.92] : [1, 1, 1];
     let v = 0;
     // Deterministic sub-centimetre lift per edge, so two carriageways that
@@ -5206,9 +5223,10 @@ float frLine(float o, float fw, float c, float w) {
       const k = polish * edge;
       return [col[0] * k, col[1] * k, col[2] * k];
     };
+    v = (cA * e.len) / ROAD_TILE;
     for (let s = 0; s < steps; s++) {
-      const t0 = s / steps, t1 = (s + 1) / steps;
-      const seg = e.len / steps;
+      const t0 = cA + ((cB - cA) * s) / steps, t1 = cA + ((cB - cA) * (s + 1)) / steps;
+      const seg = (e.len * (cB - cA)) / steps;
       // Fixed metres per texture repeat, in BOTH directions. This used to be
       // `seg / (hw * 2)` with u spanning 0..1 across the road, which tied the
       // asphalt's grain to how wide the road happened to be.
@@ -5240,13 +5258,15 @@ float frLine(float o, float fw, float c, float w) {
     this.meshTrenchWalls(flat, e, a, b, ei);
     if (lod === 1 && (e.cls === 'st' || e.cls === 'art' || e.cls === 'res')) {
       const sw = e.cls === 'art' ? 3.2 : 2.6;
-      // Stop short of each intersection: a strip run end to end would march
-      // straight across the cross street. The corner is filled by meshNode.
-      const ta = this.nodeRadius(e.a) / e.len;
-      const tb = 1 - this.nodeRadius(e.b) / e.len;
-      if (tb - ta < 0.06) return;
-      const span = tb - ta;
       for (const sg of [-1, 1]) {
+        // Stop short of each intersection: a strip run end to end would march
+        // straight across the cross street. The corner is filled by meshNode,
+        // whose kerb returns to this side's kerb line at paveStart -- per
+        // side, because a skewed corner turns at a different distance on each.
+        const ta = this.paveStart(e.a, ei, sg) / e.len;
+        const tb = 1 - this.paveStart(e.b, ei, sg) / e.len;
+        if (tb - ta < 0.06) continue;
+        const span = tb - ta;
         const ox = px * sg, oz = pz * sg;
         // Pavement pieces are chords too. At a fixed 24 m on a hill the slab
         // was drawn up to 18 cm above the height roadLift gives (terrain +
@@ -5262,10 +5282,24 @@ float frLine(float o, float fw, float c, float w) {
         // reporting pavement over the part that wasn't touching anything --
         // measured, a player walked 52 cm up on nothing beside a short
         // residential street next to a junction.
+        // Piece boundaries include the carriageway's own ends where they fall
+        // inside the run: short of its mouth this pavement borders the
+        // junction polygon, whose surface sits NODE_Y - ROAD_Y higher, and a
+        // gutter drawn at the strip's height there would be buried or fight it.
+        const tsA = [];
+        for (let s = 0; s <= wsteps; s++) tsA.push(ta + (s / wsteps) * span);
+        for (const tm of [tA, tB]) {
+          if (tm > ta + 0.01 && tm < tb - 0.01) {
+            let k = 1;
+            while (tsA[k] < tm) k++;
+            if (Math.abs(tsA[k] - tm) * e.len > 0.3 && Math.abs(tsA[k - 1] - tm) * e.len > 0.3) tsA.splice(k, 0, tm);
+          }
+        }
         const work = [];
-        for (let s = 0; s < wsteps; s++) work.push([ta + (s / wsteps) * span, ta + ((s + 1) / wsteps) * span]);
+        for (let s = 0; s + 1 < tsA.length; s++) work.push([tsA[s], tsA[s + 1]]);
         for (let wi = 0; wi < work.length; wi++) {
           const [t0, t1] = work[wi];
+          const inJ = t1 <= tA + 0.001 || t0 >= tB - 0.001;
           const x0 = lerp(a.x, b.x, t0), z0 = lerp(a.z, b.z, t0);
           const x1 = lerp(a.x, b.x, t1), z1 = lerp(a.z, b.z, t1);
           const i0x = x0 + ox * hw, i0z = z0 + oz * hw;
@@ -5343,14 +5377,15 @@ float frLine(float o, float fw, float c, float w) {
           // kerb face by construction, on the same lift the lane markings use.
           const gW = 0.5;
           const gv0 = (t0 * e.len) / ROAD_TILE, gv1 = (t1 * e.len) / ROAD_TILE;
-          const gy0 = cy0 + MARK_Y + bias, gy1 = cy1 + MARK_Y + bias;
+          const gl = inJ ? NODE_Y + 0.012 : MARK_Y + bias;
+          const gy0 = cy0 + gl, gy1 = cy1 + gl;
           const j0x = i0x - ox * gW, j0z = i0z - oz * gW;
           const j1x = i1x - ox * gW, j1z = i1z - oz * gW;
           const gDark = [0.44, 0.45, 0.46];
           const gLite = [0.92, 0.93, 0.93];
           road.quad(
-            [i0x, gy0, i0z], [j0x, G.terrainHeight(j0x, j0z) + MARK_Y + bias, j0z],
-            [j1x, G.terrainHeight(j1x, j1z) + MARK_Y + bias, j1z], [i1x, gy1, i1z],
+            [i0x, gy0, i0z], [j0x, G.terrainHeight(j0x, j0z) + gl, j0z],
+            [j1x, G.terrainHeight(j1x, j1z) + gl, j1z], [i1x, gy1, i1z],
             [0, 1, 0],
             [0, gv0, gW / ROAD_TILE, gv0, gW / ROAD_TILE, gv1, 0, gv1],
             [gDark, gLite, gLite, gDark]
@@ -5409,6 +5444,67 @@ float frLine(float o, float fw, float c, float w) {
         [cx, T(cx, cz) - 0.02, cz], [dx, T(dx, dz) - 0.02, dz],
         [ox * 0.46, 0.89, oz * 0.46], [0, 0, 1, 0, 1, 1, 0, 1], [lip, lip, toe, toe]);
     }
+  }
+
+  /**
+   * The junction this world draws at node `ni`: citygen's shape
+   * (city.junction -- a legacy square or a mouth-and-fillet polygon), or null
+   * where meshNode draws nothing. A junction anywhere near a cutting is not
+   * drawn (see meshNode), and then its approaches are not trimmed either.
+   * Cached, because every approach strip asks, from whichever chunk owns it.
+   */
+  junctionFor(ni) {
+    if (!this._jf) this._jf = new Map();
+    let J = this._jf.get(ni);
+    if (J !== undefined) return J;
+    J = this.city.junction(ni);
+    if (J) {
+      const n = this.city.nodes[ni];
+      let rr = 0;
+      for (const ei of n.e) { const e = this.city.edges[ei]; if (!e.tunnel && e.hw > rr) rr = e.hw; }
+      // A JUNCTION IS NOT BUILT INSIDE A CUTTING, and testing only its centre
+      // is not enough: a node standing just clear of the trench still paves a
+      // surface whose far corners reach into it, and drawn from the carved
+      // surface those corners dive. That is the pale plate fanning out of the
+      // mouth -- apex at the headwall, a straight unclosed edge over the bank.
+      // Generous: the square, its kerbed ring and the ring's diagonal corners
+      // all reach past the node, and cutFloor covers the banks as well as the
+      // floor. The approach strips pave it on their own, and a crossing does
+      // not belong in the mouth of a tunnel anyway.
+      const rq = rr + 8;
+      for (const [ox, oz] of [[0, 0], [rq, 0], [-rq, 0], [0, rq], [0, -rq],
+        [rq, rq], [rq, -rq], [-rq, rq], [-rq, -rq]]) {
+        if (this.cutFloor(n.x + ox, n.z + oz)) { J = null; break; }
+      }
+    }
+    this._jf.set(ni, J);
+    return J;
+  }
+
+  /** Edge `ei`'s arm of a mouth-and-fillet junction at `ni`, or null. */
+  junctionArm(ni, ei) {
+    const J = this.junctionFor(ni);
+    if (!J || J.legacy) return null;
+    for (const A of J.arms) if (A.ei === ei) return A;
+    return null;
+  }
+
+  /** Where edge `ei`'s carriageway starts, measured from node `ni`. */
+  mouthAt(ni, ei) {
+    const A = this.junctionArm(ni, ei);
+    return A ? A.m : 0;
+  }
+
+  /**
+   * Where edge `ei`'s pavement on side `sg` (+1 = its (-dz, dx) side, as
+   * meshRoad offsets it) starts, measured from node `ni`: the kerb return of
+   * the junction's corner on that side, else nodeRadius as it always was.
+   */
+  paveStart(ni, ei, sg) {
+    const A = this.junctionArm(ni, ei);
+    if (!A) return this.nodeRadius(ni);
+    // At the edge's a end the arm's +p side IS the strip's +1 side.
+    return (A.atA ? sg > 0 : sg < 0) ? A.sP : A.sN;
   }
 
   /** Half-size of the paved square drawn at an intersection. */
@@ -5529,6 +5625,12 @@ float frLine(float o, float fw, float c, float w) {
     // at a merge ends inside the main line's carriageway, so nothing needs
     // closing. citygen.nodeSurface() skips the same nodes.
     if (n.prof && !n.anchor) return;
+    // Street junctions are a polygon fitted to their approaches (citygen
+    // buildJunction). What follows -- the square turned to the widest road,
+    // and its ring -- is kept only where a graded or elevated road meets the
+    // node, whose strips meshGraded/meshViaduct draw untrimmed.
+    const J = this.junctionFor(ni);
+    if (J && !J.legacy) { this.meshJunction(road, flat, J, n, lod, walk); return; }
     let hw = 0;
     let rot = 0;
     let sw = 0;
@@ -5669,6 +5771,117 @@ float frLine(float o, float fw, float c, float w) {
     side(R, -R, -R, -R, 0, -1);
     side(R, R, R, -R, 1, 0);
     side(-R, -R, -R, R, -1, 0);
+  }
+
+  /**
+   * A street junction as citygen.buildJunction shapes it: the tarmac polygon
+   * the approaches' mouths and kerb lines enclose, and a kerbed band of
+   * pavement round each corner. nodeSurface reports exactly this.
+   *
+   * The polygon is a fan from the node, drawn at terrain + NODE_Y per vertex
+   * with shared vertices. Its boundary carries each mouth's cross-section
+   * vertices with the strip's own wear value, so the polish down the middle
+   * and the grime at the kerb run on across the seam instead of meeting a
+   * flat white plate; the node itself takes the polished value. Rings are
+   * added only where the ground bows under a spoke (as the square was
+   * subdivided only on bow): a plane is exactly a fan.
+   */
+  meshJunction(road, flat, J, n, lod, walk) {
+    const T = G.terrainHeight;
+    const poly = J.poly, pc = J.pcol, np = poly.length / 2;
+    if (np >= 3) {
+      const cx = n.x, cz = n.z, t0 = T(cx, cz);
+      let dev = 0, rm = 0;
+      for (let k = 0; k < np; k++) {
+        const x = poly[2 * k], z = poly[2 * k + 1];
+        dev = Math.max(dev, Math.abs(T((cx + x) / 2, (cz + z) / 2) - (t0 + T(x, z)) / 2));
+        rm = Math.max(rm, Math.hypot(x - cx, z - cz));
+      }
+      const sub = dev < 0.04 ? 1 : Math.max(2, Math.min(6, Math.ceil(rm / 4)));
+      const CEN = 1.12;
+      const V = (x, z, c) => road.vert(x, T(x, z) + NODE_Y, z, 0, 1, 0, x / ROAD_TILE, z / ROAD_TILE, c, c, c);
+      // Wound to face up whichever way the three points turn. (road.P is
+      // re-read: writing vertices can reallocate it.)
+      const tri = (a, b, c) => {
+        const P = road.P;
+        const ux = P[b * 3] - P[a * 3], uz = P[b * 3 + 2] - P[a * 3 + 2];
+        const vx = P[c * 3] - P[a * 3], vz = P[c * 3 + 2] - P[a * 3 + 2];
+        const ny = uz * vx - ux * vz;
+        if (Math.abs(ny) < 1e-9) return;
+        if (ny > 0) road.face3(a, b, c); else road.face3(a, c, b);
+      };
+      const ic = V(cx, cz, CEN);
+      let prev = null;
+      for (let r = 1; r <= sub; r++) {
+        const f = r / sub, ring = new Array(np);
+        for (let k = 0; k < np; k++) {
+          ring[k] = V(cx + (poly[2 * k] - cx) * f, cz + (poly[2 * k + 1] - cz) * f, CEN + (pc[k] - CEN) * f);
+        }
+        for (let k = 0; k < np; k++) {
+          const k2 = (k + 1) % np;
+          if (!prev) tri(ic, ring[k], ring[k2]);
+          else { tri(prev[k], ring[k], ring[k2]); tri(prev[k], ring[k2], prev[k2]); }
+        }
+        prev = ring;
+      }
+    }
+    if (lod !== 1 || !walk) return;
+    const pieces = this.city.junctionPieces(J);
+    if (!pieces.length) return;
+    const cc = [0.72, 0.72, 0.7], ccLo = [0.4, 0.4, 0.39];
+    const gDark = [0.44, 0.45, 0.46], gLite = [0.92, 0.93, 0.93], gW = 0.5;
+    const wy = (x, z) => T(x, z) + WALK_Y;
+    for (const pcs of pieces) {
+      const K = pcs.K, I = pcs.I;
+      const wj = 0.9 + hash2(Math.round(K[0][0] * 0.7), Math.round(K[0][1] * 0.7)) * 0.2;
+      const wIn = [wj, wj, wj], wOut = [wj * 0.9, wj * 0.9, wj * 0.91];
+      // Toward the road at each kerb vertex: from the building line to the kerb.
+      const toRoad = (k) => {
+        let dx = K[k][0] - I[k][0], dz = K[k][1] - I[k][1];
+        const l = Math.hypot(dx, dz);
+        if (l > 0.05) return [dx / l, dz / l];
+        const a = K[Math.max(0, k - 1)], b = K[Math.min(K.length - 1, k + 1)];
+        dx = b[1] - a[1]; dz = a[0] - b[0];
+        const m = Math.hypot(dx, dz) || 1;
+        return [dx / m, dz / m];
+      };
+      let vk = 0;
+      for (let k = 0; k < pcs.keep.length; k++) {
+        const k0 = K[k], k1 = K[k + 1], i0 = I[k], i1 = I[k + 1];
+        const segL = Math.hypot(k1[0] - k0[0], k1[1] - k0[1]);
+        const v0 = vk / WALK_TILE, v1 = (vk + segL) / WALK_TILE;
+        vk += segL;
+        if (!pcs.keep[k]) continue;
+        // A piece reaching into a cutting dives after the road (see meshNode).
+        if (this.inCut((k0[0] + i1[0]) / 2, (k0[1] + i1[1]) / 2)) continue;
+        const d0 = Math.hypot(i0[0] - k0[0], i0[1] - k0[1]) / WALK_TILE;
+        const d1 = Math.hypot(i1[0] - k1[0], i1[1] - k1[1]) / WALK_TILE;
+        walk.quad(
+          [k0[0], wy(k0[0], k0[1]), k0[1]], [i0[0], wy(i0[0], i0[1]), i0[1]],
+          [i1[0], wy(i1[0], i1[1]), i1[1]], [k1[0], wy(k1[0], k1[1]), k1[1]],
+          [0, 1, 0], [0, v0, d0, v0, d1, v1, 0, v1], [wIn, wOut, wOut, wIn]);
+        if (segL > 0.02) {
+          // Kerb face, facing the road.
+          let nx = -(k1[1] - k0[1]) / segL, nz = (k1[0] - k0[0]) / segL;
+          const tr = toRoad(k);
+          if (nx * tr[0] + nz * tr[1] < 0) { nx = -nx; nz = -nz; }
+          const y0 = T(k0[0], k0[1]), y1 = T(k1[0], k1[1]);
+          flat.quad([k0[0], y0 + ROAD_Y, k0[1]], [k1[0], y1 + ROAD_Y, k1[1]],
+            [k1[0], y1 + WALK_Y, k1[1]], [k0[0], y0 + WALK_Y, k0[1]], [nx, 0, nz],
+            [0, 0, 1, 0, 1, 1, 0, 1], [ccLo, ccLo, cc, cc]);
+          // Gutter, on the junction polygon's own lift.
+          const r0 = toRoad(k), r1 = toRoad(k + 1);
+          const g0x = k0[0] + r0[0] * gW, g0z = k0[1] + r0[1] * gW;
+          const g1x = k1[0] + r1[0] * gW, g1z = k1[1] + r1[1] * gW;
+          const gl = NODE_Y + 0.012;
+          road.quad([k0[0], y0 + gl, k0[1]], [g0x, T(g0x, g0z) + gl, g0z],
+            [g1x, T(g1x, g1z) + gl, g1z], [k1[0], y1 + gl, k1[1]], [0, 1, 0],
+            [0, v0, gW / ROAD_TILE, v0, gW / ROAD_TILE, v1, 0, v1], [gDark, gLite, gLite, gDark]);
+        }
+        const vg = pcs.verge[k];
+        if (vg) this.meshVerge(flat, i0[0], i0[1], i1[0], i1[1], vg[0], vg[1]);
+      }
+    }
   }
 
   // --- buildings ------------------------------------------------------------
@@ -6351,6 +6564,12 @@ float frLine(float o, float fw, float c, float w) {
       return true;
     };
 
+    // Street furniture stands on the pavement STRIP: short of where its side's
+    // pavement starts it would be on a junction's kerb radius, which is tarmac.
+    const onCorner = (ei, t, sg) => {
+      const e = city.edges[ei];
+      return t * e.len < this.paveStart(e.a, ei, sg) + 0.6 || (1 - t) * e.len < this.paveStart(e.b, ei, sg) + 0.6;
+    };
     for (const ei of ch.edges) {
       if (performance.now() - this._yt > this._yb) { yield; this._yt = performance.now(); }
       const e = city.edges[ei];
@@ -6373,6 +6592,7 @@ float frLine(float o, float fw, float c, float w) {
         const ox = x + px * sg * (e.hw + 1.4);
         const oz = z + pz * sg * (e.hw + 1.4);
         if (!G.isBuildable(ox, oz)) continue;
+        if (onCorner(ei, t, sg)) continue;
         // Offsetting sideways off THIS road can land on a different one -- a
         // ramp beside a freeway puts its lamp posts and trees on the freeway,
         // and beneath a viaduct they grow through the deck.
@@ -6448,6 +6668,7 @@ float frLine(float o, float fw, float c, float w) {
           const ox = x + px * sg * (e.hw + 0.85);
           const oz = z + pz * sg * (e.hw + 0.85);
           if (!G.isBuildable(ox, oz)) continue;
+          if (onCorner(ei, t, sg)) continue;
           if (city.onRoad(ox, oz, 0.4)) { cityStats.propsSkipped++; continue; }
           if (inPit(ox, oz)) { cityStats.propsInPit++; continue; }
           const gy = G.terrainHeight(ox, oz) + WALK_Y;
@@ -6496,6 +6717,9 @@ float frLine(float o, float fw, float c, float w) {
           const ox = n.x + px * (e.hw + 1.6) - e.dx * (e.hw + 1.4);
           const oz = n.z + pz * (e.hw + 1.6) - e.dz * (e.hw + 1.4);
           if (!G.isBuildable(ox, oz) || inPit(ox, oz)) continue;
+          // A kerb radius puts the old corner position on the junction's
+          // tarmac, or in the cross street.
+          { const ns = city.nodeSurface(ox, oz); if ((ns && ns.inSquare) || city.onRoad(ox, oz, 0.3, false)) continue; }
           const gy = G.terrainHeight(ox, oz) + WALK_Y;
           flat.box(ox, gy, oz, 0.5, 0.25, 0.5, along, [0.24, 0.25, 0.27]);
           flat.prism(ox, gy + 0.22, oz, 0.13, 5.9, 8, poleCol);

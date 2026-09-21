@@ -473,8 +473,9 @@ and drops the pieces covering each approach, so over an approach the ring is
 reported and not drawn. Measured, that override moved `sink` 11.8 % -> 12.44 %.
 The pavement taper is gone now (see "Pavement verges"; `RAMP` only edges a road
 with no pavement), but the rule stands: the ring answers only where the scan
-found nothing. Fixing it properly means teaching `nodeSurface` the
-approach-dropping that `meshNode` does.
+found nothing -- for the legacy square's ring. A fitted junction (see
+"Junctions, dead ends, bridges") is that proper fix: `nodeSurface` reports
+exactly the corner quads drawn, so there the corner does override the scan.
 
 ## What the map looks like from above
 
@@ -2070,6 +2071,7 @@ The purpose-built harnesses, each a fixed-dt, paused-game driver:
 | `tools/camtunnel.mjs` | camera height at stations through bores — nothing through the roof |
 | `tools/aircraftshots.mjs [dir] [types] [--stage] [--field] [--flight] [--takeoff]` | aircraft on a plain stage (incl. a `close` cockpit view), on their Boeing Field spots, the helicopter flown through spool/lift/hover/yaw/forward/turn/stop/land under the game's chase camera, and fixed-wing take-off numbers (see "The hangar"). `AIR_PROBE='view:x,y'` raycasts stage pixels |
 | `tools/jank.mjs` | `fwy-bump`, `crossing-clash`, `barrier-on-road` added for the grading (see "Freeway grading") |
+| `tools/junctions.mjs [tag] [--only=cat] [--noshots]` | 19 junctions picked by kind; per junction a raycast classification map, hole / stacked tarmac / crossing paint / kerb gap / sink counts, and oblique, top and eye shots (GPU by default; `JUNC_PROBE='<expr>'`, `JUNC_AT=x,z`). See "Junctions, dead ends, bridges" |
 | `tools/audiorender.mjs [--only a,b]` | renders the sound offline to `docs/audio/*.wav`: peak/RMS/centroid/silence per file, fails on clipping (see "Sound") |
 
 **A walker needs a seed, and the seed is the edge's own surface.** Seeded with
@@ -2207,11 +2209,79 @@ delta by an order of magnitude and are worthless for judging smoothness.
 
 ## Junctions, dead ends, bridges
 
-**Pavement must not cross a carriageway, and the ring is where that breaks.**
-Strips stop at `nodeRadius` and `meshNode` fills the corner with a square ring —
-but drawn as four whole sides, that ring lays a footpath straight over all four
-approach roads. Each side is cut into pieces and the pieces covering an approach
-are dropped, leaving pavement on the corners only.
+**A street junction is fitted to its approaches, not a square.** It used to be
+a square turned to the widest road, as big as that road's half-width, with
+every approach strip running on to the node centre underneath it and a square
+pavement ring round it cut into pieces. A square cannot fit a skewed crossing,
+a T or a narrow road meeting a wide one, and what that looked like was "the way
+streets intersect looks so weird": approach strips poking out past the square
+as wedges, a patchwork of differently-shaded tarmac in the middle (up to five
+surfaces 0-3 cm apart), edge lines running on across the cross street, and
+pavement corners meeting their strips at whatever angle the square made.
+
+`citygen.buildJunction(ni)` now shapes it, and `world.meshJunction` draws it:
+
+- each approach ("arm") is cut square across ITS OWN direction at a **mouth**;
+  its strip (`meshRoad`), paint (`meshRoadMarks`, to `pm`) and pavement
+  (`paveStart`, per side) all stop there, and the junction is the polygon the
+  mouths and the arms' kerb lines enclose, fanned from the node;
+- between neighbouring arms, by the angle between them: a **kerb radius**
+  (`sw + 1.5`, tangent to both kerb lines, pavement following it round) under
+  165 deg; a straight kerb from 165-195 deg (the far side of a T), **tapered**
+  3 m per metre of step where the road changes width through the junction; a
+  **mitre** round the outside of a bend above 195 deg; and where two roads meet
+  so acutely that the kerbs cross beyond the arms' share of their edges, a
+  sharp **nose** of pavement (a flatiron block) with the polygon run out to the
+  crossing point over the overlapping strips;
+- mouths are capped at 0.42 of the edge (`tmax`, 0.49 for a nose), so the two
+  ends of a short edge cannot meet;
+- the mouth carries the strip's own cross-section vertices with its wear value,
+  so polish and kerb grime run on across the seam, and the strip runs 0.4 m on
+  under the polygon: ending exactly at the mouth left the 1-4 cm step between
+  them open, a pixel-wide slit that read as a dotted line across every mouth.
+
+**`NODE_LIFT` is 0.34**, clear of every strip's 0-3 cm bias, so the polygon is
+always the top surface where it overlaps a strip. **Graded or elevated arms
+keep the old square** (`legacy`): meshGraded/meshViaduct draw them, untrimmed.
+
+**The one-height-surface law is kept by construction.** `nodeSurface` asks the
+same `junction(ni)` object meshNode draws: point-in-polygon for the tarmac,
+and exactly the corner quads that are drawn (`junctionPieces` decides which,
+lazily, with the "not on another carriageway" test), plus their verges. That
+is the fix the old note below asked for, so a corner quad now wins over the
+strip scan (`onPiece`) -- it is only ever drawn where it is the surface.
+
+Measured with **`tools/junctions.mjs`** (19 junctions picked from the graph by
+kind -- grid 4-ways, skewed, T, width change, arterial x residential, Queen
+Anne and Capitol Hill hills, 5-way; a 0.5 m grid of vertical "rays" against a
+triangle soup of the paved meshes, plus oblique, top and eye shots), v92 against
+this:
+
+| | square | fitted |
+|---|---|---|
+| tarmac stacked within 1 cm (z-fight) | 6357 | **615** |
+| drawn vs standing height > 10 cm | 764 (1.22 %) | **230 (0.36 %)** |
+| nothing drawn beside an approach's kerb | 560 (4.8 %) | **55 (0.5 %)** |
+| paint on the crossing / across another approach | 44 | **10** |
+
+What is left: acute corners too sharp even for a nose (two wide couplets
+meeting at ~40 deg on short edges, Denny triangle) still overlap their strips
+past the chord, a darker wedge; `walkOnCw` 16 -> 39 is mostly the taper's
+pavement over the wider arm's round end, which `onRoad` counts as carriageway
+and nothing draws as one. Chunk builds got faster, not slower (the old ring
+made ~300 `onRoad` calls a node, at every bend node on every curved street):
+`rendercpu --builds --ring=4` 687/559 ms -> 561/441 ms, 2.94 M -> 2.48 M
+vertices; perfguard draws unchanged (151 / 219), triangles 1.21 M -> 1.12 M
+steady. jank `sink` 99 -> 85, `crossing-clash` / `barrier-on-road` unchanged.
+Shots: `docs/junctions/` (`*-map-*` are the classification grids: red a hole,
+magenta pavement on a carriageway, blue stacked tarmac, cyan a missing kerb
+piece, orange crossing paint; dots are sink samples).
+
+**Pavement must not cross a carriageway, and the ring is where that broke.**
+Strips stopped at `nodeRadius` and `meshNode` filled the corner with a square
+ring -- drawn as four whole sides, a footpath straight over all four approach
+roads. The legacy square still cuts its ring into pieces and drops the ones
+covering an approach; a fitted junction's corner quads are tested the same way.
 
 **A dead end is not a junction.** `meshNode` returns early below degree 2.
 Otherwise a single street running out to nothing gets a full crossing square and

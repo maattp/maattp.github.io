@@ -27,7 +27,10 @@ export const CHUNK = 400;
 // case. The kerb is still 22 cm (WALK_LIFT - ROAD_LIFT), which is the number
 // world.js draws and the lift query reports.
 export const ROAD_LIFT = 0.30;
-export const NODE_LIFT = 0.33;
+// A junction is drawn over the ends of its approaches wherever two of them
+// overlap (an acute corner), so it sits clear of every strip's 0-3 cm
+// z-fight bias (world.meshRoad) rather than tying with the top of it.
+export const NODE_LIFT = 0.34;
 export const WALK_LIFT = 0.52;
 
 // Half-widths now come per-edge from the import (real lane counts), so these are
@@ -2341,32 +2344,339 @@ export function* cityGenerator(md, cache = {}) {
     }
     return roadGrid.get(skey(Math.floor(x / LIFT_CELL), Math.floor(z / LIFT_CELL)));
   };
-  // Per node: null where world.meshNode draws no square, else its half-size,
-  // orientation and ring width -- the same rules meshNode applies.
-  let nodeSqCache = null;
-  const nodeSq = (ni) => {
-    if (!nodeSqCache) nodeSqCache = new Array(g.nodes.length);
-    let q = nodeSqCache[ni];
-    if (q !== undefined) return q;
-    q = null;
-    const n = g.nodes[ni];
-    // world.meshNode draws no square at a graded node that is not an at-grade
-    // junction (the strips are mitred into one another there), nor at a dead end.
-    if (!(n.elev || (n.prof && !n.anchor)) && n.e.length >= 2) {
-      let hw = 0, rot = 0, sw = 0;
-      for (const ei of n.e) {
-        const e = g.edges[ei];
-        // Mirrors world.meshNode: a tunnel draws no surface, so it must not
-        // size the crossing square nor lift anything standing on it.
-        if (e.tunnel) continue;
-        if (e.hw > hw) { hw = e.hw; rot = Math.atan2(e.dx, -e.dz); }
-        sw = Math.max(sw, walkWidth(e.cls));
-      }
-      if (hw > 0) q = { hw, sw, c: Math.cos(rot), s: Math.sin(rot) };
+  // --- Junction shapes ------------------------------------------------------
+  //
+  // What world.meshNode draws at a node, and what nodeSurface reports there:
+  // ONE description, built here, so the drawn junction and the lift query
+  // cannot disagree about it.
+  //
+  // A junction used to be a SQUARE, axis-aligned to its widest road and as big
+  // as that road's half-width, with every approach strip running on to the
+  // node centre underneath it and a square pavement ring cut into pieces
+  // round it. A square cannot fit a skewed crossing, a T or a road meeting a
+  // wider one: approach strips poked out of it as wedges, up to five
+  // carriageways (strips and square, 0-3 cm apart) z-fought in the middle, and
+  // the ring's pieces met the pavement strips at whatever angle the square
+  // happened to make with them.
+  //
+  // Now each approach ("arm") is cut square across its own direction at its
+  // MOUTH, and the junction is the polygon those mouths and the arms' kerb
+  // lines enclose. Between neighbouring arms the kerb lines meet at a corner:
+  //   gap < 165 deg   a FILLET -- a kerb arc of radius sw + 1.5 tangent to
+  //                   both kerb lines, pavement following it round the corner
+  //   165..195 deg    straight on (the far side of a T): the kerb just joins
+  //   > 195 deg       the outside of a bend: a mitred corner (or a bevel)
+  // An arm's mouth is where its farther corner's kerb returns to its own kerb
+  // line, so its strip, its paint and its pavement all stop where the junction
+  // starts. Graded or elevated arms keep the old square (`legacy`): their
+  // strips are meshed by meshGraded/meshViaduct, which this does not trim.
+  const JT_MAX = 30;          // no mouth further than this from the node
+  const J_STRAIGHT = 165 * Math.PI / 180, J_OUTER = 195 * Math.PI / 180;
+  let juncCache = null, juncBound = null;
+  // A cheap outer bound on anything the node's junction can draw, so a lift
+  // query need not build the junctions of every node in reach.
+  const junctionBound = (ni) => {
+    if (!juncBound) { juncBound = new Float32Array(g.nodes.length); juncBound.fill(-1); }
+    let r = juncBound[ni];
+    if (r >= 0) return r;
+    // Along an arm no further than its mouth cap (or an outside mitre, at
+    // most ~4 half-widths back); across it, kerb + pavement + a fillet's
+    // centre. The legacy square and its ring sit inside the same bound.
+    let hw = 0, sw = 0, tm = 0;
+    for (const ei of g.nodes[ni].e) {
+      const e = g.edges[ei];
+      hw = Math.max(hw, e.hw); sw = Math.max(sw, walkWidth(e.cls));
+      tm = Math.max(tm, Math.min(e.len * 0.42, JT_MAX));
     }
-    nodeSqCache[ni] = q;
-    return q;
+    r = Math.hypot(Math.max(tm, 4 * hw), hw + sw + 3.2) + VERGE + 0.5;
+    juncBound[ni] = r;
+    return r;
   };
+  // Is (x, z) on a carriageway other than this junction's own arms? Own arms
+  // count only along their interior: past an end the clamped distance is a
+  // round cap, which covers corner pavement next to a wider arm.
+  const onOtherRoad = (x, z, own) => {
+    const cand = roadCell(x, z);
+    if (!cand) return false;
+    for (let q = 0; q < cand.length; q++) {
+      const ei = cand[q], e = g.edges[ei];
+      if (e.elev) continue;
+      const a = g.nodes[e.a], b = g.nodes[e.b];
+      const sx = b.x - a.x, sz = b.z - a.z, l2 = sx * sx + sz * sz;
+      let t = l2 > 0 ? ((x - a.x) * sx + (z - a.z) * sz) / l2 : 0;
+      if (own.includes(ei)) { if (t <= 0.001 || t >= 0.999) continue; }
+      t = t < 0 ? 0 : t > 1 ? 1 : t;
+      const rx = a.x + sx * t - x, rz = a.z + sz * t - z;
+      const r = e.hw + (e.pbw || 0);
+      if (rx * rx + rz * rz <= r * r) return true;
+    }
+    return false;
+  };
+  const buildJunction = (ni) => {
+    const n = g.nodes[ni];
+    // world.meshNode draws nothing at a graded node that is not an at-grade
+    // junction (the strips are mitred into one another there), nor at a dead end.
+    if (n.elev || (n.prof && !n.anchor) || n.e.length < 2) return null;
+    let hw = 0, rot = 0, sw = 0, legacy = false;
+    const arms = [];
+    for (const ei of n.e) {
+      const e = g.edges[ei];
+      // A tunnel draws no surface, so it must not size the crossing nor lift
+      // anything standing on it.
+      if (e.tunnel) continue;
+      if (e.hw > hw) { hw = e.hw; rot = Math.atan2(e.dx, -e.dz); }
+      const w = walkWidth(e.cls);
+      sw = Math.max(sw, w);
+      if (e.prof || e.elev || e.a === e.b || e.len < 1) legacy = true;
+      const atA = e.a === ni;
+      const ux = atA ? e.dx : -e.dx, uz = atA ? e.dz : -e.dz;
+      arms.push({ ei, atA, ux, uz, px: -uz, pz: ux, hw: e.hw, sw: w, ang: Math.atan2(uz, ux),
+        tmax: Math.min(e.len * 0.42, JT_MAX), hard: Math.min(e.len * 0.49, JT_MAX), m: 0, pm: 0, sP: 0, sN: 0 });
+    }
+    if (hw <= 0) return null;
+    arms.sort((p, q) => p.ang - q.ang);
+    const N = arms.length;
+    const gapOf = (i) => {
+      const A = arms[i], B = arms[(i + 1) % N];
+      let gp = B.ang - A.ang;
+      if (gp <= 0) gp += 2 * Math.PI;
+      return gp;
+    };
+    if (!legacy && N >= 2) for (let i = 0; i < N; i++) if (gapOf(i) < 0.14) legacy = true;
+    if (legacy || N < 2) return { legacy: true, x: n.x, z: n.z, hw, sw, c: Math.cos(rot), s: Math.sin(rot) };
+
+    // Kerb line on arm A's +p side at `off` from its centre, and B's -p side.
+    const P = (A, off, t) => [n.x + A.px * off + A.ux * t, n.z + A.pz * off + A.uz * t];
+    const Q = (B, off, t) => [n.x - B.px * off + B.ux * t, n.z - B.pz * off + B.uz * t];
+    // Where A's +p line at offA meets B's -p line at offB: distances along each.
+    const meet = (A, offA, B, offB) => {
+      const Rx = -B.px * offB - A.px * offA, Rz = -B.pz * offB - A.pz * offA;
+      const det = -A.ux * B.uz + B.ux * A.uz;
+      if (Math.abs(det) < 1e-6) return null;
+      return { a: (-Rx * B.uz + B.ux * Rz) / det, b: (A.ux * Rz - A.uz * Rx) / det };
+    };
+    const corners = [];
+    for (let i = 0; i < N; i++) {
+      const A = arms[i], B = arms[(i + 1) % N], gp = gapOf(i);
+      const c = { K: [], I: [], ti: 0, tj: 0, pave: A.sw > 0 || B.sw > 0, arc: null };
+      if (gp < J_STRAIGHT) {
+        const X = meet(A, A.hw, B, B.hw);
+        if (X && (X.a > A.tmax || X.b > B.tmax) && X.a > 0 && X.b > 0 && X.a <= A.hard && X.b <= B.hard) {
+          // Too acute to turn a kerb inside the arms' share of their edges
+          // (two wide roads meeting at ~40 deg: the kerbs cross 20 m out).
+          // The mouths stop at the share and the two approaches overlap past
+          // them -- but the polygon still runs out to the kerbs' crossing
+          // point, so the overlap is drawn once, on top (NODE_LIFT clears
+          // every strip's bias), and the block's nose gets its pavement: a
+          // sharp point, as a flatiron block has.
+          c.ti = Math.min(X.a, A.tmax); c.tj = Math.min(X.b, B.tmax);
+          c.K = [P(A, A.hw, c.ti), P(A, A.hw, X.a), Q(B, B.hw, c.tj)];
+          c.si = c.pa = X.a; c.sj = c.pb = X.b;
+          const Xo = meet(A, A.hw + A.sw, B, B.hw + B.sw);
+          const Xp = P(A, A.hw, X.a);
+          if (c.pave && Xo && Math.hypot(P(A, A.hw + A.sw, Xo.a)[0] - Xp[0], P(A, A.hw + A.sw, Xo.a)[1] - Xp[1]) < 12) {
+            c.PK = [Xp, Xp, Xp];
+            c.PI = [P(A, A.hw + A.sw, X.a), P(A, A.hw + A.sw, Xo.a), Q(B, B.hw + B.sw, X.b)];
+          } else c.pave = false;
+        } else if (!X || X.a > A.tmax || X.b > B.tmax) {
+          // Too acute even for that: the two approaches overlap past their
+          // mouths, and no corner is built.
+          c.ti = A.tmax; c.tj = B.tmax; c.pave = false;
+          c.K = [P(A, A.hw, c.ti), Q(B, B.hw, c.tj)];
+        } else {
+          const tanH = Math.tan(gp / 2);
+          const r0 = c.pave ? Math.max(A.sw, B.sw) + 1.5 : 2.5;
+          let r = Math.min(r0, Math.min(A.tmax - X.a, B.tmax - X.b) * tanH);
+          if (r < 0.25) r = 0;
+          const L = r / tanH;
+          c.ti = X.a + L; c.tj = X.b + L;
+          const si = Math.max(0, c.ti), sj = Math.max(0, c.tj);
+          if (si > c.ti + 0.05) { c.K.push(P(A, A.hw, si)); c.I.push(P(A, A.hw + A.sw, si)); }
+          if (r > 0) {
+            const T = P(A, A.hw, c.ti);
+            const cx = T[0] + A.px * r, cz = T[1] + A.pz * r;
+            const v0x = -A.px, v0z = -A.pz, v1x = B.px, v1z = B.pz;
+            const dl = Math.atan2(v0x * v1z - v0z * v1x, v0x * v1x + v0z * v1z);
+            const nA = Math.max(2, Math.ceil(Math.abs(dl) / 0.4));
+            for (let k = 0; k <= nA; k++) {
+              const f = k / nA, an = dl * f, cs = Math.cos(an), sn = Math.sin(an);
+              const vx = v0x * cs - v0z * sn, vz = v0x * sn + v0z * cs;
+              const ri = Math.max(0, r - (A.sw + (B.sw - A.sw) * f));
+              c.K.push([cx + vx * r, cz + vz * r]);
+              c.I.push([cx + vx * ri, cz + vz * ri]);
+            }
+            c.arc = { cx, cz, r };
+          } else {
+            const Xo = meet(A, A.hw + A.sw, B, B.hw + B.sw);
+            c.K.push(P(A, A.hw, X.a));
+            c.I.push(Xo ? P(A, A.hw + A.sw, Xo.a) : P(A, A.hw + A.sw, X.a));
+          }
+          if (sj > c.tj + 0.05) { c.K.push(Q(B, B.hw, sj)); c.I.push(Q(B, B.hw + B.sw, sj)); }
+          c.ti = si; c.tj = sj;
+        }
+      } else {
+        // Straight on, or round the outside of a bend: the pavement runs on
+        // from the node itself -- or, where the two kerbs are at different
+        // offsets (a road widening through the junction), from either end of
+        // a taper, three metres long per metre of step, instead of a kerb
+        // stepping sideways at the node with the wider road's round end
+        // poking through the narrower one's pavement.
+        const step = Math.abs(A.hw - B.hw);
+        const tp = gp <= J_OUTER && step > 0.2 ? Math.min(A.tmax, B.tmax, 3 * step + 1) : 0;
+        c.ti = c.tj = tp;
+        c.K.push(P(A, A.hw, tp)); c.I.push(P(A, A.hw + A.sw, tp));
+        if (gp > J_OUTER) {
+          const X = meet(A, A.hw, B, B.hw), Xo = meet(A, A.hw + A.sw, B, B.hw + B.sw);
+          const lim = 2.5 * Math.max(A.hw, B.hw);
+          if (X && Xo && X.a < 0 && X.b < 0 && -X.a < lim && -X.b < lim && -Xo.a < lim * 1.6) {
+            c.K.push(P(A, A.hw, X.a)); c.I.push(P(A, A.hw + A.sw, Xo.a));
+          }
+        }
+        c.K.push(Q(B, B.hw, tp)); c.I.push(Q(B, B.hw + B.sw, tp));
+      }
+      corners.push(c);
+    }
+    // Mouths and pavement starts.
+    for (let i = 0; i < N; i++) {
+      const A = arms[i], cl = corners[i], cr = corners[(i + N - 1) % N];
+      A.m = Math.min(A.tmax, Math.max(0, cl.ti, cr.tj));
+      A.sP = Math.min(A.hard, Math.max(0, cl.si != null ? cl.si : cl.ti));
+      A.sN = Math.min(A.hard, Math.max(0, cr.sj != null ? cr.sj : cr.tj));
+      // Paint stops where the polygon does, which past a nose corner is
+      // beyond the mouth.
+      A.pm = Math.min(A.hard, Math.max(A.m, cl.pa || 0, cr.pb || 0));
+    }
+    // The tarmac polygon, anticlockwise round the node: each mouth from its
+    // -p kerb to its +p kerb (with the strip's own cross-section vertices, so
+    // the wear shading carries across the seam), then the corner's kerb.
+    const pts = [], col = [];
+    const push = (p, w) => {
+      const l = pts.length;
+      if (l && Math.hypot(pts[l - 1][0] - p[0], pts[l - 1][1] - p[1]) < 0.05) return;
+      pts.push(p); col.push(w);
+    };
+    const wear = (f) => {
+      f = Math.min(1, Math.abs(f));
+      return (1 + 0.12 * (1 - f * f)) * (1 - 0.30 * Math.max(0, f - 0.55) / 0.45);
+    };
+    for (let i = 0; i < N; i++) {
+      const A = arms[i];
+      const across = Math.max(A.hw > 4.5 ? 3 : 1, Math.round((A.hw * 2) / 8));
+      for (let k = 0; k <= across; k++) {
+        const q = -A.hw + (2 * A.hw * k) / across;
+        push([n.x + A.ux * A.m + A.px * q, n.z + A.uz * A.m + A.pz * q], wear(q / A.hw));
+      }
+      for (const p of corners[i].K) push(p, wear(1));
+    }
+    if (pts.length > 1 && Math.hypot(pts[0][0] - pts[pts.length - 1][0], pts[0][1] - pts[pts.length - 1][1]) < 0.05) { pts.pop(); col.pop(); }
+    // No boundary chord longer than 6 m: the surface is drawn per vertex from
+    // the terrain, and a long chord is the grass-through-the-road problem.
+    const poly = [], pcol = [];
+    for (let k = 0; k < pts.length; k++) {
+      const p0 = pts[k], p1 = pts[(k + 1) % pts.length];
+      const L = Math.hypot(p1[0] - p0[0], p1[1] - p0[1]);
+      const s = Math.max(1, Math.ceil(L / 6));
+      for (let j = 0; j < s; j++) {
+        const f = j / s;
+        poly.push(p0[0] + (p1[0] - p0[0]) * f, p0[1] + (p1[1] - p0[1]) * f);
+        pcol.push(col[k] + (col[(k + 1) % pts.length] - col[k]) * f);
+      }
+    }
+    let R = 0;
+    for (let k = 0; k < poly.length; k += 2) R = Math.max(R, Math.hypot(poly[k] - n.x, poly[k + 1] - n.z));
+    // Corner pavement: one band per corner, as quads between the kerb (K) and
+    // the building-side line (I). Which of them are drawn is decided HERE, so
+    // nodeSurface reports exactly the quads world.meshNode draws.
+    // Corner pavement: one band per corner, as quads between the kerb (K) and
+    // the building-side line (I). Which of them are drawn is decided in
+    // junctionPieces, on first use: a mid-ring chunk needs only the polygon.
+    const raw = [];
+    for (let i = 0; i < N; i++) {
+      const c = corners[i];
+      const K = c.PK || c.K, I = c.PI || c.I;
+      if (!c.pave || K.length < 2) continue;
+      for (const p of I) R = Math.max(R, Math.hypot(p[0] - n.x, p[1] - n.z) + VERGE);
+      raw.push({ K, I, arc: c.arc });
+    }
+    return { legacy: false, x: n.x, z: n.z, hw, sw, arms, poly, pcol, raw, pieces: null,
+      R2: (R + 0.1) * (R + 0.1) };
+  };
+  // The corner quads world.meshJunction draws, and the verges off them --
+  // decided HERE so nodeSurface reports exactly those.
+  const junctionPieces = (J) => {
+    if (J.pieces) return J.pieces;
+    const own = J.arms.map((A) => A.ei);
+    const pieces = [];
+    for (const { K, I, arc } of J.raw) {
+      const keep = [], verge = [];
+      for (let k = 0; k + 1 < K.length; k++) {
+        const k0 = K[k], k1 = K[k + 1], i0 = I[k], i1 = I[k + 1];
+        let ok = Math.hypot(k1[0] - k0[0], k1[1] - k0[1]) > 0.02 || Math.hypot(i1[0] - i0[0], i1[1] - i0[1]) > 0.02;
+        if (ok && Math.hypot(i0[0] - k0[0], i0[1] - k0[1]) < 0.05 && Math.hypot(i1[0] - k1[0], i1[1] - k1[1]) < 0.05) ok = false;
+        if (ok && !G.isBuildable(i0[0], i0[1]) && !G.isBuildable(i1[0], i1[1])) ok = false;
+        // Not on another carriageway: a grid across the piece, off its kerb.
+        for (let fd = 0.25; ok && fd < 1; fd += 0.5) {
+          for (let fl = 0; fl <= 1; fl += 0.5) {
+            const ex = k0[0] + (k1[0] - k0[0]) * fl, ez = k0[1] + (k1[1] - k0[1]) * fl;
+            const gx = i0[0] + (i1[0] - i0[0]) * fl, gz = i0[1] + (i1[1] - i0[1]) * fl;
+            if (onOtherRoad(ex + (gx - ex) * fd, ez + (gz - ez) * fd, own)) { ok = false; break; }
+          }
+        }
+        keep.push(ok);
+        // The verge off this quad's building-side edge, outward = away from
+        // the kerb; world.meshVerge's own skip tests, mirrored.
+        let vg = null;
+        const sx = i1[0] - i0[0], sz = i1[1] - i0[1], sl = Math.hypot(sx, sz);
+        if (ok && sl > 0.05) {
+          let ox = -sz / sl, oz = sx / sl;
+          const mx0 = (i0[0] + i1[0]) / 2 - (k0[0] + k1[0]) / 2, mz0 = (i0[1] + i1[1]) / 2 - (k0[1] + k1[1]) / 2;
+          if (ox * mx0 + oz * mz0 < 0) { ox = -ox; oz = -oz; }
+          const v0x = i0[0] + ox * VERGE, v0z = i0[1] + oz * VERGE, v1x = i1[0] + ox * VERGE, v1z = i1[1] + oz * VERGE;
+          const mx = (i0[0] + i1[0] + v0x + v1x) / 4, mz = (i0[1] + i1[1] + v0z + v1z) / 4;
+          const hx = (v0x + v1x) / 2, hz = (v0z + v1z) / 2;
+          if (!(onRoadNoElev(mx, mz) || onRoadNoElev(hx, hz)) && G.isBuildable(hx, hz)) vg = [ox, oz];
+        }
+        verge.push(vg);
+      }
+      if (!keep.some(Boolean)) continue;
+      pieces.push({ K, I, keep, verge, arc });
+    }
+    J.pieces = pieces;
+    return pieces;
+  };
+  const junction = (ni) => {
+    if (!juncCache) juncCache = new Array(g.nodes.length);
+    let J = juncCache[ni];
+    if (J === undefined) J = juncCache[ni] = buildJunction(ni);
+    return J;
+  };
+  // onRoad(x, z, 0, false), for the verge test above (the method lives on the
+  // returned object).
+  const onRoadNoElev = (x, z) => {
+    const cand = roadCell(x, z);
+    if (!cand) return false;
+    for (let q = 0; q < cand.length; q++) {
+      const e = g.edges[cand[q]];
+      if (e.elev) continue;
+      const a = g.nodes[e.a], b = g.nodes[e.b];
+      const sx = b.x - a.x, sz = b.z - a.z, l2 = sx * sx + sz * sz;
+      let t = l2 > 0 ? ((x - a.x) * sx + (z - a.z) * sz) / l2 : 0;
+      t = t < 0 ? 0 : t > 1 ? 1 : t;
+      const rx = a.x + sx * t - x, rz = a.z + sz * t - z;
+      const r = e.hw + (e.pbw || 0);
+      if (rx * rx + rz * rz <= r * r) return true;
+    }
+    return false;
+  };
+  const inPoly = (poly, x, z) => {
+    let inside = false;
+    for (let i = 0, j = poly.length - 2; i < poly.length; j = i, i += 2) {
+      const xi = poly[i], zi = poly[i + 1], xj = poly[j], zj = poly[j + 1];
+      if ((zi > z) !== (zj > z) && x < ((xj - xi) * (z - zi)) / (zj - zi) + xi) inside = !inside;
+    }
+    return inside;
+  };
+  const inQuad = (a, b, c, d, x, z) => inPoly([a[0], a[1], b[0], b[1], c[0], c[1], d[0], d[1]], x, z);
 
   // Build the query grids now, during loading, rather than on the first
   // query: the first road meshed after boot used to pay ~15 ms for them.
@@ -2619,7 +2929,18 @@ export function* cityGenerator(md, cache = {}) {
       // sink 11.8% -> 12.44%. Fixing this properly means teaching nodeSurface
       // the approach-dropping that meshNode does; until then the empty-scan test
       // is the conservative approximation.
-      if (ns && lift <= 0) return Math.max(ns.lift, vlift);
+      //
+      // A junction built by buildJunction is that proper fix: nodeSurface
+      // reports exactly the corner quads meshNode draws (`exact`), so there
+      // the corner wins wherever it is higher -- except over another road's
+      // carriageway, where the road is the surface.
+      // On a drawn corner quad itself it wins even over a carriageway: the
+      // quads that overlap another road are not drawn (buildJunction), so
+      // what is left over one is this junction's own arm, where the kerb
+      // taper or the kerb radius has moved the kerb off the arm's centreline
+      // offset -- and there the pavement is what is drawn.
+      if (ns && ns.onPiece) return Math.max(lift, ns.lift);
+      if (ns && (lift <= 0 || (ns.exact && !onCw))) return Math.max(lift, ns.lift, vlift);
       return Math.max(lift, vlift);
     },
 
@@ -2633,7 +2954,7 @@ export function* cityGenerator(md, cache = {}) {
      * strip scan outright; the ring only fills in where the strips find nothing.
      */
     nodeSurface(x, z) {
-      const reach = MAX_HW + MAX_WALK + VERGE;
+      const reach = Math.hypot(Math.max(JT_MAX, 4 * MAX_HW), MAX_HW + MAX_WALK + 3.2) + VERGE + 0.5;
       const c0 = Math.floor((x - reach) / nCell), c1 = Math.floor((x + reach) / nCell);
       const d0 = Math.floor((z - reach) / nCell), d1 = Math.floor((z + reach) / nCell);
       let ring = null;
@@ -2643,22 +2964,49 @@ export function* cityGenerator(md, cache = {}) {
           if (!l) continue;
           for (const ni of l) {
             const n = g.nodes[ni];
-            // The square's size, orientation and ring width are per-node
-            // constants, so they are worked out once (nodeSq) rather than per
-            // call -- this ran an atan2, a cos and a sin for every node near
-            // every roadLift query.
-            const q = nodeSq(ni);
+            const ux = x - n.x, uz = z - n.z, d2 = ux * ux + uz * uz;
+            // Cheap bound first: building a junction's shape is not free,
+            // and a query has hundreds of nodes in reach downtown.
+            const bnd = junctionBound(ni);
+            if (d2 > bnd * bnd) continue;
+            const q = junction(ni);
             if (!q) continue;
-            const hw = q.hw, sw = q.sw, c = q.c, s = q.s;
-            const ux = x - n.x, uz = z - n.z;
-            const lx = Math.abs(ux * c + uz * s), lz = Math.abs(-ux * s + uz * c);
-            if (lx <= hw && lz <= hw) return { lift: NODE_LIFT, inSquare: true };
-            // The ring's outer edge comes down across a VERGE, as a strip's does.
-            if (sw > 0) {
-              const m = Math.max(lx, lz) - hw - sw;
-              if (m <= VERGE) {
-                const l = m <= 0 ? WALK_LIFT : WALK_LIFT * (1 - m / VERGE);
-                if (!ring || l > ring.lift) ring = { lift: l, inSquare: false };
+            if (q.legacy) {
+              const hw = q.hw, sw = q.sw, c = q.c, s = q.s;
+              const lx = Math.abs(ux * c + uz * s), lz = Math.abs(-ux * s + uz * c);
+              if (lx <= hw && lz <= hw) return { lift: NODE_LIFT, inSquare: true };
+              // The ring's outer edge comes down across a VERGE, as a strip's does.
+              if (sw > 0) {
+                const m = Math.max(lx, lz) - hw - sw;
+                if (m <= VERGE) {
+                  const l = m <= 0 ? WALK_LIFT : WALK_LIFT * (1 - m / VERGE);
+                  if (!ring || l > ring.lift) ring = { lift: l, inSquare: false, exact: false };
+                }
+              }
+              continue;
+            }
+            if (d2 > q.R2) continue;
+            if (inPoly(q.poly, x, z)) return { lift: NODE_LIFT, inSquare: true };
+            // Corner pavement: exactly the quads meshNode draws, and the
+            // verge off their building-side edge where it draws one.
+            for (const pc of junctionPieces(q)) {
+              const K = pc.K, I = pc.I;
+              for (let k = 0; k < pc.keep.length; k++) {
+                if (!pc.keep[k]) continue;
+                if (inQuad(K[k], K[k + 1], I[k + 1], I[k], x, z)) {
+                  if (!ring || WALK_LIFT > ring.lift || !ring.onPiece) ring = { lift: WALK_LIFT, inSquare: false, exact: true, onPiece: true };
+                  continue;
+                }
+                const vg = pc.verge[k];
+                if (!vg) continue;
+                const i0 = I[k], i1 = I[k + 1];
+                const sx = i1[0] - i0[0], sz = i1[1] - i0[1], sl2 = sx * sx + sz * sz;
+                const t = ((x - i0[0]) * sx + (z - i0[1]) * sz) / sl2;
+                if (t < 0 || t > 1) continue;
+                const out = (x - i0[0]) * vg[0] + (z - i0[1]) * vg[1];
+                if (out < 0 || out > VERGE) continue;
+                const lv = WALK_LIFT * (1 - out / VERGE);
+                if (!ring || (lv > ring.lift && !ring.onPiece)) ring = { lift: lv, inSquare: false, exact: true };
               }
             }
           }
@@ -2666,6 +3014,11 @@ export function* cityGenerator(md, cache = {}) {
       }
       return ring;
     },
+
+    /** The shape world.meshNode draws at node `ni` (see buildJunction), or null. */
+    junction,
+    /** Its corner pavement quads, with which of them are drawn. */
+    junctionPieces,
 
     /** Ground height accounting for paved lift and for bridge decks under Y. */
     groundAt(x, z, curY, lift) {
