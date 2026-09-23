@@ -6197,6 +6197,10 @@ export class Vehicle {
     if (brake > 0) acc -= (this.airborne ? 9 : spec.brakeA * 0.6) * brake;
     if (this.airborne) acc -= 9.8 * F.y;
     else acc -= this.vLong * ROLL * 1.6;
+    // Past vne the air takes it back hard. Without it a full-throttle
+    // vertical dive settled near 262 m/s, and the streamer is only proven to
+    // ~150 (see "Flying"): vne sits at the level top speed.
+    if (fly.vne && this.vLong > fly.vne) acc -= (this.vLong - fly.vne) * 2.5;
     this.vLong = Math.max(0, this.vLong + acc * dt);
     const v = this.vLong;
     if (!this.airborne) {
