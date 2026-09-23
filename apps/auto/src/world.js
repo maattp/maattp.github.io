@@ -274,6 +274,35 @@ function halfFloatRenders(renderer) {
  * is shared across all three channels, the chroma jitter is a fifth of it, and
  * everything is pulled toward its own grey.
  */
+// House paint and roofing, weighted: [weight, colour]. Seattle's housing
+// stock is Craftsman and Foursquare in white, cream and greys, a lot of sage,
+// slate blue and charcoal, and the odd barn red or mustard -- where every
+// house used to be one off-white.
+const HOUSE_PAINT = [
+  [0.17, [0.94, 0.93, 0.90]], [0.09, [0.93, 0.85, 0.66]], [0.10, [0.78, 0.79, 0.80]],
+  [0.07, [0.74, 0.69, 0.61]], [0.09, [0.60, 0.72, 0.52]], [0.05, [0.58, 0.60, 0.38]],
+  [0.09, [0.50, 0.63, 0.78]], [0.05, [0.26, 0.34, 0.50]], [0.08, [0.33, 0.34, 0.36]],
+  [0.04, [0.66, 0.24, 0.20]], [0.05, [0.90, 0.72, 0.34]], [0.04, [0.36, 0.60, 0.60]],
+  [0.08, [0.52, 0.38, 0.27]],
+];
+const HOUSE_ROOF = [
+  [0.22, [0.34, 0.34, 0.35]], [0.20, [0.50, 0.49, 0.47]], [0.16, [0.48, 0.37, 0.28]],
+  [0.07, [0.22, 0.22, 0.23]], [0.10, [0.36, 0.40, 0.47]], [0.07, [0.40, 0.46, 0.35]],
+  [0.08, [0.54, 0.31, 0.25]], [0.10, [0.66, 0.67, 0.69]],
+];
+// Paint is a chosen colour, not a weathered material: tint()'s pull toward
+// grey (built so masonry would stop reading as candy) turned every paint in the
+// palette back into the off-white it replaced. Brightness varies, chroma stays.
+function paintTint(seed, base, k) {
+  const v = 1 + (hash2(seed, k) - 0.5) * 0.16;
+  const lum = base[0] * 0.2126 + base[1] * 0.7152 + base[2] * 0.0722;
+  return base.map((c) => clamp((lum + (c - lum) * 0.92) * v, 0.1, 1.2));
+}
+function pickW(list, u) {
+  let acc = 0;
+  for (const [w, c] of list) { acc += w; if (u <= acc) return c; }
+  return list[list.length - 1][1];
+}
 const SATURATION = 0.62;
 function tint(seed, base, spread) {
   const v = 1 + (hash2(seed, 1) - 0.5) * spread * 0.85;
@@ -6105,6 +6134,40 @@ float frLine(float o, float fw, float c, float w) {
     }
   }
 
+  /**
+   * A hip roof: four slopes, the ridge along the longer side and shortened by
+   * the short half-span at each end (a pyramid on a square footprint). Normals
+   * in the house's frame, as meshGable's are.
+   */
+  meshHip(flat, bd, y0, col, pitch) {
+    const cs = Math.cos(bd.rot), sn = Math.sin(bd.rot);
+    const OVER = 0.45;
+    const alongX = bd.w >= bd.d;
+    const hw = bd.w / 2 + OVER, hd = bd.d / 2 + OVER;
+    const span = alongX ? hd : hw;
+    const rise = clamp(span * pitch, 1.0, 3.4);
+    const y1 = y0 + rise;
+    const P = (lx, lz, y) => [bd.x + lx * cs - lz * sn, y, bd.z + lx * sn + lz * cs];
+    const N = (lx, y, lz) => [lx * cs - lz * sn, y, lx * sn + lz * cs];
+    const rl = Math.max(0.01, (alongX ? hw : hd) - span);
+    const A = alongX ? P(-rl, 0, y1) : P(0, -rl, y1);
+    const B = alongX ? P(rl, 0, y1) : P(0, rl, y1);
+    const c00 = P(-hw, -hd, y0), c10 = P(hw, -hd, y0), c11 = P(hw, hd, y0), c01 = P(-hw, hd, y0);
+    const dark = [col[0] * 0.62, col[1] * 0.62, col[2] * 0.66];
+    const mid = [col[0] * 0.8, col[1] * 0.8, col[2] * 0.83];
+    if (alongX) {
+      flat.quad(c00, c10, B, A, N(0, 0.72, -0.7), ZERO_UV, col);
+      flat.quad(c11, c01, A, B, N(0, 0.72, 0.7), ZERO_UV, dark);
+      flat.tri(c01, c00, A, N(-0.7, 0.72, 0), mid);
+      flat.tri(c10, c11, B, N(0.7, 0.72, 0), mid);
+    } else {
+      flat.quad(c00, A, B, c01, N(-0.7, 0.72, 0), ZERO_UV, col);
+      flat.quad(c10, c11, B, A, N(0.7, 0.72, 0), ZERO_UV, dark);
+      flat.tri(c00, c10, A, N(0, 0.72, -0.7), mid);
+      flat.tri(c01, B, c11, N(0, 0.72, 0.7), mid);
+    }
+  }
+
   /** Square-based pyramid that honours the footprint and its rotation. */
   meshPyramid(flat, x, y0, z, hw, hd, h, rot, col) {
     const cs = Math.cos(rot), sn = Math.sin(rot);
@@ -6446,12 +6509,19 @@ float frLine(float o, float fw, float c, float w) {
       { m: 'brick', c: [0.74, 0.44, 0.34], u: 12, v: 12 },       // terracotta
       { m: 'masonry', c: [0.52, 0.62, 0.58], u: 13, v: 13 },     // painted-over green
       { m: 'glass', c: [0.56, 0.60, 0.64], u: 14, v: 13.6 },     // dark modern
+      // Five more, so a block of low-rise is not three colours of brick and
+      // two of concrete: Capitol Hill and Fremont paint their walls.
+      { m: 'masonry', c: [0.84, 0.76, 0.62], u: 13, v: 13 },     // beige stucco
+      { m: 'brick', c: [0.56, 0.32, 0.25], u: 12, v: 12 },       // dark brown brick
+      { m: 'masonry', c: [0.60, 0.66, 0.74], u: 13, v: 13 },     // grey-blue paint
+      { m: 'masonry', c: [0.80, 0.54, 0.42], u: 13, v: 13 },     // salmon paint
+      { m: 'masonry', c: [0.86, 0.76, 0.50], u: 13, v: 13 },     // ochre paint
     ];
-    const wOld = [0.20, 0.04, 0.26, 0.16, 0.16, 0.10, 0.05, 0.03];
-    const wNew = [0.22, 0.30, 0.08, 0.06, 0.08, 0.04, 0.02, 0.20];
+    const wOld = [0.14, 0.03, 0.18, 0.11, 0.11, 0.07, 0.04, 0.02, 0.09, 0.08, 0.05, 0.04, 0.04];
+    const wNew = [0.18, 0.26, 0.06, 0.05, 0.06, 0.03, 0.02, 0.18, 0.05, 0.03, 0.04, 0.02, 0.02];
     // Civic buildings are stone and brick: a school or a church in painted-
     // over green or curtain wall reads as a mistake.
-    const CIVIC = [0.34, 0, 0.30, 0.20, 0.10, 0.06, 0, 0];
+    const CIVIC = [0.28, 0, 0.26, 0.18, 0.08, 0.05, 0, 0, 0.07, 0.08, 0, 0, 0];
     // Curtain wall needs height to read as curtain wall. On a one- or two-
     // storey box it is a blue-tiled shed: the glass families' share goes to
     // concrete below 12 m.
@@ -6508,7 +6578,7 @@ float frLine(float o, float fw, float c, float w) {
       col = tint(seed, [0.84, 0.86, 0.86], 0.3); uS = 16; vS = 16;
     } else {
       target = bl.facade; cell = C.house;
-      col = tint(seed, [0.94, 0.92, 0.88], 0.36); uS = 0; vS = 0;
+      col = paintTint(seed, pickW(HOUSE_PAINT, hash2(seed, 131)), 140); uS = 0; vS = 0;
     }
 
     if (bd.kind) return this.meshLandmarkTower(bl, flat, bd, col);
@@ -6569,9 +6639,60 @@ float frLine(float o, float fw, float c, float w) {
       // Roofs were a flat near-black polygon that can fill a third of a frame
       // with no material at all. Route them through the industrial cell so
       // they take a texture, and lift them off black.
-      const rc = tint(seed, [0.46, 0.43, 0.41], 0.16);
-      bl.facade.box(bd.x, base + wallH + 2, bd.z, bd.w + 0.7, 0.26, bd.d + 0.7, bd.rot, rc,
-        { uScale: 5, vScale: 5, cell: C.industrial });
+      // A roof colour of its own, and one of three roof forms. Every house in
+      // the city had the same off-white siding under the same dark slate
+      // gable, so a neighbourhood from the air was one texture repeated.
+      const rc = paintTint(seed, pickW(HOUSE_ROOF, hash2(seed, 132)), 141);
+      const aspect = Math.max(bd.w, bd.d) / Math.max(1, Math.min(bd.w, bd.d));
+      const rk = hash2(seed, 133);
+      // flat-roofed modern boxes (townhouses, infill), hip roofs on the
+      // squarer footprints, gables on the rest
+      const form = rk < 0.11 && aspect < 2.6 ? 'flat' : rk < 0.38 && aspect < 2.2 ? 'hip' : 'gable';
+      const top = base + wallH + 2;
+      const tk = hash2(seed, 134);
+      const trim = tk < 0.68 ? [0.93, 0.92, 0.88] : tk < 0.84 ? [0.22, 0.22, 0.24]
+        : [col[0] * 0.62, col[1] * 0.62, col[2] * 0.62];
+      if (form === 'flat') {
+        // a coping round a flat roof, no overhang
+        bl.facade.box(bd.x, top, bd.z, bd.w + 0.2, 0.3, bd.d + 0.2, bd.rot, [rc[0] * 0.9, rc[1] * 0.9, rc[2] * 0.9],
+          { uScale: 5, vScale: 5, cell: C.roof });
+        flat.box(bd.x, top - 0.02, bd.z, bd.w + 0.26, 0.42, bd.d + 0.26, bd.rot, trim, { top: false });
+      } else {
+        bl.facade.box(bd.x, top, bd.z, bd.w + 0.7, 0.26, bd.d + 0.7, bd.rot, rc,
+          { uScale: 5, vScale: 5, cell: C.industrial });
+        // the fascia/frieze board under the eaves, in the trim colour
+        flat.box(bd.x, top - 0.34, bd.z, bd.w + 0.12, 0.34, bd.d + 0.12, bd.rot, trim, { top: false });
+      }
+      // A front porch on some: a deck, two posts and a roof, on the side the
+      // step is on, where it clears the street.
+      if (form !== 'flat' && bd.w >= 6.5 && bd.d >= 6 && hash2(seed, 135) < 0.42) {
+        const pw = Math.min(bd.w * (0.4 + hash2(seed, 136) * 0.35), 7), pd = 2.2;
+        const px = (hash2(seed, 137) < 0.5 ? -1 : 1) * (bd.w - pw) / 2 * hash2(seed, 138);
+        const [cx0, cz0] = off(px, bd.d / 2 + pd / 2);
+        const [ex0, ez0] = off(px, bd.d / 2 + pd + 0.3);
+        if (!this.city.onRoad(cx0, cz0, 0.5, false) && !this.city.onRoad(ex0, ez0, 0.5, false)) {
+          const py = bd.y - 0.1, ph = 2.6;
+          flat.box(cx0, py, cz0, pw, 0.34, pd, bd.rot, [0.52, 0.47, 0.42]);
+          flat.box(cx0, py + ph, cz0, pw + 0.3, 0.2, pd + 0.3, bd.rot, rc);
+          flat.box(cx0, py + ph - 0.22, cz0, pw + 0.1, 0.22, pd + 0.1, bd.rot, trim, { top: false });
+          for (const sd of [-1, 1]) {
+            const [qx, qz] = off(px + sd * (pw / 2 - 0.2), bd.d / 2 + pd - 0.2);
+            flat.box(qx, py + 0.34, qz, 0.2, ph - 0.34, 0.2, bd.rot, trim);
+          }
+        }
+      }
+      if (form === 'flat') {
+        const [sx, sz] = off(0, bd.d / 2 + 0.5);
+        flat.box(sx, bd.y - 0.1, sz, 2.0, 0.22, 1.2, bd.rot, [0.62, 0.6, 0.57]);
+        return;
+      }
+      const pitch = 0.46 + hash2(seed, 139) * 0.36;
+      if (form === 'hip') {
+        this.meshHip(flat, bd, top + 0.26, rc, pitch);
+        const [sx, sz] = off(0, bd.d / 2 + 0.5);
+        flat.box(sx, bd.y - 0.1, sz, 2.0, 0.22, 1.2, bd.rot, [0.62, 0.6, 0.57]);
+        return;
+      }
       // A gable that fits the house it sits on.
       //
       // This used to be `cone(..., max(w, d) * 0.74, ..., 4, ...)` -- a square
@@ -6591,7 +6712,7 @@ float frLine(float o, float fw, float c, float w) {
       // Measured, the drawn roof reached 0.4 m past the narrow wall; the metres
       // that looked like overhang were the NEIGHBOURING terrace's roof, which
       // touches this one. The guard was suppressing three correct roofs.
-      this.meshGable(flat, bd, base + wallH + 2.26, rc, seed);
+      this.meshGable(flat, bd, base + wallH + 2.26, rc, seed, pitch);
       const [sx, sz] = off(0, bd.d / 2 + 0.5);
       // The front step, on the ground rather than 40 cm under it.
       flat.box(sx, bd.y - 0.1, sz, 2.0, 0.22, 1.2, bd.rot, [0.62, 0.6, 0.57]);
@@ -6720,8 +6841,16 @@ float frLine(float o, float fw, float c, float w) {
       // on every building. A membrane with seams, ponding stains, patches and
       // drains reads as a roof at 10 m a tile. The tint is lifted by 1.5x to
       // land at a tar-and-gravel ~0.2 albedo over the roof cell's lighter base.
+      // Not every flat roof is grey membrane: white single-ply is most of the
+      // big commercial roofs from the air, and tar, gravel and the odd green
+      // roof make up the rest.
+      const rp = hash2(seed, 142);
+      const lid = rp < 0.52 ? [rv * 1.38, rv * 1.40, rv * 1.44]
+        : rp < 0.52 + (A > 900 ? 0.26 : 0.12) ? [0.92, 0.93, 0.95]
+        : rp < 0.84 ? [0.30, 0.30, 0.32]
+        : rp < 0.985 || bd.h > 40 ? [0.66, 0.60, 0.50] : [0.36, 0.50, 0.28];
       bl.facade.box(bd.x, rt + 0.71, bd.z, bd.w + 0.5, 0.14, bd.d + 0.5, bd.rot,
-        [rv * 1.38, rv * 1.40, rv * 1.44], { uScale: 10, vScale: 10, cell: C.roof });
+        lid, { uScale: 10, vScale: 10, cell: C.roof });
     }
 
     // No shopfront on a school, a church or a warehouse.

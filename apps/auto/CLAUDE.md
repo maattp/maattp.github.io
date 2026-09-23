@@ -932,6 +932,34 @@ cluster of buildings over 60 m, the fully-green patch nearest downtown.
   wall -- the "green slab on a stick" that trees rendered as. `spheroid` is
   closed and costs about the same.
 
+## Buildings: variety
+
+**Every house in the city was one off-white under one slate roof**
+(`tint(seed, [0.94, 0.92, 0.88])`, one gable form), so from a street or a plane
+a neighbourhood was the same texture repeated. v110:
+
+- **Paint and roofing are weighted palettes** (`HOUSE_PAINT`, `HOUSE_ROOF` in
+  world.js): whites, creams and greys, sage, olive, slate blue, navy,
+  charcoal, barn red, mustard, teal, brown shingle; asphalt greys, brown,
+  black, slate, moss, terracotta, metal. **Houses go through `paintTint`, not
+  `tint`**: tint's 38 % pull toward grey is right for masonry and turned every
+  paint back into the off-white it replaced.
+- **Three roof forms**: gable (pitch 0.46-0.82), hip (`meshHip`, 4 slopes, a
+  pyramid on a square footprint) on squarer footprints, and a flat modern box
+  with a coping on ~11 %. A fascia board under the eaves in a trim colour
+  (mostly white).
+- **Front porches** on ~40 % of houses wider than 6.5 m: deck, two posts,
+  roof, on the step's side, skipped wherever `onRoad` finds the street there.
+- **Five more wall families** for everything else (beige stucco, dark brown
+  brick, grey-blue, salmon and ochre paint), and **flat roof lids** are a
+  palette too: grey membrane, white single-ply (more of it on big roofs), tar,
+  gravel, the odd green roof.
+
+All vertex colour on the existing materials: no draws, no textures. Wallingford
+9x9 ring: 2.89 M -> 3.11 M vertices (+7.6 %), chunk builds +5 %, longest step
+1.3 -> 1.4 ms; perfguard downtown +0.7 % triangles. `landmarkshots.mjs` has
+`hood-*` street and aerial views of eight neighbourhoods for judging it.
+
 ## Buildings: the outlier scan
 
 `tools/bldshots.mjs --scan` counts every shipped box into categories (style x
