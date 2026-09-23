@@ -131,10 +131,12 @@ try {
           const fy = a.y + (b.y - a.y) * t - 0.7;
           for (let o = -a.hw; o <= a.hw; o += 2) {
             const x = px2 + qx * o, z = pz2 + qz * o;
-            // past a street-ended cut's kerb line (world.js street-roof rule)
-            // the ground is the street's, kept on purpose; the headwall laid
-            // along that line closes it
-            if (c.kerb && (x - c.kerb.x) * c.kerb.nx + (z - c.kerb.z) * c.kerb.nz > 0) continue;
+            // under a street-ended cut's protected streets (world.js
+            // street-roof rule) the ground is the street's, kept on purpose;
+            // the headwall and its top slab close it
+            if (c.protect && c.protect.some((p) => { const sx = p[2] - p[0], sz = p[3] - p[1], l2 = sx * sx + sz * sz;
+              let t = l2 > 0 ? ((x - p[0]) * sx + (z - p[1]) * sz) / l2 : 0; t = Math.max(0, Math.min(1, t));
+              return Math.hypot(x - p[0] - sx * t, z - p[1] - sz * t) <= p[4]; })) continue;
             const over = G.terrainHeight(x, z) - fy;
             n++;
             if (over > 0.4) { bad++; if (over > worst) { worst = over; wx = x; wz = z; } }

@@ -3170,9 +3170,10 @@ decks' nodes; citywide the rule would reshape 48 cuts whose lids were each
 tuned against a regression -- judge those portal by portal first):
 
 - **A street crossing the bore ends the cut at its kerb** (footway
-  included), when the roof is under the street's surface (`STREET_ROOF`
-  -0.3 m of cover: the roofs at Harrison's kerb are -0.1 to +0.2 m under
-  ground, and a street stands 0.3 m over it). Asking for a metre of cover
+  included), when the roof is at most `STREET_ROOF` (1 m) over the ground
+  there (the roofs at Harrison's kerb are -0.1 to +0.2 m under ground; a roof
+  higher still is a trench the street must bridge, the lids' job). v103 moved
+  the end to `STREET_SET` short of the kerb (below). Asking for a metre of cover
   stopped the cuts inside the street, whose north half then dipped into the
   trench.
 - **The kerb line is a half-plane nothing past may dig** (`cut.kerb`, in
@@ -3196,6 +3197,40 @@ tuned against a regression -- judge those portal by portal first):
   while roadLift, which never counts tunnels, reported it -- an invisible
   footway 0.5 m up along Harrison's south side, wherever else a bore runs
   under a pavement too. jank's walk-on-road skips bores for the same reason.
+
+**v103: the cut ends `STREET_SET` (7 m) short of the street, not at its
+kerb.** Ending at the kerb left an undug wedge of earth between the headwall
+and the street, and the terrain patch is 4 m quads, so its rise was smeared
+across the openings: grass covering the mouths. The cut now stops where the
+street is 7 m ahead (sampled across the whole corridor width, and the street
+picked along the centreline), so at least one quad (`CUT_OVER`) of rise sits
+behind concrete. What covers the rest:
+
+- **A cover slab** (`_portalWall`, kind `cover`) runs from the headwall's back
+  to the kerb at street height: the street's roof, drawn.
+- **Protect zones, not one kerb half-plane** (`cut.protect`, `underStreet`):
+  every crossing street near the mouth (not a tunnel, deck, graded or
+  portal-incident edge), out to hw + footway + 1 m, is ground nothing may dig
+  -- `cutFloor`, `inCut` and portalcheck all skip it. With one kerb from one
+  street, a ramp cut dug under Harrison's NORTH footway and a walker sank.
+- **The kerb barrier runs along the street's own direction** (its
+  perpendicular, oriented toward the street), from the roof - 2 m up. A
+  nearest-point normal off a diagonal put it along the wrong street, and cars
+  fell off Harrison's north side.
+
+**The bounce inside the mouth was a bore piece's clamped end.** A non-graded
+tunnel surface held its end height flat past the end (hw + 4 m of catch), and
+on a descending bore that shelf sat over the next piece: the car flew level,
+dropped ~1.3 m, and did it again at the next node (+-800 m/s^2). Bore pieces
+now extrapolate along their grade for 3 m past a CONTINUED end (`tin0/tin1`:
+another bore piece carries on) and give the point up beyond that; a free end
+(the portal) stays clamped, because extrapolating there added ~50 fwy-bump
+breaks at the lid tunnels. SB mouth: frames over 100 m/s^2 40 -> 16, worst
+drop a frame -0.26 -> -0.08 m.
+
+**The water mask is built in 4 m cells**, skipping only cells whose centre
+is water: skipping a whole segment when any sample was wet left the NB entry
+cutting's last 30 m under the sea plane.
 
 | north mouths | master | now |
 |---|---|---|
