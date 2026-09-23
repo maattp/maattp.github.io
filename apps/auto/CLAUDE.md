@@ -3534,11 +3534,14 @@ is the page half; load it into any booted page to re-install edited jumps
   pieces overlap on the inside.
 - `tunnelride.mjs`'s `flow()` checks `oneway` before `onewayRev`, so it treats
   the 2 `oneway=-1` edges as a -> b. None is on SR-99.
-- **Pier decks are drawn, not walkable** (Great Wheel, Pier 66, Aquarium):
-  `groundAt` over them is the seabed, so walking onto the Wheel's deck puts you
-  in the water. The surface they need exists now -- `city.setPlatforms`, which
-  the seaplane dock uses -- but those builders do not register their decks
-  yet.
+- **Only three pier decks are walkable** (v106): the Great Wheel, Pier 66
+  and the Aquarium list their tops in `userData.decks` (group-local boxes),
+  and `buildLandmarks` installs them as platforms. The 40 m DEM leaves water
+  or a 1.1-1.6 m step between the Wheel's and Pier 66's decks and the
+  promenade, so a deck can name a `land` exit: `gangway()` walks the terrain
+  out to the first dry ground within 0.9 m of the deck top and lays a sloped
+  boardwalk (piles, rails) registered as one sloped platform. Walked vs drawn:
+  0 cm. The ferry terminal, the other piers and the Alki pier have no deck.
 - **Stadium interiors are unreachable** — walls run round the whole footprint,
   with no gates. T-Mobile's roof is modelled open and does not move.
 - **The minor landmarks are the old models** (aquarium, ferry terminal, Pier 66,
