@@ -2231,8 +2231,12 @@ export function* cityGenerator(md, cache = {}) {
     }
     if (!e.elev && !e.tunnel) continue;
     const a = g.nodes[e.a], b = g.nodes[e.b];
+    // a bore end that another bore piece continues (see groundAt: past 3 m
+    // beyond a continued end this piece yields entirely to its neighbour)
+    const tunOn = (ni) => g.nodes[ni].e.some((k) => k !== sei && g.edges[k].tunnel);
     surfaces.push({ ax: a.x, az: a.z, ay: a.y, bx: b.x, bz: b.z, by: b.y, hw: e.hw + 1.5,
       tun: !!e.tunnel, ei: sei,
+      tin0: !!e.tunnel && tunOn(e.a), tin1: !!e.tunnel && tunOn(e.b),
       // a MOUTH is the first span of a bore -- one end is a portal node
       mouth: !!e.tunnel && (isPortal(e.a) || isPortal(e.b)) });
   }
@@ -2823,6 +2827,8 @@ export function* cityGenerator(md, cache = {}) {
     chunkKey: ck,
     drivable,
     surfaces,
+    /** Indices into `surfaces` whose reach may touch (x, z) (groundAt's grid). */
+    surfacesNear: (x, z) => surfGrid.get(skey(Math.floor(x / surfCell), Math.floor(z / surfCell))) || [],
 
     /** Underpass cuts dug under refused overpasses (see gradeRoads). */
     underpasses: grading.underpasses,
@@ -3193,8 +3199,8 @@ export function* cityGenerator(md, cache = {}) {
           const s = surfaces[si];
           // distToSeg, inline (no result object: ~110 calls a frame)
           const sdx = s.bx - s.ax, sdz = s.bz - s.az, sl2 = sdx * sdx + sdz * sdz;
-          let rt = sl2 > 0 ? ((x - s.ax) * sdx + (z - s.az) * sdz) / sl2 : 0;
-          rt = rt < 0 ? 0 : rt > 1 ? 1 : rt;
+          const rt0 = sl2 > 0 ? ((x - s.ax) * sdx + (z - s.az) * sdz) / sl2 : 0;
+          const rt = rt0 < 0 ? 0 : rt0 > 1 ? 1 : rt0;
           const rd = Math.hypot(x - (s.ax + sdx * rt), z - (s.az + sdz * rt));
           // A BORE HOLDS ITS CAR WITH A MARGIN. At exact half-width, a car
           // weaving at a bend where two tunnel edges of different widths join
@@ -3269,6 +3275,32 @@ export function* cityGenerator(md, cache = {}) {
             }
           } else {
             y = s.ay + (s.by - s.ay) * rt + ROAD_LIFT * 0.3;
+            // A BORE PIECE PAST ITS END extrapolates along its grade, like a
+            // graded piece. Clamped, it held its end height flat for as far as
+            // it catches (hw + the 4 m margin, ~11 m), and on a descending
+            // bore that flat shelf sat above the next piece, so nearest-to-curY
+            // rode it: the car flew level ~10 m, dropped ~1.3 m onto the deck,
+            // and did it again at the next node -- SR-99's southbound mouth
+            // measured +-800 m/s^2, "the car bounces around like crazy".
+            // Only at a CONTINUED end (another bore piece carries on): past a
+            // free end -- the portal, where the freeway surface takes over --
+            // the clamped answer is what every approach was tuned against, and
+            // extrapolating there added ~50 grade breaks at the city's lid
+            // tunnels (jank fwy-bump 820 -> 867).
+            if (s.tun) {
+              const tu = rt0;
+              if ((tu < 0 && s.tin0) || (tu > 1 && s.tin1)) {
+                const over = 3 / Math.sqrt(sl2 || 1);
+                // past 3 m beyond it the neighbour owns the point: capped
+                // there and held flat, the shelf came back 0.85 m up
+                if (tu < -over || tu > 1 + over) continue;
+                y = s.ay + (s.by - s.ay) * tu + ROAD_LIFT * 0.3;
+                extrap = true;
+                // the graded extrapolation's tie-breaker, kept over the bend
+                // margin's larger penalty where that applies
+                pen = Math.max(pen, 0.12);
+              }
+            }
           }
           // AN EXTRAPOLATION NEVER BEATS A PIECE THAT COVERS THE POINT at its
           // own level. The 0.12 penalty below only settled near-ties, and a
@@ -3282,7 +3314,7 @@ export function* cityGenerator(md, cache = {}) {
             if (nEx < EX_MAX) { exY[nEx] = y; exPen[nEx] = pen; nEx++; }
             continue;
           }
-          if (s.px !== undefined && nCov < EX_MAX && (curY == null || y <= curY + DECK_REACH)) covY[nCov++] = y;
+          if ((s.px !== undefined || s.tun) && nCov < EX_MAX && (curY == null || y <= curY + DECK_REACH)) covY[nCov++] = y;
           if (curY == null) {
             // No reference height -- a spawn or a placement query. The highest
             // deck is the only sane answer, and is what this always did.

@@ -530,10 +530,15 @@ export class Player {
     // the way out, while the boom is still inside with the car already clear.
     const deckAt = this.city.groundAt(target.x, target.z, target.y, 0);
     const ceil = deckAt + TUNNEL_H - 0.6;
-    const inBore = target.y - deckAt < 2.5 && G.terrainHeight(target.x, target.z) > deckAt + TUNNEL_H * 0.5;
+    const inBore = target.y - deckAt < 2.5 && (G.terrainHeight(target.x, target.z) > deckAt + TUNNEL_H * 0.5
+      || (this.city.camBlockOver && this.city.camBlockOver(target.x, target.z, deckAt)));
     this.camBoreHold = inBore ? 1 : Math.max(0, (this.camBoreHold || 0) - dt);
+    // RAW ground over the camera, not the carved: at a mouth the camera is
+    // over the cutting's dug end, where the carved ground is low but the
+    // headwall and its top slab stand -- the carved test let it rise into them
+    // with the car 15 m inside (the view went black).
     if (this.camBoreHold > 0 && target.y - deckAt < 2.5
-      && G.terrainHeight(this.camPos.x, this.camPos.z) > ceil && this.camPos.y > ceil) {
+      && G.terrainRaw(this.camPos.x, this.camPos.z) > ceil && this.camPos.y > ceil) {
       this.camPos.y = ceil;
       this.camClamp = 'ceil';
     }
@@ -561,12 +566,28 @@ export class Player {
   clearCamDist(target, want, height) {
     const ux = Math.sin(this.camYaw), uz = Math.cos(this.camYaw);
     const near = this.city.buildingsNear(target.x, target.z, want + 8);
+    const nb = near.length;
+    // ...and portal walls (world._camBlock): the same boxes, but tested on
+    // their exact height band -- a camera in the bore passes under a lintel
+    const pg = this.city.camBlockGrid;
+    if (pg) {
+      const r = want + 8, seen = new Set();
+      for (let cx = Math.floor((target.x - r) / 32); cx <= Math.floor((target.x + r) / 32); cx++) {
+        for (let cz = Math.floor((target.z - r) / 32); cz <= Math.floor((target.z + r) / 32); cz++) {
+          const l = pg.get(cx * 100003 + cz);
+          if (l) for (const b of l) if (!seen.has(b)) { seen.add(b); near.push(b); }
+        }
+      }
+    }
     if (!near.length) return want;
     const camY = target.y + height;
     for (let d = 1.6; d <= want; d += 0.7) {
       const sx = target.x + ux * d, sz = target.z + uz * d;
-      for (const b of near) {
-        if (camY > b.y + b.h || camY < b.y - 3) continue;
+      for (let bi = 0; bi < near.length; bi++) {
+        const b = near[bi];
+        if (camY > b.y + b.h || camY < b.y - (bi < nb ? 3 : 0.3)) continue;
+        // a mouth card stops the boom only with the target inside the bore
+        if (b.card && (target.x - b.x) * b.card[0] + (target.z - b.z) * b.card[1] <= 0) continue;
         const c = Math.cos(-b.rot), s = Math.sin(-b.rot);
         const dx = sx - b.x, dz = sz - b.z;
         const lx = dx * c - dz * s, lz = dx * s + dz * c;

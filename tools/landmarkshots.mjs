@@ -36,6 +36,11 @@ const VIEWS = [
   { name: 'market-aerial', t: [-215, 300, 4], c: [-70, 190, 0], cy: 110 },
   { name: 'wheel-close', t: [-346, 575, 30], c: [-262, 548, 1.7] },
   { name: 'wheel-mid', t: [-346, 575, 30], c: [-560, 470, 0], cy: 25 },
+  // the waterfront's walkable decks (Wheel, Aquarium, Pier 66) and the shore
+  { name: 'waterfront-aerial', t: [-400, 480, 0], c: [-230, 520, 0], cy: 130 },
+  { name: 'pier66-aerial', t: [-788, 92, 0], c: [-640, 160, 0], cy: 110 },
+  { name: 'wheel-walk', t: [-330, 575, 2], c: [-292, 590, 1.7] },
+  { name: 'pier66-walk', t: [-770, 60, 2], c: [-738, 40, 1.7] },
   { name: 'arena-close', t: [-1214, -1197, 18], c: [-1318, -1066, 1.7] },
   { name: 'arena-mid', t: [-1214, -1197, 10], c: [-1480, -1420, 0], cy: 160 },
   { name: 'mopop-close', t: [-778, -1127, 14], c: [-726, -1190, 1.7] },

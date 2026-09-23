@@ -537,6 +537,9 @@ try {
     // The scene, not the controls: hide the HUD the way beauty.mjs does.
     await ev(`(() => { for (const id of ['hud', 'pad', 'stickZone', 'lookZone', 'objective', 'toast', 'rotate', 'topBtns'])
       { const e = document.getElementById(id); if (e) e.style.display = 'none'; } return 1; })()`);
+    // RIDE_SHOT_EVAL='<expr>': run on the posed frame before each shot (paint
+    // a mesh, hide one) -- a diagnosis in the real render path, not a probe's
+    if (process.env.RIDE_SHOT_EVAL) console.log('shot-eval', await ev(process.env.RIDE_SHOT_EVAL));
     await sleep(2500);
     const s = await send('Page.captureScreenshot', { format: 'png' });
     writeFileSync(`${SHOTS}/${RIDE}-${name}.png`, Buffer.from(s.result.data, 'base64'));

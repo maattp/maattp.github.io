@@ -3170,9 +3170,10 @@ decks' nodes; citywide the rule would reshape 48 cuts whose lids were each
 tuned against a regression -- judge those portal by portal first):
 
 - **A street crossing the bore ends the cut at its kerb** (footway
-  included), when the roof is under the street's surface (`STREET_ROOF`
-  -0.3 m of cover: the roofs at Harrison's kerb are -0.1 to +0.2 m under
-  ground, and a street stands 0.3 m over it). Asking for a metre of cover
+  included), when the roof is at most `STREET_ROOF` (1 m) over the ground
+  there (the roofs at Harrison's kerb are -0.1 to +0.2 m under ground; a roof
+  higher still is a trench the street must bridge, the lids' job). v103 moved
+  the end to `STREET_SET` short of the kerb (below). Asking for a metre of cover
   stopped the cuts inside the street, whose north half then dipped into the
   trench.
 - **The kerb line is a half-plane nothing past may dig** (`cut.kerb`, in
@@ -3196,6 +3197,87 @@ tuned against a regression -- judge those portal by portal first):
   while roadLift, which never counts tunnels, reported it -- an invisible
   footway 0.5 m up along Harrison's south side, wherever else a bore runs
   under a pavement too. jank's walk-on-road skips bores for the same reason.
+
+**v103: the cut ends `STREET_SET` (7 m) short of the street, not at its
+kerb.** Ending at the kerb left an undug wedge of earth between the headwall
+and the street, and the terrain patch is 4 m quads, so its rise was smeared
+across the openings: grass covering the mouths. The cut now stops where the
+street is 7 m ahead (sampled across the whole corridor width, and the street
+picked along the centreline), so at least one quad (`CUT_OVER`) of rise sits
+behind concrete. What covers the rest:
+
+- **A cover slab** (`_portalWall`, kind `cover`) runs from the headwall's back
+  to the kerb at street height: the street's roof, drawn.
+- **Protect zones, not one kerb half-plane** (`cut.protect`, `underStreet`):
+  every crossing street near the mouth (not a tunnel, deck, graded or
+  portal-incident edge), out to hw + footway + 1 m, is ground nothing may dig
+  -- `cutFloor`, `inCut` and portalcheck all skip it. With one kerb from one
+  street, a ramp cut dug under Harrison's NORTH footway and a walker sank.
+- **The kerb barrier runs along the street's own direction** (its
+  perpendicular, oriented toward the street), from the roof - 2 m up. A
+  nearest-point normal off a diagonal put it along the wrong street, and cars
+  fell off Harrison's north side.
+
+**The bounce inside the mouth was a bore piece's clamped end.** A non-graded
+tunnel surface held its end height flat past the end (hw + 4 m of catch), and
+on a descending bore that shelf sat over the next piece: the car flew level,
+dropped ~1.3 m, and did it again at the next node (+-800 m/s^2). Bore pieces
+now extrapolate along their grade for 3 m past a CONTINUED end (`tin0/tin1`:
+another bore piece carries on) and give the point up beyond that; a free end
+(the portal) stays clamped, because extrapolating there added ~50 fwy-bump
+breaks at the lid tunnels. SB mouth: frames over 100 m/s^2 40 -> 16, worst
+drop a frame -0.26 -> -0.08 m.
+
+**v104: the cutting's own floor was a staircase too.** `cutFloor` clamps each
+corridor segment, so at every joint the lower segment's round end dug a flat
+bowl at the joint's depth ~13 m back up the segment before, and the deepest
+trench wins: shelf, 1.35 m cliff, shelf, down SR-99's NB entry at SODO, and
+the draped road on it bounced the car (720 m/s^2). Past an interior joint a
+segment now yields wherever its neighbour covers the point at full depth
+(`_segCovers`), **only at a near-straight joint** (within ~30 deg): round a
+sharp bend the clamped end is what digs the inside of the turn (yielding
+there put 0.41 m of ground over a carriageway at (421, -80)). Frames over
+100 m/s^2: SB 14 -> **0**, NB 39 -> 18 (all at the north exit's Aurora deck);
+jank fwy-bump 821 -> 772; portalcheck unchanged.
+
+**v108: the chase camera follows the car into a street-ended mouth.** It
+used to hang back outside the mouth card with the car inside, so going in
+under Harrison the screen went black for most of a second. Three pieces:
+
+- **Portal walls stop the boom** like buildings do (`world._camBlock`, a 32 m
+  grid on `city.camBlockGrid`, tested in `clearCamDist` on each box's exact
+  height band so a camera in the bore passes under a lintel): lintel, top
+  slab, piers, and each **mouth card as a one-way stop**, only while the
+  target is on its inner side (`card` = the inward direction).
+- **The bore test knows the slab**: under a street-ended mouth's top slab
+  the ground is dug, so "carved ground over the car" said open road; a wall
+  piece over it (`city.camBlockOver`) counts too, and the ceiling clamp
+  tests RAW ground over the camera.
+- **No ground inside those bores.** The dug stretch ends at the kerb, and the
+  climb back to the street crosses the tube between deck and roof -- the
+  card hides it from the road, and a camera inside saw a wall of grass.
+  `patchCell` drops quads within 24 m of a street-ended cut's end
+  (`_mouthZones`) that intrude into a bore's volume; the top slab covers
+  them from above and the lining from inside.
+
+camtunnel 0 of 24, flycam's camera figures unchanged, rides and portalcheck
+unchanged. What is left: from inside the NB exit the double mouth's piers
+and lintel read as grey blocks round the opening.
+
+**v105: an approach that meets a deck ends at the deck.** The approach ramp
+in front of a mouth aims at raw ground 70 m out, whatever it meets on the way.
+SR-99's NB exit runs into Aurora's elevated deck ~40 m past the north portal,
+and the ramp passed under it 1.7 m low, so the car climbed onto the deck 1.9 m
+in 6 m. The walk now samples each approach edge every 3 m for a deck or graded
+surface near ground level holding the point (`city.surfacesNear`, groundAt's
+grid) and ends the ramp there, at that surface's height. Worst NB north-exit
+jolt 396 -> 216 m/s^2. Two things tried and reverted: starting the ramp at the
+bore's grade (the SB south exit then stepped 0.86 m), and digging approach
+floors only to the road (64 corridors failed portalcheck's coverage).
+
+**The water mask is built in 4 m cells**, skipping only cells whose centre
+is water: skipping a whole segment when any sample was wet left the NB entry
+cutting's last 30 m under the sea plane.
 
 | north mouths | master | now |
 |---|---|---|
@@ -3306,6 +3388,21 @@ Citywide dug-road sweep after these and the stacking (588 runs): drops 215 ->
   0.02 m for views from the street into sub-sea cuttings, and skips quads over
   real water. This holds per deck unchanged: both decks have 1.5 m+ of raw
   ground over the camera everywhere past the mouths.
+- **v107: the sea plane was one quad, and that is why no mask height ever
+  worked.** A 34 km quad runs far past the 9 km far plane, and the depth
+  rasterised across a clipped triangle that size is off by more than the
+  mask's 2 cm near a low camera: the chase camera over SR-99's NB entry
+  cutting at SODO saw the whole cutting flooded, the sea winning the depth
+  test against the mask and the road beside it, and the result flipped with
+  sub-milliradian changes in heading (a probe pose rounded to 4 decimals
+  "worked"). The sea, lakes and canal are tessellated at `WATER_CELL` 530 m
+  (64 x 64 for the sea): 12 poses down that cutting all match a render with no
+  sea at all, against 1 of 12 failing as one quad. +11k triangles, 0 draws.
+  The cutting mask also covers the banks now (`+ CUT_BANK`) and every segment
+  with its floor under 1 m, not 0.3, which took out the streaks along the
+  banks. **Judge water from the real frame**: `RIDE_SHOT_EVAL='<expr>'` runs
+  on the posed frame before each tunnelride shot (hide the sea, paint the mask
+  red); a probe pose that is not the ride's exact quaternion can pass.
 - **Mitred bore joints meet at the node's height.** The thin light seam across
   the bore (NB deck at z 1667, and at every grade break between two tunnel
   edges) was the mitre: drawn heights came from PROJECTION onto each edge, so
@@ -3476,11 +3573,14 @@ is the page half; load it into any booted page to re-install edited jumps
   pieces overlap on the inside.
 - `tunnelride.mjs`'s `flow()` checks `oneway` before `onewayRev`, so it treats
   the 2 `oneway=-1` edges as a -> b. None is on SR-99.
-- **Pier decks are drawn, not walkable** (Great Wheel, Pier 66, Aquarium):
-  `groundAt` over them is the seabed, so walking onto the Wheel's deck puts you
-  in the water. The surface they need exists now -- `city.setPlatforms`, which
-  the seaplane dock uses -- but those builders do not register their decks
-  yet.
+- **Only three pier decks are walkable** (v106): the Great Wheel, Pier 66
+  and the Aquarium list their tops in `userData.decks` (group-local boxes),
+  and `buildLandmarks` installs them as platforms. The 40 m DEM leaves water
+  or a 1.1-1.6 m step between the Wheel's and Pier 66's decks and the
+  promenade, so a deck can name a `land` exit: `gangway()` walks the terrain
+  out to the first dry ground within 0.9 m of the deck top and lays a sloped
+  boardwalk (piles, rails) registered as one sloped platform. Walked vs drawn:
+  0 cm. The ferry terminal, the other piers and the Alki pier have no deck.
 - **Stadium interiors are unreachable** — walls run round the whole footprint,
   with no gates. T-Mobile's roof is modelled open and does not move.
 - **The minor landmarks are the old models** (aquarium, ferry terminal, Pier 66,

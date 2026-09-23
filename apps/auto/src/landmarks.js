@@ -1000,6 +1000,9 @@ function wheel() {
   // The deck it stands on, on piles, joining the pier to the east, with the
   // boarding platform and a ticket booth.
   g.add(box(46, 1.2, 36, P(0x857058, 0.9, 0, 0.45), -6, -1.2, 0));
+  // (the Wheel's deck is the end of Pier 57; `land` walks a boardwalk back to
+  // the promenade across the water the 40 m DEM leaves between them)
+  g.userData.decks = [{ x: -6, z: 0, hw: 23, hd: 18, top: 0, land: { x: 17, z: 0, dx: 1, dz: 0, w: 9 } }];
   for (let x = -27; x <= 15; x += 7) for (const z of [-16, -5, 5, 16]) g.add(cyl(0.35, 0.35, 6, mat.darkSteel, x, -7, z, 6));
   g.add(box(10, 1.0, 8, mat.concrete, 0, 0, 0));
   g.add(box(6, 3.2, 4, w, 12, 0, 12));
@@ -1513,6 +1516,8 @@ function pier() {
   const g = new THREE.Group();
   g.userData.baseY = 2.4;
   g.add(box(46, 2, 90, mat.wood, 0, -2, 0));
+  // its south-east corner meets the bank 1.1-1.6 m under the deck
+  g.userData.decks = [{ x: 0, z: 0, hw: 23, hd: 45, top: 0, land: { x: 23, z: -34, dx: 1, dz: 0, w: 7 } }];
   g.add(box(30, 10, 60, M(0xd8d3c6), 0, 0, 0));
   g.add(box(34, 1.2, 64, mat.red, 0, 10, 0));
   for (let i = -2; i <= 2; i++)
@@ -1567,6 +1572,7 @@ function aquarium() {
   const g = new THREE.Group();
   g.userData.baseY = 2.4;
   g.add(box(40, 2, 60, mat.wood, 0, -2, 0));
+  g.userData.decks = [{ x: 0, z: 0, hw: 20, hd: 30, top: 0 }];
   g.add(box(30, 9, 44, M(0x4b6f86), 0, 0, 0));
   g.add(box(34, 1.2, 48, mat.white, 0, 9, 0));
   const s = sign('SEATTLE AQUARIUM', 22, 3, '#0f3d55', '#ffffff');
@@ -1940,6 +1946,56 @@ const BUILDERS = {
   convention, airport, stadiumF: lumen, stadiumB: tmobile, stadiumH: husky, smith,
 };
 
+/**
+ * A boardwalk from a pier deck's edge to the shore, in WORLD coordinates.
+ * `land` is the edge point and outward direction in the landmark's frame;
+ * from there it walks the terrain in 1 m steps to the first dry ground within
+ * 0.9 m of the deck top (a walker's step), at most 70 m out, and lays a
+ * sloped timber walk on piles with rails, top running from the deck's height
+ * to 5 cm over that ground. Registered as one sloped platform (top linear
+ * along its length), so what is walked is what is drawn. Returns null when
+ * the deck already meets the ground or no ground is in reach.
+ */
+function gangway(land, px, top, pz, t, platforms) {
+  const c = Math.cos(t), sn = Math.sin(t);
+  const x0 = px + land.x * c + land.z * sn, z0 = pz - land.x * sn + land.z * c;
+  const dx = land.dx * c + land.dz * sn, dz = -land.dx * sn + land.dz * c;
+  let L = 0, endY = null;
+  for (let d = 1; d <= 70; d++) {
+    const x = x0 + dx * d, z = z0 + dz * d;
+    const h = G.terrainHeight(x, z);
+    if (!G.isWater(x, z) && h >= top - 0.9) { L = d + 1; endY = Math.min(top, h + 0.05); break; }
+  }
+  if (endY === null || L < 3) return null;
+  const gw = new THREE.Group();
+  const yaw = Math.atan2(dx, dz), pitch = Math.atan2(top - endY, L);
+  const mx = x0 + dx * (L / 2), mz = z0 + dz * (L / 2), my = (top + endY) / 2;
+  const slab = (w, h, off, lift, m) => {
+    const o = new THREE.Mesh(new THREE.BoxGeometry(w, h, L / Math.cos(pitch)), m);
+    o.rotation.order = 'YXZ';
+    o.rotation.set(pitch, yaw, 0);
+    // across (dz, -dx) by `off`; `lift` above the walking surface
+    o.position.set(mx + dz * off, my + lift - h / 2, mz - dx * off);
+    return o;
+  };
+  gw.add(slab(land.w, 0.35, 0, 0, mat.wood));
+  for (const sd of [-1, 1]) {
+    const off = sd * (land.w / 2 - 0.12);
+    gw.add(slab(0.1, 0.1, off, 1.05, mat.darkSteel));
+    gw.add(slab(0.06, 0.06, off, 0.55, mat.darkSteel));
+    for (let d = 0; d <= L; d += 3) {
+      const yy = top + (endY - top) * (d / L);
+      gw.add(box(0.1, 1.05, 0.1, mat.darkSteel, x0 + dx * d + dz * off, yy, z0 + dz * d - dx * off));
+    }
+    for (let d = 2; d < L; d += 6) {
+      const yy = top + (endY - top) * (d / L);
+      gw.add(cyl(0.3, 0.3, yy + 6, mat.darkSteel, x0 + dx * d + dz * off * 0.8, -6.35, z0 + dz * d - dx * off * 0.8, 6));
+    }
+  }
+  platforms.push({ x: mx, z: mz, hw: land.w / 2, hd: L / 2, rot: Math.atan2(-dx, dz), y0: top, y1: endY });
+  return gw;
+}
+
 /** Group-local solid -> world, through the group's yaw `t` and position. */
 function worldSolid(s, px, py, pz, t) {
   const c = Math.cos(t), sn = Math.sin(t);
@@ -2014,6 +2070,19 @@ export function buildLandmarks(scene, city) {
       const w = worldSolid(s, x, y, z, t);
       if (city && onRoad(city, w)) { dropped.push(`${l.kind}@${w.x.toFixed(0)},${w.z.toFixed(0)}`); continue; }
       solids.push(w);
+    }
+    // PIER DECKS ARE GROUND. They were drawn and not walkable: groundAt over
+    // them answered the seabed, so stepping onto the Wheel's deck or a pier
+    // dropped you into the bay. Each builder lists the tops it draws, in its
+    // own frame (a box, the solid convention); they become city platforms
+    // exactly as the seaplane dock's are.
+    for (const dk of g.userData.decks || []) {
+      const w = worldSolid({ x: dk.x, z: dk.z, hw: dk.hw, hd: dk.hd, rot: 0, y0: dk.top, y1: dk.top }, x, y, z, t);
+      platforms.push({ x: w.x, z: w.z, hw: w.hw, hd: w.hd, rot: w.rot, y0: w.y0, y1: w.y1 });
+      if (dk.land) {
+        const gw = gangway(dk.land, x, y + dk.top, z, t, platforms);
+        if (gw) addTo(l.kind === 'airport' ? 'airport' : `${Math.round(x / 1200)},${Math.round(z / 1200)}`, gw);
+      }
     }
     addTo(l.kind === 'airport' ? 'airport' : `${Math.round(x / 1200)},${Math.round(z / 1200)}`, g);
   }

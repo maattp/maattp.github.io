@@ -53,17 +53,36 @@ const CUT_BANK = 2.4;
 // nothing. 3.5 m of cover puts the face at the bottom of a ~9 m cutting, which
 // is what makes it a portal rather than a kerb.
 const CUT_COVER = 3.5;
-// ...except under a street: a street crossing the bore stands on ground, and
-// the cutting ends at its kerb, as long as the roof stays under the street's
-// surface (ROAD_LIFT 0.3 over the ground). At SR-99's north mouths the roofs
-// are level with Harrison Street's kerb (-0.1 to +0.2 m of cover); asking for
-// a metre stopped the cuts inside the street, whose north half then dipped
-// into the trench.
-const STREET_ROOF = -0.3;
+// ...except before a street: a street crossing the bore stands on ground and
+// the cutting ends STREET_SET short of it, as long as the roof there is no
+// more than this far over the ground (a roof higher still is a real trench the
+// street must bridge -- the lids' job). At SR-99's north mouths the roofs are
+// level with Harrison Street's kerb (-0.1 to +0.2 m of cover); asking for a
+// metre of cover stopped the cuts inside the street, whose north half then
+// dipped into the trench.
+const STREET_ROOF = -1.0;
+// How far short of that street's footway the cut ends: the trench floor stays
+// at full depth this far behind the headwall, so the ground's climb back up
+// (smeared over one 4 m terrain quad) is behind the mouth card.
+const STREET_SET = 7;
+/** Is (x, z) on one of street-ended cut c's protected streets (carriageway,
+ *  footway and a metre)? See _computePortalCuts. */
+function underStreet(c, x, z) {
+  for (const p of c.protect) {
+    const sx = p[2] - p[0], sz = p[3] - p[1], l2 = sx * sx + sz * sz;
+    let t = l2 > 0 ? ((x - p[0]) * sx + (z - p[1]) * sz) / l2 : 0;
+    t = t < 0 ? 0 : t > 1 ? 1 : t;
+    const dx = x - (p[0] + sx * t), dz = z - (p[1] + sz * t);
+    if (dx * dx + dz * dz <= p[4] * p[4]) return true;
+  }
+  return false;
+}
 // How far in front of a portal the approach ramp runs. Long enough that the
 // descent is gentle at the drop citygen applies, short enough that it does not
 // swallow the junction behind it.
 const APPROACH = 70;
+// Water planes are tessellated to cells this size (see buildWater).
+const WATER_CELL = 530;
 
 const ROAD_Y = ROAD_LIFT;
 // Metres per road-texture repeat. Fixed, so the asphalt's grain is the same
@@ -1154,11 +1173,29 @@ export class World {
     for (let i = 0; i <= SUB; i++) { xs[i] = cx + i * q; zs[i] = cz + i * q; }
     for (let j = 0; j <= SUB; j++) for (let i = 0; i <= SUB; i++) ys[j * (SUB + 1) + i] = G.terrainHeight(xs[i], zs[j]);
     const Y = (i, j) => ys[j * (SUB + 1) + i];
+    // NO GROUND INSIDE A STREET-ENDED MOUTH'S BORE. Such a cut is dug to the
+    // street's kerb line and stops, so the ground climbs from the trench floor
+    // back up to the street across the quads just short of it -- inside the
+    // tube, between its deck and roof. From the road the mouth card hides that
+    // (it is why the card exists); a chase camera that follows the car in saw
+    // it as a wall of grass across the bore. Those quads are simply not drawn:
+    // from inside the lining shows, and from above the portal's top slab
+    // covers the whole stretch from headwall to kerb.
+    const zones = this._mouthZones();
+    const nearZone = zones.some((z0) => Math.hypot(cx + S / 2 - z0.x, cz + S / 2 - z0.z) < S * 0.71 + 24);
     // No excavation tint. The cutting is faced in concrete by the retaining
     // walls; the ground above it is the same ground as everywhere else.
     for (let j = 0; j < SUB; j++) {
       for (let i = 0; i < SUB; i++) {
         const x = xs[i], z = zs[j], x1 = xs[i + 1], z1 = zs[j + 1];
+        if (nearZone && zones.some((z0) => Math.hypot(x + q / 2 - z0.x, z + q / 2 - z0.z) < 24)) {
+          const td = this._tunDeckUnder(x + q / 2, z + q / 2, 0);
+          if (td !== null) {
+            const y0 = Math.min(Y(i, j), Y(i, j + 1), Y(i + 1, j + 1), Y(i + 1, j));
+            const y1 = Math.max(Y(i, j), Y(i, j + 1), Y(i + 1, j + 1), Y(i + 1, j));
+            if (y1 > td + 0.1 && y0 < td + TUNNEL_H - 0.1) continue;
+          }
+        }
         b.quad(
           [x, Y(i, j), z],
           [x, Y(i, j + 1), z1],
@@ -1169,6 +1206,18 @@ export class World {
           colour);
       }
     }
+  }
+
+  /** Where each street-ended cut stops (its last point before the cap). */
+  _mouthZones() {
+    if (this._mzones) return this._mzones;
+    const out = [];
+    for (const c of this.portalCuts()) {
+      if (!c.streetDir) continue;
+      const pts = c.pts.filter((p) => !p.cap);
+      if (pts.length) out.push({ x: pts[pts.length - 1].x, z: pts[pts.length - 1].z });
+    }
+    return (this._mzones = out);
   }
 
   /**
@@ -1217,44 +1266,48 @@ export class World {
       // depth-only quad there is a hole in the sea (2 of 117 masked edges, at
       // the Pioneer Square shoreline).
       const MASK_Y = 0.02;
+      // IN CELLS, skipping only the wet ones. A whole segment used to be
+      // skipped when any of nine samples over its footprint was water, so a
+      // cutting beside the bay lost its mask entirely: the NB entry cutting at
+      // SR-99's south portal lay under the sea plane for its last 30 m, road
+      // and banks alike.
+      const maskStrip = (a, b, w, qx, qz) => {
+        const L = Math.hypot(b.x - a.x, b.z - a.z) || 1;
+        const nA = Math.max(1, Math.ceil(L / 4)), nW = Math.max(1, Math.ceil((2 * w) / 4));
+        for (let i = 0; i < nA; i++) {
+          const t0 = i / nA, t1 = (i + 1) / nA;
+          for (let j = 0; j < nW; j++) {
+            const o0 = -w + (2 * w * j) / nW, o1 = -w + (2 * w * (j + 1)) / nW;
+            const tm = (t0 + t1) / 2, om = (o0 + o1) / 2;
+            if (G.isWater(a.x + (b.x - a.x) * tm + qx * om, a.z + (b.z - a.z) * tm + qz * om)) continue;
+            const P = (t, o) => [a.x + (b.x - a.x) * t + qx * o, MASK_Y, a.z + (b.z - a.z) * t + qz * o];
+            wb.quad(P(t0, o1), P(t0, o0), P(t1, o0), P(t1, o1), [0, 1, 0], ZERO_UV, [1, 1, 1]);
+          }
+        }
+      };
       for (const e of this.city.edges) {
         if (!e.tunnel || e.elev) continue;
         const a = this.city.nodes[e.a], b = this.city.nodes[e.b];
         if (Math.min(a.y, b.y) > 1.2) continue;
-        const w = e.hw + 2;
-        const qx = -e.dz, qz = e.dx;
-        let wet = false;
-        for (const t of [0, 0.5, 1]) for (const o of [-w, 0, w]) {
-          if (G.isWater(a.x + (b.x - a.x) * t + qx * o, a.z + (b.z - a.z) * t + qz * o)) wet = true;
-        }
-        if (wet) continue;
-        wb.quad(
-          [a.x + qx * w, MASK_Y, a.z + qz * w], [a.x - qx * w, MASK_Y, a.z - qz * w],
-          [b.x - qx * w, MASK_Y, b.z - qz * w], [b.x + qx * w, MASK_Y, b.z + qz * w],
-          [0, 1, 0], ZERO_UV, [1, 1, 1]);
+        maskStrip(a, b, e.hw + 2, -e.dz, e.dx);
       }
       // ...AND OVER THE OPEN CUTTINGS. The mask followed the tunnel edges, so
       // a cutting whose floor dips under the sea on its SURFACE approach --
       // the NB entry cutting at SODO, beside the SR-99 surface on its lids --
       // showed the sea plane lying in the trench as a canal, from the road
-      // beside it. Each non-cap corridor segment whose floor is under 0.3 m
+      // beside it. Each non-cap corridor segment whose floor is under 1 m
       // gets the same depth-only quad across the whole dug floor.
       for (const c of cuts) {
         for (let i = 0; i < c.pts.length - 1; i++) {
           const a = c.pts[i], b = c.pts[i + 1];
-          if (a.cap || b.cap || Math.min(a.y, b.y) - 0.7 > 0.3) continue;
+          // (floor under 1 m, not 0.3: a segment ending just above that left
+          // a line of sea where the next one's bank dipped under it)
+          if (a.cap || b.cap || Math.min(a.y, b.y) - 0.7 > 1.0) continue;
           const L = Math.hypot(b.x - a.x, b.z - a.z) || 1;
-          const qx = -(b.z - a.z) / L, qz = (b.x - a.x) / L;
-          const w = a.hw + CUT_SH + CUT_OVER;
-          let wet = false;
-          for (const t of [0, 0.5, 1]) for (const o of [-w, 0, w]) {
-            if (G.isWater(a.x + (b.x - a.x) * t + qx * o, a.z + (b.z - a.z) * t + qz * o)) wet = true;
-          }
-          if (wet) continue;
-          wb.quad(
-            [a.x + qx * w, MASK_Y, a.z + qz * w], [a.x - qx * w, MASK_Y, a.z - qz * w],
-            [b.x - qx * w, MASK_Y, b.z - qz * w], [b.x + qx * w, MASK_Y, b.z + qz * w],
-            [0, 1, 0], ZERO_UV, [1, 1, 1]);
+          // banks included: where a bank dips under the sea outside the
+          // full-depth width, the sea showed as streaks along it (depth-only
+          // at 0.02 m, the mask does nothing over ground higher than that)
+          maskStrip(a, b, a.hw + CUT_SH + CUT_OVER + CUT_BANK, -(b.z - a.z) / L, (b.x - a.x) / L);
         }
       }
       if (!wb.empty) {
@@ -1303,7 +1356,7 @@ export class World {
         const sw = r.cls === 'art' ? 3.2 : r.cls === 'st' || r.cls === 'res' ? 2.6 : 0;
         if (distToSeg(x, z, a.x, a.z, b.x, b.z).d > r.hw + sw) continue;
         if (Math.abs(r.dx * be.dx + r.dz * be.dz) > Math.cos(Math.PI / 6)) continue;
-        return r;
+        return { r, sw };
       }
       return null;
     };
@@ -1325,6 +1378,14 @@ export class World {
         const P0 = city.nodes[m.ni];
         const app = [];
         {
+          // AN APPROACH THAT MEETS A FIXED-HEIGHT ROAD ENDS THERE, at its
+          // height. The ramp aimed at raw ground 70 m out whatever it met on
+          // the way: SR-99's NB exit joins Aurora's deck 35 m past the
+          // north portal, and passed that junction 1.7 m under the deck, so
+          // the car climbed onto it 1.9 m in 6 m (~400 m/s^2). The draped road
+          // lies 0.4 m over a corridor point's y (floor y - 0.7, + lift).
+          const walk = [];
+          let fixedY = null;
           let cur = m.ni, prev = -1, d = 0;
           while (d < APPROACH) {
             const n = city.nodes[cur];
@@ -1338,12 +1399,47 @@ export class World {
             const e = city.edges[best];
             const nx = e.a === cur ? e.b : e.a;
             const nn = city.nodes[nx];
+            // walk the edge in 3 m steps looking for a deck or graded surface
+            // at about ground level that holds the point (not an overpass)
+            const from = city.nodes[cur];
+            let hit = null;
+            for (let sd = 3; sd < e.len && d + sd <= APPROACH && !hit; sd += 3) {
+              if (d + sd < 10) continue;
+              const f = sd / e.len, x = from.x + (nn.x - from.x) * f, z = from.z + (nn.z - from.z) * f;
+              const raw = G.terrainRaw(x, z);
+              for (const si of city.surfacesNear(x, z)) {
+                const s = city.surfaces[si];
+                if (s.tun) continue;
+                const re = city.edges[s.ei];
+                if (!re || !(re.elev || re.prof)) continue;
+                const sx = s.bx - s.ax, sz = s.bz - s.az, l2 = sx * sx + sz * sz;
+                const tt = l2 > 0 ? ((x - s.ax) * sx + (z - s.az) * sz) / l2 : 0;
+                if (tt < 0 || tt > 1) continue;
+                if (Math.hypot(x - s.ax - sx * tt, z - s.az - sz * tt) > re.hw) continue;
+                const sy = s.ay + (s.by - s.ay) * tt;
+                if (sy < raw - 3 || sy > raw + 1.5) continue;
+                hit = { x, z, y: sy, sd };
+                break;
+              }
+            }
+            if (hit) {
+              d += hit.sd;
+              walk.push({ nn: { x: hit.x, z: hit.z }, hw: Math.max(m.hw, e.hw), d });
+              fixedY = hit.y + 0.4;
+              break;
+            }
             d += e.len; prev = best; cur = nx;
-            const t = Math.min(1, d / APPROACH);
+            walk.push({ nn, hw: Math.max(m.hw, e.hw), d });
+          }
+          const D = fixedY !== null ? d : APPROACH;
+          for (const w of walk) {
+            const t = Math.min(1, w.d / D), s = t * t * (3 - 2 * t);
+            const raw = G.terrainRaw(w.nn.x, w.nn.z);
             app.push({
-              x: nn.x, z: nn.z, hw: Math.max(m.hw, e.hw),
-              // ramp from the dropped portal up to untouched ground
-              y: P0.y + (G.terrainRaw(nn.x, nn.z) - P0.y) * (t * t * (3 - 2 * t)),
+              x: w.nn.x, z: w.nn.z, hw: w.hw,
+              // ramp from the dropped portal up to untouched ground (or to
+              // the fixed road it meets); the carve only digs
+              y: fixedY !== null ? Math.min(raw, P0.y + (fixedY - P0.y) * s) : P0.y + (raw - P0.y) * s,
             });
           }
         }
@@ -1395,26 +1491,67 @@ export class World {
             // does. (cutStats.streetEnded counts the cuts this shortens.)
             const cN = city.nodes[cur];
             let stop = null;
+            // LOOK AHEAD: stop where the corridor, SET metres on, would reach
+            // the street's footway anywhere across its width -- so the
+            // trench floor stays at full depth for SET behind the headwall and
+            // the ground's climb back up (smeared over a 4 m terrain quad)
+            // happens behind the mouth card, not inside the openings. Ended at
+            // the kerb itself, the climb stood in every opening as a grass
+            // slope. The cover where the corridor meets the street decides
+            // whether this applies (STREET_ROOF).
+            const ux = (nn.x - cN.x) / e.len, uz = (nn.z - cN.z) / e.len, qx = -uz, qz = ux;
+            const Wd = e.hw + CUT_SH;
             for (let sd = 1; streetRoof && sd < e.len && !stop; sd += 1) {
               const f = sd / e.len;
               const x = cN.x + (nn.x - cN.x) * f, z = cN.z + (nn.z - cN.z) * f, y = cN.y + (nn.y - cN.y) * f;
-              if (G.terrainRaw(x, z) - (y + TUN_DECK + TUN_WALL) < STREET_ROOF) continue;
-              const st = streetOver(x, z, e, m.ni);
-              if (st) {
-                const fb = Math.max(0, sd - 1) / e.len;
-                stop = { x: cN.x + (nn.x - cN.x) * fb, z: cN.z + (nn.z - cN.z) * fb, y: cN.y + (nn.y - cN.y) * fb, hw: e.hw };
-                pts2.streetDir = [st.dx, st.dz];
-                // The kerb line, 1 m short of the street, as a half-plane
-                // facing into it: nothing past it may be dug (cutFloor). The
-                // trench's full cross-section at its end is ~15 m wide, and
-                // where the street crosses at an angle a corner of it reached
-                // under the kerb -- tarmac drawn at street level over ground
-                // groundAt had dug away, which is falling through the road.
-                const sa = city.nodes[st.a];
-                let knx = -st.dz, knz = st.dx;
-                if ((sa.x - stop.x) * knx + (sa.z - stop.z) * knz < 0) { knx = -knx; knz = -knz; }
-                pts2.kerb = { x: stop.x, z: stop.z, nx: knx, nz: knz };
+              let st = null;
+              for (const o of [0, -Wd, Wd]) {
+                st = streetOver(x + ux * STREET_SET + qx * o, z + uz * STREET_SET + qz * o, e, m.ni);
+                if (st) break;
               }
+              if (!st) continue;
+              // the street that crosses the bore's CENTRELINE, when there is
+              // one within reach, is the one the wall and barrier follow: a
+              // corner can meet a side street first
+              for (let ahead = STREET_SET; ahead < STREET_SET + 25; ahead += 1) {
+                const c2 = streetOver(x + ux * ahead, z + uz * ahead, e, m.ni);
+                if (c2) { st = c2; break; }
+              }
+              // cover over the roof where the corridor meets the street
+              const cx2 = x + ux * STREET_SET, cz2 = z + uz * STREET_SET, cy2 = y + (nn.y - cN.y) / e.len * STREET_SET;
+              const cov = G.terrainRaw(cx2, cz2) - (cy2 + TUN_DECK + TUN_WALL);
+              if (cov < STREET_ROOF) continue;   // roof well over the street: lids' job
+              stop = { x, z, y, hw: e.hw };
+              pts2.streetDir = [st.r.dx, st.r.dz];
+              // The kerb line, 1 m short of the street's footway, as a half-
+              // plane facing into it: nothing past it may be dug (cutFloor,
+              // inCut). The trench's full cross-section is ~15 m wide, and
+              // where the street crosses at an angle a corner of it reached
+              // under the kerb -- tarmac over dug ground, falling through.
+              // (the street's true perpendicular, facing the street from the
+              // bore; the nearest-point direction goes diagonal near a
+              // segment's end and laid the kerb line askew)
+              const ra = city.nodes[st.r.a];
+              let knx = -st.r.dz, knz = st.r.dx;
+              let kd = (ra.x - x) * knx + (ra.z - z) * knz;
+              if (kd < 0) { knx = -knx; knz = -knz; kd = -kd; }
+              const back = st.r.hw + st.sw + 1;
+              pts2.kerb = { x: x + knx * (kd - back), z: z + knz * (kd - back), nx: knx, nz: knz };
+              // EVERY crossing street near the end is protected, not only the
+              // one the look-ahead met first: a corner of the corridor can
+              // meet a side street, whose kerb line then left the main street
+              // undug-over nothing -- the ramp bore's cut dug under Harrison
+              // Street's north footway at SR-99, and walkers sank to its deck.
+              const prot = [];
+              for (const ei of city.roadsNear(x, z, 30, false)) {
+                const r2 = city.edges[ei];
+                if (r2.tunnel || r2.elev || r2.prof || r2.a === m.ni || r2.b === m.ni) continue;
+                if (Math.abs(r2.dx * e.dx + r2.dz * e.dz) > Math.cos(Math.PI / 6)) continue;
+                const sw2 = r2.cls === 'art' ? 3.2 : r2.cls === 'st' || r2.cls === 'res' ? 2.6 : 0;
+                const a2 = city.nodes[r2.a], b2 = city.nodes[r2.b];
+                prot.push([a2.x, a2.z, b2.x, b2.z, r2.hw + sw2 + 1]);
+              }
+              pts2.protect = prot;
             }
             if (stop) {
               if (Math.hypot(stop.x - cN.x, stop.z - cN.z) > 0.5) pts2.push(stop);
@@ -1452,7 +1589,8 @@ export class World {
             x0 = Math.min(x0, q.x - r); x1 = Math.max(x1, q.x + r);
             z0 = Math.min(z0, q.z - r); z1 = Math.max(z1, q.z + r);
           }
-          cuts.push({ ni: m.ni, pts, apron: app.length, x0, x1, z0, z1, streetDir: bp.streetDir || null, kerb: bp.kerb || null });
+          cuts.push({ ni: m.ni, pts, apron: app.length, x0, x1, z0, z1, streetDir: bp.streetDir || null, kerb: bp.kerb || null,
+            protect: bp.protect || null });
           }
         }
       }
@@ -1673,20 +1811,25 @@ export class World {
     for (let ci = 0; ci < near.length; ci++) {
       const c = near[ci];
       if (x < c.x0 || x > c.x1 || z < c.z0 || z > c.z1) continue;
-      // past a street-ended cut's kerb line: that street's ground, never dug
-      if (c.kerb && (x - c.kerb.x) * c.kerb.nx + (z - c.kerb.z) * c.kerb.nz > 0) continue;
+      // under a street-ended cut's protected streets: their ground, never dug
+      if (c.protect && underStreet(c, x, z)) continue;
       for (let i = 0; i < c.pts.length - 1; i++) {
         const a = c.pts[i], b = c.pts[i + 1];
         // distToSeg, inline
         const sx = b.x - a.x, sz = b.z - a.z, l2 = sx * sx + sz * sz;
         let rt = l2 > 0 ? ((x - a.x) * sx + (z - a.z) * sz) / l2 : 0;
-        // A cut ended under a street stops dead at its end, inside the
-        // headwall's depth: clamped, the last segments' round ends dug the
-        // full cross-section (~12 m) on under the street -- the deepest trench
-        // wins, so the last real segment's bowl beat the cap's rising floor --
-        // and the street grew lids, a barrier wall and a pavement with
-        // nothing under it.
-        if (c.streetDir && rt > 1 && (b.cap || i + 2 === c.pts.length - 1)) continue;
+        // PAST AN INTERIOR JOINT the neighbouring segment owns the ground
+        // wherever it covers the point. Clamped, this segment's round end dug
+        // a flat bowl at the joint's depth ~13 m back up the segment before,
+        // and the deepest trench wins, so a descending cutting became a
+        // staircase: SR-99's NB entry at SODO had 1.35 m cliffs between flat
+        // shelves, and the car bounced down it. The clamped end still fills
+        // the wedge outside a bend, which no segment's interior covers. Only
+        // at a near-straight joint (within ~30 deg): round a sharp bend the
+        // clamped end is the only thing digging the inside of the turn to the
+        // joint's depth (portalcheck's coverage, a 90 deg turn at (421, -80)).
+        if ((rt < 0 && i > 0 && this._segCovers(c.pts[i - 1], a, x, z, b))
+          || (rt > 1 && i < c.pts.length - 2 && this._segCovers(b, c.pts[i + 2], x, z, a, true))) continue;
         rt = rt < 0 ? 0 : rt > 1 ? 1 : rt;
         const rd = Math.hypot(x - (a.x + sx * rt), z - (a.z + sz * rt));
         const w = a.hw + CUT_SH + CUT_OVER;
@@ -1711,6 +1854,23 @@ export class World {
       }
     }
     return best ? { y: bY, t: bT, c: bC } : null;
+  }
+
+  // Does corridor segment p->q cover (x, z) with its interior at full depth?
+  // (Not its banks: where only a neighbour's bank reaches, the clamped end is
+  // what digs the carriageway -- yielding there left ground over the road.)
+  // `o` is the far end of the asking segment (it shares the joint with p->q:
+  // q when `after`, else p), for the straightness test.
+  _segCovers(p, q, x, z, o, after = false) {
+    const sx = q.x - p.x, sz = q.z - p.z, l2 = sx * sx + sz * sz;
+    if (!(l2 > 0)) return false;
+    const j = after ? p : q;
+    const ox = after ? j.x - o.x : o.x - j.x, oz = after ? j.z - o.z : o.z - j.z;
+    const ol = Math.hypot(ox, oz);
+    if (!(ol > 0) || (sx * ox + sz * oz) / (Math.sqrt(l2) * ol) < 0.87) return false;
+    const rt = ((x - p.x) * sx + (z - p.z) * sz) / l2;
+    if (rt < 0 || rt > 1) return false;
+    return Math.hypot(x - (p.x + sx * rt), z - (p.z + sz * rt)) <= p.hw + CUT_SH + CUT_OVER;
   }
 
   /**
@@ -2515,10 +2675,10 @@ export class World {
   inCut(x, z, y) {
     for (const c of this._cutsNear(x, z)) {
       if (x < c.x0 || x > c.x1 || z < c.z0 || z > c.z1) continue;
-      // past a street-ended cut's kerb line nothing is dug (cutFloor), so the
-      // bore there is buried: without this the clamped end still answered
-      // "open" for ~8 m under the street, a roofless tube with the sky above
-      if (c.kerb && (x - c.kerb.x) * c.kerb.nx + (z - c.kerb.z) * c.kerb.nz > 0) continue;
+      // under a street-ended cut's protected streets nothing is dug
+      // (cutFloor), so the bore there is buried: without this the clamped end
+      // still answered "open" ~8 m under the street, a roofless tube
+      if (c.protect && underStreet(c, x, z)) continue;
       for (let i = 0; i < c.pts.length - 1; i++) {
         const a = c.pts[i], b = c.pts[i + 1];
         // distToSeg returns {d, t, x, z}, NOT a number. Comparing the object
@@ -2545,7 +2705,17 @@ export class World {
   }
 
   buildWater() {
-    const geo = new THREE.PlaneGeometry(G.MAP_HALF * 2.6, G.MAP_HALF * 2.6, 1, 1);
+    // TESSELLATED, not one quad. A 34 km quad reaches far past the 9 km far
+    // plane, and the depth rasterised across a clipped triangle that size is
+    // off by more than the 2 cm the tunnel water mask stands over the sea: from
+    // a chase camera a few metres over SR-99's NB entry cutting the sea won
+    // the depth test against the mask (and the road beside it), and the
+    // cutting drew flooded -- or not, flipping with sub-milliradian changes in
+    // the camera's heading. At WATER_CELL cells (64 x 64), 12 poses down that
+    // cutting all matched a render with no sea at all (the one quad failed 1
+    // of 12, 8 x 8 cells 1 of 12). Still one draw; ~8k triangles.
+    const WATER_SEG = Math.ceil((G.MAP_HALF * 2.6) / WATER_CELL);
+    const geo = new THREE.PlaneGeometry(G.MAP_HALF * 2.6, G.MAP_HALF * 2.6, WATER_SEG, WATER_SEG);
     geo.rotateX(-Math.PI / 2);
     const n = this.tx.water.normalMap;
     n.repeat.set(520, 520);
@@ -2617,7 +2787,8 @@ export class World {
     this.lakes = [];
     for (const l of (this.lakeSpecs || [])) {
       const w = l.x1 - l.x0, d = l.z1 - l.z0;
-      const lg = new THREE.PlaneGeometry(w, d, 1, 1);
+      // tessellated like the sea, for the same depth precision
+      const lg = new THREE.PlaneGeometry(w, d, Math.ceil(w / WATER_CELL), Math.ceil(d / WATER_CELL));
       lg.rotateX(-Math.PI / 2);
       const lm = new THREE.Mesh(lg, mat);
       lm.position.set((l.x0 + l.x1) / 2, l.level, (l.z0 + l.z1) / 2);
@@ -2655,7 +2826,7 @@ export class World {
       const box = new THREE.Vector4((c.i0 - 0.5) * S - H, (c.j0 - 0.5) * S - H, c.w * S, c.h * S);
       const x0 = (c.i0 + a0 - 1) * S - H, x1 = (c.i0 + a1 + 1) * S - H;
       const z0 = (c.j0 + b0 - 1) * S - H, z1 = (c.j0 + b1 + 1) * S - H;
-      const cg = new THREE.PlaneGeometry(x1 - x0, z1 - z0, 1, 1);
+      const cg = new THREE.PlaneGeometry(x1 - x0, z1 - z0, Math.ceil((x1 - x0) / WATER_CELL), Math.ceil((z1 - z0) / WATER_CELL));
       cg.rotateX(-Math.PI / 2);
       cg.translate((x0 + x1) / 2, 0, (z0 + z1) / 2);
       const U = c.union, pos = cg.attributes.position, uv = cg.attributes.uv;
@@ -4848,7 +5019,7 @@ float frLine(float o, float fw, float c, float w) {
     if (sc) {
       let nx = -sc.streetDir[1], nz = sc.streetDir[0];
       if (nx * O.dx + nz * O.dz < 0) { nx = -nx; nz = -nz; }
-      O.dx = nx; O.dz = nz; O.street = true;
+      O.dx = nx; O.dz = nz; O.street = true; O.kerb = sc.kerb;
     }
     const px = -O.dz, pz = O.dx;
     const rot = Math.atan2(O.dx, O.dz);
@@ -5075,12 +5246,35 @@ float frLine(float o, float fw, float c, float w) {
         [m0x + bx, sill, m0z + bz], [m1x + bx, sill, m1z + bz],
         [m1x + bx, roofY, m1z + bz], [m0x + bx, roofY, m0z + bz],
         [-O.dx, 0, -O.dz], ZERO_UV, [0.035, 0.035, 0.045]);
+      // A camera outside the card with the car inside sees only the card: it
+      // is a one-way stop for the boom (O points into the bore)
+      this._camBlock((m0x + m1x) / 2 + bx, (m0z + m1z) / 2 + bz, h1 - h0, 0.4, rot, sill, roofY, [O.dx, O.dz]);
     }
 
     const parts = [];
     const [lx, lz] = at((uMin + uMax) / 2);
     flat.box(lx, roofY, lz, uMax - uMin, capY - roofY, DEPTH, rot, conc);
     parts.push({ kind: 'lintel', x: lx, z: lz, base: roofY, top: capY, w: uMax - uMin });
+    this._camBlock(lx, lz, uMax - uMin, DEPTH, rot, roofY, capY);
+    // THE PORTAL'S TOP SLAB, from the wall's back face to the street's kerb
+    // line. A street-ended cut is dug at full depth right up to that line (so
+    // the ground's climb is behind the mouth card), and the slab is what
+    // covers it: flush with the street, a concrete deck between wall and
+    // footway, as a cut-and-cover portal has. The kerb barrier stops anyone
+    // walking or driving onto it.
+    if (Oin.street && Oin.kerb) {
+      const K = Oin.kerb;
+      const den = O.dx * K.nx + O.dz * K.nz;
+      const dK = den > 0.2 ? ((K.x - ox) * K.nx + (K.z - oz) * K.nz) / den : 0;
+      const len = dK - DEPTH / 2;
+      if (len > 0.3) {
+        const mid = DEPTH / 2 + len / 2;
+        const top = Math.max(roofY + 0.3, G.terrainRaw(ox + O.dx * dK, oz + O.dz * dK) + ROAD_LIFT);
+        flat.box(lx + O.dx * mid, roofY, lz + O.dz * mid, uMax - uMin, top - roofY, len, rot, conc);
+        parts.push({ kind: 'cover', x: lx + O.dx * mid, z: lz + O.dz * mid, base: roofY, top, w: uMax - uMin });
+        this._camBlock(lx + O.dx * mid, lz + O.dz * mid, uMax - uMin, len, rot, roofY, top);
+      }
+    }
 
     // The piers ARE the gaps: outer shoulders and whatever lies between two
     // bores. Defined by subtraction, so none of them can float.
@@ -5100,6 +5294,7 @@ float frLine(float o, float fw, float c, float w) {
       }
       flat.box(cx, foot, cz, p1 - p0, roofY - foot, DEPTH, rot, conc);
       parts.push({ kind: 'pier', x: cx, z: cz, base: foot, top: roofY, w: p1 - p0 });
+      this._camBlock(cx, cz, p1 - p0, DEPTH, rot, foot, roofY);
     }
     // Kept so a check can ask what was actually built rather than look at a
     // picture of it: every part's foot against the ground under it, and every
@@ -5113,6 +5308,46 @@ float frLine(float o, float fw, float c, float w) {
         along: (m.x - ox) * O.dx + (m.z - oz) * O.dz,
       })),
     });
+  }
+
+  // THE CHASE CAMERA'S BOOM STOPS AT A PORTAL WALL, as it does at a building
+  // (player.clearCamDist). The walls are concrete boxes the building index has
+  // never heard of, so leaving a mouth the camera sat inside the pier between
+  // two openings, and entering one it rose into the lintel and top slab. Filed
+  // once per box (a chunk rebuilt later re-meshes the same wall) on a 32 m
+  // grid on the city, where the camera looks.
+  // `inward` ([dx, dz]) makes it a mouth card's one-way stop.
+  _camBlock(x, z, w, d, rot, y0, y1, inward = null) {
+    const c = this.city;
+    const key = `${Math.round(x * 10)},${Math.round(z * 10)},${Math.round(w * 10)},${Math.round(y0 * 10)}`;
+    if (!c.camBlockKeys) {
+      c.camBlockKeys = new Set(); c.camBlockGrid = new Map();
+      // Is a portal wall piece over (x, z) more than 2 m above y? The camera's
+      // "in a bore" test: under a street-ended mouth's top slab the ground is
+      // dug, so carved ground over the car says open road.
+      c.camBlockOver = (qx, qz, qy) => {
+        const l = c.camBlockGrid.get(Math.floor(qx / 32) * 100003 + Math.floor(qz / 32));
+        if (!l) return false;
+        for (const b of l) {
+          if (b.card || b.y < qy + 2) continue;
+          const cs = Math.cos(-b.rot), sn = Math.sin(-b.rot), dx = qx - b.x, dz = qz - b.z;
+          if (Math.abs(dx * cs - dz * sn) < b.w / 2 && Math.abs(dx * sn + dz * cs) < b.d / 2) return true;
+        }
+        return false;
+      };
+    }
+    if (c.camBlockKeys.has(key)) return;
+    c.camBlockKeys.add(key);
+    const b = { x, z, w, d, rot, y: y0, h: y1 - y0, card: inward };
+    const r = Math.hypot(w, d) / 2;
+    for (let cx = Math.floor((x - r) / 32); cx <= Math.floor((x + r) / 32); cx++) {
+      for (let cz = Math.floor((z - r) / 32); cz <= Math.floor((z + r) / 32); cz++) {
+        const k = cx * 100003 + cz;
+        let l = c.camBlockGrid.get(k);
+        if (!l) c.camBlockGrid.set(k, (l = []));
+        l.push(b);
+      }
+    }
   }
 
   /** Deck, two walls and a ceiling between two cross-sections of a bore. */
