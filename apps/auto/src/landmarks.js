@@ -2353,7 +2353,12 @@ export function buildLandmarks(scene, city, waterLevelAt = null) {
     MARINAS.forEach((m, i) => {
       const d = marinaDock(m, waterLevelAt, i);
       if (!d) { dropped.push(`marina:${m.name}`); return; }
-      for (const sd of d.solids) solids.push(sd);
+      // through the same road test as every landmark solid: a curb or pile
+      // on a carriageway would be an invisible wall in a lane
+      for (const sd of d.solids) {
+        if (city && onRoad(city, sd)) { dropped.push(`marina:${m.name}@${sd.x.toFixed(0)},${sd.z.toFixed(0)}`); continue; }
+        solids.push(sd);
+      }
       platforms.push(...d.plat);
       addTo(`marina${i}`, d.g);
       marinas.push({ name: m.name, x: d.x, z: d.z, level: d.level, moorings: d.moor, seaplanes: !!m.seaplanes,
