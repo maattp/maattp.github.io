@@ -58,6 +58,7 @@ export function initGeo(md) {
   if (md.hfN !== HF_N) throw new Error(`height.png is ${md.hfN} wide, expected ${HF_N}`);
   if (md.maskN !== MASK_N) throw new Error(`surface.png is ${md.maskN} wide, expected ${MASK_N}`);
   HF = md.height;
+  fixTerrain(HF);
   WET = md.water;
   GRN = md.green;
   LOT = md.lot || null;
@@ -69,6 +70,38 @@ export function initGeo(md) {
   SPAWN_HEADING = p.spawn.heading;
   RESPAWN = { x: p.respawn.x, z: p.respawn.z };
   KEEP_CLEAR = [SPAWN, RESPAWN];
+}
+
+// PLACES THE IMPORT DUG INTO CRATERS. build_raster.py digs a bed under every
+// heightfield cell that touches water, but only a labelled lake (over
+// 20,000 m2) gets a water plane: a small pond comes out as a dry pit. Bellevue
+// Downtown Park's canal ring and reflecting pond (5,000 m2 together) became a
+// hollow 20 m deep across the south-west of its lawn, where the real park is
+// a level lawn inside a canal (landmarks.js draws the water). Each entry
+// flattens the heightfield vertices within r0 of a centre to the mean ground
+// on the ring just outside r1, blending between; applied at load, before
+// anything reads the terrain, so every consumer sees the same ground.
+export const TERRAIN_FLATS = [
+  { x: 10051, z: -129, r0: 150, r1: 215 },   // Bellevue Downtown Park
+];
+function fixTerrain(hf) {
+  for (const f of TERRAIN_FLATS) {
+    let sum = 0, n = 0;
+    const idx = (x, z) => Math.round((z + MAP_HALF) / HF_STEP) * HF_N + Math.round((x + MAP_HALF) / HF_STEP);
+    for (let k = 0; k < 32; k++) {
+      const a = (k / 32) * Math.PI * 2;
+      sum += hf[idx(f.x + Math.cos(a) * (f.r1 + 20), f.z + Math.sin(a) * (f.r1 + 20))]; n++;
+    }
+    f.y = sum / n;
+    const i0 = Math.floor((f.x - f.r1 + MAP_HALF) / HF_STEP), i1 = Math.ceil((f.x + f.r1 + MAP_HALF) / HF_STEP);
+    const j0 = Math.floor((f.z - f.r1 + MAP_HALF) / HF_STEP), j1 = Math.ceil((f.z + f.r1 + MAP_HALF) / HF_STEP);
+    for (let j = j0; j <= j1; j++) for (let i = i0; i <= i1; i++) {
+      const d = Math.hypot(i * HF_STEP - MAP_HALF - f.x, j * HF_STEP - MAP_HALF - f.z);
+      if (d >= f.r1) continue;
+      const t = d <= f.r0 ? 0 : (d - f.r0) / (f.r1 - f.r0), s = t * t * (3 - 2 * t);
+      hf[j * HF_N + i] = f.y + (hf[j * HF_N + i] - f.y) * s;
+    }
+  }
 }
 
 export function heightfield() {

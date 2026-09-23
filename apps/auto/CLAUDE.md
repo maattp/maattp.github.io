@@ -1440,6 +1440,20 @@ it was set from. Collision is in "Solid street objects".
   low crown (not a dome), folds in plan deepening toward the top, and a shingle
   map. Its colour placement is est., from photographs.
 
+- **Bellevue Downtown Park is built from its OSM water** (`bellevueDT`,
+  v111): the 10-acre lawn inside the ring canal (r 96.7-101.7 m), the
+  promenade under a double row of trees, the reflecting pond and the canal's
+  straight arm as mapped, and a stepped waterfall down the pond's east edge.
+  Before, `bellevueDT` had no builder, and the import had dug a 20 m DRY
+  CRATER there: `build_raster.py` digs a bed under every heightfield cell
+  touching water, but only a lake over 20,000 m2 gets a water plane.
+  `geo.TERRAIN_FLATS` levels such a spot at load (vertices within r0 set to
+  the ground just outside, blended to r1) before anything reads the terrain.
+  **Other small ponds have the same pit**; the importer-side fix (no bed
+  under unlabelled ponds) needs a raster rebuild and a road re-grade, so it
+  is a separate change. `city.clearCircles` keeps the scatter off the lawn.
+  1 draw, 17.6k triangles; views `bdp-*` in landmarkshots.
+
 Built alone (draws after merge / triangles): Needle 6 / 14.0k, Spheres 5 / 15.0k,
 Wheel 6 / 7.3k, arena 8 / 5.6k, Troll 4 / 5.5k, MoPOP 7 / 4.7k, T-Mobile 8 / 4.7k,
 Lumen 9 / 4.3k, Husky 8 / 1.5k, Market 7 / 0.8k, Smith 7 / 0.5k. All of them:

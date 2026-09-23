@@ -3561,6 +3561,13 @@ export function* cityGenerator(md, cache = {}) {
     },
     /** Inside a jump's kept-clear corridor (no trees, posts or parked cars)? */
     jumpClear(x, z) {
+      // ...and landmark lawns kept open (circles [x, z, r]: Bellevue
+      // Downtown Park's lawn and promenade, which landmarks.js plants itself)
+      const Cc = this.clearCircles;
+      if (Cc) for (let q = 0; q < Cc.length; q++) {
+        const dx = x - Cc[q][0], dz = z - Cc[q][1];
+        if (dx * dx + dz * dz < Cc[q][2] * Cc[q][2]) return true;
+      }
       const R = this.jumpClearRects;
       if (!R) return false;
       for (let q = 0; q < R.length; q++) {
