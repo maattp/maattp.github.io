@@ -1738,7 +1738,18 @@ export class World {
         // distToSeg, inline
         const sx = b.x - a.x, sz = b.z - a.z, l2 = sx * sx + sz * sz;
         let rt = l2 > 0 ? ((x - a.x) * sx + (z - a.z) * sz) / l2 : 0;
-
+        // PAST AN INTERIOR JOINT the neighbouring segment owns the ground
+        // wherever it covers the point. Clamped, this segment's round end dug
+        // a flat bowl at the joint's depth ~13 m back up the segment before,
+        // and the deepest trench wins, so a descending cutting became a
+        // staircase: SR-99's NB entry at SODO had 1.35 m cliffs between flat
+        // shelves, and the car bounced down it. The clamped end still fills
+        // the wedge outside a bend, which no segment's interior covers. Only
+        // at a near-straight joint (within ~30 deg): round a sharp bend the
+        // clamped end is the only thing digging the inside of the turn to the
+        // joint's depth (portalcheck's coverage, a 90 deg turn at (421, -80)).
+        if ((rt < 0 && i > 0 && this._segCovers(c.pts[i - 1], a, x, z, b))
+          || (rt > 1 && i < c.pts.length - 2 && this._segCovers(b, c.pts[i + 2], x, z, a, true))) continue;
         rt = rt < 0 ? 0 : rt > 1 ? 1 : rt;
         const rd = Math.hypot(x - (a.x + sx * rt), z - (a.z + sz * rt));
         const w = a.hw + CUT_SH + CUT_OVER;
@@ -1763,6 +1774,23 @@ export class World {
       }
     }
     return best ? { y: bY, t: bT, c: bC } : null;
+  }
+
+  // Does corridor segment p->q cover (x, z) with its interior at full depth?
+  // (Not its banks: where only a neighbour's bank reaches, the clamped end is
+  // what digs the carriageway -- yielding there left ground over the road.)
+  // `o` is the far end of the asking segment (it shares the joint with p->q:
+  // q when `after`, else p), for the straightness test.
+  _segCovers(p, q, x, z, o, after = false) {
+    const sx = q.x - p.x, sz = q.z - p.z, l2 = sx * sx + sz * sz;
+    if (!(l2 > 0)) return false;
+    const j = after ? p : q;
+    const ox = after ? j.x - o.x : o.x - j.x, oz = after ? j.z - o.z : o.z - j.z;
+    const ol = Math.hypot(ox, oz);
+    if (!(ol > 0) || (sx * ox + sz * oz) / (Math.sqrt(l2) * ol) < 0.87) return false;
+    const rt = ((x - p.x) * sx + (z - p.z) * sz) / l2;
+    if (rt < 0 || rt > 1) return false;
+    return Math.hypot(x - (p.x + sx * rt), z - (p.z + sz * rt)) <= p.hw + CUT_SH + CUT_OVER;
   }
 
   /**

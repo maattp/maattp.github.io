@@ -3228,6 +3228,18 @@ another bore piece carries on) and give the point up beyond that; a free end
 breaks at the lid tunnels. SB mouth: frames over 100 m/s^2 40 -> 16, worst
 drop a frame -0.26 -> -0.08 m.
 
+**v104: the cutting's own floor was a staircase too.** `cutFloor` clamps each
+corridor segment, so at every joint the lower segment's round end dug a flat
+bowl at the joint's depth ~13 m back up the segment before, and the deepest
+trench wins: shelf, 1.35 m cliff, shelf, down SR-99's NB entry at SODO, and
+the draped road on it bounced the car (720 m/s^2). Past an interior joint a
+segment now yields wherever its neighbour covers the point at full depth
+(`_segCovers`), **only at a near-straight joint** (within ~30 deg): round a
+sharp bend the clamped end is what digs the inside of the turn (yielding
+there put 0.41 m of ground over a carriageway at (421, -80)). Frames over
+100 m/s^2: SB 14 -> **0**, NB 39 -> 18 (all at the north exit's Aurora deck);
+jank fwy-bump 821 -> 772; portalcheck unchanged.
+
 **The water mask is built in 4 m cells**, skipping only cells whose centre
 is water: skipping a whole segment when any sample was wet left the NB entry
 cutting's last 30 m under the sea plane.
