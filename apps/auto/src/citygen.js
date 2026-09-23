@@ -3199,8 +3199,8 @@ export function* cityGenerator(md, cache = {}) {
           const s = surfaces[si];
           // distToSeg, inline (no result object: ~110 calls a frame)
           const sdx = s.bx - s.ax, sdz = s.bz - s.az, sl2 = sdx * sdx + sdz * sdz;
-          let rt = sl2 > 0 ? ((x - s.ax) * sdx + (z - s.az) * sdz) / sl2 : 0;
-          rt = rt < 0 ? 0 : rt > 1 ? 1 : rt;
+          const rt0 = sl2 > 0 ? ((x - s.ax) * sdx + (z - s.az) * sdz) / sl2 : 0;
+          const rt = rt0 < 0 ? 0 : rt0 > 1 ? 1 : rt0;
           const rd = Math.hypot(x - (s.ax + sdx * rt), z - (s.az + sdz * rt));
           // A BORE HOLDS ITS CAR WITH A MARGIN. At exact half-width, a car
           // weaving at a bend where two tunnel edges of different widths join
@@ -3288,7 +3288,7 @@ export function* cityGenerator(md, cache = {}) {
             // extrapolating there added ~50 grade breaks at the city's lid
             // tunnels (jank fwy-bump 820 -> 867).
             if (s.tun) {
-              const tu = sl2 > 0 ? ((x - s.ax) * sdx + (z - s.az) * sdz) / sl2 : 0;
+              const tu = rt0;
               if ((tu < 0 && s.tin0) || (tu > 1 && s.tin1)) {
                 const over = 3 / Math.sqrt(sl2 || 1);
                 // past 3 m beyond it the neighbour owns the point: capped
@@ -3296,6 +3296,9 @@ export function* cityGenerator(md, cache = {}) {
                 if (tu < -over || tu > 1 + over) continue;
                 y = s.ay + (s.by - s.ay) * tu + ROAD_LIFT * 0.3;
                 extrap = true;
+                // the graded extrapolation's tie-breaker, kept over the bend
+                // margin's larger penalty where that applies
+                pen = Math.max(pen, 0.12);
               }
             }
           }

@@ -1533,10 +1533,10 @@ export class World {
               // segment's end and laid the kerb line askew)
               const ra = city.nodes[st.r.a];
               let knx = -st.r.dz, knz = st.r.dx;
-              let dist = (ra.x - x) * knx + (ra.z - z) * knz;
-              if (dist < 0) { knx = -knx; knz = -knz; dist = -dist; }
+              let kd = (ra.x - x) * knx + (ra.z - z) * knz;
+              if (kd < 0) { knx = -knx; knz = -knz; kd = -kd; }
               const back = st.r.hw + st.sw + 1;
-              pts2.kerb = { x: x + knx * (dist - back), z: z + knz * (dist - back), nx: knx, nz: knz };
+              pts2.kerb = { x: x + knx * (kd - back), z: z + knz * (kd - back), nx: knx, nz: knz };
               // EVERY crossing street near the end is protected, not only the
               // one the look-ahead met first: a corner of the corridor can
               // meet a side street, whose kerb line then left the main street
