@@ -1173,11 +1173,29 @@ export class World {
     for (let i = 0; i <= SUB; i++) { xs[i] = cx + i * q; zs[i] = cz + i * q; }
     for (let j = 0; j <= SUB; j++) for (let i = 0; i <= SUB; i++) ys[j * (SUB + 1) + i] = G.terrainHeight(xs[i], zs[j]);
     const Y = (i, j) => ys[j * (SUB + 1) + i];
+    // NO GROUND INSIDE A STREET-ENDED MOUTH'S BORE. Such a cut is dug to the
+    // street's kerb line and stops, so the ground climbs from the trench floor
+    // back up to the street across the quads just short of it -- inside the
+    // tube, between its deck and roof. From the road the mouth card hides that
+    // (it is why the card exists); a chase camera that follows the car in saw
+    // it as a wall of grass across the bore. Those quads are simply not drawn:
+    // from inside the lining shows, and from above the portal's top slab
+    // covers the whole stretch from headwall to kerb.
+    const zones = this._mouthZones();
+    const nearZone = zones.some((z0) => Math.hypot(cx + S / 2 - z0.x, cz + S / 2 - z0.z) < S * 0.71 + 24);
     // No excavation tint. The cutting is faced in concrete by the retaining
     // walls; the ground above it is the same ground as everywhere else.
     for (let j = 0; j < SUB; j++) {
       for (let i = 0; i < SUB; i++) {
         const x = xs[i], z = zs[j], x1 = xs[i + 1], z1 = zs[j + 1];
+        if (nearZone && zones.some((z0) => Math.hypot(x + q / 2 - z0.x, z + q / 2 - z0.z) < 24)) {
+          const td = this._tunDeckUnder(x + q / 2, z + q / 2, 0);
+          if (td !== null) {
+            const y0 = Math.min(Y(i, j), Y(i, j + 1), Y(i + 1, j + 1), Y(i + 1, j));
+            const y1 = Math.max(Y(i, j), Y(i, j + 1), Y(i + 1, j + 1), Y(i + 1, j));
+            if (y1 > td + 0.1 && y0 < td + TUNNEL_H - 0.1) continue;
+          }
+        }
         b.quad(
           [x, Y(i, j), z],
           [x, Y(i, j + 1), z1],
@@ -1188,6 +1206,18 @@ export class World {
           colour);
       }
     }
+  }
+
+  /** Where each street-ended cut stops (its last point before the cap). */
+  _mouthZones() {
+    if (this._mzones) return this._mzones;
+    const out = [];
+    for (const c of this.portalCuts()) {
+      if (!c.streetDir) continue;
+      const pts = c.pts.filter((p) => !p.cap);
+      if (pts.length) out.push({ x: pts[pts.length - 1].x, z: pts[pts.length - 1].z });
+    }
+    return (this._mzones = out);
   }
 
   /**
@@ -5216,12 +5246,16 @@ float frLine(float o, float fw, float c, float w) {
         [m0x + bx, sill, m0z + bz], [m1x + bx, sill, m1z + bz],
         [m1x + bx, roofY, m1z + bz], [m0x + bx, roofY, m0z + bz],
         [-O.dx, 0, -O.dz], ZERO_UV, [0.035, 0.035, 0.045]);
+      // A camera outside the card with the car inside sees only the card: it
+      // is a one-way stop for the boom (O points into the bore)
+      this._camBlock((m0x + m1x) / 2 + bx, (m0z + m1z) / 2 + bz, h1 - h0, 0.4, rot, sill, roofY, [O.dx, O.dz]);
     }
 
     const parts = [];
     const [lx, lz] = at((uMin + uMax) / 2);
     flat.box(lx, roofY, lz, uMax - uMin, capY - roofY, DEPTH, rot, conc);
     parts.push({ kind: 'lintel', x: lx, z: lz, base: roofY, top: capY, w: uMax - uMin });
+    this._camBlock(lx, lz, uMax - uMin, DEPTH, rot, roofY, capY);
     // THE PORTAL'S TOP SLAB, from the wall's back face to the street's kerb
     // line. A street-ended cut is dug at full depth right up to that line (so
     // the ground's climb is behind the mouth card), and the slab is what
@@ -5238,6 +5272,7 @@ float frLine(float o, float fw, float c, float w) {
         const top = Math.max(roofY + 0.3, G.terrainRaw(ox + O.dx * dK, oz + O.dz * dK) + ROAD_LIFT);
         flat.box(lx + O.dx * mid, roofY, lz + O.dz * mid, uMax - uMin, top - roofY, len, rot, conc);
         parts.push({ kind: 'cover', x: lx + O.dx * mid, z: lz + O.dz * mid, base: roofY, top, w: uMax - uMin });
+        this._camBlock(lx + O.dx * mid, lz + O.dz * mid, uMax - uMin, len, rot, roofY, top);
       }
     }
 
@@ -5259,6 +5294,7 @@ float frLine(float o, float fw, float c, float w) {
       }
       flat.box(cx, foot, cz, p1 - p0, roofY - foot, DEPTH, rot, conc);
       parts.push({ kind: 'pier', x: cx, z: cz, base: foot, top: roofY, w: p1 - p0 });
+      this._camBlock(cx, cz, p1 - p0, DEPTH, rot, foot, roofY);
     }
     // Kept so a check can ask what was actually built rather than look at a
     // picture of it: every part's foot against the ground under it, and every
@@ -5272,6 +5308,46 @@ float frLine(float o, float fw, float c, float w) {
         along: (m.x - ox) * O.dx + (m.z - oz) * O.dz,
       })),
     });
+  }
+
+  // THE CHASE CAMERA'S BOOM STOPS AT A PORTAL WALL, as it does at a building
+  // (player.clearCamDist). The walls are concrete boxes the building index has
+  // never heard of, so leaving a mouth the camera sat inside the pier between
+  // two openings, and entering one it rose into the lintel and top slab. Filed
+  // once per box (a chunk rebuilt later re-meshes the same wall) on a 32 m
+  // grid on the city, where the camera looks.
+  // `inward` ([dx, dz]) makes it a mouth card's one-way stop.
+  _camBlock(x, z, w, d, rot, y0, y1, inward = null) {
+    const c = this.city;
+    const key = `${Math.round(x * 10)},${Math.round(z * 10)},${Math.round(w * 10)},${Math.round(y0 * 10)}`;
+    if (!c.camBlockKeys) {
+      c.camBlockKeys = new Set(); c.camBlockGrid = new Map();
+      // Is a portal wall piece over (x, z) more than 2 m above y? The camera's
+      // "in a bore" test: under a street-ended mouth's top slab the ground is
+      // dug, so carved ground over the car says open road.
+      c.camBlockOver = (qx, qz, qy) => {
+        const l = c.camBlockGrid.get(Math.floor(qx / 32) * 100003 + Math.floor(qz / 32));
+        if (!l) return false;
+        for (const b of l) {
+          if (b.card || b.y < qy + 2) continue;
+          const cs = Math.cos(-b.rot), sn = Math.sin(-b.rot), dx = qx - b.x, dz = qz - b.z;
+          if (Math.abs(dx * cs - dz * sn) < b.w / 2 && Math.abs(dx * sn + dz * cs) < b.d / 2) return true;
+        }
+        return false;
+      };
+    }
+    if (c.camBlockKeys.has(key)) return;
+    c.camBlockKeys.add(key);
+    const b = { x, z, w, d, rot, y: y0, h: y1 - y0, card: inward };
+    const r = Math.hypot(w, d) / 2;
+    for (let cx = Math.floor((x - r) / 32); cx <= Math.floor((x + r) / 32); cx++) {
+      for (let cz = Math.floor((z - r) / 32); cz <= Math.floor((z + r) / 32); cz++) {
+        const k = cx * 100003 + cz;
+        let l = c.camBlockGrid.get(k);
+        if (!l) c.camBlockGrid.set(k, (l = []));
+        l.push(b);
+      }
+    }
   }
 
   /** Deck, two walls and a ceiling between two cross-sections of a bore. */

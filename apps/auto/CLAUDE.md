@@ -3240,6 +3240,30 @@ there put 0.41 m of ground over a carriageway at (421, -80)). Frames over
 100 m/s^2: SB 14 -> **0**, NB 39 -> 18 (all at the north exit's Aurora deck);
 jank fwy-bump 821 -> 772; portalcheck unchanged.
 
+**v108: the chase camera follows the car into a street-ended mouth.** It
+used to hang back outside the mouth card with the car inside, so going in
+under Harrison the screen went black for most of a second. Three pieces:
+
+- **Portal walls stop the boom** like buildings do (`world._camBlock`, a 32 m
+  grid on `city.camBlockGrid`, tested in `clearCamDist` on each box's exact
+  height band so a camera in the bore passes under a lintel): lintel, top
+  slab, piers, and each **mouth card as a one-way stop**, only while the
+  target is on its inner side (`card` = the inward direction).
+- **The bore test knows the slab**: under a street-ended mouth's top slab
+  the ground is dug, so "carved ground over the car" said open road; a wall
+  piece over it (`city.camBlockOver`) counts too, and the ceiling clamp
+  tests RAW ground over the camera.
+- **No ground inside those bores.** The dug stretch ends at the kerb, and the
+  climb back to the street crosses the tube between deck and roof -- the
+  card hides it from the road, and a camera inside saw a wall of grass.
+  `patchCell` drops quads within 24 m of a street-ended cut's end
+  (`_mouthZones`) that intrude into a bore's volume; the top slab covers
+  them from above and the lining from inside.
+
+camtunnel 0 of 24, flycam's camera figures unchanged, rides and portalcheck
+unchanged. What is left: from inside the NB exit the double mouth's piers
+and lintel read as grey blocks round the opening.
+
 **v105: an approach that meets a deck ends at the deck.** The approach ramp
 in front of a mouth aims at raw ground 70 m out, whatever it meets on the way.
 SR-99's NB exit runs into Aurora's elevated deck ~40 m past the north portal,
