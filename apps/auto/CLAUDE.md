@@ -2824,6 +2824,29 @@ photographs them (stage, apron, close cockpit), flies the helicopter
   along -50..-10 (the first trainer was parked half inside it). The spots in
   main.js and `AIRPORT_HELIPADS` avoid both.
 
+**The fighter** (`fighter`, `buildFighter`, `updateFighter`, v113) is the one
+aircraft with a full 3D attitude. The others fly heading + bank + climb rate,
+which cannot go over the top; the fighter keeps a quaternion `v.q` and the
+stick turns it in the BODY frame (y pitches, 1.9 rad/s; x rolls, 3.5 rad/s,
+both fading below the stall), velocity along the nose, thrust (`fly.thrust`
+21 m/s^2 -- `acc` stays the arcade figure deriveSpec validates) against drag
+and `9.8 * F.y`, so a climb bleeds speed and a dive builds it. Heading, pitch
+and roll are read back out in YXZ, the order `sync()` draws, so everything
+else sees the usual fields. Touchdown wings-level, nose within ~13 deg and a
+sink under 9 m/s is a landing; anything else is a crash. It sits on Boeing
+Field's runway at the south threshold facing north (map: red delta).
+
+- **Its camera rides in its frame** (`player.updateCamera`'s first branch,
+  `camUp`, honoured by `applyCamera`): every other rig yaws round world up,
+  which flips the horizon at the top of a loop. Here the boom hangs behind
+  and above along the jet's own axes and the camera's up lerps to the jet's.
+- Measured: take-off roll 3.3 s; 780 km/h level; full back stick from 326 m
+  at cruise turns 542 deg in 5 s (a loop and a half), 1.7 s inverted, back
+  above its entry height; full aileron rolls 398 deg in 2 s.
+- **Drive a harness through `traffic.update` too**: it is what shows an apron
+  vehicle within range, and a probe stepping only `player.update` rendered
+  frames with the jet still hidden from boot.
+
 **The helicopter** (`updateHeli`, `spec.rotor`) is built to fly with one thumb:
 UP / DOWN (GAS / BRAKE relabelled; triggers on a pad, Q / Z on a keyboard,
 whose W / S are the stick) command a climb rate, and **with neither held it

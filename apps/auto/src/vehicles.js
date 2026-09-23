@@ -82,6 +82,7 @@ const ARCADE_GRIP = 2.2;
 // The flight model needs the LOCAL water surface for floatplanes, and lakes
 // live on world, which vehicles never see. main.js injects the query at boot.
 let waterQuery = null;
+const _dq = new THREE.Quaternion(), _tv = new THREE.Vector3(), _up = new THREE.Vector3(0, 1, 0);
 export function setWaterQuery(fn) { waterQuery = fn; }
 // How hard a corner may be asked for, as a fraction of the grip that exists.
 // Above 1 on purpose: this is a GTA-style car, not a simulator. It should feel
@@ -131,6 +132,12 @@ export const TYPES = {
   // wing, two fans on pylons at the tail, T-tail. Rotates at 150 km/h, stalls
   // at 120, and is held near 150 m/s (~560 km/h level, measured) -- the
   // fastest thing in the game, and still inside what the streamer keeps up with.
+  // A fighter: its own flight model (updateFighter, full 3D attitude), so it
+  // rolls, loops and flies inverted; the others fly heading-and-bank.
+  fighter: deriveSpec({ wheelbase: 6.7, len: 16.0, wid: 2.6, wheelR: 0.36, sill: 0.8, belt: 1.95, roof: 2.95, cab: [0.6, 0.3], hand: 'fighter', plane: true, fighter: true, jet: true, mass: 2.2, acc: 17, topKph: 780, brakeM: 90, latG: 0.8,
+    // `thrust` is updateFighter's own, in m/s^2 (acc is the shared arcade
+    // figure deriveSpec validates against the ground-drag model)
+    fly: { vr: 62, stall: 46, bank: 1.2, turn: 1.4, climb: 40, vne: 215, thrust: 21 } }),
   jet: deriveSpec({ wheelbase: 6.2, len: 15.0, wid: 1.7, wheelR: 0.30, sill: 0.7, belt: 1.55, roof: 2.45, cab: [0.6, 0.3], hand: 'jet', plane: true, jet: true, mass: 2.0, acc: 9.0, topKph: 540, brakeM: 90, latG: 0.6,
     fly: { vr: 42, stall: 33, bank: 0.78, turn: 0.80, climb: 26, vne: 150 } }),
   // Boeing-Stearman Model 75: the biplane Boeing built, and the one hanging
@@ -3672,6 +3679,53 @@ function buildJet(spec, paint, trim, matte) {
 }
 
 /**
+ * A single-seat twin-engined fighter, F/A-18-ish: a pointed nose, a bubble
+ * canopy, side intakes under swept wings, twin canted fins and twin nozzles,
+ * sitting tall on its gear. Navy grey (the livery comes from the spawn).
+ */
+function buildFighter(spec, paint, trim, matte) {
+  const ST = [
+    [8.00, 0.03, 0.03, 0.03, 1.70], [7.50, 0.18, 0.16, 0.14, 1.72], [6.60, 0.40, 0.36, 0.30, 1.78],
+    [5.40, 0.58, 0.55, 0.42, 1.86], [4.60, 0.66, 0.92, 0.46, 1.90], [3.40, 0.80, 1.00, 0.52, 1.92],
+    [2.40, 1.10, 0.72, 0.58, 1.92], [0.60, 1.30, 0.60, 0.60, 1.92], [-2.40, 1.28, 0.56, 0.56, 1.92],
+    [-5.20, 1.05, 0.50, 0.50, 1.92], [-6.90, 0.86, 0.44, 0.44, 1.92], [-7.50, 0.80, 0.42, 0.42, 1.92],
+  ];
+  const hull = hullTable(ST), { rings } = hull;
+  hullLoft(rings, (i, k, zm) => {
+    if (k < 0) return i === -1 ? [matte, CAVITY] : [paint, WHITE];
+    if (zm < 5.3 && zm > 2.9 && hullSide(k) >= 6) return [trim, GLASS];
+    return [paint, WHITE];
+  });
+  flightDeck(matte, trim, hull, 3.0, 5.2, { floorY: 1.55, panelZ: 5.0, seatZ: 3.55, halfW: 0.5, headY: 2.62, pilotX: 0 });
+  const DARK = [0.20, 0.21, 0.23];
+  for (const sd of [-1, 1]) {
+    // wing, swept, thin
+    aerofoil(paint, WHITE, [{ x: sd * 0.9, y: 1.86, zLE: 2.1, c: 5.8 }, { x: sd * 1.6, y: 1.86, zLE: 1.4, c: 4.9 },
+      { x: sd * 5.7, y: 1.80, zLE: -2.5, c: 1.5 }], { thick: 0.06, n: 8 });
+    trim.box(sd * 5.72, 1.80, -2.9, 0.05, 0.06, 0.14, 0, sd > 0 ? NAV_R : NAV_G);
+    // tailplane
+    aerofoil(paint, WHITE, [{ x: sd * 1.0, y: 1.95, zLE: -4.9, c: 2.6 }, { x: sd * 3.3, y: 1.90, zLE: -6.6, c: 1.1 }], { thick: 0.05, n: 6 });
+    // fins, canted out
+    aerofoil(paint, WHITE, [{ x: sd * 0.95, y: 2.40, zLE: -3.8, c: 2.9 }, { x: sd * 1.60, y: 4.55, zLE: -6.1, c: 1.2 }], { thick: 0.06, n: 6, vertical: true });
+    // intake trunk down each side, a dark mouth at its front
+    matte.box(sd * 1.22, 1.32, 0.9, 0.52, 0.72, 2.8, 0, [0.42, 0.44, 0.47]);
+    matte.quad([sd * 0.98, 1.36, 2.31], [sd * 1.46, 1.36, 2.31], [sd * 1.46, 1.98, 2.31], [sd * 0.98, 1.98, 2.31], [0, 0, 1], [0, 0, 1, 0, 1, 1, 0, 1], CAVITY);
+    // twin nozzles
+    matte.tube([sd * 0.44, 1.92, -7.2], [sd * 0.44, 1.92, -8.05], 0.40, 12, DARK, false);
+    matte.tube([sd * 0.44, 1.92, -7.95], [sd * 0.44, 1.92, -8.02], 0.31, 10, CAVITY, true);
+    // main gear
+    matte.tube([sd * 1.15, 1.40, -0.9], [sd * 1.40, 0.36, -1.05], 0.06, 8, ALU, false);
+    airWheel(trim, matte, sd * 1.44, 0.36, -1.05, 0.36, 0.2);
+  }
+  // nose gear
+  matte.tube([0, 1.45, 5.55], [0, 0.30, 5.70], 0.05, 8, ALU, false);
+  airWheel(trim, matte, 0, 0.30, 5.70, 0.30, 0.14);
+  // a dark anti-glare panel ahead of the canopy, and the refuelling probe fairing
+  matte.patch([[[-0.34, 2.33, 5.35], [0, 2.41, 5.35], [0.34, 2.33, 5.35]], [[-0.2, 2.06, 6.5], [0, 2.12, 6.5], [0.2, 2.06, 6.5]]], [0.16, 0.17, 0.19], [0, 1, 0.3]);
+  return [];
+}
+
+/**
  * Boeing-Stearman Model 75 -- blue fabric fuselage, yellow wings, the
  * striped rudder, an exposed seven-cylinder radial and two open cockpits.
  * Built LEVEL, main wheels at z = spec.taildragger.zMain; the flight model
@@ -5345,7 +5399,7 @@ function buildJetski(spec, paint, trim, matte) {
 
 /** Types with their own authored builder, keyed by `spec.hand`. */
 const HAND_BUILT = {
-  plane: buildPlane, twin: buildTwin, jet: buildJet, biplane: buildBiplane, heli: buildHeli,
+  plane: buildPlane, twin: buildTwin, jet: buildJet, biplane: buildBiplane, heli: buildHeli, fighter: buildFighter,
   sports: buildSports, muscle: buildMuscle,
   sedan: buildSedan, suv: buildSuv, pickup: buildPickup,
   hatch: (s, p, t, m) => buildSmallCar(s, p, t, m, SMALL_LOOKS.hatch),
@@ -6111,6 +6165,111 @@ export class Vehicle {
   }
 
   /**
+   * The fighter: a full 3D attitude, so it loops, rolls and flies inverted.
+   *
+   * The other planes fly a heading, a bank that turns it, and a climb rate,
+   * which is easy and cannot go over the top. Here the attitude is a
+   * quaternion and the stick moves it in the BODY frame: y pitches the nose
+   * (back is up, relative to the jet, so a full pull is a loop), x rolls.
+   * Velocity runs along the nose (arcade: no sideslip); thrust fights drag
+   * and gravity along the nose, so a climb bleeds speed and a dive builds it,
+   * and below the stall the nose drops and the jet sinks. Heading, pitch and
+   * roll are read back out of the quaternion (YXZ -- the order sync() draws
+   * group.rotation.y then tilt x, z in), so everything else sees the usual
+   * fields. On the ground it rolls and steers like the other planes.
+   */
+  updateFighter(dt, input) {
+    const spec = this.spec, fly = spec.fly;
+    const throttle = input.throttle || 0, brake = input.brake || 0;
+    const steerIn = clamp(input.steer || 0, -1, 1), pitchIn = clamp(input.pitch || 0, -1, 1);
+    if (!this.q) { this.q = new THREE.Quaternion(); this._fv = new THREE.Vector3(); this._fu = new THREE.Vector3(); this._e = new THREE.Euler(0, 0, 0, 'YXZ'); }
+    if (this.airborne === undefined) this.airborne = false;
+    this.lift = this.city.roadLift(this.x, this.z);
+    const ground = this.city.groundAt(this.x, this.z, this.y + 1.2, this.lift);
+    const top = spec.topKph / 3.6;
+    const F = this._fv, U = this._fu;
+    if (!this.airborne) {
+      this.q.setFromEuler(this._e.set(0, this.heading, 0, 'YXZ'));
+    }
+    F.set(0, 0, 1).applyQuaternion(this.q);
+    const A = fly.thrust || spec.acc;
+    let acc = A * throttle - A * (this.vLong / top) ** 2 * Math.sign(this.vLong);
+    if (brake > 0) acc -= (this.airborne ? 9 : spec.brakeA * 0.6) * brake;
+    if (this.airborne) acc -= 9.8 * F.y;
+    else acc -= this.vLong * ROLL * 1.6;
+    // Past vne the air takes it back hard. Without it a full-throttle
+    // vertical dive settled near 262 m/s, and the streamer is only proven to
+    // ~150 (see "Flying"): vne sits at the level top speed.
+    if (fly.vne && this.vLong > fly.vne) acc -= (this.vLong - fly.vne) * 2.5;
+    this.vLong = Math.max(0, this.vLong + acc * dt);
+    const v = this.vLong;
+    if (!this.airborne) {
+      const yawRate = clamp(v, 0, 14) / 9 * steerIn * 0.55;
+      this.heading += yawRate * dt;
+      this.pitch = damp(this.pitch, 0, 6, dt);
+      this.roll = 0;
+      this.y = ground;
+      this.vy = 0;
+      const f = this.forward;
+      this.x += f.x * v * dt;
+      this.z += f.z * v * dt;
+      if (v > fly.vr && pitchIn > 0.25) {
+        this.airborne = true;
+        this.q.setFromEuler(this._e.set(-0.12, this.heading, 0, 'YXZ'));
+      }
+      this.sync();
+      this.latAcc = 0; this.skid = 0;
+      return;
+    }
+    // control authority grows with airspeed; below the stall it fades
+    const auth = clamp((v - 20) / (fly.stall), 0.12, 1);
+    const pRate = pitchIn * 1.9 * auth, rRate = -steerIn * 3.5 * Math.max(0.35, auth);
+    _dq.setFromEuler(this._e.set(-pRate * dt, 0, rRate * dt, 'YXZ'));
+    this.q.multiply(_dq);
+    // stalled: the nose falls toward the ground, in the world frame
+    const st = clamp(1 - v / fly.stall, 0, 1);
+    F.set(0, 0, 1).applyQuaternion(this.q);
+    if (st > 0 || this.y > 900) {
+      const k = st * 1.4 + (this.y > 900 ? (this.y - 900) * 0.01 : 0);
+      _tv.copy(F).addScaledVector(_up, -k * dt).normalize();
+      _dq.setFromUnitVectors(F, _tv);
+      this.q.premultiply(_dq);
+      F.copy(_tv);
+    }
+    this.q.normalize();
+    U.set(0, 1, 0).applyQuaternion(this.q);
+    const sink = 12 * st;
+    const vx = F.x * v, vyy = F.y * v - sink, vz = F.z * v;
+    this.x += vx * dt; this.y += vyy * dt; this.z += vz * dt;
+    this.vy = vyy;
+    this.x = G.clampToMap(this.x); this.z = G.clampToMap(this.z);
+    if (this.y <= ground + 0.05) {
+      // wheels down, wings level and a gentle sink: a landing; anything
+      // else is a crash
+      const level = F.y > -0.22 && U.y > 0.85;
+      this.y = ground;
+      if (level && vyy > -9 && v < 115) {
+        this.airborne = false;
+        this._e.setFromQuaternion(this.q, 'YXZ');
+        this.heading = this._e.y;
+        if (vyy < -4.5) this.damage((-vyy - 4.5) * 4, true);
+      } else {
+        this.damage(Math.min(100, 30 + v * 0.6), true);
+        this.airborne = false;
+        this.vLong *= 0.2;
+      }
+    }
+    this._e.setFromQuaternion(this.q, 'YXZ');
+    this.heading = this._e.y;
+    this.pitch = this._e.x;
+    this.roll = this._e.z;
+    this.yVis = 0;
+    this.sync();
+    this.latAcc = 0;
+    this.skid = 0;
+  }
+
+  /**
    * Helicopter. Built to be flown with one thumb and two buttons:
    *
    *   collective  input.lift / input.sink (UP / DOWN): a CLIMB RATE, and with
@@ -6353,6 +6512,7 @@ export class Vehicle {
     const spec = this.spec;
     if (this.hitCd > 0) this.hitCd -= dt;
     if (spec.heli) { this.updateHeli(dt, input); return; }
+    if (spec.fighter) { this.updateFighter(dt, input); return; }
     if (spec.plane) { this.updatePlane(dt, input); return; }
     if (spec.boat) { this.updateBoat(dt, input); return; }
     const throttle = input.throttle || 0;

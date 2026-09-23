@@ -395,6 +395,29 @@ export class Player {
   }
 
   updateCamera(dt, input) {
+    // A FIGHTER IN THE AIR GETS A CAMERA IN ITS OWN FRAME. Every other rig
+    // hangs off a yaw round the world's up, which through a loop swings the
+    // camera 180 degrees at the top and flips the horizon. This one sits
+    // behind and above the jet along ITS axes, with its up, damped, so a loop
+    // reads as the world wheeling round the cockpit.
+    if (!this.onFoot && this.vehicle.spec.fighter && this.vehicle.airborne && this.vehicle.q) {
+      const v = this.vehicle, q = v.q;
+      const F = new THREE.Vector3(0, 0, 1).applyQuaternion(q), U = new THREE.Vector3(0, 1, 0).applyQuaternion(q);
+      const dist = 17 + clamp(Math.abs(v.vLong) * 0.03, 0, 5);
+      const want = F.clone().multiplyScalar(-dist).addScaledVector(U, 4.2);
+      if (!this.camRel) this.camRel = new THREE.Vector3().subVectors(this.camPos, new THREE.Vector3(v.x, v.y, v.z));
+      this.camRel.lerp(want, 1 - Math.exp(-5 * dt));
+      this.camPos.set(v.x, v.y, v.z).add(this.camRel);
+      if (!this.camUp) this.camUp = new THREE.Vector3(0, 1, 0);
+      this.camUp.lerp(U, 1 - Math.exp(-4 * dt)).normalize();
+      this.camLook.set(v.x, v.y, v.z).addScaledVector(F, 14).addScaledVector(U, 1.6);
+      this.camYaw = Math.atan2(this.camRel.x, this.camRel.z);
+      const floor = this.city.groundAt(this.camPos.x, this.camPos.z, null, 0) + 1.5;
+      if (this.camPos.y < floor) this.camPos.y = floor;
+      this.camLookRel = null;
+      return;
+    }
+    this.camUp = null;
     const target = new THREE.Vector3();
     let dist, height, lookH;
     // A plane's rig is RIGID IN TRANSLATION: the boom and look offsets are
@@ -601,6 +624,7 @@ export class Player {
 
   applyCamera(camera) {
     camera.position.copy(this.camPos);
+    if (this.camUp) camera.up.copy(this.camUp); else camera.up.set(0, 1, 0);
     camera.lookAt(this.camLook);
   }
 

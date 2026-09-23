@@ -636,10 +636,13 @@ function installShadowFade() {
         ['heli', -165, -103], ['heli', -195, 232, 0xb8322a],
         ['sportplane', -150, -1380], ['plane', -150, -1290],
         ['floatplane', -150, 1290], ['sportplane', -150, 1380],
+        // the fighter, on the runway centreline at the south threshold,
+        // facing north up all 3 km of it (heading 0.52 would face south)
+        ['fighter', 0, 1450, 0x7b8590, 0.52 + Math.PI],
       ];
-      for (const [ty, dx, dz, col] of spots) {
+      for (const [ty, dx, dz, col, hd] of spots) {
         const [px, pz] = off(dx, dz);
-        const v = traffic.spawnAt(px, pz, 0.52, ty, col || AIRCRAFT_PAINT[ty], 'apron');
+        const v = traffic.spawnAt(px, pz, hd !== undefined ? hd : 0.52, ty, col || AIRCRAFT_PAINT[ty], 'apron');
         v.vLong = 0;
       }
     }
@@ -682,6 +685,13 @@ function installShadowFade() {
   const mapPlaces = [
     { x: SEAPLANE_DOCK.x, z: SEAPLANE_DOCK.z, kind: 'dock', name: 'Seaplane Dock', near: false,
       hello: `${SEAPLANE_DOCK.name} — floatplanes and boats. Walk out to the float and get in` },
+    ...(() => {
+      const ap = (G.LANDMARKS || []).find((l) => l.kind === 'airport');
+      if (!ap) return [];
+      const AL = [Math.sin(0.52), Math.cos(0.52)];
+      return [{ x: ap.x + 1450 * AL[0], z: ap.z + 1450 * AL[1], kind: 'jet', name: 'Fighter jet', near: false,
+        hello: 'A fighter jet — full throttle, pull back past 220 km/h. Hold the stick back to loop' }];
+    })(),
     ...ATV_SPOTS.map(([x, z]) => ({ x, z, kind: 'atv', name: 'Quad bike', near: false, hello: 'A quad bike — made for the grass' })),
     ...(lmRoot.userData.marinas || []).map((mr) => ({ x: mr.x, z: mr.z, kind: 'dock', name: mr.name, near: false,
       hello: mr.seaplanes ? `${mr.name} — floatplanes on the float. Walk out and climb in`
