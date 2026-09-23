@@ -1043,7 +1043,7 @@ function refreshJobs() {
   const cnt = document.getElementById('jobsCount');
   const mon = document.getElementById('jobsMoney');
   const list = document.getElementById('jobsList');
-  if (cnt) cnt.textContent = `${s.done}/${s.total} · ${s.golds} gold · finds ${s.found}/${s.findTotal}`;
+  if (cnt) cnt.textContent = `${s.done}/${s.total} · ${s.golds} gold · finds ${s.found}/${s.findTotal} · tech tour ${s.tech}/${s.techTotal}`;
   if (mon) mon.textContent = formatMoney(game.money);
   for (const b of document.querySelectorAll('.buy')) b.disabled = game.money < +b.dataset.cost;
   if (!list) return;

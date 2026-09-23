@@ -3543,6 +3543,26 @@ logs only a car-car shunt.
 **Order matters.** Each fix exposed the next one. A failed intermediate is not a
 failed idea: measure what it exposed first.
 
+## The Tech Tour
+
+Twelve badges at the region's tech offices (`activities.js` `TECH`, v114):
+Amazon (Day 1 / the Spheres), Google (South Lake Union, Kirkland), Meta,
+Adobe and Tableau, Zillow, Expedia, Starbucks, Microsoft and Valve in
+Bellevue, and T-Mobile in Factoria. A spinning cube in the company colour
+under a light column, shown within 400 m; walk or drive through it for
+$1000, all twelve for a $10,000 bonus. Found ones persist as `__tech` in the
+activities save; the pause menu counts them and both maps mark the rest.
+
+- **Positions come from OSM where the extract names the building** (marked
+  in `TECH`), else the street address through `tools/proj.py`. Addresses
+  alone were not good enough: Expedia's came out 700 m off in Elliott Bay.
+  Microsoft's, Nintendo's and Meta's main campuses are in Redmond, east of
+  the map, so Microsoft is at its Bellevue offices.
+- **Snap to the nearest ground-level street node**, searching the nodes
+  directly: `nearestNode` can answer a deck (Aurora over Fremont), and
+  returns **-1, not null**, when nothing is in range (the landmark coins had
+  the same latent bug).
+
 ## Stunt jumps
 
 Twelve kicker ramps at real places (`src/stunts.js` `JUMPS`): over I-5 at NE
