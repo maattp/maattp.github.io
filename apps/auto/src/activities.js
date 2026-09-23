@@ -129,6 +129,31 @@ function routeLength(pts, sx, sz) {
 
 // ---------------------------------------------------------------------------
 
+// THE TECH TOUR. Badges at the region's tech offices, a set of its own:
+// [company, place, x, z]: OSM's own building where the extract names one
+// (marked), else the campus's street address through tools/proj.py; snapped
+// to the nearest ground-level street at build time. Microsoft's and
+// Nintendo's main campuses are in Redmond, east of the map. Found ones persist in the save
+// as `__tech`; collecting them all pays a bonus.
+const TECH = [
+  ['Amazon', 'Amazon Day 1 and the Spheres', -105, -518],
+  ['Google', 'Google, South Lake Union', 170, -1545],        // OSM building
+  ['Meta', 'Meta, South Lake Union', -68, -1608],
+  ['Adobe', 'Adobe, Fremont', -796, -4088],                  // OSM building
+  ['Tableau', 'Tableau, Fremont', -256, -4120],
+  ['Zillow', 'Zillow, downtown', 8, 505],
+  ['Expedia', 'Expedia Group, Interbay', -2815, -1896],      // OSM building
+  ['Starbucks', 'Starbucks Center, SODO', 156, 3404],        // OSM building
+  ['Microsoft', 'Microsoft, Bellevue', 11255, -262],
+  ['Valve', 'Valve, Bellevue', 10278, -407],
+  ['Google', 'Google Kirkland', 10624, -6444],
+  ['T-Mobile', 'T-Mobile HQ, Factoria', 12860, 3700],        // OSM buildings 1-3
+];
+// each badge takes its company's colour
+const TECH_COL = { Amazon: 0xff9900, Google: 0x4285f4, Adobe: 0xfa0f00, Tableau: 0xe8762d, Meta: 0x0866ff, Zillow: 0x006aff,
+  Expedia: 0xfdd835, Starbucks: 0x00704a, Microsoft: 0x7fba00, Valve: 0xc7322a, 'T-Mobile': 0xe20074 };
+const TECH_PAY = 1000, TECH_BONUS = 10000;
+
 export class Activities {
   constructor(scene, city, world, game, hud, audio, traffic) {
     this.scene = scene; this.city = city; this.world = world;
@@ -138,6 +163,7 @@ export class Activities {
     this.active = null;
     this.save = loadSave();
     this.found = new Set(this.save.__found || []);
+    this.techFound = new Set(this.save.__tech || []);
     this.score = this.save.__score || 0;
     this.amb = { air: 0, airBest: 0, drift: 0, topKph: 0, combo: 0, comboT: 0, lastNear: 0 };
 
@@ -150,6 +176,10 @@ export class Activities {
       cp: new THREE.CylinderGeometry(CP_R, CP_R, 18, 16, 1, true),
       ring: new THREE.TorusGeometry(RING_R, 1.8, 6, 20),
       coin: new THREE.OctahedronGeometry(1.7, 0),
+      // a tall badge: a cube on its corner over a light column you can see
+      // from a few blocks away
+      tech: new THREE.BoxGeometry(2.4, 2.4, 2.4),
+      beam: new THREE.CylinderGeometry(0.5, 0.5, 60, 8, 1, true),
     };
     const bm = (c, o) => new THREE.MeshBasicMaterial({
       color: c, transparent: true, opacity: o, side: THREE.DoubleSide, forceSinglePass: true, depthWrite: false,
@@ -305,13 +335,26 @@ export class Activities {
     for (const l of (G.LANDMARKS || [])) {
       if (this.coins.length >= 20) break;
       const ni = city.nearestNode(l.x, l.z, 300);
-      if (ni == null) continue;
+      if (ni == null || ni < 0) continue;   // nearestNode returns -1 when nothing is in range
       const n = city.nodes[ni];
       if (n.elev || n.tunnel) continue;
       const k = `${Math.round(n.x / 300)},${Math.round(n.z / 300)}`;
       if (seen.has(k)) continue;
       seen.add(k);
       this.coins.push({ i: this.coins.length, name: l.name || 'Landmark', x: n.x, z: n.z, y: n.y + 1.8 });
+    }
+    // ---- the tech tour -----------------------------------------------------
+    this.tech = [];
+    for (const [co, place, x, z] of TECH) {
+      // the nearest STREET node: nearestNode alone can answer a deck (Aurora
+      // over Fremont, the Magnolia bridge by Expedia), which is then skipped
+      let n = null, bd = 500 * 500;
+      for (const q of city.nodes) {
+        const dd = (q.x - x) ** 2 + (q.z - z) ** 2;
+        if (dd < bd && !q.elev && !q.tunnel && !q.deck && q.e.some((k) => !city.edges[k].elev && !city.edges[k].tunnel)) { bd = dd; n = q; }
+      }
+      if (!n) continue;
+      this.tech.push({ i: this.tech.length, id: place, co, name: place, x: n.x, z: n.z, y: n.y + 2.4, col: TECH_COL[co] || 0x4fd0ff });
     }
     this.buildMeshes();
   }
@@ -330,6 +373,22 @@ export class Activities {
       m.visible = false;
       this.group.add(m);
       return m;
+    });
+    // One badge + beam per tech site, shown only within 400 m: at most one or
+    // two are ever in range, so this costs ~2-4 draws where it costs anything.
+    this.techMeshes = this.tech.map((c) => {
+      const g = new THREE.Group();
+      const m = new THREE.Mesh(this.geo.tech, new THREE.MeshBasicMaterial({ color: c.col }));
+      m.rotation.set(Math.PI / 4, 0, Math.atan(Math.SQRT1_2));
+      const b = new THREE.Mesh(this.geo.beam, new THREE.MeshBasicMaterial({ color: c.col, transparent: true, opacity: 0.28,
+        depthWrite: false, side: THREE.DoubleSide, forceSinglePass: true }));
+      b.position.y = 31;
+      g.add(m, b);
+      g.position.set(c.x, c.y, c.z);
+      g.visible = false;
+      this.group.add(g);
+      g.userData.cube = m;
+      return g;
     });
     // Pooled: the budget is ~300 draws, so live markers are a fixed handful
     // reused by whatever is running -- never one mesh per checkpoint.
@@ -371,6 +430,7 @@ export class Activities {
   }
   persist() {
     this.save.__found = [...this.found];
+    this.save.__tech = [...this.techFound];
     this.save.__score = Math.round(this.score);
     writeSave(this.save);
   }
@@ -449,6 +509,7 @@ export class Activities {
       done: rows.filter((r) => r.medal && r.medal !== 'none').length,
       total: rows.length,
       found: this.found.size, findTotal: this.coins.length,
+      tech: this.techFound.size, techTotal: this.tech.length,
       score: Math.round(this.score),
     };
   }
@@ -537,6 +598,30 @@ export class Activities {
         if (this.audio) this.audio.cash();
       }
     }
+
+    for (let i = 0; i < this.tech.length; i++) {
+      const c = this.tech[i], g = this.techMeshes[i];
+      if (this.techFound.has(c.id)) { g.visible = false; continue; }
+      const d2 = dist2(c.x, c.z, p.x, p.z);
+      g.visible = d2 < 400 * 400;
+      if (g.visible) {
+        g.userData.cube.rotation.y = this.t * 1.2;
+        g.userData.cube.position.y = Math.sin(this.t * 2 + i) * 0.5;
+      }
+      if (d2 < 7 * 7 && Math.abs(p.y - c.y) < 8) {
+        this.techFound.add(c.id);
+        g.visible = false;
+        const all = this.techFound.size === this.tech.length;
+        const pay = TECH_PAY + (all ? TECH_BONUS : 0);
+        this.game.money += pay; this.score += pay;
+        this.persist();
+        this.hud.showToast(all
+          ? `${c.co} badge — the whole Tech Tour! ${this.tech.length}/${this.tech.length} · $${pay}`
+          : `${c.co} badge — ${c.name} · Tech Tour ${this.techFound.size}/${this.tech.length} · $${TECH_PAY}`, 3500);
+        if (this.audio) this.audio.cash();
+      }
+    }
+    this.hud.techFinds = this.tech.filter((c) => !this.techFound.has(c.id));
 
     for (const a of this.list) {
       const near = dist2(a.x, a.z, p.x, p.z) < 800 * 800;

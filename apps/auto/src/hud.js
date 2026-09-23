@@ -53,6 +53,18 @@ function placeIcon(ctx, kind, x, y, r) {
   ctx.lineCap = 'butt';
 }
 
+/** A Tech Tour badge's map mark: a diamond in the company colour. */
+function techIcon(ctx, x, y, r, col) {
+  ctx.fillStyle = '#' + col.toString(16).padStart(6, '0');
+  ctx.strokeStyle = '#ffffff';
+  ctx.lineWidth = r * 0.3;
+  ctx.beginPath();
+  ctx.moveTo(x, y - r); ctx.lineTo(x + r, y); ctx.lineTo(x, y + r); ctx.lineTo(x - r, y);
+  ctx.closePath();
+  ctx.fill();
+  ctx.stroke();
+}
+
 /** Renders the whole city once into an offscreen canvas; both maps sample it. */
 export function buildMapCanvas(city) {
   const c = document.createElement('canvas');
@@ -276,6 +288,12 @@ export class Hud {
       ctx.fillStyle = '#f4c542';
       ctx.fillRect(bx - 1.6 / zoom, bz - 1.6 / zoom, 3.2 / zoom, 3.2 / zoom);
     }
+    // Tech Tour badges: a diamond in the company's colour, white-edged
+    for (const c of (this.techFinds || [])) {
+      const [bx, bz] = toMap(c.x, c.z);
+      if (Math.abs(bx) > S || Math.abs(bz) > S) continue;
+      techIcon(ctx, bx, bz, 3.4 / zoom, c.col);
+    }
     // Stunt jumps: a ramp-shaped wedge pointing the way you jump, orange until
     // it has been landed clean, then green.
     for (const j of (this.jumps || [])) {
@@ -409,6 +427,12 @@ export class Hud {
     for (const j of (this.jumps || [])) {
       const [jx, jz] = toC(j.x, j.z);
       drawJumpIcon(ctx, jx, jz, j, size * 0.009);
+    }
+    for (const c of (this.techFinds || [])) {
+      const [cx, cz] = toC(c.x, c.z);
+      techIcon(ctx, cx, cz, size * 0.008, c.col);
+      ctx.fillStyle = 'rgba(255,255,255,0.8)';
+      ctx.fillText(c.co, cx, cz - size * 0.013);
     }
     if (game.target) {
       const [tx, tz] = toC(game.target.x, game.target.z);
