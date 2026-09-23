@@ -592,7 +592,7 @@ function installShadowFade() {
   world.buildSkyline();
 
   await step(0.86, 'Placing the landmarks');
-  const lmRoot = buildLandmarks(scene, city);
+  const lmRoot = buildLandmarks(scene, city, (x, z) => world.waterLevelAt(x, z));
   // The scene root never moves, and its own matrixAutoUpdate re-flagged EVERY
   // object in the world for a world-matrix multiply each frame. Static
   // subtrees are frozen; see freezeStatic.
@@ -658,6 +658,19 @@ function installShadowFade() {
       v.group.position.y = v.y + (v.spec.wheelR || 0.3) + 0.25;
     }
   }
+  // The marinas' boats, jet skis and floatplanes (landmarks.js MARINAS),
+  // moored the way the seaplane dock's are.
+  for (const mr of lmRoot.userData.marinas || []) {
+    for (const [ty, x, z, h, col] of mr.moorings) {
+      const v = traffic.spawnAt(x, z, h, ty, col, 'apron');
+      v.vLong = 0;
+      if (v.spec.floats) {
+        const wl = world.waterLevelAt(x, z);
+        v.y = (wl !== null ? wl : mr.level) + 0.12;
+        v.group.position.y = v.y + (v.spec.wheelR || 0.3) + 0.25;
+      }
+    }
+  }
   // Quads, parked out on the grass where they are for: Gas Works' Kite Hill,
   // the lawn by the seaplane dock, and Seattle Center's by the spawn.
   for (const [x, z, h, col] of ATV_SPOTS) {
@@ -670,6 +683,9 @@ function installShadowFade() {
     { x: SEAPLANE_DOCK.x, z: SEAPLANE_DOCK.z, kind: 'dock', name: 'Seaplane Dock', near: false,
       hello: `${SEAPLANE_DOCK.name} — floatplanes and boats. Walk out to the float and get in` },
     ...ATV_SPOTS.map(([x, z]) => ({ x, z, kind: 'atv', name: 'Quad bike', near: false, hello: 'A quad bike — made for the grass' })),
+    ...(lmRoot.userData.marinas || []).map((mr) => ({ x: mr.x, z: mr.z, kind: 'dock', name: mr.name, near: false,
+      hello: mr.seaplanes ? `${mr.name} — floatplanes on the float. Walk out and climb in`
+        : `${mr.name} — boats and jet skis. Walk out on the float and take one` })),
   ];
   peds = new PedSystem(scene, city, game);
   peds.camera = camera;   // animation LOD culls against it

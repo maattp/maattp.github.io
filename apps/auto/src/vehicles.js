@@ -186,6 +186,10 @@ export const TYPES = {
   // (updateBoat): it floats on the LOCAL water surface and treats anything
   // shallower than its draft as a wall. `wheelR` is only there because
   // deriveSpec's callers read it; there are no wheels.
+  // A personal watercraft: the boat's physics (boat: true) on a 3.2 m hull
+  // with a rider astride it, quicker to plane and far quicker to turn
+  // (updateBoat reads `jetski`). Moored at the marinas, never traffic.
+  jetski: deriveSpec({ wheelbase: 1.8, len: 3.20, wid: 1.20, wheelR: 0.20, sill: 0.3, belt: 0.6, roof: 1.05, cab: [-0.1, 0.1], hand: 'jetski', boat: true, jetski: true, mass: 0.4, acc: 7.5, topKph: 105, brakeM: 30, latG: 0.9 }),
   boat: deriveSpec({ wheelbase: 3.2, len: 5.70, wid: 2.20, wheelR: 0.30, sill: 0.4, belt: 0.7, roof: 1.45, cab: [-0.2, 0.1], hand: 'boat', boat: true, mass: 1.1, acc: 3.0, topKph: 70, brakeM: 45, latG: 0.6 }),
   pickup: deriveSpec({ wheelbase: 3.68,len: 5.92, wid: 2.05, wheelR: 0.42, sill: 0.48, belt: 1.26, roof: 1.98, cab: [-0.15, 0.22], hand: 'pickup', mass: 1.4, acc: 4.4, topKph: 185, brakeM: 45, latG: 0.77 }),
   van: deriveSpec({ wheelbase: 3.5,len: 5.26, wid: 2.00, wheelR: 0.35, sill: 0.36, belt: 1.10, roof: 2.28, cab: [-0.44, 0.30], hand: 'van', boxy: 2, mass: 1.5, acc: 2.9, topKph: 155, brakeM: 47, latG: 0.73 }),
@@ -2697,6 +2701,14 @@ const RIDERS = {
   // the footboards and splayed round the tank: the quad's stance.
   // Measured in the quad's frame: hands land within ~5 cm of the grips
   // (+-0.36, 1.035, 0.25), soles on the boards (top 0.325).
+  // Astride the saddle, knees bent into the footwells, hands on the bars
+  // (+-0.36, 0.98, 0.22): the quad's stance, lower and further aft.
+  jetski: {
+    z: -0.42, hipY: 0.90, seed: 91,
+    lean: 0.26, head: -0.24,
+    shoulder: [-0.74, 0.30], elbow: [-0.18, 0.06],
+    thigh: [-1.20, 0.34], knee: 1.50, foot: -0.12,
+  },
   atv: {
     z: -0.19, hipY: 0.96, seed: 77,
     lean: 0.20, head: -0.22,
@@ -5277,6 +5289,60 @@ function buildBus(spec, paint, trim, matte) {
   return [[-wxF, wr, zF, wr, twF], [wxF, wr, zF, wr, twF], [-wxR, wr, zR, wr, twR], [wxR, wr, zR, wr, twR]];
 }
 
+/**
+ * A personal watercraft. y = 0 is the waterline, like the boat's: a V-hull
+ * lofted through seven stations, a flat deck with footwells either side of a
+ * saddle, the hood over the engine, and the bars. Hull sides take the livery.
+ */
+function buildJetski(spec, paint, trim, matte) {
+  //        z      hb    deckY chineX chineY keelY
+  const S = [
+    [-1.55, 0.52, 0.40, 0.50, -0.02, -0.12],
+    [-1.00, 0.58, 0.44, 0.55, -0.04, -0.16],
+    [-0.20, 0.60, 0.48, 0.56, -0.05, -0.18],
+    [0.60, 0.55, 0.53, 0.50, -0.03, -0.16],
+    [1.10, 0.44, 0.58, 0.38, 0.02, -0.10],
+    [1.45, 0.26, 0.62, 0.20, 0.12, 0.02],
+    [1.62, 0.05, 0.64, 0.03, 0.30, 0.24],
+  ];
+  const DARK = [0.10, 0.11, 0.12], SEAT = [0.12, 0.12, 0.14], STRIPE = [0.92, 0.92, 0.9];
+  for (const sd of [-1, 1]) {
+    // sides: chine to deck edge, in the livery
+    paint.patch(S.map(([z, hb, dy, cx, cy]) => [[sd * cx, cy, z], [sd * hb, dy * 0.55 + cy * 0.45, z], [sd * hb, dy, z]]), WHITE, [sd, 0.2, 0]);
+    // bottom: keel to chine
+    matte.patch(S.map(([z, , , cx, cy, ky]) => [[0, ky, z], [sd * cx * 0.5, (ky + cy) / 2, z], [sd * cx, cy, z]]), DARK, [sd * 0.5, -1, 0]);
+    // a white stripe along the upper side
+    matte.patch(S.slice(0, 6).map(([z, hb, dy, , cy]) => [[sd * (hb + 0.004), dy * 0.75 + cy * 0.25, z], [sd * (hb + 0.004), dy * 0.62 + cy * 0.38, z]]), STRIPE, [sd, 0, 0]);
+  }
+  // transom
+  {
+    const [z, hb, dy, cx, cy, ky] = S[0];
+    matte.patch([[[-cx, cy, z], [0, ky, z], [cx, cy, z]], [[-hb, dy, z], [0, dy, z], [hb, dy, z]]], DARK, [0, 0, -1]);
+  }
+  // deck, in the livery forward of the hood, dark non-slip in the footwells
+  paint.patch(S.slice(3).map(([z, hb, dy]) => [[-hb, dy, z], [0, dy + 0.04, z], [hb, dy, z]]), WHITE, [0, 1, 0]);
+  matte.patch(S.slice(0, 4).map(([z, hb, dy]) => [[-hb, dy, z], [0, dy, z], [hb, dy, z]]), [0.2, 0.21, 0.22], [0, 1, 0]);
+  // saddle: a padded bolster on a narrow pedestal, not a crate
+  matte.box(0, 0.40, -0.52, 0.30, 0.26, 1.16, 0, DARK);
+  matte.tube([0, 0.70, -1.12], [0, 0.70, 0.02], 0.19, 10, SEAT, true);
+  // the hood over the engine, lofted: tall behind the bars, sloping away to
+  // the bow deck
+  {
+    const H = [[0.02, 0.30, 0.52, 0.80], [0.30, 0.31, 0.53, 0.82], [0.60, 0.29, 0.54, 0.74], [0.90, 0.24, 0.56, 0.64], [1.12, 0.14, 0.58, 0.60]];
+    paint.patch(H.map(([z, w, dy, top]) => [[-w, dy, z], [-w * 0.72, dy + (top - dy) * 0.8, z], [0, top, z], [w * 0.72, dy + (top - dy) * 0.8, z], [w, dy, z]]), WHITE, [0, 1, 0]);
+    const [z0, w0, d0, t0] = H[0];
+    paint.patch([[[-w0, d0, z0], [0, d0, z0], [w0, d0, z0]], [[-w0 * 0.72, d0 + (t0 - d0) * 0.8, z0], [0, t0, z0], [w0 * 0.72, d0 + (t0 - d0) * 0.8, z0]]], WHITE, [0, 0, -1]);
+  }
+  // steering post and bars
+  matte.tube([0, 0.78, 0.18], [0, 0.96, 0.22], 0.035, 6, DARK, true);
+  matte.tube([-0.36, 0.98, 0.22], [0.36, 0.98, 0.22], 0.022, 6, DARK, true);
+  for (const sd of [-1, 1]) matte.tube([sd * 0.26, 0.98, 0.22], [sd * 0.38, 0.98, 0.22], 0.032, 6, [0.05, 0.05, 0.05], true);
+  // a small tinted screen on the hood, and the stern's grab handle
+  trim.box(0, 0.88, 0.38, 0.34, 0.12, 0.03, 0, [0.12, 0.14, 0.16]);
+  matte.tube([-0.2, 0.62, -1.42], [0.2, 0.62, -1.42], 0.018, 6, CHROME, true);
+  return [];   // no wheels
+}
+
 /** Types with their own authored builder, keyed by `spec.hand`. */
 const HAND_BUILT = {
   plane: buildPlane, twin: buildTwin, jet: buildJet, biplane: buildBiplane, heli: buildHeli,
@@ -5288,7 +5354,7 @@ const HAND_BUILT = {
   boxtruck: (s, p, t, m) => buildTruck(s, p, t, m, TRUCK_LOOKS.boxtruck),
   garbage: (s, p, t, m) => buildTruck(s, p, t, m, TRUCK_LOOKS.garbage),
   convertible: buildConvertible, cruiser: buildCruiser, sportbike: buildSportbike,
-  atv: buildAtv, boat: buildBoat,
+  atv: buildAtv, boat: buildBoat, jetski: buildJetski,
 };
 
 /**
@@ -5741,7 +5807,7 @@ export class Vehicle {
     // A bike carries its rider. He goes in the tilt group, so he leans with it
     // -- parented to `group` instead he would stay bolt upright through every
     // corner while the bike went over underneath him.
-    this.rider = this.spec.moto || this.spec.atv ? makeRider(this.spec.hand) : null;
+    this.rider = this.spec.moto || this.spec.atv || this.spec.jetski ? makeRider(this.spec.hand) : null;
     if (this.rider) this.tilt.add(this.rider.group);
     this.wheelMeshes = [];
 
@@ -5809,7 +5875,7 @@ export class Vehicle {
     }
     // A quad's rider is there only when someone is riding it. (The bikes
     // keep theirs as they always have: traffic is all they ever are.)
-    if (this.rider && this.spec.atv) this.rider.group.visible = this.detailedWheels || !empty;
+    if (this.rider && (this.spec.atv || this.spec.jetski)) this.rider.group.visible = this.detailedWheels || !empty;
   }
 
   /** The player's own car gets steerable, spinning wheel meshes; traffic doesn't. */
@@ -5820,7 +5886,7 @@ export class Vehicle {
     this.trimMesh.geometry = on ? this.assets.trimGeo : this.assets.trimGeoW;
     this.matteMesh.geometry = on ? this.assets.matteGeo : this.assets.matteGeoW;
     if (!on) this.mode = this._mode;
-    if (this.rider && this.spec.atv) this.rider.group.visible = on || this._mode === 'traffic';
+    if (this.rider && (this.spec.atv || this.spec.jetski)) this.rider.group.visible = on || this._mode === 'traffic';
     if (on) {
       for (const [wx, wy, wz, gi] of this.assets.wheels) {
         const g = new THREE.Group();
@@ -6219,7 +6285,9 @@ export class Vehicle {
 
     const sp = Math.abs(this.vLong);
     const bite = clamp(sp / 5, 0, 1) * (1 - 0.3 * clamp(sp / V, 0, 1)) + (1 - clamp(sp / 5, 0, 1)) * 0.35 * throttle;
-    const yawRate = steerIn * 0.95 * bite * (this.vLong < -0.3 ? -1 : 1);
+    // a jet ski turns on its pump's thrust: sharp, and it leans hard into it
+    const agile = spec.jetski ? 1.75 : 1;
+    const yawRate = steerIn * 0.95 * agile * bite * (this.vLong < -0.3 ? -1 : 1);
     this.heading += yawRate * dt;
     this.steer = lerp(this.steer, steerIn * 0.5, 1 - Math.exp(-8 * dt));
     this.vLat += -yawRate * this.vLong * dt * 0.8;
@@ -6272,7 +6340,7 @@ export class Vehicle {
     const hump = Math.exp(-(((r - 0.33) / 0.2) ** 2));
     const tgtPitch = -(0.085 * hump + 0.03 * r) - clamp(acc, -8, 8) * 0.004
       + Math.sin(t * 1.3 + ph * 1.7) * 0.012 * (1 - 0.5 * r);
-    const tgtRoll = -clamp(yawRate * clamp(sp / 6, 0, 1), -1, 1) * 0.11
+    const tgtRoll = -clamp(yawRate * clamp(sp / 6, 0, 1), -1, 1) * (spec.jetski ? 0.34 : 0.11)
       + Math.sin(t * 1.1 + ph * 0.7) * 0.018;
     this.pitch = lerp(this.pitch, tgtPitch, 1 - Math.exp(-4 * dt));
     this.roll = lerp(this.roll, tgtRoll, 1 - Math.exp(-4 * dt));

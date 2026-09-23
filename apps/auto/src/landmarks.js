@@ -1926,6 +1926,187 @@ function seaplaneDock() {
   return g;
 }
 
+/**
+ * Marinas and seaplane bases round the region: a timber pier off the bank, a
+ * gangway down to a floating walkway with a T-head, and boats, jet skis and
+ * floatplanes tied up alongside ('apron', like the seaplane dock's). Sited at
+ * the real places (world coordinates from their lat/lon via tools/proj.py);
+ * the shore itself comes from the water mask, so each is laid out from the
+ * nearest shoreline outward, into water deep enough to float a hull.
+ */
+export const MARINAS = [
+  { name: 'Renton Seaplane Base', x: 9037, z: 12324, fleet: ['floatplane', 'floatplane', 'floatplane', 'boat'], seaplanes: true },
+  { name: 'Seattle Seaplanes', x: 820, z: -2242, fleet: ['floatplane', 'floatplane', 'jetski'], seaplanes: true },
+  { name: 'Shilshole Bay Marina', x: -5255, z: -7812, fleet: ['boat', 'jetski', 'boat', 'boat', 'jetski', 'boat'] },
+  { name: 'Elliott Bay Marina', x: -4263, z: -2041, fleet: ['boat', 'boat', 'jetski', 'boat'] },
+  { name: 'Bell Harbor Marina', x: -722, z: 205, fleet: ['boat', 'jetski', 'boat'] },
+  { name: 'Leschi Marina', x: 3940, z: 1205, fleet: ['boat', 'jetski', 'jetski', 'boat'] },
+  { name: 'Carillon Point', x: 9842, z: -4910, fleet: ['boat', 'boat', 'jetski'] },
+  { name: 'Kirkland Marina Park', x: 9669, z: -7111, fleet: ['jetski', 'boat', 'jetski', 'boat'] },
+  { name: 'Meydenbauer Bay Marina', x: 9766, z: -185, fleet: ['boat', 'boat', 'jetski', 'jetski'] },
+  { name: 'Luther Burbank Park', x: 8413, z: 2317, fleet: ['jetski', 'boat', 'jetski'] },
+];
+const BOAT_PAINT = [0xf2f2ee, 0x1f3f6a, 0xb8352a, 0xe8e2d0, 0x2d5a45, 0x3c4450];
+const SKI_PAINT = [0xf2c21a, 0x1e7fd0, 0xd8322a, 0x21b3a0, 0xf07a1c, 0x7a3fc2];
+
+/**
+ * Lay a marina out from its site. `wl(x, z)` is the local water surface or
+ * null. Returns null when no shore with deep enough water is in reach.
+ */
+function marinaDock(spec, wl, idx) {
+  const depth = (x, z) => {
+    const w = G.isWater(x, z) ? wl(x, z) : null;
+    return w === null ? -1 : w - G.terrainHeight(x, z);
+  };
+  // THE SHORE IS WHERE THE DRAWN GROUND MEETS THE WATER, not the water
+  // mask's edge: the two disagree by tens of metres along a 40 m DEM, and a
+  // dock sited on the mask stood out in the water, its pier reaching nothing.
+  // Land nearest the site (ground over the local surface), then the deep water
+  // nearest that, then the crossing between them.
+  const lvl0 = (() => {
+    for (let r = 0; r <= 320; r += 10) for (let k = 0; k < 16; k++) {
+      const a = (k / 16) * Math.PI * 2, w = wl(spec.x + Math.cos(a) * r, spec.z + Math.sin(a) * r);
+      if (w !== null && G.isWater(spec.x + Math.cos(a) * r, spec.z + Math.sin(a) * r)) return w;
+    }
+    return null;
+  })();
+  if (lvl0 === null) return null;
+  const nearest = (cx, cz, R, ok) => {
+    let bp = null, bd = Infinity;
+    for (let dz = -R; dz <= R; dz += 4) for (let dx = -R; dx <= R; dx += 4) {
+      const d2 = dx * dx + dz * dz;
+      if (d2 < bd && ok(cx + dx, cz + dz)) { bd = d2; bp = [cx + dx, cz + dz]; }
+    }
+    return bp;
+  };
+  // real land, not a DEM pixel or a breakwater standing out of the water:
+  // dry 25 m out in most directions too
+  const dry = (x, z) => G.terrainHeight(x, z) > lvl0 + 0.5 && !G.isWater(x, z);
+  const D = nearest(spec.x, spec.z, 320, (x, z) => {
+    if (!dry(x, z)) return false;
+    let n = 0;
+    for (let k = 0; k < 8; k++) { const a = (k / 8) * Math.PI * 2; if (dry(x + Math.cos(a) * 25, z + Math.sin(a) * 25)) n++; }
+    return n >= 4;
+  });
+  if (!D) return null;
+  const W = nearest(D[0], D[1], 240, (x, z) => depth(x, z) >= 2.0);
+  if (!W) return null;
+  let nx = W[0] - D[0], nz = W[1] - D[1];
+  const nl = Math.hypot(nx, nz) || 1; nx /= nl; nz /= nl;
+  let S = D;
+  for (let t = 0; t < nl; t += 1) {
+    const x = D[0] + nx * t, z = D[1] + nz * t;
+    if (G.terrainHeight(x, z) < lvl0 + 0.3) { S = [x, z]; break; }
+  }
+  const level = lvl0;
+  const px = -nz, pz = nx;
+  const at = (t, o = 0) => [S[0] + nx * t + px * o, S[1] + nz * t + pz * o];
+  // the float starts where the water floats a hull, 8-40 m out
+  let t0 = 8;
+  while (t0 < 40 && depth(...at(t0)) < 1.4) t0 += 2;
+  if (depth(...at(t0)) < 1.4) return null;
+  let len = 10;
+  while (len < 44 && depth(...at(t0 + len + 2)) >= 1.4 && depth(...at(t0 + len + 2, 10)) >= 1.0) len += 2;
+  const FY = level + 0.45;
+  const land = at(-5);
+  const LY = Math.max(G.terrainHeight(land[0], land[1]) + 0.3, level + 1.3);
+  // the pier runs from the bank to where the gangway starts down
+  const gl = Math.max(5, Math.min(12, (LY - FY) / 0.22));
+  const tp = Math.max(-1, t0 - gl);
+  const g = new THREE.Group();
+  const plat = [], solids = [];
+  const yaw = Math.atan2(nx, nz), vrot = Math.atan2(-nx, nz);
+  const deckA = M(0x8a6f4d), deckB = M(0x7c6245), pile = M(0x4a3a2b), hullM = M(0xd9dcd6);
+  const rail = P(0x9aa1a6, 0.45, 0.6, 0.8), rub = M(0x2b2e31);
+  // a strip of deck along n from ta to tb, across [o0, o1], top y0 -> y1
+  const strip = (ta, tb, o0, o1, y0, y1, th, float) => {
+    const n = Math.max(1, Math.round((tb - ta) / 2.4));
+    for (let i = 0; i < n; i++) {
+      const a = ta + ((tb - ta) * i) / n, b = ta + ((tb - ta) * (i + 1)) / n;
+      const [cx, cz] = at((a + b) / 2, (o0 + o1) / 2);
+      const yt = y0 + (y1 - y0) * (((a + b) / 2 - ta) / (tb - ta));
+      const bd = box(o1 - o0, th, b - a - 0.03, i % 2 ? deckB : deckA, cx, yt - th, cz, yaw);
+      if (y1 !== y0) { bd.rotation.order = 'YXZ'; bd.rotation.x = -Math.atan2(y1 - y0, tb - ta); }
+      g.add(bd);
+    }
+    const [mx, mz] = at((ta + tb) / 2, (o0 + o1) / 2);
+    // 6 cm longer at each end, so neighbouring pieces overlap: meeting
+    // exactly, the joint belonged to neither and a walker fell through it
+    const e = 0.06, k = (y1 - y0) / (tb - ta);
+    plat.push({ x: mx, z: mz, hw: (o1 - o0) / 2, hd: (tb - ta) / 2 + e, rot: vrot, y0: y0 - k * e, y1: y1 + k * e });
+    if (float) {
+      g.add(box(o1 - o0 - 0.1, FY - 0.22 - (level - 0.4), tb - ta - 0.1, hullM, mx, level - 0.4, mz, yaw));
+      g.add(box(o1 - o0 + 0.1, 0.14, tb - ta + 0.1, rub, mx, FY - 0.34, mz, yaw));
+    }
+  };
+  // a wall along an edge (from ta to tb at offset o), for walkers and hulls
+  const edge = (ta, tb, o, y0, y1) => {
+    const [cx, cz] = at((ta + tb) / 2, o);
+    solids.push({ x: cx, z: cz, hw: 0.15, hd: (tb - ta) / 2, rot: -yaw, y0, y1 });
+  };
+  // pier and its piles and rails
+  strip(-5, tp, -1.4, 1.4, LY, LY, 0.3, false);
+  for (let t = -3; t <= tp; t += 3) for (const o of [-1.5, 1.5]) {
+    const [x, z] = at(t, o), bed = G.terrainHeight(x, z) - 0.4;
+    if (bed < LY - 0.5) g.add(cyl(0.15, 0.17, LY - bed, pile, x, bed, z, 7));
+  }
+  // gangway
+  strip(tp, t0, -0.8, 0.8, LY, FY, 0.16, false);
+  for (const o of [-0.85, 0.85]) {
+    const [ax, az] = at(tp, o), [bx, bz] = at(t0, o);
+    const L = Math.hypot(bx - ax, bz - az);
+    const r = box(0.05, 0.05, L, rail, (ax + bx) / 2, (LY + FY) / 2 + 1.0, (az + bz) / 2, yaw);
+    r.rotation.order = 'YXZ'; r.rotation.x = -Math.atan2(FY - LY, t0 - tp);
+    g.add(r);
+    edge(tp, t0, o, Math.min(LY, FY) - 0.3, Math.max(LY, FY) + 1.2);
+  }
+  // the float and its T-head
+  // A T-head only where floatplanes tie up off it: along a walkway the craft
+  // lie bow-out, and a head across their bows pinned them to the float.
+  const head = spec.seaplanes ? 30 : 2.6;
+  strip(t0, t0 + len, -1.3, 1.3, FY, FY, 0.22, true);
+  strip(t0 + len, t0 + len + 2.6, -head / 2, head / 2, FY, FY, 0.22, true);
+  for (const o of [-1.3, 1.3]) edge(t0 + 0.2, t0 + len, o, FY - 0.3, FY + 0.9);
+  solids.push({ ...(() => { const [cx, cz] = at(t0 + len + 2.6, 0); return { x: cx, z: cz }; })(), hw: head / 2, hd: 0.15, rot: -yaw, y0: FY - 0.3, y1: FY + 0.9 });
+  // guide piles at the corners of the head and along the walkway
+  for (const [t, o] of [[t0 + len + 1.3, -head / 2 - 0.3], [t0 + len + 1.3, head / 2 + 0.3], [t0 + len / 2, -1.6], [t0 + len / 2, 1.6]].filter(([, o]) => spec.seaplanes || Math.abs(o) < 2)) {
+    const [x, z] = at(t, o), bed = G.terrainHeight(x, z) - 0.4;
+    g.add(cyl(0.2, 0.22, FY + 1.6 - bed, pile, x, bed, z, 8));
+    solids.push({ x, z, r: 0.25, y0: bed + 1.5, y1: FY + 1.7 });
+  }
+  // a sign at the head of the pier, facing the land
+  {
+    const [x, z] = at(-5.4, 1.8);
+    for (const d of [-0.9, 0.9]) {
+      const [qx, qz] = [x + px * d, z + pz * d];
+      g.add(cyl(0.05, 0.05, 2.4, rail, qx, LY - 0.3, qz, 6));
+    }
+    const sg = sign(spec.name.toUpperCase(), 2.8, 0.6, '#1f3a4a', '#f4efe2', { px: 60 });
+    sg.position.set(x, LY + 1.8, z);
+    sg.rotation.y = yaw + Math.PI;
+    g.add(sg);
+  }
+  // moorings: floatplanes off the head, the rest down both sides of the walk
+  const moor = [];
+  let si = 0, t = t0 + 3.5;
+  const colour = (ty, k) => (ty === 'jetski' ? SKI_PAINT : BOAT_PAINT)[(idx * 3 + k) % 6];
+  spec.fleet.forEach((ty, k) => {
+    if (ty === 'floatplane') {
+      // either end of the head, then off its middle further out
+      const slot = si++ % 3, side = slot === 0 ? -1 : slot === 1 ? 1 : 0;
+      const [x, z] = at(t0 + len + (side ? 7.5 : 14), side * (head / 2 - 5));
+      if (depth(x, z) >= 1.0) moor.push([ty, x, z, yaw, [0xe8c53a, 0xd8dde2, 0xc8453a][k % 3]]);
+      return;
+    }
+    const side = k % 2 ? 1 : -1;
+    const off = ty === 'jetski' ? 1.3 + 1.1 : 1.3 + 1.6;
+    const [x, z] = at(t, side * off);
+    if (depth(x, z) >= 1.0) moor.push([ty, x, z, yaw, colour(ty, k)]);
+    if (k % 2) t += ty === 'jetski' ? 4.5 : 7.5;
+  });
+  return { g, plat, solids, moor, x: S[0], z: S[1], level, land, n: [nx, nz], t0, tp };
+}
+
 export const LANDMARK_CLEAR = {
   spaceNeedle: 48, mopop: 62, arena: 95, spheres: 44, wheel: 9,
   // The Main Arcade's two OSM ways, which the model replaces; the Market's
@@ -2141,7 +2322,7 @@ function onRoad(city, s) {
  * colliders are installed through city.setLandmarkSolids; without it (the
  * cost harness) nothing outside the scene is touched.
  */
-export function buildLandmarks(scene, city) {
+export function buildLandmarks(scene, city, waterLevelAt = null) {
   atlas = new SignAtlas();
   const clusters = new Map();
   const solids = [];
@@ -2165,6 +2346,18 @@ export function buildLandmarks(scene, city) {
     }
     platforms.push(...d.userData.platforms);
     addTo('seadock', d);
+  }
+  const marinas = [];
+  if (waterLevelAt) {
+    MARINAS.forEach((m, i) => {
+      const d = marinaDock(m, waterLevelAt, i);
+      if (!d) { dropped.push(`marina:${m.name}`); return; }
+      for (const sd of d.solids) solids.push(sd);
+      platforms.push(...d.plat);
+      addTo(`marina${i}`, d.g);
+      marinas.push({ name: m.name, x: d.x, z: d.z, level: d.level, moorings: d.moor, seaplanes: !!m.seaplanes,
+        land: d.land, n: d.n, t0: d.t0, tp: d.tp });
+    });
   }
   for (const l of G.LANDMARKS) {
     const b = BUILDERS[l.kind];
@@ -2236,6 +2429,7 @@ export function buildLandmarks(scene, city) {
   // jumpClear)
   if (city) city.clearCircles = [[BDP.x, BDP.z, 121]];
   root.userData.platforms = platforms.length;
+  root.userData.marinas = marinas;
   scene.add(root);
   return root;
 }
