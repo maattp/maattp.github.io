@@ -29,9 +29,14 @@ function open() {
   return dbp;
 }
 
+// Read ONCE and kept: `#build` lives on the loading screen, which is removed
+// after boot, and a write after that read 'dev' -- and writing one build's
+// entry deletes every other build's, so a late write wiped the city's cache.
+let BUILD = null;
 export const buildId = () => {
+  if (BUILD) return BUILD;
   const el = typeof document !== 'undefined' && document.getElementById('build');
-  return el ? el.textContent.trim() : 'dev';
+  return el ? (BUILD = el.textContent.trim()) : 'dev';
 };
 
 export async function cacheGet(key) {

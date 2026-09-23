@@ -2043,10 +2043,42 @@ three layers, each built for what it costs on the phone:
   scrape loop, explosion, pistol, punch, footsteps on hard/grass/gravel/water,
   doors, seat, starter, kickstand, air brake, backfire, splash, slosh loop,
   squeal loop, gravel loop, pickup, cash, wanted sting, UI cues). `renderBank`
-  builds them in batches of OfflineAudioContexts when the context is unlocked,
-  seeded so every launch gets the same bank (57 buffers, ~45 s mono, ~0.5 s on
-  the Mac). Playing one is a BufferSource + gain (+ panner, + distance
-  low-pass, + reverb send), capped at `MAX_SHOTS` 18.
+  builds them in ~3 s batches of OfflineAudioContexts, seeded so every launch
+  gets the same bank (57 buffers, ~45 s mono, ~0.3 s on the Mac's GPU page),
+  filling the bank IN PLACE in `BANK_FIRST` order: footsteps, doors and
+  impacts are ready after the first small batch. Playing one is a
+  BufferSource + gain (+ panner, + distance low-pass, + reverb send), capped
+  at `MAX_SHOTS` 18.
+
+**The context is created at boot and unlocked on the first ACCEPTED gesture.**
+It used to be created, and resumed, on the first `pointerdown`, and the
+listener then removed itself. A touch's pointerdown is not user activation
+(only pointerup / touchend / click are, plus keydown and a mouse's
+pointerdown), so on the iPhone walking with the stick created a context that
+could never start: silence until some unrelated tap -- unpausing, the radio
+button -- resumed it, and then every sound at once. Now `audio.init()` runs
+before the reveal (a suspended context needs no gesture, and the bank renders
+while you load), and wireUi listens on pointerup, touchend, click, keydown and
+pointerdown in the CAPTURE phase (the on-screen buttons stop propagation),
+removing itself only once `ctx.state === 'running'`. `audio.live` gates
+`play()` and `update()`: anything scheduled on a suspended context piles up at
+time 0 and fires all at once on the unlock. `tools/audiounlock.mjs` drives the
+stick with real CDP touch events under the activation policy and prints the
+state at each step (`--bench` times the bank; use `AUTO_GPU=1` -- on
+SwiftShader each render batch waits for a ~0.5 s frame and the bank reads
+20-40 s, which measures the harness).
+
+**`primeLive` retries after `NotAllowedError`, and never touches an element
+the real stream holds.** Letting it retry exposed a race verify's radio check
+caught (3.8 s streamed -> 0.1 s): a late prime re-muted and paused a stream
+already loading. It now returns if the stream is loading or playing, and a
+token lets `startLive` supersede a priming play still in flight.
+
+**Footsteps are a heel knock and a sole roll under ~1.5 kHz, at a quarter of
+their old level.** They were a white-noise click at 2.2-3.6 kHz with an
+instant attack (centroid 3-6 kHz), and the footsteps scene measured -28.6 dB
+RMS against -33.4 for a car passing; now centroid 0.65-1.6 kHz and -35 dB,
+with +/-15 % per-step gain and pitch variation.
 - **Engines are a firing pattern, not an oscillator pitch.** The tone's
   PeriodicWave is the spectrum of one exhaust pulse per cylinder at its point
   in the cycle (`ENGINES[..].fire`), so the cross-plane V8's uneven banks and a

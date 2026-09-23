@@ -779,6 +779,11 @@ function installShadowFade() {
   // may stop the boot -- any error is logged, the stand-ins always come out,
   // and a lost context is reported instead of left for the first frame.
   try { warmLooks(); } catch (e) { blog(`warm looks: ${e.message}`); }
+  // The audio graph and its sound bank, now: creating a context needs no
+  // gesture (it starts suspended; wireUi's unlock resumes it), and the bank
+  // is offline rendering that used to begin only at the first tap -- seconds
+  // of silence on a phone before any footstep or door could play.
+  try { audio.init(); } catch (e) { blog(`audio: ${e.message}`); }
   {
     const tw = performance.now();
     const warm = new THREE.Group();
@@ -1228,17 +1233,29 @@ function wireUi() {
     doRespawn();
   });
 
+  // UNLOCK ON A GESTURE THE BROWSER ACCEPTS, AND KEEP TRYING UNTIL IT TAKES.
+  // This listened for the first pointerdown and then removed itself. A TOUCH
+  // pointerdown is not user activation (only pointerup / touchend / click
+  // are, plus keydown and a mouse's pointerdown), so on the iPhone the first
+  // touch -- the stick, to walk -- created the context but could not start
+  // it, and the listener was gone: the world stayed silent until some later
+  // resume() happened to land inside a real gesture (unpausing, the radio
+  // button), and then everything started at once. Capture phase, because the
+  // on-screen buttons stop propagation. The context itself is created at boot
+  // (audio.init() before the reveal), so the sound bank renders while you
+  // load instead of after the first tap.
+  const UNLOCK = ['pointerup', 'touchend', 'click', 'keydown', 'pointerdown'];
   const startAudio = () => {
     audio.init();
     audio.resume();
     // Same gesture, so Safari counts the stream as user-initiated. Getting into
     // a car happens in the frame loop and would be rejected on its own.
     audio.primeLive();
-    window.removeEventListener('pointerdown', startAudio);
-    window.removeEventListener('keydown', startAudio);
+    if (audio.ctx && audio.ctx.state === 'running') {
+      for (const ev of UNLOCK) window.removeEventListener(ev, startAudio, true);
+    }
   };
-  window.addEventListener('pointerdown', startAudio);
-  window.addEventListener('keydown', startAudio);
+  for (const ev of UNLOCK) window.addEventListener(ev, startAudio, true);
 
   // Size from the canvas box, not window.inner*: in iOS standalone the document
   // is taller than the visual viewport by the status-bar inset.
