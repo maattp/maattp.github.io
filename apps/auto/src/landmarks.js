@@ -1936,14 +1936,127 @@ export const LANDMARK_CLEAR = {
   stadiumF: 135, stadiumB: 128, stadiumH: 122, smith: 6,
   // the tower/apron cluster only -- the runway lies over real open ground and
   // the hangars beside it are real buildings that must stay
-  airport: 90, bellevueDT: 40,
+  // the ring and its promenade, off the OSM point (the circle's centre is
+  // 16 m north-west of it: -x is west, -z north)
+  airport: 90, bellevueDT: [[-13.2, -8.5, 110]],
 };
+
+/**
+ * Bellevue Downtown Park: a 10-acre lawn inside a circular canal, a half-mile
+ * promenade round it under a double row of shade trees, and in the south-west
+ * a reflecting pond fed over a wide stepped waterfall, with the canal's
+ * straight arm running west beside it (bellevuewa.gov; the geometry below is
+ * OSM's: the canal ring r 96.7-101.7 m, the pond and the channel as mapped,
+ * relative to the circle's centre). The import left a 20 m crater there
+ * (geo.js TERRAIN_FLATS levels it); nothing here was drawn before.
+ */
+// the circle's centre, from the terrain flat that levels it (geo.js)
+const BDP = { get x() { return G.terrainFlat('bellevueDT').x; }, get z() { return G.terrainFlat('bellevueDT').z; } };
+const BDP_POND = [[-95, 36], [-89, 48], [-83, 58], [-76, 67], [-67, 76], [-57, 84], [-49, 89], [-41, 93],
+  [-33, 96], [-25, 98], [-21, 99], [-20, 89], [-18, 80], [-17, 73], [-23, 67], [-30, 54], [-39, 46],
+  [-41, 35], [-95, 36]];
+const BDP_CHANNEL = [[-98, 24], [-97, 28], [-95, 33], [-85, 32], [-37, 31], [-26, 31], [-26, 26],
+  [-26, 21], [-95, 23]];
+// the pond's east edge, north to south: where the waterfall comes down
+const BDP_FALL = [[-41, 35], [-39, 46], [-30, 54], [-23, 67], [-17, 73], [-18, 80], [-20, 89]];
+function bellevueDT() {
+  const g = new THREE.Group();
+  const f = G.terrainFlat('bellevueDT');
+  g.userData.worldAligned = true;
+  g.userData.at = [BDP.x, BDP.z, f.y];
+  const water = P(0x2c5d74, 0.06, 0.1, 1.4);
+  const stone = P(0xb3ad9f, 0.85);
+  const pave = P(0xc2bba9, 0.9);
+  const bark = P(0x5b4838, 0.9);
+  const leaf = P(0x4d7838, 0.8);
+  const leaf2 = P(0x5d8a3f, 0.8);
+  // a flat ring between two radii, as one geometry
+  const ring = (r0, r1, y, m, seg = 128) => {
+    const geo = new THREE.RingGeometry(r0, r1, seg, 1);
+    geo.rotateX(-Math.PI / 2);
+    const o = new THREE.Mesh(geo, m);
+    o.position.y = y;
+    return o;
+  };
+  // a flat polygon (x, z pairs), and a coping wall round its edge
+  const flatPoly = (pts, y, m) => {
+    const sh = new THREE.Shape(pts.map(([x, z]) => new THREE.Vector2(x, -z)));
+    const geo = new THREE.ShapeGeometry(sh);
+    geo.rotateX(-Math.PI / 2);
+    const o = new THREE.Mesh(geo, m);
+    o.position.y = y;
+    return o;
+  };
+  const coping = (pts, h, t) => {
+    for (let i = 0; i < pts.length - 1; i++) {
+      const [ax, az] = pts[i], [bx, bz] = pts[i + 1];
+      const L = Math.hypot(bx - ax, bz - az);
+      if (L < 0.2) continue;
+      g.add(box(t, h, L + t, stone, (ax + bx) / 2, -0.1, (az + bz) / 2, Math.atan2(bx - ax, bz - az)));
+    }
+  };
+  // The canal: water, and a stone kerb on both banks
+  g.add(ring(96.7, 101.7, 0.2, water));
+  g.add(ring(96.2, 96.7, 0.42, stone));
+  g.add(ring(101.7, 102.3, 0.42, stone));
+  for (const r of [96.2, 96.7, 101.7, 102.3]) {
+    const geo = new THREE.CylinderGeometry(r, r, 0.52, 128, 1, true);
+    const o = new THREE.Mesh(geo, stone);
+    o.position.y = 0.16;
+    g.add(o);
+  }
+  // The promenade, and its double row of shade trees
+  g.add(ring(102.3, 109.5, 0.05, pave));
+  for (const [r, off] of [[111.8, 0], [117.2, 0.5]]) {
+    const n = Math.round((2 * Math.PI * r) / 11);
+    for (let k = 0; k < n; k++) {
+      const a = ((k + off) / n) * Math.PI * 2;
+      const x = Math.cos(a) * r, z = Math.sin(a) * r;
+      const hk = ((k * 7919 + r * 13) % 97) / 97;
+      const h = 3.0 + hk * 1.2, cr = 2.8 + hk * 1.1;
+      g.add(cyl(0.22, 0.3, h + 1, bark, x, 0, z, 6));
+      const c = new THREE.Mesh(new THREE.SphereGeometry(cr, 9, 6), hk > 0.5 ? leaf : leaf2);
+      c.scale.set(1, 0.82, 1);
+      c.position.set(x, h + cr * 0.6, z);
+      g.add(c);
+      solidCircle(g, x, z, 0.35, h);
+    }
+  }
+  // The straight arm and the reflecting pond, as mapped
+  g.add(flatPoly(BDP_CHANNEL, 0.2, water));
+  coping(BDP_CHANNEL, 0.52, 0.5);
+  g.add(flatPoly(BDP_POND, 0.12, water));
+  coping(BDP_POND, 0.5, 0.5);
+  // The waterfall: three stone steps down the pond's east edge, a sheet of
+  // falling water on each riser, the top one fed from a basin on the lawn.
+  for (let i = 0; i < BDP_FALL.length - 1; i++) {
+    const [ax, az] = BDP_FALL[i], [bx, bz] = BDP_FALL[i + 1];
+    const L = Math.hypot(bx - ax, bz - az), ux = (bx - ax) / L, uz = (bz - az) / L;
+    // away from the pond is east here
+    let nx = -uz, nz = ux;
+    if (nx < 0) { nx = -nx; nz = -nz; }
+    const rot = Math.atan2(ux, uz);
+    for (let k = 0; k < 3; k++) {
+      const d = 0.8 + k * 1.3, top = 0.7 + k * 0.6;
+      const cx = (ax + bx) / 2 + nx * d, cz = (az + bz) / 2 + nz * d;
+      g.add(box(1.3, top, L + 0.6, stone, cx, 0, cz, rot));
+      const sheet = new THREE.Mesh(new THREE.PlaneGeometry(L + 0.4, 0.62), P(0xdfeef5, 0.2, 0, 1.2));
+      sheet.position.set(cx - nx * 0.67, top - 0.31, cz - nz * 0.67);
+      sheet.rotation.y = Math.atan2(-nx, -nz);
+      g.add(sheet);
+      solidBox(g, cx, cz, 0.65, (L + 0.6) / 2, rot, top);
+    }
+    g.add(box(1.8, 0.1, L + 0.6, water, (ax + bx) / 2 + nx * 4.7, 1.9, (az + bz) / 2 + nz * 4.7, rot));
+  }
+  return g;
+}
 
 const BUILDERS = {
   spaceNeedle: () => { const g = spaceNeedle(); for (const s of needleSolids()) solid(g, s); return g; },
   mopop, arena, spheres, market, wheel, library, aquarium, gasworks, troll, locks,
   ferry: ferryTerminal, pier, kerry: kerryPark, ferriswheelPier: statueLiberty,
   convention, airport, stadiumF: lumen, stadiumB: tmobile, stadiumH: husky, smith,
+  bellevueDT,
 };
 
 /**
@@ -2119,6 +2232,10 @@ export function buildLandmarks(scene, city) {
   root.userData.solidsDropped = dropped;
   if (city && city.setLandmarkSolids) city.setLandmarkSolids(solids);
   if (city && city.setPlatforms) city.setPlatforms(platforms);
+  // Bellevue Downtown Park's lawn and promenade are open ground: the builder
+  // plants the promenade's own trees, so the scatter keeps out (citygen
+  // jumpClear)
+  if (city) city.clearCircles = [[BDP.x, BDP.z, 121]];
   root.userData.platforms = platforms.length;
   scene.add(root);
   return root;

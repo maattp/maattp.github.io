@@ -39,6 +39,22 @@ const VIEWS = [
   // the waterfront's walkable decks (Wheel, Aquarium, Pier 66) and the shore
   { name: 'waterfront-aerial', t: [-400, 480, 0], c: [-230, 520, 0], cy: 130 },
   { name: 'pier66-aerial', t: [-788, 92, 0], c: [-640, 160, 0], cy: 110 },
+  // neighbourhoods: is the city's building stock varied? (houses, low-rise)
+  { name: 'hood-wallingford-street', t: [300, -5300, 4], c: [230, -5330, 1.7] },
+  { name: 'hood-wallingford-air', t: [267, -5350, 0], c: [100, -5150, 0], cy: 120 },
+  { name: 'hood-ballard-air', t: [-3633, -7245, 0], c: [-3450, -7050, 0], cy: 110 },
+  { name: 'hood-ballard-street', t: [-3600, -7245, 5], c: [-3680, -7270, 1.7] },
+  { name: 'hood-queenanne-air', t: [-1717, -3128, 0], c: [-1500, -2950, 0], cy: 150 },
+  { name: 'hood-capitol-street', t: [1470, -1330, 6], c: [1440, -1420, 1.7] },
+  { name: 'hood-capitol-air', t: [1468, -1388, 0], c: [1650, -1200, 0], cy: 140 },
+  { name: 'hood-columbia-air', t: [3961, 5940, 0], c: [4150, 6150, 0], cy: 120 },
+  { name: 'hood-beacon-fly', t: [2100, 3200, 0], c: [2100, 4300, 0], cy: 260 },
+  // Bellevue Downtown Park: the lawn in its ring canal, the reflecting pond SW
+  { name: 'bdp-air', t: [10051, -129, 0], c: [10200, 60, 0], cy: 130 },
+  { name: 'bdp-top', t: [10051, -129, 0], c: [10052, -128, 0], cy: 330, fov: 60 },
+  { name: 'bdp-lawn', t: [10000, -80, 1], c: [10090, -170, 1.7] },
+  { name: 'bdp-fall', t: [10022, -68, 1], c: [9982, -50, 2.5] },
+  { name: 'bdp-canal', t: [10051, -30, 0.5], c: [10130, -60, 1.7] },
   { name: 'wheel-walk', t: [-330, 575, 2], c: [-292, 590, 1.7] },
   { name: 'pier66-walk', t: [-770, 60, 2], c: [-738, 40, 1.7] },
   { name: 'arena-close', t: [-1214, -1197, 18], c: [-1318, -1066, 1.7] },

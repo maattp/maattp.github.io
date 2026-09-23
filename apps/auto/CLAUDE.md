@@ -932,6 +932,34 @@ cluster of buildings over 60 m, the fully-green patch nearest downtown.
   wall -- the "green slab on a stick" that trees rendered as. `spheroid` is
   closed and costs about the same.
 
+## Buildings: variety
+
+**Every house in the city was one off-white under one slate roof**
+(`tint(seed, [0.94, 0.92, 0.88])`, one gable form), so from a street or a plane
+a neighbourhood was the same texture repeated. v110:
+
+- **Paint and roofing are weighted palettes** (`HOUSE_PAINT`, `HOUSE_ROOF` in
+  world.js): whites, creams and greys, sage, olive, slate blue, navy,
+  charcoal, barn red, mustard, teal, brown shingle; asphalt greys, brown,
+  black, slate, moss, terracotta, metal. **Houses go through `paintTint`, not
+  `tint`**: tint's 38 % pull toward grey is right for masonry and turned every
+  paint back into the off-white it replaced.
+- **Three roof forms**: gable (pitch 0.46-0.82), hip (`meshHip`, 4 slopes, a
+  pyramid on a square footprint) on squarer footprints, and a flat modern box
+  with a coping on ~11 %. A fascia board under the eaves in a trim colour
+  (mostly white).
+- **Front porches** on ~40 % of houses wider than 6.5 m: deck, two posts,
+  roof, on the step's side, skipped wherever `onRoad` finds the street there.
+- **Five more wall families** for everything else (beige stucco, dark brown
+  brick, grey-blue, salmon and ochre paint), and **flat roof lids** are a
+  palette too: grey membrane, white single-ply (more of it on big roofs), tar,
+  gravel, the odd green roof.
+
+All vertex colour on the existing materials: no draws, no textures. Wallingford
+9x9 ring: 2.89 M -> 3.11 M vertices (+7.6 %), chunk builds +5 %, longest step
+1.3 -> 1.4 ms; perfguard downtown +0.7 % triangles. `landmarkshots.mjs` has
+`hood-*` street and aerial views of eight neighbourhoods for judging it.
+
 ## Buildings: the outlier scan
 
 `tools/bldshots.mjs --scan` counts every shipped box into categories (style x
@@ -1411,6 +1439,20 @@ it was set from. Collision is in "Solid street objects".
 - **MoPOP read as inflatables** until it had near-vertical walls rolling into a
   low crown (not a dome), folds in plan deepening toward the top, and a shingle
   map. Its colour placement is est., from photographs.
+
+- **Bellevue Downtown Park is built from its OSM water** (`bellevueDT`,
+  v111): the 10-acre lawn inside the ring canal (r 96.7-101.7 m), the
+  promenade under a double row of trees, the reflecting pond and the canal's
+  straight arm as mapped, and a stepped waterfall down the pond's east edge.
+  Before, `bellevueDT` had no builder, and the import had dug a 20 m DRY
+  CRATER there: `build_raster.py` digs a bed under every heightfield cell
+  touching water, but only a lake over 20,000 m2 gets a water plane.
+  `geo.TERRAIN_FLATS` levels such a spot at load (vertices within r0 set to
+  the ground just outside, blended to r1) before anything reads the terrain.
+  **Other small ponds have the same pit**; the importer-side fix (no bed
+  under unlabelled ponds) needs a raster rebuild and a road re-grade, so it
+  is a separate change. `city.clearCircles` keeps the scatter off the lawn.
+  1 draw, 17.6k triangles; views `bdp-*` in landmarkshots.
 
 Built alone (draws after merge / triangles): Needle 6 / 14.0k, Spheres 5 / 15.0k,
 Wheel 6 / 7.3k, arena 8 / 5.6k, Troll 4 / 5.5k, MoPOP 7 / 4.7k, T-Mobile 8 / 4.7k,
