@@ -81,9 +81,12 @@ export function initGeo(md) {
 // flattens the heightfield vertices within r0 of a centre to the mean ground
 // on the ring just outside r1, blending between; applied at load, before
 // anything reads the terrain, so every consumer sees the same ground.
+// Keyed by name: landmarks.js reads Bellevue's (the level it builds on), and
+// the entry is the one place its centre is written.
 export const TERRAIN_FLATS = [
-  { x: 10051, z: -129, r0: 150, r1: 215 },   // Bellevue Downtown Park
+  { name: 'bellevueDT', x: 10051, z: -129, r0: 150, r1: 215 },   // Bellevue Downtown Park
 ];
+export const terrainFlat = (name) => TERRAIN_FLATS.find((f) => f.name === name);
 function fixTerrain(hf) {
   for (const f of TERRAIN_FLATS) {
     let sum = 0, n = 0;
