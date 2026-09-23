@@ -3827,7 +3827,12 @@ export function* cityGenerator(md, cache = {}) {
      * so a road crossing a park (Aurora through Woodland Park, Lake Washington
      * Boulevard down the length of its own) reads as plantable ground.
      */
-    onRoad(x, z, pad = 0, includeElev = true) {
+    onRoad(x, z, pad = 0, includeElev = true, includeTunnel = true) {
+      // `includeTunnel` false: a bore is not a carriageway on the SURFACE.
+      // Pavement asks this way -- it was dropped over every bore running
+      // under it (SR-99 under Harrison Street's south footway) while roadLift,
+      // which never counts tunnels, still reported it: you walked 0.5 m up on
+      // nothing. An open cutting is inCut's to answer, not this.
       // FROM THE FINE GRID for every pad a caller uses (<= ROAD_PAD_MAX). The
       // chunk scan below walked every edge of up to four 400 m chunks through
       // an allocating distToSeg, and chunk meshing calls this per pavement
@@ -3841,6 +3846,7 @@ export function* cityGenerator(md, cache = {}) {
         for (let q = 0; q < cand.length; q++) {
           const e = g.edges[cand[q]];
           if (e.elev && !includeElev) continue;
+          if (e.tunnel && !includeTunnel) continue;
           const a = g.nodes[e.a], b = g.nodes[e.b];
           const sx = b.x - a.x, sz = b.z - a.z, l2 = sx * sx + sz * sz;
           let t = l2 > 0 ? ((x - a.x) * sx + (z - a.z) * sz) / l2 : 0;
@@ -3867,6 +3873,7 @@ export function* cityGenerator(md, cache = {}) {
             // them. Pavement is the exception: a bridge passing overhead is no
             // reason to leave a hole in the footpath under it.
             if (e.elev && !includeElev) continue;
+            if (e.tunnel && !includeTunnel) continue;
             const a = g.nodes[e.a], b = g.nodes[e.b];
             // A graded road's embankment is part of it: a tree on the batter
             // is buried to its canopy, a pavement piece on it floats.

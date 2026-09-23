@@ -3153,6 +3153,62 @@ a ramp cutting 6.0 m above it keeps the old treatment.
 the angle** (see "Vehicles"). A bus grazing SR-99's wall side-on used to lose
 80 % of its speed per frame and wedge with a column behind it.
 
+### SR-99's north mouths: a street over the bore is its roof
+
+**The cutting ran 45 m past the OSM portals, under Harrison Street.** A cut
+walks the bore from its portal until there is `CUT_COVER` (3.5 m) of earth
+over the roof, so every headwall stands at the foot of a real cutting. At
+SR-99's north mouths the ground is barely above the tubes, so reaching that
+cover dug on under Harrison and the street beside it: the lid code patched
+the pit with slabs, headwalls stood in clusters with their shoulders over the
+neighbouring bore (a beam and a block floating in the cutting), and wherever
+no slab reached, groundAt answered the pit floor under drawn tarmac -- a car
+fell 10 m to the deck.
+
+In SR-99's portal groups only (`streetRoof`: groups holding the stacked
+decks' nodes; citywide the rule would reshape 48 cuts whose lids were each
+tuned against a regression -- judge those portal by portal first):
+
+- **A street crossing the bore ends the cut at its kerb** (footway
+  included), when the roof is under the street's surface (`STREET_ROOF`
+  -0.3 m of cover: the roofs at Harrison's kerb are -0.1 to +0.2 m under
+  ground, and a street stands 0.3 m over it). Asking for a metre of cover
+  stopped the cuts inside the street, whose north half then dipped into the
+  trench.
+- **The kerb line is a half-plane nothing past may dig** (`cut.kerb`, in
+  `cutFloor`, `inCut` and portalcheck's coverage). The trench's full
+  cross-section at its end is ~15 m wide, and where the street crosses at an
+  angle its corner reached under the kerb -- tarmac over dug ground, falling
+  through the road; clamped `inCut` also answered "open" 8 m under the street,
+  a roofless tube with sky above. The cap is 1.5 m, not 14, and the last
+  segments' round ends are not dug either: the deepest trench wins, so the
+  last real segment's bowl beat the cap's rising floor.
+- **The headwall follows the street** (`cut.streetDir`, meshPortalWall):
+  every bore's end lies on the kerb line, so they share one station and one
+  wall, and its lintel is the street's parapet (street + 1 m, not 2.4 m).
+- **The parapet line is a barrier** from 2 m under the roofs up (a car
+  stopped against it settles its front wheels over the mouth; a band from the
+  roof let it sink under and slide through). Tunnel traffic passes 3.7 m+
+  below it. Driven straight north off Harrison, master fell 5 m into the
+  cutting; now the car stops at the kerb.
+- **A bore is not a carriageway on the surface** (`onRoad(..., includeTunnel)`
+  false for the pavement test): pavement was dropped over every bore under it
+  while roadLift, which never counts tunnels, reported it -- an invisible
+  footway 0.5 m up along Harrison's south side, wherever else a bore runs
+  under a pavement too. jank's walk-on-road skips bores for the same reason.
+
+| north mouths | master | now |
+|---|---|---|
+| ground dug south of Harrison | 45 m of pit, lids, slab pieces | none |
+| drive north off Harrison | falls 5 m into the cutting | stops at the parapet |
+| walk Harrison's north footway | falls 7.5 m | stays on it |
+| headwalls | 3 staggered clusters | 1, along the kerb |
+
+tunnelride sb / nb / sb-wrong / nb-wrong: 0 captures, 0 hops (unchanged);
+sbx / sbx-rev unchanged; portalcheck 0 faults, 0 corridors with ground over
+the carriageway (walls 1023 -> 1013: the merged cluster); camtunnel 0 of 24;
+jank unchanged (fwy-bump 826 -> 820).
+
 ### Cut-and-cover lids: a heightfield cannot hold a road over a trench
 
 **The portal carve digs everything within hw + 7.6 m of a corridor.** That dug

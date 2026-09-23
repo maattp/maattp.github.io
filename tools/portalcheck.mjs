@@ -131,6 +131,10 @@ try {
           const fy = a.y + (b.y - a.y) * t - 0.7;
           for (let o = -a.hw; o <= a.hw; o += 2) {
             const x = px2 + qx * o, z = pz2 + qz * o;
+            // past a street-ended cut's kerb line (world.js street-roof rule)
+            // the ground is the street's, kept on purpose; the headwall laid
+            // along that line closes it
+            if (c.kerb && (x - c.kerb.x) * c.kerb.nx + (z - c.kerb.z) * c.kerb.nz > 0) continue;
             const over = G.terrainHeight(x, z) - fy;
             n++;
             if (over > 0.4) { bad++; if (over > worst) { worst = over; wx = x; wz = z; } }
