@@ -3364,6 +3364,21 @@ Citywide dug-road sweep after these and the stacking (588 runs): drops 215 ->
   0.02 m for views from the street into sub-sea cuttings, and skips quads over
   real water. This holds per deck unchanged: both decks have 1.5 m+ of raw
   ground over the camera everywhere past the mouths.
+- **v107: the sea plane was one quad, and that is why no mask height ever
+  worked.** A 34 km quad runs far past the 9 km far plane, and the depth
+  rasterised across a clipped triangle that size is off by more than the
+  mask's 2 cm near a low camera: the chase camera over SR-99's NB entry
+  cutting at SODO saw the whole cutting flooded, the sea winning the depth
+  test against the mask and the road beside it, and the result flipped with
+  sub-milliradian changes in heading (a probe pose rounded to 4 decimals
+  "worked"). The sea, lakes and canal are tessellated at `WATER_CELL` 530 m
+  (64 x 64 for the sea): 12 poses down that cutting all match a render with no
+  sea at all, against 1 of 12 failing as one quad. +11k triangles, 0 draws.
+  The cutting mask also covers the banks now (`+ CUT_BANK`) and every segment
+  with its floor under 1 m, not 0.3, which took out the streaks along the
+  banks. **Judge water from the real frame**: `RIDE_SHOT_EVAL='<expr>'` runs
+  on the posed frame before each tunnelride shot (hide the sea, paint the mask
+  red); a probe pose that is not the ride's exact quaternion can pass.
 - **Mitred bore joints meet at the node's height.** The thin light seam across
   the bore (NB deck at z 1667, and at every grade break between two tunnel
   edges) was the mitre: drawn heights came from PROJECTION onto each edge, so

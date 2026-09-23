@@ -81,6 +81,8 @@ function underStreet(c, x, z) {
 // descent is gentle at the drop citygen applies, short enough that it does not
 // swallow the junction behind it.
 const APPROACH = 70;
+// Water planes are tessellated to cells this size (see buildWater).
+const WATER_CELL = 530;
 
 const ROAD_Y = ROAD_LIFT;
 // Metres per road-texture repeat. Fixed, so the asphalt's grain is the same
@@ -1263,14 +1265,19 @@ export class World {
       // a cutting whose floor dips under the sea on its SURFACE approach --
       // the NB entry cutting at SODO, beside the SR-99 surface on its lids --
       // showed the sea plane lying in the trench as a canal, from the road
-      // beside it. Each non-cap corridor segment whose floor is under 0.3 m
+      // beside it. Each non-cap corridor segment whose floor is under 1 m
       // gets the same depth-only quad across the whole dug floor.
       for (const c of cuts) {
         for (let i = 0; i < c.pts.length - 1; i++) {
           const a = c.pts[i], b = c.pts[i + 1];
-          if (a.cap || b.cap || Math.min(a.y, b.y) - 0.7 > 0.3) continue;
+          // (floor under 1 m, not 0.3: a segment ending just above that left
+          // a line of sea where the next one's bank dipped under it)
+          if (a.cap || b.cap || Math.min(a.y, b.y) - 0.7 > 1.0) continue;
           const L = Math.hypot(b.x - a.x, b.z - a.z) || 1;
-          maskStrip(a, b, a.hw + CUT_SH + CUT_OVER, -(b.z - a.z) / L, (b.x - a.x) / L);
+          // banks included: where a bank dips under the sea outside the
+          // full-depth width, the sea showed as streaks along it (depth-only
+          // at 0.02 m, the mask does nothing over ground higher than that)
+          maskStrip(a, b, a.hw + CUT_SH + CUT_OVER + CUT_BANK, -(b.z - a.z) / L, (b.x - a.x) / L);
         }
       }
       if (!wb.empty) {
@@ -2668,7 +2675,17 @@ export class World {
   }
 
   buildWater() {
-    const geo = new THREE.PlaneGeometry(G.MAP_HALF * 2.6, G.MAP_HALF * 2.6, 1, 1);
+    // TESSELLATED, not one quad. A 34 km quad reaches far past the 9 km far
+    // plane, and the depth rasterised across a clipped triangle that size is
+    // off by more than the 2 cm the tunnel water mask stands over the sea: from
+    // a chase camera a few metres over SR-99's NB entry cutting the sea won
+    // the depth test against the mask (and the road beside it), and the
+    // cutting drew flooded -- or not, flipping with sub-milliradian changes in
+    // the camera's heading. At WATER_CELL cells (64 x 64), 12 poses down that
+    // cutting all matched a render with no sea at all (the one quad failed 1
+    // of 12, 8 x 8 cells 1 of 12). Still one draw; ~8k triangles.
+    const WATER_SEG = Math.ceil((G.MAP_HALF * 2.6) / WATER_CELL);
+    const geo = new THREE.PlaneGeometry(G.MAP_HALF * 2.6, G.MAP_HALF * 2.6, WATER_SEG, WATER_SEG);
     geo.rotateX(-Math.PI / 2);
     const n = this.tx.water.normalMap;
     n.repeat.set(520, 520);
@@ -2740,7 +2757,8 @@ export class World {
     this.lakes = [];
     for (const l of (this.lakeSpecs || [])) {
       const w = l.x1 - l.x0, d = l.z1 - l.z0;
-      const lg = new THREE.PlaneGeometry(w, d, 1, 1);
+      // tessellated like the sea, for the same depth precision
+      const lg = new THREE.PlaneGeometry(w, d, Math.ceil(w / WATER_CELL), Math.ceil(d / WATER_CELL));
       lg.rotateX(-Math.PI / 2);
       const lm = new THREE.Mesh(lg, mat);
       lm.position.set((l.x0 + l.x1) / 2, l.level, (l.z0 + l.z1) / 2);
@@ -2778,7 +2796,7 @@ export class World {
       const box = new THREE.Vector4((c.i0 - 0.5) * S - H, (c.j0 - 0.5) * S - H, c.w * S, c.h * S);
       const x0 = (c.i0 + a0 - 1) * S - H, x1 = (c.i0 + a1 + 1) * S - H;
       const z0 = (c.j0 + b0 - 1) * S - H, z1 = (c.j0 + b1 + 1) * S - H;
-      const cg = new THREE.PlaneGeometry(x1 - x0, z1 - z0, 1, 1);
+      const cg = new THREE.PlaneGeometry(x1 - x0, z1 - z0, Math.ceil((x1 - x0) / WATER_CELL), Math.ceil((z1 - z0) / WATER_CELL));
       cg.rotateX(-Math.PI / 2);
       cg.translate((x0 + x1) / 2, 0, (z0 + z1) / 2);
       const U = c.union, pos = cg.attributes.position, uv = cg.attributes.uv;
