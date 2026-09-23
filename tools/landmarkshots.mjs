@@ -55,6 +55,12 @@ const VIEWS = [
   { name: 'bdp-lawn', t: [10000, -80, 1], c: [10090, -170, 1.7] },
   { name: 'bdp-fall', t: [10022, -68, 1], c: [9982, -50, 2.5] },
   { name: 'bdp-canal', t: [10051, -30, 0.5], c: [10130, -60, 1.7] },
+  // marinas (landmarks.js MARINAS): from the bank, looking out along the pier
+  { name: 'marina-shilshole', t: [-5075, -7721, 1], c: [-5030, -7681, 0], cy: 9 },
+  { name: 'marina-renton', t: [9037, 12320, 1], c: [9060, 12390, 0], cy: 12 },
+  { name: 'marina-leschi', t: [3960, 1205, 1], c: [3915, 1220, 0], cy: 7 },
+  { name: 'marina-seaplanes', t: [770, -2242, 1], c: [815, -2230, 0], cy: 8 },
+  { name: 'marina-kirkland', t: [9681, -7115, 0.5], c: [9670, -7175, 0], cy: 6 },
   { name: 'wheel-walk', t: [-330, 575, 2], c: [-292, 590, 1.7] },
   { name: 'pier66-walk', t: [-770, 60, 2], c: [-738, 40, 1.7] },
   { name: 'arena-close', t: [-1214, -1197, 18], c: [-1318, -1066, 1.7] },

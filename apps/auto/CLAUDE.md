@@ -3043,6 +3043,43 @@ dock's car park, Seattle Center) and $700 from the delivery menu; parked
 ones freeze once settled. 6.9k triangles + the rider, like the bikes.
 Bench band in tools/vehicles.mjs (0-80 2.4 s arcade).
 
+### Marinas, seaplane bases and the jet ski
+
+**Ten docks round the region** (`landmarks.js` `MARINAS`, v112): Renton's
+seaplane base on Lake Washington's south shore and Seattle Seaplanes on Lake
+Union's east shore (floatplanes), and boats and jet skis at Shilshole,
+Elliott Bay, Bell Harbor, Leschi, Carillon Point, Kirkland, Meydenbauer Bay
+and Luther Burbank. Each is laid out from its real site by `marinaDock()`:
+a pier off the bank, a gangway, a floating walkway (a T-head only at the
+seaplane bases), piles, curbs as solids, and every top a platform. Its
+moorings spawn in main.js as 'apron' (skipped past 300 m), and each is a map
+place that says hello.
+
+- **Site from the DRAWN shore, not the water mask.** The mask's edge and the
+  terrain's crossing of the water level disagree by tens of metres on a 40 m
+  DEM: sited on the mask, docks stood out in the water with their piers
+  reaching nothing. Land nearest the site (ground over the local surface,
+  dry 25 m out in most directions, or a breakwater or a DEM pixel counts),
+  the water 2 m deep nearest that, and the crossing between them.
+- **Overlap neighbouring platforms.** Meeting exactly, the joint between
+  pier and gangway belonged to neither, and a walker fell through it to the
+  bed. Each piece is 6 cm longer at both ends.
+- **No T-head across moored bows**: craft lie bow-out along the walkway, and
+  a head's fender pinned every one of them to the float.
+
+Walked from 12 m inland out onto every float (groundAt from the ground):
+worst step 0.53 m, the kerb up onto the pier. Every moored boat and jet ski
+drives off at full throttle without a shore contact.
+
+**The jet ski** (`jetski` in TYPES, `buildJetski`) is `boat: true` -- the
+boat's float, shore and lock rules, wake and exit -- on a 3.2 m hull with the
+quad's posed rider (`RIDERS.jetski`, shown only when ridden), 105 km/h, and
+in `updateBoat` 1.75x the yaw and three times the lean: 61 deg/s through a
+full-lock turn at speed, leaning 19 deg. Not in traffic. **Re-shoot vehicle
+geometry with a bumped build** or cleared `/tmp/auto-*` profiles: the boot
+cache keeps vehicle geometry per build, and a harness profile that survived
+showed the old hull.
+
 ### The ship canal is at lake level
 
 **Only the lakes are labelled**, each by its bounding box in `water.json`, so
