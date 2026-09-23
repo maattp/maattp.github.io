@@ -12,7 +12,7 @@ const SCALE = MAP_PX / (G.MAP_HALF * 2);
  * wheels on orange. Drawn, not typed -- an emoji's glyph depends on the font.
  */
 function placeIcon(ctx, kind, x, y, r) {
-  ctx.fillStyle = kind === 'dock' ? '#2f86d6' : '#e0782e';
+  ctx.fillStyle = kind === 'dock' ? '#2f86d6' : kind === 'jet' ? '#c8352a' : '#e0782e';
   ctx.strokeStyle = '#ffffff';
   ctx.lineWidth = r * 0.22;
   ctx.beginPath();
@@ -32,6 +32,14 @@ function placeIcon(ctx, kind, x, y, r) {
     ctx.beginPath();
     ctx.arc(x, y - r * 0.55, r * 0.14, 0, Math.PI * 2);
     ctx.stroke();
+  } else if (kind === 'jet') {
+    // a delta, nose up
+    ctx.fillStyle = '#ffffff';
+    ctx.beginPath();
+    ctx.moveTo(x, y - r * 0.62); ctx.lineTo(x + r * 0.5, y + r * 0.42);
+    ctx.lineTo(x, y + r * 0.22); ctx.lineTo(x - r * 0.5, y + r * 0.42);
+    ctx.closePath();
+    ctx.fill();
   } else {
     ctx.moveTo(x - r * 0.45, y); ctx.lineTo(x + r * 0.45, y);
     ctx.stroke();
