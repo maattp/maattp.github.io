@@ -2118,7 +2118,7 @@ export const LANDMARK_CLEAR = {
   // the tower/apron cluster only -- the runway lies over real open ground and
   // the hangars beside it are real buildings that must stay
   // the ring and its promenade, off the OSM point (the circle's centre is
-  // 16 m south-west of it)
+  // 16 m north-west of it: -x is west, -z north)
   airport: 90, bellevueDT: [[-13.2, -8.5, 110]],
 };
 
@@ -2131,7 +2131,8 @@ export const LANDMARK_CLEAR = {
  * relative to the circle's centre). The import left a 20 m crater there
  * (geo.js TERRAIN_FLATS levels it); nothing here was drawn before.
  */
-const BDP = { x: 10051, z: -129 };
+// the circle's centre, from the terrain flat that levels it (geo.js)
+const BDP = { get x() { return G.terrainFlat('bellevueDT').x; }, get z() { return G.terrainFlat('bellevueDT').z; } };
 const BDP_POND = [[-95, 36], [-89, 48], [-83, 58], [-76, 67], [-67, 76], [-57, 84], [-49, 89], [-41, 93],
   [-33, 96], [-25, 98], [-21, 99], [-20, 89], [-18, 80], [-17, 73], [-23, 67], [-30, 54], [-39, 46],
   [-41, 35], [-95, 36]];
@@ -2141,7 +2142,7 @@ const BDP_CHANNEL = [[-98, 24], [-97, 28], [-95, 33], [-85, 32], [-37, 31], [-26
 const BDP_FALL = [[-41, 35], [-39, 46], [-30, 54], [-23, 67], [-17, 73], [-18, 80], [-20, 89]];
 function bellevueDT() {
   const g = new THREE.Group();
-  const f = G.TERRAIN_FLATS[0];
+  const f = G.terrainFlat('bellevueDT');
   g.userData.worldAligned = true;
   g.userData.at = [BDP.x, BDP.z, f.y];
   const water = P(0x2c5d74, 0.06, 0.1, 1.4);
@@ -2352,7 +2353,12 @@ export function buildLandmarks(scene, city, waterLevelAt = null) {
     MARINAS.forEach((m, i) => {
       const d = marinaDock(m, waterLevelAt, i);
       if (!d) { dropped.push(`marina:${m.name}`); return; }
-      for (const sd of d.solids) solids.push(sd);
+      // through the same road test as every landmark solid: a curb or pile
+      // on a carriageway would be an invisible wall in a lane
+      for (const sd of d.solids) {
+        if (city && onRoad(city, sd)) { dropped.push(`marina:${m.name}@${sd.x.toFixed(0)},${sd.z.toFixed(0)}`); continue; }
+        solids.push(sd);
+      }
       platforms.push(...d.plat);
       addTo(`marina${i}`, d.g);
       marinas.push({ name: m.name, x: d.x, z: d.z, level: d.level, moorings: d.moor, seaplanes: !!m.seaplanes,

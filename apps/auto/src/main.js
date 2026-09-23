@@ -688,7 +688,7 @@ function installShadowFade() {
     ...(() => {
       const ap = (G.LANDMARKS || []).find((l) => l.kind === 'airport');
       if (!ap) return [];
-      const AL = [Math.sin(0.52), Math.cos(0.52)], AC = [Math.cos(0.52), -Math.sin(0.52)];
+      const AL = [Math.sin(0.52), Math.cos(0.52)];
       return [{ x: ap.x + 1450 * AL[0], z: ap.z + 1450 * AL[1], kind: 'jet', name: 'Fighter jet', near: false,
         hello: 'A fighter jet — full throttle, pull back past 220 km/h. Hold the stick back to loop' }];
     })(),
