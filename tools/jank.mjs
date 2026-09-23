@@ -532,7 +532,10 @@ const CHECKS = `(() => {
       let took = 0;
       for (const e of city.edges) {
         if (took >= 140) break;
-        if (e.elev || e.len < 20) continue;
+        // (not a bore: its carriageway is underground, and the pavement drawn
+        // on the surface over it is right -- counting it flagged the Mount
+        // Baker Ridge Tunnel's street above, 26 m up, as pavement in the road)
+        if (e.elev || e.tunnel || e.len < 20) continue;
         const a = city.nodes[e.a], b = city.nodes[e.b];
         if (!nearSite(a.x, a.z, sx, sz) || !nearSite(b.x, b.z, sx, sz)) continue;
         took++;

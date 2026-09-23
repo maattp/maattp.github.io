@@ -391,28 +391,41 @@ const SOUNDS = {
   } },
 
   // --- footsteps -------------------------------------------------------------
-  step_hard: { dur: 0.2, variants: 4, build(k, out, t, R) {
-    k.burst(out, 'white', t, 'bandpass', 2200 + R() * 1400, 1.8, 1, 0.006, R);
-    k.burst(out, 'white', t + 0.035 + R() * 0.02, 'bandpass', 1700 + R() * 500, 2, 0.45, 0.004, R);
-    k.burst(out, 'pink', t, 'bandpass', 900, 0.8, 0.35, 0.02, R);
-    k.thump(out, t, 80, 60, 0.02, 0.35, 0.014);
+  // SOFT, NOT SHARP. These were a white-noise click at 2.2-3.6 kHz with an
+  // instant attack (centroid 3-6 kHz): every step was a tick, and at its old
+  // level the footsteps scene measured louder than a car passing. A shoe on a
+  // pavement is a heel knock and a sole roll, mostly under 1.5 kHz, with a few
+  // milliseconds of onset. Surfaces differ in texture, not in brightness.
+  step_hard: { dur: 0.22, variants: 4, build(k, out, t, R) {
+    const lp = k.filt('lowpass', 2200 + R() * 500, 0.7);
+    lp.connect(out);
+    // heel: a dull knock
+    k.burst(lp, 'pink', t, 'bandpass', 520 + R() * 220, 1.1, 0.9, 0.014, R, 0.003);
+    k.thump(lp, t, 95 + R() * 25, 60, 0.025, 0.45, 0.016);
+    // sole rolling onto the ball of the foot
+    k.burst(lp, 'pink', t + 0.045 + R() * 0.025, 'bandpass', 1100 + R() * 300, 0.9, 0.32, 0.018, R, 0.006);
+    // the faintest grit, for texture
+    k.burst(lp, 'white', t + 0.002, 'bandpass', 1700 + R() * 300, 1.4, 0.08, 0.008, R, 0.004);
   } },
   step_grass: { dur: 0.26, variants: 4, build(k, out, t, R) {
-    // blades and stems crushed under a sole: soft crunch, no click
+    // blades and stems crushed under a sole: a soft, low crunch
+    const lp = k.filt('lowpass', 1900 + R() * 400, 0.7);
+    lp.connect(out);
     const g = k.gain(0);
-    k.noise('white', t, 0.25, R).connect(k.filt('bandpass', 1900 + R() * 700, 0.8)).connect(g).connect(out);
-    k.grains(g.gain, t, 0.13, 18, R, 0.9, 0.003, 0.01);
-    k.burst(out, 'pink', t, 'lowpass', 480, 0.7, 0.6, 0.03, R);
-    k.burst(out, 'pink', t, 'bandpass', 1200, 0.6, 0.25, 0.05, R, 0.01);
+    k.noise('pink', t, 0.25, R).connect(k.filt('bandpass', 1200 + R() * 400, 0.8)).connect(g).connect(lp);
+    k.grains(g.gain, t, 0.13, 14, R, 0.55, 0.004, 0.012);
+    k.burst(lp, 'pink', t, 'lowpass', 420, 0.7, 0.7, 0.035, R, 0.006);
   } },
   step_gravel: { dur: 0.26, variants: 4, build(k, out, t, R) {
+    const lp = k.filt('lowpass', 2600 + R() * 400, 0.7);
+    lp.connect(out);
     const g = k.gain(0);
-    k.noise('white', t, 0.25, R).connect(k.filt('bandpass', 2400 + R() * 800, 0.9)).connect(g).connect(out);
-    k.grains(g.gain, t, 0.15, 30, R, 1, 0.002, 0.006, 1.4);
+    k.noise('pink', t, 0.25, R).connect(k.filt('bandpass', 1500 + R() * 400, 0.9)).connect(g).connect(lp);
+    k.grains(g.gain, t, 0.15, 22, R, 0.6, 0.003, 0.008, 1.4);
     const g2 = k.gain(0);
-    k.noise('white', t, 0.25, R).connect(k.filt('bandpass', 900, 1.2)).connect(g2).connect(out);
-    k.grains(g2.gain, t, 0.1, 10, R, 0.6, 0.003, 0.01);
-    k.thump(out, t, 75, 55, 0.02, 0.3, 0.015);
+    k.noise('pink', t, 0.25, R).connect(k.filt('bandpass', 700, 1.1)).connect(g2).connect(lp);
+    k.grains(g2.gain, t, 0.1, 8, R, 0.6, 0.004, 0.012);
+    k.thump(lp, t, 80, 55, 0.02, 0.35, 0.015);
   } },
   step_water: { dur: 0.42, variants: 3, build(k, out, t, R) {
     k.burst(out, 'pink', t, 'lowpass', 1800, 0.7, 0.8, 0.05, R, 0.004);
@@ -722,24 +735,43 @@ const SOUNDS = {
   } },
 };
 
+// What a player hears first, rendered first. Until the whole bank existed
+// nothing played; it fills in place now, batch by batch, in this order, so
+// footsteps and doors are ready after the first small batch. (The whole bank
+// is ~0.3 s on the Mac's GPU page, ~2 s on a phone. Timed on SwiftShader it
+// reads 20-40 s -- every batch waits for a ~0.5 s frame -- which measures the
+// harness, not the audio: use tools/audiounlock.mjs --bench with AUTO_GPU=1.)
+const BANK_FIRST = ['step_hard', 'step_grass', 'step_gravel', 'step_water', 'door_open', 'door_close', 'seat',
+  'starter', 'bump', 'land', 'punch', 'pedhit', 'thunk', 'crunch', 'glass', 'gun', 'splash', 'squeal', 'gravel', 'slosh'];
+
 /**
- * Render every recipe into AudioBuffers. Batched into a few offline contexts
- * with a yield between them, so building the graphs never blocks the main
- * thread for long; the rendering itself runs off it.
+ * Render every recipe into AudioBuffers, into `bank` as each batch finishes
+ * (`onBatch` after each). Batched into offline contexts of about 3 s of audio
+ * each -- the first ones small, so footsteps are ready within a batch -- with
+ * a yield between them, so building the graphs never blocks the main thread
+ * for long; the rendering itself runs off it.
  */
-export async function renderBank(sampleRate, onlyNames = null) {
+export async function renderBank(sampleRate, onlyNames = null, bank = {}, onBatch = null) {
   const OAC = globalThis.OfflineAudioContext || globalThis.webkitOfflineAudioContext;
-  if (!OAC) return {};
+  if (!OAC) return bank;
   const jobs = [];
-  for (const [name, s] of Object.entries(SOUNDS)) {
+  const rank = (n) => { const i = BANK_FIRST.indexOf(n); return i < 0 ? BANK_FIRST.length : i; };
+  const names = Object.keys(SOUNDS).sort((p, q) => rank(p) - rank(q));
+  for (const name of names) {
+    const s = SOUNDS[name];
     if (onlyNames && !onlyNames.includes(name)) continue;
     for (let v = 0; v < (s.variants || 1); v++) jobs.push({ name, s, v });
   }
-  const bank = {};
   const GAP = 0.05;
-  const BATCH = 8;
-  for (let j = 0; j < jobs.length; j += BATCH) {
-    const batch = jobs.slice(j, j + BATCH);
+  const batches = [];
+  let cur = [], secs = 0;
+  for (const j of jobs) {
+    const cap = batches.length === 0 ? 1.6 : 3.2;
+    if (cur.length && secs + j.s.dur > cap) { batches.push(cur); cur = []; secs = 0; }
+    cur.push(j); secs += j.s.dur + GAP;
+  }
+  if (cur.length) batches.push(cur);
+  for (const batch of batches) {
     let len = 0;
     for (const b of batch) { b.at = len; len += b.s.dur + GAP; }
     const c = new OAC(1, Math.ceil(len * sampleRate), sampleRate);
@@ -757,6 +789,7 @@ export async function renderBank(sampleRate, onlyNames = null) {
       if (p && p.then) p.then(res, rej);
     });
     const src = rendered.getChannelData(0);
+    const fresh = {};
     for (const b of batch) {
       const i0 = Math.floor(b.at * sampleRate);
       const n = Math.floor(b.s.dur * sampleRate);
@@ -764,8 +797,11 @@ export async function renderBank(sampleRate, onlyNames = null) {
       buf.getChannelData(0).set(src.subarray(i0, i0 + n));
       if (b.s.loop) buf = loopify(c, buf, b.s.loop);
       normalize(buf, b.s.loop ? 0.7 : 0.9);
-      (bank[b.name] = bank[b.name] || []).push(buf);
+      (fresh[b.name] = fresh[b.name] || []).push(buf);
     }
+    // a sound's variants appear together, so play() never picks from half
+    for (const nm in fresh) bank[nm] = (bank[nm] || []).concat(fresh[nm]);
+    if (onBatch) onBatch(bank);
     await new Promise((r) => setTimeout(r, 0));
   }
   return bank;
@@ -1474,8 +1510,11 @@ export class Audio {
     this.beat = 0;
     this.ready = true;
 
-    this.bankReady = renderBank(c.sampleRate).then((b) => {
-      this.bank = b;
+    // The bank exists from the start and fills in as it renders (renderBank).
+    // The loop taps wait for the lot.
+    this.bank = {};
+    const makeLoops = (b) => {
+      if (!b.squeal || !b.gravel || !b.scrape || !b.slosh) return;
       const lp = (f) => { const x = c.createBiquadFilter(); x.type = 'lowpass'; x.frequency.value = f; return x; };
       this.loops = {
         squeal: new Tap(c, b.squeal[0], this.sfxBus),
@@ -1483,8 +1522,13 @@ export class Audio {
         scrape: new Tap(c, b.scrape[0], this.sfxBus),
         slosh: new Tap(c, b.slosh[0], this.sfxBus, lp(2400)),
       };
+    };
+    const t0 = performance.now();
+    this.bankReady = renderBank(c.sampleRate, null, this.bank).then((b) => {
+      this.bankMs = Math.round(performance.now() - t0);
+      makeLoops(b);
       return b;
-    }).catch((e) => { console.warn('audio bank failed', e); this.bank = {}; });
+    }).catch((e) => { console.warn('audio bank failed', e); });
   }
 
   // --- live radio -----------------------------------------------------------
@@ -1559,18 +1603,38 @@ export class Audio {
   primeLive() {
     const el = this._makeLive();
     if (!el || this._livePrimed) return;
+    // The real stream already has the element (loading or playing): it is
+    // unlocked by definition, and priming it now would mute and then pause it.
+    if (this._liveState === 'loading' || this._liveState === 'playing') { this._livePrimed = true; return; }
     this._livePrimed = true;
     // MUTED, not volume 0: iOS ignores `volume` on media elements (it is
     // always 1 there), so the unlock played the stream out loud on the first
     // tap -- on foot. `muted` it does honour.
     this._priming = true;
-    const done = () => { this._priming = false; try { el.pause(); } catch (e) { /* gone */ } };
+    // A token, because the priming play can resolve AFTER the real stream has
+    // taken the element over (startLive supersedes it): its pause() then
+    // stopped the radio 0.1 s in.
+    const tok = this._primeTok = (this._primeTok || 0) + 1;
+    const done = () => {
+      if (tok !== this._primeTok) return;
+      this._priming = false;
+      try { el.pause(); } catch (e) { /* gone */ }
+    };
     try {
       el.muted = true;
       el.src = KEXP.stream;
       el.volume = 0;
       const p = el.play();
-      if (p && p.then) p.then(done).catch(() => { this._priming = false; /* stays locked; we cope */ });
+      // Rejected for want of a gesture the browser accepts: not primed after
+      // all, so the next gesture tries again instead of never. (An AbortError
+      // is the real stream's load() taking over -- that one is fine.)
+      if (p && p.then) {
+        p.then(done).catch((err) => {
+          if (tok !== this._primeTok) return;
+          this._priming = false;
+          if (err && err.name === 'NotAllowedError') this._livePrimed = false;
+        });
+      }
       else done();
     } catch (e) { this._priming = false; /* no autoplay, no live radio -- the synth still plays */ }
   }
@@ -1581,6 +1645,9 @@ export class Audio {
     if (!el) return;
     if (this._liveState === 'playing' || this._liveState === 'loading') return;
     this._liveState = 'loading';
+    // the real stream supersedes any priming play still in flight
+    this._primeTok = (this._primeTok || 0) + 1;
+    this._priming = false;
     try {
       if (el.src !== KEXP.stream) el.src = KEXP.stream;
       // A live stream that has been paused for a while resumes where it left
@@ -1667,8 +1734,16 @@ export class Audio {
    * (reverb), x/y/z (positional: attenuated, panned, darkened with distance),
    * duck (how far to pull the radio down), ref/maxD (distance model).
    */
+  /**
+   * Is the context actually running? It is created at boot now and starts
+   * suspended until a gesture resumes it; anything scheduled on a suspended
+   * context piles up at time 0 and fires at once on the unlock -- a burst of
+   * every footstep so far. The offline previews (keepLinked) are always live.
+   */
+  get live() { return keepLinked || (this.ctx && this.ctx.state === 'running'); }
+
   play(name, o = {}) {
-    if (!this.ready || !this.enabled || !this.bank) return null;
+    if (!this.ready || !this.enabled || !this.bank || !this.live) return null;
     const list = this.bank[name];
     if (!list || !list.length) return null;
     const c = this.ctx;
@@ -1877,7 +1952,7 @@ export class Audio {
   // --- the frame -----------------------------------------------------------------
 
   update(dt, state) {
-    if (!this.ready) return;
+    if (!this.ready || !this.live) return;   // see `live`
     const ctx = this.ctx;
     const t = this.now();
     if (!this.enabled) {
@@ -2032,7 +2107,12 @@ export class Audio {
         const surf = s.surface || 'hard';
         const name = surf === 'water' ? 'step_water' : surf === 'grass' ? 'step_grass' : surf === 'gravel' ? 'step_gravel' : 'step_hard';
         const run = clamp((sp - 1.4) / 5, 0, 1);
-        this.play(name, { gain: (surf === 'grass' ? 0.2 : 0.24) + run * 0.2, rate: 1.04 - run * 0.1, send: 0.04 });
+        // Under the traffic, not over it (the footsteps scene measured -28.6 dB
+        // RMS against -33.4 for a car passing; now ~-37): about a quarter of
+        // the old level,
+        // with a little per-step variation so a walk is not a metronome.
+        const vary = 0.85 + Math.random() * 0.3;
+        this.play(name, { gain: ((surf === 'grass' ? 0.055 : 0.065) + run * 0.06) * vary, rate: (1.02 - run * 0.08) * (0.96 + Math.random() * 0.08), send: 0.04 });
       }
       this.footWas[i] = !!down;
     }
