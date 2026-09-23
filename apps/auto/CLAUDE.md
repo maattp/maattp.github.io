@@ -3240,6 +3240,17 @@ there put 0.41 m of ground over a carriageway at (421, -80)). Frames over
 100 m/s^2: SB 14 -> **0**, NB 39 -> 18 (all at the north exit's Aurora deck);
 jank fwy-bump 821 -> 772; portalcheck unchanged.
 
+**v105: an approach that meets a deck ends at the deck.** The approach ramp
+in front of a mouth aims at raw ground 70 m out, whatever it meets on the way.
+SR-99's NB exit runs into Aurora's elevated deck ~40 m past the north portal,
+and the ramp passed under it 1.7 m low, so the car climbed onto the deck 1.9 m
+in 6 m. The walk now samples each approach edge every 3 m for a deck or graded
+surface near ground level holding the point (`city.surfacesNear`, groundAt's
+grid) and ends the ramp there, at that surface's height. Worst NB north-exit
+jolt 396 -> 216 m/s^2. Two things tried and reverted: starting the ramp at the
+bore's grade (the SB south exit then stepped 0.86 m), and digging approach
+floors only to the road (64 corridors failed portalcheck's coverage).
+
 **The water mask is built in 4 m cells**, skipping only cells whose centre
 is water: skipping a whole segment when any sample was wet left the NB entry
 cutting's last 30 m under the sea plane.

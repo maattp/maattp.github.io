@@ -1341,6 +1341,14 @@ export class World {
         const P0 = city.nodes[m.ni];
         const app = [];
         {
+          // AN APPROACH THAT MEETS A FIXED-HEIGHT ROAD ENDS THERE, at its
+          // height. The ramp aimed at raw ground 70 m out whatever it met on
+          // the way: SR-99's NB exit joins Aurora's deck 35 m past the
+          // north portal, and passed that junction 1.7 m under the deck, so
+          // the car climbed onto it 1.9 m in 6 m (~400 m/s^2). The draped road
+          // lies 0.4 m over a corridor point's y (floor y - 0.7, + lift).
+          const walk = [];
+          let fixedY = null;
           let cur = m.ni, prev = -1, d = 0;
           while (d < APPROACH) {
             const n = city.nodes[cur];
@@ -1354,12 +1362,47 @@ export class World {
             const e = city.edges[best];
             const nx = e.a === cur ? e.b : e.a;
             const nn = city.nodes[nx];
+            // walk the edge in 3 m steps looking for a deck or graded surface
+            // at about ground level that holds the point (not an overpass)
+            const from = city.nodes[cur];
+            let hit = null;
+            for (let sd = 3; sd < e.len && d + sd <= APPROACH && !hit; sd += 3) {
+              if (d + sd < 10) continue;
+              const f = sd / e.len, x = from.x + (nn.x - from.x) * f, z = from.z + (nn.z - from.z) * f;
+              const raw = G.terrainRaw(x, z);
+              for (const si of city.surfacesNear(x, z)) {
+                const s = city.surfaces[si];
+                if (s.tun) continue;
+                const re = city.edges[s.ei];
+                if (!re || !(re.elev || re.prof)) continue;
+                const sx = s.bx - s.ax, sz = s.bz - s.az, l2 = sx * sx + sz * sz;
+                const tt = l2 > 0 ? ((x - s.ax) * sx + (z - s.az) * sz) / l2 : 0;
+                if (tt < 0 || tt > 1) continue;
+                if (Math.hypot(x - s.ax - sx * tt, z - s.az - sz * tt) > re.hw) continue;
+                const sy = s.ay + (s.by - s.ay) * tt;
+                if (sy < raw - 3 || sy > raw + 1.5) continue;
+                hit = { x, z, y: sy, sd };
+                break;
+              }
+            }
+            if (hit) {
+              d += hit.sd;
+              walk.push({ nn: { x: hit.x, z: hit.z }, hw: Math.max(m.hw, e.hw), d });
+              fixedY = hit.y + 0.4;
+              break;
+            }
             d += e.len; prev = best; cur = nx;
-            const t = Math.min(1, d / APPROACH);
+            walk.push({ nn, hw: Math.max(m.hw, e.hw), d });
+          }
+          const D = fixedY !== null ? d : APPROACH;
+          for (const w of walk) {
+            const t = Math.min(1, w.d / D), s = t * t * (3 - 2 * t);
+            const raw = G.terrainRaw(w.nn.x, w.nn.z);
             app.push({
-              x: nn.x, z: nn.z, hw: Math.max(m.hw, e.hw),
-              // ramp from the dropped portal up to untouched ground
-              y: P0.y + (G.terrainRaw(nn.x, nn.z) - P0.y) * (t * t * (3 - 2 * t)),
+              x: w.nn.x, z: w.nn.z, hw: w.hw,
+              // ramp from the dropped portal up to untouched ground (or to
+              // the fixed road it meets); the carve only digs
+              y: fixedY !== null ? Math.min(raw, P0.y + (fixedY - P0.y) * s) : P0.y + (raw - P0.y) * s,
             });
           }
         }

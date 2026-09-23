@@ -2827,6 +2827,8 @@ export function* cityGenerator(md, cache = {}) {
     chunkKey: ck,
     drivable,
     surfaces,
+    /** Indices into `surfaces` whose reach may touch (x, z) (groundAt's grid). */
+    surfacesNear: (x, z) => surfGrid.get(skey(Math.floor(x / surfCell), Math.floor(z / surfCell))) || [],
 
     /** Underpass cuts dug under refused overpasses (see gradeRoads). */
     underpasses: grading.underpasses,
