@@ -3629,6 +3629,26 @@ writes `data/monorail.json` with the stations and platforms.
   platform; you board and leave it by the street door under its south end (in
   life, the mall's escalators). Seattle Center is walkable: a 1:8 ramp south
   to the platforms, parapets round every open edge.
+- **Seattle Center on foot, and the three ways it failed (v117).** (1) OSM's
+  three platforms differ in length by up to 0.9 m and the concourse starts at
+  the longest: a short one left a hole at the concourse, into the track slot.
+  Every platform now runs the station's whole length. (2) In a slot you fell
+  THROUGH the walkable roof under it, because `platformAt` answers only the
+  highest platform over a point and the platform above masked it; so no one
+  may get into a slot: **each slot is filled with a solid from the platform
+  edge to its beam** (trains collide with nothing, so they do not notice). A
+  thin solid on the edge was slipped past when a long frame slid you along
+  it; one reaching past the beam narrowed the platform across the slot until
+  you could not walk onto it; one measured to the FAR beam (an outer platform
+  sees both) was 12 m wide. (3) Under the ramp is solid, a box per tenth of
+  its length topped just under the slab. verify walks all of it.
+- **The clear zones are tight to what is built.** A 3 m pad round the
+  concourse reached the Armory's east face, 0.2 m past its end, and citygen
+  deleted the whole building. verify checks it stands.
+- **A train waits for you** (v117): within 350 m of a station and not
+  driving a train, the one at its platform holds; with none there or on its
+  way, the one at the far end leaves at once. You spawn ~310 m from Seattle
+  Center, so the Blue train is there when you walk over.
 - **A train is one SkinnedMesh per material with a bone per 9.3 m section**
   (`buildTrainGeometry`, skin index by section range), posed from the beam
   each frame, so the articulated body bends through the curves at **two draws
@@ -3668,6 +3688,11 @@ inside perfguard's tolerance: two guideway halves (split at Denny; 500 m
 blocks put four in view), a train, and the Westlake glass. Signs join the
 landmark cluster they stand in, and the four signal lamps are one mesh drawn
 within 800 m.
+
+**The Seattle Center Leap moved north of the Armory** (v117): the station's
+ramp came down across its old lip and it never launched. Re-run
+`tools/stuntjumps.mjs` after changing anything near a jump; verify now fails
+if any jump's run-up or ramp crosses the monorail.
 
 **`node --check file.js` passed monorail.js with its class unclosed**; the
 browser did not. Check a module as one: `node --input-type=module --check <

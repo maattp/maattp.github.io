@@ -361,13 +361,16 @@ export class Monorail {
       for (const [x, z] of poly) { x0 = Math.min(x0, x); x1 = Math.max(x1, x); z0 = Math.min(z0, z); z1 = Math.max(z1, z); }
       out.push({ x: (x0 + x1) / 2, z: (z0 + z1) / 2, hw: (x1 - x0) / 2 + pad, hd: (z1 - z0) / 2 + pad, rot: 0, y });
     };
-    // Seattle Center: platforms, the concourse 12 m past them, the ramp south
+    // Seattle Center: platforms, the concourse 12 m past them, the ramp south.
+    // Tight to what _stationSC builds: the Armory's east face is 0.2 m past
+    // the concourse's end, and a padded zone deleted the whole building.
     const scPts = this.scPlatforms.flatMap((p) => p.p);
-    around(scPts, 5, -Infinity);
+    around(scPts, 3, -Infinity);
     let wx = Infinity;
     for (const [x] of scPts) wx = Math.min(wx, x);
-    around([[wx - 16, Math.min(...scPts.map((q) => q[1]))], [wx, Math.max(...scPts.map((q) => q[1]))]], 3, -Infinity);
-    around([[wx - 20, Math.max(...scPts.map((q) => q[1]))], [wx - 6, Math.max(...scPts.map((q) => q[1])) + 80]], 2, -Infinity);
+    const zs = scPts.map((q) => q[1]), z0 = Math.min(...zs), z1 = Math.max(...zs);
+    around([[wx - 11.8, z0], [wx, z1]], 0, -Infinity);
+    around([[wx - 11.5, z1], [wx - 6, z1 + 80]], 0, -Infinity);
     // Westlake: the platform and the hall behind it
     around(this.wlPlatforms.flatMap((p) => p.p), 5, -Infinity);
     return out;
@@ -601,18 +604,34 @@ export class Monorail {
       const a0 = A(r.x, r.z) - r.along, a1 = A(r.x, r.z) + r.along;
       let lo = Bc(r.x, r.z) - r.across, hi = Bc(r.x, r.z) + r.across;
       // clear of both trains: 1.62 m from each beam's centreline
-      const edges = [];
+      const edges = [], reach = { 1: Infinity, [-1]: Infinity };
+      const tbs = [];
       for (const tr of [W, E]) {
+        const pair = [];
         for (const a of [a0, a1]) {
           const tb = trackB(tr, a);
           if (tb === null) continue;
           const mid = (lo + hi) / 2;
           if (tb >= mid) { hi = Math.min(hi, tb - 1.66); edges.push(1); } else { lo = Math.max(lo, tb + 1.66); edges.push(-1); }
+          pair.push(tb);
         }
+        tbs.push(pair);
       }
-      decks.push({ a0, a1, lo, hi, faces: new Set(edges) });
+      // How far each track-facing edge is from ITS beam (the nearer one on
+      // that side -- an outer platform also sees the far beam past the middle
+      // platform) at the farther end: the beams are not parallel to the frame.
+      for (const pair of tbs) {
+        if (!pair.length) continue;
+        if (pair.every((tb) => tb >= hi)) reach[1] = Math.min(reach[1], Math.max(...pair.map((tb) => tb - hi)));
+        else if (pair.every((tb) => tb <= lo)) reach[-1] = Math.min(reach[-1], Math.max(...pair.map((tb) => lo - tb)));
+      }
+      decks.push({ a0, a1, lo, hi, faces: new Set(edges), reach });
       ua0 = Math.min(ua0, a0); ua1 = Math.max(ua1, a1); ub0 = Math.min(ub0, lo); ub1 = Math.max(ub1, hi);
     }
+    // Every platform runs the station's whole length, into the concourse: OSM's
+    // three are 47-48 m and differ by up to 0.9 m, and the gap a short one left
+    // at the concourse was a hole into the track slot you fell through.
+    for (const d of decks) { d.a0 = ua0; d.a1 = ua1 + 0.3; }
     // the concourse: 12 m on past the buffers, the full width
     const conA0 = ua1, conA1 = ua1 + 12;
     const deckBox = (a0, a1, lo, hi, y0, y1, col) => {
@@ -623,11 +642,26 @@ export class Monorail {
     for (const d of decks) {
       const pr = deckBox(d.a0, d.a1, d.lo, d.hi, lowRoof, floor, C.deck);
       this.platforms.push({ ...pr, y0: floor, y1: floor });
-      // yellow tactile strip along each edge that faces a train
+      // Yellow tactile strip along each edge that faces a train, and a
+      // knee-high barrier on the edge. Stepping off into an empty track slot
+      // dropped you 2 m, under the platforms, with no way back; a thin solid
+      // on the edge was slipped past when a long frame slid you along it. So
+      // the solid fills the slot itself, edge to beam, where only a train
+      // ever is (trains collide with nothing). ENTER boards over it
+      // (boardable reaches 2.2 m past a train's side).
       for (const side of d.faces) {
         const e = side > 0 ? d.hi : d.lo;
         const [sx, sz] = P((d.a0 + d.a1) / 2, e - side * 0.3);
         ybox(b, sx, floor, sz, yaw, 0.3, 0.012, (d.a1 - d.a0) / 2 - 0.1, C.tactile, 4);
+        const [bx, bz] = P((d.a0 + d.a1) / 2, e - side * 0.06);
+        ybox(b, bx, floor, bz, yaw, 0.05, 0.3, (d.a1 - d.a0) / 2, [0.85, 0.72, 0.1]);
+        // edge to the beam's centreline (at the farther end: the beams are not
+        // parallel to the station): the platform across the slot fills the
+        // other half, and one reaching past the beam narrowed the platform
+        // beyond it until you could not walk onto it
+        const w = d.reach[side] + 0.15;
+        const [qx, qz] = P((d.a0 + d.a1) / 2, e + side * (w / 2 - 0.1));
+        this.solids.push({ x: qx, z: qz, hw: w / 2, hd: (d.a1 - d.a0) / 2, rot: -yaw, y0: floor - 0.3, y1: floor + 1.2, mono: true });
       }
     }
     const con = deckBox(conA0, conA1, ub0 - 1, ub1 + 1, lowRoof, floor, C.deck);
@@ -646,6 +680,9 @@ export class Monorail {
         ybox(b, wx, g + 1.2, wz, yaw, 0.01, 1.1, (a1 - a0) / 2 - 3, C.shop, side > 0 ? 1 : 2);
       }
       this.solids.push({ x: cx, z: cz, hw: (hi - lo) / 2, hd: (a1 - a0) / 2, rot: -yaw, y0: g, y1: lowRoof, mono: true });
+      // its roof is ground too: anything that still gets into a track slot
+      // stands on it rather than falling into a solid
+      this.platforms.push({ x: cx, z: cz, hw: (hi - lo) / 2, hd: (a1 - a0) / 2, rot: -yaw, y0: lowRoof, y1: lowRoof });
       clear.push([cx, cz, Math.hypot(a1 - a0, hi - lo) / 2 + 4]);
     }
     // the canopy: steel posts on each platform, a corrugated roof with
@@ -707,6 +744,8 @@ export class Monorail {
     for (const d of decks) {
       if (!d.faces.has(1)) rail([d.a0, d.hi - 0.1], [d.a1, d.hi - 0.1]);
       if (!d.faces.has(-1)) rail([d.a0, d.lo + 0.1], [d.a1, d.lo + 0.1]);
+      // and across the far end, where the beams come in
+      rail([d.a0 + 0.1, d.lo], [d.a0 + 0.1, d.hi]);
     }
     const southHi = lz > 0;                   // the +across side is the south one
     const cLo = ub0 - 0.9, cHi = ub1 + 0.9;
@@ -732,6 +771,14 @@ export class Monorail {
         }
       }
       this.platforms.push({ x: sx, z: cz, hw: 2.6, hd: L / 2, rot: 0, y0: floor, y1 });
+      // and under it, solid: a walker at the foot went in under the slab and
+      // was trapped between its side walls. Each tenth is a box whose top is
+      // just under the slab's lower end, so on the ramp nothing blocks you.
+      for (let k = 0; k < Nn; k++) {
+        const za = sz + (L * k) / Nn, zb = sz + (L * (k + 1)) / Nn;
+        const top = floor + (y1 - floor) * ((k + 1) / Nn) - 0.2;
+        this.solids.push({ x: sx, z: (za + zb) / 2, hw: 2.6, hd: (zb - za) / 2, rot: 0, y0: Math.min(T(sx, za), T(sx, zb)) - 1, y1: top, mono: true });
+      }
       for (const sd of [-1, 1]) this.solids.push({ x: sx + sd * 2.75, z: cz, hw: 0.15, hd: L / 2, rot: 0, y0: Math.min(floor, y1) - 0.5, y1: Math.max(floor, y1) + 1.1, mono: true });
       for (let k = 0; k <= 4; k++) clear.push([sx, sz + (L * k) / 4, 5]);
       this.scRamp = { x: sx, z: sz + L - 1.5, y: y1 };
@@ -1020,6 +1067,23 @@ export class Monorail {
       if (q.d < MONO.wid / 2 + 2.2) return t;
     }
     return null;
+  }
+  /** Are you within reach of that station ('wl' or 'sc'), on foot or
+   *  driving up to it -- anything but driving a train yourself? */
+  waiting(st) {
+    const p = this.player;
+    if (!p || (p.vehicle && p.vehicle.spec.monorail)) return false;
+    const q = st === 'wl' ? this.wlDoor : this.scStation, pos = p.position;
+    return !!q && Math.hypot(pos.x - q.x, pos.z - q.z) < 350;
+  }
+  /** Is a train (other than `but`) at that station or running toward it? */
+  servedSoon(st, but) {
+    for (const t of Object.values(this.trains)) {
+      if (t === but || t.driver) continue;
+      if (t.at() === st) return true;
+      if (t.state === 'run' && (st === 'sc' ? t.dir > 0 : t.dir < 0)) return true;
+    }
+    return false;
   }
   /** When a train pulls in, what to tell you if you are waiting nearby. */
   nextAt(st) {
@@ -1540,6 +1604,14 @@ export class MonorailTrain {
     if (this.state === 'dwell') {
       this.u = 0;
       this.timer -= dt;
+      // A TRAIN WAITS FOR YOU. Within reach of a station, the train at
+      // its platform holds there; and if none is there or on its way, the one
+      // at the far end leaves now instead of dwelling out its time (you should
+      // not stand a hundred seconds on an empty platform).
+      const here = this.at(), sys = this.sys;
+      if (here && sys.waiting(here) && this.timer < 2) this.timer = 2;
+      const far = here === 'wl' ? 'sc' : 'wl';
+      if (here && sys.waiting(far) && !sys.servedSoon(far, this)) this.timer = Math.min(this.timer, 1);
       // leaving Westlake through the gauntlet needs it empty too
       const o = this.other;
       if (this.timer <= 0 && !(this.at() === 'wl' && o && o.inGauntlet())) {
