@@ -99,7 +99,8 @@ See `apps/auto/CLAUDE.md` for why these are deliberately two literals.
 ### Map data
 
 The Seattle in `/apps/auto/` is imported from OpenStreetMap and USGS elevation
-data by the scripts in `/tools/`, into `/apps/auto/data/`. **OSM is ODbL, so the
+data by the scripts in `/tools/`, into `/apps/auto/data/` (the Seattle Center
+Monorail too: `tools/build_monorail.py`, driven in `src/monorail.js`). **OSM is ODbL, so the
 attribution on the launch screen and in the pause menu is a licence condition —
 don't remove it.** See `apps/auto/CLAUDE.md` for how to re-run the import.
 

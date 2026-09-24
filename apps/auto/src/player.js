@@ -81,7 +81,17 @@ export class Player {
     const rx = f.z, rz = -f.x;
     let ox = v.x - rx * (v.halfWid + 1.1);
     let oz = v.z - rz * (v.halfWid + 1.1);
-    if (v.spec.boat || v.spec.floats) {
+    let oy = v.y + 1.5;
+    if (v.spec.monorail) {
+      // The doors open at a platform and nowhere else (monorail.js exitSpot):
+      // onto the platform at Seattle Center, down to the street at Westlake.
+      const spot = this.monorail ? this.monorail.exitSpot(v) : null;
+      if (!spot && !force) {
+        this.game.onNoLanding && this.game.onNoLanding(v);
+        return false;
+      }
+      if (spot) { ox = spot.x; oz = spot.z; oy = spot.y + 1.5; }
+    } else if (v.spec.boat || v.spec.floats) {
       // Either beam, then over the bow and the stern, a little further out
       // each ring: the first spot that is not water (a platform deck counts,
       // groundAt answers it) and not inside a rail.
@@ -106,7 +116,7 @@ export class Player {
     }
     this.x = G.clampToMap(ox);
     this.z = G.clampToMap(oz);
-    this.y = this.city.groundAt(this.x, this.z, v.y + 1.5);
+    this.y = this.city.groundAt(this.x, this.z, oy);
     this.heading = v.heading;
     this.onFoot = true;
     this.h.group.visible = true;
@@ -138,8 +148,12 @@ export class Player {
     if (tap === 'enter' && this.enterCd <= 0) {
       this.enterCd = 0.45;
       if (this.onFoot) {
-        const v = traffic.nearestEnterable(this.x, this.z, 5.0);
+        // A monorail at the platform beside you (or at Westlake's street
+        // door) before any car: see monorail.js boardable.
+        const m = this.monorail && this.monorail.boardable(this.x, this.y, this.z);
+        const v = m || traffic.nearestEnterable(this.x, this.z, 5.0);
         if (v) this.enterVehicle(v);
+        else if (this.monorail && this.game.onMonorailWait) this.game.onMonorailWait(this.x, this.y, this.z);
       } else this.exitVehicle();
     }
 
@@ -338,7 +352,9 @@ export class Player {
     // handled by altitude; only a grounded plane collides like a vehicle.
     // A helicopter always collides: it hovers among the towers at walking
     // pace, and the test already frees anything above a roof.
-    const airborne = v.spec.plane && v.airborne && !v.spec.heli;
+    // A monorail runs on its beam, 7 m over the street and through MoPOP: it
+    // collides with nothing but its buffers and the other train (monorail.js).
+    const airborne = (v.spec.plane && v.airborne && !v.spec.heli) || v.spec.monorail;
     const impact = airborne ? 0 : collideWithBuildings(v, this.city, (imp) => {
       if (this.crashCd > 0) return;
       this.crashCd = 0.4;
@@ -449,6 +465,13 @@ export class Player {
         dist = 12.5 + clamp(sp * 0.07, 0, 4.5);
         height = 3.4 - clamp((v.vy || 0) * 0.10, -1, 1);
         lookH = 1.7 + clamp((v.vy || 0) * 0.12, -1, 1);
+      } else if (v.spec.monorail) {
+        // Over the roof of the leading car, looking down the beam ahead: a
+        // 37 m train behind the operator's seat, so any lower and the boom
+        // sits inside it.
+        dist = 12 + clamp(sp * 0.12, 0, 3.5);
+        height = 6.2;
+        lookH = 2.6;
       } else if (v.spec.plane) {
         // further back and higher, and the camera rides the CLIMB: keep some
         // of the vertical velocity in the look target so pulling up reads as

@@ -1722,6 +1722,56 @@ export function* cityGenerator(md, cache = {}) {
     }
     cityStats.landmarkCleared = landmarkCleared;
 
+    // --- 2d. The monorail's line and stations (monorail.js clearZones) -----
+    //
+    // A box standing across the beams hid the train inside it, and at
+    // Seattle Center three stood in the station. Each zone is an oriented
+    // rect; a building overlapping one goes unless its roof is below the
+    // zone's `y` (a low building the beams pass over, as at Denny Way).
+    if (md.monorailClear && md.monorailClear.length) {
+      const Z = md.monorailClear;
+      const ZC = 40, zg = new Map();
+      for (const zn of Z) {
+        const e = Math.hypot(zn.hw, zn.hd);
+        for (let cx = Math.floor((zn.x - e) / ZC); cx <= Math.floor((zn.x + e) / ZC); cx++)
+          for (let cz = Math.floor((zn.z - e) / ZC); cz <= Math.floor((zn.z + e) / ZC); cz++) {
+            const k = skey(cx, cz);
+            if (!zg.has(k)) zg.set(k, []);
+            zg.get(k).push(zn);
+          }
+      }
+      // separating-axis test between two oriented rects (u = (cos rot, sin rot))
+      const overlap = (ax, az, ahw, ahd, arot, b) => {
+        const ua = [Math.cos(arot), Math.sin(arot)], va = [-ua[1], ua[0]];
+        const ub = [Math.cos(b.rot), Math.sin(b.rot)], vb = [-ub[1], ub[0]];
+        const dx = b.x - ax, dz = b.z - az;
+        for (const n of [ua, va, ub, vb]) {
+          const ra = ahw * Math.abs(ua[0] * n[0] + ua[1] * n[1]) + ahd * Math.abs(va[0] * n[0] + va[1] * n[1]);
+          const rb = b.hw * Math.abs(ub[0] * n[0] + ub[1] * n[1]) + b.hd * Math.abs(vb[0] * n[0] + vb[1] * n[1]);
+          if (Math.abs(dx * n[0] + dz * n[1]) > ra + rb) return false;
+        }
+        return true;
+      };
+      let monoCleared = 0;
+      for (let bi = buildings.length - 1; bi >= 0; bi--) {
+        const bd = buildings[bi];
+        const e = Math.hypot(bd.w, bd.d) / 2;
+        const seen = new Set();
+        let hit = false;
+        for (let cx = Math.floor((bd.x - e) / ZC); cx <= Math.floor((bd.x + e) / ZC) && !hit; cx++)
+          for (let cz = Math.floor((bd.z - e) / ZC); cz <= Math.floor((bd.z + e) / ZC) && !hit; cz++) {
+            for (const zn of zg.get(skey(cx, cz)) || []) {
+              if (seen.has(zn)) continue;
+              seen.add(zn);
+              if (bd.y + bd.h < zn.y) continue;
+              if (overlap(bd.x, bd.z, bd.w / 2, bd.d / 2, bd.rot, zn)) { hit = true; break; }
+            }
+          }
+        if (hit) { buildings.splice(bi, 1); monoCleared++; }
+      }
+      cityStats.monorailCleared = monoCleared;
+    }
+
     // Nothing may stand where the player gets put down. Inside a footprint,
     // blocked() refuses every direction and the player is stuck for good, walking
     // on the spot -- and 1.5 m inside a facade there is no visual clue why.
@@ -3707,7 +3757,12 @@ export function* cityGenerator(md, cache = {}) {
     },
 
     /** Deepest landmark-solid overlap for a circle, same shape obstacleHit returns. */
-    landmarkHit(x, z, rad, y) {
+    // `ai`: lane-following traffic asking. The monorail's columns stand
+    // between lanes (monorail.js keeps them there); a car's collision circle
+    // is wider than its body, so a bus in the next lane would hit a column
+    // its body clears by a metre and wedge. Those solids (`mono`) answer
+    // walkers and your own car only.
+    landmarkHit(x, z, rad, y, ai) {
       if (!this.landmarkSolids) return null;
       let best = null, seen = null;
       const c0 = Math.floor((x - rad) / 40), c1 = Math.floor((x + rad) / 40);
@@ -3723,6 +3778,7 @@ export function* cityGenerator(md, cache = {}) {
               seen.add(i);
             }
             const s = this.landmarkSolids[i];
+            if (ai && s.mono) continue;
             if (y !== undefined && (y > s.y1 || y < s.y0 - 2.5)) continue;
             let pen, nx, nz;
             if (s.r !== undefined) {
@@ -3773,7 +3829,7 @@ export function* cityGenerator(md, cache = {}) {
      * deepest overlap rather than the first, so a car wedged between a tree and
      * a pole is pushed out of the one it is furthest into.
      */
-    obstacleHit(x, z, rad, y) {
+    obstacleHit(x, z, rad, y, ai) {
       let best = null;
       const c0 = Math.floor((x - rad) / CHUNK), c1 = Math.floor((x + rad) / CHUNK);
       const d0 = Math.floor((z - rad) / CHUNK), d1 = Math.floor((z + rad) / CHUNK);
@@ -3835,7 +3891,7 @@ export function* cityGenerator(md, cache = {}) {
       // single call site changing.
       const b = this.barrierHit(x, z, rad, y);
       if (b && (!best || b.pen > best.pen)) best = b;
-      const lm = this.landmarkHit(x, z, rad, y);
+      const lm = this.landmarkHit(x, z, rad, y, ai);
       if (lm && (!best || lm.pen > best.pen)) best = lm;
       return best;
     },

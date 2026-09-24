@@ -248,6 +248,7 @@ class SignAtlas {
   }
 }
 let atlas = null;
+let monoRef = null;   // the Monorail, while buildLandmarks runs (MoPOP's passage)
 const sign = (text, w, h, bg, fg, opts) => atlas.text(text, w, h, bg, fg, opts);
 
 // --- textures --------------------------------------------------------------
@@ -538,6 +539,28 @@ const MOPOP_PLAN = [[-35.0, -23.2], [-33.4, -17.5], [-26.4, -12.3], [-29.5, 1.7]
 // volume is a crumpled sheet, not a balloon.
 const BLOB_PROFILE = [[-0.06, 0.93], [0.12, 0.96], [0.35, 1.02], [0.58, 1.07], [0.74, 1.06], [0.85, 0.96], [0.93, 0.76], [0.98, 0.46], [1.0, 0.08]];
 
+// The monorail's passage through MoPOP, in the POI's frame: [[x, z, halfWidth]]
+// along its midline (monorail.js passage()), set by buildLandmarks.
+let mopopCut = null;
+/** Push a skin vertex out of the monorail's passage, to the side its lobe's
+ *  centre is on: the faces along the tracks come out flat, as the real
+ *  building's valley walls are. */
+function clearPassage(p, cx, cz) {
+  if (!mopopCut) return p;
+  let best = null;
+  for (let i = 0; i < mopopCut.length - 1; i++) {
+    const [ax, az, aw] = mopopCut[i], [bx, bz, bw] = mopopCut[i + 1];
+    const dx = bx - ax, dz = bz - az, L2 = dx * dx + dz * dz || 1;
+    const t = Math.max(0, Math.min(1, ((p[0] - ax) * dx + (p[2] - az) * dz) / L2));
+    const qx = ax + dx * t, qz = az + dz * t;
+    const d = Math.hypot(p[0] - qx, p[2] - qz);
+    if (!best || d < best.d) best = { d, qx, qz, nx: -dz / Math.sqrt(L2), nz: dx / Math.sqrt(L2), hw: aw + (bw - aw) * t };
+  }
+  if (!best || best.d >= best.hw) return p;
+  const side = Math.sign((cx - best.qx) * best.nx + (cz - best.qz) * best.nz) || 1;
+  return [best.qx + best.nx * side * best.hw, p[1], best.qz + best.nz * side * best.hw];
+}
+
 function blob(cx, cz, rx, rz, rot, h, m, seed, lean = [0, 0], twist = 0) {
   const N = 40;
   const rows = [];
@@ -553,7 +576,7 @@ function blob(cx, cz, rx, rz, rot, h, m, seed, lean = [0, 0], twist = 0) {
       // The roofline rises to one side and dips to the other.
       const y = -1 + (h + 1) * f * (1 + 0.16 * Math.sin(a + ph[3]) * Math.max(0, f));
       const lx = Math.cos(a) * rx * rr * sc, lz = Math.sin(a) * rz * rr * sc;
-      row.push([cx + lx * c - lz * s + lean[0] * y, y, cz + lx * s + lz * c + lean[1] * y]);
+      row.push(clearPassage([cx + lx * c - lz * s + lean[0] * y, y, cz + lx * s + lz * c + lean[1] * y], cx, cz));
     }
     rows.push(row);
   }
@@ -579,8 +602,11 @@ const skin = (color, rough, metal, env) => {
   return m;
 };
 
-function mopop() {
+function mopop(l) {
   const g = new THREE.Group();
+  const pass = monoRef && monoRef.passage();
+  const px = l.p ? l.p[0] : l.x, pz = l.p ? l.p[1] : l.z;
+  mopopCut = pass ? pass.map(([x, z, w]) => [x - px, z - pz, w]) : null;
   g.userData.worldAligned = true;
   const gold = skin(0xc79c45, 0.4, 0.8, 0.85);
   const silver = skin(0xc5c9cd, 0.36, 0.85, 0.9);
@@ -601,6 +627,7 @@ function mopop() {
     g.add(blob(cx, cz, rx, rz, rot, h, m, i + 1, lean, 0.25 * (i % 2 ? 1 : -1)));
     solidCircle(g, cx, cz, Math.min(rx, rz) * 0.9, h);
   });
+  mopopCut = null;
   // The ground floor between the skins: dark glazing and a plinth, so the
   // blobs stand on a building rather than on the lawn.
   const core = MOPOP_PLAN.map(([x, z]) => [x * 0.86, z * 0.86]);
@@ -2323,7 +2350,7 @@ function onRoad(city, s) {
  * colliders are installed through city.setLandmarkSolids; without it (the
  * cost harness) nothing outside the scene is touched.
  */
-export function buildLandmarks(scene, city, waterLevelAt = null) {
+export function buildLandmarks(scene, city, waterLevelAt = null, monorail = null) {
   atlas = new SignAtlas();
   const clusters = new Map();
   const solids = [];
@@ -2347,6 +2374,23 @@ export function buildLandmarks(scene, city, waterLevelAt = null) {
     }
     platforms.push(...d.userData.platforms);
     addTo('seadock', d);
+  }
+  // The monorail's guideway and stations (monorail.js). Its columns stand in
+  // 5th Avenue's median by design, so its solids skip the carriageway test
+  // (monorail.js keeps them out of every lane instead); its lettering joins
+  // the sign atlas and so the clusters, its structure is pre-merged.
+  let mono = null;
+  monoRef = monorail;
+  if (monorail) {
+    mono = monorail.buildStructure({ sign, glass: mat.glass });
+    solids.push(...mono.solids);
+    platforms.push(...mono.platforms);
+    // each sign (and pane of glass) into the cluster it stands in, sharing
+    // that cluster's atlas and glass draws rather than adding a cluster of
+    // its own that spans 1.4 km and never culls
+    for (const o of [...mono.signs.children]) {
+      addTo(`${Math.round(o.position.x / 1200)},${Math.round(o.position.z / 1200)}`, o);
+    }
   }
   const marinas = [];
   if (waterLevelAt) {
@@ -2425,6 +2469,7 @@ export function buildLandmarks(scene, city, waterLevelAt = null) {
     });
     root.add(merged);
   }
+  if (mono) for (const m of mono.meshes) { root.add(m); draws++; }
   root.userData.draws = draws;
   root.userData.solids = solids.length;
   root.userData.solidsDropped = dropped;
@@ -2433,7 +2478,7 @@ export function buildLandmarks(scene, city, waterLevelAt = null) {
   // Bellevue Downtown Park's lawn and promenade are open ground: the builder
   // plants the promenade's own trees, so the scatter keeps out (citygen
   // jumpClear)
-  if (city) city.clearCircles = [[BDP.x, BDP.z, 121]];
+  if (city) city.clearCircles = [[BDP.x, BDP.z, 121], ...(mono ? mono.clear : [])];
   root.userData.platforms = platforms.length;
   root.userData.marinas = marinas;
   scene.add(root);

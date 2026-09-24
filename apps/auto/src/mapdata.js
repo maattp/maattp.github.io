@@ -147,10 +147,13 @@ export async function loadMapData(onStep) {
   // second key of that name silently replaced it -- initGeo then got a JSON
   // object where it wanted the mask.
   const lakes = (await (await fetch(new URL('water.json', BASE))).json()).lakes;
+  // The Seattle Center Monorail's beams, stations and platforms, from OSM
+  // (tools/build_monorail.py); monorail.js builds the line from them.
+  const monorail = await (await fetch(new URL('monorail.json', BASE))).json();
 
   return {
     height, hfN: hp.w,
     water, green, maskN: sp.w, lot, lotN: lp.w,
-    roads, buildings, places, lakes,
+    roads, buildings, places, lakes, monorail,
   };
 }
