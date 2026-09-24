@@ -22,7 +22,7 @@ const HUB = [0.42, 0.44, 0.47];
 // shader turns those into see-through, sky-reflecting glass (see glassShader).
 // Anything that must stay opaque and merely looks dark -- a mirror face, a lamp
 // housing -- takes another colour.
-const GLASS = [0.06, 0.08, 0.10];
+export const GLASS = [0.06, 0.08, 0.10];
 // A door mirror's face: silvered, so it mirrors the sky rather than being a
 // dark tile, and deliberately NOT the glass colour, or it would go see-through
 // onto the empty inside of its pod.
@@ -5423,7 +5423,7 @@ const HAND_BUILT = {
  * trim draw is in the transparent pass with depth writes on, and a pane drawn
  * before the chrome behind it would depth-reject that chrome.
  */
-function tagGlass(geo) {
+export function tagGlass(geo) {
   const col = geo.attributes.color.array, n = col.length / 3;
   const flag = new Float32Array(n);
   for (let i = 0; i < n; i++) {

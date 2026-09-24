@@ -40,7 +40,7 @@ function disposeTree(root) {
   });
 }
 
-export function collideWithBuildings(v, city, onHit) {
+export function collideWithBuildings(v, city, onHit, ai = false) {
   // Street objects first: a tree or a lamp post is closer than the building
   // line and is what you actually hit coming off a kerb. Until this existed
   // the only solid thing in the entire map was a building, so every tree in
@@ -53,9 +53,9 @@ export function collideWithBuildings(v, city, onHit) {
   // Walls and landmarks still answer (they carry their own height bands).
   let ob;
   if (v.stunt && v.y - G.terrainHeight(v.x, v.z) > 3.5) {
-    const b = city.barrierHit(v.x, v.z, v.radius * 0.7, v.y), lm = city.landmarkHit(v.x, v.z, v.radius * 0.7, v.y);
+    const b = city.barrierHit(v.x, v.z, v.radius * 0.7, v.y), lm = city.landmarkHit(v.x, v.z, v.radius * 0.7, v.y, ai);
     ob = b && lm ? (b.pen > lm.pen ? b : lm) : b || lm;
-  } else ob = city.obstacleHit(v.x, v.z, v.radius * 0.7, v.y);
+  } else ob = city.obstacleHit(v.x, v.z, v.radius * 0.7, v.y, ai);
   if (ob) {
     v.x += ob.nx * ob.pen;
     v.z += ob.nz * ob.pen;
@@ -882,7 +882,7 @@ export class TrafficSystem {
       else input = { throttle: 0, brake: 0.12, steer: 0 }; // shunted or abandoned: coast
 
       v.update(vdt, input);
-      collideWithBuildings(v, city);
+      collideWithBuildings(v, city, null, true);
     }
 
     this.resolveCarCollisions(dt, player);

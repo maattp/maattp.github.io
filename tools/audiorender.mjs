@@ -89,6 +89,8 @@ window.R = (async () => {
     boat: { boat: true, topKph: 75, len: 6 },
     atv: { atv: true, topKph: 95, len: 2 },
     turboprop: { plane: true, turboprop: true, topKph: 520, len: 14 },
+    // the monorail's trains are not a vehicle type (monorail.js); its spec
+    monorail: { monorail: true, engine: 'traction', topKph: 96, len: 14 },
   };
   const specOf = (k) => fake[k] || V.TYPES[k];
 
@@ -220,9 +222,9 @@ window.R = (async () => {
     bankClip: (name, i) => pcm([bank[name][i].getChannelData(0)]),
     engines: Object.keys(A.ENGINES),
     engineFor: (profile) => ({ i4: 'hatch', v6: 'suv', v8: 'muscle', flat6: 'sports', diesel: 'bus', vtwin: 'cruiser',
-      sportbike: 'sportbike', single: 'atv', ev: 'ev', piston: 'plane', turboprop: 'turboprop', heli: 'heli', outboard: 'boat' })[profile],
+      sportbike: 'sportbike', single: 'atv', ev: 'ev', piston: 'plane', turboprop: 'turboprop', heli: 'heli', outboard: 'boat', traction: 'monorail' })[profile],
     engine: (profile) => scene(17, driveScript(({ i4: 'hatch', v6: 'suv', v8: 'muscle', flat6: 'sports', diesel: 'bus', vtwin: 'cruiser',
-      sportbike: 'sportbike', single: 'atv', ev: 'ev', piston: 'plane', turboprop: 'turboprop', heli: 'heli', outboard: 'boat' })[profile])),
+      sportbike: 'sportbike', single: 'atv', ev: 'ev', piston: 'plane', turboprop: 'turboprop', heli: 'heli', outboard: 'boat', traction: 'monorail' })[profile])),
     scenes: Object.keys(scenes),
     scene: (k) => scene(scenes[k][0], scenes[k][1], scenes[k][2]),
     select: Object.fromEntries(Object.entries(V.TYPES).map(([k, s]) => [k, A.selectEngine(s)])),

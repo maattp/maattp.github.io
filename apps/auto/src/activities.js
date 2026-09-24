@@ -411,6 +411,8 @@ export class Activities {
   vehicleKind(player) {
     if (player.onFoot || !player.vehicle) return 'foot';
     const s = player.vehicle.spec;
+    // the monorail runs its own line: no race or getaway starts in it
+    if (s.monorail) return 'monorail';
     if (s.floats) return 'floatplane';
     if (s.plane) return 'plane';
     // A boat is not a car: no road race or getaway starts in one.
@@ -418,6 +420,7 @@ export class Activities {
     return 'car';
   }
   canStart(a, k) {
+    if (k === 'monorail') return false;
     if (a.need === 'any') return k !== 'foot';
     if (a.need === 'car') return k === 'car';
     if (a.need === 'plane') return k === 'plane' || k === 'floatplane';
@@ -538,7 +541,7 @@ export class Activities {
       a.topKph = kph;
       this.award(Math.round(kph), `TOP SPEED ${Math.round(kph)} km/h`);
     }
-    if (v.spec.plane) { a.air = 0; a.drift = 0; return; }
+    if (v.spec.plane || v.spec.monorail) { a.air = 0; a.drift = 0; return; }
 
     // AIRTIME
     // A stunt jump is scored by stunts.js, once, not again as airtime.

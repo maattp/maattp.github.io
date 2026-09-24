@@ -7,6 +7,7 @@ import { loadMapData } from './mapdata.js';
 import { buildTextures, planTextures, encodeTextures, restoreTextures, canvasToBlob, blobToCanvas, within } from './textures.js';
 import { World, WET_FLOOR } from './world.js';
 import { buildLandmarks, SEAPLANE_DOCK, airportSurface } from './landmarks.js';
+import { Monorail } from './monorail.js';
 import { freezeStatic } from './build.js';
 import { cacheGet, cachePut, cacheGuardTripped, cacheGuardSet, cacheClear } from './bootcache.js';
 import { TrafficSystem, collideWithBuildings } from './traffic.js';
@@ -150,6 +151,15 @@ class Game {
 
   onEnterVehicle(v, wasMode) {
     controls.setMode('drive');
+    if (v.spec.monorail) {
+      audio.enterVehicle(v.spec, false);
+      for (const [k, t] of [['gas', 'POWER'], ['brake', 'BRAKE']]) {
+        const el = document.querySelector(`[data-btn="${k}"]`);
+        if (el) el.textContent = t;
+      }
+      monorail.onBoard(v);
+      return;
+    }
     // A car taken from traffic already has its engine running; a parked one,
     // an apron plane or one you left earlier has to be started.
     audio.enterVehicle(v.spec, wasMode === 'traffic' || wasMode === 'police');
@@ -174,6 +184,17 @@ class Game {
   onExitVehicle(v) {
     controls.setMode('foot');
     if (v) audio.exitVehicle(v.spec, v.dead);
+    if (v && v.spec.monorail) monorail.onLeave(v);
+  }
+
+  /** ENTER with nothing to get into: near a monorail station, say when the next train is in. */
+  onMonorailWait(x, y, z) {
+    const near = (p, r) => p && Math.hypot(x - p.x, z - p.z) < r;
+    const st = near(monorail.wlDoor, 12) ? 'wl' : near(monorail.scStation, 45) && Math.abs(y - monorail.scFloor) < 2 ? 'sc' : null;
+    if (!st) return;
+    const eta = monorail.nextAt(st);
+    hud.showToast(eta === null ? 'The next train leaves the other end shortly — wait at the platform'
+      : eta < 5 ? 'The train is pulling in — wait for the doors' : `Next train in about ${Math.ceil(eta / 10) * 10} s`);
   }
 
   onLand(drop) {
@@ -181,7 +202,8 @@ class Game {
   }
 
   /** A boat refused to let you step off into the lake (player.exitVehicle). */
-  onNoLanding() {
+  onNoLanding(v) {
+    if (v && v.spec.monorail) { hud.showToast('The doors only open at a platform — stop at Westlake Center or Seattle Center'); return; }
     hud.showToast('Nowhere to step off — bring it alongside a dock or the shore');
   }
 
@@ -254,7 +276,7 @@ class Game {
 
 // ---------------------------------------------------------------------------
 
-let renderer, scene, camera, sun, world, cityRef, traffic, peds, player, controls, hud, fx, audio, game, marker, postfx, acts, stunts;
+let renderer, scene, camera, sun, world, cityRef, traffic, peds, player, controls, hud, fx, audio, game, marker, postfx, acts, stunts, monorail;
 let pickups = [];
 // Scratch vector for the shadow-camera aim, so the frame loop allocates none.
 const LOOK_AHEAD = new THREE.Vector3();
@@ -359,6 +381,9 @@ async function boot() {
   // The freeway grading of this build, if an earlier launch kept it (see
   // bootcache.js): the biggest single step of a phone's boot.
   const bootCache = { grade: bc.grade, buildings: bc.buildings };
+  // The monorail from its data alone: citygen keeps buildings off its line.
+  monorail = new Monorail(md.monorail);
+  md.monorailClear = monorail.clearZones();
   const gen = cityGenerator(md, bootCache);
   let r = gen.next();
   while (!r.done) {
@@ -592,12 +617,15 @@ function installShadowFade() {
   world.buildSkyline();
 
   await step(0.86, 'Placing the landmarks');
-  const lmRoot = buildLandmarks(scene, city, (x, z) => world.waterLevelAt(x, z));
+  monorail.attach(city);
+  const lmRoot = buildLandmarks(scene, city, (x, z) => world.waterLevelAt(x, z), monorail);
   // The scene root never moves, and its own matrixAutoUpdate re-flagged EVERY
   // object in the world for a world-matrix multiply each frame. Static
   // subtrees are frozen; see freezeStatic.
   scene.matrixAutoUpdate = false;
   if (lmRoot) freezeStatic(lmRoot);
+  // the two trains (skinned: they pose their own bones each frame)
+  monorail.makeTrains(scene);
   if (world.terrainGroup) freezeStatic(world.terrainGroup);
 
   await step(0.9, 'Waking the city');
@@ -607,6 +635,7 @@ function installShadowFade() {
   audio.onTrack = (label) => { if (hud) hud.showToast(`♪ ${label}`); };
   controls = new Controls(document.getElementById('app'));
   player = new Player(scene, city, game, world);
+  player.monorail = monorail;
   traffic = new TrafficSystem(scene, city, game);
   traffic.camera = camera;   // far-LOD instances are culled against it
   setWaterQuery((x, z) => world.waterLevelAt(x, z));
@@ -693,6 +722,11 @@ function installShadowFade() {
         hello: 'A fighter jet — full throttle, pull back past 220 km/h. Hold the stick back to loop' }];
     })(),
     ...ATV_SPOTS.map(([x, z]) => ({ x, z, kind: 'atv', name: 'Quad bike', near: false, hello: 'A quad bike — made for the grass' })),
+    // the Monorail's two stations: Westlake's street door, Seattle Center's ramp
+    ...(monorail.wlDoor ? [{ x: monorail.wlDoor.x, z: monorail.wlDoor.z, kind: 'monorail', name: 'Monorail · Westlake', near: false,
+      hello: 'Seattle Center Monorail — the 1962 Alweg line. Tap ENTER at the door when a train is in to take the controls' }] : []),
+    ...(monorail.scRamp ? [{ x: monorail.scRamp.x, z: monorail.scRamp.z, kind: 'monorail', name: 'Monorail · Seattle Center', near: false,
+      hello: 'Seattle Center Monorail — up the ramp to the platforms. Tap ENTER beside a train to take the controls' }] : []),
     ...(lmRoot.userData.marinas || []).map((mr) => ({ x: mr.x, z: mr.z, kind: 'dock', name: mr.name, near: false,
       hello: mr.seaplanes ? `${mr.name} — floatplanes on the float. Walk out and climb in`
         : `${mr.name} — boats and jet skis. Walk out on the float and take one` })),
@@ -705,6 +739,8 @@ function installShadowFade() {
   if (!mapCanvas) { mapCanvas = buildMapCanvas(city); bcOut.mapCanvas = mapCanvas; }
   hud = new Hud(document.getElementById('app'), city, mapCanvas);
   hud.places = mapPlaces;
+  hud.monorail = monorail;
+  monorail.bind({ game, hud, audio, player });
   {
     // One tap, never behind a menu: a lost run on a phone ends the session.
     const rb = document.getElementById('raceRestart');
@@ -775,7 +811,7 @@ function installShadowFade() {
 
   await step(1, 'Welcome to Seattle');
   window.__refreshJobs = refreshJobs;
-  window.__dbg = { game, city, player, world, traffic, peds, acts, stunts, scene, camera, renderer, G, fx, hud, controls, audio, pickups, THREE, postfx, applyQuality, sun, placeSun, sceneStats, perfSys, cityStats, WET_FLOOR, animateWalk, collideWithBuildings, TYPES: VEHICLE_TYPES };
+  window.__dbg = { game, city, player, world, traffic, peds, acts, stunts, monorail, scene, camera, renderer, G, fx, hud, controls, audio, pickups, THREE, postfx, applyQuality, sun, placeSun, sceneStats, perfSys, cityStats, WET_FLOOR, animateWalk, collideWithBuildings, TYPES: VEHICLE_TYPES };
   wireUi();
   game.newTarget();
   // Start on `high` everywhere.
@@ -1377,6 +1413,7 @@ function frame(now) {
   } else {
     player.update(dt, input, look, controls, traffic, peds);
   }
+  monorail.update(dt);
   if (prof) lap('player');
 
   const p = player.position;
@@ -1532,6 +1569,15 @@ function surfaceAt(x, y, z) {
   if (lot >= 0) return G.LOT_KINDS[lot] === 'rail' ? 'gravel' : 'hard';
   return 'grass';
 }
+// Traffic's engine voices take the nearest cars from this list; the
+// monorail's trains in service ride along, so one passing overhead is heard.
+const audioCars = [];
+function withTrains(cars) {
+  audioCars.length = 0;
+  for (let i = 0; i < cars.length; i++) audioCars.push(cars[i]);
+  if (monorail && monorail.trains) for (const t of Object.values(monorail.trains)) if (t !== player.vehicle) audioCars.push(t);
+  return audioCars;
+}
 function audioState(dt, input, p, camDir, buried) {
   const v = player.vehicle;
   if ((surfT -= dt) <= 0) {
@@ -1581,7 +1627,7 @@ function audioState(dt, input, p, camDir, buried) {
     fallSpeed: player.onFoot ? player.vy : 0,
     enclosed: buried,
     listener,
-    cars: traffic.cars,
+    cars: withTrains(traffic.cars),
     heli: hp,
   };
 }

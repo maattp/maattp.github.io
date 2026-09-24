@@ -29,6 +29,7 @@ src/player.js               on-foot/driving state machine + chase camera
 src/controls.js             touch stick/buttons + keyboard fallback
 src/hud.js                  minimap, full map, readouts
 src/stunts.js               stunt-jump ramps (geometry + height query) and their scoring
+src/monorail.js             the Seattle Center Monorail: beams, stations, both trains
 src/effects.js              particles + tracers
 src/audio.js                all sound, synthesised: engine models, one-shot bank,
                             positional traffic/sirens, radio (see "Sound")
@@ -41,6 +42,7 @@ tools/build_roads.py        OSM ways -> roads.bin, and the graph assertions
 tools/build_buildings.py    OSM footprints -> buildings.bin
 tools/build_places.py       landmarks, neighbourhood names, spawn points
 tools/build_lots.py         car parks, plazas, yards -> lots.png
+tools/build_monorail.py     the monorail's beams, stations, platforms -> monorail.json
 tools/fetch_dem.py          downloads the USGS terrain tiles
 tools/render_map.py         draws the whole graph top-down, for eyeballing
 tools/verify.mjs            headless CDP boot + assertions + screenshots
@@ -3586,6 +3588,116 @@ logs only a car-car shunt.
 **Order matters.** Each fix exposed the next one. A failed intermediate is not a
 failed idea: measure what it exposed first.
 
+## The Monorail
+
+**The Seattle Center Monorail runs, and you can drive it** (`monorail.js`,
+v116): the 1962 Alweg line from Westlake Center up the middle of 5th Avenue,
+round the Denny curve, through MoPOP to Seattle Center, both stations, and
+both trains -- Blue "Spirit of Seattle" on the west beam, Red "Spirit of
+Century 21" on the east. Every dimension names its source in the header of
+monorail.js (the 2003 Landmarks designation report, the structural engineer's
+1962 PCI Journal paper, the operator's site). The route is OSM's:
+`tools/build_monorail.py` (one ~2 min scan of the state extract) stitches
+each beam's ways by shared node into one polyline from Westlake's buffer
+(s = 0) to Seattle Center's, with MoPOP's `building_passage` flagged, and
+writes `data/monorail.json` with the stations and platforms.
+
+- **It exists before the city.** main.js builds the `Monorail` from its data
+  right after the map loads, because citygen needs `clearZones()`: oriented
+  rects along both beams and round the stations and ramp, and any building box
+  overlapping one whose roof reaches the beam goes (9 today; three stood in
+  Seattle Center station). `attach(city)` later re-derives the beam heights
+  over the carved terrain; `buildStructure` runs inside `buildLandmarks`.
+- **Beam tops are the street + 7.6 m (25 ft), smoothed** as average(dilate),
+  so never below it; both beams are held level through each station, and
+  bank 8 deg at the Denny curve's 180 m radius, in proportion below it.
+- **Columns stand between lanes, not off the road.** The real ones split 5th
+  Avenue's lanes (OSM draws two one-way carriageways either side of them),
+  so the landmark rule "no solid on a carriageway" is replaced by
+  `laneClear()`, which lays lanes out as traffic.js's `laneLat` does and keeps
+  every column 1.4 m+ clear of a car's body, and out of junctions; a site that
+  fails slides along or sideways. **Their solids are `mono` and AI traffic
+  ignores them** (`collideWithBuildings(..., ai)`): a car's obstacle circle is
+  0.7 x its radius, 3.5 m for a bus, wider than its body, so a bus in the next
+  lane would have hit a column its body clears. You and walkers still hit them.
+- **MoPOP has a passage** (landmarks.js `clearPassage`): each skin vertex
+  inside the corridor round the beams' midline is pushed out to its edge on
+  its own lobe's side, which flattens the faces along the line into the
+  valley walls the real building has.
+- **Westlake's terminal stands over the sidewalk** between the mall and 5th
+  Avenue, because the game's mall box stops ~9 m short of where OSM puts the
+  platform; you board and leave it by the street door under its south end (in
+  life, the mall's escalators). Seattle Center is walkable: a 1:8 ramp south
+  to the platforms, parapets round every open edge.
+- **Seattle Center on foot, and the three ways it failed (v117).** (1) OSM's
+  three platforms differ in length by up to 0.9 m and the concourse starts at
+  the longest: a short one left a hole at the concourse, into the track slot.
+  Every platform now runs the station's whole length. (2) In a slot you fell
+  THROUGH the walkable roof under it, because `platformAt` answers only the
+  highest platform over a point and the platform above masked it; so no one
+  may get into a slot: **each slot is filled with a solid from the platform
+  edge to its beam** (trains collide with nothing, so they do not notice). A
+  thin solid on the edge was slipped past when a long frame slid you along
+  it; one reaching past the beam narrowed the platform across the slot until
+  you could not walk onto it; one measured to the FAR beam (an outer platform
+  sees both) was 12 m wide. (3) Under the ramp is solid, a box per tenth of
+  its length topped just under the slab. verify walks all of it.
+- **The clear zones are tight to what is built.** A 3 m pad round the
+  concourse reached the Armory's east face, 0.2 m past its end, and citygen
+  deleted the whole building. verify checks it stands.
+- **A train waits for you** (v117): within 350 m of a station and not
+  driving a train, the one at its platform holds; with none there or on its
+  way, the one at the far end leaves at once. You spawn ~310 m from Seattle
+  Center, so the Blue train is there when you walk over.
+- **A train is one SkinnedMesh per material with a bone per 9.3 m section**
+  (`buildTrainGeometry`, skin index by section range), posed from the beam
+  each frame, so the articulated body bends through the curves at **two draws
+  a train** (body; trim with the vehicle glass shader). A third, matte draw
+  was merged into the body: it measured +2 draws a train for no visible
+  change. Its `boundingSphere` is moved with it every frame; a skinned mesh
+  culls on that, not on its geometry's.
+- **It is a vehicle to the rest of the game** without being a `Vehicle`:
+  `MonorailTrain` carries the fields player.js, main.js, hud.js, audio.js and
+  activities.js read (`spec.monorail`, `forward`, `vLong`, `x/y/z` at the
+  operator's seat, ...). It is not in `traffic.cars`; audio's engine voices
+  get the trains in service through main.js `withTrains`, so one passing
+  overhead is heard (profile `traction`). No race, getaway or ambient
+  airtime counts in one.
+- **Driving**: POWER and BRAKE (the last of the handle is emergency, 5.7 mph/s);
+  BRAKE held at a stand is a yard move backward. There are no switches: at a
+  terminal, POWER with the lead cab facing the buffer walks you to the other
+  cab. The doors open only at a platform -- ENTER elsewhere says so -- onto
+  the platform at Seattle Center and down to the street at Westlake. Stopping
+  with the nose on the mark (1.4 m from the buffer) pays $75 within 0.5 m.
+  Buffers and the other train are the only things it can hit; too fast for
+  a curve sways the body out and, far too fast, costs health.
+- **Service**: the train you are not driving runs itself, 28 s at each
+  platform and ~97 s end to end (95 s in 1962). **The gauntlet** from
+  Westlake to Olive Way (measured: where the beams are closer than two
+  half-widths) takes one train at a time; a train bound for Westlake holds
+  at the signal until it is clear, and the signal heads show it. Drive in
+  against red and the two sideswipe, as they did in 2005.
+
+`verify.mjs` checks the line (58 columns, beams 5.5 m+ over the street, no
+column within 1.3 m of a lane by traffic's own `laneLat`, no building on the
+line, MoPOP's skins out of the passage, the ramp's steps), seven minutes of
+service at fixed dt (trips 80-140 s, the gauntlet never shared, never over
+45 mph) and a run driven from Westlake to the mark at Seattle Center and off
+onto the platform. **Cost at the spawn point: +4-5 steady draws (136 -> 140)**,
+inside perfguard's tolerance: two guideway halves (split at Denny; 500 m
+blocks put four in view), a train, and the Westlake glass. Signs join the
+landmark cluster they stand in, and the four signal lamps are one mesh drawn
+within 800 m.
+
+**The Seattle Center Leap moved north of the Armory** (v117): the station's
+ramp came down across its old lip and it never launched. Re-run
+`tools/stuntjumps.mjs` after changing anything near a jump; verify now fails
+if any jump's run-up or ramp crosses the monorail.
+
+**`node --check file.js` passed monorail.js with its class unclosed**; the
+browser did not. Check a module as one: `node --input-type=module --check <
+file`.
+
 ## The Tech Tour
 
 Twelve badges at the region's tech offices (`activities.js` `TECH`, v114):
@@ -3699,6 +3811,8 @@ is the page half; load it into any booted page to re-install edited jumps
   their ends are anchors pinned to draped streets on the same dug ground, so
   the ground itself has to come up. Point Monroe (Bainbridge) is a spit the
   DEM has below sea level.
+- **The monorail's doors do not open, nobody rides with you, and the terminal
+  interiors are not walkable** beyond Seattle Center's platforms and ramp.
 - **No Kenmore Air Harbor.** The real floatplane base at the north end of Lake
   Washington (47.756 N) is ~3.1 km past the map's north edge (47.728 N).
 

@@ -62,8 +62,10 @@ export const JUMPS = [
   { id: 'madison', name: 'Madison Park Splash', over: 'E Lee St off the street end into Lake Washington',
     sx: 4200, sz: -2182.5, x: 4551, z: -2178, H: 2.0, deg: 18, land: 60, water: true },
   // Parks, lots and a runway
-  { id: 'center', name: 'Seattle Center Leap', over: 'across the lawn north of the Space Needle',
-    sx: -1025, sz: -1060, x: -905, z: -1060, H: 1.8, deg: 17, land: 130 },
+  // (moved north of the Armory in v117: the monorail station's ramp came
+  // down across its old lip, north of the Needle, and it never launched)
+  { id: 'center', name: 'Seattle Center Leap', over: 'across the grounds north of the Armory',
+    sx: -1110, sz: -1190, x: -1010, z: -1190, H: 1.8, deg: 17, land: 130 },
   { id: 'kite-hill', name: 'Kite Hill', over: 'up Gas Works Park\'s Kite Hill and off the top, toward Lake Union',
     sx: 330, sz: -3900, x: 125, z: -3793, H: 2.2, deg: 20, land: 110 },
   { id: 'husky-lot', name: 'Husky Lot', over: 'the E1 parking lot below Husky Stadium',

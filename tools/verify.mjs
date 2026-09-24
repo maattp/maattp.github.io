@@ -442,6 +442,203 @@ async function main() {
       process.exitCode = 1;
     }
 
+    // --- the monorail -----------------------------------------------------
+    //
+    // The Seattle Center Monorail (monorail.js): the line as built, a
+    // stretch of service at fixed dt, and one run driven from the cab.
+    const mono = await session.eval(`(() => {
+      const d = window.__dbg, m = d.monorail, c = d.city, G = d.G, tf = d.traffic, THREE = d.THREE;
+      if (!m || !m.trains) return null;
+      const out = {};
+      const W = m.tracks.west, E = m.tracks.east;
+      out.len = [W.len, E.len];
+      out.columns = m.columns.length;
+      // beams clear the street (outside the stations and MoPOP)
+      let clear = Infinity;
+      for (const tr of [W, E]) for (let s = tr.wlZone[1]; s < tr.scZone[0]; s += 4) {
+        if (tr.mopop && s > tr.mopop[0] - 5 && s < tr.mopop[1] + 5) continue;
+        clear = Math.min(clear, tr.y(s) - 1.52 - c.groundAt(tr.x(s), tr.z(s), null));
+      }
+      out.beamClear = clear;
+      // no solid of the line within a car's half-width and a margin of a
+      // lane's centre, by traffic's own lane layout
+      let gap = Infinity;
+      for (const q of m.solids) for (const ei of c.edgesNear(q.x, q.z, 30)) {
+        const e = c.edges[ei];
+        if (e.tunnel || e.elev) continue;
+        const a = c.nodes[e.a], b = c.nodes[e.b];
+        for (const sign of [1, -1]) {
+          if (!tf.allowed(ei, sign)) continue;
+          for (const lu of [0.01, 0.5, 0.99]) {
+            const off = tf.laneLat(ei, sign, { laneU: lu });
+            for (let t = 0; t <= 1; t += 0.05) {
+              const lx = a.x + (b.x - a.x) * t - e.dz * sign * off, lz = a.z + (b.z - a.z) * t + e.dx * sign * off;
+              let dd;
+              if (q.r !== undefined) dd = Math.hypot(lx - q.x, lz - q.z) - q.r;
+              else { const cs = Math.cos(q.rot), sn = Math.sin(q.rot), dx = lx - q.x, dz = lz - q.z;
+                dd = Math.hypot(Math.max(0, Math.abs(dx * cs + dz * sn) - q.hw), Math.max(0, Math.abs(-dx * sn + dz * cs) - q.hd)); }
+              gap = Math.min(gap, dd);
+            }
+          }
+        }
+      }
+      out.laneGap = gap;
+      // nothing built across the train's path: no city box, and MoPOP's
+      // skins clear of the passage (a ray out each side at mid-height)
+      let boxes = 0;
+      for (const tr of [W, E]) for (let s = 0; s < tr.len; s += 3) {
+        const x = tr.x(s), z = tr.z(s), y = tr.y(s);
+        for (const b of c.buildingsNear(x, z, 30)) {
+          if (b.y + b.h < y - 1.5) continue;
+          const cs = Math.cos(-b.rot), sn = Math.sin(-b.rot), dx = x - b.x, dz = z - b.z;
+          if (Math.abs(dx * cs - dz * sn) < b.w / 2 && Math.abs(dx * sn + dz * cs) < b.d / 2) boxes++;
+        }
+      }
+      out.boxesOnLine = boxes;
+      const lms = [];
+      d.scene.traverse((o) => { if (o.isMesh && /landmarks:/.test(o.name || '')) lms.push(o); });
+      d.scene.updateMatrixWorld(true);
+      const rc = new THREE.Raycaster();
+      let hits = 0;
+      for (const tr of [W, E]) if (tr.mopop) for (let s = tr.mopop[0]; s <= tr.mopop[1]; s += 3) {
+        const h = tr.heading(s), l = new THREE.Vector3(Math.cos(h), 0, -Math.sin(h));
+        for (const sd of [1, -1]) {
+          rc.set(new THREE.Vector3(tr.x(s), tr.y(s) + 1.6, tr.z(s)), l.clone().multiplyScalar(sd));
+          rc.far = 1.62;
+          if (rc.intersectObjects(lms, false).length) hits++;
+        }
+      }
+      out.mopopHits = hits;
+      // Seattle Center: walk the ramp up to the platform
+      const r = m.scRamp;
+      let y = c.groundAt(r.x, r.z + 2, null), step = 0;
+      for (let z = r.z + 2; z > r.z - 60; z -= 0.5) { const ny = c.groundAt(r.x, z, y + 0.6); step = Math.max(step, Math.abs(ny - y)); y = ny; if (Math.abs(y - m.scFloor) < 0.05) break; }
+      out.rampStep = step; out.rampTop = y - m.scFloor;
+      // Seattle Center on foot: every platform ground from end to end (a
+      // short one left a hole at the concourse), the track slots solid, and
+      // nothing to walk into under the ramp
+      let holes = 0, slotsOpen = 0;
+      const tr = m.tracks.west, h = tr.heading(tr.len - 24), fx = Math.sin(h), fz = Math.cos(h);
+      for (const p of m.platforms) {
+        if (Math.abs(p.y0 - m.scFloor) > 0.01 || p.y0 !== p.y1 || p.hd > 30) continue;
+        const vx = -p.s, vz = p.c;              // along
+        for (let v = -p.hd + 0.3; v <= p.hd - 0.3; v += 1) {
+          const py = c.platformAt(p.x + vx * v, p.z + vz * v);
+          if (py === null || Math.abs(py - m.scFloor) > 0.01) holes++;
+        }
+      }
+      for (const tt of [m.tracks.west, m.tracks.east]) for (let s = tt.scZone[0] + 6; s < tt.len - 1; s += 3) {
+        const hh = tt.heading(s), lx = Math.cos(hh), lz = -Math.sin(hh);
+        for (const off of [-1.2, 1.2]) if (!c.obstacleHit(tt.x(s) + lx * off, tt.z(s) + lz * off, 0.32, m.scFloor)) slotsOpen++;
+      }
+      let underOpen = 0;
+      for (let z = r.z - 4; z > r.z - 40; z -= 4) if (!c.obstacleHit(r.x, z, 0.32, G.terrainHeight(r.x, z))) underOpen++;
+      out.scWalk = { holes, slotsOpen, underOpen };
+      // the Armory stands (a padded clear zone once deleted it), and no
+      // stunt jump's run-up or ramp crosses the line's stations or ramp
+      out.armory = c.buildingsNear(-970, -1128, 20).some((b) => b.w * b.d > 5000);
+      let jumpHits = [];
+      for (const j of (d.stunts && d.stunts.list) || []) {
+        for (let t = 0; t <= 1.08; t += 0.02) {
+          const x = j.sx + (j.x - j.sx) * t, z = j.sz + (j.z - j.sz) * t;
+          if (c.landmarkHit(x, z, 3, G.terrainHeight(x, z) + 1) && m.solids.some((q) => Math.hypot(q.x - x, q.z - z) < 60)) { jumpHits.push(j.id); break; }
+        }
+      }
+      out.jumpHits = jumpHits;
+      // A train waits for you: on foot near Seattle Center (the spawn is
+      // ~310 m from it), the one at its platform holds; sent away, the other
+      // comes at once instead of dwelling out its time.
+      const T = m.trains, P = d.player;
+      // you, on foot, however the drive above left you
+      if (!P.onFoot) P.exitVehicle(true);
+      const px = P.x, pz = P.z;
+      P.x = m.scStation.x + 60; P.z = m.scStation.z + 60;
+      for (let i = 0; i < 30 * 90; i++) m.update(1 / 30);
+      out.held = T.blue.at() === 'sc' && T.blue.state === 'dwell';
+      // No train there or coming: Blue mid-line heading away to Westlake,
+      // Red dwelling at Westlake with 25 s to go. Red must leave at once.
+      T.blue.place(T.blue.track.len / 2, -1); T.blue.state = 'run';
+      T.red.place(T.red.markWL + 18.6, 1); T.red.state = 'dwell'; T.red.timer = 25;
+      let waited = 0;
+      while (T.red.state === 'dwell' && waited < 30 * 20) { m.update(1 / 30); waited++; }
+      out.summoned = waited / 30;
+      // settle both back into ordinary service before timing it
+      P.x = 6000; P.z = 6000;
+      for (let i = 0; i < 30 * 240; i++) m.update(1 / 30);
+      // service: seven minutes at fixed dt, with you well away
+      P.x = 6000; P.z = 6000;
+      const arr = { blue: 0, red: 0 }, trips = [], was = {};
+      let both = 0, vmax = 0, dep = {};
+      for (let i = 0; i < 30 * 420; i++) {
+        m.update(1 / 30);
+        for (const q of Object.values(T)) {
+          vmax = Math.max(vmax, Math.abs(q.u));
+          const st = q.state;
+          if (st === 'run' && was[q.key] === 'dwell') dep[q.key] = i;
+          if (st === 'dwell' && was[q.key] === 'run') { arr[q.key]++; if (dep[q.key] !== undefined) trips.push((i - dep[q.key]) / 30); }
+          was[q.key] = st;
+        }
+        if (T.blue.inGauntlet() && T.red.inGauntlet()) both++;
+      }
+      out.arrivals = arr; out.trips = trips; out.gauntletShared = both; out.vmax = vmax;
+      // one run from the cab: Red, from Westlake to Seattle Center
+      const red = T.red;
+      for (let i = 0; i < 30 * 200 && !(red.at() === 'wl' && red.state === 'dwell'); i++) m.update(1 / 30);
+      if (red.at() !== 'wl') { out.drive = 'red never reached Westlake'; return out; }
+      m.onBoard(red);
+      let said = '';
+      const sayWas = m.say; m.say = (t) => { said = t; };
+      for (let i = 0; i < 30 * 240; i++) {
+        const left = red.markSC - red.sA, v = red.u, lim = red.limitAt(red.sA + 40);
+        const need = v * v / 2.5 + 1.2;
+        const thr = left > need && v < lim ? 1 : 0, brk = left <= need || v > lim * 1.08 ? 1 : 0;
+        red.update(1 / 30, { throttle: thr, brake: brk * (left < need ? 0.85 : 0.5) });
+        m.update(1 / 30);
+        if (Math.abs(red.u) < 0.02 && left < 8 && i > 60) break;
+      }
+      m.say = sayWas;
+      const spot = m.exitSpot(red);
+      out.drive = { at: red.at(), left: red.markSC - red.sA, said, spot: !!spot, platform: spot ? c.platformAt(spot.x, spot.z) - m.scFloor : null };
+      m.onLeave(red);
+      P.x = px; P.z = pz;
+      return out;
+    })()`, true);
+    console.log('\n--- monorail ----------------------------------------------');
+    if (!mono) {
+      console.error('FAIL: no monorail');
+      process.exitCode = 1;
+    } else {
+      console.log(`  beams ${mono.len.map((l) => l.toFixed(0)).join(' / ')} m, ${mono.columns} columns, beam over the street >= ${mono.beamClear.toFixed(2)} m,`
+        + ` nearest lane ${mono.laneGap.toFixed(2)} m from a column`);
+      console.log(`  city boxes on the line ${mono.boxesOnLine}, MoPOP skin inside the passage ${mono.mopopHits}, ramp worst step ${mono.rampStep.toFixed(2)} m`);
+      console.log(`  service 7 min: arrivals ${JSON.stringify(mono.arrivals)}, trips ${mono.trips.map((t) => t.toFixed(0)).join(', ')} s,`
+        + ` gauntlet shared ${mono.gauntletShared} frames, top ${(mono.vmax * 3.6).toFixed(0)} km/h`);
+      console.log(`  Seattle Center on foot: platform holes ${mono.scWalk.holes}, open track-slot samples ${mono.scWalk.slotsOpen}, open under the ramp ${mono.scWalk.underOpen}; Armory standing ${mono.armory}; jumps across the monorail ${mono.jumpHits.join(',') || 'none'}`);
+      console.log(`  waiting at Seattle Center: a train held there ${mono.held}, the other summoned in ${mono.summoned.toFixed(1)} s`);
+      console.log(`  driven: ${typeof mono.drive === 'string' ? mono.drive : `at ${mono.drive.at}, ${mono.drive.left.toFixed(2)} m from the mark, "${mono.drive.said}", off onto the platform ${mono.drive.platform !== null && Math.abs(mono.drive.platform) < 0.05}`}`);
+      const bad = [];
+      if (mono.columns < 45) bad.push('too few columns');
+      if (!mono.held) bad.push('no train held at Seattle Center while you wait');
+      if (mono.scWalk.holes || mono.scWalk.slotsOpen || mono.scWalk.underOpen) bad.push('Seattle Center is not walkable as built');
+      if (!mono.armory) bad.push('the Armory is gone');
+      if (mono.jumpHits.length) bad.push('a stunt jump runs into the monorail');
+      if (!(mono.summoned < 3)) bad.push('the other train not sent for you');
+      if (mono.beamClear < 5.5) bad.push('a beam low over the street');
+      if (mono.laneGap < 1.3) bad.push('a column in a lane');
+      if (mono.boxesOnLine) bad.push('buildings on the line');
+      if (mono.mopopHits) bad.push('MoPOP across the passage');
+      if (mono.rampStep > 0.5 || Math.abs(mono.rampTop) > 0.05) bad.push('the Seattle Center ramp');
+      if (mono.gauntletShared) bad.push('both trains in the gauntlet');
+      if (mono.arrivals.blue < 3 || mono.arrivals.red < 3) bad.push('service stalled');
+      if (mono.trips.some((t) => t < 80 || t > 140)) bad.push('a service trip out of 80-140 s');
+      if (mono.vmax > 20.6) bad.push('service over 45 mph');
+      if (typeof mono.drive === 'string' || mono.drive.at !== 'sc' || !mono.drive.spot || Math.abs(mono.drive.platform) > 0.05) bad.push('the driven run');
+      if (bad.length) {
+        console.error(`FAIL: monorail: ${bad.join('; ')}`);
+        process.exitCode = 1;
+      }
+    }
+
     // --- no lake in the boat's cockpit ------------------------------------
     //
     // The runabout's cockpit floor is 12 cm over its waterline and the lake is

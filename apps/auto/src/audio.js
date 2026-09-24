@@ -906,6 +906,12 @@ export const ENGINES = {
     idle: 0, redline: 400, gears: [1], spool: 0.22,
     lp: [260, 900, 1200], ex: [70, 2, 9], noise: { ratio: 70, q: 0.6, gain: 0.8, pulse: 0.95, order: 2 },
     buzz: { ratio: 14, gain: 0.14 }, whine: { hz0: 1800, hz1: 6100, gain: 0.05, load: 0.2 }, drive: 2.2, level: 0.75, jitter: 0.04 },
+  // The monorail: eight DC traction motors [LM], geared low -- a growl that
+  // climbs to a whine with speed, rubber on concrete under it, no gears.
+  traction: { kind: 'ev', stroke: 2, fire: [0], amps: [1], pw: 0.6, harm: [1, 0.3, 0.45, 0.15, 0.2],
+    idle: 0, redline: 9000, gears: [1],
+    lp: [700, 2400, 1400], ex: [420, 1.4, 6], noise: { ratio: 0, q: 1, gain: 0, pulse: 0, order: 1 },
+    whine: { hz0: 110, hz1: 1900, gain: 0.085, load: 0.75 }, drive: 1.2, level: 0.42, jitter: 0.01 },
   outboard: { kind: 'boat', stroke: 2, fire: [0, 0.5], amps: [1, 0.9], pw: 0.028,
     idle: 900, redline: 5800, gears: [1],
     lp: [380, 2300, 1500], ex: [260, 2.5, 5], noise: { ratio: 18, q: 1.2, gain: 0.3, pulse: 0.5, order: 2 },
@@ -1288,7 +1294,7 @@ function hornFor(spec) {
   if (!spec) return 'car';
   if (spec.plane || spec.heli) return 'none';
   if (spec.moto || spec.atv) return 'moto';
-  if (spec.bus || spec.cargo || spec.diesel || spec.boat) return 'truck';
+  if (spec.bus || spec.cargo || spec.diesel || spec.boat || spec.monorail) return 'truck';
   return 'car';
 }
 
@@ -1899,6 +1905,8 @@ export class Audio {
   wanted(level = 1) {
     this.play('wanted', { gain: 0.6, rate: 1 + 0.05 * (level - 1), jitter: false, send: 0.15, duck: 0.55, duckHold: 0.9 });
   }
+  /** The monorail's doors: a chime as they open, a tick as they close. */
+  chime(open) { this.ui(open ? 'check' : 'tick'); }
   /** Mission and menu cues: 'start' | 'tick' | 'go' | 'check' | 'ring' | 'fail'. */
   ui(kind) {
     this.play('ui_' + kind, { gain: kind === 'fail' ? 0.45 : 0.5, send: 0.03, jitter: false, duck: kind === 'go' || kind === 'fail' ? 0.3 : 0 });

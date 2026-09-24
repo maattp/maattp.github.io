@@ -12,7 +12,7 @@ const SCALE = MAP_PX / (G.MAP_HALF * 2);
  * wheels on orange. Drawn, not typed -- an emoji's glyph depends on the font.
  */
 function placeIcon(ctx, kind, x, y, r) {
-  ctx.fillStyle = kind === 'dock' ? '#2f86d6' : kind === 'jet' ? '#c8352a' : '#e0782e';
+  ctx.fillStyle = kind === 'dock' ? '#2f86d6' : kind === 'jet' ? '#c8352a' : kind === 'monorail' ? '#0b8a8f' : '#e0782e';
   ctx.strokeStyle = '#ffffff';
   ctx.lineWidth = r * 0.22;
   ctx.beginPath();
@@ -32,6 +32,17 @@ function placeIcon(ctx, kind, x, y, r) {
     ctx.beginPath();
     ctx.arc(x, y - r * 0.55, r * 0.14, 0, Math.PI * 2);
     ctx.stroke();
+  } else if (kind === 'monorail') {
+    // a train's round nose on its beam
+    ctx.fillStyle = '#ffffff';
+    ctx.beginPath();
+    ctx.moveTo(x - r * 0.55, y + r * 0.22);
+    ctx.lineTo(x - r * 0.55, y - r * 0.3);
+    ctx.lineTo(x + r * 0.2, y - r * 0.3);
+    ctx.quadraticCurveTo(x + r * 0.6, y - r * 0.28, x + r * 0.6, y + r * 0.22);
+    ctx.closePath();
+    ctx.fill();
+    ctx.fillRect(x - r * 0.62, y + r * 0.32, r * 1.24, r * 0.12);
   } else if (kind === 'jet') {
     // a delta, nose up
     ctx.fillStyle = '#ffffff';
@@ -212,6 +223,22 @@ export class Hud {
     this._rb.textContent = r.best ? `best ${r.best}` : '';
   }
 
+  /** The monorail's two beams as one teal line, through `to(x, z)` -> canvas. */
+  drawMonorail(ctx, to, w) {
+    const tr = this.monorail.tracks.west;
+    ctx.strokeStyle = '#19b3b8';
+    ctx.lineWidth = w;
+    ctx.lineJoin = 'round';
+    ctx.beginPath();
+    for (let s = 0; s <= tr.len; s += 10) {
+      const [x, y] = to(tr.x(s), tr.z(s));
+      if (s === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+    }
+    const [ex, ey] = to(tr.x(tr.len), tr.z(tr.len));
+    ctx.lineTo(ex, ey);
+    ctx.stroke();
+  }
+
   setObjective(text) {
     this.objective.textContent = text || '';
     this.objective.classList.toggle('show', !!text);
@@ -271,6 +298,8 @@ export class Hud {
       ctx.arc(bx, bz, 3.8 / zoom, 0, Math.PI * 2);
       ctx.fill();
     }
+    // The monorail's line, teal, under the markers
+    if (this.monorail) this.drawMonorail(ctx, toMap, 2.2 / zoom);
     // Marked places (the seaplane dock, the quads), upright whatever the
     // dial's rotation, so the anchor reads as an anchor.
     for (const pl of (this.places || [])) {
@@ -416,11 +445,12 @@ export class Hud {
       ctx.fillStyle = 'rgba(255,255,255,0.55)';
       ctx.fillText(l.name, lx, lz - size * 0.008);
     }
+    if (this.monorail) this.drawMonorail(ctx, toC, Math.max(1.5, size * 0.0022));
     for (const pl of (this.places || [])) {
       const [qx, qz] = toC(pl.x, pl.z);
       placeIcon(ctx, pl.kind, qx, qz, size * (pl.kind === 'dock' ? 0.011 : 0.008));
       // named, quads too: an unlabelled orange dot was a quad nobody found
-      if (pl.kind === 'dock' || pl.kind === 'atv') {
+      if (pl.kind === 'dock' || pl.kind === 'atv' || pl.kind === 'monorail') {
         ctx.fillStyle = 'rgba(255,255,255,0.85)';
         ctx.fillText(pl.name, qx, qz - size * 0.016);
       }
