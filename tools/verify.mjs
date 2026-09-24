@@ -343,6 +343,148 @@ async function main() {
       process.exitCode = 1;
     }
 
+    // --- no road under the water drawn over it -----------------------------
+    //
+    // The 520 was "underwater near UW": its cutting at the Montlake lid's east
+    // portal dips to ~4 m, under Lake Washington's plane at 5.09, and the
+    // depth mask that keeps water out of cuttings stood at SEA level; and a
+    // spurious 9.9 m "lake" (Union Bay's marsh, eroded off Lake Washington by
+    // build_raster) drew a second plane over both carriageways where they
+    // leave the floating bridge. Every non-tunnel road is walked at 10 m
+    // against the water drawn at that point (the sea, a lake's whole box,
+    // the canal). A sample
+    // under it counts only if nothing hides the water there: not the cuttings'
+    // mask, not ground over it (a lid), and nothing opaque between the road and
+    // the surface.
+    //
+    // The 520 and I-90 corridors must be dry end to end, and each floating
+    // bridge must be found and clear the lake by 3 m. Everything else is held
+    // to the count it had when this was written, so nothing new goes under:
+    // low decks whose ends sit on a dug shore (ferry docks, Harbor Island's
+    // ramps) and low ground inside Lake Washington's 25 km box (Tukwila,
+    // Bellevue's shore) -- see "Known gaps" in apps/auto/CLAUDE.md. Lower
+    // these when one is fixed.
+    const SUBMERGED_MAJOR_MAX = 50, SUBMERGED_STREETS_MAX = 313;
+    const sub = await session.eval(`(() => {
+      const d = window.__dbg, c = d.city, w = d.world, G = d.G, THREE = d.THREE;
+      // The water DRAWN at a point, worked out here rather than asked of the
+      // game: the sea plane at 0 everywhere, each lake's plane over its whole
+      // box, the canal's at its level.
+      const canal = G.shipCanal(w.lakeSpecs || []);
+      const W = (x, z) => {
+        let lv = 0;
+        for (const l of w.lakeSpecs || []) if (x >= l.x0 && x <= l.x1 && z >= l.z0 && z <= l.z1) lv = Math.max(lv, l.level);
+        const cl = canal && canal.at(x, z);
+        return cl != null ? Math.max(lv, cl) : lv;
+      };
+      const rc = new THREE.Raycaster(), down = new THREE.Vector3(0, -1, 0), up = new THREE.Vector3(0, 1, 0);
+      const water = new Set([w.water, ...(w.lakes || []), w.canalMesh].filter(Boolean));
+      const covers = [];
+      d.scene.traverse((o) => { if (o.isMesh && o.visible && !water.has(o) && o !== w.tunnelWaterMaskMesh) covers.push(o); });
+      const hidden = (x, y, z, lv) => {
+        if (G.terrainHeight(x, z) > Math.max(lv, y + 2)) return true;          // under ground
+        if (w.tunnelWaterMaskMesh) {
+          rc.set(new THREE.Vector3(x, lv + 2, z), down); rc.far = 2.2;
+          if (rc.intersectObject(w.tunnelWaterMaskMesh).length) return true;   // a cutting's mask
+        }
+        rc.set(new THREE.Vector3(x, y + 0.6, z), up); rc.far = Math.max(0.1, lv - y - 0.6);
+        return rc.intersectObjects(covers, false).length > 0;                 // a lid or deck over it
+      };
+      const out = { samples: 0, corridor: [], major: [], majors: 0, streets: 0, streetWhere: {}, floating: {} };
+      const FLOAT = /Evergreen Point Floating|Lacey V. Murrow|Homer M. Hadley/;
+      const CORRIDOR = /Evergreen Point Floating|Lacey V. Murrow|Homer M. Hadley|^WA 520$|^I 90$/;
+      c.edges.forEach((e, ei) => {
+        if (e.tunnel) return;
+        const a = c.nodes[e.a], b = c.nodes[e.b];
+        const n = Math.max(1, Math.ceil(e.len / 10));
+        for (let k = 0; k <= n; k++) {
+          const t = k / n, x = a.x + (b.x - a.x) * t, z = a.z + (b.z - a.z) * t;
+          const lv = W(x, z);
+          if (lv <= 0 && G.terrainHeight(x, z) > 3) continue;
+          out.samples++;
+          const seed = (e.ph ? e.ph[Math.round(t * (e.ph.length - 1))]
+            : e.elev ? a.y + (b.y - a.y) * t : G.terrainHeight(x, z)) + 0.6;
+          const y = c.groundAt(x, z, seed);
+          if (FLOAT.test(e.name || '') && G.isWater(x, z)) {
+            const f = out.floating[e.name] || (out.floating[e.name] = { min: Infinity });
+            f.min = Math.min(f.min, y - lv);
+          }
+          if (y >= lv - 0.05 || hidden(x, y, z, lv)) continue;
+          const at = ' @' + x.toFixed(0) + ',' + z.toFixed(0) + ' ' + (lv - y).toFixed(2) + ' m under';
+          if (CORRIDOR.test(e.name || '')) {
+            out.corridor.push(e.name + at);
+          } else if (e.elev || e.cls === 'hwy' || e.cls === 'ramp') {
+            out.majors++;
+            if (out.major.length < 12) out.major.push((e.elev ? 'deck ' : '') + e.cls + ' ' + (e.name || '') + at);
+          } else {
+            out.streets++;
+            const key = (e.name || e.cls) + ' @' + Math.round(x / 500) * 500 + ',' + Math.round(z / 500) * 500;
+            out.streetWhere[key] = (out.streetWhere[key] || 0) + 1;
+          }
+        }
+      });
+      out.streetWhere = Object.entries(out.streetWhere).sort((p, q) => q[1] - p[1]).slice(0, 8).map(([k, v]) => k + ' x' + v);
+      return out;
+    })()`, true);
+    console.log('\n--- roads under the water -------------------------------');
+    console.log(`  ${sub.samples} samples near water; 520/I-90 under it: ${sub.corridor.length},`
+      + ` other decks/freeways/ramps: ${sub.majors} (max ${SUBMERGED_MAJOR_MAX}),`
+      + ` streets: ${sub.streets} (max ${SUBMERGED_STREETS_MAX})`);
+    for (const [name, f] of Object.entries(sub.floating)) console.log(`  ${name}: lowest deck ${f.min.toFixed(2)} m over the lake`);
+    if (sub.streets) console.log('  streets: ' + sub.streetWhere.join('; '));
+    const lowFloat = Object.entries(sub.floating).filter(([, f]) => f.min < 3);
+    if (sub.corridor.length || lowFloat.length || Object.keys(sub.floating).length < 3
+      || sub.majors > SUBMERGED_MAJOR_MAX || sub.streets > SUBMERGED_STREETS_MAX) {
+      for (const m of [...sub.corridor.slice(0, 12), ...sub.major]) console.error('  ' + m);
+      console.error(`FAIL: roads under the water drawn over them (${sub.corridor.length} on the 520/I-90,`
+        + ` ${lowFloat.length} floating bridges under 3 m, ${Object.keys(sub.floating).length}/3 floating bridges found,`
+        + ` ${sub.majors} other deck/freeway samples, ${sub.streets} street samples)`);
+      process.exitCode = 1;
+    }
+
+    // --- no lake in the boat's cockpit ------------------------------------
+    //
+    // The runabout's cockpit floor is 12 cm over its waterline and the lake is
+    // one flat plane, so the bow rising through the hump put the floor 12 cm
+    // under it and the lake drew between the seats. A boat at fixed dt: full
+    // throttle through the hump, a hard turn each way, throttle cut; the
+    // floor's corners must stay over the local water throughout.
+    const boat = await session.eval(`(() => {
+      const d = window.__dbg, THREE = d.THREE;
+      const v = d.traffic.cars.find((c) => c.spec && c.spec.hand === 'boat');
+      if (!v || !v.spec.cockpit) return null;
+      const [fy, z0, z1, hw] = v.spec.cockpit;
+      const saved = { x: v.x, z: v.z, y: v.y, heading: v.heading, mode: v._mode, pitch: v.pitch, roll: v.roll };
+      v._mode = 'player';
+      const p = new THREE.Vector3();
+      let worst = Infinity;
+      for (let i = 0; i < 1100; i++) {
+        const t = i * 0.02;
+        v.update(0.02, { throttle: t < 18 ? 1 : 0, brake: 0, steer: t > 8 && t < 12 ? 1 : t > 13 && t < 17 ? -1 : 0 });
+        v.group.updateMatrixWorld(true);
+        const wl = d.world.waterLevelAt(v.x, v.z);
+        for (const [x, z] of [[-hw, z0], [hw, z0], [-hw, z1], [hw, z1]]) {
+          p.set(x, fy, z); v.tilt.localToWorld(p);
+          worst = Math.min(worst, p.y - wl);
+        }
+      }
+      Object.assign(v, { x: saved.x, z: saved.z, y: saved.y, heading: saved.heading, pitch: saved.pitch, roll: saved.roll, vLong: 0, vLat: 0 });
+      v._mode = saved.mode;
+      v.sync();
+      return worst;
+    })()`, true);
+    console.log('\n--- boat ------------------------------------------------');
+    if (boat === null) {
+      console.error('FAIL: no moored runabout to drive');
+      process.exitCode = 1;
+    } else {
+      console.log(`  cockpit floor, lowest over the water through hump and turns: ${(boat * 100).toFixed(1)} cm`);
+      if (boat < 0) {
+        console.error('FAIL: the lake draws inside the boat');
+        process.exitCode = 1;
+      }
+    }
+
     // --- decks: DECK_REACH must not strand anyone ---------------------------
     //
     // groundAt's reach shrank from 2.6 m to 0.9 m above the caller's reference
@@ -533,7 +675,9 @@ async function main() {
       console.log(bad.slice(0, 10).join('\n'));
     }
     console.log(`\n${bad.length ? 'FAIL' : 'OK'}: ${bad.length} exceptions`);
-    process.exitCode = bad.length ? 1 : 0;
+    // Only ever SET a failure here: `bad.length ? 1 : 0` wiped out every
+    // FAIL above whenever the console was clean, so verify exited 0 on them.
+    if (bad.length) process.exitCode = 1;
   } finally {
     chrome.kill('SIGKILL');
   }

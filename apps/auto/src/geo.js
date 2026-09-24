@@ -191,6 +191,25 @@ export function isWater(x, z) {
   return maskAt(WET, x, z) !== 0;
 }
 
+/**
+ * The height of the water DRAWN over (x, z), wet or dry: the sea plane runs
+ * under the whole map at 0, and a lake's plane covers its whole bounding box,
+ * dry banks included, at the lake's level; the ship canal's plane sits at
+ * Lake Union's. Whatever is lower than this at a point is under the water on
+ * screen -- which is how the 520 came to be "underwater near UW": its cutting
+ * at the Montlake lid dips under Lake Washington's 5.09 m plane. verify's
+ * submerged-road scan checks every road against it.
+ */
+export function drawnWaterLevel(lakes, x, z) {
+  let lv = 0;
+  for (const l of lakes || []) {
+    if (x >= l.x0 && x <= l.x1 && z >= l.z0 && z <= l.z1 && l.level > lv) lv = l.level;
+  }
+  const c = shipCanal(lakes || []), cl = c && c.at(x, z);
+  if (cl !== null && cl !== undefined && cl > lv) lv = cl;
+  return lv;
+}
+
 let CANAL;
 /**
  * THE SHIP CANAL IS AT LAKE LEVEL, not the sea's. Salmon Bay, the Fremont Cut,

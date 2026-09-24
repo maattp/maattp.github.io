@@ -161,6 +161,19 @@ and that ring is continuous: without eroding it, Lake Washington, Lake Union and
 Puget Sound label as one 49 km2 body. Eroding 40 m also parts the ship canal,
 which is what separates the lakes from the sea in reality anyway.
 
+**...and a piece the erosion parts from its own lake is still that lake.**
+Erosion also cut Union Bay's marshy pocket by Foster Island off Lake
+Washington. It labelled as its own "lake", took its level from the DEM's
+reading of the marsh and trees (9.9 m, against the lake's 5.09), and got its
+own plane, 4.8 m over the lake. That plane covered both carriageways of the
+520 where they come off the floating bridge, and the island's trees: "the
+520 is underwater near UW". `carve_lakes()` now merges a component into a
+bigger body when un-eroded water joins them *within the piece's own box*.
+Through the whole mask, Lake Union would join Lake Washington, and both
+would join the sea. It merges exactly that one piece today. `AUTO_DATA_OUT=<dir>
+python3 tools/build_raster.py` writes somewhere else for a diff; the shipped
+rasters rebuild byte for byte.
+
 **The coastline flood fill needs a closed barrier.** Coastline ways alone don't
 close it -- the fill walks around the outside and the entire map comes back as
 ocean (99.7 %). Seal the padded grid's border too. And seed from known open water
@@ -3016,6 +3029,27 @@ The lesson is not about water. **When a law is added, grep for every caller of
 the thing it replaces** -- this one sat one function away from the code that
 documented it, for as long as the game has had lakes.
 
+### Every water-level test, again: the cuttings' water mask
+
+The depth-only mask that keeps water out of a dug cutting (`portalCuts`,
+`tunnelWaterMask`) was sea-level only. It stood at 0.02 m and covered floors
+under ~1 m. The 520's cutting at the Montlake lid's east portal lies inside
+Lake Washington's box with its floor at ~4 m, so the lake's 5.09 m plane lay
+across both carriageways. Each mask quad now stands at `G.drawnWaterLevel()`
+(the highest plane drawn at that point: the sea, any lake box, the canal), and
+the "is this low enough to need one" tests use the same level.
+
+**verify walks every road against the water drawn over it** ("roads under
+the water"). It computes the drawn level itself and counts a sample only
+when nothing hides the water there: not the cuttings' mask, not ground over
+it, not a lid or deck overhead. The 520 and I-90 corridors must be dry, and
+each floating bridge must be found and clear the lake by 3 m. Master before
+this fix failed with 14 samples on the 520 and Evergreen Point at 0.61 m.
+Everything else is held at its count (see "Known gaps"), so nothing new goes
+under. **verify also used to end with `process.exitCode = bad.length ? 1 : 0`**,
+which cleared every FAIL above it whenever the console was clean. Only ever
+set a failure.
+
 ## The seaplane dock, the boat and the quad
 
 **The dock is at Lake Union's real south-west corner** (Kenmore Air's terminal,
@@ -3054,6 +3088,14 @@ third of top speed, and banks in. Its wake is one ribbon mesh in effects.js
 (`fx.wake`), fed only while you drive one. Traffic never spawns one: it is
 not in `CIVILIAN_TYPES`. 1.8k triangles, 3 draws.
 
+**The lake must not draw in the cockpit.** The floor (`spec.cockpit`, which
+`buildBoat` also draws from) is only 12 cm over the waterline and the water is
+one flat plane. Through the hump the bow rises ~0.10 rad and the floor went
+12 cm under, so the lake showed between the seats. `updateBoat` lifts the hull
+just enough to keep the floor's lowest corner, pitched and rolled, 4 cm over
+the surface: a planing hull rides up anyway, and at rest the bob never reaches
+it. verify drives one through the hump and both turns and asserts this.
+
 **The quad** (`atv`, `buildAtv`) is a four-wheeled car to the ground solve
 with a posed rider (`RIDERS.atv`, visible only while ridden), knobbly tyres
 (`addWheel(..., knobby)`: knob tops at the rolling radius, the carcass 10 %
@@ -3062,8 +3104,9 @@ new grass drag. **Road cars now bog down on grass**: a vehicle nobody's AI
 drives, off pavement (no lift, not a deck, not a lot), pays extra rolling
 resistance (a sedan manages ~110 km/h on a lawn); traffic never leaves the
 road so pays nothing. Parked in three places (`ATV_SPOTS`: Kite Hill, the
-dock's car park, Seattle Center) and $700 from the delivery menu; parked
-ones freeze once settled. 6.9k triangles + the rider, like the bikes.
+dock's car park, Seattle Center), each named "Quad bike" on the full map
+(an unlabelled orange dot was a quad nobody found), and $700 from the
+delivery menu; parked ones freeze once settled. 6.9k triangles + the rider, like the bikes.
 Bench band in tools/vehicles.mjs (0-80 2.4 s arcade).
 
 ### Marinas, seaplane bases and the jet ski
@@ -3642,6 +3685,22 @@ is the page half; load it into any booted page to re-install edited jumps
 (`__sj.install(defs)`) and re-drive them without a reboot.
 
 ## Known gaps
+
+- **Roads still under the water drawn over them: 50 deck/freeway samples and
+  313 street samples** (verify's ceilings). Two causes. (1) A lake's plane
+  covers its whole bounding box, and Lake Washington's is 25 km tall: dry
+  ground below 5.09 m inside it floods, so Tukwila's Duwamish valley (South
+  102nd/104th, East Marginal Way, the river bridges) and bits of Bellevue's and
+  Kirkland's shore are under a lake 4 km away. The fix is to mask each lake's
+  plane to its own water, as the canal's already is. (2) A short deck whose end
+  node sits on a shore the raster dug as bed follows the bed down: the East
+  Duwamish Waterway Bridge's end, Harbor Island's ramps, the Colman, Fauntleroy
+  and Southworth ferry docks. A floor in `gradeRoads` does not reach these:
+  their ends are anchors pinned to draped streets on the same dug ground, so
+  the ground itself has to come up. Point Monroe (Bainbridge) is a spit the
+  DEM has below sea level.
+- **No Kenmore Air Harbor.** The real floatplane base at the north end of Lake
+  Washington (47.756 N) is ~3.1 km past the map's north edge (47.728 N).
 
 - **Freeway over freeway at interchanges stays as imported.** 110 of the 154
   refused overpasses; see "Don't dip a graded freeway under a ramp". They are
