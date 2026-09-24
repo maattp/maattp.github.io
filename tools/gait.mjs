@@ -27,11 +27,14 @@ const SHOTS = process.argv.includes('--shots');
 // from gait-analysis literature; they are targets to be judged against, not
 // hard pass/fail lines, because this is a stylised character.
 const REF = [
-  { speed: 1.4, label: 'walk',      cadence: [100, 120], step: [0.68, 0.82], duty: [0.58, 0.65], bobCm: [3.5, 6],  kneeSwingDeg: [55, 75] },
-  { speed: 2.2, label: 'brisk',     cadence: [120, 140], step: [0.85, 1.05], duty: [0.52, 0.60], bobCm: [4, 7],    kneeSwingDeg: [65, 85] },
-  { speed: 3.5, label: 'jog',       cadence: [150, 170], step: [1.1, 1.4],   duty: [0.38, 0.48], bobCm: [6, 10],   kneeSwingDeg: [90, 120] },
-  { speed: 5.5, label: 'run',       cadence: [165, 185], step: [1.6, 2.1],   duty: [0.30, 0.40], bobCm: [7, 11],   kneeSwingDeg: [110, 140] },
-  { speed: 7.5, label: 'sprint',    cadence: [180, 210], step: [2.0, 2.6],   duty: [0.22, 0.32], bobCm: [8, 13],   kneeSwingDeg: [120, 155] },
+// stanceKneeDeg: the MEAN knee flexion while that foot is down. Every other
+// band passed while the whole stance was a crouch (36 deg at a walk, against a
+// real ~10): see CLAUDE.md, "The gait plants feet".
+  { speed: 1.4, label: 'walk',      cadence: [100, 120], step: [0.68, 0.82], duty: [0.58, 0.65], bobCm: [3.5, 6],  kneeSwingDeg: [55, 75],   stanceKneeDeg: [4, 20] },
+  { speed: 2.2, label: 'brisk',     cadence: [120, 140], step: [0.85, 1.05], duty: [0.52, 0.60], bobCm: [4, 7],    kneeSwingDeg: [65, 85],   stanceKneeDeg: [5, 24] },
+  { speed: 3.5, label: 'jog',       cadence: [150, 170], step: [1.1, 1.4],   duty: [0.38, 0.48], bobCm: [6, 10],   kneeSwingDeg: [90, 120],  stanceKneeDeg: [25, 50] },
+  { speed: 5.5, label: 'run',       cadence: [165, 185], step: [1.6, 2.1],   duty: [0.30, 0.40], bobCm: [7, 11],   kneeSwingDeg: [110, 140], stanceKneeDeg: [28, 52] },
+  { speed: 7.5, label: 'sprint',    cadence: [180, 210], step: [2.0, 2.6],   duty: [0.22, 0.32], bobCm: [8, 13],   kneeSwingDeg: [120, 155], stanceKneeDeg: [28, 55] },
 ];
 
 function launch() {
@@ -118,6 +121,7 @@ async function main() {
         const bodyPerFrame = sp * DT;
         let contactFrames = 0, airFrames = 0, leftFrames = 0, doubleFrames = 0;
         let hipMin = 1e9, hipMax = -1e9, hipSum = 0;
+        let stKnee = 0, stKneeN = 0;
         let kneeMax = 0, hipFlexMin = 1e9, hipFlexMax = -1e9, ankMin = 1e9, ankMax = -1e9;
         let armMin = 1e9, armMax = -1e9;
         let skate = 0, skateN = 0;
@@ -140,6 +144,7 @@ async function main() {
           hipSum += h.bones[1].position.y;
           const kneeL = h.bones[13].rotation.x, kneeR = h.bones[16].rotation.x;
           kneeMax = Math.max(kneeMax, Math.abs(kneeL), Math.abs(kneeR));
+          if (h.contactL) { stKnee += kneeL; stKneeN++; }
           const hipL = h.bones[12].rotation.x;
           hipFlexMin = Math.min(hipFlexMin, hipL); hipFlexMax = Math.max(hipFlexMax, hipL);
           const ankL = h.bones[14].rotation.x;
@@ -215,6 +220,7 @@ async function main() {
           // below their standing hip; much more than that is a crouch.
           hipPct: +((hipSum / frames) / 0.927 * 100).toFixed(1),
           kneeSwingDeg: +(kneeMax * 57.2958).toFixed(0),
+          stanceKneeDeg: +(stKnee / Math.max(1, stKneeN) * 57.2958).toFixed(0),
           hipRangeDeg: +((hipFlexMax - hipFlexMin) * 57.2958).toFixed(0),
           ankleRangeDeg: +((ankMax - ankMin) * 57.2958).toFixed(0),
           armRangeDeg: +((armMax - armMin) * 57.2958).toFixed(0),
@@ -307,7 +313,7 @@ async function main() {
     })()`);
 
     const w = (s, n) => String(s).padStart(n);
-    console.log('                cadence        step         duty        bob(cm)      knee-swing   skate');
+    console.log('                cadence        step         duty        bob(cm)      knee-swing   stance-knee   skate');
     for (let i = 0; i < rows.length; i++) {
       const r = rows[i], f = REF[i];
       console.log(
@@ -317,6 +323,7 @@ async function main() {
         + `  ${w(r.duty, 5)}${band(r.duty, f.duty)}`
         + `  ${w(r.bobCm, 5)}${band(r.bobCm, f.bobCm)}`
         + `  ${w(r.kneeSwingDeg, 4)}${band(r.kneeSwingDeg, f.kneeSwingDeg)}`
+        + `  ${w(r.stanceKneeDeg, 4)}${band(r.stanceKneeDeg, f.stanceKneeDeg)}`
         + `  ${w(r.skatePctOfBody, 5)}%  air ${w(r.flight, 4)}  dbl ${w(r.dbl, 4)}  hip ${w(r.hipPct, 5)}%`
       );
     }

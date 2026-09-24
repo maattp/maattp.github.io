@@ -665,19 +665,27 @@ function faceCell(skin) {
 const SKULL = [
   // Two rings under the jaw: from the chin straight to the jawline was one
   // cone, and the lower face read as a trapezoid with a pointed chin.
-  { y: J.chin - 0.012, rx: 0.036, rz: 0.046, oz: 0.022 },   // under the chin
-  // The lower face narrower than round two's egg, which read as jowls once
-  // the rest of the face had form (faceRelief puts the jaw angle back).
-  { y: J.chin - 0.002, rx: 0.041, rz: 0.062, oz: 0.016 },   // chin
-  { y: J.chin + 0.010, rx: 0.051, rz: 0.076, oz: 0.011 },   // jaw angle
-  { y: J.chin + 0.024, rx: 0.057, rz: 0.085, oz: 0.008 },   // jawline
-  { y: J.chin + 0.060, rx: 0.067, rz: 0.093, oz: 0.004 },   // cheeks
+  // The chin FORWARD and narrow. Measured off an adult profile, the chin's
+  // front is 10-11 cm ahead of the ear and 4-5 cm wide; these rings had it
+  // 8 cm ahead and 8 cm wide, which is the flat, jowly profile with no chin
+  // that read as "not human" in every portrait. The jaw's plan is a U that
+  // narrows to the front, not an egg: see the lower-face terms in faceRelief.
+  { y: J.chin - 0.012, rx: 0.032, rz: 0.058, oz: 0.020 },   // under the chin
+  { y: J.chin - 0.002, rx: 0.036, rz: 0.075, oz: 0.014 },   // chin
+  { y: J.chin + 0.010, rx: 0.047, rz: 0.083, oz: 0.010 },   // jaw angle
+  { y: J.chin + 0.024, rx: 0.054, rz: 0.089, oz: 0.007 },   // jawline
+  { y: J.chin + 0.060, rx: 0.066, rz: 0.095, oz: 0.004 },   // cheeks
   { y: J.eye - 0.020, rx: 0.075, rz: 0.095, oz: 0.001 },    // cheekbone
   { y: J.eye, rx: 0.075, rz: 0.096, oz: 0 },                // brow line
   { y: J.eye + 0.036, rx: 0.072, rz: 0.092, oz: -0.002 },   // forehead, skin
   { y: HAIRLINE + 0.002, rx: 0.073, rz: 0.093, oz: -0.003 }, // hairline
-  { y: J.crown - 0.028, rx: 0.058, rz: 0.074, oz: -0.009 },
-  { y: J.crown, rx: 0.024, rz: 0.030, oz: -0.013 },
+  // A dome, not a bullet: the skull keeps most of its breadth to within 3 cm
+  // of the crown. The old top was a cone from the hairline (2.4 cm across at
+  // the crown ring), and every buzz cut and hat read as a pointed egg.
+  { y: J.eye + 0.066, rx: 0.071, rz: 0.090, oz: -0.006 },
+  { y: J.crown - 0.022, rx: 0.062, rz: 0.080, oz: -0.009 },
+  { y: J.crown - 0.008, rx: 0.045, rz: 0.058, oz: -0.012 },
+  { y: J.crown, rx: 0.020, rz: 0.026, oz: -0.013 },
 ];
 function skullAt(y) {
   if (y <= SKULL[0].y) return SKULL[0];
@@ -708,19 +716,21 @@ function skullAt(y) {
 // Columns are dense across the face (3-13 deg at the nose and mouth) and
 // sparse behind the ears, where the hair is.
 const HEAD_COLS = (() => {
-  const d = [0, 3, 7, 13, 21, 30, 41, 54, 68, 84, 100, 132, 180].map((v) => (v * Math.PI) / 180);
+  // 16 a side, not 12: 13-32 deg apart from 41 deg round, the jaw and cheek
+  // showed their facets on every silhouette, a head cut from a gem.
+  const d = [0, 3, 7, 12, 17, 23, 30, 37, 45, 54, 64, 76, 90, 106, 126, 152, 180].map((v) => (v * Math.PI) / 180);
   return [...d, ...d.slice(1, -1).reverse().map((v) => -v)];
 })();
-const HEAD_BACK = 12;          // index of the 180 deg column: seams go here
+const HEAD_BACK = 16;          // index of the 180 deg column: seams go here
 const HEAD_ROWS = [
   J.chin - 0.010, J.chin - 0.001, J.chin + 0.010, J.chin + 0.024,   // under the chin, chin, boss, sulcus
   J.chin + 0.036, J.chin + 0.044, J.chin + 0.052, J.chin + 0.058,   // lower lip, mouth, upper lip, philtrum
   J.eye - 0.052, J.eye - 0.042, J.eye - 0.026, J.eye - 0.012,       // under the nose, tip, mid-nose, under the eye
   J.eye, J.eye + 0.009, J.eye + 0.018,                              // eye, upper lid, brow
-  HAIRLINE + 0.002, J.crown - 0.028, J.crown,
+  HAIRLINE + 0.002, J.eye + 0.066, J.crown - 0.022, J.crown - 0.008, J.crown,
 ];
 // rows from here up are hair-coloured under the paint (see drawAtlas)
-const HEAD_HAIR_ROW = HEAD_ROWS.length - 3;
+const HEAD_HAIR_ROW = HEAD_ROWS.length - 5;
 
 /** Distance from the UV axis to the base skull ellipse at height y, along th. */
 function skullRay(th, y) {
@@ -777,8 +787,10 @@ function faceRelief(th, y, F) {
   // Nose. The bridge rises out of the brow, the tip is the most forward point
   // of the face, and the underside runs back to the lip in one row -- a nose
   // from below is a triangle, not a cylinder end.
-  const np = byY(y, [[E + 0.012, 0], [E + 0.002, 0.0045 * F.bridge], [E - 0.012, 0.0095 * F.bridge],
-    [E - 0.026, 0.0150], [E - 0.042, 0.0205 * F.nose], [E - 0.052, 0.0060], [C + 0.052, 0]]);
+  // (Half as far forward again as round three had it: from the side the nose
+  // barely broke the line of the face, and from the front it was a smudge.)
+  const np = byY(y, [[E + 0.012, 0], [E + 0.002, 0.0060 * F.bridge], [E - 0.012, 0.0130 * F.bridge],
+    [E - 0.026, 0.0195], [E - 0.042, 0.0265 * F.nose], [E - 0.052, 0.0085], [C + 0.052, 0]]);
   // The columella (the strip between the nostrils) keeps the base of the
   // nose forward in the middle: with the whole underside running back to the
   // lip in one row it was a broad down-facing band, and its shadow, smoothed
@@ -791,23 +803,23 @@ function faceRelief(th, y, F) {
   // the wings of the nose, either side of the tip
   d += 0.0062 * gss(a - 0.0205, 0.0066) * gss(y - (E - 0.044), 0.0065);
   // Eye sockets, deepest at the painted eye, and the brow ridge over them.
-  d -= 0.0068 * gss(a - 0.0345, 0.0175) * gss(y - (E + 0.002), 0.0115);
-  d += 0.0046 * F.brow * gss(y - (E + 0.019), 0.0078) * gss(Math.max(0, a - 0.028), 0.030);
+  d -= 0.0100 * gss(a - 0.0345, 0.0165) * gss(y - (E + 0.002), 0.0110);
+  d += 0.0062 * F.brow * gss(y - (E + 0.019), 0.0078) * gss(Math.max(0, a - 0.028), 0.030);
   // glabella: the brows meet over the bridge
   d += 0.0015 * F.brow * gss(a, 0.012) * gss(y - (E + 0.012), 0.008);
   // Cheekbones, and the soft hollow under them.
-  d += 0.0042 * F.cheek * gss(a - 0.064, 0.019) * gss(y - (E - 0.024), 0.013);
+  d += 0.0058 * F.cheek * gss(a - 0.064, 0.019) * gss(y - (E - 0.024), 0.013);
   d -= 0.0016 * gss(a - 0.078, 0.018) * gss(y - (C + 0.054), 0.011);
   // temples, under the hair edge
   d -= 0.0014 * gss(a - 0.090, 0.018) * gss(y - (E + 0.022), 0.012);
   // Mouth: upper lip, the seam, lower lip, the corners tucked in, the dip
   // under the lower lip, and a chin boss.
-  d += 0.0030 * F.lips * gss(a, 0.017) * gss(y - (C + 0.052), 0.0045);
-  d += 0.0036 * F.lips * gss(a, 0.0145) * gss(y - (C + 0.036), 0.0050);
+  d += 0.0038 * F.lips * gss(a, 0.017) * gss(y - (C + 0.052), 0.0045);
+  d += 0.0046 * F.lips * gss(a, 0.0145) * gss(y - (C + 0.036), 0.0050);
   d -= 0.0010 * gss(a, 0.017) * gss(y - (C + 0.044), 0.0030);
   d -= 0.0012 * gss(a - 0.021, 0.0065) * gss(y - (C + 0.044), 0.0050);
   d -= 0.0026 * gss(a, 0.022) * gss(y - (C + 0.024), 0.0050);
-  d += 0.0042 * F.chin * gss(a, 0.021) * gss(y - (C + 0.009), 0.0090);
+  d += 0.0058 * F.chin * gss(a, 0.021) * gss(y - (C + 0.009), 0.0090);
   // philtrum: a groove between two ridges from the nose to the lip
   const ph = gss(y - (C + 0.058), 0.0040);
   d += ph * (0.0007 * gss(a - 0.0050, 0.0030) - 0.0009 * gss(a, 0.0030));
@@ -819,7 +831,12 @@ function faceRelief(th, y, F) {
   // The muzzle: teeth and jaw carry the whole mouth forward of the cheeks.
   // Without it the lips sat in a dish between cheek and chin, which went
   // dark in any top light and read as a moustache on every face.
-  d += 0.0042 * gss(a, 0.030) * gss(y - (C + 0.046), 0.018);
+  d += 0.0050 * gss(a, 0.030) * gss(y - (C + 0.046), 0.018);
+  // The FRONT PLANE of the face. Round the sides from the outer eye back to
+  // the ear the face turns away: temples, the side of the cheek behind the
+  // cheekbone, the masseter. On the base ellipse the front and the side were
+  // one curve, and the face read as a flat oval with features drawn on.
+  d -= 0.0045 * gss(Math.abs(th) - 1.05, 0.32) * gss(y - (E - 0.030), 0.050);
   return d;
 }
 
@@ -991,7 +1008,9 @@ function buildHair(style, seed, hair, grid, body) {
   // Rows: two from the edge up to the hairline ring, then ON the head's own
   // top rows. Straight chords between rows placed anywhere else cut inside
   // the dome of the skull, and a thin shell (the buzz cut) vanished into it.
-  const NR = 5;
+  // the head's rows over the hairline, which the shell follows up to the crown
+  const tops = HEAD_ROWS.slice(HEAD_HAIR_ROW + 1, HEAD_ROWS.length - 1);
+  const NR = 4 + tops.length;
   const vol = { crop: 0.006, side: 0.011, long: 0.010, bun: 0.005, curly: 0.024, buzz: 0.0035 }[style];
   const covers = style === 'long' || style === 'curly' || style === 'side';
   const napeY = style === 'crop' || style === 'bun' || style === 'buzz' ? J.chin + 0.050 : J.chin + 0.020;
@@ -1000,8 +1019,13 @@ function buildHair(style, seed, hair, grid, body) {
   const edgeTable = [
     // The front edge sits just below the painted hairline, so no band of skull
     // shows between the paint and the shell.
-    [Math.PI / 2, HAIRLINE - 0.005],
-    [0.95, HAIRLINE - 0.003],
+    // A hairline is a CURVE: lowest in the middle of the forehead, rising
+    // toward the temples. A level edge right round the front read as a cap
+    // pulled down to the brow. (It may not rise past HAIRLINE: the head is not
+    // drawn above that ring.)
+    [Math.PI / 2, HAIRLINE - 0.008],
+    [1.20, HAIRLINE - 0.006],
+    [0.95, HAIRLINE - 0.002],
     [0.62, HAIRLINE - 0.010],                        // temple corner
     [0.24, J.eye - 0.030],                           // sideburn, in front of the ear
     // Over the ear, and behind it: short hair clears the top of the ear
@@ -1034,7 +1058,7 @@ function buildHair(style, seed, hair, grid, body) {
       // through the forehead in square notches, a fringe cut with pinking shears.
       const yE = edge(phi) + (phi < 0.3 ? (hash2(jj * 17 + 3, seed) - 0.5) * 0.0024 : 0);
       const yH = Math.max(HEAD_ROWS[HEAD_HAIR_ROW], yE + 0.003);
-      const y = [yE, lerp(yE, yH, 0.40), yH, HEAD_ROWS[HEAD_HAIR_ROW + 1], top][i];
+      const y = i < 3 ? [yE, lerp(yE, yH, 0.40), yH][i] : i < 3 + tops.length ? tops[i - 3] : top;
       const v = (y - yE) / (top - yE);
       // The front keeps little volume (it is a hairline, not a brim); the back
       // and crown carry the most.
@@ -1466,7 +1490,8 @@ export function buildCharacter(opts = {}) {
   const TP = tRings.map(par);
   // the neckline rib's top, above the torso's last ring
   TP.push({ y: J.shoulder + 0.064, rx: sw * 0.45 * outer, rz: sd * 0.56 * outer, oz: -0.011 });
-  const NP = [{ y: J.shoulder + 0.01, rx: 0.059, rz: 0.057, oz: -0.004 }, { y: J.chin + 0.012, rx: 0.044, rz: 0.046, oz: -0.006 }];
+  const NP = [{ y: J.shoulder + 0.01, rx: 0.062, rz: 0.060, oz: -0.008 }, { y: J.chin - 0.030, rx: 0.056, rz: 0.055, oz: -0.013 },
+    { y: J.chin + 0.012, rx: 0.044, rz: 0.048, oz: -0.016 }];
   const lerpPar = (T, y) => {
     if (y <= T[0].y) return T[0];
     for (let i = 1; i < T.length; i++) {
@@ -1478,7 +1503,7 @@ export function buildCharacter(opts = {}) {
     return T[T.length - 1];
   };
   // the body under a point at height y: the torso up to its neckline, else the neck
-  const bodyAt = (y) => (y <= TP[TP.length - 1].y ? lerpPar(TP, y) : y < NP[1].y ? lerpPar(NP, y) : null);
+  const bodyAt = (y) => (y <= TP[TP.length - 1].y ? lerpPar(TP, y) : y < NP[NP.length - 1].y ? lerpPar(NP, y) : null);
   if (top === 'hoodie' && style !== 'long') {
     // rows: y, the surface under it, thickness down the middle, half-width
     // (radians either side of the spine) at which it has dived back in
@@ -1550,9 +1575,13 @@ export function buildCharacter(opts = {}) {
   const neck = new Builder(false);
   neck.loftY([
     { y: J.chest + 0.09, pts: oval(0.066, 0.064, SL) },
-    { y: J.shoulder + 0.01, pts: oval(0.059, 0.057, SL, 0, -0.004) },
+    { y: J.shoulder + 0.01, pts: oval(0.062, 0.060, SL, 0, -0.008) },
+    // A neck is 11-13 cm across, and it rises BEHIND the jaw into the base of
+    // the skull. At 8.8 cm, straight up under the middle of the head, it was
+    // the stalk of a lollipop in every profile.
+    { y: J.chin - 0.030, pts: oval(0.056, 0.055, SL, 0, -0.013) },
     // Tucked UP INSIDE the jaw, or the neck's top rim shows under the chin.
-    { y: J.chin + 0.012, pts: oval(0.044, 0.046, SL, 0, -0.006) },
+    { y: J.chin + 0.012, pts: oval(0.044, 0.048, SL, 0, -0.016) },
   ], skin, {});
   acc.add(neck, (x, y) => across(J.neck - 0.06, 0.09, B.neck, B.chest)(x, y),
     cylUV(CELLS.skin, 0, 0, J.chest + 0.09, J.chin), 'neck');
@@ -1826,13 +1855,19 @@ const L_THIGH = J.hip - J.knee;
 const L_SHIN = J.knee - J.ankle;
 // Never ask the IK for a fully locked leg -- at full extension the knee angle
 // is stationary against distance and the solve jitters.
-const REACH = LEG * 0.99;
+// 0.998, not 0.99, and the hips' margin 3 mm, not 14: on a nearly straight
+// leg a sliver of length is a lot of knee. REACH_PLANT at 97.3 % of the leg
+// held every planted knee at 26 deg or more, and with the hips riding a fixed
+// bob over that the whole stance was spent at 30-45 deg -- the crouched,
+// Groucho walk. A real stance knee is 5 deg at heel strike and 10-20 through
+// loading. tools/gait.mjs still sees no jitter at full extension.
+const REACH = LEG * 0.998;
 // What the hips are allowed to assume the planted leg can span. It has to be
 // shorter than REACH, because the pelvis rolls and carries its sockets up with
 // it -- HIP_X * sin(roll) is nearly a centimetre at a sprint. Set the hips by
 // the full reach and that rise pushes the leg past its limit, so it comes up
 // short and the planted foot lifts clear of the ground.
-const REACH_PLANT = REACH - 0.014;
+const REACH_PLANT = REACH - 0.003;   // at a walk; animateWalk adds a runner's
 
 /**
  * How far the hips travel per step, with the per-person gait variation folded
@@ -1844,7 +1879,12 @@ function stepLength(h, speed) {
   // numbers. The old `0.62 + 0.14 v` over-strided a walk (0.93 m at 1.4 m/s,
   // against a real 0.68-0.82) and under-strided a run, which is why the walk
   // reached and the run took little quick steps.
-  return clamp(0.45 + 0.245 * speed, 0.42, 2.6) * h.gait;
+  // 0.40, not 0.45: 0.79 m at 1.4 m/s, the top of the band, planted the lead
+  // foot 0.39 m out in front of the hips (a person lands ~0.3 m out), and the
+  // scissored double support pulled the hips down into a crouch. 0.74 m and
+  // 113 steps a minute is the band's middle.
+  // Back to 0.45 across the gait switch, or a run's cadence ran past its band.
+  return clamp(0.40 + 0.05 * clamp((speed - 2.2) / 1.2, 0, 1) + 0.245 * speed, 0.42, 2.6) * h.gait;
 }
 
 /**
@@ -2001,7 +2041,10 @@ export function animateWalk(h, amp, dt, speed) {
   // balanced window lands closer under the hips and pushes off further behind,
   // which is what a runner does.
   let back = 0;
-  const rawHip = (t) => t.y + Math.sqrt(Math.max(0.04, REACH_PLANT * REACH_PLANT - t.z * t.z));
+  // The margin grows with the run: a runner's pelvis rolls and carries its
+  // sockets up by most of a centimetre (see REACH_PLANT), a walker's by 3 mm.
+  const RP = REACH_PLANT - 0.011 * runBlend;
+  const rawHip = (t) => t.y + Math.sqrt(Math.max(0.04, RP * RP - t.z * t.z));
   const pivot = (zf, p) => {
     // rotation.x by p: y' = y cos p - z sin p, z' = y sin p + z cos p
     const rz = p >= 0 ? -TOE_Z : -HEEL_Z;
@@ -2016,6 +2059,25 @@ export function animateWalk(h, amp, dt, speed) {
     const a = pivot(zf, p);
     return { z: a[0], y: a[1], pitch: p, stance: true, zf, u };
   };
+  // A foot rolling onto its toes can reach further than its fixed toe-off
+  // roll says: reachToe pivots it up to ~72 deg. So a foot past heel-off limits
+  // the hips by what it can reach at that pitch, not at the scheduled one --
+  // held to the schedule, a runner's hips sank 8 cm under a real runner's
+  // through every stance and the knee folded to 67 deg (real: 40-45).
+  const TOE_MAX = 1.40;
+  const toeAt = (t, p) => {
+    const tz = t.z - ANK_Y * Math.sin(t.pitch) + TOE_Z * Math.cos(t.pitch);
+    return { z: tz + ANK_Y * Math.sin(p) - TOE_Z * Math.cos(p), y: SOLE + ANK_Y * Math.cos(p) + TOE_Z * Math.sin(p) };
+  };
+  // How far this foot may roll: nothing extra before heel-off, all of it by
+  // toe-off, eased between. Switched on at heel-off instead, a foot locked far
+  // behind (speeding up from a stand) let the hips jump 22 cm in one frame.
+  const toeCap = (t) => (t.stance && t.u > uHeel
+    ? t.pitch + Math.max(0, TOE_MAX - t.pitch) * smoothT(clamp((t.u - uHeel) / (1 - uHeel), 0, 1)) : t.pitch);
+  const reachOf = (t) => {
+    const cap = toeCap(t);
+    return cap > t.pitch ? Math.max(rawHip(t), rawHip(toeAt(t, cap))) : rawHip(t);
+  };
   // Bisect `back`: more back lifts the strike limit and lowers the toe-off
   // one. Six steps put it inside a centimetre; it is a dozen trig calls.
   // The bounds scale with the stride: fixed bounds let `back` snap to one of
@@ -2026,7 +2088,7 @@ export function animateWalk(h, amp, dt, speed) {
     let lo = -0.2 * swept, hi = 0.45 * swept;
     for (let i = 0; i < 6; i++) {
       back = (lo + hi) / 2;
-      if (rawHip(stanceAt(0)) < rawHip(stanceAt(1))) lo = back; else hi = back;
+      if (rawHip(stanceAt(0)) < reachOf(stanceAt(1))) lo = back; else hi = back;
     }
     back = (lo + hi) / 2;
   }
@@ -2128,7 +2190,7 @@ export function animateWalk(h, amp, dt, speed) {
     const g = h.group;
     g.updateMatrix();
     const m = g.matrix.elements, s2 = m[0] * m[0] + m[2] * m[2] || 1;
-    if (!h.locks) h.locks = [{ on: false, wx: 0, wz: 0, ex: 0, ez: 0 }, { on: false, wx: 0, wz: 0, ex: 0, ez: 0 }];
+    if (!h.locks) h.locks = [{ on: false, wx: 0, wz: 0, ex: 0, ez: 0, ey: 0, ez2: 0, ep: 0 }, { on: false, wx: 0, wz: 0, ex: 0, ez: 0, ey: 0, ez2: 0, ep: 0 }];
     for (let k = 0; k < 2; k++) {
       const t = k === 0 ? tl : tr, L = h.locks[k];
       if (t.stance) {
@@ -2179,8 +2241,13 @@ export function animateWalk(h, amp, dt, speed) {
   // With duty above 0.5 both feet can be down at once, and then BOTH legs
   // constrain the hips -- take the lower of the two, or the trailing leg is
   // asked for a reach it hasn't got and its foot lifts.
+  // In double support the LEADING foot (the one earlier in its stance) holds the
+  // hips, and the trailing foot rolls further up onto its toes to keep reaching
+  // (reachToe, below). Pinned to the trailing leg's fixed toe-off roll, the
+  // hips sank through every weight acceptance and the new stance knee buckled
+  // to 38 deg at 10 % of the cycle, against a real 15-20.
   const planted = tl.stance && tr.stance
-    ? (rawHip(tl) < rawHip(tr) ? tl : tr)
+    ? (tl.u < tr.u ? tl : tr)
     : (tl.stance ? tl : (tr.stance ? tr : null));
   // Which foot is bearing weight: 0 left, 1 right, -1 airborne. Only the gait
   // regression test reads it -- measuring skate needs the model's own idea of
@@ -2189,7 +2256,8 @@ export function animateWalk(h, amp, dt, speed) {
   // Per-foot, because with double support the single index cannot say that
   // both are down. The gait rig reads these to measure duty and skate.
   h.contactL = tl.stance; h.contactR = tr.stance;
-  const lowHip = Math.min(rawHip(toeOff), rawHip(strike));
+  // (a centimetre under, at a walk, for a real 4 cm of bob over mid-stance)
+  const lowHip = Math.min(reachOf(toeOff), rawHip(strike)) - (0.01 / sc) * (1 - runBlend);
   // A WALK AND A RUN BOB IN OPPOSITE PHASE.
   //
   // A straight planted leg puts the hips on a circle: highest at mid-stance,
@@ -2211,8 +2279,8 @@ export function animateWalk(h, amp, dt, speed) {
   // a fixed 4.5 cm under the scissored height at mid-stance. Neither may ride
   // above what the planted leg can reach.
   const range = Math.max(1e-3, rawHip(stanceAt(0.5)) - lowHip);
-  const walkK = Math.min(1, (0.045 / sc) / range);
-  const sink = (0.035 / sc) * settle;
+  const walkK = Math.min(1, (0.050 / sc) / range);
+  const sink = (0.010 / sc) * settle;
   let hipY;
   // With per-foot state a WALKING character can briefly have neither foot
   // classed as down -- one finishing its swing while the cycle already says
@@ -2221,7 +2289,12 @@ export function animateWalk(h, amp, dt, speed) {
   // on the rig's speed ramp at the stop). Ride the lower foot instead.
   const pin = planted || (stanceSpan >= Math.PI - 1e-6 ? (tl.y < tr.y ? tl : tr) : null);
   if (pin) {
-    const raw = rawHip(pin);
+    // a walker's hips stay on the scheduled roll (reaching further would put
+    // them up on tiptoe mid-stride); a runner's may use the toe's reach
+    // Neither may the hips sink below the double-support height while the
+    // stance foot could still reach it by rolling on: that dip was the walk's
+    // extra bob (8.5 cm on the rig against a 3.5-6 band).
+    const raw = Math.max(rawHip(pin) + (reachOf(pin) - rawHip(pin)) * runBlend, Math.min(reachOf(pin), lowHip));
     const e = clamp((raw - lowHip) / range, 0, 1);
     hipY = Math.min(raw, lowHip + (raw - lowHip) * walkK * (1 - runBlend) - sink * e * runBlend);
   } else {
@@ -2230,7 +2303,7 @@ export function animateWalk(h, amp, dt, speed) {
     const gap = Math.PI - stanceSpan;
     const w = ((phase % Math.PI) + Math.PI) % Math.PI;
     const f = gap > 1e-6 ? clamp((w - stanceSpan) / gap, 0, 1) : 0;
-    hipY = lowHip + ((0.02 + 0.03 * runBlend) / sc) * Math.sin(Math.PI * f);
+    hipY = lowHip + ((0.02 + 0.045 * runBlend) / sc) * Math.sin(Math.PI * f);
   }
 
   // The pelvis has to be posed BEFORE the legs are solved. It sways, rolls and
@@ -2245,6 +2318,13 @@ export function animateWalk(h, amp, dt, speed) {
   // the exact opposite of weight, while the pelvic list below leaned the other
   // way. The two fighting is the drunk wobble. It also narrows with pace:
   // a runner's feet land nearer the midline, so there is less to shift over.
+  // The hips may not RISE faster than a body does (1.5 m/s). A foot still
+  // locked behind at toe-off holds them low, and the flight arc that follows
+  // is computed from the analytic stride: accelerating through the gait switch
+  // they snapped 10 cm up in one frame. Rising slower only bends a planted knee
+  // a little more; it cannot open a gap under a sole.
+  if (dt && h.hipY != null) hipY = Math.min(hipY, h.hipY + 1.5 * dt / sc);
+  h.hipY = dt ? hipY : null;
   b[B.hips].position.set(-s * A * (0.085 - 0.055 * runBlend), hipY, 0);
   b[B.hips].rotation.set(0, -s * A * 0.30, -s * A * 0.11);
   b[B.hips].updateMatrix();
@@ -2282,6 +2362,34 @@ export function animateWalk(h, amp, dt, speed) {
     // 46% of running frames, lifting the sole 3 cm off the pavement.
     b[foot].rotation.x = clamp(level + t.pitch, -0.80, 1.00);
   };
+  // A trailing stance foot the hips have outrun pivots further on its toe, as
+  // far as a heel really goes (~75 deg), until the ankle is back in reach. What
+  // it borrowed is carried into the swing and faded out there, like a lock.
+  const reachToe = (thigh, t, k) => {
+    const L = h.locks && h.locks[k];
+    const cap = toeCap(t);
+    if (t.stance && t.pitch >= 0 && cap > t.pitch) {
+      _v.copy(b[thigh].position).applyMatrix4(b[B.hips].matrix);
+      const far = (z, y) => Math.hypot(t.x - _v.x, y - _v.y, z - _v.z) > REACH - 0.002;
+      if (far(t.z, t.y)) {
+        const p0 = t.pitch;
+        const toeZ = t.z - ANK_Y * Math.sin(p0) + TOE_Z * Math.cos(p0);
+        const at = (p) => [toeZ + ANK_Y * Math.sin(p) - TOE_Z * Math.cos(p), SOLE + ANK_Y * Math.cos(p) + TOE_Z * Math.sin(p)];
+        let lo = p0, hi = cap;
+        for (let i = 0; i < 8; i++) { const m = (lo + hi) / 2, a = at(m); if (far(a[0], a[1])) lo = m; else hi = m; }
+        const a = at(hi);
+        if (L) { L.ey = a[1] - t.y; L.ez2 = a[0] - t.z; L.ep = hi - p0; }
+        t.z = a[0]; t.y = a[1]; t.pitch = hi;
+        return;
+      }
+      if (L) { L.ey = 0; L.ez2 = 0; L.ep = 0; }
+    } else if (!t.stance && L && L.ep) {
+      const fade = 1 - smoothT(clamp(t.u / 0.45, 0, 1));
+      t.z += L.ez2 * fade; t.y += L.ey * fade; t.pitch += L.ep * fade;
+    }
+  };
+  reachToe(B.thighL, tl, 0);
+  reachToe(B.thighR, tr, 1);
   solveLeg(B.thighL, B.kneeL, B.footL, tl);
   solveLeg(B.thighR, B.kneeR, B.footR, tr);
 

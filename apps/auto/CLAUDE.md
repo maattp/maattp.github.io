@@ -1231,12 +1231,34 @@ noise. Overdraw is the glazed area only.
 ### Characters: head, hands, hood
 
 **The head is sculpted** (`headGrid`, `faceRelief`). `SKULL` is only the base:
-the head is `HEAD_COLS` 24 x `HEAD_ROWS` 16, columns dense across the face
-(0/3/7/13 deg at the nose and mouth) and sparse behind the ears, and each vertex
+the head is `HEAD_COLS` 32 x `HEAD_ROWS` 20, columns dense across the face
+(0/3/7/12 deg at the nose and mouth), 10-26 deg apart round the jaw and cheek
+(at 13-32 they showed as facets on every silhouette), and each vertex
 is the base ellipse plus a relief (brow ridge, sockets, cheekbones, nose
 bridge/tip/wings/columella, philtrum, lips, chin, jaw angle, muzzle).
 `faceParams(seed, soft)` gives each pooled look its own features; `soft`
 (skirt, dress, long, bun) softens jaw and brow.
+
+**Judge the head in clay first** (`CHAR_EVAL` swapping the material for a
+plain grey, on a buzz cut: `CHAR_OPTS='{"unique":true,"variant":2}'`, views
+`face,face34,profilehead`). Painted, v118's head passed for a face; in clay it
+was a flat oval, and that is what "his face looks really weird" was. v119:
+
+- **The chin comes forward and narrows.** Off an adult profile the chin's
+  front is 10-11 cm ahead of the ear and 4-5 cm wide; the rings had it 8 cm
+  ahead and 8 cm wide -- a profile with no chin and a jowly jaw.
+- **The face has a front plane**: a relief term turns the temples, the cheek
+  behind the cheekbone and the masseter away round the sides. Sockets, brow,
+  nose (tip 26.5 mm), cheekbones, lips and chin boss are about 40 % deeper.
+- **The skull is a dome**: three rings over the hairline keep its breadth to
+  within 3 cm of the crown. It was a cone from the hairline, and every buzz
+  cut and hat was a pointed egg. The hair grows on every head row over the
+  hairline (`tops` in buildHair), so adding a row there is safe.
+- **The neck is 11-12 cm across and rises behind the jaw** (8.8 cm, straight
+  up under the head, was a lollipop's stalk). `NP` in buildCharacter mirrors
+  the neck rings for the hood and long hair; change both.
+- **The hairline dips** 8 mm in the middle of the forehead and rises to the
+  temples. It may not rise over `HAIRLINE`: the head is not drawn above it.
 
 - **Relief moves a vertex ALONG THE RAY FROM THE UV AXIS `(0, HEAD_Z)`** at its
   column's angle. The face cell is a cylindrical projection round that axis, so
@@ -1284,8 +1306,8 @@ shell and comes out from beneath its edge (started on top it made a shelf),
 keeps 10 mm off the body (`bodyAt`), ends on the shoulders, and rides the chest
 below the jaw — at 40 % head it went into a runner's upper back.
 
-Cost: a pooled look is **3,389 triangles mean** (3,202-3,558), a cop 3,704, the
-player 3,520, a rider 3,488. By part: head 838, hair 283, hands 392. Still one
+Cost: a pooled look is **3,869 triangles mean** (v119; 3,389 before the
+denser head), head 1,094, hair 483, hands 392. Still one
 draw a character and still pooled; 24 pedestrians with desktop shadows is ~20k
 triangles more a crowded frame, ~1.7 % of perfguard's 1.18 M, and perfguard is
 unchanged within noise. Building the 12 looks takes 41 ms in Node. Phones cast
@@ -1356,26 +1378,54 @@ The laws:
   switching at `A < 0.05` was the pop on every stop. A runner's arms drive back
   and come forward only to the ribs.
 
+**Every band passed while the whole stance was spent in a crouch** (v118):
+the planted knee never went under 25 deg and averaged 36 at a walk, against a
+real 5 at heel strike and 10-20 through loading -- a Groucho walk, which is
+what "he walks kind of weird" was. None of the rig's bands measured the stance
+knee; the joint-angle curve over one cycle (thigh, knee, ankle, pelvis,
+shoulder, elbow against normal-gait curves) showed it, and `gait.mjs` now
+bands the mean stance knee (`stance-knee`; v118 fails it at every speed). Laws from it (v119):
+
+- **`REACH_PLANT` may not be a few percent short of the leg.** On a nearly
+  straight leg a sliver of length is a lot of knee: 97.3 % of the leg is 26
+  deg of bend. It is `LEG * 0.998 - 0.003` at a walk; animateWalk takes
+  another 11 mm off at a run (`RP`), where the pelvis rolls its sockets up.
+- **In double support the LEADING foot holds the hips**, and the trailing
+  foot rolls further onto its toes to keep reaching (`reachToe`, up to
+  `TOE_MAX` 80 deg, faded out over early swing like a lock). Pinned to the
+  trailing foot's scheduled roll, the hips sank through every weight
+  acceptance and the new stance knee buckled to 38 deg.
+- **A runner's hips are limited by what the toe can reach** (`reachOf`),
+  and that reach grows from heel-off to toe-off (`toeCap`). Switched on at
+  heel-off, a foot locked far behind let the hips jump 22 cm in one frame.
+- **The hips may not RISE faster than 1.5 m/s.** Accelerating through the
+  gait switch, the flight arc (computed from the analytic stride) snapped
+  them 10 cm above where a locked toe-off had held them.
+- **Step length is `0.40 + 0.245 v`** at a walk (0.74 m, 113 a minute), back
+  to 0.45 across the switch: at 0.79 the lead foot landed 0.39 m out, a
+  person's ~0.3.
+
 Current figures, all inside their bands:
 
-| | cadence | step | duty | bob | knee swing | hip height | skate (world) | stance gap worst | mid-swing clearance |
+| | cadence | step | duty | bob | knee swing | hip height | stance knee (mean) | skate (world) | mid-swing clearance |
 |---|---|---|---|---|---|---|---|---|---|
-| walk 1.4 | 106 | 0.79 m | 0.61 | 5.6 cm | 74 deg | 94 % | 2.5 % | 0.1 cm | 7.7 cm |
-| brisk 2.2 | 133 | 0.99 m | 0.52 | 5.0 cm | 78 deg | 92 % | 3.0 % | 0.1 cm | 7.1 cm |
-| jog 3.5 | 161 | 1.31 m | 0.40 | 8.3 cm | 109 deg | 89 % | 5.2 % | 0.1 cm | 18.2 cm |
-| run 5.5 | 183 | 1.80 m | 0.32 | 8.3 cm | 121 deg | 87 % | 6.1 % | 0.2 cm | 22.9 cm |
-| sprint 7.5 | 196 | 2.29 m | 0.26 | 8.8 cm | 130 deg | 88 % | 5.0 % | 0.2 cm | 27.5 cm |
+| walk 1.4 | 113 | 0.74 m | 0.61 | 4.1 cm | 71 deg | 97.5 % | 10 deg; was 30 | 2.9 % | 6.7 cm |
+| brisk 2.2 | 140 | 0.94 m | 0.52 | 4.7 cm | 72 deg | 96.6 % | 9; was 33 | 3.2 % | 6.8 cm |
+| jog 3.5 | 161 | 1.31 m | 0.40 | 7.8 cm | 101 deg | 91.9 % | 39; was 52 | 5.0 % | 18.7 cm |
+| run 5.5 | 183 | 1.80 m | 0.32 | 7.9 cm | 114 deg | 91.3 % | 43; was 56 | 6.0 % | 23.5 cm |
+| sprint 7.5 | 196 | 2.29 m | 0.26 | 9.6 cm | 123 deg | 91.8 % | 43; was 57 | 4.9 % | 28.1 cm |
 
-Ankle on its limit 6-33 % of a cycle (was 38-74 %). Speed ramp: worst planted
-slip 4.2 cm/frame (only while a lock is dragged in a hard deceleration), worst
-ankle pop 9.6 cm/frame (touchdown at a 7.2 m/s sprint).
+Ankle on its limit 8-32 % of a cycle. Speed ramp: worst ankle pop 9.8 cm/frame
+(touchdown at a 7.2 m/s sprint); worst planted slip 8.1 cm/frame (was 4.2), a
+toe dragged the frame it is held past toe-off while accelerating into a
+sprint, when the body covers 12 cm a frame. It comes from the hips riding
+higher, not from the toe roll (7.2 with reachToe off).
 
-**Hip height at a run is 87 %, and that is honest, not a crouch.** An earlier
-96-100 % came from shortening the ankle excursion by a fixed 0.22-0.30 m of
-"roll" the sole never actually rolled through, which is why its soles hovered
-8 cm. With a rigid foot, a 0.84 m leg spanning a 1.06 m contact travel cannot
-keep the hips higher; runners do sit lower through a flexed stance knee. Don't
-"fix" it by lengthening the roll again.
+**The old note here said a run's 87 % hip height was "honest, not a crouch",
+and it was a crouch**: the 87 % came from the 26 deg floor above plus a fixed
+3.5 cm sink. The earlier warning still stands -- do not shorten the ankle
+excursion by a fixed "roll" the sole never rolls through; reachToe pivots the
+sole on its real toe, so the stance gap is still 0.1-0.2 cm.
 
 On-foot pace is **5.0 m/s running and 7.2 sprinting**. It was 3.6/5.4, lowered
 at some point to stop the gait reading as track athletics -- which was the wrong
@@ -2290,8 +2340,9 @@ The purpose-built harnesses, each a fixed-dt, paused-game driver:
 | tool | what it judges |
 |---|---|
 | `tools/gait.mjs [--trace]` | the stride against published bands, sole contact, the speed ramp (see "The gait") |
+| `tools/walkcam.mjs <dir> [walk\|run\|sprint] [side\|chase\|both]` | the player walking on a real street at fixed dt through `player.update`, shot from the chase camera and a side camera every `WALK_STEP` frames. The moving body in context: where the crouched walk was obvious |
 | `tools/gait-strip.mjs` | a frame strip of the cycle; forces the player's humanoid visible on the staging point (one boot spawned in a car and shot 12 frames of empty ground) |
-| `tools/charshots.mjs [tag] [seed] lineup` | every pooled look plus a cop side by side at 9 m — a single seed says nothing about the pool. Close views `face`, `face34`, `profile` (0.5-0.62 m, near plane 0.05: the game's 0.5 m cut the face in half), `hands`, `handback`, `grip`, `run`. The sun sits 300 m out: at 12.8 m the subject was inside the shadow camera's near plane and portraits could not show self-shadowing at all |
+| `tools/charshots.mjs [tag] [seed] lineup` | every pooled look plus a cop side by side at 9 m — a single seed says nothing about the pool. Close views `face`, `face34`, `profile`, `profilehead` (0.5-0.85 m, near plane 0.05: the game's 0.5 m cut the face in half), `hands`, `handback`, `grip`, `run`. The sun sits 300 m out: at 12.8 m the subject was inside the shadow camera's near plane and portraits could not show self-shadowing at all |
 | `CHAR_VIEWS=a,b` / `CHAR_OPTS='{json}'` / `CHAR_EVAL='<js>'` | limit the views / merge into `makeHumanoid`'s options (a cop, the lightest skin, which no pooled look deals) / run an experiment on the posed subject first (switch off shadows, AO, map) |
 | `CHAR_PROBE='face:x,y;x,y\|profile:x,y'` | raycasts pixels back to the part (`geometry.userData.parts`, recorded by `SkinAcc.add(..., name)`) and the BIND-pose point that drew them. The posed idle stands lower than bind, so don't compare posed y |
 | `tools/crowdshots.mjs [tag]` | 12 pedestrians, one seed per POOLED LOOK, posed at dt = 0 on a real pavement; seeds `1000 + k*7919` landed on one look and photographed the harness. `CROWD_PROBE=1` prints each person's screen position, placed height, terrain, `roadLift` and what a ray straight down hits — a sunk figure is a disagreement between the ground query and the geometry |
