@@ -43,6 +43,8 @@ tools/build_buildings.py    OSM footprints -> buildings.bin
 tools/build_places.py       landmarks, neighbourhood names, spawn points
 tools/build_lots.py         car parks, plazas, yards -> lots.png
 tools/build_monorail.py     the monorail's beams, stations, platforms -> monorail.json
+tools/build_beaches.py      OSM beaches (from raw_green.json) -> beaches.json
+tools/build_parkprops.py    benches, picnic tables, playgrounds, fountains -> parkprops.json
 tools/fetch_dem.py          downloads the USGS terrain tiles
 tools/render_map.py         draws the whole graph top-down, for eyeballing
 tools/verify.mjs            headless CDP boot + assertions + screenshots
@@ -1499,6 +1501,65 @@ skipped (`G.lotAt`), except that a plaza keeps a third of its trees —
 Occidental Square is paving under plane trees. `jank.mjs`'s `tree-on-lot`
 counts built trunks on non-plaza lots: 0.
 
+### Beaches, landmarks in the parks, park furniture (v118)
+
+**Beaches are sand.** OSM's `natural=beach` polygons were inside the park
+mask, so Alki, Golden Gardens and Discovery Park's beaches were lawn to the
+water with trees on them. They are lot kind 5, `sand` (`build_lots.py`): the
+polygon, plus a band round its outline (20 m wide, 60 m under 3,000 m2),
+painted over every other lot and **not clipped by the water mask**. OSM draws
+a Sound beach mostly seaward of the coastline (it is the intertidal), and the
+drawn shore is where the 40 m terrain rises through the water plane, much of
+it on cells the 10 m mask calls wet: clipped, the waterline stayed grass.
+Under the water the sand is simply not seen. Discovery Park's South Bluff is
+sand too (`BLUFFS`: DEM slope over 0.42 inside a box).
+
+- **Lake beaches were buried by the lake dig.** The bed under a lake's cells
+  took the shore with it, so a swim beach had no dry ground. `geo.liftBeaches`
+  raises every point of a lake beach within 45 m, below lake level + 0.6, to
+  that height, at load, before anything reads the terrain.
+- **Props go on dry, level sand** (`beachProps`): umbrellas, towels,
+  driftwood, fire rings and volleyball courts at their OSM positions,
+  lifeguard chairs and swim rafts at Seattle Parks' guarded lake beaches, by
+  kit (`beachKit`: sound, alki, golden, lake, lakeNoGuard, lakeside; fresh
+  water if the beach's water stands above 1 m). "Level" is a slope under 0.2,
+  or driftwood lies up the bluff. Each beach is its own cluster and draws only
+  within 700 m (`updateLandmarkRange`, before the scene pass): eleven far
+  beaches in the downtown view cost a draw each.
+- **Park buildings are one storey.** Bathhouses, shelters, pavilions and the
+  like are bare `building=yes` with a name, which made them 11 m commercial
+  blocks on the sand. By name (`PARK_LOW_NAME`) they are 5 m; an untagged
+  class 1-2 box under 1,500 m2 in a park is 5.5 m.
+
+**Landmarks added in `geo.EXTRA_LANDMARKS`**, appended after places.json so
+activities keeps the same collectibles: West Point and Alki Point lighthouses,
+the Fremont Rocket and Lenin, Hammering Man, the Olympic Sculpture Park's
+Eagle and Echo, the Typewriter Eraser, Volunteer Park's water tower,
+conservatory and Black Sun, Pioneer Square's pergola and totem pole, Changing
+Form, and Daybreak Star. Each builder cites its dimensions. A builder faces
+its model with `g.userData.rot` (local +z is the front). Gas Works is rebuilt
+world-aligned from OSM: the six towers at their lat/lon and published heights,
+catwalks, the Play Barn's painted machinery, the picnic shelter, the fence and
+the Kite Hill sundial.
+
+- **An extra landmark may pad the terrain** (`pad: { y, r0, r1 }`, `padTerrain`,
+  raise-only): both lighthouses stand on points the 40 m DEM has under the
+  Sound (West Point -4.1 m, Alki Point -2.9 m), and Echo and Black Sun on
+  ground the dig lowered. verify fails if any extra landmark is under its
+  local water.
+
+**Park furniture is what OSM maps** (`tools/build_parkprops.py`, one ~2 min
+scan: 4.5k benches, 1.1k picnic tables, 640 playgrounds, 290 fountains, none
+of them named, so osm_extract's POIs never had them). `world.meshParkFurniture`
+draws each chunk's own into its flat mesh: no draws. A bench faces its mapped
+`direction`; a playground is a play tower with a slide and a swing set sized
+to its area, and park trees keep off it. Tables and play towers are solid.
+
+Cost at perfguard's downtown view: steady draws 141 -> 146, frame 214 -> 222,
+triangles +1.8 %. verify's "beaches, landmarks, park furniture" section checks
+sand and props at the named beaches, the bluff, dry landmarks and that the
+furniture loaded.
+
 ## Lots, plazas and yards
 
 **The ground used to know two things: park, or not park.** The lot behind the
@@ -1508,7 +1569,8 @@ ways, `raw_lots.json`) and `build_lots.py` bakes them into `data/lots.png`.
 
 **The code.** 0 = none, else `1 + kind * 50 + orientation`, orientation 0..49
 over 0..pi (the polygon's min-area-rectangle long side). Kinds: parking
-(striped), asphalt, plaza, hard (concrete), rail. **`geo.js` `LOT_ANG` /
+(striped), asphalt, plaza, hard (concrete), rail, sand (code 251 only; see
+"Beaches"). **`geo.js` `LOT_ANG` /
 `LOT_KINDS` must match `build_lots.py` `ANG` / `KINDS`.**
 
 Sources, lowest priority first: commercial/retail landuse, rail landuse,
@@ -3879,8 +3941,14 @@ is the page half; load it into any booted page to re-install edited jumps
 - **Stadium interiors are unreachable** — walls run round the whole footprint,
   with no gates. T-Mobile's roof is modelled open and does not move.
 - **The minor landmarks are the old models** (aquarium, ferry terminal, Pier 66,
-  library, convention centre, locks, Gas Works, Kerry Park, the Alki statue):
-  physically shaded and solid now, but not rebuilt.
+  library, convention centre, locks, Kerry Park): physically shaded and solid
+  now, but not rebuilt. Gas Works and the Alki statue were rebuilt in v118.
+- **Park paths are not drawn.** OSM maps every trail (Discovery Park's Loop
+  Trail, Green Lake's path), but the lot layer's 14.4 m coverage field
+  cannot hold a 2 m path, and ribbons need the road mesher's terrain
+  subdivision. Pitches are lawn with no markings.
+- **The Pioneer Square pergola's orientation is est.** (no OSM footprint): its
+  long axis runs north-south.
 - **Lot edges come from a 14.4 m coverage field**: corners round off at ~7 m and
   a lot under ~10 m wide (one aisle, a narrow forecourt) thins or vanishes.
   Striping ignores the aisles OSM draws and is phase-anchored in world space, so
