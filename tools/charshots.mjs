@@ -50,6 +50,8 @@ const VIEWS = [
   ['face', 0, 1.61, 0.50, 30],
   ['face34', 0.62, 1.61, 0.50, 30],
   ['profile', Math.PI / 2, 1.61, 0.62, 30],
+  // the whole head side on, nose to nape, for judging the profile's line
+  ['profilehead', Math.PI / 2, 1.61, 0.85, 30],
   // framed on the right hand's own bone, wherever the pose put it
   ['hands', 0.45, 'hand', 0.42, 30],
   ['handback', -1.3, 'hand', 0.42, 30],
