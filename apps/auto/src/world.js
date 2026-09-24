@@ -1294,7 +1294,15 @@ export class World {
       // all (buildWater). Quads over real water are skipped: from above, a
       // depth-only quad there is a hole in the sea (2 of 117 masked edges, at
       // the Pioneer Square shoreline).
+      //
+      // AT THE LOCAL WATER SURFACE, not the sea's. The mask stood at 0.02 and
+      // covered only floors under ~1 m, which is sea level; Lake Washington's
+      // plane is at 5.09 and its box reaches Montlake, so the 520's cutting
+      // at the lid's east portal (floor ~4 m) showed the lake lying across
+      // both carriageways -- "the 520 is underwater near UW". The sea plane
+      // runs under every lake box too; G.drawnWaterLevel takes the highest.
       const MASK_Y = 0.02;
+      const drawnWater = (x, z) => G.drawnWaterLevel(this.lakeSpecs, x, z);
       // IN CELLS, skipping only the wet ones. A whole segment used to be
       // skipped when any of nine samples over its footprint was water, so a
       // cutting beside the bay lost its mask entirely: the NB entry cutting at
@@ -1308,8 +1316,10 @@ export class World {
           for (let j = 0; j < nW; j++) {
             const o0 = -w + (2 * w * j) / nW, o1 = -w + (2 * w * (j + 1)) / nW;
             const tm = (t0 + t1) / 2, om = (o0 + o1) / 2;
-            if (G.isWater(a.x + (b.x - a.x) * tm + qx * om, a.z + (b.z - a.z) * tm + qz * om)) continue;
-            const P = (t, o) => [a.x + (b.x - a.x) * t + qx * o, MASK_Y, a.z + (b.z - a.z) * t + qz * o];
+            const mx = a.x + (b.x - a.x) * tm + qx * om, mz = a.z + (b.z - a.z) * tm + qz * om;
+            if (G.isWater(mx, mz)) continue;
+            const y = drawnWater(mx, mz) + MASK_Y;
+            const P = (t, o) => [a.x + (b.x - a.x) * t + qx * o, y, a.z + (b.z - a.z) * t + qz * o];
             wb.quad(P(t0, o1), P(t0, o0), P(t1, o0), P(t1, o1), [0, 1, 0], ZERO_UV, [1, 1, 1]);
           }
         }
@@ -1317,7 +1327,7 @@ export class World {
       for (const e of this.city.edges) {
         if (!e.tunnel || e.elev) continue;
         const a = this.city.nodes[e.a], b = this.city.nodes[e.b];
-        if (Math.min(a.y, b.y) > 1.2) continue;
+        if (Math.min(a.y, b.y) > Math.max(drawnWater(a.x, a.z), drawnWater(b.x, b.z)) + 1.2) continue;
         maskStrip(a, b, e.hw + 2, -e.dz, e.dx);
       }
       // ...AND OVER THE OPEN CUTTINGS. The mask followed the tunnel edges, so
@@ -1331,7 +1341,7 @@ export class World {
           const a = c.pts[i], b = c.pts[i + 1];
           // (floor under 1 m, not 0.3: a segment ending just above that left
           // a line of sea where the next one's bank dipped under it)
-          if (a.cap || b.cap || Math.min(a.y, b.y) - 0.7 > 1.0) continue;
+          if (a.cap || b.cap || Math.min(a.y, b.y) - 0.7 > Math.max(drawnWater(a.x, a.z), drawnWater(b.x, b.z)) + 1.0) continue;
           const L = Math.hypot(b.x - a.x, b.z - a.z) || 1;
           // banks included: where a bank dips under the sea outside the
           // full-depth width, the sea showed as streaks along it (depth-only
@@ -1351,6 +1361,7 @@ export class World {
           new THREE.MeshBasicMaterial({ colorWrite: false, side: THREE.DoubleSide }));
         mm.renderOrder = 3;
         this.scene.add(mm);
+        this.tunnelWaterMaskMesh = mm;   // verify's submerged-road check raycasts it
       }
       this.tunnelWaterMask = true;
     }

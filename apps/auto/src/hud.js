@@ -419,7 +419,8 @@ export class Hud {
     for (const pl of (this.places || [])) {
       const [qx, qz] = toC(pl.x, pl.z);
       placeIcon(ctx, pl.kind, qx, qz, size * (pl.kind === 'dock' ? 0.011 : 0.008));
-      if (pl.kind === 'dock') {
+      // named, quads too: an unlabelled orange dot was a quad nobody found
+      if (pl.kind === 'dock' || pl.kind === 'atv') {
         ctx.fillStyle = 'rgba(255,255,255,0.85)';
         ctx.fillText(pl.name, qx, qz - size * 0.016);
       }

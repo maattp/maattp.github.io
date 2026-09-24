@@ -23,7 +23,8 @@ from proj import LAT0, LON0, M_LAT, M_LON, MAP_HALF  # noqa: E402
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 DATA = os.path.join(HERE, "data")
-OUT = os.path.join(HERE, "..", "apps", "auto", "data")
+# AUTO_DATA_OUT writes somewhere else, to diff a change against the shipped data.
+OUT = os.environ.get("AUTO_DATA_OUT") or os.path.join(HERE, "..", "apps", "auto", "data")
 DEM_DIR = os.path.join(DATA, "dem")
 ZOOM = 14
 
@@ -399,6 +400,7 @@ def carve_lakes(h, wet):
         # Grow the box back past the erosion, so the plane reaches the real shore.
         GROW = 80.0
         lakes.append({
+            "_cells": (ys, xs),
             "level": round(lvl, 2),
             "x0": round(float(xs.min() * MASK_STEP - MAP_HALF) - GROW, 1),
             "z0": round(float(ys.min() * MASK_STEP - MAP_HALF) - GROW, 1),
@@ -406,6 +408,57 @@ def carve_lakes(h, wet):
             "z1": round(float(ys.max() * MASK_STEP - MAP_HALF) + GROW, 1),
             "area": int(len(cells) * MASK_STEP * MASK_STEP),
         })
+    # A PIECE ERODED OFF A BIGGER LAKE IS THAT LAKE. Eroding 40 m parts the
+    # canal from the sea, as it must, but it also parts marshy corners from
+    # their own lake: Union Bay's pocket by Foster Island came away from Lake
+    # Washington, took its level from the DEM's reading of the marsh and the
+    # trees (9.9 m, the lake is at 5.09), and the game drew a second water
+    # plane 4.8 m over the lake there -- over both carriageways of the 520
+    # where they come off the floating bridge ("the 520 is underwater near
+    # UW"), and over Foster Island's trees. Joined through UN-eroded water
+    # within its own box to a bigger body, a piece is dropped and its water
+    # takes that body's level and box. Within its box only: through the whole
+    # mask, Lake Union would join Lake Washington and both the sea.
+    lakes.sort(key=lambda l: -l["area"])
+    owner = np.full(wet.shape, -1, dtype=np.int32)
+    for li, l in enumerate(lakes):
+        owner[l["_cells"]] = li
+    merged = []
+    for li in range(len(lakes) - 1, 0, -1):
+        l = lakes[li]
+        i0 = max(0, int((l["x0"] + MAP_HALF) / MASK_STEP))
+        i1 = min(MASK_N, int((l["x1"] + MAP_HALF) / MASK_STEP) + 1)
+        j0 = max(0, int((l["z0"] + MAP_HALF) / MASK_STEP))
+        j1 = min(MASK_N, int((l["z1"] + MAP_HALF) / MASK_STEP) + 1)
+        ys, xs = l["_cells"]
+        q = deque(zip(ys.tolist(), xs.tolist()))
+        seen2 = set(q)
+        into = None
+        while q and into is None:
+            y, x = q.popleft()
+            for ny, nx in ((y - 1, x), (y + 1, x), (y, x - 1), (y, x + 1)):
+                if not (j0 <= ny < j1 and i0 <= nx < i1) or (ny, nx) in seen2 or not wet[ny, nx]:
+                    continue
+                o = owner[ny, nx]
+                if 0 <= o < li:
+                    into = o
+                    break
+                seen2.add((ny, nx))
+                q.append((ny, nx))
+        if into is None:
+            continue
+        b = lakes[into]
+        merged.append(f"{l['level']} m ({l['area'] / 1e6:.3f} km2) into the {b['level']} m body")
+        b["x0"], b["z0"] = min(b["x0"], l["x0"]), min(b["z0"], l["z0"])
+        b["x1"], b["z1"] = max(b["x1"], l["x1"]), max(b["z1"], l["z1"])
+        b["area"] += l["area"]
+        owner[owner == li] = into
+        del lakes[li]
+    for m in merged:
+        print(f"merged a piece eroded off a lake: {m}")
+    for l in lakes:
+        del l["_cells"]
+
     # Clamp the terrain below whatever water is on top of it.
     #
     # Subtracting a fixed depth is not enough: wherever the DEM disagrees with
