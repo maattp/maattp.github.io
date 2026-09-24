@@ -21,6 +21,9 @@ two bytes per sample, R and G of an RGB PNG (B unused):
             2 plaza     paving
             3 hard      concrete hardstanding: commercial / retail land
             4 rail      ballast and track: rail yards
+            5 sand      a beach (OSM natural=beach, from raw_green.json):
+                        one code, 251, no orientation -- 1 + 5*50 + 49
+                        would not fit the byte
     R  the share of the sample's own 14.4 m cell that has that code (box
        filter, 32 levels) -- what lets the edge be reconstructed between
        samples instead of snapped to them (see sample_coverage)
@@ -44,6 +47,9 @@ from proj import MAP_HALF  # noqa: E402
 HERE = os.path.dirname(os.path.abspath(__file__))
 DATA = os.path.join(HERE, "data")
 OUT = os.path.join(HERE, "..", "apps", "auto", "data")
+# AUTO_DATA_OUT writes somewhere else, to diff a change against the shipped data
+# (surface.png is still read from the shipped data).
+OUT_W = os.environ.get("AUTO_DATA_OUT") or OUT
 MASK_STEP = 10
 MASK_N = (MAP_HALF * 2) // MASK_STEP + 1   # 2601, surface.png
 # Everything is PAINTED at 3.33 m (a third of the mask cell), so the edge the
@@ -57,7 +63,7 @@ LOT_N = 1801
 LOT_STEP = MAP_HALF * 2 / (LOT_N - 1)
 COVER_LEVELS = 32   # coverage is quantised: 0.45 m of edge position, and it compresses
 
-KINDS = {"parking": 0, "asphalt": 1, "plaza": 2, "hard": 3, "rail": 4}
+KINDS = {"parking": 0, "asphalt": 1, "plaza": 2, "hard": 3, "rail": 4, "sand": 5}
 ANG = 50   # geo.js LOT_ANG
 # Drawn in this order, so later kinds win where polygons overlap: a car park
 # mapped inside a retail landuse is a car park, a plaza inside a commercial
@@ -323,7 +329,42 @@ def bake(wet, green):
     base[green] = 0
     over = np.asarray(layer_over, dtype=np.uint8)
     out = np.where(over > 0, over, np.where(squares > 0, squares, base))
+    # BEACHES ARE SAND. OSM maps them (natural=beach) and the park mask took
+    # them in with the grass, so Alki, Golden Gardens and Discovery Park's
+    # beaches were lawn down to the water, with trees on them. Sand goes over
+    # everything else here, and the water clip below still trims it.
+    sand = Image.new("L", (N, N), 0)
+    nb = 0
+    # OSM draws a Puget Sound beach mostly SEAWARD of the coastline -- it is
+    # the intertidal -- so Discovery Park's South Beach kept almost nothing on
+    # land. Each beach also takes a 10 m band round its outline, which
+    # reaches up to the drawn shore.
+    # A small beach -- a lake's swim beach, a street end -- is a strip along
+    # the waterline, and the lakes' drawn shores run up to a cell inland of it
+    # (geo.js liftBeaches brings the ground back up), so it takes a 30 m band.
+    ds = ImageDraw.Draw(sand)
+    for p in json.load(open(os.path.join(DATA, "raw_green.json")))["green"]:
+        a = area(p["o"])
+        if p.get("k") != "beach" or a < 60:
+            continue
+        paint(sand, p, code("sand", 0.0))
+        px = to_px(p["o"])
+        band = max(1, round((60 if a < 3000 else 20) / STEP))
+        ds.line(px + [px[0]], fill=code("sand", 0.0), width=band, joint="curve")
+        nb += 1
+    sand = np.asarray(sand, dtype=np.uint8)
+    stats["beach"] = nb
+    # Discovery Park's South Bluff is bare sand and clay, 50-70 m of it
+    # falling to South Beach; the 40 m DEM sees it as slopes of 0.45-1.0 there.
+    bluff = bluff_mask()
+    sand = np.where(bluff & (sand == 0), code("sand", 0.0), sand).astype(np.uint8)
+    stats["bluff"] = int(bluff.sum())
     out[wet] = 0
+    # ...and NOT clipped by the water: the shore you see is where the 40 m
+    # terrain rises through the water plane, and much of that band is on
+    # cells the 10 m water mask calls wet -- clipped there, the waterline
+    # stayed grass. Under the water the sand is simply not seen.
+    out = np.where(sand > 0, sand, out)
     k = decode(out)
     land = ~wet
     print("lots: " + "  ".join(f"{g}={n}" for g, n in stats.items()))
@@ -331,6 +372,31 @@ def bake(wet, green):
           + "  ".join(f"{name} {(k == i).sum() * STEP * STEP / 1e6:.2f} km2"
                       for name, i in KINDS.items()))
     return out
+
+
+BLUFFS = [(-7000, -5500, -6000, -4700)]   # x0, z0, x1, z1: Discovery Park's South Bluff
+BLUFF_SLOPE = 0.42
+
+
+def bluff_mask():
+    """Fine-grid mask of the exposed sea bluffs: steep DEM cells, above the
+    tide and under 100 m, inside BLUFFS."""
+    im = np.asarray(Image.open(os.path.join(OUT, "height.png")).convert("RGB")).astype(np.float64)
+    h = (im[..., 0] * 256 + im[..., 1]) / 10 - 100
+    hs = MAP_HALF * 2 / (h.shape[0] - 1)
+    gz, gx = np.gradient(h, hs)
+    ok = (np.hypot(gx, gz) > BLUFF_SLOPE) & (h > 1) & (h < 100)
+    box = np.zeros_like(ok)
+    for x0, z0, x1, z1 in BLUFFS:
+        i0, i1 = int((x0 + MAP_HALF) / hs), int((x1 + MAP_HALF) / hs) + 1
+        j0, j1 = int((z0 + MAP_HALF) / hs), int((z1 + MAP_HALF) / hs) + 1
+        box[j0:j1, i0:i1] = True
+    m = Image.fromarray(((ok & box) * 255).astype(np.uint8))
+    # heightfield vertex i (pixel centre i + 0.5) is world i * hs - MAP_HALF;
+    # fine pixel j's centre is (j + 0.5) * STEP - MAP_HALF
+    f = hs / STEP
+    b0, b1 = 0.5, 0.5 + N / f
+    return np.asarray(m.resize((N, N), Image.BILINEAR, box=(b0, b0, b1, b1))) > 110
 
 
 def fine_masks():
@@ -405,7 +471,7 @@ def main():
     img = np.zeros((LOT_N, LOT_N, 3), dtype=np.uint8)
     img[:, :, 0] = cover
     img[:, :, 1] = codes
-    p = os.path.join(OUT, "lots.png")
+    p = os.path.join(OUT_W, "lots.png")
     Image.fromarray(img, "RGB").save(p, optimize=True)
     print(f"lots.png {LOT_N}x{LOT_N} @ {LOT_STEP:.2f} m: {os.path.getsize(p) / 1e3:.0f} KB")
 

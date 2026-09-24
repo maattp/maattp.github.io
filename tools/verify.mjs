@@ -639,6 +639,63 @@ async function main() {
       }
     }
 
+    // --- beaches, landmarks, park furniture -------------------------------
+    //
+    // The beaches are sand to the water and carry their props; every landmark
+    // added with EXTRA_LANDMARKS stands on dry ground (West Point's and Alki
+    // Point's lighthouses were under the Sound until geo.js padded them); the
+    // Gas Works towers and Discovery Park's South Bluff are there; and the
+    // park furniture is drawn into the chunks round the start.
+    const places = await session.eval(`(() => {
+      const d = window.__dbg, G = d.G, w = d.world, lm = d.lmRoot;
+      const SAND = G.LOT_KINDS.indexOf('sand');
+      const out = { beaches: {}, wet: [], missing: [] };
+      for (const b of lm.userData.beaches) {
+        const k = b.name || '(unnamed)';
+        const o = out.beaches[k] || (out.beaches[k] = { props: 0, kit: b.kit });
+        o.props += b.props;
+      }
+      // sand samples (5 m grid) within r of a point on dry land
+      const sandNear = (x0, z0, r) => {
+        let n = 0;
+        for (let z = z0 - r; z <= z0 + r; z += 5) for (let x = x0 - r; x <= x0 + r; x += 5)
+          if (G.lotAt(x, z) === SAND && !G.isWater(x, z)) n++;
+        return n;
+      };
+      out.sand = {
+        alki: sandNear(-5140, 3343, 80), golden: sandNear(-5010, -8960, 60),
+        discoverySouth: sandNear(-6820, -5330, 60), bluff: sandNear(-6560, -5200, 60),
+      };
+      for (const e of G.EXTRA_LANDMARKS) {
+        const l = G.LANDMARKS.find((q) => q.kind === e.kind);
+        if (!l) { out.missing.push(e.kind); continue; }
+        const y = G.terrainHeight(l.x, l.z), wl = w.waterLevelAt(l.x, l.z);
+        if (wl !== null && y < wl + 0.5) out.wet.push(e.kind + ' ' + (y - wl).toFixed(2));
+      }
+      out.built = ['westPoint', 'alkiPoint', 'gasworks', 'troll', 'daybreak', 'waterTower'].filter((k) => !lm.getObjectByName(k) && !G.LANDMARKS.some((q) => q.kind === k));
+      let n = 0;
+      for (const l of G.PARK_PROPS.values()) n += l.length;
+      out.parkProps = n;
+      return out;
+    })()`, true);
+    console.log('\n--- beaches, landmarks, park furniture -------------------');
+    {
+      const named = ['Alki Beach', 'Matthews Beach', 'South Beach', 'Madison Park Beach', 'West Green Lake Beach'];
+      const b = places.beaches;
+      console.log(`  ${Object.keys(b).length} beaches with props; ` + named.map((k) => `${k} ${b[k] ? b[k].props : 0}`).join(', '));
+      console.log(`  sand: ${JSON.stringify(places.sand)}; landmarks under water: ${places.wet.join(', ') || 'none'}; park furniture ${places.parkProps}`);
+      const bad = [];
+      for (const k of named) if (!b[k] || b[k].props < 8) bad.push(`${k} bare`);
+      for (const [k, v] of Object.entries(places.sand)) if (v < 20) bad.push(`no sand at ${k}`);
+      if (places.wet.length) bad.push('landmarks under water: ' + places.wet.join(', '));
+      if (places.missing.length || places.built.length) bad.push('landmarks missing: ' + [...places.missing, ...places.built].join(', '));
+      if (places.parkProps < 5000) bad.push('park furniture not loaded');
+      if (bad.length) {
+        console.error(`FAIL: places: ${bad.join('; ')}`);
+        process.exitCode = 1;
+      }
+    }
+
     // --- no lake in the boat's cockpit ------------------------------------
     //
     // The runabout's cockpit floor is 12 cm over its waterline and the lake is

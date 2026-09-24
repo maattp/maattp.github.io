@@ -47,6 +47,34 @@ let GRN = null;
 let LOT = null;
 
 export let LANDMARKS = [];
+// Landmarks placed from their OSM nodes (lat, lon), appended after places.json's
+// so the first twenty -- the collectibles -- are unchanged. Sources in
+// landmarks.js beside each builder.
+export const EXTRA_LANDMARKS = [
+  // The points' tips are below the sea on the 40 m DEM: each lighthouse gets
+  // a pad of ground (`pad`: raised to y within r0, blended out by r1).
+  { kind: 'westPoint', name: 'West Point Lighthouse', lat: 47.661973, lon: -122.435741, pad: { y: 3.2, r0: 30, r1: 75 } },
+  { kind: 'alkiPoint', name: 'Alki Point Lighthouse', lat: 47.576267, lon: -122.420608, pad: { y: 4.0, r0: 28, r1: 70 } },
+  { kind: 'rocket', name: 'Fremont Rocket', lat: 47.650626, lon: -122.351184 },
+  { kind: 'lenin', name: 'Lenin', lat: 47.65136, lon: -122.350947 },
+  { kind: 'hammeringMan', name: 'Hammering Man', lat: 47.60703, lon: -122.338125 },
+  { kind: 'eagle', name: 'The Eagle', lat: 47.616588, lon: -122.355977 },
+  { kind: 'echo', name: 'Echo', lat: 47.615265, lon: -122.355602, pad: { y: 3.0, r0: 8, r1: 30 } },
+  { kind: 'eraser', name: 'Typewriter Eraser, Scale X', lat: 47.621987, lon: -122.348495 },
+  { kind: 'waterTower', name: 'Volunteer Park Water Tower', lat: 47.629026, lon: -122.314573 },
+  // at the reservoir's east edge, which the import dug as a pond
+  { kind: 'blackSun', name: 'Black Sun', lat: 47.629945, lon: -122.315202, pad: { y: 'east', r0: 8, r1: 22 } },
+  { kind: 'conservatory', name: 'Volunteer Park Conservatory', lat: 47.632082, lon: -122.315746 },
+  { kind: 'pergola', name: 'Pioneer Square Pergola', lat: 47.601852, lon: -122.33394 },
+  { kind: 'totem', name: 'Pioneer Square Totem Pole', lat: 47.602001, lon: -122.334042 },
+  { kind: 'changingForm', name: 'Changing Form', lat: 47.629477, lon: -122.359935 },
+  { kind: 'daybreak', name: 'Daybreak Star Cultural Center', lat: 47.66794, lon: -122.418044 },
+];
+export let BEACHES = [];
+// OSM's park furniture (tools/build_parkprops.py), filed by 400 m chunk:
+// 'cx,cz' -> [{ k: 'bench' | 'picnic' | 'playground' | 'fountain', x, z, a, r }].
+// world.meshProps draws each chunk's own.
+export const PARK_PROPS = new Map();
 export let PLACES = [];
 export let SPAWN = { x: -985, z: -807 };
 export let SPAWN_HEADING = 2.6;
@@ -59,12 +87,30 @@ export function initGeo(md) {
   if (md.maskN !== MASK_N) throw new Error(`surface.png is ${md.maskN} wide, expected ${MASK_N}`);
   HF = md.height;
   fixTerrain(HF);
+  liftBeaches(HF, md.beaches || [], md.lakes || [], md.water);
   WET = md.water;
   GRN = md.green;
   LOT = md.lot || null;
   if (LOT) { LOT_N = md.lotN; LOT_STEP = (MAP_HALF * 2) / (LOT_N - 1); }
   const p = md.places;
-  LANDMARKS = p.landmarks;
+  LANDMARKS = [...p.landmarks, ...EXTRA_LANDMARKS.map((e) => {
+    const [x, z] = toWorld(e.lat, e.lon);
+    if (e.pad) padTerrain(HF, x, z, e.pad);
+    return { kind: e.kind, name: e.name, x, z };
+  })];
+  BEACHES = md.beaches || [];
+  PARK_PROPS.clear();
+  if (md.parkprops) {
+    for (const k of ['bench', 'picnic', 'playground', 'fountain']) {
+      for (const r of md.parkprops[k] || []) {
+        const key = `${Math.floor(r[0] / 400)},${Math.floor(r[1] / 400)}`;
+        let l = PARK_PROPS.get(key);
+        if (!l) PARK_PROPS.set(key, (l = []));
+        // a bench's mapped direction is the way a sitter faces, compass degrees
+        l.push({ k, x: r[0], z: r[1], a: k === 'bench' && r.length > 2 ? r[2] : null, r: k === 'playground' ? r[2] : 0 });
+      }
+    }
+  }
   PLACES = p.places;
   SPAWN = { x: p.spawn.x, z: p.spawn.z };
   SPAWN_HEADING = p.spawn.heading;
@@ -103,6 +149,64 @@ function fixTerrain(hf) {
       if (d >= f.r1) continue;
       const t = d <= f.r0 ? 0 : (d - f.r0) / (f.r1 - f.r0), s = t * t * (3 - 2 * t);
       hf[j * HF_N + i] = f.y + (hf[j * HF_N + i] - f.y) * s;
+    }
+  }
+}
+
+/** Raise the ground to at least `y` within r0 of (x, z), blended out to r1.
+ *  y 'east' takes the ground 40 m east of the spot. Only ever raises. */
+function padTerrain(hf, x, z, { y, r0, r1 }) {
+  const at = (px, pz) => hf[Math.round((pz + MAP_HALF) / HF_STEP) * HF_N + Math.round((px + MAP_HALF) / HF_STEP)];
+  const Y = y === 'east' ? at(x + 40, z) : y;
+  const i0 = Math.floor((x - r1 + MAP_HALF) / HF_STEP), i1 = Math.ceil((x + r1 + MAP_HALF) / HF_STEP);
+  const j0 = Math.floor((z - r1 + MAP_HALF) / HF_STEP), j1 = Math.ceil((z + r1 + MAP_HALF) / HF_STEP);
+  for (let j = j0; j <= j1; j++) for (let i = i0; i <= i1; i++) {
+    const d = Math.hypot(i * HF_STEP - MAP_HALF - x, j * HF_STEP - MAP_HALF - z);
+    if (d >= r1) continue;
+    const t = d <= r0 ? 1 : 1 - (d - r0) / (r1 - r0), s = t * t * (3 - 2 * t);
+    const k = j * HF_N + i;
+    hf[k] = Math.max(hf[k], hf[k] + (Y - hf[k]) * s);
+  }
+}
+
+/**
+ * THE LAKE BEACHES STAND OUT OF THE LAKE. build_raster.py digs every
+ * heightfield point with water in its 40 m cell to 1.2 m under the lake,
+ * so a lake's drawn shore runs up to a cell inland of the real one -- and the
+ * swim beaches, which OSM maps along the waterline, were all under the lake
+ * plane: Madison Park, Matthews, Pritchard had no dry sand at all. Each lake
+ * beach's dry points within 45 m come back up to 0.6 m over the lake, at
+ * load, before anything reads the terrain.
+ */
+function liftBeaches(hf, beaches, lakes, wet) {
+  const wetAt = (x, z) => {
+    const i = Math.round((x + MAP_HALF) / MASK_STEP), j = Math.round((z + MAP_HALF) / MASK_STEP);
+    return i >= 0 && j >= 0 && i < MASK_N && j < MASK_N && wet[j * MASK_N + i] !== 0;
+  };
+  for (const b of beaches) {
+    let x0 = Infinity, x1 = -Infinity, z0 = Infinity, z1 = -Infinity;
+    for (const [x, z] of b.o) { x0 = Math.min(x0, x); x1 = Math.max(x1, x); z0 = Math.min(z0, z); z1 = Math.max(z1, z); }
+    const cx = (x0 + x1) / 2, cz = (z0 + z1) / 2;
+    const lake = lakes.find((l) => l.level > 1 && cx >= l.x0 && cx <= l.x1 && cz >= l.z0 && cz <= l.z1);
+    if (!lake) continue;
+    const R = 45;
+    const i0 = Math.floor((x0 - R + MAP_HALF) / HF_STEP), i1 = Math.ceil((x1 + R + MAP_HALF) / HF_STEP);
+    const j0 = Math.floor((z0 - R + MAP_HALF) / HF_STEP), j1 = Math.ceil((z1 + R + MAP_HALF) / HF_STEP);
+    for (let j = Math.max(0, j0); j <= Math.min(HF_N - 1, j1); j++) for (let i = Math.max(0, i0); i <= Math.min(HF_N - 1, i1); i++) {
+      const x = i * HF_STEP - MAP_HALF, z = j * HF_STEP - MAP_HALF;
+      if (wetAt(x, z)) continue;
+      // distance from this point to the beach's outline (or inside it)
+      let d = Infinity, inside = false;
+      for (let a = 0, k = b.o.length - 1; a < b.o.length; k = a++) {
+        const [ax, az] = b.o[k], [bx, bz] = b.o[a];
+        if ((az > z) !== (bz > z) && x < ((bx - ax) * (z - az)) / (bz - az) + ax) inside = !inside;
+        const dx = bx - ax, dz = bz - az, L2 = dx * dx + dz * dz || 1;
+        const t = Math.max(0, Math.min(1, ((x - ax) * dx + (z - az) * dz) / L2));
+        d = Math.min(d, Math.hypot(x - ax - dx * t, z - az - dz * t));
+      }
+      if (!inside && d > R) continue;
+      const k = j * HF_N + i;
+      if (hf[k] < lake.level + 0.6) hf[k] = lake.level + 0.6;
     }
   }
 }
@@ -303,7 +407,7 @@ export function inPark(x, z) {
 // `lotCodeAt` is the SAME reconstruction the terrain shader runs (world.js), so
 // what the scatter and the parked cars believe is a lot is what is drawn.
 export const LOT_ANG = 50;
-export const LOT_KINDS = ['parking', 'asphalt', 'plaza', 'hard', 'rail'];
+export const LOT_KINDS = ['parking', 'asphalt', 'plaza', 'hard', 'rail', 'sand'];
 export let LOT_N = 1801;
 export let LOT_STEP = (MAP_HALF * 2) / (LOT_N - 1);
 

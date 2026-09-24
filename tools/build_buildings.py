@@ -25,6 +25,7 @@ Format (little-endian):
 
 import json
 import math
+import re
 import os
 import struct
 import sys
@@ -35,7 +36,7 @@ from proj import MAP_HALF  # noqa: E402
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 DATA = os.path.join(HERE, "data")
-OUT = os.path.join(HERE, "..", "apps", "auto", "data")
+OUT = os.environ.get("AUTO_DATA_OUT") or os.path.join(HERE, "..", "apps", "auto", "data")
 
 CHUNK = 400                       # matches citygen.CHUNK
 NX = NZ = (MAP_HALF * 2) // CHUNK  # 40 x 40
@@ -56,6 +57,16 @@ TYPE_CLS = {
     "museum": 4, "chapel": 4, "sports_centre": 4, "fire_station": 4,
 }
 CLS_STOREY_H = {0: 3.1, 1: 3.1, 2: 3.9, 3: 5.2, 4: 4.4}
+# PARK BUILDINGS ARE LOW. OSM's beach bathhouses are bare building=yes with a
+# name, which made them commercial at 11 m: Golden Gardens' 1929 bathhouse, the
+# Green Lake Bath House and Madison's stood four storeys over the sand. An
+# untagged building named like a park structure is one storey; so is an
+# untagged small commercial/apartment-class box standing in a mapped park.
+PARK_LOW_NAME = re.compile(r"bath ?house|comfort station|restroom|toilet|shelter|pavilion|"
+                           r"field ?house|boat ?house|concession|picnic", re.I)
+PARK_LOW_H = 5.0
+PARK_SMALL_M2 = 1500
+PARK_KINDS = {"park", "garden", "recreation_ground", "nature_reserve", "beach", "golf_course"}
 CLS_DEFAULT_H = {0: 6.4, 1: 12.5, 2: 11.0, 3: 8.5, 4: 10.0}
 
 
@@ -148,9 +159,26 @@ def height_of(b, cls, area):
     return CLS_DEFAULT_H[cls]
 
 
+def park_mask():
+    """10 m raster of the mapped parks (raw_green.json), for park_low."""
+    from PIL import Image, ImageDraw
+    n = int(MAP_HALF * 2 / 10) + 1
+    img = Image.new("L", (n, n), 0)
+    d = ImageDraw.Draw(img)
+    for p in json.load(open(os.path.join(DATA, "raw_green.json")))["green"]:
+        if p.get("k") not in PARK_KINDS:
+            continue
+        d.polygon([((x + MAP_HALF) / 10, (z + MAP_HALF) / 10) for x, z in p["o"]], fill=1)
+        for hole in p.get("h", []):
+            d.polygon([((x + MAP_HALF) / 10, (z + MAP_HALF) / 10) for x, z in hole], fill=0)
+    return img, n
+
+
 def main():
     raw = json.load(open(os.path.join(DATA, "raw_buildings.json")))["buildings"]
     print(f"{len(raw)} raw footprints")
+    parks, pn = park_mask()
+    low_named = low_park = 0
 
     chunks = defaultdict(list)
     kept = tagged = dropped_small = outside = 0
@@ -173,6 +201,15 @@ def main():
         if b.get("ht") or b.get("lv"):
             tagged += 1
         h = height_of(b, cls, area)
+        if not (b.get("ht") or b.get("lv")):
+            i, j = int((cx + MAP_HALF) / 10), int((cz + MAP_HALF) / 10)
+            in_park = 0 <= i < pn and 0 <= j < pn and parks.getpixel((i, j))
+            if b.get("n") and PARK_LOW_NAME.search(b["n"]):
+                h = min(h, PARK_LOW_H)
+                low_named += 1
+            elif in_park and cls in (1, 2) and area < PARK_SMALL_M2:
+                h = min(h, PARK_LOW_H + 0.5)
+                low_park += 1
         if h > tallest[0]:
             tallest = (h, b.get("n") or "(unnamed)")
         ci = int((cx + MAP_HALF) // CHUNK)
@@ -183,6 +220,7 @@ def main():
     print(f"{kept} kept ({dropped_small} under {MIN_AREA:.0f} m2, {outside} off-map), "
           f"{tagged} with a tagged height ({tagged/max(1,kept)*100:.0f}%)")
     print(f"tallest: {tallest[1]} at {tallest[0]:.0f} m")
+    print(f"park buildings one storey: {low_named} by name, {low_park} small untagged ones in parks")
 
     blob = bytearray()
     dirs = []

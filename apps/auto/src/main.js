@@ -6,7 +6,7 @@ import { cityGenerator, cityStats } from './citygen.js';
 import { loadMapData } from './mapdata.js';
 import { buildTextures, planTextures, encodeTextures, restoreTextures, canvasToBlob, blobToCanvas, within } from './textures.js';
 import { World, WET_FLOOR } from './world.js';
-import { buildLandmarks, SEAPLANE_DOCK, airportSurface } from './landmarks.js';
+import { buildLandmarks, updateLandmarkRange, SEAPLANE_DOCK, airportSurface } from './landmarks.js';
 import { Monorail } from './monorail.js';
 import { freezeStatic } from './build.js';
 import { cacheGet, cachePut, cacheGuardTripped, cacheGuardSet, cacheClear } from './bootcache.js';
@@ -276,7 +276,7 @@ class Game {
 
 // ---------------------------------------------------------------------------
 
-let renderer, scene, camera, sun, world, cityRef, traffic, peds, player, controls, hud, fx, audio, game, marker, postfx, acts, stunts, monorail;
+let renderer, scene, camera, sun, world, cityRef, traffic, peds, player, controls, hud, fx, audio, game, marker, postfx, acts, stunts, monorail, lmRoot;
 let pickups = [];
 // Scratch vector for the shadow-camera aim, so the frame loop allocates none.
 const LOOK_AHEAD = new THREE.Vector3();
@@ -618,7 +618,7 @@ function installShadowFade() {
 
   await step(0.86, 'Placing the landmarks');
   monorail.attach(city);
-  const lmRoot = buildLandmarks(scene, city, (x, z) => world.waterLevelAt(x, z), monorail);
+  lmRoot = buildLandmarks(scene, city, (x, z) => world.waterLevelAt(x, z), monorail);
   // The scene root never moves, and its own matrixAutoUpdate re-flagged EVERY
   // object in the world for a world-matrix multiply each frame. Static
   // subtrees are frozen; see freezeStatic.
@@ -811,7 +811,7 @@ function installShadowFade() {
 
   await step(1, 'Welcome to Seattle');
   window.__refreshJobs = refreshJobs;
-  window.__dbg = { game, city, player, world, traffic, peds, acts, stunts, monorail, scene, camera, renderer, G, fx, hud, controls, audio, pickups, THREE, postfx, applyQuality, sun, placeSun, sceneStats, perfSys, cityStats, WET_FLOOR, animateWalk, collideWithBuildings, TYPES: VEHICLE_TYPES };
+  window.__dbg = { game, city, player, world, traffic, peds, acts, stunts, monorail, lmRoot, scene, camera, renderer, G, fx, hud, controls, audio, pickups, THREE, postfx, applyQuality, sun, placeSun, sceneStats, perfSys, cityStats, WET_FLOOR, animateWalk, collideWithBuildings, TYPES: VEHICLE_TYPES };
   wireUi();
   game.newTarget();
   // Start on `high` everywhere.
@@ -1566,7 +1566,8 @@ function surfaceAt(x, y, z) {
   if (y - terr > 1.5 || terr - y > 2) return 'hard';
   if (cityRef.onRoad(x, z, 2.5)) return 'hard';
   const lot = G.lotAt(x, z);
-  if (lot >= 0) return G.LOT_KINDS[lot] === 'rail' ? 'gravel' : 'hard';
+  // ballast and beach sand crunch; every other lot is paved
+  if (lot >= 0) return G.LOT_KINDS[lot] === 'rail' || G.LOT_KINDS[lot] === 'sand' ? 'gravel' : 'hard';
   return 'grass';
 }
 // Traffic's engine voices take the nearest cars from this list; the
@@ -1649,6 +1650,7 @@ function draw(now) {
     sm.__timed = true;
   }
   const t0 = prof ? performance.now() : 0;
+  if (lmRoot) updateLandmarkRange(lmRoot, camera.position);
   renderer.setRenderTarget(postfx.target);
   renderer.render(scene, camera);
   // capture before the post passes reset the counters

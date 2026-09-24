@@ -1440,21 +1440,6 @@ function library() {
   return g;
 }
 
-function gasworks() {
-  const g = new THREE.Group();
-  for (let i = 0; i < 6; i++) {
-    const a = (i / 6) * Math.PI * 2;
-    g.add(cyl(4.5, 5.5, 16 + (i % 3) * 6, mat.rust, Math.cos(a) * 12, 0, Math.sin(a) * 12, 12));
-    solidCircle(g, Math.cos(a) * 12, Math.sin(a) * 12, 5.3, 16);
-  }
-  g.add(cyl(7, 8, 26, mat.rust, 0, 0, 0, 14));
-  solidCircle(g, 0, 0, 7.8, 26);
-  for (let i = 0; i < 5; i++) {
-    g.add(box(24, 0.6, 0.6, mat.rust, 0, 10 + i * 3, 0, i * 0.6));
-  }
-  return g;
-}
-
 // The Fremont Troll (1990): an 18 ft = 5.5 m concrete troll coming up out of
 // the ground under the Aurora Bridge, a hubcap for an eye, crushing a real VW
 // Beetle in his left hand (Fremont Arts Council; Wikipedia "Fremont Troll").
@@ -1558,28 +1543,7 @@ function kerryPark() {
   g.add(box(50, 1, 16, mat.concrete, 0, -0.5, 0));
   for (let i = -5; i <= 5; i++) g.add(cyl(0.16, 0.16, 1.1, mat.darkSteel, i * 4.5, 0.5, 7, 6));
   g.add(box(46, 0.2, 0.2, mat.darkSteel, 0, 1.6, 7));
-  const arch = new THREE.Mesh(new THREE.TorusGeometry(3.4, 0.5, 6, 14, Math.PI), M(0x6e747a));
-  arch.position.set(-14, 1, 0);
-  g.add(arch);
-  return g;
-}
-
-function statueLiberty() {
-  const g = new THREE.Group();
-  const cu = P(0x66a89a, 0.6, 0.35, 0.6);
-  g.add(box(6, 5, 6, mat.concrete, 0, 0, 0));
-  g.add(cyl(1.2, 2.2, 7, cu, 0, 5, 0, 10));
-  const head = new THREE.Mesh(new THREE.SphereGeometry(0.9, 8, 8), cu);
-  head.position.y = 12.6;
-  g.add(head);
-  const arm = new THREE.Mesh(new THREE.BoxGeometry(0.6, 4, 0.6), cu);
-  arm.position.set(1.4, 12, 0);
-  arm.rotation.z = -0.4;
-  g.add(arm);
-  const torch = new THREE.Mesh(new THREE.ConeGeometry(0.7, 1.4, 8), P(0xffcf6b, 0.4, 0.2, 0.6, { emissive: 0xffa640, key: 'torch' }));
-  torch.position.set(2.6, 14.4, 0);
-  g.add(torch);
-  solidBox(g, 0, 0, 3, 3, 0, 5);
+  // (its sculpture, Changing Form, is a landmark of its own now)
   return g;
 }
 
@@ -1961,6 +1925,285 @@ function seaplaneDock() {
  * the shore itself comes from the water mask, so each is laid out from the
  * nearest shoreline outward, into water deep enough to float a hull.
  */
+// ---------------------------------------------------------------------------
+// BEACHES. The lot layer paints OSM's natural=beach as sand (build_lots.py);
+// these are what stand on it, laid on the DRY sand of each beach in
+// data/beaches.json by what that beach is. Puget Sound beaches carry the
+// Northwest's signature, bleached driftwood logs above the tideline; Alki and
+// Golden Gardens their sand volleyball courts and concrete fire rings; the
+// lake swim beaches a lifeguard chair and a swim raft offshore. Every beach
+// people use gets umbrellas and towels.
+const BEACH_UMBRELLA = [0xd8352a, 0x2a6fd0, 0xf2c32a, 0x1f9e8f, 0xf07a1c, 0x7a3fc2, 0x2e8b3d];
+const BEACH_TOWEL = [0xe84d6b, 0x3aa3e8, 0xf5d547, 0x6bd07a, 0xf08a3c, 0xffffff, 0x9b6bd8];
+// Kits by name, or by where an unnamed beach is (Golden Gardens is not named
+// in OSM). `lake` beaches are Seattle Parks' guarded swim beaches.
+// Seattle Parks guards eight beaches, all on the lakes (seattle.gov/parks,
+// swimming beaches, 2025); East Green Lake did not open in 2025, so it gets
+// its raft and no chair.
+const BEACH_KIT = [
+  { match: /^Alki Beach$/, kit: 'alki' },
+  { near: [-5000, -8900, 500], kit: 'golden' },
+  { match: /Madison Park Beach|Matthews Beach|Magnuson Park Beach|Mount Baker Beach|Pritchard Island Beach|West Green Lake Beach|Madrona|Seward/, kit: 'lake' },
+  { match: /East Green Lake Beach/, kit: 'lakeNoGuard' },
+];
+// Courts and fire pits where OSM maps them [lat, lon]: Alki's seven sand
+// volleyball courts in a diagonal line (ways 262498251-257), Golden Gardens'
+// four courts and seven fire pits north-west of the 1929 bathhouse (nodes
+// 7009847730-736).
+const BEACH_COURTS = {
+  alki: { from: [47.58167, -122.40500], to: [47.58249, -122.40317], n: 7 },
+  golden: { from: [47.69170, -122.40420], to: [47.69210, -122.40460], n: 4 },
+};
+const BEACH_FIRES = { golden: { from: [47.69217, -122.40488], to: [47.69313, -122.40578], n: 7 } };
+function beachKit(b, cx, cz, fresh) {
+  for (const k of BEACH_KIT) {
+    if (k.match && k.match.test(b.name)) return k.kit;
+    if (k.near && Math.hypot(cx - k.near[0], cz - k.near[1]) < k.near[2]) return k.kit;
+  }
+  // an unguarded beach on a lake: towels and umbrellas, no driftwood
+  return fresh ? 'lakeside' : 'sound';
+}
+
+/** A beach umbrella: pole, eight-panel canopy in alternating colour and white. */
+function umbrella(g, x, y, z, col, tilt, rnd) {
+  const pole = P(0xf2f2ee, 0.5, 0.2, 0.6);
+  const H = 2.15 + rnd() * 0.25, R = 1.05 + rnd() * 0.25;
+  const top = V(x + Math.sin(tilt) * 0.35, y + H, z + Math.cos(tilt) * 0.35);
+  g.add(strut(V(x, y - 0.3, z), top, 0.025, pole, 5));
+  const a = P(col, 0.7, 0, 0.55), w = P(0xf4f2ea, 0.7, 0, 0.55);
+  const N = 8;
+  for (const [m, odd] of [[a, 0], [w, 1]]) {
+    const pos = [];
+    for (let i = odd; i < N; i += 2) {
+      const t0 = (i / N) * Math.PI * 2, t1 = ((i + 1) / N) * Math.PI * 2;
+      const drop = 0.42;
+      pos.push(top.x, top.y + 0.12, top.z,
+        top.x + Math.cos(t1) * R, top.y - drop, top.z + Math.sin(t1) * R,
+        top.x + Math.cos(t0) * R, top.y - drop, top.z + Math.sin(t0) * R);
+    }
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+    geo.computeVertexNormals();
+    const mesh = new THREE.Mesh(geo, m);
+    mesh.material = m;
+    g.add(mesh);
+  }
+}
+
+/** A driftwood log above the tideline: bleached trunk, darker cut ends, a root wad on the big ones. */
+function driftLog(g, x, y, z, yaw, len, r, rnd) {
+  const wood = P(0x9d968a, 0.95, 0, 0.5), end = P(0x6e675c, 0.95, 0, 0.45);
+  const dx = Math.cos(yaw) * len / 2, dz = Math.sin(yaw) * len / 2;
+  const sink = r * 0.35;
+  const a = V(x - dx, y + r - sink, z - dz), b = V(x + dx, y + r * 0.8 - sink, z + dz);
+  g.add(strut(a, b, r, wood, 7));
+  const cap = (p, rr) => { const m = new THREE.Mesh(new THREE.SphereGeometry(rr, 7, 5), end); m.scale.set(1, 1, 1); m.position.copy(p); g.add(m); };
+  cap(a, r * 0.97); cap(b, r * 0.78);
+  if (len > 7 && rnd() < 0.5) {
+    // the root wad: a knot of stubs at the thick end
+    for (let k = 0; k < 5; k++) {
+      const t = (k / 5) * Math.PI * 2;
+      g.add(strut(a, V(a.x - Math.cos(yaw) * 0.6 + Math.cos(t) * r * 1.8, a.y + Math.sin(t) * r * 1.6 + r * 0.4, a.z - Math.sin(yaw) * 0.6 + Math.sin(t + 1) * r * 1.8), r * 0.28, wood, 5));
+    }
+  }
+}
+
+/** A towel laid flat, and sometimes a cooler beside it. */
+function towel(g, x, y, z, yaw, col, rnd) {
+  g.add(box(0.85, 0.02, 1.7, P(col, 0.95, 0, 0.5), x, y + 0.01, z, yaw));
+  if (rnd() < 0.3) g.add(box(0.5, 0.36, 0.34, P(rnd() < 0.5 ? 0x2a6fd0 : 0xd8352a, 0.5, 0.1, 0.6), x + Math.cos(yaw) * 0.8, y, z - Math.sin(yaw) * 0.8, yaw));
+}
+
+/** Seattle Parks' concrete fire ring: a low ring with char in it. */
+function fireRing(g, x, y, z) {
+  const conc = P(0x8a8a86, 0.9, 0, 0.5), ash = P(0x2a2724, 1, 0, 0.3);
+  const ring = new THREE.Mesh(new THREE.TorusGeometry(0.85, 0.16, 6, 16), conc);
+  ring.rotation.x = Math.PI / 2; ring.position.set(x, y + 0.3, z);
+  g.add(ring);
+  g.add(cyl(0.72, 0.72, 0.36, conc, x, y - 0.05, z, 14));
+  g.add(cyl(0.66, 0.66, 0.02, ash, x, y + 0.31, z, 12));
+  solidCircle(g, x, z, 1.0, 0.5);
+}
+
+/** A sand volleyball court: two posts, a net, and a rope boundary 8 x 16 m. */
+function volleyball(g, x, y, z, yaw) {
+  const post = P(0xe8e8e2, 0.5, 0.3, 0.6), net = P(0x1b1b1b, 0.9, 0, 0.4), rope = P(0x2a6fd0, 0.8, 0, 0.5);
+  const lx = Math.cos(yaw), lz = -Math.sin(yaw), fx = Math.sin(yaw), fz = Math.cos(yaw);
+  for (const sd of [-1, 1]) {
+    const px = x + lx * sd * 4.8, pz = z + lz * sd * 4.8;
+    g.add(cyl(0.06, 0.06, 2.6, post, px, y - 0.2, pz, 6));
+    solidCircle(g, px, pz, 0.15, 2.4);
+  }
+  g.add(box(9.6, 0.9, 0.02, net, x, y + 1.53, z, yaw));
+  g.add(box(9.6, 0.06, 0.03, P(0xf4f4f0, 0.6, 0, 0.6), x, y + 2.43, z, yaw));
+  for (const [du, dv, len, along] of [[0, 8, 8, 0], [0, -8, 8, 0], [4, 0, 16, 1], [-4, 0, 16, 1]]) {
+    g.add(box(along ? 0.05 : len, 0.03, along ? len : 0.05, rope, x + lx * du + fx * dv, y, z + lz * du + fz * dv, yaw));
+  }
+}
+
+/** A lifeguard chair: white A-frame with a seat 2 m up, a red rescue can. */
+function lifeguardChair(g, x, y, z, yaw) {
+  const wood = P(0xf2f2ee, 0.7, 0, 0.6), red = P(0xd8352a, 0.6, 0, 0.6);
+  const lx = Math.cos(yaw), lz = -Math.sin(yaw), fx = Math.sin(yaw), fz = Math.cos(yaw);
+  for (const sd of [-1, 1]) {
+    const bx = x + lx * sd * 0.7, bz = z + lz * sd * 0.7;
+    g.add(strut(V(bx - fx * 0.8, y, bz - fz * 0.8), V(bx - fx * 0.1, y + 2.1, bz - fz * 0.1), 0.06, wood, 5));
+    g.add(strut(V(bx + fx * 0.6, y, bz + fz * 0.6), V(bx + fx * 0.1, y + 2.1, bz + fz * 0.1), 0.06, wood, 5));
+  }
+  g.add(box(1.5, 0.08, 0.7, wood, x, y + 2.1, z, yaw));
+  g.add(box(1.5, 0.7, 0.06, wood, x - fx * 0.32, y + 2.18, z - fz * 0.32, yaw));
+  for (let k = 0; k < 4; k++) g.add(box(1.4, 0.05, 0.08, wood, x - fx * (0.7 - k * 0.1), y + 0.4 + k * 0.45, z - fz * (0.7 - k * 0.1), yaw));
+  g.add(box(0.2, 0.12, 0.8, red, x + lx * 0.5, y + 2.2, z + lz * 0.5, yaw));
+  umbrella(g, x - fx * 0.2, y + 2.1, z - fz * 0.2, 0xd8352a, 0, () => 0.3);
+  solidCircle(g, x, z, 0.9, 2.2);
+}
+
+/** A swim raft: white float with a ladder and a low diving board, on the water. */
+function swimRaft(g, x, y, z, yaw) {
+  const deck = P(0xeeeeea, 0.7, 0, 0.6), drum = P(0x3a3f44, 0.8, 0, 0.4);
+  g.add(box(4.2, 0.35, 4.2, deck, x, y + 0.25, z, yaw));
+  g.add(box(4.0, 0.3, 4.0, drum, x, y - 0.05, z, yaw));
+  const fx = Math.sin(yaw), fz = Math.cos(yaw);
+  g.add(box(0.5, 0.06, 2.4, P(0x2a6fd0, 0.5, 0.1, 0.6), x + fx * 1.4, y + 0.9, z + fz * 1.4, yaw));
+  g.add(box(0.6, 0.35, 0.3, deck, x + fx * 0.6, y + 0.6, z + fz * 0.6, yaw));
+  for (const sd of [-0.35, 0.35]) g.add(strut(V(x - fx * 2.1 + Math.cos(yaw) * sd, y - 0.6, z - fz * 2.1 - Math.sin(yaw) * sd), V(x - fx * 2.1 + Math.cos(yaw) * sd, y + 1.1, z - fz * 2.1 - Math.sin(yaw) * sd), 0.03, P(0xc9cdd1, 0.3, 0.9, 0.8), 5));
+}
+
+/**
+ * The props for every beach: [{ key, g }] in world coordinates. `wl(x, z)`
+ * is the local water surface (null on land). Only DRY sand counts -- the
+ * lot is sand and the ground stands 0.3 m+ over the water beside it -- and
+ * each prop keeps off roads and buildings.
+ */
+/** Show the near-only landmark meshes (the beaches' props) within range of `cam`. */
+export function updateLandmarkRange(root, cam) {
+  for (const n of root.userData.near) {
+    const c = n.s.center, d = n.r + n.s.radius;
+    const dx = cam.x - c.x, dz = cam.z - c.z;
+    n.o.visible = dx * dx + dz * dz < d * d;
+  }
+}
+
+export function beachProps(beaches, city, wl) {
+  const out = [];
+  const SAND = G.LOT_KINDS.indexOf('sand');
+  beaches.forEach((b, bi) => {
+    let cx = 0, cz = 0;
+    for (const [x, z] of b.o) { cx += x; cz += z; }
+    cx /= b.o.length; cz /= b.o.length;
+    // fresh water: the nearest water on the beach's outline stands above the sea
+    let fresh = false;
+    for (const [x, z] of b.o) { const w = wl(x, z); if (w !== null && G.isWater(x, z)) { fresh = w > 1; break; } }
+    const kit = beachKit(b, cx, cz, fresh);
+    // a seeded stream per beach, so the layout is the same every boot
+    let seed = (bi * 9973 + 17) >>> 0;
+    const rnd = () => { seed = (seed * 1664525 + 1013904223) >>> 0; return seed / 4294967296; };
+    const surf = (x, z) => { const w = wl(x, z); return w === null ? 0 : w; };
+    // level: the sand runs up Discovery Park's bluff, and nothing lies on that
+    const level = (x, z) => Math.hypot(G.terrainHeight(x + 2, z) - G.terrainHeight(x - 2, z),
+      G.terrainHeight(x, z + 2) - G.terrainHeight(x, z - 2)) < 4 * 0.2;
+    const dry = (x, z) => G.lotAt(x, z) === SAND && G.terrainHeight(x, z) > surf(x, z) + 0.3 && level(x, z)
+      && !(city && city.onRoad(x, z, 1.5)) && !(city && city.buildingsNear(x, z, 4).some((bd) => {
+        const c = Math.cos(-bd.rot), sn = Math.sin(-bd.rot), dx = x - bd.x, dz = z - bd.z;
+        return Math.abs(dx * c - dz * sn) < bd.w / 2 + 1.5 && Math.abs(dx * sn + dz * c) < bd.d / 2 + 1.5;
+      }));
+    // candidate points: a 2.5 m grid over the beach's box and its 10 m band
+    let x0 = Infinity, x1 = -Infinity, z0 = Infinity, z1 = -Infinity;
+    for (const [x, z] of b.o) { x0 = Math.min(x0, x); x1 = Math.max(x1, x); z0 = Math.min(z0, z); z1 = Math.max(z1, z); }
+    const pts = [];
+    for (let z = z0 - 10; z <= z1 + 10; z += 2.5) for (let x = x0 - 10; x <= x1 + 10; x += 2.5) {
+      if (!dry(x, z)) continue;
+      const sd = G.shoreDist(x, z);
+      if (sd <= 0 || sd > 58) continue;
+      pts.push([x, z, sd]);
+    }
+    if (pts.length < 6) return;
+    const g = new THREE.Group();
+    // which way is the water: down the shore-distance gradient
+    const toWater = (x, z) => {
+      const gx = G.shoreDist(x + 4, z) - G.shoreDist(x - 4, z), gz = G.shoreDist(x, z + 4) - G.shoreDist(x, z - 4);
+      return Math.atan2(-gx, -gz);          // heading that faces the water
+    };
+    const maxSd = pts.reduce((m, p) => Math.max(m, p[2]), 0);
+    const used = [];
+    const free = (x, z, r) => used.every(([ux, uz, ur]) => Math.hypot(ux - x, uz - z) > ur + r);
+    const pick = (filter, r, tries = 40) => {
+      for (let t = 0; t < tries; t++) {
+        const p = pts[Math.floor(rnd() * pts.length)];
+        if (!filter(p) || !free(p[0], p[1], r)) continue;
+        used.push([p[0], p[1], r]);
+        return p;
+      }
+      return null;
+    };
+    const Y = (x, z) => G.terrainHeight(x, z);
+    const dryArea = pts.length * 6.25;
+    // Driftwood above the tideline on the Sound, lying along the shore
+    if (kit === 'sound' || kit === 'alki' || kit === 'golden') {
+      const n = Math.min(60, Math.round(dryArea / 180));
+      for (let i = 0; i < n; i++) {
+        const p = pick((q) => q[2] > maxSd * 0.55, 3.5);
+        if (!p) break;
+        const h = toWater(p[0], p[1]);
+        driftLog(g, p[0], Y(p[0], p[1]), p[1], -h + (rnd() - 0.5) * 0.8, 4 + rnd() * 9, 0.22 + rnd() * 0.3, rnd);
+      }
+    }
+    // Umbrellas and towels, mid-beach, facing the water
+    const people = kit === 'sound' ? Math.min(10, Math.round(dryArea / 900)) : Math.min(36, Math.round(dryArea / 300));
+    for (let i = 0; i < people; i++) {
+      const p = pick((q) => q[2] > 3 && q[2] < maxSd * 0.8, 2.6);
+      if (!p) break;
+      const h = toWater(p[0], p[1]), y = Y(p[0], p[1]);
+      if (rnd() < 0.7) umbrella(g, p[0], y, p[1], BEACH_UMBRELLA[Math.floor(rnd() * BEACH_UMBRELLA.length)], h + Math.PI, rnd);
+      const k = 1 + Math.floor(rnd() * 2);
+      for (let t = 0; t < k; t++) {
+        const off = (t - (k - 1) / 2) * 1.1;
+        towel(g, p[0] + Math.cos(h) * off + Math.sin(h) * 0.9, y, p[1] - Math.sin(h) * off + Math.cos(h) * 0.9, h, BEACH_TOWEL[Math.floor(rnd() * BEACH_TOWEL.length)], rnd);
+      }
+    }
+    // Courts and fire pits at their mapped places, along the line OSM gives,
+    // each nudged onto the nearest dry sand
+    const along = (spec, fn) => {
+      const [ax, az] = G.toWorld(spec.from[0], spec.from[1]), [bx, bz] = G.toWorld(spec.to[0], spec.to[1]);
+      for (let i = 0; i < spec.n; i++) {
+        const t = spec.n > 1 ? i / (spec.n - 1) : 0.5;
+        let x = ax + (bx - ax) * t, z = az + (bz - az) * t;
+        if (!dry(x, z)) {
+          let best = null, bd = Infinity;
+          for (const p of pts) { const d = Math.hypot(p[0] - x, p[1] - z); if (d < bd) { bd = d; best = p; } }
+          if (!best || bd > 25) continue;
+          [x, z] = best;
+        }
+        used.push([x, z, 5]);
+        fn(x, z, Math.atan2(bx - ax, bz - az));
+      }
+    };
+    if (BEACH_COURTS[kit]) along(BEACH_COURTS[kit], (x, z, h) => volleyball(g, x, Y(x, z), z, h + Math.PI / 2));
+    if (BEACH_FIRES[kit]) along(BEACH_FIRES[kit], (x, z) => fireRing(g, x, Y(x, z), z));
+    else if (kit === 'alki') {
+      // Alki has fire rings too, first come; no count is published
+      for (let i = 0; i < 8; i++) {
+        const p = pick((q) => q[2] > maxSd * 0.45, 3);
+        if (p) fireRing(g, p[0], Y(p[0], p[1]), p[1]);
+      }
+    }
+    if (kit === 'lake' || kit === 'lakeNoGuard') {
+      const p = pick((q) => q[2] > 4, 3, 80);
+      if (p) {
+        const h = toWater(p[0], p[1]);
+        if (kit === 'lake') lifeguardChair(g, p[0], Y(p[0], p[1]), p[1], h);
+        // the raft 30-40 m out, where it is deep enough to dive
+        for (let d = 30; d <= 55; d += 5) {
+          const rx = p[0] + Math.sin(h) * d, rz = p[1] + Math.cos(h) * d, w = wl(rx, rz);
+          if (w !== null && G.isWater(rx, rz) && w - G.terrainHeight(rx, rz) > 2.5) { swimRaft(g, rx, w, rz, h); break; }
+        }
+      }
+    }
+    if (g.children.length) out.push({ key: `beach${bi}`, name: b.name, kit, g, x: cx, z: cz });
+  });
+  return out;
+}
+
 export const MARINAS = [
   { name: 'Renton Seaplane Base', x: 9037, z: 12324, fleet: ['floatplane', 'floatplane', 'floatplane', 'boat'], seaplanes: true },
   { name: 'Seattle Seaplanes', x: 820, z: -2242, fleet: ['floatplane', 'floatplane', 'jetski'], seaplanes: true },
@@ -2139,14 +2382,21 @@ export const LANDMARK_CLEAR = {
   // The Main Arcade's two OSM ways, which the model replaces; the Market's
   // own node is 220 m up the bluff from its sign.
   market: [[96.5, 99.5, 6], [143.5, 154.9, 6], [152.5, 141, 10], [122.5, 114.7, 10], [94.9, 85.5, 8]],
-  aquarium: 48, ferry: 72, library: 48, pier: 52, gasworks: 95, troll: 18,
-  locks: 75, kerry: 30, ferriswheelPier: 42, convention: 62,
+  aquarium: 48, ferry: 72, library: 48, pier: 52, troll: 18,
+  // the park, and the Play Barn and picnic shelter's own OSM boxes, which the
+  // model replaces (they stand ~110 m east of the park's point)
+  gasworks: [[0, 0, 95], [101, -24, 30], [93, -45, 28]],
+  // the Statue of Liberty stands 1.1 km from Alki Beach Park's point
+  locks: 75, kerry: 30, ferriswheelPier: [[-818.8, 759.8, 5]], convention: 62,
   stadiumF: 135, stadiumB: 128, stadiumH: 122, smith: 6,
   // the tower/apron cluster only -- the runway lies over real open ground and
   // the hangars beside it are real buildings that must stay
   // the ring and its promenade, off the OSM point (the circle's centre is
   // 16 m north-west of it: -x is west, -z north)
   airport: 90, bellevueDT: [[-13.2, -8.5, 110]],
+  westPoint: 10, alkiPoint: 9, lenin: 3, hammeringMan: 3, eagle: 8, echo: 5, eraser: 3,
+  waterTower: 11, blackSun: 4, conservatory: 34, pergola: 11, totem: 2, changingForm: 3, daybreak: 30,
+  rocket: 0.1,   // on a building's corner: that building stays
 };
 
 /**
@@ -2259,12 +2509,570 @@ function bellevueDT() {
   return g;
 }
 
+// ---------------------------------------------------------------------------
+// THE SECOND PASS OF LANDMARKS (v118), each placed from its OSM node
+// (geo.js EXTRA_LANDMARKS) and built to its published dimensions. `rot` in a
+// builder's userData turns it (front = local +z): -pi/2 faces west, pi north.
+
+const ft = (f) => f * 0.3048;
+const HEADING = { west: -Math.PI / 2, north: Math.PI, east: Math.PI / 2, south: 0 };
+
+/** A gabled roof over a w x d plan (ridge along z), eaves at y0, rise r. */
+function gable(g, w, d, y0, r, m, x = 0, z = 0) {
+  const hw = w / 2 + 0.3, hd = d / 2 + 0.3;
+  const pos = [
+    -hw, y0, -hd, 0, y0 + r, -hd, 0, y0 + r, hd, -hw, y0, -hd, 0, y0 + r, hd, -hw, y0, hd,
+    hw, y0, -hd, hw, y0, hd, 0, y0 + r, hd, hw, y0, -hd, 0, y0 + r, hd, 0, y0 + r, -hd,
+    -hw, y0, -hd, hw, y0, -hd, 0, y0 + r, -hd, -hw, y0, hd, 0, y0 + r, hd, hw, y0, hd,
+  ];
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  geo.computeVertexNormals();
+  const o = new THREE.Mesh(geo, m);
+  o.material.side = THREE.FrontSide;
+  o.position.set(x, 0, z);
+  g.add(o);
+}
+
+// West Point Light, Discovery Park (1881; historic-structures.com, HistoryLink
+// 4183, Wikipedia): a square stuccoed-brick tower 10 ft a side, 23 ft tall, a
+// bracketed catwalk at 19 ft, an octagonal iron lantern with a ball
+// ventilator. White walls, red roofs, grey-green lantern and trim, a dark
+// blue-grey base. The fog-signal building is on its west face, the workshop on
+// its east -- the tower sits between them, 16 x 6 m in all, E-W, at the end
+// of the sandy point.
+function westPoint() {
+  const g = new THREE.Group();
+  const white = P(0xf1efe8, 0.75, 0, 0.6), red = P(0xa8322a, 0.7, 0, 0.55), trim = P(0x5e7a6c, 0.55, 0.3, 0.6);
+  const base = P(0x3e4a55, 0.85, 0, 0.5);
+  const T = ft(10), top = ft(19);
+  g.add(box(16.4, 0.7, 6.4, base, 0, -0.3, 0));
+  g.add(box(T, top, T, white, 0, 0.4, 0));
+  // the catwalk on its brackets, and its rail
+  g.add(box(T + 1.3, 0.14, T + 1.3, trim, 0, top + 0.4, 0));
+  for (const [sx, sz] of [[1, 1], [-1, 1], [1, -1], [-1, -1]]) g.add(strut(V(sx * T / 2, top - 0.5, sz * T / 2), V(sx * (T / 2 + 0.55), top + 0.4, sz * (T / 2 + 0.55)), 0.05, trim, 4));
+  for (let k = 0; k < 16; k++) {
+    const a = (k / 16) * Math.PI * 2, r = (T + 1.2) / 2 / Math.max(Math.abs(Math.cos(a)), Math.abs(Math.sin(a)));
+    g.add(cyl(0.025, 0.025, 1.0, trim, Math.cos(a) * r, top + 0.5, Math.sin(a) * r, 4));
+  }
+  const railRing = new THREE.Mesh(new THREE.TorusGeometry((T + 1.2) / 2 * 1.12, 0.03, 4, 4), trim);
+  railRing.rotation.set(Math.PI / 2, 0, Math.PI / 4); railRing.position.y = top + 1.5; g.add(railRing);
+  // octagonal lantern: glass between iron mullions, a domed roof, the ball
+  const lamp = P(0xfff4d8, 0.3, 0, 1, { emissive: 0xfff0c8, emissiveIntensity: 0.7, key: 'wpLamp' });
+  g.add(cyl(0.95, 0.95, 1.35, lamp, 0, top + 0.55, 0, 8));
+  for (let k = 0; k < 8; k++) { const a = (k / 8) * Math.PI * 2 + Math.PI / 8; g.add(cyl(0.04, 0.04, 1.4, trim, Math.cos(a) * 0.97, top + 0.55, Math.sin(a) * 0.97, 4)); }
+  g.add(cyl(0.2, 1.1, 0.75, trim, 0, top + 1.9, 0, 8));
+  const ball = new THREE.Mesh(new THREE.SphereGeometry(0.2, 8, 6), trim); ball.position.y = top + 2.85; g.add(ball);
+  // fog-signal building to the west (gabled, arched windows, "1881"), workshop east
+  g.add(box(6.2, 3.3, 5.6, white, -4.7, 0.4, 0));
+  gable(g, 6.2, 5.6, 3.7, 1.6, red, -4.7, 0);
+  g.add(box(3.6, 3.0, 4.4, white, 3.8, 0.4, 0));
+  gable(g, 3.6, 4.4, 3.4, 1.3, red, 3.8, 0);
+  const s = sign('1881', 1.0, 0.36, null, '#5e7a6c', { px: 60 });
+  s.position.set(-7.85, 3.1, 0); s.rotation.y = -Math.PI / 2; g.add(s);
+  for (const x of [-6.2, -3.2]) for (const sd of [-1, 1]) g.add(box(0.9, 1.3, 0.05, trim, x, 1.4, sd * 2.83));
+  solidBox(g, 0, 0, 8.2, 3.2, 0, 7);
+  g.userData.rot = 0;
+  return g;
+}
+
+// Alki Point Light (1913; Wikipedia, HistoryLink 4197, lighthousefriends): a
+// 37 ft octagonal tower with lantern and gallery, focal height 39 ft,
+// attached to a one-storey fog-signal building; white, red roofs, dark
+// lantern, green window trim. Faces the Sound, west.
+function alkiPoint() {
+  const g = new THREE.Group();
+  const white = P(0xf2f0ea, 0.75, 0, 0.6), red = P(0xa8322a, 0.7, 0, 0.55), black = P(0x23262a, 0.5, 0.4, 0.6), green = P(0x3d6b4f, 0.6, 0, 0.55);
+  const H = ft(37);
+  g.add(box(12.5, 0.6, 9, P(0x9a9892, 0.9, 0, 0.5), 0, -0.3, 0));
+  // tower on the building's west end
+  g.add(cyl(1.35, 1.6, H - 3.2, white, -3.6, 0.3, 0, 8));
+  g.add(cyl(2.05, 2.05, 0.18, black, -3.6, H - 2.9, 0, 8));
+  const lamp = P(0xfff4d8, 0.3, 0, 1, { emissive: 0xfff0c8, emissiveIntensity: 0.7, key: 'wpLamp' });
+  g.add(cyl(1.0, 1.0, 1.4, lamp, -3.6, H - 2.7, 0, 8));
+  for (let k = 0; k < 8; k++) { const a = (k / 8) * Math.PI * 2 + Math.PI / 8; g.add(cyl(0.05, 0.05, 1.45, black, -3.6 + Math.cos(a) * 1.02, H - 2.7, Math.sin(a) * 1.02, 4)); }
+  g.add(cyl(0.2, 1.15, 0.9, black, -3.6, H - 1.3, 0, 8));
+  for (let k = 0; k < 20; k++) { const a = (k / 20) * Math.PI * 2; g.add(cyl(0.025, 0.025, 0.9, black, -3.6 + Math.cos(a) * 1.95, H - 2.72, Math.sin(a) * 1.95, 4)); }
+  // the fog-signal building, windows trimmed green
+  g.add(box(8.5, 3.6, 6.4, white, 1.2, 0.3, 0));
+  gable(g, 8.5, 6.4, 3.9, 1.5, red, 1.2, 0);
+  for (const x of [-1.2, 1.2, 3.6]) for (const sd of [-1, 1]) g.add(box(1.0, 1.4, 0.05, green, x, 1.5, sd * 3.23));
+  solidCircle(g, -3.6, 0, 1.8, H);
+  solidBox(g, 1.2, 0, 4.3, 3.3, 0, 4);
+  g.userData.rot = 0;
+  return g;
+}
+
+// The Statue of Liberty at Alki (1952, recast in bronze 2007; Wikipedia): a
+// 7.5 ft copper-green figure on a 4.5 ft pedestal, facing north over Elliott
+// Bay, in its 2008 plaza. It used to stand 12 m tall at Alki Beach Park's
+// centroid, a kilometre from where it is.
+function statueLiberty() {
+  const g = new THREE.Group();
+  const cu = P(0x6aa597, 0.55, 0.35, 0.6), stone = P(0xb9b3a6, 0.9, 0, 0.5);
+  const [ax, az] = G.toWorld(47.579376, -122.410632);
+  g.userData.at = [ax, az, G.terrainHeight(ax, az)];
+  g.add(cyl(4.2, 4.2, 0.15, P(0x9d978b, 0.9, 0, 0.5), 0, -0.05, 0, 20));
+  g.add(box(1.5, ft(4.5), 1.5, stone, 0, 0, 0));
+  g.add(box(1.8, 0.2, 1.8, stone, 0, ft(4.5), 0));
+  const y0 = ft(4.5) + 0.2, S = ft(7.5) / 2.3;
+  // robe to the waist, torso, head and crown, raised torch arm, tablet
+  g.add(cyl(0.3 * S, 0.42 * S, 1.2 * S, cu, 0, y0, 0, 10));
+  g.add(cyl(0.26 * S, 0.3 * S, 0.6 * S, cu, 0, y0 + 1.2 * S, 0, 10));
+  const head = new THREE.Mesh(new THREE.SphereGeometry(0.16 * S, 10, 8), cu); head.position.set(0, y0 + 1.97 * S, 0.02); g.add(head);
+  for (let k = 0; k < 7; k++) { const a = -1.2 + k * 0.4; g.add(strut(V(Math.sin(a) * 0.12 * S, y0 + 2.07 * S, Math.cos(a) * 0.12 * S), V(Math.sin(a) * 0.3 * S, y0 + 2.22 * S, Math.cos(a) * 0.3 * S), 0.025 * S, cu, 3)); }
+  g.add(strut(V(0.22 * S, y0 + 1.7 * S, 0), V(0.3 * S, y0 + 2.45 * S, 0.05 * S), 0.07 * S, cu, 6));
+  g.add(cyl(0.1 * S, 0.06 * S, 0.22 * S, P(0xe6b54a, 0.35, 0.7, 0.8), 0.31 * S, y0 + 2.45 * S, 0.05 * S, 8));
+  const flame = new THREE.Mesh(new THREE.ConeGeometry(0.08 * S, 0.2 * S, 6), P(0xf2c14e, 0.3, 0.8, 0.9));
+  flame.position.set(0.31 * S, y0 + 2.75 * S, 0.05 * S); g.add(flame);
+  g.add(box(0.28 * S, 0.4 * S, 0.06 * S, cu, -0.26 * S, y0 + 1.3 * S, 0.12 * S, 0.3));
+  solidBox(g, 0, 0, 0.8, 0.8, 0, 2.6);
+  g.userData.rot = HEADING.north;
+  return g;
+}
+
+// Gas Works Park (Wikipedia; HistoryLink 20978; Landmarks Board 2025): the
+// Seattle Gas Light Co. plant, 1906-56. Six generator towers in a N-S line
+// (OSM ways 191328724-736) -- the 1937-38 pair at 80 and 75 ft, nearest the
+// water; four of 1947 at 50 ft, 22 ft across -- steel shells on brick,
+// rusted, with catwalks on three levels and the plant's pipework, inside a
+// chain-link fence. East of them the exhauster-compressor house, now the
+// Play Barn, with its machinery painted in reds, oranges and blues, and the
+// boiler house, now the picnic shelter. Kite Hill (45 ft) carries the 1978
+// sundial, an analemmatic dial ~13 m across where you are the gnomon.
+function gasworks(l) {
+  const g = new THREE.Group();
+  g.userData.worldAligned = true;
+  const px = l.p ? l.p[0] : l.x, pz = l.p ? l.p[1] : l.z;
+  const W = (lat, lon) => { const [x, z] = G.toWorld(lat, lon); return [x - px, z - pz]; };
+  const rust = P(0x7a4128, 0.85, 0.35, 0.5), rust2 = P(0x5e3322, 0.9, 0.3, 0.45), steel = P(0x3b3a38, 0.7, 0.5, 0.55);
+  const Y0 = (x, z) => G.terrainHeight(x + px, z + pz) - G.terrainHeight(px, pz);
+  // the towers, south (nearest the water) to north
+  const [sx, sz] = W(47.64491, -122.33476), [nx, nz] = W(47.64543, -122.33476);
+  const heights = [ft(80), ft(75), ft(50), ft(50), ft(50), ft(50)];
+  const R = ft(22) / 2;
+  const towers = [];
+  for (let i = 0; i < 6; i++) {
+    const t = i / 5, x = sx + (nx - sx) * t, z = sz + (nz - sz) * t, y = Y0(x, z), H = heights[i];
+    towers.push([x, z, y, H]);
+    g.add(cyl(R, R * 1.04, H * 0.82, rust, x, y, z, 18));
+    g.add(cyl(R * 0.55, R, H * 0.18, rust2, x, y + H * 0.82, z, 18));          // the conical head
+    g.add(cyl(0.45, 0.45, 1.6, rust2, x, y + H, z, 8));                        // the stack
+    for (let b = 1; b < 5; b++) g.add(cyl(R * 1.03, R * 1.03, 0.14, rust2, x, y + (H * 0.82 * b) / 5, z, 18));
+    // a caged ladder up the east face
+    g.add(box(0.5, H * 0.8, 0.08, steel, x + R + 0.3, y + 0.5, z));
+    solidCircle(g, x, z, R + 0.2, H);
+  }
+  // catwalks on three levels, tower to tower, and the pipes along the tops
+  for (const f of [0.28, 0.52, 0.74]) {
+    for (let i = 0; i < 5; i++) {
+      const [ax, az, ay, ah] = towers[i], [bx, bz, by, bh] = towers[i + 1];
+      const y = Math.max(ay, by) + Math.min(ah, bh) * f;
+      g.add(box(1.1, 0.12, Math.hypot(bx - ax, bz - az), steel, (ax + bx) / 2 + R * 0.9, y, (az + bz) / 2, Math.atan2(bx - ax, bz - az)));
+      g.add(box(0.05, 1.0, Math.hypot(bx - ax, bz - az), steel, (ax + bx) / 2 + R * 0.9 + 0.55, y, (az + bz) / 2, Math.atan2(bx - ax, bz - az)));
+    }
+  }
+  for (let i = 0; i < 5; i++) {
+    const [ax, az, ay, ah] = towers[i], [bx, bz, by, bh] = towers[i + 1];
+    const y = Math.min(ay + ah, by + bh) * 0.9;
+    g.add(strut(V(ax - R * 0.4, y, az), V(bx - R * 0.4, y, bz), 0.55, rust2, 8));
+  }
+  // the scrubbers and absorbers west of the line, piped to it
+  for (const [ox, oz, h, r] of [[-11, 6, ft(68), ft(12) / 2], [-11, 22, ft(48), 2.2], [-12, 40, ft(40), 2.0]]) {
+    const x = sx + ox, z = sz - oz, y = Y0(x, z);
+    g.add(cyl(r, r, h, rust, x, y, z, 14));
+    g.add(strut(V(x, y + h * 0.8, z), V(sx - R * 0.4, y + h * 0.8, z), 0.35, rust2, 6));
+    solidCircle(g, x, z, r + 0.2, h);
+  }
+  // the chain-link fence round the compound
+  {
+    const x0 = sx - 18, x1 = sx + 9, z0 = nz - 9, z1 = sz + 9;
+    const post = P(0x8e9398, 0.5, 0.6, 0.6);
+    const mesh = P(0x7e848a, 0.6, 0.6, 0.5, { transparent: true, opacity: 0.35, depthWrite: false, key: 'chainlink' });
+    for (const [a, b] of [[[x0, z0], [x1, z0]], [[x1, z0], [x1, z1]], [[x1, z1], [x0, z1]], [[x0, z1], [x0, z0]]]) {
+      const L = Math.hypot(b[0] - a[0], b[1] - a[1]), n = Math.ceil(L / 3);
+      for (let k = 0; k <= n; k++) { const x = a[0] + (b[0] - a[0]) * (k / n), z = a[1] + (b[1] - a[1]) * (k / n); g.add(cyl(0.05, 0.05, 2.4, post, x, Y0(x, z), z, 5)); }
+      const mx = (a[0] + b[0]) / 2, mz = (a[1] + b[1]) / 2;
+      const ry = Math.abs(b[1] - a[1]) > Math.abs(b[0] - a[0]) ? Math.PI / 2 : 0;
+      g.add(box(L, 2.2, 0.03, mesh, mx, Y0(mx, mz), mz, ry));
+      g.add(box(L, 0.05, 0.05, post, mx, Y0(mx, mz) + 2.3, mz, ry));
+      solidBox(g, mx, mz, Math.abs(b[0] - a[0]) / 2 + 0.1, Math.abs(b[1] - a[1]) / 2 + 0.1, 0, 2.4);
+    }
+  }
+  // The Play Barn (exhauster-compressor house) and the picnic shelter
+  // (boiler house): open sides under a truss roof, the machinery kept and
+  // painted. OSM ways 52137309 / 52137316, ~55 x 20 and 52 x 18 m, E-W.
+  const shed = (lat, lon, L, D, painted) => {
+    const [x, z] = W(lat, lon), y = Y0(x, z);
+    g.add(box(L, 0.3, D, P(0x8f8a82, 0.9, 0, 0.5), x, y - 0.2, z));
+    for (let k = 0; k <= Math.round(L / 6); k++) for (const sd of [-1, 1]) {
+      const cx = x - L / 2 + (k * L) / Math.round(L / 6);
+      g.add(box(0.45, 6.2, 0.45, P(0x6d3a2a, 0.8, 0.2, 0.5), cx, y, z + sd * (D / 2 - 0.3)));
+      solidCircle(g, cx, z + sd * (D / 2 - 0.3), 0.35, 6);
+    }
+    const roofM = P(0x8b3b2a, 0.75, 0.2, 0.5);
+    const rg = new THREE.Group(); gable(rg, D, L, 6.2, 3.2, roofM, 0, 0); rg.rotation.y = Math.PI / 2; rg.position.set(x, y, z); g.add(rg);
+    if (!painted) return;
+    // the painted machinery: compressor bodies, a great red flywheel, pipes
+    const cols = [0xd8352a, 0xf07a1c, 0xf2c32a, 0x2a6fd0, 0x7a3fc2, 0x2e9e6a];
+    for (let k = 0; k < 6; k++) {
+      const cx = x - L / 2 + 6 + k * (L - 12) / 5;
+      g.add(box(3.6, 2.4, 2.2, P(cols[k], 0.55, 0.3, 0.6), cx, y, z - 2));
+      g.add(cyl(0.45, 0.45, 3.2, P(cols[(k + 2) % 6], 0.55, 0.3, 0.6), cx, y + 2.4, z - 2, 10));
+      g.add(strut(V(cx, y + 3.2, z - 2), V(cx, y + 3.2, z + 3), 0.22, P(cols[(k + 3) % 6], 0.55, 0.3, 0.6), 6));
+      solidBox(g, cx, z - 2, 1.9, 1.2, 0, 2.6);
+    }
+    const fly = new THREE.Mesh(new THREE.TorusGeometry(2.1, 0.28, 8, 24), P(0xd8352a, 0.5, 0.3, 0.6));
+    fly.position.set(x + L / 2 - 5, y + 2.4, z + 3); g.add(fly);
+    g.add(strut(V(x + L / 2 - 5, y + 2.4, z + 2.6), V(x + L / 2 - 5, y + 2.4, z + 3.4), 0.3, P(0x2a6fd0, 0.5, 0.3, 0.6), 8));
+    solidCircle(g, x + L / 2 - 5, z + 3, 1.2, 4.6);
+  };
+  shed(47.645891, -122.333404, 55, 20, true);
+  shed(47.646075, -122.333508, 52, 18, false);
+  // the sundial on Kite Hill: a 13 m ellipse of mosaic, hour stones round it
+  {
+    const [x, z] = W(47.645321, -122.336361), y = Y0(x, z);
+    const dial = atlas.panel(13, 11, 40, (c, Wd, Hd) => {
+      c.fillStyle = '#b9a88c'; c.beginPath(); c.ellipse(Wd / 2, Hd / 2, Wd / 2 - 2, Hd / 2 - 2, 0, 0, Math.PI * 2); c.fill();
+      const cols = ['#3d6b8c', '#c9a13a', '#8c3d3d', '#3d8c5e', '#e8e2d0', '#6b4a8c'];
+      for (let k = 0; k < 220; k++) {
+        const a = (k * 2.39996) % (Math.PI * 2), r = Math.sqrt(k / 220);
+        c.fillStyle = cols[k % cols.length];
+        c.beginPath(); c.arc(Wd / 2 + Math.cos(a) * r * (Wd / 2 - 8), Hd / 2 + Math.sin(a) * r * (Hd / 2 - 8), 3 + (k % 4), 0, Math.PI * 2); c.fill();
+      }
+      c.strokeStyle = '#4a3b2a'; c.lineWidth = 5;
+      c.beginPath(); c.ellipse(Wd / 2, Hd / 2, Wd / 2 - 14, Hd / 2 - 14, 0, 0, Math.PI * 2); c.stroke();
+    });
+    dial.rotation.x = -Math.PI / 2; dial.position.set(x, y + 0.06, z);
+    g.add(dial);
+    for (let k = 0; k < 13; k++) { const a = Math.PI + (k / 12) * Math.PI; g.add(box(0.5, 0.3, 0.5, P(0x7a6a58, 0.9, 0, 0.5), x + Math.cos(a) * 6.2, y, z + Math.sin(a) * 5.2)); }
+  }
+  return g;
+}
+
+// Fremont Rocket (1994; Wikipedia, roadsideamerica): a 53 ft Cold War rocket
+// fuselage built from a C-119's tail boom, mounted nose-up on the corner of
+// Evanston Ave N and N 35th St, the Fremont crest and "De Libertas Quirkas".
+function rocket() {
+  const g = new THREE.Group();
+  const body = P(0x3a3d40, 0.45, 0.6, 0.7), trimC = P(0xc9ccd0, 0.35, 0.8, 0.8), red = P(0xb5342c, 0.5, 0.2, 0.6);
+  const H = ft(53);
+  g.add(box(3.4, 1.2, 3.4, P(0x8f8c85, 0.9, 0, 0.5), 0, 0, 0));
+  g.add(cyl(0.9, 0.9, H * 0.72, body, 0, 1.2, 0, 16));
+  g.add(cyl(0.05, 0.9, H * 0.22, body, 0, 1.2 + H * 0.72, 0, 16));
+  for (const f of [0.18, 0.45, 0.7]) g.add(cyl(0.93, 0.93, 0.25, trimC, 0, 1.2 + H * f, 0, 16));
+  for (let k = 0; k < 4; k++) {
+    const a = (k / 4) * Math.PI * 2;
+    const fin = new THREE.Mesh(new THREE.BoxGeometry(0.12, 3.6, 2.0), red);
+    fin.position.set(Math.cos(a) * 1.5, 2.4, Math.sin(a) * 1.5); fin.rotation.y = -a; g.add(fin);
+  }
+  const s = sign('F\nR\nE\nM\nO\nN\nT', 0.9, 7.5, null, '#e8e2d0', { px: 40, fill: 0.9 });
+  s.position.set(0, 7.5, 0.93); g.add(s);
+  solidCircle(g, 0, 0, 1.8, H);
+  g.userData.rot = HEADING.south;
+  return g;
+}
+
+// Lenin in Fremont (Emil Venkov; Wikipedia): 16 ft of bronze, the figure
+// striding out of a ring of flames and guns, on a low plinth.
+function lenin() {
+  const g = new THREE.Group();
+  const br = P(0x4a3a2a, 0.45, 0.7, 0.6);
+  const S = ft(16) / 4.9;
+  g.add(box(3.2, 0.9, 3.2, P(0x8f8c85, 0.9, 0, 0.5), 0, 0, 0));
+  const y0 = 0.9;
+  for (let k = 0; k < 9; k++) {
+    const a = (k / 9) * Math.PI * 2, r = 0.9 * S;
+    const f = new THREE.Mesh(new THREE.ConeGeometry(0.28 * S, (1.1 + (k % 3) * 0.4) * S, 5), br);
+    f.position.set(Math.cos(a) * r, y0 + 0.6 * S, Math.sin(a) * r); f.rotation.z = Math.cos(a) * 0.35; f.rotation.x = -Math.sin(a) * 0.35; g.add(f);
+  }
+  for (const sd of [-1, 1]) g.add(strut(V(sd * 0.25 * S, y0, sd * 0.2 * S), V(sd * 0.18 * S, y0 + 2.0 * S, 0), 0.19 * S, br, 7));
+  g.add(cyl(0.42 * S, 0.62 * S, 1.2 * S, br, 0, y0 + 1.3 * S, 0, 10));   // the coat
+  g.add(cyl(0.38 * S, 0.42 * S, 1.0 * S, br, 0, y0 + 2.5 * S, 0, 10));
+  const head = new THREE.Mesh(new THREE.SphereGeometry(0.28 * S, 10, 8), br); head.position.set(0, y0 + 3.75 * S, 0.05 * S); g.add(head);
+  g.add(strut(V(0.4 * S, y0 + 3.3 * S, 0), V(0.75 * S, y0 + 2.4 * S, 0.5 * S), 0.12 * S, br, 6));
+  g.add(strut(V(-0.4 * S, y0 + 3.3 * S, 0), V(-0.6 * S, y0 + 2.3 * S, -0.1 * S), 0.12 * S, br, 6));
+  solidCircle(g, 0, 0, 1.6, 5);
+  g.userData.rot = HEADING.east;
+  return g;
+}
+
+// Hammering Man (Jonathan Borofsky, 1992; Wikipedia): 48 ft of flat black
+// steel, 7 in thick, a worker in profile whose motorised arm swings his hammer
+// four times a minute, in front of the Seattle Art Museum on 1st Ave.
+function hammeringMan() {
+  const g = new THREE.Group();
+  const black = P(0x151617, 0.6, 0.3, 0.45);
+  const H = ft(48), k = H / 14.6;
+  const sh = new THREE.Shape();
+  const pts = [[-0.6, 0], [-0.2, 0], [0.1, 3.4], [0.4, 0], [0.8, 0], [0.55, 4.6], [0.7, 7.2], [0.9, 9.4], [0.55, 11.8],
+    [0.6, 12.4], [0.95, 13.2], [0.75, 14.2], [0.2, 14.6], [-0.35, 14.2], [-0.4, 13.0], [-0.2, 12.4], [-0.55, 11.6],
+    [-0.9, 9.0], [-0.8, 6.8], [-0.7, 4.6]];
+  sh.moveTo(pts[0][0] * k, pts[0][1] * k);
+  for (const [x, y] of pts.slice(1)) sh.lineTo(x * k, y * k);
+  const geo = new THREE.ExtrudeGeometry(sh, { depth: ft(7 / 12), bevelEnabled: false });
+  geo.rotateY(Math.PI / 2);
+  g.add(new THREE.Mesh(geo, black));
+  // the arm and hammer, raised mid-swing
+  g.add(strut(V(0, 11.2 * k, 0.6 * k), V(0, 12.4 * k, 3.4 * k), 0.28 * k, black, 6));
+  g.add(box(0.3, 0.6 * k, 1.4 * k, black, 0, 12.1 * k, 3.6 * k));
+  solidBox(g, 0, 0, 0.5, 0.8, 0, 3);
+  // broadside to 1st Ave (the downtown grid, ~32 deg west of north), so the
+  // avenue sees his profile; he faces up it, toward Pike Place
+  g.userData.rot = 0.558 - Math.PI;
+  return g;
+}
+
+// The Eagle (Alexander Calder, 1971; Olympic Sculpture Park): red-painted
+// steel plates, 465 x 390 x 390 in (11.8 m), on splayed legs.
+function eagle() {
+  const g = new THREE.Group();
+  const red = P(0xc0281f, 0.45, 0.25, 0.6);
+  const plate = (pts, depth, rx, ry, x, y, z) => {
+    const sh = new THREE.Shape(); sh.moveTo(pts[0][0], pts[0][1]); for (const p of pts.slice(1)) sh.lineTo(p[0], p[1]);
+    const o = new THREE.Mesh(new THREE.ExtrudeGeometry(sh, { depth, bevelEnabled: false }), red);
+    o.rotation.set(rx, ry, 0); o.position.set(x, y, z); g.add(o);
+  };
+  plate([[-5, 0], [-3.4, 0], [0, 7.2], [3.4, 0], [5, 0], [0.8, 9.2], [-0.8, 9.2]], 0.12, 0, 0, 0, 0, -0.06);
+  plate([[-4.2, 0], [-2.8, 0], [0, 6.2], [2.8, 0], [4.2, 0], [0.5, 7.6], [-0.5, 7.6]], 0.12, 0, Math.PI / 2, 0.06, 0, 0);
+  plate([[0, 8.2], [4.8, 11.8], [3.2, 9.2], [0.4, 7.4]], 0.1, 0, 0.5, 0, 0, 0);
+  plate([[0, 8.2], [-4.2, 11.2], [-2.8, 8.8], [-0.4, 7.4]], 0.1, 0, -0.6, 0, 0, 0);
+  for (const [x, z] of [[-4.2, 0], [4.2, 0], [0, -3.5], [0, 3.5]]) solidCircle(g, x, z, 0.8, 4);
+  return g;
+}
+
+// Echo (Jaume Plensa, 2011; Olympic Sculpture Park): a 46 ft head of a
+// girl, eyes closed, elongated and flattened front to back, white marble
+// dust on resin; she faces west, to the Sound.
+function echo() {
+  const g = new THREE.Group();
+  const marble = P(0xf2f0ea, 0.55, 0, 0.7);
+  const H = ft(46);
+  const head = new THREE.Mesh(new THREE.SphereGeometry(1, 28, 20), marble);
+  head.scale.set(2.4, H / 2 * 0.92, 1.55); head.position.y = H / 2 * 0.92 + 0.6; g.add(head);
+  const nose = new THREE.Mesh(new THREE.SphereGeometry(1, 10, 8), marble);
+  nose.scale.set(0.45, 1.5, 0.6); nose.position.set(0, H * 0.55, 1.4); g.add(nose);
+  for (const sd of [-1, 1]) {
+    const lid = new THREE.Mesh(new THREE.SphereGeometry(1, 10, 6), P(0xd9d6ce, 0.6, 0, 0.6));
+    lid.scale.set(0.75, 0.12, 0.3); lid.position.set(sd * 0.95, H * 0.66, 1.25); g.add(lid);
+  }
+  const lips = new THREE.Mesh(new THREE.SphereGeometry(1, 10, 6), P(0xe4e0d8, 0.6, 0, 0.6));
+  lips.scale.set(0.6, 0.18, 0.3); lips.position.set(0, H * 0.35, 1.3); g.add(lips);
+  g.add(cyl(2.2, 2.4, 0.6, P(0x9d978b, 0.9, 0, 0.5), 0, 0, 0, 20));
+  solidCircle(g, 0, 0, 2.3, H);
+  g.userData.rot = HEADING.west;
+  return g;
+}
+
+// Typewriter Eraser, Scale X (Oldenburg and van Bruggen; at Seattle Center
+// since 2016, beside MoPOP): 19 ft 4 in of painted steel and fiberglass -- a
+// pink eraser wheel tilted on its edge, its blue bristles sweeping up.
+function eraser() {
+  const g = new THREE.Group();
+  const pink = P(0xe597a6, 0.5, 0.1, 0.6), blue = P(0x2f6fb8, 0.5, 0.2, 0.6), steel = P(0xb8bdc2, 0.35, 0.8, 0.8);
+  const disc = new THREE.Mesh(new THREE.CylinderGeometry(1.45, 1.45, 0.5, 28), pink);
+  disc.rotation.set(Math.PI / 2 - 0.35, 0, 0.25); disc.position.set(0, 1.3, 0); g.add(disc);
+  g.add(strut(V(0, 1.4, 0), V(0.4, 3.4, -0.5), 0.12, steel, 8));
+  for (let k = 0; k < 22; k++) {
+    const a = -0.9 + (k / 21) * 1.8;
+    g.add(strut(V(0.4, 3.4, -0.5), V(0.4 + Math.sin(a) * 1.5, 3.4 + 2.5 * Math.cos(a * 0.7), -0.5 - Math.cos(a) * 0.9), 0.06, blue, 4));
+  }
+  solidCircle(g, 0, 0, 1.4, 3);
+  g.userData.rot = 0.4;
+  return g;
+}
+
+// Volunteer Park Water Tower (1906; klarmanandzaugg, OSM way 40790430): 75 ft
+// of round brick over a 60 ft standpipe, 106 steps to an observation deck
+// with sixteen windows all round, a low pyramidal roof and finial, doors
+// north and south.
+function waterTower() {
+  const g = new THREE.Group();
+  const brick = P(0x8e4b35, 0.9, 0, 0.5), stone = P(0xc9bda6, 0.85, 0, 0.55), roofM = P(0x4d5a52, 0.6, 0.3, 0.55);
+  const H = ft(75), R = 8.6;
+  g.add(cyl(R + 0.4, R + 0.6, 1.2, stone, 0, 0, 0, 24));
+  g.add(cyl(R, R, H - 4.6, brick, 0, 1.2, 0, 24));
+  g.add(cyl(R + 0.35, R + 0.35, 0.5, stone, 0, H - 3.4, 0, 24));
+  // the deck's sixteen windows between brick piers
+  for (let k = 0; k < 16; k++) {
+    const a = (k / 16) * Math.PI * 2;
+    g.add(box(1.9, 2.4, 0.2, P(0x2c3a42, 0.2, 0.3, 0.8), Math.cos(a) * (R + 0.05), H - 6.6, Math.sin(a) * (R + 0.05), -a + Math.PI / 2));
+  }
+  g.add(cyl(R + 0.5, R + 0.5, 0.35, stone, 0, H - 4.0, 0, 24));
+  g.add(cyl(0.4, R + 0.7, 3.0, roofM, 0, H - 2.9, 0, 16));
+  g.add(cyl(0.12, 0.12, 1.4, roofM, 0, H + 0.1, 0, 6));
+  for (const sd of [-1, 1]) g.add(box(2.2, 3.4, 0.2, P(0x3b2a20, 0.7, 0, 0.5), 0, 1.2, sd * (R + 0.05)));
+  solidCircle(g, 0, 0, R + 0.4, H);
+  return g;
+}
+
+// Black Sun (Isamu Noguchi, 1969): a 9 ft ring of black Brazilian granite,
+// 12 tons, on Fred Bassetti's stone platform at the reservoir's east edge;
+// looking due west through it frames the Space Needle.
+function blackSun() {
+  const g = new THREE.Group();
+  const granite = P(0x121314, 0.25, 0.1, 0.9);
+  g.add(box(6.5, 0.45, 4.5, P(0xa19d93, 0.9, 0, 0.5), 0, -0.1, 0));
+  const ring = new THREE.Mesh(new THREE.TorusGeometry(ft(9) / 2 - 0.35, 0.42, 14, 36), granite);
+  ring.position.y = ft(9) / 2 + 0.35; g.add(ring);
+  solidBox(g, 0, 0, 1.6, 0.6, 0, 3);
+  g.userData.rot = HEADING.east;   // the ring's plane across the E-W axis
+  return g;
+}
+
+// Volunteer Park Conservatory (1912, Lord & Burnham; OSM way 40790435): a
+// Victorian glass house 61 x 22 m, long axis E-W -- the Palm House's taller
+// dome in the middle, glass wings either side, white-painted frames.
+function conservatory() {
+  const g = new THREE.Group();
+  const frame = P(0xf2f2ee, 0.5, 0.1, 0.65);
+  const pane = mat.clearGlass;
+  const wing = (x, L, D, H) => {
+    g.add(box(L, 0.8, D, P(0xb8b2a4, 0.9, 0, 0.5), x, 0, 0));
+    g.add(box(L, H - 0.8, D, pane, x, 0.8, 0));
+    const rf = new THREE.Mesh(new THREE.CylinderGeometry(D / 2, D / 2, L, 20, 1, false, 0, Math.PI), pane);
+    rf.rotation.set(0, 0, Math.PI / 2); rf.position.set(x, H, 0); g.add(rf);
+    for (let k = 0; k <= Math.round(L / 2.4); k++) {
+      const fx = x - L / 2 + (k * L) / Math.round(L / 2.4);
+      for (const sd of [-1, 1]) g.add(box(0.08, H, 0.08, frame, fx, 0, sd * D / 2));
+      const arch = new THREE.Mesh(new THREE.TorusGeometry(D / 2, 0.05, 4, 16, Math.PI), frame);
+      arch.rotation.y = Math.PI / 2; arch.position.set(fx, H, 0); g.add(arch);
+    }
+  };
+  wing(-19, 22, 11, 5.5);
+  wing(19, 22, 11, 5.5);
+  // the Palm House: taller, a dome with a lantern
+  g.add(box(16, 0.8, 22, P(0xb8b2a4, 0.9, 0, 0.5), 0, 0, 0));
+  g.add(box(16, 7.2, 22, pane, 0, 0.8, 0));
+  const dome = new THREE.Mesh(new THREE.SphereGeometry(8, 20, 10, 0, Math.PI * 2, 0, Math.PI / 2), pane);
+  dome.scale.set(1, 0.8, 1.35); dome.position.y = 8; g.add(dome);
+  for (let k = 0; k < 12; k++) {
+    const a = (k / 12) * Math.PI;
+    const rib = new THREE.Mesh(new THREE.TorusGeometry(8, 0.06, 4, 20, Math.PI), frame);
+    rib.scale.set(1, 0.8, 1.35); rib.rotation.y = a; rib.position.y = 8; g.add(rib);
+  }
+  g.add(cyl(1.2, 1.2, 1.6, pane, 0, 14.2, 0, 10));
+  g.add(cyl(0.2, 1.3, 0.8, frame, 0, 15.8, 0, 10));
+  solidBox(g, 0, 0, 30.5, 5.6, 0, 6);
+  solidBox(g, 0, 0, 8, 11, 0, 8);
+  return g;
+}
+
+// The Pioneer Square pergola (1909, Julian Everett; rebuilt 2001-02): 60 ft of
+// cast iron and glass, 16 ft high, twelve Corinthian columns and sixteen
+// arches, in the triangle of Pioneer Place at 1st Ave and Yesler Way.
+function pergola() {
+  const g = new THREE.Group();
+  const iron = P(0x1f2a24, 0.5, 0.6, 0.6);
+  const L = ft(60), H = ft(16), D = 4.2;
+  for (let k = 0; k < 6; k++) for (const sd of [-1, 1]) {
+    const z = -L / 2 + (k * L) / 5, x = sd * D / 2;
+    g.add(cyl(0.16, 0.2, H - 1.6, iron, x, 0, z, 10));
+    g.add(cyl(0.34, 0.2, 0.5, iron, x, H - 1.6, z, 10));
+    solidCircle(g, x, z, 0.25, H);
+  }
+  for (let k = 0; k < 5; k++) for (const sd of [-1, 1]) {
+    const z = -L / 2 + ((k + 0.5) * L) / 5;
+    const arch = new THREE.Mesh(new THREE.TorusGeometry(L / 10, 0.08, 4, 14, Math.PI), iron);
+    arch.position.set(sd * D / 2, H - 1.4, z); arch.rotation.y = Math.PI / 2; g.add(arch);
+  }
+  g.add(box(D + 0.8, 0.25, L + 0.6, iron, 0, H - 1.1, 0));
+  const roof = new THREE.Mesh(new THREE.CylinderGeometry(D / 2 + 0.6, D / 2 + 0.6, L + 0.4, 14, 1, false, 0, Math.PI), mat.clearGlass);
+  roof.rotation.x = Math.PI / 2; roof.rotation.z = Math.PI / 2; roof.scale.set(1, 1, 0.55); roof.position.y = H - 0.85; g.add(roof);
+  for (let k = 0; k <= 10; k++) {
+    const rib = new THREE.Mesh(new THREE.TorusGeometry(D / 2 + 0.6, 0.05, 4, 12, Math.PI), iron);
+    rib.scale.set(1, 0.55, 1); rib.position.set(0, H - 0.85, -L / 2 + (k * L) / 10); g.add(rib);
+  }
+  g.userData.rot = 0;
+  return g;
+}
+
+// The Pioneer Square totem pole (1940 replica, Charles Brown's Tlingit carvers;
+// Wikipedia): 50 ft, black, red and blue-green -- Raven on top, the woman with
+// the frog child, the frog husband, mink, raven, the whale with a seal, and
+// Raven-at-the-Head-of-Nass at the foot.
+function totem() {
+  const g = new THREE.Group();
+  const cedar = P(0x6b4a33, 0.9, 0, 0.5);
+  const H = ft(50);
+  const bands = [0x1a1a1a, 0xb5342c, 0x2e8b7a, 0x1a1a1a, 0xb5342c, 0x2e8b7a, 0x1a1a1a];
+  g.add(cyl(0.42, 0.5, H - 2.2, cedar, 0, 0, 0, 12));
+  for (let k = 0; k < 7; k++) {
+    const y = 0.8 + (k * (H - 3.6)) / 7;
+    g.add(cyl(0.46, 0.5, 0.5, P(bands[k], 0.7, 0, 0.5), 0, y, 0, 12));
+    // a face on each figure: brows and eyes
+    for (const sd of [-1, 1]) g.add(box(0.26, 0.12, 0.08, P(0x1a1a1a, 0.7, 0, 0.5), sd * 0.16, y + 1.1, 0.46));
+    g.add(box(0.2, 0.3, 0.16, P(bands[(k + 1) % 7], 0.7, 0, 0.5), 0, y + 0.8, 0.48));
+  }
+  // Raven at the top, wings spread
+  const rv = P(0x1a1a1a, 0.7, 0, 0.5);
+  g.add(box(0.8, 1.2, 0.9, rv, 0, H - 2.2, 0));
+  for (const sd of [-1, 1]) g.add(box(1.4, 0.7, 0.18, rv, sd * 1.0, H - 1.9, 0, 0));
+  const beak = new THREE.Mesh(new THREE.ConeGeometry(0.18, 0.9, 6), rv); beak.rotation.x = Math.PI / 2; beak.position.set(0, H - 1.5, 0.8); g.add(beak);
+  solidCircle(g, 0, 0, 0.55, H);
+  g.userData.rot = HEADING.west;
+  return g;
+}
+
+// Changing Form (Doris Totten Chase, 1971; Kerry Park): 15 ft of dark
+// weathering steel, smooth curves pierced by round holes you can walk
+// through, at the centre of the viewpoint.
+function changingForm() {
+  const g = new THREE.Group();
+  const corten = P(0x4e3326, 0.7, 0.4, 0.5);
+  const H = ft(15);
+  const slab = (w, h, holes, rz, x, y, z, ry) => {
+    const sh = new THREE.Shape();
+    sh.absarc(0, 0, 1, 0, Math.PI * 2, false);
+    const path = new THREE.Shape(); path.moveTo(-w / 2, 0); path.lineTo(w / 2, 0); path.quadraticCurveTo(w / 2 + 0.6, h / 2, w / 2, h); path.lineTo(-w / 2, h); path.quadraticCurveTo(-w / 2 - 0.6, h / 2, -w / 2, 0);
+    for (const [hx, hy, hr] of holes) { const hole = new THREE.Path(); hole.absarc(hx, hy, hr, 0, Math.PI * 2, true); path.holes.push(hole); }
+    const o = new THREE.Mesh(new THREE.ExtrudeGeometry(path, { depth: 0.35, bevelEnabled: true, bevelSize: 0.08, bevelThickness: 0.08, bevelSegments: 2, curveSegments: 18 }), corten);
+    o.position.set(x, y, z); o.rotation.set(0, ry, rz); g.add(o);
+  };
+  slab(2.4, H, [[0, 1.5, 0.75], [0, 3.4, 0.5]], 0, 0, 0, -0.2, 0);
+  slab(2.0, H * 0.7, [[0, 1.2, 0.65]], 0.1, 0.4, 0, 0.3, Math.PI / 2 - 0.3);
+  solidBox(g, 0, 0, 1.4, 0.9, 0, H);
+  g.userData.rot = 0;
+  return g;
+}
+
+// Daybreak Star Indian Cultural Center (1977, Arai/Jackson with Lawney Reyes;
+// HistoryLink 11237): 21,000 sq ft on an octagonal plan, its halves after a
+// Coast Salish plank house, four raised geometric roofs for the Daybreak
+// Star's four blossoms, cedar posts and big windows. OSM way 159915631,
+// ~51 x 48 m.
+function daybreak() {
+  const g = new THREE.Group();
+  const cedar = P(0x7a5236, 0.85, 0, 0.5), roofM = P(0x5b4a3c, 0.8, 0, 0.45), glassM = mat.glass;
+  const R = 17;
+  const oct = [];
+  for (let k = 0; k < 8; k++) { const a = (k / 8) * Math.PI * 2 + Math.PI / 8; oct.push([Math.cos(a) * R, Math.sin(a) * R]); }
+  g.add(prism(oct, -0.5, 0.4, P(0x9d978b, 0.9, 0, 0.5)));
+  g.add(prism(oct.map(([x, z]) => [x * 0.97, z * 0.97]), 0.4, 4.6, cedar));
+  // four wings out to the cardinal points, each under its own pyramid roof
+  for (let k = 0; k < 4; k++) {
+    const a = (k / 4) * Math.PI * 2, cx = Math.cos(a) * 16, cz = Math.sin(a) * 16;
+    g.add(box(12, 4.4, 12, cedar, cx, 0.4, cz, -a));
+    g.add(box(12.2, 2.2, 0.2, glassM, cx + Math.cos(a) * 6.05, 1.4, cz + Math.sin(a) * 6.05, -a + Math.PI / 2));
+    const pyr = new THREE.Mesh(new THREE.ConeGeometry(9.2, 6.5, 4), roofM);
+    pyr.rotation.y = Math.PI / 4 - a; pyr.position.set(cx, 4.8 + 3.25, cz); g.add(pyr);
+    for (const sd of [-1, 1]) g.add(cyl(0.3, 0.3, 4.4, P(0x5a3a24, 0.85, 0, 0.5), cx + Math.cos(a) * 6.3 + Math.sin(a) * sd * 5.5, 0.4, cz + Math.sin(a) * 6.3 - Math.cos(a) * sd * 5.5, 8));
+    solidBox(g, cx, cz, 6.2, 6.2, 0, 8, -a);
+  }
+  const centre = new THREE.Mesh(new THREE.ConeGeometry(R * 0.9, 7, 8), roofM);
+  centre.rotation.y = Math.PI / 8; centre.position.y = 4.6 + 3.5; g.add(centre);
+  solidCircle(g, 0, 0, R, 8);
+  return g;
+}
+
 const BUILDERS = {
   spaceNeedle: () => { const g = spaceNeedle(); for (const s of needleSolids()) solid(g, s); return g; },
   mopop, arena, spheres, market, wheel, library, aquarium, gasworks, troll, locks,
   ferry: ferryTerminal, pier, kerry: kerryPark, ferriswheelPier: statueLiberty,
   convention, airport, stadiumF: lumen, stadiumB: tmobile, stadiumH: husky, smith,
   bellevueDT,
+  westPoint, alkiPoint, rocket, lenin, hammeringMan, eagle, echo, eraser, waterTower, blackSun,
+  conservatory, pergola, totem, changingForm, daybreak,
 };
 
 /**
@@ -2409,6 +3217,19 @@ export function buildLandmarks(scene, city, waterLevelAt = null, monorail = null
         land: d.land, n: d.n, t0: d.t0, tp: d.tp });
     });
   }
+  // the beaches' props (beachProps), each beach its own cluster
+  const beaches = [];
+  if (waterLevelAt && G.BEACHES) {
+    for (const bp of beachProps(G.BEACHES, city, waterLevelAt)) {
+      for (const s of bp.g.userData.solids || []) {
+        const w = worldSolid(s, 0, 0, 0, 0);
+        if (city && onRoad(city, w)) { dropped.push(`beach:${bp.name}@${w.x.toFixed(0)},${w.z.toFixed(0)}`); continue; }
+        solids.push(w);
+      }
+      addTo(bp.key, bp.g);
+      beaches.push({ name: bp.name, kit: bp.kit, x: bp.x, z: bp.z, props: bp.g.children.length });
+    }
+  }
   for (const l of G.LANDMARKS) {
     const b = BUILDERS[l.kind];
     if (!b) continue;
@@ -2417,7 +3238,7 @@ export function buildLandmarks(scene, city, waterLevelAt = null, monorail = null
     const x = at ? at[0] : (l.p ? l.p[0] : l.x);
     const z = at ? at[1] : (l.p ? l.p[1] : l.z);
     const y = at ? at[2] : g.userData.baseY !== undefined ? g.userData.baseY : G.terrainHeight(x, z);
-    const t = g.userData.worldAligned ? 0 : (l.rot || 0);
+    const t = g.userData.worldAligned ? 0 : g.userData.rot !== undefined ? g.userData.rot : (l.rot || 0);
     g.position.set(x, y, z);
     g.rotation.y = t;
     g.userData.landmark = l.name;
@@ -2447,6 +3268,7 @@ export function buildLandmarks(scene, city, waterLevelAt = null, monorail = null
   root.name = 'landmarks';
   const needleMats = new Set(Object.values(NEEDLE_MATS));
   let draws = 0;
+  const near = [];
   for (const [key, grp] of clusters) {
     const merged = mergePalette(mergeByMaterial(grp), needleMats);
     merged.traverse((o) => {
@@ -2463,6 +3285,9 @@ export function buildLandmarks(scene, city, waterLevelAt = null, monorail = null
         return;
       }
       o.name = `landmarks:${key}`;
+      // A beach's umbrellas and towels are a few pixels past 700 m; eleven far
+      // beaches in one downtown view cost a draw each (updateLandmarkRange).
+      if (key.startsWith('beach')) near.push({ o, s: o.geometry.boundingSphere, r: 700 });
       const ok = !(o.material.userData && o.material.userData.noShadow) && !o.material.transparent && !o.material.isMeshBasicMaterial;
       o.castShadow = ok;
       o.receiveShadow = ok || o.material.isMeshStandardMaterial;
@@ -2481,6 +3306,8 @@ export function buildLandmarks(scene, city, waterLevelAt = null, monorail = null
   if (city) city.clearCircles = [[BDP.x, BDP.z, 121], ...(mono ? mono.clear : [])];
   root.userData.platforms = platforms.length;
   root.userData.marinas = marinas;
+  root.userData.beaches = beaches;
+  root.userData.near = near;
   scene.add(root);
   return root;
 }

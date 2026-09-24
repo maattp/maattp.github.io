@@ -989,6 +989,20 @@ export class World {
                 vec3 wt = texture2D( lotWalk, p / 20.0 ).rgb;
                 pav = mix( vec3( 0.32, 0.32, 0.31 ), wt * vec3( 0.86, 0.86, 0.84 ), 0.4 );
                 pav *= mix( vec3( 1.0 ), macroT, 0.65 );
+              } else if ( kind > 4.5 ) {
+                // A beach. Puget Sound's are grey-tan sand going to pebbles,
+                // the lakes' a warmer tan: the base is between, with the
+                // pavement map at 0.7 m as grain, broad paler and darker drifts
+                // (dry above the tideline, damp below it), and a pebble speckle
+                // that fades to its mean with distance so it cannot shimmer.
+                vec3 grain = texture2D( lotWalk, vLotXZ / 0.7 ).rgb;
+                pav = vec3( 0.60, 0.54, 0.44 ) * mix( vec3( 1.0 ), grain, 0.28 );
+                pav *= 0.86 + nBig * 0.24;
+                pav *= 1.0 - smoothstep( 0.46, 0.34, nMid ) * 0.16;
+                float fp = max( fwidth( vLotXZ.x ), 1e-4 );
+                float peb = step( 0.72, texture2D( lotNoise, vLotXZ / 3.1 ).r );
+                peb = peb * clamp( 1.0 - ( fp - 0.05 ) / 0.3, 0.0, 1.0 ) + ( 1.0 - clamp( 1.0 - ( fp - 0.05 ) / 0.3, 0.0, 1.0 ) ) * 0.12;
+                pav = mix( pav, pav * vec3( 0.62, 0.6, 0.58 ), peb * 0.5 );
               } else {
                 // Rail yard: dark ballast, track every 4.8 m along the yard's
                 // long side -- two steel rails on dark sleepers.
@@ -7419,6 +7433,11 @@ float frLine(float o, float fw, float c, float w) {
       }
     }
 
+    // Park furniture, where OSM maps it (tools/build_parkprops.py): benches,
+    // picnic tables, playgrounds, fountains. A park that was lawn and trees
+    // had nothing in it at the scale you walk at.
+    const playgrounds = this.meshParkFurniture(flat, cx, cz, inPit);
+
     // Park trees. The count is candidates over the whole chunk, of which only
     // the ones landing in a park survive -- at 46 a chunk-sized park got one
     // tree per 60 m and read as an empty green rectangle, which is most of why
@@ -7453,6 +7472,8 @@ float frLine(float o, float fw, float c, float w) {
       // yes in the middle of a building. Measured, 9.3 % of surviving park
       // candidates stood inside a footprint -- trees growing through roofs.
       if (this.inBuilding(x, z, 0.8)) { treeSkip++; continue; }
+      // ...nor on a playground's equipment.
+      if (playgrounds.some((p) => Math.hypot(p[0] - x, p[1] - z) < p[2])) { treeSkip++; continue; }
       // ...nor in the water. The green mask and the water mask are separate
       // rasters and their shorelines do not agree to the metre, so inPark says
       // yes on cells that are under Puget Sound or below the tide line. 63
@@ -7512,6 +7533,102 @@ float frLine(float o, float fw, float c, float w) {
       this.city.addObstacle(this._ck, x, z, 0.45 + h * 0.25);
     }
     cityStats.treesSkipped += treeSkip;
+  }
+
+  /**
+   * The chunk's own benches, picnic tables, playgrounds and fountains, into
+   * the flat mesh (no draws). Returns the playgrounds' [x, z, clear radius],
+   * which the park-tree scatter keeps off. Tables and play structures are
+   * solid; a bench is not, since you sit, not collide.
+   */
+  meshParkFurniture(flat, cx, cz, inPit) {
+    const city = this.city, out = [];
+    const list = G.PARK_PROPS.get(`${cx},${cz}`);
+    if (!list) return out;
+    const wood = [0.42, 0.29, 0.18], woodD = [0.3, 0.21, 0.13], iron = [0.16, 0.18, 0.17];
+    const standOn = (x, z, pad) => {
+      if (G.isWater(x, z) || city.onRoad(x, z, pad)) return null;
+      if (this.inBuilding(x, z, 0.2) || inPit(x, z) || city.jumpClear(x, z)) return null;
+      return G.terrainHeight(x, z) + city.roadLift(x, z);
+    };
+    for (const p of list) {
+      const hr = hash2(Math.round(p.x * 3) + 7, Math.round(p.z * 3) + 19);
+      if (p.k === 'bench') {
+        const gy = standOn(p.x, p.z, 0.4);
+        if (gy === null) continue;
+        // local +z is the way the sitter faces: compass `a` -> rot = pi + a
+        const rot = p.a !== null ? Math.PI + (p.a * Math.PI) / 180 : hr * Math.PI * 2;
+        const L = (lx, lz) => [p.x + lx * Math.cos(rot) - lz * Math.sin(rot), p.z + lx * Math.sin(rot) + lz * Math.cos(rot)];
+        const slat = hr < 0.7 ? wood : [0.22, 0.34, 0.26];
+        for (const sx of [-0.7, 0.7]) { const [x, z] = L(sx, 0); flat.box(x, gy, z, 0.07, 0.44, 0.46, rot, iron); }
+        { const [x, z] = L(0, 0.02); flat.box(x, gy + 0.42, z, 1.7, 0.05, 0.42, rot, slat); }
+        { const [x, z] = L(0, -0.22); flat.box(x, gy + 0.58, z, 1.7, 0.28, 0.05, rot, slat); }
+      } else if (p.k === 'picnic') {
+        const gy = standOn(p.x, p.z, 0.8);
+        if (gy === null) continue;
+        const rot = hr * Math.PI * 2, c = Math.cos(rot), sn = Math.sin(rot);
+        const L = (lz) => [p.x - lz * sn, p.z + lz * c];
+        const col = hr < 0.75 ? wood : [0.24, 0.32, 0.24];
+        flat.box(p.x, gy + 0.72, p.z, 1.8, 0.05, 0.76, rot, col);
+        for (const s2 of [-0.62, 0.62]) { const [x, z] = L(s2); flat.box(x, gy + 0.42, z, 1.8, 0.05, 0.26, rot, col); }
+        for (const lx of [-0.65, 0.65]) {
+          const x = p.x + lx * c, z = p.z + lx * sn;
+          flat.box(x, gy, z, 0.07, 0.72, 1.5, rot, woodD);
+        }
+        city.addObstacle(this._ck, p.x, p.z, 0.7);
+      } else if (p.k === 'fountain') {
+        const gy = standOn(p.x, p.z, 0.3);
+        if (gy === null) continue;
+        flat.prism(p.x, gy, p.z, 0.2, 0.86, 8, [0.36, 0.38, 0.4]);
+        flat.prism(p.x, gy + 0.86, p.z, 0.3, 0.1, 8, [0.44, 0.46, 0.48]);
+      } else {
+        // A playground: a play tower (deck on four posts, a peaked roof, a
+        // slide off one side) and a swing set, sized to the mapped area.
+        const R = Math.max(5, Math.min(p.r, 14));
+        const pal = [[0.16, 0.42, 0.62], [0.72, 0.2, 0.16], [0.2, 0.5, 0.28], [0.86, 0.62, 0.12]];
+        const c1 = pal[Math.floor(hr * 4) % 4], c2 = pal[(Math.floor(hr * 4) + 1) % 4], c3 = pal[(Math.floor(hr * 4) + 2) % 4];
+        const rot = hr * Math.PI * 2, c = Math.cos(rot), sn = Math.sin(rot);
+        const at = (lx, lz) => [p.x + lx * c - lz * sn, p.z + lx * sn + lz * c];
+        // the tower
+        const [tx, tz] = at(-R * 0.25, 0);
+        const ty = standOn(tx, tz, 2.2);
+        if (ty !== null) {
+          for (const [ox, oz] of [[-1.3, -1.3], [1.3, -1.3], [-1.3, 1.3], [1.3, 1.3]]) {
+            const [x, z] = at(-R * 0.25 + ox, oz);
+            flat.box(x, ty, z, 0.16, 3.1, 0.16, rot, c1);
+          }
+          flat.box(tx, ty + 1.45, tz, 2.8, 0.12, 2.8, rot, woodD);
+          for (const sd of [-1, 1]) { const [x, z] = at(-R * 0.25, sd * 1.35); flat.box(x, ty + 1.57, z, 2.8, 0.7, 0.06, rot, c2); }
+          flat.cone(tx, ty + 3.1, tz, 2.3, 1.2, 4, c3);
+          // slide: stepped down and out along local +x
+          for (let k = 0; k < 7; k++) {
+            const [x, z] = at(-R * 0.25 + 1.4 + k * 0.42, 0);
+            flat.box(x, ty + 1.45 - k * 0.2, z, 0.44, 0.08, 0.62, rot, c3);
+          }
+          const [lx, lz] = at(-R * 0.25 - 1.6, 0);
+          for (let k = 0; k < 5; k++) flat.box(lx, ty + 0.3 + k * 0.28, lz, 0.08, 0.05, 0.6, rot, iron);
+          city.addObstacle(this._ck, tx, tz, 1.9);
+        }
+        // the swings
+        const [sx, sz] = at(R * 0.35, R * 0.35);
+        const sy = standOn(sx, sz, 2.0);
+        if (sy !== null) {
+          for (const e of [-1.7, 1.7]) for (const f of [-0.5, 0.5]) {
+            const [x, z] = at(R * 0.35 + e, R * 0.35 + f);
+            flat.box(x, sy, z, 0.1, 2.4, 0.1, rot, iron);
+          }
+          const [bx, bz] = at(R * 0.35, R * 0.35);
+          flat.box(bx, sy + 2.35, bz, 3.6, 0.1, 0.1, rot, iron);
+          for (const e of [-0.7, 0.7]) {
+            const [x, z] = at(R * 0.35 + e, R * 0.35);
+            flat.box(x, sy + 0.5, z, 0.44, 0.05, 0.2, rot, [0.12, 0.12, 0.12]);
+            for (const f of [-0.2, 0.2]) { const [cx2, cz2] = at(R * 0.35 + e + f, R * 0.35); flat.box(cx2, sy + 0.55, cz2, 0.02, 1.8, 0.02, rot, [0.5, 0.52, 0.54]); }
+          }
+        }
+        out.push([p.x, p.z, R + 1.5]);
+      }
+    }
+    return out;
   }
 
   /**
