@@ -1219,21 +1219,47 @@ export class EngineVoice {
 // ---------------------------------------------------------------------------
 
 const SCALE = [0, 3, 5, 7, 10];
-// Station 0 is the real KEXP when there is a network, and the synthesised
-// version of itself when there isn't -- every station keeps its synth voice so
-// the radio still works with the aeroplane on, which is the whole point of an
-// offline-first PWA.
+// A live station is its real stream when there is a network, and a
+// synthesised stand-in (root/tempo/wave/mood) when there isn't -- every station
+// keeps its synth voice so the radio still works with the aeroplane on, which
+// is the whole point of an offline-first PWA. The last two are synth only.
+//
+// Streams come from radio-browser.info (the search /apps/radio uses), each
+// checked to answer over HTTPS with audio and CORS for polkiewicz.com. BBC
+// Radio 1 is HLS: its master playlist points at an http:// variant, which an
+// https page may not load, so this is that variant over https. Safari plays
+// HLS in an <audio>; a browser that cannot (`canPlayType`) skips the station.
 const STATIONS = [
-  { name: 'KEXP 90.3', root: 55, tempo: 104, wave: 'sawtooth', mood: 0.6, live: true },
+  { name: 'KEXP 90.3', root: 55, tempo: 104, wave: 'sawtooth', mood: 0.6,
+    stream: 'https://kexp.streamguys1.com/kexp160.aac', nowPlaying: 'kexp' },
+  { name: 'RdMix Classic Rock', root: 52, tempo: 118, wave: 'sawtooth', mood: 0.7,
+    stream: 'https://cast1.torontocast.com:4610/stream' },
+  { name: 'BBC Radio 1', root: 60, tempo: 122, wave: 'square', mood: 0.8,
+    stream: 'https://as-hls-ww.live.cf.md.bbci.co.uk/pool_01505109/live/ww/bbc_radio_one/bbc_radio_one.isml/bbc_radio_one-audio%3d96000.norewind.m3u8',
+    hls: true },
+  { name: 'Top 100 Charts', root: 57, tempo: 126, wave: 'square', mood: 0.85,
+    stream: 'https://breakz-high.rautemusik.fm/' },
+  { name: 'NRJ Linkin Park', root: 50, tempo: 105, wave: 'sawtooth', mood: 0.75,
+    stream: 'https://streaming.nrjaudio.fm/ouvfbfoarp52' },
+  { name: 'Rock Antenne Alternative', root: 55, tempo: 112, wave: 'sawtooth', mood: 0.7,
+    stream: 'https://stream.rockantenne.de/alternative' },
+  { name: '80s Drive', root: 57, tempo: 116, wave: 'square', mood: 0.75,
+    stream: 'https://samcloud.spacial.com/api/listen?sid=111415&m=sc&rid=293634&t=ssl' },
+  { name: 'C89.5 Seattle', root: 58, tempo: 124, wave: 'square', mood: 0.8,
+    stream: 'https://knhc-ice.streamguys1.com/live' },
+  { name: 'KNKX 88.5 Jazz', root: 53, tempo: 92, wave: 'triangle', mood: 0.45,
+    stream: 'https://knkx-live-a.edge.audiocdn.com/6284_128k' },
+  { name: 'Classical KING FM', root: 48, tempo: 72, wave: 'triangle', mood: 0.25,
+    stream: 'https://classicalking.streamguys1.com/king-fm-aac-128k' },
   { name: 'Rain City FM', root: 49, tempo: 86, wave: 'triangle', mood: 0.3 },
   { name: 'Pike St Radio', root: 62, tempo: 124, wave: 'square', mood: 0.85 },
 ];
+/** The station list, for the menu's picker: [{ name, live }]. */
+export const STATION_NAMES = STATIONS.map((s) => ({ name: s.name, live: !!s.stream }));
 
-// Same stream and now-playing feed the /apps/radio app uses.
-const KEXP = {
-  stream: 'https://kexp.streamguys1.com/kexp160.aac',
-  nowPlaying: 'https://api.kexp.org/v2/plays/?limit=1&format=json',
-};
+// KEXP's now-playing feed, the one /apps/radio uses. The other stations
+// publish titles only inside the stream (ICY), which a media element hides.
+const KEXP_NOW = 'https://api.kexp.org/v2/plays/?limit=1&format=json';
 
 // ---------------------------------------------------------------------------
 // Live helpers
@@ -1555,7 +1581,8 @@ export class Audio {
     // so the bare identifier resolves to us, not to the DOM constructor.
     const el = new window.Audio();
     el.preload = 'none';
-    el.crossOrigin = 'anonymous';
+    // No crossOrigin: nothing reads the samples (the stream is not routed
+    // through Web Audio), and asking for CORS only lets a station fail.
     // Streams have no duration to seek in, and iOS otherwise offers scrubbing.
     el.loop = false;
     el.volume = 0;
@@ -1633,7 +1660,7 @@ export class Audio {
     };
     try {
       el.muted = true;
-      el.src = KEXP.stream;
+      el.src = this._stream();
       el.volume = 0;
       const p = el.play();
       // Rejected for want of a gesture the browser accepts: not primed after
@@ -1656,11 +1683,13 @@ export class Audio {
     if (!el) return;
     if (this._liveState === 'playing' || this._liveState === 'loading') return;
     this._liveState = 'loading';
+    this._liveLoadAt = Date.now();
     // the real stream supersedes any priming play still in flight
     this._primeTok = (this._primeTok || 0) + 1;
     this._priming = false;
     try {
-      if (el.src !== KEXP.stream) el.src = KEXP.stream;
+      const src = this._stream();
+      if (this._liveSrc !== src) { el.src = src; this._liveSrc = src; }
       // A live stream that has been paused for a while resumes where it left
       // off, i.e. behind. Reloading puts us back at the live edge.
       el.load();
@@ -1704,7 +1733,8 @@ export class Audio {
     if (this._nowPlayingAt && Date.now() - this._nowPlayingAt < 20000) return;
     this._nowPlayingAt = Date.now();
     try {
-      const r = await fetch(KEXP.nowPlaying, { cache: 'no-store' });
+      if (STATIONS[this.station].nowPlaying !== 'kexp') return;
+      const r = await fetch(KEXP_NOW, { cache: 'no-store' });
       if (!r.ok) return;
       const d = await r.json();
       const play = d.results && d.results[0];
@@ -1993,10 +2023,17 @@ export class Audio {
     // Radio. The live stream is a car radio: it runs while you are in a car and
     // stops when you get out, which is also what keeps a background tab quiet.
     const wantLive = !!state.inCar && this.musicOn && this.enabled
-      && !!STATIONS[this.station].live;
+      && !!STATIONS[this.station].stream;
     if (wantLive !== this._liveWanted) {
       this._liveWanted = wantLive;
       if (wantLive) this.startLive(); else this.stopLive();
+    }
+    // A stream that neither plays nor errors -- an HLS station in a browser
+    // that says it can play HLS and then does not -- is silence forever. 20 s
+    // without sound and the synth voice takes over for this station.
+    if (this._liveState === 'loading' && Date.now() - this._liveLoadAt > 20000) {
+      this._liveFailed = true;
+      this.stopLive();
     }
     if (this.liveOn) {
       // iOS ignores `volume` on a media element, so there the duck cannot
@@ -2354,20 +2391,62 @@ export class Audio {
     s.stop(t + dur + 0.05);
   }
 
-  nextStation() {
-    this.station = (this.station + 1) % STATIONS.length;
-    // Tuning away from KEXP has to actually stop the stream; the update loop
-    // only notices a change of intent, and station is not part of that.
-    if (!STATIONS[this.station].live) {
-      this._liveWanted = false;
-      this.stopLive();
-    }
+  /** The current station's stream URL (any live station's, for priming). */
+  _stream() {
+    const st = STATIONS[this.station];
+    return st.stream || STATIONS[0].stream;
+  }
+
+  /** Can this browser play the station's stream? (HLS: Safari yes, most others no.) */
+  playable(i) {
+    const st = STATIONS[i];
+    if (!st.hls) return true;
+    try { return !!(this._makeLive() && this._live.canPlayType('application/vnd.apple.mpegurl')); } catch (e) { return false; }
+  }
+
+  /** Tune to station i (skipping one this browser cannot play); returns its name. */
+  setStation(i) {
+    const n = STATIONS.length;
+    i = ((i % n) + n) % n;
+    this.station = i;
+    // Retune: stop whatever is playing, and let the update loop start the new
+    // stream (it acts on a change of intent, so clear the intent too). A dead
+    // stream is only given up on for the station it died on.
+    this._liveWanted = false;
+    this._liveFailed = false;
+    this._liveSrc = null;
+    this.stopLive();
+    this._nowPlaying = null;
+    this._nowPlayingAt = 0;
     return this.stationName();
+  }
+
+  /**
+   * Every car has its own station, like GTA: a random one this browser can
+   * play, never the one you just left. Live stations while online; offline
+   * every station is its synth voice anyway.
+   */
+  randomStation() {
+    const online = typeof navigator === 'undefined' || navigator.onLine !== false;
+    const pool = [];
+    for (let i = 0; i < STATIONS.length; i++) {
+      if (i !== this.station && this.playable(i) && (!online || STATIONS[i].stream)) pool.push(i);
+    }
+    return pool.length ? this.setStation(pool[Math.floor(Math.random() * pool.length)]) : this.stationName();
+  }
+
+  nextStation(dir = 1) {
+    let i = this.station;
+    for (let k = 0; k < STATIONS.length; k++) {
+      i = (i + dir + STATIONS.length) % STATIONS.length;
+      if (this.playable(i)) break;
+    }
+    return this.setStation(i);
   }
 
   /** True when this station is the real stream rather than its synth stand-in. */
   liveStation() {
-    return !!STATIONS[this.station].live && this.liveOn;
+    return !!STATIONS[this.station].stream && this.liveOn;
   }
 
   stationName() {

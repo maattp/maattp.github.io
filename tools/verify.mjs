@@ -885,13 +885,35 @@ async function main() {
       d.audio.init(); d.audio.resume(); d.audio.primeLive();
       const p = d.player.position;
       const v = d.traffic.nearestEnterable(p.x, p.z, 600);
-      if (v) d.player.enterVehicle(v);
-      await new Promise(r => setTimeout(r, 7000));
-      return { live: d.audio.liveOn, t: d.audio._live ? d.audio._live.currentTime : 0,
-               track: d.audio._nowPlaying };
+      // Getting in tunes a random station: five cars, how many stations?
+      const seen = new Set();
+      for (let k = 0; k < 5; k++) {
+        if (v) d.player.enterVehicle(v);
+        seen.add(d.audio.stationName());
+        if (k < 4) { d.player.exitVehicle(); await new Promise(r => setTimeout(r, 300)); }
+      }
+      // Then every live station through the game's own path (tuned in a car;
+      // audio.update starts the stream): does it play within 14 s?
+      const m = await import('./src/audio.js');
+      const out = [];
+      for (let i = 0; i < m.STATION_NAMES.length; i++) {
+        if (!m.STATION_NAMES[i].live) continue;
+        if (!d.audio.playable(i)) { out.push([m.STATION_NAMES[i].name, 'not playable in this browser']); continue; }
+        d.audio.setStation(i);
+        const t0 = Date.now();
+        while (!d.audio.liveOn && Date.now() - t0 < 14000) await new Promise(r => setTimeout(r, 250));
+        const ok = d.audio.liveOn;
+        if (ok) await new Promise(r => setTimeout(r, 1500));
+        out.push([m.STATION_NAMES[i].name, ok ? 'live in ' + ((Date.now() - t0 - 1500) / 1000).toFixed(1) + ' s' : 'no sound (synth covers)',
+          i === 0 ? d.audio._nowPlaying : undefined]);
+      }
+      return { stations: out, random: [...seen] };
     })()`, true);
-    console.log(`  online:  live=${radioOn.live} streamed=${radioOn.t.toFixed(1)}s `
-      + `track=${radioOn.track ? JSON.stringify(radioOn.track) : 'none yet'}`);
+    console.log(`  getting in picks: ${radioOn.random.join(', ')}`);
+    for (const [n, r, track] of radioOn.stations) console.log(`  ${n.padEnd(26)} ${r}${track ? '  (' + track + ')' : ''}`);
+    // live streams are other people's servers: reported, not failed. The
+    // random pick is ours.
+    if (radioOn.random.length < 2) { console.error('FAIL: every car got the same station'); process.exitCode = 1; }
 
     await session.send('Network.emulateNetworkConditions', {
       offline: true, latency: 0, downloadThroughput: 0, uploadThroughput: 0,

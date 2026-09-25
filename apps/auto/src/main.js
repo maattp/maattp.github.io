@@ -26,7 +26,7 @@ import { Hud, buildMapCanvas } from './hud.js';
 import { Activities } from './activities.js';
 import { installRamps, buildRampMesh, StuntJumps } from './stunts.js';
 import { Effects } from './effects.js';
-import { Audio } from './audio.js';
+import { Audio, STATION_NAMES } from './audio.js';
 import { PostFX } from './postfx.js';
 import { clamp, lerp, rng, dist2, formatMoney } from './util.js';
 
@@ -173,12 +173,12 @@ class Game {
     if (heli) setTimeout(() => hud.showToast('Hold UP to lift off — let go to hover'), 1400);
     if (v.mode === 'parked' || v.wasParked) this.addHeat(8);
     hud.showToast(v.typeName === 'police' ? 'Police cruiser commandeered' : 'Vehicle acquired');
-    // The radio comes on with the ignition. audio.update() starts the stream on
-    // the next frame; this is only the announcement.
-    if (this.settings.music) {
-      setTimeout(() => {
-        if (audio.liveStation()) hud.showToast(`♪ ${audio.stationName()} — live`);
-      }, 900);
+    // The radio comes on with the ignition, on a random station (every car
+    // its own, as in GTA); RADIO on the pad tunes the next one. audio.update()
+    // starts the stream on the next frame; this is only the announcement.
+    if (this.settings.music && audio.musicOn) {
+      audio.randomStation();
+      setTimeout(() => hud.showToast(`♪ ${audio.stationName()}`), 900);
     }
   }
 
@@ -1101,6 +1101,7 @@ function refreshJobs() {
     + '</span></div>').join('');
 }
 let warpArmed = false;
+let showStation = () => {};   // wireUi: mark the tuned station in the menu
 // the menu/map idle (see frame): frames drawn since it opened, and a request
 // for one more
 let idleDrawn = 0, idleRedraw = false;
@@ -1211,9 +1212,9 @@ function handlePadUi(dt) {
     audio.resume();
     if (!audio.musicOn) {
       audio.musicOn = true;
-      hud.showToast(audio.stationName());
+      hud.showToast(`♪ ${audio.stationName()}`);
     } else {
-      hud.showToast(u.radio > 0 ? audio.nextStation() : audio.nextStation());
+      hud.showToast(`♪ ${audio.nextStation(u.radio > 0 ? 1 : -1)}`);
     }
   }
 }
@@ -1226,6 +1227,7 @@ function wireUi() {
     game.paused = v;
     pause.classList.toggle('show', v);
     if (v) refreshJobs();          // the Jobs list is only ever read here
+    if (v) showStation();
     if (v) padMenu.open(); else padMenu.close();
     // iOS suspends the AudioContext when the app goes to the background and
     // does not hand it back on its own, so the world would come back silent.
@@ -1256,15 +1258,26 @@ function wireUi() {
     }
     setMapOpen(false);
   });
+  // RADIO on the driving pad: the next station. pointerdown, like every pad
+  // button (the pad's own handler stops propagation, not this listener).
+  const radioPad = document.querySelector('[data-btn="radio"]');
+  if (radioPad) radioPad.addEventListener('pointerdown', () => {
+    audio.init();
+    audio.resume();
+    audio.primeLive();
+    if (!audio.musicOn) { audio.musicOn = true; game.settings.music = true; document.getElementById('setMusic').classList.add('on'); }
+    else audio.nextStation();
+    hud.showToast(`♪ ${audio.stationName()}`);
+  });
   document.getElementById('radioBtn').addEventListener('click', () => {
     audio.init();
     audio.resume();
     audio.primeLive();
     if (!audio.musicOn) {
       audio.musicOn = true;
-      hud.showToast(audio.stationName());
+      hud.showToast(`♪ ${audio.stationName()}`);
     } else {
-      hud.showToast(audio.nextStation());
+      hud.showToast(`♪ ${audio.nextStation()}`);
     }
   });
 
@@ -1283,6 +1296,30 @@ function wireUi() {
     el.addEventListener('click', () => applyQuality(el.dataset.quality, true));
   }
   bind('setMusic', 'music', (v) => { audio.musicOn = v; });
+  // The station picker. The radio button in the HUD cycles the same list.
+  const stEl = document.getElementById('stations');
+  const stBtns = STATION_NAMES.map((st, i) => {
+    const b = document.createElement('button');
+    b.className = 'stn';
+    b.textContent = st.name;
+    if (!st.live) { const t = document.createElement('span'); t.className = 'syn'; t.textContent = ' · synth'; b.appendChild(t); }
+    b.addEventListener('click', () => {
+      audio.init();
+      audio.resume();
+      audio.primeLive();
+      audio.setStation(i);
+      audio.musicOn = true;
+      game.settings.music = true;
+      document.getElementById('setMusic').classList.add('on');
+      showStation();
+    });
+    stEl.appendChild(b);
+    return b;
+  });
+  showStation = () => stBtns.forEach((b, i) => {
+    b.classList.toggle('on', i === audio.station);
+    b.style.display = audio.playable(i) ? '' : 'none';
+  });
   bind('setSound', 'sound', (v) => { audio.enabled = v; });
   bind('setDebug', 'debug', (v) => { debugEl.classList.toggle('on', v); });
   bind('setPost', 'post', (v) => { postfx.setPostEnabled(v); });

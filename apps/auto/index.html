@@ -343,6 +343,15 @@
     color: #97a2ad; -webkit-tap-highlight-color: transparent;
   }
   .dbg.on { background: rgba(90,190,140,0.22); border-color: rgba(90,190,140,0.5); color: #dff3e8; }
+  /* the radio's stations: tap one to tune (the radio button cycles them) */
+  .stgrid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 6px; margin: 2px 0 10px; }
+  .stn {
+    font: 600 12px/1.15 ui-sans-serif, system-ui; padding: 9px 8px; border-radius: 8px; text-align: left;
+    border: 1px solid rgba(255,255,255,0.16); background: rgba(255,255,255,0.06);
+    color: #b9c3cc; -webkit-tap-highlight-color: transparent;
+  }
+  .stn.on { background: rgba(90,190,140,0.22); border-color: rgba(90,190,140,0.5); color: #dff3e8; }
+  .stn .syn { opacity: .55; font-weight: 500; }
 </style>
 </head>
 <body>
@@ -381,7 +390,7 @@
     <div class="btn b-md car-only" data-btn="hand">HAND<br>BRAKE</div>
     <div class="btn b-sm car-only" data-btn="enter" data-tap="1">EXIT</div>
     <div class="btn b-md b-brake car-only" data-btn="brake">BRAKE</div>
-    <div class="btn b-sm car-only" style="visibility:hidden"></div>
+    <div class="btn b-sm car-only" data-btn="radio">RADIO</div>
     <div class="btn b-lg b-gas car-only" data-btn="gas">GAS</div>
     <!-- on foot -->
     <div class="btn b-sm foot-only" data-btn="jump">JUMP</div>
@@ -438,6 +447,7 @@
       </div></div>
       <div class="row"><span>Shadows</span><div class="toggle" id="setShadows"></div></div>
       <div class="row"><span>Radio</span><div class="toggle" id="setMusic"></div></div>
+      <div class="stgrid" id="stations"></div>
       <div class="row"><span>Sound effects</span><div class="toggle" id="setSound"></div></div>
       <div class="row"><span>Camera speed</span><input type="range" id="setSens" min="0.4" max="2.2" step="0.1" value="1"></div>
       <div class="row"><span>Debug stats</span><div class="toggle" id="setDebug"></div></div>
@@ -459,7 +469,7 @@
         Left thumb steers and walks. Right side: drag to look, buttons to drive.
         Walk up to any car and hit ENTER to take it. Deliveries pay — the gold ring
         on the minimap is your drop-off. Hurt someone and the SPD will notice.
-        <br><br>Keyboard: WASD / arrows, F enter-exit, Space handbrake &amp; jump,
+        <br><br>Keyboard: WASD / arrows, F enter-exit, Space handbrake &amp; jump, R radio,
         Shift run, J attack, H horn.
         <br><br>Streets, shoreline and buildings are real: map data ©
         OpenStreetMap contributors, licensed ODbL. Elevation from USGS 3DEP.
@@ -481,7 +491,7 @@
     <pre id="bootLog"></pre>
     <div id="loadRotate">Turn sideways to play once it has loaded</div>
     <!-- Bumped once per change, in step with CACHE in sw.js. See CLAUDE.md. -->
-    <div id="build">v121</div>
+    <div id="build">v122</div>
     <div id="attrib">Map data © OpenStreetMap contributors (ODbL) · elevation USGS 3DEP</div>
   </div>
   <script>
