@@ -1341,6 +1341,11 @@ export class Audio {
     if (!ctx) {
       const AC = window.AudioContext || window.webkitAudioContext;
       if (!AC) return;
+      // A GAME, not a notification: on the iPhone, Web Audio follows the ring/
+      // silent switch unless the page's audio session says it is playback, so
+      // with the phone on silent every sound in the game was muted while the
+      // radio (a media element) still played. iOS 17+; elsewhere a no-op.
+      try { if (navigator.audioSession) navigator.audioSession.type = 'playback'; } catch (e) { /* older WebKit */ }
       ctx = new AC();
     }
     this.ctx = ctx;
@@ -1719,7 +1724,12 @@ export class Audio {
   }
 
   resume() {
-    if (this.ctx && this.ctx.state === 'suspended' && this.ctx.resume) this.ctx.resume();
+    // Anything but 'running': iOS reports 'interrupted' after the app comes
+    // back from the background (or a call, or Siri), and a context left there
+    // because it was not 'suspended' stayed silent for the rest of the session.
+    if (this.ctx && this.ctx.state !== 'running' && this.ctx.state !== 'closed' && this.ctx.resume) {
+      this.ctx.resume().catch(() => {});
+    }
     // iOS pauses media on the way to the background and does not resume it --
     // but only a radio that is wanted (in a car) comes back.
     if (this._liveWanted && this._live) {

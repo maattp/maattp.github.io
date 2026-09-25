@@ -1219,6 +1219,8 @@ function wireUi() {
   setPausedRef = setPaused;
   document.getElementById('pauseBtn').addEventListener('click', () => setPaused(!game.paused));
   document.getElementById('resumeBtn').addEventListener('click', () => setPaused(false));
+  // Tap outside the card to close the menu, like the map.
+  pause.addEventListener('click', (e) => { if (e.target === pause) setPaused(false); });
   // Tap the minimap to open the full map -- it replaced a dedicated button.
   document.getElementById('minimapWrap').addEventListener('click', () => {
     setMapOpen(!game.mapOpen);
@@ -1307,15 +1309,17 @@ function wireUi() {
   // (audio.init() before the reveal), so the sound bank renders while you
   // load instead of after the first tap.
   const UNLOCK = ['pointerup', 'touchend', 'click', 'keydown', 'pointerdown'];
+  // And the listeners STAY. They used to remove themselves once the context
+  // first ran, so when iOS stopped it later (the home screen, a call, Siri)
+  // no tap could ever start it again and the game went silent for good. A
+  // running context makes this a single state check.
   const startAudio = () => {
+    if (audio.ctx && audio.ctx.state === 'running' && audio._livePrimed) return;
     audio.init();
     audio.resume();
     // Same gesture, so Safari counts the stream as user-initiated. Getting into
     // a car happens in the frame loop and would be rejected on its own.
     audio.primeLive();
-    if (audio.ctx && audio.ctx.state === 'running') {
-      for (const ev of UNLOCK) window.removeEventListener(ev, startAudio, true);
-    }
   };
   for (const ev of UNLOCK) window.addEventListener(ev, startAudio, true);
 
