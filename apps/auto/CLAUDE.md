@@ -2237,6 +2237,17 @@ state at each step (`--bench` times the bank; use `AUTO_GPU=1` -- on
 SwiftShader each render batch waits for a ~0.5 s frame and the bank reads
 20-40 s, which measures the harness).
 
+**Resume from anything but `running`, on every gesture, for the whole
+session (v120).** iOS stops the context behind the page's back (the home
+screen, a call, Siri) and reports it as `interrupted`, which Chrome never
+does; `resume()` only acted on `suspended`, so on the iPhone the game went
+silent and stayed silent. The unlock listeners never remove themselves (a
+running context makes each one a state check), and `audio.init()` sets
+`navigator.audioSession.type = 'playback'` so the ring/silent switch does not
+mute the game (iOS 17+; the radio's media element never followed it, which is
+why the radio could play while nothing else did). `tools/audiounlock.mjs`
+fakes an `interrupted` context and taps again; master before this fails it.
+
 **`primeLive` retries after `NotAllowedError`, and never touches an element
 the real stream holds.** Letting it retry exposed a race verify's radio check
 caught (3.8 s streamed -> 0.1 s): a late prime re-muted and paused a stream

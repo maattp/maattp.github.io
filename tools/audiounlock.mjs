@@ -86,6 +86,27 @@ try {
   const ok = atRelease.ctx === 'running' && last.bank > 0;
   console.log(ok ? 'OK: running the moment the first touch lifts, bank ready' : 'FAIL: audio not running when the first touch lifts');
   if (!ok) code = 1;
+  // iOS stops a running context behind the page's back (the home screen, a
+  // call, Siri) and reports it as 'interrupted', a state Chrome never uses.
+  // resume() only ever acted on 'suspended', so on the iPhone the game stayed
+  // silent from then on. Suspend it and make it SAY 'interrupted', the way iOS
+  // would, then tap once more: it must come back.
+  await ev(`(async () => { const c = window.__dbg.audio.ctx; await c.suspend();
+    Object.defineProperty(c, 'state', { configurable: true, get() { return 'interrupted'; } });
+    const r = c.resume.bind(c);
+    c.resume = () => { delete c.state; return r(); };
+    return 1; })()`);
+  await sleep(300);
+  const stopped = JSON.parse(await state('context interrupted, as iOS reports it'));
+  await send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x, y, id: 2 }] });
+  await sleep(150);
+  await send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+  await sleep(500);
+  const back = JSON.parse(await state('tapped again'));
+  console.log('  ' + JSON.stringify(stopped) + '\n  ' + JSON.stringify(back));
+  const ok2 = stopped.ctx !== 'running' && back.ctx === 'running';
+  console.log(ok2 ? 'OK: a later tap restarts a context the system stopped' : 'FAIL: a stopped context stays stopped after a tap');
+  if (!ok2) code = 1;
 } catch (e) {
   console.error(e); code = 1;
 } finally {
