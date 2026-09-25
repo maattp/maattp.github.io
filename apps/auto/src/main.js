@@ -7,6 +7,7 @@ import { loadMapData } from './mapdata.js';
 import { buildTextures, planTextures, encodeTextures, restoreTextures, canvasToBlob, blobToCanvas, within } from './textures.js';
 import { World, WET_FLOOR } from './world.js';
 import { buildLandmarks, updateLandmarkRange, SEAPLANE_DOCK, airportSurface } from './landmarks.js';
+import { ShadowCache } from './shadowcache.js';
 import { Monorail } from './monorail.js';
 import { freezeStatic } from './build.js';
 import { cacheGet, cachePut, cacheGuardTripped, cacheGuardSet, cacheClear } from './bootcache.js';
@@ -276,7 +277,7 @@ class Game {
 
 // ---------------------------------------------------------------------------
 
-let renderer, scene, camera, sun, world, cityRef, traffic, peds, player, controls, hud, fx, audio, game, marker, postfx, acts, stunts, monorail, lmRoot;
+let renderer, scene, camera, sun, world, cityRef, traffic, peds, player, controls, hud, fx, audio, game, marker, postfx, acts, stunts, monorail, lmRoot, shadowCache = null;
 let pickups = [];
 // Scratch vector for the shadow-camera aim, so the frame loop allocates none.
 const LOOK_AHEAD = new THREE.Vector3();
@@ -626,6 +627,16 @@ function installShadowFade() {
   if (lmRoot) freezeStatic(lmRoot);
   // the two trains (skinned: they pose their own bones each frame)
   monorail.makeTrains(scene);
+  // Phones draw the city's shadows once and copy them each frame; only what
+  // moves is drawn into the shadow map every frame (shadowcache.js). The
+  // desktop keeps three's pass: its 2048 map would make the cache ~4x larger.
+  if (ON_PHONE && !window.__noShadowCache) {
+    try {
+      const ramps = scene.getObjectByName('stuntRamps');
+      shadowCache = new ShadowCache(renderer, sun, { margin: 60, statics: () => [world.group, lmRoot, ramps], keep: () => [] });
+      world.onChunkChange = (x, z, r) => shadowCache.chunkChanged(x, z, r);
+    } catch (e) { blog(`shadow cache: ${e.message}`); shadowCache = null; }
+  }
   if (world.terrainGroup) freezeStatic(world.terrainGroup);
 
   await step(0.9, 'Waking the city');
@@ -811,7 +822,7 @@ function installShadowFade() {
 
   await step(1, 'Welcome to Seattle');
   window.__refreshJobs = refreshJobs;
-  window.__dbg = { game, city, player, world, traffic, peds, acts, stunts, monorail, lmRoot, scene, camera, renderer, G, fx, hud, controls, audio, pickups, THREE, postfx, applyQuality, sun, placeSun, sceneStats, perfSys, cityStats, WET_FLOOR, animateWalk, collideWithBuildings, TYPES: VEHICLE_TYPES };
+  window.__dbg = { game, city, player, world, traffic, peds, acts, stunts, monorail, lmRoot, shadowCache, scene, camera, renderer, G, fx, hud, controls, audio, pickups, THREE, postfx, applyQuality, sun, placeSun, sceneStats, perfSys, cityStats, WET_FLOOR, animateWalk, collideWithBuildings, TYPES: VEHICLE_TYPES };
   wireUi();
   game.newTarget();
   // Start on `high` everywhere.
@@ -1090,6 +1101,10 @@ function refreshJobs() {
     + '</span></div>').join('');
 }
 let warpArmed = false;
+// the menu/map idle (see frame): frames drawn since it opened, and a request
+// for one more
+let idleDrawn = 0, idleRedraw = false;
+const pauseMenuEl = document.getElementById('pauseMenu');
 
 function setMapOpen(v) {
   game.mapOpen = v;
@@ -1219,6 +1234,9 @@ function wireUi() {
   setPausedRef = setPaused;
   document.getElementById('pauseBtn').addEventListener('click', () => setPaused(!game.paused));
   document.getElementById('resumeBtn').addEventListener('click', () => setPaused(false));
+  // A setting changed in the menu (graphics, shadows, a post pass) shows
+  // behind it: one redraw per tap.
+  pause.addEventListener('click', () => { idleRedraw = true; });
   // Tap outside the card to close the menu, like the map.
   pause.addEventListener('click', (e) => { if (e.target === pause) setPaused(false); });
   // Tap the minimap to open the full map -- it replaced a dedicated button.
@@ -1326,6 +1344,7 @@ function wireUi() {
   // Size from the canvas box, not window.inner*: in iOS standalone the document
   // is taller than the visual viewport by the status-bar inset.
   const fit = () => {
+    idleRedraw = true;   // a resize clears the canvas
     const c = renderer.domElement;
     const w = c.clientWidth || window.innerWidth;
     const h = c.clientHeight || window.innerHeight;
@@ -1336,6 +1355,7 @@ function wireUi() {
     hud.resize();
   };
   window.addEventListener('resize', fit);
+  renderer.domElement.addEventListener('webglcontextrestored', () => { idleRedraw = true; });
   window.addEventListener('orientationchange', () => setTimeout(fit, 250));
   fit();
   // Pause on the way out, but through setPaused so the menu comes WITH it.
@@ -1344,7 +1364,7 @@ function wireUi() {
   // only way out was the pause button, which nobody presses on a frozen app.
   document.addEventListener('visibilitychange', () => {
     if (document.hidden) setPaused(true);
-    else if (game.paused) pause.classList.add('show');
+    else if (game.paused) { pause.classList.add('show'); idleRedraw = true; }
   });
 }
 
@@ -1400,9 +1420,19 @@ function frame(now) {
 
   if (game.paused || game.mapOpen) {
     controls.takeLook();
-    draw(now);
+    // NOTHING MOVES BEHIND THE MENU OR THE MAP, so stop drawing it. The whole
+    // city, shadows and post chain were redrawn 60 times a second behind an
+    // 86 %-opaque overlay: a paused phone ran as hot as a playing one. Two
+    // frames after it opens (the second takes anything the first compiled),
+    // then the canvas keeps the last one until something asks for a redraw
+    // (idleRedraw: a resize, a setting). Only when the menu is SHOWING or the
+    // map is open: harnesses pause the game without the menu to pose shots,
+    // and those still draw every frame.
+    const idle = game.mapOpen || pauseMenuEl.classList.contains('show');
+    if (!idle || idleDrawn < 2 || idleRedraw) { draw(now); idleDrawn++; idleRedraw = false; }
     return;
   }
+  idleDrawn = 0;
 
   const input = controls.read();
   const look = controls.takeLook();
@@ -1654,7 +1684,7 @@ function draw(now) {
     sm.__timed = true;
   }
   const t0 = prof ? performance.now() : 0;
-  if (lmRoot) updateLandmarkRange(lmRoot, camera.position);
+  if (lmRoot && updateLandmarkRange(lmRoot, camera.position) && shadowCache) shadowCache.invalidate();
   renderer.setRenderTarget(postfx.target);
   renderer.render(scene, camera);
   // capture before the post passes reset the counters
@@ -1749,6 +1779,7 @@ function applyQuality(q, manual) {
   // automatic step down re-apply medium and waste a rung.
   tierIdx = Math.max(0, TIERS.indexOf(q));
   game.settings.quality = q;
+  idleRedraw = true;
   postfx.setQuality(q, ON_PHONE);
   renderer.shadowMap.enabled = q !== 'low' && game.settings.shadows;
   // Pixel ratio is the single biggest fill-rate dial there is: 2.0 against

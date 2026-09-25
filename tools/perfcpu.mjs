@@ -356,7 +356,7 @@ try {
     await send('Emulation.setUserAgentOverride', { userAgent: IPHONE_UA, platform: 'iPhone' });
     await send('Emulation.setTouchEmulationEnabled', { enabled: true, maxTouchPoints: 5 });
   }
-  await send('Page.addScriptToEvaluateOnNewDocument', { source: `window.__noAutoQuality = true;
+  await send('Page.addScriptToEvaluateOnNewDocument', { source: `window.__noAutoQuality = true;${process.argv.includes('--no-shadow-cache') ? ' window.__noShadowCache = true;' : ''}
     try { localStorage.setItem('auto-quality', ${JSON.stringify(QUALITY)}); } catch (e) {}` });
   await send('Page.navigate', { url: `http://localhost:${HTTP_PORT}/apps/auto/` });
   for (let i = 0; i < 600; i++) { await sleep(500); try { if (await ev('!!window.__dbg')) break; } catch {} }
@@ -379,7 +379,24 @@ try {
     if (st.error) { console.log(`\n[${run}] ${st.error}`); continue; }
     const T = await ev(`window.__pc.time(${FRAMES})`);
     const C = await ev(`window.__pc.count(${Math.round(FRAMES / 2)})`);
-    const O = { setup: st, time: T, counts: C };
+    // The shadow pass on its own: its draw calls and CPU time per frame,
+    // against the whole scene pass's calls (which include it).
+    const SH = await ev(`new Promise((res) => { const d = window.__dbg, r = d.renderer, sm = r.shadowMap, o = sm.render;
+      let n = 0, c = 0, ms = 0, tot = 0, inSh = false; const by = {};
+      // which objects the shadow pass draws, by what they are
+      const vg = new Set(d.traffic.cars.map((v) => v.group)); if (d.player.vehicle) vg.add(d.player.vehicle.group);
+      const kind = (ob) => { for (let q = ob; q; q = q.parent) { if (q.isSkinnedMesh) return 'character'; if (vg.has(q)) return 'vehicle';
+        if (q === d.world.group) return 'city';
+        if (q.name && /^landmarks|spaceNeedle|monorail/.test(q.name)) return 'landmark'; if (q.parent === d.scene) return q.name || q.type; } return '?'; };
+      const orb = r.renderBufferDirect;
+      r.renderBufferDirect = function (cam, sc, geo, mat, ob, g) { if (inSh) { const k = kind(ob); by[k] = (by[k] || 0) + 1; } return orb.apply(this, arguments); };
+      sm.render = function (...a) { const t = performance.now(), c0 = r.info.render.calls; inSh = true; o.apply(this, a); inSh = false; ms += performance.now() - t; c += r.info.render.calls - c0; };
+      const f = () => { n++; tot += d.sceneStats.calls; if (n < 120) requestAnimationFrame(f); else { sm.render = o; r.renderBufferDirect = orb;
+        for (const k in by) by[k] = +(by[k] / n).toFixed(1);
+        res({ calls: +(c / n).toFixed(1), ms: +(ms / n).toFixed(2), sceneCalls: +(tot / n).toFixed(1), by }); } };
+      requestAnimationFrame(f); })`);
+    SH.cacheRedraws = await ev('window.__dbg.shadowCache ? window.__dbg.shadowCache.renders : null');
+    const O = { setup: st, time: T, counts: C, shadow: SH };
     out.runs[run] = O;
     const sys = Object.entries(T.sys).sort((a, b) => b[1] - a[1]).map(([k, v]) => `${k} ${v.toFixed(2)}`).join('  ');
     console.log(`\n[${run}] settled in ${(st.settle / 1000).toFixed(0)} s  route ${st.route} m  moved ${T.moved} m  resets ${T.resets}  ${T.cars} cars ${T.peds} peds  ${T.draws} draws (mean)  ${T.trisK}k tris`);
@@ -387,6 +404,7 @@ try {
     console.log(`  fps ${T.fps}  frame interval median ${T.raf.toFixed(1)}  p90 ${T.raf90}  p99 ${T.raf99}`);
     console.log(`  by system (mean ms/frame): ${sys}`);
     console.log(`  frames over 20 ms: ${T.miss} of ${T.n} (over 36 ms: ${T.miss2})`);
+    console.log(`  shadow pass: ${SH.calls} of ${SH.sceneCalls} scene-pass draws, ${SH.ms} ms/frame  (${Object.entries(SH.by).map(([k, v]) => k + ' ' + v).join(', ')})  cache redraws so far ${SH.cacheRedraws}`);
     console.log(`  slow quarter spends extra: ${T.slowQ}`);
     for (const w of T.worst) console.log(`    ${w}`);
     console.log('  queries/frame: ' + Object.entries(C).sort((a, b) => b[1].msFrame - a[1].msFrame)

@@ -2075,13 +2075,19 @@ function swimRaft(g, x, y, z, yaw) {
  * lot is sand and the ground stands 0.3 m+ over the water beside it -- and
  * each prop keeps off roads and buildings.
  */
-/** Show the near-only landmark meshes (the beaches' props) within range of `cam`. */
+/**
+ * Show the near-only landmark meshes (the beaches' props) within range of
+ * `cam`. Returns whether any changed (the phone's shadow cache redraws then).
+ */
 export function updateLandmarkRange(root, cam) {
+  let changed = false;
   for (const n of root.userData.near) {
     const c = n.s.center, d = n.r + n.s.radius;
     const dx = cam.x - c.x, dz = cam.z - c.z;
-    n.o.visible = dx * dx + dz * dz < d * d;
+    const v = dx * dx + dz * dz < d * d;
+    if (v !== n.o.visible) { n.o.visible = v; changed = true; }
   }
+  return changed;
 }
 
 export function beachProps(beaches, city, wl) {
