@@ -3961,6 +3961,8 @@ float frLine(float o, float fw, float c, float w) {
       c.group = step.value || null;
       c.lod = this._buildLod;
       if (c.group) { this.group.add(c.group); freezeStatic(c.group); }
+      // the phone's shadow cache holds this chunk's shadows (shadowcache.js)
+      if (this.onChunkChange) this.onChunkChange((c.cx + 0.5) * CHUNK, (c.cz + 0.5) * CHUNK, CHUNK);
       if (old) {
         old.traverse((o) => { if (o.geometry) o.geometry.dispose(); });
         this.group.remove(old);
@@ -3983,6 +3985,7 @@ float frLine(float o, float fw, float c, float w) {
       if (o.geometry) o.geometry.dispose();
     });
     this.group.remove(c.group);
+    if (this.onChunkChange) this.onChunkChange((c.cx + 0.5) * CHUNK, (c.cz + 0.5) * CHUNK, CHUNK);
     c.group = null;
     c.lod = -1;
   }

@@ -30,6 +30,7 @@ src/controls.js             touch stick/buttons + keyboard fallback
 src/hud.js                  minimap, full map, readouts
 src/stunts.js               stunt-jump ramps (geometry + height query) and their scoring
 src/monorail.js             the Seattle Center Monorail: beams, stations, both trains
+src/shadowcache.js          phones: the city's shadows drawn once, only movers per frame
 src/effects.js              particles + tracers
 src/audio.js                all sound, synthesised: engine models, one-shot bank,
                             positional traffic/sirens, radio (see "Sound")
@@ -2023,6 +2024,53 @@ calls and GL calls are expensive there in a way Chrome hides.
 | I-5 drive | 11.5 ms | 6.5 ms |
 | standing at Yesler Terrace | 13.1 ms, 338 draws | 6.2 ms, 171 draws |
 
+### Heat: don't redo work whose answer has not changed (v121)
+
+The phone runs smoothly and hot. Two things were recomputed every frame
+to the same result:
+
+- **The menu and the map drew the city behind them.** Paused, the loop still
+  rendered the scene, shadows and post chain 60 times a second under an 86 %
+  overlay. Now it draws two frames after the menu shows or the map opens and
+  then leaves the canvas alone until something asks (`idleRedraw`: a resize, a
+  tap in the menu, quality, coming back from the background). The idle keys
+  off the menu being SHOWN, not `game.paused`: harnesses pause without the
+  menu to pose shots, and must keep drawing.
+- **The city's shadows are drawn once** (`src/shadowcache.js`, phones only).
+  Static casters (`world.group`, the landmarks, the ramps) render into a cache
+  60 m bigger than the shadow box on every side; each frame it is copied into
+  the live map shifted by whole texels -- `placeSun` snaps the box to the texel
+  grid in all three axes, so the shift and the depth offset are exact -- and
+  three's own pass draws only the movers over it (statics hidden, its clear
+  suppressed). It re-renders when the box leaves it (the box rides 90 m ahead
+  of the camera: every ~2 s driving, once after a look round), when a chunk
+  within reach of it is built or dropped (`world.onChunkChange`, with 340 m for
+  a tower's shadow at this sun), and when a range-culled landmark mesh toggles.
+  It wraps `shadowMap.render`, so every `renderer.render` -- game and
+  harnesses -- gets it; it refuses to install if its copy shader did not
+  compile (three does not throw, it would draw no city shadows), and turns
+  itself off on any error. `window.__noShadowCache` (perfcpu
+  `--no-shadow-cache`) boots without it.
+
+**`renderer.info` resets AFTER the shadow pass**, so `sceneStats`, perfguard
+and the Debug readout have never counted shadow draws. perfcpu now reports
+the pass separately (`shadow pass: N of M`, by caster kind).
+
+| phone profile, shadow-pass draws | three's pass | cached |
+|---|---|---|
+| driving I-5 | 29.7 | 12 |
+| driving downtown | 36 | 14 |
+| standing downtown | 22 | 2-3 |
+
+At the 8x throttle: render 5.06 -> 4.65 ms/frame driving downtown, 4.53 ->
+4.05 standing; shadow pass 0.59 -> 0.27 ms. `node tools/shadowcheck.mjs`
+reads the live shadow map back through the cache and through three's pass at
+seven boxes (small shifts, past the margin, a turn) and compares the depths:
+all but a few edge texels a caster just touches (float transforms of ~1 km
+coordinates rasterise them differently) agree to ~1e-5. The cache is ~1350 px
+square, RGBA plus depth, ~15 MB of GPU memory. Desktop keeps three's pass:
+its 2048 map would make the cache ~4x that.
+
 ### Hitches: everything first-used belongs behind the loading screen
 
 **Nothing was compiled until the first frame, and some things not until much
@@ -2368,6 +2416,7 @@ The purpose-built harnesses, each a fixed-dt, paused-game driver:
 | `tools/aircraftshots.mjs [dir] [types] [--stage] [--field] [--flight] [--takeoff]` | aircraft on a plain stage (incl. a `close` cockpit view), on their Boeing Field spots, the helicopter flown through spool/lift/hover/yaw/forward/turn/stop/land under the game's chase camera, and fixed-wing take-off numbers (see "The hangar"). `AIR_PROBE='view:x,y'` raycasts stage pixels |
 | `tools/jank.mjs` | `fwy-bump`, `crossing-clash`, `barrier-on-road` added for the grading (see "Freeway grading") |
 | `tools/junctions.mjs [tag] [--only=cat] [--noshots]` | 19 junctions picked by kind; per junction a raycast classification map, hole / stacked tarmac / crossing paint / kerb gap / sink counts, and oblique, top and eye shots (GPU by default; `JUNC_PROBE='<expr>'`, `JUNC_AT=x,z`). See "Junctions, dead ends, bridges" |
+| `tools/shadowcheck.mjs` | the phone's shadow cache against three's own pass: live shadow map read back both ways at seven boxes, depths compared texel by texel, draws counted (see "Heat") |
 | `tools/audiorender.mjs [--only a,b]` | renders the sound offline to `docs/audio/*.wav`: peak/RMS/centroid/silence per file, fails on clipping (see "Sound") |
 
 **A walker needs a seed, and the seed is the edge's own surface.** Seeded with
