@@ -2285,6 +2285,31 @@ state at each step (`--bench` times the bank; use `AUTO_GPU=1` -- on
 SwiftShader each render batch waits for a ~0.5 s frame and the bank reads
 20-40 s, which measures the harness).
 
+**The radio is twelve stations** (v122, `STATIONS` in audio.js): KEXP, RdMix
+Classic Rock, BBC Radio 1, Top 100 Charts, NRJ Linkin Park, Rock Antenne
+Alternative, 80s Drive, C89.5, KNKX, Classical KING FM, and two synth-only
+stations. Every live one keeps a synth voice for when it is offline or dead.
+Getting into a car tunes a random one (never the last); RADIO on the driving
+pad, R, the HUD's radio button or the pad's shoulder buttons tune the next;
+the pause menu lists them all.
+
+- **Find streams with the radio-browser.info search /apps/radio uses**, then
+  check each with curl: HTTPS, an audio content type, and a CORS header for
+  polkiewicz.com. An https page may not load an http stream. BBC Radio 1's HLS
+  master playlist points at an http variant, so the station is that variant
+  over https; Safari plays HLS in an `<audio>`, and a browser whose
+  `canPlayType` says no skips the station (`playable`).
+- **The element has no `crossOrigin`**: nothing reads its samples, and asking
+  for CORS only lets a station fail.
+- **A stream that neither plays nor errors is silence forever**, so 20 s in
+  `loading` marks it failed and the synth voice covers. BBC Radio 1 takes
+  ~13 s to start in desktop Chrome. A failure is forgotten on retuning.
+- Only KEXP has a now-playing feed; the others put titles in the stream
+  (ICY), which a media element hides.
+- verify tunes every live station in a car and reports how long each takes to
+  sound (reported, not failed: they are other people's servers), and fails if
+  five cars in a row get the same station.
+
 **Resume from anything but `running`, on every gesture, for the whole
 session (v120).** iOS stops the context behind the page's back (the home
 screen, a call, Siri) and reports it as `interrupted`, which Chrome never

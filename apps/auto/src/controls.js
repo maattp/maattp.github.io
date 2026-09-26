@@ -132,6 +132,7 @@ export class Controls {
       this.keys.add(e.code);
       if (e.code === 'KeyF' || e.code === 'KeyE') this.tapped = 'enter';
       if (e.code === 'Space') this.tapped = 'jump';
+      if (e.code === 'KeyR' && this._ui) this._ui.radio = 1;   // the next station
       if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Space'].includes(e.code)) e.preventDefault();
     });
     window.addEventListener('keyup', (e) => this.keys.delete(e.code));
