@@ -203,6 +203,10 @@ export const TYPES = {
   // handled in updateBalloon. `seeFar`: a 21 m balloon is a landmark from
   // kilometres away, not a quad that can vanish at 80 lengths.
   balloon: deriveSpec({ wheelbase: 1.3, len: 1.6, wid: 1.6, wheelR: 0.2, sill: 0.2, belt: 1.1, roof: 1.2, cab: [0, 0.1], hand: 'balloon', plane: true, balloon: true, mass: 0.6, acc: 3, topKph: 40, brakeM: 40, latG: 0.5, livery: 0xffffff, seeFar: 4000 }),
+  // A sea kayak, 4.3 m, paddled: strokes alternate sides and the stroke is
+  // the thrust and the steering both (updateKayak). A kayak is a boat to the
+  // water rules -- float, shore, exit onto a deck -- with no engine.
+  kayak: deriveSpec({ wheelbase: 2.6, len: 4.3, wid: 0.64, wheelR: 0.1, sill: 0.1, belt: 0.2, roof: 0.3, cab: [-0.5, 0.3], hand: 'kayak', boat: true, kayak: true, noEngine: true, mass: 0.12, acc: 1.6, topKph: 11, brakeM: 6, latG: 0.4 }),
   jetski: deriveSpec({ wheelbase: 1.8, len: 3.20, wid: 1.20, wheelR: 0.20, sill: 0.3, belt: 0.6, roof: 1.05, cab: [-0.1, 0.1], hand: 'jetski', boat: true, jetski: true, mass: 0.4, acc: 7.5, topKph: 105, brakeM: 30, latG: 0.9 }),
   boat: deriveSpec({ wheelbase: 3.2, len: 5.70, wid: 2.20, wheelR: 0.30, sill: 0.4, belt: 0.7, roof: 1.45, cab: [-0.2, 0.1], hand: 'boat', boat: true, cockpit: [0.12, -2.2, 0.9, 0.86], mass: 1.1, acc: 3.0, topKph: 70, brakeM: 45, latG: 0.6 }),
   pickup: deriveSpec({ wheelbase: 3.68,len: 5.92, wid: 2.05, wheelR: 0.42, sill: 0.48, belt: 1.26, roof: 1.98, cab: [-0.15, 0.22], hand: 'pickup', mass: 1.4, acc: 4.4, topKph: 185, brakeM: 45, latG: 0.77 }),
@@ -2732,6 +2736,14 @@ const RIDERS = {
     shoulder: [-0.74, 0.30], elbow: [-0.18, 0.06],
     thigh: [-1.20, 0.34], knee: 1.50, foot: -0.12,
   },
+  // Sitting in the cockpit, legs forward under the deck; the arms are the
+  // paddle's (updateKayak solves them to the shaft every frame).
+  kayak: {
+    z: -0.14, hipY: 0.17, seed: 61,
+    lean: 0.02, head: -0.04,
+    shoulder: [-0.9, 0.25], elbow: [-0.9, 0.05],
+    thigh: [-1.48, 0.10], knee: 0.28, foot: -0.25,
+  },
   atv: {
     z: -0.19, hipY: 0.96, seed: 77,
     lean: 0.20, head: -0.22,
@@ -2754,10 +2766,19 @@ function riderGeometry() {
   return RIDER_GEO;
 }
 
+// A kayaker: shirt sleeves under a yellow life vest (the hi-vis loft), no helmet.
+let PADDLER_GEO = null;
+function paddlerGeometry() {
+  if (!PADDLER_GEO) {
+    PADDLER_GEO = buildCharacter({ seed: 5150, variant: 4, shirt: [0.16, 0.34, 0.52], pants: [0.12, 0.12, 0.14], hivis: true });
+  }
+  return PADDLER_GEO;
+}
+
 /** Poses a humanoid onto a bike and returns it, ready to add to the tilt group. */
 function makeRider(hand) {
   const p = RIDERS[hand];
-  const h = makeHumanoid({ geometry: riderGeometry(), seed: p.seed, scale: 0.96 });
+  const h = makeHumanoid({ geometry: hand === 'kayak' ? paddlerGeometry() : riderGeometry(), seed: p.seed, scale: 0.96 });
   const b = h.bones;
   b[BONES.spine].rotation.x = p.lean * 0.45;
   b[BONES.chest].rotation.x = p.lean * 0.55;
@@ -5359,6 +5380,134 @@ function buildBus(spec, paint, trim, matte) {
   return [[-wxF, wr, zF, wr, twF], [wxF, wr, zF, wr, twF], [-wxR, wr, zR, wr, twR], [wxR, wr, zR, wr, twR]];
 }
 
+// Paddling: a stroke's length in s, the share of it the blade is in the
+// water, peak push m/s2, the push's yaw (the wiggle) and the turn's, drag
+// (quadratic, linear), yaw damping (at rest, per m/s of speed), and the
+// draft a kayak can run in. Measured: cruise 2.4 m/s (9 km/h), a paddled
+// turn and a pivot at rest both ~40 deg/s, back-paddling ~2 m/s.
+const KAYAK = { stroke: 0.64, catchOut: 0.55, push: 2.4, yaw: 1.4, turn: 9, drag: 0.12, lin: 0.05, yawDamp: 3.5, track: 0.4, draft: 0.22 };
+const X_AXIS = new THREE.Vector3(1, 0, 0);
+const _ikA = new THREE.Vector3(), _ikB = new THREE.Vector3(), _ikC = new THREE.Vector3(), _ikQ = new THREE.Quaternion();
+
+/**
+ * Two-bone arm IK onto a world-space target: the elbow bends in the plane
+ * holding the pole (out to the side, down and back), the upper arm aims at
+ * the elbow, the forearm at the target. Bone directions are their children's
+ * bind offsets, so it works on any humanoid from peds.js.
+ */
+function solveArm(sh, el, hand, target, frame, side) {
+  const S = sh.getWorldPosition(new THREE.Vector3());
+  const E0 = el.getWorldPosition(new THREE.Vector3()), H0 = hand.getWorldPosition(new THREE.Vector3());
+  const L1 = S.distanceTo(E0), L2 = E0.distanceTo(H0);
+  const toT = target.clone().sub(S);
+  let d = toT.length();
+  d = clamp(d, Math.abs(L1 - L2) + 1e-3, L1 + L2 - 1e-3);
+  const dir = toT.normalize();
+  // pole: the elbow drops and goes out to its own side, in the boat's frame
+  const pole = new THREE.Vector3(side * 0.8, -0.9, -0.3).applyQuaternion(frame.getWorldQuaternion(_ikQ)).normalize();
+  const perp = pole.addScaledVector(dir, -pole.dot(dir)).normalize();
+  const a = (L1 * L1 - L2 * L2 + d * d) / (2 * d), hgt = Math.sqrt(Math.max(0, L1 * L1 - a * a));
+  const E = S.clone().addScaledVector(dir, a).addScaledVector(perp, hgt);
+  const T = S.clone().addScaledVector(dir, d);
+  const aim = (bone, child, from, to) => {
+    // world direction -> the bone's parent space, then from the child's bind offset
+    const pq = bone.parent.getWorldQuaternion(_ikQ).invert();
+    const want = _ikA.copy(to).sub(from).normalize().applyQuaternion(pq);
+    const rest = _ikB.copy(child.position).normalize();
+    bone.quaternion.setFromUnitVectors(rest, want);
+    bone.updateMatrixWorld(true);
+  };
+  aim(sh, el, S, E);
+  aim(el, hand, el.getWorldPosition(_ikC), T);
+}
+
+/** A touring paddle along local x: an alloy shaft and two yellow blades. */
+let PADDLE_GEO = null;
+const PADDLE_MAT = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.5, metalness: 0.2 });
+function kayakPaddle() {
+  if (!PADDLE_GEO) {
+    const b = new Builder(false);
+    const shaft = [0.16, 0.17, 0.19], blade = [0.95, 0.78, 0.12], tip = [0.12, 0.12, 0.13];
+    b.tube([-0.86, 0, 0], [0.86, 0, 0], 0.016, 8, shaft, true);
+    for (const sd of [-1, 1]) {
+      // a blade: asymmetric-ish oval, 46 x 17 cm, 1 cm thick
+      const x0 = sd * 0.84, x1 = sd * 1.3;
+      b.box((x0 + x1) / 2 - 0.23, -0.07, 0, 0.46, 0.14, 0.012, 0, blade);
+      b.box((x0 + x1) / 2 - 0.23 + sd * 0.02, -0.085, 0, 0.36, 0.17, 0.013, 0, blade);
+      b.box(x1 - sd * 0.01 - 0.01, -0.07, 0, 0.02, 0.14, 0.014, 0, tip);
+      b.tube([sd * 0.72, 0, 0], [sd * 0.76, 0, 0], 0.024, 8, tip, true);     // drip ring
+    }
+    PADDLE_GEO = b.build();
+  }
+  const m = new THREE.Mesh(PADDLE_GEO, PADDLE_MAT);
+  m.castShadow = true;
+  return m;
+}
+
+/**
+ * A sea kayak: 4.3 m by 64 cm, lofted through stations (a rounded-V hull, the
+ * sheer rising to the ends, a crowned deck), a cockpit coaming, deck lines
+ * and toggles at the ends. y = 0 is the waterline. The hull and deck take the
+ * livery.
+ */
+function buildKayak(spec, paint, trim, matte) {
+  const L = 2.15, N = 14;
+  const st = [];
+  for (let i = 0; i <= N; i++) {
+    const z = -L + (2 * L * i) / N, u = Math.abs(z) / L;
+    const w = 0.32 * Math.pow(Math.max(0, 1 - Math.pow(u, 2.1)), 0.75) + 0.004;
+    const sheer = 0.13 + 0.09 * u * u;
+    const keel = -0.14 * (1 - Math.pow(u, 2.6)) + 0.1 * Math.pow(u, 6);
+    const crown = 0.07 * (1 - u * u) * (z > 0 ? 1 : 0.7);
+    st.push({ z, w, sheer, keel, crown });
+  }
+  const WHITE_ = [1, 1, 1], DARK = [0.08, 0.08, 0.09], LINE = [0.1, 0.1, 0.11];
+  for (const sd of [-1, 1]) {
+    paint.patch(st.map(({ z, w, sheer, keel }) => [[0, keel, z], [sd * w * 0.62, keel * 0.55, z], [sd * w * 0.96, sheer * 0.35, z], [sd * w, sheer, z]]), WHITE_, [sd, -0.2, 0]);
+  }
+  paint.patch(st.map(({ z, w, sheer, crown }) => [[-w, sheer, z], [-w * 0.55, sheer + crown * 0.8, z], [0, sheer + crown, z], [w * 0.55, sheer + crown * 0.8, z], [w, sheer, z]]), WHITE_, [0, 1, 0]);
+  // the cockpit: a black opening with a raised coaming round it
+  const deckY = (z, x) => {
+    const u = Math.abs(z) / L, sheer = 0.13 + 0.09 * u * u, crown = 0.07 * (1 - u * u) * (z > 0 ? 1 : 0.7);
+    return sheer + crown * (1 - (x / 0.3) ** 2 * 0.45);
+  };
+  const CZ = -0.12, CA = 0.42, CB = 0.22, NS = 20;
+  const ring = (ra, rb, dy) => {
+    const pts = [];
+    for (let j = 0; j <= NS; j++) {
+      const a = (j / NS) * Math.PI * 2, x = Math.sin(a) * rb, z = CZ + Math.cos(a) * ra;
+      pts.push([x, deckY(z, x) + dy, z]);
+    }
+    return pts;
+  };
+  matte.patch([ring(CA, CB, 0.05), ring(CA - 0.04, CB - 0.04, 0.055)], DARK, [0, 1, 0]);
+  matte.patch([ring(CA + 0.03, CB + 0.03, 0.005), ring(CA, CB, 0.05)], DARK, [0, 1, 0]);
+  {
+    const pts = ring(CA - 0.04, CB - 0.04, 0.052);
+    const c = [0, deckY(CZ, 0) + 0.02, CZ];
+    for (let j = 0; j < NS; j++) matte.tri(c, pts[j], pts[j + 1], [0, 1, 0], [0.03, 0.03, 0.035]);
+    // the seat back, just visible behind the opening
+    matte.box(0, deckY(CZ - 0.34, 0) - 0.05, CZ - 0.34, 0.3, 0.2, 0.04, 0, [0.14, 0.14, 0.16]);
+  }
+  // deck lines: bungees criss-crossing the fore and aft decks, a perimeter line
+  for (const [z0, z1] of [[0.55, 1.25], [-0.75, -1.35]]) {
+    for (const [a, c] of [[z0, z1], [z1, z0]]) {
+      const wa = 0.18, wc = 0.18;
+      matte.tube([-wa, deckY(a, wa) + 0.012, a], [wc, deckY(c, wc) + 0.012, c], 0.006, 4, LINE);
+    }
+    matte.tube([-0.2, deckY(z0, 0.2) + 0.012, z0], [0.2, deckY(z0, 0.2) + 0.012, z0], 0.006, 4, LINE);
+  }
+  // toggles at bow and stern
+  for (const sd of [-1, 1]) {
+    const z = sd * (L - 0.1);
+    matte.tube([-0.05, deckY(z, 0) + 0.02, z], [0.05, deckY(z, 0) + 0.02, z], 0.012, 6, DARK, true);
+  }
+  // a skeg box aft, and a compass bump fore
+  matte.box(0, deckY(-1.6, 0) - 0.01, -1.6, 0.06, 0.03, 0.18, 0, DARK);
+  trim.spheroid(0, deckY(0.62, 0) + 0.015, 0.62, 0.05, 10, 5, [0.1, 0.12, 0.14], 0.5);
+  return [];   // no wheels
+}
+
 /**
  * A personal watercraft. y = 0 is the waterline, like the boat's: a V-hull
  * lofted through seven stations, a flat deck with footwells either side of a
@@ -5592,7 +5741,7 @@ const HAND_BUILT = {
   boxtruck: (s, p, t, m) => buildTruck(s, p, t, m, TRUCK_LOOKS.boxtruck),
   garbage: (s, p, t, m) => buildTruck(s, p, t, m, TRUCK_LOOKS.garbage),
   convertible: buildConvertible, cruiser: buildCruiser, sportbike: buildSportbike,
-  atv: buildAtv, boat: buildBoat, jetski: buildJetski, balloon: buildBalloon,
+  atv: buildAtv, boat: buildBoat, jetski: buildJetski, kayak: buildKayak, balloon: buildBalloon,
 };
 
 /**
@@ -6055,7 +6204,7 @@ export class Vehicle {
     // A bike carries its rider. He goes in the tilt group, so he leans with it
     // -- parented to `group` instead he would stay bolt upright through every
     // corner while the bike went over underneath him.
-    this.rider = this.spec.moto || this.spec.atv || this.spec.jetski || this.spec.balloon ? makeRider(this.spec.hand) : null;
+    this.rider = this.spec.moto || this.spec.atv || this.spec.jetski || this.spec.kayak || this.spec.balloon ? makeRider(this.spec.hand) : null;
     if (this.rider) this.tilt.add(this.rider.group);
     this.wheelMeshes = [];
     this.shadowTilt = null;   // the player's contact shadow (setDetailed)
@@ -6130,7 +6279,7 @@ export class Vehicle {
     }
     // A quad's rider is there only when someone is riding it. (The bikes
     // keep theirs as they always have: traffic is all they ever are.)
-    if (this.rider && (this.spec.atv || this.spec.jetski || this.spec.balloon)) this.rider.group.visible = this.detailedWheels || !empty;
+    if (this.rider && (this.spec.atv || this.spec.jetski || this.spec.kayak || this.spec.balloon)) this.rider.group.visible = this.detailedWheels || !empty;
   }
 
   /** The player's own car gets steerable, spinning wheel meshes; traffic doesn't. */
@@ -6141,7 +6290,12 @@ export class Vehicle {
     this.trimMesh.geometry = on ? this.assets.trimGeo : this.assets.trimGeoW;
     this.matteMesh.geometry = on ? this.assets.matteGeo : this.assets.matteGeoW;
     if (!on) this.mode = this._mode;
-    if (this.rider && (this.spec.atv || this.spec.jetski || this.spec.balloon)) this.rider.group.visible = on || this._mode === 'traffic';
+    if (this.rider && (this.spec.atv || this.spec.jetski || this.spec.kayak || this.spec.balloon)) this.rider.group.visible = on || this._mode === 'traffic';
+    // the kayak's paddle, in the paddler's hands (updateKayak)
+    if (this.spec.kayak) {
+      if (on && !this.paddle) { this.paddle = kayakPaddle(); this.tilt.add(this.paddle); }
+      else if (!on && this.paddle) { this.tilt.remove(this.paddle); this.paddle = null; }
+    }
     // the burner's flame, shown while it is lit (updateBalloon)
     if (this.spec.balloon) {
       if (on && !this.flame) {
@@ -6788,6 +6942,51 @@ export class Vehicle {
    *
    * A moored boat ('apron') holds its mooring and only bobs.
    */
+  /**
+   * Move a hull through the water by its vLong/vLat: a probe leading the hull
+   * must find `minDepth` under the local surface and the same water LEVEL (a
+   * lock's step is a wall), trying each axis alone to slide along a bank.
+   * Sets shoreHit to the impact speed.
+   */
+  _waterMove(dt, minDepth) {
+    const depthAt = (x, z) => {
+      const wl = waterQuery ? waterQuery(x, z) : null;
+      return wl === null ? -1 : wl - G.terrainHeight(x, z);
+    };
+    const sp = Math.abs(this.vLong);
+    const f = this.forward;
+    const rx = f.z, rz = -f.x;
+    const dx = (f.x * this.vLong + rx * this.vLat) * dt;
+    const dz = (f.z * this.vLong + rz * this.vLat) * dt;
+    // The probe leads the hull by its half-length in the direction of travel.
+    const lead = this.vLong >= 0 ? this.halfLen * 0.92 : -this.halfLen * 0.92;
+    // A jump in the water's own LEVEL is a wall too: the Ballard Locks' gate
+    // between the canal at lake level and the Sound 5 m below, which a boat
+    // would otherwise sail straight over and drop down. Lake Washington's
+    // 22 cm below the canal passes.
+    const wlHere = waterQuery ? waterQuery(this.x, this.z) : null;
+    const level = (x, z) => {
+      if (wlHere === null) return true;
+      const w = waterQuery(x, z);
+      return w === null || Math.abs(w - wlHere) < 0.5;
+    };
+    const ok = (x, z) => depthAt(x, z) >= minDepth && depthAt(x + f.x * lead, z + f.z * lead) >= minDepth
+      && level(x + f.x * lead, z + f.z * lead);
+    this.shoreHit = 0;
+    if (ok(this.x + dx, this.z + dz)) { this.x += dx; this.z += dz; }
+    else {
+      const impact = sp;
+      if (ok(this.x + dx, this.z)) this.x += dx;
+      else if (ok(this.x, this.z + dz)) this.z += dz;
+      this.vLong *= impact > 4 ? -0.15 : 0.35;
+      this.vLat *= 0.3;
+      this.shoreHit = impact;
+    }
+    this.x = G.clampToMap(this.x);
+    this.z = G.clampToMap(this.z);
+    return { dx, dz };
+  }
+
   updateBoat(dt, input) {
     const spec = this.spec;
     const MIN_DEPTH = 0.45;
@@ -6828,37 +7027,7 @@ export class Vehicle {
     this.vLat *= Math.exp(-2.4 * dt);
     this.latAcc = yawRate * this.vLong;
 
-    const f = this.forward;
-    const rx = f.z, rz = -f.x;
-    const dx = (f.x * this.vLong + rx * this.vLat) * dt;
-    const dz = (f.z * this.vLong + rz * this.vLat) * dt;
-    // The probe leads the hull by its half-length in the direction of travel.
-    const lead = this.vLong >= 0 ? this.halfLen * 0.92 : -this.halfLen * 0.92;
-    // A jump in the water's own LEVEL is a wall too: the Ballard Locks' gate
-    // between the canal at lake level and the Sound 5 m below, which a boat
-    // would otherwise sail straight over and drop down. Lake Washington's
-    // 22 cm below the canal passes.
-    const wlHere = waterQuery ? waterQuery(this.x, this.z) : null;
-    const level = (x, z) => {
-      if (wlHere === null) return true;
-      const w = waterQuery(x, z);
-      return w === null || Math.abs(w - wlHere) < 0.5;
-    };
-    const ok = (x, z) => depthAt(x, z) >= MIN_DEPTH && depthAt(x + f.x * lead, z + f.z * lead) >= MIN_DEPTH
-      && level(x + f.x * lead, z + f.z * lead);
-    this.shoreHit = 0;
-    if (ok(this.x + dx, this.z + dz)) { this.x += dx; this.z += dz; }
-    else {
-      const impact = sp;
-      if (ok(this.x + dx, this.z)) this.x += dx;
-      else if (ok(this.x, this.z + dz)) this.z += dz;
-      this.vLong *= impact > 4 ? -0.15 : 0.35;
-      this.vLat *= 0.3;
-      this.shoreHit = impact;
-    }
-    this.x = G.clampToMap(this.x);
-    this.z = G.clampToMap(this.z);
-
+    const { dx, dz } = this._waterMove(dt, MIN_DEPTH);
     const wl = waterQuery ? waterQuery(this.x, this.z) : null;
     const surf = wl !== null ? wl : this.y;
     const ph = this._bob, t = this._t;
@@ -6898,6 +7067,127 @@ export class Vehicle {
     return { dx, dz };
   }
 
+  /**
+   * A kayak, paddled. GAS paddles forward, BRAKE back-paddles, the stick
+   * steers -- and all of it is strokes: they alternate sides at ~1.6 a second,
+   * each blade in the water for the first 55 % of its stroke, and each one
+   * pushes the hull along and yaws it away from its own side. Straight
+   * paddling therefore wiggles the bow as a real one does. Steering makes the
+   * strokes on the outside of the turn long sweeps and the inside ones
+   * short, or at a standstill reverse sweeps, so the boat pivots on the spot.
+   * The hull tracks: yaw is damped, harder the faster it runs, and sideslip
+   * dies fast (the keel line).
+   */
+  updateKayak(dt, input) {
+    const moored = this._mode === 'apron';
+    const fwd = moored ? 0 : clamp(input.throttle || 0, 0, 1);
+    const back = moored ? 0 : ((input.brake || 0) > 0.3 ? clamp(input.brake, 0, 1) : 0);
+    const steer = moored ? 0 : clamp(input.steer || 0, -1, 1);
+    const k = this.kayak || (this.kayak = { ph: 0, side: 1, yawV: 0, strokes: 0, effort: 0, dip: 0, dipSide: 0 });
+    this._t += dt;
+    const paddling = fwd > 0 || back > 0 || Math.abs(steer) > 0.2;
+    k.effort = lerp(k.effort, paddling ? 1 : 0, 1 - Math.exp(-5 * dt));
+    k.dip = 0;
+    if (paddling || k.ph > 0) {
+      const was = k.ph;
+      k.ph += dt / KAYAK.stroke;
+      if (was === 0 || (was < 1e-6 && k.ph > 0)) { k.dip = 1; k.dipSide = k.side; }
+      if (k.ph >= 1) {
+        k.ph -= 1; k.side = -k.side; k.strokes++;
+        if (paddling) { k.dip = 1; k.dipSide = k.side; } else k.ph = 0;
+      }
+    }
+    const s = k.side;                                 // +1 the right side, -1 the left
+    const inWater = k.ph > 0 && k.ph < KAYAK.catchOut;
+    const pw = inWater ? Math.sin(Math.PI * k.ph / KAYAK.catchOut) : 0;
+    // This side's blade: the push (forward, or back-paddling) both sides
+    // share, and the turn (steer > 0 turns left: the right side sweeps wide,
+    // the left side reverse-sweeps). The push yaws the bow away from its own
+    // side a little -- the wiggle; the turn yaws it the same way from either
+    // side, and nets out to no thrust, so at a standstill it pivots.
+    const fPush = fwd - back * 0.8, fTurn = steer * s * 0.9;
+    let acc = clamp(fPush + fTurn, -1, 1.6) * pw * KAYAK.push;
+    const yawAcc = pw * (s * fPush * KAYAK.yaw + steer * 0.9 * KAYAK.turn);
+    const sp = Math.abs(this.vLong);
+    acc -= KAYAK.drag * this.vLong * sp + KAYAK.lin * this.vLong;
+    this.vLong += acc * dt;
+    k.yawV += yawAcc * dt;
+    k.yawV *= Math.exp(-(KAYAK.yawDamp + KAYAK.track * sp) * dt);
+    this.heading += k.yawV * dt;
+    this.steer = lerp(this.steer, steer * 0.5, 1 - Math.exp(-8 * dt));
+    this.vLat += -k.yawV * this.vLong * dt * 0.3;
+    this.vLat *= Math.exp(-4 * dt);
+    this.latAcc = k.yawV * this.vLong;
+    if (moored) { this.vLong = 0; this.vLat = 0; k.yawV = 0; }
+    this._waterMove(dt, KAYAK.draft);
+    // float on the local surface, a small surge on each stroke and a lean
+    // into the blade
+    const wl = waterQuery ? waterQuery(this.x, this.z) : null;
+    const surf = wl !== null ? wl : this.y;
+    const ph = this._bob, t = this._t;
+    const heave = Math.sin(t * 1.9 + ph) * 0.025 + Math.sin(t * 3.1 + ph * 2.1) * 0.01;
+    const base = Number.isNaN(this._surf) ? surf : damp(this._surf, surf, 3, dt);
+    this._surf = base;
+    this.y = base + heave;
+    this.onGround = true;
+    this.vy = 0;
+    const tgtPitch = -0.012 * pw + Math.sin(t * 1.4 + ph * 1.7) * 0.01;
+    const tgtRoll = -s * 0.05 * pw + Math.sin(t * 1.2 + ph * 0.7) * 0.02;
+    this.pitch = lerp(this.pitch, tgtPitch, 1 - Math.exp(-5 * dt));
+    this.roll = lerp(this.roll, tgtRoll, 1 - Math.exp(-5 * dt));
+    this.skid = 0;
+    this.sync();
+    if (this.paddle && this.rider && this.rider.group.visible) this._paddleStroke(k, pw);
+  }
+
+  /**
+   * The paddle's pose for this moment of the stroke (in the tilt group's
+   * frame), and the paddler's arms solved to its two grips. The stroke side's
+   * blade goes in by the feet and comes out at the hip, beside the hull and
+   * under the surface; through the recovery the paddle rolls over to the
+   * other side; at rest it lies across the cockpit.
+   */
+  _paddleStroke(k, pw) {
+    const P = this.paddle, h = this.rider, b = h.bones;
+    const pose = (side, u) => {
+      // u 0..1 through the pull: the blade from the catch to the exit
+      const bz = lerp(0.95, -0.35, u), c = new THREE.Vector3(side * 0.08, 0.5 + 0.06 * Math.sin(Math.PI * u), lerp(0.42, 0.05, u));
+      const blade = new THREE.Vector3(side * 0.86, -0.14, bz);
+      return { c, d: blade.sub(c).normalize() };
+    };
+    const u = k.ph < KAYAK.catchOut ? k.ph / KAYAK.catchOut : 1;
+    let c, d;
+    if (k.ph < KAYAK.catchOut) ({ c, d } = pose(k.side, u));
+    else {
+      // the recovery: out of the water on this side, over, and in on the other
+      const r = (k.ph - KAYAK.catchOut) / (1 - KAYAK.catchOut), e = r * r * (3 - 2 * r);
+      const A = pose(k.side, 1), B = pose(-k.side, 0);
+      c = A.c.lerp(B.c, e);
+      const up = new THREE.Vector3(0, 1, 0);
+      d = A.d.clone().lerp(B.d, e);
+      d.addScaledVector(up, Math.sin(Math.PI * e) * 0.5).normalize();
+    }
+    // at rest the paddle lies across the cockpit, level
+    const rest = { c: new THREE.Vector3(0, 0.46, 0.28), d: new THREE.Vector3(1, 0, 0) };
+    c.lerp(rest.c, 1 - k.effort);
+    d.lerp(rest.d, 1 - k.effort).normalize();
+    P.position.copy(c);
+    P.quaternion.setFromUnitVectors(X_AXIS, d);
+    // torso: wound toward the catch, unwinding through the pull
+    const twist = k.side * lerp(0.32, -0.12, u) * k.effort;
+    b[BONES.spine].rotation.y = twist * 0.45;
+    b[BONES.chest].rotation.y = twist * 0.55;
+    // the grips, into world space, and the arms solved to them
+    this.group.updateMatrixWorld(true);
+    const gl = c.clone().addScaledVector(d, -0.36), gr = c.clone().addScaledVector(d, 0.36);
+    this.tilt.localToWorld(gl); this.tilt.localToWorld(gr);
+    h.group.updateMatrixWorld(true);
+    // the humanoid's left hand holds the paddle's -x grip
+    solveArm(b[BONES.shoulderL], b[BONES.elbowL], b[BONES.handL], gl, this.tilt, -1);
+    solveArm(b[BONES.shoulderR], b[BONES.elbowR], b[BONES.handR], gr, this.tilt, 1);
+    void pw;
+  }
+
   update(dt, input) {
     const spec = this.spec;
     if (this.hitCd > 0) this.hitCd -= dt;
@@ -6905,6 +7195,7 @@ export class Vehicle {
     if (spec.heli) { this.updateHeli(dt, input); return; }
     if (spec.fighter) { this.updateFighter(dt, input); return; }
     if (spec.plane) { this.updatePlane(dt, input); return; }
+    if (spec.kayak) { this.updateKayak(dt, input); return; }
     if (spec.boat) { this.updateBoat(dt, input); return; }
     const throttle = input.throttle || 0;
     const brake = input.brake || 0;

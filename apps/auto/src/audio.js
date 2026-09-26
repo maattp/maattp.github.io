@@ -1968,9 +1968,9 @@ export class Audio {
   /** Getting in: doors, seat, starter, and the engine catching. */
   enterVehicle(spec, running) {
     if (!this.ready) return;
-    if (spec && spec.balloon) {
-      // No engine: a balloon is the burner and the wind. Climbing into the
-      // basket is a creak of wicker and nothing else.
+    if (spec && (spec.balloon || spec.noEngine)) {
+      // No engine: a balloon is the burner and the wind, a kayak the paddle.
+      // Climbing in is a creak of wicker (or hull) and nothing else.
       this._spec = spec;
       this.engModel.on = false;
       this._engStartAt = -1;
@@ -2087,7 +2087,7 @@ export class Audio {
       const name = selectEngine(spec);
       this.eng.setProfile(name);
       m.setProfile(ENGINES[name], spec);
-      if (!spec.balloon) m.start(true);
+      if (!spec.balloon && !spec.noEngine) m.start(true);
     }
     // Out of the car by any route -- a respawn never calls exitVehicle -- and
     // the engine is off.

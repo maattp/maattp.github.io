@@ -193,11 +193,12 @@ class Game {
     // an apron plane or one you left earlier has to be started.
     audio.enterVehicle(v.spec, wasMode === 'traffic' || wasMode === 'police');
     // In a helicopter GAS and BRAKE are the collective.
-    const heli = !!v.spec.heli, balloon = !!v.spec.balloon;
-    for (const [k, car, h, b] of [['gas', 'GAS', 'UP', 'BURN'], ['brake', 'BRAKE', 'DOWN', 'VENT']]) {
+    const heli = !!v.spec.heli, balloon = !!v.spec.balloon, kayak = !!v.spec.kayak;
+    for (const [k, car, h, b, p] of [['gas', 'GAS', 'UP', 'BURN', 'PADDLE'], ['brake', 'BRAKE', 'DOWN', 'VENT', 'BACK']]) {
       const el = document.querySelector(`[data-btn="${k}"]`);
-      if (el) el.textContent = balloon ? b : heli ? h : car;
+      if (el) el.textContent = kayak ? p : balloon ? b : heli ? h : car;
     }
+    if (kayak) setTimeout(() => hud.showToast('Hold PADDLE to paddle — steer with the stick, even standing still'), 1000);
     if (heli) setTimeout(() => hud.showToast('Hold UP to lift off — let go to hover'), 1400);
     if (balloon) {
       setTimeout(() => hud.showToast('Hold BURN to heat the envelope and rise — VENT to sink'), 1200);
@@ -795,6 +796,7 @@ function installShadowFade() {
     v.vLong = 0;
   }
   spawnBalloon();
+  if (SEAPLANE_DOCK.kayakRack) kayakRack(SEAPLANE_DOCK.kayakRack);
   fishSpots = fishingSpots();
   fishing = new Fishing({
     audio,
@@ -857,6 +859,8 @@ function installShadowFade() {
       hello: 'The fish stall at Pike Place. Step up to the counter and press ENTER to catch' },
     ...hoops.courts.map((c) => ({ x: c.x, z: c.z, kind: 'hoop', name: `Basketball — ${c.name}`, near: false,
       hello: 'A basketball court. Stand on the free throw line and press ENTER' })),
+    ...(SEAPLANE_DOCK.kayakRack ? [{ x: -101, z: -1982, kind: 'kayak', name: 'Kayaks', near: false,
+      hello: 'Kayaks for rent. Walk out to the float and climb into one' }] : []),
     { x: BALLOON_SITE.x, z: BALLOON_SITE.z, kind: 'balloon', name: 'Hot air balloon', near: false,
       hello: 'A hot air balloon, ready to fly. Climb into the basket' },
     // the Monorail's two stations: Westlake's street door, Seattle Center's ramp
@@ -1601,6 +1605,56 @@ function fishingProp(sp) {
   scene.add(g);
   return g;
 }
+/**
+ * The kayak rental on the seaplane dock's landing: a rack of three boats on
+ * two frames, paddles leaning on it, and the board. Its kayaks to take are
+ * the four moored at the float (landmarks.js SEAPLANE_DOCK.moorings).
+ */
+function kayakRack(at) {
+  const b = new Builder(false);
+  const { x, y, z } = at;
+  const wood = [0.42, 0.3, 0.2], frame = [0.3, 0.32, 0.34];
+  // Builder.box turns the other way from rotation.y; everything here is along world x
+  for (const dx of [-1.1, 1.1]) {
+    b.box(x + dx, y, z - 0.35, 0.08, 1.5, 0.08, 0, frame);
+    b.box(x + dx, y, z + 0.35, 0.08, 1.5, 0.08, 0, frame);
+    for (const yy of [0.45, 0.95, 1.45]) b.box(x + dx, y + yy, z, 0.08, 0.06, 0.85, 0, wood);
+  }
+  const hulls = [[0.95, 0.72, 0.1], [0.84, 0.2, 0.16], [0.16, 0.56, 0.72]];
+  hulls.forEach((c, i) => {
+    // a kayak upside down on each rung: a long flattened spheroid
+    const g = new THREE.SphereGeometry(1, 14, 8);
+    g.scale(2.1, 0.13, 0.3); g.translate(x, y + 0.6 + i * 0.5, z);
+    const p = g.attributes.position, n = g.attributes.normal, ix = g.index.array, base = b.pos.length / 3;
+    for (let q = 0; q < p.count; q++) b.vert(p.getX(q), p.getY(q), p.getZ(q), n.getX(q), n.getY(q), n.getZ(q), 0, 0, c[0], c[1], c[2]);
+    for (let q = 0; q < ix.length; q += 3) b.face3(base + ix[q], base + ix[q + 1], base + ix[q + 2]);
+    g.dispose();
+  });
+  // paddles leaning against the end frame
+  for (const k of [0, 1, 2]) {
+    b.tube([x + 1.35 + k * 0.1, y, z - 0.3 + k * 0.2], [x + 1.25 + k * 0.1, y + 2.1, z - 0.3 + k * 0.2], 0.016, 6, [0.16, 0.17, 0.19], true);
+    b.box(x + 1.26 + k * 0.1, y + 1.8, z - 0.3 + k * 0.2, 0.012, 0.45, 0.16, 0, [0.95, 0.78, 0.12]);
+  }
+  const m = new THREE.Mesh(b.build(), world.mats.flat);
+  m.castShadow = true; m.receiveShadow = true;
+  scene.add(m);
+  // the board
+  const c = document.createElement('canvas'); c.width = 384; c.height = 128;
+  const g = c.getContext('2d');
+  g.fillStyle = '#1f4f6e'; g.fillRect(0, 0, 384, 128);
+  g.fillStyle = '#fff'; g.font = '900 46px Helvetica, Arial, sans-serif'; g.textAlign = 'center'; g.textBaseline = 'middle';
+  g.fillText('KAYAKS', 192, 50);
+  g.font = '700 20px Helvetica, Arial, sans-serif'; g.fillStyle = '#ffd24a';
+  g.fillText('BY THE HOUR · ON THE FLOAT', 192, 98);
+  const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace;
+  const sign = new THREE.Mesh(new THREE.PlaneGeometry(1.8, 0.6), new THREE.MeshStandardMaterial({ map: t, roughness: 0.7, side: THREE.DoubleSide }));
+  sign.position.set(x - 2.0, y + 1.4, z);
+  sign.rotation.y = Math.PI / 2;
+  scene.add(sign);
+  const post = new THREE.Mesh(new THREE.BoxGeometry(0.07, 1.1, 0.07), world.mats.flat);
+  post.position.set(x - 2.0, y + 0.55, z);
+  scene.add(post);
+}
 /** The balloon, inflated and waiting on its launch field. */
 function spawnBalloon() {
   const v = traffic.spawnAt(BALLOON_SITE.x, BALLOON_SITE.z, BALLOON_SITE.heading, 'balloon', 0xffffff, 'apron');
@@ -1727,6 +1781,12 @@ function frame(now) {
   }
   updatePickups(dt);
   if (!player.vehicle || !player.vehicle.spec.boat) fx.wake(dt, null);
+  if (player.vehicle && player.vehicle.spec.kayak && player.vehicle.kayak && player.vehicle.kayak.dip) {
+    const v = player.vehicle, sd = v.kayak.dipSide, f = v.forward;
+    const bx = v.x + f.z * sd * -0.66 + f.x * 0.9, bz = v.z - f.x * sd * -0.66 + f.z * 0.9;
+    fx.droplets(bx, v.y + 0.05, bz, 7);
+    audio.play('splash', { gain: 0.1, rate: 1.9 + Math.random() * 0.4, x: bx, y: v.y, z: bz });
+  }
   fx.update(dt);
 
   // engine smoke / skid marks

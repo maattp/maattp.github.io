@@ -986,6 +986,53 @@ async function main() {
       if (bad.length) { console.error(`FAIL: flying fish: ${bad.join('; ')}`); process.exitCode = 1; }
     }
 
+    // --- kayaks on Lake Union ---------------------------------------------
+    //
+    // Four rentals moored at the seaplane dock's float; one paddled at fixed
+    // dt: cruises at a kayak's speed, the blade goes in the water mid-stroke,
+    // a paddled turn and a pivot at rest both turn, back-paddling goes astern.
+    const kay = await session.eval(`(() => {
+      const d = window.__dbg, P = d.player, T = d.THREE;
+      const ks = d.traffic.cars.filter((v) => v.spec.kayak);
+      if (!ks.length) return null;
+      if (P.vehicle) P.exitVehicle(true);
+      const v = ks[0], out = { n: ks.length };
+      P.x = v.x; P.z = v.z; P.y = v.y + 1; P.enterVehicle(v);
+      out.paddle = !!v.paddle && v.rider.group.visible;
+      const run = (secs, inp) => { for (let i = 0; i < secs * 60; i++) v.update(1 / 60, inp); };
+      const x0 = v.x, z0 = v.z;
+      let depth = 9;
+      for (let i = 0; i < 20 * 60; i++) {
+        v.update(1 / 60, { throttle: 1, brake: 0, steer: 0 });
+        if (v.kayak.ph > 0.2 && v.kayak.ph < 0.35) {
+          const bp = new T.Vector3(v.kayak.side * 1.07, -0.07, 0).applyMatrix4(v.paddle.matrixWorld);
+          depth = Math.min(depth, bp.y - d.world.waterLevelAt(bp.x, bp.z));
+        }
+      }
+      out.cruise = +v.vLong.toFixed(2); out.dist = +Math.hypot(v.x - x0, v.z - z0).toFixed(1); out.depth = +depth.toFixed(2);
+      let h = v.heading; run(6, { throttle: 1, brake: 0, steer: 1 });
+      out.turn = +(((v.heading - h) * 180 / Math.PI) / 6).toFixed(1);
+      run(10, { throttle: 0, brake: 0, steer: 0 });
+      h = v.heading; run(5, { throttle: 0, brake: 0, steer: -1 });
+      out.pivot = +(((v.heading - h) * 180 / Math.PI) / 5).toFixed(1);
+      run(6, { throttle: 0, brake: 1, steer: 0 });
+      out.back = +v.vLong.toFixed(2);
+      P.exitVehicle(true);
+      return out;
+    })()`, true);
+    console.log('\n--- kayaks ------------------------------------------------');
+    if (!kay) { console.error('FAIL: no kayaks'); process.exitCode = 1; }
+    else {
+      console.log(`  ${kay.n} moored; paddled 20 s: ${kay.cruise} m/s, ${kay.dist} m, blade ${-kay.depth} m under mid-stroke; turn ${kay.turn} deg/s, pivot at rest ${kay.pivot} deg/s, back-paddling ${kay.back} m/s`);
+      const bad = [];
+      if (kay.n < 4 || !kay.paddle) bad.push('the rentals or the paddler');
+      if (kay.cruise < 1.8 || kay.cruise > 3.2) bad.push('cruise speed');
+      if (kay.depth > -0.05) bad.push('the blade does not reach the water');
+      if (kay.turn < 25 || Math.abs(kay.pivot) < 25) bad.push('turning');
+      if (kay.back > -1) bad.push('back-paddling');
+      if (bad.length) { console.error(`FAIL: kayaks: ${bad.join('; ')}`); process.exitCode = 1; }
+    }
+
     // --- no lake in the boat's cockpit ------------------------------------
     //
     // The runabout's cockpit floor is 12 cm over its waterline and the lake is
