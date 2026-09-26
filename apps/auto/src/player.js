@@ -462,6 +462,9 @@ export class Player {
       dist = 7.6 + v.spec.len * 0.42 + clamp(sp * 0.09, 0, 3.4);
       height = 3.2 + v.spec.roof * 0.42;
       lookH = 1.05;
+      // an articulated bus's rear section reaches 13.5 m behind the front's
+      // centre: the boom clears it
+      if (v.spec.artic) { dist += 8; height += 1.2; }
       if (v.spec.balloon) {
         // Far enough back to see the whole balloon -- 22 m of it over the
         // basket -- and looking at the middle of it, so the basket sits low

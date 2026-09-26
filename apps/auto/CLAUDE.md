@@ -1104,6 +1104,38 @@ built rather than blocked out:
   counter-rotating chest, level head, breathing idle, and the legs described
   below.
 
+### The articulated bus (v134)
+
+**King County Metro's 60 ft artic (a New Flyer XDE60 as RapidRide runs
+them), in RapidRide red, as TWO vehicles.** `artic` is the 11.4 m front
+section on the front and middle axles: traffic's lanes, AI, collisions and the
+player drive it as a bus. `articRear` is the 6.5 m rear on the drive axle, a
+`trailer`: `traffic.spawnAt` makes it with its front, the AI and despawn loop
+skip it, and after every update (the player's artic too) `Vehicle.follow`
+places it by trailer kinematics -- its drive axle dragged toward the
+turntable, which puts it inside the front's path round a corner and straight
+behind in reverse -- limited to 54 deg, sitting on the ground under its axle
+and on the hitch. Then the bellows (`makeBellows`, a 16 x 7 corrugated ring
+rebuilt from both sections' frames, within 150 m) stretch between them, open on
+the outside of a turn and folded on the inside.
+
+- The two sections never collide with each other; the rear is kinematic in
+  `resolveCarCollisions` (other cars take the whole push); entering the rear
+  enters the front (`nearestEnterable`); removing the front removes both.
+- **Both sections are `buildBus`** with options (axles, doors, `frontEnd` /
+  `rearEnd` -- a missing end is the bellows' dark mounting plate -- the roof
+  pod, `noFrontAxle`). Its stations are now relative to nose and tail, which
+  for 12 m are the old numbers: the city bus hashes identically.
+- It takes one of the three taxi slots in `CIVILIAN_TYPES`, in place: the
+  array is indexed by hash for kerbside parking, and appending would have
+  changed which car stands in every kerb slot in the city. Never parked, off
+  residential streets like the bus. The player's chase boom is 8 m longer and
+  1.2 m higher in one, to clear the rear section.
+
+verify's "articulated bus" section drives one straight, through a full-lock
+bend and in reverse (rear on line, turntable within its limit, hitch joined),
+enters the rear, and removes it. `docs/artic/` has shots.
+
 ### Every vehicle type has an authored builder
 
 The generic loft (one `section` tube, triangle-fan end caps, boxes for lamps,

@@ -213,6 +213,9 @@ export const TYPES = {
   van: deriveSpec({ wheelbase: 3.5,len: 5.26, wid: 2.00, wheelR: 0.35, sill: 0.36, belt: 1.10, roof: 2.28, cab: [-0.44, 0.30], hand: 'van', boxy: 2, mass: 1.5, acc: 2.9, topKph: 155, brakeM: 47, latG: 0.73 }),
   taxi: deriveSpec({ wheelbase: 2.98,len: 4.76, wid: 1.85, wheelR: 0.33, sill: 0.30, belt: 1.06, roof: 1.50, cab: [-0.28, 0.19], hand: 'service', taxi: true, livery: 0xf0b40c, mass: 1.0, acc: 3.8, topKph: 195, brakeM: 41, latG: 0.85 }),
   police: deriveSpec({ wheelbase: 2.95,len: 4.98, wid: 1.92, wheelR: 0.34, sill: 0.30, belt: 1.06, roof: 1.50, cab: [-0.28, 0.19], hand: 'service', police: true, livery: 0xf2f4f6, mass: 1.1, acc: 5.6, topKph: 230, brakeM: 37, latG: 0.93 }),
+  // the articulated bus: the front section and the trailing rear (buildArticFront)
+  artic: deriveSpec({ wheelbase: 6.7, len: 11.4, wid: 2.59, wheelR: 0.50, sill: 0.50, belt: 1.30, roof: 3.10, cab: [-0.48, 0.48], hand: 'artic', livery: 0xc41a24, bus: true, artic: true, boxy: 3, mass: 6.0, acc: 1.25, topKph: 90, brakeM: 58, latG: 0.58 }),
+  articRear: deriveSpec({ wheelbase: 5.3, len: 6.5, wid: 2.59, wheelR: 0.50, sill: 0.50, belt: 1.30, roof: 3.10, cab: [-0.48, 0.48], hand: 'articRear', livery: 0xc41a24, bus: true, trailer: true, boxy: 3, mass: 3.0, acc: 1.25, topKph: 90, brakeM: 58, latG: 0.58 }),
   bus: deriveSpec({ wheelbase: 6.0,len: 12.0, wid: 2.55, wheelR: 0.50, sill: 0.50, belt: 1.30, roof: 3.10, cab: [-0.48, 0.48], hand: 'bus', livery: 0xeceae3, bus: true, boxy: 3, mass: 4.5, acc: 1.4, topKph: 95, brakeM: 52, latG: 0.62 }),
   boxtruck: deriveSpec({ wheelbase: 4.3,len: 7.5, wid: 2.38, wheelR: 0.46, sill: 0.62, belt: 1.55, roof: 2.55, cab: [0.14, 0.46], cargo: 2.55, hand: 'boxtruck', boxy: 2, mass: 3.0, acc: 2.5, topKph: 125, brakeM: 51, latG: 0.66 }),
   ambulance: deriveSpec({ wheelbase: 3.9,len: 6.3, wid: 2.28, wheelR: 0.42, sill: 0.56, belt: 1.42, roof: 2.35, cab: [0.16, 0.46], cargo: 2.25, hand: 'ambulance', livery: 0xf4f4f0, boxy: 2, emergency: true, mass: 2.4, acc: 3.2, topKph: 155, brakeM: 48, latG: 0.72 }),
@@ -277,7 +280,9 @@ export const CIVILIAN_TYPES = [
   ...Array(4).fill('compact'),
   ...Array(4).fill('hatch'),
   ...Array(3).fill('ev'),
-  ...Array(3).fill('taxi'),
+  // (one of the three taxi slots is the articulated bus: in place, so every
+  // other slot, and the hash-picked kerbside cars, keep their types)
+  ...Array(2).fill('taxi'), 'artic',
   ...Array(3).fill('van'),
   ...Array(2).fill('muscle'),
   ...Array(2).fill('sports'),
@@ -5256,14 +5261,20 @@ function buildAmbulance(spec, paint, trim, matte) {
  * KERB side, which is -x: traffic drives on the right and `laneOffset` puts a
  * vehicle heading +z at -x of the centreline.
  */
-function buildBus(spec, paint, trim, matte) {
+// `o` makes the articulated bus's two sections from the same body: its axle
+// positions, its kerb doors, whether it has a front end (screen, lamps, sign,
+// bike rack, mirrors) and a rear end (lamps, rear window, grille), and where
+// the roof pod sits. An end it does not have is a dark mounting plate for the
+// bellows. The defaults are the 12 m city bus, unchanged.
+function buildBus(spec, paint, trim, matte, o = {}) {
   const wr = spec.wheelR, roofY = spec.roof;
   const nose = spec.len / 2, tail = -spec.len / 2;
-  const zF = 3.45, zR = -2.55;                 // 2.55 m front overhang, 3.45 m rear
+  const zF = o.zF !== undefined ? o.zF : 3.45, zR = o.zR !== undefined ? o.zR : -2.55;   // 2.55 m front overhang, 3.45 m rear
+  const frontEnd = o.frontEnd !== false, rearEnd = o.rearEnd !== false;
   const belt = 1.20;
   const core = bodyCore(spec, paint, matte, {
-    halfW: curve([[tail, 0.975], [-5.6, 1.0], [5.6, 1.0], [nose, 0.975]]),
-    sillY: curve([[tail, 0.52], [-5.4, 0.42], [5.4, 0.42], [nose, 0.46]]),
+    halfW: curve([[tail, frontEnd || rearEnd ? (rearEnd ? 0.975 : 1.0) : 1.0], [tail + 0.4, 1.0], [nose - 0.4, 1.0], [nose, frontEnd ? 0.975 : 1.0]]),
+    sillY: curve([[tail, rearEnd ? 0.52 : 0.42], [tail + 0.6, 0.42], [nose - 0.6, 0.42], [nose, frontEnd ? 0.46 : 0.42]]),
     beltY: () => belt, tuckAt: () => 0.97, topAt: () => 0.99, zF, zR,
     archR: 0.66, archGap: 0.06, archPow: 3.2, creaseAt: 0.40, tumble: 0.99, deckDrop: 0.010, lipOut: 0.030,
     endRound: 0.12, endMin: 0.96, stations: 64,
@@ -5273,12 +5284,12 @@ function buildBus(spec, paint, trim, matte) {
   // The window band and the kerb-side doors, worked out before the shell so
   // it can be built with the openings in it (see boxShell).
   const winY0 = belt + 0.10, winY1 = roofY - 0.52;
-  const DOORS = [[4.45, 5.55], [-0.60, 0.60]];
+  const DOORS = o.doors || [[4.45, 5.55], [-0.60, 0.60]];
   const spansOf = (sx) => {
     const cuts = sx < 0 ? DOORS : [], spans = [];
-    let z = tail + 1.70;
+    let z = tail + (rearEnd ? 1.70 : 0.30);
     for (const [a, b] of [...cuts].sort((p, q) => p[0] - q[0])) { spans.push([z, a - 0.05]); z = b + 0.05; }
-    spans.push([z, nose - 0.35]);
+    spans.push([z, nose - (frontEnd ? 0.35 : 0.30)]);
     return { cuts, spans };
   };
   const windows = [];
@@ -5290,40 +5301,46 @@ function buildBus(spec, paint, trim, matte) {
   const shell = boxShell(paint, {
     z0: tail, z1: nose, stations: 48, rr: 0.22, tumble: 0.04, crown: 0.05,
     wAt: (z) => geom(z).tw * rk(z), y0At: () => belt - 0.03,
-    y1At: curve([[tail, roofY - 0.10], [tail + 0.35, roofY], [nose - 0.45, roofY], [nose, roofY - 0.12]]),
+    y1At: curve([[tail, rearEnd ? roofY - 0.10 : roofY], [tail + 0.35, roofY], [nose - 0.45, roofY], [nose, frontEnd ? roofY - 0.12 : roofY]]),
     windows,
   });
   const sN = shell.sec(nose);
-  const scrTop = sN.side - 0.03;
-  endFace(paint, nose, 1, shell.prof(nose), [[0, (sN.y0 + scrTop) / 2 + 0.001, sN.w0 - 0.10, (scrTop - sN.y0) / 2]], WHITE);
-  const LAMP_A = [0.90, 0.68, 0.17, 0.075];
-  endFace(paint, nose, 1, endProf(nose), [LAMP_A], WHITE);
-  for (const sx of [-1, 1]) {
-    const hp = pocket(paint, matte, sx * LAMP_A[0], LAMP_A[1], nose, LAMP_A[2], LAMP_A[3], 0.07, 1, { rim: 0.02, rimCol: PLASTIC });
-    trim.box(sx * LAMP_A[0], LAMP_A[1] - 0.05, nose - 0.02, hp.hw * 1.9, 0.10, 0.02, 0, LAMP);
-  }
-  // Windscreen: one tall pane from bumper height to the destination sign.
-  const fw = sN.w0 - 0.10, zs = nose + 0.008;
-  trim.patch([[[-fw, 0.98, zs], [0, 0.98, zs], [fw, 0.98, zs]],
-    [[-fw, sN.side - 0.03, zs], [0, sN.side - 0.03, zs], [fw, sN.side - 0.03, zs]]], GLASS, [0, 0, 1]);
-  // Its foot runs down over the lower body's nose, which stays solid: back
-  // that strip in the dark of the dash rather than the livery.
-  matte.quad([-fw, 0.98, nose + 0.004], [fw, 0.98, nose + 0.004], [fw, sN.y0 + 0.002, nose + 0.004], [-fw, sN.y0 + 0.002, nose + 0.004],
-    [0, 0, 1], [0, 0, 1, 0, 1, 1, 0, 1], CAB_DASH);
-  busCabin(matte, shell, { belt, nose, tail, roofY });
-  matte.box(0, sN.side - 0.02, nose + 0.004, fw * 2 + 0.08, 0.26, 0.03, 0, [0.04, 0.04, 0.045]);      // sign housing
-  trim.box(0, sN.side + 0.07, nose + 0.018, 1.30, 0.08, 0.012, 0, [1.0, 0.62, 0.12]);                 // route display
-  for (const x of [-0.70, 0.30]) matte.tube([x, 1.02, nose + 0.024], [x + 0.46, 1.36, nose + 0.024], 0.012, 4, PLASTIC, true);
-  matte.box(0, 0.26, nose + 0.03, geom(nose).w * 1.92, 0.26, 0.16, 0, PLASTIC);                        // bumper
-  trim.box(0, 0.30, nose + 0.115, 0.40, 0.12, 0.02, 0, PLATE);
-  // Folded bike rack on the nose -- the detail every Seattle bus carries.
-  for (const sx of [-1, 1]) matte.tube([sx * 0.42, 0.40, nose + 0.12], [sx * 0.42, 0.92, nose + 0.12], 0.020, 5, PLASTIC, true);
-  matte.tube([-0.42, 0.92, nose + 0.12], [0.42, 0.92, nose + 0.12], 0.020, 5, PLASTIC, true);
-  matte.tube([-0.42, 0.66, nose + 0.12], [0.42, 0.66, nose + 0.12], 0.016, 5, PLASTIC, true);
-  for (const sx of [-1, 1]) {
-    matte.tube([sx * (sN.w0 - 0.05), sN.side - 0.10, nose - 0.20], [sx * (sN.w0 + 0.16), sN.side - 0.02, nose + 0.32], 0.024, 6, PLASTIC, true);
-    matte.box(sx * (sN.w0 + 0.16), sN.side - 0.62, nose + 0.32, 0.10, 0.58, 0.16, 0, PLASTIC);
-    trim.box(sx * (sN.w0 + 0.16), sN.side - 0.60, nose + 0.235, 0.08, 0.54, 0.012, 0, MIRROR);
+  if (frontEnd) {
+    const scrTop = sN.side - 0.03;
+    endFace(paint, nose, 1, shell.prof(nose), [[0, (sN.y0 + scrTop) / 2 + 0.001, sN.w0 - 0.10, (scrTop - sN.y0) / 2]], WHITE);
+    const LAMP_A = [0.90, 0.68, 0.17, 0.075];
+    endFace(paint, nose, 1, endProf(nose), [LAMP_A], WHITE);
+    for (const sx of [-1, 1]) {
+      const hp = pocket(paint, matte, sx * LAMP_A[0], LAMP_A[1], nose, LAMP_A[2], LAMP_A[3], 0.07, 1, { rim: 0.02, rimCol: PLASTIC });
+      trim.box(sx * LAMP_A[0], LAMP_A[1] - 0.05, nose - 0.02, hp.hw * 1.9, 0.10, 0.02, 0, LAMP);
+    }
+    // Windscreen: one tall pane from bumper height to the destination sign.
+    const fw = sN.w0 - 0.10, zs = nose + 0.008;
+    trim.patch([[[-fw, 0.98, zs], [0, 0.98, zs], [fw, 0.98, zs]],
+      [[-fw, sN.side - 0.03, zs], [0, sN.side - 0.03, zs], [fw, sN.side - 0.03, zs]]], GLASS, [0, 0, 1]);
+    // Its foot runs down over the lower body's nose, which stays solid: back
+    // that strip in the dark of the dash rather than the livery.
+    matte.quad([-fw, 0.98, nose + 0.004], [fw, 0.98, nose + 0.004], [fw, sN.y0 + 0.002, nose + 0.004], [-fw, sN.y0 + 0.002, nose + 0.004],
+      [0, 0, 1], [0, 0, 1, 0, 1, 1, 0, 1], CAB_DASH);
+    busCabin(matte, shell, { belt, nose, tail, roofY });
+    matte.box(0, sN.side - 0.02, nose + 0.004, fw * 2 + 0.08, 0.26, 0.03, 0, [0.04, 0.04, 0.045]);      // sign housing
+    trim.box(0, sN.side + 0.07, nose + 0.018, 1.30, 0.08, 0.012, 0, [1.0, 0.62, 0.12]);                 // route display
+    for (const x of [-0.70, 0.30]) matte.tube([x, 1.02, nose + 0.024], [x + 0.46, 1.36, nose + 0.024], 0.012, 4, PLASTIC, true);
+    matte.box(0, 0.26, nose + 0.03, geom(nose).w * 1.92, 0.26, 0.16, 0, PLASTIC);                        // bumper
+    trim.box(0, 0.30, nose + 0.115, 0.40, 0.12, 0.02, 0, PLATE);
+    // Folded bike rack on the nose -- the detail every Seattle bus carries.
+    for (const sx of [-1, 1]) matte.tube([sx * 0.42, 0.40, nose + 0.12], [sx * 0.42, 0.92, nose + 0.12], 0.020, 5, PLASTIC, true);
+    matte.tube([-0.42, 0.92, nose + 0.12], [0.42, 0.92, nose + 0.12], 0.020, 5, PLASTIC, true);
+    matte.tube([-0.42, 0.66, nose + 0.12], [0.42, 0.66, nose + 0.12], 0.016, 5, PLASTIC, true);
+    for (const sx of [-1, 1]) {
+      matte.tube([sx * (sN.w0 - 0.05), sN.side - 0.10, nose - 0.20], [sx * (sN.w0 + 0.16), sN.side - 0.02, nose + 0.32], 0.024, 6, PLASTIC, true);
+      matte.box(sx * (sN.w0 + 0.16), sN.side - 0.62, nose + 0.32, 0.10, 0.58, 0.16, 0, PLASTIC);
+      trim.box(sx * (sN.w0 + 0.16), sN.side - 0.60, nose + 0.235, 0.08, 0.54, 0.012, 0, MIRROR);
+    }
+  } else {
+    // the bellows' mounting plate
+    matte.box(0, sN.y0 - 0.2, nose - 0.02, sN.w0 * 2 + 0.04, sN.side - sN.y0 + 0.5, 0.06, 0, [0.07, 0.07, 0.08]);
+    matte.box(0, 0.40, nose - 0.04, geom(nose).w * 1.9, 0.9, 0.08, 0, [0.07, 0.07, 0.08]);
   }
 
   // --- sides: window band, doors on the kerb side ---------------------------------
@@ -5351,34 +5368,115 @@ function buildBus(spec, paint, trim, matte) {
       matte.box(sx * (w + 0.004), winY1, (a + b) / 2, 0.012, 0.05, b - a, 0, [0.07, 0.075, 0.08]);
     }
     // Engine-bay louvres behind the last window, street side only.
-    if (sx > 0) for (let i = 0; i < 5; i++) matte.box(sx * (geom(tail + 0.9).w + 0.006), 0.62 + i * 0.07, tail + 0.90, 0.01, 0.025, 1.10, 0, [0.10, 0.11, 0.12]);
+    if (sx > 0 && rearEnd) for (let i = 0; i < 5; i++) matte.box(sx * (geom(tail + 0.9).w + 0.006), 0.62 + i * 0.07, tail + 0.90, 0.01, 0.025, 1.10, 0, [0.10, 0.11, 0.12]);
     trim.box(sx * (geom(zF - 0.9).w + 0.004), 0.55, zF - 0.9, 0.012, 0.05, 0.10, 0, AMBER);
   }
 
   // --- rear -----------------------------------------------------------------------
-  const TL = [1.02, 0.86, 0.08, 0.15];
-  endFace(paint, tail, -1, endProf(tail), [TL], WHITE);
-  const RW = [0, 2.20, 0.90, 0.36];
-  endFace(paint, tail, -1, shell.prof(tail), [RW], WHITE);
-  const wp = pocket(paint, matte, 0, RW[1], tail, RW[2], RW[3], 0.04, -1, { rim: 0.03, rimCol: PLASTIC });
-  trim.box(0, RW[1] - wp.hh, tail + 0.012, wp.hw * 2, wp.hh * 2, 0.010, 0, GLASS);
-  for (const sx of [-1, 1]) {
-    const tp = pocket(paint, matte, sx * TL[0], TL[1], tail, TL[2], TL[3], 0.04, -1, { rim: 0.018, rimCol: PLASTIC });
-    trim.box(sx * TL[0], TL[1] - tp.hh * 0.95, tail + 0.014, tp.hw * 1.9, tp.hh * 1.9, 0.020, 0, TAILC);
+  if (rearEnd) {
+    const TL = [1.02, 0.86, 0.08, 0.15];
+    endFace(paint, tail, -1, endProf(tail), [TL], WHITE);
+    const RW = [0, 2.20, 0.90, 0.36];
+    endFace(paint, tail, -1, shell.prof(tail), [RW], WHITE);
+    const wp = pocket(paint, matte, 0, RW[1], tail, RW[2], RW[3], 0.04, -1, { rim: 0.03, rimCol: PLASTIC });
+    trim.box(0, RW[1] - wp.hh, tail + 0.012, wp.hw * 2, wp.hh * 2, 0.010, 0, GLASS);
+    for (const sx of [-1, 1]) {
+      const tp = pocket(paint, matte, sx * TL[0], TL[1], tail, TL[2], TL[3], 0.04, -1, { rim: 0.018, rimCol: PLASTIC });
+      trim.box(sx * TL[0], TL[1] - tp.hh * 0.95, tail + 0.014, tp.hw * 1.9, tp.hh * 1.9, 0.020, 0, TAILC);
+    }
+    matte.box(0, 0.55, tail - 0.012, 1.40, 0.50, 0.02, 0, [0.10, 0.11, 0.12]);                           // engine grille
+    matte.box(0, 0.26, tail - 0.03, geom(tail).w * 1.92, 0.24, 0.16, 0, PLASTIC);
+    trim.box(0, 0.42, tail - 0.045, 0.40, 0.12, 0.02, 0, PLATE);
+  } else {
+    const sT = shell.sec(tail);
+    matte.box(0, sT.y0 - 0.2, tail + 0.02, sT.w0 * 2 + 0.04, sT.side - sT.y0 + 0.5, 0.06, 0, [0.07, 0.07, 0.08]);
+    matte.box(0, 0.40, tail + 0.04, geom(tail).w * 1.9, 0.9, 0.08, 0, [0.07, 0.07, 0.08]);
   }
-  matte.box(0, 0.55, tail - 0.012, 1.40, 0.50, 0.02, 0, [0.10, 0.11, 0.12]);                           // engine grille
-  matte.box(0, 0.26, tail - 0.03, geom(tail).w * 1.92, 0.24, 0.16, 0, PLASTIC);
-  trim.box(0, 0.42, tail - 0.045, 0.40, 0.12, 0.02, 0, PLATE);
 
   // --- roof: air-conditioning pod ---------------------------------------------------
-  paint.box(0, roofY + 0.02, -3.0, 1.70, 0.24, 2.80, 0, WHITE);
-  matte.box(0, roofY + 0.26, -3.0, 1.20, 0.012, 2.00, 0, [0.20, 0.21, 0.22]);
-  matte.box(0, roofY + 0.03, 3.9, 0.70, 0.06, 0.70, 0, [0.30, 0.31, 0.32]);                            // escape hatch
+  const pod = o.pod !== undefined ? o.pod : -3.0;
+  if (pod !== null) {
+    paint.box(0, roofY + 0.02, pod, 1.70, 0.24, 2.80, 0, WHITE);
+    matte.box(0, roofY + 0.26, pod, 1.20, 0.012, 2.00, 0, [0.20, 0.21, 0.22]);
+  }
+  if (frontEnd) matte.box(0, roofY + 0.03, nose - 2.1, 0.70, 0.06, 0.70, 0, [0.30, 0.31, 0.32]);        // escape hatch
 
   const twF = 0.30, twR = 0.42;
   const wxF = geom(zF).wb - twF / 2 + 0.02, wxR = geom(zR).wb - twR / 2 + 0.02;
-  return [[-wxF, wr, zF, wr, twF], [wxF, wr, zF, wr, twF], [-wxR, wr, zR, wr, twR], [wxR, wr, zR, wr, twR]];
+  const wheels = [[-wxR, wr, zR, wr, twR], [wxR, wr, zR, wr, twR]];
+  // a trailing section has only its drive axle; it rides on the hitch at the front
+  return o.noFrontAxle ? wheels : [[-wxF, wr, zF, wr, twF], [wxF, wr, zF, wr, twF], ...wheels];
 }
+
+/**
+ * King County Metro's 60 ft articulated bus (a New Flyer XDE60 as RapidRide
+ * runs them): an 11.4 m front section on the front and middle axles, a
+ * rubber bellows round the turntable, and a 6.5 m rear section on the drive
+ * axle, riding on the hitch. Two vehicles (see Vehicle.follow): the front is
+ * `artic`, which traffic and the player drive as a bus; the rear is
+ * `articRear`, placed by trailer kinematics every frame.
+ */
+const ARTIC = { hitchF: 6.35, hitchR: 3.85, axleR: -1.45, maxAngle: 0.95 };
+
+// The bellows: a corrugated rubber ring stretched from the front section's
+// tail to the rear section's nose, rebuilt from the two sections every frame
+// (112 vertices), so it opens on the outside of a turn and folds on the inside.
+const BEL_P = [];
+{
+  // the section: a rounded rectangle 2.4 m wide, from 0.45 m to 3.0 m up
+  const w = 1.2, y0 = 0.45, y1 = 3.0, r = 0.35;
+  const corners = [[w - r, y1 - r, 0], [-w + r, y1 - r, Math.PI / 2], [-w + r, y0 + r, Math.PI], [w - r, y0 + r, Math.PI * 1.5]];
+  for (const [cx, cy, a0] of corners) for (let k = 0; k < 4; k++) { const a = a0 + (k / 3) * (Math.PI / 2); BEL_P.push([cx + Math.cos(a) * r, cy + Math.sin(a) * r]); }
+}
+const BEL_RINGS = 7;
+const BEL_MAT = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.92, metalness: 0 });
+export function makeBellows() {
+  const n = BEL_P.length, geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(n * BEL_RINGS * 3), 3));
+  const col = new Float32Array(n * BEL_RINGS * 3);
+  for (let i = 0; i < BEL_RINGS; i++) for (let j = 0; j < n; j++) { const k = i % 2 ? 0.07 : 0.12; col.set([k, k, k * 1.05], (i * n + j) * 3); }
+  geo.setAttribute('color', new THREE.BufferAttribute(col, 3));
+  const idx = [];
+  for (let i = 0; i < BEL_RINGS - 1; i++) for (let j = 0; j < n; j++) {
+    const a = i * n + j, b = i * n + ((j + 1) % n), c = (i + 1) * n + j, d = (i + 1) * n + ((j + 1) % n);
+    idx.push(a, c, b, b, c, d);
+  }
+  geo.setIndex(idx);
+  const m = new THREE.Mesh(geo, BEL_MAT);
+  m.frustumCulled = false;
+  m.castShadow = false;
+  return m;
+}
+const _bA = new THREE.Vector3(), _bB = new THREE.Vector3(), _bC = new THREE.Vector3();
+function updateBellows(m, lead, rear) {
+  lead.group.updateMatrixWorld(true);
+  rear.group.updateMatrixWorld(true);
+  const n = BEL_P.length, pos = m.geometry.attributes.position.array;
+  const zF = -lead.spec.len / 2 - 0.02, zR = rear.spec.len / 2 + 0.02;
+  const cF = lead.matteMesh.localToWorld(_bC.set(0, 1.7, zF)).clone(), cR = rear.matteMesh.localToWorld(_bC.set(0, 1.7, zR)).clone();
+  for (let j = 0; j < n; j++) {
+    const [x, y] = BEL_P[j];
+    lead.matteMesh.localToWorld(_bA.set(x, y, zF));
+    rear.matteMesh.localToWorld(_bB.set(x, y, zR));
+    for (let i = 0; i < BEL_RINGS; i++) {
+      const t = i / (BEL_RINGS - 1), fold = i % 2 ? 1.035 : 1;
+      const cx = cF.x + (cR.x - cF.x) * t, cy = cF.y + (cR.y - cF.y) * t, cz = cF.z + (cR.z - cF.z) * t;
+      const px = _bA.x + (_bB.x - _bA.x) * t, py = _bA.y + (_bB.y - _bA.y) * t, pz = _bA.z + (_bB.z - _bA.z) * t;
+      const o = (i * n + j) * 3;
+      pos[o] = cx + (px - cx) * fold; pos[o + 1] = cy + (py - cy) * fold; pos[o + 2] = cz + (pz - cz) * fold;
+    }
+  }
+  m.geometry.attributes.position.needsUpdate = true;
+  m.geometry.computeVertexNormals();
+}
+function buildArticFront(spec, paint, trim, matte) {
+  // front axle 2.6 m back from the nose; the middle axle 2.1 m ahead of the tail
+  return buildBus(spec, paint, trim, matte, { zF: 3.1, zR: -3.6, doors: [[3.95, 5.05], [-1.9, -0.8]], rearEnd: false, pod: -1.5 });
+}
+function buildArticRear(spec, paint, trim, matte) {
+  return buildBus(spec, paint, trim, matte, { zF: 1.0, zR: ARTIC.axleR, doors: [[0.55, 1.65]], frontEnd: false, pod: -0.6, noFrontAxle: true });
+}
+
 
 // Paddling: a stroke's length in s, the share of it the blade is in the
 // water, peak push m/s2, the push's yaw (the wiggle) and the turn's, drag
@@ -5741,7 +5839,7 @@ const HAND_BUILT = {
   boxtruck: (s, p, t, m) => buildTruck(s, p, t, m, TRUCK_LOOKS.boxtruck),
   garbage: (s, p, t, m) => buildTruck(s, p, t, m, TRUCK_LOOKS.garbage),
   convertible: buildConvertible, cruiser: buildCruiser, sportbike: buildSportbike,
-  atv: buildAtv, boat: buildBoat, jetski: buildJetski, kayak: buildKayak, balloon: buildBalloon,
+  atv: buildAtv, boat: buildBoat, jetski: buildJetski, kayak: buildKayak, artic: buildArticFront, articRear: buildArticRear, balloon: buildBalloon,
 };
 
 /**
@@ -6410,6 +6508,39 @@ export class Vehicle {
   // every hot loop over the cars, and a fresh object per read was a large
   // share of the frame's garbage. Every caller uses it at once and none holds
   // it across a heading change; keep it that way (copy x/z if you must).
+  /**
+   * The articulated bus's rear section, placed behind its front (`lead`):
+   * its drive axle is dragged toward the turntable -- trailer kinematics,
+   * which is how the real one tracks, inside the front's path round a corner
+   * and straight behind it in reverse -- the turntable's angle is limited,
+   * and the section sits on the ground under its axle and on the hitch. Then
+   * the bellows are stretched between the two.
+   */
+  follow(lead) {
+    const city = this.city, f = lead.forward;
+    const hx = lead.x - f.x * ARTIC.hitchF, hz = lead.z - f.z * ARTIC.hitchF;
+    const g = this.forward;
+    const ax0 = this.x + g.x * ARTIC.axleR, az0 = this.z + g.z * ARTIC.axleR;
+    let h = Math.atan2(hx - ax0, hz - az0);
+    let rel = Math.atan2(Math.sin(h - lead.heading), Math.cos(h - lead.heading));
+    rel = clamp(rel, -ARTIC.maxAngle, ARTIC.maxAngle);
+    h = lead.heading + rel;
+    this.heading = h;
+    const F = this.forward;
+    this.x = hx - F.x * ARTIC.hitchR; this.z = hz - F.z * ARTIC.hitchR;
+    this.lift = city.roadLift(this.x, this.z);
+    const hy = city.groundAt(hx, hz, lead.y + 1.5, city.roadLift(hx, hz));
+    const axx = this.x + F.x * ARTIC.axleR, axz = this.z + F.z * ARTIC.axleR;
+    const ay = city.groundAt(axx, axz, lead.y + 1.5, city.roadLift(axx, axz));
+    const span = ARTIC.hitchR - ARTIC.axleR;
+    this.pitch = Math.atan2(ay - hy, span);
+    this.y = ay + (hy - ay) * (-ARTIC.axleR / span);
+    this.roll = lead.roll * 0.6;
+    this.vLong = lead.vLong;
+    this.sync();
+    if (lead.bellows && lead.bellows.visible) updateBellows(lead.bellows, lead, this);
+  }
+
   get forward() {
     const f = this._fwd;
     if (this._fwdH !== this.heading) { this._fwdH = this.heading; f.x = Math.sin(this.heading); f.z = Math.cos(this.heading); }
