@@ -3307,7 +3307,7 @@ road so pays nothing. Parked in three places (`ATV_SPOTS`: Kite Hill, the
 dock's car park, Seattle Center), each named "Quad bike" on the full map
 (an unlabelled orange dot was a quad nobody found), and $700 from the
 delivery menu; parked ones freeze once settled. 6.9k triangles + the rider, like the bikes.
-Bench band in tools/vehicles.mjs (0-80 2.4 s arcade).
+Bench band in tools/vehicles.mjs (0-100 2.7 s arcade, 125 km/h since v123).
 
 ### Marinas, seaplane bases and the jet ski
 
@@ -3980,6 +3980,35 @@ moving forward within 25 deg of the heading, under 20 damage; a `water` jump's
 clean landing IS the splash. Clean landings tick the unique tally
 (`localStorage 'auto-stunts'`, with best distances). Activities' ambient
 AIRTIME is suppressed during a stunt so it is not paid twice.
+
+**Bikes and quads pop off the lip, and wheelie** (v123). A light vehicle
+(`spec.moto`, `spec.atv`) leaves a ramp with `rampVy * 1.15 + 1 m/s`, plus up
+to 3.5 m/s more for pulling the stick back as it goes; before, the quad (then
+95 km/h, 26 m/s at the lip against a car's 40-50) cleared the ramps by 1-2 m.
+It is now a 125 km/h sport quad. In the air the stick tilts a bike's nose.
+On the ground, stick back with the gas on lifts the front about the rear axle
+(`v.wheelie`, to 0.42 rad on a quad, 0.55 on a bike, in proportion to the
+pull; `sync` raises the centre so the back wheel stays down); steering is
+weaker with the front wheel up, and a wheelie over 2 s is announced
+(`game.onWheelie`). **The player's contact shadow is its own mesh** now
+(`shadowGeo`, `shadowTilt`, made in `setDetailed`): baked into the trim, it
+tilted with the body, so a wheelie lifted the dark patch off the road with the
+nose and a jump carried it into the air. It follows the road's pitch and roll,
+not the wheelie, and hides off the ground. +1 draw for the player's vehicle
+only; traffic keeps it baked into `trimGeoW`. The stick's other axis already reached `v.update` as
+`pitch` for the planes; cars ignore it. `tools/stuntjumps.mjs --type atv`
+drives the jumps on any vehicle type.
+
+| quad, cap 99 | v122 (95 km/h) | v123 |
+|---|---|---|
+| lip speed | 26-27 m/s | 32-36 m/s |
+| distance | 32-73 m | 57-121 m |
+| height over the lip | 0.9-7 m | 2.6-18 m |
+
+At full speed the quad now clears Kite Hill's landing into Lake Union (as the
+sportbike already did), and the four cliff jumps land it hard, as they do a
+car. The full-run `qa-cliff@99` "passed the lip without launching" fails on
+master too; the jump passes run alone.
 
 **Slow motion** eases in only for flights predicted over 1.5 s, through the
 middle of the flight (off by 80 % of it, so touchdown is at full speed and in

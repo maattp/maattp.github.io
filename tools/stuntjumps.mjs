@@ -14,7 +14,7 @@
 // (32 m/s, ~115 km/h) wrecks the car.
 //
 // Usage:  python3 -m http.server 8000; node tools/stuntjumps.mjs [ids,...]
-//         [--caps 24,32,99] [--shots DIR]   (DIR: a ramp close-up and a mid-air
+//         [--caps 24,32,99] [--shots DIR] [--type atv]   (DIR: a ramp close-up and a mid-air
 //         chase frame per jump, e.g. docs/jumps)
 // Env:    AUTO_HTTP_PORT, AUTO_CDP_PORT as every harness.
 import { launchChrome, assertRenderer } from './chrome.mjs';
@@ -23,7 +23,9 @@ import { setTimeout as sleep } from 'node:timers/promises';
 
 const args = process.argv.slice(2);
 const argVal = (k) => { const i = args.indexOf(k); return i >= 0 ? args[i + 1] : undefined; };
-const ONLY = args.find((a) => !a.startsWith('--') && args[args.indexOf(a) - 1] !== '--caps' && args[args.indexOf(a) - 1] !== '--shots');
+const ONLY = args.find((a) => !a.startsWith('--') && !['--caps', '--shots', '--type'].includes(args[args.indexOf(a) - 1]));
+// --type atv: drive something other than the sedan (any vehicle type key)
+const TYPE = argVal('--type');
 const CAPS = (argVal('--caps') || '24,32,99').split(',').map(Number);
 const SHOTS = argVal('--shots');
 const HTTP_PORT = process.env.AUTO_HTTP_PORT || 8000;
@@ -84,7 +86,7 @@ try {
     console.log(`\n${jid}  ramp L ${ck.L} m, lip at ${ck.lipY} m;  closed to traffic: ${ck.closed.join(', ') || 'none'}${ck.bad.length ? '  ON: ' + ck.bad.join(', ') : ''}`);
     console.log(`  run-up: ${tags('run')}\n  ramp:   ${tags('ramp')}\n  land:   ${tags('land')}\n  ground past the lip (every 10 m): ${ck.prof.join(' ')}`);
     for (const cap of CAPS) {
-      const st = JSON.parse(await ev(`window.__sj.drive(${JSON.stringify(jid)}, { cap: ${cap} })`));
+      const st = JSON.parse(await ev(`window.__sj.drive(${JSON.stringify(jid)}, { cap: ${cap}${TYPE ? `, type: ${JSON.stringify(TYPE)}` : ''} })`));
       const r = st.res && typeof st.res === 'object' ? st.res : null;
       const line = r && r.dist !== undefined
         ? `lip ${r.speed} m/s  ${r.dist} m  ${r.air} s  up ${r.maxUp} m  hurt ${r.hurt}  ${r.clean ? 'CLEAN' : r.wet ? 'wet' : 'not clean'}  $${r.pay}  at (${r.x}, ${r.z})`

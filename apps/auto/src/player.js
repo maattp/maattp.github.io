@@ -338,6 +338,7 @@ export class Player {
       sink: input.sinkAmt != null ? input.sinkAmt : brake,
       pilot: true,
     });
+    if (v.wheelieDone) { if (this.game.onWheelie) this.game.onWheelie(v.wheelieDone); v.wheelieDone = 0; }
     if (wading) {
       v.vLong -= v.vLong * Math.min(1, 2.6 * dt);
       v.vLat -= v.vLat * Math.min(1, 2.6 * dt);
