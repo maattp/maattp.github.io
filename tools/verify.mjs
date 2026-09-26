@@ -1415,6 +1415,77 @@ async function main() {
       if (bad.length) { console.error(`FAIL: hockey: ${bad.join('; ')}`); process.exitCode = 1; }
     }
 
+    // --- Boeing Field's control tower: FINAL APPROACH ---------------------------------
+    //
+    // The tower stands at Boeing Field with its door off the pavement and its
+    // shaft solid; ENTER at the door opens the game. A path drawn with a
+    // finger (real pointer events on the overlay) from an aircraft into its
+    // runway's landing zone locks and lands it; a path into the WRONG runway
+    // does not; two aircraft flown into each other end the shift, which pays
+    // $3 an aircraft; leaving gives the city back.
+    const atc = await session.eval(`(async () => {
+      const d = window.__dbg, T = d.tower, P = d.player;
+      if (!T) return null;
+      const M = await import('/apps/auto/src/atcgame.js');
+      if (P.vehicle) P.exitVehicle(true);
+      const tw = d.lmRoot.userData.tower;
+      const out = { door: !!tw, onPave: d.city.slabQuery ? d.city.slabQuery(tw.x, tw.z) !== null : null, shaftSolid: !!d.city.obstacleHit(tw.shaft[0], tw.shaft[1], 0.5) };
+      P.x = T.door.x; P.z = T.door.z; P.y = T.door.y;
+      out.took = d.game.tryInteract(P) && T.mode;
+      T._newGame(); T.frozen = true;
+      const a = T.game;
+      // one jet, in the middle of the field, heading east
+      a.nextSpawn = 1e9;
+      a.planes = [{ id: 1, kind: 'jet', x: 300, y: 150, a: 0, path: null, land: false, drawing: false, landing: null, entering: false, warn: false, dead: false, age: 0, prop: 0 }];
+      const el = T.el, toC = (x, y) => [x * T.k + T.ox, y * T.k + T.oy];
+      const ev = (type, x, y) => { const [cx, cy] = toC(x, y); el.dispatchEvent(new PointerEvent(type, { pointerId: 7, clientX: cx, clientY: cy, bubbles: true, pointerType: 'touch' })); };
+      const z = M.zoneOf('red'), ax = z.x - Math.cos(z.a) * 100, ay = z.y - Math.sin(z.a) * 100;
+      ev('pointerdown', 300, 150);
+      for (let i = 1; i <= 16; i++) ev('pointermove', 300 + (ax - 300) * i / 16, 150 + (ay - 150) * i / 16);
+      for (let i = 1; i <= 12; i++) ev('pointermove', ax + (z.x - ax) * i / 12, ay + (z.y - ay) * i / 12);
+      ev('pointerup', z.x, z.y);
+      const p = a.planes[0];
+      out.locked = p.land;
+      for (let i = 0; i < 60 * 40 && a.landed === 0; i++) a.step(1 / 60);
+      out.landed = a.landed;
+      // a prop drawn to the jets' runway does not lock
+      a.planes = [{ id: 2, kind: 'prop', x: 300, y: 150, a: 0, path: null, land: false, drawing: false, landing: null, entering: false, warn: false, dead: false, age: 0, prop: 0 }];
+      const q = a.planes[0];
+      a.beginPath(q);
+      for (let i = 1; i <= 28; i++) a.extendPath(q, 300 + (ax - 300) * Math.min(1, i / 16) + (i > 16 ? (z.x - ax) * (i - 16) / 12 : 0), 150 + (ay - 150) * Math.min(1, i / 16) + (i > 16 ? (z.y - ay) * (i - 16) / 12 : 0));
+      out.wrongLocked = q.land;
+      // head-on: a collision ends the shift
+      a.planes = [
+        { id: 3, kind: 'jet', x: 400, y: 120, a: 0, path: null, land: false, drawing: false, landing: null, entering: false, warn: false, dead: false, age: 0, prop: 0 },
+        { id: 4, kind: 'prop', x: 600, y: 120, a: Math.PI, path: null, land: false, drawing: false, landing: null, entering: false, warn: false, dead: false, age: 0, prop: 0 }];
+      let warned = false;
+      for (let i = 0; i < 60 * 10 && !a.over; i++) { a.step(1 / 60); if (a.planes.some((x) => x.warn)) warned = true; }
+      out.warned = warned; out.crashed = a.over;
+      a.takeEvents();
+      const m0 = d.game.money;
+      T.frozen = false; a.t = a.crash.t + 2;
+      T.update(1 / 60);
+      out.paid = d.game.money - m0; out.overMode = T.mode;
+      T.close();
+      out.closed = T.mode; out.paused = d.game.paused;
+      return out;
+    })()`, true);
+    console.log('\n--- control tower -----------------------------------------');
+    if (!atc) { console.error('FAIL: no control tower'); process.exitCode = 1; }
+    else {
+      console.log(`  tower ${atc.door}, door on the pavement ${atc.onPave}, shaft solid ${atc.shaftSolid}; ENTER -> ${atc.took}`);
+      console.log(`  a finger's path to 14R locks ${atc.locked} and lands ${atc.landed}; a prop's to 14R locks ${atc.wrongLocked}; head-on warns ${atc.warned}, crashes ${atc.crashed}; paid $${atc.paid} (${atc.overMode}); closed ${atc.closed}, city unpaused ${!atc.paused}`);
+      const bad = [];
+      if (!atc.door || atc.onPave || !atc.shaftSolid) bad.push('the tower is not standing right');
+      if (atc.took !== 'brief') bad.push('ENTER does not open the tower');
+      if (!atc.locked || atc.landed !== 1) bad.push('a drawn path does not land the jet');
+      if (atc.wrongLocked) bad.push('the wrong runway locks');
+      if (!atc.warned || !atc.crashed) bad.push('no warning or no collision');
+      if (atc.paid !== 3 || atc.overMode !== 'over') bad.push('the shift does not pay');
+      if (atc.closed !== 'off' || atc.paused) bad.push('leaving does not give the city back');
+      if (bad.length) { console.error(`FAIL: control tower: ${bad.join('; ')}`); process.exitCode = 1; }
+    }
+
     // --- the articulated bus ---------------------------------------------------
     //
     // An artic spawned and driven: its rear section follows on the hitch
