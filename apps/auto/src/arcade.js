@@ -18,8 +18,8 @@ import { GAMES, text } from './arcadegames.js';
 const AT = G.toWorld(47.6143, -122.3450);        // 2nd Ave between Bell and Blanchard
 const STEP = 1 / 60;
 
-/** Square waves and noise for the cabinets. */
-class Beeper {
+/** Square waves and noise for the cabinets (pinball.js adds its own sounds). */
+export class Beeper {
   constructor(ctx, dest) {
     this.c = ctx;
     if (!ctx) return;
@@ -98,6 +98,42 @@ class Beeper {
   }
 }
 
+/**
+ * The street face of a real building nearest a spot: a face at least 9 m long
+ * on a building 6 m+ tall, that fronts a road 7 m out and is not on one itself.
+ * { fx, fz } the face's middle, { nx, nz } its outward normal.
+ */
+export function streetFace(city, at, r = 70) {
+  let best = null;
+  for (const b of city.buildingsNear(at[0], at[1], r)) {
+    const c = Math.cos(b.rot), s = Math.sin(b.rot);
+    const faces = [[c, s, b.w / 2, b.d], [-c, -s, b.w / 2, b.d], [-s, c, b.d / 2, b.w], [s, -c, b.d / 2, b.w]];
+    for (const [nx, nz, off, len] of faces) {
+      if (len < 9 || b.h < 6) continue;
+      const fx = b.x + nx * off, fz = b.z + nz * off;
+      if (!city.onRoad(fx + nx * 7, fz + nz * 7, 0) || city.onRoad(fx + nx * 1.2, fz + nz * 1.2, 0)) continue;
+      const d = Math.hypot(fx - at[0], fz - at[1]);
+      if (!best || d < best.d) best = { d, fx, fz, nx, nz };
+    }
+  }
+  return best || { fx: at[0], fz: at[1], nx: 0, nz: 1 };
+}
+
+/**
+ * Where a storefront panel stands on a face: 0.6 m out, clear of a dense
+ * building's glass shopfront (15 cm proud) and its trim ledge (50 cm) --
+ * mounted on the wall itself, the shopfront hid its lower half and it read as
+ * a sign hung a storey up -- and its foot on the LOWEST ground across its
+ * width, so a sloping street leaves no gap under one end.
+ */
+export function storefrontSpot(city, f, width = 9) {
+  let gy = Infinity;
+  for (const k of [-0.5, -0.25, 0, 0.25, 0.5]) {
+    gy = Math.min(gy, city.groundAt(f.fx + f.nx * 0.9 - f.nz * k * width, f.fz + f.nz * 0.9 + f.nx * k * width, null));
+  }
+  return { x: f.fx + f.nx * 0.6, z: f.fz + f.nz * 0.6, y: gy };
+}
+
 export class Arcade {
   /** opts: { scene, city, world, audio, money: () => n, charge(n) -> bool, onReward(n), onEnd } */
   constructor(opts) {
@@ -119,20 +155,7 @@ export class Arcade {
 
   _storefront() {
     const { city, scene } = this.o;
-    // the building face nearest the spot that fronts a road
-    let best = null;
-    for (const b of city.buildingsNear(AT[0], AT[1], 70)) {
-      const c = Math.cos(b.rot), s = Math.sin(b.rot);
-      const faces = [[c, s, b.w / 2, b.d], [-c, -s, b.w / 2, b.d], [-s, c, b.d / 2, b.w], [s, -c, b.d / 2, b.w]];
-      for (const [nx, nz, off, len] of faces) {
-        if (len < 9 || b.h < 6) continue;
-        const fx = b.x + nx * off, fz = b.z + nz * off;
-        if (!city.onRoad(fx + nx * 7, fz + nz * 7, 0) || city.onRoad(fx + nx * 1.2, fz + nz * 1.2, 0)) continue;
-        const d = Math.hypot(fx - AT[0], fz - AT[1]);
-        if (!best || d < best.d) best = { d, fx, fz, nx, nz };
-      }
-    }
-    if (!best) { best = { fx: AT[0], fz: AT[1], nx: 0, nz: 1 }; }
+    const best = streetFace(city, AT);
     this.face = best;
     const gy = city.groundAt(best.fx + best.nx * 1.5, best.fz + best.nz * 1.5, null);
     this.door = { x: best.fx + best.nx * 1.6, z: best.fz + best.nz * 1.6, y: gy };
@@ -168,7 +191,8 @@ export class Arcade {
     g.shadowBlur = 0;
     const t = new THREE.CanvasTexture(cv); t.colorSpace = THREE.SRGBColorSpace; t.anisotropy = 4;
     const m = new THREE.Mesh(new THREE.PlaneGeometry(9, 6), new THREE.MeshStandardMaterial({ map: t, emissiveMap: t, emissive: 0xffffff, emissiveIntensity: 0.55, roughness: 0.7 }));
-    m.position.set(best.fx + best.nx * 0.06, gy + 3.0, best.fz + best.nz * 0.06);
+    const at = storefrontSpot(city, best);
+    m.position.set(at.x, at.y + 3.0, at.z);
     m.rotation.y = Math.atan2(best.nx, best.nz);
     m.name = 'arcadeFront';
     scene.add(m);

@@ -31,6 +31,8 @@ src/hud.js                  minimap, full map, readouts
 src/needletop.js            the Space Needle's elevator, deck and viewers
 src/arcade.js               the Belltown arcade: storefront, room, cabinet
 src/arcadegames.js          its six games
+src/pinball.js              the pinball museum: storefront, the machine's screen, its sounds
+src/pinballtable.js         EMERALD CITY: the table's geometry, physics and rules (no DOM)
 src/golf.js                 three par-3s at Interbay
 src/wheelride.js            the Great Wheel's turning half and the ride on it
 src/fishtoss.js             the fish stall at Pike Place Market + the catching game
@@ -4219,6 +4221,10 @@ opaque, so the city is not drawn behind it (the menu idle, as for fishing).
   a D-pad (8-way by the pointer's angle) and A / B on screen, arrows/WASD and
   Space-J / X-K on a keyboard; a fixed 60 Hz step. Each game is a pure
   `step(dt, input, sfx)` / `draw(g)`; `input.pressed` holds one-frame edges.
+- **The panel stands 0.6 m off the wall, on the lowest ground across it**
+  (`storefrontSpot`, v136). Mounted on the wall itself, a dense building's
+  glass shopfront (15 cm proud) and its trim ledge (50 cm) covered its lower
+  half, and it read as a sign hung a storey up.
 - A credit is $1 (`charge`); beating a cabinet's stored high score pays $50
   (localStorage `auto-arcade-hi`). Sounds are square waves and filtered noise
   on the game's AudioContext (`Beeper`), one set per game, rate-limited.
@@ -4229,6 +4235,55 @@ opaque, so the city is not drawn behind it (the menu idle, as for fishing).
 verify's "arcade" section: the storefront on 2nd Ave, the room, a $1 credit,
 20 s of mashed input on every cabinet without an exception, the high score
 kept, leaving. `docs/arcade/` has shots.
+
+## The pinball museum (v136)
+
+**A storefront on Maynard Ave S** (the Seattle Pinball Museum's block in the
+International District; `src/pinball.js`), found and hung like the arcade's
+(`streetFace`, `storefrontSpot`, both exported from arcade.js). ENTER at the
+door opens EMERALD CITY, an original table; the overlay is opaque, so the city
+idles behind it. $1 a game, three balls; it pays $1 per 100,000 and $50 for a
+new high score (localStorage `auto-pinball-hi`).
+
+- **The physics is `src/pinballtable.js` and imports nothing**, so Node plays
+  it. Table units are 20 to the inch (400 x 800, ball R 10.5), y down the
+  glass, gravity 1150 u/s^2, 12 substeps a 60 Hz frame (under half a radius a
+  substep at the 4000 u/s cap). Walls are thin segments tested by distance,
+  bumpers and posts circles, each flipper a tapered capsule whose surface
+  velocity (omega x r at the contact) goes into the bounce: aim comes from
+  when and where on the flipper you hit, and a raised flipper cradles.
+- **The head is flat with rounded corners, not an arch.** Round, a ball rode
+  the wall from any medium plunge all the way to the left orbit and the top
+  lanes were unreachable; flat, the ball leaves the right corner and falls in
+  an arc, so plunge strength picks the lane (the skill shot: 0.25-0.40 of the
+  pull drops into a lane, a full pull orbits to the spinner).
+- **Every pocket was found by the bot, not by eye.** Inlane passages have to
+  be wider than a ball under the slings (the first one wedged it), the inlane
+  guides end above the flipper pivots (a V between guide and pivot held a ball
+  for ever), and the orbit's exit deflector feeds the inlane (without it 46 of
+  58 drains were the left outlane, straight under the orbit).
+- Rules: S E A top lanes (lane change on the flippers, a set advances bonus
+  X to 6), pop bumpers, slings, a spinner on the left orbit (60 spins relight
+  the left outlane's KICKBACK), a P N W drop bank that lights LOCK at the
+  saucer, two locks for three-ball multiball with a JACKPOT on the NEEDLE ramp,
+  ramp combos inside 6 s, EXTRA BALL at the saucer after 6 ramps (then every
+  10), 10 s ball save, TILT on the third quick nudge. The ramp is a scripted
+  path in the air, taken only above 640 u/s at its lip; slower, it bounces off.
+- The screen: a static playfield drawn once at the screen's scale, then the
+  lamps, targets, flippers, balls and the ramp over it each frame; the view
+  follows the lowest ball with a lead, or shows the whole table if the screen
+  is tall. A dot-matrix display beside it (text rendered at 128 x 32 and read
+  back as four-level dots). Left half flips left; the right half flips right,
+  or, pressed while a ball waits in the shooter lane, is the plunger.
+- `pinball.frozen` stops the frame loop stepping the table, for harnesses that
+  step it themselves.
+
+`node pinbot.mjs`-style testing: construct `Table({ rng })` in Node and flip at
+any ball near a flipper; six games ran 35 minutes with no ball leaving the
+table. verify's "pinball" section: the storefront, both panels standing on the
+ground in front of the shopfront, ENTER, $1, touch on each half, the plunger,
+a seeded bot game to the end with no escapes and every feature seen, the pay,
+closing. `docs/pinball/` has shots.
 
 ## Basketball in the parks
 
