@@ -1178,6 +1178,56 @@ async function main() {
       if (bad.length) { console.error(`FAIL: arcade: ${bad.join('; ')}`); process.exitCode = 1; }
     }
 
+    // --- the articulated bus ---------------------------------------------------
+    //
+    // An artic spawned and driven: its rear section follows on the hitch
+    // (joined exactly), straight behind on a straight, turning inside in a
+    // bend within the turntable's limit, and in reverse; the two sections do
+    // not collide with each other; entering the rear enters the front; it
+    // leaves as one. And traffic spawns them.
+    const artic = await session.eval(`(() => {
+      const d = window.__dbg, P = d.player, T = d.traffic, C = d.city;
+      if (P.vehicle) P.exitVehicle(true);
+      let best = null;
+      for (const e of C.edges) {
+        if ((e.cls !== 'art' && e.cls !== 'st') || e.elev || e.tunnel || e.len < 30) continue;
+        const a = C.nodes[e.a], dd = Math.hypot(a.x - P.x, a.z - P.z);
+        if (!best || dd < best.dd) best = { e, dd };
+      }
+      const e = best.e, a = C.nodes[e.a];
+      const v = T.spawnAt(a.x + e.dx * 15, a.z + e.dz * 15, Math.atan2(e.dx, e.dz), 'artic', 0xc41a24, 'free');
+      const r = v.trailer;
+      if (!r) return { spawned: false };
+      P.x = v.x; P.z = v.z; P.enterVehicle(v);
+      const inp = (gas, steer, brake = 0) => ({ x: steer, y: 0, gas: gas > 0, brake: brake > 0, gasAmt: gas, brakeAmt: brake, hand: false, sprint: false, attack: false, horn: false, jump: false });
+      let maxA = 0, hitch = 0, bad = 0;
+      const step = (k, i) => { for (let n = 0; n < k; n++) {
+        P.update(1 / 60, i, { x: 0, y: 0 }, d.controls, T, d.peds); T.update(1 / 60, P.x, P.z, { x: 0, z: 1 }, P);
+        maxA = Math.max(maxA, Math.abs(Math.atan2(Math.sin(r.heading - v.heading), Math.cos(r.heading - v.heading))));
+        hitch = Math.max(hitch, Math.hypot(v.x - v.forward.x * 6.35 - (r.x + r.forward.x * 3.85), v.z - v.forward.z * 6.35 - (r.z + r.forward.z * 3.85)));
+        if (!isFinite(r.x + r.y + r.z + r.heading)) bad++; } };
+      step(300, inp(1, 0));
+      const straight = Math.abs(Math.atan2(Math.sin(r.heading - v.heading), Math.cos(r.heading - v.heading)));
+      step(180, inp(0, 0, 1)); step(420, inp(0.5, 1)); step(240, inp(0, 0, 1));
+      const out = { spawned: true, straight: +(straight * 57.3).toFixed(2), maxA: +(maxA * 57.3).toFixed(1), hitch: +hitch.toFixed(3), bad,
+        enterRear: T.nearestEnterable(r.x, r.z, 6) === v };
+      P.exitVehicle(true);
+      T.remove(v);
+      out.leftAsOne = !T.cars.includes(r) && !v.bellows;
+      return out;
+    })()`, true);
+    console.log('\n--- articulated bus ----------------------------------------');
+    if (!artic || !artic.spawned) { console.error('FAIL: no articulated bus'); process.exitCode = 1; }
+    else {
+      console.log(`  on a straight ${artic.straight} deg off line; through a full-lock bend and reversing, turntable up to ${artic.maxA} deg, hitch joined within ${artic.hitch} m; entering the rear enters the front ${artic.enterRear}; left as one ${artic.leftAsOne}`);
+      const bad = [];
+      if (artic.straight > 1) bad.push('the rear does not trail straight');
+      if (artic.maxA < 20 || artic.maxA > 55) bad.push('the turntable angle');
+      if (artic.hitch > 0.01 || artic.bad) bad.push('the hitch comes apart');
+      if (!artic.enterRear || !artic.leftAsOne) bad.push('entering or removing');
+      if (bad.length) { console.error(`FAIL: articulated bus: ${bad.join('; ')}`); process.exitCode = 1; }
+    }
+
     // --- no lake in the boat's cockpit ------------------------------------
     //
     // The runabout's cockpit floor is 12 cm over its waterline and the lake is

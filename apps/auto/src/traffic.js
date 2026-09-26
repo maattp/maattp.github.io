@@ -1,7 +1,7 @@
 // Traffic, parked cars and the police response.
 
 import * as THREE from './three.js';
-import { Vehicle, CIVILIAN_TYPES, randomCarColor, vehicleAssets, farLod } from './vehicles.js';
+import { Vehicle, CIVILIAN_TYPES, randomCarColor, vehicleAssets, farLod, makeBellows } from './vehicles.js';
 import { clamp, lerp, angleWrap, hash2, rng, dist2 } from './util.js';
 import * as G from './geo.js';
 
@@ -350,6 +350,9 @@ export class TrafficSystem {
   }
 
   remove(v) {
+    // an articulated bus goes as one: its rear section and bellows with it
+    if (v.trailer) { const r = v.trailer; v.trailer = null; r.leader = null; this.remove(r); }
+    if (v.bellows) { this.scene.remove(v.bellows); v.bellows.geometry.dispose(); v.bellows = null; }
     const i = this.cars.indexOf(v);
     if (i >= 0) this.cars.splice(i, 1);
     this.scene.remove(v.group);
@@ -361,7 +364,19 @@ export class TrafficSystem {
   spawnAt(x, z, heading, typeName, color, mode) {
     const v = new Vehicle(this.city, typeName, color);
     v.place(x, z, heading);
-    return this.add(v, mode);
+    this.add(v, mode);
+    if (v.spec.artic) {
+      // the rear section, straight behind, and the bellows between
+      const r = new Vehicle(this.city, 'articRear', color);
+      const f = v.forward, back = 6.35 + 3.85;
+      r.place(x - f.x * back, z - f.z * back, heading);
+      r.leader = v; v.trailer = r;
+      this.add(r, 'trailer');
+      v.bellows = makeBellows();
+      this.scene.add(v.bellows);
+      r.follow(v);
+    }
+    return v;
   }
 
   // --- parked cars ---------------------------------------------------------
@@ -402,7 +417,7 @@ export class TrafficSystem {
         if (!G.isBuildable(x, z) || city.jumpClear(x, z)) continue;
         const heading = Math.atan2(e.dx, e.dz) + (side > 0 ? 0 : Math.PI);
         const tn = CIVILIAN_TYPES[Math.floor(hash2(ei + s * 7, 11) * CIVILIAN_TYPES.length)];
-        if (tn === 'bus' || tn === 'garbage') continue;
+        if (tn === 'bus' || tn === 'artic' || tn === 'garbage') continue;
         const v = this.spawnAt(x, z, heading, tn, randomCarColor(ei * 13 + s), 'parked');
         // A parked car sits against a kerb with buildings behind it, so its
         // shadow lands almost entirely on ground that is already shaded -- and
@@ -531,7 +546,7 @@ export class TrafficSystem {
       const lo = { x: -e.dz * sign * off, z: e.dx * sign * off };
       const heading = Math.atan2(e.dx * sign, e.dz * sign);
       let tn = CIVILIAN_TYPES[Math.floor(this.R.n() * CIVILIAN_TYPES.length)];
-      if (e.cls === 'res' && (tn === 'bus' || tn === 'boxtruck' || tn === 'garbage')) tn = 'sedan';
+      if (e.cls === 'res' && (tn === 'bus' || tn === 'artic' || tn === 'boxtruck' || tn === 'garbage')) tn = 'sedan';
       const v = this.spawnAt(x + lo.x, z + lo.z, heading, tn, randomCarColor((this.R.n() * 1e6) | 0), 'traffic');
       if (e.tunnel) {
         // IN the bore, not on the street over it. place() seeds groundAt with
@@ -824,6 +839,8 @@ export class TrafficSystem {
     for (let i = this.cars.length - 1; i >= 0; i--) {
       const v = this.cars[i];
       if (v === player.vehicle) continue;
+      // an articulated bus's rear section is placed by its front (below)
+      if (v.mode === 'trailer') { if (!v.leader) this.remove(v); continue; }
       const d2 = dist2(v.x, v.z, px, pz);
       // 'apron' is the airport's planes: player-flyable set dressing that has
       // to still be there when you drive back an hour later.
@@ -889,6 +906,13 @@ export class TrafficSystem {
     }
 
     this.resolveCarCollisions(dt, player);
+    // articulated buses: each rear section follows its front, the player's too
+    for (const v of this.cars) {
+      if (!v.trailer) continue;
+      if (v.bellows) v.bellows.visible = v.group.visible && dist2(v.x, v.z, px, pz) < 150 * 150;
+      v.trailer.follow(v);
+      v.trailer.group.visible = v.group.visible;
+    }
     // collision resolution edits transforms directly, so re-sync every body.
     for (const v of this.cars) if (v !== player.vehicle) v.sync();
     this.updateFarLod(px, pz, player);
@@ -1106,6 +1130,8 @@ export class TrafficSystem {
         if (Math.abs((a.y || 0) - (b.y || 0)) > 3) continue;
         // Two parked cars never move, so they cannot start overlapping.
         if (a.mode === 'parked' && b.mode === 'parked') continue;
+        // an articulated bus's two sections are one vehicle
+        if (a.leader === b || b.leader === a) continue;
         const dx = b.x - a.x, dz = b.z - a.z;
         const rr = a.radius + b.radius;
         const d2 = dx * dx + dz * dz;
@@ -1113,7 +1139,8 @@ export class TrafficSystem {
         const d = Math.sqrt(d2);
         const nx = dx / d, nz = dz / d;
         const pen = rr - d;
-        const ma = a.mass, mb = b.mass;
+        // a rear section is placed by its front, so it does not give way
+        const ma = a.mode === 'trailer' ? 1e6 : a.mass, mb = b.mode === 'trailer' ? 1e6 : b.mass;
         const total = ma + mb;
         a.x -= nx * pen * (mb / total);
         a.z -= nz * pen * (mb / total);
@@ -1163,6 +1190,7 @@ export class TrafficSystem {
       const d = dist2(p.x, p.z, x, z);
       if (d < bd) { bd = d; best = v; }
     }
-    return best;
+    // an articulated bus is driven from its front section
+    return best && best.leader ? best.leader : best;
   }
 }
