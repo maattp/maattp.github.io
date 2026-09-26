@@ -3897,6 +3897,49 @@ if any jump's run-up or ramp crosses the monorail.
 browser did not. Check a module as one: `node --input-type=module --check <
 file`.
 
+## The hot air balloon
+
+**A balloon stands inflated on the lawn over Jefferson Park's reservoir lid**
+(Beacon Hill; `BALLOON_SITE` in main.js, v125): dead flat at 98.7 m, open for
+80 m every way, kept clear of the park's trees (`city.clearCircles`), marked
+on the map, with a quad parked beside it. It is a `Vehicle` (`balloon` in
+TYPES, `buildBalloon`, `updateBalloon`), flagged `plane` so it gets the
+aircraft paths (the far massing while airborne, no horn) and dispatched
+before them.
+
+- **Built to a 77,000 cu ft sport balloon** (`BAL`): an envelope 18 m from
+  mouth to crown, 16.5 m across, 24 gores lofted one by one so each bulges
+  between its load tapes (the tapes are the creases where two gores' normals
+  meet), in colour bands -- a rainbow with a navy-and-white chevron belt and a
+  navy crown; a dark lining up the throat and a Nomex skirt; sixteen flying
+  wires; a stainless double burner on four padded uprights; a wicker basket
+  with a suede rim, skids, handles and four propane cylinders; a pilot whose
+  right hand goes up to the blast valve when you burn, and a flame.
+- **The envelope is in the MATTE draw**: the paint material takes one tint per
+  car and drops vertex colour, which left the rainbow plain silver.
+- **Flying it is flying a balloon.** BURN (gas) heats the envelope, VENT
+  (brake) dumps heat, and it always cools on its own: a 1 s burn about every
+  10 s holds a height, with the lag a real one has. Buoyancy is the heat over a
+  neutral 62 deg against quadratic drag, 4-5 m/s up or down flat out. It goes
+  where the WIND takes it, and the wind turns and builds with height (calm on
+  the ground, ~8 m/s at 500 m, blowing toward downtown up high), so you steer
+  by choosing a height. The stick adds a gentle 5.5 m/s push along the basket
+  and turns it (rotation vents). The HUD reads altitude, not speed.
+- **It lands on whatever the basket meets** (`_balloonFloor`: ground, decks,
+  roofs, water); over 5.5 m/s it hurts. **The envelope stays out of towers**
+  (`_balloonEnvelopeHit`: any footprint within 7.6 m whose roof is above the
+  mouth pushes it out); the basket collides like the helicopter's airframe.
+- **`seeFar`**: apron vehicles vanish at 80 lengths, which for a 1.6 m
+  basket would be 128 m; a balloon shows to 4 km. Lost (despawned, wrecked),
+  a new one appears at the park when you are 400 m+ away.
+- No engine: `audio.enterVehicle` returns early for it, and the burner is a
+  looped bank sound (`burner`) played while it is lit.
+
+verify's "hot air balloon" section flies it at fixed dt: climbs on the burner,
+holds within metres on short burns, drifts on the wind, lands softly on the
+vent, and keeps its envelope off the tallest downtown tower when shoved into
+it. `docs/balloon/` has shots.
+
 ## The Tech Tour
 
 Twelve badges at the region's tech offices (`activities.js` `TECH`, v114):

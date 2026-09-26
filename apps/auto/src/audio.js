@@ -626,6 +626,18 @@ const SOUNDS = {
     k.wander(ng.gain, t, 2.5, 0.25, 0.1, R, 30);
     k.noise('white', t, 2.5, R).connect(k.filt('bandpass', 1300, 3)).connect(ng).connect(out);
   } },
+  // A balloon's burner: a deep roar of propane burning, a hiss over it and
+  // the flutter of the flame. Looped while the burner is lit.
+  burner: { dur: 2.6, loop: 0.3, build(k, out, t, R) {
+    const roar = k.gain(0.9);
+    k.wander(roar.gain, t, 2.6, 0.85, 0.15, R, 60);
+    k.noise('brown', t, 2.6, R).connect(k.filt('lowpass', 420, 0.9)).connect(roar).connect(out);
+    const body = k.gain(0.35);
+    k.wander(body.gain, t, 2.6, 0.32, 0.08, R, 90);
+    k.noise('pink', t, 2.6, R).connect(k.filt('bandpass', 900, 0.6)).connect(body).connect(out);
+    const hiss = k.gain(0.10);
+    k.noise('white', t, 2.6, R).connect(k.filt('highpass', 3200)).connect(hiss).connect(out);
+  } },
   gravel: { dur: 2.4, loop: 0.3, build(k, out, t, R) {
     const g = k.gain(0);
     k.noise('white', t, 2.4, R).connect(k.filt('bandpass', 1900, 0.8)).connect(g).connect(out);
@@ -1551,13 +1563,14 @@ export class Audio {
     // The loop taps wait for the lot.
     this.bank = {};
     const makeLoops = (b) => {
-      if (!b.squeal || !b.gravel || !b.scrape || !b.slosh) return;
+      if (!b.squeal || !b.gravel || !b.scrape || !b.slosh || !b.burner) return;
       const lp = (f) => { const x = c.createBiquadFilter(); x.type = 'lowpass'; x.frequency.value = f; return x; };
       this.loops = {
         squeal: new Tap(c, b.squeal[0], this.sfxBus),
         gravel: new Tap(c, b.gravel[0], this.sfxBus),
         scrape: new Tap(c, b.scrape[0], this.sfxBus),
         slosh: new Tap(c, b.slosh[0], this.sfxBus, lp(2400)),
+        burner: new Tap(c, b.burner[0], this.sfxBus),
       };
     };
     const t0 = performance.now();
@@ -1955,6 +1968,16 @@ export class Audio {
   /** Getting in: doors, seat, starter, and the engine catching. */
   enterVehicle(spec, running) {
     if (!this.ready) return;
+    if (spec && spec.balloon) {
+      // No engine: a balloon is the burner and the wind. Climbing into the
+      // basket is a creak of wicker and nothing else.
+      this._spec = spec;
+      this.engModel.on = false;
+      this._engStartAt = -1;
+      this.hornKind = null;
+      this.play('seat', { gain: 0.35, send: 0.04 });
+      return;
+    }
     this._spec = spec;
     const name = selectEngine(spec);
     this.eng.setProfile(name);
@@ -2064,7 +2087,7 @@ export class Audio {
       const name = selectEngine(spec);
       this.eng.setProfile(name);
       m.setProfile(ENGINES[name], spec);
-      m.start(true);
+      if (!spec.balloon) m.start(true);
     }
     // Out of the car by any route -- a respawn never calls exitVehicle -- and
     // the engine is off.
@@ -2116,6 +2139,8 @@ export class Audio {
       this.loops.squeal.set(squeal * 0.22, t, 0.04, 0.85 + clamp(sp / 40, 0, 0.35));
       const grav = offroad && onGround ? clamp(sp / 18, 0, 1) * 0.12 + skid * 0.15 : 0;
       this.loops.gravel.set(grav, t, 0.08, 0.8 + clamp(sp / 30, 0, 0.5));
+      // a balloon's burner, lit
+      this.loops.burner.set(inCar && s.burner ? 0.55 : 0, t, s.burner ? 0.05 : 0.12);
       const scr = inCar ? clamp(s.scrape || 0, 0, 1) : 0;
       this.loops.scrape.set(scr * 0.3, t, 0.03, 0.8 + clamp(sp / 25, 0, 0.5));
       // water: a boat's hull, a floatplane on the lake, a car in a ford, or

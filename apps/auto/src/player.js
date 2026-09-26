@@ -355,7 +355,9 @@ export class Player {
     // pace, and the test already frees anything above a roof.
     // A monorail runs on its beam, 7 m over the street and through MoPOP: it
     // collides with nothing but its buffers and the other train (monorail.js).
-    const airborne = (v.spec.plane && v.airborne && !v.spec.heli) || v.spec.monorail;
+    // A balloon's basket collides too, like the helicopter; its envelope is
+    // kept out of towers by updateBalloon.
+    const airborne = (v.spec.plane && v.airborne && !v.spec.heli && !v.spec.balloon) || v.spec.monorail;
     const impact = airborne ? 0 : collideWithBuildings(v, this.city, (imp) => {
       if (this.crashCd > 0) return;
       this.crashCd = 0.4;
@@ -458,7 +460,14 @@ export class Player {
       dist = 7.6 + v.spec.len * 0.42 + clamp(sp * 0.09, 0, 3.4);
       height = 3.2 + v.spec.roof * 0.42;
       lookH = 1.05;
-      if (v.spec.heli) {
+      if (v.spec.balloon) {
+        // Far enough back to see the whole balloon -- 22 m of it over the
+        // basket -- and looking at the middle of it, so the basket sits low
+        // in the frame and the envelope fills the top.
+        dist = 30 + clamp(sp * 0.3, 0, 4);
+        height = 6.5;
+        lookH = 9.5;
+      } else if (v.spec.heli) {
         // Closer than a plane's -- a helicopter is flown at a hover and at
         // walking pace as often as flat out, and from 15 m back at a hover it
         // is a speck -- lengthening with speed. The look point stays on the
@@ -485,7 +494,7 @@ export class Player {
       // A big stunt jump pulls the boom back and up a little, eased by
       // stunts.js, so the landing zone comes into view before you reach it.
       if (this.stuntCam > 0.001) { dist += 4.5 * this.stuntCam; height += 1.8 * this.stuntCam; }
-      if (v.spec.heli && v.airborne && v.vLong > -2) {
+      if ((v.spec.heli || v.spec.balloon) && v.airborne && v.vLong > -2) {
         // A helicopter yaws on the spot, and the stick flies it along the
         // nose, so the camera has to come round behind a pedal turn at the
         // hover as well -- or "forward" stops meaning up the screen. Slower
@@ -511,7 +520,7 @@ export class Player {
     // A helicopter keeps the pull-in below 25 m/s: at a hover beside a tower
     // the boom otherwise sits inside it, and the rigid rig below damps the
     // change in boom length anyway.
-    const airPlane = plane && this.vehicle.airborne && !(this.vehicle.spec.heli && this.vehicle.speed < 25);
+    const airPlane = plane && this.vehicle.airborne && !(this.vehicle.spec.heli && this.vehicle.speed < 25) && !this.vehicle.spec.balloon;
     if (!airPlane) dist = this.clearCamDist(target, dist * cp, height) / Math.max(cp, 0.15);
     const wanted = new THREE.Vector3(
       target.x + Math.sin(this.camYaw) * dist * cp,
