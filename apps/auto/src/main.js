@@ -182,6 +182,9 @@ class Game {
     }
   }
 
+  // a wheelie held over 2 s (vehicles.js), announced the way GTA does
+  onWheelie(t) { hud.showToast(`Wheelie ${t.toFixed(1)} s`); }
+
   onExitVehicle(v) {
     controls.setMode('foot');
     if (v) audio.exitVehicle(v.spec, v.dead);

@@ -74,7 +74,7 @@ const BANDS = {
   sportbike: { name: 'sport motorcycle', accel: [3, 3.5], top: [270, 300], brake: [38, 42], lat: [1.00, 1.15] },
   // A sport quad: 0-80 km/h (it tops out under 110, so it gets the 80 mark),
   // light and grippy, braked hard on four knobblies.
-  atv: { name: 'sport ATV', accel: [4.5, 6.5], top: [85, 105], brake: [38, 48], lat: [0.85, 0.98] },
+  atv: { name: 'sport ATV', accel: [4.5, 6.5], top: [110, 130], brake: [38, 48], lat: [0.85, 0.98] },
   pickup: { name: 'full-size pickup', accel: [6.5, 9], top: [170, 200], brake: [40, 50], lat: [0.72, 0.82] },
   van: { name: 'panel van', accel: [11, 16], top: [140, 170], brake: [42, 52], lat: [0.68, 0.78] },
   taxi: { name: 'taxi (sedan)', accel: [8, 12], top: [180, 220], brake: [36, 45], lat: [0.80, 0.90] },

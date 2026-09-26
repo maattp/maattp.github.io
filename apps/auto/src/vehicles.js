@@ -188,7 +188,7 @@ export const TYPES = {
   // (low gearing, four driven knobblies), and `minTurnR` tightens the
   // low-speed lock below every car's 4.5 m. Top speed ~95 km/h, like a
   // sport quad; 0-80 in about 5 s real, which the arcade punch halves.
-  atv: deriveSpec({ wheelbase: 1.26, len: 2.00, wid: 1.20, wheelR: 0.29, sill: 0.30, belt: 0.80, roof: 1.25, cab: [-0.2, 0.1], hand: 'atv', atv: true, offroad: true, minTurnR: 3.0, mass: 0.34, acc: 8.5, topKph: 95, brakeM: 42, latG: 0.92 }),
+  atv: deriveSpec({ wheelbase: 1.26, len: 2.00, wid: 1.20, wheelR: 0.29, sill: 0.30, belt: 0.80, roof: 1.25, cab: [-0.2, 0.1], hand: 'atv', atv: true, offroad: true, minTurnR: 3.0, mass: 0.34, acc: 8.5, topKph: 125, brakeM: 42, latG: 0.92 }),
   // A 5.7 m outboard runabout. `boat` sends update() to the hull model
   // (updateBoat): it floats on the LOCAL water surface and treats anything
   // shallower than its draft as a wall. `wheelR` is only there because
@@ -5910,6 +5910,9 @@ export class Vehicle {
     // vertical speed it would launch at, and the flight state while airborne.
     this.rampRef = null; this.rampT = 0; this.rampVy = 0; this.rampAlong = 0;
     this.stunt = false; this.spinRate = 0; this.stuntLaunch = null; this.stuntLanded = false; this.landVy = 0;
+    // Wheelies (bikes and quads): the nose-up angle about the rear axle, how
+    // long the current one has lasted, and a finished one for the HUD to read.
+    this.wheelie = 0; this.wheelieT = 0; this.wheelieDone = 0; this.pullIn = 0;
     this._cast = null; this._farCol = null;
     this._fwd = { x: 0, z: 1 }; this._fwdH = NaN;
     this._acc = 0; this._still = 0;   // traffic.js: half-rate AI time, parked-settle frames
@@ -6536,8 +6539,14 @@ export class Vehicle {
     const throttle = input.throttle || 0;
     const brake = input.brake || 0;
     const hand = input.handbrake || 0;
-    const steerIn = clamp(input.steer || 0, -1, 1);
-    if (this.stunt) { this.stuntAir(dt, steerIn); return STILL; }
+    // PULL BACK TO WHEELIE (bikes and quads), as in GTA: the stick's other
+    // axis, which cars ignore and planes climb with. With the front wheel in
+    // the air there is less to steer with.
+    const light = !!(spec.moto || spec.atv);
+    const pull = light ? clamp(input.pitch || 0, -1, 1) : 0;
+    this.pullIn = pull;
+    const steerIn = clamp(input.steer || 0, -1, 1) * (1 - 0.6 * clamp(this.wheelie / 0.3, 0, 1));
+    if (this.stunt) { this.stuntAir(dt, steerIn, pull); return STILL; }
 
     // One paved-surface query per body per frame, reused by all seven ground
     // samples below -- the scan is too expensive to repeat per wheel.
@@ -6776,7 +6785,11 @@ export class Vehicle {
       // find the ground again.
       this.stunt = true;
       this.onGround = false;
-      this.vy = this.rampVy;
+      // A bike or a quad POPS off the lip: a rider unloads the suspension into
+      // the kicker, and pulling back as you leave it pops harder. Without it a
+      // quad (26-33 m/s at the lip against a car's 40-50) cleared the ramps by
+      // a metre or two and felt like driving off a kerb.
+      this.vy = light ? this.rampVy * 1.15 + 3.5 * clamp(pull, 0, 1) + 1.0 : this.rampVy;
       this.spinRate = 0;
       this.stuntLaunch = this.rampRef;
       this.rampRef = null;
@@ -6833,6 +6846,15 @@ export class Vehicle {
       : Math.atan2(lh - rh, this.halfWid * 2) + clamp(this.vLat, -9, 9) * 0.016
         + (rough > 0 ? Math.sin(this.x * 2.7 - this.z * 1.3) * rough * (spec.offroad ? 0.03 : 0.015) : 0);
     this.pitch = lerp(this.pitch, tgtPitch, 1 - Math.exp(-10 * dt));
+    if (light) {
+      // Held on the gas with the stick back, the nose comes up to a balance
+      // angle in proportion to the pull; let go, or lift off, and it drops.
+      const up = this.onGround && sp > 2.5 && this.vLong > 0 && throttle > 0.3 && pull > 0.25;
+      const want = up ? (spec.atv ? 0.42 : 0.55) * clamp((pull - 0.25) / 0.6, 0, 1) : 0;
+      this.wheelie = lerp(this.wheelie, want, 1 - Math.exp(-(want > this.wheelie ? 3.2 : 6) * dt));
+      if (this.wheelie > 0.2) this.wheelieT += dt;
+      else if (this.wheelie < 0.08 && this.wheelieT > 0) { if (this.wheelieT > 2) this.wheelieDone = this.wheelieT; this.wheelieT = 0; }
+    }
     // A bike's lean IS its steering, visually, so it has to arrive with the
     // turn rather than a tenth of a second behind it -- lagging the yaw is what
     // makes the controls feel like they are wallowing.
@@ -6854,7 +6876,7 @@ export class Vehicle {
    * back as slide (vLat), which is what a clean landing is judged on. No
    * engine, no brakes, no grip -- only air drag and STUNT_G.
    */
-  stuntAir(dt, steerIn) {
+  stuntAir(dt, steerIn, pull = 0) {
     const f = this.forward;
     let wx = f.x * this.vLong + f.z * this.vLat, wz = f.z * this.vLong - f.x * this.vLat;
     const sp = Math.hypot(wx, wz);
@@ -6887,8 +6909,10 @@ export class Vehicle {
       if (wl !== null && wl - 0.8 > target) { target = wl - 0.8; splash = true; }
     }
     // The nose follows the flight path, as a thrown car's does.
-    const tgtPitch = -Math.atan2(this.vy, Math.max(6, sp)) * 0.75;
-    this.pitch = lerp(this.pitch, tgtPitch, 1 - Math.exp(-2.5 * dt));
+    // ...and on a bike or a quad the stick tilts it: back for nose up.
+    const tgtPitch = -Math.atan2(this.vy, Math.max(6, sp)) * 0.75 - pull * 0.55;
+    this.pitch = lerp(this.pitch, tgtPitch, 1 - Math.exp(-(pull ? 4 : 2.5) * dt));
+    this.wheelie = lerp(this.wheelie, 0, 1 - Math.exp(-4 * dt));
     this.roll = lerp(this.roll, 0, 1 - Math.exp(-3 * dt));
     this.latAcc = 0; this.skid = 0;
     this.wheelSpin += (this.vLong / (this.assets.wheelR || 0.34)) * dt;
@@ -6912,9 +6936,12 @@ export class Vehicle {
   }
 
   sync() {
-    this.group.position.set(this.x, this.y + this.yVis, this.z);
+    // A wheelie turns the body about the rear axle: nose up, and the centre
+    // lifted so the back wheel stays on the ground.
+    const wl = this.wheelie ? (this.spec.wheelbase || 1.3) * 0.5 * Math.sin(this.wheelie) : 0;
+    this.group.position.set(this.x, this.y + this.yVis + wl, this.z);
     this.group.rotation.y = this.heading;
-    this.tilt.rotation.x = this.pitch;
+    this.tilt.rotation.x = this.pitch - this.wheelie;
     this.tilt.rotation.z = this.roll;
     if (this.detailedWheels) {
       for (const m of this.wheelMeshes) {
