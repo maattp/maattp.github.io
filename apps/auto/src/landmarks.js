@@ -3177,6 +3177,7 @@ function onRoad(city, s) {
 export function buildLandmarks(scene, city, waterLevelAt = null, monorail = null) {
   let needleAt = null;   // where the Needle stands, for needletop.js
   let wheelAt = null;    // and the Great Wheel, for wheelride.js
+  let arenaAt = null;    // and Climate Pledge Arena, for hockey.js
   atlas = new SignAtlas();
   const clusters = new Map();
   const solids = [];
@@ -3262,6 +3263,7 @@ export function buildLandmarks(scene, city, waterLevelAt = null, monorail = null
     g.userData.landmark = l.name;
     if (l.kind === 'spaceNeedle') needleAt = { x, y, z, t };
     if (l.kind === 'wheel') wheelAt = { x, y, z };
+    if (l.kind === 'arena') arenaAt = { x, y, z };
     for (const s of g.userData.solids || []) {
       const w = worldSolid(s, x, y, z, t);
       if (city && onRoad(city, w)) { dropped.push(`${l.kind}@${w.x.toFixed(0)},${w.z.toFixed(0)}`); continue; }
@@ -3330,6 +3332,7 @@ export function buildLandmarks(scene, city, waterLevelAt = null, monorail = null
   root.userData.near = near;
   root.userData.needle = needleAt;
   root.userData.wheel = wheelAt;
+  root.userData.arena = arenaAt;
   scene.add(root);
   return root;
 }

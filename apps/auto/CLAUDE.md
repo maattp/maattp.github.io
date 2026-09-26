@@ -33,6 +33,8 @@ src/arcade.js               the Belltown arcade: storefront, room, cabinet
 src/arcadegames.js          its six games
 src/pinball.js              the pinball museum: storefront, the machine's screen, its sounds
 src/pinballtable.js         EMERALD CITY: the table's geometry, physics and rules (no DOM)
+src/hockey.js               hockey night at Climate Pledge Arena: marquee, 16-bit screen, pad, sound
+src/hockeygame.js           the hockey game itself: skating, puck, goalies, team AI (no DOM)
 src/golf.js                 three par-3s at Interbay
 src/wheelride.js            the Great Wheel's turning half and the ride on it
 src/fishtoss.js             the fish stall at Pike Place Market + the catching game
@@ -4285,6 +4287,55 @@ ground in front of the shopfront, ENTER, $1, touch on each half, the plunger,
 a seeded bot game to the end with no escapes and every feature seen, the pay,
 closing. `docs/pinball/` has shots.
 
+## Hockey night at Climate Pledge Arena (v137)
+
+**A marquee outside the south atrium on Thomas St** (`src/hockey.js`; the
+arena's position is `lmRoot.userData.arena`, the door 95.5 m south of it where
+the atrium's glass front peaks). ENTER there drops straight into a game --
+SEATTLE (you) against VANCOUVER, three 2:30 periods, one sudden-death
+overtime, ties allowed -- with no team select or menu. A win pays $250, a tie
+$100, a loss $25, plus $25 a goal. The overlay is opaque: the city idles.
+
+- **The game is `src/hockeygame.js` and imports nothing**; with `humanTeam:
+  null` both benches are the AI, which is how it is tuned. Feet and seconds,
+  the rink 200 x 85 with 28 ft corners, nets 6 ft by 3.3 ft on the goal lines.
+- **Mechanics, not scripts**, after the 16-bit classic: skating asks for an
+  acceleration (momentum, carving, hockey stops); tap SHOOT for a wrist shot,
+  hold for a slap shot, the stick's vertical picks the corner; SHOOT while a
+  pass is on its way to you is a ONE-TIMER (control follows every pass); without
+  the puck SHOOT is a lunge that flattens a carrier hit at speed, or a poke
+  when slow, and PASS switches to the skater nearest the puck (or, when a
+  teammate has it, calls for it). Draws are taken on the drop; early is a loss.
+- **Goalies play the angle and react late**: they ride an arc in front of the
+  net at a capped speed, read a shot after 0.1-0.2 s, reach further the longer
+  they have seen it, and rebound hard shots or cover soft ones. So a pass across
+  the crease and a one-timer beats them where a shot from the same spot does not.
+- **Checked every substep of the puck**, the goalie and the net: at 100 ft/s a
+  slap shot crosses the goalie's plane and the goal line in one frame.
+- **The AI** plays roles: a shape by possession and puck (wingers wide, the
+  centre in the slot, D at the points), the nearest defender pressures and
+  checks, the rest mark; carriers dodge, pass to open teammates in the slot
+  (who one-time it about half the time) and shoot from range bands only with
+  an open lane (goalies excluded from that test, or it never shoots).
+- **Balance, from Node** (AI-vs-AI and a scripted "human" through the same
+  inputs a thumb gives): ~20 shots on goal a side, ~85-90 % saves, one-timers
+  from the slot ~27 %. A bug worth remembering: the check used a signed speed
+  that was only right when the hitter came first in the player list, and one
+  team never flattened anyone -- measure a symmetric game for symmetry. The
+  home side gets slightly better skaters and the CPU gives the skater you
+  control a little more room than its own; without that the scripted player
+  lost 10 of 10.
+- The screen: a 400 x 225 canvas scaled pixel-sharp, the rink across it in a
+  3/4 view (across the ice squashed 0.62) scrolling with the puck, pixel crowd
+  (it jumps on a goal), ads on the dasher, every skater drawn from rectangles
+  (stride, stick, number on the back, goalie's pads) with a marker under yours.
+  Crowd noise swells near the nets; an organ, a goal horn, a whistle.
+- `hockey.frozen` stops the frame loop stepping the game, for harnesses.
+
+verify's "hockey" section: the marquee, ENTER into a game, a draw won on the
+drop, the stick, a shot, a one-timer, a check, three seeded AI games to a final
+with nothing leaving the rink, the pay, closing. `docs/hockey/` has shots.
+
 ## Basketball in the parks
 
 **A half court in four parks** -- Cal Anderson, Judkins, Green Lake, Jefferson
@@ -4573,7 +4624,7 @@ is the page half; load it into any booted page to re-install edited jumps
   boardwalk (piles, rails) registered as one sloped platform. Walked vs drawn:
   0 cm. The ferry terminal, the other piers and the Alki pier have no deck.
 - **Stadium interiors are unreachable** — walls run round the whole footprint,
-  with no gates. T-Mobile's roof is modelled open and does not move.
+  with no gates (the arena's hockey game is a screen you enter at its doors). T-Mobile's roof is modelled open and does not move.
 - **The minor landmarks are the old models** (aquarium, ferry terminal, Pier 66,
   library, convention centre, locks, Kerry Park): physically shaded and solid
   now, but not rebuilt. Gas Works and the Alki statue were rebuilt in v118.
