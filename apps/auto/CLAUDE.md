@@ -29,6 +29,8 @@ src/player.js               on-foot/driving state machine + chase camera
 src/controls.js             touch stick/buttons + keyboard fallback
 src/hud.js                  minimap, full map, readouts
 src/needletop.js            the Space Needle's elevator, deck and viewers
+src/arcade.js               the Belltown arcade: storefront, room, cabinet
+src/arcadegames.js          its six games
 src/golf.js                 three par-3s at Interbay
 src/wheelride.js            the Great Wheel's turning half and the ride on it
 src/fishtoss.js             the fish stall at Pike Place Market + the catching game
@@ -4147,6 +4149,41 @@ verify's "golf" section plays a round with sweet-spot swings at the right
 power in still air (tee shots on the green, the card, the pay), a ball into
 15th Ave W (a stroke, and back to where it was hit), and closing.
 `docs/golf/` has shots.
+
+## The Belltown arcade (v133)
+
+**A storefront on 2nd Ave** (`src/arcade.js`): at boot it finds the street
+face of a real building nearest 2nd Ave at Bell St (a face at least 9 m long
+that fronts a road 7 m out and is not itself on one) and hangs a glowing
+panel on it -- brick, a window of lit cabinets, the door, ARCADE in neon. One
+draw. ENTER at the door pauses the city and opens the room; the overlay is
+opaque, so the city is not drawn behind it (the menu idle, as for fishing).
+
+- **Six cabinets** (`src/arcadegames.js`), faithful to six classics' rules
+  under generic names, original art, each at its own resolution: PADDLE
+  (1972 tennis: angle by where it strikes, first to 11; the machine misjudges
+  by more as a rally grows and tops out at 175 px/s, or two good paddles
+  rally for ever), BRICKS (1976: 1/3/5/7-point rows, speed-ups at 4 and 12
+  hits and the first orange and red, the paddle halving at the back wall,
+  two walls), SERPENT, ROCKS (1979 vector: split 20/50/100, saucers, the
+  quickening heartbeat, hyperspace, a ship at 10,000), SPACE RAID (1978: 5 x
+  11, the march quickening as they thin, erodible pixel bunkers, the mystery
+  ship), CROSSING (1981: five lanes -- one a Metro bus -- and the Ship Canal's
+  logs and diving turtles to five homes against the clock).
+- **The cabinet**: the canvas scaled pixel-sharp into a bezel with scanlines,
+  a D-pad (8-way by the pointer's angle) and A / B on screen, arrows/WASD and
+  Space-J / X-K on a keyboard; a fixed 60 Hz step. Each game is a pure
+  `step(dt, input, sfx)` / `draw(g)`; `input.pressed` holds one-frame edges.
+- A credit is $1 (`charge`); beating a cabinet's stored high score pays $50
+  (localStorage `auto-arcade-hi`). Sounds are square waves and filtered noise
+  on the game's AudioContext (`Beeper`), one set per game, rate-limited.
+- **The games are tested in Node** with bots and a stub canvas (they import
+  only fishing.js's `FONT`): the brick bot clears both walls, a tracking
+  paddle takes ~3 minutes to win 11, the others play to a game over.
+
+verify's "arcade" section: the storefront on 2nd Ave, the room, a $1 credit,
+20 s of mashed input on every cabinet without an exception, the high score
+kept, leaving. `docs/arcade/` has shots.
 
 ## Basketball in the parks
 

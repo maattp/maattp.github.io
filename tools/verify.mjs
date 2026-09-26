@@ -1127,6 +1127,57 @@ async function main() {
       if (bad.length) { console.error(`FAIL: golf: ${bad.join('; ')}`); process.exitCode = 1; }
     }
 
+    // --- the Belltown arcade ------------------------------------------------
+    //
+    // The storefront found a building face on 2nd Ave; ENTER at its door opens
+    // the room; a credit costs $1; each of the six cabinets plays 20 s of
+    // mashed input without an exception; a finished game records its high
+    // score; leaving gives the city back.
+    const arc = await session.eval(`(() => {
+      const d = window.__dbg, A = d.arcade, P = d.player;
+      if (!A) return null;
+      if (P.vehicle) P.exitVehicle(true);
+      const out = { face: +Math.hypot(A.face.fx - d.G.toWorld(47.6143, -122.345)[0], A.face.fz - d.G.toWorld(47.6143, -122.345)[1]).toFixed(1) };
+      d.game.money = Math.max(d.game.money, 20);
+      P.x = A.door.x; P.z = A.door.z; P.y = A.door.y;
+      out.took = d.game.tryInteract(P) && A.mode;
+      const m0 = d.game.money;
+      out.games = [];
+      for (const c of A.cards) {
+        A._insert(c.gm);
+        let err = null;
+        try {
+          for (let n = 0; n < 60 * 20 && A.mode === 'play'; n++) {
+            A._keys = { left: n % 97 < 40, right: n % 97 > 60, up: n % 53 < 20, down: n % 71 > 60, a: n % 12 < 6, b: n % 200 < 30 };
+            A.update(1 / 60);
+          }
+        } catch (e) { err = String(e); }
+        out.games.push({ id: c.gm.id, score: A.game ? A.game.score : -1, err });
+        A._toRoom();
+      }
+      out.charged = m0 - d.game.money;
+      // a finished game records its score
+      A._insert(A.cards[2].gm); A.game.score = 4321; A.game.over = true; A.game.result = 'GAME OVER'; A.update(1 / 60);
+      out.hi = A.hi.serpent;
+      A.close();
+      out.closed = A.mode; out.paused = d.game.paused;
+      return out;
+    })()`, true);
+    console.log('\n--- arcade -------------------------------------------------');
+    if (!arc) { console.error('FAIL: no arcade'); process.exitCode = 1; }
+    else {
+      console.log(`  storefront ${arc.face} m from 2nd Ave at Bell; ENTER -> ${arc.took}; charged $${arc.charged} for ${arc.games.length} credits`);
+      console.log(`  ${arc.games.map((g) => `${g.id} ${g.score}${g.err ? ' ERROR ' + g.err : ''}`).join(', ')}; high score kept ${arc.hi}; closed ${arc.closed}, city unpaused ${!arc.paused}`);
+      const bad = [];
+      if (arc.face > 60) bad.push('the storefront is not on 2nd Ave');
+      if (arc.took !== 'room') bad.push('ENTER does not open it');
+      if (arc.charged !== arc.games.length) bad.push('a credit is not $1');
+      if (arc.games.some((g) => g.err)) bad.push('a cabinet threw');
+      if (arc.hi !== 4321) bad.push('the high score is not kept');
+      if (arc.closed !== 'off' || arc.paused) bad.push('leaving does not give the city back');
+      if (bad.length) { console.error(`FAIL: arcade: ${bad.join('; ')}`); process.exitCode = 1; }
+    }
+
     // --- no lake in the boat's cockpit ------------------------------------
     //
     // The runabout's cockpit floor is 12 cm over its waterline and the lake is
