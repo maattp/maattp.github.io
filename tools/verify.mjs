@@ -1208,6 +1208,110 @@ async function main() {
       if (bad.length) { console.error(`FAIL: arcade: ${bad.join('; ')}`); process.exitCode = 1; }
     }
 
+    // --- the pinball museum ------------------------------------------------------
+    //
+    // The storefront found a face on Maynard Ave S, and both storefront panels
+    // (this and the arcade's) stand ON the ground in front of the shopfront:
+    // mounted on the wall, a dense building's glass shopfront hid their lower
+    // half. ENTER opens the machine, a game is $1, a tap on each half of the
+    // screen raises that flipper, holding the right half with a ball in the
+    // shooter lane draws the plunger and letting go fires it. A seeded bot
+    // plays a whole game: no ball leaves the table, it ends, it pays $1 per
+    // 100,000 and keeps the high score; leaving gives the city back.
+    const pin = await session.eval(`(() => {
+      const d = window.__dbg, A = d.pinball, P = d.player;
+      if (!A) return null;
+      if (P.vehicle) P.exitVehicle(true);
+      const at = d.G.toWorld(47.59857, -122.32556);
+      const out = { face: +Math.hypot(A.face.fx - at[0], A.face.fz - at[1]).toFixed(1) };
+      // each panel: its foot on the ground, standing clear of the shopfront
+      out.panels = [['pinball', A], ['arcade', d.arcade]].map(([n, o]) => {
+        const m = o.front, f = o.face, foot = m.position.y - 3;
+        const off = (m.position.x - f.fx) * f.nx + (m.position.z - f.fz) * f.nz;
+        let lo = Infinity, hi = -Infinity;
+        for (const k of [-4.5, 0, 4.5]) { const g = d.city.groundAt(m.position.x - f.nz * k + f.nx * 0.3, m.position.z + f.nx * k + f.nz * 0.3, null); lo = Math.min(lo, g); hi = Math.max(hi, g); }
+        return { n, gap: +(foot - lo).toFixed(2), sunk: +(hi - foot).toFixed(2), off: +off.toFixed(2) };
+      });
+      d.game.money = Math.max(d.game.money, 20);
+      P.x = A.door.x; P.z = A.door.z; P.y = A.door.y;
+      out.took = d.game.tryInteract(P) && A.mode;
+      const m0 = d.game.money;
+      A._insert();
+      out.charged = m0 - d.game.money;
+      out.mode = A.mode;
+      // touch: the left half flips the left flipper
+      const el = A.el, W = innerWidth, H = innerHeight;
+      const ev = (type, id, x) => el.dispatchEvent(new PointerEvent(type, { pointerId: id, clientX: x, clientY: H * 0.6, bubbles: true, pointerType: 'touch' }));
+      const t = A.table, rest = t.flips[0].a;
+      ev('pointerdown', 11, W * 0.2);
+      for (let i = 0; i < 6; i++) A.update(1 / 60);
+      out.leftUp = t.flips[0].on && t.flips[0].a < rest - 0.5;
+      ev('pointerup', 11, W * 0.2);
+      for (let i = 0; i < 20; i++) A.update(1 / 60);
+      out.leftDown = !t.flips[0].on && Math.abs(t.flips[0].a - rest) < 1e-6;
+      // the right half with a ball in the lane is the plunger
+      ev('pointerdown', 12, W * 0.8);
+      for (let i = 0; i < 20; i++) A.update(1 / 60);
+      out.pull = +t.plunge.toFixed(2);
+      out.rightStill = !t.flips[1].on;
+      ev('pointerup', 12, W * 0.8);
+      for (let i = 0; i < 20; i++) A.update(1 / 60);
+      out.launched = t.state === 'play' && t.balls[0].y < 600;
+      // a whole game, played by a seeded bot at a fixed step
+      let seed = 5; const rng = () => { seed = (seed * 16807) % 2147483647; return (seed - 1) / 2147483646; };
+      const T = new t.constructor({ rng });
+      A.table = T; A.frozen = true;
+      const F = [{ x: 112, y: 704 }, { x: 260, y: 704 }];
+      let hold = [0, 0], cool = [0, 0], pt = 0, escapes = 0, n = 0;
+      const seen = {};
+      for (; n < 60 * 60 * 20 && !T.over; n++) {
+        const inp = { left: false, right: false, plunge: false };
+        if (T._waiting()) { pt++; inp.plunge = pt < 10 + (n % 30); } else pt = 0;
+        for (const b of T.balls) for (let i = 0; i < 2; i++) {
+          const dx = (b.x - F[i].x) * (i ? -1 : 1), dy = b.y - F[i].y;
+          if (cool[i] <= 0 && dx > -5 && dx < 75 && dy > -45 && dy < 40 && b.vy > -50 && rng() < 0.5) { hold[i] = 8 + Math.floor(rng() * 8); cool[i] = hold[i] + 10; }
+        }
+        inp.left = hold[0]-- > 0; inp.right = hold[1]-- > 0; cool[0]--; cool[1]--;
+        T.step(1 / 60, inp);
+        for (const e of T.takeEvents()) seen[e] = 1;
+        for (const b of T.balls) if (!b.ramp && !b.held && (b.x < 20 || b.x > 384 || b.y < 20)) escapes++;
+      }
+      out.game = { over: T.over, minutes: +(n / 3600).toFixed(1), score: T.score, escapes, seen: ['bumper', 'sling', 'lane', 'ramp', 'saucer', 'drop', 'spin', 'flipHit'].filter((k) => !seen[k]) };
+      const hi0 = A.hi, cash0 = d.game.money;
+      A.frozen = false; A.overT = 0;
+      for (let i = 0; i < 90 && A.mode === 'play'; i++) A.update(1 / 60);
+      out.paid = d.game.money - cash0; out.expect = Math.floor(T.score / 100000) + (T.score > hi0 && hi0 > 0 ? 50 : 0);
+      out.hi = A.hi === Math.max(hi0, T.score);
+      out.overMode = A.mode;
+      A.close();
+      out.closed = A.mode; out.paused = d.game.paused;
+      return out;
+    })()`, true);
+    console.log('\n--- pinball -----------------------------------------------');
+    if (!pin) { console.error('FAIL: no pinball museum'); process.exitCode = 1; }
+    else {
+      console.log(`  storefront ${pin.face} m from 508 Maynard Ave S; panels ${pin.panels.map((p) => `${p.n} foot +${p.gap} m over the lowest ground, ${p.sunk} m under the highest, ${p.off} m off the wall`).join('; ')}`);
+      console.log(`  ENTER -> ${pin.took}; $${pin.charged} a game; left half flips ${pin.leftUp}/${pin.leftDown}; right half pulls the plunger ${pin.pull} (flipper still ${pin.rightStill}), fires ${pin.launched}`);
+      console.log(`  bot game: over ${pin.game.over} after ${pin.game.minutes} min, ${pin.game.score} points, ${pin.game.escapes} escapes${pin.game.seen.length ? ', never saw ' + pin.game.seen.join(' ') : ''}; paid $${pin.paid} (expect $${pin.expect}), high score ${pin.hi}; closed ${pin.closed}, city unpaused ${!pin.paused}`);
+      const bad = [];
+      if (pin.face > 60) bad.push('the storefront is not on Maynard Ave S');
+      for (const p of pin.panels) {
+        if (p.gap > 0.05) bad.push(`the ${p.n} panel floats ${p.gap} m`);
+        if (p.sunk > 1) bad.push(`the ${p.n} panel is ${p.sunk} m in the ground`);
+        if (p.off < 0.55) bad.push(`the ${p.n} panel is behind the shopfront`);
+      }
+      if (pin.took !== 'lobby') bad.push('ENTER does not open it');
+      if (pin.charged !== 1 || pin.mode !== 'play') bad.push('a game is not $1');
+      if (!pin.leftUp || !pin.leftDown) bad.push('a tap does not work the left flipper');
+      if (!(pin.pull > 0.3) || !pin.rightStill || !pin.launched) bad.push('the plunger does not work from the right half');
+      if (!pin.game.over) bad.push('the bot game did not end');
+      if (pin.game.escapes) bad.push('a ball left the table');
+      if (pin.game.seen.length) bad.push(`never saw ${pin.game.seen.join(' ')}`);
+      if (pin.paid !== pin.expect || !pin.hi || pin.overMode !== 'over') bad.push('the payout or high score is wrong');
+      if (pin.closed !== 'off' || pin.paused) bad.push('leaving does not give the city back');
+      if (bad.length) { console.error(`FAIL: pinball: ${bad.join('; ')}`); process.exitCode = 1; }
+    }
+
     // --- the articulated bus ---------------------------------------------------
     //
     // An artic spawned and driven: its rear section follows on the hitch
