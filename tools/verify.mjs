@@ -696,6 +696,73 @@ async function main() {
       }
     }
 
+    // --- the hot air balloon ----------------------------------------------
+    //
+    // At Jefferson Park, flown at a fixed dt through player.update: it rises
+    // on the burner, drifts with the wind, holds a height on short burns,
+    // lands on the vent without damage, and its envelope stays out of a tower
+    // it is driven into.
+    const bal = await session.eval(`(() => {
+      const d = window.__dbg, P = d.player;
+      const b = d.traffic.cars.find((v) => v.spec.balloon);
+      if (!b) return null;
+      if (P.vehicle) P.exitVehicle(true);
+      P.x = b.x + 2; P.z = b.z + 1; P.y = b.y;
+      P.enterVehicle(b);
+      const x0 = b.x, z0 = b.z, y0 = b.y;
+      const step = (n, inp) => { for (let i = 0; i < n; i++) {
+        P.update(1 / 60, Object.assign({ x: 0, y: 0, gas: false, brake: false, hand: false }, inp), { x: 0, y: 0 }, d.controls, d.traffic, d.peds);
+        d.world.update(b.x, b.z, 2); } };
+      const out = {};
+      step(300, { gas: true, gasAmt: 1 }); step(900, {});
+      out.climbed = +(b.y - y0).toFixed(1);
+      // hold: a 1 s burn every 10.5 s (the duty that balances the envelope's
+      // cooling at its floating temperature). Let the climb settle for 40 s,
+      // then it should stay put for the next minute.
+      for (let k = 0; k < 4; k++) { step(60, { gas: true, gasAmt: 1 }); step(570, {}); }
+      const yh = b.y;
+      for (let k = 0; k < 6; k++) { step(60, { gas: true, gasAmt: 1 }); step(570, {}); }
+      out.holdDrift = +(b.y - yh).toFixed(1);
+      out.drifted = Math.round(Math.hypot(b.x - x0, b.z - z0));
+      step(2400, { brake: true, brakeAmt: 1 });
+      step(1200, {});
+      out.landed = !b.airborne;
+      out.health = b.health;
+      // the envelope and a tower: the tallest box within 600 m of downtown
+      let tw = null;
+      for (const q of d.city.buildingsNear(0, 0, 600)) if (!tw || q.h > tw.h) tw = q;
+      const top = (tw.base != null ? tw.base : tw.y);
+      // start clear of the footprint whatever its rotation
+      b.x = tw.x + Math.hypot(tw.w, tw.d) / 2 + 15; b.z = tw.z; b.y = top + 20; b.vy = 0; b.airborne = true; b.heat = 62;
+      let worst = Infinity;
+      for (let i = 0; i < 400; i++) {
+        const dx = tw.x - b.x, dz = tw.z - b.z, l = Math.hypot(dx, dz) || 1;
+        b.x += dx / l * 0.3; b.z += dz / l * 0.3;       // shoved at 18 m/s
+        step(1, {});
+        const c = Math.cos(-tw.rot), s = Math.sin(-tw.rot), ex = b.x - tw.x, ez = b.z - tw.z;
+        const lx = ex * c - ez * s, lz = ex * s + ez * c;
+        const qx = Math.max(-tw.w / 2, Math.min(tw.w / 2, lx)), qz = Math.max(-tw.d / 2, Math.min(tw.d / 2, lz));
+        worst = Math.min(worst, Math.hypot(lx - qx, lz - qz));
+      }
+      out.towerClear = +worst.toFixed(2);
+      out.tower = Math.round(tw.h);
+      P.exitVehicle(true);
+      return out;
+    })()`, true);
+    console.log('\n--- hot air balloon ---------------------------------------');
+    if (!bal) { console.error('FAIL: no balloon'); process.exitCode = 1; }
+    else {
+      console.log(`  climbed ${bal.climbed} m in 20 s, held to ${bal.holdDrift} m over a minute of short burns, drifted ${bal.drifted} m on the wind`);
+      console.log(`  vented down: landed ${bal.landed}, health ${bal.health}; driven into a ${bal.tower} m tower, the envelope kept ${bal.towerClear} m off it`);
+      const bad = [];
+      if (!(bal.climbed > 30)) bad.push('the burner does not lift it');
+      if (Math.abs(bal.holdDrift) > 40) bad.push('short burns do not hold a height');
+      if (!(bal.drifted > 60)) bad.push('the wind does not move it');
+      if (!bal.landed || bal.health < 100) bad.push('venting does not land it softly');
+      if (bal.towerClear < 6) bad.push('the envelope goes into a tower');
+      if (bad.length) { console.error(`FAIL: balloon: ${bad.join('; ')}`); process.exitCode = 1; }
+    }
+
     // --- no lake in the boat's cockpit ------------------------------------
     //
     // The runabout's cockpit floor is 12 cm over its waterline and the lake is

@@ -53,7 +53,14 @@ const ATV_SPOTS = [
   // the middle of the lawn south of the Armory, 36 m from anything in every
   // direction (it was against the Armory's wall, behind a tree)
   [-894, -940, 1.0, 0xe8b21c],
+  // Jefferson Park, beside the balloon's launch field on the reservoir lid
+  [2045, 4600, 0.6, 0x2e6fd0],
 ];
+// THE HOT AIR BALLOON, on the lawn over Jefferson Park's reservoir lid on
+// Beacon Hill: dead flat (98.7 m), open for 80 m every way, and one of the
+// best views of the city. It stands inflated, waiting; the launch field is
+// kept clear of the park's trees. See updateBalloon in vehicles.js.
+const BALLOON_SITE = { x: 2089, z: 4640, heading: Math.PI };
 const HOSPITAL = G.RESPAWN; // kept clear of buildings by citygen, via G.KEEP_CLEAR
 
 class Game {
@@ -167,12 +174,16 @@ class Game {
     // an apron plane or one you left earlier has to be started.
     audio.enterVehicle(v.spec, wasMode === 'traffic' || wasMode === 'police');
     // In a helicopter GAS and BRAKE are the collective.
-    const heli = !!v.spec.heli;
-    for (const [k, car, h] of [['gas', 'GAS', 'UP'], ['brake', 'BRAKE', 'DOWN']]) {
+    const heli = !!v.spec.heli, balloon = !!v.spec.balloon;
+    for (const [k, car, h, b] of [['gas', 'GAS', 'UP', 'BURN'], ['brake', 'BRAKE', 'DOWN', 'VENT']]) {
       const el = document.querySelector(`[data-btn="${k}"]`);
-      if (el) el.textContent = heli ? h : car;
+      if (el) el.textContent = balloon ? b : heli ? h : car;
     }
     if (heli) setTimeout(() => hud.showToast('Hold UP to lift off — let go to hover'), 1400);
+    if (balloon) {
+      setTimeout(() => hud.showToast('Hold BURN to heat the envelope and rise — VENT to sink'), 1200);
+      setTimeout(() => hud.showToast('The wind turns with height: climb or sink to change course'), 6500);
+    }
     if (v.mode === 'parked' || v.wasParked) this.addHeat(8);
     hud.showToast(v.typeName === 'police' ? 'Police cruiser commandeered' : 'Vehicle acquired');
     // The radio comes on with the ignition, on a random station (every car
@@ -625,6 +636,8 @@ function installShadowFade() {
   await step(0.86, 'Placing the landmarks');
   monorail.attach(city);
   lmRoot = buildLandmarks(scene, city, (x, z) => world.waterLevelAt(x, z), monorail);
+  // the balloon's launch field: no park trees on it
+  if (city.clearCircles) city.clearCircles.push([BALLOON_SITE.x, BALLOON_SITE.z, 26]);
   // The scene root never moves, and its own matrixAutoUpdate re-flagged EVERY
   // object in the world for a world-matrix multiply each frame. Static
   // subtrees are frozen; see freezeStatic.
@@ -725,6 +738,7 @@ function installShadowFade() {
     const v = traffic.spawnAt(x, z, h, 'atv', col, 'apron');
     v.vLong = 0;
   }
+  spawnBalloon();
   // A CAR WORTH TAKING at the kerb nearest the spawn. Kerbside cars come from
   // a fixed hash of street slots, so the first car every player walked up to
   // was the same pickup. That slot is reserved and a sports coupe parked in it
@@ -757,6 +771,8 @@ function installShadowFade() {
         hello: 'A fighter jet — full throttle, pull back past 220 km/h. Hold the stick back to loop' }];
     })(),
     ...ATV_SPOTS.map(([x, z]) => ({ x, z, kind: 'atv', name: 'Quad bike', near: false, hello: 'A quad bike — made for the grass' })),
+    { x: BALLOON_SITE.x, z: BALLOON_SITE.z, kind: 'balloon', name: 'Hot air balloon', near: false,
+      hello: 'A hot air balloon, ready to fly. Climb into the basket' },
     // the Monorail's two stations: Westlake's street door, Seattle Center's ramp
     ...(monorail.wlDoor ? [{ x: monorail.wlDoor.x, z: monorail.wlDoor.z, kind: 'monorail', name: 'Monorail · Westlake', near: false,
       hello: 'Seattle Center Monorail — the 1962 Alweg line. Tap ENTER at the door when a train is in to take the controls' }] : []),
@@ -1438,6 +1454,13 @@ function doRespawn() {
 const perfSys = { on: false, ms: {}, frames: 0 };
 let perfT = 0;
 let helloCd = 0;   // seconds until the next place may say hello
+let balloonCheck = 5;
+/** The balloon, inflated and waiting on its launch field. */
+function spawnBalloon() {
+  const v = traffic.spawnAt(BALLOON_SITE.x, BALLOON_SITE.z, BALLOON_SITE.heading, 'balloon', 0xffffff, 'apron');
+  v.vLong = 0;
+  return v;
+}
 function lap(name) {
   const t = performance.now();
   perfSys.ms[name] = (perfSys.ms[name] || 0) + (t - perfT);
@@ -1517,6 +1540,12 @@ function frame(now) {
   // One at a time, in list order, so the dock is never talked over by the
   // quad parked beside it: the next waits for this one's toast to finish.
   helloCd = Math.max(0, helloCd - dt);
+  // There is always a balloon: one left somewhere and lost (a wreck, a
+  // despawn) is replaced at Jefferson Park, out of sight of the player.
+  if ((balloonCheck -= dt) <= 0) {
+    balloonCheck = 5;
+    if (!traffic.cars.some((v) => v.spec.balloon) && dist2(p.x, p.z, BALLOON_SITE.x, BALLOON_SITE.z) > 400 * 400) spawnBalloon();
+  }
   for (const pl of hud.places) {
     const d2 = dist2(pl.x, pl.z, p.x, p.z);
     if (pl.near) { if (d2 > 110 * 110) pl.near = false; continue; }
@@ -1691,7 +1720,9 @@ function audioState(dt, input, p, camDir, buried) {
     onFoot: player.onFoot,
     vehicle: v,
     spec,
-    speed: v ? v.vLong : 0,
+    speed: v ? (v.spec.balloon ? 0 : v.vLong) : 0,
+    burner: !!(v && v.spec.balloon && v.burning),
+    // a balloon moves WITH the air: no rush of wind at any speed
     // A helicopter's turbine runs at governed speed whatever the collective
     // is doing: the note follows the rotor spool, not the UP button.
     throttle: !v ? 0 : v.spec.heli ? 0.6 * (v.spool || 0) + (input.gas ? 0.4 : 0)

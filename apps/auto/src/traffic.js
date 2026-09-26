@@ -845,7 +845,7 @@ export class TrafficSystem {
       // draws each, and all nineteen were culled every frame. They show out
       // to 80 lengths, about 10 px on a phone -- a jet to 1.2 km, a boat to
       // 460 m, a quad to 160 m -- and never closer than a parked car does.
-      const show = v.mode !== 'apron' || d2 < Math.max(PARKED_SHOW, v.spec.len * 80) ** 2;
+      const show = v.mode !== 'apron' || d2 < Math.max(PARKED_SHOW, v.spec.len * 80, v.spec.seeFar || 0) ** 2;
       if (v.mode === 'apron' && v.spec.atv && d2 < 300 * 300 && Math.abs(v.vLong) < 0.05 && Math.abs(v.vLat) < 0.05) {
         v.group.visible = show;
         if (v._still < 3) v._still++;

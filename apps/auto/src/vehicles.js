@@ -198,6 +198,11 @@ export const TYPES = {
   // A personal watercraft: the boat's physics (boat: true) on a 3.2 m hull
   // with a rider astride it, quicker to plane and far quicker to turn
   // (updateBoat reads `jetski`). Moored at the marinas, never traffic.
+  // A hot air balloon (balloon.js-free: it is a Vehicle, flown by updateBalloon).
+  // `len`/`wid` are the BASKET, which is what collides; the envelope is
+  // handled in updateBalloon. `seeFar`: a 21 m balloon is a landmark from
+  // kilometres away, not a quad that can vanish at 80 lengths.
+  balloon: deriveSpec({ wheelbase: 1.3, len: 1.6, wid: 1.6, wheelR: 0.2, sill: 0.2, belt: 1.1, roof: 1.2, cab: [0, 0.1], hand: 'balloon', plane: true, balloon: true, mass: 0.6, acc: 3, topKph: 40, brakeM: 40, latG: 0.5, livery: 0xffffff, seeFar: 4000 }),
   jetski: deriveSpec({ wheelbase: 1.8, len: 3.20, wid: 1.20, wheelR: 0.20, sill: 0.3, belt: 0.6, roof: 1.05, cab: [-0.1, 0.1], hand: 'jetski', boat: true, jetski: true, mass: 0.4, acc: 7.5, topKph: 105, brakeM: 30, latG: 0.9 }),
   boat: deriveSpec({ wheelbase: 3.2, len: 5.70, wid: 2.20, wheelR: 0.30, sill: 0.4, belt: 0.7, roof: 1.45, cab: [-0.2, 0.1], hand: 'boat', boat: true, cockpit: [0.12, -2.2, 0.9, 0.86], mass: 1.1, acc: 3.0, topKph: 70, brakeM: 45, latG: 0.6 }),
   pickup: deriveSpec({ wheelbase: 3.68,len: 5.92, wid: 2.05, wheelR: 0.42, sill: 0.48, belt: 1.26, roof: 1.98, cab: [-0.15, 0.22], hand: 'pickup', mass: 1.4, acc: 4.4, topKph: 185, brakeM: 45, latG: 0.77 }),
@@ -2713,6 +2718,14 @@ const RIDERS = {
   // (+-0.36, 1.035, 0.25), soles on the boards (top 0.325).
   // Astride the saddle, knees bent into the footwells, hands on the bars
   // (+-0.36, 0.98, 0.22): the quad's stance, lower and further aft.
+  // the balloon's pilot stands in the basket; updateBalloon raises the right
+  // arm to the blast valve while the burner is lit
+  balloon: {
+    z: -0.28, hipY: 1.05, seed: 133,
+    lean: 0, head: -0.12,
+    shoulder: [0.04, 0.16], elbow: [-0.30, 0.04],
+    thigh: [0.02, 0.07], knee: 0.06, foot: -0.02,
+  },
   jetski: {
     z: -0.42, hipY: 0.90, seed: 91,
     lean: 0.26, head: -0.24,
@@ -5400,6 +5413,174 @@ function buildJetski(spec, paint, trim, matte) {
   return [];   // no wheels
 }
 
+/**
+ * A hot air balloon, to the proportions of a 77,000 cu ft (2,200 m3) sport
+ * balloon (Cameron / Lindstrand / Ultramagic type sheets): an envelope 18 m
+ * from mouth to crown and 16.5 m across at the equator, 24 gores, a basket
+ * 1.5 x 1.3 m and 1.15 m deep, a double burner 2.5 m over the basket floor.
+ *
+ * The envelope is the classic "natural shape" -- a narrow throat widening to
+ * an equator about 60 % of the way up, then a rounded crown -- lofted gore by
+ * gore, each gore bulging between its load tapes (the tapes are the creases
+ * where two gores' normals meet), in colour bands: a rainbow of gores with
+ * a white chevron belt and a dark crown. Local y = 0 is the ground under the
+ * basket.
+ */
+const BAL = {
+  mouthY: 4.0, height: 18.0, gores: 24,
+  // [height above the mouth, radius]: throat, flare, equator, shoulder, crown
+  profile: [[0, 1.9], [1.0, 2.6], [2.5, 3.9], [4.5, 5.6], [6.5, 6.9], [8.5, 7.8], [10.3, 8.25], [12.0, 8.2],
+    [13.6, 7.6], [15.0, 6.5], [16.2, 4.9], [17.1, 3.1], [17.7, 1.6], [18.0, 0.55]],
+};
+function buildBalloon(spec, paint, trim, matte) {
+  const G = BAL.gores, P = BAL.profile, M = BAL.mouthY;
+  const RAINBOW = [[0.86, 0.13, 0.12], [0.96, 0.46, 0.07], [0.98, 0.80, 0.10], [0.17, 0.62, 0.25],
+    [0.10, 0.45, 0.80], [0.36, 0.21, 0.62]];
+  const WHITE_ = [0.94, 0.93, 0.90], NAVY = [0.08, 0.12, 0.28];
+  // Envelope in the MATTE draw: the paint material takes one tint per car
+  // (the livery) and drops per-vertex colour, which left a rainbow envelope
+  // plain silver; matte keeps it, and its roughness is right for nylon.
+  // Rings up the envelope, with a colour per band: the gore's own colour, a
+  // white belt round the equator with a navy chevron, the gore colour above,
+  // a navy crown.
+  const rows = [];
+  for (let i = 0; i < P.length - 1; i++) {
+    const [h0, r0] = P[i], [h1, r1] = P[i + 1];
+    const n = i < 3 || i > P.length - 4 ? 1 : 2;
+    for (let k = 0; k < n; k++) {
+      const t = k / n;
+      rows.push([h0 + (h1 - h0) * t, r0 + (r1 - r0) * t]);
+    }
+  }
+  rows.push(P[P.length - 1]);
+  const band = (h) => (h < 7.2 ? 0 : h < 8.2 ? 1 : h < 11.2 ? 2 : h < 12.2 ? 1 : h < 16.4 ? 3 : 4);
+  for (let g = 0; g < G; g++) {
+    const a0 = (g / G) * Math.PI * 2, a1 = ((g + 1) / G) * Math.PI * 2;
+    const gc = RAINBOW[g % RAINBOW.length];
+    const mid = (a0 + a1) / 2;
+    // three columns across the gore: tape, belly, tape. A gore under
+    // pressure bulges ~3 % of the radius between its tapes.
+    const col = (h, r, a, belly) => {
+      const rr = r * (1 + belly * 0.03 * Math.min(1, r / 3));
+      return [Math.sin(a) * rr, M + h, Math.cos(a) * rr];
+    };
+    // Split the gore into its colour bands; a band boundary is a ring both
+    // patches share, so the envelope is closed.
+    let start = 0;
+    for (let i = 1; i <= rows.length; i++) {
+      const bi = band(rows[start][0] + 0.01);
+      const end = i === rows.length || band(rows[i][0] + 0.01) !== bi;
+      if (!end) continue;
+      const seg = rows.slice(start, Math.min(i + 1, rows.length));
+      let c = bi === 0 || bi === 2 ? gc : bi === 1 ? WHITE_ : bi === 3 ? gc : NAVY;
+      // the chevron: alternate belt gores navy
+      if (bi === 1 && g % 2 === 0) c = NAVY;
+      if (bi === 3) c = RAINBOW[(g + 3) % RAINBOW.length];
+      if (seg.length >= 2) {
+        matte.patch(seg.map(([h, r]) => [col(h, r, a0, 0), col(h, r, (a0 + mid) / 2, 0.7), col(h, r, mid, 1),
+          col(h, r, (mid + a1) / 2, 0.7), col(h, r, a1, 0)]), c, [Math.sin(mid), 0.2, Math.cos(mid)]);
+      }
+      start = i;
+    }
+  }
+  // the parachute vent's cap at the crown
+  {
+    const [h, r] = P[P.length - 1];
+    const ring = [];
+    for (let g = 0; g <= G; g++) { const a = (g / G) * Math.PI * 2; ring.push([Math.sin(a) * r, M + h, Math.cos(a) * r]); }
+    matte.patch([ring, ring.map(() => [0, M + h + 0.12, 0])], NAVY, [0, 1, 0]);
+  }
+  // Inside the mouth: the lining you see up the throat, dark and scorched.
+  {
+    const lin = [];
+    for (let i = 0; i < 4; i++) {
+      const [h, r] = P[i];
+      const ring = [];
+      for (let g = 0; g <= G; g++) { const a = (g / G) * Math.PI * 2; ring.push([Math.sin(a) * r * 0.985, M + h, Math.cos(a) * r * 0.985]); }
+      lin.push(ring);
+    }
+    matte.patch(lin, [0.16, 0.10, 0.08], [0, -1, 0]);
+  }
+  // The skirt (scoop): heat-proof Nomex from the throat down round the burner.
+  {
+    const sk = [];
+    for (const [y, r] of [[M, 1.92], [M - 0.55, 1.78], [M - 1.1, 1.62]]) {
+      const ring = [];
+      for (let g = 0; g <= G; g++) { const a = (g / G) * Math.PI * 2; ring.push([Math.sin(a) * r, y, Math.cos(a) * r]); }
+      sk.push(ring);
+    }
+    matte.patch(sk, [0.12, 0.13, 0.15], [0, 0, 1]);
+  }
+  // --- the basket -----------------------------------------------------------
+  const BW = 1.5, BD = 1.3, BH = 1.15, FLOOR = 0.14;
+  const WICKER = [0.60, 0.44, 0.26], WICKER_IN = [0.42, 0.30, 0.18], SUEDE = [0.30, 0.19, 0.11];
+  // four walls, each a thin box, outer weave and a darker inside
+  matte.box(0, 0.06, BD / 2 - 0.03, BW, BH - 0.06, 0.06, 0, WICKER);
+  matte.box(0, 0.06, -BD / 2 + 0.03, BW, BH - 0.06, 0.06, 0, WICKER);
+  matte.box(BW / 2 - 0.03, 0.06, 0, 0.06, BH - 0.06, BD - 0.12, 0, WICKER);
+  matte.box(-BW / 2 + 0.03, 0.06, 0, 0.06, BH - 0.06, BD - 0.12, 0, WICKER);
+  matte.box(0, 0.06, 0, BW - 0.1, FLOOR - 0.06, BD - 0.1, 0, WICKER_IN);
+  // woven bands: darker courses round the outside every 0.2 m
+  for (let y = 0.22; y < BH; y += 0.22) {
+    matte.box(0, y, 0, BW + 0.012, 0.035, BD + 0.012, 0, [0.46, 0.32, 0.18]);
+  }
+  // padded suede rim round the top, and rope handles on each side
+  const rim = [[-BW / 2, BH, -BD / 2], [BW / 2, BH, -BD / 2], [BW / 2, BH, BD / 2], [-BW / 2, BH, BD / 2]];
+  for (let k = 0; k < 4; k++) matte.tube(rim[k], rim[(k + 1) % 4], 0.065, 8, SUEDE, true);
+  for (const sd of [-1, 1]) {
+    matte.tube([sd * (BW / 2 + 0.03), 0.7, -0.25], [sd * (BW / 2 + 0.06), 0.62, 0], 0.018, 5, [0.78, 0.72, 0.58]);
+    matte.tube([sd * (BW / 2 + 0.06), 0.62, 0], [sd * (BW / 2 + 0.03), 0.7, 0.25], 0.018, 5, [0.78, 0.72, 0.58]);
+  }
+  // wooden skids under it
+  for (const sd of [-0.45, 0.45]) matte.box(sd, 0, 0, 0.1, 0.07, BD + 0.08, 0, [0.36, 0.25, 0.15]);
+  // four propane cylinders in padded covers, in the corners
+  for (const [x, z] of [[-0.5, -0.4], [0.5, -0.4], [-0.5, 0.42], [0.5, 0.42]]) {
+    matte.tube([x, FLOOR, z], [x, FLOOR + 0.82, z], 0.17, 12, [0.10, 0.22, 0.44], true);
+    trim.tube([x, FLOOR + 0.82, z], [x, FLOOR + 0.9, z], 0.05, 8, CHROME, true);
+  }
+  // --- uprights, burner, flying wires ---------------------------------------
+  const BY = 2.62;                                        // burner frame height
+  const FR = 0.38;                                        // frame half-width
+  const top = [[-FR, BY, -FR], [FR, BY, -FR], [FR, BY, FR], [-FR, BY, FR]];
+  const corners = [[-BW / 2 + 0.06, BH, -BD / 2 + 0.06], [BW / 2 - 0.06, BH, -BD / 2 + 0.06], [BW / 2 - 0.06, BH, BD / 2 - 0.06], [-BW / 2 + 0.06, BH, BD / 2 - 0.06]];
+  for (let k = 0; k < 4; k++) {
+    // the flexi-pole in its padded sleeve
+    matte.tube(corners[k], top[k], 0.035, 6, [0.13, 0.13, 0.15]);
+    trim.tube(top[k], top[(k + 1) % 4], 0.025, 6, CHROME);
+  }
+  // the double burner: two stainless cans with their coils, a blast valve
+  for (const sd of [-1, 1]) {
+    // (in the paint draw -- white metallic, which reads as brushed steel --
+    // so a balloon's paint geometry is not empty)
+    paint.tube([sd * 0.17, BY - 0.05, 0], [sd * 0.17, BY + 0.34, 0], 0.13, 12, WHITE, true);
+    for (let k = 0; k < 3; k++) trim.tube([sd * 0.17 - 0.15, BY + 0.06 + k * 0.1, 0], [sd * 0.17 + 0.15, BY + 0.06 + k * 0.1, 0], 0.028, 8, [0.62, 0.64, 0.66]);
+  }
+  matte.box(0, BY - 0.18, FR - 0.02, 0.18, 0.1, 0.08, 0, [0.72, 0.12, 0.10]);   // the blast valve handle
+  // Flying wires: from the frame corners and between them up to the load
+  // tapes at the mouth, sixteen of them. Dark steel, thin.
+  for (let g = 0; g < 16; g++) {
+    const a = ((g + 0.5) / 16) * Math.PI * 2;
+    const k = Math.floor(((a + Math.PI / 4) % (Math.PI * 2)) / (Math.PI / 2)) % 4;
+    const from = top[(k + 2) % 4];
+    matte.tube([from[0] * 1.05, BY + 0.02, from[2] * 1.05], [Math.sin(a) * 1.9, M - 0.02, Math.cos(a) * 1.9], 0.012, 4, [0.18, 0.18, 0.2]);
+  }
+  return [];   // no wheels
+}
+
+/** The burner's flame: two glowing cones, shown while the burner is lit. */
+function balloonFlame() {
+  const g = new THREE.Group();
+  const outer = new THREE.Mesh(new THREE.ConeGeometry(0.28, 1.5, 10, 1, true),
+    new THREE.MeshBasicMaterial({ color: 0xff8a2a, transparent: true, opacity: 0.8, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide }));
+  const inner = new THREE.Mesh(new THREE.ConeGeometry(0.14, 1.0, 8, 1, true),
+    new THREE.MeshBasicMaterial({ color: 0xbfe2ff, transparent: true, opacity: 0.9, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide }));
+  outer.position.y = 0.75; inner.position.y = 0.5;
+  g.add(outer, inner);
+  g.position.set(0, 2.98, 0);
+  g.visible = false;
+  return g;
+}
+
 /** Types with their own authored builder, keyed by `spec.hand`. */
 const HAND_BUILT = {
   plane: buildPlane, twin: buildTwin, jet: buildJet, biplane: buildBiplane, heli: buildHeli, fighter: buildFighter,
@@ -5411,7 +5592,7 @@ const HAND_BUILT = {
   boxtruck: (s, p, t, m) => buildTruck(s, p, t, m, TRUCK_LOOKS.boxtruck),
   garbage: (s, p, t, m) => buildTruck(s, p, t, m, TRUCK_LOOKS.garbage),
   convertible: buildConvertible, cruiser: buildCruiser, sportbike: buildSportbike,
-  atv: buildAtv, boat: buildBoat, jetski: buildJetski,
+  atv: buildAtv, boat: buildBoat, jetski: buildJetski, balloon: buildBalloon,
 };
 
 /**
@@ -5874,7 +6055,7 @@ export class Vehicle {
     // A bike carries its rider. He goes in the tilt group, so he leans with it
     // -- parented to `group` instead he would stay bolt upright through every
     // corner while the bike went over underneath him.
-    this.rider = this.spec.moto || this.spec.atv || this.spec.jetski ? makeRider(this.spec.hand) : null;
+    this.rider = this.spec.moto || this.spec.atv || this.spec.jetski || this.spec.balloon ? makeRider(this.spec.hand) : null;
     if (this.rider) this.tilt.add(this.rider.group);
     this.wheelMeshes = [];
     this.shadowTilt = null;   // the player's contact shadow (setDetailed)
@@ -5917,6 +6098,9 @@ export class Vehicle {
     // about its main wheels, not its middle.
     this.rollA = 0; this.pitchA = 0; this.yVis = 0;
     this.spool = 0; this.yawRate = 0; this.accLong = 0; this.accLeft = 0;
+    // A balloon's envelope: air temperature over ambient (deg C), whether the
+    // burner is lit, the flame mesh (setDetailed) and the gust clock.
+    this.heat = 58; this.burning = false; this.flame = null; this.gustT = Math.random() * 100;
     // stunt ramps: the ramp under the centre (held briefly past the lip), the
     // vertical speed it would launch at, and the flight state while airborne.
     this.rampRef = null; this.rampT = 0; this.rampVy = 0; this.rampAlong = 0;
@@ -5946,7 +6130,7 @@ export class Vehicle {
     }
     // A quad's rider is there only when someone is riding it. (The bikes
     // keep theirs as they always have: traffic is all they ever are.)
-    if (this.rider && (this.spec.atv || this.spec.jetski)) this.rider.group.visible = this.detailedWheels || !empty;
+    if (this.rider && (this.spec.atv || this.spec.jetski || this.spec.balloon)) this.rider.group.visible = this.detailedWheels || !empty;
   }
 
   /** The player's own car gets steerable, spinning wheel meshes; traffic doesn't. */
@@ -5957,7 +6141,17 @@ export class Vehicle {
     this.trimMesh.geometry = on ? this.assets.trimGeo : this.assets.trimGeoW;
     this.matteMesh.geometry = on ? this.assets.matteGeo : this.assets.matteGeoW;
     if (!on) this.mode = this._mode;
-    if (this.rider && (this.spec.atv || this.spec.jetski)) this.rider.group.visible = on || this._mode === 'traffic';
+    if (this.rider && (this.spec.atv || this.spec.jetski || this.spec.balloon)) this.rider.group.visible = on || this._mode === 'traffic';
+    // the burner's flame, shown while it is lit (updateBalloon)
+    if (this.spec.balloon) {
+      if (on && !this.flame) {
+        this.flame = balloonFlame();
+        this.tilt.add(this.flame);
+      } else if (!on && this.flame) {
+        this.tilt.remove(this.flame);
+        this.flame = null;
+      }
+    }
     if (on) {
       for (const [wx, wy, wz, gi] of this.assets.wheels) {
         const g = new THREE.Group();
@@ -6298,6 +6492,159 @@ export class Vehicle {
   }
 
   /**
+   * A hot air balloon. It has no engine and nothing to push against: the
+   * burner heats the air in the envelope, hot air is lighter than the air
+   * round it, and the balloon rises. So:
+   *
+   *  - BURN (gas) heats the envelope and VENT (brake) opens the parachute
+   *    valve and dumps heat. The envelope always cools on its own, toward
+   *    well under the temperature it floats at, so to hold a height you burn
+   *    in short bursts every ten or fifteen seconds -- exactly how a balloon
+   *    is flown. The response lags by seconds, as a real one's does;
+   *  - buoyancy is the heat over the neutral temperature, against quadratic
+   *    drag: ~4-5 m/s climbing or sinking flat out;
+   *  - it goes where the WIND takes it, and the wind turns and strengthens
+   *    with height (calm on the ground, ~8 m/s from the north-west at 500 m),
+   *    so where you go is a matter of which height you fly at. The stick adds
+   *    a gentle push along the basket (and turns it: rotation vents), enough to
+   *    explore the city rather than drift out to sea;
+   *  - it lands wherever the basket meets something: ground, a roof, water.
+   *    Touching down faster than ~5.5 m/s hurts. On the ground the basket drags
+   *    to a stop, and a balloon nobody flies cools and settles.
+   *  - The envelope is 16.5 m across and cannot be flown through a tower: it is
+   *    pushed out of any building whose roof is above its mouth.
+   */
+  updateBalloon(dt, input) {
+    const piloted = !!input.pilot;
+    const burn = piloted && (input.lift || 0) > 0.3;
+    const vent = piloted && (input.sink || 0) > 0.3;
+    const steerIn = piloted ? clamp(input.steer || 0, -1, 1) : 0;
+    const fwdIn = piloted ? -clamp(input.pitch || 0, -1, 1) : 0;
+    const NEUTRAL = 62;
+    this.burning = burn;
+    this.heat = clamp(this.heat + ((burn ? 13 : 0) - (vent ? 12 : 0) - (this.heat - 34) * 0.046) * dt, 20, 115);
+    // what the basket would stand on here: ground, a deck, a roof, the water
+    const ground = this._balloonFloor(this.x, this.z);
+    const agl = this.y - ground;
+    // buoyancy, weaker in thin air, against drag
+    let ay = (this.heat - NEUTRAL) * 0.045 - Math.max(0, this.y - 700) * 0.004;
+    ay -= 0.07 * this.vy * Math.abs(this.vy) + 0.06 * this.vy;
+    // the wind at this height: calm near the ground, turning and building
+    // with height, with slow gusts
+    this.gustT += dt;
+    const h = Math.max(0, agl);
+    const wd = 2.2 + h * 0.0030 + Math.sin(this.gustT * 0.05) * 0.25;   // direction it blows TOWARD
+    const ws = clamp(0.4 + h * 0.016, 0, 9) * (0.85 + 0.15 * Math.sin(this.gustT * 0.21));
+    const f = this.forward;
+    const lx = f.z, lz = -f.x;
+    let wx = f.x * this.vLong + lx * this.vLat, wz = f.z * this.vLong + lz * this.vLat;
+    if (this.airborne) {
+      // drift to the wind plus the push along the basket
+      const push = fwdIn * 5.5;
+      const tx = Math.sin(wd) * ws + f.x * push, tz = Math.cos(wd) * ws + f.z * push;
+      const k = 1 - Math.exp(-dt / 3.2);
+      wx += (tx - wx) * k; wz += (tz - wz) * k;
+      this.vy += ay * dt;
+      this.y += this.vy * dt;
+      if (this.y <= ground) {
+        const hit = -this.vy;
+        if (hit > 5.5) this.damage(Math.min(70, (hit - 5.5) * 14), true);
+        this.y = ground; this.vy = 0; this.airborne = false;
+      }
+    } else {
+      // on the ground: the basket drags to a stop, and it only leaves when
+      // there is lift
+      const k = Math.min(1, 3 * dt);
+      wx -= wx * k; wz -= wz * k;
+      this.y = ground; this.vy = 0;
+      if (ay > 0.05) { this.airborne = true; this.vy = 0.2; }
+    }
+    // rotation vents turn the basket; a slow drift turn otherwise
+    this.yawRate = damp(this.yawRate, steerIn * 0.5 + (this.airborne ? 0.015 : 0), 2, dt);
+    this.heading += this.yawRate * dt;
+    // the envelope against buildings taller than its mouth
+    const env = this._balloonEnvelopeHit(this.x + wx * dt, this.z + wz * dt);
+    if (env) {
+      const into = wx * env.nx + wz * env.nz;
+      if (into < 0) { wx -= into * env.nx * 1.3; wz -= into * env.nz * 1.3; }
+      this.x += env.nx * env.depth; this.z += env.nz * env.depth;
+    }
+    this.x = G.clampToMap(this.x + wx * dt);
+    this.z = G.clampToMap(this.z + wz * dt);
+    const f2 = this.forward, l2x = f2.z, l2z = -f2.x;
+    this.vLong = wx * f2.x + wz * f2.z;
+    this.vLat = wx * l2x + wz * l2z;
+    // A basket hangs: it swings a little under the envelope in a gust or a
+    // change of speed, and hardly at all in steady drift.
+    const sw = this.airborne ? 0.022 : 0;
+    this.pitch = damp(this.pitch, Math.sin(this.gustT * 0.9) * sw, 2, dt);
+    this.roll = damp(this.roll, Math.sin(this.gustT * 0.7 + 1.3) * sw, 2, dt);
+    this.yVis = 0;
+    this.onGround = !this.airborne;
+    this.latAcc = 0; this.skid = 0;
+    if (this.flame) {
+      this.flame.visible = burn;
+      if (burn) {
+        const fl = 1 + Math.sin(this.gustT * 37) * 0.12 + Math.sin(this.gustT * 23) * 0.08;
+        this.flame.scale.set(1, fl, 1);
+      }
+    }
+    if (this.rider) {
+      // the pilot's right hand on the blast valve while the burner is lit
+      const b = this.rider.bones;
+      const want = burn ? -2.55 : 0.04;
+      b[BONES.shoulderR].rotation.x = damp(b[BONES.shoulderR].rotation.x, want, 10, dt);
+      b[BONES.elbowR].rotation.x = damp(b[BONES.elbowR].rotation.x, burn ? -0.5 : -0.3, 10, dt);
+    }
+    this.sync();
+  }
+
+  /** The highest thing under the basket: ground, a deck, a roof, the water. */
+  _balloonFloor(x, z) {
+    let y = this.city.groundAt(x, z, this.y + 1.2);
+    for (const b of this.city.buildingsNear(x, z, 40)) {
+      const c = Math.cos(-b.rot), s = Math.sin(-b.rot), dx = x - b.x, dz = z - b.z;
+      if (Math.abs(dx * c - dz * s) < b.w / 2 + 0.6 && Math.abs(dx * s + dz * c) < b.d / 2 + 0.6) {
+        const top = (b.base != null ? b.base : b.y) + b.h;
+        if (top <= this.y + 1.2 && top > y) y = top;
+      }
+    }
+    if (waterQuery && G.isWater(x, z)) {
+      const wl = waterQuery(x, z);
+      if (wl !== null && wl > y) y = wl;
+    }
+    return y;
+  }
+
+  /**
+   * Is the envelope in a building? Any footprint within the envelope's radius
+   * whose roof stands above the mouth: the push out of it (unit normal and
+   * depth), or null.
+   */
+  _balloonEnvelopeHit(x, z) {
+    const R = 7.6, mouth = this.y + BAL.mouthY;
+    let best = null;
+    for (const b of this.city.buildingsNear(x, z, 60)) {
+      const top = (b.base != null ? b.base : b.y) + b.h;
+      if (top < mouth) continue;
+      const c = Math.cos(-b.rot), s = Math.sin(-b.rot), dx = x - b.x, dz = z - b.z;
+      const lx = dx * c - dz * s, lz = dx * s + dz * c;
+      const hx = b.w / 2, hz = b.d / 2;
+      const qx = clamp(lx, -hx, hx), qz = clamp(lz, -hz, hz);
+      let ex = lx - qx, ez = lz - qz, d = Math.hypot(ex, ez);
+      if (d >= R) continue;
+      if (d < 1e-6) { ex = lx; ez = lz; d = Math.hypot(ex, ez) || 1; }
+      const depth = R - d;
+      if (!best || depth > best.depth) {
+        // back to world axes
+        const nx = (ex * c + ez * s) / d, nz = (-ex * s + ez * c) / d;
+        best = { nx, nz, depth };
+      }
+    }
+    return best;
+  }
+
+  /**
    * Helicopter. Built to be flown with one thumb and two buttons:
    *
    *   collective  input.lift / input.sink (UP / DOWN): a CLIMB RATE, and with
@@ -6554,6 +6901,7 @@ export class Vehicle {
   update(dt, input) {
     const spec = this.spec;
     if (this.hitCd > 0) this.hitCd -= dt;
+    if (spec.balloon) { this.updateBalloon(dt, input); return; }
     if (spec.heli) { this.updateHeli(dt, input); return; }
     if (spec.fighter) { this.updateFighter(dt, input); return; }
     if (spec.plane) { this.updatePlane(dt, input); return; }

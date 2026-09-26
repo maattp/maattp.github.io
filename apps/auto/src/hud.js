@@ -12,7 +12,8 @@ const SCALE = MAP_PX / (G.MAP_HALF * 2);
  * wheels on orange. Drawn, not typed -- an emoji's glyph depends on the font.
  */
 function placeIcon(ctx, kind, x, y, r) {
-  ctx.fillStyle = kind === 'dock' ? '#2f86d6' : kind === 'jet' ? '#c8352a' : kind === 'monorail' ? '#0b8a8f' : '#e0782e';
+  ctx.fillStyle = kind === 'dock' ? '#2f86d6' : kind === 'jet' ? '#c8352a' : kind === 'monorail' ? '#0b8a8f'
+    : kind === 'balloon' ? '#d2432f' : '#e0782e';
   ctx.strokeStyle = '#ffffff';
   ctx.lineWidth = r * 0.22;
   ctx.beginPath();
@@ -43,6 +44,16 @@ function placeIcon(ctx, kind, x, y, r) {
     ctx.closePath();
     ctx.fill();
     ctx.fillRect(x - r * 0.62, y + r * 0.32, r * 1.24, r * 0.12);
+  } else if (kind === 'balloon') {
+    // an envelope over a basket
+    ctx.fillStyle = '#ffffff';
+    ctx.beginPath();
+    ctx.arc(x, y - r * 0.18, r * 0.42, Math.PI * 0.85, Math.PI * 2.15);
+    ctx.lineTo(x + r * 0.12, y + r * 0.3);
+    ctx.lineTo(x - r * 0.12, y + r * 0.3);
+    ctx.closePath();
+    ctx.fill();
+    ctx.fillRect(x - r * 0.14, y + r * 0.38, r * 0.28, r * 0.2);
   } else if (kind === 'jet') {
     // a delta, nose up
     ctx.fillStyle = '#ffffff';
@@ -177,6 +188,7 @@ export class Hud {
     this.healthFill = root.querySelector('#healthFill');
     this.armourRow = root.querySelector('#speedo');
     this.speedVal = root.querySelector('#speedVal');
+    this.speedUnit = root.querySelector('#speedo .u');
     this.place = root.querySelector('#place');
     this.toast = root.querySelector('#toast');
     this.objective = root.querySelector('#objective');
@@ -383,7 +395,10 @@ export class Hud {
     this.healthFill.style.width = `${clamp(player.health, 0, 100)}%`;
     this.healthFill.style.background = player.health > 45 ? '#4fd07a' : player.health > 20 ? '#f0b429' : '#e5484d';
     const kph = player.onFoot ? player.speed * 3.6 : Math.abs(player.vehicle ? player.vehicle.vLong : 0) * 3.6;
-    this.speedVal.textContent = Math.round(kph);
+    // A balloon's instrument is its altimeter, not a speedometer.
+    const alt = !player.onFoot && player.vehicle && player.vehicle.spec.balloon;
+    this.speedVal.textContent = Math.round(alt ? player.vehicle.y : kph);
+    if (this.speedUnit && this.speedUnit.textContent !== (alt ? 'm' : 'km/h')) this.speedUnit.textContent = alt ? 'm' : 'km/h';
     this.armourRow.classList.toggle('hidden', player.onFoot);
     this.ammoEl.classList.toggle('hidden', !(player.onFoot && player.armed));
     if (player.armed) this.ammoEl.textContent = `⌖ ${player.ammo}`;
@@ -450,7 +465,7 @@ export class Hud {
       const [qx, qz] = toC(pl.x, pl.z);
       placeIcon(ctx, pl.kind, qx, qz, size * (pl.kind === 'dock' ? 0.011 : 0.008));
       // named, quads too: an unlabelled orange dot was a quad nobody found
-      if (pl.kind === 'dock' || pl.kind === 'atv' || pl.kind === 'monorail') {
+      if (pl.kind === 'dock' || pl.kind === 'atv' || pl.kind === 'monorail' || pl.kind === 'balloon') {
         ctx.fillStyle = 'rgba(255,255,255,0.85)';
         ctx.fillText(pl.name, qx, qz - size * 0.016);
       }
