@@ -182,6 +182,25 @@ preset becomes the sky of a rail shooter that spawns enemies on the beat.
 Verify headlessly with `node tools/visverify.mjs` (fake mic, screenshots every
 preset on desktop and phone viewports plus the game).
 
+## Demo App
+
+### Version Management
+
+**IMPORTANT:** Increment `VERSION` in `/apps/demo/index.html` once per PR,
+and bump `CACHE` in `/apps/demo/sw.js` (`demo-vN`) to match.
+
+"SOCKS OFF", a 2000s-style demoscene production (Three.js r160 + raymarched
+fragment shaders), ~3 minutes, looping. The soundtrack is a 138 BPM trance tune
+synthesized note by note in WebAudio, and **the music scheduler is the demo's
+clock**: `PARTS` / `CUTS` / `TITLES` are in song bars, kick/clap envelopes come
+from the same `kickOn`/`clapOn` rules the arrangement uses. All render targets
+are 8-bit (no HalfFloat — iOS). Resolution adapts per frame class (`Q` for
+geometry, `RMQ` for raymarched scenes); `?q=` / `?rmq=` pin it, `?bar=N`
+starts at a bar. Verify with `AUTO_GPU=1 node tools/demoverify.mjs` (needs
+`python3 -m http.server 8000`; `DEMO_PERF=1` adds frame times — headless rAF
+pacing is not real, time `__demo.frameAt` instead), then look at the shots in
+`tools/data/demoshots/`.
+
 ## Fishing App
 
 ### Version Management
