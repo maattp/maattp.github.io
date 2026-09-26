@@ -3318,6 +3318,44 @@ dock's car park, Seattle Center), each named "Quad bike" on the full map
 delivery menu; parked ones freeze once settled. 6.9k triangles + the rider, like the bikes.
 Bench band in tools/vehicles.mjs (0-100 2.7 s arcade, 125 km/h since v123).
 
+### Kayaks on Lake Union (v130)
+
+**Four rental kayaks are moored at the seaplane dock's float** (Moss Bay's
+rentals are at this end of the lake in life), with a rack of boats, paddles
+and a KAYAKS board on the landing (main.js `kayakRack`), marked on the map.
+`kayak` in TYPES is `boat: true` -- the float, shore and exit rules -- with
+`noEngine` (audio.js skips the engine as it does for the balloon) and its own
+`updateKayak`, dispatched before the boat's.
+
+- **Everything is strokes** (`KAYAK` in vehicles.js). PADDLE (gas) paddles,
+  BACK (brake) back-paddles, the stick steers; strokes alternate sides every
+  0.64 s, each blade in the water for the first 55 %. The shared push yaws the
+  bow away from its own side a little (the wiggle a real kayak has); the turn
+  makes the outside strokes wide sweeps and the inside ones reverse sweeps,
+  which yaw the same way from either side and net no thrust, so at a
+  standstill it pivots. Yaw is damped harder with speed (the hull tracks),
+  sideslip dies fast. Measured: cruise 2.4 m/s, a paddled turn 34 deg/s, a
+  pivot at rest 42 deg/s, back-paddling 2 m/s. It runs in 22 cm of water.
+- **The boat's water movement is shared**: `Vehicle._waterMove(dt,
+  minDepth)` (the depth probe leading the hull, the lock-level wall, sliding
+  along a bank) is what `updateBoat` and `updateKayak` both call. The boat's
+  cockpit check reads 4.0 cm either side of the change.
+- **The paddler holds the paddle.** A shared figure in a yellow life vest (the
+  hi-vis loft), seated with legs forward (`RIDERS.kayak`). Each frame
+  `_paddleStroke` poses the paddle -- the stroke blade from the feet to the
+  hip, 86 cm out and under the surface; through the recovery it rolls over to
+  the other side; at rest it lies across the cockpit -- then solves both arms
+  onto its grips with a two-bone IK (`solveArm`: the elbow in the plane of a
+  pole out, down and back; each bone aimed from its child's bind offset, so it
+  fits any humanoid) and twists the torso toward the catch. The paddle is one
+  extra draw, made in `setDetailed(true)`.
+- Each catch splashes: water off the blade (`fx.droplets`) and a small
+  positional `splash`.
+
+verify's "kayaks" section paddles one at fixed dt and checks the cruise, the
+blade under the surface mid-stroke, both kinds of turn and back-paddling.
+`docs/kayak/` has shots.
+
 ### Marinas, seaplane bases and the jet ski
 
 **Ten docks round the region** (`landmarks.js` `MARINAS`, v112): Renton's

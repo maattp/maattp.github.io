@@ -157,6 +157,11 @@ export class Effects {
     this.emit(x, y, z, 30, { r: 0.3, g: 0.3, b: 0.32, size: 3.6, life: 2.4, spread: 4, vy: 4, grav: 0.6, jitter: 2 });
   }
 
+  /** Water off a paddle blade, or any small splash. */
+  droplets(x, y, z, n = 8) {
+    this.emit(x, y, z, n, { r: 0.86, g: 0.92, b: 0.96, size: 0.22, life: 0.55, spread: 1.4, vy: 1.6, grav: -9, drag: 0.9, jitter: 0.12 });
+  }
+
   blood(x, y, z) {
     this.emit(x, y, z, 8, { r: 0.6, g: 0.08, b: 0.08, size: 0.3, life: 0.5, spread: 2.2, vy: 1.6, grav: -9 });
   }

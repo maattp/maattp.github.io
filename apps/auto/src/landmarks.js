@@ -1760,7 +1760,15 @@ export const SEAPLANE_DOCK = {
     ['floatplane', FLOAT_X0 - 3.1, -1944, 0, 0xd8dde2],
     ['boat', FLOAT_X1 + 2.2, -1968, Math.PI, 0xf2f2ee],
     ['boat', FLOAT_X0 - 2.2, -1974, 0, 0x1f3f6a],
+    // the rental kayaks (Moss Bay's, in life, at this end of the lake), two
+    // down each side of the float's south end
+    ['kayak', FLOAT_X1 + 1.4, -1984.2, Math.PI, 0xf0b020],
+    ['kayak', FLOAT_X1 + 1.4, -1980.4, Math.PI, 0xd8342a],
+    ['kayak', FLOAT_X0 - 1.4, -1984.2, 0, 0x2a8fb8],
+    ['kayak', FLOAT_X0 - 1.4, -1980.4, 0, 0x6db33f],
   ],
+  // the rental's rack and board, on the landing
+  kayakRack: { x: -152, z: -1953.6, y: PIER_Y },
 };
 
 function seaplaneDock() {
