@@ -80,11 +80,11 @@ export class NeedleTop {
     for (const v of this.views) {
       const { x, z } = v.stand, h = v.h, fx = Math.sin(h), fz = Math.cos(h), rx = fz, rz = -fx;
       const post = [0.16, 0.3, 0.27], head = [0.1, 0.36, 0.3], dark = [0.05, 0.05, 0.06];
-      b.box(x, Y, z, 0.46, 0.06, 0.46, h, [0.35, 0.36, 0.37]);
+      b.box(x, Y, z, 0.46, 0.06, 0.46, -h, [0.35, 0.36, 0.37]);
       b.prism(x, Y, z, 0.075, 1.02, 10, post);
-      b.box(x - fx * 0.12, Y + 0.62, z - fz * 0.12, 0.16, 0.22, 0.08, h, [0.74, 0.62, 0.2]);   // the coin box
-      b.box(x, Y + 0.98, z, 0.3, 0.08, 0.16, h, post);
-      b.box(x, Y + 1.05, z, 0.48, 0.3, 0.34, h, head);
+      b.box(x - fx * 0.12, Y + 0.62, z - fz * 0.12, 0.16, 0.22, 0.08, -h, [0.74, 0.62, 0.2]);   // the coin box
+      b.box(x, Y + 0.98, z, 0.3, 0.08, 0.16, -h, post);
+      b.box(x, Y + 1.05, z, 0.48, 0.3, 0.34, -h, head);
       for (const s of [-1, 1]) {
         const ox = x + rx * 0.11 * s, oz = z + rz * 0.11 * s;
         b.tube([ox + fx * 0.16, Y + 1.2, oz + fz * 0.16], [ox + fx * 0.36, Y + 1.22, oz + fz * 0.36], 0.075, 12, head, true);
@@ -96,9 +96,9 @@ export class NeedleTop {
     // lamp over it
     {
       const h = this.door.h, p = this.pt(ELEVATOR_A, DECK.rIn - 0.1), fx = Math.sin(h), fz = Math.cos(h), rx = fz, rz = -fx;
-      b.box(p.x, this.deckY, p.z, 1.7, 2.6, 0.12, h, [0.93, 0.93, 0.9]);
-      for (const s of [-1, 1]) b.box(p.x + rx * 0.37 * s + fx * 0.07, this.deckY + 0.02, p.z + rz * 0.37 * s + fz * 0.07, 0.7, 2.35, 0.04, h, [0.44, 0.46, 0.48]);
-      b.box(p.x + fx * 0.08, this.deckY + 2.42, p.z + fz * 0.08, 0.5, 0.12, 0.04, h, [1.0, 0.72, 0.25]);
+      b.box(p.x, this.deckY, p.z, 1.7, 2.6, 0.12, -h, [0.93, 0.93, 0.9]);
+      for (const s of [-1, 1]) b.box(p.x + rx * 0.37 * s + fx * 0.07, this.deckY + 0.02, p.z + rz * 0.37 * s + fz * 0.07, 0.7, 2.35, 0.04, -h, [0.44, 0.46, 0.48]);
+      b.box(p.x + fx * 0.08, this.deckY + 2.42, p.z + fz * 0.08, 0.5, 0.12, 0.04, -h, [1.0, 0.72, 0.25]);
     }
     // no shadow casting: from 158 m it would land far out on the ground, and
     // on a phone every caster outside the cached statics is drawn each frame

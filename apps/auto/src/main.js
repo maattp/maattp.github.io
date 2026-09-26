@@ -13,6 +13,7 @@ import { freezeStatic, Builder } from './build.js';
 import { Fishing } from './fishing.js';
 import { Hoops } from './hoops.js';
 import { NeedleTop } from './needletop.js';
+import { FishToss } from './fishtoss.js';
 import { BONES } from './peds.js';
 import { cacheGet, cachePut, cacheGuardTripped, cacheGuardSet, cacheClear } from './bootcache.js';
 import { TrafficSystem, collideWithBuildings } from './traffic.js';
@@ -77,6 +78,7 @@ const FISHING_SITES = [
 ];
 let fishing = null, fishSpots = [];
 let hoops = null;   // the basketball courts (hoops.js)
+let fishToss = null;   // the flying fish at Pike Place Market (fishtoss.js)
 let needleTop = null;   // the Space Needle's elevator, deck and viewers (needletop.js)
 const HOSPITAL = G.RESPAWN; // kept clear of buildings by citygen, via G.KEEP_CLEAR
 
@@ -230,6 +232,15 @@ class Game {
     }
     // the Space Needle's elevator, or a viewer on its deck?
     if (needleTop && needleTop.tryInteract(pl)) return true;
+    // the fish stall at Pike Place Market?
+    if (fishToss && !fishToss.active && fishToss.near(pl)) {
+      this.paused = true;
+      const b = player.h.bones;
+      fishToss.start({ camera, player,
+        bones: { shoulderR: b[BONES.shoulderR], elbowR: b[BONES.elbowR], shoulderL: b[BONES.shoulderL], elbowL: b[BONES.elbowL],
+          handL: b[BONES.handL], handR: b[BONES.handR] } });
+      return true;
+    }
     // a basketball court's free throw line?
     const court = hoops && !hoops.active && hoops.near(pl);
     if (court) {
@@ -798,6 +809,11 @@ function installShadowFade() {
     onReward: (m) => { game.money += m; setTimeout(() => hud.showToast(`Free throws paid $${m}`), 400); },
     onEnd: () => { game.paused = false; },
   });
+  fishToss = new FishToss({
+    scene, city, world, audio, controls,
+    onReward: (m) => { game.money += m; setTimeout(() => hud.showToast(`The fish stall paid $${m}`), 400); },
+    onEnd: () => { game.paused = false; },
+  });
   if (lmRoot.userData.needle) {
     needleTop = new NeedleTop({ scene, city, world, player, camera, audio, hud: null, at: lmRoot.userData.needle });
   }
@@ -837,6 +853,8 @@ function installShadowFade() {
       hello: 'A fishing rod on the pier. Press ENTER to cast' })),
     ...(needleTop ? [{ x: needleTop.X, z: needleTop.Z, kind: 'needle', name: 'Space Needle elevator', near: false,
       hello: 'The Space Needle. Walk to the elevator in the middle and press ENTER to ride to the top' }] : []),
+    { x: fishToss.spot.x, z: fishToss.spot.z, kind: 'fishtoss', name: 'Flying fish', near: false,
+      hello: 'The fish stall at Pike Place. Step up to the counter and press ENTER to catch' },
     ...hoops.courts.map((c) => ({ x: c.x, z: c.z, kind: 'hoop', name: `Basketball — ${c.name}`, near: false,
       hello: 'A basketball court. Stand on the free throw line and press ENTER' })),
     { x: BALLOON_SITE.x, z: BALLOON_SITE.z, kind: 'balloon', name: 'Hot air balloon', near: false,
@@ -931,7 +949,7 @@ function installShadowFade() {
 
   await step(1, 'Welcome to Seattle');
   window.__refreshJobs = refreshJobs;
-  window.__dbg = { game, city, player, world, traffic, peds, acts, stunts, monorail, lmRoot, shadowCache, fishing, fishSpots, hoops, needleTop, scene, camera, renderer, G, fx, hud, controls, audio, pickups, THREE, postfx, applyQuality, sun, placeSun, sceneStats, perfSys, cityStats, WET_FLOOR, animateWalk, collideWithBuildings, TYPES: VEHICLE_TYPES };
+  window.__dbg = { game, city, player, world, traffic, peds, acts, stunts, monorail, lmRoot, shadowCache, fishing, fishSpots, hoops, needleTop, fishToss, scene, camera, renderer, G, fx, hud, controls, audio, pickups, THREE, postfx, applyQuality, sun, placeSun, sceneStats, perfSys, cityStats, WET_FLOOR, animateWalk, collideWithBuildings, TYPES: VEHICLE_TYPES };
   wireUi();
   game.newTarget();
   // Start on `high` everywhere.
@@ -1564,10 +1582,10 @@ function fishingProp(sp) {
   const b = new Builder(false);
   const fx = Math.sin(sp.heading), fz = Math.cos(sp.heading), rx = fz, rz = -fx;
   const X = sp.rx, Z = sp.rz, Y = sp.y;
-  b.box(X, Y, Z, 0.12, 0.9, 0.12, sp.heading, [0.35, 0.25, 0.16]);                         // stand post
+  b.box(X, Y, Z, 0.12, 0.9, 0.12, -sp.heading, [0.35, 0.25, 0.16]);                         // stand post
   b.prism(X + rx * 0.7, Y, Z + rz * 0.7, 0.16, 0.34, 10, [0.85, 0.85, 0.82]);               // bucket
   b.prism(X + rx * 0.7, Y + 0.32, Z + rz * 0.7, 0.17, 0.03, 10, [0.62, 0.62, 0.6]);
-  b.box(X - rx * 0.55, Y, Z - rz * 0.55, 0.42, 0.2, 0.24, sp.heading, [0.2, 0.42, 0.24]);   // tackle box
+  b.box(X - rx * 0.55, Y, Z - rz * 0.55, 0.42, 0.2, 0.24, -sp.heading, [0.2, 0.42, 0.24]);   // tackle box
   const g = new THREE.Group();
   const m = new THREE.Mesh(b.build(), world.mats.flat);
   m.castShadow = true;
@@ -1621,6 +1639,7 @@ function frame(now) {
 
   if (fishing && fishing.active) fishing.update(dt);
   if (hoops && hoops.active) hoops.update(dt);
+  if (fishToss) { if (fishToss.active) fishToss.update(dt); fishToss.updateWorld(dt, camera.position.x, camera.position.z); }
   if (hoops) hoops.updateVisibility(camera.position.x, camera.position.z);
   if (game.paused || game.mapOpen) {
     controls.takeLook();

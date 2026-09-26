@@ -1469,6 +1469,16 @@ export function buildCharacter(opts = {}) {
       { y: J.shoulder - 0.04, pts: oval(sw * 0.98 * outer, sd * 1.02 * outer, ST) },
     ], opts.vest, {});
   }
+  if (opts.bib) {
+    // Rubber bib overalls (a fishmonger's): hips to just over the chest line,
+    // standing a little off the shirt, the trousers in the same colour.
+    torso.loftY([
+      { y: J.hip - 0.02, pts: oval(bw * 1.06 * outer, bd * 1.08 * outer, ST) },
+      { y: 1.075, pts: oval(ww * 1.07 * outer, wd * 1.12 * outer, ST, 0, 0.004) },
+      { y: J.chest + 0.02, pts: oval(cw * 1.05 * outer, cd * 1.08 * outer, ST, 0, 0.012) },
+      { y: J.chest + 0.07, pts: oval(cw * 0.96 * outer, cd * 1.0 * outer, ST, 0, 0.01) },
+    ], opts.bib, {});
+  }
   acc.add(torso, torsoW, cylUV(topCell, 0, 0, J.hip - 0.06, J.shoulder + 0.07), 'torso');
 
   // --- hood ----------------------------------------------------------------

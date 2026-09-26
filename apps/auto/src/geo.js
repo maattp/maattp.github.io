@@ -133,6 +133,24 @@ export const TERRAIN_FLATS = [
   { name: 'bellevueDT', x: 10051, z: -129, r0: 150, r1: 215 },   // Bellevue Downtown Park
 ];
 export const terrainFlat = (name) => TERRAIN_FLATS.find((f) => f.name === name);
+
+// GROUND NO PORTAL CUTTING MAY DIG, as capsules [x0, z0, x1, z1, r]: a cut
+// whose trench would reach one is not made (world.js _computePortalCuts). Pike Place Market's
+// frontage: OSM's Post Alley runs 26 m in a tunnel under the Main Arcade, and
+// its cutting dug the pavement under the market's canopy 6 m down, so the
+// stalls stood in a pit behind a lid barrier and nobody could walk up to
+// them. In life that pavement is at the street's level.
+export const NO_DIG = [
+  // along the arcade's street face, s -6..40 m up Pike Place, 4.3-6.6 m off
+  // the centreline (landmarks.js MARKET_*)
+  [-198 + 0.748 * 6 - 0.664 * 5.45, 297 + 0.664 * 6 + 0.748 * 5.45,
+    -198 - 0.748 * 40 - 0.664 * 5.45, 297 - 0.664 * 40 + 0.748 * 5.45, 1.25],
+  // and Pike Place itself through the Pike St junction, where the same
+  // cutting (Post Alley's approach reaches the arcade) left a pit in the
+  // carriageway
+  [-198 + 0.748 * 12 - 0.664 * 2, 297 + 0.664 * 12 + 0.748 * 2,
+    -198 - 0.748 * 6 - 0.664 * 2, 297 - 0.664 * 6 + 0.748 * 2, 4.5],
+];
 function fixTerrain(hf) {
   for (const f of TERRAIN_FLATS) {
     let sum = 0, n = 0;

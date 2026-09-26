@@ -857,6 +857,8 @@ const MARKET_U = [-0.748, -0.664];       // up Pike Place, north-west
 const MARKET_W = [-0.664, 0.748];        // off its west kerb, toward the bay
 const MARKET_CLOCK = [-9.4, 14.5];       // the OSM "Public Market Clock" node
 // [s along Pike Place, outer offset] -- Western Avenue converges to the north.
+// for fishtoss.js: the stall stands under this arcade's canopy
+export const MARKET_FRAME = { at: MARKET_AT, u: MARKET_U, w: MARKET_W, inset: 6.5 };
 const ARCADE_EDGE = [[-4, 24], [30, 26], [50, 26], [70, 23.5], [90, 18.5], [102, 15.5]];
 
 function market() {
@@ -866,38 +868,58 @@ function market() {
   const SO = (s, o) => [MARKET_U[0] * s + MARKET_W[0] * o, MARKET_U[1] * s + MARKET_W[1] * o];
   const wall = facadeMat('market', '#d9ceb5', ['#3c4a52', '#6f7f86'], 4.2, 3.6, 2.4, 2.0, { mullion: '#2f4a3a', band: '#8f836a' });
   const H = 9.5, IN = 6.5;
-  // Up the outer side, south to north, and back down the kerb.
-  const poly = [SO(-4, IN), SO(-4, 24), ...ARCADE_EDGE.slice(1).map(([s, o]) => SO(s, o)), SO(102, IN)];
-  // The bluff: the arcade stands on the street and its lower storeys run
-  // down the hill behind, which is why the prism goes to -14 m.
-  const m = prism(poly, -14, H, wall);
-  const uv = m.geometry.attributes.uv;
-  for (let i = 0; i < uv.count; i++) uv.setXY(i, uv.getX(i) / 4.2, uv.getY(i) / 3.6);
-  g.add(m);
+  // THE ARCADE FOLLOWS ITS STREET. Pike Place climbs ~5 m over the arcade's
+  // first 40 m; built at one height, the canopy, the hall front and the
+  // signs sank into the pavement north of Pike St and the roofline squatted.
+  // `rel(s)` is the street's height at the kerb, relative to the group.
+  const rel = (s) => {
+    let sum = 0;
+    for (const ds of [-2, 0, 2]) {
+      const [lx, lz] = SO(s + ds, 3.6);
+      sum += G.terrainHeight(MARKET_AT[0] + lx, MARKET_AT[1] + lz) + 0.3 - MARKET_STREET_Y;
+    }
+    return sum / 3;
+  };
+  // The body in spans along its outer edge, each as tall as the street there
+  // (the bluff: the arcade stands on the street and its lower storeys run
+  // down the hill behind, which is why each prism goes to -14 m).
   const roofTrim = P(0x7f8a7a, 0.7, 0.2, 0.6);
-  g.add(prism(poly, H, H + 0.7, roofTrim));
-  // The street face: a green canopy over the stalls, white columns under it,
-  // the dark market hall behind, and the neon along the fascia.
+  const spans = [[-4, 24], ...ARCADE_EDGE.slice(1)];
+  for (let k = 0; k < spans.length - 1; k++) {
+    const [sa, oa] = spans[k], [sb, ob] = spans[k + 1];
+    const top = H + rel((sa + sb) / 2);
+    const poly = [SO(sa, IN), SO(sa, oa), SO(sb, ob), SO(sb, IN)];
+    const m = prism(poly, -14, top, wall);
+    const uv = m.geometry.attributes.uv;
+    for (let i = 0; i < uv.count; i++) uv.setXY(i, uv.getX(i) / 4.2, uv.getY(i) / 3.6);
+    g.add(m);
+    g.add(prism(poly, top, top + 0.7, roofTrim));
+  }
+  // The street face, bay by bay (the columns' 6.5 m): a green canopy over the
+  // stalls, white columns under it, the dark market hall behind, the neon
+  // along the fascia.
   const ang = Math.atan2(-MARKET_U[1], MARKET_U[0]);          // box: local x up the street
   const faceN = Math.atan2(-MARKET_W[0], -MARKET_W[1]);       // plane: facing the street
-  const L = 106, s0 = -4;
+  const s0 = -4, BAY = 6.5;
   {
-    const [mx, mz] = SO(s0 + L / 2, IN - 1.7);
-    g.add(box(L - 1, 0.35, 3.4, P(0x2f5a44, 0.6, 0.3, 0.6), mx, 4.2, mz, ang));
-    const [dx, dz] = SO(s0 + L / 2, IN - 0.08);
-    g.add(box(L - 2, 3.6, 0.2, P(0x2a2622, 0.9, 0, 0.3), dx, 0.2, dz, ang));
-    for (let s = s0 + 2; s < s0 + L - 1; s += 6.5) {
-      const [cx, cz] = SO(s, IN - 3.1);
-      g.add(box(0.45, 4.2, 0.45, mat.white, cx, 0, cz, ang));
+    const canopy = P(0x2f5a44, 0.6, 0.3, 0.6), hall = P(0x2a2622, 0.9, 0, 0.3);
+    for (let sa = s0; sa < 102 - 0.5; sa += BAY) {
+      const sb = Math.min(102, sa + BAY), y = rel((sa + sb) / 2);
+      const [mx, mz] = SO((sa + sb) / 2, IN - 1.7);
+      g.add(box(sb - sa + 0.02, 0.35, 3.4, canopy, mx, y + 4.2, mz, ang));
+      const [dx, dz] = SO((sa + sb) / 2, IN - 0.08);
+      g.add(box(sb - sa + 0.02, 3.6, 0.2, hall, dx, y + 0.2, dz, ang));
+      const [cx, cz] = SO(sa + 2, IN - 3.1);
+      if (sa + 2 < 101) g.add(box(0.45, 4.2 - (y - rel(sa + 2)), 0.45, mat.white, cx, rel(sa + 2), cz, ang));
     }
     const fm = sign('FARMERS MARKET', 13, 1.5, '#1c2a24', '#ff4a36', { glow: true });
     const [fx, fz] = SO(16, IN - 0.12);
-    fm.position.set(fx, 5.8, fz);
+    fm.position.set(fx, rel(16) + 5.8, fz);
     fm.rotation.y = faceN;
     g.add(fm);
     const mp = sign('MEET THE PRODUCER', 11, 1.2, '#1c2a24', '#ff4a36', { glow: true });
     const [mx2, mz2] = SO(36, IN - 0.12);
-    mp.position.set(mx2, 5.8, mz2);
+    mp.position.set(mx2, rel(36) + 5.8, mz2);
     mp.rotation.y = faceN;
     g.add(mp);
   }
@@ -906,11 +928,12 @@ function market() {
   const side = [0.54, 0.84];               // viewer's left
   const fa = Math.atan2(f[0], f[1]);
   const S0 = [MARKET_CLOCK[0] - side[0] * 9.0, MARKET_CLOCK[1] - side[1] * 9.0];
-  const sy = H + 1.2;
+  const HR = H + rel((-4 + 30) / 2);       // the first span's roof, under the sign
+  const sy = HR + 1.2;
   // Steel frame the neon letters are mounted on.
   for (const s of [-7.4, -2.4, 2.4, 7.4]) {
     const x = S0[0] + side[0] * s, z = S0[1] + side[1] * s;
-    g.add(beam(V(x, H + 0.6, z), V(x, sy + 5.8, z), 0.2, 0.2, mat.darkSteel));
+    g.add(beam(V(x, HR + 0.6, z), V(x, sy + 5.8, z), 0.2, 0.2, mat.darkSteel));
   }
   g.add(beam(V(S0[0] - side[0] * 8, sy + 3.0, S0[1] - side[1] * 8), V(S0[0] + side[0] * 8, sy + 3.0, S0[1] + side[1] * 8), 0.16, 0.16, mat.darkSteel));
   const pm = sign('PUBLIC MARKET', 16.4, 3.3, null, '#ff2b1c', { glow: true, stroke: '#7a0d06', px: 40, fill: 0.9 });
@@ -924,7 +947,7 @@ function market() {
   // The clock: a round face on a steel mast, left of the sign.
   const C0 = MARKET_CLOCK;
   const cyy = sy + 6.4;
-  g.add(cyl(0.16, 0.2, cyy - H, mat.darkSteel, C0[0], H, C0[1], 8));
+  g.add(cyl(0.16, 0.2, cyy - HR, mat.darkSteel, C0[0], HR, C0[1], 8));
   const face = atlas.panel(3.2, 3.2, 64, (c, W, Hh) => {
     const r = W / 2;
     c.clearRect(0, 0, W, Hh);
@@ -964,7 +987,7 @@ function market() {
     const [sa, oa] = ARCADE_EDGE[k], [sb, ob] = ARCADE_EDGE[k + 1];
     const o = Math.min(oa, ob);
     const [cx, cz] = SO((sa + sb) / 2, (IN + o) / 2);
-    solidBox(g, cx, cz, (sb - sa) / 2, (o - IN) / 2, rot, H);
+    solidBox(g, cx, cz, (sb - sa) / 2, (o - IN) / 2, rot, H + rel((sa + sb) / 2));
   }
   return g;
 }
