@@ -808,6 +808,54 @@ async function main() {
       if (bad.length) { console.error(`FAIL: fishing: ${bad.join('; ')}`); process.exitCode = 1; }
     }
 
+    // --- basketball: free throws in the parks -----------------------------
+    //
+    // Every court found level open ground and is a platform you stand on;
+    // ENTER on its free throw line starts the game; a centred shot drops,
+    // a marker stopped at its end misses; ten shots end it and pay; closing
+    // it gives the city back.
+    const hoop = await session.eval(`(() => {
+      const d = window.__dbg, H = d.hoops, P = d.player;
+      if (!H) return null;
+      if (P.vehicle) P.exitVehicle(true);
+      const out = { courts: H.courts.map((c) => c.name) };
+      out.stand = Math.max(...H.courts.map((c) => Math.abs(d.city.groundAt(c.ft.x, c.ft.z, c.y + 0.5) - c.y)));
+      const c = H.courts[0];
+      P.x = c.ft.x; P.z = c.ft.z; P.y = c.y;
+      const money0 = d.game.money;
+      out.took = d.game.tryInteract(P);
+      out.state = H.state; out.paused = d.game.paused;
+      const shoot = (ea, ep) => {
+        H.update(1 / 60); H.aimLock = ea; H.powLock = ep; H._shoot();
+        let n = 0; while (!H.result && n < 600) { H.update(1 / 60); n++; }
+        const r = H.result.made;
+        while (H.state === 'flight' && n < 900) { H.update(1 / 60); n++; }
+        return r;
+      };
+      out.made = [shoot(0, 0), shoot(0.1, -0.1), shoot(-0.1, 0.1)];
+      out.missed = [shoot(1, 0), shoot(0, -1), shoot(0, 1)];
+      for (let i = 0; i < 4; i++) shoot(0, 0);
+      out.end = H.state; out.score = H.made; out.paid = d.game.money - money0;
+      H.close();
+      out.closed = H.state; out.after = d.game.paused;
+      return out;
+    })()`, true);
+    console.log('\n--- basketball ---------------------------------------------');
+    if (!hoop) { console.error('FAIL: no basketball'); process.exitCode = 1; }
+    else {
+      console.log(`  courts: ${hoop.courts.join(', ')}; standing on the line within ${hoop.stand.toFixed(2)} m`);
+      console.log(`  ENTER ${hoop.took} -> ${hoop.state}; green-zone shots ${hoop.made}; wild ones ${hoop.missed}; after ten ${hoop.end}, ${hoop.score} made, paid $${hoop.paid}; closed ${hoop.closed}, city unpaused ${!hoop.after}`);
+      const bad = [];
+      if (hoop.courts.length < 4) bad.push('a park has no court');
+      if (hoop.stand > 0.05) bad.push('the court is not what you stand on');
+      if (!hoop.took || hoop.state !== 'aim' || !hoop.paused) bad.push('ENTER does not start it');
+      if (hoop.made.some((m) => !m)) bad.push('a good shot missed');
+      if (hoop.missed.some((m) => m)) bad.push('a wild shot went in');
+      if (hoop.end !== 'done' || hoop.score !== 7 || hoop.paid <= 0) bad.push('the round does not end or pay');
+      if (hoop.closed !== 'off' || hoop.after) bad.push('closing does not give the city back');
+      if (bad.length) { console.error(`FAIL: basketball: ${bad.join('; ')}`); process.exitCode = 1; }
+    }
+
     // --- no lake in the boat's cockpit ------------------------------------
     //
     // The runabout's cockpit floor is 12 cm over its waterline and the lake is

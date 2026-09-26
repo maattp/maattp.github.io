@@ -28,6 +28,7 @@ src/peds.js                 humanoid builder + pedestrian/cop crowd
 src/player.js               on-foot/driving state machine + chase camera
 src/controls.js             touch stick/buttons + keyboard fallback
 src/hud.js                  minimap, full map, readouts
+src/hoops.js                basketball courts in the parks + the free-throw game
 src/stunts.js               stunt-jump ramps (geometry + height query) and their scoring
 src/monorail.js             the Seattle Center Monorail: beams, stations, both trains
 src/shadowcache.js          phones: the city's shadows drawn once, only movers per frame
@@ -3970,6 +3971,42 @@ goes to `game.tryInteract` before the cars.
 verify's "fishing" section: every site found its deck, ENTER casts and opens
 it, banking / combo time / junk / hooking / payout all to the number, and
 closing it unpauses the city. `docs/fishing/` has shots.
+
+## Basketball in the parks
+
+**A half court in four parks** -- Cal Anderson, Judkins, Green Lake, Jefferson
+(`HOOP_SITES` in src/hoops.js, v127). Each stands on the flattest open ground
+within 150 m of the site (park or lot, off roads, buildings and water, under
+0.6 m of fall across it; 8 headings tried). The search costs ~30 ms a site on
+the Mac, so its answer is stored with the site (`at`) and boot only re-checks
+it (0.1 ms for all four), searching again if the city under it changed. A
+court is a slab at the
+highest corner with concrete skirts down to the ground, registered as a city
+platform (so you stand on what is drawn) and kept clear of trees
+(`city.clearCircles`). Regulation size: 50 x 47 ft, the key 16 ft, the board
+4 ft inside the baseline, the rim 10 ft up and 18 in across, the free throw
+line 15 ft out, lines painted into one canvas texture. The courts show within
+450 m; the map marks them.
+
+- **ENTER on the free throw line** (after the fishing rods in
+  `game.tryInteract`) pauses the city and starts ten free throws. Tap once to
+  stop the AIM marker, once more to stop POWER; the shot is the launch speed
+  that drops a 56 deg arc 2.5 cm past the rim's centre, off by the markers'
+  error (linear plus a cubic, so the green zone keeps the ball in the few cm a
+  24 cm ball has through a 46 cm rim, and a marker stopped at its end
+  airballs).
+- **Nothing is decided in advance**: the flight is integrated at 6 substeps a
+  frame against the rim as a torus and the backboard as a plane, so swishes,
+  rattle-ins, bank shots, rim-outs and airballs all come out of the
+  collisions. Measured over a 9 x 9 grid of marker errors: the green zone
+  swishes or drops, the outer third rims out, the ends airball.
+- A make pays $10, a swish $15, doubled from the third in a row; the markers
+  speed up on a streak. Best score in localStorage `auto-hoops-best`. The
+  driving HUD hides and the camera narrows to 44 deg while it is up.
+
+verify's "basketball" section: every park found a court, you stand on it,
+ENTER starts it, green-zone shots go in and wild ones do not, ten shots end
+and pay, closing gives the city back. `docs/hoops/` has shots.
 
 ## The Tech Tour
 
