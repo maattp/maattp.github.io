@@ -4036,21 +4036,34 @@ goes to `game.tryInteract` before the cars.
   the character turns to the water, a rod in the right hand bone, arm back
   and a snap forward, the line flying to a splash ring 14 m out, the camera
   beside and behind.
-- **Then a Game Boy Color fishing game** (`src/fishing.js`), after Funky's
-  Fishing in Donkey Kong Country (GBC, 2000): 160 x 144 in a GBC shell,
-  four-colour sprites drawn from strings, a 3x5 pixel font, a chiptune loop
-  and blips on the game's AudioContext. Move the hook up and down (drag, W/S,
-  arrows); the line holds four; A reels them in and banks them. Herring 50,
-  perch 100, rockfish 150, salmon 300, dogfish 400, Dungeness crab on the
-  bottom 250, a Giant Pacific Octopus buys 6 s. Two or more of one kind on a
-  line buys time (4 s per extra) and three or more multiplies the points;
-  junk (can, bottle, boot, tyre, from level 2) costs 5 s each. Levels by score
-  multiply points and speed things up. Time-up pays score / 20 in dollars;
-  best kept in localStorage `auto-fish-best`.
+- **Then a Game Boy Color fishing game** (`src/fishing.js`), following Funky
+  Fishing in Donkey Kong Country (GBC, 2000): 160 x 144 in a GBC shell with a
+  D-pad and A / B, four-colour sprites drawn from strings, a 3x5 pixel font, a
+  chiptune loop and blips on the game's AudioContext. v135 brought it to the
+  real one's rules:
+  - **You row a dinghy left and right** along the surface (DK rode Enguarde),
+    the hook hanging under your rod; up and down drop and raise it (D-pad,
+    arrows/WASD, or a drag on the screen). The line holds six.
+  - **A reels in and the catch is thrown to a crab boat** drifting back and
+    forth (Diddy's barge), quicker by level: it lands if the boat will be
+    within 34 px of the throw, else it splashes back -- fish lost, and junk
+    thrown there costs nothing. So you row under the boat before you reel.
+  - Two or more of one kind on a line buy time (4 s per extra), three or more
+    multiply the points. **KOMBO**: a line of one kind (two or more) lights
+    the next letter, a mixed line resets it, all five refill 25 s and pay
+    1000 x level.
+  - Herring, perch, rockfish and salmon are the Bitesizes' colours (50 / 100 /
+    150 / 300); a Giant Pacific Octopus is the Croctopus (20 points, +6 s);
+    Dungeness crabs walk the bottom (250). **The dogfish are Chomps Jr.**: a
+    small shark from level 2 that bites off whatever hangs on your line.
+  - Cans and bottles from level 3, boots and tyres from level 5: -5 s each if
+    they land in the boat. Nine levels by score. Time-up pays score / 20;
+    best kept in localStorage `auto-fish-best`.
 - While its screen is up the city is not drawn (the menu idle, see "Heat").
 
 verify's "fishing" section: every site found its deck, ENTER casts and opens
-it, banking / combo time / junk / hooking / payout all to the number, and
+it, the dinghy rows, a line banks with the boat in reach and not out of it,
+combo time / junk / KOMBO / the shark / hooking / payout all to the number, and
 closing it unpauses the city. `docs/fishing/` has shots.
 
 ## The flying fish at Pike Place (v129)

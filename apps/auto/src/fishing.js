@@ -3,24 +3,38 @@
 // A rod leans on a stand at the end of a few real piers and floats (Pier 66,
 // the Aquarium's Pier 59, Elliott Bay Marina, Leschi). Walk up, press ENTER:
 // you cast off the end in the city, the lure splashes down, and the screen
-// turns into a Game Boy Color fishing game -- a nod to Funky's Fishing in
-// Donkey Kong Country (GBC, 2000), which it borrows the shape of: a side view
-// under the water, a hook you move up and down through schools of fish, a
-// line that holds a few catches, a reel that banks them for points, matching
-// catches that buy time back, and junk that costs it. The fish are Puget
-// Sound's: herring, perch, rockfish, salmon, dogfish, a Giant Pacific Octopus
-// (time, not points) and Dungeness crabs walking the bottom.
+// turns into a Game Boy Color fishing game after Funky Fishing in Donkey Kong
+// Country (GBC, 2000), whose rules it follows:
 //
-// It is all drawn here, at the Game Boy's 160 x 144, in four-colour sprite
-// palettes, with its own pixel font and a chiptune loop on the game's
-// AudioContext. Touch: drag anywhere on the left to move the hook, A reels,
-// B leaves. Keys: up/down (W/S), Space/Enter reels, Esc leaves.
+//  - DK rode Enguarde along the surface, rod in hand; here you row a dinghy
+//    left and right, the hook hanging under you, and lower and raise it.
+//  - Catches were flicked into Diddy's barge as it drifted across; here a
+//    crab boat drifts back and forth, and the line's catch is thrown up to it
+//    when you reel in -- it lands if the boat is close enough to catch it,
+//    and splashes back if not (so junk thrown where the boat is not costs
+//    nothing, and fish thrown there are lost).
+//  - Bitesizes came in colours and two or more of one colour on a line bought
+//    time; a line of one colour lit the next letter of KOMBO, all five refill
+//    most of the clock. Here the colours are herring, perch, rockfish and
+//    salmon, and a line of one kind lights K-O-M-B-O; a mixed line resets it.
+//  - Croctopus: few points, lots of time (the Giant Pacific Octopus).
+//  - Chomps Jr. swam through: here the dogfish, a small shark, bites off
+//    whatever hangs on your line.
+//  - Junk -- cans and bottles -- from level 3 costs time if it lands in the
+//    boat; boots and tyres join from level 5. Nine levels by score.
+//
+// Drawn at the Game Boy's 160 x 144, in four-colour sprite palettes, with a
+// pixel font and a chiptune loop on the game's AudioContext. Touch: the D-pad
+// (or a drag) moves the dinghy and the hook, A reels in, B leaves. Keys:
+// arrows / WASD, Space / Enter reels, Esc leaves.
 
 import * as THREE from './three.js';
 import { clamp } from './util.js';
 
 const W = 160, H = 144;
-const SURF = 30, BED = 131, HX = 92;       // water surface, seabed, hook column
+const SURF = 30, BED = 131, HX = 92;       // water surface, seabed, the hook's column at the start
+const ROD = 12;                            // the hook hangs this far right of the dinghy's bow
+const LINE_MAX = 6;
 const TIME0 = 60;
 
 // --- palettes and sprites ---------------------------------------------------
@@ -128,7 +142,7 @@ const KINDS = {
   perch: { pts: 100, band: [50, 95], speed: 20 },
   rockfish: { pts: 150, band: [90, 124], speed: 14 },
   salmon: { pts: 300, band: [45, 100], speed: 38 },
-  dogfish: { pts: 400, band: [95, 122], speed: 44 },
+  dogfish: { shark: true, band: [60, 122], speed: 52 },
   octopus: { pts: 20, band: [100, 122], speed: 9, time: 6 },
   crab: { pts: 250, band: [124, 124], speed: 10, walk: true },
   can: { junk: true, band: [34, 120], speed: 6, sink: 6 },
@@ -136,7 +150,8 @@ const KINDS = {
   boot: { junk: true, band: [34, 120], speed: 5, sink: 9 },
   tire: { junk: true, band: [124, 124], speed: 6, walk: true },
 };
-const FISH = ['herring', 'perch', 'rockfish', 'salmon', 'dogfish', 'octopus', 'crab'];
+const FISH = ['herring', 'perch', 'rockfish', 'salmon', 'octopus', 'crab'];
+const KOMBO = 'KOMBO';
 const JUNK = ['can', 'bottle', 'boot', 'tire'];
 
 // A 3x5 pixel font: digits, capitals and a little punctuation.
@@ -234,7 +249,8 @@ export class Fishing {
     d.id = 'fishOverlay';
     d.innerHTML = `<div class="fishShell"><canvas width="${W}" height="${H}"></canvas>
       <div class="fishPad"><button data-k="B">B</button><button data-k="A">A</button></div>
-      <div class="fishHint">DRAG TO MOVE THE HOOK &nbsp;·&nbsp; A REELS IN &nbsp;·&nbsp; B LEAVES</div></div>`;
+      <div class="fishDpad"><div data-d="up"></div><div data-d="left"></div><div data-d="right"></div><div data-d="down"></div><span></span></div>
+      <div class="fishHint">D-PAD ROWS AND DROPS THE HOOK &nbsp;·&nbsp; A REELS IN &nbsp;·&nbsp; B LEAVES</div></div>`;
     const st = document.createElement('style');
     st.textContent = `
       #fishOverlay { position: absolute; inset: 0; z-index: 40; display: none; align-items: center; justify-content: center;
@@ -248,6 +264,15 @@ export class Fishing {
       #fishOverlay .fishPad button { width: 54px; height: 54px; border-radius: 50%; border: none; font: 900 18px ui-monospace, monospace;
         color: #fff; background: #b8285a; box-shadow: 0 4px 0 #6a1030; touch-action: none; -webkit-tap-highlight-color: transparent; }
       #fishOverlay .fishPad button:active { transform: translateY(3px); box-shadow: 0 1px 0 #6a1030; }
+      #fishOverlay .fishDpad { position: absolute; left: -128px; bottom: 30px; width: 96px; height: 96px; touch-action: none; }
+      #fishOverlay .fishDpad div { position: absolute; width: 32px; height: 32px; background: #2a2a34; box-shadow: 0 3px 0 #111; }
+      #fishOverlay .fishDpad div.on { background: #4a4a58; transform: translateY(2px); box-shadow: 0 1px 0 #111; }
+      #fishOverlay .fishDpad [data-d=up] { left: 32px; top: 0; border-radius: 5px 5px 0 0; }
+      #fishOverlay .fishDpad [data-d=down] { left: 32px; top: 64px; border-radius: 0 0 5px 5px; }
+      #fishOverlay .fishDpad [data-d=left] { left: 0; top: 32px; border-radius: 5px 0 0 5px; }
+      #fishOverlay .fishDpad [data-d=right] { left: 64px; top: 32px; border-radius: 0 5px 5px 0; }
+      #fishOverlay .fishDpad span { position: absolute; left: 32px; top: 32px; width: 32px; height: 32px; background: #2a2a34; }
+      @media (max-height: 460px) { #fishOverlay .fishDpad { left: -122px; } }
       #fishOverlay .fishHint { text-align: center; color: #e8dcff; font: 700 10px ui-monospace, monospace; letter-spacing: .08em; margin-top: 8px; opacity: .8; }
       @media (max-height: 460px) { #fishOverlay canvas { height: 72vh; } #fishOverlay .fishPad { right: -124px; } }`;
     document.head.appendChild(st);
@@ -259,17 +284,32 @@ export class Fishing {
     for (const b of d.querySelectorAll('.fishPad button')) {
       b.addEventListener('pointerdown', (e) => { e.preventDefault(); e.stopPropagation(); this._press(b.dataset.k); });
     }
-    // drag anywhere else to move the hook: finger height maps to hook depth
+    // the D-pad: 8 ways by where the finger is on it
+    this.pad = { up: false, down: false, left: false, right: false };
+    const dp = d.querySelector('.fishDpad');
+    let dpId = null;
+    const setDp = (e) => {
+      const r = dp.getBoundingClientRect(), x = e.clientX - (r.left + r.width / 2), y = e.clientY - (r.top + r.height / 2);
+      const m = r.width * 0.14;
+      this.pad = { left: x < -m, right: x > m, up: y < -m, down: y > m };
+      for (const el of dp.querySelectorAll('div')) el.classList.toggle('on', !!this.pad[el.dataset.d]);
+    };
+    dp.addEventListener('pointerdown', (e) => { e.preventDefault(); e.stopPropagation(); dpId = e.pointerId; dp.setPointerCapture(e.pointerId); setDp(e); });
+    dp.addEventListener('pointermove', (e) => { if (e.pointerId === dpId) setDp(e); });
+    const dpOff = (e) => { if (e.pointerId !== dpId) return; dpId = null; this.pad = { up: false, down: false, left: false, right: false }; for (const el of dp.querySelectorAll('div')) el.classList.remove('on'); };
+    for (const ev of ['pointerup', 'pointercancel', 'lostpointercapture']) dp.addEventListener(ev, dpOff);
+    // or drag anywhere else: up and down is the hook's depth, across rows the dinghy
     let drag = null;
     d.addEventListener('pointerdown', (e) => {
-      if (e.target.closest('.fishPad')) return;
-      drag = { id: e.pointerId, y0: e.clientY, h0: this.hookY };
+      if (e.target.closest('.fishPad') || e.target.closest('.fishDpad')) return;
+      drag = { id: e.pointerId, x0: e.clientX, y0: e.clientY, h0: this.hookY, b0: this.bx };
       e.preventDefault();
     });
     d.addEventListener('pointermove', (e) => {
-      if (!drag || e.pointerId !== drag.id || this.state !== 'play' || this.reeling) return;
+      if (!drag || e.pointerId !== drag.id || this.state !== 'play' || this.reeling || this.throwing) return;
       const r = this.cv.getBoundingClientRect();
       this.hookY = clamp(drag.h0 + (e.clientY - drag.y0) * (H / r.height) * 1.3, SURF + 4, BED - 3);
+      this.bx = clamp(drag.b0 + (e.clientX - drag.x0) * (W / r.width), 4, W - ROD - 6);
     });
     const end = (e) => { if (drag && e.pointerId === drag.id) drag = null; };
     d.addEventListener('pointerup', end);
@@ -410,12 +450,18 @@ export class Fishing {
     this.score = 0; this.level = 1; this.time = TIME0; this.hookY = 60; this.reeling = false;
     this.caught = []; this.ents = []; this.pops = []; this.spawnT = 0; this.junkT = 4; this.banner = null;
     this.frame = 0;
+    this.bx = HX - ROD;                 // the dinghy (its hook hangs at bx + ROD)
+    this.boat = { x: 104, dir: -1 };    // the crab boat the catch is thrown to
+    this.kombo = 0;                     // KOMBO letters lit
+    this.throwing = null;               // a catch in the air
   }
+
+  get hookX() { return this.bx + ROD; }
 
   _press(k) {
     if (this.state === 'title') { if (k === 'A') { this._reset(); this.state = 'play'; this.chip.sfx('bank'); } else if (k === 'B') this.close(); return; }
     if (this.state === 'play') {
-      if (k === 'A' && !this.reeling) { this.reeling = true; this.chip.sfx('reel'); }
+      if (k === 'A' && !this.reeling && !this.throwing) { this.reeling = true; this.chip.sfx('reel'); }
       if (k === 'B') this._gameOver(true);
       return;
     }
@@ -464,33 +510,52 @@ export class Fishing {
     this.frame++;
     this.time -= dt;
     if (this.time <= 0) { this.time = 0; this._gameOver(false); return; }
-    // hook
-    const up = this.keys.has('ArrowUp') || this.keys.has('KeyW'), dn = this.keys.has('ArrowDown') || this.keys.has('KeyS');
+    const up = this.keys.has('ArrowUp') || this.keys.has('KeyW') || this.pad.up, dn = this.keys.has('ArrowDown') || this.keys.has('KeyS') || this.pad.down;
+    const lf = this.keys.has('ArrowLeft') || this.keys.has('KeyA') || this.pad.left, rt = this.keys.has('ArrowRight') || this.keys.has('KeyD') || this.pad.right;
+    // the crab boat drifts back and forth, quicker as the levels go
+    const bt = this.boat, bs = 9 + this.level * 2.2;
+    bt.x += bt.dir * bs * dt;
+    if (bt.x < 20) { bt.x = 20; bt.dir = 1; } else if (bt.x > W - 20) { bt.x = W - 20; bt.dir = -1; }
+    // the dinghy: rowed left and right, not while the line comes up
+    if (!this.reeling && !this.throwing) {
+      if (lf) this.bx -= 46 * dt;
+      if (rt) this.bx += 46 * dt;
+    }
+    this.bx = clamp(this.bx, 4, W - ROD - 6);
+    // the hook
     if (this.reeling) {
       this.hookY -= 170 * dt;
-      if (this.hookY <= SURF + 2) { this.hookY = SURF + 2; this._bank(); }
-    } else {
+      if (this.hookY <= SURF + 2) { this.hookY = SURF + 2; this._throw(); }
+    } else if (!this.throwing) {
       if (up) this.hookY -= 80 * dt;
       if (dn) this.hookY += 80 * dt;
       this.hookY = clamp(this.hookY, SURF + 4, BED - 3);
     }
-    // spawns: a fish every ~0.9 s (faster with level), junk from level 2
+    if (this.throwing) this._throwStep(dt);
+    // spawns: a fish every ~0.9 s (faster with level); a shark now and then;
+    // cans and bottles from level 3, boots and tyres from level 5
     this.spawnT -= dt;
     if (this.spawnT <= 0) {
       this.spawnT = Math.max(0.35, 0.95 - this.level * 0.06) * (0.6 + Math.random() * 0.8);
       const r = Math.random();
-      const kind = r < 0.3 ? 'herring' : r < 0.52 ? 'perch' : r < 0.68 ? 'rockfish' : r < 0.8 ? 'salmon' : r < 0.87 ? 'dogfish' : r < 0.94 ? 'octopus' : 'crab';
+      const kind = r < 0.28 ? 'herring' : r < 0.5 ? 'perch' : r < 0.67 ? 'rockfish' : r < 0.79 ? 'salmon' : r < 0.87 ? 'octopus' : r < 0.94 ? 'crab'
+        : (this.level >= 2 ? 'dogfish' : 'herring');
       this._spawn(kind, Math.random() < 0.5);
     }
-    if (this.level >= 2) {
+    if (this.level >= 3) {
       this.junkT -= dt;
       if (this.junkT <= 0) {
-        this.junkT = Math.max(1.2, 5 - this.level * 0.5) * (0.6 + Math.random() * 0.8);
-        this._spawn(JUNK[Math.floor(Math.random() * JUNK.length)], Math.random() < 0.5);
+        this.junkT = Math.max(1.2, 5 - this.level * 0.45) * (0.6 + Math.random() * 0.8);
+        const pool = this.level >= 5 ? JUNK : ['can', 'bottle'];
+        this._spawn(pool[Math.floor(Math.random() * pool.length)], Math.random() < 0.5);
       }
     }
-    // move everything; the hook takes what it touches (up to four)
-    const hk = { x: HX - 2, y: this.hookY, w: 5, h: 5 };
+    // move everything; the hook takes what it touches (up to six); a shark
+    // that meets the line bites off the catch
+    const hx = this.hookX;
+    const hk = { x: hx - 2, y: this.hookY, w: 5, h: 5 };
+    let hang = 0;
+    for (const k of this.caught) hang += this.spr[k].w - 2;
     for (const e of this.ents) {
       const K = KINDS[e.kind];
       e.ph += dt * 6;
@@ -498,11 +563,21 @@ export class Fishing {
       if (K.sink && e.y < BED - e.h) e.y += K.sink * dt;
       if (K.float) e.y = SURF - 2 + Math.sin(e.ph * 0.5);
       if (!K.walk && !K.float && !K.sink) e.y += Math.sin(e.ph) * 6 * dt;
-      if (!this.reeling && this.caught.length < 4 && !e.gone && e.x < hk.x + hk.w && e.x + e.w > hk.x && e.y < hk.y + hk.h && e.y + e.h > hk.y) {
+      if (e.gone) continue;
+      const touch = (y0, y1) => e.x < hx + 3 && e.x + e.w > hx - 3 && e.y < y1 && e.y + e.h > y0;
+      if (K.shark) {
+        if (this.caught.length && !this.throwing && touch(this.hookY + 3, this.hookY + 5 + hang)) {
+          this._pop('CHOMP!', hx + 6, this.hookY, '#ff6060');
+          this.chip.sfx('junk');
+          this.caught = [];
+        }
+        continue;
+      }
+      if (!this.reeling && !this.throwing && this.caught.length < LINE_MAX && e.x < hk.x + hk.w && e.x + e.w > hk.x && e.y < hk.y + hk.h && e.y + e.h > hk.y) {
         e.gone = true;
         this.caught.push(e.kind);
         this.chip.sfx(K.junk ? 'junk' : 'hook');
-        if (K.junk) this._pop('JUNK', HX + 6, this.hookY, '#e84040');
+        if (K.junk) this._pop('JUNK', hx + 6, this.hookY, '#e84040');
       }
     }
     this.ents = this.ents.filter((e) => !e.gone && e.x > -40 && e.x < W + 40);
@@ -511,35 +586,75 @@ export class Fishing {
     if (this.banner && (this.banner.t += dt) > 1.8) this.banner = null;
   }
 
-  _bank() {
+  /**
+   * The line is up: throw the catch to the crab boat. It flies for 0.55 s
+   * toward where the boat will be, if the boat is within reach of the throw,
+   * and lands in it; out of reach it arcs up and splashes back.
+   */
+  _throw() {
     this.reeling = false;
     if (!this.caught.length) { this.hookY = 60; return; }
+    const T = 0.55, bt = this.boat;
+    const bx1 = clamp(bt.x + bt.dir * (9 + this.level * 2.2) * T, 20, W - 20);
+    const reach = Math.abs(bx1 - this.hookX) <= 34;
+    this.throwing = { items: this.caught, x0: this.hookX, x1: reach ? bx1 : this.hookX + (bx1 > this.hookX ? 14 : -14), t: 0, T, reach };
+    this.caught = [];
+    this.chip.sfx('reel');
+  }
+
+  _throwStep(dt) {
+    const th = this.throwing;
+    th.t += dt;
+    if (th.t < th.T) return;
+    this.throwing = null;
+    this.hookY = 60;
+    if (th.reach) { this._bank(th.items); return; }
+    // missed the boat: back in the water, fish and junk alike
+    const fish = th.items.filter((k) => !KINDS[k].junk).length;
+    this._pop(fish ? 'SPLASH!' : 'OVERBOARD', th.x1 - 10, SURF + 4, fish ? '#a8d8f8' : '#80ff90');
+    this.chip.sfx('splash');
+    if (fish) this.kombo = 0;
+  }
+
+  _bank(items) {
     let pts = 0, time = 0;
     const count = {};
-    for (const k of this.caught) {
+    for (const k of items) {
       const K = KINDS[k];
       if (K.junk) { time -= 5; continue; }
       pts += K.pts;
       if (K.time) time += K.time;
       count[k] = (count[k] || 0) + 1;
     }
-    // COMBO: two or more of one kind on one line buys time; three or more
-    // doubles the points, four triples them
+    // two or more of one kind on one line buys time; three or more
+    // multiplies the points
+    const kinds = Object.keys(count);
     let combo = 0;
     for (const n of Object.values(count)) combo = Math.max(combo, n);
     if (combo >= 2) { time += (combo - 1) * 4; this.chip.sfx('combo'); this._pop(`COMBO X${combo}`, 60, 44, '#ffe060'); }
     if (combo >= 3) pts *= combo - 1;
+    // KOMBO: a line of one kind lights the next letter; a mixed line resets
+    // it; all five refill most of the clock
+    if (kinds.length === 1 && combo >= 2 && !items.some((k) => KINDS[k].junk)) {
+      this.kombo++;
+      if (this.kombo >= KOMBO.length) {
+        this.kombo = 0;
+        time += 25;
+        pts += 1000;
+        this.banner = { text: 'KOMBO!', t: 0 };
+        this.chip.sfx('level');
+      }
+    } else if (kinds.length > 1) this.kombo = 0;
     this.score += pts * this.level;
     this.time = Math.min(TIME0 + 30, this.time + time);
-    if (pts) this._pop(`+${pts * this.level}`, HX + 6, SURF + 6, '#ffffff');
-    if (time < 0) this._pop(`${time}S`, HX + 6, SURF + 14, '#ff6060');
-    else if (time > 0) this._pop(`+${time}S`, HX + 6, SURF + 14, '#80ff90');
+    const px = clamp(this.boat.x - 10, 4, W - 40);
+    if (pts) this._pop(`+${pts * this.level}`, px, SURF - 22, '#ffffff');
+    if (time < 0) this._pop(`${time}S`, px, SURF - 14, '#ff6060');
+    else if (time > 0) this._pop(`+${time}S`, px, SURF - 14, '#80ff90');
     if (pts) this.chip.sfx('bank');
-    this.caught = [];
-    this.hookY = 60;
-    // levels: every 800 points, then wider
-    const next = [0, 800, 2000, 3600, 5600, 8000, 11000, 14500, 18500, 23000];
-    while (this.level < next.length && this.score >= next[this.level]) {
+    // nine levels by score
+    const next = [0, 800, 2000, 3600, 5600, 8000, 11000, 14500, 18500];
+    while (this.level < 9 && this.score >= next[this.level]) {
       this.level++;
       this.banner = { text: `LEVEL ${this.level}`, t: 0 };
       this.chip.sfx('level');
@@ -578,8 +693,6 @@ export class Fishing {
     g.fillStyle = '#6a4a2a'; g.fillRect(0, SURF - 4, 58, 3);
     g.fillStyle = '#4a3018';
     for (const px of [6, 26, 46]) g.fillRect(px, SURF - 1, 3, 30);
-    const a = this.spr.angler;
-    g.drawImage(a.r, 46, SURF - 4 - a.h);
     // water, in bands, with a moving surface
     const bands = [['#4aa0d8', SURF, 36], ['#2a78b8', SURF + 36, 38], ['#1a4a88', SURF + 74, BED - SURF - 74]];
     for (const [c, y, h] of bands) { g.fillStyle = c; g.fillRect(0, y, W, h); }
@@ -604,8 +717,9 @@ export class Fishing {
     this._scene(t + (this.frame || 0) * 0);
     if (this.state === 'title') {
       g.fillStyle = 'rgba(10,10,40,0.55)'; g.fillRect(0, 34, W, 70);
-      this._center('PUGET SOUND', 42, '#ffe060', 2);
-      this._center('FISHING', 56, '#ffffff', 2);
+      this._center('PUGET SOUND', 38, '#ffe060', 2);
+      this._center('FISHING', 52, '#ffffff', 2);
+      this._center('ROW UNDER THE BOAT - REEL IN', 68, '#a8d8f8');
       if (Math.floor(t * 2) % 2 === 0) this._center('PRESS A', 78, '#ffffff');
       this._center(`BEST ${this.best}`, 92, '#a8d8f8');
       return;
@@ -616,24 +730,57 @@ export class Fishing {
       const wig = KINDS[e.kind].walk ? Math.round(Math.sin(e.ph * 2)) : 0;
       g.drawImage(e.dir > 0 ? s.l : s.r, Math.round(e.x), Math.round(e.y) + wig);
     }
+    // the crab boat, drifting (drawn further off, a little higher)
+    const bt = this.boat || { x: 104 };
+    {
+      const x = Math.round(bt.x), y = SURF - 7;
+      g.fillStyle = '#7a2a1a'; g.fillRect(x - 16, y, 32, 5); g.fillRect(x - 14, y + 5, 28, 2);
+      g.fillStyle = '#e8e0d0'; g.fillRect(x - 16, y, 32, 1);
+      g.fillStyle = '#e8e0d0'; g.fillRect(x + 2, y - 7, 9, 7);                    // wheelhouse
+      g.fillStyle = '#4a90c0'; g.fillRect(x + 4, y - 5, 5, 2);
+      g.fillStyle = '#303038'; g.fillRect(x - 12, y - 4, 10, 4);                   // the fish hold
+      g.fillStyle = '#e8b830'; g.fillRect(x - 8, y - 9, 2, 5); g.fillRect(x - 9, y - 11, 4, 2);   // the deckhand
+    }
+    // the dinghy and you in it, rod out over the bow
+    const bx = Math.round(this.bx !== undefined ? this.bx : HX - ROD), hx = bx + ROD;
+    {
+      const y = SURF - 3, bob = Math.round(Math.sin(t * 2.4));
+      g.fillStyle = '#d8d0b8'; g.fillRect(bx - 8, y + bob, 16, 3); g.fillRect(bx - 6, y + 3 + bob, 12, 2);
+      g.fillStyle = '#6a4a2a'; g.fillRect(bx - 8, y + bob, 16, 1);
+      g.fillStyle = '#d83030'; g.fillRect(bx - 3, y - 5 + bob, 5, 5);            // life vest
+      g.fillStyle = '#e0a070'; g.fillRect(bx - 2, y - 8 + bob, 3, 3);             // head
+      g.fillStyle = '#202040'; g.fillRect(bx - 3, y - 9 + bob, 5, 1);             // cap
+      g.strokeStyle = '#3a2a1a'; g.lineWidth = 1;
+      g.beginPath(); g.moveTo(bx + 1.5, y - 3.5 + bob); g.lineTo(hx + 0.5, SURF - 13.5); g.stroke();
+    }
     // the line: rod tip to the surface to the hook, and what hangs on it
     const hy = Math.round(this.hookY);
-    g.strokeStyle = '#f8f8f8'; g.lineWidth = 1;
-    g.beginPath(); g.moveTo(58.5, SURF - 15.5); g.lineTo(HX + 0.5, SURF + 0.5); g.lineTo(HX + 0.5, hy + 0.5); g.stroke();
-    g.fillStyle = '#e8e8e8';
-    g.fillRect(HX, hy, 1, 4); g.fillRect(HX - 2, hy + 3, 3, 1); g.fillRect(HX - 2, hy + 1, 1, 2);
-    g.fillStyle = '#e84040'; g.fillRect(HX - 1, hy - 3, 3, 2);           // the bobber-red lure
-    let cy = hy + 5;
-    for (const k of (this.caught || [])) {
-      const s = this.spr[k];
-      const wig = Math.round(Math.sin(t * 12 + cy) * 1.5);
-      g.save(); g.translate(HX + wig, cy); g.rotate(Math.PI / 2); g.drawImage(s.r, 0, -Math.round(s.h / 2)); g.restore();
-      cy += s.w - 2;
+    if (!this.throwing) {
+      g.strokeStyle = '#f8f8f8'; g.lineWidth = 1;
+      g.beginPath(); g.moveTo(hx + 0.5, SURF - 13.5); g.lineTo(hx + 0.5, hy + 0.5); g.stroke();
+      g.fillStyle = '#e8e8e8';
+      g.fillRect(hx, hy, 1, 4); g.fillRect(hx - 2, hy + 3, 3, 1); g.fillRect(hx - 2, hy + 1, 1, 2);
+      g.fillStyle = '#e84040'; g.fillRect(hx - 1, hy - 3, 3, 2);           // the bobber-red lure
+      let cy = hy + 5;
+      for (const k of (this.caught || [])) {
+        const s = this.spr[k];
+        const wig = Math.round(Math.sin(t * 12 + cy) * 1.5);
+        g.save(); g.translate(hx + wig, cy); g.rotate(Math.PI / 2); g.drawImage(s.r, 0, -Math.round(s.h / 2)); g.restore();
+        cy += s.w - 2;
+      }
+    } else {
+      // the catch in the air, arcing to the boat (or over it and in)
+      const th = this.throwing, u = clamp(th.t / th.T, 0, 1);
+      // (kept under the HUD bar: the sky band is only 20 px tall)
+      const x = th.x0 + (th.x1 - th.x0) * u, y = SURF - 12 - Math.sin(u * Math.PI) * 8 + u * (th.reach ? 4 : 16);
+      th.items.forEach((k, i) => { const s = this.spr[k]; g.drawImage(s.r, Math.round(x - s.w / 2 + (i % 2) * 3), Math.round(y - i * 3)); });
     }
     // HUD: score, level, the time bar
     g.fillStyle = 'rgba(16,16,48,0.75)'; g.fillRect(0, 0, W, 9);
     this._text(`SCORE ${String(this.score).padStart(6, '0')}`, 2, 2, '#ffffff');
-    this._text(`L${this.level}`, 86, 2, '#ffe060');
+    this._text(`L${this.level}`, 58, 2, '#ffe060');
+    // KOMBO: the letters lit so far
+    for (let i = 0; i < 5; i++) this._text(KOMBO[i], 70 + i * 5, 2, i < (this.kombo || 0) ? '#ffe060' : '#50507a');
     const tb = clamp(this.time / TIME0, 0, 1.5);
     g.fillStyle = '#303050'; g.fillRect(100, 2, 57, 5);
     g.fillStyle = this.time < 10 ? (Math.floor(t * 6) % 2 ? '#ff4040' : '#ff9040') : '#50e070';
