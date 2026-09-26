@@ -2290,7 +2290,8 @@ Classic Rock, BBC Radio 1, Top 100 Charts, NRJ Linkin Park, Rock Antenne
 Alternative, 80s Drive, C89.5, KNKX, Classical KING FM, and two synth-only
 stations. Every live one keeps a synth voice for when it is offline or dead.
 Getting into a car tunes a random one (never the last); RADIO on the driving
-pad, R, the HUD's radio button or the pad's shoulder buttons tune the next;
+pad (the only on-screen radio control, and only in a car: v124 removed the
+HUD's 📻), R or the pad's shoulder buttons tune the next;
 the pause menu lists them all.
 
 - **Find streams with the radio-browser.info search /apps/radio uses**, then

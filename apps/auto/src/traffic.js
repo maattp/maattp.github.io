@@ -231,6 +231,8 @@ export class TrafficSystem {
     this._farS = new THREE.Sphere();
     this._tick = 0;
     this.parkedSlots = new Set();
+    // kerb slots given to something else for good (main.js: the car by the spawn)
+    this.reservedSlots = new Set();
     this.R = rng(99);
     this.heli = null;
     this.spawnTimer = 0;
@@ -388,6 +390,7 @@ export class TrafficSystem {
         // 0.30 still reads as a lived-in street.
         if (h > 0.30) continue;
         const key = ei * 64 + s;
+        if (this.reservedSlots.has(key)) continue;
         seen.add(key);
         if (this.parkedSlots.has(key)) continue;
         const t = s / slots;

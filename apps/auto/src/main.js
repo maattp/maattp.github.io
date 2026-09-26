@@ -50,7 +50,9 @@ const STAR_POINTS = [0, 30, 90, 190, 340, 560];
 const ATV_SPOTS = [
   [185, -3772, -Math.PI / 2, 0x3d7a2e],
   [-172, -1947, -1.9, 0xc8452e],
-  [-950, -900, 2.2, 0xe8b21c],
+  // the middle of the lawn south of the Armory, 36 m from anything in every
+  // direction (it was against the Armory's wall, behind a tree)
+  [-894, -940, 1.0, 0xe8b21c],
 ];
 const HOSPITAL = G.RESPAWN; // kept clear of buildings by citygen, via G.KEEP_CLEAR
 
@@ -723,6 +725,25 @@ function installShadowFade() {
     const v = traffic.spawnAt(x, z, h, 'atv', col, 'apron');
     v.vLong = 0;
   }
+  // A CAR WORTH TAKING at the kerb nearest the spawn. Kerbside cars come from
+  // a fixed hash of street slots, so the first car every player walked up to
+  // was the same pickup. That slot is reserved and a sports coupe parked in it
+  // for good (apron: never despawned, like the quads).
+  {
+    traffic.updateParked(G.SPAWN.x, G.SPAWN.z);
+    let best = null, bd = Infinity;
+    for (const v of traffic.cars) {
+      if (v.mode !== 'parked' || typeof v.slot !== 'number') continue;
+      const dd = Math.hypot(v.x - G.SPAWN.x, v.z - G.SPAWN.z);
+      if (dd < bd) { bd = dd; best = v; }
+    }
+    if (best) {
+      traffic.reservedSlots.add(best.slot);
+      const { x, z, heading } = best;
+      traffic.remove(best);
+      traffic.spawnAt(x, z, heading, 'sports', 0xc4161c, 'apron').vLong = 0;
+    }
+  }
   // What the map marks, and what says hello when you get near (the HUD is
   // made below; it takes the list then).
   const mapPlaces = [
@@ -1271,17 +1292,6 @@ function wireUi() {
     if (!audio.musicOn) { audio.musicOn = true; game.settings.music = true; document.getElementById('setMusic').classList.add('on'); }
     else audio.nextStation();
     hud.showToast(`♪ ${audio.stationName()}`);
-  });
-  document.getElementById('radioBtn').addEventListener('click', () => {
-    audio.init();
-    audio.resume();
-    audio.primeLive();
-    if (!audio.musicOn) {
-      audio.musicOn = true;
-      hud.showToast(`♪ ${audio.stationName()}`);
-    } else {
-      hud.showToast(`♪ ${audio.nextStation()}`);
-    }
   });
 
   const bind = (id, key, apply) => {
