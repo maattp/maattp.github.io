@@ -29,6 +29,7 @@ src/player.js               on-foot/driving state machine + chase camera
 src/controls.js             touch stick/buttons + keyboard fallback
 src/hud.js                  minimap, full map, readouts
 src/needletop.js            the Space Needle's elevator, deck and viewers
+src/golf.js                 three par-3s at Interbay
 src/wheelride.js            the Great Wheel's turning half and the ride on it
 src/fishtoss.js             the fish stall at Pike Place Market + the catching game
 src/hoops.js                basketball courts in the parks + the free-throw game
@@ -4102,6 +4103,50 @@ phone they are movers in the shadow pass (not the cache's statics).
 
 verify's "Great Wheel" section checks it turns, rides once round (time,
 height, stepping off) and the quick way down. `docs/wheel/` has shots.
+
+## Golf at Interbay (v132)
+
+**Three par-3s on the green west of 15th Ave W** (`src/golf.js`), where the
+Interbay Golf Center's executive course is: 126, 140 and 155 yards, laid out
+from the golf center's lat/lon on ground surveyed clear of roads, buildings
+and water, falling 2-6 m across a hole. Each hole's tee, fairway (widening in
+the middle), fringe, green (striped) and bunkers are cut out of a 1 m grid by
+**marching squares over signed distance fields** -- the grass as the union of
+tee, fairway and fringe, each bunker as sand drawn 1.5 cm over it -- so the
+edges follow the shapes rather than stepping cell by cell (the first version
+dropped whole cells and every edge was a staircase). One draped mesh on
+`world.mats.flat`, plus a waving flag and a board per hole. The park's trees
+and furniture keep off the holes (`city.jumpClearRects`); trunks beside them
+knock the ball back.
+
+- **A stroke**: aim (stick or drag; a ring shows the carry), the club picked
+  by distance (CLUB or C changes it), SWING: the first tap stops POWER, the
+  second the ACCURACY needle sweeping back through the white -- early hooks,
+  late slices, both lose a little. Power goes to the launch speed as its
+  square root, so the carry is about power x the club's full carry.
+- **The flight** integrates quadratic drag against the air (`DRAG`, the
+  clubs' launch speeds bisected so each carries its full distance in still
+  air), a breeze of 0-6 m/s that grows with height, and sidespin curve.
+  Landing bounces by the surface, takes most of an iron's pace, and backspin
+  checks it for half a second (`CLUBS[].spin`): without that a 9-iron ran 20 m
+  and a full shot went through the green. Rolling decelerates by the surface
+  (green 0.62 m/s2) and runs down the slope at 0.4 of gravity's component (the
+  course is shaped flatter than the 40 m terrain under it; at 0.7 a 3 m putt
+  ran 5 m past). The cup takes a ball crossing it under 1.6 m/s; faster lips
+  out. A road or a building is out of bounds: back where it was hit from, +1.
+- The golfer is posed by the swing: side-on at address, bent over the ball,
+  the grip on an arc round the shoulders with both hands solved to it
+  (`solveArm`, exported from vehicles.js), the torso turning with it, the club
+  from the grip to the head. The camera is down the line at address, chases
+  the ball in flight (which is drawn never smaller than a few pixels), and
+  sits low behind it on the green.
+- The card after three holes; pays $150 for par, $50 a stroke either side,
+  $500 more for a hole-in-one; best round in localStorage `auto-golf-best`.
+
+verify's "golf" section plays a round with sweet-spot swings at the right
+power in still air (tee shots on the green, the card, the pay), a ball into
+15th Ave W (a stroke, and back to where it was hit), and closing.
+`docs/golf/` has shots.
 
 ## Basketball in the parks
 

@@ -1071,6 +1071,62 @@ async function main() {
       if (bad.length) { console.error(`FAIL: Great Wheel: ${bad.join('; ')}`); process.exitCode = 1; }
     }
 
+    // --- golf at Interbay ---------------------------------------------------
+    //
+    // A player who aims at the pin, picks the power for the distance and
+    // stops the needle in the sweet spot, in still air, plays
+    // the three holes: tee shots find the greens, the round ends in par or
+    // near it with a card and pay; a shot into a road comes back with a
+    // stroke added; closing gives the city back.
+    const golfR = await session.eval(`(() => {
+      const d = window.__dbg, Gf = d.golf, P = d.player;
+      if (!Gf) return null;
+      if (P.vehicle) P.exitVehicle(true);
+      const t = Gf.holes[0].tee; P.x = t.x; P.z = t.z; P.y = d.G.terrainHeight(t.x, t.z);
+      const money0 = d.game.money;
+      const out = { took: d.game.tryInteract(P) && Gf.state, tees: [] };
+      let guard = 0;
+      while (Gf.state !== 'card' && guard < 60) {
+        if (Gf.state === 'aim') {
+          const h = Gf.h, dist = Math.hypot(h.pin.x - Gf.bx, h.pin.z - Gf.bz);
+          Gf.wind = { x: 0, z: 0, s: 0 };        // still air: the breeze is random
+          Gf.aim = Math.atan2(h.pin.x - Gf.bx, h.pin.z - Gf.bz);
+          const c = [140, 118, 100, 75, 0][Gf.clubI], tee = Gf.lie === 'tee';
+          const pw = Gf.clubI === 4 ? (Math.sqrt(2 * 0.62 * (dist + 0.3)) - 0.5) / 6.2 : Math.min(1, (dist * 0.9) / c);
+          Gf.state = 'power'; Gf.power = pw; Gf.acc = 0.1; Gf._swing();
+          let n = 0; while (Gf.state !== 'aim' && Gf.state !== 'card' && Gf.h === h && n < 60 * 40) { Gf.update(1 / 60); n++; }
+          if (tee) out.tees.push(Gf.h === h && Gf.state === 'aim' ? +Math.hypot(h.pin.x - Gf.bx, h.pin.z - Gf.bz).toFixed(1) : 0);
+        } else Gf.update(1 / 60);
+        guard++;
+      }
+      out.scores = Gf.scores; out.card = Gf.state === 'card'; out.paid = d.game.money - money0;
+      // out of bounds: a ball rolling onto 15th Ave W
+      Gf._round(); const h = Gf.h;
+      Gf._placeBall(t.x + 3, t.z);
+      Gf.prev = { x: Gf.bx, z: Gf.bz };
+      let rx = t.x, rz = t.z; for (let k = 0; k < 400 && !d.city.onRoad(rx, rz, 0); k++) rx += 2;
+      Gf.bx = rx - 1.5; Gf.bz = rz; Gf.vel = new d.THREE.Vector3(6, 0, 0); Gf.check = 0; Gf.clubI = 3; Gf.state = 'roll';
+      const s0 = Gf.strokes; let n = 0; while (Gf.state === 'roll' && n < 600) { Gf.update(1 / 60); n++; }
+      out.oob = { strokes: Gf.strokes - s0, back: +Math.hypot(Gf.bx - Gf.prev.x, Gf.bz - Gf.prev.z).toFixed(2) };
+      Gf.close();
+      out.closed = Gf.state; out.paused = d.game.paused;
+      void h;
+      return out;
+    })()`, true);
+    console.log('\n--- golf ---------------------------------------------------');
+    if (!golfR) { console.error('FAIL: no golf'); process.exitCode = 1; }
+    else {
+      console.log(`  ENTER -> ${golfR.took}; tee shots finish ${golfR.tees.join(', ')} m from the pin; card ${golfR.scores.join('-')} (${golfR.scores.reduce((a, b) => a + b, 0)}, par 9), paid $${golfR.paid}; into the road: +${golfR.oob.strokes} stroke, back ${golfR.oob.back} m from where it was hit; closed ${golfR.closed}, city unpaused ${!golfR.paused}`);
+      const bad = [];
+      if (golfR.took !== 'aim') bad.push('ENTER does not start it');
+      if (!golfR.card || golfR.scores.length !== 3) bad.push('the round does not finish');
+      if (golfR.tees.some((dd) => dd > 20)) bad.push('a good tee shot misses the green by 20 m');
+      if (golfR.scores.reduce((a, b) => a + b, 0) > 12) bad.push('a good round scores over 12');
+      if (golfR.oob.strokes !== 1 || golfR.oob.back > 0.5) bad.push('out of bounds');
+      if (golfR.closed !== 'off' || golfR.paused) bad.push('closing does not give the city back');
+      if (bad.length) { console.error(`FAIL: golf: ${bad.join('; ')}`); process.exitCode = 1; }
+    }
+
     // --- no lake in the boat's cockpit ------------------------------------
     //
     // The runabout's cockpit floor is 12 cm over its waterline and the lake is
