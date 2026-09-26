@@ -856,6 +856,63 @@ async function main() {
       if (bad.length) { console.error(`FAIL: basketball: ${bad.join('; ')}`); process.exitCode = 1; }
     }
 
+    // --- up the Space Needle ----------------------------------------------
+    //
+    // ENTER at the core rides the elevator to the deck, which you stand on;
+    // walking out into the barriers and in at the indoor glass keeps you on
+    // the ring; a viewer zooms and names what it sees; the elevator brings
+    // you back down to the plaza.
+    const ndl = await session.eval(`(() => {
+      const d = window.__dbg, N = d.needleTop, P = d.player;
+      if (!N) return null;
+      if (P.vehicle) P.exitVehicle(true);
+      const out = { dropped: (d.lmRoot.userData.solidsDropped || []).filter((s) => s.startsWith('spaceNeedle')) };
+      const r = () => Math.hypot(P.x - N.X, P.z - N.Z);
+      const b = N.pt(N.views[0].a - Math.PI / 6, 5.6);
+      P.x = b.x; P.z = b.z; P.y = d.city.groundAt(b.x, b.z, N.Y + 1);
+      out.up = N.tryInteract(P) && N.mode;
+      let n = 0; while (N.busy && n < 3000) { N.update(1 / 60, { x: 0, y: 0 }, { x: 0, y: 0 }); n++; }
+      out.rideS = +(n / 60).toFixed(1);
+      out.onDeck = +(P.y - N.deckY).toFixed(2);
+      out.stand = +Math.abs(d.city.groundAt(P.x, P.z, P.y + 0.5) - N.deckY).toFixed(2);
+      const inp = (x, y) => ({ x, y, gas: false, brake: false, gasAmt: 0, brakeAmt: 0, sprint: false, jump: false, attack: false });
+      const walk = (x, y, k) => { for (let i = 0; i < k; i++) P.update(1 / 60, inp(x, y), { x: 0, y: 0 }, d.controls, d.traffic, d.peds); };
+      let rMin = 99, rMax = 0, yLo = 1e9;
+      const note = () => { rMin = Math.min(rMin, r()); rMax = Math.max(rMax, r()); yLo = Math.min(yLo, P.y); };
+      P.camYaw = P.heading + Math.PI; for (let i = 0; i < 200; i++) { walk(0, -1, 1); note(); }
+      P.camYaw = P.heading; for (let i = 0; i < 260; i++) { walk(0, -1, 1); note(); }
+      for (let i = 0; i < 900; i++) { walk(1, -0.2, 1); note(); }
+      out.ring = [+rMin.toFixed(2), +rMax.toFixed(2)];
+      out.fell = +(N.deckY - yLo).toFixed(2);
+      const v = N.views[2];
+      P.x = v.x; P.z = v.z; P.y = N.deckY;
+      out.view = N.tryInteract(P) && N.mode;
+      N.zoomIn = true; for (let i = 0; i < 60; i++) N.update(1 / 60, { x: 0, y: 0 }, { x: 0, y: 0 }); N.zoomIn = false;
+      out.fov = +d.camera.fov.toFixed(1);
+      out.label = N.ui.sub.textContent;
+      N.endView();
+      out.fovBack = d.camera.fov;
+      P.x = N.door.x; P.z = N.door.z; P.y = N.deckY;
+      out.down = N.tryInteract(P) && N.mode;
+      n = 0; while (N.busy && n < 3000) { N.update(1 / 60, { x: 0, y: 0 }, { x: 0, y: 0 }); n++; }
+      out.ground = +(P.y - N.Y).toFixed(2);
+      out.visible = P.h.group.visible;
+      return out;
+    })()`, true);
+    console.log('\n--- Space Needle ------------------------------------------');
+    if (!ndl) { console.error('FAIL: no Space Needle deck'); process.exitCode = 1; }
+    else {
+      console.log(`  ENTER at the core: ${ndl.up}, ${ndl.rideS} s to the deck; standing ${ndl.onDeck} m off it (ground query ${ndl.stand} m)`);
+      console.log(`  walked into the barriers, the glass and round: r ${ndl.ring[0]}-${ndl.ring[1]} m, dropped ${ndl.fell} m; viewer ${ndl.view}, zoomed to ${ndl.fov} deg ("${ndl.label}"), fov back ${ndl.fovBack}; down: ${ndl.down}, ${ndl.ground} m over the plaza, visible ${ndl.visible}`);
+      const bad = [];
+      if (ndl.dropped.length) bad.push(`solids dropped: ${ndl.dropped.join(', ')}`);
+      if (ndl.up !== 'ride' || Math.abs(ndl.onDeck) > 0.05 || ndl.stand > 0.05) bad.push('the ride up does not land on the deck');
+      if (ndl.ring[0] < 13.6 || ndl.ring[1] > 16.3 || ndl.fell > 0.05) bad.push('the deck does not hold you');
+      if (ndl.view !== 'view' || ndl.fov >= 9 || !/°/.test(ndl.label) || ndl.fovBack < 30) bad.push('the viewer');
+      if (ndl.down !== 'ride' || Math.abs(ndl.ground) > 1.5 || !ndl.visible) bad.push('the ride down');
+      if (bad.length) { console.error(`FAIL: Space Needle: ${bad.join('; ')}`); process.exitCode = 1; }
+    }
+
     // --- no lake in the boat's cockpit ------------------------------------
     //
     // The runabout's cockpit floor is 12 cm over its waterline and the lake is

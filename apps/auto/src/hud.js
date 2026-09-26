@@ -13,7 +13,7 @@ const SCALE = MAP_PX / (G.MAP_HALF * 2);
  */
 function placeIcon(ctx, kind, x, y, r) {
   ctx.fillStyle = kind === 'dock' ? '#2f86d6' : kind === 'jet' ? '#c8352a' : kind === 'monorail' ? '#0b8a8f'
-    : kind === 'balloon' ? '#d2432f' : kind === 'fish' ? '#1f9aa8' : kind === 'hoop' ? '#d9661f' : '#e0782e';
+    : kind === 'balloon' ? '#d2432f' : kind === 'fish' ? '#1f9aa8' : kind === 'hoop' ? '#d9661f' : kind === 'needle' ? '#5a6fd6' : '#e0782e';
   ctx.strokeStyle = '#ffffff';
   ctx.lineWidth = r * 0.22;
   ctx.beginPath();
@@ -52,6 +52,15 @@ function placeIcon(ctx, kind, x, y, r) {
     ctx.fill();
     ctx.beginPath();
     ctx.moveTo(x + r * 0.22, y); ctx.lineTo(x + r * 0.55, y - r * 0.24); ctx.lineTo(x + r * 0.55, y + r * 0.24);
+    ctx.closePath();
+    ctx.fill();
+  } else if (kind === 'needle') {
+    // an elevator's up arrow
+    ctx.fillStyle = '#ffffff';
+    ctx.beginPath();
+    ctx.moveTo(x, y - r * 0.55); ctx.lineTo(x + r * 0.42, y - r * 0.02); ctx.lineTo(x + r * 0.15, y - r * 0.02);
+    ctx.lineTo(x + r * 0.15, y + r * 0.5); ctx.lineTo(x - r * 0.15, y + r * 0.5); ctx.lineTo(x - r * 0.15, y - r * 0.02);
+    ctx.lineTo(x - r * 0.42, y - r * 0.02);
     ctx.closePath();
     ctx.fill();
   } else if (kind === 'hoop') {

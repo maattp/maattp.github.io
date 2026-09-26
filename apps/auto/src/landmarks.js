@@ -53,7 +53,7 @@
 import * as THREE from './three.js';
 import * as G from './geo.js';
 import { mergeByMaterial } from './build.js';
-import { spaceNeedle, NEEDLE_MATS, needleSolids } from './needle.js';
+import { spaceNeedle, NEEDLE_MATS, needleSolids, needleDecks } from './needle.js';
 
 // --- materials -----------------------------------------------------------------
 //
@@ -3072,7 +3072,7 @@ function daybreak() {
 }
 
 const BUILDERS = {
-  spaceNeedle: () => { const g = spaceNeedle(); for (const s of needleSolids()) solid(g, s); return g; },
+  spaceNeedle: () => { const g = spaceNeedle(); for (const s of needleSolids()) solid(g, s); g.userData.decks = needleDecks(); return g; },
   mopop, arena, spheres, market, wheel, library, aquarium, gasworks, troll, locks,
   ferry: ferryTerminal, pier, kerry: kerryPark, ferriswheelPier: statueLiberty,
   convention, airport, stadiumF: lumen, stadiumB: tmobile, stadiumH: husky, smith,
@@ -3165,6 +3165,7 @@ function onRoad(city, s) {
  * cost harness) nothing outside the scene is touched.
  */
 export function buildLandmarks(scene, city, waterLevelAt = null, monorail = null) {
+  let needleAt = null;   // where the Needle stands, for needletop.js
   atlas = new SignAtlas();
   const clusters = new Map();
   const solids = [];
@@ -3248,6 +3249,7 @@ export function buildLandmarks(scene, city, waterLevelAt = null, monorail = null
     g.position.set(x, y, z);
     g.rotation.y = t;
     g.userData.landmark = l.name;
+    if (l.kind === 'spaceNeedle') needleAt = { x, y, z, t };
     for (const s of g.userData.solids || []) {
       const w = worldSolid(s, x, y, z, t);
       if (city && onRoad(city, w)) { dropped.push(`${l.kind}@${w.x.toFixed(0)},${w.z.toFixed(0)}`); continue; }
@@ -3259,7 +3261,7 @@ export function buildLandmarks(scene, city, waterLevelAt = null, monorail = null
     // own frame (a box, the solid convention); they become city platforms
     // exactly as the seaplane dock's are.
     for (const dk of g.userData.decks || []) {
-      const w = worldSolid({ x: dk.x, z: dk.z, hw: dk.hw, hd: dk.hd, rot: 0, y0: dk.top, y1: dk.top }, x, y, z, t);
+      const w = worldSolid({ x: dk.x, z: dk.z, hw: dk.hw, hd: dk.hd, rot: dk.rot || 0, y0: dk.top, y1: dk.top }, x, y, z, t);
       platforms.push({ x: w.x, z: w.z, hw: w.hw, hd: w.hd, rot: w.rot, y0: w.y0, y1: w.y1 });
       if (dk.land) {
         const gw = gangway(dk.land, x, y + dk.top, z, t, platforms);
@@ -3314,6 +3316,7 @@ export function buildLandmarks(scene, city, waterLevelAt = null, monorail = null
   root.userData.marinas = marinas;
   root.userData.beaches = beaches;
   root.userData.near = near;
+  root.userData.needle = needleAt;
   scene.add(root);
   return root;
 }

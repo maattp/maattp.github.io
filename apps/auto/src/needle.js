@@ -84,6 +84,15 @@ export const NEEDLE = {
 // Leg-pair centreline radius vs height. Monotone cubic through the measured
 // stations, so the lower legs run nearly straight, bend into the waist and
 // flare out like a trumpet into the arms.
+// The open-air deck's walkable ring (520 ft): the indoor level's glass at
+// r 13.8, the barriers' foot at 16.35, the slab top ~158.45 across it. The
+// elevator that is ridden (needletop.js) is the one on the core face between
+// the first two leg pairs, at model angle ELEVATOR_A.
+export const DECK = { y: 158.47, rIn: 13.85, rOut: 16.25 };
+export const LEG_ANGLES = [0, 1, 2].map((i) => (i / 3) * Math.PI * 2 + 0.5);
+export const ELEVATOR_A = LEG_ANGLES[0] + Math.PI / 3;
+export const ELEVATOR_R = NEEDLE.core / 2 + 1.3;
+
 const LEG_R = [
   [-2, 14.95], [0, 14.7], [30.5, 11.3], [61, 7.9], [90, 5.1], [NEEDLE.waist, 4.0],
   [126, 4.4], [137, 6.2], [144, 8.0], [148.5, 9.6],
@@ -261,6 +270,31 @@ export function needleSolids() {
     }
   }
   out.push({ x: 0, z: 0, r: 3.3, y0: -2, y1: 150 });
+  // The observation deck (v128, walkable): the open-air barriers and the
+  // indoor level's glass, one box per panel, banded to the deck.
+  const y0 = DECK.y, y1 = DECK.y + 3.3;
+  for (let k = 0; k < 48; k++) {
+    const a = (k + 0.5) / 48 * Math.PI * 2, r = DECK.rOut + 0.12;
+    out.push({ x: Math.cos(a) * r, z: Math.sin(a) * r, hw: r * Math.sin(Math.PI / 48) + 0.06, hd: 0.12, rot: a + Math.PI / 2, y0, y1 });
+  }
+  for (let k = 0; k < 24; k++) {
+    const a = (k + 0.5) / 24 * Math.PI * 2, r = DECK.rIn - 0.15;
+    out.push({ x: Math.cos(a) * r, z: Math.sin(a) * r, hw: r * Math.sin(Math.PI / 24) + 0.06, hd: 0.15, rot: a + Math.PI / 2, y0, y1 });
+  }
+  return out;
+}
+
+/**
+ * The observation deck's floor as landmark decks (city platforms), in the
+ * model's frame: 24 flat segments of the ring between the indoor glass and
+ * the barriers, each a box turned to its own angle.
+ */
+export function needleDecks() {
+  const out = [], rm = (DECK.rIn + DECK.rOut) / 2, hd = (DECK.rOut - DECK.rIn) / 2 + 0.05;
+  for (let k = 0; k < 24; k++) {
+    const a = (k + 0.5) / 24 * Math.PI * 2;
+    out.push({ x: Math.cos(a) * rm, z: Math.sin(a) * rm, hw: DECK.rOut * Math.sin(Math.PI / 24) + 0.1, hd, rot: a + Math.PI / 2, top: DECK.y });
+  }
   return out;
 }
 
@@ -301,6 +335,7 @@ export function spaceNeedle() {
       const x = Math.cos(a) * out + tx * s, z = Math.sin(a) * out + tz * s;
       g.add(box(0.18, CH, 0.18, MT.dark, x, CH / 2, z, -a));
     }
+    if (i === 0) continue;   // the ridden car is needletop.js's own, live
     const cabY = [44, 103, 141][i];
     const cx = Math.cos(a) * (out + 0.4), cz = Math.sin(a) * (out + 0.4);
     g.add(box(1.8, 3.0, 2.4, MT.white, cx, cabY, cz, -a));
