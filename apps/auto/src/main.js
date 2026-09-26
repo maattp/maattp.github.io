@@ -12,6 +12,7 @@ import { Monorail } from './monorail.js';
 import { freezeStatic, Builder } from './build.js';
 import { Fishing } from './fishing.js';
 import { Hoops } from './hoops.js';
+import { NeedleTop } from './needletop.js';
 import { BONES } from './peds.js';
 import { cacheGet, cachePut, cacheGuardTripped, cacheGuardSet, cacheClear } from './bootcache.js';
 import { TrafficSystem, collideWithBuildings } from './traffic.js';
@@ -76,6 +77,7 @@ const FISHING_SITES = [
 ];
 let fishing = null, fishSpots = [];
 let hoops = null;   // the basketball courts (hoops.js)
+let needleTop = null;   // the Space Needle's elevator, deck and viewers (needletop.js)
 const HOSPITAL = G.RESPAWN; // kept clear of buildings by citygen, via G.KEEP_CLEAR
 
 class Game {
@@ -226,6 +228,8 @@ class Game {
         return true;
       }
     }
+    // the Space Needle's elevator, or a viewer on its deck?
+    if (needleTop && needleTop.tryInteract(pl)) return true;
     // a basketball court's free throw line?
     const court = hoops && !hoops.active && hoops.near(pl);
     if (court) {
@@ -794,6 +798,9 @@ function installShadowFade() {
     onReward: (m) => { game.money += m; setTimeout(() => hud.showToast(`Free throws paid $${m}`), 400); },
     onEnd: () => { game.paused = false; },
   });
+  if (lmRoot.userData.needle) {
+    needleTop = new NeedleTop({ scene, city, world, player, camera, audio, hud: null, at: lmRoot.userData.needle });
+  }
   // A CAR WORTH TAKING at the kerb nearest the spawn. Kerbside cars come from
   // a fixed hash of street slots, so the first car every player walked up to
   // was the same pickup. That slot is reserved and a sports coupe parked in it
@@ -828,6 +835,8 @@ function installShadowFade() {
     ...ATV_SPOTS.map(([x, z]) => ({ x, z, kind: 'atv', name: 'Quad bike', near: false, hello: 'A quad bike — made for the grass' })),
     ...fishSpots.map((sp) => ({ x: sp.x, z: sp.z, kind: 'fish', name: `Fishing — ${sp.name}`, near: false,
       hello: 'A fishing rod on the pier. Press ENTER to cast' })),
+    ...(needleTop ? [{ x: needleTop.X, z: needleTop.Z, kind: 'needle', name: 'Space Needle elevator', near: false,
+      hello: 'The Space Needle. Walk to the elevator in the middle and press ENTER to ride to the top' }] : []),
     ...hoops.courts.map((c) => ({ x: c.x, z: c.z, kind: 'hoop', name: `Basketball — ${c.name}`, near: false,
       hello: 'A basketball court. Stand on the free throw line and press ENTER' })),
     { x: BALLOON_SITE.x, z: BALLOON_SITE.z, kind: 'balloon', name: 'Hot air balloon', near: false,
@@ -849,6 +858,7 @@ function installShadowFade() {
   if (!mapCanvas) { mapCanvas = buildMapCanvas(city); bcOut.mapCanvas = mapCanvas; }
   hud = new Hud(document.getElementById('app'), city, mapCanvas);
   hud.places = mapPlaces;
+  if (needleTop) needleTop.o.hud = hud;
   hud.monorail = monorail;
   monorail.bind({ game, hud, audio, player });
   {
@@ -921,7 +931,7 @@ function installShadowFade() {
 
   await step(1, 'Welcome to Seattle');
   window.__refreshJobs = refreshJobs;
-  window.__dbg = { game, city, player, world, traffic, peds, acts, stunts, monorail, lmRoot, shadowCache, fishing, fishSpots, hoops, scene, camera, renderer, G, fx, hud, controls, audio, pickups, THREE, postfx, applyQuality, sun, placeSun, sceneStats, perfSys, cityStats, WET_FLOOR, animateWalk, collideWithBuildings, TYPES: VEHICLE_TYPES };
+  window.__dbg = { game, city, player, world, traffic, peds, acts, stunts, monorail, lmRoot, shadowCache, fishing, fishSpots, hoops, needleTop, scene, camera, renderer, G, fx, hud, controls, audio, pickups, THREE, postfx, applyQuality, sun, placeSun, sceneStats, perfSys, cityStats, WET_FLOOR, animateWalk, collideWithBuildings, TYPES: VEHICLE_TYPES };
   wireUi();
   game.newTarget();
   // Start on `high` everywhere.
@@ -1639,7 +1649,12 @@ function frame(now) {
     game.deathT += dt;
     controls.takeTap();
     if (game.deathT > 2.6) doRespawn();
+  } else if (needleTop && needleTop.busy) {
+    // riding the Needle's elevator or looking through a viewer: the city runs on
+    needleTop.update(dt, input, look);
   } else {
+    // on the Needle's deck the boom is short: it is 2.4 m wide
+    player.camShort = needleTop && player.onFoot && needleTop.onDeck(player) ? 2.6 : 0;
     player.update(dt, input, look, controls, traffic, peds);
   }
   monorail.update(dt);
@@ -1750,6 +1765,10 @@ function frame(now) {
   // high we are (build massing-only near chunks at altitude) and which way we
   // are moving (build ahead of the nose first).
   world.playerAlt = Math.max(0, p.y - G.terrainHeight(p.x, p.z));
+  // On the Needle the view wants the far layers (on over 45 m) but not the
+  // flying LOD, which drops the near ring to massing (over 100 m): the
+  // Seattle Center below stays detailed.
+  if (needleTop && p.y > needleTop.Y + 20 && Math.hypot(p.x - needleTop.X, p.z - needleTop.Z) < 20) world.playerAlt = 50;
   {
     const pv = player.vehicle;
     const fast = pv && Math.abs(pv.vLong) > 8;
@@ -1771,7 +1790,7 @@ function frame(now) {
     scene.fog.density = baseFogDensity * (1 + Math.min(2.2, alt / 220));
   }
 
-  player.applyCamera(camera);
+  if (!(needleTop && needleTop.busy)) player.applyCamera(camera);
   placeSun(p.x, p.y, p.z);
   if (prof) lap('camera');
 

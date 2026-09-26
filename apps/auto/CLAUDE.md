@@ -28,6 +28,7 @@ src/peds.js                 humanoid builder + pedestrian/cop crowd
 src/player.js               on-foot/driving state machine + chase camera
 src/controls.js             touch stick/buttons + keyboard fallback
 src/hud.js                  minimap, full map, readouts
+src/needletop.js            the Space Needle's elevator, deck and viewers
 src/hoops.js                basketball courts in the parks + the free-throw game
 src/stunts.js               stunt-jump ramps (geometry + height query) and their scoring
 src/monorail.js             the Seattle Center Monorail: beams, stations, both trains
@@ -4007,6 +4008,50 @@ line 15 ft out, lines painted into one canvas texture. The courts show within
 verify's "basketball" section: every park found a court, you stand on it,
 ENTER starts it, green-zone shots go in and wild ones do not, ten shots end
 and pay, closing gives the city back. `docs/hoops/` has shots.
+
+## Up the Space Needle
+
+**The Needle can be ridden, walked round and looked out from** (v128,
+`src/needletop.js`). ENTER on foot within 7.5 m of the core (the map marks
+it, and it says hello within 55 m) rides the glass elevator on the core face
+between the first two leg pairs (`ELEVATOR_A` in needle.js) to the top in
+15 s (41 s in life), eased at both ends, while the city runs on. The camera
+stands at the car's open front looking out between the legs with a slow
+glance each way, and the car's display counts the feet to 520. The view goes
+dark through the SkyLine level's floor (100 ft), which the car passes
+through. Skip, ENTER or Esc ends it early.
+
+- **The deck is the landmark's own geometry made walkable**: `needleDecks()`
+  (24 flat segments of the ring between the indoor glass, r 13.85, and the
+  barriers' foot, r 16.25, at 158.47 m) go in as landmark decks, which now
+  take a `rot`, and `needleSolids()` adds one box per barrier panel and per
+  indoor glass bay, banded to the deck. Walked into both and round:
+  r 14.2-16.0, never off the floor.
+- **The car is live**: the model no longer bakes a cab on that elevator's
+  rails, and `needletop.js` draws its own (1 draw; open front, rail, header,
+  the display) where the last ride left it.
+- **Six coin-op viewers** stand at the rail, with the elevator door in the
+  indoor level's glass (one merged mesh, `world.mats.flat`, 1 draw). ENTER at
+  one looks through it: two lens fields (an SVG mask, the union of two
+  blurred ellipses), drag or the stick to pan (+-83 deg, slower zoomed in),
+  + / - / the wheel / Q, Z to zoom 1.5x-16x. The eyepiece names a landmark
+  within a sliver of the view's bearing and at an elevation between its foot
+  and 120 m up it, else the neighbourhood the view's ray meets the ground in
+  (`G.placeNameAt`), with the distance and compass bearing. The stands hide
+  while you look (you are looking through one), and the FOV is restored on
+  leaving.
+- **On the deck the far layers come on but the near ring stays detailed**:
+  main.js reports 50 m of altitude to the streamer there (over 45 turns on
+  the far massing and roads; over 100 would drop the near ring to massing),
+  and the on-foot boom is 2.6 m (`player.camShort`), the deck being 2.4 m
+  wide.
+- Neither new mesh casts a shadow: from 158 m it would land far out on the
+  ground, and on a phone anything outside the shadow cache's statics is
+  drawn into the shadow pass every frame.
+
+verify's "Space Needle" section rides up, stands on the deck, walks into the
+barriers, the glass and round, zooms a viewer and rides down to the plaza.
+`docs/needle/` has shots.
 
 ## The Tech Tour
 

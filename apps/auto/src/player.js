@@ -452,7 +452,7 @@ export class Player {
     this.camClamp = null;
     if (this.onFoot) {
       target.set(this.x, this.camFootY != null ? this.camFootY : this.y, this.z);
-      dist = 4.6;
+      dist = this.camShort || 4.6;
       height = 1.55;
       lookH = 1.45;
     } else {
