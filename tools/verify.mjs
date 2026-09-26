@@ -765,9 +765,13 @@ async function main() {
 
     // --- fishing off the piers --------------------------------------------
     //
-    // Every site found its deck's end; ENTER there casts and opens the game;
-    // a reel banks points, a combo buys time, junk costs it, a passing fish
-    // is hooked; time-up pays out; closing it gives the city back.
+    // Every site found its deck's end; ENTER there casts and opens the game.
+    // Funky Fishing's rules: the dinghy rows left and right; a line thrown up
+    // with the crab boat in reach banks (three salmon and an octopus: combo
+    // points and time), out of reach it splashes back and costs nothing; junk
+    // that lands in the boat costs time; five lines of one kind light KOMBO
+    // and refill the clock; a shark bites off the catch; the hook takes a
+    // passing fish; time-up pays out; closing gives the city back.
     const fish = await session.eval(`(async () => {
       const d = window.__dbg, F = d.fishing, P = d.player;
       if (!F) return null;
@@ -780,14 +784,36 @@ async function main() {
       for (let i = 0; i < 300 && F.state === 'cast'; i++) await new Promise((r) => setTimeout(r, 200));
       out.title = F.state;
       F._press('A');
-      F.caught = ['salmon', 'salmon', 'salmon', 'octopus']; F.time = 40; F.hookY = 32; F.reeling = true; F._play(0.05);
-      out.score = F.score; out.time = +F.time.toFixed(1);
-      F.caught = ['can', 'boot']; F.reeling = true; F.hookY = 32; const t0 = F.time; F._play(0.05);
-      out.junk = +(F.time - t0).toFixed(1);
-      F.ents = [{ kind: 'perch', x: 88, y: 60, dir: 1, sp: 0, w: 12, h: 6, ph: 0 }]; F.hookY = 60; F.reeling = false; F._play(0.016);
+      // rowing
+      const bx0 = F.bx; F.keys.add('ArrowRight'); for (let i = 0; i < 20; i++) F._play(0.05); F.keys.delete('ArrowRight');
+      out.rowed = +(F.bx - bx0).toFixed(1);
+      F.ents = [];
+      const line = (items, inReach) => {
+        F.boat = { x: inReach ? F.hookX : (F.hookX > 80 ? 20 : 140), dir: inReach ? 1 : (F.hookX > 80 ? -1 : 1) };
+        F.caught = items.slice(); F.hookY = 32; F.reeling = true; F.ents = [];
+        const s0 = F.score; let el = 0, n = 0;
+        const t0 = F.time;
+        while ((F.reeling || F.throwing || n === 0) && n < 100) { F._play(0.05); el += 0.05; n++; F.ents = []; }
+        return { pts: F.score - s0, dt: +(F.time - t0 + el).toFixed(1) };
+      };
+      F.time = 40;
+      out.bank = line(['salmon', 'salmon', 'salmon', 'octopus'], true);
+      out.miss = line(['salmon', 'salmon'], false);
+      out.junk = line(['can', 'boot'], true);
+      F.kombo = 0; F.time = 30;
+      const k0 = F.time; let kel = 0;
+      for (let i = 0; i < 5; i++) { const r = line(['herring', 'herring'], true); kel += r.dt; }
+      out.kombo = { lit: F.kombo, time: +kel.toFixed(1) };
+      // a shark through the catch
+      F.caught = ['perch', 'perch']; F.reeling = false; F.throwing = null; F.hookY = 70;
+      F.ents = [{ kind: 'dogfish', x: F.hookX - 30, y: 72, dir: 1, sp: 400, w: 23, h: 7, ph: 0 }];
+      for (let i = 0; i < 4; i++) F._play(0.02);
+      out.chomped = F.caught.length === 0;
+      // the hook takes a fish
+      F.ents = [{ kind: 'perch', x: F.hookX - 4, y: 60, dir: 1, sp: 0, w: 12, h: 6, ph: 0 }]; F.hookY = 60; F.reeling = false; F._play(0.016);
       out.hooked = F.caught.join(',');
       F.time = 0.01; F._play(0.05);
-      out.over = F.state; out.paid = d.game.money - money0;
+      out.over = F.state; out.paid = d.game.money - money0; out.expectPay = Math.floor(F.score / 20);
       F.close();
       out.closed = F.state; out.paused = d.game.paused; out.rod = sp.prop.userData.rod.visible;
       return out;
@@ -796,14 +822,18 @@ async function main() {
     if (!fish) { console.error('FAIL: no fishing'); process.exitCode = 1; }
     else {
       console.log(`  spots: ${fish.spots.join(', ')}`);
-      console.log(`  ENTER cast ${fish.took} -> ${fish.title}; 3 salmon + octopus banked ${fish.score} pts, time 40 -> ${fish.time} s; junk ${fish.junk} s; hooked ${fish.hooked}; time-up ${fish.over}, paid $${fish.paid}; closed ${fish.closed}, city unpaused ${!fish.paused}`);
+      console.log(`  ENTER cast ${fish.took} -> ${fish.title}; rowed ${fish.rowed} px; 3 salmon + octopus to the boat ${fish.bank.pts} pts ${fish.bank.dt >= 0 ? '+' : ''}${fish.bank.dt} s; out of reach ${fish.miss.pts} pts; junk ${fish.junk.dt} s; KOMBO ${fish.kombo.lit === 0 ? 'completed' : fish.kombo.lit + ' lit'} (+${fish.kombo.time} s over five lines); shark chomped ${fish.chomped}; hooked ${fish.hooked}; time-up ${fish.over}, paid $${fish.paid}; closed ${fish.closed}, city unpaused ${!fish.paused}`);
       const bad = [];
       if (fish.spots.length < 4) bad.push('a pier has no fishing spot');
       if (!fish.took || fish.title !== 'title') bad.push('ENTER does not start it');
-      if (fish.score !== 1840 || fish.time !== 54) bad.push('scoring or combo time');
-      if (fish.junk !== -10) bad.push('junk penalty');
+      if (fish.rowed < 30) bad.push('the dinghy does not row');
+      if (fish.bank.pts !== 1840 || Math.abs(fish.bank.dt - 14) > 0.2) bad.push('scoring or combo time');
+      if (fish.miss.pts !== 0) bad.push('a throw out of reach still banks');
+      if (Math.abs(fish.junk.dt + 10) > 0.2) bad.push('junk penalty');
+      if (fish.kombo.lit !== 0 || fish.kombo.time < 40) bad.push('KOMBO');
+      if (!fish.chomped) bad.push('the shark');
       if (fish.hooked !== 'perch') bad.push('the hook does not take a fish');
-      if (fish.over !== 'over' || fish.paid !== 92) bad.push('time-up / payout');
+      if (fish.over !== 'over' || fish.paid !== fish.expectPay || fish.paid <= 0) bad.push('time-up / payout');
       if (fish.closed !== 'off' || fish.paused || !fish.rod) bad.push('closing does not give the city back');
       if (bad.length) { console.error(`FAIL: fishing: ${bad.join('; ')}`); process.exitCode = 1; }
     }
