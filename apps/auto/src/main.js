@@ -16,6 +16,7 @@ import { NeedleTop } from './needletop.js';
 import { FishToss } from './fishtoss.js';
 import { WheelRide } from './wheelride.js';
 import { Golf } from './golf.js';
+import { Arcade } from './arcade.js';
 import { BONES } from './peds.js';
 import { cacheGet, cachePut, cacheGuardTripped, cacheGuardSet, cacheClear } from './bootcache.js';
 import { TrafficSystem, collideWithBuildings } from './traffic.js';
@@ -80,6 +81,7 @@ const FISHING_SITES = [
 ];
 let fishing = null, fishSpots = [];
 let hoops = null;   // the basketball courts (hoops.js)
+let arcade = null;   // the Belltown arcade (arcade.js)
 let golf = null;   // three holes at Interbay (golf.js)
 let wheelRide = null;   // the Great Wheel, turning, and its ride (wheelride.js)
 let fishToss = null;   // the flying fish at Pike Place Market (fishtoss.js)
@@ -239,6 +241,12 @@ class Game {
     if (wheelRide && wheelRide.tryInteract(pl)) return true;
     // the Space Needle's elevator, or a viewer on its deck?
     if (needleTop && needleTop.tryInteract(pl)) return true;
+    // the arcade's door on 2nd Ave?
+    if (arcade && !arcade.active && arcade.near(pl)) {
+      this.paused = true;
+      arcade.start();
+      return true;
+    }
     // the first tee at Interbay?
     if (golf && !golf.active && golf.near(pl)) {
       this.paused = true;
@@ -823,6 +831,13 @@ function installShadowFade() {
     onReward: (m) => { game.money += m; setTimeout(() => hud.showToast(`Free throws paid $${m}`), 400); },
     onEnd: () => { game.paused = false; },
   });
+  arcade = new Arcade({
+    scene, city, world, audio,
+    money: () => game.money,
+    charge: (n) => { if (game.money < n) return false; game.money -= n; return true; },
+    onReward: (m) => { game.money += m; },
+    onEnd: () => { game.paused = false; },
+  });
   golf = new Golf({
     scene, city, world, audio, controls,
     onReward: (m) => { game.money += m; setTimeout(() => hud.showToast(`Interbay Golf paid $${m}`), 400); },
@@ -877,6 +892,8 @@ function installShadowFade() {
       hello: 'The Seattle Great Wheel. Step onto the platform and press ENTER to ride' }] : []),
     ...(needleTop ? [{ x: needleTop.X, z: needleTop.Z, kind: 'needle', name: 'Space Needle elevator', near: false,
       hello: 'The Space Needle. Walk to the elevator in the middle and press ENTER to ride to the top' }] : []),
+    { x: arcade.spot.x, z: arcade.spot.z, kind: 'arcade', name: 'Arcade', near: false,
+      hello: 'An arcade on 2nd Ave — six classic cabinets. Press ENTER at the door' },
     { x: golf.holes[0].tee.x, z: golf.holes[0].tee.z, kind: 'golf', name: 'Interbay Golf', near: false,
       hello: 'Interbay Golf — three par-3s. Press ENTER on the first tee to play' },
     { x: fishToss.spot.x, z: fishToss.spot.z, kind: 'fishtoss', name: 'Flying fish', near: false,
@@ -978,7 +995,7 @@ function installShadowFade() {
 
   await step(1, 'Welcome to Seattle');
   window.__refreshJobs = refreshJobs;
-  window.__dbg = { game, city, player, world, traffic, peds, acts, stunts, monorail, lmRoot, shadowCache, fishing, fishSpots, hoops, needleTop, fishToss, wheelRide, golf, scene, camera, renderer, G, fx, hud, controls, audio, pickups, THREE, postfx, applyQuality, sun, placeSun, sceneStats, perfSys, cityStats, WET_FLOOR, animateWalk, collideWithBuildings, TYPES: VEHICLE_TYPES };
+  window.__dbg = { game, city, player, world, traffic, peds, acts, stunts, monorail, lmRoot, shadowCache, fishing, fishSpots, hoops, needleTop, fishToss, wheelRide, golf, arcade, scene, camera, renderer, G, fx, hud, controls, audio, pickups, THREE, postfx, applyQuality, sun, placeSun, sceneStats, perfSys, cityStats, WET_FLOOR, animateWalk, collideWithBuildings, TYPES: VEHICLE_TYPES };
   wireUi();
   game.newTarget();
   // Start on `high` everywhere.
@@ -1719,6 +1736,7 @@ function frame(now) {
   if (fishing && fishing.active) fishing.update(dt);
   if (hoops && hoops.active) hoops.update(dt);
   if (golf && golf.active) golf.update(dt);
+  if (arcade && arcade.active) arcade.update(dt);
   if (fishToss) { if (fishToss.active) fishToss.update(dt); fishToss.updateWorld(dt, camera.position.x, camera.position.z); }
   if (hoops) hoops.updateVisibility(camera.position.x, camera.position.z);
   if (game.paused || game.mapOpen) {
@@ -1732,7 +1750,8 @@ function frame(now) {
     // map is open: harnesses pause the game without the menu to pose shots,
     // and those still draw every frame.
     // (the fishing game's screen covers the city too, once it is up)
-    const idle = game.mapOpen || pauseMenuEl.classList.contains('show') || (fishing && fishing.el.classList.contains('show'));
+    const idle = game.mapOpen || pauseMenuEl.classList.contains('show') || (fishing && fishing.el.classList.contains('show'))
+      || (arcade && arcade.active);
     if (!idle || idleDrawn < 2 || idleRedraw) { draw(now); idleDrawn++; idleRedraw = false; }
     return;
   }
