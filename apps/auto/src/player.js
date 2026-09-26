@@ -147,7 +147,9 @@ export class Player {
     const tap = controls.takeTap();
     if (tap === 'enter' && this.enterCd <= 0) {
       this.enterCd = 0.45;
-      if (this.onFoot) {
+      if (this.onFoot && this.game.tryInteract && this.game.tryInteract(this)) {
+        // something on foot took the press (a fishing rod on a pier)
+      } else if (this.onFoot) {
         // A monorail at the platform beside you (or at Westlake's street
         // door) before any car: see monorail.js boardable.
         const m = this.monorail && this.monorail.boardable(this.x, this.y, this.z);

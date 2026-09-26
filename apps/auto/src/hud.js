@@ -13,7 +13,7 @@ const SCALE = MAP_PX / (G.MAP_HALF * 2);
  */
 function placeIcon(ctx, kind, x, y, r) {
   ctx.fillStyle = kind === 'dock' ? '#2f86d6' : kind === 'jet' ? '#c8352a' : kind === 'monorail' ? '#0b8a8f'
-    : kind === 'balloon' ? '#d2432f' : '#e0782e';
+    : kind === 'balloon' ? '#d2432f' : kind === 'fish' ? '#1f9aa8' : '#e0782e';
   ctx.strokeStyle = '#ffffff';
   ctx.lineWidth = r * 0.22;
   ctx.beginPath();
@@ -44,6 +44,16 @@ function placeIcon(ctx, kind, x, y, r) {
     ctx.closePath();
     ctx.fill();
     ctx.fillRect(x - r * 0.62, y + r * 0.32, r * 1.24, r * 0.12);
+  } else if (kind === 'fish') {
+    // a fish, nose left
+    ctx.fillStyle = '#ffffff';
+    ctx.beginPath();
+    ctx.ellipse(x - r * 0.08, y, r * 0.38, r * 0.22, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.beginPath();
+    ctx.moveTo(x + r * 0.22, y); ctx.lineTo(x + r * 0.55, y - r * 0.24); ctx.lineTo(x + r * 0.55, y + r * 0.24);
+    ctx.closePath();
+    ctx.fill();
   } else if (kind === 'balloon') {
     // an envelope over a basket
     ctx.fillStyle = '#ffffff';
@@ -465,7 +475,7 @@ export class Hud {
       const [qx, qz] = toC(pl.x, pl.z);
       placeIcon(ctx, pl.kind, qx, qz, size * (pl.kind === 'dock' ? 0.011 : 0.008));
       // named, quads too: an unlabelled orange dot was a quad nobody found
-      if (pl.kind === 'dock' || pl.kind === 'atv' || pl.kind === 'monorail' || pl.kind === 'balloon') {
+      if (pl.kind === 'dock' || pl.kind === 'atv' || pl.kind === 'monorail' || pl.kind === 'balloon' || pl.kind === 'fish') {
         ctx.fillStyle = 'rgba(255,255,255,0.85)';
         ctx.fillText(pl.name, qx, qz - size * 0.016);
       }

@@ -763,6 +763,51 @@ async function main() {
       if (bad.length) { console.error(`FAIL: balloon: ${bad.join('; ')}`); process.exitCode = 1; }
     }
 
+    // --- fishing off the piers --------------------------------------------
+    //
+    // Every site found its deck's end; ENTER there casts and opens the game;
+    // a reel banks points, a combo buys time, junk costs it, a passing fish
+    // is hooked; time-up pays out; closing it gives the city back.
+    const fish = await session.eval(`(async () => {
+      const d = window.__dbg, F = d.fishing, P = d.player;
+      if (!F) return null;
+      if (P.vehicle) P.exitVehicle(true);
+      const out = { spots: d.fishSpots.map((q) => q.name) };
+      const sp = d.fishSpots[0];
+      P.x = sp.rx; P.z = sp.rz; P.y = sp.y;
+      const money0 = d.game.money;
+      out.took = d.game.tryInteract(P);
+      for (let i = 0; i < 300 && F.state === 'cast'; i++) await new Promise((r) => setTimeout(r, 200));
+      out.title = F.state;
+      F._press('A');
+      F.caught = ['salmon', 'salmon', 'salmon', 'octopus']; F.time = 40; F.hookY = 32; F.reeling = true; F._play(0.05);
+      out.score = F.score; out.time = +F.time.toFixed(1);
+      F.caught = ['can', 'boot']; F.reeling = true; F.hookY = 32; const t0 = F.time; F._play(0.05);
+      out.junk = +(F.time - t0).toFixed(1);
+      F.ents = [{ kind: 'perch', x: 88, y: 60, dir: 1, sp: 0, w: 12, h: 6, ph: 0 }]; F.hookY = 60; F.reeling = false; F._play(0.016);
+      out.hooked = F.caught.join(',');
+      F.time = 0.01; F._play(0.05);
+      out.over = F.state; out.paid = d.game.money - money0;
+      F.close();
+      out.closed = F.state; out.paused = d.game.paused; out.rod = sp.prop.userData.rod.visible;
+      return out;
+    })()`, true);
+    console.log('\n--- fishing ------------------------------------------------');
+    if (!fish) { console.error('FAIL: no fishing'); process.exitCode = 1; }
+    else {
+      console.log(`  spots: ${fish.spots.join(', ')}`);
+      console.log(`  ENTER cast ${fish.took} -> ${fish.title}; 3 salmon + octopus banked ${fish.score} pts, time 40 -> ${fish.time} s; junk ${fish.junk} s; hooked ${fish.hooked}; time-up ${fish.over}, paid $${fish.paid}; closed ${fish.closed}, city unpaused ${!fish.paused}`);
+      const bad = [];
+      if (fish.spots.length < 4) bad.push('a pier has no fishing spot');
+      if (!fish.took || fish.title !== 'title') bad.push('ENTER does not start it');
+      if (fish.score !== 1840 || fish.time !== 54) bad.push('scoring or combo time');
+      if (fish.junk !== -10) bad.push('junk penalty');
+      if (fish.hooked !== 'perch') bad.push('the hook does not take a fish');
+      if (fish.over !== 'over' || fish.paid !== 92) bad.push('time-up / payout');
+      if (fish.closed !== 'off' || fish.paused || !fish.rod) bad.push('closing does not give the city back');
+      if (bad.length) { console.error(`FAIL: fishing: ${bad.join('; ')}`); process.exitCode = 1; }
+    }
+
     // --- no lake in the boat's cockpit ------------------------------------
     //
     // The runabout's cockpit floor is 12 cm over its waterline and the lake is

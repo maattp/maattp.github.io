@@ -9,7 +9,9 @@ import { World, WET_FLOOR } from './world.js';
 import { buildLandmarks, updateLandmarkRange, SEAPLANE_DOCK, airportSurface } from './landmarks.js';
 import { ShadowCache } from './shadowcache.js';
 import { Monorail } from './monorail.js';
-import { freezeStatic } from './build.js';
+import { freezeStatic, Builder } from './build.js';
+import { Fishing } from './fishing.js';
+import { BONES } from './peds.js';
 import { cacheGet, cachePut, cacheGuardTripped, cacheGuardSet, cacheClear } from './bootcache.js';
 import { TrafficSystem, collideWithBuildings } from './traffic.js';
 import { TYPES as VEHICLE_TYPES, setWaterQuery, setVehicleCache, vehicleSnapshot, vehicleAssets, paintMaterial } from './vehicles.js';
@@ -61,6 +63,17 @@ const ATV_SPOTS = [
 // best views of the city. It stands inflated, waiting; the launch field is
 // kept clear of the park's trees. See updateBalloon in vehicles.js.
 const BALLOON_SITE = { x: 2089, z: 4640, heading: Math.PI };
+// FISHING: a rod on a stand at the far end of a few real piers and floats.
+// Each site is snapped at boot to the outermost walkable point of the deck
+// nearest it, facing the open water (fishingSpots). ENTER there casts, and a
+// retro fishing game opens (fishing.js).
+const FISHING_SITES = [
+  { name: 'Pier 66', x: -788, z: 92 },
+  { name: 'Pier 59', x: -415, z: 398 },
+  { name: 'Elliott Bay Marina', x: -4263, z: -2141 },
+  { name: 'Leschi Marina', x: 3942, z: 1205 },
+];
+let fishing = null, fishSpots = [];
 const HOSPITAL = G.RESPAWN; // kept clear of buildings by citygen, via G.KEEP_CLEAR
 
 class Game {
@@ -197,6 +210,22 @@ class Game {
 
   // a wheelie held over 2 s (vehicles.js), announced the way GTA does
   onWheelie(t) { hud.showToast(`Wheelie ${t.toFixed(1)} s`); }
+
+  /** ENTER on foot, before the cars: a fishing rod within reach? */
+  tryInteract(pl) {
+    if (!fishing || fishing.active) return false;
+    for (const sp of fishSpots) {
+      if (Math.hypot(pl.x - sp.rx, pl.z - sp.rz) < 3.2 && Math.abs(pl.y - sp.y) < 2) {
+        this.paused = true;
+        const b = player.h.bones;
+        fishing.start(sp, { scene, camera, player, audio,
+          bones: { handR: b[BONES.handR], shoulderR: b[BONES.shoulderR], elbowR: b[BONES.elbowR], shoulderL: b[BONES.shoulderL], elbowL: b[BONES.elbowL] } });
+        if (sp.prop) sp.prop.userData.rod.visible = false;
+        return true;
+      }
+    }
+    return false;
+  }
 
   onExitVehicle(v) {
     controls.setMode('foot');
@@ -739,6 +768,15 @@ function installShadowFade() {
     v.vLong = 0;
   }
   spawnBalloon();
+  fishSpots = fishingSpots();
+  fishing = new Fishing({
+    audio,
+    onReward: (m) => { game.money += m; setTimeout(() => hud.showToast(`Fishing paid $${m}`), 400); },
+    onEnd: () => {
+      game.paused = false;
+      for (const sp of fishSpots) if (sp.prop) sp.prop.userData.rod.visible = true;
+    },
+  });
   // A CAR WORTH TAKING at the kerb nearest the spawn. Kerbside cars come from
   // a fixed hash of street slots, so the first car every player walked up to
   // was the same pickup. That slot is reserved and a sports coupe parked in it
@@ -771,6 +809,8 @@ function installShadowFade() {
         hello: 'A fighter jet — full throttle, pull back past 220 km/h. Hold the stick back to loop' }];
     })(),
     ...ATV_SPOTS.map(([x, z]) => ({ x, z, kind: 'atv', name: 'Quad bike', near: false, hello: 'A quad bike — made for the grass' })),
+    ...fishSpots.map((sp) => ({ x: sp.x, z: sp.z, kind: 'fish', name: `Fishing — ${sp.name}`, near: false,
+      hello: 'A fishing rod on the pier. Press ENTER to cast' })),
     { x: BALLOON_SITE.x, z: BALLOON_SITE.z, kind: 'balloon', name: 'Hot air balloon', near: false,
       hello: 'A hot air balloon, ready to fly. Climb into the basket' },
     // the Monorail's two stations: Westlake's street door, Seattle Center's ramp
@@ -862,7 +902,7 @@ function installShadowFade() {
 
   await step(1, 'Welcome to Seattle');
   window.__refreshJobs = refreshJobs;
-  window.__dbg = { game, city, player, world, traffic, peds, acts, stunts, monorail, lmRoot, shadowCache, scene, camera, renderer, G, fx, hud, controls, audio, pickups, THREE, postfx, applyQuality, sun, placeSun, sceneStats, perfSys, cityStats, WET_FLOOR, animateWalk, collideWithBuildings, TYPES: VEHICLE_TYPES };
+  window.__dbg = { game, city, player, world, traffic, peds, acts, stunts, monorail, lmRoot, shadowCache, fishing, fishSpots, scene, camera, renderer, G, fx, hud, controls, audio, pickups, THREE, postfx, applyQuality, sun, placeSun, sceneStats, perfSys, cityStats, WET_FLOOR, animateWalk, collideWithBuildings, TYPES: VEHICLE_TYPES };
   wireUi();
   game.newTarget();
   // Start on `high` everywhere.
@@ -1455,6 +1495,65 @@ const perfSys = { on: false, ms: {}, frames: 0 };
 let perfT = 0;
 let helloCd = 0;   // seconds until the next place may say hello
 let balloonCheck = 5;
+
+/**
+ * Each fishing site at the outermost walkable point of its deck: the platform
+ * point nearest the site that has open water a few metres beyond it, the one
+ * furthest from the shore. The rod stands there, facing the water.
+ */
+function fishingSpots() {
+  const out = [];
+  for (const site of FISHING_SITES) {
+    let best = null;
+    for (let dz = -70; dz <= 70; dz += 2) for (let dx = -70; dx <= 70; dx += 2) {
+      const x = site.x + dx, z = site.z + dz;
+      const y = cityRef.platformAt(x, z);
+      if (y == null) continue;
+      // which way is open water, right past the edge?
+      for (let k = 0; k < 16; k++) {
+        const a = (k / 16) * Math.PI * 2, ox = Math.sin(a), oz = Math.cos(a);
+        const ex = x + ox * 2.2, ez = z + oz * 2.2;
+        if (cityRef.platformAt(ex, ez) != null || !G.isWater(ex, ez) || !G.isWater(x + ox * 14, z + oz * 14)) continue;
+        const score = G.shoreDist(x, z) - Math.hypot(dx, dz) * 0.2;
+        if (!best || score > best.score) best = { x, z, y, heading: a, score };
+      }
+    }
+    if (!best) { blog(`fishing: no deck edge at ${site.name}`); continue; }
+    const wl = world.waterLevelAt(best.x, best.z);
+    // the player stands a metre in from the edge; the rod stand beside them
+    const fx = Math.sin(best.heading), fz = Math.cos(best.heading), rx = fz, rz = -fx;
+    const sp = { name: site.name, x: best.x - fx * 0.9, z: best.z - fz * 0.9, y: best.y, heading: best.heading,
+      water: wl !== null ? wl : 0, rx: best.x - fx * 0.5 + rx * 1.1, rz: best.z - fz * 0.5 + rz * 1.1 };
+    sp.prop = fishingProp(sp);
+    out.push(sp);
+  }
+  return out;
+}
+
+/** A rod in a stand, a bucket and a tackle box, on the deck at a spot. */
+function fishingProp(sp) {
+  const b = new Builder(false);
+  const fx = Math.sin(sp.heading), fz = Math.cos(sp.heading), rx = fz, rz = -fx;
+  const X = sp.rx, Z = sp.rz, Y = sp.y;
+  b.box(X, Y, Z, 0.12, 0.9, 0.12, sp.heading, [0.35, 0.25, 0.16]);                         // stand post
+  b.prism(X + rx * 0.7, Y, Z + rz * 0.7, 0.16, 0.34, 10, [0.85, 0.85, 0.82]);               // bucket
+  b.prism(X + rx * 0.7, Y + 0.32, Z + rz * 0.7, 0.17, 0.03, 10, [0.62, 0.62, 0.6]);
+  b.box(X - rx * 0.55, Y, Z - rz * 0.55, 0.42, 0.2, 0.24, sp.heading, [0.2, 0.42, 0.24]);   // tackle box
+  const g = new THREE.Group();
+  const m = new THREE.Mesh(b.build(), world.mats.flat);
+  m.castShadow = true;
+  g.add(m);
+  // the rod itself, leaning out over the water from the stand
+  const rod = new THREE.Mesh(new THREE.CylinderGeometry(0.008, 0.016, 2.2, 6), new THREE.MeshStandardMaterial({ color: 0x1c2430, roughness: 0.5, metalness: 0.3 }));
+  rod.position.set(X + fx * 0.6, Y + 1.5, Z + fz * 0.6);
+  rod.rotation.order = 'YXZ';
+  rod.rotation.y = sp.heading;
+  rod.rotation.x = 0.75;
+  g.add(rod);
+  g.userData.rod = rod;
+  scene.add(g);
+  return g;
+}
 /** The balloon, inflated and waiting on its launch field. */
 function spawnBalloon() {
   const v = traffic.spawnAt(BALLOON_SITE.x, BALLOON_SITE.z, BALLOON_SITE.heading, 'balloon', 0xffffff, 'apron');
@@ -1491,6 +1590,7 @@ function frame(now) {
   controls.poll(dt);
   handlePadUi(dt);
 
+  if (fishing && fishing.active) fishing.update(dt);
   if (game.paused || game.mapOpen) {
     controls.takeLook();
     // NOTHING MOVES BEHIND THE MENU OR THE MAP, so stop drawing it. The whole
@@ -1501,7 +1601,8 @@ function frame(now) {
     // (idleRedraw: a resize, a setting). Only when the menu is SHOWING or the
     // map is open: harnesses pause the game without the menu to pose shots,
     // and those still draw every frame.
-    const idle = game.mapOpen || pauseMenuEl.classList.contains('show');
+    // (the fishing game's screen covers the city too, once it is up)
+    const idle = game.mapOpen || pauseMenuEl.classList.contains('show') || (fishing && fishing.el.classList.contains('show'));
     if (!idle || idleDrawn < 2 || idleRedraw) { draw(now); idleDrawn++; idleRedraw = false; }
     return;
   }
