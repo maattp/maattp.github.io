@@ -3940,6 +3940,37 @@ holds within metres on short burns, drifts on the wind, lands softly on the
 vent, and keeps its envelope off the tallest downtown tower when shoved into
 it. `docs/balloon/` has shots.
 
+## Fishing off the piers (an Easter egg)
+
+**A rod stands at the far end of four real piers and floats** -- Pier 66,
+the Aquarium's Pier 59, Elliott Bay Marina, Leschi Marina (`FISHING_SITES` in
+main.js, v126). Each is snapped at boot to the outermost walkable point of the
+deck nearest it with open water past its edge (`fishingSpots`: a 2 m grid of
+`platformAt` points, scored by `shoreDist`); a rod on a stand, a bucket and a
+tackle box stand there (`fishingProp`), and the map marks it. ENTER on foot
+goes to `game.tryInteract` before the cars.
+
+- **The cast is in the city** (`Fishing.start`, `_castStep`, the game paused):
+  the character turns to the water, a rod in the right hand bone, arm back
+  and a snap forward, the line flying to a splash ring 14 m out, the camera
+  beside and behind.
+- **Then a Game Boy Color fishing game** (`src/fishing.js`), after Funky's
+  Fishing in Donkey Kong Country (GBC, 2000): 160 x 144 in a GBC shell,
+  four-colour sprites drawn from strings, a 3x5 pixel font, a chiptune loop
+  and blips on the game's AudioContext. Move the hook up and down (drag, W/S,
+  arrows); the line holds four; A reels them in and banks them. Herring 50,
+  perch 100, rockfish 150, salmon 300, dogfish 400, Dungeness crab on the
+  bottom 250, a Giant Pacific Octopus buys 6 s. Two or more of one kind on a
+  line buys time (4 s per extra) and three or more multiplies the points;
+  junk (can, bottle, boot, tyre, from level 2) costs 5 s each. Levels by score
+  multiply points and speed things up. Time-up pays score / 20 in dollars;
+  best kept in localStorage `auto-fish-best`.
+- While its screen is up the city is not drawn (the menu idle, see "Heat").
+
+verify's "fishing" section: every site found its deck, ENTER casts and opens
+it, banking / combo time / junk / hooking / payout all to the number, and
+closing it unpauses the city. `docs/fishing/` has shots.
+
 ## The Tech Tour
 
 Twelve badges at the region's tech offices (`activities.js` `TECH`, v114):
