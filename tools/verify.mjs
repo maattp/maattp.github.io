@@ -1312,6 +1312,109 @@ async function main() {
       if (bad.length) { console.error(`FAIL: pinball: ${bad.join('; ')}`); process.exitCode = 1; }
     }
 
+    // --- hockey night at Climate Pledge Arena ---------------------------------------
+    //
+    // The marquee stands outside the south atrium; ENTER there drops straight
+    // into a game (no menus). The pad works end to end: the stick skates your
+    // man, a draw taken on the drop goes to your defenceman, a tap of SHOOT
+    // with the puck is a shot, SHOOT while a pass is on its way is a one-timer,
+    // SHOOT into a carrier at speed flattens him. Seeded AI-vs-AI games run to
+    // a final with nobody leaving the rink, and the final pays by the result.
+    const hk = await session.eval(`(() => {
+      const d = window.__dbg, H = d.hockey, P = d.player;
+      if (!H) return null;
+      if (P.vehicle) P.exitVehicle(true);
+      const a = d.lmRoot.userData.arena;
+      const out = { door: +Math.hypot(H.door.x - (a.x + 3.7), H.door.z - (a.z + 95.5)).toFixed(1), marquee: !!H.marquee.parent };
+      P.x = H.door.x; P.z = H.door.z; P.y = H.door.y;
+      out.took = d.game.tryInteract(P) && H.mode;
+      H.frozen = false;
+      for (let i = 0; i < 160 && H.mode === 'intro'; i++) H.update(1 / 60);
+      out.mode = H.mode;
+      const g = H.game;
+      const run = (n, inp) => { for (let i = 0; i < n; i++) { g.step(1 / 60, typeof inp === 'function' ? inp(i) : inp); g.takeEvents(); } };
+      const evs = (n, inp) => { const e = []; for (let i = 0; i < n; i++) { g.step(1 / 60, typeof inp === 'function' ? inp(i) : inp); e.push(...g.takeEvents()); } return e; };
+      // the draw: wait for the drop, then SHOOT
+      H.frozen = true;
+      g._faceoff(0, 0, '');
+      let i = 0;
+      while (g.state === 'faceoff' && g.stateT < g.fo.drop + 0.03 && i++ < 300) run(1, {});
+      g.fo.aiReact = 0.5;
+      run(1, { shoot: true }); run(40, {});
+      out.draw = g.puck.lastTeam === 0;
+      // the stick: skate the controlled man to the right
+      const c = g.ctl, x0 = c.x;
+      run(60, { x: 1, y: 0 });
+      out.skated = +(c.x - x0).toFixed(1);
+      // a shot: the puck on his stick 25 ft out, SHOOT tapped
+      const place = (p, x, y) => { p.x = x; p.y = y; p.vx = 0; p.vy = 0; p.down = 0; };
+      const gx = -g.netX(0);
+      g.state = 'play';
+      place(c, gx - Math.sign(gx) * 25, 4); g._take(c); g.ctl = c;
+      const sog = g.shots[0];
+      let e = evs(3, { shoot: true }); e = e.concat(evs(30, {}));
+      out.shot = e.includes('wrist') && g.shots[0] === sog + 1;
+      // a one-timer: a pass to him, SHOOT pressed on its way
+      g.state = 'play';
+      const mate = g.players[1];
+      place(mate, gx - Math.sign(gx) * 30, -20); place(c, gx - Math.sign(gx) * 22, 8);
+      for (const q of g.players) if (q.team === 1 && !q.goalie) place(q, -gx * 0.5, 40 - q.i * 4);
+      g._take(mate); g._pass(mate, 0, 0, c);
+      out.ctlIsReceiver = g.ctl === c;
+      e = evs(1, { shoot: true }).concat(evs(60, {}));
+      out.oneTimer = e.includes('onetimer');
+      // a check: an opposing carrier, ours skating hard into him
+      g.state = 'play';
+      const opp = g.players[6];
+      place(opp, 0, 0); g._take(opp);
+      g.ctl = c; place(c, -9, 0); c.vx = 24; c.face = 0; g._prevShoot = false;
+      e = evs(1, { x: 1, y: 0, shoot: true }).concat(evs(20, { x: 1, y: 0 }));
+      out.check = e.includes('check') && opp.down > 0;
+      // seeded AI-vs-AI games to the final
+      let seed = 9; const rng = () => { seed = (seed * 16807) % 2147483647; return (seed - 1) / 2147483646; };
+      const G2 = g.constructor, games = [];
+      let out2 = 0;
+      for (let k = 0; k < 3; k++) {
+        const h = new G2({ rng, humanTeam: null });
+        let n = 0;
+        while (!h.over && n++ < 60 * 60 * 20) {
+          h.step(1 / 60); h.takeEvents();
+          for (const p of [h.puck, ...h.players]) if (!(Math.abs(p.x) <= 101 && Math.abs(p.y) <= 43.5)) out2++;
+        }
+        games.push({ over: h.over, score: h.score.join('-'), shots: h.shots.join('-'), min: +(n / 3600).toFixed(1) });
+      }
+      out.games = games; out.outOfRink = out2;
+      // the final pays: a 3-1 win is $250 + 3 x $25
+      H.frozen = false;
+      g.score = [3, 1]; g._final();
+      const m0 = d.game.money;
+      H.update(1 / 60);
+      out.paid = d.game.money - m0; out.finalMode = H.mode;
+      H.close();
+      out.closed = H.mode; out.paused = d.game.paused;
+      return out;
+    })()`, true);
+    console.log('\n--- hockey ------------------------------------------------');
+    if (!hk) { console.error('FAIL: no hockey'); process.exitCode = 1; }
+    else {
+      console.log(`  marquee ${hk.marquee}, door ${hk.door} m from the atrium; ENTER -> ${hk.took} -> ${hk.mode}; draw won ${hk.draw}; skated ${hk.skated} ft in 1 s; shot ${hk.shot}; one-timer ${hk.oneTimer} (control to receiver ${hk.ctlIsReceiver}); check ${hk.check}`);
+      console.log(`  AI games ${hk.games.map((x) => `${x.score} (shots ${x.shots}, ${x.min} min${x.over ? '' : ', NOT OVER'})`).join(', ')}; out of rink ${hk.outOfRink}; a 3-1 win paid $${hk.paid}; closed ${hk.closed}, city unpaused ${!hk.paused}`);
+      const bad = [];
+      if (!hk.marquee || hk.door > 3) bad.push('the marquee is not at the arena');
+      if (hk.took !== 'intro' || hk.mode !== 'play') bad.push('ENTER does not drop into a game');
+      if (!hk.draw) bad.push('a draw taken on the drop is not won');
+      if (!(hk.skated > 8)) bad.push('the stick does not skate');
+      if (!hk.shot) bad.push('SHOOT does not shoot');
+      if (!hk.oneTimer || !hk.ctlIsReceiver) bad.push('no one-timer');
+      if (!hk.check) bad.push('a check does not flatten the carrier');
+      if (hk.games.some((x) => !x.over)) bad.push('an AI game did not end');
+      if (hk.games.every((x) => x.score === '0-0')) bad.push('nobody scores');
+      if (hk.outOfRink) bad.push('something left the rink');
+      if (hk.paid !== 325 || hk.finalMode !== 'final') bad.push('the final does not pay');
+      if (hk.closed !== 'off' || hk.paused) bad.push('leaving does not give the city back');
+      if (bad.length) { console.error(`FAIL: hockey: ${bad.join('; ')}`); process.exitCode = 1; }
+    }
+
     // --- the articulated bus ---------------------------------------------------
     //
     // An artic spawned and driven: its rear section follows on the hitch
