@@ -5558,16 +5558,25 @@ function buildType(spec) {
   const build = HAND_BUILT[spec.hand];
   if (!build) throw new Error(`vehicle type has no builder: hand '${spec.hand}'`);
   const wheels = build(spec, paint, trim, matte);
-  // Not under a hull: a dark blob on the water reads as a hole in it.
-  if (!spec.plane && !spec.boat) contactShadow(trim, spec);
-
   const clone = (base) => {
     const b = new Builder(false);
     b.pos = base.pos.slice(); b.nor = base.nor.slice();
     b.col = base.col.slice(); b.idx = base.idx.slice();
     return b;
   };
+  // Not under a hull: a dark blob on the water reads as a hole in it.
+  // Baked into the traffic trim (no draw), but the PLAYER's detailed car has
+  // it as its own mesh on the ground: in the trim it tilted with the body, so
+  // a wheelie lifted the patch off the road with the nose, and a jump carried
+  // it up into the air under the car.
+  const shadow = new Builder(false);
+  if (!spec.plane && !spec.boat) contactShadow(shadow, spec);
   const trimW = clone(trim), matteW = clone(matte);
+  {
+    const base = trimW.pos.length / 3;
+    trimW.pos.push(...shadow.pos); trimW.nor.push(...shadow.nor); trimW.col.push(...shadow.col);
+    for (const i of shadow.idx) trimW.idx.push(i + base);
+  }
   const spins = matte.spins.map(({ b, at, axis }) => {
     const base = matteW.pos.length / 3;
     for (let i = 0; i < b.pos.length; i += 3) matteW.pos.push(b.pos[i] + at[0], b.pos[i + 1] + at[1], b.pos[i + 2] + at[2]);
@@ -5617,6 +5626,7 @@ function buildType(spec) {
     trimGeo: tagGlass(trim.build()),
     matteGeo: crewed(matte).build(),
     trimGeoW: tagGlass(trimW.build()),
+    shadowGeo: shadow.idx.length ? tagGlass(shadow.build()) : null,
     matteGeoW: matte.crew.empty ? matteGeoWE : crewed(matteW).build(),
     matteGeoWE,
     wheelGeos,
@@ -5633,7 +5643,7 @@ function buildType(spec) {
 // launch of the same build. Geometry only: materials, specs and wheels' meshes
 // are made as usual. `matteGeoW` is the same object as `matteGeoWE` for a type
 // with no crew, and stays so.
-const GEO_KEYS = ['paintGeo', 'trimGeo', 'matteGeo', 'trimGeoW', 'matteGeoW', 'matteGeoWE'];
+const GEO_KEYS = ['paintGeo', 'trimGeo', 'matteGeo', 'trimGeoW', 'matteGeoW', 'matteGeoWE', 'shadowGeo'];
 const packGeo = (g) => ({ a: Object.entries(g.attributes).map(([k, at]) => [k, at.array, at.itemSize]), i: g.index.array });
 function unpackGeo(p) {
   const g = new THREE.BufferGeometry();
@@ -5650,7 +5660,7 @@ export function vehicleSnapshot() {
     const r = { wheels: t.wheels, wheelR: t.wheelR, mwShared: t.matteGeoW === t.matteGeoWE,
       wheelGeos: t.wheelGeos.map((w) => ({ trim: packGeo(w.trim), matte: packGeo(w.matte) })),
       spins: t.spins.map((s) => ({ geo: packGeo(s.geo), at: s.at, axis: s.axis })) };
-    for (const g of GEO_KEYS) if (!(g === 'matteGeoW' && r.mwShared)) r[g] = packGeo(t[g]);
+    for (const g of GEO_KEYS) if (t[g] && !(g === 'matteGeoW' && r.mwShared)) r[g] = packGeo(t[g]);
     types[k] = r;
   }
   const far = {};
@@ -5867,6 +5877,7 @@ export class Vehicle {
     this.rider = this.spec.moto || this.spec.atv || this.spec.jetski ? makeRider(this.spec.hand) : null;
     if (this.rider) this.tilt.add(this.rider.group);
     this.wheelMeshes = [];
+    this.shadowTilt = null;   // the player's contact shadow (setDetailed)
 
     this.x = 0; this.y = 0; this.z = 0;
     this.heading = 0;
@@ -5959,6 +5970,16 @@ export class Vehicle {
         this.tilt.add(g);
         this.wheelMeshes.push(g);
       }
+      // the contact shadow, on the ground: follows the road's slope (pitch,
+      // roll) but not a wheelie, and goes when the wheels leave the ground
+      if (this.assets.shadowGeo) {
+        this.shadowTilt = new THREE.Group();
+        const sm = new THREE.Mesh(this.assets.shadowGeo, A.trimMat);
+        sm.renderOrder = -1;   // under the car's own glass in the transparent pass
+        sm.position.y = -this.pivotY;
+        this.shadowTilt.add(sm);
+        this.group.add(this.shadowTilt);
+      }
       for (const s of this.assets.spins) {
         const m = new THREE.Mesh(s.geo, A.matteMat);
         m.castShadow = true;
@@ -5972,6 +5993,7 @@ export class Vehicle {
       this.wheelMeshes.length = 0;
       for (const m of this.spinMeshes) this.tilt.remove(m);
       this.spinMeshes.length = 0;
+      if (this.shadowTilt) { this.group.remove(this.shadowTilt); this.shadowTilt = null; }
     }
   }
 
@@ -6942,6 +6964,13 @@ export class Vehicle {
     this.group.position.set(this.x, this.y + this.yVis + wl, this.z);
     this.group.rotation.y = this.heading;
     this.tilt.rotation.x = this.pitch - this.wheelie;
+    if (this.shadowTilt) {
+      const st = this.shadowTilt;
+      st.position.y = this.tilt.position.y - wl;
+      st.rotation.x = this.pitch;
+      st.rotation.z = this.roll;
+      st.visible = this.onGround && !this.stunt;
+    }
     this.tilt.rotation.z = this.roll;
     if (this.detailedWheels) {
       for (const m of this.wheelMeshes) {

@@ -3990,7 +3990,12 @@ On the ground, stick back with the gas on lifts the front about the rear axle
 (`v.wheelie`, to 0.42 rad on a quad, 0.55 on a bike, in proportion to the
 pull; `sync` raises the centre so the back wheel stays down); steering is
 weaker with the front wheel up, and a wheelie over 2 s is announced
-(`game.onWheelie`). The stick's other axis already reached `v.update` as
+(`game.onWheelie`). **The player's contact shadow is its own mesh** now
+(`shadowGeo`, `shadowTilt`, made in `setDetailed`): baked into the trim, it
+tilted with the body, so a wheelie lifted the dark patch off the road with the
+nose and a jump carried it into the air. It follows the road's pitch and roll,
+not the wheelie, and hides off the ground. +1 draw for the player's vehicle
+only; traffic keeps it baked into `trimGeoW`. The stick's other axis already reached `v.update` as
 `pitch` for the planes; cars ignore it. `tools/stuntjumps.mjs --type atv`
 drives the jumps on any vehicle type.
 
