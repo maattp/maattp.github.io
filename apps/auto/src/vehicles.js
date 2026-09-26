@@ -5395,7 +5395,7 @@ const _ikA = new THREE.Vector3(), _ikB = new THREE.Vector3(), _ikC = new THREE.V
  * the elbow, the forearm at the target. Bone directions are their children's
  * bind offsets, so it works on any humanoid from peds.js.
  */
-function solveArm(sh, el, hand, target, frame, side) {
+export function solveArm(sh, el, hand, target, frame, side) {
   const S = sh.getWorldPosition(new THREE.Vector3());
   const E0 = el.getWorldPosition(new THREE.Vector3()), H0 = hand.getWorldPosition(new THREE.Vector3());
   const L1 = S.distanceTo(E0), L2 = E0.distanceTo(H0);
