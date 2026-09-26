@@ -1689,12 +1689,43 @@ function airport() {
   for (const e of [-1, 1]) for (const sdx of [-21.5, 21.5])          // edge stripes
     mark(sdx, e * 762, 0.7, 1500);
 
-  // tower on the apron edge
-  const [twx, twz] = off(-300, -190);
-  g.add(box(9, 26, 9, mat.concrete, twx, 13, twz, RY));
-  g.add(box(12, 4.4, 12, mat.glassSolid, twx, 28.2, twz, RY + 0.4));
-  g.add(box(13, 0.7, 13, mat.darkSteel, twx, 30.7, twz, RY + 0.4));
-  solidBox(g, twx, twz, 4.5, 4.5, -RY, 40, 0);
+  // The control tower, west of the GA apron (est.: KBFI's 1962 tower is a
+  // concrete shaft with a flared glass cab; ~37 m to the cab roof). A base
+  // building with its door to the apron, a tapered eight-sided shaft with a
+  // window slot, a flared transition, the cab (glass leaning out, eight
+  // mullions), a catwalk, the roof, masts and a beacon. ENTER at the door
+  // plays FINAL APPROACH (atc.js); the door is published as userData.tower.
+  const TW = [-300, -190];
+  const [twx, twz] = off(TW[0], TW[1]);
+  const towerC = M(0xd4cfc6), trimC = M(0x9aa0a6);
+  const [bx, bz] = off(TW[0] + 1, TW[1]);
+  g.add(box(12, 5, 18, towerC, bx, 0, bz, RY));
+  g.add(box(12.4, 0.4, 18.4, trimC, bx, 5, bz, RY));
+  const [dx0, dz0] = off(TW[0] + 7.05, TW[1]);
+  g.add(box(0.2, 2.6, 2.6, mat.glassSolid, dx0, 0, dz0, RY));
+  const [cx0, cz0] = off(TW[0] + 8, TW[1]);
+  g.add(box(2.2, 0.25, 4.2, mat.white, cx0, 3.0, cz0, RY));
+  g.add(cyl(2.9, 3.4, 26, towerC, twx, 5, twz, 8));
+  const [sx0, sz0] = off(TW[0] + 3.05, TW[1]);
+  g.add(box(0.3, 22, 1.1, mat.glassSolid, sx0, 7, sz0, RY));
+  g.add(cyl(4.9, 3.0, 2.6, trimC, twx, 31, twz, 8));
+  g.add(cyl(5.3, 5.3, 0.9, mat.darkSteel, twx, 33.6, twz, 8));
+  g.add(cyl(6.5, 6.5, 0.16, mat.darkSteel, twx, 33.5, twz, 8));       // the catwalk
+  g.add(cyl(6.1, 5.1, 4.3, mat.glassSolid, twx, 34.5, twz, 8));
+  for (let k = 0; k < 8; k++) {
+    const q = (k + 0.5) / 8 * Math.PI * 2;
+    g.add(beam(V(twx + Math.cos(q) * 5.12, 34.5, twz + Math.sin(q) * 5.12), V(twx + Math.cos(q) * 6.12, 38.8, twz + Math.sin(q) * 6.12), 0.22, 0.22, mat.darkSteel));
+    g.add(beam(V(twx + Math.cos(q) * 6.45, 33.6, twz + Math.sin(q) * 6.45), V(twx + Math.cos(q) * 6.45, 34.7, twz + Math.sin(q) * 6.45), 0.07, 0.07, mat.darkSteel));
+  }
+  g.add(cyl(6.7, 6.4, 0.8, mat.darkSteel, twx, 38.8, twz, 8));
+  g.add(cyl(3.4, 3.6, 1.3, mat.white, twx, 39.6, twz, 8));
+  g.add(cyl(0.09, 0.09, 7, mat.darkSteel, twx + 1.6, 40.9, twz, 5));
+  g.add(cyl(0.07, 0.07, 4.5, mat.darkSteel, twx - 1.8, 40.9, twz + 0.8, 5));
+  g.add(cyl(0.35, 0.35, 0.5, M(0x3ac878), twx + 1.6, 47.9, twz, 8));
+  solidBox(g, twx, twz, 3.4, 3.4, -RY, 40, 0);
+  solidBox(g, bx, bz, 6, 9, -RY, 5.4, 0);
+  const [ex, ez] = off(TW[0] + 9.5, TW[1]);
+  g.userData.tower = { door: [ex, ez], shaft: [twx, twz], cab: 36.6 };
   // windsock
   const [wx, wz] = off(-120, -900);
   g.add(cyl(0.12, 0.12, 7, mat.darkSteel, wx, 3.5, wz, 6));
@@ -3178,6 +3209,7 @@ export function buildLandmarks(scene, city, waterLevelAt = null, monorail = null
   let needleAt = null;   // where the Needle stands, for needletop.js
   let wheelAt = null;    // and the Great Wheel, for wheelride.js
   let arenaAt = null;    // and Climate Pledge Arena, for hockey.js
+  let towerAt = null;    // and Boeing Field's control tower, for atc.js
   atlas = new SignAtlas();
   const clusters = new Map();
   const solids = [];
@@ -3264,6 +3296,10 @@ export function buildLandmarks(scene, city, waterLevelAt = null, monorail = null
     if (l.kind === 'spaceNeedle') needleAt = { x, y, z, t };
     if (l.kind === 'wheel') wheelAt = { x, y, z };
     if (l.kind === 'arena') arenaAt = { x, y, z };
+    if (l.kind === 'airport' && g.userData.tower) {
+      const tw = g.userData.tower;
+      towerAt = { x: x + tw.door[0], z: z + tw.door[1], y, shaft: [x + tw.shaft[0], z + tw.shaft[1]], cabY: y + tw.cab };
+    }
     for (const s of g.userData.solids || []) {
       const w = worldSolid(s, x, y, z, t);
       if (city && onRoad(city, w)) { dropped.push(`${l.kind}@${w.x.toFixed(0)},${w.z.toFixed(0)}`); continue; }
@@ -3333,6 +3369,7 @@ export function buildLandmarks(scene, city, waterLevelAt = null, monorail = null
   root.userData.needle = needleAt;
   root.userData.wheel = wheelAt;
   root.userData.arena = arenaAt;
+  root.userData.tower = towerAt;
   scene.add(root);
   return root;
 }

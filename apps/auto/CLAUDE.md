@@ -35,6 +35,8 @@ src/pinball.js              the pinball museum: storefront, the machine's screen
 src/pinballtable.js         EMERALD CITY: the table's geometry, physics and rules (no DOM)
 src/hockey.js               hockey night at Climate Pledge Arena: marquee, 16-bit screen, pad, sound
 src/hockeygame.js           the hockey game itself: skating, puck, goalies, team AI (no DOM)
+src/atc.js                  Boeing Field's control tower: FINAL APPROACH's screen, finger and sound
+src/atcgame.js              FINAL APPROACH itself: arrivals, paths, landing zones, separation (no DOM)
 src/golf.js                 three par-3s at Interbay
 src/wheelride.js            the Great Wheel's turning half and the ride on it
 src/fishtoss.js             the fish stall at Pike Place Market + the catching game
@@ -4335,6 +4337,43 @@ $100, a loss $25, plus $25 a goal. The overlay is opaque: the city idles.
 verify's "hockey" section: the marquee, ENTER into a game, a draw won on the
 drop, the stick, a shot, a one-timer, a check, three seeded AI games to a final
 with nothing leaving the rink, the pay, closing. `docs/hockey/` has shots.
+
+## Boeing Field's control tower and FINAL APPROACH (v138)
+
+**The tower is built in `landmarks.js` `airport()`** (it was a concrete box
+under a glass box, floating: `box()` and `cyl()` there take the BOTTOM height,
+not the centre). West of the GA apron at (across -300, along -190): a base
+building with its door to the east, a tapered eight-sided shaft with a window
+slot, a flared transition, a cab of glass leaning out between eight mullions,
+a catwalk, the roof, two masts and a green beacon; shaft and base are solid.
+Its door is published as `lmRoot.userData.tower` (with the shaft and cab).
+
+**ENTER at the door plays FINAL APPROACH** (`src/atc.js`, `src/atcgame.js`),
+after the touch-screen classic: aircraft arrive from the edges (an arrow
+blinks where, first), fly straight and turn back at the edge, and you draw
+each one's path with a finger. A path that enters the right landing zone
+heading within 55 deg of its arrow locks (white dots) and lands the aircraft
+on arrival: red jets on 14R from its west end, yellow props on 14L from its
+east end, blue helicopters on the pad from anywhere, green seaplanes on the
+Duwamish heading north (from the 12th landing); fast jets from the 8th.
+Closer than twice their radii, two aircraft ring red and beep; closer than
+0.82 of them they collide and the shift ends. Arrivals quicken with the count
+(6.2 s apart down to 2.1). FF doubles the clock. A shift pays $3 an aircraft
+and a new best $50 more (localStorage `auto-atc-best`).
+
+- **The world takes the screen's aspect**: 1000 wide and 460-700 tall (the
+  layout lives in y 20..460, the apron keeps to the bottom), so the edge the
+  aircraft turn back at is the edge of the screen. Fitted letterboxing
+  showed grass that looked playable and wasn't.
+- The field is drawn once per size (mown grass, the river, taxiways, apron
+  and hangars, runways with piano keys, arrows and numbers, the pad, trees);
+  aircraft are canvas shapes with a shadow that closes in as they land.
+- `tower.frozen` stops the frame loop stepping the game, for harnesses.
+
+verify's "control tower" section: the tower standing off the pavement and
+solid, ENTER, a path drawn with real pointer events from a jet into 14R's zone
+locking and landing it, a prop's path into 14R not locking, a head-on warning
+then collision, the pay, closing. `docs/tower/` has shots.
 
 ## Basketball in the parks
 

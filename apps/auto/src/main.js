@@ -19,6 +19,7 @@ import { Golf } from './golf.js';
 import { Arcade } from './arcade.js';
 import { Pinball } from './pinball.js';
 import { HockeyNight } from './hockey.js';
+import { TowerGame } from './atc.js';
 import { BONES } from './peds.js';
 import { cacheGet, cachePut, cacheGuardTripped, cacheGuardSet, cacheClear } from './bootcache.js';
 import { TrafficSystem, collideWithBuildings } from './traffic.js';
@@ -86,6 +87,7 @@ let hoops = null;   // the basketball courts (hoops.js)
 let arcade = null;   // the Belltown arcade (arcade.js)
 let pinball = null;  // the pinball museum in the International District (pinball.js)
 let hockey = null;   // hockey night at Climate Pledge Arena (hockey.js)
+let tower = null;    // Boeing Field's control tower and FINAL APPROACH (atc.js)
 let golf = null;   // three holes at Interbay (golf.js)
 let wheelRide = null;   // the Great Wheel, turning, and its ride (wheelride.js)
 let fishToss = null;   // the flying fish at Pike Place Market (fishtoss.js)
@@ -261,6 +263,12 @@ class Game {
     if (hockey && !hockey.active && hockey.near(pl)) {
       this.paused = true;
       hockey.start();
+      return true;
+    }
+    // the control tower's door at Boeing Field?
+    if (tower && !tower.active && tower.near(pl)) {
+      this.paused = true;
+      tower.start();
       return true;
     }
     // the first tee at Interbay?
@@ -866,6 +874,11 @@ function installShadowFade() {
     onReward: (m) => { game.money += m; setTimeout(() => hud.showToast(`Hockey night paid $${m}`), 400); },
     onEnd: () => { game.paused = false; },
   });
+  tower = new TowerGame({
+    scene, city, world, audio, tower: lmRoot.userData.tower,
+    onReward: (m) => { game.money += m; setTimeout(() => hud.showToast(`The tower paid $${m}`), 400); },
+    onEnd: () => { game.paused = false; },
+  });
   golf = new Golf({
     scene, city, world, audio, controls,
     onReward: (m) => { game.money += m; setTimeout(() => hud.showToast(`Interbay Golf paid $${m}`), 400); },
@@ -926,6 +939,8 @@ function installShadowFade() {
       hello: 'The pinball museum on Maynard Ave S. Press ENTER at the door to play Emerald City' },
     { x: hockey.spot.x, z: hockey.spot.z, kind: 'hockey', name: 'Hockey Night', near: false,
       hello: 'Hockey night at Climate Pledge Arena. Press ENTER at the doors to drop the puck' },
+    { x: tower.spot.x, z: tower.spot.z, kind: 'tower', name: 'Control Tower', near: false,
+      hello: "Boeing Field's control tower. Press ENTER at the door to take the field" },
     { x: golf.holes[0].tee.x, z: golf.holes[0].tee.z, kind: 'golf', name: 'Interbay Golf', near: false,
       hello: 'Interbay Golf — three par-3s. Press ENTER on the first tee to play' },
     { x: fishToss.spot.x, z: fishToss.spot.z, kind: 'fishtoss', name: 'Flying fish', near: false,
@@ -1027,7 +1042,7 @@ function installShadowFade() {
 
   await step(1, 'Welcome to Seattle');
   window.__refreshJobs = refreshJobs;
-  window.__dbg = { game, city, player, world, traffic, peds, acts, stunts, monorail, lmRoot, shadowCache, fishing, fishSpots, hoops, needleTop, fishToss, wheelRide, golf, arcade, pinball, hockey, scene, camera, renderer, G, fx, hud, controls, audio, pickups, THREE, postfx, applyQuality, sun, placeSun, sceneStats, perfSys, cityStats, WET_FLOOR, animateWalk, collideWithBuildings, TYPES: VEHICLE_TYPES };
+  window.__dbg = { game, city, player, world, traffic, peds, acts, stunts, monorail, lmRoot, shadowCache, fishing, fishSpots, hoops, needleTop, fishToss, wheelRide, golf, arcade, pinball, hockey, tower, scene, camera, renderer, G, fx, hud, controls, audio, pickups, THREE, postfx, applyQuality, sun, placeSun, sceneStats, perfSys, cityStats, WET_FLOOR, animateWalk, collideWithBuildings, TYPES: VEHICLE_TYPES };
   wireUi();
   game.newTarget();
   // Start on `high` everywhere.
@@ -1771,6 +1786,7 @@ function frame(now) {
   if (arcade && arcade.active) arcade.update(dt);
   if (pinball && pinball.active) pinball.update(dt);
   if (hockey && hockey.active) hockey.update(dt);
+  if (tower && tower.active) tower.update(dt);
   if (fishToss) { if (fishToss.active) fishToss.update(dt); fishToss.updateWorld(dt, camera.position.x, camera.position.z); }
   if (hoops) hoops.updateVisibility(camera.position.x, camera.position.z);
   if (game.paused || game.mapOpen) {
@@ -1785,7 +1801,7 @@ function frame(now) {
     // and those still draw every frame.
     // (the fishing game's screen covers the city too, once it is up)
     const idle = game.mapOpen || pauseMenuEl.classList.contains('show') || (fishing && fishing.el.classList.contains('show'))
-      || (arcade && arcade.active) || (pinball && pinball.active) || (hockey && hockey.active);
+      || (arcade && arcade.active) || (pinball && pinball.active) || (hockey && hockey.active) || (tower && tower.active);
     if (!idle || idleDrawn < 2 || idleRedraw) { draw(now); idleDrawn++; idleRedraw = false; }
     return;
   }
