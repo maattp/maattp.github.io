@@ -1643,6 +1643,18 @@ export class World {
             x0 = Math.min(x0, q.x - r); x1 = Math.max(x1, q.x + r);
             z0 = Math.min(z0, q.z - r); z1 = Math.max(z1, q.z + r);
           }
+          // A cutting that would dig ground geo.NO_DIG protects is not made
+          // at all: its lids and walls are decided from the corridor, so
+          // leaving the ground undug under a lidded street drew no tarmac.
+          // The bore stays a bore under the ground.
+          const digs = (q) => G.NO_DIG.some((p) => {
+            const sx = p[2] - p[0], sz = p[3] - p[1], l2 = sx * sx + sz * sz;
+            let t = l2 > 0 ? ((q.x - p[0]) * sx + (q.z - p[1]) * sz) / l2 : 0;
+            t = t < 0 ? 0 : t > 1 ? 1 : t;
+            const r = p[4] + q.hw + CUT_SH + CUT_BANK;
+            return Math.hypot(q.x - p[0] - sx * t, q.z - p[1] - sz * t) < r;
+          });
+          if (pts.some(digs)) { this.cutStats.noDig = (this.cutStats.noDig || 0) + 1; continue; }
           cuts.push({ ni: m.ni, pts, apron: app.length, x0, x1, z0, z1, streetDir: bp.streetDir || null, kerb: bp.kerb || null,
             protect: bp.protect || null });
           }

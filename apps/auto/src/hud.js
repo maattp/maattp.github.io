@@ -13,7 +13,7 @@ const SCALE = MAP_PX / (G.MAP_HALF * 2);
  */
 function placeIcon(ctx, kind, x, y, r) {
   ctx.fillStyle = kind === 'dock' ? '#2f86d6' : kind === 'jet' ? '#c8352a' : kind === 'monorail' ? '#0b8a8f'
-    : kind === 'balloon' ? '#d2432f' : kind === 'fish' ? '#1f9aa8' : kind === 'hoop' ? '#d9661f' : kind === 'needle' ? '#5a6fd6' : '#e0782e';
+    : kind === 'balloon' ? '#d2432f' : kind === 'fish' ? '#1f9aa8' : kind === 'hoop' ? '#d9661f' : kind === 'needle' ? '#5a6fd6' : kind === 'fishtoss' ? '#d05a1e' : '#e0782e';
   ctx.strokeStyle = '#ffffff';
   ctx.lineWidth = r * 0.22;
   ctx.beginPath();
@@ -54,6 +54,17 @@ function placeIcon(ctx, kind, x, y, r) {
     ctx.moveTo(x + r * 0.22, y); ctx.lineTo(x + r * 0.55, y - r * 0.24); ctx.lineTo(x + r * 0.55, y + r * 0.24);
     ctx.closePath();
     ctx.fill();
+  } else if (kind === 'fishtoss') {
+    // a fish in the air over a hand
+    ctx.fillStyle = '#ffffff';
+    ctx.beginPath();
+    ctx.ellipse(x, y - r * 0.12, r * 0.36, r * 0.17, -0.5, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.beginPath();
+    ctx.moveTo(x - r * 0.26, y + r * 0.04); ctx.lineTo(x - r * 0.56, y + r * 0.02); ctx.lineTo(x - r * 0.4, y + r * 0.3);
+    ctx.closePath();
+    ctx.fill();
+    ctx.fillRect(x - r * 0.3, y + r * 0.36, r * 0.6, r * 0.12);
   } else if (kind === 'needle') {
     // an elevator's up arrow
     ctx.fillStyle = '#ffffff';
@@ -492,7 +503,7 @@ export class Hud {
       const [qx, qz] = toC(pl.x, pl.z);
       placeIcon(ctx, pl.kind, qx, qz, size * (pl.kind === 'dock' ? 0.011 : 0.008));
       // named, quads too: an unlabelled orange dot was a quad nobody found
-      if (pl.kind === 'dock' || pl.kind === 'atv' || pl.kind === 'monorail' || pl.kind === 'balloon' || pl.kind === 'fish' || pl.kind === 'hoop') {
+      if (pl.kind === 'dock' || pl.kind === 'atv' || pl.kind === 'monorail' || pl.kind === 'balloon' || pl.kind === 'fish' || pl.kind === 'hoop' || pl.kind === 'fishtoss' || pl.kind === 'needle') {
         ctx.fillStyle = 'rgba(255,255,255,0.85)';
         ctx.fillText(pl.name, qx, qz - size * 0.016);
       }

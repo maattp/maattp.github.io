@@ -29,6 +29,7 @@ src/player.js               on-foot/driving state machine + chase camera
 src/controls.js             touch stick/buttons + keyboard fallback
 src/hud.js                  minimap, full map, readouts
 src/needletop.js            the Space Needle's elevator, deck and viewers
+src/fishtoss.js             the fish stall at Pike Place Market + the catching game
 src/hoops.js                basketball courts in the parks + the free-throw game
 src/stunts.js               stunt-jump ramps (geometry + height query) and their scoring
 src/monorail.js             the Seattle Center Monorail: beams, stations, both trains
@@ -1983,6 +1984,11 @@ bare ground.
 normal** — this exists because hand-wound horizontal quads were backface-culled,
 which made every road surface in the city invisible while the sidewalks (wound
 the other way) rendered fine. Don't "optimise" that check away.
+
+**`Builder.box(..., rot)` turns the OTHER way from three's `rotation.y`**
+(its local x is (cos rot, sin rot)): to face a box along a heading `h`, pass
+`-h`. The Needle's viewers and the fishing rod's stand were built with `h` and
+stood skewed until v129.
 
 `mergeByMaterial()` flattens a group of static meshes into one mesh per material;
 landmarks would otherwise cost hundreds of draw calls.
@@ -3972,6 +3978,63 @@ goes to `game.tryInteract` before the cars.
 verify's "fishing" section: every site found its deck, ENTER casts and opens
 it, banking / combo time / junk / hooking / payout all to the number, and
 closing it unpauses the city. `docs/fishing/` has shots.
+
+## The flying fish at Pike Place (v129)
+
+**A fish stall under the Main Arcade's canopy**, between the columns just up
+Pike Place from the PUBLIC MARKET sign (`src/fishtoss.js`, laid out in the
+market's own frame, `MARKET_FRAME` from landmarks.js: s up Pike Place, o off
+its centreline). An ice bed sloping to the street with salmon, halibut and
+Dungeness crab laid on it (the fish geometry the game throws), a wrapping
+counter against the arcade, a FRESH FISH board, and three fishmongers in orange
+rubber bibs (`makeHumanoid({ bib })`, new in peds.js: a loft hips-to-chest
+over the shirt; only characters built with it change). One merged mesh plus
+the board and the crew, shown within 260 m.
+
+- **ENTER in front of the ice** takes the counter: a monger picks a fish,
+  calls the order ("ONE KING SALMON, FLYING TO MINNESOTA!", the crew echoes
+  the destination), winds up and throws. Slide along the counter (stick,
+  A/D, arrows) and CATCH (button, Space, J) as it arrives: hands closed up to
+  0.34 s before, or 80 ms after, catch it; a tenth of a second either side is
+  PERFECT (x1.5); every five in a row adds to the multiplier (to x4). Three on
+  the floor ends it, else a minute, faster as it goes, two in the air from
+  the second half. Pays score / 40; best in localStorage `auto-fishtoss-best`.
+- **Every throw is catchable**: it is aimed at RELEASE, within
+  `CATCH_SPEED` (4 m/s) x flight x 0.62 of where you stand, and flown as real
+  ballistics to that spot on the counter line. Aimed at the call (0.9 s
+  earlier) some needed 4.5 m/s. A ring hangs where it will arrive (drawn over
+  everything) and closes to the fish's size as it lands: the timing cue.
+- The camera stands out in Pike Place 5 m up: at 3.5 m the crew stood between
+  it and the catcher. The stall sits between two canopy columns (every 6.5 m
+  from s -2), which otherwise stood in the middle of the view.
+
+**The frontage it stands on was broken three ways, all fixed here:**
+
+1. **Post Alley's cutting dug it.** OSM's Post Alley runs 26 m in a tunnel
+   under the market, and its portal cutting dug the pavement under the canopy
+   6 m down and the Pike St junction's carriageway 8 m down, and lidded Pike
+   Place with a barrier: the stalls stood in a pit nobody could reach, and the
+   junction had a hole in it. `G.NO_DIG` (capsules) lists ground no cutting may
+   dig, and **a cut that would reach one is not made at all** (world.js
+   `_computePortalCuts`, `cutStats.noDig`): lids and walls are decided from the
+   corridor, so undigging the ground alone (the first attempt, via the cut's
+   `protect`) left Pike Place lidded with no tarmac drawn. The 26 m bore stays
+   a bore under the ground.
+2. **The arcade was built at one height** (Pike Place at Pike St) while the
+   street climbs ~5 m along it, so north of the stall the canopy, hall front and
+   neon sank into the pavement. The body is built in spans along its outer
+   edge and the street face bay by bay, each at `rel(s)`, the terrain at the
+   kerb (landmarks build after the carve, so it is final).
+3. **Its pavement was reported and never drawn**: roadLift said 52 cm the
+   whole length, the chunk mesher laid nothing, walkers floated. fishtoss.js
+   lays the floor from the kerb to the arcade face, level across at the
+   pavement's height, and registers each 1.5 m slice as a city platform, so
+   what you stand on is what is drawn (walked: within 2 cm).
+
+verify's "flying fish" section walks the frontage at three places (no drop
+over 0.3 m, the floor within 10 cm of the drawn surface, reaching the arcade),
+plays a round standing under every fish (every one caught), one hands off
+(over at three drops), the pay, and closing. `docs/fishtoss/` has shots.
 
 ## Basketball in the parks
 

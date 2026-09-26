@@ -913,6 +913,79 @@ async function main() {
       if (bad.length) { console.error(`FAIL: Space Needle: ${bad.join('; ')}`); process.exitCode = 1; }
     }
 
+    // --- the flying fish at Pike Place -----------------------------------
+    //
+    // The arcade's frontage is at street level and walkable (it stood in a
+    // portal cutting's pit behind a lid barrier, and its pavement was never
+    // drawn); ENTER at the stall starts it; a catcher who stands under each
+    // fish and closes on it catches every one; hands off, three on the floor
+    // ends it; it pays; closing gives the city back.
+    const toss = await session.eval(`(() => {
+      const d = window.__dbg, F = d.fishToss, P = d.player, T = d.THREE;
+      if (!F) return null;
+      if (P.vehicle) P.exitVehicle(true);
+      const U = [-0.748, -0.664], W = [-0.664, 0.748], A = [-198, 297];
+      const SO = (s, o) => [A[0] + U[0] * s + W[0] * o, A[1] + U[1] * s + W[1] * o];
+      const out = {};
+      // walk from the carriageway to the arcade's face at three places along it
+      const inp = (x, y) => ({ x, y, gas: false, brake: false, gasAmt: 0, brakeAmt: 0, sprint: false, jump: false, attack: false });
+      const rc = new T.Raycaster();
+      out.walks = [];
+      for (const s0 of [2, 30, 60]) {
+        const [x, z] = SO(s0, 1.5);
+        const pend = () => [...d.world.chunks.values()].filter((k) => k.lod !== k.wantLod).length;
+        for (let i = 0; i < 2000 && pend() > 0; i++) d.world.update(x, z, 60);
+        F.updateWorld(0, x, z); d.scene.updateMatrixWorld(true);
+        P.x = x; P.z = z; P.y = d.city.groundAt(x, z, 60);
+        P.heading = Math.atan2(W[0], W[1]); P.camYaw = P.heading + Math.PI;
+        let drop = 0, worst = 0, o = 0;
+        for (let i = 0; i < 140; i++) {
+          const y0 = P.y;
+          P.update(1 / 60, inp(0, -1), { x: 0, y: 0 }, d.controls, d.traffic, d.peds);
+          drop = Math.max(drop, y0 - P.y);
+          rc.set(new T.Vector3(P.x, P.y + 1.5, P.z), new T.Vector3(0, -1, 0));
+          const h = rc.intersectObjects(d.scene.children, true).find((q) => q.object.visible && !P.h.group.children.includes(q.object));
+          const dx = P.x - A[0], dz = P.z - A[1]; o = dx * W[0] + dz * W[1];
+          if (h && o > 4.6) worst = Math.max(worst, Math.abs(P.y - h.point.y));
+        }
+        out.walks.push({ s: s0, o: +o.toFixed(2), fell: +drop.toFixed(2), floor: +worst.toFixed(2) });
+      }
+      P.x = F.spot.x; P.z = F.spot.z; P.y = d.city.groundAt(P.x, P.z, F.y + 1);
+      const money0 = d.game.money;
+      out.took = d.game.tryInteract(P) && F.state;
+      const ctl = d.controls, read0 = ctl.read.bind(ctl); let steer = 0;
+      ctl.read = () => ({ ...read0(), x: steer });
+      let n = 0;
+      while (F.state === 'play' && n < 60 * 70) {
+        const fl = F.fish.filter((f) => f.state === 'fly').sort((a, b) => (a.T - a.age) - (b.T - b.age))[0];
+        if (fl) { steer = Math.max(-1, Math.min(1, (fl.aimS - F.catchS) * 3)); if (fl.T - fl.age < 0.06 && fl.T - fl.age > 0.03 && F.t - F.grabT > 0.4) F.grab(); } else steer = 0;
+        F.update(1 / 60); n++;
+      }
+      out.caught = F.caught; out.drops = F.drops; out.perfects = F.perfects;
+      out.paid = d.game.money - money0;
+      F._round(); steer = 0; n = 0;
+      while (F.state === 'play' && n < 60 * 70) { F.update(1 / 60); n++; }
+      out.idle = { drops: F.drops, state: F.state, t: +F.t.toFixed(1) };
+      ctl.read = read0;
+      F.close();
+      out.closed = F.state; out.paused = d.game.paused;
+      return out;
+    })()`, true);
+    console.log('\n--- flying fish ------------------------------------------');
+    if (!toss) { console.error('FAIL: no fish stall'); process.exitCode = 1; }
+    else {
+      console.log(`  frontage walks (s: reached o, fell, floor vs drawn): ${toss.walks.map((w) => `${w.s}: ${w.o} m, ${w.fell} m, ${w.floor} m`).join('; ')}`);
+      console.log(`  ENTER -> ${toss.took}; standing under each fish, a whole round: ${toss.caught} caught (${toss.perfects} perfect), ${toss.drops} dropped; hands off: ${toss.idle.drops} on the floor, ${toss.idle.state} at ${toss.idle.t} s; paid $${toss.paid}; closed ${toss.closed}, city unpaused ${!toss.paused}`);
+      const bad = [];
+      if (toss.walks.some((w) => w.fell > 0.3 || w.o < 3.9 || w.floor > 0.1)) bad.push('the frontage');
+      if (toss.took !== 'play') bad.push('ENTER does not start it');
+      if (toss.caught < 25 || toss.drops > 0) bad.push('a catcher under every fish drops some');
+      if (toss.idle.drops !== 3 || toss.idle.state !== 'over') bad.push('three on the floor does not end it');
+      if (toss.paid <= 0) bad.push('no pay');
+      if (toss.closed !== 'off' || toss.paused) bad.push('closing does not give the city back');
+      if (bad.length) { console.error(`FAIL: flying fish: ${bad.join('; ')}`); process.exitCode = 1; }
+    }
+
     // --- no lake in the boat's cockpit ------------------------------------
     //
     // The runabout's cockpit floor is 12 cm over its waterline and the lake is
