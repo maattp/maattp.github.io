@@ -1033,6 +1033,44 @@ async function main() {
       if (bad.length) { console.error(`FAIL: kayaks: ${bad.join('; ')}`); process.exitCode = 1; }
     }
 
+    // --- the Great Wheel ---------------------------------------------------
+    //
+    // It turns; ENTER on the platform brings a gondola round and boards it;
+    // one turn takes you ~165 ft up and back to the platform, where you step
+    // off; "Down" gets you off in a fraction of that.
+    const wheel = await session.eval(`(() => {
+      const d = window.__dbg, W = d.wheelRide, P = d.player;
+      if (!W) return null;
+      if (P.vehicle) P.exitVehicle(true);
+      const th0 = W.theta; for (let i = 0; i < 120; i++) W.update(1 / 60, null, null, W.hub.x, W.hub.z);
+      const out = { turns: W.theta > th0 };
+      P.x = W.hub.x + 3; P.z = W.hub.z; P.y = d.city.groundAt(P.x, P.z, W.deckY + 1.5);
+      out.took = W.tryInteract(P) && W.mode;
+      let n = 0, top = 0, boarded = null;
+      while (W.busy && n < 60 * 200) {
+        W.update(1 / 60, { x: 0, y: 0 }, { x: 0, y: 0 }, P.x, P.z); n++;
+        if (W.mode === 'ride') { top = Math.max(top, P.y); if (boarded === null) boarded = +(P.y - W.deckY).toFixed(2); }
+      }
+      out.s = +(n / 60).toFixed(1); out.topFt = Math.round((top - W.deckY + 2.4) / 0.3048); out.boarded = boarded;
+      out.off = { visible: P.h.group.visible, y: +(P.y - W.deckY).toFixed(2), dx: +(P.x - W.hub.x).toFixed(1) };
+      W.tryInteract(P); n = 0;
+      while (W.busy && n < 60 * 200) { W.update(1 / 60, { x: 0, y: 0 }, { x: 0, y: 0 }, P.x, P.z); if (W.mode === 'ride' && W.rideT > 4) W.down(); n++; }
+      out.downS = +(n / 60).toFixed(1);
+      return out;
+    })()`, true);
+    console.log('\n--- Great Wheel -------------------------------------------');
+    if (!wheel) { console.error('FAIL: no Great Wheel ride'); process.exitCode = 1; }
+    else {
+      console.log(`  turning ${wheel.turns}; ENTER -> ${wheel.took}; a ride ${wheel.s} s, boarded ${wheel.boarded} m off the deck, ${wheel.topFt} ft at the top; off at the platform ${JSON.stringify(wheel.off)}; "Down" ${wheel.downS} s`);
+      const bad = [];
+      if (!wheel.turns) bad.push('the wheel does not turn');
+      if (wheel.took !== 'align' || wheel.s < 80 || wheel.s > 130) bad.push('the ride');
+      if (wheel.topFt < 150 || wheel.topFt > 185) bad.push('the height');
+      if (!wheel.off.visible || Math.abs(wheel.off.y) > 1.5) bad.push('stepping off');
+      if (wheel.downS > 45) bad.push('"Down"');
+      if (bad.length) { console.error(`FAIL: Great Wheel: ${bad.join('; ')}`); process.exitCode = 1; }
+    }
+
     // --- no lake in the boat's cockpit ------------------------------------
     //
     // The runabout's cockpit floor is 12 cm over its waterline and the lake is

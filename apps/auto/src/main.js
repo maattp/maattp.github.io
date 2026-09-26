@@ -14,6 +14,7 @@ import { Fishing } from './fishing.js';
 import { Hoops } from './hoops.js';
 import { NeedleTop } from './needletop.js';
 import { FishToss } from './fishtoss.js';
+import { WheelRide } from './wheelride.js';
 import { BONES } from './peds.js';
 import { cacheGet, cachePut, cacheGuardTripped, cacheGuardSet, cacheClear } from './bootcache.js';
 import { TrafficSystem, collideWithBuildings } from './traffic.js';
@@ -78,6 +79,7 @@ const FISHING_SITES = [
 ];
 let fishing = null, fishSpots = [];
 let hoops = null;   // the basketball courts (hoops.js)
+let wheelRide = null;   // the Great Wheel, turning, and its ride (wheelride.js)
 let fishToss = null;   // the flying fish at Pike Place Market (fishtoss.js)
 let needleTop = null;   // the Space Needle's elevator, deck and viewers (needletop.js)
 const HOSPITAL = G.RESPAWN; // kept clear of buildings by citygen, via G.KEEP_CLEAR
@@ -231,6 +233,8 @@ class Game {
         return true;
       }
     }
+    // the Great Wheel's boarding platform?
+    if (wheelRide && wheelRide.tryInteract(pl)) return true;
     // the Space Needle's elevator, or a viewer on its deck?
     if (needleTop && needleTop.tryInteract(pl)) return true;
     // the fish stall at Pike Place Market?
@@ -816,6 +820,9 @@ function installShadowFade() {
     onReward: (m) => { game.money += m; setTimeout(() => hud.showToast(`The fish stall paid $${m}`), 400); },
     onEnd: () => { game.paused = false; },
   });
+  if (lmRoot.userData.wheel) {
+    wheelRide = new WheelRide({ scene, city, player, camera, audio, hud: null, at: lmRoot.userData.wheel });
+  }
   if (lmRoot.userData.needle) {
     needleTop = new NeedleTop({ scene, city, world, player, camera, audio, hud: null, at: lmRoot.userData.needle });
   }
@@ -853,6 +860,8 @@ function installShadowFade() {
     ...ATV_SPOTS.map(([x, z]) => ({ x, z, kind: 'atv', name: 'Quad bike', near: false, hello: 'A quad bike — made for the grass' })),
     ...fishSpots.map((sp) => ({ x: sp.x, z: sp.z, kind: 'fish', name: `Fishing — ${sp.name}`, near: false,
       hello: 'A fishing rod on the pier. Press ENTER to cast' })),
+    ...(wheelRide ? [{ x: wheelRide.hub.x + 4, z: wheelRide.hub.z, kind: 'wheel', name: 'Great Wheel', near: false,
+      hello: 'The Seattle Great Wheel. Step onto the platform and press ENTER to ride' }] : []),
     ...(needleTop ? [{ x: needleTop.X, z: needleTop.Z, kind: 'needle', name: 'Space Needle elevator', near: false,
       hello: 'The Space Needle. Walk to the elevator in the middle and press ENTER to ride to the top' }] : []),
     { x: fishToss.spot.x, z: fishToss.spot.z, kind: 'fishtoss', name: 'Flying fish', near: false,
@@ -881,6 +890,7 @@ function installShadowFade() {
   hud = new Hud(document.getElementById('app'), city, mapCanvas);
   hud.places = mapPlaces;
   if (needleTop) needleTop.o.hud = hud;
+  if (wheelRide) wheelRide.o.hud = hud;
   hud.monorail = monorail;
   monorail.bind({ game, hud, audio, player });
   {
@@ -953,7 +963,7 @@ function installShadowFade() {
 
   await step(1, 'Welcome to Seattle');
   window.__refreshJobs = refreshJobs;
-  window.__dbg = { game, city, player, world, traffic, peds, acts, stunts, monorail, lmRoot, shadowCache, fishing, fishSpots, hoops, needleTop, fishToss, scene, camera, renderer, G, fx, hud, controls, audio, pickups, THREE, postfx, applyQuality, sun, placeSun, sceneStats, perfSys, cityStats, WET_FLOOR, animateWalk, collideWithBuildings, TYPES: VEHICLE_TYPES };
+  window.__dbg = { game, city, player, world, traffic, peds, acts, stunts, monorail, lmRoot, shadowCache, fishing, fishSpots, hoops, needleTop, fishToss, wheelRide, scene, camera, renderer, G, fx, hud, controls, audio, pickups, THREE, postfx, applyQuality, sun, placeSun, sceneStats, perfSys, cityStats, WET_FLOOR, animateWalk, collideWithBuildings, TYPES: VEHICLE_TYPES };
   wireUi();
   game.newTarget();
   // Start on `high` everywhere.
@@ -1722,6 +1732,8 @@ function frame(now) {
     game.deathT += dt;
     controls.takeTap();
     if (game.deathT > 2.6) doRespawn();
+  } else if (wheelRide && wheelRide.busy) {
+    // riding the Great Wheel: the ride has the camera (wheelRide.update below)
   } else if (needleTop && needleTop.busy) {
     // riding the Needle's elevator or looking through a viewer: the city runs on
     needleTop.update(dt, input, look);
@@ -1731,6 +1743,7 @@ function frame(now) {
     player.update(dt, input, look, controls, traffic, peds);
   }
   monorail.update(dt);
+  if (wheelRide) wheelRide.update(dt, wheelRide.busy ? input : null, wheelRide.busy ? look : null, camera.position.x, camera.position.z);
   if (prof) lap('player');
 
   const p = player.position;
@@ -1869,7 +1882,7 @@ function frame(now) {
     scene.fog.density = baseFogDensity * (1 + Math.min(2.2, alt / 220));
   }
 
-  if (!(needleTop && needleTop.busy)) player.applyCamera(camera);
+  if (!(needleTop && needleTop.busy) && !(wheelRide && wheelRide.busy)) player.applyCamera(camera);
   placeSun(p.x, p.y, p.z);
   if (prof) lap('camera');
 

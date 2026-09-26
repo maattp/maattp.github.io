@@ -13,7 +13,7 @@ const SCALE = MAP_PX / (G.MAP_HALF * 2);
  */
 function placeIcon(ctx, kind, x, y, r) {
   ctx.fillStyle = kind === 'dock' ? '#2f86d6' : kind === 'jet' ? '#c8352a' : kind === 'monorail' ? '#0b8a8f'
-    : kind === 'balloon' ? '#d2432f' : kind === 'fish' ? '#1f9aa8' : kind === 'hoop' ? '#d9661f' : kind === 'needle' ? '#5a6fd6' : kind === 'fishtoss' ? '#d05a1e' : kind === 'kayak' ? '#e0a818' : '#e0782e';
+    : kind === 'balloon' ? '#d2432f' : kind === 'fish' ? '#1f9aa8' : kind === 'hoop' ? '#d9661f' : kind === 'needle' ? '#5a6fd6' : kind === 'fishtoss' ? '#d05a1e' : kind === 'kayak' ? '#e0a818' : kind === 'wheel' ? '#2f6fb0' : '#e0782e';
   ctx.strokeStyle = '#ffffff';
   ctx.lineWidth = r * 0.22;
   ctx.beginPath();
@@ -54,6 +54,18 @@ function placeIcon(ctx, kind, x, y, r) {
     ctx.moveTo(x + r * 0.22, y); ctx.lineTo(x + r * 0.55, y - r * 0.24); ctx.lineTo(x + r * 0.55, y + r * 0.24);
     ctx.closePath();
     ctx.fill();
+  } else if (kind === 'wheel') {
+    // a Ferris wheel: a ring, spokes and a stand
+    ctx.strokeStyle = '#ffffff';
+    ctx.lineWidth = r * 0.1;
+    ctx.arc(x, y - r * 0.08, r * 0.42, 0, Math.PI * 2);
+    for (let k = 0; k < 4; k++) {
+      const a = (k / 4) * Math.PI;
+      ctx.moveTo(x - Math.cos(a) * r * 0.42, y - r * 0.08 - Math.sin(a) * r * 0.42);
+      ctx.lineTo(x + Math.cos(a) * r * 0.42, y - r * 0.08 + Math.sin(a) * r * 0.42);
+    }
+    ctx.moveTo(x - r * 0.3, y + r * 0.5); ctx.lineTo(x, y - r * 0.08); ctx.lineTo(x + r * 0.3, y + r * 0.5);
+    ctx.stroke();
   } else if (kind === 'kayak') {
     // a kayak and its paddle, crossed
     ctx.fillStyle = '#ffffff';
@@ -513,7 +525,7 @@ export class Hud {
       const [qx, qz] = toC(pl.x, pl.z);
       placeIcon(ctx, pl.kind, qx, qz, size * (pl.kind === 'dock' ? 0.011 : 0.008));
       // named, quads too: an unlabelled orange dot was a quad nobody found
-      if (pl.kind === 'dock' || pl.kind === 'atv' || pl.kind === 'monorail' || pl.kind === 'balloon' || pl.kind === 'fish' || pl.kind === 'hoop' || pl.kind === 'fishtoss' || pl.kind === 'needle' || pl.kind === 'kayak') {
+      if (pl.kind === 'dock' || pl.kind === 'atv' || pl.kind === 'monorail' || pl.kind === 'balloon' || pl.kind === 'fish' || pl.kind === 'hoop' || pl.kind === 'fishtoss' || pl.kind === 'needle' || pl.kind === 'kayak' || pl.kind === 'wheel') {
         ctx.fillStyle = 'rgba(255,255,255,0.85)';
         ctx.fillText(pl.name, qx, qz - size * 0.016);
       }
