@@ -11,6 +11,7 @@ import { ShadowCache } from './shadowcache.js';
 import { Monorail } from './monorail.js';
 import { freezeStatic, Builder } from './build.js';
 import { Fishing } from './fishing.js';
+import { Hoops } from './hoops.js';
 import { BONES } from './peds.js';
 import { cacheGet, cachePut, cacheGuardTripped, cacheGuardSet, cacheClear } from './bootcache.js';
 import { TrafficSystem, collideWithBuildings } from './traffic.js';
@@ -74,6 +75,7 @@ const FISHING_SITES = [
   { name: 'Leschi Marina', x: 3942, z: 1205 },
 ];
 let fishing = null, fishSpots = [];
+let hoops = null;   // the basketball courts (hoops.js)
 const HOSPITAL = G.RESPAWN; // kept clear of buildings by citygen, via G.KEEP_CLEAR
 
 class Game {
@@ -223,6 +225,16 @@ class Game {
         if (sp.prop) sp.prop.userData.rod.visible = false;
         return true;
       }
+    }
+    // a basketball court's free throw line?
+    const court = hoops && !hoops.active && hoops.near(pl);
+    if (court) {
+      this.paused = true;
+      const b = player.h.bones;
+      hoops.start(court, { camera, player,
+        bones: { shoulderR: b[BONES.shoulderR], elbowR: b[BONES.elbowR], shoulderL: b[BONES.shoulderL], elbowL: b[BONES.elbowL],
+          handL: b[BONES.handL], handR: b[BONES.handR] } });
+      return true;
     }
     return false;
   }
@@ -777,6 +789,11 @@ function installShadowFade() {
       for (const sp of fishSpots) if (sp.prop) sp.prop.userData.rod.visible = true;
     },
   });
+  hoops = new Hoops({
+    scene, city, world, audio,
+    onReward: (m) => { game.money += m; setTimeout(() => hud.showToast(`Free throws paid $${m}`), 400); },
+    onEnd: () => { game.paused = false; },
+  });
   // A CAR WORTH TAKING at the kerb nearest the spawn. Kerbside cars come from
   // a fixed hash of street slots, so the first car every player walked up to
   // was the same pickup. That slot is reserved and a sports coupe parked in it
@@ -811,6 +828,8 @@ function installShadowFade() {
     ...ATV_SPOTS.map(([x, z]) => ({ x, z, kind: 'atv', name: 'Quad bike', near: false, hello: 'A quad bike — made for the grass' })),
     ...fishSpots.map((sp) => ({ x: sp.x, z: sp.z, kind: 'fish', name: `Fishing — ${sp.name}`, near: false,
       hello: 'A fishing rod on the pier. Press ENTER to cast' })),
+    ...hoops.courts.map((c) => ({ x: c.x, z: c.z, kind: 'hoop', name: `Basketball — ${c.name}`, near: false,
+      hello: 'A basketball court. Stand on the free throw line and press ENTER' })),
     { x: BALLOON_SITE.x, z: BALLOON_SITE.z, kind: 'balloon', name: 'Hot air balloon', near: false,
       hello: 'A hot air balloon, ready to fly. Climb into the basket' },
     // the Monorail's two stations: Westlake's street door, Seattle Center's ramp
@@ -902,7 +921,7 @@ function installShadowFade() {
 
   await step(1, 'Welcome to Seattle');
   window.__refreshJobs = refreshJobs;
-  window.__dbg = { game, city, player, world, traffic, peds, acts, stunts, monorail, lmRoot, shadowCache, fishing, fishSpots, scene, camera, renderer, G, fx, hud, controls, audio, pickups, THREE, postfx, applyQuality, sun, placeSun, sceneStats, perfSys, cityStats, WET_FLOOR, animateWalk, collideWithBuildings, TYPES: VEHICLE_TYPES };
+  window.__dbg = { game, city, player, world, traffic, peds, acts, stunts, monorail, lmRoot, shadowCache, fishing, fishSpots, hoops, scene, camera, renderer, G, fx, hud, controls, audio, pickups, THREE, postfx, applyQuality, sun, placeSun, sceneStats, perfSys, cityStats, WET_FLOOR, animateWalk, collideWithBuildings, TYPES: VEHICLE_TYPES };
   wireUi();
   game.newTarget();
   // Start on `high` everywhere.
@@ -1591,6 +1610,8 @@ function frame(now) {
   handlePadUi(dt);
 
   if (fishing && fishing.active) fishing.update(dt);
+  if (hoops && hoops.active) hoops.update(dt);
+  if (hoops) hoops.updateVisibility(camera.position.x, camera.position.z);
   if (game.paused || game.mapOpen) {
     controls.takeLook();
     // NOTHING MOVES BEHIND THE MENU OR THE MAP, so stop drawing it. The whole
