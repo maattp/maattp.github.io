@@ -997,39 +997,18 @@ function market() {
 // along the pier (world x) so the west side hangs out over the bay; axle
 // north-south, on two A-frames. y = 0 is the pier deck.
 
-const WHEEL = { R: 24.1, Rp: 24.4, hub: 28.4, n: 42, deck: 2.4 };
+export const WHEEL = { R: 24.1, Rp: 24.4, hub: 28.4, n: 42, deck: 2.4, hubZ: 2.6 };
 
 function wheel() {
   const g = new THREE.Group();
   g.userData.baseY = WHEEL.deck;
   g.userData.worldAligned = true;
-  const { R, Rp, hub, n } = WHEEL;
+  const { hub } = WHEEL;
   const w = mat.whiteSteel;
-  const ringPts = (r, z) => {
-    const pts = [];
-    for (let k = 0; k <= 84; k++) { const a = (k / 84) * Math.PI * 2; pts.push(V(Math.cos(a) * r, hub + Math.sin(a) * r, z)); }
-    return pts;
-  };
-  // Rim: a triangular truss -- two outer rings and one inner, laced.
-  for (const z of [-1.1, 1.1]) g.add(new THREE.Mesh(new THREE.TubeGeometry(new THREE.CatmullRomCurve3(ringPts(R, z), true), 84, 0.32, 6, true), w));
-  g.add(new THREE.Mesh(new THREE.TubeGeometry(new THREE.CatmullRomCurve3(ringPts(R - 1.9, 0), true), 84, 0.26, 5, true), w));
+  // The rim, its trusses and spokes, and the 42 gondolas turn, so they are
+  // wheelride.js's own (built there from WHEEL): only the hub, the axle, the
+  // A-frames and the pier are landmark.
   const hubZ = 2.6;
-  for (let i = 0; i < n; i++) {
-    const a = (i / n) * Math.PI * 2, a2 = ((i + 0.5) / n) * Math.PI * 2;
-    const o = (r, aa, z) => V(Math.cos(aa) * r, hub + Math.sin(aa) * r, z);
-    g.add(strut(o(R, a, -1.1), o(R - 1.9, a2, 0), 0.12, w, 4));
-    g.add(strut(o(R, a, 1.1), o(R - 1.9, a2, 0), 0.12, w, 4));
-    g.add(strut(o(R, a, -1.1), o(R, a, 1.1), 0.1, w, 4));
-    // Spokes: tension rods from both hub flanges to the rim.
-    g.add(strut(o(1.9, a, -hubZ), o(R - 1.9, a, 0), 0.07, w, 3));
-    g.add(strut(o(1.9, a2, hubZ), o(R - 1.9, a2, 0), 0.07, w, 3));
-    // Gondola: hangs from a pivot just outside the rim.
-    const px = Math.cos(a) * Rp, py = hub + Math.sin(a) * Rp;
-    g.add(box(0.25, 0.9, 0.25, mat.darkSteel, px, py - 0.9, 0));
-    g.add(box(2.3, 2.3, 2.1, mat.glassSolid, px, py - 3.2, 0));
-    g.add(box(2.5, 0.35, 2.3, w, px, py - 0.95, 0));
-    g.add(box(2.5, 0.3, 2.3, w, px, py - 3.45, 0));
-  }
   // Hub and axle.
   const hubM = new THREE.Mesh(new THREE.CylinderGeometry(1.9, 1.9, 2 * hubZ + 0.4, 16), w);
   hubM.rotation.x = Math.PI / 2; hubM.position.set(0, hub, 0);
@@ -3197,6 +3176,7 @@ function onRoad(city, s) {
  */
 export function buildLandmarks(scene, city, waterLevelAt = null, monorail = null) {
   let needleAt = null;   // where the Needle stands, for needletop.js
+  let wheelAt = null;    // and the Great Wheel, for wheelride.js
   atlas = new SignAtlas();
   const clusters = new Map();
   const solids = [];
@@ -3281,6 +3261,7 @@ export function buildLandmarks(scene, city, waterLevelAt = null, monorail = null
     g.rotation.y = t;
     g.userData.landmark = l.name;
     if (l.kind === 'spaceNeedle') needleAt = { x, y, z, t };
+    if (l.kind === 'wheel') wheelAt = { x, y, z };
     for (const s of g.userData.solids || []) {
       const w = worldSolid(s, x, y, z, t);
       if (city && onRoad(city, w)) { dropped.push(`${l.kind}@${w.x.toFixed(0)},${w.z.toFixed(0)}`); continue; }
@@ -3348,6 +3329,7 @@ export function buildLandmarks(scene, city, waterLevelAt = null, monorail = null
   root.userData.beaches = beaches;
   root.userData.near = near;
   root.userData.needle = needleAt;
+  root.userData.wheel = wheelAt;
   scene.add(root);
   return root;
 }

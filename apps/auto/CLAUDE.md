@@ -29,6 +29,7 @@ src/player.js               on-foot/driving state machine + chase camera
 src/controls.js             touch stick/buttons + keyboard fallback
 src/hud.js                  minimap, full map, readouts
 src/needletop.js            the Space Needle's elevator, deck and viewers
+src/wheelride.js            the Great Wheel's turning half and the ride on it
 src/fishtoss.js             the fish stall at Pike Place Market + the catching game
 src/hoops.js                basketball courts in the parks + the free-throw game
 src/stunts.js               stunt-jump ramps (geometry + height query) and their scoring
@@ -4073,6 +4074,34 @@ verify's "flying fish" section walks the frontage at three places (no drop
 over 0.3 m, the floor within 10 cm of the drawn surface, reaching the arcade),
 plays a round standing under every fish (every one caught), one hands off
 (over at three drops), the pay, and closing. `docs/fishtoss/` has shots.
+
+## The Great Wheel turns, and you can ride it (v131)
+
+**The wheel's rotating half is `src/wheelride.js`**; landmarks.js keeps the
+hub, axle, A-frames and Pier 57's deck (`WHEEL` is exported from there). The
+rim (two outer rings and an inner one, laced), the spokes from both hub
+flanges and the pivot brackets are one merged mesh turning about the axle;
+the 42 gondolas are two InstancedMeshes (frame, glass) whose matrices are
+set every frame the wheel is within 1.4 km, each hanging level from its
+pivot. It turns once every 90 s all day. Cost: 3 draws near the waterfront
+(the rotating parts no longer merge into the landmark cluster), and on a
+phone they are movers in the shadow pass (not the cache's statics).
+
+- **ENTER on the boarding platform** eases the next gondola round to the
+  bottom and stops it (`_nextToBottom`, `align`), you step in, and it takes
+  you once round (~100 s with the start and the stop, 167 ft at the top) and
+  lets you off on the platform facing the city. **Down** (or ENTER, Esc)
+  brings it round at 6x.
+- **The gondola you ride is a detailed one** (`riddenGondola`: frame,
+  see-through glass, a floor, benches on its north and south walls) in place
+  of its instance (scaled to zero). You sit on the south bench looking north:
+  the open views from a wheel are out of its plane, along the axle; in the
+  plane are the neighbouring gondolas, the spokes and the A-frames. Drag or
+  the stick looks round; the readout is your height in feet. The gondola
+  swings a little on its pivot as the wheel starts and stops.
+
+verify's "Great Wheel" section checks it turns, rides once round (time,
+height, stepping off) and the quick way down. `docs/wheel/` has shots.
 
 ## Basketball in the parks
 
