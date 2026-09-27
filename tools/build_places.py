@@ -54,7 +54,7 @@ LANDMARKS = [
 
 # Where the player starts, and where the hospital puts them back. Both are real
 # places, and citygen keeps buildings off them (G.KEEP_CLEAR).
-SPAWN_LL = (47.6186, -122.3510)      # 5th Ave N & Broad St, looking at the Needle
+SPAWN_LL = (47.62446, -122.34756)    # 5th Ave N by Roy St: the whole Needle down the street
 RESPAWN_LL = (47.6032, -122.3236)    # Harborview Medical Center
 
 

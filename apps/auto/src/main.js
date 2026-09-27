@@ -997,23 +997,40 @@ function installShadowFade() {
   if (lmRoot.userData.needle) {
     needleTop = new NeedleTop({ scene, city, world, player, camera, audio, hud: null, at: lmRoot.userData.needle });
   }
-  // A CAR WORTH TAKING at the kerb nearest the spawn. Kerbside cars come from
-  // a fixed hash of street slots, so the first car every player walked up to
-  // was the same pickup. That slot is reserved and a sports coupe parked in it
-  // for good (apron: never despawned, like the quads).
+  // A CAR WORTH TAKING at the kerb in front of the spawn. Kerbside cars come
+  // from a fixed hash of street slots, so the first car every player walked
+  // up to was the same pickup -- and the nearest slot was usually out of the
+  // opening frame. A red sports coupe is parked for good (apron: never
+  // despawned, like the quads) at the right-hand kerb ~14 m ahead, facing up
+  // the street, and any kerbside car in that spot gives up its slot.
   {
     traffic.updateParked(G.SPAWN.x, G.SPAWN.z);
-    let best = null, bd = Infinity;
-    for (const v of traffic.cars) {
-      if (v.mode !== 'parked' || typeof v.slot !== 'number') continue;
-      const dd = Math.hypot(v.x - G.SPAWN.x, v.z - G.SPAWN.z);
-      if (dd < bd) { bd = dd; best = v; }
+    const fx = Math.sin(G.SPAWN_HEADING), fz = Math.cos(G.SPAWN_HEADING);
+    const ax = G.SPAWN.x + fx * 14, az = G.SPAWN.z + fz * 14;
+    let spot = null;
+    for (const ei of city.edgesNear(ax, az, 40)) {
+      const e = city.edges[ei];
+      if (e.elev || e.tunnel || e.prof || e.cls === 'hwy' || e.cls === 'ramp') continue;
+      const n0 = city.nodes[e.a];
+      const sg = e.dx * fx + e.dz * fz >= 0 ? 1 : -1;
+      if (Math.abs(e.dx * fx + e.dz * fz) < 0.9) continue;      // along the view only
+      const dx = e.dx * sg, dz = e.dz * sg;
+      const t = (ax - n0.x) * e.dx + (az - n0.z) * e.dz;
+      if (t < 6 || t > e.len - 6) continue;
+      const cx = n0.x + e.dx * t, cz = n0.z + e.dz * t;
+      if (Math.hypot(cx - ax, cz - az) > 25) continue;
+      const x = cx - dz * (e.hw - 1.15), z = cz + dx * (e.hw - 1.15);
+      // the outermost right-hand kerb (a divided street has a median kerb too)
+      const right = (x - G.SPAWN.x) * -fz + (z - G.SPAWN.z) * fx;
+      if (!spot || right > spot.right) spot = { x, z, heading: Math.atan2(dx, dz), right };
     }
-    if (best) {
-      traffic.reservedSlots.add(best.slot);
-      const { x, z, heading } = best;
-      traffic.remove(best);
-      traffic.spawnAt(x, z, heading, 'sports', 0xc4161c, 'apron').vLong = 0;
+    if (spot) {
+      for (const v of [...traffic.cars]) {
+        if (v.mode !== 'parked' || Math.hypot(v.x - spot.x, v.z - spot.z) > 8) continue;
+        if (typeof v.slot === 'number') traffic.reservedSlots.add(v.slot);
+        traffic.remove(v);
+      }
+      traffic.spawnAt(spot.x, spot.z, spot.heading, 'sports', 0xc4161c, 'apron').vLong = 0;
     }
   }
   // What the map marks, and what says hello when you get near (the HUD is
