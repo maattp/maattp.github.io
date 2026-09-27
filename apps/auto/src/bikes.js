@@ -204,6 +204,8 @@ export class BikeNet {
 
   update(camera) {
     if (!this.chunks) return;
+    // a 1 km chunk's visibility changes rarely: look every eighth frame
+    if ((this._tick = (this._tick || 0) + 1) & 7) return;
     const R = (ON_PHONE ? 600 : 1000) + CHUNK * 0.71, x = camera.position.x, z = camera.position.z;
     for (const c of this.chunks) c.m.visible = Math.hypot(c.x - x, c.z - z) < R;
   }
@@ -348,6 +350,10 @@ export class Cyclists {
     let want = r.speed;
     const pos = player.position, fx = Math.sin(r.h), fz = Math.cos(r.h);
     const ax = pos.x - v.x, az = pos.z - v.z, ahead = ax * fx + az * fz, lat = Math.abs(ax * fz - az * fx);
+    v._ikFar = ax * ax + az * az > 45 * 45;
+    // a cyclist is 4 draws (the bike's three and the rider): past a couple of
+    // hundred metres it is a few pixels, and nobody misses it
+    v.group.visible = ax * ax + az * az < (ON_PHONE ? 120 * 120 : 180 * 180);
     if (ahead > 0 && ahead < 9 && lat < 1.4) {
       want = Math.min(want, Math.max(0, (ahead - 2.2) * 0.8));
       r.bellT -= dt;
