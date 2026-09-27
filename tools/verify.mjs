@@ -1871,6 +1871,27 @@ async function main() {
       if (bad.length) { console.error(`FAIL: parachutes: ${bad.join('; ')}`); process.exitCode = 1; }
     }
 
+    // --- no invisible walls in Elliott Bay -------------------------------------------------
+    // Where the 10 m water mask called drawn sea "land" (ground under the sea
+    // plane), a jet ski stopped dead in open water north of downtown.
+    const jwl = await session.eval(`(() => {
+      const d = window.__dbg, T = d.traffic, P = d.player;
+      if (P.vehicle) P.exitVehicle(true);
+      const runs = [[-889, 35, -1.25], [-1323, -392, -1.7]].map(([x, z, h]) => {
+        const v = T.spawnAt(x, z, h, 'jetski', 0xd8242c, 'free');
+        P.x = v.x; P.z = v.z; P.y = v.y + 1; P.enterVehicle(v);
+        v.x = x; v.z = z; v.heading = h; v.vLong = 12;
+        for (let i = 0; i < 60 * 3; i++) { v.heading = h; P.updateDrive(1 / 60, { x: 0, y: 0, gasAmt: 1, brakeAmt: 0 }, T, d.peds); }
+        const m = Math.round(Math.hypot(v.x - x, v.z - z));
+        P.exitVehicle(true); T.remove(v);
+        return m;
+      });
+      return runs;
+    })()`, true);
+    console.log('\n--- elliott bay -------------------------------------------');
+    console.log(`  a jet ski through the old invisible walls: ${jwl.join(' / ')} m in 3 s`);
+    if (jwl.some((m) => m < 40)) { console.error('FAIL: elliott bay: an invisible wall stops the jet ski'); process.exitCode = 1; }
+
     // --- the articulated bus ---------------------------------------------------
     //
     // An artic spawned and driven: its rear section follows on the hitch

@@ -3483,6 +3483,21 @@ geometry with a bumped build** or cleared `/tmp/auto-*` profiles: the boot
 cache keeps vehicle geometry per build, and a harness profile that survived
 showed the old hull.
 
+### Hulls go where the water is drawn (v145)
+
+**The water mask is not where the water is drawn.** The sea is one plane at
+0 m, so any ground under it is drawn as sea -- but the 10 m mask and the 40 m
+DEM disagree along the shore, and `world.waterLevelAt` (null off the mask)
+made every such cell a wall: a jet ski running north along the waterfront
+from downtown stopped dead in open water off Pier 66 / Myrtle Edwards. The
+hulls' query (main.js `setWaterQuery`) now counts ground more than 15 cm
+under the sea's surface as sea too. And a small craft runs in shallow water:
+`spec.minDepth` is 0.12 m for the jet ski and 0.3 m for the runabout (the
+boats' 0.45 m had shallow shelves under drawn water acting as walls too).
+verify's "elliott bay" drives a jet ski through two of the old walls.
+Known: Smith Cove's two long piers (90 and 91) are not drawn; their sheds
+stand in the water.
+
 ### The ship canal is at lake level
 
 **Only the lakes are labelled**, each by its bounding box in `water.json`, so

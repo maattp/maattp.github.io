@@ -792,7 +792,12 @@ function installShadowFade() {
   player.monorail = monorail;
   traffic = new TrafficSystem(scene, city, game);
   traffic.camera = camera;   // far-LOD instances are culled against it
-  setWaterQuery((x, z) => world.waterLevelAt(x, z));
+  // Hulls ask where the water is DRAWN. The 10 m water mask and the 40 m
+  // terrain disagree along the shore: ground under the sea's surface is drawn
+  // as sea (the plane covers it) while the mask can call it land, and every
+  // such cell was an invisible wall in open water -- a jet ski running north
+  // along the waterfront stopped dead in it.
+  setWaterQuery((x, z) => { const wl = world.waterLevelAt(x, z); return wl !== null ? wl : G.terrainHeight(x, z) < -0.15 ? 0 : null; });
   // Boeing Field's apron: three trainers, parked nose-out along the taxiway
   // side, matching the landmark's own layout constants (bearing -0.52, apron
   // centred 260 m east, 120 m south of the ARP). Mode 'apron' so they never
