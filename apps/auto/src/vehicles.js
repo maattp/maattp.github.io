@@ -216,6 +216,8 @@ export const TYPES = {
   // the articulated bus: the front section and the trailing rear (buildArticFront)
   artic: deriveSpec({ wheelbase: 6.7, len: 11.4, wid: 2.59, wheelR: 0.50, sill: 0.50, belt: 1.30, roof: 3.10, cab: [-0.48, 0.48], hand: 'artic', livery: 0xc41a24, bus: true, artic: true, boxy: 3, mass: 6.0, acc: 1.25, topKph: 90, brakeM: 58, latG: 0.58 }),
   articRear: deriveSpec({ wheelbase: 5.3, len: 6.5, wid: 2.59, wheelR: 0.50, sill: 0.50, belt: 1.30, roof: 3.10, cab: [-0.48, 0.48], hand: 'articRear', livery: 0xc41a24, bus: true, trailer: true, boxy: 3, mass: 3.0, acc: 1.25, topKph: 90, brakeM: 58, latG: 0.58 }),
+  // an unlimited hydroplane: a turbine three-pointer that runs on its sponsons (updateHydro)
+  hydro: deriveSpec({ wheelbase: 6.0, len: 9.6, wid: 4.4, wheelR: 0.3, sill: 0.2, belt: 0.6, roof: 1.3, cab: [0.1, 0.35], hand: 'hydro', boat: true, hydro: true, engine: 'turbine', mass: 3.0, acc: 12, topKph: 250, brakeM: 60, latG: 1.6 }),
   // the Duck Tour's amphibious DUKW: a truck on land, a boat in the water (updateDuck)
   duck: deriveSpec({ wheelbase: 5.2, len: 9.5, wid: 2.52, wheelR: 0.56, sill: 0.62, belt: 2.05, roof: 3.4, cab: [-0.42, 0.26], hand: 'duck', livery: 0xf2c230, amphib: true, diesel: true, mass: 6.5, acc: 1.35, topKph: 80, brakeM: 55, latG: 0.55 }),
   bus: deriveSpec({ wheelbase: 6.0,len: 12.0, wid: 2.55, wheelR: 0.50, sill: 0.50, belt: 1.30, roof: 3.10, cab: [-0.48, 0.48], hand: 'bus', livery: 0xeceae3, bus: true, boxy: 3, mass: 4.5, acc: 1.4, topKph: 95, brakeM: 52, latG: 0.62 }),
@@ -2502,6 +2504,68 @@ const HULL_BOTTOM = [0.80, 0.81, 0.79];   // a trailer boat's white bottom: the 
  * bench, consoles, and a wrap-round screen in trim glass you look through at
  * all of it. The driver is `matte.crew`, so a moored boat is empty.
  */
+/**
+ * An unlimited hydroplane (after the modern turbine cab-forward boats Seafair
+ * races): a flat wing-deck 9.6 m long and 4.4 m wide at the sponsons, which
+ * run forward either side; the canopy at the front of a central cowl, a turbine
+ * intake behind it; a tall fin and a wing on it at the stern; a propeller that
+ * skims the surface. Origin at the waterline under the centre; nose +z.
+ */
+export const HYDRO = { thrust: 12.5, drag: 0.00235, roll: 0.02, grip: 20, yawMax: 0.42, blow: 0.36, warn: 0.27, lift: 0.000052 };
+function buildHydro(spec, paint, trim, matte) {
+  // the deck's half-width along its length
+  const ST = [[-3.7, 1.08], [-2.0, 1.42], [0.0, 1.78], [2.0, 2.08], [3.9, 2.2], [4.6, 2.12], [4.85, 1.9]];
+  const hwAt = (z) => { for (let i = 1; i < ST.length; i++) if (z <= ST[i][0]) { const [z0, w0] = ST[i - 1], [z1, w1] = ST[i]; return w0 + (w1 - w0) * (z - z0) / (z1 - z0); } return ST[ST.length - 1][1]; };
+  const Z = []; for (let z = -3.7; z < 4.85; z += 0.3) Z.push(z); Z.push(4.85);
+  const TOP = 0.62, BOT = 0.28;
+  // the deck: cambered top, flat bottom, edges
+  paint.patch(Z.map((z) => { const w = hwAt(z); return [-1, -0.6, -0.25, 0, 0.25, 0.6, 1].map((u) => [u * w, TOP + 0.1 * (1 - u * u), z]); }), WHITE, [0, 1, 0]);
+  matte.patch(Z.map((z) => { const w = hwAt(z); return [[-w, BOT, z], [0, BOT - 0.04, z], [w, BOT, z]]; }), [0.14, 0.15, 0.16], [0, -1, 0]);
+  for (const sd of [-1, 1]) {
+    paint.patch(Z.map((z) => { const w = hwAt(z); return [[sd * w, BOT, z], [sd * w, TOP, z]]; }), WHITE, [sd, 0, 0]);
+    // a racing stripe along each edge
+    matte.patch(Z.map((z) => { const w = hwAt(z) - 0.12; return [[sd * w, TOP + 0.1 * (1 - (w / hwAt(z)) ** 2) + 0.012, z], [sd * (w - 0.22), TOP + 0.1 * (1 - ((w - 0.22) / hwAt(z)) ** 2) + 0.012, z]]; }), [0.96, 0.96, 0.94], [0, 1, 0]);
+    // the sponsons: running surfaces under the forward outer corners
+    const SZ = Z.filter((z) => z >= 0.8);
+    matte.patch(SZ.map((z) => { const w = hwAt(z); return [[sd * w, BOT, z], [sd * w, -0.02 + Math.max(0, z - 4.2) * 0.35, z], [sd * (w - 0.55), 0.02 + Math.max(0, z - 4.2) * 0.35, z], [sd * (w - 0.62), BOT, z]]; }), [0.12, 0.13, 0.14], [sd * 0.4, -1, 0]);
+    paint.patch(SZ.map((z) => { const w = hwAt(z); return [[sd * w, BOT, z], [sd * w, -0.02 + Math.max(0, z - 4.2) * 0.35, z]]; }), WHITE, [sd, 0, 0]);
+  }
+  // transom and the nose's rolled edge
+  paint.patch([[[-1.08, BOT, -3.7], [1.08, BOT, -3.7]], [[-1.08, TOP, -3.7], [1.08, TOP, -3.7]]], WHITE, [0, 0, -1]);
+  for (let i = 0; i < 8; i++) {
+    const x0 = -2.1 + i * 4.2 / 8, x1 = x0 + 4.2 / 8;
+    paint.tube([x0, (TOP + BOT) / 2, 4.84], [x1, (TOP + BOT) / 2, 4.84], (TOP - BOT) / 2, 6, WHITE, false);
+  }
+  // the central cowl, from behind the canopy to the fin
+  const rings = [];
+  for (const [z, w, h] of [[2.3, 0.42, 0.3], [1.8, 0.62, 0.62], [0.6, 0.7, 0.86], [-1.2, 0.66, 0.9], [-2.6, 0.52, 0.72], [-3.6, 0.38, 0.5]]) {
+    const ring = [];
+    for (let k = 0; k <= 8; k++) { const a = Math.PI * k / 8; ring.push([Math.cos(a) * w, TOP + Math.sin(a) * h, z]); }
+    rings.push(ring);
+  }
+  paint.patch(rings, WHITE, [0, 1, 0]);
+  // a coloured band down the cowl, and the turbine intakes each side of it
+  matte.patch(rings.slice(1).map((r) => [r[3].map((v, i) => v * (i === 1 ? 1.01 : 1)), r[4], r[5].map((v, i) => v * (i === 1 ? 1.01 : 1))]), [0.95, 0.78, 0.12], [0, 1, 0]);
+  for (const sd of [-1, 1]) {
+    matte.box(sd * 0.72, TOP + 0.2, 0.9, 0.34, 0.5, 0.9, 0, [0.08, 0.08, 0.09]);
+    trim.box(sd * 0.72, TOP + 0.3, 1.36, 0.28, 0.34, 0.02, 0, CHROME);
+  }
+  // the canopy: a glass bubble on a painted collar at the front of the cowl
+  paint.patch([0, 1, 2, 3, 4, 5, 6, 7, 8].map((k) => { const a = Math.PI * k / 8; return [[Math.cos(a) * 0.62, TOP + Math.sin(a) * 0.28, 3.4], [Math.cos(a) * 0.5, TOP + Math.sin(a) * 0.32, 2.2]]; }), WHITE, [0, 1, 0]);
+  trim.spheroid(0, TOP + 0.3, 2.85, 0.56, 12, 7, GLASS, 0.75);
+  if (matte.crew) matte.crew.spheroid(0, TOP + 0.32, 2.7, 0.2, 8, 5, [0.9, 0.9, 0.92], 1);
+  // the fin and the wing on it
+  matte.patch([[[0, TOP + 0.7, -2.4], [0, TOP + 2.35, -3.0]], [[0, TOP + 0.5, -3.7], [0, TOP + 2.35, -3.75]]], [0.96, 0.96, 0.94], [1, 0, 0]);
+  matte.patch([[[0, TOP + 0.5, -3.7], [0, TOP + 2.35, -3.75]], [[0, TOP + 0.7, -2.4], [0, TOP + 2.35, -3.0]]], [0.96, 0.96, 0.94], [-1, 0, 0]);
+  paint.box(0, TOP + 2.3, -3.35, 3.8, 0.1, 0.9, 0, WHITE);
+  for (const sd of [-1, 1]) matte.box(sd * 1.9, TOP + 1.9, -3.35, 0.06, 0.55, 0.8, 0, [0.95, 0.78, 0.12]);
+  // the propeller, half under the surface at the transom, and the skid fin
+  matte.spheroid(0, 0.18, -3.95, 0.16, 8, 5, [0.3, 0.3, 0.32], 1);
+  for (let k = 0; k < 3; k++) { const a = k / 3 * Math.PI * 2; matte.tube([0, 0.18, -4.0], [Math.cos(a) * 0.5, 0.18 + Math.sin(a) * 0.5, -4.05], 0.07, 4, [0.72, 0.6, 0.3], false); }
+  matte.box(-1.0, -0.25, -2.4, 0.04, 0.55, 0.7, 0, [0.2, 0.2, 0.22]);
+  return [];
+}
+
 /**
  * The Duck Tour's DUKW (after the WWII amphibious truck the Seattle tours
  * ran): a boat hull 9.5 m long on six wheels in arches cut into its sides, an
@@ -5959,7 +6023,7 @@ const HAND_BUILT = {
   boxtruck: (s, p, t, m) => buildTruck(s, p, t, m, TRUCK_LOOKS.boxtruck),
   garbage: (s, p, t, m) => buildTruck(s, p, t, m, TRUCK_LOOKS.garbage),
   convertible: buildConvertible, cruiser: buildCruiser, sportbike: buildSportbike,
-  atv: buildAtv, boat: buildBoat, duck: buildDuck, jetski: buildJetski, kayak: buildKayak, artic: buildArticFront, articRear: buildArticRear, balloon: buildBalloon,
+  atv: buildAtv, boat: buildBoat, duck: buildDuck, hydro: buildHydro, jetski: buildJetski, kayak: buildKayak, artic: buildArticFront, articRear: buildArticRear, balloon: buildBalloon,
 };
 
 /**
@@ -7240,6 +7304,95 @@ export class Vehicle {
   }
 
   /**
+   * An unlimited hydroplane. The turbine spools (it takes a second to come
+   * up); thrust against quadratic drag gives the top speed; below ~25 m/s the
+   * hull is in the water and drags until it gets up on its sponsons.
+   *
+   * TURNING: the rudder asks for a yaw rate (HYDRO.yawMax at speed); the
+   * lateral acceleration that needs is speed x yaw, and past HYDRO.grip the
+   * excess goes into sideslip. Held too long, the slide HOOKS: the boat spins
+   * out and scrubs off most of its speed. So you lift for the turns.
+   *
+   * BLOWOVER: the deck is a wing. The nose rises with the square of the
+   * speed; the stick trims it (back raises it, forward drops it), a hit on a
+   * wake kicks it. Past HYDRO.warn the HUD warns; past HYDRO.blow the boat
+   * blows over backwards -- a crash that ends the run until it is righted.
+   * Lifting off the throttle or pushing forward brings the nose down.
+   * `this.hyd` carries the state; the race sets `wakeKick` from other boats.
+   */
+  updateHydro(dt, input) {
+    const spec = this.spec, H = HYDRO;
+    const moored = this._mode === 'apron';
+    const throttle = moored ? 0 : clamp(input.throttle || 0, 0, 1), brake = moored ? 0 : input.brake || 0;
+    const steerIn = clamp(input.steer || 0, -1, 1), pitchIn = clamp(input.pitch || 0, -1, 1);
+    this._t += dt;
+    const h = this.hyd || (this.hyd = { spool: 0, nose: 0, noseV: 0, slip: 0, hook: 0, blown: 0, flip: 0, wakeKick: 0, warn: false, chine: 0 });
+    if (h.blown > 0) {
+      // over on its back: tumble, then sit there until righted
+      h.blown += dt;
+      h.flip = Math.min(Math.PI * 0.95, h.flip + dt * 5);
+      this.vLong *= Math.exp(-1.6 * dt); this.vLat *= Math.exp(-1.6 * dt);
+      this._waterMove(dt, 0.4);
+      const wl = waterQuery ? waterQuery(this.x, this.z) : null;
+      this.y = (wl !== null ? wl : this.y) + 0.3 + Math.sin(Math.min(h.flip, Math.PI)) * 3;
+      this.pitch = -h.flip; this.roll = 0.3 * Math.sin(h.flip);
+      this.sync();
+      return;
+    }
+    h.spool += (throttle - h.spool) * Math.min(1, dt * (throttle > h.spool ? 1.3 : 2.6));
+    let acc = H.thrust * h.spool - H.drag * this.vLong * Math.abs(this.vLong) - H.roll * this.vLong;
+    const planing = clamp((Math.abs(this.vLong) - 8) / 18, 0, 1);
+    acc -= (1 - planing) * this.vLong * 0.35;                         // the hull in the water
+    if (brake > 0.2) acc -= (this.vLong > 0 ? 7 : 2) * brake + (this.vLong < 0.5 ? 1.5 * brake : 0);
+    if (moored) { this.vLong = 0; this.vLat = 0; acc = 0; }
+    this.vLong += acc * dt;
+    const v = Math.abs(this.vLong);
+    // yaw: the rudder's demand, and the grip the sponsons have for it
+    let yawMax = v < 17 ? 1.1 - (1.1 - H.yawMax) * v / 17 : H.yawMax;
+    if (h.hook > 0) yawMax = 0;
+    let yaw = steerIn * yawMax * (this.vLong < -0.5 ? -1 : 1) * clamp(v / 3, 0, 1);
+    const need = Math.abs(yaw) * v;
+    if (need > H.grip && v > 10) {
+      const over = need - H.grip;
+      h.slip += over * dt * 0.6;
+      yaw *= 0.92;
+    } else h.slip = Math.max(0, h.slip - dt * 6);
+    this.vLat += -yaw * this.vLong * dt * 0.15 - Math.sign(yaw) * (need > H.grip ? (need - H.grip) * dt * 0.6 : 0);
+    this.vLat *= Math.exp(-(h.hook > 0 ? 1.2 : 5.5) * dt);
+    if (h.slip > 10 && v > 35 && h.hook <= 0) { h.hook = 1.3; this.hooked = true; }
+    if (h.hook > 0) {
+      h.hook -= dt;
+      this.heading += Math.sign(steerIn || 1) * 5.2 * dt;
+      this.vLong *= Math.exp(-1.7 * dt);
+      if (h.hook <= 0) h.slip = 0;
+    } else this.heading += yaw * dt;
+    this.steer = lerp(this.steer, steerIn * 0.4, 1 - Math.exp(-8 * dt));
+    this.latAcc = yaw * this.vLong;
+    // the nose: lift with speed, the stick's trim, the chop and other boats' wakes
+    const target = H.lift * v * v + pitchIn * 0.14 - brake * 0.05 + (h.spool - throttle) * -0.02;
+    const chop = (Math.sin(this._t * 13.1 + this._bob) * 0.5 + Math.sin(this._t * 7.3) * 0.5) * 0.4 * clamp((v - 40) / 30, 0, 1);
+    h.noseV += ((target - h.nose) * 14 - h.noseV * 5 + chop + h.wakeKick) * dt;
+    h.wakeKick = 0;
+    h.nose += h.noseV * dt;
+    h.nose = Math.max(-0.04, h.nose);
+    h.warn = h.nose > H.warn;
+    if (h.nose > H.blow && v > 30) { h.blown = 0.0001; h.flip = h.nose; this.blewOver = true; }
+    h.chine = Math.sin(this._t * 9.5) * 0.035 * clamp((v - 55) / 15, 0, 1);
+    const { dx, dz } = this._waterMove(dt, 0.4);
+    const wl = waterQuery ? waterQuery(this.x, this.z) : null;
+    const surf = wl !== null ? wl : this.y;
+    this._surf = Number.isNaN(this._surf) ? surf : damp(this._surf, surf, 3, dt);
+    const ride = -0.12 + 0.34 * planing + Math.sin(this._t * 17 + this._bob) * 0.03 * planing;
+    this.y = this._surf + ride;
+    this.onGround = true; this.vy = 0;
+    this.pitch = -h.nose;
+    this.roll = h.chine - clamp(yaw * clamp(v / 20, 0, 1), -0.5, 0.5) * 0.12 + (h.hook > 0 ? Math.sin(h.hook * 9) * 0.06 : 0);
+    this.skid = clamp(Math.abs(this.vLat) / 8, 0, 1);
+    this.sync();
+    return { dx, dz };
+  }
+
+  /**
    * The DUKW: afloat when the water under it is deeper than DUCK.floatIn (it
    * drove down a ramp or off a bank), back on its wheels when it is shallower
    * than floatOut AND the bed ahead is gentle enough to climb (at a steep bank
@@ -7484,6 +7637,7 @@ export class Vehicle {
     if (spec.fighter) { this.updateFighter(dt, input); return; }
     if (spec.plane) { this.updatePlane(dt, input); return; }
     if (spec.kayak) { this.updateKayak(dt, input); return; }
+    if (spec.hydro) { this.updateHydro(dt, input); return; }
     if (spec.boat) { this.updateBoat(dt, input); return; }
     if (spec.amphib && this.updateDuck(dt, input)) return;
     const throttle = input.throttle || 0;
