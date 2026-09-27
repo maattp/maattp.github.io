@@ -1801,6 +1801,33 @@ async function main() {
       if (bad.length) { console.error(`FAIL: parked cars: ${bad.join('; ')}`); process.exitCode = 1; }
     }
 
+    // --- the 747-8 at Boeing Field ----------------------------------------------------
+    const jum = await session.eval(`(() => {
+      const d = window.__dbg, T = d.traffic, P = d.player;
+      const v = T.cars.find((c) => c.spec.hand === 'jumbo');
+      if (!v) return null;
+      if (P.vehicle) P.exitVehicle(true);
+      const out = { onPave: d.city.slabQuery ? d.city.slabQuery(v.x, v.z) !== null : null, tris: 0 };
+      for (const m of [v.paintMesh, v.trimMesh, v.matteMesh]) if (m && m.geometry && m.geometry.index) out.tris += m.geometry.index.count / 3;
+      // a take-off roll down the runway from the north threshold
+      const ap = d.G.LANDMARKS.find((l) => l.kind === 'airport');
+      const AL = [Math.sin(0.52), Math.cos(0.52)];
+      const x0 = ap.x - 1400 * AL[0], z0 = ap.z - 1400 * AL[1];
+      P.x = v.x; P.z = v.z; P.y = v.y + 1; P.enterVehicle(v);
+      v.x = x0; v.z = z0; v.heading = 0.52; v.vLong = 0; v.y = d.city.groundAt(x0, z0, null); v.airborne = false;
+      let roll = null;
+      for (let i = 0; i < 60 * 60 && roll === null; i++) { v.update(1 / 60, { throttle: 1, pitch: v.vLong > 70 ? 1 : 0, pilot: true }); if (v.airborne) roll = Math.round(Math.hypot(v.x - x0, v.z - z0)); }
+      out.roll = roll;
+      P.exitVehicle(true);
+      return out;
+    })()`, true);
+    console.log('\n--- 747 ---------------------------------------------------');
+    if (!jum) { console.error('FAIL: no 747 at Boeing Field'); process.exitCode = 1; }
+    else {
+      console.log(`  parked on the pavement ${jum.onPave}; ${Math.round(jum.tris)} triangles; lifts off after ${jum.roll} m of runway`);
+      if (!jum.onPave || jum.roll === null || jum.roll > 1500) { console.error('FAIL: 747: not parked on the pavement or cannot take off within the runway'); process.exitCode = 1; }
+    }
+
     // --- the articulated bus ---------------------------------------------------
     //
     // An artic spawned and driven: its rear section follows on the hitch

@@ -140,6 +140,12 @@ export const TYPES = {
     fly: { vr: 62, stall: 46, bank: 1.2, turn: 1.4, climb: 40, vne: 215, thrust: 21 } }),
   jet: deriveSpec({ wheelbase: 6.2, len: 15.0, wid: 1.7, wheelR: 0.30, sill: 0.7, belt: 1.55, roof: 2.45, cab: [0.6, 0.3], hand: 'jet', plane: true, jet: true, mass: 2.0, acc: 9.0, topKph: 540, brakeM: 90, latG: 0.6,
     fly: { vr: 42, stall: 33, bank: 0.78, turn: 0.80, climb: 26, vne: 150 } }),
+  // The Boeing 747-8, the largest airliner Boeing has built: 76.3 m long,
+  // 68.4 m span, 19.4 m to the fin tip, four GEnx-2B on the wing, 18 wheels.
+  // Heavy and slow to wind up; rotates at ~150 kt. `wid` is the fuselage
+  // (street-scale collision); the wings are drawn wide.
+  jumbo: deriveSpec({ wheelbase: 26, len: 76.3, wid: 6.5, wheelR: 0.62, sill: 2.2, belt: 6.0, roof: 10.3, cab: [0.9, 0.3], hand: 'jumbo', plane: true, jet: true, mass: 12, acc: 5.8, topKph: 560, brakeM: 180, latG: 0.4, seeFar: 7000,
+    fly: { vr: 76, stall: 60, bank: 0.55, turn: 0.34, climb: 14, vne: 150, thrustK: 0.62 } }),
   // Boeing-Stearman Model 75: the biplane Boeing built, and the one hanging
   // in the Museum of Flight next door. A taildragger: it sits 11 degrees nose
   // up on its tailwheel until the tail lifts at ~15 m/s (`taildragger` is the
@@ -3905,6 +3911,127 @@ function buildJet(spec, paint, trim, matte) {
 }
 
 /**
+ * The Boeing 747-8 Intercontinental: the Queen of the Skies at her biggest.
+ * Station figures from Boeing's airport planning document (76.3 m long,
+ * 6.5 m fuselage, 68.4 m span, 19.4 m tail height, 37.5 deg sweep); the
+ * upper-deck hump runs 27 m back from the nose. White over a pale grey
+ * belly with a deep blue cheatline and fin (a house livery, not an
+ * airline's). Nose +z, the ground at y = 0 under the gear.
+ */
+function buildJumbo(spec, paint, trim, matte) {
+  const H = spec.len / 2;                    // 38.15
+  const ST = [
+    [H, 0.08, 0.08, 0.08, 4.35], [H - 0.5, 1.15, 1.25, 1.05, 4.45], [H - 1.6, 2.05, 2.25, 1.85, 4.7],
+    [H - 3.2, 2.72, 3.25, 2.55, 5.0], [H - 5.2, 3.08, 4.25, 2.92, 5.2], [H - 8.0, 3.24, 4.9, 3.08, 5.3],
+    [H - 12, 3.25, 5.0, 3.1, 5.3], [H - 20, 3.25, 5.0, 3.1, 5.3], [H - 24, 3.25, 4.55, 3.1, 5.3],
+    [H - 27, 3.25, 3.7, 3.1, 5.3], [H - 29.5, 3.25, 3.3, 3.1, 5.3], [-17, 3.25, 3.3, 3.1, 5.3],
+    [-23, 3.12, 3.22, 2.75, 5.5], [-29, 2.68, 2.95, 2.05, 6.05], [-34, 1.85, 2.4, 1.3, 6.7],
+    [-37.4, 0.85, 1.45, 0.55, 7.35], [-H, 0.3, 0.6, 0.25, 7.6],
+  ];
+  const hull = hullTable(ST), { rings, skinX, sec } = hull;
+  const BELLY = [0.80, 0.82, 0.85], BLUE = [0.07, 0.2, 0.52], DOOR = [0.72, 0.74, 0.78];
+  // the windscreen, cut into the upper deck's nose
+  hullLoft(rings, (i, k, zm) => {
+    if (k < 0) return i === -1 ? [paint, WHITE] : [matte, [0.35, 0.36, 0.38]];
+    const sdk = hullSide(k);
+    if (zm < H - 3.2 && zm > H - 5.2 && (sdk === 7 || sdk === 8)) return [trim, GLASS];
+    if (sdk <= 2) return [matte, BELLY];
+    return [paint, WHITE];
+  });
+  flightDeck(matte, trim, hull, H - 7.5, H - 3.4, { floorY: 8.05, panelZ: H - 3.7, seatZ: H - 5.0, halfW: 1.2, headY: 9.5, pilotX: 0.62 });
+  const skinPatch = (b, sd, zc, yc, w, h, col, d) => {
+    const rows = [];
+    for (const z of [zc - w / 2, zc + w / 2]) rows.push([yc - h / 2, yc + h / 2].map((y) => [sd * (skinX(z, y) + d), y, z]));
+    b.patch(rows, col, [sd, 0, 0]);
+  };
+  const DOORS = [H - 9.2, H - 19.5, 3.2, -10.5, -21.5];
+  for (const sd of [-1, 1]) {
+    // main deck windows, the length of the cabin, gaps for the doors and the wing box
+    for (let z = H - 8.4; z > -26; z -= 0.51) {
+      if (DOORS.some((dz) => Math.abs(z - dz) < 1.05)) continue;
+      skinWindow(trim, matte, skinX, sd, z, 6.05, 0.27, 0.40);
+    }
+    // the upper deck's, down the hump
+    for (let z = H - 8.2; z > H - 25.5; z -= 0.51) skinWindow(trim, matte, skinX, sd, z, 9.2, 0.26, 0.36);
+    // five doors a side: a grey panel and its small window
+    for (const dz of DOORS) {
+      skinPatch(matte, sd, dz, 5.55, 1.1, 1.95, DOOR, 0.004);
+      skinWindow(trim, matte, skinX, sd, dz, 6.1, 0.22, 0.28);
+    }
+    // the cheatline under the windows, and a thin one over it
+    hullBand(matte, hull, sd, H - 2.2, -34.5, 0.06, 0.13, BLUE);
+    hullBand(matte, hull, sd, H - 2.6, -33.5, 0.16, 0.18, BLUE);
+    // the cockpit's side windows
+    for (let j = 0; j < 3; j++) skinWindow(trim, matte, skinX, sd, H - 5.6 - j * 0.62, 9.35, 0.5, 0.42);
+  }
+  // --- wings -------------------------------------------------------------------------
+  const WST = (sd) => [
+    { x: sd * 3.1, y: 3.35, zLE: 7.0, c: 15.5 }, { x: sd * 12.5, y: 4.4, zLE: -1.3, c: 9.6 },
+    { x: sd * 29.5, y: 6.45, zLE: -14.3, c: 4.1 }, { x: sd * 34.2, y: 7.05, zLE: -19.8, c: 1.4 },
+  ];
+  const wingAt = (sd, x) => {
+    const st = WST(sd), ax = Math.abs(x);
+    for (let i = 1; i < st.length; i++) {
+      if (ax <= Math.abs(st[i].x)) {
+        const a = st[i - 1], b = st[i], t = (ax - Math.abs(a.x)) / (Math.abs(b.x) - Math.abs(a.x));
+        return { y: lerp(a.y, b.y, t), zLE: lerp(a.zLE, b.zLE, t), c: lerp(a.c, b.c, t) };
+      }
+    }
+    return st[st.length - 1];
+  };
+  for (const sd of [-1, 1]) {
+    aerofoil(paint, WHITE, WST(sd), { thick: 0.11, n: 10 });
+    // flaps and ailerons: panel lines along the trailing edge, and the flap-track canoes under it
+    for (const [u0, u1] of [[4, 12], [12.6, 21], [21.5, 28.6]]) {
+      const a = wingAt(sd, u0), b = wingAt(sd, u1);
+      const ca = 0.72, cb = 0.74;
+      matte.patch([[[sd * u0, a.y + 0.2, a.zLE - a.c * ca], [sd * u1, b.y + 0.14, b.zLE - b.c * ca]], [[sd * u0, a.y + 0.2, a.zLE - a.c * cb], [sd * u1, b.y + 0.14, b.zLE - b.c * cb]]], [0.55, 0.57, 0.6], [0, 1, 0]);
+    }
+    for (const x of [6.5, 10, 15, 19.5, 24]) {
+      const w = wingAt(sd, x), z = w.zLE - w.c * 0.55;
+      matte.box(sd * x, w.y - 0.55, z - 1.2, 0.5, 0.55, w.c * 0.75, 0, [0.82, 0.84, 0.86]);
+    }
+    const tip = wingAt(sd, 34.1);
+    trim.box(sd * 34.15, tip.y, tip.zLE - 0.4, 0.06, 0.1, 0.2, 0, sd > 0 ? NAV_R : NAV_G);
+    // --- four engines: GEnx nacelles on pylons ahead of and under the wing ---------------
+    for (const ex of [12.0, 21.3]) {
+      const w = wingAt(sd, ex), x = sd * ex, yc = w.y - 2.35, z0 = w.zLE + 3.4;
+      const ES = [[z0, 1.62, 1.62, 1.62, yc], [z0 - 0.4, 1.78, 1.78, 1.78, yc], [z0 - 2.2, 1.82, 1.82, 1.82, yc],
+        [z0 - 4.4, 1.62, 1.62, 1.62, yc], [z0 - 5.4, 1.2, 1.2, 1.2, yc], [z0 - 6.6, 0.8, 0.8, 0.8, yc], [z0 - 7.6, 0.55, 0.55, 0.55, yc]];
+      const er = ES.map(([z, rw, ht, hb, y]) => { const r = hullRing(z, rw, ht, hb, y); return { z, pts: r.pts.map(([px, py]) => [px + x, py]) }; });
+      hullLoft(er, (i, k) => (i === -1 ? [matte, CAVITY] : k < 0 ? [matte, [0.2, 0.19, 0.18]] : [paint, WHITE]));
+      trim.tube([x, yc, z0 + 0.05], [x, yc, z0 - 0.12], 1.6, 20, CHROME, false);
+      trim.tube([x, yc, z0 - 0.35], [x, yc, z0 - 0.9], 0.45, 12, CHROME, true);          // the spinner
+      matte.tube([x, yc, z0 - 0.3], [x, yc, z0 - 0.32], 1.52, 20, [0.18, 0.18, 0.2], true);  // the fan face
+      matte.tube([x, yc, z0 - 7.4], [x, yc, z0 - 8.6], 0.5, 12, [0.3, 0.28, 0.26], true);   // the core nozzle and plug
+      aerofoil(paint, WHITE, [{ x, y: yc + 1.6, zLE: z0 - 1.4, c: 7.0 }, { x, y: w.y - 0.1, zLE: w.zLE + 0.6, c: 5.2 }], { thick: 0.14, n: 6, vertical: true });
+    }
+  }
+  // wing-to-body fairing under the centre section
+  matte.box(0, 1.9, 0.5, 6.8, 1.3, 20, 0, BELLY);
+  // --- the tail: fin with its blue, and the tailplane ------------------------------
+  aerofoil(matte, BLUE, [{ x: 0, y: 8.4, zLE: -19.5, c: 15.5 }, { x: 0, y: 13.5, zLE: -27.8, c: 9.0 }, { x: 0, y: 19.4, zLE: -35.0, c: 5.2 }], { thick: 0.1, n: 8, vertical: true });
+  for (const sd of [-1, 1]) {
+    aerofoil(paint, WHITE, [{ x: sd * 1.4, y: 7.0, zLE: -26.5, c: 9.4 }, { x: sd * 11.1, y: 8.35, zLE: -35.2, c: 2.6 }], { thick: 0.09, n: 7 });
+  }
+  trim.box(0, 19.2, -40.2, 0.1, 0.1, 0.15, 0, WHITE);
+  trim.box(0, 10.4, 12, 0.12, 0.1, 0.3, 0, TAILC);             // the beacon on the crown
+  trim.box(0, 2.0, 2, 0.12, 0.1, 0.3, 0, TAILC);               // and under the belly
+  // --- the gear: two nosewheels, four four-wheel main bogies (18 wheels) ---------------
+  const R = spec.wheelR;
+  const bogie = (x, z, top) => {
+    matte.tube([x, top, z], [x, R + 0.35, z], 0.2, 10, ALU, false);
+    matte.box(x, R - 0.08, z, 0.4, 0.2, 2.6, 0, [0.3, 0.31, 0.33]);
+    for (const dz of [-0.8, 0.8]) for (const dx of [-0.62, 0.62]) airWheel(trim, matte, x + dx, R, z + dz, R, 0.5);
+  };
+  for (const sd of [-1, 1]) { bogie(sd * 5.6, -1.2, 3.8); bogie(sd * 1.9, -4.4, 2.4); }
+  matte.tube([0, 2.4, H - 8.8], [0, R + 0.2, H - 8.9], 0.16, 10, ALU, false);
+  for (const dx of [-0.42, 0.42]) airWheel(trim, matte, dx, R * 0.85, H - 8.9, R * 0.85, 0.42);
+  trim.box(0, 1.2, H - 8.3, 0.3, 0.15, 0.2, 0, LAMP);
+  return [];
+}
+
+/**
  * A single-seat twin-engined fighter, F/A-18-ish: a pointed nose, a bubble
  * canopy, side intakes under swept wings, twin canted fins and twin nozzles,
  * sitting tall on its gear. Navy grey (the livery comes from the spawn).
@@ -6014,7 +6141,7 @@ function balloonFlame() {
 
 /** Types with their own authored builder, keyed by `spec.hand`. */
 const HAND_BUILT = {
-  plane: buildPlane, twin: buildTwin, jet: buildJet, biplane: buildBiplane, heli: buildHeli, fighter: buildFighter,
+  plane: buildPlane, twin: buildTwin, jet: buildJet, biplane: buildBiplane, heli: buildHeli, fighter: buildFighter, jumbo: buildJumbo,
   sports: buildSports, muscle: buildMuscle,
   sedan: buildSedan, suv: buildSuv, pickup: buildPickup,
   hatch: (s, p, t, m) => buildSmallCar(s, p, t, m, SMALL_LOOKS.hatch),
@@ -6777,7 +6904,8 @@ export class Vehicle {
     // airspeed along the nose. Diving trades height for speed and climbing
     // pays for it, which is most of what makes flight feel like flight.
     let acc = 0;
-    if (throttle > 0) acc += spec.acc * throttle * (1 - clamp(this.vLong / top, 0, 1));
+    // `fly.thrustK`: a heavy airliner winds up slowly (the 747's roll is ~1 km, not a light jet's 50 m)
+    if (throttle > 0) acc += spec.acc * (fly.thrustK || 1) * throttle * (1 - clamp(this.vLong / top, 0, 1));
     if (brake > 0) acc -= (this.airborne ? 2.2 : spec.brakeA * 0.6) * brake;
     // 0.45x, not 2.2x: with the heavy drag the measured cruise was 170 kph
     // against a requested 300 -- the arcade bargain applies in the air too.
