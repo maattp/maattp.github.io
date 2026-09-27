@@ -338,6 +338,11 @@ class Game {
     audio.land(drop);
   }
 
+  /** Out of an aircraft in the air (player.js exitVehicle, parachute.js). */
+  onBailOut() { hud.showToast('You jumped! JUMP opens the parachute (it opens itself at 60 m)', 3200); audio.play('door_open', { gain: 0.5 }); }
+  onChute() { audio.play('slosh', { gain: 0.9, rate: 2.2 }); }
+  onSplash(x, y, z) { fx.droplets(x, y + 0.2, z, 30); audio.play('splash', { gain: 1, x, y, z }); }
+
   /** A boat refused to let you step off into the lake (player.exitVehicle). */
   onNoLanding(v) {
     if (v && v.spec.monorail) { hud.showToast('The doors only open at a platform — stop at Westlake Center or Seattle Center'); return; }

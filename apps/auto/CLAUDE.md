@@ -40,6 +40,7 @@ src/atcgame.js              FINAL APPROACH itself: arrivals, paths, landing zone
 src/ducktour.js             the Duck Tour: kiosk at Seattle Center, the Lake Union ramp, the tour and its quackers
 src/barista.js              First Cup Coffee at 1912 Pike Place: storefront, the counter, the stations, sound
 src/baristagame.js          MORNING RUSH itself: orders, recipes, the machine's timing, customers (no DOM)
+src/parachute.js            bailing out of an aircraft in the air: free fall, the canopy, landing
 src/hydrorace.js            Seafair: the Lake Washington course, pits, log boom, rooster tails, race rules, AI, the jets
 src/golf.js                 three par-3s at Interbay
 src/wheelride.js            the Great Wheel's turning half and the ride on it
@@ -3113,6 +3114,27 @@ a 19.4 m fin, a nose gear and four four-wheel bogies. `wid` is the fuselage
 model with `fly.thrustK` 0.62 so it winds up like a heavy (roll ~490 m,
 rotate at 150 kt, ~550 km/h level, 8 deg/s turns), and the chase rig scales
 with any aircraft over 30 m long (player.js). `seeFar` 7 km.
+
+**Parachutes** (`src/parachute.js`, v144). Get out of any aircraft more
+than 12 m over the ground -- a plane, the helicopter, the balloon -- and you
+jump (player.js `exitVehicle`; it used to set you straight down on the ground
+under it). `player.sky` has the frame while you are in the air:
+
+- **Free fall**: gravity against quadratic drag, terminal 55 m/s belly to
+  earth; you leave with the aircraft's velocity. The stick tracks you across
+  the sky (camera-relative, ~14 m/s). JUMP opens the canopy; it opens itself
+  at 60 m over the ground or water.
+- **Under canopy**: a nine-cell ram-air wing on its lines (two draws, built
+  once), ~10 m/s forward and 5 m/s down; the stick turns it, forward dives,
+  back flares. Landing under canopy is harmless; free fall into the ground
+  is not. Into the water, a boat puts you on the nearest shore after 1.6 s
+  (there is no swimming, and the water otherwise drowns you).
+- **The camera** follows a skydiver rigidly, as it does a plane (player.js
+  `plane` / `airPlane` include `this.sky`): the on-foot rig damps height at
+  4.5, which at 55 m/s trailed the body by 10 m and out of the frame.
+
+verify's "parachutes" section: terminal speed, the auto-opener, an early
+opening flown down, a water landing put ashore -- unhurt each time.
 
 **The fighter** (`fighter`, `buildFighter`, `updateFighter`, v113) is the one
 aircraft with a full 3D attitude. The others fly heading + bank + climb rate,

@@ -1828,6 +1828,49 @@ async function main() {
       if (!jum.onPave || jum.roll === null || jum.roll > 1500) { console.error('FAIL: 747: not parked on the pavement or cannot take off within the runway'); process.exitCode = 1; }
     }
 
+    // --- parachutes ----------------------------------------------------------------------
+    //
+    // Out of a plane 600 m up you jump: free fall to terminal (~55 m/s), the
+    // canopy opens by itself at 60 m and you land unhurt; opened early with
+    // JUMP it flies and steers down; into Elliott Bay a boat puts you ashore.
+    const chu = await session.eval(`(() => {
+      const d = window.__dbg, T = d.traffic, P = d.player, C = d.city;
+      const jumpFrom = (x, z, alt, inputFn) => {
+        if (P.vehicle) P.exitVehicle(true);
+        const v = T.spawnAt(x, z, 1.0, 'plane', 0xdfe3e6, 'free');
+        P.x = v.x; P.z = v.z; P.y = v.y + 1; P.enterVehicle(v);
+        v.y = C.groundAt(x, z, null) + alt; v.airborne = true; v.vLong = 55; v.vy = 0;
+        P.health = 100; d.game.dead = false;
+        const ok = P.exitVehicle();
+        const r = { jumped: ok && !!P.sky, vmax: 0, openAt: null, water: false };
+        for (let i = 0; i < 60 * 240 && P.sky; i++) {
+          P.updateFoot(1 / 60, inputFn ? inputFn(i) : { x: 0, y: 0, jump: false }, T, d.peds);
+          if (!P.sky) break;
+          r.vmax = Math.max(r.vmax, Math.hypot(P.sky.vx, P.sky.vy, P.sky.vz));
+          if (P.sky.state !== 'free' && r.openAt === null) r.openAt = Math.round(P.y - C.groundAt(P.x, P.z, null));
+          if (P.sky.state === 'water') r.water = true;
+        }
+        r.landed = !P.sky; r.hurt = 100 - P.health; r.dry = !d.G.isWater(P.x, P.z);
+        T.remove(v);
+        return r;
+      };
+      return {
+        auto: jumpFrom(-900, -800, 600, null),
+        early: jumpFrom(-900, -800, 600, (i) => ({ x: i > 240 ? 0.4 : 0, y: 0, jump: i === 60 })),
+        water: jumpFrom(-1400, 600, 500, (i) => ({ x: 0, y: 0, jump: i === 30 })),
+      };
+    })()`, true);
+    console.log('\n--- parachutes --------------------------------------------');
+    console.log(`  free fall to ${chu.auto.vmax.toFixed(1)} m/s, auto-open at ${chu.auto.openAt} m, landed ${chu.auto.landed} hurt ${chu.auto.hurt}; opened at ${chu.early.openAt} m, landed hurt ${chu.early.hurt}; into the bay: splash ${chu.water.water}, ashore ${chu.water.dry}, hurt ${chu.water.hurt}`);
+    {
+      const bad = [];
+      if (!chu.auto.jumped || Math.abs(chu.auto.vmax - 55) > 3) bad.push('free fall');
+      if (chu.auto.openAt === null || chu.auto.openAt > 70 || chu.auto.hurt) bad.push('the auto-opener');
+      if (!(chu.early.openAt > 500) || chu.early.hurt || !chu.early.landed) bad.push('an early opening');
+      if (!chu.water.water || !chu.water.dry || chu.water.hurt) bad.push('a water landing');
+      if (bad.length) { console.error(`FAIL: parachutes: ${bad.join('; ')}`); process.exitCode = 1; }
+    }
+
     // --- the articulated bus ---------------------------------------------------
     //
     // An artic spawned and driven: its rear section follows on the hitch
