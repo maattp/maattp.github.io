@@ -1,5 +1,6 @@
 // The player: on foot, behind the wheel, and the chase camera that follows.
 
+import { Skydive } from './parachute.js';
 import * as THREE from './three.js';
 import { makeHumanoid, animateWalk } from './peds.js';
 import { collideWithBuildings } from './traffic.js';
@@ -37,6 +38,7 @@ export class Player {
     this.crashCd = 0; // see updateDrive: one wall scrape is one crash
     this.scrapeT = 0; // seconds of wall contact left, for the scrape sound
     this.fellFrom = 0; // height a fall started at, for landing damage
+    this.sky = null;   // a parachute jump in progress (parachute.js)
 
     this.camYaw = this.heading + Math.PI;
     this.camPitch = 0.1;
@@ -78,6 +80,23 @@ export class Player {
     const v = this.vehicle;
     if (!v) return false;
     const f = v.forward;
+    // Out of an aircraft in the air: you JUMP (parachute.js). More than 12 m
+    // up, a plane, the helicopter or the balloon -- it used to put you
+    // straight down on the ground under it.
+    if (v.spec.plane && !force && (v.airborne || v.spec.balloon) && v.y - this.city.groundAt(v.x, v.z, null) > 12) {
+      const rx = f.z, rz = -f.x;
+      this.x = G.clampToMap(v.x - rx * (v.halfWid + 2.5)); this.z = G.clampToMap(v.z - rz * (v.halfWid + 2.5)); this.y = v.y - 1.5;
+      this.heading = v.heading;
+      this.onFoot = true; this.h.group.visible = true;
+      this.grounded = false; this.vy = 0; this.speed = 0; this.fellFrom = 0;
+      this.sky = new Skydive(this, v, this.h.group.parent);
+      v.mode = 'free';
+      v.setDetailed(false);
+      this.vehicle = null;
+      this.game.onExitVehicle(v);
+      if (this.game.onBailOut) this.game.onBailOut(v);
+      return true;
+    }
     const rx = f.z, rz = -f.x;
     let ox = v.x - rx * (v.halfWid + 1.1);
     let oz = v.z - rz * (v.halfWid + 1.1);
@@ -164,6 +183,11 @@ export class Player {
   }
 
   updateFoot(dt, input, traffic, peds) {
+    // in the air after bailing out: the parachute has the frame (parachute.js)
+    if (this.sky) {
+      if (this.sky.update(this, dt, input)) return;
+      this.sky = null;
+    }
     const mag = Math.hypot(input.x, input.y);
     // On-foot pace. The city is 10 km across, so these sit above real walking
     // and jogging speeds -- crossing a block should not be a chore.
@@ -448,12 +472,13 @@ export class Player {
     // frame and 9.7 m on a 60 ms hitch. A phone streaming chunks does not hold
     // an even clock, so the boom surged in and out by metres with every hitch,
     // which from the seat reads as the camera jumping about.
-    const plane = !this.onFoot && this.vehicle.spec.plane;
+    // a skydiver falls at 55 m/s: rigid like a plane, or the damped rig trails 10 m above them
+    const plane = (!this.onFoot && this.vehicle.spec.plane) || !!this.sky;
     this.camClamp = null;
     if (this.onFoot) {
       target.set(this.x, this.camFootY != null ? this.camFootY : this.y, this.z);
       dist = this.camShort || 4.6;
-      height = 1.55;
+      height = this.sky ? 4 : 1.55;
       lookH = 1.45;
     } else {
       const v = this.vehicle;
@@ -527,7 +552,7 @@ export class Player {
     // A helicopter keeps the pull-in below 25 m/s: at a hover beside a tower
     // the boom otherwise sits inside it, and the rigid rig below damps the
     // change in boom length anyway.
-    const airPlane = plane && this.vehicle.airborne && !(this.vehicle.spec.heli && this.vehicle.speed < 25) && !this.vehicle.spec.balloon;
+    const airPlane = !!this.sky || (plane && this.vehicle.airborne && !(this.vehicle.spec.heli && this.vehicle.speed < 25) && !this.vehicle.spec.balloon);
     if (!airPlane) dist = this.clearCamDist(target, dist * cp, height) / Math.max(cp, 0.15);
     const wanted = new THREE.Vector3(
       target.x + Math.sin(this.camYaw) * dist * cp,
