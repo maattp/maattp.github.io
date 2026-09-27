@@ -38,6 +38,8 @@ src/hockeygame.js           the hockey game itself: skating, puck, goalies, team
 src/atc.js                  Boeing Field's control tower: FINAL APPROACH's screen, finger and sound
 src/atcgame.js              FINAL APPROACH itself: arrivals, paths, landing zones, separation (no DOM)
 src/ducktour.js             the Duck Tour: kiosk at Seattle Center, the Lake Union ramp, the tour and its quackers
+src/barista.js              First Cup Coffee at 1912 Pike Place: storefront, the counter, the stations, sound
+src/baristagame.js          MORNING RUSH itself: orders, recipes, the machine's timing, customers (no DOM)
 src/golf.js                 three par-3s at Interbay
 src/wheelride.js            the Great Wheel's turning half and the ride on it
 src/fishtoss.js             the fish stall at Pike Place Market + the catching game
@@ -4418,6 +4420,37 @@ verify's "duck tour" section: the lot clear of the road, ENTER starting the
 tour, down the ramp (afloat, splash, the floor over the water, water speed),
 back up it (wheels down, onto the street), the quack, the tour to the end.
 `docs/ducks/` has shots.
+
+## First Cup Coffee at Pike Place (v140)
+
+**A storefront where the city's coffee story started** (1912 Pike Place,
+under a generic name), on the east side of the street facing the market. It is
+sited from the market's own frame (`MARKET_FRAME`, ~150 m up Pike Place from
+Pike St) with `streetFace(city, at, r, want)` keeping only faces that look
+across the street. **`streetFace` now also skips a face with another box
+standing in front of it**: the first pick opened onto a building 4 m away
+(OSM boxes overlap there). The arcade's and the museum's picks did not move.
+
+**ENTER opens MORNING RUSH** (`src/barista.js`, `src/baristagame.js`), a
+dash-style counter game. Customers come to the counter (four at a time, the
+rest a line out the door) with an order bubble and a patience ring; you take a
+cup (S M L), build the drink station by station and tap the customer to hand
+it over. Shots follow the size (1-3, +SHOT one more) and take 1.4 s on one of
+two group heads; milk steams for 1.2 s in a hot cup and pours cold over ice;
+FOAM needs the milk steamed first. Exact pays the price and a tip that grows
+with the patience left; one thing wrong pays the price; two or more and it is
+refused and the customer waits on, crosser. 150 s, arrivals quickening from
+~6 s to ~1.8 s apart. Keyboard: Z X C cups, A S D shot/drip/water, F G H
+whole/oat/foam, J K L vanilla/caramel/mocha, ; whip, Q ice, Backspace bin,
+1-4 serve. A shift pays the till and the tips (localStorage `auto-coffee-best`).
+
+- Balanced with a bot that builds each order's plan (`Barista.plan`) at a
+  fixed tap interval: at 0.35 s a tap it serves all ~43 customers, at 0.9 s it
+  starts losing some, at 1.2 s a quarter walk out.
+
+verify's "coffee" section: the storefront facing the street, ENTER, an exact
+latte built with real pointer taps (tip), one mistake (price only), two
+(refused), a bot shift to closing and the pay, leaving. `docs/coffee/` has shots.
 
 ## Basketball in the parks
 

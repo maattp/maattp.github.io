@@ -100,18 +100,28 @@ export class Beeper {
 
 /**
  * The street face of a real building nearest a spot: a face at least 9 m long
- * on a building 6 m+ tall, that fronts a road 7 m out and is not on one itself.
- * { fx, fz } the face's middle, { nx, nz } its outward normal.
+ * on a building 6 m+ tall, that fronts a road 7 m out and is not on one itself, with no other box
+ * standing in front of it.
+ * { fx, fz } the face's middle, { nx, nz } its outward normal. `want`, a
+ * direction, keeps only faces looking that way.
  */
-export function streetFace(city, at, r = 70) {
+export function streetFace(city, at, r = 70, want = null) {
   let best = null;
+  // another box standing in front of the face hides it (overlapping OSM boxes)
+  const blocked = (x, z, self) => city.buildingsNear(x, z, 40).some((o) => {
+    if (o === self) return false;
+    const dx = x - o.x, dz = z - o.z, c = Math.cos(o.rot), s = Math.sin(o.rot);
+    return Math.abs(dx * c + dz * s) < o.w / 2 && Math.abs(-dx * s + dz * c) < o.d / 2;
+  });
   for (const b of city.buildingsNear(at[0], at[1], r)) {
     const c = Math.cos(b.rot), s = Math.sin(b.rot);
     const faces = [[c, s, b.w / 2, b.d], [-c, -s, b.w / 2, b.d], [-s, c, b.d / 2, b.w], [s, -c, b.d / 2, b.w]];
     for (const [nx, nz, off, len] of faces) {
       if (len < 9 || b.h < 6) continue;
+      if (want && nx * want[0] + nz * want[1] < 0.8) continue;
       const fx = b.x + nx * off, fz = b.z + nz * off;
       if (!city.onRoad(fx + nx * 7, fz + nz * 7, 0) || city.onRoad(fx + nx * 1.2, fz + nz * 1.2, 0)) continue;
+      if (blocked(fx + nx * 1.5, fz + nz * 1.5, b) || blocked(fx + nx * 4, fz + nz * 4, b)) continue;
       const d = Math.hypot(fx - at[0], fz - at[1]);
       if (!best || d < best.d) best = { d, fx, fz, nx, nz };
     }

@@ -1562,6 +1562,89 @@ async function main() {
       if (bad.length) { console.error(`FAIL: duck tour: ${bad.join('; ')}`); process.exitCode = 1; }
     }
 
+    // --- First Cup Coffee: MORNING RUSH ---------------------------------------------------
+    //
+    // The storefront on Pike Place's east side facing the market; ENTER opens
+    // the shop. Drinks built through the station buttons (real pointer
+    // events) and handed over by tapping the customer: exact pays a tip, one
+    // thing wrong pays the price only, two and it is refused. A seeded bot
+    // works a shift to closing, and the shift pays the till and tips.
+    const cof = await session.eval(`(async () => {
+      const d = window.__dbg, C = d.coffee, P = d.player;
+      if (!C) return null;
+      const M = await import('/apps/auto/src/baristagame.js');
+      if (P.vehicle) P.exitVehicle(true);
+      const fr = d.lmRoot && null;
+      const out = { face: [+C.face.nx.toFixed(2), +C.face.nz.toFixed(2)] };
+      P.x = C.door.x; P.z = C.door.z; P.y = C.door.y;
+      out.took = d.game.tryInteract(P) && C.mode;
+      C._newGame(); C.frozen = true;
+      const g = C.game;
+      const tapSt = (k) => { const b = C.el.querySelector('button[data-st="' + k + '"]'); b.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, pointerType: 'touch' })); };
+      const tapCust = (k) => { const L = C._layout(); const r = C.ui.cv.getBoundingClientRect(); C.ui.cv.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, clientX: r.left + L.custX(k), clientY: r.top + L.counterY - 30, pointerType: 'touch' })); };
+      const order = (o) => ({ id: 99, order: o, patience: 30, max: 30, look: 1, leaving: 0, mood: null, moodT: 0 });
+      // an exact medium oat latte
+      g.counter = [order({ drink: 'latte', size: 1, iced: false, milk: 'oat', extraShot: false }), null, null, null];
+      tapSt('cup1'); tapSt('shot'); tapSt('shot'); tapSt('oat');
+      for (let i = 0; i < 120; i++) g.step(1 / 60);
+      const e0 = g.earned + g.tips; tapCust(0);
+      out.exact = { paid: +(g.earned + g.tips - e0).toFixed(2), tip: g.tips > 0, perfect: g.perfect };
+      // one thing wrong (whole milk for oat): price only
+      g.counter = [order({ drink: 'latte', size: 1, iced: false, milk: 'oat', extraShot: false }), null, null, null];
+      tapSt('cup1'); tapSt('shot'); tapSt('shot'); tapSt('whole');
+      for (let i = 0; i < 120; i++) g.step(1 / 60);
+      const t0 = g.tips, e1 = g.earned; tapCust(0);
+      out.oneWrong = { price: +(g.earned - e1).toFixed(2), tip: +(g.tips - t0).toFixed(2) };
+      // two wrong (a drip for an iced mocha): refused
+      g.counter = [order({ drink: 'mocha', size: 2, iced: true, milk: 'whole', extraShot: false }), null, null, null];
+      tapSt('cup2'); tapSt('drip');
+      const r0 = g.refused; tapCust(0);
+      out.refused = g.refused === r0 + 1 && !!g.counter[0];
+      // a shift, worked by a bot
+      let seed = 4; const rng = () => { seed = (seed * 16807) % 2147483647; return (seed - 1) / 2147483646; };
+      const b = new M.Barista({ rng });
+      let cool = 0, job = null, n = 0;
+      while (!b.over && n++ < 60 * 400) {
+        b.step(1 / 60); b.takeEvents(); cool -= 1 / 60;
+        if (cool > 0) continue;
+        if (!job) {
+          let k = -1, lo = 1e9; b.counter.forEach((c, j) => { if (c && !c.leaving && c.patience < lo) { lo = c.patience; k = j; } });
+          if (k < 0) continue;
+          const spot = b.newCup(b.counter[k].order.size); if (spot < 0) continue;
+          job = { k, id: b.counter[k].id, spot, steps: M.Barista.plan(b.counter[k].order) }; cool = 0.5; continue;
+        }
+        const cu = b.counter[job.k];
+        if (!cu || cu.id !== job.id || cu.leaving) { b.select(job.spot); b.apply('bin'); job = null; continue; }
+        b.select(job.spot); const c = b.cups[job.spot];
+        if (job.steps.length) { const s = job.steps[0]; if (s === 'foam' && !c.milk) continue; if (b.apply(s)) job.steps.shift(); cool = 0.5; continue; }
+        if (c.busy > 0) continue;
+        b.serve(job.k); job = null; cool = 0.5;
+      }
+      out.shift = { over: b.over, served: b.served, perfect: b.perfect, walked: b.walked, till: Math.round(b.earned + b.tips) };
+      // closing pays
+      C.game = b; C.frozen = false; C.mode = 'play';
+      const m0 = d.game.money; C.update(1 / 60);
+      out.paid = d.game.money - m0; out.overMode = C.mode;
+      C.close();
+      out.closed = C.mode; out.paused = d.game.paused;
+      return out;
+    })()`, true);
+    console.log('\n--- coffee ------------------------------------------------');
+    if (!cof) { console.error('FAIL: no coffee shop'); process.exitCode = 1; }
+    else {
+      console.log(`  storefront facing ${cof.face}; ENTER -> ${cof.took}; exact latte paid $${cof.exact.paid} (tip ${cof.exact.tip}); one wrong paid $${cof.oneWrong.price} + $${cof.oneWrong.tip} tip; two wrong refused ${cof.refused}`);
+      console.log(`  bot shift: served ${cof.shift.served} (${cof.shift.perfect} perfect), ${cof.shift.walked} walked, till $${cof.shift.till}; paid $${cof.paid} (${cof.overMode}); closed ${cof.closed}, city unpaused ${!cof.paused}`);
+      const bad = [];
+      if (cof.took !== 'brief') bad.push('ENTER does not open the shop');
+      if (!(cof.exact.paid > 4.5) || !cof.exact.tip || cof.exact.perfect !== 1) bad.push('an exact drink does not pay a tip');
+      if (cof.oneWrong.price !== 4.5 || cof.oneWrong.tip !== 0) bad.push('one mistake is not price-only');
+      if (!cof.refused) bad.push('a wrong drink is not refused');
+      if (!cof.shift.over || cof.shift.served < 15) bad.push('a shift does not run');
+      if (cof.paid !== cof.shift.till || cof.overMode !== 'over') bad.push('closing does not pay');
+      if (cof.closed !== 'off' || cof.paused) bad.push('leaving does not give the city back');
+      if (bad.length) { console.error(`FAIL: coffee: ${bad.join('; ')}`); process.exitCode = 1; }
+    }
+
     // --- the articulated bus ---------------------------------------------------
     //
     // An artic spawned and driven: its rear section follows on the hitch
