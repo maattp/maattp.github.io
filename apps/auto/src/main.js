@@ -20,6 +20,7 @@ import { Arcade } from './arcade.js';
 import { Pinball } from './pinball.js';
 import { HockeyNight } from './hockey.js';
 import { TowerGame } from './atc.js';
+import { DuckTour } from './ducktour.js';
 import { BONES } from './peds.js';
 import { cacheGet, cachePut, cacheGuardTripped, cacheGuardSet, cacheClear } from './bootcache.js';
 import { TrafficSystem, collideWithBuildings } from './traffic.js';
@@ -88,6 +89,7 @@ let arcade = null;   // the Belltown arcade (arcade.js)
 let pinball = null;  // the pinball museum in the International District (pinball.js)
 let hockey = null;   // hockey night at Climate Pledge Arena (hockey.js)
 let tower = null;    // Boeing Field's control tower and FINAL APPROACH (atc.js)
+let duckTour = null; // the Duck Tour: kiosk, ducks, ramp and the tour (ducktour.js)
 let golf = null;   // three holes at Interbay (golf.js)
 let wheelRide = null;   // the Great Wheel, turning, and its ride (wheelride.js)
 let fishToss = null;   // the flying fish at Pike Place Market (fishtoss.js)
@@ -100,6 +102,7 @@ class Game {
     this.points = 0;
     this.money = 250;
     this.target = null;
+    this.tourTarget = null;   // the Duck Tour's next stop (ducktour.js)
     this.deliveryValue = 0;
     this.cool = 0;
     this.dead = false;
@@ -186,6 +189,8 @@ class Game {
   }
 
   onHorn() {
+    // in a duck, the horn is the passengers' quackers
+    if (player.vehicle && player.vehicle.spec.amphib && duckTour) { duckTour.quack(player.vehicle); peds.scare(player.position.x, player.position.z, 6); return; }
     audio.horn();
     peds.scare(player.position.x, player.position.z, 14);
   }
@@ -265,6 +270,8 @@ class Game {
       hockey.start();
       return true;
     }
+    // the Duck Tour's kiosk at Seattle Center?
+    if (duckTour && !duckTour.tour && duckTour.near(pl)) return duckTour.start();
     // the control tower's door at Boeing Field?
     if (tower && !tower.active && tower.near(pl)) {
       this.paused = true;
@@ -874,6 +881,14 @@ function installShadowFade() {
     onReward: (m) => { game.money += m; setTimeout(() => hud.showToast(`Hockey night paid $${m}`), 400); },
     onEnd: () => { game.paused = false; },
   });
+  duckTour = new DuckTour({
+    scene, city, world, traffic, needle: lmRoot.userData.needle,
+    // read when used: some of these are made later in the boot
+    get player() { return player; }, get game() { return game; }, get hud() { return hud; },
+    get audio() { return audio; }, get fx() { return fx; }, get peds() { return peds; },
+    onReward: (m) => { game.money += m; setTimeout(() => hud.showToast(`The Duck Tour paid $${m}`), 400); },
+  });
+  duckTour.spawnDucks();
   tower = new TowerGame({
     scene, city, world, audio, tower: lmRoot.userData.tower,
     onReward: (m) => { game.money += m; setTimeout(() => hud.showToast(`The tower paid $${m}`), 400); },
@@ -939,6 +954,8 @@ function installShadowFade() {
       hello: 'The pinball museum on Maynard Ave S. Press ENTER at the door to play Emerald City' },
     { x: hockey.spot.x, z: hockey.spot.z, kind: 'hockey', name: 'Hockey Night', near: false,
       hello: 'Hockey night at Climate Pledge Arena. Press ENTER at the doors to drop the puck' },
+    { x: duckTour.spot.x, z: duckTour.spot.z, kind: 'duck', name: 'Duck Tours', near: false,
+      hello: 'Duck Tours — land and lake. Press ENTER at the kiosk to captain a tour' },
     { x: tower.spot.x, z: tower.spot.z, kind: 'tower', name: 'Control Tower', near: false,
       hello: "Boeing Field's control tower. Press ENTER at the door to take the field" },
     { x: golf.holes[0].tee.x, z: golf.holes[0].tee.z, kind: 'golf', name: 'Interbay Golf', near: false,
@@ -1042,7 +1059,7 @@ function installShadowFade() {
 
   await step(1, 'Welcome to Seattle');
   window.__refreshJobs = refreshJobs;
-  window.__dbg = { game, city, player, world, traffic, peds, acts, stunts, monorail, lmRoot, shadowCache, fishing, fishSpots, hoops, needleTop, fishToss, wheelRide, golf, arcade, pinball, hockey, tower, scene, camera, renderer, G, fx, hud, controls, audio, pickups, THREE, postfx, applyQuality, sun, placeSun, sceneStats, perfSys, cityStats, WET_FLOOR, animateWalk, collideWithBuildings, TYPES: VEHICLE_TYPES };
+  window.__dbg = { game, city, player, world, traffic, peds, acts, stunts, monorail, lmRoot, shadowCache, fishing, fishSpots, hoops, needleTop, fishToss, wheelRide, golf, arcade, pinball, hockey, tower, duckTour, scene, camera, renderer, G, fx, hud, controls, audio, pickups, THREE, postfx, applyQuality, sun, placeSun, sceneStats, perfSys, cityStats, WET_FLOOR, animateWalk, collideWithBuildings, TYPES: VEHICLE_TYPES };
   wireUi();
   game.newTarget();
   // Start on `high` everywhere.
@@ -1878,7 +1895,8 @@ function frame(now) {
     if (!buried) hud.__toldTunnel = false;
   }
   updatePickups(dt);
-  if (!player.vehicle || !player.vehicle.spec.boat) fx.wake(dt, null);
+  if (duckTour) duckTour.update(dt);
+  if (!player.vehicle || !(player.vehicle.spec.boat || player.vehicle.afloat)) fx.wake(dt, null);
   if (player.vehicle && player.vehicle.spec.kayak && player.vehicle.kayak && player.vehicle.kayak.dip) {
     const v = player.vehicle, sd = v.kayak.dipSide, f = v.forward;
     const bx = v.x + f.z * sd * -0.66 + f.x * 0.9, bz = v.z - f.x * sd * -0.66 + f.z * 0.9;
@@ -1898,12 +1916,12 @@ function frame(now) {
     }
     // A boat leaves a wake: a foam ribbon from the transom (one draw, only
     // while you are driving one) and spray off the bow once it is moving.
-    if (v.spec.boat) {
+    if (v.spec.boat || v.afloat) {
       fx.wake(dt, v);
       const sp = Math.abs(v.vLong);
       if (sp > 6 && Math.random() < 0.4) {
         const f = v.forward, s = Math.random() < 0.5 ? 1 : -1;
-        fx.emit(v.x + f.x * v.halfLen * 0.55 + f.z * s * 1.1, v.y + 0.15, v.z + f.z * v.halfLen * 0.55 - f.x * s * 1.1, 2,
+        fx.emit(v.x + f.x * v.halfLen * 0.55 + f.z * s * 1.1, (v.afloat ? v._surf : v.y) + 0.15, v.z + f.z * v.halfLen * 0.55 - f.x * s * 1.1, 2,
           { r: 0.92, g: 0.95, b: 0.97, size: 0.55, life: 0.55, spread: 1.2, vy: 1.4, grav: -9, drag: 0.9,
             vx: f.z * s * 2.2, vz: -f.x * s * 2.2 });
       }
@@ -2020,7 +2038,7 @@ function audioState(dt, input, p, camDir, buried) {
   const wetMask = wl !== null && G.isWater(p.x, p.z);
   const depth = wetMask ? wl - p.y : 0;
   const spec = v ? v.spec : null;
-  const floating = !!(spec && (spec.floats || spec.boat));
+  const floating = !!(spec && (spec.floats || spec.boat || (v && v.afloat)));
   const water = v ? (!floating && depth > 0 ? depth : 0) : depth > 0.05 ? depth : 0;
   listener.x = camera.position.x; listener.y = camera.position.y; listener.z = camera.position.z;
   listener.fx = camDir.x; listener.fz = camDir.z;

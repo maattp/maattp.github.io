@@ -13,7 +13,7 @@ const SCALE = MAP_PX / (G.MAP_HALF * 2);
  */
 function placeIcon(ctx, kind, x, y, r) {
   ctx.fillStyle = kind === 'dock' ? '#2f86d6' : kind === 'jet' ? '#c8352a' : kind === 'monorail' ? '#0b8a8f'
-    : kind === 'balloon' ? '#d2432f' : kind === 'fish' ? '#1f9aa8' : kind === 'hoop' ? '#d9661f' : kind === 'needle' ? '#5a6fd6' : kind === 'fishtoss' ? '#d05a1e' : kind === 'kayak' ? '#e0a818' : kind === 'wheel' ? '#2f6fb0' : kind === 'golf' ? '#2c8a4a' : kind === 'arcade' ? '#c83ad8' : kind === 'pinball' ? '#e8503a' : kind === 'hockey' ? '#2c6ad8' : kind === 'tower' ? '#6a7a8a' : '#e0782e';
+    : kind === 'balloon' ? '#d2432f' : kind === 'fish' ? '#1f9aa8' : kind === 'hoop' ? '#d9661f' : kind === 'needle' ? '#5a6fd6' : kind === 'fishtoss' ? '#d05a1e' : kind === 'kayak' ? '#e0a818' : kind === 'wheel' ? '#2f6fb0' : kind === 'golf' ? '#2c8a4a' : kind === 'arcade' ? '#c83ad8' : kind === 'pinball' ? '#e8503a' : kind === 'hockey' ? '#2c6ad8' : kind === 'tower' ? '#6a7a8a' : kind === 'duck' ? '#e8b020' : '#e0782e';
   ctx.strokeStyle = '#ffffff';
   ctx.lineWidth = r * 0.22;
   ctx.beginPath();
@@ -75,6 +75,12 @@ function placeIcon(ctx, kind, x, y, r) {
     ctx.fillRect(-r * 0.07, 0, r * 0.14, r * 0.85); ctx.fillRect(-r * 0.07, r * 0.75, r * 0.42, r * 0.14);
     ctx.restore();
     ctx.fillRect(x + r * 0.08, y + r * 0.3, r * 0.34, r * 0.16);
+  } else if (kind === 'duck') {
+    // a duck: body, head, bill
+    ctx.fillStyle = '#ffffff';
+    ctx.beginPath(); ctx.ellipse(x - r * 0.08, y + r * 0.15, r * 0.48, r * 0.26, 0, 0, Math.PI * 2); ctx.fill();
+    ctx.beginPath(); ctx.arc(x + r * 0.22, y - r * 0.22, r * 0.2, 0, Math.PI * 2); ctx.fill();
+    ctx.fillRect(x + r * 0.36, y - r * 0.24, r * 0.22, r * 0.1);
   } else if (kind === 'tower') {
     // a control tower: a shaft under a wide cab
     ctx.fillStyle = '#ffffff';
@@ -391,6 +397,13 @@ export class Hud {
       ctx.arc(bx, bz, 4.5 / zoom, 0, Math.PI * 2);
       ctx.fill();
     }
+    if (game.tourTarget) {
+      const [bx, bz] = toMap(game.tourTarget.x, game.tourTarget.z);
+      ctx.fillStyle = '#4ae8ff'; ctx.strokeStyle = '#003a4a'; ctx.lineWidth = 1.5 / zoom;
+      ctx.beginPath();
+      ctx.arc(bx, bz, 5.5 / zoom, 0, Math.PI * 2);
+      ctx.fill(); ctx.stroke();
+    }
     // Activity and collectible icons live on the MINIMAP, not as world meshes:
     // sixty markers would be sixty draws against a ~300 budget, and a canvas
     // dot is free. This is also the discoverability path -- you find things by
@@ -559,7 +572,7 @@ export class Hud {
       const [qx, qz] = toC(pl.x, pl.z);
       placeIcon(ctx, pl.kind, qx, qz, size * (pl.kind === 'dock' ? 0.011 : 0.008));
       // named, quads too: an unlabelled orange dot was a quad nobody found
-      if (pl.kind === 'dock' || pl.kind === 'atv' || pl.kind === 'monorail' || pl.kind === 'balloon' || pl.kind === 'fish' || pl.kind === 'hoop' || pl.kind === 'fishtoss' || pl.kind === 'needle' || pl.kind === 'kayak' || pl.kind === 'wheel' || pl.kind === 'golf' || pl.kind === 'arcade' || pl.kind === 'pinball' || pl.kind === 'hockey' || pl.kind === 'tower') {
+      if (pl.kind === 'dock' || pl.kind === 'atv' || pl.kind === 'monorail' || pl.kind === 'balloon' || pl.kind === 'fish' || pl.kind === 'hoop' || pl.kind === 'fishtoss' || pl.kind === 'needle' || pl.kind === 'kayak' || pl.kind === 'wheel' || pl.kind === 'golf' || pl.kind === 'arcade' || pl.kind === 'pinball' || pl.kind === 'hockey' || pl.kind === 'tower' || pl.kind === 'duck') {
         ctx.fillStyle = 'rgba(255,255,255,0.85)';
         ctx.fillText(pl.name, qx, qz - size * 0.016);
       }
@@ -579,6 +592,13 @@ export class Hud {
       ctx.fillStyle = '#ffd24a';
       ctx.beginPath();
       ctx.arc(tx, tz, size * 0.008, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    if (game.tourTarget) {
+      const [tx, tz] = toC(game.tourTarget.x, game.tourTarget.z);
+      ctx.fillStyle = '#4ae8ff';
+      ctx.beginPath();
+      ctx.arc(tx, tz, size * 0.01, 0, Math.PI * 2);
       ctx.fill();
     }
     const [px, pz] = toC(p.x, p.z);

@@ -1486,6 +1486,82 @@ async function main() {
       if (bad.length) { console.error(`FAIL: control tower: ${bad.join('; ')}`); process.exitCode = 1; }
     }
 
+    // --- the Duck Tour ----------------------------------------------------------------
+    //
+    // The kiosk at Seattle Center with two DUKWs parked off the road; ENTER
+    // puts you at the wheel with the tour running. A duck driven down the
+    // Lake Union ramp floats (its floor over the water) and motors at a
+    // DUKW's pace; driven back at the ramp it puts its wheels down and climbs
+    // out onto the street. The tour's stops, visited in order (on the water
+    // where they are on the water), pay $150 + $25 for the splashdown. The
+    // horn in a duck is the quackers.
+    const dk = await session.eval(`(() => {
+      const d = window.__dbg, P = d.player, DT = d.duckTour;
+      if (!DT) return null;
+      if (P.vehicle) P.exitVehicle(true);
+      const out = { lot: DT.ducks.map((v) => !d.city.onRoad(v.x, v.z, 0) && !d.world.inBuilding(v.x, v.z, 0)) };
+      P.x = DT.door.x; P.z = DT.door.z; P.y = DT.door.y;
+      out.took = d.game.tryInteract(P) && !!P.vehicle && P.vehicle.spec.amphib && !!DT.tour;
+      const v = P.vehicle;
+      out.stop0 = DT.route[DT.tour.i].id;
+      // down the ramp
+      const r = { x: -181, z: -2612, dx: 0.92, dz: -0.38 }, h = Math.atan2(r.dx, r.dz);
+      v.x = r.x - r.dx * 26; v.z = r.z - r.dz * 26; v.heading = h; v.vLong = 0; v.afloat = false;
+      v.y = d.city.groundAt(v.x, v.z, null);
+      let floatAt = null, minFloor = 9, splash = false;
+      for (let i = 0; i < 60 * 30; i++) {
+        v.heading = h;
+        v.update(1 / 60, { throttle: 0.7, brake: 0, steer: 0 });
+        if (v.splashed) splash = true;
+        if (v.afloat) {
+          if (floatAt === null) floatAt = +Math.hypot(v.x - r.x, v.z - r.z).toFixed(1);
+          minFloor = Math.min(minFloor, v.y + 1.42 - d.world.waterLevelAt(v.x, v.z));
+        }
+      }
+      out.floatAt = floatAt; out.minFloor = +minFloor.toFixed(2); out.splash = splash; out.waterV = +v.vLong.toFixed(2);
+      // and back up it
+      const hb = Math.atan2(-r.dx, -r.dz);
+      v.x = r.x + r.dx * 45; v.z = r.z + r.dz * 45;
+      let landAt = null;
+      for (let i = 0; i < 60 * 30; i++) {
+        v.heading = hb;
+        v.update(1 / 60, { throttle: 0.8, brake: 0, steer: 0 });
+        if (!v.afloat && landAt === null) landAt = +Math.hypot(v.x - r.x, v.z - r.z).toFixed(1);
+      }
+      out.landAt = landAt; out.outY = +(v.y - d.world.waterLevelAt(v.x, v.z)).toFixed(1);
+      // the quack
+      const q0 = DT.tour.quacks; d.game.onHorn(); out.quacked = DT.tour.quacks === q0 + 1;
+      // the whole tour, stop by stop
+      const m0 = d.game.money;
+      DT.tour.splashed = true;
+      for (const s of DT.route) {
+        v.x = s.x; v.z = s.z; v.afloat = !!s.water;
+        DT.update(1 / 60);
+        if (!DT.tour) break;
+      }
+      out.done = !DT.tour; out.paid = d.game.money - m0; out.tips = 0;
+      out.target = d.game.tourTarget;
+      P.exitVehicle(true);
+      return out;
+    })()`, true);
+    console.log('\n--- duck tour ---------------------------------------------');
+    if (!dk) { console.error('FAIL: no duck tour'); process.exitCode = 1; }
+    else {
+      await new Promise((res) => setTimeout(res, 600));
+      console.log(`  lot off the road ${dk.lot.join(',')}; ENTER -> at the wheel, tour on ${dk.took} (first stop ${dk.stop0})`);
+      console.log(`  down the ramp: afloat ${dk.floatAt} m out (splash ${dk.splash}), floor ${dk.minFloor} m over the water, ${dk.waterV} m/s; back up: wheels down ${dk.landAt} m out, ${dk.outY} m over the lake; quack ${dk.quacked}; tour done ${dk.done}, target cleared ${dk.target === null}`);
+      const bad = [];
+      if (dk.lot.length < 2 || dk.lot.some((x) => !x)) bad.push('the ducks are not parked clear');
+      if (!dk.took || dk.stop0 !== 'slu') bad.push('ENTER does not start the tour');
+      if (dk.floatAt === null || dk.floatAt > 30 || !dk.splash) bad.push('it does not float off the ramp');
+      if (!(dk.minFloor > 0.02)) bad.push('the lake is in the boat');
+      if (dk.waterV < 3 || dk.waterV > 6) bad.push('water speed');
+      if (dk.landAt === null || !(dk.outY > 1)) bad.push('it cannot climb out up the ramp');
+      if (!dk.quacked) bad.push('the horn does not quack');
+      if (!dk.done || dk.target !== null) bad.push('the tour does not finish');
+      if (bad.length) { console.error(`FAIL: duck tour: ${bad.join('; ')}`); process.exitCode = 1; }
+    }
+
     // --- the articulated bus ---------------------------------------------------
     //
     // An artic spawned and driven: its rear section follows on the hitch

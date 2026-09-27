@@ -37,6 +37,7 @@ src/hockey.js               hockey night at Climate Pledge Arena: marquee, 16-bi
 src/hockeygame.js           the hockey game itself: skating, puck, goalies, team AI (no DOM)
 src/atc.js                  Boeing Field's control tower: FINAL APPROACH's screen, finger and sound
 src/atcgame.js              FINAL APPROACH itself: arrivals, paths, landing zones, separation (no DOM)
+src/ducktour.js             the Duck Tour: kiosk at Seattle Center, the Lake Union ramp, the tour and its quackers
 src/golf.js                 three par-3s at Interbay
 src/wheelride.js            the Great Wheel's turning half and the ride on it
 src/fishtoss.js             the fish stall at Pike Place Market + the catching game
@@ -4374,6 +4375,49 @@ verify's "control tower" section: the tower standing off the pavement and
 solid, ENTER, a path drawn with real pointer events from a jet into 14R's zone
 locking and landing it, a prop's path into 14R not locking, a head-on warning
 then collision, the pay, closing. `docs/tower/` has shots.
+
+## The Duck Tour (v139)
+
+**An amphibious DUKW you can drive anywhere** (`duck` in TYPES, `buildDuck`,
+`updateDuck`, `DUCK` in vehicles.js), after the WWII trucks Seattle's lake
+tours ran: a 9.5 m boat hull on six wheels in arches cut into its sides, an
+open tub of benches and tourists under a striped canopy, a windscreen, and a
+duck's face on the bow (eyes on the flanks, a bill on the stem). It is a truck
+on land (`diesel`) and a boat in the water:
+
+- **Afloat when the water under it is deeper than `floatIn`** (1.25 m), back
+  on its wheels under `floatOut` (0.85 m) if the bed ahead is gentle -- at a
+  steep bank it stays a boat and the bank is a wall. Afloat it IS the boat:
+  `updateBoat` with a slow hull (18 km/h top; ~14 in practice) through a
+  prototype of its spec, drawn `DUCK.draft` (1.28 m) under the waterline, with
+  the cockpit rule keeping the tub's floor over the water.
+- **Water is where the ground is under the local surface, mask or not.** Off
+  the ramp the 10 m water mask said "dry" over 2.7 m of drawn lake and the duck
+  drove the bed.
+- **Its hull may run up a gentle shore** (`spec.minDepth`, -0.5 for the duck;
+  a boat keeps 0.45): with the boat's probe a hull-length ahead, it stopped 9 m
+  out in water too deep to put its wheels down.
+- Everything that asked "is it a boat" asks `v.afloat` too: the wake and bow
+  spray (main.js), getting out onto land (player.js), shore impacts, the
+  engine's water sound (audio floating); player.js's drowning skips `amphib`.
+
+**The tour** (`src/ducktour.js`): a kiosk at 516 Broad St by Seattle Center
+(where the tours ran from), two ducks parked clear of the road beside it, and
+a concrete launch ramp on Lake Union's west shore at Westlake (-181, -2612),
+where the bank already runs gently into 3 m of water. ENTER at the kiosk puts
+you at the wheel with a load of tourists; the captain's lines run as captions
+while a beacon and a cyan dot on both maps show the next stop: Westlake &
+Mercer, the ramp, SPLASHDOWN, the seaplane lane, the Eastlake houseboats, Gas
+Works, back up the ramp, home. **In a duck the HORN is the quackers**: a chorus
+of synthesised quacks, and people within 30 m tip $2 each, once (to $80). A
+tour pays $150, $25 for the splashdown, and the tips; out of the duck for 20 s
+or wrecked, it is off. The main.js wiring passes getters: the HUD, peds and fx
+are made later in the boot than the tour.
+
+verify's "duck tour" section: the lot clear of the road, ENTER starting the
+tour, down the ramp (afloat, splash, the floor over the water, water speed),
+back up it (wheels down, onto the street), the quack, the tour to the end.
+`docs/ducks/` has shots.
 
 ## Basketball in the parks
 
