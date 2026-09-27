@@ -290,6 +290,12 @@ const HOUSE_ROOF = [
   [0.07, [0.22, 0.22, 0.23]], [0.10, [0.36, 0.40, 0.47]], [0.07, [0.40, 0.46, 0.35]],
   [0.08, [0.54, 0.31, 0.25]], [0.10, [0.66, 0.67, 0.69]],
 ];
+// Modern townhomes (houseExtras' neighbour, townhome): the palette infill has
+// in Seattle -- charcoal, white, mid grey, near-black, the odd deep green.
+const NOTOP = { top: false };   // a panel's top edge is never seen
+const MODERN_PAINT = [[0.2, 0.21, 0.23], [0.86, 0.86, 0.84], [0.55, 0.56, 0.57], [0.11, 0.11, 0.12],
+  [0.86, 0.86, 0.84], [0.2, 0.21, 0.23], [0.18, 0.26, 0.22], [0.42, 0.43, 0.45]];
+
 // Paint is a chosen colour, not a weathered material: tint()'s pull toward
 // grey (built so masonry would stop reading as candy) turned every paint in the
 // palette back into the off-white it replaced. Brightness varies, chroma stays.
@@ -6194,6 +6200,175 @@ float frLine(float o, float fw, float c, float w) {
   }
 
   /**
+   * A MODERN TOWNHOME, or a row of them (v156): the flat-roofed form was a
+   * painted box with a coping. Now, along the long side (the front, or the
+   * +x face on a footprint that runs front to back), it is split into ~5.5 m
+   * units, ~7 m each, with (on most) a cedar accent panel, a big glazed front at each floor
+   * with a balcony and a glass rail on the floors above the ground, and a
+   * recessed entry under a canopy; over it a parapet, and on some a roof deck
+   * behind a rail with the stair's penthouse. Boxes into `flat`, no draws.
+   */
+  townhome(flat, bd, seed, col, top, off) {
+    const alongX = bd.w >= bd.d, L = alongX ? bd.w : bd.d, face = (alongX ? bd.d : bd.w) / 2;
+    // local (u along the front, out from it) -> the house's (lx, lz)
+    const at = (u, o) => (alongX ? [u, face + o] : [face + o, -u]);
+    const rot = alongX ? bd.rot : bd.rot - Math.PI / 2;
+    const P = (u, o) => off(...at(u, o));
+    const y0 = bd.y, floors = Math.max(2, Math.min(4, Math.round((top - y0) / 3)));
+    const fh = (top - y0) / floors;
+    const n = Math.max(1, Math.round(L / 7)), uw = L / n;
+    const CEDAR = [0.55, 0.36, 0.2], GLASS2 = [0.12, 0.16, 0.2], RAIL = [0.62, 0.72, 0.76], METAL = [0.12, 0.12, 0.13];
+    const accent = hash2(seed, 182) < 0.7;
+    for (let k = 0; k < n; k++) {
+      const u0 = -L / 2 + k * uw, uc = u0 + uw / 2, flip = (k + Math.floor(hash2(seed, 183) * 2)) % 2 ? 1 : -1;
+      // the cedar panel, full height, to one side of the unit
+      if (accent && hash2(seed + k, 187) < 0.7) { const [x, z] = P(uc + flip * (uw / 2 - 0.75), 0.04); flat.box(x, y0, z, 1.2, top - y0 - 0.15, 0.06, rot, CEDAR, NOTOP); }
+      // the entry: a dark door recess and a canopy over it
+      const eu = uc + flip * (uw / 2 - 0.75) * (accent ? -1 : 1) * 0.6;
+      { const [x, z] = P(eu, 0.03); flat.box(x, y0, z, 1.1, 2.3, 0.06, rot, METAL, NOTOP); }
+      { const [x, z] = P(eu, 0.6); flat.box(x, y0 + 2.5, z, 1.8, 0.12, 1.2, rot, col.map((c) => c * 0.7)); }
+      // the glazing, floor by floor; a balcony on each floor above the ground
+      for (let f = 0; f < floors; f++) {
+        const fy = y0 + f * fh, gw = Math.min(uw - (accent ? 2.2 : 1.2), 3.6);
+        const gu = uc - flip * (accent ? 0.5 : 0);
+        if (gw < 1) continue;
+        if (f === 0) { const [x, z] = P(gu, 0.03); flat.box(x, fy + 0.9, z, gw * 0.8, fh - 1.4, 0.06, rot, GLASS2, NOTOP); continue; }
+        { const [x, z] = P(gu, 0.03); flat.box(x, fy + 0.1, z, gw, fh - 0.6, 0.06, rot, GLASS2, NOTOP); }
+        // a balcony on the top floor, and on a middle one on some
+        if (f === floors - 1 ? hash2(seed + k, 184) < 0.65 : hash2(seed + k, 184 + f) < 0.2) {
+          const bw = gw + 0.5, bd2 = 1.4;
+          const [x, z] = P(gu, bd2 / 2);
+          flat.box(x, fy - 0.05, z, bw, 0.18, bd2, rot, [0.5, 0.5, 0.5]);
+          // the glass rail round its three open sides, and its cap
+          const [fx, fz] = P(gu, bd2 - 0.03);
+          flat.box(fx, fy + 0.13, fz, bw, 0.95, 0.04, rot, RAIL, NOTOP);
+          for (const sd of [-1, 1]) {
+            const [sx, sz] = P(gu + sd * (bw / 2 - 0.02), bd2 / 2);
+            flat.box(sx, fy + 0.13, sz, 0.04, 0.95, bd2, rot, RAIL, NOTOP);
+          }
+        }
+      }
+    }
+    // the parapet, and on some a roof deck: a rail round it and the stair's penthouse
+    const [cx, cz] = off(0, 0);
+    flat.box(cx, top, cz, bd.w + 0.1, 0.45, bd.d + 0.1, bd.rot, col.map((c) => c * 0.85), { top: false });
+    flat.box(cx, top - 0.02, cz, bd.w - 0.2, 0.06, bd.d - 0.2, bd.rot, [0.3, 0.3, 0.31]);
+    if (hash2(seed, 186) < 0.5) {
+      const [px, pz] = off(...(alongX ? [bd.w / 2 - 1.8, 0] : [0, bd.d / 2 - 1.8]));
+      flat.box(px, top, pz, 2.6, 2.5, 2.6, bd.rot, col);
+      flat.box(px, top + 2.5, pz, 2.9, 0.12, 2.9, bd.rot, [0.3, 0.3, 0.31]);
+    }
+    // the step
+    const [sx, sz] = P(0, 0.6);
+    flat.box(sx, bd.y - 0.1, sz, 1.6, 0.18, 1.0, rot, [0.6, 0.6, 0.58]);
+  }
+
+  /**
+   * WHAT MAKES ONE HOUSE NOT THE NEXT (v156). Paint, roofing and three roof
+   * forms (v110) still left a street of the same box; these are the pieces a
+   * Seattle street actually varies by, each on a share of the houses (by the
+   * house's seed, so the same house always has the same), all in the chunk's
+   * `flat` builder -- vertex colour, a few boxes, no draws:
+   *   dormers on a steep gable's front slope (a third of those with room),
+   *   a chimney on hip roofs too, solar panels on the slope that faces most
+   *   to the south (one in eleven), an attached garage with its door (one in
+   *   eight, where the lot beside is clear of road, water and buildings), a
+   *   bay window on the front where there is no porch (one in six).
+   * `y0` is the eaves, as meshGable/meshHip take it; `off(lx, lz)` the house's
+   * local frame (+z is the front: the step and the porch are there).
+   */
+  houseExtras(flat, bd, seed, form, y0, pitch, rc, col, trim, off) {
+    const OVER = 0.45, alongX = bd.w >= bd.d;
+    const hw = bd.w / 2 + OVER, hd = bd.d / 2 + OVER;
+    const span = alongX ? hd : hw;
+    const rise = form === 'gable' ? clamp(span * pitch, pitch < 0.5 ? 0.6 : 1.0, 3.6) : clamp(span * pitch, 1.0, 3.4);
+    const cs = Math.cos(bd.rot), sn = Math.sin(bd.rot);
+    const Nw = (lx, y, lz) => [lx * cs - lz * sn, y, lx * sn + lz * cs];
+    const P = (lx, lz, y) => { const [x, z] = off(lx, lz); return [x, y, z]; };
+    // a point on the roof: `a` along the ridge, `b` out from it toward side `s`
+    // (0 at the ridge, span at the eaves)
+    const rl = alongX ? hw : hd;
+    const roofY = (b) => y0 + rise * (1 - b / span);
+    const L = (a, b, s) => (alongX ? [a, s * b] : [s * b, a]);
+    const GL = [0.1, 0.13, 0.17];
+    // --- dormers: on the front slope when the ridge runs across the front
+    if (form === 'gable' && alongX && rise >= 1.7 && bd.w >= 8 && hash2(seed, 171) < 0.34) {
+      const n = bd.w >= 12 && hash2(seed, 172) < 0.5 ? 2 : 1;
+      for (let k = 0; k < n; k++) {
+        const a = n === 1 ? (hash2(seed, 173) - 0.5) * bd.w * 0.3 : (k ? 1 : -1) * bd.w * 0.22;
+        const bF = span * 0.62, bB = 0.3, dw = 1.7;
+        const baseY = roofY(bF) - 0.12, hgt = Math.min(1.4, y0 + rise - baseY - 0.3);
+        if (hgt < 0.9) continue;
+        const [cx, cz] = off(...L(a, (bF + bB) / 2, 1));
+        flat.box(cx, baseY, cz, dw, hgt, bF - bB, bd.rot, col, { top: false });
+        // its window and the frame round it
+        const [wx, wz] = off(...L(a, bF + 0.01, 1));
+        flat.box(wx, baseY + 0.3, wz, 1.1, 0.8, 0.05, bd.rot, trim);
+        const [gx, gz] = off(...L(a, bF + 0.03, 1));
+        flat.box(gx, baseY + 0.38, gz, 0.94, 0.64, 0.04, bd.rot, GL);
+        // its own little gable, the ridge running up into the main roof
+        this.meshGable(flat, { x: cx, z: cz, w: dw - 0.9, d: bF - bB, rot: bd.rot }, baseY + hgt, rc, seed + k, 0.8, false);
+      }
+    }
+    // --- a chimney on a hip roof too (meshGable gives the gables theirs)
+    if (form === 'hip' && hash2(seed, 21) > 0.62) {
+      const [px, pz] = off(...L((hash2(seed, 22) - 0.5) * rl * 0.6, span * 0.3, hash2(seed, 23) < 0.5 ? 1 : -1));
+      flat.box(px, y0 + rise * 0.5, pz, 0.72, rise * 0.7 + 0.7, 0.72, bd.rot, [0.4, 0.29, 0.25]);
+    }
+    // --- solar panels, on the slope facing most to the south (+z is south)
+    if (hash2(seed, 175) < 0.09 && span > 2.5) {
+      const s = alongX ? (cs >= 0 ? 1 : -1) : (sn >= 0 ? 1 : -1);
+      const b0 = span * 0.22, b1 = span * 0.8, a0 = -rl * 0.6, a1 = rl * 0.6;
+      const lift = 0.1;
+      const corner = (a, b) => { const [lx, lz] = L(a, b, s); return P(lx, lz, roofY(b) + lift); };
+      const nr = alongX ? Nw(0, span, s * rise) : Nw(s * rise, span, 0);
+      const nl = Math.hypot(...nr), n = nr.map((v) => v / nl);
+      flat.quad(corner(a0, b0), corner(a1, b0), corner(a1, b1), corner(a0, b1), n, [0, 0, 1, 0, 1, 1, 0, 1], [0.06, 0.09, 0.2]);
+      // the frames between the panels
+      for (let a = a0 + (a1 - a0) / 3; a < a1 - 1e-3; a += (a1 - a0) / 3) {
+        const A0 = corner(a - 0.03, b0), A1 = corner(a + 0.03, b0), B1 = corner(a + 0.03, b1), B0 = corner(a - 0.03, b1);
+        for (const q of [A0, A1, B1, B0]) q[1] += 0.01;
+        flat.quad(A0, A1, B1, B0, n, [0, 0, 1, 0, 1, 1, 0, 1], [0.6, 0.62, 0.65]);
+      }
+    }
+    // --- an attached garage beside the house, its door to the front
+    if (bd.w >= 7 && bd.d >= 7 && hash2(seed, 176) < 0.12) {
+      const sd = hash2(seed, 177) < 0.5 ? -1 : 1, gw = 3.6, gd = Math.min(6.5, bd.d * 0.85), gh = 2.9;
+      const glx = sd * (bd.w / 2 + gw / 2), glz = bd.d / 2 - gd / 2;
+      let clear = true;
+      for (const [u, v] of [[0, 0], [gw / 2, gd / 2], [-gw / 2, gd / 2], [gw / 2, -gd / 2], [-gw / 2, -gd / 2], [0, gd / 2 + 3]]) {
+        const [qx, qz] = off(glx + u, glz + v);
+        if (this.city.onRoad(qx, qz, 0.4, false) || G.isWater(qx, qz) || this.inBuilding(qx, qz, 0.3)) { clear = false; break; }
+      }
+      if (clear) {
+        const [gx, gz] = off(glx, glz);
+        const gy = G.terrainHeight(gx, gz);
+        flat.box(gx, gy - 0.5, gz, gw, gh + 0.5, gd, bd.rot, col, { ao: 0.2 });
+        flat.box(gx, gy + gh, gz, gw + 0.3, 0.22, gd + 0.3, bd.rot, rc);
+        flat.box(gx, gy + gh - 0.26, gz, gw + 0.1, 0.26, gd + 0.1, bd.rot, trim, { top: false });
+        // the roll-up door, panelled, and the drive in front of it
+        const [dx, dz] = off(glx, glz + gd / 2 + 0.02);
+        flat.box(dx, gy, dz, gw - 0.7, 2.25, 0.05, bd.rot, [0.86, 0.85, 0.82]);
+        { const [lx2, lz2] = off(glx, glz + gd / 2 + 0.05); flat.box(lx2, gy + 1.12, lz2, gw - 0.75, 0.03, 0.03, bd.rot, [0.62, 0.61, 0.58]); }
+        const [ax, az] = off(glx, glz + gd / 2 + 2.4);
+        flat.box(ax, G.terrainHeight(ax, az) - 0.05, az, gw - 0.2, 0.1, 4.6, bd.rot, [0.5, 0.49, 0.47]);
+      }
+    }
+    // --- a bay window on the front
+    const porch = bd.w >= 6.5 && bd.d >= 6 && hash2(seed, 135) < 0.42;
+    if (bd.w >= 7 && !porch && hash2(seed, 178) < 0.16) {
+      const sd = hash2(seed, 179) < 0.5 ? -1 : 1, bw = 2.4, bz = 0.55;
+      const [cx, cz] = off(sd * bd.w * 0.24, bd.d / 2 + bz / 2);
+      const y = bd.y + 0.55;
+      flat.box(cx, y, cz, bw, 1.75, bz, bd.rot, col);
+      flat.box(cx, y + 1.75, cz, bw + 0.2, 0.14, bz + 0.15, bd.rot, rc);
+      const [fx, fz] = off(sd * bd.w * 0.24, bd.d / 2 + bz + 0.01);
+      flat.box(fx, y + 0.35, fz, bw - 0.4, 1.15, 0.03, bd.rot, trim);
+      flat.box(fx, y + 0.42, fz, bw - 0.56, 1.0, 0.04, bd.rot, GL);
+    }
+  }
+
+  /**
    * A hip roof: four slopes, the ridge along the longer side and shortened by
    * the short half-span at each end (a pyramid on a square footprint). Normals
    * in the house's frame, as meshGable's are.
@@ -6664,6 +6839,16 @@ float frLine(float o, float fw, float c, float w) {
 
     if (bd.style === 'house') {
       const wallH = bd.h * 0.72;
+      // The roof form is decided first: a modern townhome is painted from its
+      // own palette. A row of them is how OSM draws most terraces -- one long
+      // footprint -- so an elongated house often is one (v156).
+      const aspect = Math.max(bd.w, bd.d) / Math.max(1, Math.min(bd.w, bd.d));
+      const rk = hash2(seed, 133);
+      const form = (rk < 0.11 && aspect < 2.6) || (aspect >= 2.6 && hash2(seed, 180) < 0.3) ? 'flat'
+        : rk < 0.38 && aspect < 2.2 ? 'hip' : 'gable';
+      // smooth panel cladding (the concrete cell's ~5 m panels), not clapboard
+      if (form === 'flat') { col = MODERN_PAINT[Math.floor(hash2(seed, 181) * MODERN_PAINT.length)]; cell = C.concrete; }
+      const sideU = form === 'flat' ? { uScale: 10, uFit: false } : { uScale: 11, uFit: true };
       // Siding from the ground at the house's centre, a foundation under it.
       //
       // The siding box used to start at `base`, 2 m underground, with its one
@@ -6686,7 +6871,7 @@ float frLine(float o, float fw, float c, float w) {
         const bh = expo - 0.6;
         target.box(bd.x, sy - bh, bd.z, bd.w, bh + 0.02, bd.d, bd.rot,
           [col[0] * 0.8, col[1] * 0.8, col[2] * 0.8],
-          { top: false, uScale: 11, uFit: true, vScale: tileH, vOff: -bh / tileH, cell });
+          { top: false, ...sideU, vScale: form === 'flat' ? 10 : tileH, vOff: form === 'flat' ? 0 : -bh / tileH, cell });
         fTop = sy - bh;
       }
       flat.box(bd.x, base - drop, bd.z, bd.w + 0.12, fTop - base + drop + 0.04, bd.d + 0.12, bd.rot,
@@ -6694,7 +6879,7 @@ float frLine(float o, float fw, float c, float w) {
       // A whole number of elevations per face, ~11 m each: stretched once
       // round a 20 m house the door came out 4.4 m wide.
       target.box(bd.x, sy, bd.z, bd.w, tileH, bd.d, bd.rot, col,
-        { top: false, uScale: 11, uFit: true, vScale: 0, ao: 0.2, cell });
+        { top: false, ...sideU, vScale: form === 'flat' ? 10 : 0, ao: 0.2, cell });
       // Roofs were a flat near-black polygon that can fill a third of a frame
       // with no material at all. Route them through the industrial cell so
       // they take a texture, and lift them off black.
@@ -6702,11 +6887,8 @@ float frLine(float o, float fw, float c, float w) {
       // the city had the same off-white siding under the same dark slate
       // gable, so a neighbourhood from the air was one texture repeated.
       const rc = paintTint(seed, pickW(HOUSE_ROOF, hash2(seed, 132)), 141);
-      const aspect = Math.max(bd.w, bd.d) / Math.max(1, Math.min(bd.w, bd.d));
-      const rk = hash2(seed, 133);
-      // flat-roofed modern boxes (townhouses, infill), hip roofs on the
-      // squarer footprints, gables on the rest
-      const form = rk < 0.11 && aspect < 2.6 ? 'flat' : rk < 0.38 && aspect < 2.2 ? 'hip' : 'gable';
+      // flat-roofed modern townhomes and infill, hip roofs on the squarer
+      // footprints, gables on the rest (decided above)
       const top = base + wallH + 2;
       const tk = hash2(seed, 134);
       const trim = tk < 0.68 ? [0.93, 0.92, 0.88] : tk < 0.84 ? [0.22, 0.22, 0.24]
@@ -6738,16 +6920,21 @@ float frLine(float o, float fw, float c, float w) {
             const [qx, qz] = off(px + sd * (pw / 2 - 0.2), bd.d / 2 + pd - 0.2);
             flat.box(qx, py + 0.34, qz, 0.2, ph - 0.34, 0.2, bd.rot, trim);
           }
+          // a railing along the front, open in the middle for the steps
+          if (pw > 3) for (const sd of [-1, 1]) {
+            const rw = pw / 2 - 0.9, [rx, rz] = off(px + sd * (pw / 2 - 0.2 - rw / 2), bd.d / 2 + pd - 0.2);
+            flat.box(rx, py + 0.34 + 0.82, rz, rw, 0.08, 0.1, bd.rot, trim);
+          }
         }
       }
       if (form === 'flat') {
-        const [sx, sz] = off(0, bd.d / 2 + 0.5);
-        flat.box(sx, bd.y - 0.1, sz, 2.0, 0.22, 1.2, bd.rot, [0.62, 0.6, 0.57]);
+        this.townhome(flat, bd, seed, col, top, off);
         return;
       }
       const pitch = 0.46 + hash2(seed, 139) * 0.36;
       if (form === 'hip') {
         this.meshHip(flat, bd, top + 0.26, rc, pitch);
+        this.houseExtras(flat, bd, seed, 'hip', top + 0.26, pitch, rc, col, trim, off);
         const [sx, sz] = off(0, bd.d / 2 + 0.5);
         flat.box(sx, bd.y - 0.1, sz, 2.0, 0.22, 1.2, bd.rot, [0.62, 0.6, 0.57]);
         return;
@@ -6772,6 +6959,7 @@ float frLine(float o, float fw, float c, float w) {
       // that looked like overhang were the NEIGHBOURING terrace's roof, which
       // touches this one. The guard was suppressing three correct roofs.
       this.meshGable(flat, bd, base + wallH + 2.26, rc, seed, pitch);
+      this.houseExtras(flat, bd, seed, 'gable', top + 0.26, pitch, rc, col, trim, off);
       const [sx, sz] = off(0, bd.d / 2 + 0.5);
       // The front step, on the ground rather than 40 cm under it.
       flat.box(sx, bd.y - 0.1, sz, 2.0, 0.22, 1.2, bd.rot, [0.62, 0.6, 0.57]);
