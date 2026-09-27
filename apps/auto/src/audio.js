@@ -730,6 +730,10 @@ const SOUNDS = {
   } },
   // A light-rail car's warning bell: a small gong struck twice, its
   // partials inharmonic and decaying at their own rates (METAL).
+  // a bicycle bell: a small dome struck twice, bright and quick
+  bike_bell: { dur: 0.9, build(k, out, t, R) {
+    for (const t0 of [t, t + 0.16]) METAL.slice(0, 4).forEach((r, i) => k.ping(out, t0, 2350 * r, 0.26 / (1 + i), 0.32 / (1 + i * 0.6), 0.001));
+  } },
   tram_bell: { dur: 1.6, build(k, out, t, R) {
     for (const t0 of [t, t + 0.34]) {
       METAL.slice(0, 5).forEach((r, i) => k.ping(out, t0, 1046 * r, 0.32 / (1 + i * 0.8), 0.55 / (1 + i * 0.5), 0.0015));

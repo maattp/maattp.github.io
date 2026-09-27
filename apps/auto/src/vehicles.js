@@ -213,6 +213,10 @@ export const TYPES = {
   // the thrust and the steering both (updateKayak). A kayak is a boat to the
   // water rules -- float, shore, exit onto a deck -- with no engine.
   kayak: deriveSpec({ wheelbase: 2.6, len: 4.3, wid: 0.64, wheelR: 0.1, sill: 0.1, belt: 0.2, roof: 0.3, cab: [-0.5, 0.3], hand: 'kayak', boat: true, kayak: true, noEngine: true, mass: 0.12, acc: 1.6, topKph: 11, brakeM: 6, latG: 0.4 }),
+  // A city bicycle: a bike to the ground solve and the lean (`moto`), pedalled
+  // (`bicycle`: the rider's legs follow the cranks) and silent (`noEngine`).
+  // 700c wheels, a 1.06 m wheelbase, ~35 km/h on the flat.
+  bicycle: deriveSpec({ wheelbase: 1.06, len: 1.80, wid: 0.62, wheelR: 0.345, sill: 0.28, belt: 0.95, roof: 1.12, cab: [-0.2, 0.1], hand: 'bicycle', moto: true, bicycle: true, noEngine: true, mass: 0.1, acc: 1.7, topKph: 35, brakeM: 14, latG: 0.8 }),
   jetski: deriveSpec({ wheelbase: 1.8, len: 3.20, wid: 1.20, wheelR: 0.20, sill: 0.3, belt: 0.6, roof: 1.05, cab: [-0.1, 0.1], hand: 'jetski', boat: true, jetski: true, minDepth: 0.12, mass: 0.4, acc: 7.5, topKph: 105, brakeM: 30, latG: 0.9 }),
   boat: deriveSpec({ wheelbase: 3.2, len: 5.70, wid: 2.20, wheelR: 0.30, sill: 0.4, belt: 0.7, roof: 1.45, cab: [-0.2, 0.1], hand: 'boat', boat: true, minDepth: 0.3, cockpit: [0.12, -2.2, 0.9, 0.86], mass: 1.1, acc: 3.0, topKph: 70, brakeM: 45, latG: 0.6 }),
   pickup: deriveSpec({ wheelbase: 3.68,len: 5.92, wid: 2.05, wheelR: 0.42, sill: 0.48, belt: 1.26, roof: 1.98, cab: [-0.15, 0.22], hand: 'pickup', mass: 1.4, acc: 4.4, topKph: 185, brakeM: 45, latG: 0.77 }),
@@ -330,7 +334,8 @@ export const CAR_COLORS = [
  * player walks round the bike, and a dished blank facing the kerb would be the
  * most obvious thing on it.
  */
-function addWheel(trim, matte, cx, cy, cz, r, w, out = 1, knobby = false) {
+function addWheel(trim, matte, cx, cy, cz, r, w, out = 1, knobby = false, kind = null) {
+  if (kind === 'bike') { bikeWheel(trim, matte, cx, cy, cz, r, w); return; }
   const SEG = 18;
   // Knob tops at the rolling radius, the carcass under them: the wheel
   // still stands on `r`, as the ground solve assumes.
@@ -2860,24 +2865,104 @@ function buildBoat(spec, paint, trim, matte) {
   trim.tube([0.62, 1.55, -2.62], [0.62, 1.60, -2.62], 0.03, 8, LAMP, true);
 
   // --- outboard ---------------------------------------------------------------------
-  const OZ = -3.08;
-  matte.box(0, 0.40, -2.86, 0.34, 0.24, 0.14, 0, [0.12, 0.12, 0.13]);            // transom bracket
-  matte.loft([
-    { z: -2.86, pts: ring2(0.15, 0.95, 0.24, 12) },
-    { z: -3.00, pts: ring2(0.21, 1.00, 0.30, 12) },
-    { z: -3.22, pts: ring2(0.20, 0.98, 0.28, 12) },
-    { z: -3.38, pts: ring2(0.12, 0.92, 0.20, 12) },
-  ], [0.07, 0.07, 0.08], { capStart: true, capEnd: true });
-  trim.box(0, 1.00, -3.39, 0.18, 0.05, 0.01, 0, [0.85, 0.86, 0.88]);               // decal band
-  matte.box(0, -0.25, OZ, 0.12, 0.95, 0.26, 0, [0.09, 0.09, 0.10]);                  // leg
-  matte.box(0, -0.25, OZ - 0.02, 0.30, 0.018, 0.40, 0, [0.09, 0.09, 0.10]);         // cavitation plate
-  matte.tube([0, -0.38, OZ + 0.20], [0, -0.38, OZ - 0.16], 0.07, 8, [0.09, 0.09, 0.10], true);
-  matte.box(0, -0.58, OZ - 0.04, 0.03, 0.20, 0.16, 0, [0.09, 0.09, 0.10]);          // skeg
-  for (let k = 0; k < 3; k++) {
-    const a = (k / 3) * Math.PI * 2 + 0.4;
-    trim.tube([0, -0.38, OZ - 0.20], [Math.cos(a) * 0.19, -0.38 + Math.sin(a) * 0.19, OZ - 0.23], 0.035, 4, ALLOY, true);
+  // A 150 hp four-stroke on the transom: a clamp bracket with its tilt/trim
+  // ram, a lower cowl in black and a tall sculpted top cowl in white with a
+  // livery band and its vents, a hydrofoil-section midsection and leg, the
+  // anti-ventilation plate, a torpedo gearcase with its skeg, and a
+  // three-bladed stainless prop.
+  {
+    const OB = -3.10, BLK = [0.06, 0.06, 0.07], WHT = [0.9, 0.9, 0.88];
+    matte.box(0, 0.34, -2.86, 0.36, 0.34, 0.14, 0, [0.12, 0.12, 0.13]);            // clamp bracket
+    trim.tube([0, 0.30, -2.92], [0, 0.52, -2.98], 0.035, 8, ALLOY, true);         // trim ram
+    // lower cowl, black, and the top cowl over it
+    matte.loft([
+      { z: -2.90, pts: ring2(0.18, 0.74, 0.12, 14) },
+      { z: -3.00, pts: ring2(0.23, 0.76, 0.14, 14) },
+      { z: -3.26, pts: ring2(0.22, 0.76, 0.14, 14) },
+      { z: -3.36, pts: ring2(0.15, 0.75, 0.11, 14) },
+    ], BLK, { capStart: true, capEnd: true });
+    matte.loft([
+      { z: -2.91, pts: ring2(0.16, 0.95, 0.18, 14) },
+      { z: -2.97, pts: ring2(0.225, 0.99, 0.24, 14) },
+      { z: -3.08, pts: ring2(0.245, 1.01, 0.265, 14) },
+      { z: -3.22, pts: ring2(0.24, 1.00, 0.26, 14) },
+      { z: -3.33, pts: ring2(0.20, 0.975, 0.225, 14) },
+      { z: -3.40, pts: ring2(0.12, 0.95, 0.16, 14) },
+      { z: -3.43, pts: ring2(0.05, 0.94, 0.08, 14) },
+    ], WHT, { capStart: true, capEnd: false });
+    // the livery band round the cowl and a black top panel with its vents
+    for (const sd of [-1, 1]) {
+      paint.patch([[[sd * 0.246, 0.98, -3.02], [sd * 0.251, 1.04, -3.02]], [[sd * 0.246, 0.975, -3.30], [sd * 0.228, 1.02, -3.30]]], WHITE, [sd, 0, 0]);
+      for (let k = 0; k < 4; k++) matte.box(sd * 0.1, 1.255, -3.1 - k * 0.045, 0.08, 0.012, 0.018, 0, BLK);
+    }
+    matte.spheroid(0, 1.2, -3.15, 0.2, 12, 6, BLK, 0.35);
+    // midsection and leg: a foil section tapering down to the plate
+    const foil = (half, chord, zc) => {
+      const p = [];
+      for (let k = 0; k < 12; k++) {
+        const a = (k / 12) * Math.PI * 2, c = Math.cos(a), sn = Math.sin(a);
+        p.push([sn * half * (c > 0 ? 1 : 0.8), zc + c * chord * (c > 0 ? 0.4 : 0.6)]);
+      }
+      return p;
+    };
+    matte.loftY([
+      { y: 0.66, pts: foil(0.13, 0.42, OB + 0.02) },
+      { y: 0.40, pts: foil(0.09, 0.36, OB) },
+      { y: 0.10, pts: foil(0.065, 0.32, OB - 0.01) },
+      { y: -0.20, pts: foil(0.055, 0.30, OB - 0.02) },
+    ], BLK, { capStart: false, capEnd: false });
+    matte.box(0, -0.21, OB - 0.03, 0.32, 0.018, 0.46, 0, BLK);                    // anti-ventilation plate
+    matte.box(0, -0.30, OB + 0.06, 0.03, 0.08, 0.1, 0, [0.5, 0.52, 0.55]);         // trim tab / anode
+    // gearcase torpedo, nose forward, and the skeg under it
+    matte.tube([0, -0.40, OB + 0.18], [0, -0.40, OB - 0.20], 0.07, 12, BLK, false);
+    matte.spheroid(0, -0.40, OB + 0.18, 0.07, 10, 6, BLK, 1);
+    matte.tube([0, -0.40, OB - 0.20], [0, -0.40, OB - 0.24], 0.05, 10, BLK, true);
+    matte.quad([0, -0.46, OB + 0.02], [0, -0.46, OB - 0.18], [0, -0.66, OB - 0.20], [0, -0.64, OB - 0.05], [1, 0, 0], [0, 0, 1, 0, 1, 1, 0, 1], BLK);
+    matte.quad([0, -0.46, OB + 0.02], [0, -0.46, OB - 0.18], [0, -0.66, OB - 0.20], [0, -0.64, OB - 0.05], [-1, 0, 0], [0, 0, 1, 0, 1, 1, 0, 1], BLK);
+    // the prop: hub and three raked blades, both faces
+    const pz = OB - 0.27;
+    trim.tube([0, -0.40, pz + 0.04], [0, -0.40, pz - 0.08], 0.045, 10, ALLOY, true);
+    for (let k = 0; k < 3; k++) {
+      const a = (k / 3) * Math.PI * 2 + 0.3;
+      const P = (r, da, dz) => [Math.cos(a + da) * r, -0.40 + Math.sin(a + da) * r, pz + dz];
+      const pts = [P(0.045, -0.35, 0.03), P(0.17, -0.22, 0.0), P(0.19, 0.12, -0.04), P(0.045, 0.30, -0.06)];
+      for (const n of [1, -1]) trim.quad(pts[0], pts[1], pts[2], pts[3], [0, 0, n], [0, 0, 1, 0, 1, 1, 0, 1], ALLOY);
+    }
   }
-
+  // swim platforms either side of the motor, teak on stainless brackets,
+  // and a ladder on the port one
+  {
+    const TEAK = [0.50, 0.34, 0.19];
+    for (const sd of [-1, 1]) {
+      matte.box(sd * 0.60, 0.40, -2.97, 0.54, 0.05, 0.34, 0, TEAK);
+      for (let k = 0; k < 6; k++) matte.box(sd * 0.60, 0.451, -2.83 - k * 0.055, 0.52, 0.004, 0.012, 0, [0.9, 0.88, 0.8]);
+      for (const x of [0.4, 0.8]) trim.tube([sd * x, 0.40, -2.80], [sd * x, 0.36, -3.1], 0.012, 5, CHROME, true);
+    }
+    for (const x of [0.52, 0.72]) trim.tube([x, 0.45, -3.12], [x, -0.35, -3.18], 0.012, 6, CHROME, true);
+    for (let k = 0; k < 4; k++) trim.tube([0.52, 0.2 - k * 0.18, -3.14 - k * 0.012], [0.72, 0.2 - k * 0.18, -3.14 - k * 0.012], 0.014, 5, CHROME, true);
+  }
+  // running strakes along the bottom, both sides
+  for (const sd of [-1, 1]) {
+    for (const f of [0.42, 0.72]) {
+      const pts = S.slice(0, 8).map((q) => { const [z, , , cx, cy, ky] = q; return [sd * cx * f, ky + (cy - ky) * f * 0.98 - 0.012, z]; });
+      for (let k = 0; k < pts.length - 1; k++) matte.tube(pts[k], pts[k + 1], 0.016, 4, HULL_BOTTOM, false);
+    }
+  }
+  // cleats midships and aft on the caps, and the bimini top folded into its
+  // boot over the stern seat on two stainless bows
+  for (const sd of [-1, 1]) {
+    for (const z of [-0.2, -2.3]) {
+      const q = at(z), x = sd * (q[1] - 0.07);
+      trim.box(x, q[2] + 0.01, z, 0.04, 0.03, 0.05, 0, CHROME);
+      trim.box(x, q[2] + 0.04, z, 0.035, 0.02, 0.2, 0, CHROME);
+    }
+    const q = at(-1.9);
+    trim.tube([sd * (q[1] - 0.12), q[2], -1.9], [sd * (q[1] - 0.2), q[2] + 0.34, -2.3], 0.014, 6, CHROME, true);
+  }
+  {
+    const q = at(-2.3), w = q[1] - 0.22;
+    matte.tube([-w, q[2] + 0.40, -2.3], [w, q[2] + 0.40, -2.3], 0.09, 10, [0.06, 0.1, 0.24], true);
+  }
   // --- the driver, at the helm (occupied geometry only) ---------------------------
   if (matte.crew) occupant(matte.crew, HELM, 1.06, -0.46, 0.46, [HELM, 0.92, 0.36]);
   return [];
@@ -2924,6 +3009,15 @@ const RIDERS = {
     lean: 0, head: -0.12,
     shoulder: [0.04, 0.16], elbow: [-0.30, 0.04],
     thigh: [0.02, 0.07], knee: 0.06, foot: -0.02,
+  },
+  // On the saddle, leaning to a flat bar; the arms and legs are solved to the
+  // grips and the pedals every frame (Vehicle._pedal), so these are only
+  // where they start.
+  bicycle: {
+    z: -0.17, hipY: 1.06, seed: 47,
+    lean: 0.52, head: -0.46,
+    shoulder: [-0.72, 0.24], elbow: [-0.2, 0.06],
+    thigh: [-1.1, 0.08], knee: 1.2, foot: -0.1,
   },
   jetski: {
     z: -0.42, hipY: 0.90, seed: 91,
@@ -3311,6 +3405,7 @@ function aerofoil(b, col, stations, { thick = 0.12, n = 8, vertical = false } = 
  * The live prop used to exist on every plane, parked or not, and spin at
  * idle beside the runway.
  */
+const _pedalV = new THREE.Vector3();
 function spinPart(matte, at, axis, b) {
   if (!matte.spins) throw new Error('spinPart: buildType did not open matte.spins');
   matte.spins.push({ b, at, axis });
@@ -5804,7 +5899,7 @@ const _ikA = new THREE.Vector3(), _ikB = new THREE.Vector3(), _ikC = new THREE.V
  * the elbow, the forearm at the target. Bone directions are their children's
  * bind offsets, so it works on any humanoid from peds.js.
  */
-export function solveArm(sh, el, hand, target, frame, side) {
+export function solveArm(sh, el, hand, target, frame, side, poleDir = null) {
   const S = sh.getWorldPosition(new THREE.Vector3());
   const E0 = el.getWorldPosition(new THREE.Vector3()), H0 = hand.getWorldPosition(new THREE.Vector3());
   const L1 = S.distanceTo(E0), L2 = E0.distanceTo(H0);
@@ -5813,7 +5908,7 @@ export function solveArm(sh, el, hand, target, frame, side) {
   d = clamp(d, Math.abs(L1 - L2) + 1e-3, L1 + L2 - 1e-3);
   const dir = toT.normalize();
   // pole: the elbow drops and goes out to its own side, in the boat's frame
-  const pole = new THREE.Vector3(side * 0.8, -0.9, -0.3).applyQuaternion(frame.getWorldQuaternion(_ikQ)).normalize();
+  const pole = (poleDir ? new THREE.Vector3(...poleDir) : new THREE.Vector3(side * 0.8, -0.9, -0.3)).applyQuaternion(frame.getWorldQuaternion(_ikQ)).normalize();
   const perp = pole.addScaledVector(dir, -pole.dot(dir)).normalize();
   const a = (L1 * L1 - L2 * L2 + d * d) / (2 * d), hgt = Math.sqrt(Math.max(0, L1 * L1 - a * a));
   const E = S.clone().addScaledVector(dir, a).addScaledVector(perp, hgt);
@@ -5922,52 +6017,322 @@ function buildKayak(spec, paint, trim, matte) {
  * lofted through seven stations, a flat deck with footwells either side of a
  * saddle, the hood over the engine, and the bars. Hull sides take the livery.
  */
+/**
+ * A bicycle wheel: a 38 mm tyre round a narrow alloy rim, 32 wire spokes
+ * laced from both hub flanges, the hub. Built about the axle along x like
+ * addWheel's. Spokes are 3-sided tubes: at a few pixels they read as a
+ * shimmer, which is what spokes look like.
+ */
+function bikeWheel(trim, matte, cx, cy, cz, r, w) {
+  const SEG = 24, hw = w / 2, tr = r - hw;
+  // the tyre: a tube of revolution, round in section
+  const ring = (k) => {
+    const a = (k / 8) * Math.PI * 2;
+    return [Math.cos(a) * hw, tr + Math.sin(a) * hw * 1.05];
+  };
+  for (let i = 0; i < SEG; i++) {
+    const a0 = (i / SEG) * Math.PI * 2, a1 = ((i + 1) / SEG) * Math.PI * 2;
+    for (let k = 0; k < 8; k++) {
+      const [x0, r0] = ring(k), [x1, r1] = ring(k + 1);
+      const P = (x, rr, a) => [cx + x, cy + Math.cos(a) * rr, cz + Math.sin(a) * rr];
+      const am = (k + 0.5) / 8 * Math.PI * 2, n = (a) => [Math.cos(am), Math.sin(am) * Math.cos(a), Math.sin(am) * Math.sin(a)];
+      matte.quad(P(x0, r0, a0), P(x0, r0, a1), P(x1, r1, a1), P(x1, r1, a0), [n(a0), n(a1), n(a1), n(a0)], [0, 0, 1, 0, 1, 1, 0, 1], k === 2 || k === 1 ? [0.36, 0.3, 0.22] : TYRE);
+    }
+    // the rim: a shallow U, both faces
+    for (const sx of [-1, 1]) {
+      const P = (rr, a) => [cx + sx * 0.011, cy + Math.cos(a) * rr, cz + Math.sin(a) * rr];
+      trim.quad(P(tr - hw * 0.6, a0), P(tr - hw * 0.6, a1), P(tr - 0.03, a1), P(tr - 0.03, a0), [sx, 0, 0], [0, 0, 1, 0, 1, 1, 0, 1], RIM);
+    }
+    const P = (rr, a) => [cx, cy + Math.cos(a) * rr, cz + Math.sin(a) * rr];
+    trim.quad([P(tr - 0.03, a0)[0] - 0.011, P(tr - 0.03, a0)[1], P(tr - 0.03, a0)[2]], [P(tr - 0.03, a1)[0] - 0.011, P(tr - 0.03, a1)[1], P(tr - 0.03, a1)[2]],
+      [P(tr - 0.03, a1)[0] + 0.011, P(tr - 0.03, a1)[1], P(tr - 0.03, a1)[2]], [P(tr - 0.03, a0)[0] + 0.011, P(tr - 0.03, a0)[1], P(tr - 0.03, a0)[2]],
+      [0, -Math.cos((a0 + a1) / 2), -Math.sin((a0 + a1) / 2)], [0, 0, 1, 0, 1, 1, 0, 1], RIM);
+  }
+  // spokes, crossed: each from a flange tangentially to the rim
+  const N = 32;
+  for (let k = 0; k < N; k++) {
+    const side = k % 2 ? 1 : -1, a = (k / N) * Math.PI * 2, lead = (k % 4 < 2 ? 1 : -1) * 0.5;
+    const h = [cx + side * 0.028, cy + Math.cos(a + lead) * 0.026, cz + Math.sin(a + lead) * 0.026];
+    const e = [cx + side * 0.004, cy + Math.cos(a) * (tr - 0.028), cz + Math.sin(a) * (tr - 0.028)];
+    trim.tube(h, e, 0.0022, 3, [0.78, 0.8, 0.82], false);
+  }
+  trim.tube([cx - 0.035, cy, cz], [cx + 0.035, cy, cz], 0.018, 10, HUB, true);
+  trim.tube([cx - 0.05, cy, cz], [cx + 0.05, cy, cz], 0.006, 6, ALLOY, true);
+}
+
+/**
+ * A city bicycle, the kind a bike-share dock or a commuter rides: a diamond
+ * frame in the livery (the paint tint), a steel fork, flat bars with grips,
+ * brake levers and a bell, a sprung saddle, full fenders, a rear rack with
+ * its lamp, a front basket over the headlamp, a chainring and chain to a
+ * cassette and derailleur, a kickstand. 700c wheels on a 1.06 m wheelbase.
+ * The crank (arms, pedals, chainring) is a spin part about the bottom
+ * bracket: the ridden bike turns it with the rider's feet (Vehicle._pedal).
+ * Local: +z forward, x to the left, y = 0 on the ground.
+ */
+const BIKE = { bb: [0, 0.285, -0.06], crank: 0.17, qx: 0.085 };
+function buildBicycle(spec, paint, trim, matte) {
+  const r = spec.wheelR, zF = 0.53, zR = -0.53;
+  const wheels = [[0, r, zF, r, 0.038, 0, false, 'bike'], [0, r, zR, r, 0.038, 0, false, 'bike']];
+  const BB = BIKE.bb, headTop = [0, 0.93, 0.33], headBot = [0, 0.76, 0.375], seatTop = [0, 0.86, -0.17];
+  const STEEL = [0.2, 0.2, 0.21], BLACK = [0.03, 0.03, 0.035], SILVER = [0.72, 0.73, 0.75];
+  const T = (a, b, rr) => paint.tube(a, b, rr, 8, WHITE, true);
+  // the frame: head tube, top tube, down tube, seat tube, stays
+  T(headBot, headTop, 0.022);
+  T(seatTop, [0, 0.905, 0.335], 0.017);
+  T(headBot, BB, 0.02);
+  T(BB, [0, 0.9, -0.19], 0.017);
+  for (const sx of [-1, 1]) {
+    T([sx * 0.02, BB[1], BB[2]], [sx * 0.065, r, zR], 0.011);
+    T([sx * 0.012, 0.85, -0.175], [sx * 0.065, r + 0.01, zR + 0.01], 0.01);
+    // dropouts
+    trim.box(sx * 0.066, r - 0.015, zR, 0.012, 0.05, 0.05, 0, SILVER);
+  }
+  trim.tube([0, BB[1], BB[2]], [0, BB[1], BB[2]].map((v, i) => (i === 0 ? v + 0.001 : v)), 0.03, 10, SILVER, true);
+  matte.tube([-0.04, BB[1], BB[2]], [0.04, BB[1], BB[2]], 0.026, 10, STEEL, true);   // bottom bracket shell
+  // the fork: crown and two legs raked forward to the axle
+  matte.box(0, headBot[1] - 0.03, headBot[2] + 0.01, 0.12, 0.04, 0.05, 0, STEEL);
+  for (const sx of [-1, 1]) matte.tube([sx * 0.045, headBot[1] - 0.03, headBot[2] + 0.01], [sx * 0.05, r + 0.01, zF], 0.012, 6, STEEL, true);
+  // stem, bars, grips, levers, bell
+  matte.tube(headTop, [0, 0.98, 0.35], 0.018, 8, STEEL, true);
+  matte.tube([0, 0.98, 0.35], [0, 0.995, 0.43], 0.017, 8, STEEL, true);
+  matte.tube([-0.31, 0.995, 0.43], [0.31, 0.995, 0.43], 0.012, 8, SILVER, true);
+  for (const sx of [-1, 1]) {
+    matte.tube([sx * 0.2, 0.995, 0.43], [sx * 0.32, 0.995, 0.43], 0.017, 8, BLACK, true);
+    trim.tube([sx * 0.17, 0.995, 0.445], [sx * 0.26, 0.985, 0.52], 0.006, 4, SILVER, true);   // brake lever
+    matte.tube([sx * 0.16, 0.995, 0.43], [sx * 0.05, 0.9, 0.36], 0.004, 3, BLACK, false);        // cable
+  }
+  trim.tube([0.12, 1.01, 0.43], [0.12, 1.03, 0.43], 0.022, 10, SILVER, true);                     // bell
+  // saddle on its post, springs under it
+  matte.tube([0, 0.9, -0.19], [0, 0.99, -0.225], 0.012, 8, SILVER, true);
+  matte.loft([
+    { z: -0.32, pts: ring2(0.085, 1.015, 0.03, 10) },
+    { z: -0.26, pts: ring2(0.095, 1.02, 0.035, 10) },
+    { z: -0.18, pts: ring2(0.05, 1.02, 0.03, 10) },
+    { z: -0.08, pts: ring2(0.025, 1.015, 0.022, 10) },
+  ], BLACK, { capStart: true, capEnd: true });
+  for (const sx of [-1, 1]) trim.tube([sx * 0.05, 0.985, -0.29], [sx * 0.05, 0.955, -0.29], 0.012, 6, SILVER, true);
+  // fenders over both wheels, and their stays
+  fender(matte, r, zF, r + 0.035, 0.03, -0.5, 1.8, SILVER);
+  fender(matte, r, zR, r + 0.035, 0.03, -1.9, 0.3, SILVER);
+  for (const sx of [-1, 1]) {
+    matte.tube([sx * 0.032, r + 0.08, zF + 0.34], [sx * 0.05, r, zF], 0.004, 3, SILVER, false);
+    matte.tube([sx * 0.032, r + 0.08, zR - 0.34], [sx * 0.065, r, zR], 0.004, 3, SILVER, false);
+  }
+  // the rear rack and its lamp, the front basket over the headlamp
+  for (const sx of [-1, 1]) {
+    matte.tube([sx * 0.07, 0.83, -0.2], [sx * 0.07, 0.83, -0.72], 0.007, 5, STEEL, true);
+    matte.tube([sx * 0.07, 0.83, -0.66], [sx * 0.066, r + 0.02, zR - 0.02], 0.007, 5, STEEL, true);
+  }
+  for (const z of [-0.36, -0.5, -0.64]) matte.tube([-0.07, 0.83, z], [0.07, 0.83, z], 0.005, 4, STEEL, false);
+  trim.box(0, 0.8, -0.735, 0.07, 0.035, 0.02, 0, TAILC);
+  trim.tube([0, 0.93, 0.44], [0, 0.93, 0.47], 0.028, 10, LAMP, true);
+  {
+    const B = [0.2, 0.2, 0.21], x0 = 0.15, y0 = 0.82, y1 = 1.04, z0 = 0.44, z1 = 0.72;
+    for (const [a, b] of [[[-x0, y0, z0], [x0, y0, z0]], [[-x0, y0, z1], [x0, y0, z1]], [[-x0, y1, z0], [x0, y1, z0]], [[-x0, y1, z1], [x0, y1, z1]],
+      [[-x0, y0, z0], [-x0, y0, z1]], [[x0, y0, z0], [x0, y0, z1]], [[-x0, y1, z0], [-x0, y1, z1]], [[x0, y1, z0], [x0, y1, z1]]]) matte.tube(a, b, 0.006, 4, B, false);
+    for (const [x, z] of [[-x0, z0], [x0, z0], [-x0, z1], [x0, z1]]) matte.tube([x, y0, z], [x, y1, z], 0.006, 4, B, false);
+    for (let k = 1; k < 4; k++) { const y = y0 + (y1 - y0) * k / 4; matte.tube([-x0, y, z1], [x0, y, z1], 0.004, 3, B, false); matte.tube([-x0, y, z0], [x0, y, z0], 0.004, 3, B, false); }
+    matte.quad([-x0, y0, z0], [x0, y0, z0], [x0, y0, z1], [-x0, y0, z1], [0, 1, 0], [0, 0, 1, 0, 1, 1, 0, 1], B);
+    matte.tube([0, y0, z0], [0, 0.93, 0.36], 0.008, 4, B, true);
+  }
+  // drivetrain: the chain from the chainring to the cassette, the
+  // derailleur, the kickstand
+  const cr = BIKE.crank, dx = -BIKE.qx + 0.02;
+  for (const dy of [0.1, -0.1]) matte.tube([dx, BB[1] + dy, BB[2]], [dx, r + dy * 0.36, zR], 0.006, 4, [0.12, 0.12, 0.12], false);
+  trim.tube([dx - 0.01, r, zR], [dx + 0.012, r, zR], 0.04, 12, SILVER, true);
+  matte.box(dx - 0.01, r - 0.12, zR + 0.02, 0.02, 0.09, 0.05, 0, BLACK);
+  matte.tube([0.05, BB[1] - 0.01, BB[2] - 0.12], [0.1, 0.02, BB[2] - 0.22], 0.01, 5, STEEL, true);
+  // the crank, as a spin part: chainring, two arms opposite, pedals
+  {
+    const c = new Builder(false);
+    for (let i = 0; i < 16; i++) {
+      const a0 = (i / 16) * Math.PI * 2, a1 = ((i + 1) / 16) * Math.PI * 2;
+      for (const sx of [-1, 1]) {
+        const x = -BIKE.qx + 0.02 + sx * 0.003;
+        c.quad([x, Math.cos(a0) * 0.1, Math.sin(a0) * 0.1], [x, Math.cos(a1) * 0.1, Math.sin(a1) * 0.1], [x, Math.cos(a1) * 0.035, Math.sin(a1) * 0.035], [x, Math.cos(a0) * 0.035, Math.sin(a0) * 0.035],
+          [sx, 0, 0], [0, 0, 1, 0, 1, 1, 0, 1], [0.55, 0.56, 0.58]);
+      }
+    }
+    c.tube([-BIKE.qx, 0, 0], [BIKE.qx, 0, 0], 0.012, 6, SILVER, true);
+    for (const [sx, a] of [[1, 0], [-1, Math.PI]]) {
+      const e = [sx * BIKE.qx, Math.cos(a) * cr, Math.sin(a) * cr];
+      c.tube([sx * BIKE.qx, 0, 0], e, 0.012, 6, SILVER, true);
+      c.box(sx * (BIKE.qx + 0.055), e[1] - 0.012, e[2], 0.09, 0.024, 0.07, 0, BLACK);
+    }
+    spinPart(matte, BB, 'x', c);
+  }
+  return wheels;
+}
+
 function buildJetski(spec, paint, trim, matte) {
-  //        z      hb    deckY chineX chineY keelY
+  // A modern three-seat personal watercraft (the 3.2-3.4 m runabouts every
+  // maker builds): a deep-V hull with strakes and a chine flat, sponsons aft,
+  // the upper deck in the livery -- a long hood over the engine rising into a
+  // steering pod, footwells either side of a stepped two-tone saddle, a
+  // swim platform at the stern and the jet's steering nozzle and reverse
+  // bucket under it. y = 0 is the waterline; the rider (RIDERS.jetski) sits
+  // at z -0.42 with his hands on the bars at (+-0.36, 0.98, 0.22).
+  //        z      chineX chineY keelY  gunwale half, y
   const S = [
-    [-1.55, 0.52, 0.40, 0.50, -0.02, -0.12],
-    [-1.00, 0.58, 0.44, 0.55, -0.04, -0.16],
-    [-0.20, 0.60, 0.48, 0.56, -0.05, -0.18],
-    [0.60, 0.55, 0.53, 0.50, -0.03, -0.16],
-    [1.10, 0.44, 0.58, 0.38, 0.02, -0.10],
-    [1.45, 0.26, 0.62, 0.20, 0.12, 0.02],
-    [1.62, 0.05, 0.64, 0.03, 0.30, 0.24],
+    [-1.62, 0.50, -0.02, -0.09, 0.60, 0.40],
+    [-1.25, 0.53, -0.04, -0.15, 0.63, 0.42],
+    [-0.60, 0.55, -0.05, -0.19, 0.64, 0.44],
+    [0.00, 0.54, -0.04, -0.20, 0.63, 0.46],
+    [0.55, 0.49, -0.01, -0.18, 0.58, 0.50],
+    [1.00, 0.39, 0.05, -0.12, 0.47, 0.54],
+    [1.35, 0.25, 0.14, -0.02, 0.33, 0.58],
+    [1.56, 0.11, 0.27, 0.13, 0.16, 0.61],
+    [1.66, 0.02, 0.40, 0.33, 0.03, 0.63],
   ];
-  const DARK = [0.10, 0.11, 0.12], SEAT = [0.12, 0.12, 0.14], STRIPE = [0.92, 0.92, 0.9];
+  const at = (z) => {
+    if (z <= S[0][0]) return S[0].slice();
+    for (let i = 1; i < S.length; i++) if (z <= S[i][0]) { const a = S[i - 1], b = S[i], t = (z - a[0]) / (b[0] - a[0]); return a.map((v, k) => v + (b[k] - v) * t); }
+    return S[S.length - 1].slice();
+  };
+  const HULL = [0.15, 0.16, 0.18], DECK = [0.07, 0.075, 0.08], TRIMG = [0.34, 0.35, 0.38], SEATTOP = [0.05, 0.05, 0.055],
+    SEATSIDE = [0.30, 0.31, 0.33], ACCENT = [0.04, 0.04, 0.045], PIN = [0.9, 0.9, 0.88];
+  // the topsides profile, chine lip to gunwale, at a fraction 0..1
+  const side = (s, sd) => {
+    const [, cx, cy, , hb, sy] = s;
+    return [[sd * (cx + 0.035), cy + 0.012], [sd * (hb - 0.004), cy + (sy - cy) * 0.36], [sd * hb, cy + (sy - cy) * 0.76], [sd * (hb - 0.012), sy]];
+  };
+  const alongSide = (s, sd, f) => {
+    const p = side(s, sd), k = Math.min(2, Math.floor(f * 3)), t = f * 3 - k;
+    return [p[k][0] + (p[k + 1][0] - p[k][0]) * t + sd * 0.004, p[k][1] + (p[k + 1][1] - p[k][1]) * t];
+  };
   for (const sd of [-1, 1]) {
-    // sides: chine to deck edge, in the livery
-    paint.patch(S.map(([z, hb, dy, cx, cy]) => [[sd * cx, cy, z], [sd * hb, dy * 0.55 + cy * 0.45, z], [sd * hb, dy, z]]), WHITE, [sd, 0.2, 0]);
-    // bottom: keel to chine
-    matte.patch(S.map(([z, , , cx, cy, ky]) => [[0, ky, z], [sd * cx * 0.5, (ky + cy) / 2, z], [sd * cx, cy, z]]), DARK, [sd * 0.5, -1, 0]);
-    // a white stripe along the upper side
-    matte.patch(S.slice(0, 6).map(([z, hb, dy, , cy]) => [[sd * (hb + 0.004), dy * 0.75 + cy * 0.25, z], [sd * (hb + 0.004), dy * 0.62 + cy * 0.38, z]]), STRIPE, [sd, 0, 0]);
+    // bottom: keel, a strake, the chine, the chine flat -- dark, like every
+    // PWC's bottom
+    matte.patch(S.map(([z, cx, cy, ky]) => [[0, ky, z], [sd * cx * 0.45, ky + (cy - ky) * 0.40, z], [sd * cx * 0.47, ky + (cy - ky) * 0.47, z],
+      [sd * cx * 0.82, ky + (cy - ky) * 0.84, z], [sd * cx * 0.84, ky + (cy - ky) * 0.90, z], [sd * cx, cy, z], [sd * (cx + 0.035), cy + 0.012, z]]), HULL, [sd * 0.5, -1, 0]);
+    // topsides in the livery
+    paint.patch(S.map((s) => side(s, sd).map(([x, y]) => [x, y, s[0]])), WHITE, [sd, 0.2, 0]);
+    // the graphic: a dark sweep low at the stern rising forward, pinstriped
+    const sweep = S.slice(0, 6);
+    const band = (f0, f1) => sweep.map((s) => {
+      const k = (s[0] + 1.62) / 2.8;
+      return [f0 + k * 0.32, f1 + k * 0.32].map((f) => { const q = alongSide(s, sd, clamp(f, 0, 0.99)); return [q[0], q[1], s[0]]; });
+    });
+    matte.patch(band(0.08, 0.30), ACCENT, [sd, 0, 0]);
+    matte.patch(band(0.33, 0.36), PIN, [sd, 0, 0]);
+    // rub rail along the gunwale
+    for (let i = 0; i < S.length - 2; i++) matte.tube([sd * (S[i][4] + 0.004), S[i][5] - 0.018, S[i][0]], [sd * (S[i + 1][4] + 0.004), S[i + 1][5] - 0.018, S[i + 1][0]], 0.024, 6, TRIMG, false);
+    // sponsons: short fins at the chine, aft
+    matte.box(sd * (at(-1.2)[1] + 0.04), at(-1.2)[2] - 0.02, -1.18, 0.05, 0.1, 0.5, 0, HULL);
+    // footwell: floor, and a raised lip at the gunwale
+    const fw = [-1.25, -0.9, -0.5, -0.1, 0.25, 0.42];
+    matte.patch(fw.map((z) => { const s = at(z), fy = s[5] - 0.015; return [[sd * 0.22, fy, z], [sd * (s[4] - 0.06), fy, z]]; }), DECK, [0, 1, 0]);
+    matte.patch(fw.map((z) => { const s = at(z), fy = s[5] - 0.015; return [[sd * (s[4] - 0.06), fy, z], [sd * (s[4] - 0.035), s[5] + 0.06, z], [sd * (s[4] - 0.004), s[5], z]]; }), TRIMG, [0, 1, 0]);
+    // the footwell's front, rising into the hood
+    const f0 = at(0.42);
+    matte.quad([sd * 0.22, f0[5] - 0.015, 0.42], [sd * (f0[4] - 0.06), f0[5] - 0.015, 0.42], [sd * (f0[4] - 0.06), f0[5] + 0.08, 0.36], [sd * 0.22, f0[5] + 0.22, 0.30],
+      [0, 0.4, -1], [0, 0, 1, 0, 1, 1, 0, 1], DECK);
   }
-  // transom
+  // transom and the swim platform
   {
-    const [z, hb, dy, cx, cy, ky] = S[0];
-    matte.patch([[[-cx, cy, z], [0, ky, z], [cx, cy, z]], [[-hb, dy, z], [0, dy, z], [hb, dy, z]]], DARK, [0, 0, -1]);
+    const [z, cx, cy, ky, hb, sy] = S[0];
+    matte.patch([[[-cx, cy, z], [0, ky, z], [cx, cy, z]], [[-hb, sy, z], [0, sy, z], [hb, sy, z]]], HULL, [0, 0, -1]);
+    const pz = at(-1.25);
+    matte.patch([[[-hb, sy + 0.005, z], [hb, sy + 0.005, z]], [[-pz[4] + 0.02, pz[5] + 0.005, -1.25], [pz[4] - 0.02, pz[5] + 0.005, -1.25]]], DECK, [0, 1, 0]);
+    // non-slip mat squares on the platform
+    for (const x of [-0.28, 0, 0.28]) matte.box(x, sy + 0.006, -1.44, 0.22, 0.008, 0.28, 0, [0.14, 0.15, 0.16]);
+    // reboarding step, folded, under the platform's middle
+    matte.box(0, 0.20, z - 0.07, 0.32, 0.035, 0.12, 0, TRIMG);
+    trim.tube([0, 0.22, z - 0.01], [0, 0.22, z - 0.08], 0.012, 5, ALLOY, true);
   }
-  // deck, in the livery forward of the hood, dark non-slip in the footwells
-  paint.patch(S.slice(3).map(([z, hb, dy]) => [[-hb, dy, z], [0, dy + 0.04, z], [hb, dy, z]]), WHITE, [0, 1, 0]);
-  matte.patch(S.slice(0, 4).map(([z, hb, dy]) => [[-hb, dy, z], [0, dy, z], [hb, dy, z]]), [0.2, 0.21, 0.22], [0, 1, 0]);
-  // saddle: a padded bolster on a narrow pedestal, not a crate
-  matte.box(0, 0.40, -0.52, 0.30, 0.26, 1.16, 0, DARK);
-  matte.tube([0, 0.70, -1.12], [0, 0.70, 0.02], 0.19, 10, SEAT, true);
-  // the hood over the engine, lofted: tall behind the bars, sloping away to
-  // the bow deck
+  // the jet: a steering nozzle out of the transom, the reverse bucket over
+  // it, the ride plate and the intake under the hull
   {
-    const H = [[0.02, 0.30, 0.52, 0.80], [0.30, 0.31, 0.53, 0.82], [0.60, 0.29, 0.54, 0.74], [0.90, 0.24, 0.56, 0.64], [1.12, 0.14, 0.58, 0.60]];
-    paint.patch(H.map(([z, w, dy, top]) => [[-w, dy, z], [-w * 0.72, dy + (top - dy) * 0.8, z], [0, top, z], [w * 0.72, dy + (top - dy) * 0.8, z], [w, dy, z]]), WHITE, [0, 1, 0]);
-    const [z0, w0, d0, t0] = H[0];
-    paint.patch([[[-w0, d0, z0], [0, d0, z0], [w0, d0, z0]], [[-w0 * 0.72, d0 + (t0 - d0) * 0.8, z0], [0, t0, z0], [w0 * 0.72, d0 + (t0 - d0) * 0.8, z0]]], WHITE, [0, 0, -1]);
+    const z0 = S[0][0];
+    matte.loft([
+      { z: z0 + 0.02, pts: ring2(0.10, 0.08, 0.10, 12) },
+      { z: z0 - 0.14, pts: ring2(0.09, 0.08, 0.09, 12) },
+      { z: z0 - 0.22, pts: ring2(0.075, 0.08, 0.075, 12) },
+    ], [0.22, 0.23, 0.25], { capEnd: false });
+    matte.tube([0, 0.08, z0 - 0.20], [0, 0.08, z0 - 0.23], 0.066, 12, [0.03, 0.03, 0.03], true);
+    matte.box(0, 0.03, z0 - 0.26, 0.22, 0.16, 0.04, 0, TRIMG);
+    for (const sd of [-1, 1]) trim.tube([sd * 0.14, 0.14, z0 - 0.26], [sd * 0.12, 0.2, z0 - 0.02], 0.012, 5, ALLOY, true);
+    matte.box(0, -0.105, -1.38, 0.34, 0.018, 0.5, 0, [0.28, 0.29, 0.31]);
+    for (let k = 0; k < 5; k++) matte.box(0, -0.2, -0.55 - k * 0.09, 0.26, 0.012, 0.02, 0, [0.3, 0.31, 0.33]);
+    // tow eye
+    trim.tube([0, 0.34, z0 - 0.01], [0, 0.34, z0 - 0.06], 0.02, 6, ALLOY, true);
   }
-  // steering post and bars
-  matte.tube([0, 0.78, 0.18], [0, 0.96, 0.22], 0.035, 6, DARK, true);
-  matte.tube([-0.36, 0.98, 0.22], [0.36, 0.98, 0.22], 0.022, 6, DARK, true);
-  for (const sd of [-1, 1]) matte.tube([sd * 0.26, 0.98, 0.22], [sd * 0.38, 0.98, 0.22], 0.032, 6, [0.05, 0.05, 0.05], true);
-  // a small tinted screen on the hood, and the stern's grab handle
-  trim.box(0, 0.88, 0.38, 0.34, 0.12, 0.03, 0, [0.12, 0.14, 0.16]);
-  matte.tube([-0.2, 0.62, -1.42], [0.2, 0.62, -1.42], 0.018, 6, CHROME, true);
+  // the saddle's pedestal, between the footwells
+  {
+    const P = [-1.25, -0.8, -0.2, 0.3];
+    for (const sd of [-1, 1]) matte.patch(P.map((z) => { const fy = at(z)[5] - 0.015; return [[sd * 0.22, fy, z], [sd * 0.205, 0.63, z]]; }), SEATSIDE, [sd, 0, 0]);
+    const fy = at(-1.25)[5];
+    matte.quad([-0.22, fy, -1.25], [0.22, fy, -1.25], [0.205, 0.63, -1.25], [-0.205, 0.63, -1.25], [0, 0, -1], [0, 0, 1, 0, 1, 1, 0, 1], SEATSIDE);
+  }
+  // the saddle: driver and passengers stepped, a black top over grey sides,
+  // livery piping between them, the grab strap across the middle
+  {
+    const T = [[-1.22, 0.78], [-1.12, 0.84], [-0.96, 0.875], [-0.74, 0.88], [-0.64, 0.855], [-0.56, 0.83], [-0.30, 0.822], [-0.05, 0.83], [0.12, 0.83], [0.24, 0.79], [0.30, 0.72]];
+    const W = (z) => 0.22 - Math.max(0, z - 0.1) * 0.25;
+    const prof = (z, top, sd) => {
+      const w = W(z);
+      return [[sd * (w - 0.012), 0.625], [sd * (w + 0.018), top - 0.12], [sd * (w + 0.004), top - 0.045], [sd * (w - 0.05), top - 0.004], [sd * (w * 0.45), top + 0.012], [0, top + 0.016]];
+    };
+    for (const sd of [-1, 1]) {
+      const rows = T.map(([z, t]) => prof(z, t, sd).map(([x, y]) => [x, y, z]));
+      matte.patch(rows.map((r) => r.slice(0, 3)), SEATSIDE, [sd, 0.2, 0]);
+      paint.patch(rows.map((r) => [r[2], [r[2][0] * 0.985 + sd * 0.0, r[2][1] + 0.012, r[2][2]]]), WHITE, [sd, 0.6, 0]);
+      matte.patch(rows.map((r) => [[r[2][0] * 0.985, r[2][1] + 0.012, r[2][2]], ...r.slice(3)]), SEATTOP, [sd * 0.3, 1, 0]);
+    }
+    // ends
+    for (const [z, t, n] of [[T[0][0], T[0][1], -1], [T[T.length - 1][0], T[T.length - 1][1], 1]]) {
+      const row = [...prof(z, t, -1).reverse(), ...prof(z, t, 1).slice(1)].map(([x, y]) => [x, y, z]);
+      matte.patch([row, row.map(([x, y]) => [x * 0.2, Math.max(0.625, y - 0.02), z + n * 0.03])], SEATTOP, [0, 0, n]);
+    }
+    matte.tube([-0.23, 0.852, -0.66], [0.23, 0.852, -0.66], 0.014, 6, [0.02, 0.02, 0.02], true);
+    // the rear grab handle, round the back of the saddle
+    const gh = [[-0.275, 0.64, -1.02], [-0.26, 0.69, -1.28], [0, 0.70, -1.34], [0.26, 0.69, -1.28], [0.275, 0.64, -1.02]];
+    for (let k = 0; k < gh.length - 1; k++) matte.tube(gh[k], gh[k + 1], 0.02, 6, TRIMG, true);
+  }
+  // the hood: a long shell over the engine from the steering pod to the bow,
+  // in the livery above a dark skirt at the gunwale, with the storage lid's
+  // shut line across it
+  {
+    const H = [[0.30, 0.34, 0.80], [0.45, 0.43, 0.79], [0.70, 0.46, 0.75], [0.95, 0.43, 0.70], [1.18, 0.35, 0.665], [1.38, 0.24, 0.645], [1.54, 0.12, 0.635], [1.64, 0.03, 0.632]];
+    const sec = (z, w, h, sd) => {
+      const s = at(z), hb = s[4] - 0.006, sy = s[5];
+      return [[sd * hb, sy, z], [sd * (hb - 0.01), sy + 0.035, z], [sd * Math.max(w, 0.02) * 1.0, sy + (h - sy) * 0.55, z],
+        [sd * w * 0.78, h - 0.02, z], [sd * w * 0.4, h - 0.003, z], [0, h, z]];
+    };
+    for (const sd of [-1, 1]) {
+      const rows = H.map(([z, w, h]) => sec(z, w, h, sd));
+      matte.patch(rows.map((r) => r.slice(0, 2)), ACCENT, [sd, 0.3, 0]);
+      paint.patch(rows.map((r) => r.slice(1)), WHITE, [sd * 0.3, 1, 0]);
+    }
+    // the shut line of the storage lid, and a vent pair either side
+    const lz = 0.98, ls = at(lz), row = [];
+    for (let j = -4; j <= 4; j++) {
+      const u = j / 4, w = 0.43, h = 0.70;
+      row.push([u * w, (1 - u * u) * (h - ls[5]) * 0.95 + ls[5] + 0.004, lz]);
+    }
+    for (let k = 0; k < row.length - 1; k++) matte.tube(row[k], row[k + 1], 0.006, 4, ACCENT, false);
+    for (const sd of [-1, 1]) for (let k = 0; k < 3; k++) matte.box(sd * 0.3, 0.70 - k * 0.006, 0.62 + k * 0.05, 0.1, 0.012, 0.025, 0, ACCENT);
+    // the pod's back, facing the rider
+    const r0 = [...sec(0.30, 0.34, 0.80, -1).reverse(), ...sec(0.30, 0.34, 0.80, 1).slice(1)];
+    matte.patch([r0, r0.map(([x, y, z]) => [x * 0.6, Math.max(y, 0.62), z - 0.02])], DECK, [0, 0, -1]);
+  }
+  // steering pod: the fairing over the bars, a tinted visor, the display
+  matte.spheroid(0, 0.86, 0.34, 0.2, 12, 8, [0.09, 0.095, 0.1], 0.55);
+  trim.quad([-0.16, 0.9, 0.30], [0.16, 0.9, 0.30], [0.13, 1.0, 0.40], [-0.13, 1.0, 0.40], [0, 0.7, -0.7], [0, 0, 1, 0, 1, 1, 0, 1], [0.15, 0.17, 0.2]);
+  trim.quad([-0.07, 0.905, 0.29], [0.07, 0.905, 0.29], [0.06, 0.95, 0.33], [-0.06, 0.95, 0.33], [0, 0.7, -0.7], [0, 0, 1, 0, 1, 1, 0, 1], [0.35, 0.85, 0.95]);
+  // bars, grips, levers, mirrors
+  matte.tube([0, 0.84, 0.28], [0, 0.97, 0.24], 0.03, 6, DECK, true);
+  matte.tube([-0.36, 0.98, 0.22], [0.36, 0.98, 0.22], 0.019, 8, [0.16, 0.16, 0.17], true);
+  for (const sd of [-1, 1]) {
+    matte.tube([sd * 0.26, 0.98, 0.22], [sd * 0.39, 0.98, 0.22], 0.031, 8, [0.03, 0.03, 0.035], true);
+    matte.tube([sd * 0.395, 0.98, 0.22], [sd * 0.405, 0.98, 0.22], 0.036, 8, TRIMG, true);
+    matte.tube([sd * 0.25, 0.995, 0.25], [sd * 0.33, 0.99, 0.27], 0.01, 4, TRIMG, true);
+    mirror(trim, sd * 0.33, 1.07, 0.40, 0.045, [sd * 0.15, 0.93, 0.36], [0.1, 0.1, 0.11]);
+  }
+  // bow eye and cleats, stern lights
+  trim.tube([0, 0.40, 1.68], [0, 0.44, 1.63], 0.018, 6, ALLOY, true);
+  for (const sd of [-1, 1]) trim.box(sd * 0.5, 0.435, -1.55, 0.04, 0.03, 0.1, 0, ALLOY);
   return [];   // no wheels
 }
 
@@ -6150,7 +6515,7 @@ const HAND_BUILT = {
   boxtruck: (s, p, t, m) => buildTruck(s, p, t, m, TRUCK_LOOKS.boxtruck),
   garbage: (s, p, t, m) => buildTruck(s, p, t, m, TRUCK_LOOKS.garbage),
   convertible: buildConvertible, cruiser: buildCruiser, sportbike: buildSportbike,
-  atv: buildAtv, boat: buildBoat, duck: buildDuck, hydro: buildHydro, jetski: buildJetski, kayak: buildKayak, artic: buildArticFront, articRear: buildArticRear, balloon: buildBalloon,
+  atv: buildAtv, bicycle: buildBicycle, boat: buildBoat, duck: buildDuck, hydro: buildHydro, jetski: buildJetski, kayak: buildKayak, artic: buildArticFront, articRear: buildArticRear, balloon: buildBalloon,
 };
 
 /**
@@ -6326,7 +6691,7 @@ function buildType(spec) {
   // A wheel may declare its own outboard side; a bike's are on the centreline,
   // where `Math.sign(ax)` says nothing.
   const outOf = ([ax, , , , , o]) => (o !== undefined ? o : (Math.sign(ax) || 1));
-  for (const wl of wheels) addWheel(trimW, matteW, wl[0], wl[1], wl[2], wl[3], wl[4], outOf(wl), !!wl[6]);
+  for (const wl of wheels) addWheel(trimW, matteW, wl[0], wl[1], wl[2], wl[3], wl[4], outOf(wl), !!wl[6], wl[7]);
   // The detailed build needs a wheel geometry per distinct size AND per side:
   // the spokes and brake disc are only on the outboard face, so the left and
   // right wheels are mirror images and cannot share a buffer. Staggered tyres
@@ -6336,11 +6701,11 @@ function buildType(spec) {
   const placed = wheels.map((wl) => {
     const [ax, ay, az, r, w] = wl;
     const out = outOf(wl);
-    const k = `${r}|${w}|${out}|${!!wl[6]}`;
+    const k = `${r}|${w}|${out}|${!!wl[6]}|${wl[7] || ''}`;
     let gi = geoKey.get(k);
     if (gi === undefined) {
       const wt = new Builder(false), wm = new Builder(false);
-      addWheel(wt, wm, 0, 0, 0, r, w, out, !!wl[6]);
+      addWheel(wt, wm, 0, 0, 0, r, w, out, !!wl[6], wl[7]);
       gi = wheelGeos.length;
       wheelGeos.push({ trim: wt.build(), matte: wm.build() });
       geoKey.set(k, gi);
@@ -6613,7 +6978,7 @@ export class Vehicle {
     // A bike carries its rider. He goes in the tilt group, so he leans with it
     // -- parented to `group` instead he would stay bolt upright through every
     // corner while the bike went over underneath him.
-    this.rider = this.spec.moto || this.spec.atv || this.spec.jetski || this.spec.kayak || this.spec.balloon ? makeRider(this.spec.hand) : null;
+    this.rider = this.spec.moto || this.spec.bicycle || this.spec.atv || this.spec.jetski || this.spec.kayak || this.spec.balloon ? makeRider(this.spec.hand) : null;
     if (this.rider) this.tilt.add(this.rider.group);
     this.wheelMeshes = [];
     this.shadowTilt = null;   // the player's contact shadow (setDetailed)
@@ -6632,6 +6997,7 @@ export class Vehicle {
     this.onGround = true;
     this.vy = 0;
     this.wheelSpin = 0;
+    this.crank = 0; this.pedaling = false; this._spinWas = 0;   // a bicycle's cranks (_pedal)
     this.skid = 0;
     this.lift = 0;
     this.radius = Math.max(t.spec.len, t.spec.wid) * 0.42;
@@ -6689,7 +7055,7 @@ export class Vehicle {
     }
     // A quad's rider is there only when someone is riding it. (The bikes
     // keep theirs as they always have: traffic is all they ever are.)
-    if (this.rider && (this.spec.atv || this.spec.jetski || this.spec.kayak || this.spec.balloon)) this.rider.group.visible = this.detailedWheels || !empty;
+    if (this.rider && (this.spec.atv || this.spec.bicycle || this.spec.jetski || this.spec.kayak || this.spec.balloon)) this.rider.group.visible = this.detailedWheels || !empty;
   }
 
   /** The player's own car gets steerable, spinning wheel meshes; traffic doesn't. */
@@ -6700,7 +7066,7 @@ export class Vehicle {
     this.trimMesh.geometry = on ? this.assets.trimGeo : this.assets.trimGeoW;
     this.matteMesh.geometry = on ? this.assets.matteGeo : this.assets.matteGeoW;
     if (!on) this.mode = this._mode;
-    if (this.rider && (this.spec.atv || this.spec.jetski || this.spec.kayak || this.spec.balloon)) this.rider.group.visible = on || this._mode === 'traffic';
+    if (this.rider && (this.spec.atv || this.spec.bicycle || this.spec.jetski || this.spec.kayak || this.spec.balloon)) this.rider.group.visible = on || this._mode === 'traffic' || this._mode === 'path';
     // the kayak's paddle, in the paddler's hands (updateKayak)
     if (this.spec.kayak) {
       if (on && !this.paddle) { this.paddle = kayakPaddle(); this.tilt.add(this.paddle); }
@@ -7769,6 +8135,7 @@ export class Vehicle {
     if (spec.boat) { this.updateBoat(dt, input); return; }
     if (spec.amphib && this.updateDuck(dt, input)) return;
     const throttle = input.throttle || 0;
+    this.pedaling = throttle > 0.05;
     const brake = input.brake || 0;
     const hand = input.handbrake || 0;
     // PULL BACK TO WHEELIE (bikes and quads), as in GTA: the stick's other
@@ -8178,7 +8545,39 @@ export class Vehicle {
     this.sync();
   }
 
+  /**
+   * A bicycle's cranks turn with the rear wheel while it is pedalled (a
+   * 2.4:1 gear), and freewheel otherwise; the rider's feet are solved onto
+   * the pedals and his hands onto the grips (solveArm, two bones each).
+   */
+  _pedal() {
+    const d = this.wheelSpin - this._spinWas;
+    this._spinWas = this.wheelSpin;
+    if (this.pedaling && Math.abs(d) < 1) this.crank += d / 2.4;
+    for (const m of this.spinMeshes) m.rotation.x = this.crank;
+    const h = this.rider;
+    if (!h || !h.group.visible) return;
+    const b = h.bones, t = this.tilt, bb = BIKE.bb;
+    this.group.position.set(this.x, this.y + this.yVis, this.z);
+    this.group.rotation.y = this.heading;
+    t.rotation.x = this.pitch - this.wheelie; t.rotation.z = this.roll;
+    this.group.updateMatrixWorld(true);
+    const V = _pedalV;
+    for (const [sx, sh, el, hand, th, kn, ft, ph] of [
+      [1, BONES.shoulderL, BONES.elbowL, BONES.handL, BONES.thighL, BONES.kneeL, BONES.footL, 0],
+      [-1, BONES.shoulderR, BONES.elbowR, BONES.handR, BONES.thighR, BONES.kneeR, BONES.footR, Math.PI]]) {
+      const a = this.crank + ph;
+      // the ankle over the pedal spindle, the ball of the foot on it
+      t.localToWorld(V.set(sx * (BIKE.qx + 0.05), bb[1] + Math.cos(a) * BIKE.crank + 0.075, bb[2] + Math.sin(a) * BIKE.crank - 0.07));
+      solveArm(b[th], b[kn], b[ft], V, t, sx, [sx * 0.15, 0.3, 1]);
+      b[ft].rotation.x = -0.15 + Math.sin(a) * 0.2;
+      t.localToWorld(V.set(sx * 0.27, 0.995, 0.43));
+      solveArm(b[sh], b[el], b[hand], V, t, sx);
+    }
+  }
+
   sync() {
+    if (this.spec.bicycle) this._pedal();
     // A wheelie turns the body about the rear axle: nose up, and the centre
     // lifted so the back wheel stays on the ground.
     const wl = this.wheelie ? (this.spec.wheelbase || 1.3) * 0.5 * Math.sin(this.wheelie) : 0;

@@ -49,6 +49,7 @@ src/hoops.js                basketball courts in the parks + the free-throw game
 src/stunts.js               stunt-jump ramps (geometry + height query) and their scoring
 src/monorail.js             the Seattle Center Monorail: beams, stations, both trains
 src/link.js                 Link light rail's 1 Line: tracks, guideway, bores, stations, the trains
+src/bikes.js                bike paths drawn and ridden, AI cyclists, bike-share docks
 src/shadowcache.js          phones: the city's shadows drawn once, only movers per frame
 src/effects.js              particles + tracers
 src/audio.js                all sound, synthesised: engine models, one-shot bank,
@@ -65,6 +66,7 @@ tools/build_lots.py         car parks, plazas, yards -> lots.png
 tools/build_monorail.py     the monorail's beams, stations, platforms -> monorail.json
 tools/extract_rail.py       every rail way and stop in the box -> tools/data/raw_rail.json
 tools/build_link.py         Link's two 1 Line tracks and its stations -> link.json
+tools/build_bikepaths.py    cycleways and designated bike paths -> bikepaths.json
 tools/build_beaches.py      OSM beaches (from raw_green.json) -> beaches.json
 tools/build_parkprops.py    benches, picnic tables, playgrounds, fountains -> parkprops.json
 tools/fetch_dem.py          downloads the USGS terrain tiles
@@ -4050,6 +4052,67 @@ if any jump's run-up or ramp crosses the monorail.
 **`node --check file.js` passed monorail.js with its class unclosed**; the
 browser did not. Check a module as one: `node --input-type=module --check <
 file`.
+
+## Bicycles and the bike paths (v147)
+
+**Seattle's bike paths are drawn and ridden** (`src/bikes.js`).
+`tools/build_bikepaths.py` (~15 s) keeps every highway=cycleway and every
+path/footway/track signed bicycle=designated: ~260 km, the Burke-Gilman
+(22.5 km in the box), the I-90, Alki, SR 520, Elliott Bay and Duwamish
+trails, Green Lake's loop. Each way keeps its end node ids so the ways join
+into a network.
+
+- **Drawn** as 3 m ribbons (2.2 m gravel where unpaved) with a dashed yellow
+  centre line and white edges, every vertex on `terrainHeight` + 5 cm with a
+  polygon offset, cut to ~4 m. Not drawn: bridges and tunnels (the road
+  import already draws what they cross), pieces on a carriageway (a sidepath
+  mapped along a road), over water or in a building -- ~190 km drawn. 1 km
+  chunks shown within 1 km (600 m on a phone): +2-6 draws.
+- **Trees, furniture and parked cars keep off them**: `city.extraClear`
+  asks `bikeNet.keepClear` (a 40 m segment grid) with Link's.
+- **Cyclists** are `bicycle` Vehicles in traffic's list in mode `path`,
+  which traffic neither drives nor despawns: `Cyclists` keeps 8 (4 on a
+  phone) within ~480 m, spawned 150-450 m out, riding 4-6.5 m/s on the right,
+  turning onto another way at each node and round at a dead end, leaning
+  into turns, slowing and ringing the bell (`bike_bell`) for someone on
+  foot in the way. Take one like any vehicle.
+- **Bike-share docks** at trailheads (`DOCK_SITES`, snapped to open, dry,
+  level ground beside the nearest drawn path; 9 of 11 find one): racks, a
+  kiosk, five green bikes ('apron'), refilled while you are 260 m+ away. On
+  the maps as "Bikes · <place>".
+- **The bicycle** (`bicycle` in TYPES, `buildBicycle`): a city bike -- a
+  diamond frame in the livery, steel fork, flat bar, levers and bell, sprung
+  saddle, full fenders, a rear rack and lamp, a front basket, chain,
+  cassette, derailleur, kickstand -- on 700c wheels with 32 laced spokes
+  (`bikeWheel`, wheel kind 'bike'). `moto` gives it the two-patch ground
+  solve and the lean; `noEngine`, no engine. ~27 km/h flat out, 20 km/h in
+  3 s (arcade). The horn is the bell.
+- **Pedalling** (`Vehicle._pedal`, from `sync`): the crank is a spin part at
+  the bottom bracket, turned with the rear wheel at 2.4:1 while pedalling
+  and freewheeling otherwise; the rider's ankles are solved onto the pedals
+  and his hands onto the grips every frame (`solveArm`, which now takes a
+  pole, forward for a knee). Its chase camera is close (4.4 m).
+
+verify's "bicycles" section: the paths drawn, the docks stocked, a dock
+bike ridden (top speed, time to 20 km/h, the cranks turning), a minute of
+cyclists at Green Lake all on the paths, no trunk on a path round Gas
+Works. `docs/bikes/` has shots.
+
+## The jet ski and the runabout, rebuilt (v147)
+
+- **The jet ski** (`buildJetski`) is a modern three-seat PWC: a deep-V hull
+  with two strakes and a chine flat, sponsons aft, topsides in the livery
+  with a dark sweep and pinstripe, a rub rail; footwells with a raised lip,
+  a stepped two-tone saddle with livery piping and a grab handle; a long
+  hood with the storage lid's shut line and vents rising into a steering
+  pod (visor, display, bars, grips, levers, mirrors); a swim platform with a
+  reboarding step, and the jet's nozzle, reverse bucket, ride plate and
+  intake. The rider's hands and seat are where they were.
+- **The runabout's outboard** is a 150 hp four-stroke: clamp bracket and
+  trim ram, black lower cowl, a sculpted white top cowl with a livery band
+  and vents, a foil-section leg, anti-ventilation plate, torpedo gearcase and
+  skeg, a three-bladed prop. Also teak swim platforms with a ladder, running
+  strakes, cleats, and the bimini stowed in its boot. `docs/boats/`.
 
 ## Link light rail (v146)
 

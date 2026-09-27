@@ -511,6 +511,12 @@ export class Player {
         dist = 12.5 + clamp(sp * 0.07, 0, 4.5);
         height = 3.4 - clamp((v.vy || 0) * 0.10, -1, 1);
         lookH = 1.7 + clamp((v.vy || 0) * 0.12, -1, 1);
+      } else if (v.spec.bicycle) {
+        // close behind and over the rider's shoulder: a bicycle is small, and
+        // the car rig put it a speck in the middle of the screen
+        dist = 4.4 + clamp(sp * 0.08, 0, 1.2);
+        height = 1.9;
+        lookH = 1.15;
       } else if (v.spec.link) {
         // over the lead car's roof, looking down the line: 118 m of train
         // behind the cab
