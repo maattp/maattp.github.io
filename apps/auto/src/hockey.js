@@ -124,6 +124,7 @@ export class HockeyNight {
   _entrance() {
     const { scene, city, arena } = this.o;
     const a = arena || { x: -1213.8, y: 0, z: -1197.3 };
+    this.arena = a;
     // the atrium's glass front peaks at local (3.7, 92.4); its solid ends 91.5 m south of the centre
     const x = a.x + 3.7, z = a.z + 95.5;
     const y = city.groundAt(x, z, null);
@@ -161,7 +162,19 @@ export class HockeyNight {
     }
   }
 
-  near(pl) { return Math.hypot(pl.x - this.door.x, pl.z - this.door.z) < 6 && Math.abs(pl.y - this.door.y) < 3; }
+  /**
+   * Anywhere round the arena: within ~20 m of its walls on any side (the
+   * building is a 110 m square under its roof, landmarks.js ARENA, with the
+   * glass atrium out to 92 m south of its centre), on foot at ground level.
+   * One ENTER spot at the atrium doors was a secret to be found.
+   */
+  near(pl) {
+    const a = this.arena;
+    const dx = pl.x - (a.x + 4.5), dz = pl.z - (a.z + 1);
+    const round = Math.max(Math.abs(dx), Math.abs(dz)) < 55 + 22;
+    const atrium = Math.abs(pl.x - (a.x + 3.7)) < 60 && dz > 50 && dz < 92 + 22;
+    return (round || atrium) && Math.abs(pl.y - this.o.city.groundAt(pl.x, pl.z, pl.y + 1)) < 2.5;
+  }
 
   // --- the overlay ---------------------------------------------------------------------------
 

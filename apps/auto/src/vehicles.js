@@ -7771,6 +7771,17 @@ export class Vehicle {
     if (hand > 0.5 && this.vLong > 0) acc -= 11;
     this.vLong += acc * dt;
     if (Math.abs(this.vLong) < 0.12 && throttle === 0) this.vLong *= 0.82;
+    // NOBODY AT THE WHEEL: the parking brake. Unattended vehicles used to get
+    // a feather of BRAKE, and at a standstill the brake is reverse gear, so
+    // every parked or abandoned car crept backwards -- and on a hill gravity
+    // took it from there. Now it holds: up to 9 m/s^2 (a 1-in-1 grade) is
+    // cancelled outright at rest. A car bailed out of at speed coasts down
+    // first, the way it would with its engine off.
+    if (input.park) {
+      const hold = Math.abs(this.vLong) < 4 ? 9 : 2.5;
+      const d = hold * dt;
+      this.vLong = Math.abs(this.vLong) <= d ? 0 : this.vLong - Math.sign(this.vLong) * d;
+    }
 
     // Bicycle-model yaw plus lateral slip for arcade drift. `wheelbase` comes
     // from the authored builders' real axle centres -- `len * 0.62` was a guess

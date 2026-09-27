@@ -977,7 +977,7 @@ function installShadowFade() {
     { x: pinball.spot.x, z: pinball.spot.z, kind: 'pinball', name: 'Pinball Museum', near: false,
       hello: 'The pinball museum on Maynard Ave S. Press ENTER at the door to play Emerald City' },
     { x: hockey.spot.x, z: hockey.spot.z, kind: 'hockey', name: 'Hockey Night', near: false,
-      hello: 'Hockey night at Climate Pledge Arena. Press ENTER at the doors to drop the puck' },
+      hello: 'Hockey night at Climate Pledge Arena. Press ENTER anywhere at the arena to drop the puck' },
     { x: duckTour.spot.x, z: duckTour.spot.z, kind: 'duck', name: 'Duck Tours', near: false,
       hello: 'Duck Tours — land and lake. Press ENTER at the kiosk to captain a tour' },
     { x: seafair.spot.x, z: seafair.spot.z, kind: 'hydro', name: 'Seafair Pits', near: false,

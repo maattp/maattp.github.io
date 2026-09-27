@@ -1327,6 +1327,9 @@ async function main() {
       const a = d.lmRoot.userData.arena;
       const out = { door: +Math.hypot(H.door.x - (a.x + 3.7), H.door.z - (a.z + 95.5)).toFixed(1), marquee: !!H.marquee.parent };
       P.x = H.door.x; P.z = H.door.z; P.y = H.door.y;
+      // ENTER anywhere round the arena, not at one spot
+      out.around = [[0, -70], [70, 0], [0, 70], [-70, 0], [60, 60], [3.7, 104]].map(([dx, dz]) => { const x = a.x + 4.5 + dx, z = a.z + 1 + dz; return H.near({ x, z, y: d.city.groundAt(x, z, null) }); }).every(Boolean)
+        && !H.near({ x: a.x, z: a.z + 140, y: d.city.groundAt(a.x, a.z + 140, null) });
       out.took = d.game.tryInteract(P) && H.mode;
       H.frozen = false;
       for (let i = 0; i < 160 && H.mode === 'intro'; i++) H.update(1 / 60);
@@ -1402,10 +1405,11 @@ async function main() {
     console.log('\n--- hockey ------------------------------------------------');
     if (!hk) { console.error('FAIL: no hockey'); process.exitCode = 1; }
     else {
-      console.log(`  marquee ${hk.marquee}, door ${hk.door} m from the atrium; ENTER -> ${hk.took} -> ${hk.mode}; draw won ${hk.draw}; skated ${hk.skated} ft in 1 s; shot ${hk.shot}; one-timer ${hk.oneTimer} (control to receiver ${hk.ctlIsReceiver}); check ${hk.check}`);
+      console.log(`  marquee ${hk.marquee}, door ${hk.door} m from the atrium, ENTER all round ${hk.around}; ENTER -> ${hk.took} -> ${hk.mode}; draw won ${hk.draw}; skated ${hk.skated} ft in 1 s; shot ${hk.shot}; one-timer ${hk.oneTimer} (control to receiver ${hk.ctlIsReceiver}); check ${hk.check}`);
       console.log(`  AI games ${hk.games.map((x) => `${x.score} (shots ${x.shots}, ${x.min} min${x.over ? '' : ', NOT OVER'})`).join(', ')}; out of rink ${hk.outOfRink}; a 3-1 win paid $${hk.paid}; closed ${hk.closed}, city unpaused ${!hk.paused}`);
       const bad = [];
       if (!hk.marquee || hk.door > 3) bad.push('the marquee is not at the arena');
+      if (!hk.around) bad.push('ENTER does not work all round the arena');
       if (hk.took !== 'intro' || hk.mode !== 'play') bad.push('ENTER does not drop into a game');
       if (!hk.draw) bad.push('a draw taken on the drop is not won');
       if (!(hk.skated > 8)) bad.push('the stick does not skate');
@@ -1739,6 +1743,62 @@ async function main() {
       if (sfr.heat.series !== 1) bad.push('the series did not advance');
       if (sfr.after.state !== 'idle' || sfr.after.boats || sfr.after.paused) bad.push('back at the pits');
       if (bad.length) { console.error(`FAIL: seafair: ${bad.join('; ')}`); process.exitCode = 1; }
+    }
+
+    // --- nobody at the wheel: parked cars stay put ------------------------------------
+    //
+    // An unattended vehicle (the spawn's sports car on its apron, a car you got
+    // out of) has a parking brake: it does not creep (the brake at a standstill
+    // is reverse gear, and that is what they used to get), and it holds on the
+    // steepest street near Queen Anne either way round. One bailed out of at
+    // speed coasts to a stop and stays stopped.
+    const prk = await session.eval(`(() => {
+      const d = window.__dbg, T = d.traffic, P = d.player, C = d.city;
+      if (P.vehicle) P.exitVehicle(true);
+      const step = (secs) => { for (let i = 0; i < secs * 60; i++) T.update(1 / 60, P.x, P.z, { x: 0, z: -1 }, P); };
+      const out = {};
+      const px = P.x, pz = P.z;
+      let best = null;
+      for (let x = -2200; x < -1300; x += 20) for (let z = -3400; z < -2600; z += 20) {
+        if (!C.onRoad(x, z, 0)) continue;
+        const g0 = C.groundAt(x, z, null), gx = C.groundAt(x + 6, z, null), gz = C.groundAt(x, z + 6, null);
+        const gr = Math.hypot(gx - g0, gz - g0) / 6;
+        if (!best || gr > best.gr) best = { x, z, gr, h: Math.atan2(gx - g0, gz - g0) };
+      }
+      out.grade = +best.gr.toFixed(2);
+      // an apron sports car (the spawn's) and a quad, parked on that hill
+      out.spawnCar = Math.max(...['sports', 'atv'].map((ty) => {
+        const v = T.spawnAt(best.x, best.z, best.h + Math.PI, ty, 0xc4161c, 'apron');
+        v.vLong = 0; P.x = v.x + 20; P.z = v.z;
+        const a = [v.x, v.z]; step(10);
+        const m = +Math.hypot(v.x - a[0], v.z - a[1]).toFixed(2);
+        T.remove(v);
+        return m;
+      }));
+      out.hill = [best.h, best.h + Math.PI].map((h) => {
+        const v = T.spawnAt(best.x, best.z, h, 'sedan', 0x3366aa, 'free');
+        P.x = v.x + 20; P.z = v.z;
+        const a = [v.x, v.z]; step(8);
+        const m = +Math.hypot(v.x - a[0], v.z - a[1]).toFixed(2);
+        T.remove(v);
+        return m;
+      });
+      const v = T.spawnAt(best.x, best.z, best.h + Math.PI / 2, 'sedan', 0x3366aa, 'free');
+      P.x = v.x; P.z = v.z; P.enterVehicle(v); v.vLong = 20; P.exitVehicle(true);
+      step(6); const a = [v.x, v.z]; step(4);
+      out.bail = { after: +Math.hypot(v.x - a[0], v.z - a[1]).toFixed(2), v: +v.vLong.toFixed(2) };
+      T.remove(v);
+      P.x = px; P.z = pz;
+      return out;
+    })()`, true);
+    console.log('\n--- parked cars -------------------------------------------');
+    console.log(`  an apron sports car and quad on the hill moved ${prk.spawnCar} m in 10 s; a sedan on a ${Math.round(prk.grade * 100)} % grade moved ${prk.hill.join(' / ')} m (uphill / downhill) in 8 s; bailed out at 72 km/h: ${prk.bail.after} m in the 4 s after stopping (v ${prk.bail.v})`);
+    {
+      const bad = [];
+      if (!(prk.spawnCar < 0.05)) bad.push('the spawn car rolls');
+      if (prk.hill.some((m) => m > 0.05)) bad.push('a parked car rolls down the hill');
+      if (prk.bail.after > 0.05 || prk.bail.v !== 0) bad.push('an abandoned car creeps');
+      if (bad.length) { console.error(`FAIL: parked cars: ${bad.join('; ')}`); process.exitCode = 1; }
     }
 
     // --- the articulated bus ---------------------------------------------------

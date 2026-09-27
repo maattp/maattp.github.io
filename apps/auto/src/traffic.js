@@ -901,7 +901,9 @@ export class TrafficSystem {
         if (v.recycle) { this.remove(v); continue; }
       }
       else if (v.mode === 'police') input = this.drivePolice(v, vdt, px, pz, player);
-      else input = { throttle: 0, brake: 0.12, steer: 0 }; // shunted or abandoned: coast
+      // shunted, abandoned or parked on an apron: nobody at the wheel, so the
+      // parking brake (Vehicle.update `park`); aircraft and boats keep their old coast
+      else input = v.spec.plane || v.spec.boat ? { throttle: 0, brake: 0.12, steer: 0 } : { throttle: 0, brake: 0, steer: 0, park: true };
 
       v.update(vdt, input);
       collideWithBuildings(v, city, null, true);
