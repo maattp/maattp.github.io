@@ -314,6 +314,8 @@ export class Hud {
     this.armourRow = root.querySelector('#speedo');
     this.speedVal = root.querySelector('#speedVal');
     this.speedUnit = root.querySelector('#speedo .u');
+    this.altRow = root.querySelector('#altRow');
+    this.altVal = root.querySelector('#altVal');
     this.place = root.querySelector('#place');
     this.toast = root.querySelector('#toast');
     this.objective = root.querySelector('#objective');
@@ -546,6 +548,13 @@ export class Hud {
     const alt = !player.onFoot && player.vehicle && player.vehicle.spec.balloon;
     this.speedVal.textContent = Math.round(alt ? player.vehicle.y : kph);
     if (this.speedUnit && this.speedUnit.textContent !== (alt ? 'm' : 'km/h')) this.speedUnit.textContent = alt ? 'm' : 'km/h';
+    // Flying anything, the altitude over sea level under the speed (a
+    // balloon's is already the main readout)
+    const fl = !player.onFoot && player.vehicle && player.vehicle.spec.plane && !player.vehicle.spec.balloon;
+    if (this.altRow) {
+      this.altRow.classList.toggle('hidden', !fl);
+      if (fl) this.altVal.textContent = Math.max(0, Math.round(player.vehicle.y));
+    }
     this.armourRow.classList.toggle('hidden', player.onFoot);
     this.ammoEl.classList.toggle('hidden', !(player.onFoot && player.armed));
     if (player.armed) this.ammoEl.textContent = `⌖ ${player.ammo}`;

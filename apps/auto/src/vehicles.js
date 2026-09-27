@@ -145,7 +145,7 @@ export const TYPES = {
   // Heavy and slow to wind up; rotates at ~150 kt. `wid` is the fuselage
   // (street-scale collision); the wings are drawn wide.
   jumbo: deriveSpec({ wheelbase: 26, len: 76.3, wid: 6.5, wheelR: 0.62, sill: 2.2, belt: 6.0, roof: 10.3, cab: [0.9, 0.3], hand: 'jumbo', plane: true, jet: true, mass: 12, acc: 5.8, topKph: 560, brakeM: 180, latG: 0.4, seeFar: 7000,
-    fly: { vr: 76, stall: 60, bank: 0.55, turn: 0.34, climb: 14, vne: 150, thrustK: 0.62 } }),
+    fly: { vr: 72, stall: 58, bank: 0.55, turn: 0.34, climb: 34, climbBase: 7, vne: 150, thrustK: 0.62 } }),
   // Boeing-Stearman Model 75: the biplane Boeing built, and the one hanging
   // in the Museum of Flight next door. A taildragger: it sits 11 degrees nose
   // up on its tailwheel until the tail lifts at ~15 m/s (`taildragger` is the
@@ -7308,7 +7308,7 @@ export class Vehicle {
       // pitch: stick back climbs. Climb rate scales with excess airspeed, and
       // below the stall the nose mushes down no matter what you ask for.
       const excess = clamp((this.vLong - STALL) / (top - STALL), 0, 1);
-      let vyT = pitchIn * (4 + fly.climb * excess);
+      let vyT = pitchIn * ((fly.climbBase || 4) + fly.climb * excess);
       if (this.vLong < STALL) vyT = Math.min(vyT, -6 * (1 - this.vLong / STALL) * 3);
       // soft ceiling: the air runs out, gently
       if (this.y > 520) vyT = Math.min(vyT, (560 - this.y) * 0.08);
