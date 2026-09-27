@@ -1410,7 +1410,7 @@ export class MonorailTrain {
     // What the rest of the game reads off a vehicle (player.js, main.js,
     // hud.js, audio.js, activities.js): a spec with its flags, and the fields
     // below. `len` sizes the chase camera; the train's own length is MONO.len.
-    this.spec = { monorail: true, hand: 'monorail', engine: 'traction', len: 14, wid: MONO.wid, roof: 3.2,
+    this.spec = { monorail: true, rail: true, hand: 'monorail', engine: 'traction', len: 14, wid: MONO.wid, roof: 3.2,
       topKph: MONO.vMax * 3.6, mass: 45 };
     this.x = 0; this.y = 0; this.z = 0; this.heading = 0;
     this.vLong = 0; this.vLat = 0; this.vy = 0; this.speed = 0;

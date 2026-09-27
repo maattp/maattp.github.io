@@ -9,6 +9,7 @@ import { World, WET_FLOOR } from './world.js';
 import { buildLandmarks, updateLandmarkRange, SEAPLANE_DOCK, airportSurface } from './landmarks.js';
 import { ShadowCache } from './shadowcache.js';
 import { Monorail } from './monorail.js';
+import { Link } from './link.js';
 import { freezeStatic, Builder } from './build.js';
 import { Fishing } from './fishing.js';
 import { Hoops } from './hoops.js';
@@ -195,19 +196,21 @@ class Game {
   onHorn() {
     // in a duck, the horn is the passengers' quackers
     if (player.vehicle && player.vehicle.spec.amphib && duckTour) { duckTour.quack(player.vehicle); peds.scare(player.position.x, player.position.z, 6); return; }
+    // a light-rail car rings its bell
+    if (player.vehicle && player.vehicle.spec.link) { if (audio.ready) audio.play('tram_bell', { gain: 0.9 }); peds.scare(player.position.x, player.position.z, 10); return; }
     audio.horn();
     peds.scare(player.position.x, player.position.z, 14);
   }
 
   onEnterVehicle(v, wasMode) {
     controls.setMode('drive');
-    if (v.spec.monorail) {
+    if (v.spec.rail) {
       audio.enterVehicle(v.spec, false);
       for (const [k, t] of [['gas', 'POWER'], ['brake', 'BRAKE']]) {
         const el = document.querySelector(`[data-btn="${k}"]`);
         if (el) el.textContent = t;
       }
-      monorail.onBoard(v);
+      v.sys.onBoard(v);
       return;
     }
     // A car taken from traffic already has its engine running; a parked one,
@@ -321,7 +324,7 @@ class Game {
   onExitVehicle(v) {
     controls.setMode('foot');
     if (v) audio.exitVehicle(v.spec, v.dead);
-    if (v && v.spec.monorail) monorail.onLeave(v);
+    if (v && v.spec.rail) v.sys.onLeave(v);
   }
 
   /** ENTER with nothing to get into: near a monorail station, say when the next train is in. */
@@ -346,6 +349,7 @@ class Game {
   /** A boat refused to let you step off into the lake (player.exitVehicle). */
   onNoLanding(v) {
     if (v && v.spec.monorail) { hud.showToast('The doors only open at a platform — stop at Westlake Center or Seattle Center'); return; }
+    if (v && v.spec.rail) { hud.showToast(v.sys.noExitMsg); return; }
     hud.showToast('Nowhere to step off — bring it alongside a dock or the shore');
   }
 
@@ -418,7 +422,7 @@ class Game {
 
 // ---------------------------------------------------------------------------
 
-let renderer, scene, camera, sun, world, cityRef, traffic, peds, player, controls, hud, fx, audio, game, marker, postfx, acts, stunts, monorail, lmRoot, shadowCache = null;
+let renderer, scene, camera, sun, world, cityRef, traffic, peds, player, controls, hud, fx, audio, game, marker, postfx, acts, stunts, monorail, link, lmRoot, shadowCache = null;
 let pickups = [];
 // Scratch vector for the shadow-camera aim, so the frame loop allocates none.
 const LOOK_AHEAD = new THREE.Vector3();
@@ -526,6 +530,9 @@ async function boot() {
   // The monorail from its data alone: citygen keeps buildings off its line.
   monorail = new Monorail(md.monorail);
   md.monorailClear = monorail.clearZones();
+  // ...and Link light rail's 1 Line, from its data alone for the same reason
+  link = new Link(md.link);
+  md.linkClear = link.clearZones();
   const gen = cityGenerator(md, bootCache);
   let r = gen.next();
   while (!r.done) {
@@ -754,13 +761,19 @@ function installShadowFade() {
     const rampMesh = buildRampMesh(city, ramps, world.mats.flat);
     if (rampMesh) scene.add(rampMesh);
   }
+  // nor on Link's tracks
+  city.extraClear = (x, z) => link.keepClear(x, z);
 
   await step(0.8, 'Building the skyline');
   world.buildSkyline();
 
   await step(0.86, 'Placing the landmarks');
   monorail.attach(city);
+  link.attach(city);
   lmRoot = buildLandmarks(scene, city, (x, z) => world.waterLevelAt(x, z), monorail);
+  // the line's structure after the landmarks, whose solids and platforms it adds to
+  link.build(scene, world);
+  freezeStatic(link.group); freezeStatic(link.tunGroup);
   // the balloon's launch field: no park trees on it
   if (city.clearCircles) city.clearCircles.push([BALLOON_SITE.x, BALLOON_SITE.z, 26]);
   // The scene root never moves, and its own matrixAutoUpdate re-flagged EVERY
@@ -770,13 +783,14 @@ function installShadowFade() {
   if (lmRoot) freezeStatic(lmRoot);
   // the two trains (skinned: they pose their own bones each frame)
   monorail.makeTrains(scene);
+  link.makeTrains(scene);
   // Phones draw the city's shadows once and copy them each frame; only what
   // moves is drawn into the shadow map every frame (shadowcache.js). The
   // desktop keeps three's pass: its 2048 map would make the cache ~4x larger.
   if (ON_PHONE && !window.__noShadowCache) {
     try {
       const ramps = scene.getObjectByName('stuntRamps');
-      shadowCache = new ShadowCache(renderer, sun, { margin: 60, statics: () => [world.group, lmRoot, ramps], keep: () => [] });
+      shadowCache = new ShadowCache(renderer, sun, { margin: 60, statics: () => [world.group, lmRoot, ramps, link.group], keep: () => [] });
       world.onChunkChange = (x, z, r) => shadowCache.chunkChanged(x, z, r);
     } catch (e) { blog(`shadow cache: ${e.message}`); shadowCache = null; }
   }
@@ -790,8 +804,10 @@ function installShadowFade() {
   controls = new Controls(document.getElementById('app'));
   player = new Player(scene, city, game, world);
   player.monorail = monorail;
+  player.link = link;
   traffic = new TrafficSystem(scene, city, game);
   traffic.camera = camera;   // far-LOD instances are culled against it
+  traffic.link = link;       // cars stop for a train on a level crossing
   // Hulls ask where the water is DRAWN. The 10 m water mask and the 40 m
   // terrain disagree along the shore: ground under the sea's surface is drawn
   // as sea (the plane covers it) while the mask can call it land, and every
@@ -1017,6 +1033,9 @@ function installShadowFade() {
       hello: 'Seattle Center Monorail — the 1962 Alweg line. Tap ENTER at the door when a train is in to take the controls' }] : []),
     ...(monorail.scRamp ? [{ x: monorail.scRamp.x, z: monorail.scRamp.z, kind: 'monorail', name: 'Monorail · Seattle Center', near: false,
       hello: 'Seattle Center Monorail — up the ramp to the platforms. Tap ENTER beside a train to take the controls' }] : []),
+    // Link light rail: every station's street entrance
+    ...link.stations.map((st) => ({ x: st.ent.x, z: st.ent.z, kind: 'link', name: `Link · ${st.name}`, near: false,
+      hello: `${st.full} Station — Link light rail's 1 Line. Tap ENTER here when a train is in to drive it` })),
     ...(lmRoot.userData.marinas || []).map((mr) => ({ x: mr.x, z: mr.z, kind: 'dock', name: mr.name, near: false,
       hello: mr.seaplanes ? `${mr.name} — floatplanes on the float. Walk out and climb in`
         : `${mr.name} — boats and jet skis. Walk out on the float and take one` })),
@@ -1032,7 +1051,9 @@ function installShadowFade() {
   if (needleTop) needleTop.o.hud = hud;
   if (wheelRide) wheelRide.o.hud = hud;
   hud.monorail = monorail;
+  hud.link = link;
   monorail.bind({ game, hud, audio, player });
+  link.bind({ game, hud, audio, player });
   {
     // One tap, never behind a menu: a lost run on a phone ends the session.
     const rb = document.getElementById('raceRestart');
@@ -1103,7 +1124,7 @@ function installShadowFade() {
 
   await step(1, 'Welcome to Seattle');
   window.__refreshJobs = refreshJobs;
-  window.__dbg = { game, city, player, world, traffic, peds, acts, stunts, monorail, lmRoot, shadowCache, fishing, fishSpots, hoops, needleTop, fishToss, wheelRide, golf, arcade, pinball, hockey, tower, duckTour, coffee, seafair, scene, camera, renderer, G, fx, hud, controls, audio, pickups, THREE, postfx, applyQuality, sun, placeSun, sceneStats, perfSys, cityStats, WET_FLOOR, animateWalk, collideWithBuildings, TYPES: VEHICLE_TYPES };
+  window.__dbg = { game, city, player, world, traffic, peds, acts, stunts, monorail, link, lmRoot, shadowCache, fishing, fishSpots, hoops, needleTop, fishToss, wheelRide, golf, arcade, pinball, hockey, tower, duckTour, coffee, seafair, scene, camera, renderer, G, fx, hud, controls, audio, pickups, THREE, postfx, applyQuality, sun, placeSun, sceneStats, perfSys, cityStats, WET_FLOOR, animateWalk, collideWithBuildings, TYPES: VEHICLE_TYPES };
   wireUi();
   game.newTarget();
   // Start on `high` everywhere.
@@ -1890,6 +1911,7 @@ function frame(now) {
     player.update(dt, input, look, controls, traffic, peds);
   }
   monorail.update(dt);
+  link.update(dt, camera);
   if (wheelRide) wheelRide.update(dt, wheelRide.busy ? input : null, wheelRide.busy ? look : null, camera.position.x, camera.position.z);
   if (prof) lap('player');
 
@@ -2072,6 +2094,7 @@ function withTrains(cars) {
   audioCars.length = 0;
   for (let i = 0; i < cars.length; i++) audioCars.push(cars[i]);
   if (monorail && monorail.trains) for (const t of Object.values(monorail.trains)) if (t !== player.vehicle) audioCars.push(t);
+  if (link) for (const t of link.trains) if (t !== player.vehicle && t.group.visible) audioCars.push(t);
   return audioCars;
 }
 function audioState(dt, input, p, camDir, buried) {

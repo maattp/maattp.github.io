@@ -101,10 +101,11 @@ export class Player {
     let ox = v.x - rx * (v.halfWid + 1.1);
     let oz = v.z - rz * (v.halfWid + 1.1);
     let oy = v.y + 1.5;
-    if (v.spec.monorail) {
-      // The doors open at a platform and nowhere else (monorail.js exitSpot):
-      // onto the platform at Seattle Center, down to the street at Westlake.
-      const spot = this.monorail ? this.monorail.exitSpot(v) : null;
+    if (v.spec.rail) {
+      // The doors open at a platform and nowhere else (monorail.js / link.js
+      // exitSpot): onto the platform at Seattle Center, down to the street at
+      // Westlake, out to a Link station's street entrance.
+      const spot = v.sys ? v.sys.exitSpot(v) : null;
       if (!spot && !force) {
         this.game.onNoLanding && this.game.onNoLanding(v);
         return false;
@@ -171,9 +172,11 @@ export class Player {
       } else if (this.onFoot) {
         // A monorail at the platform beside you (or at Westlake's street
         // door) before any car: see monorail.js boardable.
-        const m = this.monorail && this.monorail.boardable(this.x, this.y, this.z);
+        const m = (this.monorail && this.monorail.boardable(this.x, this.y, this.z))
+          || (this.link && this.link.boardable(this.x, this.y, this.z));
         const v = m || traffic.nearestEnterable(this.x, this.z, 5.0);
         if (v) this.enterVehicle(v);
+        else if (this.link && this.link.onWait(this.x, this.z)) { /* told when the next trains are due */ }
         else if (this.monorail && this.game.onMonorailWait) this.game.onMonorailWait(this.x, this.y, this.z);
       } else this.exitVehicle();
     }
@@ -383,7 +386,7 @@ export class Player {
     // collides with nothing but its buffers and the other train (monorail.js).
     // A balloon's basket collides too, like the helicopter; its envelope is
     // kept out of towers by updateBalloon.
-    const airborne = (v.spec.plane && v.airborne && !v.spec.heli && !v.spec.balloon) || v.spec.monorail;
+    const airborne = (v.spec.plane && v.airborne && !v.spec.heli && !v.spec.balloon) || v.spec.rail;
     const impact = airborne ? 0 : collideWithBuildings(v, this.city, (imp) => {
       if (this.crashCd > 0) return;
       this.crashCd = 0.4;
@@ -440,6 +443,9 @@ export class Player {
   }
 
   updateCamera(dt, input) {
+    // A vehicle with a rig of its own takes the camera when it wants it (a
+    // Link train in a bore: link.js camRig).
+    if (!this.onFoot && this.vehicle && this.vehicle.camRig && this.vehicle.camRig(this, dt)) return;
     // A FIGHTER IN THE AIR GETS A CAMERA IN ITS OWN FRAME. Every other rig
     // hangs off a yaw round the world's up, which through a loop swings the
     // camera 180 degrees at the top and flips the horizon. This one sits
@@ -505,6 +511,12 @@ export class Player {
         dist = 12.5 + clamp(sp * 0.07, 0, 4.5);
         height = 3.4 - clamp((v.vy || 0) * 0.10, -1, 1);
         lookH = 1.7 + clamp((v.vy || 0) * 0.12, -1, 1);
+      } else if (v.spec.link) {
+        // over the lead car's roof, looking down the line: 118 m of train
+        // behind the cab
+        dist = 15 + clamp(sp * 0.12, 0, 4);
+        height = 7.2;
+        lookH = 2.6;
       } else if (v.spec.monorail) {
         // Over the roof of the leading car, looking down the beam ahead: a
         // 37 m train behind the operator's seat, so any lower and the boom

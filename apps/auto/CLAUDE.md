@@ -48,6 +48,7 @@ src/fishtoss.js             the fish stall at Pike Place Market + the catching g
 src/hoops.js                basketball courts in the parks + the free-throw game
 src/stunts.js               stunt-jump ramps (geometry + height query) and their scoring
 src/monorail.js             the Seattle Center Monorail: beams, stations, both trains
+src/link.js                 Link light rail's 1 Line: tracks, guideway, bores, stations, the trains
 src/shadowcache.js          phones: the city's shadows drawn once, only movers per frame
 src/effects.js              particles + tracers
 src/audio.js                all sound, synthesised: engine models, one-shot bank,
@@ -62,6 +63,8 @@ tools/build_buildings.py    OSM footprints -> buildings.bin
 tools/build_places.py       landmarks, neighbourhood names, spawn points
 tools/build_lots.py         car parks, plazas, yards -> lots.png
 tools/build_monorail.py     the monorail's beams, stations, platforms -> monorail.json
+tools/extract_rail.py       every rail way and stop in the box -> tools/data/raw_rail.json
+tools/build_link.py         Link's two 1 Line tracks and its stations -> link.json
 tools/build_beaches.py      OSM beaches (from raw_green.json) -> beaches.json
 tools/build_parkprops.py    benches, picnic tables, playgrounds, fountains -> parkprops.json
 tools/fetch_dem.py          downloads the USGS terrain tiles
@@ -4047,6 +4050,101 @@ if any jump's run-up or ramp crosses the monorail.
 **`node --check file.js` passed monorail.js with its class unclosed**; the
 browser did not. Check a module as one: `node --input-type=module --check <
 file`.
+
+## Link light rail (v146)
+
+**The 1 Line runs across the whole map, both tracks, and you can drive it**
+(`src/link.js`): from the map's north edge down the Lynnwood extension,
+over the Northgate guideway, through 13 km of bore (Roosevelt, U District,
+UW under the Montlake Cut, Capitol Hill, and the downtown transit tunnel's
+Westlake, Symphony and Pioneer Square), out at International District, down
+the SODO busway, into Beacon Hill, over Mount Baker, down the middle of MLK
+Jr Way (Columbia City, Othello, Rainier Beach) and up onto the guideway to
+the south edge. Sixteen stations; 28 four-car trains in service.
+
+- **The route is OSM's.** `tools/extract_rail.py` (one ~75 s scan) writes
+  every rail way and stop in the box to `tools/data/raw_rail.json` (the
+  freight line is in there too); `tools/build_link.py` builds each track as
+  a graph of WAYS joined at their end nodes -- joined at nodes, switches weld
+  the two tracks into one network -- walks it north end to south end, crops
+  it to the map and names the western track `sb`, the eastern `nb` (trains
+  keep right). s runs north -> south on both; sb trains go +s, nb -s.
+- **The profile is solved, not imported** (`LinkTrack.setHeights`): at grade
+  the smoothed ground + 0.62 m (the bed stands clear of the road surface
+  beside it, as MLK's raised trackway does; 0.36 at a level crossing), the
+  guideway 8.5 m up, a bore 7.8 m under the lowest ground within 30 m.
+  Stations are level, and a station's two tracks share ONE level (the lower
+  for a bore, the higher for a deck) so an island's two halves meet. The
+  highest profile under every ceiling and the lowest over every floor are
+  Lipschitz envelopes at the 5.5 % ruling grade, and **where they cross, the
+  grade wins**: a bore that cannot get under the ground in time runs higher,
+  and its box stands out of the ground -- that is a portal's covered
+  approach, drawn as one, with a headwall.
+- **Every metre has a kind** (`KD`): bore, box, guideway, fill, level
+  crossing. A bore that starts in the air (the 40 m ground cannot see the
+  hillside Beacon Hill's west portal is in) is guideway until it meets the
+  ground. A "tunnel" under 400 m is the track passing under something at
+  its own level (the ramps south of International District), not a bore. A
+  platform partly in the open is an open station: OSM ends the downtown
+  tunnel halfway along International District's nb platform.
+- **The profile is computed twice**: from the map alone before the city
+  exists, because citygen's clear zones (the monorail's mechanism,
+  `md.linkClear`) must know where a box stands above the ground -- houses on
+  Beacon Hill's east slope stood over it -- and again over the carved
+  terrain with the crossings once the city is built. Trees, furniture and
+  parked cars keep off the open line through `city.extraClear`.
+- **A level crossing is a road that CROSSES the track**: one that also
+  covers the track 11 m either way along is a street it runs in or beside.
+  Found first, so the rail comes down to the road there.
+- **Chunked by 500 m**: per chunk a textured bed (ballast and sleepers), the
+  structure (`world.mats.flat`), near detail (rails, poles, wires), the
+  boards, mouth cards and the bores. Bores and underground halls are drawn
+  (unlit, the glow material, lamp pools every 18 m) ONLY while you drive a
+  train whose cab is in one (`tunnelMode`), and mouth cards hide them from
+  outside. Guideway columns stand off the carriageways (slid up to 15 m,
+  else the span is longer) and are solid.
+- **Trains** (`buildLRVGeometry`): a low-floor three-section LRV, 28.9 m,
+  a cab at each end, white over a navy skirt with a teal line, a dark window
+  band, four double doors a side, seats, poles and lit ceilings behind
+  see-through glass, three bogies, a pantograph over the short centre
+  section; four cars on one skinned mesh with twelve bones, 2 draws a train,
+  the geometry shared by every train (~18k triangles).
+- **Service**: 14 trains a track, 20 s at every platform, braking to each
+  stop mark, to 55 mph and to 35 in the street, curves at 1 m/s2 unbalanced.
+  Moving block: a train keeps 30 m of braking distance behind the tail of
+  the one ahead (yours included). At the map's edge a train leaves (the rest
+  of the line is off the map), turns back out of sight and comes in on the
+  other track. Standing at a station's entrance, the train at the platform
+  waits for you (up to two minutes) and the service away from you runs 6x
+  until one comes.
+- **Driving**: ENTER at a station's street entrance (on the map, a green
+  light-rail icon) with a train in boards it; ENTER with none says when the
+  next are due each way. POWER and BRAKE, the readout gives the next stop,
+  the limit and the train ahead. Stopping within 1 m of the mark pays $60
+  (3 m $30); the doors open, and ENTER then puts you out at the street
+  entrance. At the map's edge POWER changes ends onto the other track. The
+  horn is the bell. In a bore the camera goes into the cab (`camRig`, the
+  hook at the top of `player.updateCamera`).
+- **At grade the track is not a force field** (`_guard`): on foot or in a
+  car on the track, an oncoming train rings its bell and brakes for you,
+  planned at the service rate and the emergency brake the moment it is
+  late; one that reaches you shoves you off and hurts. AI cars stop for a
+  train on (or about to be on) a crossing ahead (`link.blocks`, from
+  traffic's obstacle scan).
+- `spec.rail` is what "a train" means to the rest of the game (the monorail
+  has it too): no building collision, `v.sys.exitSpot` / `onBoard` /
+  `onLeave`, no races, the truck horn class.
+
+verify's "Link light rail" section: sixteen stations; the grade within 5.5 %,
+nothing at grade under the ground, no bore out of it, no building over the
+open line, no column on a carriageway, the entrances dry and off the road;
+ten minutes of service (stops made, nothing over 55 mph, trains never closer
+than the moving block); a run driven Westlake -> Symphony stopped on the mark
+and out at the street; a train stopping short of you on the track; a car
+held at a crossing. Cost near the line: +10-22 draws (trains 2 each, a few
+chunk meshes); tunnel geometry only in the tunnel. `docs/link/` has shots.
+Not built: the 2 Line across I-90 (it joins south of International
+District in OSM), the freight main line (in `raw_rail.json`).
 
 ## The hot air balloon
 
