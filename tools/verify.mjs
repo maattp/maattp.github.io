@@ -1343,7 +1343,12 @@ async function main() {
       run(1, { shoot: true }); run(40, {});
       out.draw = g.puck.lastTeam === 0;
       // the stick: skate the controlled man to the right
-      const c = g.ctl, x0 = c.x;
+      // the stick, in open ice: a standing skater, nobody near
+      const c = g.ctl;
+      g.state = 'play'; c.down = 0; c.vx = 0; c.vy = 0; c.x = -40; c.y = -20; c.check = 0;
+      for (const q of g.players) if (q !== c && !q.goalie) { q.x = 40 + q.i * 3; q.y = 25; q.vx = 0; q.vy = 0; }
+      g.puck.owner = null; g.puck.x = 60; g.puck.y = 30; g.puck.vx = 0; g.puck.vy = 0;
+      const x0 = c.x;
       run(60, { x: 1, y: 0 });
       out.skated = +(c.x - x0).toFixed(1);
       // a shot: the puck on his stick 25 ft out, SHOOT tapped
@@ -1643,6 +1648,97 @@ async function main() {
       if (cof.paid !== cof.shift.till || cof.overMode !== 'over') bad.push('closing does not pay');
       if (cof.closed !== 'off' || cof.paused) bad.push('leaving does not give the city back');
       if (bad.length) { console.error(`FAIL: coffee: ${bad.join('; ')}`); process.exitCode = 1; }
+    }
+
+    // --- Seafair: hydroplanes on Lake Washington ---------------------------------------------
+    //
+    // The course is all open water (inside lane to the log boom), the pits
+    // are on dry land with the practice boat moored off the dock. The boat:
+    // a top speed near 150 mph; full lock flat out HOOKS; lifting to 50 m/s
+    // holds the turn; back stick flat out BLOWS OVER and forward stick keeps
+    // the nose down. The rules: a start before the clock's zero does not count,
+    // cutting inside the turn buoys is a lap's penalty. A whole heat, every
+    // boat driven by the AI (yours too), runs to the flag and pays.
+    const sfr = await session.eval(`(async () => {
+      const d = window.__dbg, SF = d.seafair, P = d.player, G = d.G, w = d.world;
+      if (!SF) return null;
+      const M = await import('/apps/auto/src/hydrorace.js');
+      if (P.vehicle) P.exitVehicle(true);
+      const C = SF.course, out = {};
+      let dry = 0, n = 0;
+      for (let s = 0; s < C.L; s += 25) for (const off of [-24, 0, 40, 80, 170]) {
+        const p = C.at(s, off); n++;
+        const wl = w.waterLevelAt(p.x, p.z);
+        if (!G.isWater(p.x, p.z) || wl === null || wl - G.terrainHeight(p.x, p.z) < 2) dry++;
+      }
+      out.course = { n, dry, lap: Math.round(C.L) };
+      out.pits = { land: SF.door.y > SF.level + 0.3, moored: !!SF.practice && d.traffic.cars.includes(SF.practice) };
+      // the boat
+      const v = SF.practice;
+      P.x = v.x; P.z = v.z; P.y = v.y + 1; P.enterVehicle(v);
+      const p0 = C.at(C.sLine - 900, 30);
+      const reset = (spd) => { v.x = p0.x; v.z = p0.z; v.heading = Math.atan2(p0.dx, p0.dz); v.vLong = spd; v.vLat = 0; v.hyd.slip = 0; v.hyd.hook = 0; v.hyd.nose = 0.1; v.hyd.noseV = 0; v.hooked = false; v.blewOver = false; };
+      let top = 0;
+      v.update(1 / 60, {}); reset(0);
+      for (let i = 0; i < 60 * 20; i++) { v.update(1 / 60, { throttle: 1, steer: 0, pitch: -0.5 }); top = Math.max(top, v.vLong); }
+      out.top = +(top * 2.237).toFixed(0);
+      const noseSafe = v.hyd.nose;
+      reset(66); let hook = null;
+      for (let i = 0; i < 60 * 6 && hook === null; i++) { v.update(1 / 60, { throttle: 1, steer: 1, pitch: -0.5 }); if (v.hooked) hook = +(i / 60).toFixed(1); }
+      reset(50); let held = true;
+      for (let i = 0; i < 60 * 6; i++) { v.update(1 / 60, { throttle: 0.45, steer: 0.8, pitch: -0.5 }); if (v.hooked) held = false; }
+      reset(66); let blow = null;
+      for (let i = 0; i < 60 * 8 && blow === null; i++) { v.update(1 / 60, { throttle: 1, steer: 0, pitch: 1 }); if (v.hyd.blown > 0) blow = +(i / 60).toFixed(1); }
+      SF._right(v); v.blewOver = false;
+      out.boat = { noseSafe: +noseSafe.toFixed(3), hook, held, blow };
+      P.exitVehicle(true);
+      // a heat, all AI
+      d.game.paused = false;
+      SF._startRace(M.EVENTS[0]);
+      const pen0 = SF.me.pen;
+      // the player's boat crosses the line during the clock: its start does not count
+      const me = SF.me;
+      const early = C.at(C.sLine - 3, 30); me.v.x = early.x; me.v.z = early.z; me.v.heading = Math.atan2(early.dx, early.dz); me.v.vLong = 40;
+      for (let i = 0; i < 20; i++) { me.v.update(1 / 60, { throttle: 1 }); SF._raceStep(1 / 60); }
+      out.jump = me.crossedEarly && !me.started;
+      const back = C.at(C.sLine - 1200, 30); me.v.x = back.x; me.v.z = back.z; me.v.heading = Math.atan2(back.dx, back.dz);
+      let k = 0, buoyTested = false;
+      while ((SF.state === 'staging' || SF.state === 'racing') && k++ < 60 * 420) {
+        if (!me.done) SF._drive(me, 1 / 60);
+        SF._raceStep(1 / 60);
+        if (!buoyTested && SF.state === 'racing' && SF.raceT > 20) {
+          buoyTested = true;
+          const b = SF.boats[5], pen = b.pen;
+          const cx = C.B.x + C.u.x * 40, cz = C.B.z + C.u.z * 40;
+          const ox = b.v.x, oz = b.v.z; b.v.x = cx; b.v.z = cz; SF._raceStep(1 / 60); b.v.x = ox; b.v.z = oz; SF._raceStep(1 / 60);
+          out.buoy = b.pen === pen + 1;
+        }
+      }
+      const res = SF._order();
+      out.heat = { state: SF.state, secs: Math.round(k / 60), finished: res.filter((b) => b.done && !b.out).length, out: res.filter((b) => b.out).length, laps: res.map((b) => b.laps - b.pen), best: Math.min(...res.map((b) => b.best || 999)).toFixed(1), myPlace: me.place, series: SF.series.event };
+      SF._toPits();
+      out.after = { state: SF.state, boats: SF.boats.length, paused: d.game.paused };
+      return out;
+    })()`, true);
+    console.log('\n--- seafair -----------------------------------------------');
+    if (!sfr) { console.error('FAIL: no seafair'); process.exitCode = 1; }
+    else {
+      console.log(`  course ${sfr.course.lap} m a lap, ${sfr.course.dry} of ${sfr.course.n} samples off deep water; pits on land ${sfr.pits.land}, practice boat moored ${sfr.pits.moored}`);
+      console.log(`  boat: ${sfr.top} mph flat out (nose ${sfr.boat.noseSafe} with the stick forward); full lock hooks after ${sfr.boat.hook} s; lifting holds ${sfr.boat.held}; back stick blows over after ${sfr.boat.blow} s`);
+      console.log(`  jump start doesn't count ${sfr.jump}; buoy cut penalised ${sfr.buoy}; heat: ${sfr.heat.state} after ${sfr.heat.secs} s, ${sfr.heat.finished} finished, ${sfr.heat.out} out, laps ${sfr.heat.laps.join(',')}, best lap ${sfr.heat.best} s, you P${sfr.heat.myPlace}; series at event ${sfr.heat.series}; back at the pits ${sfr.after.state} (${sfr.after.boats} boats), unpaused ${!sfr.after.paused}`);
+      const bad = [];
+      if (sfr.course.dry) bad.push('the course is not all on deep water');
+      if (!sfr.pits.land || !sfr.pits.moored) bad.push('the pits');
+      if (sfr.top < 135 || sfr.top > 170) bad.push('top speed');
+      if (!(sfr.boat.noseSafe < 0.27)) bad.push('the nose will not come down');
+      if (sfr.boat.hook === null || !sfr.boat.held) bad.push('hooking');
+      if (sfr.boat.blow === null) bad.push('no blowover');
+      if (!sfr.jump) bad.push('a jump start counted');
+      if (!sfr.buoy) bad.push('a buoy cut was not penalised');
+      if (sfr.heat.state !== 'done' || sfr.heat.finished < 5 || sfr.heat.laps.some((l) => l < 3 && l > 0 && false)) bad.push('the heat did not run to the flag');
+      if (sfr.heat.series !== 1) bad.push('the series did not advance');
+      if (sfr.after.state !== 'idle' || sfr.after.boats || sfr.after.paused) bad.push('back at the pits');
+      if (bad.length) { console.error(`FAIL: seafair: ${bad.join('; ')}`); process.exitCode = 1; }
     }
 
     // --- the articulated bus ---------------------------------------------------

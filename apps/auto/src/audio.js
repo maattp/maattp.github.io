@@ -914,6 +914,11 @@ export const ENGINES = {
     idle: 900, redline: 1700, gears: [1], spool: 0.35,
     lp: [700, 2000, 1800], ex: [200, 1.5, 4], noise: { ratio: 60, q: 0.5, gain: 0.35, pulse: 0.3, order: 4 },
     buzz: { ratio: 8, gain: 0.12 }, whine: { hz0: 2600, hz1: 6400, gain: 0.08, load: 0.3 }, drive: 1.5, level: 0.62, jitter: 0.03 },
+  // An unlimited hydroplane's gas turbine: a jet's whine over a roar, spooling slowly.
+  turbine: { kind: 'plane', stroke: 2, fire: [0, 0.25, 0.5, 0.75], amps: [1, 1, 1, 1], pw: 0.08,
+    idle: 1100, redline: 2600, gears: [1], spool: 0.5,
+    lp: [900, 3400, 1600], ex: [240, 1.4, 4], noise: { ratio: 80, q: 0.5, gain: 0.7, pulse: 0.12, order: 4 },
+    buzz: { ratio: 10, gain: 0.08 }, whine: { hz0: 2800, hz1: 8800, gain: 0.15, load: 0.4 }, drive: 1.6, level: 0.72, jitter: 0.02 },
   heli: { kind: 'heli', stroke: 2, fire: [0, 0.5], amps: [1, 0.93], pw: 0.012,
     idle: 0, redline: 400, gears: [1], spool: 0.22,
     lp: [260, 900, 1200], ex: [70, 2, 9], noise: { ratio: 70, q: 0.6, gain: 0.8, pulse: 0.95, order: 2 },

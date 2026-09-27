@@ -40,6 +40,7 @@ src/atcgame.js              FINAL APPROACH itself: arrivals, paths, landing zone
 src/ducktour.js             the Duck Tour: kiosk at Seattle Center, the Lake Union ramp, the tour and its quackers
 src/barista.js              First Cup Coffee at 1912 Pike Place: storefront, the counter, the stations, sound
 src/baristagame.js          MORNING RUSH itself: orders, recipes, the machine's timing, customers (no DOM)
+src/hydrorace.js            Seafair: the Lake Washington course, pits, log boom, rooster tails, race rules, AI, the jets
 src/golf.js                 three par-3s at Interbay
 src/wheelride.js            the Great Wheel's turning half and the ride on it
 src/fishtoss.js             the fish stall at Pike Place Market + the catching game
@@ -4451,6 +4452,61 @@ whole/oat/foam, J K L vanilla/caramel/mocha, ; whip, Q ice, Backspace bin,
 verify's "coffee" section: the storefront facing the street, ENTER, an exact
 latte built with real pointer taps (tip), one mistake (price only), two
 (refused), a bot shift to closing and the pay, leaving. `docs/coffee/` has shots.
+
+## Seafair: unlimited hydroplanes on Lake Washington (v141)
+
+**A drivable unlimited hydroplane** (`hydro` in TYPES, `buildHydro`,
+`updateHydro`, `HYDRO` in vehicles.js): a turbine cab-forward three-pointer,
+9.6 m by 4.4 m at the sponsons, with a canopy, a turbine cowl, a fin and wing,
+and a propeller at the transom; engine profile `turbine` in audio.js. The
+physics is the thing:
+
+- **Thrust against quadratic drag** (top ~69 m/s, 153 mph; 0-100 mph 5.7 s);
+  under ~25 m/s the hull drags until it gets up on its sponsons.
+- **Turning is grip-limited**: the rudder asks for a yaw rate
+  (`HYDRO.yawMax` at speed), and lateral demand past `HYDRO.grip` goes into
+  slip. Full lock flat out HOOKS in ~2 s (a spin that scrubs off most of the
+  speed); lift to ~50 m/s and a hard turn holds. `this.hooked` flags it.
+- **Blowover**: the nose rises with the square of the speed (0.23 rad flat
+  out); the stick trims it +-0.14 (back raises it); chop and other boats'
+  wakes (`hyd.wakeKick`, set by the race) kick it. Past 0.27 the HUD flashes
+  NOSE HIGH; past 0.36 it goes over backwards and is out (`this.blewOver`).
+
+**The course** (`src/hydrorace.js` `Course`): an oval 3.77 km round in the open
+water between Genesee Park and Mercer Island, run counter-clockwise: south
+down the west straight past the pits (start/finish halfway down it), the
+south turn, north up the back straight, the north turn. `at(s, off)` and
+`project(x, z)` are the centreline arc length and the outward offset from the
+inside lane. **Scenery is one merged vertex-colour mesh** (turn buoys, the
+start pylons, the log boom and ~150 spectator boats tied to it along the back
+straight, the pit dock and crane, team tents and grandstands on the lawn),
+plus the start/finish banner. **The pits are found from the course**, walking
+west from the start line to dry ground: the Stan Sayres lat/lon lands in the
+lake, and the first build put the tents on the lake bed.
+
+**Rooster tails are one `THREE.Points` system for every boat** (1600
+particles, a small shader, fading within ~30 m of the camera so your own
+tail does not white out the screen).
+
+**A race** (ENTER at the pits opens the race office: the next Seafair Cup
+event, free practice, the standings): six boats, yours `U-1 MISS SEATTLE`.
+The rivals run in mode `race`, which traffic.js neither drives nor despawns.
+The clock starts at 30 s ~1.35 km from the line; crossing before zero means
+your start does not count (a lap lost). Cutting inside a turn's buoys is a
+lap's penalty. Heats are 3 laps, the final 4; the AI keeps a lane, paces the
+turns (~50 m/s) and the straights, gives room, lifts when its nose is high,
+and paces its start to arrive just after zero by skill. Boat contact costs
+speed on impact only (per frame, two boats steering into each other stalled
+dead in the water). **The Seafair Cup** is heat 1, heat 2, final, points 400 /
+300 / 225 / ...; purses $600 down to $50, the Cup $2,000 more (localStorage
+`auto-seafair`). In the final a six-ship delta of jets (the `fighter` type,
+driven kinematically) flies down the course. Measured with all-AI heats: laps
+of 63-67 s, the field within seconds, nobody stalled.
+
+verify's "seafair" section: the course all on deep water, the pits on land,
+the boat's top speed / hook / held turn / blowover / nose control, a jump
+start not counting, a buoy cut penalised, a whole heat to the flag with the
+series advancing, back to the pits. `docs/seafair/` has shots.
 
 ## Basketball in the parks
 

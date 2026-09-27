@@ -22,6 +22,7 @@ import { HockeyNight } from './hockey.js';
 import { TowerGame } from './atc.js';
 import { DuckTour } from './ducktour.js';
 import { CoffeeShop } from './barista.js';
+import { Seafair } from './hydrorace.js';
 import { BONES } from './peds.js';
 import { cacheGet, cachePut, cacheGuardTripped, cacheGuardSet, cacheClear } from './bootcache.js';
 import { TrafficSystem, collideWithBuildings } from './traffic.js';
@@ -92,6 +93,7 @@ let hockey = null;   // hockey night at Climate Pledge Arena (hockey.js)
 let tower = null;    // Boeing Field's control tower and FINAL APPROACH (atc.js)
 let duckTour = null; // the Duck Tour: kiosk, ducks, ramp and the tour (ducktour.js)
 let coffee = null;   // First Cup Coffee at 1912 Pike Place and MORNING RUSH (barista.js)
+let seafair = null;  // hydroplane racing on Lake Washington (hydrorace.js)
 let golf = null;   // three holes at Interbay (golf.js)
 let wheelRide = null;   // the Great Wheel, turning, and its ride (wheelride.js)
 let fishToss = null;   // the flying fish at Pike Place Market (fishtoss.js)
@@ -274,6 +276,8 @@ class Game {
     }
     // the Duck Tour's kiosk at Seattle Center?
     if (duckTour && !duckTour.tour && duckTour.near(pl)) return duckTour.start();
+    // the race office at Stan Sayres Pits?
+    if (seafair && seafair.state === 'idle' && seafair.near(pl)) { seafair.start(); return true; }
     // the coffee shop at 1912 Pike Place?
     if (coffee && !coffee.active && coffee.near(pl)) {
       this.paused = true;
@@ -897,6 +901,13 @@ function installShadowFade() {
     onReward: (m) => { game.money += m; setTimeout(() => hud.showToast(`The Duck Tour paid $${m}`), 400); },
   });
   duckTour.spawnDucks();
+  seafair = new Seafair({
+    scene, city, world, traffic,
+    get player() { return player; }, get game() { return game; }, get hud() { return hud; },
+    get audio() { return audio; }, get camera() { return camera; }, get renderer() { return renderer; },
+    onReward: (m) => { game.money += m; setTimeout(() => hud.showToast(`Seafair paid $${m}`), 400); },
+  });
+  seafair.spawnPractice();
   coffee = new CoffeeShop({
     scene, city, world, audio,
     onReward: (m) => { game.money += m; setTimeout(() => hud.showToast(`Your shift at First Cup paid $${m}`), 400); },
@@ -969,6 +980,8 @@ function installShadowFade() {
       hello: 'Hockey night at Climate Pledge Arena. Press ENTER at the doors to drop the puck' },
     { x: duckTour.spot.x, z: duckTour.spot.z, kind: 'duck', name: 'Duck Tours', near: false,
       hello: 'Duck Tours — land and lake. Press ENTER at the kiosk to captain a tour' },
+    { x: seafair.spot.x, z: seafair.spot.z, kind: 'hydro', name: 'Seafair Pits', near: false,
+      hello: 'Stan Sayres Pits: unlimited hydroplanes. Press ENTER to race, or take the boat off the dock' },
     { x: coffee.spot.x, z: coffee.spot.z, kind: 'coffee', name: 'First Cup Coffee', near: false,
       hello: 'First Cup Coffee, Pike Place. Press ENTER to work the morning rush' },
     { x: tower.spot.x, z: tower.spot.z, kind: 'tower', name: 'Control Tower', near: false,
@@ -1074,7 +1087,7 @@ function installShadowFade() {
 
   await step(1, 'Welcome to Seattle');
   window.__refreshJobs = refreshJobs;
-  window.__dbg = { game, city, player, world, traffic, peds, acts, stunts, monorail, lmRoot, shadowCache, fishing, fishSpots, hoops, needleTop, fishToss, wheelRide, golf, arcade, pinball, hockey, tower, duckTour, coffee, scene, camera, renderer, G, fx, hud, controls, audio, pickups, THREE, postfx, applyQuality, sun, placeSun, sceneStats, perfSys, cityStats, WET_FLOOR, animateWalk, collideWithBuildings, TYPES: VEHICLE_TYPES };
+  window.__dbg = { game, city, player, world, traffic, peds, acts, stunts, monorail, lmRoot, shadowCache, fishing, fishSpots, hoops, needleTop, fishToss, wheelRide, golf, arcade, pinball, hockey, tower, duckTour, coffee, seafair, scene, camera, renderer, G, fx, hud, controls, audio, pickups, THREE, postfx, applyQuality, sun, placeSun, sceneStats, perfSys, cityStats, WET_FLOOR, animateWalk, collideWithBuildings, TYPES: VEHICLE_TYPES };
   wireUi();
   game.newTarget();
   // Start on `high` everywhere.
@@ -1912,6 +1925,7 @@ function frame(now) {
   }
   updatePickups(dt);
   if (duckTour) duckTour.update(dt);
+  if (seafair) seafair.update(dt);
   if (!player.vehicle || !(player.vehicle.spec.boat || player.vehicle.afloat)) fx.wake(dt, null);
   if (player.vehicle && player.vehicle.spec.kayak && player.vehicle.kayak && player.vehicle.kayak.dip) {
     const v = player.vehicle, sd = v.kayak.dipSide, f = v.forward;
