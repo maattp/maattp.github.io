@@ -8620,7 +8620,9 @@ export class Vehicle {
     if (this.pedaling && Math.abs(d) < 1) this.crank += d / 2.4;
     for (const m of this.spinMeshes) m.rotation.x = this.crank;
     const h = this.rider;
-    if (!h || !h.group.visible) return;
+    // the limbs are solved only where someone could see them (bikes.js sets
+    // _ikFar past 45 m): four two-bone solves and a matrix update a rider
+    if (!h || !h.group.visible || this._ikFar) return;
     const b = h.bones, t = this.tilt, bb = BIKE.bb;
     this.group.position.set(this.x, this.y + this.yVis, this.z);
     this.group.rotation.y = this.heading;

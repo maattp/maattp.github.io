@@ -2144,6 +2144,29 @@ coordinates rasterise them differently) agree to ~1e-5. The cache is ~1350 px
 square, RGBA plus depth, ~15 MB of GPU memory. Desktop keeps three's pass:
 its 2048 map would make the cache ~4x that.
 
+### Standing still costs nothing (v152)
+
+The docks, the bike share and the islands took traffic's list to ~160
+vehicles, 114 of them 'apron' -- standing on a dock, a rack or the airfield.
+Four fixes, measured with `perfcpu.mjs --throttle=8` against the base in the
+same session (CPU/frame mean; frames over 20 ms of 400):
+
+| | before | after |
+|---|---|---|
+| drive-dt | 13.3 ms, 46 | **10.1 ms, 14** |
+| foot-dt | 14.0 ms, 48 | **10.4 ms, 7** |
+
+- **A settled apron vehicle freezes** (traffic.js, the quads' old rule for
+  all of them): bikes, aircraft on the ground, and boats more than 120 m
+  from you (a nearer one bobs). Within 300 m each used to run the whole
+  driving model to stand still. Its matrices freeze too.
+- **Car-car collision is sort-and-sweep on x**, and two still vehicles are
+  never tested (all-pairs was ~12k tests a frame).
+- **A cyclist's limbs are solved within 45 m only** (`_ikFar`), and a
+  cyclist is drawn within 180 m (120 on a phone).
+- **The minimap redraws at 30 Hz**, and the Link line is drawn only where it
+  is on the dial, from points computed once.
+
 ### Hitches: everything first-used belongs behind the loading screen
 
 **Nothing was compiled until the first frame, and some things not until much

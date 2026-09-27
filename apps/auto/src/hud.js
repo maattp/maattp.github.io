@@ -369,15 +369,25 @@ export class Hud {
   }
 
   /** Link's 1 Line, green (its tracks as one line), through `to(x, z)` -> canvas. */
-  drawLink(ctx, to, w) {
-    const tr = this.link.tracks.sb;
+  drawLink(ctx, to, w, near = null) {
+    // the line's points once, every 20 m; `near` ({x, z, r}) draws only the
+    // stretch within r of a point -- the minimap shows ~1 km of 31
+    if (!this._linkPts) {
+      const tr = this.link.tracks.sb, n = Math.floor(tr.len / 20) + 1, P = new Float32Array(n * 2);
+      for (let i = 0; i < n; i++) { P[i * 2] = tr.x(i * 20); P[i * 2 + 1] = tr.z(i * 20); }
+      this._linkPts = P;
+    }
+    const P = this._linkPts, n = P.length / 2, r2 = near ? near.r * near.r : Infinity;
     ctx.strokeStyle = '#3a9a44';
     ctx.lineWidth = w;
     ctx.lineJoin = 'round';
     ctx.beginPath();
-    for (let s = 0; s <= tr.len; s += 20) {
-      const [x, y] = to(tr.x(s), tr.z(s));
-      if (s === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+    let pen = false;
+    for (let i = 0; i < n; i++) {
+      const x = P[i * 2], z = P[i * 2 + 1];
+      if (near && (x - near.x) ** 2 + (z - near.z) ** 2 > r2) { pen = false; continue; }
+      const [cx, cy] = to(x, z);
+      if (pen) ctx.lineTo(cx, cy); else { ctx.moveTo(cx, cy); pen = true; }
     }
     ctx.stroke();
   }
@@ -406,7 +416,11 @@ export class Hud {
   update(dt, game, player, traffic) {
     const p = player.position;
     this.setRace(this.race, player);
-    // minimap
+    // minimap -- at 30 Hz: it is a few hundred canvas calls, and at 60 the
+    // phone drew it twice for every change you could see
+    this._mmAcc = (this._mmAcc || 0) + dt;
+    if (this._mmAcc >= 1 / 31) {
+    this._mmAcc = 0;
     const ctx = this.mctx;
     const S = this.miniSize;
     const zoom = player.onFoot ? 1.9 : 1.35;
@@ -465,7 +479,7 @@ export class Hud {
       ctx.fill();
     }
     // The monorail's line, teal, under the markers
-    if (this.link) this.drawLink(ctx, toMap, 2.6 / zoom);
+    if (this.link) this.drawLink(ctx, toMap, 2.6 / zoom, { x: p.x, z: p.z, r: S / (zoom * SCALE) + 60 });
     if (this.monorail) this.drawMonorail(ctx, toMap, 2.2 / zoom);
     // Marked places (the seaplane dock, the quads), upright whatever the
     // dial's rotation, so the anchor reads as an anchor.
@@ -544,6 +558,8 @@ export class Hud {
     ctx.fillStyle = '#ffffff';
     ctx.fillText('N', nx * (rr - 9), nz * (rr - 9));
     ctx.restore();
+
+    }
 
     // readouts
     this.money.textContent = formatMoney(game.money);

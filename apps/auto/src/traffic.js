@@ -215,6 +215,8 @@ const MIN_COMPONENT = 60;
 // updateParked); anything else keeps a 0.8 m shoulder.
 const LANE_W = 4.2, PARK_EDGE = 2.2, SHOULDER = 0.8;
 
+const byX = (a, b) => a.x - b.x;
+
 export class TrafficSystem {
   constructor(scene, city, game) {
     this.scene = scene;
@@ -750,7 +752,7 @@ export class TrafficSystem {
       // Nothing of a far car's own is drawn, and a settled parked car does not
       // move: neither needs three to recompute its five matrices every frame.
       // (A shunt makes a parked car 'free', which thaws it.)
-      const frozen = v !== player.vehicle && (far || (v.mode === 'parked' && v._still >= 3));
+      const frozen = v !== player.vehicle && (far || ((v.mode === 'parked' || v.mode === 'apron') && v._still >= 3));
       if (v.group.matrixWorldAutoUpdate === frozen) v.group.matrixWorldAutoUpdate = !frozen;
       if (!far) continue;
       if (cam) {
@@ -866,7 +868,13 @@ export class TrafficSystem {
       // to 80 lengths, about 10 px on a phone -- a jet to 1.2 km, a boat to
       // 460 m, a quad to 160 m -- and never closer than a parked car does.
       const show = v.mode !== 'apron' || d2 < Math.max(PARKED_SHOW, v.spec.len * 80, v.spec.seeFar || 0) ** 2;
-      if (v.mode === 'apron' && v.spec.atv && d2 < 300 * 300 && Math.abs(v.vLong) < 0.05 && Math.abs(v.vLat) < 0.05) {
+      // ...and so, once settled, is anything else standing on an apron: the
+      // bike-share bikes, the airfield's aircraft, a moored boat (except one
+      // within 120 m, which bobs). 114 of the 158 vehicles in the list are
+      // apron vehicles since the docks, and within 300 m each ran the whole
+      // driving model every frame to stand still.
+      const settles = v.spec.atv || v.spec.bicycle || (v.spec.plane && !v.airborne) || (v.spec.boat && d2 > 120 * 120);
+      if (v.mode === 'apron' && settles && d2 < 300 * 300 && Math.abs(v.vLong) < 0.05 && Math.abs(v.vLat) < 0.05) {
         v.group.visible = show;
         if (v._still < 3) v._still++;
         else continue;
@@ -1128,14 +1136,23 @@ export class TrafficSystem {
   }
 
   resolveCarCollisions(dt, player) {
-    const all = this.cars;
-    for (let i = 0; i < all.length; i++) {
-      const a = all[i];
-      if (a.mode === 'parked' && a !== player.vehicle) {
-        // parked cars still get shoved
-      }
-      for (let j = i + 1; j < all.length; j++) {
+    // SORT AND SWEEP along x: all-pairs was 12k tests a frame with the docks'
+    // 158 vehicles, nearly all of them between things kilometres apart. A pair
+    // is only looked at while their x ranges can overlap, and two vehicles
+    // that are standing still (parked, or a settled apron one) never can
+    // start to.
+    const n = this.cars.length, all = this._colOrd || (this._colOrd = []);
+    all.length = n;
+    let rMax = 0;
+    for (let k = 0; k < n; k++) { const v = this.cars[k]; all[k] = v; if (v.radius > rMax) rMax = v.radius; }
+    all.sort(byX);
+    const still = (v) => v !== player.vehicle && (v.mode === 'parked' || (v.mode === 'apron' && v._still >= 3));
+    for (let i = 0; i < n; i++) {
+      const a = all[i], sa = still(a), reach = a.x + a.radius + rMax;
+      for (let j = i + 1; j < n; j++) {
         const b = all[j];
+        if (b.x > reach) break;
+        if (sa && still(b)) continue;
         // The test is 2D, so gate on height or a plane at 200 m gets shunted
         // by the traffic it overflies -- the "invisible collision in the air".
         // Also stops a viaduct car trading paint with the street below it.
