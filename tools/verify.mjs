@@ -1818,14 +1818,18 @@ async function main() {
       let roll = null;
       for (let i = 0; i < 60 * 60 && roll === null; i++) { v.update(1 / 60, { throttle: 1, pitch: v.vLong > 70 ? 1 : 0, pilot: true }); if (v.airborne) roll = Math.round(Math.hypot(v.x - x0, v.z - z0)); }
       out.roll = roll;
+      // and the climb out: 20 s of full back stick after lift-off
+      const y0 = v.y;
+      for (let i = 0; i < 60 * 20; i++) v.update(1 / 60, { throttle: 1, pitch: 1, pilot: true });
+      out.climb = Math.round(v.y - y0);
       P.exitVehicle(true);
       return out;
     })()`, true);
     console.log('\n--- 747 ---------------------------------------------------');
     if (!jum) { console.error('FAIL: no 747 at Boeing Field'); process.exitCode = 1; }
     else {
-      console.log(`  parked on the pavement ${jum.onPave}; ${Math.round(jum.tris)} triangles; lifts off after ${jum.roll} m of runway`);
-      if (!jum.onPave || jum.roll === null || jum.roll > 1500) { console.error('FAIL: 747: not parked on the pavement or cannot take off within the runway'); process.exitCode = 1; }
+      console.log(`  parked on the pavement ${jum.onPave}; ${Math.round(jum.tris)} triangles; lifts off after ${jum.roll} m of runway, climbs ${jum.climb} m in 20 s`);
+      if (!jum.onPave || jum.roll === null || jum.roll > 1500 || !(jum.climb > 120)) { console.error('FAIL: 747: not parked on the pavement or cannot take off within the runway'); process.exitCode = 1; }
     }
 
     // --- parachutes ----------------------------------------------------------------------

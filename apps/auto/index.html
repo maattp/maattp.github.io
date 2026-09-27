@@ -145,6 +145,8 @@
   #speedo { display: flex; align-items: baseline; gap: 3px; text-shadow: 0 2px 8px rgba(0,0,0,0.7); }
   #speedVal { font-size: 26px; font-weight: 800; font-variant-numeric: tabular-nums; }
   #speedo .u { font-size: 11px; opacity: .7; }
+  #altRow { font-size: 17px; font-weight: 800; font-variant-numeric: tabular-nums; text-shadow: 0 2px 8px rgba(0,0,0,0.7); }
+  #altRow .u { font-size: 11px; opacity: .7; }
   #ammo { font-size: 15px; font-weight: 700; opacity: .9; }
   .hidden { display: none !important; }
 
@@ -371,6 +373,7 @@
       <div id="money">$250</div>
       <div id="stars"></div>
       <div id="speedo" class="hidden"><span id="speedVal">0</span><span class="u">km/h</span></div>
+      <div id="altRow" class="hidden"><span class="u">ALT</span> <span id="altVal">0</span><span class="u"> m</span></div>
       <div id="ammo" class="hidden">⌖ 0</div>
     </div>
     <div id="objective"></div>
@@ -491,7 +494,7 @@
     <pre id="bootLog"></pre>
     <div id="loadRotate">Turn sideways to play once it has loaded</div>
     <!-- Bumped once per change, in step with CACHE in sw.js. See CLAUDE.md. -->
-    <div id="build">v148</div>
+    <div id="build">v149</div>
     <div id="attrib">Map data © OpenStreetMap contributors (ODbL) · elevation USGS 3DEP</div>
   </div>
   <script>

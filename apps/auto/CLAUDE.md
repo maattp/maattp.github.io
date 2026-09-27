@@ -3116,9 +3116,16 @@ decks, five doors a side, a house livery (white, pale belly, blue cheatline and
 fin), raked swept wings with flap-track canoes, four GEnx nacelles on pylons,
 a 19.4 m fin, a nose gear and four four-wheel bogies. `wid` is the fuselage
 (street-scale collision); the wings are drawn. It flies the ordinary plane
-model with `fly.thrustK` 0.62 so it winds up like a heavy (roll ~490 m,
-rotate at 150 kt, ~550 km/h level, 8 deg/s turns), and the chase rig scales
+model with `fly.thrustK` 0.62 so it winds up like a heavy (roll ~410 m,
+rotate at 140 kt, ~550 km/h level, 8 deg/s turns). Its climb has its own
+`fly.climb` 34 and `climbBase` 7 (v149): the light aircraft's 14 / 4 scale
+with speed over the stall, which on a heavy's 58 m/s stall left it climbing
+4.6 m/s -- 88 m in the first 20 s; now ~8 m/s, 150 m, and the chase rig scales
 with any aircraft over 30 m long (player.js). `seeFar` 7 km.
+
+**Altitude on the HUD** (v149): flying a plane or the helicopter, `#altRow`
+under the speed reads the height over sea level (`hud.js`); the balloon's
+main readout is already its altitude.
 
 **Parachutes** (`src/parachute.js`, v144). Get out of any aircraft more
 than 12 m over the ground -- a plane, the helicopter, the balloon -- and you
