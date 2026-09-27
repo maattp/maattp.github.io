@@ -42,12 +42,14 @@
   }
 
   /* ---------- interaction zones ---------- */
+  /* The stick is the left third only; everything else drags the camera.
+     At 46% wide the stick grabbed presses near the middle meant for looking. */
   #lookZone {
-    position: absolute; right: 0; top: 0; bottom: 0; width: 58%;
+    position: absolute; inset: 0;
     touch-action: none; z-index: 2;
   }
   #stickZone {
-    position: absolute; left: 0; bottom: 0; width: 46%; height: 62%;
+    position: absolute; left: 0; top: 0; bottom: 0; width: 33.333%;
     touch-action: none; z-index: 3;
   }
   #stickBase {
@@ -494,7 +496,7 @@
     <pre id="bootLog"></pre>
     <div id="loadRotate">Turn sideways to play once it has loaded</div>
     <!-- Bumped once per change, in step with CACHE in sw.js. See CLAUDE.md. -->
-    <div id="build">v157</div>
+    <div id="build">v158</div>
     <div id="attrib">Map data © OpenStreetMap contributors (ODbL) · elevation USGS 3DEP</div>
   </div>
   <script>

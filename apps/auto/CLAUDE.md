@@ -539,6 +539,24 @@ the city instead of a rectangle. The query point is still pushed around by smoot
 noise and sampled three times, because the chunk grid is 400 m and a straight
 lookup draws its staircase on the ground.
 
+## The spawn and the touch zones (v158)
+
+**You spawn on 5th Ave N by Roy St, ~440 m north of the Needle, looking at it** (`SPAWN_LL`
+in `tools/build_places.py`, `spawn` in `places.json`; the heading is computed
+to face the Needle). The old spawn at 5th Ave N & Broad St also faced it, but
+at 230 m, with a building on the corner in the way, and closer than ~400 m the
+top house is above the frame of a level chase camera. The spot was chosen by a
+line-of-sight search (every street node 400-700 m out, clear to the Needle at
+25, 70, 110 and 158 m over its base, past every building box) and then by
+looking at the frames. **A red sports coupe is parked at the right-hand kerb
+~14 m ahead** (main.js), in the opening frame; the nearest kerb slot, which it
+used to replace, was beside or behind the camera.
+
+**The stick is the left third of the screen, full height; everything else
+drags the camera** (`#stickZone` / `#lookZone` in index.html). The stick
+zone was 46 % wide, so a press just left of centre meant to look put the stick
+there. The minimap and buttons sit above both and keep their taps.
+
 ## Input lifecycle (never latch a held pointer)
 
 `pointerup` is not guaranteed. iOS steals the gesture at a screen edge, an
@@ -4123,8 +4141,8 @@ writes `data/monorail.json` with the stations and platforms.
   deleted the whole building. verify checks it stands.
 - **A train waits for you** (v117): within 350 m of a station and not
   driving a train, the one at its platform holds; with none there or on its
-  way, the one at the far end leaves at once. You spawn ~310 m from Seattle
-  Center, so the Blue train is there when you walk over.
+  way, the one at the far end leaves at once. You spawn ~390 m from Seattle
+  Center (v158), so the Blue train is there when you walk over.
 - **A train is one SkinnedMesh per material with a bone per 9.3 m section**
   (`buildTrainGeometry`, skin index by section range), posed from the beam
   each frame, so the articulated body bends through the curves at **two draws
