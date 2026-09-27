@@ -1371,6 +1371,8 @@ const NOSE = 1.25;                              // how far the cab's nose runs p
 function buildLRVGeometry() {
   // Build one car into per-section builders, then copy it.
   const body = [0, 1, 2].map(() => new Builder(false)), trim = [0, 1, 2].map(() => new Builder(false));
+  // the doorways, open (the leaves slid back): drawn only while the doors are
+  const open = [0, 1, 2].map(() => new Builder(false));
   const half = LINK.carLen / 2;
   const secZ = [[-half, -half + LINK.secA], [-LINK.secC / 2, LINK.secC / 2], [half - LINK.secA, half]];
 
@@ -1422,6 +1424,8 @@ function buildLRVGeometry() {
       }
       // door details: the open-door buttons, lit green, and the step plate
       for (const d of doors) {
+        open[k].quad([sd * (HW + 0.008), 0.34, d - 0.64], [sd * (HW + 0.008), 0.34, d + 0.64], [sd * (HW + 0.008), 2.2, d + 0.64], [sd * (HW + 0.008), 2.2, d - 0.64], [sd, 0, 0], uv0, [0.05, 0.05, 0.055]);
+        open[k].quad([sd * (HW + 0.009), 0.3, d - 0.64], [sd * (HW + 0.009), 0.3, d + 0.64], [sd * (HW + 0.009), 0.35, d + 0.64], [sd * (HW + 0.009), 0.35, d - 0.64], [sd, 0, 0], uv0, [0.9, 0.75, 0.1]);
         T.quad([sd * (HW + 0.004), 1.18, d - 0.78], [sd * (HW + 0.004), 1.18, d - 0.7], [sd * (HW + 0.004), 1.26, d - 0.7], [sd * (HW + 0.004), 1.26, d - 0.78], [sd, 0, 0], uv0, LIV.green);
         B.quad([sd * (HW - 0.02), 0.3, d - 0.7], [sd * (HW + 0.03), 0.3, d - 0.7], [sd * (HW + 0.03), 0.3, d + 0.7], [sd * (HW - 0.02), 0.3, d + 0.7], UP, uv0, [0.4, 0.4, 0.4]);
       }
@@ -1613,7 +1617,7 @@ function buildLRVGeometry() {
     geo.setIndex(new THREE.BufferAttribute(idx, 1));
     return geo;
   };
-  const geo = { body: assemble(body), trim: assemble(trim) };
+  const geo = { body: assemble(body), trim: assemble(trim), open: assemble(open) };
   tagGlass(geo.trim);
   return geo;
 }
@@ -1658,7 +1662,7 @@ export class LinkTrain {
     for (const b of this.bones) this.group.add(b);
     this.group.updateMatrixWorld(true);
     const skel = new THREE.Skeleton(this.bones);
-    this.meshes = [[g.body, sys.bodyMat], [g.trim, sys.trimMat]].map(([geo, m]) => {
+    this.meshes = [[g.body, sys.bodyMat], [g.trim, sys.trimMat], [g.open, sys.bodyMat]].map(([geo, m]) => {
       const mesh = new THREE.SkinnedMesh(geo, m);
       mesh.bind(skel, new THREE.Matrix4());
       mesh.castShadow = true;
@@ -1722,6 +1726,8 @@ export class LinkTrain {
     }
     this.group.updateMatrixWorld(true);
     for (const m of this.meshes) m.boundingSphere.center.set(this.cx, tr.y(this.s) + 1.8, this.cz);
+    // the doors: open while it stands at a platform
+    this.meshes[2].visible = !!this.doors;
   }
 
   /** Speed limit at s for the run (and the whole train must be under it). */
