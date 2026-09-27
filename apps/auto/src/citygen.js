@@ -1728,8 +1728,9 @@ export function* cityGenerator(md, cache = {}) {
     // Seattle Center three stood in the station. Each zone is an oriented
     // rect; a building overlapping one goes unless its roof is below the
     // zone's `y` (a low building the beams pass over, as at Denny Way).
-    if (md.monorailClear && md.monorailClear.length) {
-      const Z = md.monorailClear;
+    // Link light rail's open corridor and stations (link.js clearZones) too.
+    if ((md.monorailClear && md.monorailClear.length) || (md.linkClear && md.linkClear.length)) {
+      const Z = [...(md.monorailClear || []), ...(md.linkClear || [])];
       const ZC = 40, zg = new Map();
       for (const zn of Z) {
         const e = Math.hypot(zn.hw, zn.hd);
@@ -3611,6 +3612,8 @@ export function* cityGenerator(md, cache = {}) {
     },
     /** Inside a jump's kept-clear corridor (no trees, posts or parked cars)? */
     jumpClear(x, z) {
+      // ...and whatever else asks for open ground (link.js: the tracks)
+      if (this.extraClear && this.extraClear(x, z)) return true;
       // ...and landmark lawns kept open (circles [x, z, r]: Bellevue
       // Downtown Park's lawn and promenade, which landmarks.js plants itself)
       const Cc = this.clearCircles;

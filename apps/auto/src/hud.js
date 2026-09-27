@@ -13,7 +13,7 @@ const SCALE = MAP_PX / (G.MAP_HALF * 2);
  */
 function placeIcon(ctx, kind, x, y, r) {
   ctx.fillStyle = kind === 'dock' ? '#2f86d6' : kind === 'jet' ? '#c8352a' : kind === 'monorail' ? '#0b8a8f'
-    : kind === 'balloon' ? '#d2432f' : kind === 'fish' ? '#1f9aa8' : kind === 'hoop' ? '#d9661f' : kind === 'needle' ? '#5a6fd6' : kind === 'fishtoss' ? '#d05a1e' : kind === 'kayak' ? '#e0a818' : kind === 'wheel' ? '#2f6fb0' : kind === 'golf' ? '#2c8a4a' : kind === 'arcade' ? '#c83ad8' : kind === 'pinball' ? '#e8503a' : kind === 'hockey' ? '#2c6ad8' : kind === 'tower' ? '#6a7a8a' : kind === 'duck' ? '#e8b020' : kind === 'coffee' ? '#6a4a32' : kind === 'hydro' ? '#d8242c' : '#e0782e';
+    : kind === 'balloon' ? '#d2432f' : kind === 'fish' ? '#1f9aa8' : kind === 'hoop' ? '#d9661f' : kind === 'needle' ? '#5a6fd6' : kind === 'fishtoss' ? '#d05a1e' : kind === 'kayak' ? '#e0a818' : kind === 'wheel' ? '#2f6fb0' : kind === 'golf' ? '#2c8a4a' : kind === 'arcade' ? '#c83ad8' : kind === 'pinball' ? '#e8503a' : kind === 'hockey' ? '#2c6ad8' : kind === 'tower' ? '#6a7a8a' : kind === 'duck' ? '#e8b020' : kind === 'coffee' ? '#6a4a32' : kind === 'hydro' ? '#d8242c' : kind === 'link' ? '#3a9a44' : '#e0782e';
   ctx.strokeStyle = '#ffffff';
   ctx.lineWidth = r * 0.22;
   ctx.beginPath();
@@ -75,6 +75,15 @@ function placeIcon(ctx, kind, x, y, r) {
     ctx.fillRect(-r * 0.07, 0, r * 0.14, r * 0.85); ctx.fillRect(-r * 0.07, r * 0.75, r * 0.42, r * 0.14);
     ctx.restore();
     ctx.fillRect(x + r * 0.08, y + r * 0.3, r * 0.34, r * 0.16);
+  } else if (kind === 'link') {
+    // a light-rail car's face: windscreen over its lamps, the pantograph
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(x - r * 0.36, y - r * 0.3, r * 0.72, r * 0.72);
+    ctx.fillStyle = '#3a9a44';
+    ctx.fillRect(x - r * 0.26, y - r * 0.2, r * 0.52, r * 0.26);
+    ctx.fillRect(x - r * 0.22, y + r * 0.2, r * 0.1, r * 0.08); ctx.fillRect(x + r * 0.12, y + r * 0.2, r * 0.1, r * 0.08);
+    ctx.strokeStyle = '#ffffff'; ctx.lineWidth = r * 0.1;
+    ctx.beginPath(); ctx.moveTo(x - r * 0.2, y - r * 0.3); ctx.lineTo(x + r * 0.1, y - r * 0.55); ctx.lineTo(x - r * 0.1, y - r * 0.62); ctx.stroke();
   } else if (kind === 'hydro') {
     // a hydroplane's planform, nose up, and its rooster tail
     ctx.fillStyle = '#ffffff';
@@ -345,6 +354,20 @@ export class Hud {
     this._rb.textContent = r.best ? `best ${r.best}` : '';
   }
 
+  /** Link's 1 Line, green (its tracks as one line), through `to(x, z)` -> canvas. */
+  drawLink(ctx, to, w) {
+    const tr = this.link.tracks.sb;
+    ctx.strokeStyle = '#3a9a44';
+    ctx.lineWidth = w;
+    ctx.lineJoin = 'round';
+    ctx.beginPath();
+    for (let s = 0; s <= tr.len; s += 20) {
+      const [x, y] = to(tr.x(s), tr.z(s));
+      if (s === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+    }
+    ctx.stroke();
+  }
+
   /** The monorail's two beams as one teal line, through `to(x, z)` -> canvas. */
   drawMonorail(ctx, to, w) {
     const tr = this.monorail.tracks.west;
@@ -428,6 +451,7 @@ export class Hud {
       ctx.fill();
     }
     // The monorail's line, teal, under the markers
+    if (this.link) this.drawLink(ctx, toMap, 2.6 / zoom);
     if (this.monorail) this.drawMonorail(ctx, toMap, 2.2 / zoom);
     // Marked places (the seaplane dock, the quads), upright whatever the
     // dial's rotation, so the anchor reads as an anchor.
@@ -577,12 +601,13 @@ export class Hud {
       ctx.fillStyle = 'rgba(255,255,255,0.55)';
       ctx.fillText(l.name, lx, lz - size * 0.008);
     }
+    if (this.link) this.drawLink(ctx, toC, Math.max(1.8, size * 0.0026));
     if (this.monorail) this.drawMonorail(ctx, toC, Math.max(1.5, size * 0.0022));
     for (const pl of (this.places || [])) {
       const [qx, qz] = toC(pl.x, pl.z);
       placeIcon(ctx, pl.kind, qx, qz, size * (pl.kind === 'dock' ? 0.011 : 0.008));
       // named, quads too: an unlabelled orange dot was a quad nobody found
-      if (pl.kind === 'dock' || pl.kind === 'atv' || pl.kind === 'monorail' || pl.kind === 'balloon' || pl.kind === 'fish' || pl.kind === 'hoop' || pl.kind === 'fishtoss' || pl.kind === 'needle' || pl.kind === 'kayak' || pl.kind === 'wheel' || pl.kind === 'golf' || pl.kind === 'arcade' || pl.kind === 'pinball' || pl.kind === 'hockey' || pl.kind === 'tower' || pl.kind === 'duck' || pl.kind === 'coffee' || pl.kind === 'hydro') {
+      if (pl.kind === 'dock' || pl.kind === 'atv' || pl.kind === 'monorail' || pl.kind === 'balloon' || pl.kind === 'fish' || pl.kind === 'hoop' || pl.kind === 'fishtoss' || pl.kind === 'needle' || pl.kind === 'kayak' || pl.kind === 'wheel' || pl.kind === 'golf' || pl.kind === 'arcade' || pl.kind === 'pinball' || pl.kind === 'hockey' || pl.kind === 'tower' || pl.kind === 'duck' || pl.kind === 'coffee' || pl.kind === 'hydro' || pl.kind === 'link') {
         ctx.fillStyle = 'rgba(255,255,255,0.85)';
         ctx.fillText(pl.name, qx, qz - size * 0.016);
       }

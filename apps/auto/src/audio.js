@@ -728,6 +728,13 @@ const SOUNDS = {
       g.gain.setTargetAtTime(0, ti + 0.12, i === 2 ? 0.12 : 0.05);
     });
   } },
+  // A light-rail car's warning bell: a small gong struck twice, its
+  // partials inharmonic and decaying at their own rates (METAL).
+  tram_bell: { dur: 1.6, build(k, out, t, R) {
+    for (const t0 of [t, t + 0.34]) {
+      METAL.slice(0, 5).forEach((r, i) => k.ping(out, t0, 1046 * r, 0.32 / (1 + i * 0.8), 0.55 / (1 + i * 0.5), 0.0015));
+    }
+  } },
   ui_check: { dur: 0.5, build(k, out, t, R) {
     k.ping(out, t, 1568, 0.5, 0.13, 0.003);
     k.ping(out, t, 2093, 0.35, 0.11, 0.003);
@@ -1337,7 +1344,7 @@ function hornFor(spec) {
   if (!spec) return 'car';
   if (spec.plane || spec.heli) return 'none';
   if (spec.moto || spec.atv) return 'moto';
-  if (spec.bus || spec.cargo || spec.diesel || spec.boat || spec.monorail) return 'truck';
+  if (spec.bus || spec.cargo || spec.diesel || spec.boat || spec.rail) return 'truck';
   return 'car';
 }
 

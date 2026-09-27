@@ -1892,6 +1892,125 @@ async function main() {
     console.log(`  a jet ski through the old invisible walls: ${jwl.join(' / ')} m in 3 s`);
     if (jwl.some((m) => m < 40)) { console.error('FAIL: elliott bay: an invisible wall stops the jet ski'); process.exitCode = 1; }
 
+    // --- Link light rail ----------------------------------------------------------------
+    //
+    // The 1 Line (link.js): both tracks and all sixteen stations; the profile
+    // within its grade, at grade never under the ground, bores buried; no
+    // building over the open line and no guideway column on a carriageway;
+    // ten minutes of service (every train stops, none closer than the moving
+    // block, none over 55 mph); a run driven from Westlake to Symphony with a
+    // rated stop and the doors letting you out at the street; a train braking
+    // for you on the track at grade; a car held at a crossing by a train.
+    const lk = await session.eval(`(() => {
+      const d = window.__dbg, L = d.link, C = d.city, G = d.G, P = d.player;
+      const out = { stations: L.stations.length, tracks: {} };
+      for (const k of ['sb', 'nb']) {
+        const tr = L.tracks[k];
+        let grade = 0, under = 0, exposed = 0, bldg = 0;
+        for (let i = 10; i < tr.n - 15; i += 5) {
+          grade = Math.max(grade, Math.abs(tr.Y[i + 5] - tr.Y[i]) / 5);
+          const kd = tr.KD[i];
+          if ((kd === 4 || kd === 5) && tr.Y[i] < tr.GR[i] + 0.2) under++;
+          if (kd === 1 && tr.Y[i] + 6 > tr.GR[i]) exposed++;
+          if (kd !== 1 && i % 20 === 0) {
+            for (const b of C.buildingsNear(tr.X[i], tr.Z[i], 12)) {
+              const c = Math.cos(-b.rot), sn = Math.sin(-b.rot), dx = tr.X[i] - b.x, dz = tr.Z[i] - b.z;
+              if (Math.abs(dx * c - dz * sn) < b.w / 2 && Math.abs(dx * sn + dz * c) < b.d / 2 && b.y + b.h > tr.Y[i] - 2) { bldg++; break; }
+            }
+          }
+        }
+        out.tracks[k] = { len: Math.round(tr.len), grade: +grade.toFixed(3), under, exposed, bldg };
+      }
+      out.colsOnRoad = L.solids.filter((q) => q.r > 0.6 && C.onRoad(q.x, q.z, 0, false, false)).length;
+      out.entBad = L.stations.filter((q) => G.isWater(q.ent.x, q.ent.z) || C.onRoad(q.ent.x, q.ent.z, 1)).map((q) => q.name);
+      // service, with you far away
+      if (P.vehicle) P.exitVehicle(true);
+      const px = P.x, pz = P.z;
+      P.x = -6000; P.z = 9000;
+      const was = new Map();
+      let arrivals = 0, vmax = 0, minGap = Infinity;
+      for (let i = 0; i < 30 * 600; i++) {
+        L._service(1 / 30);
+        for (const t of L.trains) {
+          if (t.state === 'dwell' && was.get(t) === 'run') arrivals++;
+          was.set(t, t.state);
+          if (t.state !== 'off') vmax = Math.max(vmax, Math.abs(t.u));
+        }
+        if (i % 30 === 0) for (const k of ['sb', 'nb']) {
+          const on = L.trains.filter((t) => t.track === L.tracks[k] && t.state !== 'off').sort((a, b) => a.s - b.s);
+          for (let j = 1; j < on.length; j++) minGap = Math.min(minGap, on[j].s - on[j - 1].s - 118);
+        }
+      }
+      out.service = { arrivals, vmax: +vmax.toFixed(1), minGap: Math.round(minGap) };
+      // a run from the cab: Westlake to Symphony
+      const wl = L.stations.find((q) => q.name === 'Westlake'), sy = L.stations.find((q) => q.name === 'Symphony');
+      for (const t of L.trains) if (t.track === L.tracks.sb && Math.abs(t.s - wl.s.sb) < 900) { t.state = 'off'; t.offT = 1e9; t.group.visible = false; }
+      const t = L.trains.find((q) => q.track === L.tracks.sb && q.state !== 'off');
+      t.place(wl.s.sb, 1); t.state = 'dwell'; t.station = wl; t.timer = 30; t.lastStop = wl; t.doors = true;
+      P.x = wl.ent.x; P.z = wl.ent.z; P.y = wl.ent.y;
+      const b = L.boardable(P.x, P.y, P.z);
+      out.boarded = b === t && P.enterVehicle(b) && P.vehicle === t;
+      let said = '';
+      const sayWas = L.say; L.say = (m) => { said = m; };
+      for (let i = 0; i < 30 * 150 && out.boarded; i++) {
+        const stopLead = sy.s.sb + 59, left = stopLead - t.lead, v = t.u;
+        const tgt = Math.min(t.allowed(null, 1.2), Math.sqrt(2 * 0.95 * Math.max(0, left - 0.3)));
+        let thr = v < tgt - 0.4 ? 1 : 0, brk = v > tgt + 0.05 ? Math.min(0.9, 0.35 + (v - tgt) * 1.5) : 0;
+        if (left < 0.3) { thr = 0; brk = 0.9; }
+        t.update(1 / 30, { throttle: thr, brake: brk });
+        if (i > 60 && Math.abs(t.u) < 0.02 && left < 3) break;
+      }
+      L.say = sayWas;
+      const spot = L.exitSpot(t);
+      out.drive = { err: +(sy.s.sb - t.s).toFixed(2), said, spot: !!spot };
+      if (P.vehicle) P.exitVehicle();
+      out.drive.out = P.onFoot && Math.hypot(P.x - sy.ent.x, P.z - sy.ent.z) < 3;
+      // you on the track at grade, a train coming: it stops short
+      const tr = L.tracks.sb;
+      let sP = 0;
+      for (let s = 24000; s < 26000; s += 10) if (tr.kind(s) === 4 && !L.stations.some((q) => Math.abs(q.s.sb - s) < 200)) { sP = s; break; }
+      for (const q of L.trains) if (q.track === tr && Math.abs(q.s - sP) < 1500) { q.state = 'off'; q.offT = 1e9; }
+      const a = L.trains.find((q) => q.track === tr && q.state !== 'off' && q !== t) || t;
+      a.driver = null; a.place(sP - 300, 1); a.state = 'run'; a.u = 14; a.lastStop = null;
+      P.x = tr.x(sP); P.z = tr.z(sP); P.y = tr.y(sP); P.health = 100;
+      let closest = Infinity;
+      for (let i = 0; i < 30 * 30; i++) { L._guard(1 / 30, P); L._service(1 / 30); closest = Math.min(closest, sP - a.lead); P.x = tr.x(sP); P.z = tr.z(sP); }
+      out.obstruct = { closest: +closest.toFixed(1), stopped: Math.abs(a.u) < 0.05, hurt: 100 - P.health };
+      // a train on a level crossing holds a car there
+      let sX = -1;
+      for (let s = 16800; s < 30000; s += 2) if (tr.kind(s) === 5) { sX = s; break; }
+      a.place(sX, 1); a.state = 'dwell'; a.timer = 1e9;
+      const h = tr.heading(sX);
+      out.crossing = { at: sX, held: L.blocks(tr.x(sX), tr.z(sX), tr.y(sX)), clear: !L.blocks(tr.x(sX) + Math.cos(h) * 40, tr.z(sX) - Math.sin(h) * 40, tr.y(sX)) };
+      a.timer = 1;
+      P.x = px; P.z = pz;
+      return out;
+    })()`, true);
+    console.log('\n--- Link light rail ---------------------------------------');
+    for (const k of ['sb', 'nb']) { const q = lk.tracks[k]; console.log(`  ${k}: ${q.len} m, steepest ${(q.grade * 100).toFixed(1)} %, at grade under the ground ${q.under}, bores out of the ground ${q.exposed}, buildings over the line ${q.bldg}`); }
+    console.log(`  ${lk.stations} stations; columns on a carriageway ${lk.colsOnRoad}; bad entrances ${lk.entBad.join(', ') || 'none'}`);
+    console.log(`  10 min of service: ${lk.service.arrivals} station stops, top ${lk.service.vmax} m/s, closest trains ${lk.service.minGap} m apart`);
+    console.log(`  driven Westlake -> Symphony: boarded ${lk.boarded}, stopped ${lk.drive.err} m from the mark ("${lk.drive.said}"), out at the street ${lk.drive.out}`);
+    console.log(`  a train for you on the track: closest ${lk.obstruct.closest} m, stopped ${lk.obstruct.stopped}, hurt ${lk.obstruct.hurt}; a crossing at s ${lk.crossing.at}: held ${lk.crossing.held}, clear 40 m off ${lk.crossing.clear}`);
+    {
+      const bad = [];
+      if (lk.stations !== 16) bad.push('stations');
+      for (const k of ['sb', 'nb']) {
+        const q = lk.tracks[k];
+        if (q.grade > 0.062) bad.push(`${k} grade`);
+        if (q.under) bad.push(`${k} at grade under the ground`);
+        if (q.exposed) bad.push(`${k} bore out of the ground`);
+        if (q.bldg > 2) bad.push(`${k} buildings over the line`);
+      }
+      if (lk.colsOnRoad) bad.push('a column on a carriageway');
+      if (lk.entBad.length) bad.push('station entrances');
+      if (lk.service.arrivals < 80 || lk.service.vmax > 25 || lk.service.minGap < 20) bad.push('service');
+      if (!lk.boarded || Math.abs(lk.drive.err) > 1.5 || !/Symphony/.test(lk.drive.said) || !lk.drive.out) bad.push('the driven run');
+      if (!(lk.obstruct.closest > 0) || !lk.obstruct.stopped || lk.obstruct.hurt) bad.push('braking for you');
+      if (lk.crossing.at < 0 || !lk.crossing.held || !lk.crossing.clear) bad.push('the level crossing');
+      if (bad.length) { console.error(`FAIL: Link: ${bad.join('; ')}`); process.exitCode = 1; }
+    }
+
     // --- the articulated bus ---------------------------------------------------
     //
     // An artic spawned and driven: its rear section follows on the hitch

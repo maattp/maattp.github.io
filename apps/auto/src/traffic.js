@@ -1014,6 +1014,13 @@ export class TrafficSystem {
       if (lat > 2.2) continue;
       brake = Math.max(brake, clamp(1.4 - fwd / scanLen, 0.35, 1));
     }
+    // A Link train on (or coming to) the level crossing ahead: wait for it.
+    const lk = this.link;
+    if (lk && lk.onGradeCorridor(v.x, v.z)) {
+      for (let d = 3; d <= scanLen + 5; d += 3) {
+        if (lk.blocks(v.x + f.x * d, v.z + f.z * d, v.y)) { brake = Math.max(brake, clamp(1.3 - d / (scanLen + 5), 0.5, 1)); break; }
+      }
+    }
     if (player.onFoot && Math.abs(player.y - v.y) < 3) {
       const rx = player.x - v.x, rz = player.z - v.z;
       const fwd = rx * f.x + rz * f.z;
