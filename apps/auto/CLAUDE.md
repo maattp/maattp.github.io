@@ -50,6 +50,9 @@ src/stunts.js               stunt-jump ramps (geometry + height query) and their
 src/monorail.js             the Seattle Center Monorail: beams, stations, both trains
 src/link.js                 Link light rail's 1 Line: tracks, guideway, bores, stations, the trains
 src/bikes.js                bike paths drawn and ridden, AI cyclists, bike-share docks
+src/islands.js              the islands across the Sound: Easter eggs, the Sasquatch, Blake's deer
+src/pickleball.js           the pickleball court on Bainbridge and its screen
+src/pickleballgame.js       PICKLEBALL itself: singles, the two-bounce rule, the kitchen (no DOM)
 src/shadowcache.js          phones: the city's shadows drawn once, only movers per frame
 src/effects.js              particles + tracers
 src/audio.js                all sound, synthesised: engine models, one-shot bank,
@@ -4059,6 +4062,43 @@ if any jump's run-up or ramp crosses the monorail.
 **`node --check file.js` passed monorail.js with its class unclosed**; the
 browser did not. Check a module as one: `node --input-type=module --check <
 file`.
+
+## The islands across the Sound (v151)
+
+**You can fly to Bainbridge, Blake and Vashon, and get back.** Four more
+`MARINAS` (landmarks.js): Bainbridge's Rockaway and Manitou beaches (Eagle
+Harbor is just past the map's west edge), Blake Island's marina and Vashon's
+north end, each with floatplanes, boats and a jet ski, sited from the drawn
+shore like the rest. Their map hellos hint at what is there.
+
+**Easter eggs** (`src/islands.js`), each placed on the nearest dry, open,
+fairly level ground to its real site (a footprint test for the bigger ones)
+and drawn only within a few hundred metres; each pays once
+(localStorage `auto-islands`):
+- Vashon: **the bike in the tree** (a fir grown round a bicycle, $250) and a
+  **Sasquatch** in the woods above it -- he wanders, and bolts when you
+  come within 55 m; see him within 15 m for $1,500.
+- Blake: a **cedar longhouse** with carved posts and a **salmon bake** on
+  stakes round a fire (stand by it: full health, $100), the island's
+  **deer**, who bolt at 30 m, and an **X of driftwood** on the west beach --
+  ENTER on it digs up a sea chest ($5,000).
+- Bainbridge: the **labyrinth** at Halls Hill; its centre sounds the gong
+  ($150).
+
+**Pickleball** (`src/pickleball.js`, `src/pickleballgame.js`), on
+Bainbridge where it was invented in 1965: a regulation court (20 x 44 ft,
+the kitchen 7 ft each side of a 34 in net) on level ground near Rockaway
+Beach, fenced, with a sign; its slab is a platform. ENTER on it plays
+singles against the island's champion: rally scoring to 11 (win by 2), an
+underhand cross-court serve past the kitchen, the two-bounce rule, and no
+volleys from the kitchen -- all enforced. Drag to move; DINK, DRIVE and LOB
+(J, K, L); timing is where the ball is in your reach, and the ball goes the
+way you are moving. A win pays $150 + $10 a point. The game is pure and
+played by bots in Node (rallies to 36 shots, games of ~2-3 minutes).
+
+verify's "the islands" section: the docks and their craft, no site in the
+water, every egg found and paid, the Sasquatch fleeing, the dig, standing on
+the court and a game to its end. `docs/islands/`.
 
 ## Bicycles and the bike paths (v147)
 
