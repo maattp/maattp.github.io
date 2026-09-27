@@ -32,6 +32,22 @@ export const ROAD_LIFT = 0.30;
 // z-fight bias (world.meshRoad) rather than tying with the top of it.
 export const NODE_LIFT = 0.34;
 export const WALK_LIFT = 0.52;
+// ...and a street strip climbs those 4 cm to it over the last MOUTH_RAMP
+// metres before the junction's mouth, drawn (world.meshRoad) and reported
+// (roadLift) by the same `mouthRamp`. It used to be a step at every mouth,
+// up onto the junction and down off it: at 20 m/s a +-37 m/s^2 jolt through
+// the seat at every junction and bend node in the city.
+export const MOUTH_RAMP = 6;
+/**
+ * How far (0..1) along the climb to NODE_LIFT a strip is at `s` metres from
+ * its a end, given each end's mouth distance (0: no mouth, no climb).
+ */
+export function mouthRamp(s, len, mA, mB) {
+  let r = 0;
+  if (mA > 0) r = 1 - (s - mA) / MOUTH_RAMP;
+  if (mB > 0) r = Math.max(r, 1 - (len - s - mB) / MOUTH_RAMP);
+  return r <= 0 ? 0 : r >= 1 ? 1 : r;
+}
 
 // Half-widths now come per-edge from the import (real lane counts), so these are
 // only the fallback and the bounds a lift query scans within.
@@ -2788,6 +2804,23 @@ export function* cityGenerator(md, cache = {}) {
     if (J === undefined) J = juncCache[ni] = buildJunction(ni);
     return J;
   };
+  // Each edge's mouth distance at both ends (0 where no fitted junction
+  // trims it), for the strip's climb to NODE_LIFT (mouthRamp). Cached: the
+  // lift query is hot and a junction's shape is not free to build.
+  let mouthCache = null;
+  const stripMouths = (ei) => {
+    if (!mouthCache) mouthCache = new Float32Array(g.edges.length * 2).fill(-1);
+    if (mouthCache[ei * 2] < 0) {
+      const e = g.edges[ei];
+      for (let k = 0; k < 2; k++) {
+        const J = junction(k ? e.b : e.a);
+        let m = 0;
+        if (J && !J.legacy) for (const A of J.arms) if (A.ei === ei && A.atA === !k) m = A.m;
+        mouthCache[ei * 2 + k] = m;
+      }
+    }
+    return mouthCache;
+  };
   // onRoad(x, z, 0, false), for the verge test above (the method lives on the
   // returned object).
   const onRoadNoElev = (x, z) => {
@@ -3040,12 +3073,16 @@ export function* cityGenerator(md, cache = {}) {
                 if (vl > vlift) vlift = vl;
                 continue;
               }
-              if (rd <= e.hw) { if (ROAD_LIFT > lift) lift = ROAD_LIFT; }
-              else if (WALK_LIFT > wlift) wlift = WALK_LIFT;
+              if (rd <= e.hw) {
+                const mc = stripMouths(cand[q]), ei2 = cand[q] * 2;
+                const rl = ROAD_LIFT + (NODE_LIFT - ROAD_LIFT) * mouthRamp(rt * e.len, e.len, mc[ei2], mc[ei2 + 1]);
+                if (rl > lift) lift = rl;
+              } else if (WALK_LIFT > wlift) wlift = WALK_LIFT;
               continue;
             }
             if (rd > outer) continue;
-            let l = ROAD_LIFT;
+            const mc = stripMouths(cand[q]), ei2 = cand[q] * 2;
+            let l = ROAD_LIFT + (NODE_LIFT - ROAD_LIFT) * mouthRamp(rt * e.len, e.len, mc[ei2], mc[ei2 + 1]);
             if (rd > outer - RAMP) l *= (outer - rd) / RAMP;
             if (l > lift) lift = l;
           }

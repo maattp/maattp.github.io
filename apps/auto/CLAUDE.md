@@ -2753,6 +2753,29 @@ pavement corners meeting their strips at whatever angle the square made.
 always the top surface where it overlaps a strip. **Graded or elevated arms
 keep the old square** (`legacy`): meshGraded/meshViaduct draw them, untrimmed.
 
+**The strip climbs to it** (v157). Those 4 cm were a step at every mouth, up
+onto the junction and down off it, at every crossing AND every bend node of
+a curved street. Driven at 20 m/s along 40 street chains (63,109 frames at
+fixed dt, heading written each frame) it was a +-37 m/s^2 jolt each time:
+536 frames over 30 m/s^2, now 32 (a legacy square keeps its step; the ramp
+only knows fitted mouths). Each strip rises over the last `MOUTH_RAMP`
+(6 m) before a fitted junction's mouth, and `mouthRamp()` (citygen) is the
+one formula `roadLift` reports and `meshRoad` draws:
+
+- drawn to 16 mm under the polygon, so the paint (12 mm over the strip)
+  stays under it where they meet;
+- the 0.4 m run-on under the polygon does NOT climb: ramped, it lay a few mm
+  under the polygon (a different chord of the terrain) and junctions.mjs
+  counted 1105 stacked samples against 15;
+- cells, edge lines, pavement pieces and gutters break where the climb
+  starts, so the drawn ramp is the straight line the query reports.
+
+junctions.mjs: sink 230 -> 59, every other count unchanged. The kerb gutter
+also moved 6 mm under the lane paint: the edge line lies inside it on any
+street under ~9 m of half-width, and at one height whole kerb lines lost the
+depth test. None of this is the kerb rule in "Smooth the camera, not the
+ground": that ramp moved the query off the drawing, this one moves both.
+
 **The one-height-surface law is kept by construction.** `nodeSurface` asks the
 same `junction(ni)` object meshNode draws: point-in-polygon for the tarmac,
 and exactly the corner quads that are drawn (`junctionPieces` decides which,

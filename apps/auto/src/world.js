@@ -7,7 +7,7 @@ import * as G from './geo.js';
 // Kept in step with main.js. Shadow-caster policy differs by platform, and the
 // difference is worth roughly 40 draw calls a frame.
 const ON_PHONE = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
-import { CHUNK, ROAD_LIFT, NODE_LIFT, WALK_LIFT, TUNNEL_H, VERGE, cityStats } from './citygen.js';
+import { CHUNK, ROAD_LIFT, NODE_LIFT, WALK_LIFT, TUNNEL_H, VERGE, MOUTH_RAMP, mouthRamp, cityStats } from './citygen.js';
 import { Builder, ChunkBuilder, freezeStatic } from './build.js';
 import { hash2, clamp, lerp, distToSeg, segDist } from './util.js';
 
@@ -4538,6 +4538,10 @@ float frLine(float o, float fw, float c, float w) {
     // edge down into the dip where it ends.
     const lidded = ei != null && this._lidByEdge && this._lidByEdge.has(ei);
     const LID_TOP = ROAD_LIFT + 0.04;
+    // Paint climbs to the junction with the strip (meshRoad's rampY).
+    const mA = ei != null && !e.prof ? this.mouthAt(e.a, ei) : 0, mB = ei != null && !e.prof ? this.mouthAt(e.b, ei) : 0;
+    const climb = NODE_Y - 0.016 - ROAD_Y - bias;
+    const rampY = (t) => (mA > 0 || mB > 0 ? climb * mouthRamp(t * e.len, e.len, mA, mB) : 0);
     const yAt = e.prof
       ? (x, z, t, o) => {
         const P = this.city.profAt(e, t);
@@ -4548,7 +4552,7 @@ float frLine(float o, float fw, float c, float w) {
           const l = this.city.lidAt(x, z);
           return l !== null ? l + LID_TOP + (MARK_Y - ROAD_LIFT) + bias : G.terrainHeight(x, z) + MARK_Y + bias;
         }
-        : (x, z) => G.terrainHeight(x, z) + MARK_Y + bias;
+        : (x, z, t) => G.terrainHeight(x, z) + MARK_Y + bias + rampY(t);
     const W = 0.06;                             // half-width of a painted line
     const WHITE = [0.94, 0.93, 0.88];
     const YELLOW = [0.88, 0.72, 0.2];
@@ -4614,8 +4618,15 @@ float frLine(float o, float fw, float c, float w) {
     // subdivide so a line follows the terrain rather than spanning it (and a
     // slab's end, 0.5 m stations, rather than bridging off it)
     const step = lidded ? 1 : 8;
-    for (let s = from; s < till; s += step) {
-      const to = Math.min(till, s + step);
+    // ...and where the climb to a junction starts, so the line follows it
+    const cuts = [];
+    for (let s = from; s < till; s += step) cuts.push(s);
+    for (const m of [mA > 0 ? mA + MOUTH_RAMP : -1, mB > 0 ? e.len - mB - MOUTH_RAMP : -1]) {
+      if (m > from + 0.3 && m < till - 0.3) cuts.push(m);
+    }
+    cuts.sort((p, q) => p - q);
+    for (let i = 0; i < cuts.length; i++) {
+      const s = cuts[i], to = i + 1 < cuts.length ? cuts[i + 1] : till;
       stripe(sideW((s + to) / 2, 0) - inset, s, to, WHITE);
       stripe(-(sideW((s + to) / 2, 1) - inset), s, to, WHITE);
     }
@@ -5746,6 +5757,16 @@ float frLine(float o, float fw, float c, float w) {
     const tA = mA / e.len, tB = 1 - mB / e.len;
     const cA = Math.max(0, mA - 0.4) / e.len, cB = 1 - Math.max(0, mB - 0.4) / e.len;
     const steps = Math.max(1, Math.round((e.len * (cB - cA)) / segLen));
+    // Cells also break where the climb to a junction starts (mouthRamp), so
+    // the drawn ramp is the straight line roadLift reports.
+    const ts = [];
+    for (let s = 0; s <= steps; s++) ts.push(cA + ((cB - cA) * s) / steps);
+    for (const m of [mA > 0 ? (mA + MOUTH_RAMP) / e.len : -1, mB > 0 ? 1 - (mB + MOUTH_RAMP) / e.len : -1, tA, tB]) {
+      if (m <= cA || m >= cB) continue;
+      let k = 1;
+      while (ts[k] < m) k++;
+      if ((ts[k] - m) * e.len > 0.3 && (m - ts[k - 1]) * e.len > 0.3) ts.splice(k, 0, m);
+    }
     const col = e.cls === 'hwy' ? [0.92, 0.92, 0.92] : [1, 1, 1];
     let v = 0;
     // Deterministic sub-centimetre lift per edge, so two carriageways that
@@ -5760,7 +5781,15 @@ float frLine(float o, float fw, float c, float w) {
     // smeared over the road rather than as obvious flicker. That is the "messy
     // surface". 3 cm is far below the 22 cm kerb, so roadLift need not know.
     const bias = hash2(ei | 0, 7) * 0.03;
-    const yAt = (x, z) => G.terrainHeight(x, z) + ROAD_Y + bias;
+    // The last MOUTH_RAMP metres climb to the junction polygon (citygen
+    // mouthRamp), to 16 mm under it at the mouth (so the paint, 12 mm over
+    // the strip, stays under it where they meet). The 0.4 m run-on UNDER the
+    // polygon does not climb: ramped too, it lay a few mm under the polygon
+    // (the two are different chords of the terrain) and fought it -- 1105
+    // stacked samples in tools/junctions.mjs against 15.
+    const climb = NODE_Y - 0.016 - ROAD_Y - bias;
+    const rampY = (t) => (mA > 0 || mB > 0 ? climb * mouthRamp(t * e.len, e.len, mA, mB) : 0);
+    const yAt = (x, z, t, ro) => G.terrainHeight(x, z) + ROAD_Y + bias + (ro ? 0 : rampY(t));
     // Subdivide ACROSS the width as well as along the length.
     //
     // The quad used to span the full carriageway with terrain sampled only at
@@ -5810,9 +5839,10 @@ float frLine(float o, float fw, float c, float w) {
       }
     }
     v = (cA * e.len) / ROAD_TILE;
-    for (let s = 0; s < steps; s++) {
-      const t0 = cA + ((cB - cA) * s) / steps, t1 = cA + ((cB - cA) * (s + 1)) / steps;
-      const seg = (e.len * (cB - cA)) / steps;
+    for (let s = 0; s + 1 < ts.length; s++) {
+      const t0 = ts[s], t1 = ts[s + 1];
+      const seg = e.len * (t1 - t0);
+      const ro = t1 <= tA + 1e-9 || t0 >= tB - 1e-9;   // the run-on under the polygon
       // Fixed metres per texture repeat, in BOTH directions. This used to be
       // `seg / (hw * 2)` with u spanning 0..1 across the road, which tied the
       // asphalt's grain to how wide the road happened to be.
@@ -5851,7 +5881,7 @@ float frLine(float o, float fw, float c, float w) {
             if (cell.length >= 3) {
               const vi = cell.map(([t, o]) => {
                 const [x, z] = P(t, o), w = wear(o);
-                return road.vert(x, yAt(x, z), z, 0, 1, 0, (hw - o) / ROAD_TILE, v0 + ((t - t0) * e.len) / ROAD_TILE, w[0], w[1], w[2]);
+                return road.vert(x, yAt(x, z, t, ro), z, 0, 1, 0, (hw - o) / ROAD_TILE, v0 + ((t - t0) * e.len) / ROAD_TILE, w[0], w[1], w[2]);
               });
               for (let i = 1; i + 1 < vi.length; i++) {
                 const P3 = road.P, q0 = vi[0], q1 = vi[i], q2 = vi[i + 1];
@@ -5868,10 +5898,10 @@ float frLine(float o, float fw, float c, float w) {
         const [ax, az] = P(t0, o0), [bx, bz] = P(t0, o1);
         const [cx, cz] = P(t1, o1), [dx, dz] = P(t1, o0);
         road.quad(
-          [ax, yAt(ax, az), az],
-          [bx, yAt(bx, bz), bz],
-          [cx, yAt(cx, cz), cz],
-          [dx, yAt(dx, dz), dz],
+          [ax, yAt(ax, az, t0, ro), az],
+          [bx, yAt(bx, bz, t0, ro), bz],
+          [cx, yAt(cx, cz, t1, ro), cz],
+          [dx, yAt(dx, dz, t1, ro), dz],
           [0, 1, 0], [u0, v0, u1, v0, u1, v1, u0, v1],
           [wear(o0), wear(o1), wear(o1), wear(o0)]
         );
@@ -5911,7 +5941,8 @@ float frLine(float o, float fw, float c, float w) {
         // gutter drawn at the strip's height there would be buried or fight it.
         const tsA = [];
         for (let s = 0; s <= wsteps; s++) tsA.push(ta + (s / wsteps) * span);
-        for (const tm of [tA, tB]) {
+        const rA = mA > 0 ? (mA + MOUTH_RAMP) / e.len : -1, rB = mB > 0 ? 1 - (mB + MOUTH_RAMP) / e.len : -1;
+        for (const tm of [tA, tB, rA, rB]) {
           if (tm > ta + 0.01 && tm < tb - 0.01) {
             let k = 1;
             while (tsA[k] < tm) k++;
@@ -5999,18 +6030,22 @@ float frLine(float o, float fw, float c, float w) {
           // the single loudest "this is a textured plane, not a street" tell --
           // every real kerb has a strip of accumulated grime against it. Drawn
           // here rather than in the road loop so it stays registered with the
-          // kerb face by construction, on the same lift the lane markings use.
+          // kerb face by construction, just under the lift the lane markings use.
           const gW = 0.5;
           const gv0 = (t0 * e.len) / ROAD_TILE, gv1 = (t1 * e.len) / ROAD_TILE;
-          const gl = inJ ? NODE_Y + 0.012 : MARK_Y + bias;
-          const gy0 = cy0 + gl, gy1 = cy1 + gl;
+          // 6 mm under the paint: the edge line lies inside the gutter on any
+          // street under ~9 m of half-width, and at one height the two fought
+          // (whichever won by rounding -- whole kerb lines went missing).
+          const gl0 = inJ ? NODE_Y + 0.012 : MARK_Y - 0.006 + bias + rampY(t0);
+          const gl1 = inJ ? NODE_Y + 0.012 : MARK_Y - 0.006 + bias + rampY(t1);
+          const gy0 = cy0 + gl0, gy1 = cy1 + gl1;
           const j0x = i0x - ox * gW, j0z = i0z - oz * gW;
           const j1x = i1x - ox * gW, j1z = i1z - oz * gW;
           const gDark = [0.44, 0.45, 0.46];
           const gLite = [0.92, 0.93, 0.93];
           road.quad(
-            [i0x, gy0, i0z], [j0x, G.terrainHeight(j0x, j0z) + gl, j0z],
-            [j1x, G.terrainHeight(j1x, j1z) + gl, j1z], [i1x, gy1, i1z],
+            [i0x, gy0, i0z], [j0x, G.terrainHeight(j0x, j0z) + gl0, j0z],
+            [j1x, G.terrainHeight(j1x, j1z) + gl1, j1z], [i1x, gy1, i1z],
             [0, 1, 0],
             [0, gv0, gW / ROAD_TILE, gv0, gW / ROAD_TILE, gv1, 0, gv1],
             [gDark, gLite, gLite, gDark]
