@@ -2011,6 +2011,37 @@ async function main() {
       if (bad.length) { console.error(`FAIL: Link: ${bad.join('; ')}`); process.exitCode = 1; }
     }
 
+    // --- Link: getting on ------------------------------------------------------------------
+    // ENTER beside a train stopped at an open-air platform boards it (not only
+    // at the street entrance); ENTER at an underground station with no train
+    // in calls the next one, and you board it by yourself when it opens.
+    const lb = await session.eval(`(() => { const d = window.__dbg, L = d.link, P = d.player, out = {};
+  if (P.vehicle) P.exitVehicle(true);
+  // 1: beside a train at Columbia City's platform (not at the entrance)
+  const cc = L.stations.find((q) => q.name === 'Columbia City'), tr = L.tracks.sb;
+  const t = L.trains.find((q) => q.track === tr);
+  t.place(cc.s.sb, 1); t.state = 'dwell'; t.station = cc; t.timer = 15; t.lastStop = cc;
+  const s = cc.s.sb + 20, h = tr.heading(s), sg = tr.nearest(L.tracks.nb.x(cc.s.nb), L.tracks.nb.z(cc.s.nb), 40).side;
+  P.x = tr.x(s) - Math.cos(h) * 3.2 * sg; P.z = tr.z(s) + Math.sin(h) * 3.2 * sg; P.y = tr.y(s) + 0.36;
+  out.besideDist = Math.hypot(P.x - cc.ent.x, P.z - cc.ent.z).toFixed(0);
+  out.beside = L.boardable(P.x, P.y, P.z) === t;
+  // 2: Capitol Hill's entrance, nothing in: call one and wait
+  const ch = L.stations.find((q) => q.name === 'Capitol Hill');
+  for (const q of L.trains) if (q.stationHere() === ch) { q.state = 'run'; q.lastStop = ch; }
+  P.x = ch.ent.x; P.z = ch.ent.z; P.y = ch.ent.y;
+  let said = ''; const sw = L.say; L.say = (m) => { said = m; };
+  out.boardableBefore = !!L.boardable(P.x, P.y, P.z);
+  L.onWait(P.x, P.z);
+  let secs = null;
+  for (let i = 0; i < 30 * 90; i++) { L.update(1 / 30, d.camera); if (!P.onFoot) { secs = i / 30; break; } }
+  L.say = sw;
+  out.call = { said, secs, boarded: !P.onFoot && P.vehicle && P.vehicle.spec.link, at: P.vehicle && P.vehicle.stationHere && P.vehicle.stationHere() && P.vehicle.stationHere().name };
+  if (P.vehicle) P.exitVehicle(true);
+  return out; })()`, true);
+    console.log('\n--- Link: getting on ---------------------------------------');
+    console.log(`  beside a train on the platform (${lb.besideDist} m from the entrance): boards ${lb.beside}; at Capitol Hill with none in: called, boarded ${lb.call.boarded} after ${lb.call.secs} s at ${lb.call.at}`);
+    if (!lb.beside || lb.boardableBefore || !lb.call.boarded || !(lb.call.secs < 40) || lb.call.at !== 'Capitol Hill') { console.error('FAIL: Link: getting on'); process.exitCode = 1; }
+
     // --- bicycles and the bike paths ----------------------------------------------------
     //
     // bikes.js: the network drawn, the docks stocked, a dock bike ridden at
