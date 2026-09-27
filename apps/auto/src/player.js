@@ -289,14 +289,25 @@ export class Player {
     this.h.group.rotation.y = this.heading;
     animateWalk(this.h, clamp(this.speed * 0.16, 0, 0.85), dt, this.speed);
 
-    // run over by a car
+    // Run over by a car: ONCE per hit, and thrown clear to the side. It was
+    // damage every frame of the overlap, with a push straight back along the
+    // car's own path -- so the car met you again the next frame, and one
+    // glancing hit chained into a death.
+    this.hitCd = Math.max(0, (this.hitCd || 0) - dt);
     for (const v of traffic.cars) {
       if (v.mode === 'parked' || Math.abs(v.vLong) < 3) continue;
+      if (Math.abs(v.y - this.y) > 2.5) continue;
       const n = v.nearest(this.x, this.z);
       if (dist2(n.x, n.z, this.x, this.z) < 0.8) {
-        this.game.damagePlayer(Math.abs(v.vLong) * 1.6, 'vehicle');
-        this.x -= v.forward.x * 1.4;
-        this.z -= v.forward.z * 1.4;
+        if (this.hitCd <= 0) {
+          this.hitCd = 1;
+          this.game.damagePlayer(Math.abs(v.vLong) * 1.6, 'vehicle');
+        }
+        // out of its path, to whichever side you were already on
+        const f = v.forward, rx = this.x - v.x, rz = this.z - v.z;
+        const side = (rx * f.z - rz * f.x) >= 0 ? 1 : -1;
+        const out = v.halfWid + 0.9 - Math.abs(rx * f.z - rz * f.x);
+        if (out > 0) { this.x += f.z * side * (out + 0.3); this.z -= f.x * side * (out + 0.3); }
       }
     }
   }

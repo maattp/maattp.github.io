@@ -363,6 +363,18 @@ export class TrafficSystem {
     if (v.extra) { disposeTree(v.extra); v.extra = null; }
   }
 
+  /**
+   * Is there water DRAWN over the ground here? The 10 m water mask
+   * (isBuildable) and the drawn water disagree along every shore: ground under
+   * the sea's plane, a kerb just inside a lake's shore. Parked cars stood in
+   * both. `waterAt` is main.js's (the drawn surface, as the boats use).
+   */
+  wet(x, z) {
+    if (!this.waterAt) return false;
+    const wl = this.waterAt(x, z);
+    return wl !== null && wl > G.terrainHeight(x, z) + 0.05;
+  }
+
   spawnAt(x, z, heading, typeName, color, mode) {
     const v = new Vehicle(this.city, typeName, color);
     v.place(x, z, heading);
@@ -416,7 +428,7 @@ export class TrafficSystem {
         const x = lerp(a.x, b.x, t) - e.dz * off * side;
         const z = lerp(a.z, b.z, t) + e.dx * off * side;
         if (dist2(x, z, px, pz) > PARKED_RADIUS * PARKED_RADIUS) continue;
-        if (!G.isBuildable(x, z) || city.jumpClear(x, z)) continue;
+        if (!G.isBuildable(x, z) || city.jumpClear(x, z) || this.wet(x, z)) continue;
         const heading = Math.atan2(e.dx, e.dz) + (side > 0 ? 0 : Math.PI);
         const tn = CIVILIAN_TYPES[Math.floor(hash2(ei + s * 7, 11) * CIVILIAN_TYPES.length)];
         if (tn === 'bus' || tn === 'artic' || tn === 'garbage') continue;
@@ -478,7 +490,7 @@ export class TrafficSystem {
         const wx = cu * ux - cv * uz, wz = cu * uz + cv * ux;
         if (dist2(wx, wz, px, pz) > LOT_R * LOT_R || G.lotCodeAt(wx, wz) !== code) continue;
         if (this.parkedSlots.has(key) || city.onRoad(wx, wz, 2.5) || city.jumpClear(wx, wz)) continue;
-        if (this.inFootprint(wx, wz, 1.5)) continue;
+        if (this.inFootprint(wx, wz, 1.5) || this.wet(wx, wz)) continue;
         // The seaplane dock's car park runs to the shore, and its landing deck
         // is inside the lot's coverage: a bay there parked a car on the pier.
         if (city.platformAt && city.platformAt(wx, wz) !== null) continue;
@@ -1030,11 +1042,26 @@ export class TrafficSystem {
         if (lk.blocks(v.x + f.x * d, v.z + f.z * d, v.y)) { brake = Math.max(brake, clamp(1.3 - d / (scanLen + 5), 0.5, 1)); break; }
       }
     }
+    // YOU, ON FOOT. It used to look 10 m ahead, which at 15 m/s is well
+    // inside its stopping distance, and only at where you were: a car saw you
+    // step off the kerb once it was too late to stop. Now it looks as far as
+    // it needs to stop (plus a margin), at where you will be by the time it
+    // gets there, and brakes hard when you are inside that.
     if (player.onFoot && Math.abs(player.y - v.y) < 3) {
+      const sp = Math.max(0, v.vLong);
+      const reach = Math.max(10, sp * sp / 12 + sp * 0.6 + 6);
       const rx = player.x - v.x, rz = player.z - v.z;
       const fwd = rx * f.x + rz * f.z;
-      const lat = Math.abs(rx * f.z - rz * f.x);
-      if (fwd > 0 && fwd < 10 && lat < 2.2) brake = Math.max(brake, 0.8);
+      if (fwd > 0 && fwd < reach) {
+        const t = Math.min(2, fwd / Math.max(sp, 3));
+        const pv = player.speed || 0, ph = player.heading || 0;
+        const qx = rx + Math.sin(ph) * pv * t, qz = rz + Math.cos(ph) * pv * t;
+        const lat = Math.min(Math.abs(rx * f.z - rz * f.x), Math.abs(qx * f.z - qz * f.x));
+        if (lat < v.halfWid + 1.3) {
+          const stopD = sp * sp / 12 + 3;
+          brake = Math.max(brake, fwd < stopD + 4 ? 1 : 0.6);
+        }
+      }
     }
     const targetSpeed = Math.min(ee.spd, 8 + ee.spd) * (v.panic > 0 ? 1.5 : 1);
     const throttle = brake > 0.2 ? 0 : clamp((targetSpeed - v.vLong) * 0.4, 0, 1);

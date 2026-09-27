@@ -361,19 +361,20 @@ async function main() {
     // bridge must be found and clear the lake by 3 m. Everything else is held
     // to the count it had when this was written, so nothing new goes under:
     // low decks whose ends sit on a dug shore (ferry docks, Harbor Island's
-    // ramps) and low ground inside Lake Washington's 25 km box (Tukwila,
-    // Bellevue's shore) -- see "Known gaps" in apps/auto/CLAUDE.md. Lower
-    // these when one is fixed.
-    const SUBMERGED_MAJOR_MAX = 50, SUBMERGED_STREETS_MAX = 313;
+    // ramps) and shore streets under a lake's 40 m drawn margin -- see "Known
+    // gaps" in apps/auto/CLAUDE.md. Lower these when one is fixed.
+    // v153: lakes drawn over their own water, not their boxes: 50 -> 36, 313 -> 168
+    const SUBMERGED_MAJOR_MAX = 36, SUBMERGED_STREETS_MAX = 168;
     const sub = await session.eval(`(() => {
       const d = window.__dbg, c = d.city, w = d.world, G = d.G, THREE = d.THREE;
       // The water DRAWN at a point, worked out here rather than asked of the
-      // game: the sea plane at 0 everywhere, each lake's plane over its whole
-      // box, the canal's at its level.
+      // game: the sea plane at 0 everywhere, each lake's plane over its own
+      // water (the mask its plane is drawn through, G.lakeMask), the canal's
+      // at its level.
       const canal = G.shipCanal(w.lakeSpecs || []);
       const W = (x, z) => {
         let lv = 0;
-        for (const l of w.lakeSpecs || []) if (x >= l.x0 && x <= l.x1 && z >= l.z0 && z <= l.z1) lv = Math.max(lv, l.level);
+        for (const l of w.lakeSpecs || []) if (G.inLake(l, x, z)) lv = Math.max(lv, l.level);
         const cl = canal && canal.at(x, z);
         return cl != null ? Math.max(lv, cl) : lv;
       };
@@ -2154,6 +2155,78 @@ async function main() {
       if (!isl.court || !isl.onCourt || !isl.pickle || isl.pickle.state !== 'over') bad.push('pickleball');
       if (bad.length) { console.error(`FAIL: islands: ${bad.join('; ')}`); process.exitCode = 1; }
     }
+
+    // --- traffic and you, on foot ------------------------------------------------------
+    // Step into the lane 16-28 m ahead of a moving AI car at a walk: it must
+    // see you (where you will be, as far out as it needs to stop) and stop.
+    // Master before v153 hit you in half of these.
+    const ro = await session.eval(`(() => { const d = window.__dbg, T = d.traffic, P = d.player, G = d.G;
+  if (P.vehicle) P.exitVehicle(true);
+  let hits = 0, trials = 0, dmg = 0, deaths = 0;
+  const cam = new d.THREE.Vector3(0, 0, -1);
+  for (let k = 0; k < 20; k++) {
+    // a moving car
+    P.x = 150 + (k % 5) * 300; P.z = 200 + Math.floor(k / 5) * 250; P.y = d.city.groundAt(P.x, P.z, null);
+    for (let i = 0; i < 90; i++) T.update(1 / 30, P.x, P.z, cam, P);
+    const v = T.cars.find((c) => c.mode === 'traffic' && c.vLong > 9 && Math.hypot(c.x - P.x, c.z - P.z) < 300);
+    if (!v) continue;
+    trials++;
+    const f = v.forward, fwd = 16 + (k % 4) * 4, side = k % 2 ? 1 : -1;
+    // start 3.5 m to the side, 16-28 m ahead, walking across its path
+    P.x = v.x + f.x * fwd + f.z * side * 3.5; P.z = v.z + f.z * fwd - f.x * side * 3.5; P.y = v.y;
+    P.heading = Math.atan2(-f.z * side, f.x * side); P.speed = 1.4;
+    P.health = 100; d.game.dead = false; P.hitCd = 0;
+    let hit = false;
+    for (let i = 0; i < 30 * 5; i++) {
+      T.update(1 / 30, P.x, P.z, cam, P);
+      P.x += Math.sin(P.heading) * 1.4 / 30; P.z += Math.cos(P.heading) * 1.4 / 30; P.y = v.y;
+      // the run-over test, as updateFoot does it
+      for (const c of T.cars) {
+        if (c.mode === 'parked' || Math.abs(c.vLong) < 3 || Math.abs(c.y - P.y) > 2.5) continue;
+        const n = c.nearest(P.x, P.z);
+        if ((n.x - P.x) ** 2 + (n.z - P.z) ** 2 < 0.8) { hit = true; }
+      }
+    }
+    if (hit) hits++;
+  }
+  return { trials, hits };
+})()`, true);
+    // No parked car under drawn water: low streets near every shore, and the
+    // Duwamish valley that Lake Washington's box used to flood.
+    const wp = await session.eval(`(() => { const d = window.__dbg, T = d.traffic, P = d.player, G = d.G, W = d.world, C = d.city;
+  if (P.vehicle) P.exitVehicle(true);
+  // what is DRAWN wet: a lake plane where the build draws one, the sea under -0.15
+  const drawn = (x, z) => { for (const l of W.lakeSpecs) { const on = G.inLake ? G.inLake(l, x, z) : (x >= l.x0 && x <= l.x1 && z >= l.z0 && z <= l.z1); if (on) return l.level; }
+    const c = W.canal; if (c) { const lv = c.at(x, z); if (lv !== null) return lv; } return G.isWater(x, z) || G.terrainHeight(x, z) < -0.15 ? 0 : null; };
+  // low street nodes near water, spread out
+  const spots = [];
+  for (let i = 0; i < C.nodes.length && spots.length < 60; i += 23) {
+    const n = C.nodes[i]; if (n.elev) continue;
+    const t = G.terrainHeight(n.x, n.z); if (t > 7) continue;
+    let near = false; for (let a = 0; a < 8; a++) if (G.isWater(n.x + Math.cos(a) * 150, n.z + Math.sin(a) * 150)) near = true;
+    if (!near) continue;
+    if (spots.some((s) => Math.hypot(s[0] - n.x, s[1] - n.z) < 350)) continue;
+    spots.push([n.x, n.z]);
+  }
+  for (let z = 9000; z <= 12600; z += 500) for (let x = 1500; x <= 4500; x += 500) spots.push([x, z]);
+  const cam = new d.THREE.Vector3(0, 0, -1);
+  const bad = new Set(); let parked = 0;
+  for (const [x, z] of spots) {
+    P.x = x; P.z = z; P.y = C.groundAt(x, z, null);
+    for (let k = 0; k < 20; k++) T.update(1 / 30, x, z, cam, P);
+    for (const v of T.cars) {
+      if (v.mode !== 'parked' && !(v.mode === 'apron' && !v.spec.boat && !v.spec.floats)) continue;
+      parked++;
+      const wl = drawn(v.x, v.z);
+      if (wl !== null && wl > G.terrainHeight(v.x, v.z) + 0.05) bad.add((v.x | 0) + ',' + (v.z | 0));
+    }
+  }
+  return { spots: spots.length, parkedSeen: parked, underWater: bad.size, examples: [...bad].slice(0, 8) };
+})()`, true);
+    console.log('\n--- traffic and you ----------------------------------------');
+    console.log(`  stepping into the lane ahead of a moving car: hit ${ro.hits} of ${ro.trials}; parked cars under water ${wp.underWater} of ${wp.parkedSeen} seen at ${wp.spots} low spots ${wp.examples.join(' ')}`);
+    if (ro.trials < 10 || ro.hits > 1) { console.error('FAIL: AI cars run you over'); process.exitCode = 1; }
+    if (wp.underWater) { console.error('FAIL: parked cars under the water'); process.exitCode = 1; }
 
     // --- the articulated bus ---------------------------------------------------
     //

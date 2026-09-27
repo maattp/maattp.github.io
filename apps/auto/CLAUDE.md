@@ -1917,6 +1917,19 @@ midline to any near-parallel opposing edge within 3 m of height. Stacked 6.6 m
 apart, SR-99 no longer trips it past the north mouths. Two-way streets are
 unchanged, at 0.48 hw right of centre.
 
+**AI cars see you on foot as far out as they need to stop** (v153). The
+scan used to look 10 m ahead at where you were -- well inside a car's
+stopping distance at 15 m/s -- so a car saw you step off the kerb too late.
+It now looks `v^2/12 + 0.6 v + 6` m ahead (at least 10), at where you will be
+by the time it gets there, and brakes fully inside its stopping distance. And
+a hit is ONCE (`player.hitCd`, 1 s) and throws you clear to the side you were
+on: it was damage every frame of the overlap with a push straight back along
+the car's path, so one glancing hit chained into a death. verify's "traffic
+and you" steps into the lane 16-28 m ahead of moving cars (master: 20 hits in
+40; now 0). **No parked car under drawn water** either: kerb and lot slots
+are refused where `traffic.waterAt` (the drawn surface, the boats' query)
+stands over the ground.
+
 **Police route legally, except in a pursuit on surface streets.** `findPath`
 never takes a freeway or ramp against its flow, and may run a surface one-way
 the wrong way at 3x cost, which is what a unit cutting a block does. Inside
@@ -5015,19 +5028,20 @@ is the page half; load it into any booted page to re-install edited jumps
 
 ## Known gaps
 
-- **Roads still under the water drawn over them: 50 deck/freeway samples and
-  313 street samples** (verify's ceilings). Two causes. (1) A lake's plane
-  covers its whole bounding box, and Lake Washington's is 25 km tall: dry
-  ground below 5.09 m inside it floods, so Tukwila's Duwamish valley (South
-  102nd/104th, East Marginal Way, the river bridges) and bits of Bellevue's and
-  Kirkland's shore are under a lake 4 km away. The fix is to mask each lake's
-  plane to its own water, as the canal's already is. (2) A short deck whose end
-  node sits on a shore the raster dug as bed follows the bed down: the East
-  Duwamish Waterway Bridge's end, Harbor Island's ramps, the Colman, Fauntleroy
-  and Southworth ferry docks. A floor in `gradeRoads` does not reach these:
-  their ends are anchors pinned to draped streets on the same dug ground, so
-  the ground itself has to come up. Point Monroe (Bainbridge) is a spit the
-  DEM has below sea level.
+- **Roads still under the water drawn over them: 36 deck/freeway samples and
+  168 street samples** (verify's ceilings). v153 fixed the big one: a lake's
+  plane covered its whole bounding box, and Lake Washington's is 25 km tall,
+  so Tukwila's Duwamish valley and bits of Bellevue's and Kirkland's shore
+  were drawn under a lake 4 km away (parked cars and all). Each lake is now
+  its own water (`G.lakeMask`: the largest connected wet body in its box on a
+  20 m grid, grown 40 m for the drawn shore), and the plane, `waterLevelAt`,
+  `drawnWaterLevel` and citygen's `standY` all read it. What is left: shore
+  streets inside that 40 m margin whose ground the DEM has below the lake,
+  and short decks whose end nodes sit on a shore the raster dug as bed (the
+  East Duwamish Waterway Bridge's end, Harbor Island's ramps, the ferry
+  docks) -- their ends are anchors pinned to draped streets on the same dug
+  ground, so the ground itself has to come up. Point Monroe (Bainbridge) is
+  a spit the DEM has below sea level.
 - **The monorail's doors do not open, nobody rides with you, and the terminal
   interiors are not walkable** beyond Seattle Center's platforms and ramp.
 - **No Kenmore Air Harbor.** The real floatplane base at the north end of Lake
