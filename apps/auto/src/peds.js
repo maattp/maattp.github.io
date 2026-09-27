@@ -2233,6 +2233,42 @@ export function animateWalk(h, amp, dt, speed) {
           L.wx = m[0] * (t.x + ex) + m[8] * (t.zf + ez) + m[12];
           L.wz = m[2] * (t.x + ex) + m[10] * (t.zf + ez) + m[14];
         }
+        // NEVER ACROSS THE BODY. A lock holds the foot while the body turns
+        // over it, and the stick turns the player at up to 10 rad/s even at a
+        // standstill: a light pull back (a reverse at walking pace, both feet
+        // down) swung the body round its planted feet and the right foot came
+        // to rest beside or past the left -- crossed legs, or one leg flopped
+        // diagonally, and standing still nothing lifted it again. A lock may
+        // hold a foot only so far sideways, and never over the midline; past
+        // that it is dragged, as past EMAX.
+        const side = k === 0 ? -1 : 1, XIN = 0.05 / sc, XOFF = 0.14 / sc;
+        let exc = clamp(ex, -XOFF, XOFF);
+        const xin = Math.min(XIN, side * t.x);   // never inside where it stands anyway
+        if (side * (t.x + exc) < xin) exc = side * xin - t.x;
+        if (exc !== ex) {
+          ex = exc;
+          L.wx = m[0] * (t.x + ex) + m[8] * (t.zf + ez) + m[12];
+          L.wz = m[2] * (t.x + ex) + m[10] * (t.zf + ez) + m[14];
+        }
+        // STANDING STILL, A FOOT OFF ITS SPOT STEPS BACK TO IT. Stopped, the
+        // cycle stops and no foot ever lifts, so whatever a turn or a stop left
+        // a lock holding was held for good. One foot at a time, the one further
+        // out first: lifted and set down on its spot over ~0.3 s.
+        if (h.gspd < 0.3) {
+          const el2 = Math.hypot(ex, ez);
+          if (h.settleK == null && el2 > 0.035 / sc) {
+            const o = h.locks[1 - k];
+            if (Math.hypot(o.ex, o.ez) <= el2 || h.settleK === undefined) h.settleK = k;
+          }
+          if (h.settleK === k) {
+            const f = Math.exp(-11 * dt);
+            ex *= f; ez *= f;
+            t.y += Math.min(0.07 / sc, el2 * 0.7);
+            if (Math.hypot(ex, ez) < 0.006 / sc) { ex = 0; ez = 0; h.settleK = null; }
+            L.wx = m[0] * (t.x + ex) + m[8] * (t.zf + ez) + m[12];
+            L.wz = m[2] * (t.x + ex) + m[10] * (t.zf + ez) + m[14];
+          }
+        } else h.settleK = null;
         L.ex = ex; L.ez = ez;
         t.x += ex; t.z += ez;
       } else {
