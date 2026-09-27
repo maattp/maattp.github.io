@@ -91,7 +91,7 @@ export class Player {
         return false;
       }
       if (spot) { ox = spot.x; oz = spot.z; oy = spot.y + 1.5; }
-    } else if (v.spec.boat || v.spec.floats) {
+    } else if (v.spec.boat || v.spec.floats || v.afloat) {
       // Either beam, then over the bow and the stern, a little further out
       // each ring: the first spot that is not water (a platform deck counts,
       // groundAt answers it) and not inside a rail.
@@ -322,7 +322,7 @@ export class Player {
     // below the lake beside it. The level is a reference height, not a region.
     const wl = this.world.waterLevelAt(v.x, v.z);
     // A floatplane's pontoons make water a surface, not a hazard.
-    const wading = !v.spec.floats && !v.spec.boat && wl !== null && G.isWater(v.x, v.z) && v.y < wl - 0.35;
+    const wading = !v.spec.floats && !v.spec.boat && !v.spec.amphib && wl !== null && G.isWater(v.x, v.z) && v.y < wl - 0.35;
 
     v.update(dt, {
       // A drowned engine makes no power and the wheels find nothing to push
@@ -368,13 +368,13 @@ export class Player {
     });
     // A boat's shore is its wall: updateBoat refuses the move and leaves the
     // impact, which is a crash like any other.
-    if (v.spec.boat && v.shoreHit > 3 && this.crashCd <= 0) {
+    if ((v.spec.boat || v.afloat) && v.shoreHit > 3 && this.crashCd <= 0) {
       this.crashCd = 0.4;
       this.game.onCrash(v.shoreHit, false);
       if (v.shoreHit > 9) this.game.damagePlayer(v.shoreHit * 0.4, 'crash');
     }
     // Contact, held briefly: the grinding loop follows it (see audio.js).
-    if (impact > 0 || (v.spec.boat && v.shoreHit > 0)) this.scrapeT = 0.15;
+    if (impact > 0 || ((v.spec.boat || v.afloat) && v.shoreHit > 0)) this.scrapeT = 0.15;
     // Deep enough to be over the roof rather than merely through a ford. One
     // test now, against the local surface, instead of a separate sea-only path.
     if (wading && v.y < wl - 1.6) this.game.onCarSank(v);

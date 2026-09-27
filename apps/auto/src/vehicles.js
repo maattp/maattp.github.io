@@ -216,6 +216,8 @@ export const TYPES = {
   // the articulated bus: the front section and the trailing rear (buildArticFront)
   artic: deriveSpec({ wheelbase: 6.7, len: 11.4, wid: 2.59, wheelR: 0.50, sill: 0.50, belt: 1.30, roof: 3.10, cab: [-0.48, 0.48], hand: 'artic', livery: 0xc41a24, bus: true, artic: true, boxy: 3, mass: 6.0, acc: 1.25, topKph: 90, brakeM: 58, latG: 0.58 }),
   articRear: deriveSpec({ wheelbase: 5.3, len: 6.5, wid: 2.59, wheelR: 0.50, sill: 0.50, belt: 1.30, roof: 3.10, cab: [-0.48, 0.48], hand: 'articRear', livery: 0xc41a24, bus: true, trailer: true, boxy: 3, mass: 3.0, acc: 1.25, topKph: 90, brakeM: 58, latG: 0.58 }),
+  // the Duck Tour's amphibious DUKW: a truck on land, a boat in the water (updateDuck)
+  duck: deriveSpec({ wheelbase: 5.2, len: 9.5, wid: 2.52, wheelR: 0.56, sill: 0.62, belt: 2.05, roof: 3.4, cab: [-0.42, 0.26], hand: 'duck', livery: 0xf2c230, amphib: true, diesel: true, mass: 6.5, acc: 1.35, topKph: 80, brakeM: 55, latG: 0.55 }),
   bus: deriveSpec({ wheelbase: 6.0,len: 12.0, wid: 2.55, wheelR: 0.50, sill: 0.50, belt: 1.30, roof: 3.10, cab: [-0.48, 0.48], hand: 'bus', livery: 0xeceae3, bus: true, boxy: 3, mass: 4.5, acc: 1.4, topKph: 95, brakeM: 52, latG: 0.62 }),
   boxtruck: deriveSpec({ wheelbase: 4.3,len: 7.5, wid: 2.38, wheelR: 0.46, sill: 0.62, belt: 1.55, roof: 2.55, cab: [0.14, 0.46], cargo: 2.55, hand: 'boxtruck', boxy: 2, mass: 3.0, acc: 2.5, topKph: 125, brakeM: 51, latG: 0.66 }),
   ambulance: deriveSpec({ wheelbase: 3.9,len: 6.3, wid: 2.28, wheelR: 0.42, sill: 0.56, belt: 1.42, roof: 2.35, cab: [0.16, 0.46], cargo: 2.25, hand: 'ambulance', livery: 0xf4f4f0, boxy: 2, emergency: true, mass: 2.4, acc: 3.2, topKph: 155, brakeM: 48, latG: 0.72 }),
@@ -2500,6 +2502,124 @@ const HULL_BOTTOM = [0.80, 0.81, 0.79];   // a trailer boat's white bottom: the 
  * bench, consoles, and a wrap-round screen in trim glass you look through at
  * all of it. The driver is `matte.crew`, so a moored boat is empty.
  */
+/**
+ * The Duck Tour's DUKW (after the WWII amphibious truck the Seattle tours
+ * ran): a boat hull 9.5 m long on six wheels in arches cut into its sides, an
+ * open passenger tub under a striped canopy on posts, a windscreen, benches
+ * of tourists, and a duck's face on the bow -- eyes on the flanks and a bill
+ * on the stem. Origin on the ground under the centre; nose +z.
+ */
+export const DUCK = { draft: 1.28, floor: 1.42, floatIn: 1.25, floatOut: 0.85, waterKph: 18, waterAcc: 1.5, axles: [2.95, -1.75, -3.15], track: 1.0 };
+function buildDuck(spec, paint, trim, matte) {
+  //        z     half-beam  bottomY  topY
+  const S = [
+    [-4.72, 1.18, 0.84, 2.00],
+    [-4.35, 1.24, 0.66, 2.02],
+    [-2.00, 1.26, 0.62, 2.05],
+    [1.60, 1.26, 0.62, 2.05],
+    [2.90, 1.23, 0.68, 2.06],
+    [3.60, 1.10, 0.92, 2.08],
+    [4.20, 0.86, 1.26, 2.10],
+    [4.58, 0.56, 1.60, 2.12],
+    [4.76, 0.30, 1.86, 2.12],
+  ];
+  const at = (z) => {
+    for (let i = 1; i < S.length; i++) if (z <= S[i][0]) { const a = S[i - 1], b = S[i], t = (z - a[0]) / (b[0] - a[0]); return a.map((v, k) => v + (b[k] - v) * t); }
+    return S[S.length - 1].slice();
+  };
+  const R = spec.wheelR, AX = DUCK.axles;
+  // the arch over each wheel: the hull side's bottom edge lifted round it
+  const arch = (z) => { let l = 0; for (const wz of AX) { const d = Math.abs(z - wz); if (d < R + 0.2) l = Math.max(l, Math.sqrt((R + 0.2) ** 2 - d * d) * 0.95 + 0.52 - 0.62); } return l; };
+  const Z = [];
+  for (let z = S[0][0]; z < S[S.length - 1][0]; z += 0.12) Z.push(z);
+  Z.push(S[S.length - 1][0]);
+  for (const sd of [-1, 1]) {
+    // the topsides, painted: from the chine (lifted over the arches) to the gunwale
+    paint.patch(Z.map((z) => { const [, hb, by, ty] = at(z); const b = by + Math.max(0, arch(z)); return [[sd * hb * 0.94, b, z], [sd * hb, Math.max(b, by + 0.16), z], [sd * hb, ty, z]]; }), WHITE, [sd, 0, 0]);
+    // a sea-blue boot stripe low on the side, and a white rub strake under the gunwale
+    matte.patch(Z.map((z) => { const [, hb, by] = at(z); const b = by + 0.22 + Math.max(0, arch(z)); return [[sd * (hb + 0.006), Math.min(b, by + 1.2), z], [sd * (hb + 0.006), Math.min(b + 0.14, by + 1.3), z]]; }), [0.10, 0.34, 0.62], [sd, 0, 0]);
+    for (let i = 0; i < S.length - 1; i++) matte.tube([sd * (S[i][1] + 0.02), S[i][3] - 0.06, S[i][0]], [sd * (S[i + 1][1] + 0.02), S[i + 1][3] - 0.06, S[i + 1][0]], 0.05, 6, [0.94, 0.94, 0.9], false);
+  }
+  // the bottom and the wheel wells
+  matte.patch(Z.map((z) => { const [, hb, by] = at(z); return [[-hb * 0.94, by, z], [0, by - 0.05, z], [hb * 0.94, by, z]]; }), [0.16, 0.17, 0.18], [0, -1, 0]);
+  for (const wz of AX) for (const sd of [-1, 1]) {
+    matte.box(sd * 0.98, 0.5, wz, 0.56, 0.72, 2 * R + 0.36, 0, CAVITY);
+  }
+  // transom
+  for (const sd of [-1, 1]) {
+    const [z, hb, by, ty] = S[0];
+    paint.patch([[[sd * hb * 0.94, by, z], [sd * hb, by + 0.16, z], [sd * hb, ty, z]], [[0, by - 0.05, z], [0, by + 0.16, z], [0, ty, z]]], WHITE, [0, 0, -1]);
+  }
+  // decks: aft, and the foredeck over the bow (cambered), in the hull colour
+  const deck = (z0, z1) => {
+    const rows = [];
+    for (const z of Z.filter((q) => q >= z0 - 1e-6 && q <= z1 + 1e-6)) {
+      const [, hb, , ty] = at(z);
+      rows.push([-1, -0.5, 0, 0.5, 1].map((u) => [u * hb, ty + 0.06 * (1 - u * u), z]));
+    }
+    paint.patch(rows, WHITE, [0, 1, 0]);
+  };
+  deck(S[0][0], -3.95); deck(2.45, S[S.length - 1][0]);
+  // the tub: floor, liners, the bulkheads fore and aft
+  const F = DUCK.floor, TZ0 = -3.95, TZ1 = 2.45;
+  matte.quad([-1.14, F, TZ0], [1.14, F, TZ0], [1.14, F, TZ1], [-1.14, F, TZ1], [0, 1, 0], [0, 0, 1, 0, 1, 1, 0, 1], [0.28, 0.3, 0.32]);
+  for (const sd of [-1, 1]) matte.quad([sd * 1.16, F, TZ0], [sd * 1.16, F, TZ1], [sd * 1.16, 2.04, TZ1], [sd * 1.16, 2.04, TZ0], [-sd, 0, 0], [0, 0, 1, 0, 1, 1, 0, 1], [0.78, 0.76, 0.7]);
+  matte.quad([-1.16, F, TZ1], [1.16, F, TZ1], [1.16, 2.08, TZ1], [-1.16, 2.08, TZ1], [0, 0, -1], [0, 0, 1, 0, 1, 1, 0, 1], [0.78, 0.76, 0.7]);
+  matte.quad([1.16, F, TZ0], [-1.16, F, TZ0], [-1.16, 2.02, TZ0], [1.16, 2.02, TZ0], [0, 0, 1], [0, 0, 1, 0, 1, 1, 0, 1], [0.78, 0.76, 0.7]);
+  // the windscreen, framed
+  const WZ = 2.4, WY0 = 2.08, WY1 = 2.95;
+  trim.quad([-1.12, WY0, WZ], [1.12, WY0, WZ], [1.12, WY1, WZ - 0.12], [-1.12, WY1, WZ - 0.12], [0, 0.14, 1], [0, 0, 1, 0, 1, 1, 0, 1], GLASS);
+  for (const x of [-1.14, 0, 1.14]) matte.tube([x, WY0, WZ], [x, WY1, WZ - 0.12], 0.035, 5, [0.2, 0.2, 0.22], false);
+  matte.tube([-1.14, WY1, WZ - 0.12], [1.14, WY1, WZ - 0.12], 0.035, 5, [0.2, 0.2, 0.22], false);
+  // the canopy: posts, a striped roof, a scalloped valance
+  const CY = 3.36, CZ0 = -4.1, CZ1 = 2.3;
+  for (const z of [CZ0 + 0.1, -1.5, 0.6, CZ1 - 0.05]) for (const sd of [-1, 1]) matte.tube([sd * 1.18, 2.04, z], [sd * 1.18, CY, z], 0.04, 6, [0.9, 0.9, 0.88], false);
+  for (let k = 0; k < 7; k++) {
+    const x0 = -1.3 + k * (2.6 / 7);
+    matte.box(x0 + 2.6 / 14, CY, (CZ0 + CZ1) / 2, 2.6 / 7 + 0.002, 0.07, CZ1 - CZ0 + 0.3, 0, k % 2 ? [0.94, 0.94, 0.9] : [0.10, 0.36, 0.66]);
+  }
+  for (const sd of [-1, 1]) matte.box(sd * 1.3, CY - 0.22, (CZ0 + CZ1) / 2, 0.03, 0.22, CZ1 - CZ0 + 0.3, 0, [0.10, 0.36, 0.66]);
+  matte.box(0, CY - 0.22, CZ1 + 0.15, 2.62, 0.22, 0.03, 0, [0.94, 0.72, 0.1]);
+  matte.box(0, CY - 0.22, CZ0 - 0.15, 2.62, 0.22, 0.03, 0, [0.94, 0.72, 0.1]);
+  // the driver's seat and wheel (right, +x), and six benches of tourists behind
+  const H = 0.78;
+  rakedBox(matte, 0.55, F, 1.55, 0.6, 0.62, 0.14, 0.05, [0.62, 0.12, 0.1]);
+  wheelRim(matte, 0.55, F + 0.72, 2.12, 0.22);
+  if (matte.crew) occupant(matte.crew, 0.55, F + 0.08, 1.55, H, [0.55, F + 0.72, 2.12]);
+  const shirts = [[0.85, 0.2, 0.2], [0.2, 0.5, 0.85], [0.95, 0.8, 0.2], [0.25, 0.65, 0.35], [0.9, 0.9, 0.88], [0.55, 0.3, 0.65]];
+  let n = 0;
+  for (let z = 0.75; z > TZ0 + 0.3; z -= 0.8) {
+    for (const sd of [-1, 1]) {
+      rakedBox(matte, sd * 0.55, F, z - 0.2, 0.96, 0.6, 0.12, 0.05, [0.62, 0.12, 0.1]);
+      if (matte.crew) for (const dx of [-0.24, 0.24]) {
+        if ((n++ * 7) % 5 === 0) continue;
+        occupant(matte.crew, sd * 0.55 + dx, F + 0.08, z, H);
+        matte.crew.box(sd * 0.55 + dx, F + 0.12, z + 0.1, 0.3, 0.42, 0.2, 0, shirts[n % shirts.length]);
+      }
+    }
+  }
+  // the duck's face: eyes on the bow flanks, a bill on the stem
+  for (const sd of [-1, 1]) {
+    const z = 3.95, [, hb] = at(z);
+    matte.spheroid(sd * (hb + 0.02), 1.72, z, 0.3, 10, 6, [0.97, 0.97, 0.95], 1);
+    matte.spheroid(sd * (hb + 0.2), 1.74, z + 0.08, 0.13, 8, 5, [0.04, 0.04, 0.05], 1);
+  }
+  matte.spheroid(0, 1.78, 4.92, 0.5, 12, 6, [0.98, 0.56, 0.12], 0.32);
+  matte.spheroid(0, 1.62, 4.86, 0.44, 12, 6, [0.92, 0.48, 0.08], 0.26);
+  // lamps, a propeller and rudder under the stern, a life ring
+  for (const sd of [-1, 1]) {
+    trim.box(sd * 0.62, 1.55, 4.32, 0.26, 0.2, 0.08, 0, LAMP);
+    trim.box(sd * 0.92, 1.5, -4.74, 0.18, 0.22, 0.05, 0, TAILC);
+  }
+  matte.box(0, 0.55, -4.55, 0.06, 0.62, 0.36, 0, [0.2, 0.2, 0.22]);
+  matte.spheroid(0, 0.72, -4.4, 0.24, 8, 4, [0.72, 0.58, 0.28], 0.25);
+  for (let k = 0; k < 10; k++) {
+    const a0 = k / 10 * Math.PI * 2, a1 = (k + 1) / 10 * Math.PI * 2;
+    matte.tube([Math.cos(a0) * 0.32, 2.5 + Math.sin(a0) * 0.32, -4.18], [Math.cos(a1) * 0.32, 2.5 + Math.sin(a1) * 0.32, -4.18], 0.07, 5, k % 2 ? [0.95, 0.95, 0.92] : [0.92, 0.3, 0.12], false);
+  }
+  return AX.flatMap((z) => [[-DUCK.track, R, z, R, 0.36], [DUCK.track, R, z, R, 0.36]]);
+}
+
 function buildBoat(spec, paint, trim, matte) {
   //        z      hb    sheer  chineX chineY  keelY
   const S = [
@@ -5839,7 +5959,7 @@ const HAND_BUILT = {
   boxtruck: (s, p, t, m) => buildTruck(s, p, t, m, TRUCK_LOOKS.boxtruck),
   garbage: (s, p, t, m) => buildTruck(s, p, t, m, TRUCK_LOOKS.garbage),
   convertible: buildConvertible, cruiser: buildCruiser, sportbike: buildSportbike,
-  atv: buildAtv, boat: buildBoat, jetski: buildJetski, kayak: buildKayak, artic: buildArticFront, articRear: buildArticRear, balloon: buildBalloon,
+  atv: buildAtv, boat: buildBoat, duck: buildDuck, jetski: buildJetski, kayak: buildKayak, artic: buildArticFront, articRear: buildArticRear, balloon: buildBalloon,
 };
 
 /**
@@ -6359,6 +6479,7 @@ export class Vehicle {
     this._fwd = { x: 0, z: 1 }; this._fwdH = NaN;
     this._acc = 0; this._still = 0;   // traffic.js: half-rate AI time, parked-settle frames
     this._t = 0; this.shoreHit = 0; this._surf = NaN;   // boats: wave clock, last grounding impact, eased surface
+    this.afloat = false; this.splashed = false; this._waterSpec = null;   // the Duck Tour's DUKW (updateDuck)
     this._bob = (typeName.length * 1.37 + (color & 0xff) * 0.021) % 6.28;
   }
 
@@ -7118,9 +7239,45 @@ export class Vehicle {
     return { dx, dz };
   }
 
+  /**
+   * The DUKW: afloat when the water under it is deeper than DUCK.floatIn (it
+   * drove down a ramp or off a bank), back on its wheels when it is shallower
+   * than floatOut AND the bed ahead is gentle enough to climb (at a steep bank
+   * the boat's shore rule holds it off). Afloat it IS the boat -- updateBoat
+   * with a slow hull (a DUKW makes ~10 km/h in the water) -- drawn DUCK.draft
+   * below its waterline. Returns true when it handled the frame; false hands
+   * it to the ground model.
+   */
+  updateDuck(dt, input) {
+    const wl = waterQuery ? waterQuery(this.x, this.z) : null;
+    // The mask's shore band disagrees with the drawn water by metres (10 m
+    // cells against the 40 m DEM): off the ramp it said "dry" over 2.7 m of
+    // drawn lake and the duck drove the bed. Water is wherever the ground is
+    // under the local surface, the mask or not.
+    const ground = wl !== null ? this.city.groundAt(this.x, this.z, this.afloat ? wl - DUCK.draft + 0.5 : this.y + 0.5) : 0;
+    const wet = wl !== null && (G.isWater(this.x, this.z) || ground < wl - 0.3);
+    const depth = wet ? wl - ground : -1;
+    if (!this.afloat && depth > DUCK.floatIn) {
+      this.afloat = true; this._surf = NaN; this.vLat *= 0.3; this.splashed = true;
+    } else if (this.afloat && depth < DUCK.floatOut) {
+      const f = this.forward, ahead = this.city.groundAt(this.x + f.x * 3, this.z + f.z * 3, ground + 1);
+      if (ahead - ground < 1.2 || !wet) { this.afloat = false; this.y = Math.max(this.y, ground); this.vy = 0; }
+    } else if (this.afloat && !wet) this.afloat = false;
+    if (!this.afloat) return false;
+    const saved = this.spec;
+    this.spec = this._waterSpec || (this._waterSpec = Object.assign(Object.create(saved), {
+      topKph: DUCK.waterKph, acc: DUCK.waterAcc, boat: true, minDepth: -0.5, cockpit: [DUCK.floor - DUCK.draft, -3.95, 2.45, 1.14],
+    }));
+    try { this.updateBoat(dt, input); } finally { this.spec = saved; }
+    this.y -= DUCK.draft;
+    this.sync();
+    return true;
+  }
+
   updateBoat(dt, input) {
     const spec = this.spec;
-    const MIN_DEPTH = 0.45;
+    // a DUKW's wheels touch before its hull does, so its bow may run up a gentle shore (updateDuck)
+    const MIN_DEPTH = spec.minDepth || 0.45;
     const throttle = input.throttle || 0;
     const brake = input.brake || 0;
     const steerIn = clamp(input.steer || 0, -1, 1);
@@ -7328,6 +7485,7 @@ export class Vehicle {
     if (spec.plane) { this.updatePlane(dt, input); return; }
     if (spec.kayak) { this.updateKayak(dt, input); return; }
     if (spec.boat) { this.updateBoat(dt, input); return; }
+    if (spec.amphib && this.updateDuck(dt, input)) return;
     const throttle = input.throttle || 0;
     const brake = input.brake || 0;
     const hand = input.handbrake || 0;
