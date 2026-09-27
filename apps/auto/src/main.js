@@ -817,6 +817,9 @@ function installShadowFade() {
         // the fighter, on the runway centreline at the south threshold,
         // facing north up all 3 km of it (heading 0.52 would face south)
         ['fighter', 0, 1450, 0x7b8590, 0.52 + Math.PI],
+        // the 747-8, on the east taxiway at the north end, nose south toward
+        // the runway (its 68 m span needs the open grass either side of it)
+        ['jumbo', 150, -1240, 0xf4f5f6],
       ];
       for (const [ty, dx, dz, col, hd] of spots) {
         const [px, pz] = off(dx, dz);
@@ -962,8 +965,11 @@ function installShadowFade() {
       const ap = (G.LANDMARKS || []).find((l) => l.kind === 'airport');
       if (!ap) return [];
       const AL = [Math.sin(0.52), Math.cos(0.52)];
+      const AC = [Math.cos(0.52), -Math.sin(0.52)];
       return [{ x: ap.x + 1450 * AL[0], z: ap.z + 1450 * AL[1], kind: 'jet', name: 'Fighter jet', near: false,
-        hello: 'A fighter jet — full throttle, pull back past 220 km/h. Hold the stick back to loop' }];
+        hello: 'A fighter jet — full throttle, pull back past 220 km/h. Hold the stick back to loop' },
+      { x: ap.x + 150 * AC[0] - 1240 * AL[0], z: ap.z + 150 * AC[1] - 1240 * AL[1], kind: 'jet', name: 'Boeing 747-8', near: false,
+        hello: 'A 747-8, the biggest thing Boeing ever built. She needs the whole runway: rotate at 150 knots' }];
     })(),
     ...ATV_SPOTS.map(([x, z]) => ({ x, z, kind: 'atv', name: 'Quad bike', near: false, hello: 'A quad bike — made for the grass' })),
     ...fishSpots.map((sp) => ({ x: sp.x, z: sp.z, kind: 'fish', name: `Fishing — ${sp.name}`, near: false,

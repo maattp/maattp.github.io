@@ -3102,6 +3102,18 @@ photographs them (stage, apron, close cockpit), flies the helicopter
   along -50..-10 (the first trainer was parked half inside it). The spots in
   main.js and `AIRPORT_HELIPADS` avoid both.
 
+**The 747-8** (`jumbo`, `buildJumbo`, v143), the largest airliner Boeing has
+built, parked on the east taxiway at the north end (along -1240), nose south
+toward the runway: 76.3 m, the upper-deck hump 27 m back from the nose, a
+windscreen cut into its skin over a flight deck, ~290 cabin windows on two
+decks, five doors a side, a house livery (white, pale belly, blue cheatline and
+fin), raked swept wings with flap-track canoes, four GEnx nacelles on pylons,
+a 19.4 m fin, a nose gear and four four-wheel bogies. `wid` is the fuselage
+(street-scale collision); the wings are drawn. It flies the ordinary plane
+model with `fly.thrustK` 0.62 so it winds up like a heavy (roll ~490 m,
+rotate at 150 kt, ~550 km/h level, 8 deg/s turns), and the chase rig scales
+with any aircraft over 30 m long (player.js). `seeFar` 7 km.
+
 **The fighter** (`fighter`, `buildFighter`, `updateFighter`, v113) is the one
 aircraft with a full 3D attitude. The others fly heading + bank + climb rate,
 which cannot go over the top; the fighter keeps a quaternion `v.q` and the

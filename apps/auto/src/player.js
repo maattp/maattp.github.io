@@ -495,6 +495,8 @@ export class Player {
         dist = 15.5 + clamp(sp * 0.05, 0, 3);
         height = 4.6 - clamp((v.vy || 0) * 0.18, -1.6, 1.6);
         lookH = 2.2 + clamp((v.vy || 0) * 0.22, -2, 2);
+        // an airliner is five light aircraft long: the rig scales with it
+        if (v.spec.len > 30) { const k = v.spec.len / 17; dist *= k; height *= k * 0.8; lookH *= k * 0.9; }
       }
       // A big stunt jump pulls the boom back and up a little, eased by
       // stunts.js, so the landing zone comes into view before you reach it.
