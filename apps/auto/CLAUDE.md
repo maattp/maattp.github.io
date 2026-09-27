@@ -1755,6 +1755,16 @@ side — holding the throttle into a wall killed the player in about a sixth of 
 second — and `player.crashCd` does the same job there. **Anything driven by
 sustained contact needs this**; per-frame is never the right cadence for it.
 
+**Nobody at the wheel: the parking brake** (v142). traffic.js gives every
+unattended vehicle -- an 'apron' car or quad, one you got out of ('free') --
+the input `{ park: true }`, and `Vehicle.update` then takes up to 9 m/s^2 of
+speed off it a second (2.5 above 4 m/s, so a car bailed out of at speed
+coasts to a stop first). It used to get `brake: 0.12`, and **at a standstill
+the brake is reverse gear**: every parked car crept backwards (the spawn's
+sports car 33 m in 10 s) and on a hill gravity took over (16-20 m in 8 s on
+a 35 % grade). Aircraft and boats keep their old coast. verify's "parked
+cars" section.
+
 **A scrape is not a crash.** `collideWithBuildings`' obstacle/barrier branch
 (every vehicle, player and traffic) took 80 % of the speed on every contact
 frame whatever the angle, so a vehicle grazing a wall side-on lost it each
@@ -4297,7 +4307,8 @@ closing. `docs/pinball/` has shots.
 
 **A marquee outside the south atrium on Thomas St** (`src/hockey.js`; the
 arena's position is `lmRoot.userData.arena`, the door 95.5 m south of it where
-the atrium's glass front peaks). ENTER there drops straight into a game --
+the atrium's glass front peaks). ENTER anywhere round the arena -- within ~20 m
+of its walls on any side (`near`), not at one secret spot -- drops straight into a game --
 SEATTLE (you) against VANCOUVER, three 2:30 periods, one sudden-death
 overtime, ties allowed -- with no team select or menu. A win pays $250, a tie
 $100, a loss $25, plus $25 a goal. The overlay is opaque: the city idles.
