@@ -2271,6 +2271,33 @@ async function main() {
       console.error('FAIL: swimming'); process.exitCode = 1;
     }
 
+    // --- piers, and trains' doors -------------------------------------------------------
+    // OSM's piers built as decks you stand on at the height drawn; Pier 90's
+    // sheds (not mapped as a pier) on a deck; a train standing at a platform
+    // shows its doors open, one running does not.
+    const pr = await session.eval(`(() => {
+      const d = window.__dbg, P = d.piers, C = d.city;
+      const out = { built: P.built.length, sheds: P.sheds, checked: 0, off: 0 };
+      for (let i = 0; i < P.plats.length; i += 7) {
+        const q = P.plats[i]; out.checked++;
+        if (Math.abs(C.groundAt(q.x, q.z, q.y0 + 0.5) - q.y0) > 0.1) out.off++;
+      }
+      // Pier 90's sheds: every big building standing in the sea at Smith Cove has a deck
+      out.smithCove = C.buildings.filter((b) => b.x > -3300 && b.x < -3050 && b.z > -2150 && b.z < -1750 && b.w * b.d > 150)
+        .map((b) => C.platformAt(b.x, b.z) !== null);
+      const L = d.link, t = L.trains.find((q) => q.state === 'dwell'), r = L.trains.find((q) => q.state === 'run');
+      if (t) t.pose(); if (r) r.pose();
+      const M = d.monorail.trains;
+      for (const q of Object.values(M)) q.pose();
+      out.doors = { linkDwell: t ? t.meshes[2].visible : null, linkRun: r ? r.meshes[2].visible : null,
+        mono: Object.values(M).map((q) => q.meshes[2].visible === (!!q.at() && q.state === 'dwell')) };
+      return out;
+    })()`, true);
+    console.log('\n--- piers and doors ----------------------------------------');
+    console.log(`  ${pr.built} OSM piers and ${pr.sheds} sea sheds decked; standing on them off the drawn deck ${pr.off} of ${pr.checked}; Pier 90 sheds on a deck ${pr.smithCove.filter(Boolean).length}/${pr.smithCove.length}; doors: Link standing ${pr.doors.linkDwell}, running ${pr.doors.linkRun}, monorail ${pr.doors.mono}`);
+    if (pr.built < 800 || pr.off > pr.checked * 0.02 || !pr.smithCove.length || pr.smithCove.some((x) => !x)
+      || pr.doors.linkDwell !== true || pr.doors.linkRun !== false || pr.doors.mono.some((x) => !x)) { console.error('FAIL: piers and doors'); process.exitCode = 1; }
+
     // --- the articulated bus ---------------------------------------------------
     //
     // An artic spawned and driven: its rear section follows on the hitch

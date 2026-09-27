@@ -158,10 +158,12 @@ export async function loadMapData(onStep) {
   const parkprops = await (await fetch(new URL('parkprops.json', BASE))).json();
   // Seattle's bike paths (tools/build_bikepaths.py): bikes.js draws and rides them
   const bikepaths = await (await fetch(new URL('bikepaths.json', BASE))).json();
+  // OSM's piers (tools/build_piers.py): piers.js builds the ones nothing else does
+  const piers = await (await fetch(new URL('piers.json', BASE))).json();
 
   return {
     height, hfN: hp.w,
     water, green, maskN: sp.w, lot, lotN: lp.w,
-    roads, buildings, places, lakes, monorail, link, beaches, parkprops, bikepaths,
+    roads, buildings, places, lakes, monorail, link, beaches, parkprops, bikepaths, piers,
   };
 }

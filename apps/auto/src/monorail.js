@@ -1199,13 +1199,16 @@ function buildTrainGeometry(liv) {
   // vertex-coloured material) and the trim (glazing, lamps, poles). A third
   // for the matte parts measured as +2 draws a train for no visible change.
   const body = new Builder(false), trim = new Builder(false), matte = body;
+  // the doorways, open: the leaves slid back into the car, the dark saloon
+  // behind -- drawn only while the doors are open (MonorailTrain.pose)
+  const open = new Builder(false);
   const L = MONO.len, S = MONO.secLen, NOSE = 3.3, GAP = 0.13;
   const cream = [0.90, 0.87, 0.78], white = [0.93, 0.93, 0.9];
   const colOf = (tag, front) => tag === 'rib' ? liv.skirt : tag === 'groove' ? liv.skirt.map((c) => c * 0.72)
     : tag === 'belt' ? liv.band : tag === 'roofline' ? liv.roofline : tag === 'roof' ? white
     : front && tag === 'cream' ? cream : cream;
   const ranges = [];
-  const mark = () => [body.pos.length / 3, trim.pos.length / 3];
+  const mark = () => [body.pos.length / 3, trim.pos.length / 3, open.pos.length / 3];
 
   // One side (sd = +1 left, -1 right) of a straight stretch z0..z1: the
   // profile extruded, the window band glazed between pillars, with doors.
@@ -1234,6 +1237,8 @@ function buildTrainGeometry(liv) {
     matte.quad([sd * SKIRT_IN, -1.05, z0], [sd * 1.47, -1.05, z0], [sd * 1.47, -1.05, z1], [sd * SKIRT_IN, -1.05, z1], [0, -1, 0], uv, [0.2, 0.2, 0.21]);
     // doors: a dark seam each side of each leaf, and the glazing runs lower
     for (const dz of doors) {
+      open.quad([sd * (HALF + 0.008), 0.66, dz - 0.6], [sd * (HALF + 0.008), 0.66, dz + 0.6], [sd * (HALF + 0.008), 2.5, dz + 0.6], [sd * (HALF + 0.008), 2.5, dz - 0.6], [sd, 0, 0], uv, [0.05, 0.05, 0.055]);
+      open.quad([sd * (HALF + 0.009), 0.62, dz - 0.6], [sd * (HALF + 0.009), 0.62, dz + 0.6], [sd * (HALF + 0.009), 0.67, dz + 0.6], [sd * (HALF + 0.009), 0.67, dz - 0.6], [sd, 0, 0], uv, [0.55, 0.55, 0.52]);
       for (const e of [dz - 0.62, dz + 0.62, dz]) {
         body.quad([sd * (HALF + 0.004), 0.62, e - 0.018], [sd * (HALF + 0.004), 0.62, e + 0.018], [sd * (HALF + 0.004), 2.52, e + 0.018], [sd * (HALF + 0.004), 2.52, e - 0.018], [sd, 0, 0], uv, [0.25, 0.25, 0.26]);
       }
@@ -1366,7 +1371,7 @@ function buildTrainGeometry(liv) {
     geo.setAttribute('skinWeight', new THREE.Float32BufferAttribute(sw, 4));
     return geo;
   };
-  return { body: skinned(body, 0), trim: skinned(trim, 1) };
+  return { body: skinned(body, 0), trim: skinned(trim, 1), open: skinned(open, 2) };
 }
 
 /** Glazing and pillars along a stretch z0..z1: [[g0, g1], ...], doors kept as door. */
@@ -1445,7 +1450,7 @@ export class MonorailTrain {
     for (const b of this.bones) this.group.add(b);
     this.group.updateMatrixWorld(true);
     const skel = new THREE.Skeleton(this.bones);
-    this.meshes = [[geo.body, this.bodyMat], [geo.trim, A.trimMat]].map(([g, m]) => {
+    this.meshes = [[geo.body, this.bodyMat], [geo.trim, A.trimMat], [geo.open, this.bodyMat]].map(([g, m]) => {
       const mesh = new THREE.SkinnedMesh(g, m);
       mesh.bind(skel, new THREE.Matrix4());
       mesh.castShadow = true;
@@ -1509,6 +1514,8 @@ export class MonorailTrain {
     this.group.updateMatrixWorld(true);
     const cx = tr.x(this.s), cy = tr.y(this.s), cz = tr.z(this.s);
     for (const m of this.meshes) m.boundingSphere.center.set(cx, cy + 1.5, cz);
+    // the doors: open while it stands at a platform
+    this.meshes[2].visible = !!this.at() && (this.driver ? Math.abs(this.u) < 0.05 : this.state === 'dwell');
     // the vehicle's point is the operator's seat in the leading cab
     const sl = this.lead - this.dir * 2.2;
     this.x = tr.x(sl); this.z = tr.z(sl); this.y = tr.y(sl);

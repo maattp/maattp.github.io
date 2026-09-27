@@ -12,6 +12,7 @@ import { Monorail } from './monorail.js';
 import { Link } from './link.js';
 import { BikeNet, Cyclists } from './bikes.js';
 import { Islands } from './islands.js';
+import { Piers } from './piers.js';
 import { PickleballCourt } from './pickleball.js';
 import { freezeStatic, Builder } from './build.js';
 import { Fishing } from './fishing.js';
@@ -96,7 +97,7 @@ let pinball = null;  // the pinball museum in the International District (pinbal
 let hockey = null;   // hockey night at Climate Pledge Arena (hockey.js)
 let tower = null;    // Boeing Field's control tower and FINAL APPROACH (atc.js)
 let duckTour = null; // the Duck Tour: kiosk, ducks, ramp and the tour (ducktour.js)
-let islands = null, pickle = null;   // the islands across the Sound (islands.js), pickleball on Bainbridge (pickleball.js)
+let islands = null, pickle = null, piers = null;   // the islands across the Sound (islands.js), pickleball on Bainbridge (pickleball.js)
 let coffee = null;   // First Cup Coffee at 1912 Pike Place and MORNING RUSH (barista.js)
 let seafair = null;  // hydroplane racing on Lake Washington (hydrorace.js)
 let golf = null;   // three holes at Interbay (golf.js)
@@ -794,6 +795,8 @@ function installShadowFade() {
   // the line's structure after the landmarks, whose solids and platforms it adds to
   link.build(scene, world);
   bikeNet.build(scene, city);
+  // every other pier OSM maps, after everything that builds its own decks
+  piers = new Piers(md.piers, { scene, city, waterAt: (x, z) => { const wl = world.waterLevelAt(x, z); return wl !== null ? wl : G.terrainHeight(x, z) < -0.15 ? 0 : null; } });
   freezeStatic(link.group); freezeStatic(link.tunGroup);
   // the balloon's launch field: no park trees on it
   if (city.clearCircles) city.clearCircles.push([BALLOON_SITE.x, BALLOON_SITE.z, 26]);
@@ -1163,7 +1166,7 @@ function installShadowFade() {
 
   await step(1, 'Welcome to Seattle');
   window.__refreshJobs = refreshJobs;
-  window.__dbg = { game, city, player, world, traffic, peds, acts, stunts, monorail, link, bikeNet, cyclists, lmRoot, shadowCache, fishing, fishSpots, hoops, needleTop, fishToss, wheelRide, golf, arcade, pinball, hockey, tower, duckTour, coffee, seafair, islands, pickle, scene, camera, renderer, G, fx, hud, controls, audio, pickups, THREE, postfx, applyQuality, sun, placeSun, sceneStats, perfSys, cityStats, WET_FLOOR, animateWalk, collideWithBuildings, TYPES: VEHICLE_TYPES };
+  window.__dbg = { game, city, player, world, traffic, peds, acts, stunts, monorail, link, bikeNet, cyclists, lmRoot, shadowCache, fishing, fishSpots, hoops, needleTop, fishToss, wheelRide, golf, arcade, pinball, hockey, tower, duckTour, coffee, seafair, islands, pickle, piers, scene, camera, renderer, G, fx, hud, controls, audio, pickups, THREE, postfx, applyQuality, sun, placeSun, sceneStats, perfSys, cityStats, WET_FLOOR, animateWalk, collideWithBuildings, TYPES: VEHICLE_TYPES };
   wireUi();
   game.newTarget();
   // Start on `high` everywhere.
@@ -1955,6 +1958,7 @@ function frame(now) {
   link.update(dt, camera);
   cyclists.update(dt, player);
   bikeNet.update(camera);
+  piers.update(camera);
   if (wheelRide) wheelRide.update(dt, wheelRide.busy ? input : null, wheelRide.busy ? look : null, camera.position.x, camera.position.z);
   if (prof) lap('player');
 

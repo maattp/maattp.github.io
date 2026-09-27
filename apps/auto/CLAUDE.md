@@ -50,6 +50,7 @@ src/stunts.js               stunt-jump ramps (geometry + height query) and their
 src/monorail.js             the Seattle Center Monorail: beams, stations, both trains
 src/link.js                 Link light rail's 1 Line: tracks, guideway, bores, stations, the trains
 src/bikes.js                bike paths drawn and ridden, AI cyclists, bike-share docks
+src/piers.js                every other pier OSM maps, as a deck on piles; decks under sheds in the sea
 src/islands.js              the islands across the Sound: Easter eggs, the Sasquatch, Blake's deer
 src/pickleball.js           the pickleball court on Bainbridge and its screen
 src/pickleballgame.js       PICKLEBALL itself: singles, the two-bounce rule, the kitchen (no DOM)
@@ -70,6 +71,7 @@ tools/build_monorail.py     the monorail's beams, stations, platforms -> monorai
 tools/extract_rail.py       every rail way and stop in the box -> tools/data/raw_rail.json
 tools/build_link.py         Link's two 1 Line tracks and its stations -> link.json
 tools/build_bikepaths.py    cycleways and designated bike paths -> bikepaths.json
+tools/build_piers.py        OSM's piers -> piers.json
 tools/build_beaches.py      OSM beaches (from raw_green.json) -> beaches.json
 tools/build_parkprops.py    benches, picnic tables, playgrounds, fountains -> parkprops.json
 tools/fetch_dem.py          downloads the USGS terrain tiles
@@ -5065,8 +5067,9 @@ is the page half; load it into any booted page to re-install edited jumps
   docks) -- their ends are anchors pinned to draped streets on the same dug
   ground, so the ground itself has to come up. Point Monroe (Bainbridge) is
   a spit the DEM has below sea level.
-- **The monorail's doors do not open, nobody rides with you, and the terminal
-  interiors are not walkable** beyond Seattle Center's platforms and ramp.
+- **Nobody rides the monorail with you, and its terminal interiors are not
+  walkable** beyond Seattle Center's platforms and ramp. (Its doors, and
+  Link's, show open while a train stands at a platform: v155.)
 - **No Kenmore Air Harbor.** The real floatplane base at the north end of Lake
   Washington (47.756 N) is ~3.1 km past the map's north edge (47.728 N).
 
@@ -5122,14 +5125,17 @@ is the page half; load it into any booted page to re-install edited jumps
   pieces overlap on the inside.
 - `tunnelride.mjs`'s `flow()` checks `oneway` before `onewayRev`, so it treats
   the 2 `oneway=-1` edges as a -> b. None is on SR-99.
-- **Only three pier decks are walkable** (v106): the Great Wheel, Pier 66
-  and the Aquarium list their tops in `userData.decks` (group-local boxes),
-  and `buildLandmarks` installs them as platforms. The 40 m DEM leaves water
-  or a 1.1-1.6 m step between the Wheel's and Pier 66's decks and the
-  promenade, so a deck can name a `land` exit: `gangway()` walks the terrain
-  out to the first dry ground within 0.9 m of the deck top and lays a sloped
-  boardwalk (piles, rails) registered as one sloped platform. Walked vs drawn:
-  0 cm. The ferry terminal, the other piers and the Alki pier have no deck.
+- **Piers** (v155, `src/piers.js`): every pier OSM maps (`tools/build_piers.py`,
+  ~15 s) over 150 m2 (or 25 m of walkway), mostly over water, not already
+  built and with no road on it, is a deck on piles -- 1288 of them, ~350
+  outlines -- level with the shore it leaves (0.5-4 m over the water),
+  walkable (6 m platform squares; a walkway's segments). Buildings over the
+  SEA with nothing under them get a deck too (Smith Cove's Pier 90 is only
+  its sheds in OSM). 1 km chunks within ~1.7 km: +1 draw on the waterfront.
+  ~0.6 % of deck samples stand on another, overlapping pier's height. Still
+  hand-built: the Great Wheel's, Pier 66's and the Aquarium's decks (with
+  their gangways), the marinas' floats; the ferry terminal's vehicle lanes
+  are roads.
 - **Stadium interiors are unreachable** — walls run round the whole footprint,
   with no gates (the arena's hockey game is a screen you enter at its doors). T-Mobile's roof is modelled open and does not move.
 - **The minor landmarks are the old models** (aquarium, ferry terminal, Pier 66,
