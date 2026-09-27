@@ -2011,6 +2011,62 @@ async function main() {
       if (bad.length) { console.error(`FAIL: Link: ${bad.join('; ')}`); process.exitCode = 1; }
     }
 
+    // --- bicycles and the bike paths ----------------------------------------------------
+    //
+    // bikes.js: the network drawn, the docks stocked, a dock bike ridden at
+    // fixed dt (a bicycle's speed, the cranks turning with it), cyclists
+    // spawning on the paths and staying on them, and no tree planted on a
+    // path in the chunks built round a trail.
+    const bk = await session.eval(`(() => {
+      const d = window.__dbg, N = d.bikeNet, C = d.cyclists, P = d.player, T = d.traffic, cs = d.city;
+      const out = { km: Math.round(N.km), docks: C.docks.length, stocked: C.docks.every((k) => k.bikes.length === 5 && k.bikes.every((v) => v.spec.bicycle)) };
+      if (P.vehicle) P.exitVehicle(true);
+      const k = C.docks[0], v = k.bikes[2];
+      P.x = v.x; P.z = v.z; P.enterVehicle(v);
+      const c0 = v.crank;
+      let vmax = 0, t20 = null;
+      for (let i = 0; i < 60 * 8; i++) {
+        P.updateDrive(1 / 60, { x: 0, y: 0, gasAmt: 1, brakeAmt: 0 }, T, d.peds);
+        vmax = Math.max(vmax, v.vLong);
+        if (t20 === null && v.vLong * 3.6 > 20) t20 = i / 60;
+      }
+      out.ride = { kmh: +(vmax * 3.6).toFixed(1), t20, crank: +(v.crank - c0).toFixed(1), rider: v.rider.group.visible };
+      P.exitVehicle(true);
+      // cyclists: a minute round Green Lake
+      const g = C.docks.find((q) => /Green Lake/.test(q.name)) || C.docks[1];
+      P.x = g.x + 20; P.z = g.z + 20;
+      for (let i = 0; i < 30 * 60; i++) C.update(1 / 30, P);
+      let off = 0;
+      for (const r of C.riders) { const q = N.nearest(r.v.x, r.v.z, 10); if (!q || q.d > 1.6) off++; }
+      out.riders = { n: C.riders.length, off, spawned: C.stats.spawned, junctions: C.stats.junctions };
+      // trees on the path round the Gas Works dock
+      const pending = () => [...d.world.chunks.values()].filter((c) => c.lod !== c.wantLod).length;
+      d.world.update(k.x, k.z, 60); for (let i = 0; i < 2000 && pending() > 0; i++) d.world.update(k.x, k.z, 60);
+      let trunks = 0, onPath = 0;
+      for (const list of cs.obstacles.values ? cs.obstacles.values() : []) {
+        for (let q = 0; q < list.length; q += 3) {
+          if (Math.hypot(list[q] - k.x, list[q + 1] - k.z) > 400) continue;
+          trunks++;
+          const n = N.nearest(list[q], list[q + 1], 3);
+          if (n && n.d < 1.4 && !n.P.bridge) onPath++;
+        }
+      }
+      out.trees = { trunks, onPath };
+      return out;
+    })()`, true);
+    console.log('\n--- bicycles -----------------------------------------------');
+    console.log(`  ${bk.km} km of path drawn, ${bk.docks} docks, stocked ${bk.stocked}; a dock bike: ${bk.ride.kmh} km/h top, 20 km/h in ${bk.ride.t20} s, crank turned ${bk.ride.crank} rad, rider ${bk.ride.rider}`);
+    console.log(`  cyclists: ${bk.riders.n} riding (${bk.riders.spawned} spawned, ${bk.riders.junctions} junctions), off the path ${bk.riders.off}; trunks near the trail ${bk.trees.trunks}, on the path ${bk.trees.onPath}`);
+    {
+      const bad = [];
+      if (bk.km < 150) bad.push('paths');
+      if (bk.docks < 8 || !bk.stocked) bad.push('docks');
+      if (bk.ride.kmh < 25 || bk.ride.kmh > 42 || !(bk.ride.t20 < 6) || bk.ride.crank < 5 || !bk.ride.rider) bad.push('riding');
+      if (bk.riders.n < 3 || bk.riders.off) bad.push('cyclists');
+      if (bk.trees.onPath) bad.push('trees on the path');
+      if (bad.length) { console.error(`FAIL: bicycles: ${bad.join('; ')}`); process.exitCode = 1; }
+    }
+
     // --- the articulated bus ---------------------------------------------------
     //
     // An artic spawned and driven: its rear section follows on the hitch

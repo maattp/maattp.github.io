@@ -10,6 +10,7 @@ import { buildLandmarks, updateLandmarkRange, SEAPLANE_DOCK, airportSurface } fr
 import { ShadowCache } from './shadowcache.js';
 import { Monorail } from './monorail.js';
 import { Link } from './link.js';
+import { BikeNet, Cyclists } from './bikes.js';
 import { freezeStatic, Builder } from './build.js';
 import { Fishing } from './fishing.js';
 import { Hoops } from './hoops.js';
@@ -197,6 +198,7 @@ class Game {
     // in a duck, the horn is the passengers' quackers
     if (player.vehicle && player.vehicle.spec.amphib && duckTour) { duckTour.quack(player.vehicle); peds.scare(player.position.x, player.position.z, 6); return; }
     // a light-rail car rings its bell
+    if (player.vehicle && player.vehicle.spec.bicycle) { if (audio.ready) audio.play('bike_bell', { gain: 0.9 }); peds.scare(player.position.x, player.position.z, 5); return; }
     if (player.vehicle && player.vehicle.spec.link) { if (audio.ready) audio.play('tram_bell', { gain: 0.9 }); peds.scare(player.position.x, player.position.z, 10); return; }
     audio.horn();
     peds.scare(player.position.x, player.position.z, 14);
@@ -422,7 +424,7 @@ class Game {
 
 // ---------------------------------------------------------------------------
 
-let renderer, scene, camera, sun, world, cityRef, traffic, peds, player, controls, hud, fx, audio, game, marker, postfx, acts, stunts, monorail, link, lmRoot, shadowCache = null;
+let renderer, scene, camera, sun, world, cityRef, traffic, peds, player, controls, hud, fx, audio, game, marker, postfx, acts, stunts, monorail, link, bikeNet, cyclists, lmRoot, shadowCache = null;
 let pickups = [];
 // Scratch vector for the shadow-camera aim, so the frame loop allocates none.
 const LOOK_AHEAD = new THREE.Vector3();
@@ -533,6 +535,8 @@ async function boot() {
   // ...and Link light rail's 1 Line, from its data alone for the same reason
   link = new Link(md.link);
   md.linkClear = link.clearZones();
+  // Seattle's bike paths, from their data: the scatter keeps off them
+  bikeNet = new BikeNet(md.bikepaths);
   const gen = cityGenerator(md, bootCache);
   let r = gen.next();
   while (!r.done) {
@@ -762,7 +766,7 @@ function installShadowFade() {
     if (rampMesh) scene.add(rampMesh);
   }
   // nor on Link's tracks
-  city.extraClear = (x, z) => link.keepClear(x, z);
+  city.extraClear = (x, z) => link.keepClear(x, z) || bikeNet.keepClear(x, z);
 
   await step(0.8, 'Building the skyline');
   world.buildSkyline();
@@ -773,6 +777,7 @@ function installShadowFade() {
   lmRoot = buildLandmarks(scene, city, (x, z) => world.waterLevelAt(x, z), monorail);
   // the line's structure after the landmarks, whose solids and platforms it adds to
   link.build(scene, world);
+  bikeNet.build(scene, city);
   freezeStatic(link.group); freezeStatic(link.tunGroup);
   // the balloon's launch field: no park trees on it
   if (city.clearCircles) city.clearCircles.push([BALLOON_SITE.x, BALLOON_SITE.z, 26]);
@@ -808,6 +813,8 @@ function installShadowFade() {
   traffic = new TrafficSystem(scene, city, game);
   traffic.camera = camera;   // far-LOD instances are culled against it
   traffic.link = link;       // cars stop for a train on a level crossing
+  // the cyclists on the bike paths, and the bike-share docks
+  cyclists = new Cyclists(bikeNet, traffic, city, scene);
   // Hulls ask where the water is DRAWN. The 10 m water mask and the 40 m
   // terrain disagree along the shore: ground under the sea's surface is drawn
   // as sea (the plane covers it) while the mask can call it land, and every
@@ -1033,6 +1040,9 @@ function installShadowFade() {
       hello: 'Seattle Center Monorail — the 1962 Alweg line. Tap ENTER at the door when a train is in to take the controls' }] : []),
     ...(monorail.scRamp ? [{ x: monorail.scRamp.x, z: monorail.scRamp.z, kind: 'monorail', name: 'Monorail · Seattle Center', near: false,
       hello: 'Seattle Center Monorail — up the ramp to the platforms. Tap ENTER beside a train to take the controls' }] : []),
+    // the bike-share docks along the trails
+    ...cyclists.docks.map((dk) => ({ x: dk.x, z: dk.z, kind: 'bike', name: `Bikes · ${dk.name}`, near: false,
+      hello: `Bike share — ${dk.name}. Take a bike from the rack: the trail is right here` })),
     // Link light rail: every station's street entrance
     ...link.stations.map((st) => ({ x: st.ent.x, z: st.ent.z, kind: 'link', name: `Link · ${st.name}`, near: false,
       hello: `${st.full} Station — Link light rail's 1 Line. Tap ENTER here when a train is in to drive it` })),
@@ -1054,6 +1064,7 @@ function installShadowFade() {
   hud.link = link;
   monorail.bind({ game, hud, audio, player });
   link.bind({ game, hud, audio, player });
+  cyclists.audio = audio;
   {
     // One tap, never behind a menu: a lost run on a phone ends the session.
     const rb = document.getElementById('raceRestart');
@@ -1124,7 +1135,7 @@ function installShadowFade() {
 
   await step(1, 'Welcome to Seattle');
   window.__refreshJobs = refreshJobs;
-  window.__dbg = { game, city, player, world, traffic, peds, acts, stunts, monorail, link, lmRoot, shadowCache, fishing, fishSpots, hoops, needleTop, fishToss, wheelRide, golf, arcade, pinball, hockey, tower, duckTour, coffee, seafair, scene, camera, renderer, G, fx, hud, controls, audio, pickups, THREE, postfx, applyQuality, sun, placeSun, sceneStats, perfSys, cityStats, WET_FLOOR, animateWalk, collideWithBuildings, TYPES: VEHICLE_TYPES };
+  window.__dbg = { game, city, player, world, traffic, peds, acts, stunts, monorail, link, bikeNet, cyclists, lmRoot, shadowCache, fishing, fishSpots, hoops, needleTop, fishToss, wheelRide, golf, arcade, pinball, hockey, tower, duckTour, coffee, seafair, scene, camera, renderer, G, fx, hud, controls, audio, pickups, THREE, postfx, applyQuality, sun, placeSun, sceneStats, perfSys, cityStats, WET_FLOOR, animateWalk, collideWithBuildings, TYPES: VEHICLE_TYPES };
   wireUi();
   game.newTarget();
   // Start on `high` everywhere.
@@ -1912,6 +1923,8 @@ function frame(now) {
   }
   monorail.update(dt);
   link.update(dt, camera);
+  cyclists.update(dt, player);
+  bikeNet.update(camera);
   if (wheelRide) wheelRide.update(dt, wheelRide.busy ? input : null, wheelRide.busy ? look : null, camera.position.x, camera.position.z);
   if (prof) lap('player');
 
