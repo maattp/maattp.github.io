@@ -322,10 +322,76 @@ export function isWater(x, z) {
  * at the Montlake lid dips under Lake Washington's 5.09 m plane. verify's
  * submerged-road scan checks every road against it.
  */
+/**
+ * A LAKE IS ITS OWN WATER, NOT ITS BOX. water.json gives each lake a level
+ * and an axis-aligned bounding box, and everything used to take the box: Lake
+ * Washington's runs 25 km north to south, so every dry street in it below
+ * 5.09 m -- the Duwamish valley in Tukwila, bits of Bellevue's and Kirkland's
+ * shore -- was drawn under the lake, parked cars and all. The lake is the
+ * largest connected body of wet cells in its box (the Duwamish river is wet
+ * and in the box, but reaches the lake only through the Sound, outside it),
+ * on a 20 m grid, dilated 40 m so the drawn shore -- where the 40 m DEM
+ * blends into the plane -- stays covered. Memoised per lake.
+ */
+const LAKE_CELL = 20, LAKE_GROW = 2;
+const LAKE_MASKS = new Map();
+export function lakeMask(l) {
+  let m = LAKE_MASKS.get(l);
+  if (m) return m;
+  const S = LAKE_CELL, w = Math.ceil((l.x1 - l.x0) / S) + 1, h = Math.ceil((l.z1 - l.z0) / S) + 1;
+  const wet = new Uint8Array(w * h);
+  for (let j = 0; j < h; j++) for (let i = 0; i < w; i++) {
+    const x = l.x0 + i * S, z = l.z0 + j * S;
+    if (isWater(x, z) || isWater(x + S * 0.4, z) || isWater(x, z + S * 0.4) || isWater(x - S * 0.4, z) || isWater(x, z - S * 0.4)) wet[j * w + i] = 1;
+  }
+  // the largest 4-connected component
+  const lab = new Int32Array(w * h).fill(-1), stack = new Int32Array(w * h);
+  let best = -1, bestN = 0, nLab = 0;
+  for (let k = 0; k < w * h; k++) {
+    if (!wet[k] || lab[k] >= 0) continue;
+    let sp = 0, n = 0;
+    stack[sp++] = k; lab[k] = nLab;
+    while (sp) {
+      const c = stack[--sp]; n++;
+      const ci = c % w, cj = (c / w) | 0;
+      if (ci > 0 && wet[c - 1] && lab[c - 1] < 0) { lab[c - 1] = nLab; stack[sp++] = c - 1; }
+      if (ci < w - 1 && wet[c + 1] && lab[c + 1] < 0) { lab[c + 1] = nLab; stack[sp++] = c + 1; }
+      if (cj > 0 && wet[c - w] && lab[c - w] < 0) { lab[c - w] = nLab; stack[sp++] = c - w; }
+      if (cj < h - 1 && wet[c + w] && lab[c + w] < 0) { lab[c + w] = nLab; stack[sp++] = c + w; }
+    }
+    if (n > bestN) { bestN = n; best = nLab; }
+    nLab++;
+  }
+  let d = new Uint8Array(w * h);
+  for (let k = 0; k < w * h; k++) if (lab[k] === best) d[k] = 1;
+  // grow it, separably
+  for (let it = 0; it < 2; it++) {
+    const o = new Uint8Array(w * h);
+    for (let j = 0; j < h; j++) for (let i = 0; i < w; i++) {
+      let on = 0;
+      for (let t = -LAKE_GROW; t <= LAKE_GROW && !on; t++) {
+        const ii = it ? i : i + t, jj = it ? j + t : j;
+        if (ii >= 0 && jj >= 0 && ii < w && jj < h && d[jj * w + ii]) on = 1;
+      }
+      o[j * w + i] = on;
+    }
+    d = o;
+  }
+  m = { d, w, h, x0: l.x0, z0: l.z0, step: S, cells: bestN };
+  LAKE_MASKS.set(l, m);
+  return m;
+}
+/** Is (x, z) this lake's water (or its drawn shore)? */
+export function inLake(l, x, z) {
+  if (x < l.x0 || x > l.x1 || z < l.z0 || z > l.z1) return false;
+  const m = lakeMask(l), i = Math.round((x - m.x0) / m.step), j = Math.round((z - m.z0) / m.step);
+  return i >= 0 && j >= 0 && i < m.w && j < m.h && m.d[j * m.w + i] === 1;
+}
+
 export function drawnWaterLevel(lakes, x, z) {
   let lv = 0;
   for (const l of lakes || []) {
-    if (x >= l.x0 && x <= l.x1 && z >= l.z0 && z <= l.z1 && l.level > lv) lv = l.level;
+    if (l.level > lv && inLake(l, x, z)) lv = l.level;
   }
   const c = shipCanal(lakes || []), cl = c && c.at(x, z);
   if (cl !== null && cl !== undefined && cl > lv) lv = cl;

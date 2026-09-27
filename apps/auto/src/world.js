@@ -2856,7 +2856,26 @@ export class World {
       // tessellated like the sea, for the same depth precision
       const lg = new THREE.PlaneGeometry(w, d, Math.ceil(w / WATER_CELL), Math.ceil(d / WATER_CELL));
       lg.rotateX(-Math.PI / 2);
-      const lm = new THREE.Mesh(lg, mat);
+      // drawn only over the lake's own water (G.lakeMask), not its whole box
+      const M = G.lakeMask(l);
+      const tex = new THREE.DataTexture(M.d.map((v) => v * 255), M.w, M.h, THREE.RedFormat, THREE.UnsignedByteType);
+      tex.magFilter = THREE.LinearFilter; tex.minFilter = THREE.LinearFilter;
+      tex.unpackAlignment = 1;
+      tex.needsUpdate = true;
+      const lbox = new THREE.Vector4(M.x0 - M.step / 2, M.z0 - M.step / 2, M.w * M.step, M.h * M.step);
+      const lmat = mat.clone();
+      lmat.onBeforeCompile = (sh) => {
+        twoScale(sh);
+        sh.uniforms.lakeMask = { value: tex };
+        sh.uniforms.lakeBox = { value: lbox };
+        sh.vertexShader = 'varying vec2 vLakeW;\n' + sh.vertexShader.replace('#include <begin_vertex>',
+          '#include <begin_vertex>\n\tvLakeW = ( modelMatrix * vec4( transformed, 1.0 ) ).xz;');
+        sh.fragmentShader = 'uniform sampler2D lakeMask;\nuniform vec4 lakeBox;\nvarying vec2 vLakeW;\n'
+          + sh.fragmentShader.replace('#include <clipping_planes_fragment>',
+            '#include <clipping_planes_fragment>\n\tif ( texture2D( lakeMask, ( vLakeW - lakeBox.xy ) / lakeBox.zw ).r < 0.5 ) discard;');
+      };
+      lmat.customProgramCacheKey = () => 'waterLake';
+      const lm = new THREE.Mesh(lg, lmat);
       lm.position.set((l.x0 + l.x1) / 2, l.level, (l.z0 + l.z1) / 2);
       lm.renderOrder = 5;   // after the sea, as before -- see note above
       lm.onBeforeRender = gate;
@@ -7220,7 +7239,7 @@ float frLine(float o, float fw, float c, float w) {
 
   waterLevelAt(x, z) {
     for (const l of (this.lakeSpecs || [])) {
-      if (x >= l.x0 && x <= l.x1 && z >= l.z0 && z <= l.z1) return l.level;
+      if (G.inLake(l, x, z)) return l.level;
     }
     const c = this.canal !== undefined ? this.canal : this._findCanal();
     if (c) { const lv = c.at(x, z); if (lv !== null) return lv; }

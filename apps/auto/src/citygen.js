@@ -1538,7 +1538,7 @@ export function* cityGenerator(md, cache = {}) {
       let lv = 0;
       let boxed = false;
       for (const l of lakes) {
-        if (x >= l.x0 && x <= l.x1 && z >= l.z0 && z <= l.z1) { lv = l.level; boxed = true; break; }
+        if (G.inLake(l, x, z)) { lv = l.level; boxed = true; break; }
       }
       // the ship canal is at Lake Union's level too (geo.js shipCanal):
       // Salmon Bay's boathouses stood up to their roofs in it

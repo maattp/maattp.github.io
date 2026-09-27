@@ -824,6 +824,8 @@ function installShadowFade() {
   traffic = new TrafficSystem(scene, city, game);
   traffic.camera = camera;   // far-LOD instances are culled against it
   traffic.link = link;       // cars stop for a train on a level crossing
+  // where water is drawn (the boats' query): no car parks under it
+  traffic.waterAt = (x, z) => { const wl = world.waterLevelAt(x, z); return wl !== null ? wl : G.terrainHeight(x, z) < -0.15 ? 0 : null; };
   // the cyclists on the bike paths, and the bike-share docks
   cyclists = new Cyclists(bikeNet, traffic, city, scene);
   // Hulls ask where the water is DRAWN. The 10 m water mask and the 40 m
