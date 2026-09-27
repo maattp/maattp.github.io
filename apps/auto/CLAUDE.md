@@ -4180,9 +4180,16 @@ the south edge. Sixteen stations; 28 four-car trains in service.
   other track. Standing at a station's entrance, the train at the platform
   waits for you (up to two minutes) and the service away from you runs 6x
   until one comes.
-- **Driving**: ENTER at a station's street entrance (on the map, a green
-  light-rail icon) with a train in boards it; ENTER with none says when the
-  next are due each way. POWER and BRAKE, the readout gives the next stop,
+- **Getting on** (v148): ENTER at a station's street entrance (on the map,
+  a green light-rail icon) or, at a station in the open, anywhere on or
+  beside its platforms, boards the stopped train you are beside (or the one
+  with the longest left to wait). With none in, ENTER calls one (`call`):
+  the nearest train coming toward the station is moved up the line to 180 m
+  short of the platform if the track there is clear (the wait skipped), and
+  you board it by yourself when its doors open (`pending`, in `update`).
+  Only the entrance boarded before, and it had no prompt: standing beside a
+  train on the platform, ENTER did nothing.
+- **Driving**: POWER and BRAKE, the readout gives the next stop,
   the limit and the train ahead. Stopping within 1 m of the mark pays $60
   (3 m $30); the doors open, and ENTER then puts you out at the street
   entrance. At the map's edge POWER changes ends onto the other track. The

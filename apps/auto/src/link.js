@@ -1075,9 +1075,17 @@ export class Link {
     }
   }
 
-  /** The station whose entrance you are standing at (within 14 m), or null. */
+  /** The station you are at: within 14 m of its street entrance, or -- at
+   *  one in the open -- anywhere on or beside its platforms. Else null. */
   waitingAt(x, z) {
     for (const st of this.stations) if (Math.hypot(x - st.ent.x, z - st.ent.z) < 14) return st;
+    for (const st of this.stations) {
+      if (st.under) continue;
+      for (const k of ['sb', 'nb']) {
+        const tr = this.tracks[k], q = tr.nearest(x, z, 14);
+        if (q && Math.abs(q.s - st.s[k]) < LINK.platLen / 2 + 8) return st;
+      }
+    }
     return null;
   }
 
@@ -1107,6 +1115,15 @@ export class Link {
       const vis = t.state !== 'off' && (t.driver === 'player' || (d < RANGE.train && (this.tunnelMode ? d < 900 : !buried)));
       t.group.visible = vis;
       if (vis) t.pose();
+    }
+    // a called train: board it when its doors open, if you are still there
+    const pd = this.pending;
+    if (pd && p) {
+      if (!p.onFoot || this.waitingAt(p.position.x, p.position.z) !== pd.st || performance.now() - pd.at > 240000) this.pending = null;
+      else {
+        const t = this.trains.find((q) => !q.driver && q.state === 'dwell' && q.station === pd.st);
+        if (t) { this.pending = null; p.enterVehicle(t); }
+      }
     }
     // people and cars on the track
     if (p) this._guard(dt, p);
@@ -1202,12 +1219,48 @@ export class Link {
   boardable(x, y, z) {
     const st = this.waitingAt(x, z);
     if (!st) return null;
-    let best = null;
+    let best = null, bd = Infinity;
     for (const t of this.trains) {
-      if (t.driver || t.state !== 'dwell' || t.station !== st) continue;
-      if (!best || t.timer > best.timer) best = t;
+      if (t.driver || t.state === 'off' || t.stationHere() !== st) continue;
+      // the one you are standing beside, else the one with the longest to wait
+      const q = t.track.nearest(x, z, 20), d = q && (q.s - t.tail) * (q.s - t.lead) <= 0 ? q.d : 50 - (t.timer || 0);
+      if (d < bd) { bd = d; best = t; }
     }
     return best;
+  }
+
+  /**
+   * ENTER at a station with no train in: the next one is called in. The
+   * nearest train coming toward this station on either track that is not
+   * already close is moved up the line to 160 m short of the platform (the
+   * wait you would have had, skipped), provided the track there is clear,
+   * and you board it by yourself when its doors open (update).
+   */
+  call(st) {
+    let best = null;
+    for (const k of ['sb', 'nb']) {
+      const tr = this.tracks[k], sS = st.s[k];
+      for (const t of this.trains) {
+        if (t.track !== tr || t.driver || t.state === 'off') continue;
+        const d = (sS - t.s) * t.dir;
+        if (d < 5) continue;
+        if (!best || d < best.d) best = { t, d, k };
+      }
+    }
+    if (!best) return null;
+    const { t, d, k } = best, tr = this.tracks[k], sS = st.s[k];
+    if (d > 190) {
+      const s = sS - t.dir * 180;
+      let clear = s > LINK.len && s < tr.len - LINK.len;
+      for (const o of this.trains) {
+        if (o === t || o.track !== tr || o.state === 'off') continue;
+        // nothing where it would go, nor between there and the platform
+        if (Math.abs(o.s - s) < LINK.len + 40 || ((o.s - s) * t.dir > 0 && (sS - o.s) * t.dir > -70)) clear = false;
+      }
+      if (clear) { t.place(s, t.dir); t.state = 'run'; t.u = t.dir * 10; t.lastStop = null; t.station = null; }
+    }
+    this.pending = { st, t, at: performance.now() };
+    return t;
   }
 
   /** When the next train in each direction is due at `st`, in seconds (null: none coming). */
@@ -1231,13 +1284,15 @@ export class Link {
     return out;
   }
 
-  /** ENTER at an entrance with no train in: when the next ones are due. */
+  /** ENTER at a station with no train in: call the next one in. */
   onWait(x, z) {
     const st = this.waitingAt(x, z);
     if (!st) return false;
-    const n = this.nextAt(st);
-    const fmt = (s) => s === null ? 'none coming' : s < 8 ? 'arriving now' : s < 60 ? `${Math.ceil(s / 10) * 10} s` : `${Math.floor(s / 60)} min ${Math.round(s % 60 / 10) * 10} s`;
-    this.say(`${st.full} Station — to Lynnwood: ${fmt(n.nb)} · to Federal Way: ${fmt(n.sb)}. Wait here and tap ENTER when a train is in`, 4800);
+    const t = this.call(st);
+    if (!t) { this.say(`${st.full} Station — no train coming just now`); return true; }
+    const n = this.nextAt(st), eta = n[t.track.key];
+    const to = t.dir > 0 ? 'Federal Way' : 'Lynnwood';
+    this.say(`${st.full} Station — a train to ${to} is ${eta === null || eta < 8 ? 'pulling in' : `${Math.ceil(eta / 5) * 5} s away`}. Stay here: you'll board when its doors open`, 5200);
     return true;
   }
 
@@ -1765,7 +1820,7 @@ export class LinkTrain {
       // A TRAIN WAITS FOR YOU: standing at this station's entrance, the
       // train at its platform holds (up to two minutes)
       const p = sys.player;
-      if (p && p.onFoot && this.station && Math.hypot(p.position.x - this.station.ent.x, p.position.z - this.station.ent.z) < 14 && this.timer < 2 && this.held < 120) {
+      if (p && p.onFoot && this.station && sys.waitingAt(p.position.x, p.position.z) === this.station && this.timer < 2 && this.held < 120) {
         this.timer = 2; this.held += dt;
       }
       if (this.timer <= 0) {

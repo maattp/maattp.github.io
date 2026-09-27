@@ -1045,7 +1045,7 @@ function installShadowFade() {
       hello: `Bike share — ${dk.name}. Take a bike from the rack: the trail is right here` })),
     // Link light rail: every station's street entrance
     ...link.stations.map((st) => ({ x: st.ent.x, z: st.ent.z, kind: 'link', name: `Link · ${st.name}`, near: false,
-      hello: `${st.full} Station — Link light rail's 1 Line. Tap ENTER here when a train is in to drive it` })),
+      hello: `${st.full} Station — Link light rail's 1 Line. Tap ENTER here${st.under ? '' : ' or on the platform'} to catch the next train and drive it` })),
     ...(lmRoot.userData.marinas || []).map((mr) => ({ x: mr.x, z: mr.z, kind: 'dock', name: mr.name, near: false,
       hello: mr.seaplanes ? `${mr.name} — floatplanes on the float. Walk out and climb in`
         : `${mr.name} — boats and jet skis. Walk out on the float and take one` })),
