@@ -35,6 +35,7 @@ const OUT = `tools/data/vehicles/${TAG}`;
 const VIEWS = [
   ['front', 0.72, 0.30],
   ['rear', Math.PI - 0.62, 0.28],
+  ...(process.env.VEH_BEHIND ? [['behind', Math.PI - 0.18, 0.22], ['above', Math.PI - 0.12, 0.55]] : []),
 ];
 
 function launch() {
