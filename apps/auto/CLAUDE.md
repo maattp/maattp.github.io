@@ -1006,6 +1006,33 @@ All vertex colour on the existing materials: no draws, no textures. Wallingford
 1.3 -> 1.4 ms; perfguard downtown +0.7 % triangles. `landmarkshots.mjs` has
 `hood-*` street and aerial views of eight neighbourhoods for judging it.
 
+## Houses: dormers, garages, and modern townhomes (v156)
+
+Each on a share of the houses by the house's seed, all vertex-coloured boxes
+in the chunk's `flat` builder (no draws, no materials):
+
+- `houseExtras`: dormers on a steep gable's front slope (a third of those
+  with room: box, framed window, their own little gable), a chimney on hip
+  roofs too, solar panels on the slope facing most to the south (one in
+  eleven), an attached garage with its door and a drive (one in eight,
+  where the lot beside is clear of road, water and buildings), a bay window
+  on the front where there is no porch (one in six), a railing on porches.
+- `townhome`: the flat-roofed form (11 % of squarer houses, and 30 % of
+  footprints longer than 2.6:1 -- one long footprint is how OSM draws most
+  terraces) is a modern townhome or a row of them: `MODERN_PAINT` (charcoal,
+  white, grey, near-black), panel cladding (the concrete cell at 10 m, not
+  clapboard), ~7 m units along the long side each with a cedar accent panel
+  (most), glazing on every floor, a recessed door under a canopy, a balcony
+  with a glass rail on the top floor (and a middle one on some); a parapet,
+  and on half a stair penthouse on the roof.
+
+Cost, `rendercpu --builds --ring=4` in Wallingford (dense housing), against
+the base: 3.12 M -> 3.48 M vertices (+11.7 %), chunk builds 350 -> 373 ms
+total. The first cut was +24 %; the townhomes were ~240k of it (per-floor
+balconies, mullions) and the extras ~140k -- attributed by stubbing each
+method through `RCPU_PRE` (`w.townhome = () => {}`), which is the way to
+find what a building feature costs. `docs/houses2/`.
+
 ## Buildings: the outlier scan
 
 `tools/bldshots.mjs --scan` counts every shipped box into categories (style x
