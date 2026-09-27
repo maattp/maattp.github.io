@@ -2262,6 +2262,14 @@ export const MARINAS = [
   { name: 'Kirkland Marina Park', x: 9669, z: -7111, fleet: ['jetski', 'boat', 'jetski', 'boat'] },
   { name: 'Meydenbauer Bay Marina', x: 9766, z: -185, fleet: ['boat', 'boat', 'jetski', 'jetski'] },
   { name: 'Luther Burbank Park', x: 8413, z: 2317, fleet: ['jetski', 'boat', 'jetski'] },
+  // Across the Sound, so that what flies or sails over there can get back:
+  // Bainbridge's east shore (Rockaway Beach and Manitou Beach -- Eagle Harbor
+  // itself is just past the map's west edge), Blake Island State Park's
+  // marina, and Vashon's north end by the ferry dock.
+  { name: 'Bainbridge Island · Rockaway Beach', x: -12338, z: 2484, fleet: ['floatplane', 'boat', 'jetski', 'boat'], seaplanes: true },
+  { name: 'Bainbridge Island · Manitou Beach', x: -12488, z: -3631, fleet: ['boat', 'floatplane', 'jetski'], seaplanes: true },
+  { name: 'Blake Island Marina', x: -11255, z: 7565, fleet: ['boat', 'floatplane', 'jetski', 'boat'], seaplanes: true },
+  { name: 'Vashon Island · North End', x: -9481, z: 11212, fleet: ['floatplane', 'boat', 'jetski'], seaplanes: true },
 ];
 const BOAT_PAINT = [0xf2f2ee, 0x1f3f6a, 0xb8352a, 0xe8e2d0, 0x2d5a45, 0x3c4450];
 const SKI_PAINT = [0xf2c21a, 0x1e7fd0, 0xd8322a, 0x21b3a0, 0xf07a1c, 0x7a3fc2];

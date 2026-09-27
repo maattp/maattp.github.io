@@ -11,6 +11,8 @@ import { ShadowCache } from './shadowcache.js';
 import { Monorail } from './monorail.js';
 import { Link } from './link.js';
 import { BikeNet, Cyclists } from './bikes.js';
+import { Islands } from './islands.js';
+import { PickleballCourt } from './pickleball.js';
 import { freezeStatic, Builder } from './build.js';
 import { Fishing } from './fishing.js';
 import { Hoops } from './hoops.js';
@@ -94,6 +96,7 @@ let pinball = null;  // the pinball museum in the International District (pinbal
 let hockey = null;   // hockey night at Climate Pledge Arena (hockey.js)
 let tower = null;    // Boeing Field's control tower and FINAL APPROACH (atc.js)
 let duckTour = null; // the Duck Tour: kiosk, ducks, ramp and the tour (ducktour.js)
+let islands = null, pickle = null;   // the islands across the Sound (islands.js), pickleball on Bainbridge (pickleball.js)
 let coffee = null;   // First Cup Coffee at 1912 Pike Place and MORNING RUSH (barista.js)
 let seafair = null;  // hydroplane racing on Lake Washington (hydrorace.js)
 let golf = null;   // three holes at Interbay (golf.js)
@@ -283,6 +286,14 @@ class Game {
     if (duckTour && !duckTour.tour && duckTour.near(pl)) return duckTour.start();
     // the race office at Stan Sayres Pits?
     if (seafair && seafair.state === 'idle' && seafair.near(pl)) { seafair.start(); return true; }
+    // pickleball on Bainbridge, where it was invented?
+    if (pickle && !pickle.active && pickle.near(pl)) {
+      this.paused = true;
+      pickle.start();
+      return true;
+    }
+    // digging for Blake Island's treasure?
+    if (islands && islands.tryInteract(pl)) return true;
     // the coffee shop at 1912 Pike Place?
     if (coffee && !coffee.active && coffee.near(pl)) {
       this.paused = true;
@@ -949,6 +960,12 @@ function installShadowFade() {
     onReward: (m) => { game.money += m; setTimeout(() => hud.showToast(`Your shift at First Cup paid $${m}`), 400); },
     onEnd: () => { game.paused = false; },
   });
+  pickle = new PickleballCourt({
+    scene, city, world, audio, get player() { return player; },
+    onReward: (m) => { game.money += m; setTimeout(() => hud.showToast(`Pickleball paid $${m}`), 400); },
+    onEnd: () => { game.paused = false; },
+  });
+  islands = new Islands({ scene, city, world, get game() { return game; }, get hud() { return hud; }, get audio() { return audio; }, get player() { return player; } });
   tower = new TowerGame({
     scene, city, world, audio, tower: lmRoot.userData.tower,
     onReward: (m) => { game.money += m; setTimeout(() => hud.showToast(`The tower paid $${m}`), 400); },
@@ -1021,6 +1038,8 @@ function installShadowFade() {
       hello: 'Duck Tours — land and lake. Press ENTER at the kiosk to captain a tour' },
     { x: seafair.spot.x, z: seafair.spot.z, kind: 'hydro', name: 'Seafair Pits', near: false,
       hello: 'Stan Sayres Pits: unlimited hydroplanes. Press ENTER to race, or take the boat off the dock' },
+    ...(pickle.court ? [{ x: pickle.court.x, z: pickle.court.z, kind: 'pickle', name: 'Pickleball', near: false,
+      hello: 'Pickleball was invented here on Bainbridge Island in 1965. Walk onto the court and press ENTER to play' }] : []),
     { x: coffee.spot.x, z: coffee.spot.z, kind: 'coffee', name: 'First Cup Coffee', near: false,
       hello: 'First Cup Coffee, Pike Place. Press ENTER to work the morning rush' },
     { x: tower.spot.x, z: tower.spot.z, kind: 'tower', name: 'Control Tower', near: false,
@@ -1047,7 +1066,9 @@ function installShadowFade() {
     ...link.stations.map((st) => ({ x: st.ent.x, z: st.ent.z, kind: 'link', name: `Link · ${st.name}`, near: false,
       hello: `${st.full} Station — Link light rail's 1 Line. Tap ENTER here${st.under ? '' : ' or on the platform'} to catch the next train and drive it` })),
     ...(lmRoot.userData.marinas || []).map((mr) => ({ x: mr.x, z: mr.z, kind: 'dock', name: mr.name, near: false,
-      hello: mr.seaplanes ? `${mr.name} — floatplanes on the float. Walk out and climb in`
+      hello: /Blake/.test(mr.name) ? `${mr.name} — they say something's buried under an X on the island's west beach. Floatplanes and boats on the float`
+        : /Vashon/.test(mr.name) ? `${mr.name} — keep to the path in the woods up there. People have seen things`
+        : mr.seaplanes ? `${mr.name} — floatplanes on the float. Walk out and climb in`
         : `${mr.name} — boats and jet skis. Walk out on the float and take one` })),
   ];
   peds = new PedSystem(scene, city, game);
@@ -1135,7 +1156,7 @@ function installShadowFade() {
 
   await step(1, 'Welcome to Seattle');
   window.__refreshJobs = refreshJobs;
-  window.__dbg = { game, city, player, world, traffic, peds, acts, stunts, monorail, link, bikeNet, cyclists, lmRoot, shadowCache, fishing, fishSpots, hoops, needleTop, fishToss, wheelRide, golf, arcade, pinball, hockey, tower, duckTour, coffee, seafair, scene, camera, renderer, G, fx, hud, controls, audio, pickups, THREE, postfx, applyQuality, sun, placeSun, sceneStats, perfSys, cityStats, WET_FLOOR, animateWalk, collideWithBuildings, TYPES: VEHICLE_TYPES };
+  window.__dbg = { game, city, player, world, traffic, peds, acts, stunts, monorail, link, bikeNet, cyclists, lmRoot, shadowCache, fishing, fishSpots, hoops, needleTop, fishToss, wheelRide, golf, arcade, pinball, hockey, tower, duckTour, coffee, seafair, islands, pickle, scene, camera, renderer, G, fx, hud, controls, audio, pickups, THREE, postfx, applyQuality, sun, placeSun, sceneStats, perfSys, cityStats, WET_FLOOR, animateWalk, collideWithBuildings, TYPES: VEHICLE_TYPES };
   wireUi();
   game.newTarget();
   // Start on `high` everywhere.
@@ -1881,6 +1902,8 @@ function frame(now) {
   if (hockey && hockey.active) hockey.update(dt);
   if (tower && tower.active) tower.update(dt);
   if (coffee && coffee.active) coffee.update(dt);
+  if (pickle) pickle.update(dt);
+  if (islands) islands.update(dt);
   if (fishToss) { if (fishToss.active) fishToss.update(dt); fishToss.updateWorld(dt, camera.position.x, camera.position.z); }
   if (hoops) hoops.updateVisibility(camera.position.x, camera.position.z);
   if (game.paused || game.mapOpen) {
@@ -1895,7 +1918,7 @@ function frame(now) {
     // and those still draw every frame.
     // (the fishing game's screen covers the city too, once it is up)
     const idle = game.mapOpen || pauseMenuEl.classList.contains('show') || (fishing && fishing.el.classList.contains('show'))
-      || (arcade && arcade.active) || (pinball && pinball.active) || (hockey && hockey.active) || (tower && tower.active) || (coffee && coffee.active);
+      || (arcade && arcade.active) || (pinball && pinball.active) || (hockey && hockey.active) || (tower && tower.active) || (coffee && coffee.active) || (pickle && pickle.active);
     if (!idle || idleDrawn < 2 || idleRedraw) { draw(now); idleDrawn++; idleRedraw = false; }
     return;
   }

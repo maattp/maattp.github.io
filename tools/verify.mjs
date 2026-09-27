@@ -2102,6 +2102,59 @@ async function main() {
       if (bad.length) { console.error(`FAIL: bicycles: ${bad.join('; ')}`); process.exitCode = 1; }
     }
 
+    // --- the islands across the Sound ------------------------------------------------------
+    // Docks with floatplanes and boats on Bainbridge, Blake and Vashon (so
+    // nobody who flies over is stranded), the Easter eggs sited on dry land
+    // and each paying once, the Sasquatch fleeing, the treasure dug, and the
+    // pickleball court: on level ground, ENTER plays, a game runs to 11.
+    const isl = await session.eval(`(() => {
+      const d = window.__dbg, I = d.islands, K = d.pickle, T = d.traffic, P = d.player, G = d.G;
+      const out = {};
+      const west = (d.lmRoot.userData.marinas || []).filter((m) => m.x < -8000);
+      out.docks = west.length;
+      out.craft = T.cars.filter((v) => v.mode === 'apron' && v.x < -8000 && (v.spec.floats || v.spec.boat)).map((v) => v.typeName);
+      out.dry = Object.entries(I.place).filter(([, q]) => G.isWater(q.x, q.z) || G.terrainHeight(q.x, q.z) < 0.3).map(([k]) => k);
+      if (P.vehicle) P.exitVehicle(true);
+      localStorage.removeItem('auto-islands'); I.found = new Set();
+      const m0 = d.game.money;
+      // the bike in the tree, the salmon bake, the labyrinth: walk up to each
+      for (const q of [I.bikeTree, I.fire, I.lab]) { P.x = q.x + 0.5; P.z = q.z + 0.5; P.y = G.terrainHeight(P.x, P.z); I.update(0.05); }
+      // the Sasquatch: come up on him and he bolts
+      const s = I.sq; P.x = s.x + 12; P.z = s.z; P.y = G.terrainHeight(P.x, P.z);
+      for (let i = 0; i < 60; i++) { I.update(1 / 30); if (i < 30) { P.x = s.x + 12; P.z = s.z; } }
+      out.fled = Math.hypot(s.x - P.x, s.z - P.z) > 16;
+      // dig
+      P.x = I.chest.x; P.z = I.chest.z; P.y = G.terrainHeight(P.x, P.z);
+      out.dug = I.tryInteract(P);
+      out.found = [...I.found].sort();
+      out.paid = d.game.money - m0;
+      // pickleball
+      out.court = !!K.court;
+      if (K.court) {
+        P.x = K.court.x; P.z = K.court.z; P.y = K.court.y;
+        out.onCourt = K.near(P) && Math.abs(d.city.platformAt(K.court.x, K.court.z) - K.court.y) < 0.05;
+        K.start(); K._newGame(); K.frozen = true;
+        const gm = K.game;
+        for (let i = 0; i < 60 * 900 && gm.state !== 'over'; i++) gm.step(1 / 60, { mx: 0, my: 0, shot: i % 25 === 0 ? 'drive' : null, aimX: 0 });
+        out.pickle = { state: gm.state, score: gm.score };
+        K.frozen = false; K.close();
+      }
+      return out;
+    })()`, true);
+    console.log('\n--- the islands --------------------------------------------');
+    console.log(`  docks across the Sound ${isl.docks} (${isl.craft.length} craft: ${[...new Set(isl.craft)].join(', ')}); sites in the water ${isl.dry.join(', ') || 'none'}`);
+    console.log(`  found ${isl.found.join(', ')} for $${isl.paid}; the Sasquatch fled ${isl.fled}; dug ${isl.dug}`);
+    console.log(`  pickleball: court ${isl.court}, standing on it ${isl.onCourt}; a game to ${isl.pickle && isl.pickle.score.join('-')} (${isl.pickle && isl.pickle.state})`);
+    {
+      const bad = [];
+      if (isl.docks < 4 || !isl.craft.includes('floatplane') || !isl.craft.includes('boat')) bad.push('docks');
+      if (isl.dry.length) bad.push('sites in the water');
+      if (!['bikeTree', 'labyrinth', 'salmon', 'sasquatch', 'treasure'].every((k) => isl.found.includes(k)) || isl.paid < 5000) bad.push('the Easter eggs');
+      if (!isl.fled) bad.push('the Sasquatch');
+      if (!isl.court || !isl.onCourt || !isl.pickle || isl.pickle.state !== 'over') bad.push('pickleball');
+      if (bad.length) { console.error(`FAIL: islands: ${bad.join('; ')}`); process.exitCode = 1; }
+    }
+
     // --- the articulated bus ---------------------------------------------------
     //
     // An artic spawned and driven: its rear section follows on the hitch
