@@ -5273,100 +5273,164 @@ function sideGlass(trim, shell, sx, zA, zB, yBot, yTopMax, d = 0.007, cols = 6) 
  * cab sides follow the screen, they do not stop square.
  */
 function buildVan(spec, paint, trim, matte) {
+  // A high-roof panel van (the Transit / Sprinter class) as ONE body: every
+  // cross-section runs from the sill, up a flat flank with a little
+  // tumblehome, round the roof edge to the crown, and the long profile goes
+  // flat roof -> raked windscreen -> short bonnet -> nose. The rear is a flat
+  // pair of doors from the bumper to the roof. Wheel arches are the flank's
+  // bottom edge rising over each tyre, with a liner behind and a black flare
+  // round it. Glass is cut out of the same grid (side windows in the cab
+  // doors, the windscreen) so the cab is seen into; the cargo box is closed
+  // off behind the seats.
   const wr = spec.wheelR, roofY = spec.roof;
   const nose = spec.len / 2, tail = -spec.len / 2;
-  const zF = 1.70, zR = -1.80;                 // 3.50 m wheelbase, 93 cm front overhang
-  const halfW = curve([[tail, 0.96], [-2.40, 0.99], [zR, 1.00], [0, 0.99], [zF, 1.00], [2.25, 0.97], [nose, 0.90]]);
-  const sillY = curve([[tail, 0.50], [-2.35, 0.42], [-1.00, 0.38], [1.00, 0.38], [2.30, 0.42], [nose, 0.46]]);
-  const beltY = curve([[tail, 1.12], [-1.00, 1.12], [1.00, 1.12], [1.50, 1.115], [1.95, 1.07], [2.35, 0.99], [nose, 0.93]]);
-  const core = bodyCore(spec, paint, matte, {
-    halfW, sillY, beltY, zF, zR,
-    tuckAt: curve([[tail, 0.95], [zR, 0.98], [0, 0.95], [zF, 0.98], [nose, 0.95]]),
-    topAt: curve([[tail, 0.98], [1.40, 0.98], [1.95, 0.95], [2.35, 0.88], [nose, 0.80]]),
-    archR: 0.58, archGap: 0.07, archPow: 2.4, creaseAt: 0.45, tumble: 0.985,
-    deckDrop: 0.020, lipOut: 0.030, endRound: 0.10, endMin: 0.94,
-  });
-  const { geom, endProf } = core;
+  const zF = 1.70, zR = -1.80, AR = 0.47;
+  const W = curve([[tail, 0.965], [tail + 0.14, 0.99], [zR, 1.0], [1.55, 1.0], [2.15, 0.975], [nose - 0.12, 0.93], [nose, 0.88]]);
+  const TOP = curve([[tail, roofY - 0.03], [tail + 0.10, roofY], [0.92, roofY], [1.05, roofY - 0.06], [1.64, 1.17], [2.25, 1.05], [nose - 0.10, 0.98], [nose, 0.90]]);
+  const SILL = 0.40, BELT = 1.14;
+  const archY = (z) => {
+    let y = SILL;
+    for (const az of [zF, zR]) {
+      const dz = z - az;
+      if (Math.abs(dz) < AR) y = Math.max(y, wr + Math.sqrt(AR * AR - dz * dz) * 0.98);
+    }
+    return y;
+  };
+  // the cab's side windows: from the A-pillar back to the B-pillar
+  const WIN0 = 0.50, WIN1 = 1.52;
+  const sec = (z) => {
+    const w = W(z), H = TOP(z), b = archY(z);
+    const belt = Math.min(BELT, H - 0.06);
+    const upY = Math.max(belt + 0.02, H - 0.16);
+    const winB = Math.min(belt + 0.07, upY - 0.02), winT = Math.max(winB + 0.01, Math.min(H - 0.24, upY - 0.01));
+    return [
+      [w - 0.035, b], [w, Math.min(b + 0.08, belt - 0.03)], [w, belt], [w - 0.005, winB], [w - 0.022, winT],
+      [w - 0.03, upY], [w - 0.13, H - 0.025], [w * 0.5, H], [0, H + 0.012],
+    ];
+  };
+  // stations: dense round the arches, the cab and the ends
+  const zs = new Set([tail, tail + 0.04, tail + 0.12, nose, nose - 0.05, nose - 0.12, WIN0, WIN1, WIN0 + 0.04, WIN1 - 0.04, 0.92, 1.05, 1.64, 2.25]);
+  for (let z = tail; z < nose; z += 0.2) zs.add(+z.toFixed(3));
+  for (const az of [zF, zR]) for (let k = -12; k <= 12; k++) zs.add(+(az + (k / 12) * (AR + 0.01)).toFixed(4));
+  const Z = [...zs].filter((z) => z >= tail && z <= nose).sort((a, b) => a - b);
+  const GL = GLASS, CLAD = [0.08, 0.085, 0.09];
+  // what each quad is: (station interval i, column k) -> [builder, colour] or null
+  const pick = (za, zb, k) => {
+    const zm = (za + zb) / 2;
+    if (k === 0) return [matte, CLAD];                                       // lower cladding
+    if (k === 3 && zm > WIN0 + 0.04 && zm < WIN1 - 0.04) return [trim, GL]; // cab side window
+    if (k >= 6 && zm > 1.07 && zm < 1.62) return [trim, GL];               // windscreen
+    return [paint, WHITE];
+  };
+  for (const sd of [-1, 1]) {
+    const rows = Z.map((z) => sec(z).map(([x, y]) => [sd * x, y, z]));
+    // per-vertex normals, from the grid, outward
+    const N = rows.map((r, i) => r.map((q, k) => {
+      const a = rows[Math.max(0, i - 1)][k], b = rows[Math.min(rows.length - 1, i + 1)][k];
+      const c = r[Math.max(0, k - 1)], d = r[Math.min(r.length - 1, k + 1)];
+      const u = [b[0] - a[0], b[1] - a[1], b[2] - a[2]], v = [d[0] - c[0], d[1] - c[1], d[2] - c[2]];
+      let n = [u[1] * v[2] - u[2] * v[1], u[2] * v[0] - u[0] * v[2], u[0] * v[1] - u[1] * v[0]];
+      const l = Math.hypot(...n) || 1; n = n.map((t) => t / l);
+      const out = [q[0], q[1] - 0.8, 0];
+      if (n[0] * out[0] + n[1] * out[1] < 0) n = n.map((t) => -t);
+      return n;
+    }));
+    for (let i = 0; i < rows.length - 1; i++) {
+      for (let k = 0; k < rows[i].length - 1; k++) {
+        const pk = pick(Z[i], Z[i + 1], k);
+        if (!pk) continue;
+        const [b, col] = pk;
+        const inset = b === trim ? 0.006 : 0;
+        const P = (ii, kk) => { const q = rows[ii][kk]; return inset ? [q[0] - sd * inset * Math.sign(q[0] || 1) * 0 - N[ii][kk][0] * inset, q[1] - N[ii][kk][1] * inset, q[2]] : q; };
+        b.quad(P(i, k), P(i + 1, k), P(i + 1, k + 1), P(i, k + 1), [N[i][k], N[i + 1][k], N[i + 1][k + 1], N[i][k + 1]], [0, 0, 1, 0, 1, 1, 0, 1], col);
+      }
+    }
+    // wheel arches: a liner tunnelled in behind each opening, and a flare
+    for (const az of [zF, zR]) {
+      const lipPts = [], liner = [[], [], []];
+      for (let t = 0; t <= 16; t++) {
+        const a = Math.PI * (t / 16);
+        const z = az - Math.cos(a) * AR * 0.995, y = Math.max(SILL - 0.02, wr + Math.sin(a) * AR * 0.98);
+        const x = sd * (W(z) - 0.03);
+        lipPts.push([x + sd * 0.03, y + 0.01, z]);
+        liner[0].push([x, y, z]); liner[1].push([x - sd * 0.28, y, z]); liner[2].push([x - sd * 0.30, wr * 0.6 + (y - wr * 0.6) * 0.3, z]);
+      }
+      matte.patch(liner, CAVITY, [-sd, -0.5, 0]);
+      for (let t = 0; t < lipPts.length - 1; t++) matte.tube(lipPts[t], lipPts[t + 1], 0.035, 5, CLAD, false);
+    }
+  }
+  // the underbody between the sills
+  matte.quad([-0.96, SILL - 0.02, tail + 0.2], [0.96, SILL - 0.02, tail + 0.2], [0.96, SILL - 0.02, nose - 0.25], [-0.96, SILL - 0.02, nose - 0.25], [0, -1, 0], [0, 0, 1, 0, 1, 1, 0, 1], CAVITY);
+
+  const profAt = (z) => sec(z).map(([x, y]) => [y, x]);
   const tw = 0.235;
-  const wx = geom(zF).wb - tw / 2 + 0.02, wxR = geom(zR).wb - tw / 2 + 0.02;
+  const wx = W(zF) - tw / 2 - 0.02, wxR = W(zR) - tw / 2 - 0.02;
   const wheels = [[-wx, wr, zF, wr, tw], [wx, wr, zF, wr, tw], [-wxR, wr, zR, wr, tw], [wxR, wr, zR, wr, tw]];
 
-  // --- upper body ----------------------------------------------------------
-  const cowlZ = 1.62;
-  const shell = boxShell(paint, {
-    z0: tail, z1: cowlZ, stations: 34, rr: 0.14, tumble: 0.035, crown: 0.03, capEnd: true,
-    wAt: (z) => geom(z).tw,
-    y0At: (z) => beltY(z) - 0.03,
-    // Level roof, then a curve down the screen that meets the bonnet tangent.
-    y1At: curve([[tail, roofY - 0.03], [tail + 0.18, roofY], [0.80, roofY], [1.00, roofY - 0.05], [cowlZ, beltY(cowlZ) + 0.03]]),
-    windows: [-1, 1].map((sx) => ({ sx, zA: 0.46, zB: 1.50, yBot: beltY(1.0) + 0.06, yTopMax: roofY - 0.30 })),
-    slope: { zA: 1.54, zB: 1.04 },
-  });
-
-  // Windscreen, laid on the shell's sloping top between the two corners.
-  slopeGlass(trim, shell, 1.54, 1.04);
-  // Cab: the floor at the belt, a bulkhead behind the seats closing off the
-  // cargo box (whose inside you would otherwise see straight through), and a
-  // headliner under the level roof.
-  boxCabin(matte, { y: beltY(1.0) + 0.01, sit: 1.50, x: shell.sec(1.0).w0 - 0.06, zR: 0.26, zF: 1.46, top: roofY - 0.07,
-    hzF: 0.96, rows: [0.52], wheelDz: 0.62 });
-
-  for (const sx of [-1, 1]) {
-    sideGlass(trim, shell, sx, 0.46, 1.50, beltY(1.0) + 0.06, roofY - 0.30);
-    // B-pillar and sliding-door shut lines, lower body and upper, and the
-    // door's track along the waist behind it.
-    for (const zc of [0.40, -0.92]) {
-      shutLine(core, matte, sx, zc);
-      const g = shell.sec(zc);
-      matte.box(sx * (g.w0 + 0.004), g.y0 + 0.03, zc, 0.010, g.side - g.y0 - 0.06, 0.016, 0, [0.13, 0.14, 0.15]);
+  // --- the cab: floor, seats, dash, wheel, the bulkhead closing the cargo
+  // box behind them, the headliner
+  boxCabin(matte, { y: 0.62, sit: 1.14, x: W(1.0) - 0.08, zR: 0.30, zF: 1.58, top: roofY - 0.09, hzF: 1.02, rows: [0.62], wheelDz: 0.58 });
+  // wipers at the foot of the screen
+  for (const x of [-0.42, 0.18]) matte.tube([x, 1.19, 1.6], [x + 0.45, 1.36, 1.5], 0.012, 4, CLAD, true);
+  // A-pillar trims and the screen's black surround at the top
+  for (const sd of [-1, 1]) {
+    // door shut lines: cab door front and back, the sliding door on the kerb side
+    for (const zc of sd < 0 ? [WIN0 - 0.02, 1.58, -0.92] : [WIN0 - 0.02, 1.58]) {
+      const q = sec(zc);
+      matte.box(sd * (q[2][0] + 0.003), archY(zc) + 0.04, zc, 0.008, q[5][1] - archY(zc) - 0.08, 0.014, 0, [0.12, 0.13, 0.14]);
     }
-    const gT = shell.sec(-1.6);
-    matte.box(sx * (gT.w0 + 0.006), roofY - 0.40, -1.75, 0.014, 0.028, 1.70, 0, [0.12, 0.13, 0.14]);
-    for (const zc of [0.30, -0.80]) matte.box(sx * (geom(zc).w + 0.006), 1.02, zc, 0.012, 0.030, 0.16, 0, PLASTIC);   // handles
-    // Black rubbing strip down the lower body, between the arches.
-    matte.box(sx * (geom(0).w + 0.006), 0.64, (zF + zR) / 2, 0.020, 0.10, (zF - zR) - 1.30, 0, PLASTIC);
-    // Commercial mirror on a black arm off the A-pillar.
-    const mz = 1.46, bx = geom(mz).tw;
-    matte.tube([sx * bx, 1.22, mz], [sx * (bx + 0.20), 1.34, mz + 0.03], 0.022, 6, PLASTIC, true);
-    matte.box(sx * (bx + 0.25), 1.10, mz + 0.03, 0.080, 0.34, 0.12, 0, PLASTIC);
-    trim.box(sx * (bx + 0.25), 1.12, mz - 0.034, 0.060, 0.30, 0.012, 0, MIRROR);
-    trim.box(sx * (geom(2.30).w + 0.004), 0.86, 2.30, 0.010, 0.030, 0.08, 0, AMBER);
+    // the sliding door's track along the waist behind it
+    if (sd < 0) matte.box(sd * (W(-1.6) - 0.02), roofY - 0.42, -1.72, 0.014, 0.03, 1.6, 0, [0.12, 0.13, 0.14]);
+    for (const zc of [1.40, -0.80]) if (sd < 0 || zc > 0) matte.box(sd * (W(zc) + 0.006), 1.04, zc, 0.012, 0.032, 0.17, 0, PLASTIC);   // handles
+    // rubbing strip down the flank between the arches
+    matte.box(sd * (W(0) + 0.008), 0.72, (zF + zR) / 2, 0.02, 0.11, (zF - zR) - 1.25, 0, PLASTIC);
+    // side marker and fuel filler
+    trim.box(sd * (W(2.1) + 0.004), 0.86, 2.1, 0.01, 0.03, 0.08, 0, AMBER);
+    if (sd > 0) matte.box(sd * (W(-1.2) + 0.004), 0.95, -1.2, 0.01, 0.12, 0.12, 0, [0.14, 0.15, 0.16]);
+    // commercial mirror on a black arm off the A-pillar
+    const mz = 1.52, bx = W(mz);
+    matte.tube([sd * bx, 1.22, mz], [sd * (bx + 0.2), 1.34, mz + 0.03], 0.022, 6, PLASTIC, true);
+    matte.box(sd * (bx + 0.25), 1.08, mz + 0.03, 0.08, 0.36, 0.12, 0, PLASTIC);
+    trim.box(sd * (bx + 0.25), 1.1, mz - 0.034, 0.06, 0.32, 0.012, 0, MIRROR);
   }
 
-  // --- front --------------------------------------------------------------------
-  const yN = sillY(nose);
-  const GRILLE = [0, yN + 0.230, 0.420, 0.100], LAMP_A = [0.630, yN + 0.345, 0.155, 0.060];
-  const INTAKE = [0, yN + 0.070, 0.440, 0.040];
-  endFace(paint, nose, 1, endProf(nose), [GRILLE, LAMP_A, INTAKE], WHITE);
-  const gp = pocket(paint, matte, 0, GRILLE[1], nose, GRILLE[2], GRILLE[3], 0.12, 1, { rim: 0.026, rimCol: PLASTIC });
-  for (let i = 0; i < 3; i++) trim.box(0, GRILLE[1] - 0.070 + i * 0.060, gp.z + 0.02, gp.hw * 1.92, 0.020, 0.04, 0, CHROME);
+  // --- the front: grille, lamps, bumper ------------------------------------------
+  const yN = SILL;
+  const GRILLE = [0, yN + 0.33, 0.44, 0.11], LAMP_A = [0.62, yN + 0.47, 0.17, 0.07], INTAKE = [0, yN + 0.12, 0.46, 0.045];
+  endFace(paint, nose, 1, profAt(nose), [GRILLE, LAMP_A, INTAKE], WHITE);
+  const gp = pocket(paint, matte, 0, GRILLE[1], nose, GRILLE[2], GRILLE[3], 0.12, 1, { rim: 0.028, rimCol: PLASTIC });
+  for (let i = 0; i < 3; i++) trim.box(0, GRILLE[1] - 0.075 + i * 0.062, gp.z + 0.02, gp.hw * 1.92, 0.02, 0.04, 0, CHROME);
   for (const sx of [-1, 1]) {
     const hp = pocket(paint, matte, sx * LAMP_A[0], LAMP_A[1], nose, LAMP_A[2], LAMP_A[3], 0.09, 1, { rim: 0.018, rimCol: PLASTIC });
-    trim.box(sx * LAMP_A[0], LAMP_A[1] - 0.046, nose - 0.028, hp.hw * 1.9, 0.092, 0.022, 0, LAMP);
-    headlampWrap(core, trim, sx, nose, 0.16);
+    trim.box(sx * LAMP_A[0], LAMP_A[1] - 0.05, nose - 0.028, hp.hw * 1.9, 0.1, 0.022, 0, LAMP);
+    trim.box(sx * (LAMP_A[0] + 0.12), LAMP_A[1] - 0.02, nose - 0.03, 0.05, 0.05, 0.02, 0, AMBER);
+    trim.tube([sx * 0.62, yN + 0.02, nose + 0.02], [sx * 0.62, yN + 0.02, nose + 0.05], 0.035, 8, LAMP, true);   // fog lamps
   }
   pocket(paint, matte, 0, INTAKE[1], nose, INTAKE[2], INTAKE[3], 0.08, 1, { rim: 0.02, rimCol: PLASTIC });
-  matte.box(0, yN - 0.06, nose - 0.06, geom(nose - 0.06).wb * 1.96, 0.13, 0.16, 0, PLASTIC);    // bumper
-  trim.box(0, yN + 0.130, nose + 0.024, 0.40, 0.11, 0.02, 0, PLATE);
+  matte.box(0, yN - 0.1, nose - 0.08, W(nose - 0.08) * 2.02, 0.2, 0.2, 0, PLASTIC);     // bumper
+  trim.box(0, yN - 0.02, nose + 0.03, 0.4, 0.11, 0.02, 0, PLATE);
 
-  // --- rear: two doors, each with its own glass -------------------------------
-  const yT = sillY(tail);
-  const TAILA = [0.820, yT + 0.420, 0.065, 0.170], TPLATE = [0, yT + 0.250, 0.230, 0.070];
-  endFace(paint, tail, -1, endProf(tail), [TAILA, TPLATE], WHITE);
-  const RW = [0.42, roofY - 0.52, 0.30, 0.22];
-  endFace(paint, tail, -1, shell.prof(tail), [RW], WHITE);
+  // --- the rear: two flat doors from the bumper to the roof, each with its
+  // glass, tall lamp clusters in the corners, the step bumper -----------------------
+  const TAILA = [0.86, SILL + 0.62, 0.07, 0.30], TPLATE = [0, SILL + 0.26, 0.23, 0.07];
+  const RW = [0.44, roofY - 0.56, 0.30, 0.24];
+  endFace(paint, tail, -1, profAt(tail), [TAILA, TPLATE, RW], WHITE);
   for (const sx of [-1, 1]) {
     const tp = pocket(paint, matte, sx * TAILA[0], TAILA[1], tail, TAILA[2], TAILA[3], 0.05, -1, { rim: 0.016, rimCol: PLASTIC });
-    trim.box(sx * TAILA[0], TAILA[1] - tp.hh * 0.95, tail + 0.016, tp.hw * 1.9, tp.hh * 1.9, 0.020, 0, TAILC);
-    const wp = pocket(paint, matte, sx * RW[0], RW[1], tail, RW[2], RW[3], 0.03, -1, { rim: 0.020, rimCol: PLASTIC });
-    trim.box(sx * RW[0], RW[1] - wp.hh, tail + 0.012, wp.hw * 2, wp.hh * 2, 0.010, 0, GLASS);
-    trim.box(sx * 0.10, roofY - 1.05, tail - 0.020, 0.030, 0.16, 0.030, 0, CHROME);   // door handles
+    trim.box(sx * TAILA[0], TAILA[1] - tp.hh * 0.95, tail + 0.016, tp.hw * 1.9, tp.hh * 0.95, 0.02, 0, TAILC);
+    trim.box(sx * TAILA[0], TAILA[1] + 0.0, tail + 0.016, tp.hw * 1.9, tp.hh * 0.9, 0.02, 0, AMBER);
+    const wp = pocket(paint, matte, sx * RW[0], RW[1], tail, RW[2], RW[3], 0.03, -1, { rim: 0.02, rimCol: PLASTIC });
+    trim.box(sx * RW[0], RW[1] - wp.hh, tail + 0.012, wp.hw * 2, wp.hh * 2, 0.01, 0, GLASS);
+    matte.box(sx * RW[0], RW[1] - wp.hh, tail + 0.12, wp.hw * 2, wp.hh * 2, 0.01, 0, CAVITY);   // behind the glass: the dark cargo box
+    trim.box(sx * 0.1, SILL + 0.78, tail - 0.02, 0.03, 0.16, 0.03, 0, CHROME);                     // door handles
+    for (const y of [SILL + 0.35, roofY - 0.35]) matte.box(sx * (W(tail) - 0.02), y, tail - 0.01, 0.03, 0.12, 0.02, 0, PLASTIC);   // hinges
   }
-  matte.box(0, yT + 0.05, tail - 0.005, 0.014, roofY - yT - 0.18, 0.012, 0, [0.12, 0.13, 0.14]);   // door split
+  matte.box(0, SILL + 0.02, tail - 0.006, 0.014, roofY - SILL - 0.1, 0.012, 0, [0.12, 0.13, 0.14]);   // door split
   pocket(paint, matte, 0, TPLATE[1], tail, TPLATE[2], TPLATE[3], 0.04, -1, { rim: 0.016, rimCol: PLASTIC });
-  trim.box(0, TPLATE[1] - 0.062, tail - 0.022, 0.40, 0.12, 0.02, 0, PLATE);
-  matte.box(0, yT - 0.06, tail + 0.06, geom(tail + 0.06).wb * 1.96, 0.14, 0.16, 0, PLASTIC);    // step bumper
-  trim.box(0, roofY - 0.070, tail - 0.012, 0.26, 0.030, 0.02, 0, TAILC);                         // high stop lamp
+  trim.box(0, TPLATE[1] - 0.062, tail - 0.022, 0.4, 0.12, 0.02, 0, PLATE);
+  matte.box(0, SILL - 0.14, tail + 0.04, W(tail) * 2.0, 0.18, 0.2, 0, PLASTIC);      // step bumper
+  matte.box(0, SILL - 0.05, tail - 0.12, 0.7, 0.04, 0.16, 0, [0.2, 0.21, 0.22]);     // the step
+  trim.box(0, roofY - 0.07, tail - 0.012, 0.3, 0.03, 0.02, 0, TAILC);               // high stop lamp
   return wheels;
 }
 
