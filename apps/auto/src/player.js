@@ -2,11 +2,15 @@
 
 import { Skydive } from './parachute.js';
 import * as THREE from './three.js';
-import { makeHumanoid, animateWalk } from './peds.js';
+import { makeHumanoid, animateWalk, BONES } from './peds.js';
 import { collideWithBuildings } from './traffic.js';
 import { clamp, lerp, angleWrap, damp, dist2 } from './util.js';
 import * as G from './geo.js';
 import { TUNNEL_H } from './citygen.js';
+
+// Swimming: water deeper than this (from surface to ground) takes you off
+// your feet; while swimming your feet ride this far under the surface.
+const SWIM_DEPTH = 1.3, SWIM_FEET = 0.3;
 
 export class Player {
   constructor(scene, city, game, world) {
@@ -39,6 +43,8 @@ export class Player {
     this.scrapeT = 0; // seconds of wall contact left, for the scrape sound
     this.fellFrom = 0; // height a fall started at, for landing damage
     this.sky = null;   // a parachute jump in progress (parachute.js)
+    this.swimming = false; this.swimPhase = 0;   // in deep water (updateSwim)
+    this.hitCd = 0;    // seconds before a car can hurt you again (updateFoot)
 
     this.camYaw = this.heading + Math.PI;
     this.camPitch = 0.1;
@@ -61,6 +67,7 @@ export class Player {
     // ever wrote `wasParked`, so taking a parked car has never added heat.
     v.wasParked = v.mode === 'parked';
     const wasMode = v.mode;
+    if (this.swimming) { this.swimming = false; this.h.group.rotation.x = 0; this.h.locks = null; }
     v.mode = 'free';
     v.setDetailed(true);
     this.onFoot = false;
@@ -128,9 +135,12 @@ export class Player {
         }
         if (spot) break;
       }
+      // Nowhere dry to step: over the side, and swim (updateSwim).
       if (!spot && !force) {
-        this.game.onNoLanding && this.game.onNoLanding(v);
-        return false;
+        ox = v.x - rx * (v.halfWid + 1.3); oz = v.z - rz * (v.halfWid + 1.3);
+        const wl = this.waterAt(ox, oz);
+        oy = wl !== null ? wl + 0.4 : v.y + 1.5;
+        if (this.game.onJumpIn) this.game.onJumpIn(v);
       }
       if (spot) [ox, oz] = spot;
     }
@@ -191,6 +201,7 @@ export class Player {
       if (this.sky.update(this, dt, input)) return;
       this.sky = null;
     }
+    if (this.swimming && this.updateSwim(dt, input)) return;
     const mag = Math.hypot(input.x, input.y);
     // On-foot pace. The city is 10 km across, so these sit above real walking
     // and jogging speeds -- crossing a block should not be a chore.
@@ -281,8 +292,10 @@ export class Player {
     // `y < -0.6` only ever describes the sea. Green Lake sits at 50 m and Lake
     // Union at 5, so you could stand on a lake bed indefinitely -- and
     // `world.waterLevelAt()`, written for exactly this, had no callers at all.
-    const wl = this.world.waterLevelAt(this.x, this.z);
-    if (wl !== null && G.isWater(this.x, this.z) && this.y < wl - 0.6) this.game.onDrown();
+    // ...and there you swim (updateSwim): deeper than your chest, you are off
+    // your feet. It used to be death.
+    const wl = this.waterAt(this.x, this.z);
+    if (wl !== null && ground < wl - SWIM_DEPTH && this.y < wl - 0.2) { this.startSwim(wl, !this.grounded); return; }
 
     // Root first: animateWalk locks planted feet in world space (see peds.js).
     this.h.group.position.set(this.x, this.y, this.z);
@@ -310,6 +323,116 @@ export class Player {
         if (out > 0) { this.x += f.z * side * (out + 0.3); this.z -= f.x * side * (out + 0.3); }
       }
     }
+  }
+
+  /** Where water is drawn at (x, z): its surface, or null. The boats' rule --
+   *  ground under the sea's plane is sea whatever the 10 m mask says. */
+  waterAt(x, z) {
+    const wl = this.world.waterLevelAt(x, z);
+    return wl !== null ? wl : G.terrainHeight(x, z) < -0.15 ? 0 : null;
+  }
+
+  startSwim(wl, splash) {
+    this.swimming = true;
+    this.swimPhase = 0;
+    this.y = wl - SWIM_FEET;
+    this.vy = 0; this.grounded = true; this.fellFrom = 0;
+    this.speed = Math.min(this.speed, 1.5);
+    this.h.locks = null;
+    if (splash && this.game.onSplash) this.game.onSplash(this.x, wl, this.z, 6);
+    if (this.game.onSwim) this.game.onSwim(true);
+  }
+
+  /**
+   * SWIMMING: in water deeper than your chest you are off your feet, lying
+   * along the surface at a front crawl -- 1.8 m/s, 2.8 sprinting -- steered
+   * like walking. You come out onto anything you can climb from the water: a
+   * shelving shore (it gets shallow and you stand), a dock's float or a boat
+   * landing within 1.3 m of the surface; a sea wall or a pier deck higher than
+   * that stops you. ENTER beside a boat climbs in, as on land. Returns false
+   * once you are on your feet again.
+   */
+  updateSwim(dt, input) {
+    const wl = this.waterAt(this.x, this.z);
+    if (wl === null) return this.endSwim(this.city.groundAt(this.x, this.z, this.y + 1));
+    const mag = Math.hypot(input.x, input.y);
+    let target = 0;
+    if (mag > 0.12) {
+      const ang = Math.atan2(-input.x, -input.y) + this.camYaw + Math.PI;
+      this.heading += clamp(angleWrap(ang - this.heading), -3 * dt, 3 * dt);
+      target = (input.sprint ? 2.8 : 1.8) * clamp(mag, 0, 1);
+    }
+    this.speed = damp(this.speed, target, 2.5, dt);
+    const nx = G.clampToMap(this.x + Math.sin(this.heading) * this.speed * dt);
+    const nz = G.clampToMap(this.z + Math.cos(this.heading) * this.speed * dt);
+    const wlN = this.waterAt(nx, nz);
+    const gN = this.city.groundAt(nx, nz, (wlN !== null ? wlN : wl) + 1.4);
+    if (wlN === null || gN > (wlN !== null ? wlN : wl) - SWIM_DEPTH) {
+      // shallows or something to climb onto: stand up there, if it is in reach
+      if (gN <= wl + 1.3) { this.x = nx; this.z = nz; return this.endSwim(gN); }
+      this.speed *= 0.5;
+    } else if (!this.blocked(nx, nz)) { this.x = nx; this.z = nz; }
+    else if (this.speed > 0.3) {
+      // A float's curb (a solid, so boats and walkers stop at it): swimming
+      // into it, you haul yourself over onto the deck behind it if that is in
+      // reach of the water.
+      const fx = Math.sin(this.heading), fz = Math.cos(this.heading);
+      for (const k of [0.9, 1.4, 2.0, 2.6]) {
+        const lx = this.x + fx * k, lz = this.z + fz * k, gl = this.city.groundAt(lx, lz, wl + 1.4);
+        if (gl > wl - 0.3 && gl <= wl + 1.3 && !this.blocked(lx, lz)) { this.x = lx; this.z = lz; return this.endSwim(gl); }
+      }
+    }
+    // lying along the surface to swim, upright with the head out to tread
+    const tread = this.speed < 0.35;
+    this.y = damp(this.y, wl - (tread ? 1.22 : SWIM_FEET), 4, dt);
+    this.vy = 0; this.grounded = true;
+    // the camera follows the surface, not your feet (1.2 m down, treading)
+    this.camFootY = this.camFootY == null ? wl - SWIM_FEET : damp(this.camFootY, wl - SWIM_FEET, 10, dt);
+    // the crawl
+    const g = this.h.group, b = this.h.bones;
+    g.position.set(this.x, this.y, this.z);
+    g.rotation.y = this.heading;
+    g.rotation.x = damp(g.rotation.x, tread ? 0.18 : 1.32, 4, dt);
+    const was = this.swimPhase;
+    this.swimPhase += dt * (2.2 + this.speed * 1.4);
+    const ph = this.swimPhase, still = tread ? 1 : 0;
+    b[BONES.spine].rotation.set(0, Math.sin(ph) * 0.18, 0);
+    b[BONES.chest].rotation.set(0, Math.sin(ph) * 0.12, 0);
+    b[BONES.neck].rotation.set(still ? 0 : -0.55, 0, 0);
+    b[BONES.head].rotation.set(still ? -0.05 : -0.45, Math.sin(ph) * 0.35 * (1 - still), 0);
+    if (still) {
+      // treading water: arms sculling out to the sides, legs cycling
+      for (const [s, sh, el, th, kn] of [[1, BONES.shoulderL, BONES.elbowL, BONES.thighL, BONES.kneeL], [-1, BONES.shoulderR, BONES.elbowR, BONES.thighR, BONES.kneeR]]) {
+        b[sh].rotation.set(-0.9 + Math.sin(ph * 1.5 + s) * 0.25, 0, s * 0.9);
+        b[el].rotation.set(-0.4, 0, 0);
+        b[th].rotation.set(-0.5 + Math.sin(ph * 1.5 + (s > 0 ? 0 : Math.PI)) * 0.4, 0, s * 0.15);
+        b[kn].rotation.set(0.8, 0, 0);
+      }
+    } else {
+      for (const [s, sh, el, th, kn, off] of [[1, BONES.shoulderL, BONES.elbowL, BONES.thighL, BONES.kneeL, 0], [-1, BONES.shoulderR, BONES.elbowR, BONES.thighR, BONES.kneeR, Math.PI]]) {
+        const a = ph + off;
+        // the arm windmills: reach overhead, pull down under the body to the
+        // hip, recover over the water
+        b[sh].rotation.set(-a, 0, s * (0.15 + 0.25 * Math.max(0, Math.sin(a))));
+        b[el].rotation.set(-0.25 - 0.55 * Math.max(0, -Math.cos(a)), 0, 0);
+        // a flutter kick from the hips
+        b[th].rotation.set(Math.sin(ph * 3 + off) * 0.28, 0, s * 0.06);
+        b[kn].rotation.set(0.15 + 0.2 * Math.max(0, Math.sin(ph * 3 + off)), 0, 0);
+      }
+    }
+    // a splash at each hand's entry
+    if (!still && Math.floor(was / Math.PI) !== Math.floor(this.swimPhase / Math.PI) && this.game.onSwimStroke) this.game.onSwimStroke(this.x, wl, this.z);
+    return true;
+  }
+
+  endSwim(ground) {
+    this.swimming = false;
+    this.y = ground; this.vy = 0; this.grounded = true;
+    this.h.group.rotation.x = 0;
+    this.h.locks = null;
+    this.speed = Math.min(this.speed, 1.2);
+    if (this.game.onSwim) this.game.onSwim(false);
+    return false;
   }
 
   blocked(x, z) {
@@ -729,6 +852,7 @@ export class Player {
     }
     this.onFoot = true;
     this.h.group.visible = true;
+    this.swimming = false; this.h.group.rotation.x = 0;
     this.x = x;
     this.z = z;
     this.y = this.city.groundAt(x, z, null);

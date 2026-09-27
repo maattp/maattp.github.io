@@ -366,12 +366,17 @@ class Game {
     hud.showToast('Nowhere to step off — bring it alongside a dock or the shore');
   }
 
-  onDrown() {
-    this.damagePlayer(200, 'water');
+  // Swimming (player.js updateSwim): into the water, the strokes, climbing out.
+  onSwim(inWater) {
+    if (inWater && !this._swamOnce) { this._swamOnce = true; hud.showToast('Swimming — swim to the shore, a dock, or a boat and press ENTER to climb in', 3600); }
   }
+  onSwimStroke(x, y, z) { if (audio.ready) audio.play('step_water', { gain: 0.55, x, y, z }); if (Math.random() < 0.5) fx.droplets(x, y + 0.1, z, 4); }
+  onJumpIn() { hud.showToast('Over the side — swim for it'); }
 
+  /** A car drove into water too deep and is going down: you get out and swim. */
   onCarSank(v) {
-    this.damagePlayer(200, 'water');
+    hud.showToast('Your car is sinking — swim for it!');
+    player.exitVehicle(true);
   }
 
   onCarDestroyed(v) {

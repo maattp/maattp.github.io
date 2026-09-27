@@ -2228,6 +2228,49 @@ async function main() {
     if (ro.trials < 10 || ro.hits > 1) { console.error('FAIL: AI cars run you over'); process.exitCode = 1; }
     if (wp.underWater) { console.error('FAIL: parked cars under the water'); process.exitCode = 1; }
 
+    // --- swimming ---------------------------------------------------------------------------
+    // Fall into Lake Union 45 m off the seaplane dock's float: you swim, not
+    // drown, and haul yourself out onto the float. Step off a boat in open
+    // water: over the side. Drive a car into deep water: it sinks, you swim.
+    const sw = await session.eval(`(() => {
+      const d = window.__dbg, P = d.player, T = d.traffic;
+      if (P.vehicle) P.exitVehicle(true);
+      const out = {};
+      P.x = -56; P.z = -1960; P.y = 12; P.grounded = false; P.vy = 0; P.fellFrom = 12; P.health = 100; d.game.dead = false;
+      P.heading = -Math.PI / 2; P.camYaw = P.heading - Math.PI;
+      let swam = null, outT = null;
+      for (let i = 0; i < 60 * 60; i++) {
+        P.updateFoot(1 / 60, { x: 0, y: i > 60 ? -1 : 0 }, T, d.peds);
+        if (P.swimming && swam === null) swam = i / 60;
+        if (swam !== null && !P.swimming) { outT = i / 60; break; }
+      }
+      out.fall = { swam, out: outT, onFloat: d.city.platformAt(P.x, P.z) !== null, health: P.health, at: [P.x.toFixed(1), P.z.toFixed(1), P.y.toFixed(2)], sw: P.swimming, h: P.heading.toFixed(2), blocked: P.blocked(P.x - 1, P.z), ahead: d.city.groundAt(P.x - 1, P.z, 7).toFixed(2), wl: P.waterAt(P.x, P.z), near: T.cars.filter((v) => Math.hypot(v.x - P.x, v.z - P.z) < 6).map((v) => v.typeName + '@' + v.x.toFixed(1) + ',' + v.z.toFixed(1)) };
+      // off a runabout in the middle of the lake
+      const b = T.spawnAt(300, -2600, 0, 'boat', 0xffffff, 'free');
+      P.x = b.x; P.z = b.z; P.enterVehicle(b);
+      const ok = P.exitVehicle();
+      for (let i = 0; i < 30; i++) P.updateFoot(1 / 60, { x: 0, y: 0 }, T, d.peds);
+      out.boat = { left: ok, swimming: P.swimming, health: P.health };
+      T.remove(b);
+      // a car off the end of a Lake Union pier, into deep water
+      P.swimming = false; P.h.group.rotation.x = 0;
+      const c = T.spawnAt(300, -2600, 0, 'sedan', 0x335577, 'free');
+      P.x = c.x; P.z = c.z; P.enterVehicle(c);
+      let sank = false;
+      for (let i = 0; i < 60 * 8 && !sank; i++) { P.updateDrive(1 / 60, { x: 0, y: 0, gasAmt: 0, brakeAmt: 0 }, T, d.peds); if (P.onFoot) sank = true; }
+      for (let i = 0; i < 60; i++) if (P.onFoot) P.updateFoot(1 / 60, { x: 0, y: 0 }, T, d.peds);
+      out.car = { out: sank, swimming: P.swimming, health: P.health };
+      T.remove(c);
+      if (P.swimming) { P.swimming = false; P.h.group.rotation.x = 0; }
+      return out;
+    })()`, true);
+    console.log('\n--- swimming -----------------------------------------------');
+    if (sw.fall.out === null) console.log('  stuck: ' + JSON.stringify(sw.fall));
+    console.log(`  into the lake: swimming at ${sw.fall.swam} s, out on the float at ${sw.fall.out} s (${sw.fall.onFloat}), health ${sw.fall.health}; off a boat: ${sw.boat.swimming}; a car into deep water: out ${sw.car.out}, swimming ${sw.car.swimming}, health ${sw.car.health}`);
+    if (sw.fall.swam === null || sw.fall.out === null || !sw.fall.onFloat || sw.fall.health < 100 || !sw.boat.left || !sw.boat.swimming || !sw.car.out || !sw.car.swimming || sw.car.health <= 0) {
+      console.error('FAIL: swimming'); process.exitCode = 1;
+    }
+
     // --- the articulated bus ---------------------------------------------------
     //
     // An artic spawned and driven: its rear section follows on the hitch

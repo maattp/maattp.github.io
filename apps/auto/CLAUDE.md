@@ -3178,8 +3178,7 @@ under it). `player.sky` has the frame while you are in the air:
 - **Under canopy**: a nine-cell ram-air wing on its lines (two draws, built
   once), ~10 m/s forward and 5 m/s down; the stick turns it, forward dives,
   back flares. Landing under canopy is harmless; free fall into the ground
-  is not. Into the water, a boat puts you on the nearest shore after 1.6 s
-  (there is no swimming, and the water otherwise drowns you).
+  is not. Into the water, a boat puts you on the nearest shore after 1.6 s.
 - **The camera** follows a skydiver rigidly, as it does a plane (player.js
   `plane` / `airPlane` include `this.sky`): the on-foot rig damps height at
   4.5, which at 55 m/s trailed the body by 10 m and out of the frame.
@@ -3399,6 +3398,30 @@ Everything else is held at its count (see "Known gaps"), so nothing new goes
 under. **verify also used to end with `process.exitCode = bad.length ? 1 : 0`**,
 which cleared every FAIL above it whenever the console was clean. Only ever
 set a failure.
+
+## Swimming (v154)
+
+**Deep water is swimming, not death** (player.js `updateSwim`). On foot,
+water more than `SWIM_DEPTH` 1.3 m deep (surface to the ground under you,
+against `waterAt` -- the drawn surface, the boats' rule) takes you off your
+feet: you lie along the surface at a front crawl, 1.8 m/s (2.8 sprinting),
+steered like walking, the arms windmilling and the legs kicking, a splash at
+each hand's entry. Stopped, you tread water upright, head and shoulders out.
+The camera follows the surface, not your feet.
+
+- **Out**: onto anything within 1.3 m of the surface -- a shelving shore
+  (where it is shallow enough you stand), a dock's float, over its curb (a
+  solid, so the swimmer hauls over it onto the deck behind); a sea wall or a
+  pier deck higher than that stops you. ENTER beside a boat climbs in.
+- **In**: walk in, fall in (a splash), step off a boat away from the shore
+  (it used to refuse: now you go over the side), or drive a car into deep
+  water -- it sinks and you get out and swim (`onCarSank`; it used to kill
+  you).
+- The parachute's water landing still has a boat fish you out.
+
+verify's "swimming": a fall into Lake Union swum to the seaplane float and
+out onto it, unhurt; off a boat in open water; a car into deep water.
+`docs/swim/`.
 
 ## The seaplane dock, the boat and the quad
 
