@@ -101,7 +101,7 @@ See `apps/auto/CLAUDE.md` for why these are deliberately two literals.
 The Seattle in `/apps/auto/` is imported from OpenStreetMap and USGS elevation
 data by the scripts in `/tools/`, into `/apps/auto/data/` (the Seattle Center
 Monorail too: `tools/build_monorail.py`, driven in `src/monorail.js`; and
-Link's 1 Line: `tools/extract_rail.py` + `tools/build_link.py`, `src/link.js`; BNSF's
+Link's 1 and 2 Lines: `tools/extract_rail.py` + `tools/build_link.py`, `src/link.js`; BNSF's
 main line: `tools/build_freight.py`, `src/freight.js`). **OSM is ODbL, so the
 attribution on the launch screen and in the pause menu is a licence condition —
 don't remove it.** See `apps/auto/CLAUDE.md` for how to re-run the import.
