@@ -1425,8 +1425,9 @@ export class World {
     const seen = new Set();
     for (const [, grp] of this.portalGroups()) {
       // The street-roof rule is SR-99's (its portal groups hold the stacked
-      // decks' nodes). Citywide it would reshape 48 cuts whose lids were each
-      // tuned against a regression; judge those portal by portal first.
+      // decks' nodes), and anywhere for a freeway over the bore (below).
+      // For every street it would reshape 48 cuts whose lids were each tuned
+      // against a regression; judge those portal by portal first.
       const streetRoof = grp.members.some((mm) => city.nodes[mm.ni].deck);
       const groupBranches = [];
       for (const m of grp.members) {
@@ -1563,7 +1564,7 @@ export class World {
             // whether this applies (STREET_ROOF).
             const ux = (nn.x - cN.x) / e.len, uz = (nn.z - cN.z) / e.len, qx = -uz, qz = ux;
             const Wd = e.hw + CUT_SH;
-            for (let sd = 1; streetRoof && sd < e.len && !stop; sd += 1) {
+            for (let sd = 1; sd < e.len && !stop; sd += 1) {
               const f = sd / e.len;
               const x = cN.x + (nn.x - cN.x) * f, z = cN.z + (nn.z - cN.z) * f, y = cN.y + (nn.y - cN.y) * f;
               let st = null;
@@ -1572,6 +1573,12 @@ export class World {
                 if (st) break;
               }
               if (!st) continue;
+              // Citywide, a FREEWAY over a street's bore is its roof too: the
+              // Dexter Way underpass's cut dug Aurora 6 m deep across its
+              // lanes, and no lid had the headroom to bridge it. (Not a ramp
+              // bore under one: the I-90 ramps' headwalls by Rainier then
+              // stood 1.2 m off the ground.)
+              if (!streetRoof && (st.r.cls !== 'hwy' || e.cls === 'hwy' || e.cls === 'ramp')) continue;
               // the street that crosses the bore's CENTRELINE, when there is
               // one within reach, is the one the wall and barrier follow: a
               // corner can meet a side street first

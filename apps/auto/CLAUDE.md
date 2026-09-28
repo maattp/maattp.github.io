@@ -1967,9 +1967,19 @@ The fallbacks are for safety: a car out of sight at a one-way dead end is
 recycled, a one-way's only exit sharper than 120 deg is taken anyway, and a
 two-way dead end still U-turns.
 
-**One-way lanes span the carriageway, 4.2 m apart** (`LANE_W`), not 3.6.
-`resolveCarCollisions` tests circles of radius 0.42 x length — 2 m for a
-sedan — so two cars abreast at 3.6 m shove each other the whole way. Lanes stay
+**One-way lanes span the carriageway, 3.6 m apart** (`LANE_W`, v162), and
+**cars collide as their bodies' rectangles** (`boxOverlap` in traffic.js: 2D
+SAT on the four body axes, the pair separated along the axis of least
+overlap; the circle `hypot(halfLen, halfWid)` is only the broad phase).
+`resolveCarCollisions` used to test circles of 0.42 x length -- 2 m for a
+sedan -- which touched across 3.6 m, so lanes were 4.2 m and a 3-lane freeway
+ran 2 AI lanes; and the circles fell short of a car's nose and tail, so a
+queue shoved itself along. **An AI car drives round an unattended car
+standing in its lane** (`v.dodge`, set by the forward scan for a `free` or
+`parked` car within its lane): shoved circles used to push one along; boxes
+do not, and without the dodge a queue sat behind a knocked-out parked car
+for good. trafficcheck, 7 sites x 1 min: contacts 127 -> 29 a minute in
+total (sr99s 27 -> 2, the pursuit 45 -> 3), stuck cars 2 -> 2. Lanes stay
 out of parking (2.2 m) and the shoulder (0.8 m) and inside the narrowest graded
 `e.tw`. **An overlapping opposing carriageway owns its half**: SR-99's tubes were
 14 m roads 7.5-11 m apart at one level, and laid across full width each tube's
@@ -2939,6 +2949,20 @@ one variable per node, and solves them together:
   A smoothstep taper instead squeezed the added height into 2-3 m in 9 m.
 - An overpass that would need more than 15 % is refused and left as imported
   (`cityStats.overpassesRefused`).
+- **Couple only carriageways running side by side, and blend only what the
+  solve left close** (v162). A deck crossing OVER a freeway reads "level"
+  with it off its imported node chord and then solves 6 m higher for
+  clearance; coupled, the blend averaged the freeway up toward it: 4-5 m
+  humps at 20-24 % on I-5 under S Holgate St and beside the I-90 ramps. Two
+  guards: a pair must be within ~37 deg (`parallelTo`; at 20 deg the Rainier
+  ramps, diverging from I-90 at 20-26 deg, lost their coupling and a portal's
+  ground sank from under its piers -- 37 is the angle `tnb` uses), and the
+  blend skips a partner solved more than 1 m away (a split-level pair, or a
+  ramp climbing over something; the blend is for ~0.2 m). I-5 ground profile
+  steps over 8 %: 83 -> 27 (verify's "freeways" holds it under 40). Coupling
+  to the neighbour's CLEARANCE-raised floor (not its base) was tried to level
+  ramp pairs left 0.6-1 m apart and made barrier-on-road 841 -> 1015:
+  reverted.
 - **Couple overlapping carriageways to the neighbour's BASE floor, once.**
   Profiled independently they cross along the length (a sawtooth, and a car hops
   to whichever is higher). Coupling to the neighbour's SOLVED height each pass
@@ -3067,6 +3091,23 @@ correctly riding a deck that bows below the straight chord between its end nodes
 The approaches that remain are draped ramps beside portal cuts, where world.js
 carves the terrain after citygen fixed the node heights. Cost: +3 draws (terrain tiles carrying underpass cells), ~+1-2 %
 triangles; grading runs once at load over ~88k samples.
+
+**Nothing stands up through a deck** (v162, citygen pass 5b). roadFit clears
+buildings off carriageways at ground level and leaves bridges alone, but a
+box under a viaduct can be taller than the gap: a SODO warehouse's roof
+stood 10 cm over SR-99's deck, and cars driving the viaduct hit it as a wall
+across the lane, crash after crash. After grading, every building a deck
+passes over is brought under its soffit (`cityStats.buildingsUnderDecks`,
+33). It runs on every load, so the boot cache needs no new entry.
+
+**A deck may only pick you up if it is at your wheels, and the wheels are
+where a vehicle asks from** (v162). `Vehicle.update`, `place()` and the
+artic's rear section asked `groundAt` from y + 1.5, so a surface up to 2.4 m
+over the lane was "in reach": a ramp running beside a freeway 1.5 m higher,
+or a low overpass, captured cars on the carriageway under it and dropped
+them off its end. They ask from y + 0.45 now (`REF`; a stunt flight still
+uses 1.5). The freeway ride below: 30 m/s2 frames 6246 -> 1462 with the
+building cap and this together.
 
 **A deck may only pick you up if it is at your wheels.** `DECK_REACH` is 0.9 m:
 `groundAt` used to take the highest deck within `curY + 2.6`, taller than a car,
@@ -3820,9 +3861,13 @@ neighbouring bore (a beam and a block floating in the cutting), and wherever
 no slab reached, groundAt answered the pit floor under drawn tarmac -- a car
 fell 10 m to the deck.
 
-In SR-99's portal groups only (`streetRoof`: groups holding the stacked
-decks' nodes; citywide the rule would reshape 48 cuts whose lids were each
-tuned against a regression -- judge those portal by portal first):
+In SR-99's portal groups (`streetRoof`: groups holding the stacked decks'
+nodes; citywide the rule would reshape 48 cuts whose lids were each tuned
+against a regression -- judge those portal by portal first), and since v162
+anywhere a FREEWAY crosses a street's bore: the Dexter Way N underpass's cut
+dug Aurora 6 m deep across its lanes, a cliff at 28 m/s that no lid had the
+headroom to bridge. (Not a ramp bore under a freeway: the I-90 ramps' piers
+by Rainier then stood 1.2 m off the ground.)
 
 - **A street crossing the bore ends the cut at its kerb** (footway
   included), when the roof is at most `STREET_ROOF` (1 m) over the ground
@@ -5321,9 +5366,6 @@ is the page half; load it into any booted page to re-install edited jumps
   approaches before and after rather than just reviving it.
 - **The express lanes only run northbound**, because the import drops
   `oneway=reversible` (see "One-way traffic").
-- **AI lanes are 4.2 m apart** because the car collision shape is a circle, so a
-  3-lane carriageway runs 2 AI lanes. The real fix is an oriented box in
-  `resolveCarCollisions`.
 - **Obstacles in dug pits wedge traffic** (posts beside lidded ramps, the I-5
   express portal near (520, 0)). Out of sight the car is recycled; in view it
   stays stuck.

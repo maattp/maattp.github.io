@@ -2700,6 +2700,53 @@ async function main() {
       process.exitCode = 1;
     }
 
+    // --- freeways (v162) --------------------------------------------------
+    // Nothing stands up through a deck; the grading does not average a
+    // freeway up toward a deck crossing over it; the Dexter Way underpass
+    // does not dig Aurora; and cars collide as their bodies, so two abreast in
+    // 3.6 m lanes do not touch while two nose to tail 4 m apart do.
+    const fw = await session.eval(`(() => { const d = window.__dbg, C = d.city, T = d.traffic, W = d.world;
+      let through = 0;
+      for (const e of C.edges) {
+        if (!e.elev || e.tunnel) continue;
+        const a = C.nodes[e.a], b = C.nodes[e.b], px = -e.dz, pz = e.dx;
+        for (let s = 0; s <= e.len; s += 4) {
+          const t = e.len ? s / e.len : 0, deck = e.prof ? C.profAt(e, t).h : a.y + (b.y - a.y) * t;
+          for (const o of [-e.hw, 0, e.hw]) {
+            const x = a.x + e.dx * s + px * o, z = a.z + e.dz * s + pz * o;
+            for (const bd of C.buildingsNear ? C.buildingsNear(x, z, 2) : []) {
+              if (bd.y > deck - 2.5 || bd.y + bd.h <= deck - 1.3) continue;
+              const c = Math.cos(-bd.rot), sn = Math.sin(-bd.rot), dx = x - bd.x, dz = z - bd.z;
+              if (Math.abs(dx * c - dz * sn) < bd.w / 2 && Math.abs(dx * sn + dz * c) < bd.d / 2) through++;
+            }
+          }
+        }
+      }
+      let steep = 0;
+      for (const e of C.edges) {
+        if (e.name !== 'I 5' || e.elev || e.tunnel || !e.ph) continue;
+        const k = e.ph.length - 1;
+        for (let i = 0; i < k; i++) if (Math.abs(e.ph[i + 1] - e.ph[i]) / (e.len / k) > 0.08) steep++;
+      }
+      const aurora = W.cutDepth(-562, -3077);
+      const mk = (x, z, h) => { const v = T.spawnAt(x, z, h, 'sedan', 0x777777, 'free'); v.x = x; v.z = z; v.heading = h; v.vLong = 10; return v; };
+      const P = { vehicle: null };
+      const A = mk(9000, 9000, 0), B = mk(9003.6, 9000, 0);
+      T.resolveCarCollisions(1 / 60, P);
+      const abreast = Math.abs(A.x - 9000) + Math.abs(B.x - 9003.6);
+      const Cc = mk(9100, 9000, 0), D = mk(9100, 9004, 0);
+      T.resolveCarCollisions(1 / 60, P);
+      const tail = Math.abs(D.z - Cc.z - 4);
+      for (const v of [A, B, Cc, D]) T.remove ? T.remove(v) : (v.recycle = true);
+      return { through, steep, aurora, abreast, tail, has: !!C.buildingsNear };
+    })()`, true);
+    console.log('\n--- freeways --------------------------------------------');
+    console.log(`  buildings through a deck: ${fw.through}${fw.has ? '' : ' (no buildingsNear)'}; I-5 ground profile steps over 8 %: ${fw.steep}; Aurora dug at Dexter Way: ${fw.aurora.toFixed(2)} m`);
+    console.log(`  sedans abreast 3.6 m apart moved ${fw.abreast.toFixed(3)} m; nose to tail 4 m apart pushed ${fw.tail.toFixed(2)} m`);
+    if (!fw.has || fw.through > 0 || fw.steep > 40 || fw.aurora > 0.5 || fw.abreast > 0.001 || fw.tail < 0.3) {
+      console.error('FAIL: freeways'); process.exitCode = 1;
+    }
+
     if (SHOTS) {
       mkdirSync(OUT, { recursive: true });
       const views = [
