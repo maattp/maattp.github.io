@@ -1999,7 +1999,7 @@ async function main() {
     console.log(`  a train for you on the track: closest ${lk.obstruct.closest} m, stopped ${lk.obstruct.stopped}, hurt ${lk.obstruct.hurt}; a crossing at s ${lk.crossing.at}: held ${lk.crossing.held}, clear 40 m off ${lk.crossing.clear}`);
     {
       const bad = [];
-      if (lk.stations !== 16) bad.push('stations');
+      if (lk.stations !== 23) bad.push('stations');
       for (const k of ['sb', 'nb']) {
         const q = lk.tracks[k];
         if (q.grade > 0.062) bad.push(`${k} grade`);
@@ -2046,6 +2046,104 @@ async function main() {
     console.log('\n--- Link: getting on ---------------------------------------');
     console.log(`  beside a train on the platform (${lb.besideDist} m from the entrance): boards ${lb.beside}; at Capitol Hill with none in: called, boarded ${lb.call.boarded} after ${lb.call.secs} s at ${lb.call.at}`);
     if (!lb.beside || lb.boardableBefore || !lb.call.boarded || !(lb.call.secs < 40) || lb.call.at !== 'Capitol Hill') { console.error('FAIL: Link: getting on'); process.exitCode = 1; }
+
+    // --- Link: the 2 Line ------------------------------------------------------------------
+    //
+    // The 2 Line's branch (link.js sb2 / nb2): its seven stations, its profile
+    // (grade, nothing at grade under the ground, bores buried), the floating
+    // bridge's rails clear of Lake Washington; ten minutes of service with the
+    // 2 Line's trains stopping on their branch and never overlapping a 1 Line
+    // train on the rails the two share; a merge forced at the junction (one
+    // train holds at the signal, both get through, never together); a run
+    // driven from Mercer Island to South Bellevue, stopped on the mark.
+    const l2 = await session.eval(`(() => {
+      const d = window.__dbg, L = d.link, G = d.G, P = d.player, out = {};
+      const sb2 = L.tracks.sb2, nb2 = L.tracks.nb2, E = L.merge.E;
+      out.own = L.stations.filter((q) => !q.lines.includes(1)).map((q) => q.name);
+      out.tracks = {};
+      for (const tr of [sb2, nb2]) {
+        let grade = 0, under = 0, exposed = 0, wet = 0, over = 0;
+        for (let i = tr.idx(tr.share.end) + 5; i < tr.n - 15; i += 5) {
+          grade = Math.max(grade, Math.abs(tr.Y[i + 5] - tr.Y[i]) / 5);
+          const kd = tr.KD[i];
+          if ((kd === 4 || kd === 5) && tr.Y[i] < tr.GR[i] + 0.2) under++;
+          if (kd === 1 && tr.Y[i] + 6 > tr.GR[i]) exposed++;
+          // over Lake Washington (a lake: its level, not the sea's): clear of it
+          const wl = G.isWater(tr.X[i], tr.Z[i]) ? G.drawnWaterLevel(L.lakes, tr.X[i], tr.Z[i]) : null;
+          if (wl !== null && wl > 1 && kd === 3) { over++; if (tr.Y[i] < wl + 2.5) wet++; }
+        }
+        out.tracks[tr.key] = { grade: +grade.toFixed(3), under, exposed, overWater: over * 5, wet };
+      }
+      if (P.vehicle) P.exitVehicle(true);
+      const px = P.x, pz = P.z;
+      P.x = -6000; P.z = 9000;
+      // service
+      const was = new Map(), own = new Set();
+      let arrivals = 0, overlap = 0;
+      for (let i = 0; i < 30 * 600; i++) {
+        L._service(1 / 30);
+        for (const t of L.trains) {
+          if (t.state === 'dwell' && was.get(t) === 'run' && L.lineOf(t.track.key) === 2) { arrivals++; if (t.station && !t.station.lines.includes(1)) own.add(t.station.name); }
+          was.set(t, t.state);
+        }
+        if (i % 15 === 0) {
+          const act = L.trains.filter((t) => t.state !== 'off');
+          for (let a = 0; a < act.length; a++) for (let b = a + 1; b < act.length; b++) if (act[a].track !== act[b].track && L.sharedOverlap(act[a], act[b])) overlap++;
+        }
+      }
+      out.service = { arrivals, own: own.size, overlap };
+      // a merge, forced: a 1 Line and a 2 Line train reach the junction together
+      const nb = L.tracks.nb;
+      for (const t of L.trains) if ((t.track === nb || t.track === nb2) && Math.abs(t.s - E) < 1500) { t.state = 'off'; t.offT = 1e9; }
+      const pool = L.trains.filter((t) => t.state === 'off' && t.offT < 1e8);
+      const a = L.trains.find((t) => t.track === nb && t.state !== 'off') || pool[0];
+      const b = L.trains.find((t) => t.track === nb2 && t.state !== 'off' && t !== a) || pool[1];
+      for (const [t, tr] of [[a, nb], [b, nb2]]) { t.track = tr; t.dir = -1; t.driver = null; t.place(E + 59 + 90, -1); t.state = 'run'; t.u = -10; t.lastStop = L.stations.find((q) => q.s[tr.key] !== undefined && Math.abs(q.s[tr.key] - E) < 400) || null; }
+      L.merge.owner = null;
+      let held = false, bad = 0;
+      for (let i = 0; i < 30 * 150; i++) {
+        L._service(1 / 30);
+        if (L.sharedOverlap(a, b)) bad++;
+        if ((a.lead > E && Math.abs(a.u) < 0.05) || (b.lead > E && Math.abs(b.u) < 0.05)) held = true;
+      }
+      out.merge = { held, overlap: bad, through: a.lead < E - 50 && b.lead < E - 50 };
+      // a 2 Line run from Mercer Island to South Bellevue
+      const mi = L.stations.find((q) => q.name === 'Mercer Island'), sbv = L.stations.find((q) => q.name === 'South Bellevue');
+      for (const t of L.trains) if (t.track === sb2 && Math.abs(t.s - mi.s.sb2) < 6000) { t.state = 'off'; t.offT = 1e9; }
+      const t = L.trains.find((q) => q.track === sb2) || a;
+      t.track = sb2; t.dir = 1; t.place(mi.s.sb2, 1); t.state = 'dwell'; t.station = mi; t.timer = 30; t.lastStop = mi; t.doors = true; t.u = 0;
+      P.x = mi.ent.x; P.z = mi.ent.z; P.y = mi.ent.y;
+      out.boarded = L.boardable(P.x, P.y, P.z) === t && P.enterVehicle(t) && P.vehicle === t;
+      let said = '';
+      const sw = L.say; L.say = (m) => { said = m; };
+      for (let i = 0; i < 30 * 400 && out.boarded; i++) {
+        const stopLead = sbv.s.sb2 + 59, left = stopLead - t.lead, v = t.u;
+        const tgt = Math.min(t.allowed(null, 1.2), Math.sqrt(2 * 0.95 * Math.max(0, left - 0.3)));
+        let thr = v < tgt - 0.4 ? 1 : 0, brk = v > tgt + 0.05 ? Math.min(0.9, 0.35 + (v - tgt) * 1.5) : 0;
+        if (left < 0.3) { thr = 0; brk = 0.9; }
+        t.update(1 / 30, { throttle: thr, brake: brk });
+        if (i > 60 && Math.abs(t.u) < 0.02 && left < 3) break;
+      }
+      L.say = sw;
+      out.drive = { err: +(sbv.s.sb2 - t.s).toFixed(2), said };
+      if (P.vehicle) P.exitVehicle(true);
+      P.x = px; P.z = pz;
+      return out;
+    })()`, true);
+    console.log('\n--- Link: the 2 Line ---------------------------------------');
+    console.log(`  its stations: ${l2.own.join(', ')}`);
+    for (const k of ['sb2', 'nb2']) { const q = l2.tracks[k]; console.log(`  ${k}: steepest ${(q.grade * 100).toFixed(1)} %, at grade under the ground ${q.under}, bores out of the ground ${q.exposed}, ${q.overWater} m over the lake (${q.wet} samples within 2.5 m of it)`); }
+    console.log(`  10 min: ${l2.service.arrivals} 2 Line stops (${l2.service.own} of its own stations), overlapping a 1 Line train ${l2.service.overlap}`);
+    console.log(`  a forced merge: one held ${l2.merge.held}, together ${l2.merge.overlap}, both through ${l2.merge.through}; Mercer Island -> South Bellevue: boarded ${l2.boarded}, ${l2.drive.err} m from the mark ("${l2.drive.said}")`);
+    {
+      const bad = [];
+      if (l2.own.length !== 7) bad.push('stations');
+      for (const k of ['sb2', 'nb2']) { const q = l2.tracks[k]; if (q.grade > 0.062 || q.under || q.exposed || q.wet || q.overWater < 1500) bad.push(k); }
+      if (l2.service.arrivals < 15 || l2.service.own < 4 || l2.service.overlap) bad.push('service');
+      if (!l2.merge.held || l2.merge.overlap || !l2.merge.through) bad.push('the merge');
+      if (!l2.boarded || Math.abs(l2.drive.err) > 1.5 || !/South Bellevue/.test(l2.drive.said)) bad.push('the driven run');
+      if (bad.length) { console.error(`FAIL: Link 2 Line: ${bad.join('; ')}`); process.exitCode = 1; }
+    }
 
     // --- freight: BNSF's main line --------------------------------------------------------
     //

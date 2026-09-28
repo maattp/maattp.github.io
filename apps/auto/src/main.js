@@ -554,7 +554,7 @@ async function boot() {
   monorail = new Monorail(md.monorail);
   md.monorailClear = monorail.clearZones();
   // ...and Link light rail's 1 Line, from its data alone for the same reason
-  link = new Link(md.link);
+  link = new Link(md.link, md);
   md.linkClear = link.clearZones();
   // ...and BNSF's main line, likewise
   freight = new Freight(md.freight, md);
@@ -1104,8 +1104,8 @@ function installShadowFade() {
     ...cyclists.docks.map((dk) => ({ x: dk.x, z: dk.z, kind: 'bike', name: `Bikes · ${dk.name}`, near: false,
       hello: `Bike share — ${dk.name}. Take a bike from the rack: the trail is right here` })),
     // Link light rail: every station's street entrance
-    ...link.stations.map((st) => ({ x: st.ent.x, z: st.ent.z, kind: 'link', name: `Link · ${st.name}`, near: false,
-      hello: `${st.full} Station — Link light rail's 1 Line. Tap ENTER here${st.under ? '' : ' or on the platform'} to catch the next train and drive it` })),
+    ...link.stations.map((st) => ({ x: st.ent.x, z: st.ent.z, kind: st.lines.includes(1) ? 'link' : 'link2', name: `Link · ${st.name}`, near: false,
+      hello: `${st.full} Station — Link light rail's ${st.lines.map((l) => `${l} Line`).join(' and ')}. Tap ENTER here${st.under ? '' : ' or on the platform'} to catch the next train and drive it` })),
     // BNSF's crew-change stop: where you take a freight
     { x: freight.yard.x, z: freight.yard.z, kind: 'freight', name: 'Freight · Balmer Yard', near: false,
       hello: 'Balmer Yard — BNSF freights stop here for a crew change. Climb up at the lead locomotive (ENTER), or tap ENTER to call the next one in' },

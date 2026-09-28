@@ -7,8 +7,9 @@ From tools/data/raw_rail.json: the running tracks (railway=light_rail with no
 connected networks, one per track, each with three ends: the 1 Line's north
 and south ends and the 2 Line's east end, joined at the junction south of
 International District. Each track is walked north -> south as the path
-between its two 1 Line ends, cropped to the map, and written as points
-[x, z, flag] (flag 1 tunnel, 2 bridge). Stations are the named light-rail
+between its two 1 Line ends, and north -> east for the 2 Line (`sb2`, `nb2`:
+the same rails as far as the junction), cropped to the map, and written as
+points [x, z, flag] (flag 1 tunnel, 2 bridge). Stations are the named light-rail
 stops within 80 m of the line, at their s along each track.
 
 The two tracks are named for their direction of travel: trains keep right, so
@@ -58,6 +59,7 @@ def main():
         comps.append(comp)
     comps.sort(key=lambda c: -sum(wlen(lr[j]) for j in c))
     tracks = []
+    branches = []   # per track: the 2 Line's route, north end -> east end
     for comp in comps[:2]:
         ends = collections.Counter()
         for j in comp:
@@ -68,42 +70,51 @@ def main():
         terms = [n for n, c in ends.items() if c == 1]
         north = min(terms, key=lambda n: pos[n][1])
         south = max(terms, key=lambda n: pos[n][1])
-        dist, prev, pq = {north: 0}, {}, [(0, north)]
-        while pq:
-            dd, n = heapq.heappop(pq)
-            if n == south:
-                break
-            if dd > dist.get(n, 1e18):
-                continue
-            for j in adj[n]:
-                if j not in comp:
+        east = max(terms, key=lambda n: pos[n][0])
+
+        def walk(dst):
+            dist, prev, pq = {north: 0}, {}, [(0, north)]
+            while pq:
+                dd, n = heapq.heappop(pq)
+                if n == dst:
+                    break
+                if dd > dist.get(n, 1e18):
                     continue
+                for j in adj[n]:
+                    if j not in comp:
+                        continue
+                    w = lr[j]
+                    m = w["ids"][-1] if w["ids"][0] == n else w["ids"][0]
+                    nd = dd + wlen(w)
+                    if nd < dist.get(m, 1e18):
+                        dist[m] = nd; prev[m] = (n, j); heapq.heappush(pq, (nd, m))
+            chain, n = [], dst
+            while n != north:
+                a, j = prev[n]
+                chain.append((a, j)); n = a
+            chain.reverse()
+            pts = []
+            for a, j in chain:
                 w = lr[j]
-                m = w["ids"][-1] if w["ids"][0] == n else w["ids"][0]
-                nd = dd + wlen(w)
-                if nd < dist.get(m, 1e18):
-                    dist[m] = nd; prev[m] = (n, j); heapq.heappush(pq, (nd, m))
-        chain, n = [], south
-        while n != north:
-            a, j = prev[n]
-            chain.append((a, j)); n = a
-        chain.reverse()
-        pts = []
-        for a, j in chain:
-            w = lr[j]
-            p = w["p"] if w["ids"][0] == a else list(reversed(w["p"]))
-            f = flag(w)
-            for q in (p if not pts else p[1:]):
-                pts.append([q[0], q[1], f])
-        inside = [abs(p[0]) < EDGE and abs(p[1]) < EDGE for p in pts]
-        i0 = inside.index(True)
-        i1 = len(inside) - 1 - inside[::-1].index(True)
-        tracks.append(pts[i0:i1 + 1])
+                p = w["p"] if w["ids"][0] == a else list(reversed(w["p"]))
+                f = flag(w)
+                for q in (p if not pts else p[1:]):
+                    pts.append([q[0], q[1], f])
+            inside = [abs(p[0]) < EDGE and abs(p[1]) < EDGE for p in pts]
+            i0 = inside.index(True)
+            i1 = len(inside) - 1 - inside[::-1].index(True)
+            return pts[i0:i1 + 1]
+        tracks.append(walk(south))
+        # The 2 Line: the same track from the north end to the junction south
+        # of International District, then its own branch east across I-90
+        branches.append(walk(east))
     # name them: the western one is southbound
     def mean_x(p):
         return sum(q[0] for q in p) / len(p)
-    tracks.sort(key=mean_x)
-    out = {"sb": tracks[0], "nb": tracks[1]}
+    order = sorted(range(2), key=lambda i: mean_x(tracks[i]))
+    out = {"sb": tracks[order[0]], "nb": tracks[order[1]],
+           # a 2 Line track rides its 1 Line track's rails as far as the junction
+           "sb2": branches[order[0]], "nb2": branches[order[1]]}
     # stations
     stops = [s for s in d["stops"] if s.get("name") and (s.get("light_rail") == "yes" or s.get("station") == "light_rail")]
     by = collections.defaultdict(list)
@@ -124,16 +135,23 @@ def main():
             acc += math.sqrt(L2)
         return best, bs
     stations = []
+    KEYS = ("sb", "nb", "sb2", "nb2")
     for name, ss in by.items():
         x = sum(s["x"] for s in ss) / len(ss); z = sum(s["z"] for s in ss) / len(ss)
-        d_sb, s_sb = near(out["sb"], x, z)
-        d_nb, s_nb = near(out["nb"], x, z)
-        if min(d_sb, d_nb) > 80:
+        st = {"name": name, "x": round(x, 1), "z": round(z, 1)}
+        for k in KEYS:
+            dk, sk = near(out[k], x, z)
+            if dk < 80:
+                st["s_" + k] = round(sk, 1)
+        if not any("s_" + k in st for k in KEYS):
             continue
-        stations.append({"name": name, "x": round(x, 1), "z": round(z, 1), "s_sb": round(s_sb, 1), "s_nb": round(s_nb, 1)})
-    stations.sort(key=lambda s: s["s_sb"])
+        # BelRed stands on the map's edge: no room for its platforms
+        if max(abs(x), abs(z)) > EDGE - 70:
+            continue
+        stations.append(st)
+    stations.sort(key=lambda s: s.get("s_sb", 1e6 + s.get("s_sb2", 0)))
     out["stations"] = stations
-    for k in ("sb", "nb"):
+    for k in KEYS:
         L = sum(math.hypot(a[0] - b[0], a[1] - b[1]) for a, b in zip(out[k], out[k][1:]))
         tun = sum(math.hypot(a[0] - b[0], a[1] - b[1]) for a, b in zip(out[k], out[k][1:]) if a[2] == 1)
         br = sum(math.hypot(a[0] - b[0], a[1] - b[1]) for a, b in zip(out[k], out[k][1:]) if a[2] == 2)
