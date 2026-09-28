@@ -1457,6 +1457,17 @@ The laws:
   animateWalk** (`player.updateFoot` and `PedSystem.update` do), or the lock is
   a frame behind. `dt = 0` means "pose at this phase" and bypasses all history —
   the strip and portrait harnesses rely on it.
+- **A lock never holds a foot across the body** (v159): at most 14 cm
+  sideways and never over the midline (or inside where the foot stands
+  anyway). The stick turns the player at up to 10 rad/s even at a standstill,
+  so a light pull back swung the body round both planted feet and left the
+  legs crossed or one flopped diagonally -- and **standing still, no foot ever
+  lifted again**, so it stayed that way. Now, below 0.3 m/s, a foot more than
+  3.5 cm off its spot steps back to it (lifted, ~0.3 s, one foot at a time).
+  Measured over a light reverse, a full reverse, a 90 deg turn and a slow
+  spin: the right foot ended over the midline, beside or past the left, in
+  three of four before,
+  never now. gait.mjs output is byte-identical.
 - A lock is dragged, never re-planted: past 0.5 m from the analytic spot (warp,
   wall, hard stop), or further out than the stride ever puts a foot (`zLimit`),
   or the hips ride a foot left 86 cm behind and squat.
