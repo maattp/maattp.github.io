@@ -4490,8 +4490,48 @@ than the moving block); a run driven Westlake -> Symphony stopped on the mark
 and out at the street; a train stopping short of you on the track; a car
 held at a crossing. Cost near the line: +10-22 draws (trains 2 each, a few
 chunk meshes); tunnel geometry only in the tunnel. `docs/link/` has shots.
-Not built: the 2 Line across I-90 (it joins south of International
-District in OSM). The freight main line is freight.js (v160).
+The freight main line is freight.js (v160).
+
+### The 2 Line (v161)
+
+**The 2 Line runs across I-90 to Bellevue**: from Lynnwood (the map's north
+edge) on the 1 Line's rails through downtown to the junction just south of
+International District, then its own branch east -- Judkins Park, the
+Mount Baker tunnel, the I-90 floating bridge, Mercer Island, the East
+Channel, South Bellevue, East Main, Bellevue Downtown, Wilburton and Spring
+District, off the map's east edge (BelRed stands on it and is left out).
+
+- **Four tracks, two of them half shared.** `build_link.py` walks each
+  track component north -> south (the 1 Line, unchanged byte for byte) AND
+  north -> east: `sb2` / `nb2` are the whole 2 Line route, the same points
+  as `sb` / `nb` as far as the junction. link.js finds where they part
+  (`share = { track, end }`, the first sample 0.3 m off the parent) and
+  copies the parent's profile over that stretch (`_joinShared`, eased back
+  over 250 m past it). The shared rails and stations are drawn once, by the
+  1 Line's tracks; a station knows every track that serves it (`st.s[k]`,
+  `st.lines`).
+- **Trains on shared rails see each other.** `aheadOf(t)` counts a train on
+  the other line while any of it is on the rails they share (moving block
+  across both lines), and `step` collides trains that overlap there
+  (`sharedOverlap`). Northbound, the two lines MERGE: a train takes the
+  junction (`mergeFree`, one at a time, lapsing once its holder is clear)
+  or stops at a signal 25 m short of it; the readout shows JUNCTION SIGNAL
+  STOP. Six trains a direction on the 2 Line; they turn back off the map at
+  both ends like the 1 Line's, and come back only onto clear rails.
+- **On I-90 the rails are the centre roadway**, level with the traffic:
+  over the lake a 2 Line bridge rides the road decks beside it (sampled at
+  `attach`, `P.bridgeFloor`), else just over the water (`floatDeck` 3.2 m)
+  on a concrete pontoon instead of columns. The 1 Line keeps LINK's numbers,
+  so its profile is exactly what it was.
+- The map draws the branch in 2 Line blue, and its own stations with a blue
+  icon; the readout and toasts say which line and where to.
+
+verify's "Link: the 2 Line": its seven stations; grade, nothing at grade
+under the ground, bores buried, the floating bridge clear of the lake; ten
+minutes of service (its own stations served, never overlapping a 1 Line
+train); a merge forced at the junction (one holds, both get through, never
+together); a run driven Mercer Island -> South Bellevue, stopped on the
+mark.
 
 ## The hot air balloon
 

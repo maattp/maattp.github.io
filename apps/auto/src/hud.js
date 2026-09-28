@@ -13,7 +13,7 @@ const SCALE = MAP_PX / (G.MAP_HALF * 2);
  */
 function placeIcon(ctx, kind, x, y, r) {
   ctx.fillStyle = kind === 'dock' ? '#2f86d6' : kind === 'jet' ? '#c8352a' : kind === 'monorail' ? '#0b8a8f'
-    : kind === 'balloon' ? '#d2432f' : kind === 'fish' ? '#1f9aa8' : kind === 'hoop' ? '#d9661f' : kind === 'needle' ? '#5a6fd6' : kind === 'fishtoss' ? '#d05a1e' : kind === 'kayak' ? '#e0a818' : kind === 'wheel' ? '#2f6fb0' : kind === 'golf' ? '#2c8a4a' : kind === 'arcade' ? '#c83ad8' : kind === 'pinball' ? '#e8503a' : kind === 'hockey' ? '#2c6ad8' : kind === 'tower' ? '#6a7a8a' : kind === 'duck' ? '#e8b020' : kind === 'coffee' ? '#6a4a32' : kind === 'hydro' ? '#d8242c' : kind === 'link' ? '#3a9a44' : kind === 'freight' ? '#b8501c' : kind === 'bike' ? '#57b83a' : kind === 'pickle' ? '#c8a21a' : '#e0782e';
+    : kind === 'balloon' ? '#d2432f' : kind === 'fish' ? '#1f9aa8' : kind === 'hoop' ? '#d9661f' : kind === 'needle' ? '#5a6fd6' : kind === 'fishtoss' ? '#d05a1e' : kind === 'kayak' ? '#e0a818' : kind === 'wheel' ? '#2f6fb0' : kind === 'golf' ? '#2c8a4a' : kind === 'arcade' ? '#c83ad8' : kind === 'pinball' ? '#e8503a' : kind === 'hockey' ? '#2c6ad8' : kind === 'tower' ? '#6a7a8a' : kind === 'duck' ? '#e8b020' : kind === 'coffee' ? '#6a4a32' : kind === 'hydro' ? '#d8242c' : kind === 'link' ? '#3a9a44' : kind === 'link2' ? '#0082ca' : kind === 'freight' ? '#b8501c' : kind === 'bike' ? '#57b83a' : kind === 'pickle' ? '#c8a21a' : '#e0782e';
   ctx.strokeStyle = '#ffffff';
   ctx.lineWidth = r * 0.22;
   ctx.beginPath();
@@ -87,11 +87,11 @@ function placeIcon(ctx, kind, x, y, r) {
     for (const sx of [-1, 1]) { ctx.beginPath(); ctx.arc(x + sx * r * 0.34, y + r * 0.16, r * 0.24, 0, Math.PI * 2); ctx.stroke(); }
     ctx.beginPath(); ctx.moveTo(x - r * 0.34, y + r * 0.16); ctx.lineTo(x - r * 0.06, y - r * 0.2); ctx.lineTo(x + r * 0.2, y - r * 0.2); ctx.lineTo(x + r * 0.34, y + r * 0.16);
     ctx.moveTo(x - r * 0.06, y - r * 0.2); ctx.lineTo(x, y + r * 0.16); ctx.lineTo(x + r * 0.2, y - r * 0.2); ctx.stroke();
-  } else if (kind === 'link') {
+  } else if (kind === 'link' || kind === 'link2') {
     // a light-rail car's face: windscreen over its lamps, the pantograph
     ctx.fillStyle = '#ffffff';
     ctx.fillRect(x - r * 0.36, y - r * 0.3, r * 0.72, r * 0.72);
-    ctx.fillStyle = '#3a9a44';
+    ctx.fillStyle = kind === 'link2' ? '#0082ca' : '#3a9a44';
     ctx.fillRect(x - r * 0.26, y - r * 0.2, r * 0.52, r * 0.26);
     ctx.fillRect(x - r * 0.22, y + r * 0.2, r * 0.1, r * 0.08); ctx.fillRect(x + r * 0.12, y + r * 0.2, r * 0.1, r * 0.08);
     ctx.strokeStyle = '#ffffff'; ctx.lineWidth = r * 0.1;
@@ -377,17 +377,22 @@ export class Hud {
     this._rb.textContent = r.best ? `best ${r.best}` : '';
   }
 
-  /** Link's 1 Line, green (its tracks as one line), through `to(x, z)` -> canvas. */
+  /** Link: the 1 Line green (its tracks as one line), the 2 Line's branch
+   *  blue, through `to(x, z)` -> canvas. */
   drawLink(ctx, to, w, near = null) {
-    // the line's points once, every 20 m; `near` ({x, z, r}) draws only the
-    // stretch within r of a point -- the minimap shows ~1 km of 31
-    if (!this._linkPts) {
-      const tr = this.link.tracks.sb, n = Math.floor(tr.len / 20) + 1, P = new Float32Array(n * 2);
-      for (let i = 0; i < n; i++) { P[i * 2] = tr.x(i * 20); P[i * 2 + 1] = tr.z(i * 20); }
-      this._linkPts = P;
+    this._drawLine(ctx, to, w, near, this.link.tracks.sb, 0, '#3a9a44', '_linkPts');
+    const b = this.link.tracks.sb2;
+    if (b) this._drawLine(ctx, to, w, near, b, b.share.end, '#0082ca', '_link2Pts');
+  }
+
+  _drawLine(ctx, to, w, near, tr, s0, colour, key) {
+    if (!this[key]) {
+      const n = Math.floor((tr.len - s0) / 20) + 1, P = new Float32Array(n * 2);
+      for (let i = 0; i < n; i++) { P[i * 2] = tr.x(s0 + i * 20); P[i * 2 + 1] = tr.z(s0 + i * 20); }
+      this[key] = P;
     }
-    const P = this._linkPts, n = P.length / 2, r2 = near ? near.r * near.r : Infinity;
-    ctx.strokeStyle = '#3a9a44';
+    const P = this[key], n = P.length / 2, r2 = near ? near.r * near.r : Infinity;
+    ctx.strokeStyle = colour;
     ctx.lineWidth = w;
     ctx.lineJoin = 'round';
     ctx.beginPath();
@@ -677,7 +682,7 @@ export class Hud {
       const [qx, qz] = toC(pl.x, pl.z);
       placeIcon(ctx, pl.kind, qx, qz, size * (pl.kind === 'dock' ? 0.011 : 0.008));
       // named, quads too: an unlabelled orange dot was a quad nobody found
-      if (pl.kind === 'dock' || pl.kind === 'atv' || pl.kind === 'monorail' || pl.kind === 'balloon' || pl.kind === 'fish' || pl.kind === 'hoop' || pl.kind === 'fishtoss' || pl.kind === 'needle' || pl.kind === 'kayak' || pl.kind === 'wheel' || pl.kind === 'golf' || pl.kind === 'arcade' || pl.kind === 'pinball' || pl.kind === 'hockey' || pl.kind === 'tower' || pl.kind === 'duck' || pl.kind === 'coffee' || pl.kind === 'hydro' || pl.kind === 'link' || pl.kind === 'freight' || pl.kind === 'bike' || pl.kind === 'pickle') {
+      if (pl.kind === 'dock' || pl.kind === 'atv' || pl.kind === 'monorail' || pl.kind === 'balloon' || pl.kind === 'fish' || pl.kind === 'hoop' || pl.kind === 'fishtoss' || pl.kind === 'needle' || pl.kind === 'kayak' || pl.kind === 'wheel' || pl.kind === 'golf' || pl.kind === 'arcade' || pl.kind === 'pinball' || pl.kind === 'hockey' || pl.kind === 'tower' || pl.kind === 'duck' || pl.kind === 'coffee' || pl.kind === 'hydro' || pl.kind === 'link' || pl.kind === 'link2' || pl.kind === 'freight' || pl.kind === 'bike' || pl.kind === 'pickle') {
         ctx.fillStyle = 'rgba(255,255,255,0.85)';
         ctx.fillText(pl.name, qx, qz - size * 0.016);
       }

@@ -57,7 +57,9 @@ export const LINK = {
   acc: 1.3, brake: 1.3, brakeEmerg: 2.2,
   aLat: 1.0,             // unbalanced lateral acceleration in service (est.)
   dwell: 20,             // seconds at a platform (est.; ST schedules ~20-30)
-  perTrack: 14,          // trains on each track (~2.3 km apart: 3-4 min headways)
+  perTrack: 14,          // trains on each 1 Line track (~2.3 km apart: 3-4 min headways)
+  perTrack2: 6,          // ...and each 2 Line track, sharing the 1 Line's rails north of the junction
+  floatDeck: 3.2,        // the rail head over Lake Washington on the I-90 floating bridge (est.)
 };
 LINK.len = LINK.cars * LINK.carLen + (LINK.cars - 1) * LINK.couple;
 
@@ -121,7 +123,7 @@ export class LinkTrack {
   constructor(key, raw, P = LINK) {
     this.key = key;
     this.P = P;
-    this.dir = key === 'sb' ? 1 : -1;       // direction of travel along s
+    this.dir = key.startsWith('sb') ? 1 : -1;   // direction of travel along s (sb, sb2: +s)
     // Chaikin corner-cutting, twice, endpoints kept. A point's flag is the
     // flag of the way it came from, which build_link.py writes on the END
     // point of each segment.
@@ -251,7 +253,12 @@ export class LinkTrack {
         // a level crossing is pinned to the road it carries: flush with the
         // raw ground there, which the carve then meets
         lo[i] = hi[i] = tg[i] = Math.max(gr[i], P.seaFloor || -1e9) + P.liftX;
-      } else { lo[i] = hi[i] = tg[i] = ga[i] + (crossing && crossing[i] ? P.liftX : P.lift); }
+      } else {
+        lo[i] = hi[i] = tg[i] = ga[i] + (crossing && crossing[i] ? P.liftX : P.lift);
+        // `P.waterAtGrade`: track OSM has at grade over water the mask calls
+        // a lake (the 2 Line past Mercer Slough) keeps a bridge's floor too
+        if (P.waterAtGrade && P.bridgeFloor) { const b = P.bridgeFloor(this.X[i], this.Z[i]); if (b > lo[i]) lo[i] = hi[i] = tg[i] = b; }
+      }
     }
     for (const z of zones) {
       const [s0, s1] = z;
@@ -390,23 +397,55 @@ const CHUNK = 500;
 export class Link {
   /** From the map data alone, right after the map loads: citygen needs
    *  clearZones() (buildings off the line) before the city exists. */
-  constructor(data) {
+  constructor(data, md) {
     this.data = data;
-    this.tracks = { sb: new LinkTrack('sb', data.sb), nb: new LinkTrack('nb', data.nb) };
+    // A bridge over water clears it: the 2 Line's deck on the I-90 floating
+    // bridge rides just over Lake Washington, not 8.5 m over its bed
+    const lakes = md ? md.lakes : null;
+    this.lakes = lakes;
+    const P = { ...LINK, waterAtGrade: true, bridgeFloor: (x, z) => (G.isWater(x, z) ? G.drawnWaterLevel(lakes, x, z) + LINK.floatDeck : -Infinity) };
+    this.P = P;
+    // The 1 Line's two tracks, and (v161) the 2 Line's: `sb2` / `nb2` ride
+    // the 1 Line's rails from the north end to the junction south of
+    // International District (`share`), then their own branch east over I-90
+    this.keys = ['sb', 'nb', ...(data.sb2 ? ['sb2', 'nb2'] : [])];
+    this.tracks = {};
+    // (the 1 Line keeps LINK's numbers: its profile is exactly what it was)
+    for (const k of this.keys) this.tracks[k] = new LinkTrack(k, data[k], k.endsWith('2') ? P : LINK);
     this.tracks.sb.other = this.tracks.nb; this.tracks.nb.other = this.tracks.sb;
+    if (this.tracks.sb2) {
+      this.tracks.sb2.other = this.tracks.nb2; this.tracks.nb2.other = this.tracks.sb2;
+      for (const [k2, k1] of [['sb2', 'sb'], ['nb2', 'nb']]) {
+        const a = this.tracks[k2], b = this.tracks[k1];
+        // where the branch leaves: the first sample more than 0.3 m off the parent
+        let i = 0;
+        while (i < a.n && i < b.n && Math.hypot(a.X[i] - b.X[i], a.Z[i] - b.Z[i]) < 0.3) i++;
+        a.share = { track: b, end: i * STEP };
+        b.shareBy = a;
+      }
+    }
+    this.lineOf = (k) => (k.endsWith('2') ? 2 : 1);
     this.stations = data.stations.map((q, i) => ({ i, name: q.name.replace('International District Chinatown', 'Intl District/Chinatown').replace('University of Washington', 'Univ of Washington'),
-      full: q.name, x: q.x, z: q.z, s: { sb: 0, nb: 0 } }));
-    // each station's centre on each track: the nearest sample to the station's
-    // own point (the build's s is along the unsmoothed line)
+      full: q.name, x: q.x, z: q.z, s: {} }));
+    // each station's centre on each track that serves it: the nearest sample
+    // to the station's own point (the build's s is along the unsmoothed line)
     for (const st of this.stations) {
-      for (const k of ['sb', 'nb']) {
+      for (const k of this.keys) {
+        if (data.stations[st.i]['s_' + k] === undefined) continue;
         const q = this.tracks[k].nearest(st.x, st.z, 120);
         st.s[k] = q ? q.s : data.stations[st.i]['s_' + k];
       }
+      st.lines = [...new Set(Object.keys(st.s).map((k) => this.lineOf(k)))];
+      // the track whose half of the station is DRAWN: a shared station is the 1 Line's
+      st.key = st.s.sb !== undefined ? 'sb' : 'sb2';
     }
-    for (const k of ['sb', 'nb']) {
+    for (const k of this.keys) {
       const tr = this.tracks[k];
-      tr.zones = this.stations.map((st) => [st.s[k] - LINK.platLen / 2 - 12, st.s[k] + LINK.platLen / 2 + 12]);
+      tr.zones = this.stations.filter((st) => st.s[k] !== undefined).map((st) => {
+        const z = [st.s[k] - LINK.platLen / 2 - 12, st.s[k] + LINK.platLen / 2 + 12];
+        z.st = st;
+        return z;
+      });
       // A platform partly in the open is an open station: OSM ends the
       // downtown tunnel halfway along International District's nb platform
       // (the real station is an open cut); the bore starts past its end.
@@ -459,7 +498,7 @@ export class Link {
   /** Is (x, z) on the line's open corridor (no trees, props or parked cars)? */
   keepClear(x, z) {
     if (!this.corrCells.has(Math.floor(x / 40) * 100003 + Math.floor(z / 40))) return false;
-    for (const k of ['sb', 'nb']) {
+    for (const k of this.keys) {
       const tr = this.tracks[k];
       const q = tr.nearest(x, z, 12);
       if (!q) continue;
@@ -505,16 +544,32 @@ export class Link {
     // A station's two tracks at ONE level (an island platform, a hall or a
     // deck shared between them): the lower of the two for a bore, the higher
     // on the guideway; then both profiles again.
-    const sb = this.tracks.sb, nb = this.tracks.nb;
     let redo = false;
-    this.stations.forEach((st, i) => {
-      const a = sb.zones[i], b = nb.zones[i];
-      if (a.level === undefined || b.level === undefined) return;
-      const bore = sb.F[sb.idx(st.s.sb)] === 1;
-      const y = bore ? Math.min(a.level, b.level) : Math.max(a.level, b.level);
-      a[2] = y; b[2] = y; redo = true;
-    });
-    if (redo) for (const tr of [sb, nb]) { tr.setHeights(tr.zones, tr._XW); this._kinds(tr); }
+    for (const [ka, kb] of [['sb', 'nb'], ['sb2', 'nb2']]) {
+      const A = this.tracks[ka], B = this.tracks[kb];
+      if (!A) continue;
+      for (const a of A.zones) {
+        const b = B.zones.find((z) => z.st === a.st);
+        if (!b || a.level === undefined || b.level === undefined) continue;
+        const bore = A.F[A.idx(a.st.s[ka])] === 1;
+        const y = bore ? Math.min(a.level, b.level) : Math.max(a.level, b.level);
+        a[2] = y; b[2] = y; redo = true;
+      }
+    }
+    if (redo) for (const tr of Object.values(this.tracks)) { tr.setHeights(tr.zones, tr._XW); this._kinds(tr); }
+    this._joinShared();
+  }
+
+  /** The 2 Line's shared rails ARE the 1 Line's: the same profile and kinds
+   *  as far as the junction, eased back to its own over 250 m past it. */
+  _joinShared() {
+    for (const tr of Object.values(this.tracks)) {
+      if (!tr.share) continue;
+      const p = tr.share.track, iE = tr.idx(tr.share.end);
+      for (let i = 0; i < iE && i < p.n; i++) { tr.Y[i] = p.Y[i]; tr.KD[i] = p.KD[i]; tr.GR[i] = p.GR[i]; if (p._X) tr._X[i] = p._X[i]; }
+      const d = p.Y[Math.min(iE, p.n - 1)] - tr.Y[iE];
+      for (let k = 0; k < 250 && iE + k < tr.n; k++) tr.Y[iE + k] += d * (1 - k / 250);
+    }
   }
 
   _kinds(tr) {
@@ -532,6 +587,31 @@ export class Link {
    *  limits, the at-grade corridor, the station entrances. */
   attach(city) {
     this.city = city;
+    // ON I-90 THE RAILS ARE IN THE CENTRE ROADWAY, level with the traffic
+    // either side of them: over the lake a 2 Line bridge rides the road
+    // decks beside it (what the city draws), else just over the water
+    const floorMemo = new Map();   // _profile runs setHeights twice: sample the city once
+    this.P.bridgeFloor = (x, z) => {
+      if (!G.isWater(x, z)) return -Infinity;
+      const key = Math.round(x * 4) * 1e6 + Math.round(z * 4);
+      const hit = floorMemo.get(key);
+      if (hit !== undefined) return hit;
+      const f = floorAt(x, z);
+      floorMemo.set(key, f);
+      return f;
+    };
+    const floorAt = (x, z) => {
+      const wl = G.drawnWaterLevel(this.lakes, x, z);
+      let deck = -Infinity;
+      for (let a = 0; a < 8; a++) {
+        for (const r of [9, 13]) {
+          const px = x + Math.cos(a * Math.PI / 4) * r, pz = z + Math.sin(a * Math.PI / 4) * r;
+          const y = city.groundAt(px, pz, null);
+          if (y > wl + 1 && city.onRoad(px, pz, 0, true)) deck = Math.max(deck, y);
+        }
+      }
+      return Math.max(wl + LINK.floatDeck, deck + 0.25);
+    };
     this._profile(city);
     for (const tr of Object.values(this.tracks)) {
       const n = tr.n, KD = tr.KD, LIM = new Float32Array(n);
@@ -572,7 +652,7 @@ export class Link {
       return Math.abs(lx) < b.w / 2 + 2 && Math.abs(lz) < b.d / 2 + 2;
     });
     for (const st of this.stations) {
-      const sb = this.tracks.sb, sS = st.s.sb;
+      const sb = this.tracks[st.key], sS = st.s[st.key];
       const under = sb.kind(sS) === TUN;
       const cx = sb.x(sS), cz = sb.z(sS);
       let best = null;
@@ -580,7 +660,7 @@ export class Link {
         for (let k = 0; k < 24; k++) {
           const a = (k / 24) * Math.PI * 2, x = cx + Math.cos(a) * r, z = cz + Math.sin(a) * r;
           if (G.isWater(x, z) || city.onRoad(x, z, 2.2) || inBld(x, z)) continue;
-          if (!under && (this.tracks.sb.nearest(x, z, 8) || this.tracks.nb.nearest(x, z, 8))) continue;
+          if (!under && this.keys.some((kk) => this.tracks[kk].nearest(x, z, 8))) continue;
           const y = city.groundAt(x, z, null);
           if (Math.abs(y - G.terrainHeight(x, z)) > 1.2) continue;
           // face the station
@@ -615,7 +695,15 @@ export class Link {
     };
     this._chunk = chunk;
     for (const tr of Object.values(this.tracks)) this._buildTrack(tr, chunk);
-    for (const st of this.stations) for (const k of ['sb', 'nb']) this._buildStation(st, this.tracks[k], chunk);
+    // each track's half of each station it serves -- a shared station once,
+    // by the 1 Line's tracks
+    for (const st of this.stations) {
+      for (const k of this.keys) {
+        const tr = this.tracks[k];
+        if (st.s[k] === undefined || (tr.share && st.s[k] < tr.share.end + 70)) continue;
+        this._buildStation(st, tr, chunk);
+      }
+    }
     for (const st of this.stations) this._buildEntrance(st, chunk);
     // meshes
     this.group = new THREE.Group(); this.group.name = 'link';
@@ -663,6 +751,8 @@ export class Link {
       const F1 = frame(tr, s1);
       const A = F0, B = F1;
       F0 = F1;
+      // the 2 Line's shared rails are the 1 Line's, drawn once
+      if (tr.share && s1 < tr.share.end - 1) continue;
       const kind = tr.kind(sm);
       const c = chunk(tr.x(sm), tr.z(sm));
       const q = other.nearest(tr.x(sm), tr.z(sm), 40);
@@ -745,7 +835,7 @@ export class Link {
         // tracks where they share the deck (the western track places it)
         if (sm >= colNext) {
           const shared = otherD < 8.5;
-          if (!shared || tr.key === 'sb') {
+          if (!shared || tr.key.startsWith('sb')) {
             let placed = false;
             for (const ds of [0, 5, -5, 10, -10, 15]) {
               const sc = sm + ds;
@@ -753,9 +843,20 @@ export class Link {
               const P = frame(tr, sc);
               const off = shared ? otherD / 2 * towardOther : 0;
               const x = P.x + P.lx * off, z = P.z + P.lz * off;
-              if (this.city.onRoad(x, z, 1.3, false, false)) continue;
               const gy = G.terrainHeight(x, z);
               const top = P.y - 2.25;
+              // THE FLOATING BRIDGE: over deep water the guideway rides a
+              // concrete pontoon, as I-90's does -- a column 60 m down to the
+              // lake bed would be the wrong bridge entirely
+              const wl = G.isWater(x, z) ? G.drawnWaterLevel(this.lakes, x, z) : null;
+              if (wl !== null && wl - gy > 2.5 && top - wl < 2.2) {
+                const pw = shared ? otherD + 5.5 : 5.5;
+                c.flat.box(x, wl - 2.6, z, pw, top - (wl - 2.6), 32.6, -P.h, C.concrete);
+                c.flat.box(x, wl + 0.35, z, pw + 0.1, 0.08, 32.6, -P.h, C.concreteL);
+                placed = true;
+                break;
+              }
+              if (this.city.onRoad(x, z, 1.3, false, false)) continue;
               if (top - gy < 2) continue;
               const cw = shared ? 2.0 : 1.6;
               c.flat.box(x, gy - 0.5, z, cw, top - gy + 0.5 - 0.6, cw, -P.h, C.concrete);
@@ -1045,16 +1146,20 @@ export class Link {
     this.bodyMat = new THREE.MeshStandardMaterial({ vertexColors: true, metalness: 0.2, roughness: 0.42, envMapIntensity: 1.1 });
     this.trimMat = A.trimMat;
     let id = 0;
-    for (const k of ['sb', 'nb']) {
+    for (const k of this.keys) {
       const tr = this.tracks[k];
-      for (let i = 0; i < LINK.perTrack; i++) {
+      // a 2 Line train starts out on its own branch, clear of the shared rails
+      const n = tr.share ? LINK.perTrack2 : LINK.perTrack, s0 = tr.share ? tr.share.end + 300 : 0;
+      for (let i = 0; i < n; i++) {
         const t = new LinkTrain(this, id++, tr);
-        const s = ((i + 0.5) / LINK.perTrack) * tr.len;
+        const s = s0 + ((i + 0.5) / n) * (tr.len - s0);
         t.place(clamp(s, LINK.len / 2 + 5, tr.len - LINK.len / 2 - 5), tr.dir);
         this.trains.push(t);
         scene.add(t.group);
       }
     }
+    // the junction a northbound train merges through, one at a time
+    if (this.tracks.nb2) this.merge = { E: this.tracks.nb2.share.end, owner: null };
     // settle the service: four minutes of it, at a coarse step
     for (let k = 0; k < 960; k++) this._service(0.25, true);
     for (const t of this.trains) t.group.visible = false;
@@ -1065,15 +1170,74 @@ export class Link {
   bind(o) { Object.assign(this, { game: o.game, hud: o.hud, audio: o.audio, player: o.player }); }
   say(t, ms) { if (this.hud) this.hud.showToast(t, ms); }
 
-  /** The train on `tr` whose tail is next ahead of `t` (moving the way it moves). */
-  ahead(t) {
-    let best = null, bd = Infinity;
+  /** Where two tracks are the same rails: [0, E] (a 2 Line track and its
+   *  1 Line track), or null. */
+  sharedEnd(ta, tb) {
+    if (ta.share && ta.share.track === tb) return ta.share.end;
+    if (tb.share && tb.share.track === ta) return tb.share.end;
+    return null;
+  }
+
+  /**
+   * The train whose tail is next ahead of `t` on the rails `t` will run on,
+   * and where that tail is, in `t`'s s: { o, tail }, or null. A train on the
+   * other line counts while any of it is on the rails the two share -- and
+   * one merging ahead of `t` ends, for `t`, at the junction.
+   */
+  aheadOf(t) {
+    let best = null, bd = Infinity, bt = 0;
     for (const o of this.trains) {
-      if (o === t || o.track !== t.track || o.state === 'off') continue;
-      const d = (o.s - t.s) * t.dir;
-      if (d > 0 && d < bd) { bd = d; best = o; }
+      if (o === t || o.state === 'off') continue;
+      let tail;
+      if (o.track === t.track) tail = o.tail;
+      else {
+        const E = this.sharedEnd(t.track, o.track);
+        if (E === null) continue;
+        if (t.dir > 0) { if (t.lead > E + 5 || o.tail > E) continue; tail = o.tail; }
+        else { if (o.lead > E) continue; tail = Math.min(o.tail, E); }
+      }
+      const d = (tail - t.lead) * t.dir;
+      if (d > -LINK.len && d < bd) { bd = d; best = o; bt = tail; }
     }
-    return best;
+    return best ? { o: best, tail: bt } : null;
+  }
+  ahead(t) { const a = this.aheadOf(t); return a ? a.o : null; }
+
+  /** Are these two trains on the same rails somewhere, overlapping? (a collision) */
+  sharedOverlap(a, b) {
+    const E = this.sharedEnd(a.track, b.track);
+    if (E === null) return false;
+    const a0 = Math.min(a.lead, a.tail), a1 = Math.min(E, Math.max(a.lead, a.tail));
+    const b0 = Math.min(b.lead, b.tail), b1 = Math.min(E, Math.max(b.lead, b.tail));
+    return a0 < E && b0 < E && a0 < b1 && b0 < a1;
+  }
+
+  /**
+   * THE MERGE. A northbound train takes the junction south of International
+   * District before it runs onto the shared rails, one at a time; the token
+   * lapses once its holder is clear of the junction.
+   */
+  mergeFree(t) {
+    const m = this.merge;
+    if (!m || t.dir > 0 || !(t.track === this.tracks.nb || t.track === this.tracks.nb2)) return true;
+    if (t.lead < m.E - 2) return true;                    // through it already
+    const o = m.owner;
+    if (o && o !== t && o.state !== 'off' && o.tail > m.E - 3 && (o.track === this.tracks.nb || o.track === this.tracks.nb2)) return false;
+    // nothing of the other line's still standing in the junction
+    for (const q of this.trains) {
+      if (q === t || q.state === 'off' || !(q.track === this.tracks.nb || q.track === this.tracks.nb2) || q.track === t.track) continue;
+      if (q.lead < m.E && q.tail > m.E - 3) return false;
+    }
+    m.owner = t;
+    return true;
+  }
+
+  /** Where a train is bound: '1 Line to Federal Way', '2 Line to Downtown Redmond'. */
+  bound(t, full = false) {
+    const line = this.lineOf(t.track.key);
+    const to = t.dir < 0 ? (full ? 'Lynnwood City Center' : 'Lynnwood')
+      : line === 2 ? (full ? 'Downtown Redmond' : 'Redmond') : (full ? 'Federal Way Downtown' : 'Federal Way');
+    return `${line} Line to ${to}`;
   }
 
   /** Where a station stops a train on track `tr`: its centre s. */
@@ -1082,12 +1246,20 @@ export class Link {
   _service(dt, boot = false) {
     const p = this.player, pos = p ? p.position : null;
     const waiting = !boot && p && p.onFoot && this.waitingAt(pos.x, pos.z);
+    this._tick = (this._tick || 0) + 1;
     for (const t of this.trains) {
       if (t.driver === 'player') continue;
       // far from you, while you wait at a station, the service runs fast
       let k = 1;
-      if (waiting && pos && Math.hypot(t.x - pos.x, t.z - pos.z) > 1400) k = 6;
-      let left = dt * k;
+      const far = pos && Math.hypot(t.x - pos.x, t.z - pos.z);
+      if (waiting && far > 1400) k = 6;
+      // More than 2 km off, a train is run every fourth frame on the time it
+      // has saved up (round robin, by id): with the 2 Line there are 40 of
+      // them, and their planning was ~0.4 ms a frame on the phone profile.
+      t._acc = (t._acc || 0) + dt * k;
+      if (!boot && far > 2000 && (this._tick + t.id) % 4 !== 0) continue;
+      let left = t._acc;
+      t._acc = 0;
       while (left > 1e-6) { const h = Math.min(0.25, left); t.service(h); left -= h; }
     }
   }
@@ -1098,7 +1270,8 @@ export class Link {
     for (const st of this.stations) if (Math.hypot(x - st.ent.x, z - st.ent.z) < 14) return st;
     for (const st of this.stations) {
       if (st.under) continue;
-      for (const k of ['sb', 'nb']) {
+      for (const k of this.keys) {
+        if (st.s[k] === undefined) continue;
         const tr = this.tracks[k], q = tr.nearest(x, z, 14);
         if (q && Math.abs(q.s - st.s[k]) < LINK.platLen / 2 + 8) return st;
       }
@@ -1163,7 +1336,7 @@ export class Link {
     const x = p.position.x, z = p.position.z;
     if (!this.onGradeCorridor(x, z)) return;
     const rad = pv ? pv.halfWid * 0.9 + 0.3 : 0.35;
-    for (const k of ['sb', 'nb']) {
+    for (const k of this.keys) {
       const tr = this.tracks[k];
       const q = tr.nearest(x, z, 8);
       if (!q) continue;
@@ -1214,7 +1387,7 @@ export class Link {
    */
   blocks(x, z, y) {
     if (!this.onGradeCorridor(x, z)) return false;
-    for (const k of ['sb', 'nb']) {
+    for (const k of this.keys) {
       const tr = this.tracks[k];
       const q = tr.nearest(x, z, 6);
       if (!q || q.d > LINK.wid / 2 + 1.6) continue;
@@ -1255,7 +1428,8 @@ export class Link {
    */
   call(st) {
     let best = null;
-    for (const k of ['sb', 'nb']) {
+    for (const k of this.keys) {
+      if (st.s[k] === undefined) continue;
       const tr = this.tracks[k], sS = st.s[k];
       for (const t of this.trains) {
         if (t.track !== tr || t.driver || t.state === 'off') continue;
@@ -1283,7 +1457,8 @@ export class Link {
   /** When the next train in each direction is due at `st`, in seconds (null: none coming). */
   nextAt(st) {
     const out = {};
-    for (const k of ['sb', 'nb']) {
+    for (const k of this.keys) {
+      if (st.s[k] === undefined) continue;
       const tr = this.tracks[k], sS = st.s[k];
       let best = null;
       for (const t of this.trains) {
@@ -1308,8 +1483,7 @@ export class Link {
     const t = this.call(st);
     if (!t) { this.say(`${st.full} Station — no train coming just now`); return true; }
     const n = this.nextAt(st), eta = n[t.track.key];
-    const to = t.dir > 0 ? 'Federal Way' : 'Lynnwood';
-    this.say(`${st.full} Station — a train to ${to} is ${eta === null || eta < 8 ? 'pulling in' : `${Math.ceil(eta / 5) * 5} s away`}. Stay here: you'll board when its doors open`, 5200);
+    this.say(`${st.full} Station — a ${this.bound(t)} train is ${eta === null || eta < 8 ? 'pulling in' : `${Math.ceil(eta / 5) * 5} s away`}. Stay here: you'll board when its doors open`, 5200);
     return true;
   }
 
@@ -1329,8 +1503,7 @@ export class Link {
     if (st) t.lastStop = st;
     t.doors = true;
     this._objBefore = this.hud ? this.hud.objective.textContent : '';
-    const to = t.dir > 0 ? 'Federal Way Downtown' : 'Lynnwood City Center';
-    this.say(`1 Line to ${to} — you're driving. POWER to go, BRAKE to stop: every platform has a stop mark`, 4600);
+    this.say(`${this.bound(t, true)} — you're driving. POWER to go, BRAKE to stop: every platform has a stop mark`, 4600);
   }
   onLeave(t) {
     t.resume();
@@ -1666,7 +1839,7 @@ export class LinkTrain {
     this.state = 'run'; this.timer = 0; this.station = null;
     this.obstructAt = Infinity; this.hornT = 0; this.lastStop = null; this.held = 0;
     this.arrival = null; this.doors = false; this.warned = 0;
-    this.offT = 0;
+    this.offT = 0; this._acc = 0;
     const g = sys.geo || (sys.geo = buildLRVGeometry());
     this.bones = [];
     for (let k = 0; k < SECTIONS.length; k++) {
@@ -1783,7 +1956,9 @@ export class LinkTrain {
     }
     // the train ahead, and behind (a player's train reversing)
     for (const o of this.sys.trains) {
-      if (o === this || o.track !== tr || o.state === 'off') continue;
+      if (o === this || o.state === 'off') continue;
+      // the other line's train counts where the two run on the same rails
+      if (o.track !== tr && !this.sys.sharedOverlap(this, o)) continue;
       const gap = Math.abs(o.s - this.s) - LINK.len;
       if (gap < 0) {
         const rel = Math.abs(this.u - o.u);
@@ -1831,7 +2006,8 @@ export class LinkTrain {
       if (this.offT > 0) return;
       const nt = tr.other, s0 = this.dir > 0 ? tr.len : 0;   // the end it left by
       const s = clamp(s0 + (s0 > 0 ? -1 : 1) * (LINK.len / 2 + 2), LINK.len / 2, nt.len - LINK.len / 2);
-      for (const o of sys.trains) if (o !== this && o.track === nt && o.state !== 'off' && Math.abs(o.s - s) < LINK.len + 200) { this.offT = 5; return; }
+      // the rails it comes back on are clear -- the other line's too, where they share them
+      for (const o of sys.trains) if (o !== this && o.state !== 'off' && (o.track === nt || sys.sharedEnd(nt, o.track) > s) && Math.abs(o.s - s) < LINK.len + 200) { this.offT = 5; return; }
       this.track = nt; this.dir = nt.dir; this.s = s; this.u = this.dir * 8; this.lastStop = null;
       this.state = 'run';
       this._point();
@@ -1854,12 +2030,21 @@ export class LinkTrain {
       return;
     }
     const st = this.nextStation();
-    const stopLead = st ? st.s[tr.key] + this.dir * LINK.len / 2 : null;
+    let stopLead = st ? st.s[tr.key] + this.dir * LINK.len / 2 : null;
+    // the merge south of International District: a signal 25 m short of it
+    // until this train has the junction
+    const M = sys.merge;
+    if (M && this.dir < 0 && this.lead > M.E && this.lead - M.E < 260 && !sys.mergeFree(this)) {
+      const sig = M.E + 25;
+      if (stopLead === null || sig > stopLead) stopLead = sig;
+    }
     let vAllow = this.allowed(stopLead, 1.0);
-    // the train ahead: moving block, 30 m behind its tail
-    const o = sys.ahead(this);
+    // the train ahead: moving block, 30 m behind its tail (the other line's
+    // too, on the rails the two share)
+    const ah = sys.aheadOf(this), o = ah && ah.o;
+    const oTail = ah ? ah.tail : 0;
     if (o) {
-      const gap = (o.tail - this.lead) * this.dir - 30;
+      const gap = (oTail - this.lead) * this.dir - 30;
       vAllow = Math.min(vAllow, Math.sqrt(Math.max(0, 2 * 1.0 * gap)) + Math.max(0, o.u * o.dir) * 0.5);
       if (gap < 0) vAllow = 0;
     }
@@ -1884,9 +2069,9 @@ export class LinkTrain {
     else if (v > vAllow) brake = 0.25;
     const left = stopLead === null ? Infinity : (stopLead - this.lead) * this.dir;
     if (left < 0.3 || emerg) { power = 0; brake = 1; }
-    else if (left < 4 && v < 0.8 && (!o || (o.tail - this.lead) * this.dir > 32)) power = 0.35;
+    else if (left < 4 && v < 0.8 && (!o || (oTail - this.lead) * this.dir > 32)) power = 0.35;
     this.step(dt, power, brake);
-    if (st && Math.abs(this.u) < 0.05 && left < 0.8) {
+    if (st && Math.abs(this.u) < 0.05 && left < 0.8 && (st.s[tr.key] + this.dir * LINK.len / 2 - this.lead) * this.dir < 0.8) {
       this.u = 0;
       this.state = 'dwell'; this.timer = LINK.dwell; this.station = st; this.held = 0; this.doors = true; this.lastStop = st;
       sys.onDoors(this, true);
@@ -1935,17 +2120,19 @@ export class LinkTrain {
     const here = this.stationHere();
     const mph = (v) => Math.round(v * 2.237);
     const lim = mph(Math.min(...[0, 20, 40, 60].map((d) => this.limitAt(this.lead + this.dir * d))));
-    const to = this.dir > 0 ? 'Federal Way' : 'Lynnwood';
-    if (here && this.doors) return `1 Line to ${to} · ${here.full} Station — doors open · POWER to depart`;
+    const bound = sys.bound(this);
+    if (here && this.doors) return `${bound} · ${here.full} Station — doors open · POWER to depart`;
     const st = this.nextStation();
-    const o = sys.ahead(this);
-    const gap = o ? (o.tail - this.lead) * this.dir : Infinity;
+    const ah = sys.aheadOf(this), o = ah && ah.o;
+    const gap = ah ? (ah.tail - this.lead) * this.dir : Infinity;
     // the train ahead: a figure within 600 m, a warning inside braking distance
     const v = Math.abs(this.u), stopD = v * v / (2 * LINK.brake) + 40;
     const ahead = gap < stopD ? ` · STOP — TRAIN AHEAD ${Math.max(0, Math.round(gap))} m` : gap < 600 ? ` · train ahead ${Math.round(gap)} m` : '';
-    if (!st) return `1 Line to ${to} · end of the map ahead · limit ${lim} mph${ahead}`;
+    const M = sys.merge;
+    const sig = M && this.dir < 0 && this.lead > M.E && this.lead - M.E < 400 && !(M.owner === this || sys.mergeFree(this)) ? ` · JUNCTION SIGNAL STOP ${Math.round(this.lead - M.E)} m` : '';
+    if (!st) return `${bound} · end of the map ahead · limit ${lim} mph${ahead}${sig}`;
     const left = (st.s[this.track.key] + this.dir * LINK.len / 2 - this.lead) * this.dir;
-    return `Next: ${st.full} ${Math.max(0, left).toFixed(left < 30 ? 1 : 0)} m · limit ${lim} mph${ahead}`;
+    return `${sys.lineOf(this.track.key) === 2 ? '2 Line · ' : ''}Next: ${st.full} ${Math.max(0, left).toFixed(left < 30 ? 1 : 0)} m · limit ${lim} mph${ahead}${sig}`;
   }
 
   /** player.js calls this as it calls any vehicle's update. */
@@ -1963,7 +2150,7 @@ export class LinkTrain {
       if (busy) { if (this.warned <= 0) { sys.say('Wait — a train is on the other track'); this.warned = 3; } }
       else {
         this.track = nt; this.dir = nt.dir; this.s = s; this.u = 0; this.lastStop = null;
-        sys.say(`You change ends — the 1 Line back to ${this.dir > 0 ? 'Federal Way' : 'Lynnwood'} on the other track`);
+        sys.say(`You change ends — the ${sys.bound(this)} on the other track`);
         this.arrival = { from: null, t: 0, rated: false };
       }
     }
