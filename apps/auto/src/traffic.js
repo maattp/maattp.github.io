@@ -1042,6 +1042,13 @@ export class TrafficSystem {
         if (lk.blocks(v.x + f.x * d, v.z + f.z * d, v.y)) { brake = Math.max(brake, clamp(1.3 - d / (scanLen + 5), 0.5, 1)); break; }
       }
     }
+    // A freight crossing's gates coming down ahead: stop at the arm.
+    const fr = this.freight;
+    if (fr && fr.crossCells) {
+      for (let d = 3; d <= scanLen + 6; d += 3) {
+        if (fr.blocks(v.x + f.x * d, v.z + f.z * d, v.y)) { brake = Math.max(brake, clamp(1.35 - d / (scanLen + 6), 0.55, 1)); break; }
+      }
+    }
     // YOU, ON FOOT. It used to look 10 m ahead, which at 15 m/s is well
     // inside its stopping distance, and only at where you were: a car saw you
     // step off the kerb once it was too late to stop. Now it looks as far as

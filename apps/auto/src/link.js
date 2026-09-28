@@ -79,6 +79,8 @@ const ON_PHONE = typeof navigator !== 'undefined' && /iPhone|iPad|iPod|Android/i
 const RANGE = ON_PHONE ? { flat: 1900, bed: 900, near: 380, sign: 500, train: 1000 }
   : { flat: 2800, bed: 1500, near: 600, sign: 700, train: 1600 };
 const TUN = 1, BOX = 2, DECK = 3, FILL = 4, CROSS = 5;
+/** What each metre of a track is (LinkTrack.KD): freight.js shares them. */
+export const KIND = { TUN, BOX, DECK, FILL, CROSS };
 
 function boxAvg(a, r) {
   const n = a.length, out = new Float64Array(n), c = new Float64Array(n + 1);
@@ -113,8 +115,12 @@ function erode(a, r) {
 // flag (tunnel / bridge / ground), height profile and speed limits.
 
 export class LinkTrack {
-  constructor(key, raw) {
+  /** `P`: the line's numbers (LINK's shape: lift, liftX, deck, cover, grade);
+   *  freight.js passes its own. `P.bridgeFloor(x, z)`, if given, is the
+   *  lowest a bridge's rail head may be there (clearance over the water). */
+  constructor(key, raw, P = LINK) {
     this.key = key;
+    this.P = P;
     this.dir = key === 'sb' ? 1 : -1;       // direction of travel along s
     // Chaikin corner-cutting, twice, endpoints kept. A point's flag is the
     // flag of the way it came from, which build_link.py writes on the END
@@ -223,18 +229,29 @@ export class LinkTrack {
    * Stations are level. `zones`: [[s0, s1, kindHint]].
    */
   setHeights(zones, crossing) {
-    const n = this.n, g = LINK.grade;
+    const P = this.P, n = this.n, g = P.grade;
     const gr = new Float64Array(n);
     for (let i = 0; i < n; i++) gr[i] = G.terrainHeight(this.X[i], this.Z[i]);
     this.GR = gr;
-    const ga = boxAvg(dilate(gr, 4), 6);
+    // Link rides OVER the ground's bumps (dilate, then smooth). A freight bed
+    // (`P.follow` 'mean') follows the ground's AVERAGE and the ground is cut
+    // down to it (freight.js carveDepth): at a 2.2 % ruling grade the 40 m
+    // DEM's 5-8 m noise lifted the line onto fills everywhere.
+    const ga = P.follow === 'mean' ? boxAvg(gr.map((v) => Math.max(v, P.seaFloor || -1e9)), P.meanR || 40) : boxAvg(dilate(gr, 4), 6);
     const cov = erode(gr, 30);
     const lo = new Float64Array(n), hi = new Float64Array(n), tg = new Float64Array(n);
     for (let i = 0; i < n; i++) {
       const f = this.F[i];
-      if (f === 1) { hi[i] = cov[i] - LINK.cover; lo[i] = hi[i] - 90; tg[i] = cov[i] - LINK.cover - 6; }
-      else if (f === 2) { lo[i] = ga[i] + LINK.lift; hi[i] = ga[i] + LINK.deck; tg[i] = hi[i]; }
-      else { lo[i] = hi[i] = tg[i] = ga[i] + (crossing && crossing[i] ? LINK.liftX : LINK.lift); }
+      if (f === 1) { hi[i] = cov[i] - P.cover; lo[i] = hi[i] - 90; tg[i] = cov[i] - P.cover - 6; }
+      else if (f === 2) {
+        lo[i] = ga[i] + P.lift; hi[i] = ga[i] + P.deck;
+        if (P.bridgeFloor) { const b = P.bridgeFloor(this.X[i], this.Z[i]); if (b > hi[i]) hi[i] = b; if (b > lo[i]) lo[i] = b; }
+        tg[i] = hi[i];
+      } else if (crossing && crossing[i] && P.follow === 'mean') {
+        // a level crossing is pinned to the road it carries: flush with the
+        // raw ground there, which the carve then meets
+        lo[i] = hi[i] = tg[i] = Math.max(gr[i], P.seaFloor || -1e9) + P.liftX;
+      } else { lo[i] = hi[i] = tg[i] = ga[i] + (crossing && crossing[i] ? P.liftX : P.lift); }
     }
     for (const z of zones) {
       const [s0, s1] = z;

@@ -1745,8 +1745,8 @@ export function* cityGenerator(md, cache = {}) {
     // rect; a building overlapping one goes unless its roof is below the
     // zone's `y` (a low building the beams pass over, as at Denny Way).
     // Link light rail's open corridor and stations (link.js clearZones) too.
-    if ((md.monorailClear && md.monorailClear.length) || (md.linkClear && md.linkClear.length)) {
-      const Z = [...(md.monorailClear || []), ...(md.linkClear || [])];
+    if ((md.monorailClear && md.monorailClear.length) || (md.linkClear && md.linkClear.length) || (md.freightClear && md.freightClear.length)) {
+      const Z = [...(md.monorailClear || []), ...(md.linkClear || []), ...(md.freightClear || [])];
       const ZC = 40, zg = new Map();
       for (const zn of Z) {
         const e = Math.hypot(zn.hw, zn.hd);

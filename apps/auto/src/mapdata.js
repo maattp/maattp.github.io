@@ -152,6 +152,8 @@ export async function loadMapData(onStep) {
   const monorail = await (await fetch(new URL('monorail.json', BASE))).json();
   // Link light rail's 1 Line, both tracks and the stations (tools/build_link.py)
   const link = await (await fetch(new URL('link.json', BASE))).json();
+  // BNSF's main line through Seattle and Balmer Yard (tools/build_freight.py)
+  const freight = await (await fetch(new URL('freight.json', BASE))).json();
   // OSM's beaches, for what stands on them (tools/build_beaches.py)
   const beaches = (await (await fetch(new URL('beaches.json', BASE))).json()).beaches;
   // benches, picnic tables, playgrounds and fountains (tools/build_parkprops.py)
@@ -164,6 +166,6 @@ export async function loadMapData(onStep) {
   return {
     height, hfN: hp.w,
     water, green, maskN: sp.w, lot, lotN: lp.w,
-    roads, buildings, places, lakes, monorail, link, beaches, parkprops, bikepaths, piers,
+    roads, buildings, places, lakes, monorail, link, freight, beaches, parkprops, bikepaths, piers,
   };
 }

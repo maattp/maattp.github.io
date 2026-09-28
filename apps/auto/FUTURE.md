@@ -13,20 +13,3 @@ Local notes, not a spec.
   not the solved ground profile), Judkins Park / Mercer Island / South
   Bellevue / Bellevue Downtown stations, 2 Line blue on the map.
 - The map's east edge is ~x 13000: check how much of Bellevue/Redmond is in.
-
-## Freight train
-
-- Catch it at the Interbay / Balmer Yard by Magnolia; the BNSF main line runs
-  the whole map north-south (Everett direction past Golden Gardens / Shilshole,
-  south through the waterfront tunnel under downtown, SODO, the Duwamish).
-- Data already extracted: `tools/data/raw_rail.json` (railway=rail with
-  usage/service tags; yards and sidings included). Pick the main line by
-  `usage=main` and stitch like `build_link.py`.
-- A very long, detailed train: diesel locomotives (two or three up front),
-  a long consist (intermodal wells, tank cars, hoppers, boxcars) — instanced
-  per car type, bones or per-car transforms along the track.
-- Reuse `src/link.js`'s track/profile code (LinkTrack, envelopes, bores for the
-  Great Northern tunnel under downtown); `spec.rail` already routes boarding,
-  exit spots and the camera.
-- Driving: throttle notches and air brakes, a heavy train's slow acceleration,
-  grade effects; crossings with gates at grade.

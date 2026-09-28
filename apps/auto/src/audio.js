@@ -734,6 +734,58 @@ const SOUNDS = {
   bike_bell: { dur: 0.9, build(k, out, t, R) {
     for (const t0 of [t, t + 0.16]) METAL.slice(0, 4).forEach((r, i) => k.ping(out, t0, 2350 * r, 0.26 / (1 + i), 0.32 / (1 + i * 0.6), 0.001));
   } },
+  // A level crossing's electronic bell: a hard little strike, about twice a
+  // second (freight.js paces it), bright and a touch inharmonic.
+  xing_bell: { dur: 0.5, build(k, out, t, R) {
+    const g = k.gain(1);
+    g.connect(k.filt('highpass', 400, 0.7)).connect(out);
+    k.ping(g, t, 1180, 0.55, 0.16, 0.0008);
+    k.ping(g, t, 1180 * 2.76, 0.22, 0.06, 0.0008);
+    k.ping(g, t, 1180 * 5.4, 0.08, 0.025, 0.0008);
+    k.burst(g, 'white', t, 'bandpass', 3800, 2, 0.12, 0.004, R);
+  } },
+  // A locomotive's pneumatic bell: one swing of the clapper, a big bronze bell.
+  loco_bell: { dur: 1.6, build(k, out, t, R) {
+    METAL.slice(0, 6).forEach((r, i) => k.ping(out, t, 560 * r * (1 + (R() - 0.5) * 0.01), 0.34 / (1 + i * 0.7), 0.9 / (1 + i * 0.45), 0.002));
+    k.burst(out, 'white', t, 'bandpass', 2400, 1.5, 0.06, 0.006, R);
+  } },
+  // Brakes released: the brake pipe recharging, a long soft hiss off the train.
+  brake_release: { dur: 2.4, build(k, out, t, R) {
+    const g = k.gain(0);
+    k.noise('white', t, 2.4, R).connect(k.filt('highpass', 1600, 0.6)).connect(k.filt('lowpass', 7000, 0.6)).connect(g).connect(out);
+    g.gain.setValueAtTime(0, t);
+    g.gain.linearRampToValueAtTime(0.5, t + 0.06);
+    g.gain.setTargetAtTime(0.18, t + 0.1, 0.3);
+    g.gain.setTargetAtTime(0, t + 1.2, 0.35);
+  } },
+  // Emergency: the brake pipe vented at once -- a roar, then a long hiss.
+  brake_dump: { dur: 3.6, build(k, out, t, R) {
+    const g = k.gain(0);
+    const bp = k.filt('bandpass', 1400, 0.5);
+    bp.frequency.setValueAtTime(900, t);
+    bp.frequency.exponentialRampToValueAtTime(3400, t + 2.8);
+    k.noise('pink', t, 3.6, R).connect(bp).connect(g).connect(out);
+    g.gain.setValueAtTime(0, t);
+    g.gain.linearRampToValueAtTime(1.0, t + 0.02);
+    g.gain.setTargetAtTime(0.35, t + 0.05, 0.5);
+    g.gain.setTargetAtTime(0, t + 2.2, 0.45);
+    k.thump(out, t, 80, 40, 0.3, 0.6, 0.12);
+  } },
+  // Steel wheels over rail: one 18 m car's worth at 15 m/s -- the rumble, the
+  // wheels' hum, and each axle over a joint (two trucks, two axles each: the
+  // clickety-clack). Played at speed / 15.
+  rail_roll: { dur: 1.2, loop: 0.06, build(k, out, t, R) {
+    const rg = k.gain(0.55);
+    k.noise('brown', t, 1.2, R).connect(k.filt('lowpass', 170, 0.8)).connect(rg).connect(out);
+    const hg = k.gain(0.12);
+    k.noise('pink', t, 1.2, R).connect(k.filt('bandpass', 420, 1.1)).connect(hg).connect(out);
+    for (const x of [0.25, 0.37, 0.87, 0.99]) {
+      const ti = t + x;
+      k.thump(out, ti, 140, 60, 0.05, 0.55, 0.035);
+      k.burst(out, 'white', ti, 'bandpass', 1700 + R() * 400, 1.6, 0.35, 0.012, R);
+      k.ping(out, ti, 900 + R() * 300, 0.06, 0.03);
+    }
+  } },
   tram_bell: { dur: 1.6, build(k, out, t, R) {
     for (const t0 of [t, t + 0.34]) {
       METAL.slice(0, 5).forEach((r, i) => k.ping(out, t0, 1046 * r, 0.32 / (1 + i * 0.8), 0.55 / (1 + i * 0.5), 0.0015));
@@ -940,6 +992,14 @@ export const ENGINES = {
     idle: 0, redline: 9000, gears: [1],
     lp: [700, 2400, 1400], ex: [420, 1.4, 6], noise: { ratio: 0, q: 1, gain: 0, pulse: 0, order: 1 },
     whine: { hz0: 110, hz1: 1900, gain: 0.085, load: 0.75 }, drive: 1.2, level: 0.42, jitter: 0.01 },
+  // A GE GEVO-12: a 12-cylinder, four-stroke diesel at 440 rpm idle to 1050 in
+  // notch 8 [GE] -- the fundamental is the firing rate (a low, even beat), the
+  // turbo's whine climbs with load, and it is loud.
+  gevo: { kind: 'loco', stroke: 4, fire: [0, 1 / 12, 2 / 12, 3 / 12, 4 / 12, 5 / 12, 6 / 12, 7 / 12, 8 / 12, 9 / 12, 10 / 12, 11 / 12].map((f, i) => f + (i % 2 ? 0.006 : 0)),
+    amps: [1, 0.9, 1.05, 0.93, 1.02, 0.88, 1.04, 0.95, 0.99, 0.91, 1.06, 0.94], pw: 0.045,
+    idle: 440, redline: 1050, gears: [1],
+    lp: [180, 700, 900], ex: [62, 1.6, 8], noise: { ratio: 42, q: 1.2, gain: 0.3, pulse: 0.55, order: 12 },
+    whine: { hz0: 700, hz1: 4800, gain: 0.07, load: 0.85 }, drive: 1.9, level: 0.5, jitter: 0.04, rough: 0.45, airbrake: true },
   outboard: { kind: 'boat', stroke: 2, fire: [0, 0.5], amps: [1, 0.9], pw: 0.028,
     idle: 900, redline: 5800, gears: [1],
     lp: [380, 2300, 1500], ex: [260, 2.5, 5], noise: { ratio: 18, q: 1.2, gain: 0.3, pulse: 0.5, order: 2 },
@@ -1044,6 +1104,10 @@ export class EngineModel {
       target = (p.idle + (p.redline - p.idle) * clamp(Math.pow(thr, 0.8) + wind, 0, 1)) * this.spin;
     } else if (p.kind === 'boat') {
       target = p.idle + (p.redline - p.idle) * clamp(0.72 * thr + 0.28 * clamp(v / this.vmax, 0, 1), 0, 1);
+    } else if (p.kind === 'loco') {
+      // diesel-electric: the engine's speed is the throttle notch's, whatever
+      // the wheels are doing; it winds up and down over seconds
+      target = p.idle + (p.redline - p.idle) * thr;
     } else {
       const gears = p.gears;
       const last = gears.length - 1;
@@ -1085,9 +1149,9 @@ export class EngineModel {
       this.flare -= dt;
       target = Math.max(target, (p.idle || 800) * (1 + 1.2 * Math.max(0, this.flare) / 0.5));
     }
-    const rate = !this.on ? (p.kind === 'car' ? 4 : 1.5) : this.shiftT > 0 ? 14 : p.kind === 'car' ? 9 : 3;
+    const rate = !this.on ? (p.kind === 'car' ? 4 : 1.5) : this.shiftT > 0 ? 14 : p.kind === 'car' ? 9 : p.kind === 'loco' ? 0.7 : 3;
     this.rpm += (target - this.rpm) * (1 - Math.exp(-rate * dt));
-    this.load += (thr - this.load) * (1 - Math.exp(-10 * dt));
+    this.load += (thr - this.load) * (1 - Math.exp(-(p.kind === 'loco' ? 1.2 : 10) * dt));
     // lift-off from high revs: the exhaust crackles and pops for a moment
     if (p.crackle && this.lastThr > 0.6 && thr < 0.1 && this.rpm > p.redline * 0.55) this.popT = 0.7;
     this.lastThr = thr;
@@ -1319,6 +1383,103 @@ class Tap {
       setp(this.g.gain, v, t, tc);
       if (rate) setp(this.src.playbackRate, rate, t, 0.08);
     }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// The freight's air horn
+// ---------------------------------------------------------------------------
+
+// A Nathan K5LA, what BNSF's road power carries: five bells, D#4 F#4 G#4 B4
+// D#5 -- the B6 chord everyone knows from a crossing. Each bell is a reed
+// driven by the air into a flared horn: a buzzy, harmonically rich pulse
+// (the reed) through a formant (the bell's flare), which is what separates a
+// horn from an organ. When the valve opens the bells scoop up to pitch as
+// the pressure builds, and they sag as it closes.
+const K5LA = [311.1, 370.0, 415.3, 493.9, 622.3];
+
+function hornWave(c, f0) {
+  const N = 40, re = new Float32Array(N + 1), im = new Float32Array(N + 1);
+  for (let n = 1; n <= N; n++) {
+    const f = n * f0;
+    // reed pulse (~1/n^0.75), a formant round 1.4 kHz and a second near 3 kHz
+    const form = 1 + 2.2 * Math.exp(-(((f - 1400) / 700) ** 2)) + 0.9 * Math.exp(-(((f - 3000) / 900) ** 2));
+    const a = Math.pow(n, -0.75) * form * (f > 7000 ? Math.exp(-(f - 7000) / 1500) : 1);
+    im[n] = a * (n % 2 ? 1 : 0.8);
+  }
+  return c.createPeriodicWave(re, im);
+}
+
+/** One horn: five bells, a breath of air, an envelope with the scoop and sag. */
+class AirHorn {
+  constructor(c, dest, verbIn) {
+    this.c = c;
+    this.pre = c.createGain(); this.pre.gain.value = 0.34;
+    this.shaper = c.createWaveShaper(); this.shaper.curve = tanhCurve(1.6);
+    this.lp = c.createBiquadFilter(); this.lp.type = 'lowpass'; this.lp.frequency.value = 9000; this.lp.Q.value = 0.5;
+    this.body = c.createBiquadFilter(); this.body.type = 'peaking'; this.body.frequency.value = 1300; this.body.Q.value = 0.9; this.body.gain.value = 4;
+    this.out = c.createGain(); this.out.gain.value = 0;
+    this.pan = c.createStereoPanner ? c.createStereoPanner() : c.createGain();
+    this.send = c.createGain(); this.send.gain.value = 0.35;
+    this.pre.connect(this.shaper).connect(this.body).connect(this.lp).connect(this.out).connect(this.pan);
+    this.out.connect(this.send);
+    this.bells = K5LA.map((f, i) => {
+      const o = c.createOscillator();
+      o.setPeriodicWave(hornWave(c, f));
+      const det = (i * 37 % 7 - 3) * 1.5;            // a few cents apart: they beat
+      o.frequency.value = f;
+      o.detune.value = det;
+      const g = c.createGain(); g.gain.value = [0.95, 1, 0.9, 0.85, 0.7][i];
+      o.connect(g).connect(this.pre);
+      o.start(c.currentTime);
+      return { o, f, det };
+    });
+    // the air: a band of noise under the reeds
+    this.air = c.createBufferSource(); this.air.loop = true;
+    this.airBp = c.createBiquadFilter(); this.airBp.type = 'bandpass'; this.airBp.frequency.value = 2600; this.airBp.Q.value = 0.7;
+    this.airG = c.createGain(); this.airG.gain.value = 0.05;
+    this.dest = dest; this.verbIn = verbIn;
+    this.linked = false; this.on = false; this.quiet = 0;
+  }
+  setNoise(buf) {
+    if (this.air.buffer) return;
+    this.air.buffer = buf;
+    this.air.connect(this.airBp).connect(this.airG).connect(this.pre);
+    this.air.start(this.c.currentTime);
+  }
+  _link(on) {
+    if (keepLinked) on = true;
+    if (on === this.linked) return;
+    this.linked = on;
+    if (on) { this.pan.connect(this.dest); this.send.connect(this.verbIn); }
+    else { this.pan.disconnect(); this.send.disconnect(); }
+  }
+  /** Each frame: `on` the valve, `level` the loudness here, `pan`, doppler, how far. */
+  set(t, on, level, pan = 0, dop = 1, dist = 0) {
+    if (on || this.out.gain.value > 0.001) this._link(true);
+    if (on !== this.on) {
+      this.on = on;
+      for (const b of this.bells) {
+        const d = b.o.detune;
+        d.cancelScheduledValues(t);
+        if (on) { d.setValueAtTime(b.det - 70, t); d.linearRampToValueAtTime(b.det - 8, t + 0.09); d.linearRampToValueAtTime(b.det, t + 0.22); }
+        else { d.setValueAtTime(d.value, t); d.linearRampToValueAtTime(b.det - 30, t + 0.22); }
+      }
+      const g = this.out.gain;
+      g.cancelScheduledValues(t);
+      g._lv = undefined;
+      if (on) { g.setValueAtTime(g.value, t); g.linearRampToValueAtTime(level * 0.6, t + 0.035); g.setTargetAtTime(level, t + 0.035, 0.06); }
+      else { g.setValueAtTime(g.value, t); g.setTargetAtTime(0, t, 0.07); }
+      this.quiet = 0;
+    } else if (on) {
+      setp(this.out.gain, level, t, 0.05);
+    }
+    if (!on && ++this.quiet > 60) this._link(false);
+    if (this.pan.pan) setp(this.pan.pan, pan, t, 0.05);
+    for (const b of this.bells) setp(b.o.frequency, b.f * dop, t, 0.04);
+    // air takes the top off a distant horn
+    setp(this.lp.frequency, clamp(9000 * Math.exp(-dist / 700), 700, 9000), t, 0.1);
+    setp(this.send.gain, 0.3 + clamp(dist / 900, 0, 0.6), t, 0.2);
   }
 }
 
@@ -1560,6 +1721,10 @@ export class Audio {
     this.heliModel = new EngineModel();
     this._heliPrev = null;
 
+    // --- freights: your train's horn; the AI trains' engines, horns, wheels ---
+    this.frHorn = null;      // built when you first drive one
+    this.frVoices = [];      // built when one first comes within earshot
+
     // --- one-shots -----------------------------------------------------------------
     this.shots = [];
     this._last = {};
@@ -1579,7 +1744,7 @@ export class Audio {
     // The loop taps wait for the lot.
     this.bank = {};
     const makeLoops = (b) => {
-      if (!b.squeal || !b.gravel || !b.scrape || !b.slosh || !b.burner) return;
+      if (!b.squeal || !b.gravel || !b.scrape || !b.slosh || !b.burner || !b.rail_roll) return;
       const lp = (f) => { const x = c.createBiquadFilter(); x.type = 'lowpass'; x.frequency.value = f; return x; };
       this.loops = {
         squeal: new Tap(c, b.squeal[0], this.sfxBus),
@@ -1587,6 +1752,7 @@ export class Audio {
         scrape: new Tap(c, b.scrape[0], this.sfxBus),
         slosh: new Tap(c, b.slosh[0], this.sfxBus, lp(2400)),
         burner: new Tap(c, b.burner[0], this.sfxBus),
+        roll: new Tap(c, b.rail_roll[0], this.sfxBus, lp(3200)),
       };
     };
     const t0 = performance.now();
@@ -2183,6 +2349,22 @@ export class Audio {
     if (grounded) this._airT = 0;
     this._groundWas = grounded;
 
+    // a freight you are driving: its air horn, its bell, its wheels
+    const fv = inCar && spec && spec.freight ? s.vehicle : null;
+    if (fv || this.frHorn) {
+      if (!this.frHorn) { this.frHorn = new AirHorn(this.ctx, this.sfxBus, this.verbIn); this.frHorn.setNoise(this.pinkNoise); }
+      // over the cab roof, a little behind you: loud, but not in your ear
+      this.frHorn.set(t, !!(fv && fv.hornOn), 0.78, 0, 1, 40);
+    }
+    if (fv && fv.bellOn) {
+      this._frBellT = (this._frBellT || 0) - dt;
+      if (this._frBellT <= 0) { this._frBellT = 0.95; this.play('loco_bell', { gain: 0.22, send: 0.05, jitter: false }); }
+    }
+    if (this.loops && this.loops.roll) {
+      const v = fv ? Math.abs(fv.u) : 0;
+      this.loops.roll.set(fv ? clamp(v / 6, 0, 1) * 0.42 : 0, t, 0.12, clamp(v / 15, 0.2, 2.2));
+    }
+
     // horn
     if (this.hornT > 0) this.hornT -= dt;
     const hornWant = this.hornT > 0 && inCar;
@@ -2280,6 +2462,9 @@ export class Audio {
       this._siren(this.sirens[0], { x: L.x, y: L.y, z: L.z + 20, vLong: 0, forward: { x: 0, z: 1 }, siren: t, legacy: s.siren }, t, L);
     }
 
+    // --- freights ------------------------------------------------------------------
+    if (s.freight) this._freights(dt, t, s, L);
+
     // --- the police helicopter -----------------------------------------------------
     const h = s.heli;
     if (h || this.heliVoice) {
@@ -2298,6 +2483,75 @@ export class Audio {
       if (sp && this.heliPan.pan) setp(this.heliPan.pan, sp.pan, t, 0.1);
       this.heliVoice.apply(m, t, sp ? sp.gain * 0.9 : 0, sp ? sp.dop : 1);
     }
+  }
+
+  /**
+   * The AI freights you can hear: for the nearest two, the lead locomotive's
+   * engine and horn, and the wheels where the train is nearest you. A freight
+   * is heard a long way off -- the horn over a kilometre and a half.
+   */
+  _freights(dt, t, s, L) {
+    const c = this.ctx;
+    const near = [];
+    for (const tr of s.freight) {
+      if (tr.state === 'off' || tr === s.vehicle) continue;
+      const d = Math.hypot(tr.x - L.x, tr.z - L.z);
+      if (d < 1800) near.push([d, tr]);
+    }
+    near.sort((p, q) => p[0] - q[0]);
+    while (this.frVoices.length < Math.min(2, near.length)) {
+      const pan = c.createStereoPanner ? c.createStereoPanner() : c.createGain();
+      pan.connect(this.sfxBus);
+      const eng = new EngineVoice(c, this.pinkNoise, pan);
+      eng.setProfile('gevo');
+      const model = new EngineModel();
+      model.setProfile(ENGINES.gevo, { topKph: 80 });
+      model.start(true);
+      const horn = new AirHorn(c, this.sfxBus, this.verbIn);
+      horn.setNoise(this.pinkNoise);
+      const rpan = c.createStereoPanner ? c.createStereoPanner() : c.createGain();
+      rpan.connect(this.sfxBus);
+      const roll = this.bank && this.bank.rail_roll ? new Tap(c, this.bank.rail_roll[0], rpan) : null;
+      this.frVoices.push({ pan, eng, model, horn, rpan, roll, train: null, bellT: 0 });
+    }
+    this.frVoices.forEach((fv, i) => {
+      const tr = near[i] ? near[i][1] : null;
+      if (!fv.roll && this.bank && this.bank.rail_roll) fv.roll = new Tap(c, this.bank.rail_roll[0], fv.rpan);
+      if (!tr) {
+        fv.eng.silence(t);
+        fv.horn.set(t, false, 0, 0, 1, 2000);
+        if (fv.roll) fv.roll.set(0, t);
+        return;
+      }
+      const f = tr.forward, v = tr.vLong;
+      // the engine and the horn, at the lead locomotive
+      const sp = spatial(L, tr.x, tr.y + 3.5, tr.z, f.x * v, f.z * v, 26, 1100);
+      fv.model.step(dt, v, tr.notch / 8, false);
+      if (sp) {
+        if (fv.pan.pan) setp(fv.pan.pan, sp.pan, t, 0.08);
+        fv.eng.apply(fv.model, t, sp.gain * 0.9, sp.dop);
+      } else fv.eng.silence(t);
+      const hs = spatial(L, tr.x, tr.y + 4.8, tr.z, f.x * v, f.z * v, 45, 2200);
+      fv.horn.set(t, !!(tr.hornOn && hs), hs ? Math.min(0.75, hs.gain * 0.85) : 0, hs ? hs.pan : 0, hs ? hs.dop : 1, hs ? hs.d : 2000);
+      // the bell, rung by the lead unit
+      if (tr.bellOn && sp && sp.d < 320) {
+        fv.bellT -= dt;
+        if (fv.bellT <= 0) { fv.bellT = 0.95; this.play('loco_bell', { gain: 0.5, x: tr.x, y: tr.y + 2, z: tr.z, ref: 12, maxD: 340, jitter: false }); }
+      }
+      // the wheels: from the point of the train nearest you
+      if (fv.roll) {
+        const tk = tr.track, q = tk.nearest(L.x, L.z, 600);
+        let ws = q ? q.s : tr.s;
+        const lo = Math.min(tr.lead, tr.tail), hi = Math.max(tr.lead, tr.tail);
+        ws = clamp(ws, lo, hi);
+        const rs = spatial(L, tk.x(ws), tk.y(ws) + 1, tk.z(ws), 0, 0, 14, 450);
+        const spd = Math.abs(tr.u);
+        if (rs) {
+          if (fv.rpan.pan) setp(fv.rpan.pan, rs.pan, t, 0.1);
+          fv.roll.set(rs.gain * clamp(spd / 6, 0, 1) * 0.8, t, 0.15, clamp(spd / 15, 0.2, 2.2));
+        } else fv.roll.set(0, t);
+      }
+    });
   }
 
   _trafficVoice(tv, dt, t, L) {
